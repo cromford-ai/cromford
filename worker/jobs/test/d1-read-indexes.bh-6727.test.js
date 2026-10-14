@@ -15,6 +15,7 @@ import assert from 'node:assert/strict';
 import worker from '../src/index.js';
 import { readCoreSections } from '../src/lib/daily-digest/core-sections.js';
 import { openVolumeDb, capturingD1, plan, NOW_ISO, isoAgo } from './lib/d1-volume.bh-6727.js';
+import { openDb } from './lib/d1-sqlite.bh-1030.js';
 
 const SECRET = 'test-secret';
 const HOT = ['wakes', 'jobs', 'cost_rows', 'ledgers', 'job_artifacts', 'job_heartbeats'];
@@ -108,6 +109,61 @@ test('I6: the digest answer is the same rows as the old correlated query', { ski
   const neu = vol.db.prepare(`SELECT * FROM (${q.sql}) ORDER BY project, ticket_id`).all(from, to);
   assert.ok(old.length > 0, 'the fixture has merged tickets in the window');
   assert.deepEqual(neu.map((r) => ({ ...r })), old.map((r) => ({ ...r })));
+});
+
+// I8 (BH-6750 follow-up of the #6749 review): the same-rows check on hand-built
+// rows, because the volume fixture gives every (project, ticket) one job. Each
+// case below is one way the merge -> artifact -> job -> ticket walk can differ.
+const OLD_DIGEST_SQL = `SELECT project, ticket_id, MIN(issue_created_at) AS issue_created_at FROM jobs
+      WHERE issue_created_at IS NOT NULL AND ticket_id IS NOT NULL
+        AND EXISTS (SELECT 1 FROM job_artifacts a JOIN jobs j2 ON j2.id=a.job_id
+                     WHERE a.artifact_kind='pr_url'
+                       AND a.artifact_ref IN (SELECT key FROM ledgers
+                                             WHERE kind='merge' AND status='merged' AND created_at>=?1 AND created_at<?2)
+                       AND j2.project=jobs.project AND j2.ticket_id=jobs.ticket_id)
+      GROUP BY project, ticket_id ORDER BY project, ticket_id`;
+
+test('I8: the digest rewrite returns the old rows on the edge cases', async (t) => {
+  const o = await openDb();
+  if (!o) return t.skip('node:sqlite unavailable');
+  const { db } = o;
+  const from = isoAgo(48), to = isoAgo(24), inside = isoAgo(36), before = isoAgo(60);
+  const d1 = isoAgo(200), d2 = isoAgo(150), d3 = isoAgo(100);
+  const job = db.prepare(`INSERT INTO jobs (id, project, ticket_id, kind, box, stage, status, created_at, updated_at, issue_created_at)
+                          VALUES (?, ?, ?, 'build', 'b', 'done', 'done', ?, ?, ?)`);
+  const pr = db.prepare(`INSERT INTO job_artifacts (job_id, artifact_kind, artifact_ref, created_at, updated_at) VALUES (?, 'pr_url', ?, ?, ?)`);
+  const merge = db.prepare(`INSERT INTO ledgers (kind, key, status, created_at, updated_at) VALUES ('merge', ?, ?, ?, ?)`);
+  const add = (id, project, ticket, issued, url) => { job.run(id, project, ticket, d1, d1, issued); if (url) pr.run(id, url, d1, d1); };
+  // A: the merged job has a NULL issue_created_at; its dated siblings set the MIN.
+  add('a1', 'p1', 'T-A', null, 'u/a'); add('a2', 'p1', 'T-A', d2, null); add('a3', 'p1', 'T-A', d1, null);
+  // B: two jobs carry the same pr_url, on two tickets; both tickets count.
+  add('b1', 'p1', 'T-B1', d3, 'u/b'); add('b2', 'p1', 'T-B2', d2, 'u/b');
+  // C: the same ticket_id in two projects; only p1's PR merged.
+  add('c1', 'p1', 'T-C', d2, 'u/c'); add('c2', 'p2', 'T-C', d1, 'u/c-other');
+  // D: merged before the window. E: in the window but not merged.
+  add('d1', 'p1', 'T-D', d1, 'u/d'); add('e1', 'p1', 'T-E', d1, 'u/e');
+  // F: merged in the window, but every job of the ticket has a NULL date.
+  add('f1', 'p1', 'T-F', null, 'u/f'); add('f2', 'p1', 'T-F', null, null);
+  // G: merged in the window, but the job has no ticket_id.
+  add('g1', 'p1', null, d1, 'u/g');
+  for (const u of ['u/a', 'u/b', 'u/c', 'u/f', 'u/g']) merge.run(u, 'merged', inside, inside);
+  merge.run('u/d', 'merged', before, before);
+  merge.run('u/e', 'parked', inside, inside);
+  merge.run('u/c-other', 'merged', before, before);
+
+  const old = db.prepare(OLD_DIGEST_SQL).all(from, to).map((r) => ({ ...r }));
+  const log = [];
+  await readCoreSections(capturingD1(db, log), { from, to, day: from.slice(0, 10) }, { now: NOW_ISO });
+  const q = log.find((r) => /MIN\(j\.issue_created_at\)/.test(r.sql));
+  assert.ok(q, 'the digest ran the rewritten read');
+  const neu = db.prepare(`SELECT * FROM (${q.sql}) ORDER BY project, ticket_id`).all(from, to).map((r) => ({ ...r }));
+  assert.deepEqual(old, [
+    { project: 'p1', ticket_id: 'T-A', issue_created_at: d1 },
+    { project: 'p1', ticket_id: 'T-B1', issue_created_at: d3 },
+    { project: 'p1', ticket_id: 'T-B2', issue_created_at: d2 },
+    { project: 'p1', ticket_id: 'T-C', issue_created_at: d2 },
+  ], 'the old query answers the cases as written');
+  assert.deepEqual(neu, old);
 });
 
 test('I7: GET /api/metrics/dora reads build launches through idx_jobs_kind_spawn', { skip: !vol }, async () => {

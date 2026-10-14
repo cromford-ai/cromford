@@ -64,6 +64,11 @@ export const routes = [
       // grouped. Written as a plain GROUP BY, D1 (no ANALYZE statistics) walked
       // a (repo, ...) index to get the groups in order and read every wake:
       // 205,634 rows a call, 284 calls in 2 h, for an hours=1 window of ~1,200.
+      // The cost grows with the window: it reads every wake in it. The callers ask
+      // hours=1 (bin/lib/pr-snapshot-wakes.sh) and 24 (the daily doorbell lane).
+      // hours=168, the cap, read ~200k wakes and took 430 ms against 231 ms
+      // before the rewrite (#6749 review); no caller asks for it. A caller that
+      // needs a week should get a daily rollup, not this read.
       const rows = await env.DB.prepare(
         `WITH w AS MATERIALIZED (SELECT repo, at, kind FROM wakes WHERE at >= ?1)
          SELECT repo, COUNT(*) n, MAX(at) last_at, GROUP_CONCAT(DISTINCT kind) kinds

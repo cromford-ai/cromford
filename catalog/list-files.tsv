@@ -1,0 +1,19 @@
+# catalog/list-files.tsv — list files that grow through fragments, read by
+# bin/list-file-lint.sh (BH-6738). A PR that adds lines to a list file must add
+# its entry as a new file under the paired input dir instead.
+#
+# Columns, tab-separated: <path glob>	<input>	<note>
+#   <path glob>  repo-root path; a `*` never crosses a `/`.
+#   <input>      one of three kinds:
+#     <dir>/           fragments: the PR must ADD a file under <dir>/.
+#     rendered <dir>/  committed render: the PR must add or edit a file under <dir>/.
+#     ignored <dir>/   git-ignored render: never committed; <dir>/ names the fix.
+#   <note>       free text, shown in the lint output.
+# Lines starting with `#` and blank lines are skipped.
+worker/jobs/src/index.js	worker/jobs/src/routes/	route table entry since BH-4607; one route per file
+cron/*.cron	ignored cron/lanes/	rendered by bin/render-crontab.sh
+catalog/lanes.json	ignored catalog/lanes.d/	rendered by bin/lanes-build.sh
+.mergify.yml	rendered config/mergify/	committed render of bin/mergify-template.sh
+docs/MERGE-CONDUCTOR.md	docs/notes/	what changed goes in a dated note (D37)
+docs/PR-OWNERSHIP.md	rendered docs/PR-OWNERSHIP.d/	committed render of bin/render-doc-sections.sh
+worker/jobs/schema.sql	ignored worker/jobs/schema.d/	rendered by bin/schema-build.sh
