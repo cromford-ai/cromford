@@ -9,6 +9,13 @@
 #   tests/*.sh lines that pipe a file-grep into `grep -q`, the shape that
 #   flakes under pipefail (the regex is rollup-crash-loud-test.sh section 5).
 #
+# rp_index_on_create_table <tree> <base>
+#   BH-6730 (iron law: indexes and retention). `+` lines of `git diff <base>`
+#   over *.sql: every added CREATE TABLE (not TEMP/TEMPORARY/VIRTUAL) needs an
+#   added CREATE [UNIQUE] INDEX ... ON <table> in the same diff, any .sql file,
+#   or an added `-- no-index: <table> <reason>` line (a handful-of-rows table;
+#   the reason is required). One finding per table without either.
+#
 # rp_model_id_delta <tree> <base>
 #   `+` lines of `git diff <base>` over bin/ catalog/ worker/ (the price and
 #   slug maps excluded, as alert-triage-runners R6 and triage-route-off-grok S7
@@ -138,6 +145,39 @@ rp_schema_fragment() {
           ln=$((ln+1)) ;;
     esac
   done < <(git -C "$1" diff --no-renames --no-color -U0 "$2" -- 'worker/*/schema.d/*.sql' 2>/dev/null)
+  [ "$n" -eq 0 ]
+}
+
+rp_index_on_create_table() {
+  local l path="" ln=0 n=0 t k
+  local ct_re='^[[:space:]]*create[[:space:]]+table[[:space:]]+(if[[:space:]]+not[[:space:]]+exists[[:space:]]+)?["`[]?([a-z_][a-z0-9_.]*)'
+  local ix_re='create[[:space:]]+(unique[[:space:]]+)?index[[:space:]]+(if[[:space:]]+not[[:space:]]+exists[[:space:]]+)?[^[:space:]]+[[:space:]]+on[[:space:]]+["`[]?([a-z_][a-z0-9_.]*)'
+  local ex_re='^[[:space:]]*--[[:space:]]*no-index:[[:space:]]*([a-z_][a-z0-9_.]*)[[:space:]]+[^[:space:]]'
+  local -A at=() ok=()
+  local -a order=()
+  [ -n "${2:-}" ] || return 125
+  git -C "$1" rev-parse -q --verify "$2^{commit}" >/dev/null 2>&1 || return 125
+  while IFS= read -r l; do
+    case "$l" in
+      '+++ b/'*) path=${l#+++ b/} ;;
+      '+++'*) path="" ;;
+      '@@ '*) ln=${l#*+}; ln=${ln%% *}; ln=${ln%%,*} ;;
+      +*) l=${l#+}; l=${l,,}
+          if [[ $l =~ $ct_re ]]; then
+            t=${BASH_REMATCH[2]##*.}
+            [ -n "${at[$t]:-}" ] || order+=("$t")
+            at[$t]="$path:$ln"
+          fi
+          [[ $l =~ $ix_re ]] && ok[${BASH_REMATCH[3]##*.}]=1
+          [[ $l =~ $ex_re ]] && ok[${BASH_REMATCH[1]##*.}]=1
+          ln=$((ln+1)) ;;
+    esac
+  done < <(git -C "$1" diff --no-renames --no-color -U0 "$2" -- '*.sql' 2>/dev/null)
+  for k in "${order[@]}"; do
+    [ -n "${ok[$k]:-}" ] && continue
+    echo "${at[$k]}: index-on-create-table: table $k has no CREATE INDEX in this diff (iron law, BH-6730: every new table ships with the indexes its queries need; a handful-of-rows table carries -- no-index: $k <reason>)"
+    n=$((n+1))
+  done
   [ "$n" -eq 0 ]
 }
 

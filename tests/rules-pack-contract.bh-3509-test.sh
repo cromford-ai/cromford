@@ -44,8 +44,9 @@ run() {
 # TEST-CHANGE (BH-4987): and lanes-knob-delta (a new knob is its own fragment file).
 # TEST-CHANGE (BH-5788): and schema-fragment, schema-fragment-name and
 # discipline-dupes (three builtins).
+# TEST-CHANGE (BH-6730): and index-on-create-table (a delta builtin).
 # The list still pins every id exactly.
-WANT="agent-push alert-writers changelog-headers checks-tree date-bomb determinism discipline-dupes fast-lints-data fixture-hygiene grep-q jobs-client-modules lanes-knob-delta lib-root marker-reason model-id-delta model-literal route-fragments schema-fragment schema-fragment-name scratch-closure switch test-sources tier-wording"
+WANT="agent-push alert-writers changelog-headers checks-tree date-bomb determinism discipline-dupes fast-lints-data fixture-hygiene grep-q index-on-create-table jobs-client-modules lanes-knob-delta lib-root marker-reason model-id-delta model-literal route-fragments schema-fragment schema-fragment-name scratch-closure switch test-sources tier-wording"
 run bash "$RP" --list
 LIST_IDS=$(printf '%s\n' "$OUT" | awk 'NF {print $1}' | sort | tr '\n' ' ' | sed 's/ $//')
 CAT_IDS=$( [ -r "$CAT" ] && grep -v '^#' "$CAT" | awk -F'\t' 'NF {print $1}' | sort | tr '\n' ' ' | sed 's/ $//')
@@ -57,7 +58,7 @@ if [ -n "$CAT_IDS" ] && [ "$CAT_IDS" = "$WANT" ]; then ok; else bad "R0a catalog
 if [ -r "$CAT" ]; then
   rows=$(grep -v '^#' "$CAT" | grep -c .)
   # TEST-CHANGE (BH-5788): three new rows, 20 -> 23.
-  [ "$rows" -eq 23 ] && ok || bad "R0b catalog has $rows rows (want 23)"
+  [ "$rows" -eq 24 ] && ok || bad "R0b catalog has $rows rows (want 24)"
   badnf=$(grep -v '^#' "$CAT" | grep . | awk -F'\t' 'NF!=6 {print $1}')
   [ -z "$badnf" ] && ok || bad "R0b rows without exactly 6 TAB fields: $badnf"
   badval=$(grep -v '^#' "$CAT" | grep . | awk -F'\t' '

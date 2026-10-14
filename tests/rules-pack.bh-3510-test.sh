@@ -338,7 +338,8 @@ to=$(js o8 '[.components[]|select(.rc == 124)|.id]|join(",")')
 # so the real catalog has 20 components. The assertion still pins the exact count.
 # TEST-CHANGE (BH-5788): schema-fragment, schema-fragment-name and
 # discipline-dupes make it 23.
-[ "$(js o8 '.components|length')" = 23 ] && ok || bad "R8 $(js o8 '.components|length') components (want 23)"
+# TEST-CHANGE (BH-6730): 24 with index-on-create-table.
+[ "$(js o8 '.components|length')" = 24 ] && ok || bad "R8 $(js o8 '.components|length') components (want 24)"
 cnr=$(js o8 '.could_not_run - ["date-bomb"] | join(",")')
 [ -z "$cnr" ] && ok || bad "R8 could_not_run beyond date-bomb: $cnr"
 [ "$(js o8 '.components[]|select(.id=="route-fragments").state')" = green ] && ok \

@@ -11,6 +11,12 @@
 - **AI model config:** agents never hardcode `claude-*` model strings — resolve through the project's DB-backed resolver (seed a config row for new agents). A hardcoded model string in agent code is a bug; convert it.
 - **Data independence:** any integration with an external API keeps its OWN local copy of the data it reads (idempotent + resumable ingestion, raw payload snapshots, honest per-record status). Ask: "if this vendor cut us off tomorrow, what would we lose?"
 - **Exactly-once/idempotent writes** everywhere money or records move.
+- **Indexes and retention, every table from day one (the operator, 2026-10-14; BH-6730):**
+  - Every new table ships with the indexes its queries need, in the same migration: name the index that serves each WHERE, JOIN, ORDER BY and GROUP BY.
+  - A test runs `EXPLAIN QUERY PLAN` (SQLite/D1) or `EXPLAIN` (Postgres) on seeded data at realistic volume and asserts the hot queries use an index (no full `SCAN` of a large table). A later index goes in a new additive migration (`CREATE INDEX IF NOT EXISTS`).
+  - No correlated subquery that re-runs per row over a large table. A poll or dashboard that recomputes an aggregate over all history gets a summary table or a short cache.
+  - Every growing table has a retention rule: what the rows are for, how long they keep value, and a scheduled job that deletes or archives the rest (window in a settings row, dry-run first, one audit row per run). Money and history rows are archived, never silently deleted.
+  - Reviews BLOCK on a new table or query without its index, a new per-row correlated subquery, or a growing table with no retention rule.
 - **De-AI voice** on every AI→human text surface (use the project's `withHumanVoice`-style wrapper if present; new LLM call sites without it are review-blockers).
 - **Never hand-append to a shared index.** If a build needs to register itself in a repo-wide table, list or registry, it writes its OWN file keyed by the ticket and a generator concatenates them. N concurrent builds appending to one file is N guaranteed conflicts on a hunk no ticket is about. Any file every build touches is a serialization point in a system designed to be parallel.
 

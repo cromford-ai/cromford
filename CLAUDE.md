@@ -5,6 +5,19 @@ box as `~/.claude/CLAUDE.md` and is what a build in ANY repo reads. This file ad
 only the thing the harness reads from a repo ROOT: the verification contract
 below. Nothing here replaces or overrides `rules/CLAUDE.md`.
 
+
+## Iron law: indexes and retention (BH-6730)
+
+The fleet's iron laws live in `rules/topics/` (rendered to `rules/CLAUDE.md`). This one binds this repo's own D1 tables too (the harness-jobs lesson, #6727: tables of 25k-206k rows read 100-160M rows an hour, one correlated subquery read 1.29M rows per call, and D1 answered "overloaded" 875 times in 5 hours).
+
+- Every new table ships with the indexes its queries need, in the same migration: name the index that serves each WHERE, JOIN, ORDER BY and GROUP BY.
+- A test runs `EXPLAIN QUERY PLAN` (SQLite/D1) or `EXPLAIN` (Postgres) on seeded data at realistic volume and asserts the hot queries use an index (no full `SCAN` of a large table). A later index goes in a new additive migration (`CREATE INDEX IF NOT EXISTS`).
+- No correlated subquery that re-runs per row over a large table. A poll or dashboard that recomputes an aggregate over all history gets a summary table or a short cache.
+- Every growing table has a retention rule: what the rows are for, how long they keep value, and a scheduled job that deletes or archives the rest (window in a settings row, dry-run first, one audit row per run). Money and history rows are archived, never silently deleted.
+- Reviews BLOCK on a new table or query without its index, a new per-row correlated subquery, or a growing table with no retention rule.
+
+`bin/rules-pack.sh` component `index-on-create-table` refuses a diff that adds a `CREATE TABLE` with no `CREATE INDEX` on that table in the same diff (a handful-of-rows table carries `-- no-index: <table> <reason>`).
+
 ## Verification Contract
 
 The FIRST fenced block is what `bin/batch-resolve.sh` runs once over a union

@@ -20,6 +20,7 @@ model-literal	tree	suite	tests/model-literal-lint.sh	-	model ids come from the r
 model-id-delta	delta	builtin	rp_model_id_delta	-	this diff adds no model id literal
 schema-fragment	delta	builtin	rp_schema_fragment	-	a new CREATE TABLE goes in a new worker/*/schema.d fragment, never an existing one (BH-5788)
 schema-fragment-name	delta	builtin	rp_schema_fragment_name	-	a new worker/*/schema.d fragment never reuses an NNNN number the base has; a stamp-form one (<yyyymmddhhmm>-<ticket-key>-<name>.sql) is later than every stamp fragment at the base (BH-5788)
+index-on-create-table	delta	builtin	rp_index_on_create_table	-	a new CREATE TABLE ships with a CREATE INDEX on it in the same diff, or a -- no-index: <table> <reason> line (iron law, BH-6730)
 discipline-dupes	tree	builtin	rp_discipline_dupes	-	no two build-discipline rules claim the same D number (BH-5788)
 test-sources	tree	cmd	bin/test-sources-lint.sh	-	test suites source helpers with a same-line handler
 changelog-headers	tree	cmd	bin/changelog-header-lint.sh	-	no per-ticket changelog bullet (# - BH-N: / // - BH-N:) in a comment
