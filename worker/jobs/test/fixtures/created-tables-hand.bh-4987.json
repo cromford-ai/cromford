@@ -38,7 +38,8 @@
   ],
   "lane_ticks": [
     "CREATE TABLE IF NOT EXISTS lane_ticks (\n       lane TEXT NOT NULL,\n       project TEXT NOT NULL,\n       box TEXT NOT NULL,\n       last_tick_at TEXT NOT NULL,\n       last_outcome TEXT NOT NULL,\n       why TEXT,\n       updated_at TEXT NOT NULL,\n       PRIMARY KEY (lane, project, box)\n     )",
-    "CREATE INDEX IF NOT EXISTS idx_lane_ticks_lane ON lane_ticks(lane, last_tick_at)"
+    "CREATE INDEX IF NOT EXISTS idx_lane_ticks_lane ON lane_ticks(lane, last_tick_at)",
+    "CREATE INDEX IF NOT EXISTS idx_lane_ticks_tick ON lane_ticks(last_tick_at)"
   ],
   "lane_flag_sightings": [
     "CREATE TABLE IF NOT EXISTS lane_flag_sightings (\n       name TEXT NOT NULL,\n       box TEXT NOT NULL,\n       lane TEXT,\n       project TEXT,\n       active INTEGER NOT NULL,\n       seen_at TEXT NOT NULL,\n       updated_at TEXT NOT NULL,\n       PRIMARY KEY (name, box)\n     )",

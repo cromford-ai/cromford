@@ -1,0 +1,10 @@
+# @hub-lanes
+
+# ── D1-RETENTION LANE (BH-6750, slice 2 of BH-6727) ─────────────────────────
+# Every hour at :41. POSTs one retention run to the jobs worker, which deletes
+# rows with no further value (old and acked wakes, beats of closed jobs, old
+# stage events after a daily roll-up, stale lane ticks) in bounded batches and
+# writes one retention_runs row per rule. Counts only while the settings row
+# retention.dry_run is 1. One line per rule in logs/d1-retention.log.
+# Off: flags/lane-off-d1-retention (bin/harness-ctl.sh off d1-retention).
+41 * * * * /root/harness/bin/hub-lease.sh check && /root/harness/bin/d1-retention.sh >> /root/harness/logs/d1-retention-cron.log 2>&1

@@ -1,0 +1,34 @@
+{
+  "id": "d1-retention",
+  "name": "D1 retention",
+  "scope": "hub",
+  "script": "bin/d1-retention.sh",
+  "cadence": "41 * * * *",
+  "boxes": [
+    "hub"
+  ],
+  "switch": {
+    "kind": "flag",
+    "name": "lane-off-d1-retention",
+    "aliases": []
+  },
+  "wired": true,
+  "knobs": [
+    {
+      "env": "D1_RETENTION_NOW",
+      "type": "string",
+      "default": "",
+      "unit": null,
+      "zero_means": null,
+      "read_in": "bin/d1-retention.sh",
+      "note": "BH-6750 test seam: epoch seconds that stamp the log lines instead of the clock. Only all-digit values are used. NOT settable from the control plane. The retention windows, batch and dry-run mode are settings rows (retention.*) the worker reads, not lane knobs.",
+      "settable": false
+    }
+  ],
+  "stats": {
+    "cost_stage": null,
+    "cost_project_filter": null,
+    "lanes_row": false,
+    "log": "logs/d1-retention.log"
+  }
+}

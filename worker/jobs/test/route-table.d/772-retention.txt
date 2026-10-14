@@ -1,0 +1,4 @@
+# D1 RETENTION (BH-6750, slice 2 of BH-6727): the hourly bounded delete run
+# that bin/d1-retention.sh calls, one audit row per rule per run; appended
+# after lane-spend at the END of the table.
+POST /api/retention/run
