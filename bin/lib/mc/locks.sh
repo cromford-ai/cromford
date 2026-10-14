@@ -88,6 +88,18 @@ mc_pr_lock_take() {
 mc_merge_locked() {
   local proj="$1"; shift
   local rc w="${MC_MERGE_LOCK_WAIT:-120}"
+  # ON A LANE-RUN MACHINE (MC_ON_MACHINE=1) nothing lands: this box's flock
+  # cannot serialise against the hub or another machine, and the machine has
+  # no build record to check the verdict against. pr_worker defers a READY PR
+  # before it gets here (deferred=land); this is the second guard. 99 is the
+  # "nothing was written, try next tick" answer for a direct merge
+  # (deferred=merge) and for a queue enqueue (deferred=enqueue).
+  if [ "${MC_ON_MACHINE:-}" = 1 ]; then
+    case "${1:-}" in
+      mc_merge)   [ -n "${MC_PR_DEFERRED_FILE:-}" ] && echo merge >> "$MC_PR_DEFERRED_FILE"; return 99 ;;
+      mc_enqueue) [ -n "${MC_PR_DEFERRED_FILE:-}" ] && echo enqueue >> "$MC_PR_DEFERRED_FILE"; return 99 ;;
+    esac
+  fi
   if command -v mc_lock_wait_left >/dev/null 2>&1; then w=$(mc_lock_wait_left "$w") || return 99; fi
   exec 8>>"$(mc_merge_lock "$proj")" || return 99
   flock -w "$w" 8 || { exec 8>&-; return 99; }

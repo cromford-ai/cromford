@@ -710,7 +710,7 @@ already read:
 | mover | rebinds? | why |
 |---|---|---|
 | `run-build.sh` pre-PR rebase | yes | the reviewed tree onto a newer base, typechecked. Mapped across by the reviewed head's *distance* from the old head — a fix round already commits above it, so matching on equality alone orphaned the sha, and the gate then counted main's own merged history as this build's drift |
-| `rebase-train.sh` verified push | yes | union-resolved to two deterministic conflict classes, typechecked against main's baseline, unit-tested. A train that pushed without rebinding would hand the sweep a mismatch on every PR it fixed — the starvation class the train exists to kill |
+| `rebase-train.sh` verified push | yes, unless the BH-5791 caller check of the rebased head finds a gone or unexplained caller, or could not run (BH-6718) | union-resolved to two deterministic conflict classes, typechecked against main's baseline, unit-tested. A train that pushed without rebinding would hand the sweep a mismatch on every PR it fixed — the starvation class the train exists to kill |
 | the merge queue's own rebase | yes | same shape, same lane, typecheck-gated before the force-push |
 | fix rounds (the merged lens round under `LENSES_PARALLEL=1`) | yes | it is followed by a suite re-run and a re-review inside the lens block itself, and `review-head` is written after that — so the gate sees no drift because there is none |
 | fix rounds (security / refuter under `LENSES_PARALLEL=0`, and preview QA in either mode) | no | that is the code nobody read; it is what the gate exists to catch |

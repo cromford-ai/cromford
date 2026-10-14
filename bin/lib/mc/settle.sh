@@ -749,6 +749,15 @@ closed_unmerged_rows() {
 #   issue stays open and whose sha never reaches the deploy train, silently.
 conductor_settle() {
   local key="$1" url="$2" proj="$3" slug="$4" br="$5" rec="$6" job="$7" head="$8" rev="$9" v="${10}" ms="${11}" why="${12}" msha="${13:-}"
+  # NEVER ON A LANE-RUN MACHINE (BH-6495). The machine lands nothing, so no
+  # caller reaches this there; if one does, it writes nothing. The issue
+  # close, the deployreq row, the stack follow and the deploy-verify are the
+  # hub's, and the hub's QUEUED pass settles this PR on its next tick.
+  if [ "${MC_ON_MACHINE:-}" = 1 ]; then
+    [ -n "${MC_PR_DEFERRED_FILE:-}" ] && echo settle >> "$MC_PR_DEFERRED_FILE"
+    mc_log "$key MERGED but seen on a lane-run machine — not settled here; the hub settles it (deferred=settle)"
+    return 0
+  fi
   mc_log "MERGED $key by conductor (record ${rec:-none})"
   mc_transition "$key" MERGED "$why" "$head" "$rev" "$url" "$v" "$ms" "$rec" >/dev/null
   # EVERY CONTESTED HOLD THIS MERGE WINS ENDS HERE (BH-589). The losers move to

@@ -3066,6 +3066,14 @@ mc_rr_fail() {
 mc_rereview_spawn() {
   local slug="$1" num="$2" project="$3" url="$4" rev="$5" head="$6" rec="$7"
   local jf out rc pid rrr=""
+  # ON A LANE-RUN MACHINE (MC_ON_MACHINE=1, bin/merge-conductor-pr.sh) the
+  # detached re-review job would outlive the run and its result file would never reach
+  # the hub. rc 3 is the cap answer every caller reads as "a later tick", and
+  # the hub runs this PR itself on its next tick (deferred=rereview).
+  if [ "${MC_ON_MACHINE:-}" = 1 ]; then
+    [ -n "${MC_PR_DEFERRED_FILE:-}" ] && echo rereview >> "$MC_PR_DEFERRED_FILE"
+    return 3
+  fi
   mkdir -p "$MC_RR_DIR" 2>/dev/null || return 1
   jf=$(mc_rr_file "$slug" "$num" "$head"); out="${jf%.json}.out"
   # A FINISHED REVIEW IS NOT BOUGHT TWICE (BH-2358). The job file is a box-local
@@ -3346,6 +3354,14 @@ mc_rb_fail() {
 mc_rebase_spawn() {
   local slug="$1" num="$2" project="$3" br="$4" head="$5" url="$6" cap="${7:-${MC_REBASE_PARALLEL:-0}}"
   local jf out rc pid
+  # ON A LANE-RUN MACHINE (MC_ON_MACHINE=1, bin/merge-conductor-pr.sh) the
+  # detached rebase job would outlive the run and its result file would never reach
+  # the hub. rc 3 is the cap answer every caller reads as "a later tick", and
+  # the hub runs this PR itself on its next tick (deferred=rebase).
+  if [ "${MC_ON_MACHINE:-}" = 1 ]; then
+    [ -n "${MC_PR_DEFERRED_FILE:-}" ] && echo rebase >> "$MC_PR_DEFERRED_FILE"
+    return 3
+  fi
   case "$cap" in ''|*[!0-9]*) cap="${MC_REBASE_PARALLEL:-0}" ;; esac
   mkdir -p "$MC_RB_DIR" 2>/dev/null || return 1
   jf=$(mc_rb_file "$slug" "$num" "$head"); out="${jf%.json}.out"
@@ -3450,6 +3466,15 @@ mc_dv_fail() {
 #   a build, and capping it would mean a merged sha nobody is watching.
 mc_dv_spawn() {
   local project="$1" slug="$2" sha="$3" build="$4" jf out pid
+  # ON A LANE-RUN MACHINE (MC_ON_MACHINE=1, bin/merge-conductor-pr.sh) the
+  # deploy-verify job would outlive the run and its result file would never reach
+  # the hub. No caller reaches this on a machine: conductor_settle, the only
+  # caller, defers first (deferred=settle). If one does, rc 3 is a refusal and
+  # no job file is written (deferred=dv).
+  if [ "${MC_ON_MACHINE:-}" = 1 ]; then
+    [ -n "${MC_PR_DEFERRED_FILE:-}" ] && echo dv >> "$MC_PR_DEFERRED_FILE"
+    return 3
+  fi
   mkdir -p "$MC_DV_DIR" 2>/dev/null || return 1
   jf=$(mc_dv_file "$project" "$sha"); out="${jf%.json}.out"
   ( flock 9 2>/dev/null

@@ -1068,8 +1068,15 @@ mc_merge() {
 #   rc 4  mergify only: a human lead verdict is required (BH-3806); nothing
 #         written; stdout is the refusal, `refused: ` then the reason naming
 #         `bin/lead-verdict.sh post ... MERGE --source human`. NOT a strike
+#   rc 99 on a lane-run machine (MC_ON_MACHINE=1, BH-6495): nothing written
 mc_enqueue() {
   local url="$1" head="$2" slug
+  # A lane-run machine enqueues nothing (BH-6495): an enqueue is a landing, and
+  # the hub owns every landing. 99 = nothing was written, the next tick tries.
+  if [ "${MC_ON_MACHINE:-}" = 1 ]; then
+    [ -n "${MC_PR_DEFERRED_FILE:-}" ] && echo enqueue >> "$MC_PR_DEFERRED_FILE"
+    printf 'on a lane-run machine — not enqueued here; the hub enqueues it'; return 99
+  fi
   slug=$(mc_slug_of_url "$url")
   case "$(mc_queue_provider "$slug")" in
     mergify) mc_enqueue_mergify "$slug" "$url" "$head" ;;

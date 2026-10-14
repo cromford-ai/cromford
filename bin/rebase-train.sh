@@ -21,6 +21,9 @@
 # approval to the head it produced, on the build record and on the ledger row.
 # Without that the sweep — which now refuses a head that is not the reviewed sha
 # — would park every PR this train fixes.
+# BH-6718: the rebind waits on the BH-5791 caller check of the rebased head.
+# Callers found, or a check that could not run, push without a rebind, and
+# found callers request a lead review.
 set -uo pipefail
 PROJECT="${1:?project}"
 H="${HARNESS:-/root/harness}"
@@ -290,6 +293,49 @@ MDEOF
       npm run test:unit >/dev/null 2>&1 \
         || { echo "$(STAMP) [$PROJECT] STRIKE $PR" >> "$LOG"; echo "$(STAMP) [$PROJECT] $PR unit tests RED post-rebase — not pushed" >> "$LOG"; exit 0; }
     fi
+    # >>> caller check (BH-6718)
+    # The BH-5791 caller check, on the head this train is about to push. A rebase
+    # onto a main that added a caller of an interface this PR changes (the #4332
+    # class) passes typecheck in shell, SQL, JSON and untyped JS. So the approval
+    # carries over only when the check ran and left no caller gone or unexplained.
+    # Anything else still pushes, but the head-bound block below does not rebind,
+    # and a found caller asks the lead to review the new head. A check that could
+    # not run is not a pass. CALLER_CHECK_MAX_LINES=0 (the BH-5791 off switch)
+    # keeps the old rebind.
+    TRAIN_REBIND=0; CK_N=0; CK_WHY=""; CK_IFS=""
+    # shellcheck source=bin/lib/caller-check.sh
+    command -v cc_conf >/dev/null 2>&1 || . "$H/bin/lib/caller-check.sh" 2>/dev/null || true
+    if ! command -v cc_conf >/dev/null 2>&1 || [ ! -x "$H/bin/caller-check.sh" ]; then
+      CK_WHY="could-not-run (the caller-check lib or CLI is missing on $(hostname))"
+    else
+      cc_conf "$PROJECT"
+      if [ "$CK_MAX_LINES" = 0 ]; then
+        TRAIN_REBIND=1
+        echo "$(STAMP) [$PROJECT] $PR caller check: off (CALLER_CHECK_MAX_LINES=0) — the approval is rebound as before" >> "$LOG"
+      else
+        CK_BASE=$(git merge-base "origin/$BASE" HEAD 2>/dev/null) || CK_BASE=unresolved
+        CK_PLAN=/dev/null; [ -s "$D/plan.md" ] && CK_PLAN="$D/plan.md"
+        CK_OUT="$D/callers-rebase-train.txt"; CK_RC=0; CK_SUM=""
+        "$H/bin/caller-check.sh" --repo . --base "$CK_BASE" --head HEAD --plan "$CK_PLAN" \
+          --out "$CK_OUT" >/dev/null 2>>"$LOG" || CK_RC=$?
+        { IFS= read -r CK_SUM < "$CK_OUT"; } 2>/dev/null || true
+        CK_SUM=${CK_SUM#CALLERS: }
+        if [ "$CK_RC" = 0 ] && [[ "$CK_SUM" =~ noreason=([0-9]+)\ gone=([0-9]+) ]]; then
+          CK_N=$(( BASH_REMATCH[1] + BASH_REMATCH[2] ))
+          if [ "$CK_N" = 0 ]; then
+            TRAIN_REBIND=1
+            echo "$(STAMP) [$PROJECT] $PR caller check: $CK_SUM — the approval carries over" >> "$LOG"
+          else
+            CK_IFS=$(awk -F'\t' '$1 == "CALLER" && $4 == "left alone" && ($5 == "no reason in the plan" || $5 ~ /^definition gone/) && !s[$2]++ { o = o (n++ ? "," : "") $2 } END { print o }' "$CK_OUT" 2>/dev/null) || CK_IFS=""
+            CK_WHY="$CK_SUM on ${CK_IFS:-an unnamed interface}"
+          fi
+        else
+          CK_WHY="could-not-run (rc=$CK_RC${CK_SUM:+: $CK_SUM})"
+        fi
+      fi
+    fi
+    [ -z "$CK_WHY" ] || echo "$(STAMP) [$PROJECT] $PR caller check: $CK_WHY — the approval will NOT be rebound" >> "$LOG"
+    # <<< caller check (BH-6718)
     # The ticket's hold is re-read at the push, and the lease is the head this
     # rebase began from (BH-2504) — never a bare --force-with-lease, whose
     # expected value is whatever the last fetch happened to see.
@@ -312,14 +358,37 @@ MDEOF
     # (job_verdict_rebind returns 2 and writes nothing), so a train run cannot
     # turn a pre-item-1 build into a gated one.
     NEWSHA=$(git rev-parse HEAD)
-    if [ -s "$D/reviewed-sha" ]; then echo "$NEWSHA" > "$D/reviewed-sha"; fi
-    if type job_verdict_rebind >/dev/null 2>&1; then
-      if job_verdict_rebind "$PR" "$NEWSHA" >/dev/null 2>&1; then
-        echo "$(STAMP) [$PROJECT] $PR approval rebound to the rebased head $NEWSHA" >> "$LOG"
+    if [ "${TRAIN_REBIND:-1}" = 1 ]; then
+      if [ -s "$D/reviewed-sha" ]; then echo "$NEWSHA" > "$D/reviewed-sha"; fi
+      if type job_verdict_rebind >/dev/null 2>&1; then
+        if job_verdict_rebind "$PR" "$NEWSHA" >/dev/null 2>&1; then
+          echo "$(STAMP) [$PROJECT] $PR approval rebound to the rebased head $NEWSHA" >> "$LOG"
+        fi
+      fi
+    else
+      # BH-6718: the caller check above did not pass. Neither write runs: the
+      # sweep sees a head nobody reviewed and holds it. A found caller asks the
+      # lead for a review of THIS head (pushed above, so the lead can read it).
+      echo "$(STAMP) [$PROJECT] $PR approval NOT rebound to $NEWSHA (caller check)" >> "$LOG"
+      if [ "${CK_N:-0}" -gt 0 ]; then
+        CK_SLUG=${PR#https://github.com/}; CK_SLUG=${CK_SLUG%/pull/*}; LV_RC=0
+        "$H/bin/lead-verdict.sh" request "$CK_SLUG" "${PR##*/}" "$NEWSHA" \
+          --notes "rebase-train: caller check found $CK_N callers (${CK_IFS:-unnamed})" >/dev/null 2>>"$LOG" || LV_RC=$?
+        if [ "$LV_RC" = 0 ]; then
+          echo "$(STAMP) [$PROJECT] $PR lead review requested on ${NEWSHA:0:12}" >> "$LOG"
+        else
+          echo "$(STAMP) [$PROJECT] $PR lead review request failed (rc=$LV_RC) — the sweep holds the PR until a review binds ${NEWSHA:0:12}" >> "$LOG"
+        fi
       fi
     fi
     # <<< head-bound approval
-    echo "$(STAMP) [$PROJECT] $PR rebased + verified + pushed — sweep takes it next tick" >> "$LOG"
+    # >>> train final line (BH-6718)
+    if [ "${TRAIN_REBIND:-1}" = 1 ]; then
+      echo "$(STAMP) [$PROJECT] $PR rebased + verified + pushed — sweep takes it next tick" >> "$LOG"
+    else
+      echo "$(STAMP) [$PROJECT] $PR rebased + verified + pushed — NOT rebound, the sweep waits for a review of the new head" >> "$LOG"
+    fi
+    # <<< train final line
   )
   git -C "$REPO" worktree remove --force "$WT" 2>/dev/null || true
   BUDGET=$((BUDGET-1))

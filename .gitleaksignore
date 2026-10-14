@@ -23,6 +23,7 @@ mcp/test/board-actions.bh-5820.test.mjs:generic-api-key:76
 tests/box-launch.bh-5748-test.sh:generic-api-key:220
 tests/box-launch.bh-5748-test.sh:generic-api-key:400
 tests/ci-durations-missing-row.bh-5653-test.sh:curl-auth-header:68
+tests/conductor-enqueue-only.bh-6495-test.sh:curl-auth-header:141
 tests/conductor-head-lag-cost.bh-6462-test.sh:generic-api-key:74
 tests/coord-writes-fragments.bh-6487-test.sh:generic-api-key:181
 tests/cost-row-attribution.bh-3986-test.sh:generic-api-key:54

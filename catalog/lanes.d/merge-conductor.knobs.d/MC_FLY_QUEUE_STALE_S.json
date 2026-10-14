@@ -1,0 +1,11 @@
+{
+  "env": "MC_FLY_QUEUE_STALE_S",
+  "type": "int",
+  "default": 600,
+  "min": 0,
+  "max": 86400,
+  "unit": "seconds",
+  "zero_means": null,
+  "read_in": "bin/lib/mc/fly-workers.sh",
+  "note": "BH-6495: with conductor_workers_on_fly on, a merge-conductor-pr lane_runs row that no lane-run machine has claimed this many seconds after it was enqueued makes the hub run that PR itself this tick (fallback=no-capacity), so a missing or full fleet never stops merges. 600 matches the ticket's 'row unclaimed for more than 10 min' rollback line. A machine that claims the row later lands nothing (MC_ON_MACHINE)."
+}

@@ -1,0 +1,8 @@
+{
+  "env": "MC_PR_DEFERRED_FILE",
+  "type": "string",
+  "default": "",
+  "zero_means": null,
+  "note": "Not a knob: the file bin/merge-conductor-pr.sh hands the keyed conductor run on a lane-run machine (BH-6495). With MC_ON_MACHINE=1, bin/merge-conductor.sh and bin/lib/mc/rebase.sh append the name of each step that needs the hub (land, rebase, rereview) to it, and bin/merge-conductor-pr.sh reports them. Read as ${MC_PR_DEFERRED_FILE:-}; empty = nothing is written. A path, so NOT settable from the control plane.",
+  "settable": false
+}

@@ -1,0 +1,8 @@
+{
+  "env": "MC_ON_MACHINE",
+  "type": "string",
+  "default": "",
+  "zero_means": null,
+  "note": "Not a knob: set to 1 by bin/merge-conductor-pr.sh for the keyed conductor run of one PR on a lane-run machine (BH-6495). Read by bin/merge-conductor.sh and bin/lib/mc/rebase.sh as ${MC_ON_MACHINE:-}: 1 = no enqueue, no land fan-out and no detached rebase/re-review from this run; the deferred work is written to MC_PR_DEFERRED_FILE for the hub. Unset on the hub, which keeps today's behaviour. NOT settable from the control plane.",
+  "settable": false
+}

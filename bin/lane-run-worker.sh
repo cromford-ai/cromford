@@ -30,6 +30,14 @@
 #                at most 512 bytes. A failed report logs one line, and the
 #                lease re-runs the row.
 #
+# TERM or INT (a Fly stop, BH-6495) with a run in flight: the run's process
+# group gets TERM, the loop waits up to lane_run.term_grace_s (1..25, fallback
+# 20) and then KILLs the group, stops the heartbeat and posts
+# POST /api/lane-runs/<id>/release {machine}: the row goes back to `queued`
+# with its attempts kept, and another machine resumes it. No checkpoint and no
+# report. A failed release logs one line, and the lease re-runs the row. With
+# no run in flight, TERM exits 0 and writes nothing. Either way the exit is 0.
+#
 # --once drains the queue: it loops until a claim comes back empty, then exits
 # 0. The machine id is --machine, else FLY_MACHINE_ID, else this box's name; it
 # must be a path-safe name, else exit 2. Log lines go to
@@ -74,9 +82,48 @@ lw_poll_s() {
   printf '%s' "$v"
 }
 
+lw_term_grace_s() {
+  local v
+  v=$(setting_get lane_run.term_grace_s 2>/dev/null) || v=""
+  v=$(printf '%s' "$v" | tr -d '[:space:]')
+  case "$v" in ''|*[!0-9]*) v=20 ;; esac
+  [ "$v" -ge 1 ] && [ "$v" -le 25 ] || v=20
+  printf '%s' "$v"
+}
+
 RESP="$H/state/lane-run-worker/claim-$$.json"
 trap 'rm -f "$RESP"' EXIT
 declare -A LW_ALERTED=()
+# The run in flight, for the TERM trap: id, lane, project, pid (= its process
+# group, setsid), output file and the grace read when it started.
+LW_ID=""; LW_LANE=""; LW_PROJECT=""; LW_PID=""; LW_OUT=""; LW_GRACE=20
+
+# lw_release <id> <lane> <project> — the TERM hand-off's write.
+lw_release() {
+  local id="$1" lane="$2" project="$3"
+  if _jobs_req POST "/api/lane-runs/$id/release" "$(jq -nc --arg m "$MACHINE" '{machine:$m}')" > /dev/null; then
+    lw_log "run $id $lane/$project: TERM — released to the queue"
+  else
+    lw_log "run $id $lane/$project: TERM — release failed (http ${JOBS_HTTP:-none}); the lease re-runs it"
+  fi
+}
+
+# lw_on_term — the TERM/INT trap. Always exits 0.
+lw_on_term() {
+  local timer
+  trap '' TERM INT
+  if [ -z "$LW_ID" ]; then exit 0; fi
+  kill -TERM -- "-$LW_PID" 2>/dev/null || kill -TERM "$LW_PID" 2>/dev/null
+  ( sleep "$LW_GRACE"; kill -KILL -- "-$LW_PID" 2>/dev/null || kill -KILL "$LW_PID" 2>/dev/null ) &
+  timer=$!
+  wait "$LW_PID" 2>/dev/null
+  kill "$timer" 2>/dev/null; wait "$timer" 2>/dev/null
+  lrh_stop
+  cat "$LW_OUT" >> "$H/logs/$LW_LANE-cron.log" 2>/dev/null; rm -f "$LW_OUT"
+  lw_release "$LW_ID" "$LW_LANE" "$LW_PROJECT"
+  exit 0
+}
+trap lw_on_term TERM INT
 
 # lw_report <id> <lane> <project> <rc> <prof> — step 6.
 lw_report() {
@@ -120,6 +167,7 @@ lw_run() {
   fi
   [ -z "$fo" ] || lw_log "run $id $lane/$project: $fo"
   out="$H/state/lane-run-worker/run-$id.out"
+  LW_GRACE=$(lw_term_grace_s)
   if command -v setsid >/dev/null 2>&1; then
     LANE_RUN_ID="$id" setsid -w "$H/bin/project-lane-run.sh" "$lane" "$project" 0 "$H/${args[0]}" "${args[@]:1}" \
       > "$out" 2>&1 < /dev/null &
@@ -128,8 +176,10 @@ lw_run() {
       > "$out" 2>&1 < /dev/null &
   fi
   pid=$!
+  LW_LANE="$lane"; LW_PROJECT="$project"; LW_PID="$pid"; LW_OUT="$out"; LW_ID="$id"
   lrh_start "$id" "$pid"
   wait "$pid"; rc=$?
+  LW_ID=""
   lrh_stop
   cat "$out" >> "$H/logs/$lane-cron.log" 2>/dev/null
   prof=$(grep '^PROF ' "$out" 2>/dev/null | tail -n 1 | head -c 512)
@@ -151,11 +201,13 @@ while :; do
   if [ "$crc" != 0 ]; then
     lw_log "claim failed (rc $crc, http ${JOBS_HTTP:-none})"
     [ "$ONCE" = 1 ] && exit 1
-    sleep "$(lw_poll_s)"; continue
+    sleep "$(lw_poll_s)" & wait "$!"; continue
   fi
   if [ "$JOBS_HTTP" = 204 ] || [ ! -s "$RESP" ]; then
     [ "$ONCE" = 1 ] && exit 0
-    sleep "$(lw_poll_s)"; continue
+    # In the background and waited for, so a TERM during the sleep runs the
+    # trap at once rather than after the sleep.
+    sleep "$(lw_poll_s)" & wait "$!"; continue
   fi
   lw_run "$RESP"
 done

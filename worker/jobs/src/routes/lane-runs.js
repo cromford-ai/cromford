@@ -13,6 +13,13 @@
 //
 // A row is `done` only through the report route, which needs the claimer's
 // machine id and an integer rc. A missing rc is a 400, never a 0.
+//
+// The release route (BH-6495) is the SIGTERM hand-off: the claimer sets its
+// row back to `queued` and keeps `attempts`, so another machine re-claims it
+// and sweepDead still counts the try. The prefix read lists one lane's rows
+// whose project starts with a prefix, newest first: the merge-conductor-pr
+// lane keys a row as <project>.<pr>.<head12>, and the hub reads one PR's rows
+// before it enqueues (bin/lib/mc/fly-workers.sh).
 
 import { d1Guarded, json } from "../lib/http.js";
 import { isoPlusSeconds, laneName, leaseWon, str } from "../lib/core.js";
@@ -23,6 +30,7 @@ const ARG_BYTES_MAX = 4096;
 const ARGS_JSON_BYTES_MAX = 16384;
 const LANES_FILTER_MAX = 32;
 const PROF_BYTES_MAX = 512;
+const LIST_LIMIT_MAX = 50;
 // The settings rows and their documented code fallbacks.
 const LEASE_KEY = "lane_run.lease_s";
 const LEASE_DEFAULT_S = 120;
@@ -149,6 +157,65 @@ export const routes = [
       }
       if (Number(row.rc) === rc) return json(200, { id, status: "done", rc, replay: true, as_of: t });
       return json(409, { error: "not reported", reason: "rc_mismatch", id, status: row.status, rc: Number(row.rc) });
+    }),
+  ],
+
+  [
+    "POST", /^\/api\/lane-runs\/(\d+)\/release$/,
+    ({ env, t, body, m }) => d1Guarded("lane_runs", async () => {
+      const id = Number(m[1]);
+      const machine = laneName(body.machine);
+      if (!machine) return json(400, { error: `machine is required and ${NAME_ERR}` });
+      const r = await env.DB.prepare(
+        `UPDATE lane_runs SET status='queued', claimed_by=NULL, claimed_at=NULL, lease_until=NULL, heartbeat_at=NULL
+         WHERE id=?1 AND status='claimed' AND claimed_by=?2`
+      ).bind(id, machine).run();
+      const row = await env.DB.prepare("SELECT status, claimed_by, attempts FROM lane_runs WHERE id=?1").bind(id).first();
+      if (leaseWon(r)) return json(200, { id, status: "queued", attempts: row ? Number(row.attempts) : null, as_of: t });
+      if (!row) return json(404, { error: "no such lane run", id });
+      if (row.status !== "claimed") {
+        return json(409, { error: "not released", reason: "not_claimed", id, status: row.status });
+      }
+      return json(409, { error: "not released", reason: "not_claimer", id, status: row.status });
+    }),
+  ],
+
+  [
+    // Its own path (BH-6495 fix round): GET /api/lane-runs is the metrics list
+    // (lane-runs-metrics.js, BH-6127). Registered here as well, the first entry
+    // shadowed the other and the route table refused the duplicate.
+    "GET", "/api/lane-runs/by-prefix",
+    ({ env, url, t }) => d1Guarded("lane_runs", async () => {
+      const q = url.searchParams;
+      const lane = laneName(q.get("lane"));
+      const prefix = laneName(q.get("project_prefix"));
+      if (!lane || !prefix) return json(400, { error: `lane and project_prefix are required and ${NAME_ERR}` });
+      const live = q.get("live");
+      if (live !== null && live !== "1") return json(400, { error: "live must be 1 when present" });
+      const rawLimit = q.get("limit");
+      let limit = LIST_LIMIT_MAX;
+      if (rawLimit !== null) {
+        limit = /^\d+$/.test(rawLimit) ? Number(rawLimit) : NaN;
+        if (!(limit >= 1 && limit <= LIST_LIMIT_MAX)) return json(400, { error: `limit must be 1..${LIST_LIMIT_MAX}` });
+      }
+      // A range on project, not LIKE: `_` is a legal name character and a LIKE
+      // wildcard. Every legal character sorts below '~', so [prefix, prefix~)
+      // is exactly the names that start with prefix.
+      const rows = (await env.DB.prepare(
+        `SELECT id, lane, project, status, claimed_by, attempts, rc, prof_line, enqueued_at, finished_at
+         FROM lane_runs WHERE lane=?1 AND project >= ?2 AND project < ?3
+           AND (?4 IS NULL OR status IN ('queued','claimed'))
+         ORDER BY id DESC LIMIT ?5`
+      ).bind(lane, prefix, `${prefix}~`, live, limit + 1).all()).results || [];
+      const truncated = rows.length > limit;
+      return json(200, {
+        rows: rows.slice(0, limit).map((r) => ({
+          id: Number(r.id), lane: r.lane, project: r.project, status: r.status, claimed_by: r.claimed_by,
+          attempts: Number(r.attempts), rc: r.rc === null ? null : Number(r.rc), prof_line: r.prof_line,
+          enqueued_at: r.enqueued_at, finished_at: r.finished_at,
+        })),
+        truncated, as_of: t,
+      });
     }),
   ],
 

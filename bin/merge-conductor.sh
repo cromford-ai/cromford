@@ -233,6 +233,10 @@ command -v rp_post >/dev/null 2>&1 || rp_post() {
 # autoenqueue.sh's gates and send, and does nothing without them.
 # shellcheck source=bin/lib/mc/external-enqueue.sh
 [ -r "$H/bin/lib/mc/external-enqueue.sh" ] && . "$H/bin/lib/mc/external-enqueue.sh"
+# The per-PR workers on lane-run machines (BH-6495), same optional rule: a
+# tree without it starts every worker on this box, as before.
+# shellcheck source=bin/lib/mc/fly-workers.sh
+[ -r "$H/bin/lib/mc/fly-workers.sh" ] && . "$H/bin/lib/mc/fly-workers.sh"
 # The stale-dequeue requeue (BH-3480). Optional like the libs above: a tree
 # without it ticks exactly as before.
 # shellcheck source=bin/lib/mc-stale-dequeue.sh
@@ -2459,6 +2463,18 @@ pr_worker() {
           return 0
         fi
       fi
+      # ON A LANE-RUN MACHINE NOTHING LANDS (BH-6495). The machine has no
+      # builds/ record, so its verdict is the ledger's alone and the BH-4585
+      # CONTRADICTION park cannot fire, and its flock serialises against
+      # nobody. An enqueue and a direct merge are both landings, so both wait
+      # for the hub, which runs this PR itself on its next tick (deferred=land).
+      # Before the budget take, so a deferred PR spends no merge budget.
+      if [ "${MC_ON_MACHINE:-}" = 1 ]; then
+        [ -n "${MC_PR_DEFERRED_FILE:-}" ] && echo land >> "$MC_PR_DEFERRED_FILE"
+        mc_log "$KEY READY at ${HEAD:0:8} on a lane-run machine — not landed here; the hub lands it on its next tick (deferred=land)"
+        mc_ready_why "$KEY" "$HEAD" machine-deferred "READY on a lane-run machine; the hub lands it on its next tick" logged
+        return 0
+      fi
       mc_step enqueue
       # The refusal above sits BEFORE the take, so a PR that never reached gh
       # costs the project no unit of this tick's merge budget.
@@ -2736,7 +2752,11 @@ tick_project() {
   # QUEUED are therefore read here, FIRST, and each one is settled, ejected, or
   # left where it is. It runs before the open pass so an ejected PR is already
   # out of READY by the time the classifier gets to it.
-  if [ "$QUEUE" = 1 ]; then
+  # NEVER ON A LANE-RUN MACHINE (BH-6495). This pass reads EVERY QUEUED row of
+  # the repo, not only MC_ONLY_PR's, and a settle is a landing: the issue close,
+  # the deployreq ledger row and the deploy-verify the machine cannot spawn.
+  # The hub runs this pass on every tick, so it owns each settle and ejection.
+  if [ "$QUEUE" = 1 ] && [ "${MC_ON_MACHINE:-}" != 1 ]; then
     mapfile -t QROWS < <(awk -F'\t' -v p="$SLUG#" '$2=="QUEUED" && index($1,p)==1' "$MC_ROWS" 2>/dev/null)
     for QROW in "${QROWS[@]:-}"; do
       [ -n "$QROW" ] || continue
@@ -3153,6 +3173,22 @@ tick_project() {
   mapfile -t _pinbr < <(printf '%s\n' "${ROWS[@]}" | cut -f4)
   command -v prs_refs_pin >/dev/null 2>&1 && prs_refs_pin "$SLUG" "$MC_REFS_PIN_PREFIX" "${_pinbr[@]}"
   local _wcap
+  # ON A LANE-RUN MACHINE (BH-6495, bin/lib/mc/fly-workers.sh). With the
+  # conductor_workers_on_fly switch on, a row is enqueued as one lane_runs row
+  # and starts no worker here (mc_fly_arm rc 0); any other answer runs it here
+  # as before. A run on a machine (MC_ON_MACHINE=1) never enqueues.
+  # Each row's enqueue runs in the background inside the pr_slot_wait bound,
+  # like a local worker, so its 2 jobs-worker reads never queue behind the
+  # other rows' reads in this loop; the tally comes back through a tick file.
+  local _fly=0
+  MC_FLY_N_ENQ=0; MC_FLY_N_SKIP=0; MC_FLY_N_FB=0; MC_FLY_COUNT_FILE=""
+  [ "${MC_ON_MACHINE:-}" != 1 ] && [ "${#ROWS[@]}" -gt 0 ] && command -v mc_fly_workers_on >/dev/null 2>&1 \
+    && mc_fly_workers_on "$P" && _fly=1
+  if [ "$_fly" = 1 ]; then
+    mkdir -p "$MC_TICK_DIR" 2>/dev/null
+    MC_FLY_COUNT_FILE="$MC_TICK_DIR/fly-count.$(mc_safe_name "$P").$BASHPID"
+    : > "$MC_FLY_COUNT_FILE" 2>/dev/null || MC_FLY_COUNT_FILE=""
+  fi
   for ROW in "${ROWS[@]}"; do
     [ -n "$ROW" ] || continue
     # THE WINDOW (BH-4842). Under the backstop's timeout, a worker starts only
@@ -3163,6 +3199,14 @@ tick_project() {
       hotfix_pending_is "$P" "${ROW%%$'\t'*}" 2>/dev/null && hotfix_pending_drop "$P" "${ROW%%$'\t'*}"
       continue
     fi
+    if [ "$_fly" = 1 ] && [ -n "$MC_FLY_COUNT_FILE" ]; then
+      MC_WORKER_DEADLINE_CAP_S="${_wcap:-${MC_WORKER_DEADLINE_CAP_S:-}}" \
+        mc_fly_launch "$P" "$SLUG" "$ROW" &
+      PRPIDS+=("$!")
+      pr_slot_wait
+      continue
+    fi
+    [ "$_fly" = 1 ] && mc_fly_arm "$P" "$SLUG" "$ROW" && continue
     MC_WORKER_DEADLINE_CAP_S="${_wcap:-${MC_WORKER_DEADLINE_CAP_S:-}}" \
       fanin_run_sub "$SLUG#${ROW%%$'\t'*}" mc_fanin_outcome mc_worker_bounded "$ROW" &
     PRPIDS+=("$!")
@@ -3174,6 +3218,11 @@ tick_project() {
   # reaped answers rc 127 on stderr, which is why this is quiet and unchecked.
   for PID in "${PRPIDS[@]:-}"; do [ -n "$PID" ] && wait "$PID" 2>/dev/null; done
   fanin_end
+  if [ "$_fly" = 1 ] && [ -n "$MC_FLY_COUNT_FILE" ]; then
+    MC_FLY_N_ENQ=$(grep -cx enq "$MC_FLY_COUNT_FILE" 2>/dev/null); MC_FLY_N_SKIP=$(grep -cx skip "$MC_FLY_COUNT_FILE" 2>/dev/null)
+    MC_FLY_N_FB=$(grep -cx fb "$MC_FLY_COUNT_FILE" 2>/dev/null); rm -f "$MC_FLY_COUNT_FILE"
+  fi
+  [ "$_fly" = 1 ] && mc_log "FLY-ENQUEUE $SLUG enqueued=${MC_FLY_N_ENQ:-0} skipped=${MC_FLY_N_SKIP:-0} fallback=${MC_FLY_N_FB:-0}"
 
   # ---- what the read memo saved this tick (BH-1486) --------------------------
   # One line per project per tick, read AFTER the workers have answered because
@@ -3188,11 +3237,13 @@ tick_project() {
   # tick (ae_mark above). It writes nothing outside MODE=merge (a WOULD line
   # instead), takes no merge budget (a post is not a merge) and has its own cap,
   # MC_AUTOENQUEUE_CAP.
-  command -v ae_project >/dev/null 2>&1 && ae_project "$P" "$SLUG" "$PROVIDER" "$PBASE" "${ROWS[@]}"
+  # Both steps post `@mergifyio queue`, which is a landing, so a lane-run
+  # machine (MC_ON_MACHINE=1) runs neither (BH-6495). The hub runs them.
+  [ "${MC_ON_MACHINE:-}" != 1 ] && command -v ae_project >/dev/null 2>&1 && ae_project "$P" "$SLUG" "$PROVIDER" "$PBASE" "${ROWS[@]}"
   # The same step for the open PRs of NON-harness authors (BH-4580), which the
   # list above never carries: one REST page, review-prs' APPROVE on the head, the
   # iron-law scan in the READY mark's place, the same cap (bin/lib/mc/external-enqueue.sh).
-  command -v xe_project >/dev/null 2>&1 && xe_project "$P" "$SLUG" "$PROVIDER" "$PBASE"
+  [ "${MC_ON_MACHINE:-}" != 1 ] && command -v xe_project >/dev/null 2>&1 && xe_project "$P" "$SLUG" "$PROVIDER" "$PBASE"
 
   # ---- what the land fan-out actually reached (BH-870) -----------------------
   # The handled sha is recorded HERE, after every worker has answered, and only
