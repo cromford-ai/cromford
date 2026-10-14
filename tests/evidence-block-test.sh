@@ -583,6 +583,11 @@ drive() { # drive <tier> <qa-note> [env assignments...]
       set -uo pipefail
       STAMP() { echo TS; }
       job_evidence_put() { printf "%s|%s|%s\n" "$1" "$2" "$3" >> "$ART_SINK"; return "${PUT_RC:-0}"; }
+      # TEST-CHANGE (BH-6091): the settle pass now asks the hold gate before its
+      # gh pr edit and fails closed with no hold library. This drive is about the
+      # body, so the ticket is not held (tests/pool-hold-yield.bh-6091 drives a
+      # held one). BRANCH is what the gate reads.
+      hold_push_verdict() { return 0; }; BRANCH=ticket/k
       PROJECT=p; KEY=K; BASE=main; CHANGED="src/lib/pay.ts
 src/components/pay/Row.tsx"
       TAMPER_RC=0; REPRO_RC=0; INTENT_RC=0; E2E_VERDICT=pass

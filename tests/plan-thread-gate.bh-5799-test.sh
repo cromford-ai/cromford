@@ -382,7 +382,10 @@ grep -q 'comment-id: *$\|comment-id: null' "$W9.thread" 2>/dev/null && bad "§9 
 # TEST-CHANGE: v3 became v4 in the main merge (main's BH-5797 took v3 first),
 # then v6 (main's BH-5800 took v4 and BH-5802 took v5 first). The assertion is
 # the same: this PR's checklist change carries its own version.
-[ "$(sed -n 1p "$SRC/prompts/lead-review-checklist.md")" = "Checklist-Version: 6" ] && ok || bad "§9 the checklist must be v6"
+# TEST-CHANGE: BH-6381 took v7 (item 14). The check is now "v6 or later":
+# BH-5799's change is in v6, and every later version keeps it.
+ckv=$(sed -n 's/^Checklist-Version: \([0-9][0-9]*\)$/\1/p;1q' "$SRC/prompts/lead-review-checklist.md")
+[ -n "$ckv" ] && [ "$ckv" -ge 6 ] && ok || bad "§9 the checklist must be v6 or later (got '${ckv}')"
 grep -q 'Spec changes from comments' "$SRC/prompts/lead-review-checklist.md" && ok || bad "§9 checklist item 1 must name the Spec changes section"
 grep -q '## Spec changes from comments' "$SRC/prompts/plan-contract.md" && ok || bad "§9 plan-contract.md must name the section"
 

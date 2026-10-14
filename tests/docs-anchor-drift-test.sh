@@ -105,7 +105,7 @@ scan_line() {
       continue
     fi
     body=$(sed -n "${num}p" "$ROOT/$path")
-    if [ -n "$body" ] && printf '%s\n' "$body" | grep -qF -- "$marker"; then
+    if [ -n "$body" ] && grep -qF -- "$marker" <<<"$body"; then
       printf 'resolves\t%s\t%s\t%s\n' "$ln" "$cite" "$marker"
     else
       printf 'drifted\t%s\t%s\t%s\n' "$ln" "$cite" "$marker"

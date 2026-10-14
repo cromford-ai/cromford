@@ -27,6 +27,7 @@ set -uo pipefail
 DIR=$(cd "$(dirname "$0")/.." && pwd)
 # shellcheck source=lib/scratch.sh
 . "$(dirname "$0")/lib/scratch.sh" || exit 1
+. "$(dirname "$0")/lib/jobs-schema.sh" && jobs_schema_render || exit 1
 "$DIR/bin/llm-sites-build.sh" --compose --repo "$DIR" >/dev/null || { echo "FAIL: cannot compose catalog/llm-sites.json"; exit 1; }
 NOW=2026-10-08T00:00:00Z
 

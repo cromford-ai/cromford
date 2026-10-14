@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url';
 import { DatabaseSync } from 'node:sqlite';
 import { createHmac, randomBytes } from 'node:crypto';
 import worker from '../src/index.js';
+import { jobsSchemaSql } from './lib/jobs-schema.js';
 
 // BH-3846 — a source=human verdict row, and the two switches that decide how
 // much a human row is trusted, must not be forgeable by a direct D1 write. The
@@ -16,7 +17,7 @@ const SECRET = 'test-secret';
 const LEAD = 'lead-test-token';
 const HUMAN = 'human-test-token';
 const KEY = 'sig-test-key';
-const SCHEMA = readFileSync(fileURLToPath(new URL('../schema.sql', import.meta.url)), 'utf8');
+const SCHEMA = jobsSchemaSql();
 
 function sqliteDB(db) {
   const bindAndRun = (sql, binds) => ({

@@ -8,8 +8,12 @@ past `CLOSEOUT_AGE_OUT_H` (default 168h), and page once per project rather than
 once per record. `bin/sweep-stale-builds.sh` annotates its survivors with the
 same verdict through the same function.
 
-**How an operator reaches it:** `cron/hub.cron` runs `bin/pipeline-health.sh`
-every 10 minutes on the hub; `bin/sweep-stale-builds.sh` runs daily. Output lands
+**How an operator reaches it:** `cron/hub.cron` runs `bin/pipeline-health.sh
+--dispatch` every 10 minutes on the hub (BH-5941). The dispatch starts one
+`bin/pipeline-health.sh --project <p>` per project, and checks 4 and 5 run in
+those project runs. `bin/pipeline-health.sh --project <p>` runs one project's
+checks by hand; with no argument every section runs in one process.
+`bin/sweep-stale-builds.sh` runs daily. Output lands
 in `logs/ALERTS.log`, `logs/pipeline-health.log` and
 `logs/sweep-stale-builds.log`. Mission Control's pipeline pane reads the middle
 one through `bin/fetch-log.sh which=pipeline`.
@@ -19,6 +23,8 @@ one through `bin/fetch-log.sh which=pipeline`.
 | what | how |
 |---|---|
 | the two checks, extracted verbatim | `bash tests/pipeline-health-closeout-ageout-test.sh` |
+| the skip set: an aged-out dir is not read again (BH-5941) | `HARNESS_TEST_SANDBOX=1 bash tests/pipeline-health-closeout-skip.bh-5941-test.sh` |
+| the dispatch, the per-project runs and their locks (BH-5941) | `HARNESS_TEST_SANDBOX=1 bash tests/pipeline-health-dispatch.bh-5941-test.sh` |
 | the age-out writer's dedupe, on a file past the pipe buffer | `HARNESS_TEST_SANDBOX=1 bash tests/closeout-record-aged-dedupe.bh-1044-test.sh` |
 | the neighbouring blocks in the same file | `bash tests/pipeline-health-detectors-test.sh`, `-flake-rate-test.sh`, `-permared-test.sh` |
 | the whole health script, end to end | run it with `HARNESS=<scratch tree>` and a stubbed `PATH` (see the PR body's reproduction) |
@@ -26,6 +32,13 @@ one through `bin/fetch-log.sh which=pipeline`.
 | the remediation handler that reads the alert key | `bash tests/remediation-hook-test.sh` |
 
 **Files it owns on a live box:**
+
+- `state/pipeline-health/<p>/closeout-aged.tsv` — the skip set (BH-5941). One
+  line per dir already aged out: dir, RESULT mtime, kind (`aged` or
+  `emptyurl`). Checks 4 and 5 count such a dir and do not read it again while
+  its RESULT mtime is unchanged and still past the ceiling. A gone or rewritten
+  dir is pruned. Losing the file costs one tick of re-reads.
+- `locks/pipeline-health-<p>.lock` — one project run at a time (BH-5941).
 
 - `state/closeout-aged-out.tsv` — the audit trail. One row per aged-out build
   dir: `project`, `build dir`, `RESULT` first line, reason. ONE row: since

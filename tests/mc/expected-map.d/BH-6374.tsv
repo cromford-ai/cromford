@@ -1,0 +1,4 @@
+# tests/mc/expected-map.d/BH-6374.tsv — the squash-base resolver a stacked sibling part
+# uses before its rebase (bin/lib/mc/rebase.sh, BH-6374); origin=lib because it
+# is a new module function.
+rebase	mc_resolve_squash_base	lib

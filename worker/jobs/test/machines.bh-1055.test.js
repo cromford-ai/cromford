@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import worker from '../src/index.js';
+import { jobsSchemaSql } from './lib/jobs-schema.js';
 
 // BH-1055 (BH-1035.1): the four /api/machines routes, driven through the
 // worker's REAL fetch handler over a node:sqlite database.
@@ -20,7 +21,7 @@ const now = Date.now();  // determinism: ok the single anchor; every fixture bel
 const iso = (msAgo) => new Date(now - msAgo).toISOString().replace(/\.\d{3}Z$/, 'Z');
 const ISO_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/;
 
-const SCHEMA = readFileSync(fileURLToPath(new URL('../schema.sql', import.meta.url)), 'utf8');
+const SCHEMA = jobsSchemaSql();
 
 let DatabaseSync = null;
 try { ({ DatabaseSync } = await import('node:sqlite')); } catch { DatabaseSync = null; }

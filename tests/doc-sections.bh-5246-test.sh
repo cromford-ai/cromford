@@ -107,7 +107,7 @@ eq "R1 clean --check stdout" "$out" ""
 printf 'an added hooks line\n' >> "$R/$FD/10-hooks.md"
 out=$("$RDS" --root "$R" --check); rc=$?
 eq "R1 edited fragment --check rc" "$rc" 1
-eq "R1 edited fragment first line" "$(printf '%s\n' "$out" | head -1)" "DRIFT $DOC"
+eq "R1 edited fragment first line" "$(head -1 <<<"$out")" "DRIFT $DOC"
 
 "$RDS" --root "$R" --write; rc=$?
 eq "R1 --write rc" "$rc" 0
@@ -178,7 +178,7 @@ eq "R1 bad root rc" "$rc" 2
 M="$T/r1-missing"; seed "$M"; rm -f "$M/$DOC"
 out=$("$RDS" --root "$M" --check); rc=$?
 eq "R1 missing doc --check rc" "$rc" 1
-eq "R1 missing doc first line" "$(printf '%s\n' "$out" | head -1)" "DRIFT $DOC"
+eq "R1 missing doc first line" "$(head -1 <<<"$out")" "DRIFT $DOC"
 "$RDS" --root "$M" "$DOC" > "$T/explicit.out"; rc=$?
 eq "R1 explicit doc arg rc" "$rc" 0
 cmp -s "$T/explicit.out" "$DIR/$DOC" && ok || bad "R1: an explicit doc arg does not render the same bytes"
@@ -193,7 +193,7 @@ eq "R2 rf_registry row" "$(printf '%s\n' "$REG" | awk -F'\t' -v d="$DOC" '$1 == 
 grep -qxF '| `docs/PR-OWNERSHIP.md` | `bin/render-doc-sections.sh --write` | committed |' "$TAIL" \
   && ok || bad "R2: tail.md's Generated-files table has no committed row for $DOC"
 MAP=$(awk '/^# >>> rff default map/ { inb = 1; next } /^# <<< rff default map/ { inb = 0 } inb' "$GR" | tr '|' '\t')
-printf '%s\n' "$MAP" | grep -qxF "$ROW" && ok || bad "R2: the guardrail's baked map has no row for $DOC"
+grep -qxF "$ROW" <<<"$MAP" && ok || bad "R2: the guardrail's baked map has no row for $DOC"
 
 # ============================================================================
 # R3 two siblings, two fragments, no fragment conflict

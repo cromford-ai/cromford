@@ -1,9 +1,9 @@
 # P2: cut the paid calls around execute (2026-09-25)
 
-**Why.** Seven days of cost rows to 2026-09-25: pre-plan spent **$N on top
-of plan's $N**, and on the boards that ship least, triage is most of the
-bill: project-1 $N of triage for 13 merges, project-7 $N for 6,
-project-8 $N for 4. project-9 spent **$N with zero merges**
+**Why.** Seven days of cost rows to 2026-09-25: pre-plan spent **$4.4K on top
+of plan's $6.5K**, and on the boards that ship least, triage is most of the
+bill: project-1 $637 of triage for 13 merges, project-7 $649 for 6,
+project-8 $238 for 4. project-9 spent **$643 with zero merges**
 (pipeline-health `costzeromerge`). the operator's rule: no per-ticket dollar budgets.
 Cut the **volume** of paid calls, structurally and deterministically. Three
 levers, each a knob that is a settings row, each fail-open.

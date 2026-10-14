@@ -1,0 +1,534 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Harness vs. Engineering Team — Sep 21–Oct 3</title>
+<style>
+:root{color-scheme:light;--bg:#FCFCFC;--ink:#1A1A1A;--muted:#5B6470;--line:#E6E8EC;--card:#FFFFFF;--soft:#F3F5F8;--accent:#2563EB;--accent-soft:#EAF1FF;--ok:#15803D;--ok-soft:#E8F6EC;--warn:#B45309;--warn-soft:#FFF4E5;--bad:#B91C1C;--bad-soft:#FDECEC;--violet:#6D28D9;--violet-soft:#F1EBFF;--body:#2b333d;--s1:#2563EB;--s2:#C2410C;--mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){color-scheme:dark;--bg:#0F1115;--ink:#E6E8EC;--muted:#9AA4B2;--line:#262A33;--card:#161A21;--soft:#1A1E26;--accent:#60A5FA;--accent-soft:#16233A;--ok:#4ADE80;--ok-soft:#12271A;--warn:#FBBF24;--warn-soft:#2B2210;--bad:#F87171;--bad-soft:#2C1616;--violet:#A78BFA;--violet-soft:#221B33;--body:#C9D1DB;--s1:#3B82F6;--s2:#EA580C}}
+:root[data-theme="dark"]{color-scheme:dark;--bg:#0F1115;--ink:#E6E8EC;--muted:#9AA4B2;--line:#262A33;--card:#161A21;--soft:#1A1E26;--accent:#60A5FA;--accent-soft:#16233A;--ok:#4ADE80;--ok-soft:#12271A;--warn:#FBBF24;--warn-soft:#2B2210;--bad:#F87171;--bad-soft:#2C1616;--violet:#A78BFA;--violet-soft:#221B33;--body:#C9D1DB;--s1:#3B82F6;--s2:#EA580C}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI",Inter,Roboto,Helvetica,Arial,sans-serif}
+a{color:var(--accent)}
+nav.top{position:sticky;top:0;z-index:20;background:color-mix(in srgb,var(--bg) 92%,transparent);backdrop-filter:blur(8px);border-bottom:1px solid var(--line)}
+nav.top .in{max-width:1600px;margin:0 auto;padding:10px 24px;display:flex;gap:6px 14px;flex-wrap:wrap;align-items:center}
+nav.top b{margin-right:8px}
+nav.top a.l{color:var(--muted);text-decoration:none;font-size:13px;padding:4px 8px;border-radius:6px}
+nav.top a.l:hover{background:var(--soft);color:var(--ink)}
+main{max-width:1600px;margin:0 auto;padding-block:8px 80px;padding-inline:24px}
+header.hero{padding:28px 0 8px}
+header.hero h1{font-size:34px;line-height:1.15;margin:0 0 10px;letter-spacing:-.01em}
+header.hero p.lede{font-size:19px;color:var(--muted);max-width:960px;margin:0 0 20px}
+.pill{display:inline-block;font-size:12px;font-weight:600;padding:2px 9px;border-radius:999px;background:var(--soft);color:var(--muted);border:1px solid var(--line);vertical-align:middle}
+.pill.ok{background:var(--ok-soft);color:var(--ok);border-color:transparent}
+.pill.warn{background:var(--warn-soft);color:var(--warn);border-color:transparent}
+.pill.acc{background:var(--accent-soft);color:var(--accent);border-color:transparent}
+.pill.bad{background:var(--bad-soft);color:var(--bad);border-color:transparent}
+.stats{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin:18px 0 8px}
+@media (max-width:1100px){.stats{grid-template-columns:repeat(2,1fr)}}
+@media (max-width:480px){.stats{grid-template-columns:1fr}}
+.stat .v.sm{font-size:24px}
+.stat{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:14px 16px}
+.stat .k{font-size:12px;color:var(--muted);text-transform:uppercase;letter-spacing:.06em}
+.stat .v{font-size:30px;font-weight:700;letter-spacing:-.01em;margin:4px 0 2px;font-variant-numeric:tabular-nums}
+.stat .s{font-size:13px;color:var(--muted)}
+section{margin-top:44px;scroll-margin-top:64px}
+section h2{font-size:24px;margin:0 0 6px;letter-spacing:-.01em}
+section p.sub{color:var(--muted);font-size:16px;margin:0 0 18px;max-width:960px}
+p{max-width:960px}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:14px}
+.two{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:16px 18px;min-width:0}
+.card h3{margin:0 0 8px;font-size:16px}
+.card p{margin:6px 0;color:var(--body)}
+.card ul{margin:6px 0 0 18px;padding:0;color:var(--body)}
+.card li{margin:4px 0}
+.big{font-size:26px;font-weight:700;font-variant-numeric:tabular-nums;letter-spacing:-.01em}
+.muted{color:var(--muted)}
+.tw{overflow-x:auto;border:1px solid var(--line);border-radius:12px;background:var(--card)}
+table{border-collapse:collapse;width:100%;min-width:560px;font-size:14px}
+th,td{padding:9px 12px;text-align:left;border-bottom:1px solid var(--line);vertical-align:top}
+th{font-size:12px;text-transform:uppercase;letter-spacing:.05em;color:var(--muted);cursor:pointer;user-select:none;white-space:nowrap;background:var(--soft)}
+th[aria-sort="ascending"]::after{content:" ▲";font-size:10px}
+th[aria-sort="descending"]::after{content:" ▼";font-size:10px}
+td.n,th.n{text-align:right;font-variant-numeric:tabular-nums}
+tr:last-child td{border-bottom:0}
+tr.hl td{background:var(--accent-soft)}
+/* bars */
+.bars{display:grid;gap:8px;margin-top:10px}
+.bar{display:grid;grid-template-columns:150px 1fr 90px;gap:10px;align-items:center;font-size:14px}
+.bar .lab{color:var(--body);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.bar .trk{height:14px;background:var(--soft);border-radius:4px;position:relative}
+.bar .fil{position:absolute;left:0;top:0;bottom:0;background:var(--s1);border-radius:0 4px 4px 0;min-width:2px}
+.bar .fil.s2{background:var(--s2)}
+.bar .fil.log{background:repeating-linear-gradient(135deg,var(--s1) 0 4px,transparent 4px 8px)}
+.bar .val{text-align:right;font-variant-numeric:tabular-nums;color:var(--ink)}
+.bar:hover .trk{outline:2px solid var(--line)}
+.legend{display:flex;gap:16px;flex-wrap:wrap;font-size:13px;color:var(--muted);margin:8px 0 0}
+.legend i{display:inline-block;width:12px;height:12px;border-radius:3px;vertical-align:-2px;margin-right:6px}
+.callout{border-left:4px solid var(--accent);background:var(--accent-soft);padding:12px 16px;border-radius:0 10px 10px 0;margin:14px 0;max-width:960px}
+.callout.warn{border-color:var(--warn);background:var(--warn-soft)}
+.cols2{columns:2;column-gap:28px;max-width:1200px}
+.cols2 li{break-inside:avoid;margin:0 0 8px}
+/* calculator */
+.calc{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:12px}
+.calc label{display:block;font-size:12px;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin-bottom:4px}
+.calc input{width:100%;font:inherit;font-size:16px;padding:8px 10px;border:1px solid var(--line);border-radius:8px;background:var(--bg);color:var(--ink);font-variant-numeric:tabular-nums}
+.out{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:12px;margin-top:14px}
+code{font-family:var(--mono);font-size:13px;background:var(--soft);padding:1px 5px;border-radius:4px}
+footer{margin-top:60px;color:var(--muted);font-size:13px;border-top:1px solid var(--line);padding-top:16px}
+@media (max-width:900px){.two{grid-template-columns:1fr}.cols2{columns:1}.bar{grid-template-columns:110px 1fr 70px}header.hero h1{font-size:26px}}
+:root{--s3:#7C3AED}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){--s3:#A78BFA}}
+:root[data-theme="dark"]{--s3:#A78BFA}
+.bar .fil.s3{background:var(--s3)}
+.hourly{overflow-x:auto;padding:8px 0 4px}
+.hourly .grid-h{display:grid;grid-auto-flow:column;grid-auto-columns:minmax(12px,1fr);gap:2px;min-width:760px}
+.hourly .col{display:grid;grid-template-rows:90px 70px 16px;gap:3px}
+.hourly .up,.hourly .dn{position:relative;background:var(--soft);border-radius:2px}
+.hourly .up i,.hourly .dn i{position:absolute;left:0;right:0;border-radius:2px}
+.hourly .up i{bottom:0;background:var(--s1)}
+.hourly .dn i{top:0;background:var(--s2)}
+.hourly .dn i.or{background:var(--s3)}
+.hourly .t{font-size:10px;color:var(--muted);white-space:nowrap;overflow:visible}
+.hourly .col:hover .up,.hourly .col:hover .dn{outline:1px solid var(--muted)}
+.hrow{display:flex;justify-content:space-between;font-size:12px;color:var(--muted);min-width:760px}
+button.pre{font:inherit;font-size:13px;padding:7px 12px;border-radius:8px;border:1px solid var(--line);background:var(--soft);color:var(--ink);cursor:pointer;min-height:36px}
+button.pre.on{background:var(--accent-soft);color:var(--accent);border-color:var(--accent)}
+</style>
+</head>
+<body>
+<nav class="top"><div class="in">
+  <b>Harness vs. Engineering Team</b>
+  <a class="l" href="#tldr">TL;DR</a>
+  <a class="l" href="#capacity">Capacity &amp; potential</a>
+  <a class="l" href="#daily">Daily trend</a>
+  <a class="l" href="#then">Then vs. now</a>
+  <a class="l" href="#why">Why it got cheaper</a>
+  <a class="l" href="#shipped">What shipped</a>
+  <a class="l" href="#human">Human equivalent</a>
+  <a class="l" href="#cost">What it cost</a>
+  <a class="l" href="#side">Side by side</a>
+  <a class="l" href="#calc">Calculator</a>
+  <a class="l" href="#caveats">Caveats</a>
+</div></nav>
+<main>
+<header class="hero" id="tldr">
+  <p style="margin:0 0 10px"><span class="pill acc">Cromford only</span> <span class="pill">Window: Sep 21 12:45pm → Oct 3 1:35pm ET (289h)</span> <span class="pill">Priced at list API rates</span> <span class="pill">Fourth in the series: <a href="HARNESS_VS_ENGINEERING_TEAM_2026-09-14.html">Sep 14</a> · <a href="HARNESS_VS_ENGINEERING_TEAM_2026-09-17.html">Sep 17</a> · <a href="HARNESS_VS_ENGINEERING_TEAM_2026-09-21.html">Sep 21</a></span></p>
+  <h1>Twelve days of the harness: half the PRs per day, a fifth of the cost per day</h1>
+  <p class="lede">Same rules as before: the harness and nothing else, every logged call priced from its own token counts at list API rates. Since Sep 21 the harness merged <b>1,043 pull requests</b> across nine repos and closed <b>819 ai-build issues</b>, at 87 PRs a day. The model work behind it comes to <b>$21.5K</b>: <b>$1.8K a day</b> and <b>$21 per merged PR</b>, down from $62. Tokens per PR fell from 54M to 20M after the Sep 22 move to Opus 5.5, and the OpenRouter and alert lanes that had been leaking money went quiet. Output fell too, though. 72% of the PRs went into the harness itself, and the last four days averaged 39 PRs a day. At this window's average, the harness does the work of about <b>170 engineers and leads</b>, which would cost <b>~$128K a day</b> in the US. On its best proven day it did the work of about <b>465</b>.</p>
+  <div class="stats">
+    <div class="stat"><div class="k">Harness PRs merged</div><div class="v">1,043</div><div class="s">87 / day · 156 operator, 143 human-dev and 27 merge-train PRs excluded</div></div>
+    <div class="stat"><div class="k">Lines added / removed</div><div class="v sm">959K / 52K</div><div class="s">11,628 files · ~920 added lines per PR</div></div>
+    <div class="stat"><div class="k">ai-build issues closed</div><div class="v">819</div><div class="s">68 / day · 640 cromford · 162 project-5 · 17 other</div></div>
+    <div class="stat"><div class="k">Human equivalent</div><div class="v">~170</div><div class="s">155 engineers + 15 reviewers / tech leads</div></div>
+    <div class="stat"><div class="k">Human cost per day</div><div class="v sm">$110K–$153K</div><div class="s">US average, fully loaded · $27M–$38M / yr</div></div>
+    <div class="stat"><div class="k">API-equivalent spend</div><div class="v">$21.5K</div><div class="s">$1,788 / day · 20.9B tokens · $12K–$21K of it cash</div></div>
+    <div class="stat"><div class="k">Cost per merged PR</div><div class="v">$21</div><div class="s">was $62 · median ticket $5.12, was $17</div></div>
+    <div class="stat"><div class="k">Cheaper than a US team</div><div class="v">61–85×</div><div class="s">~104× vs Bay Area senior · 16–23× vs offshore</div></div>
+  </div>
+  <div class="callout"><b>Running total since Sep 14.</b> Across three windows the harness has merged <b>2,181 PRs in 454 hours</b> (115 a day) for <b>$94.4K</b> of model work, <b>$43 per PR</b>. The first 165 hours cost $72.9K. The last 289 cost $21.5K.</div>
+</header>
+
+<section id="capacity">
+<h2>Capacity &amp; potential</h2>
+<p class="sub">What the fleet has shown it can do, against what it did this window. Equivalent headcount uses the same midpoint ratio as every report so far: about 1.8 engineers per harness PR per day, plus one lead or reviewer per ten engineers, at $720 and $1,100 a day.</p>
+<div class="stats">
+  <div class="stat"><div class="k">Proven peak</div><div class="v">237</div><div class="s">PRs in one day, Fri Sep 18</div></div>
+  <div class="stat"><div class="k">Best day this window</div><div class="v">176</div><div class="s">Tue Sep 22 · 230K lines, the most lines of any day</div></div>
+  <div class="stat"><div class="k">This window's average</div><div class="v">87</div><div class="s">37% of the proven peak</div></div>
+  <div class="stat"><div class="k">Last four days</div><div class="v">39</div><div class="s">Sep 30 → Oct 3 · 16% of peak · $480 / day</div></div>
+</div>
+<div class="tw" style="margin-top:14px"><table id="t-cap">
+  <thead><tr><th>Pace</th><th class="n">PRs / day</th><th class="n">Equivalent people</th><th class="n">US team / day</th><th class="n">US team / year</th><th class="n">Harness / day</th><th class="n">Harness / PR</th><th class="n">Cheaper by</th></tr></thead>
+  <tbody>
+    <tr><td>Last four days (Sep 30 → Oct 3)</td><td class="n">39</td><td class="n" data-v="77">~77</td><td class="n" data-v="58100">$58K</td><td class="n" data-v="14500000">$14.5M</td><td class="n" data-v="480">$480</td><td class="n">$12</td><td class="n" data-v="120">~120×</td></tr>
+    <tr class="hl"><td>This window's average</td><td class="n">87</td><td class="n" data-v="170">~170</td><td class="n" data-v="128100">$128K</td><td class="n" data-v="32000000">$32M</td><td class="n" data-v="1788">$1,788</td><td class="n">$21</td><td class="n" data-v="72">~72×</td></tr>
+    <tr><td>Average since Sep 14 (454h)</td><td class="n">115</td><td class="n" data-v="226">~226</td><td class="n" data-v="170000">$170K</td><td class="n" data-v="42500000">$43M</td><td class="n" data-v="4990">$5.0K</td><td class="n">$43</td><td class="n" data-v="34">~34×</td></tr>
+    <tr><td>Best day this window (Sep 22)</td><td class="n">176</td><td class="n" data-v="345">~345</td><td class="n" data-v="260000">$260K</td><td class="n" data-v="65000000">$65M</td><td class="n" data-v="7372">$7.4K</td><td class="n">$42</td><td class="n" data-v="35">~35×</td></tr>
+    <tr><td>Proven peak (Sep 18), at that day's cost</td><td class="n">237</td><td class="n" data-v="465">~465</td><td class="n" data-v="350000">$350K</td><td class="n" data-v="87500000">$88M</td><td class="n" data-v="17249">$17.2K</td><td class="n">$73</td><td class="n" data-v="20">~20×</td></tr>
+    <tr><td><b>Potential:</b> proven peak at this window's cost per PR</td><td class="n">237</td><td class="n" data-v="465">~465</td><td class="n" data-v="350000">$350K</td><td class="n" data-v="87500000">$88M</td><td class="n" data-v="4890">$4.9K</td><td class="n">$21</td><td class="n" data-v="71">~71×</td></tr>
+  </tbody>
+</table></div>
+<div class="two" style="margin-top:16px">
+  <div class="card">
+    <h3>Equivalent org size at each pace</h3>
+    <div class="bars" id="capbars"></div>
+    <p class="muted" style="font-size:13px;margin-top:10px">Engineers plus the review and lead layer. US cost uses $720 a day per engineer and $1,100 per lead, over 250 working days.</p>
+  </div>
+  <div class="card">
+    <h3>What the potential means</h3>
+    <ul>
+      <li><b>The capacity is there, and most of it went unused.</b> The fleet has merged 237 PRs in a day. This window averaged 37% of that, and the last four days 16%.</li>
+      <li><b>Running at the proven peak, with today's cost structure:</b> about <b>$4.9K a day</b> of model work for what a ~465-person engineering org ships (~$350K a day, ~$88M a year in the US). The harness would cost about <b>$1.8M a year</b> at list API rates.</li>
+      <li><b>Peak days have cost more per PR,</b> though: $42 on Sep 22 and $73 on Sep 18. So $4.9K to $10K a day is the honest range, still <b>35–71× cheaper</b>.</li>
+      <li><b>Client product used a small slice of it.</b> The eight client and product repos got 289 PRs, 24 a day. The rest was the harness building itself.</li>
+      <li><b>Not measured here: why output fell.</b> Spend dropped along with merges ($300–$560 a day since Sep 30), so the fleet looks under-fed or paused rather than at a compute limit. This report did not read queue depth, pause flags or the boards to confirm that.</li>
+    </ul>
+  </div>
+</div>
+</section>
+
+<section id="daily">
+<h2>Daily trend, Sep 14 → Oct 3</h2>
+<p class="sub">All four reports on one axis, in Eastern time. The top chart shows output against spend. The bottom one shows what a merged PR cost that day (every dollar spent ÷ harness PRs merged), with the median cost of a ticket whose last call landed that day.</p>
+<div class="card"><div id="dualchart"></div>
+  <div class="legend"><span><i style="background:var(--s1)"></i>Harness PRs merged</span><span><i style="background:var(--s2)"></i>API-equivalent spend that day</span></div></div>
+<div class="card" style="margin-top:14px"><div id="dailychart"></div>
+  <div class="legend"><span><i style="background:var(--s1)"></i>All-in $ per merged PR</span><span><i style="background:var(--s2);border-radius:50%"></i>Median $ per ticket (build stages only)</span></div></div>
+<p>Sep 22 is the turning point. It was the last day with Fable plan/review and the OpenRouter Claude rung in heavy use ($7.4K, $42 a PR), and the first day of the all-Opus-5.5 routing. From Sep 23 a merged PR cost <b>$10–$24</b> on every day, with no build-day and drain-day swing like the one in the last report. The ticket median fell from $16 on Sep 22 to $4–$7 and stayed there. From Sep 30 the fleet ran on Claude alone: Codex, grok, Kimi and OpenRouter all went to about zero.</p>
+<div class="tw" style="margin-top:14px"><table id="t-daily">
+  <thead><tr><th>Day (ET)</th><th class="n">Harness PRs</th><th class="n">Lines added</th><th class="n">API-equivalent</th><th class="n">All-in $ / PR</th><th class="n">Median $ / ticket</th><th class="n">Tokens / PR</th><th class="n">Calls / PR</th><th>Note</th></tr></thead>
+  <tbody>
+    <tr><td data-v="0">Mon Sep 21 (from 12:45pm)</td><td class="n">73</td><td class="n" data-v="108924">108.9K</td><td class="n" data-v="1854">$1,854</td><td class="n">$25</td><td class="n">$14.04</td><td class="n">26.7M</td><td class="n">14.1</td><td>partial day; Kimi and grok still in the mix</td></tr>
+    <tr><td data-v="1">Tue Sep 22</td><td class="n">176</td><td class="n" data-v="230330">230.3K</td><td class="n" data-v="7372">$7,372</td><td class="n">$42</td><td class="n">$16.41</td><td class="n">32.3M</td><td class="n">15.4</td><td>best day of the window; $1.6K on OpenRouter; $692 peak hour at 6am</td></tr>
+    <tr><td data-v="2">Wed Sep 23</td><td class="n">122</td><td class="n" data-v="93030">93.0K</td><td class="n" data-v="1898">$1,898</td><td class="n">$16</td><td class="n">$5.27</td><td class="n">18.4M</td><td class="n">26.4</td><td>last day with meaningful OpenRouter spend</td></tr>
+    <tr><td data-v="3">Thu Sep 24</td><td class="n">155</td><td class="n" data-v="116256">116.3K</td><td class="n" data-v="1908">$1,908</td><td class="n">$12</td><td class="n">$3.87</td><td class="n">15.5M</td><td class="n">13.3</td><td>second-best day at the lowest cost per PR</td></tr>
+    <tr><td data-v="4">Fri Sep 25</td><td class="n">68</td><td class="n" data-v="54178">54.2K</td><td class="n" data-v="1241">$1,241</td><td class="n">$18</td><td class="n">$4.12</td><td class="n">20.4M</td><td class="n">12.7</td><td>10h gap with no merges overnight</td></tr>
+    <tr><td data-v="5">Sat Sep 26</td><td class="n">60</td><td class="n" data-v="40582">40.6K</td><td class="n" data-v="1414">$1,414</td><td class="n">$24</td><td class="n">$4.21</td><td class="n">24.1M</td><td class="n">16.8</td><td></td></tr>
+    <tr><td data-v="6">Sun Sep 27</td><td class="n">76</td><td class="n" data-v="51016">51.0K</td><td class="n" data-v="1475">$1,475</td><td class="n">$19</td><td class="n">$5.88</td><td class="n">10.8M</td><td class="n">15.6</td><td>Codex carried two thirds of spend</td></tr>
+    <tr><td data-v="7">Mon Sep 28</td><td class="n">95</td><td class="n" data-v="74866">74.9K</td><td class="n" data-v="1242">$1,242</td><td class="n">$13</td><td class="n">$5.94</td><td class="n">13.2M</td><td class="n">16.9</td><td></td></tr>
+    <tr><td data-v="8">Tue Sep 29</td><td class="n">80</td><td class="n" data-v="71342">71.3K</td><td class="n" data-v="1400">$1,400</td><td class="n">$18</td><td class="n">$6.63</td><td class="n">20.0M</td><td class="n">13.4</td><td>OpenRouter topped up a second time</td></tr>
+    <tr><td data-v="9">Wed Sep 30</td><td class="n">34</td><td class="n" data-v="31502">31.5K</td><td class="n" data-v="406">$406</td><td class="n">$12</td><td class="n">$6.44</td><td class="n">15.4M</td><td class="n">19.4</td><td>Claude-only from here</td></tr>
+    <tr><td data-v="10">Thu Oct 1</td><td class="n">58</td><td class="n" data-v="48539">48.5K</td><td class="n" data-v="559">$559</td><td class="n">$10</td><td class="n">$5.44</td><td class="n">11.9M</td><td class="n">15.3</td><td>cheapest PRs of the series</td></tr>
+    <tr><td data-v="11">Fri Oct 2</td><td class="n">15</td><td class="n" data-v="11393">11.4K</td><td class="n" data-v="294">$294</td><td class="n">$20</td><td class="n">$3.08</td><td class="n">22.3M</td><td class="n">41.2</td><td>quietest day; 16h with no merge into Oct 3</td></tr>
+    <tr><td data-v="12">Sat Oct 3 (to 1:35pm)</td><td class="n">31</td><td class="n" data-v="27283">27.3K</td><td class="n" data-v="456">$456</td><td class="n">$15</td><td class="n">$1.83</td><td class="n">17.7M</td><td class="n">25.9</td><td>partial day</td></tr>
+  </tbody>
+</table></div>
+</section>
+
+<section id="then">
+<h2>Then vs. now</h2>
+<p class="sub">All three windows as 24-hour rates. This window prices calls with the fleet's full formula (1-hour cache writes, grok cliff). On the method the earlier reports used it would read $20.3K, 6% lower, so the drop shown here is if anything understated.</p>
+<div class="tw"><table id="t-then">
+  <thead><tr><th>Measure</th><th class="n">Sep 14–17 (68h)</th><th class="n">Sep 17–21 (97h)</th><th class="n">Sep 21–Oct 3 (289h)</th><th class="n">Change vs. last</th></tr></thead>
+  <tbody>
+    <tr><td>Harness PRs merged / day</td><td class="n">179</td><td class="n">157</td><td class="n">87</td><td class="n">−45%</td></tr>
+    <tr><td>Lines added / day</td><td class="n">187K</td><td class="n">182K</td><td class="n">80K</td><td class="n">−56%</td></tr>
+    <tr><td>ai-build issues closed / day</td><td class="n">148</td><td class="n">108</td><td class="n">68</td><td class="n">−37%</td></tr>
+    <tr class="hl"><td>API-equivalent / day</td><td class="n">$11.9K</td><td class="n">$9.7K</td><td class="n">$1.79K</td><td class="n">−82%</td></tr>
+    <tr class="hl"><td>Cost / PR, API-equivalent</td><td class="n">$66</td><td class="n">$62</td><td class="n">$21</td><td class="n">−67%</td></tr>
+    <tr><td>Median ticket, build stages only</td><td class="n">$13</td><td class="n">$17</td><td class="n">$5.12</td><td class="n">−70%</td></tr>
+    <tr><td>Tokens / PR</td><td class="n">53.1M</td><td class="n">54.1M</td><td class="n">20.0M</td><td class="n">−63%</td></tr>
+    <tr><td>Model calls / PR</td><td class="n">40.7</td><td class="n">31.1</td><td class="n">17.0</td><td class="n">−45%</td></tr>
+    <tr><td>Triage share of spend</td><td class="n">39%</td><td class="n">27%</td><td class="n">28%</td><td class="n">flat</td></tr>
+    <tr><td>Self-work (cromford) share of PRs</td><td class="n">9%</td><td class="n">40%</td><td class="n">72%</td><td class="n">+32 pts</td></tr>
+    <tr><td>PR open → merge, median / p90</td><td class="n">—</td><td class="n">1.0h / 25h</td><td class="n">1.8h / 19h</td><td class="n">median slower, tail shorter</td></tr>
+    <tr><td>Equivalent people</td><td class="n">~330</td><td class="n">~310</td><td class="n">~170</td><td class="n">−45%</td></tr>
+    <tr><td>Cheaper than US average</td><td class="n">18–25×</td><td class="n">21–29×</td><td class="n">61–85×</td><td class="n">about 3×</td></tr>
+  </tbody>
+</table></div>
+</section>
+
+<section id="why">
+<h2>Why it got cheaper</h2>
+<p class="sub">Each of these is visible in the rows. Together they account for the drop. The cost per PR fell by two thirds while the average PR shrank by only a fifth (1,159 → 920 added lines).</p>
+<div class="grid">
+  <div class="card"><h3>Opus 5.5 replaced Fable</h3><p class="big">43% → 14%</p><p>Fable's share of spend. Last window Fable cost $16.9K, direct and via OpenRouter. This window it cost $3.0K. Opus 5.5 now carries the build lanes: $8.0K across 8,192 calls, about <b>$0.98 a call</b>.</p></div>
+  <div class="card"><h3>Context per PR collapsed</h3><p class="big">54M → 20M</p><p>Tokens per merged PR, with calls per PR down from 31 to 17. Uncached input fell from 7.0B to 1.6B over a window three times as long. Most of last window's uncached input was the no-cache OpenRouter rung.</p></div>
+  <div class="card"><h3>The OpenRouter rung went quiet</h3><p class="big">$6.3K → $2.0K</p><p>The survival ladder's Claude-on-OpenRouter fallback, billed at full input price. $1.6K of this window's $2.0K landed on Sep 22. After Sep 29 it was under $5 a day.</p></div>
+  <div class="card"><h3>The alert lanes stopped spending</h3><p class="big">$2.9K → ~$0</p><p>Alert-triage and responder together, last window, on no PRs at all. This window they made 10 calls.</p></div>
+  <div class="card"><h3>Triage got cheaper in step</h3><p class="big">$2,640 → $497 / day</p><p>Triage's share held at 28%, so it shrank at the same rate as everything else. project-4 is now the costliest triage lane by far: $2.5K, 65% of that project's spend.</p></div>
+  <div class="card"><h3>Codex carried more of the load</h3><p class="big">$2.4K → $3.7K</p><p>On the ChatGPT subscription, so the money wasn't extra. It peaked Sep 27 at two thirds of the day's spend and stopped on Sep 30.</p></div>
+</div>
+</section>
+
+<section id="shipped">
+<h2>What shipped</h2>
+<p class="sub">1,043 harness-built PRs across nine repos in 289 hours. cromford took 754 of them, project-5 178 and project-4 65.</p>
+<div class="two">
+  <div class="card">
+    <h3>Harness PRs by repo</h3>
+    <div class="bars" id="prbars"></div>
+    <p class="muted" style="font-size:13px;margin-top:10px">A PR counts as harness-built when <code>cromford[bot]</code> (242) or <code>cromford-builders[bot]</code> (748, the Fly builders' own GitHub App, new since the last report) authored it, or when it was pushed to a <code>ticket/</code> branch (53 more, pushed under the operator's token). Merge-train batch PRs are excluded because their contents are already counted. Median time from PR open to merge was 1.8 hours; p90 was 19 hours.</p>
+  </div>
+  <div class="card">
+    <h3>The window in numbers</h3>
+    <div class="tw"><table id="t-shipped">
+      <thead><tr><th>Repo</th><th class="n">Harness PRs</th><th class="n">Lines added</th><th class="n">Issues closed</th><th class="n">API-equiv.</th><th class="n">$ / PR</th><th>Excluded</th></tr></thead>
+      <tbody>
+        <tr><td>cromford</td><td class="n">754</td><td class="n" data-v="680898">680.9K</td><td class="n">640</td><td class="n" data-v="12159">$12,159</td><td class="n">$16</td><td>124 operator · 27 train</td></tr>
+        <tr><td>project-5</td><td class="n">178</td><td class="n" data-v="175102">175.1K</td><td class="n">162</td><td class="n" data-v="3037">$3,037</td><td class="n">$17</td><td>13 operator</td></tr>
+        <tr><td>project-4</td><td class="n">65</td><td class="n" data-v="62339">62.3K</td><td class="n" data-v="-1">own board</td><td class="n" data-v="3851">$3,851</td><td class="n">$59</td><td>4 operator · 30 human-dev</td></tr>
+        <tr><td>project-3</td><td class="n">20</td><td class="n" data-v="22970">23.0K</td><td class="n" data-v="-1">own board</td><td class="n" data-v="554">$554</td><td class="n">$28</td><td>3 operator · 3 human-dev</td></tr>
+        <tr><td>project-1</td><td class="n">10</td><td class="n" data-v="9308">9.3K</td><td class="n" data-v="-1">own board</td><td class="n" data-v="217">$217</td><td class="n">$22</td><td>2 operator · 8 human-dev · no harness merge since Sep 25</td></tr>
+        <tr><td>project-8</td><td class="n">8</td><td class="n" data-v="3044">3.0K</td><td class="n">13</td><td class="n" data-v="209">$209</td><td class="n">$26</td><td>1 human-dev</td></tr>
+        <tr><td>project-7</td><td class="n">4</td><td class="n" data-v="2804">2.8K</td><td class="n">4</td><td class="n" data-v="288">$288</td><td class="n">$72</td><td>1 operator · all 4 merged today</td></tr>
+        <tr><td>project-2</td><td class="n">3</td><td class="n" data-v="2429">2.4K</td><td class="n" data-v="-1">own board</td><td class="n" data-v="303">$303</td><td class="n">$101</td><td>2 operator · 10 human-dev</td></tr>
+        <tr><td>project-9</td><td class="n">1</td><td class="n" data-v="347">0.3K</td><td class="n" data-v="-1">own board</td><td class="n" data-v="710">$710</td><td class="n">$710</td><td>1 operator · 91 human-dev (aepod)</td></tr>
+        <tr><td>cromford-console</td><td class="n">0</td><td class="n" data-v="0">0</td><td class="n">0</td><td class="n" data-v="71">$71</td><td class="n">—</td><td>6 operator</td></tr>
+        <tr><td>project-6-runtime</td><td class="n">0</td><td class="n" data-v="0">0</td><td class="n">0</td><td class="n" data-v="0">—</td><td class="n">—</td><td>nothing merged in 12 days</td></tr>
+        <tr class="hl"><td>Fleet</td><td class="n">1,043</td><td class="n" data-v="959241">959.2K</td><td class="n">819</td><td class="n" data-v="21519">$21,519</td><td class="n">$21</td><td>156 operator · 143 human-dev · 27 train</td></tr>
+      </tbody>
+    </table></div>
+    <p class="muted" style="font-size:13px;margin-top:10px"><b>Self-work vs. product:</b> cromford and its console took 754 PRs for $12.2K ($16 each). The eight product repos took 289 PRs for $9.2K ($32 each). Operator PRs are Claude Code sessions on the operator's Mac (including 64 <code>lead/</code> branches) and hand fixes on the hub. Human-dev PRs are aepod, collaborator-1 and randyfrancis. Their spend is excluded too. "own board" means the project tracks tickets on its product board, not GitHub issues.</p>
+  </div>
+</div>
+</section>
+
+<section id="human">
+<h2>Human equivalent</h2>
+<p class="sub">The same two methods as before, applied to the 289-hour daily average. PRs per day fell 45%, lines per day 56%, because the average PR got 20% smaller.</p>
+<div class="grid">
+  <div class="card"><h3>Method A · by merged PRs</h3><p class="big">90–105 people</p><p>A strong product engineer lands about one reviewed PR per working day. 87 harness PRs a day is roughly <b>80–90 engineers</b>.</p><p>Add the triage, decomposition and review work behind 68 closed issues a day: another <b>10–15 senior reviewers and tech leads</b>.</p><p class="muted">Understates it: harness PRs average ~920 added lines, larger than a typical human PR.</p></div>
+  <div class="card"><h3>Method B · by volume</h3><p class="big">250–375 people</p><p>75.4K net lines a day, at a sustainable <b>200–300 net lines per engineer per day</b>, is 250 to 375 engineers.</p><p class="muted">Overstates it: the count includes tests, plan and build-log files, and some generated code.</p></div>
+  <div class="card"><h3>Honest midpoint</h3><p class="big">~155 engineers</p><p>plus a review and lead layer of about 15. Call it a <b>170-person</b> product engineering org running every day. That is down from 310 last report, with the same ratio to Method A.</p><p class="muted">Every cost figure below uses this midpoint. The calculator lets you move it.</p></div>
+</div>
+<div class="card" style="margin-top:14px"><h3>Headcount by counting method</h3><div class="bars" id="hcbars"></div></div>
+</section>
+
+<section id="cost">
+<h2>What it cost</h2>
+<p class="sub">Every logged call, priced from its own token counts at list API rates with the fleet's own <code>cost_price_tokens</code> formula. 17,704 rows.</p>
+<div class="two">
+<div class="card">
+<h3>The bill, by model family</h3>
+<div class="tw"><table id="t-fam">
+  <thead><tr><th>Lane</th><th class="n">API-equivalent</th><th class="n">Share</th><th class="n">Calls</th><th>What runs there</th></tr></thead>
+  <tbody>
+    <tr><td>Claude, direct (Opus 5.5 $8.0K, Opus 5 $3.4K, Fable 5.1 $2.2K, Sonnet 5 / 5.5 $0.9K)</td><td class="n" data-v="14490">$14,490</td><td class="n">67%</td><td class="n" data-v="13393">13,393</td><td>plan, execute, review, fix, triage, on Max seats, box accounts and the metered account</td></tr>
+    <tr><td>Codex / gpt-6-astra</td><td class="n" data-v="3700">$3,700</td><td class="n">17%</td><td class="n" data-v="470">470</td><td>ChatGPT-subscription lanes, priced from tokens; stopped Sep 30</td></tr>
+    <tr><td>Claude via OpenRouter (Fable $810, Opus 5 $772, Opus 5.5 $392)</td><td class="n" data-v="1974">$1,974</td><td class="n">9%</td><td class="n" data-v="254">254</td><td>survival-ladder Claude rung, metered, no prompt cache</td></tr>
+    <tr><td>grok-4.6 / 4.7</td><td class="n" data-v="721">$721</td><td class="n">3%</td><td class="n" data-v="775">775</td><td>ladder and triage; $404 without the 2× cliff; rows record only $138</td></tr>
+    <tr><td>Fireworks (Kimi K2.7 Code)</td><td class="n" data-v="624">$624</td><td class="n">3%</td><td class="n" data-v="167">167</td><td>open-model floor, gone after Sep 22</td></tr>
+    <tr><td>DeepSeek V4 Flash</td><td class="n" data-v="11">$11</td><td class="n">0.05%</td><td class="n" data-v="718">718</td><td>cheapest rung</td></tr>
+    <tr><td>Synthetic / none</td><td class="n" data-v="0">$0</td><td class="n">0%</td><td class="n" data-v="1927">1,927</td><td>zero-token rows</td></tr>
+    <tr class="hl"><td>Total</td><td class="n" data-v="21519">$21,519</td><td class="n">100%</td><td class="n" data-v="17704">17,704</td><td>20.9B tokens · $1,788 / day · $21 / PR</td></tr>
+  </tbody>
+</table></div>
+<p class="muted" style="font-size:13px;margin-top:10px">Token mix: 18.1B cache reads, 1.6B input, 1.0B cache writes, 0.16B output. Prices from <code>catalog/model-prices.json</code> (refreshed Sep 17). The hub's newer Oct 3 price table changes the total by $31. Fly machine time ($2,160 computed, 42 machines, 25 running) is infrastructure, not tokens, and is excluded here. It is 4.6× last window's figure.</p>
+</div>
+<div class="card">
+<h3>Where the money went, by stage</h3>
+<div class="tw"><table id="t-stage">
+  <thead><tr><th>Stage</th><th class="n">API-equivalent</th><th class="n">Share</th><th class="n">Last report</th><th>Attached to a PR?</th></tr></thead>
+  <tbody>
+    <tr><td>execute</td><td class="n" data-v="6219">$6,219</td><td class="n">29%</td><td class="n">27%</td><td>yes</td></tr>
+    <tr><td>triage</td><td class="n" data-v="5979">$5,979</td><td class="n">28%</td><td class="n">27%</td><td>no: reading boards, deciding what to build</td></tr>
+    <tr><td>review</td><td class="n" data-v="3244">$3,244</td><td class="n">15%</td><td class="n">20%</td><td>yes</td></tr>
+    <tr><td>plan</td><td class="n" data-v="2828">$2,828</td><td class="n">13%</td><td class="n">12%</td><td>yes</td></tr>
+    <tr><td>preplan</td><td class="n" data-v="2059">$2,059</td><td class="n">10%</td><td class="n">9%</td><td>yes</td></tr>
+    <tr><td>fix · decompose · lead-review · orchestrator · qa · other</td><td class="n" data-v="1192">$1,192</td><td class="n">6%</td><td class="n">6%</td><td>mostly</td></tr>
+    <tr class="hl"><td>Total</td><td class="n" data-v="21519">$21,519</td><td class="n">100%</td><td class="n">100%</td><td>60% carries a ticket id, up from 51%</td></tr>
+  </tbody>
+</table></div>
+<p style="margin-top:10px"><b>$21 a PR or $5 a ticket?</b> Both, measuring different things. $21 is every dollar the fleet spent divided by the PRs that merged, including triage and builds that never merged. $5.12 is the median ticket priced on its own build-stage rows: 1,309 tickets, mean $9.42, p90 $19.87, dearest BH-685 at $236. By project: cromford $5.40, project-5 $7.44, project-4 $4.22 (p90 $33), project-3 $3.08, project-9 $2.09.</p>
+</div>
+</div>
+
+<div class="two" style="margin-top:16px">
+<div class="card">
+<h3>By project</h3>
+<div class="tw"><table id="t-proj">
+  <thead><tr><th>Project</th><th class="n">API-equivalent</th><th class="n">Share</th><th class="n">of which triage</th><th class="n">Harness PRs</th><th class="n">$ / PR</th></tr></thead>
+  <tbody>
+    <tr><td>cromford</td><td class="n" data-v="12159">$12,159</td><td class="n">57%</td><td class="n" data-v="2295">$2,295</td><td class="n">754</td><td class="n">$16</td></tr>
+    <tr><td>project-4</td><td class="n" data-v="3851">$3,851</td><td class="n">18%</td><td class="n" data-v="2501">$2,501</td><td class="n">65</td><td class="n">$59</td></tr>
+    <tr><td>project-5</td><td class="n" data-v="3037">$3,037</td><td class="n">14%</td><td class="n" data-v="588">$588</td><td class="n">178</td><td class="n">$17</td></tr>
+    <tr><td>project-9</td><td class="n" data-v="710">$710</td><td class="n">3%</td><td class="n" data-v="178">$178</td><td class="n">1</td><td class="n">$710</td></tr>
+    <tr><td>project-3</td><td class="n" data-v="554">$554</td><td class="n">3%</td><td class="n" data-v="76">$76</td><td class="n">20</td><td class="n">$28</td></tr>
+    <tr><td>project-2</td><td class="n" data-v="303">$303</td><td class="n">1%</td><td class="n" data-v="63">$63</td><td class="n">3</td><td class="n">$101</td></tr>
+    <tr><td>project-7</td><td class="n" data-v="288">$288</td><td class="n">1%</td><td class="n" data-v="53">$53</td><td class="n">4</td><td class="n">$72</td></tr>
+    <tr><td>project-1</td><td class="n" data-v="217">$217</td><td class="n">1%</td><td class="n" data-v="52">$52</td><td class="n">10</td><td class="n">$22</td></tr>
+    <tr><td>project-8</td><td class="n" data-v="209">$209</td><td class="n">1%</td><td class="n" data-v="100">$100</td><td class="n">8</td><td class="n">$26</td></tr>
+    <tr><td>fleet · harness-console · test fixtures</td><td class="n" data-v="185">$185</td><td class="n">1%</td><td class="n" data-v="68">$68</td><td class="n">0</td><td class="n">—</td></tr>
+  </tbody>
+</table></div>
+<p class="muted" style="font-size:13px;margin-top:10px">project-9 priced 52 tickets but merged one harness PR. Its repo is mostly aepod's hand work (91 PRs), so harness builds there may land as changes he merges himself. Not verified.</p>
+</div>
+<div class="card">
+<h3>Claude spend by account, and the cash</h3>
+<div class="tw"><table id="t-acct">
+  <thead><tr><th>Account</th><th class="n">API-equivalent</th><th>Meter</th></tr></thead>
+  <tbody>
+    <tr><td>max1–max7 (two label styles)</td><td class="n" data-v="7443">$7,443</td><td>subscription seats, no meter</td></tr>
+    <tr><td>operator@example.com</td><td class="n" data-v="5704">$5,704</td><td>metered: overage meter moved ≥$13.1K, includes Mac sessions</td></tr>
+    <tr><td>box accounts (project-4, project-3, project-2, project-1)</td><td class="n" data-v="996">$996</td><td>dedicated seats</td></tr>
+    <tr><td>no account label</td><td class="n" data-v="346">$346</td><td>was $6.7K last report</td></tr>
+  </tbody>
+</table></div>
+<p style="margin-top:10px"><b>Cash out the door: about $12K–$21K.</b> That is $3.9K of OpenRouter credits (two top-ups; $1.5K left), $2.2K of Fly, $0.1–$0.7K of xAI, up to $0.6K of Fireworks, and between $6.1K (the priced rows on the metered account) and $13.1K (the meter, which also bills the Mac) of Anthropic overage. Subscriptions absorbed about $12.1K of the API-equivalent: Max seats $7.4K, Codex $3.7K, box accounts $1.0K.</p>
+<p class="muted" style="font-size:13px">The meter reset on Oct 1, and the readable history starts Sep 23. Its value on Sep 21 comes from the last report, and the hours before the reset weren't captured, so $13.1K is a lower bound on how far it moved. OpenRouter's cash still runs $1.9K ahead of its priced rows, the same gap as last time.</p>
+</div>
+</div>
+</section>
+
+<section id="side">
+<h2>Side by side</h2>
+<p class="sub">Same 289-hour average output, five ways to pay for it.</p>
+<div class="tw"><table id="t-side">
+  <thead><tr><th>Setup</th><th class="n">Headcount</th><th class="n">Cost / day</th><th class="n">Cost / PR</th><th class="n">Cost / year</th><th class="n">Harness is cheaper by</th><th>Basis</th></tr></thead>
+  <tbody>
+    <tr class="hl"><td>Cromford (API-equivalent)</td><td class="n">0</td><td class="n" data-v="1788">$1.8K</td><td class="n" data-v="21">$21</td><td class="n" data-v="653000">~$0.65M</td><td class="n">—</td><td>every logged call at list API rates ÷ 1,043 PRs; yearly = 365 × the daily average</td></tr>
+    <tr><td>Cromford (cash, upper bound incl. Fly)</td><td class="n">0</td><td class="n" data-v="1700">$1.0K–$1.7K</td><td class="n" data-v="20">$12–$20</td><td class="n" data-v="620000">$0.37M–$0.62M</td><td class="n">—</td><td>OpenRouter + Fly + xAI + Fireworks + Anthropic overage</td></tr>
+    <tr><td>US team, average</td><td class="n">155 + 15 leads</td><td class="n" data-v="128000">$110K–$153K</td><td class="n" data-v="1477">$1.3K–$1.8K</td><td class="n" data-v="32000000">$27M–$38M</td><td class="n" data-v="72">61–85×</td><td>$150K–$220K/yr loaded ≈ $600–$880/working day; leads $1,100/day; 250 working days</td></tr>
+    <tr><td>Bay Area, senior</td><td class="n">155 + 15 leads</td><td class="n" data-v="185000">~$185K</td><td class="n" data-v="2135">~$2.1K</td><td class="n" data-v="46000000">~$46M</td><td class="n" data-v="104">~104×</td><td>~$1,090 / person / day, same rate as the first report</td></tr>
+    <tr><td>Offshore team</td><td class="n">155 + 15 leads</td><td class="n" data-v="35000">$29K–$41K</td><td class="n" data-v="400">$330–$470</td><td class="n" data-v="8700000">$7M–$10M</td><td class="n" data-v="20">16–23×</td><td>same headcount, ~$170–$240 / day loaded</td></tr>
+  </tbody>
+</table></div>
+<div class="two" style="margin-top:16px">
+  <div class="card"><h3>Cost per day (log scale)</h3><div class="bars" id="costbars"></div><p class="muted" style="font-size:13px;margin-top:10px">Hatched bars sit on a log axis. $1.8K and $128K would not fit on a linear one.</p></div>
+  <div class="card"><h3>Throughput that headcount buys</h3>
+  <div class="tw"><table id="t-thru">
+    <thead><tr><th>Measure</th><th class="n">Harness, 289h avg</th><th class="n">170-person org</th><th>Note</th></tr></thead>
+    <tbody>
+      <tr><td>Merged PRs / day</td><td class="n">87</td><td class="n">~155</td><td>org at 1 PR / eng / day; harness PRs ~2–3× bigger</td></tr>
+      <tr><td>Net lines / day</td><td class="n">75K</td><td class="n">31K–47K</td><td>org at 200–300 net lines / eng / day</td></tr>
+      <tr><td>Issues closed / day</td><td class="n">68</td><td class="n">—</td><td>ai-build issues on GitHub-driven projects only</td></tr>
+      <tr><td>Best single day</td><td class="n">176 PRs</td><td class="n">—</td><td>Tue Sep 22, $7.4K, 230K lines</td></tr>
+      <tr><td>PR open to merge</td><td class="n">1.8h median</td><td class="n">1–5 days</td><td>p90 19h</td></tr>
+      <tr><td>Coordination overhead</td><td class="n">1 operator</td><td class="n">~15 leads + PM/EM</td><td>the layer the harness replaces outright</td></tr>
+    </tbody>
+  </table></div></div>
+</div>
+</section>
+
+<section id="calc">
+<h2>Calculator</h2>
+<p class="sub">Every assumption is an input. Pick a pace to load it, or type your own. Engineers and leads follow the PRs-per-day input (≈1.8 engineers per PR, one lead per ten) unless you edit them directly.</p>
+<div class="card">
+  <div class="presets" style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px">
+    <button class="pre" data-pr="39" data-h="480">Last 4 days · 39/day</button>
+    <button class="pre on" data-pr="87" data-h="1788">This window · 87/day</button>
+    <button class="pre" data-pr="115" data-h="4990">Since Sep 14 · 115/day</button>
+    <button class="pre" data-pr="176" data-h="7372">Best day this window · 176</button>
+    <button class="pre" data-pr="237" data-h="4890">Potential: peak at $21/PR · 237</button>
+  </div>
+  <div class="calc">
+    <div><label for="c-pr">PRs merged / day</label><input id="c-pr" type="number" value="87" min="1"></div>
+    <div><label for="c-eng">Equivalent engineers</label><input id="c-eng" type="number" value="155" min="1"></div>
+    <div><label for="c-lead">Review / lead layer</label><input id="c-lead" type="number" value="15" min="0"></div>
+    <div><label for="c-ecost">Engineer cost / day ($)</label><input id="c-ecost" type="number" value="720" min="1"></div>
+    <div><label for="c-lcost">Lead cost / day ($)</label><input id="c-lcost" type="number" value="1100" min="1"></div>
+    <div><label for="c-h">Harness spend / day ($)</label><input id="c-h" type="number" value="1788" min="1"></div>
+    <div><label for="c-days">Working days / year</label><input id="c-days" type="number" value="250" min="1"></div>
+  </div>
+  <div class="out">
+    <div class="stat"><div class="k">Human team / day</div><div class="v" id="o-hd">—</div><div class="s">engineers + leads, fully loaded</div></div>
+    <div class="stat"><div class="k">Human team / year</div><div class="v" id="o-hy">—</div><div class="s">at working-days input</div></div>
+    <div class="stat"><div class="k">Human cost / PR</div><div class="v" id="o-hpr">—</div><div class="s">team cost ÷ PRs</div></div>
+    <div class="stat"><div class="k">Harness cost / PR</div><div class="v" id="o-apr">—</div><div class="s">spend ÷ PRs</div></div>
+    <div class="stat"><div class="k">Harness is cheaper by</div><div class="v" id="o-x">—</div><div class="s">per day, same output</div></div>
+    <div class="stat"><div class="k">Yearly saving</div><div class="v" id="o-save">—</div><div class="s">human team / year − harness × 365</div></div>
+  </div>
+</div>
+</section>
+
+<section id="caveats">
+<h2>Caveats, stated plainly</h2>
+<ul class="cols2">
+  <li><b>The basis is list API rates, not an invoice.</b> It answers "what would this output cost to buy", not "what was charged". The cash range is in the cost section.</li>
+  <li><b>The pricing formula got stricter.</b> This report applies the fleet's own 1-hour cache-write rate and the grok 2× cliff, which the earlier reports skipped. On their method this window is $20.3K, not $21.5K.</li>
+  <li><b>The fleet slowed and this report doesn't say why.</b> 39 PRs a day over the last four days, nothing from project-1 since Sep 25, nothing from project-5 since Oct 1, a 16-hour gap with no merges Oct 2–3. Spend fell in step, so this looks like no work queued, not a capacity limit. That was not checked.</li>
+  <li><b>Self-work is 72% of the window.</b> 754 of 1,043 PRs went into cromford. They are real merged code, but they are the harness improving itself, not client product.</li>
+  <li><b>Two classification calls.</b> <code>cromford-builders[bot]</code> (the Fly builders' new GitHub App) counts as harness. 64 PRs on <code>lead/</code> branches under the operator's account count as operator work, the way Mac sessions always have. 27 merge-train PRs are excluded because their contents are already counted.</li>
+  <li><b>Coverage is still the open risk.</b> A call that writes no cost row is invisible. OpenRouter's cash runs $1.9K ahead of its priced rows. 2,000 refusal and context-kill rows carry zero tokens. xAI, Fireworks and Codex have no spend endpoint.</li>
+  <li><b>The Anthropic meter is a weak check.</b> It also bills Mac sessions, its history only goes back to Sep 23, it reset on Oct 1, and its latest snapshot came back with status "error".</li>
+  <li><b>Fly is now real money.</b> $2,160 of machine time across 42 machines, 4.6× last window. It is excluded from the API-equivalent figure as infrastructure.</li>
+  <li><b>Lines are inflated.</b> Each harness PR carries its plan and build-log files alongside code and tests. Method A (by PRs) is the safer headcount anchor; Method B is a ceiling.</li>
+  <li><b>Human rates are averages.</b> $150K–$220K fully loaded per US engineer, $1,100 a day per lead. The calculator takes other numbers.</li>
+  <li><b>Not the same work.</b> A 170-person org also ships design, product management, support and on-call. This compares engineering throughput only.</li>
+  <li><b>The potential row is an extrapolation.</b> It combines the proven peak volume (Sep 18) with this window's cost per PR. No day has yet done both.</li>
+</ul>
+</section>
+
+<footer>
+Generated 2026-10-03 ~2pm ET. Throughput: GitHub REST API across the fleet.conf repos plus cromford-console. This covers 1,369 merged PRs with their additions, deletions and files, and closed ai-build issues, merged between 2026-09-21T16:45Z and 2026-10-03T17:34Z. Cost: 17,704 per-call rows from harness-jobs <code>/api/metrics/cost-rows</code>, read on the hub through the fleet's own client, deduped on (box, row_hash), and repriced from token counts with <code>catalog/model-prices.json</code> using the fleet's <code>cost_price_tokens</code> (<code>bin/lib/cost-row.sh</code>). The same rows sum to $22.4K on their recorded <code>cost_usd</code> (1,027 blank). Cross-checked against <code>/api/metrics/extra-usage</code>, <code>/api/metrics/vendor-spend</code> and <code>/api/metrics/cost-anchored</code> (7-day roll-up $3.5K over 267 PRs). Supersedes nothing: the <a href="HARNESS_VS_ENGINEERING_TEAM_2026-09-21.html">Sep 21 report</a> stays as the record of its window.
+</footer>
+</main>
+<script>
+(function(){
+  const fmt=n=>n>=1e6?'$'+(n/1e6).toFixed(1)+'M':n>=1e3?'$'+(n/1e3).toFixed(n>=1e5?0:1)+'K':'$'+Math.round(n);
+  const esc=s=>String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+  function bars(el, rows, opts){
+    opts=opts||{}; const sc=v=>opts.log?Math.log10(v):v; const max=Math.max(...rows.map(r=>sc(r.v)));
+    el.innerHTML=rows.map(r=>`<div class="bar"><div class="lab" title="${esc(r.l)}">${esc(r.l)}</div><div class="trk"><div class="fil ${r.cls||''}" style="width:${sc(r.v)/max*100}%" title="${esc(r.title||r.l+': '+r.d)}"></div></div><div class="val">${esc(r.d)}</div></div>`).join('');
+  }
+  bars(document.getElementById('prbars'),[['cromford',754],['project-5',178],['project-4',65],['project-3',20],['project-1',10],['project-8',8],['project-7',4],['project-2',3],['project-9',1]].map(([l,v])=>({l,v,d:String(v),title:`${l}: ${v} harness PRs`})));
+  bars(document.getElementById('hcbars'),[
+    {l:'By PRs (A)',v:98,d:'90–105',title:'Method A: 80–90 engineers + 10–15 leads'},
+    {l:'Midpoint',v:170,d:'155 + 15',title:'155 engineers + 15 leads'},
+    {l:'By volume (B)',v:313,d:'250–375',title:'Method B: 75.4K net lines / 200–300 per engineer-day'},
+  ]);
+  bars(document.getElementById('capbars'),[
+    {l:'Last 4 days',v:77,d:'~77'},{l:'This window',v:170,d:'~170',cls:''},{l:'Since Sep 14',v:226,d:'~226'},
+    {l:'Best day (Sep 22)',v:345,d:'~345'},{l:'Proven peak',v:465,d:'~465',cls:'s2'}]);
+  bars(document.getElementById('costbars'),[
+    {l:'Harness, API-equiv.',v:1788,d:'$1.8K',cls:'log',title:'Harness at list API rates: $1,788 / day'},
+    {l:'Harness, cash (upper)',v:1700,d:'$1.7K',cls:'log',title:'Cash upper bound incl. Fly: ~$1,700 / day'},
+    {l:'Offshore team',v:35000,d:'$35K',cls:'log s2',title:'Offshore 170 people: ~$35,000 / day'},
+    {l:'US team, average',v:128000,d:'$128K',cls:'log s2',title:'US average 170 people: ~$128,000 / day'},
+    {l:'Bay Area, senior',v:185000,d:'$185K',cls:'log s2',title:'Bay Area senior 170 people: ~$185,000 / day'},
+  ],{log:true});
+
+  // label, PRs, spend, all-in $/PR, median ticket, partial?, window
+  const D=[
+    ['Sep 14',90,3355,37,11,1],['15',139,9111,66,13],['16',202,16343,81,14],['17',209,14837,71,16],['18',237,17249,73,18],['19',114,8249,72,22],['20',91,2761,30,17],
+    ['21',129,2880,22,14],['22',176,7372,42,16.4],['23',122,1898,16,5.3],['24',155,1908,12,3.9],['25',68,1241,18,4.1],['26',60,1414,24,4.2],['27',76,1475,19,5.9],
+    ['28',95,1242,13,5.9],['29',80,1400,18,6.6],['30',34,406,12,6.4],['Oct 1',58,559,10,5.4],['2',15,294,20,3.1],['3',31,456,15,1.8,1]];
+  const FONT='font:12px -apple-system,BlinkMacSystemFont,Segoe UI,Inter,sans-serif';
+  // dual: PR bars + spend line
+  (function(){
+    const el=document.getElementById('dualchart'); const W=1200,H=300,L=46,R=60,T=18,B=40,n=D.length,iw=(W-L-R)/n;
+    const yp=v=>T+(H-T-B)*(1-v/250), ys=v=>T+(H-T-B)*(1-v/18000);
+    let s=`<svg viewBox="0 0 ${W} ${H}" width="100%" style="display:block;${FONT}" role="img" aria-label="Harness PRs merged and spend by day">`;
+    for(const g of [0,50,100,150,200,250]) s+=`<line x1="${L}" x2="${W-R}" y1="${yp(g)}" y2="${yp(g)}" stroke="var(--line)"/><text x="${L-6}" y="${yp(g)+4}" text-anchor="end" fill="var(--s1)">${g}</text><text x="${W-R+6}" y="${yp(g)+4}" fill="var(--s2)">${fmt(g/250*18000)}</text>`;
+    // window dividers
+    [[0,'Sep 14 report'],[3.5,'Sep 17 report'],[7.5,'this report']].forEach(([i,t])=>{const x=L+i*iw; s+=`<line x1="${x}" x2="${x}" y1="${T-6}" y2="${H-B}" stroke="var(--muted)" stroke-dasharray="3 4"/><text x="${x+4}" y="${T+4}" fill="var(--muted)">${t}</text>`;});
+    D.forEach((d,i)=>{const x=L+i*iw,bw=iw*0.6,bx=x+(iw-bw)/2; s+=`<g><title>${esc(d[0])}: ${d[1]} PRs · ${fmt(d[2])} · $${d[3]}/PR</title><rect x="${bx}" y="${yp(d[1])}" width="${bw}" height="${yp(0)-yp(d[1])}" rx="3" fill="var(--s1)" opacity="${d[5]?0.55:0.9}"/><text x="${x+iw/2}" y="${H-B+16}" text-anchor="middle" fill="var(--muted)">${esc(d[0])}</text></g>`;});
+    s+=`<polyline fill="none" stroke="var(--s2)" stroke-width="2.5" points="${D.map((d,i)=>`${L+i*iw+iw/2},${ys(d[2])}`).join(' ')}"/>`;
+    D.forEach((d,i)=>{s+=`<circle cx="${L+i*iw+iw/2}" cy="${ys(d[2])}" r="3.5" fill="var(--s2)"><title>${esc(d[0])}: ${fmt(d[2])}</title></circle>`;});
+    s+=`<text x="${L}" y="${H-6}" fill="var(--muted)">Sep 21 combines the last report's morning with this report's afternoon. Faded bars are partial days.</text></svg>`;
+    el.innerHTML=`<div style="overflow-x:auto"><div style="min-width:760px">${s}</div></div>`;
+  })();
+  // $/PR bars + median ticket dots
+  (function(){
+    const el=document.getElementById('dailychart'); const W=1200,H=280,L=46,R=20,T=18,B=40,n=D.length,iw=(W-L-R)/n; const y=v=>T+(H-T-B)*(1-v/90);
+    let s=`<svg viewBox="0 0 ${W} ${H}" width="100%" style="display:block;${FONT}" role="img" aria-label="All-in cost per PR and median ticket cost by day">`;
+    for(const g of [0,20,40,60,80]) s+=`<line x1="${L}" x2="${W-R}" y1="${y(g)}" y2="${y(g)}" stroke="var(--line)"/><text x="${L-6}" y="${y(g)+4}" text-anchor="end" fill="var(--muted)">$${g}</text>`;
+    D.forEach((d,i)=>{const x=L+i*iw,bw=iw*0.55,bx=x+(iw-bw)/2;
+      s+=`<g><title>${esc(d[0])}: all-in $${d[3]} per PR · median ticket $${d[4]}</title><rect x="${bx}" y="${y(d[3])}" width="${bw}" height="${y(0)-y(d[3])}" rx="3" fill="var(--s1)" opacity="${d[5]?0.55:0.9}"/><text x="${bx+bw/2}" y="${y(d[3])-5}" text-anchor="middle" fill="var(--ink)" font-weight="600">$${d[3]}</text><text x="${x+iw/2}" y="${H-B+16}" text-anchor="middle" fill="var(--muted)">${esc(d[0])}</text></g>`;});
+    s+=`<polyline fill="none" stroke="var(--s2)" stroke-width="2" stroke-dasharray="4 4" points="${D.map((d,i)=>`${L+i*iw+iw/2},${y(d[4])}`).join(' ')}"/>`;
+    D.forEach((d,i)=>{s+=`<circle cx="${L+i*iw+iw/2}" cy="${y(d[4])}" r="5" fill="var(--s2)" stroke="var(--card)" stroke-width="2"/>`;});
+    s+='</svg>';
+    el.innerHTML=`<div style="overflow-x:auto"><div style="min-width:760px">${s}</div></div>`;
+  })();
+
+  const $=id=>document.getElementById(id);
+  function calc(){
+    const eng=+$('c-eng').value||0, lead=+$('c-lead').value||0, ec=+$('c-ecost').value||0, lc=+$('c-lcost').value||0, h=+$('c-h').value||1, pr=+$('c-pr').value||1, days=+$('c-days').value||1;
+    const hd=eng*ec+lead*lc;
+    $('o-hd').textContent=fmt(hd); $('o-hy').textContent=fmt(hd*days);
+    $('o-hpr').textContent=fmt(hd/pr); $('o-apr').textContent='$'+(h/pr).toFixed(0);
+    $('o-x').textContent=(hd/h).toFixed(0)+'×'; $('o-save').textContent=fmt(hd*days-h*365);
+  }
+  function fromPr(){ const pr=+$('c-pr').value||0; const e=Math.round(pr*1.79); $('c-eng').value=e; $('c-lead').value=Math.round(e/10); }
+  $('c-pr').addEventListener('input',()=>{fromPr();calc();});
+  document.querySelectorAll('.calc input').forEach(i=>{ if(i.id!=='c-pr') i.addEventListener('input',calc); });
+  document.querySelectorAll('button.pre').forEach(b=>b.addEventListener('click',()=>{
+    document.querySelectorAll('button.pre').forEach(o=>o.classList.remove('on')); b.classList.add('on');
+    $('c-pr').value=b.dataset.pr; $('c-h').value=b.dataset.h; fromPr(); calc();
+  }));
+  calc();
+
+  document.querySelectorAll('table').forEach(t=>{
+    const ths=t.querySelectorAll('thead th');
+    ths.forEach((th,idx)=>{
+      th.setAttribute('role','columnheader'); th.tabIndex=0;
+      const go=()=>{
+        const dir=th.getAttribute('aria-sort')==='ascending'?'descending':'ascending';
+        ths.forEach(o=>o.removeAttribute('aria-sort')); th.setAttribute('aria-sort',dir);
+        const tb=t.querySelector('tbody'); const rows=[...tb.querySelectorAll('tr')];
+        const num=th.classList.contains('n');
+        const key=r=>{const c=r.children[idx]; if(!c) return ''; if(c.dataset.v!==undefined) return +c.dataset.v; const s=c.textContent.trim().replace(/[~$,+−×]/g,'').replace('K','e3').replace('M','e6'); const n=parseFloat(s); return (num||idx===0&&false)&&!isNaN(n)?n:(!isNaN(n)&&num?n:c.textContent.trim().toLowerCase());};
+        rows.sort((a,b)=>{const ka=key(a),kb=key(b); const r=(typeof ka==='number'&&typeof kb==='number')?ka-kb:String(ka).localeCompare(String(kb)); return dir==='ascending'?r:-r;});
+        rows.forEach(r=>tb.appendChild(r));
+      };
+      th.addEventListener('click',go); th.addEventListener('keydown',e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();go();}});
+    });
+  });
+})();
+</script>
+</body>
+</html>

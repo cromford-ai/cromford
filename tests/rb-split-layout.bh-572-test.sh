@@ -80,8 +80,8 @@ driver_shape "$T/pasted.sh" rb_ "${RB_MODS[@]}" >/dev/null \
 { cat "$DRV"; printf '%s\n' 'build_new_stage() {' '  local stage_out="$BUILD_DIR/new-stage.txt"' '  printf "new stage for %s\n" "$KEY" > "$stage_out"' '}'; } > "$T/newfn.sh"
 WHY=$(driver_shape "$T/newfn.sh" rb_ "${RB_MODS[@]}") \
   && bad "check 3 accepts a driver with a new unprefixed function build_new_stage()" || ok
-printf '%s\n' "$WHY" | grep -q '^S1: .*build_new_stage' && ok \
-  || bad "check 3 refuses build_new_stage() but not by S1: $(printf '%s' "$WHY" | head -2)"
+grep -q '^S1: .*build_new_stage' <<<"$WHY" && ok \
+  || bad "check 3 refuses build_new_stage() but not by S1: $(head -2 <<<"$WHY")"
 WHY=$(driver_shape "$DRV" rb_ "${RB_MODS[@]}") && ok || bad "bin/run-build.sh carries a stage body: $WHY"
 
 # check 4
@@ -93,10 +93,10 @@ OUT=$(env -i PATH="$PATH" bash --noprofile --norc -uo pipefail -c "$SRC echo __S
 RC=$?
 [ "$RC" -eq 0 ] && ok || bad "sourcing the seven modules under -uo pipefail exits $RC"
 PRE=$(printf '%s\n' "$OUT" | sed '/^__SOURCED__$/,$d')
-[ -z "$PRE" ] && ok || bad "sourcing the modules printed something: $(printf '%s' "$PRE" | head -3)"
+[ -z "$PRE" ] && ok || bad "sourcing the modules printed something: $(head -3 <<<"$PRE")"
 FNS=$(printf '%s\n' "$OUT" | sed -n '/^__SOURCED__$/,$p')
 for e in $ENTRIES; do
-  printf '%s\n' "$FNS" | grep -qx "declare -f $e" && ok || bad "no module defines $e"
+  grep -qx "declare -f $e" <<<"$FNS" && ok || bad "no module defines $e"
 done
 
 # check 5, the counter first: over a fixture with every near-miss shape

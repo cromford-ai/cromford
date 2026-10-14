@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import worker from '../src/index.js';
+import { jobsSchemaSql } from './lib/jobs-schema.js';
 
 // POST /api/wakes/claim, GET|PUT /api/wakes/cursor, POST /api/wakes/cooldown/take
 // and the orphan-claim sweep on POST /api/wakes/prune (BH-2636, BH-2525.1).
@@ -14,7 +15,7 @@ import worker from '../src/index.js';
 // applied, and every statement is recorded so "a 400 ran nothing" is an
 // assertion (D11).
 
-const SCHEMA = readFileSync(fileURLToPath(new URL('../schema.sql', import.meta.url)), 'utf8');
+const SCHEMA = jobsSchemaSql();
 const SECRET = 'test-secret';
 
 // The D1-shaped adapter wakes-prune.bh-1267 uses, copied (that file exports nothing).

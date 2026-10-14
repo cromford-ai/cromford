@@ -1232,7 +1232,7 @@ outranks the env on every box; see `catalog/lanes.d/_lib.json` for the other
 `lib.agent-call.*` knobs.
 
 **`GROK_BILLING=api` is an architecture change, not an env edit.** Flipping it
-moves a lane from flat-rate to per-token; it cost $N in two days once
+moves a lane from flat-rate to per-token; it cost $460 in two days once
 (`bin/billing-mode.sh:47-52`).
 
 `openrouter` and `fireworks` are the codex CLI pointed at another provider

@@ -631,8 +631,7 @@ sweep 'TK-77 t-77 — ready project=x-os'
 [ -d "$T/pl/plans/x-os-TK-99" ] \
   && bad "a pre-plan whose key left the queue must still be dropped (small set)" || ok
 # No pipeline left at either site: the next edit must not reintroduce it.
-grep -q 'printf .*"\$RQL" | grep -q' "$DIR/bin/preplan-tick.sh" \
-  && bad "the housekeeping sweep must read \$RQL with a here-string, not a pipe into grep -q" || ok
+grep -q 'printf .*"\$RQL" | grep -q' "$DIR/bin/preplan-tick.sh" && bad "the housekeeping sweep must read \$RQL with a here-string, not a pipe into grep -q" || ok  # determinism: ok race-sigpipe-echo the shape is a grep PATTERN that asserts it is absent from bin/; no pipe runs here
 
 # ══ 16. THE LIB'S OWN DEDUPE MUST NOT PIPE INTO grep -q EITHER ═════════════
 # Round-3 N2. rq_lines de-duplicates a key present in BOTH halves with
@@ -661,8 +660,7 @@ OUT=$(lib 1 up 'rq_lines "$HARNESS" x-os')
 grep -q '^TK-5 ' <<<"$OUT" \
   && ok || bad "a row whose key is NOT on the file must still be emitted, got: [$OUT]"
 # No pipeline left at the site: the next edit must not reintroduce it.
-grep -q 'printf .*"\$keys" | grep -q' "$DIR/bin/lib/ready-queue.sh" \
-  && bad "rq_lines must test key membership without piping into grep -q" || ok
+grep -q 'printf .*"\$keys" | grep -q' "$DIR/bin/lib/ready-queue.sh" && bad "rq_lines must test key membership without piping into grep -q" || ok  # determinism: ok race-sigpipe-echo the shape is a grep PATTERN that asserts it is absent from bin/; no pipe runs here
 
 echo "ready-queue-rows: $PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ]

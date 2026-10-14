@@ -918,6 +918,7 @@ mc_eject_runs_file() { printf '%s/eject-runs/%s' "$MC_STATE_DIR" "$(mc_handoff_i
 mc_eject_fix_now() {
   local p="$1" slug="$2" key="$3" head="$4" url="$5" runs="" rc f
   [ -n "$key" ] && [ -n "$head" ] || return 0
+  command -v nv_twice_note >/dev/null 2>&1 && nv_twice_note "$p" "$slug" "$key" "$head" "$url"
   mc_attempt_has "ejectfix $key $head" 2>/dev/null && return 0
   if [ "${ACTIONS:-0}" != 1 ]; then
     mc_log "$key would hand queue-ejected-twice to a fix round now with its two failing batch runs (observe mode: nothing written)"; return 0; fi

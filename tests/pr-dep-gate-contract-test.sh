@@ -113,7 +113,7 @@ rm -f "$T/h/flags/pr-dep-gate-off"
 # Including the incident's own line, verbatim from #615's body.
 while IFS= read -r line; do
   [ -n "$line" ] || continue
-  run_case 'printf "%s\n" "$L" | grep -qE "$PDG_DEP_RE"' L="$line"
+  run_case 'grep -qE "$PDG_DEP_RE" <<<"$L"' L="$line"
   [ "$RC" = 0 ] && ok || bad "PDG_DEP_RE must match: [$line]"
 done <<'POS'
 Depends on #609 (PR #612)
@@ -128,7 +128,7 @@ POS
 # every PR body it creates — matching it would hold the whole fleet for ever.
 while IFS= read -r line; do
   [ -n "$line" ] || continue
-  run_case 'printf "%s\n" "$L" | grep -qE "$PDG_DEP_RE"' L="$line"
+  run_case 'grep -qE "$PDG_DEP_RE" <<<"$L"' L="$line"
   [ "$RC" != 0 ] && ok || bad "PDG_DEP_RE must NOT match: [$line]"
 done <<'NEG'
 > Depends on #609 (PR #612)

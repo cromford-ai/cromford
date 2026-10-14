@@ -42,7 +42,7 @@ cat > "$T/c/tests/x-test.sh" <<'EOF'
 #!/bin/bash
 if git -C "$DIR" rev-parse --verify origin/main >/dev/null 2>&1; then
   CHANGED=$(git -C "$DIR" diff --name-only origin/main...HEAD)
-  if printf '%s\n' "$CHANGED" | grep -q '^worker/'; then
+  if grep -q '^worker/' <<<"$CHANGED"; then
     bad "this branch edits worker/ — that receiver is its own ticket, not this one"
   else ok; fi
 fi
@@ -61,7 +61,7 @@ if git -C "$DIR" rev-parse --verify origin/main >/dev/null 2>&1; then
   if ! grep -qE '^(\.harness/specs/BH-903/|guardrails/inapp-prompt)' <<<"$(printf '%s\n' "$CHANGED")"; then
     echo "SKIP (this branch is not BH-903's slice) — the negative-diff arm judges only the ticket's own branch."
   else
-  if printf '%s\n' "$CHANGED" | grep -q '^worker/'; then
+  if grep -q '^worker/' <<<"$CHANGED"; then
     bad "this branch edits worker/ — that receiver is its own ticket, not this one"
   else ok; fi
   fi
@@ -168,7 +168,7 @@ cat > "$T/c/tests/x-test.sh" <<'EOF'
 #!/bin/bash
 if git -C "$DIR" rev-parse --verify origin/main >/dev/null 2>&1; then
   CHANGED=$(git -C "$DIR" diff --name-only origin/main...HEAD)   # determinism: ok this fixture repo IS the branch under test
-  if printf '%s\n' "$CHANGED" | grep -q '^worker/'; then
+  if grep -q '^worker/' <<<"$CHANGED"; then
     bad "this branch edits worker/"
   else ok; fi
 fi
@@ -222,7 +222,7 @@ cat > "$T/c/tests/x-test.sh" <<'EOF'
 #!/bin/bash
 if git -C "$DIR" rev-parse --verify origin/main >/dev/null 2>&1; then
   CHANGED=$(git -C "$DIR" diff --name-only origin/main...HEAD)
-  if printf '%s\n' "$CHANGED" | grep -q '^worker/'; then
+  if grep -q '^worker/' <<<"$CHANGED"; then
     bad "this branch edits worker/"
   else ok; fi
 fi

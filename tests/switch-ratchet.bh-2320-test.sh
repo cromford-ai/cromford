@@ -76,7 +76,7 @@ drops() {
   for d in "$1"/tests/switch-ratchet.d/*.drop; do
     [ -f "$d" ] || continue
     body=$(grep -vE '^[[:space:]]*(#|$)' "$d")
-    if [ "$(printf '%s\n' "$body" | grep -c .)" -eq 1 ] && [[ "$body" =~ ^[[:space:]]*([0-9]+)[[:space:]]*$ ]]; then
+    if [ "$(grep -c . <<<"$body")" -eq 1 ] && [[ "$body" =~ ^[[:space:]]*([0-9]+)[[:space:]]*$ ]]; then
       DROPS=$((DROPS + 10#${BASH_REMATCH[1]})); ok
     else
       bad "R0 ${d#"$1"/}: drop must be one non-negative integer, got '$(printf '%s' "$body" | tr '\n' ' ')'"

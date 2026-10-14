@@ -7,7 +7,7 @@ one runner floods the ledger with rows nobody priced.
 
 Before BH-1020 only the grok branch priced its own tokens. The codex, openrouter
 and fireworks lanes captured token counts and wrote them beside an empty
-`cost_usd`, so 1,987 rows and about $N in three days read as $0.00 on every
+`cost_usd`, so 1,987 rows and about $3.5K in three days read as $0.00 on every
 view that does not go through `bin/cost-rollup.sh` (the DB mirror,
 `run-build.sh`'s `COST_LINE`, `builder-direct.sh`'s per-build cost,
 `run-triage.sh`'s spend line, `cost-reconcile.sh` itself).

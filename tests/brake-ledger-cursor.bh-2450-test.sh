@@ -84,7 +84,7 @@ GET2=$(grep '^GET ' "$T/req.log" | sed -n 2p)
 WANT="GET /api/ledger?kind=brake%3Atriage-family&limit=1000&before=$(enc "$(jq -nr --argjson n "$NOW" '$n|todate')")&before_key=$(enc "$LASTKEY")"
 [ "$RC" -eq 0 ] && [ "$GET2" = "$WANT" ] \
   && ok || bad "C: second request was '$GET2', wanted '$WANT' (rc=$RC)"
-[ "$(printf '%s\n' "$OUT" | grep -c "$TAB")" -eq 1002 ] && grep -q "^old1${TAB}" <<< "$OUT" \
+[ "$(grep -c "$TAB" <<<"$OUT")" -eq 1002 ] && grep -q "^old1${TAB}" <<< "$OUT" \
   && ok || bad "C: brake_read printed $(printf '%s\n' "$OUT" | grep -c "$TAB") rows, wanted 1002"
 
 # --- D. a full page with no last key is an outage ----------------------------

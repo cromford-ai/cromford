@@ -351,7 +351,11 @@ echo "main is red" > "$T/h/flags/main-red-mgfy"
 run_tick env MC_TTL_READY=0
 grep -q "$K31 READY and HELD by the main-red freeze" "$CLOG" && ok || bad "T6: the freeze holds the row ($(grep -o 'mgfy-os#31 .*' "$CLOG" | head -4))"
 [ ! -s "$T/status-posts.txt" ] && ok || bad "T6: zero status POSTs under the freeze ($(cat "$T/status-posts.txt"))"
-grep -q "$K31 stuck in READY past its TTL — no deterministic re-kick" "$CLOG" && ok || bad "T6: the READY TTL keeps its old line ($(grep -o 'mgfy-os#31 stuck.*' "$CLOG" | head -2))"
+# TEST-CHANGE (BH-6000): READY past its TTL now has a re-kick arm
+# (mc_ready_rekick: one keyed conductor run per head when no hold is recorded).
+# This row IS held (the main-red freeze, recorded as its ready-why), so the arm
+# must name the hold and launch nothing. The status assertions are unchanged.
+grep -q "$K31 stuck in READY past its TTL on .* — the conductor holds it on purpose" "$CLOG" && ok || bad "T6: the READY TTL names the freeze hold and re-kicks nothing ($(grep -o 'mgfy-os#31 stuck.*' "$CLOG" | head -2))"
 run_tick env MC_TTL_READY=0
 [ ! -s "$T/status-posts.txt" ] && ok || bad "T6: and a second tick still POSTs nothing ($(cat "$T/status-posts.txt"))"
 

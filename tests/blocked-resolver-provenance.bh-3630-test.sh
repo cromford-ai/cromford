@@ -12,7 +12,8 @@
 # THE ACCEPTANCE ROWS (plan R1-R8):
 #   R1  provenance-ci-red maps to the ci-red ladder; a bare `provenance` does not.
 #   R2  every reason that mapped before still maps to the same class and action,
-#       in BOTH copies (the inline one and bin/lib/br/ladder.sh).
+#       in BOTH reads (the resolver corpus and bin/lib/br/ladder.sh; BH-5241
+#       cut the inline copy, so the corpus finds the module's).
 #   R3  a whole tick: provenance row + the conductor's APPROVE/red detail on the
 #       row's head -> candidate `provenance-ci-red`, the ladder's first ci-red
 #       rung, and a resolver claim for that head.
@@ -37,11 +38,16 @@ NOW=$(date +%s)
 # ============================================================================
 # R1 / R2 — the classifier, pure, in both copies.
 # ============================================================================
+# BH-5241: the corpus is the driver plus bin/lib/br/*.sh (tests/lib/br-corpus.sh),
+# because the ladder functions moved out of the driver into bin/lib/br/ladder.sh.
+# shellcheck source=tests/lib/br-corpus.sh
+. "$DIR/tests/lib/br-corpus.sh" || exit 1
+br_corpus "$DIR" "$T/br-corpus.sh" || exit 1
 extract() { # extract <file> <fn>...
   local f="$1"; shift
   for fn in "$@"; do awk -v F="^$fn\\(\\)" '$0~F{f=1} f{print} f&&/^}$/{exit}' "$f"; done
 }
-for src in "$DIR/bin/blocked-resolver.sh" "$DIR/bin/lib/br/ladder.sh"; do
+for src in "$T/br-corpus.sh" "$DIR/bin/lib/br/ladder.sh"; do
   extract "$src" br_ladder_class br_action br_reason_of > "$T/cls.sh"
   [ "$(grep -c '^br_.*() {' "$T/cls.sh")" = 3 ] && ok || bad "could not extract the classifier from $src"
   C() { bash -c '. "$0"; "$@"' "$T/cls.sh" "$@"; }

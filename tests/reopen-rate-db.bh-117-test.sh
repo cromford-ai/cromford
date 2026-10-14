@@ -22,6 +22,9 @@
 # Run from anywhere: tests/reopen-rate-db.bh-117-test.sh   (exit 0 = all pass)
 set -uo pipefail
 . "$(dirname "$0")/lib/scratch.sh" || exit 1
+# TEST-CHANGE BH-6052: the day stamp below is read by the code and again here; never straddle 00:00Z.
+. "$(dirname "$0")/lib/day-boundary.sh" || exit 1
+clear_boundary 86400 30 || exit 1
 DIR=$(cd "$(dirname "$0")/.." && pwd)
 . "$DIR/tests/lib/rb-all.sh" || exit 1
 RB_ALL=$(rb_all "$DIR" "$T/run-build.all.sh")
@@ -141,9 +144,12 @@ TODAY=$(date -u +%Y%m%d)
 printf 'date,project,key,from,to\n%s,p-one,#1,done,open\n%s,p-one,#2,done,open\n' "$TODAY" "$TODAY" > "$B/logs/reopens.csv"
 RJ="$B/state/reopen-rate.json"
 
+# TEST-CHANGE(BH-6159): REOPEN_REASON=0 scopes section B to the reopen_rate rows.
+# The lane now also saves a reopen_reason row for each in-window CSV row (the
+# #1/#2 fixture rows), which tests/reopen-reason.bh-6159-test.sh pins.
 brun() { # brun <HARNESS_SECRET> -> rc of the real lane
   : > "$T/curl.log"; : > "$B/logs/ALERTS.log"; rm -f "$RJ"
-  HARNESS="$B" HARNESS_ENV_DIR="$B/env" FLEET_CONF="$B/fleet.conf" HARNESS_SECRET="$1" \
+  HARNESS="$B" HARNESS_ENV_DIR="$B/env" FLEET_CONF="$B/fleet.conf" HARNESS_SECRET="$1" REOPEN_REASON=0 \
     JOBS_URL=http://jobs.test JOBS_RETRIES=0 bash "$DIR/bin/reopen-metrics.sh" > "$T/b.out" 2>&1
   echo $?
 }

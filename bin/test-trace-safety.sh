@@ -116,6 +116,17 @@
 #   starts empty on every run. bin/ci-durations.sh merge folds a batch's rows
 #   into the shard weights (docs/ci-durations.md).
 #
+# A TEST PRINTS NO CREDENTIAL (BH-6672). A pool box exports GH_TOKEN as a live
+#   GitHub App token, and tests/batch-resolve-test.sh printed it into the run
+#   output. Every test here starts with GH_TOKEN and GITHUB_TOKEN set to a
+#   CANARY: `ghs_canary` + 30 hex characters, made once per run, never written
+#   in source and never printed. A test whose output (stdout and stderr, in
+#   both modes) holds the canary is `HIT <test> printed-credential GH_TOKEN
+#   (…)`, which counts like any other hit. A test that sources
+#   tests/lib/scratch.sh never sees it: the lib unsets both. Under --gate a
+#   failed test's output is printed through token_redact
+#   (bin/lib/token-redact.sh) when the lib is beside this script.
+#
 # KNOBS:
 #   TRACE_SAFETY_TEST_TIMEOUT  per-test timeout in whole seconds (default 600)
 #   TRACE_SAFETY_KEEP=1        keep the work dir and every trace, print where
@@ -176,6 +187,12 @@ if [ -f "$SELF_DIR/lib/suite-runner.sh" ]; then
   # shellcheck source=lib/suite-runner.sh
   . "$SELF_DIR/lib/suite-runner.sh" || die "cannot source $SELF_DIR/lib/suite-runner.sh"
 fi
+# The same holds for the token scrub: a lone copy still finds the canary, and
+# only prints a failed test's output unscrubbed.
+if [ -f "$SELF_DIR/lib/token-redact.sh" ]; then
+  # shellcheck source=lib/token-redact.sh
+  . "$SELF_DIR/lib/token-redact.sh" || die "cannot source $SELF_DIR/lib/token-redact.sh"
+fi
 
 # ── arguments ────────────────────────────────────────────────────────────────
 MODE=run
@@ -201,7 +218,7 @@ while [ $# -gt 0 ]; do
     --shard)   [ $# -ge 2 ] || die "--shard needs a spec like 0/4"
                SHARD="$2"; shift ;;
     --shard=*) SHARD="${1#--shard=}" ;;
-    -h|--help) sed -n '2,149p' "$0"; exit 0 ;;
+    -h|--help) sed -n '2,160p' "$0"; exit 0 ;;
     -*)        die "unknown flag $1" ;;
     *)         [ -z "$ROOT" ] || die "only one root may be given (got '$ROOT' and '$1')"
                ROOT="$1" ;;
@@ -343,6 +360,12 @@ safe_redirect() { # <resolved absolute path> — the devices a redirect may name
 WORK="$(mktemp -d "${TMPDIR:-/tmp}"/trace-safety.XXXXXX)" \
   || die "cannot create a work dir under ${TMPDIR:-/tmp}"
 KEEP_WORK=0
+# The credential canary (BH-6672): made at run time, so no source line holds it.
+CANARY="ghs_canary$(printf '%s %s %s' "$$" "${EPOCHREALTIME:-}" "$WORK" | sha256sum | cut -c1-30)"
+[ "${#CANARY}" = 40 ] || die "could not make the credential canary"
+print_redacted() { # <file> — a failed test's output, token shapes scrubbed
+  if command -v token_redact >/dev/null 2>&1; then token_redact < "$1"; else cat "$1"; fi
+}
 cleanup() {
   if [ "$KEEP_WORK" = 1 ] || [ "${TRACE_SAFETY_KEEP:-}" = 1 ]; then
     echo "$SELF_NAME: traces kept in $WORK" >&2
@@ -686,6 +709,9 @@ for TEST_PATH in "${TESTS[@]}"; do
   KEY="${TEST_PATH#"$ROOT"/}"; KEY="${KEY//\//__}"
   TRACE="$WORK/$KEY.trace"
   ERRF="$WORK/$KEY.err"
+  # stdout, kept only in the plain mode (--gate interleaves it into $ERRF) and
+  # only for the canary read below.
+  OUTF="$WORK/$KEY.out"; : > "$OUTF"
   NTESTS=$((NTESTS + 1))
   ROOT_BEFORE=0; root_exists && ROOT_BEFORE=1
 
@@ -698,19 +724,19 @@ for TEST_PATH in "${TESTS[@]}"; do
     T0=$SECONDS; E0=$EPOCHREALTIME
     ( cd "$ROOT" && exec 199>"$TRACE" \
       && ${DFL_PIPE[@]+"${DFL_PIPE[@]}"} env -u HARNESS -u H -u HARNESS_CHECKOUT -u SCRATCH -u T \
-             BASH_ENV="$WORK/trace-env.sh" \
+             GH_TOKEN="$CANARY" GITHUB_TOKEN="$CANARY" BASH_ENV="$WORK/trace-env.sh" \
              timeout "$TEST_TIMEOUT" bash "$TEST_PATH" ) </dev/null >"$ERRF" 2>&1
     RC=$?
     E1=$EPOCHREALTIME
     echo "--- ${TEST_PATH#"$ROOT"/} rc=$RC $((SECONDS - T0))s"
     [ -z "$TIMINGS" ] || awk -v s="${TEST_PATH#"$ROOT"/}" -v a="${E0/,/.}" -v b="${E1/,/.}" -v rc="$RC" \
       'BEGIN { printf "%s\t%.1f\t%s\n", s, b - a, rc }' >> "$TIMINGS"
-    [ "$RC" -eq 0 ] || cat "$ERRF"
+    [ "$RC" -eq 0 ] || print_redacted "$ERRF"
   else
     ( cd "$ROOT" && exec 199>"$TRACE" \
       && ${DFL_PIPE[@]+"${DFL_PIPE[@]}"} env -u HARNESS -u H -u HARNESS_CHECKOUT -u SCRATCH -u T \
-             BASH_ENV="$WORK/trace-env.sh" \
-             timeout "$TEST_TIMEOUT" bash "$TEST_PATH" ) >/dev/null 2>"$ERRF"
+             GH_TOKEN="$CANARY" GITHUB_TOKEN="$CANARY" BASH_ENV="$WORK/trace-env.sh" \
+             timeout "$TEST_TIMEOUT" bash "$TEST_PATH" ) >"$OUTF" 2>"$ERRF"
     RC=$?
   fi
 
@@ -764,12 +790,19 @@ for TEST_PATH in "${TESTS[@]}"; do
       "$NAME" "$CREATE_ROOT"
   fi
 
+  if grep -qF -- "$CANARY" "$ERRF" "$OUTF" 2>/dev/null; then
+    NHIT=$((NHIT + 1))
+    HITS_HERE=$((HITS_HERE + 1))
+    printf 'HIT %s printed-credential GH_TOKEN (a canary from the runner env reached the test output)\n' "$NAME"
+  fi
+
   [ -z "$EXIT_LINE" ] || echo "$EXIT_LINE"
   if [ "$HITS_HERE" -gt 0 ]; then
     KEEP_WORK=1
   elif [ "${TRACE_SAFETY_KEEP:-}" != 1 ]; then
     rm -f "$TRACE" "$ERRF"
   fi
+  rm -f "$OUTF"
 done
 
 echo "TRACE: $NTESTS tests, $NEXIT nonzero exit(s), $NHIT hit(s)"

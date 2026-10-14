@@ -93,7 +93,7 @@ if [ -z "${PC_UNDER_TEST:-}" ]; then
   if cmp -s "$m" "$PC"; then bad "M1: the mutation did not apply"
   else
     out=$(PC_UNDER_TEST="$m" HARNESS_TEST_SANDBOX=1 bash "$0" 2>&1)
-    printf '%s\n' "$out" | grep -q "^FAIL: K2" && ok || bad "M1: K2 stayed green without the reason check"
+    grep -q "^FAIL: K2" <<<"$out" && ok || bad "M1: K2 stayed green without the reason check"
   fi
 fi
 

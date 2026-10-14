@@ -27,6 +27,8 @@
 #   S3  redaction runs before the byte cut, so a cut never splits a secret
 #       into a fragment the patterns miss
 #   J1  a jobs-get probe that answers non-2xx shows the worker's payload
+#   LP1 (BH-6641) the real catalog's lead-protected-paths probe GETs one repo's rows
+#       (the worker answers 400 "repo must be owner/name" with no repo)
 #   B2  a hand-written `## Live probes` heading with no markers keeps the body
 #       below it; a start marker with no end keeps it too
 #   V1  lp_evidence: only a comment by the lane's App (LIVE_PROBES_APP) that
@@ -106,6 +108,12 @@ gh_auth_for() { printf 'gh_auth_for %s\n' "$1" >> "$GHLOG"
   if [ -n "${STUB_PAT:-}" ]; then export GH_TOKEN=ghp_fixture_pat; else export GH_TOKEN=ghs_fixture_app; fi; }
 _jobs_req() { printf '%s %s\n' "$1" "$2" >> "$JLOG"; printf '%s\n' "${JOBS_ALERT:-unset}" >> "$T/jalert"
   if [ -n "${JOBS_FAIL:-}" ]; then JOBS_HTTP=503; JOBS_BODY='{"error":"hub_lease schema not applied"}'; return 1; fi
+  # BH-6641: the protected-paths route is per repo, as the worker serves it:
+  # 400 with no repo, the repo's rows with one.
+  case "$2" in
+    /api/lead-protected-paths\?*repo=*) JOBS_HTTP=200; echo '{"rows":[{"repo":"example-org/cromford","glob":"bin/**","removed_at":null},{"repo":"example-org/cromford","glob":"catalog/**","removed_at":null}]}'; return 0 ;;
+    /api/lead-protected-paths*) JOBS_HTTP=400; JOBS_BODY='{"error":"repo must be owner/name"}'; return 1 ;;
+  esac
   JOBS_HTTP=200; echo '{"flags":[{"name":"paused-x","active":1}]}'; }
 EOF
 export GHLOG="$T/gh.log" COMMENT="$T/comment.md" BODYOUT="$T/body.md" JLOG="$T/jobs.log" T_PRCOMMENTS="$T/prcomments.json" T
@@ -230,6 +238,17 @@ reset; HS3=$(printf 'c%.0s' {1..40}); pr "$HS3" "$(block 'probe: hub-lease')"
 # match or pattern knows, unless the redaction ran first.
 lane PROBE_RAW=1 T_OUT_BYTES=12 >/dev/null
 grep -qF "${SECRET_VALUE:0:8}" "$COMMENT" && bad "S3 a cut left part of the secret: $(cat "$COMMENT")" || ok
+
+# ── LP1 (BH-6641): the real catalog's lead-protected-paths probe names a repo ──
+# The worker answers 400 "repo must be owner/name" to a GET with no repo, which
+# is what the lane posted on #6519. The catalog row must ask for one repo.
+reset; pr 6641664166416641664166416641664166416641 "$(block 'probe: lead-protected-paths')"
+lane >/dev/null
+grep -qE '^GET /api/lead-protected-paths\?repo=example-org/cromford$' "$JLOG" && ok \
+  || bad "LP1 the probe did not GET the cromford rows: $(cat "$JLOG")"
+grep -q 'lead-protected-paths`: rc 0' "$COMMENT" 2>/dev/null && ok || bad "LP1 the probe is not rc 0: $(cat "$COMMENT" 2>/dev/null)"
+grep -q 'repo must be owner/name' "$COMMENT" 2>/dev/null && bad "LP1 the probe still gets the 400" || ok
+grep -q '"rows"' "$COMMENT" 2>/dev/null && ok || bad "LP1 the comment lacks the rows payload: $(cat "$COMMENT" 2>/dev/null)"
 
 # ── J1: a jobs-get failure shows the payload ──
 reset; pr "$(printf 'd%.0s' {1..40})" "$(block 'probe: flags')"

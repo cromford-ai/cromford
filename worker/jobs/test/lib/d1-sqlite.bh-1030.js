@@ -11,8 +11,9 @@
 // / .all() / .run(), and batch(). Every method is async, like D1's.
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
+import { jobsSchemaFile } from './jobs-schema.js';
 
-const SCHEMA_PATH = fileURLToPath(new URL('../../schema.sql', import.meta.url));
+const SCHEMA_PATH = jobsSchemaFile();
 
 // D1 accepts undefined for a NULL bind and 0/1 for a boolean; node:sqlite
 // refuses both. Normalising here keeps the worker's own binds unchanged.

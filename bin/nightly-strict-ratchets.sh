@@ -70,7 +70,7 @@ while read -r s _; do
     printf '%s\n' "${real:-$(tail -5 <<<"$out")}" | sed 's/^/     /'
     if [ -n "$SUMMARY" ]; then
       { printf '### `%s` (strict mode, rc %s)\n```\n' "$s" "$rc"
-        printf '%s\n' "${real:-$(tail -5 <<<"$out")}" | head -20
+        head -20 <<<"${real:-$(tail -5 <<<"$out")}"
         printf '```\n\n'; } >> "$SUMMARY"
     fi
   fi

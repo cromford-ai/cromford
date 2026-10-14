@@ -65,7 +65,7 @@ QR_GLOBS_DEFAULT_registry='catalog/* cron/* worker/jobs/src/index.js'
 # generated and git-ignored, so they never appear in a PR diff.
 QR_GLOBS_DEFAULT_generated='rules/CLAUDE.md env-templates/*'
 QR_GLOBS_DEFAULT_share_mirror='bin/share/*'
-QR_GLOBS_DEFAULT_schema='worker/jobs/schema.sql *migrations/* worker/jobs/src/lib/core.js'
+QR_GLOBS_DEFAULT_schema='worker/jobs/schema.sql worker/*/schema.d/* *migrations/* worker/jobs/src/lib/core.js'
 QR_THRESHOLD_DEFAULT=50
 QR_SIZE_LINES_DEFAULT=400
 QR_SIZE_LINES_BIG_DEFAULT=1000

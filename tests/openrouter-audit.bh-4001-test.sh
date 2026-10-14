@@ -163,7 +163,7 @@ check "A1 residual usd 40" "$(bk residual usd)" 40.0
 check "A1 json line is the tracer's" "$(jqv "$js" "d['line'][:42]")" "openrouter scope=harness-keys state=ok ven"
 md=$("$CLI" --since "$S" --until "$U" 2>"$T/err"); rc=$?
 check "A1 markdown rc 0" "$rc" 0
-has "A1 line 1 is the tracer's" "$(printf '%s\n' "$md" | head -1)" "openrouter scope=harness-keys state=ok vendor_usd=100.00 rows_usd=60.00 "
+has "A1 line 1 is the tracer's" "$(head -1 <<<"$md")" "openrouter scope=harness-keys state=ok vendor_usd=100.00 rows_usd=60.00 "
 has "A1 bucket table header" "$md" "| bucket | count | usd | attribution |"
 has "A1 other-keys row" "$md" "| other-keys | 1 | 900.00 |"
 has "A1 residual row" "$md" "| residual | 1 | 40.00 |"

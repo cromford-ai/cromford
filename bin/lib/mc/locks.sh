@@ -53,13 +53,26 @@ mc_safe_name() { printf '%s' "${1//[^A-Za-z0-9._-]/_}"; }
 mc_pr_lock()    { printf '%s/merge-conductor-%s-%s.lock' "$MC_LOCK_DIR" "$(mc_safe_name "$1")" "$(mc_safe_name "$2")"; }
 mc_merge_lock() { printf '%s/merge-conductor-%s-merge.lock' "$MC_LOCK_DIR" "$(mc_safe_name "$1")"; }
 mc_git_lock()   { printf '%s/merge-conductor-%s-git.lock' "$MC_LOCK_DIR" "$(mc_safe_name "$1")"; }
+# mc_pr_lock_take — take the PR lock already open on fd 9. Every cron and
+#   keyed worker asks with flock -n and skips a PR another worker holds. A run
+#   started BY a worker that still holds that lock (the READY re-kick, BH-6000
+#   part 3: kw_conductor from inside pr_worker) is launched with
+#   MC_PR_LOCK_WAIT_S=<s>, an input set by its launcher, never a knob: it waits
+#   up to <s> seconds for the launcher to finish and drop the lock, instead of
+#   losing that race and skipping (lead review lr-6015). rc 0 taken.
+mc_pr_lock_take() {
+  local w="${MC_PR_LOCK_WAIT_S-}"
+  case "$w" in ''|*[!0-9]*|0) flock -n 9 ;; *) flock -w "$w" 9 ;; esac
+}
 
 # mc_merge_locked <project> <command...> — run ONE merge-class call under the
 #   project's merge lock (locks/merge-conductor-<project>-merge.lock, fd 8) and
 #   release it the moment the call returns. rc is the command's own, except
 #   99 = the lock could not be had within MC_MERGE_LOCK_WAIT seconds, which
 #   every caller treats as "nothing was written, try next tick" and never as a
-#   merge failure.
+#   merge failure. Inside a conductor worker the wait is also capped at the
+#   worker's deadline less 15 s (mc_lock_wait_left, bin/lib/fanin.sh), and with
+#   less than that left it is 99 at once, before the lock file is opened.
 #
 #   WHY IT IS A FUNCTION AROUND ONE CALL AND NOT A SECTION. fd 8 is opened and
 #   closed inside it, and every caller invokes it as `$(mc_merge_locked ...)`,
@@ -74,9 +87,10 @@ mc_git_lock()   { printf '%s/merge-conductor-%s-git.lock' "$MC_LOCK_DIR" "$(mc_s
 #   call plus mc_merge's settle sleep, never a clone, a review or a deploy.
 mc_merge_locked() {
   local proj="$1"; shift
-  local rc
+  local rc w="${MC_MERGE_LOCK_WAIT:-120}"
+  if command -v mc_lock_wait_left >/dev/null 2>&1; then w=$(mc_lock_wait_left "$w") || return 99; fi
   exec 8>>"$(mc_merge_lock "$proj")" || return 99
-  flock -w "${MC_MERGE_LOCK_WAIT:-120}" 8 || { exec 8>&-; return 99; }
+  flock -w "$w" 8 || { exec 8>&-; return 99; }
   "$@"; rc=$?
   flock -u 8; exec 8>&-
   return "$rc"
@@ -87,13 +101,15 @@ mc_merge_locked() {
 #   checkout: mc_merge_tree, mc_patch_id (both rebind halves) and mc_no_overlap.
 #   Each is a fetch and a read of a few hundred milliseconds; the wait is
 #   MC_GIT_LOCK_WAIT so a repo with a dozen PRs in one tick queues rather than
-#   fails. rc 99 = the lock could not be had, and a caller that gets it must
-#   decline to act rather than treat it as a negative answer.
+#   fails, capped inside a worker at its deadline the same way. rc 99 = the lock
+#   could not be had, and a caller that gets it must decline to act rather than
+#   treat it as a negative answer.
 mc_git_locked() {
   local proj="$1"; shift
-  local rc
+  local rc w="${MC_GIT_LOCK_WAIT:-180}"
+  if command -v mc_lock_wait_left >/dev/null 2>&1; then w=$(mc_lock_wait_left "$w") || return 99; fi
   exec 7>>"$(mc_git_lock "$proj")" || return 99
-  flock -w "${MC_GIT_LOCK_WAIT:-180}" 7 || { exec 7>&-; return 99; }
+  flock -w "$w" 7 || { exec 7>&-; return 99; }
   "$@"; rc=$?
   flock -u 7; exec 7>&-
   return "$rc"
@@ -707,7 +723,7 @@ mc_lane_account_fact() {
     *AGENT_CALL_NO_HEADROOM*) return 0 ;;
     *AGENT_CALL_REFUSED*runners-restricted*) return 0 ;;
   esac
-  printf '%s' "$why" | grep -qiE "$MC_LANE_EXHAUST_RE"
+  grep -qiE "$MC_LANE_EXHAUST_RE" < <(printf '%s' "$why")
 }
 
 # mc_lane_down_note <reason> — record the outage, ONCE, when the reason is an

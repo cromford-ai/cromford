@@ -37,7 +37,7 @@
 #   JOB_ID JOB_JSON JOB_PHASE_ID JOBS_TIMEOUT NB_AT NB_F NB_NOW OV_CAP OV_WAKE OV_WHY
 #   PLAN_MODEL PO_AT PO_MSG QA_MODEL QDIR QMETA QRFLAG QUEUE_CLAIMED QUEUE_ROW_OK
 #   REOPEN_HOT REOPEN_NOTE REOPEN_RATE_FILE REVIEW_MODEL REVIEW_MODEL_T0 RN RO_AT RO_D
-#   RO_MIN RO_N RO_RATE RO_ROW RO_SRC SLOTS SLOTWHY SQUASH_OK STACK_NOTE STACK_ON STACK_PARENT_PR TAKEN TARGET_BRANCH
+#   RO_MIN RO_N RO_RATE RO_ROW RO_SRC SLOTS SLOTWHY SPR_HOW SPR_N SPR_ST SPR_URL SQUASH_OK STACK_NOTE STACK_ON STACK_PARENT_PR TAKEN TARGET_BRANCH
 #   TEST_SELECT_EFFECTIVE WIP
 # shellcheck shell=bash
 
@@ -131,6 +131,27 @@ TEST_SELECT_RESOLVE() {
   return 0
 }
 
+# RB_TOKEN_REDACT <file> — scrub GitHub-token shapes out of a build file before
+# a lens, evidence.md or a PR reads it (BH-6672: a suite printed the box's real
+# App token into harness-suite). bin/lib/token-redact.sh does the work and
+# fails closed. A harness with no lib leaves the file as written and says so in
+# pipeline.log. Always returns 0: a scrub never stops a build.
+RB_TOKEN_REDACT() {
+  local f="$1"
+  if ! command -v token_redact_file >/dev/null 2>&1; then
+    if [ -r "$HARNESS/bin/lib/token-redact.sh" ]; then
+      # shellcheck source=bin/lib/token-redact.sh
+      . "$HARNESS/bin/lib/token-redact.sh"
+    else
+      echo "$(STAMP) [$PROJECT/$KEY] token-redact: bin/lib/token-redact.sh missing — $f not scrubbed" >> "$BUILD/pipeline.log"
+      return 0
+    fi
+  fi
+  token_redact_file "$f" \
+    || echo "$(STAMP) [$PROJECT/$KEY] token-redact: could not scrub $f — its output is withheld" >> "$BUILD/pipeline.log"
+  return 0
+}
+
 # HARNESS_SUITE_RUN <outfile-name> <phase: lenses|fix|head>
 # Runs the repo's suite, appends it to $BUILD/<outfile-name>, and records what
 # ran. Always returns 0: a red suite is EVIDENCE the reviewer reads, never a
@@ -221,6 +242,7 @@ HARNESS_SUITE_RUN() {
   fi
   # The teardown runs on every suite exit (green, red, 124), before HARNESS_EXIT.
   [ -n "${PGT_DIR:-}" ] && pgt_stop "$BUILD/$outfile"
+  RB_TOKEN_REDACT "$BUILD/$outfile"
   echo "HARNESS_EXIT: $rc" >> "$BUILD/$outfile"
   case "$phase" in lenses) stage=suite ;; *) stage="suite-$phase" ;; esac
   command -v STAGE_END >/dev/null 2>&1 && STAGE_END "$stage" "$t0"
@@ -249,7 +271,7 @@ HARNESS_SUITE_RUN() {
 # GITLEAKS_REQUIRED=1 (BH-5789) rides on both: on a box with no gitleaks the leak
 # suite is red, never a skip, so a fixture leak is found here and not in the queue.
 HARNESS_IMPACT_GATE_RUN() {
-  local outfile="$1" phase="$2" base="${SCOPE_BASE:-$BASE}" rc t0 stage prc pst="" pel p0 budget rpo skip=()
+  local outfile="$1" phase="$2" base="${SCOPE_BASE:-$BASE}" rc t0 stage prc pst="" pel p0 budget rpo skip=() fm
   echo "HARNESS_SUITE: impact gate — bin/test-impact-gate.sh --base $base" > "$BUILD/$outfile"
   echo "$(STAMP) [$PROJECT/$KEY] HARNESS-VERIFY $phase (bin/test-impact-gate.sh --base $base)" >> "$BUILD/pipeline.log"
   if [ -x bin/rules-pack.sh ]; then
@@ -269,7 +291,11 @@ HARNESS_IMPACT_GATE_RUN() {
   fi
   t0=""; command -v STAGE_START >/dev/null 2>&1 && t0=$(STAGE_START)
   export SUITE_REUSE_RUN_KEY="$(basename "$BUILD")-gate-$phase-$(date +%s)"
-  GITLEAKS_REQUIRED=1 timeout 1500 bin/test-impact-gate.sh --base "$base" --project "$PROJECT" --table "$BUILD/impact-gate-$phase.md" ${skip[@]+"${skip[@]}"} >> "$BUILD/$outfile" 2>&1; rc=$?
+  # BH-6459: the whole-repo suites run on HEAD merged with fresh main. The
+  # fly-pool knob; anything but 0 or 1 is 1, and no resolver is 1.
+  fm=1; command -v lane_knob >/dev/null 2>&1 && fm=$(lane_knob fly-pool TEST_IMPACT_GATE_FRESH_MAIN "$PROJECT" 2>/dev/null)
+  case "$fm" in 0|1) ;; *) fm=1 ;; esac
+  TEST_IMPACT_GATE_FRESH_MAIN="$fm" GITLEAKS_REQUIRED=1 timeout 1500 bin/test-impact-gate.sh --base "$base" --project "$PROJECT" --table "$BUILD/impact-gate-$phase.md" ${skip[@]+"${skip[@]}"} >> "$BUILD/$outfile" 2>&1; rc=$?
   if [ "$rc" = 124 ]; then
     { echo "impact-gate: TIMED OUT — the stage's 1500 s timeout killed the gate mid-run. Not a pass and not a failure: these suites completed before it,"
       grep '^impact-gate: done ' "$BUILD/$outfile" | sed 's/^impact-gate: done /  /'
@@ -280,6 +306,7 @@ HARNESS_IMPACT_GATE_RUN() {
   fi
   [ "$rc" = 125 ] && rc=could-not-run
   [ "$rc" = 0 ] && [ "$pst" = red ] && rc=1
+  RB_TOKEN_REDACT "$BUILD/$outfile"
   echo "HARNESS_EXIT: $rc" >> "$BUILD/$outfile"
   case "$phase" in lenses) stage=suite ;; *) stage="suite-$phase" ;; esac
   command -v STAGE_END >/dev/null 2>&1 && STAGE_END "$stage" "$t0"
@@ -692,6 +719,35 @@ elif [ "$TW_RC" = 2 ]; then
   echo "$(STAMP) [$PROJECT/$KEY] tripwire pause row unreadable; building as today (fail-open)" >> "$BUILD/pipeline.log"
 fi
 # <<< tripwire paused skip
+
+# >>> dispatch mode gate
+# BH-6350: a project in dispatch mode hotfix-only (bin/lib/dispatch-mode.sh)
+# starts a build only for a hotfix-labelled or allow-listed ticket. Triage is
+# told so by a prompt directive and the fastpath holds the key itself; this is
+# the deterministic backstop for every launcher, placed before the budget gate
+# and the Fly enqueue, so a held launch takes no claim, no slot and no queue
+# row. Admitted without a read: a resume (a fix round of an admitted build) and
+# a pool machine (the job was admitted at enqueue or spawn). An unknown label
+# read (HF_RC=2) admits, as the hotfix detect block says. BUILD_DEFERRED: the
+# next tick re-offers the ticket, and on normal it builds.
+if [ "${BUILDER_EXEC:-}" != 1 ] && [ -z "${RESUME_BUILD:-}" ]; then
+  # shellcheck source=bin/lib/dispatch-mode.sh
+  [ -r "$HARNESS/bin/lib/dispatch-mode.sh" ] && . "$HARNESS/bin/lib/dispatch-mode.sh" 2>/dev/null
+  if command -v dm_read >/dev/null 2>&1; then
+    dm_read "$PROJECT"
+    DM_HFD=0
+    if [ "${HOTFIX:-}" = 1 ]; then DM_HFD=1; elif [ "${HF_RC:-}" = 2 ]; then DM_HFD=2; fi
+    if ! dm_admit_ticket "${TICKET:-}" "$DM_HFD"; then
+      DM_LINE="dispatch mode hotfix-only: $KEY waits (no hotfix label, not on the allow-list)"
+      echo "$(STAMP) [$PROJECT/$KEY] $DM_LINE; allow-list: $(dm_allow_text)" >> "$BUILD/pipeline.log"
+      mkdir -p "$HARNESS/logs" 2>/dev/null
+      echo "$(STAMP) [$PROJECT/$KEY] $DM_LINE" >> "$HARNESS/logs/${PROJECT}.log" 2>/dev/null || true
+      RESULT "BUILD_DEFERRED $DM_LINE"
+      exit 3
+    fi
+  fi
+fi
+# <<< dispatch mode gate
 
 # >>> budget launch gate (BH-4489)
 # A project at its day budget cap (settings budget.project.<p>.day_usd, then
@@ -1678,17 +1734,45 @@ if [ -n "${STACK_BASE:-}" ]; then
         # A failure here is usually the GOOD outcome: the parent branch was
         # deleted because its PR merged between the tick that decided this and
         # this build starting. Fall back to the real base rather than dying.
-        if git -C "$REPO" fetch origin "+refs/heads/$STACK_BASE:refs/remotes/origin/$STACK_BASE" --quiet 2>/dev/null; then
+        # >>> parent PR state (BH-6537)
+        # A repo with delete_branch_on_merge=false keeps a merged parent's
+        # branch, so the fetch alone read "still open" and TK-260 deferred 4
+        # times after #275 merged. The PR's state decides first (sw_parent_pr):
+        # merged/closed builds on $BASE without the fetch; unreadable with a
+        # live branch waits, a merge is never assumed; open, none and unchecked
+        # (no gh_rest or slug in this shell) leave branch existence to decide.
+        SPR_ST=unchecked; SPR_N=""; SPR_URL=""
+        # shellcheck source=bin/lib/stack-wait.sh
+        command -v sw_parent_pr >/dev/null 2>&1 || . "$HARNESS/bin/lib/stack-wait.sh" 2>/dev/null
+        command -v sw_parent_pr >/dev/null 2>&1 \
+          && read -r SPR_ST SPR_N SPR_URL <<<"$(sw_parent_pr "${GH_AUTH_SLUG:-}" "$STACK_BASE" 2>/dev/null)"
+        [ -n "$SPR_ST" ] || SPR_ST=unchecked
+        # <<< parent PR state (BH-6537)
+        if [ "$SPR_ST" = merged ] || [ "$SPR_ST" = closed ]; then
+          SPR_HOW=merged; [ "$SPR_ST" = merged ] || SPR_HOW="closed without a merge"
+          echo "$(STAMP) [$PROJECT/$KEY] stack-wait: parent PR #$SPR_N is $SPR_HOW and its branch $STACK_BASE still exists — building on $BASE, not stacked" >> "$BUILD/pipeline.log"
+        elif git -C "$REPO" fetch origin "+refs/heads/$STACK_BASE:refs/remotes/origin/$STACK_BASE" --quiet 2>/dev/null; then
+          if [ "$SPR_ST" = unreadable ]; then
+            echo "$(STAMP) [$PROJECT/$KEY] stack-wait: the state of parent PR for branch $STACK_BASE could not be read (rc $SPR_N) — deferred, a merge is never assumed" >> "$BUILD/pipeline.log"
+            command -v _sw_log >/dev/null 2>&1 && _sw_log "$PROJECT" "$KEY" "parent-pr=unreadable rc=$SPR_N parent=$STACK_BASE (deferred)"
+            RESULT "BUILD_DEFERRED stack-wait: the state of parent PR for branch $STACK_BASE could not be read (rc $SPR_N) — waiting; a merge is never assumed"
+            exit 3
+          fi
+          case "$SPR_ST" in
+            open) [ -z "${STACK_PARENT_PR:-}" ] && [ -n "$SPR_URL" ] && STACK_PARENT_PR="$SPR_URL" ;;
+            *) echo "$(STAMP) [$PROJECT/$KEY] stack-wait: parent PR state $SPR_ST for $STACK_BASE — branch existence decides" >> "$BUILD/pipeline.log" ;;
+          esac
           # WAIT FOR THE PARENT TO MERGE (BH-5234). STACK_WAIT_PARENT_MERGE
-          # (bin/lib/stale-parent.sh sp_wait_mode; off|rollouts|all, default
-          # rollouts): `all` never stacks, `rollouts` does not stack a rollout
-          # wave child (`Rollout wave N of M:` in its issue body), which is the
-          # shape whose parent kept being rewritten under it. Decided here,
-          # before any model spend; the next tick re-offers the ticket and the
-          # parent's branch is gone once it merged. An issue body that cannot be
-          # read under `rollouts` waits too. A board project has no issue: only
-          # `all` defers there.
-          SW_MODE=rollouts; SW_WHY=""
+          # (bin/lib/stale-parent.sh sp_wait_mode; off|rollouts|all|plan,
+          # default plan): `all` never stacks, `rollouts` does not stack a
+          # rollout wave child (`Rollout wave N of M:` in its issue body), which
+          # is the shape whose parent kept being rewritten under it. Decided
+          # here, before any model spend; the next tick re-offers the ticket and
+          # the parent's branch is gone once it merged. An issue body that cannot
+          # be read under `rollouts` waits too. A board project has no issue:
+          # only `all` defers there. `plan` (BH-6389) is `rollouts` plus the
+          # stack plan gate below.
+          SW_MODE=rollouts; SW_WHY=""; SWP_ACT=""
           # shellcheck source=bin/lib/stale-parent.sh
           command -v sp_wait_mode >/dev/null 2>&1 || . "$HARNESS/bin/lib/stale-parent.sh" 2>/dev/null
           command -v sp_wait_mode >/dev/null 2>&1 && SW_MODE=$(sp_wait_mode "$PROJECT" 2>/dev/null)
@@ -1696,7 +1780,7 @@ if [ -n "${STACK_BASE:-}" ]; then
             all) SW_WHY=all ;;
             off) ;;
             *)
-              SW_MODE=rollouts
+              [ "$SW_MODE" = plan ] || SW_MODE=rollouts
               if [ "$("$HARNESS/bin/fleet-conf.sh" "$PROJECT" board_prefix 2>/dev/null)" = "-" ] \
                  && [[ "${TICKET:-}" =~ ^[0-9]+$ ]] && [ -n "${GH_AUTH_SLUG:-}" ]; then
                 SW_RC=0; SW_T=$(mktemp "${TMPDIR:-/tmp}/stack-wait.XXXXXX") || SW_RC=75
@@ -1714,16 +1798,52 @@ if [ -n "${STACK_BASE:-}" ]; then
             RESULT "BUILD_DEFERRED stack-wait: parent branch $STACK_BASE is still open and STACK_WAIT_PARENT_MERGE=$SW_WHY — the child builds after the parent merges"
             exit 3
           fi
-          STACK_ON="$STACK_BASE"; BASE="$STACK_ON"
-          # The parent PR's URL is what a human reading the board comment or the
-          # PR body actually clicks. The launcher may pass it (the STACKABLE
-          # line carries it); otherwise it is one cheap lookup off the branch.
-          # Empty is fine everywhere it is printed — the sentence still reads.
-          if [ -z "${STACK_PARENT_PR:-}" ]; then
-            STACK_PARENT_PR=$(gh pr list -R "$(git -C "$REPO" remote get-url origin | sed -E 's#(git@github.com:|https://github.com/)##; s#\.git$##')" --head "$STACK_ON" --state open --json url -q '.[0].url' 2>/dev/null)   # gh-guard-allow: read not converted by BH-770.1; #770 tracks it
+          # >>> stack plan gate (BH-6389)
+          # A child on an OPEN parent stacks only when its plan's `## Stack`
+          # files are disjoint from the parent's (bin/lib/stack-wait.sh sw_pre).
+          # pending: plan on the parent, and the `stack plan check (BH-6389)`
+          # block at the top of rb_gate_overlap decides; wait: a deferral is
+          # already on record and under STACK_WAIT_CAP_H, so no plan is bought;
+          # capped: build from the real base without the parent; exempt: a
+          # hotfix stacks as before. No lib on the box: today's stack.
+          if [ "$SW_MODE" = plan ]; then
+            # shellcheck source=bin/lib/stack-wait.sh
+            command -v sw_pre >/dev/null 2>&1 || . "$HARNESS/bin/lib/stack-wait.sh" 2>/dev/null
+            if command -v sw_pre >/dev/null 2>&1; then
+              read -r SWP_ACT SWP_H SWP_CAP <<<"$(sw_pre "$PROJECT" "$KEY" "$STACK_BASE" 2>/dev/null)"
+              SWP_N=$(sw_pkey "$STACK_BASE"); SWP_REF="#$SWP_N"; [ -n "$SWP_N" ] || SWP_REF="$STACK_BASE"
+              case "${SWP_ACT:-}" in
+                exempt)
+                  echo "$(STAMP) [$PROJECT/$KEY] stack-wait: hotfix exempt — stacking on $STACK_BASE" >> "$BUILD/pipeline.log" ;;
+                wait)
+                  echo "$(STAMP) [$PROJECT/$KEY] stack-wait: parent branch $STACK_BASE is still open and $KEY has waited ${SWP_H}h of STACK_WAIT_CAP_H=${SWP_CAP}h — deferred before the plan" >> "$BUILD/pipeline.log"
+                  RESULT "BUILD_DEFERRED stack-wait: parent branch $STACK_BASE is still open and $KEY has waited ${SWP_H}h of STACK_WAIT_CAP_H=${SWP_CAP}h — Blocked-by $SWP_REF; the child builds after the parent merges"
+                  exit 3 ;;
+                capped)
+                  SWP_SINCE=$(sw_row_get "$PROJECT" "$KEY" "$STACK_BASE" 2>/dev/null | awk '{print $2}')
+                  sw_row_put "$PROJECT" "$KEY" "$STACK_BASE" capped "${SWP_SINCE:-0}" "STACK_WAIT_CAP_H=${SWP_CAP}h reached" \
+                    || echo "$(STAMP) [$PROJECT/$KEY] stack-wait: the capped row could not be written (ledger and file both failed)" >> "$BUILD/pipeline.log"
+                  echo "$(STAMP) [$PROJECT/$KEY] stack-wait: STACK_WAIT_CAP_H=${SWP_CAP}h reached (waited ${SWP_H}h) for parent $STACK_BASE — building $KEY from $BASE without the parent" >> "$BUILD/pipeline.log" ;;
+                *)
+                  SWP_ACT=pending
+                  { printf '%s\n' "$STACK_BASE"; sw_parent_files "$REPO" "$BASE_MAIN" "$STACK_BASE" 2>/dev/null; } > "$BUILD/stack-wait-pending" ;;
+              esac
+            fi
           fi
-          STACK_NOTE=" | STACKED on $STACK_ON (${STACK_PARENT_PR:-parent PR not resolved}) — this PR is based on the parent's branch and retargets to $BASE_MAIN when the parent merges"
-          echo "$(STAMP) [$PROJECT/$KEY] STACKED on $STACK_ON (${STACK_PARENT_PR:-parent PR url not resolved}) — branch cut from origin/$STACK_ON, diffs/review/PR all target it" >> "$BUILD/pipeline.log"
+          # <<< stack plan gate (BH-6389)
+          if [ "${SWP_ACT:-}" != capped ]; then
+            STACK_ON="$STACK_BASE"; BASE="$STACK_ON"
+            # The parent PR's URL is what a human reading the board comment or
+            # the PR body actually clicks. The launcher may pass it (the
+            # STACKABLE line carries it); otherwise it is one cheap lookup off
+            # the branch. Empty is fine everywhere it is printed — the sentence
+            # still reads.
+            if [ -z "${STACK_PARENT_PR:-}" ]; then
+              STACK_PARENT_PR=$(gh pr list -R "$(git -C "$REPO" remote get-url origin | sed -E 's#(git@github.com:|https://github.com/)##; s#\.git$##')" --head "$STACK_ON" --state open --json url -q '.[0].url' 2>/dev/null)   # gh-guard-allow: read not converted by BH-770.1; #770 tracks it
+            fi
+            STACK_NOTE=" | STACKED on $STACK_ON (${STACK_PARENT_PR:-parent PR not resolved}) — this PR is based on the parent's branch and retargets to $BASE_MAIN when the parent merges"
+            echo "$(STAMP) [$PROJECT/$KEY] STACKED on $STACK_ON (${STACK_PARENT_PR:-parent PR url not resolved}) — branch cut from origin/$STACK_ON, diffs/review/PR all target it" >> "$BUILD/pipeline.log"
+          fi
         else
           echo "$(STAMP) [$PROJECT/$KEY] STACK_BASE $STACK_BASE could not be fetched from origin (parent merged and its branch was deleted?) — building on $BASE" >> "$BUILD/pipeline.log"
         fi ;;
@@ -1843,20 +1963,61 @@ track_pushed(){ git update-ref "refs/remotes/origin/$BRANCH" "$(git rev-parse HE
 # project-4 TK-1587 attempt 2: remote never moved, fix-round + pre-PR pushes both
 # rejected). An explicit <branch>:<sha> lease needs no refspec; an empty sha
 # keeps the "must not exist yet" guard for the first push of a fresh branch.
-# RB_PUSH [-u] — EVERY push of $BRANCH from this pipeline (BH-2504). The lease
-# is explicit: what WE last pushed, or "must not exist yet", and the ticket's
-# HOLD is re-read at each push through bin/lib/hold-push.sh: a lead who held the
-# ticket while this build ran owns the branch now (#2592 was rebuilt under a
-# HOLD on 2026-09-25). A held push fails like any refused push, so the pre-PR
-# push defers the build and the backups say "did not land". rc = hold_push's.
+# RB_PUSH [-u] [<stage>] — EVERY push of $BRANCH from this pipeline (BH-2504).
+# The lease is explicit: what WE last pushed, or "must not exist yet", and the
+# ticket's HOLD is re-read at each push through bin/lib/hold-push.sh: a lead who
+# held the ticket while this build ran owns the branch now (#2592 was rebuilt
+# under a HOLD on 2026-09-25). rc = hold_push's.
+#
+# A HELD PUSH YIELDS THE BUILD (BH-6091). <stage> names the write point
+# (default `push`). When hold_push answers rc 3 (held), RB_HOLD_YIELD writes
+# `HOLD_YIELD <KEY> at <stage>` to pipeline.log and RESULT and exits 3: nothing
+# is pushed and the commits stay in this worktree. An unreadable hold (rc 4) is
+# held for this write only: no push, rc 4 back to the caller, and the next
+# write point reads the hold again.
 # shellcheck source=bin/lib/hold-push.sh
 [ -r "$HARNESS/bin/lib/hold-push.sh" ] && . "$HARNESS/bin/lib/hold-push.sh" 2>/dev/null
+# RB_HOLD_YIELD <stage> <why> — the build stops at this write point. In the
+# main shell it writes RESULT and exits 3, the exit HOLD_STAGE_CHECK takes. In
+# a subshell (the background E2E lane) an exit ends only the subshell, so it
+# returns 3 with no RESULT, and the main shell yields at its next write point.
+# Once the PR is open (RB_PR_OPEN=1, set right after the create block), a hold
+# yields THAT write only: the build must still record PR_CREATED with its URL,
+# so the yield is a note (HOLD_YIELD_NOTE, carried on the PR_CREATED line), not
+# an exit (review of e68d8e58: a HOLD during the QA fix session).
+RB_HOLD_YIELD(){
+  echo "$(STAMP) [$PROJECT/$KEY] HOLD_YIELD $KEY at $1 — $2; nothing pushed, the work stays in $PWD" >> "$BUILD/pipeline.log"
+  if [ -n "${RB_PR_OPEN:-}" ]; then
+    HOLD_YIELD_NOTE="${HOLD_YIELD_NOTE:-} | HOLD_YIELD $KEY at $1 — the ticket says $2; that push was skipped, the PR stays open"
+    return 3
+  fi
+  [ "$BASHPID" = "$$" ] || return 3
+  RESULT "BUILD_DEFERRED HOLD_YIELD $KEY at $1 — the ticket says $2; a newer RESUME on the ticket lifts it"
+  exit 3
+}
+# RB_HOLD_GATE <stage> — the hold read for a write that is not a push (PR open).
+# rc 0 clear. Held: RB_HOLD_YIELD. rc 2 unreadable or no hold library: the
+# caller skips this write. The reader is hold_push_verdict, the one RB_PUSH uses.
+RB_HOLD_GATE(){
+  local v rc
+  command -v hold_push_verdict >/dev/null 2>&1 || { echo "$(STAMP) [$PROJECT/$KEY] bin/lib/hold-push.sh missing at $1 — this write is skipped" >> "$BUILD/pipeline.log"; return 2; }
+  v=$(hold_push_verdict "$PROJECT" - "$BRANCH"); rc=$?
+  case "$rc" in
+    0) return 0 ;;
+    1) RB_HOLD_YIELD "$1" "${v#*	}"; return 3 ;;
+  esac
+  echo "$(STAMP) [$PROJECT/$KEY] hold unreadable at $1 (${v#*	}) — this write is skipped" >> "$BUILD/pipeline.log"
+  return 2
+}
 RB_PUSH(){
-  local up=() l
-  [ "${1:-}" = -u ] && up=(-u)
+  local up=() l stage rc=0
+  [ "${1:-}" = -u ] && { up=(-u); shift; }
+  stage="${1:-push}"
   l=$(git rev-parse -q --verify "refs/remotes/origin/$BRANCH" 2>/dev/null) || l=""
   command -v hold_push >/dev/null 2>&1 || { echo "$(STAMP) [$PROJECT/$KEY] bin/lib/hold-push.sh missing — $BRANCH NOT pushed" >> "$BUILD/pipeline.log"; return 1; }
-  HOLD_PUSH_LOG="$BUILD/pipeline.log" hold_push ${up[@]+"${up[@]}"} "$PROJECT" - "$PWD" origin "$BRANCH" "$BRANCH" "${l:-new}"
+  HOLD_PUSH_LOG="$BUILD/pipeline.log" hold_push ${up[@]+"${up[@]}"} "$PROJECT" - "$PWD" origin "$BRANCH" "$BRANCH" "${l:-new}" || rc=$?
+  [ "$rc" = 3 ] && RB_HOLD_YIELD "$stage" "the ticket is held (see the hold-push line above)"
+  return "$rc"
 }
 # SQUASH_OK: may this pipeline rewrite the branch's history before the PR? Only
 # for a branch it cut itself. A dispatcher-supplied TARGET_BRANCH is an existing
@@ -1958,8 +2119,8 @@ if CKPT_RESUME_LINE=$("$HARNESS/bin/lane-checkpoint.sh" --resume-branch "$WT" "$
   fi
 fi
 # <<< checkpoint adopt
-if [ -z "$CKPT_START_POINT" ] && printf '%s\n' "$TAKEN" | grep -qx "refs/heads/$BRANCH"; then
-  RN=2; while printf '%s\n' "$TAKEN" | grep -qx "refs/heads/$BRANCH-r$RN"; do RN=$((RN+1)); done
+if [ -z "$CKPT_START_POINT" ] && grep -qx "refs/heads/$BRANCH" <<<"$TAKEN"; then
+  RN=2; while grep -qx "refs/heads/$BRANCH-r$RN" <<<"$TAKEN"; do RN=$((RN+1)); done
   BRANCH="$BRANCH-r$RN"
   echo "$(STAMP) [$PROJECT/$KEY] branch name taken on remote — building as $BRANCH" >> "$BUILD/pipeline.log"
 fi
@@ -1972,6 +2133,45 @@ fi
 } # end rb_gate_claim_and_workspace
 
 rb_gate_overlap() {
+# >>> stack plan check (BH-6389)
+# The post-plan half of the stack plan gate in `stacked child builds`. That
+# block planned this child on its parent's OPEN branch and left
+# $BUILD/stack-wait-pending; the plan now has to carry a `## Stack` section
+# whose files are disjoint from the parent's diff and plan files
+# (bin/lib/stack-wait.sh sw_post). Approved: record `stacked` and go on.
+# Anything else: record `waiting` (the first deferral's time is kept, it is the
+# STACK_WAIT_CAP_H clock), post one Blocked-by comment, then defer. Ledger,
+# then comment, then RESULT: the row exists before anything says so.
+if [ -e "$BUILD/stack-wait-pending" ] && [ -n "${STACK_ON:-}" ]; then
+  # shellcheck source=bin/lib/stack-wait.sh
+  command -v sw_post >/dev/null 2>&1 || . "$HARNESS/bin/lib/stack-wait.sh" 2>/dev/null
+  if command -v sw_post >/dev/null 2>&1; then
+    SWC_OUT=$(sw_post "$BUILD" "$REPO" "${BASE_MAIN:-main}" "$STACK_ON" 2>/dev/null)
+    case "$SWC_OUT" in
+      "stack "*)
+        read -r _ SWC_C SWC_P <<<"$SWC_OUT"
+        sw_row_put "$PROJECT" "$KEY" "$STACK_ON" stacked "$(sw_now)" "Stack section approved" \
+          || echo "$(STAMP) [$PROJECT/$KEY] stack-wait: the stacked row could not be written (ledger and file both failed)" >> "$BUILD/pipeline.log"
+        rm -f "$BUILD/stack-wait-pending"
+        echo "$(STAMP) [$PROJECT/$KEY] stack-wait: Stack section approved — $SWC_C child files disjoint from $SWC_P parent files on $STACK_ON" >> "$BUILD/pipeline.log" ;;
+      *)
+        SWC_WHY="${SWC_OUT#defer }"
+        [ -n "$SWC_WHY" ] && [ "$SWC_WHY" != "$SWC_OUT" ] || SWC_WHY="the stack check gave no answer"
+        SWC_SINCE=""
+        read -r SWC_ST SWC_SINCE <<<"$(sw_row_get "$PROJECT" "$KEY" "$STACK_ON" 2>/dev/null)"
+        case "${SWC_ST:-}:${SWC_SINCE:-}" in waiting:[1-9]*) ;; *) SWC_SINCE=$(sw_now) ;; esac
+        sw_row_put "$PROJECT" "$KEY" "$STACK_ON" waiting "$SWC_SINCE" "$SWC_WHY" \
+          || echo "$(STAMP) [$PROJECT/$KEY] stack-wait: the waiting row could not be written (ledger and file both failed)" >> "$BUILD/pipeline.log"
+        sw_note "$PROJECT" "$KEY" "$STACK_ON" "$SWC_WHY" "$BUILD"
+        SWC_N=$(sw_pkey "$STACK_ON"); SWC_REF="#$SWC_N"; [ -n "$SWC_N" ] || SWC_REF="$STACK_ON"
+        SWC_CAP=$(sw_cap "$PROJECT")
+        echo "$(STAMP) [$PROJECT/$KEY] stack-wait: $KEY's plan builds on open parent $STACK_ON and $SWC_WHY — deferred until the parent merges or STACK_WAIT_CAP_H=${SWC_CAP}h" >> "$BUILD/pipeline.log"
+        RESULT "BUILD_DEFERRED stack-wait: $KEY's plan builds on open parent $STACK_ON and $SWC_WHY — Blocked-by $SWC_REF; the child builds from ${BASE_MAIN:-main} after the parent merges, or at STACK_WAIT_CAP_H=${SWC_CAP}h"
+        exit 3 ;;
+    esac
+  fi
+fi
+# <<< stack plan check (BH-6389)
 # >>> priority yield
 # --- PRIORITY YIELD (#647, BH-643 fix 3) -------------------------------------
 # THE OVERLAP DEFERRAL BELOW DOES NOT KNOW WHO IS URGENT. Two builds that claim
@@ -2201,7 +2401,7 @@ until CMSG=$("$HARNESS/bin/conflict-check.sh" "$PROJECT" "$BUILD" 2>/dev/null); 
     printf 'OVERLAP_DEFER: %s\nVERDICT: %s\nWAKE: %s\n' "$OV_WHY" "$OV_VERDICT" "$OV_WAKE" > "$BUILD/overlap-defer.txt"
     if [ -n "${JOB_ID:-}" ] && command -v job_artifact_put >/dev/null 2>&1; then
       job_artifact_put overlap_defer "$OV_VERDICT" \
-        "$(jq -nc --argjson w "$CWAIT" --arg c "$(printf '%s' "$CMSG" | head -1 | cut -c1-300)" \
+        "$(jq -nc --argjson w "$CWAIT" --arg c "$(head -1 <<<"$CMSG" | cut -c1-300)" \
             --arg k "$OV_WAKE" --argjson e "$OV_ENFORCE" \
             '{waited_s:$w,conflict:$c,wake:$k,enforced:($e==1)}' 2>/dev/null)" \
         >/dev/null 2>&1 || true
@@ -2270,7 +2470,7 @@ if [ -x "$HARNESS/bin/plan-overlap.sh" ]; then
     fi
     if [ -n "${JOB_ID:-}" ] && command -v job_artifact_put >/dev/null 2>&1; then
       job_artifact_put overlap_defer deferred \
-        "$(jq -nc --arg c "$(printf '%s' "$PO_MSG" | head -1 | cut -c1-300)" --argjson nb "$PO_NB" \
+        "$(jq -nc --arg c "$(head -1 <<<"$PO_MSG" | cut -c1-300)" --argjson nb "$PO_NB" \
             --arg ch "$PO_CHOICE" --arg af "$PO_OTHER" \
             '{scope:"fleet",conflict:$c,not_before_s:$nb,choice:$ch,after:$af}' 2>/dev/null)" \
         >/dev/null 2>&1 || true

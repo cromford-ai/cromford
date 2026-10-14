@@ -4,6 +4,7 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { DatabaseSync } from 'node:sqlite';
 import worker, { CREATED_TABLES } from '../src/index.js';
+import { jobsSchemaSql } from './lib/jobs-schema.js';
 
 // P4 — PLAN-DRIVEN MODEL ROUTING, SHADOW MODE. Three tables and their routes:
 //   route_rules          one row per rule (plan features -> would-be execute
@@ -21,7 +22,7 @@ import worker, { CREATED_TABLES } from '../src/index.js';
 // mode 'live' is refused, so nothing in this slice can ever be read as a live
 // routing decision.
 const SECRET = 'test-secret';
-const SCHEMA = readFileSync(fileURLToPath(new URL('../schema.sql', import.meta.url)), 'utf8');
+const SCHEMA = jobsSchemaSql();
 
 function sqliteDB(db) {
   const nul = (xs) => xs.map((v) => (v === undefined ? null : v));

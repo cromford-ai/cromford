@@ -9,9 +9,11 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import worker from '../src/index.js';
 import { openDb } from './lib/d1-sqlite.bh-1030.js';
+import { jobsSchemaSql } from './lib/jobs-schema.js';
 
 const SECRET = 'fixture-harness-secret';
-const SCHEMA = readFileSync(fileURLToPath(new URL('../schema.sql', import.meta.url)), 'utf8');
+// The composition of worker/jobs/schema.d/ (BH-6005): schema.sql is a render.
+const SCHEMA = jobsSchemaSql();
 const ROUTE_SRC = readFileSync(fileURLToPath(new URL('../src/routes/lane-runs.js', import.meta.url)), 'utf8');
 
 const call = (DB, method, path, body) => {

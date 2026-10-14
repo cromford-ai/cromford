@@ -129,7 +129,7 @@ rm -f "$T/logs/findings.log"
 client log-rehydrate findings "$T/logs/findings.log" "$DAYS" >/dev/null 2>&1; RC=$?
 [ "$RC" -eq 0 ] && ok || bad "log_rehydrate rc=$RC (want 0) — cursor $(cursor)"
 CUR=$(cursor)
-if printf '%s' "$CUR" | grep -qE '^[0-9]{4}-[0-9]{2}-[0-9]{2} [0-9]{2}:[0-9]{2}:[0-9]{2}Z$'; then ok; else
+if grep -qE '^[0-9]{4}-[0-9]{2}-[0-9]{2} [0-9]{2}:[0-9]{2}:[0-9]{2}Z$' <<<"$CUR"; then ok; else
   bad "the decoded cursor must be the stamp format bin/decision-log.sh writes (\`YYYY-MM-DD HH:MM:SSZ\`), got: [$CUR]"
 fi
 [ "${CUR:0:10}" = "$(date -u -d "@$BASE" '+%Y-%m-%d')" ] && ok \

@@ -108,6 +108,7 @@ grep -q 'left issue #2320 open, slice delivered (kept-slice:open-children:#2407+
 # branch runs mc_close_shipped with the PR url. A slice settles the debt (owed
 # marker cleared, merge recorded) without closing the issue.
 cp "$DIR/bin/merge-sweep.sh" "$DIR/bin/jobs-client.sh" "$T/h/bin/"
+mkdir -p "$T/h/bin/lib" && cp -rL "$DIR/bin/lib/ms" "$T/h/bin/lib/" || exit 1   # BH-5242: the sweep loads bin/lib/ms/
 cp "$DIR/bin/lib/gh-pr-list.sh" "$T/h/bin/lib/"
 cp "$DIR/bin/lib/gh-budget.sh" "$T/h/bin/lib/" 2>/dev/null || true
 mkdir -p "$T/h/bin/lib/jobs" "$T/h/locks" && cp "$DIR"/bin/lib/jobs/*.sh "$T/h/bin/lib/jobs/"

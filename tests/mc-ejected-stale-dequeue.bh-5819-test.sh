@@ -86,6 +86,10 @@ case "$*" in
   # The culprit read (BH-5819) over REST: the PR's comments and the head's date.
   *"api -i -X GET repos/example-org/mgfy-os/issues/31/comments"*) restpr --raw 200 "$(cat "$T/prcomments.json" 2>/dev/null || echo '[]')" ;;
   *"api -i -X GET repos/example-org/mgfy-os/commits/"*"/check-runs"*) restpr --raw 200 '{"check_runs":[]}' ;;
+  # BH-6161: the requeue arms ask the pre-queue gate, which reads main's tip
+  # (the real commits shape carries a sha); mgfy-os has no prequeue-gate.yml.
+  *"api -i -X GET repos/example-org/mgfy-os/commits/main") restpr --raw 200 '{"sha":"eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"}' ;;
+  *"actions/workflows/prequeue-gate.yml"*) restpr --raw 404 '{"message":"Not Found"}' ;;
   *"api -i -X GET repos/example-org/mgfy-os/commits/"*) restpr --raw 200 "{\"commit\":{\"committer\":{\"date\":\"$(cat "$T/headdate")\"}}}" ;;
   # ---- writes -------------------------------------------------------------
   *"api -X DELETE repos/"*"/labels/dequeued"*)

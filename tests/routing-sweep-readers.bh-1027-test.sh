@@ -127,7 +127,7 @@ S=$(status)
 rm -f "$H"/flags/*
 [ "$(flyblock | jq -r '.x.pool_app')" = harness-pool-x ] && ok || bad "2: fly-block pool_app from the row"
 rm -f "$H"/flags/*
-HV=$(health 1); printf '%s' "$HV" | grep -q 'BUILD_REFUSED(halted)' && ok || bad "2/7: health-uncommented must see a halted row: $HV"
+HV=$(health 1); grep -q 'BUILD_REFUSED(halted)' <<<"$HV" && ok || bad "2/7: health-uncommented must see a halted row: $HV"
 [ ! -s "$T/rsync.log" ] && [ ! -s "$T/ssh.log" ] && ok || bad "2: no rsync/ssh may carry the flip"
 
 # --- 3/4. dark default and no client: file answers, byte-identical, zero routing GETs
@@ -172,7 +172,7 @@ point 'br_pool_routed project-3' && bad "6: project-3 must not be pool" || ok
 # --- 7. pool-halt: row and file give the same terminal verdict ----------------
 reset; knob on; row x fly1 null 1; dead_build x; A=$(health 1)
 reset; knob off; : > "$H/flags/pool-halt-x"; dead_build x; B=$(health 1)
-[ "$A" = "$B" ] && printf '%s' "$A" | grep -q 'BUILD_REFUSED(halted)' && ok || bad "7: halted row vs file differ: [$A] vs [$B]"
+[ "$A" = "$B" ] && grep -q 'BUILD_REFUSED(halted)' <<<"$A" && ok || bad "7: halted row vs file differ: [$A] vs [$B]"
 
 # --- 8. mutation: propagate without its routing_sync_all misses the row pool --
 reset; knob on; row x pool harness-pool-x 0

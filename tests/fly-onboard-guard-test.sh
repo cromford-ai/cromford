@@ -70,15 +70,15 @@ grep -q 'apps create builder-alpha' "$G2/logs/flyctl-calls.log" \
   && ok || bad "the app flag must name pool-alpha"
 V=$(printf '%s\n' "$OUT" | grep -c '^FLY_ONBOARD alpha OK:')
 [ "$V" = 1 ] && ok || bad "exactly one OK verdict line on stdout (got $V): $OUT"
-printf '%s\n' "$OUT" | grep -q "flags/fly-pool-alpha=present" \
+grep -q "flags/fly-pool-alpha=present" <<<"$OUT" \
   && ok || bad "the verdict must name the pool flag path and its state: $OUT"
-printf '%s\n' "$OUT" | grep -q "flags/builder-fly-alpha=present" \
+grep -q "flags/builder-fly-alpha=present" <<<"$OUT" \
   && ok || bad "the verdict must name the builder flag path and its state: $OUT"
-printf '%s\n' "$OUT" | grep -q 'free-slots="unlimited (fly-routed:' \
+grep -q 'free-slots="unlimited (fly-routed:' <<<"$OUT" \
   && ok || bad "the verdict must carry bin/free-slots.sh's answer verbatim: $OUT"
 grep -q 'FLY_ONBOARD alpha OK:' "$G2/logs/fly-pool-rollout.log" \
   && ok || bad "the verdict must also be in logs/fly-pool-rollout.log"
-printf '%s\n' "$OUT" | grep -q 'image: registry.fly.io/builder-alpha' \
+grep -q 'image: registry.fly.io/builder-alpha' <<<"$OUT" \
   && ok || bad "the rollout's per-step lines must be printed, not just logged: $OUT"
 grep -q '10.0.0.13' "$G2/logs/ssh.log" \
   && ok || bad "the owning box's enqueue flag must be set over ssh"
@@ -89,7 +89,7 @@ run_ob box-hub "$G3" alpha --cap 4
 [ "$RC" = 0 ] && ok || bad "--cap 4 must still onboard (got $RC)"
 [ "$(cat "$G3/flags/fly-pool-alpha")" = 4 ] \
   && ok || bad "--cap 4 must land as 4 in flags/fly-pool-alpha (got '$(cat "$G3/flags/fly-pool-alpha")')"
-printf '%s\n' "$OUT" | grep -q 'present(cap 4)' \
+grep -q 'present(cap 4)' <<<"$OUT" \
   && ok || bad "the verdict must report the cap that RESOLVES: $OUT"
 
 # ══ 4. A BAD --cap IS REFUSED, NEVER CLAMPED (D11) ══════════════════════════

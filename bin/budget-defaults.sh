@@ -167,7 +167,7 @@ awk -F, '
 LC_ALL=C sort -t "$(printf '\t')" -k1,1 "$TMP/rows.tsv" > "$TMP/sorted.tsv"
 : > "$TMP/values"
 while IFS="$(printf '\t')" read -r key value n unit; do
-  if ! printf '%s' "$key" | grep -Eq '^[a-z0-9_.-]{1,64}$'; then
+  if ! grep -Eq '^[a-z0-9_.-]{1,64}$' <<<"$key"; then
     echo "budget-defaults.sh: skipped '$key' (not a legal settings key: [a-z0-9_.-], at most 64 chars)" >&2
     continue
   fi

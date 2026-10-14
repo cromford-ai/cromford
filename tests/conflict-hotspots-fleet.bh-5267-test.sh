@@ -23,6 +23,7 @@
 # Run from anywhere: HARNESS_TEST_SANDBOX=1 bash tests/conflict-hotspots-fleet.bh-5267-test.sh
 set -uo pipefail
 . "$(dirname "$0")/lib/scratch.sh" || exit 1
+. "$(dirname "$0")/lib/jobs-schema.sh" && jobs_schema_render || exit 1
 DIR=$(cd "$(dirname "$0")/.." && pwd)
 "$DIR/bin/llm-sites-build.sh" --compose --repo "$DIR" >/dev/null || { echo "FAIL: cannot compose catalog/llm-sites.json"; exit 1; }
 PASS=0; FAIL=0
@@ -178,7 +179,7 @@ puts() { grep -c '^PUT /api/conflict-hotspots' "$T/req.log" 2>/dev/null || true;
 lane
 check "F1 lane rc 0 (rc=$LRC: $(head -c 300 "$T/lane.err"))" '[ "$LRC" = 0 ]'
 EA=$(expected alpha); EB=$(expected beta)
-check "F1 fixture: alpha's measurer output has rows" '[ -n "$EA" ] && printf "%s\n" "$EA" | grep -q "^hot.txt	2	"'
+check "F1 fixture: alpha's measurer output has rows" '[ -n "$EA" ] && grep -q "^hot.txt	2	" <<<"$EA"'
 check "F1 fixture: beta's measurer output has rows" '[ -n "$EB" ]'
 check "F1 alpha rows equal the measurer's (got: $(stored alpha | tr '\n' ' '))" '[ "$(stored alpha)" = "$EA" ]'
 check "F1 beta rows equal the measurer's" '[ "$(stored beta)" = "$EB" ]'
@@ -197,7 +198,7 @@ push alpha
 lane
 EA2=$(expected alpha)
 check "F2 lane rc 0" '[ "$LRC" = 0 ]'
-check "F2 the fetch brought the new PR: hot.txt now 3 conflicts" 'printf "%s\n" "$EA2" | grep -q "^hot.txt	3	" && [ "$EA2" != "$A1" ]'
+check "F2 the fetch brought the new PR: hot.txt now 3 conflicts" 'grep -q "^hot.txt	3	" <<<"$EA2" && [ "$EA2" != "$A1" ]'
 check "F2 alpha rows replaced by the new window" '[ "$(stored alpha)" = "$EA2" ]'
 check "F2 no duplicate (project,file)" '[ -z "$(sql "SELECT project, file FROM conflict_hotspots GROUP BY project, file HAVING COUNT(*) > 1")" ]'
 # beta is re-measured too (its run_at and until move), so its DATA must match.

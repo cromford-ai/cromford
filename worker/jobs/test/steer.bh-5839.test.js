@@ -6,14 +6,13 @@
 //   - every send and every read is a stage event on the job (the event log)
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
-import { fileURLToPath } from 'node:url';
 import worker from '../src/index.js';
 import { openDb } from './lib/d1-sqlite.bh-1030.js';
 import { CREATED_TABLES } from '../src/lib/core.js';
+import { jobsSchemaSql } from './lib/jobs-schema.js';
 
 const SECRET = 'test-secret';
-const SCHEMA = readFileSync(fileURLToPath(new URL('../schema.sql', import.meta.url)), 'utf8');
+const SCHEMA = jobsSchemaSql();
 const norm = (s) => s.replace(/\s+/g, ' ').replace(/\( /g, '(').replace(/ \)/g, ')').trim();
 const T0 = '2026-10-09T20:00:00Z';
 

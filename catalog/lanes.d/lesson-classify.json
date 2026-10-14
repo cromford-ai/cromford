@@ -1,0 +1,87 @@
+{
+  "id": "lesson-classify",
+  "name": "Lesson classify (one category per BLOCK finding)",
+  "scope": "hub",
+  "script": "bin/lesson-classify.sh",
+  "cadence": "23 * * * *",
+  "boxes": [
+    "hub"
+  ],
+  "switch": {
+    "kind": "flag",
+    "name": "lane-off-lesson-classify",
+    "aliases": []
+  },
+  "wired": true,
+  "knobs": [
+    {
+      "env": "LESSON_CLASSIFY_ENABLED",
+      "type": "int",
+      "default": 1,
+      "min": 0,
+      "max": 1,
+      "zero_means": "off",
+      "note": "BH-5806: 0 stops the lane before any request. Read by bin/lesson-classify.sh as ${LESSON_CLASSIFY_ENABLED:-1}; any value other than 0 or 1 is one warn line in logs/lesson-classify.log and the default.",
+      "settable": true
+    },
+    {
+      "env": "LESSON_CLASSIFY_MAX_PER_TICK",
+      "type": "int",
+      "default": 5,
+      "min": 1,
+      "max": 50,
+      "zero_means": null,
+      "note": "BH-5806: BLOCK verdicts one tick asks for (GET /api/block-classify/pending?limit=), so at most this many model calls a tick. Read by bin/lesson-classify.sh as ${LESSON_CLASSIFY_MAX_PER_TICK:-5}; outside 1..50 is one warn line and the default.",
+      "settable": true
+    },
+    {
+      "env": "LESSON_CLASSIFY_TIMEOUT_S",
+      "type": "int",
+      "default": 120,
+      "min": 30,
+      "max": 600,
+      "unit": "s",
+      "zero_means": null,
+      "note": "BH-5806: seconds one classify call may run (bin/agent-call.sh timeout). Read by bin/lesson-classify.sh as ${LESSON_CLASSIFY_TIMEOUT_S:-120}; outside 30..600 is one warn line and the default.",
+      "settable": true
+    },
+    {
+      "env": "LLM_LANE_ENABLED",
+      "type": "int",
+      "default": 1,
+      "min": 0,
+      "max": 1,
+      "zero_means": "off",
+      "read_in": "bin/lib/llm-gate.sh",
+      "note": "0 makes this lane call no model at all. bin/lib/llm-gate.sh refuses BEFORE the vendor call and writes a zero-cost row_source=refused row, so the stop is visible in the ledger rather than being a lane that went quiet.",
+      "settable": true
+    },
+    {
+      "env": "LLM_RUNNER_ALLOWED",
+      "type": "string",
+      "default": "",
+      "zero_means": null,
+      "read_in": "bin/lib/llm-gate.sh",
+      "note": "Comma/space list of the ONLY ladder rungs this lane may reach. Empty is every rung, i.e. today's ladder unchanged. A rung outside the list is refused before the call.",
+      "settable": true
+    },
+    {
+      "env": "LLM_USD_CAP_DAY",
+      "type": "float",
+      "default": 0,
+      "min": 0,
+      "max": 10000,
+      "unit": "usd",
+      "zero_means": "unlimited",
+      "read_in": "bin/lib/llm-gate.sh",
+      "note": "Dollars this lane may spend in the current UTC day, summed from D1 cost_rows through GET /api/metrics/llm-spend, never from the box's own logs/cost.csv.",
+      "settable": true
+    }
+  ],
+  "stats": {
+    "cost_stage": "lesson-classify",
+    "cost_project_filter": null,
+    "lanes_row": false,
+    "log": "logs/lesson-classify.log"
+  }
+}

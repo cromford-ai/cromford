@@ -1455,3 +1455,11 @@ a.statgrid__cell:hover { background: var(--surface-1); color: var(--text); }
 .kb__head { flex-wrap: wrap; }
 .card__track { margin: 6px 0 2px; overflow-x: auto; max-width: 100%; }
 .card__track .track { min-width: 220px; }
+/* BH-6668: eight nowrap labels are wider than a card's node pitch (27 px on a
+   six-column board, 36 px on a 390 px phone), so they overlapped. A card shows
+   only its current station's label; the column head names the station and the
+   track's title lists all eight. */
+.card__track .st .lbl { display: none; }
+.card__track .st.now .lbl,
+.card__track .st.done:last-child .lbl,
+.card__track .st.done:has(+ .st:not(.done):not(.now)) .lbl { display: inline; }

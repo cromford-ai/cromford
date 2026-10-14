@@ -136,6 +136,22 @@ HOLD_TITLE_RE='\((?:ON[ \t]+)?HOLD\)|\[(?:ON[ \t]+)?HOLD\]|^[ \t]*(?:[A-Z]+-[0-9
 # and it re-holds nothing either. `\A` means the same in jq's Oniguruma and
 # python3 `re` (bin/launch-fastpath.sh reads this string too).
 HOLD_LIFT_LEAD_RE='\A[ \t\r\n]*(?i:resume|release|released|unhold|proceed)(?![A-Za-z0-9_?-])'
+# A PERSON'S COMMENT THAT OPENS WITH `HOLD:` IS A HOLD, WHATEVER FOLLOWS
+# (BH-6091, 2026-10-12). The mirror of the lead-lift rule above. #5962: the operator
+# wrote "HOLD: the lead reversed the RESUME above" at 23:36:14Z and "HOLD: …
+# Please make no pool push until the PR is open and RESUME …" at 00:16:03Z.
+# Both carried a capital RESUME, the lift-anywhere arm read each as a lift, and
+# a running pool build pushed twice under them. Capital HOLD first (after
+# whitespace), then `:` or a dash, the body rule's `:—–-`. "HOLD lifted" has
+# no colon or dash and is not this, so it still lifts. Asked after the lead-lift
+# arm, so "RESUME: the HOLD above is withdrawn" still lifts. `\A` means the same
+# in jq's Oniguruma and python3 `re` (bin/launch-fastpath.sh reads it too).
+# A BARE `HOLD` LINE IS THE SAME HOLD (review of 82abecc2): the lead's HOLD
+# comments on #6091 are `HOLD`, a blank line, then text that names RESUME. So
+# a first non-empty line that is only `hold` (any case, trailing blanks) holds
+# too. The dash needs a word boundary: "HOLD-free comment: RESUME now" is not
+# a hold. `\Z` and `(?i:…)` mean the same in Oniguruma and python3 `re`.
+HOLD_LEAD_RE='\A[ \t\r\n]*(?:HOLD[ \t]*(?:[:—–]|-(?![A-Za-z0-9]))|(?i:hold)[ \t]*(?:\r?\n|\Z))'
 # WAITING ON A HUMAN (BH-3443, slice 2 of BH-3433). BH-3348 paid $6.53 in
 # rebuilds of a review block that only the hub could clear: every rebuild ended
 # on the same step, and nothing on the ticket said a person had to take it. So
@@ -168,7 +184,7 @@ HOLD_NH_TAG_RE='<!--[ \t]*nh-fp:[0-9a-f]+[ \t]*-->'
 # or body. Lifted exactly as NEEDS-HUMAN: is (a person's done directly over it,
 # or the lift vocabulary), and a person's HOLD/ABANDON under it still stands.
 HOLD_HUMAN_FIX_RE='(?m)^(Taken by:[ \t]*\S|\[human-fix\])'
-export HOLD_WORD_RE HOLD_COMMENT_RE HOLD_LIFT_RE HOLD_NEG_RE HOLD_BODY_RE HOLD_ABANDON_RE HOLD_TITLE_RE HOLD_LIFT_LEAD_RE
+export HOLD_WORD_RE HOLD_COMMENT_RE HOLD_LIFT_RE HOLD_NEG_RE HOLD_BODY_RE HOLD_ABANDON_RE HOLD_TITLE_RE HOLD_LIFT_LEAD_RE HOLD_LEAD_RE
 export HOLD_NEEDS_HUMAN_RE HOLD_HUMAN_DONE_RE HOLD_NH_TAG_RE HOLD_HUMAN_FIX_RE
 
 # THE MARKER ON OUR OWN AMBIGUITY NOTE (hold_ambiguous_note). The note names the
@@ -201,7 +217,8 @@ hold__read() {
 
 # THE jq DEFINITIONS hold_classify AND hold_ambiguous SHARE, so "what is a
 # decisive comment" and "which comment is the newest person's" have one spelling.
-# The program that uses them passes $lift $neg $ab $hold $lead $mark $nh $hf $done.
+# The program that uses them passes $lift $neg $ab $hold $lead $holdlead $mark
+# $nh $hf $done.
 #
 # A comment is DECISIVE-LIFT when it opens with a lift word (HOLD_LIFT_LEAD_RE,
 # BH-3435) or the lift vocabulary matches, and no negation/condition precedes
@@ -210,7 +227,13 @@ hold__read() {
 # it was neither of those; neutral otherwise. A negated lead word is neutral,
 # never a hold: the sentence was about lifting.
 #
-# LIFT IS ASKED FIRST so the recency law reads the same in every direction:
+# A comment that OPENS with `HOLD:` or `HOLD —` (HOLD_LEAD_RE, BH-6091) is
+# DECISIVE-HOLD, asked right after the lead-lift and before the lift
+# vocabulary: "HOLD: the lead reversed the RESUME above" is a hold.
+#
+# THE ORDER: needs-human, human-fix, lead-lift, lead-HOLD, lift, abandon, done,
+# hold. Apart from the two lead arms, LIFT IS ASKED FIRST so the recency law
+# reads the same in every direction:
 # an ABANDON that a later RESUME lifts is clear, and a HOLD newer than an
 # ABANDON is a pause again. NEEDS-HUMAN is asked before even that (BH-3443):
 # the placer's own comment names RESUME in its release line and must never read
@@ -235,6 +258,7 @@ HOLD__JQ_DEFS='
     def decide: if test($nh) then "needs-human"
                 elif test($hf) then "human-fix"
                 elif test($lead) then (if test($neg) then "none" else "lift" end)
+                elif test($holdlead) then "hold"
                 elif test($lift) and ((test($neg)) | not) then "lift"
                 elif test($ab) and ((test($neg)) | not) then "abandon"
                 elif test($done) then "done"
@@ -289,7 +313,7 @@ hold_classify() {
   out=$( { printf '%s\n' "$ij"; printf '%s\n' "$cj"; } | jq -rn \
         --arg hold "$HOLD_COMMENT_RE" --arg lift "$HOLD_LIFT_RE" --arg neg "$HOLD_NEG_RE" \
         --arg bodyre "$HOLD_BODY_RE" --arg ab "$HOLD_ABANDON_RE" --arg titlere "$HOLD_TITLE_RE" \
-        --arg lead "$HOLD_LIFT_LEAD_RE" --arg mark "$HOLD_AMBIGUOUS_MARK" \
+        --arg lead "$HOLD_LIFT_LEAD_RE" --arg holdlead "$HOLD_LEAD_RE" --arg mark "$HOLD_AMBIGUOUS_MARK" \
         --arg nh "$HOLD_NEEDS_HUMAN_RE" --arg hf "$HOLD_HUMAN_FIX_RE" --arg done "$HOLD_HUMAN_DONE_RE" \
         --arg nhtag "$HOLD_NH_TAG_RE" "$HOLD__JQ_DEFS"'
     input as $i
@@ -428,7 +452,7 @@ hold_ambiguous() {
   [ -n "$cj" ] || return 1
   out=$(printf '%s\n' "$cj" | jq -rn \
         --arg hold "$HOLD_COMMENT_RE" --arg lift "$HOLD_LIFT_RE" --arg neg "$HOLD_NEG_RE" \
-        --arg ab "$HOLD_ABANDON_RE" --arg lead "$HOLD_LIFT_LEAD_RE" --arg mark "$HOLD_AMBIGUOUS_MARK" \
+        --arg ab "$HOLD_ABANDON_RE" --arg lead "$HOLD_LIFT_LEAD_RE" --arg holdlead "$HOLD_LEAD_RE" --arg mark "$HOLD_AMBIGUOUS_MARK" \
         --arg nh "$HOLD_NEEDS_HUMAN_RE" --arg hf "$HOLD_HUMAN_FIX_RE" --arg done "$HOLD_HUMAN_DONE_RE" "$HOLD__JQ_DEFS"'
     input as $c
     | (people($c) | first) as $p

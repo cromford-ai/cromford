@@ -45,7 +45,12 @@ command -v jq >/dev/null || { echo "blocked-resolver.bh-948-test: SKIPPED — jq
 # of it would pass while the lane changed.
 # ════════════════════════════════════════════════════════════════════════════
 ST="$T/st"; mkdir -p "$ST"
-awk '$0 ~ /^br_key_shape\(\)/ {f=1} f{print} f&&/^}$/{exit}' "$DIR/bin/blocked-resolver.sh" > "$T/keylib.sh"
+# BH-6461: the key family moved to bin/lib/br/keys.sh; the corpus is the driver
+# plus bin/lib/br/*.sh (tests/lib/br-corpus.sh), so the extraction finds it there.
+# shellcheck source=tests/lib/br-corpus.sh
+. "$DIR/tests/lib/br-corpus.sh" || exit 1
+br_corpus "$DIR" "$T/br-corpus.sh" || exit 1
+awk '$0 ~ /^br_key_shape\(\)/ {f=1} f{print} f&&/^}$/{exit}' "$T/br-corpus.sh" > "$T/keylib.sh"
 grep -q '^br_key_shape()' "$T/keylib.sh" \
   && ok || bad "could not extract br_key_shape from bin/blocked-resolver.sh — section 1 would test a paraphrase"
 # shellcheck source=/dev/null

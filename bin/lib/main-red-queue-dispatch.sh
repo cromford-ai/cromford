@@ -90,7 +90,7 @@ mrqd_self_dispatch() {
     log "SELF-DISPATCH: $slug $wf on main — queue freeze held $held min, main's newest push run is green; one dispatch for this episode"
     return 0
   fi
-  first=$(printf '%s\n' "$out" | head -1 | cut -c1-200)
+  first=$(head -1 <<<"$out" | cut -c1-200)
   job_ledger_put main_red_qdispatch "$key" "dispatch=refused at=$(STAMP)" >/dev/null 2>&1 \
     || log "self-dispatch: $slug could not mark the dispatch refused — the row still reads requested, so it is not retried either"
   log "self-dispatch: $slug $wf dispatch REFUSED: $first"

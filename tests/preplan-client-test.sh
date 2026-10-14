@@ -171,8 +171,8 @@ JSON
 curl_reset; route /api/preplans 200 "$T/curl/index.json"
 OUT=$(jc 'preplan_index proj')
 [ "$(printf '%s\n' "$OUT" | wc -l)" = 2 ] && ok || bad "preplan_index must print one line per key, got: $OUT"
-[ "$(printf '%s\n' "$OUT" | head -1 | cut -f4)" = 'src/lib/pay.ts|src/ui/card.tsx|' ] \
-  && ok || bad "preplan_index must flatten newlines in planned_files so a TSV reader never shifts, got: $(printf '%s\n' "$OUT" | head -1)"
+[ "$(head -1 <<<"$OUT" | cut -f4)" = 'src/lib/pay.ts|src/ui/card.tsx|' ] \
+  && ok || bad "preplan_index must flatten newlines in planned_files so a TSV reader never shifts, got: $(head -1 <<<"$OUT")"
 
 echo "--- 2. preplan_planned_files: local dir first, DB second"
 plf() { # plf <key> -> the function's stdout, run with the fake curl on PATH
@@ -190,9 +190,14 @@ curl_reset; route /api/preplans 200 "$T/curl/index.json"
 OUT=$(plf AB-2)
 [ "$OUT" = "src/other.ts
 rc=0" ] && ok || bad "with no local dir the DB index row must answer, got: $OUT"
-curl_reset; route /nothing 200 ""
+printf '{"preplans":[]}' > "$T/curl/empty-index.json"
+curl_reset; route /api/preplans 200 "$T/curl/empty-index.json"
 OUT=$(plf AB-3)
 [ "$OUT" = "rc=1" ] && ok || bad "no list anywhere must print nothing and rc 1, got: $OUT"
+# BH-6715: an index read that failed (404 here) is rc 2, "could not ask", not rc 1
+curl_reset; route /nothing 200 ""
+OUT=$(plf AB-3)
+[ "$OUT" = "rc=2" ] && ok || bad "an index that did not answer must print nothing and rc 2, got: $OUT"
 
 echo "--- 3. _preplan_client sources lazily"
 # (a) the verbs are already callable here, so NOTHING may be sourced — proven by
@@ -254,16 +259,16 @@ OUT=$(cli preplan-put proj AB-1 "$PD" 2>/dev/null)
 [ "$OUT" = "rc=3" ] && ok || bad "the CLI must exit with the verb's rc (3 on a refusal), got: $OUT"
 curl_reset; route /api/preplans 200 "$T/curl/row.json"
 OUT=$(cli preplan-get proj AB-1)
-[ "$(printf '%s\n' "$OUT" | head -1 | jq -r '.ticket_key')" = AB-1 ] \
+[ "$(head -1 <<<"$OUT" | jq -r '.ticket_key')" = AB-1 ] \
   && ok || bad "the preplan-get CLI case must print the row, got: $OUT"
 curl_reset; route /api/preplans 200 "$T/curl/index.json"
 OUT=$(cli preplan-index proj)
-[ "$(printf '%s\n' "$OUT" | head -1 | cut -f1)" = AB-1 ] \
+[ "$(head -1 <<<"$OUT" | cut -f1)" = AB-1 ] \
   && ok || bad "the preplan-index CLI case must print the TSV index, got: $OUT"
 # The usage line is what an operator reads; a verb that is not in it is a verb
 # nobody finds.
 U=$( ( export HARNESS="$T"; bash "$T/bin/jobs-client.sh" bogus-verb ) 2>&1 )
-printf '%s' "$U" | grep -q 'preplan-put <project> <key> <plan-dir>|preplan-get <project> <key>|preplan-index <project>' \
+grep -q 'preplan-put <project> <key> <plan-dir>|preplan-get <project> <key>|preplan-index <project>' <<<"$U" \
   && ok || bad "the usage line must document the three preplan verbs"
 
 echo "preplan-client: $PASS passed, $FAIL failed"

@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import worker from '../src/index.js';
+import { jobsSchemaSql } from './lib/jobs-schema.js';
 
 // BH-3926 (BH-3921.3): GET /api/metrics/triage-paid-unchanged — the daily,
 // per-project count of triage tickets the model was paid to re-read although
@@ -13,7 +14,7 @@ import worker from '../src/index.js';
 // pinned (the cost-breakdown.bh-3557 pattern).
 
 const SECRET = 'test-secret';
-const SCHEMA = readFileSync(fileURLToPath(new URL('../schema.sql', import.meta.url)), 'utf8');
+const SCHEMA = jobsSchemaSql();
 
 let DatabaseSync = null;
 try { ({ DatabaseSync } = await import('node:sqlite')); } catch { DatabaseSync = null; }

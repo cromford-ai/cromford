@@ -192,7 +192,7 @@ ld_classify() {
   if [ -z "$hits" ] && command -v patch_same >/dev/null 2>&1 && how=$(patch_same "$g" "$main" "$gs" "$hs"); then
     echo "replay $how"; return 0
   fi
-  if printf '%s\n' "$ns" | grep -qE $'^-\t'; then echo "full binary"; return 0; fi
+  if grep -qE $'^-\t' <<<"$ns"; then echo "full binary"; return 0; fi
   sum=$(printf '%s\n' "$ns" | awk -F'\t' 'NF >= 3 {s += $1 + $2} END {print s + 0}')
   n=$(printf '%s\n' "$own" | awk 'NF' | wc -l | tr -d ' ')
   if [ -n "$hits" ]; then

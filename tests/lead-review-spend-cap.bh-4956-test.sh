@@ -14,6 +14,9 @@
 # Run from anywhere: HARNESS_TEST_SANDBOX=1 bash tests/lead-review-spend-cap.bh-4956-test.sh
 set -uo pipefail
 . "$(dirname "$0")/lib/scratch.sh" || exit 1
+# TEST-CHANGE BH-6052: the day stamp below is read by the code and again here; never straddle 00:00Z.
+. "$(dirname "$0")/lib/day-boundary.sh" || exit 1
+clear_boundary 86400 34 || exit 1
 . "$(dirname "$0")/lib/lead-worklist-fixture.bh-4956.sh" || exit 1
 PASS=0; FAIL=0
 ok()  { PASS=$((PASS+1)); }

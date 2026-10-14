@@ -26,9 +26,10 @@ NODE_TEST="$DIR/worker/jobs/test/fix-rounds-routes.bh-2670.test.js"
 
 # --- 1: the module exists and is registered ---------------------------------
 if [ -f "$ROUTE" ]; then ok; else bad "missing $ROUTE"; fi
-grep -q '^import { routes as fixRounds } from "./routes/fix-rounds.js";$' "$INDEX" && ok \
-  || bad "index.js does not import the fix-rounds routes"
-grep -q '^  \.\.\.fixRounds,$' "$INDEX" && ok || bad "index.js ROUTES does not spread fixRounds"
+# TEST-CHANGE (BH-4607): a family is registered by its route-table.d fragment; index.js no longer lists gated families.
+[ "$(ls "$DIR"/worker/jobs/test/route-table.d/[0-9][0-9][0-9]-fix-rounds.txt 2>/dev/null | wc -l)" = 1 ] && ok \
+  || bad "fix-rounds has no route-table.d fragment (BH-4607: the fragment IS the registration)"
+grep -q 'from "./routes/fix-rounds.js"' "$INDEX" && bad "index.js hand-registers fix-rounds: the fragment registers it (BH-4607)" || ok
 
 # --- 2: no template-literal SQL ---------------------------------------------
 # A missing file must fail here too, not pass as "no hits" (D3).

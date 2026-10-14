@@ -562,8 +562,33 @@ if [ "${EVIDENCE_BLOCK:-1}" = 1 ]; then
     printf '%s\n' "$EVIDENCE" > "$BUILD/evidence.md"
     MERGE_NOTE=$(MERGE_NOTE_FOR "$TIER")
     EVIDENCE_SECTION=$'\n'"$EVIDENCE"$'\n'
+    # >>> pr-body hold gate (tests/pool-hold-yield.bh-6091-test.sh drives this block)
+    # The PR is open and RESULT already says so (BH-6091). A held or unreadable
+    # ticket skips only this edit: no exit, and RESULT keeps its PR_CREATED.
+    # Fails CLOSED, like RB_HOLD_GATE: no hold library is no edit.
+    PR_BODY_HOLD=""
     if [ -n "$PR_URL" ]; then
-      gh pr edit "$PR_URL" --body "$(PR_BODY_FOR "$EVIDENCE_SECTION")" >/dev/null 2>>"$BUILD/gh-stderr.log" || echo "$(STAMP) [$PROJECT/$KEY] evidence block: gh pr edit failed — the PR keeps its PR-open-time block" >> "$BUILD/pipeline.log"   # gh-guard-allow: a write, not a decision read
+      if command -v hold_push_verdict >/dev/null 2>&1; then
+        PR_BODY_HOLD=$(hold_push_verdict "$PROJECT" - "$BRANCH") && PR_BODY_HOLD=""
+      else
+        PR_BODY_HOLD=$'unreadable\tbin/lib/hold-push.sh missing'
+      fi
+    fi
+    if [ -n "$PR_BODY_HOLD" ]; then
+      echo "$(STAMP) [$PROJECT/$KEY] HOLD_YIELD $KEY at pr-body-edit — ${PR_BODY_HOLD#*	}; the PR keeps its PR-open-time body" >> "$BUILD/pipeline.log"
+      PR_URL_EDIT=""
+    else
+      PR_URL_EDIT="$PR_URL"
+    fi
+    # <<< pr-body hold gate
+    if [ -n "$PR_URL_EDIT" ]; then
+      PR_BODY_FOR "$EVIDENCE_SECTION" > "$BUILD/pr-body-edit.md"
+      # BH-6393: the edited body is self-checked like the opened one (all rules,
+      # reason lines for the head as it is now, the open-time fix sections put
+      # back, no new model turn), or it would drop what the open phase wrote.
+      command -v _pr_self_check_prepush >/dev/null 2>&1 && _pr_self_check_prepush "$BUILD/pr-body-edit.md" edit
+      command -v RB_TOKEN_REDACT >/dev/null 2>&1 && RB_TOKEN_REDACT "$BUILD/pr-body-edit.md"
+      gh pr edit "$PR_URL" --body "$(cat "$BUILD/pr-body-edit.md")" >/dev/null 2>>"$BUILD/gh-stderr.log" || echo "$(STAMP) [$PROJECT/$KEY] evidence block: gh pr edit failed — the PR keeps its PR-open-time block" >> "$BUILD/pipeline.log"   # gh-guard-allow: a write, not a decision read
     fi
   fi
   # ...and as a row, so the console and any box can read this build's evidence
@@ -1015,7 +1040,7 @@ if [ "$TIER" = "1" ] && [ -n "$PR_URL" ] && [ -z "${BUILDER_NO_MERGE:-}" ] && [ 
     # the note, which is the same shape the QA/migration notes already use.
     echo "$(STAMP) [$PROJECT/$KEY] tier-1 merge ENQUEUED in $SLUG's merge queue — the merge conductor settles it" >> "$BUILD/pipeline.log"
     BB pr_created "$TIER" "APPROVE" "$PR_URL" false "$(printf 'REVIEW:\n%s' "$(tail -c 900 "$BUILD/review.md")")"
-    RESULT "PR_CREATED $PR_URL | QUEUED: in the repo's merge queue, the merge conductor settles it${PREPR_NOTE:-}"
+    RESULT "PR_CREATED $PR_URL | QUEUED: in the repo's merge queue, the merge conductor settles it${PREPR_NOTE:-}${HOLD_YIELD_NOTE:-}"
     # >>> live emit handoff conductor
     type LIVE >/dev/null 2>&1 && LIVE handoff conductor "tier 1: enqueued in the repo's merge queue, the merge conductor settles it"
     # <<< live emit handoff conductor
@@ -1039,7 +1064,7 @@ if [ "$TIER" = "1" ] && [ -n "$PR_URL" ] && [ -z "${BUILDER_NO_MERGE:-}" ] && [ 
       echo "$(STAMP) [$PROJECT/$KEY] tier-1 merge failed, leaving PR open" >> "$ALERTS"
     fi
     BB pr_created "$TIER" "APPROVE" "$PR_URL" false "$(printf 'REVIEW:\n%s' "$(tail -c 900 "$BUILD/review.md")")"
-    RESULT "PR_CREATED $PR_URL${PREPR_NOTE:-}"
+    RESULT "PR_CREATED $PR_URL${PREPR_NOTE:-}${HOLD_YIELD_NOTE:-}"
   fi
 else
   # THE LEDGER SAYS THE SAME THING THE RESULT SAYS. Every other tier-1 branch
@@ -1064,7 +1089,7 @@ else
     fi
   fi
   # <<< live emit handoff
-  RESULT "PR_CREATED $PR_URL$QA_NOTE$MIG_NOTE$REBASE_NOTE${STACK_NOTE:-}${PREPR_NOTE:-}"
+  RESULT "PR_CREATED $PR_URL$QA_NOTE$MIG_NOTE$REBASE_NOTE${STACK_NOTE:-}${PREPR_NOTE:-}${HOLD_YIELD_NOTE:-}"
 fi
 # <<< tier-1 merge gate
 

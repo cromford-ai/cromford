@@ -1,3 +1,4 @@
 # SUITE REUSE SAVED (BH-5369, BH-5354.3): the suite ledger's bearer-only reads, appended after staff-findings at the END of the table.
 GET /api/suite-results/saved
 GET /api/suite-results/runs
+GET /api/suite-results/passes

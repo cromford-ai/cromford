@@ -1,0 +1,37 @@
+[
+    {
+      "lane": "staff",
+      "stage": "staff-tick",
+      "project": "fleet",
+      "runner": null,
+      "job": "At most one hub call per staff agent tick (bin/staff.sh tick <agent>, every 15 minutes), only for new findings, that decides per finding: digest, ask, or act by the agent's autonomy level, as one JSON object of decisions.",
+      "target_tokens": 12000,
+      "ceiling_tokens": 30000,
+      "composition": [
+        {
+          "component": "agent soul",
+          "source": "prompts/staff/<agent>-soul.md",
+          "cap": "static",
+          "purpose": "what the agent MAY do, NEVER does and REPORTS"
+        },
+        {
+          "component": "lane SOP",
+          "source": "catalog/prompts/staff-tick.md",
+          "cap": "static",
+          "purpose": "the decision contract and the STE voice rules"
+        },
+        {
+          "component": "new findings",
+          "source": "the agent's collector output, fingerprinted, minus acted, claimed and suppressed items",
+          "cap": "STAFF_MAX_ITEMS items (default 20)",
+          "purpose": "THE SCOPED DELTA: only findings no tick has acted on"
+        }
+      ],
+      "bounds": [
+        "[lane:max_items] at most STAFF_MAX_ITEMS findings are claimed and put in the prompt; the rest are deferred to the next tick (VERIFIED: tests/staff-heartbeat.bh-5561-test.sh H10)"
+      ],
+      "measured_before": null,
+      "measured_before_note": "never measured: the stage is new in BH-5561.",
+      "_unmeasured": "no staff tick has called a model yet. No context_kill_tokens either: BH-2538 arms no lane without measured rows."
+    }
+]

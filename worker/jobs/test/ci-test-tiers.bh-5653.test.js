@@ -5,14 +5,14 @@
 // tests/ci-test-tiers-*.bh-5653-test.sh.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
-import { fileURLToPath } from 'node:url';
 import worker from '../src/index.js';
 import { openDb } from './lib/d1-sqlite.bh-1030.js';
+import { jobsSchemaSql } from './lib/jobs-schema.js';
 
 const HARNESS = 'fixture-harness-secret';
 const TOKEN = 'fixture-ci-token';
-const SCHEMA = readFileSync(fileURLToPath(new URL('../schema.sql', import.meta.url)), 'utf8');
+// The composition of worker/jobs/schema.d/ (BH-6005): schema.sql is a render.
+const SCHEMA = jobsSchemaSql();
 const PATH = '/api/ci/test-tiers';
 const BLOB_A = 'a'.repeat(40);
 const BLOB_B = 'b'.repeat(40);

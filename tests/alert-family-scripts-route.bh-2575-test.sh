@@ -23,8 +23,9 @@ for f in "$SRC" "$INDEX" "$SUITE"; do
   [ -f "$f" ] && ok || bad "missing $f"
 done
 
-grep -q '^import { routes as alertFamilyScripts } from "./routes/alert-family-scripts.js";$' "$INDEX" \
-  && ok || bad "index.js does not import the alert-family-scripts routes"
+# TEST-CHANGE (BH-4607): a family is registered by its route-table.d fragment; index.js no longer lists gated families.
+[ "$(ls "$DIR"/worker/jobs/test/route-table.d/[0-9][0-9][0-9]-alert-family-scripts.txt 2>/dev/null | wc -l)" = 1 ] && ok \
+  || bad "alert-family-scripts has no route-table.d fragment (BH-4607: the fragment IS the registration)"
 
 if ! command -v node >/dev/null 2>&1; then
   echo "alert-family-scripts-route: node suite SKIPPED — node is not installed on this box"

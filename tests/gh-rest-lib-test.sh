@@ -125,7 +125,7 @@ row '403 secondary'     75 403 rate-limit  ''          -- gh_rest GET repos/o/r/
 reset; fx 429 '{"message":"triggered an abuse detection mechanism"}'
 row '429 abuse'         75 429 rate-limit  ''          -- gh_rest GET repos/o/r/pulls/7
 reset; fx 401 '{"message":"Bad credentials"}'
-row '401'               75 401 ''          ''          -- gh_rest GET repos/o/r/pulls/7
+row '401'               75 401 auth        ''          -- gh_rest GET repos/o/r/pulls/7
 reset; fx 500 '{"message":"rate limit"}'
 row '500 saying rate limit' 75 500 ''      ''          -- gh_rest GET repos/o/r/pulls/7
 reset; fx 502 ''
@@ -293,7 +293,7 @@ esac
 case "$LINE" in
   *"token=explicit"*) ok ;; *) bad "alert: token label missing from '$LINE'" ;;
 esac
-if echo "$LINE" | grep -Eq '^[0-9]{4}-[0-9]{2}-[0-9]{2} [0-9]{2}:[0-9]{2}:[0-9]{2}Z '; then ok
+if grep -Eq '^[0-9]{4}-[0-9]{2}-[0-9]{2} [0-9]{2}:[0-9]{2}:[0-9]{2}Z ' <<<"$LINE"; then ok
 else bad "alert: the line must open with a UTC stamp, got '$LINE'"; fi
 if [ "$(grep -c ghp_SECRETVALUE "$ALOG")" = 0 ]; then ok; else bad "alert: THE TOKEN VALUE IS IN ALERTS.log"; fi
 if [ "$(grep -c ghp_SECRETVALUE "$T/gh-calls.txt")" = 0 ]; then ok; else bad "the token value reached gh's argv"; fi

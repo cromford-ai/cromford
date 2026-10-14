@@ -4,6 +4,7 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import worker from '../src/index.js';
 import { CREATED_TABLES, ensureTable } from '../src/lib/core.js';
+import { jobsSchemaSql } from './lib/jobs-schema.js';
 
 // POST /api/wakes/prune + the index the summary reads (BH-1267 item 2).
 //
@@ -20,7 +21,7 @@ import { CREATED_TABLES, ensureTable } from '../src/lib/core.js';
 // and on the list of statements the route actually executed, driven through
 // `worker.fetch` — the production entry (D2/D3).
 
-const SCHEMA = readFileSync(fileURLToPath(new URL('../schema.sql', import.meta.url)), 'utf8');
+const SCHEMA = jobsSchemaSql();
 const SECRET = 'test-secret';
 const now = Date.now();  // determinism: ok the single anchor; every fixture below is iso(msAgo) off it
 const H = 3600e3;
@@ -289,7 +290,8 @@ test('prune: a database with no wakes table self-creates it and answers 200', as
   assert.equal(r.status, 200, `a missing table must not 500: ${JSON.stringify(r.body)}`);
   assert.equal(r.body.deleted, 0);
   const names = indexNames(fx.db);
-  assert.deepEqual(names, ['idx_wakes_at', 'idx_wakes_dedupe', 'idx_wakes_unacked'],
+  // BH-6727 added idx_wakes_repo_id (schema.d/202610141900): the self-create carries it too.
+  assert.deepEqual(names, ['idx_wakes_at', 'idx_wakes_dedupe', 'idx_wakes_repo_id', 'idx_wakes_unacked'],
     `the self-create must bring every index with it; got ${names.join(', ')}`);
   fx.db.close();
 });

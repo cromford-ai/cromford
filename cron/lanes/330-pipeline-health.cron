@@ -1,2 +1,6 @@
 # @hub-lanes
-*/10 * * * * /root/harness/bin/hub-lease.sh check && /root/harness/bin/pipeline-health.sh >/dev/null 2>&1
+# pipeline-health. BH-5941 (2026-10-11): --dispatch starts one detached
+# `pipeline-health.sh --project <p>` per project, each on its own lock and at a
+# stable offset inside PH_DISPATCH_SPREAD_SECS (bin/lib/project-lanes.sh), then runs the fleet sections.
+*/10 * * * * /root/harness/bin/hub-lease.sh check && /root/harness/bin/pipeline-health.sh --dispatch >> /root/harness/logs/pipeline-health-cron.log 2>&1
+# @hub-lanes

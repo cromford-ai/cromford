@@ -10,6 +10,7 @@
 # Run from anywhere: tests/port-cursor-route.bh-5227-test.sh   (exit 0 = all pass)
 set -uo pipefail
 DIR=$(cd "$(dirname "$0")/.." && pwd)
+. "$(dirname "$0")/lib/jobs-schema.sh" && jobs_schema_render || exit 1
 "$DIR/bin/llm-sites-build.sh" --compose --repo "$DIR" >/dev/null || { echo "FAIL: cannot compose catalog/llm-sites.json"; exit 1; }
 PASS=0; FAIL=0
 ok()  { PASS=$((PASS+1)); }
@@ -23,8 +24,9 @@ for f in "$SRC" "$INDEX" "$SUITE"; do
   [ -f "$f" ] && ok || bad "missing $f"
 done
 
-grep -q '^import { routes as portCursor } from "./routes/port-cursor.js";$' "$INDEX" \
-  && ok || bad "index.js does not import the port-cursor routes"
+# TEST-CHANGE (BH-4607): a family is registered by its route-table.d fragment; index.js no longer lists gated families.
+[ "$(ls "$DIR"/worker/jobs/test/route-table.d/[0-9][0-9][0-9]-port-cursor.txt 2>/dev/null | wc -l)" = 1 ] && ok \
+  || bad "port-cursor has no route-table.d fragment (BH-4607: the fragment IS the registration)"
 grep -q 'CREATE TABLE IF NOT EXISTS port_cursor' "$DIR/worker/jobs/schema.sql" \
   && ok || bad "schema.sql has no port_cursor table"
 grep -qx 'PUT /api/port/cursor' "$DIR/worker/jobs/test/route-table.d/515-port-cursor.txt" 2>/dev/null \

@@ -18,7 +18,9 @@
 # Run: HARNESS_TEST_SANDBOX=1 bash tests/staff-screen.bh-5567-test.sh   (exit 0 = pass)
 set -uo pipefail
 . "$(dirname "$0")/lib/scratch.sh" || exit 1
+. "$(dirname "$0")/lib/jobs-schema.sh" && jobs_schema_render || exit 1
 DIR=$(cd "$(dirname "$0")/.." && pwd)
+"$DIR/bin/lanes-build.sh" --root "$DIR" --write >/dev/null || { echo "FAIL: cannot write catalog/lanes.json"; exit 1; }
 "$DIR/bin/llm-sites-build.sh" --compose --repo "$DIR" >/dev/null || { echo "FAIL: cannot compose catalog/llm-sites.json"; exit 1; }
 PASS=0; FAIL=0
 ok()  { PASS=$((PASS+1)); }

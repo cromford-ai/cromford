@@ -175,7 +175,7 @@ printf '%s' "$RESP" | jq -e '(.comment // .id // .data) != null' >/dev/null 2>&1
 # explanation; a comment with no move is one status the next tick fixes.
 MOVED=$(CURL -X POST -d "$(jq -nc --arg s "$TO_STATUS" '{toStatus:$s,sortOrder:999999}')" \
   "$PROD$PREFIX/tickets/$TICKET/move" 2>/dev/null)
-if ! printf '%s' "$MOVED" | grep -q "$TO_STATUS"; then
+if ! grep -q "$TO_STATUS" <<<"$MOVED"; then
   say "commented, but the move to $TO_STATUS was refused: $(printf '%.160s' "$MOVED")"
   echo "POSTED $PROJECT/$KEY (status not moved)"
   exit 0

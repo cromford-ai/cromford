@@ -72,7 +72,7 @@ _rt_classify() {
   # An empty list is never "nothing risky changed": it is a diff this could not
   # read (bad base, detached ref, not a repo) or a diff with no files at all,
   # and neither one has earned a cheap review.
-  if ! printf '%s\n' "$files" | grep -q '[^[:space:]]'; then
+  if ! grep -q '[^[:space:]]' <<<"$files"; then
     printf 'T2 reason=%s\n' "$empty_reason"
     return 0
   fi
@@ -80,7 +80,7 @@ _rt_classify() {
 
   # A path this cannot resolve is not normalised into a tier — `tests/../bin/`
   # is a bin/ change wearing a tests/ prefix.
-  if printf '%s\n' "$files" | grep -q '\.\.'; then
+  if grep -q '\.\.' <<<"$files"; then
     printf 'T2 reason=unresolvable path(s)\n'
     return 0
   fi
@@ -89,7 +89,7 @@ _rt_classify() {
   local product=""
   while IFS= read -r f; do
     [ -n "$f" ] || continue
-    printf '%s\n' "$f" | grep -qE "$RT_DOCS_RE" && continue
+    grep -qE "$RT_DOCS_RE" <<<"$f" && continue
     docs_only=0
     product="$product$f
 "

@@ -9,6 +9,13 @@
   // @sentry/cloudflare imports node:async_hooks and other node: modules
   // (BH-5618). Without this flag wrangler warns and the bundle is wrong.
   "compatibility_flags": ["nodejs_compat"],
+  // BH-4987: src/lib/schema-sql.workerd.js imports the composed schema.sql as
+  // text, and CREATED_TABLES (src/lib/core.js) derives from it.
+  "rules": [{ "type": "Text", "globs": ["**/*.sql"], "fallthrough": true }],
+  // BH-4607: src/index.js imports ROUTES from "#routes", which is the
+  // git-ignored src/routes.gen.js under wrangler. This renders it from
+  // test/route-table.d/ before every bundle; a refused fragment fails the deploy.
+  "build": { "command": "node scripts/routes-build.mjs" },
   "account_id": "00000000000000000000000000000000",
   "workers_dev": true,
   "preview_urls": false,

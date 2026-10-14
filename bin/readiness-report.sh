@@ -177,7 +177,7 @@ repo_files() {
 RUNNER="" RUNNER_KIND="" TESTS_PRESENT=fail
 PKG_TEST=""
 [ -f "$REPO/package.json" ] && PKG_TEST=$(jq -r '.scripts.test // empty' "$REPO/package.json" 2>/dev/null)
-if [ -n "$PKG_TEST" ] && ! printf '%s' "$PKG_TEST" | grep -qi 'no test specified'; then
+if [ -n "$PKG_TEST" ] && ! grep -qi 'no test specified' <<<"$PKG_TEST"; then
   # npm's generated placeholder ("Error: no test specified && exit 1") is the
   # one test script that is worse than none: it exists, it always fails, and a
   # check that counted it would grade a repo with no suite as testable.
@@ -283,6 +283,9 @@ case "$SLUG" in */*/*|*" "*) SLUG="" ;; esac
 [ -n "$SLUG" ] && command -v gh_auth_for >/dev/null 2>&1 && gh_auth_for "$SLUG" || true
 
 GH_OFF=0; [ "${READINESS_GH:-1}" = 0 ] && GH_OFF=1
+# PROT_READ: what the protection read answered, for ci.required_check below —
+# protected | unprotected | unread.
+PROT_READ=unread
 if [ "$GH_OFF" = 1 ]; then
   add ci.branch_protection ci skipped "READINESS_GH=0 — GitHub was not asked"
 elif ! command -v gh >/dev/null 2>&1; then
@@ -296,18 +299,45 @@ else
     # repo, and reading it as "not protected" would refuse repos for the state
     # of the machine running the report.
     add ci.branch_protection ci unknown "gh could not resolve the default branch of $SLUG"
-  elif gh api "repos/$SLUG/branches/$DEF/protection" --jq '.url // "protected"' >/dev/null 2>"$TMPD/gh2.err"; then
-    add ci.branch_protection ci pass "$DEF is protected"
+  elif gh api "repos/$SLUG/branches/$DEF/protection" >"$TMPD/prot.json" 2>"$TMPD/gh2.err"; then
+    add ci.branch_protection ci pass "$DEF is protected"; PROT_READ=protected
   elif grep -qi 'not protected' "$TMPD/gh2.err" 2>/dev/null; then
     # ONLY the phrase GitHub uses for the real answer ("Branch not protected").
     # A bare 404/Not Found is also what GitHub returns when the token cannot see
     # the repo at all, and reading that as "unprotected" would cost a repo a
     # level for the state of the machine running the report — the thing the
     # fail-open comment above exists to prevent.
-    add ci.branch_protection ci fail "Branch not protected: $DEF"
+    add ci.branch_protection ci fail "Branch not protected: $DEF"; PROT_READ=unprotected
   else
     add ci.branch_protection ci unknown "gh could not read branch protection: $(tail -1 "$TMPD/gh2.err" 2>/dev/null)"
   fi
+fi
+
+# ci.required_check (BH-6428): does anything on GitHub refuse a merge whose CI
+# is red? Either a branch protection rule with required_status_checks, or a
+# ruleset on the default branch with a required_status_checks rule. project-6's
+# main ruleset had neither, so GitHub accepted a REST merge of a red PR.
+# Report-only: no level in catalog/readiness-levels.json reads it. A read that
+# failed is unknown, never fail (same reason as the fail-open comment above).
+if [ "$GH_OFF" = 1 ]; then
+  add ci.required_check ci skipped "READINESS_GH=0 — GitHub was not asked"
+elif ! command -v gh >/dev/null 2>&1; then
+  add ci.required_check ci unknown "gh is not on PATH — required status checks were not read"
+elif [ -z "$SLUG" ]; then
+  add ci.required_check ci unknown "no github.com origin remote — nothing to ask about"
+elif [ -z "${DEF:-}" ]; then
+  add ci.required_check ci unknown "gh could not resolve the default branch of $SLUG"
+elif [ "$PROT_READ" = protected ] && jq -e '.required_status_checks != null' "$TMPD/prot.json" >/dev/null 2>&1; then
+  add ci.required_check ci pass "the branch protection rule on $DEF requires status checks"
+elif ! gh api "repos/$SLUG/rules/branches/$DEF" >"$TMPD/rules.json" 2>"$TMPD/gh3.err" \
+     || ! jq -e 'type == "array"' "$TMPD/rules.json" >/dev/null 2>&1; then
+  add ci.required_check ci unknown "gh could not read the rulesets on $DEF: $(tail -1 "$TMPD/gh3.err" 2>/dev/null)"
+elif jq -e 'any(.[]; .type == "required_status_checks")' "$TMPD/rules.json" >/dev/null 2>&1; then
+  add ci.required_check ci pass "a ruleset on $DEF requires status checks"
+elif [ "$PROT_READ" = unread ] || { [ "$PROT_READ" = protected ] && ! jq -e 'type == "object"' "$TMPD/prot.json" >/dev/null 2>&1; }; then
+  add ci.required_check ci unknown "no ruleset on $DEF requires a status check, and branch protection could not be read"
+else
+  add ci.required_check ci fail "OWED: required status check — $DEF has no ruleset or branch protection rule that requires a status check"
 fi
 
 # ── preview ─────────────────────────────────────────────────────────────────

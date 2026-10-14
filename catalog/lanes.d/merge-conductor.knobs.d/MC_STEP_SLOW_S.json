@@ -1,0 +1,11 @@
+{
+  "env": "MC_STEP_SLOW_S",
+  "type": "int",
+  "default": 60,
+  "min": 0,
+  "max": 1500,
+  "unit": "seconds",
+  "zero_means": "off",
+  "note": "A worker step past this logs one STEP_SLOW line while it runs, and a STEP_END line with started= when it ends, on any path (BH-6351). Settings row: lane.merge-conductor.mc_step_slow_s.",
+  "read_in": "bin/lib/fanin.sh"
+}

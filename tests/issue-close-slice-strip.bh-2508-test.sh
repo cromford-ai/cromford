@@ -246,9 +246,9 @@ W=$(mcs); RC=$?
 CCLINE=$(grep -m1 '^CC plan ' "$DIR/bin/lib/rb/plan.sh")
 [ -n "$CCLINE" ] && ok || bad "P1: bin/lib/rb/plan.sh has no 'CC plan' line"
 PROMPT=$( set +u; CC() { printf '%s' "$5"; }; TICKET=2320 KEY=BH-2320 PROJECT=proj BUILD=/b; eval "$CCLINE" )
-printf '%s' "$PROMPT" | grep -qF 'SLICE: C<n> of #2320' && ok \
+grep -qF 'SLICE: C<n> of #2320' <<<"$PROMPT" && ok \
   || bad "P1: the expanded planner prompt must ask for 'SLICE: C<n> of #2320' (prompt tail: ${PROMPT: -300})"
-printf '%s' "$PROMPT" | grep -qF 'PLAN ONLY' && ok || bad "P1: the extraction must be the real planner prompt"
+grep -qF 'PLAN ONLY' <<<"$PROMPT" && ok || bad "P1: the extraction must be the real planner prompt"
 
 # P2/P3. the repair pass rewrites plan.md IN PLACE, so it must tell the model to
 # keep a 'SLICE:' line the planner wrote; a repair that drops it turns a sliced
@@ -260,8 +260,8 @@ for RP in plan-repair-run.txt; do
   RLINE=$(grep -m1 "^[[:space:]]*CC plan .*$RP" "$DIR/bin/lib/rb/plan.sh" | sed 's/^[[:space:]]*//')
   [ -n "$RLINE" ] && ok || bad "P2: bin/lib/rb/plan.sh has no 'CC plan' line for $RP"
   RPROMPT=$( set +u; CC() { printf '%s' "$5"; }; TICKET=2320 KEY=BH-2320 PROJECT=proj BUILD=/b HARNESS=/h; eval "$RLINE" )
-  printf '%s' "$RPROMPT" | grep -qF 'Repair the plan' && ok || bad "P2: the $RP extraction must be the real repair prompt"
-  printf '%s' "$RPROMPT" | grep -qF "'SLICE:" && ok \
+  grep -qF 'Repair the plan' <<<"$RPROMPT" && ok || bad "P2: the $RP extraction must be the real repair prompt"
+  grep -qF "'SLICE:" <<<"$RPROMPT" && ok \
     || bad "P3: the $RP repair prompt must tell the model to keep a 'SLICE:' line (prompt tail: ${RPROMPT: -300})"
 done
 

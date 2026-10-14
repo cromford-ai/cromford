@@ -4,6 +4,7 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { DatabaseSync } from 'node:sqlite';
 import worker, { CREATED_TABLES } from '../src/index.js';
+import { jobsSchemaSql } from './lib/jobs-schema.js';
 
 // BH-3493 (BH-3478.1) — the hub side of the split-child context-pack wire:
 // the context_packs table, POST/GET /api/context-packs, the stage.plan.child
@@ -11,7 +12,7 @@ import worker, { CREATED_TABLES } from '../src/index.js';
 // THAT SHIPS, through worker.fetch, the same idiom as
 // model-routes-seed.bh-1908.test.js.
 const SECRET = 'test-secret';
-const SCHEMA = readFileSync(fileURLToPath(new URL('../schema.sql', import.meta.url)), 'utf8');
+const SCHEMA = jobsSchemaSql();
 
 // Copied from model-routes-seed.bh-1908.test.js (test files stay independent).
 function sqliteDB(db) {

@@ -136,7 +136,7 @@ has "$S2" '$0.00' && bad "D2: stamp shows \$0.00 for an absent Fly line: $S2" ||
 J=$( ( . "$DIR/bin/lib/jobs/cost.sh"; _metric_pr_costs_json "$(CSV)" ) 2>&1)
 [ "$(printf '%s' "$J" | jq -r '.rows[0] | keys_unsorted | join(",")')" = \
   "pr_url,cost_usd,input_toks,output_toks,cache_read,cache_write,stage_breakdown,build_dirs,auth_account,account_breakdown" ] \
-  && ok || bad "D3: the pr_costs JSON keys changed: $(printf '%s' "$J" | head -c 300)"
+  && ok || bad "D3: the pr_costs JSON keys changed: $(head -c 300 <<<"$J")"
 [ "$(printf '%s' "$J" | grep -c fly_usd)" = 0 ] && ok || bad "D3: fly_usd reached the worker contract"
 
 # D4

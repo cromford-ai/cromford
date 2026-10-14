@@ -36,6 +36,9 @@
 #   (exit 0 = all pass)
 set -uo pipefail
 . "$(dirname "$0")/lib/scratch.sh" || exit 1
+# TEST-CHANGE BH-6052: the day stamp below is read by the code and again here; never straddle 00:00Z.
+. "$(dirname "$0")/lib/day-boundary.sh" || exit 1
+clear_boundary 86400 30 || exit 1
 DIR=$(cd "$(dirname "$0")/.." && pwd)
 NOW=$(date -u +%Y%m%d)
 
@@ -110,13 +113,13 @@ run --quiet >/dev/null 2>&1; RC=$?
 PROJ_LINE=$(grep '\[model-route\]' "$T/logs/ALERTS.log" 2>/dev/null | grep 'build.execute' || true)
 HUB_LINE=$(grep '\[model-route\]' "$T/logs/ALERTS.log" 2>/dev/null | grep 'review.pr' || true)
 if [ -n "$PROJ_LINE" ] \
-   && printf '%s' "$PROJ_LINE" | grep -q 'project-3' \
-   && printf '%s' "$PROJ_LINE" | grep -q '2' \
-   && printf '%s' "$PROJ_LINE" | grep -q '/models/build.execute'; then ok
+   && grep -q 'project-3' <<<"$PROJ_LINE" \
+   && grep -q '2' <<<"$PROJ_LINE" \
+   && grep -q '/models/build.execute' <<<"$PROJ_LINE"; then ok
 else bad "1c the project gap's line must name the role, the project, the rung and a /models URL: '$PROJ_LINE'"; fi
 if [ -n "$HUB_LINE" ] \
-   && printf '%s' "$HUB_LINE" | grep -q '1,3' \
-   && printf '%s' "$HUB_LINE" | grep -q '/models/review.pr'; then ok
+   && grep -q '1,3' <<<"$HUB_LINE" \
+   && grep -q '/models/review.pr' <<<"$HUB_LINE"; then ok
 else bad "1d the hub gap's line must name the role, the rungs and a /models URL: '$HUB_LINE'"; fi
 grep -q 'gapped=2' "$LANELOG" 2>/dev/null && ok || bad "1e wanted a gapped=2 summary in $LANELOG: $(cat "$LANELOG" 2>/dev/null)"
 grep -q 'checked=3' "$LANELOG" 2>/dev/null && ok || bad "1f wanted checked=3 (the response's roles length) in $LANELOG: $(cat "$LANELOG" 2>/dev/null)"

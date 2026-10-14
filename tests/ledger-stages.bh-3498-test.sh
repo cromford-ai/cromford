@@ -134,7 +134,12 @@ drive "$T/sizeblock.mut.sh" DRC=0
 # ============================================================================
 # br_resolve_ticket_merged — superseded beats
 # ============================================================================
-{ awk '/^br_row_closed\(\) \{/,/^\}/' "$DIR/bin/blocked-resolver.sh"
+# BH-5241: the corpus is the driver plus bin/lib/br/*.sh (tests/lib/br-corpus.sh),
+# because the record functions moved out of the driver into bin/lib/br/record.sh.
+# shellcheck source=tests/lib/br-corpus.sh
+. "$DIR/tests/lib/br-corpus.sh" || exit 1
+br_corpus "$DIR" "$T/br-corpus.sh" || exit 1
+{ awk '/^br_row_closed\(\) \{/,/^\}/' "$T/br-corpus.sh"
   awk '/^br_resolve_ticket_merged\(\) \{/,/^\}/' "$DIR/bin/blocked-resolver.sh"; } > "$T/resolver.sh"
 grep -q '^br_resolve_ticket_merged() {' "$T/resolver.sh" && grep -q '^br_row_closed() {' "$T/resolver.sh" \
   && ok || bad "could not extract the resolver functions"

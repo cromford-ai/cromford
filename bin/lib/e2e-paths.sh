@@ -36,5 +36,5 @@ e2e_path_hit() { # stdin: one path per line
   grep -qE "$E2E_PATH_RE"
 }
 e2e_check_name() { # e2e_check_name <name>
-  printf '%s' "${1:-}" | grep -qiE "$E2E_CHECK_RE"
+  grep -qiE "$E2E_CHECK_RE" <<<"${1:-}"
 }

@@ -4,6 +4,7 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { DatabaseSync } from 'node:sqlite';
 import worker from '../src/index.js';
+import { jobsSchemaSql } from './lib/jobs-schema.js';
 
 // BH-2532.0 (BH-2622) — box_status.rules_hash and rules_reported_at, driven
 // against THE SQL THAT SHIPS: schema.sql on a fresh database, and the
@@ -12,7 +13,7 @@ import worker from '../src/index.js';
 // only true if both paths actually create them.
 
 const SECRET = 'test-secret';
-const SCHEMA = readFileSync(fileURLToPath(new URL('../schema.sql', import.meta.url)), 'utf8');
+const SCHEMA = jobsSchemaSql();
 
 // A D1-shaped facade over node:sqlite (same shape as schema-deploy-queue.bh-1026).
 function sqliteDB(db) {

@@ -24,7 +24,9 @@ INDEX="$DIR/worker/jobs/src/index.js"
 for f in "$ROUTE" "$SUITE"; do
   [ -f "$f" ] && ok || bad "missing $f"
 done
-grep -q '^  \.\.\.boxCommands,$' "$INDEX" && ok || bad "index.js does not mount the boxCommands routes"
+# TEST-CHANGE (BH-4607): a family is registered by its route-table.d fragment; index.js no longer lists gated families.
+[ "$(ls "$DIR"/worker/jobs/test/route-table.d/[0-9][0-9][0-9]-box-commands.txt 2>/dev/null | wc -l)" = 1 ] && ok \
+  || bad "box-commands has no route-table.d fragment (BH-4607: the fragment IS the registration)"
 
 if ! command -v node >/dev/null 2>&1; then
   echo "box-commands-worker: node suite SKIPPED — node is not installed on this box"
@@ -40,7 +42,7 @@ else
     bad "node --test test/box-commands.bh-2518.test.js failed:"
     printf '%s\n' "$OUT" | grep -E '^not ok|AssertionError|Error|# (pass|fail)' | head -40
   fi
-  printf '%s\n' "$OUT" | grep -q '^# skipped 0$' && ok || bad "the node suite skipped a test (node:sqlite missing?)"
+  grep -q '^# skipped 0$' <<<"$OUT" && ok || bad "the node suite skipped a test (node:sqlite missing?)"
 fi
 
 echo "box-commands-worker: $PASS passed, $FAIL failed"

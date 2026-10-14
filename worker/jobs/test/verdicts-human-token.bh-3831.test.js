@@ -4,6 +4,7 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { DatabaseSync } from 'node:sqlite';
 import worker from '../src/index.js';
+import { jobsSchemaSql } from './lib/jobs-schema.js';
 
 // BH-3831 — a source=human verdict is only provably human when it carries the
 // human verdict token (x-human-verdict-token = the worker secret
@@ -16,7 +17,7 @@ import worker from '../src/index.js';
 const SECRET = 'test-secret';
 const LEAD = 'lead-test-token';
 const HUMAN = 'human-test-token';
-const SCHEMA = readFileSync(fileURLToPath(new URL('../schema.sql', import.meta.url)), 'utf8');
+const SCHEMA = jobsSchemaSql();
 
 function sqliteDB(db) {
   const bindAndRun = (sql, binds) => ({

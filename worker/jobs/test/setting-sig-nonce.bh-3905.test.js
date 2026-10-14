@@ -6,6 +6,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { createHmac } from 'node:crypto';
 import worker from '../src/index.js';
 import * as verdicts from '../src/routes/verdicts.js';
+import { jobsSchemaSql } from './lib/jobs-schema.js';
 
 const { PROTECTED_PREFIXES, isProtectedSetting, settingProof, settingSigMessageV2 } = verdicts;
 
@@ -18,7 +19,7 @@ const SECRET = 'test-secret';
 const LEAD = 'lead-test-token';
 const HUMAN = 'human-test-token';
 const KEY = 'sig-test-key';
-const SCHEMA = readFileSync(fileURLToPath(new URL('../schema.sql', import.meta.url)), 'utf8');
+const SCHEMA = jobsSchemaSql();
 
 function sqliteDB(db) {
   const bindAndRun = (sql, binds) => ({

@@ -121,6 +121,21 @@ DONE="$H/state/merge-sweep-done.txt"; mkdir -p "$H/state" "$H/logs" "$H/locks"; 
 # never ledgered (it is reversible — see the gate), so without this the sweep
 # would page every ten minutes for as long as the PR sat there.
 HBALERT="$H/state/headbound-alerted.txt"; touch "$HBALERT"
+# >>> sweep modules (BH-5242)
+# bin/lib/ms/ holds the sweep's helper modules, loaded through the module map
+# (bin/lib/ms/load.sh). The copy next to this script is tried first, because
+# the fixtures copy this script into a scratch bin/; then $H/bin/lib/ms. A
+# module that is missing or unusable REFUSES the tick: a box mid-sync can see
+# this script new and bin/lib/ms/ missing, and a sweep without its helpers
+# would fail on the first record instead of saying why.
+MS_LIB_DIR="$(dirname "$0")/lib/ms"; [ -r "$MS_LIB_DIR/load.sh" ] || MS_LIB_DIR="$H/bin/lib/ms"
+# shellcheck source=bin/lib/ms/load.sh
+if ! . "$MS_LIB_DIR/load.sh"; then
+  HARNESS="$H" "$H/bin/alert-line.sh" "SWEEP MODULE MISSING: bin/lib/ms/ is missing or unusable on $(hostname) — the box's bin/ is half-synced; no PR was swept this tick" 2>/dev/null || true
+  echo "$(STAMP) [merge-sweep] bin/lib/ms/ is missing or unusable — refusing the tick" >> "$LOG"
+  exit 1
+fi
+# <<< sweep modules
 
 # HARNESS_SECRET lives in global.env; cron does not source it for us. Sourced
 # BEFORE the kill-switch test now, because that test is the flag lookup and the
@@ -633,32 +648,6 @@ while read -r _TS _CAUSE _TPR _TFP; do
   [ -n "$_TPR" ] && [ -n "$_TFP" ] || continue
   _TERM["$_TPR|$_TFP"]="$_TS $_CAUSE"
 done < "$TERM_CACHE"
-
-# The evidence every terminal cause is decided from, in one stat: name, mtime
-# and size of each file. An absent file simply drops out, so a relay
-# (bin/fly-results-ingest.sh, bin/fly-pool.sh) that adds, removes or rewrites
-# any of them changes the key and the record is re-evaluated — which is the
-# behaviour we want. Empty output = no fingerprint = no caching at all.
-sweep_record_fp() { ( cd "$1" 2>/dev/null && stat -c '%n:%Y:%s' RESULT review.md pipeline.log e2e.md reviewed-sha 2>/dev/null | tr '\n' ',' ); }
-sweep_terminal() { # sweep_terminal <cause> — this record's refusal is decided by the record itself
-  local cause="${1// /_}"
-  _ITER_CLASS=terminal-new
-  [ -n "${FP:-}" ] || return 0
-  _TERM["$PR|$FP"]="$NOW $cause"
-  printf '%s %s %s %s\n' "$NOW" "$cause" "$PR" "$FP" >> "$TERM_CACHE"
-}
-# The two causes that say something in the log today. Re-emitted verbatim on the
-# daily refresh so bin/pipeline-health.sh:344 keeps finding a reason line for a
-# starved PR instead of reporting "the silent-skip shape". The other three
-# causes are silent today and stay silent — a first-time line for each would
-# print thousands of lines on the first tick after deploy, the opposite of what
-# BH-710 asks for; the per-project counters carry their visibility.
-sweep_relog_line() { # sweep_relog_line <cause>
-  case "$1" in
-    e2e-fail)            printf '%s skipped: E2E smoke FAILED on the build'"'"'s preview deployment (see %s/e2e.md)\n' "$PR" "$D" ;;
-    ledger-provenance-*) printf '%s skipped: ledger provenance is %s, not the primary review lane\n' "$PR" "${1#ledger-provenance-}" ;;
-  esac
-}
 
 # --- The issue close-out, retryable (BH-784) ---------------------------------
 # ORDER: comment, then close, then the done-marker — and the marker only after

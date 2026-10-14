@@ -21,6 +21,9 @@
 # Run from anywhere: tests/prompt-ceiling-test.sh   (exit 0 = all pass)
 set -uo pipefail
 . "$(dirname "$0")/lib/scratch.sh" || exit 1
+# TEST-CHANGE BH-6052: the day stamp below is read by the code and again here; never straddle 00:00Z.
+. "$(dirname "$0")/lib/day-boundary.sh" || exit 1
+clear_boundary 86400 30 || exit 1
 DIR=$(cd "$(dirname "$0")/.." && pwd)
 AC="$DIR/bin/agent-call.sh"
 ROLL="$DIR/bin/cost-rollup.sh"

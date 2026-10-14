@@ -3,12 +3,13 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { DatabaseSync } from 'node:sqlite';
+import { jobsSchemaSql } from './lib/jobs-schema.js';
 
 // BH-1510.2 — the roles the non-build lanes read once their literals are gone.
 // Each value is the literal the lane carried on main (50380e9b) before #1510.2
 // deleted it; schema.sql names the file:line on every row. Driven against THE
 // SQL THAT SHIPS, the same idiom as model-routes.bh-1510.test.js.
-const SCHEMA = readFileSync(fileURLToPath(new URL('../schema.sql', import.meta.url)), 'utf8');
+const SCHEMA = jobsSchemaSql();
 const openDb = () => { const db = new DatabaseSync(':memory:'); db.exec(SCHEMA); return db; };
 const ladder = (db, role) => db.prepare(
   'SELECT position, model, runner, project, updated_by FROM model_routes WHERE role=? ORDER BY position').all(role);

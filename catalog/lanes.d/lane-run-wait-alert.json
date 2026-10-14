@@ -1,0 +1,44 @@
+{
+  "id": "lane-run-wait-alert",
+  "name": "Lane-run queue-wait alert",
+  "scope": "hub",
+  "script": "bin/lane-run-wait-alert.sh",
+  "cadence": "* * * * *",
+  "boxes": [
+    "hub"
+  ],
+  "switch": {
+    "kind": "flag",
+    "name": "lane-off-lane-run-wait-alert",
+    "aliases": []
+  },
+  "wired": true,
+  "knobs": [
+    {
+      "env": "LANE_RUN_LOADAVG_FILE",
+      "type": "string",
+      "default": "",
+      "unit": null,
+      "zero_means": null,
+      "read_in": "bin/lane-run-wait-alert.sh",
+      "note": "BH-6127 test seam: the file the hub load is read from. Empty = /proc/loadavg, the documented default in the script. NOT settable from the control plane.",
+      "settable": false
+    },
+    {
+      "env": "LANE_RUN_NOW",
+      "type": "string",
+      "default": "",
+      "unit": null,
+      "zero_means": null,
+      "read_in": "bin/lane-run-wait-alert.sh",
+      "note": "BH-6127 test seam: epoch seconds that stamp the summary line instead of the clock. Only all-digit values are used. NOT settable from the control plane.",
+      "settable": false
+    }
+  ],
+  "stats": {
+    "cost_stage": null,
+    "cost_project_filter": null,
+    "lanes_row": false,
+    "log": "logs/lane-run-wait-alert.log"
+  }
+}

@@ -287,7 +287,7 @@ render() { # render <gates.json literal> ; sets ROW / OUT / JSON
 
 # case 9 — present, with both files named
 render '{"tamper":"0","repro":"0","intent":"0","e2e":"pass","migration":"present","migration_files":["prisma/migrations/manual/2026-09-22-x.sql","prisma/schema/misc.prisma"]}'
-printf '%s\n' "$OUT" | grep -qF \
+grep -qF <<<"$OUT" \
   '| migration gate | present — prisma/migrations/manual/2026-09-22-x.sql, prisma/schema/misc.prisma |' \
   && ok || bad "9: the Evidence row does not name the files: [$ROW]"
 printf '%s' "$JSON" | jq -e '.migration_files | test("2026-09-22-x.sql") and test("misc.prisma")' >/dev/null 2>&1 \

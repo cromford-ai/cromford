@@ -177,17 +177,17 @@ that produces it has stopped.
 ## The alarm this replaced
 
 `bin/pipeline-health.sh` carried a spend circuit breaker: a flat dollar cap per
-project per 24 hours. `$N` a project, `$N` the fleet — the hardcoded
+project per 24 hours. `$300` a project, `$800` the fleet — the hardcoded
 defaults, in force on every box, because `flags/cost-caps.conf` existed on none
 of them.
 
 On 2026-09-15 it paged four times before lunch:
 
 ```
-02:11:42Z project-5 spent $N in 24h (cap $N)
-08:31:30Z project-5 spent $N in 24h (cap $N)
-12:01:34Z project-4   spent  $N in 24h (cap $N)
-14:41:57Z project-5 spent $N in 24h (cap $N)
+02:11:42Z project-5 spent $1368.90 in 24h (cap $300)
+08:31:30Z project-5 spent $1462.16 in 24h (cap $300)
+12:01:34Z project-4   spent  $300.65 in 24h (cap $300)
+14:41:57Z project-5 spent $1456.30 in 24h (cap $300)
 ```
 
 Nothing was burning. project-5 merged ~90 PRs that day at $16-$50 each. The cap
@@ -256,7 +256,7 @@ path with no model in it.
 | gap | what changed |
 | --- | --- |
 | The autohalt needed `flags/cost-autohalt-optin`, which no box had, so the breaker paged and never braked. | **On by default.** Kill switches: `flags/cost-autohalt-off` (a file, wins) or the settings row `lane.pipeline-health.cost_autohalt = 0` (the prefix is `lane.`, lane-gate.sh's `_lg_kpfx`). A project already paused (`paused-<p>` active) is left alone: no second halt, no overwritten reason, no page. After a pause the breaker will not pause the same project again for `COST_AUTOHALT_REARM_S` (`state/costhalt/<p>`). **Resuming** is the console's `resume_board` or `flag_set paused-<p> off`: deleting `flags/paused-<p>` on the box does not resume it, because `flag_sync` re-creates the file from the row. |
-| The rate divides by merged PRs, so a project spending with **zero** merges was only ever named in the daily "could not evaluate" line (project-9: $N/7d, 0 merged). | **Zero-merge breaker**, merges counted by MERGE date (`bin/cost-rollup.sh` 7d now uses `merged:>=`, and the breaker takes max(7d, 24h)). **7d:** delivery spend ≥ `COST_ZM_7D_USD` with fewer than `COST_ZM_MIN_MERGES` merged in 7d → PAUSED (same flag/row as the rate halt) and paged critical once a day (`costzeromerge:<p>`). **24h:** spend ≥ `COST_ZM_24H_USD` with none merged in 24h → PAUSED only when the 7d merges are also under the minimum; a project that merged this week but not today is **paged, never paused**, because that is what a fleet-wide merge stop (CI outage, MonkCI cap, stuck queue, quiet hour) looks like. After a halt, a window is judged only once it lies wholly after the halt stamp (24h for the 24h rule, 7d for the 7d rule), so a resumed project is not re-paused daily off old spend. Per-project thresholds: `lane.pipeline-health.<p>.cost_zm_24h_usd` (and `_7d_usd`, `_min_merges`). A merged count that could not be taken is still not zero: those projects are never paused on a guess. The ledger's `fleet` bucket is not a project and is never judged. |
+| The rate divides by merged PRs, so a project spending with **zero** merges was only ever named in the daily "could not evaluate" line (project-9: $643/7d, 0 merged). | **Zero-merge breaker**, merges counted by MERGE date (`bin/cost-rollup.sh` 7d now uses `merged:>=`, and the breaker takes max(7d, 24h)). **7d:** delivery spend ≥ `COST_ZM_7D_USD` with fewer than `COST_ZM_MIN_MERGES` merged in 7d → PAUSED (same flag/row as the rate halt) and paged critical once a day (`costzeromerge:<p>`). **24h:** spend ≥ `COST_ZM_24H_USD` with none merged in 24h → PAUSED only when the 7d merges are also under the minimum; a project that merged this week but not today is **paged, never paused**, because that is what a fleet-wide merge stop (CI outage, MonkCI cap, stuck queue, quiet hour) looks like. After a halt, a window is judged only once it lies wholly after the halt stamp (24h for the 24h rule, 7d for the 7d rule), so a resumed project is not re-paused daily off old spend. Per-project thresholds: `lane.pipeline-health.<p>.cost_zm_24h_usd` (and `_7d_usd`, `_min_merges`). A merged count that could not be taken is still not zero: those projects are never paused on a guess. The ledger's `fleet` bucket is not a project and is never judged. |
 | Rows with an empty `cost_usd` added nothing to the ceiling, so an unpriced runner spent invisibly against it. | **Unpriced rows are priced pessimistically, for the brake only:** the model's own rates (cliff included), the price table's top rate per component for a model it does not know, `COST_UNPRICED_ROW_USD` ($2) for an rc-0 call that reported no usage. A failed call with no usage adds nothing, and neither does a `billing_mode=subscription` row (not cash). The ceiling page says how much of its total was priced this way. More than `COST_UNPRICED_RUNNER_HOUR_MAX` (60) unpriced rows from one runner in the last hour pages critical (`costunpriced:<runner>`, once a day). |
 | The ceiling's ssh sweep was a hardcoded list of six boxes — no project-6, no project-9. | **The rows come from the topology:** the `cost_rows` table first (every box running `cost-rows-push`, plus the Fly builders' rows the hub ingests), and when it cannot answer, this box's ledger plus every distinct box in `fleet.conf --tailnet-ips`. The page names which source answered. A machine that is in neither (a Mac that does not push `cost_rows`) is still outside the brake. |
 
@@ -278,7 +278,7 @@ layer replaces only the keys it names (BH-4155):
 
 | # | source | what it is for |
 | --- | --- | --- |
-| 1 | built-in | `$N/PR`, `min 5 PRs`, `$N/day` fleet |
+| 1 | built-in | `$100/PR`, `min 5 PRs`, `$4000/day` fleet |
 | 2 | `catalog/cost-caps.conf` | a reviewed commit; read only when no `flags/cost-caps.conf` is readable |
 | 3 | `registry-seed` settings rows `conf.cost-caps.*` | the DB copy of row 2. `worker/jobs/schema.sql` seeds them (INSERT OR IGNORE), and `bin/harness-sync.sh` re-seeds through `bin/cost-caps-seed-sync.sh` on the hub whenever the catalog's bytes move, so a reviewed catalog edit reaches the running cap on the next hub deploy. A failed re-seed is one ALERTS line and retries every sync |
 | 4 | `flags/cost-caps.conf` | machine-local, line by line |
@@ -297,7 +297,7 @@ ceiling <usd_per_day>
 ```
 
 **The old grammar is refused, not reinterpreted.** A bare `project-5 300` row
-used to mean $N per *day*. Reading it as $N per *PR* would raise the bar
+used to mean $300 per *day*. Reading it as $300 per *PR* would raise the bar
 tenfold and silence the alert forever — the same broken threshold with the alarm
 switched off. Such rows are counted, named in a once-a-day alert, and the
 project runs on the default until someone fixes the row.
@@ -410,6 +410,14 @@ seeds the rows once a day at 3x each lane's p99 (7+ days of data), insert-if-abs
 through `bin/spend-ceiling-seed.sh`. `off` lifts one lane; the switch
 `spend-ceiling-off` lifts all. Details: `docs/notes/2026-10-11-BH-5526-spend-ceiling.md`.
 
+## Lane spend view (BH-5526 C4)
+
+/costs → LANE SPEND · TODAY (UTC) shows each lane's spend today (the `cost_rows`
+stamped with its `lane_id`, the sum the ceiling gate reads), its alert line
+(`SPEND_ALERT_P99_MULT` x p99) and its ceiling row. The hub pushes the p99 table
+once a day as `ledgers` rows of kind `spend_p99` (`bin/spend-lane-push.sh`), and
+`GET /api/metrics/lane-spend` joins the three. Details: `docs/notes/2026-10-12-BH-6174-lane-spend.md`.
+
 ## Cost-capture parity
 
 A call that the ledger cannot price is money nobody can see. Two different
@@ -479,7 +487,7 @@ so; the hub's rollup was the first and only mention, once a day.
   called from `run_attempt` in `bin/agent-call.sh` immediately before the row is
   assembled, for EVERY runner. Until BH-1020 only the grok branch priced its own
   tokens, so the codex, openrouter and fireworks lanes wrote real token counts
-  beside an empty `cost_usd` and 1,987 rows / about $N in three days read as
+  beside an empty `cost_usd` and 1,987 rows / about $3.5K in three days read as
   $0.00 everywhere except `cost-rollup.sh` (which prices blank rows itself).
   Rules, in order: a dollar figure already on the row is final (a vendor or
   transcript measurement is never overwritten by a catalog estimate); any token

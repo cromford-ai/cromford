@@ -2,12 +2,13 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
+import { jobsSchemaSql } from './lib/jobs-schema.js';
 
 // BH-2653 (BH-2528.0): the box_console_commands table, its index and its two
 // settings seeds, checked on schema.sql APPLIED through node:sqlite (sqlite3 is
 // not installed on the boxes, same as settings-schema.test.js).
 
-const SCHEMA = readFileSync(fileURLToPath(new URL('../schema.sql', import.meta.url)), 'utf8');
+const SCHEMA = jobsSchemaSql();
 const TTL_KEY = 'lane.box-console-commands.box_console_commands_ttl_s';
 const LIMIT_KEY = 'lane.box-console-commands.box_console_commands_claim_limit';
 

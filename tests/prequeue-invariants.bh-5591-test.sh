@@ -243,7 +243,10 @@ if [ -n "$NODE_OK" ]; then
   # and catalog/llm-sites.json (composed from llm-sites.d/, BH-4987) aside.
   cp -r "$DIR/agent-core" "$V/"
   cp "$DIR/catalog/context-budgets.json" "$V/catalog/"
-  for p in package.json schema.sql src test; do cp -r "$DIR/worker/jobs/$p" "$V/worker/jobs/"; done
+  # TEST-CHANGE (BH-6005.1): the node tests compose the schema from schema.d/
+  # (worker/jobs/test/lib/jobs-schema.js), so the fixture copies the fragments.
+  # schema.sql is a render the fixture does not need.
+  for p in package.json schema.d src test; do cp -r "$DIR/worker/jobs/$p" "$V/worker/jobs/"; done
   # The wrapper on its own renders catalog/lanes.json and composes
   # catalog/llm-sites.json, which the worker imports.
   wrap_v() { ( cd "$V" && PATH="$T/npmonly:$PATH" bash "$WRAP_REL" "$@" ) > "$T/i5a.out" 2>&1; echo $? > "$T/i5a.rc"; }
@@ -260,10 +263,11 @@ if [ -n "$NODE_OK" ]; then
   [ "$(rc i5)" = 0 ] && grep -q '^prequeue-invariant: worker-jobs-schema rc=0 ' "$T/i5.out" && ok \
     || bad "I5: the real row is green on a clean worker (rc $(rc i5): $(cat "$T/i5.out" "$T/i5.err"; cat "$T/i5.d/fail/worker-jobs-schema.txt" 2>/dev/null))"
   # I5b. The #4744 shape: 'drop' in a DEFAULT.
-  echo "CREATE TABLE IF NOT EXISTS pq_probe (note TEXT DEFAULT 'drop me');" >> "$V/worker/jobs/schema.sql"
+  # The probe goes in a fragment: that is what the composed schema is made of.
+  echo "CREATE TABLE IF NOT EXISTS pq_probe (note TEXT DEFAULT 'drop me');" > "$V/worker/jobs/schema.d/9999-pq-probe.sql"
   vrun i5b
   [ "$(rc i5b)" = 1 ] && [ "$(cat "$T/i5b.d/failed.txt" 2>/dev/null)" = worker-jobs-schema ] && ok \
-    || bad "I5b: 'drop' in schema.sql makes the real row red (rc $(rc i5b): $(cat "$T/i5b.out"))"
+    || bad "I5b: 'drop' in a schema fragment makes the real row red (rc $(rc i5b): $(cat "$T/i5b.out"))"
   grep -qxF 'FAIL: worker-schema: schema.sql re-applies clean, and carries no ALTER or DROP' "$T/i5b.d/fail/worker-jobs-schema.txt" 2>/dev/null && ok \
     || bad "I5b: fail/worker-jobs-schema.txt names the failing test (got: $(cat "$T/i5b.d/fail/worker-jobs-schema.txt" 2>/dev/null))"
 

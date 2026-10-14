@@ -19,6 +19,7 @@ set -uo pipefail
 . "$(dirname "$0")/lib/scratch.sh" || exit 1
 DIR=$(cd "$(dirname "$0")/.." && pwd)
 . "$DIR/tests/lib/rb-all.sh" || exit 1
+. "$DIR/tests/lib/hold-gate-fixture.sh" || exit 1  # BH-6091: the pr-open HOLD gate for a pipeline slice
 RB_ALL=$(rb_all "$DIR" "$T/run-build.all.sh")
 mkdir -p "$T/bin/lib" "$T/build" "$T/fakebin" "$T/repo" "$T/logs" "$T/env" \
          "$T/flags" "$T/state"
@@ -33,6 +34,7 @@ awk '/^# >>> merge note fn/{f=1;next} /^# <<< merge note fn/{exit} f' "$RB_ALL" 
 awk '/^# >>> pr open/{f=1;next} /^# <<< pr open/{exit} f' "$RB_ALL" > "$T/propen.sh"
 [ -s "$T/propen.sh" ] && ok || bad "could not extract the PR-open region — # >>> pr open markers missing?"
 grep -q 'gh pr create' "$T/propen.sh" && ok || bad "the extracted region does not contain the PR create"
+hold_gate_prepend "$RB_ALL" "$T/propen.sh"   # BH-6091: the real gate, a no-HOLD ticket read
 cp "$DIR/bin/lib/hotfix-lib.sh" "$T/bin/lib/" 2>/dev/null || bad "bin/lib/hotfix-lib.sh does not exist"
 
 ( cd "$T/repo" && git init -q -b main && git config user.email t@example.com && git config user.name t \

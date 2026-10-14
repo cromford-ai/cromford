@@ -97,18 +97,18 @@ grep -E '^add .*fly/onboard-queue.conf' "$A/git.log" >/dev/null \
   && ok || bad "the queue file must be STAGED into the loader's own commit: $(grep '^add' "$A/git.log")"
 grep -E '^commit ' "$A/git.log" >/dev/null \
   && ok || bad "the loader must still make its commit"
-printf '%s\n' "$OUT" | grep -q "fly/onboard-queue.conf now carries 'gamma'" \
+grep -q "fly/onboard-queue.conf now carries 'gamma'" <<<"$OUT" \
   && ok || bad "the loader must print what it queued: $OUT"
-printf '%s\n' "$OUT" | grep -q 'free-slots.sh gamma' \
+grep -q 'free-slots.sh gamma' <<<"$OUT" \
   && ok || bad "the loader must print how to check it on the hub: $OUT"
-printf '%s\n' "$OUT" | grep -q 'ALERTS.log' \
+grep -q 'ALERTS.log' <<<"$OUT" \
   && ok || bad "the loader must say where a failure will land: $OUT"
 [ ! -s "$A/ssh.log" ] \
   && ok || bad "queuing must need no ssh in either direction (got: $(cat "$A/ssh.log"))"
 # Re-run: idempotent, no second line.
 load "$A" example-org/gamma --fly --no-bootstrap
 [ "$RC" = 0 ] && ok || bad "a re-run must exit 0 (got $RC): $OUT"
-printf '%s\n' "$OUT" | grep -q 'already carries gamma — skipping' \
+grep -q 'already carries gamma — skipping' <<<"$OUT" \
   && ok || bad "a re-run must say it is already queued: $OUT"
 [ "$(qlines "$A")" = 1 ] \
   && ok || bad "a re-run must not append a second line (got $(qlines "$A"))"

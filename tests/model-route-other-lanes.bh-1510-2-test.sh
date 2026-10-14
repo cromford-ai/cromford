@@ -110,7 +110,7 @@ lane_case() {
   case "$none" in
     75) [ "$rc" = 75 ] && ok || bad "$f#$n none: rc=$rc (want 75) out=[$(echo $out)]" ;;
     empty:*) v="${none#empty:}"
-      [ "$rc" = 0 ] && printf '%s\n' "$out" | grep -qx "$v=" && ok \
+      [ "$rc" = 0 ] && grep -qx "$v=" <<<"$out" && ok \
         || bad "$f#$n none: rc=$rc, want rc 0 with $v empty; out=[$(echo $out)]" ;;
   esac
   grep -q "no model route for role '$role'" "$T/logs/ALERTS.log" 2>/dev/null && ok \

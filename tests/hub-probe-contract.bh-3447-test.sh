@@ -262,8 +262,12 @@ if command -v node >/dev/null 2>&1; then
     const wired = (r) => Array.isArray(r) && r.length > 0 && r.every((e) => m.default.ROUTES.includes(e));
     console.log(Array.isArray(m.default.ROUTES), wired(hp.routes), wired(hc.routes));" 2>&1)
   [ "$W1" = "true true true" ] && ok || bad "W1 worker import: $W1"
-  grep -qE '^\s*\.\.\.hubProbe,\s*$' "$DIR/worker/jobs/src/index.js" && grep -qE '^\s*\.\.\.hubProbeCount,\s*$' "$DIR/worker/jobs/src/index.js" \
-    && ok || bad "W1 index.js does not spread hubProbe and hubProbeCount"
+  # TEST-CHANGE (BH-4607): a family is registered by its route-table.d fragment; index.js no longer lists gated families.
+  [ "$(ls "$DIR"/worker/jobs/test/route-table.d/[0-9][0-9][0-9]-hub-probe.txt 2>/dev/null | wc -l)" = 1 ] && ok \
+    || bad "hub-probe has no route-table.d fragment (BH-4607: the fragment IS the registration)"
+  # TEST-CHANGE (BH-4607): a family is registered by its route-table.d fragment; index.js no longer lists gated families.
+  [ "$(ls "$DIR"/worker/jobs/test/route-table.d/[0-9][0-9][0-9]-hub-probe-count.txt 2>/dev/null | wc -l)" = 1 ] && ok \
+    || bad "hub-probe-count has no route-table.d fragment (BH-4607: the fragment IS the registration)"
 else
   echo "hub-probe-contract: W1 SKIPPED, no node on this box (CI's worker/jobs job runs vitest)"
 fi

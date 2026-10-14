@@ -111,7 +111,7 @@ trk_board_transition() {
   resp=$(_trk_board_curl POST "$TRK_BOARD_BASE/tickets/$id/move" "$req") || TRK_CURL_RC=$?
   _trk_board_req_done "$req"
   [ -n "$resp" ] && printf '%s\n' "$resp"
-  [ "$TRK_CURL_RC" = 0 ] && printf '%s' "$resp" | grep -q "\"$s\"" || return 1
+  [ "$TRK_CURL_RC" = 0 ] && grep -q "\"$s\"" <<<"$resp" || return 1
   return 0
 }
 

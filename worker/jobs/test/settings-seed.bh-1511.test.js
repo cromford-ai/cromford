@@ -7,6 +7,7 @@ import { clearCapSeeds } from './lib/d1-sqlite.bh-1030.js';
 import {
   LANES_REGISTRY, PRUNE_SEED_SQL, REGISTRY_SEED_ACTOR, SEED_REGISTRY_SQL, registrySeedRows, unsettableKnob,
 } from '../src/lib/core.js';
+import { jobsSchemaSql } from './lib/jobs-schema.js';
 
 // POST /api/settings/seed-registry — BH-1511.1's seed: every registered knob
 // with a static default gets a settings row, so the table is the complete
@@ -79,7 +80,7 @@ test('the seed SQL: idempotent, never overwrites an operator, follows the regist
   let DatabaseSync;
   try { ({ DatabaseSync } = await import('node:sqlite')); } catch { t.skip('node:sqlite unavailable on this runtime'); return; }
   const db = new DatabaseSync(':memory:');
-  db.exec(readFileSync(fileURLToPath(new URL('../schema.sql', import.meta.url)), 'utf8'));
+  db.exec(jobsSchemaSql());
   const seed = (rows) => {
     let changed = 0;
     for (const r of rows) {
@@ -128,7 +129,7 @@ test('the seed PRUNES its own orphans: a registry-seed row whose knob left the r
   let DatabaseSync;
   try { ({ DatabaseSync } = await import('node:sqlite')); } catch { t.skip('node:sqlite unavailable on this runtime'); return; }
   const db = new DatabaseSync(':memory:');
-  db.exec(readFileSync(fileURLToPath(new URL('../schema.sql', import.meta.url)), 'utf8'));
+  db.exec(jobsSchemaSql());
   clearCapSeeds(db); // BH-4155: the orphan count below is over every registry-seed row
   const ins = db.prepare('INSERT INTO settings (key,value,note,actor,updated_at) VALUES (?,?,NULL,?,\'t0\')');
   ins.run('lane.demo.demo_gone', '4', REGISTRY_SEED_ACTOR);     // knob renamed away: an orphan

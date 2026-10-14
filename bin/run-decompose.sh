@@ -366,11 +366,11 @@ if [ "$LANE" = issues ] || [ "$FILER_OFF" = 0 ]; then
   if [ "$LANE" = issues ]; then
     DCP_SUBJECT="Ticket $KEY (GitHub issue #$ISSUE in $GH_REPO)"
     DCP_READ="Read the issue's FULL thread (\`gh issue view $ISSUE -R $GH_REPO --json title,body,comments,labels,state\`), the project's board rules in /root/harness/prompts/$PROJECT.md, and the oversized plan at $BUILD/plan.md."
-    DCP_NOFILE="Do not create an issue, do not comment, do not touch a label, do not change any code. This harness files the children itself, because the ordering and handoff lines it writes ('Part of', 'Order:', 'Blocked-by:', 'CONTRACT:', 'DEPENDS:', the ai-build label) have to be exact for the launcher to parse them."
+    DCP_NOFILE="Do not create an issue, do not comment, do not touch a label, do not change any code. This harness files the children itself, because the ordering and handoff lines it writes ('Part of', 'Order:', 'Blocked-by:', 'CONTRACT:', 'DEPENDS:', 'Owns:', the ai-build label) have to be exact for the launcher to parse them."
   else
     DCP_SUBJECT="Ticket $KEY (id $TICKET)"
     DCP_READ="Read the ticket's FULL thread (board access method + endpoints in /root/harness/prompts/$PROJECT.md) and the oversized plan at $BUILD/plan.md."
-    DCP_NOFILE="Do not create a ticket, do not comment, do not move the ticket's status, do not change any code. This harness files the children itself, because the ordering and handoff lines it writes ('Part of', 'Order:', 'Blocked-by:', 'CONTRACT:', 'DEPENDS:') and the board's dependency fields have to be exact for the launcher to parse them."
+    DCP_NOFILE="Do not create a ticket, do not comment, do not move the ticket's status, do not change any code. This harness files the children itself, because the ordering and handoff lines it writes ('Part of', 'Order:', 'Blocked-by:', 'CONTRACT:', 'DEPENDS:', 'Owns:') and the board's dependency fields have to be exact for the launcher to parse them."
   fi
 
   SPEC="$BUILD/children.json"
@@ -381,6 +381,8 @@ $DCP_READ
 TRACER FIRST. Before you slice anything, answer one question: what is the thinnest END-TO-END path through this feature? A real trigger (a user action, a cron tick, a webhook), then a persisted result, then an observable outcome (a preview screen, an API response, or for work with no UI a real row or log line). THAT IS CHILD 1, THE TRACER, and it is small on purpose: aim for $CONTRACT_MAXL lines of product code or fewer. Its contract names the exported names and paths the tracer really uses, so the siblings import WORKING code. Stubs that do nothing are not a tracer: the point is that a wrong assumption shows up on child 1, not after every sibling is built on it. It lands first and every other child is a parallel wave on top of it. A first chunk that size almost never conflicts with the default branch, so the children hanging off it almost never strand behind a rebuilt parent, and they all build at the same time instead of queueing behind each other.
 
 SHARED SEAMS GO IN THE CONTRACT. Before you finalize the siblings, list every file two or more siblings would both edit: a registry or index they each add a row to, a prompt or doc each adds a section to, a module each adds a function to. The contract creates those seams so each sibling then edits ONLY its own: a fragment file or registry slot per sibling (a new file each sibling owns, never a shared list each appends to), a headed section stub per sibling in the shared prompt or doc, an empty module file per sibling. These seams are the one place a contract may land empty files, because they exist so siblings never touch the same lines. Name every seam path in the contract field.
+
+ONE SEAM FILE PER LATER CHILD. The contract creates one seam file for each later child: an empty placeholder export that the shared code already imports, with a one-line comment that names the owner as '$KEY.<n>'. Each later child edits only its own seam file(s) and files no other sibling lists. A shared list is a registry folder with one file per entry, never an array that several children append to. If two children must edit the same existing file, the later one names the earlier in 'after' as \"<position>: same file <path>\". That makes it a hard blocker, so use it only when no seam is possible.
 
 Siblings do NOT wait for the contract to merge. The moment the contract's pull request is open this harness builds them on its branch (STACK_BASE, docs/BUILD-CONCURRENCY.md), and GitHub retargets their pull requests when the contract merges. So blocking every sibling on the contract costs minutes, not a chain level, and it is the expected path.
 
@@ -394,14 +396,16 @@ YOU DO NOT FILE ANYTHING. $DCP_NOFILE Your ONLY output is a spec file.
 
 Write $SPEC — a JSON array, 2 to 5 objects, THE TRACER FIRST and then the siblings, no prose around it and no code fence:
 [
-  {\"title\": \"scan tracer\", \"contract\": \"src/api/scan.ts: GET /scan; src/lib/scan/store.ts: readScan(), writeScan()\", \"after\": [], \"body\": \"markdown for the child issue\\n\\n## Observable outcome\\nPOST a scan, then GET /scan returns it\"},
-  {\"title\": \"scan list\", \"after\": [], \"body\": \"...\\n\\n## Observable outcome\\nthe /scans page lists the stored scans\"},
-  {\"title\": \"scan export\", \"after\": [\"2: listScans()\"], \"body\": \"...\\n\\n## Observable outcome\\nGET /scan/export returns a CSV of them\"}
+  {\"title\": \"scan tracer\", \"contract\": \"src/api/scan.ts: GET /scan; src/lib/scan/store.ts: readScan(), writeScan()\", \"owns\": [\"src/api/scan.ts\", \"src/lib/scan/store.ts\", \"src/lib/scan/list.ts\", \"src/lib/scan/export.ts\"], \"after\": [], \"body\": \"markdown for the child issue\\n\\n## Observable outcome\\nPOST a scan, then GET /scan returns it\"},
+  {\"title\": \"scan list\", \"owns\": [\"src/lib/scan/list.ts\", \"src/app/scans/page.tsx\"], \"after\": [], \"body\": \"...\\n\\n## Observable outcome\\nthe /scans page lists the stored scans\"},
+  {\"title\": \"scan export\", \"owns\": [\"src/lib/scan/export.ts\", \"src/api/scan-export.ts\"], \"after\": [\"2: listScans()\"], \"body\": \"...\\n\\n## Observable outcome\\nGET /scan/export returns a CSV of them\"}
 ]
   contract — ON THE FIRST OBJECT ONLY, and REQUIRED: the exported names and the paths the tracer really lands, the working code the siblings import, and every shared seam it pre-creates (path: what it is for). The filer turns it into the child's 'CONTRACT:' line and titles that child '$KEY.0: contract — <slice name>'. No contract, no split: the spec is refused.
   title — the slice, a few words. Do NOT prefix it with a key; the filer writes '$KEY.<n>: ' itself.
   after — LAST RESORT, and it is the thing to design away: the 1-based positions IN THIS ARRAY WHOSE CODE THIS CHILD IMPORTS, written as \"<position>: <the symbol>\" so the reason is on the record. Position 1 is the contract and is never listed — the filer blocks every sibling on it. Naming a sibling here is not a hint: the filer makes that sibling a HARD BLOCKER on the same line, so this child waits for it (or stacks on its branch) exactly as it waits for the contract. Prefer [] and prefer moving the shared symbol into the contract: file-disjoint children that build at the same time are the entire point of the split, and an over-declared 'after' is a child that sits idle for an hour it did not owe. An ordering PREFERENCE is not a dependency. Never name a position at or after this child's own.
-  body  — everything a builder needs and nothing it does not: the exact scope, the intended file list, the acceptance tests this slice owns from the parent plan, and any context from the thread. EVERY body, the tracer's included, carries a '## Observable outcome' section: the one acceptance test that exercises that child's path end to end, or for KIND infra/migration the real row or log line it produces, plus the QA screens when there is UI. A child with no Observable outcome section is refused and the ticket comes back unsplit. Do NOT write 'Part of', 'Order:', 'Blocked-by:', 'CONTRACT:', 'DEPENDS:' or a size budget line — the filer appends those.
+  owns — the repo paths this child creates or edits, as a JSON array of strings: its seam file(s) plus files no sibling lists. The filer writes them as the child's 'Owns:' line. Two children never own the same path unless the later one names the earlier in 'after'.
+  imports_contract — siblings only, optional, default true. Write false ONLY when this slice uses no name on the contract's CONTRACT: line and edits no file the contract lands. Such a sibling is filed with no blocker and builds on main in parallel with the contract. If you are not sure, leave it out.
+  body  — everything a builder needs and nothing it does not: the exact scope, the intended file list, the acceptance tests this slice owns from the parent plan, and any context from the thread. EVERY body, the tracer's included, carries a '## Observable outcome' section: the one acceptance test that exercises that child's path end to end, or for KIND infra/migration the real row or log line it produces, plus the QA screens when there is UI. A child with no Observable outcome section is refused and the ticket comes back unsplit. Do NOT write 'Part of', 'Order:', 'Blocked-by:', 'CONTRACT:', 'DEPENDS:', 'Owns:' or a size budget line — the filer appends those.
 
 Final output line: exactly 'DECOMPOSE_SPEC_READY' or 'DECOMPOSE_FAILED: <reason>'."
 
@@ -519,6 +523,23 @@ Final output line: exactly 'DECOMPOSE_SPEC_READY' or 'DECOMPOSE_FAILED: <reason>
   file_children "$PROJECT" "$TICKET" "$KEY" "$BUILD" "$SPEC"
   FC_RC=$?
   [ "$FC_RC" -eq 0 ] || FAIL "${FC_ERROR:-file_children returned rc=$FC_RC}"
+  # OWNS OVERLAP (BH-6384): two filed children that own the same path with no
+  # hard link between them will conflict. A warning in pipeline.log, never a
+  # gate: the split is already filed, and this script's rc does not move. The
+  # id of child n is line n of children.txt (the board lane's dry run writes
+  # none, so it falls back to the '$KEY.<n>' the filer wrote in DEPENDS).
+  DL_ARGS=(); n=1
+  while [ "$n" -le "$N" ]; do
+    DL_ID=$(sed -n "${n}p" "$BUILD/children.txt" 2>/dev/null)
+    DL_F="$BUILD/children/child-$n.md"; [ -f "$DL_F" ] || DL_F="$BUILD/children/child-$n.html"
+    DL_ARGS+=("${DL_ID:-$KEY.$n}=$DL_F"); n=$((n + 1))
+  done
+  DL_OUT=$(timeout 30 "$(dirname "$0")/decompose-lint.sh" "${DL_ARGS[@]}" 2>&1); DL_RC=$?
+  if [ "$DL_RC" -eq 0 ]; then
+    while IFS= read -r DL_L; do [ -n "$DL_L" ] && LOG "$DL_L"; done <<<"$DL_OUT"
+  else
+    LOG "DECOMPOSE_LINT could-not-run rc=$DL_RC"
+  fi
   dcp_publish "$SPEC" || true
   # The issues lane's children are open ai-build issues, which
   # bin/orphan-reconcile.sh enqueues; only the board lane enqueues here.
@@ -533,7 +554,7 @@ PROMPT="$DEC_UI_NOTICE""You are the tech lead for this project. Ticket $KEY (id 
 
 Read the ticket's FULL thread (board access method + endpoints in /root/harness/prompts/$PROJECT.md) and the oversized plan at $BUILD/plan.md.
 
-TRACER FIRST. Before you slice anything, answer one question: what is the thinnest END-TO-END path through this feature? A real trigger (a user action, a cron tick, a webhook), then a persisted result, then an observable outcome (a preview screen, an API response, or for work with no UI a real row or log line). That is child 1, THE TRACER: title it '$KEY.0: contract — <slice name>', keep it to $CONTRACT_MAXL lines of product code or fewer, and list the exported names and paths it really lands on a 'CONTRACT:' line in its description, so the siblings import working code. The tracer also pre-creates every seam two or more siblings would otherwise both edit (a fragment file or registry slot per sibling instead of a shared list each appends to, a headed section stub per sibling in a shared prompt or doc, an empty module file per sibling), so each sibling edits only its own, and add every shared seam path to that CONTRACT: line. Stubs that do nothing are not a tracer. It lands first and the rest are built on top of it at the same time. Each sibling adds ONE CAPABILITY END TO END (for example list, create, edit, export) and touches whatever layers that capability needs. If two siblings need the same symbol, that symbol belongs in the tracer, so move it there rather than chaining them: at most 2 levels of 'build after' beyond the tracer, and a deeper chain means the split is wrong, not that the work is.
+TRACER FIRST. Before you slice anything, answer one question: what is the thinnest END-TO-END path through this feature? A real trigger (a user action, a cron tick, a webhook), then a persisted result, then an observable outcome (a preview screen, an API response, or for work with no UI a real row or log line). That is child 1, THE TRACER: title it '$KEY.0: contract — <slice name>', keep it to $CONTRACT_MAXL lines of product code or fewer, and list the exported names and paths it really lands on a 'CONTRACT:' line in its description, so the siblings import working code. The tracer also pre-creates every seam two or more siblings would otherwise both edit (a fragment file or registry slot per sibling instead of a shared list each appends to, a headed section stub per sibling in a shared prompt or doc, an empty module file per sibling), so each sibling edits only its own, and add every shared seam path to that CONTRACT: line. Make it one seam file per later child, each with a one-line comment naming its owner child, and write each child's own paths on an 'Owns: <path>, <path>' line in its description; if two children must edit the same existing file, the later one says 'build after <earlier key>: same file <path>'. Stubs that do nothing are not a tracer. It lands first and the rest are built on top of it at the same time. Each sibling adds ONE CAPABILITY END TO END (for example list, create, edit, export) and touches whatever layers that capability needs. If two siblings need the same symbol, that symbol belongs in the tracer, so move it there rather than chaining them: at most 2 levels of 'build after' beyond the tracer, and a deeper chain means the split is wrong, not that the work is.
 
 A LAYER SPLIT IS A DECOMPOSITION FAILURE, the same as a chain: a 'UI child', 'API child', 'worker child' or 'schema child' builds pieces nobody can observe until the last one lands. Slice by what a user can do, not by where the code lives.
 

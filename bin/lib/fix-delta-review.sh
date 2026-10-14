@@ -74,7 +74,7 @@ fdr_decide() {
   git merge-base --is-ancestor "$from" "$to" 2>/dev/null || { echo "full history-rewritten"; return 0; }
   ns=$(git diff --numstat "$from" "$to" 2>/dev/null) || { echo "full diff-unavailable"; return 0; }
   # numstat prints `-<TAB>-` for a file it cannot count lines in.
-  if printf '%s\n' "$ns" | grep -qE $'^-\t'; then echo "full binary"; return 0; fi
+  if grep -qE $'^-\t' <<<"$ns"; then echo "full binary"; return 0; fi
   sum=$(printf '%s\n' "$ns" | awk -F'\t' 'NF>=3 {s += $1 + $2} END {print s + 0}')
   [ "$sum" -le "$max" ] || { echo "full over-max"; return 0; }
   if ! { git range-diff --no-color "$base" "$from" "$to" && git diff --no-color "$from" "$to"; } > "$out" 2>/dev/null; then

@@ -1,0 +1,44 @@
+{
+  "libs": [
+    {
+      "id": "sibling-serial",
+      "file": "bin/sibling-serial.sh",
+      "note": "BH-6374. Sibling parts of one split slice (a parent's DECOMPOSED children, such as TK-184 and TK-185, or dotted keys such as TK-142.1) whose pre-plan file lists share a path run one at a time, in n order, and a part with no list waits for a sibling in flight. bin/fly-pool.sh:pool_spawn_decision gate 0c runs `bin/sibling-serial.sh check` and keeps the row queued on rc 3, logging `SIBLING_SERIAL <K> waits for <S> on <file>` to logs/fly-pool.log. bin/overlap-schedule.sh runs `decide` and prints the verdict as a HELD line. lane_switch sibling-serial-off is the same kill switch as SIBLING_SERIAL=0.",
+      "knobs": [
+        {
+          "env": "SIBLING_SERIAL",
+          "read_in": "bin/sibling-serial.sh",
+          "type": "int",
+          "default": 1,
+          "min": 0,
+          "max": 1,
+          "zero_means": "off",
+          "required": false,
+          "note": "1 = the pool holds a sibling part behind a colliding sibling. 0 (or off) = check answers go for every key and the pool spawns as before. Read by bin/sibling-serial.sh check as _preplan_env SIBLING_SERIAL 1 after lib_env_apply sibling-serial."
+        },
+        {
+          "env": "SIBLING_QUEUED_MAX_MIN",
+          "read_in": "bin/sibling-serial.sh",
+          "type": "int",
+          "default": 120,
+          "min": 0,
+          "unit": "minutes",
+          "zero_means": "a queued sibling never holds",
+          "required": false,
+          "note": "A lower-n queued sibling whose enqueued_at is older than this holds nobody: it is stuck for another reason (HOLD, a cap), and one stderr line in logs/fly-pool.log says so."
+        },
+        {
+          "env": "SIBLING_SERIAL_MAX_MIN",
+          "read_in": "bin/sibling-serial.sh",
+          "type": "int",
+          "default": 360,
+          "min": 0,
+          "unit": "minutes",
+          "zero_means": "no ceiling",
+          "required": false,
+          "note": "The wait ceiling, timed from state/sibling-serial/<p>/<K>.sibling-since. At the ceiling the key is released, SIBLING_SERIAL_RELEASED is logged, and one warn alert is sent per (key, blocker). Equal to POOL_AFTER_MAX_MIN by default."
+        }
+      ]
+    }
+  ]
+}

@@ -29,6 +29,21 @@
 #   nh_release_evidence <slug> <issue>
 #   nh_prompt_release_note <slug> <issue>
 #   nh_pr_body_section <slug> <issue>
+# step-done.sh (BH-6536: a human-step-only BLOCK after the person did the step)
+#   nh_sd_human_only <review.md>     rc 0 prints "human-step<TAB><action>",
+#                                    rc 1 prints "none", rc 2 unreadable.
+#   nh_sd_done_after <comments-json> <since-iso>
+#                                    rc 0 prints the evidence, rc 1 none,
+#                                    rc 2 unreadable. Pure: no network.
+#   nh_sd_rescue_on [project]        rc 0 shape D runs for the project: the
+#                                    review-rescue knob RESCUE_HUMAN_STEP (read
+#                                    with lane_knob) is 1 and that lane is not off.
+#   nh_sd_pending <record-dir> [project]
+#                                    rc 0 the record waits for the rescue
+#                                    lane's human-step re-review, else rc 1.
+#   nh_sd_stage_put <project> <issue> <key> <state> <reason>
+#                                    writes the ticket_stage row; rc 0 always.
+#   nh_sd_stage_lines <project>      the hub-local rows in the window; rc 0.
 # bin/needs-human-hold.sh <project> <issue> <fp> <action> <source>
 #                                    0 placed / already held / switch off / not
 #                                    an issues board; 1 could not place; 75
@@ -67,7 +82,7 @@ nh_fingerprint() { # nh_fingerprint <text>
 }
 
 _nh_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
-for _nh_f in classify trip release; do
+for _nh_f in classify trip release step-done; do
   [ -r "$_nh_dir/needs-human/$_nh_f.sh" ] && . "$_nh_dir/needs-human/$_nh_f.sh" 2>/dev/null || true
 done
 unset _nh_f

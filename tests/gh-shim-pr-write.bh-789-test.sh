@@ -232,7 +232,7 @@ gshim_reset
 printf 'HTTP 409: Head branch was modified (https://api.github.com/repos/o/r/pulls/7/merge)\n' | gshim_fixture repos_o_r_pulls_7_merge 1
 gshim_run pr merge 7 -R o/r --squash --match-head-commit abc123
 eq  "pr-merge-409 rc" "$RC" "1"
-has "pr-merge-409 stderr line 1" "$(printf '%s\n' "$ERR" | head -n1)" "Head branch was modified"
+has "pr-merge-409 stderr line 1" "$(head -n1 <<<"$ERR")" "Head branch was modified"
 eq  "pr-merge-409 stdout empty"  "$OUT" ""
 rm -f "$T/fixtures/repos_o_r_pulls_7_merge.rc" "$T/fixtures/repos_o_r_pulls_7_merge.err"
 printf '{"sha":"deadbeef","merged":true,"message":"Pull Request successfully merged"}\n' | gshim_fixture repos_o_r_pulls_7_merge
@@ -332,7 +332,7 @@ gshim_reset
 printf 'HTTP 405: Base branch was modified. Review and try the merge again.\n' | gshim_fixture repos_o_r_pulls_7_merge 1
 gshim_run pr merge 7 -R o/r --squash
 eq    "pr-merge-405-other rc"           "$RC" "1"
-has   "pr-merge-405-other stderr line 1" "$(printf '%s\n' "$ERR" | head -n1)" "Base branch was modified"
+has   "pr-merge-405-other stderr line 1" "$(head -n1 <<<"$ERR")" "Base branch was modified"
 hasnt "pr-merge-405-other no passthru"   "$(gshim_calls)" "PASSTHRU pr merge"
 rm -f "$T/fixtures/repos_o_r_pulls_7_merge.rc" "$T/fixtures/repos_o_r_pulls_7_merge.err"
 printf '{"sha":"deadbeef","merged":true,"message":"Pull Request successfully merged"}\n' | gshim_fixture repos_o_r_pulls_7_merge

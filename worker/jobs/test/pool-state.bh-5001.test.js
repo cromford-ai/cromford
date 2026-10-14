@@ -11,9 +11,10 @@ import { fileURLToPath } from 'node:url';
 import worker from '../src/index.js';
 import { openDb } from './lib/d1-sqlite.bh-1030.js';
 import { CREATED_TABLES } from '../src/lib/core.js';
+import { jobsSchemaSql } from './lib/jobs-schema.js';
 
 const SECRET = 'test-secret';
-const SCHEMA = readFileSync(fileURLToPath(new URL('../schema.sql', import.meta.url)), 'utf8');
+const SCHEMA = jobsSchemaSql();
 const NOW = 1790000000; // a fixed epoch: every ts fixture is derived from it
 // Text stamps derive from NOW too, so no fixture is pinned to a calendar date.
 const iso = (t, sep = ' ') => new Date(t * 1000).toISOString().replace('T', sep).replace(/\.\d+Z$/, 'Z');

@@ -86,6 +86,7 @@ reset() {
   rm -rf "$T/builds" "$T/ledger" "$T/prfacts"
   mkdir -p "$T/builds" "$T/ledger" "$T/prfacts"
   rm -f "$T/ledger-rc" "$T/prfacts-rc" "$TSV"
+  rm -rf "$T/state/pipeline-health"   # the BH-5941 skip set, cleared with the tsv it shadows
   : > "$T/logs/pipeline-health.log"
 }
 alerts() { cat "$T/alerts.txt" 2>/dev/null; }

@@ -4,9 +4,15 @@
   "private": true,
   "type": "module",
   "description": "Mission Control — the web front-end for the cromford fleet control plane",
+  "imports": {
+    "#coord-writes": {
+      "workerd": "./functions/_lib/coord-writes.gen.js",
+      "default": "./tests/lib/coord-writes.node.js"
+    }
+  },
   "scripts": {
     "dev": "vite",
-    "build": "vite build",
+    "build": "node scripts/coord-writes-build.mjs && vite build",
     "preview": "vite preview",
     "test": "node --test tests/*.test.js",
     "drive:world": "node tests/drive/world-drive.mjs",

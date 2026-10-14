@@ -68,7 +68,7 @@ hc_conf() { # hc_conf <project>
 hc_fetch() {
   local p="${1:-}" out="${2:-}" lib body
   HC_WHY=""
-  printf '%s' "$p" | grep -qE '^[A-Za-z0-9._-]{1,64}$' || { HC_WHY="project name not usable"; return 1; }
+  grep -qE '^[A-Za-z0-9._-]{1,64}$' <<<"$p" || { HC_WHY="project name not usable"; return 1; }
   [ -n "$out" ] || { HC_WHY="no output path"; return 1; }
   # Set and EMPTY: answered here, before the client is sourced. UNSET goes on to
   # the client, which resolves the fleet worker.

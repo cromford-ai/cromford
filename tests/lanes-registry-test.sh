@@ -140,11 +140,23 @@ PLUMBING="$PLUMBING JOBS_HTTP"
 # line and cost-autohalt's reason name the row or the file that stopped them.
 # The same case as GH_REST_STATUS: an output, not an input.
 PLUMBING="$PLUMBING LANE_SWITCH_SRC"
+# JOBS_TRANSCRIPT_TRUNCATED (BH-5915) is SET BY bin/lib/jobs/jobs.sh's
+# job_transcript_get: 1 when the ledger kept only the transcript's tail.
+# bin/lesson-classify.sh reads it back after the call. An output, the same case
+# as GH_REST_STATUS: a settings row that set it would make every full report
+# read as tail-only.
+PLUMBING="$PLUMBING JOBS_TRANSCRIPT_TRUNCATED"
 # PL_LANE, PL_PROJECT, PL_SLUG, PL_STATE_DIR and PL_LOCK_FD (BH-5913) are SET BY
 # bin/project-lane-run.sh for the one project run it starts: which lane, which
 # project, which lock fd it already holds. Outputs of the runner, never knobs: a
 # settings row that set PL_PROJECT would point every run at one project.
 PLUMBING="$PLUMBING PL_LANE PL_PROJECT PL_SLUG PL_STATE_DIR PL_LOCK_FD"
+# LANE_RUN_ID (BH-6124, read by blocked-resolver since BH-6128) is SET BY
+# bin/lane-run-worker.sh for the one lane_runs row it claimed. Its presence
+# means "this run is on a Fly lane machine": write back, never start a build.
+# An output of the machine loop, never a knob: a settings row that set it would
+# make every hub run believe it was off the hub.
+PLUMBING="$PLUMBING LANE_RUN_ID"
 # MC_FANIN_SOLO_RUN (BH-4842) is a launch marker, not a knob: kw_conductor sets
 # it on the keyed run mc_fanin_solo launches, so that run never solos again. A
 # settings row that set it would switch the solo split off for every tick.
@@ -332,7 +344,7 @@ while read -r id; do
     # settings page); demanding one here would make those two rules contradict
     # each other, and the only way to satisfy both would be to register the
     # secret. The shape is the same regex section 13 uses.
-    printf '%s' "$n" | grep -qE '(^|_)(TOKEN|SECRET|PASSWORD|CREDENTIALS?|KEY|DSN)$' && continue
+    grep -qE '(^|_)(TOKEN|SECRET|PASSWORD|CREDENTIALS?|KEY|DSN)$' <<<"$n" && continue
     case " $known "    in *" $n "*) continue ;; esac
     grep -qE "(^|[[:space:]]|;|\(|!)(local[[:space:]]+|export[[:space:]]+)?$n=|read[[:space:]].*\b$n\b" "$T/code.sh" && continue
     MISSINGK="$MISSINGK $id/$n"
@@ -751,7 +763,7 @@ while IFS=$'\t' read -r lid lfile env rin def; do
   [ -f "$DIR/$rin" ] || { LIBBAD="$LIBBAD $lid/$env(no-file:$rin)"; continue; }
   code_has "$DIR/$rin" -w -- "$env" || LIBBAD="$LIBBAD $lid/$env(phantom)"
   key="lib.$lid.$(printf '%s' "$env" | tr '[:upper:]' '[:lower:]')"
-  printf '%s' "$key" | grep -qE '^[a-z0-9_.-]{1,64}$' || LIBBAD="$LIBBAD $lid/$env(key:$key)"
+  grep -qE '^[a-z0-9_.-]{1,64}$' <<<"$key" || LIBBAD="$LIBBAD $lid/$env(key:$key)"
   case "$def" in *'$'*) LIBBAD="$LIBBAD $lid/$env(default-is-shell)" ;; esac
 done < <(jq -r '.libs[]?|.id as $i|.file as $f|.knobs[]?|select(.env)|[$i,$f,.env,(.read_in//"null"),(.default|tostring)]|@tsv' "$REG")
 [ -z "$LIBBAD" ] && ok || bad "20a libs scope:$LIBBAD"

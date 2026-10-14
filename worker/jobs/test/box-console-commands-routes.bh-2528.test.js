@@ -4,6 +4,7 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import worker from '../src/index.js';
 import { openDb } from './lib/d1-sqlite.bh-1030.js';
+import { jobsSchemaSql } from './lib/jobs-schema.js';
 
 // BH-2654 (BH-2528.1) — the five `box_console_commands` routes, driven through
 // worker.fetch against THE SQL THAT SHIPS (schema.sql in node:sqlite).
@@ -15,7 +16,7 @@ import { openDb } from './lib/d1-sqlite.bh-1030.js';
 
 const SECRET = 'test-secret';
 const BASE = '/api/box-console-commands';
-const SCHEMA = readFileSync(fileURLToPath(new URL('../schema.sql', import.meta.url)), 'utf8');
+const SCHEMA = jobsSchemaSql();
 
 const TEST_NOW = Date.now();   // determinism: ok the ONE anchor the aged fixtures are derived from
 const ago = (s) => new Date(TEST_NOW - s * 1000).toISOString().replace(/\.\d{3}Z$/, 'Z');

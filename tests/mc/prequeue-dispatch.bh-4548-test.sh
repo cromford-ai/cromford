@@ -72,14 +72,16 @@ open(out + "/facts", "w").write("\n".join([
 ]) + "\n")
 PY
 fact() { sed -n "s/^$1=//p" "$T/w/facts" 2>/dev/null; }
-[ "$(fact inputs)" = "head,invariants,main,pr,suites" ] && ok || bad "W: inputs are pr/head/main/suites (got '$(fact inputs)')"
+# TEST-CHANGE (BH-6335): two optional inputs, learned and trace.
+[ "$(fact inputs)" = "head,invariants,learned,main,pr,suites,trace" ] && ok || bad "W: inputs are pr/head/main/suites (got '$(fact inputs)')"
 [ "$(fact required)" = "head,main,pr" ] && ok || bad "W: suites is optional, the rest required (got '$(fact required)')"
 case "$(fact runs_on)" in *vars.CI_RUNNER*) ok ;; *) bad "W: runs-on reads vars.CI_RUNNER (got '$(fact runs_on)')" ;; esac
 [ "$(fact permissions)" = "{'contents': 'read'}" ] && ok || bad "W: permissions are contents: read only (got '$(fact permissions)')"
 [ "$(fact timeout)" = 25 ] && ok || bad "W: timeout-minutes is 25 (got '$(fact timeout)')"
 RN=$(fact run_name); RN=${RN//'${{ inputs.pr }}'/4545}; RN=${RN//'${{ inputs.head }}'/$H1}; RN=${RN//'${{ inputs.main }}'/$M}
 [ -n "$RN" ] && [ "$RN" = "$(title 4545 "$H1" "$M")" ] && ok || bad "W: run-name equals pq_run_title (got '$RN' vs '$(title 4545 "$H1" "$M")')"
-[ "$(fact env)" = "PQ_HEAD,PQ_INVARIANTS_IN,PQ_MAIN,PQ_PR,PQ_SUITES_IN" ] && ok || bad "W: inputs reach the script through env only (got '$(fact env)')"
+# TEST-CHANGE (BH-6335): their env, PQ_LEARNED_IN and PQ_TRACE_IN.
+[ "$(fact env)" = "PQ_HEAD,PQ_INVARIANTS_IN,PQ_LEARNED_IN,PQ_MAIN,PQ_PR,PQ_SUITES_IN,PQ_TRACE_IN" ] && ok || bad "W: inputs reach the script through env only (got '$(fact env)')"
 grep -q '\${{' "$T/w/run.sh" && bad "W: no \${{ }} expression inside the run script (script injection)" || ok
 case "$(fact shell)" in *-e*|None) bad "W: the run step must not use errexit (shell '$(fact shell)')" ;; *) ok ;; esac
 [ "$(grep -c 'title=prequeue-verdict' "$T/w/run.sh")" = 1 ] && ok || bad "W: exactly one verdict print in the script"
@@ -211,6 +213,9 @@ case "\$*" in
   *"api -i -X GET repos/$SLUG/actions/runs/77/jobs"*) restpr --raw 200 "\$(cat "$T/jobs.json")" ;;
   *"api -i -X GET repos/$SLUG/check-runs/88/annotations"*) restpr --raw 200 "\$(cat "$T/ann.json")" ;;
   *"api -i -X GET repos/$SLUG/commits/main"|*"api -i -X GET repos/$SLUG/commits/main "*) restpr --raw 200 '{"sha":"$M"}' ;;
+  # TEST-CHANGE (BH-6335): the reuse of an older main's verdict now reads how
+  # far main moved (pq_main_behind). The older main is one commit behind.
+  *"api -i -X GET repos/$SLUG/compare/"*) restpr --raw 200 '{"status":"ahead","ahead_by":1}' ;;
   *"api -i -X GET repos/$SLUG/rulesets"*) restpr --raw 200 '[]' ;;
   *"api -i -X GET repos/$SLUG/contents/.mergify.yml"*) restpr --raw 200 '{"content":"$MGFY_YML"}' ;;
   *"actions/runs?head_sha="*) restpr --raw 200 '{"workflow_runs":[{"id":1,"name":"CI","status":"completed","conclusion":"success","run_started_at":"2026-10-05T01:00:00Z"}]}' ;;
@@ -314,7 +319,7 @@ enqueued() {
 held() {
   [ "$(enq)" = 0 ] && ok || bad "$1: nothing enqueued on a hold (argv: $(cat "$T/c-enq.txt"))"
   [ "$(state)" = READY ] && ok || bad "$1: the row stays READY (state '$(state)'; log: $(clog))"
-  printf '%s' "$(why)" | grep -q "	$H1	prequeue-pending	" && ok || bad "$1: ready-why says prequeue-pending (note: $(why))"
+  grep -q "	$H1	prequeue-pending	" <<<"$(why)" && ok || bad "$1: ready-why says prequeue-pending (note: $(why))"
 }
 
 # ============================================================================
@@ -336,7 +341,7 @@ case "$D" in *"-R $SLUG --ref main "*"-f pr=41"*"-f head=$H1"*"-f main=$M"*) ok 
 grep -q '^cache-at-dispatch: pending ' "$T/dispatch.txt" && ok || bad "L2: pending is on disk BEFORE the dispatch call (got $(grep cache-at "$T/dispatch.txt"))"
 case "$(cache)" in "pending "*) ok ;; *) bad "L2: the cache entry is pending (got '$(cache)')" ;; esac
 held L2
-printf '%s' "$(why)" | grep -q "prequeue-gate.yml dispatched for main ${M:0:12}" && ok || bad "L2: the hold says what it waits on (note: $(why))"
+grep -q "prequeue-gate.yml dispatched for main ${M:0:12}" <<<"$(why)" && ok || bad "L2: the hold says what it waits on (note: $(why))"
 [ -e "$T/gate-ran" ] && bad "L2: the hub's own gate is never run" || ok
 # Still running on the next tick: held, no second dispatch.
 KEEP=1 reset; run -; tick
@@ -381,7 +386,7 @@ case "$(reason)" in "prequeue-red: tests/a.sh on main ${M_OLD:0:12}"*) ok ;; *) 
 reset; put "$M_OLD" pending $((NOW - 600)); run - "$(title 41 "$H1" "$M_OLD")"; tick
 [ "$(ndisp)" = 0 ] && ok || bad "L5c: a fresh pending sibling is not re-dispatched (got $(ndisp))"
 held L5c
-printf '%s' "$(why)" | grep -q "prequeue run for main ${M_OLD:0:12} still running" && ok || bad "L5c: the hold names the main it waits on (note: $(why))"
+grep -q "prequeue run for main ${M_OLD:0:12} still running" <<<"$(why)" && ok || bad "L5c: the hold names the main it waits on (note: $(why))"
 # ...and once that sibling's run lands, the miss settles it and acts on it.
 reset; put "$M_OLD" pending $((NOW - 600)); run success "$(title 41 "$H1" "$M_OLD")"; ann "green main=$M_OLD head=$H1 suites="; tick
 enqueued "L5d a settled sibling's green"

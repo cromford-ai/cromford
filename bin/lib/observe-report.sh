@@ -45,7 +45,7 @@ _or_message() {
   prs=$(printf '%s\n' "$lines" | grep -oE '[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+#[0-9]+' | sort -u | wc -l)
   counts=$(printf '%s\n' "$lines" | grep -oE 'WOULD_[A-Z_]+' | sort | uniq -c | sort -k1,1nr -k2 \
     | awk '{ printf "%s%s %s", (NR > 1 ? ", " : ""), $1, $2 }')
-  ex=$(printf '%s\n' "$lines" | head -5 | cut -c1-200 | paste -sd';' - | sed 's/;/; /g')
+  ex=$(head -5 <<<"$lines" | cut -c1-200 | paste -sd';' - | sed 's/;/; /g')
   printf '%s has watched for %s ticks since %s without acting. It would have done %s %s on %s %s: %s. Examples: %s. To let it act: %s' \
     "$lane" "$n" "$since" "$total" "$([ "$total" = 1 ] && echo thing || echo things)" \
     "$prs" "$([ "$prs" = 1 ] && echo PR || echo PRs)" "$counts" "$ex" "$flip"

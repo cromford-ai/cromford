@@ -11,9 +11,10 @@ import { fileURLToPath } from 'node:url';
 import worker from '../src/index.js';
 import { openDb } from './lib/d1-sqlite.bh-1030.js';
 import { CREATED_TABLES, COOLDOWN_KINDS, COOLDOWN_MAX_S } from '../src/lib/core.js';
+import { jobsSchemaSql } from './lib/jobs-schema.js';
 
 const SECRET = 'test-secret';
-const SCHEMA = readFileSync(fileURLToPath(new URL('../schema.sql', import.meta.url)), 'utf8');
+const SCHEMA = jobsSchemaSql();
 const FUT = 4102444800; // 2100-01-01, far past the 8-day cap: only inserted directly
 // The route reads its own request clock, so fixtures are relative to one anchor
 // captured at load; every offset below is >= 60 s, far wider than the suite's run.

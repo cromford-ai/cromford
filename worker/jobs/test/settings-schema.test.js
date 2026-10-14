@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
+import { jobsSchemaSql } from './lib/jobs-schema.js';
 
 // schema.sql, APPLIED — not read as text.
 //
@@ -13,7 +14,7 @@ import { fileURLToPath } from 'node:url';
 // back over a number somebody deliberately changed. INSERT OR IGNORE is the
 // whole defence, and a regex over the file would pass on a plain INSERT too.
 
-const SCHEMA = readFileSync(fileURLToPath(new URL('../schema.sql', import.meta.url)), 'utf8');
+const SCHEMA = jobsSchemaSql();
 
 test('schema.sql applies twice and the settings seed never overwrites an operator edit', async (t) => {
   let DatabaseSync;

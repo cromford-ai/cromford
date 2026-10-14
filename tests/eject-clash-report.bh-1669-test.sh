@@ -178,7 +178,7 @@ touch "$T/fix/20.files.500"
 run "$LOG" "$SLUG" 50
 rm -f "$T/fix/20.files.500"
 [ "$RC" = 0 ] && ok || bad "D: rc=$RC (want 0); err=$ERR"
-printf '%s\n' "$OUT" | grep -qxF "n/a${TAB}$SLUG#21~#20" && ok || bad "D: no n/a row for #21~#20: $OUT"
+grep -qxF "n/a${TAB}$SLUG#21~#20" <<<"$OUT" && ok || bad "D: no n/a row for #21~#20: $OUT"
 [ "$(row1)" = "scripts/worker-import-set.json${TAB}2" ] && ok || bad "D: first row '$(row1)', want worker-import-set.json<TAB>2"
 case "$(footer)" in *" pairs=3 unresolved=0 unreadable=1 "*) ok ;; *) bad "D: footer wants unreadable=1: $(footer)" ;; esac
 

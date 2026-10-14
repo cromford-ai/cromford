@@ -239,9 +239,9 @@ verdict() { # verdict <class-file-contents|-> ; prints the RESULT line
 }
 
 V=$(verdict 'RUNNER_EXHAUSTED class=account-exhausted(credits) seen=account-exhausted runner=claude rc=1')
-printf '%s' "$V" | grep -q 'RESULT BUILD_DEFERRED' \
+grep -q 'RESULT BUILD_DEFERRED' <<<"$V" \
   && ok || bad "5: the deferral prefix must not change (consumers route on it): $V"
-printf '%s' "$V" | grep -q 'RUNNER_EXHAUSTED' \
+grep -q 'RUNNER_EXHAUSTED' <<<"$V" \
   && ok || bad "5: an exhausted plan stage must name the token: $V"
 grep -q 'produced no output' <<<"$(printf '%s' "$V")" \
   && bad "5: an exhausted plan stage still rendered as 'produced no output': $V" || ok
@@ -249,9 +249,9 @@ grep -q 'produced no output' <<<"$(printf '%s' "$V")" \
 # D13 — with no sidecar the old copy is rendered verbatim, because that state
 # still happens and the sentence is still true in it.
 V=$(verdict -)
-printf '%s' "$V" | grep -q 'RESULT BUILD_DEFERRED plan session produced no output' \
+grep -q 'RESULT BUILD_DEFERRED plan session produced no output' <<<"$V" \
   && ok || bad "5: with no .class the original copy must be unchanged: $V"
-printf '%s' "$V" | grep -q 'BB plan_deferred' \
+grep -q 'BB plan_deferred' <<<"$V" \
   && ok || bad "5: the build-board call must still fire: $V"
 
 echo "runner-error-classification: $PASS passed, $FAIL failed"

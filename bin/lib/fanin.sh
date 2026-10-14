@@ -61,6 +61,11 @@
 # are deliberately NOT exported: a detached child that sources this lib must not
 # append to its parent's ledger.
 
+# BH-6462: the per-worker call trace (mc_worker_bounded, mc_fanin_outcome). A
+# box missing the file traces nothing, and a kill reads `calls: none`.
+# shellcheck source=bin/lib/call-trace.sh
+[ -r "${BASH_SOURCE[0]%/*}/call-trace.sh" ] && . "${BASH_SOURCE[0]%/*}/call-trace.sh" 2>/dev/null
+
 _fanin_stamp() { date -u '+%Y-%m-%d %H:%M:%SZ'; }
 
 _fanin_append() { # _fanin_append <file> <line>
@@ -359,28 +364,114 @@ fanin_end() {
 # `READY unexplained` otherwise: no enqueue (that would have made it QUEUED) and
 # no recorded hold. Both of those new outcomes write one log line and one warn
 # alert per (PR, head), through the attempts ledger.
+#
+# THE STEP (BH-6346). The deadline mark is `<d>\t<stage>\t<step>\t<step_s>\t
+# <earlier>` (THE STEP TRAIL, at mc_step), so the WORKER_DEADLINE line and alert
+# end `| step: <step> (<n>s) | earlier: <name>=<n>s ...`, and the Sentry event
+# carries a `step` tag. A worker mc_step stopped after a GitHub 401
+# left <FANIN_STAGE_FILE>.auth and is `skipped:auth`, which clears the streak: a
+# solo run does not cure a bad token.
+#
+# THE STEP TIMEOUT (BH-6351). The mark's 6th field is the kind of kill
+# (`deadline`, or `step-timeout` when one step ran past MC_STEP_TIMEOUT_S) and
+# its 7th the step timeout that fired. A step timeout is `killed:step-timeout`:
+# one STEP_TIMEOUT line, one warn alert and one Sentry event per (PR, head,
+# step), and the row is left as it is for the next tick. The deadline's Sentry
+# title names the step and copies no log line (the stage stays in extra). A
+# mark from an older writer (2 fields) is kind `deadline`, step `unknown`.
+#
+# THE HOLD (BH-6670). A step timeout in a read-only step (_mc_step_holdable:
+# lane-epoch, head-lag, park-holds) is held, not paged, for the first
+# MC_STEP_HOLD_MAX (default 2, 0 = off, not a number = 2) kills per (PR, head,
+# step): one `stephold <key> <head> <step>` attempts line, one
+# `<key> STEP_HELD step=<s> after <n>s on <head8> (step timeout <t>s, hold <i>
+# of <max>): ...` log line, no alert, no Sentry, outcome `killed:slow-read`.
+# The worker is still killed and the row is left as it is. The next kill past
+# the cap pages STEP_TIMEOUT as above. The STEP_TIMEOUT event's tags add pr
+# (the number) and worker_key (<SLUG>#<n>), each sent only when it has a value.
+#
+# THE TAGS (BH-6347). The Sentry title is `WORKER_DEADLINE: worker killed after
+# <d>s on <head8> in step <step>`: the step, never the log-derived stage, which
+# is the step when the worker logged nothing (BH-6462; a mark written before
+# that still reads `unknown`), and stays in extra.stage. The
+# tags add pr (the number), worker_key (<SLUG>#<n>) and deadline_secs (the
+# seconds the killer slept), each sent only when it has a value, deadline_secs
+# only when it is an integer. Extra adds started_at (the mark's mtime minus d,
+# ISO UTC, empty when either is unreadable), deadline_cfg_s and deadline_cap_s
+# (the settings this process read), so a capped deadline reads as capped.
+#
+# THE CALLS (BH-6462). A killed worker leaves <mark>.calls, its call trace
+# (bin/lib/call-trace.sh). The WORKER_DEADLINE and STEP_TIMEOUT lines and
+# alerts end ` | calls: <call_trace_summary>`, and both Sentry extras carry it
+# as `calls` (not the title). It prints only measured counts and seconds; `none` when the
+# worker traced no call or left no file. The file goes with the mark.
 mc_fanin_outcome() {
-  local num head draft mstate st key mark d stage f ts nh kind text
+  local num head draft mstate st key mark d stage step step_s earlier mkind sto f ts nh kind text ds mt sa calls hmax hn
   IFS=$'\t' read -r num _ head _ draft mstate _ <<<"${2:-}"
   if [ "$draft" = true ]; then echo skipped:draft; return 0; fi
   if [ "$mstate" = UNVERIFIABLE ]; then echo skipped:unverifiable; return 0; fi
   key="${SLUG:-}#$num"
   mark=$(_mc_deadline_mark "$key")
   if [ -n "$mark" ] && [ -f "$mark" ]; then
-    IFS=$'\t' read -r d stage < "$mark" 2>/dev/null
-    rm -f "$mark" 2>/dev/null
+    IFS=$'\t' read -r d stage step step_s earlier mkind sto < "$mark" 2>/dev/null
+    # The killer writes the mark just before the TERM, so mtime - d is the start.
+    ds=""; sa=""; [[ "${d:-}" =~ ^[0-9]+$ ]] && ds=$d
+    mt=$(stat -c %Y "$mark" 2>/dev/null)
+    [ -n "$ds" ] && [[ "$mt" =~ ^[0-9]+$ ]] && sa=$(date -u -d "@$((mt - ds))" '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null)
+    calls=none
+    command -v call_trace_summary >/dev/null 2>&1 && calls=$(call_trace_summary "$mark.calls")
+    rm -f "$mark" "$mark.calls" 2>/dev/null
+    [ -n "${FANIN_STAGE_FILE:-}" ] && rm -f "$FANIN_STAGE_FILE.auth" 2>/dev/null
+    step=${step:-unknown}
+    if [ "$mkind" = step-timeout ]; then
+      hmax=${MC_STEP_HOLD_MAX:-2}; [[ "$hmax" =~ ^[0-9]+$ ]] || hmax=2
+      if [ "$hmax" -gt 0 ] && _mc_step_holdable "$step"; then
+        hn=$(mc_attempt_count stephold "$key" "$head $step" 2>/dev/null)
+        [[ "$hn" =~ ^[0-9]+$ ]] || hn=0
+        if [ "$hn" -lt "$hmax" ]; then
+          mc_attempt_put_n stephold "$key" "$head" "$step" 2>/dev/null
+          st=$(mc_row_field "$key" 2 2>/dev/null)
+          mc_log "$key STEP_HELD step=$step after ${step_s:-?}s on ${head:0:8} (step timeout ${sto:-?}s, hold $((hn + 1)) of $hmax): a read-only step ran slow; worker stopped, row left ${st:-no row}, the next tick works it again | calls: ${calls:-none}" 2>/dev/null
+          echo killed:slow-read; return 0
+        fi
+      fi
+      if ! mc_attempt_has "steptimeout $key $head $step" 2>/dev/null; then
+        mc_attempt_put "steptimeout $key $head $step" 2>/dev/null
+        st=$(mc_row_field "$key" 2 2>/dev/null)
+        text="step=$step after ${step_s:-?}s on ${head:0:8} (step timeout ${sto:-?}s, worker deadline ${d:-?}s): worker stopped; row left ${st:-no row}, the next tick works it again | calls: ${calls:-none}"
+        mc_log "$key STEP_TIMEOUT $text" 2>/dev/null
+        _mc_fanin_alert "STEP_TIMEOUT $key: $text"
+        command -v sentry_report >/dev/null 2>&1 && sentry_report warning merge-conductor conductor-step-timeout \
+          "STEP_TIMEOUT: step $step passed ${sto:-?}s on ${head:0:8}" \
+          "$(jq -nc --arg p "${P:-}" --arg k "$key" --arg h "$head" --arg st "$step" --arg t "${sto:-}" --arg s "${stage:-unknown}" \
+               --arg c "${calls:-none}" '{project:$p,pr:$k,head:$h,step:$st,step_timeout_s:$t,stage:$s,calls:$c,tags:{step:$st}}' 2>/dev/null)" \
+          "$(jq -nc --arg s "$step" --arg n "$num" --arg k "$key" \
+               '{step:$s,pr:$n,worker_key:$k} | with_entries(select(.value != ""))' 2>/dev/null)" >/dev/null 2>&1
+      fi
+      echo killed:step-timeout; return 0
+    fi
     if ! mc_attempt_has "workerdeadline $key $head" 2>/dev/null; then
       mc_attempt_put "workerdeadline $key $head" 2>/dev/null
-      text="worker killed after ${d:-?}s on ${head:0:8} at stage: ${stage:-unknown}"
+      text="worker killed after ${d:-?}s on ${head:0:8} at stage: ${stage:-unknown} | step: $step (${step_s:-?}s) | earlier: ${earlier:-none} | calls: ${calls:-none}"
       mc_log "$key WORKER_DEADLINE: $text" 2>/dev/null
       _mc_fanin_alert "WORKER_DEADLINE $key: $text"
       # BH-5617. fanin_run_sub reads this function's stdout as the outcome
       # word, so the reporter's output is discarded here as well.
       command -v sentry_report >/dev/null 2>&1 && sentry_report warning merge-conductor conductor-worker-deadline \
-        "WORKER_DEADLINE: $text" \
-        "$(jq -nc --arg p "${P:-}" --arg k "$key" --arg h "$head" --arg s "${stage:-unknown}" --arg d "${d:-}" '{project:$p,pr:$k,head:$h,stage:$s,deadline_s:$d}' 2>/dev/null)" >/dev/null 2>&1
+        "WORKER_DEADLINE: worker killed after ${ds:-?}s on ${head:0:8} in step $step" \
+        "$(jq -nc --arg p "${P:-}" --arg k "$key" --arg h "$head" --arg s "${stage:-unknown}" --arg d "${d:-}" \
+             --arg st "$step" --arg ss "${step_s:-}" --arg e "${earlier:-}" --arg sa "${sa:-}" \
+             --arg dc "${MC_WORKER_DEADLINE_S:-180}" --arg cap "${MC_WORKER_DEADLINE_CAP_S:-}" --arg c "${calls:-none}" \
+             '{project:$p,pr:$k,head:$h,stage:$s,deadline_s:$d,step:$st,step_s:$ss,earlier:$e,
+               started_at:$sa,deadline_cfg_s:$dc,deadline_cap_s:$cap,calls:$c}' 2>/dev/null)" \
+        "$(jq -nc --arg s "$step" --arg n "$num" --arg k "$key" --arg d "$ds" \
+             '{step:$s,pr:$n,worker_key:$k,deadline_secs:$d} | with_entries(select(.value != ""))' 2>/dev/null)" >/dev/null 2>&1
     fi
     echo killed:deadline; return 0
+  fi
+  if [ -n "${FANIN_STAGE_FILE:-}" ] && [ -f "$FANIN_STAGE_FILE.auth" ]; then
+    rm -f "$FANIN_STAGE_FILE.auth" 2>/dev/null
+    echo skipped:auth; return 0
   fi
   st=$(mc_row_field "$key" 2 2>/dev/null)
   if [ -n "${FANIN_STAGE_FILE:-}" ] && [ -f "$FANIN_STAGE_FILE.locked" ]; then
@@ -403,6 +494,15 @@ mc_fanin_outcome() {
     echo "READY unexplained"; return 0
   fi
   echo "${st:-skipped:no-row}"
+}
+
+# _mc_step_holdable <step> — rc 0 for a read-only pr_worker step, where a step
+# timeout is held (THE HOLD, at mc_fanin_outcome). head-lag-kick (close/reopen)
+# and handoff-sticky (approval rebind, label remove) can be mid-write at a kill,
+# so they are not here.
+_mc_step_holdable() {
+  case "${1:-}" in lane-epoch|head-lag|park-holds) return 0 ;; esac
+  return 1
 }
 
 # mc_fanin_solo <slug> <num> <n> — BH-4842: hand a PR that has been missing from
@@ -431,6 +531,133 @@ mc_fanin_solo() {
 mc_fanin_mark_locked() {
   [ -n "${FANIN_STAGE_FILE:-}" ] && : > "$FANIN_STAGE_FILE.locked" 2>/dev/null
   return 0
+}
+
+# mc_step <name> — THE STEP TRAIL (BH-6346). pr_worker calls this at each step
+# boundary. It appends `<epoch>\t<name>` to MC_STEP_FILE (<mark>.steps, set by
+# mc_worker_bounded; unset = no write). A deadline kill reads the trail
+# (_mc_steps_summary), so the kill names the step even when the worker logged
+# nothing. It also sets MC_STEP_NAME in the worker shell, the step each call
+# trace line names (BH-6462, bin/lib/call-trace.sh).
+#
+# THE 401 STOP. GH_REST_AUTH_FAIL_FILE (<mark>.auth) exists once a GitHub call of
+# this worker answered HTTP 401 (bin/lib/gh-rest-auth.sh, and the gh() wrapper of
+# bin/lib/gh-limit-logger.sh). Every later gh_rest of the worker is refused with
+# no request, and the next boundary writes ONE AUTH_401 line, leaves
+# <FANIN_STAGE_FILE>.auth for mc_fanin_outcome and EXITS the worker subshell. Each
+# boundary sits where no budget unit is held and no write is half done. Always
+# rc 0 when it returns.
+#
+# THE STEP LINES (BH-6351). Each trail line is `<epoch>\t<name>\t<log flag>`;
+# the flag is MC_STEP_LOG (pr_worker sets it to 1 after a READY transition).
+# mc_step ends the open step first: `<key> STEP_END step=<prev> took=<n>s` when
+# its flag is 1, or when it took MC_STEP_SLOW_S or more (default 60, 0 = off),
+# then with ` started=<HH:MM:SSZ>`. With the flag 1 it logs `<key> STEP_START
+# step=<name>`. A name outside ^[A-Za-z][A-Za-z0-9:_-]{0,39}$ is written as
+# `unknown`. No MC_STEP_FILE: nothing is written or logged.
+mc_step() {
+  local f="${GH_REST_AUTH_FAIL_FILE:-}" now t0="" prev=""
+  if [ -n "$f" ] && [ -e "$f" ]; then
+    printf -v now '%(%s)T' -1
+    if [ -n "${MC_STEP_FILE:-}" ] && [ -r "$MC_STEP_FILE" ]; then
+      IFS=$'\t' read -r t0 _ < "$MC_STEP_FILE" 2>/dev/null
+      prev=$(tail -n 1 "$MC_STEP_FILE" 2>/dev/null | cut -f2)
+    fi
+    [[ "$t0" =~ ^[0-9]+$ ]] || t0=$now
+    mc_log "${KEY:-?} AUTH_401: a GitHub call answered HTTP 401 during step ${prev:-start}; worker stopped after $((now - t0))s before step ${1:-?}, the next tick retries" 2>/dev/null
+    [ -n "${FANIN_STAGE_FILE:-}" ] && : > "$FANIN_STAGE_FILE.auth" 2>/dev/null
+    exit 0
+  fi
+  MC_STEP_NAME="${1:-?}"
+  [ -n "${MC_STEP_FILE:-}" ] || return 0
+  local name="${1:-?}" fl=0
+  [[ "$name" =~ ^[A-Za-z][A-Za-z0-9:_-]{0,39}$ ]] || name=unknown
+  [ "${MC_STEP_LOG:-0}" = 1 ] && fl=1
+  _mc_step_end "${KEY:-?}" ""
+  printf '%(%s)T\t%s\t%s\n' -1 "$name" "$fl" >> "$MC_STEP_FILE" 2>/dev/null
+  [ "$fl" = 1 ] && mc_log "${KEY:-?} STEP_START step=$name" 2>/dev/null
+  return 0
+}
+
+# mc_step_read <file> — the trail's last line as `<epoch>\t<name>\t<flag 0|1>`.
+# Prints nothing when the file is absent or its last line is malformed.
+mc_step_read() {
+  local t n fl
+  [ -r "${1:-}" ] || return 0
+  IFS=$'\t' read -r t n fl _ <<<"$(tail -n 1 "$1" 2>/dev/null)"
+  [[ "$t" =~ ^[0-9]+$ ]] && [ -n "$n" ] || return 0
+  [ "$fl" = 1 ] || fl=0
+  printf '%s\t%s\t%s\n' "$t" "$n" "$fl"
+}
+
+# _mc_step_end <key> <result> — the STEP_END line for the open step of
+# MC_STEP_FILE, under the rule at mc_step. A non-empty result is appended as
+# ` result=<result>`. Always rc 0.
+_mc_step_end() {
+  local t n fl now took slow line
+  IFS=$'\t' read -r t n fl <<<"$(mc_step_read "${MC_STEP_FILE:-}")"
+  [ -n "$t" ] || return 0
+  printf -v now '%(%s)T' -1
+  took=$((now - t)); [ "$took" -ge 0 ] || took=0
+  slow=${MC_STEP_SLOW_S:-60}; [[ "$slow" =~ ^[0-9]+$ ]] || slow=60
+  if [ "$fl" = 1 ]; then
+    line="STEP_END step=$n took=${took}s"
+  elif [ "$slow" -gt 0 ] && [ "$took" -ge "$slow" ]; then
+    line="STEP_END step=$n took=${took}s started=$(date -u -d "@$t" +%H:%M:%S 2>/dev/null)Z"
+  else
+    return 0
+  fi
+  [ -n "$2" ] && line="$line result=$2"
+  mc_log "$1 $line" 2>/dev/null
+  return 0
+}
+
+# mc_step_close <key> <result> — mc_worker_bounded calls this when the worker is
+# gone: the last open step ends with ` result=<rc:N|step-timeout|deadline>`
+# (same log rule as mc_step), and the trail is removed. Always rc 0.
+mc_step_close() {
+  [ -n "${MC_STEP_FILE:-}" ] || return 0
+  _mc_step_end "${1:-?}" "${2:-}"
+  rm -f "$MC_STEP_FILE" 2>/dev/null
+  return 0
+}
+
+# _mc_steps_summary <step file> <now> [fallback s] — prints
+# `<step>\t<step_s>\t<earlier>`: the last step of the trail, its seconds up to
+# <now>, and `name=Ns ...` for each step before it, at most 300 bytes (the steps
+# that do not fit are counted as ` +N more`). An empty or missing trail is step
+# `start` with the fallback seconds (0 when none is given). Never an empty field:
+# the mark is read with IFS=tab, which joins empty fields.
+_mc_steps_summary() {
+  awk -F '\t' -v now="$2" -v fb="${3:-0}" '
+    $1 ~ /^[0-9]+$/ && $2 != "" { n++; t[n] = $1; s[n] = $2 }
+    END {
+      if (!n) { printf "start\t%d\tnone\n", fb; exit }
+      e = ""; more = 0
+      for (i = 1; i < n; i++) {
+        it = s[i] "=" (t[i + 1] - t[i]) "s"
+        if (more || length(e) + length(it) + 1 > 285) { more++; continue }
+        e = (e == "" ? it : e " " it)
+      }
+      if (more) e = e " +" more " more"
+      if (e == "") e = "none"
+      printf "%s\t%d\t%s\n", s[n], now - t[n], e
+    }' "$1" 2>/dev/null || printf 'start\t%d\tnone\n' "${3:-0}"
+}
+
+# mc_lock_wait_left <configured s> — the seconds a project lock may be waited on
+# inside a worker (BH-6346): the configured wait, capped at what is left before
+# MC_WORKER_DEADLINE_AT (set by mc_worker_bounded) minus a 15 s margin, the same
+# floor as mc_window_cap (under that a worker cannot read a PR and act on it).
+# rc 1, nothing printed, when under 1 s is left: the caller must not wait. No
+# deadline, or not a number: prints the configured value, rc 0.
+mc_lock_wait_left() {
+  local w="${1:-}" at="${MC_WORKER_DEADLINE_AT:-}" now left margin=15
+  [[ "$at" =~ ^[0-9]+$ ]] || { printf '%s\n' "$w"; return 0; }
+  printf -v now '%(%s)T' -1
+  left=$(( at - now - margin ))
+  [ "$left" -ge 1 ] || return 1
+  if [[ "$w" =~ ^[0-9]+$ ]] && [ "$w" -le "$left" ]; then printf '%s\n' "$w"; else printf '%s\n' "$left"; fi
 }
 
 # mc_window_cap — BH-4842, THE WINDOW. A keyed backstop run carries
@@ -518,26 +745,117 @@ _mc_kill_tree() {
 # the cap from its own timeout, so the deadline always fires first, whatever the
 # settings row says. Runs inside fanin_run_sub's subshell, and returns the
 # worker's own status (143 or 137 when it was killed).
+#
+# BH-6346. With a mark, the worker gets its step trail (MC_STEP_FILE=<mark>.steps,
+# first line `start`) and its 401 marker path (GH_REST_AUTH_FAIL_FILE=<mark>.auth);
+# with a deadline, MC_WORKER_DEADLINE_AT, the epoch of the kill, which caps every
+# project-lock wait (mc_lock_wait_left). All three are locals, never exported: a
+# detached child (setsid rebase, re-review) must not inherit a marker that shuts
+# its own GitHub reads. The worker always runs in a subshell, so mc_step's exit
+# comes back here, and both files are removed when it is gone. Trails older
+# than a day (a tick killed whole) are removed by the next worker.
+#
+# THE STEP TIMEOUT (BH-6351). The watchdog polls the trail every
+# MC_STEP_POLL_S (default 5). A step that has run MC_STEP_TIMEOUT_S (default
+# 240, 0 = off, not a number = 240) is killed like a deadline, with the mark's
+# kind `step-timeout`. The `enqueue` and `merge` steps wait on purpose, so their
+# timeout is never under max(MC_MERGE_LOCK_WAIT, MC_MERGIFY_WAIT_S) + 10. The
+# `lock-probe` step waits for the PR lock when MC_PR_LOCK_WAIT_S is set (the
+# READY re-kick, BH-6000), so its timeout is the step timeout plus that wait. A step
+# timeout that is not under the deadline never fires: the deadline names the
+# step. A step past MC_STEP_SLOW_S (default 60, 0 = off) logs one
+# `<key> STEP_SLOW step=<name> running=<n>s` while it runs. The mark is
+# `<d>\t<stage>\t<step>\t<step_s>\t<earlier>\t<kind>\t<step timeout>`.
+#
+# BH-6462. The worker also gets its call trace (HARNESS_CALL_TRACE_FILE=
+# <mark>.calls, a local like the others). A normal return removes it; a kill
+# leaves it beside the mark for mc_fanin_outcome. With no log line for the PR,
+# the mark's stage is the step, so a known step never reads `unknown`.
 mc_worker_bounded() {
-  local d cap mark w k rc stage dir t0
+  local d cap mark w k rc stage dir t0 step step_s earlier key res
+  local st slow poll floor lw mw pw start now left ts sn run eff kind seen s
+  local MC_STEP_FILE="" GH_REST_AUTH_FAIL_FILE="" MC_WORKER_DEADLINE_AT="" HARNESS_CALL_TRACE_FILE=""
   d=${MC_WORKER_DEADLINE_S:-180}; [[ "$d" =~ ^[0-9]+$ ]] || d=180
   cap=${MC_WORKER_DEADLINE_CAP_S:-}
   if [[ "$cap" =~ ^[0-9]+$ ]] && [ "$cap" -gt 0 ] && { [ "$d" = 0 ] || [ "$d" -gt "$cap" ]; }; then d=$cap; fi
-  mark=$(_mc_deadline_mark "${SLUG:-}#${1%%$'\t'*}")
-  if [ "$d" = 0 ] || [ -z "$mark" ]; then pr_worker "$@"; return; fi
+  # A run that WAITS for its PR lock (MC_PR_LOCK_WAIT_S, the READY re-kick,
+  # BH-6000) gets that wait on top of its deadline: the wait is spent before
+  # the worker does any work, so it must not eat the work's own time (Fable
+  # review of 9fc9454d1, finding 2).
+  if [ "$d" != 0 ] && [[ "${MC_PR_LOCK_WAIT_S:-}" =~ ^[0-9]+$ ]] && [ "${MC_PR_LOCK_WAIT_S}" -gt 0 ]; then d=$((d + MC_PR_LOCK_WAIT_S)); fi
+  key="${SLUG:-}#${1%%$'\t'*}"
+  mark=$(_mc_deadline_mark "$key")
+  if [ -z "$mark" ]; then pr_worker "$@"; return; fi
   dir="${mark%/*}"; mkdir -p "$dir" 2>/dev/null
+  # A tick killed whole leaves its workers' trails: nothing came back to remove
+  # them. A day is far past any tick, so a live worker's files are never hit.
+  find "$dir" -maxdepth 1 -type f \( -name '*.steps' -o -name '*.auth' -o -name '*.calls' \) -mmin +1440 -delete 2>/dev/null
+  MC_STEP_FILE="$mark.steps"; GH_REST_AUTH_FAIL_FILE="$mark.auth"; HARNESS_CALL_TRACE_FILE="$mark.calls"
+  rm -f "$MC_STEP_FILE" "$GH_REST_AUTH_FAIL_FILE" "$HARNESS_CALL_TRACE_FILE" 2>/dev/null
+  printf '%(%s)T\tstart\n' -1 > "$MC_STEP_FILE" 2>/dev/null
+  if [ "$d" = 0 ]; then
+    ( pr_worker "$@" ); rc=$?
+    mc_step_close "$key" "rc:$rc"
+    rm -f "$MC_STEP_FILE" "$GH_REST_AUTH_FAIL_FILE" "$HARNESS_CALL_TRACE_FILE" 2>/dev/null
+    return "$rc"
+  fi
+  st=${MC_STEP_TIMEOUT_S:-240}; [[ "$st" =~ ^[0-9]+$ ]] || st=240
+  slow=${MC_STEP_SLOW_S:-60}; [[ "$slow" =~ ^[0-9]+$ ]] || slow=60
+  poll=${MC_STEP_POLL_S:-5}; [[ "$poll" =~ ^[0-9]+$ ]] && [ "$poll" -ge 1 ] || poll=5
+  lw=${MC_MERGE_LOCK_WAIT:-120}; [[ "$lw" =~ ^[0-9]+$ ]] || lw=120
+  mw=${MC_MERGIFY_WAIT_S:-90}; [[ "$mw" =~ ^[0-9]+$ ]] || mw=90
+  floor=$(( (lw > mw ? lw : mw) + 10 ))
+  # lock-probe takes the PR lock. A run that waits for it on purpose (the READY
+  # re-kick, MC_PR_LOCK_WAIT_S) gets that wait on top of its step timeout, as
+  # the deadline does above: the wait is not a stall.
+  pw=0; [[ "${MC_PR_LOCK_WAIT_S:-}" =~ ^[0-9]+$ ]] && pw=$MC_PR_LOCK_WAIT_S
+  MC_WORKER_DEADLINE_AT=$(( $(date +%s) + d ))
   pr_worker "$@" & w=$!
   (
-    sleep "$d"
+    # The deadline, or the first step past its timeout, whichever comes first.
+    printf -v start '%(%s)T' -1
+    kind=deadline; eff=$st; seen=""
+    while :; do
+      printf -v now '%(%s)T' -1
+      left=$(( start + d - now ))
+      [ "$left" -gt 0 ] || break
+      IFS=$'\t' read -r ts sn _ <<<"$(mc_step_read "$MC_STEP_FILE")"
+      if [ -n "$ts" ]; then
+        run=$(( now - ts ))
+        eff=$st
+        case "$sn" in
+          enqueue|merge) [ "$eff" -gt 0 ] && [ "$eff" -lt "$floor" ] && eff=$floor ;;
+          lock-probe) [ "$eff" -gt 0 ] && eff=$((eff + pw)) ;;
+        esac
+        if [ "$eff" -gt 0 ] && [ "$eff" -lt "$d" ] && [ "$run" -ge "$eff" ]; then kind=step-timeout; break; fi
+        if [ "$slow" -gt 0 ] && [ "$run" -ge "$slow" ] && [ "$seen" != "$ts $sn" ]; then
+          seen="$ts $sn"
+          mc_log "$key STEP_SLOW step=$sn running=${run}s" 2>/dev/null
+        fi
+      fi
+      s=$poll; [ "$s" -le "$left" ] || s=$left
+      sleep "$s"
+    done
     # The stage is the last line this tick logged for the PR: already in the
-    # log, so it puts nothing new (no argv, no token) in an alert.
+    # log, so it puts nothing new (no argv, no token) in an alert. With no such
+    # line it is the step (BH-6462), never `unknown` when the step is known.
     t0=$(date -u -d "@${MC_FANIN_T0:-0}" '+%Y-%m-%d %H:%M:%S' 2>/dev/null)
     stage=$(tail -n 5000 "${MC_LOG:-/dev/null}" 2>/dev/null \
       | awk -v k="${SLUG:-}#${1%%$'\t'*}" -v t="$t0" '(index($0, k " ") || index($0, k ":")) && substr($0, 1, 19) >= t { l = $0 } END { print substr(l, 1, 300) }')
-    printf '%s\t%s\n' "$d" "${stage//$'\t'/ }" > "$mark" 2>/dev/null
+    # The step is the trail's last line (THE STEP TRAIL, at mc_step). No field
+    # is written empty: the reader splits on tabs, and IFS joins empty fields.
+    IFS=$'\t' read -r step step_s earlier <<<"$(_mc_steps_summary "$MC_STEP_FILE" "$(date +%s)" "$d")"
+    stage="${stage//$'\t'/ }"
+    printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$d" "${stage:-${step:-start}}" "${step:-start}" "${step_s:-$d}" "${earlier:-none}" "$kind" "$eff" > "$mark" 2>/dev/null
     _mc_kill_tree TERM "$w"; sleep 5; _mc_kill_tree KILL "$w"
   ) & k=$!
   wait "$w"; rc=$?
   _mc_kill_tree TERM "$k"; wait "$k" 2>/dev/null
+  res="rc:$rc"
+  [ -f "$mark" ] && { IFS=$'\t' read -r _ _ _ _ _ res _ < "$mark"; res=${res:-deadline}; } 2>/dev/null
+  mc_step_close "$key" "$res"
+  rm -f "$MC_STEP_FILE" "$GH_REST_AUTH_FAIL_FILE" 2>/dev/null
+  # A kill wrote the mark: its trace stays for mc_fanin_outcome.
+  [ -f "$mark" ] || rm -f "$HARNESS_CALL_TRACE_FILE" 2>/dev/null
   return "$rc"
 }

@@ -197,7 +197,7 @@ for f in "${FILES[@]}"; do
     eq "C1 $f: catalog/switches.d/$n.json name" "$(jq -r '.name // empty' "$c" 2>/dev/null)" "$n"
     jq -e --arg f "$f" '.readers | index($f)' "$c" >/dev/null 2>&1 && ok || bad "C1 catalog/switches.d/$n.json readers lack $f"
   done
-  first=$(printf '%s\n' "$sw" | head -1)
+  first=$(head -1 <<<"$sw")
   case "$first" in [g-o]*) ok ;; *) bad "O1 $f: lowest switch '$first' is outside g-o" ;; esac
 done
 for n in gh-app-default-off gh-app-rotate-off gh-app-tokens-off lane-reaper-off; do

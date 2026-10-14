@@ -18,11 +18,12 @@
 #   3. nothing is misplaced and nothing is missing — the set a module defines is
 #      EXACTLY the set tests/br/expected-map.tsv assigns it. Both directions,
 #      because this slice is complete for its two modules.
-#   4. THE SLICE IS DARK. Every mapped function is still defined inline in
+#   4. A `lib` ROW IS DARK. That function is still defined inline in
 #      bin/blocked-resolver.sh, BELOW the source loop, and the module's copy is
 #      BYTE-IDENTICAL to the inline one. That is what "lands dark" means here:
 #      the inline definition wins, the module is inert, and the cut is a pure
-#      deletion whose diff this test will keep honest.
+#      deletion whose diff this test will keep honest. A `mod` row is CUT
+#      (BH-5241): the module defines it and bin/blocked-resolver.sh does not.
 #   5. nothing runs on source. A module that did something on source would do it
 #      on every tick of every project on every box the moment harness-sync ships
 #      it, and the lane sources them before it has decided anything.
@@ -55,7 +56,7 @@ command -v jq >/dev/null || { echo "jq missing — skipping"; exit 0; }
 BR="$DIR/bin/blocked-resolver.sh"
 BRD="$DIR/bin/lib/br"
 MAP="$DIR/tests/br/expected-map.tsv"
-MODULES="ladder record"
+MODULES="discovery keys ladder record"
 
 # fn_body <file> <name> — the function's source as the file carries it:
 # `^name() {` through the next `^}`. The same extraction five resolver suites
@@ -142,14 +143,15 @@ DUPS=$(cat "$SETS"/*.txt | grep -v '^$' | sort | uniq -d)
 
 # Guard the map first: a truncated or missing map would make every row below
 # vacuous rather than red.
-if [ -s "$MAP" ] && grep -qxF "$(printf 'ladder\tbr_action\tlib')" "$MAP"; then ok
+if [ -s "$MAP" ] && grep -qxF "$(printf 'ladder\tbr_action\tmod')" "$MAP"; then ok
 else bad "3: $MAP must exist and assign the lane's functions (ladder/br_action row missing)"; fi
 
 MIS=0
 for m in $MODULES; do
   while read -r n; do
     [ -n "$n" ] || continue
-    if ! grep -qxF "$(printf '%s\t%s\tlib' "$m" "$n")" "$MAP"; then
+    if ! grep -qxF "$(printf '%s\t%s\tlib' "$m" "$n")" "$MAP" \
+       && ! grep -qxF "$(printf '%s\t%s\tmod' "$m" "$n")" "$MAP"; then
       MIS=$((MIS+1))
       echo "  misplaced: $n is defined by br/$m.sh; the map says '$(awk -F'\t' -v n="$n" '$2==n{print $1}' "$MAP")'"
     fi
@@ -169,16 +171,24 @@ for m in $MODULES; do
 done
 [ "$MISSING" -eq 0 ] && ok || bad "3: $MISSING mapped function(s) are not defined by the module the map assigns them to"
 
-# ── 4. the slice is DARK: the module's copy is byte-identical to the inline ──
+# ── 4. a `lib` row is DARK: the module's copy is byte-identical to the inline ──
 # one, and the inline one is still there. Delete the inline copy without saying
-# so and this goes red; change either copy alone and this goes red.
+# so and this goes red; change either copy alone and this goes red. A `mod` row
+# is CUT: the module carries it and the inline copy is gone, so putting one back
+# inline goes red too.
 DARK=0; DARKN=0
-while IFS=$'\t' read -r mod n _; do
+while IFS=$'\t' read -r mod n origin; do
   [ -n "$n" ] || continue
   DARKN=$((DARKN+1))
   inline=$(fn_body "$BR" "$n")
   modbody=$(fn_body "$BRD/$mod.sh" "$n")
-  if [ -z "$inline" ]; then
+  if [ "$origin" = mod ]; then
+    if [ -n "$inline" ]; then
+      DARK=$((DARK+1)); echo "  not cut: $n is a 'mod' row but bin/blocked-resolver.sh still defines it inline"
+    elif [ -z "$modbody" ]; then
+      DARK=$((DARK+1)); echo "  not cut: bin/lib/br/$mod.sh carries no '^$n() {' … '^}' block"
+    fi
+  elif [ -z "$inline" ]; then
     DARK=$((DARK+1)); echo "  not dark: $n is no longer defined inline in bin/blocked-resolver.sh (the cut happened without updating tests/br/expected-map.tsv)"
   elif [ -z "$modbody" ]; then
     DARK=$((DARK+1)); echo "  not dark: bin/lib/br/$mod.sh carries no '^$n() {' … '^}' block"
@@ -188,7 +198,7 @@ while IFS=$'\t' read -r mod n _; do
   fi
 done < <(grep -v '^#' "$MAP")
 [ "$DARKN" -ge 18 ] && ok || bad "4: the map carries $DARKN function rows, expected at least 18 — a shrunken map makes this check vacuous"
-[ "$DARK" -eq 0 ] && ok || bad "4: $DARK of $DARKN mapped functions are not a byte-identical copy of the inline one"
+[ "$DARK" -eq 0 ] && ok || bad "4: $DARK of $DARKN mapped functions are not a byte-identical copy of the inline one (lib) or not cut from the driver (mod)"
 
 # ── 5. nothing runs on source ───────────────────────────────────────────────
 Q="$T/q"; mkdir -p "$Q/logs" "$Q/state" "$Q/flags" "$Q/locks"
@@ -230,8 +240,8 @@ run_lane() { # run_lane -> rc; the lane's own stdout/stderr land in $T/lane.out
       bash "$H/bin/blocked-resolver.sh" nosuchproject ) > "$T/lane.out" 2>&1
 }
 
-# 6a — the loop is REAL. Nothing about the product changes when it is deleted
-# (the inline copies still define every function), so only a canary can see it.
+# 6a — the loop is REAL. A canary is the direct proof that record.sh was
+# sourced, apart from the functions it defines.
 # It goes into the SCRATCH copy of a module, never the shipped one.
 : > "$H/logs/ALERTS.log"
 printf 'printf %%s canary > "%s/br-sourced"\n' "$T" >> "$H/bin/lib/br/record.sh"
@@ -279,7 +289,7 @@ N6C=$(grep -cF "RESOLVER MODULE MISSING: bin/lib/br/ladder.sh" "$H/logs/ALERTS.l
 
 # 6d — the module list is a LITERAL. tests and the sibling slices read it off
 # this line; a computed one would be the lane running code inside every reader.
-grep -qxF 'BR_MODULES="ladder record"' "$BR" && ok \
+grep -qxF 'BR_MODULES="discovery keys ladder record"' "$BR" && ok \
   || bad "6d: bin/blocked-resolver.sh must carry the literal BR_MODULES line, got: $(grep -m1 '^BR_MODULES=' "$BR")"
 
 # ── 7. the fixture rule, ratcheted ──────────────────────────────────────────

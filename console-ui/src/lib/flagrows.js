@@ -8,6 +8,8 @@
 // row is absent, so it reads as unreadable rather than as a guessed "off".
 export const FLAG_ROWS_CAP = 500;
 
+import { modeOf } from './dispatch-mode.js';
+
 const WIP_VALUE = /^[1-9][0-9]*$/;
 
 function listOf(payload, key) {
@@ -61,6 +63,21 @@ export function shapeProjectFlags(flagsPayload, routingPayload, projects) {
     };
   }
   return out;
+}
+
+// The Fleet table's cells: shapeProjectFlags plus the BH-6350 MODE cell, from
+// the same flags read. shapeProjectFlags keeps its three-key contract (the
+// fleet-flag-columns.bh-5643 suite pins it), so MODE is added here. An
+// unreadable flags read is mode null ("—"), never a guessed `normal`: normal
+// says "not paused", which the PAUSED rule above forbids on a failed read.
+// A readable read with no dispatch-mode-<p> row is `normal` (modeOf).
+export function shapeFleetCells(flagsPayload, routingPayload, projects) {
+  const cells = shapeProjectFlags(flagsPayload, routingPayload, projects);
+  const flags = listOf(flagsPayload, 'flags');
+  const byName = new Map();
+  if (flags) for (const r of flags) if (r && typeof r.name === 'string') byName.set(r.name, r);
+  for (const p of Object.keys(cells)) cells[p].mode = flags ? modeOf(byName, p) : null;
+  return cells;
 }
 
 // The WIP input's check: a whole number from 1 to 9999, refused otherwise,

@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import worker, { ensureTable, CREATED_TABLES } from '../src/index.js';
+import { jobsSchemaSql } from './lib/jobs-schema.js';
 
 // K3 — THE PRE-CALL GUARD'S COUNTER. bin/agent-call.sh asks this route, BEFORE
 // it spends anything, how many paid calls one piece of work (project, stage,
@@ -18,7 +19,7 @@ import worker, { ensureTable, CREATED_TABLES } from '../src/index.js';
 // row stamped in the year 2000, which is outside any window the route accepts.
 
 const SECRET = 'test-secret';
-const SCHEMA = readFileSync(fileURLToPath(new URL('../schema.sql', import.meta.url)), 'utf8');
+const SCHEMA = jobsSchemaSql();
 
 function sqliteDB(db) {
   const prepare = (sql) => {

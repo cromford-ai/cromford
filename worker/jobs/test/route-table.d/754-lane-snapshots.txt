@@ -1,0 +1,12 @@
+# LANE SNAPSHOTS (BH-6128, BH-6047 part 5 of 5): blocked-resolver inputs off
+# the hub. The last family in the table, after the lane-runs seams (751..753).
+# GET …/writebacks and GET …/writebacks/<id> are two rows; POST …/writebacks/ack
+# is anchored on its own so POST …/writebacks never swallows it.
+PUT re:/^\/api\/lane-snapshots\/([^/]+)\/([^/]+)\/parts\/([^/]+)$/
+POST re:/^\/api\/lane-snapshots\/([^/]+)\/([^/]+)\/commit$/
+GET re:/^\/api\/lane-snapshots\/([^/]+)\/([^/]+)$/
+GET re:/^\/api\/lane-snapshots\/([^/]+)\/([^/]+)\/parts\/([^/]+)$/
+POST re:/^\/api\/lane-snapshots\/([^/]+)\/([^/]+)\/writebacks$/
+GET re:/^\/api\/lane-snapshots\/([^/]+)\/([^/]+)\/writebacks$/
+GET re:/^\/api\/lane-snapshots\/([^/]+)\/([^/]+)\/writebacks\/(\d+)$/
+POST re:/^\/api\/lane-snapshots\/([^/]+)\/([^/]+)\/writebacks\/ack$/

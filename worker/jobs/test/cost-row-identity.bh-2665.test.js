@@ -4,6 +4,7 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import worker from '../src/index.js';
 import { shapeLaneDedup } from '../src/lib/lane-dedup.js';
+import { jobsSchemaSql } from './lib/jobs-schema.js';
 
 // BH-2665 (BH-2537 slice 1): cost rows carry a 26th column, guard_fp (the
 // pre-call guard's input fingerprint), and the cost family gains a shape-only
@@ -14,7 +15,7 @@ import { shapeLaneDedup } from '../src/lib/lane-dedup.js';
 // this file.
 
 const SECRET = 'test-secret';
-const SCHEMA = readFileSync(fileURLToPath(new URL('../schema.sql', import.meta.url)), 'utf8');
+const SCHEMA = jobsSchemaSql();
 let DatabaseSync = null;
 try { ({ DatabaseSync } = await import('node:sqlite')); } catch { DatabaseSync = null; }
 

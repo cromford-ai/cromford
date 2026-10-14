@@ -60,9 +60,9 @@ day() { date -u -d "2026-10-08 -$1 days" +%F; }   # day <n> — n UTC days befor
 # --- S1 / S3: baseline over the history ----------------------------------------
 OUT=$("$SA" baseline --rows "$T/hist.csv" --until 2026-10-08 --days 14 --min-days 7 2>/dev/null); rc=$?
 [ "$rc" = 0 ] && ok || bad "S1 baseline exited $rc on a good csv"
-printf '%s\n' "$OUT" | grep -qxF "$(printf 'lane\tfly-pool\t120.00\t14')" && ok \
+grep -qxF "$(printf 'lane\tfly-pool\t120.00\t14')" <<<"$OUT" && ok \
   || bad "S1 lane fly-pool p99 is not 120.00 over 14 days: [$OUT]"
-printf '%s\n' "$OUT" | grep -qxF "$(printf 'project\tbusy\t120.00\t14')" && ok \
+grep -qxF "$(printf 'project\tbusy\t120.00\t14')" <<<"$OUT" && ok \
   || bad "S1 project busy has no row of its own: [$OUT]"
 grep -q "short6\|quiet" <<<"$OUT" && bad "S3 a key with 6 days printed a line: [$OUT]" || ok
 [ "$(printf '%s\n' "$OUT" | grep -cxF "$(printf 'lane\tseven\t5.00\t7')")" = 1 ] && ok \
@@ -74,10 +74,10 @@ grep -q "short6\|quiet" <<<"$OUT" && bad "S3 a key with 6 days printed a line: [
   for i in $(seq 1 101); do row "$(day "$i")T10:00:00Z" big execute big "$i"; done
 } > "$T/s2.csv"
 OUT=$("$SA" baseline --rows "$T/s2.csv" --until 2026-10-08 --days 120 --min-days 7 2>/dev/null)
-printf '%s\n' "$OUT" | grep -qxF "$(printf 'lane\tbig\t100.00\t101')" && ok \
+grep -qxF "$(printf 'lane\tbig\t100.00\t101')" <<<"$OUT" && ok \
   || bad "S2 nearest-rank p99 of 1..101 is not 100.00 (ceil(0.99n)-1): [$OUT]"
 OUT=$("$SA" baseline --rows "$T/hist.csv" --until 2026-10-08 --days 14 --min-days 1 2>/dev/null)
-printf '%s\n' "$OUT" | grep -qxF "$(printf 'lane\tshort6\t10.00\t6')" && ok \
+grep -qxF "$(printf 'lane\tshort6\t10.00\t6')" <<<"$OUT" && ok \
   || bad "S3 --min-days 1 did not admit the 6-day lane: [$OUT]"
 
 # --- S4: refused / settled / duplicate / stage fallback / window edges ---------
@@ -91,9 +91,9 @@ printf '%s\n' "$OUT" | grep -qxF "$(printf 'lane\tshort6\t10.00\t6')" && ok \
   row "$(day 15)T10:00:00Z" p4 triage "" 999                  # 15 days ago: outside 14
 } > "$T/s4.csv"
 OUT=$("$SA" baseline --rows "$T/s4.csv" --until 2026-10-08 --days 14 --min-days 7 2>/dev/null)
-printf '%s\n' "$OUT" | grep -qxF "$(printf 'lane\ttriage\t10.00\t7')" && ok \
+grep -qxF "$(printf 'lane\ttriage\t10.00\t7')" <<<"$OUT" && ok \
   || bad "S4 empty lane_id did not group under stage, or a refused/settled/duplicate/out-of-window row counted: [$OUT]"
-printf '%s\n' "$OUT" | grep -qxF "$(printf 'project\tp4\t10.00\t7')" && ok \
+grep -qxF "$(printf 'project\tp4\t10.00\t7')" <<<"$OUT" && ok \
   || bad "S4 project p4 total is not 10.00 a day: [$OUT]"
 
 # --- S5: not a cost.csv ----------------------------------------------------------

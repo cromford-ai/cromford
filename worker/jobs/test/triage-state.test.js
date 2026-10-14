@@ -4,6 +4,7 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import worker, { CREATED_TABLES } from '../src/index.js';
 import { openDb } from './lib/d1-sqlite.bh-1030.js';
+import { jobsSchemaSql } from './lib/jobs-schema.js';
 
 // TRIAGE-STATE (the operator, 2026-09-28): one row per ticket that says what the
 // triage model last decided about it and which INPUT HASH that verdict was made
@@ -19,7 +20,7 @@ import { openDb } from './lib/d1-sqlite.bh-1030.js';
 // A PUT names only the columns it carries: the pre-check's observe write
 // (input_hash + last_decision) must never erase the verdict a session wrote.
 const SECRET = 'test-secret';
-const SCHEMA = readFileSync(fileURLToPath(new URL('../schema.sql', import.meta.url)), 'utf8');
+const SCHEMA = jobsSchemaSql();
 const H64 = 'a'.repeat(64);
 const H64B = 'b'.repeat(64);
 

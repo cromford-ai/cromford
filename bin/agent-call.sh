@@ -337,7 +337,7 @@ claude_ladder() {
     # A role that names failover rungs owns its ladder. One that names only
     # its primary inherits claude.ladder's from that model on, as every
     # single-model lane did when the rungs were literals here.
-    if [ "$(printf '%s\n' "$rows" | head -1)" = "$MODEL" ] && [ "$(printf '%s\n' "$rows" | wc -l)" -gt 1 ]; then
+    if [ "$(head -1 <<<"$rows")" = "$MODEL" ] && [ "$(printf '%s\n' "$rows" | wc -l)" -gt 1 ]; then
       printf '%s\n' "$rows"; return 0
     fi
   fi
@@ -3743,7 +3743,7 @@ ladder_resets_at() {
     e=$(TZ="${tz:-UTC}" date -d "$when" +%s 2>/dev/null) || return 0
     now=$(date -u +%s)
     if [ "$e" -le "$now" ]; then
-      printf '%s' "$when" | grep -qiE '[a-z]{3,} [0-9]|[0-9]{4}-[0-9]{2}' && return 0
+      grep -qiE '[a-z]{3,} [0-9]|[0-9]{4}-[0-9]{2}' <<<"$when" && return 0
       e=$(( e + 86400 ))
     fi
   fi

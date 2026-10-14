@@ -74,6 +74,13 @@
 #                 posted. One ALERTS line (emptyblock-<id>, once per reset) says
 #                 so, and the request is stamped; an ALERTS append that fails
 #                 is no stamp.
+#              2a-flip. BH-6391: when the request's scope_notes carry a
+#                 `lead-prev:` group (bin/lib/lead-prev.sh) with own-commits:0
+#                 and the verdict class (BLOCK vs MERGE/MERGE-WITH-NOTES)
+#                 differs from its word: ONE log line `flip <repo>#<pr> <G12>
+#                 <W> -> <H12> <V> own-commits:0 request:<id>`, deduped by
+#                 state/lead-review-land/flip-<id>. A measurement only: it
+#                 gates no post, no stamp and no counter.
 #              2c. MERGE / MERGE-WITH-NOTES recorded on THIS tick (post rc 0/4)
 #                 and LEAD_REVIEW_SPOTCHECK_PCT (0..100, 0 = off; anything else
 #                 is logged and off) above cksum("<repo>#<pr>@<head>") % 100:
@@ -174,6 +181,9 @@ for f in bin/jobs-client.sh bin/lib/jobs/req.sh bin/lib/lead-reviews.sh bin/lib/
 done
 # shellcheck source=/dev/null
 { . "$H/bin/jobs-client.sh"; . "$H/bin/lib/lead-reviews.sh"; . "$H/bin/lib/verdicts.sh"; . "$H/bin/lib/gh-rest.sh"; . "$H/bin/lib/lead-authority.sh"; }
+# BH-6391, fail-open: without it no flip line is logged; nothing else changes.
+# shellcheck source=/dev/null
+[ -r "$H/bin/lib/lead-prev.sh" ] && . "$H/bin/lib/lead-prev.sh" 2>/dev/null
 # BH-3780, fail-open: without it a lead BLOCK is posted with no hold route (lrl_block_route).
 # shellcheck source=/dev/null
 [ -r "$H/bin/lib/needs-human.sh" ] && . "$H/bin/lib/needs-human.sh" 2>/dev/null
@@ -701,15 +711,15 @@ while IFS= read -r ROW; do
         [ -z "$RID" ] || ROWREF="#$RID"
         case "$PRC" in
           0) PROMOTED=$((PROMOTED + 1))
-             log "$REPO#$PR @${HEAD:0:12} lead review $ID: $VERDICT posted as a source=lead row ($(printf '%s' "$OUT" | head -1))"
+             log "$REPO#$PR @${HEAD:0:12} lead review $ID: $VERDICT posted as a source=lead row ($(head -1 <<<"$OUT"))"
              [ "$VERDICT" = BLOCK ] || lrl_spotcheck "$SAFE_ID" "$REPO" "$PR" "$HEAD" "$VERDICT" "$MODEL" "$REF" ;;
           3) log "$REPO#$PR @${HEAD:0:12} lead review $ID: reviewed @${HEAD:0:12} but the PR head moved; not posted, stamped promoted (a verdict on a dead head gates nothing): $(printf '%s' "$OUT" | tr '\n' ' ' | head -c 200)" ;;
           4) PROMOTED=$((PROMOTED + 1))
              log "$REPO#$PR @${HEAD:0:12} lead review $ID: $VERDICT posted as a source=lead row, but the lead-verdict status was NOT published ($(printf '%s' "$OUT" | tr '\n' ' ' | head -c 300))"
              [ "$VERDICT" = BLOCK ] || lrl_spotcheck "$SAFE_ID" "$REPO" "$PR" "$HEAD" "$VERDICT" "$MODEL" "$REF" ;;
           5) PROMOTED=$((PROMOTED + 1))
-             WH=$(printf '%s' "$OUT" | grep -m1 'status withheld' | sed 's/^lead-verdict: //')
-             log "$REPO#$PR @${HEAD:0:12} lead review $ID: $VERDICT recorded as advice; lead-verdict status withheld (${WH:-$(printf '%s' "$OUT" | head -1)})"
+             WH=$(grep -m1 'status withheld' <<<"$OUT" | sed 's/^lead-verdict: //')
+             log "$REPO#$PR @${HEAD:0:12} lead review $ID: $VERDICT recorded as advice; lead-verdict status withheld (${WH:-$(head -1 <<<"$OUT")})"
              WR=${WH#status withheld on * }; WR=${WR%; a *}
              lrl_ask_human "${WR:-see logs/lead-review-land.log}" || continue ;;
           *) log "$REPO#$PR @${HEAD:0:12} lead review $ID: verdict row NOT posted ($(printf '%s' "$OUT" | tr '\n' ' ' | head -c 200)); not stamped, next tick retries"
@@ -720,6 +730,14 @@ while IFS= read -r ROW; do
         PRC=0
         # A withheld row whose beat was never sent (it failed, so no stamp) asks now.
         if [ "$ADVICE" != 0 ]; then lrl_ask_human "recorded as advice on an earlier tick" || continue; fi
+      fi
+      # 2a-flip. BH-6391, a measurement: a verdict whose class differs from the
+      # earlier lead word on a head with no own commit since it. One line per
+      # request (the flip-<id> marker); no post, stamp or counter depends on it.
+      if [ "$PRC" != 3 ] && command -v lpv_flip >/dev/null 2>&1 && [ ! -e "$STATE/flip-$SAFE_ID" ] \
+         && FL=$(lpv_flip "$(jq -r '.scope_notes // ""' <<<"$ROW" 2>/dev/null)" "$VERDICT"); then
+        log "flip $REPO#$PR ${FL%% own-commits:*} -> ${HEAD:0:12} $VERDICT own-commits:0 request:$ID"
+        : > "$STATE/flip-$SAFE_ID" 2>/dev/null || log "could not write the flip marker for $ID; a rerun may log it again"
       fi
       # 2b. A recorded BLOCK puts its findings on the PR before the stamp.
       if [ "$VERDICT" = BLOCK ] && [ "$PRC" != 3 ]; then
@@ -747,7 +765,7 @@ while IFS= read -r ROW; do
       SBODY='{}'; [ -z "$SJOB" ] || SBODY=$(jq -nc --arg j "$JOB" '{job_id:$j}')
       if SOUT=$(lr_post_lead "/$ID/promoted" "$SBODY" 2>&1); then
         STAMPED=$((STAMPED + 1))
-      elif printf '%s' "$SOUT" | grep -q 'the request now holds job'; then
+      elif grep -q 'the request now holds job' <<<"$SOUT"; then
         log "$REPO#$PR @${HEAD:0:12} lead review $ID: promoted stamp for job ${SJOB} refused, a newer result on the request; next tick lands it ($(printf '%s' "$SOUT" | tr '\n' ' ' | head -c 200))"
       else
         log "$REPO#$PR @${HEAD:0:12} lead review $ID: promoted stamp failed ($(printf '%s' "$SOUT" | tr '\n' ' ' | head -c 200)); the row stands, next tick stamps only"

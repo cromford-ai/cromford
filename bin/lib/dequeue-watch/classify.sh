@@ -55,7 +55,7 @@ dqw_parse_log() {
   #   runs at least 16 characters.
   [ -n "$rows" ] || return 1
   n=$(printf '%s\n' "$rows" | wc -l)
-  printf '%s\n' "$rows" | head -n "$cap"
+  head -n "$cap" <<<"$rows"
   [ "$n" -gt "$cap" ] && printf -- '-\t(truncated)\n'
   return 0
 }

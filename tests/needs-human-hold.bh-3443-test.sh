@@ -75,7 +75,7 @@ PLACE bp 7 "$FP" "$ACT" review; RC=$?
 [ "$RC" = 0 ] && ok || bad "P1: rc $RC, want 0 ($(cat "$T/err"))"
 [ "$(posts)" = 1 ] && ok || bad "P1: want exactly 1 POST, got $(posts)"
 BODY=$(sed '/^---$/,$d' "$T/posts.txt" 2>/dev/null)
-[ "$(printf '%s\n' "$BODY" | head -1)" = "NEEDS-HUMAN: $ACT" ] && ok || bad "P1: body line 1 is not the marker: '$(printf '%s\n' "$BODY" | head -1)'"
+[ "$(head -1 <<<"$BODY")" = "NEEDS-HUMAN: $ACT" ] && ok || bad "P1: body line 1 is not the marker: '$(head -1 <<<"$BODY")'"
 grep -qF "<!-- nh-fp:$FP -->" <<<"$BODY" && ok || bad "P1: the body must carry the hidden nh-fp tag"
 grep -q 'HUMAN-STEP-DONE:' <<<"$BODY" && ok || bad "P1: the body must say how to release it"
 grep -q '^HUMAN-STEP-DONE:' <<<"$BODY" && bad "P1: HUMAN-STEP-DONE: must never open a line of our own comment" || ok

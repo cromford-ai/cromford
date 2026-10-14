@@ -10,7 +10,7 @@
 #   flag_clear [--scope S] [--local-only] <name> [reason]                                rc 0 cleared, 1 not
 #   flag_list  [--scope S] [--cached] <prefix>      active names, one a line; rc 0, or 2 unknown
 #
-# paused-*, automerge-disabled[-*] and lanedown-* are harness_flags rows read
+# paused-*, automerge-disabled[-*], lanedown-* and dispatch-mode-* are harness_flags rows read
 # DB-first with a last-good cache; every other name keeps the flags/ file.
 # shellcheck source=bin/jobs-client.sh
 command -v flag_has >/dev/null 2>&1 || . "$(dirname "${BASH_SOURCE[0]}")/../jobs-client.sh"

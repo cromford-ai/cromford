@@ -4,9 +4,10 @@
 #
 # WHY. bin/run-tests-in-docker.sh built its image with trixie's apt `nodejs`, a
 # node 20.19 with no `node:sqlite`. CI pins node-version '22'
-# (.github/workflows/harness-ci.yml). So on a Mac
-# the worker/jobs node tests ended "suite did not run" while CI passed them: a
-# local run that could not reproduce CI for a whole family of suites.
+# (.github/workflows/harness-ci.yml). So on a Mac the worker/jobs node tests
+# (and the tests/cloud-* suites, since removed by BH-6303) ended "suite did
+# not run" while CI passed them: a local run that could not reproduce CI for
+# a whole family of suites.
 # fly/testhost/ fixed the same bug with fly/testhost/node-install.sh (BH-1617);
 # the local image now installs node through that same script.
 #
@@ -44,19 +45,19 @@ APT=$(printf '%s\n' "$DF" | sed -n '/apt-get install/,/rm -rf/p')
 [ -n "$APT" ] && ok || bad "1 no apt-get install block in the inline Dockerfile"
 grep -qwE 'nodejs|npm' <<<"$APT" \
   && bad "1 the image still installs apt nodejs/npm (Debian's node 20, no node:sqlite): $APT" || ok
-printf '%s\n' "$APT" | grep -qw 'xz-utils' && ok || bad "1 the apt block lacks xz-utils, which node-install.sh needs for tar -J"
-printf '%s\n' "$APT" | grep -qw 'python3-yaml' && ok || bad "1 the apt block lacks python3-yaml, which the workflow and .mergify.yml suites import"
+grep -qw 'xz-utils' <<<"$APT" && ok || bad "1 the apt block lacks xz-utils, which node-install.sh needs for tar -J"
+grep -qw 'python3-yaml' <<<"$APT" && ok || bad "1 the apt block lacks python3-yaml, which the workflow and .mergify.yml suites import"
 
-printf '%s\n' "$DF" | grep -qx 'ARG NODE_VERSION' && ok || bad "2 no bare 'ARG NODE_VERSION' in the inline Dockerfile"
+grep -qx 'ARG NODE_VERSION' <<<"$DF" && ok || bad "2 no bare 'ARG NODE_VERSION' in the inline Dockerfile"
 grep -q '^ARG NODE_VERSION=' <<<"$DF" && bad "2 ARG NODE_VERSION carries a default" || ok
 # TEST-CHANGE (merge batch #5631): this used to require `COPY node-install.sh`,
 # which needs a build context; tests/run-tests-in-docker.bh-1193-test.sh C
 # requires the context to be `-`. The script now arrives as a build arg.
 grep -qE '^(COPY|ADD) ' <<<"$DF" && bad "2 the inline Dockerfile has a COPY/ADD, which needs a build context (BH-1193 wants none)" || ok
-printf '%s\n' "$DF" | grep -qx 'ARG NODE_INSTALL_B64' && ok || bad "2 no 'ARG NODE_INSTALL_B64' in the inline Dockerfile"
-printf '%s\n' "$DF" | grep -q 'NODE_INSTALL_B64" | base64 -d > /usr/local/bin/testhost-node-install.sh' && ok \
+grep -qx 'ARG NODE_INSTALL_B64' <<<"$DF" && ok || bad "2 no 'ARG NODE_INSTALL_B64' in the inline Dockerfile"
+grep -q 'NODE_INSTALL_B64" | base64 -d > /usr/local/bin/testhost-node-install.sh' <<<"$DF" && ok \
   || bad "2 the inline Dockerfile does not write node-install.sh from NODE_INSTALL_B64"
-printf '%s\n' "$DF" | grep -q 'node-install.sh "\$NODE_VERSION"' && ok \
+grep -q 'node-install.sh "\$NODE_VERSION"' <<<"$DF" && ok \
   || bad "2 the inline Dockerfile does not run node-install.sh \"\$NODE_VERSION\""
 LIT=$(printf '%s\n' "$DF" | grep -nE '[0-9]+\.[0-9]+\.[0-9]+')
 [ -z "$LIT" ] && ok || bad "2 version literal in the inline Dockerfile: $LIT"

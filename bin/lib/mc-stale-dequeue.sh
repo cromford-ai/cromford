@@ -148,6 +148,14 @@ sdq_arm() {
         mc_log "STALE_DEQUEUE_WOULD_REQUEUE $KEY $HEAD (merge mode off) — Mergify dequeued it at $(date -u -d "@$pt" +%H:%MZ) and a verdict newer than that binds this head"
       elif [ "${MGABLE:-}" != MERGEABLE ] || [ "${MSTATE:-}" = DIRTY ] || [ "${CI:-}" = red ]; then
         mc_log "STALE_DEQUEUE_WAIT $KEY $HEAD — dequeued and freshly approved, but mergeable=${MGABLE:-?} state=${MSTATE:-?} ci=${CI:-?}; the rebase and red ladders own it"
+      # BH-6161: the pre-queue gate first, on a run dispatched after the dequeue.
+      elif command -v ec_requeue_gate >/dev/null 2>&1 \
+           && ! ec_requeue_gate "$SLUG" "$NUM" "$URL" "$HEAD" "${PBASE:-}" "$pt"; then
+        case "$EC_PQ_WORD" in
+          red)    STATE=BLOCKED_HUMAN; WHY="$EC_PQ_WHY" ;;
+          rebase) STATE=NEEDS_REBASE;  WHY="prequeue after ejection: $EC_PQ_WHY" ;;
+          *)      STATE=WAIT_CI;       WHY="dequeued by Mergify; $EC_PQ_WHY" ;;
+        esac
       elif ! mc_tick_budget_take "$P" requeue "${MC_REQUEUE_CAP:-5}"; then
         mc_log "$KEY REQUEUE_DEFERRED $KEY $HEAD — this project has spent its ${MC_REQUEUE_CAP:-5} re-queues for this tick; re-offered on the next one"
         STATE=WAIT_CI; WHY="dequeued by Mergify; requeue deferred to the next tick"
@@ -169,6 +177,7 @@ sdq_arm() {
     resolver)
       mc_attempt_has "reejected $KEY $HEAD" 2>/dev/null || mc_attempt_put "reejected $KEY $HEAD"
       STATE=BLOCKED_HUMAN; WHY="queue-ejected-twice"
+      command -v ec_summary >/dev/null 2>&1 && vline=$(ec_summary "$SLUG" "$NUM") && [ -n "$vline" ] && WHY="queue-ejected-twice: $vline"
       mc_log "STALE_DEQUEUE_RESOLVER $KEY $HEAD — Mergify dequeued this head again after its one requeue; the blocked-resolver owns it" ;;
     wait)
       STATE=WAIT_CI; WHY="requeued on ${HEAD:0:8}, waiting for Mergify to acknowledge — never re-queued twice" ;;

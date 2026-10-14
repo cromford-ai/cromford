@@ -43,19 +43,19 @@ printf 'x="${DEMO_N:-3}"\n' > "$R/tests/t.sh"
 
 OUT=$(LANE_REGISTRY="$T/reg.json" bash "$LINT" "$R" 2>&1); RC=$?
 [ "$RC" = 0 ] && ok || bad "5a WARN mode must exit 0 with findings, got $RC: $OUT"
-printf '%s\n' "$OUT" | grep -qx 'bin/demo.sh:2:DEMO_N:5' && ok || bad "1 the registered literal was not listed: $OUT"
+grep -qx 'bin/demo.sh:2:DEMO_N:5' <<<"$OUT" && ok || bad "1 the registered literal was not listed: $OUT"
 grep -q 'OTHER_THING' <<<"$(printf '%s\n' "$OUT")" && bad "2a an unregistered name was listed: $OUT" || ok
 grep -qE 'bin/demo.sh:(4|5|6):' <<<"$(printf '%s\n' "$OUT")" && bad "2b an empty/computed/commented default was listed: $OUT" || ok
-printf '%s\n' "$OUT" | grep -qx 'bin/demo.sh:7:DEMO_N:7' && ok || bad "3a the nested inner literal was not listed: $OUT"
+grep -qx 'bin/demo.sh:7:DEMO_N:7' <<<"$OUT" && ok || bad "3a the nested inner literal was not listed: $OUT"
 grep -q 'bin/demo.sh:7:DEMO_S' <<<"$(printf '%s\n' "$OUT")" && bad "3b a computed outer default was listed: $OUT" || ok
-printf '%s\n' "$OUT" | grep -qx 'bin/lib/demo.sh:1:DEMO_LIB_S:900' && ok || bad "4 a lib-scope knob was not listed: $OUT"
+grep -qx 'bin/lib/demo.sh:1:DEMO_LIB_S:900' <<<"$OUT" && ok || bad "4 a lib-scope knob was not listed: $OUT"
 grep -q '^tests/' <<<"$(printf '%s\n' "$OUT")" && bad "fixtures under tests/ must be exempt: $OUT" || ok
-printf '%s\n' "$OUT" | grep -q 'config-literal-lint: 3 redundant literal' && ok || bad "5b the count line must say 3: $OUT"
+grep -q 'config-literal-lint: 3 redundant literal' <<<"$OUT" && ok || bad "5b the count line must say 3: $OUT"
 LANE_REGISTRY="$T/reg.json" bash "$LINT" --strict "$R" >/dev/null 2>&1
 [ $? = 1 ] && ok || bad "5c --strict must exit 1 while findings remain"
 # 7 — drift: DEMO_N's registry default is 5; the nested read says 7.
 DR=$(LANE_REGISTRY="$T/reg.json" bash "$LINT" --drift "$R" 2>/dev/null)
-printf '%s\n' "$DR" | grep -qxF "$(printf 'READ_DIFFERS\tlane:demo\tDEMO_N\tbin/demo.sh\tread=7 registry=5')" && ok \
+grep -qxF "$(printf 'READ_DIFFERS\tlane:demo\tDEMO_N\tbin/demo.sh\tread=7 registry=5')" <<<"$DR" && ok \
   || bad "7a --drift must list DEMO_N read=7 vs registry=5: $DR"
 grep -q "DEMO_N.*read=5 " <<<"$(printf '%s\n' "$DR")" && bad "7b a read equal to the registry is not drift: $DR" || ok
 # Clean the tree: every read in the contract form.
@@ -67,7 +67,7 @@ LANE_REGISTRY="$T/reg.json" bash "$LINT" --strict "$R" >/dev/null 2>&1
 # 6 — the real repo.
 OUT=$(bash "$LINT" 2>&1); RC=$?
 [ "$RC" = 0 ] && ok || bad "6a the lint must run clean (WARN) on this repo, rc=$RC: $(printf '%s' "$OUT" | tail -2)"
-printf '%s\n' "$OUT" | grep -qE '^config-literal-lint: [0-9]+ redundant literal' && ok || bad "6b no count line on this repo: $(printf '%s' "$OUT" | tail -2)"
+grep -qE '^config-literal-lint: [0-9]+ redundant literal' <<<"$OUT" && ok || bad "6b no count line on this repo: $(printf '%s' "$OUT" | tail -2)"
 grep -q ':WAKE_BACKSTOP_S:' <<<"$(printf '%s\n' "$OUT")" && bad "6c the worked example's literal is back: $(printf '%s\n' "$OUT" | grep WAKE_BACKSTOP_S)" || ok
 
 echo "config-literal-lint-test: $PASS passed, $FAIL failed"

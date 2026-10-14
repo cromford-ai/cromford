@@ -9,6 +9,7 @@
 # 2 on a 404, 9 on a 409, and a payload over the argv cap riding a file.
 set -uo pipefail
 . "$(dirname "$0")/lib/scratch.sh" || exit 1
+. "$(dirname "$0")/lib/jobs-schema.sh" && jobs_schema_render || exit 1
 DIR=$(cd "$(dirname "$0")/.." && pwd)
 LIB="$DIR/bin/lib/jobs/box-console-commands.sh"
 SCHEMA="$DIR/worker/jobs/schema.sql"

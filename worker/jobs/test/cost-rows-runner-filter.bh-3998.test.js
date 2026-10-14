@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import worker from '../src/index.js';
+import { jobsSchemaSql } from './lib/jobs-schema.js';
 
 // BH-3998 (BH-3983.0): GET /api/metrics/cost-rows accepts ?runner=, so a
 // reader that only wants one runner's rows (the OpenRouter gap tracer,
@@ -10,7 +11,7 @@ import worker from '../src/index.js';
 // leaves the query as it was.
 
 const SECRET = 'test-secret';
-const SCHEMA = readFileSync(fileURLToPath(new URL('../schema.sql', import.meta.url)), 'utf8');
+const SCHEMA = jobsSchemaSql();
 let DatabaseSync = null;
 try { ({ DatabaseSync } = await import('node:sqlite')); } catch { DatabaseSync = null; }
 

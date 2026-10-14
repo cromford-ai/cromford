@@ -1,0 +1,41 @@
+{
+  "id": "qa-wiring-sweep",
+  "name": "QA wiring sweep",
+  "scope": "hub",
+  "script": "bin/qa-wiring-sweep.sh",
+  "cadence": "55 5 * * *",
+  "boxes": [
+    "hub"
+  ],
+  "switch": {
+    "kind": "flag",
+    "name": "lane-off-qa-wiring-sweep",
+    "aliases": []
+  },
+  "wired": true,
+  "knobs": [
+    {
+      "env": "QA_WIRING_DAY",
+      "type": "string",
+      "default": "",
+      "zero_means": null,
+      "note": "no static default — the script computes it (date -u +%Y%m%d). Read by bin/qa-wiring-sweep.sh as ${QA_WIRING_DAY:-$(date -u +%Y%m%d)}: the UTC day stamp of the once-a-day alert latch flags/alerted-qa-wiring-<project>-<day>. A test seam (BH-6254); NOT settable from the control plane.",
+      "settable": false
+    },
+    {
+      "env": "QA_WIRING_CURL",
+      "type": "string",
+      "default": "curl",
+      "zero_means": null,
+      "read_in": "bin/qa-wiring-check.sh",
+      "note": "Read by bin/qa-wiring-check.sh as ${QA_WIRING_CURL:-curl}: the curl the prod sign-in page and Clerk FAPI probes run. A test seam (BH-6254); NOT settable from the control plane.",
+      "settable": false
+    }
+  ],
+  "stats": {
+    "cost_stage": null,
+    "cost_project_filter": null,
+    "lanes_row": false,
+    "log": "logs/qa-wiring.log"
+  }
+}

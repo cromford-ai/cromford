@@ -1,0 +1,9 @@
+{
+  "env": "CI_BATCH_MODES_EVERY",
+  "type": "int",
+  "default": 3600,
+  "min": 0,
+  "unit": "seconds",
+  "zero_means": null,
+  "note": "BH-6407: seconds between the 'ci batch modes' lines bin/pipeline-health.sh writes to logs/pipeline-health.log (own stamp state/ci-batch-modes.stamp, one GET /api/ci-batches per line). 0 = every pipeline-health tick. Not a whole number falls back to 3600. A measurement only: it never pages."
+}

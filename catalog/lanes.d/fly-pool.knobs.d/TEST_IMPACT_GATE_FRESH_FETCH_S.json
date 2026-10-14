@@ -1,0 +1,11 @@
+{
+  "env": "TEST_IMPACT_GATE_FRESH_FETCH_S",
+  "type": "int",
+  "default": 60,
+  "min": 5,
+  "max": 120,
+  "unit": "seconds",
+  "zero_means": null,
+  "note": "BH-6459: the most seconds the impact gate's fetch of origin's main may take before the fresh-main pass is off for that run. The fetch, the merge and the snapshot are taken from TEST_IMPACT_GATE_BUDGET_S.",
+  "read_in": "bin/test-impact-gate.sh"
+}

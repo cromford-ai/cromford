@@ -18,7 +18,7 @@
 #   bin/test-impact.sh always-why          the same, `<suite>\t<why>`: the line
 #                                          that put it there, or the catalog
 #   bin/test-impact.sh inputs              every input of every suite, for the
-#                                          suite fingerprint (BH-5366)
+#                                          suite fingerprint (BH-5366; v2 BH-6406)
 #
 # Flags: --root <dir> (default: this checkout), --out <file> (default: stdout),
 #        --map <file> (use this map instead of building one — tests only),
@@ -39,6 +39,19 @@
 #                        the whole-tree rows bin/, bin/lib/, catalog/) is
 #                        `full: unmapped path (<p>)`. A *.md there never goes
 #                        full, and selects only through its specific rows.
+#                        tests/lib/ is not infra here either (BH-6371): a
+#                        changed helper selects through its helper closure
+#                        (ti_testlib_closure), and a closure with no map row
+#                        that names one of its files is
+#                        `full: unmapped path (<p>)`. The global helpers
+#                        (tests/lib/scratch.sh) escalate in the batch's rules
+#                        file before this runs.
+#   env TI_WORKFLOW_BASE=<sha> (BH-6688; batch select only): a changed
+#                        .github/workflows/harness-ci.yml whose diff from <sha>
+#                        to HEAD bin/test-impact-workflow.sh calls non-test
+#                        jobs only (rc 1) selects through its map rows instead
+#                        of `full: infra change`. Unset, or any other answer,
+#                        is the infra answer.
 #
 # ── THE MAP IS GENERATED AND NEVER COMMITTED (BH-1175's rule, applied) ───────
 # BH-1175 took docs/verification-map/README.md out of git because a file derived
@@ -64,6 +77,12 @@
 #   bin/lib/x.sh    a file: this suite runs when that file changes
 #   bin/lib/mc/     a directory: this suite runs when anything under it changes
 #   *               the whole tree: this suite runs on EVERY diff
+#
+# Rows also come from catalog/test-impact-learned.d/*.tsv, the LEARNED edges:
+# bin/impact-learn.sh writes one when a merge-queue batch failed a suite that
+# the map did not select for the culprit's paths (ti_learned_rows). `select
+# --why` prints a learned path pick that the suite text does not name as
+# `learned` (BH-6459); a learned `*` row stays `always`.
 #
 # A suite's paths are the literal repo paths its TEXT names, closed over what
 # those scripts `source`. That is a static over-approximation on purpose: it can
@@ -117,7 +136,7 @@ while [ $# -gt 0 ]; do
     --changed) [ $# -ge 2 ] || { echo "test-impact: --changed needs a path" >&2; exit 2; }
             CHANGED_FILE="$2"; shift ;;
     --changed=*) CHANGED_FILE="${1#--changed=}" ;;
-    -h|--help) sed -n '2,40p' "$0"; exit 0 ;;
+    -h|--help) sed -n '2,48p' "$0"; exit 0 ;;
     -*)     echo "test-impact: unknown flag $1" >&2; exit 2 ;;
     *)      if [ -z "$CMD" ]; then CMD="$1"; else ARGS+=("$1"); fi ;;
   esac
@@ -284,21 +303,25 @@ TI_TMP=$(mktemp -d "${TMPDIR:-/tmp}/test-impact.XXXXXX") || {
 # THE UNIVERSE IS WHAT GIT TRACKS: a diff is made of tracked paths, so the
 # universe has to be tracked paths. Since BH-5518 C2 no tracked file sits under
 # an ignore rule, and tests/generated-not-tracked.bh-5518-test.sh G1 holds that.
-# THE TWO GENERATED-PATH ALIASES (BH-6005, BH-4987): worker/<w>/schema.sql is
-# composed from worker/<w>/schema.d/, and catalog/llm-sites.json from
-# catalog/llm-sites.d/; suites name the composed file. When a tracked source
-# directory has no tracked composed file, the universe still carries the path,
-# so a suite that names "$DIR/worker/<w>/schema.sql" or
-# "$DIR/catalog/llm-sites.json" keeps its row.
+# THE THREE GENERATED-PATH ALIASES (BH-6005, BH-4987, BH-6487):
+# worker/<w>/schema.sql is composed from worker/<w>/schema.d/,
+# catalog/llm-sites.json from catalog/llm-sites.d/ and
+# catalog/context-budgets.json from catalog/context-budgets.d/; suites name the
+# composed file. When a tracked source directory has no tracked composed file,
+# the universe still carries the path, so a suite that names
+# "$DIR/worker/<w>/schema.sql", "$DIR/catalog/llm-sites.json" or
+# "$DIR/catalog/context-budgets.json" keeps its row.
 ti_files() {
   if git -C "$ROOT" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
     git -C "$ROOT" ls-files | awk '
       { print; seen[$0] = 1 }
       /^worker\/[^\/]+\/schema\.d\// { split($0, p, "/"); w[p[2]] = 1 }
       /^catalog\/llm-sites\.d\// { sites = 1 }
+      /^catalog\/context-budgets\.d\// { budgets = 1 }
       END {
         for (k in w) if (!(("worker/" k "/schema.sql") in seen)) print "worker/" k "/schema.sql"
         if (sites && !("catalog/llm-sites.json" in seen)) print "catalog/llm-sites.json"
+        if (budgets && !("catalog/context-budgets.json" in seen)) print "catalog/context-budgets.json"
       }'
   else
     ( cd "$ROOT" && find . \
@@ -311,7 +334,8 @@ ti_files() {
 # ── the suites ──────────────────────────────────────────────────────────────
 # tests/*.sh and tests/mc/*.sh, exactly the corpus bin/test-suite-run.sh sweeps.
 # tests/lib/ is deliberately not here: those are libraries the suites source,
-# not suites, which is why a change to one of them forces the whole corpus.
+# not suites. A change to one of them forces the whole corpus, except in a
+# batch select, where it selects through ti_testlib_closure (BH-6371).
 ti_suites() {
   ( cd "$ROOT" && ls tests/*.sh tests/mc/*.sh 2>/dev/null ) | LC_ALL=C sort
 }
@@ -549,6 +573,136 @@ ti_always() {
   ti_always_why | cut -f1
 }
 
+# ti_learned_rows — `<suite>\t<path>` for each data line of each
+# catalog/test-impact-learned.d/*.tsv. bin/impact-learn.sh writes one fragment
+# per edge, `<path>\t<suite>\t<source batch>\t<date>`, when a merge-queue batch
+# failed suite <suite> for a culprit that changed <path> and the map did not
+# select it. <path> is a file, a directory row that ends in `/`, or `*` (a
+# whole-repo suite: an always row). A row whose suite or path is not in the tree
+# is dropped, the same rule as catalog/test-impact-always.txt: a rename must not
+# leave a phantom row. No directory or no fragment is 0 rows. A fragment awk
+# cannot read is rc 2, never a short map.
+ti_learned_rows() {
+  local dir="$ROOT/catalog/test-impact-learned.d" f s p frags=()
+  [ -d "$dir" ] || return 0
+  for f in "$dir"/*.tsv; do
+    if [ -e "$f" ] || [ -L "$f" ]; then frags+=("$f"); fi
+  done
+  [ "${#frags[@]}" -gt 0 ] || return 0
+  LC_ALL=C awk -F'\t' '/^[ \t]*(#|$)/ { next } NF >= 2 && $1 != "" && $2 != "" { print $2 "\t" $1 }' \
+      "${frags[@]}" > "$TI_TMP/learned" || {
+    echo "test-impact: a learned edge fragment could not be read — refusing to hand back a short map" >&2
+    return 2
+  }
+  while IFS=$'\t' read -r s p; do
+    [[ "$s" =~ ^tests/(mc/)?[A-Za-z0-9._-]+\.sh$ ]] && [ -f "$ROOT/$s" ] || continue
+    case "$p" in
+      '*') ;;
+      */) [ -d "$ROOT/$p" ] || continue ;;
+      *)  [ -f "$ROOT/$p" ] || continue ;;
+    esac
+    printf '%s\t%s\n' "$s" "$p"
+  done < "$TI_TMP/learned"
+}
+
+# ti_treedir_rows — `<suite>\t<dir>/` for a suite that scans a whole source
+# directory with a BARE name (BH-6688 fix round). The path extractor drops a
+# bare directory token on purpose: `the bin/ lane` in prose is not a
+# dependency, and only a rooted token may name a directory. A whole-directory
+# SCAN is the exception, and the one that left #6355 out of draft #6367's
+# candidates: tests/ticket-branch-ratchet.bh-3835-test.sh runs
+# `( cd "$1" && grep -rnI … bin/ )`, so it had no bin/ row and no `*` row, and
+# a change to bin/lib/stall-alerts.sh never reached it.
+#
+# The two signals, on code lines only (a `#`-led line is skipped and quoted
+# text is masked the way TI_ALWAYS_AWK masks it, so a pattern 'bin/' is not a
+# directory):
+#   grep -r / -R / --recursive, or rg   every word on that line that is a bare
+#                                        or rooted top-level source directory
+#                                        (bin, bin/, fly, "$DIR/worker", …)
+#   os.walk + os.path.join(x, "<dir>")  a python walk of that directory
+# A word behind any other variable (`"$T/bin"`) is a scratch path and adds
+# nothing. A directory row is a root row for bin/ (ti_root_rows), so it never
+# makes a path "specific", and the orphan list counts exact rows only.
+# Over-matching runs one extra suite on a change under that directory, the
+# documented safe direction. A word that names a FILE is an exact row; a path
+# the tree does not hold adds no row.
+TI_TREEDIR_AWK='
+function mask(s,   o, i, c, j, q) {
+  o = ""
+  for (i = 1; i <= length(s); i++) {
+    c = substr(s, i, 1)
+    if (c == "\\") { o = o substr(s, i, 2); i++; continue }
+    if (c == "\047" || c == "\"") {
+      j = i + 1; q = ""
+      while (j <= length(s) && substr(s, j, 1) != c) { q = q substr(s, j, 1); j++ }
+      o = o c ((c == "\"" && index(q, "$") > 0) ? q : "") c
+      i = j; continue
+    }
+    o = o c
+  }
+  return o
+}
+BEGIN {
+  DIRRE = "^(" DIRS_ ")(/[A-Za-z0-9._-]+)*/?$"
+  ROOTRE = "^\\$\\{?(" ROOTVAR_ ")\\}?/"
+}
+/^[[:space:]]*#/ { next }
+{
+  s = mask($0)
+  if (s ~ /(^|[^A-Za-z0-9_-])grep[[:space:]]+([^|;&]*[[:space:]])?(-[A-Za-z]*[rR][A-Za-z]*|--recursive)([[:space:]]|$)/ || s ~ /(^|[^A-Za-z0-9_-])rg[[:space:]]/) {
+    n = split(s, w, /[[:space:];|&()`<>]+/)
+    for (i = 1; i <= n; i++) {
+      t = w[i]; gsub(/"/, "", t)
+      if (t ~ ROOTRE) sub(ROOTRE, "", t)
+      else if (t ~ /\$/) continue
+      if (t ~ DIRRE) { sub(/\/$/, "", t); print FILENAME "\t" t "/" }
+    }
+  }
+}
+'
+# The python walk: a file that calls os.walk, and a line that joins a root with
+# a quoted source directory name.
+TI_TREEDIR_PY_AWK='
+/^[[:space:]]*#/ { next }
+{
+  s = $0
+  while (match(s, /os\.path\.join\([A-Za-z_][A-Za-z0-9_]*,[[:space:]]*"[A-Za-z0-9._-]+"\)/)) {
+    m = substr(s, RSTART, RLENGTH); s = substr(s, RSTART + RLENGTH)
+    sub(/^[^"]*"/, "", m); sub(/".*$/, "", m)
+    if (m ~ "^(" DIRS_ ")$") print FILENAME "\t" m "/"
+  }
+}
+'
+ti_treedir_rows() {
+  local dirs='bin|worker|console-ui|mcp|agent-core|locks-worker|cron|catalog|env-templates|guardrails|checks|prompts|fly|config|rules|skills|orchestrator|tasks|docs'
+  local _s _files=() _walk=() s p
+  while IFS= read -r _s; do [ -n "$_s" ] && _files+=("$_s"); done < <(ti_suites)
+  [ "${#_files[@]}" -gt 0 ] || return 0
+  for _s in "${_files[@]}"; do grep -q 'os\.walk' "$ROOT/$_s" 2>/dev/null && _walk+=("$_s"); done
+  {
+    ( cd "$ROOT" && LC_ALL=C awk -v ROOTVAR_="$TI_ROOTVAR" -v DIRS_="$dirs" "$TI_TREEDIR_AWK" "${_files[@]}" ) || return 2
+    if [ "${#_walk[@]}" -gt 0 ]; then
+      ( cd "$ROOT" && LC_ALL=C awk -v DIRS_="$dirs" "$TI_TREEDIR_PY_AWK" "${_walk[@]}" ) || return 2
+    fi
+  } > "$TI_TMP/treedir" || {
+    echo "test-impact: the whole-directory scan failed — refusing to hand back a short map" >&2
+    return 2
+  }
+  # A directory is a `<dir>/` row. A FILE the scan named (`grep -r x
+  # bin/jobs-client.sh`) is an exact row, the row the path extractor gives a
+  # named file. Anything else names nothing in this tree and adds no row. The
+  # loop's last test must never be the function's status: a missing path on
+  # the last sorted row would turn a good scan into rc 1 and the map into rc 2.
+  LC_ALL=C sort -u "$TI_TMP/treedir" | while IFS=$'\t' read -r s p; do
+    p="${p%/}"
+    if [ -d "$ROOT/$p" ]; then printf '%s\t%s/\n' "$s" "$p"
+    elif [ -f "$ROOT/$p" ]; then printf '%s\t%s\n' "$s" "$p"
+    fi
+  done
+  return 0
+}
+
 # ── the map ─────────────────────────────────────────────────────────────────
 ti_build_map() {
   local idx="$TI_TMP/index" edges="$TI_TMP/edges" closed="$TI_TMP/closed"
@@ -572,6 +726,12 @@ ti_build_map() {
     ti_suites | awk '{print $0 "\t" $0}'
     ti_always | awk '{print $0 "\t*"}'
   } > "$TI_TMP/raw" || return 2
+  # The edges a merge-queue failure taught the map (ti_learned_rows). The copy
+  # in learned.rows is what ti_why_rows reads to print the `learned` kind.
+  ti_learned_rows > "$TI_TMP/learned.rows" || return 2
+  cat "$TI_TMP/learned.rows" >> "$TI_TMP/raw" || return 2
+  # A suite that scans a whole source directory by its bare name (ti_treedir_rows).
+  ti_treedir_rows >> "$TI_TMP/raw" || return 2
 
   # Literal paths and rooted globs, out of NORMALISED lines. One pass over the
   # corpus, one form of the checkout root to recognise — see TI_AWK_NORM.
@@ -696,7 +856,8 @@ ti_inert() {
   esac
 }
 # Infra: a change here can move which suites exist or how they run, so the map
-# is not an authority on it. tests/lib/ is a library every suite may source;
+# is not an authority on it. tests/lib/ is a library every suite may source
+# (in the full list only, BH-6371: a batch select follows the helper closure);
 # suite-runner.sh and this script ARE the selection; a workflow change is the
 # thing being proved; catalog/ holds the conf the gates read. The three RUNNERS
 # are here on the BH-1203 review's N1: the map would select their own suites and
@@ -710,9 +871,14 @@ ti_inert() {
 # ^catalog/: bin/ci-plan.sh has already escalated on the catalogs the selection
 # reads (catalog/ci-batch-escalate.tsv), and every other catalog/ path selects
 # through the map or is unmapped. Every literal path here has an escalate row in
-# that file (tests/ci-batch-escalate-narrow.bh-6059-test.sh G1).
-ti_infra_core_re='^tests/lib/|^bin/suite-reuse\.sh$|^bin/lib/suite-fingerprint\.sh$|^bin/lib/suite-runner\.sh$|^bin/lib/docker-host\.sh$|^bin/test-impact\.sh$|^bin/test-suite-run\.sh$|^bin/test-trace-safety\.sh$|^bin/run-tests-in-docker\.sh$|^\.github/workflows/'
-ti_infra_re="$ti_infra_core_re|^catalog/"
+# that file (tests/ci-batch-escalate-narrow.bh-6059-test.sh G1). ^tests/lib/ is
+# out of the core list too (BH-6371): the global helpers have escalate rows in
+# that file, and every other helper selects through ti_testlib_closure. The full
+# list, which the PR select and the builder gate read, is unchanged. ti_inputs
+# reads the core list and decides tests/lib/ and catalog/ path by path
+# (ti_inputs_infra, BH-6406).
+ti_infra_core_re='^bin/suite-reuse\.sh$|^bin/lib/suite-fingerprint\.sh$|^bin/lib/suite-runner\.sh$|^bin/lib/docker-host\.sh$|^bin/test-impact\.sh$|^bin/test-suite-run\.sh$|^bin/test-trace-safety\.sh$|^bin/run-tests-in-docker\.sh$|^\.github/workflows/'
+ti_infra_re="$ti_infra_core_re|^tests/lib/|^catalog/"
 # The whole-tree scanner rows: almost every bin/ or catalog/ path is "covered"
 # through them, so they say nothing about one path (BH-6059).
 ti_root_rows=' bin/ bin/lib/ catalog/ '
@@ -737,6 +903,85 @@ ti_specific() {
   ' "$1"
 }
 
+# ti_testlib_closure <path> — THE HELPER CLOSURE (BH-6371): <path>, plus every
+# tests/lib/ file that names the basename of a file already in the set on a
+# line that is not a comment, until no file is added. A suite that sources
+# fixture-harness.sh reaches rb-all.sh through it, and the map has a row only
+# for the helper the suite names. A basename match over-approximates on
+# purpose: an extra suite runs, and no consumer is missed.
+ti_testlib_closure() {
+  local libs=() f
+  while IFS= read -r f; do [ -f "$ROOT/$f" ] && libs+=("$f"); done \
+    < <(cd "$ROOT" && ls -d tests/lib/* 2>/dev/null)
+  if [ "${#libs[@]}" -eq 0 ]; then printf '%s\n' "$1"; return 0; fi
+  # Each operand is ./<path>, for the reason ti_named_scan gives: a bare
+  # name=value operand is an awk assignment, never a file.
+  local _args=(); for f in "${libs[@]}"; do _args+=("./$f"); done
+  ( cd "$ROOT" && LC_ALL=C awk -v start="$1" '
+      function base(p) { sub(/.*\//, "", p); return p }
+      FNR == 1 { n++; f = FILENAME; sub(/^\.\//, "", f); F[n] = f; T[n] = "" }
+      /^[ \t]*#/ { next }
+      { T[n] = T[n] "\n" $0 }
+      END {
+        inset[start] = 1; B[base(start)] = 1
+        # Bounded: each round that continues adds at least one file.
+        for (round = 0; round <= n; round++) {
+          added = 0
+          for (i = 1; i <= n; i++) {
+            if (F[i] in inset) continue
+            for (b in B) if (index(T[i], b) > 0) { inset[F[i]] = 1; NEW[F[i]] = 1; added = 1; break }
+          }
+          for (f in NEW) B[base(f)] = 1
+          for (f in NEW) delete NEW[f]
+          if (!added) break
+        }
+        for (f in inset) print f
+      }' "${_args[@]}" ) | LC_ALL=C sort -u
+}
+
+# ti_testlib_edges — THE HELPER CLOSURE, DOWNWARD (BH-6406): `<a>\t<r>` for
+# every tests/lib/ file a and every tracked tests/lib/ file r that a reaches,
+# a itself included. a reaches r when a's non-comment text names r's basename,
+# directly or through other helpers. It is the relation ti_testlib_closure
+# follows upward, with the same files, basename rule and comment rule, so r is
+# in the closure of a changed b exactly when a suite naming a reaches b here.
+ti_testlib_edges() {
+  local libs=() f tg="$TI_TMP/edges.targets"
+  ti_files > "$TI_TMP/edges.files" || return 2
+  awk '/^tests\/lib\//' "$TI_TMP/edges.files" > "$tg"
+  while IFS= read -r f; do [ -f "$ROOT/$f" ] && libs+=("$f"); done \
+    < <(cd "$ROOT" && ls -d tests/lib/* 2>/dev/null)
+  {
+    awk '{ print $0 "\t" $0 }' "$tg"
+    if [ "${#libs[@]}" -gt 0 ]; then
+      # ./<path> operands, for the reason ti_named_scan gives.
+      local _args=(); for f in "${libs[@]}"; do _args+=("./$f"); done
+      ( cd "$ROOT" && LC_ALL=C awk -v tf="$tg" '
+          function base(p) { sub(/.*\//, "", p); return p }
+          BEGIN { while ((getline t < tf) > 0) { m++; R[m] = t; RB[m] = base(t) } }
+          FNR == 1 { n++; f = FILENAME; sub(/^\.\//, "", f); F[n] = f; T[n] = "" }
+          /^[ \t]*#/ { next }
+          { T[n] = T[n] "\n" $0 }
+          END {
+            for (i = 1; i <= n; i++) {
+              print F[i] "\t" F[i]
+              for (j = 1; j <= m; j++) if (R[j] != F[i] && index(T[i], RB[j]) > 0) print F[i] "\t" R[j]
+            }
+          }' "${_args[@]}" ) || return 2
+    fi
+  } > "$TI_TMP/edges" || return 2
+  ti_closure "$TI_TMP/edges"
+}
+
+# ti_testlib_mapped <map> <closure-file> — rc 0 when a map row names one of the
+# closure's files exactly. The tests/lib/ directory row (suites that scan the
+# whole directory) matches every helper, so it is no proof of a consumer.
+ti_testlib_mapped() {
+  awk -F'\t' 'FILENAME == ARGV[1] { if ($0 != "") want[$0] = 1; next }
+    ($2 in want) { found = 1; exit }
+    END { exit(found ? 0 : 1) }' "$2" "$1"
+}
+
 # ── THE WHY COLUMN (BH-1524) ────────────────────────────────────────────────
 # `select --why` prints one `<suite>\t<kind>\t<path>` row per reason a suite was
 # picked, so a reviewer reading a gate table can see that the pinned suites ran
@@ -750,6 +995,9 @@ ti_specific() {
 #   named    the suite names a FUNCTION defined in a changed script, at the base
 #            or the head (<path>#<function>). See ti_named_rows.
 #   source   the suite names the path on a line that runs, sources or copies it
+#   learned  a learned edge (catalog/test-impact-learned.d/, BH-6459) names the
+#            path for the suite, and the suite text does not name it. The gate
+#            ranks it directly above closure.
 #   closure  the suite reaches the path only through what its scripts `source`
 #   always   the suite is in the always-run set (<path> is `*`)
 #   full     the whole corpus was selected; <path> is the reason
@@ -777,6 +1025,15 @@ ti_why_rows() {
   # through a whole-tree root row, only through a row that names it or its own
   # directory.
   [ -f "$TI_TMP/narrow" ] || : > "$TI_TMP/narrow"
+  # The learned rows ti_build_map kept. With --map <file> the map was built
+  # elsewhere and ti_build_map did not run here, so read them now. Only the
+  # label depends on them: the selection comes from the map either way.
+  if [ ! -f "$TI_TMP/learned.rows" ]; then
+    ti_learned_rows > "$TI_TMP/learned.rows" 2>/dev/null || {
+      : > "$TI_TMP/learned.rows"
+      echo "test-impact: learned rows unreadable — learned picks print as closure" >&2
+    }
+  fi
   awk -F'\t' -v cf="$changed" -v nf="$TI_TMP/narrow" -v roots="$ti_root_rows" '
     FILENAME == nf { if ($0 != "") nar[$0] = 1; next }
     FILENAME == cf { if ($0 != "") ch[++nc] = $0; next }
@@ -799,8 +1056,9 @@ ti_why_rows() {
     # exact confusion the map's extractor exists to refuse. A row path the
     # suite never spells out came in through the source closure.
     ti_rootvars "${files[@]}" > "$TI_TMP/why.rootvars"
-    ( cd "$ROOT" && LC_ALL=C awk -v pf="$pairs" -v rvfile="$TI_TMP/why.rootvars" \
+    ( cd "$ROOT" && LC_ALL=C awk -v lf="$TI_TMP/learned.rows" -v pf="$pairs" -v rvfile="$TI_TMP/why.rootvars" \
         -v ROOTVAR_="$TI_ROOTVAR" -v RR="$TI_READ_RE" -v XR="$TI_RUN_RE" "$TI_AWK_NORM"'
+        FILENAME == lf { split($0, f, "\t"); L[f[1] "\t" f[2]] = 1; next }
         FILENAME == pf { split($0, f, "\t")
                          if (f[2] == "path") { k = ++np; S[k] = f[1]; P[k] = f[3]; C[k] = f[4]; by[f[1]] = by[f[1]] " " k }
                          next }
@@ -829,8 +1087,9 @@ ti_why_rows() {
           }
           return 0
         }
-        END { for (k = 1; k <= np; k++) print S[k] "\t" (r[k] ? "reads" : (d[k] ? "source" : "closure")) "\t" C[k] }
-      ' "$pairs" "$TI_TMP/why.rootvars" "${files[@]}" )
+        END { for (k = 1; k <= np; k++)
+                print S[k] "\t" (r[k] ? "reads" : (d[k] ? "source" : (((S[k] "\t" P[k]) in L) ? "learned" : "closure"))) "\t" C[k] }
+      ' "$TI_TMP/learned.rows" "$pairs" "$TI_TMP/why.rootvars" "${files[@]}" )
   fi
   ti_named_rows "$changed"
 }
@@ -915,7 +1174,9 @@ ti_named_scan() {
 # every map row as it is (`<suite>\t<suite>`, `<suite>\t*`, `<suite>\t<path>`),
 # a `<suite>\t<path>` row for every function a suite names that a non-test
 # script defines (the `named` rule, over the whole tree rather than a diff),
-# and `@infra\t<path>` for every file ti_infra_re says the map cannot speak for.
+# a `<suite>\t<helper>` row for every tests/lib/ helper a named helper reaches
+# (ti_testlib_edges, BH-6406), and `@infra\t<path>` for every file
+# ti_inputs_infra says the map cannot speak for.
 # Over-approximate on purpose: an extra input costs a re-run, a missing one a
 # reuse that should not have happened. A map that cannot be built is rc 2.
 ti_inputs() {
@@ -937,11 +1198,70 @@ ti_inputs() {
   # a short list that lets a suite be reused across a named function's change.
   local named="$TI_TMP/inputs.named"
   ti_named_scan "$defs" > "$named" || { echo "test-impact: the named-function scan failed" >&2; return 2; }
+  # The helper rows: a suite whose map row names helper h reads every helper
+  # h reaches (ti_testlib_edges). A scan that died is rc 2, never a short list.
+  local closed="$TI_TMP/inputs.closed" helpers="$TI_TMP/inputs.helpers"
+  ti_testlib_edges > "$closed" || { echo "test-impact: the helper closure failed" >&2; return 2; }
+  awk -F'\t' 'FILENAME == ARGV[1] { to[$1] = to[$1] "\t" $2; next }
+    $2 ~ /^tests\/lib\// && ($2 in to) { n = split(to[$2], r, "\t"); for (i = 2; i <= n; i++) print $1 "\t" r[i] }
+  ' "$closed" "$map" > "$helpers" || { echo "test-impact: the helper rows failed" >&2; return 2; }
+  ti_inputs_infra "$map" "$helpers" "$files" > "$TI_TMP/inputs.infra" || return 2
   {
-    cat "$map"
+    cat "$map" "$helpers"
     awk -F'\t' '{ sub(/#[^#]*$/, "", $3); print $1 "\t" $3 }' "$named"
-    { grep -E "$ti_infra_re" "$files" || :; } | awk '{ print "@infra\t" $0 }'
+    awk '{ print "@infra\t" $0 }' "$TI_TMP/inputs.infra"
   } | LC_ALL=C sort -u
+}
+
+# ti_inputs_infra <map> <helper-rows> <files> — the v2 `@infra` paths
+# (BH-6406), the paths the map cannot speak for, so every fingerprint moves
+# with them. The union of:
+#   1. what ti_infra_core_re matches;
+#   2. a tests/lib/ path, not *.md, that no map or helper row names exactly
+#      (the tests/lib/ directory row is no proof of a consumer);
+#   3. a catalog/ path, not *.md, with no specific map row (ti_specific: an
+#      exact or directory row that is not a whole-tree root row);
+#   4. any other tests/lib/ or catalog/ path, not *.md, that the TREE's own
+#      catalog/ci-batch-escalate.tsv escalates (cbe_reason; the global
+#      helpers). CI_BATCH_ESCALATE_TSV is never read: the fingerprint is a
+#      function of the tree.
+# A rules lib that cannot be sourced is every tests/lib/ and catalog/ path
+# (the v1 set); an unreadable rules file is the same, because cbe_reason then
+# escalates every path. This is the set a batch select (TI_BATCH_SELECT=1)
+# would call `unmapped path` or that its rules escalate, so a path moves a
+# suite's fingerprint exactly when that select would run the suite.
+ti_inputs_infra() {
+  local map="$1" helpers="$2" files="$3" cand="$TI_TMP/infra.cand" p
+  { grep -E "$ti_infra_core_re" "$files" || :; } > "$TI_TMP/infra.core"
+  if ! ( . "$ROOT/bin/lib/ci-batch-escalate.sh" && command -v cbe_reason ) > /dev/null 2>&1; then
+    { cat "$TI_TMP/infra.core"; grep -E '^tests/lib/|^catalog/' "$files" || :; } | LC_ALL=C sort -u
+    return 0
+  fi
+  awk -F'\t' -v roots="$ti_root_rows" '
+    FILENAME == ARGV[1] || FILENAME == ARGV[2] {
+      if ($2 == "*") next
+      named[$2] = 1
+      if (FILENAME == ARGV[1] && index(roots, " " $2 " ") == 0 && $2 ~ /\/$/) dirs[$2] = 1
+      next
+    }
+    /\.md$/ { next }
+    /^tests\/lib\// { print (($0 in named) ? "cand" : "infra") "\t" $0; next }
+    /^catalog\// {
+      spec = (($0 in named) && index(roots, " " $0 " ") == 0)
+      if (!spec) for (d in dirs) if (index($0, d) == 1) { spec = 1; break }
+      print (spec ? "cand" : "infra") "\t" $0
+    }' "$map" "$helpers" "$files" > "$cand" || { echo "test-impact: the infra scan failed" >&2; return 2; }
+  {
+    cat "$TI_TMP/infra.core"
+    awk -F'\t' '$1 == "infra" { print $2 }' "$cand"
+    awk -F'\t' '$1 == "cand" { print $2 }' "$cand" | (
+      # shellcheck source=lib/ci-batch-escalate.sh
+      . "$ROOT/bin/lib/ci-batch-escalate.sh" || exit 2
+      export CI_BATCH_ESCALATE_TSV="$ROOT/catalog/ci-batch-escalate.tsv"
+      while IFS= read -r p; do cbe_reason "$p" > /dev/null && printf '%s\n' "$p"; done
+      exit 0 ) || { echo "test-impact: the escalation rules scan failed" >&2; exit 2; }
+  } | LC_ALL=C sort -u
+  [ "${PIPESTATUS[0]}" = 0 ] || return 2
 }
 
 # ti_emit_full <reason> — the whole corpus, as a list or as --why rows.
@@ -951,6 +1271,15 @@ ti_emit_full() {
   if [ "$WHY" = 1 ]; then printf '%s\n' "$all" | awk -v r="$1" '{ print $0 "\tfull\t" r }'
   else printf '%s\n' "$all"; fi
   printf 'impact: %d of %d suites (%s)\n' "$total" "$total" "$1" >&3
+}
+
+# ti_workflow_nontest — rc 0 when TI_WORKFLOW_BASE is set and
+# bin/test-impact-workflow.sh says the workflow diff from it to HEAD touches
+# non-test jobs only (its rc 1). Any other answer is rc 1: the infra answer.
+ti_workflow_nontest() {
+  [ -n "${TI_WORKFLOW_BASE:-}" ] && [ -f "$ROOT/bin/test-impact-workflow.sh" ] || return 1
+  bash "$ROOT/bin/test-impact-workflow.sh" "$TI_WORKFLOW_BASE" HEAD --root "$ROOT" > /dev/null 2>&1
+  [ $? = 1 ]
 }
 
 # ti_select <map> <changed-file> — print the suites, and the reason on fd 3.
@@ -967,8 +1296,16 @@ ti_select_from() {
   local infra_re="$ti_infra_re"
   [ "${TI_BATCH_SELECT:-}" = 1 ] && infra_re="$ti_infra_core_re"
   : > "$TI_TMP/narrow"
+  # The changed list ti_why_rows reads: the diff, plus each changed helper's
+  # closure in a batch (BH-6371). The reason line still counts the diff.
+  local work="$TI_TMP/changed.work"
+  cp "$changed" "$work" 2>/dev/null || : > "$work"
   while IFS= read -r p; do
     [ -n "$p" ] || continue
+    if [ "${TI_BATCH_SELECT:-}" = 1 ] && [ "$p" = .github/workflows/harness-ci.yml ] \
+       && ti_workflow_nontest && ti_specific "$map" "$p"; then
+      continue
+    fi
     if printf '%s\n' "$p" | grep -qE "$infra_re"; then
       full="full: infra change ($p)"; break
     fi
@@ -977,9 +1314,15 @@ ti_select_from() {
     # is narrowed to its specific rows in ti_why_rows.
     if [ "${TI_BATCH_SELECT:-}" = 1 ]; then
       case "$p" in
-        bin/lib/*.md|catalog/*.md) printf '%s\n' "$p" >> "$TI_TMP/narrow"; continue ;;
+        bin/lib/*.md|catalog/*.md|tests/lib/*.md) printf '%s\n' "$p" >> "$TI_TMP/narrow"; continue ;;
         bin/lib/*|catalog/*)
           ti_specific "$map" "$p" || { full="full: unmapped path ($p)"; break; } ;;
+        # BH-6371: a helper selects every suite that reaches it, directly or
+        # through another helper. No suite reaches it: unmapped.
+        tests/lib/*)
+          ti_testlib_closure "$p" > "$TI_TMP/closure"
+          ti_testlib_mapped "$map" "$TI_TMP/closure" || { full="full: unmapped path ($p)"; break; }
+          cat "$TI_TMP/closure" >> "$work" ;;
       esac
     fi
     # COVERED BEFORE INERT, on purpose. docs/ is inert as a rule, but a handful
@@ -999,7 +1342,8 @@ ti_select_from() {
     else ti_emit_full "$full"; return 0; fi
   fi
 
-  ti_why_rows "$map" "$changed" | LC_ALL=C sort -u > "$TI_TMP/why"
+  LC_ALL=C sort -u -o "$work" "$work"
+  ti_why_rows "$map" "$work" | LC_ALL=C sort -u > "$TI_TMP/why"
   local n; n=$(cut -f1 "$TI_TMP/why" | LC_ALL=C sort -u | grep -c .)
   # A selection of nothing is never a green run of nothing. The always-run set
   # is non-empty in this repo, so an empty answer means the map or the diff is
@@ -1035,11 +1379,13 @@ ti_changed() { # <range> -> the changed paths, one per line
   git -C "$ROOT" diff --name-only "$base" "$head"
 }
 
-# ti_schema_alias <changed-file> — THE TWO GENERATED-PATH ALIASES (BH-6005,
-# BH-4987), on the diff side: a changed worker/<w>/schema.d/<x>.sql also changes
-# the composed worker/<w>/schema.sql, and a changed catalog/llm-sites.d/<x>.json
-# the composed catalog/llm-sites.json, so that path is appended once. The
-# original lines stay.
+# ti_schema_alias <changed-file> — THE THREE GENERATED-PATH ALIASES (BH-6005,
+# BH-4987, BH-6487), on the diff side: a changed worker/<w>/schema.d/<x>.sql
+# also changes the composed worker/<w>/schema.sql, a changed
+# catalog/llm-sites.d/<x>.json the composed catalog/llm-sites.json, and a
+# changed catalog/context-budgets.d/<x>.json the composed
+# catalog/context-budgets.json, so that path is appended once. The original
+# lines stay.
 ti_schema_alias() {
   awk '
     { print; have[$0] = 1 }
@@ -1049,6 +1395,10 @@ ti_schema_alias() {
     }
     /^catalog\/llm-sites\.d\/[^\/]+\.json$/ {
       a = "catalog/llm-sites.json"
+      if (!(a in want)) { want[a] = 1; order[++n] = a }
+    }
+    /^catalog\/context-budgets\.d\/[^\/]+\.json$/ {
+      a = "catalog/context-budgets.json"
       if (!(a in want)) { want[a] = 1; order[++n] = a }
     }
     END { for (i = 1; i <= n; i++) if (!(order[i] in have)) print order[i] }
@@ -1403,7 +1753,7 @@ case "$CMD" in
   inputs)
     if [ -n "$OUT" ]; then ti_inputs > "$OUT"; else ti_inputs; fi ;;
   ""|help)
-    sed -n '2,40p' "$0"; exit 0 ;;
+    sed -n '2,48p' "$0"; exit 0 ;;
   *)
     echo "test-impact: unknown command '$CMD' (map, select, ci-select, orphans, audit, always, always-why, inputs)" >&2; exit 2 ;;
 esac

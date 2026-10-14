@@ -1,0 +1,12 @@
+{
+  "env": "RESCUE_HUMAN_STEP",
+  "type": "int",
+  "default": 1,
+  "min": 0,
+  "max": 1,
+  "unit": null,
+  "zero_means": "off",
+  "required": true,
+  "note": "BH-6536 shape D: a REVIEW_BLOCKED record whose only BLOCK findings are a human step is re-reviewed on its built branch once a person posts HUMAN-STEP-DONE: on the issue (TK-232). Read by bin/review-rescue.sh, and by bin/blocked-resolver.sh through nh_sd_rescue_on (bin/lib/needs-human/step-done.sh, lane_knob review-rescue RESCUE_HUMAN_STEP), so a settings row of 0 also restores the resolver's rebuild of a released needs-human park. 0 = off: today's walk, a verdict-bearing human-step block is not re-reviewed.",
+  "read_in": "bin/review-rescue.sh"
+}

@@ -232,7 +232,7 @@ resolve
 budget_case u3c '"x": 3' '"x": 4'
 resolve
 [ "$RC" = 1 ] && ok || bad "U3b same key: rc should be 1 (a duplicate key is a semantic conflict), got $RC"
-printf '%s\n' "$OUT" | grep -qx "$BUDGETS" && ok || bad "U3b same key: stdout must list the file, got: $OUT"
+grep -qx "$BUDGETS" <<<"$OUT" && ok || bad "U3b same key: stdout must list the file, got: $OUT"
 unmerged "$BUDGETS" && ok || bad "U3b same key: the file must still be unmerged"
 grep -q "$BUDGETS left as a REAL conflict by the append-union step: validator failed.*duplicate key" "$MC_LOG" \
   && ok || bad "U3b same key: the decline must name the duplicate key: $(tail -2 "$MC_LOG")"
@@ -300,7 +300,7 @@ CREATE TABLE t (id INTEGER PRIMARY KEY, w TEXT);
 "
 resolve
 [ "$RC" = 1 ] && ok || bad "U6a a branch that edits a base line must park, got rc $RC"
-printf '%s\n' "$OUT" | grep -qx "$SCHEMA" && ok || bad "U6a stdout must be the conflict list, got: $OUT"
+grep -qx "$SCHEMA" <<<"$OUT" && ok || bad "U6a stdout must be the conflict list, got: $OUT"
 unmerged "$SCHEMA" && ok || bad "U6a the file must still be unmerged"
 grep -q '^<<<<<<<' "$W/$SCHEMA" && ok || bad "U6a the worktree must still carry the markers"
 grep -q "left as a REAL conflict by the append-union step: not pure insertion: the branch changed or removed a base line" "$MC_LOG" \
@@ -347,7 +347,7 @@ grep -qx "$FRAGS/681-tick-fam.txt" <<<"$(git -C "$W" ls-tree -r --name-only HEAD
 frag_case u8 665-w.txt 665-z.txt
 resolve
 [ "$RC" = 1 ] && ok || bad "U8 a mid-table collision must park, got rc $RC"
-printf '%s\n' "$OUT" | grep -qx "$INDEX" && ok || bad "U8 stdout must be the conflict list, got: $OUT"
+grep -qx "$INDEX" <<<"$OUT" && ok || bad "U8 stdout must be the conflict list, got: $OUT"
 LS=$(git -C "$W" ls-files -- "$FRAGS" | sed 's#.*/##' | tr '\n' ' ')
 [ "$LS" = "660-x.txt 665-w.txt 665-z.txt 670-y.txt " ] && ok || bad "U8 nothing may be renamed, got: $LS"
 
@@ -514,7 +514,7 @@ CREATE TABLE t (id INTEGER PRIMARY KEY, w TEXT);
 "
 OUT=$(mc_rebase o/r demo-os "$BR" "$BR_HEAD" "$URL3"); RC=$?
 [ "$RC" = 1 ] && ok || bad "U13 a non-append conflict through mc_rebase must be rc 1, got $RC"
-printf '%s\n' "$OUT" | grep -qx "$SCHEMA" && ok || bad "U13 stdout must list the file, got: $OUT"
+grep -qx "$SCHEMA" <<<"$OUT" && ok || bad "U13 stdout must list the file, got: $OUT"
 [ "$(git -C "$ORIGIN" rev-parse "$BR")" = "$BR_HEAD" ] && ok || bad "U13 the remote branch must be unchanged"
 
 # =============================================================================

@@ -26,6 +26,9 @@
 # Run from anywhere: bash tests/merge-conductor-deadend-test.sh  (exit 0 = pass)
 set -uo pipefail
 . "$(dirname "$0")/lib/scratch.sh" || exit 1
+# TEST-CHANGE BH-6052: the day stamp below is read by the code and again here; never straddle 00:00Z.
+. "$(dirname "$0")/lib/day-boundary.sh" || exit 1
+clear_boundary 86400 145 || exit 1
 # BH-3223: scratch.sh blanks JOBS_URL; this suite's fake curl answers a worker URL.
 export JOBS_URL=https://jobs.invalid
 # TEST-CHANGE (BH-1585): the open-PR list is REST now (a page plus per-PR reads);

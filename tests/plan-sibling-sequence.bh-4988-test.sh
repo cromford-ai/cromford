@@ -283,20 +283,20 @@ case "$NB" in "Holding this one until BH-5000 (#900) merges. Both plan to edit \
 case "$NB" in *Blocked-by*) bad "N1: body says Blocked-by" ;; *) ok ;; esac
 case "$NB" in *—*) bad "N1: body has an em dash" ;; *) ok ;; esac
 [ "$(printf '%s\n' "$NB" | tail -1)" = "<!-- plan-sibling:BH-5001:BH-5000 -->" ] && ok || bad "N1: last line must be the marker: $NB"
-printf '%s' "$OUT" | grep -q 'PLAN_SIBLING BH-5001 comment=posted after=BH-5000' && ok || bad "N1: no comment=posted log: $OUT"
+grep -q 'PLAN_SIBLING BH-5001 comment=posted after=BH-5000' <<<"$OUT" && ok || bad "N1: no comment=posted log: $OUT"
 # BH-5799: the posted note is in the build's own-post ledger, so the plan
 # thread gate never refuses this build's plan on it
 [ "$(wc -l < "$B/own-comments.sha256" 2>/dev/null | tr -d ' ')" = 1 ] && ok || bad "N1: the posted note must be in $B/own-comments.sha256"
 # N2: the same pair again -> no second post
 note "$LINE"
 [ "$RC" = 0 ] && [ "$(posts)" = 1 ] && ok || bad "N2: a second note for the same pair must not post, posts=$(posts)"
-printf '%s' "$OUT" | grep -q 'comment=already' && ok || bad "N2: no comment=already log: $OUT"
+grep -q 'comment=already' <<<"$OUT" && ok || bad "N2: no comment=already log: $OUT"
 # N3: a failed post leaves no mark; the next call posts
 reset; mkb "$(body 4975 3)" bin/lib/triage-state.sh
 echo 75 > "$H/fx/rc.comment"
 note "$LINE"
 [ "$RC" = 0 ] && [ "$(posts)" = 0 ] && [ -z "$(find "$H/state/comment-marks" -type f 2>/dev/null)" ] && ok || bad "N3: a failed post must leave no mark, rc=$RC $(find "$H/state/comment-marks" -type f 2>/dev/null)"
-printf '%s' "$OUT" | grep -q 'comment=failed rc=75' && ok || bad "N3: no comment=failed log: $OUT"
+grep -q 'comment=failed rc=75' <<<"$OUT" && ok || bad "N3: no comment=failed log: $OUT"
 rm -f "$H/fx/rc.comment"
 note "$LINE"
 [ "$(posts)" = 1 ] && ok || bad "N3: the retry must post, posts=$(posts)"
@@ -312,7 +312,7 @@ note "OVERLAP_DEFER BH-5001 vs .. files=[a,a]"
 [ "$RC" = 1 ] && [ "$(posts)" = 0 ] && ok || bad "N4: .. must be refused, rc=$RC"
 # N5: comment switch and kill switch
 note "$LINE" PLAN_SIBLING_COMMENT=0
-[ "$RC" = 0 ] && [ "$(posts)" = 0 ] && printf '%s' "$OUT" | grep -q 'comment=off' && ok || bad "N5: PLAN_SIBLING_COMMENT=0 must not post, posts=$(posts) out=$OUT"
+[ "$RC" = 0 ] && [ "$(posts)" = 0 ] && grep -q 'comment=off' <<<"$OUT" && ok || bad "N5: PLAN_SIBLING_COMMENT=0 must not post, posts=$(posts) out=$OUT"
 note "$LINE" OVERLAP_SCHED=0
 [ "$RC" = 0 ] && [ "$(posts)" = 0 ] && ok || bad "N5: OVERLAP_SCHED=0 must not post"
 # N6: not a child

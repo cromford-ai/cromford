@@ -67,7 +67,12 @@ mkdir -p "$H/bin/lib/mc" && cp "$DIR"/bin/lib/mc/*.sh "$H/bin/lib/mc/"
 
 # The functions under test, lifted out of the script the way the other resolver
 # fixtures do it — the script's top level is a whole lane run.
-fn() { awk -v F="^$1\\(\\)" '$0~F{f=1} f{print} f&&/^}$/{exit}' "$DIR/bin/blocked-resolver.sh"; }
+# BH-5241: the corpus is the driver plus bin/lib/br/*.sh (tests/lib/br-corpus.sh),
+# because the record functions moved out of the driver into bin/lib/br/record.sh.
+# shellcheck source=tests/lib/br-corpus.sh
+. "$DIR/tests/lib/br-corpus.sh" || exit 1
+br_corpus "$DIR" "$T/br-corpus.sh" || exit 1
+fn() { awk -v F="^$1\\(\\)" '$0~F{f=1} f{print} f&&/^}$/{exit}' "$T/br-corpus.sh"; }
 # br_fix_cap/br_shape/br_rebuild_cap ride along because br_fix_round asks the
 # cap for the ticket BEFORE it reads anything (BH-579): without them `cap` was
 # empty, `[ "$n" -ge "" ]` printed `integer expression expected` on stderr and

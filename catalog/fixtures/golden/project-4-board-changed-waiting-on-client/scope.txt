@@ -1,1 +1,1 @@
-board rb_c4e8: CHANGED 7330 "Stop auto-categorizing Stripe payouts" (comments: 1 -> 2; verdict: null -> needs_clarification; waitingOn: team -> requester; activity)
+board rb_c4e8: CHANGED 7330 "Stop auto-tagging incoming orders" (comments: 1 -> 2; verdict: null -> needs_clarification; waitingOn: team -> requester; activity)

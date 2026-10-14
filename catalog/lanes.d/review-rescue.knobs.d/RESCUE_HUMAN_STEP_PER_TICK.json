@@ -1,0 +1,11 @@
+{
+  "env": "RESCUE_HUMAN_STEP_PER_TICK",
+  "type": "int",
+  "default": 5,
+  "min": 1,
+  "max": 50,
+  "unit": "candidates",
+  "zero_means": null,
+  "required": true,
+  "note": "BH-6536: how many shape-D records one tick checks, the one checked longest ago first. Its own cap, so a record waiting on a person never takes a RESCUE_PER_TICK slot. A record with no HUMAN-STEP-DONE costs one REST read and no model call."
+}

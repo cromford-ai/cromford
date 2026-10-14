@@ -17,6 +17,7 @@
 set -uo pipefail
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 . "$(dirname "$0")/lib/scratch.sh" || exit 1
+. "$(dirname "$0")/lib/jobs-schema.sh" && jobs_schema_render || exit 1
 UP="$ROOT/bin/worker-schema-upgrade.sh"
 RUN="$ROOT/bin/checks-run.sh"
 CHK="$ROOT/checks/worker-schema-ensure-columns/check.sh"

@@ -32,7 +32,7 @@ names() { cat > "$T/test.log"; D=$T bash -c "$BLOCK"$'\nprintf "%s" "$NAMES"'; }
 
 # ── N7 ───────────────────────────────────────────────────────────────────────
 chk "N7 the fenced block is present" '[ -n "$BLOCK" ]'
-chk "N7 the block assigns NAMES" 'printf "%s\n" "$BLOCK" | grep -qE "^[[:space:]]*NAMES=\\$\\(awk"'
+chk "N7 the block assigns NAMES" 'grep -qE "^[[:space:]]*NAMES=\\$\\(awk" <<<"$BLOCK"'
 
 # ── N1 ───────────────────────────────────────────────────────────────────────
 B9='B9 the mounted /now and /needs read the jobs ledger and count from it'
@@ -63,8 +63,8 @@ not ok 158 - $B9
 EOF
 )
 chk "N1 title and file" '[ "$OUT" = "$B9 [tests/building-now.bh-3569.test.js]" ]'
-chk "N1 no absolute path" '! printf "%s" "$OUT" | grep -qF /root/'
-chk "N1 no :L:C" '! printf "%s" "$OUT" | grep -qF :267'
+chk "N1 no absolute path" '! grep -qF /root/ <<<"$OUT"'
+chk "N1 no :L:C" '! grep -qF :267 <<<"$OUT"'
 
 # ── N2 ───────────────────────────────────────────────────────────────────────
 OUT=$(printf 'TAP version 13\n# Subtest: tests/panel.test.js\n    not ok 7 - BuildQueuePanel (mounted): a refused DROP keeps the row\nnot ok 1 - tests/panel.test.js\n# pass 40\n# fail 1\n' | names)
@@ -103,7 +103,7 @@ ok 5 - P2 passes after
 EOF
 )
 chk "N4 each title carries its own file" '[ "$OUT" = "A1 first [tests/a.bh-1.test.js]; C1 second [tests/c.bh-2.test.js]; C2 no yaml location" ]'
-chk "N4 a passing test's file is never attributed" '! printf "%s" "$OUT" | grep -qF pass.bh-9'
+chk "N4 a passing test's file is never attributed" '! grep -qF pass.bh-9 <<<"$OUT"'
 # The same without `# Subtest:` lines: the `ok` line alone ends the failure.
 OUT=$(printf "not ok 1 - C3 bare\nok 2 - P3 passes\n  ---\n  location: '/s/tests/pass.bh-9.test.js:3:1'\n  ...\n" | names)
 chk "N4 no Subtest lines: still not attributed" '[ "$OUT" = "C3 bare" ]'

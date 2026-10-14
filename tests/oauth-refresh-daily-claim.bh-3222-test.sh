@@ -32,6 +32,9 @@
 # Run: HARNESS_TEST_SANDBOX=1 bash tests/oauth-refresh-daily-claim.bh-3222-test.sh
 set -uo pipefail
 . "$(dirname "$0")/lib/scratch.sh" || exit 1
+# TEST-CHANGE BH-6052: the day stamp below is read by the code and again here; never straddle 00:00Z.
+. "$(dirname "$0")/lib/day-boundary.sh" || exit 1
+clear_boundary 86400 30 || exit 1
 DIR=$(cd "$(dirname "$0")/.." && pwd)
 command -v jq >/dev/null || { echo "jq missing — skipping"; exit 0; }
 PASS=0; FAIL=0

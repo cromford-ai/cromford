@@ -30,7 +30,7 @@ SFE_PSR_LIMIT=1000
 sfe_flag_pr_state_rows() {
   local err rc src
   err=$(HARNESS="$SFE_H" bash "$SFE_H/bin/jobs-client.sh" flag-active pr-state-rows 2>&1 >/dev/null); rc=$?
-  src=$(printf '%s\n' "$err" | grep -m1 '^flag-active pr-state-rows: source:')
+  src=$(grep -m1 '^flag-active pr-state-rows: source:' <<<"$err")
   sfe_info "flag-active pr-state-rows rc=$rc"
   [ -n "$src" ] && sfe_info "$src"
   if [ "$rc" != 0 ]; then

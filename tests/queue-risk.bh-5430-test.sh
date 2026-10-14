@@ -17,6 +17,7 @@
 # Run from anywhere: HARNESS_TEST_SANDBOX=1 bash tests/queue-risk.bh-5430-test.sh
 set -uo pipefail
 . "$(dirname "$0")/lib/scratch.sh" || exit 1
+. "$(dirname "$0")/lib/jobs-schema.sh" && jobs_schema_render || exit 1
 DIR=$(cd "$(dirname "$0")/.." && pwd)
 PASS=0; FAIL=0
 ok()  { PASS=$((PASS+1)); }
@@ -139,6 +140,11 @@ O=$(sc 10 1 tests/old-thing.bh-1-test.sh)
 [ "$(f1 "$O")" = 0 ] && ok || bad "Q12 a test file main already has does not count: '$O'"
 O=$(sc 10 1 tests/lib/new-helper.sh)
 [ "$(f1 "$O")" = 0 ] && ok || bad "Q12 a non-test-shaped path under tests/ does not count: '$O'"
+
+# ── Q13 (BH-6011): schema.sql is not in git, so a schema PR names a fragment ──
+: > "$ROWS"
+O=$(sc 10 1 worker/jobs/schema.d/0100-x.sql)
+[ "$(f1 "$O")" = 40 ] && grep -q 'schema:+40' <<<"$O" && ok || bad "Q13 a schema.d fragment alone must be a schema hit (+40): '$O'"
 
 # ── the seeds: every queue_risk.* row in schema.sql equals the lib's fallback ─
 SEEDS=$(grep -o "('queue_risk\.[a-z_.]*','[^']*'" "$DIR/worker/jobs/schema.sql" | sed "s/^('//; s/','/\t/; s/'$//")

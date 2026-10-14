@@ -1,0 +1,11 @@
+{
+  "env": "POOL_HOLD_CACHE_TTL_S",
+  "type": "int",
+  "default": 21600,
+  "min": 0,
+  "max": 604800,
+  "unit": "seconds",
+  "zero_means": "off",
+  "required": false,
+  "note": "BH-6549: how long the pool's HOLD gate trusts a cached held verdict (state/pool/<p>/hold-cache/<n>.json) whose listing key (updated_at|comments) and hold.sh checksum did not change. Past it the thread is read again. It bounds the one case the key can miss: a comment EDIT that turns a HOLD into a RESUME. Only held verdicts are cached, so the cache never releases a row. 0 = off: no listing read, every row reads its thread as before."
+}

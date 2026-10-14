@@ -465,7 +465,7 @@ exit "$f"
 REMOTE
   ); rc=$?
   [ -n "$OUT" ] && printf '%s\n' "$OUT" | grep -v '^SMOKE_PASS$'
-  if [ "$rc" = 0 ] && printf '%s\n' "$OUT" | grep -qx SMOKE_PASS; then
+  if [ "$rc" = 0 ] && grep -qx SMOKE_PASS <<<"$OUT"; then
     SMOKE=PASS
     st_write '.smoke = "PASS"' || fail "cannot write $ST"
     stamp smoke

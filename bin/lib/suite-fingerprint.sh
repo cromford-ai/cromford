@@ -8,17 +8,28 @@
 # Writes `<suite>\t<fp>\t<never-reason or ->`, one row per suite in
 # <suites-file>, in input order. The fingerprint is
 #
-#   sha256( "suite-fp v1\n"
+#   sha256( "suite-fp v2\n"
 #         + "infra\t<infra_hash>\n"
 #         + sorted unique "<path>\t<git object id or ->" over the suite's inputs )
 #
 # where the inputs are the suite's rows in `bin/test-impact.sh inputs` (the
-# suite itself, every path its map row names, every script defining a function
+# suite itself, every path its map row names, every tests/lib/ helper those
+# helpers reach through the helper closure, every script defining a function
 # it names; a directory row hashes as its tree id), and infra_hash is the
 # sha256 of the same sorted lines over the `@infra` paths plus this file,
-# bin/suite-reuse.sh, bin/ci-plan.sh and bin/test-impact-gate.sh. A path that
-# does not exist at <rev> hashes as `-`. So any input moving, or any of the
-# infra moving, moves the fingerprint and the suite runs.
+# bin/suite-reuse.sh, bin/ci-plan.sh, bin/test-impact-gate.sh,
+# bin/lib/ci-batch-escalate.sh (it decides the `@infra` set) and
+# catalog/suite-reuse-never.tsv (read here). A path that does not exist at
+# <rev> hashes as `-`. So any input moving, or any of the infra moving, moves
+# the fingerprint and the suite runs.
+#
+# v2 (BH-6406): a tests/lib/ or catalog/ path is NOT infra as a rule. It is
+# infra only when the tree's catalog/ci-batch-escalate.tsv escalates it (the
+# global helpers, e.g. tests/lib/scratch.sh), when no suite reaches it (a
+# helper no suite names after the closure, a catalog/ file with no specific
+# map row), or when the rules cannot be read (then every such path is, the
+# v1 set). A *.md there is never infra. The header names v2, so no v1 ledger
+# row can match a v2 fingerprint.
 #
 # NEVER REUSED (fp `-`, the reason in column 3), checked in this order:
 #   always            the suite runs on every diff (a `*` inputs row)
@@ -75,7 +86,8 @@ _sfp_compute() {
 
   # infra_hash, over the sorted `<path>\t<id or ->` lines of the infra set.
   { awk -F'\t' '$1 == "@infra" { print $2 }' "$w/inputs"
-    printf '%s\n' bin/suite-reuse.sh bin/lib/suite-fingerprint.sh bin/ci-plan.sh bin/test-impact-gate.sh
+    printf '%s\n' bin/suite-reuse.sh bin/lib/suite-fingerprint.sh bin/ci-plan.sh bin/test-impact-gate.sh \
+      bin/lib/ci-batch-escalate.sh catalog/suite-reuse-never.tsv
   } | LC_ALL=C sort -u | awk -F'\t' -v tf="$w/tree" '
       FILENAME == tf { id[$1] = $2; next }
       { print $1 "\t" (($1 in id) ? id[$1] : "-") }' "$w/tree" - > "$w/infra"
@@ -126,7 +138,7 @@ _sfp_compute() {
         else if (!(s in known)) r = "unknown suite"
         else {
           r = "-"; f = cdir "/" n
-          printf "suite-fp v1\ninfra\t%s\n%s", ih, rows[s] > f; close(f)
+          printf "suite-fp v2\ninfra\t%s\n%s", ih, rows[s] > f; close(f)
         }
         print n "\t" s "\t" r
       }

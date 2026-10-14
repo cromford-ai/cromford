@@ -20,4 +20,4 @@
 # answers (bin/run-rollout.sh). Without it a refused rollout was a mexec miss
 # while the machine idled and a dead machine after it stopped (BH-4061).
 RESULT_PREFIX_RE='^(PR_|PLAN_|REVIEW_|BUILD_|QUEUED_|EXECUTE_|DECOMPOSE|ROLLOUT_|RESULT_|SECURITY_|REFUTE_|QA_|TAMPER_|SMOKE|REBASED|CONFLICT|GATE_RED|REBASE_)'
-printf '%s' "${1:-}" | head -1 | grep -qE "$RESULT_PREFIX_RE"
+head -1 <<<"${1:-}" | grep -qE "$RESULT_PREFIX_RE"

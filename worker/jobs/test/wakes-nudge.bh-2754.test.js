@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import worker from '../src/index.js';
+import { jobsSchemaSql } from './lib/jobs-schema.js';
 
 // POST /api/wakes/nudge (BH-2754, Ask 2 of #2751).
 //
@@ -14,7 +15,7 @@ import worker from '../src/index.js';
 // database that had schema.sql applied, driven through `worker.fetch` (D2).
 // A bad body must run no INSERT at all (D11), so every statement is recorded.
 
-const SCHEMA = readFileSync(fileURLToPath(new URL('../schema.sql', import.meta.url)), 'utf8');
+const SCHEMA = jobsSchemaSql();
 const SECRET = 'test-secret';
 
 // Same D1-shaped adapter as wakes-prune.bh-1267: `all` answers {results},

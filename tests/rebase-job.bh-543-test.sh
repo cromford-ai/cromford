@@ -274,8 +274,8 @@ case "$(R1)" in REBASED\ *) ok ;; *) bad "(c) first line must be REBASED (got '$
 PKG=$(git -C "$T/origin.git" show "$BR_PKG:package.json" 2>/dev/null)
 printf '%s' "$PKG" | jq . >/dev/null 2>&1 \
   && ok || bad "(c) the pushed package.json must still parse as json (got: $PKG)"
-printf '%s' "$PKG" | grep -q BRANCHTOK && ok || bad "(c) the branch's token must survive the resolve"
-printf '%s' "$PKG" | grep -q MAINTOK   && ok || bad "(c) main's token must survive the resolve"
+grep -q BRANCHTOK <<<"$PKG" && ok || bad "(c) the branch's token must survive the resolve"
+grep -q MAINTOK <<<"$PKG"   && ok || bad "(c) main's token must survive the resolve"
 after "(c)"
 
 # ============================================================================

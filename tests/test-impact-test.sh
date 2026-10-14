@@ -90,10 +90,17 @@ else bad "A: these suites have no map row at all: $(printf '%s' "$MISSING" | tr 
 # naming something that does not exist is a token the extractor mis-read.
 BOGUS=$(cut -f2 "$MAP" | LC_ALL=C sort -u | while IFS= read -r p; do
   [ "$p" = "*" ] && continue
+  # TEST-CHANGE (BH-6005.4): worker/<w>/schema.sql is the one generated-path
+  # alias the map keeps on purpose (bin/test-impact.sh, BH-6005). It is not in
+  # git, so it exists only after a compose; its schema.d/ is the real path.
+  case "$p" in worker/*/schema.sql) [ -d "$DIR/${p%schema.sql}schema.d" ] && continue ;; esac
+  # TEST-CHANGE (BH-6499): catalog/llm-sites.json is the second generated-path
+  # alias (bin/test-impact.sh ti_files, BH-4987); its llm-sites.d/ is the real path.
+  case "$p" in catalog/llm-sites.json) [ -d "$DIR/catalog/llm-sites.d" ] && continue ;; esac
   [ -e "$DIR/$p" ] || printf '%s\n' "$p"
 done)
 if [ -z "$BOGUS" ]; then ok
-else bad "A: the map names paths that do not exist: $(printf '%s' "$BOGUS" | head -5 | tr '\n' ' ')"; fi
+else bad "A: the map names paths that do not exist: $(head -5 <<<"$BOGUS" | tr '\n' ' ')"; fi
 
 # The always-run set is never empty: it is the floor every selection stands on,
 # and a floor of nothing turns a doc-only PR into a green run of no tests.
@@ -114,7 +121,7 @@ if [ "$NALWAYS" -gt 0 ]; then ok; else bad "A: the always-run set is empty"; fi
 AUDIT=$("$TI" audit 2>"$T/audit.err")
 if [ -z "$AUDIT" ]; then ok
 else bad "A2: the map is missing rows the corpus audit can see (first 8 of $(printf '%s\n' "$AUDIT" | grep -c .)):
-$(printf '%s\n' "$AUDIT" | head -8)"; fi
+$(head -8 <<<"$AUDIT")"; fi
 if [ ! -s "$T/audit.err" ]; then ok
 else bad "A2: the audit wrote to stderr: $(head -2 "$T/audit.err")"; fi
 
@@ -162,11 +169,11 @@ if grep -qxF "$JOINHOLE" "$MAP"; then ok
 else bad "A2: the folded python join row is missing from the map"; fi
 grep -vxF "$JOINHOLE" "$MAP" > "$T/map-joinholed.tsv"
 JOIN_AUDIT=$("$TI" audit --map "$T/map-joinholed.tsv" 2>/dev/null)
-if printf '%s\n' "$JOIN_AUDIT" | grep -qxF "$JOINHOLE"; then ok
+if grep -qxF "$JOINHOLE" <<<"$JOIN_AUDIT"; then ok
 else bad "A2: the audit cannot see a piecewise os.path.join — a future one would be invisible"; fi
 grep -vxF "$HOLE" "$MAP" > "$T/map-holed.tsv"
 HOLED_AUDIT=$("$TI" audit --map "$T/map-holed.tsv" 2>/dev/null)
-if printf '%s\n' "$HOLED_AUDIT" | grep -qxF "$HOLE"; then ok
+if grep -qxF "$HOLE" <<<"$HOLED_AUDIT"; then ok
 else bad "A2: removing '$(printf '%s' "$HOLE" | tr '\t' ' ')' from the map did not make the audit report it — the audit checks nothing"; fi
 
 # ── B. one library, every suite that names it ───────────────────────────────
@@ -264,7 +271,7 @@ echo '# touched' >> "$R/bin/lib/alpha.sh"
 git -C "$R" add -A
 git -C "$R" -c user.email=t@example.com -c user.name=t commit -qm alpha
 GOT=$(sel)
-if printf '%s\n' "$GOT" | grep -qxF tests/beta-test.sh; then ok
+if grep -qxF tests/beta-test.sh <<<"$GOT"; then ok
 else bad "C2: a diff on the sourced library did not select tests/beta-test.sh, which reaches it only through bin/beta.sh: '$(printf '%s' "$GOT" | tr '\n' ' ')'"; fi
 
 # ── D. a path no suite maps runs EVERYTHING, and says so ───────────────────
@@ -330,7 +337,7 @@ done
 # F1 — no row at all for the path
 grep -vxF "$ROW_BETA" "$T/smap.tsv" | grep -vxF "$ROW_GAMMA" > "$T/smap-none.tsv"
 HOLED=$("$TI" --root "$R" --map "$T/smap-none.tsv" select "$BASE..HEAD" 2>"$T/reason2")
-if [ "$(printf '%s\n' "$HOLED" | grep -c .)" -eq 3 ] &&
+if [ "$(grep -c . <<<"$HOLED")" -eq 3 ] &&
    grep -q 'full: unknown reach (bin/lib/alpha.sh)' "$T/reason2"; then ok
 else bad "F1: a map with no row for the changed path must fall through to the whole corpus, got '$(printf '%s' "$HOLED" | tr '\n' ' ')' / '$(cat "$T/reason2")'"; fi
 
@@ -339,10 +346,10 @@ grep -vxF "$ROW_BETA" "$T/smap.tsv" > "$T/smap-holed.tsv"
 HOLED=$("$TI" --root "$R" --map "$T/smap-holed.tsv" select "$BASE..HEAD" 2>/dev/null)
 if ! grep -qxF tests/beta-test.sh <<<"$(printf '%s\n' "$HOLED")"; then ok
 else bad "F2: removing beta-test's row changed nothing — the map is not what drives the selection"; fi
-if printf '%s\n' "$HOLED" | grep -qxF tests/gamma-test.sh; then ok
+if grep -qxF tests/gamma-test.sh <<<"$HOLED"; then ok
 else bad "F2: gamma-test still maps the path and must still be selected"; fi
 WHOLE=$("$TI" --root "$R" --map "$T/smap.tsv" select "$BASE..HEAD" 2>/dev/null)
-if printf '%s\n' "$WHOLE" | grep -qxF tests/beta-test.sh; then ok
+if grep -qxF tests/beta-test.sh <<<"$WHOLE"; then ok
 else bad "F2: the intact map does not select tests/beta-test.sh either — case F proves nothing"; fi
 
 # ── G. the orphan ratchet: a SET DIFF against the merge-base (BH-1268) ─────
@@ -389,7 +396,7 @@ if [ -n "$GBASE" ]; then
   else bad "G2: bin/test-impact.sh orphans --check refuses this branch against $GBASE (rc=$GRC):
 $GOUT"; fi
 else
-  if [ "$GRC" = 2 ] && printf '%s' "$GOUT" | grep -qF 'no base to compare against'; then
+  if [ "$GRC" = 2 ] && grep -qF 'no base to compare against' <<<"$GOUT"; then
     echo "test-impact: G2 — this checkout has no base (no TI_BASE, no origin/main); asserted the rc 2 path instead"
     ok
   else bad "G2: this checkout has no base, so --check must exit 2 saying so rather than pass (rc=$GRC):
@@ -444,7 +451,7 @@ ogit add -A; ogit commit -qm "a script with no suite"
 GOUT=$(ocheck); GRC=$?
 if [ "$GRC" = 1 ]; then ok
 else bad "G4: a script no suite names must be refused with rc 1 (got $GRC): $GOUT"; fi
-if printf '%s' "$GOUT" | grep -qF 'bin/stray.sh'; then ok
+if grep -qF 'bin/stray.sh' <<<"$GOUT"; then ok
 else bad "G4: the refusal must NAME the script it is about. Got: $GOUT"; fi
 # ...and it must not drag the orphan that was ALREADY there into the refusal:
 # bin/lonely.sh is the base's hole, not this diff's.
@@ -464,7 +471,7 @@ ogit add -A; ogit commit -qm "a suite for the lonely script"
 GOUT=$(ocheck); GRC=$?
 if [ "$GRC" = 0 ]; then ok
 else bad "G5: a diff that FIXES an orphan and commits nothing else must pass (rc=$GRC): $GOUT"; fi
-if printf '%s' "$GOUT" | grep -qE '1 fixed'; then ok
+if grep -qE '1 fixed' <<<"$GOUT"; then ok
 else bad "G5: the pass should report the orphan this diff fixed. Got: $GOUT"; fi
 if [ -z "$(git -C "$OR" status --porcelain 2>/dev/null)" ]; then ok
 else bad "G5: the check left the tree dirty — it must write nothing into the checkout it is grading"; fi
@@ -484,7 +491,7 @@ OLIST=$("$TI" --root "$OR" orphans 2>/dev/null)
 if [ "$OLIST" = "bin/stray.sh" ]; then ok
 else bad "G6: the swap fixture should hold exactly one orphan again, got '$(printf '%s' "$OLIST" | tr '\n' ' ')' — the count is unchanged, which is the point"; fi
 GOUT=$(ocheck); GRC=$?
-if [ "$GRC" = 1 ] && printf '%s' "$GOUT" | grep -qF 'bin/stray.sh'; then ok
+if [ "$GRC" = 1 ] && grep -qF 'bin/stray.sh' <<<"$GOUT"; then ok
 else bad "G6: a swap (one fixed, one added, same total) must be refused by name (rc=$GRC): $GOUT"; fi
 
 # G7. THE DRIFT, the other shape a count misses: the fix and the new hole in
@@ -500,12 +507,12 @@ ogit add -A; ogit commit -qm "first: fix the hole"
 printf '#!/bin/bash\necho stray\n' > "$OR/bin/stray.sh"
 ogit add -A; ogit commit -qm "then: add a new one"
 GOUT=$(ocheck); GRC=$?
-if [ "$GRC" = 1 ] && printf '%s' "$GOUT" | grep -qF 'bin/stray.sh'; then ok
+if [ "$GRC" = 1 ] && grep -qF 'bin/stray.sh' <<<"$GOUT"; then ok
 else bad "G7: a new orphan added AFTER a fix in the same branch must still be refused — this is the state a floor count reads as 'at the floor' (rc=$GRC): $GOUT"; fi
 # ...and the same branch with no base given falls back to the merge-base with
 # main and answers identically, which is how it runs on a Mac.
 GOUT=$(env -u TI_BASE "$TI" --root "$OR" orphans --check 2>&1); GRC=$?
-if [ "$GRC" = 1 ] && printf '%s' "$GOUT" | grep -qF 'bin/stray.sh'; then ok
+if [ "$GRC" = 1 ] && grep -qF 'bin/stray.sh' <<<"$GOUT"; then ok
 else bad "G7: with no TI_BASE the check must fall back to the merge-base with main and reach the same verdict (rc=$GRC): $GOUT"; fi
 
 # G8. a TRACKED list switches nothing off. The derived file is allowed to exist
@@ -519,7 +526,7 @@ mkdir -p "$OR/catalog"
 ogit add -f catalog/test-impact-orphans.txt >/dev/null 2>&1
 ogit commit -qm "commit the list" >/dev/null 2>&1
 GOUT=$(ocheck); GRC=$?
-if [ "$GRC" = 1 ] && printf '%s' "$GOUT" | grep -qF 'TRACKED'; then ok
+if [ "$GRC" = 1 ] && grep -qF 'TRACKED' <<<"$GOUT"; then ok
 else bad "G8: a TRACKED catalog/test-impact-orphans.txt must be refused with rc 1 (got $GRC): $GOUT"; fi
 
 # G9. A BASE THAT CANNOT BE RESOLVED IS rc 2, NEVER A GREEN. "this diff adds no

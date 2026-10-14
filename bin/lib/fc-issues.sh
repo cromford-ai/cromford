@@ -19,6 +19,9 @@
 #                title, footer and parent comment, FC_SLICE_BASE = the merged
 #                C<k>, FC_SLICE_PR = the merged PR number)
 #   FC_LANE     issues, which is why this module was sourced
+#   FC_PARENT_NOTE  0 = post no parent comment and leave the parent's label
+#                alone: the caller (bin/lib/slice-closeout.sh, BH-6308) closes
+#                the parent with its own comment. Default 1.
 #
 # Sourced, never executed: no `set -e`, no `exit`, no side effect at source
 # time, same shape as bin/lib/file-children.sh and for the same reason — a
@@ -87,12 +90,12 @@ fc_unlabel_parent() {
 fc_file_issues() {
   local DRY=0; fc_dry && DRY=1
   local HARNESS="${HARNESS:-/root/harness}"
-  local ISSUE GH_REPO N CONTRACT fcs
+  local ISSUE GH_REPO N CONTRACT fcs OWNS
   local VOCAB PARENT_LABELS LBL_SRC INHERITED ONE MATCH V LBL_SET LBL_NOTE LBL_FLAGS
   local CHILDREN_DIR GHLOG PREFIX LINKS i n TITLE BODY BLOCK DEPENDS AFTERS A P p SYM F CT NUM URL
   local SG_DECL SG_OVER SG_BUDGET COMMENT DRYNOTE _FRESH
   local PATHS_DIR PF CONTRACT_PATHS CP_RC CONTESTED_ALL CONTESTED CHILD_PATHS CHP_RC SHARED sp CONTESTED_NOTE
-  local EXTRACT_FAILED EXTRACT_NOTE
+  local EXTRACT_FAILED EXTRACT_NOTE INDEP INDEP_WHY CONTRACT_TOKENS INDEP_SHARED
   local NUMS=() LBL_ARGS=()
   local EXISTING=() EXISTING_TITLE EXISTING_NUM EV_RC EV_T FC_UL _ei _eln _PL FILED_NEW=0
   # Callable directly (the rollout lane's caller is a later slice), so the
@@ -144,7 +147,7 @@ fc_file_issues() {
       # someone's repo; a line we cannot read is theirs to fix, not ours to
       # skip. Same key shape the ISSUE derivation below accepts, so a CRLF or
       # a stray space is named here rather than trimmed into a guess.
-      if ! printf '%s\n' "$_ei" | grep -qE '^[A-Za-z]+-[0-9]+$'; then
+      if ! grep -qE '^[A-Za-z]+-[0-9]+$' <<<"$_ei"; then
         FC_ERROR="children.txt line $_eln is not a child key ('$_ei') — left as it was, resolve by hand"
         fc_log "$FC_BUILD" "$FC_ERROR"; return 1
       fi
@@ -342,6 +345,16 @@ fc_file_issues() {
     # The two halves of what a failed extraction leaves behind, read-only, for
     # the WARN and the comment line. Both answer for a body that never failed
     # too, so no caller has to guard them.
+    # EVERY PATH-SHAPED TOKEN, with no prefix filter (BH-5520). planned-files.sh
+    # keeps only src/, tests/, docs/ and the like, and in cromford the
+    # product code is under bin/, so its list cannot prove that a sibling shares
+    # no file with the contract. The independence check below reads this set
+    # too, and only that check reads it: CONTESTED lines stay planned-files.sh's.
+    path_tokens_of() { # path_tokens_of <text...> -> sorted unique a/b.ext tokens
+      printf '%s\n' "$@" \
+        | grep -oE '[][A-Za-z0-9_@()/.-]+\.(ts|tsx|js|jsx|mjs|cjs|sql|prisma|css|scss|json|sh|md|yml|yaml|py|conf|tsv|toml|txt|cron|go|rs)' \
+        | sed 's|^\./||' | grep '/' | LC_ALL=C sort -u
+    }
     paths_fail_reason() { # paths_fail_reason <name> -> `rc=<n>[: <stderr>]`
       local f="$PATHS_DIR/$1/extract-failed.txt"
       if [ -s "$f" ]; then cat "$f"; else printf 'rc=?\n'; fi
@@ -359,6 +372,7 @@ fc_file_issues() {
     # The CONTRACT: string and child 1's body are ONE plan.md: the union is one
     # extractor run, not two lists merged by hand.
     CONTRACT_PATHS=$(paths_of_body contract "$CONTRACT" "$(jq -r '.[0].body' "$FC_SPEC")"); CP_RC=$?
+    CONTRACT_TOKENS=$(path_tokens_of "$CONTRACT" "$(jq -r '.[0].body' "$FC_SPEC")")
     if [ "$CP_RC" = 2 ]; then
       fc_log "$FC_BUILD" "WARN: $PF failed on the contract body ($(paths_fail_reason contract)) — no contested paths can be computed for this split; partial list left in $PATHS_DIR/contract/planned-files.txt: $(paths_partial contract)"
       EXTRACT_FAILED="shared-file extraction failed: contract body ($(paths_fail_reason contract))"
@@ -394,7 +408,7 @@ fc_file_issues() {
     # above still bounds this at two levels — a declaration cannot grow a chain.
     # The `DEPENDS:` lines ride alongside in the shape prompts/plan-contract.md
     # §7 asks the child's own plan to carry.
-    BLOCK=""; DEPENDS=""; CONTESTED=""
+    BLOCK=""; DEPENDS=""; CONTESTED=""; INDEP=""
     AFTERS=$(jq -r --argjson i "$i" '(.[$i].after // []) | .[] | tostring' "$FC_SPEC" 2>/dev/null)
     if [ "$FC_KIND" = rollout ] || [ "$FC_KIND" = slice ]; then
       # A WAVE WAITS ONLY ON THE WAVES ITS AUTHOR NAMED. There is no contract to
@@ -413,7 +427,7 @@ fc_file_issues() {
       # once. `10` must not match position `1`, hence the non-digit anchor.
       p=1
       while [ "$p" -lt "$n" ]; do
-        if printf '%s\n' "$AFTERS" | grep -qE "^[[:space:]]*$p([^0-9]|\$)"; then
+        if grep -qE "^[[:space:]]*$p([^0-9]|\$)" <<<"$AFTERS"; then
           if [ -n "$BLOCK" ]; then BLOCK="$BLOCK, #${NUMS[$((p - 1))]} (hard)"
           else BLOCK="#${NUMS[$((p - 1))]} (hard)"; fi
         fi
@@ -441,7 +455,7 @@ fc_file_issues() {
       while [ "$p" -lt "$n" ]; do
         SYM=$(printf '%s\n' "$AFTERS" | grep -E "^[[:space:]]*$p([^0-9]|\$)" | head -1 \
               | sed -E "s/^[[:space:]]*${p}[[:space:]]*:?[[:space:]]*//")
-        if printf '%s\n' "$AFTERS" | grep -qE "^[[:space:]]*$p([^0-9]|\$)"; then
+        if grep -qE "^[[:space:]]*$p([^0-9]|\$)" <<<"$AFTERS"; then
           [ -n "$SYM" ] || SYM="it imports this sibling's code"
           BLOCK="$BLOCK, #${NUMS[$((p - 1))]} (hard)"
           DEPENDS="$DEPENDS
@@ -457,6 +471,7 @@ DEPENDS: #${NUMS[$((p - 1))]} soft — a separate slice of the same parent, no s
       # not src/x.ts, and a body that names the same file twice yields one line.
       # An empty intersection writes nothing at all — the sibling's Blocked-by
       # and DEPENDS lines are untouched either way.
+      CHP_RC=""
       if [ -n "$CONTRACT_PATHS" ]; then
         CHILD_PATHS=$(paths_of_body "child-$n" "$BODY"); CHP_RC=$?
         if [ "$CHP_RC" = 2 ]; then
@@ -479,11 +494,53 @@ DEPENDS: #${NUMS[$((p - 1))]} soft — a separate slice of the same parent, no s
           fi
         fi
       fi
+      # AN INDEPENDENT SIBLING FILES OFF MAIN (BH-5520). The spec may say
+      # `imports_contract: false` (the JSON literal; the string "false" is the
+      # same as absent). The filer takes that word only when it can check it:
+      # no `after` names an earlier sibling, the contract's paths were
+      # extracted, this body's paths were extracted, and none of them is shared.
+      # Then the contract blocker goes away, so the launcher never stacks this
+      # child on the contract branch. Any failed check keeps today's hard lines
+      # byte for byte and says which check failed. An absent field runs none of
+      # this.
+      if jq -e --argjson i "$i" '.[$i].imports_contract == false' "$FC_SPEC" >/dev/null 2>&1; then
+        INDEP_WHY=""
+        p=2
+        while [ "$p" -lt "$n" ]; do
+          if grep -qE "^[[:space:]]*$p([^0-9]|\$)" <<<"$AFTERS"; then
+            INDEP_WHY="it names sibling $p in 'after'"; break
+          fi
+          p=$((p + 1))
+        done
+        if [ -z "$INDEP_WHY" ] && [ -z "$CONTRACT_PATHS" ]; then INDEP_WHY="the contract has no extracted path to check against"
+        elif [ -z "$INDEP_WHY" ] && [ "$CHP_RC" != 0 ]; then INDEP_WHY="path extraction failed on this body"
+        elif [ -z "$INDEP_WHY" ] && [ -n "$CONTESTED" ]; then INDEP_WHY="it shares $(printf '%s\n' "$CONTESTED" | sed -E 's/^CONTESTED: (.*) -> #[0-9]+$/\1/' | paste -sd, -) with the contract"
+        elif [ -z "$INDEP_WHY" ]; then
+          # The extractor's list is blind to bin/ and to any other prefix it
+          # does not keep, so the full token sets decide too. Any shared token
+          # refuses: fail closed.
+          INDEP_SHARED=$(LC_ALL=C comm -12 <(printf '%s\n' "$CONTRACT_TOKENS") <(path_tokens_of "$BODY") | sed '/^$/d' | paste -sd, -)
+          [ -z "$INDEP_SHARED" ] || INDEP_WHY="it names $INDEP_SHARED, which the contract also names"
+        fi
+        if [ -z "$INDEP_WHY" ]; then
+          INDEP=1
+          BLOCK=""
+          # Every other DEPENDS line is a soft sibling line here: no `after`
+          # entry passed the check above.
+          DEPENDS="DEPENDS: #${NUMS[0]} soft — this slice imports nothing from the contract (imports_contract: false) and shares no file with it${DEPENDS#"DEPENDS: #${NUMS[0]} hard — this slice imports the contract ($CONTRACT)"}"
+        else
+          fc_log "$FC_BUILD" "child $n: imports_contract false refused — $INDEP_WHY — kept hard on the contract #${NUMS[0]}"
+        fi
+      fi
     fi
     F="$CHILDREN_DIR/child-$n.md"
+    OWNS=$(fc_owns_line "$FC_SPEC" "$i")
+    [ -z "$OWNS" ] && [ "$FC_KIND" = decompose ] && fc_log "$FC_BUILD" "child $n declares no owns"
     { printf '%s\n\n' "$BODY"
-      fc_child_footer "$FC_KIND" "$ISSUE" "$n" "$N" "$BLOCK" "$DEPENDS" "$CONTRACT" "$CONTESTED"
+      fc_child_footer "$FC_KIND" "$ISSUE" "$n" "$N" "$BLOCK" "$DEPENDS" "$CONTRACT" "$CONTESTED" "$INDEP"
+      [ -n "$OWNS" ] && printf '%s\n' "$OWNS"
     } > "$F"
+    if [ "$INDEP" = 1 ]; then fc_log "$FC_BUILD" "child $n: independent of the contract — filed with no blocker, builds on main"; fi
     # The contract is .0 and the siblings are .1 up, so the key says which one a
     # child is; a rollout wave is .1 up and there is no .0. The Order line above
     # stays 1-based over every filed child: it is what
@@ -665,7 +722,7 @@ Each part is its own issue, its own branch and its own PR, with its own tests.
 
 This issue stays open as the master. We took the \`ai-build\` label off it so no builder picks the whole thing up again, and we will comment here as each part lands."
   fi
-  if [ "$FILED_NEW" -eq 1 ]; then
+  if [ "$FILED_NEW" -eq 1 ] && [ "${FC_PARENT_NOTE:-1}" != 0 ]; then
     if [ "$DRY" = 1 ]; then
       printf '%s\n' "$COMMENT" > "$FC_BUILD/decompose-comment.md"
       printf 'gh api -X POST repos/%s/issues/%s/comments -F body=@%s\n' "$GH_REPO" "$ISSUE" "$FC_BUILD/decompose-comment.md" >> "$GHLOG"
@@ -699,7 +756,7 @@ This issue stays open as the master. We took the \`ai-build\` label off it so no
     # here would read as work this run did; it re-proved every child and filed
     # none, and the operator reading the log deserves that distinction.
     fc_log "$FC_BUILD" "already decomposed into: $(paste -sd, "$FC_BUILD/children.txt") — every child re-proven on the repo, nothing re-filed"
-    if [ "$DRY" != 1 ]; then
+    if [ "$DRY" != 1 ] && [ "${FC_PARENT_NOTE:-1}" != 0 ]; then
       # THE PARKING STEP ONLY EVER RAN BEHIND FILED_NEW. The first run's
       # `--remove-label` can fail after every child is filed, and no rerun
       # retried it — a parent of a COMPLETE split still carrying `ai-build` is
@@ -710,7 +767,7 @@ This issue stays open as the master. We took the \`ai-build\` label off it so no
       _PL=$(fc_parent_labels "$GH_REPO" "$ISSUE")
       # A read that answered nothing does NOTHING and says nothing: absent is
       # not "unlabelled". The split is complete either way, so rc stays 0.
-      if printf '%s\n' "$_PL" | grep -qxi 'ai-build'; then
+      if grep -qxi 'ai-build' <<<"$_PL"; then
         printf 'gh api -X DELETE repos/%s/issues/%s/labels/ai-build\n' "$GH_REPO" "$ISSUE" >> "$GHLOG"
         FC_UL=0; fc_unlabel_parent "$GH_REPO" "$ISSUE" || FC_UL=$?
         if [ "$FC_UL" = 0 ] || [ "$FC_UL" = 44 ]; then

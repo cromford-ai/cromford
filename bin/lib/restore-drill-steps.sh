@@ -80,7 +80,7 @@ drill_on_box() {
     stamp=""
   fi
   if [ "$rc" != 0 ]; then
-    _drill_fail "restore rc=$rc$(printf '%s\n' "$REMOTE_OUT" | grep -m1 -E 'not configured|REFUSED' | cut -c1-200 | sed 's/^/: /')"
+    _drill_fail "restore rc=$rc$(grep -m1 -E 'not configured|REFUSED' <<<"$REMOTE_OUT" | cut -c1-200 | sed 's/^/: /')"
     return 1
   fi
   [ -n "$DRILL_RPO_S" ] || _drill_fail "restore: RPO unknown" || return 1

@@ -318,10 +318,66 @@ mq_conductor_hold() {
 }
 # <<< conductor verdict gate
 
+# >>> pre-merge guard
+# The last check before a merge (BH-6428): the head is the reviewed sha, its CI
+# is green, and the merge conductor has not parked the PR. The rule lives in
+# bin/lib/mq-premerge.sh (pmg_check), whose header has the project-6 #216
+# incident. mq_land asks it before every merge rung, so the union train and the
+# serial loop both ask it. A box whose sync has not landed the lib answers ok,
+# as mq_conductor_hold does.
+# shellcheck source=bin/lib/mq-premerge.sh
+[ -r "$HARNESS/bin/lib/mq-premerge.sh" ] && . "$HARNESS/bin/lib/mq-premerge.sh"
+# mq_enqueued_epoch <num> — when the entry was enqueued: the queued row's
+#   enqueued_at, else the queue file's mtime, else nothing. The row comes first
+#   because a row-only entry gets its file when this box materialises it, so
+#   the mtime would make an old enqueue look new.
+mq_enqueued_epoch() {
+  local num="$1" at e
+  if command -v merge_queue_list >/dev/null 2>&1; then
+    at=$(merge_queue_list "$PROJECT" 2>/dev/null | awk -F'\t' -v n="$num" '$2 == n { print $6; exit }')
+    e=$(command -v pmg_epoch >/dev/null 2>&1 && pmg_epoch "$at")
+    [ -n "$e" ] && { printf '%s' "$e"; return 0; }
+  fi
+  stat -c %Y "$Q/$num" 2>/dev/null || true
+}
+# mq_reviewed_sha <num> — the sha the review approved: hb_sha (the job_verdict
+#   row), else reviewed_sha on the conductor's pr_state row, else nothing.
+mq_reviewed_sha() {
+  local num="$1" sha row
+  sha=$(hb_sha "$num" 2>/dev/null)
+  [ -n "$sha" ] && { printf '%s' "$sha"; return 0; }
+  command -v job_ledger_row >/dev/null 2>&1 || return 0
+  row=$(job_ledger_row pr_state "$SLUG#$num" 2>/dev/null) || return 0
+  jq -r '.detail | (if type == "string" then (fromjson? // {}) elif type == "object" then . else {} end)
+         | .reviewed_sha // "" | select(. != "-")' <<<"$row" 2>/dev/null || true
+}
+# mq_premerge_guard <num> <head> — prints pmg_check's answer: ok, hold <reason>
+#   or handback <reason>.
+mq_premerge_guard() {
+  local num="$1" head="${2:-}"
+  command -v pmg_check >/dev/null 2>&1 || { printf 'ok\n'; return 0; }
+  pmg_check "$SLUG" "$num" "$head" "$(mq_reviewed_sha "$num")" "$(mq_enqueued_epoch "$num")" \
+    "$LOG" "$(STAMP) [$PROJECT] #$num"
+}
+# mq_refused <num> <handback|hold> <reason> — act on a guard refusal that
+#   mq_land printed. handback: the entry leaves this queue and its row is
+#   dropped with the reason; the merge conductor lands every READY PR itself,
+#   and a fresh APPROVE re-queues it. hold: nothing; the entry stays queued and
+#   pmg_check already wrote the log line.
+mq_refused() {
+  [ "${2:-}" = handback ] || return 0
+  rm -f "$Q/$1" "$Q/$1.absent"
+  MQROW "$1" dropped "MERGE_REFUSED ${3:-} — handed back to the merge conductor"
+  echo "$(STAMP) [$PROJECT] #$1 handed back to the merge conductor: ${3:-}" >> "$LOG"
+}
+# <<< pre-merge guard
+
 # >>> mq_land
 # mq_land <num> — land ONE PR (BH-892). Prints `MERGED <sha>` when GitHub's own
 #   REST answer says the merge happened (the sha may be empty when the 200 did
-#   not carry one), and nothing at all otherwise.
+#   not carry one), `REFUSED <hold|handback> <reason>` when the pre-merge guard
+#   refused the head (no rung ran; the caller hands it to mq_refused), and
+#   nothing at all otherwise.
 #
 #   THE TWO LANDING PATHS SHARE THIS, for the same reason hb_blocked is a
 #   function: the union merge train and the serial loop both merge, and a change
@@ -341,6 +397,13 @@ mq_land() { # mq_land <num> [pin-head]
   local num="$1" pin="${2:-}" out rc sha
   # BH-5914: the conductor's per-head verdict, asked before anything is spent.
   if command -v mq_conductor_hold >/dev/null 2>&1 && mq_conductor_hold "$num" "$pin"; then return 0; fi
+  # BH-6428: reviewed sha, CI and conductor park state, before any merge rung.
+  if command -v mq_premerge_guard >/dev/null 2>&1; then
+    local ghead="$pin" verdict
+    [ -n "$ghead" ] || ghead=$(mq_pr "$num" .head.sha 2>/dev/null) || ghead=""
+    verdict=$(mq_premerge_guard "$num" "$ghead")
+    case "$verdict" in ok) ;; *) printf 'REFUSED %s\n' "${verdict:-hold no-answer}"; return 0 ;; esac
+  fi
   sha=$(hb_sha "$num" 2>/dev/null)
   # hb_blocked says "land it" when HEADBOUND_ENFORCE is off, and a PUT still
   # bound to the reviewed sha would answer 409 to the very head that switch
@@ -677,6 +740,7 @@ if [ "$NQ" -ge 2 ]; then
           mr_queue_hold "$F" && continue
           command -v to_lane_hold >/dev/null 2>&1 && to_lane_hold "$PROJECT" "$SLUG" "$F" "$LOG" && continue   # BH-1526
           read -r MQST MQSHA < <(mq_land "$F" "${MQ_LEAD_HEAD:-}")
+          [ "${MQST:-}" = REFUSED ] && { mq_refused "$F" "${MQSHA%% *}" "${MQSHA#* }"; continue; }
           [ "${MQST:-}" = MERGED ] || sleep 4
           # "landed" is a word this queue may only write off an answer (BH-784):
           # GitHub's own 200 from mq_land, or the REST re-read. An unreadable
@@ -880,6 +944,7 @@ for F in $(mq_queue_list); do
   # the one this pass's own rebase pushed. A push by anyone else since is a
   # head nothing here read, and GitHub refuses it.
   read -r MQST MQSHA < <(mq_land "$NUM" "${MQ_PIN:-}")
+  [ "${MQST:-}" = REFUSED ] && { mq_refused "$NUM" "${MQSHA%% *}" "${MQSHA#* }"; continue; }
   [ "${MQST:-}" = MERGED ] || sleep 5
   # Same rule as the train above: "still open" is a claim about the PR, and this
   # queue may not make it off a read that did not answer. mq_land's own 200 is

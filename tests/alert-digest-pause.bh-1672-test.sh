@@ -63,9 +63,9 @@ digest
 [ "$(calls)" = 1 ] && ok || bad "A: a live pause with an empty log must send once (calls=$(calls))"
 L=$(line)
 [ "$(printf '%s\n' "$L" | grep -c '^  - PAUSED ')" = 2 ] && ok || bad "A: want two PAUSED lines, got: $L"
-printf '%s\n' "$L" | grep -qxF '  - PAUSED merges · fleet · 2d 3h · "runaway fix" · by operator · expires in 21h' \
+grep -qxF '  - PAUSED merges · fleet · 2d 3h · "runaway fix" · by operator · expires in 21h' <<<"$L" \
   && ok || bad "A: fleet merges line not in the documented format: $L"
-printf '%s\n' "$L" | grep -qxF '  - PAUSED reviews · project-1 · 3h 5m · "cap hit" · by ops · expires in 45m' \
+grep -qxF '  - PAUSED reviews · project-1 · 3h 5m · "cap hit" · by ops · expires in 45m' <<<"$L" \
   && ok || bad "A: project reviews line missing: $L"
 [ "$(cat "$T/refresh.calls" 2>/dev/null | wc -l | tr -d ' ')" = 1 ] && ok || bad "A: pause_refresh not called exactly once"
 
@@ -74,7 +74,7 @@ setup
 cache "$(row fleet merges "bad date" operator $((NOW - 3600)) $((NOW + 3600)) | jq -c '.created_at = "not-a-date"')"
 digest
 L=$(line)
-printf '%s\n' "$L" | grep -qxF '  - PAUSED merges · fleet · age unknown · "bad date" · by operator · expires in 1h' \
+grep -qxF '  - PAUSED merges · fleet · age unknown · "bad date" · by operator · expires in 1h' <<<"$L" \
   && ok || bad "G: an unparseable created_at must read 'age unknown': $L"
 grep -qE '[0-9]{3,}d' <<<"$(printf '%s\n' "$L")" && bad "G: an epoch-0 age leaked into the line: $L" || ok
 
@@ -97,7 +97,7 @@ digest
 [ "$(calls)" = 1 ] && ok || bad "S: an env-shape pause must send (calls=$(calls))"
 L=$(line)
 [ "$(printf '%s\n' "$L" | grep -c '^  - PAUSED ')" = 1 ] && ok || bad "S: want one PAUSED line: $L"
-printf '%s\n' "$L" | grep -qxF '  - PAUSED env:review-cap=1 · env (reported only, no row)' \
+grep -qxF '  - PAUSED env:review-cap=1 · env (reported only, no row)' <<<"$L" \
   && ok || bad "S: env line not in the documented format: $L"
 
 # ── T: triage entries AND a pause → both in the one message ─────────────────
@@ -107,8 +107,8 @@ printf '%s alert-triage HANDLED something fixed\n' "$(date -u '+%Y-%m-%d %H:%M:%
 digest
 [ "$(calls)" = 1 ] && ok || bad "T: want one send (calls=$(calls))"
 L=$(line)
-printf '%s\n' "$L" | grep -q '1 fixed silently' && ok || bad "T: triage counts missing: $L"
-printf '%s\n' "$L" | grep -qF '  - PAUSED merges · fleet · 2d 3h' && ok || bad "T: pause line missing: $L"
+grep -q '1 fixed silently' <<<"$L" && ok || bad "T: triage counts missing: $L"
+grep -qF '  - PAUSED merges · fleet · 2d 3h' <<<"$L" && ok || bad "T: pause line missing: $L"
 
 # ── W: --warn-batch is unchanged by a live pause ────────────────────────────
 warn_run() { # warn_run with|without → normalized beat payload on stdout

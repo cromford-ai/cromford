@@ -118,7 +118,7 @@ _gpc_fallback_on() { # rc 1 = the ladder stops at rung 1
 }
 
 _gpc_is_ratelimit() { # _gpc_is_ratelimit <text>; rc 0 = this reads like a cap
-  printf '%s' "${1:-}" | grep -qiE 'API rate limit (already )?exceeded|secondary rate limit|HTTP 403|HTTP 429'
+  grep -qiE 'API rate limit (already )?exceeded|secondary rate limit|HTTP 403|HTTP 429' <<<"${1:-}"
 }
 
 # The first pull URL in a blob — used ONLY on gh's own stdout, which is the URL

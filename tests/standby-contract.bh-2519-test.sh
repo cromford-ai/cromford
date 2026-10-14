@@ -11,9 +11,10 @@
 set -uo pipefail
 DIR=$(readlink -f "$(dirname "$0")/..")
 . "$(dirname "$0")/lib/scratch.sh" || exit 1
+. "$(dirname "$0")/lib/jobs-schema.sh" && jobs_schema_render || exit 1
+"$DIR/bin/lanes-build.sh" --root "$DIR" --write >/dev/null || { echo "FAIL: cannot write catalog/lanes.json"; exit 1; }
 "$DIR/bin/llm-sites-build.sh" --compose --repo "$DIR" >/dev/null || { echo "FAIL: cannot compose catalog/llm-sites.json"; exit 1; }
 SCHEMA="$DIR/worker/jobs/schema.sql"
-INDEX="$DIR/worker/jobs/src/index.js"
 STANDBY_ROUTES="$DIR/worker/jobs/src/routes/hub-standby.js"
 VERIFY_ROUTES="$DIR/worker/jobs/src/routes/hub-standby-verify.js"
 STUBS="$DIR/console-ui/src/screens/hub/StandbyVerify.js"
@@ -53,6 +54,20 @@ check "a: api.js has standbyVerifyRuns() GET" \
 # checked-in catalog/*.json rides along before lanes.json is composed.
 mkdir -p "$T/worker/jobs" "$T/catalog"
 cp -r "$DIR/worker/jobs/src" "$T/worker/jobs/src"
+# TEST-CHANGE (BH-4987): core.js resolves `#schema-sql` through the worker's
+# package.json, and under Node that composes schema.d/ through test/lib/, so
+# the scratch tree carries all three beside src/.
+cp "$DIR/worker/jobs/package.json" "$T/worker/jobs/" || fail "cannot copy the worker package.json (BH-4987)"
+cp -R "$DIR/worker/jobs/schema.d" "$T/worker/jobs/schema.d" || fail "cannot copy worker/jobs/schema.d (BH-4987)"
+mkdir -p "$T/worker/jobs/test/lib" || fail "cannot create the worker test/lib (BH-4987)"
+cp "$DIR/worker/jobs/test/lib/jobs-schema.js" "$DIR/worker/jobs/test/lib/schema-sql.node.js" "$T/worker/jobs/test/lib/" \
+  || fail "cannot copy the Node schema composer (BH-4987)"
+# TEST-CHANGE (BH-4607): index.js imports ROUTES from `#routes`, which under
+# Node is test/lib/routes.node.js reading test/route-table.d/, so the scratch
+# tree carries both.
+cp "$DIR/worker/jobs/test/lib/routes.node.js" "$T/worker/jobs/test/lib/" \
+  && cp -R "$DIR/worker/jobs/test/route-table.d" "$T/worker/jobs/test/route-table.d" \
+  || fail "cannot copy the Node route loader and test/route-table.d (BH-4607)"
 # The staff routes import agent-core/ by a relative path (BH-5559), so the
 # scratch tree carries it beside worker/, as the deployed bundle does.
 cp -R "$DIR/agent-core" "$T/agent-core" || fail "cannot copy agent-core (the worker imports it, BH-5559)"
@@ -71,16 +86,19 @@ out=$(node --input-type=module -e "
 if [ "$out" = ok ]; then pass "b: both route modules export a routes array; index.js loads"
 else fail "b: worker modules: $(printf '%s' "$out" | tail -n 3)"; fi
 
-rl=$(grep -nE '^\s*\.\.\.restoreLab,\s*$' "$INDEX" | cut -d: -f1)
-hs=$(grep -nE '^\s*\.\.\.hubStandby,\s*$' "$INDEX" | cut -d: -f1)
-hv=$(grep -nE '^\s*\.\.\.hubStandbyVerify,\s*$' "$INDEX" | cut -d: -f1)
+# TEST-CHANGE (BH-4607): a family is registered by its route-table.d fragment
+# and ROUTES follows the sorted fragment names, so the order is read there.
+FRAGD="$DIR/worker/jobs/test/route-table.d"
+rl=$(ls "$FRAGD" | grep -nE '^[0-9]{3}-restore-lab\.txt$' | cut -d: -f1)
+hs=$(ls "$FRAGD" | grep -nE '^[0-9]{3}-hub-standby\.txt$' | cut -d: -f1)
+hv=$(ls "$FRAGD" | grep -nE '^[0-9]{3}-hub-standby-verify\.txt$' | cut -d: -f1)
 if [ -n "$rl" ] && [ -n "$hs" ] && [ -n "$hv" ] && [ "$hs" -eq $((rl+1)) ] && [ "$hv" -eq $((rl+2)) ]; then
-  pass "b: index.js spreads ...hubStandby, ...hubStandbyVerify right after ...restoreLab"
-else fail "b: index.js spread order (restoreLab=$rl hubStandby=$hs hubStandbyVerify=$hv)"; fi
-check "b: index.js imports hubStandby from ./routes/hub-standby.js" \
-  "grep -Fq 'import { routes as hubStandby } from \"./routes/hub-standby.js\";' '$INDEX'"
-check "b: index.js imports hubStandbyVerify from ./routes/hub-standby-verify.js" \
-  "grep -Fq 'import { routes as hubStandbyVerify } from \"./routes/hub-standby-verify.js\";' '$INDEX'"
+  pass "b: the hub-standby and hub-standby-verify fragments come right after restore-lab"
+else fail "b: route-table.d fragment order (restoreLab=$rl hubStandby=$hs hubStandbyVerify=$hv)"; fi
+check "b: hub-standby is registered by one route-table.d fragment" \
+  "[ \"\$(ls '$FRAGD'/[0-9][0-9][0-9]-hub-standby.txt 2>/dev/null | wc -l)\" = 1 ]"
+check "b: hub-standby-verify is registered by one route-table.d fragment" \
+  "[ \"\$(ls '$FRAGD'/[0-9][0-9][0-9]-hub-standby-verify.txt 2>/dev/null | wc -l)\" = 1 ]"
 
 # ── c. the new schema block is additive ──
 block=$(awk '/BH-2519: hub standby heartbeat/{on=1} on&&/^$/{exit} on' "$SCHEMA")

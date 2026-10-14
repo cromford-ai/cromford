@@ -48,6 +48,7 @@ import { StaffScreen, StaffAgentScreen, StaffFindingScreen } from './screens/Sta
 import { ControlsScreen } from './screens/Controls.js';
 import { MergeQueueScreen } from './screens/MergeQueue.js';
 import { LeadReviewsScreen } from './screens/LeadReviews.js';
+import { LaneRunsScreen, LaneRunListScreen, LaneRunScreen } from './screens/LaneRuns.js';
 import { ErrorBoundary } from './ui/ErrorBoundary.js';
 
 export const FleetContext = createContext(null);
@@ -86,6 +87,10 @@ export const ROUTES = [
   ['/world', WorldScreen],
   ['/models', ModelsScreen],
   ['/models/:role', ModelRoleScreen],
+  ['/lane-runs', LaneRunsScreen],
+  ['/lane-runs/lane/:lane', LaneRunListScreen],
+  ['/lane-runs/machine/:machine', LaneRunListScreen],
+  ['/lane-runs/run/:id', LaneRunScreen],
   ['/hub', HubScreen],
   // The staff roster (BH-5567). /staff/finding/:id has three segments and
   // /staff/:agent two, so matchRoute never confuses them.
@@ -157,6 +162,9 @@ export const NAV = [
   { to: '/ci', label: 'CI', icon: IconAlerts, match: (p) => p === '/ci' },
   // UTIL is each project's build utilization and why it is idle (BH-4011); FLEET glyph.
   { to: '/utilization', label: 'UTIL', icon: IconFleet, match: (p) => p === '/utilization' },
+  // LANES is where each lane's runs ran and how long they queued (BH-6127):
+  // per lane, per machine, per run. It shares the FLEET glyph.
+  { to: '/lane-runs', label: 'LANES', icon: IconFleet, match: (p) => p === '/lane-runs' || p.startsWith('/lane-runs/') },
   // HUB is hub recovery (BH-1909): who holds the lease, the backup stamps,
   // promote and the restore lab. A stub until #1945/#1946; it shares the FLEET glyph.
   { to: '/hub', label: 'HUB', icon: IconFleet, match: (p) => p === '/hub' },

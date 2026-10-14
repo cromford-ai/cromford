@@ -1,6 +1,7 @@
 // Exception reporting to Sentry for a harness worker (BH-5618).
 //
-// tests/worker-sentry.bh-5618-test.sh checks it.
+// The Cloud worker's copy of this file moved to example-org/cromford-web
+// (BH-5239), so this copy has no twin in this repo.
 //
 // OFF UNLESS CONFIGURED. Without the HARNESS_SENTRY_DSN binding the handler
 // runs exactly as written and the SDK is never imported. The import is lazy on
@@ -20,7 +21,8 @@
 //     (fail-open: D1 is often the thing that is failing);
 //   - cap: at most HARNESS_SENTRY_MAX_PER_FP_HOUR events (default 6) per
 //     worker + exception type + message head per UTC hour, per isolate;
-//   - tags lane/box/project/harness_sha, then scrubEvent.
+//   - tags lane/box/project/harness_sha (and d1_attempts on a D1 overload
+//     give-up, BH-6690), then scrubEvent.
 
 let sdk;
 let sdkFailed = false;
@@ -83,7 +85,7 @@ function overCap(event, worker, env) {
   return false;
 }
 
-async function gate(event, worker, pauseFlags) {
+async function gate(event, worker, pauseFlags, hint) {
   const env = currentEnv;
   if (pauseFlags && (await paused(env))) return null;
   if (overCap(event, worker, env)) return null;
@@ -94,6 +96,9 @@ async function gate(event, worker, pauseFlags) {
     project: "-",
     harness_sha: env.HARNESS_SHA || "unknown",
   };
+  // BH-6690: lib/d1-retry.js marks a D1 overload it gave up on.
+  const ex = hint && hint.originalException;
+  if (ex && typeof ex.d1Attempts === "number") event.tags.d1_attempts = String(ex.d1Attempts);
   return scrubEvent(event);
 }
 
@@ -104,7 +109,7 @@ export function sentryOptions(env, worker, pauseFlags = false) {
     maxRequestBodySize: "none",
     sampleRate: 1.0,
     tracesSampleRate: 0,
-    beforeSend: (event) => gate(event, worker, pauseFlags),
+    beforeSend: (event, hint) => gate(event, worker, pauseFlags, hint),
   };
 }
 
@@ -143,7 +148,7 @@ export function withHarnessSentry(handler, { worker, pauseFlags = false }) {
   return handler;
 }
 
-// For a worker that turns a throw into a response itself (its own
+// For a worker that turns a throw into a response itself (harness-cloud's
 // catch), so withSentry never sees it. Never throws.
 export async function captureException(e, env) {
   if (!env || !env.HARNESS_SENTRY_DSN) return;

@@ -4,6 +4,7 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import worker from '../src/index.js';
 import { ensureColumns } from '../src/lib/core.js';
+import { jobsSchemaSql } from './lib/jobs-schema.js';
 
 // BH-2489: the pre-call spend gate asks GET /api/metrics/llm-spend?lane=… once
 // per registered stage on every capped model call, and that query was one
@@ -17,7 +18,7 @@ import { ensureColumns } from '../src/lib/core.js';
 // probed from this suite.
 
 const SECRET = 'test-secret';
-const SCHEMA = readFileSync(fileURLToPath(new URL('../schema.sql', import.meta.url)), 'utf8');
+const SCHEMA = jobsSchemaSql();
 let DatabaseSync = null;
 try { ({ DatabaseSync } = await import('node:sqlite')); } catch { DatabaseSync = null; }
 

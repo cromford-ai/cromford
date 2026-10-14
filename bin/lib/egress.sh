@@ -83,7 +83,7 @@ eg_hosts() {
   for e in $v; do
     e="${e%.}"
     case "$e" in *.:*) e="${e%%.:*}:${e##*:}" ;; esac
-    if ! printf '%s' "$e" | grep -Eq "$EG_ENTRY_RE"; then n=0; list=""; break; fi
+    if ! grep -Eq "$EG_ENTRY_RE" <<<"$e"; then n=0; list=""; break; fi
     list="${list:+$list }$e"; n=$((n + 1))
   done
   # One bad entry voids the row: a silently shorter list would read as configured.

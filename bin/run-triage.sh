@@ -317,6 +317,11 @@ PROMPT_TEXT="$(cat "$PROMPT_FILE")"
 FILE-OVERLAP GUARD (deterministic — run it, do not reason about it). Immediately before you launch a build for a ticket, run \`$HARNESS/bin/overlap-guard.sh $PROJECT <KEY>\`. It answers LAUNCH (go — every error answers LAUNCH too, except an unreadable open-PR list with no cached copy, which DEFERs as \`DEFER <KEY> gh unknown …\`) or DEFER, and a DEFER names the sibling build or open PR whose files collide. On DEFER do NOT launch that ticket this tick: leave its queue line in place, and say in your output which key deferred and on which files. The next tick re-offers it — this is BUILD_DEFERRED semantics, not a queue and not a wait."
 # <<< overlap guard
 rt_pause_builds  # BH-1672: a live builds pause appends a no-launch directive before SHARD_SOP (bin/lib/rt/gate.sh)
+rt_dispatch_mode  # BH-6350: hotfix-only mode — one log line + launch directive (bin/lib/rt/gate.sh)
+# BH-6159: the saved reasons of this project's reopened tickets (bin/lib/reopen-reason.sh); empty = prompt unchanged
+[ -r "$HARNESS/bin/lib/reopen-reason.sh" ] && . "$HARNESS/bin/lib/reopen-reason.sh" 2>/dev/null && rr_on && RR_NOTE=$(rr_triage_note "$PROJECT" 2>/dev/null) && [ -n "$RR_NOTE" ] && PROMPT_TEXT="$PROMPT_TEXT
+
+$RR_NOTE"
 # The SOP as written, kept aside before the arms below wrap it in this tick's
 # scope. A triage shard carries its OWN one-ticket scope and then the SOP; handed
 # the wrapped copy it would also be handed the whole tick's reading list, which

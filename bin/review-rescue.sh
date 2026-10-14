@@ -56,7 +56,21 @@
 #    rescues it like any relayed dir. With no PR and no pushed branch it gets one
 #    RESCUE_OUTCOME: no-branch line and one ALERTS line, never a silent retire.
 #
-# A FOURTH SHAPE, LEDGER-ONLY (BH-858) — `verdict_backfill` below, which runs
+# D. HUMAN STEP DONE (BH-6536) — RESULT says REVIEW_BLOCKED and review.md DOES
+#    have a verdict, but every blocking finding of its final round is a step a
+#    person has to take (bin/lib/needs-human/step-done.sh nh_sd_human_only).
+#    TK-232 (project-6-os, 2026-10-13) blocked only on "migration 0020 not
+#    applied in prod"; the person applied it and posted HUMAN-STEP-DONE, and
+#    nothing re-reviewed the branch. Such a record is offered on its own per-tick
+#    cap (RESCUE_HUMAN_STEP_PER_TICK). With no person's HUMAN-STEP-DONE: comment
+#    after the RESULT it only writes the ticket_stage row human-step-waiting: no
+#    attempt, no model call. With one, the pushed head is re-reviewed with the
+#    person's evidence in the prompt; APPROVE opens the PR, BLOCK opens it too
+#    and posts the round as a signed review, which bin/blocked-resolver.sh reads
+#    as review-changes-requested (a fix round). It never enqueues a build.
+#    Kill switch: RESCUE_HUMAN_STEP=0 (the walk is then exactly the A/B/C one).
+#
+# A FIFTH SHAPE, LEDGER-ONLY (BH-858) — `verdict_backfill` below, which runs
 # before the candidate walk and shares nothing with it. A record whose terminal
 # is PR_CREATE_FAILED and whose review.md ends in VERDICT: APPROVE holds a real
 # judgement that was never written down (until BH-858 the verdict row needed a PR
@@ -124,6 +138,11 @@ REPOS="${REPOS_ROOT:-/root/repos}"
 # written, nothing is claimed.
 # shellcheck source=bin/lib/handoff-watch.sh
 [ -r "$H/bin/lib/handoff-watch.sh" ] && . "$H/bin/lib/handoff-watch.sh"
+# BH-6536: the human-step decisions and the ticket_stage writer. Missing, shape
+# D is off and the walk is the A/B/C one.
+# shellcheck source=bin/lib/needs-human.sh
+. "$(dirname "${BASH_SOURCE[0]}")/lib/needs-human.sh" 2>/dev/null || . "$H/bin/lib/needs-human.sh" 2>/dev/null || true
+command -v nh_sd_human_only >/dev/null 2>&1 || RESCUE_HUMAN_STEP=0
 # BH-1651: the ticket-state read is REST. gh-rest.sh sources gh-rest-var.sh.
 for _P in "$(dirname "$0")/lib/gh-rest.sh" "$H/bin/lib/gh-rest.sh"; do
   # shellcheck source=bin/lib/gh-rest.sh
@@ -142,6 +161,13 @@ LOG="$H/logs/review-rescue.log"
 # sanitizer only answer when lane-gate.sh or the registry could not run.
 RESCUE_PER_TICK="${RESCUE_PER_TICK:-}"
 case "$RESCUE_PER_TICK" in ''|*[!0-9]*) RESCUE_PER_TICK=3 ;; esac
+# BH-6536 shape D. Registry knobs too; 1 and 5 only answer when the registry
+# could not run. Its own cap, so a record waiting on a person never takes an A/B slot.
+RESCUE_HUMAN_STEP="${RESCUE_HUMAN_STEP:-}"
+case "$RESCUE_HUMAN_STEP" in ''|*[!01]*) RESCUE_HUMAN_STEP=1 ;; esac
+RESCUE_HUMAN_STEP_PER_TICK="${RESCUE_HUMAN_STEP_PER_TICK:-}"
+case "$RESCUE_HUMAN_STEP_PER_TICK" in ''|*[!0-9]*|0) RESCUE_HUMAN_STEP_PER_TICK=5 ;; esac
+export RESCUE_HUMAN_STEP
 # How many candidates may be in flight at once. A rescue is mostly waiting — on
 # gh, on a git fetch, on a Fable review — so the cap is about the account and the
 # box, not about ordering: they do not touch each other's keys (the per-key flock
@@ -179,12 +205,35 @@ export PATH="$PATH:/usr/local/bin"
 slug_for() { awk -v p="$1" '$1==p {print $2}' "$H/fleet.conf"; }
 is_tamper_block() { case "$1" in "REVIEW_BLOCKED test-tamper"*) return 0 ;; *) return 1 ;; esac; }
 
+# rescue_post_block <record> <slug> <pr-number> <reviewed-sha> — BH-6536 shape
+# D's BLOCK. The appended round (the text after the last `=== ` header, its own
+# VERDICT line dropped), then `VERDICT: REQUEST_CHANGES`, `---` and the review
+# lane's signed footer on the 40-hex head: the shape bin/blocked-resolver.sh's
+# br_review_harness_pick + br_review_verdict read as review-changes-requested.
+# Posted as a COMMENT review, else as a PR comment. rc 0 when either post
+# answered 0; rc 1 when neither did (nothing is claimed then).
+rescue_post_block() {
+  local cand="$1" slug="$2" num="$3" sha="$4" bf rc=1
+  case "$num" in ''|*[!0-9]*) return 1 ;; esac
+  bf=$(mktemp "${TMPDIR:-/tmp}/rescue-review-XXXX" 2>/dev/null) || return 1
+  { _nh_final "$cand/review.md" | grep -vE '^[[:space:]]*VERDICT:'
+    printf '\nVERDICT: REQUEST_CHANGES\n\n---\n'
+    printf '_Automated harness review (Fable) of %s. Human-step re-review by bin/review-rescue.sh; the harness fix round consumes this verdict._\n' "$sha"
+  } > "$bf"
+  if gh pr review "$num" -R "$slug" --comment --body-file "$bf" >>"$cand/rescue-lane.log" 2>&1; then rc=0
+  elif gh pr comment "$num" -R "$slug" --body-file "$bf" >>"$cand/rescue-lane.log" 2>&1; then rc=0; fi
+  rm -f "$bf"
+  return "$rc"
+}
+
 # --- one candidate, start to finish -------------------------------------------
 # Returns 0 always: a candidate that cannot be rescued must not stop the tick.
 rescue_one() {
-  local CAND="$1"
+  local CAND="$1" SD=0
   local BN CORE PROJECT KEY REST SLUG ATT FIRST TAMPER WT MB RC V T RMODEL
   local PRNUM BRANCH PRURL RESCAN RESCAN_NOTE TITLE BODY REUSED PRE PRBF TJOB
+  local SD_ACT="" SD_EV="" SD_WHO="" SD_AT="" SD_SECTION="" REV_SHA="" POSTRC=1
+  [ "${2:-}" = human-step ] && SD=1
   BN=$(basename "$CAND")
   FIRST=$(head -1 "$CAND/RESULT" 2>/dev/null)
   TAMPER=0; is_tamper_block "$FIRST" && TAMPER=1
@@ -263,6 +312,45 @@ rescue_one() {
       touch "$CAND/.review-rescued"; return 0
     fi ;;
   esac
+  # >>> human-step evidence (BH-6536)
+  # Shape D spends nothing until a person answered: the thread is read (one REST
+  # read, no attempt), and only a person's HUMAN-STEP-DONE: after the RESULT
+  # lets the shared path below buy a review.
+  if [ "$SD" = 1 ]; then
+    local SD_THREAD SD_SINCE SD_RC
+    case "$ISSUE" in ''|*[!0-9]*)
+      # The walk does not offer these (sd_issues_board); stamp the check
+      # anyway, so a record that gets here never keeps sort key 0.
+      : > "$CAND/.human-step-checked"
+      say "$BN: human-step re-review needs a GitHub-issues board (board prefix '-') — not offered here"
+      return 0 ;;
+    esac
+    : > "$CAND/.human-step-checked"
+    SD_ACT=$(nh_sd_human_only "$CAND/review.md" 2>/dev/null | cut -f2-)
+    SD_SINCE=$(date -u -d "@$(stat -c %Y "$CAND/RESULT" 2>/dev/null || echo 0)" '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null)
+    SD_RC=0; SD_THREAD=$(_nh_rel_thread "$SLUG" "$ISSUE" 2>/dev/null) || SD_RC=2
+    [ "$SD_RC" = 0 ] && { SD_EV=$(nh_sd_done_after "$SD_THREAD" "$SD_SINCE"); SD_RC=$?; }
+    case "$SD_RC" in
+      0) ;;
+      1)
+        nh_sd_stage_put "$PROJECT" "$ISSUE" "$KEY" human-step-waiting           "review blocked only on a human step: ${SD_ACT:-see review.md}; waits for a person's HUMAN-STEP-DONE: comment"
+        if [ ! -e "$CAND/.human-step-waiting-said" ]; then
+          say "$BN: review blocked only on a human step (${SD_ACT:-see review.md}); no person's HUMAN-STEP-DONE: on #$ISSUE after $SD_SINCE — waiting, no attempt spent"
+          : > "$CAND/.human-step-waiting-said"
+        fi
+        rescue_reset; return 0 ;;
+      *)
+        say "$BN: human-step thread unreadable — no attempt spent"
+        rescue_reset; return 0 ;;
+    esac
+    SD_WHO=$(sed -n 's/^author: \(@[^ ]*\) at .*/\1/p' <<<"$SD_EV" | head -1)
+    SD_AT=$(sed -n 's/^author: @[^ ]* at //p' <<<"$SD_EV" | head -1)
+    nh_sd_stage_put "$PROJECT" "$ISSUE" "$KEY" human-step-done "$SD_WHO posted HUMAN-STEP-DONE at $SD_AT; re-reviewing the built branch"
+    say "$BN: $SD_WHO posted HUMAN-STEP-DONE at $SD_AT — re-reviewing the built branch"
+    SD_SECTION=$(printf '\n\n## Human step evidence\n\nFrom %s:\n\n%s' "$(sed -n '1s/^comment: //p' <<<"$SD_EV")" \
+      "$(sed '1d; s/^/> /; s/^> $/>/' <<<"$SD_EV")")
+  fi
+  # <<< human-step evidence
   # THE REVIEWER'S MODEL IS A ROUTE (BH-1510.1): REVIEW_MODEL in env, else this
   # project's rescue.review row. Asked BEFORE an attempt is spent: with no route
   # nothing is bought, the resolver has written the ALERTS line naming the role,
@@ -306,6 +394,8 @@ rescue_one() {
       echo "RESCUE_OUTCOME: no-branch $(STAMP) — no open PR and no pushed branch for $KEY; handed to bin/blocked-resolver.sh" >> "$CAND/RESULT"
       alert "$BN: materialized from the ledger (box reaped) but no open PR or pushed branch exists — nothing to re-review; retired to bin/blocked-resolver.sh for a fresh rebuild (job ${MJOB:-unknown})"
     fi
+    [ "$SD" = 1 ] && nh_sd_stage_put "$PROJECT" "$ISSUE" "$KEY" handed-to-resolver \
+      "human step done, but no open PR or pushed branch for $KEY; bin/blocked-resolver.sh rebuilds the ticket"
     mc_git_auth_clear
     rescue_reset
     touch "$CAND/.review-rescued"; return 0
@@ -383,6 +473,8 @@ rescue_one() {
       if [ "${CONFLICTED:-0}" -gt 0 ]; then
         : > "$CAND/.conflicts-with-main"
         say "$BN: conflicts with main on $BRANCH — no PR opened, left for the resolver"
+        [ "$SD" = 1 ] && nh_sd_stage_put "$PROJECT" "$ISSUE" "$KEY" handed-to-resolver \
+          "human step done, but $BRANCH conflicts with main; bin/blocked-resolver.sh owns it"
       else
         say "$BN: merge origin/main failed without conflicts (see $CLOG) — left un-rescued this tick"
       fi
@@ -407,9 +499,11 @@ rescue_one() {
     [ -n "$TITLE" ] || TITLE="rescued build $BN"
     BODY=$(printf 'Rescued by `bin/review-rescue.sh` on %s: this build %s, so its branch was pushed and no pull request was ever opened.\n\nPlan: `%s`\n\n%s\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n' \
       "$(STAMP)" \
-      "$([ "$TAMPER" -eq 1 ] && echo 'was blocked by a test-tamper false positive (retitled test cases counted as deletions)' || echo 'died mid-review')" \
+      "$(if [ "$SD" = 1 ]; then echo "was blocked only on a human step (${SD_ACT:-see review.md}); $SD_WHO posted HUMAN-STEP-DONE at $SD_AT"
+         elif [ "$TAMPER" -eq 1 ]; then echo 'was blocked by a test-tamper false positive (retitled test cases counted as deletions)'
+         else echo 'died mid-review'; fi)" \
       "$CAND/plan.md" \
-      "${RESCAN_NOTE:-No test-tamper re-scan was needed for this build.}")
+      "${RESCAN_NOTE:-No test-tamper re-scan was needed for this build.}$SD_SECTION")
     # >>> pr trailers (BH-3987)
     # THE PR SAYS WHO BUILT IT: the build's own job (its pr-body.md trailer, else
     # its job.json), never this lane's exported JOB_ID. The body goes through a
@@ -454,6 +548,22 @@ rescue_one() {
     # already written down.
     REUSED=1
     say "$BN: reusing the standing $V ($T) from the original round — the gate blocked after the review, not before it"
+  elif [ "$SD" = 1 ]; then
+    # The re-review is APPENDED under its own header, so the rounds above stay
+    # the record and every final-round reader (_nh_final, verdict_parse -L)
+    # reads this one. The header names the head the review runs on.
+    REV_SHA=$(git -C "$WT" rev-parse HEAD 2>/dev/null)
+    printf '\n=== human-step re-review %s %s ===\n' "${REV_SHA:0:8}" "$(STAMP)" >> "$CAND/review.md"
+    PROMPT="Adversarially review the diff of origin/main...HEAD in this repo for ticket $KEY (branch $BRANCH${PRNUM:+, PR #$PRNUM}), against the plan at $CAND/plan.md if present and the iron laws in ~/.claude/CLAUDE.md. Rules: /root/harness/prompts/build-discipline.md — cite rule ids (D1-D27) in findings. The original review BLOCKed only on this human step: ${SD_ACT:-see $CAND/review.md}. A person ran it; their evidence is below. Do not re-block on that finding. Judge the rest of the diff as a full adversarial review: correctness, edge cases, test honesty (do new tests fail if the feature breaks?), the touched-file UI iron laws, and security basics (authz on changed routes, injection, secrets). APPEND your complete review to $CAND/review.md below the line '=== human-step re-review ${REV_SHA:0:8}' (already written); do not edit the rounds above it. Second-to-last line exactly 'TIER: 1' or 'TIER: 2'. Last line exactly VERDICT: APPROVE or VERDICT: BLOCK."$'\n\n'"The person's evidence:"$'\n'"$SD_EV"
+    PRE=$(cksum < "$CAND/review.md" 2>/dev/null)
+    ( cd "$WT" && AGENT_CALL_ROLE=rescue.review timeout -k 60 2400 "$H/bin/agent-call.sh" review "$PROJECT" "$RMODEL" 2100 "$CAND/rescue-review-run.txt" "$PROMPT" ) >>"$CLOG" 2>&1
+    [ "$PRE" != "$(cksum < "$CAND/review.md" 2>/dev/null)" ] && rm -f "$CAND/.findings-general"
+    # The appended round only: a verdict above the header is the original BLOCK.
+    V=$(_nh_final "$CAND/review.md" | verdict_parse -L 2>/dev/null) && V="VERDICT: $V" || V=""
+    T=$(_nh_final "$CAND/review.md" | grep -oE "TIER: [12]" | tail -1)
+    # A BLOCK is posted on the PR now, while this repo's token is still the
+    # one in use: the resolver's review source reads it as a fix round.
+    [ "$V" = "VERDICT: BLOCK" ] && { rescue_post_block "$CAND" "$SLUG" "${PRURL##*/}" "$REV_SHA"; POSTRC=$?; }
   else
     PROMPT="Adversarially review the diff of origin/main...HEAD in this repo for ticket $KEY (branch $BRANCH${PRNUM:+, PR #$PRNUM}), against the plan at $CAND/plan.md if present and the iron laws in ~/.claude/CLAUDE.md. Rules: /root/harness/prompts/build-discipline.md — cite rule ids (D1-D27) in findings. A prior review round DIED MID-RUN leaving a draft in $CAND/review.md — supersede it: REWRITE $CAND/review.md as the complete review. Judge correctness, edge cases, test honesty (do new tests fail if the feature breaks?), the touched-file UI iron laws, and security basics (authz on changed routes, injection, secrets).${RESCAN_NOTE} Second-to-last line exactly 'TIER: 1' or 'TIER: 2'. Last line exactly VERDICT: APPROVE or VERDICT: BLOCK."
     PRE=$(cksum < "$CAND/review.md" 2>/dev/null)
@@ -471,30 +581,35 @@ rescue_one() {
   rescue_reset
 
   # --- act on the verdict -----------------------------------------------------
+  # ADDITIVE, NOT WHOLESALE (BH-1301). This used to be three echo lines into
+  # `> "$CAND/RESULT"`, which threw away everything else the file held —
+  # `TICKET_ID:`, `SOURCE:`, `JOB_ID:`, `BUILT_AS:`, `BUILD_DIR:`. The
+  # candidate walk is `find $H/builds -maxdepth 2 -name RESULT`, so relayed
+  # and ledger-staged dirs are candidates too, and those lines are how
+  # bin/lib/rt/staging.sh tells one build of a ticket from another: a
+  # marker-less dir made its dedup blind and the next result for that ticket
+  # was consumed instead of staged — a close-out nothing retries.
+  #
+  # So: the new header, then every old line except the one it replaces
+  # (line 1) and the keys it rewrites. Written to .tmp and moved into place,
+  # because reading and truncating one file in a single pipeline empties it.
+  rescue_result_rewrite() { # rescue_result_rewrite <RESCUED: line>
+    { echo "PR_CREATED ${PRURL}"; [ -n "$T" ] && echo "$T"
+      echo "$1"
+      # An old TIER: line is dropped only when this rescue HAS a tier of its
+      # own; with no verdict tier to write, the original's is the record. An
+      # unreadable old RESULT degrades to the three-line file written above.
+      if [ -n "$T" ]; then sed -e 1d -e '/^RESCUED: /d' -e '/^TIER: /d' "$CAND/RESULT" 2>/dev/null
+      else                sed -e 1d -e '/^RESCUED: /d' "$CAND/RESULT" 2>/dev/null; fi
+    } > "$CAND/RESULT.tmp" && mv -f "$CAND/RESULT.tmp" "$CAND/RESULT"
+  }
   case "$V" in
     "VERDICT: APPROVE")
-      # ADDITIVE, NOT WHOLESALE (BH-1301). This used to be three echo lines into
-      # `> "$CAND/RESULT"`, which threw away everything else the file held —
-      # `TICKET_ID:`, `SOURCE:`, `JOB_ID:`, `BUILT_AS:`, `BUILD_DIR:`. The
-      # candidate walk is `find $H/builds -maxdepth 2 -name RESULT`, so relayed
-      # and ledger-staged dirs are candidates too, and those lines are how
-      # bin/lib/rt/staging.sh tells one build of a ticket from another: a
-      # marker-less dir made its dedup blind and the next result for that ticket
-      # was consumed instead of staged — a close-out nothing retries.
-      #
-      # So: the new header, then every old line except the one it replaces
-      # (line 1) and the keys it rewrites. Written to .tmp and moved into place,
-      # because reading and truncating one file in a single pipeline empties it.
-      { echo "PR_CREATED ${PRURL}"; [ -n "$T" ] && echo "$T"
-        if [ "$REUSED" -eq 1 ]; then echo "RESCUED: test-tamper block re-scanned clean $(STAMP); the original APPROVE stands and the PR was opened"
-        else echo "RESCUED: review re-run $(STAMP) after died-mid-review orphan"; fi
-        # An old TIER: line is dropped only when this rescue HAS a tier of its
-        # own; with no verdict tier to write, the original's is the record. An
-        # unreadable old RESULT degrades to the three-line file written above.
-        if [ -n "$T" ]; then sed -e 1d -e '/^RESCUED: /d' -e '/^TIER: /d' "$CAND/RESULT" 2>/dev/null
-        else                sed -e 1d -e '/^RESCUED: /d' "$CAND/RESULT" 2>/dev/null; fi
-      } > "$CAND/RESULT.tmp" && mv -f "$CAND/RESULT.tmp" "$CAND/RESULT"
+      if [ "$REUSED" -eq 1 ]; then rescue_result_rewrite "RESCUED: test-tamper block re-scanned clean $(STAMP); the original APPROVE stands and the PR was opened"
+      elif [ "$SD" = 1 ]; then rescue_result_rewrite "RESCUED: human-step re-review $(STAMP) after HUMAN-STEP-DONE by $SD_WHO"
+      else rescue_result_rewrite "RESCUED: review re-run $(STAMP) after died-mid-review orphan"; fi
       touch "$CAND/.review-rescued"
+      [ "$SD" = 1 ] && nh_sd_stage_put "$PROJECT" "$ISSUE" "$KEY" rereview-approve "re-review APPROVE; PR ${PRURL} opened for the merge lanes"
       # A self-heal, not a page (BH-4724): info plus a self_heal ledger row, the
       # text the alert wrapper would build. No lib on this box -> the raw info line.
       local SH_MSG="[review-rescue] [$PROJECT/$KEY] $BN: rescued review = APPROVE ($T) — ${PRURL:-branch $BRANCH} now flows through the normal merge lanes."
@@ -503,6 +618,25 @@ rescue_one() {
       say "$BN: APPROVE ($T) — RESULT upgraded to PR_CREATED" ;;
     "VERDICT: BLOCK")
       touch "$CAND/.review-rescued"
+      # >>> human-step block (BH-6536)
+      # Posted (rc 0): the PR exists and carries a signed REQUEST_CHANGES on the
+      # reviewed head, which br_from_reviews turns into a fix round, so the
+      # record leaves REVIEW_BLOCKED. Not posted: nothing is claimed, the record
+      # stays REVIEW_BLOCKED for the resolver, and one ALERTS line says so.
+      if [ "$SD" = 1 ]; then
+        if [ "$POSTRC" = 0 ]; then
+          rescue_result_rewrite "RESCUED: human-step re-review $(STAMP) = BLOCK; findings posted on the PR for the fix round"
+          nh_sd_stage_put "$PROJECT" "$ISSUE" "$KEY" rereview-block \
+            "re-review BLOCK on ${REV_SHA:0:8}; findings posted on ${PRURL}; the resolver's fix round owns it"
+          say "$BN: human-step re-review = BLOCK ($T) — findings posted on $PRURL; RESULT is PR_CREATED and bin/blocked-resolver.sh's review source runs the fix round"
+        else
+          alert "$BN: human-step re-review = BLOCK but the review could not be posted on $PRURL — the record stays REVIEW_BLOCKED for bin/blocked-resolver.sh"
+          nh_sd_stage_put "$PROJECT" "$ISSUE" "$KEY" handed-to-resolver \
+            "re-review BLOCK, but the review could not be posted on ${PRURL}; the record stays REVIEW_BLOCKED for bin/blocked-resolver.sh"
+        fi
+        return 0
+      fi
+      # <<< human-step block
       # SAY WHAT HAPPENS NEXT, NOT WHAT WE WISH HAPPENED (BH-5125). This line
       # used to promise "an agent fix round". br_from_builds offers a plain
       # REVIEW_BLOCKED record as rescue-giving-up, which br_action sends to a
@@ -519,7 +653,12 @@ rescue_one() {
         && bhw_claim "$PROJECT" "$KEY" "${PRURL:--}" review-rescue "$nb" "rescued review = BLOCK; rescue-giving-up from $at"
       say "$BN: BLOCK — fix round needed" ;;
     *)
-      say "$BN: attempt $ATT produced no VERDICT (killed at deadline or died again)" ;;
+      say "$BN: attempt $ATT produced no VERDICT (killed at deadline or died again)"
+      # The empty round stays under its header; nh_sd_human_only reads the round
+      # above it, so the record is shape D again next tick (attempt 2, then the
+      # walk's GIVING UP path writes rereview-gave-up).
+      [ "$SD" = 1 ] && nh_sd_stage_put "$PROJECT" "$ISSUE" "$KEY" human-step-done \
+        "$SD_WHO posted HUMAN-STEP-DONE at $SD_AT; re-review attempt $ATT produced no verdict; the rescue lane retries next tick (2 attempts, then bin/blocked-resolver.sh)" ;;
   esac
   return 0
 }
@@ -794,9 +933,43 @@ ledger_materialize() {
 ledger_materialize
 
 # --- pick the oldest candidates -----------------------------------------------
-CANDS=()
+# sd_rec_ids <record> — "<project> <key> <issue>" for a record, the parse
+# rescue_one makes; nothing when the registry does not know the project.
+sd_rec_ids() {
+  local core p rest k
+  core=$(basename "$1"); core="${core#pool-}"
+  p=$("$H/bin/project-of.sh" --prefix "$core" 2>/dev/null) || return 1
+  [ -n "$p" ] || return 1
+  rest="${core#"$p"-}"; k="${rest%-*}"
+  printf '%s %s %s\n' "$p" "$k" "${k##*-}"
+}
+# sd_human_block <record> — rc 0 when review.md is a BLOCK whose findings are
+# human steps only. A no is remembered in .human-step-none and reused while it
+# is newer than review.md, so an old code-BLOCK record costs one stat per tick,
+# not a verdict_parse and an nh_sd_human_only fork per review line (lead review
+# lr-6621-e59f79a9aa94). An appended review round makes review.md newer, and
+# the record is parsed again.
+sd_human_block() {
+  local d="$1"
+  [ -f "$d/review.md" ] || return 1
+  [ -f "$d/.human-step-none" ] && [ "$d/.human-step-none" -nt "$d/review.md" ] && return 1
+  if [ "$(verdict_parse -L "$d/review.md" 2>/dev/null)" = BLOCK ] \
+     && nh_sd_human_only "$d/review.md" >/dev/null 2>&1; then
+    return 0
+  fi
+  : > "$d/.human-step-none"
+  return 1
+}
+# sd_issues_board <project> — rc 0 when the project's tickets are GitHub issues
+# (board prefix "-" in fleet.conf). Shape D reads a GitHub thread; an in-app
+# board record is never offered, so it never takes a per-tick slot.
+sd_issues_board() {
+  [ "$(awk -v p="$1" '$1==p {print $4}' "$H/fleet.conf" 2>/dev/null | head -1)" = "-" ]
+}
+CANDS=(); SD_ALL=()
 while read -r R; do
-  [ "${#CANDS[@]}" -lt "$RESCUE_PER_TICK" ] || break
+  # Shape D has its own list; with it off, the walk stops where it always did.
+  [ "${#CANDS[@]}" -lt "$RESCUE_PER_TICK" ] || [ "$RESCUE_HUMAN_STEP" = 1 ] || break
   D=$(dirname "$R")
   # BH-4437: a ledger pass's half-built tmp record is never a candidate.
   case "$D" in */.pool-*.tmp.*) continue ;; esac
@@ -805,8 +978,42 @@ while read -r R; do
   fi
   FIRST=$(head -1 "$R" 2>/dev/null)
   grep -q "REVIEW_BLOCKED" <<<"$FIRST" || continue
+  # >>> shape D candidates (BH-6536)
+  # A verdict-bearing BLOCK whose final round is a human step only. It is
+  # collected whole here and rotated below, so a record that waits on a person
+  # for days never holds a slot another one needs. The marker stats come first:
+  # most old records carry one, and every path below skips those two anyway.
+  [ -f "$D/.review-rescued" ] && continue
+  [ -f "$D/.blocked-resolver-superseded" ] && continue
+  if [ "$RESCUE_HUMAN_STEP" = 1 ] && [ ! -f "$D/.blocked-resolver-abandoned" ] \
+     && ! is_tamper_block "$FIRST" \
+     && sd_human_block "$D"; then
+    # A newer build of the same ticket is the one a done comment answers.
+    read -r SDP SDK SDN <<<"$(sd_rec_ids "$D")"
+    # An in-app board has no GitHub thread to read: not offered (the record
+    # is verdict-bearing, so the A/B/C path below skips it as before).
+    [ -n "${SDP:-}" ] && ! sd_issues_board "$SDP" && continue
+    if [ -n "${SDK:-}" ]; then
+      SDNEW=""
+      for O in "$H"/builds/"$SDP-$SDK"-*/RESULT "$H"/builds/pool-"$SDP-$SDK"-*/RESULT; do
+        [ -f "$O" ] && [ "$O" != "$R" ] && [ "$O" -nt "$R" ] && { SDNEW="$O"; break; }
+      done
+      [ -z "$SDNEW" ] || continue
+    fi
+    A=$(cat "$D/.rescue-attempts" 2>/dev/null || echo 0)
+    if [ "$A" -ge 2 ]; then
+      HARNESS="$H" "$H/bin/alert-line.sh" "[review-rescue] GIVING UP on $(basename "$D") after 2 failed rescue attempts — retired from this lane and handed to bin/blocked-resolver.sh, which rebuilds the ticket fresh against current main (3 tries, then one ABANDONED outcome record). Nobody is waiting on a person."
+      [ -n "${SDK:-}" ] && nh_sd_stage_put "$SDP" "$SDN" "$SDK" rereview-gave-up \
+        "re-review produced no verdict twice; bin/blocked-resolver.sh rebuilds after its floor"
+      touch "$D/.review-rescued"; continue
+    fi
+    SD_ALL+=("$D"); continue
+  fi
+  # <<< shape D candidates
+  [ "${#CANDS[@]}" -lt "$RESCUE_PER_TICK" ] || continue
   # A verdict normally means this build was already judged and there is nothing
-  # to re-enter. The ONE exception is a test-tamper block: the gate runs BEFORE
+  # to re-enter. Shape D above takes the human-step-only BLOCK (BH-6536); the
+  # other exception is a test-tamper block: the gate runs BEFORE
   # the review on a fresh build and AFTER it on a resumed one, so four of the
   # 2026-09-13 strandees held `VERDICT: APPROVE` and a REVIEW_BLOCKED terminal at
   # the same time. Skipping them is what left them waiting for a PR forever.
@@ -829,7 +1036,15 @@ while read -r R; do
   fi
   CANDS+=("$D")
 done < <(find "$H/builds" -maxdepth 2 -name RESULT -mmin +90 2>/dev/null | xargs -r ls -tr 2>/dev/null)
-[ "${#CANDS[@]}" -gt 0 ] || exit 0
+# Shape D rotates: the record checked longest ago (.human-step-checked, touched
+# on every thread read) goes first, oldest RESULT first among the unchecked.
+SD_CANDS=()
+if [ "${#SD_ALL[@]}" -gt 0 ]; then
+  while IFS=$'\t' read -r _ C; do SD_CANDS+=("$C"); done < <(
+    for C in "${SD_ALL[@]}"; do printf '%s\t%s\n' "$(stat -c %Y "$C/.human-step-checked" 2>/dev/null || echo 0)" "$C"; done \
+      | sort -s -t$'\t' -k1,1n | head -n "$RESCUE_HUMAN_STEP_PER_TICK")
+fi
+[ "${#CANDS[@]}" -gt 0 ] || [ "${#SD_CANDS[@]}" -gt 0 ] || exit 0
 
 # Oldest first, RESCUE_PER_TICK of them, all IN PARALLEL. One per tick was the
 # original bound on cost; with 39 stranded builds on one day that is a fortnight
@@ -840,8 +1055,11 @@ done < <(find "$H/builds" -maxdepth 2 -name RESULT -mmin +90 2>/dev/null | xargs
 # cron never overlaps a rescue with its own successor.
 case "$RESCUE_PARALLEL" in ''|*[!0-9]*) RESCUE_PARALLEL=0 ;; esac   # 0 = no cap: every candidate starts now
 RUNNING=0
-for C in "${CANDS[@]}"; do
-  ( rescue_one "$C" ) &
+for C in "${CANDS[@]}" "${SD_CANDS[@]/#/human-step:}"; do
+  case "$C" in
+    human-step:*) ( rescue_one "${C#human-step:}" human-step ) & ;;
+    *) ( rescue_one "$C" ) & ;;
+  esac
   RUNNING=$((RUNNING+1))
   # `wait -n` returns on the FIRST child to finish, which is what keeps the cap a
   # cap without making the slowest candidate the pace-setter for the rest.

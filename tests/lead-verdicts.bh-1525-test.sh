@@ -202,13 +202,13 @@ cp "$DIR/bin/merge-conductor.sh" "$DIR/bin/fleet-conf.sh" "$DIR/bin/jobs-client.
 mkdir -p "$T/h/bin/lib/jobs" && cp "$DIR"/bin/lib/jobs/*.sh "$T/h/bin/lib/jobs/"
 : > "$T/h/env/global.env"
 printf '#!/bin/bash\necho "" > "$4"; exit 0\n' > "$T/h/bin/agent-call.sh"; chmod +x "$T/h/bin/agent-call.sh"
-REC="$T/h/builds/demo-os-AIO-20-202609160001"; mkdir -p "$REC"
+REC="$T/h/builds/demo-os-TK-20-202609160001"; mkdir -p "$REC"
 echo "PR_CREATED $PRURL" > "$REC/RESULT"
 printf 'findings\nTIER: 2\nVERDICT: APPROVE\n' > "$REC/review.md"
 echo "$H1" > "$REC/reviewed-sha"
-PRJSON_OPEN=$(jq -nc --arg u "$PRURL" --arg h "$H1" '{number:41,html_url:$u,title:"t",body:"",state:"open",merged_at:null,merge_commit_sha:null,mergeable_state:"clean",draft:false,head:{sha:$h,ref:"ticket/aio-20"},base:{ref:"main"},user:{login:"operator",type:"User"},labels:[],created_at:"2026-09-12T00:00:00Z",updated_at:"2026-09-12T00:00:00Z",closed_at:null}')
+PRJSON_OPEN=$(jq -nc --arg u "$PRURL" --arg h "$H1" '{number:41,html_url:$u,title:"t",body:"",state:"open",merged_at:null,merge_commit_sha:null,mergeable_state:"clean",draft:false,head:{sha:$h,ref:"ticket/TK-20"},base:{ref:"main"},user:{login:"operator",type:"User"},labels:[],created_at:"2026-09-12T00:00:00Z",updated_at:"2026-09-12T00:00:00Z",closed_at:null}')
 PRJSON_MERGED=$(jq -c '.state="closed" | .merged_at="2026-09-12T01:00:00Z" | .merge_commit_sha="cccccccc3333" | .closed_at="2026-09-12T01:00:00Z"' <<<"$PRJSON_OPEN")
-PRLIST=$(jq -nc --arg u "$PRURL" --arg h "$H1" '[{number:41,url:$u,headRefOid:$h,headRefName:"ticket/aio-20",isDraft:false,mergeStateStatus:"CLEAN",mergeable:"MERGEABLE",state:"OPEN",labels:[],baseRefName:"main"}]')
+PRLIST=$(jq -nc --arg u "$PRURL" --arg h "$H1" '[{number:41,url:$u,headRefOid:$h,headRefName:"ticket/TK-20",isDraft:false,mergeStateStatus:"CLEAN",mergeable:"MERGEABLE",state:"OPEN",labels:[],baseRefName:"main"}]')
 cat > "$T/fakebin/gh" <<EOF
 #!/bin/bash
 printf '%s\n' "\$*" >> "$T/gh-calls.txt"
@@ -232,8 +232,8 @@ case "\$*" in
 +const a = 1;
 ' ;;
   *"api -i -X GET repos/$SLUG/pulls/41"*)
-    if [ -f "$T/merged41" ]; then restpr MERGED "$H1" ticket/aio-20 main "" MERGEABLE CLEAN operator cccccccc3333
-    else restpr OPEN "$H1" ticket/aio-20 main "" MERGEABLE CLEAN operator; fi ;;
+    if [ -f "$T/merged41" ]; then restpr MERGED "$H1" ticket/TK-20 main "" MERGEABLE CLEAN operator cccccccc3333
+    else restpr OPEN "$H1" ticket/TK-20 main "" MERGEABLE CLEAN operator; fi ;;
   *"api repos/$SLUG/pulls/41/commits"*) printf '%s\n' "$T_HEAD_OLD"; exit 0 ;;
   *"--json state,headRefOid,baseRefName"*) [ -f "$T/merged41" ] && echo "MERGED $H1 main" || echo "OPEN $H1 main" ;;
   *"--json state,headRefOid"*)             [ -f "$T/merged41" ] && echo "MERGED $H1" || echo "OPEN $H1" ;;
@@ -367,6 +367,7 @@ echo "$H1" > "$REC/reviewed-sha"
 SW="$T/sw"
 mkdir -p "$SW/bin/lib" "$SW/logs" "$SW/state" "$SW/flags" "$SW/locks" "$SW/env" "$SW/builds" "$SW/fakebin"
 cp "$DIR/bin/merge-sweep.sh" "$SW/bin/sweep.sh"
+mkdir -p "$SW/bin/lib" && cp -rL "$DIR/bin/lib/ms" "$SW/bin/lib/" || exit 1   # BH-5242: the sweep loads bin/lib/ms/
 cp "$DIR/bin/jobs-client.sh" "$SW/bin/"
 mkdir -p "$SW/bin/lib/jobs" && cp "$DIR"/bin/lib/jobs/*.sh "$SW/bin/lib/jobs/"
 cp "$DIR/bin/lib/merge-conductor-lib.sh" "$DIR/bin/lib/gh-rest.sh" "$DIR/bin/lib/gh-rest-var.sh" \
@@ -397,15 +398,15 @@ case "\$*" in
   *"v3.diff"*) restpr --diff '+ const x = 1;
 ' ;;
   *"api -i -X GET repos/$SLUG/pulls/41"*)
-    if [ -s "\$MERGE_SINK" ]; then restpr MERGED "$H1" ticket/aio-20 main "" MERGEABLE CLEAN operator deadbeefcafe
-    else restpr OPEN "$H1" ticket/aio-20 main "" MERGEABLE CLEAN operator; fi ;;
+    if [ -s "\$MERGE_SINK" ]; then restpr MERGED "$H1" ticket/TK-20 main "" MERGEABLE CLEAN operator deadbeefcafe
+    else restpr OPEN "$H1" ticket/TK-20 main "" MERGEABLE CLEAN operator; fi ;;
   *"api -i -X POST repos/$SLUG/issues/"*"/comments"*) restpr --raw 200 '{"id":1}' ;;
   *"api -i -X PATCH repos/$SLUG/issues/"*) restpr --raw 200 '{"state":"closed"}' ;;
   *"api -i -X GET repos/$SLUG/issues/"*)   restpr --raw 200 '{"state":"closed"}' ;;
   *"api repos/$SLUG/pulls/41/commits"*) printf '%s\n' "$T_HEAD_OLD"; exit 0 ;;
   *"--json state,isInMergeQueue"*) [ -s "\$MERGE_SINK" ] && echo "MERGED false" || echo "OPEN false" ;;
   *"--json state,mergeStateStatus,author,headRefOid"*) echo "OPEN CLEAN operator $H1 " ;;
-  *"--json headRefName"*) echo "ticket/aio-20" ;;
+  *"--json headRefName"*) echo "ticket/TK-20" ;;
   *"--json state -q .state"*) [ -s "\$MERGE_SINK" ] && echo MERGED || echo OPEN ;;
   *"pr diff"*) echo "+ const x = 1;" ;;
   *"--json mergeCommit"*) echo "deadbeefcafe" ;;
@@ -418,10 +419,10 @@ cp "$DIR/tests/lib/rest-emit.sh" "$SW/fakebin/restpr"; chmod +x "$SW/fakebin/res
 cp "$T/fakebin/curl" "$SW/fakebin/curl"
 sw_setup() {
   vd_reset
-  scratch_rm "$SW/builds"; scratch_rm "$SW/state/block-gate"; mkdir -p "$SW/builds/pool-ts-AIO-20-202609160001"
-  echo "PR_CREATED $PRURL" > "$SW/builds/pool-ts-AIO-20-202609160001/RESULT"
-  printf 'findings\nTIER: 2\nVERDICT: APPROVE\n' > "$SW/builds/pool-ts-AIO-20-202609160001/review.md"
-  : > "$SW/builds/pool-ts-AIO-20-202609160001/pipeline.log"
+  scratch_rm "$SW/builds"; scratch_rm "$SW/state/block-gate"; mkdir -p "$SW/builds/pool-ts-TK-20-202609160001"
+  echo "PR_CREATED $PRURL" > "$SW/builds/pool-ts-TK-20-202609160001/RESULT"
+  printf 'findings\nTIER: 2\nVERDICT: APPROVE\n' > "$SW/builds/pool-ts-TK-20-202609160001/review.md"
+  : > "$SW/builds/pool-ts-TK-20-202609160001/pipeline.log"
   : > "$SW/state/merge-sweep-done.txt"; : > "$SW/logs/merge-sweep.log"; : > "$SW/logs/ALERTS.log"
   : > "$SW/merges.txt"; : > "$SW/gh.txt"; : > "$SW/comments.txt"
 }
@@ -487,12 +488,12 @@ case "\$*" in
   *"api repos/$SLUG/issues/"*"/comments"*) exit 0 ;;
   *"api repos/$SLUG/pulls/"*"/reviews"*) exit 0 ;;
   *"api -i -X GET repos/$SLUG/pulls/"*)
-    if [ -s "$QH/gh-merges.txt" ]; then restpr MERGED "$H1" ticket/aio-41 main "" MERGEABLE CLEAN operator cccccccc3333
-    else restpr OPEN "$H1" ticket/aio-41 main "" MERGEABLE CLEAN operator; fi ;;
+    if [ -s "$QH/gh-merges.txt" ]; then restpr MERGED "$H1" ticket/TK-41 main "" MERGEABLE CLEAN operator cccccccc3333
+    else restpr OPEN "$H1" ticket/TK-41 main "" MERGEABLE CLEAN operator; fi ;;
   *"api repos/$SLUG/pulls/"*"/commits"*) printf '%s\n' "$T_HEAD_OLD"; exit 0 ;;
   *"--json headRefOid"*) echo "$H1" ;;
-  *"--json state,mergeable,headRefName"*) echo "OPEN MERGEABLE ticket/aio-41" ;;
-  *"--json state,headRefName"*) echo "OPEN ticket/aio-41" ;;
+  *"--json state,mergeable,headRefName"*) echo "OPEN MERGEABLE ticket/TK-41" ;;
+  *"--json state,headRefName"*) echo "OPEN ticket/TK-41" ;;
   *"--json state"*) [ -s "$QH/gh-merges.txt" ] && echo MERGED || echo OPEN ;;
   *"--json mergeCommit"*) echo cccccccc3333 ;;
   *) echo "" ;;

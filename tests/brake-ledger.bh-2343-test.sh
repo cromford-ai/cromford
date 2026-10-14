@@ -178,7 +178,7 @@ LAST1=$(jq -r '.ledgers[-1].updated_at' "$T/pages/1")
 ENC=$(jq -nr --arg b "$LAST1" '$b|@uri')
 ENCK=$(jq -r '.ledgers[-1].key|@uri' "$T/pages/1")
 GET2=$(grep '^GET ' "$T/req.log" | sed -n 2p)
-[ "$RC" -eq 0 ] && [ "$(printf '%s\n' "$OUT" | grep -c .)" -eq 1003 ] \
+[ "$RC" -eq 0 ] && [ "$(grep -c . <<<"$OUT")" -eq 1003 ] \
   && grep -q "^k0${TAB}" <<< "$OUT" && grep -q "^k1002${TAB}" <<< "$OUT" \
   && [ "$(reqs)" -eq 2 ] \
   && ok || bad "two-page walk rc=$RC rows=$(printf '%s\n' "$OUT" | grep -c .) reqs=$(reqs)"
@@ -190,20 +190,20 @@ reset
 for p in 1 2 3 4 5 6; do page "$T/pages/$p" 1000 $(( (p-1)*1000 )); done
 OUT=$(run brake_read triage-family 100000); RC=$?
 [ "$RC" -eq 0 ] && [ "$(reqs)" -eq 5 ] && [ "$(printf '%s\n' "$OUT" | tail -1)" = "#truncated" ] \
-  && [ "$(printf '%s\n' "$OUT" | grep -c "$TAB")" -eq 5000 ] \
+  && [ "$(grep -c "$TAB" <<<"$OUT")" -eq 5000 ] \
   && ok || bad "cap: rc=$RC reqs=$(reqs) last='$(printf '%s\n' "$OUT" | tail -1)'"
 # a 5th full page whose oldest row is out of window is complete, not truncated
 reset
 for p in 1 2 3 4 5; do page "$T/pages/$p" 1000 $(( (p-1)*1000 )); done
 OUT=$(run brake_read triage-family 4500); RC=$?
 [ "$RC" -eq 0 ] && [ "$(reqs)" -eq 5 ] && ! grep -q '^#truncated' <<< "$OUT" \
-  && [ "$(printf '%s\n' "$OUT" | grep -c "$TAB")" -eq 4501 ] \
+  && [ "$(grep -c "$TAB" <<<"$OUT")" -eq 4501 ] \
   && ok || bad "out-of-window 5th page: rc=$RC reqs=$(reqs) rows=$(printf '%s\n' "$OUT" | grep -c "$TAB") last='$(printf '%s\n' "$OUT" | tail -1)'"
 # a full page whose oldest row is out of window stops the walk early
 reset
 page "$T/pages/1" 1000 3000
 OUT=$(run brake_read triage-family 3500); RC=$?
-[ "$RC" -eq 0 ] && [ "$(reqs)" -eq 1 ] && [ "$(printf '%s\n' "$OUT" | grep -c "$TAB")" -eq 501 ] \
+[ "$RC" -eq 0 ] && [ "$(reqs)" -eq 1 ] && [ "$(grep -c "$TAB" <<<"$OUT")" -eq 501 ] \
   && ok || bad "old full page: rc=$RC reqs=$(reqs)"
 
 # --- 7. only _jobs_req is reached --------------------------------------------

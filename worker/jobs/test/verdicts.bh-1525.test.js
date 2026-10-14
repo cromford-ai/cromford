@@ -4,13 +4,14 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { DatabaseSync } from 'node:sqlite';
 import worker, { CREATED_TABLES } from '../src/index.js';
+import { jobsSchemaSql } from './lib/jobs-schema.js';
 
 // BH-1525 — lead verdicts become rows. Driven against THE SQL THAT SHIPS
 // (worker/jobs/schema.sql), the model-routes idiom: append-only is a property
 // of the table (triggers), not of the routes happening to lack an UPDATE, so a
 // stub that answered `changes:1` could not prove it.
 const SECRET = 'test-secret';
-const SCHEMA = readFileSync(fileURLToPath(new URL('../schema.sql', import.meta.url)), 'utf8');
+const SCHEMA = jobsSchemaSql();
 
 function sqliteDB(db) {
   const bindAndRun = (sql, binds) => ({

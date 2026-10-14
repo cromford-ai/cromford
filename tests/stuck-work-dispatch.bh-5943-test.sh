@@ -13,7 +13,8 @@
 # waits (30 s at most) until $T/release exists. The FACTS come from
 # STUCK_WORK_FIXTURE=$T/fx, a directory of <project>.txt files.
 #
-#   AT-1a --dispatch returns at once, rc 0, `started 3 project run(s)`
+#   AT-1a --dispatch returns rc 0, `started 3 project run(s)`, while p1's page
+#         still blocks (no wall-clock bound, BH-6508)
 #   AT-1b p1 blocked in its page: p2 and p3 finish, p1's lock is held
 #   AT-1c a second dispatch: p2/p3 run again, p1 is `still live`, no p1 line
 #   AT-1d release: p1 writes one line; each page carries its own --project;
@@ -60,7 +61,8 @@ cat > "$H/bin/alert-line.sh" <<'SH'
 #!/bin/bash
 printf '%s\n' "$*" >> "$FXT/alerts"
 case " $* " in
-  *" --project p1 "*) i=0; while [ ! -e "$FXT/release" ] && [ "$i" -lt 150 ]; do sleep 0.2; i=$((i + 1)); done ;;
+  *" --project p1 "*) i=0; while [ ! -e "$FXT/release" ] && [ "$i" -lt 150 ]; do sleep 0.2; i=$((i + 1)); done
+                      : > "$FXT/p1-page-returned" ;;
 esac
 exit 0
 SH
@@ -126,7 +128,7 @@ settle() {
 wreset() {
   local p
   settle
-  for p in "$T/reqs" "$T/alerts" "$T/lane-alerts" "$T/ledger.json" "$T/release" "$T/out" \
+  for p in "$T/reqs" "$T/alerts" "$T/lane-alerts" "$T/ledger.json" "$T/release" "$T/out" "$T/p1-page-returned" \
     "$H/state" "$H/logs" "$H/locks" "$H/flags"; do
     scratch_rm "$p" || exit 1
   done
@@ -149,11 +151,11 @@ reqsof() { awk -v p="$1" '$1 == p' "$T/reqs" | wc -l | tr -d ' '; }
 
 # ── AT-1a / AT-1b ───────────────────────────────────────────────────────────
 wreset
-SECONDS=0
 dispatch STUCK_WORK_PROJECTS=all
-D1=$SECONDS
+# Read the marker first: a dispatch that waited on its runs saw p1's page return.
+[ -e "$T/p1-page-returned" ] && P1_AT_EXIT=returned || P1_AT_EXIT=blocked
 check "AT-1a rc 0 ($(cat "$T/out"))" '[ "$(cat "$T/rc")" = 0 ]'
-check "AT-1a returns within 5 s (${D1}s)" '[ "$D1" -le 5 ]'
+check "AT-1a returns while p1's page still blocks (p1 page: $P1_AT_EXIT)" '[ "$P1_AT_EXIT" = blocked ]'
 check "AT-1a prints the dispatch line" 'grep -q "stuck-work dispatch: started 3 project run(s)" "$T/out"'
 waitfor '[ "$(sumlines stuck-work-p2.log)" -ge 1 ] && [ "$(sumlines stuck-work-p3.log)" -ge 1 ]' \
   || bad "AT-1b p2/p3 never wrote a summary line ($(cat "$H"/logs/*.log 2>/dev/null | head -5))"

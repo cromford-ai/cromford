@@ -1,0 +1,11 @@
+# @hub-lanes
+
+# ── LESSON-CLASSIFY LANE (BH-5806, BH-5794.1) ──────────────────────────────
+# Hourly at minute 23 (off the quarter-hour, BH-5781) it reads the BLOCK
+# verdicts that have no finished classify run (GET /api/block-classify/pending),
+# claims each one BEFORE its one cheap model call (model_routes role
+# lesson.classify), and writes one block_findings row per finding. A tick with
+# nothing pending makes no model call and writes no log line; flock -n dedupes.
+# Off: LESSON_CLASSIFY_ENABLED=0, flags/lane-off-lesson-classify, or
+# bin/harness-ctl.sh off lesson-classify.
+23 * * * * /root/harness/bin/hub-lease.sh check && /root/harness/bin/lesson-classify.sh >/dev/null 2>&1

@@ -243,7 +243,7 @@
       "max": 1000,
       "unit": "suites",
       "zero_means": null,
-      "note": "The builder's impact gate (bin/test-impact-gate.sh, BH-1524): the most suites a build of this project runs before it pushes, strongest reason first (self > reads > always > named > source > closure). What is past it is named as left to CI.",
+      "note": "The builder's impact gate (bin/test-impact-gate.sh, BH-1524): the most suites a build of this project runs before it pushes, strongest reason first (self > reads > always > named > source > learned > closure). What is past it is named as left to CI.",
       "read_in": "bin/test-impact-gate.sh"
     },
     {

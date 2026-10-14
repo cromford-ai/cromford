@@ -110,17 +110,17 @@ fixture() { # fixture <dir> <lane json> — a root with bin/lane.sh calling stag
 F="$T/c5-missing"
 fixture "$F" '{"id":"fx","script":"bin/lane.sh","stats":{"cost_stage":["a"],"cost_stage_via":["bin/nope.sh"]}}'
 OUT=$(python3 "$CHK" "$F" "$F/lanes.d" 2>&1); rc=$?
-{ [ "$rc" -ne 0 ] && printf '%s\n' "$OUT" | grep -q '^FAIL: .*bin/nope.sh'; } && ok \
+{ [ "$rc" -ne 0 ] && grep -q '^FAIL: .*bin/nope.sh' <<<"$OUT"; } && ok \
   || bad "C5: a cost_stage_via naming a missing script was not a FAIL (rc=$rc): $OUT"
 F="$T/c5-unreg"
 fixture "$F" '{"id":"fx","script":"bin/lane.sh","stats":{"cost_stage":["a"],"cost_stage_via":["bin/helper.sh"]}}'
 OUT=$(python3 "$CHK" "$F" "$F/lanes.d" 2>&1); rc=$?
-{ [ "$rc" -ne 0 ] && printf '%s\n' "$OUT" | grep -q '^FAIL: lane fx registers cost_stage \[a\] .*\[a,x\]'; } && ok \
+{ [ "$rc" -ne 0 ] && grep -q '^FAIL: lane fx registers cost_stage \[a\] .*\[a,x\]' <<<"$OUT"; } && ok \
   || bad "C5: a helper calling unregistered stage x was not a FAIL (rc=$rc): $OUT"
 F="$T/c5-good"
 fixture "$F" '{"id":"fx","script":"bin/lane.sh","stats":{"cost_stage":["a","x"],"cost_stage_via":["bin/helper.sh"]}}'
 OUT=$(python3 "$CHK" "$F" "$F/lanes.d" 2>&1); rc=$?
-{ [ "$rc" -eq 0 ] && printf '%s\n' "$OUT" | grep -q '^LANE fx registered=a,x called=a,x sites=2$'; } && ok \
+{ [ "$rc" -eq 0 ] && grep -q '^LANE fx registered=a,x called=a,x sites=2$' <<<"$OUT"; } && ok \
   || bad "C5: a lane registering its declared helper's stage was not accepted (rc=$rc): $OUT"
 # Undeclared, the helper's stage is not the lane's: registering x is a FAIL.
 F="$T/c5-undeclared"

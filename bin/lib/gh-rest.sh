@@ -31,7 +31,10 @@
 #
 # READING THE STATUS. GH_REST_STATUS (3 digits, or 000 when no status line came
 # back) and GH_REST_REASON (rate-limit | network | empty | bad-args |
-# quota-reserve | empty string) are set in the shell that CALLS a helper. The
+# quota-reserve | auth | auth-skipped | empty string) are set in the shell that
+# CALLS a helper. `auth` is a 401. `auth-skipped` is a call refused with no
+# request, status 401, because an earlier call of the same conductor worker got
+# a 401 (BH-6346, bin/lib/gh-rest-auth.sh); outside a worker it never occurs. The
 # SAME SCOPE RULE governs GH_REST_QUOTA_REMAINING / GH_REST_QUOTA_LIMIT /
 # GH_REST_QUOTA_RESET / GH_REST_QUOTA_RETRY_AFTER (BH-1484: the `X-RateLimit-*`
 # and `Retry-After` headers of the response just read, EMPTY when the response
@@ -81,6 +84,10 @@ GH_REST_REASON=
 # false and gh_rest behaves exactly as it did before this file existed.
 [ -r "$(dirname "${BASH_SOURCE[0]}")/gh-rest-ledger.sh" ] && . "$(dirname "${BASH_SOURCE[0]}")/gh-rest-ledger.sh" 2>/dev/null
 
+# BH-6346: the 401 stop of a conductor worker, in a sibling for the same reason.
+# A box missing the file sends every call, as before.
+[ -r "$(dirname "${BASH_SOURCE[0]}")/gh-rest-auth.sh" ] && . "$(dirname "${BASH_SOURCE[0]}")/gh-rest-auth.sh" 2>/dev/null
+
 _gh_rest_args_ok() { # _gh_rest_args_ok <slug> [num]
   [[ "${1:-}" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] || return 1
   if [ $# -ge 2 ]; then [[ "${2:-}" =~ ^[0-9]+$ ]] || return 1; fi
@@ -102,10 +109,13 @@ _gh_rest_sniff() {
 
 gh_rest() { # gh_rest <method> <path> [extra args for the REST call...]
   # GH_TOKEN is local (C2): the gate may put the App token on THIS call; the caller's shell never keeps it.
-  local m="${1:-}" p="${2:-}" tmp st body etagkey= etagval= extra=() use_etag=0 GH_TOKEN="${GH_TOKEN:-}"
+  local m="${1:-}" p="${2:-}" tmp st body etagkey= etagval= extra=() use_etag=0 GH_TOKEN="${GH_TOKEN:-}" ct0=""
   if [ -z "$m" ] || [ -z "$p" ]; then _gh_rest_bad_args; return 75; fi
   shift 2
   GH_REST_STATUS=000; GH_REST_REASON=; GH_REST_QUOTA_REMAINING=; GH_REST_QUOTA_LIMIT=; GH_REST_QUOTA_RESET=; GH_REST_QUOTA_RETRY_AFTER=
+  # BH-6346. A worker that already got a 401 sends nothing more: refused here,
+  # before the quota gate, so the refusal costs no ledger line.
+  if command -v _gh_auth_gate >/dev/null 2>&1 && ! _gh_auth_gate; then GH_REST_STATUS=401; GH_REST_REASON=auth-skipped; return 75; fi
   # BH-1484. BEFORE the request, and before the mktemp, so a refused read costs
   # nothing at all. Only a caller that marked itself optional is ever refused.
   if command -v _gh_quota_gate >/dev/null 2>&1 && ! _gh_quota_gate "$p"; then GH_REST_REASON=quota-reserve; return 75; fi
@@ -122,16 +132,24 @@ gh_rest() { # gh_rest <method> <path> [extra args for the REST call...]
   # `|| true`: gh exits non-zero on every 4xx/5xx, and an errexit caller must
   # reach the mapping below rather than die on gh's own rc.
   # ${extra[@]+…}: bash < 4.4 (macOS /bin/bash 3.2) calls an empty array unbound under set -u (BH-3565).
+  if [ -n "${HARNESS_CALL_TRACE_FILE:-}" ] && command -v call_trace_t0 >/dev/null 2>&1; then call_trace_t0 ct0; fi
   gh api -i -X "$m" "$p" "$@" ${extra[@]+"${extra[@]}"} > "$tmp" 2>/dev/null || true
   # The FIRST status line only, and no pipe: `sed | head` can answer 141 under
   # pipefail and take an errexit caller down with it.
   st=$(sed -n '/^HTTP\/[0-9.]* [0-9][0-9][0-9]/{s/^HTTP\/[0-9.]* \([0-9][0-9][0-9]\).*/\1/p;q;}' "$tmp")
+  # BH-6462: one call-trace line per request sent, inside a bounded conductor
+  # worker only (bin/lib/call-trace.sh). Method and path, never the args.
+  if [ -n "${HARNESS_CALL_TRACE_FILE:-}" ] && command -v call_trace_put >/dev/null 2>&1; then call_trace_put gh "$m $p" "${st:-000}" "$ct0"; fi
   # BH-1484: the quota headers and the ledger line, ONCE, before the status
   # branching below — so the 000/network path is ledgered too, which is the most
   # interesting row in the file the hour the shared bucket drains.
   if command -v _gh_quota_observe >/dev/null 2>&1; then _gh_quota_observe "$tmp" "$m" "$p" "$st"; fi
   if [ -z "$st" ]; then rm -f "$tmp"; GH_REST_REASON=network; return 75; fi
   GH_REST_STATUS=$st
+  if [ "$st" = 401 ]; then
+    GH_REST_REASON=auth
+    if command -v _gh_auth_observe >/dev/null 2>&1; then _gh_auth_observe; fi
+  fi
   # A 304 with no cached body left (lost mid-tick) falls through as 75, never
   # as an empty answer a caller could mistake for a real state (BH-1295 spec).
   if [ "$st" = 304 ] && [ "$use_etag" = 1 ]; then

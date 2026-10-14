@@ -94,8 +94,8 @@ grep -qxF "$(printf 'tests/launch-fastpath-test.sh\treads\tbin/orphan-reconcile.
   && ok || bad "W: T1.32 reads bin/orphan-reconcile.sh as data, and --why must say reads (got: $(grep launch-fastpath "$T/why-one-orc" | tr '\t' ' ' | head -3))"
 # Every --why row is three tab-separated fields with a known kind — a reviewer
 # reads the column, so an unknown word there is a claim nobody defined.
-BADROW=$(awk -F'\t' 'NF != 3 || $2 !~ /^(self|reads|named|source|closure|always|full)$/' "$T"/why-1478 "$T"/why-1481 "$T"/why-1496)
-[ -z "$BADROW" ] && ok || bad "W: malformed --why rows: $(printf '%s' "$BADROW" | head -3)"
+BADROW=$(awk -F'\t' 'NF != 3 || $2 !~ /^(self|reads|named|source|learned|closure|always|full)$/' "$T"/why-1478 "$T"/why-1481 "$T"/why-1496)
+[ -z "$BADROW" ] && ok || bad "W: malformed --why rows: $(head -3 <<<"$BADROW")"
 # The suites --why names are exactly the suites plain select names.
 cut -f1 "$T/why-1481" | LC_ALL=C sort -u > "$T/why-1481.suites"
 cmp -s "$T/why-1481.suites" "$T/sel-1481" && ok \
@@ -156,11 +156,11 @@ row() { printf '%s\t%s\t%s' "$1" "$2" "$3"; }
 # ── N. named: a function defined in the changed script ──────────────────────
 echo '# touched' >> "$R/bin/lib/widget.sh"; gitc commit -qam touch
 GOT=$(why)
-printf '%s\n' "$GOT" | grep -qxF "$(row tests/pin-test.sh named 'bin/lib/widget.sh#widget_close_all')" \
+grep -qxF "$(row tests/pin-test.sh named 'bin/lib/widget.sh#widget_close_all')" <<<"$GOT" \
   && ok || bad "N: pin-test names widget_close_all (defined in bin/lib/widget.sh) and must be selected as named (got: $(printf '%s' "$GOT" | tr '\t\n' ' |'))"
-printf '%s\n' "$GOT" | grep -qxF "$(row tests/runs-test.sh closure bin/lib/widget.sh)" \
+grep -qxF "$(row tests/runs-test.sh closure bin/lib/widget.sh)" <<<"$GOT" \
   && ok || bad "N: runs-test reaches widget.sh only through bin/tool.sh's source line — kind closure (got: $(printf '%s' "$GOT" | tr '\t\n' ' |'))"
-printf '%s\n' "$GOT" | grep -qxF "$(row tests/wide-test.sh always "*")" \
+grep -qxF "$(row tests/wide-test.sh always "*")" <<<"$GOT" \
   && ok || bad "N: the always-run floor must say always"
 grep -q '^tests/ok-test.sh' <<<"$(printf '%s\n' "$GOT")" \
   && bad "N: a two-letter function (ok) must not count as a suite naming widget.sh — precision" || ok
@@ -171,7 +171,7 @@ gitc reset -q --hard "$BASE"
 sed -i.bak '/widget_close_all/d' "$R/bin/lib/widget.sh" && rm -f "$R/bin/lib/widget.sh.bak"
 gitc commit -qam "drop widget_close_all"
 GOT=$(why)
-printf '%s\n' "$GOT" | grep -qxF "$(row tests/pin-test.sh named 'bin/lib/widget.sh#widget_close_all')" \
+grep -qxF "$(row tests/pin-test.sh named 'bin/lib/widget.sh#widget_close_all')" <<<"$GOT" \
   && ok || bad "N: a function the diff DELETED must still select the suites naming it (got: $(printf '%s' "$GOT" | tr '\t\n' ' |'))"
 
 # A changed suite selects itself, and says self.

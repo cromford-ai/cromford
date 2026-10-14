@@ -169,7 +169,7 @@ for P in $PROJECTS; do
 
   SHAS=$(gh api "repos/$SLUG/commits?sha=$BASE&per_page=$NCOMMITS" --jq '.[].sha' 2>/dev/null)
   [ -n "$SHAS" ] || { say "$P" "could not read $BASE's commits — retrying next tick"; continue; }
-  NEWEST=$(printf '%s\n' "$SHAS" | head -1)
+  NEWEST=$(head -1 <<<"$SHAS")
   LAST=$(cat "$MARK" 2>/dev/null)
   if [ -z "$LAST" ]; then
     # FIRST SIGHT OF A REPO PLANTS THE MARK AND DOES NOTHING ELSE. Treating an

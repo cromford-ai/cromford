@@ -20,6 +20,9 @@
 # Run from anywhere: tests/product-lane-rows.bh-2720-test.sh   (exit 0 = pass)
 set -uo pipefail
 . "$(dirname "$0")/lib/scratch.sh" || exit 1
+# TEST-CHANGE BH-6052: the day stamp below is read by the code and again here; never straddle 00:00Z.
+. "$(dirname "$0")/lib/day-boundary.sh" || exit 1
+clear_boundary 86400 30 || exit 1
 DIR=$(cd "$(dirname "$0")/.." && pwd)
 PASS=0; FAIL=0
 ok()  { PASS=$((PASS+1)); }
@@ -107,7 +110,7 @@ case "$URL" in
     if [ "$M" = PUT ]; then
       p=$(jq -r .project <<<"$D"); s=$(jq -r .proposal_id <<<"$D")
       [ -e "$STUB_T/refuse-gate-pending" ] && [ "$(jq -r .status <<<"$D")" = gate_pending ] && ans 503 '{"error":"refused"}'
-      printf '%s' "$s" | grep -Eq '^[A-Za-z0-9._-]{1,128}$' || ans 400 '{"error":"proposal_id"}'
+      grep -Eq '^[A-Za-z0-9._-]{1,128}$' <<<"$s" || ans 400 '{"error":"proposal_id"}'
       f="$STUB_T/db/$p--$s.json"; now=$(date -u +%Y-%m-%dT%H:%M:%SZ)
       if [ "$(jq -r '.if_absent // false' <<<"$D")" = true ]; then
         [ -f "$f" ] && ans 200 "$(jq -c '{proposal: ., inserted: false}' "$f")"

@@ -217,7 +217,7 @@ skipped S2a "$N2"
 grep -q '^put-object' "$T/s3/calls.log" && bad "S2a: the skip run called put-object" || ok
 [ "$(grep -c "^head-object $K1\$" "$T/s3/calls.log")" -eq 1 ] && ok || bad "S2a: expected one head-object of $K1: $(tr '\n' '|' < "$T/s3/calls.log")"
 NEW=$(tail -n +"$((L0 + 1))" "$H/logs/state-backup.log")
-[ "$(printf '%s\n' "$NEW" | grep -c .)" -eq 1 ] \
+[ "$(grep -c . <<<"$NEW")" -eq 1 ] \
   && grep -qE "\[state-backup\] skip: inputs unchanged since $TS1 \($K1\) - shipped nothing\$" <<<"$NEW" \
   && ok || bad "S2a: expected exactly one skip line, got: $NEW"
 [ "$(grep -c '\[state-backup\]' "$H/logs/ALERTS.log")" -eq "$A0" ] && ok || bad "S2a: the skip wrote an ALERTS line"

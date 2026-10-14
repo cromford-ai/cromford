@@ -221,7 +221,7 @@ RB="$RB_ALL"
 grep -q 'PUSH_BRANCH() {' "$RB" && ok || bad "run-build.sh has no PUSH_BRANCH helper"
 # BH-2504: every run-build push is RB_PUSH, which pushes through
 # bin/lib/hold-push.sh; the lease rule below is pinned on both halves.
-grep -q 'if RB_PUSH -u 2>>"\$BUILD/pipeline.log"; then' "$RB" \
+grep -q 'if RB_PUSH -u "\$1" 2>>"\$BUILD/pipeline.log"; then' "$RB" \
   && ok || bad "the pre-review push is not RB_PUSH (a --force-with-lease push)"
 # The lease must be EXPLICIT (<branch>:<sha>): a bare --force-with-lease resolves
 # through the fetch refspec, which single-branch pool clones do not have, so every

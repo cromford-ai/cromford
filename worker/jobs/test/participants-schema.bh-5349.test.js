@@ -5,11 +5,12 @@ import { fileURLToPath } from 'node:url';
 import { DatabaseSync } from 'node:sqlite';
 import { CREATED_TABLES, ADDED_COLUMNS, ensureTable, ensureColumns } from '../src/lib/core.js';
 import { d1 } from './lib/d1-sqlite.bh-1030.js';
+import { jobsSchemaSql } from './lib/jobs-schema.js';
 
 // BH-5349 (BH-5348.0): the participant_machines table, its self-create copy,
 // the sibling columns that arrive by ensureColumns and the claim-staleness seed.
 // Every check runs real SQLite over THE SQL THAT SHIPS (schema.sql).
-const SCHEMA = readFileSync(fileURLToPath(new URL('../schema.sql', import.meta.url)), 'utf8');
+const SCHEMA = jobsSchemaSql();
 
 const cols = (db, t) => db.prepare(`PRAGMA table_info(${t})`).all()
   .map(({ name, type, notnull, dflt_value, pk }) => ({ name, type, notnull, dflt_value, pk }));

@@ -181,7 +181,14 @@ immutable snapshot: each pass pins `HEAD`, `git archive`s that commit's
 schema from it, deploys from it, and stamps that commit's key. A pull that
 lands mid-deploy cannot put code live ahead of its schema (#1548 review C1,
 pinned by B8 in `tests/harness-sync-d1-batch.bh-1538-test.sh`); the next pass
-sees the new key and applies before it deploys. The success line reads
+sees the new key and applies before it deploys. The snapshot also carries
+`agent-core/`, which worker/jobs's staff routes import, and a worker that
+imports it adds `-core-<sha>` to its key (BH-6687, pinned by
+`tests/harness-sync-snapshot-agent-core.bh-6687-test.sh`). A failed
+`wrangler deploy` ALERTs on the first failure, then at most once per
+`lane.fleet-propagate.harness_sync_deploy_alert_repeat_s` seconds (default
+3600) per worker per box while it keeps failing, with the failure count in the
+line; a held failure is one `alert held` line in `update-runners.log`. The success line reads
 `schema.sql applied (<n> statements; <r> round trip(s); full apply|delta vs <sha>) to <db>`.
 
 `--command`, not `--file`, and that is not a style choice: under the hub's

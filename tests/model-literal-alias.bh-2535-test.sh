@@ -44,15 +44,15 @@ commit_tree "$T1"
 OUT=$(bash "$LINT" "$T1" 2>&1); RC=$?
 [ "$RC" = 1 ] && ok || bad "L1 planted aliases must fail the lint (rc 1), got $RC: $OUT"
 for w in bin/x.sh:2: bin/x.sh:3: bin/x.sh:4: bin/y.js:2:; do
-  printf '%s\n' "$OUT" | grep -q "$w" && ok || bad "L1 the failure must name $w: $OUT"
+  grep -q "$w" <<<"$OUT" && ok || bad "L1 the failure must name $w: $OUT"
 done
-printf '%s\n' "$OUT" | grep -q '4 bare-alias line(s) found (0 exempt)' && ok \
+grep -q '4 bare-alias line(s) found (0 exempt)' <<<"$OUT" && ok \
   || bad "L1 summary must count 4 bare-alias lines: $OUT"
 
 # ── L6 ──────────────────────────────────────────────────────────────────────
 OUT=$(bash "$LINT" --warn "$T1" 2>&1); RC=$?
 [ "$RC" = 0 ] && ok || bad "L6 --warn must exit 0, got $RC"
-printf '%s\n' "$OUT" | grep -q 'bin/x.sh:2:' && ok || bad "L6 --warn must still list the hits: $OUT"
+grep -q 'bin/x.sh:2:' <<<"$OUT" && ok || bad "L6 --warn must still list the hits: $OUT"
 
 # ── L2 ──────────────────────────────────────────────────────────────────────
 T2="$T/tree2"; mktree "$T2"
@@ -61,8 +61,8 @@ printf 'bin/owned.sh\towned by another ticket\n' > "$T2/tests/model-literal-alia
 commit_tree "$T2"
 OUT=$(bash "$LINT" "$T2" 2>&1); RC=$?
 [ "$RC" = 0 ] && ok || bad "L2 an allowlisted hit must not fail the lint, got $RC: $OUT"
-printf '%s\n' "$OUT" | grep -q 'exempt: bin/owned.sh:2:' && ok || bad "L2 the hit must be reported exempt: $OUT"
-printf '%s\n' "$OUT" | grep -q '0 bare-alias line(s) found (1 exempt)' && ok || bad "L2 summary: $OUT"
+grep -q 'exempt: bin/owned.sh:2:' <<<"$OUT" && ok || bad "L2 the hit must be reported exempt: $OUT"
+grep -q '0 bare-alias line(s) found (1 exempt)' <<<"$OUT" && ok || bad "L2 summary: $OUT"
 # the same allowlist does not cover a different path
 printf '#!/bin/bash\nclaude --model=opus\n' > "$T2/bin/other.sh"; commit_tree "$T2"
 OUT=$(bash "$LINT" "$T2" 2>&1); RC=$?
@@ -74,7 +74,7 @@ printf 'bin/gone.sh\tremoved upstream\n' > "$T3/tests/model-literal-alias-allowl
 commit_tree "$T3"
 OUT=$(bash "$LINT" "$T3" 2>&1); RC=$?
 [ "$RC" = 0 ] && ok || bad "L3 a stale exemption must not fail the lint, got $RC: $OUT"
-printf '%s\n' "$OUT" | grep -q 'stale alias exemption bin/gone.sh' && ok || bad "L3 stale note missing: $OUT"
+grep -q 'stale alias exemption bin/gone.sh' <<<"$OUT" && ok || bad "L3 stale note missing: $OUT"
 
 # ── L4 ──────────────────────────────────────────────────────────────────────
 T4="$T/tree4"; mktree "$T4"
@@ -92,7 +92,7 @@ printf 'claude -p --model haiku "hi"\nX_MODEL=sonnet\n' > "$T4/tests/fixture.sh"
 commit_tree "$T4"
 OUT=$(bash "$LINT" "$T4" 2>&1); RC=$?
 [ "$RC" = 0 ] && ok || bad "L4 negatives must not fail the lint, got $RC: $OUT"
-printf '%s\n' "$OUT" | grep -q '0 bare-alias line(s) found (0 exempt)' && ok || bad "L4 must count 0 alias lines: $OUT"
+grep -q '0 bare-alias line(s) found (0 exempt)' <<<"$OUT" && ok || bad "L4 must count 0 alias lines: $OUT"
 
 # A full id is the vocabulary scan's line, never counted twice by the alias scan.
 T4B="$T/tree4b"; mktree "$T4B"
@@ -102,13 +102,13 @@ commit_tree "$T4B"
 OUT=$(bash "$LINT" "$T4B" 2>&1); RC=$?
 [ -n "$ID" ] && ok || bad "L4 no claude-sonnet-* id in catalog/model-prices.json to plant"
 [ "$RC" = 1 ] && ok || bad "L4 a full id must still fail the vocabulary scan, got $RC: $OUT"
-printf '%s\n' "$OUT" | grep -q '0 bare-alias line(s) found (0 exempt)' && ok || bad "L4 a full id must not count as a bare alias: $OUT"
+grep -q '0 bare-alias line(s) found (0 exempt)' <<<"$OUT" && ok || bad "L4 a full id must not count as a bare alias: $OUT"
 
 # ── L5 ──────────────────────────────────────────────────────────────────────
 OUT=$(bash "$LINT" 2>&1); RC=$?
 [ "$RC" = 0 ] && ok || bad "L5 the real repo must pass the lint, got $RC: $OUT"
-printf '%s\n' "$OUT" | grep -qE '0 bare-alias line\(s\) found \([0-9]+ exempt\)' && ok || bad "L5 alias summary: $OUT"
-printf '%s\n' "$OUT" | grep -q '0 model-id literal line(s)' && ok || bad "L5 vocabulary summary: $OUT"
+grep -qE '0 bare-alias line\(s\) found \([0-9]+ exempt\)' <<<"$OUT" && ok || bad "L5 alias summary: $OUT"
+grep -q '0 model-id literal line(s)' <<<"$OUT" && ok || bad "L5 vocabulary summary: $OUT"
 
 echo "model-literal-alias.bh-2535: $PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ]

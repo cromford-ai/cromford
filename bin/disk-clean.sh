@@ -29,6 +29,8 @@
 #      blob:none clone cache, so deleting it buys a re-clone every train.
 # Since BH-4440 it also runs bin/box-housekeeping.sh as stage 9 (session
 # ledgers and /tmp top level, see that file's header).
+# Stage 10 bounds each logs/*-cron.log at CRON_LOG_MAX_KB: over it, the file is
+# cut in place (same inode, so a >> writer keeps appending) to its newest half.
 # Each is a no-op on a box with nothing to clean, and each counter in the
 # summary line is incremented only after the work really happened.
 #
@@ -224,7 +226,7 @@ if [ -d "$LOCKS" ]; then
   OPENFDS=$(find "$PROC"/[0-9]*/fd -maxdepth 1 -lname "$LOCKS/*" -printf '%l\n' 2>/dev/null | sort -u)
   while IFS= read -r lk; do
     [ -n "$lk" ] || continue
-    if printf '%s\n' "$OPENFDS" | grep -qxF "$lk"; then
+    if grep -qxF "$lk" <<<"$OPENFDS"; then
       locks_skipped_held=$((locks_skipped_held + 1)); continue
     fi
     if LOCKF="$lk" flock -n "$lk" -c 'rm -f -- "$LOCKF"' 2>/dev/null && [ ! -e "$lk" ]; then
@@ -249,7 +251,7 @@ while IFS= read -r sf; do
   sb=$(basename "$sf")
   case "$sb" in
     *.sh)
-      if printf '%s\n' "$CRONTXT" | grep -qF "$sb"; then
+      if grep -qF "$sb" <<<"$CRONTXT"; then
         say "scratch kept: $sb (the crontab runs it)"
         scratch_skipped=$((scratch_skipped + 1)); continue
       fi
@@ -394,8 +396,59 @@ if [ -x "$H/bin/box-housekeeping.sh" ]; then
     || say "box-housekeeping exited rc=$? - see its lines above"
 fi
 
+# 10. cron lane logs (BH-6530): every logs/*-cron.log over CRON_LOG_MAX_KB is
+# cut to its newest CRON_LOG_MAX_KB/2 KB, starting at a line start. One glob
+# covers every lane that appends its stderr there. Keeping half means a file is
+# not re-cut every day. The cut is copy-truncate IN PLACE (`cat tmp > log`), not
+# `mv tmp log`: a lane running at this minute holds the log open with >>
+# (O_APPEND), so on the same inode its next line lands at the new end, where a
+# rename would send it to an unlinked file. Lines appended between the tail and
+# the truncate are lost; that window is milliseconds, once a day. -type f skips
+# symlinks, and -maxdepth 1 skips anything under a subdirectory. A knob that is
+# not a whole number >= 64 skips the stage, never guessed (a typo of 1 would
+# empty every log daily).
+CRON_KB="${CRON_LOG_MAX_KB:-10240}"
+cronlogs_cut=0; cronlogs_freed_kb=0
+case "$CRON_KB" in
+  ''|*[!0-9]*) CRON_KB_OK=0 ;;
+  *) if [ "${#CRON_KB}" -le 9 ] && [ "$((10#$CRON_KB))" -ge 64 ]; then CRON_KB_OK=1; else CRON_KB_OK=0; fi ;;
+esac
+if [ "$CRON_KB_OK" = 0 ]; then
+  say "cron log bound skipped: CRON_LOG_MAX_KB='$CRON_KB' is not a whole number >= 64"
+else
+  CRON_MAXB=$(( 10#$CRON_KB * 1024 )); CRON_KEEPB=$(( CRON_MAXB / 2 ))
+  while IFS= read -r cf; do
+    [ -n "$cf" ] || continue
+    cb=$(basename "$cf")
+    csz=$(stat -c %s "$cf" 2>/dev/null)
+    case "$csz" in ''|*[!0-9]*) continue ;; esac
+    [ "$csz" -gt "$CRON_MAXB" ] || continue
+    ctmp="$H/logs/.$cb.cut.$$"
+    # sed 1d drops the partial first line, so the kept text starts at a line start.
+    tail -c "$CRON_KEEPB" -- "$cf" 2>/dev/null | sed '1d' 2>/dev/null > "$ctmp"
+    crc=("${PIPESTATUS[@]}")
+    if [ "${crc[0]}" != 0 ] || [ "${crc[1]:-1}" != 0 ]; then
+      say "cron log kept: $cb is ${csz} bytes, but its newest part could not be written to a temp file"
+      rm -f "$ctmp"; continue
+    fi
+    if ! cat "$ctmp" 2>/dev/null > "$cf"; then
+      say "cron log cut failed: $cb could not be rewritten in place - it can be partly written"
+      rm -f "$ctmp"; continue
+    fi
+    rm -f "$ctmp"
+    cnew=$(stat -c %s "$cf" 2>/dev/null)
+    case "$cnew" in ''|*[!0-9]*) say "cron log cut: $cb size unreadable after the cut"; continue ;; esac
+    if [ "$cnew" -le "$CRON_MAXB" ]; then
+      cronlogs_cut=$((cronlogs_cut + 1))
+      cronlogs_freed_kb=$((cronlogs_freed_kb + (csz - cnew) / 1024))
+    else
+      say "cron log cut: $cb is still ${cnew} bytes after the cut"
+    fi
+  done < <(find "$H/logs" -maxdepth 1 -type f -name '*-cron.log' 2>/dev/null)
+fi
+
 after=$(df --output=pcent / | tail -1 | tr -dc 0-9)
-echo "$NOW disk-clean: ${before}%->${after}% npm=${sz}M worktrees_removed=${removed} tsv_kept=${tsv_kept} tsv_archived=${tsv_archived} tsv_kept_live=${tsv_kept_live} locks_removed=${locks_removed} locks_skipped_held=${locks_skipped_held} scratch_moved=${scratch_moved} scratch_skipped=${scratch_skipped} leases=${leases} tmp_removed=${tmp_removed} tmp_freed_kb=${tmp_freed_kb} tmp_skipped_held=${tmp_skipped_held}" >> "$LOG"
+echo "$NOW disk-clean: ${before}%->${after}% npm=${sz}M worktrees_removed=${removed} tsv_kept=${tsv_kept} tsv_archived=${tsv_archived} tsv_kept_live=${tsv_kept_live} locks_removed=${locks_removed} locks_skipped_held=${locks_skipped_held} scratch_moved=${scratch_moved} scratch_skipped=${scratch_skipped} leases=${leases} tmp_removed=${tmp_removed} tmp_freed_kb=${tmp_freed_kb} tmp_skipped_held=${tmp_skipped_held} cronlogs_cut=${cronlogs_cut} cronlogs_freed_kb=${cronlogs_freed_kb}" >> "$LOG"
 if [ "${after:-0}" -gt 90 ]; then
   echo "$NOW [disk-clean] $(hostname): disk still ${after}% after cleanup — the alert medic (bin/alerts-medic.sh) owns this line; it needs a resize or a triage of dirty/unpushed worktrees, neither of which this script will do unasked" >> "$ALERTS"
 fi

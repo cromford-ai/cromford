@@ -166,6 +166,13 @@ mkdir -p "$SCRATCH/logs" "$SCRATCH/state" "$SCRATCH/flags" "$SCRATCH/locks"
 ln -s "$REPO/bin" "$SCRATCH/bin"
 ln -s "$REPO/prompts" "$SCRATCH/prompts"
 ln -s "$REPO/catalog" "$SCRATCH/catalog"
+# catalog/context-budgets.json is composed from catalog/context-budgets.d/ and
+# git-ignored (BH-6487). CI's eval step runs this script directly, with no
+# tests/lib/scratch.sh to compose it, so the eval lane would lose its budget.
+if [ -d "$REPO/catalog/context-budgets.d" ]; then
+  "$REPO/bin/context-budgets-build.sh" --repo "$REPO" --compose >/dev/null \
+    || die "catalog/context-budgets.json could not be composed from catalog/context-budgets.d (run bin/context-budgets-build.sh --check)"
+fi
 COSTCSV="$SCRATCH/logs/cost.csv"
 
 # spent — dollars billed so far by THIS run. Read out of the scratch cost.csv

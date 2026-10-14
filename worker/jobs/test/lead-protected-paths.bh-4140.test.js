@@ -4,13 +4,14 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { DatabaseSync } from 'node:sqlite';
 import worker, { CREATED_TABLES } from '../src/index.js';
+import { jobsSchemaSql } from './lib/jobs-schema.js';
 
 // BH-4146 (BH-4140.1) — the protected-path globs as rows. Driven through
 // worker.fetch (the bearer gate and the ROUTES table included) against THE SQL
 // THAT SHIPS, so the one-live-row rule is the partial unique index's, not a
 // stub's.
 const SECRET = 'test-secret';
-const SCHEMA = readFileSync(fileURLToPath(new URL('../schema.sql', import.meta.url)), 'utf8');
+const SCHEMA = jobsSchemaSql();
 
 function sqliteDB(db) {
   const bindAndRun = (sql, binds) => ({

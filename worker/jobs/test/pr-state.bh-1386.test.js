@@ -4,6 +4,7 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import worker from '../src/index.js';
 import { d1, openDb } from './lib/d1-sqlite.bh-1030.js';
+import { jobsSchemaSql } from './lib/jobs-schema.js';
 
 // BH-1386 (BH-1025.1) — the six PR-state / PR-attempt routes.
 //
@@ -22,7 +23,7 @@ import { d1, openDb } from './lib/d1-sqlite.bh-1030.js';
 // `t.skip` when node:sqlite is absent (the settings-schema.test.js rule): a
 // silent pass would hide exactly the checks that make this file worth running.
 
-const SCHEMA = readFileSync(fileURLToPath(new URL('../schema.sql', import.meta.url)), 'utf8');
+const SCHEMA = jobsSchemaSql();
 const MARK = '-- ── BH-1025.0';
 const SECRET = 'test-secret';
 const REPO = 'example-org/x';

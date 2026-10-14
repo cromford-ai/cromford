@@ -23,7 +23,8 @@
 #   L1 406: every file is read, so the literal inside a 20,001-line file
 #      counts: 2 hits, both named
 #   L2 406 with a binary file: rc 3, MC_DIFF_UNSCANNED=1, the file named
-#   L3 403 (a rate limit, not size) does NOT fall back: rc 75, no clone touched
+#   L3 a 502 and a 403 fall back to the local diff too (BH-6000: any failure of
+#      the API read, not only a 406), and the log names the status
 #   L4 the fetched PR head is not the head the conductor read: rc 75
 #   L5 the API answers: its diff is used, no clone touched
 #   H1 THE REVIEW'S CASE, through the conductor's blocks: a 406 PR whose
@@ -124,10 +125,16 @@ drive 406 8 "$H8"
 grep -qx "rc=3" "$T/drive.out" && grep -qx "unscanned=1" "$T/drive.out" && ok || bad "L2 a binary file must give rc 3 and MC_DIFF_UNSCANNED=1: $(cat "$T/drive.out")"
 grep -q "1 file(s) not scanned.*logo.bin" "$T/mc.log" && ok || bad "L2 the unscanned file must be named: $(cat "$T/mc.log")"
 
-# L3. 403: a refusal that is not about size does not fall back
-drive 403 7 "$H7"
-grep -qx "rc=75" "$T/drive.out" && ok || bad "L3 a 403 must stay UNVERIFIABLE (rc 75): $(cat "$T/drive.out")"
-[ ! -s "$T/funnel-calls" ] && ok || bad "L3 a 403 must not touch a clone: $(cat "$T/funnel-calls")"
+# L3. TEST-CHANGE (BH-6000): any failure of the API read falls back, not only a
+# 406. Before, a 403 was asserted to stay UNVERIFIABLE; #6000 asks that a
+# failed read (#5993: UNVERIFIABLE on every tick) runs the local scan. The
+# local read spends no API budget, so a rate limit is no reason to skip it.
+for st in 502 403; do
+  drive "$st" 7 "$H7"
+  grep -qx "rc=0" "$T/drive.out" && grep -qx "scan=2" "$T/drive.out" && ok || bad "L3 a $st must fall back to the local diff and scan it (rc 0, 2 hits): $(cat "$T/drive.out")"
+  [ -s "$T/funnel-calls" ] && ok || bad "L3 a $st must read the local clone"
+  grep -q "diff read from the API failed (HTTP $st) — iron-law scan reads a local git diff" "$T/mc.log" && ok || bad "L3 the log must name HTTP $st: $(cat "$T/mc.log")"
+done
 
 # L4. the head the PR ref carries is not the head the conductor read
 drive 406 7 "0000000000000000000000000000000000000000"

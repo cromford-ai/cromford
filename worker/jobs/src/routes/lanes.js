@@ -12,6 +12,7 @@ import {
   LANES_REGISTRY, REGISTRY_SEED_ACTOR,
 } from "../lib/core.js";
 import { CONFIG_KINDS, configChangeStmts } from "../lib/config-changes.js";
+import { fleetFlagRows } from "../lib/harness-flags.js";
 
 export const routes = [
   // ── The harness control plane (BH-1132) ────────────────────────────────
@@ -50,9 +51,10 @@ export const routes = [
       // that project's tickets. A control plane whose project page can omit a
       // spend lane is the problem it was built to solve.
       const reg = LANES_REGISTRY.lanes || [];
-      const flags = await env.DB.prepare(
-        "SELECT name, active, actor, reason, updated_at FROM pause_flags LIMIT 2000").all();
-      const flagBy = new Map((flags.results || []).map((r) => [r.name, r]));
+      // BH-4154: every fleet flag from the store its name picks, so a ported
+      // switch (automerge-disabled) is its harness_flags row, not a mirror.
+      const { flags } = await fleetFlagRows(env, { limit: 2000 });
+      const flagBy = new Map(flags.map((r) => [r.name, r]));
       const settings = await env.DB.prepare(
         "SELECT key, value, actor, updated_at FROM settings WHERE key LIKE 'lane.%' LIMIT 2000").all();
       const setBy = new Map((settings.results || []).map((r) => [r.key, r]));

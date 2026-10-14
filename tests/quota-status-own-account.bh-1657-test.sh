@@ -30,8 +30,8 @@ OUT=$(QS); rc=$?
 [ "$rc" = 0 ] && ok || bad "rc=$rc"
 BLOCK=$(printf '%s\n' "$OUT" | sed -n '/^OWN-ACCOUNT PROJECTS/,$p')
 [ -n "$BLOCK" ] && ok || bad "no OWN-ACCOUNT PROJECTS block: $OUT"
-printf '%s\n' "$BLOCK" | grep -qE "^project-3 +own:project-3 +db +$FP8\$" && ok || bad "project-3 line: $BLOCK"
-printf '%s\n' "$BLOCK" | grep -qE '^project-9 +own:project-9 +db +missing$' && ok || bad "missing-file line: $BLOCK"
+grep -qE "^project-3 +own:project-3 +db +$FP8\$" <<<"$BLOCK" && ok || bad "project-3 line: $BLOCK"
+grep -qE '^project-9 +own:project-9 +db +missing$' <<<"$BLOCK" && ok || bad "missing-file line: $BLOCK"
 grep -q project-5 <<<"$(printf '%s\n' "$BLOCK")" && bad "unpinned project-5 listed: $BLOCK" || ok
 grep -qF "$TOK" <<<"$(printf '%s' "$OUT"; cat "$T/err")" && bad "token printed" || ok
 J1=$(QS --json)

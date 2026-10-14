@@ -4,12 +4,13 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { openDb } from './lib/d1-sqlite.bh-1030.js';
 import { CREATED_TABLES } from '../src/lib/core.js';
+import { jobsSchemaSql } from './lib/jobs-schema.js';
 
 // BH-2668 (BH-2530.0): the fix_round_jobs table and its two indexes, applied
 // from the real schema.sql, and the CREATED_TABLES twin that self-creates it.
 // The routes that write it are a sibling slice; here we only prove the SQL.
 
-const SCHEMA = readFileSync(fileURLToPath(new URL('../schema.sql', import.meta.url)), 'utf8');
+const SCHEMA = jobsSchemaSql();
 const T0 = '2026-09-26T00:00:00Z';
 
 // name, notnull, default — the ticket's 17 columns in order.

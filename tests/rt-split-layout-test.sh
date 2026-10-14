@@ -131,7 +131,7 @@ DECLARED=$(HARNESS="$H" PROJECT="$P" bash -c '
   done
   declare -F' _ "$DIR" 2>/dev/null)
 for fn in $RT_FUNCS; do
-  if printf '%s\n' "$DECLARED" | grep -qx "declare -f $fn"; then ok
+  if grep -qx "declare -f $fn" <<<"$DECLARED"; then ok
   else bad "sourcing bin/lib/rt/*.sh does not define $fn()"; fi
 done
 
@@ -201,8 +201,8 @@ driver_shape "$T/rt-pasted.sh" rt_ "${RT_MODS[@]}" >/dev/null \
 { cat "$RT_DRV"; printf '%s\n' 'triage_new_stage() {' '  local stage_out="$STATE_DIR/new-stage.txt"' '  printf "new stage for %s\n" "$PROJECT" > "$stage_out"' '}'; } > "$T/rt-newfn.sh"
 WHY=$(driver_shape "$T/rt-newfn.sh" rt_ "${RT_MODS[@]}") \
   && bad "A6 accepts a driver with a new unprefixed function triage_new_stage()" || ok
-printf '%s\n' "$WHY" | grep -q '^S1: .*triage_new_stage' && ok \
-  || bad "A6 refuses triage_new_stage() but not by S1: $(printf '%s' "$WHY" | head -2)"
+grep -q '^S1: .*triage_new_stage' <<<"$WHY" && ok \
+  || bad "A6 refuses triage_new_stage() but not by S1: $(head -2 <<<"$WHY")"
 if WHY=$(driver_shape "$RT_DRV" rt_ "${RT_MODS[@]}"); then ok
 else bad "bin/run-triage.sh carries a stage body — move it to its bin/lib/rt/ stage file: $WHY"; fi
 

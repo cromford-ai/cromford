@@ -216,7 +216,7 @@ scratch_rm "$H/state/gh-app-default.fail"
 for fn in api_jwt rate_log; do
   body=$(sed -n "/^$fn() {/,/^}/p" "$DIR/bin/gh-token.sh")
   n_all=$(printf '%s\n' "$body" | grep -c 'curl ')
-  n_m=$(printf '%s\n' "$body" | grep -c 'curl -sS -m ')
+  n_m=$(grep -c 'curl -sS -m ' <<<"$body")
   [ "$n_all" -gt 0 ] && [ "$n_all" = "$n_m" ] && ok || bad "6h: every curl in gh-token.sh $fn must carry -m (bounded), $n_m of $n_all do"
 done
 

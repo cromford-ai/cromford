@@ -290,7 +290,7 @@ drive "$T_NEW"
 if git -C "$DIR" cat-file -e "$BASE_SHA:bin/main-red-detector.sh" 2>/dev/null; then
   git -C "$DIR" show "$BASE_SHA:bin/main-red-detector.sh" > "$T/old-detector.sh"
   tree "$T_OLD" "$T/old-detector.sh"
-  norm_log()  { sed -E 's/^[0-9-]+ [0-9:]+Z //' "$1" | grep -v -e '^queue knobs ' -e '^attribution is off'; }
+  norm_log()  { sed -E 's/^[0-9-]+ [0-9:]+Z //' "$1" | grep -v -e '^queue knobs ' -e '^attribution is off' -e '^pass start: ' -e '^pass end: ' -e ' decision=none reason='; }
   norm_flag() { grep -v -e '^qred_t=' -e '^qred_done=' -e '^raised=' -e '^detected=' "$1" 2>/dev/null; }
   h5() { # h5 <label> — one tick on the current pages in both trees, compared
     local r d

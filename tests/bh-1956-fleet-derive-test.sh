@@ -151,21 +151,21 @@ printf '[{"number":7,"status":"done","lastActivityAt":"%s"}]\n' "$NOWISO" > "$T/
 echo '[{"id":"b1","keyPrefix":"ZT"}]' > "$T/boards.json"
 echo '[{"number":41,"url":"https://github.com/Acme/zeta-os/pull/41","headRefName":"ticket/zt-7"}]' > "$T/open-prs.json"
 OUT=$(bi zeta-os)
-printf '%s\n' "$OUT" | grep -q '^DRY: zeta-os ZT-7 is DONE.*#41' && ok || bad "6: a served keyPrefix ZT must name ZT-7, got '$OUT'"
+grep -q '^DRY: zeta-os ZT-7 is DONE.*#41' <<<"$OUT" && ok || bad "6: a served keyPrefix ZT must name ZT-7, got '$OUT'"
 echo '{"boards":[{"id":"b1","keyPrefix":"ZT"}]}' > "$T/boards.json"
 OUT=$(bi zeta-os)
-printf '%s\n' "$OUT" | grep -q '^DRY: zeta-os ZT-7 is DONE' && ok || bad "6: the {boards:[…]} shape must serve keyPrefix too, got '$OUT'"
+grep -q '^DRY: zeta-os ZT-7 is DONE' <<<"$OUT" && ok || bad "6: the {boards:[…]} shape must serve keyPrefix too, got '$OUT'"
 
 echo '[{"id":"b1"}]' > "$T/boards.json"
 echo '[{"number":42,"url":"https://github.com/Acme/project-4/pull/42","headRefName":"ticket/TK-7"}]' > "$T/open-prs.json"
 OUT=$(bi project-4)
-printf '%s\n' "$OUT" | grep -q '^DRY: project-4 TK-7 is DONE.*#42' && ok || bad "6: no keyPrefix must fall back to the map's AR, got '$OUT'"
+grep -q '^DRY: project-4 TK-7 is DONE.*#42' <<<"$OUT" && ok || bad "6: no keyPrefix must fall back to the map's AR, got '$OUT'"
 
 echo '[{"id":"b1","keyPrefix":"ZT"}]' > "$T/boards.json"
 printf '[{"key":"SRV-7","number":7,"status":"done","lastActivityAt":"%s"}]\n' "$NOWISO" > "$T/tickets.json"
 echo '[{"number":43,"url":"u43","headRefName":"ticket/srv-7"},{"number":44,"url":"u44","headRefName":"ticket/zt-7"}]' > "$T/open-prs.json"
 OUT=$(bi zeta-os)
-printf '%s\n' "$OUT" | grep -q '^DRY: zeta-os SRV-7 is DONE.*#43' && ok || bad "6: a served .key must win, got '$OUT'"
+grep -q '^DRY: zeta-os SRV-7 is DONE.*#43' <<<"$OUT" && ok || bad "6: a served .key must win, got '$OUT'"
 grep -q 'ZT-7' <<<"$OUT" && bad "6: a served .key must not be overridden by keyPrefix, got '$OUT'" || ok
 
 echo "bh-1956-fleet-derive: $PASS passed, $FAIL failed"

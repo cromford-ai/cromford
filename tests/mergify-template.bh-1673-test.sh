@@ -173,9 +173,10 @@ tojson "$T/a10-1.yml" > "$T/a10-1.json" \
 
 # A11: cromford's values. Batches of 8, 3 min (the operator, 2026-09-24); 0 retries
 # since the corpus runs only in the batch (2026-09-24, PR #2220): a retry costs
-# a full corpus run. 8 parallel (the operator, 2026-09-28; 4 from #2220): throughput
-# over CI minutes, a policy change, not a weakening.
-jq -e '.merge_queue.max_parallel_checks == 8
+# a full corpus run. 3 parallel (the operator, 2026-10-12, BH-6337; was 8 from
+# 2026-09-28): a red or dequeued batch restarts every batch above it, a policy
+# change, not a weakening.
+jq -e '.merge_queue.max_parallel_checks == 3
        and (.queue_rules[]|select(.name=="default") | .batch_size == 4 and .batch_max_wait_time == "3 min" and .max_checks_retries == 0 and .checks_timeout == "60 min" and .merge_method == "merge")
        and (.queue_rules[]|select(.name=="hotfix")  | .batch_size == 1 and .batch_max_wait_time == "0 s" and .max_checks_retries == 0)' "$T/cromford.json" >/dev/null \
   && ok || bad "A11 cromford render values (got $(jq -c '{mq:.merge_queue, q:[.queue_rules[]|{name,batch_size,batch_max_wait_time,max_checks_retries}]}' "$T/cromford.json"))"

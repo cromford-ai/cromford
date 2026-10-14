@@ -105,7 +105,7 @@ if command -v alerts_db_on >/dev/null 2>&1 && alerts_db_on; then
     PARKED_DB=1
     PARKED_CNT=$(printf '%s\n' "$PARKED_ROWS" | awk 'NF && $0 !~ /^#/ { n++ } END { print n+0 }')
     PARKED_N="$PARKED_CNT"
-    printf '%s\n' "$PARKED_ROWS" | grep -qx '#truncated' && PARKED_N="500+"
+    grep -qx '#truncated' <<<"$PARKED_ROWS" && PARKED_N="500+"
     # Oldest five by the row's own first_seen (column 7), rendered like the
     # local path renders them so the message shape does not change under the
     # reader. One NOW for every age.

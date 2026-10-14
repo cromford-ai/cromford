@@ -78,8 +78,8 @@ worker_covered() {
   for t in "$root"/tests/*.sh; do
     [ -f "$t" ] || continue
     code=$(grep -v '^[[:space:]]*#' "$t")
-    printf '%s\n' "$code" | grep -Eq "^[[:space:]]*cd [^;&|]*worker/$name/?[\"']?([[:space:]]|\$)" || continue
-    printf '%s\n' "$code" | grep -Eq '(^|[[:space:];&|])(node --test|npm test)([[:space:]]|$)' && return 0
+    grep -Eq "^[[:space:]]*cd [^;&|]*worker/$name/?[\"']?([[:space:]]|\$)" <<<"$code" || continue
+    grep -Eq '(^|[[:space:];&|])(node --test|npm test)([[:space:]]|$)' <<<"$code" && return 0
   done
   return 1
 }

@@ -5,6 +5,7 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { DatabaseSync } from 'node:sqlite';
 import worker from '../../src/index.js';
+import { jobsSchemaSql } from '../lib/jobs-schema.js';
 
 // BH-2532.4 (BH-2626) — POST /api/boxes/self-report, driven through
 // worker.fetch (the production entry, auth gate included) against THE SQL THAT
@@ -13,7 +14,7 @@ import worker from '../../src/index.js';
 // guard that is dropped or inverted fails here.
 
 const SECRET = 'test-secret';
-const SCHEMA = readFileSync(fileURLToPath(new URL('../../schema.sql', import.meta.url)), 'utf8');
+const SCHEMA = jobsSchemaSql();
 
 // A D1-shaped facade over node:sqlite (same shape as boxes-rules-hash.bh-2622),
 // plus batch() because POST /api/metrics/cli-versions writes through it.

@@ -24,6 +24,9 @@
 import { resolveIdentity, FALLBACK_ACTOR } from '../../_lib/access-identity.js';
 import { readOnlyRefusal } from '../../_lib/qa-session.js';
 import { importTheme, CUSTOM_KEY_RE, CUSTOM_PREFIX } from '../../../src/theme/custom.js';
+import { isStr, isScalar, jsonError } from '../../_lib/coord-writes.js';
+import { checkWrites } from '../../_lib/coord-writes-compose.js';
+import { FRAGMENT_WRITES } from '#coord-writes';
 
 const JOBS = 'https://harness-jobs.operator.workers.dev';
 const CONSOLE = 'https://harness-console.operator.workers.dev';
@@ -60,22 +63,15 @@ const isJobAbandon = (rest) => {
   return Boolean(m) && m[1] !== '.' && m[1] !== '..';
 };
 
-// THE WRITE SURFACE (BH-2405). Every non-GET the proxy admits is one row here,
-// and the row says exactly which body fields and which query fields travel to
-// the worker. Nothing else does: not an unknown field, not the browser's
-// `actor`, not a query string on a body write. `actor` is never in a list; it
-// is stamped. `ok(key, value)` narrows a field's type where the worker would
-// otherwise coerce it; `build(sent, env, actor)` replaces the pick for a row whose
-// body is rebuilt from the worker's own state. `needsReason` refuses the write
-// with a 400 unless `reason` is a non-blank string.
-const isStr = (_k, v) => typeof v === 'string';
+// THE WRITE SURFACE (BH-2405): the row contract is in functions/_lib/coord-writes.js.
+// BH-6487: WRITES is closed. A new write route is a new file,
+// functions/_lib/coord-writes.d/<NNNN>-<slug>.js, never a row appended here.
 // BH-5353: one participant decision on a worker-minted (crypto.randomUUID) id.
 const PARTICIPANT_ID = '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}';
 const participantDecision = (verb) => {
   const re = new RegExp(`^participants\\/${PARTICIPANT_ID}\\/${verb}$`);
   return (rest) => re.test(rest);
 };
-const isScalar = (k, v) => typeof v === 'string' || (k !== 'action' && typeof v === 'number' && Number.isFinite(v));
 const WRITES = [
   // BH-4153: the /flags screen. PUT `flags` also carries `scope` and `value`.
   // BH-5643: `value` is the flag file's content, e.g. a wip limit.
@@ -112,7 +108,11 @@ const WRITES = [
   // calls it yet). Flat scalars (project and app, never a nested args), no `ok`, so
   // a boolean confirm passes like restore-lab. claim and :id/result are the
   // box lane's routes and stay 405 from a browser.
-  { method: 'POST', path: 'box-commands', body: ['box', 'type', 'target', 'project', 'app', 'reason', 'confirm'] },
+  // BH-5750: the Orgo and Fly pool controls add their args and the price
+  // token (quote_id, confirm_monthly_usd), forwarded as sent; the worker
+  // validates them and gates every one of those types on the stamped actor.
+  { method: 'POST', path: 'box-commands', body: ['box', 'type', 'target', 'project', 'app', 'reason', 'confirm',
+    'account', 'vcpus', 'mem_gb', 'disk_gb', 'to', 'ip', 'delete', 'cap', 'quote_id', 'confirm_monthly_usd'] },
   // BH-2323: RETRY / REQUEUE on one job; `detail` only, as a string, because the
   // worker's requeue reads max_attempts and a click must not lift that cap.
   { method: 'POST', path: isJobAction, body: ['detail'], ok: isStr, rowOrder: true },
@@ -187,17 +187,15 @@ const WRITES = [
   // without it they answer 503 and forward nothing.
   { method: 'POST', path: participantDecision('approve'), body: ['granted_roles'], build: (sent) => participantApproveBody(sent), leadToken: true },
   { method: 'POST', path: participantDecision('deny'), body: [], leadToken: true },
-  { method: 'POST', path: participantDecision('revoke'), body: [], leadToken: true },
-  // BH-5839: the ticket page's Step in composer, a POST to `steer` exactly.
-  // Strings only. The actor is stamped here. steer/take, steer/settle,
-  // steer/<id>/claim and steer/<id>/delivered are box-side and stay 405 from a
-  // browser, and so does a GET of steer/outbox (BOX_ONLY_GETS).
-  { method: 'POST', path: 'steer', body: ['project', 'ticket', 'job_id', 'mode', 'text'], ok: isStr }
+  { method: 'POST', path: participantDecision('revoke'), body: [], leadToken: true }
 ];
+// Every write row: WRITES, then the coord-writes.d/ fragments in name order.
+// A duplicate (method, string path) refuses to load rather than shadow a row.
+export const ROUTES = checkWrites([...WRITES, ...FRAGMENT_WRITES]);
 // BH-5839: GETs that only a box makes. Every other GET passes as-is; these are
-// 405 from a browser, the same as a write that is not a WRITES row.
+// 405 from a browser, the same as a write that is not a ROUTES row.
 const BOX_ONLY_GETS = ['steer/outbox'];
-const writeRoute = (method, rest) => WRITES.find((w) =>
+const writeRoute = (method, rest) => ROUTES.find((w) =>
   w.method === method && (typeof w.path === 'function' ? w.path(rest) : w.path === rest)) || null;
 
 // The forwarded body: the row's fields the browser sent, then the stamped
@@ -218,9 +216,6 @@ function pickBody(sent, row, actor) {
   out.actor = actor;
   return out;
 }
-
-const jsonError = (status, error) =>
-  new Response(JSON.stringify({ error }), { status, headers: { 'content-type': 'application/json' } });
 
 // BH-4846: a custom theme row is fleet-visible (every viewer's picker paints
 // it), so its value is validated HERE, by the same validator the editor and
@@ -384,7 +379,7 @@ export async function onRequest(context) {
   }
 
   // /api/coord/<rest> -> <jobs worker>/api/<rest>. A GET passes as-is, query
-  // and all; a write passes only if it is a row of WRITES, and a job cannot be
+  // and all; a write passes only if it is a row of ROUTES, and a job cannot be
   // PATCHed from a browser (stage/status transitions belong to the box doing
   // the work).
   const rest = Array.isArray(params.path) ? params.path.join('/') : (params.path || '');

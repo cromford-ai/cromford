@@ -136,7 +136,7 @@ handoff() {
     queue_claim() { echo "claim $3" >> "$NR/calls"; return 0; }
     queue_release() { echo "release $2 $3" >> "$NR/calls"; return 0; }
     destroy_machine() { echo "destroy $1" >> "$NR/calls"; return 0; }
-    push_preplan() { :; }; push_reroute() { :; }; push_build_note() { :; }
+    push_preplan() { :; }; push_reroute() { :; }; push_build_note() { :; }; push_bake_evidence() { :; }
     . "$NR/fn.sh"
     next_job_or_destroy
     echo "$REUSED"

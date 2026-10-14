@@ -202,7 +202,7 @@ out=$(run 'rc=0; cooldown_list lane || rc=$?; echo "rc=$rc"')
 [ "$out" = "rc=2" ] && ok || bad "S8 rowless answer rc: $out"
 answer "GET /api/cooldowns?kind=account" "{\"rows\":[$(row account claude old 1),{\"kind\":\"account\",\"vendor\":\"claude\",\"subject\":\"t\",\"until\":$FUT,\"since\":5,\"reason\":\"a\\tb\\nc\",\"box\":null,\"set_at\":1}],\"truncated\":false}"
 out=$(run 'fcd_list account; echo "rc=$?"')
-[ "$(printf '%s\n' "$out" | head -1 | awk -F'\t' '{print NF "|" $1 "|" $2 "|" $4}')" = "6|claude|t|5" ] \
+[ "$(head -1 <<<"$out" | awk -F'\t' '{print NF "|" $1 "|" $2 "|" $4}')" = "6|claude|t|5" ] \
   && ok || bad "S8 fcd_list row: [$out]"
 [ "$(printf '%s\n' "$out" | wc -l)" = 2 ] && [ "$(printf '%s\n' "$out" | tail -1)" = "rc=0" ] \
   && ok || bad "S8 fcd_list printed an expired row or wrong rc: [$out]"

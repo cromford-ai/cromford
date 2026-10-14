@@ -1,0 +1,11 @@
+{
+  "env": "MC_LEAD_CARRY",
+  "read_in": "bin/lib/lead-carry.sh",
+  "type": "int",
+  "default": 1,
+  "min": 0,
+  "max": 1,
+  "unit": null,
+  "zero_means": "off",
+  "note": "BH-6291: when no lead row stands on the live head, the conductor carries the newest lead MERGE or MERGE-WITH-NOTES from an older head onto it in the same tick, only when bin/lib/patch-same.sh proves the same patch (clean main merges only, or a byte-exact rebase). Never a BLOCK. 0 = off: the head waits for the lead-review enqueue lane or a new review, as before."
+}

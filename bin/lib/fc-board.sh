@@ -102,7 +102,7 @@ fc_file_board() {
   if [ -s "$FC_BUILD/children.txt" ]; then
     while IFS= read -r _ei || [ -n "$_ei" ]; do
       _eln=$((_eln + 1))
-      printf '%s\n' "$_ei" | grep -qE '^[A-Za-z]+-[0-9]+$' \
+      grep -qE '^[A-Za-z]+-[0-9]+$' <<<"$_ei" \
         || { _fcb_fail "children.txt line $_eln is not a board key ('$_ei') — left as it was, resolve by hand"; return 1; }
       EXISTING+=("$_ei")
     done < "$FC_BUILD/children.txt"
@@ -224,6 +224,11 @@ fc_file_board() {
     if [ "$FC_KIND" != rollout ] && [ "$i" != 0 ]; then
       BLOCK="${KEYS[1]} (hard)"
       DEPENDS="DEPENDS: ${KEYS[1]} hard — this slice imports the contract ($CONTRACT)"
+      # BH-5520: this lane has no contract-path extraction, so it cannot check
+      # "shares no file". The sibling stays hard; the log line shows the gap.
+      if jq -e --argjson i "$i" '.[$i].imports_contract == false' "$FC_SPEC" >/dev/null 2>&1; then
+        fc_log "$FC_BUILD" "child $n: imports_contract false refused — the board lane cannot check shared files — kept hard on the contract ${KEYS[1]}"
+      fi
       if [ "$CAP" = 1 ]; then
         [ -n "${IDS[1]:-}" ] || { _fcb_fail "child $n depends on the contract, whose board id is unknown — nothing filed for it"; return 1; }
         DEPS=$(jq -c --argjson id "${IDS[1]}" '. + [$id]' <<<"$DEPS")
@@ -237,7 +242,8 @@ fc_file_board() {
     # A capable board carries the order in dependsOn: no text line beside it.
     [ "$FC_KIND" != rollout ] && [ "$CAP" = 1 ] && BLOCK=""
     HTML="$FC_BUILD/children/child-$n.html"
-    { printf '%s\n\n' "$BODY"; fc_child_footer "$FC_KIND" "$FC_KEY" "$n" "$N" "$BLOCK" "$DEPENDS" "$CONTRACT"; } | _fcb_html > "$HTML"
+    { printf '%s\n\n' "$BODY"; fc_child_footer "$FC_KIND" "$FC_KEY" "$n" "$N" "$BLOCK" "$DEPENDS" "$CONTRACT"
+      fc_owns_line "$FC_SPEC" "$i"; } | _fcb_html > "$HTML"
     REQ="$FC_BUILD/children/create-$n.json"
     jq -n --arg title "$CT" --rawfile desc "$HTML" --arg pri "$PRIORITY" --argjson cap "$CAP" \
           --argjson parent "$PARENT_ID_JSON" --argjson deps "$DEPS" \
@@ -259,7 +265,7 @@ fc_file_board() {
     if [ "$RC" != 0 ] || [ -z "$KEY" ] || [ -z "$ID" ]; then
       _fcb_fail "create failed on child $n of $N (curl rc=$RC, key '${KEY:-none}', id ${ID:-none}) — $((n - 1)) filed, the master is not parked"; return 1
     fi
-    printf '%s\n' "$KEY" | grep -qE '^[A-Za-z]+-[0-9]+$' \
+    grep -qE '^[A-Za-z]+-[0-9]+$' <<<"$KEY" \
       || { _fcb_fail "child $n of $N was created as id $ID but its key '$KEY' is not a board key — not recorded, resolve by hand"; return 1; }
     # RECORDED BEFORE THE LOOP ADVANCES: a run killed on child n+1 leaves an
     # honest partial record, and the rerun files only what is missing.

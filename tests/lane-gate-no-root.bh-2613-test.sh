@@ -169,7 +169,7 @@ chk "A10 _cost_rows_log with no root: rc 0, silent" "$([ "$rc" = 0 ] && [ -z "$o
 n=$(cat "$T/a10p.trace" "$T/a10l.trace" | grep -cE "(^|[ \"'<>=])/(logs|flags)/")
 chk "A10 no root-relative /logs or /flags path is built" "$([ "$n" = 0 ]; echo $?)" "count=$n"
 out=$(nr bash -c 'exec 9>"$2"; BASH_XTRACEFD=9; set -x; . "$1/cost-budget.sh"; cost_budget_rates_tsv' _ "$LIB" "$T/a10.trace" 2>/dev/null); rc=$?
-chk "A10 cost_budget_rates_tsv with no root reads the sibling catalog" "$([ "$rc" = 0 ] && printf '%s\n' "$out" | grep -q '^__MAX__	'; echo $?)" "rc=$rc"
+chk "A10 cost_budget_rates_tsv with no root reads the sibling catalog" "$([ "$rc" = 0 ] && grep -q '^__MAX__	' <<<"$out"; echo $?)" "rc=$rc"
 n=$(grep -cE '/root/harness|(^|[ "])/(state|catalog)/model-prices' "$T/a10.trace")
 chk "A10 cost_budget_rates_tsv tries no root candidate" "$([ "$n" = 0 ]; echo $?)" "count=$n"
 chk "A10 no file created in HOME or cwd" "$([ "$(snap)" = "$before" ]; echo $?)"

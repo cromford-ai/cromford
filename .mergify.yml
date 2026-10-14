@@ -1,0 +1,182 @@
+# Mergify merge queue for cromford itself (the operator, 2026-09-23).
+#
+# WHY. On 2026-09-23 main went red four times, each time from two PRs that were
+# green on their own merge refs and broke main when merged back to back
+# (#1620 vs #1614, #1459's suite vs #1639's fixture, #1619's readers vs
+# #1639's ratchet). The queue builds every PR — alone or in a batch — on top of
+# CURRENT main and merges only if that tree is green. GitHub's native queue is
+# Enterprise-Cloud-only for private repos, so the queue is Mergify's
+# (docs/MERGIFY.md has the ops page and the contract).
+#
+# EACH TREE IS TESTED EXACTLY ONCE (the operator, 2026-09-24). MonkCI billed 63K-126K
+# overage minutes a day because a tree was tested on the PR (twice), in the
+# batch and again on the push to main. Now an ordinary PR runs only the three
+# fast checks, which is what queue_conditions ask for; the test corpus (one
+# traced run, both verdicts), the SPA and the jobs worker run ONLY on the batch
+# draft, which is what merge_conditions ask for — Mergify evaluates those on the
+# draft. With the two lists different, Mergify never checks a PR in place: every
+# batch, even a batch of one, is a draft, so the corpus runs once per batch and
+# never on the PR itself. The builder's bin/test-impact-gate.sh run before it
+# pushes is the PR-time pre-test. Rendered from
+# config/mergify/repos/cromford.conf (queue_check= / check= / status_check=);
+# bin/mergify-template.sh --check keeps the two equal.
+#
+# HOW THE HARNESS USES IT. The merge conductor detects this file (root path,
+# `queue_rules:`) and switches this repo's provider to `mergify`: it enqueues by
+# adding the `merge-queue` label (plus the `@mergifyio queue` ask) and never
+# runs a direct merge here. Removing this file is the rollback: the provider
+# drops back to `none` and every merger merges directly as before.
+#
+# IMPACT LANES (BH-4979), NOT LIVE. The conf's queue_mode=parallel would add
+# `merge_queue.mode: parallel` and `scopes: {source: {manual: {}}}` here: each
+# PR's scopes are the impact suites bin/test-impact.sh maps its files to (minus
+# the always-suites), uploaded by the merge conductor before the label, so PRs
+# with disjoint scopes test and merge in their own lanes and PRs sharing one
+# batch together. A high-tier or unmappable PR is uploaded with all_scopes, the
+# serial lane. Until the flip PR (key + PUT probe, docs/MERGIFY.md) this file
+# is serial and the conductor only logs the lane each PR would take.
+merge_queue:
+  # Speculative batches built at once, ahead of the one being merged.
+  # 3 (the operator, 2026-10-12, BH-6337; was 8 from 2026-09-28, 4 from #2220): a
+  # failed or dequeued lower batch restarts every batch above it, and most
+  # batches run the full corpus (25-30 min). Raise it again after #5454 and the
+  # pre-queue learned-suite gate, if a batch costs about 10 min and the batch
+  # failure rate is below 20%.
+  max_parallel_checks: 3
+
+queue_rules:
+  # FIRST IN THE FILE IS FIRST IN LINE: the hotfix queue is above default, and it
+  # takes `fix-main-red` PRs only. `hotfix` is the pool's build-priority label and
+  # queues in default like any other PR (BH-2121: on 2026-09-24 a `hotfix` PR
+  # jumped the queue and threw away a green batch of 8, #2104).
+  - name: hotfix
+    queue_conditions:
+      - base = main
+      - label = fix-main-red
+      # BH-2275: a standing changes-requested review keeps a PR out (and dequeues it).
+      - "#changes-requested-reviews-by=0"
+      - check-success = "Syntax + shellcheck + config integrity"
+      - check-success = "Test determinism lint"
+      - check-success = "Prompt replay evals (prompts/** only)"
+      # BH-3348: the head-bound verdict gate (status_check= in the conf).
+      - check-success = "lead-verdict"
+    merge_conditions:
+      # ... and a batch holding one cannot merge (BH-2275).
+      - "#changes-requested-reviews-by=0"
+      - check-success = "Syntax + shellcheck + config integrity"
+      - check-success = "Test determinism lint"
+      - check-success = "Pure-logic gate fixtures"
+      - check-success = "Tests cannot touch a real harness"
+      - check-success = "Mission Control SPA — unit tests + build"
+      - check-success = "Jobs worker — routes + schema"
+      - check-success = "Prompt replay evals (prompts/** only)"
+    # MERGE, not squash: this repo allows merge commits only.
+    merge_method: merge
+    # An emergency never shares a batch, and never waits to fill one.
+    batch_size: 1
+    batch_max_wait_time: 0 s
+    max_checks_retries: 0
+    checks_timeout: 60 min
+  - name: solo
+    # THE SOLO LANE (BH-5430): default's conditions plus `queue-solo`, which the
+    # merge conductor adds before merge-queue when a PR's break-risk score
+    # reaches queue_risk.threshold (bin/lib/queue-risk.sh). One risky PR then
+    # tests alone instead of failing a batch of 8 and every batch stacked behind
+    # it. No priority rule: it never interrupts running checks.
+    queue_conditions:
+      - base = main
+      - label = queue-solo
+      - "#changes-requested-reviews-by=0"
+      - check-success = "Syntax + shellcheck + config integrity"
+      - check-success = "Test determinism lint"
+      - check-success = "Prompt replay evals (prompts/** only)"
+      - check-success = "lead-verdict"
+    merge_conditions:
+      - "#changes-requested-reviews-by=0"
+      - check-success = "Syntax + shellcheck + config integrity"
+      - check-success = "Test determinism lint"
+      - check-success = "Pure-logic gate fixtures"
+      - check-success = "Tests cannot touch a real harness"
+      - check-success = "Mission Control SPA — unit tests + build"
+      - check-success = "Jobs worker — routes + schema"
+      - check-success = "Prompt replay evals (prompts/** only)"
+    merge_method: merge
+    batch_size: 1
+    batch_max_wait_time: 0 s
+    max_checks_retries: 0
+    checks_timeout: 60 min
+  - name: default
+    # The PR's own FAST checks must be green before it may enter the queue: an
+    # ordinary PR runs nothing else (each tree is tested exactly once, below) ...
+    queue_conditions:
+      - base = main
+      # BH-2275: a standing changes-requested review keeps a PR out (and dequeues it).
+      - "#changes-requested-reviews-by=0"
+      - check-success = "Syntax + shellcheck + config integrity"
+      - check-success = "Test determinism lint"
+      - check-success = "Prompt replay evals (prompts/** only)"
+      # BH-3348: and a verdict bound to THIS head. `lead-verdict` is a commit
+      # status only a head-bound verdict publishes (bin/lead-verdict.sh post,
+      # or the conductor's own enqueue), so a hand `@Mergifyio queue` on a head
+      # nobody reviewed never gets in, and a push leaves the new head without it.
+      - check-success = "lead-verdict"
+    # ... and the batch draft, built on current main, must pass ALL SEVEN —
+    # the test corpus, the SPA and the jobs worker run there and nowhere else.
+    merge_conditions:
+      # ... and a batch holding one cannot merge (BH-2275).
+      - "#changes-requested-reviews-by=0"
+      - check-success = "Syntax + shellcheck + config integrity"
+      - check-success = "Test determinism lint"
+      - check-success = "Pure-logic gate fixtures"
+      - check-success = "Tests cannot touch a real harness"
+      - check-success = "Mission Control SPA — unit tests + build"
+      - check-success = "Jobs worker — routes + schema"
+      - check-success = "Prompt replay evals (prompts/** only)"
+    merge_method: merge
+    # 8 (the operator, 2026-09-24): the pool now builds ~12 PRs at a time; batches of 8
+    # Mergify splits a red batch to find the culprit.
+    batch_size: 4
+    batch_max_wait_time: 3 min
+    # A retry hides a real failure and costs a full corpus run: 0 (2026-09-24).
+    max_checks_retries: 0
+    # The plan job + a shard (bounded at 45 min) + the fan-ins; explicit so a
+    # slow run is not dequeued by an `auto` timeout.
+    checks_timeout: 60 min
+
+# Interrupts running batches, so it fires for a main-red fix only (BH-2121).
+priority_rules:
+  - name: hotfix first
+    conditions:
+      - label = fix-main-red
+    priority: high
+    allow_checks_interruption: true
+
+pull_request_rules:
+  - name: queue a hotfix at the head of the line
+    conditions:
+      - base = main
+      - label = merge-queue
+      - label = fix-main-red
+    actions:
+      queue:
+        name: hotfix
+  - name: queue on the harness label
+    conditions:
+      - base = main
+      - label = merge-queue
+      - -label = fix-main-red
+      # ... and a solo-routed PR matches the rule below instead (BH-5430).
+      - -label = queue-solo
+    actions:
+      queue:
+        name: default
+  - name: queue on the solo label
+    conditions:
+      - base = main
+      - label = merge-queue
+      - label = queue-solo
+      # A fix-main-red PR takes the hotfix rule even when it scores high.
+      - -label = fix-main-red
+    actions:
+      queue:
+        name: solo

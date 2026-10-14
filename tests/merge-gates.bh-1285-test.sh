@@ -81,6 +81,11 @@ job_cap()         { :; }
 # a different lead: the fence answers "not a lead PR" and every case here is
 # decided by the gate it is about (the lead fence has its own suite, 1606).
 setting_get()     { [ "${1:-}" = lead_pr_authors ] && echo bh1285-lead; }
+# BH-6428: the box queue's pre-merge guard lands only a head bound to a review.
+# The conductor's pr_state row binds it here (reviewed_sha = the fixture head,
+# state READY); every other ledger kind has no row, as before.
+job_ledger_row()  { [ "${1:-}" = pr_state ] || return 2
+  jq -nc '{status:"READY", detail:({head_sha:"aaaaaaaa1111", reviewed_sha:"aaaaaaaa1111"}|tojson)}'; }
 JC
 chmod +x "$T/h/bin/jobs-client.sh"
 
@@ -145,6 +150,7 @@ mkdir -p "$TRACK"
 printf '%s\n' "$*" >> "$TRACK/gh-calls.txt"
 PRN=""
 case "$*" in
+  *"api -i -X GET repos/$SLUG/actions/runs?head_sha="*) printf 'HTTP/1.1 200 OK\r\n\r\n{"workflow_runs":[{"name":"ci","status":"completed","conclusion":"success","created_at":"2026-10-13T00:00:00Z"}]}\n'; exit 0 ;;  # BH-6428: the guard reads head CI; green here
   *"api -i -X GET repos/"*"/issues/"*"/comments"*) printf 'HTTP/1.1 200 OK\r\n\r\n[]\n'; exit 0 ;;  # BH-1668: the PR's own thread (no HOLD), read over REST by to_merge_hold
   *"api -i -X PUT repos/$SLUG/pulls/"*"/merge"*)
     PRN=$(sed -E 's|.*/pulls/([0-9]+)/merge.*|\1|' <<<"$*")

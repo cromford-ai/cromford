@@ -4,6 +4,7 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { DatabaseSync } from 'node:sqlite';
 import worker from '../src/index.js';
+import { jobsSchemaSql } from './lib/jobs-schema.js';
 
 // BH-5400 — a lead review request that is reset to `requested` and re-reviewed
 // must be visible to the land lane again, and the reset must be recorded
@@ -12,7 +13,7 @@ import worker from '../src/index.js';
 // ensureColumns adds them on the first handler call.
 const SECRET = 'test-secret';
 const LEAD = 'lead-test-token';
-const SCHEMA = readFileSync(fileURLToPath(new URL('../schema.sql', import.meta.url)), 'utf8');
+const SCHEMA = jobsSchemaSql();
 
 function sqliteDB(db) {
   const bindAndRun = (sql, binds) => ({

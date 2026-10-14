@@ -23,7 +23,7 @@
 #   sp_stale_commits <wt> <base-ref> <head>  TSV child_sha, main_sha, subject
 #   sp_open_children <slug> <branch>         rc 0 proven list · 1 unreadable (why)
 #   sp_is_rollout_wave <body>                rc 0 = a rollout wave child
-#   sp_wait_mode [project]                   off | rollouts | all
+#   sp_wait_mode [project]                   off | rollouts | all | plan
 #
 # Knobs: catalog/lanes.d/_lib.stale-parent.json, through lib_env_apply
 # stale-parent (settings row > env > the registry default these fallbacks
@@ -45,7 +45,8 @@ sp_knob() {
     command -v lib_env_apply >/dev/null 2>&1 || . "$_SP_LIB/lane-gate.sh" >/dev/null 2>&1 || exit 0
     lib_env_apply stale-parent "${2:-}" >/dev/null 2>&1) || true
   case "$name" in
-    STACK_WAIT_PARENT_MERGE) printf '%s\n' "${v:-rollouts}" ;;
+    STACK_WAIT_PARENT_MERGE) printf '%s\n' "${v:-plan}" ;;
+    STACK_WAIT_CAP_H) case "$v" in ''|*[!0-9]*|0) printf '24\n' ;; *) [ "$v" -gt 336 ] && v=336; printf '%s\n' "$v" ;; esac ;;
     HOLD_PUSH_REWRITE_GUARD|STALE_PARENT_CHECK) case "$v" in 0) printf '0\n' ;; *) printf '1\n' ;; esac ;;
     STALE_PARENT_MAX_PRS) case "$v" in ''|*[!0-9]*|0) printf '30\n' ;; *) [ "$v" -gt 100 ] && v=100; printf '%s\n' "$v" ;; esac ;;
     STALE_PARENT_SCAN_MAX) case "$v" in ''|*[!0-9]*|0) printf '20\n' ;; *) printf '%s\n' "$v" ;; esac ;;
@@ -239,21 +240,23 @@ sp_open_children() {
 # (bin/lib/file-children.sh fc_child_footer writes `Rollout wave N of M:`).
 sp_is_rollout_wave() { grep -qE '^Rollout wave [0-9]+ of [0-9]+:' <<<"${1:-}"; }
 
-# sp_wait_mode [project] — STACK_WAIT_PARENT_MERGE: off | rollouts | all. An
-# invalid value is `rollouts`, the registry default, with one line in
+# sp_wait_mode [project] — STACK_WAIT_PARENT_MERGE: off | rollouts | all |
+# plan. `plan` (BH-6389, bin/lib/stack-wait.sh) is `rollouts` plus: a child
+# stacks only when its plan's `## Stack` files are disjoint from the parent's.
+# An invalid value is `plan`, the registry default, with one line in
 # logs/stale-parent.log: a settings outage never turns the wait off.
 sp_wait_mode() {
   local v h
   v=$(sp_knob STACK_WAIT_PARENT_MERGE "${1:-}")
   case "$v" in
-    off|rollouts|all) printf '%s\n' "$v" ;;
+    off|rollouts|all|plan) printf '%s\n' "$v" ;;
     *)
       h="${HARNESS:-${H:-}}"
       if [ -n "$h" ]; then
         mkdir -p "$h/logs" 2>/dev/null
-        printf '%s [%s] stale-parent: STACK_WAIT_PARENT_MERGE=%s is not off|rollouts|all — using rollouts\n' \
+        printf '%s [%s] stale-parent: STACK_WAIT_PARENT_MERGE=%s is not off|rollouts|all|plan — using plan\n' \
           "$(date -u '+%Y-%m-%d %H:%M:%SZ')" "${1:--}" "$v" >> "$h/logs/stale-parent.log" 2>/dev/null
       fi
-      printf 'rollouts\n' ;;
+      printf 'plan\n' ;;
   esac
 }

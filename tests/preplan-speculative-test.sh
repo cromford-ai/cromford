@@ -406,7 +406,7 @@ done
 n=0
 while IFS= read -r l; do
   [ -n "$l" ] || continue
-  printf '%s' "$l" | grep -qF -- "$PAT" || continue
+  grep -qF -- "$PAT" <<<"$l" || continue
   n=$((n+1))
   if [ "$SHOW" = 1 ]; then echo "$((1000+n)) $l"; else echo "$((1000+n))"; fi
 done < "$HARNESS/procs.txt"

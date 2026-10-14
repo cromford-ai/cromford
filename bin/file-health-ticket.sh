@@ -30,14 +30,14 @@ CURL() { curl -s --max-time 25 -H "Authorization: Bearer $TOKEN" -H "Content-Typ
 
 BOARDS=$(CURL "$BASE/boards")
 BOARD=$(echo "$BOARDS" | jq -r '(.boards // .)[0].id // empty')
-[ -n "$BOARD" ] || { echo "FAIL: no board id in: $(echo "$BOARDS" | head -c 200)"; exit 1; }
+[ -n "$BOARD" ] || { echo "FAIL: no board id in: $(head -c 200 <<<"$BOARDS")"; exit 1; }
 
 DESC="<p>We added an automatic health monitor to the app: <a href=\"$PROD/api/health\">$PROD/api/health</a>.</p><p>Our monitoring fleet now checks it twice a day. It verifies 2 things: the database answers, and the AI connection actually works (a real test call, not just a key check). If the AI provider key stops working or runs out of credits, we get an alert within 12 hours instead of finding out from a broken feature days later.</p><p>Shipped today in $PRURL. Filed here for the record. Nothing is needed from your side.</p>"
 PAYLOAD=$(jq -nc --arg t "Automatic health monitoring for the app (/api/health)" --arg d "$DESC" '{title:$t, description:$d, priority:"low"}')
 CREATED=$(CURL -X POST -d "$PAYLOAD" "$BASE/boards/$BOARD/tickets")
 TID=$(echo "$CREATED" | jq -r '.ticket.id // .id // empty')
 TKEY=$(echo "$CREATED" | jq -r '.ticket.key // .key // "?"')
-[ -n "$TID" ] || { echo "FAIL: create: $(echo "$CREATED" | head -c 300)"; exit 1; }
+[ -n "$TID" ] || { echo "FAIL: create: $(head -c 300 <<<"$CREATED")"; exit 1; }
 
 MOVED=$(CURL -X POST -d '{"toStatus":"done","sortOrder":999999}' "$BASE/tickets/$TID/move")
-echo "OK $PROJECT ticket $TKEY (id $TID) filed+closed: $(echo "$MOVED" | head -c 120)"
+echo "OK $PROJECT ticket $TKEY (id $TID) filed+closed: $(head -c 120 <<<"$MOVED")"

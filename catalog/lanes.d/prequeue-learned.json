@@ -1,0 +1,77 @@
+{
+  "id": "prequeue-learned",
+  "name": "Pre-queue learned suites",
+  "scope": "hub",
+  "script": "bin/prequeue-learned.sh",
+  "cadence": "23,53 * * * *",
+  "boxes": [
+    "hub"
+  ],
+  "switch": {
+    "kind": "flag",
+    "name": "lane-off-prequeue-learned",
+    "aliases": []
+  },
+  "wired": true,
+  "knobs": [
+    {
+      "env": "PREQUEUE_LEARNED_REPO",
+      "type": "string",
+      "default": "example-org/cromford",
+      "zero_means": null,
+      "note": "BH-6335: the repo whose Harness CI (harness-ci.yml) failed merge-queue batch runs are read, one local record per run in state/prequeue-learned/runs/. Only cromford runs that workflow. NOT settable from the control plane: it is an identity the lane reads GitHub as, so only env/global.env on the box moves it.",
+      "settable": false
+    },
+    {
+      "env": "PREQUEUE_LEARNED_MIN",
+      "type": "int",
+      "default": 20,
+      "min": 1,
+      "max": 1000,
+      "zero_means": null,
+      "note": "BH-6335: a suite goes on the learned list (the pre-queue gate's `learned` input) only when this many distinct failed merge-queue batches named it inside PREQUEUE_LEARNED_DAYS. Read by bin/prequeue-learned.sh --list."
+    },
+    {
+      "env": "PREQUEUE_LEARNED_DAYS",
+      "type": "int",
+      "default": 7,
+      "min": 1,
+      "max": 30,
+      "zero_means": null,
+      "note": "BH-6335: the window. --list counts the records of batch runs created in the last this-many days; --refresh reads the runs created in the same window. Records are kept 30 days whatever this says."
+    },
+    {
+      "env": "PREQUEUE_LEARNED_TOP",
+      "type": "int",
+      "default": 10,
+      "min": 1,
+      "max": 50,
+      "zero_means": null,
+      "note": "BH-6335: at most this many suites on the learned list, highest counts first, ties by name. Bounds the time the learned suites add to every pre-queue gate run."
+    },
+    {
+      "env": "PREQUEUE_LEARNED_PAGES",
+      "type": "int",
+      "default": 5,
+      "min": 1,
+      "max": 10,
+      "zero_means": null,
+      "note": "BH-6335: at most this many 100-run pages of the harness-ci.yml run list per --refresh tick."
+    },
+    {
+      "env": "PREQUEUE_LEARNED_MAX",
+      "type": "int",
+      "default": 20,
+      "min": 1,
+      "max": 100,
+      "zero_means": null,
+      "note": "BH-6335: at most this many unrecorded failed batch runs have their logs read per tick (the log and one jobs page each, through bin/lib/flaky.sh). The rest are logged as deferred and drain oldest first on later ticks."
+    }
+  ],
+  "stats": {
+    "cost_stage": null,
+    "cost_project_filter": null,
+    "lanes_row": false,
+    "log": "logs/prequeue-learned.log"
+  }
+}

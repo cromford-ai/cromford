@@ -730,8 +730,10 @@ fi
 # BH-5961 adds bin/lib/slice-remainder.sh: it files the remaining slices of a
 # merged SLICE plan through fc_file_issues (kind slice), never file_children,
 # so the board lane cannot receive that kind.
+# BH-6308 adds bin/lib/slice-closeout.sh for the same reason: it files ONE
+# "rest of" child through fc_file_issues (kind slice), never file_children.
 CALLERS=$(cd "$DIR" && grep -rn 'file-children\.sh\|file_children\|fc_[a-z_]*(' bin/ fly/ cron/ --include='*.sh' 2>/dev/null \
-          | grep -vE '^bin/lib/file-children\.sh:|^bin/lib/fc-issues\.sh:|^bin/lib/fc-board\.sh:|^bin/run-decompose\.sh:|^bin/run-rollout\.sh:|^bin/file-health-ticket\.sh:|^bin/lib/slice-remainder\.sh:' \
+          | grep -vE '^bin/lib/file-children\.sh:|^bin/lib/fc-issues\.sh:|^bin/lib/fc-board\.sh:|^bin/run-decompose\.sh:|^bin/run-rollout\.sh:|^bin/file-health-ticket\.sh:|^bin/lib/slice-remainder\.sh:|^bin/lib/slice-closeout\.sh:' \
           | grep -vE '^[^:]+:[0-9]+:[[:space:]]*#')
 [ -z "$CALLERS" ] && ok || bad "only bin/run-decompose.sh (+ its lane module) and bin/run-rollout.sh may call the filer (found):
 $CALLERS"

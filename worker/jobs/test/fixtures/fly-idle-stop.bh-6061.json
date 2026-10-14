@@ -1,0 +1,1 @@
+{"rows":[{"stop_id":"1f1d00000001-1791700000","app":"pool-cromford","machine_id":"1f1d00000001","size":"performance-16x","source":"pool","idle_s":1000,"threshold_s":900,"usd_per_hour":0.89863,"status":"requested","box":"fixture","stopped_at":"2026-10-11T06:26:40Z"}]}

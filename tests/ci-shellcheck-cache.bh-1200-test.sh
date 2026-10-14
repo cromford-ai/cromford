@@ -72,7 +72,7 @@ $STRAY"; fi
 
   # …and the reader is not vacuous: it must still SEE an apt-get install line,
   # or it would report "no shellcheck apt" forever on an empty file.
-  if printf '%s\n' "$CODE" | grep -q 'apt-get install'; then ok
+  if grep -q 'apt-get install' <<<"$CODE"; then ok
   else bad "A: no apt-get install line at all in the workflow — this check graded nothing"; fi
 
   # The cache has to persist between runs or the script is only ever cold. On a
@@ -95,7 +95,7 @@ $STRAY"; fi
   # silently never hits, and it reads as correct.
   PIN=$(sed -n 's/^SHELLCHECK_PIN=//p' "$SCRIPT" | head -1)
   if [ -n "$PIN" ]; then ok; else bad "A: bin/ci-shellcheck.sh declares no SHELLCHECK_PIN"; fi
-  if [ -n "$PIN" ] && printf '%s\n' "$CODE" | grep -q "key:.*$PIN"; then ok
+  if [ -n "$PIN" ] && grep -q "key:.*$PIN" <<<"$CODE"; then ok
   else bad "A: the actions/cache key does not name the pinned ShellCheck $PIN — a version bump would reuse the old cache"; fi
 
  # The cached path must be the directory the script actually writes to, or the
@@ -107,9 +107,9 @@ $STRAY"; fi
   # must name the script's cache dir and must actually cache the findings dirs.
   if [ -n "$DEFCACHE" ]; then
     PATHBLOCK=$(printf '%s\n' "$CODE" | grep -A3 '^path:')
-    if printf '%s\n' "$PATHBLOCK" | grep -q "$DEFCACHE"; then ok
+    if grep -q "$DEFCACHE" <<<"$PATHBLOCK"; then ok
     else bad "A: the actions/cache path does not name the script's cache dir '$DEFCACHE' — nothing would be saved"; fi
-    if printf '%s\n' "$PATHBLOCK" | grep -qE "$DEFCACHE/(results|fatal)"; then ok
+    if grep -qE "$DEFCACHE/(results|fatal)" <<<"$PATHBLOCK"; then ok
     else bad "A: the actions/cache path does not include '$DEFCACHE/results' and '$DEFCACHE/fatal' — the binary would be cached too"; fi
   else bad "A: cannot read the script's default cache directory name"; fi
 else

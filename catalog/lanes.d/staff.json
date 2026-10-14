@@ -1,0 +1,132 @@
+{
+  "id": "staff",
+  "name": "Staff heartbeat (one tick per active staff agent: collect, claim, at most one model call, act by autonomy level)",
+  "scope": "hub",
+  "script": "bin/staff.sh",
+  "cadence": "*/15 * * * *",
+  "boxes": [
+    "hub"
+  ],
+  "switch": {
+    "kind": "flag",
+    "name": "staff-off-all",
+    "aliases": []
+  },
+  "wired": true,
+  "stats": {
+    "cost_stage": "staff-tick",
+    "cost_project_filter": null,
+    "lanes_row": false,
+    "log": "logs/staff.log"
+  },
+  "knobs": [
+    {
+      "env": "STAFF_ENABLED",
+      "type": "int",
+      "default": 1,
+      "min": 0,
+      "max": 1,
+      "zero_means": "off",
+      "note": "BH-5561: 0 stops every staff tick after the kill-flag check and before any roster read. Read by bin/staff.sh as ${STAFF_ENABLED:-1}; out of range is one warn line and the default.",
+      "settable": true
+    },
+    {
+      "env": "STAFF_MAX_ITEMS",
+      "type": "int",
+      "default": 20,
+      "min": 1,
+      "max": 100,
+      "zero_means": null,
+      "note": "BH-5561: collector lines claimed per agent per tick, all judged in ONE model call. More than this: the rest are not claimed and come back next tick (logged deferred=<n>).",
+      "settable": true
+    },
+    {
+      "env": "STAFF_MAX_ATTEMPTS",
+      "type": "int",
+      "default": 2,
+      "min": 1,
+      "max": 10,
+      "zero_means": null,
+      "note": "BH-5561: model calls one finding may cost. A finding already at the cap is recorded failed with no call. The counter is written before the call.",
+      "settable": true
+    },
+    {
+      "env": "STAFF_COLLECT_TIMEOUT_S",
+      "type": "int",
+      "default": 120,
+      "min": 10,
+      "max": 600,
+      "unit": "s",
+      "zero_means": null,
+      "note": "BH-5561: timeout on bin/staff/<agent>-collect.sh. A collector that times out is rc 124: unreadable, nothing claimed.",
+      "settable": true
+    },
+    {
+      "env": "STAFF_LLM_MAX_USD",
+      "type": "number",
+      "default": 0.6,
+      "min": 0.01,
+      "max": 2,
+      "unit": "usd",
+      "zero_means": null,
+      "note": "BH-5561: USD cap on each staff tick's model call (passed as AGENT_CALL_BUDGET_USD_STAFF_TICK, one stage for every agent). Read by bin/staff.sh as ${STAFF_LLM_MAX_USD:-0.60}; not a number is one warn line and the default.",
+      "settable": true
+    },
+    {
+      "env": "STAFF_FILE_REPO",
+      "type": "string",
+      "default": "example-org/cromford",
+      "zero_means": null,
+      "note": "BH-5561: owner/repo where a staff agent files its tickets (label staff:<agent>, no ai-build label). Not owner/repo: one warn line and the default. NOT settable from the control plane: it names the repo a root lane writes to; set it in env/global.env.",
+      "settable": false
+    },
+    {
+      "env": "STAFF_FIXTURE",
+      "type": "string",
+      "default": "",
+      "zero_means": null,
+      "note": "Test seam: a file bin/staff.sh sources after its libs, only when HARNESS_TEST_SANDBOX=1. NOT settable from the control plane: it names a file a root lane sources.",
+      "settable": false
+    },
+    {
+      "env": "HARNESS_TEST_SANDBOX",
+      "type": "string",
+      "default": "",
+      "zero_means": null,
+      "note": "Test seam gate: bin/staff.sh sources STAFF_FIXTURE only when this is 1 (the test harness sets it). Never set on a box, and NOT settable from the control plane.",
+      "settable": false
+    },
+    {
+      "env": "LLM_RUNNER_ALLOWED",
+      "type": "string",
+      "default": "",
+      "zero_means": null,
+      "read_in": "bin/lib/llm-gate.sh",
+      "note": "Comma/space list of the ONLY ladder rungs the staff lane may reach. Empty is every rung, i.e. the stage.staff-tick ladder unchanged. A rung outside the list is refused before the call.",
+      "settable": true
+    },
+    {
+      "env": "LLM_USD_CAP_DAY",
+      "type": "float",
+      "default": 0,
+      "min": 0,
+      "max": 10000,
+      "unit": "usd",
+      "zero_means": "unlimited",
+      "read_in": "bin/lib/llm-gate.sh",
+      "note": "BH-5561: dollars the staff lane (every agent together) may spend in the current UTC day, summed from D1 cost_rows through GET /api/metrics/llm-spend. 0 is no cap here; the fleet row lane.staff.llm_usd_cap_day sets it with no deploy.",
+      "settable": true
+    },
+    {
+      "env": "LLM_LANE_ENABLED",
+      "type": "int",
+      "default": 1,
+      "min": 0,
+      "max": 1,
+      "zero_means": "off",
+      "read_in": "bin/lib/llm-gate.sh",
+      "note": "0 makes the staff lane call no model at all. bin/lib/llm-gate.sh refuses BEFORE the vendor call and writes a zero-cost row_source=refused row.",
+      "settable": true
+    }
+  ]
+}

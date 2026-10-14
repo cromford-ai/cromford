@@ -295,11 +295,11 @@ HARNESS="$H" "$H/bin/queue-line-drop.sh" 'TK-2; rm -rf /' >/dev/null 2>&1 && bad
 # `|| echo 0` made BEFORE/AFTER "0\n0" and $(( )) died with a syntax error.
 : > "$H/logs/READY-QUEUE.log"
 out=$(HARNESS="$H" "$H/bin/queue-line-drop.sh" TK-9 2>&1) || { bad "empty-queue drop must rc 0, got $? ($out)"; out=""; }
-echo "$out" | grep -q 'dropped 0' && ok || bad "empty-queue drop must print dropped 0, got: $out"
+grep -q 'dropped 0' <<<"$out" && ok || bad "empty-queue drop must print dropped 0, got: $out"
 grep -qi 'syntax error' <<<"$(echo "$out")" && bad "empty-queue drop must not arithmetic-error: $out" || ok
 printf 'TK-9 only\n' > "$H/logs/READY-QUEUE.log"
 out=$(HARNESS="$H" "$H/bin/queue-line-drop.sh" TK-9 2>&1) || { bad "last-line drop must rc 0, got $? ($out)"; out=""; }
-echo "$out" | grep -q 'dropped 1' && ok || bad "last-line drop must print dropped 1, got: $out"
+grep -q 'dropped 1' <<<"$out" && ok || bad "last-line drop must print dropped 1, got: $out"
 grep -qi 'syntax error' <<<"$(echo "$out")" && bad "last-line drop must not arithmetic-error: $out" || ok
 [ "$(grep -c . "$H/logs/READY-QUEUE.log" 2>/dev/null || true)" = "0" ] && ok || bad "last-line drop must leave the queue empty"
 

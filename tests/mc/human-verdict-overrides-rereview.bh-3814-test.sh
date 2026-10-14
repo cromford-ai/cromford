@@ -109,11 +109,11 @@ cp "$DIR/bin/merge-conductor.sh" "$DIR/bin/fleet-conf.sh" "$DIR/bin/jobs-client.
 mkdir -p "$T/h/bin/lib/jobs" && cp "$DIR"/bin/lib/jobs/*.sh "$T/h/bin/lib/jobs/" || exit 1
 : > "$T/h/env/global.env"
 printf '#!/bin/bash\necho "" > "$4"; exit 0\n' > "$T/h/bin/agent-call.sh"; chmod +x "$T/h/bin/agent-call.sh"
-REC="$T/h/builds/demo-os-AIO-20-202609160001"; mkdir -p "$REC"
+REC="$T/h/builds/demo-os-TK-20-202609160001"; mkdir -p "$REC"
 echo "PR_CREATED $PRURL" > "$REC/RESULT"
 printf 'findings\nTIER: 2\nVERDICT: APPROVE\n' > "$REC/review.md"
-PRJSON_OPEN=$(jq -nc --arg u "$PRURL" --arg h "$H1" '{number:41,html_url:$u,title:"t",body:"",state:"open",merged_at:null,merge_commit_sha:null,mergeable_state:"clean",draft:false,head:{sha:$h,ref:"ticket/aio-20"},base:{ref:"main"},user:{login:"operator",type:"User"},labels:[],created_at:"2026-09-12T00:00:00Z",updated_at:"2026-09-12T00:00:00Z",closed_at:null}')
-PRLIST=$(jq -nc --arg u "$PRURL" --arg h "$H1" '[{number:41,url:$u,headRefOid:$h,headRefName:"ticket/aio-20",isDraft:false,mergeStateStatus:"CLEAN",mergeable:"MERGEABLE",state:"OPEN",labels:[],baseRefName:"main"}]')
+PRJSON_OPEN=$(jq -nc --arg u "$PRURL" --arg h "$H1" '{number:41,html_url:$u,title:"t",body:"",state:"open",merged_at:null,merge_commit_sha:null,mergeable_state:"clean",draft:false,head:{sha:$h,ref:"ticket/TK-20"},base:{ref:"main"},user:{login:"operator",type:"User"},labels:[],created_at:"2026-09-12T00:00:00Z",updated_at:"2026-09-12T00:00:00Z",closed_at:null}')
+PRLIST=$(jq -nc --arg u "$PRURL" --arg h "$H1" '[{number:41,url:$u,headRefOid:$h,headRefName:"ticket/TK-20",isDraft:false,mergeStateStatus:"CLEAN",mergeable:"MERGEABLE",state:"OPEN",labels:[],baseRefName:"main"}]')
 cat > "$T/fakebin/gh" <<EOF
 #!/bin/bash
 printf '%s\n' "\$*" >> "$T/gh-calls.txt"
@@ -142,7 +142,7 @@ case "\$*" in
   *"v3.diff"*) restpr --diff '+++ b/src/x.ts
 +const a = 1;
 ' ;;
-  *"api -i -X GET repos/$SLUG/pulls/41"*) restpr OPEN "$H1" ticket/aio-20 main "" MERGEABLE CLEAN operator ;;
+  *"api -i -X GET repos/$SLUG/pulls/41"*) restpr OPEN "$H1" ticket/TK-20 main "" MERGEABLE CLEAN operator ;;
   *"api repos/$SLUG/pulls/41/commits"*) printf '%s\n' "$T_HEAD_OLD"; exit 0 ;;
   *"--json state,headRefOid,baseRefName"*) echo "OPEN $H1 main" ;;
   *"--json state,headRefOid"*)             echo "OPEN $H1" ;;

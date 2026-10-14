@@ -237,7 +237,7 @@ esac
 # alphabetical and says nothing about it.
 PLAIN=$(qblock | grep -v '\[HOTFIX\] ' | awk '{print $1}')
 EXPECT=$(head -39 "$H/logs/READY-QUEUE.log" | awk '{print $1}')
-[ "$PLAIN" = "$EXPECT" ] && ok || bad "1d: the plain queue lines must keep READY-QUEUE order (got: $(printf '%s' "$PLAIN" | head -3 | tr '\n' ' '))"
+[ "$PLAIN" = "$EXPECT" ] && ok || bad "1d: the plain queue lines must keep READY-QUEUE order (got: $(head -3 <<<"$PLAIN" | tr '\n' ' '))"
 grep -qF "$SOP_LINE" "$(prompt_file)" && ok || bad "1e: the SOP sentence must appear once something is marked"
 [ "$(grep -cF "$SOP_LINE" "$(prompt_file)")" = 1 ] && ok || bad "1f: the SOP sentence must appear exactly once (got $(grep -cF "$SOP_LINE" "$(prompt_file)"))"
 

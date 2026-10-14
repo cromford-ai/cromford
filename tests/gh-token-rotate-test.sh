@@ -302,7 +302,7 @@ rbline() { grep -n -- "$1" "$RB_ALL" | grep -vE '^[0-9]+:[[:space:]]*#' | head -
 grep -q 'lib/gh-token-live.sh' "$RB_ALL" && ok || bad "run-build.sh does not source bin/lib/gh-token-live.sh"
 grep -q 'command -v gh_token_live' "$RB_ALL" \
   && ok || bad "run-build.sh must guard the helper with command -v, for a box whose sync has not landed it"
-for pat in 'RB_PUSH -u && track_pushed' 'gh pr create --head'; do
+for pat in 'RB_PUSH -u pr-push && track_pushed' 'gh pr create --head'; do
   L=$(rbline "$pat"); P=$(grep -n '^GH_LIVE$' "$RB_ALL" | cut -d: -f1 | awk -v l="$L" '$1 < l {v=$1} END {print v}')
   [ -n "$P" ] && [ "$P" -lt "$L" ] && ok || bad "no GH_LIVE before '$pat' (line $L)"
 done

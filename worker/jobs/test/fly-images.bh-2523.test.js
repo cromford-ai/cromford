@@ -9,9 +9,10 @@ import { fileURLToPath } from 'node:url';
 import worker from '../src/index.js';
 import { openDb } from './lib/d1-sqlite.bh-1030.js';
 import { CREATED_TABLES } from '../src/lib/core.js';
+import { jobsSchemaSql } from './lib/jobs-schema.js';
 
 const SECRET = 'test-secret';
-const SCHEMA = readFileSync(fileURLToPath(new URL('../schema.sql', import.meta.url)), 'utf8');
+const SCHEMA = jobsSchemaSql();
 const ANCHOR = Math.floor(Date.now() / 1000); // determinism: ok the one clock read every baked_at fixture is derived from
 const REF_A = 'registry.fly.io/builder-alpha-os:deployment-01AAAAAAAAAAAAAAAAAAAAAAAA';
 const REF_B = 'registry.fly.io/builder-alpha-os:deployment-01BBBBBBBBBBBBBBBBBBBBBBBB';

@@ -563,7 +563,7 @@ constants are only fallbacks):
 | `registry` | 25 | `catalog/*`, `cron/*`, `worker/jobs/src/index.js` |
 | `generated` | 20 | the committed paths of the `## Generated files` table: `rules/CLAUDE.md`, `env-templates/*` (`catalog/lanes.json` and `cron/*.cron` are git-ignored, so no PR diff carries them) |
 | `share_mirror` | 30 | `bin/share/*` |
-| `schema` | 40 | `worker/jobs/schema.sql`, `*migrations/*`, `worker/jobs/src/lib/core.js` |
+| `schema` | 40 | `worker/jobs/schema.sql`, `worker/*/schema.d/*`, `*migrations/*`, `worker/jobs/src/lib/core.js` |
 | `new_tests` | 10 | a test-shaped path main does not have yet |
 | `size` | 15, twice at `size_lines_big` | additions + deletions ≥ `queue_risk.size_lines` (400); ≥ `size_lines_big` (1000) |
 | `size_files` | 10 | changed files ≥ `queue_risk.size_files` (15) |

@@ -119,7 +119,7 @@ these three boxes:
    that does not report is NAMED in the note, never summed as $0 — a silent zero
    and a quiet week are the same number and must not read the same.
 2. **Account-side spend caps** (the operator's side, per account). Tracking tells you it
-   happened; only a cap stops it. The hub ran to $N in one weekly window
+   happened; only a cap stops it. The hub ran to $18,863 in one weekly window
    with no cap, which is what this section exists to prevent repeating.
 
 **The tracking is the only signal.** There is no error, no failover, and no log
@@ -144,7 +144,7 @@ which is the accepted behaviour rather than a degradation.
 
 This paragraph exists because the previous wording — "the hub's Claude login is
 the operator's main account" — is ambiguous enough that it sent an audit chasing an
-$N overage on `operator@example.com` on 2026-08-24. `orchestrate.sh` had it right in
+$18.8K overage on `operator@example.com` on 2026-08-24. `orchestrate.sh` had it right in
 a code comment while this file had it vague; the doc was the thing that misled.
 Name the account, or a future reader re-derives the wrong one.
 
@@ -152,17 +152,17 @@ Name the account, or a future reader re-derives the wrong one.
 
 | Signal | Normal |
 |---|---|
-| Orchestrator burn | ~$N-670/day |
+| Orchestrator burn | ~$600-670/day |
 | Meter cross-check | $22-30/hr |
 | Notional step-up | **2026-08-24** — `fleet_notional_7d` rose when codex and box-chat volume became visible for the first time. NOT a burn: those lanes always ran, they just recorded no tokens. Cash is unchanged (codex is subscription). |
 | grok triage input | 620K mean / 3.7M max tokens per call, 62% over xAI's 200K cliff (hub, 7d to 2026-08-24). The assembled prompt is <25K tokens, so this is agentic session accumulation, not prompt size — see `runner_input_stats_7d` in summary.json. |
 
 Tracked by `bin/extra-usage-track.sh` (hourly, writes `logs/extra-usage.csv`) and
 `orchestrator-burn.csv`. The day-alert threshold is tuned against the first row of
-that table — see the header of `extra-usage-track.sh` for why $N was noise.
+that table — see the header of `extra-usage-track.sh` for why $100 was noise.
 
 ⚠️ **Unverified:** whether the endpoint's `used_credits` is a WEEKLY or a
-billing-cycle figure is not yet established ($N/day x ~28d ≈ $N is
+billing-cycle figure is not yet established ($666/day x ~28d ≈ $18.6K is
 suspiciously close to the observed meter, which would make it monthly). The
 rollup currently labels it weekly. Do not relabel on either guess — settle it
 against the Console, once, then fix the label everywhere at the same time.
@@ -206,7 +206,7 @@ below its Aug-19 peak within two days of these landing.
   ratio, CLI loop efficiency, 200K long-context doubling all eat the sticker
   discount).
 - **A lane you cannot price is a lane you cannot trust.** The grok lane ran
-  2 days / ~$N with blank cost.csv fields (usage parser aimed at the wrong
+  2 days / ~$460 with blank cost.csv fields (usage parser aimed at the wrong
   JSON path); the bill was the only symptom. Full rule: cost-capture parity in
   ~/.claude/rules/metered-api-dedup.md — new lanes must emit PRICED rows on
   their first real call, verified against the vendor's own ledger.
@@ -426,7 +426,7 @@ SELECT ROUND(SUM(cost_usd),2) transcript_usd, ROUND(SUM(result_usd),2) envelope_
 
 Everything above measures the Anthropic bill. The rest of what we pay for lived
 in four dashboards nobody opened: the xAI wallet that runs fleet triage (the
-recurring $N top-ups), the OpenRouter tier-3 survival lane, codex, and the Fly
+recurring $100 top-ups), the OpenRouter tier-3 survival lane, codex, and the Fly
 pool — which IS the compute bill. `cost.csv` carries model-priced *estimates*
 for the grok/openrouter rows (`bin/cost-rollup.sh` `METERED_VENDORS`), and
 before this nothing had ever compared an estimate to an invoice.
@@ -554,8 +554,8 @@ A Fly pool machine (`bin/fly-pool.sh`, `fly/entrypoint.sh`, `fly/builder-runner.
 is volume-less: its rootfs, and with it `/data/harness/logs/cost.csv`, dies with
 the machine. Every watcher box has mirrored its rows into `cost_rows` every 10
 minutes since 2026-09-02; pool machines had no such loop, so **pool spend existed
-only as `jobs.spent_usd` per-job totals** — $N in the 24h to 2026-09-14
-($N of it project-5) with no per-stage row, no per-model row and no account
+only as `jobs.spent_usd` per-job totals** — $1,456 in the 24h to 2026-09-14
+($1,366 of it project-5) with no per-stage row, no per-model row and no account
 label behind any of it.
 
 The pool launch archive includes `catalog/`, including `model-prices.json`.
@@ -661,8 +661,8 @@ Two independent measurements of the same money, made to agree:
   machine whose rows are not in the window. This is the ledger every dashboard,
   PR cost and budget here is built on.
 
-Nothing compared them until now. That is how `operator@example.com` reached $N
-of a $N monthly cap with its meter unread for fifteen days: a ledger cannot
+Nothing compared them until now. That is how `operator@example.com` reached $23.8K
+of a $35K monthly cap with its meter unread for fifteen days: a ledger cannot
 see an invoice, and an invoice cannot see a lane.
 
 ### The account map — `catalog/cost-accounts.json`
@@ -840,7 +840,7 @@ money went. `--dry-run` logs ` would alert` and sends, flags and pushes nothing.
 **One log line per daily run**, whatever came back:
 
 ```
-cost-reconcile openrouter 24h scope=account state=ok vendor=$N rows=$N (2) unpriced=0 gap=$N (50.0%) alerted=1
+cost-reconcile openrouter 24h scope=account state=ok vendor=$200.00 rows=$100.00 (2) unpriced=0 gap=$100.00 (50.0%) alerted=1
 ```
 
 Every `state=`, and only `ok` can alert:

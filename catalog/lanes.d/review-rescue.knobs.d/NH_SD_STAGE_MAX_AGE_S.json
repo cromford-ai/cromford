@@ -1,0 +1,11 @@
+{
+  "env": "NH_SD_STAGE_MAX_AGE_S",
+  "type": "int",
+  "default": 604800,
+  "min": 3600,
+  "max": 2592000,
+  "unit": "seconds",
+  "zero_means": null,
+  "read_in": "bin/lib/needs-human/step-done.sh",
+  "note": "BH-6536: how old a hub-local ticket_stage row (state/ticket-stage/<project>.tsv) may be and still print as a 'not queued' line in bin/fly-pool.sh. The same 7 days as the kanban's ARCHIVE_AFTER_MIN."
+}

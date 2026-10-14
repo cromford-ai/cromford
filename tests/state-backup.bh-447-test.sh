@@ -300,7 +300,7 @@ for want in env.tar.age state/box-id state/quota/a.json logs/ALERTS.log flags/ \
             builds/b1/RESULT builds/b1/cost.csv builds/b1/plan.md builds/b1/review.md \
             builds/b1/pipeline.log orchestrator/some/file.txt meta/crontab.txt \
             meta/checkout-head.txt meta/box.txt meta/ts.txt; do
-  printf '%s\n' "$ENTRIES" | grep -qx "$want" \
+  grep -qx "$want" <<<"$ENTRIES" \
     && ok || bad "S1: the tarball is missing $want"
 done
 for never in builds/b1/other.txt orchestrator/node_modules/pkg/index.js orchestrator/.git/HEAD; do
@@ -367,9 +367,9 @@ run; RC=$?
 NAL=$(grep -c '\[state-backup\]' "$ALOG" 2>/dev/null)
 [ "$NAL" -eq 1 ] && ok || bad "S2: expected one ALERTS line, got $NAL: $(cat "$ALOG")"
 ALINE=$(grep '\[state-backup\]' "$ALOG")
-printf '%s\n' "$ALINE" | grep -q 'put FAILED' \
+grep -q 'put FAILED' <<<"$ALINE" \
   && ok || bad "S2: the alert does not name the stage: $ALINE"
-printf '%s\n' "$ALINE" | grep -q 'last good off-box copy: 20260901T000000Z$' \
+grep -q 'last good off-box copy: 20260901T000000Z$' <<<"$ALINE" \
   && ok || bad "S2: the alert does not end with the last good copy: $ALINE"
 grep -qE 'sak-canary-4471|akid-canary-4471' <<<"$(printf '%s\n' "$ALINE")" \
   && bad "S2: the alert printed a credential value: $ALINE" || ok
@@ -399,9 +399,9 @@ verify_case() { # verify_case <stub switch> <alert fragment> <label>
   local n; n=$(grep -c '\[state-backup\]' "$ALOG" 2>/dev/null)
   [ "${n:-0}" -eq 1 ] && ok || bad "S2d/$3: expected one ALERTS line, got $n: $(cat "$ALOG")"
   local line; line=$(grep '\[state-backup\]' "$ALOG")
-  printf '%s\n' "$line" | grep -q "$2" \
+  grep -q "$2" <<<"$line" \
     && ok || bad "S2d/$3: the alert does not say '$2': $line"
-  printf '%s\n' "$line" | grep -q 'last good off-box copy: 20260901T000000Z$' \
+  grep -q 'last good off-box copy: 20260901T000000Z$' <<<"$line" \
     && ok || bad "S2d/$3: the alert does not end with the last good copy: $line"
   grep -qE 'sak-canary-4471|akid-canary-4471' <<<"$(printf '%s\n' "$line")" \
     && bad "S2d/$3: the alert printed a credential value: $line" || ok
@@ -424,7 +424,7 @@ verify_case short-head 'size FAILED (remote'                                    
 # (captured first, never `grep file | grep -q`: grep -q SIGPIPEs the upstream
 # grep and pipefail then reports the pipeline red on correct code)
 ALINE=$(grep '\[state-backup\]' "$ALOG")
-printf '%s\n' "$ALINE" | grep -qE 'remote [0-9]+ != local [0-9]+ for key small/' \
+grep -qE 'remote [0-9]+ != local [0-9]+ for key small/' <<<"$ALINE" \
   && ok || bad "S2d/short-size: the alert does not name both sizes: $ALINE"
 
 # ── S2b: the lock is dedupe, never a queue ──────────────────────────────────
@@ -449,9 +449,9 @@ run; RC=$?
 NAL=$(grep -c '\[state-backup\]' "$ALOG" 2>/dev/null)
 [ "$NAL" -eq 1 ] && ok || bad "S2c: expected one ALERTS line, got $NAL: $(cat "$ALOG")"
 ALINE=$(grep '\[state-backup\]' "$ALOG")
-printf '%s\n' "$ALINE" | grep -q 'BACKUP_AGE_RECIPIENT' \
+grep -q 'BACKUP_AGE_RECIPIENT' <<<"$ALINE" \
   && ok || bad "S2c: the alert does not name the missing key: $ALINE"
-printf '%s\n' "$ALINE" | grep -q 'NEEDED FROM' \
+grep -q 'NEEDED FROM' <<<"$ALINE" \
   && ok || bad "S2c: the alert does not say what is needed and from whom: $ALINE"
 [ -f "$T/h/state/state-backup-unconfigured-20260915" ] \
   && ok || bad "S2c: no per-day marker was written"
@@ -521,9 +521,9 @@ run BACKUP_NOW=notanumber; RC=$?
 NAL=$(grep -c '\[state-backup\]' "$ALOG" 2>/dev/null)
 [ "$NAL" -eq 1 ] && ok || bad "S2c-clock: expected one ALERTS line, got $NAL: $(cat "$ALOG")"
 ALINE=$(grep '\[state-backup\]' "$ALOG")
-printf '%s\n' "$ALINE" | grep -q 'clock FAILED' \
+grep -q 'clock FAILED' <<<"$ALINE" \
   && ok || bad "S2c-clock: the alert does not name the clock stage: $ALINE"
-printf '%s\n' "$ALINE" | grep -q 'last good off-box copy: never$' \
+grep -q 'last good off-box copy: never$' <<<"$ALINE" \
   && ok || bad "S2c-clock: the alert does not end with the last good copy: $ALINE"
 [ ! -s "$CALLS" ] \
   && ok || bad "S2c-clock: it called the bucket without a timestamp: $(cat "$CALLS" 2>/dev/null)"
@@ -634,7 +634,7 @@ grep -q 'pruned 0 kept 0' "$LOG" 2>/dev/null \
 NAL=$(grep -c '\[state-backup\]' "$ALOG" 2>/dev/null)
 [ "$NAL" -eq 1 ] && ok || bad "S3b: expected one ALERTS line, got $NAL: $(cat "$ALOG")"
 ALINE=$(grep '\[state-backup\]' "$ALOG")
-printf '%s\n' "$ALINE" | grep -q 'prune FAILED' \
+grep -q 'prune FAILED' <<<"$ALINE" \
   && ok || bad "S3b: the alert does not name the prune stage: $ALINE"
 [ "$(jq -r .key "$T/h/state/backup-last.json" 2>/dev/null)" = "$KEY" ] \
   && ok || bad "S3b: the backup must still be stamped when a delete batch is refused"

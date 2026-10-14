@@ -5,7 +5,7 @@
 `bin/agent-call.sh` that stops a price-driven reroute becoming a price increase.
 
 It exists because of one day. On 2026-09-20, 00:00–12:20Z, `logs/cost.csv` stage
-`alert-triage` carried **208 rows and $N**, against $39–$61 a day for the five
+`alert-triage` carried **208 rows and $793**, against $39–$61 a day for the five
 days before it. Nothing was broken in a way a log could show:
 
 | day | rows | USD |
@@ -15,12 +15,12 @@ days before it. Nothing was broken in a way a log could show:
 | 09-17 | 298 | $49 |
 | 09-18 | 215 | $39 |
 | 09-19 | 366 | $61 |
-| **09-20 (12h)** | **208** | **$N** |
+| **09-20 (12h)** | **208** | **$793** |
 
 The configured `RUNNER_TRIAGE` (grok, ~$0.02 a session here) projected past the
 xAI cliff, BH-656's routing correctly skipped it, and the ladder below it went on
-to `codex/gpt-6-astra` (81 rows, $N) and `openrouter/anthropic/claude-fable-5.1`
-(97 rows, $N) at ~$4 a session. 150 of the 192 sessions concluded
+to `codex/gpt-6-astra` (81 rows, $392) and `openrouter/anthropic/claude-fable-5.1`
+(97 rows, $396) at ~$4 a session. 150 of the 192 sessions concluded
 `handled=0 escalated=0 noise=1` — about $4 to call a stale heartbeat noise —
 while every tick logged `deferred 485 families to next tick`. The session cap
 (`TRIAGE_MAX_FAMILIES=4`) held the entire time. **A session cap is not a spend
@@ -192,7 +192,7 @@ The identical gate now runs after the tier-2 block, and the failovers line says
 refused call writes no cost row and `cliff_projected_context` is the median of
 the last ten rc-0 rows — a lane that only ever refuses can never move the number
 it refused on. An unpriceable rung refuses (the one reader here that does not
-fail open: descending on a rung nobody can price is the $N shape itself).
+fail open: descending on a rung nobody can price is the $793 shape itself).
 
 **The exit path is the floor retry.** A strong-tier cliff is retried ONCE on the
 housekeeping floor lane, which has no cliff at this size and costs cents: that

@@ -1,0 +1,10 @@
+{
+  "env": "BOX_OPS_ORGO_TIMEOUT_S",
+  "type": "int",
+  "default": 1500,
+  "min": 60,
+  "max": null,
+  "unit": "s",
+  "zero_means": null,
+  "note": "timeout on each Orgo and Fly pool op a box_commands_v2 row asks for (orgo_restart, orgo_stop, orgo_resize[_quote], orgo_retire, orgo_launch[_quote], fly_pool_cap, fly_onboard); a resize drains, PATCHes and polls, so it gets its own bound above BOX_OPS_TIMEOUT_S. rc 124 records the command as ok:false \"timed out after <n>s\". Keep it below the worker's box_commands_claim_ttl_s settings row (fallback 1800), or a running op is re-offered. A value that is not a positive integer is refused with one ALERTS line and nothing is claimed. Read by bin/box-ops.sh (BH-5750)."
+}

@@ -25,6 +25,7 @@
 # Run from anywhere: HARNESS_TEST_SANDBOX=1 tests/fleet-cooldown-contract.bh-2352-test.sh
 set -uo pipefail
 . "$(dirname "$0")/lib/scratch.sh" || exit 1
+. "$(dirname "$0")/lib/jobs-schema.sh" && jobs_schema_render || exit 1
 DIR=$(cd "$(dirname "$0")/.." && pwd)
 LIB="$DIR/bin/lib/fleet-cooldown.sh"
 PASS=0; FAIL=0

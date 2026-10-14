@@ -170,7 +170,8 @@ for FN in ics mcs; do
   # C4 / C6 the same with no child: honest comment, label kept, and one critical
   # SLICE_REMAINDER_UNKNOWN page in place of the warn (the plan names no remainder)
   reset; pr_body "$CLOSES_BODY"; timeline '[]'; writes; slice_plan
-  W=$($FN); RC=$?
+  # BH-6308: the legacy path, behind its switch; the default is pinned in tests/slice-closeout-closes.bh-6308-test.sh
+  W=$(SLICE_CLOSEOUT_SETTLE=0 $FN); RC=$?
   [ "$RC" = 0 ] && [ "$W" = kept-slice:no-children+label-kept ] && ok \
     || bad "C4[$FN]: no child must answer kept-slice:no-children+label-kept rc 0 (rc=$RC w=$W)"
   [ "$(head -1 "$T/posted.txt")" = "$NOKID_LINE" ] && ok || bad "C4[$FN]: first line ($(head -1 "$T/posted.txt"))"
@@ -185,13 +186,15 @@ for FN in ics mcs; do
   [ -f "$REC/issue-commented" ] && ok || bad "C4[$FN]: the comment must write <record>/issue-commented"
   # the second lane on the same record: no comment, no alert, same word
   cat "$T/gh-argv.log" >> "$T/all-argv.log"; ghfx_log_reset; : > "$T/posted.txt"
-  W=$($FN); RC=$?
+  # BH-6308: the legacy path, behind its switch; the default is pinned in tests/slice-closeout-closes.bh-6308-test.sh
+  W=$(SLICE_CLOSEOUT_SETTLE=0 $FN); RC=$?
   [ "$RC" = 0 ] && [ "$W" = kept-slice:no-children+label-kept ] && ok || bad "C4[$FN]: second lane word (rc=$RC w=$W)"
   [ "$(n_post)" = 0 ] && [ "$(n_delete)" = 0 ] && [ "$(n_alert)" = 1 ] && ok \
     || bad "C4[$FN]: the second lane posts and alerts nothing (post=$(n_post) delete=$(n_delete) alerts=$(n_alert))"
   # C4b a Refs body, no plan, no child
   reset; pr_body "$REFS_BODY"; timeline '[]'; writes
-  W=$($FN); RC=$?
+  # BH-6308: the legacy path, behind its switch; the default is pinned in tests/slice-closeout-closes.bh-6308-test.sh
+  W=$(SLICE_CLOSEOUT_SETTLE=0 $FN); RC=$?
   [ "$RC" = 0 ] && [ "$W" = kept-slice:no-children+label-kept ] && [ "$(n_delete)" = 0 ] && [ "$(n_post)" = 1 ] && [ "$(n_alert)" = 1 ] \
     && grep -q -- '--severity warn' "$T/h/logs/ALERTS.log" && ok \
     || bad "C4b[$FN]: a Refs body with no child keeps the warn alert (rc=$RC w=$W post=$(n_post) delete=$(n_delete) alerts=$(n_alert))"
@@ -215,14 +218,16 @@ done
 reset; pr_body "$REFS_BODY"; timeline '[]'
 ghfx_route POST   "repos/$S/issues/4477/comments" 403 '{"message":"no"}'
 ghfx_route DELETE "repos/$S/issues/4477/labels/ai-build" 200 '[]'
-W=$(mcs); RC=$?
+# BH-6308: the legacy path, behind its switch; the default is pinned in tests/slice-closeout-closes.bh-6308-test.sh
+W=$(SLICE_CLOSEOUT_SETTLE=0 mcs); RC=$?
 [ "$RC" = 1 ] && [ "$W" = comment-deferred ] && [ "$(n_delete)" = 0 ] && [ "$(n_alert)" = 0 ] && ok \
   || bad "C6: a refused no-child comment in the conductor must be comment-deferred rc 1, no strip, no alert (rc=$RC w=$W delete=$(n_delete) alerts=$(n_alert))"
 # ...and issue_slice_settle (nobody retries it) still alerts, saying the comment failed
 reset; pr_body "$REFS_BODY"; timeline '[]'
 ghfx_route POST   "repos/$S/issues/4477/comments" 403 '{"message":"no"}'
 ghfx_route DELETE "repos/$S/issues/4477/labels/ai-build" 200 '[]'
-W=$(ics); RC=$?
+# BH-6308: the legacy path, behind its switch; the default is pinned in tests/slice-closeout-closes.bh-6308-test.sh
+W=$(SLICE_CLOSEOUT_SETTLE=0 ics); RC=$?
 [ "$RC" = 0 ] && [ "$W" = kept-slice:no-children+label-kept,comment-failed ] && [ "$(n_delete)" = 0 ] && [ "$(n_alert)" = 1 ] \
   && grep -q 'comment failed' "$T/h/logs/ALERTS.log" && ok \
   || bad "C6: a refused no-child comment in issue_close_shipped (rc=$RC w=$W delete=$(n_delete) alerts=$(cat "$T/h/logs/ALERTS.log"))"

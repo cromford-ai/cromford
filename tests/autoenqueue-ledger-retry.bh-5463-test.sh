@@ -105,6 +105,8 @@ job_artifact_put() { return 0; }
 . "$DIR/bin/lib/autoenqueue.sh" || exit 1
 # The 2 s wait, recorded instead of slept (defined after the source on purpose).
 _ae_sleep() { echo "$1" >> "$T/sleeps"; }
+# BH-6433 made the default ladder 2 5 10; this suite pins the one-retry premise.
+export MC_AE_LEDGER_BACKOFF=2
 
 row() { printf '%s\t%s\t%s\tticket/mg-%s\tfalse\tCLEAN\tMERGEABLE\tOPEN\tfalse\t-\tmain\t-\tfalse' \
   "$1" "$U/$1" "$(hsha "$1")" "$1"; }

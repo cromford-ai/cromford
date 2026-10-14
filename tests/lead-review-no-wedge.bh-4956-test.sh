@@ -218,8 +218,14 @@ lwf_needs_at example-org/demo-os "$SHA2" 101
 echo "$SHA2" > "$FX/head.101"
 LEAD_REVIEW_MAX_PER_PR_DAY=1 lwf_tick
 [ "$(nstarts 101)" = 1 ] && ok || bad "N7 the second head started: $(startbody 101)"
-[[ "$(lwf_summary)" == *" capped=1 "* ]] && ok || bad "N7 summary: $(lwf_summary)"
-grep -q "skip lr-101-${SHA2:0:12}: example-org/demo-os#101 had agent calls for LEAD_REVIEW_MAX_PER_PR_DAY=1 lead reviews today" "$L" && ok || bad "N7 no cap line: $(tail -3 "$L")"
+# TEST-CHANGE (BH-5876): gate 13 (bin/lib/lead-gates.d/90-caps.sh) now stops a
+# worklist head at the per-PR-day cap BEFORE job_open, so the summary counts it
+# skipped=1 (not capped=1), the line is the gate's `[skip pr-day-cap]`, and no
+# lead_review job is opened for it. The cap, the started.tsv count and the ONE
+# trip alert are the same.
+[[ "$(lwf_summary)" == *" skipped=1 "* ]] && ok || bad "N7 summary: $(lwf_summary)"
+grep -qF "[skip pr-day-cap] example-org/demo-os#101 @${SHA2:0:12} 1 lead reviews of this PR today (LEAD_REVIEW_MAX_PER_PR_DAY=1); not started" "$L" && ok || bad "N7 no cap line: $(tail -3 "$L")"
+[ "$(lwf_cnt "^POST /api/jobs .*\"ticket_id\":\"lr-101-${SHA2:0:12}\"" "$T/log/worker")" = 0 ] && ok || bad "N7 a job was opened for the capped head"
 [ "$(awk -F'\t' '$3 == 101' "$H/state/lead-review/started.tsv" | wc -l | tr -d ' ')" = 1 ] && ok || bad "N7 started.tsv: $(cat "$H/state/lead-review/started.tsv")"
 DAY=$(TZ=UTC0 date +%Y%m%d)
 [ "$(lwf_cnt "--severity warn --id lead-trip-example-org_demo-os-101-$DAY lead-review " "$T/log/lane-alert")" = 1 ] && ok || bad "N7 trip alerts: $(cat "$T/log/lane-alert" 2>/dev/null)"

@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url';
 import { DatabaseSync } from 'node:sqlite';
 import { createHmac } from 'node:crypto';
 import worker from '../src/index.js';
+import { jobsSchemaSql } from './lib/jobs-schema.js';
 
 // BH-4090 (BH-3905 child 4): the lead_authority.* and lead_protected_paths_extra.*
 // rows behind the setting signature. A bearer PUT that LOOSENS one needs the
@@ -15,7 +16,7 @@ import worker from '../src/index.js';
 const SECRET = 'test-secret';
 const HUMAN = 'human-test-token';
 const KEY = 'sig-test-key';
-const SCHEMA = readFileSync(fileURLToPath(new URL('../schema.sql', import.meta.url)), 'utf8');
+const SCHEMA = jobsSchemaSql();
 const K = 'lead_authority.example-org.cromford';
 const X = 'lead_protected_paths_extra.example-org.cromford';
 

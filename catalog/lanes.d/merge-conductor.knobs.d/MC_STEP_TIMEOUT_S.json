@@ -1,0 +1,11 @@
+{
+  "env": "MC_STEP_TIMEOUT_S",
+  "type": "int",
+  "default": 240,
+  "min": 0,
+  "max": 1500,
+  "unit": "seconds",
+  "zero_means": "off",
+  "note": "Wall time one named step of a PR worker (dep-gate, state-guard, enqueue ...) may take before the worker is killed with a STEP_TIMEOUT line and the outcome killed:step-timeout (BH-6351). The row is left as it is and the next tick works the PR again. The enqueue and merge steps never time out under max(MC_MERGE_LOCK_WAIT, MC_MERGIFY_WAIT_S) + 10. The lock-probe step adds MC_PR_LOCK_WAIT_S (the READY re-kick's PR lock wait) to it. It fires only when it is under MC_WORKER_DEADLINE_S; otherwise the deadline fires and names the step. Settings row: lane.merge-conductor.mc_step_timeout_s.",
+  "read_in": "bin/lib/fanin.sh"
+}

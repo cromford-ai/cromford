@@ -83,7 +83,7 @@ TH_REV='{"body":"steps","comments":[{"id":"c2","createdAt":"2026-09-02T00:00:00Z
 TH_ADD='{"body":"steps","comments":[{"id":"c1","createdAt":"2026-09-01T00:00:00Z","body":"a"},{"id":"c2","createdAt":"2026-09-02T00:00:00Z","body":"b"},{"id":"c3","createdAt":"2026-09-03T00:00:00Z","body":"c"}]}'
 TH_EDIT='{"body":"steps, edited","comments":[{"id":"c1","createdAt":"2026-09-01T00:00:00Z","body":"a"},{"id":"c2","createdAt":"2026-09-02T00:00:00Z","body":"b"}]}'
 K1=$(L pr_ledger_key p BH-1 "$TH")
-printf '%s' "$K1" | grep -qE '^p/BH-1/[0-9a-f]{64}$' && ok || bad "L3: key shape is '$K1'"
+grep -qE '^p/BH-1/[0-9a-f]{64}$' <<<"$K1" && ok || bad "L3: key shape is '$K1'"
 [ "$(L pr_ledger_key p BH-1 "$TH_REV")" = "$K1" ] && ok || bad "L4: reordering the comments changed the key"
 [ "$(L pr_ledger_key p BH-1 "$TH_ADD")" != "$K1" ] && ok || bad "L5: a new comment did not change the key"
 [ "$(L pr_ledger_key p BH-1 "$TH_EDIT")" != "$K1" ] && ok || bad "L5: an edited body did not change the key"

@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
+import { jobsSchemaSql } from './lib/jobs-schema.js';
 
 // BH-1526: WHO THE LEAD IS lives in a settings row, not in code (#1511).
 // bin/lib/ticket-ownership.sh reads `lead_pr_authors` to exempt the lead's PR
@@ -9,7 +10,7 @@ import { fileURLToPath } from 'node:url';
 // Applied, not grepped: the row must exist after the file is applied, and a
 // re-apply (every deploy) must not reset an operator's edit of it.
 
-const SCHEMA = readFileSync(fileURLToPath(new URL('../schema.sql', import.meta.url)), 'utf8');
+const SCHEMA = jobsSchemaSql();
 
 test('schema.sql seeds lead_pr_authors and a re-apply keeps an operator edit', async (t) => {
   let DatabaseSync;

@@ -1,0 +1,82 @@
+{
+  "libs": [
+    {
+      "id": "stall-alerts",
+      "file": "bin/lib/stall-alerts.sh",
+      "note": "BH-6308: bin/pipeline-health.sh pages two silent stalls. stalehold:<project>:<n> = an ai-build ticket whose newest decisive comment is a HOLD older than STALL_HOLD_MAX_H (STALL_HOLD_HOTFIX_H for a hotfix) and whose owner is not active (no live participant named in the line, no build row and no PR push inside STALL_OWNER_WINDOW_H). stalledblocker:<project>:<child>:<parent> = a hard Blocked-by on an open parent whose last merged slice is older than STALL_PARENT_MERGED_H, with no open child, no open PR and no running build. Resolved at call time with lib_env_apply stall-alerts.",
+      "knobs": [
+        {
+          "env": "STALL_HOLD_CHECK",
+          "type": "int",
+          "default": 1,
+          "min": 0,
+          "max": 1,
+          "zero_means": "off",
+          "required": false,
+          "note": "Master switch for the stale HOLD half of bin/pipeline-health.sh's stall alerts block (stalehold:<project>:<n>). Read by stall_knob."
+        },
+        {
+          "env": "STALL_HOLD_MAX_H",
+          "type": "int",
+          "default": 12,
+          "min": 1,
+          "unit": "hours",
+          "zero_means": null,
+          "required": false,
+          "note": "A comment HOLD older than this, with no active owner, pages stalehold. A value that is not a whole number of at least 1 reads as 12. Read by stall_knob."
+        },
+        {
+          "env": "STALL_HOLD_HOTFIX_H",
+          "type": "int",
+          "default": 3,
+          "min": 1,
+          "unit": "hours",
+          "zero_means": null,
+          "required": false,
+          "note": "The STALL_HOLD_MAX_H of a ticket that carries the hotfix label. A value that is not a whole number of at least 1 reads as 3. Read by stall_knob."
+        },
+        {
+          "env": "STALL_OWNER_WINDOW_H",
+          "type": "int",
+          "default": 12,
+          "min": 1,
+          "unit": "hours",
+          "zero_means": null,
+          "required": false,
+          "note": "A HOLD owner is active when a build row for the ticket, or a push to an open PR of the ticket, is newer than this. Read by stall_knob."
+        },
+        {
+          "env": "STALL_PARENT_CHECK",
+          "type": "int",
+          "default": 1,
+          "min": 0,
+          "max": 1,
+          "zero_means": "off",
+          "required": false,
+          "note": "Master switch for the stale-parent half of the stall alerts block (stalledblocker:<project>:<child>:<parent>). Read by stall_knob."
+        },
+        {
+          "env": "STALL_PARENT_MERGED_H",
+          "type": "int",
+          "default": 3,
+          "min": 1,
+          "unit": "hours",
+          "zero_means": null,
+          "required": false,
+          "note": "A hard Blocked-by parent that is still open pages once its newest merged slice is older than this and it has no open child, PR or build. Read by stall_knob."
+        },
+        {
+          "env": "STALL_MAX_THREADS",
+          "type": "int",
+          "default": 30,
+          "min": 1,
+          "max": 100,
+          "unit": "threads per project per tick",
+          "zero_means": null,
+          "required": false,
+          "note": "At most this many HOLD candidate threads per project are read and judged per tick; past it one stalehold:<project>:page-cut alert names the cut. Read by stall_knob."
+        }
+      ]
+    }
+  ]
+}

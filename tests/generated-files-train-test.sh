@@ -139,13 +139,13 @@ WANT_ROW=$(printf '%s\n' \
   "$(printf 'rules/CLAUDE.md\tbin/render-rules.sh --write')" \
   "$(printf 'docs/PR-OWNERSHIP.md\tbin/render-doc-sections.sh --write')" \
   "$(printf 'worker/jobs/schema.sql\tbin/schema-build.sh --write')")
-#    …and the last four rows are the ones still COMMITTED. rules/CLAUDE.md
+#    …and of the last three rows two are still COMMITTED. rules/CLAUDE.md
 #    (BH-1336): five scripts copy it verbatim onto every box, so it cannot leave
 #    git yet, which is exactly why a train must regenerate it rather than hand
 #    merge two siblings' renders. docs/PR-OWNERSHIP.md (BH-5235.2) is linked by
 #    path and read on GitHub, so it stays too. worker/jobs/schema.sql (BH-4987)
-#    has about 220 readers, composed from worker/jobs/schema.d/.
-#    They are the only rows here GT-9 does not claim.
+#    is composed from worker/jobs/schema.d/ and is NOT in git since BH-6005:
+#    every reader composes its own. (BH-5239.4 deleted the Cloud schema row.)
 if [ "$REGEN_TABLE" = "$WANT_ROW" ]; then ok
 else bad "GT-2: regen_table must print exactly the declared rows. Got:
 $(printf '%s' "$REGEN_TABLE" | cat -A)"; fi

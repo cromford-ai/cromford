@@ -55,6 +55,7 @@ NOW=$(date +%s)
 
 mkdir -p "$T/bin" "$T/bin/lib" "$T/logs" "$T/state" "$T/flags" "$T/locks" "$T/builds" "$T/fakebin"
 cp "$DIR/bin/merge-sweep.sh" "$T/bin/sweep.sh"
+mkdir -p "$T/bin/lib" && cp -rL "$DIR/bin/lib/ms" "$T/bin/lib/" || exit 1   # BH-5242: the sweep loads bin/lib/ms/
 # Since BH-784 every decision read in the sweep goes through the conductor lib
 # and bin/lib/gh-rest.sh. Both have to be in the scratch box's bin/lib or the
 # sweep's fail-closed shims answer "unverifiable" to every read, no record is

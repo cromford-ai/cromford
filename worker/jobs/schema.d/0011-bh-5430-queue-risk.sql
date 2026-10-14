@@ -70,8 +70,15 @@ INSERT OR IGNORE INTO settings (key,value,note,actor,updated_at) VALUES
   ('queue_risk.globs.generated','rules/CLAUDE.md env-templates/*','BH-5430: paths of the generated signal, space-separated globs','seed','2026-10-08T00:00:00Z');
 INSERT OR IGNORE INTO settings (key,value,note,actor,updated_at) VALUES
   ('queue_risk.globs.share_mirror','bin/share/*','BH-5430: paths of the share_mirror signal, space-separated globs','seed','2026-10-08T00:00:00Z');
+-- BH-6011: worker/jobs/schema.sql left git, so a schema PR's diff names only
+-- worker/<w>/schema.d/ fragments; the schema signal matches them too. On an
+-- existing DB only the untouched BH-5430 seed row moves (actor seed, the old
+-- value), the BH-4762 shape: an operator's row is left alone, and a second
+-- apply matches nothing.
 INSERT OR IGNORE INTO settings (key,value,note,actor,updated_at) VALUES
-  ('queue_risk.globs.schema','worker/jobs/schema.sql *migrations/* worker/jobs/src/lib/core.js','BH-5430: paths of the schema signal, space-separated globs','seed','2026-10-08T00:00:00Z');
+  ('queue_risk.globs.schema','worker/jobs/schema.sql worker/*/schema.d/* *migrations/* worker/jobs/src/lib/core.js','BH-5430, BH-6011: paths of the schema signal, space-separated globs','seed','2026-10-13T00:00:00Z')
+  ON CONFLICT(key) DO UPDATE SET value = excluded.value, note = excluded.note, updated_at = excluded.updated_at
+  WHERE settings.actor = 'seed' AND settings.value = 'worker/jobs/schema.sql *migrations/* worker/jobs/src/lib/core.js';
 INSERT OR IGNORE INTO settings (key,value,note,actor,updated_at) VALUES
   ('queue_risk.size_lines','400','BH-5430: additions+deletions at or above this add the size weight','seed','2026-10-08T00:00:00Z');
 INSERT OR IGNORE INTO settings (key,value,note,actor,updated_at) VALUES

@@ -479,7 +479,7 @@ alert_state_retired_tokens() {
 # `gonebox-staging` and `project-10` never matches `project-10-nav`.
 _as_names_word() {
   local n; n=$(printf '%s' "$2" | sed 's/[.[\*^$()+?{|\\]/\\&/g')
-  printf '%s' "$1" | grep -qE -- "(^|[^A-Za-z0-9_-])${n}([^A-Za-z0-9_-]|\$)" 2>/dev/null
+  grep -qE -- "(^|[^A-Za-z0-9_-])${n}([^A-Za-z0-9_-]|\$)" 2>/dev/null <<<"$1"
 }
 
 alert_state_route() { # alert_state_route <line> <severity>
@@ -488,14 +488,14 @@ alert_state_route() { # alert_state_route <line> <severity>
   case "$sev" in info|warn|critical) : ;; *) sev=critical ;; esac
   while IFS=$'\t' read -r re lvl; do
     [ -n "$re" ] && [ -n "$lvl" ] || continue
-    if printf '%s' "$line" | grep -qE "$re" 2>/dev/null; then
+    if grep -qE "$re" 2>/dev/null < <(printf '%s' "$line"); then
       case "$lvl" in info|warn|critical) sev="$lvl"; break ;; esac
     fi
   done < <(_as_rules severity)
   [ "$sev" = info ] && { printf '%s' "$sev"; return 0; }
   # Does this line even claim something is down? A parked box appearing in an
   # unrelated alert must not mute that alert.
-  printf '%s' "$line" | grep -qE "$(alert_cfg ALERT_PARK_DOWNGRADE_RE 'LANE DOWN|AUTH DOWN|LANE SILENT|watcher stale|UNREACHABLE|CANARY FAILED')" 2>/dev/null \
+  grep -qE "$(alert_cfg ALERT_PARK_DOWNGRADE_RE 'LANE DOWN|AUTH DOWN|LANE SILENT|watcher stale|UNREACHABLE|CANARY FAILED')" 2>/dev/null < <(printf '%s' "$line") \
     || { printf '%s' "$sev"; return 0; }
   parked=""
   # BH-4153: paused-<box> is a harness_flags row; flag_list answers from the DB
@@ -518,7 +518,7 @@ alert_state_route() { # alert_state_route <line> <severity>
   # alert_state_retired_tokens); the paused/parked names keep their old reading.
   for box in $parked; do
     [ -n "$box" ] || continue
-    if printf '%s' "$line" | grep -qF -- "$box" 2>/dev/null; then
+    if grep -qF -- "$box" 2>/dev/null <<<"$line"; then
       printf 'info'; return 0
     fi
   done

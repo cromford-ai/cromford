@@ -41,6 +41,7 @@ build, so a probe that did not run says so and the level is computed without it.
 | `tests.green` | tests | that runner exits 0 within `READINESS_TEST_TIMEOUT`. A timeout is a **fail**, not an unknown |
 | `ci.workflow` | ci | a `.github/workflows/*.yml` that triggers on `pull_request` **and** invokes a test command inside a `run:` step. A `paths: ['tests/**']` trigger, an upload-artifact `path:` or a checkout path is not a command and does not count |
 | `ci.branch_protection` | ci | `gh api repos/<slug>/branches/<default>/protection` answers. Only GitHub's `Branch not protected` is `fail`; a bare `Not Found` (the token cannot see the repo) and anything else that goes wrong are `unknown` |
+| `ci.required_check` | ci | Report-only (no level reads it). `pass` when the protection rule has `required_status_checks`, or `gh api repos/<slug>/rules/branches/<default>` lists a `required_status_checks` rule. `fail` with `OWED: required status check` when both reads answer and neither requires a check. A read that fails is `unknown` |
 | `preview.config` | preview | `vercel.json`, `.vercel/project.json`, `wrangler.toml`, `netlify.toml`, or a documented `preview … https://…` line in README/CLAUDE/AGENTS |
 | `board.source` | board | an `/api/board` route dir, or `ai-build` in `.github/labels.*` or an issue template, or (when `gh` answers) the live `ai-build` label |
 | `migrations.appliable` | migrations | a migrations dir whose `scripts/migrations/*.sql` pass `bin/check-migration-appliable.sh`. No migrations dir at all is `na`; a dir holding only shapes the linter cannot read (`prisma/migrations`, `supabase/migrations`) is `unknown`, never `pass` |
@@ -137,7 +138,7 @@ never be read as this repo's.
 | knob | default | what it does |
 |---|---|---|
 | `READINESS_TEST_TIMEOUT` | `600` | seconds the repo's suite may take. Over it: `tests.green fail`, detail `timed out after Ns` |
-| `READINESS_GH` | unset (on) | `0` asks GitHub nothing; `ci.branch_protection` reads `skipped` |
+| `READINESS_GH` | unset (on) | `0` asks GitHub nothing; `ci.branch_protection` and `ci.required_check` read `skipped` |
 | `READINESS_LEVELS` | unset | a level table, **used as given** — an unreadable path is rc 2, never a fallback |
 
 Level tables resolve in the order every other catalog knob uses:

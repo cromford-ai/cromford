@@ -25,6 +25,7 @@
 # Run from anywhere: tests/closeout-aged-table-test.sh   (exit 0 = all pass)
 set -uo pipefail
 . "$(dirname "$0")/lib/scratch.sh" || exit 1
+. "$(dirname "$0")/lib/jobs-schema.sh" && jobs_schema_render || exit 1
 DIR=$(cd "$(dirname "$0")/.." && pwd)
 PASS=0; FAIL=0
 ok()  { PASS=$((PASS+1)); }
@@ -141,7 +142,7 @@ record 1 up x-os x-os-TK-2-202607 "PR_CREATED |" "aged-out >168h (700h)"
   && ok || bad "RED CORE: with the table saying 'already decided', an emptied TSV must NOT be refilled, got: $(cat "$TSV")"
 # ...and the table still ANSWERS for that dir, which is the durable half: the
 # decision is readable after the file is gone, by any box, not just this one.
-client 1 up 'closeout_aged_has x-os-TK-2-202607; echo "rc=$?"' | grep -qx 'rc=0' \
+grep -qx 'rc=0' <<<"$(client 1 up 'closeout_aged_has x-os-TK-2-202607; echo "rc=$?"')" \
   && ok || bad "closeout_aged_has must still answer 'already decided' for a dir whose tsv row is gone"
 
 # ══ 4. A DIR THE TABLE HAS NEVER SEEN IS STILL RECORDED ═════════════════════
@@ -173,23 +174,23 @@ record 1 up x-os "" "head" "reason"
 
 # ══ 8. THE CLIENT'S CONTRACT ════════════════════════════════════════════════
 : > "$AGED"
-client 1 up 'closeout_aged_put x-os d-1 head reason >/dev/null; echo "rc=$?"' | grep -qx 'rc=0' \
+grep -qx 'rc=0' <<<"$(client 1 up 'closeout_aged_put x-os d-1 head reason >/dev/null; echo "rc=$?"')" \
   && ok || bad "closeout_aged_put must answer rc 0 on a fresh record"
-client 1 up 'closeout_aged_put x-os d-1 head reason >/dev/null; echo "rc=$?"' | grep -qx 'rc=3' \
+grep -qx 'rc=3' <<<"$(client 1 up 'closeout_aged_put x-os d-1 head reason >/dev/null; echo "rc=$?"')" \
   && ok || bad "a DUPLICATE is its own answer (rc 3), never 'recorded' and never an error"
-client 1 up 'closeout_aged_has d-1; echo "rc=$?"' | grep -qx 'rc=0' \
+grep -qx 'rc=0' <<<"$(client 1 up 'closeout_aged_has d-1; echo "rc=$?"')" \
   && ok || bad "closeout_aged_has must answer rc 0 for a recorded dir"
-client 1 up 'closeout_aged_has d-nope; echo "rc=$?"' | grep -qx 'rc=2' \
+grep -qx 'rc=2' <<<"$(client 1 up 'closeout_aged_has d-nope; echo "rc=$?"')" \
   && ok || bad "a dir with NO row is rc 2 — a real answer, not an outage"
-client 1 down 'closeout_aged_has d-1; echo "rc=$?"' | grep -qx 'rc=1' \
+grep -qx 'rc=1' <<<"$(client 1 down 'closeout_aged_has d-1; echo "rc=$?"')" \
   && ok || bad "an outage is rc 1 and is never confused with 'no row'"
 
 # ══ 9. THE FLAG IS A DB ROW, AND OFF BY DEFAULT ════════════════════════════
-client 0 up 'closeout_aged_table_on; echo "rc=$?"' | grep -qx 'rc=1' \
+grep -qx 'rc=1' <<<"$(client 0 up 'closeout_aged_table_on; echo "rc=$?"')" \
   && ok || bad "closeout_aged_table must be OFF at 0 — the flag is the whole rollback"
-client 1 up 'closeout_aged_table_on; echo "rc=$?"' | grep -qx 'rc=0' \
+grep -qx 'rc=0' <<<"$(client 1 up 'closeout_aged_table_on; echo "rc=$?"')" \
   && ok || bad "closeout_aged_table_on must read the settings row"
-client 1 down 'closeout_aged_table_on; echo "rc=$?"' | grep -qx 'rc=1' \
+grep -qx 'rc=1' <<<"$(client 1 down 'closeout_aged_table_on; echo "rc=$?"')" \
   && ok || bad "an outage must NEVER read as ON — a blinking worker must not switch a lane's code path"
 
 # ══ 10. THE SCHEMA IS ADDITIVE AND SEEDED OFF ══════════════════════════════

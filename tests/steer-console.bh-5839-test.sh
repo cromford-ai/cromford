@@ -96,7 +96,7 @@ done <<< "$OUT"
 grep -q "from '../lib/steer.js'" "$PANEL" && ok || bad "AgentSession.js must build its body with lib/steer.js"
 grep -q "useConfirm" "$PANEL" && ok || bad "AgentSession.js must confirm a hold through the in-app useConfirm modal"
 grep -q "api.steerNotes" "$SCREEN" && ok || bad "Ticket.js must load the ticket's steer notes"
-grep -q "path: 'steer'" "$PROXY" && ok || bad "the coord proxy must carry the POST steer row"
+grep -q "path: 'steer'" "$DIR/console-ui/functions/_lib/coord-writes.d/5839-steer.js" && ok || bad "the coord write fragment 5839-steer.js must carry the POST steer row"
 CODE=$(grep -hvE '^[[:space:]]*//' "$PANEL" "$SCREEN" "$LIB")
 if [[ "$CODE" =~ (window|globalThis)\.(confirm|alert|prompt)[[:space:]]*\( ]]; then
   bad "a native dialog in the Step in composer"

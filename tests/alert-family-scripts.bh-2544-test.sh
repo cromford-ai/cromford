@@ -76,6 +76,10 @@ while [ $# -gt 0 ]; do
 done
 printf '%s %s %s parked=%s\n' "$METHOD" "$URL" "$BODY" "$(grep -c 'PARKED by registry row' "$FK_LOG" 2>/dev/null)" >> "$FK/req.log"
 [ -f "$FK/curl-down" ] && exit 7
+# BH-6650: a one-shot delay on the registry fetch, inside the runner's deadline,
+# stands in for a loaded runner that is slow to reach its first verify.
+case "$METHOD $URL" in "GET "*/api/alert-family-scripts)
+  [ -f "$FK/curl-delay" ] && { rm -f "$FK/curl-delay"; sleep 2; } ;; esac   # determinism: ok the delay IS the fixture (BH-6650 start lag)
 case "$METHOD $URL" in
   "GET "*/api/alert-family-scripts)
     if [ -f "$FK/rows-404" ]; then printf '{"error":"not found"}\n404\n'
@@ -116,7 +120,7 @@ reset() { # reset <line>... — the spool this tick starts from
   echo '{}' > "$FAMF"; printf '%s\n' "$@" > "$SPOOL"
   : > "$H/state/alert-quarantine.jsonl"
   rm -f "$H"/flags/* "$H"/state/alert-triage-expired-*.tsv "$H/state/triage-prstate.json"
-  rm -f "$T/req.log" "$T/curl-down" "$T/rows-404" "$T/rows-html" "$T/patch-409" "$H/bin/rm.sh" "$T/canary"
+  rm -f "$T/req.log" "$T/curl-down" "$T/rows-404" "$T/rows-html" "$T/patch-409" "$T/curl-delay" "$H/bin/rm.sh" "$T/canary"
   scratch_rm "$CALLDIR"; mkdir -p "$CALLDIR"
   scratch_rm "$H/bin/alert-verify"; mkdir -p "$H/bin/alert-verify"
   mkverify ok-clear 'echo "gone: probe 200"; exit 0'
@@ -199,9 +203,9 @@ reset "$L_A"; rows "[$(row r-clear akey_prefix orclane: still-there settle park)
 jq -n --arg k "$F_A" --argjson v "$((NOW - 7*3600))" '{($k): $v}' > "$FAMF"
 run
 PATCHL=$(grep '^PATCH .*/api/alerts/state ' "$T/req.log" 2>/dev/null)
-printf '%s' "$PATCHL" | grep -qF '{"id":"a-1","state":"parked","actor":"alert-triage"}' && ok \
+grep -qF '{"id":"a-1","state":"parked","actor":"alert-triage"}' <<<"$PATCHL" && ok \
   || bad "B4c: PATCH /api/alerts/state parks a-1 as alert-triage (got: $PATCHL)"
-printf '%s' "$PATCHL" | grep -q 'parked=[1-9]' && ok || bad "B4c: PARKED is logged BEFORE the write (got: $PATCHL)"
+grep -q 'parked=[1-9]' <<<"$PATCHL" && ok || bad "B4c: PARKED is logged BEFORE the write (got: $PATCHL)"
 grep -q 'PARKED by registry row r-clear family=.* ids=a-1' "$LOGF" && ok || bad "B4c: PARKED by registry row r-clear line"
 [ "$(ncalls)" = 0 ] && ok || bad "B4c: a parked family costs no session (got $(ncalls))"
 [ "$(summary)" = "triage pass: REGISTRY rows=1 matched=1 cleared=0 parked=1 repro=1 unknown=0 unchecked=0" ] && ok \
@@ -267,10 +271,15 @@ reset "$L_A" "$L_G2" "$L_G3"; rows "[$(row r-clear akey_prefix orclane: ok-clear
 [ "$(nverify)" = 1 ] && ok || bad "B4g: exactly one verify runs (got $(nverify))"
 case "$(summary)" in *" cleared=1 "*" unchecked=2") ok ;; *) bad "B4g: cleared=1 unchecked=2 (got: $(summary))" ;; esac
 [ "$(ncalls)" = 2 ] && ok || bad "B4g: the two unchecked families keep their sessions (got $(ncalls))"
-# B4-deadline: the first verify overruns a 1s pass; the second family is unchecked.
-reset "$L_A" "$L_G2"; mkverify slow 'sleep 3; echo late; exit 0'   # determinism: ok the sleep IS the fixture: a verify that overruns the 1s pass deadline
-rows "[$(row r-slow akey_prefix orclane: slow)]"; run TRIAGE_VERIFY_DEADLINE_S=1
+# B4-deadline: the pass starts 2s late (a loaded runner), the first verify never
+# ends on its own, and its timeout, clamped to what is left of the 10s pass, kills
+# it; the second family is unchecked. No wall-clock race on the first start (BH-6650).
+reset "$L_A" "$L_G2"; mkverify slow 'exec sleep 60'   # determinism: ok the verify never ends; the deadline-clamped timeout is what stops it
+rows "[$(row r-slow akey_prefix orclane: slow)]"; touch "$T/curl-delay"
+run TRIAGE_VERIFY_DEADLINE_S=10 TRIAGE_VERIFY_TIMEOUT_S=30
 [ "$(nverify)" = 1 ] && ok || bad "B4-deadline: one verify started (got $(nverify))"
+grep -q 'row r-slow: verify slow rc=124 ' "$LOGF" && ok || bad "B4-deadline: the clamped timeout killed the first verify (log: $(grep -F 'r-slow' "$LOGF" | head -2))"
+[ ! -e "$T/curl-delay" ] && ok || bad "B4-deadline: the start delay fired"
 case "$(summary)" in *" cleared=0 "*" unknown=1 unchecked=1") ok ;; *) bad "B4-deadline: unknown=1 unchecked=1 (got: $(summary))" ;; esac
 [ "$(ncalls)" = 2 ] && ok || bad "B4-deadline: both families keep their sessions (got $(ncalls))"
 

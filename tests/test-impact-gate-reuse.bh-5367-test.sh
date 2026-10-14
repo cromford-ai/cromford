@@ -30,6 +30,7 @@
 #   G7   CLAUDE.md and the map entry say what to look for
 set -uo pipefail
 . "$(dirname "$0")/lib/scratch.sh" || exit 1
+. "$(dirname "$0")/lib/jobs-schema.sh" && jobs_schema_render || exit 1
 DIR=$(cd "$(dirname "$0")/.." && pwd)
 NOW=2026-10-08T00:00:00Z
 PASS=0 FAIL=0
@@ -47,6 +48,7 @@ if [ ! -f "$DIR/catalog/lanes.json" ]; then
   HARNESS_TEST_SANDBOX=1 "$DIR/bin/lanes-build.sh" --root "$DIR" --write > /dev/null 2>&1 \
     || bad "could not generate catalog/lanes.json the worker imports"
 fi
+"$DIR/bin/llm-sites-build.sh" --compose --repo "$DIR" >/dev/null || { echo "FAIL: cannot compose catalog/llm-sites.json"; exit 1; }
 
 # ── the scratch checkout ────────────────────────────────────────────────────
 R="$T/repo"

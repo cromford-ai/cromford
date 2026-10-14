@@ -344,8 +344,11 @@ rm -f "$H/flags/lane-off-blocked-resolver-tproj"
 # ============================================================================
 # T5. the floor the lib mirrors is the floor br_from_builds applies.
 # ============================================================================
-BFB=$(awk '/^br_from_builds\(\) \{/{f=1} f{print} f&&/^}$/{exit}' "$DIR/bin/blocked-resolver.sh")
-[ -n "$BFB" ] || bad "T5: br_from_builds is not defined in bin/blocked-resolver.sh"
+# BH-6517: br_from_builds moved to bin/lib/br/discovery.sh; read the corpus.
+. "$DIR/tests/lib/br-corpus.sh" || exit 1
+br_corpus "$DIR" "$T/br-corpus.sh" || exit 1
+BFB=$(awk '/^br_from_builds\(\) \{/{f=1} f{print} f&&/^}$/{exit}' "$T/br-corpus.sh")
+[ -n "$BFB" ] || bad "T5: br_from_builds is not defined in the resolver corpus"
 if [ -n "$BFB" ]; then
   grep -qF -- '-mmin +90' <<<"$BFB" && grep -qF -- '-gt 5400' <<<"$BFB" \
     && ok "T5: br_from_builds still floors a record at 90 min / 5400 s" \

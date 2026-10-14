@@ -43,8 +43,8 @@ rrh_check() {
   rm -rf "$scratch"
   case "$rc" in
     0) printf 'ok\trender check passed on %s\n' "${head:0:12}" ;;
-    1) first=$(printf '%s\n' "$out" | grep -m1 -E '^[<>] ' || true)
-       [ -n "$first" ] || first=$(printf '%s\n' "$out" | head -1)
+    1) first=$(grep -m1 -E '^[<>] ' <<<"$out" || true)
+       [ -n "$first" ] || first=$(head -1 <<<"$out")
        printf 'drift\t%s\n' "$(printf '%s' "$first" | tr '\t' ' ' | head -c 200)" ;;
     *) printf 'unread\trender check rc %s\n' "$rc" ;;
   esac

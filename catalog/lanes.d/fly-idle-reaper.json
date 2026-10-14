@@ -1,0 +1,32 @@
+{
+  "id": "fly-idle-reaper",
+  "name": "Fly idle machine stop (every app in the org)",
+  "scope": "hub",
+  "script": "bin/fly-idle-reaper.sh",
+  "cadence": "2-59/5 * * * *",
+  "boxes": [
+    "hub"
+  ],
+  "switch": {
+    "kind": "flag",
+    "name": "lane-off-fly-idle-reaper",
+    "aliases": []
+  },
+  "wired": true,
+  "knobs": [
+    {
+      "env": "FLY_IDLE_REAPER_NOW",
+      "type": "string",
+      "default": "",
+      "zero_means": null,
+      "note": "no static default — the script computes it ($(date -u +%s)). Read by bin/fly-idle-reaper.sh as ${FLY_IDLE_REAPER_NOW:-$(date -u +%s)}: the clock the lane measures idle seconds, the no-signal age and the stop row's time from. A test seam. NOT settable from the control plane — only env/global.env on the box moves it. The thresholds are settings rows, not knobs: fly.idle_stop_after_s (900, and fly.idle_stop_after_s.<app>), fly.idle_nosignal_alert_s (3600), fly.idle_fail_alert_after (3), fly.idle_max_stops_per_pass (10).",
+      "settable": false
+    }
+  ],
+  "stats": {
+    "cost_stage": null,
+    "cost_project_filter": null,
+    "lanes_row": false,
+    "log": "logs/fly-idle-reaper.log"
+  }
+}

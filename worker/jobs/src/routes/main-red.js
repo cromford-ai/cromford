@@ -8,12 +8,17 @@
 // new sha, green or clear. They join the flags family, so src/index.js keeps
 // its table as it was.
 //
-// A CLEAR is the one write here that touches pause_flags. It is one batch of
-// three statements, each guarded on the flag still being active, so a clear
+// A CLEAR is the one write here that touches the freeze row. It is one batch
+// of three statements, each guarded on the flag still being active, so a clear
 // cannot stamp main_red without dropping the freeze and writing its event, and
 // two clears racing each other write one event between them.
+//
+// BH-4154: the freeze is read and cleared in the store its name picks
+// (lib/harness-flags.js). main-red-* is not a ported name, so today that is
+// the pause_flags row, exactly as before.
 
 import { json, d1Guarded } from "../lib/http.js";
+import { fleetFlagRows, readFleetFlag, flagActiveSql, clearFleetFlagStmt } from "../lib/harness-flags.js";
 
 const NAME_RE = /^main-red-[A-Za-z0-9._-]+$/;
 // The detector's own kill switches share the prefix. They are not freezes.
@@ -37,16 +42,31 @@ export const routes = [
     ({ env, url, t }) => d1Guarded("main_red", async () => {
       // ?all=1 is what the detector reads: every detail row, cleared_* included.
       // The default is what the console banner reads: live freezes only.
-      const sql = url.searchParams.get("all") === "1"
-        ? "SELECT * FROM main_red ORDER BY name LIMIT ?1"
-        : `SELECT pf.name, pf.active, pf.actor, pf.reason, pf.updated_at,
-                  mr.slug, mr.project, mr.sha, mr.workflow, mr.job, mr.run_url, mr.since,
-                  mr.reason AS red_reason, mr.cleared_sha, mr.cleared_at, mr.cleared_by, mr.clear_reason
-             FROM pause_flags pf LEFT JOIN main_red mr ON mr.name = pf.name
-            WHERE pf.active = 1 AND pf.name LIKE 'main-red-%'
-              AND pf.name NOT IN ('main-red-detector-off', 'main-red-pr-pair-off')
-            ORDER BY pf.name LIMIT ?1`;
-      const rows = (await env.DB.prepare(sql).bind(CAP + 1).all()).results || [];
+      if (url.searchParams.get("all") === "1") {
+        const rows = (await env.DB.prepare("SELECT * FROM main_red ORDER BY name LIMIT ?1").bind(CAP + 1).all()).results || [];
+        return json(200, { main_red: rows.slice(0, CAP), truncated: rows.length > CAP, as_of: t });
+      }
+      // The live freezes from the flag store, then their main_red detail by
+      // name: the two can live in different tables, so the join is here.
+      const { flags } = await fleetFlagRows(env, { prefix: "main-red-", onlyOn: 1, limit: CAP + 1 + KILL_SWITCHES.size });
+      const live = flags.filter((f) => !KILL_SWITCHES.has(f.name)).slice(0, CAP + 1);
+      const detail = new Map();
+      if (live.length) {
+        const got = await env.DB.prepare(
+          "SELECT * FROM main_red WHERE name IN (SELECT value FROM json_each(?1))"
+        ).bind(JSON.stringify(live.map((f) => f.name))).all();
+        for (const r of got.results || []) detail.set(r.name, r);
+      }
+      const rows = live.map((f) => {
+        const mr = detail.get(f.name) || {};
+        return {
+          name: f.name, active: f.active, actor: f.actor, reason: f.reason, updated_at: f.updated_at,
+          slug: mr.slug ?? null, project: mr.project ?? null, sha: mr.sha ?? null, workflow: mr.workflow ?? null,
+          job: mr.job ?? null, run_url: mr.run_url ?? null, since: mr.since ?? null, red_reason: mr.reason ?? null,
+          cleared_sha: mr.cleared_sha ?? null, cleared_at: mr.cleared_at ?? null, cleared_by: mr.cleared_by ?? null,
+          clear_reason: mr.clear_reason ?? null,
+        };
+      });
       return json(200, { main_red: rows.slice(0, CAP), truncated: rows.length > CAP, as_of: t });
     }),
   ],
@@ -105,15 +125,15 @@ export const routes = [
       const name = validName(body.name);
       if (!name) return json(400, { error: "valid main-red name required" });
 
-      const flag = await env.DB.prepare("SELECT active FROM pause_flags WHERE name=?1").bind(name).first();
-      if (!flag || flag.active !== 1) return json(409, { error: "not red" });
+      const flag = await readFleetFlag(env, name);
+      if (!flag || Number(flag.active) !== 1) return json(409, { error: "not red" });
       const mr = await readRow(env, name);
       // The operator cleared the sha they were shown. A detector that has
       // since moved the row to another sha makes that a different decision.
       const seen = str(body.sha, 128);
       if (seen && seen !== (mr ? mr.sha : null)) return json(409, { error: "moved to a new sha" });
 
-      const stillRed = "EXISTS (SELECT 1 FROM pause_flags WHERE name=?1 AND active=1)";
+      const stillRed = flagActiveSql(name);
       const [ev] = await env.DB.batch([
         env.DB.prepare(
           `INSERT INTO main_red_events (name, action, sha, actor, reason, at)
@@ -123,15 +143,11 @@ export const routes = [
           `UPDATE main_red SET active=0, cleared_sha=sha, cleared_at=?2, cleared_by=?3, clear_reason=?4, updated_at=?2
             WHERE name=?1 AND ${stillRed}`
         ).bind(name, t, actor, reason),
-        env.DB.prepare(
-          `INSERT INTO pause_flags (name, active, actor, reason, updated_at) VALUES (?1, 0, ?2, 'cleared: ' || ?3, ?4)
-           ON CONFLICT(name) DO UPDATE SET active=0, actor=excluded.actor, reason=excluded.reason,
-             updated_at=excluded.updated_at WHERE pause_flags.active=1`
-        ).bind(name, actor, reason, t),
+        clearFleetFlagStmt(env, name, actor, reason, t),
       ]);
       // Another clear landed between the read above and this batch.
       if (!ev || !ev.meta || ev.meta.changes !== 1) return json(409, { error: "not red" });
-      const after = await env.DB.prepare("SELECT * FROM pause_flags WHERE name=?1").bind(name).first();
+      const after = await readFleetFlag(env, name);
       return json(200, { cleared: true, flag: after, main_red: (await readRow(env, name)) || null });
     }),
   ],

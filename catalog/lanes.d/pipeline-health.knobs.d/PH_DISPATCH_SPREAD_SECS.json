@@ -1,0 +1,10 @@
+{
+  "env": "PH_DISPATCH_SPREAD_SECS",
+  "type": "int",
+  "default": 540,
+  "min": 0,
+  "max": 3600,
+  "unit": "seconds",
+  "zero_means": null,
+  "note": "BH-5941: the cron line runs pipeline-health.sh --dispatch, which starts one detached run per project (no cap) and then runs the fleet sections. Each project starts at a stable offset inside this window (bin/lib/project-lanes.sh). 0 starts every project run at once. A non-number falls back to 540 with one log line."
+}

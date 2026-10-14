@@ -149,7 +149,8 @@ test('F7: PAUSED, WIP and ROUTE are sortable headers; accessors return bool/numb
   const out = render(h(ProjectsTable, { rows: ROWS, recentRuns: {}, flagCells: READABLE }));
   const hs = headers(out);
   const iFlags = hs.findIndex((t) => t.startsWith('FLAGS'));
-  assert.deepEqual(hs.slice(iFlags, iFlags + 4).map((t) => t.split(' ')[0]), ['FLAGS', 'PAUSED', 'WIP', 'ROUTE']);
+  // BH-6350 put MODE between PAUSED and WIP.
+  assert.deepEqual(hs.slice(iFlags, iFlags + 5).map((t) => t.split(' ')[0]), ['FLAGS', 'PAUSED', 'MODE', 'WIP', 'ROUTE']);
   for (const label of ['PAUSED', 'WIP', 'ROUTE']) {
     assert.match(out, new RegExp(`<th aria-sort="(none|ascending|descending)"[^>]*>\\s*<button[^>]*>\\s*${label}`), label);
   }

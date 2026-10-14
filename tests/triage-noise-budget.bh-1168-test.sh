@@ -25,6 +25,9 @@
 set -uo pipefail
 . "$(dirname "$0")/lib/scratch.sh" || exit 1
 . "$(dirname "$0")/lib/triage-tick.sh" || exit 1
+# TEST-CHANGE BH-6052: the day stamp below is read by the code and again here; never straddle 00:00Z.
+. "$(dirname "$0")/lib/day-boundary.sh" || exit 1
+clear_boundary 86400 77 || exit 1
 DIR=$(cd "$(dirname "$0")/.." && pwd)
 PASS=0; FAIL=0
 ok()  { PASS=$((PASS+1)); }
@@ -233,7 +236,7 @@ scratch_rm "$CFILE"
 # number so a settings page can never show a second, stale copy of it.
 K=$(lcrepo -- lane_caps_knobs alert-triage)
 printf '%s' "$K" | jq -e '[.[] | select(.env == "LANE_NOISE_CAP_ALERT_TRIAGE")] | length == 1' >/dev/null 2>&1 \
-  && ok || bad "L13 the noise budget must be exactly one knob row (got '$(printf '%s' "$K" | head -c 200)')"
+  && ok || bad "L13 the noise budget must be exactly one knob row (got '$(head -c 200 <<<"$K")')"
 printf '%s' "$K" | jq -e '[.[] | select(.env == "LANE_NOISE_CAP_ALERT_TRIAGE")][0]
                           | .zero_means == "off" and .type == "int" and .default == 10' >/dev/null 2>&1 \
   && ok || bad "L13b ...declaring int, zero_means off, and the budget actually binding (10)"

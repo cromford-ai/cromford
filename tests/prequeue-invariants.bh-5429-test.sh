@@ -7,7 +7,7 @@
 # tree (share-mirror-clean, lanes-registry, ...). A head that broke one got a
 # green pre-queue verdict and the merge batch was the first thing to run it.
 #
-#   C1      catalog/prequeue-invariants.tsv: 14 rows, 5 TAB columns, and
+#   C1      catalog/prequeue-invariants.tsv: 17 rows, 5 TAB columns, and
 #           the runner refuses a bad catalog with rc 2 before running anything
 #   C5-C8   bin/prequeue-invariants.sh --run on stub suites: red, fail lines
 #           (redacted, cut at 300), over budget reported not killed, the total
@@ -19,7 +19,8 @@
 #   G1      a gitleaks suite with no installable pinned gitleaks is rc 125
 #   D1-D5   a dry run of the workflow's real verdict step (the BH-4548 W shape)
 #   A1-A4   the REAL invariant suites: tests/prequeue-invariants-real.bh-5429-test.sh
-#           (apart, so tests/trap-target-safety-test.sh does not run them nested)
+#           (apart, so the retired tests/trap-target-safety-test.sh did not run
+#           them nested; BH-5541 removed that guard)
 #
 # Run from anywhere: HARNESS_TEST_SANDBOX=1 bash tests/prequeue-invariants.bh-5429-test.sh
 set -uo pipefail
@@ -37,7 +38,9 @@ WF="$DIR/.github/workflows/prequeue-gate.yml"
 DISPATCH_LIB="$DIR/bin/lib/mc-prequeue.d/dispatch.sh"
 # TEST-CHANGE (BH-5591): two new cmd rows, render-doc-sections and
 # worker-jobs-schema, so 14 rows; the ids and two pins below follow.
-IDS="share-mirror-clean share-publish-clean lanes-registry config-inventory rules-pack-contract hold-push-ratchet gh-graphql-reads-lint pr-trailers-sites scratch-closure determinism triage-state-pr-contract pr-scoped-tests render-doc-sections worker-jobs-schema"
+# TEST-CHANGE (BH-6335): three new suite rows, flag-callsites-pool,
+# mc-split-layout and gh-rest-no-subshell, so 17 rows.
+IDS="share-mirror-clean share-publish-clean lanes-registry config-inventory rules-pack-contract hold-push-ratchet gh-graphql-reads-lint pr-trailers-sites scratch-closure determinism triage-state-pr-contract pr-scoped-tests render-doc-sections worker-jobs-schema flag-callsites-pool mc-split-layout gh-rest-no-subshell"
 NL=$'\n'
 row() { printf '%s\t%s\t%s\t%s\t%s\n' "$@"; }
 has() { [[ "$1" == *"$2"* ]]; }
@@ -47,8 +50,8 @@ has() { [[ "$1" == *"$2"* ]]; }
 # ============================================================================
 [ -r "$CATALOG" ] || bad "C1: catalog/prequeue-invariants.tsv is missing"
 crows() { grep -v '^#' "$CATALOG" 2>/dev/null | grep -v '^$'; }
-# TEST-CHANGE (BH-5591): 12 -> 14 rows.
-[ "$(crows | wc -l)" = 14 ] && ok || bad "C1: 14 non-comment rows (got $(crows | wc -l))"
+# TEST-CHANGE (BH-5591): 12 -> 14 rows. TEST-CHANGE (BH-6335): 14 -> 17 rows.
+[ "$(crows | wc -l)" = 17 ] && ok || bad "C1: 17 non-comment rows (got $(crows | wc -l))"
 [ "$(crows | awk -F'\t' 'NF != 5' | wc -l)" = 0 ] && ok || bad "C1: every row has 5 TAB fields"
 [ "$(crows | cut -f1 | tr '\n' ' ')" = "$IDS " ] && ok || bad "C1: the ids, in order (got '$(crows | cut -f1 | tr '\n' ' ')')"
 CBAD=""

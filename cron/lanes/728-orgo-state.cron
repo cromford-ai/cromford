@@ -1,0 +1,11 @@
+# @hub-lanes
+
+# ── ORGO LIVE STATE (BH-5750, part of #5744) ────────────────────────────────
+# Every 5 minutes: for each Orgo account in catalog/orgo-plans.json, read
+# GET /computers and PUT the list to the jobs worker (orgo_computers), which
+# the /machines ORGO STATE column reads. A complete list tombstones a computer
+# that is gone; a failed or capped read tombstones nothing. An account with no
+# API key is one log line, never an alert. Hub only: the hub holds the Orgo
+# keys. Knob: ORGO_STATE_CALL_TIMEOUT_S in catalog/lanes.d/orgo-state.json.
+# Off via the lane's flags/lane-off-<id> flag (bin/harness-ctl.sh off <id>).
+*/5 * * * * /root/harness/bin/hub-lease.sh check && /root/harness/bin/orgo-state.sh >/dev/null 2>&1

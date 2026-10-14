@@ -95,12 +95,12 @@ check_job() { # check_job <job> <literal marking the step that must come after>
   [ -n "$step" ] || { bad "B1: '$J' has no step that apt-installs python3-yaml"; return; }
   ok
   BODY=$(printf '%s\n' "$S" | awk -F'\t' -v s="$step" '$1 == s { print $2 }')
-  printf '%s\n' "$BODY" | grep -qx 'if ! bin/ci-tool-present.sh --python-module yaml; then' \
+  grep -qx 'if ! bin/ci-tool-present.sh --python-module yaml; then' <<<"$BODY" \
     && ok || bad "B1: '$J' must guard the install with 'if ! bin/ci-tool-present.sh --python-module yaml' (step: $(printf '%s' "$BODY" | tr '\n' '|'))"
   # The LAST line of the step is the unguarded assert — what makes the job red.
   [ "$(printf '%s\n' "$BODY" | tail -1)" = 'bin/ci-tool-present.sh --python-module yaml' ] \
     && ok || bad "B1: '$J' must END the step with an unguarded 'bin/ci-tool-present.sh --python-module yaml' (step: $(printf '%s' "$BODY" | tr '\n' '|'))"
-  printf '%s\n' "$BODY" | grep -qx 'set -euo pipefail' \
+  grep -qx 'set -euo pipefail' <<<"$BODY" \
     && ok || bad "B1: '$J' PyYAML step must run under set -euo pipefail"
   later=$(printf '%s\n' "$S" | awk -F'\t' -v a="$after" 'index($2, a) { print $1; exit }')
   [ -n "$later" ] || { bad "B2: '$J' has no step matching '$after'"; return; }

@@ -268,7 +268,9 @@ ord "$M"
 
 # ---- MM-7 the real repo -----------------------------------------------------
 "$BUILD" --check >"$T/out" 2>"$T/err"; RC=$?
-[ "$RC" = 0 ] && grep -q '^module-map: 1 dir(s) ok (bin/lib/mc)$' "$T/out" && ok || bad "MM-7 --check on the repo must pass and name bin/lib/mc, rc=$RC out=$(cat "$T/out") err=$(cat "$T/err")"
+# BH-5241: bin/lib/br has headers and a MODULES too, so the ok list names more
+# than one dir; this pins that bin/lib/mc is one of them.
+[ "$RC" = 0 ] && grep -qE '^module-map: [0-9]+ dir\(s\) ok \(([^)]* )?bin/lib/mc( [^)]*)?\)$' "$T/out" && ok || bad "MM-7 --check on the repo must pass and name bin/lib/mc, rc=$RC out=$(cat "$T/out") err=$(cat "$T/err")"
 [ "$(grep -v '^#' "$DIR/bin/lib/mc/MODULES" | tr '\n' ' ')" = "log locks classify queue rebase settle " ] && ok || bad "MM-7 bin/lib/mc/MODULES must keep the shim's order: $(cat "$DIR/bin/lib/mc/MODULES")"
 "$BUILD" bin/lib/mc >"$T/out" 2>"$T/err"; RC=$?
 [ "$RC" = 0 ] && [ "$(tr '\n' ' ' < "$T/out")" = "log locks classify queue rebase settle " ] && ok || bad "MM-7 the headers alone must give the shim's order, rc=$RC '$(cat "$T/out")'"

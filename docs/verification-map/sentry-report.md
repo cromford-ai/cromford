@@ -1,7 +1,8 @@
 # Sentry reporter for bash lanes (BH-5617)
 
 **What it is:** `bin/lib/sentry-report.sh` defines
-`sentry_report <level> <lane> <reason> <message> [extra-json]`. It sends one
+`sentry_report <level> <lane> <reason> <message> [extra-json] [tags-json]`.
+`tags-json` adds string tags; the five standard tags win on a clash. It sends one
 event to the Sentry project of `HARNESS_SENTRY_DSN` (`cromford-harness`) when a
 lane fails in a way that was only a log line before. It always returns 0 and
 prints nothing.
@@ -25,6 +26,8 @@ prints nothing.
 - `mc_fanin_outcome` in `bin/lib/fanin.sh`, once per (PR, head) on a
   `WORKER_DEADLINE` kill (lane `merge-conductor`, reason
   `conductor-worker-deadline`). `bin/merge-conductor.sh` sources the lib.
+  The event carries a `step` tag and the extra fields `step`, `step_s` and
+  `earlier`, the worker's step trail at the kill (BH-6346).
 
 **Preconditions:** `HARNESS_SENTRY_DSN` in `env/global.env` (a secret, never a
 knob). `SENTRY_MAX_PER_FP_HOUR` resolves through `lib_env_apply sentry-report`

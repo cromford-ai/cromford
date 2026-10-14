@@ -36,6 +36,9 @@
 #   HARNESS_TEST_SANDBOX=1 tests/no-twin-ledgers.bh-1036-test.sh   (exit 0 = pass)
 set -uo pipefail
 . "$(dirname "$0")/lib/scratch.sh" || exit 1
+# TEST-CHANGE BH-6052: the day stamp below is read by the code and again here; never straddle 00:00Z.
+. "$(dirname "$0")/lib/day-boundary.sh" || exit 1
+clear_boundary 86400 57 || exit 1
 # BH-1941: the script under test resolves its vendor base URL through
 # endpoint_url (env, else the registry default); this sandbox composes no
 # registry, so the env carries today's URL — the registry default itself.

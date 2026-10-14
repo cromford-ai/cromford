@@ -36,7 +36,7 @@
 #   fc_log <build-dir> <msg>            one stamped pipeline.log line
 #   fc_board_base <project>             <API base><board prefix>, or rc 1
 #   fc_child_title <kind> <KEY> <i> <title>
-#   fc_child_footer <kind> <parent> <n> <N> <block> <depends> <contract> [<contested>]
+#   fc_child_footer <kind> <parent> <n> <N> <block> <depends> <contract> [<contested>] [<indep>]
 #   fc_strip_fences                     stdin -> stdout, fences and tags gone
 #   fc_has_rollout                      rc 0 when the stripped text has `## Rollout`
 
@@ -153,7 +153,7 @@ fc_child_title() {
   else printf '%s.%s: %s\n' "$key" "$i" "$title"; fi
 }
 
-# fc_child_footer <kind> <parent-issue> <n> <N> <block> <depends> <contract> [<contested>]
+# fc_child_footer <kind> <parent-issue> <n> <N> <block> <depends> <contract> [<contested>] [<indep>]
 # The trailing block of a child body, starting with the `---` rule. The lane
 # filer writes the child's own body first, then a blank line, then this.
 #
@@ -173,9 +173,15 @@ fc_child_title() {
 # `DEPENDS:` — the position tests/decompose-contract-first-test.sh asserts on.
 # Rollout and the contract child (n = 1) never receive one; a caller that
 # passes one anyway is ignored, because neither arm reads the parameter.
+#
+# `indep` (BH-5520) is optional and decompose-siblings-only: `1` when the issues
+# lane checked that this sibling imports nothing from the contract and shares no
+# file with it. The caller then hands in no `block`, and this prints the
+# builds-on-main sentence in place of the stacked-build one. Empty = today's
+# bytes.
 fc_child_footer() {
   local kind="${1:-decompose}" parent="${2:-}" n="${3:-1}" total="${4:-1}"
-  local block="${5:-}" depends="${6:-}" contract="${7:-}" contested="${8:-}" maxl maxf cmaxl
+  local block="${5:-}" depends="${6:-}" contract="${7:-}" contested="${8:-}" indep="${9:-}" maxl maxf cmaxl
   maxl=$(_fc_num "${MAXL:-}" 300)
   maxf=$(_fc_num "${MAXF:-}" 12)
   cmaxl=$(_fc_num "${CONTRACT_MAXL:-${CONTRACT_MAX_LINES:-}}" 60)
@@ -204,10 +210,29 @@ fc_child_footer() {
     [ -n "$block" ] && printf 'Blocked-by: %s\n' "$block"
     [ -n "$contested" ] && printf '%s\n' "$contested"
     printf '%s\n' "$depends"
-    printf 'You do not wait for the contract to merge: this builds on the contract branch as soon as its pull request is open, and GitHub retargets this one when it lands.\n'
+    if [ "$indep" = 1 ]; then
+      printf 'This slice imports nothing from the contract, so it builds on main in parallel with it and merges on its own.\n'
+    else
+      printf 'You do not wait for the contract to merge: this builds on the contract branch as soon as its pull request is open, and GitHub retargets this one when it lands.\n'
+    fi
   fi
   printf 'Size budget: at most %s lines of product code across %s files.\n' "$maxl" "$maxf"
   printf 'Split child (depth 1): if the plan for this slice still sizes over the budget, it is built whole and says so. It is never split again.\n'
+}
+
+# fc_owns_line <spec> <0-based index> — the child's `Owns: <path>, <path>` line
+# (BH-6384), from the spec's `owns` array: strings only, blanks dropped, in the
+# spec's order. Prints nothing when the field is missing, empty or not an
+# array, so a spec without `owns` files bodies byte-identical to before. Both
+# lanes print it AFTER fc_child_footer, so no footer reader sees a new line
+# inside the footer. bin/decompose-lint.sh is its reader.
+fc_owns_line() {
+  local o
+  o=$(jq -r --argjson i "${2:-0}" '(.[$i].owns // []) | if type == "array"
+        then map(select(type == "string") | gsub("^\\s+|\\s+$"; "") | select(length > 0)) | join(", ")
+        else "" end' "${1:-}" 2>/dev/null) || o=""
+  [ -n "$o" ] && printf 'Owns: %s\n' "$o"
+  return 0
 }
 
 # fc_strip_fences — stdin to stdout, in this order:

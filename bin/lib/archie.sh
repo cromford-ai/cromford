@@ -93,12 +93,12 @@ ARCHIE_NEWS_RE="${ARCHIE_NEWS_RE:-$ARCHIE_NEWS_RE_DEFAULT}"
 archie_no_action() {
   local s="${1:-}"
   [ -n "${s//[[:space:]]/}" ] || return 1
-  printf '%s' "$s" | grep -Eiq -- "$ARCHIE_NO_ACTION_RE" || return 1
+  grep -Eiq -- "$ARCHIE_NO_ACTION_RE" <<<"$s" || return 1
   # Only a clean "no match" (rc 1) is no ask and no news: a malformed
   # ARCHIE_ASK_RE or ARCHIE_NEWS_RE (rc 2) fails toward sending, never silence.
-  printf '%s' "$s" | grep -Eiq -- "$ARCHIE_ASK_RE"
+  grep -Eiq -- "$ARCHIE_ASK_RE" <<<"$s"
   [ "$?" = 1 ] || return 1
-  printf '%s' "$s" | grep -Eiq -- "$ARCHIE_NEWS_RE"
+  grep -Eiq -- "$ARCHIE_NEWS_RE" <<<"$s"
   [ "$?" = 1 ]
 }
 
@@ -323,5 +323,5 @@ archie_split_class() {
 }
 
 archie_sensitive() {
-  printf '%s\n' "${1:-}" "${2:-}" "${3:-}" | grep -Eiq -- "$ARCHIE_SENSITIVE_RE"
+  grep -Eiq -- "$ARCHIE_SENSITIVE_RE" < <(printf '%s\n' "${1:-}" "${2:-}" "${3:-}")
 }

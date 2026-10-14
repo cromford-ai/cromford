@@ -105,9 +105,9 @@ ENTRIES=$(PATH="$T/fakebin:$PATH" tar --zstd -tf "$OBJ" 2>/dev/null)
 grep -qE '^state/scratch(/|$)' <<<"$(printf '%s\n' "$ENTRIES")" \
   && bad "X1: operator scratch rode into the off-box copy: $(printf '%s\n' "$ENTRIES" | grep -E '^state/scratch')" \
   || ok
-printf '%s\n' "$ENTRIES" | grep -qx 'state/box-id' \
-  && ok || bad "X2: the exclusion took state/box-id with it: $(printf '%s\n' "$ENTRIES" | head -20)"
-printf '%s\n' "$ENTRIES" | grep -qx 'env.tar.age' \
+grep -qx 'state/box-id' <<<"$ENTRIES" \
+  && ok || bad "X2: the exclusion took state/box-id with it: $(head -20 <<<"$ENTRIES")"
+grep -qx 'env.tar.age' <<<"$ENTRIES" \
   && ok || bad "X2: the encrypted env tar is missing from the object"
 [ -f "$T/h/state/backup-last.json" ] \
   && ok || bad "X2: the upload path no longer stamps state/backup-last.json"

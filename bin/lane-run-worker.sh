@@ -12,13 +12,19 @@
 #   2. check     lane and project are path-safe names and args[0] is a path
 #                under bin/ with no `..`. A bad row is logged and NOT run and
 #                NOT reported: its lease runs out and the row is re-claimed.
-#   3. inputs    lri_fetch <lane> <project> <state dir> (lib/lane-run-inputs.sh);
-#                a non-zero rc skips the run the same way.
+#   3. inputs    lri_fetch <lane> <project> <state dir> (lib/lane-run-inputs.sh).
+#                A non-zero rc does NOT run the lane: the row is reported rc 66
+#                with prof `PROF lri_fetch rc=<n> <lane>/<project>`, and the
+#                first such failure of a lane in this process writes ONE
+#                `lane-alert.sh --id lane-inputs-<lane>` line naming the project.
 #   4. run       LANE_RUN_ID=<id> setsid -w bin/project-lane-run.sh <lane>
 #                <project> 0 $H/<args[0]> <args[1..]>, with lrh_start/lrh_stop
 #                (lib/lane-run-heartbeat.sh) around the wait. Its output goes to
 #                logs/<lane>-cron.log, as on the hub.
-#   5. report    unless lrh_lost: POST /api/lane-runs/<id>/report {machine, rc,
+#   5. write     unless lrh_lost: lri_checkpoint <lane> <project> posts what the
+#      back      run changed since its last checkpoint. A failure reports rc 75
+#                (EX_TEMPFAIL), never the run's own rc.
+#   6. report    unless lrh_lost: POST /api/lane-runs/<id>/report {machine, rc,
 #                prof}. rc is the run's real exit status (127 when it could not
 #                start); prof is the run's last line that starts `PROF `,
 #                at most 512 bytes. A failed report logs one line, and the
@@ -70,10 +76,23 @@ lw_poll_s() {
 
 RESP="$H/state/lane-run-worker/claim-$$.json"
 trap 'rm -f "$RESP"' EXIT
+declare -A LW_ALERTED=()
 
-# lw_run <claim payload file> — steps 2-5 for one claimed row.
+# lw_report <id> <lane> <project> <rc> <prof> — step 6.
+lw_report() {
+  local id="$1" lane="$2" project="$3" rc="$4" prof="$5" body
+  body=$(jq -nc --arg m "$MACHINE" --argjson rc "$rc" --arg p "$prof" \
+    '{machine:$m, rc:$rc} + (if $p == "" then {} else {prof:$p} end)')
+  if _jobs_req POST "/api/lane-runs/$id/report" "$body" > /dev/null; then
+    lw_log "run $id $lane/$project rc $rc: reported"
+  else
+    lw_log "run $id $lane/$project rc $rc: report failed (http ${JOBS_HTTP:-none}); the lease re-runs it"
+  fi
+}
+
+# lw_run <claim payload file> — steps 2-6 for one claimed row.
 lw_run() {
-  local f="$1" id lane project n out pid rc prof body
+  local f="$1" id lane project n out pid rc prof fo frc
   local -a args=()
   id=$(jq -r '.id // empty' "$f" 2>/dev/null)
   lane=$(jq -r '.lane // empty' "$f" 2>/dev/null)
@@ -87,9 +106,19 @@ lw_run() {
   if ! [[ ${args[0]} =~ ^bin/[A-Za-z0-9._/-]+$ ]] || [[ /${args[0]}/ == */../* ]]; then
     lw_log "run $id: args[0] '${args[0]}' is not a path under bin/; not run, not reported"; return 0
   fi
-  if ! lri_fetch "$lane" "$project" "$H/state/$lane/$project"; then
-    lw_log "run $id: lri_fetch $lane $project failed; not run, not reported"; return 0
+  fo=$(lri_fetch "$lane" "$project" "$H/state/$lane/$project" 2>&1); frc=$?
+  if [ "$frc" != 0 ]; then
+    lw_log "run $id: lri_fetch $lane $project rc $frc ($(printf '%s' "$fo" | tail -n 1)); not run"
+    if [ -z "${LW_ALERTED[$lane]:-}" ]; then
+      LW_ALERTED[$lane]=1
+      [ -x "$H/bin/lane-alert.sh" ] && "$H/bin/lane-alert.sh" --severity warn --id "lane-inputs-$lane" "$lane" \
+        "lane machine $MACHINE could not fetch the hub inputs for $lane/$project (lri_fetch rc $frc: $(printf '%s' "$fo" | tail -n 1)); the run was not started and is reported rc 66. Check bin/lane-snapshot-publish.sh on the hub." \
+        >/dev/null 2>&1
+    fi
+    lw_report "$id" "$lane" "$project" 66 "PROF lri_fetch rc=$frc $lane/$project"
+    return 0
   fi
+  [ -z "$fo" ] || lw_log "run $id $lane/$project: $fo"
   out="$H/state/lane-run-worker/run-$id.out"
   if command -v setsid >/dev/null 2>&1; then
     LANE_RUN_ID="$id" setsid -w "$H/bin/project-lane-run.sh" "$lane" "$project" 0 "$H/${args[0]}" "${args[@]:1}" \
@@ -108,13 +137,11 @@ lw_run() {
   if lrh_lost; then
     lw_log "run $id $lane/$project rc $rc: lease lost; not reported"; return 0
   fi
-  body=$(jq -nc --arg m "$MACHINE" --argjson rc "$rc" --arg p "$prof" \
-    '{machine:$m, rc:$rc} + (if $p == "" then {} else {prof:$p} end)')
-  if _jobs_req POST "/api/lane-runs/$id/report" "$body" > /dev/null; then
-    lw_log "run $id $lane/$project rc $rc: reported"
-  else
-    lw_log "run $id $lane/$project rc $rc: report failed (http ${JOBS_HTTP:-none}); the lease re-runs it"
+  if ! fo=$(LANE_RUN_ID="$id" lri_checkpoint "$lane" "$project" 2>&1); then
+    lw_log "run $id $lane/$project rc $rc: the final write-back failed ($(printf '%s' "$fo" | tail -n 1)); reported rc 75"
+    rc=75; prof="PROF lri_checkpoint failed $lane/$project"
   fi
+  lw_report "$id" "$lane" "$project" "$rc" "$prof"
   return 0
 }
 

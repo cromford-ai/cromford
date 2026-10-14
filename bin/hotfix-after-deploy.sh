@@ -266,7 +266,11 @@ if [ "$PREFIX" = "-" ] && [ -n "$ISSUE" ]; then
   fi
   if [ "$STATE" = open ] && [ "${G%%:*}" = slice ]; then
     W=$(issue_slice_settle "$SLUG" "$ISSUE" "$PR_URL" "$G" "$HARNESS" "$BUILD")
-    echo "hotfix-after-deploy: left issue $ISSUE open, slice delivered ($W)" >&2
+    # BH-6308: with no open child the slice close-out may close the issue.
+    case "$W" in
+      closed-slice:*) echo "hotfix-after-deploy: closed issue $ISSUE, the merged slices delivered it ($W)" >&2 ;;
+      *)              echo "hotfix-after-deploy: left issue $ISSUE open, slice delivered ($W)" >&2 ;;
+    esac
     OWED=""
     case "$W" in *+strip-failed*) OWED="take ai-build off issue $ISSUE by hand" ;; esac
     case "$W" in *,comment-failed*) OWED="${OWED:+$OWED and }post the slice note on issue $ISSUE by hand" ;; esac
@@ -274,6 +278,7 @@ if [ "$PREFIX" = "-" ] && [ -n "$ISSUE" ]; then
     # BH-5961: close-deferred:remainder is the remainder filing, not that read.
     case "$W" in
       close-deferred:remainder) OWED="filing the remaining slices of issue $ISSUE did not finish; the next close-out tick resumes it from $BUILD/slice-remainder" ;;
+      close-deferred:slice-closeout) OWED="the slice close-out of issue $ISSUE did not finish; the next close-out tick resumes it from $BUILD/slice-closeout" ;;
       close-deferred:*) OWED="the child-issue read failed, so check issue $ISSUE's children and settle it by hand" ;; esac
     [ -z "$OWED" ] || CLOSEOUT_ALERT "issue $ISSUE is a slice of a master; $W; $OWED"
   elif [ "$STATE" = open ] && [ "$G" != close ]; then

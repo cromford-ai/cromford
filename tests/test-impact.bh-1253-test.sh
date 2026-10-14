@@ -78,7 +78,7 @@ $(diff "$T/awk-map.tsv" "$T/mawk-map.tsv" 2>/dev/null | head -6)"; fi
   # An audit that dies is an audit that reports no missing rows.
   AUD=$(PATH="$AWKSHIM:$PATH" "$TI" audit 2>"$T/mawk-audit.err"); RC=$?
   if [ "$RC" -eq 0 ] && [ -z "$AUD" ]; then ok
-  else bad "1b: audit under mawk rc=$RC with $(printf '%s\n' "$AUD" | grep -c .) row(s): $(printf '%s\n' "$AUD" | head -3 | tr '\n' ' ')"; fi
+  else bad "1b: audit under mawk rc=$RC with $(grep -c . <<<"$AUD") row(s): $(head -3 <<<"$AUD" | tr '\n' ' ')"; fi
   if [ ! -s "$T/mawk-audit.err" ]; then ok
   else bad "1b: the audit wrote to stderr under mawk: $(head -2 "$T/mawk-audit.err" | tr '\n' ' ')"; fi
 fi
@@ -165,7 +165,7 @@ ssel() { # <path to touch> -> prints the selection, reason into $T/src-reason
 }
 for P in bin/lib/alpha.sh bin/lib/mod/one.sh; do
   GOT=$(ssel "$P")
-  if printf '%s\n' "$GOT" | grep -qxF tests/delta-test.sh &&
+  if grep -qxF tests/delta-test.sh <<<"$GOT" &&
      grep -q 'selected:' "$T/src-reason"; then ok
   else bad "2: a diff on $P did not SELECT tests/delta-test.sh (it reaches it only through the unbraced source line in bin/delta.sh): '$(printf '%s' "$GOT" | tr '\n' ' ')' / '$(cat "$T/src-reason")'"; fi
 done
@@ -245,7 +245,7 @@ $(cat "$T/o-map.tsv" 2>/dev/null)"; fi
 echo '# touched' >> "$O/bin/lonely.sh"
 sgit "$O" add -A; sgit "$O" commit -qm "touch lonely"
 GOT=$("$TI" --root "$O" select "$OBASE..HEAD" 2>"$T/o-reason")
-if printf '%s\n' "$GOT" | grep -qxF tests/comment-test.sh; then ok
+if grep -qxF tests/comment-test.sh <<<"$GOT"; then ok
 else bad "4c: a diff on bin/lonely.sh no longer selects the suite that names it in a comment: '$(printf '%s' "$GOT" | tr '\n' ' ')' / '$(cat "$T/o-reason")'"; fi
 owork
 
@@ -262,7 +262,7 @@ echo "stray: 1 passed, 0 failed"
 SH
 sgit "$O" add -A; sgit "$O" commit -qm "a script cited only in a comment"
 GOUT=$(ocheck); GRC=$?
-if [ "$GRC" -eq 1 ] && printf '%s' "$GOUT" | grep -qF 'bin/stray.sh'; then ok
+if [ "$GRC" -eq 1 ] && grep -qF 'bin/stray.sh' <<<"$GOUT"; then ok
 else bad "4b: a script whose only citation is a # line must be refused by name (rc=$GRC): $GOUT"; fi
 if ! grep -qF 'bin/lonely.sh' <<<"$(printf '%s' "$GOUT")"; then ok
 else bad "4b: the refusal names bin/lonely.sh, an orphan on BOTH sides — only what this diff adds is new: $GOUT"; fi
@@ -277,7 +277,7 @@ echo "stray: 1 passed, 0 failed"
 SH
 sgit "$O" add -A; sgit "$O" commit -qm "a real citation for the stray script"
 GOUT=$(ocheck); GRC=$?
-if [ "$GRC" -eq 0 ] && printf '%s' "$GOUT" | grep -qF 'no new orphans'; then ok
+if [ "$GRC" -eq 0 ] && grep -qF 'no new orphans' <<<"$GOUT"; then ok
 else bad "4b: a real (non-comment) citation must clear the refusal (rc=$GRC): $GOUT"; fi
 owork
 
@@ -292,7 +292,7 @@ if [ -s "$STRICT" ] && [ -s "$LOOSE" ]; then ok
 else bad "4d: could not compute the real repo's orphan lists (strict $(wc -l <"$STRICT") / loose $(wc -l <"$LOOSE")): $(head -2 "$T/strict.err" "$T/loose.err" | tr '\n' ' ')"; fi
 LOST=$(comm -13 "$STRICT" "$LOOSE")
 if [ -z "$LOST" ]; then ok
-else bad "4d: the ratchet's list DROPPED $(printf '%s\n' "$LOST" | grep -c .) script(s) the map-built list holds — the strict rule may only ADD orphans (first 5): $(printf '%s\n' "$LOST" | head -5 | tr '\n' ' ')"; fi
+else bad "4d: the ratchet's list DROPPED $(grep -c . <<<"$LOST") script(s) the map-built list holds — the strict rule may only ADD orphans (first 5): $(head -5 <<<"$LOST" | tr '\n' ' ')"; fi
 ONLYCOMMENT=$(comm -13 "$LOOSE" "$STRICT")
 # A hard failure, not a skip: the two lists being identical over a 450-script
 # corpus means the strict rule moved nothing, which is what this ticket exists

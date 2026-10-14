@@ -709,11 +709,11 @@ ACCOUNT_PRIORITY=10
 CLAUDE_CONFIG_DIR=$T/.claude-unreadable
 EOF
 POOL_LIB="$T/bin/lib/pool-account.sh"
-env HARNESS="$T" bash -c '. "$1"; account_headroom unreadable claude-fable-5-1 >/dev/null; echo "rc=$?"' x "$POOL_LIB" | grep -q 'rc=0' && ok || bad "18: account_headroom unreadable did not return 0"
-env HARNESS="$T" bash -c '. "$1"; _pa_metered unreadable claude-fable-5-1 >/dev/null; echo "rc=$?"' x "$POOL_LIB" | grep -q 'rc=0' && ok || bad "18: _pa_metered unreadable did not return 0"
+grep -q 'rc=0' <<<"$(env HARNESS="$T" bash -c '. "$1"; account_headroom unreadable claude-fable-5-1 >/dev/null; echo "rc=$?"' x "$POOL_LIB")" && ok || bad "18: account_headroom unreadable did not return 0"
+grep -q 'rc=0' <<<"$(env HARNESS="$T" bash -c '. "$1"; _pa_metered unreadable claude-fable-5-1 >/dev/null; echo "rc=$?"' x "$POOL_LIB")" && ok || bad "18: _pa_metered unreadable did not return 0"
 quota unknown unknown 60 40 2
-env HARNESS="$T" bash -c '. "$1"; account_headroom unknown claude-fable-5-1 >/dev/null; echo "rc=$?"' x "$POOL_LIB" | grep -q 'rc=0' && ok || bad "18: account_headroom unknown did not return 0"
-env HARNESS="$T" bash -c '. "$1"; _pa_metered unknown claude-fable-5-1 >/dev/null; echo "rc=$?"' x "$POOL_LIB" | grep -q 'rc=1' && ok || bad "18: _pa_metered unknown did not return 1"
+grep -q 'rc=0' <<<"$(env HARNESS="$T" bash -c '. "$1"; account_headroom unknown claude-fable-5-1 >/dev/null; echo "rc=$?"' x "$POOL_LIB")" && ok || bad "18: account_headroom unknown did not return 0"
+grep -q 'rc=1' <<<"$(env HARNESS="$T" bash -c '. "$1"; _pa_metered unknown claude-fable-5-1 >/dev/null; echo "rc=$?"' x "$POOL_LIB")" && ok || bad "18: _pa_metered unknown did not return 1"
 rm -f "$T/state/quota/unknown.json" "$T/state/quota/unreadable.json"
 
 echo "account-routing-test: $PASS pass, $FAIL fail"

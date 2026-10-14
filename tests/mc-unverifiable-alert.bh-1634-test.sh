@@ -116,7 +116,7 @@ grep -q 'pulls?state=open' "$T/gh-calls.txt" && ok || bad "setup: the tick must 
 # U1
 M=$(wc -l < "$LOG"); tick fail
 NEW11=$(tail -n +"$((M+1))" "$LOG" | grep -F 'demo-os#11 ')
-[ "$(printf '%s\n' "$NEW11" | grep -c .)" = 1 ] && grep -q 'merge state UNVERIFIABLE this tick' <<<"$NEW11" \
+[ "$(grep -c . <<<"$NEW11")" = 1 ] && grep -q 'merge state UNVERIFIABLE this tick' <<<"$NEW11" \
   && grep -q 'unverifiable 1/3' <<<"$NEW11" \
   && ok || bad "U1: one failing tick must log exactly ONE line for #11 carrying 'unverifiable 1/3' (got: $NEW11)"
 [ "$(count11)" = 1 ] && ok || bad "U1: the state file count must be 1 after one failing tick (got $(count11))"

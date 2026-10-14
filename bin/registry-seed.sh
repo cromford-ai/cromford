@@ -169,7 +169,7 @@ if [ "$FORCE" != 1 ]; then
   elif [ "$GHTTP" = 503 ] && [ "$(jq -r '.error // empty' <<<"$GBODY" 2>/dev/null)" = "registry schema not applied" ]; then :
   else
     rm -f "$TMP/headers"
-    echo "registry-seed: GET /api/registry/version answered http=$GHTTP $(printf '%s' "$GBODY" | head -c 200); not proven empty, nothing imported" >&2
+    echo "registry-seed: GET /api/registry/version answered http=$GHTTP $(head -c 200 <<<"$GBODY"); not proven empty, nothing imported" >&2
     exit 1
   fi
 fi
@@ -182,6 +182,6 @@ HTTP="${OUT##*$'\n'}"; BODY="${OUT%$'\n'*}"
 case "$HTTP" in
   2*) jq -er 'select(.ok == true and (.version | type == "number"))
         | "registry-seed: changed=\(.changed) version=\(.version) stale=\(.stale | length)"' <<<"$BODY" 2>/dev/null \
-        || { echo "registry-seed: http=$HTTP but the answer is not an import result: $(printf '%s' "$BODY" | head -c 200)" >&2; exit 1; } ;;
-  *) echo "registry-seed: http=$HTTP $(printf '%s' "$BODY" | head -c 200)" >&2; exit 1 ;;
+        || { echo "registry-seed: http=$HTTP but the answer is not an import result: $(head -c 200 <<<"$BODY")" >&2; exit 1; } ;;
+  *) echo "registry-seed: http=$HTTP $(head -c 200 <<<"$BODY")" >&2; exit 1 ;;
 esac

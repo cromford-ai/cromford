@@ -139,7 +139,7 @@ VN=$(printf '%s' "$V" | wc -c | tr -d ' ')
 # The cap binds the EVIDENCE; the marker is allowed to be the one thing above
 # it, because a prompt that silently ends mid-sentence is the failure here.
 [ "$VN" -le $(( 500 + 300 )) ] && ok || bad "C3 capped evidence must come back at about the cap (got ${VN}B for a 500B cap)"
-case "$V" in *"[capped:"*) ok ;; *) bad "C4 a truncation must carry a MARKER, never be silent: $(printf '%s' "$V" | head -c 120)" ;; esac
+case "$V" in *"[capped:"*) ok ;; *) bad "C4 a truncation must carry a MARKER, never be silent: $(head -c 120 <<<"$V")" ;; esac
 case "$V" in *"$(printf '%s' "$BIG" | tail -1)"*) ok ;; *) bad "C5 the NEWEST evidence must survive the cut (oldest-first drop)" ;; esac
 case "$V" in *"line 0001 of evidence"*) bad "C6 the oldest line must be the one dropped" ;; *) ok ;; esac
 

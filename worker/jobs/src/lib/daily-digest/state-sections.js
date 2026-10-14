@@ -24,6 +24,7 @@
 // section only, never an empty list.
 import { capList } from "./shape.js";
 import { nowIso } from "../http.js";
+import { readFleetFlag } from "../harness-flags.js";
 
 const SNAPSHOT_STALE_MS = 30 * 60 * 1000;
 
@@ -169,8 +170,7 @@ export async function readStateSections(db, win, opts) {
   const factory = sect(async () => {
     const [stop] = await rowsOf(db.prepare(
       `SELECT value, actor, updated_at FROM settings WHERE key='switch.factory-stop'`));
-    const [off] = await rowsOf(db.prepare(
-      `SELECT active, actor, updated_at FROM pause_flags WHERE name='all-off'`));
+    const off = await readFleetFlag({ DB: db }, "all-off");
     // At most four rows: `what` is CHECKed to four values and pauses_live is
     // unique on (scope, what) while ended_at IS NULL.
     const fleet = await rowsOf(db.prepare(

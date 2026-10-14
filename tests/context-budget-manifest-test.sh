@@ -685,5 +685,33 @@ ns["lanes"].append({"lane": "both", "stage": "triage", "runner": "claude",
 assert ns["ceiling_for"]("claude", "triage", "bigproj") == 123456
 PYT
 
+# --- 9. THE STAFF LANE HAS ITS ONE BUDGET ROW (BH-5561) ----------------------
+# TEST-CHANGE (lead review lr-5985 of 623ae9adc): this section required one
+# `staff.<name>` row per agent, and section 4 let those rows pass on a soul
+# file alone. Every staff agent calls the ONE stage staff-tick (the operator,
+# 2026-10-12), so a per-agent row could never match a cost row. The guard now
+# requires the row the code reads, and refuses a per-agent row coming back.
+python3 - "$DIR" "$MAN" <<'@ST@' && ok || bad "the staff lane's budget row is wrong"
+import sys, json, re, copy
+DIR, MAN = sys.argv[1], sys.argv[2]
+man = json.load(open(MAN))
+src = open(f"{DIR}/bin/staff.sh").read()
+m = re.search(r'agent-call\.sh" ([a-z][a-z0-9-]*) fleet', src)
+assert m, "bin/staff.sh: no literal agent-call stage found"
+stage = m.group(1)
+
+def check(mm):
+    rows = [l for l in mm["lanes"] if l.get("stage") == stage]
+    per = sorted(l.get("stage") for l in mm["lanes"] if str(l.get("stage", "")).startswith("staff."))
+    return rows, per
+
+cut = copy.deepcopy(man)
+cut["lanes"] = [l for l in cut["lanes"] if l.get("stage") != stage]
+assert not check(cut)[0], "the guard does not see a removed staff-tick row"
+rows, per = check(man)
+assert len(rows) == 1, f"want one budget row for stage {stage}, got {len(rows)}"
+assert not per, "per-agent staff rows match no cost row: " + ", ".join(per)
+@ST@
+
 echo "context-budget-manifest-test: $PASS pass, $FAIL fail"
 [ "$FAIL" -eq 0 ]

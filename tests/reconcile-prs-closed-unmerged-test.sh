@@ -121,7 +121,7 @@ case "\$URL" in
     printf '%s\n' "\$BODY" >> "$T/reconciled.txt"
     if [ "\$MODE" = refuse-all ]; then
       emit '{"error":"boom"}' 500
-    elif [ "\$MODE" = refuse-closed ] && printf '%s' "\$BODY" | grep -q '"closed"'; then
+    elif [ "\$MODE" = refuse-closed ] && grep -q '"closed"' <<<"\$BODY"; then
       emit '{"error":"unknown field closed"}' 400
     else
       emit '{"ok":true}' 200

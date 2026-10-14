@@ -1,5 +1,5 @@
 #!/bin/bash
-# bin/main-red-detector.sh [--explain] [owner/repo ...] — is MAIN itself red?
+# bin/main-red-detector.sh [--explain] [--flagged-only] [owner/repo ...] — is MAIN itself red?
 #
 # THE SILENCE THIS KILLS (2026-09-15). worker/jobs/test/cost-anchored.test.js
 # windowed off the wall clock against fixtures pinned to 2026-09-14. At ~14:00Z
@@ -87,6 +87,32 @@
 # (decision=none reason=unconfirmed otherwise). That second read is what
 # guards a raise when the ledger cannot be reached. --explain reads the row
 # and never writes it.
+#
+# ONE PASS, FLAGGED REPOS FIRST (BH-6352). On 2026-10-13 a pass judged the 13
+# repos in fleet.conf order, ended after repo 6, and never reached
+# example-org/project-6 (the last row): its freeze stayed up 39 minutes on a green
+# main, and the log said nothing. A scheduled pass (no repo arguments) now
+# judges every repo with a flags/main-red-* file first, in fleet.conf order,
+# then the rest; an explicit repo list keeps its order. Each pass logs a
+# `pass start:` and a `pass end:` line (repos decided, seconds, exit code,
+# signal, last repo). A freeze the pass leaves undecided gets one
+# `<slug|flag>: decision=none reason=<why>` line: the verdict's own reason
+# (stale-page, no-runs, ...), not-reached (the pass ended first),
+# not-in-repo-list (no repo in the pass maps to the flag) or lock-held
+# (another pass held the lock). A SIGKILL cannot be trapped and leaves no
+# line; the next pass judges the flagged repo first. --explain logs none of it.
+#
+# FLAGGED-ONLY RE-CHECK (BH-6502). The scheduled pass runs inside the merge
+# conductor's full tick, and that tick runs once an hour (BH-5521). On
+# 2026-10-13 a project-6 freeze stayed up for most of an hour on a green main,
+# twice. bin/main-red-recheck.sh (a */5 hub lane) runs `--flagged-only`: the
+# repo list is resolved as above, then cut to the slugs whose freeze flag is
+# up, in list order, and judged by the same loop. A repo with no flag is not
+# read. No flag in the list = exit 0 with no line. The pass logs
+# `pass start: recheck, <n> flagged repo(s): <slugs>` and, before its
+# `pass end:` line, `recheck: <n> flagged repo(s), <r> Actions read(s)`
+# (every GitHub Actions GET this pass made). It names no stray flag: the
+# hourly pass does that.
 #
 #   red, and no flag yet  -> write flags/main-red-<owner>-<repo> (sha, workflow,
 #                            since, run url, reason) + ONE --critical alert naming
@@ -237,6 +263,8 @@
 #                              main_red_queue_self_dispatch_min > env > default;
 #                              a non-numeric value is the default
 #
+#   --flagged-only  judge only the repos in the list whose freeze flag is up
+#               (BH-6502, above). bin/main-red-recheck.sh runs it every 5 min.
 #   --explain   print what this tick WOULD do, and exit. READ-ONLY (BH-997):
 #               takes no lock, writes and clears no flags/main-red-* file,
 #               publishes no pause row, writes no state/main-red/*.verdict,
@@ -250,11 +278,12 @@ set -uo pipefail
 H="${HARNESS:-/root/harness}"
 . "${HARNESS:-/root/harness}/bin/lib/env-path.sh" 2>/dev/null || . "$(dirname "${BASH_SOURCE[0]}")/lib/env-path.sh" 2>/dev/null || harness_env_dir() { printf '%s\n' "${1:-${HARNESS:-/root/harness}}/env"; }; HENV=$(harness_env_dir "$H")
 export HARNESS="$H"
-EXPLAIN=0; ARGS=()
+EXPLAIN=0; FLAGGED_ONLY=0; ARGS=()
 while [ $# -gt 0 ]; do
   case "$1" in
     --explain) EXPLAIN=1 ;;
-    -h|--help) sed -n '2,248p' "$0"; exit 0 ;;
+    --flagged-only) FLAGGED_ONLY=1 ;;
+    -h|--help) sed -n '2,276p' "$0"; exit 0 ;;
     -*) echo "main-red-detector.sh: unknown flag $1" >&2; exit 2 ;;
     *) ARGS+=("$1") ;;
   esac
@@ -395,9 +424,30 @@ NOW=$(date +%s)
 # arrived — and this arm's held-lock path is a bare `exit 0`, so the operator
 # got no output at all — while opening the file truncated the one the running
 # tick was holding.
+# mr_flag_name <slug> — the freeze flag's basename. mr_flag_up <name> — rc 0
+# when that freeze is up on this hub. mr_flag_files — the basename of every
+# freeze flag on disk; the two lane switches share the prefix and are not freezes.
+mr_flag_name() { printf 'main-red-%s' "$(printf '%s' "$1" | tr '/' '-')"; }
+mr_flag_up()   { [ -f "$H/flags/$1" ]; }
+mr_flag_files() {
+  local f n
+  for f in "$H"/flags/main-red-*; do
+    [ -f "$f" ] || continue
+    n=$(basename "$f")
+    case "$n" in main-red-detector-off|main-red-pr-pair-off) continue ;; esac
+    printf '%s\n' "$n"
+  done
+}
 if [ "$EXPLAIN" != 1 ] && command -v flock >/dev/null 2>&1; then
   exec 8>"$H/locks/main-red-detector.lock"
-  flock -n 8 || exit 0
+  if ! flock -n 8; then
+    # A skipped pass is said for every freeze it leaves up (BH-6352), and only
+    # then: with no flag up a held lock stays as quiet as it always was.
+    while read -r _mrn; do
+      [ -n "$_mrn" ] && log "$_mrn: decision=none reason=lock-held — another pass holds locks/main-red-detector.lock"
+    done < <(mr_flag_files)
+    exit 0
+  fi
 fi
 
 # The repo list, read exactly the way bin/pipeline-health.sh's perma-red check
@@ -414,6 +464,74 @@ else
             | grep -E '^[^-][^ ]*/[^ ]+$' | awk '!seen[$0]++' )
 fi
 [ -n "$REPOS" ] || { log "no repos to check — fleet.conf unreadable and MAIN_RED_REPOS unset"; exit 0; }
+# --flagged-only (BH-6502): keep only the slugs whose freeze is up, in list
+# order. None left = nothing to re-check: exit 0 before any line or trap.
+if [ "$FLAGGED_ONLY" = 1 ]; then
+  _mrf=""
+  for _mrs in $REPOS; do mr_flag_up "$(mr_flag_name "$_mrs")" && _mrf+="$_mrs"$'\n'; done
+  REPOS="${_mrf%$'\n'}"
+  [ -n "$REPOS" ] || exit 0
+fi
+
+# mr_flagged_first — REPOS with every slug whose freeze is up moved to the
+# front. Both groups keep their relative order. Only a scheduled pass (no repo
+# arguments) is reordered: an explicit list is judged as given.
+mr_flagged_first() {
+  local s up=() rest=()
+  for s in $REPOS; do
+    if mr_flag_up "$(mr_flag_name "$s")"; then up+=("$s"); else rest+=("$s"); fi
+  done
+  printf '%s\n' ${up[@]+"${up[@]}"} ${rest[@]+"${rest[@]}"}
+}
+# mr_stray_flags — one line for each freeze flag that no repo in this pass maps
+# to. This pass can never clear one, so it is said, not skipped in silence.
+mr_stray_flags() {
+  local n s hit
+  while read -r n; do
+    [ -n "$n" ] || continue
+    hit=0
+    for s in $REPOS; do [ "$n" = "$(mr_flag_name "$s")" ] && { hit=1; break; }; done
+    [ "$hit" = 1 ] || log "$n: decision=none reason=not-in-repo-list — no repo in this pass maps to it"
+  done < <(mr_flag_files)
+}
+# mr_pass_end <rc> — the EXIT trap of a pass that is not --explain. One
+# not-reached line per flagged repo the pass did not decide, then one line for
+# the pass. It writes no verdict, flag, ledger row or alert.
+mr_pass_end() {
+  local s
+  for s in $REPOS; do
+    [ -n "${MR_DECIDED[$s]:-}" ] && continue
+    mr_flag_up "$(mr_flag_name "$s")" || continue
+    log "$s: decision=none reason=not-reached flag=$(mr_flag_name "$s") — the pass ended (exit $1, signal $MR_SIG) while on ${MR_CUR:-none}; the freeze stays up"
+  done
+  if [ "$FLAGGED_ONLY" = 1 ]; then
+    local r=0
+    [ -n "${MR_READS_F:-}" ] && [ -f "$MR_READS_F" ] && r=$(wc -c < "$MR_READS_F" | tr -d ' ')
+    log "recheck: $(wc -w <<<"$REPOS" | tr -d ' ') flagged repo(s), ${r:-0} Actions read(s)"
+    [ -n "${MR_READS_F:-}" ] && rm -f "$MR_READS_F"
+  fi
+  log "pass end: decided ${#MR_DECIDED[@]} of $(wc -w <<<"$REPOS" | tr -d ' ') repo(s) in $((SECONDS - MR_T0))s, exit $1, signal $MR_SIG, last repo ${MR_CUR:-none}"
+}
+declare -A MR_DECIDED=()
+MR_CUR=""; MR_SIG=none; MR_T0=$SECONDS
+if [ "$EXPLAIN" != 1 ]; then
+  _mrup=""
+  for _mrs in $REPOS; do mr_flag_up "$(mr_flag_name "$_mrs")" && _mrup+="${_mrup:+ }$_mrs"; done
+  if [ "$FLAGGED_ONLY" = 1 ]; then
+    log "pass start: recheck, $(wc -w <<<"$REPOS" | tr -d ' ') flagged repo(s): $(printf '%s' "$REPOS" | tr '\n' ' ')"
+    MR_READS_F=$(mktemp 2>/dev/null) || MR_READS_F=""
+  elif [ "${#ARGS[@]}" -eq 0 ]; then
+    REPOS=$(mr_flagged_first)
+    mr_stray_flags
+    log "pass start: $(wc -w <<<"$REPOS" | tr -d ' ') repo(s), $(wc -w <<<"$_mrup" | tr -d ' ') with a flag up, decided first: ${_mrup:-none}"
+  else
+    log "pass start: $(wc -w <<<"$REPOS" | tr -d ' ') repo(s), $(wc -w <<<"$_mrup" | tr -d ' ') with a flag up, order as given"
+  fi
+  trap 'MR_SIG=TERM; exit 143' TERM
+  trap 'MR_SIG=INT; exit 130' INT
+  trap 'MR_SIG=HUP; exit 129' HUP
+  trap 'mr_pass_end $?' EXIT
+fi
 
 # shellcheck source=bin/lib/gh-repo-token.sh
 [ -r "$H/bin/lib/gh-repo-token.sh" ] && . "$H/bin/lib/gh-repo-token.sh" 2>/dev/null
@@ -526,7 +644,12 @@ mr_cleared_load() {
 # Last-write, rewritten whole, keyed on the slug. Nothing dedupes on it and a
 # missing one is read as "do not act", so it cannot go stale into an action.
 # --explain writes NOTHING here: the file is a fact about a tick that happened.
+# mr_count_read — one byte in $MR_READS_F per GitHub Actions GET, in a
+# --flagged-only pass only (the file is unset otherwise). A file, not a
+# variable: read_jobs runs inside $(...). The rerun POST is not counted.
+mr_count_read() { [ -n "${MR_READS_F:-}" ] && printf x >> "$MR_READS_F" 2>/dev/null; return 0; }
 mr_verdict() {
+  MR_DECIDED["$1"]=1
   [ "$EXPLAIN" = 1 ] && return 0
   local d="$H/state/main-red"
   # the top-level mkdir makes logs/ flags/ locks/, never state/ — so this one
@@ -534,6 +657,10 @@ mr_verdict() {
   mkdir -p "$d" 2>/dev/null || return 0
   { echo "decision=${2:-none}"; echo "reason=${3:-}"; echo "sha=${4:-}"; echo "at=$(STAMP)"; } \
     > "$d/$(echo "$1" | tr '/' '-').verdict" 2>/dev/null
+  # A freeze this tick did not judge is said in the log too (BH-6352).
+  if [ "${2:-none}" = none ] && mr_flag_up "$(mr_flag_name "$1")"; then
+    log "$1: decision=none reason=${3:-unknown} flag=$(mr_flag_name "$1") — the freeze stays up"
+  fi
   return 0
 }
 
@@ -672,6 +799,7 @@ PYEOF
 mr_read_page() {
   local raw
   PG_RUNS=""; PG_TOTAL=""; PG_NEWEST=""
+  mr_count_read
   raw=$(gh api -X GET "repos/$1/actions/runs" -f branch=main -f per_page="$2" \
     -q '{total:.total_count, runs:[.workflow_runs[]? | {n:.name, p:.path, s:.status, c:.conclusion, sha:.head_sha, t:.created_at, u:.html_url, id:.id, e:.event}]}' 2>/dev/null) || return 1
   PG_RUNS=$(jq -c 'if type=="array" then . else (.runs // []) end' <<<"$raw" 2>/dev/null) || PG_RUNS=""
@@ -831,6 +959,7 @@ mr_queue_verdict() {
   case " $(printf '%s' "$QUEUE_REPOS" | tr ',' ' ') " in *" $1 "*) ;; *) return 0 ;; esac
   local raw out
   QREAD=fail
+  mr_count_read
   raw=$(gh api -X GET "repos/$1/actions/runs" -f event=pull_request -f per_page="$QUEUE_PAGE" \
     -q '[.workflow_runs[]? | {n:.name, p:.path, s:.status, c:.conclusion, sha:.head_sha, hb:.head_branch, dt:.display_title, t:.created_at, ut:.updated_at, u:.html_url, id:.id}]' 2>/dev/null) || {
     log "$1: the merge-queue runs could not be read — the queue arm decides nothing this tick"; return 0; }
@@ -1044,6 +1173,7 @@ alert() { # alert <critical|resolve|warn|notice|infra> <text>
 mr_infra_only() {
   local raw
   INF_ATTEMPT=""; INF_JOBS=""; INF_STEPS=""; INF_RAW=""
+  mr_count_read
   raw=$(gh api "repos/$1/actions/runs/$2/jobs?per_page=100" 2>/dev/null) || return 1
   INF_RAW=$raw
   jq -e '
@@ -1186,6 +1316,7 @@ mr_sched_warn() {
 
 mr_cleared_load
 for SLUG in $REPOS; do
+  MR_CUR="$SLUG"
   [ -n "$SLUG" ] && [ "$SLUG" != "-" ] || continue
   FLAG="$H/flags/main-red-$(echo "$SLUG" | tr '/' '-')"
   if command -v gh_default_auth_for_slug >/dev/null 2>&1; then
@@ -1381,6 +1512,7 @@ for SLUG in $REPOS; do
       if jq -e 'type=="object" and (.jobs|type)=="array"' <<<"$INF_RAW" >/dev/null 2>&1; then
         j=$(jq -r '[.jobs[] | select(.conclusion=="failure") | .name] | join(", ")' <<<"$INF_RAW" 2>/dev/null)
       else
+        mr_count_read
         j=$(gh api "repos/$SLUG/actions/runs/$RID/jobs" \
           -q '[.jobs[]? | select(.conclusion=="failure") | .name] | join(", ")' 2>/dev/null)
       fi

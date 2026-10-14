@@ -98,7 +98,7 @@ for (const [name, rest, method] of [['P2', 'cost-caps/seed', 'POST'], ['P3', 'co
 }
 " 2>&1)
 for c in P1 P2 P3 P4-post P4-delete; do
-  echo "$OUT" | grep -q "^ok $c " && ok || bad "$c: $(echo "$OUT" | grep "^no $c " || echo "$OUT")"
+  grep -q "^ok $c " <<<"$OUT" && ok || bad "$c: $(grep "^no $c " <<<"$OUT" || echo "$OUT")"
 done
 
 # --- N: the node suites -----------------------------------------------------

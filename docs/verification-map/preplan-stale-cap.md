@@ -8,7 +8,7 @@ session. Nothing bounded how often that could happen, and the trigger is not the
 ticket — it is main moving. On a busy night every merge touching a shared file
 (`prisma/schema.prisma`, `tests/lib/scratch.sh`) re-bought a ~$4 plan for every
 queued ticket that named it: **project-4 paid for 152 stale re-plans on
-2026-09-18** ($N of pre-plan spend that day), TK-1847 about 50 in three
+2026-09-18** ($1,037 of pre-plan spend that day), TK-1847 about 50 in three
 days. Nothing errored, every script exited 0, and the bill was the only symptom.
 
 A ticket now gets `PREPLAN_STALE_MAX` stale re-plans per 24h. Past that the key

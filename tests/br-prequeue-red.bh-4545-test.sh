@@ -40,9 +40,14 @@ SOLO="prequeue-red: tests/x.sh (reproduced alone on abc123def456, batch #9)"
 # ============================================================================
 # R1 / R2 / N1 — the classifier, inline (extracted by name) and module (sourced)
 # ============================================================================
+# BH-5241: the corpus is the driver plus bin/lib/br/*.sh (tests/lib/br-corpus.sh),
+# because the ladder functions moved out of the driver into bin/lib/br/ladder.sh.
+# shellcheck source=tests/lib/br-corpus.sh
+. "$DIR/tests/lib/br-corpus.sh" || exit 1
+br_corpus "$DIR" "$T/br-corpus.sh" || exit 1
 INLINE="$T/inline.sh"; : > "$INLINE"
 for fn in br_ladder_class br_skips_mechanical br_ladder_rung br_action br_reason_of; do
-  awk -v f="^$fn\\(\\)" '$0 ~ f {p=1} p{print} p&&/^}$/{exit}' "$DIR/bin/blocked-resolver.sh" >> "$INLINE"
+  awk -v f="^$fn\\(\\)" '$0 ~ f {p=1} p{print} p&&/^}$/{exit}' "$T/br-corpus.sh" >> "$INLINE"
 done
 MODULE="$DIR/bin/lib/br/ladder.sh"
 for fn in br_ladder_class br_skips_mechanical br_ladder_rung br_action br_reason_of; do

@@ -1,0 +1,10 @@
+# @hub-lanes
+
+# ── QA WIRING SWEEP (BH-6254, 2026-10-12) ────────────────────────────────────
+# Daily at 05:55Z, five minutes after the doorbell check: is browser QA wired
+# for every project in fleet.conf? bin/qa-wiring-check.sh checks the vercel.conf
+# row, the prod URL, the QA account, the deploy kind and the Clerk prod origin.
+# project-6-os merged 47+ PRs with none of them set: no preview QA, no prod QA,
+# prod smoke off, and no line anywhere saying so. One ALERTS line and one
+# fleet_alert per project per UTC day while any line is OWED. Read-only.
+55 5 * * * /root/harness/bin/hub-lease.sh check && /root/harness/bin/qa-wiring-sweep.sh >/dev/null 2>&1

@@ -176,10 +176,8 @@ mlog | grep 'ci-health push:' | grep -q 'push failed.*3 of 3' && mlog | grep 'ci
 # ═══════════════════════ bin/testhost-tick.sh (cmd_ci_runners) ═══════════════
 FIX="$T/fix"; TH="$T/th"
 mkdir -p "$FIX/settings" "$T/fakebin" "$TH/bin/lib" "$TH/catalog" "$TH/flags" "$TH/logs" "$TH/state"
-cp "$DIR/bin/lib/lane-gate.sh" "$TH/bin/lib/"
-[ -f "$DIR/bin/lib/env-path.sh" ] && cp "$DIR/bin/lib/env-path.sh" "$TH/bin/lib/"
 cp "$(rendered_registry)" "$TH/catalog/lanes.json"
-cp "$DIR/bin/testhost-tick.sh" "$TH/bin/testhost-tick.sh"; chmod +x "$TH/bin/testhost-tick.sh"
+scratch_install_closure bin/testhost-tick.sh "$TH" >/dev/null || { echo "FAIL: could not install the tick's closure"; exit 1; }
 # The settings half of the client is files, as in tests/ci-runners-alert.bh-1210-test.sh.
 SETTINGS_STUB='flag_sync() { return 1; }
 setting_get() { [ -f "$FIX/settings/$1" ] || return 2; cat "$FIX/settings/$1"; }

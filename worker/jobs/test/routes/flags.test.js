@@ -15,8 +15,13 @@ test('a flag write needs an explicit active, and coerces the shapes a client sen
   for (const [sent, want] of [[true, 1], ['true', 1], [1, 1], [0, 0], ['0', 0], [false, 0]]) {
     const r = await call('/api/flags', { method: 'PUT', body: { name: 'paused-project-3', active: sent } });
     assert.equal(r.status, 200);
-    const ins = r.db._calls.find((c) => /INSERT INTO pause_flags/.test(c.sql));
-    assert.equal(ins.binds[1], want, `active ${JSON.stringify(sent)} became ${ins.binds[1]}`);
+    // TEST-CHANGE BH-4154: paused-* is a ported name and its write no longer
+    // mirrors into pause_flags, so the coerced value is read from the
+    // harness_flags upsert: ON binds cleared_at (?7) NULL, OFF binds a stamp.
+    assert.ok(!r.db._calls.some((c) => /INSERT INTO pause_flags/.test(c.sql)), 'no pause_flags mirror');
+    const ins = r.db._calls.find((c) => /INSERT INTO harness_flags/.test(c.sql));
+    const got = ins.binds[6] === null ? 1 : 0;
+    assert.equal(got, want, `active ${JSON.stringify(sent)} became ${got}`);
   }
 });
 

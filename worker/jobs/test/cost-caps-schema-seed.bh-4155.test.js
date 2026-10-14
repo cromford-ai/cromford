@@ -20,9 +20,10 @@ import worker from '../src/index.js';
 import { capFleetKey, validateCapValue } from '../src/lib/cost-caps.js';
 import { REGISTRY_SEED_ACTOR } from '../src/lib/core.js';
 import { openDb } from './lib/d1-sqlite.bh-1030.js';
+import { jobsSchemaSql } from './lib/jobs-schema.js';
 
 const SECRET = 'test-secret';
-const SCHEMA = readFileSync(fileURLToPath(new URL('../schema.sql', import.meta.url)), 'utf8');
+const SCHEMA = jobsSchemaSql();
 
 const call = (DB, path, { method = 'GET', body } = {}) => {
   const req = new Request(`https://jobs.test${path}`, {

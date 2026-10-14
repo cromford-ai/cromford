@@ -16,7 +16,6 @@
 // The worker's own secrets are the fixture's: HARNESS_SECRET fixture-secret,
 // REGISTRY_ADMIN_TOKEN fixture-admin-token. Exit 3 = no node:sqlite.
 import { appendFileSync, existsSync, readFileSync } from 'node:fs';
-import { fileURLToPath } from 'node:url';
 
 let DatabaseSync;
 try { ({ DatabaseSync } = await import('node:sqlite')); } catch { process.exit(3); }
@@ -26,7 +25,8 @@ const file = process.env.REGISTRY_FIXTURE_DB;
 if (!file) { process.stderr.write('REGISTRY_FIXTURE_DB is unset\n'); process.exit(2); }
 const fresh = !existsSync(file);
 const db = new DatabaseSync(file);
-if (fresh) db.exec(readFileSync(fileURLToPath(new URL('../../worker/jobs/schema.sql', import.meta.url)), 'utf8'));
+const { jobsSchemaSql } = await import('../../worker/jobs/test/lib/jobs-schema.js');
+if (fresh) db.exec(jobsSchemaSql());
 
 const argv = process.argv.slice(2);
 if (argv[0] === '--query') {

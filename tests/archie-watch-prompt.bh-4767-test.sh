@@ -23,6 +23,7 @@
 # Run: HARNESS_TEST_SANDBOX=1 bash tests/archie-watch-prompt.bh-4767-test.sh
 set -uo pipefail
 . "$(dirname "$0")/lib/scratch.sh" || exit 1
+. "$(dirname "$0")/lib/jobs-schema.sh" && jobs_schema_render || exit 1
 REPO=$(cd "$(dirname "$0")/.." && pwd)
 PROMPT="$REPO/catalog/prompts/archie-watch.md"
 CHECK="$REPO/catalog/prompts/archie-check.md"

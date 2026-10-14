@@ -131,7 +131,7 @@ seed --tsv "$T/missing.tsv" >/dev/null 2>&1; RC=$?
 # S5 ────────────────────────────────────────────────────────────────────────────
 OUT=$("$SEED" -h 2>&1); RC=$?
 [ "$RC" = 0 ] && ok || bad "S5 -h rc=$RC"
-printf '%s' "$OUT" | grep -q 'added_by=seed:BH-4140' && ok || bad "S5 -h does not print the header"
+grep -q 'added_by=seed:BH-4140' <<<"$OUT" && ok || bad "S5 -h does not print the header"
 [ "$(puts)" = 0 ] && ok || bad "S5 -h sent a request"
 
 echo "lead-protected-paths-seed: $PASS pass, $FAIL fail"

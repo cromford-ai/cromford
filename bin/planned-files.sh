@@ -16,11 +16,24 @@
 # test or check it only RUNS there; a guard test every plan runs became every
 # plan's claim, and six project-6-os tickets took six waves on it. A path also
 # named on any other line is still listed.
-# usage: planned-files.sh <build-dir>
+# A project's own source roots (bin/, catalog/, ...) count too when it has a row
+# in catalog/claim-roots.d/<project>.txt (bin/lib/claim-roots.sh). The project is
+# arg 2, else the row the build dir's name resolves to. Such a root needs its
+# slash (`binary/x.ts` is not under `bin`), and a dir scope under it must start
+# a token (`/root/harness/bin/lib/rb/` is not) and have 3 segments even with a
+# dot in it (`catalog/lanes.d/` is not). No row = the defaults only.
+# usage: planned-files.sh <build-dir> [project]
 set -uo pipefail
 BUILD="${1:?build dir}"
 PLAN="$BUILD/plan.md"
 [ -s "$PLAN" ] || exit 0
+HERE="$(dirname "$0")"
+EXTRA=""
+# shellcheck source=bin/lib/claim-roots.sh
+if [ -r "$HERE/lib/claim-roots.sh" ] && . "$HERE/lib/claim-roots.sh"; then
+  PROJ="${2:-$(claim_roots_project "$HERE/../catalog" "$(basename "$BUILD")")}"
+  EXTRA=$(claim_roots_list "$HERE/../catalog" "$PROJ" | sed 's/\./\\./g' | paste -sd'|')
+fi
 scan() {
   awk '/^#+[[:space:]]/ {
          t = tolower($0)
@@ -34,11 +47,13 @@ scan() {
        !skip && !vskip' "$PLAN"
 }
 scan | grep -oE '[][A-Za-z0-9_@()/.-]+\.(ts|tsx|js|jsx|mjs|sql|prisma|css|scss|json|sh|md|yml|yaml)' \
-  | grep -E '^(src|prisma|scripts|e2e|tests|app|lib|components|pages|public|docs|content|middleware)' \
+  | grep -E "^(src|prisma|scripts|e2e|tests|app|lib|components|pages|public|docs|content|middleware)${EXTRA:+|^($EXTRA)/}" \
   | sed 's|^\./||' | sort -u > "$BUILD/planned-files.txt"
 # Bare directory scopes ("everything under src/lib/foo/") count too
 scan | grep -oE '(src|prisma|scripts|e2e|tests)/[][A-Za-z0-9_@()/.-]+/' \
   | sed 's|/$||' | sort -u >> "$BUILD/planned-files.txt"
+[ -n "$EXTRA" ] && scan | grep -oE "(^|[^][A-Za-z0-9_@()/.-])($EXTRA)/[][A-Za-z0-9_@()/.-]+/" \
+  | sed -e 's|^[^][A-Za-z0-9_@()/.-]||' -e 's|/$||' | awk -F/ 'NF>=3' | sort -u >> "$BUILD/planned-files.txt"
 # Drop over-broad dir scopes (fewer than 3 segments, e.g. bare "src/lib") —
 # they would serialize against everything and starve parallelism.
 awk -F/ '/\./ || NF>=3' "$BUILD/planned-files.txt" | sort -u > "$BUILD/planned-files.txt.new" \

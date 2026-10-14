@@ -15,7 +15,7 @@
 # catalog/determinism-lint.conf (no DETERMINISM_LINT_CONF override): the claim
 # is about the conf this repo ships, so a copy would prove nothing.
 #
-# determinism: ok-file sigpipe-negative waiver-no-reason the heredocs below are the false-pass shape as DATA; this suite's own checks read here-strings
+# determinism: ok-file sigpipe-negative race-sigpipe-echo waiver-no-reason the heredocs below are the false-pass shape as DATA; this suite's own checks read here-strings
 # Run from anywhere: tests/test-determinism-lint.bh-1818-test.sh  (exit 0 = all pass)
 set -uo pipefail
 . "$(dirname "$0")/lib/scratch.sh" || exit 1

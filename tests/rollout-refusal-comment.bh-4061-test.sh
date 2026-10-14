@@ -114,10 +114,10 @@ drive "$T/bodies/unknown.md"
 [ "$(deletes)" = 1 ] && ok || bad "R1: want 1 DELETE, got $(deletes)"
 [ "$(markers | wc -l)" = 1 ] && ok || bad "R1: want 1 marker on the thread"
 BODY=$(jq -r '.[0].body' "$T/comments.json" 2>/dev/null)
-[ "$(printf '%s\n' "$BODY" | head -1)" = "$(markers | head -1)" ] && ok || bad "R1: the marker is not the first line"
-printf '%s' "$BODY" | grep -qF "$UNKNOWN_REASON" && ok || bad "R1: reason not quoted verbatim: $BODY"
-printf '%s' "$BODY" | grep -qF 'ai-build' && ok || bad "R1: no ai-build instruction"
-printf '%s' "$BODY" | grep -q 'after:' && ok || bad "R1: no fix line for an unknown dependency"
+[ "$(head -1 <<<"$BODY")" = "$(markers | head -1)" ] && ok || bad "R1: the marker is not the first line"
+grep -qF "$UNKNOWN_REASON" <<<"$BODY" && ok || bad "R1: reason not quoted verbatim: $BODY"
+grep -qF 'ai-build' <<<"$BODY" && ok || bad "R1: no ai-build instruction"
+grep -q 'after:' <<<"$BODY" && ok || bad "R1: no fix line for an unknown dependency"
 grep -q '—' <<<"$BODY" && bad "R1: an em dash in client copy" || ok
 [ "$(last_result)" = "RESULT \"ROLLOUT_FAILED $UNKNOWN_REASON\"" ] && ok || bad "R1: RESULT changed: $(last_result)"
 grep -q '^RESULT' "$T/b/stdout.txt" && bad "R1: notify printed a RESULT-shaped line on stdout" || ok

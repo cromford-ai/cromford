@@ -88,7 +88,7 @@ drive() { # drive [args...] — one tick of the real detector
 }
 alerts()   { awk 'END{print NR+0}' "$T/alerts.txt" 2>/dev/null; }
 ghcount()  { awk -v p="$1" 'index($0,p){n++} END{print n+0}' "$T/gh.txt" 2>/dev/null; }
-lastlog()  { awk 'END{print}' "$T/logs/main-red.log" 2>/dev/null; }
+lastlog()  { awk '!/Z pass end: /{l=$0} END{print l}' "$T/logs/main-red.log" 2>/dev/null; }  # the last DECISION line: BH-6352's pass end: line closes every pass
 FLAG="$T/flags/main-red-o-r"
 CI=".github/workflows/harness-ci.yml"; E2E=".github/workflows/e2e.yml"
 LINT=".github/workflows/lint.yml"

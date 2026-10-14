@@ -479,6 +479,7 @@ mv "$CT/to.off" "$CH/bin/lib/ticket-ownership.sh"
 ST="$T/sw"; mkdir -p "$ST"
 fx_mc_harness "$DIR" "$ST" || bad "S0: the sweep fixture did not build"
 cp "$DIR/bin/merge-sweep.sh" "$DIR/bin/fleet-conf.sh" "$DIR/bin/jobs-client.sh" "$ST/h/bin/"
+mkdir -p "$ST/h/bin/lib" && cp -rL "$DIR/bin/lib/ms" "$ST/h/bin/lib/" || exit 1   # BH-5242: the sweep loads bin/lib/ms/
 mkdir -p "$ST/h/bin/lib/jobs"; cp "$DIR"/bin/lib/jobs/*.sh "$ST/h/bin/lib/jobs/"
 cp "$DIR/bin/lib/ticket-ownership.sh" "$DIR/bin/lib/hold.sh" "$DIR/bin/lib/block-gate.sh" "$DIR/bin/lib/verdicts.sh" "$ST/h/bin/lib/"
 for s in beat.sh deploy-request.sh codegraph-ensure.sh; do printf '#!/bin/bash\nexit 0\n' > "$ST/h/bin/$s"; chmod +x "$ST/h/bin/$s"; done

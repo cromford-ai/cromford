@@ -19,11 +19,13 @@ pl_name_ok "$lane" && pl_name_ok "$p" || { echo "project-lane-run: bad lane or p
 case "$off" in ''|*[!0-9]*) off=0 ;; esac
 
 # Close every inherited fd above 2: a lock the dispatcher's caller held must
-# never travel into a run that lives for an hour.
+# never travel into a run that lives for an hour. The shell's own xtrace fd
+# (BASH_XTRACEFD, a traced CI shard's fd 199) stays: closing it sends the
+# trace to stderr, into the lane's log.
 for _fd in /proc/$$/fd/*; do
   _n="${_fd##*/}"
   case "$_n" in ''|*[!0-9]*) continue ;; esac
-  [ "$_n" -gt 2 ] && [ "$_n" != 255 ] && eval "exec $_n>&-" 2>/dev/null
+  [ "$_n" -gt 2 ] && [ "$_n" != 255 ] && [ "$_n" != "${BASH_XTRACEFD:-}" ] && eval "exec $_n>&-" 2>/dev/null
 done
 unset _fd _n
 

@@ -104,9 +104,14 @@ reaped() {
 # ═══════════════════════════════════════════════════════════════════════════
 # A. The classifier, extracted and CALLED.
 # ═══════════════════════════════════════════════════════════════════════════
+# BH-5241: the corpus is the driver plus bin/lib/br/*.sh (tests/lib/br-corpus.sh),
+# because the ladder functions moved out of the driver into bin/lib/br/ladder.sh.
+# shellcheck source=tests/lib/br-corpus.sh
+. "$DIR/tests/lib/br-corpus.sh" || exit 1
+br_corpus "$H" "$T/br-corpus.sh" || exit 1
 : > "$T/cls.sh"
 for fn in br_action br_reason_of br_ladder_class br_ladder_rung br_skips_mechanical br_rebuild_outcome; do
-  awk -v f="^${fn}[(][)]" '$0 ~ f {p=1} p{print} p&&/^}$/{exit}' "$H/bin/blocked-resolver.sh" >> "$T/cls.sh"
+  awk -v f="^${fn}[(][)]" '$0 ~ f {p=1} p{print} p&&/^}$/{exit}' "$T/br-corpus.sh" >> "$T/cls.sh"
 done
 cls()   { bash -c '. "$0"; br_reason_of "$1"' "$T/cls.sh" "$1"; }
 act()   { bash -c '. "$0"; br_action "$1"' "$T/cls.sh" "$1"; }
@@ -127,8 +132,8 @@ outc()  { bash -c '. "$0"; br_rebuild_outcome "$1"' "$T/cls.sh" "$1"; }
 # ═══════════════════════════════════════════════════════════════════════════
 # B1/B2. br_from_builds offers the record — and its negatives.
 # ═══════════════════════════════════════════════════════════════════════════
-awk '/^br_from_builds\(\) \{/{p=1} p{print} p&&/^}$/{exit}' "$H/bin/blocked-resolver.sh" > "$T/src.sh"
-awk '/^br_rkey\(\) \{/{p=1} p{print} p&&/^}$/{exit}' "$H/bin/blocked-resolver.sh" >> "$T/src.sh"
+awk '/^br_from_builds\(\) \{/{p=1} p{print} p&&/^}$/{exit}' "$T/br-corpus.sh" > "$T/src.sh"
+awk '/^br_rkey\(\) \{/{p=1} p{print} p&&/^}$/{exit}' "$T/br-corpus.sh" >> "$T/src.sh"
 builds() { H="$H" ST="$H/state/blocked-resolver" ONLY=tproj \
            bash -c '. "$0"; br_from_builds' "$T/src.sh" 2>/dev/null; }
 

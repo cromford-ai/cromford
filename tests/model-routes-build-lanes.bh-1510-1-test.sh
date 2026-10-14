@@ -357,7 +357,7 @@ OUT=$(env -u EXECUTE_MODEL -u REVIEW_MODEL -u QA_MODEL -u PLAN_MODEL PATH="$T/fa
 # BH-2559: SMOKE is a free credential probe now, so it resolves no model at all.
 SMOKE_BLOCK=$(sed -n '/if \[ "\$key" = "SMOKE" \]; then/,/return 0/p' "$DIR/fly/builder-runner.sh")
 if [ -z "$SMOKE_BLOCK" ]; then bad "B8 the SMOKE block was not found in fly/builder-runner.sh"
-elif printf '%s' "$SMOKE_BLOCK" | grep -q 'model_for'; then bad "B8 the SMOKE probe must resolve no model (BH-2559)"
+elif grep -q 'model_for' <<<"$SMOKE_BLOCK"; then bad "B8 the SMOKE probe must resolve no model (BH-2559)"
 else ok; fi
 
 # =============================================================================

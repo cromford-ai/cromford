@@ -83,6 +83,10 @@ case "$*" in
     restpr --raw 200 "$(jq -c '[.[] | {number, state:"open", draft:false, html_url:.url, head:{sha:.headRefOid, ref:.headRefName, repo:{full_name:"example-org/mgfy-os"}}, base:{ref:.baseRefName, repo:{full_name:"example-org/mgfy-os"}}, labels, user:{login:"operator", type:"User"}, mergeable_state:(.mergeStateStatus | ascii_downcase)}]' "$T/list.json" 2>/dev/null || echo '[]')" ;;
   # BH-5819: the PR's comments (a human dequeue) and the head's commit date.
   *"issues/31/comments"*) restpr --raw 200 "$(cat "$T/prcomments.json" 2>/dev/null || echo '[]')" ;;
+  # BH-6161: the requeue arm asks the pre-queue gate, which reads main's tip
+  # (the real commits shape carries a sha); mgfy-os has no prequeue-gate.yml.
+  *"api -i -X GET repos/example-org/mgfy-os/commits/main") restpr --raw 200 '{"sha":"eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"}' ;;
+  *"actions/workflows/prequeue-gate.yml"*) restpr --raw 404 '{"message":"Not Found"}' ;;
   *"api -i -X GET repos/example-org/mgfy-os/commits/"*)
     [ -s "$T/commitfail" ] && { restpr --raw 502 '{"message":"Bad Gateway"}'; exit 0; }
     restpr --raw 200 '{"commit":{"committer":{"date":"2026-10-08T09:00:00Z"}}}' ;;
@@ -376,7 +380,8 @@ printf '[%s]' "$(list_row 31 "$H2" CLEAN MERGEABLE dequeued)" > "$T/list.json"
 run_tick
 [ "$(requeues)" = 1 ] && pass "N13: a new head after a culprit head is re-queued" \
   || fail "N13: want 1 requeue for H2, got $(requeues) (state $(state_of "$K31"), why '$(reason_of "$K31")')"
-[ "$(reason_of "$K31")" != queue-ejected-twice ] && pass "N13: ...and is not handed to the resolver" || fail "N13: H2 went to the resolver as queue-ejected-twice"
+# A prefix match (BH-6161): queue-ejected-twice may carry its causes after a colon.
+case "$(reason_of "$K31")" in queue-ejected-twice*) fail "N13: H2 went to the resolver as queue-ejected-twice ('$(reason_of "$K31")')" ;; *) pass "N13: ...and is not handed to the resolver" ;; esac
 grep -q 'labels/dequeued' "$T/label-removes.txt" && pass "N13: the stale dequeued label is removed for the new head" || fail "N13: the dequeued label stayed on ($(cat "$T/label-removes.txt"))"
 
 # N14 — H1 was requeued and ejected again for real, and dequeue-watch named it:

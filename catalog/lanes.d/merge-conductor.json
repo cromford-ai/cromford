@@ -114,6 +114,7 @@
     },
     {
       "env": "MC_FULL_TICK_BUDGET_S",
+      "read_in": "bin/lib/mc/tick-scope.sh",
       "type": "int",
       "default": 1500,
       "min": 0,
@@ -749,6 +750,28 @@
       "note": "BH-4545: the pre-queue isolation gate. 1 = before a READY head is marked ready or enqueued, the conductor reads the per-(PR, head, main tip) verdict and parks a cached red that names a suite as prequeue-red; an unreadable main tip holds the row READY. 0 = the gate is never asked. Read through pq_knob. Per project: lane.merge-conductor.<project>.mc_prequeue_gate."
     },
     {
+      "env": "MC_EJECT_CAUSE",
+      "type": "int",
+      "default": 1,
+      "min": 0,
+      "max": 1,
+      "unit": "flag",
+      "zero_means": "off",
+      "read_in": "bin/lib/mc-eject-cause.sh",
+      "note": "BH-6161: 1 = each queue ejection reads Mergify's dequeue comment for this head once, writes one EJECT_CAUSE line and a state/merge-conductor/eject-cause/<repo>_<n> record, and puts the cause into the row reason (queue-ejected: <cause>, queue-ejected-twice: <both>). 0 = the reasons and log lines before BH-6161. Per project: lane.merge-conductor.<project>.mc_eject_cause."
+    },
+    {
+      "env": "MC_REQUEUE_PREQUEUE",
+      "type": "int",
+      "default": 1,
+      "min": 0,
+      "max": 1,
+      "unit": "flag",
+      "zero_means": "off",
+      "read_in": "bin/lib/mc-eject-cause.sh",
+      "note": "BH-6161: 1 = the BH-636 re-entry arm and the BH-3480 stale-dequeue arm ask pq_gate before they requeue an ejected head, and accept only a verdict on current main or one dispatched after the ejection; hold waits, red parks prequeue-red, conflict goes to NEEDS_REBASE. 0 = requeue with no gate, as before. Off as well when MC_PREQUEUE_GATE=0 or the repo has no prequeue-gate.yml. Per project: lane.merge-conductor.<project>.mc_requeue_prequeue."
+    },
+    {
       "env": "MC_PREQUEUE_FRESH_S",
       "type": "int",
       "default": 1800,
@@ -866,7 +889,7 @@
       "max": 1,
       "unit": null,
       "zero_means": "off",
-      "note": "BH-5463. 1: an autoenqueue ledger read that answers rc 1 (unusable) is read once more after a fixed 2 s before the row is skipped. Settings key lane.merge-conductor.mc_ae_ledger_retry. 0: one read, as before."
+      "note": "BH-5463. 1: an autoenqueue ledger read that answers rc 1 (unusable) is read again on the MC_AE_LEDGER_BACKOFF ladder (default 2 5 10 s, BH-6433) before the row is skipped. Settings key lane.merge-conductor.mc_ae_ledger_retry. 0: one read, as before."
     },
     {
       "env": "MC_AE_LEDGER_BURST",

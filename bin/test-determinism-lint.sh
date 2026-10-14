@@ -18,6 +18,8 @@
 # pipeline that flakes a test flakes a lane the same way). A file reached only
 # by `scope` runs only the rules that named it; a test file runs all of them.
 # BH-1897: date-empty-stamp is the second rule a `scope` line takes into bin/.
+# BH-6109: race-sigpipe-echo is race-sigpipe for a printf/echo producer.
+# BH-6508: race-wall-bound warns on an elapsed wall-clock capture in a test.
 # WHAT IT LOOKS FOR: clock reads, randomness and sleep-based races
 # (`rule` lines). Rules are `error` (rc 1) or `warn` (printed, rc 0).
 # WHAT MAKES IT QUIET:
@@ -263,6 +265,7 @@ while IFS= read -r F; do
     msg["clock-new-date"]      = "new Date() with no argument is the wall clock — pass the instant the test means"
     msg["clock-rolling-window"]= "a rolling window asked for by a file whose fixtures are frozen in calendar time — pin the call (?day=YYYY-MM-DD) or build the fixtures relative to now (this is the #360 failure, verbatim)"
     msg["clock-date-cmd"]      = "date renders a calendar field from the wall clock and this file pins no anchor — capture one NOW= and derive from it"
+    msg["race-wall-bound"]     = "elapsed wall-clock time captured for a bound (SECONDS=0, $((SECONDS - t0))): a loaded runner stretches it and the check goes red on PRs that did not touch the code (BH-6508) — assert the order of events instead (a marker the slow stub sets, still unset when the call returns), or waive a hang-only ceiling: # determinism: ok race-wall-bound <why>"
     msg["rand-bash"]           = "$RANDOM makes the run unreproducible — use a fixed value, or the test name"
     msg["rand-js"]             = "Math.random makes the run unreproducible — use a fixed value"
     msg["race-sleep"]          = "a foreground sleep as synchronisation is a race that flakes under load — wait on the condition in a bounded loop"
@@ -270,6 +273,7 @@ while IFS= read -r F; do
     msg["date-empty-stamp"]    = "GNU date -d \"\" exits 0 and answers today'\''s 00:00Z, so the || fallback never runs on an empty variable — guard it with [ -n \"$x\" ] || return 1 (or take the caller'\''s unparseable fallback), or waive it: # determinism: ok date-empty-stamp <why>"
     msg["sigpipe-negative"]    = "a NEGATIVE check fed by a pipe into grep -q (BH-1818): when the thing IS there, grep exits at the first match, the producer takes SIGPIPE, pipefail fails the pipeline and the ok branch fires, so the check passes in exactly the case it exists to catch — read the output first: grep -q X <<<\"$(cmd)\""
     msg["race-sigpipe"]        = "a short-circuiting consumer (grep -q, head) on the right of a git pipe: grep exits at the first match, git takes SIGPIPE on the rest, and pipefail turns a TRUE assertion red — capture the output first (<<<), ask git the question (merge-base --is-ancestor), or use a consumer that reads to EOF (grep -c)"
+    msg["race-sigpipe-echo"]   = "a short-circuiting consumer (grep -q/-m, head) on the right of a printf/echo pipe: under pipefail the consumer exits at the first match, the writer takes SIGPIPE on the rest, and a TRUE match reads as a miss (BH-6109, tests/llm-call-ratchet-test.sh, PR #6108) — read from a here-string: grep -q X <<<\"$VAR\", or grep -q X < <(printf …) when the bytes must stay exact"
   }
   { line[NR] = $0 }
   END {

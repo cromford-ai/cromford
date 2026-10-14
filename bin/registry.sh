@@ -130,7 +130,7 @@ if [ "$RC" -ne 0 ]; then echo "registry: $VERB: transport rc=$RC $(head -c 200 "
 HTTP="${OUT##*$'\n'}"; RESP="${OUT%$'\n'*}"
 case "$HTTP" in
   2*) ;;
-  *) echo "registry: $VERB: http=$HTTP $(printf '%s' "$RESP" | head -c 400)" >&2; exit 1 ;;
+  *) echo "registry: $VERB: http=$HTTP $(head -c 400 <<<"$RESP")" >&2; exit 1 ;;
 esac
 
 if [ "$WRITE" = 0 ]; then
@@ -142,13 +142,13 @@ if [ "$WRITE" = 0 ]; then
            "projects=" + ([$p[] | select(.box == $x.box and (.status // "active") == "active") | .project] | if length == 0 then "-" else join(",") end),
            "lanes=" + ([$l[] | select(.box_id == $x.box_id)] | length | tostring)]
         | join(" "))' <<<"$RESP" 2>/dev/null \
-    || { echo "registry: show: http=$HTTP but the answer is not a registry: $(printf '%s' "$RESP" | head -c 200)" >&2; exit 1; }
+    || { echo "registry: show: http=$HTTP but the answer is not a registry: $(head -c 200 <<<"$RESP")" >&2; exit 1; }
   exit 0
 fi
 
 LINE=$(jq -er --arg verb "$VERB" 'select(.ok == true and (.changed | type == "number") and (.version | type == "number"))
   | "registry: \($verb) changed=\(.changed) version=\(.version)"' <<<"$RESP" 2>/dev/null) \
-  || { echo "registry: $VERB: http=$HTTP but the answer is not a write result: $(printf '%s' "$RESP" | head -c 200)" >&2; exit 1; }
+  || { echo "registry: $VERB: http=$HTTP but the answer is not a write result: $(head -c 200 <<<"$RESP")" >&2; exit 1; }
 echo "$LINE"
 
 # The local cache, refreshed now so this box reads its own write at once.

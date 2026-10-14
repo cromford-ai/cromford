@@ -276,7 +276,7 @@ awk '/^_strip_quoted_heredocs\(\) \{/,/^\}/' "$GUARD" > "$T/strip.sh"
 STRIPPED=$(bash -c '. "$1"; _strip_quoted_heredocs "$2"' _ "$T/strip.sh" "$(printf '%s' "$HD" | tr '\n\r\t' '   ')" 2>/dev/null)
 [ -s "$T/strip.sh" ] && [ -n "$STRIPPED" ] && [ "$(grep -c 'INSERT INTO' <<<"$STRIPPED")" = 0 ] \
   && grep -q 'echo wrote it' <<<"$STRIPPED" && grep -q 'cat > /tmp/mig.sql' <<<"$STRIPPED" \
-  && ok || bad "the heredoc strip did not reduce the 40KB body to launcher + tail: $(printf '%s' "$STRIPPED" | head -c 300)"
+  && ok || bad "the heredoc strip did not reduce the 40KB body to launcher + tail: $(head -c 300 <<<"$STRIPPED")"
 [ -s "$T/logs/findings.log" ] \
   && bad "a heredoc body filed a finding: $(head -1 "$T/logs/findings.log")" || ok
 # The body of a runbook or a migration is full of shell separators, so without

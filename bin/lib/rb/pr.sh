@@ -749,7 +749,7 @@ echo "$(STAMP) [$PROJECT/$KEY] PR (tier $TIER)" >> "$BUILD/pipeline.log"
 CKPT_SQUASH_WIP || CKPT_SQUASH_REFUSED pr
 # <<< pre-pr squash
 GH_LIVE
-{ RB_PUSH -u && track_pushed; } || { sleep 10; GH_LIVE; RB_PUSH -u && track_pushed; } || {
+{ RB_PUSH -u pr-push && track_pushed; } || { sleep 10; GH_LIVE; RB_PUSH -u pr-push && track_pushed; } || {
   echo "$(STAMP) [$PROJECT/$KEY] the push of $BRANCH was REJECTED (a HOLD on the ticket, an unreadable hold, or the lease) — deferring, no PR claimed" >> "$BUILD/pipeline.log"
   RESULT "BUILD_DEFERRED push of $BRANCH rejected"; exit 3
 }
@@ -809,6 +809,10 @@ if [ -f "$BUILD/cost.csv" ]; then
   # row_source/result_usd and the attribution tags and $NF became run_id.
   COST_LINE=$(awk -F, 'NR>1 {s[$4]+=$13; t+=$13; ti+=$9; to+=$10; cr+=$11; cw+=$12} END {if (t>0) {printf "AI cost to PR: $%.2f (", t; sep=""; for (k in s) {printf "%s%s $%.2f", sep, k, s[k]; sep=", "}; printf ") — tokens: %.0fk in / %.0fk out (cache %.1fM read, %.1fM write)", ti/1000, to/1000, cr/1000000, cw/1000000}}' "$BUILD/cost.csv" 2>/dev/null)
 fi
+# BH-6392: psc_test_change_section, the `## Test changes` lines PR_BODY_FOR
+# prints. A missing lib leaves the body as it was.
+# shellcheck source=bin/lib/pr-self-check.sh
+command -v psc_test_change_section >/dev/null 2>&1 || { [ -r "$HARNESS/bin/lib/pr-self-check.sh" ] && . "$HARNESS/bin/lib/pr-self-check.sh" 2>/dev/null; }
 # >>> evidence block
 # --- The evidence a human merges on (SDLC item 2) ----------------------------
 # The verification section of this body used to be "validate.txt (4812B)" — a
@@ -1065,6 +1069,12 @@ PR_BODY_FOR() { # PR_BODY_FOR <evidence-section>
   # (the suites that source this block alone) the body passes through as is.
   local _KW=cat
   command -v prepr_body_keywords >/dev/null 2>&1 && _KW=prepr_body_keywords
+  # BH-6392: the plan's tests-that-must-change and the commits' TEST-CHANGE:
+  # lines, for the self-check's test-ownership rule. Empty without the lib.
+  local TEST_CHANGE_SECTION=""
+  if command -v psc_test_change_section >/dev/null 2>&1; then
+    TEST_CHANGE_SECTION=$(psc_test_change_section "$BUILD/plan.md" "origin/${BASE:-main}")
+  fi
   printf '%sTicket %s — %s
 %s%s
 ## What
@@ -1096,7 +1106,7 @@ Full manifest (per-input digests): `%s/context.json` on the build box.
 %s
 🤖 Generated with [Claude Code](https://claude.com/claude-code)' \
     "$HOTFIX_PREFIX" "$KEY" "$EB_SUBJECT" "${CLOSES_LINE:+$CLOSES_LINE
-}" "$STACK_SECTION" "$WHAT_LIST" "$WHY_EXCERPT" "$VERIFY_LINE" "$SPEC_LINE" "${ASSUMPTIONS_SECTION}${PREPR_SECTION:-}${REPRO_SECTION:-}${SPEC_CHANGES_SECTION:-}${NOTMET_SECTION:-}${NH_PR_SECTION:-}${CALLERS_SECTION:-}" "$(basename "$BUILD")" "$PLAN_MODEL" "$EXECUTE_MODEL" "$REVIEW_MODEL" "$MERGE_NOTE" "$MIG_SECTION" "$COST_LINE" \
+}" "$STACK_SECTION" "$WHAT_LIST" "$WHY_EXCERPT" "$VERIFY_LINE" "$SPEC_LINE" "${ASSUMPTIONS_SECTION}${PREPR_SECTION:-}${REPRO_SECTION:-}${SPEC_CHANGES_SECTION:-}${NOTMET_SECTION:-}${NH_PR_SECTION:-}${CALLERS_SECTION:-}${TEST_CHANGE_SECTION:-}" "$(basename "$BUILD")" "$PLAN_MODEL" "$EXECUTE_MODEL" "$REVIEW_MODEL" "$MERGE_NOTE" "$MIG_SECTION" "$COST_LINE" \
     "$CTX_SIG" "$CTX_SIG" "$CTX_COMMIT" "$(hostname)" "$CTX_SYNC" "$CTX_FRESH" "$BUILD" "$1" \
     | "$_KW"
 }
@@ -1183,16 +1193,48 @@ PR_SUBJECT=${PR_SUBJECT:0:80}
 # wants anyway, so the body is written once and every rung reads the same bytes.
 PR_BODY_FOR "$EVIDENCE_SECTION" > "$BUILD/pr-body.md"
 # >>> pr body fix round
-# BH-5790: THE BODY CARRIES WHAT THE LEAD REVIEW WOULD BLOCK ON. The body-* rows
-# of catalog/pr-self-check.tsv (Why, an acceptance section or gate table,
-# mutation evidence for a new suite, the D1 / kill-knob callout, the probe the
-# ticket names) run on the composed body. A refusal buys ONE fix turn that
-# writes only the missing sections to $BUILD/pr-body-fix.md, appended here; the
-# rules run once more and the log says which. The PR opens either way: the
-# lead-review enqueue holds a body that is still short.
-_pr_body_fix() {
-  local psc="$HARNESS/bin/pr-self-check.sh" tk="$BUILD/ticket-body.md" b out miss k
-  [ -x "$psc" ] && [ -s "$BUILD/pr-body.md" ] || return 0
+# BH-5790 / BH-6393: THE BODY CARRIES WHAT THE LEAD REVIEW WOULD BLOCK ON, and
+# the builder checks it before the hub does. Every row of
+# catalog/pr-self-check.tsv runs on the final head and body (no --only: the
+# same rules self_check_hold in bin/lead-review-enqueue.sh runs after the PR is
+# open), at most 2 times:
+#   - a plan-files refusal gets one reason line per unplanned file under
+#     `## Files outside the plan`, from psc_plan_missing, with no model turn;
+#   - a body-* refusal (Why, an acceptance section or gate table, the probe the
+#     ticket names) buys ONE fix turn in the open phase that writes only the
+#     missing sections to $BUILD/pr-body-fix.md, inserted here;
+#   - what still refuses on the second check goes into the body under
+#     `## Pre-open check: refusals left`. That heading must never match the
+#     acceptance/self-check/evidence/why section matchers, or a finding would
+#     score as a section.
+# The PR opens (or its body is edited) either way. Phase `edit` is the settle
+# stage's `gh pr edit` (bin/lib/rb/result.sh): its body is rendered fresh, so
+# the open-time fix sections are inserted again, never bought again. One line
+# per phase goes to $BUILD/self-check-prepush.txt. PR_SELF_CHECK=0 turns the
+# step off together with the hub hold.
+_pr_body_insert() { # <body-file> <section-file>
+  # Before the footer (the `---` above "Plan: harness build"), so the added
+  # sections sit with the body and the attribution footer stays last; no
+  # footer = appended.
+  awk -v f="$2" '
+    { L[++n] = $0 }
+    END {
+      at = 0
+      for (i = 1; i < n; i++) if (L[i] == "---" && L[i + 1] ~ /^Plan: harness build/) { at = i; break }
+      for (i = 1; i <= n; i++) {
+        if (i == at) { while ((getline x < f) > 0) print x; print "" }
+        print L[i]
+      }
+      if (!at) { print ""; while ((getline x < f) > 0) print x }
+    }' "$1" > "$1.new" && mv -f "$1.new" "$1"
+}
+_pr_self_check_prepush() { # <body-file> <open|edit>
+  local body="$1" phase="${2:-open}" psc="$HARNESS/bin/pr-self-check.sh" tk="$BUILD/ticket-body.md"
+  local b out rc ref miss k try=0 bought=0 verdict ids p subj n=0 fixed
+  local rec="$BUILD/self-check-prepush.txt"
+  if ! [ -x "$psc" ] || ! [ -s "$body" ]; then
+    echo "$phase tries=0 verdict=could-not-run rules=-" >> "$rec"; return 0
+  fi
   # The self-check's kill switch is the fix round's too (lead review
   # lr-5846): PR_SELF_CHECK=0 buys no FIX_MODEL turn. Env first, then the
   # lead-review-enqueue lane registry; unread = on, like the enqueue.
@@ -1204,36 +1246,80 @@ _pr_body_fix() {
   fi
   jq -r '.body // ""' "$BUILD/ticket-meta.json" > "$tk" 2>/dev/null || : > "$tk"
   b="origin/${BASE:-main}"; git rev-parse -q --verify "$b^{commit}" >/dev/null 2>&1 || b="${BASE:-main}"
-  out=$("$psc" check --repo . --base "$b" --head HEAD --body "$BUILD/pr-body.md" --ticket "$tk" --only '^body-' 2>/dev/null)
-  miss=$(sed -n 's/^REFUSE //p' <<<"$out")
-  [ -n "$miss" ] || return 0
-  rm -f "$BUILD/pr-body-fix.md"
-  CC fix "$FIX_MODEL" 900 "$BUILD/pr-body-fix-run.txt" "The PR body at $BUILD/pr-body.md is missing sections the lead review would BLOCK on. Do NOT edit any repo file and do NOT commit. Write ONLY the missing sections, as markdown, to $BUILD/pr-body-fix.md, from the facts of this build. The body always has a '## Why' heading, so a body-why finding means its text is too thin; an acceptance finding wants a section that names the acceptance tests and their results (the plan at $BUILD/plan.md, the diff \`git diff $b...HEAD\`, the test output in $BUILD). Each one must be true: if a fact is not in the build record, say it was not run. Missing:
-$miss"
-  if [ -s "$BUILD/pr-body-fix.md" ]; then
-    # Before the footer (the `---` above "Plan: harness build"), so the added
-    # sections sit with the body and the attribution footer stays last; no
-    # footer = appended.
-    awk -v f="$BUILD/pr-body-fix.md" '
-      { L[++n] = $0 }
-      END {
-        at = 0
-        for (i = 1; i < n; i++) if (L[i] == "---" && L[i + 1] ~ /^Plan: harness build/) { at = i; break }
-        for (i = 1; i <= n; i++) {
-          if (i == at) { while ((getline x < f) > 0) print x; print "" }
-          print L[i]
-        }
-        if (!at) { print ""; while ((getline x < f) > 0) print x }
-      }' "$BUILD/pr-body.md" > "$BUILD/pr-body.md.new" && mv -f "$BUILD/pr-body.md.new" "$BUILD/pr-body.md"
+  # psc_plan_missing lists the files plan-files refuses, uncut. A lib that will
+  # not source writes no reason lines; the check itself still runs.
+  command -v psc_plan_missing >/dev/null 2>&1 || . "$HARNESS/bin/lib/pr-self-check.sh" 2>/dev/null
+  # Edit phase: put back the sections the open phase's fix turn wrote, unless
+  # every line of them is already in the body.
+  if [ "$phase" = edit ] && [ -s "$BUILD/pr-body-fix.md" ] \
+     && grep -v '^[[:space:]]*$' "$BUILD/pr-body-fix.md" | grep -qvxF -f "$body"; then
+    _pr_body_insert "$body" "$BUILD/pr-body-fix.md"
   fi
-  out=$("$psc" check --repo . --base "$b" --head HEAD --body "$BUILD/pr-body.md" --ticket "$tk" --only '^body-' 2>/dev/null)
-  miss=$(sed -n 's/^REFUSE //p' <<<"$out")
-  if [ -z "$miss" ]; then echo "$(STAMP) [$PROJECT/$KEY] pr body: fixed — the fix turn added the missing sections" >> "$BUILD/pipeline.log"
-  else echo "$(STAMP) [$PROJECT/$KEY] pr body: still missing after the fix turn — $(tr '\n' ';' <<<"$miss" | cut -c1-400)" >> "$BUILD/pipeline.log"; fi
+  while :; do
+    try=$((try + 1))
+    out=$(env -u PR_SELF_CHECK_ONLY "$psc" check --repo . --base "$b" --head HEAD --body "$body" --ticket "$tk" ${KEY:+--key "$KEY"} 2>/dev/null); rc=$?
+    if [ "$rc" != 0 ] && [ "$rc" != 1 ]; then
+      echo "$(STAMP) [$PROJECT/$KEY] pr self-check: could not run ($phase): $(head -1 <<<"$out" | cut -c1-200)" >> "$BUILD/pipeline.log"
+      echo "$phase tries=$try verdict=could-not-run rules=-" >> "$rec"
+      return 0
+    fi
+    ref=$(sed -n 's/^REFUSE //p' <<<"$out")
+    [ -n "$ref" ] && [ "$try" -lt 2 ] || break
+    if grep -q '^plan-files:' <<<"$ref" && command -v psc_plan_missing >/dev/null 2>&1 \
+       && miss=$(psc_plan_missing . "$b" HEAD "$body" "") && [ -n "$miss" ]; then
+      { printf '## Files outside the plan\n\n'
+        while IFS= read -r p; do
+          [ -n "$p" ] || continue
+          n=$((n + 1))
+          subj=$(git log -1 --format=%s "$b..HEAD" -- "$p" 2>/dev/null | tr -d '`' | cut -c1-120)
+          if [ -n "$subj" ]; then printf -- '- `%s`: changed in this build by "%s"; the plan'"'"'s Files to touch does not name it.\n' "$p" "$subj"
+          else printf -- '- `%s`: changed in this build; the plan'"'"'s Files to touch does not name it.\n' "$p"; fi
+        done <<<"$miss"; } > "$BUILD/pr-body-outside.md"
+      _pr_body_insert "$body" "$BUILD/pr-body-outside.md"
+      echo "$(STAMP) [$PROJECT/$KEY] pr self-check: wrote $n reason line(s) under Files outside the plan" >> "$BUILD/pipeline.log"
+    fi
+    miss=$(grep '^body-' <<<"$ref")
+    if [ -n "$miss" ] && [ "$phase" = open ]; then
+      bought=1
+      rm -f "$BUILD/pr-body-fix.md"
+      CC fix "$FIX_MODEL" 900 "$BUILD/pr-body-fix-run.txt" "The PR body at $body is missing sections the lead review would BLOCK on. Do NOT edit any repo file and do NOT commit. Write ONLY the missing sections, as markdown, to $BUILD/pr-body-fix.md, from the facts of this build. The body always has a '## Why' heading, so a body-why finding means its text is too thin; an acceptance finding wants a section that names the acceptance tests and their results (the plan at $BUILD/plan.md, the diff \`git diff $b...HEAD\`, the test output in $BUILD). Each one must be true: if a fact is not in the build record, say it was not run. Missing:
+$miss"
+      [ -s "$BUILD/pr-body-fix.md" ] && _pr_body_insert "$body" "$BUILD/pr-body-fix.md"
+    fi
+  done
+  if [ "$bought" = 1 ]; then
+    fixed=$(grep '^body-' <<<"$ref")
+    if [ -z "$fixed" ]; then echo "$(STAMP) [$PROJECT/$KEY] pr body: fixed — the fix turn added the missing sections" >> "$BUILD/pipeline.log"
+    else echo "$(STAMP) [$PROJECT/$KEY] pr body: still missing after the fix turn — $(tr '\n' ';' <<<"$fixed" | cut -c1-400)" >> "$BUILD/pipeline.log"; fi
+  fi
+  if [ -z "$ref" ]; then
+    verdict=pass; ids=-
+    echo "$(STAMP) [$PROJECT/$KEY] pr self-check: pass on try $try ($phase)" >> "$BUILD/pipeline.log"
+  else
+    verdict=refused; ids=$(sed 's/:.*//' <<<"$ref" | awk '!s[$0]++' | paste -sd, -)
+    { printf '## Pre-open check: refusals left\n\n'
+      printf 'The builder ran bin/pr-self-check.sh %s times on this head before it %s the PR. These findings are still open, and the lead review reads them:\n' \
+        "$try" "$([ "$phase" = edit ] && echo updated || echo opened)"
+      sed 's/^/- /' <<<"$ref"; } > "$BUILD/pr-body-findings.md"
+    _pr_body_insert "$body" "$BUILD/pr-body-findings.md"
+    echo "$(STAMP) [$PROJECT/$KEY] pr self-check: still refused after $try tries ($phase) — $ids; the findings are in the body" >> "$BUILD/pipeline.log"
+  fi
+  echo "$phase tries=$try verdict=$verdict rules=$ids" >> "$rec"
   return 0
 }
-_pr_body_fix
+_pr_self_check_prepush "$BUILD/pr-body.md" open
 # <<< pr body fix round
+# BH-6672: the body carries suite output and evidence; no token shape is sent.
+RB_TOKEN_REDACT "$BUILD/pr-body.md"
+# >>> pr-open hold gate (tests/pool-hold-yield.bh-6091-test.sh drives this block)
+# THE HOLD IS READ AGAIN AT THE CREATE (BH-6091). HOLD_STAGE_CHECK pr ran
+# before the PR-body model turn above, so it is not a write-time read. Held:
+# RB_HOLD_YIELD exits 3 with `HOLD_YIELD <KEY> at pr-open`. Unreadable: no PR
+# is opened, the branch is already pushed, and the next run reads it again.
+RB_HOLD_GATE pr-open || {
+  RESULT "BUILD_DEFERRED hold unreadable at pr-open — the branch is pushed, no PR opened"; exit 3
+}
+# <<< pr-open hold gate
 if command -v gh_pr_create_ladder >/dev/null 2>&1 && [ -n "$PCF_SLUG" ]; then
   _pr_trailers_s1
   PR_URL=$(gh_pr_create_ladder "$PCF_SLUG" "$BRANCH" "$BASE" \
@@ -1278,6 +1364,9 @@ if [ -z "$PR_URL" ]; then
 fi
 # <<< pr create failed
 # <<< pr create call
+# THE PR IS OPEN from here on (BH-6091 review): a hold at a later write point
+# (the QA fix push) yields that write only, and RESULT still says PR_CREATED.
+[ -n "$PR_URL" ] && RB_PR_OPEN=1
 # --- THE LABEL FOLLOWS THE WORK (#368, hotfix lane 1/3) ----------------------
 # A SEPARATE REST WRITE, never a `--label` flag on the create above. That flag
 # fails the whole CREATE when the label does not exist in the target repo, which
@@ -1373,7 +1462,7 @@ if [ -n "$PR_URL" ] && grep -qiE '\.(tsx|jsx|css)$|(^|/)app/|(^|/)components/|(^
       echo "$(STAMP) [$PROJECT/$KEY] QA FAIL -> fix round" >> "$BUILD/pipeline.log"
       CC fix "$FIX_MODEL" 4800 "$BUILD/qa-fix-run.txt" "Address every defect in $BUILD/qa.md (browser QA of the preview deployment) on branch $BRANCH (plan: $BUILD/plan.md). Keep tests green; 'npm run build' must pass. Commit your work. Do NOT push: the harness pushes $BRANCH after this session, through its hold check."
       GH_LIVE
-      { RB_PUSH 2>/dev/null && track_pushed; } || true
+      { RB_PUSH qa-fix 2>/dev/null && track_pushed; } || true
       SHA=$(git rev-parse HEAD)
       PREVIEW_URL=$("$HARNESS/bin/wait-preview.sh" "$SLUG" "$SHA" 600 2>"$BUILD/wait-preview.err"); WP_RC=$?
       cat "$BUILD/wait-preview.err" >> "$BUILD/pipeline.log" 2>/dev/null

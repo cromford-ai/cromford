@@ -13,7 +13,7 @@ silent stop of 2026-09 went unpaged:
 | merge conductor, GraphQL budget empty | hub fine | 0 merges for hours |
 | share mirror | nothing: it runs on GitHub | frozen for two days on leak-guard hits |
 | `fleet-slo.sh` | nothing | never scheduled at all |
-| project-9 | boxes fine | $N spent in 7 days, 0 merges |
+| project-9 | boxes fine | $643 spent in 7 days, 0 merges |
 
 The in-fleet detectors (fleet-slo, pipeline-health, jobs-watchdog) live on the
 same hub that stopped, so they cannot be the answer. K2 puts a progress judge

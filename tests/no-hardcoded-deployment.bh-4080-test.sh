@@ -54,14 +54,14 @@ F=$(fixture l1)
 printf '#!/bin/bash\n# header\nREPO=example-org/widget\n' > "$F/bin/x.sh"
 out=$(lint --root "$F" --allowlist /dev/null); rc=$?
 [ "$rc" = 1 ] && ok || bad "L1 hardcoded org: rc=$rc, want 1"
-printf '%s\n' "$out" | grep -q "^bin/x.sh:3	gh-org	" && ok || bad "L1 output does not name bin/x.sh:3 gh-org: $out"
+grep -q "^bin/x.sh:3	gh-org	" <<<"$out" && ok || bad "L1 output does not name bin/x.sh:3 gh-org: $out"
 
 # ── L2: a hardcoded box is red ───────────────────────────────────────────────
 F=$(fixture l2)
 printf 'ssh root@box-foo true\n' > "$F/bin/y.sh"
 out=$(lint --root "$F" --allowlist /dev/null); rc=$?
 [ "$rc" = 1 ] && ok || bad "L2 hardcoded box: rc=$rc, want 1"
-printf '%s\n' "$out" | grep -q "^bin/y.sh:1	box-host	" && ok || bad "L2 output does not name box-host: $out"
+grep -q "^bin/y.sh:1	box-host	" <<<"$out" && ok || bad "L2 output does not name box-host: $out"
 
 # ── L3: every family in the catalog fires, exactly once per line ─────────────
 F=$(fixture l3)
@@ -85,7 +85,7 @@ for fam in harness-repo gh-org operator-login workers-subdomain operator-email b
   i=$((i+1))
   n=$(printf '%s\n' "$out" | grep -c "^bin/all.sh:$i	")
   [ "$n" = 1 ] || bad "L3 line $i: $n hits, want exactly 1 ($fam): $(printf '%s\n' "$out" | grep "^bin/all.sh:$i	")"
-  printf '%s\n' "$out" | grep -q "^bin/all.sh:$i	$fam	" && ok || bad "L3 family $fam did not fire on line $i"
+  grep -q "^bin/all.sh:$i	$fam	" <<<"$out" && ok || bad "L3 family $fam did not fire on line $i"
 done
 # every family the catalog declares is covered above (a new row needs a line here)
 CATFAMS=$(grep -v '^#' "$FAMS" | grep -v '^$' | cut -f1 | sort | tr '\n' ' ')
@@ -111,7 +111,7 @@ out=$(lint --root "$F" --allowlist /dev/null); rc=$?
 F=$(fixture l4b)
 printf 'case "$p" in\n  *) SLUG=example-org/widget ;;\nesac\n' > "$F/bin/arm.sh"
 out=$(lint --root "$F" --allowlist /dev/null); rc=$?
-[ "$rc" = 1 ] && printf '%s\n' "$out" | grep -q '^bin/arm.sh:2	gh-org	' && ok || bad "L4 a shell *) case arm was read as a comment: rc=$rc $out"
+[ "$rc" = 1 ] && grep -q '^bin/arm.sh:2	gh-org	' <<<"$out" && ok || bad "L4 a shell *) case arm was read as a comment: rc=$rc $out"
 
 # ── L5: neighbours that are not a family stay quiet ──────────────────────────
 F=$(fixture l5)
@@ -138,16 +138,16 @@ out=$(lint --root "$F" --allowlist "$T/allow-ok.txt"); rc=$?
 printf 'bin/home.sh  gh-org\n' > "$T/allow-noreason.txt"
 out=$(lint --root "$F" --allowlist "$T/allow-noreason.txt"); rc=$?
 [ "$rc" = 1 ] && ok || bad "L6 entry with no reason: rc=$rc, want 1"
-printf '%s\n' "$out" | grep -q '^allowlist:1: bin/home.sh: no reason' && ok || bad "L6 no-reason problem line missing: $out"
+grep -q '^allowlist:1: bin/home.sh: no reason' <<<"$out" && ok || bad "L6 no-reason problem line missing: $out"
 printf 'bin/home.sh  gh-org,box-host  home of both\n' > "$T/allow-stale.txt"
 out=$(lint --root "$F" --allowlist "$T/allow-stale.txt"); rc=$?
 [ "$rc" = 1 ] && ok || bad "L6 stale family: rc=$rc, want 1"
-printf '%s\n' "$out" | grep -q 'bin/home.sh: stale, no box-host' && ok || bad "L6 stale line missing: $out"
+grep -q 'bin/home.sh: stale, no box-host' <<<"$out" && ok || bad "L6 stale line missing: $out"
 grep -q 'stale, no gh-org' <<<"$out" && bad "L6 the live family was reported stale: $out" || ok
 printf 'bin/home.sh  gh-org  home\nbin/gone.sh  gh-org  removed\n' > "$T/allow-missing.txt"
 out=$(lint --root "$F" --allowlist "$T/allow-missing.txt"); rc=$?
 [ "$rc" = 1 ] && ok || bad "L6 missing path: rc=$rc, want 1"
-printf '%s\n' "$out" | grep -q 'bin/gone.sh: no such file' && ok || bad "L6 missing-path line: $out"
+grep -q 'bin/gone.sh: no such file' <<<"$out" && ok || bad "L6 missing-path line: $out"
 printf 'bin/home.sh  gh-orgg  typo\n' > "$T/allow-unknown.txt"
 lint --root "$F" --allowlist "$T/allow-unknown.txt" >/dev/null; rc=$?
 [ "$rc" = 1 ] && ok || bad "L6 unknown family: rc=$rc, want 1"

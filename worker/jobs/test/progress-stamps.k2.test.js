@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import worker from '../src/index.js';
+import { jobsSchemaSql } from './lib/jobs-schema.js';
 
 // K2 — THE PROGRESS STAMPS the outside dead-man judges. One read-only route
 // that answers, per project, WHEN each lane last produced something (a triage
@@ -18,7 +19,7 @@ import worker from '../src/index.js';
 // (docs/TEST-DETERMINISM.md).
 
 const SECRET = 'test-secret';
-const SCHEMA = readFileSync(fileURLToPath(new URL('../schema.sql', import.meta.url)), 'utf8');
+const SCHEMA = jobsSchemaSql();
 const IN = '2999-01-01T00:00:00Z';
 const IN2 = '2999-01-01T00:05:00Z';
 const OUT = '2000-01-01T00:00:00Z';

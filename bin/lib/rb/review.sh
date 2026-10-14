@@ -173,7 +173,7 @@ elif ! awk -v p="$PROJECT" '$1 !~ /^#/ && $1 == p {f=1} END {exit !f}' "$HARNESS
 else
   E2E_SLUG=$(git remote get-url origin | sed -E 's#(git@github.com:|https://github.com/)##; s#\.git$##')
   GH_LIVE
-  if RB_PUSH -u 2>>"$BUILD/pipeline.log"; then
+  if RB_PUSH -u e2e 2>>"$BUILD/pipeline.log"; then
     track_pushed
     # The sha the browser is about to drive, on disk. The fix round and the
     # pre-PR rebase can both move HEAD while a capped lane is still running, so

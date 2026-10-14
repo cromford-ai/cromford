@@ -1,0 +1,11 @@
+{
+  "env": "STACK_WAIT_CAP_H",
+  "type": "int",
+  "default": 24,
+  "min": 1,
+  "max": 336,
+  "unit": "hours",
+  "zero_means": null,
+  "required": false,
+  "note": "BH-6389: the longest a child waits for an open parent under STACK_WAIT_PARENT_MERGE=plan, from its first stack-wait deferral (ledgers kind stack-wait). At the cap the child builds from the base branch without the parent. Read by sp_knob."
+}

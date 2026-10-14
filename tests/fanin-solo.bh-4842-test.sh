@@ -431,60 +431,44 @@ printf '#!/bin/bash\nexit 1\n' > "$T/rbin/gh"
 chmod +x "$R/bin/merge-conductor.sh" "$T/rbin/timeout" "$T/rbin/gh"
 printf 'example-org/x-os#1\tREADY\t%s\taaa\taaa\t-\t-\thttps://github.com/example-org/x-os/pull/1\n' "$(date +%s)" \
   > "$R/state/merge-conductor/pr-state.tsv"
-bs() { : > "$T/to.txt"; ( cd "$T" && env PATH="$T/rbin:$PATH" HARNESS="$R" "$@" bash "$R/bin/merge-conductor-backstop.sh" > "$T/bs.out" 2>&1 ); }
+# TEST-CHANGE (BH-6000): the backstop starts one DETACHED run per candidate and
+# returns at once, so bs waits (bounded) until every run it started has
+# written its line. The assertions on the timeout knob are unchanged.
+bs() { : > "$T/to.txt"; ( cd "$T" && env PATH="$T/rbin:$PATH" HARNESS="$R" "$@" bash "$R/bin/merge-conductor-backstop.sh" > "$T/bs.out" 2>&1 )
+  local want n=0; want=$(sed -n 's/.*: \([0-9]*\) detached keyed conductor run(s) started.*/\1/p' "$T/bs.out" | tail -1)
+  while [ "$(grep -c . "$T/to.txt" 2>/dev/null || echo 0)" -lt "${want:-0}" ] && [ "$n" -lt 40 ]; do sleep 0.25; n=$((n + 1)); done; sleep 0.3; }
 bs;                             [ "$(cat "$T/to.txt")" = 240 ] && ok || bad "K5: default timeout 240 (got: $(cat "$T/to.txt"))"
 bs MC_BACKSTOP_TIMEOUT_S=120;   [ "$(cat "$T/to.txt")" = 120 ] && ok || bad "K5: MC_BACKSTOP_TIMEOUT_S=120 (got: $(cat "$T/to.txt"))"
 bs MC_BACKSTOP_TIMEOUT_S=abc;   [ "$(cat "$T/to.txt")" = 240 ] && ok || bad "K5: a non-number falls back to 240 (got: $(cat "$T/to.txt"))"
 grep -qx 'example-org/x-os#1' "$T/rec.txt" && ok || bad "K5: the keyed run still got its key (got: $(cat "$T/rec.txt"))"
 
-# K8 — the order and the carry: what the last capped fire deferred first, then
-# the harness's own repo, then the oldest. Three fires at cap 2 take every key
-# within two fires.
+# K8/K8b/K11. TEST-CHANGE (BH-6000): these cases pinned ONE keyed run per
+# fire that took the carry first, then the harness's own repo, then the oldest,
+# up to MC_BACKSTOP_MAX_KEYS (default 6), carried the rest, and gave the run a
+# shared worker window (MC_WORKERS_DONE_BY) whose deferred keys headed the next
+# carry. That batching is what starved PRs (#4546, #5704, #5727, #5990, #5999
+# logged WINDOW_DEFERRED on every fire). The contract now: every candidate gets
+# its own run in the same fire, with no shared window and no carry, whatever
+# the (deprecated) cap says. tests/backstop-per-pr.bh-6000-test.sh drives the
+# concurrency; these keep the old cases' intent: no key ever starves.
 now=$(date +%s)
 { for n in 1 2 3; do printf 'example-org/x-os#%s\tREADY\t%s\taaa\taaa\t-\t-\tu\n' "$n" "$((now - 100 + n))"; done
-  printf 'example-org/cromford#9\tWAIT_CI\t%s\tbbb\tbbb\t-\t-\tu\n' "$now"; } > "$R/state/merge-conductor/pr-state.tsv"
-: > "$R/state/merge-conductor/backstop-carry"; : > "$T/rec.txt"
-for f in 1 2 3; do bs MC_BACKSTOP_MAX_KEYS=2 HARNESS_REPO=example-org/cromford; done
-[ "$(paste -sd' ' "$T/rec.txt")" = "example-org/cromford#9,example-org/x-os#1 example-org/x-os#2,example-org/x-os#3 example-org/cromford#9,example-org/x-os#1" ] \
-  && ok || bad "K8: the carry first, then own repo, then the oldest (got: $(paste -sd' ' "$T/rec.txt"))"
-grep -qF 'deferred (cap MC_BACKSTOP_MAX_KEYS=2) — the next fire takes them first: example-org/x-os#2,example-org/x-os#3' "$T/bs.out" \
-  && ok || bad "K8: the deferred keys are logged in carry order (got: $(grep deferred "$T/bs.out"))"
-bs MC_BACKSTOP_MAX_KEYS=0 HARNESS_REPO=example-org/cromford
-[ ! -s "$R/state/merge-conductor/backstop-carry" ] && ok || bad "K8: an uncapped fire clears the carry (got: $(cat "$R/state/merge-conductor/backstop-carry"))"
-
-# K8b — no starvation: the harness's own repo has as many candidates as the cap.
-# With the harness ahead of the carry, x-os was never taken; now every key is
-# taken within three fires.
-{ for n in 1 2; do printf 'example-org/x-os#%s\tREADY\t%s\taaa\taaa\t-\t-\tu\n' "$n" "$((now - 100 + n))"; done
   for n in 7 8 9; do printf 'example-org/cromford#%s\tWAIT_CI\t%s\tbbb\tbbb\t-\t-\tu\n' "$n" "$((now - 50 + n))"; done; } > "$R/state/merge-conductor/pr-state.tsv"
-: > "$R/state/merge-conductor/backstop-carry"; : > "$T/rec.txt"
-for f in 1 2 3; do bs MC_BACKSTOP_MAX_KEYS=2 HARNESS_REPO=example-org/cromford; done
-TOOK=$(tr ',' '\n' < "$T/rec.txt" | sort -u | paste -sd' ' -)
-[ "$TOOK" = "example-org/cromford#7 example-org/cromford#8 example-org/cromford#9 example-org/x-os#1 example-org/x-os#2" ] \
-  && ok || bad "K8b: every project's keys are taken within three fires (fires: $(paste -sd' ' "$T/rec.txt"))"
+: > "$T/rec.txt"
+bs MC_BACKSTOP_MAX_KEYS=2 HARNESS_REPO=example-org/cromford
+[ "$(sort "$T/rec.txt" | paste -sd' ' -)" = "example-org/cromford#7 example-org/cromford#8 example-org/cromford#9 example-org/x-os#1 example-org/x-os#2 example-org/x-os#3" ] \
+  && ok || bad "K8: one fire takes every key, each in its own run, whatever the cap (got: $(sort "$T/rec.txt" | paste -sd' ' -))"
+grep -qi 'deferred' "$T/bs.out" && bad "K8: nothing is deferred (got: $(cat "$T/bs.out"))" || ok
+[ ! -s "$R/state/merge-conductor/backstop-carry" ] && ok || bad "K8b: no carry is written"
 
-# K11 — the default cap is 6, the run gets its window, and the keys it had no
-# window for head the next fire's carry.
-cat > "$R/bin/merge-conductor.sh" <<EOF
-#!/bin/bash
-printf '%s\t%s\n' "\${MC_ONLY_PR:-}" "\${MC_WORKERS_DONE_BY:-}" >> "$T/rec.txt"
-[ -n "\${MC_WINDOW_DEFER_FILE:-}" ] && printf 'example-org/x-os#5\n' >> "\$MC_WINDOW_DEFER_FILE"
-exit 0
-EOF
+# K11 — no run gets a shared window.
+printf '#!/bin/bash\nprintf "%%s\\t%%s\\n" "${MC_ONLY_PR:-}" "${MC_WORKERS_DONE_BY:-}" >> "%s/rec.txt"\nexit 0\n' "$T" > "$R/bin/merge-conductor.sh"
 : > "$R/state/merge-conductor/pr-state.tsv"
 for n in 1 2 3 4 5 6 7 8; do printf 'example-org/x-os#%s\tREADY\t%s\taaa\taaa\t-\t-\tu\n' "$n" "$((now - 100 + n))" >> "$R/state/merge-conductor/pr-state.tsv"; done
-: > "$R/state/merge-conductor/backstop-carry"; : > "$T/rec.txt"
-t0=$(date +%s); bs
-[ "$(cut -f1 "$T/rec.txt")" = "example-org/x-os#1,example-org/x-os#2,example-org/x-os#3,example-org/x-os#4,example-org/x-os#5,example-org/x-os#6" ] \
-  && ok || bad "K11: the default cap takes 6 (got: $(cut -f1 "$T/rec.txt"))"
-DL=$(cut -f2 "$T/rec.txt")
-[[ "$DL" =~ ^[0-9]+$ ]] && [ "$DL" -ge $((t0 + 195)) ] && [ "$DL" -le $(( $(date +%s) + 195 )) ] \
-  && ok || bad "K11: MC_WORKERS_DONE_BY is the run start plus the 195 s worker cap (got: '$DL', t0 $t0)"
-[ "$(paste -sd' ' "$R/state/merge-conductor/backstop-carry")" = "example-org/x-os#5 example-org/x-os#7 example-org/x-os#8" ] \
-  && ok || bad "K11: the window-deferred key heads the carry (got: $(paste -sd' ' "$R/state/merge-conductor/backstop-carry"))"
-grep -qF '1 key(s) had no window left in this run — the next fire takes them first: example-org/x-os#5' "$T/bs.out" \
-  && ok || bad "K11: the fire logs the window deferral (got: $(cat "$T/bs.out"))"
-[ -z "$(find "$R/state/merge-conductor" -name 'backstop-carry.*' 2>/dev/null)" ] && ok || bad "K11: no temp file left behind"
+: > "$T/rec.txt"; bs
+[ "$(grep -c . "$T/rec.txt")" = 8 ] && ok || bad "K11: all 8 candidates run (got: $(cut -f1 "$T/rec.txt" | paste -sd' ' -))"
+[ -z "$(cut -f2 "$T/rec.txt" | tr -d '\n')" ] && ok || bad "K11: no run carries MC_WORKERS_DONE_BY (got: $(cut -f2 "$T/rec.txt" | paste -sd' ' -))"
+grep -qF 'no window left' "$T/bs.out" && bad "K11: no window deferral (got: $(cat "$T/bs.out"))" || ok
 
 # K6
 [ ! -s "$T/gh-writes.txt" ] && ok || bad "K6: an observe tick used a write verb: $(cat "$T/gh-writes.txt")"

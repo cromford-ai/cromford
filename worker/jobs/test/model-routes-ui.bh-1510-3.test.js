@@ -4,6 +4,7 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { DatabaseSync } from 'node:sqlite';
 import worker from '../src/index.js';
+import { jobsSchemaSql } from './lib/jobs-schema.js';
 
 // BH-1510.3 — the three things the console Models screen needs from the worker
 // that #1510.0's contract did not carry:
@@ -17,7 +18,7 @@ import worker from '../src/index.js';
 //      value — the rows #1507 left behind on claude-opus-5 / claude-fable-5-1.
 // Driven against the SQL that ships (schema.sql), like the #1510.0 suite.
 const SECRET = 'test-secret';
-const SCHEMA = readFileSync(fileURLToPath(new URL('../schema.sql', import.meta.url)), 'utf8');
+const SCHEMA = jobsSchemaSql();
 
 // Each .bind() returns its OWN statement: model-routes.js prepares a statement
 // once and binds it once per rung, and a shim that shared one bind slot would

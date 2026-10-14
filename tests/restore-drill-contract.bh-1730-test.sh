@@ -184,8 +184,8 @@ known=$(jq -r '.knobs[].env' "$DIR/catalog/lanes.d/restore-drill.json" 2>/dev/nu
 unreg=""
 for n in $(printf '%s\n' "$code" | grep -oE '\$\{[A-Z][A-Z0-9_]{2,}:-' | sed 's/^\${//; s/:-$//' | sort -u); do
   case " HARNESS $known " in *" $n "*) continue ;; esac
-  printf '%s' "$n" | grep -qE '(^|_)(TOKEN|SECRET|PASSWORD|CREDENTIALS?|KEY)$' && continue
-  printf '%s\n' "$code" | grep -qE "(^|[[:space:]]|;)$n=" && continue
+  grep -qE '(^|_)(TOKEN|SECRET|PASSWORD|CREDENTIALS?|KEY)$' <<<"$n" && continue
+  grep -qE "(^|[[:space:]]|;)$n=" <<<"$code" && continue
   unreg="$unreg $n"
 done
 [ -n "$known" ] && [ -z "$unreg" ] && ok || bad "C-noknobs lane reads unregistered knobs:${unreg:- (registry has none)}"

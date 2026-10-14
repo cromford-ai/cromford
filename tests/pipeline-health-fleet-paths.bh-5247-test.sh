@@ -102,7 +102,7 @@ mv "$T/fleet-paths.sh.away" "$F/bin/lib/fleet-paths.sh" 2>/dev/null
 gcf 17940 B2 bin/a.sh docs/x.md; B2=$(short)
 heads "$A"; drive_fresh
 D=$(drift)
-[ "$(printf '%s' "$D" | grep -c .)" = 1 ] && grep -q "^5400|driftfail:project-4:$B2|" <<<"$D" && ok \
+[ "$(grep -c . <<<"$D")" = 1 ] && grep -q "^5400|driftfail:project-4:$B2|" <<<"$D" && ok \
   || bad "P2: a box behind a bin/ change must page once, key driftfail:project-4:$B2 (alerts: $(cat "$T/alerts.txt"))"
 grep -q "box-project-4-1 reports harness at $A" <<<"$D" && grep -q "lacks origin/main $B2" <<<"$D" \
   && grep -q 'fleet-propagate did not land there' <<<"$D" && ok || bad "P2: the alert keeps its wording (got: $D)"

@@ -107,7 +107,7 @@ triage_signal_sfp() {
     ids="${TRIAGE_SIGNAL_SELF_IDENTITIES:-}"
   fi
   d=$(TRIAGE_SIGNAL_SELF_IDENTITIES="$ids" "$h/bin/triage-gate.sh" "$p" --signal "$k" 2>/dev/null) || return 1
-  printf '%s' "$d" | grep -qxE '[0-9a-f]{16}' || return 1
+  grep -qxE '[0-9a-f]{16}' <<<"$d" || return 1
   sfp=$(triage_shard_fp "$h" "$p" "$k" "$gh" "$u" "sig $d") || return 1
   # shellcheck disable=SC2034  # both read by bin/lib/rt/shards.sh
   TRIAGE_SIGNAL_SFP="$sfp"

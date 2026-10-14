@@ -43,14 +43,29 @@
 # catalog/test-impact-orphans.txt and catalog/ci-merge-reuse.tsv (PR lint,
 # never read when a batch is selected).
 #
+# BH-6371 replaced the blanket `tests/lib/` row the same way. A changed helper
+# under tests/lib/ selects every suite that sources or imports it, directly or
+# through another helper (bin/test-impact.sh's helper closure, again only under
+# TI_BATCH_SELECT=1), and one that no suite reaches is `unmapped path <p>`. An
+# escalate row under tests/lib/ is the list of GLOBAL helpers: one whose change
+# is a change to about every suite, so its impact set is the corpus anyway.
+#
+# AN ADD-ONLY DIFF TO THIS FILE (BH-6371) does not escalate. bin/ci-plan.sh
+# reads the batch's own `git diff -U0` of this file through cbe_add_only, and
+# selects through the map when every changed line is an added line, at least
+# one is a row, and every added row is `pattern<TAB>kind<TAB>why` with kind
+# escalate, spa or worker. An added spa (worker) row turns that job on. A
+# removed or changed line, an added allow row, a malformed row, a comment-only
+# diff, an empty diff or one that cannot be read still escalates.
+#
 # The allow rows exempt docs: a *.md never escalates on its own.
 .github/	escalate	the workflow decides what runs and on which runner
 bin/ci-plan.sh	escalate	the planner itself
 bin/test-impact*.sh	escalate	the selector and its builder gate
 bin/test-tiers.sh	escalate	the tier step that runs after the selection
-tests/lib/	escalate	the scratch and runner helpers every suite sources
+tests/lib/scratch.sh	escalate	the sandbox guard every suite sources (2109 of 2147); a change to it is a change to every suite
 .mergify.yml	escalate	the merge queue's own conditions
-catalog/ci-batch-escalate.tsv	escalate	this file; bin/ci-plan.sh reads it through bin/lib/ci-batch-escalate.sh, and no other row covers it
+catalog/ci-batch-escalate.tsv	escalate	this file; bin/ci-plan.sh reads it through bin/lib/ci-batch-escalate.sh, and no other row covers it; an add-only diff selects instead (BH-6371)
 bin/lib/ci-batch-escalate.sh	escalate	the rules reader bin/ci-plan.sh sources
 catalog/test-tiers.tsv	escalate	the tiers bin/ci-plan.sh and bin/test-tiers.sh read
 bin/lib/test-protected.sh	escalate	sourced by bin/test-tiers.sh: which suites the tier step may never drop
@@ -81,8 +96,11 @@ console-ui/	spa	the SPA itself (also built into cbe_affects)
 worker/	worker	the worker itself (also built into cbe_affects)
 bin/lib/jobs/	worker	the box-side jobs client the worker's routes answer
 agent-core/	worker	worker/jobs/src/routes/staff.js imports agent-core/src and its charter schema (BH-5559)
+console-ui/tests/fixtures/lane-runs.bh-6127.json	worker	worker/jobs/test/lane-runs-metrics.bh-6127.test.js checks the console panel fixture against the worker answer
 worker/jobs/src/lib/config-changes.js	spa	console-ui tests import it to pin the console's CONFIG_KINDS copy against the worker's
 worker/watchdog/src/	spa	console-ui/tests/standby-panel.bh-2641.test.js imports worker/watchdog/src/standby.js
+worker/jobs/test/fixtures/fly-idle-stop.bh-6061.json	spa	console-ui/tests/fly-idle.bh-6061.test.js reads the reaper's stop-row fixture to pin the panel against the worker's row
+bin/lib/dispatch-mode.sh	spa	console-ui/tests/dispatch-mode.bh-6350.test.js runs its dm_parse to pin the console's parseModeValue against the shell's
 bin/lanes-build.sh	worker	the worker-jobs step that renders the registry the worker imports
 bin/worker-schema-upgrade.sh	worker	the worker-jobs step that replays schema.sql over main's
 bin/lib/d1-schema.sh	worker	the splitter bin/worker-schema-upgrade.sh sources and worker tests run
@@ -95,5 +113,9 @@ catalog/llm-sites.json	worker	worker/jobs/src/lib/llm-sites-catalog.js imports i
 catalog/llm-sites.d/	worker	the fragments the worker's imported llm-sites catalog is composed from (BH-4987)
 bin/llm-sites-build.sh	worker	the worker-jobs step that composes the llm-sites catalog the worker imports
 catalog/context-budgets.json	worker	worker/jobs/src/routes/llm-sites.js imports it
+catalog/context-budgets.d/	worker	the fragments the worker's imported budget manifest is composed from (BH-6487)
+bin/context-budgets-build.sh	worker	the worker-jobs step that composes the budget manifest the worker imports
 catalog/model-prices.json	worker	worker/jobs/test/route-rules.p4.test.js reads it
 catalog/readiness-levels.json	worker	worker/jobs/test/settings-conf-value.bh-2411.test.js reads it
+worker/jobs/src/lib/box-command-args.js	spa	console-ui/tests/machines-orgo-actions.bh-5750.test.js imports it (BH-5750)
+console-ui/src/lib/box-commands.js	worker	worker/jobs/test/box-command-types-drift.bh-5750.test.js imports it (BH-5750)

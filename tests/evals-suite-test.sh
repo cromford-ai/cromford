@@ -102,15 +102,15 @@ cp "$FIX/$ONE/inputs.md" "$T/fx/$ONE/inputs.md"
 #     here would grade a prompt/model pair the fleet does not run.
 OUT=$(env -u TRIAGE_MODEL -u EVALS_MODEL EVALS_FIXTURES="$T/fx" "$RUN" --limit 1 2>&1)
 [ $? -eq 2 ] && ok || bad "the runner ran with no configured model"
-printf '%s' "$OUT" | grep -q "TRIAGE_MODEL is unset" && ok || bad "the unset-model refusal does not name the variable to set"
+grep -q "TRIAGE_MODEL is unset" <<<"$OUT" && ok || bad "the unset-model refusal does not name the variable to set"
 
 # 2f. THE SPEND CAP BINDS BEFORE THE FIRST CALL, not after it.
 : > "$T/fake-argv.txt"
 OUT=$(TRIAGE_MODEL=test-model EVALS_FIXTURES="$T/fx" EVALS_MAX_USD=0.01 EVALS_CALL_USD=0.50 \
       "$RUN" --limit 1 2>&1)
 [ $? -eq 2 ] && ok || bad "the spend cap did not fail the run"
-printf '%s' "$OUT" | grep -q "SPEND CAP" && ok || bad "the cap fired without saying so"
-printf '%s' "$OUT" | grep -q "INCOMPLETE" && ok || bad "a capped run must report INCOMPLETE, not a verdict on the prompt"
+grep -q "SPEND CAP" <<<"$OUT" && ok || bad "the cap fired without saying so"
+grep -q "INCOMPLETE" <<<"$OUT" && ok || bad "a capped run must report INCOMPLETE, not a verdict on the prompt"
 [ ! -s "$T/fake-argv.txt" ] && ok || bad "the cap fired AFTER spending — it must stop before the call"
 
 # ---------------------------------------------------------------------------
@@ -124,19 +124,19 @@ runfake() { FAKE_SAYS="$1" TRIAGE_MODEL=test-model EVALS_FIXTURES="$T/one" "$RUN
 
 OUT=$(runfake "DECISION: TK-60 :: skip :: waiting on the client"); RC=$?
 [ "$RC" -eq 0 ] && ok || bad "the recorded verdict did not grade as a pass (rc=$RC)"
-printf '%s' "$OUT" | grep -qE "TK-60|$SC" && ok || bad "the diff table does not name the fixture"
-printf '%s' "$OUT" | grep -q "VERDICT: OK" && ok || bad "a matching replay did not report OK"
+grep -qE "TK-60|$SC" <<<"$OUT" && ok || bad "the diff table does not name the fixture"
+grep -q "VERDICT: OK" <<<"$OUT" && ok || bad "a matching replay did not report OK"
 
 OUT=$(runfake "DECISION: TK-60 :: launch :: shipping it"); RC=$?
 [ "$RC" -eq 1 ] && ok || bad "a flipped verdict did not exit 1 (rc=$RC)"
-printf '%s' "$OUT" | grep -q "REGRESSION" && ok || bad "a flipped verdict did not report a regression"
+grep -q "REGRESSION" <<<"$OUT" && ok || bad "a flipped verdict did not report a regression"
 
 # SILENCE IS A FAIL. A session that says nothing about a pinned ticket has not
 # handled it; reading that as a pass makes the eval greener the quieter the
 # model gets.
 OUT=$(runfake "I had a look and everything seems fine."); RC=$?
 [ "$RC" -eq 1 ] && ok || bad "silence about a pinned ticket did not fail (rc=$RC)"
-printf '%s' "$OUT" | grep -q "no decision" && ok || bad "silence was not reported as a missing decision"
+grep -q "no decision" <<<"$OUT" && ok || bad "silence was not reported as a missing decision"
 
 # EVERY emitted action must be allowed: launching a duplicate and then
 # commenting about it is not a pass on a fixture that pins skip.
@@ -158,7 +158,7 @@ DEAD
 chmod +x "$T/fake-agent-call.sh"
 OUT=$(TRIAGE_MODEL=test-model EVALS_FIXTURES="$T/one" "$RUN" 2>&1); RC=$?
 [ "$RC" -eq 2 ] && ok || bad "an empty runner response did not exit 2 (rc=$RC)"
-printf '%s' "$OUT" | grep -q "BROKEN" && ok || bad "an empty runner response was not called out as broken"
+grep -q "BROKEN" <<<"$OUT" && ok || bad "an empty runner response was not called out as broken"
 
 # NEITHER IS AN ERROR DUMP — THE OTHER HALF OF "PRODUCED NOTHING" (2026-09-16).
 # The shape that got through: the claude CLI returns no `.result` (dead token,
@@ -180,12 +180,12 @@ DUMP
 chmod +x "$T/fake-agent-call.sh"
 OUT=$(TRIAGE_MODEL=test-model EVALS_FIXTURES="$T/one" "$RUN" 2>&1); RC=$?
 [ "$RC" -eq 2 ] && ok || bad "a runner error dump graded as something other than BROKEN (rc=$RC)"
-printf '%s' "$OUT" | grep -q "BROKEN" && ok || bad "a runner error dump was not called out as broken"
+grep -q "BROKEN" <<<"$OUT" && ok || bad "a runner error dump was not called out as broken"
 grep -q "REGRESSION" <<<"$(printf '%s' "$OUT")" && bad "an outage was reported as a prompt REGRESSION — the false verdict that started this" || ok
 # …and the BROKEN verdict must carry the evidence, or the next reader cannot
 # tell a dead credential from a usage cap from a killed session.
-printf '%s' "$OUT" | grep -q "what the runner said" && ok || bad "the BROKEN verdict printed no runner output at all"
-printf '%s' "$OUT" | grep -qi "Invalid API key" && ok || bad "the BROKEN verdict did not quote what the runner actually said"
+grep -q "what the runner said" <<<"$OUT" && ok || bad "the BROKEN verdict printed no runner output at all"
+grep -qi "Invalid API key" <<<"$OUT" && ok || bad "the BROKEN verdict did not quote what the runner actually said"
 
 # ONE BLIP IN TWENTY IS RETRIED ONCE, NOT GRADED (main red at f83ca87f). The
 # envelope that reached CI had no .result AND no stderr, so "runner said:" was
@@ -209,8 +209,8 @@ chmod +x "$T/fake-agent-call.sh"
 OUT=$(TRIAGE_MODEL=test-model EVALS_FIXTURES="$T/one" "$RUN" 2>&1); RC=$?
 [ "$RC" -eq 0 ] && ok || bad "a one-call blip followed by a good answer did not grade OK (rc=$RC): $(printf '%s' "$OUT" | tail -4 | tr '\n' ' ')"
 [ "$(wc -l < "$T/fake-argv.txt" | tr -d ' ')" -eq 2 ] && ok || bad "the unrun scenario was not retried exactly once ($(wc -l < "$T/fake-argv.txt" | tr -d ' ') calls)"
-printf '%s' "$OUT" | grep -q "retrying once" && ok || bad "the retry happened silently — it must say so"
-printf '%s' "$OUT" | grep -q "error_during_execution" && ok || bad "a blank-stderr envelope left 'runner said' empty — its subtype must be quoted"
+grep -q "retrying once" <<<"$OUT" && ok || bad "the retry happened silently — it must say so"
+grep -q "error_during_execution" <<<"$OUT" && ok || bad "a blank-stderr envelope left 'runner said' empty — its subtype must be quoted"
 
 # …and the retry is bounded: a runner that stays dead is BROKEN after two calls.
 cat > "$T/fake-agent-call.sh" <<DEAD2
@@ -266,24 +266,24 @@ chmod +x "$STUB/bin/agent-call.sh"
 OUT=$(env -u PROMPT_EVAL_AGENT_CALL TRIAGE_MODEL=test-model EVALS_FIXTURES="$T/one" \
       "$STUB/tests/evals/run-evals.sh" 2>&1); RC=$?
 [ "$RC" -eq 2 ] && ok || bad "a zero-spend replay did not exit 2 (rc=$RC): $(printf '%s' "$OUT" | tail -3 | tr '\n' ' ')"
-printf '%s' "$OUT" | grep -q "BROKEN" && ok || bad "a zero-spend replay was not called out as broken"
+grep -q "BROKEN" <<<"$OUT" && ok || bad "a zero-spend replay was not called out as broken"
 grep -q "REGRESSION" <<<"$(printf '%s' "$OUT")" && bad "a zero-spend replay was reported as a prompt REGRESSION — the false verdict this pins" || ok
-printf '%s' "$OUT" | grep -q "billed" && ok || bad "the BROKEN verdict does not say the run billed nothing"
-printf '%s' "$OUT" | grep -q "never reached the model" && ok || bad "the verdict does not name the spend as the tell"
+grep -q "billed" <<<"$OUT" && ok || bad "the BROKEN verdict does not say the run billed nothing"
+grep -q "never reached the model" <<<"$OUT" && ok || bad "the verdict does not name the spend as the tell"
 
 # The guard must never fire on this suite's fake, or every assertion above it
 # would turn into BROKEN the moment a fixture disagreed.
 mkfake
 OUT=$(runfake "DECISION: TK-60 :: launch :: shipping it"); RC=$?
 [ "$RC" -eq 1 ] && ok || bad "the zero-spend guard swallowed a real regression driven through the fake (rc=$RC)"
-printf '%s' "$OUT" | grep -q "REGRESSION" && ok || bad "a real regression stopped being reported as one"
+grep -q "REGRESSION" <<<"$OUT" && ok || bad "a real regression stopped being reported as one"
 
 # A SESSION THAT REALLY DID ANSWER IS STILL GRADED. The envelope test must not
 # swallow a genuine silent answer: that one ran, and it is a FAIL, not an outage.
 mkfake
 OUT=$(runfake "I had a look and everything seems fine."); RC=$?
 [ "$RC" -eq 1 ] && ok || bad "the error-dump guard swallowed a real silent answer (rc=$RC, must stay a FAIL)"
-printf '%s' "$OUT" | grep -q "no decision" && ok || bad "a real silent answer stopped reporting a missing decision"
+grep -q "no decision" <<<"$OUT" && ok || bad "a real silent answer stopped reporting a missing decision"
 
 # ---------------------------------------------------------------------------
 # 4. THE PROMPTS UNDER TEST ARE THIS CHECKOUT'S, never /root/harness's deployed

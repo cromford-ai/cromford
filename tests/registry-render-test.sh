@@ -226,7 +226,7 @@ printf '# @ungated a test lane\n5 * * * * /root/harness/bin/zz-hub-lane.sh >/dev
 # --- 6c. an unknown box says why -------------------------------------------
 E8=$("$DIR/bin/render-cron.sh" --root "$DIR" zz-no-such-box 2>&1 >/dev/null); RC8=$?
 [ "$RC8" -ne 0 ] && ok || bad "8a an unknown box rendered (rc 0)"
-printf '%s' "$E8" | grep -q 'no registry lane lists this box' \
+grep -q 'no registry lane lists this box' <<<"$E8" \
   && ok || bad "8b an unknown box refuses with a blank reason: '$E8'"
 
 # --- 6. every fragment names a registered lane -------------------------------

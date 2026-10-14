@@ -52,7 +52,7 @@ _mg_ensure_client() {
 }
 
 _mg_valid() {
-  printf '%s' "$1" | grep -qxE '[A-Za-z0-9_][A-Za-z0-9_.-]*(/[A-Za-z0-9_][A-Za-z0-9_.-]*)*/\*\.sql' || return 1
+  grep -qxE '[A-Za-z0-9_][A-Za-z0-9_.-]*(/[A-Za-z0-9_][A-Za-z0-9_.-]*)*/\*\.sql' <<<"$1" || return 1
   case "/$1/" in */../*) return 1 ;; esac
   return 0
 }

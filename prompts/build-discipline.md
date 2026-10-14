@@ -130,3 +130,9 @@ From the 300-PR review-block analysis (295 BLOCK findings over 186 PRs, #4168 to
 ## Added 2026-10-10 (BH-5789): fixture hygiene
 - **D64 Fixtures look fake on purpose.** An IP in a test is RFC 5737 (`192.0.2.x`, `198.51.100.x`, `203.0.113.x`), never a tailnet `100.64/10` or an RFC1918 address. A fake token or secret has the word `fixture` in its value (`tok-fixture-1`). No real hostname, tailnet name or client name. `bin/fixture-hygiene.sh` (rules pack) is red on a new test line that breaks this, and the verify step runs gitleaks with `GITLEAKS_REQUIRED=1`.
 The reasons and knobs for D64 are in docs/notes/2026-10-10-BH-5789-fixture-hygiene.md.
+
+## Added 2026-10-13 (BH-6392): test ownership
+- **D65 A test belongs to its ticket (D51, enforced).** Put a new case in `tests/<topic>.<this-key>-test.sh`. Edit a test of another ticket only to change a premise this PR changes. Name it in the plan under `## Tests that must change`, and write `TEST-CHANGE: <path> — <the premise>` in a commit message; the PR body copies it. `bin/pr-self-check.sh` rule `test-ownership` refuses an edit to `tests/*.<other-key>-test.sh` with no such line. 49 of 297 conflict pairs in the 2026-10-06..13 study were test files edited by two PRs.
+
+## Added 2026-10-13 (BH-6394): stacked commits
+- **D66 A PR carries only its own ticket's commits (enforced).** When the plan says to stack, open the PR with the parent branch as base. Never rebase a parent's commits onto main. If the parent merges first, merge main and let the parent's commits drop out. `bin/pr-self-check.sh` rule `foreign-commits` refuses a first-parent commit whose subject leads with another ticket's key, unless the base is that ticket's branch or the conductor holds the PR as STACKED_WAIT. In 7 days, 24 of 458 ticket PRs carried another ticket's commits, and #6355 broke batch #6368.

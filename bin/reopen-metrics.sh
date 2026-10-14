@@ -66,8 +66,11 @@ shift_day() { # shift_day <YYYYMMDD> <+N|-N days> -> YYYYMMDD (echoes input if i
 prev_day() { shift_day "$1" -1; }
 next_day() { shift_day "$1" +1; }
 
-snapshot() { # snapshot <project> -> prints JSON [{key,status,waitingOn}] or nothing
-  local P=$1 BASE TOKEN BP
+# board_conn <project> — sets BASE TOKEN BP for an app board; rc 1 when any is
+# missing or the board is GitHub Issues. Loads the project env, so call it in a
+# subshell (snapshot() and the reason pass both do).
+board_conn() {
+  local P=$1
   set -a; [ -f "$HENV/$P.env" ] && . "$HENV/$P.env"; set +a
   case "$P" in
     project-1)   BASE="${PROJECT_1_API_BASE:-}"; TOKEN="${PROJECT_1_INTERNAL_API_TOKEN:-}"; BP="/api/board" ;;
@@ -89,7 +92,12 @@ snapshot() { # snapshot <project> -> prints JSON [{key,status,waitingOn}] or not
       [ -n "$TOKEN" ] || TOKEN="${INTERNAL_TOKEN:-}"
       ;;
   esac
-  [ -n "$BASE" ] && [ -n "$TOKEN" ] && [ -n "$BP" ] && [ "$BP" != "-" ] || return 1
+  [ -n "$BASE" ] && [ -n "$TOKEN" ] && [ -n "$BP" ] && [ "$BP" != "-" ]
+}
+
+snapshot() { # snapshot <project> -> prints JSON [{key,id,status,waitingOn}] or nothing
+  local P=$1 BASE TOKEN BP
+  board_conn "$P" || return 1
   local ids bid out='[]'
   ids=$(curl -sf -m 20 -H "Authorization: Bearer $TOKEN" -H "User-Agent: curl/8" "$BASE$BP/boards" \
     | jq -r '(.boards? // .) | .[]?.id') || return 1
@@ -97,7 +105,7 @@ snapshot() { # snapshot <project> -> prints JSON [{key,status,waitingOn}] or not
   while IFS= read -r bid; do
     local page
     page=$(curl -sf -m 30 -H "Authorization: Bearer $TOKEN" -H "User-Agent: curl/8" "$BASE$BP/boards/$bid/tickets" \
-      | jq -c '[(.tickets? // .) | .[]? | {key: (.key // ("#" + ((.number // 0)|tostring))), status, waitingOn}]') || return 1
+      | jq -c '[(.tickets? // .) | .[]? | {key: (.key // ("#" + ((.number // 0)|tostring))), id: (.id // null), status, waitingOn}]') || return 1
     out=$(jq -c --argjson p "$page" '. + $p' <<<"$out") || return 1
   done <<<"$ids"
   printf '%s' "$out"
@@ -207,6 +215,27 @@ gh_reopens() { # gh_reopens <project> <slug> -> writes CSV rows; rc 1 = could no
   return 0
 }
 
+# >>> reopen reason (BH-6159): the comments around each reopen, saved as the
+# ticket's reopen reason (bin/lib/reopen-reason.sh). jobs-client is sourced
+# here, earlier than the BH-117 block, whose own guard then skips it.
+if ! command -v job_ledger_put >/dev/null 2>&1 \
+   && [ -r "$BIN/jobs-client.sh" ] && [ -r "$BIN/lib/jobs/settings.sh" ]; then
+  # shellcheck source=/dev/null
+  . "$BIN/jobs-client.sh" >/dev/null 2>&1 || true
+fi
+# shellcheck source=lib/reopen-reason.sh
+. "$BIN/lib/reopen-reason.sh" 2>/dev/null || true
+RR_ON=0; command -v rr_on >/dev/null 2>&1 && rr_on && RR_ON=1
+RR_RUN=$(mktemp -d); trap 'rm -rf "$RR_RUN"' EXIT
+# <<< reopen reason
+# >>> revert reason (BH-6160): the failure signal of each revert on a
+# project's default branch, saved for the ticket's rebuild
+# (bin/lib/revert-reason.sh). Read only; its run files share $RR_RUN.
+# shellcheck source=lib/revert-reason.sh
+. "$BIN/lib/revert-reason.sh" 2>/dev/null || true
+RV_ON=0; command -v rv_on >/dev/null 2>&1 && rv_on && RV_ON=1
+RV_SINCE_ISO=""; [ "$RV_ON" = 1 ] && RV_SINCE_ISO=$(rv_since_iso)
+# <<< revert reason
 PROJECTS=$("$BIN/fleet-conf.sh" --projects 2>/dev/null)
 # Fail-open to the original four rather than measuring nothing — but SAY SO.
 # A fallback that runs silently is worse than no fallback: the rate rows for
@@ -224,6 +253,12 @@ if [ -z "$PROJECTS" ]; then
 fi
 
 for P in $PROJECTS; do
+  if [ "$RV_ON" = 1 ] && [ -n "$RV_SINCE_ISO" ]; then
+    RV_SLUG=$("$BIN/fleet-conf.sh" "$P" repo 2>/dev/null)
+    if [ -n "$RV_SLUG" ] && [ "$RV_SLUG" != "-" ]; then
+      ( RV_RUN="$RR_RUN" rv_capture "$P" "$RV_SLUG" "$RV_SINCE_ISO" )
+    fi
+  fi
   if [ "$REGISTRY_OK" = 0 ]; then
     BP="app-board"   # snapshot() carries these four prefixes itself
   else
@@ -240,6 +275,7 @@ for P in $PROJECTS; do
     command -v gh_auth_for >/dev/null 2>&1 && gh_auth_for "$SLUG" || true
     gh_reopens "$P" "$SLUG" \
       || HARNESS="$H" "$H/bin/alert-line.sh" "[reopen-metrics] $P gh issue events unreadable — skipped"
+    [ "$RR_ON" = 1 ] && ( RR_RUN="$RR_RUN" rr_capture_rows "$P" gh "$SINCE" "$CSV" "$SLUG" )
     command -v gh_auth_reset >/dev/null 2>&1 && gh_auth_reset
     continue
   fi
@@ -247,7 +283,9 @@ for P in $PROJECTS; do
   PDIR="$SNAPDIR/$P"; mkdir -p "$PDIR"
   printf '%s' "$SNAP" > "$PDIR/$TODAY.json"
   PREV=$(ls "$PDIR" | grep -E '^[0-9]{8}\.json$' | sort | tail -2 | head -1)
-  [ -n "$PREV" ] && [ "$PREV" != "$TODAY.json" ] || continue
+  # No earlier snapshot: diff today against itself (no rows), so the reason
+  # pass below still runs for the rows already in the CSV.
+  [ -n "$PREV" ] && [ "$PREV" != "$TODAY.json" ] || PREV="$TODAY.json"
   # A reopen = status rank fell from >=3 (review/done) to <3.
   jq -nr --argjson old "$(cat "$PDIR/$PREV")" --argjson new "$SNAP" '
     ($old | map({(.key): .status}) | add // {}) as $o
@@ -257,9 +295,14 @@ for P in $PROJECTS; do
     | [.key, $o[.key], .status] | @csv' 2>/dev/null | while IFS= read -r ROW; do
     echo "$TODAY,$P,$(tr -d '"' <<<"$ROW")" >> "$CSV"
   done
+  [ "$RR_ON" = 1 ] && ( board_conn "$P" && RR_BASE="$BASE" RR_TOKEN="$TOKEN" RR_BP="$BP" RR_RUN="$RR_RUN" \
+    rr_capture_rows "$P" app "$SINCE" "$CSV" "$PDIR/$TODAY.json" )
   # keep 30 snapshots per project
   ls "$PDIR" | sort | head -n -30 | while read -r F; do rm -f "$PDIR/$F"; done
 done
+
+[ "$RR_ON" = 1 ] && RR_RUN="$RR_RUN" rr_capture_report
+[ "$RV_ON" = 1 ] && RV_RUN="$RR_RUN" rv_capture_report
 
 # Rolling 14d rate per project: reopens vs merged builds (metrics.csv PR_MERGED
 # plus merge-sweep ledger lines are approximated by PR_CREATED+PR_MERGED kinds).

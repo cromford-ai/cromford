@@ -3,9 +3,18 @@
 #                      [--ref <rev> --worker <name> [--to <path>]]
 #
 # Compose worker/<w>/schema.sql from worker/<w>/schema.d/: every fragment, named
-# NNNN-<name>.sql, sorted by name under LC_ALL=C and concatenated with plain
-# `cat` — no banner, no separator, so the render is exactly the bytes of the
-# fragments in order.
+# NNNN-<name>.sql or <yyyymmddhhmm>-<ticket-key>-<name>.sql, sorted by name under
+# LC_ALL=C and concatenated with plain `cat` — no banner, no separator, so the
+# render is exactly the bytes of the fragments in order.
+#
+# NEW FRAGMENTS ARE NAMED BY TICKET KEY (BH-5788). A picked "next free" NNNN
+# collides with the next build's pick: main held two 0022 fragments on
+# 2026-10-14. A new fragment is <yyyymmddhhmm>-<ticket-key>-<name>.sql: the key
+# makes the name unique, and the UTC minute the builder creates it is the order
+# key, so the same name sort puts every NNNN fragment first and then the new
+# ones in creation order. The rules-pack builtin rp_schema_fragment_name refuses
+# a new NNNN fragment whose number the base already has, and a stamp that is
+# not later than the base's newest stamp.
 #
 # WHY (BH-4987). docs/CONFLICT_HOTSPOTS.md (BH-4986) ranked
 # worker/jobs/schema.sql the top conflict hotspot in this repo: every new table
@@ -14,18 +23,21 @@
 # plus `bin/schema-build.sh --write`. Two builds adding two tables touch no
 # common source file.
 #
-# AND schema.sql STAYS COMMITTED, byte for byte the file it was. About 220
-# readers read it from the tree or through `git show <ref>:worker/jobs/schema.sql`
-# (bin/harness-sync.sh's D1 apply, bin/worker-schema-upgrade.sh, CI's
-# "schema.sql applies over main's" step, the worker test corpus), and none of
-# them changes. It is declared `committed` in the Generated files table of
-# docs/verification-map/index/tail.md, so a rebase or a merge train that
-# conflicts on it regenerates it from the merged fragments instead of
-# hand-merging it — the same arrangement as rules/CLAUDE.md (BH-1336).
+# schema.sql IS NOT IN GIT (BH-6005). worker/jobs/schema.sql is the render of
+# schema.d/ and is git-ignored (.gitignore). A committed render was the top
+# conflict left after the split: two branches that each added one fragment both
+# re-rendered it, and on 2026-10-11 that parked 8 approved PRs for up to 1,300
+# minutes. Every reader composes it where it reads it: bin/harness-sync.sh's
+# deploy (`--to` into its snapshot), CI and the lints (`--ref` for a base
+# revision), and the test corpus (tests/lib/jobs-schema.sh,
+# worker/jobs/test/lib/jobs-schema.js).
+# --check refuses the ignored render coming back into git; a working copy that
+# differs from the fragments is a stale local render, a note and never an error.
 #
 # VALIDATION runs before any write and in --check; each failure prints
 # `<path>: <reason>`:
-#   * every entry in schema.d/ is a file named ^[0-9]{4}-[a-z0-9][a-z0-9_-]*\.sql$
+#   * every entry in schema.d/ is a file named
+#     ^([0-9]{4}|[0-9]{12})-[a-z0-9][a-z0-9_-]*\.sql$
 #     (a stray README, x.sql.bak or subdirectory is an error, never skipped)
 #   * every fragment is non-empty and ends in a newline (otherwise its last
 #     `-- comment` line would swallow the next fragment's first statement)
@@ -39,8 +51,11 @@
 #   --write         rewrite worker/<w>/schema.sql (atomically, only when the
 #                   bytes differ); refuses, rc 1, when that would delete a
 #                   statement no fragment holds (see NO STATEMENT IS EVER DROPPED)
-#   --check         validate, then compare the composition with the committed
-#                   worker/<w>/schema.sql; rc 1 when they differ
+#   --check         validate, then, by how git holds worker/<w>/schema.sql:
+#                   tracked AND ignored -> rc 1, it must not be in git;
+#                   untracked and ignored -> rc 0 (a differing working copy is a
+#                   one-line stale-render note); anything else (a tracked render,
+#                   a non-git tree) -> compare with the file, rc 1 when they differ
 #   --to <path>     write the composition to <path> (one worker only)
 #   (none)          print the composition on stdout (one worker only)
 #   --worker <name> only worker/<name> (default: every worker with a schema.d/)
@@ -123,10 +138,10 @@ compose() {
     [ -n "$name" ] || continue
     f="$src/$name"
     if [ -d "$f" ] || [ ! -f "$f" ]; then
-      echo "$rel/$name: not a fragment file (schema.d/ holds only NNNN-<name>.sql files)" >&2; bad=1; continue
+      echo "$rel/$name: not a fragment file (schema.d/ holds only fragment .sql files)" >&2; bad=1; continue
     fi
-    if ! [[ $name =~ ^[0-9]{4}-[a-z0-9][a-z0-9_-]*\.sql$ ]]; then
-      echo "$rel/$name: not a fragment name (want NNNN-<name>.sql, lower case)" >&2; bad=1; continue
+    if ! [[ $name =~ ^([0-9]{4}|[0-9]{12})-[a-z0-9][a-z0-9_-]*\.sql$ ]]; then
+      echo "$rel/$name: not a fragment name (want <yyyymmddhhmm>-<ticket-key>-<name>.sql or NNNN-<name>.sql, lower case)" >&2; bad=1; continue
     fi
     if [ ! -s "$f" ]; then
       echo "$rel/$name: empty fragment" >&2; bad=1; continue
@@ -225,6 +240,25 @@ own_render() {
   [ "$(cksum < "$ROOT/worker/$1/schema.sql")" = "$(cat "$f")" ]
 }
 
+# tracked_state <worker> — how git holds worker/<w>/schema.sql: tracked-ignored
+# (an ignored render was added back), untracked-ignored (the BH-6005 shape), or
+# other (a tracked render, or no git here). --no-index: check-ignore must answer
+# for a path the index holds too.
+tracked_state() {
+  local p="worker/$1/schema.sql" t=0 i=0
+  # Physical paths on both sides: a relative ROOT, a symlinked one or a trailing
+  # slash is the same tree, and a byte compare would call it `other`.
+  local top phys
+  top=$(git -C "$ROOT" rev-parse --show-toplevel 2>/dev/null) && top=$(cd "$top" 2>/dev/null && pwd -P) || top=""
+  phys=$(cd "$ROOT" 2>/dev/null && pwd -P) || phys=""
+  [ -n "$top" ] && [ "$top" = "$phys" ] || { echo other; return 0; }
+  git -C "$ROOT" ls-files --error-unmatch -- "$p" >/dev/null 2>&1 && t=1
+  git -C "$ROOT" check-ignore -q --no-index -- "$p" 2>/dev/null && i=1
+  if [ "$i" = 1 ] && [ "$t" = 1 ]; then echo tracked-ignored
+  elif [ "$i" = 1 ]; then echo untracked-ignored
+  else echo other; fi
+}
+
 # unfragmented <worker> <composition> — print `<statement's first line>\t<where>`
 # for each statement --write would lose; rc 0 when there is none.
 unfragmented() {
@@ -233,7 +267,10 @@ unfragmented() {
   local -a sides=()
   stmt_lines "$comp" > "$k"
   : > "$cd"; : > "$ch"; : > "$gone"
-  [ -f "$ROOT/$sql" ] && stmt_lines "$ROOT/$sql" > "$cd"
+  # An ignored, untracked render is a local copy, never a source (BH-6005): its
+  # statements are an earlier render's, so they are not candidates. What a
+  # commit put in schema.sql (HEAD, MERGE_HEAD, this branch) is still checked.
+  [ -f "$ROOT/$sql" ] && [ "${TSTATE:-other}" != untracked-ignored ] && stmt_lines "$ROOT/$sql" > "$cd"
   if own_render "$w"; then
     # Our own earlier render: only what a commit put in schema.sql can be lost.
     for r in HEAD MERGE_HEAD; do obj_lines "$r:$sql"; done | sort -u > "$TMP/$w.committed"
@@ -301,6 +338,8 @@ for w in "${WORKERS[@]}"; do
   compose "$w" "$out" || { rc=1; continue; }
   DONE+=("$w")
   dst="$ROOT/worker/$w/schema.sql"
+  TSTATE=other
+  case "$MODE" in write|check) TSTATE=$(tracked_state "$w") ;; esac
   case "$MODE" in
     write)
       # Before the equal-bytes shortcut: in the batch-train shape the working
@@ -320,6 +359,16 @@ for w in "${WORKERS[@]}"; do
         mkdir -p "${lr%/*}" 2>/dev/null && cksum < "$dst" > "$lr" 2>/dev/null || :
       fi ;;
     check)
+      if [ "$TSTATE" = tracked-ignored ]; then
+        echo "worker/$w/schema.sql is generated and git-ignored — it must not be in git: git rm --cached worker/$w/schema.sql (schema.sql is not in git; add or edit a fragment under worker/$w/schema.d/)" >&2
+        rc=1; continue
+      fi
+      if [ "$TSTATE" = untracked-ignored ]; then
+        if [ -f "$dst" ] && ! cmp -s "$out" "$dst"; then
+          echo "worker/$w/schema.sql is a stale local render — bin/schema-build.sh --write refreshes it (not an error)" >&2
+        fi
+        continue
+      fi
       if ! [ -f "$dst" ] || ! cmp -s "$out" "$dst"; then
         echo "worker/$w/schema.sql is generated from worker/$w/schema.d/ — add or edit a fragment there and run bin/schema-build.sh --write; do not edit schema.sql directly" >&2
         unfragmented "$w" "$out" > "$TMP/$w.lost" || report_unfragmented "$w" "$TMP/$w.lost"

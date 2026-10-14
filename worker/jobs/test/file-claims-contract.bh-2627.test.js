@@ -4,6 +4,7 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { DatabaseSync } from 'node:sqlite';
 import * as core from '../src/lib/core.js';
+import { jobsSchemaSql } from './lib/jobs-schema.js';
 
 // BH-2627 (BH-2524.0) — the fleet file-claims CONTRACT slice, driven against
 // the SQL that ships: the four nullable job_claims columns in schema.sql's
@@ -12,7 +13,7 @@ import * as core from '../src/lib/core.js';
 // node:sqlite is imported at the top with no skip path, same as
 // schema-deploy-queue.bh-1026.test.js: CI runs node 22.
 
-const SCHEMA = readFileSync(fileURLToPath(new URL('../schema.sql', import.meta.url)), 'utf8');
+const SCHEMA = jobsSchemaSql();
 
 const OLD_COLS = ['job_id', 'lane', 'attempts', 'max_attempts', 'next_attempt_at',
   'escalate_allowed', 'reason', 'updated_at'];

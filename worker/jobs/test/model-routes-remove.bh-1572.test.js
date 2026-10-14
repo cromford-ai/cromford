@@ -4,6 +4,7 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { DatabaseSync } from 'node:sqlite';
 import worker from '../src/index.js';
+import { jobsSchemaSql } from './lib/jobs-schema.js';
 
 // BH-1572 (F5 of #1569's round-2 review) — removing a whole hub role is
 // DURABLE. Before this, the PUT refused an empty ladder and reset was
@@ -19,7 +20,7 @@ import worker from '../src/index.js';
 //      operator had cut, on every deploy.
 // Driven against the SQL that ships (schema.sql), like the #1510.x suites.
 const SECRET = 'test-secret';
-const SCHEMA = readFileSync(fileURLToPath(new URL('../schema.sql', import.meta.url)), 'utf8');
+const SCHEMA = jobsSchemaSql();
 
 function sqliteDB(db) {
   const prepare = (sql) => {

@@ -70,7 +70,7 @@ need_git() {
 if [ -n "${MRSL_FILES+x}" ]; then FILES="$MRSL_FILES"
 else need_git; FILES=$(git -C "$ROOT" diff --name-only "$MB" HEAD) || exit 2; fi
 
-printf '%s\n' "$FILES" | grep -qxF "$SCHEMA_PATH" || printf '%s\n' "$FILES" | grep -qE '^worker/jobs/schema\.d/[^/]+\.sql$' \
+grep -qxF "$SCHEMA_PATH" <<<"$FILES" || grep -qE '^worker/jobs/schema\.d/[^/]+\.sql$' <<<"$FILES" \
   || { echo "model-route-seed-lint: $SCHEMA_PATH not in the diff (no schema.sql, no schema.d fragment) — nothing to check"; exit 0; }
 
 if [ -n "${MRSL_HEAD_SQL:-}" ]; then HEAD_SQL="$MRSL_HEAD_SQL"
@@ -163,7 +163,7 @@ has_put() {
 }
 
 WAIVED=0
-if printf '%s' "${PR_BODY:-}" | grep -qF "$WAIVER" || printf '%s\n' "$ADDED" | grep -qF "$WAIVER"; then WAIVED=1; fi
+if grep -qF "$WAIVER" <<<"${PR_BODY:-}" || grep -qF "$WAIVER" <<<"$ADDED"; then WAIVED=1; fi
 
 BAD=""; WAIVE_LIST=""
 for role in $CHANGED; do

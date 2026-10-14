@@ -142,7 +142,7 @@ triage_park_tick_line() {
   for m in "$h/state/triage-park/$p/"*; do
     [ -f "$m" ] || continue
     b=${m##*/}
-    printf '%s\n' "$keys" | grep -qxF -- "${b%.*}" || rm -f "$m"
+    grep -qxF -- "${b%.*}" <<<"$keys" || rm -f "$m"
   done
   return 0
 }

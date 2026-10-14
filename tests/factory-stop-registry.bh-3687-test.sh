@@ -97,7 +97,7 @@ while read -r id scope; do
   run "$id" "$scope"
   eq "R1 $id switch ON: output" "$OUT" ""
   eq "R1 $id exit 0" "$RC" "0"
-  log | grep -q "\[lane-gate\] $id[/ ].*SKIPPED — factory-stop" && ok \
+  log | grep -q "\[lane-gate\] ${id}[/ ].*SKIPPED — factory-stop" && ok \
     || bad "R1 $id no SKIPPED — factory-stop line: $(log)"
   ls "$T/h/state/lane-gate/$id"*.paused >/dev/null 2>&1 && ok \
     || bad "R1 $id no state/lane-gate/$id*.paused stamp"
@@ -167,7 +167,7 @@ if [ -z "${LG_UNDER_TEST:-}" ]; then
   if cmp -s "$M" "$LG"; then bad "M1 the block marker was not found"
   else
     MOUT=$(LG_UNDER_TEST="$M" HARNESS_TEST_SANDBOX=1 bash "$0" 2>&1)
-    printf '%s\n' "$MOUT" | grep -q '^FAIL: R1' && ok || bad "M1 R1 stayed green without the block"
+    grep -q '^FAIL: R1' <<<"$MOUT" && ok || bad "M1 R1 stayed green without the block"
   fi
 fi
 

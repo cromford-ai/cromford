@@ -209,7 +209,7 @@ printf '#!/bin/bash\nclaude -p hello\n' > "$T/repo/bin/probe.sh"
 printf '#!/bin/bash\nclaude -p hello\n' > "$T/repo/bin/other.sh"
 printf 'bin/probe.sh: it is a credential probe\n' > "$T/repo/tests/allow.txt"
 H=$(scan "$T/repo" "$T/repo/tests/allow.txt")
-printf '%s' "$H" | grep -q 'bin/other.sh' && ok || bad "a file NOT on the allowlist must still be flagged"
+grep -q 'bin/other.sh' <<<"$H" && ok || bad "a file NOT on the allowlist must still be flagged"
 grep -q 'bin/probe.sh' <<<"$(printf '%s' "$H")" && bad "an allowlisted file must not be flagged" || ok
 rm -f "$T/repo/bin/probe.sh" "$T/repo/bin/other.sh"
 

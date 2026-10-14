@@ -1,6 +1,7 @@
 #!/bin/bash
 # bin/pool-cap.sh <project> — print the Fly pool's live-machine cap for a project.
 # bin/pool-cap.sh --autoscale — print 1|0, the autoscale knob itself.
+# bin/pool-cap.sh --set <project> <n> [--apply] — re-number an enabled pool's cap.
 #
 # 0 MEANS NO CEILING (the operator, 2026-09-14: "we can launch unlimited builders with
 # fly.io"). The default 3 was OUR number, not Fly's: nine projects times three
@@ -25,9 +26,39 @@
 # KILL FLAG. POOL_AUTOSCALE=0 (env, or env/global.env) restores the pre-2026-09-14
 # answer byte-for-byte: flag number, else the conf, else 3, and POOL_CAP_MAX is
 # not consulted at all.
+#
+# WRITE MODE (BH-5750). bin/pool-cap.sh --set <project> <n> [--apply]
+# re-numbers an EXISTING flags/fly-pool-<project> to <n>. Without --apply it
+# prints `PLAN cap <p> <old>-><n>` and writes nothing; with it, it writes the
+# number (tmp + mv) and prints `SET cap <p> <old>-><n>`. <old> is what the
+# print path answers before the write. The file's presence is the pool's enable
+# switch, so a cap set never creates it: no file is rc 2 `not on the pool`.
+# <n> is a positive integer with no leading zero, refused otherwise (D11:
+# never clamped). Exit 0 done/planned, 1 write failed, 2 refused or usage. The
+# Mission Control fly_pool_cap command runs it from bin/box-ops.sh on the hub.
 set -uo pipefail
-P="${1:?project}"
 HARNESS="${HARNESS:-/root/harness}"
+if [ "${1:-}" = --set ]; then
+  setref() { echo "pool-cap: $*" >&2; exit 2; }
+  [ $# -eq 3 ] || [ $# -eq 4 ] || setref "usage: pool-cap.sh --set <project> <n> [--apply]"
+  SP="$2"; SN="$3"; SA="${4:-}"
+  [ -z "$SA" ] || [ "$SA" = --apply ] || setref "usage: pool-cap.sh --set <project> <n> [--apply]"
+  [[ "$SP" =~ ^[A-Za-z0-9._-]{1,64}$ ]] && [[ "$SP" != *..* ]] || setref "project '$SP' must match [A-Za-z0-9._-]{1,64}"
+  [[ "$SN" =~ ^[1-9][0-9]*$ ]] || setref "cap '$SN' is not a positive integer"
+  SF="$HARNESS/flags/fly-pool-$SP"
+  # The file's presence is the enable switch, and the cap is written into it,
+  # so the check is the one file-only reader (bin/lib/flag-on.sh, BH-5635),
+  # never a raw test and never the row.
+  . "$HARNESS/bin/lib/flag-on.sh" 2>/dev/null || . "$(dirname "${BASH_SOURCE[0]}")/lib/flag-on.sh" 2>/dev/null \
+    || flag_file_on() { [ -f "$HARNESS/flags/$1-$2" ]; }
+  flag_file_on fly-pool "$SP" || setref "$SP is not on the pool (no flags/fly-pool-$SP); nothing written"
+  old=$(bash "${BASH_SOURCE[0]}" "$SP" 2>/dev/null)
+  if [ "$SA" != --apply ]; then printf 'PLAN cap %s %s->%s\n' "$SP" "${old:-?}" "$SN"; exit 0; fi
+  printf '%s\n' "$SN" > "$SF.tmp.$$" && mv "$SF.tmp.$$" "$SF" \
+    || { rm -f "$SF.tmp.$$"; echo "pool-cap: cannot write $SF" >&2; exit 1; }
+  printf 'SET cap %s %s->%s\n' "$SP" "${old:-?}" "$SN"; exit 0
+fi
+P="${1:?project}"
 . "${HARNESS:-/root/harness}/bin/lib/env-path.sh" 2>/dev/null || . "$(dirname "${BASH_SOURCE[0]}")/lib/env-path.sh" 2>/dev/null || harness_env_dir() { printf '%s\n' "${1:-${HARNESS:-/root/harness}}/env"; }; HENV=$(harness_env_dir "$HARNESS")
 
 # Both knobs live in env/global.env and every caller reaches this script from

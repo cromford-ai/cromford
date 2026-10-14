@@ -19,6 +19,9 @@
 # Run from anywhere: tests/gh-app-builders-followups.bh-1602-test.sh (exit 0 = all pass)
 . "$(dirname "$0")/lib/scratch.sh" || exit 1
 . "$(dirname "$0")/lib/wait-for.sh" || exit 1  # BH-6049: clear_boundary around the hour stamp
+# TEST-CHANGE BH-6052: the day stamp below is read by the code and again here; never straddle 00:00Z.
+. "$(dirname "$0")/lib/day-boundary.sh" || exit 1
+clear_boundary 86400 41 || exit 1
 DIR=$(cd "$(dirname "$0")/.." && pwd)
 PASS=0; FAIL=0
 ok()  { PASS=$((PASS+1)); }

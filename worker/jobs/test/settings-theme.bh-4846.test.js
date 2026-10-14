@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import worker from '../src/index.js';
+import { jobsSchemaSql } from './lib/jobs-schema.js';
 
 // BH-4846: custom console themes are settings rows ui.theme.custom.<slug>
 // holding a theme document (~2.3 KB of JSON). The worker gives that prefix the
@@ -11,7 +12,7 @@ import worker from '../src/index.js';
 // schema.sql applied to an in-memory sqlite (the cost-caps.bh-2564 harness).
 
 const SECRET = 'test-secret';
-const SCHEMA = readFileSync(fileURLToPath(new URL('../schema.sql', import.meta.url)), 'utf8');
+const SCHEMA = jobsSchemaSql();
 
 let DatabaseSync = null;
 try { ({ DatabaseSync } = await import('node:sqlite')); } catch { DatabaseSync = null; }

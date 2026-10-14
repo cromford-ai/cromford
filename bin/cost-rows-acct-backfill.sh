@@ -59,7 +59,7 @@ SQL="" N=0
 for f in "$DIR"/*.env; do
   [ -f "$f" ] || continue
   name=$(basename "$f" .env)
-  if ! printf '%s' "$name" | grep -qE '^[a-z0-9][a-z0-9._-]{0,39}$' || [ "$name" = default ]; then
+  if ! grep -qE '^[a-z0-9][a-z0-9._-]{0,39}$' <<<"$name" || [ "$name" = default ]; then
     echo "skip $f: not an account name" >&2; continue
   fi
   an=$(_val "$f" ACCOUNT_NAME)

@@ -2,12 +2,13 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
+import { jobsSchemaSql } from './lib/jobs-schema.js';
 
 // BH-2531: product_proposals is the row the product lane's proposal ledger
 // outlives its box in. This proves schema.sql creates it idempotently, with the
 // ticket's columns, a (project, proposal_id) primary key and no other index.
 
-const SCHEMA = readFileSync(fileURLToPath(new URL('../schema.sql', import.meta.url)), 'utf8');
+const SCHEMA = jobsSchemaSql();
 
 async function openDb(t) {
   let DatabaseSync;

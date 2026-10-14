@@ -233,7 +233,7 @@ cli post "$IN" 7 "$HEAD" MERGE --source lead --note "lead-review:9" >/dev/null; 
   || bad "P1 the row is recorded with the authority token: $(cat "$W/posted" 2>/dev/null)"
 [ "$(statuses)" = 0 ] && ok || bad "P1 no status POST on a protected PR: $(ghlog | grep statuses)"
 grep -q '\.mergify\.yml' "$T/cli.err" && grep -q -- '--source human' "$T/cli.err" && ok || bad "P1 stderr names the path and --source human: $(cat "$T/cli.err")"
-grep -q 'x-lead-verdict-client: 3' "$W/hdr" 2>/dev/null && ok || bad "P5 the lead post sends x-lead-verdict-client: 3"
+grep -q 'x-lead-verdict-client: 4' "$W/hdr" 2>/dev/null && ok || bad "P5 the lead post sends x-lead-verdict-client: 4"
 reset; files README.md .mergify.yml
 cli post "$IN" 7 "$HEAD" MERGE --source human >/dev/null; RC=$?
 L=$(ghlog | grep -- "-X POST repos/$IN/statuses/$HEAD")

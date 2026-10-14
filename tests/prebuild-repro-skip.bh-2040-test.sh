@@ -190,7 +190,7 @@ for body in 'The rule is that a principal writes `[no-repro]` on its own line.' 
             '> [no-repro]' '[no-reproduce]' '[norepro]' 'cause-proven — rows empty' \
             'see [no-repro] above' '[no-repro: never closed'; do
   i=$((i+1)); fx "a8-$i"; appticket u_client "x" "$(appc c8 "$T1" true the operator "$body")"
-  run app APP-7; is_run "A8.$i ($(printf '%s' "$body" | head -1))"
+  run app APP-7; is_run "A8.$i ($(head -1 <<<"$body"))"
 done
 
 # A9 — a later client comment does not supersede the principal's marker.
@@ -274,7 +274,7 @@ out=$(L pr_fetch_thread nowhere 7 NW-7); rc=$?
 # ═══════════════════════════════════════════════════════════════════════════
 fx r; ghissue 1 NONE "steps"; C0=$(ghc 41 client1 NONE User "$T0" 'totals are off')
 ghcomments 1 "$C0"; K0=$(L pr_ledger_key ghp BH-7 "$(L pr_fetch_thread ghp 7 BH-7)")
-printf '%s' "$K0" | grep -qE '^ghp/BH-7/[0-9a-f]{64}$' && ok || bad "R: base key '$K0'"
+grep -qE '^ghp/BH-7/[0-9a-f]{64}$' <<<"$K0" && ok || bad "R: base key '$K0'"
 key_with() { ghissue 2 NONE "steps"; ghcomments 1 "$C0" "$1"; L pr_ledger_key ghp BH-7 "$(L pr_fetch_thread ghp 7 BH-7)"; }
 [ "$(key_with "$(ghc 42 'cromford[bot]' NONE Bot "$T1" 'We could not see it. <!-- harness:repro-stop BH-7 -->')")" = "$K0" ] \
   && ok || bad "R1: the bot's stop comment moved the key"
@@ -289,7 +289,7 @@ key_with() { ghissue 2 NONE "steps"; ghcomments 1 "$C0" "$1"; L pr_ledger_key gh
 # internal stop comment does not; a client quoting the marker does.
 fx r4; A0=$(appc c1 "$T0" false 'Client Person' 'totals are off')
 appticket u_client "steps" "$A0"; KA=$(L pr_ledger_key app APP-7 "$(L pr_fetch_thread app 7 APP-7)")
-printf '%s' "$KA" | grep -qE '^app/APP-7/[0-9a-f]{64}$' && ok || bad "R4: base key '$KA'"
+grep -qE '^app/APP-7/[0-9a-f]{64}$' <<<"$KA" && ok || bad "R4: base key '$KA'"
 akey_with() { appticket u_client "steps" "$A0" "$1"; L pr_ledger_key app APP-7 "$(L pr_fetch_thread app 7 APP-7)"; }
 [ "$(akey_with "$(appc c2 "$T1" true the operator 'We could not see it. <!-- harness:repro-stop APP-7 -->')")" = "$KA" ] \
   && ok || bad "R4: the internal stop comment moved the key"

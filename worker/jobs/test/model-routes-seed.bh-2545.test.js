@@ -3,13 +3,14 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { DatabaseSync } from 'node:sqlite';
+import { jobsSchemaSql } from './lib/jobs-schema.js';
 
 // BH-2545 — a docs/lock/tests-only diff under the line cap is reviewed by the
 // review.trivial role when REVIEW_TRIVIAL_MODE=route and the class is in
 // REVIEW_TRIVIAL_ROUTE_CLASSES (bin/lib/review-saving.sh
 // review_trivial_pick). The model is this seed row, never a literal in the lane.
 // Driven against THE SQL THAT SHIPS.
-const SCHEMA = readFileSync(fileURLToPath(new URL('../schema.sql', import.meta.url)), 'utf8');
+const SCHEMA = jobsSchemaSql();
 const openDb = () => { const db = new DatabaseSync(':memory:'); db.exec(SCHEMA); return db; };
 const ladder = (db, role) => db.prepare(
   'SELECT position, model, runner, project, scope, updated_by FROM model_routes WHERE role=? ORDER BY position').all(role);

@@ -78,13 +78,13 @@ case "\$*" in
   *"api -i -X GET repos/"*"/pulls/"*)
     printf 'HTTP/1.1 200 OK\r\nServer: x\r\n\r\n'
     if [ -s "$T/gh-merges.txt" ]; then ST=closed; MA='"2026-09-18T00:00:00Z"'; else ST=open; MA=null; fi
-    BR=ticket/aio-41
-    case "\$*" in *"/pulls/7"*) BR=ticket/aio-7 ;; *"/pulls/8"*) BR=ticket/aio-8 ;; esac
+    BR=ticket/TK-41
+    case "\$*" in *"/pulls/7"*) BR=ticket/TK-7 ;; *"/pulls/8"*) BR=ticket/TK-8 ;; esac
     printf '{"state":"%s","merged_at":%s,"head":{"sha":"$H1","ref":"%s"},"base":{"ref":"main"},"labels":[],"mergeable":true,"mergeable_state":"clean","user":{"login":"app/cromford","type":"Bot"},"merge_commit_sha":"cccccccc3333","body":"harness PR body"}\n' "\$ST" "\$MA" "\$BR"
     exit 0 ;;
   *"--json headRefOid"*) echo "$H1" ;;
-  *"--json state,mergeable,headRefName"*) echo "OPEN MERGEABLE ticket/aio-41" ;;
-  *"--json state,headRefName"*) echo "OPEN ticket/aio-41" ;;
+  *"--json state,mergeable,headRefName"*) echo "OPEN MERGEABLE ticket/TK-41" ;;
+  *"--json state,headRefName"*) echo "OPEN ticket/TK-41" ;;
   *"--json state"*) [ -s "$T/gh-merges.txt" ] && echo MERGED || echo OPEN ;;
   *"--json mergeCommit"*) echo cccccccc3333 ;;
   *) echo "" ;;
@@ -388,7 +388,7 @@ run_gate() { # run_gate <pdg-rc> [define=1] ; prints the RESULT line
   printf 'VERDICT: APPROVE\n' > "$T/h/builds/gate/review.md"; printf 'plan\n' > "$T/h/builds/gate/plan.md"
   : > "$T/h/builds/gate/pipeline.log"; : > "$T/gh-merges.txt"
   ( cd "$T" && PATH="$T/fakebin:$PATH" HARNESS="$T/h" BUILD="$T/h/builds/gate" ALERTS="$T/h/logs/ALERTS.log" \
-      PROJECT=demo-os KEY=AIO-41 SLUG="$SLUG" TIER=1 PR_URL="$PRURL" \
+      PROJECT=demo-os KEY=TK-41 SLUG="$SLUG" TIER=1 PR_URL="$PRURL" \
       QA_NOTE="" MIG_NOTE="" REBASE_NOTE="" CLOSES_LINE="Closes #41" HEADBOUND_SHA="$H1" \
       BUILDER_NO_MERGE= PDG_RC="$1" PDG_OUT="$DEP" PDG_DEFINE="${2:-1}" \
       bash -c 'set -uo pipefail

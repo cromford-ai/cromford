@@ -234,8 +234,9 @@ V=$( ( HARNESS="$Q"; . "$Q/bin/lib/lead-delta.sh"; ld_knob LEAD_DELTA_PROTECTED_
 reset "$H1" "$H1" MERGE; tick
 [ "$RC" -eq 0 ] && ok || bad "P1 (enqueue) rc=$RC out=$(cat "$T/out")"
 [ "$(reqs)" = 1 ] && ok || bad "P1 (enqueue) want one request, got $(reqs)"
+# TEST-CHANGE (BH-6391): the delta note is now followed by the lead-prev: group.
 case "$(jq -r .scope_notes <<<"$(reqbody)" 2>/dev/null)" in
-  *"lead-delta:$G lines:5/40 files:1 protected:worker/jobs/schema.sql") ok ;;
+  *"lead-delta:$G lines:5/40 files:1 protected:worker/jobs/schema.sql; lead-prev:$G word:MERGE "*) ok ;;
   *) bad "P1 (enqueue) scope_notes: $(reqbody) log: $(cat "$QLOG")" ;;
 esac
 hasw delta=1 && hasw full=0 && ok || bad "P1 (enqueue) summary: $(summ)"

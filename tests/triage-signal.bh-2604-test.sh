@@ -19,6 +19,9 @@
 # Run from anywhere: tests/triage-signal.bh-2604-test.sh   (exit 0 = all pass)
 set -uo pipefail
 . "$(dirname "$0")/lib/scratch.sh" || exit 1
+# TEST-CHANGE BH-6052: the day stamp below is read by the code and again here; never straddle 00:00Z.
+. "$(dirname "$0")/lib/day-boundary.sh" || exit 1
+clear_boundary 86400 78 || exit 1
 DIR=$(cd "$(dirname "$0")/.." && pwd)
 "$DIR/bin/llm-sites-build.sh" --compose --repo "$DIR" >/dev/null || { echo "FAIL: cannot compose catalog/llm-sites.json"; exit 1; }
 PASS=0; FAIL=0
@@ -53,9 +56,9 @@ dig() {
 withc() { jq -c --argjson c "$1" '.ticket.comments += [$c]' "$A/in.json" > "$A/v.json"; }
 # moves <label> <comment-json> [ids...] / same <label> <comment-json> [ids...]
 moves() { local l="$1" c="$2" b d; shift 2; withc "$c"; b=$(dig "$A/in.json" "$@"); d=$(dig "$A/v.json" "$@")
-  printf '%s' "$d" | grep -qE "$HEX16" && [ "$d" != "$b" ] && ok || bad "$l MUST move the digest ($d vs $b)"; }
+  grep -qE "$HEX16" <<<"$d" && [ "$d" != "$b" ] && ok || bad "$l MUST move the digest ($d vs $b)"; }
 same()  { local l="$1" c="$2" b d; shift 2; withc "$c"; b=$(dig "$A/in.json" "$@"); d=$(dig "$A/v.json" "$@")
-  printf '%s' "$b" | grep -qE "$HEX16" && [ "$d" = "$b" ] && ok || bad "$l must NOT move the digest ($d vs $b)"; }
+  grep -qE "$HEX16" <<<"$b" && [ "$d" = "$b" ] && ok || bad "$l must NOT move the digest ($d vs $b)"; }
 ours() { # ours <body-json-value> — a comment by our self actor
   printf '{"id":"c3","author":{"userId":"u-h","name":"project-1 Team Harness"},"body":%s}' "$1"; }
 
@@ -125,9 +128,9 @@ gsig() { env HARNESS="$G" HARNESS_ENV_DIR="$G/env" FLEET_CONF="$G/fleet.conf" "$
 cp "$A/in.json" "$G/fixture/thread.json"; G0=$(gsig)
 withc "$SB"; cp "$A/v.json" "$G/fixture/thread.json"
 G1=$(gsig TRIAGE_SIGNAL_SELF_IDENTITIES=u-project-9-bot); G2=$(gsig)
-printf '%s' "$G0" | grep -qE "$HEX16" && [ "$G1" = "$G0" ] && ok \
+grep -qE "$HEX16" <<<"$G0" && [ "$G1" = "$G0" ] && ok \
   || bad "(I5) the real gate must hand TRIAGE_SIGNAL_SELF_IDENTITIES to the digest (with it: $G1, base $G0)"
-printf '%s' "$G2" | grep -qE "$HEX16" && [ "$G2" != "$G0" ] && ok \
+grep -qE "$HEX16" <<<"$G2" && [ "$G2" != "$G0" ] && ok \
   || bad "(I5) with no identities the same comment must move the digest ($G2 vs $G0)"
 
 # ═══ E box — the REAL bin/run-triage.sh, gate stubbed (as tests/…bh-2542) ═══

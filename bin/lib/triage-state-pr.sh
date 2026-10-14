@@ -150,7 +150,7 @@ ts_pr_precheck() {
       if gh_rest GET "repos/$slug/pulls/$n/reviews" -F per_page=100 > "$t/$key.rev" 2>/dev/null </dev/null \
          && jq -e 'type == "array"' "$t/$key.rev" >/dev/null 2>&1; then
         lead=$(vd_standing "$slug" "$n" "$(jq -r '.head.sha // ""' <<<"$row")" 2>/dev/null </dev/null); rc=$?
-        case "$rc" in 0) lead=$(printf '%s\n' "$lead" | head -1 | cut -f1-3) ;; 1) lead=none ;; *) lead="" ;; esac
+        case "$rc" in 0) lead=$(head -1 <<<"$lead" | cut -f1-3) ;; 1) lead=none ;; *) lead="" ;; esac
         if [ -n "$lead" ] && printf '%s\n' "$lead" > "$t/$key.lead"; then
           hash=$(python3 "$ppy" pr-hash --thread "$t/$key.raw" --pr "$t/$key.pr" --reviews "$t/$key.rev" \
                    --lead "$t/$key.lead" 2>/dev/null </dev/null) || hash=-

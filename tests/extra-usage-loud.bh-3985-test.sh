@@ -27,6 +27,9 @@
 # Run from anywhere: tests/extra-usage-loud.bh-3985-test.sh   (exit 0 = all pass)
 set -uo pipefail
 . "$(dirname "$0")/lib/scratch.sh" || exit 1
+# TEST-CHANGE BH-6052: the day stamp below is read by the code and again here; never straddle 00:00Z.
+. "$(dirname "$0")/lib/day-boundary.sh" || exit 1
+clear_boundary 86400 68 || exit 1
 DIR=$(cd "$(dirname "$0")/.." && pwd)
 trap 'scratch_cleanup; [ -n "${SRV_PID:-}" ] && kill "$SRV_PID" 2>/dev/null' EXIT
 mkdir -p "$T/bin/lib/jobs" "$T/env" "$T/logs" "$T/state" "$T/flags" "$T/cfg-mk" "$T/fx" "$T/fakebin"

@@ -270,7 +270,7 @@ grep -q 'moved to in_progress' "$T/b4/pipeline.log" && bad "B4 the master read a
 # The same run with the adapter's check broken: if fc-board still made the call
 # itself, this copy would change nothing.
 mkdir -p "$T/mut"; cp -R "$DIR/bin" "$T/mut/"
-sed -i 's/\[ "\$TRK_CURL_RC" = 0 \] && printf .%s. "\$resp" | grep -q "\\"\$s\\"" || return 1/true/' "$T/mut/bin/lib/tracker/board.sh"
+sed -i 's/\[ "\$TRK_CURL_RC" = 0 \] && grep -q "\\"\$s\\"" <<<"\$resp" || return 1/true/' "$T/mut/bin/lib/tracker/board.sh"
 cmp -s "$T/mut/bin/lib/tracker/board.sh" "$DIR/bin/lib/tracker/board.sh" && bad "B4 the mutation did not apply" || ok
 reset_stub; touch "$T/s/move-noecho"; scratch_rm "$T/b4m"; mkdir -p "$T/b4m"
 run_env "$T/mut/bin/run-rollout.sh" ledger-os cmParent01 LG-9 "$T/b4m" >/dev/null 2>&1

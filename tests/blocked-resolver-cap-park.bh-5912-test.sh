@@ -25,7 +25,12 @@ bad() { FAIL=$((FAIL+1)); echo "FAIL: $1"; }
 BR="$DIR/bin/blocked-resolver.sh"
 H="$T/h"; mkdir -p "$H/state/build-queue" "$H/logs" "$H/bin"
 
-fn() { awk -v f="$1" '$0 ~ "^"f"\\(\\) \\{" {p=1} p{print} p&&/^}$/{exit}' "$BR"; }
+# BH-5241: the corpus is the driver plus bin/lib/br/*.sh (tests/lib/br-corpus.sh),
+# because the ladder functions moved out of the driver into bin/lib/br/ladder.sh.
+# shellcheck source=tests/lib/br-corpus.sh
+. "$DIR/tests/lib/br-corpus.sh" || exit 1
+br_corpus "$DIR" "$T/br-corpus.sh" || exit 1
+fn() { awk -v f="$1" '$0 ~ "^"f"\\(\\) \\{" {p=1} p{print} p&&/^}$/{exit}' "$T/br-corpus.sh"; }
 
 { fn br_rkey; fn br_from_queue; } > "$T/q.sh"
 grep -q '^br_from_queue() {' "$T/q.sh" && ok || bad "setup: could not extract br_from_queue"
@@ -44,12 +49,12 @@ OUT=$(H="$H" ONLY="" ROWS="$T/rows.tsv" bash -c '
 KEYS=$(cut -f7 <<<"$OUT")
 
 # R1 — the exact reason the pre-BH-4859 cap arm wrote.
-printf '%s\n' "$OUT" | grep -q "pool-deferred-max	-	-	BH-7	" && ok \
+grep -q "pool-deferred-max	-	-	BH-7	" <<<"$OUT" && ok \
   || bad "R1: a legacy 'spawn cap … deferred to a human' row is not offered: $OUT"
-printf '%s\n' "$OUT" | grep -q "^queue	tproj	tproj-BH-7	pool-deferred-max" && ok \
+grep -q "^queue	tproj	tproj-BH-7	pool-deferred-max" <<<"$OUT" && ok \
   || bad "R1: the row is not a queue-source pool-deferred-max row keyed tproj-BH-7: $OUT"
 # R2 — the default-cap wording.
-printf '%s\n' "$OUT" | grep -q "pool-deferred-max	-	-	BH-9	" && ok \
+grep -q "pool-deferred-max	-	-	BH-9	" <<<"$OUT" && ok \
   || bad "R2: the cap-of-2 wording is not offered: $OUT"
 # R3 — unrelated FAILED rows.
 grep -qx 'BH-8' <<<"$KEYS" && bad "R3: an open-PR row was offered for a rebuild" || ok
@@ -57,9 +62,9 @@ grep -qx 'BH-10' <<<"$KEYS" && bad "R3: a rebase stand-down row was offered for 
 # R4 — a lane failure is never a rebuild, whatever else the reason says.
 grep -qx 'BH-11' <<<"$KEYS" && bad "R4: a RUNNER_EXHAUSTED row was offered because it also names the cap" || ok
 # R5 — the existing triggers.
-printf '%s\n' "$OUT" | grep -q "pool-deferred-max	-	-	BH-12	" && ok \
+grep -q "pool-deferred-max	-	-	BH-12	" <<<"$OUT" && ok \
   || bad "R5: an ordinary deferred-max row is no longer offered: $OUT"
-printf '%s\n' "$OUT" | grep -q "pool-died-twice	-	-	BH-13	" && ok \
+grep -q "pool-died-twice	-	-	BH-13	" <<<"$OUT" && ok \
   || bad "R5: a died-twice row is no longer offered: $OUT"
 # Exactly one row per offered key.
 N=$(grep -c . <<<"$OUT")

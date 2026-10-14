@@ -1,0 +1,20 @@
+# fly/lane-run.toml — the Fly app `lane-run` (BH-6126, BH-6047 part 3 of 5).
+#
+# Its machines run bin/lane-run-worker.sh (fly/lane-run-entrypoint.sh) and
+# claim lane_runs rows. This app is NOT the build pool app. It has no [[vm]]
+# block and no services: machines are started and stopped only by
+# bin/lane-fleet.sh on the hub, and their size comes from the settings rows
+# lane_fleet.vm_size and lane_fleet.vm_memory_mb.
+#
+# One-time setup, by an operator, from the repo root:
+#   flyctl apps create lane-run
+#   flyctl secrets set HARNESS_SECRET=... JOBS_URL=... GH_APP_ID=... \
+#     GH_APP_PRIVATE_KEY=... GH_APP_INSTALLATION_<OWNER>=... -a lane-run --stage
+#   flyctl deploy . -c fly/lane-run.toml --build-only --push --image-label latest
+# The deploy pushes registry.fly.io/lane-run:latest, the image the settings row
+# lane_fleet.image names. GH_APP_PRIVATE_KEY is the PEM text; the entrypoint
+# writes it to a mode-600 file at boot. No key is in the image.
+app = "lane-run"
+
+[build]
+  dockerfile = "lane-run.Dockerfile"

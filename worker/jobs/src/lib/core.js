@@ -9,6 +9,10 @@
 // its callers have always imported from it, and nothing in this file knows a
 // route exists.
 import { json } from "./http.js";
+import SCHEMA_SQL from "#schema-sql";
+import { createdTablesFrom } from "./created-tables.js";
+import { activeFleetFlags } from "./harness-flags.js";
+import { rawDb } from "./d1-retry.js";
 
 export const OPEN_STATUS = "running";
 
@@ -565,8 +569,8 @@ export async function contractBreach(env, jobId, phaseName) {
 // THE FILE REMAINS THE FALLBACK, unchanged: bin/jobs-client.sh `flag_active`
 // still reconciles and still answers from the file, so a worker outage leaves a
 // box deciding exactly as it does today. This is an ADDITIONAL gate, never a
-// replacement — and with pause_flags empty, or every row at active=0, it
-// refuses nothing at all.
+// replacement — and with no active pause row in either store (pause_flags, or
+// harness_flags for the ported paused-* names, BH-4154) it refuses nothing.
 //
 // Broadest first, because when the whole fleet is paused that is the headline a
 // human needs, not the lane rule underneath it.
@@ -581,12 +585,10 @@ export function pauseNames(job) {
 
 export async function checkPause(env, job) {
   const names = pauseNames(job);
-  const marks = names.map((_, i) => `?${i + 1}`).join(",");
-  const rows = await env.DB.prepare(
-    `SELECT name, active, actor, reason, updated_at FROM pause_flags
-      WHERE active=1 AND name IN (${marks})`
-  ).bind(...names).all();
-  const active = rows.results || [];
+  // BH-4154: each name from the store its name picks (activeFleetFlags):
+  // paused-* from its fleet harness_flags row, or from pause_flags while no
+  // such row exists. A D1 error throws to the claim route, which claims nothing.
+  const active = await activeFleetFlags(env, names);
   if (active.length === 0) return null;
   // Report in the order the names were built, not the order SQLite returned.
   const hit = names.map((n) => active.find((r) => r.name === n)).find(Boolean);
@@ -594,12 +596,13 @@ export async function checkPause(env, job) {
   return {
     scope: "pause",
     flag: hit.name,
-    // Named as the ROW, with its time (BH-2643): a builder's claim reads only
-    // this table, and "flags/<name>" sent an investigation after box files.
-    reason: `paused: pause_flags row ${hit.name} is active (updated ${hit.updated_at})`
+    // Named as the ROW, with its table and time (BH-2643): "flags/<name>"
+    // sent an investigation after box files.
+    reason: `paused: ${hit.table} row ${hit.name} is active (updated ${hit.updated_at})`
       + (hit.reason ? ` — ${hit.reason}` : "")
       + (hit.actor ? ` (set by ${hit.actor})` : ""),
-    pause: hit,
+    // The keys this object has always carried, from either store.
+    pause: { name: hit.name, active: 1, actor: hit.actor, reason: hit.reason, updated_at: hit.updated_at },
   };
 }
 
@@ -1132,8 +1135,9 @@ export const ADDED_INDEXES = {
 export const addedColumnsReady = new WeakMap();
 export async function ensureColumns(env, table) {
   const db = env.DB;
-  let per = addedColumnsReady.get(db);
-  if (!per) { per = new Map(); addedColumnsReady.set(db, per); }
+  // Keyed on the raw binding, not the BH-6690 retry proxy index.js puts on env.DB.
+  let per = addedColumnsReady.get(rawDb(db));
+  if (!per) { per = new Map(); addedColumnsReady.set(rawDb(db), per); }
   if (per.has(table)) return per.get(table);
   const p = (async () => {
     const info = await db.prepare(`PRAGMA table_info(${table})`).all();
@@ -1177,352 +1181,41 @@ export async function ensureColumns(env, table) {
 // when a statement fails, so code cannot run ahead of its schema. This map is
 // still the belt to that deploy-time braces: it makes a table true on the live
 // database on the FIRST request after a deploy, without waiting for the next
-// update-runners run. The map still carries only `preplans`: hub_lease and
-// settings are covered by the deploy-time apply plus d1Guarded (lib/http.js),
-// which answers 503 naming the table rather than throwing, and putting a CREATE
-// in front of the lease routes would send statements the test fixture does not
-// model into every W-test. Two mechanisms, one rule: a route never runs ahead
+// update-runners run. The map has an entry for every schema table, but a
+// table only self-creates where a route calls ensureTable for it. No route does
+// for hub_lease or settings: the deploy-time apply plus d1Guarded (lib/http.js)
+// cover them, which answers 503 naming the table rather than throwing, and
+// putting a CREATE in front of the lease routes would send statements the test
+// fixture does not model into every W-test. Two mechanisms, one rule: a route never runs ahead
 // of its table in silence.
 //
 // So a table whose routes must work the minute the worker deploys creates itself
 // here, the way ensureColumns ALTERs a missing column: memoised per env.DB
 // handle, idempotent (IF NOT EXISTS), additive, never a DROP, and run BEFORE the
-// first statement that needs it. schema.sql still carries the same CREATE — it is
-// the readable definition and what a fresh database is built from; this is the
-// mechanism that makes it true on the live one without a human.
+// first statement that needs it.
 //
-// Table and statement text may only ever come from this literal map, never from
-// a request.
+// SINCE BH-4987 the statements derive from worker/jobs/schema.d/, not from a
+// hand copy. `#schema-sql` (package.json "imports") is the composed schema text:
+// the bundled schema.sql in the deployed worker, jobsSchemaSql() under Node.
+// createdTablesFrom (lib/created-tables.js) maps it to every CREATE TABLE and
+// the CREATE INDEXes ON that table. So a new table is one schema.d fragment and
+// nothing else. Do NOT add a key to CREATED_TABLE_OVERRIDES for a new table:
+// test/created-tables.bh-4987.test.js refuses it.
+//
+// The overrides replace the derived entry for their key. Most are hand copies
+// that equal the derived form (the same test proves it) and that a later slice
+// deletes. Five differ on purpose: merge_trains creates train_group up front,
+// verdicts and setting_sigs add CREATE TRIGGERs (schema.d may not hold one,
+// BH-1000), pr_state_events adds the pr_state VIEW and harness_flags adds its
+// pause_flags backfill INSERT.
+//
+// Table and statement text may only ever come from the schema text and this
+// literal map, never from a request.
 // The nine dequeue-watch class words (BH-3727), as SQL, for the two CHECKs on
 // dequeue_events and the one on dequeue_actions below.
 const DQW_CLASS_SQL = "'rule-break','scanner-fp','semantic-test','textual-conflict','bystander','stale-status','flake','main-red','unclassified'";
-export const CREATED_TABLES = {
-  // BH-1043 — both tables self-create for the same reason preplans does: the
-  // deploy is `wrangler deploy` and nothing else, so a table that waits for a
-  // hand-run `d1 execute` ships DEAD and every route against it answers 500.
-  account_leases: [
-    `CREATE TABLE IF NOT EXISTS account_leases (
-       account TEXT NOT NULL,
-       machine_id TEXT NOT NULL,
-       box TEXT,
-       project TEXT,
-       ticket_key TEXT,
-       expires_at TEXT NOT NULL,
-       created_at TEXT NOT NULL,
-       updated_at TEXT NOT NULL,
-       PRIMARY KEY (account, machine_id)
-     )`,
-    "CREATE INDEX IF NOT EXISTS idx_account_leases_live ON account_leases(account, expires_at)",
-  ],
-
-  // BH-2516.0 (BH-2644) — self-creates for the BH-1043 reason; the DDL is
-  // schema.sql's and test/routes/token-health.bh-2516.test.js compares them.
-  token_health: [
-    `CREATE TABLE IF NOT EXISTS token_health (
-       kind TEXT NOT NULL,
-       subject TEXT NOT NULL,
-       box TEXT,
-       expires_at TEXT,
-       last_ok_at TEXT,
-       last_attempt_at TEXT,
-       last_ok INTEGER,
-       fail_count INTEGER NOT NULL DEFAULT 0,
-       last_error TEXT,
-       updated_at TEXT NOT NULL,
-       PRIMARY KEY (kind, subject)
-     )`,
-  ],
-
-  // BH-1201 (contract chunk BH-1381) — the conductor's held pages. Self-creates
-  // for the BH-1043 reason: the deploy is `wrangler deploy`, so a table waiting
-  // on a hand-run `d1 execute` ships DEAD and every route against it 500s. The
-  // DDL below is schema.sql's, verbatim, and a test compares the two strings.
-  conductor_held_pages: [
-    `CREATE TABLE IF NOT EXISTS conductor_held_pages (
-       repo TEXT NOT NULL,
-       number INTEGER NOT NULL,
-       state TEXT NOT NULL,
-       head TEXT NOT NULL,
-       kind TEXT NOT NULL,
-       text TEXT NOT NULL,
-       mark TEXT,
-       mode TEXT NOT NULL,
-       first_held_at TEXT NOT NULL,
-       last_seen_at TEXT NOT NULL,
-       PRIMARY KEY (repo, number, state, head, kind)
-     )`,
-    "CREATE INDEX IF NOT EXISTS idx_conductor_held_first ON conductor_held_pages(first_held_at)",
-  ],
-  // BH-2668 (BH-2530.0) — the fix-round job queue. Self-creates for the
-  // BH-1043 reason: the deploy is `wrangler deploy`, so a table waiting on a
-  // hand-run `d1 execute` ships DEAD. The DDL is schema.sql's, and a test
-  // compares them.
-  fix_round_jobs: [
-    `CREATE TABLE IF NOT EXISTS fix_round_jobs (
-       id INTEGER PRIMARY KEY AUTOINCREMENT,
-       project TEXT NOT NULL,
-       cap_key TEXT NOT NULL,
-       box TEXT NOT NULL,
-       args TEXT NOT NULL,
-       record_in TEXT,
-       hotfix INTEGER NOT NULL DEFAULT 0,
-       status TEXT NOT NULL,
-       attempt INTEGER NOT NULL DEFAULT 0,
-       claimed_by TEXT,
-       claimed_at TEXT,
-       result TEXT,
-       record_out TEXT,
-       enqueued_at TEXT NOT NULL,
-       finished_at TEXT,
-       adopted_at TEXT,
-       updated_at TEXT NOT NULL
-     )`,
-    "CREATE UNIQUE INDEX IF NOT EXISTS fix_round_jobs_open ON fix_round_jobs(project, cap_key) WHERE status IN ('queued','claimed','done')",
-    "CREATE INDEX IF NOT EXISTS fix_round_jobs_box ON fix_round_jobs(box, status)",
-  ],
-  // BH-5839 — the ticket page's steer notes (routes/steer.js). Self-creates for
-  // the BH-1043 reason; the DDL is schema.sql's, and test/steer.bh-5839.test.js
-  // compares them.
-  steer_notes: [
-    `CREATE TABLE IF NOT EXISTS steer_notes (
-       id INTEGER PRIMARY KEY AUTOINCREMENT,
-       project TEXT NOT NULL,
-       ticket TEXT NOT NULL,
-       job_id TEXT,
-       mode TEXT NOT NULL CHECK (mode IN ('now','ticket','hold')),
-       text TEXT NOT NULL,
-       actor TEXT NOT NULL,
-       status TEXT NOT NULL CHECK (status IN ('pending','taken','read','delivering','delivered','failed')),
-       attempts INTEGER NOT NULL DEFAULT 0,
-       detail TEXT,
-       build_read_at TEXT,
-       delivered_at TEXT,
-       created_at TEXT NOT NULL,
-       updated_at TEXT NOT NULL
-     )`,
-    "CREATE INDEX IF NOT EXISTS idx_steer_notes_ticket ON steer_notes(project, ticket, id)",
-    "CREATE INDEX IF NOT EXISTS idx_steer_notes_job ON steer_notes(job_id, mode, status)",
-    "CREATE INDEX IF NOT EXISTS idx_steer_notes_outbox ON steer_notes(status, mode, id)",
-  ],
-  // BH-2353 (BH-2319.1) — the fleet cooldowns. Self-creates for the BH-1043
-  // reason: the deploy is `wrangler deploy`, so a table waiting on a hand-run
-  // `d1 execute` ships DEAD. The DDL is schema.sql's, and a test compares them.
-  fleet_cooldowns: [
-    `CREATE TABLE IF NOT EXISTS fleet_cooldowns (
-       kind TEXT NOT NULL,
-       vendor TEXT NOT NULL,
-       subject TEXT NOT NULL,
-       until_at TEXT NOT NULL,
-       since_at TEXT,
-       reason TEXT,
-       box TEXT,
-       set_at TEXT NOT NULL,
-       PRIMARY KEY (kind, vendor, subject)
-     )`,
-    "CREATE INDEX IF NOT EXISTS idx_fleet_cooldowns_kind_until ON fleet_cooldowns(kind, until_at)",
-  ],
-  // BH-2523 — the Fly image pointer per project. Self-creates for the same
-  // BH-1043 reason as fleet_cooldowns; the DDL is schema.sql's, and
-  // test/fly-images.bh-2523.test.js compares the columns.
-  fly_images: [
-    `CREATE TABLE IF NOT EXISTS fly_images (
-       project TEXT NOT NULL,
-       digest TEXT NOT NULL,
-       app TEXT NOT NULL,
-       bake TEXT,
-       cli TEXT,
-       baked_at INTEGER,
-       active INTEGER NOT NULL DEFAULT 0,
-       box TEXT,
-       set_at TEXT NOT NULL,
-       state TEXT,
-       PRIMARY KEY (project, digest)
-     )`,
-    "CREATE INDEX IF NOT EXISTS idx_fly_images_active ON fly_images(project, active)",
-  ],
-  gh_budget: [
-    `CREATE TABLE IF NOT EXISTS gh_budget (
-       fingerprint TEXT PRIMARY KEY,
-       core_remaining INTEGER,
-       core_limit INTEGER,
-       core_reset INTEGER,
-       graphql_remaining INTEGER,
-       graphql_limit INTEGER,
-       graphql_reset INTEGER,
-       fetched_at INTEGER NOT NULL,
-       box TEXT,
-       updated_at TEXT NOT NULL
-     )`,
-  ],
-  // BH-1574 — the fleet GitHub-call ledger. Self-creates for the BH-1043
-  // reason: the first box to push after the deploy must land its rows, not a
-  // 500. The DDL is schema.sql's, verbatim; a test compares the two shapes.
-  gh_ledger: [
-    `CREATE TABLE IF NOT EXISTS gh_ledger (
-       box TEXT NOT NULL,
-       hour TEXT NOT NULL,
-       lane TEXT NOT NULL,
-       project TEXT NOT NULL,
-       meter TEXT NOT NULL,
-       resource TEXT NOT NULL,
-       method TEXT NOT NULL,
-       path_class TEXT NOT NULL,
-       status TEXT NOT NULL,
-       source TEXT NOT NULL,
-       calls INTEGER NOT NULL,
-       counted INTEGER NOT NULL,
-       remaining_min INTEGER,
-       used_max INTEGER,
-       limit_max INTEGER,
-       reset_max INTEGER,
-       updated_at TEXT NOT NULL,
-       PRIMARY KEY (box, hour, lane, project, meter, resource, method, path_class, status, source)
-     )`,
-    "CREATE INDEX IF NOT EXISTS idx_gh_ledger_hour ON gh_ledger(hour)",
-  ],
-  // BH-1165 — same reason as the three below: `bin/harness-sync.sh` runs
-  // `wrangler deploy` and nothing else, so a table that waits for a hand-run
-  // `d1 execute` ships dead and every lane's liveness post answers 500.
-  lane_ticks: [
-    `CREATE TABLE IF NOT EXISTS lane_ticks (
-       lane TEXT NOT NULL,
-       project TEXT NOT NULL,
-       box TEXT NOT NULL,
-       last_tick_at TEXT NOT NULL,
-       last_outcome TEXT NOT NULL,
-       why TEXT,
-       updated_at TEXT NOT NULL,
-       PRIMARY KEY (lane, project, box)
-     )`,
-    "CREATE INDEX IF NOT EXISTS idx_lane_ticks_lane ON lane_ticks(lane, last_tick_at)",
-  ],
-  lane_flag_sightings: [
-    `CREATE TABLE IF NOT EXISTS lane_flag_sightings (
-       name TEXT NOT NULL,
-       box TEXT NOT NULL,
-       lane TEXT,
-       project TEXT,
-       active INTEGER NOT NULL,
-       seen_at TEXT NOT NULL,
-       updated_at TEXT NOT NULL,
-       PRIMARY KEY (name, box)
-     )`,
-    "CREATE INDEX IF NOT EXISTS idx_lane_flag_sightings_lane ON lane_flag_sightings(lane, active)",
-  ],
-  preplans: [
-    `CREATE TABLE IF NOT EXISTS preplans (
-       project TEXT NOT NULL,
-       ticket_key TEXT NOT NULL,
-       base_sha TEXT NOT NULL,
-       ticket_fp TEXT,
-       planned_files TEXT,
-       plan_md TEXT NOT NULL,
-       bytes INTEGER,
-       box TEXT,
-       created_at TEXT NOT NULL,
-       updated_at TEXT NOT NULL,
-       PRIMARY KEY (project, ticket_key)
-     )`,
-    "CREATE INDEX IF NOT EXISTS idx_preplans_project ON preplans(project, updated_at)",
-  ],
-  context_packs: [
-    `CREATE TABLE IF NOT EXISTS context_packs (
-       project TEXT NOT NULL,
-       ticket_key TEXT NOT NULL,
-       parent_key TEXT NOT NULL,
-       base_sha TEXT,
-       pack_md TEXT NOT NULL,
-       bytes INTEGER,
-       box TEXT,
-       created_at TEXT NOT NULL,
-       updated_at TEXT NOT NULL,
-       PRIMARY KEY (project, ticket_key)
-     )`,
-  ],
-  machines: [
-    `CREATE TABLE IF NOT EXISTS machines (
-       machine_id TEXT PRIMARY KEY,
-       project TEXT NOT NULL,
-       app TEXT NOT NULL,
-       role TEXT NOT NULL,
-       key TEXT,
-       ticket TEXT,
-       auth_account TEXT,
-       image TEXT,
-       state TEXT NOT NULL,
-       detail TEXT,
-       spawned_at TEXT,
-       last_seen TEXT,
-       ended_at TEXT,
-       actor TEXT,
-       updated_at TEXT NOT NULL
-     )`,
-    "CREATE INDEX IF NOT EXISTS idx_machines_project ON machines(project, state)",
-    "CREATE INDEX IF NOT EXISTS idx_machines_key ON machines(project, key)",
-  ],
-  // BH-1032 — the per-token price table every cost figure is multiplied by.
-  // Day one of that ticket is the hub's 04:30 `update-model-prices.sh` push and
-  // eight boxes pulling it at 05:05; without this entry both answer 500 against
-  // a table `wrangler deploy` never created, and each box spends its daily ALERT
-  // on "check HARNESS_SECRET/JOBS_URL" — a false cause for a missing table.
-  model_prices: [
-    `CREATE TABLE IF NOT EXISTS model_prices (
-       model TEXT PRIMARY KEY,
-       slug TEXT,
-       prompt REAL,
-       completion REAL,
-       cache_read REAL,
-       cache_write REAL,
-       cliff_tokens INTEGER,
-       source TEXT,
-       updated_at TEXT NOT NULL,
-       price_source TEXT,
-       vendor_prompt REAL,
-       vendor_completion REAL,
-       vendor_cache_read REAL,
-       vendor_cache_write REAL,
-       vendor_cliff_tokens INTEGER,
-       version INTEGER NOT NULL DEFAULT 1,
-       effective_at TEXT
-     )`,
-  ],
-  // BH-5652 — Fly list prices, the model slug map and the price history as
-  // rows. Same BH-658 reason as model_prices above: their routes create them,
-  // because the deploy is `wrangler deploy`. Keep in step with schema.sql.
-  price_fly: [
-    `CREATE TABLE IF NOT EXISTS price_fly (
-       key TEXT PRIMARY KEY,
-       value REAL NOT NULL,
-       version INTEGER NOT NULL DEFAULT 1,
-       effective_at TEXT NOT NULL,
-       source TEXT,
-       updated_at TEXT NOT NULL
-     )`,
-  ],
-  model_slugs: [
-    `CREATE TABLE IF NOT EXISTS model_slugs (
-       model TEXT PRIMARY KEY,
-       slug TEXT NOT NULL,
-       version INTEGER NOT NULL DEFAULT 1,
-       effective_at TEXT NOT NULL,
-       source TEXT,
-       updated_at TEXT NOT NULL
-     )`,
-  ],
-  price_audit: [
-    `CREATE TABLE IF NOT EXISTS price_audit (
-       id INTEGER PRIMARY KEY AUTOINCREMENT,
-       kind TEXT NOT NULL,
-       key TEXT NOT NULL,
-       version INTEGER NOT NULL,
-       old_json TEXT,
-       new_json TEXT NOT NULL,
-       source TEXT,
-       effective_at TEXT NOT NULL,
-       UNIQUE(kind, key, version)
-     )`,
-  ],
-  // BH-1269 — the merge-train registry. Same reason as every table above it:
+export const CREATED_TABLE_OVERRIDES = {
+  // BH-1269 — the merge-train registry. Same reason as every self-created table:
   // the deploy is `wrangler deploy`, so a table that waits for a hand-run
   // `d1 execute` ships dead and bin/batch-resolve.sh's row write fails open
   // silently, which is indistinguishable from a lane that ran no trains.
@@ -1545,131 +1238,6 @@ export const CREATED_TABLES = {
        PRIMARY KEY (project, branch)
      )`,
     "CREATE INDEX IF NOT EXISTS idx_merge_trains_outcome ON merge_trains(outcome, project, created_at)",
-  ],
-  alerts: [
-    `CREATE TABLE IF NOT EXISTS alerts (
-       id TEXT PRIMARY KEY,
-       family TEXT,
-       box TEXT,
-       project TEXT,
-       line TEXT,
-       severity TEXT,
-       first_seen TEXT NOT NULL,
-       last_seen TEXT NOT NULL,
-       count INTEGER NOT NULL DEFAULT 1,
-       state TEXT NOT NULL DEFAULT 'new',
-       claimed_by TEXT,
-       claimed_at TEXT,
-       notified_at TEXT
-     )`,
-    "CREATE INDEX IF NOT EXISTS idx_alerts_state ON alerts(state, claimed_at, first_seen)",
-    "CREATE INDEX IF NOT EXISTS idx_alerts_family ON alerts(family, last_seen)",
-  ],
-  // BH-2368 — the console's alert action log (BH-2324), append-only. Same
-  // shape as schema.sql, so the routes that write it self-create it on a D1
-  // the schema was never applied to.
-  alert_actions: [
-    `CREATE TABLE IF NOT EXISTS alert_actions (
-       id INTEGER PRIMARY KEY AUTOINCREMENT,
-       alert_id TEXT NOT NULL,
-       action TEXT NOT NULL,
-       actor TEXT NOT NULL,
-       note TEXT,
-       before_state TEXT,
-       after_state TEXT,
-       until TEXT,
-       outcome TEXT NOT NULL,
-       at TEXT NOT NULL
-     )`,
-    "CREATE INDEX IF NOT EXISTS idx_alert_actions_alert ON alert_actions(alert_id, at)",
-  ],
-  // BH-1033 — the age-out audit. Same reason as every entry above it, with one
-  // that is specific to this table: it is the DEDUPE for a decision the fleet
-  // makes once and must never make twice, and the shell side fails OPEN on a
-  // non-2xx (it keeps writing state/closeout-aged-out.tsv and reads the tsv
-  // back), so a table `wrangler deploy` never created would not be loud — it
-  // would be one false-cause "harness-jobs unreachable" ALERT a day while the
-  // rows silently never land. A thrown `no such table` is a 1101, not a status
-  // a caller can read, which is exactly the shape BH-1000 was written for.
-  closeout_aged: [
-    `CREATE TABLE IF NOT EXISTS closeout_aged (
-       build_dir TEXT PRIMARY KEY,
-       project TEXT,
-       result_head TEXT,
-       reason TEXT,
-       recorded_by TEXT,
-       at TEXT NOT NULL
-     )`,
-    "CREATE INDEX IF NOT EXISTS idx_closeout_aged_project ON closeout_aged(project, at)",
-  ],
-  // BH-1805 (BH-1793.0) — the split-watchdog action ledger. The route that reads
-  // it may run before any deploy-time apply, so a missing table is created here, never a thrown 1101.
-  split_watchdog_actions: [
-    `CREATE TABLE IF NOT EXISTS split_watchdog_actions (
-       project TEXT NOT NULL,
-       family TEXT NOT NULL,
-       child TEXT NOT NULL,
-       step TEXT NOT NULL,
-       reason_fp TEXT NOT NULL,
-       reason TEXT,
-       outcome TEXT,
-       repeats INTEGER NOT NULL DEFAULT 1,
-       first_at TEXT NOT NULL,
-       last_at TEXT NOT NULL,
-       actor TEXT,
-       PRIMARY KEY (project, child, step, reason_fp)
-     )`,
-    "CREATE INDEX IF NOT EXISTS idx_split_watchdog_family ON split_watchdog_actions(project, family, last_at)",
-    "CREATE INDEX IF NOT EXISTS idx_split_watchdog_last ON split_watchdog_actions(last_at)",
-  ],
-  // BH-3425 (BH-3422.0) — the model-watch table, same DDL as schema.sql. The
-  // #3422 routes may run before any deploy-time apply, so it is created here.
-  model_watch: [
-    `CREATE TABLE IF NOT EXISTS model_watch (
-       vendor TEXT NOT NULL,
-       model_id TEXT NOT NULL,
-       slug TEXT,
-       source TEXT NOT NULL,
-       source_url TEXT,
-       released_at TEXT,
-       prompt REAL,
-       completion REAL,
-       cache_read REAL,
-       cache_write REAL,
-       context_window INTEGER,
-       status TEXT NOT NULL DEFAULT 'new' CHECK(status IN ('new','suggested','adopted','ignored')),
-       suggestion TEXT,
-       probe TEXT,
-       probe_attempted_at TEXT,
-       announced_at TEXT,
-       first_seen TEXT NOT NULL,
-       updated_at TEXT NOT NULL,
-       actor TEXT,
-       reason TEXT,
-       PRIMARY KEY (vendor, model_id)
-     )`,
-    "CREATE INDEX IF NOT EXISTS idx_model_watch_status ON model_watch(status, first_seen)",
-  ],
-  // K3 — the pre-call guard's counter. On the HOT path of every guarded paid
-  // call: bin/agent-call.sh asks before it spends. A table `wrangler deploy`
-  // never created would answer a thrown 1101, which the client reads as
-  // "counter unreadable" — and for a METERED runner that refuses the call. So
-  // the route creates its own table, like every entry above.
-  call_guard: [
-    `CREATE TABLE IF NOT EXISTS call_guard (
-       call_id TEXT PRIMARY KEY,
-       project TEXT NOT NULL,
-       stage TEXT NOT NULL,
-       fp TEXT NOT NULL,
-       status TEXT NOT NULL,
-       box TEXT,
-       runner TEXT,
-       at TEXT NOT NULL,
-       settled_at TEXT,
-       note TEXT
-     )`,
-    "CREATE INDEX IF NOT EXISTS idx_call_guard_key ON call_guard(project, stage, fp, at)",
-    "CREATE INDEX IF NOT EXISTS idx_call_guard_at ON call_guard(at)",
   ],
   // BH-1024 — the append-only verdict record. Same reason as every entry above,
   // and this one is on the HOT path: `job_artifact_put verdict` is how run-build
@@ -1721,6 +1289,8 @@ export const CREATED_TABLES = {
     "CREATE UNIQUE INDEX IF NOT EXISTS idx_wakes_dedupe ON wakes(repo, kind, key, minute)",
     "CREATE INDEX IF NOT EXISTS idx_wakes_unacked ON wakes(acked_at, id)",
     "CREATE INDEX IF NOT EXISTS idx_wakes_at ON wakes(at)",
+    // BH-6727 (schema.d/202610141900): the cursor read WHERE id > ? AND repo = ?.
+    "CREATE INDEX IF NOT EXISTS idx_wakes_repo_id ON wakes(repo, id)",
   ],
   // BH-2636 — POST /api/wakes/prune now sweeps orphan claims, and the prune is
   // a daily lane that already self-creates `wakes`; without this belt it would
@@ -2318,6 +1888,9 @@ export const CREATED_TABLES = {
     "CREATE INDEX IF NOT EXISTS idx_suite_reuse_runs_created ON suite_reuse_runs(created_at)",
   ],
 };
+// Every table in the composed schema, with each override in place of its
+// derived entry.
+export const CREATED_TABLES = { ...createdTablesFrom(SCHEMA_SQL), ...CREATED_TABLE_OVERRIDES };
 // Vocabulary for the Fly machine registry (BH-1054). Every writer fails open,
 // so a state missing from this set is not a loud error anywhere: the write is
 // refused with a 400, the caller prints nothing, and the row keeps saying
@@ -2341,8 +1914,9 @@ export const MACHINE_TERMINAL = new Set(["destroyed", "gone"]);
 export const createdTablesReady = new WeakMap();
 export async function ensureTable(env, table) {
   const db = env.DB;
-  let per = createdTablesReady.get(db);
-  if (!per) { per = new Map(); createdTablesReady.set(db, per); }
+  // Keyed on the raw binding, as in ensureColumns.
+  let per = createdTablesReady.get(rawDb(db));
+  if (!per) { per = new Map(); createdTablesReady.set(rawDb(db), per); }
   if (per.has(table)) return per.get(table);
   const p = (async () => {
     for (const sql of CREATED_TABLES[table] || []) await db.prepare(sql).run();

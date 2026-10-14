@@ -188,7 +188,7 @@ for f in "${FILES[@]}"; do
        && jq -e '.box_scoped == true and (.what | length > 0)' "$c" >/dev/null 2>&1; then ok
     else bad "C1 $f: lane_switch $n has no catalog/switches.d/$n.json naming it with $f in readers"; fi
   done
-  low=$(printf '%s\n' "$lits" | head -1)
+  low=$(head -1 <<<"$lits")
   case "$low" in [g-o]*) ok ;; *) bad "O1 $f: lowest switch '$low' is outside g-o" ;; esac
 done
 for n in "${NAMES[@]:1}"; do

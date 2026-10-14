@@ -22,8 +22,12 @@ bad() { FAIL=$((FAIL+1)); echo "FAIL: $1"; }
 BR="$DIR/bin/blocked-resolver.sh"
 H="$T/h"; mkdir -p "$H/state/build-queue" "$H/logs" "$H/bin"
 printf '#!/bin/bash\nexit 0\n' > "$H/bin/beat.sh"; chmod +x "$H/bin/beat.sh"
+# BH-6517: br_from_queue moved to bin/lib/br/discovery.sh; the corpus is the
+# driver first, then every module (tests/lib/br-corpus.sh).
+. "$DIR/tests/lib/br-corpus.sh" || exit 1
+br_corpus "$DIR" "$T/br-corpus.sh" || exit 1
 
-fn() { awk -v f="$1" '$0 ~ "^"f"\\(\\) \\{" {p=1} p{print} p&&/^}$/{exit}' "$BR"; }
+fn() { awk -v f="$1" '$0 ~ "^"f"\\(\\) \\{" {p=1} p{print} p&&/^}$/{exit}' "$T/br-corpus.sh"; }
 
 # ── A. br_from_queue ────────────────────────────────────────────────────────
 { fn br_rkey; fn br_from_queue; } > "$T/q.sh"
@@ -39,8 +43,8 @@ OUT=$(H="$H" ONLY="" ROWS="$T/rows.tsv" bash -c '
   . "$0"; br_from_queue' "$T/q.sh" 2>/dev/null)
 grep -qx 'BH-1' <<<"$(cut -f7 <<<"$OUT")" && bad "A: a RUNNER_EXHAUSTED park was offered for a rebuild" || ok
 grep -qx 'BH-2' <<<"$(cut -f7 <<<"$OUT")" && bad "A: a class=auth park was offered for a rebuild" || ok
-printf '%s\n' "$OUT" | grep -q "pool-deferred-max	-	-	BH-3" && ok || bad "A: an ordinary deferred-max park is no longer offered: $OUT"
-printf '%s\n' "$OUT" | grep -q "pool-died-twice	-	-	BH-4" && ok || bad "A: a died-twice park is no longer offered: $OUT"
+grep -q "pool-deferred-max	-	-	BH-3" <<<"$OUT" && ok || bad "A: an ordinary deferred-max park is no longer offered: $OUT"
+grep -q "pool-died-twice	-	-	BH-4" <<<"$OUT" && ok || bad "A: a died-twice park is no longer offered: $OUT"
 
 # ── B. br_abandon writes the ledger row ─────────────────────────────────────
 fn br_abandon > "$T/a.sh"

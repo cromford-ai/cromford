@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url';
 import { DatabaseSync } from 'node:sqlite';
 import worker, { CREATED_TABLES } from '../src/index.js';
 import { isProtectedSetting } from '../src/routes/verdicts.js';
+import { jobsSchemaSql } from './lib/jobs-schema.js';
 
 // BH-5022 (BH-4973.1) — the worker half of the rule-based risk tier:
 //   - source=risk-tier on /api/verdicts: lead token, MERGE only, and it STANDS
@@ -16,7 +17,7 @@ import { isProtectedSetting } from '../src/routes/verdicts.js';
 // the verdicts.bh-1525 / lead-reviews.bh-1949 idiom.
 const SECRET = 'test-secret';
 const LEAD = 'lead-test-token';
-const SCHEMA = readFileSync(fileURLToPath(new URL('../schema.sql', import.meta.url)), 'utf8');
+const SCHEMA = jobsSchemaSql();
 
 function sqliteDB(db) {
   const bindAndRun = (sql, binds) => ({

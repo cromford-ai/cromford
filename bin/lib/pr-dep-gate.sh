@@ -229,7 +229,7 @@ _pdg_order_hold() {
     _PDG_OCHECKED="${_PDG_OCHECKED:+$_PDG_OCHECKED }#$k"
     while read -r s pn pref pb64; do
       [ "$s" = "$slug" ] && [ "$pn" != - ] || continue
-      printf '%s\n' "$pref" | grep -qiE "^ticket/[a-z0-9]+-$k(-r[0-9]+)?\$" \
+      grep -qiE "^ticket/[a-z0-9]+-$k(-r[0-9]+)?\$" <<<"$pref" \
         || [ "$(_pdg_linked_issue "$(printf '%s' "$pb64" | base64 -d 2>/dev/null)")" = "$k" ] || continue
       st=$(awk -F'\t' -v key="$slug#$pn" '$1==key { print $2; exit }' "$rows" 2>/dev/null)
       case "$st" in

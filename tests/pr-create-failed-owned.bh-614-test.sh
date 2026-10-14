@@ -36,6 +36,7 @@ set -uo pipefail
 . "$(dirname "$0")/lib/scratch.sh" || exit 1
 DIR=$(cd "$(dirname "$0")/.." && pwd)
 . "$DIR/tests/lib/rb-all.sh" || exit 1
+. "$DIR/tests/lib/hold-gate-fixture.sh" || exit 1  # BH-6091: the pr-open HOLD gate for a pipeline slice
 RB_ALL=$(rb_all "$DIR" "$T/run-build.all.sh")
 NOW=$(date +%s)
 PASS=0; FAIL=0
@@ -64,6 +65,7 @@ awk '/^_job_finish\(\) \{/{f=1} f{print} f && /^\}/{exit}' "$RB" > "$JOBFIN"
 [ -s "$ROWCLOSE" ] && ok || bad "extract: the reap row close block is missing from bin/fly-pool.sh"
 [ -s "$QROWSH" ]   && ok || bad "extract: QROW is missing from bin/fly-pool.sh"
 [ -s "$CREATE" ]   && ok || bad "extract: the pr create call block is missing from bin/run-build.sh"
+hold_gate_prepend "$RB_ALL" "$CREATE"   # BH-6091: the real gate, a no-HOLD ticket read
 [ -s "$JOBFIN" ]   && ok || bad "extract: _job_finish is missing from bin/run-build.sh"
 grep -q 'QROW' "$ROWCLOSE" && ok || bad "extract: the row close block does not close a row"
 

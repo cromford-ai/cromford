@@ -1,0 +1,10 @@
+{
+  "env": "IMPACT_LEARN_EXPIRE_PASSES",
+  "type": "int",
+  "default": 30,
+  "min": 0,
+  "max": 1000,
+  "zero_means": "off",
+  "required": false,
+  "note": "BH-6460: a learned edge expires when its suite passed this many times with no failure after the edge's date (suite_results ledger); 0 turns expiry off. Read by bin/impact-learn-lane.sh as ${IMPACT_LEARN_EXPIRE_PASSES:-30}."
+}

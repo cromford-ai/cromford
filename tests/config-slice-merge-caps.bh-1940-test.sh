@@ -138,7 +138,7 @@ done <<<"$KNOBS"
 
 echo "--- C2 no literal left, every var still read"
 LINT=$(HARNESS_TEST_SANDBOX=1 bash "$DIR/tests/config-literal-lint.sh" "$DIR" 2>&1)
-printf '%s\n' "$LINT" | grep -q 'config-literal-lint:' && ok || bad "C2 the literal lint did not run: $LINT"
+grep -q 'config-literal-lint:' <<<"$LINT" && ok || bad "C2 the literal lint did not run: $LINT"
 HITS=$(printf '%s\n' "$LINT" | grep -E ':(BR_MAX_REGEN|PR_MERGE_REST|RESCUE_PER_TICK|RESCUE_PARALLEL|RP_RAW_CAP|RP_TEXT_CAP|LANE_CAPS_SCAN|LANE_CAPS_PRICE_MAX):')
 [ -z "$HITS" ] && ok || bad "C2 the literal lint still lists a slice var: $HITS"
 while IFS=$'\t' read -r v scope id f lit; do

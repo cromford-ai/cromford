@@ -30,11 +30,13 @@ G="$T/gh"; W="$T/worker"; mkdir -p "$G" "$W" "$T/fakebin" "$T/tmp" "$T/tok"
 cp "$DIR/tests/lib/rest-emit.sh" "$T/fakebin/restpr"; chmod +x "$T/fakebin/restpr"
 
 # The stub gh. $G/head is the PR's head; $G/pull = 404|500|none forces the PR
-# read; $G/status-code (default 201) answers the statuses POST.
+# read; $G/status-code (default 201) answers the statuses POST. TEST-CHANGE
+# (BH-6548): the reviews list a MERGE post reads is empty.
 cat > "$T/fakebin/gh" <<EOF
 #!/bin/bash
 printf '%s\n' "\$*" >> "$G/calls"
 case "\$*" in
+  *"api -i -X GET repos/"*"/pulls/"[0-9]*"/reviews"*) restpr --raw 200 '[]' ;;
   *"api -i -X GET repos/"*"/pulls/"[0-9]*)
     case "\$(cat "$G/pull" 2>/dev/null)" in
       404) restpr --raw 404 '{"message":"Not Found"}' ;;
@@ -76,6 +78,9 @@ for f in env-path lead-reviews verdicts hub-box lane-gate; do cp "$DIR/bin/lib/$
 # and a lib with no catalog withholds every lead MERGE; demo-os is not governed.
 mkdir -p "$H/catalog"; cp "$DIR/bin/lib/lead-authority.sh" "$H/bin/lib/"; cp "$DIR/catalog/lead-protected-paths.tsv" "$H/catalog/"
 cp "$DIR/bin/lead-review-land.sh" "$H/bin/"
+# TEST-CHANGE (BH-6548): a MERGE post that cannot load bin/lib/lead-stale-review.sh
+# now says so on stderr, so the tree carries the CLI's whole closure.
+scratch_install_closure bin/lead-verdict.sh "$H" >/dev/null || { echo "closure install of bin/lead-verdict.sh failed"; exit 1; }
 
 export PATH="$T/fakebin:$PATH" HARNESS="$H" HARNESS_SECRET=s JOBS_URL=https://jobs.test JOBS_RETRIES=0 \
   JOBS_BOX=mac-lead TMPDIR="$T/tmp" LEAD_VERDICT_TOKEN_FILE="$T/tok/lead" GH_APP_TOKENS=0

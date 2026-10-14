@@ -28,9 +28,15 @@
 # is a stub that appends its argv to $T/alerts.
 #
 # Run from anywhere: HARNESS_TEST_SANDBOX=1 bash tests/triage-state-paid-unchanged.bh-3926-test.sh
+# BH-6578: triaged_at is one hour before the run, never a fixed date. A
+# client-turn verdict comes back after triaged_at + the nudge (14 days), so a
+# fixed date made this fixture go red on the day the nudge ran out.
+TRIAGED_AT=$(date -u -d "@$(( $(date -u +%s) - 3600 ))" '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null \
+  || date -u -r "$(( $(date -u +%s) - 3600 ))" '+%Y-%m-%dT%H:%M:%SZ')
 set -uo pipefail
 . "$(dirname "$0")/lib/scratch.sh" || exit 1
 DIR=$(cd "$(dirname "$0")/.." && pwd)
+"$DIR/bin/lanes-build.sh" --root "$DIR" --write >/dev/null || { echo "FAIL: cannot write catalog/lanes.json"; exit 1; }
 "$DIR/bin/llm-sites-build.sh" --compose --repo "$DIR" >/dev/null || { echo "FAIL: cannot compose catalog/llm-sites.json"; exit 1; }
 PASS=0; FAIL=0
 ok()  { PASS=$((PASS+1)); }
@@ -93,8 +99,8 @@ seed() {
   echo '[]' > "$ROWS"; tick_env shadow; ( ts_precheck ) >/dev/null 2>&1
   while IFS=$'\t' read -r k h; do
     vh="$h"; case "$chg" in *" $k "*) vh=$(printf '0%.0s' $(seq 64)) ;; esac
-    jq -n --arg k "$k" --arg h "$vh" '{ticket_key:$k, verdict:"triaged", waiting_on:"none", verdict_hash:$h, input_hash:$h,
-      triaged_at:"2026-09-30T00:00:00Z", next_recheck_at:"2099-01-01T00:00:00Z", reason:"x"}'
+    jq -n --arg ta "$TRIAGED_AT" --arg k "$k" --arg h "$vh" '{ticket_key:$k, verdict:"triaged", waiting_on:"none", verdict_hash:$h, input_hash:$h,
+      triaged_at:$ta, next_recheck_at:"2099-01-01T00:00:00Z", reason:"x"}'
   done < <(awk -F'\t' '{print $1"\t"$5}' "$D/decisions.tsv") | jq -s . > "$ROWS"
   : > "$LOGF"
 }

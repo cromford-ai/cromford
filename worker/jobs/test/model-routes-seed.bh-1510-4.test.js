@@ -3,12 +3,13 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { DatabaseSync } from 'node:sqlite';
+import { jobsSchemaSql } from './lib/jobs-schema.js';
 
 // BH-1510.4 — the bootstrap smoke turn (bin/bootstrap-machine.sh, the
 // `# >>> smoke model` block) reads its model from the bootstrap.smoke role. The
 // seed carries the exact id the script passed before #1510.4 deleted the
 // literal, so deploying it changes nothing. Driven against THE SQL THAT SHIPS.
-const SCHEMA = readFileSync(fileURLToPath(new URL('../schema.sql', import.meta.url)), 'utf8');
+const SCHEMA = jobsSchemaSql();
 const openDb = () => { const db = new DatabaseSync(':memory:'); db.exec(SCHEMA); return db; };
 const ladder = (db, role) => db.prepare(
   'SELECT position, model, runner, project, scope, updated_by FROM model_routes WHERE role=? ORDER BY position').all(role);

@@ -99,6 +99,16 @@
 #            <LEAD_DELTA_PROTECTED_MAX_LINES>:<word> (an 8th column). An unapproved
 #            head stops here. Every replay, delta and full request is one row of
 #            modes.tsv (30 days); the summary carries delta=, full= and today_*.
+#   prev     (BH-6391, bin/lib/lead-prev.sh) a head whose PR has an earlier
+#            lead row (MERGE, MERGE-WITH-NOTES or BLOCK, not a lead-replay:
+#            row) on another head G is requested with ONE more scope note
+#            group, in delta and full mode alike: `lead-prev:<G> word:<W>
+#            report:state/lead-reviews/lr-<pr>-<G12>.md own-commits:<n|?>
+#            own-files:<csv> main-files:<csv>` (lpv_note), logged as
+#            `re-review of <G12> (<W>)`. It is computed right before the
+#            request, with a fetch only when the clone lacks G or the head.
+#            git that cannot answer gives `?` fields; the request still goes.
+#            request() fits scope_notes to the worker's 4000 chars (lpv_fit).
 #   traced   (BH-5795) a head not yet in the ledger is HELD (skipped_traced,
 #            one log line with the reason, asked again next tick) when the PR
 #            is DIRTY (mergeable_state dirty: GitHub runs no CI on it; only with
@@ -345,6 +355,8 @@ LCW=0; . "$H/bin/lib/lead-chain-wake.sh" 2>/dev/null && LCW=1
 . "$H/bin/lib/patch-same.sh" 2>/dev/null || true
 # Replay without the builder, and delta mode (BH-5294). Missing, BH-3930 alone.
 LD=0; . "$H/bin/lib/lead-delta.sh" 2>/dev/null && command -v ld_classify >/dev/null 2>&1 && LD=1
+# The re-review token (BH-6391, header `prev`). Missing, no request carries it.
+. "$H/bin/lib/lead-prev.sh" 2>/dev/null || true
 # BH-5630: ONE REVIEW GATE. A head with no builder APPROVE bound to it is
 # requested when its CI is green, read through the lead lane's own definition
 # (bin/lead-review.sh's `lead ci green` block: every check the base branch's
@@ -657,6 +669,9 @@ request() {
   [ -n "$dnote" ] && notes="$notes; $dnote"
   [ -n "${PSCNOTE:-}" ] && notes="$notes; $PSCNOTE"
   [ -n "${TNOTE:-}" ] && notes="$notes; $TNOTE"
+  # The worker caps scope_notes at 4000 chars (worker/jobs/src/routes/lead-reviews.js);
+  # over it, the lead-prev file lists become their counts (BH-6391).
+  command -v lpv_fit >/dev/null 2>&1 && notes=$(lpv_fit "$notes" 4000)
   if ! authors=$(head_authors_json "$slug" "$n" "$(jq -r '.head.ref // empty' "$WORK/pr" 2>/dev/null)" "$PROJECT"); then
     log "$slug#$n @${head:0:12}: no head authorship ($authors); requested without head_authors"
     authors=""
@@ -878,7 +893,7 @@ noapp_why() {
 # `self`); rc 1 = go. One fetch of the base and the head into the hub clone,
 # and none when the clone already has both.
 self_check_hold() {
-  local repo="${REPOS_ROOT:-/root/repos}/$5" bf out rc tf tn
+  local repo="${REPOS_ROOT:-/root/repos}/$5" bf out rc tf tn ij it il ir itn tk
   PSCOUT=""; PSCNOTES=""
   [ "$PSC" = 1 ] && [ -d "$repo/.git" ] || return 1
   bf="$WORK/body-$2"
@@ -891,10 +906,19 @@ self_check_hold() {
   fi
   # BH-5790: the linked issue is the ticket text the body-* rules read (a probe
   # its Done when names). One REST read per held head per tick; none = no text.
-  tf="$WORK/ticket-$2"; : > "$tf"
+  # BH-6380: the same read gives the title and labels the perf trigger reads,
+  # and the repo and number its one parent hop needs. A failed read = all empty.
+  tf="$WORK/ticket-$2"; : > "$tf"; ij="$WORK/ticket-$2.json"; : > "$ij"; it=""; il=""; ir=""; itn=""
   tn=$(grep -oiE '(closes|fixes|resolves|refs|part of)[[:space:]]+#[0-9]+' "$bf" 2>/dev/null | head -1 | grep -oE '[0-9]+$')
-  [ -n "$tn" ] && gh_rest GET "repos/$1/issues/$tn" 2>/dev/null | jq -r '.body // ""' > "$tf" 2>/dev/null
-  out=$(PR_SELF_CHECK_CATALOG="${PR_SELF_CHECK_CATALOG:-$H/catalog/pr-self-check.tsv}" \
+  if [ -n "$tn" ] && gh_rest GET "repos/$1/issues/$tn" > "$ij" 2>/dev/null; then
+    jq -r '.body // ""' "$ij" > "$tf" 2>/dev/null
+    it=$(jq -r '.title // ""' "$ij" 2>/dev/null); il=$(jq -r '[.labels[]?.name] | join(",")' "$ij" 2>/dev/null)
+    ir="$1"; itn="$tn"
+  fi
+  # BH-6392: the title key (`BH-N: ...`) is the PR's own key for test-ownership.
+  tk=$(jq -r '.title // ""' "$WORK/pr" 2>/dev/null | sed -nE 's/^([A-Za-z]+-[0-9]+(\.[0-9]+)*):.*/\1/p')
+  out=$(PR_SELF_CHECK_CATALOG="${PR_SELF_CHECK_CATALOG:-$H/catalog/pr-self-check.tsv}" PSC_PR_KEY="$tk" \
+        PSC_TICKET_TITLE="$it" PSC_TICKET_LABELS="$il" PSC_TICKET_REPO="$ir" PSC_TICKET_N="$itn" \
         psc_check "$repo" "origin/$4" "$3" "$bf" "$tf" 2>/dev/null); rc=$?
   # BH-5790: a `note` body rule (mutation evidence, the D1 callout) holds
   # nothing; its finding rides in the request notes for the lead to judge.
@@ -1134,7 +1158,7 @@ for SLUG in $AUTO_REPOS; do
     # a rebound head on patch_same. A BLOCK is only ever replayed as a BLOCK,
     # onto a rebound head; it is never delta-reviewed and never replayed onto
     # an unapproved head.
-    DMODE=""; DNOTE=""; DPRIOR=""; DUPNOTE=""
+    DMODE=""; DNOTE=""; DPRIOR=""; DUPNOTE=""; LPVH=""; LPVW=""; LPVNOTE=""
     if [ "$REBOUND" = 1 ] || [ "$APPROVED" = 0 ] || [ "$LD" = 1 ]; then
       PH=""; PW=""; PID=""; WHY=""
       # A truncated history cannot prove which lead row is newest: unreadable.
@@ -1152,6 +1176,13 @@ for SLUG in $AUTO_REPOS; do
              and ((.source // "") | IN("lead", "human", "risk-tier")))' "$WORK/vd" >/dev/null 2>&1; then
         VERD=$((VERD + 1)); skip_line verdict "$SLUG#$N @$H12: a lead/human/risk-tier row stands on this head (verdict history)"; continue
       else
+        # BH-6391: the earlier REVIEWED head (a replay row has no review behind it).
+        IFS=$'\t' read -r LPVH LPVW < <(jq -r --arg h "$HEAD" '[.rows[] | select(.source == "lead"
+            and ((.head_sha // "") | ascii_downcase) != $h
+            and ((.verdict // "") | IN("MERGE", "MERGE-WITH-NOTES", "BLOCK"))
+            and (((.note // "") | split(" ") | any(startswith("lead-replay:"))) | not))]
+          | max_by(.id) // empty | "\(.head_sha | ascii_downcase)\t\(.verdict)"' "$WORK/vd" 2>/dev/null)
+        [[ "$LPVH" =~ ^[0-9a-f]{40}$ ]] || { LPVH=""; LPVW=""; }
         IFS=$'\t' read -r PH PW PID < <(jq -r --arg h "$HEAD" '[.rows[] | select(.source == "lead"
             and ((.head_sha // "") | ascii_downcase) != $h
             and ((.verdict // "") | IN("MERGE", "MERGE-WITH-NOTES", "BLOCK")))]
@@ -1496,6 +1527,23 @@ for SLUG in $AUTO_REPOS; do
     if [ -n "${DUPNOTE:-}" ]; then
       log "$SLUG#$N @$H12: requested with a note: $DUPNOTE"
       DNOTE="${DNOTE:+$DNOTE; }$DUPNOTE"; DUPNOTE=""
+    fi
+    # BH-6391: the earlier review and the delta since it ride in the notes, in
+    # delta and full mode alike. Here, after every skip, so no skipped head pays
+    # the git work. A fetch only when the clone lacks G or the head.
+    if [ -n "$LPVH" ] && command -v lpv_note >/dev/null 2>&1; then
+      PS_REPO="${REPOS_ROOT:-/root/repos}/$PROJECT"
+      if [ -d "$PS_REPO/.git" ]; then
+        if ! git -C "$PS_REPO" cat-file -e "$LPVH^{commit}" 2>/dev/null || ! git -C "$PS_REPO" cat-file -e "$HEAD^{commit}" 2>/dev/null; then
+          command -v patch_same_fetch >/dev/null 2>&1 && patch_same_fetch "$PS_REPO" "$LPVH" "$HEAD"
+        fi
+        LPVNOTE=$(lpv_note "$PS_REPO" origin/main "$LPVH" "$LPVW" "$HEAD" "$N")
+        DNOTE="${DNOTE:+$DNOTE; }$LPVNOTE"
+        LPVC=${LPVNOTE#* own-commits:}
+        log "$SLUG#$N @$H12: re-review of ${LPVH:0:12} ($LPVW): own-commits:${LPVC%% *}"
+      else
+        log "$SLUG#$N @$H12: re-review of ${LPVH:0:12} ($LPVW): no checkout at $PS_REPO; requested with no lead-prev token"
+      fi
     fi
     # <<< rebase hold
     # >>> live probes (BH-5801): the PR's declared read-only probes, run once per

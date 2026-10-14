@@ -801,7 +801,7 @@ grep -qi 'product' "$RB_ALL" \
   && ok || bad "the prompt must say the count is PRODUCT lines, not diff lines"
 # The gate runs BEFORE the executor. A size check after EXECUTE is a receipt.
 SGL=$(grep -n '^# >>> size gate' "$RB_ALL" | cut -d: -f1)
-EXL=$(grep -n 'echo "$(STAMP) \[$PROJECT/$KEY\] EXECUTE' "$RB_ALL" | head -1 | cut -d: -f1)
+EXL=$(grep -n 'echo "$(STAMP) \[$PROJECT/$KEY\] EXECUTE' "$RB_ALL" | head -1 | cut -d: -f1)  # determinism: ok race-sigpipe-echo the echo is grep's pattern; the producer is grep reading one file
 [ -n "$SGL" ] && [ -n "$EXL" ] && [ "$SGL" -lt "$EXL" ] \
   && ok || bad "the size gate must run before EXECUTE (gate@${SGL:-?} execute@${EXL:-?})"
 # The registry is tracked in the repo, so a threshold change is a reviewed

@@ -133,12 +133,20 @@ fi
 # same top-level prefixes, the same bare-directory scopes and the same
 # fewer-than-three-segments prune. Two spellings of "the files this ticket owns"
 # is a child whose list means something different from its parent's, compared
-# against each other by bin/dep-verify.sh as though it did not.
+# against each other by bin/dep-verify.sh as though it did not. The project's
+# own roots come from the same row (bin/lib/claim-roots.sh), spelled the same way.
+EXTRA=""
+# shellcheck source=bin/lib/claim-roots.sh
+[ -r "$HERE/lib/claim-roots.sh" ] && . "$HERE/lib/claim-roots.sh" 2>/dev/null \
+  && EXTRA=$(claim_roots_list "$HERE/../catalog" "$(claim_roots_project "$HERE/../catalog" "$PROJECT")" \
+             | sed 's/\./\\./g' | paste -sd'|')
 extract() {
   grep -oE '[][A-Za-z0-9_@()/.-]+\.(ts|tsx|js|jsx|mjs|sql|prisma|css|scss|json|sh|md|yml|yaml)' "$1" 2>/dev/null \
-    | grep -E '^(src|prisma|scripts|e2e|tests|app|lib|components|pages|public|docs|content|middleware)' \
+    | grep -E "^(src|prisma|scripts|e2e|tests|app|lib|components|pages|public|docs|content|middleware)${EXTRA:+|^($EXTRA)/}" \
     | sed 's|^\./||'
   grep -oE '(src|prisma|scripts|e2e|tests)/[][A-Za-z0-9_@()/.-]+/' "$1" 2>/dev/null | sed 's|/$||'
+  [ -z "$EXTRA" ] || grep -oE "(^|[^][A-Za-z0-9_@()/.-])($EXTRA)/[][A-Za-z0-9_@()/.-]+/" "$1" 2>/dev/null \
+    | sed -e 's|^[^][A-Za-z0-9_@()/.-]||' -e 's|/$||' | awk -F/ 'NF>=3'
 }
 
 # keep: on stdin, the paths this checkout can vouch for.

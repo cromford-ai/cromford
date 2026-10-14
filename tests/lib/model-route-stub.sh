@@ -26,6 +26,7 @@
 # the jobs client stays quiet about it. Each model-routes request is appended to
 # $MRS_SINK when set.
 # shellcheck shell=bash
+. "$(dirname "${BASH_SOURCE[0]}")/jobs-schema.sh" || return 1
 
 mrs_install() {
   mkdir -p "$1"
@@ -160,6 +161,7 @@ model_routes_fixture() {
   # an in-memory SQLite (as the worker suites and harness-sync apply it) and the
   # hub rows are read back, so every seed shape — VALUES tuples, guarded
   # INSERT…SELECT, FROM (VALUES …) — lands exactly as the fleet deploys it.
+  jobs_schema_render "$root" || return 1
   python3 - "$root/worker/jobs/schema.sql" "$h/state/model-routes" "$@" <<'PY' || return 1
 import sqlite3, sys, os, collections
 src, out, projects = sys.argv[1], sys.argv[2], sys.argv[3:]

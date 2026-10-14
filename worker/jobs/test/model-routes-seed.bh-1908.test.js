@@ -4,6 +4,7 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { DatabaseSync } from 'node:sqlite';
 import worker from '../src/index.js';
+import { jobsSchemaSql } from './lib/jobs-schema.js';
 
 // BH-1908 — the model_routes seed matches the live hub ladders, so a fresh D1
 // (a new box, a test fixture) runs the models the hub runs. One carve-out:
@@ -12,7 +13,7 @@ import worker from '../src/index.js';
 // Driven against THE SQL THAT SHIPS, through worker.fetch for the writes, the
 // same idiom as model-routes.bh-1510.test.js and runner-routes.bh-1766.test.js.
 const SECRET = 'test-secret';
-const SCHEMA = readFileSync(fileURLToPath(new URL('../schema.sql', import.meta.url)), 'utf8');
+const SCHEMA = jobsSchemaSql();
 
 // Copied from runner-routes.bh-1766.test.js (test files stay independent).
 function sqliteDB(db) {
@@ -142,6 +143,9 @@ const SEEDED_AS_COPY = {
   // TEST-CHANGE (BH-5024): jev-pilot.baseline, the replay pilot's Haiku
   // baseline, copies review.trivial's rung 0 the same way.
   'jev-pilot.baseline': 'review.trivial',
+  // TEST-CHANGE (BH-5806): lesson.classify, the BLOCK classifier's cheap route,
+  // copies review.trivial's rung 0 the same way.
+  'lesson.classify': 'review.trivial',
 };
 // TEST-CHANGE (BH-4065): archie-research.xsearch copies grok.default's GROK
 // rung 0 (Archie's direct xAI X search runs on the grok runner), so it is

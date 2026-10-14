@@ -290,7 +290,7 @@ ROWS='{"rows":[{"id":2,"repo":"example-org/x","number":12,"state":"BLOCKED","sin
 reset
 OUT=$(CURL_BODY="$ROWS" drv "pr_state_events_page BLOCKED '$SINCE' 5"); RC=$?
 [ "$RC" -eq 0 ] && ok || bad "3c: pr_state_events_page rc=$RC (want 0)"
-FIRST=$(printf '%s\n' "$OUT" | head -1)
+FIRST=$(head -1 <<<"$OUT")
 SECOND=$(printf '%s\n' "$OUT" | sed -n 2p)
 [ "$(printf '%s' "$FIRST" | cut -f2)" = 34 ] && ok \
   || bad "3c: newest (id 7) must be the FIRST row, got '$FIRST'"

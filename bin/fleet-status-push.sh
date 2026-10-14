@@ -122,7 +122,7 @@ for P in $FLEET_PROJECTS; do
   FAILEDN=${FAILEDN:-0}
   # pool_held <key> — rc 0 when that row is held. One reader for both the DB and
   # the file path below, so the two can never disagree about what "queued" means.
-  pool_held() { [ -n "${1:-}" ] && printf '%s\n' "$HELDKEYS" | grep -qxF -- "$1"; }
+  pool_held() { [ -n "${1:-}" ] && grep -qxF -- "$1" <<<"$HELDKEYS"; }
   QD=""; QAGE=""
   if command -v queue_list >/dev/null 2>&1; then
     QROWS=$(queue_list "$P" queued 2>/dev/null)
@@ -481,7 +481,7 @@ fi
 RULES=null
 # shellcheck disable=SC2086  # $TO is "timeout 20" or empty, by design
 if RROWS=$(HARNESS="$H" $TO "$H/bin/jobs-client.sh" rules 2>/dev/null); then
-  RULES=$(printf %s "$RROWS" | head -50 | jq -Rnc '[inputs | split("\t") | select(length >= 4)
+  RULES=$(head -50 <<<"$RROWS" | jq -Rnc '[inputs | split("\t") | select(length >= 4)
     | {scope: .[0], selector: .[1], kind: .[2], max_concurrent: (.[3] | tonumber? // null)}]' 2>/dev/null)
   [ -n "$RULES" ] || RULES=null
 fi

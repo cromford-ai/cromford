@@ -25,6 +25,7 @@ set -uo pipefail
 . "$(dirname "$0")/lib/scratch.sh" || exit 1
 DIR=$(cd "$(dirname "$0")/.." && pwd)
 . "$DIR/tests/lib/rb-all.sh" || exit 1
+. "$DIR/tests/lib/hold-gate-fixture.sh" || exit 1  # BH-6091: the pr-open HOLD gate for a pipeline slice
 RB_ALL=$(rb_all "$DIR" "$T/run-build.all.sh")
 mkdir -p "$T/bin/lib" "$T/build" "$T/repo" "$T/out"
 # The evidence block's CLOSE_ISSUE_AFTER_MERGE writes through this library, which
@@ -46,6 +47,7 @@ extract "pr title subject"  "$T/title.sh"     && ok || bad "no '# >>> pr title s
 extract "merge note fn"     "$T/mergenote.sh" && ok || bad "could not extract the merge note fn block — markers moved?"
 extract "evidence block"    "$T/evidence.sh"  && ok || bad "could not extract the evidence block — markers moved?"
 extract "pr create ladder"  "$T/ladder.sh"    && ok || bad "could not extract the pr create ladder block — markers moved?"
+hold_gate_prepend "$RB_ALL" "$T/ladder.sh"   # BH-6091: the real gate, a no-HOLD ticket read
 
 # ── the scratch repo: the incident's exact shape ─────────────────────────────
 # A: the old main. origin/main then gains the train commits and another ticket's

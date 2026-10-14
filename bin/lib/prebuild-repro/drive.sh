@@ -41,7 +41,7 @@ _pr_drive_ledger_detail() {
 _pr_drive_md() {
   local b="$1" tmp
   tmp=$(mktemp "$b/.prebuild-repro-md.XXXXXX") || return 1
-  printf 'REPRO_ROLE: %s\nREPRO_URL: %s\nREPRO_STEPS: %s\nREPRO_OBSERVED: %s\n' "$2" "$3" "$4" "$5" | head -c 2000 > "$tmp" \
+  head -c 2000 < <(printf 'REPRO_ROLE: %s\nREPRO_URL: %s\nREPRO_STEPS: %s\nREPRO_OBSERVED: %s\n' "$2" "$3" "$4" "$5") > "$tmp" \
     && mv -f "$tmp" "$b/prebuild-repro.md" || { rm -f "$tmp"; return 1; }
 }
 

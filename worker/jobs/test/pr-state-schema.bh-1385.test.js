@@ -4,6 +4,7 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { d1 } from './lib/d1-sqlite.bh-1030.js';
 import { CREATED_TABLES, ensureTable } from '../src/lib/core.js';
+import { jobsSchemaSql } from './lib/jobs-schema.js';
 
 // BH-1385 (BH-1025.0): the PR-state / PR-attempt schema chunk.
 //
@@ -18,7 +19,7 @@ import { CREATED_TABLES, ensureTable } from '../src/lib/core.js';
 //
 // No clock, no network: every value is a literal.
 
-const SCHEMA = readFileSync(fileURLToPath(new URL('../schema.sql', import.meta.url)), 'utf8');
+const SCHEMA = jobsSchemaSql();
 const MARK = '-- ── BH-1025.0';
 
 async function sqlite() {

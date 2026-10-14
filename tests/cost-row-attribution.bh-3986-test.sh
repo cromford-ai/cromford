@@ -27,6 +27,7 @@
 # Run from anywhere: tests/cost-row-attribution.bh-3986-test.sh (exit 0 = pass)
 set -uo pipefail
 . "$(dirname "$0")/lib/scratch.sh" || exit 1
+. "$(dirname "$0")/lib/jobs-schema.sh" && jobs_schema_render || exit 1
 DIR=$(cd "$(dirname "$0")/.." && pwd)
 . "$DIR/tests/lib/model-route-stub.sh" || exit 1
 PASS=0; FAIL=0

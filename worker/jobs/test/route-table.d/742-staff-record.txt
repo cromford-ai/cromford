@@ -1,0 +1,4 @@
+# STAFF RECORD (BH-5561, BH-5556.4): the staff heartbeat's record step (a
+# claimed finding moves to its outcome; a filing writes one staff decision),
+# placed after staff findings (740) and before lane runs (750).
+POST /api/staff/findings/record

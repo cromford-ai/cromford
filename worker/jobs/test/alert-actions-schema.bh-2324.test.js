@@ -5,12 +5,13 @@ import { fileURLToPath } from 'node:url';
 import worker, { ensureTable, ROUTES } from '../src/index.js';
 import { matchRoute } from '../src/lib/router.js';
 import { ALERT_ID_RE, ALERT_ACTOR_RE, alertKnobs } from '../src/routes/alerts.js';
+import { jobsSchemaSql } from './lib/jobs-schema.js';
 
 // BH-2368 (BH-2324 contract): the alert_actions audit table, its worker
 // self-create mirror, the three alerts.js exports the sibling imports, and the
 // two routes, whose handlers were filled in by BH-2369.
 
-const SCHEMA = readFileSync(fileURLToPath(new URL('../schema.sql', import.meta.url)), 'utf8');
+const SCHEMA = jobsSchemaSql();
 
 async function sqlite(t) {
   try {

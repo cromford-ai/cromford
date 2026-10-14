@@ -24,6 +24,11 @@
 #   W7 the input hash is byte-identical to origin/main's formula
 #
 # Run from anywhere: HARNESS_TEST_SANDBOX=1 bash tests/triage-state-inapp-work.bh-3774-test.sh
+# BH-6578: triaged_at is one hour before the run, never a fixed date. A
+# client-turn verdict comes back after triaged_at + the nudge (14 days), so a
+# fixed date made this fixture go red on the day the nudge ran out.
+TRIAGED_AT=$(date -u -d "@$(( $(date -u +%s) - 3600 ))" '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null \
+  || date -u -r "$(( $(date -u +%s) - 3600 ))" '+%Y-%m-%dT%H:%M:%SZ')
 set -uo pipefail
 . "$(dirname "$0")/lib/scratch.sh" || exit 1
 DIR=$(cd "$(dirname "$0")/.." && pwd)
@@ -86,9 +91,9 @@ tick_env shadow; ( ts_precheck ) >/dev/null 2>&1
 [ "$(awk -F'\t' '$5!="-"' "$D/decisions.tsv" | wc -l | tr -d ' ')" = 9 ] && ok \
   || bad "fixture: every ticket hashed: $(cat "$D/decisions.tsv" 2>/dev/null)"
 awk -F'\t' '{print $1"\t"$5}' "$D/decisions.tsv" | while IFS=$'\t' read -r k h; do
-  jq -n --arg k "$k" --arg h "$h" --arg v "$(stored_of "$k")" \
+  jq -n --arg ta "$TRIAGED_AT" --arg k "$k" --arg h "$h" --arg v "$(stored_of "$k")" \
     '{ticket_key:$k, verdict:$v, waiting_on:(if $v=="needs_clarification" then "client" else "none" end),
-      verdict_hash:$h, input_hash:$h, triaged_at:"2026-09-30T00:00:00Z", next_recheck_at:"2099-01-01T00:00:00Z", reason:"x"}'
+      verdict_hash:$h, input_hash:$h, triaged_at:$ta, next_recheck_at:"2099-01-01T00:00:00Z", reason:"x"}'
 done | jq -s . > "$ROWS"
 
 work_env() {

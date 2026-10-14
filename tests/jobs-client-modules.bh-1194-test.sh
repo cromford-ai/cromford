@@ -207,12 +207,12 @@ ERR=$(HARNESS="$T/m" bash -c '. "$1" 2>/dev/null; echo REACHED' _ "$T/m/bin/jobs
 [ "$RC" != 0 ] && ok || bad "a missing module must exit nonzero, not half-load the client"
 [ "$ERR" != REACHED ] && ok || bad "a missing module must stop the caller, not let it run on with half a client"
 ERR2=$(HARNESS="$T/m" bash -c '. "$1"' _ "$T/m/bin/jobs-client.sh" 2>&1 >/dev/null)
-printf '%s' "$ERR2" | grep -q 'bin/lib/jobs/queue.sh' \
+grep -q 'bin/lib/jobs/queue.sh' <<<"$ERR2" \
   && ok || bad "the refusal must name the missing module path; got: $ERR2"
 # It must also name the fixture rule, because the reader is almost always a test
 # author whose scratch harness copied the client and not the modules.
-printf '%s' "$ERR2" | grep -qi 'bin/lib/jobs' \
-  && printf '%s' "$ERR2" | grep -qiE 'cop(y|ied)|fixture' \
+grep -qi 'bin/lib/jobs' <<<"$ERR2" \
+  && grep -qiE 'cop(y|ied)|fixture' <<<"$ERR2" \
   && ok || bad "the refusal must tell the reader to copy bin/lib/jobs/*.sh too; got: $ERR2"
 
 # ============================================================================

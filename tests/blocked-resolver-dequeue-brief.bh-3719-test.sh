@@ -149,8 +149,19 @@ extract() { # extract <script> <out>
     awk -v f="^$fn\\(\\)" '$0 ~ f {p=1} p{print} p&&/^}$/{exit}' "$1" >> "$2"
   done
 }
-extract "$H/bin/blocked-resolver.sh" "$T/cls.sh"
-extract "$H/bin/blocked-resolver.main.sh" "$T/cls-main.sh"
+# BH-5241: the corpus is the driver plus bin/lib/br/*.sh (tests/lib/br-corpus.sh),
+# because the ladder functions moved out of the driver into bin/lib/br/ladder.sh.
+# shellcheck source=tests/lib/br-corpus.sh
+. "$DIR/tests/lib/br-corpus.sh" || exit 1
+br_corpus "$H" "$T/br-corpus.sh" || exit 1
+extract "$T/br-corpus.sh" "$T/cls.sh"
+# origin/main's side reads origin/main's corpus too: once this cut is on main,
+# its driver alone no longer carries br_num/br_shape/br_fix_cap.
+mkdir -p "$T/mainroot"
+{ git -C "$DIR" archive origin/main bin/blocked-resolver.sh bin/lib/br | tar -x -C "$T/mainroot"; } 2>/dev/null
+br_corpus "$T/mainroot" "$T/br-corpus-main.sh" \
+  || { echo "FAIL: setup: origin/main's bin/blocked-resolver.sh + bin/lib/br would not read"; exit 1; }
+extract "$T/br-corpus-main.sh" "$T/cls-main.sh"
 grep -q '^br_fix_cap()' "$T/cls.sh" && grep -q '^br_shape()' "$T/cls.sh" && grep -q '^br_num()' "$T/cls.sh" \
   && ok "R3: extracted br_num/br_shape/br_ladder_class/br_fix_cap" || bad "R3: extraction came back short"
 # MAX_FIXROUNDS=3 so the queue-dequeued arm is distinguishable from the default

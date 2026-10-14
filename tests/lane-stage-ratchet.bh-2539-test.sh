@@ -43,7 +43,7 @@ $(printf '%s\n' "$OUT" | grep '^FAIL')"
 ! grep -q 'SITE cost-readout' <<<"$OUT" \
   && ! jq -e '.sites[] | select(.id == "cost-readout")' "$DIR/catalog/llm-sites.json" >/dev/null && ok \
   || bad "S2: cost-readout is still an llm site after BH-2550: $(printf '%s\n' "$OUT" | grep 'cost-readout')"
-printf '%s\n' "$OUT" | grep -qx 'SITE runner-bench stage=bench called=bench project=bench called_project=bench' && ok \
+grep -qx 'SITE runner-bench stage=bench called=bench project=bench called_project=bench' <<<"$OUT" && ok \
   || bad "S3: runner-bench does not bill bench/bench: $(printf '%s\n' "$OUT" | grep 'runner-bench')"
 SKIPS=$(printf '%s\n' "$OUT" | awk '/^SKIP SITE /{print $3}' | sort | tr '\n' ' ')
 [ "$SKIPS" = "claude-auth-check lane-probe rb-plan trap-eval " ] && ok || bad "S4: skipped sites are [$SKIPS], expected exactly [claude-auth-check lane-probe rb-plan trap-eval]"
@@ -62,14 +62,14 @@ mksite() { # mksite <name> <stage> <project> — a root with one agent-call site
 mksite s5 readout fleet
 printf '#!/bin/bash\n"$HARNESS/bin/agent-call.sh" review fleet "$M" 1200 out x\n' > "$T/s5/bin/s5.sh"
 OUT=$(check "$T/s5" "$T/s5/catalog/lanes.d"); RC=$?
-[ "$RC" != 0 ] && printf '%s\n' "$OUT" | grep -q 'FAIL: site s5 declares stage \[readout\] but bin/s5.sh calls agent-call.sh with \[review\]' && ok \
+[ "$RC" != 0 ] && grep -q 'FAIL: site s5 declares stage \[readout\] but bin/s5.sh calls agent-call.sh with \[review\]' <<<"$OUT" && ok \
   || bad "S5: a site declaring readout and calling review passed (rc=$RC): $OUT"
 
 # S6: declared project fleet, the script bills project-1.
 mksite s6 readout fleet
 printf '#!/bin/bash\n"$HARNESS/bin/agent-call.sh" readout project-1 "$M" 1200 out x\n' > "$T/s6/bin/s6.sh"
 OUT=$(check "$T/s6" "$T/s6/catalog/lanes.d"); RC=$?
-[ "$RC" != 0 ] && printf '%s\n' "$OUT" | grep -q 'FAIL: site s6 declares project fleet but bin/s6.sh calls agent-call.sh with project \[project-1\]' && ok \
+[ "$RC" != 0 ] && grep -q 'FAIL: site s6 declares project fleet but bin/s6.sh calls agent-call.sh with project \[project-1\]' <<<"$OUT" && ok \
   || bad "S6: a site declaring project fleet and billing project-1 passed (rc=$RC): $OUT"
 
 # S7: prose, comments, heredocs and tests are not calls; the real one is.
@@ -85,14 +85,14 @@ TXT
 RUNNER_BENCH=x "$H/bin/agent-call.sh" bench bench m 60 o x
 EOF
 OUT=$(check "$T/s7" "$T/s7/catalog/lanes.d"); RC=$?
-[ "$RC" = 0 ] && printf '%s\n' "$OUT" | grep -qx 'SITE s7 stage=bench called=bench project=bench called_project=bench' && ok \
+[ "$RC" = 0 ] && grep -qx 'SITE s7 stage=bench called=bench project=bench called_project=bench' <<<"$OUT" && ok \
   || bad "S7: prose/comment/heredoc/test mentions were read as calls (rc=$RC): $OUT"
 
 # S8: a site whose project is a variable is not compared, whatever it passes.
 mksite s8 review '$PROJECT'
 printf '#!/bin/bash\nP=someone\n"$H/bin/agent-call.sh" review "$P" m 60 o x\n' > "$T/s8/bin/s8.sh"
 OUT=$(check "$T/s8" "$T/s8/catalog/lanes.d"); RC=$?
-[ "$RC" = 0 ] && printf '%s\n' "$OUT" | grep -qx 'SITE s8 stage=review called=review project=$PROJECT called_project=someone' && ok \
+[ "$RC" = 0 ] && grep -qx 'SITE s8 stage=review called=review project=$PROJECT called_project=someone' <<<"$OUT" && ok \
   || bad "S8: a \$PROJECT site had its project compared (rc=$RC): $OUT"
 
 # S9: the real mutation — runner-bench's catalog row set back to triage.
@@ -100,7 +100,7 @@ mkdir -p "$T/s9/catalog"
 jq '(.sites[] | select(.id=="runner-bench") | .stage) = "triage"' "$DIR/catalog/llm-sites.json" > "$T/s9/catalog/llm-sites.json"
 cp -r "$DIR/bin" "$T/s9/"
 OUT=$(check "$T/s9" "$DIR/catalog/lanes.d"); RC=$?
-[ "$RC" != 0 ] && printf '%s\n' "$OUT" | grep -q 'FAIL: site runner-bench declares stage \[triage\]' && ok \
+[ "$RC" != 0 ] && grep -q 'FAIL: site runner-bench declares stage \[triage\]' <<<"$OUT" && ok \
   || bad "S9: runner-bench's row reverted to triage and the ratchet stayed green (rc=$RC)"
 
 echo "lane-stage-ratchet-sites: $PASS passed, $FAIL failed"

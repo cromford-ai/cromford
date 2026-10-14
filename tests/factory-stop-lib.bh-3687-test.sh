@@ -168,7 +168,7 @@ if [ -z "${FS_UNDER_TEST:-}" ]; then
     sed "$2" "$FS" > "$m"
     if cmp -s "$m" "$FS"; then bad "M $1: the mutation did not apply"; return; fi
     out=$(FS_UNDER_TEST="$m" HARNESS_TEST_SANDBOX=1 bash "$0" 2>&1)
-    printf '%s\n' "$out" | grep -q "^FAIL: $3" && ok || bad "M $1: $3 stayed green under the mutant"
+    grep -q "^FAIL: $3" <<<"$out" && ok || bad "M $1: $3 stayed green under the mutant"
   }
   mutant always-run 's/^factory_stopped() {$/factory_stopped() { return 1;/' "L1 row 1 stops"
   mutant no-norow-log '/_lg_log_throttled factory-stop-norow/d' "L3 the no-readable line is logged"

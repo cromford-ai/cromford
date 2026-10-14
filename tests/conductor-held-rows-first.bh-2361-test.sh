@@ -104,8 +104,8 @@ reset_io
 OUT=$(held_pages_whole 500); RC=$?
 [ "$RC" = 0 ] && ok || bad "W1 whole read rc=$RC, wanted 0"
 [ "$(printf '%s\n' "$OUT" | grep -c .)" = 2 ] && ok || bad "W1 wanted 2 lines: $OUT"
-[ "$(printf '%s\n' "$OUT" | head -1 | awk -F'\t' '{print NF}')" = 10 ] && ok || bad "W1 wanted 10 columns: $OUT"
-[ "$(printf '%s\n' "$OUT" | head -1 | cut -f1-5 | tr '\t' ' ')" = "example-org/a 7 WAIT_CI $HEAD STUCK" ] && ok || bad "W1 first row: $OUT"
+[ "$(head -1 <<<"$OUT" | awk -F'\t' '{print NF}')" = 10 ] && ok || bad "W1 wanted 10 columns: $OUT"
+[ "$(head -1 <<<"$OUT" | cut -f1-5 | tr '\t' ' ')" = "example-org/a 7 WAIT_CI $HEAD STUCK" ] && ok || bad "W1 first row: $OUT"
 grep -q '^GET /api/conductor/held?limit=500$' "$REQ" && ok || bad "W1 request: $(cat "$REQ")"
 printf '%s' '{"rows":[],"n_total":0}' > "$T/held.json"
 OUT=$(held_pages_whole 500); RC=$?

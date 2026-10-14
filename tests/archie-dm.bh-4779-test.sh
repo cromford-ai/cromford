@@ -188,7 +188,7 @@ _jobs_req() {
       out='{"ok":true}' ;;
     "GET /api/ledger")
       k=$(qp kind)
-      if printf '%s' "$p" | grep -q '[?&]key='; then
+      if grep -q '[?&]key=' <<<"$p"; then
         out=$(jq -c --arg k "$k" --arg v "$(qp key)" '.ledger[$k + "|" + $v] // empty | {ledger: .}' "$db")
         [ -n "$out" ] || { JOBS_HTTP=404; return 2; }
       else

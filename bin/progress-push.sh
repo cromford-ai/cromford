@@ -189,7 +189,7 @@ fi
 [ "${ALLOFF:-0}" = 1 ] || [ "${DRY:-0}" = 1 ] || { command -v lane_gate_or_exit >/dev/null 2>&1 && lane_gate_or_exit progress-push; }
 if [ "$ALLOFF" = 1 ]; then
   RESP=$(post_wd /api/progress "$(jq -nc --argjson cfg "$CFG" '{v:1, all_off:true, cfg:$cfg}')") || RESP="post failed"
-  echo "$(date -u '+%Y-%m-%d %H:%M:%SZ') [progress-push] all-off marker pushed watchdog=$(printf %s "$RESP" | head -c 120)" >> "$LOG"
+  echo "$(date -u '+%Y-%m-%d %H:%M:%SZ') [progress-push] all-off marker pushed watchdog=$(head -c 120 <<<"$RESP")" >> "$LOG"
   exit 0
 fi
 
@@ -257,7 +257,7 @@ fi
 if [ "$DRY" = 1 ]; then
   RESP=$(post_wd /api/progress/dry-run "$BODY")
   if ! printf %s "$RESP" | jq -e 'type=="object"' >/dev/null 2>&1; then
-    echo "progress-push --dry-run: the watchdog did not answer (got: $(printf %s "$RESP" | head -c 200))"; exit 1
+    echo "progress-push --dry-run: the watchdog did not answer (got: $(head -c 200 <<<"$RESP"))"; exit 1
   fi
   printf %s "$RESP" | jq -r --argjson e "$(printf %s "$BODY" | jq -c '.errors')" '
     "progress-push --dry-run (nothing stored, nothing paged)",
@@ -270,5 +270,5 @@ if [ "$DRY" = 1 ]; then
 fi
 
 RESP=$(post_wd /api/progress "$BODY") || RESP="post failed"
-echo "$(date -u '+%Y-%m-%d %H:%M:%SZ') [progress-push] projects=$(printf %s "$BODY" | jq '.projects|length') errors=$(printf %s "$BODY" | jq -c '.errors') dropped_knob_pairs=$DROPPED watchdog=$(printf %s "$RESP" | head -c 120)" >> "$LOG"
+echo "$(date -u '+%Y-%m-%d %H:%M:%SZ') [progress-push] projects=$(printf %s "$BODY" | jq '.projects|length') errors=$(printf %s "$BODY" | jq -c '.errors') dropped_knob_pairs=$DROPPED watchdog=$(head -c 120 <<<"$RESP")" >> "$LOG"
 exit 0

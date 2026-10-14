@@ -47,7 +47,7 @@ test('1 /saved groups by day, repo and class, newest day first, with summed coun
   if (!s) return;
   await s.run('123-1-0', { headers: TOKEN, ran: 3, reused: 5, saved_s: 120 });
   await s.run('124-1-0', { headers: TOKEN, ran: 1, reused: 2, saved_s: 30 });
-  await s.run('cromford-BH-1-gate-1', { ran: 2, reused: 4, saved_s: 600 });
+  await s.run('example-BH-1-gate-1', { ran: 2, reused: 4, saved_s: 600 });
   await s.run('125-1-0', { headers: TOKEN, ran: 4, reused: 1, saved_s: 45 });
   s.at(BH, '125-1-0', `${yesterday()}T09:00:00Z`);
   const r = await s.call('GET', '/api/suite-results/saved?days=14');

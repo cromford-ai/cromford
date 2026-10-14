@@ -90,7 +90,7 @@ shim_grammar() {
   ' "$1"
 }
 GRAM=$(shim_grammar "$LIB") && ok \
-  || bad "1: bin/lib/merge-conductor-lib.sh must be a shim — one source, guard, assignment or loop line per line, no functions, no logic: $(printf '%s' "$GRAM" | head -5 | tr '\n' '|')"
+  || bad "1: bin/lib/merge-conductor-lib.sh must be a shim — one source, guard, assignment or loop line per line, no functions, no logic: $(head -5 <<<"$GRAM" | tr '\n' '|')"
 
 # ── 2. the map is real before anything is read off it ───────────────────────
 # A truncated or missing map would make every row below vacuous rather than red.
@@ -173,7 +173,7 @@ while [ "$(wc -l < "$T/f40.sh")" -lt 40 ]; do
   n=$(wc -l < "$T/f40.sh")
   printf '[ -r "$MC_H/bin/lib/extra-%s.sh" ] && . "$MC_H/bin/lib/extra-%s.sh"\n' "$n" "$n" >> "$T/f40.sh"
 done
-GRAM=$(shim_grammar "$T/f40.sh") && ok || bad "1/fixture: a 40-line sourcing-only shim must pass: $(printf '%s' "$GRAM" | head -3 | tr '\n' '|')"
+GRAM=$(shim_grammar "$T/f40.sh") && ok || bad "1/fixture: a 40-line sourcing-only shim must pass: $(head -3 <<<"$GRAM" | tr '\n' '|')"
 SELF=$(who_self "$T/f40.sh")
 [ -z "$SELF" ] && ok || bad "4/fixture: the 40-line sourcing-only shim must define nothing, got: $SELF"
 # B. a shim with an `if` block of logic fails check 1

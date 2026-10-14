@@ -73,6 +73,16 @@
       "note": "BH-1597. Every tick probes EVERY started machine in TESTHOST_APP with one df over flyctl ssh console, logs its root and /srv/tmp use, and raises testhost-disk-<machine name> (warn, bin/lane-alert.sh) when its ROOT disk is above this percent; the condition resolves once the machine is back at or under it. The roots are 7.8 GB overlays and testhost-2 went from 74% to 87% in minutes with thirteen runs live. 0 turns the alert off (the log line stays). Same 85% idea as #1123's fleet disk guard."
     },
     {
+      "env": "TESTHOST_UNKNOWN_ALERT_TICKS",
+      "type": "int",
+      "default": 3,
+      "min": 1,
+      "max": 288,
+      "unit": "ticks",
+      "zero_means": null,
+      "note": "BH-6061. Consecutive ticks that read the machine state as unknown before the tick raises testhost-state-unknown (warn, bin/lane-alert.sh) with the cause it measured (flyctl not found, an auth failure, an API error). One alert per streak; a tick that reads a real state again resolves it. The idle stop cannot run while the state is unknown, which is how the host billed for 13 days with no alert."
+    },
+    {
       "env": "CI_RUNNERS_SLUG",
       "type": "string",
       "default": "example-org/cromford",

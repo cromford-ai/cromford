@@ -1,0 +1,8 @@
+# @hub-lanes
+# Impact-map learner (BH-6458, C1 of BH-6390): reads the culprit rule-break /
+# semantic-test rows of dequeue_events, runs bin/impact-learn.sh record in a
+# scratch worktree of origin/main, and opens ONE PR on impact-learn/edges with
+# the new catalog/test-impact-learned.d fragments. One open lane PR at a time.
+# WRITES: logs/impact-learn.log, state/impact-learn/seen.tsv. Off:
+# flags/lane-off-impact-learn-lane. Dry: IMPACT_LEARN_ACT=0.
+23 * * * * /root/harness/bin/hub-lease.sh check && /root/harness/bin/impact-learn-lane.sh >/dev/null 2>&1

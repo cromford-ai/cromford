@@ -392,6 +392,24 @@ run "$P" 925 926
 grep -q 'project-5 925 TK-925' "$H/launches.log" 2>/dev/null && ok || bad "T1.4d: the #3354 comment must lift the hold: $(reason 925)"
 [ "$(reason 926)" = "HOLD in comment" ] && ok || bad "T1.4d: our ambiguity note must not lift, got '$(reason 926)'"
 nomodel T1.4d
+# BH-6091: a comment OPENING with `HOLD:` holds even when it names RESUME
+# (#5962's two exact shapes); a lead RESUME that names the HOLD still lifts.
+reset
+mkissue 927 OPEN "$LAB_AI" "TK-927 HOLD that names the RESUME above" "$BODY_OK" \
+  '[{"body":"RESUME — go ahead"},{"body":"HOLD: the lead reversed the RESUME above (the two messages crossed)."}]'
+mkissue 928 OPEN "$LAB_AI" "TK-928 HOLD until RESUME" "$BODY_OK" \
+  '[{"body":"RESUME — go ahead"},{"body":"HOLD: a Mac agent owns the branch. Please make no pool push until the PR is open and RESUME is posted."}]'
+mkissue 929 OPEN "$LAB_AI" "TK-929 RESUME that names the HOLD" "$BODY_OK" \
+  '[{"body":"HOLD: waiting"},{"body":"RESUME: the pool is building; the HOLD above is withdrawn"}]'
+# a bare HOLD line, then text naming RESUME (#6091's real HOLD comments, review of 82abecc2)
+mkissue 930 OPEN "$LAB_AI" "TK-930 bare HOLD line" "$BODY_OK" \
+  '[{"body":"RESUME — go ahead"},{"body":"HOLD\n\nA Mac agent is fixing the lead BLOCK. A RESUME follows when the fix is pushed.\n"}]'
+run "$P" 927 928 929 930
+[ "$(reason 927)" = "HOLD in comment" ] && ok || bad "T1.4f: an opening HOLD naming RESUME must hold, got '$(reason 927)'"
+[ "$(reason 928)" = "HOLD in comment" ] && ok || bad "T1.4f: 'HOLD: … until … RESUME' must hold, got '$(reason 928)'"
+grep -q 'project-5 929 TK-929' "$H/launches.log" 2>/dev/null && ok || bad "T1.4f: an opening RESUME naming the HOLD must lift: $(reason 929)"
+[ "$(reason 930)" = "HOLD in comment" ] && ok || bad "T1.4f: a bare HOLD line over text naming RESUME must hold, got '$(reason 930)'"
+nomodel T1.4f
 # and the box mid-sync without the lib: NO lift vocabulary, so it behaves exactly
 # as this script did before it read bin/lib/hold.sh — every hold is permanent.
 reset

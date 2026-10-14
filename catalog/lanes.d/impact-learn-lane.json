@@ -1,0 +1,104 @@
+{
+  "id": "impact-learn-lane",
+  "name": "Impact-map learner",
+  "scope": "hub",
+  "script": "bin/impact-learn-lane.sh",
+  "cadence": "23 * * * *",
+  "boxes": [
+    "hub"
+  ],
+  "switch": {
+    "kind": "flag",
+    "name": "lane-off-impact-learn-lane",
+    "aliases": []
+  },
+  "wired": true,
+  "knobs": [
+    {
+      "env": "IMPACT_LEARN_ACT",
+      "type": "int",
+      "default": 1,
+      "min": 0,
+      "max": 1,
+      "zero_means": "off",
+      "note": "BH-6458: 1 lets the lane push impact-learn/edges and open the learned-edge PR; 0 is dry: it reads, learns in the worktree, prints would-open, and pushes and marks nothing. Read by bin/impact-learn-lane.sh as ${IMPACT_LEARN_ACT:-1}."
+    },
+    {
+      "env": "IMPACT_LEARN_WINDOW_H",
+      "type": "int",
+      "default": 168,
+      "min": 1,
+      "max": 720,
+      "zero_means": null,
+      "note": "BH-6458: hours of dequeue_events the lane reads per tick; also the age at which a state/impact-learn/seen.tsv line is pruned. Read by bin/impact-learn-lane.sh as ${IMPACT_LEARN_WINDOW_H:-168}.",
+      "unit": "hours"
+    },
+    {
+      "env": "IMPACT_LEARN_MAX_EVENTS",
+      "type": "int",
+      "default": 50,
+      "min": 1,
+      "max": 500,
+      "zero_means": null,
+      "note": "BH-6458: the most candidate rows learned per tick, oldest first; the rest wait for the next tick. Read by bin/impact-learn-lane.sh as ${IMPACT_LEARN_MAX_EVENTS:-50}."
+    },
+    {
+      "env": "IMPACT_LEARN_MAX_EDGES",
+      "type": "int",
+      "default": 30,
+      "min": 1,
+      "max": 200,
+      "zero_means": null,
+      "note": "BH-6458: more new edges than this in one tick opens no PR, marks nothing and pages impact-learn-mass once (a wide failure or a classifier fault; a person looks first). Read by bin/impact-learn-lane.sh as ${IMPACT_LEARN_MAX_EDGES:-30}."
+    },
+    {
+      "env": "IMPACT_LEARN_MAX_PATHS",
+      "type": "int",
+      "default": 10,
+      "min": 1,
+      "max": 100,
+      "zero_means": null,
+      "note": "BH-6458: passed to bin/impact-learn.sh record --max-paths, the most changed paths one suite may learn from one event. Read by bin/impact-learn-lane.sh as ${IMPACT_LEARN_MAX_PATHS:-10}."
+    },
+    {
+      "env": "IMPACT_LEARN_PR_STALE_H",
+      "type": "int",
+      "default": 48,
+      "min": 1,
+      "max": 720,
+      "zero_means": null,
+      "note": "BH-6458: an open lane PR older than this pages impact-learn-stale:<n>; while it is open the lane learns nothing. Read by bin/impact-learn-lane.sh as ${IMPACT_LEARN_PR_STALE_H:-48}.",
+      "unit": "hours"
+    },
+    {
+      "env": "IMPACT_LEARN_NOW",
+      "type": "string",
+      "default": "",
+      "zero_means": null,
+      "note": "Test seam: the epoch second bin/impact-learn-lane.sh uses as now (tests/impact-learn-lane.bh-6458-test.sh). Empty means the clock. NOT settable from the control plane.",
+      "settable": false
+    },
+    {
+      "env": "IMPACT_LEARN_LANE_FIXTURE",
+      "type": "string",
+      "default": "",
+      "zero_means": null,
+      "note": "Test seam: a file bin/impact-learn-lane.sh sources after the contract libs, only when HARNESS_TEST_SANDBOX=1 (tests/impact-learn-lane.bh-6458-test.sh). NOT settable from the control plane: it names a file a root lane sources.",
+      "settable": false
+    },
+    {
+      "env": "HARNESS_TEST_SANDBOX",
+      "type": "string",
+      "default": "",
+      "zero_means": null,
+      "note": "Test seam gate: bin/impact-learn-lane.sh sources IMPACT_LEARN_LANE_FIXTURE only when this is 1 (the test harness sets it). Never set on a box, and NOT settable from the control plane.",
+      "settable": false
+    }
+  ],
+  "stats": {
+    "cost_stage": null,
+    "cost_project_filter": null,
+    "lanes_row": false,
+    "log": "logs/impact-learn.log"
+  }
+}

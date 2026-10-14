@@ -227,8 +227,11 @@ hasw skipped_verdict=1 && ok || bad "G3 summary: $(summ)"
 # ── G5: a lead MERGE on A, D = A + 30 lines: a delta request based on A ──
 reset "$D" MERGE; tick
 [ "$(created)" = 1 ] && ok || bad "G5 want one request, got $(created): $(tail -5 "$QLOG")"
-[ "$(jq -r .scope_notes <<<"$(body1)" 2>/dev/null)" = "auto: CI green on ${D:0:12}; lead-delta:$A lines:30/40 files:1" ] && ok \
-  || bad "G5 scope_notes: $(body1)"
+# TEST-CHANGE (BH-6391): the same exact prefix, then the new lead-prev: group naming A.
+case "$(jq -r .scope_notes <<<"$(body1)" 2>/dev/null)" in
+  "auto: CI green on ${D:0:12}; lead-delta:$A lines:30/40 files:1; lead-prev:$A word:MERGE "*) ok ;;
+  *) bad "G5 scope_notes: $(body1)" ;;
+esac
 [ "$(jq -r .prior_verdict_ref <<<"$(body1)" 2>/dev/null)" = "lead MERGE on ${A:0:12} (verdict row #5)" ] && ok || bad "G5 prior_verdict_ref: $(body1)"
 hasw delta=1 && hasw full=0 && ok || bad "G5 summary: $(summ)"
 [ ! -s "$T/log/post" ] && ok || bad "G5 a 30-line change was replayed: $(cat "$T/log/post")"

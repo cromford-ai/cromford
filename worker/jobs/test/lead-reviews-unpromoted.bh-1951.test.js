@@ -4,6 +4,7 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { DatabaseSync } from 'node:sqlite';
 import worker from '../src/index.js';
+import { jobsSchemaSql } from './lib/jobs-schema.js';
 
 // BH-1951 — GET /api/lead-reviews?promoted=0: the hub's promotion lane
 // (bin/lead-review-land.sh) asks for unpromoted rows only, so a list capped at
@@ -12,7 +13,7 @@ import worker from '../src/index.js';
 // the lead-reviews.bh-1949 idiom.
 const SECRET = 'test-secret';
 const LEAD = 'lead-test-token';
-const SCHEMA = readFileSync(fileURLToPath(new URL('../schema.sql', import.meta.url)), 'utf8');
+const SCHEMA = jobsSchemaSql();
 
 function sqliteDB(db) {
   const bindAndRun = (sql, binds) => ({

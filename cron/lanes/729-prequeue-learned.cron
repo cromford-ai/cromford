@@ -1,0 +1,9 @@
+# @hub-lanes
+
+# ── PREQUEUE LEARNED (BH-6335) ─────────────────────────────────────────────
+# The learned list for the pre-queue gate: one local record per FAILED
+# merge-queue batch run of Harness CI, holding the tests/*.sh suites that
+# failed in it. The conductor hook reads the frequent ones through --list.
+# Twice an hour, off ci-batch-ledger's :11/:41; at most PAGES + MAX GitHub
+# reads, skipped while the bucket is low. Kill: bin/harness-ctl.sh off prequeue-learned.
+23,53 * * * * /root/harness/bin/hub-lease.sh check && /root/harness/bin/prequeue-learned.sh --refresh >/dev/null 2>&1

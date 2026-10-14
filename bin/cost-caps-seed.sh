@@ -117,11 +117,11 @@ _jobs_req POST /api/cost-caps/seed "$body" > "$outf"
 rc=$?
 out=$(cat "$outf")
 if [ "$rc" -ne 0 ]; then
-  echo "cost-caps-seed: POST /api/cost-caps/seed failed (http=${JOBS_HTTP:-none}): $(printf '%s' "${JOBS_BODY:-}" | head -c 200 | tr '\n' ' ')" >&2
+  echo "cost-caps-seed: POST /api/cost-caps/seed failed (http=${JOBS_HTTP:-none}): $(head -c 200 < <(printf '%s' "${JOBS_BODY:-}") | tr '\n' ' ')" >&2
   exit 1
 fi
 if ! printf '%s' "$out" | jq -e '.changed_keys | type == "array"' >/dev/null 2>&1; then
-  echo "cost-caps-seed: POST /api/cost-caps/seed answered http=${JOBS_HTTP:-none} without a changed_keys array: $(printf '%s' "$out" | head -c 200 | tr '\n' ' ')" >&2
+  echo "cost-caps-seed: POST /api/cost-caps/seed answered http=${JOBS_HTTP:-none} without a changed_keys array: $(head -c 200 < <(printf '%s' "$out") | tr '\n' ' ')" >&2
   exit 1
 fi
 printf '%s' "$out" | jq -r '

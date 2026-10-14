@@ -376,6 +376,7 @@ sweep_tree() { # sweep_tree <with-lib|no-lib>
   scratch_rm "$SW"
   mkdir -p "$SW/bin/lib" "$SW/logs" "$SW/state" "$SW/flags" "$SW/locks" "$SW/env" "$SW/builds"
   cp "$DIR/bin/merge-sweep.sh" "$SW/bin/sweep.sh"
+  mkdir -p "$SW/bin/lib" && cp -rL "$DIR/bin/lib/ms" "$SW/bin/lib/" || exit 1   # BH-5242: the sweep loads bin/lib/ms/
   # The decision reads go through the conductor lib and bin/lib/gh-rest.sh since
   # BH-784; without both the sweep's fail-closed shims answer "unverifiable" and
   # it never reaches the merge line these blocks are about. with-lib/no-lib is

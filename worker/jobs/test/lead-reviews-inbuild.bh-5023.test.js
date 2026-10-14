@@ -4,6 +4,7 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { DatabaseSync } from 'node:sqlite';
 import worker from '../src/index.js';
+import { jobsSchemaSql } from './lib/jobs-schema.js';
 
 // BH-5023 (BH-4973.2) — a build files the lead review request for its OWN
 // medium-risk head with the bearer alone (bin/inbuild-lead-review.sh), because
@@ -13,7 +14,7 @@ import worker from '../src/index.js';
 // 403 it was. Driven through worker.fetch against the SQL that ships.
 const SECRET = 'test-secret';
 const LEAD = 'lead-test-token';
-const SCHEMA = readFileSync(fileURLToPath(new URL('../schema.sql', import.meta.url)), 'utf8');
+const SCHEMA = jobsSchemaSql();
 
 function sqliteDB(db) {
   const bindAndRun = (sql, binds) => ({

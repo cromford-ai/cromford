@@ -36,6 +36,9 @@ set -uo pipefail
 DIR=$(cd "$(dirname "$0")/.." && pwd)
 # shellcheck source=tests/lib/scratch.sh
 . "$(dirname "$0")/lib/scratch.sh" || exit 1
+# TEST-CHANGE BH-6052: the day stamp below is read by the code and again here; never straddle 00:00Z.
+. "$(dirname "$0")/lib/day-boundary.sh" || exit 1
+clear_boundary 86400 36 || exit 1
 PASS=0; FAIL=0
 ok()  { PASS=$((PASS+1)); }
 bad() { FAIL=$((FAIL+1)); echo "FAIL: $1"; }
@@ -176,9 +179,13 @@ LATE=$( ( trap '' PIPE; drained box-01 >/dev/null ) 2>&1 | grep -c 'Broken pipe'
 # writer — which is the other reason this only ever showed up on some runs.
 # `mawk -Winteractive` is mawk with line-buffered reads, so it makes the prompt
 # exit deterministic here with no change to any awk semantics. Where the probe
-# fails the awk in PATH is not mawk, and it already exits promptly.
+# fails the awk in PATH is not mawk, and it already exits promptly. gawk ACCEPTS
+# -Winteractive with a warning on stderr ("option `-W interactive'
+# unrecognized, ignored") and rc 0, so a silent rc is not enough: the shim
+# would add that warning to every awk call, and a block that must write nothing
+# to stderr (backup-freshness-test B2) fails for the shim, not for the code.
 mkdir -p "$T/awkshim"
-if awk -Winteractive 'BEGIN{exit 0}' </dev/null >/dev/null 2>&1; then
+if AWKPROBE=$(awk -Winteractive 'BEGIN{exit 0}' </dev/null 2>&1) && [ -z "$AWKPROBE" ]; then
   printf '#!/bin/sh\nexec %s -Winteractive "$@"\n' "$(command -v awk)" > "$T/awkshim/awk"
   chmod +x "$T/awkshim/awk"
 fi

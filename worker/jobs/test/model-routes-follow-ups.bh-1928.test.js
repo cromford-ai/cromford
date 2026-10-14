@@ -4,6 +4,7 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { DatabaseSync } from 'node:sqlite';
 import worker from '../src/index.js';
+import { jobsSchemaSql } from './lib/jobs-schema.js';
 
 // BH-1928 — two follow-ups of #1917 (BH-1572) on the hub remove route, and
 // one on reset:
@@ -16,7 +17,7 @@ import worker from '../src/index.js';
 //       landed in between was deleted but audited with the stale value.
 // Driven through worker.fetch against the schema.sql that ships.
 const SECRET = 'test-secret';
-const SCHEMA = readFileSync(fileURLToPath(new URL('../schema.sql', import.meta.url)), 'utf8');
+const SCHEMA = jobsSchemaSql();
 
 function sqliteDB(db) {
   const prepare = (sql) => {

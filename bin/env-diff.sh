@@ -104,7 +104,7 @@ parse_env() {
     END { for (i = 1; i <= n; i++) printf "%s\t%s\n", order[i], val[order[i]] }
   ' "$1"
 }
-is_secret() { printf '%s' "$1" | grep -qiE 'KEY|TOKEN|SECRET|PASS'; }
+is_secret() { grep -qiE 'KEY|TOKEN|SECRET|PASS' <<<"$1"; }
 # value_is_secret <value> — rc 0 when the VALUE carries a credential, whatever
 # the key is called (BH-1993: RUNNER_URL=https://user:tok@host went out raw).
 # It errs toward masking: a masked model name costs a human one lookup, an
@@ -217,7 +217,7 @@ fi
 
 TOTAL=$(printf '%s\n' "$ITEMS" | wc -l | tr -d ' ')
 AKEY="envdiff:$BOX:$(printf '%s\n' "$ITEMS" | sha256sum | cut -c1-16)"
-SHOWN=$(printf '%s\n' "$ITEMS" | head -n "$MAX" | paste -sd ';' - | sed 's/;/; /g')
+SHOWN=$(head -n "$MAX" <<<"$ITEMS" | paste -sd ';' - | sed 's/;/; /g')
 MORE=""
 [ "$TOTAL" -gt "$MAX" ] && MORE=" (+$((TOTAL - MAX)) more; full list in logs/env-diff.log)"
 LINE="ENV CHANGE on $BOX: $SHOWN$MORE (runner/billing config is architecture: confirm this was intended)"

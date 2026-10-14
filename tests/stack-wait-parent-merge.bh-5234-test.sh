@@ -10,7 +10,8 @@
 #              written by bin/lib/file-children.sh fc_child_footer) waits; every
 #              other child stacks as today.
 #   all      — no child stacks; every one waits for the merge.
-# An invalid value is `rollouts`, with ONE line in logs/stale-parent.log.
+# An invalid value is `plan` (BH-6389), with ONE line in logs/stale-parent.log;
+# the launch side reads `plan` as `rollouts`.
 #
 # Two places obey it, and both are DRIVEN here rather than grepped:
 #   1. bin/unblocked-children.sh (the launch side) emits no STACKABLE line for a
@@ -100,14 +101,15 @@ OUT=$(STACK_WAIT_PARENT_MERGE=all uc <<<"$DIFF_OPEN")
 grep -q 'STACKABLE 2 ' <<<"$OUT" && bad "W4: =all must not stack the rollout wave (got: $OUT)" || ok
 grep -q 'STACKABLE 3 ' <<<"$OUT" && bad "W4: =all must not stack the ordinary child either (got: $OUT)" || ok
 
-# W5: an invalid value reads as rollouts, and says so once in the lib's log.
+# W5: an invalid value reads as plan (BH-6389; it was rollouts), which the
+# launch side treats as rollouts, and says so once in the lib's log.
 : > "$T/h/logs/stale-parent.log"
 OUT=$(STACK_WAIT_PARENT_MERGE=bogus uc <<<"$DIFF_OPEN")
 grep -q 'STACKABLE 2 ' <<<"$OUT" && bad "W5: =bogus must behave as rollouts — no STACKABLE 2 (got: $OUT)" || ok
 grep -q '^board issues: STACKABLE 3 ' <<<"$OUT" && ok || bad "W5: =bogus must behave as rollouts — STACKABLE 3 present (got: $OUT)"
 SPLOG=$(cat "$T/h/logs/stale-parent.log" 2>/dev/null)
-[ "$(grep -c . <<<"$SPLOG")" = 1 ] && grep -q 'bogus' <<<"$SPLOG" && grep -q 'rollouts' <<<"$SPLOG" \
-  && ok || bad "W5: exactly one stale-parent.log line naming 'bogus' and 'rollouts' (got: $SPLOG)"
+[ "$(grep -c . <<<"$SPLOG")" = 1 ] && grep -q 'bogus' <<<"$SPLOG" && grep -q 'using plan$' <<<"$SPLOG" \
+  && ok || bad "W5: exactly one stale-parent.log line naming 'bogus' and 'plan' (got: $SPLOG)"
 
 # W6: the parent CLOSED — the knob only governs stacking, so the release is
 # untouched under every mode.

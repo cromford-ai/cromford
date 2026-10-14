@@ -1,0 +1,117 @@
+{
+  "metrics": {
+    "hours": 24,
+    "since": "2026-10-11T18:21:13Z",
+    "lanes": [
+      {
+        "lane": "ci-sweep",
+        "queued": 0,
+        "claimed": 0,
+        "done": 1,
+        "died": 0,
+        "wait_p50_s": 20,
+        "wait_max_s": 20,
+        "wait_n": 1,
+        "cost_usd": 0.01
+      },
+      {
+        "lane": "demo",
+        "queued": 1,
+        "claimed": 1,
+        "done": 2,
+        "died": 1,
+        "wait_p50_s": 120,
+        "wait_max_s": 900,
+        "wait_n": 5,
+        "cost_usd": 0.03
+      }
+    ],
+    "machines": [
+      {
+        "machine": "m1",
+        "claimed": 1,
+        "done": 1,
+        "died": 0,
+        "last_claimed_at": "2026-10-12T18:16:33Z"
+      },
+      {
+        "machine": "m2",
+        "claimed": 0,
+        "done": 2,
+        "died": 1,
+        "last_claimed_at": "2026-10-12T18:20:13Z"
+      }
+    ],
+    "hub": {
+      "box": "hub",
+      "load1": 0.42,
+      "reported_at": "2026-10-12T18:21:13Z",
+      "age_s": 0
+    },
+    "idle_cost_usd": 0,
+    "cost_available": true,
+    "wait_alert_min": 10,
+    "truncated": false,
+    "as_of": "2026-10-12T18:21:13Z"
+  },
+  "list": {
+    "runs": [
+      {
+        "id": 5,
+        "lane": "demo",
+        "project": "p5",
+        "status": "died",
+        "enqueued_at": "2026-10-12T18:16:13Z",
+        "claimed_at": "2026-10-12T18:20:13Z",
+        "claimed_by": "m2",
+        "finished_at": null,
+        "rc": null,
+        "attempts": 1,
+        "wait_s": 240,
+        "run_s": null
+      },
+      {
+        "id": 4,
+        "lane": "demo",
+        "project": "p4",
+        "status": "claimed",
+        "enqueued_at": "2026-10-12T18:14:33Z",
+        "claimed_at": "2026-10-12T18:16:33Z",
+        "claimed_by": "m1",
+        "finished_at": null,
+        "rc": null,
+        "attempts": 1,
+        "wait_s": 120,
+        "run_s": null
+      }
+    ],
+    "truncated": true,
+    "limit": 2,
+    "as_of": "2026-10-12T18:21:13Z"
+  },
+  "run": {
+    "run": {
+      "id": 2,
+      "lane": "demo",
+      "project": "p2",
+      "status": "done",
+      "enqueued_at": "2026-10-12T18:11:13Z",
+      "claimed_at": "2026-10-12T18:11:43Z",
+      "claimed_by": "m1",
+      "finished_at": "2026-10-12T18:11:55Z",
+      "rc": 0,
+      "attempts": 1,
+      "wait_s": 30,
+      "run_s": 12,
+      "args": [
+        "bin/x.sh",
+        "p2"
+      ],
+      "enqueued_by": "hub",
+      "heartbeat_at": "2026-10-12T18:11:43Z",
+      "lease_until": "2026-10-12T18:13:43Z",
+      "prof_line": "PROF lane=demo <b>bold</b> wall=12s"
+    },
+    "as_of": "2026-10-12T18:21:13Z"
+  }
+}

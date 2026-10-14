@@ -1,0 +1,12 @@
+# @hub-lanes
+
+# ── LANE-RUN-WAIT-ALERT LANE (BH-6127, BH-6047 part 4 of 5) ─────────────────
+# Every minute. POSTs one wait tick (with the hub's load1) to the jobs worker,
+# which decides in D1 whether a lane's oldest queued lane run waited over the
+# settings row lane_run.wait_alert_min (default 10) on 2 consecutive ticks.
+# Writes one warn alert per lane per breach (id lane-run-wait:<lane>) and
+# resolves it when the wait drops under the limit. No lock: the worker counts
+# the ticks and the alert id dedupes. One line per run in
+# logs/lane-run-wait-alert.log. Off: flags/lane-off-lane-run-wait-alert
+# (bin/harness-ctl.sh off lane-run-wait-alert).
+* * * * * /root/harness/bin/hub-lease.sh check && /root/harness/bin/lane-run-wait-alert.sh >> /root/harness/logs/lane-run-wait-alert-cron.log 2>&1

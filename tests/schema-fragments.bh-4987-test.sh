@@ -30,6 +30,7 @@
 # Run from anywhere (exit 0 = all pass).
 set -uo pipefail
 . "$(dirname "$0")/lib/scratch.sh" || exit 1
+. "$(dirname "$0")/lib/jobs-schema.sh" && jobs_schema_render || exit 1
 DIR=$(cd "$(dirname "$0")/.." && pwd)
 SB="$DIR/bin/schema-build.sh"
 PASS=0; FAIL=0

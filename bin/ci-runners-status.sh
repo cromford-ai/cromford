@@ -92,7 +92,7 @@ while :; do
   RC=$?
   if [ "$RC" != 0 ] || [ -z "$RAW" ]; then
     echo "ci-runners-status: could not read repos/$SLUG/actions/runners page $PAGE (rc=$RC)" >&2
-    printf '%s\n' "$RAW" | head -3 >&2
+    head -3 <<<"$RAW" >&2
     exit 2
   fi
   # Shape is checked per page, not once at the end: a 403 on page 2 must be
@@ -102,7 +102,7 @@ while :; do
     then "BADSHAPE" else {t: (.total_count // -1), r: .runners} end' 2>/dev/null)
   if [ -z "$PAGE_JSON" ] || [ "$PAGE_JSON" = '"BADSHAPE"' ]; then
     echo "ci-runners-status: repos/$SLUG/actions/runners page $PAGE did not answer with a runner list" >&2
-    printf '%s\n' "$RAW" | head -3 >&2
+    head -3 <<<"$RAW" >&2
     exit 2
   fi
   [ -n "$TOTAL_COUNT" ] || TOTAL_COUNT=$(printf '%s' "$PAGE_JSON" | jq -r '.t')
@@ -147,7 +147,7 @@ COUNTS=$(printf '%s' "$RAW" | jq -r --arg label "$LABEL" '
 
 if [ -z "$COUNTS" ] || [ "$COUNTS" = BADSHAPE ]; then
   echo "ci-runners-status: repos/$SLUG/actions/runners did not answer with a runner list" >&2
-  printf '%s\n' "$RAW" | head -3 >&2
+  head -3 <<<"$RAW" >&2
   exit 2
 fi
 

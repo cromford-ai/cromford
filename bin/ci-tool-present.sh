@@ -93,10 +93,10 @@ fi
 
 # Whole-token match: the pin must be bounded by something that is not a version
 # character on both sides, so 1.5.0 does not match inside 1.5.01 or 11.5.0.
-if printf '%s\n' "$OUT" | grep -qE "(^|[^0-9.])$(printf '%s' "$PIN" | sed 's/\./\\./g')([^0-9.]|$)"; then
+if grep -qE "(^|[^0-9.])$(printf '%s' "$PIN" | sed 's/\./\\./g')([^0-9.]|$)" <<<"$OUT"; then
   echo "ci-tool-present: $CMD is already at $PIN"
   exit 0
 fi
 
-echo "ci-tool-present: $CMD is on PATH but not at $PIN (it reports: $(printf '%s' "$OUT" | head -1))"
+echo "ci-tool-present: $CMD is on PATH but not at $PIN (it reports: $(head -1 <<<"$OUT"))"
 exit 1

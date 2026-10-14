@@ -1,0 +1,11 @@
+{
+  "env": "HARNESS_SYNC_DEPLOY_ALERT_REPEAT_S",
+  "type": "int",
+  "default": 3600,
+  "min": 0,
+  "max": 86400,
+  "zero_means": null,
+  "read_in": "bin/harness-sync.sh",
+  "note": "BH-6687: seconds between two `wrangler deploy FAILED` ALERTS for one worker on one box while its deploy keeps failing. The first failure always alerts; a held failure is one update-runners.log line, and the next alert carries the failure count. Read by bin/harness-sync.sh as ${HARNESS_SYNC_DEPLOY_ALERT_REPEAT_S:-} (then this same settings row read directly, only on a failed deploy), falling back to HARNESS_SYNC_DEPLOY_ALERT_REPEAT_S_DEFAULT (3600) in bin/harness-sync.sh. A non-numeric value falls through to the default. 0 is a 0-second window: every failed deploy alerts (nothing is switched off).",
+  "settable": true
+}

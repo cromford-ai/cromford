@@ -993,19 +993,19 @@ lane_knob() {
     # because that write went through a surface that showed them the bounds.
     # Either way the trim is never silent: one line per lane per knob per hour,
     # the same throttle the gate uses.
-    if [ "$src" = settings ] && printf '%s' "$val" | grep -qE '^-?[0-9]+(\.[0-9]+)?$'; then
+    if [ "$src" = settings ] && grep -qE '^-?[0-9]+(\.[0-9]+)?$' <<<"$val"; then
       was="$val"
-      if printf '%s' "$mn" | grep -qE '^-?[0-9]+(\.[0-9]+)?$'; then
+      if grep -qE '^-?[0-9]+(\.[0-9]+)?$' <<<"$mn"; then
         awk -v v="$val" -v m="$mn" 'BEGIN{exit !(v<m)}' && val="$mn"
       fi
-      if printf '%s' "$mx" | grep -qE '^-?[0-9]+(\.[0-9]+)?$'; then
+      if grep -qE '^-?[0-9]+(\.[0-9]+)?$' <<<"$mx"; then
         awk -v v="$val" -v m="$mx" 'BEGIN{exit !(v>m)}' && val="$mx"
       fi
       [ "$was" = "$val" ] || _lg_log_throttled "knob-$id-$env${p:+-$p}" \
         "[lane-gate] $id${p:+/$p} $env CLAMPED $was -> $val (registry bounds ${mn:--}..${mx:--}; the settings row still says $was)"
-    elif [ "$src" = env ] && printf '%s' "$val" | grep -qE '^-?[0-9]+(\.[0-9]+)?$'; then
-      if { printf '%s' "$mn" | grep -qE '^-?[0-9]+(\.[0-9]+)?$' && awk -v v="$val" -v m="$mn" 'BEGIN{exit !(v<m)}'; } \
-      || { printf '%s' "$mx" | grep -qE '^-?[0-9]+(\.[0-9]+)?$' && awk -v v="$val" -v m="$mx" 'BEGIN{exit !(v>m)}'; }; then
+    elif [ "$src" = env ] && grep -qE '^-?[0-9]+(\.[0-9]+)?$' <<<"$val"; then
+      if { grep -qE '^-?[0-9]+(\.[0-9]+)?$' <<<"$mn" && awk -v v="$val" -v m="$mn" 'BEGIN{exit !(v<m)}'; } \
+      || { grep -qE '^-?[0-9]+(\.[0-9]+)?$' <<<"$mx" && awk -v v="$val" -v m="$mx" 'BEGIN{exit !(v>m)}'; }; then
         _lg_log_throttled "knob-$id-$env${p:+-$p}" \
           "[lane-gate] $id${p:+/$p} $env is $val from the environment, outside the registry's ${mn:--}..${mx:--} — USED AS IS, not clamped (env/global.env is today's behaviour; set a settings row to change it)"
       fi
@@ -1125,7 +1125,7 @@ _lg_env_apply() {
       low=$(printf '%s' "$e" | tr '[:upper:]' '[:lower:]'); hit=""
       for key in ${p:+"$(_lg_kpfx).$id.$p.$low" "$(_lg_kpfx).$id.$p.$low.unlimited"} \
                  "$(_lg_kpfx).$id.$low" "$(_lg_kpfx).$id.$low.unlimited"; do
-        printf '%s\n' "$rows" | grep -qxF -- "$key" && { hit=1; break; }
+        grep -qxF -- "$key" <<<"$rows" && { hit=1; break; }
       done
       if [ -n "$hit" ]; then
         # lane_knob does the resolving, the clamping and the logging, so one

@@ -29,7 +29,11 @@ async function request(path, init) {
   if (text) {
     try { body = JSON.parse(text); } catch { body = null; }
   }
-  if (res.status === 403 || (res.status === 404 && body && body.error === 'unauthorized')) {
+  // BH-5750: the box-commands owner gate answers 403 {error:"owner_only"} to
+  // a signed-in session that is not an owner. That is a refusal to show, not
+  // a lost session, so it is the one 403 that is not an AuthError.
+  if ((res.status === 403 && !(body && body.error === 'owner_only'))
+    || (res.status === 404 && body && body.error === 'unauthorized')) {
     throw new AuthError();
   }
   if (!res.ok) {
@@ -147,6 +151,9 @@ export const api = {
   },
   // Per-account usage from cost_rows (BH-167), same coord proxy as costAnchored.
   accountUsage: (window = '5h') => get('/api/coord/metrics/account-usage?window=' + encodeURIComponent(window)),
+  // Each lane's spend today against its alert line and ceiling (BH-6174), same
+  // coord proxy. No day = the worker's UTC today.
+  laneSpend: (day) => get('/api/coord/metrics/lane-spend' + (day ? '?day=' + encodeURIComponent(day) : '')),
   // Newest hourly utilization snapshot per project (BH-4011), same coord proxy.
   utilization: () => get('/api/coord/utilization'),
   // Spend grouped by project/stage/runner/model/billing/ticket (BH-3557). A
@@ -161,6 +168,15 @@ export const api = {
   },
   // Triage tickets paid for unchanged input, per day and project (BH-3926).
   triagePaidUnchanged: (days = 14) => get('/api/coord/metrics/triage-paid-unchanged?days=' + encodeURIComponent(days)),
+  // BLOCK findings per week and category, and the rows behind one cell (BH-5806).
+  blockFindingsWeekly: (weeks = 8) => get('/api/coord/block-findings/weekly?weeks=' + encodeURIComponent(weeks)),
+  blockFindings: ({ category, week, limit = 200 } = {}) => {
+    const q = new URLSearchParams();
+    if (category) q.set('category', category);
+    if (week) q.set('week', week);
+    q.set('limit', String(limit));
+    return get('/api/coord/block-findings?' + q.toString());
+  },
   // BH-2647: one row per credential (OAuth / GH App) with its live leases; read-only.
   tokenHealth: () => get('/api/coord/account-leases/health'),
   // Calls per distinct input by lane (BH-2537), and the individual cost rows
@@ -263,6 +279,8 @@ export const api = {
     get(`/api/coord/preplans/adoption?${new URLSearchParams({ project: p, days: String(days) })}`),
   // BH-5267: the files that conflicted or were rebased most on one project's box.
   conflictHotspots: (project, limit) => get(`/api/coord/conflict-hotspots?project=${encodeURIComponent(project)}&limit=${encodeURIComponent(limit)}`),
+  // BH-6061: the Fly idle reaper's last started-machine snapshot and its stops in the last 24 h.
+  flyIdle: () => get('/api/coord/fly-idle'),
   // Lane liveness (2026-08-30): what is SUPPOSED to be ticking, and whether it
   // is. Same worker, same proxy, same session as the jobs read above — and the
   // rows arrive with the verdict already computed, so this screen and
@@ -394,6 +412,8 @@ export const api = {
   // BH-2518: a box/machine op request, and the recent commands (optionally one box's).
   boxCommand: (body) => post('/api/coord/box-commands', body),
   boxCommands: (box) => get('/api/coord/box-commands' + (box ? '?box=' + encodeURIComponent(box) : '')),
+  // BH-5750 C4: the hub's last Orgo computer list per account (ORGO STATE).
+  orgoComputers: () => get('/api/coord/orgo-computers'),
   // BH-2521: the SEED REGISTRY plan/apply/runs and the CHAT BINDINGS read/edit.
   // No actor goes out: the coord proxy stamps it. BH-2995: the apply and the
   // edit carry the dialog's reason, which the proxy requires.

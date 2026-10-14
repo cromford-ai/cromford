@@ -1,0 +1,98 @@
+{
+  "account_leases": [
+    "CREATE TABLE IF NOT EXISTS account_leases (\n       account TEXT NOT NULL,\n       machine_id TEXT NOT NULL,\n       box TEXT,\n       project TEXT,\n       ticket_key TEXT,\n       expires_at TEXT NOT NULL,\n       created_at TEXT NOT NULL,\n       updated_at TEXT NOT NULL,\n       PRIMARY KEY (account, machine_id)\n     )",
+    "CREATE INDEX IF NOT EXISTS idx_account_leases_live ON account_leases(account, expires_at)"
+  ],
+  "token_health": [
+    "CREATE TABLE IF NOT EXISTS token_health (\n       kind TEXT NOT NULL,\n       subject TEXT NOT NULL,\n       box TEXT,\n       expires_at TEXT,\n       last_ok_at TEXT,\n       last_attempt_at TEXT,\n       last_ok INTEGER,\n       fail_count INTEGER NOT NULL DEFAULT 0,\n       last_error TEXT,\n       updated_at TEXT NOT NULL,\n       PRIMARY KEY (kind, subject)\n     )"
+  ],
+  "conductor_held_pages": [
+    "CREATE TABLE IF NOT EXISTS conductor_held_pages (\n       repo TEXT NOT NULL,\n       number INTEGER NOT NULL,\n       state TEXT NOT NULL,\n       head TEXT NOT NULL,\n       kind TEXT NOT NULL,\n       text TEXT NOT NULL,\n       mark TEXT,\n       mode TEXT NOT NULL,\n       first_held_at TEXT NOT NULL,\n       last_seen_at TEXT NOT NULL,\n       PRIMARY KEY (repo, number, state, head, kind)\n     )",
+    "CREATE INDEX IF NOT EXISTS idx_conductor_held_first ON conductor_held_pages(first_held_at)"
+  ],
+  "fix_round_jobs": [
+    "CREATE TABLE IF NOT EXISTS fix_round_jobs (\n       id INTEGER PRIMARY KEY AUTOINCREMENT,\n       project TEXT NOT NULL,\n       cap_key TEXT NOT NULL,\n       box TEXT NOT NULL,\n       args TEXT NOT NULL,\n       record_in TEXT,\n       hotfix INTEGER NOT NULL DEFAULT 0,\n       status TEXT NOT NULL,\n       attempt INTEGER NOT NULL DEFAULT 0,\n       claimed_by TEXT,\n       claimed_at TEXT,\n       result TEXT,\n       record_out TEXT,\n       enqueued_at TEXT NOT NULL,\n       finished_at TEXT,\n       adopted_at TEXT,\n       updated_at TEXT NOT NULL\n     )",
+    "CREATE UNIQUE INDEX IF NOT EXISTS fix_round_jobs_open ON fix_round_jobs(project, cap_key) WHERE status IN ('queued','claimed','done')",
+    "CREATE INDEX IF NOT EXISTS fix_round_jobs_box ON fix_round_jobs(box, status)"
+  ],
+  "steer_notes": [
+    "CREATE TABLE IF NOT EXISTS steer_notes (\n       id INTEGER PRIMARY KEY AUTOINCREMENT,\n       project TEXT NOT NULL,\n       ticket TEXT NOT NULL,\n       job_id TEXT,\n       mode TEXT NOT NULL CHECK (mode IN ('now','ticket','hold')),\n       text TEXT NOT NULL,\n       actor TEXT NOT NULL,\n       status TEXT NOT NULL CHECK (status IN ('pending','taken','read','delivering','delivered','failed')),\n       attempts INTEGER NOT NULL DEFAULT 0,\n       detail TEXT,\n       build_read_at TEXT,\n       delivered_at TEXT,\n       created_at TEXT NOT NULL,\n       updated_at TEXT NOT NULL\n     )",
+    "CREATE INDEX IF NOT EXISTS idx_steer_notes_ticket ON steer_notes(project, ticket, id)",
+    "CREATE INDEX IF NOT EXISTS idx_steer_notes_job ON steer_notes(job_id, mode, status)",
+    "CREATE INDEX IF NOT EXISTS idx_steer_notes_outbox ON steer_notes(status, mode, id)"
+  ],
+  "fleet_cooldowns": [
+    "CREATE TABLE IF NOT EXISTS fleet_cooldowns (\n       kind TEXT NOT NULL,\n       vendor TEXT NOT NULL,\n       subject TEXT NOT NULL,\n       until_at TEXT NOT NULL,\n       since_at TEXT,\n       reason TEXT,\n       box TEXT,\n       set_at TEXT NOT NULL,\n       PRIMARY KEY (kind, vendor, subject)\n     )",
+    "CREATE INDEX IF NOT EXISTS idx_fleet_cooldowns_kind_until ON fleet_cooldowns(kind, until_at)"
+  ],
+  "fly_images": [
+    "CREATE TABLE IF NOT EXISTS fly_images (\n       project TEXT NOT NULL,\n       digest TEXT NOT NULL,\n       app TEXT NOT NULL,\n       bake TEXT,\n       cli TEXT,\n       baked_at INTEGER,\n       active INTEGER NOT NULL DEFAULT 0,\n       box TEXT,\n       set_at TEXT NOT NULL,\n       state TEXT,\n       PRIMARY KEY (project, digest)\n     )",
+    "CREATE INDEX IF NOT EXISTS idx_fly_images_active ON fly_images(project, active)"
+  ],
+  "gh_budget": [
+    "CREATE TABLE IF NOT EXISTS gh_budget (\n       fingerprint TEXT PRIMARY KEY,\n       core_remaining INTEGER,\n       core_limit INTEGER,\n       core_reset INTEGER,\n       graphql_remaining INTEGER,\n       graphql_limit INTEGER,\n       graphql_reset INTEGER,\n       fetched_at INTEGER NOT NULL,\n       box TEXT,\n       updated_at TEXT NOT NULL\n     )"
+  ],
+  "gh_ledger": [
+    "CREATE TABLE IF NOT EXISTS gh_ledger (\n       box TEXT NOT NULL,\n       hour TEXT NOT NULL,\n       lane TEXT NOT NULL,\n       project TEXT NOT NULL,\n       meter TEXT NOT NULL,\n       resource TEXT NOT NULL,\n       method TEXT NOT NULL,\n       path_class TEXT NOT NULL,\n       status TEXT NOT NULL,\n       source TEXT NOT NULL,\n       calls INTEGER NOT NULL,\n       counted INTEGER NOT NULL,\n       remaining_min INTEGER,\n       used_max INTEGER,\n       limit_max INTEGER,\n       reset_max INTEGER,\n       updated_at TEXT NOT NULL,\n       PRIMARY KEY (box, hour, lane, project, meter, resource, method, path_class, status, source)\n     )",
+    "CREATE INDEX IF NOT EXISTS idx_gh_ledger_hour ON gh_ledger(hour)"
+  ],
+  "lane_ticks": [
+    "CREATE TABLE IF NOT EXISTS lane_ticks (\n       lane TEXT NOT NULL,\n       project TEXT NOT NULL,\n       box TEXT NOT NULL,\n       last_tick_at TEXT NOT NULL,\n       last_outcome TEXT NOT NULL,\n       why TEXT,\n       updated_at TEXT NOT NULL,\n       PRIMARY KEY (lane, project, box)\n     )",
+    "CREATE INDEX IF NOT EXISTS idx_lane_ticks_lane ON lane_ticks(lane, last_tick_at)"
+  ],
+  "lane_flag_sightings": [
+    "CREATE TABLE IF NOT EXISTS lane_flag_sightings (\n       name TEXT NOT NULL,\n       box TEXT NOT NULL,\n       lane TEXT,\n       project TEXT,\n       active INTEGER NOT NULL,\n       seen_at TEXT NOT NULL,\n       updated_at TEXT NOT NULL,\n       PRIMARY KEY (name, box)\n     )",
+    "CREATE INDEX IF NOT EXISTS idx_lane_flag_sightings_lane ON lane_flag_sightings(lane, active)"
+  ],
+  "preplans": [
+    "CREATE TABLE IF NOT EXISTS preplans (\n       project TEXT NOT NULL,\n       ticket_key TEXT NOT NULL,\n       base_sha TEXT NOT NULL,\n       ticket_fp TEXT,\n       planned_files TEXT,\n       plan_md TEXT NOT NULL,\n       bytes INTEGER,\n       box TEXT,\n       created_at TEXT NOT NULL,\n       updated_at TEXT NOT NULL,\n       PRIMARY KEY (project, ticket_key)\n     )",
+    "CREATE INDEX IF NOT EXISTS idx_preplans_project ON preplans(project, updated_at)"
+  ],
+  "context_packs": [
+    "CREATE TABLE IF NOT EXISTS context_packs (\n       project TEXT NOT NULL,\n       ticket_key TEXT NOT NULL,\n       parent_key TEXT NOT NULL,\n       base_sha TEXT,\n       pack_md TEXT NOT NULL,\n       bytes INTEGER,\n       box TEXT,\n       created_at TEXT NOT NULL,\n       updated_at TEXT NOT NULL,\n       PRIMARY KEY (project, ticket_key)\n     )"
+  ],
+  "machines": [
+    "CREATE TABLE IF NOT EXISTS machines (\n       machine_id TEXT PRIMARY KEY,\n       project TEXT NOT NULL,\n       app TEXT NOT NULL,\n       role TEXT NOT NULL,\n       key TEXT,\n       ticket TEXT,\n       auth_account TEXT,\n       image TEXT,\n       state TEXT NOT NULL,\n       detail TEXT,\n       spawned_at TEXT,\n       last_seen TEXT,\n       ended_at TEXT,\n       actor TEXT,\n       updated_at TEXT NOT NULL\n     )",
+    "CREATE INDEX IF NOT EXISTS idx_machines_project ON machines(project, state)",
+    "CREATE INDEX IF NOT EXISTS idx_machines_key ON machines(project, key)"
+  ],
+  "model_prices": [
+    "CREATE TABLE IF NOT EXISTS model_prices (\n       model TEXT PRIMARY KEY,\n       slug TEXT,\n       prompt REAL,\n       completion REAL,\n       cache_read REAL,\n       cache_write REAL,\n       cliff_tokens INTEGER,\n       source TEXT,\n       updated_at TEXT NOT NULL,\n       price_source TEXT,\n       vendor_prompt REAL,\n       vendor_completion REAL,\n       vendor_cache_read REAL,\n       vendor_cache_write REAL,\n       vendor_cliff_tokens INTEGER,\n       version INTEGER NOT NULL DEFAULT 1,\n       effective_at TEXT\n     )"
+  ],
+  "price_fly": [
+    "CREATE TABLE IF NOT EXISTS price_fly (\n       key TEXT PRIMARY KEY,\n       value REAL NOT NULL,\n       version INTEGER NOT NULL DEFAULT 1,\n       effective_at TEXT NOT NULL,\n       source TEXT,\n       updated_at TEXT NOT NULL\n     )"
+  ],
+  "model_slugs": [
+    "CREATE TABLE IF NOT EXISTS model_slugs (\n       model TEXT PRIMARY KEY,\n       slug TEXT NOT NULL,\n       version INTEGER NOT NULL DEFAULT 1,\n       effective_at TEXT NOT NULL,\n       source TEXT,\n       updated_at TEXT NOT NULL\n     )"
+  ],
+  "price_audit": [
+    "CREATE TABLE IF NOT EXISTS price_audit (\n       id INTEGER PRIMARY KEY AUTOINCREMENT,\n       kind TEXT NOT NULL,\n       key TEXT NOT NULL,\n       version INTEGER NOT NULL,\n       old_json TEXT,\n       new_json TEXT NOT NULL,\n       source TEXT,\n       effective_at TEXT NOT NULL,\n       UNIQUE(kind, key, version)\n     )"
+  ],
+  "alerts": [
+    "CREATE TABLE IF NOT EXISTS alerts (\n       id TEXT PRIMARY KEY,\n       family TEXT,\n       box TEXT,\n       project TEXT,\n       line TEXT,\n       severity TEXT,\n       first_seen TEXT NOT NULL,\n       last_seen TEXT NOT NULL,\n       count INTEGER NOT NULL DEFAULT 1,\n       state TEXT NOT NULL DEFAULT 'new',\n       claimed_by TEXT,\n       claimed_at TEXT,\n       notified_at TEXT\n     )",
+    "CREATE INDEX IF NOT EXISTS idx_alerts_state ON alerts(state, claimed_at, first_seen)",
+    "CREATE INDEX IF NOT EXISTS idx_alerts_family ON alerts(family, last_seen)"
+  ],
+  "alert_actions": [
+    "CREATE TABLE IF NOT EXISTS alert_actions (\n       id INTEGER PRIMARY KEY AUTOINCREMENT,\n       alert_id TEXT NOT NULL,\n       action TEXT NOT NULL,\n       actor TEXT NOT NULL,\n       note TEXT,\n       before_state TEXT,\n       after_state TEXT,\n       until TEXT,\n       outcome TEXT NOT NULL,\n       at TEXT NOT NULL\n     )",
+    "CREATE INDEX IF NOT EXISTS idx_alert_actions_alert ON alert_actions(alert_id, at)"
+  ],
+  "closeout_aged": [
+    "CREATE TABLE IF NOT EXISTS closeout_aged (\n       build_dir TEXT PRIMARY KEY,\n       project TEXT,\n       result_head TEXT,\n       reason TEXT,\n       recorded_by TEXT,\n       at TEXT NOT NULL\n     )",
+    "CREATE INDEX IF NOT EXISTS idx_closeout_aged_project ON closeout_aged(project, at)"
+  ],
+  "split_watchdog_actions": [
+    "CREATE TABLE IF NOT EXISTS split_watchdog_actions (\n       project TEXT NOT NULL,\n       family TEXT NOT NULL,\n       child TEXT NOT NULL,\n       step TEXT NOT NULL,\n       reason_fp TEXT NOT NULL,\n       reason TEXT,\n       outcome TEXT,\n       repeats INTEGER NOT NULL DEFAULT 1,\n       first_at TEXT NOT NULL,\n       last_at TEXT NOT NULL,\n       actor TEXT,\n       PRIMARY KEY (project, child, step, reason_fp)\n     )",
+    "CREATE INDEX IF NOT EXISTS idx_split_watchdog_family ON split_watchdog_actions(project, family, last_at)",
+    "CREATE INDEX IF NOT EXISTS idx_split_watchdog_last ON split_watchdog_actions(last_at)"
+  ],
+  "model_watch": [
+    "CREATE TABLE IF NOT EXISTS model_watch (\n       vendor TEXT NOT NULL,\n       model_id TEXT NOT NULL,\n       slug TEXT,\n       source TEXT NOT NULL,\n       source_url TEXT,\n       released_at TEXT,\n       prompt REAL,\n       completion REAL,\n       cache_read REAL,\n       cache_write REAL,\n       context_window INTEGER,\n       status TEXT NOT NULL DEFAULT 'new' CHECK(status IN ('new','suggested','adopted','ignored')),\n       suggestion TEXT,\n       probe TEXT,\n       probe_attempted_at TEXT,\n       announced_at TEXT,\n       first_seen TEXT NOT NULL,\n       updated_at TEXT NOT NULL,\n       actor TEXT,\n       reason TEXT,\n       PRIMARY KEY (vendor, model_id)\n     )",
+    "CREATE INDEX IF NOT EXISTS idx_model_watch_status ON model_watch(status, first_seen)"
+  ],
+  "call_guard": [
+    "CREATE TABLE IF NOT EXISTS call_guard (\n       call_id TEXT PRIMARY KEY,\n       project TEXT NOT NULL,\n       stage TEXT NOT NULL,\n       fp TEXT NOT NULL,\n       status TEXT NOT NULL,\n       box TEXT,\n       runner TEXT,\n       at TEXT NOT NULL,\n       settled_at TEXT,\n       note TEXT\n     )",
+    "CREATE INDEX IF NOT EXISTS idx_call_guard_key ON call_guard(project, stage, fp, at)",
+    "CREATE INDEX IF NOT EXISTS idx_call_guard_at ON call_guard(at)"
+  ]
+}

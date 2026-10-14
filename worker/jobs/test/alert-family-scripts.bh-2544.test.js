@@ -4,13 +4,14 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import worker, { CREATED_TABLES } from '../src/index.js';
 import { d1 } from './lib/d1-sqlite.bh-1030.js';
+import { jobsSchemaSql } from './lib/jobs-schema.js';
 
 // BH-2575 (BH-2544.3): the bearer-gated route over alert_family_scripts.
 // Every request goes through worker.fetch — the production entry point — so a
 // case goes red if the route is dropped from ROUTES, not only if its handler
 // changes. The DB is node:sqlite behind the D1 shim, so the real SQL runs.
 
-const SCHEMA = readFileSync(fileURLToPath(new URL('../schema.sql', import.meta.url)), 'utf8');
+const SCHEMA = jobsSchemaSql();
 const SECRET = 's3cret';
 const BASE = 'https://jobs.example/api/alert-family-scripts';
 

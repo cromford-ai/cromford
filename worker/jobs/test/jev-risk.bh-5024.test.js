@@ -4,6 +4,7 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { DatabaseSync } from 'node:sqlite';
 import worker, { CREATED_TABLES } from '../src/index.js';
+import { jobsSchemaSql } from './lib/jobs-schema.js';
 
 // BH-5024 (BH-4973.3) — the spend ledger in front of every Jev (TypeSafe
 // jev-latest) call: POST /api/jev-risk/claim, POST /api/jev-risk/settle,
@@ -13,7 +14,7 @@ import worker, { CREATED_TABLES } from '../src/index.js';
 // answered is never bought again. Driven through worker.fetch against THE SQL
 // THAT SHIPS (worker/jobs/schema.sql), the risk-tiers.bh-5022 idiom.
 const SECRET = 'test-secret';
-const SCHEMA = readFileSync(fileURLToPath(new URL('../schema.sql', import.meta.url)), 'utf8');
+const SCHEMA = jobsSchemaSql();
 
 function sqliteDB(db) {
   const bindAndRun = (sql, binds) => ({

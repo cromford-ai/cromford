@@ -1,15 +1,17 @@
 #!/bin/bash
 # shellcheck shell=bash
-# bin/lib/br/ladder.sh — BH-1176: the resolver's CLASSIFIER, the pure half of the
-# lane: a reason word in, a ladder class / rung / action word out. Sourced by
-# bin/blocked-resolver.sh, never run. Nothing here reads a file, writes one, or
-# calls out; sourcing it defines seven functions and does nothing else.
+# module: ladder
+# bin/lib/br/ladder.sh — BH-1176: the resolver's LADDER: the classifier (a
+# reason word in, a ladder class / rung / action word out) and the regenerate
+# rung. Sourced by bin/blocked-resolver.sh, never run. Sourcing it defines eight
+# functions and does nothing else. The seven classifier functions are pure;
+# br_regen_rung (the last one) is a rung: at call time it reads and writes
+# through the record layer (record.sh), merges main with the conductor's
+# mc_rebase, and dispatches the driver's other rungs.
 #
-# This slice landed DARK (see tests/br-split-layout-test.sh case 4): the block
-# below is a BYTE-IDENTICAL copy of the one still inline in
-# bin/blocked-resolver.sh, which is sourced FIRST and therefore loses to the
-# inline definition. The cut that deletes the inline copy is a separate change,
-# and this file is what makes that diff a pure deletion.
+# BH-5241 cut the inline copies: this file is the ONLY definition of these eight
+# names, and tests/br-split-layout-test.sh case 4 holds them absent from the
+# driver.
 # ---------------------------------------------------------------------------
 # The classifier. PURE: a reason word in, an action word out, nothing read and
 # nothing written. It is the one place that decides what the ladder does with a
@@ -109,6 +111,34 @@ br_regen_offered() {
     '[.attempts[]? | select((.action == "regen") or (.action == "regen-noop"))
                    | select((.detail // "") | contains("head8=" + $h))] | length > 0' \
     >/dev/null 2>&1
+}
+
+# br_eject_runs <pr-url> [<head>] — the failing batch runs the merge conductor
+#   handed over for a queue-ejected-twice park (mc_eject_fix_now, BH-6000): the
+#   lines of its mc_eject_runs_file after the head on line 1, and ONLY while
+#   that head is the PR's head now. <head> is the caller's head; empty reads the
+#   conductor row's head (mc_row_field field 4). A file for another head is
+#   stale (the fix round pushed a new head, and that head's runs could not be
+#   read): it is removed and answers rc 1, so neither the ladder nor the brief
+#   ever acts on an older head's runs (lead review lr-6024). rc 0 printed at
+#   least one run; rc 1 no file, an empty or stale one, no head to compare, or
+#   no conductor lib on this box.
+br_eject_runs() {
+  local u="${1:-}" h="${2:-}" f out fh=""
+  command -v mc_eject_runs_file >/dev/null 2>&1 || return 1
+  case "$u" in https://github.com/*/*/pull/*) ;; *) return 1 ;; esac
+  f=$(mc_eject_runs_file "$(mc_slug_of_url "$u")#$(mc_num_of_url "$u")")
+  [ -s "$f" ] || return 1
+  if [ -z "$h" ] && command -v mc_row_field >/dev/null 2>&1; then
+    h=$(mc_row_field "$(mc_slug_of_url "$u")#$(mc_num_of_url "$u")" 4 2>/dev/null)
+  fi
+  [ "${#h}" -ge 7 ] || return 1
+  { IFS= read -r fh < "$f"; } 2>/dev/null
+  [ "${#fh}" -ge 7 ] || return 1
+  case "$h" in "$fh"*) ;; *) case "$fh" in "$h"*) ;; *) rm -f "$f" 2>/dev/null; return 1 ;; esac ;; esac
+  out=$(tail -n +2 "$f" 2>/dev/null)
+  [ -n "$out" ] || return 1
+  printf '%s\n' "$out"
 }
 
 # br_regen_ladder <class> <ladder-action> -> the action to DISPATCH.
@@ -239,3 +269,122 @@ br_reason_of() {
   esac
 }
 
+# RUNG 1b: REGENERATE (BH-950.2). One more merge of origin/main into the branch,
+# and nothing else. No model, no tokens.
+#
+# WHY IT IS ITS OWN RUNG. Rung 1 merges main once, and the commonest red CI in
+# this repo is a GENERATED file that main has since moved: the generated-files
+# table is rebuilt by the merge itself (mc_regen_table, bin/lib/merge-conductor-lib.sh),
+# so a park sitting on that drift is one free merge from green. 12 of the open
+# PRs in the #950 census were parked there, and each of them was about to buy an
+# agent fix round to do what a merge does for nothing.
+#
+# AND IT IS BOUNDED, twice: br_regen_offered refuses a head this ticket has
+# already been offered the rung on, and `regens` refuses a ticket that has spent
+# BR_MAX_REGEN of them however far main has moved since. A regenerate that
+# landed nothing DOES NOT DELAY THE PARK — the displaced ladder answer (the fix
+# round, or the rebuild when the fix round is spent) is dispatched in the SAME
+# tick, so this rung can only ever cost a merge.
+br_regen_rung() {
+  local p="$1" rkey="$2" reason="$3" url="$4" rec="$5" tkey="$6" next="${7:-fix-round}"
+  local ck st n slug br head out rc ref ckey rvw
+  ck=$(br_cap_key "$p" "$rkey" "$tkey")
+  st=$(br_load "$p" "$ck")
+  # The displaced answer, dispatched by name. Everything below that cannot take
+  # the rung comes through here, so "the park moved this tick" is one path.
+  br_regen_next() {
+    case "$next" in
+      rebuild-fresh) br_rebuild_fresh "$p" "$rkey" "$reason" "$url" "$rec" "$tkey" ;;
+      *)             br_fix_round     "$p" "$rkey" "$reason" "$url" "$rec" "$tkey" ;;
+    esac
+  }
+  # OBSERVE BEFORE THE PR READ, the way br_mechanical does it: a dry run costs
+  # this lane no GitHub call at all. The head8 dedup and the bound are read from
+  # the PR below, so the sentence names the condition rather than claiming the
+  # rung would certainly be taken.
+  if [ "$OBSERVE" = 1 ]; then
+    say "$p/$rkey [$reason]: WOULD take the regenerate rung unless it was already offered on this head or the ticket has spent BR_MAX_REGEN=$MAX_REGEN (merge origin/main into the PR branch, which regenerates the generated files once #969 lands) and then $next — observe mode"
+    return 0
+  fi
+  slug=$("$H/bin/fleet-conf.sh" "$p" repo 2>/dev/null)
+  [ -n "$slug" ] || slug=$(br_slug_of_url "$url") || slug=""
+  br=""; head=""
+  if [ -n "$url" ] && [ "$url" != "-" ]; then
+    ref=$(br_pr_ref "$url" "$slug"); rc=$?
+    # rc 2 IS "GITHUB DID NOT ANSWER" (see br_pr_ref): no rung spent, no state
+    # written, the park is re-offered next tick — exactly as rung 1 treats it.
+    if [ "$rc" = 2 ]; then
+      say "$p/$rkey [$reason]: PR read FAILED (${ref:-no detail}) — retrying next tick, no rung spent"
+      return 0
+    fi
+    [ "$rc" = 0 ] && read -r slug br head <<<"$ref"
+    # The head this rung read is the head this lane now knows the PR on (BH-1642).
+    [ "$rc" = 0 ] && br_sup_seen "$p" "$ck" "$url" "$head"
+    [ -n "${slug:-}" ] && br_use_token "$slug"
+  fi
+  if [ -z "$slug" ] || [ -z "${br:-}" ] || [ -z "${head:-}" ]; then
+    say "$p/$rkey [$reason]: no branch/head for ${url:--} even after re-reading it under ${slug:-no repo}'s own token — nothing to regenerate, $next"
+    br_regen_next; return 0
+  fi
+  if br_regen_offered "$st" "$head"; then
+    say "$p/$rkey [$reason]: the regenerate rung was already offered on ${head:0:8} — $next"
+    br_regen_next; return 0
+  fi
+  # AND THE PER-TICKET BOUND ON LANDED REGENERATES, read after the head so the
+  # more precise sentence (this exact head) is the one a park on an unchanged
+  # head gets. main keeps moving, so the head8 dedup above would let a ticket
+  # LAND a regenerate per new head for ever; this is what ends that. It does not
+  # bound mc_rebase calls — the dedup does, at one per distinct head.
+  n=$(br_num "$st" regens)
+  if [ "$n" -ge "$MAX_REGEN" ]; then
+    say "$p/$rkey [$reason]: the regenerate rung has already run $n time(s) (BR_MAX_REGEN=$MAX_REGEN) — $next"
+    br_regen_next; return 0
+  fi
+  br_event resolver_rung "$p" "$ck" "$reason" "rung 1b regenerate: mc_rebase on $br at ${head:0:8}"
+  out=$(mc_rebase "$slug" "$p" "$br" "$head" "$url"); rc=$?
+  # Same as rung 1: the setup alert is cleared the moment the rung RAN. rc 4 is
+  # the setup arm below and must not clear it.
+  case "$rc" in 0|1|2|3|5|6) rm -f "$ST/$p/$ck.setup-alerted" 2>/dev/null ;; esac
+  case "$rc" in
+    0|5)
+      if [ -n "$out" ] && [ "$out" != "$head" ]; then
+        br_record "$p" "$ck" regen "$reason" "regenerated $br: pushed ${out:0:8} over head8=${head:0:8} (mc_rebase rc=$rc)" regens
+        say "$p/$rkey [$reason]: REGENERATE — pushed ${out:0:8} over ${head:0:8}; CI runs on the new head and the conductor judges it"
+        return 0
+      fi
+      # Nothing landed, so nothing was regenerated. Recorded against the head so
+      # this park is never offered the rung on it again, the counter is NOT spent
+      # (no merge happened), and the ladder's own answer runs now.
+      br_record "$p" "$ck" regen-noop "$reason" "mc_rebase rc=$rc left head8=${head:0:8} in place — $next now"
+      say "$p/$rkey [$reason]: the regenerate rung had nothing to merge into $br at ${head:0:8} — $next"
+      br_regen_next; return 0 ;;
+    1|2)
+      # A conflict, or a merged tree the hub's gate refuses: nothing regenerated
+      # landed, and both are exactly what the fix round exists for. Same tick.
+      br_record "$p" "$ck" regen-noop "$reason" "mc_rebase rc=$rc left head8=${head:0:8} in place — $next now"
+      say "$p/$rkey [$reason]: the regenerate rung could not land (mc_rebase rc=$rc) — $next"
+      br_regen_next; return 0 ;;
+    3|7)
+      # The head moved under the lease, or the pool queue refused it. Nothing is
+      # spent and nothing is said twice — the next tick reads the new head.
+      say "$p/$rkey [$reason]: the regenerate rung's lease was rejected or the pool queue was unreachable (mc_rebase rc=$rc) — no rung spent, retried next tick"
+      return 0 ;;
+    6)
+      # The pool took it: a queue row exists and a machine is rebasing this
+      # branch, so the rung RAN, and the conductor row leaves the park the same
+      # way rung 1's rc-6 arm leaves it.
+      ckey="$(mc_slug_of_url "$url")#$(mc_num_of_url "$url")"; rvw=$(mc_row_field "$ckey" 5)
+      br_record "$p" "$ck" regen "$reason" \
+        "queued a pool rebase of $br at head8=${head:0:8} ($(mc_pool_rebase_key "$(mc_num_of_url "$url")" "$head")); the conductor reads the pool's result" regens
+      mc_transition "$ckey" REBASING "pool rebase queued by the resolver's regenerate rung" "$head" "${rvw:--}" "$url" "-" "-" "${rec:--}" >/dev/null
+      say "$p/$rkey [$reason]: REGENERATE — pool rebase queued for ${head:0:8}; the row leaves the park and the conductor reads the result"
+      return 0 ;;
+    *)
+      # SETUP FAILED (rc 4 and any rc mc_rebase does not document): a fact about
+      # this box, not an event about the PR. It spends nothing, cascades into
+      # nothing — the fix round wants the same clone and the same credential —
+      # and pages once per episode (br_setup_blocked).
+      br_setup_blocked "$p" "$ck" "$rkey" "$reason" "$url" "mc_rebase rc=$rc on $slug — a clone or credential problem; see the credential line in merge-conductor.log" regen
+      return 0 ;;
+  esac
+}

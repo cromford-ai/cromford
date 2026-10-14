@@ -75,6 +75,10 @@ BEJ_SOLO_WORD=""; BEJ_IMPACT_UNIT=""; BEJ_IMPACT_N=""; BEJ_IMPACT_LINE=""
 # the gate below decides exactly as before (bim_verdict is never defined).
 # shellcheck source=bin/lib/mc-batch-impact.sh
 . "${BASH_SOURCE[0]%/*}/mc-batch-impact.sh" 2>/dev/null || true
+# BH-6336: a batch that failed only because a CI shard left no verdict.
+# Absent, the gate below decides exactly as before (nv_gate is never defined).
+# shellcheck source=bin/lib/mc-noverdict.sh
+. "${BASH_SOURCE[0]%/*}/mc-noverdict.sh" 2>/dev/null || true
 
 # _bej_knob <ENV> <default> — a merge-conductor lane knob for this project, a
 #   non-negative integer, else the default (the _fr_knob pattern).
@@ -380,6 +384,9 @@ bej_reentry_gate() {
   local im k1 k2 k3 k4 iskip=0 ihold=0
   FR_WHY=""; FR_LINE=""; FR_STATE=""; BEJ_IMPACT_LINE=""
   case "$ms" in CLEAN|UNSTABLE) ;; *) return 1 ;; esac
+  # >>> no-verdict (BH-6336)
+  if declare -F nv_gate >/dev/null; then nv_gate "$slug" "$num" "$key" "$head" "$ms"; case $? in 0) return 0 ;; 1|2) return 1 ;; esac; fi
+  # <<< no-verdict
   bej_verdict "$slug" "$num" "$key" "$head"
   # >>> impact eject (BH-4980)
   # A member of a multi-PR draft Mergify named nobody in: ask the impact map

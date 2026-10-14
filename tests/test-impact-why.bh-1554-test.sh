@@ -102,7 +102,7 @@ BASE=$(git -C "$R" rev-parse HEAD)
 echo '# touched' >> "$R/bin/lib/widget.sh"; gitc commit -qam "touch widget"
 
 GOT=$("$TI" --root "$R" select "$BASE..HEAD" --map-only --why 2>"$T/reason")
-named() { printf '%s\n' "$GOT" | grep -qxF "$(printf '%s\tnamed\tbin/lib/widget.sh#widget_close_all' "$1")"; }
+named() { grep -qxF "$(printf '%s\tnamed\tbin/lib/widget.sh#widget_close_all' "$1")" <<<"$GOT"; }
 
 # S1a — the comment-only suite is not a named pick.
 named tests/comment-test.sh \

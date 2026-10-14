@@ -8,9 +8,10 @@
 // Since BH-2377, PUT batches a `flag` config_changes row with its upsert when
 // the flag is new or `active` changed, and GET /api/flag-changes reads them.
 // Since BH-4153 the ported families (FLAG_PORTED_RE in lib/harness-flags.js)
-// are harness_flags rows keyed (scope, name): PUT and DELETE write the row, the
-// fleet-scope pause_flags mirror and the audit row in one batch, GET merges the
-// two stores, and every other name answers exactly as before.
+// are harness_flags rows keyed (scope, name): PUT and DELETE write the row and
+// the audit row in one batch, GET merges the two stores, and every other name
+// answers exactly as before. Since BH-4154 a ported write no longer mirrors
+// into pause_flags: every worker reader picks the store by name.
 // Since BH-5635 a pause_flags row (a NON-ported name, wip-limit-* say) carries
 // an optional `value` (the flag file's content), and a value change is audited
 // too. The routes widen an old table with ensureColumns before they read or
@@ -20,8 +21,8 @@ import { d1Guarded, json } from "../lib/http.js";
 import { ensureColumns, ensureTable } from "../lib/core.js";
 import { CONFIG_KINDS, configChangeStmts, listConfigChanges } from "../lib/config-changes.js";
 import {
-  FLAG_NAME_RE, VALUE_MAX, isPortedFlag, validScope, legacyShape, projectPauseRow,
-  mirrorStmts, readPortedFlag, upsertStmt,
+  FLAG_NAME_RE, VALUE_MAX, isPortedFlag, validScope, projectPauseRow,
+  readPortedFlag, upsertStmt, fleetFlagRows,
 } from "../lib/harness-flags.js";
 import { routes as mainRed } from "./main-red.js";
 
@@ -54,8 +55,7 @@ async function putLegacy(env, t, name, active, actor, reason, value = null) {
   return json(200, { flag: row });
 }
 
-// One ported write: the harness_flags upsert, the pause_flags mirror (fleet
-// scope only) and the audit row, in ONE batch. The audit row is written when
+// One ported write: the harness_flags upsert and the audit row, in ONE batch. The audit row is written when
 // the row is new or `active`/`value` changed; `value` and `scope` join the
 // audited fields only when they carry something, so a plain fleet pause audits
 // as {"active":N} exactly as BH-2377 recorded it.
@@ -70,7 +70,6 @@ async function writePorted(env, t, { scope, name, active, value, actor, reason, 
       setAt: active ? t : (was ? was.set_at : t),
       clearedAt: active ? null : t,
     }),
-    ...mirrorStmts(env, { scope, name, active, actor, reason }, t),
     ...configChangeStmts(env, CONFIG_KINDS.FLAG, name, was, after, fields, actor, reason, t),
   ]);
   return json(200, { flag: await readPortedFlag(env, scope, name) });
@@ -85,13 +84,12 @@ export const routes = [
   // behavior instead of un-pausing a board nobody meant to resume.
   // That still holds for every name EXCEPT the ported families (BH-4153): for
   // those the harness_flags row is the truth and the box keeps a last-good
-  // cache, not a file; pause_flags carries only their fleet-scope mirror.
+  // cache, not a file.
   [
     "GET", "/api/flags",
-    // BH-4153: both stores, merged, every row in the full shape. A ported name
-    // comes from harness_flags only; its pause_flags mirror row is skipped
-    // (NOT EXISTS), so it never appears twice. `prefix` is compared with
-    // substr, not LIKE, because `_` is in the flag-name alphabet.
+    // BH-4153: both stores, merged, every row in the full shape
+    // (fleetFlagRows). A ported name with a fleet harness_flags row comes from
+    // that row only, so an old pause_flags mirror row never appears twice.
     async ({ env, url, t }) => {
       const qs = url.searchParams.get("scope");
       const scope = qs === null || qs === "" ? null : validScope(qs);
@@ -99,26 +97,10 @@ export const routes = [
       const prefix = url.searchParams.get("prefix") || "";
       if (!PREFIX_RE.test(prefix) || prefix.length > 128) return json(400, { error: "valid prefix required" });
       const onlyOn = url.searchParams.get("active") === "1" ? 1 : 0;
-      await ensureTable(env, "harness_flags");
-      const ported = await env.DB.prepare(
-        `SELECT * FROM harness_flags
-          WHERE (?1 IS NULL OR scope=?1) AND substr(name, 1, length(?2))=?2 AND (?3=0 OR cleared_at IS NULL)
-          ORDER BY name ASC, scope ASC LIMIT ${LIST_MAX + 1}`
-      ).bind(scope, prefix, onlyOn).all();
       await ensureColumns(env, "pause_flags");
-      const legacy = scope !== null && scope !== "fleet" ? { results: [] } : await env.DB.prepare(
-        `SELECT * FROM pause_flags p
-          WHERE substr(name, 1, length(?1))=?1 AND (?2=0 OR active=1)
-            AND NOT EXISTS (SELECT 1 FROM harness_flags h WHERE h.scope='fleet' AND h.name=p.name)
-          ORDER BY name ASC LIMIT ${LIST_MAX + 1}`
-      ).bind(prefix, onlyOn).all();
-      const cmp = (a, b) => (a < b ? -1 : a > b ? 1 : 0);
-      const flags = [
-        ...(ported.results || []).map(legacyShape),
-        ...(legacy.results || []).map(projectPauseRow),
-      ].sort((a, b) => cmp(a.name, b.name) || cmp(a.scope, b.scope));
-      const out = { flags: flags.slice(0, LIST_MAX), as_of: t };
-      if (flags.length > LIST_MAX) out.truncated = true;
+      const { flags, truncated } = await fleetFlagRows(env, { scope, prefix, onlyOn, limit: LIST_MAX });
+      const out = { flags, as_of: t };
+      if (truncated) out.truncated = true;
       return json(200, out);
     },
   ],
@@ -189,8 +171,8 @@ export const routes = [
     },
   ],
 
-  // BH-4153: clear a flag. A ported name is soft-cleared (cleared_at=t, the
-  // fleet mirror to active=0, one audit row); a row already cleared answers 200
+  // BH-4153: clear a flag. A ported name is soft-cleared (cleared_at=t, one
+  // audit row); a row already cleared answers 200
   // and writes nothing. Any other name is exactly PUT {active:0}. No row is a
   // 404 either way: a DELETE never creates a flag.
   [

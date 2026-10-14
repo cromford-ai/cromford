@@ -1348,7 +1348,7 @@ if [ -s "$SETTLED" ]; then
   while IFS=$'\t' read -r SREASON SLINE2; do
     [ -n "${SREASON:-}" ] || continue
     SETTLED_N=$((SETTLED_N + 1))
-    echo "$(STAMP) NOISE-STALE (deterministic, no model call) $SREASON :: $(printf '%s' "$SLINE2" | head -c 300)" >> "$LOG"
+    echo "$(STAMP) NOISE-STALE (deterministic, no model call) $SREASON :: $(head -c 300 <<<"$SLINE2")" >> "$LOG"
   done < "$SETTLED"
   echo "$(STAMP) triage pass: settled $SETTLED_N line(s) deterministically — no session, \$0" >> "$LOG"
 fi

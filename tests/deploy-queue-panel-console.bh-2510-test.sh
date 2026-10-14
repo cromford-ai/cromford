@@ -46,7 +46,7 @@ if [ -f "$SCREEN" ] && [ -f "$LIB" ]; then
   CODE=$(grep -hvE '^[[:space:]]*//' "$SCREEN" "$LIB")
   # A bare or window. call. useConfirm( and confirm({ (the hook's own function)
   # are not natives: the preceding character rules them out.
-  if printf '%s\n' "$CODE" | grep -qE '(^|[^A-Za-z0-9_.])(confirm|alert|prompt)[[:space:]]*\([^{]|window\.(confirm|alert|prompt)[[:space:]]*\('; then
+  if grep -qE '(^|[^A-Za-z0-9_.])(confirm|alert|prompt)[[:space:]]*\([^{]|window\.(confirm|alert|prompt)[[:space:]]*\(' <<<"$CODE"; then
     bad "a native dialog in the DEPLOY QUEUE screen or its lib"
   else
     ok

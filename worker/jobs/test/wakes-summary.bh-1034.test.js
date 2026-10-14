@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import worker from '../src/index.js';
+import { jobsSchemaSql } from './lib/jobs-schema.js';
 
 // GET /api/wakes/summary — who has RUNG lately (BH-1034.4, audit #35).
 //
@@ -13,7 +14,7 @@ import worker from '../src/index.js';
 // SQL is the thing executed: GROUP BY, MAX(at), GROUP_CONCAT(DISTINCT kind) and
 // the `at >= ?1` window all have to be right in the engine, not in a regex.
 
-const SCHEMA = readFileSync(fileURLToPath(new URL('../schema.sql', import.meta.url)), 'utf8');
+const SCHEMA = jobsSchemaSql();
 const SECRET = 'test-secret';
 const now = Date.now();  // determinism: ok the single anchor; every fixture below is iso(msAgo) off it
 const H = 3600e3;

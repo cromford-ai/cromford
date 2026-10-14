@@ -147,3 +147,109 @@ closeout_record_aged() {
       "$tsv" 2>/dev/null && exit 0
     printf '%s\t%s\t%s\t%s\n' "$proj" "$dir" "$line" "$reason" >> "$tsv" )
 }
+
+# >>> closeout skip set (BH-5941)
+# NOT READ AGAIN. Checks 4 and 5 of bin/pipeline-health.sh used to visit every
+# aged dir on every tick: a stat, a head, a grep, a fork of
+# bin/queued-fly-relayed.sh and a closeout_record_aged call (an awk over the
+# audit tsv and, with the BH-1033 flag on, a worker call answering rc 3). On
+# project-1 that was 386 dirs every ten minutes, to reach the same answer.
+#
+# The skip set is one file per project, state/pipeline-health/<p>/closeout-aged.tsv,
+# one line per decided dir: dir<TAB>RESULT mtime<TAB>kind (aged | emptyurl). A
+# dir is skipped only while its RESULT mtime is the one recorded AND that mtime
+# is still past the current ceiling: a rewritten RESULT or a raised
+# CLOSEOUT_AGE_OUT_H is judged again. A line is written only after
+# closeout_record_aged returned 0, so a failed record is retried next tick.
+# Everything here fails open: a lost or junk file means the dirs are judged once
+# more, which is the cost of one tick as it was before.
+#
+# Pure bash and one stat. The caller passes the harness root; nothing here
+# defaults it.
+
+# closeout_skip_file <harness> <project> — the project's skip file path.
+closeout_skip_file() {
+  [ -n "${1:-}" ] && [ -n "${2:-}" ] || return 1
+  printf '%s/state/pipeline-health/%s/closeout-aged.tsv' "$1" "$2"
+}
+
+# closeout_mtimes <RESULT path or glob>... — fills CO_MT[<build dir>]=<mtime>
+# with ONE stat. A glob that matched nothing reaches stat as itself and fails
+# for that argument only, so stat's rc is not read.
+closeout_mtimes() {
+  declare -gA CO_MT=()
+  local t n
+  [ "$#" -gt 0 ] || return 0
+  while IFS=$'\t' read -r t n; do
+    [ -n "$n" ] || continue
+    n="${n%/RESULT}"
+    CO_MT["${n##*/}"]="$t"
+  done < <(stat -c $'%Y\t%n' -- "$@" 2>/dev/null)
+  return 0
+}
+
+# closeout_skip_load <file> — fills CO_SKIP[<dir>]="<mtime><TAB><kind>". A line
+# with no dir, a non-numeric mtime or an unknown kind is ignored. No file, an
+# empty set.
+closeout_skip_load() {
+  declare -gA CO_SKIP=()
+  local f="${1:-}" d m k
+  [ -n "$f" ] && [ -r "$f" ] || return 0
+  while IFS=$'\t' read -r d m k || [ -n "$d" ]; do
+    [ -n "$d" ] || continue
+    case "$m" in ''|*[!0-9]*) continue ;; esac
+    case "$k" in aged|emptyurl) ;; *) continue ;; esac
+    CO_SKIP["$d"]="$m"$'\t'"$k"
+  done < "$f"
+  return 0
+}
+
+# closeout_skip_hit <dir> <now> <age-s> — prints the kind and returns 0 when the
+# dir is in the set, its RESULT mtime is the recorded one, and that mtime is
+# still older than <age-s>. Anything else is rc 1: judge the dir.
+closeout_skip_hit() {
+  local d="${1:-}" now="${2:-}" age="${3:-}" e m
+  [ -n "$d" ] || return 1
+  declare -p CO_SKIP >/dev/null 2>&1 && declare -p CO_MT >/dev/null 2>&1 || return 1
+  case "$now" in ''|*[!0-9]*) return 1 ;; esac
+  case "$age" in ''|*[!0-9]*) return 1 ;; esac
+  e="${CO_SKIP[$d]:-}"; [ -n "$e" ] || return 1
+  m="${e%%$'\t'*}"
+  [ "$m" = "${CO_MT[$d]:-}" ] || return 1
+  [ $(( now - m )) -gt "$age" ] || return 1
+  printf '%s' "${e#*$'\t'}"
+}
+
+# closeout_skip_add <file> <dir> <mtime> <kind> — appends one line and adds the
+# dir to CO_SKIP. A failed append is ignored: the next tick judges it again.
+closeout_skip_add() {
+  local f="${1:-}" d="${2:-}" m="${3:-}" k="${4:-}"
+  [ -n "$f" ] && [ -n "$d" ] || return 1
+  case "$m" in ''|*[!0-9]*) return 1 ;; esac
+  case "$k" in aged|emptyurl) ;; *) return 1 ;; esac
+  [ -d "${f%/*}" ] || mkdir -p "${f%/*}" 2>/dev/null
+  { printf '%s\t%s\t%s\n' "$d" "$m" "$k" >> "$f"; } 2>/dev/null || return 0
+  declare -gA CO_SKIP
+  CO_SKIP["$d"]="$m"$'\t'"$k"
+  return 0
+}
+
+# closeout_skip_prune <file> — when an entry's dir is gone or its RESULT was
+# rewritten (no CO_MT entry with the same mtime), rewrite the file with only
+# the live entries. When every entry is live, write nothing.
+closeout_skip_prune() {
+  local f="${1:-}" d e stale=0
+  [ -n "$f" ] && [ -f "$f" ] || return 0
+  declare -p CO_SKIP >/dev/null 2>&1 || return 0
+  declare -gA CO_MT
+  for d in "${!CO_SKIP[@]}"; do
+    e="${CO_SKIP[$d]}"
+    [ "${e%%$'\t'*}" = "${CO_MT[$d]:-}" ] && continue
+    stale=1; unset 'CO_SKIP[$d]'
+  done
+  [ "$stale" = 1 ] || return 0
+  { for d in "${!CO_SKIP[@]}"; do printf '%s\t%s\n' "$d" "${CO_SKIP[$d]}"; done; } \
+    > "$f.tmp.$$" 2>/dev/null && mv -f "$f.tmp.$$" "$f" 2>/dev/null || rm -f "$f.tmp.$$"
+  return 0
+}
+# <<< closeout skip set

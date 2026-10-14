@@ -1,15 +1,16 @@
 // BH-4153 (BH-4141.1): flags in the DB. The ported families (paused-*,
 // automerge-disabled, automerge-disabled-*, lanedown-*) live in harness_flags,
-// keyed (scope, name); fleet-scoped writes mirror into pause_flags in the same
-// batch so checkPause and the other worker readers keep working unchanged.
+// keyed (scope, name). TEST-CHANGE BH-4154: the fleet-scope pause_flags mirror
+// is retired; the worker readers read harness_flags for these names, so W1, W1b,
+// W2 and W8 now pin that NO pause_flags row is written.
 //
 // WHAT IS PINNED, on a REAL schema.sql database behind the node:sqlite shim,
 // through the real worker.fetch:
-//   W1  PUT ported fleet -> harness_flags row (cleared_at NULL), the pause_flags
-//       mirror active=1, one config_changes kind=flag row; a same-value re-PUT
+//   W1  PUT ported fleet -> harness_flags row (cleared_at NULL), NO pause_flags
+//       row (BH-4154), one config_changes kind=flag row; a same-value re-PUT
 //       adds no audit row; a value change does; value is capped at 512 chars;
 //       an inactive PUT on no row creates it cleared; a re-set reopens it;
-//   W2  DELETE -> cleared_at set, mirror active=0, one audit row; an unknown
+//   W2  DELETE -> cleared_at set, no pause_flags row, one audit row; an unknown
 //       name is a 404; an already-cleared row is a 200 with no write;
 //   W3  a box-scoped PUT (lanedown-*, scope boxa) writes no pause_flags row;
 //       a bad scope is a 400;
@@ -20,7 +21,7 @@
 //       the 500 cap reports truncated;
 //   W6  GET /api/flags/<name>?scope= -> ported from harness_flags, 404 absent;
 //   W7  checkPause refuses a claim after PUT paused-<p> and allows it after
-//       DELETE (the mirror is load-bearing);
+//       DELETE (through harness_flags since BH-4154);
 //   W8  expected_set_at mismatch -> 409 {error:'flag moved'} and no write;
 //   W9  the backfill statement run twice changes nothing the second time and
 //       never overwrites an existing harness_flags row; schema.sql and
@@ -36,6 +37,7 @@ import { readFileSync } from 'node:fs';
 import worker from '../src/index.js';
 import { CREATED_TABLES } from '../src/lib/core.js';
 import { openDb } from './lib/d1-sqlite.bh-1030.js';
+import { jobsSchemaSql } from './lib/jobs-schema.js';
 
 const SECRET = 'test-secret';
 const FULL_KEYS = ['scope', 'name', 'value', 'set_by', 'reason', 'set_at', 'cleared_at', 'active', 'actor', 'updated_at'];
@@ -63,7 +65,7 @@ const audits = (db, name) =>
 const hcount = (db) => db.prepare('SELECT COUNT(*) AS n FROM harness_flags').get().n;
 const sortedKeys = (o) => Object.keys(o).sort();
 
-test('W1 PUT ported fleet writes the row, the mirror and one audit row', (t) => withDb(t, async ({ db, DB }) => {
+test('W1 PUT ported fleet writes the row, no mirror and one audit row', (t) => withDb(t, async ({ db, DB }) => {
   const r = await call(DB, 'PUT', '/api/flags', { name: 'paused-p', active: 1, actor: 'console', reason: 'freeze' });
   assert.equal(r.status, 200, JSON.stringify(r.body));
   const h = hrow(db, 'paused-p');
@@ -72,11 +74,8 @@ test('W1 PUT ported fleet writes the row, the mirror and one audit row', (t) => 
   assert.equal(h.set_by, 'console');
   assert.equal(h.reason, 'freeze');
   assert.equal(h.value, null);
-  const m = prow(db, 'paused-p');
-  assert.ok(m, 'pause_flags mirror written');
-  assert.equal(m.active, 1);
-  assert.equal(m.actor, 'console');
-  assert.equal(m.reason, 'freeze');
+  // TEST-CHANGE BH-4154: the mirror is retired, so no pause_flags row.
+  assert.equal(prow(db, 'paused-p'), undefined, 'no pause_flags mirror');
   assert.equal(audits(db, 'paused-p').length, 1);
   // The response row is the full shape, legacy keys included.
   assert.deepEqual(sortedKeys(r.body.flag), [...FULL_KEYS].sort());
@@ -105,17 +104,19 @@ test('W1b an inactive PUT on no row creates it cleared; a re-set reopens it', (t
   assert.ok(h);
   assert.equal(typeof h.cleared_at, 'string');
   assert.equal(h.cleared_at, h.set_at);
-  assert.equal(prow(db, 'automerge-disabled').active, 0);
+  // TEST-CHANGE BH-4154: the mirror is retired, so no pause_flags row.
+  assert.equal(prow(db, 'automerge-disabled'), undefined);
   assert.equal(off.body.flag.active, 0);
 
   const on = await call(DB, 'PUT', '/api/flags', { name: 'automerge-disabled', active: 1, actor: 'console' });
   assert.equal(on.status, 200);
   assert.equal(hrow(db, 'automerge-disabled').cleared_at, null);
-  assert.equal(prow(db, 'automerge-disabled').active, 1);
+  // TEST-CHANGE BH-4154: the re-set writes no pause_flags row either.
+  assert.equal(prow(db, 'automerge-disabled'), undefined);
   assert.equal(audits(db, 'automerge-disabled').length, 2);
 }));
 
-test('W2 DELETE clears, mirrors active=0 and audits once; unknown 404; cleared is a no-op 200', (t) => withDb(t, async ({ db, DB }) => {
+test('W2 DELETE clears, writes no mirror and audits once; unknown 404; cleared is a no-op 200', (t) => withDb(t, async ({ db, DB }) => {
   await call(DB, 'PUT', '/api/flags', { name: 'paused-p', active: 1, actor: 'console', reason: 'freeze' });
   const del = await call(DB, 'DELETE', '/api/flags?name=paused-p&scope=fleet&reason=back&actor=operator');
   assert.equal(del.status, 200, JSON.stringify(del.body));
@@ -123,7 +124,8 @@ test('W2 DELETE clears, mirrors active=0 and audits once; unknown 404; cleared i
   assert.equal(typeof h.cleared_at, 'string');
   assert.equal(h.reason, 'back');
   assert.equal(h.set_by, 'operator');
-  assert.equal(prow(db, 'paused-p').active, 0);
+  // TEST-CHANGE BH-4154: the clear writes no pause_flags row.
+  assert.equal(prow(db, 'paused-p'), undefined);
   const a = audits(db, 'paused-p');
   assert.equal(a.length, 2);
   assert.equal(JSON.parse(a[1].after_json).active, 0);
@@ -303,7 +305,8 @@ test('W8 expected_set_at guards the write: a mismatch is a 409 and writes nothin
   const wrong = await call(DB, 'PUT', '/api/flags', { name: 'paused-p', active: 1, expected_set_at: h.set_at + 'x' });
   assert.equal(wrong.status, 409);
   assert.deepEqual({ ...hrow(db, 'paused-p') }, h, 'no write on 409');
-  assert.equal(prow(db, 'paused-p').active, 0, 'no mirror write on 409');
+  // TEST-CHANGE BH-4154: no pause_flags row exists at all now.
+  assert.equal(prow(db, 'paused-p'), undefined, 'no mirror write on 409');
   assert.equal(audits(db, 'paused-p').length, nAudit, 'no audit on 409');
 
   const right = await call(DB, 'PUT', '/api/flags', { name: 'paused-p', active: 1, expected_set_at: h.cleared_at });
@@ -317,7 +320,7 @@ test('W9 the backfill is idempotent and never overwrites; schema.sql and CREATED
   const backfill = stmts.find((s) => /^\s*INSERT OR IGNORE INTO harness_flags/.test(s));
   assert.ok(backfill, 'the backfill statement is in CREATED_TABLES');
   const flat = (s) => s.replace(/\s+/g, ' ').trim();
-  const schema = flat(readFileSync(new URL('../schema.sql', import.meta.url), 'utf8')
+  const schema = flat(jobsSchemaSql()
     .split('\n').filter((l) => !/^\s*--/.test(l)).join('\n'));
   for (const s of stmts) assert.ok(schema.includes(flat(s)), `schema.sql carries: ${flat(s).slice(0, 60)}`);
 
@@ -344,12 +347,15 @@ test('W9 the backfill is idempotent and never overwrites; schema.sql and CREATED
 
 test('W10 FLAG_PORTED_RE is one exact line the shell copy is compared to', async () => {
   const src = readFileSync(new URL('../src/lib/harness-flags.js', import.meta.url), 'utf8');
+  // TEST-CHANGE BH-6350: the pinned literal gains |dispatch-mode-.+ (the
+  // per-project dispatch mode row is a ported family), and the positive list
+  // gains dispatch-mode-x. A spec change to this case, not a weakening.
   assert.ok(src.split('\n').includes(
-    'export const FLAG_PORTED_RE = /^(paused-.+|automerge-disabled|automerge-disabled-.+|lanedown-.+)$/;',
+    'export const FLAG_PORTED_RE = /^(paused-.+|automerge-disabled|automerge-disabled-.+|lanedown-.+|dispatch-mode-.+)$/;',
   ));
   const { FLAG_PORTED_RE } = await import('../src/lib/harness-flags.js');
-  for (const n of ['paused-x', 'automerge-disabled', 'automerge-disabled-p', 'lanedown-b-x-1']) assert.ok(FLAG_PORTED_RE.test(n), n);
-  for (const n of ['paused-', 'automerge-disabledx', 'alerts-db', 'lanedown-']) assert.ok(!FLAG_PORTED_RE.test(n), n);
+  for (const n of ['paused-x', 'automerge-disabled', 'automerge-disabled-p', 'lanedown-b-x-1', 'dispatch-mode-x']) assert.ok(FLAG_PORTED_RE.test(n), n);
+  for (const n of ['paused-', 'automerge-disabledx', 'alerts-db', 'lanedown-', 'dispatch-mode-']) assert.ok(!FLAG_PORTED_RE.test(n), n);
 });
 
 test('W11 the pre-#4332 shell readers keep .flag.active and .flag.updated_at', (t) => withDb(t, async ({ DB }) => {

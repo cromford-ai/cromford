@@ -286,13 +286,18 @@ HAS "told nobody, and the ext-nopush row on ${H1:0:12} could not be released —
 # ===========================================================================
 # X5: br_xpr_terminal through the lane's real terminals, lifted.
 # ===========================================================================
+# BH-5241: the corpus is the driver plus bin/lib/br/*.sh (tests/lib/br-corpus.sh),
+# because the record functions moved out of the driver into bin/lib/br/record.sh.
+# shellcheck source=tests/lib/br-corpus.sh
+. "$DIR/tests/lib/br-corpus.sh" || exit 1
+br_corpus "$H" "$T/br-corpus.sh" || exit 1
 : > "$T/lift.sh"
 for fn in br_rkey br_cap_key br_file br_load br_save br_num br_rows_count br_cap_rows br_record br_fix_cap br_shape \
           br_is_external br_fix_terminal br_fix_terminal_word br_abandon br_xpr_parked br_rebuild_fresh \
           br_slug_of_url br_pr_comment; do
   awk -v f="^$fn\\\\(\\\\)" '
     $0 ~ f { p=1; if ($0 ~ /\}$/ && $0 !~ /\{ *$/) { print; exit } }
-    p { print } p && /^}$/ { exit }' "$H/bin/blocked-resolver.sh" >> "$T/lift.sh"
+    p { print } p && /^}$/ { exit }' "$T/br-corpus.sh" >> "$T/lift.sh"
 done
 for fn in br_fix_terminal br_abandon br_rebuild_fresh br_record br_fix_cap br_cap_rows br_xpr_parked; do
   grep -q "^$fn()" "$T/lift.sh" && ok || bad "lift: $fn() was not found in bin/blocked-resolver.sh"

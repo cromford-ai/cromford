@@ -1,0 +1,12 @@
+# @hub-lanes
+
+# ── STAFF HEARTBEAT LANE (BH-5561) ──────────────────────────────────────────
+# Every 15 minutes bin/staff.sh tick-all runs one tick per active staff agent
+# (GET /api/staff/agents). A tick reads the kill flags first, runs the agent's
+# collector, claims each item by fingerprint BEFORE any spend, and makes at
+# most ONE model call for the new items. It acts by the agent's autonomy level:
+# a digest line, a GitHub issue labelled staff:<agent>, or a refusal with one
+# beat for a NEVER-list action. A tick with no new items makes no model call
+# and writes no log line; flock -n dedupes per agent. Off: STAFF_ENABLED=0,
+# flags/staff-off-all, or flags/staff-off-<agent> for one agent.
+*/15 * * * * /root/harness/bin/hub-lease.sh check && /root/harness/bin/staff.sh tick-all >/dev/null 2>&1

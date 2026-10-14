@@ -20,6 +20,7 @@
 # Run: HARNESS_TEST_SANDBOX=1 bash tests/dequeue-watch-stub.bh-3719-test.sh
 set -uo pipefail
 . "$(dirname "$0")/lib/scratch.sh" || exit 1
+. "$(dirname "$0")/lib/jobs-schema.sh" && jobs_schema_render || exit 1
 DIR=$(cd "$(dirname "$0")/.." && pwd)
 
 PASS=0; FAIL=0

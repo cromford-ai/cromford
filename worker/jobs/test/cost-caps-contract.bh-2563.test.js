@@ -4,6 +4,7 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import worker, { CREATED_TABLES } from '../src/index.js';
 import { clearCapSeeds } from './lib/d1-sqlite.bh-1030.js';
+import { jobsSchemaSql } from './lib/jobs-schema.js';
 
 // BH-2563 (BH-2511.0): the cost-caps CONTRACT the BH-2511 siblings build on.
 // The cost_cap_changes table exists in schema.sql and in CREATED_TABLES with
@@ -12,7 +13,7 @@ import { clearCapSeeds } from './lib/d1-sqlite.bh-1030.js';
 // shapes, and worker/jobs/test/cost-caps.bh-2564.test.js owns the behaviour.
 
 const SECRET = 'test-secret';
-const SCHEMA = readFileSync(fileURLToPath(new URL('../schema.sql', import.meta.url)), 'utf8');
+const SCHEMA = jobsSchemaSql();
 
 let DatabaseSync = null;
 try { ({ DatabaseSync } = await import('node:sqlite')); } catch { DatabaseSync = null; }

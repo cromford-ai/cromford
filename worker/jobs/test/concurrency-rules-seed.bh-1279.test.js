@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
+import { jobsSchemaSql } from './lib/jobs-schema.js';
 
 // BH-1279: the 2026-09-14 NO-CAPS order (PR #343) deleted the
 // `concurrency_rules` rows repo/*/build and box/*/build from the live D1 — the
@@ -14,7 +15,7 @@ import { fileURLToPath } from 'node:url';
 // box concurrency_rules row again, so a re-apply can never resurrect one an
 // operator deleted.
 
-const SCHEMA = readFileSync(fileURLToPath(new URL('../schema.sql', import.meta.url)), 'utf8');
+const SCHEMA = jobsSchemaSql();
 
 test('schema.sql seed: no repo or box concurrency_rules row (no row = unlimited is the default)', async (t) => {
   let DatabaseSync;

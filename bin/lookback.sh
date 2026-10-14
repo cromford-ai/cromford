@@ -69,6 +69,10 @@ for f in followup cluster file board; do
   # shellcheck source=/dev/null
   [ -r "$HARNESS/bin/lib/lookback-$f.sh" ] && . "$HARNESS/bin/lib/lookback-$f.sh"
 done
+# shellcheck source=lib/reopen-reason.sh
+[ -r "$HARNESS/bin/lib/reopen-reason.sh" ] && . "$HARNESS/bin/lib/reopen-reason.sh"
+# shellcheck source=lib/revert-reason.sh
+[ -r "$HARNESS/bin/lib/revert-reason.sh" ] && . "$HARNESS/bin/lib/revert-reason.sh"
 SUMMARY=""
 add() { SUMMARY="${SUMMARY:+$SUMMARY
 }$*"; }
@@ -225,6 +229,8 @@ MEASURE=""
     | "measure: \($r | length) clusters filed to date, \($W) in the last 7 days, \($R + $S) followed up (\($R) recurred, \($S) stopped), \($M | length) with a merged fix (\([$M[] | select(.s == "followed_up_recurred")] | length) of those recurred)"
       + (if $filed > 0 then "; this run'"'"'s \($filed) not yet counted" else "" end)' "$RUN/ledger.json" 2>/dev/null)
 add "${MEASURE:-measure: ledger unreadable (${LWHY:-ledger rows unparseable})}"
+command -v rr_week_line >/dev/null 2>&1 && add "$(rr_week_line "$BUNDLE" "${LOOKBACK_DAYS:-7}")"
+command -v rv_week_line >/dev/null 2>&1 && add "$(rv_week_line "${LOOKBACK_DAYS:-7}")"
 
 # 8. one summary: info when live, warn (the digest) when dry
 while IFS= read -r s; do

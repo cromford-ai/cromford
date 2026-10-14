@@ -124,11 +124,11 @@ OUT=$(cli alerts --state new --limit 10); RC=$?
 [ "$RC" -eq 0 ] && ok || bad "alerts cli rc=$RC"
 NLINES=$(printf '%s\n' "$OUT" | grep -c '^[^#]') || true
 [ "$NLINES" -eq 2 ] && ok || bad "alerts printed $NLINES data rows, wanted 2"
-COLS=$(printf '%s\n' "$OUT" | head -1 | awk -F'\t' '{print NF}')
+COLS=$(head -1 <<<"$OUT" | awk -F'\t' '{print NF}')
 [ "$COLS" -eq 13 ] && ok || bad "alerts first row has $COLS columns, wanted 13 (12 before line)"
-LASTCOL=$(printf '%s\n' "$OUT" | head -1 | awk -F'\t' '{print $NF}')
+LASTCOL=$(head -1 <<<"$OUT" | awk -F'\t' '{print $NF}')
 [ "$LASTCOL" = "one" ] && ok || bad "alerts line column is '$LASTCOL', wanted 'one'"
-printf '%s\n' "$OUT" | grep -qx '#truncated' && ok || bad "missing #truncated line; output was:\n$OUT"
+grep -qx '#truncated' <<<"$OUT" && ok || bad "missing #truncated line; output was:\n$OUT"
 
 # --- 5. 404 maps to rc 2 and empty stdout; outage maps to rc 1 ---------------
 rm -f "$T/req.log"

@@ -47,8 +47,7 @@ mc_init
 MCLOG="$T/h/logs/merge-conductor.log"
 
 # --- T1. the registry ---------------------------------------------------------
-for row in "worker/jobs/schema.sql|bin/schema-build.sh --write" \
-           "rules/CLAUDE.md|bin/render-rules.sh --write" \
+for row in "rules/CLAUDE.md|bin/render-rules.sh --write" \
            "docs/PR-OWNERSHIP.md|bin/render-doc-sections.sh --write" \
            "docs/notes/INDEX.md|bin/render-doc-index.sh"; do
   p="${row%%|*}"; want="${row#*|}"
@@ -62,6 +61,16 @@ while IFS=$'\t' read -r p cmd; do
   git -C "$DIR" ls-files --error-unmatch -- "$p" >/dev/null 2>&1 && ok || bad "T1 $p is in the registry but not tracked"
   [ -x "$DIR/${cmd%% *}" ] && ok || bad "T1 $p's generator ${cmd%% *} is not an executable in the tree"
 done < <(mc_regen_paths)
+
+# TEST-CHANGE (BH-6005.4): worker/jobs/schema.sql left git, so it left the
+# registry: no row in the conf and none in the compiled default.
+mc_regen_cmd_for_path worker/jobs/schema.sql >/dev/null 2>&1 && bad "T1 worker/jobs/schema.sql must have no row any more" || ok
+MC_REGENERATED_PATHS_CONF="$T/no-such.conf" mc_regen_cmd_for_path worker/jobs/schema.sql >/dev/null 2>&1 \
+  && bad "T1 the compiled default must have no worker/jobs/schema.sql row any more" || ok
+# The fixtures below still COMMIT a render (the shape this mechanism exists
+# for), so E1-R2 drive the regenerate through a conf that names it.
+printf 'worker/jobs/schema.sql\tbin/schema-build.sh --write\n' > "$T/regen.conf"
+export MC_REGENERATED_PATHS_CONF="$T/regen.conf"
 
 # --- the fixture: a repo with the real schema builder ------------------------
 frag() { # frag <repo> <name> <table>

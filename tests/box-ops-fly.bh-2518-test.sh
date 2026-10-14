@@ -12,6 +12,7 @@
 # Run from anywhere: HARNESS_TEST_SANDBOX=1 bash tests/box-ops-fly.bh-2518-test.sh
 set -uo pipefail
 . "$(dirname "$0")/lib/scratch.sh" || exit 1
+. "$(dirname "$0")/lib/jobs-schema.sh" && jobs_schema_render || exit 1
 DIR=$(cd "$(dirname "$0")/.." && pwd)
 LIB="$DIR/bin/lib/box-ops-fly.sh"
 SCHEMA="$DIR/worker/jobs/schema.sql"

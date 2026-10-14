@@ -838,7 +838,8 @@ SLUG=$(git -C "$DIR" config --get remote.origin.url 2>/dev/null \
 # GH_APP_RATCHET_OWNER_TOKEN (BH-1984) is the token CI hands this block on a
 # pull request. It is set as GH_TOKEN on this one read and nowhere else, so no
 # other block, and no other suite in the shard, runs with it. Unset, the read
-# uses whatever identity the caller's gh already has, as before.
+# carries no credential: tests/lib/scratch.sh strips the caller's GH_TOKEN and
+# points GH_CONFIG_DIR at the scratch dir (BH-6672), so it fails and SKIPs.
 gh_state() { # gh_state <owner/repo> <issue number> -> prints open|closed|""
   local tok=()
   [ -n "${GH_APP_RATCHET_OWNER_TOKEN:-}" ] && tok=(env GH_TOKEN="$GH_APP_RATCHET_OWNER_TOKEN")

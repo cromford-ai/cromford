@@ -394,7 +394,7 @@ ph_ticket_to_todo() {
     if [ -z "${tid:-}" ]; then _po_stale_say "STALE_RUNG move $p/$k: the ticket's id could not be read from the board — not moved"; return 1; fi
     resp=$(curl -s -m 25 -X POST -H "Authorization: Bearer $token" -H "Content-Type: application/json" -H "User-Agent: curl/8" \
            -d "$(jq -nc '{toStatus:"todo",sortOrder:999999}')" "$base$prefix/tickets/$tid/move" 2>/dev/null </dev/null)
-    if ! printf '%s' "$resp" | grep -q todo; then
+    if ! grep -q todo <<<"$resp"; then
       _po_stale_say "STALE_RUNG move $p/$k: the board did not confirm todo — not moved ($(printf '%.120s' "$resp"))"
       return 1
     fi

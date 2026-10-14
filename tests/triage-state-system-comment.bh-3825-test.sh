@@ -14,6 +14,11 @@
 #      Unblocked comment, `llm changed` after it
 #
 # Run from anywhere: HARNESS_TEST_SANDBOX=1 bash tests/triage-state-system-comment.bh-3825-test.sh
+# BH-6578: triaged_at is one hour before the run, never a fixed date. A
+# client-turn verdict comes back after triaged_at + the nudge (14 days), so a
+# fixed date made this fixture go red on the day the nudge ran out.
+TRIAGED_AT=$(date -u -d "@$(( $(date -u +%s) - 3600 ))" '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null \
+  || date -u -r "$(( $(date -u +%s) - 3600 ))" '+%Y-%m-%dT%H:%M:%SZ')
 set -uo pipefail
 . "$(dirname "$0")/lib/scratch.sh" || exit 1
 DIR=$(cd "$(dirname "$0")/.." && pwd)
@@ -46,12 +51,12 @@ withc() { jq -c --argjson c "$1" '.ticket.comments += [$c]' "$A/in.json" > "$A/v
 ours()  { jq -cn --arg b "$1" --arg now "$NOW" '{id:"c3",author:{userId:"u-h",name:"project-1 Team Harness"},body:$b,createdAt:$now}'; }
 human() { jq -cn --arg b "$1" --arg now "$NOW" '{id:"c3",author:{userId:"u-carol",name:"Carol Client"},body:$b,createdAt:$now}'; }
 BD=$(dig "$A/in.json"); BH=$(ih "$A/in.json")
-printf '%s' "$BD" | grep -qE "$HEX16" && ok || bad "fixture: base digest is 16 hex: [$BD]"
-printf '%s' "$BH" | grep -qE "$HEX" && ok || bad "fixture: base input_hash is hex: [$BH]"
+grep -qE "$HEX16" <<<"$BD" && ok || bad "fixture: base digest is 16 hex: [$BD]"
+grep -qE "$HEX" <<<"$BH" && ok || bad "fixture: base input_hash is hex: [$BH]"
 # moves <label> <comment-json> / same <label> <comment-json>
 moves() { local d h; withc "$2"; d=$(dig "$A/v.json"); h=$(ih "$A/v.json")
-  printf '%s' "$d" | grep -qE "$HEX16" && [ "$d" != "$BD" ] && ok || bad "$1 MUST move the digest ($d vs $BD)"
-  printf '%s' "$h" | grep -qE "$HEX" && [ "$h" != "$BH" ] && ok || bad "$1 MUST move the input_hash ($h vs $BH)"; }
+  grep -qE "$HEX16" <<<"$d" && [ "$d" != "$BD" ] && ok || bad "$1 MUST move the digest ($d vs $BD)"
+  grep -qE "$HEX" <<<"$h" && [ "$h" != "$BH" ] && ok || bad "$1 MUST move the input_hash ($h vs $BH)"; }
 same()  { local d h; withc "$2"; d=$(dig "$A/v.json"); h=$(ih "$A/v.json")
   [ "$d" = "$BD" ] && ok || bad "$1 must NOT move the digest ($d vs $BD)"
   [ "$h" = "$BH" ] && ok || bad "$1 must NOT move the input_hash ($h vs $BH)"; }
@@ -103,9 +108,9 @@ col() { awk -F'\t' -v k="$1" -v c="$2" '$1==k{print $c}' "$D/decisions.tsv"; }
 # pass 1: the hash; then a row stamped with it
 tick_env shadow; ( ts_precheck ) >/dev/null 2>&1
 H5=$(col c1a 5)
-printf '%s' "$H5" | grep -qE "$HEX" && ok || bad "(S5) fixture: the ticket hashed: $(cat "$D/decisions.tsv" 2>/dev/null)"
-jq -n --arg h "$H5" '[{ticket_key:"c1a", verdict:"triaged", waiting_on:"none", verdict_hash:$h, input_hash:$h,
-  triaged_at:"2026-10-02T18:00:00Z", next_recheck_at:"2099-01-01T00:00:00Z", reason:"x"}]' > "$ROWS"
+grep -qE "$HEX" <<<"$H5" && ok || bad "(S5) fixture: the ticket hashed: $(cat "$D/decisions.tsv" 2>/dev/null)"
+jq -n --arg ta "$TRIAGED_AT" --arg h "$H5" '[{ticket_key:"c1a", verdict:"triaged", waiting_on:"none", verdict_hash:$h, input_hash:$h,
+  triaged_at:$ta, next_recheck_at:"2099-01-01T00:00:00Z", reason:"x"}]' > "$ROWS"
 tick_env enforce; ( ts_precheck ) >/dev/null 2>&1
 [ "$(col c1a 3) $(col c1a 4)" = "skip unchanged:triaged" ] && ok \
   || bad "(S5) before the nudge the settled ticket is skip unchanged: [$(cut -f1-5 "$D/decisions.tsv")]"

@@ -32,6 +32,23 @@ if [ "$(id -u)" -eq 0 ] && [ -d "$__scratch_harness_root" ] && [ "${HARNESS_TEST
   exit 1
 fi
 
+# >>> context-budgets compose (BH-6487)
+# catalog/context-budgets.json is composed from catalog/context-budgets.d/ and
+# git-ignored. About 100 suites read it and about 100 more load the jobs worker,
+# which imports it. Every one of them sources this file before it reads
+# anything, so one compose here replaces a line in each suite. It never exits:
+# a suite that does not read the manifest must not die on it, and one that does
+# fails on its own read with this line above it. An unchanged compose writes
+# nothing, and a tree with no context-budgets.d/ (a fixture copy) is skipped.
+__scratch_repo=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." 2>/dev/null && pwd)
+if [ -n "$__scratch_repo" ] && [ -d "$__scratch_repo/catalog/context-budgets.d" ] \
+   && [ -x "$__scratch_repo/bin/context-budgets-build.sh" ]; then
+  "$__scratch_repo/bin/context-budgets-build.sh" --compose --repo "$__scratch_repo" >/dev/null 2>&1 \
+    || echo "scratch.sh: catalog/context-budgets.json could not be composed from catalog/context-budgets.d (run bin/context-budgets-build.sh --check)" >&2
+fi
+unset __scratch_repo
+# <<< context-budgets compose
+
 # fly/entrypoint.sh exports HARNESS_ENV_DIR on pool machines; resolver rule 1
 # would otherwise send every scratch $T/h/env fixture to the live tmpfs.
 unset HARNESS H HARNESS_CHECKOUT HARNESS_ENV_DIR
@@ -45,6 +62,12 @@ unset HARNESS H HARNESS_CHECKOUT HARNESS_ENV_DIR
 # global.env, and an ambient COST_ROWS_BOX outranks a fixture's state/box-id.
 export JOBS_URL=
 unset HARNESS_SECRET COST_ROWS_BOX
+# BH-6672: a pool machine's build env exports GH_TOKEN as a live GitHub App
+# installation token, and tests/batch-resolve-test.sh printed it into the run
+# output. A suite gets no GitHub credential from the shell that started it; one
+# that needs a token sets a fixture after sourcing this. GH_APP_RATCHET_OWNER_TOKEN
+# stays: CI hands it to tests/gh-app-ratchet-test.sh on purpose, by that name.
+unset GH_TOKEN GITHUB_TOKEN GH_ENTERPRISE_TOKEN GITHUB_ENTERPRISE_TOKEN MC_GIT_TOKEN
 # BH-5781: lane_gate_or_exit sleeps a per-box start offset (up to 120 s) at a
 # quarter-hour minute. A suite that runs a lane at :00/:15/:30/:45 must not
 # wait for it; tests/lane-start-offset.bh-5781-test.sh unsets this to drive it.
@@ -123,6 +146,8 @@ chmod 755 "$SCRATCH"
 # adopted, not kept). A suite that already pins ETC_HARNESS_ENV per command
 # (25 do) still wins; CI has no /etc/harness/env, so this is what CI sees.
 export ETC_HARNESS_ENV="$SCRATCH/.no-etc-harness-env"
+# BH-6672: and a real `gh` reads no login from the box's ~/.config/gh.
+export GH_CONFIG_DIR="$SCRATCH/.gh-config"
 
 __scratch_inside() {
   [ -n "${SCRATCH:-}" ] || return 1

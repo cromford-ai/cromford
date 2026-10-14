@@ -8,7 +8,7 @@
 ## GET /api/accounting/requests-board/boards/rb_c4e8/tickets (open tickets)
 ```json
 [
-  {"id": 7330, "key": "TK-7330", "title": "Stop auto-categorizing Stripe payouts", "status": "todo", "waitingOn": "requester", "triageVerdict": "needs_clarification", "commentCount": 2, "reporter": "Owen Brandt", "priority": "medium", "lastActivityAt": "2026-09-21T16:01:44Z"}
+  {"id": 7330, "key": "TK-7330", "title": "Stop auto-tagging incoming orders", "status": "todo", "waitingOn": "requester", "triageVerdict": "needs_clarification", "commentCount": 2, "reporter": "Owen Brandt", "priority": "medium", "lastActivityAt": "2026-09-21T16:01:44Z"}
 ]
 ```
 
@@ -17,26 +17,26 @@
 {
   "id": 7330,
   "key": "TK-7330",
-  "title": "Stop auto-categorizing Stripe payouts",
-  "description": "The automatic category on Stripe payouts is wrong half the time. Turn it off.",
+  "title": "Stop auto-tagging incoming orders",
+  "description": "The automatic tag on incoming orders is wrong half the time. Turn it off.",
   "status": "todo",
   "waitingOn": "requester",
   "triageVerdict": "needs_clarification",
-  "reporter": "Owen Brandt (finance team, controller)",
+  "reporter": "Owen Brandt (operations team, operations manager)",
   "comments": [
     {
       "id": 73301,
       "authorId": "u_owen",
       "author": "Owen Brandt",
       "createdAt": "2026-09-21T15:58:00Z",
-      "body": "The auto-category keeps putting Stripe payouts under revenue. Please stop it."
+      "body": "The auto-tag keeps putting incoming orders under wholesale. Please stop it."
     },
     {
       "id": 73302,
       "authorId": "system-board",
       "author": "AI Triage",
       "createdAt": "2026-09-21T16:01:44Z",
-      "body": "[AI Triage] Turning it off changes how every payout gets booked. Should new payouts land uncategorized for someone to review, or go to a fixed clearing account? And should we re-open the payouts it already categorized this quarter?"
+      "body": "[AI Triage] Turning it off changes how every order gets routed. Should new orders land untagged for someone to review, or go to a fixed default queue? And should we re-open the orders it already tagged this quarter?"
     }
   ]
 }

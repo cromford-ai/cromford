@@ -244,7 +244,7 @@ has "$S" 'actions/download-artifact@v4' "tests-shard downloads ci-durations"
 case "$S" in *continue-on-error*) bad "CD-7 the shard download must not continue on error" ;; *) [ -n "$S" ] && ok "CD-7 the shard download is hard" || bad "CD-7 no shard download step" ;; esac
 has "$SHARDJ" 'no ci-durations from the plan job' "tests-shard guards a missing file"
 S=$(step_of "$SHARDJ" 'bin/test-trace-safety.sh --gate')
-printf '%s\n' "$S" | grep -qxF '          SUITE_DURATIONS_FILE: ${{ runner.temp }}/ci-durations/ci-durations.tsv' \
+grep -qxF '          SUITE_DURATIONS_FILE: ${{ runner.temp }}/ci-durations/ci-durations.tsv' <<<"$S" \
   && ok "CD-7 the traced step reads the plan's file" || bad "CD-7 the traced step has no SUITE_DURATIONS_FILE env line"
 has "$S" '--timings "$RUNNER_TEMP/timings/shard-$SHARD.tsv"' "the traced step writes timings"
 S=$(step_of "$SHARDJ" 'name: suite-timings-${{ matrix.shard }}')

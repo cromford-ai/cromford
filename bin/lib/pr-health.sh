@@ -70,9 +70,9 @@ _PH_CI_VOCAB="\\b(ci|check|workflow|job)\\b.*\\b(did not run|didn't run|not run|
 _PH_CI_NAMED='\b(ci|workflows?|github actions)\b'
 _PH_CODE_REF='[A-Za-z0-9_./-]+\.[A-Za-z0-9]+:[0-9]+|[A-Za-z0-9_-]+/[A-Za-z0-9_./-]+\.[a-z]{1,4}\b'
 _ph_ci_finding() { # _ph_ci_finding <one finding>
-  printf '%s\n' "$1" | grep -Eiq -- "$_PH_CI_VOCAB" || return 1
-  printf '%s\n' "$1" | grep -Eiq -- "$_PH_CI_NAMED" || return 1
-  ! printf '%s\n' "$1" | grep -Eq -- "$_PH_CODE_REF"
+  grep -Eiq -- "$_PH_CI_VOCAB" <<<"$1" || return 1
+  grep -Eiq -- "$_PH_CI_NAMED" <<<"$1" || return 1
+  ! grep -Eq -- "$_PH_CODE_REF" <<<"$1"
 }
 ph_ci_only_body() {
   local text="${1:-}" lines line marks nmarks start para

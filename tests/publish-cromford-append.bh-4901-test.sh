@@ -64,7 +64,9 @@ def skip(d, names):
     return [n for n in names if n == ".git" or (rel == "bin" and n in ("share", "publish-share.sh"))]
 shutil.copytree(src, out, ignore=skip)
 PY
-for g in leakcheck gitleaks-gate; do
+# registry_guard: the publisher runs it first (BH-6494); this suite is about
+# the append, so the scratch upstream carries no fleet registry and it is a stub.
+for g in leakcheck gitleaks-gate registry_guard; do
   cat > "$UP/bin/share/$g.py" <<PY
 import sys
 open("$T/guard.calls", "a").write("$g " + " ".join(sys.argv[1:]) + "\n")

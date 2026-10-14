@@ -4,11 +4,12 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { DatabaseSync } from 'node:sqlite';
 import { laneCandidates } from '../src/lib/core.js';
+import { jobsSchemaSql } from './lib/jobs-schema.js';
 
 // BH-1948 (BH-1525.0) — the lead review contract: the lead_review_requests
 // table, the lead.review model route and the lead-review retry policy. Driven
 // against THE SQL THAT SHIPS, the model-routes-seed.bh-1510-2 idiom.
-const SCHEMA = readFileSync(fileURLToPath(new URL('../schema.sql', import.meta.url)), 'utf8');
+const SCHEMA = jobsSchemaSql();
 const openDb = () => { const db = new DatabaseSync(':memory:'); db.exec(SCHEMA); return db; };
 const routes = (db) => db.prepare(
   "SELECT model, runner, position, project, updated_by FROM model_routes WHERE role='lead.review' ORDER BY position").all()

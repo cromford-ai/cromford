@@ -13,8 +13,14 @@
 #   C5. the REAL bin/lib/jobs/req.sh against a dead port: every verb rc != 0 and
 #       no stdout (the client's fail-open contract)
 # Run from anywhere: tests/triage-state-client-test.sh   (exit 0 = all pass)
+# BH-6578: triaged_at is one hour before the run, never a fixed date. A
+# client-turn verdict comes back after triaged_at + the nudge (14 days), so a
+# fixed date made this fixture go red on the day the nudge ran out.
+TRIAGED_AT=$(date -u -d "@$(( $(date -u +%s) - 3600 ))" '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null \
+  || date -u -r "$(( $(date -u +%s) - 3600 ))" '+%Y-%m-%dT%H:%M:%SZ')
 set -uo pipefail
 . "$(dirname "$0")/lib/scratch.sh" || exit 1
+. "$(dirname "$0")/lib/jobs-schema.sh" && jobs_schema_render || exit 1
 DIR=$(cd "$(dirname "$0")/.." && pwd)
 "$DIR/bin/llm-sites-build.sh" --compose --repo "$DIR" >/dev/null || { echo "FAIL: cannot compose catalog/llm-sites.json"; exit 1; }
 PASS=0; FAIL=0
@@ -72,8 +78,8 @@ done
 H=$(printf 'a%.0s' $(seq 64)); H2=$(printf 'b%.0s' $(seq 64))
 
 # --- C1 -------------------------------------------------------------------------
-jq -n --arg h "$H" '{project:"cromford",ticket_key:"2657",ticket_label:"BH-2657",input_hash:$h,
-  verdict:"buildable",verdict_hash:$h,triaged_at:"2026-09-28T10:00:00Z",next_recheck_at:"2099-01-01T00:00:00Z",
+jq -n --arg ta "$TRIAGED_AT" --arg h "$H" '{project:"cromford",ticket_key:"2657",ticket_label:"BH-2657",input_hash:$h,
+  verdict:"buildable",verdict_hash:$h,triaged_at:$ta,next_recheck_at:"2099-01-01T00:00:00Z",
   reason:"DECISION launch",last_decision:"llm new",last_mode:"shadow"}' > "$T/one.json"
 out=$(triage_state_put "$T/one.json"); rc=$?
 [ "$rc" = 0 ] && [ "$(printf '%s' "$out" | jq -r '.upserted' 2>/dev/null)" = 1 ] && ok \

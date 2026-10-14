@@ -83,7 +83,7 @@ taken() {
 # refused <case> <path>: rc 1, stdout lists the path, the path unmerged and kept.
 refused() {
   [ "$RC" = 1 ] && ok || bad "$1: rc $RC, want 1"
-  printf '%s\n' "$OUT" | grep -qx -- "$2" && ok || bad "$1: stdout does not list $2: $OUT"
+  grep -qx -- "$2" <<<"$OUT" && ok || bad "$1: stdout does not list $2: $OUT"
   unmerged "$2" && ok || bad "$1: $2 is not unmerged"
   [ -f "$W/$2" ] && ok || bad "$1: $2 is gone from the worktree"
 }
@@ -168,18 +168,18 @@ refused X5 "$SCHEMA"
 
 # --- X6: a worker with no schema.d/ -> no opinion, the deletion is taken.
 mkrepo x6
-put worker/plain_fixture/schema.sql 'CREATE TABLE IF NOT EXISTS plain_fixture (id INTEGER PRIMARY KEY);
+put worker/cloud_fixture/schema.sql 'CREATE TABLE IF NOT EXISTS cloud_fixture (id INTEGER PRIMARY KEY);
 '
-commit plain-add
+commit cloud-add
 git -C "$W" branch -q -f "$BR"
-untrack worker/plain_fixture/schema.sql; commit main-untrack
+untrack worker/cloud_fixture/schema.sql; commit main-untrack
 on_branch
-printf 'CREATE TABLE IF NOT EXISTS plain_more_fixture (id INTEGER PRIMARY KEY);\n' >> "$W/worker/plain_fixture/schema.sql"
+printf 'CREATE TABLE IF NOT EXISTS cloud_more_fixture (id INTEGER PRIMARY KEY);\n' >> "$W/worker/cloud_fixture/schema.sql"
 commit branch-edit
 merge_main
-unmerged worker/plain_fixture/schema.sql && ok || bad "X6: fixture: plain schema.sql is not a conflict"
+unmerged worker/cloud_fixture/schema.sql && ok || bad "X6: fixture: cloud schema.sql is not a conflict"
 resolve
-taken X6 worker/plain_fixture/schema.sql
+taken X6 worker/cloud_fixture/schema.sql
 [ "$(logn BH-6005)" = 0 ] && ok || bad "X6: a BH-6005 line was logged: $(cat "$MC_LOG")"
 
 # --- X7: as X1, but main adds a stray file the builder refuses -> REAL conflict.

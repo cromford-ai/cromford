@@ -176,7 +176,7 @@ flaky_run_tests() {
           | grep -av '^$' | awk '!seen[$0]++' | sed 's/^/job:/')
   fi
   [ -n "$out" ] || return 1
-  printf '%s\n' "$out" | head -n "${FLAKY_TESTS_MAX:-20}"
+  head -n "${FLAKY_TESTS_MAX:-20}" <<<"$out"
 }
 
 # flaky_run_tests_strict <owner/repo> <run-id> (BH-3776) — flaky_run_tests for a

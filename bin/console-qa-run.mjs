@@ -9,7 +9,8 @@
 // /qa-login/<token> URL, and never printed. The session it buys reads and never
 // writes; this driver only loads pages, it never clicks.
 //
-// Each <path> is loaded at 1440px AND 390px through bin/qa-drive.mjs driveScreen
+// Each <path> is loaded at 1440px AND 390px (or at the widths CONSOLE_QA_WIDTHS
+// selects, see viewportsFor) through bin/qa-drive.mjs driveScreen
 // and judged by its screenFailures, plus horizontal body scroll at 390px. The
 // session is proved first: GET <base>/api/dash/fleet must answer 200 after the
 // sign-in, or no screen is driven. Prints one line per failure, `SCREEN <path>
@@ -40,6 +41,21 @@ export const VIEWPORTS = [
   { name: "1440", width: 1440, height: 900 },
   { name: "390", width: 390, height: 844 },
 ];
+
+// The heights of the widths a caller may select. bin/console-postmerge-qa.sh
+// sets CONSOLE_QA_WIDTHS=1280,375; the preview lane sets nothing.
+const HEIGHTS = { 1440: 900, 1280: 900, 390: 844, 375: 812 };
+
+// viewportsFor("1280,375") — the viewports of a comma list of widths, in its
+// order. A width not in HEIGHTS is dropped; an empty result is VIEWPORTS.
+export function viewportsFor(widths) {
+  const out = String(widths || "")
+    .split(",")
+    .map((w) => w.trim())
+    .filter((w) => Object.hasOwn(HEIGHTS, w))
+    .map((w) => ({ name: w, width: Number(w), height: HEIGHTS[w] }));
+  return out.length ? out : VIEWPORTS;
+}
 
 // The verdict for one record at these widths: qa-drive's, plus the 390px body
 // scroll (qa-drive only judges scroll at its own 375px).
@@ -96,8 +112,9 @@ async function main() {
       failures.push(`the QA session did not hold: GET /api/dash/fleet answered ${pst === null ? "no response" : `HTTP ${pst}`} after /qa-login/ — no screen driven`);
       return finish();
     }
+    const viewports = viewportsFor(process.env.CONSOLE_QA_WIDTHS || "");
     for (const path of paths) {
-      for (const viewport of VIEWPORTS) {
+      for (const viewport of viewports) {
         const rec = await driveScreen(ctx, { base, path, viewport, outDir });
         screens.push(rec);
         const f = consoleFailures(rec);

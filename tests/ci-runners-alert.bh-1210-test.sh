@@ -40,10 +40,8 @@ command -v jq >/dev/null || { echo "jq missing — skipping"; exit 0; }
 
 FIX="$T/fix"; H="$T/h"
 mkdir -p "$FIX/settings" "$T/fakebin" "$H/bin/lib" "$H/catalog" "$H/flags" "$H/logs" "$H/state"
-cp "$DIR/bin/lib/lane-gate.sh" "$H/bin/lib/"
-[ -f "$DIR/bin/lib/env-path.sh" ] && cp "$DIR/bin/lib/env-path.sh" "$H/bin/lib/"
 cp "$(rendered_registry)" "$H/catalog/lanes.json"
-cp "$TICK" "$H/bin/testhost-tick.sh"; chmod +x "$H/bin/testhost-tick.sh"
+scratch_install_closure bin/testhost-tick.sh "$H" >/dev/null || { echo "FAIL: could not install the tick's closure"; exit 1; }
 # ONE clock read for the whole file; every age below is derived from it.
 NOW=$(date -u '+%s')
 

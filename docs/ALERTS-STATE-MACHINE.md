@@ -125,7 +125,7 @@ muting it.
 ```bash
 # fire — same id while open counts instead of paging
 bin/lane-alert.sh --id extra-usage-overage-project-6 --severity critical \
-  extra-usage "account is in overage, meter \$N"
+  extra-usage "account is in overage, meter \$26144.47"
 
 # resolve — exactly one send, silent if nothing was open
 bin/lane-alert.sh --resolve --id extra-usage-overage-project-6 \

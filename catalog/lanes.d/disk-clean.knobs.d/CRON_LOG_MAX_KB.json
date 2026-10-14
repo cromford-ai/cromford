@@ -1,0 +1,9 @@
+{
+  "env": "CRON_LOG_MAX_KB",
+  "type": "int",
+  "default": 10240,
+  "min": 64,
+  "zero_means": null,
+  "read_in": "bin/disk-clean.sh",
+  "note": "BH-6530: stage 10 of bin/disk-clean.sh cuts each logs/*-cron.log over this many KB in place (same inode) to its newest half, starting at a line start. Read as ${CRON_LOG_MAX_KB:-10240}. Not a whole number >= 64: the stage is skipped and logged, never guessed."
+}

@@ -247,13 +247,18 @@ x2 none   1  1 -
 x2 row:1  -  1 -
 # Exactly one row: the candidate TSV from the source itself.
 RESET; XINSTALL; TRACER 600; KNOB external_pr.fix_rounds.project-3 row:1
+# BH-5241: the corpus is the driver plus bin/lib/br/*.sh (tests/lib/br-corpus.sh),
+# because the record functions moved out of the driver into bin/lib/br/record.sh.
+# shellcheck source=tests/lib/br-corpus.sh
+. "$DIR/tests/lib/br-corpus.sh" || exit 1
+br_corpus "$H" "$T/br-corpus.sh" || exit 1
 ROWS_OUT=$( export HARNESS="$H" LOG="$T/src.log" H ST="$H/state/blocked-resolver" ONLY=project-3
   say() { echo "$*" >> "$T/src.log"; }
   . "$H/bin/lib/gh-rest.sh"; . "$H/bin/lib/gh-pr-list.sh"; . "$H/bin/jobs-client.sh"
   . "$H/bin/lib/merge-conductor-lib.sh" >/dev/null 2>&1
   br_use_token() { :; }; br_reset_token() { :; }
   for fn in br_rkey br_review_rows br_lead_pick br_lead_merges_only br_review_harness_pick br_review_newest br_review_verdict; do
-    awk -v f="^$fn\\\\(\\\\)" '$0 ~ f {p=1} p{print} p&&/^}$/{exit} p&&/}$/&&/\(\) *\{.*\}$/{exit}' "$H/bin/blocked-resolver.sh"
+    awk -v f="^$fn\\\\(\\\\)" '$0 ~ f {p=1} p{print} p&&/^}$/{exit} p&&/}$/&&/\(\) *\{.*\}$/{exit}' "$T/br-corpus.sh"
   done > "$T/srcfns.sh"
   BR_LEAD_HDR='LEAD FINDINGS — every item must be addressed in code'
   BR_REVIEW_FOOTER='_Automated harness review (Fable) of '
@@ -382,7 +387,7 @@ for fn in br_rkey br_cap_key br_file br_load br_is_external br_fix_terminal br_f
           br_abandon br_abandon_rebuild br_xpr_parked br_rebuild_fresh br_slug_of_url br_pr_field br_pr_state br_pr_comment br_close_pr; do
   awk -v f="^$fn\\\\(\\\\)" '
     $0 ~ f { p=1; if ($0 ~ /\}$/ && $0 !~ /\{ *$/) { print; exit } }
-    p { print } p && /^}$/ { exit }' "$H/bin/blocked-resolver.sh" >> "$T/lift.sh"
+    p { print } p && /^}$/ { exit }' "$T/br-corpus.sh" >> "$T/lift.sh"
 done
 for fn in br_is_external br_fix_terminal br_abandon br_abandon_rebuild br_xpr_parked br_rebuild_fresh br_close_pr; do
   grep -q "^$fn()" "$T/lift.sh" && ok || bad "lift: $fn() was not found in bin/blocked-resolver.sh"

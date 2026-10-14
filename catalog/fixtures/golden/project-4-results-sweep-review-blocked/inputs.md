@@ -6,10 +6,10 @@ Re-checked at the start of this tick: **unchanged** since the last consumed tick
 
 ## cat /root/harness/builds/project-4-TK-7288-20260920T2205/RESULT
 ```
-REVIEW_BLOCKED adversarial review found the merge rewrites posted journal lines
+REVIEW_BLOCKED adversarial review found the merge rewrites shipped order lines
 TICKET: TK-7288
-REVIEW: BLOCK — the merge updates vendorId on posted journal lines in place
-        and the ledger rule in CLAUDE.md is append-only. No PR opened.
+REVIEW: BLOCK — the merge updates supplierId on shipped order lines in place
+        and the history rule in CLAUDE.md is append-only. No PR opened.
 BRANCH: TK-7288-collapse (pushed to example-org/project-4, no PR)
 ```
 
@@ -24,18 +24,18 @@ RESULT  plan.md  review.md  execute.out  cost.csv
 {
   "id": 7288,
   "key": "TK-7288",
-  "title": "Collapse duplicate vendor records",
+  "title": "Collapse duplicate supplier records",
   "status": "in_progress",
   "waitingOn": "team",
   "triageVerdict": "ready",
-  "reporter": "Owen Brandt (finance team, controller)",
+  "reporter": "Owen Brandt (operations team, operations manager)",
   "comments": [
     {
       "id": 72881,
       "authorId": "u_owen",
       "author": "Owen Brandt",
       "createdAt": "2026-09-15T09:30:00Z",
-      "body": "We have the same vendor under three spellings. Merge them so the history is in one place."
+      "body": "We have the same supplier under three spellings. Merge them so the history is in one place."
     }
   ]
 }

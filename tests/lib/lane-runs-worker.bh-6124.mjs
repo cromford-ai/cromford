@@ -1,7 +1,7 @@
 // tests/lib/lane-runs-worker.bh-6124.mjs — an HTTP server on 127.0.0.1 for
 // tests/project-lanes-fly.bh-6124-test.sh, so pl_dispatch, lp_* and
 // bin/lane-run-worker.sh are driven over real curl against the REAL jobs
-// worker (worker/jobs/src/index.js) on node:sqlite with worker/jobs/schema.sql
+// worker (worker/jobs/src/index.js) on node:sqlite with the composed jobs schema
 // applied. HARNESS_SECRET is 'fixture-harness-secret'.
 //
 //   node lane-runs-worker.bh-6124.mjs <log>
@@ -16,7 +16,7 @@
 // `<METHOD> <path> <status>` to <log>. Exits 3 when node:sqlite is missing, so
 // the suite can SKIP visibly, and on its own after 180 s.
 import { createServer } from 'node:http';
-import { appendFileSync, readFileSync } from 'node:fs';
+import { appendFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 
 const [, , log] = process.argv;
@@ -26,7 +26,8 @@ try { ({ DatabaseSync } = await import('node:sqlite')); } catch { process.exit(3
 const worker = (await import(`${ROOT}worker/jobs/src/index.js`)).default;
 const { d1 } = await import(`${ROOT}worker/jobs/test/lib/d1-sqlite.bh-1030.js`);
 const db = new DatabaseSync(':memory:');
-db.exec(readFileSync(`${ROOT}worker/jobs/schema.sql`, 'utf8'));
+const { jobsSchemaSql } = await import(`${ROOT}worker/jobs/test/lib/jobs-schema.js`);
+db.exec(jobsSchemaSql());
 const env = { DB: d1(db), HARNESS_SECRET: 'fixture-harness-secret' };
 let failEnqueue = Number(process.env.FAIL_ENQUEUE_N || 0);
 

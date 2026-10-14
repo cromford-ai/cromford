@@ -46,7 +46,7 @@ RESP=$(curl -sS -m 20 -w '\n%{http_code}' -X POST "$CLERK_API/v1/sessions" \
   -d "{\"user_id\":\"$UID_\"}" 2>/dev/null) || RESP=$'\n000'
 CODE="${RESP##*$'\n'}"; BODY="${RESP%$'\n'*}"
 if [ "${CODE:0:1}" != 2 ]; then
-  if printf '%s' "$BODY" | grep -q 'user_banned'; then
+  if grep -q 'user_banned' <<<"$BODY"; then
     echo "$P/$ROLE is BANNED in Clerk — that is the rest state, not an outage." >&2
     echo "Drive it through: $SELF/qa-unbanned.sh $P $ROLE -- <command…>" >&2
     exit 3

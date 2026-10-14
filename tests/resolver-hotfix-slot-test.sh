@@ -167,7 +167,16 @@ chmod +x "$H/bin/agent-call.sh"
 # tests/resolver-pr-read-failed-test.sh does it — the script's top level is a
 # whole lane run.
 # ---------------------------------------------------------------------------
-fn() { awk -v F="^$1\\(\\)" '$0~F{f=1} f{print} f&&/^}$/{exit}' "$DIR/bin/blocked-resolver.sh"; }
+# BH-5241: the corpus is the driver plus bin/lib/br/*.sh (tests/lib/br-corpus.sh),
+# because the ladder functions moved out of the driver into bin/lib/br/ladder.sh.
+# shellcheck source=tests/lib/br-corpus.sh
+. "$DIR/tests/lib/br-corpus.sh" || exit 1
+br_corpus "$DIR" "$T/br-corpus.sh" || exit 1
+# The name is matched EXACTLY (`<name>()`), never as a prefix: with the record
+# layer in bin/lib/br/record.sh, `br_record_index()` comes before `br_record()`
+# in the corpus, and awk reads an escaped "()" as an empty group, so a prefix match lifted
+# the wrong function (merge-queue batch #6436).
+fn() { awk -v N="$1" 'index($0, N "()") == 1 && substr($0, length(N) + 3, 1) ~ /^( |\{|$)/ {f=1} f{print} f&&/^}$/{exit}' "$T/br-corpus.sh"; }
 LIFTED="$T/lifted.sh"; export LIFTED
 {
   cat <<EOF

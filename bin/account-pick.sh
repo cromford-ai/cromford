@@ -569,10 +569,10 @@ account_pick() {
     fi
   fi
   if [ -z "${pick:-}" ]; then
-    pick=$(printf '%s\n' "$ranked" | head -1 | cut -f3)
+    pick=$(head -1 <<<"$ranked" | cut -f3)
     if [ "$pick" = default ] && [ "${vendor_registry:-0}" -eq 0 ]; then reason=default
-    elif [ "$(printf '%s\n' "$ranked" | grep -c '')" -eq 1 ]; then reason=only
-    elif [ "$(printf '%s\n' "$ranked" | head -2 | cut -f1 | sort -u | grep -c '')" -eq 1 ]; then reason=tie_5h
+    elif [ "$(grep -c '' <<<"$ranked")" -eq 1 ]; then reason=only
+    elif [ "$(head -2 <<<"$ranked" | cut -f1 | sort -u | grep -c '')" -eq 1 ]; then reason=tie_5h
     else reason=priority
     fi
   fi

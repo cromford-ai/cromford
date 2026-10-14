@@ -66,8 +66,10 @@ while IFS= read -r line; do
 done <<< "$OUT"
 
 # --- 2: wiring --------------------------------------------------------------
-[ "$(grep -c 'routes/cost-breakdown.js' "$INDEX")" = 1 ] && ok || bad "index.js must import the route module once"
-[ "$(grep -c '\.\.\.costBreakdown,' "$INDEX")" = 1 ] && ok || bad "index.js must spread costBreakdown into ROUTES once"
+# TEST-CHANGE (BH-4607): a family is registered by its route-table.d fragment; index.js no longer lists gated families.
+[ "$(ls "$DIR"/worker/jobs/test/route-table.d/[0-9][0-9][0-9]-cost-breakdown.txt 2>/dev/null | wc -l)" = 1 ] && ok \
+  || bad "cost-breakdown has no route-table.d fragment (BH-4607: the fragment IS the registration)"
+grep -q 'from "./routes/cost-breakdown.js"' "$INDEX" && bad "index.js hand-registers cost-breakdown: the fragment registers it (BH-4607)" || ok
 grep -qx 'GET /api/metrics/cost-breakdown' "$DIR"/worker/jobs/test/route-table.d/*-cost-breakdown.txt 2>/dev/null \
   && ok || bad "no route-table fragment for GET /api/metrics/cost-breakdown"
 grep -q "from '../ui/SortableTable.js'" "$SCREEN" && ok || bad "CostBreakdown.js must use the shared SortableTable"

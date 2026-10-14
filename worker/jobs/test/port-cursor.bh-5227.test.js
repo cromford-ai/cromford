@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import worker from '../src/index.js';
+import { jobsSchemaSql } from './lib/jobs-schema.js';
 
 // GET|PUT /api/port/cursor (BH-5227): the watermark bin/port-to-cromford.sh
 // keeps per public target, so a merged range is ported once and never skipped.
@@ -11,7 +12,7 @@ import worker from '../src/index.js';
 // schema.sql applied, and every statement is recorded so "a 400 ran nothing"
 // is an assertion (D11).
 
-const SCHEMA = readFileSync(fileURLToPath(new URL('../schema.sql', import.meta.url)), 'utf8');
+const SCHEMA = jobsSchemaSql();
 const SECRET = 'test-secret';
 const TARGET = 'cromford-ai/cromford';
 const SHA_A = 'a'.repeat(40);

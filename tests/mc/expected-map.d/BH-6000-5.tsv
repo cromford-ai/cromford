@@ -1,0 +1,4 @@
+# tests/mc/expected-map.d/BH-6000-5.tsv — BH-6000 part 3, Fable review of
+# 9fc9454d1: the kind of the ready-why note, so only a hold stops the READY
+# re-kick; origin=lib, a new module function.
+classify	mc_ready_why_kind	lib

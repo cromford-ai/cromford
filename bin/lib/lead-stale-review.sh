@@ -14,7 +14,10 @@
 #
 # WHAT IS "THE LANE'S OWN" REVIEW. All three, never fewer:
 #   * state CHANGES_REQUESTED on a commit other than the head the new verdict
-#     is about (a review AT that head is a verdict on the very code: kept);
+#     is about (a review AT that head is a verdict on the very code: kept).
+#     Mode verdict (BH-6548) drops that exception: a MERGE posted through
+#     bin/lead-verdict.sh by source lead or human also supersedes a review AT
+#     the same head, because that post is itself a verdict on the very code;
 #   * the body carries the `<!-- lead-review:` marker lrl_findings writes;
 #   * the author is a BOT whose login is in lsr_bots_json: LEAD_REVIEW_BOT_LOGINS
 #     (default cromford[bot], the hub App every lead review posts as),
@@ -23,17 +26,24 @@
 #     these, whatever its body says: user.type must be "Bot".
 #
 # API (bash 3.2 safe: bin/lead-verdict.sh sources it on the lead's Mac):
+#   LSR_MODES                            -> the modes lsr_stale honours; a
+#                                           caller checks it for verdict
 #   lsr_bots_json                        -> JSON array of the bot logins
 #   lsr_stale <reviews.json> <head>      -> id<TAB>commit_id per stale own review
+#   lsr_stale <reviews.json> <head> <request-id> <job> <merge|block|verdict>
+#                                        -> id<TAB>commit_id<TAB>relanded|older|same
 #   lsr_reviews <repo> <pr> <out>        -> every page of the PR's reviews as ONE
 #                                           array in <out>; rc 1 = not a whole read
-#   lsr_dismiss_stale <repo> <pr> <head> <verdict> <row-ref> [<job> <merge|block> <request-id>]
+#   lsr_dismiss_stale <repo> <pr> <head> <verdict> <row-ref> [<job> <merge|block|verdict> <request-id>]
 #        reads the reviews and dismisses each stale own review, the message
 #        naming the old head, the new head, the verdict and the verdict row.
 #        With the three extra arguments (bin/lead-review-land.sh step 2d,
 #        BH-5400) an earlier landing of the same request counts too, whatever
 #        its commit, and mode block keeps only those; its message says
 #        "re-landed", and LSR_RELANDED counts them apart from LSR_DISMISSED.
+#        Mode verdict with no request id (bin/lead-verdict.sh, BH-6548) also
+#        dismisses an own review AT <head>; its message names the verdict, the
+#        verdict row and the head, and it counts in LSR_DISMISSED.
 #        Prints one line per review: `dismissed <id> <old12>` or
 #        `failed <id> <old12> HTTP <status>`. Sets LSR_DISMISSED / LSR_FAILED.
 #        rc 0 = none stands any more (dismissed now, or none was there);
@@ -48,6 +58,7 @@
 # Every GitHub call goes through gh_rest (bin/lib/gh-rest.sh, REST only).
 
 LSR_MARK='<!-- lead-review:'
+LSR_MODES='merge block verdict'
 
 lsr_bots_json() {
   local l out=""
@@ -62,7 +73,9 @@ lsr_stale() { # lsr_stale <reviews.json> <head> [<request-id> <job> <merge|block
   # BH-5400, with the three extra arguments: a review is also stale when it is
   # an earlier landing of THIS request (its `<!-- lead-review:<id> -->` marker
   # without this <job>'s `<!-- lead-job:<job> -->`), whatever its commit; mode
-  # block drops the older-head case; a third column says `relanded` or `older`.
+  # block drops the older-head case; a third column says `relanded`, `same`
+  # (a review AT <head>) or `older`. BH-6548: mode verdict keeps an own review
+  # whatever its commit, the same head included.
   # The own-review filter (state, marker, bot author) holds in every case.
   local three=0; [ $# -ge 5 ] && three=1
   jq -r --arg h "$2" --arg m "$LSR_MARK" --argjson bots "$(lsr_bots_json)" \
@@ -74,9 +87,10 @@ lsr_stale() { # lsr_stale <reviews.json> <head> [<request-id> <job> <merge|block
       and ($b | contains($m))
       and ((.user.type // "") == "Bot")
       and ((.user.login // "") as $l | $bots | index($l) != null)
-      and ($re or ($mode == "merge"
+      and ($re or $mode == "verdict" or ($mode == "merge"
         and ((.commit_id // "") | ascii_downcase) != ($h | ascii_downcase))))
-    | [(.id | tostring), (.commit_id // "")] + (if $three == "1" then [if $re then "relanded" else "older" end] else [] end)
+    | [(.id | tostring), (.commit_id // "")] + (if $three == "1" then [if $re then "relanded"
+        elif ((.commit_id // "") | ascii_downcase) == ($h | ascii_downcase) then "same" else "older" end] else [] end)
     | @tsv' "$1" 2>/dev/null
 }
 
@@ -100,10 +114,12 @@ lsr_dismiss_stale() { # lsr_dismiss_stale <repo> <pr> <head> <verdict> <row-ref>
   f=$(mktemp "${TMPDIR:-/tmp}/lead-stale-review-d.XXXXXX") || return 1
   if ! lsr_reviews "$repo" "$pr" "$f"; then rm -f "$f" "$f.tmp"; LSR_FAILED=1; return 1; fi
   if [ -n "$req" ]; then lsr_stale "$f" "$head" "$req" "$job" "$mode" > "$f.ids"
+  elif [ "$mode" = verdict ]; then lsr_stale "$f" "$head" "" "" verdict > "$f.ids"
   else lsr_stale "$f" "$head" > "$f.ids"; fi
   while IFS=$'\t' read -r rid cid kind; do
     [ -n "$rid" ] || continue
     msg="Superseded: the lead verdict on ${head:0:12} is $verdict (verdict row $ref), so this lead BLOCK on ${cid:0:12} no longer stands. Dismissed by the lead lane that posted it (BH-5213); the findings stay in this review's body."
+    [ "$kind" = same ] && msg="Superseded: verdict row $ref records $verdict on this same head ${head:0:12}, so this lead BLOCK on it no longer stands. Dismissed by the harness after the $verdict post (BH-5213, BH-6548); the findings stay in this review's body."
     [ "$kind" = relanded ] && msg="Superseded: lead review $req was re-landed as $verdict on ${head:0:12} (verdict row $ref), so this earlier landing on ${cid:0:12} no longer stands. Dismissed by the lead lane that posted it (BH-5213, BH-5400); the findings stay in this review's body."
     grc=0; gh_rest PUT "repos/$repo/pulls/$pr/reviews/$rid/dismissals" -f event=DISMISS -f message="$msg" > /dev/null 2>&1 || grc=$?
     if [ "$grc" = 0 ]; then

@@ -1,0 +1,2 @@
+# tests/ms/driver-ceiling.tsv — BH-5242: the ceiling on bin/merge-sweep.sh, read by tests/ms-split-layout.bh-5242-test.sh (M4). key<TAB>max. `fns` = column-0 function definitions in the driver. Each slice that moves a concern into bin/lib/ms/ LOWERS it in the same PR; nothing raises it. No line ceiling: the parent ticket forbids source-file line limits (#5228).
+fns	18

@@ -10,11 +10,12 @@
 #
 # These cases were the A section of tests/prequeue-invariants.bh-5429-test.sh.
 # They live apart because they run whole real suites (about 200 s), and that
-# file also sources bin/lib/mc-prequeue.sh, which makes it one of the suites
-# tests/trap-target-safety-test.sh traces. Inside that guard the nested real
-# suites pushed it past its 900 s cap on every merge batch (2026-10-08). This
-# file sources no bin/ script, so the guard's incident shape cannot happen
-# here; bin/test-trace-safety.sh still traces it on its own shard.
+# file also sources bin/lib/mc-prequeue.sh, which made it one of the suites
+# the trap-target guard traced. Inside that guard the nested real suites
+# pushed it past its 900 s cap on every merge batch (2026-10-08). BH-5541
+# retired that guard into bin/test-trace-safety.sh, which traces this file on
+# its own shard. This file sources no bin/ script, so the guard's incident
+# shape cannot happen here.
 #
 # Run from anywhere: HARNESS_TEST_SANDBOX=1 bash tests/prequeue-invariants-real.bh-5429-test.sh
 set -uo pipefail

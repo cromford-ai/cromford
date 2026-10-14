@@ -130,7 +130,7 @@ sw_act() {
     close-parent)
       [ -n "$h" ] || return 1
       out=$("$h/bin/decompose-parent-close.sh" "$p" --cooled 2>/dev/null)
-      if printf '%s\n' "$out" | grep -qxF -- "$fam"; then
+      if grep -qxF -- "$fam" <<<"$out"; then
         sw_record "$p" "$fam" "$child" "$step" "$reason" acted >/dev/null || return 1; echo acted
       else
         sw_record "$p" "$fam" "$child" "$step" "decompose-parent-close declined" skipped >/dev/null || return 1; echo skipped

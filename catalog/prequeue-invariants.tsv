@@ -27,3 +27,6 @@ triage-state-pr-contract	suite	tests/triage-state-pr-contract.bh-3418-test.sh	13
 pr-scoped-tests	cmd	bin/pr-scoped-test-lint.sh	15	no test asserts on its own PR's commit range without an empty-range guard or a pr-scoped marker
 render-doc-sections	cmd	bin/render-doc-sections.sh --check	2	every committed docs/<doc>.md render matches its docs/<doc>.d/ section files on the merged tree
 worker-jobs-schema	cmd	bin/prequeue-worker-schema.sh worker/jobs/test/machines-schema.bh-1054.test.js worker/jobs/test/model-routes.bh-1510.test.js worker/jobs/test/schema-deploy-queue.bh-1026.test.js	15	worker/jobs/schema.sql re-applies clean and stays additive (no ALTER, no DROP) on the merged tree
+flag-callsites-pool	suite	tests/flag-callsites-pool.bh-5635-test.sh	30	no bin/cron/fly script outside bin/lib reads a routing or wip-limit flag with a raw [ -f ] test
+mc-split-layout	suite	tests/mc-split-layout-test.sh	40	every function a bin/lib/mc module defines is in the module map, and no function is defined twice
+gh-rest-no-subshell	suite	tests/gh-rest-no-subshell-lint.sh	15	no bin/ script reads gh_rest through a $( ) subshell

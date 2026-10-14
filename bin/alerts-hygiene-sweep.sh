@@ -108,7 +108,7 @@ while IFS=$'\t' read -r ID AKEY PROJ LINE; do
   # ONLY after the box's canary has answered cleanly (review of #2291): a box
   # still listed in state/claude-auth-down.txt may genuinely be down, and a row
   # whose box cannot be named is left alone.
-  if printf '%s' "$TXT" | grep -qE "$AUTH_PROSE_RE"; then
+  if grep -qE "$AUTH_PROSE_RE" <<<"$TXT"; then
     ABOX=$(printf '%s' "$TXT" | sed -nE 's/.*\[auth\] ([A-Za-z0-9_.-]+) (CLAUDE AUTH DOWN|AUTH PROBE INCONCLUSIVE).*/\1/p; s/.*(CLAUDE AUTH DOWN|AUTH PROBE INCONCLUSIVE) on ([A-Za-z0-9_.-]+) box.*/\2/p' | head -1)
     if [ -n "$ABOX" ] && ! grep -qxF "$ABOX" "$HARNESS/state/claude-auth-down.txt" 2>/dev/null; then
       printf '%s\tauth-probe-prose\t%s\n' "$ID" "$LINE" >> "$WORK/class.tsv"
@@ -129,7 +129,7 @@ while IFS=$'\t' read -r ID AKEY PROJ LINE; do
     case "$G" in alert:*) G="alert:$(alert_state_key "$TXT")" ;; esac
     printf '%s\t%s\t%s\n' "$ID" "$G" "$LINE" >> "$WORK/dated.tsv"
   fi
-  if [ "$CHECK_PRS" = 1 ] && printf '%s\n%s\n' "$AKEY" "$TXT" | grep -qE "$PR_SUBJECT_RE"; then
+  if [ "$CHECK_PRS" = 1 ] && grep -qE "$PR_SUBJECT_RE" <<<"$(printf '%s\n%s\n' "$AKEY" "$TXT")"; then
     printf '%s\t%s\t%s\n' "$ID" "$AKEY" "$LINE" >> "$WORK/prs.tsv"
   fi
 # "-" for an empty akey/project: tab is IFS whitespace, so an empty middle field

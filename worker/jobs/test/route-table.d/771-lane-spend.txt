@@ -1,0 +1,3 @@
+# LANE SPEND (BH-6174, BH-5526 C4): each lane's spend today against its alert
+# line and its ceiling, for /costs; appended after steer at the END of the table.
+GET /api/metrics/lane-spend

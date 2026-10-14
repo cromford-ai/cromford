@@ -29,6 +29,7 @@ set -uo pipefail
 DIR=$(cd "$(dirname "$0")/.." && pwd)
 # shellcheck source=lib/scratch.sh
 . "$(dirname "$0")/lib/scratch.sh" || exit 1
+. "$(dirname "$0")/lib/jobs-schema.sh" && jobs_schema_render || exit 1
 NOW=2026-10-08T00:00:00Z
 
 PASS=0 FAIL=0
@@ -44,6 +45,7 @@ if [ ! -f "$DIR/catalog/lanes.json" ]; then
   HARNESS_TEST_SANDBOX=1 "$DIR/bin/lanes-build.sh" --root "$DIR" --write > /dev/null 2>&1 \
     || bad "could not generate catalog/lanes.json the worker imports"
 fi
+"$DIR/bin/llm-sites-build.sh" --compose --repo "$DIR" >/dev/null || { echo "FAIL: cannot compose catalog/llm-sites.json"; exit 1; }
 
 # ── the scratch checkout ────────────────────────────────────────────────────
 R="$T/repo"
@@ -141,8 +143,11 @@ cplan c1 -- "${BATCH[@]}" "${CREDS[@]}" CI_PLAN_REUSE=1 CI_PLAN_ESCALATION='sele
   || bad "C1 list: $(lst c1) out=$(cat "$T/c1.out" "$T/c1.err")"
 { [ "$(out c1 reuse)" = on ] && [ "$(out c1 reused)" = 1 ] && [ "$(out c1 saved_s)" = 6 ] && [ "$(out c1 count)" = 3 ]; } \
   && ok "C1 outputs reuse=on reused=1 saved_s=6 count=3" || bad "C1 outputs: $(cat "$T/c1.go")"
-grep -qxF 'reuse: reused tests/s3.sh from BASEKEY (6s)' "$T/c1.out" && ok "C1 names s3 and the run it came from" \
-  || bad "C1 no reused line: $(cat "$T/c1.out")"
+# BH-6406: the line ends in the fingerprint, the s3 row of the run's own fingerprints.tsv.
+C1FP=$(awk -F'\t' '$1 == "tests/s3.sh" { print $2 }' "$T/c1.rd/fingerprints.tsv" 2>/dev/null)
+{ grep -qxE 'reuse: reused tests/s3\.sh from BASEKEY \(6s\) fp [0-9a-f]{64}' "$T/c1.out" \
+  && grep -qxF "reuse: reused tests/s3.sh from BASEKEY (6s) fp $C1FP" "$T/c1.out"; } \
+  && ok "C1 names s3, the run it came from and its fingerprint" || bad "C1 no reused line: $(cat "$T/c1.out")"
 grep -qxF 'reuse: on — ran 3 reused 1 of 4 (saved ~6s)' "$T/c1.out" && ok "C1 reuse summary line" \
   || bad "C1 no reuse summary: $(cat "$T/c1.out")"
 grep -qE '^impact: 3 of 4 suites \(full: selection input: catalog/x; tiers: .*\) — 1 shard\(s\), mode=full$' "$T/c1.out" \

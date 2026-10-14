@@ -216,8 +216,12 @@ afm_rr_checkout() {
 #   (AFM_RR_GLOBS, a comma list; `*` crosses `/`, as in a case pattern).
 afm_rr_union_match() {
   local g
-  local IFS=,
-  for g in $AFM_RR_GLOBS; do
+  local -a gs=()
+  # `read -a`, never an unquoted `for g in $AFM_RR_GLOBS`: that expanded each
+  # glob against the current directory, so `worker/*/schema.sql` stopped
+  # matching worker/jobs/schema.sql once the file left git (BH-6005).
+  IFS=, read -r -a gs <<< "$AFM_RR_GLOBS"
+  for g in "${gs[@]}"; do
     g=$(printf '%s' "$g" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')
     [ -n "$g" ] || continue
     # shellcheck disable=SC2254

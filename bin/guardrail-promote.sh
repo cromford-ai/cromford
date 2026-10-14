@@ -110,7 +110,7 @@ find "$CHECKS" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | sort | while IFS= r
     refuse "$SLUG" "TARGET is the harness repo — guardrails ship to project repos, never here"
     continue
   fi
-  if ! printf '%s\n' "$FLEET_REPOS" | grep -qxF "$TARGET"; then
+  if ! grep -qxF "$TARGET" <<<"$FLEET_REPOS"; then
     refuse "$SLUG" "TARGET '$TARGET' is not in fleet.conf — not a fleet repo, refusing to clone or push to it"
     continue
   fi

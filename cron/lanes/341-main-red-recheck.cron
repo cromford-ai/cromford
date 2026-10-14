@@ -1,0 +1,8 @@
+# @hub-lanes
+# Main-red flagged recheck (BH-6502): every repo with a flags/main-red-* freeze
+# up is judged again every MAIN_RED_RECHECK_MIN minutes (default 5) by
+# bin/main-red-detector.sh --flagged-only, the same decision code as the hourly
+# pass in the merge conductor. No freeze up = no GitHub read. A green main now
+# clears its freeze within one tick, not at the next hourly pass.
+# Kill: bin/harness-ctl.sh off main-red-recheck.
+*/5 * * * * /root/harness/bin/hub-lease.sh check && /root/harness/bin/main-red-recheck.sh >> /root/harness/logs/main-red-detector.log 2>&1

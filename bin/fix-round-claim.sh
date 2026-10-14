@@ -67,8 +67,8 @@ frc_run() {
   args_json=$(printf '%s' "$row" | jq -c '.args | (if type == "string" then (try fromjson catch null) else . end)
     | if type == "array" and length == 6 and all(.[]; type == "string") then . else empty end' 2>/dev/null)
   why=""
-  printf '%s' "$p" | grep -qE '^[A-Za-z0-9._-]+$' && [ "$p" != . ] && [ "$p" != .. ] || why="project '$p' is not [A-Za-z0-9._-]+"
-  [ -n "$why" ] || { printf '%s' "$ck" | grep -qE '^[A-Za-z0-9._-]+$' && [ "$ck" != . ] && [ "$ck" != .. ]; } || why="cap_key '$ck' is not [A-Za-z0-9._-]+"
+  grep -qE '^[A-Za-z0-9._-]+$' <<<"$p" && [ "$p" != . ] && [ "$p" != .. ] || why="project '$p' is not [A-Za-z0-9._-]+"
+  [ -n "$why" ] || { grep -qE '^[A-Za-z0-9._-]+$' <<<"$ck" && [ "$ck" != . ] && [ "$ck" != .. ]; } || why="cap_key '$ck' is not [A-Za-z0-9._-]+"
   [ -n "$why" ] || case "$attempt" in ''|*[!0-9]*) why="attempt '$attempt' is not a number" ;; esac
   [ -n "$why" ] || [ -n "$args_json" ] || why="args are not six strings"
   if [ -n "$why" ]; then
@@ -129,7 +129,7 @@ frc_run() {
   fi
   if [ -z "$res" ]; then
     result="setup-blocked $(frc_b64 "the round on $box gave no FIX_RESULT (rc=$rc)")"
-  elif printf '%s' "$res" | grep -qE '^(done|terminal|rebuild-fresh|setup-blocked [^ ]+|box-paused [^ ]+)$'; then
+  elif grep -qE '^(done|terminal|rebuild-fresh|setup-blocked [^ ]+|box-paused [^ ]+)$' <<<"$res"; then
     result="$res"
   else
     result="setup-blocked $(frc_b64 "the round on $box answered an unrecognised FIX_RESULT: $res")"

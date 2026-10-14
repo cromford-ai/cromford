@@ -56,9 +56,9 @@ check() { python3 "$CHECKER" "$@"; }
 OUT=$(check "$DIR" "$DIR/catalog/lanes.d"); RC=$?
 [ "$RC" = 0 ] && ok || bad "R1: registered stages differ from call-site stages:
 $(printf '%s\n' "$OUT" | grep '^FAIL')"
-printf '%s\n' "$OUT" | grep -qx 'LANE postmerge-qa registered=prodqa called=prodqa sites=1' && ok \
+grep -qx 'LANE postmerge-qa registered=prodqa called=prodqa sites=1' <<<"$OUT" && ok \
   || bad "R1: postmerge-qa is not registered as exactly {prodqa}: $(printf '%s\n' "$OUT" | grep 'postmerge-qa')"
-printf '%s\n' "$OUT" | grep -qE '^LANE run-product registered=ideate,map,mockup,prd,signals,synth called=ideate,map,mockup,prd,signals,synth ' && ok \
+grep -qE '^LANE run-product registered=ideate,map,mockup,prd,signals,synth called=ideate,map,mockup,prd,signals,synth ' <<<"$OUT" && ok \
   || bad "R1: run-product is not registered as exactly {map,signals,ideate,synth,prd,mockup} (the last two through its declared helper bin/draft-proposal.sh, BH-2489): $(printf '%s\n' "$OUT" | grep 'run-product')"
 N=$(printf '%s\n' "$OUT" | grep -c '^LANE ')
 [ "$N" -ge 10 ] && ok || bad "R2: only $N lanes had a direct agent-call site — the scanner is finding nothing"
@@ -85,7 +85,7 @@ TXT
 "$H/bin/agent-call.sh" real p m 60 "$OUT" "$PROMPT"
 EOF
 OUT=$(check "$T/r3" "$T/r3/catalog/lanes.d"); RC=$?
-[ "$RC" = 0 ] && printf '%s\n' "$OUT" | grep -qx 'LANE r3 registered=real called=real sites=1' && ok \
+[ "$RC" = 0 ] && grep -qx 'LANE r3 registered=real called=real sites=1' <<<"$OUT" && ok \
   || bad "R3: prose/comment/heredoc/test mentions were read as calls (rc=$RC): $OUT"
 
 # R4: the call through a variable, the stage through a variable, a
@@ -100,7 +100,7 @@ env A=1 \
   "$AGENT_CALL" "$S" p m 60 out prompt
 EOF
 OUT=$(check "$T/r4" "$T/r4/catalog/lanes.d"); RC=$?
-[ "$RC" = 0 ] && printf '%s\n' "$OUT" | grep -qx 'LANE r4 registered=eval called=eval sites=1' && ok \
+[ "$RC" = 0 ] && grep -qx 'LANE r4 registered=eval called=eval sites=1' <<<"$OUT" && ok \
   || bad "R4: \"\$AGENT_CALL\" \"\$S\" did not resolve to {eval} (rc=$RC): $OUT"
 
 # R5a: the ticket's own bug, in miniature — registered fix, calls prodqa.
@@ -110,13 +110,13 @@ cat > "$T/r5/bin/r5.sh" <<'EOF'
 AGENT_CALL_ROLE=postmerge.qa "$SELF/agent-call.sh" prodqa "$P" m 1500 out x
 EOF
 OUT=$(check "$T/r5" "$T/r5/catalog/lanes.d"); RC=$?
-[ "$RC" != 0 ] && printf '%s\n' "$OUT" | grep -q 'FAIL: lane r5 registers cost_stage \[fix\] but bin/r5.sh calls agent-call.sh with \[prodqa\]' && ok \
+[ "$RC" != 0 ] && grep -q 'FAIL: lane r5 registers cost_stage \[fix\] but bin/r5.sh calls agent-call.sh with \[prodqa\]' <<<"$OUT" && ok \
   || bad "R5a: a lane registering fix and calling prodqa passed (rc=$RC): $OUT"
 # R5b: an unresolvable stage is a FAIL naming file:line, never skipped.
 mkfix r5b '"x"'
 printf '#!/bin/bash\n"$H/bin/agent-call.sh" "$1" p m 60 o x\n' > "$T/r5b/bin/r5b.sh"
 OUT=$(check "$T/r5b" "$T/r5b/catalog/lanes.d"); RC=$?
-[ "$RC" != 0 ] && printf '%s\n' "$OUT" | grep -q 'FAIL: bin/r5b.sh:2: agent-call stage argument "\$1" does not resolve' && ok \
+[ "$RC" != 0 ] && grep -q 'FAIL: bin/r5b.sh:2: agent-call stage argument "\$1" does not resolve' <<<"$OUT" && ok \
   || bad "R5b: an unresolvable \"\$1\" stage was not a FAIL naming the line (rc=$RC): $OUT"
 # R5c: an array registering MORE than the script calls is a mismatch too.
 mkfix r5c '["a","b"]'
@@ -129,7 +129,7 @@ mkdir -p "$T/r6/catalog"
 cp -r "$DIR/catalog/lanes.d" "$T/r6/catalog/"
 jq '.stats.cost_stage = "fix"' "$DIR/catalog/lanes.d/postmerge-qa.json" > "$T/r6/catalog/lanes.d/postmerge-qa.json"
 OUT=$(check "$DIR" "$T/r6/catalog/lanes.d"); RC=$?
-[ "$RC" != 0 ] && printf '%s\n' "$OUT" | grep -q 'FAIL: lane postmerge-qa registers cost_stage \[fix\]' && ok \
+[ "$RC" != 0 ] && grep -q 'FAIL: lane postmerge-qa registers cost_stage \[fix\]' <<<"$OUT" && ok \
   || bad "R6: postmerge-qa reverted to cost_stage=fix and the ratchet stayed green (rc=$RC)"
 
 echo "lane-stage-ratchet: $PASS passed, $FAIL failed"

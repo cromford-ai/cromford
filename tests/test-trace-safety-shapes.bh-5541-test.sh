@@ -112,10 +112,10 @@ OUT=$("$RUN" "$B" 2>&1); RC=$?
 if [ "$RC" -eq 1 ]; then ok; else bad "bad tree: rc must be 1, got $RC"; fi
 for id in s1 s2 s3 s3sub s4 s5 s6 s7 s8; do
   sid=${id%sub}
-  if printf '%s\n' "$OUT" | grep -qE "^HIT ${sid}-test\.sh rm ${BADT}/${id}( |$)"; then ok
+  if grep -qE "^HIT ${sid}-test\.sh rm ${BADT}/${id}( |$)" <<<"$OUT"; then ok
   else bad "${id}: the tracer must print 'HIT ${sid}-test.sh rm ${BADT}/${id}'"; fi
 done
-if printf '%s\n' "$OUT" | grep -qE "^HIT qc-test\.sh rm ${BADT}/qc( |$)"; then ok
+if grep -qE "^HIT qc-test\.sh rm ${BADT}/qc( |$)" <<<"$OUT"; then ok
 else bad "quoted-PS4 control: a raw deletion line after a real PS4 reassign must be a HIT"; fi
 
 # ── the good tree: the same shapes, each removing its own mktemp -d dir ──────
@@ -208,7 +208,7 @@ FIXEOF
 OUT=$(cd / && "$RUN" "$G" 2>&1); RC=$?
 if [ "$RC" -eq 0 ] && has "TRACE: 10 tests, 0 nonzero exit(s), 0 hit(s)" "$OUT"; then ok
 else bad "good tree: rc must be 0 with 10 tests, 0 nonzero exits and 0 hits (rc=$RC)"; fi
-if printf '%s\n' "$OUT" | grep -q '^HIT '; then
+if grep -q '^HIT ' <<<"$OUT"; then
   bad "good tree: no HIT line allowed, got: $(printf '%s\n' "$OUT" | grep '^HIT ' | cut -d' ' -f1-4 | tr '\n' ';')"
 else ok; fi
 

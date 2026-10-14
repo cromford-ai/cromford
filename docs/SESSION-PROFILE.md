@@ -3,7 +3,7 @@
 Every claude call through `bin/agent-call.sh` can run under a per-stage
 **session profile** built by `bin/lib/session-profile.sh`. The profile exists
 to cut prompt-cache WRITES, which were 60-82% of each sampled hub call's cost
-(70-115K tokens written per fresh session) on a fleet spending ~$N a week
+(70-115K tokens written per fresh session) on a fleet spending ~$47.5K a week
 notional, almost all on Opus 5.5.
 
 ## What the profile does

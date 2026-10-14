@@ -210,9 +210,8 @@ esac
 # missing: deleting `[ -d "$HARNESS" ] || HARNESS=…` reds 2b and 2c.
 CO="$T/co"
 mkdir -p "$CO/bin/lib" "$CO/catalog"
-cp "$TICK" "$CO/bin/"
-cp "$DIR/bin/lib/lane-gate.sh" "$DIR/bin/lib/env-path.sh" "$CO/bin/lib/"
 cp "$T/jobs-client-stub.sh" "$CO/bin/jobs-client.sh"
+scratch_install_closure bin/testhost-tick.sh "$CO" >/dev/null || bad "2 could not install the tick's closure into $CO"
 cp "$(rendered_registry)" "$CO/catalog/lanes.json"
 reset; stamp "$((NOW - 60))"   # inside the window: no machine action either way
 OUT=$(env PATH="$T/fakebin:/usr/bin:/bin:/usr/sbin:/sbin" HOME="$T" HARNESS="$T/nope" \

@@ -1,0 +1,78 @@
+{
+  "id": "outcome-check",
+  "name": "Perf PR outcome check",
+  "scope": "hub",
+  "script": "bin/outcome-check.sh",
+  "cadence": "*/30 * * * *",
+  "boxes": [
+    "hub"
+  ],
+  "switch": {
+    "kind": "flag",
+    "name": "lane-off-outcome-check",
+    "aliases": []
+  },
+  "wired": true,
+  "knobs": [
+    {
+      "env": "OUTCOME_CHECK_DELAY_H",
+      "type": "int",
+      "default": 6,
+      "min": 1,
+      "max": 72,
+      "zero_means": null,
+      "note": "BH-6382: a merged perf PR is measured this many hours after GitHub's merged_at, on live data. Earlier ticks do not read it."
+    },
+    {
+      "env": "OUTCOME_CHECK_LOOKBACK_H",
+      "type": "int",
+      "default": 48,
+      "min": 6,
+      "max": 168,
+      "zero_means": null,
+      "note": "BH-6382: merge-ledger rows (kind merge) updated in the last this-many hours are candidates. Keep it above OUTCOME_CHECK_MAX_WAIT_H, or a PR that waits for samples ages out before it is decided."
+    },
+    {
+      "env": "OUTCOME_CHECK_MIN_SAMPLES",
+      "type": "int",
+      "default": 5,
+      "min": 1,
+      "max": 1000,
+      "zero_means": null,
+      "note": "BH-6382: a measurement with fewer samples than this is not decided. The PR gets a wait row and is measured again next tick."
+    },
+    {
+      "env": "OUTCOME_CHECK_MAX_WAIT_H",
+      "type": "int",
+      "default": 24,
+      "min": 6,
+      "max": 168,
+      "zero_means": null,
+      "note": "BH-6382: this many hours after the merge, a PR that still has too few samples is recorded insufficient, with one ALERTS line."
+    },
+    {
+      "env": "OUTCOME_CHECK_MAX_PRS",
+      "type": "int",
+      "default": 50,
+      "min": 1,
+      "max": 200,
+      "zero_means": null,
+      "note": "BH-6382: at most this many due PRs are checked per tick, oldest first. The rest are logged as deferred and drain on later ticks. PRs that already have a final row do not count."
+    },
+    {
+      "env": "OUTCOME_CHECK_DEADLINE_S",
+      "type": "int",
+      "default": 600,
+      "min": 60,
+      "max": 1500,
+      "zero_means": null,
+      "note": "BH-6382: no new PR is started after the tick has run this many seconds. The rest are logged as deferred. A */30 tick must end before the next one."
+    }
+  ],
+  "stats": {
+    "cost_stage": null,
+    "cost_project_filter": null,
+    "lanes_row": false,
+    "log": "logs/outcome-check.log"
+  }
+}

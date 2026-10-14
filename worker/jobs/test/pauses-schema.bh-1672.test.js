@@ -2,12 +2,13 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
+import { jobsSchemaSql } from './lib/jobs-schema.js';
 
 // BH-1681 (BH-1672.0): the pauses table, its one-live-row index and the three
 // pause_* settings seeds, applied from the real schema.sql. The routes that
 // write pauses are a sibling slice; here we only prove the SQL.
 
-const SCHEMA = readFileSync(fileURLToPath(new URL('../schema.sql', import.meta.url)), 'utf8');
+const SCHEMA = jobsSchemaSql();
 
 const COLUMNS = [
   'id', 'scope', 'what', 'reason', 'actor',

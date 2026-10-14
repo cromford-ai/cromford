@@ -37,6 +37,7 @@ bad() { FAIL=$((FAIL+1)); echo "FAIL: $1"; }
 command -v jq >/dev/null || { echo "jq missing — skipping"; exit 0; }
 
 cp "$DIR/bin/merge-sweep.sh" "$T/bin/sweep.sh"
+mkdir -p "$T/bin/lib" && cp -rL "$DIR/bin/lib/ms" "$T/bin/lib/" || exit 1   # BH-5242: the sweep loads bin/lib/ms/
 cp "$DIR/bin/alert-line.sh" "$T/bin/"
 # The sweep sources the conductor lib for its PR-state reader (mc_pr_view,
 # BH-783/784) and the merge-queue probe; without it every read answers rc 1 and the

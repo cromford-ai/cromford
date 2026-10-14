@@ -50,6 +50,14 @@ command -v lane_gate_or_exit >/dev/null 2>&1 && lane_gate_or_exit preplan-tick
 # nothing is exported and the lane behaves byte-for-byte as it does today.
 command -v lane_env_apply    >/dev/null 2>&1 && lane_env_apply    preplan-tick
 
+# THE HUB_MODULE SIGNAL (BH-6384): one existing file planned by 3+ pre-planned
+# tickets of a project. Up here, before the tick's early exits, so a busy or an
+# idle tick still reaches it. The script keeps a daily stamp per project, so
+# every tick but the first of the UTC day costs a file read. A signal, not a
+# gate: bounded, output discarded, rc ignored.
+HMW="$HARNESS/bin/hub-module-warn.sh"
+[ -x "$HMW" ] && { timeout 60 "$HMW" --box >/dev/null 2>&1 </dev/null || true; }
+
 # THE READY SET (BH-1033): the file's lines UNION the `ready` build_queue rows.
 # One definition, in one lib; with it absent this is the grep of $Q that was
 # here before, character for character.

@@ -40,15 +40,15 @@ PKGS=$(printf '%s\n' "$APT_CODE" | sed -n '/apt-get install/,/^[[:space:]]*&&/p'
   || bad "G0: could not extract the DOCKERFILE heredoc from $RUNNER (every check below would be vacuous)"
 [ -n "$APT" ] && printf '%s\n' "$APT" | tail -n1 | grep -q 'rm -rf' && ok \
   || bad "G0: could not extract the apt-get install RUN (apt-get install .. rm -rf) from the heredoc: $DF"
-printf '%s\n' "$PKGS" | grep -qw 'rsync' && ok \
+grep -qw 'rsync' <<<"$PKGS" && ok \
   || bad "G0: could not extract the package list from the install RUN: $APT"
 
 # ── G1. the image installs gawk ─────────────────────────────────────────────
-printf '%s\n' "$PKGS" | grep -qw 'gawk' && ok \
+grep -qw 'gawk' <<<"$PKGS" && ok \
   || bad "G1: the image installs no gawk, so awk is trixie's mawk and parses awk -v unlike CI: $APT"
 
 # ── G2. gawk IS awk, and the build fails closed if it is not ────────────────
-printf '%s\n' "$APT_CODE" | grep -q 'update-alternatives --set awk /usr/bin/gawk' && ok \
+grep -q 'update-alternatives --set awk /usr/bin/gawk' <<<"$APT_CODE" && ok \
   || bad "G2: the install RUN does not set the awk alternative to /usr/bin/gawk before rm -rf: $APT"
 printf '%s\n' "$APT_CODE" | grep 'awk --version' | grep -q 'GNU Awk' && ok \
   || bad "G2: the install RUN does not check that awk --version says GNU Awk, so a mawk image could ship under the new tag: $APT"
@@ -56,7 +56,7 @@ printf '%s\n' "$APT_CODE" | grep 'awk --version' | grep -q 'GNU Awk' && ok \
 # ── G3. the default tag moved to trixie.5 ───────────────────────────────────
 TAG_LINE=$(grep '^IMAGE=' "$RUNNER")
 [ -n "$TAG_LINE" ] && ok || bad "G3: no default IMAGE= line in $RUNNER"
-printf '%s\n' "$TAG_LINE" | grep -q ':trixie\.5}"$' && ok \
+grep -q ':trixie\.5}"$' <<<"$TAG_LINE" && ok \
   || bad "G3: the default IMAGE tag is not trixie.5, so a machine holding trixie.4 reuses its mawk image: $TAG_LINE"
 grep -q ':trixie\.[234]}' <<<"$TAG_LINE" \
   && bad "G3: the default IMAGE still names an older tag (trixie.2/.3/.4): $TAG_LINE" || ok
@@ -66,11 +66,11 @@ T4=$(grep -n 'trixie\.4' "$RUNNER")
 [ -n "$T4" ] && ok || bad "G4: the header no longer names trixie.4 among the older tags"
 T4_CODE=$(printf '%s\n' "$T4" | grep -v '^[0-9]*:#')
 [ -z "$T4_CODE" ] && ok || bad "G4: a non-comment line names trixie.4: $T4_CODE"
-printf '%s\n' "$T4" | grep -q 'mawk' && ok \
+grep -q 'mawk' <<<"$T4" && ok \
   || bad "G4: no header line names trixie.4 as the mawk-as-awk tag: $T4"
 
 # ── G5. python3-yaml is still installed (BH-5583 body, I1) ──────────────────
-printf '%s\n' "$PKGS" | grep -qw 'python3-yaml' && ok \
+grep -qw 'python3-yaml' <<<"$PKGS" && ok \
   || bad "G5: the image no longer installs python3-yaml: $APT"
 
 # ── G6. the package comment block says why gawk is there ────────────────────

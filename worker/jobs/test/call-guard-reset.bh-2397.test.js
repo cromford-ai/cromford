@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import worker from '../src/index.js';
+import { jobsSchemaSql } from './lib/jobs-schema.js';
 
 // BH-2397 item 1: a RESET must supersede the refusals before it. The GET
 // roll-up keeps `refused` (every refusal in the window, what the box CLI
@@ -13,7 +14,7 @@ import worker from '../src/index.js';
 // to the second, and these tests never read a clock (docs/TEST-DETERMINISM.md).
 
 const SECRET = 'test-secret';
-const SCHEMA = readFileSync(fileURLToPath(new URL('../schema.sql', import.meta.url)), 'utf8');
+const SCHEMA = jobsSchemaSql();
 
 function sqliteDB(db) {
   const prepare = (sql) => {

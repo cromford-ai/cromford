@@ -175,9 +175,9 @@ if [ ! -f "$PF" ]; then bad "A5-A8: bin/routing-flip-preflight.sh does not exist
   : > "$H/flags/builder-fly-x"; : > "$H/flags/fly-pool-x"; echo harness-pool-x > "$H/flags/fly-pool-app-x"; : > "$H/flags/builder-fly-y"
   BEFORE=$(snap); OUT=$(preflight); RC=$?
   [ "$RC" = 0 ] && ok || bad "A5: clean box must pass (rc=$RC): $OUT"
-  for c in 1 2 3 4 5; do printf '%s\n' "$OUT" | grep -q "^\[PASS\] $c " && ok || bad "A5: check $c must print a PASS line: $OUT"; done
-  printf '%s\n' "$OUT" | grep -q 'routing_rows=off' && ok || bad "A5: must print the knob's current value"
-  printf '%s\n' "$OUT" | grep -q 'http=200 rows=3' && ok || bad "A5: must record the live probe's status and row count"
+  for c in 1 2 3 4 5; do grep -q "^\[PASS\] $c " <<<"$OUT" && ok || bad "A5: check $c must print a PASS line: $OUT"; done
+  grep -q 'routing_rows=off' <<<"$OUT" && ok || bad "A5: must print the knob's current value"
+  grep -q 'http=200 rows=3' <<<"$OUT" && ok || bad "A5: must record the live probe's status and row count"
   # A8 read-only (knob off here, knob on below).
   [ "$BEFORE" = "$(snap)" ] && ok || bad "A8: preflight must leave flags/ byte-identical"
   NONGET=$(grep -v '^GET ' "$T/req.log"); [ -z "$NONGET" ] && ok || bad "A8: preflight sent a non-GET: $NONGET"
@@ -187,19 +187,19 @@ if [ ! -f "$PF" ]; then bad "A5-A8: bin/routing-flip-preflight.sh does not exist
   : > "$H/flags/fly-pool-y"; : > "$H/flags/builder-fly-z"; : > "$H/flags/fly-pool-z"; : > "$H/flags/fly-pool-app-z"
   OUT=$(preflight); RC=$?
   [ "$RC" = 1 ] && ok || bad "A6: orphan/empty/drift must fail (rc=$RC)"
-  printf '%s\n' "$OUT" | grep -q '^\[FAIL\] 1 .*fly-pool-y' && ok || bad "A6: check 1 must name the orphan fly-pool-y: $OUT"
-  printf '%s\n' "$OUT" | grep -q '^\[FAIL\] 2 .*fly-pool-app-z' && ok || bad "A6: check 2 must name the empty fly-pool-app-z: $OUT"
-  printf '%s\n' "$OUT" | grep -q '^\[FAIL\] 4 .*pool-halt-x' && ok || bad "A6: the row drift (x halted=1, no file) must be named: $OUT"
+  grep -q '^\[FAIL\] 1 .*fly-pool-y' <<<"$OUT" && ok || bad "A6: check 1 must name the orphan fly-pool-y: $OUT"
+  grep -q '^\[FAIL\] 2 .*fly-pool-app-z' <<<"$OUT" && ok || bad "A6: check 2 must name the empty fly-pool-app-z: $OUT"
+  grep -q '^\[FAIL\] 4 .*pool-halt-x' <<<"$OUT" && ok || bad "A6: the row drift (x halted=1, no file) must be named: $OUT"
   # A7 the live probe failing.
   for m in http401 http500 down; do
     reset; knob off; OUT=$(CURL_MODE=$m preflight); RC=$?
-    [ "$RC" = 1 ] && printf '%s\n' "$OUT" | grep -q '^\[FAIL\] 4 .*http=' && ok || bad "A7: probe $m must fail check 4 with its http= status (rc=$RC): $OUT"
+    [ "$RC" = 1 ] && grep -q '^\[FAIL\] 4 .*http=' <<<"$OUT" && ok || bad "A7: probe $m must fail check 4 with its http= status (rc=$RC): $OUT"
   done
   # A8 read-only with the knob ON and a row that disagrees with the files.
   reset; knob on; row x local null 0; : > "$H/flags/builder-fly-x"; : > "$H/flags/fly-pool-x"
   BEFORE=$(snap); OUT=$(preflight); RC=$?
   [ "$BEFORE" = "$(snap)" ] && ok || bad "A8: knob on — preflight must still write nothing to flags/"
-  [ "$RC" = 1 ] && printf '%s\n' "$OUT" | grep -q 'routing_rows=on' && ok || bad "A8: knob on + drift must fail and say the knob is on (rc=$RC): $OUT"
+  [ "$RC" = 1 ] && grep -q 'routing_rows=on' <<<"$OUT" && ok || bad "A8: knob on + drift must fail and say the knob is on (rc=$RC): $OUT"
   NONGET=$(grep -v '^GET ' "$T/req.log"); [ -z "$NONGET" ] && ok || bad "A8: knob on — preflight sent a non-GET: $NONGET"
 fi
 
@@ -214,14 +214,14 @@ if [ ! -f "$SEED" ]; then bad "A9-A11: bin/routing-seed-rows.sh does not exist";
   # A9 empty table: the flip would be a no-op, so check 5 fails and says how to seed.
   reset; knob off; hub_files
   OUT=$(preflight); RC=$?
-  [ "$RC" = 1 ] && printf '%s\n' "$OUT" | grep -q '^\[FAIL\] 5 .*missing x y z.*routing-seed-rows.sh --apply' \
+  [ "$RC" = 1 ] && grep -q '^\[FAIL\] 5 .*missing x y z.*routing-seed-rows.sh --apply' <<<"$OUT" \
     && ok || bad "A9: an empty table must fail check 5, name x y z and the seed command (rc=$RC): $OUT"
   # A10 dry run: prints, PUTs nothing, touches nothing.
   BEFORE=$(snap); OUT=$(seed); RC=$?
   [ "$RC" = 0 ] && [ "$(puts)" = 0 ] && [ "$BEFORE" = "$(snap)" ] && ok || bad "A10: dry run must PUT nothing and write nothing (rc=$RC puts=$(puts)): $OUT"
-  printf '%s\n' "$OUT" | grep -q '^would seed x builder=pool pool_app=harness-pool-x halted=1$' \
-    && printf '%s\n' "$OUT" | grep -q '^would seed y builder=fly1 pool_app=- halted=0$' \
-    && printf '%s\n' "$OUT" | grep -q '^would seed z builder=local pool_app=- halted=0$' && ok || bad "A10: dry run must name each derived row: $OUT"
+  grep -q '^would seed x builder=pool pool_app=harness-pool-x halted=1$' <<<"$OUT" \
+    && grep -q '^would seed y builder=fly1 pool_app=- halted=0$' <<<"$OUT" \
+    && grep -q '^would seed z builder=local pool_app=- halted=0$' <<<"$OUT" && ok || bad "A10: dry run must name each derived row: $OUT"
   # A10 apply: 3 PUTs, files byte-identical (mtimes too), then the preflight is READY.
   rm -f "$T/req.log"; OUT=$(seed --apply); RC=$?
   [ "$RC" = 0 ] && [ "$(puts)" = 3 ] && ok || bad "A10: --apply must PUT exactly 3 rows (rc=$RC puts=$(puts)): $OUT"
@@ -233,7 +233,7 @@ if [ ! -f "$SEED" ]; then bad "A9-A11: bin/routing-seed-rows.sh does not exist";
     && ok || bad "A10: after the seed the preflight must be READY (rc=$RC): $OUT"
   # A10 idempotent: a re-run PUTs nothing.
   rm -f "$T/req.log"; OUT=$(seed --apply); RC=$?
-  [ "$RC" = 0 ] && [ "$(puts)" = 0 ] && printf '%s\n' "$OUT" | grep -q 'already matching 3' && ok || bad "A10: re-run must be a no-op (rc=$RC puts=$(puts)): $OUT"
+  [ "$RC" = 0 ] && [ "$(puts)" = 0 ] && grep -q 'already matching 3' <<<"$OUT" && ok || bad "A10: re-run must be a no-op (rc=$RC puts=$(puts)): $OUT"
   # A10 and the flip that follows is invisible: knob on, every reader answers as before.
   knob on; BEFORE=$(snap)
   [ "$(point 'routing_sync_all; routing_builder x; routing_builder y; routing_builder z' | tr '\n' ' ')" = "pool fly1 local " ] \
@@ -252,10 +252,10 @@ if [ ! -f "$SEED" ]; then bad "A9-A11: bin/routing-seed-rows.sh does not exist";
   done
   reset; knob off; hub_files; row y local null 0
   OUT=$(seed --apply); RC=$?
-  [ "$RC" = 1 ] && [ "$(puts)" = 0 ] && [ "$(jq -r .builder "$T/rows/y.json")" = local ] && printf '%s\n' "$OUT" | grep -q 'y: existing row local|' \
+  [ "$RC" = 1 ] && [ "$(puts)" = 0 ] && [ "$(jq -r .builder "$T/rows/y.json")" = local ] && grep -q 'y: existing row local|' <<<"$OUT" \
     && ok || bad "A11: a differing existing row must be named and never overwritten (rc=$RC puts=$(puts)): $OUT"
   reset; knob off; hub_files; OUT=$(CURL_MODE=putfail seed --apply); RC=$?
-  [ "$RC" = 1 ] && printf '%s\n' "$OUT" | grep -q '^FAILED x ' && ok || bad "A11: a failed PUT must be reported and fail the run (rc=$RC): $OUT"
+  [ "$RC" = 1 ] && grep -q '^FAILED x ' <<<"$OUT" && ok || bad "A11: a failed PUT must be reported and fail the run (rc=$RC): $OUT"
 
   # --- BH-2010 (the #1989 re-review follow-ups) ---------------------------------
   # A12 every seeded row is AUDITED: the PUT carries actor routing-seed and a reason.

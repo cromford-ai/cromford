@@ -45,13 +45,13 @@ run_ob "$I1" alpha
 [ "$RC" = 0 ] && ok || bad "an already-routed project must exit 0 (got $RC)"
 [ ! -e "$I1/logs/flyctl-calls.log" ] \
   && ok || bad "an already-routed project must make ZERO flyctl calls (got: $(cat "$I1/logs/flyctl-calls.log"))"
-printf '%s\n' "$OUT" | grep -q '^FLY_ONBOARD alpha ALREADY:' \
+grep -q '^FLY_ONBOARD alpha ALREADY:' <<<"$OUT" \
   && ok || bad "the verdict must say ALREADY: $OUT"
-printf '%s\n' "$OUT" | grep -q "flags/fly-pool-alpha=present" \
+grep -q "flags/fly-pool-alpha=present" <<<"$OUT" \
   && ok || bad "ALREADY must still name both flag paths: $OUT"
-printf '%s\n' "$OUT" | grep -q "flags/builder-fly-alpha=present" \
+grep -q "flags/builder-fly-alpha=present" <<<"$OUT" \
   && ok || bad "ALREADY must still name both flag paths: $OUT"
-printf '%s\n' "$OUT" | grep -q 'free-slots="unlimited' \
+grep -q 'free-slots="unlimited' <<<"$OUT" \
   && ok || bad "ALREADY must still carry the free-slots answer: $OUT"
 grep -q 'WARNING' <<<"$(printf '%s\n' "$OUT")" \
   && bad "a fully-flagged project must not warn: $OUT" || ok
@@ -65,7 +65,7 @@ run_ob "$I2" alpha
 [ "$RC" = 0 ] && ok || bad "missing app flag must not change the verdict rc (got $RC)"
 [ ! -e "$I2/logs/flyctl-calls.log" ] \
   && ok || bad "missing app flag must not trigger a re-probe"
-printf '%s\n' "$OUT" | grep -q 'WARNING: flags/fly-pool-app-alpha missing' \
+grep -q 'WARNING: flags/fly-pool-app-alpha missing' <<<"$OUT" \
   && ok || bad "a missing app flag must be reported: $OUT"
 
 # ══ 3. HALF-ROUTED IS NOT ROUTED ════════════════════════════════════════════
@@ -100,7 +100,7 @@ run_ob "$I5" alpha
 N1=$(grep -c 'machine run' "$I5/logs/flyctl-calls.log")
 run_ob "$I5" alpha
 [ "$RC" = 0 ] && ok || bad "second run must exit 0 (got $RC)"
-printf '%s\n' "$OUT" | grep -q 'ALREADY' \
+grep -q 'ALREADY' <<<"$OUT" \
   && ok || bad "the second run must be the ALREADY path: $OUT"
 [ "$(grep -c 'machine run' "$I5/logs/flyctl-calls.log")" = "$N1" ] \
   && ok || bad "the second run must spend no further machine"

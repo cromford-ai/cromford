@@ -4,6 +4,7 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { DatabaseSync } from 'node:sqlite';
 import worker from '../src/index.js';
+import { jobsSchemaSql } from './lib/jobs-schema.js';
 
 // BH-1510.0 — the model-routes CONTRACT slice, driven against THE SQL THAT
 // SHIPS (worker/jobs/schema.sql), the same idiom
@@ -14,7 +15,7 @@ import worker from '../src/index.js';
 // validation, upsert and audit trail are real SQL, not a regex a stub answers
 // to. node:sqlite is imported at the top with no skip path: CI runs node 22.
 const SECRET = 'test-secret';
-const SCHEMA = readFileSync(fileURLToPath(new URL('../schema.sql', import.meta.url)), 'utf8');
+const SCHEMA = jobsSchemaSql();
 
 function sqliteDB(db) {
   const prepare = (sql) => {

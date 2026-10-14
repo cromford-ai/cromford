@@ -27,8 +27,14 @@
 #   the kill switch, a dead worker fails open, the rt_shards hook is wired.
 #
 # Run from anywhere: tests/triage-state-precheck-test.sh   (exit 0 = all pass)
+# BH-6578: triaged_at is one hour before the run, never a fixed date. A
+# client-turn verdict comes back after triaged_at + the nudge (14 days), so a
+# fixed date made this fixture go red on the day the nudge ran out.
+TRIAGED_AT=$(date -u -d "@$(( $(date -u +%s) - 3600 ))" '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null \
+  || date -u -r "$(( $(date -u +%s) - 3600 ))" '+%Y-%m-%dT%H:%M:%SZ')
 set -uo pipefail
 . "$(dirname "$0")/lib/scratch.sh" || exit 1
+. "$(dirname "$0")/lib/jobs-schema.sh" && jobs_schema_render || exit 1
 DIR=$(cd "$(dirname "$0")/.." && pwd)
 "$DIR/bin/llm-sites-build.sh" --compose --repo "$DIR" >/dev/null || { echo "FAIL: cannot compose catalog/llm-sites.json"; exit 1; }
 PASS=0; FAIL=0
@@ -271,8 +277,8 @@ iss 15 "Audit log" "Add an audit log" '["ai-build","hold"]'
 world
 tick_env shadow; ( ts_precheck ) >/dev/null 2>&1
 for k in 14 15; do
-  jq -n --arg k "$k" --arg h "$(hashof $k)" '{project:"project-5",ticket_key:$k,verdict:"buildable",verdict_hash:$h,input_hash:$h,
-    triaged_at:"2026-09-28T09:59:00Z",next_recheck_at:"2099-01-01T00:00:00Z",reason:"test"}' > "$T/r.json"
+  jq -n --arg ta "$TRIAGED_AT" --arg k "$k" --arg h "$(hashof $k)" '{project:"project-5",ticket_key:$k,verdict:"buildable",verdict_hash:$h,input_hash:$h,
+    triaged_at:$ta,next_recheck_at:"2099-01-01T00:00:00Z",reason:"test"}' > "$T/r.json"
   triage_state_put "$T/r.json" >/dev/null || bad "(d) could not seed the buildable row for $k"
 done
 tick_env enforce; : > "$T/calls/run-build"

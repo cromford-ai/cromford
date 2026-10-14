@@ -177,8 +177,8 @@ URL12=https://github.com/example-org/demo-os/pull/12
   # U1 — one grep hit and one CHECK-HIT, each with its rule and path.
   HA=$(ilc_hits "$T/a.diff"); rc=$?
   [ "$rc" = 0 ] && [ "$(printf '%s\n' "$HA" | grep -c .)" = 2 ] || no "U1 two hits rc 0 (rc $rc: $HA)"
-  printf '%s\n' "$HA" | grep -q $'^redflag:window.confirm(\tsrc/ui.js\t[0-9a-f]\{40\}$' || no "U1 redflag rule + path ($HA)"
-  printf '%s\n' "$HA" | grep -q $'^check:sql-command-injection\tsrc/ui.js\t[0-9a-f]\{40\}$' || no "U1 check rule + path ($HA)"
+  grep -q $'^redflag:window.confirm(\tsrc/ui.js\t[0-9a-f]\{40\}$' <<<"$HA" || no "U1 redflag rule + path ($HA)"
+  grep -q $'^check:sql-command-injection\tsrc/ui.js\t[0-9a-f]\{40\}$' <<<"$HA" || no "U1 check rule + path ($HA)"
   # U2 — moved + re-indented is the same fingerprint; one character is not.
   [ "$(ilc_hits "$T/b.diff")" = "$HA" ] || no "U2 a moved, re-indented line must fingerprint the same"
   [ "$(ilc_hits "$T/b3.diff" | grep redflag)" != "$(printf '%s\n' "$HA" | grep redflag)" ] || no "U2 a changed character must change the fingerprint"
@@ -198,7 +198,7 @@ URL12=https://github.com/example-org/demo-os/pull/12
   ilc_pr_key https://github.com/example-org/Cromford/issues/9 >/dev/null; [ $? = 1 ] || no "U5 a non-PR url must be rc 1"
   # U6 — a second copy of the accepted line is not covered.
   O=$(ilc_covered "$URL11" 3 "$T/dup.diff"); rc=$?
-  [ "$rc" = 1 ] && printf '%s' "$O" | grep -q 'redflag:window.confirm( src/ui.js (more copies than accepted)' || no "U6 duplicate must be rc 1 more-copies (rc $rc: $O)"
+  [ "$rc" = 1 ] && grep -q 'redflag:window.confirm( src/ui.js (more copies than accepted)' <<<"$O" || no "U6 duplicate must be rc 1 more-copies (rc $rc: $O)"
   # U7 — over the cap fails closed.
   ILC_MAX_HITS=1 ilc_hits "$T/a.diff" >/dev/null 2>&1; rc=$?
   [ "$rc" = 2 ] || no "U7 over ILC_MAX_HITS must be rc 2 (rc $rc)"
@@ -245,7 +245,7 @@ fresh; DIFF_B2 > "$C/prdiff-11"
 tick
 REF=$(clog | grep 'iron-law: carry refused')
 [ -n "$REF" ] && ok || bad "C2 a carry-refused line (log: $(clog | grep -i iron | tail -3))"
-printf '%s' "$REF" | grep -q 'redflag:window.alert( src/other.js (new or changed)' && ok || bad "C2 names H2 ($REF)"
+grep -q 'redflag:window.alert( src/other.js (new or changed)' <<<"$REF" && ok || bad "C2 names H2 ($REF)"
 grep -q 'src/ui.js' <<<"$REF" && bad "C2 must not name the covered H ($REF)" || ok
 crow 'example-org/demo-os#11' | grep -q 'iron-law' && ok || bad "C2 parked on iron-law ($(crow 'example-org/demo-os#11'))"
 grep -q 'carried acceptance' <<<"$(clog)" && bad "C2 must not carry" || ok
@@ -279,6 +279,7 @@ ledger_clear
 H="$T/h"; mkdir -p "$H/bin"
 cp "$DIR/bin/blocked-resolver.sh" "$DIR/bin/merge-sweep.sh" "$DIR/bin/fleet-conf.sh" \
    "$DIR/bin/project-of.sh" "$DIR/bin/box-for.sh" "$DIR/bin/jobs-client.sh" "$H/bin/" || exit 1
+mkdir -p "$H/bin/lib" && cp -rL "$DIR/bin/lib/ms" "$H/bin/lib/" || exit 1   # BH-5242: the sweep loads bin/lib/ms/
 fx_br_harness "$DIR" "$T" || exit 1
 mkdir -p "$H/bin/lib/jobs" && cp "$DIR"/bin/lib/jobs/*.sh "$H/bin/lib/jobs/" || exit 1
 cp "$DIR/bin/lib/ironlaw-carry.sh" "$H/bin/lib/" || exit 1

@@ -220,7 +220,7 @@ run_tick env GH_LIST_BRIDGE_FAIL_LAZY="$T/lazy-fail"
 rm -f "$T/lazy-fail"
 NEW11=$(tail -n +"$((M+1))" "$T/h/logs/merge-conductor.log" | grep -F 'demo-os#11 ')
 grep -q 'pulls?state=open' "$T/gh-calls.txt" && ok || bad "3f: the tick must have read the open list (this case would otherwise prove nothing)"
-[ "$(printf '%s\n' "$NEW11" | grep -c .)" = 1 ] && grep -q 'merge state UNVERIFIABLE this tick' <<<"$NEW11" \
+[ "$(grep -c . <<<"$NEW11")" = 1 ] && grep -q 'merge state UNVERIFIABLE this tick' <<<"$NEW11" \
   && ok || bad "3f: an UNVERIFIABLE row must produce exactly ONE log line, saying so (got: $NEW11)"
 [ "$(grep -F 'example-org/demo-os#11	' "$T/h/state/merge-conductor/pr-state.tsv")" = "$ROW11" ] \
   && ok || bad "3f: an UNVERIFIABLE row must be left exactly as it was (was '$ROW11')"

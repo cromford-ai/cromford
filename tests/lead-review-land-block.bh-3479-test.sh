@@ -206,7 +206,7 @@ reset; tick
 [ "$(rposts_ev 7 REQUEST_CHANGES)" = 1 ] && grep -q "^POST repos/$SLUG/pulls/7/reviews event=REQUEST_CHANGES commit_id=$SHA\$" "$T/log/gh" \
   && ok || bad "L1 the POST is not REQUEST_CHANGES bound to $SHA: $(grep reviews "$T/log/gh")"
 B=$(lastbody)
-[ "$(printf '%s\n' "$B" | head -1)" = '<!-- lead-review:lr-1 -->' ] && ok || bad "L1 line 1 is not the marker: $(printf '%s' "$B" | head -2)"
+[ "$(head -1 <<<"$B")" = '<!-- lead-review:lr-1 -->' ] && ok || bad "L1 line 1 is not the marker: $(head -2 <<<"$B")"
 grep -qF "Lead review (automated lead-review lane, stub-model) of ${SHA:0:12}" <<<"$B" && ok || bad "L1 no framing line: $B"
 grep -qF 'finding X' <<<"$B" && ok || bad "L1 the report body is not in the review: $B"
 grep -qF 'Report truncated here' <<<"$B" && bad "L1 an untruncated report got the truncated line" || ok
@@ -319,7 +319,7 @@ ROWS=$(jq -c '[ .[] | {l:(.user.login // ""), t:(.user.type // ""), a:(.author_a
 OUT=$(bash -c '. "$5" 2>/dev/null; . "$1"; br_lead_pick "$2" "$3" "$4"' _ "$T/pick.sh" "$SLUG" "$SHA" "$ROWS" "$DIR/bin/lib/gh-pr-list.sh"); PRC=$?
 [ "$PRC" = 0 ] && ok || bad "L7 br_lead_pick rc=$PRC on the posted review"
 DEC=$(printf '%s' "$OUT" | base64 -d 2>/dev/null)
-[ "$(printf '%s\n' "$DEC" | head -1)" = 'LEAD FINDINGS — every item must be addressed in code' ] && ok || bad "L7 not framed as a lead brief: $(printf '%s' "$DEC" | head -2)"
+[ "$(head -1 <<<"$DEC")" = 'LEAD FINDINGS — every item must be addressed in code' ] && ok || bad "L7 not framed as a lead brief: $(head -2 <<<"$DEC")"
 grep -qF 'finding X' <<<"$DEC" && ok || bad "L7 the brief lacks the finding"
 
 # ── L8: pct=100 -> one beat per MERGE / MERGE-WITH-NOTES, none for BLOCK ──

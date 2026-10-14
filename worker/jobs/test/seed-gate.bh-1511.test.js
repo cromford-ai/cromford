@@ -4,6 +4,7 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import worker from '../src/index.js';
 import { REGISTRY_SEED_ACTOR, registrySeedRows, seedRegistryPlan, LANES_REGISTRY } from '../src/lib/core.js';
+import { jobsSchemaSql } from './lib/jobs-schema.js';
 
 // Review round 2 of #1565 (BH-1511.1b): what `harness-ctl seed-registry`
 // needs from the worker to gate itself honestly.
@@ -27,7 +28,7 @@ import { REGISTRY_SEED_ACTOR, registrySeedRows, seedRegistryPlan, LANES_REGISTRY
 // with whatever the fixture hands back.
 
 const SECRET = 'test-secret';
-const SCHEMA = readFileSync(fileURLToPath(new URL('../schema.sql', import.meta.url)), 'utf8');
+const SCHEMA = jobsSchemaSql();
 let DatabaseSync = null;
 try { ({ DatabaseSync } = await import('node:sqlite')); } catch { DatabaseSync = null; }
 

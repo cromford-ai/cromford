@@ -347,7 +347,7 @@ gshim_pr_list_search() {
   # prompt hands a build lane (`gh pr list --state all --search "<KEY>"`,
   # prompts/cromford.md:51 and eight more), read as prose, so the branch
   # has to be there. Same per-hit cost as the --json path, same --limit cap.
-  if printf '%s,' "$GSHIM_FIELDS" | grep -qE '(headRefName|headRefOid|baseRefName),' ||
+  if grep -qE '(headRefName|headRefOid|baseRefName),' <<<"$GSHIM_FIELDS," ||
      { [ -z "$GSHIM_FIELDS" ] && [ -z "$GSHIM_JQ" ]; }; then
     nums=$(jq -r ".[:$GSHIM_LIMIT][].number" "$hits") || exit 1
     for n in $nums; do

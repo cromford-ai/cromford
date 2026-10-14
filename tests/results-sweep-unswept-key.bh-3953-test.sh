@@ -122,8 +122,8 @@ LIST=$( HARNESS="$H" PROJECT="$P"; . "$H/bin/lib/rt/scope.sh"
 if [ "$LIST" = NO-FUNCTION ]; then bad "A2 bin/lib/rt/scope.sh defines no rt_unswept_dirs"
 else
   [ "$(printf '%s\n' "$LIST" | grep -c .)" = 30 ] && ok || bad "A2 expected 30 lines, got $(printf '%s\n' "$LIST" | grep -c .)"
-  [ "$(printf '%s\n' "$LIST" | head -1)" = "$H/builds/pool-$P-BH-3900-202610030000 :: RELAYED newest" ] && ok \
-    || bad "A2 the newest (pool- relay) dir must come first, exact shape '<dir> :: <first RESULT line>': $(printf '%s\n' "$LIST" | head -1)"
+  [ "$(head -1 <<<"$LIST")" = "$H/builds/pool-$P-BH-3900-202610030000 :: RELAYED newest" ] && ok \
+    || bad "A2 the newest (pool- relay) dir must come first, exact shape '<dir> :: <first RESULT line>': $(head -1 <<<"$LIST")"
   [ "$(printf '%s\n' "$LIST" | sed -n 2p)" = "$H/builds/$P-BH-3134-202610030000 :: R34 line one" ] && ok \
     || bad "A2 second line must be the next newest: $(printf '%s\n' "$LIST" | sed -n 2p)"
   for i in 1 2 3 4 5; do

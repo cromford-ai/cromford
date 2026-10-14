@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import worker from '../src/index.js';
+import { jobsSchemaSql } from './lib/jobs-schema.js';
 
 // BH-3557: a lane with no `stats.cost_stage` and no `stats.cost_project_filter`
 // declares no model spend of its own, so GET /api/lanes/status reports its
@@ -15,7 +16,7 @@ import worker from '../src/index.js';
 // copied from lanes-stage-array.bh-2304.test.js on purpose (no shared helper).
 
 const SECRET = 'test-secret';
-const SCHEMA = readFileSync(fileURLToPath(new URL('../schema.sql', import.meta.url)), 'utf8');
+const SCHEMA = jobsSchemaSql();
 
 let DatabaseSync = null;
 try { ({ DatabaseSync } = await import('node:sqlite')); } catch { DatabaseSync = null; }

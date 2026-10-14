@@ -23,8 +23,14 @@
 #
 # A MEMBER REACHES an S unit when `test-impact.sh select --why` on its files
 # names that suite, always-suites included (a failing always-suite is reached
-# by every member, so it is `several`). A `full` row (an infra path, a file
-# main's map cannot place, a file the PR adds) reaches everything: `*`. It
+# by every member, so it is `several`). The select runs as a BATCH select
+# (TI_BATCH_SELECT=1, BH-6688), the same rules the batch's own selection
+# used: a catalog/ or tests/lib/ path reaches the suites the map ties to it,
+# not the corpus. Without it, 17 of 20 replayed members reached `*` and the
+# decision was never `eject`. A `full` row (a runner or workflow path, a file
+# main's map cannot place, a file the PR adds) reaches everything: `*`, and
+# the row's reason goes to `<files>.full`, logged as BATCH_IMPACT_FULL. Each
+# draft logs BATCH_IMPACT_REACH, the members that reached `*`. It
 # reaches a P unit when one of its files is under the prefix, or its reach is
 # `*`. A member whose head, dequeue comment or file list cannot be read, or
 # whose newest dequeue comment is not this draft's at its current head, is `?`,
@@ -91,16 +97,21 @@ bim_mode() {
 }
 
 # bim_reach <files-list> <map> — the suites those files reach, one per line,
-#   or the single line `*` for any `full` row. rc 1 when the list is empty or
-#   unreadable, there is no root, or test-impact fails or answers nothing.
+#   or the single line `*` for any `full` row, whose reason (`full: unmapped
+#   path (<p>)`) is written to <files-list>.full. rc 1 when the list is empty
+#   or unreadable, there is no root, or test-impact fails or answers nothing.
 bim_reach() {
   local files="${1:-}" map="${2:-}" root rows rc=0
   [ -n "$files" ] && [ -r "$files" ] && grep -q . "$files" 2>/dev/null || return 1
   [ -n "$map" ] && [ -s "$map" ] || return 1
   root=$(_bim_root) || return 1
-  rows=$(bash "$root/bin/test-impact.sh" select --why --changed "$files" --map "$map" --root "$root" 2>/dev/null) || rc=$?
+  rm -f "$files.full"
+  rows=$(TI_BATCH_SELECT=1 bash "$root/bin/test-impact.sh" select --why --changed "$files" --map "$map" --root "$root" 2>/dev/null) || rc=$?
   [ "$rc" = 0 ] && [ -n "$rows" ] || return 1
-  if awk -F'\t' '$2 == "full" { f = 1 } END { exit !f }' <<<"$rows"; then echo '*'; return 0; fi
+  if awk -F'\t' '$2 == "full" { f = 1 } END { exit !f }' <<<"$rows"; then
+    awk -F'\t' '$2 == "full" { print $3; exit }' <<<"$rows" > "$files.full" 2>/dev/null || :
+    echo '*'; return 0
+  fi
   awk -F'\t' '$1 != "" { print $1 }' <<<"$rows" | LC_ALL=C sort -u
 }
 
@@ -191,7 +202,7 @@ bim_decide() {
 # _bim_compute <slug> <draft> <checks-enc> — sets BIM_DECISION / BIM_MEMBERS.
 #   rc 0 every read succeeded (cacheable), rc 1 not.
 _bim_compute() {
-  local slug="$1" d="$2" checks="$3" root work map raw st m stacked n max i h pl complete=1 c
+  local slug="$1" d="$2" checks="$3" root work map raw st m stacked n max i h pl complete=1 c nr=0 nf=0
   BIM_DECISION="bisect unknown - -"; BIM_MEMBERS=""
   [ -n "$slug" ] && [ "$slug" = "${HARNESS_REPO:-}" ] || return 1
   root=$(_bim_root) || return 1
@@ -223,7 +234,13 @@ _bim_compute() {
       rm -f "$work/r/$i.files" "$work/r/$i.reach.tmp"; complete=0; continue
     fi
     mv -f "$work/r/$i.reach.tmp" "$work/r/$i.reach"
+    nr=$((nr + 1))
+    if [ "$(cat "$work/r/$i.reach")" = '*' ]; then
+      nf=$((nf + 1))
+      _bim_log "BATCH_IMPACT_FULL draft=$d pr=$i $(head -1 "$work/r/$i.files.full" 2>/dev/null)"
+    fi
   done
+  _bim_log "BATCH_IMPACT_REACH draft=$d full=$nf of $nr members"
   c=$(bim_candidates "$work/units" "$work/r" "$m")
   BIM_DECISION=$(bim_decide "$c" "$work/units"); BIM_MEMBERS="$m"
   rm -rf "$work"

@@ -135,6 +135,11 @@ _jobs_not_configured() {
 # JOBS_STATUS_FILE (BH-5463): a caller that reads through a `$( )` loses
 # JOBS_HTTP. When it sets this path, the request overwrites the file with one
 # word: http=<code>, curl_rc=<n>, no-secret or no-url. Unset = no write.
+#
+# JOBS_BODY_FILE (BH-6433): the same opt-in for the payload. When set, the
+# request empties the file first and, on an answer, writes the first 200 bytes
+# of the payload to it (the cut _jobs_log uses). JOBS_STATUS_FILE stays one
+# word: bin/model-prices-sync.sh reads it with head -c 64.
 JOBS_HTTP=""
 JOBS_BODY=""
 # _jobs_curl <method> <path> <body> <body-arg> — one HTTP attempt; prints the
@@ -152,9 +157,14 @@ _jobs_curl() {
 _jobs_req() { # _jobs_req <method> <path> [json-body]
   local method="$1" path="$2" body="${3:-}" out rc
   JOBS_HTTP=""; JOBS_BODY=""
+  { [ -z "${JOBS_BODY_FILE:-}" ] || : > "$JOBS_BODY_FILE"; } 2>/dev/null
   [ -n "${HARNESS_SECRET:-}" ] || { { [ -z "${JOBS_STATUS_FILE:-}" ] || echo no-secret > "$JOBS_STATUS_FILE"; } 2>/dev/null; _jobs_log "HARNESS_SECRET unset"; return 1; }
   [ -n "${JOBS_URL:-}" ] || { { [ -z "${JOBS_STATUS_FILE:-}" ] || echo no-url > "$JOBS_STATUS_FILE"; } 2>/dev/null; _jobs_not_configured; return 1; }
   local attempt=0 ovl=0 bodyf="" bodyarg="$body"
+  # BH-6462: one call-trace line per request (retries included), inside a
+  # bounded conductor worker only (bin/lib/call-trace.sh). Method and path.
+  local ctr=0 ct0=""
+  if [ -n "${HARNESS_CALL_TRACE_FILE:-}" ] && command -v call_trace_put >/dev/null 2>&1; then ctr=1; call_trace_t0 ct0; fi
   # A LARGE body rides in a file. Linux caps one argv string at 128KB
   # (MAX_ARG_STRLEN), and a batch endpoint's payload — a full pr-costs sweep is
   # hundreds of rows — can pass it; bash reports that E2BIG as rc=126, which the
@@ -175,17 +185,19 @@ _jobs_req() { # _jobs_req <method> <path> [json-body]
     done
     # The overload retry: 503 AND "overloaded" in the payload, nothing broader.
     [ "$rc" -eq 0 ] && [ "${out##*$'\n'}" = 503 ] && [ "$ovl" -lt "${JOBS_OVERLOAD_RETRIES:-1}" ] \
-      && printf '%s' "${out%$'\n'*}" | grep -qi overloaded || break
+      && grep -qi overloaded <<<"${out%$'\n'*}" || break
     ovl=$((ovl+1))
     sleep $(( ${JOBS_OVERLOAD_SLEEP:-2} + RANDOM % (${JOBS_OVERLOAD_JITTER_S:-2} + 1) ))
   done
   local retried=""; [ "$ovl" -gt 0 ] && retried=" after overload retry"
   [ -n "$bodyf" ] && rm -f "$bodyf"
-  if [ "$rc" -ne 0 ]; then { [ -z "${JOBS_STATUS_FILE:-}" ] || echo "curl_rc=$rc" > "$JOBS_STATUS_FILE"; } 2>/dev/null; _jobs_log "$method $path transport rc=$rc after $((attempt+1)) attempt(s)$retried"; return 1; fi
+  if [ "$rc" -ne 0 ]; then [ "$ctr" = 1 ] && call_trace_put jobs "$method $path" "curl_rc=$rc" "$ct0"; { [ -z "${JOBS_STATUS_FILE:-}" ] || echo "curl_rc=$rc" > "$JOBS_STATUS_FILE"; } 2>/dev/null; _jobs_log "$method $path transport rc=$rc after $((attempt+1)) attempt(s)$retried"; return 1; fi
   JOBS_HTTP="${out##*$'\n'}"
   { [ -z "${JOBS_STATUS_FILE:-}" ] || echo "http=$JOBS_HTTP" > "$JOBS_STATUS_FILE"; } 2>/dev/null
   local payload="${out%$'\n'*}"
   JOBS_BODY="$payload"
+  { [ -z "${JOBS_BODY_FILE:-}" ] || head -c 200 < <(printf '%s' "$payload") > "$JOBS_BODY_FILE"; } 2>/dev/null
+  [ "$ctr" = 1 ] && call_trace_put jobs "$method $path" "$JOBS_HTTP" "$ct0"
   case "$JOBS_HTTP" in
     2*) printf '%s' "$payload"; return 0 ;;
     409) printf '%s' "$payload"; return 9 ;;

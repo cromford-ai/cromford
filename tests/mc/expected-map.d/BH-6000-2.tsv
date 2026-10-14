@@ -1,0 +1,4 @@
+# tests/mc/expected-map.d/BH-6000-2.tsv — BH-6000 part 3: a READY row past its
+# TTL with no recorded hold gets one keyed re-kick per head; origin=lib, a new
+# module function. (Part 1's rows are in BH-6000.tsv, its own PR.)
+classify	mc_ready_rekick	lib

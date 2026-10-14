@@ -1,1 +1,1 @@
-board rb_c4e8: CHANGED 7315 "Add the vendor's payment terms to the bill detail page" (waitingOn: requester -> team; comments: 2 -> 3; activity)
+board rb_c4e8: CHANGED 7315 "Add the supplier's delivery window to the order detail page" (waitingOn: requester -> team; comments: 2 -> 3; activity)

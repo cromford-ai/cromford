@@ -76,7 +76,7 @@ f="$T/ans/\$name"
 [ -n "\$name" ] && [ -r "\$f" ] || { printf 'HTTP/1.1 404 Not Found\r\n\r\n{"message":"Not Found"}'; exit 0; }
 st=\$(head -1 "\$f")
 etag=""; [ -r "\$f.etag" ] && etag=\$(cat "\$f.etag")
-if [ -n "\$etag" ] && printf '%s' "\$A" | grep -qF "If-None-Match: \$etag"; then
+if [ -n "\$etag" ] && grep -qF "If-None-Match: \$etag" <<<"\$A"; then
   printf 'HTTP/1.1 304 Not Modified\r\nETag: %s\r\n\r\n' "\$etag"; exit 0
 fi
 printf 'HTTP/1.1 %s Stub\r\n' "\$st"

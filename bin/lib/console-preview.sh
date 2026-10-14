@@ -29,13 +29,15 @@ declare -F gh_rest >/dev/null || . "$_CPV_LIB/gh-rest.sh" || return 1
 
 # cpv_alias <branch> — the alias Pages gives a --branch deploy: lower case,
 # every char outside [a-z0-9-] becomes "-", cut to 28 chars, no trailing "-".
-# `main` (the production branch) and an all-dash name are refused.
+# `main` (the production branch), `postmerge-qa` (the alias
+# bin/console-postmerge-qa.sh deploys the shipped build to) and an all-dash
+# name are refused.
 cpv_alias() {
   local a
   a=$(printf '%s' "${1:-}" | tr '[:upper:]' '[:lower:]' | tr -c 'a-z0-9-' '-')
   a=${a:0:28}
   while [ "${a%-}" != "$a" ]; do a=${a%-}; done
-  case "$a" in ''|main) return 1 ;; esac
+  case "$a" in ''|main|postmerge-qa) return 1 ;; esac
   # <8 hex>.<project>.pages.dev is a production deployment's own URL, so an
   # alias of that shape gets a prefix (console-ui/functions/qa-login refuses it).
   [[ "$a" =~ ^[0-9a-f]{8}$ ]] && a="br-$a"
@@ -95,37 +97,108 @@ cpv_marker_seen() {
     'any(.[]?; (.body // "") | gsub("\r"; "") | split("\n") | any(.[]; . == $m))' "$1" >/dev/null 2>&1
 }
 
+# _cpv_uid_pids <uid> — the sorted pids whose real or effective uid is <uid>,
+# one per line (nothing when there are none). rc 2 when pgrep is missing.
+_cpv_uid_pids() {
+  command -v pgrep >/dev/null 2>&1 || return 2
+  # pgrep is rc 1 when nothing matches; under pipefail that must not leak out.
+  { pgrep -u "$1"; pgrep -U "$1"; true; } 2>/dev/null | sort -un
+}
+
+# _cpv_uid_busy <who> <uid> <when> — rc 0 when <uid> has no live process. Else
+# rc 125 and one stderr line with the count and the first 5 pids. <when> is
+# "before" or "after" the build.
+_cpv_uid_busy() {
+  local pids k
+  pids=$(_cpv_uid_pids "$2") || { echo "cpv_run_unpriv: pgrep is not installed, so the build user cannot be checked" >&2; return 125; }
+  [ -n "$pids" ] || return 0
+  k=$(wc -l <<<"$pids" | tr -d ' ')
+  pids=$(head -n 5 <<<"$pids" | tr '\n' ' '); pids=${pids% }
+  if [ "$3" = before ]; then
+    echo "cpv_run_unpriv: build user '$1' (uid $2) has $k live process(es) (pid $pids) — no build starts while one is alive" >&2
+  else
+    echo "cpv_run_unpriv: build user '$1' (uid $2) still has $k process(es) after the build (pid $pids) — the build output is not used" >&2
+  fi
+  return 125
+}
+
 # cpv_run_unpriv <root> <workdir> <timeout> <cmd...> — run <cmd> in <workdir>
 # (under <root>) as an unprivileged user, with a clean environment. The PR head
 # is code nobody has reviewed yet: its package.json and vite.config.js must not
 # run as root beside /etc/harness/env (BH-5909 review). The user is
 # CONSOLE_PREVIEW_BUILD_USER (default nobody); <root> is handed to it, and the
 # env carries PATH and a HOME, npm cache and TMPDIR under <root>, nothing else.
-# rc 125, with the reason on stderr, when the drop cannot be made: not root,
-# no setpriv, no such user, a uid of 0, or a <root> the user cannot write.
+# NOTHING THE COMMAND STARTS OUTLIVES IT. <cmd> runs in its own PID namespace
+# (unshare --pid --fork --kill-child --mount-proc) under `timeout`, which is
+# the namespace's PID 1. When PID 1 exits, the command ended or timed out, the
+# kernel kills every process left in the namespace: setsid, nohup and a
+# double fork cannot leave it. An outer `timeout` (<timeout> + 30 s) is the
+# backstop. For a real build user, `setpriv` changes the child's credentials,
+# so the kernel clears the PR_SET_PDEATHSIG that --kill-child set. A kill of
+# unshare (the outer timeout, or lane-reaper.sh) then leaves the namespace
+# alive until the inner `timeout -k 5 <timeout>` ends it: at most <timeout> +
+# 5 s. The namespace still holds every process, and the next run's preflight
+# refuses while one is alive. In self mode with no setpriv, --kill-child does
+# take PID 1 and the namespace.
+# The build user must have no live process before the run (one could write
+# the build tree) and none after it (root then reads dist/ from that tree).
+# rc 125, with the reason on stderr, when the build cannot be run isolated:
+# not root, no setpriv, no such user, a uid of 0, a <root> the user cannot
+# write, a box that cannot make a PID namespace, no pgrep, or a live process
+# of the build user before or after the run. Otherwise the command's rc (124
+# on a timeout), with a command rc of 125 returned as 1.
 # The ONE other mode is CONSOLE_PREVIEW_BUILD_USER=self, honoured only under
 # HARNESS_TEST_SANDBOX=1: the suites run as themselves with the same clean env.
+# It tries the PID namespace as root, then inside a user namespace, and runs
+# without one (one stderr line) when neither works. It checks live processes
+# of the uid CPV_TEST_UID, and of no uid when that is unset (the runner's own
+# uid always has live processes).
 cpv_run_unpriv() {
-  local root="${1:-}" wd="${2:-}" to="${3:-}" who="${CONSOLE_PREVIEW_BUILD_USER:-nobody}" uid gid
+  local root="${1:-}" wd="${2:-}" to="${3:-}" who="${CONSOLE_PREVIEW_BUILD_USER:-nobody}" uid gid chk="" ns=()
   shift 3 || return 125
   [ -d "$root" ] && [ -d "$wd" ] && [ "$#" -gt 0 ] || { echo "cpv_run_unpriv: bad arguments" >&2; return 125; }
+  case "$to" in ''|*[!0-9]*) echo "cpv_run_unpriv: bad arguments" >&2; return 125 ;; esac
   mkdir -p "$root/.cpv-home" "$root/.cpv-tmp" "$root/.cpv-npm" || return 125
   local cenv=(env -i PATH="$PATH" HOME="$root/.cpv-home" TMPDIR="$root/.cpv-tmp"
               npm_config_cache="$root/.cpv-npm" LANG=C.UTF-8 CI=1)
+  local pidns=(unshare --pid --fork --kill-child --mount-proc --)
   if [ "$who" = self ]; then
     [ "${HARNESS_TEST_SANDBOX:-}" = 1 ] \
       || { echo "cpv_run_unpriv: CONSOLE_PREVIEW_BUILD_USER=self is for the test sandbox only" >&2; return 125; }
-    ( cd "$wd" && timeout "$to" "${cenv[@]}" "$@" </dev/null ); return $?
+    chk=${CPV_TEST_UID:-}
+    case "$chk" in *[!0-9]*) echo "cpv_run_unpriv: CPV_TEST_UID '$chk' is not a uid" >&2; return 125 ;; esac
+    if "${pidns[@]}" true >/dev/null 2>&1; then ns=("${pidns[@]}")
+    elif unshare --user --map-root-user --pid --fork --kill-child --mount-proc -- true >/dev/null 2>&1; then
+      ns=(unshare --user --map-root-user --pid --fork --kill-child --mount-proc --)
+    else
+      echo "cpv_run_unpriv: self mode without a PID namespace (test sandbox)" >&2
+    fi
+    if [ -n "$chk" ]; then _cpv_uid_busy "$who" "$chk" before || return; fi
+    ( cd "$wd" && timeout -k 10 "$((to + 30))" "${ns[@]}" "${cenv[@]}" timeout -k 5 "$to" "$@" </dev/null )
+  else
+    [ "$(id -u)" = 0 ] || { echo "cpv_run_unpriv: not root, so the build cannot drop to '$who'" >&2; return 125; }
+    command -v setpriv >/dev/null 2>&1 || { echo "cpv_run_unpriv: setpriv is not installed" >&2; return 125; }
+    uid=$(id -u "$who" 2>/dev/null) && gid=$(id -g "$who" 2>/dev/null) \
+      || { echo "cpv_run_unpriv: there is no user '$who'" >&2; return 125; }
+    [ "$uid" != 0 ] || { echo "cpv_run_unpriv: user '$who' is uid 0" >&2; return 125; }
+    chk=$uid
+    command -v unshare >/dev/null 2>&1 && "${pidns[@]}" true >/dev/null 2>&1 \
+      || { echo "cpv_run_unpriv: this box cannot start a PID namespace (unshare --pid refused), so the build cannot be isolated" >&2; return 125; }
+    ns=("${pidns[@]}")
+    _cpv_uid_busy "$who" "$chk" before || return
+    chown -R "$uid:$gid" "$root" || { echo "cpv_run_unpriv: could not hand $root to '$who'" >&2; return 125; }
+    setpriv --reuid="$uid" --regid="$gid" --clear-groups test -w "$wd" 2>/dev/null \
+      || { echo "cpv_run_unpriv: '$who' cannot write $wd" >&2; return 125; }
+    ( cd "$wd" && timeout -k 10 "$((to + 30))" "${ns[@]}" setpriv --reuid="$uid" --regid="$gid" --clear-groups \
+        "${cenv[@]}" timeout -k 5 "$to" "$@" </dev/null )
   fi
-  [ "$(id -u)" = 0 ] || { echo "cpv_run_unpriv: not root, so the build cannot drop to '$who'" >&2; return 125; }
-  command -v setpriv >/dev/null 2>&1 || { echo "cpv_run_unpriv: setpriv is not installed" >&2; return 125; }
-  uid=$(id -u "$who" 2>/dev/null) && gid=$(id -g "$who" 2>/dev/null) \
-    || { echo "cpv_run_unpriv: there is no user '$who'" >&2; return 125; }
-  [ "$uid" != 0 ] || { echo "cpv_run_unpriv: user '$who' is uid 0" >&2; return 125; }
-  chown -R "$uid:$gid" "$root" || { echo "cpv_run_unpriv: could not hand $root to '$who'" >&2; return 125; }
-  setpriv --reuid="$uid" --regid="$gid" --clear-groups test -w "$wd" 2>/dev/null \
-    || { echo "cpv_run_unpriv: '$who' cannot write $wd" >&2; return 125; }
-  ( cd "$wd" && timeout "$to" setpriv --reuid="$uid" --regid="$gid" --clear-groups "${cenv[@]}" "$@" </dev/null )
+  local rc=$?
+  # 125 is this function's box-fault code. The PR head picks the command's rc
+  # ("build": "exit 125"), so a 125 from the command is a head failure, never
+  # a box fault: it must not stop the lane or skip the attempt charge.
+  [ "$rc" != 125 ] || rc=1
+  if [ -n "$chk" ]; then _cpv_uid_busy "$who" "$chk" after || return; fi
+  return "$rc"
 }
 
 # cpv_copy_dist <from-dist> <to-dist> — copy a build output that an
@@ -148,5 +221,26 @@ cpv_copy_dist() {
   [ -z "$stripped" ] || echo "cpv_copy_dist: stripped from the PR build output:$stripped" >&2
   odd=$(find "$to" ! -type f ! -type d -print -quit 2>/dev/null)
   [ -z "$odd" ] || { echo "cpv_copy_dist: dist holds a non-regular file (${odd#"$to"/})" >&2; rm -rf -- "$to"; return 1; }
+  return 0
+}
+
+# cpv_coord_writes <git-dir> <sha> <tree> — render the coord proxy's fragment
+# write table (BH-6487) into a deploy tree that holds only <sha>'s
+# console-ui/functions and console-ui/src. The proxy imports `#coord-writes`,
+# which needs console-ui/package.json and the rendered
+# functions/_lib/coord-writes.gen.js in the tree, or the Functions bundle
+# fails. A <sha> with no console-ui/scripts/coord-writes-build.mjs predates the
+# split: rc 0, the tree is not touched. Else rc 0 with the gen file in place,
+# or rc 1 and one stderr line that says why.
+cpv_coord_writes() {
+  local co="$1" sha="$2" tree="$3" ps rc err
+  git -C "$co" cat-file -e "$sha:console-ui/scripts/coord-writes-build.mjs" 2>/dev/null || return 0
+  git -C "$co" archive "$sha" console-ui/package.json console-ui/scripts 2>/dev/null | tar -x -C "$tree" 2>/dev/null
+  ps=("${PIPESTATUS[@]}")
+  [ "${ps[0]}" = 0 ] && [ "${ps[1]}" = 0 ] \
+    || { echo "package.json and scripts/ did not copy (git archive rc=${ps[0]}, tar rc=${ps[1]})" >&2; return 1; }
+  err=$(cd "$tree/console-ui" && timeout 60 node scripts/coord-writes-build.mjs 2>&1 >/dev/null); rc=$?
+  [ "$rc" = 0 ] || { echo "render rc=$rc: $(printf '%s\n' "$err" | tail -n 1 | cut -c1-200)" >&2; return 1; }
+  [ -f "$tree/console-ui/functions/_lib/coord-writes.gen.js" ] || { echo "the render wrote no coord-writes.gen.js" >&2; return 1; }
   return 0
 }

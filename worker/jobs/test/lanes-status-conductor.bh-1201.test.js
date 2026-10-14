@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import worker from '../src/index.js';
+import { jobsSchemaSql } from './lib/jobs-schema.js';
 
 // BH-1201 (BH-1383): GET /api/lanes/status carries the merge-conductor's
 // published mode and held-page count, and carries them on that lane ONLY.
@@ -22,7 +23,7 @@ import worker from '../src/index.js';
 // is `WHERE key LIKE 'lane.%'` and could never see either of these keys.
 
 const SECRET = 'test-secret';
-const SCHEMA = readFileSync(fileURLToPath(new URL('../schema.sql', import.meta.url)), 'utf8');
+const SCHEMA = jobsSchemaSql();
 
 let DatabaseSync = null;
 try { ({ DatabaseSync } = await import('node:sqlite')); } catch { DatabaseSync = null; }

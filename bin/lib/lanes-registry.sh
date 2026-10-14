@@ -79,12 +79,17 @@ _lr_root() {
 # leaves every remaining byte untouched, so a contents-only digest would not
 # move and the removed lane would keep its kill switch forever. The RENDERER is
 # hashed for the mirror-image reason: a change to bin/lanes-build.sh changes the
-# output with every source byte untouched.
+# output with every source byte untouched. The knob fragments
+# (`<owner>.knobs.d/<ENV>.json`) are hashed last, names and contents, because a
+# second file in an existing knob dir changes neither the top listing nor
+# `*.json`; with no fragments the key is what it was before they existed.
 _lr_hash() {
   local src="$1" renderer="${2:-}"
   { LC_ALL=C ls -1 -- "$src" 2>/dev/null
     LC_ALL=C cat -- "$src"/*.json 2>/dev/null
     [ -n "$renderer" ] && [ -r "$renderer" ] && LC_ALL=C cat -- "$renderer" 2>/dev/null
+    LC_ALL=C ls -1 -- "$src"/*.knobs.d 2>/dev/null
+    LC_ALL=C cat -- "$src"/*.knobs.d/* 2>/dev/null
   } | cksum 2>/dev/null
 }
 

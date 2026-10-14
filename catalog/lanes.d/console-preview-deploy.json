@@ -49,7 +49,7 @@
       "type": "string",
       "default": "nobody",
       "zero_means": null,
-      "note": "BH-5909 review: the user the PR head's npm ci --ignore-scripts and vite build run as (bin/lib/console-preview.sh cpv_run_unpriv), with a clean env and no read of the env dir. A root lane that cannot drop to it (no setpriv, no such user, uid 0) deploys nothing and logs why. NOT settable from the control plane: the value decides what unreviewed code can read, so only env/global.env on the box moves it.",
+      "note": "BH-5909 review: the user the PR head's npm ci --ignore-scripts and vite build run as (bin/lib/console-preview.sh cpv_run_unpriv), with a clean env and no read of the env dir. A root lane that cannot drop to it (no setpriv, no such user, uid 0) deploys nothing and logs why. NOT settable from the control plane: the value decides what unreviewed code can read, so only env/global.env on the box moves it. BH-6073: each build command runs in its own PID namespace, and no build starts or is used while a process of this user is alive (one console-preview-box alert names the pids). Other lanes also run as nobody, so before you set CONSOLE_PREVIEW_DEPLOY=1, set this to a dedicated user that runs nothing else.",
       "settable": false
     },
     {

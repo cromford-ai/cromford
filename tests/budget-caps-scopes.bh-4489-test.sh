@@ -26,6 +26,9 @@
 # Run from anywhere: tests/budget-caps-scopes.bh-4489-test.sh   (exit 0 = all pass)
 set -uo pipefail
 . "$(dirname "$0")/lib/scratch.sh" || exit 1
+# TEST-CHANGE BH-6052: the day stamp below is read by the code and again here; never straddle 00:00Z.
+. "$(dirname "$0")/lib/day-boundary.sh" || exit 1
+clear_boundary 86400 118 || exit 1
 DIR=$(cd "$(dirname "$0")/.." && pwd)
 LIB="$DIR/bin/lib/budget-stop.sh"
 PASS=0; FAIL=0

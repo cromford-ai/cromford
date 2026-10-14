@@ -35,12 +35,14 @@
 #   WAVE 2: AB-2 AB-4
 #   STACK: AB-3 base=ticket/ab-7 (overlaps open PR #11 on code/c.ts)
 #   HELD: AB-5 overlaps in-flight AB-9 on code/e.ts
+#   HELD: TK-1.2 waits for sibling TK-1.1 on code/f.ts (SIBLING_SERIAL)
 #   UNPLANNED: AB-8
 #   HOT-FILES:
 #   code/shared.ts :: AB-1 AB-2 AB-6
 # HELD names a ticket whose plan collides with a build running RIGHT NOW (a
 # claim in state/claims/, a live build dir, or a `claimed` row in the jobs
-# ledger). STACK names a WAVE 1 key whose plan overlaps exactly one OPEN harness
+# ledger). A SIBLING_SERIAL HELD names a part of a split ticket that waits for
+# a sibling part, by bin/sibling-serial.sh's rule (BH-6374). STACK names a WAVE 1 key whose plan overlaps exactly one OPEN harness
 # PR and nothing in flight (BH-1174): it launches on that PR's branch with
 # STACK_BASE=<base> instead of on the default branch, where bin/overlap-guard.sh
 # would defer it until the PR merged. UNPLANNED names a ready ticket with no pre-plan file list yet: it
@@ -405,16 +407,20 @@ fi
 #    stale or unparseable is NO ROWS, so the output is today's: a STACK line is
 #    never built from missing data. Rows: number<TAB>branch<TAB>path, drafts
 #    dropped as the guard drops them, and a branch that could not be pasted
-#    into a launch line safely never reaches the python pass.
+#    into a launch line safely never reaches the python pass. The rows are read
+#    with the switch off too, for the sibling rule below; the python pass then
+#    builds no STACK line from them.
 PRS=$(mktemp) || exit 0
-trap 'rm -f "$ROWS" "$CAND" "$INFLIGHT" "$UNJUDGED" "$CLAIMED" "$SEEN" "$PRS"; rm -rf "$FCD"' EXIT
+SIB=$(mktemp) || exit 0
+SIBP=$(mktemp) || exit 0
+trap 'rm -f "$ROWS" "$CAND" "$INFLIGHT" "$UNJUDGED" "$CLAIMED" "$SEEN" "$PRS" "$SIB" "$SIBP"; rm -rf "$FCD"' EXIT
 PRC="$HARNESS/state/overlap-guard/$PROJECT-prs.json"
 STACK_ON=1
 case "$(_preplan_env "$HARNESS" STACKED_BUILDS 1)" in 0) STACK_ON=0 ;; esac
 # lane_switch is always in scope here: bin/lib/preplan-lib.sh (required above)
 # sources bin/lib/lane-switch.sh or defines the flags/<name> fallback itself.
 HARNESS="$HARNESS" lane_switch stacked-builds-off file && STACK_ON=0
-if [ "$STACK_ON" = 1 ] && [ -s "$PRC" ] && command -v jq >/dev/null 2>&1; then
+if [ -s "$PRC" ] && command -v jq >/dev/null 2>&1; then
   PAGE=$(python3 -c 'import os,sys,time; print(int(time.time()-os.path.getmtime(sys.argv[1])))' "$PRC" 2>/dev/null) || PAGE=""
   case "$PAGE" in ''|*[!0-9]*) PAGE="" ;; esac
   if [ -n "$PAGE" ] && [ "$PAGE" -le "$MAX_AGE" ]; then
@@ -456,6 +462,17 @@ fi
 
 [ -s "$ROWS" ] || exit 0
 
+# SIBLING PARTS (BH-6374): bin/sibling-serial.sh's rule over the same three
+# files. Each line names a part (TK-184, or TK-142.2) that must wait for a
+# sibling (TK-183, or TK-142.1); the python pass turns it into a HELD line. The
+# parts map (`parts`, from this box's DECOMPOSED records) is what makes a board
+# key a part. Missing script or no line = today's output.
+if [ "$MODE" != hotfor ] && [ -x "$HERE/sibling-serial.sh" ]; then
+  HARNESS="$HARNESS" "$HERE/sibling-serial.sh" parts "$PROJECT" > "$SIBP" 2>/dev/null || : > "$SIBP"
+  IGNORE="$IGNORE" RM="$RM" STACK_ON="$STACK_ON" \
+    "$HERE/sibling-serial.sh" decide "$ROWS" "$INFLIGHT" "$PRS" "$SIBP" > "$SIB" 2>/dev/null || : > "$SIB"
+fi
+
 # ── the graph, in one python pass ────────────────────────────────────────────
 # ONE PASS, not N² awk forks: on a 100-ticket backlog the pairwise comparison is
 # 5000 pairs, and 5000 process spawns per triage tick is a cost nobody asked for.
@@ -472,9 +489,9 @@ fi
 # OVERLAP_IGNORE drops the auto-resolvable paths before any comparison, and
 # OVERLAP_THRESHOLD is the same Jaccard bar bin/overlap-guard.sh:judge applies —
 # so the tick's two rules agree on which files are worth a delay (case 8b).
-MODE="$MODE" TKEY="$TKEY" HOT_MIN="$HOT_MIN" IGNORE="$IGNORE" THRESH="$THRESH" RM="$RM" \
-python3 - "$ROWS" "$PRS" <<'PYEOF'
-import fnmatch, os, sys
+MODE="$MODE" TKEY="$TKEY" HOT_MIN="$HOT_MIN" IGNORE="$IGNORE" THRESH="$THRESH" RM="$RM" STACK_ON="$STACK_ON" \
+python3 - "$ROWS" "$PRS" "$SIB" <<'PYEOF'
+import fnmatch, os, re, sys
 
 MODE = os.environ.get("MODE") or "full"
 TKEY = os.environ.get("TKEY") or ""
@@ -583,6 +600,27 @@ def sortkey(k):
 
 inflight = sorted([k for k, c in cls.items() if c == "inflight"], key=lambda k: k)
 cands = sorted([k for k, c in cls.items() if c in READY], key=sortkey)
+STACK_ON = (os.environ.get("STACK_ON") or "1") != "0"
+
+# SIBLING PARTS (BH-6374): bin/sibling-serial.sh decide's verdicts. A part that
+# must wait for a sibling is HELD before any wave is built, and leaves the waves
+# and UNPLANNED. A verdict that is only an open sibling PR (`stackable`) is not
+# held while stacked builds are on: the STACK logic below places it on that PR's
+# branch, and it is held after all if no STACK line comes of it.
+sib_why, sib_stack = {}, {}
+try:
+    with open(sys.argv[3]) as fh3:
+        for line in fh3:
+            m = re.match(r"^SIBLING_SERIAL (\S+) waits for (\S+) on (.+?)(?: stackable base=(\S+))?$", line.rstrip("\n"))
+            if not m or m.group(1) not in cls:
+                continue
+            if m.group(4) and STACK_ON:
+                sib_stack[m.group(1)] = (m.group(2), m.group(3))
+            else:
+                sib_why[m.group(1)] = (m.group(2), m.group(3))
+except Exception:
+    sib_why, sib_stack = {}, {}
+cands = [k for k in cands if k not in sib_why]
 unplanned = [k for k in cands if not P.get(k)]
 placeable = [k for k in cands if P.get(k)]
 
@@ -651,7 +689,7 @@ for pk, fs in pr_files.items():
         pr_lists[pk] = pl
 
 stack = {}
-if pr_lists and waves:
+if STACK_ON and pr_lists and waves:
     for k in waves[0]:
         lk = k.lower()
         hits = []
@@ -663,6 +701,18 @@ if pr_lists and waves:
                 hits.append((num, br, c))
         if len(hits) == 1:
             stack[k] = hits[0]
+
+# A stackable sibling the STACK pass did not place is held after all.
+late = [k for w in waves for k in w if k in sib_stack and k not in stack]
+if late:
+    for k in late:
+        sib_why[k] = sib_stack[k]
+    waves = [w2 for w2 in ([k for k in w if k not in late] for w in waves) if w2]
+    wave_of = {}
+    for i, w in enumerate(waves):
+        for k in w:
+            wave_of[k] = i + 1
+    stack = {k: v for k, v in stack.items() if waves and k in waves[0]}
 
 def stack_verdict(k):
     num, br, f = stack[k]
@@ -680,11 +730,14 @@ hot = sorted(((f, sorted(ks, key=sortkey)) for f, ks in counts.items() if len(ks
              key=lambda r: (-len(r[1]), r[0]))
 
 def held_line(k):
+    if k in sib_why:
+        o, c = sib_why[k]
+        return "HELD: %s waits for sibling %s on %s (SIBLING_SERIAL)" % (k, o, c)
     o, c = held_why[k]
     return "HELD: %s overlaps in-flight %s on %s" % (k, o, c)
 
 if MODE == "key":
-    if TKEY in held_why:
+    if TKEY in held_why or TKEY in sib_why:
         print(held_line(TKEY))
     elif TKEY in wave_of:
         n = wave_of[TKEY]
@@ -719,6 +772,8 @@ for k in (waves[0] if waves else ()):
     if k in stack:
         print("STACK: %s %s" % (k, stack_verdict(k)))
 for k in held:
+    print(held_line(k))
+for k in sorted(sib_why, key=sortkey):
     print(held_line(k))
 if unplanned:
     print("UNPLANNED: %s" % " ".join(unplanned))

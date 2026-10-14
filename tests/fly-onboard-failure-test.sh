@@ -46,13 +46,13 @@ grep '\[fly-onboard\] alpha onboarding FAILED' "$F1/logs/ALERTS.log" | grep -q '
   && ok || bad "the ALERTS line must name the step that failed: $(cat "$F1/logs/ALERTS.log")"
 grep '\[fly-onboard\] alpha onboarding FAILED' "$F1/logs/ALERTS.log" | grep -q 'bin/fly-onboard.sh alpha' \
   && ok || bad "the ALERTS line must say what to run to fix it"
-printf '%s\n' "$OUT" | grep -q '^FLY_ONBOARD alpha FAILED:' \
+grep -q '^FLY_ONBOARD alpha FAILED:' <<<"$OUT" \
   && ok || bad "the verdict must say FAILED: $OUT"
-printf '%s\n' "$OUT" | grep -q "flags/fly-pool-alpha=absent" \
+grep -q "flags/fly-pool-alpha=absent" <<<"$OUT" \
   && ok || bad "the verdict must report the pool flag as absent: $OUT"
-printf '%s\n' "$OUT" | grep -q "flags/builder-fly-alpha=absent" \
+grep -q "flags/builder-fly-alpha=absent" <<<"$OUT" \
   && ok || bad "the verdict must report the builder flag as absent: $OUT"
-printf '%s\n' "$OUT" | grep -q 'free-slots="unlimited (BUILD_SLOTS=0' \
+grep -q 'free-slots="unlimited (BUILD_SLOTS=0' <<<"$OUT" \
   && ok || bad "free-slots must be answered even on the failure path — it is the LOCAL answer now: $OUT"
 
 # ══ 2. THE MACHINE NEVER STARTS: a different step, same discipline ══════════

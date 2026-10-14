@@ -281,7 +281,7 @@ LEAKS=""
 for h in "${REPO[@]}"; do
   f="${h%%	*}"
   [ "$f" = "bin/agent-call.sh" ] && continue
-  printf '%s\n' "$ALLOWED" | grep -qxF "$f" && continue
+  grep -qxF "$f" <<<"$ALLOWED" && continue
   LEAKS="$LEAKS $h"
 done
 [ -z "$LEAKS" ] && ok || bad "3: a vendor call lives outside bin/agent-call.sh and is not written down in tests/llm-call-ratchet-allowlist.txt:$LEAKS"
@@ -375,7 +375,7 @@ UNCAT=""
 while IFS= read -r f; do
   [ -n "$f" ] || continue
   [ "$f" = "bin/agent-call.sh" ] && continue
-  grep -qxF "$f" <<<"$SCRIPTS" || UNCAT="$UNCAT $f"   # BH-6097: a here-string, never printf | grep -q under pipefail (SIGPIPE read as "not listed")
+  grep -qxF "$f" <<<"$SCRIPTS" || UNCAT="$UNCAT $f"   # BH-6097: a here-string, never a pipe into grep -q under pipefail (a SIGPIPE read as "not listed")
 done < <(callers "$DIR" bin cron checks fly skills)
 [ -z "$UNCAT" ] && ok \
   || bad "7: these files call agent-call.sh and are not in catalog/llm-sites.json —$UNCAT. Add a site (id, script, marker, lane, stage) for each, as a new catalog/llm-sites.d/NNNN-<id>.json fragment."

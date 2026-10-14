@@ -22,7 +22,7 @@ HARNESS=/root/harness
 . "${HARNESS:-/root/harness}/bin/lib/env-path.sh" 2>/dev/null || . "$(dirname "${BASH_SOURCE[0]}")/lib/env-path.sh" 2>/dev/null || harness_env_dir() { printf '%s\n' "${1:-${HARNESS:-/root/harness}}/env"; }; HENV=$(harness_env_dir "$HARNESS")
 ORC=/root/orchestrator
 MSGF="${1:?message file}"
-ORIGIN=""; CMD_ID=""; META_TRANSPORT=telegram; RELAY=0
+ORIGIN=""; CMD_ID=""; META_TRANSPORT=telegram; RELAY=0; META_FROM_USER=""
 if [ -f "$MSGF.meta" ]; then
   ORIGIN=$(jq -r '.origin // ""' "$MSGF.meta" 2>/dev/null)
   CMD_ID=$(jq -r '.command_id // ""' "$MSGF.meta" 2>/dev/null)
@@ -37,6 +37,9 @@ if [ -f "$MSGF.meta" ]; then
   # the group's General topic — addressed to a chat the asker was not in.
   META_CHAT=$(jq -r '.chat_id // ""' "$MSGF.meta" 2>/dev/null)
   META_THREAD=$(jq -r '.thread_id // ""' "$MSGF.meta" 2>/dev/null)
+  # WHO ASKED (BH-5751): the Telegram username bin/box-request.sh maps to an
+  # owner email (BOX_CHAT_OWNERS) before it queues a box command.
+  META_FROM_USER=$(jq -r '.from_username // ""' "$MSGF.meta" 2>/dev/null)
   # The message's own ids (BH-5336): a reply inside an in-flight turn's thread
   # waits for that turn (orct_gate). Absent fields never make a turn wait.
   META_MSG_ID=$(jq -r '.message_id // "" | tostring' "$MSGF.meta" 2>/dev/null)
@@ -307,6 +310,29 @@ if [ -x "$HARNESS/bin/archie.sh" ]; then
   fi
 fi
 # <<< archie intercept
+# >>> box request intercept (BH-5751; tests/box-request.bh-5751-test.sh runs this block)
+# BOX AND PROJECT VERBS NEVER COST A TURN. `/box launch`, `/box list`,
+# `/project load`, `we need a box for <p>` and a `yes` to an open offer are
+# parsed by bin/box-request.sh, which queues the box commands as the owner and
+# prints the reply (rc 0); anything else is rc 1 and the normal turn runs.
+# Fail open, the same shape as the archie block above.
+if [ -x "$HARNESS/bin/box-request.sh" ]; then
+  _box_out=$(BOXREQ_TRANSPORT="$META_TRANSPORT" BOXREQ_FROM_USER="${META_FROM_USER:-}" BOXREQ_CHAT="${META_CHAT:-}" \
+    BOXREQ_THREAD="${META_THREAD:-}" BOXREQ_CMD_ID="${CMD_ID:-}" "$HARNESS/bin/box-request.sh" intercept "$TEXT" 2>/dev/null); _box_rc=$?
+  if [ "$_box_rc" = 0 ] && [ -n "$_box_out" ]; then
+    _box_t=$(mktemp -d 2>/dev/null) || _box_t=""
+    if [ -n "$_box_t" ]; then
+      printf '%s\n' "$_box_out" > "$_box_t/reply.txt"
+      printf '%s\n' "$TEXT" > "$_box_t/msg.txt"
+      "$HARNESS/bin/orc-context.sh" append box "$_box_t/msg.txt" "$_box_t/reply.txt" 2>/dev/null
+      mv -f "$_box_t/reply.txt" "$ORC/last-reply.txt"
+      rm -rf -- "$_box_t"
+    fi
+    deliver_reply "$(archie_sign "$_box_out")"
+    exit 0
+  fi
+fi
+# <<< box request intercept
 # Keep "typing…" alive from pickup until the reply — STARTED BEFORE the turn
 # gate so a message that waits for a slot still shows life (Telegram expires
 # each action after ~5s, hence the loop). It stops when this turn's bash is

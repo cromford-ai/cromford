@@ -9,7 +9,8 @@
 #
 #   R1  two projects run in parallel: A blocks inside its session while B
 #       finishes; each holds only locks/watchdog-responder-<p>.lock and the old
-#       locks/responder.lock is not held
+#       locks/responder.lock is not held; B's lock is free once its run exits
+#       (polled, 10 s bound)
 #   R2  each run's prompt names only its own stale ticket
 #   R3  a wedged job of projfix-b is not in projfix-a's prompt
 #   R4  each run's session sees ACCOUNT_PROJECT_FOR_LANE=responder=<p> and its
@@ -56,7 +57,8 @@ cat > "$H/bin/agent-call.sh" <<EOF
 # args: triage responder <model> <timeout> <out> <prompt>
 out="\$5"; p="\${out##*/responder-run.}"; p="\${p%.txt}"
 printf '%s' "\$6" > "$T/prompt.\$p"
-old=free; flock -n "$H/locks/responder.lock" true 2>/dev/null || old=held
+# Shared: the other run's session probes the same file at the same moment (BH-6571).
+old=free; flock -n -s "$H/locks/responder.lock" true 2>/dev/null || old=held
 own=free; flock -n "$H/locks/watchdog-responder-\$p.lock" true || own=held
 printf '%s\t%s\t%s\t%s\t%s\n' "\$p" "\${ACCOUNT_PROJECT_FOR_LANE:-none}" "\${GH_TOKEN:-none}" "\$own" "\$old" >> "$T/calls.tsv"
 if [ -e "$T/hold.\$p" ]; then for i in \$(seq 1 300); do [ -e "$T/release" ] && break; sleep 0.1; done; fi
@@ -67,6 +69,9 @@ EOF
 chmod +x "$H/bin/"*.sh
 
 WAITFOR() { local i; for i in $(seq 1 300); do eval "$1" && return 0; sleep 0.2; done; return 1; }
+# LOCKFREE <lock> — the lock is free within 10 s. A run holds its lock until it
+# exits, and it still logs and stamps after its session returns (BH-6571).
+LOCKFREE() { local i; for i in $(seq 1 100); do flock -n "$1" true && return 0; sleep 0.1; done; return 1; }
 COL() { awk -F'\t' -v p="$1" -v c="$2" '$1 == p {print $c; exit}' "$T/calls.tsv"; }
 NDONE() { grep -c . "$T/done.txt" 2>/dev/null; }
 SNAP='{"projfix-a":{"tickets":[{"key":"PFA-1","status":"todo","waitingOn":"team","hours":30,"title":"alpha stuck"}]},
@@ -99,12 +104,14 @@ OUT=$(bash "$H/bin/watchdog-responder.sh"); RC=$?
 [ "$RC" = 0 ] && ok || bad "R1: dispatch exits 0 (rc=$RC)"
 case "$OUT" in "watchdog-responder dispatch: started 2 project run(s)"*) ok ;; *) bad "R1: one dispatch line for 2 runs: $OUT" ;; esac
 WAITFOR 'grep -qx projfix-b "$T/done.txt"' && ok || bad "R1: projfix-b finished its session (log: $(tail -5 "$H/logs/watchdog-responder-cron.log" 2>/dev/null))"
+# projfix-a is held in its session, so its row comes; wait for it before the A-side reads.
+WAITFOR '[ "$(COL projfix-a 1)" = projfix-a ]' || bad "R1: projfix-a's session started (calls: $(cat "$T/calls.tsv"))"
 grep -qx projfix-a "$T/done.txt" && bad "R1: projfix-a's session must still be blocked when projfix-b finishes" || ok
 [ "$(COL projfix-a 4)" = held ] && [ "$(COL projfix-b 4)" = held ] && ok \
   || bad "R1: each session runs under its own project lock (a=$(COL projfix-a 4) b=$(COL projfix-b 4))"
 [ "$(COL projfix-a 5)" = free ] && [ "$(COL projfix-b 5)" = free ] && ok \
   || bad "R1: the old global locks/responder.lock is not held (a=$(COL projfix-a 5) b=$(COL projfix-b 5))"
-flock -n "$H/locks/watchdog-responder-projfix-b.lock" true && ok || bad "R1: projfix-b's lock is free once its run ended"
+LOCKFREE "$H/locks/watchdog-responder-projfix-b.lock" && ok || bad "R1: projfix-b's lock is free once its run ended"
 flock -n "$H/locks/watchdog-responder-projfix-a.lock" true && bad "R1: projfix-a's lock is held while its run is live" || ok
 
 # R2 — own stale ticket only.

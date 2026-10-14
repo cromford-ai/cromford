@@ -502,7 +502,7 @@ if grep -qE '^(HARNESS|H)="\$\{HARNESS:-/root/harness\}"' "$DIR/bin/cost-readout
   ro_setup() {
     setup_one "$1" cost-readout.sh
     mkdir -p "$SH/state/cost"
-    printf '#!/bin/bash\nprintf "%%s\\n" "$*" | head -c 200 >> "$HARNESS/agent-calls"; echo READOUT > "$5"\n' > "$SH/bin/agent-call.sh"
+    printf '#!/bin/bash\nhead -c 200 < <(printf "%%s\\n" "$*") >> "$HARNESS/agent-calls"; echo READOUT > "$5"\n' > "$SH/bin/agent-call.sh"
     chmod +x "$SH/bin/agent-call.sh"
   }
   ro_summary() {

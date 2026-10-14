@@ -194,7 +194,7 @@ NB2=$(grep 'POST .*api/alerts/note' "$S1" | sed -n 2p | sed 's/^[^ ]* [^ ]* //')
 [ "$(jq -r '.box' <<<"$NB2" 2>/dev/null)" = "b" ] \
   && ok || bad "second note body box is '$(jq -r '.box' <<<"$NB2" 2>/dev/null)', want b"
 FAM=$(jq -r '.family' <<<"$NB" 2>/dev/null)
-printf '%s' "$FAM" | grep -qE '^[0-9a-f]{12}$' \
+grep -qE '^[0-9a-f]{12}$' <<<"$FAM" \
   && ok || bad "note body family is '$FAM', want 12 hex (bin/alert_family.py family)"
 # A line that names no fleet project is fleet-wide, never empty: an empty
 # project lands every alert in the General topic.

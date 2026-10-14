@@ -34,6 +34,7 @@ DIR=$(cd "$(dirname "$0")/.." && pwd)
 . "$(dirname "$0")/lib/verdict-fixture.sh" || exit 1
 vpf_export || exit 1
 . "$DIR/tests/lib/rb-all.sh" || exit 1
+. "$DIR/tests/lib/hold-gate-fixture.sh" || exit 1  # BH-6091: the pr-open HOLD gate for a pipeline slice
 RB_ALL=$(rb_all "$DIR" "$T/run-build.all.sh")
 # ONE clock read for the whole file (bin/test-determinism-lint.sh): nothing below
 # compares times, it only keeps fixture directory names unique.
@@ -343,6 +344,7 @@ BLK="$CASE/blk.sh"
   marked '# >>> result pr url ratchet' '# <<< result pr url ratchet' "$RB"
   marked '# >>> pr create call'        '# <<< pr create call'        "$RB"
   marked '# >>> verdict artifact'      '# <<< verdict artifact'      "$RB"; } > "$BLK"
+hold_gate_prepend "$RB" "$BLK"   # BH-6091: the real gate, a no-HOLD ticket read
 BUILDDIR="$CASE/b"; mkdir -p "$BUILDDIR"
 printf 'findings\nTIER: 1\nVERDICT: APPROVE\n' > "$BUILDDIR/review.md"
 echo deadbee > "$BUILDDIR/review-head"

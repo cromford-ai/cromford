@@ -46,7 +46,7 @@ ts_rows_unreadable_tick() {
   [ -e "$d/decisions.tsv" ] || return 1
   case "${GATE_REASON:-}" in no-gate-state|gate-fetch-failed) ;; *) _ts_enforce_reason || return 1 ;; esac
   if [ -n "${QLINES:-}${QDIRS:-}${RDIRS:-}" ] || [ "${GATE_REASON:-}" = remote-results-pending ] \
-     || printf '%s\n%s\n' "${TICK_SCOPE:-}" "${BOARD_SEC:-}" | grep -qE 'UNBLOCKED|STACKABLE|^board prs:'; then
+     || grep -qE 'UNBLOCKED|STACKABLE|^board prs:' <<<"$(printf '%s\n%s\n' "${TICK_SCOPE:-}" "${BOARD_SEC:-}")"; then
     TS_ENFORCING=1
     # A key an UNBLOCKED / STACKABLE line releases is launch work too, though
     # column 9 counts only queue lines and finished builds: keep it out of the skip set.

@@ -33,13 +33,14 @@
 
 command -v vd_standing >/dev/null 2>&1 || { [ -r "${BASH_SOURCE[0]%/*}/verdicts.sh" ] && . "${BASH_SOURCE[0]%/*}/verdicts.sh"; }
 command -v la_decide >/dev/null 2>&1 || { [ -r "${BASH_SOURCE[0]%/*}/lead-authority.sh" ] && . "${BASH_SOURCE[0]%/*}/lead-authority.sh"; }
+command -v lead_carry >/dev/null 2>&1 || { [ -r "${BASH_SOURCE[0]%/*}/lead-carry.sh" ] && . "${BASH_SOURCE[0]%/*}/lead-carry.sh"; }
 
 # mc_lead_ready <key> <owner/repo> <num> <head> <verdict> <reviewed> <headbound>
 #   rc 0 -> a standing lead/human MERGE on <head> the lane may clear: the caller
 #           sets VERDICT=APPROVE and REVIEWED=<head> for this tick.
 #   rc 1 -> no rebind (every other answer, unreadable included).
 mc_lead_ready() {
-  local key="$1" slug="$2" num="$3" head="$4" v="${5:-}" rev="${6:-}" hb="${7:-}" line word src
+  local key="$1" slug="$2" num="$3" head="$4" v="${5:-}" rev="${6:-}" hb="${7:-}" line word src vrc
   [ "${MC_LEAD_READY:-1}" != 0 ] || return 1
   [ -n "$head" ] || return 1
   case "$v" in BLOCK|CONTRADICTION) return 1 ;; esac
@@ -48,7 +49,14 @@ mc_lead_ready() {
   command -v la_scope >/dev/null 2>&1 && command -v la_decide >/dev/null 2>&1 \
     && command -v vd_standing >/dev/null 2>&1 || return 1
   la_scope "$slug" || return 1
-  line=$(vd_standing "$slug" "$num" "$head" 2>/dev/null) || return 1
+  line=$(vd_standing "$slug" "$num" "$head" 2>/dev/null); vrc=$?
+  # Nothing stands on this head: a lead word on an older head with the same
+  # patch is carried here first (bin/lib/lead-carry.sh, BH-6291).
+  if [ "$vrc" = 1 ] && command -v lead_carry >/dev/null 2>&1 && lead_carry "$key" "$slug" "$num" "$head"; then
+    line=$(vd_standing "$slug" "$num" "$head" 2>/dev/null) || return 1
+  elif [ "$vrc" != 0 ]; then
+    return 1
+  fi
   word=$(cut -f1 <<<"$line"); src=$(cut -f2 <<<"$line")
   case "$word" in MERGE|MERGE-WITH-NOTES) ;; *) return 1 ;; esac
   la_decide "$slug" "$num" "$head" conductor || return 1

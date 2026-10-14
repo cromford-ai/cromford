@@ -469,7 +469,8 @@ def scan_test_assignments(root):
 # ── registered-knob resolution (recomputed, never trusted from a snapshot) ──
 
 def load_registered(root):
-    """env -> list of {lane, settable, default, read_in} from catalog/lanes.d/*.json."""
+    """env -> list of {lane, settable, default, read_in} from catalog/lanes.d/*.json
+    and catalog/lanes.d/<owner>.knobs.d/*.json."""
     reg = defaultdict(list)
     d = os.path.join(root, "catalog", "lanes.d")
     if not os.path.isdir(d):
@@ -489,6 +490,30 @@ def load_registered(root):
                 continue
             reg[env].append({
                 "lane": lane_id,
+                "settable": knob.get("settable", True),
+                "default": knob.get("default"),
+                "read_in": knob.get("read_in"),
+            })
+    # A knob added as its own file: <owner>.knobs.d/<ENV>.json, one knob object
+    # (bin/lanes-build.sh composes it into the owner's knobs).
+    for dn in sorted(os.listdir(d)):
+        kd = os.path.join(d, dn)
+        if not dn.endswith(".knobs.d") or not os.path.isdir(kd):
+            continue
+        owner = dn[:-len(".knobs.d")]
+        for fn in sorted(os.listdir(kd)):
+            if not fn.endswith(".json"):
+                continue
+            try:
+                with open(os.path.join(kd, fn), "r") as fh:
+                    knob = json.load(fh)
+            except (OSError, ValueError):
+                continue
+            env = knob.get("env") if isinstance(knob, dict) else None
+            if not env:
+                continue
+            reg[env].append({
+                "lane": owner,
                 "settable": knob.get("settable", True),
                 "default": knob.get("default"),
                 "read_in": knob.get("read_in"),

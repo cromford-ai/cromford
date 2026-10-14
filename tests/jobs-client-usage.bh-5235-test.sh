@@ -112,7 +112,7 @@ done
 BODY=${USAGE#usage: jobs-client.sh \{}; BODY=${BODY%\}}
 
 # ══ U2. every arm has its #: line, every #: line has its arm ════════════════
-if out=$(check_sync "$SRC"); then ok; else bad "U2: arm/#: mismatch: $(printf '%s' "$out" | head -5 | tr '\n' ';')"; fi
+if out=$(check_sync "$SRC"); then ok; else bad "U2: arm/#: mismatch: $(head -5 <<<"$out" | tr '\n' ';')"; fi
 [ "$(arm_set "$SRC" | wc -l)" -gt 100 ] && ok || bad "U2: fewer than 100 arms found in $SRC: the block scoping is wrong"
 n=$(awk '/^  case "\$CMD" in/{f=1;next} f&&/^    \*\)/{exit} f&&/^    #: transcript-get /{n++} END{print n+0}' "$SRC")
 [ "$n" = 2 ] && ok || bad "U2: transcript-get has $n #: lines, want 2"
@@ -120,11 +120,11 @@ n=$(awk '/^  case "\$CMD" in/{f=1;next} f&&/^    \*\)/{exit} f&&/^    #: transcr
 # ══ U3. the check is not always green, and not always red ═══════════════════
 awk '/^    \*\)/&&!d{print "    zz-u3a-undocumented) true; RC=0 ;;"; d=1} {print}' "$SRC" > "$T/a.sh"
 out=$(check_sync "$T/a.sh"); rc=$?
-[ "$rc" = 1 ] && printf '%s' "$out" | grep -qx 'arm without #: zz-u3a-undocumented' && ok \
+[ "$rc" = 1 ] && grep -qx 'arm without #: zz-u3a-undocumented' <<<"$out" && ok \
   || bad "U3a: an arm with no #: line was not named (rc $rc): $out"
 awk '/^    \*\)/&&!d{print "    #: zz-u3b-armless <x>"; d=1} {print}' "$SRC" > "$T/b.sh"
 out=$(check_sync "$T/b.sh"); rc=$?
-[ "$rc" = 1 ] && printf '%s' "$out" | grep -qx '#: without arm zz-u3b-armless' && ok \
+[ "$rc" = 1 ] && grep -qx '#: without arm zz-u3b-armless' <<<"$out" && ok \
   || bad "U3b: a #: line with no arm was not named (rc $rc): $out"
 cp "$SRC" "$T/c.sh"
 if check_sync "$T/c.sh" >/dev/null; then ok; else bad "U3c: the unmodified copy does not pass check_sync"; fi
@@ -133,7 +133,7 @@ if check_sync "$T/c.sh" >/dev/null; then ok; else bad "U3c: the unmodified copy 
 for e in 'triage-state-get <project> <key>' \
          'lane-proc-beat <lane> start|beat|done [pid] [interval_s] [expect_s] [note]' \
          "$RULE_UNSET"; do
-  printf '%s' "$USAGE" | grep -qF -- "$e" && ok || bad "U4: usage lacks '$e'"
+  grep -qF -- "$e" <<<"$USAGE" && ok || bad "U4: usage lacks '$e'"
 done
 
 # ══ U5. every old entry survives, plus rule-unset; no arm moved ═════════════
@@ -174,7 +174,7 @@ entry_check() {
   grep -qxF -- "$RULE_UNSET" <<< "$(doc_entries "$f")" || echo "no '#: $RULE_UNSET' line"
   if [ "$OLDOK" = 1 ]; then
     miss=$(doc_entries "$f" | LC_ALL=C sort -u | LC_ALL=C comm -23 "$T/old.entries" -)
-    [ -z "$miss" ] || echo "645b72ecb entries missing now: $(printf '%s' "$miss" | head -3 | tr '\n' ';')"
+    [ -z "$miss" ] || echo "645b72ecb entries missing now: $(head -3 < <(printf '%s' "$miss") | tr '\n' ';')"
     # in-order subsequence: walk the current arms, consuming the old list.
     arm_list "$f" | awk 'NR==FNR{o[++n]=$0; next} i<n && $0==o[i+1]{i++} END{exit !(i==n)}' "$T/old.arms" - \
       || echo "the 645b72ecb arms are not an in-order subsequence of the arms now (an arm moved or went)"
@@ -204,7 +204,7 @@ case "|$nbody|" in *'|zz-new <x>|'*) ok ;; *) bad "U5b: the new verb's entry is 
 if [ "$OLDOK" = 1 ]; then
   sed 's/^    #: triage-state-get <project> <key>$/    #: triage-state-get <key>/' "$SRC" > "$T/edit.sh"
   out=$(entry_check "$T/edit.sh" "$(usage_body "$T/edit.sh")")
-  printf '%s' "$out" | grep -q '645b72ecb entries missing now: triage-state-get <project> <key>' && ok \
+  grep -q '645b72ecb entries missing now: triage-state-get <project> <key>' <<<"$out" && ok \
     || bad "U5c: an edited old entry was not caught: $out"
   # Move the first arm (with its #: lines) to just above `*)`.
   awk '/^  case "\$CMD" in/{f=1; print; next}
@@ -216,7 +216,7 @@ if [ "$OLDOK" = 1 ]; then
   if [ "$(arm_list "$T/move.sh" | sort)" = "$(arm_list "$SRC" | sort)" ] \
      && [ "$(arm_list "$T/move.sh")" != "$(arm_list "$SRC")" ]; then
     out=$(entry_check "$T/move.sh" "$(usage_body "$T/move.sh")")
-    printf '%s' "$out" | grep -q 'not an in-order subsequence' && ok \
+    grep -q 'not an in-order subsequence' <<<"$out" && ok \
       || bad "U5c: a moved arm was not caught: $out"
   else
     bad "U5c: the move fixture did not move exactly one arm"

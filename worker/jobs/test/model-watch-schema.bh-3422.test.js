@@ -3,13 +3,14 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { ensureTable } from '../src/index.js';
+import { jobsSchemaSql } from './lib/jobs-schema.js';
 
 // BH-3425 (BH-3422.0) — the model-watch table. schema.sql is what harness-sync
 // applies at deploy, CREATED_TABLES is what the worker creates on a D1 that
 // deploy never reached. The two must be the same table. Fixture ids are neutral
 // (acme / m-1): tests/alert-triage-runners R6 scans worker/ for model literals.
 
-const SCHEMA = readFileSync(fileURLToPath(new URL('../schema.sql', import.meta.url)), 'utf8');
+const SCHEMA = jobsSchemaSql();
 
 const COLUMNS = [
   'vendor', 'model_id', 'slug', 'source', 'source_url', 'released_at', 'prompt', 'completion',

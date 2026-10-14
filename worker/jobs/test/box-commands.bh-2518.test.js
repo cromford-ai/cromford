@@ -4,6 +4,7 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import worker from '../src/index.js';
 import { openDb } from './lib/d1-sqlite.bh-1030.js';
+import { jobsSchemaFile } from './lib/jobs-schema.js';
 
 // BH-2659 (BH-2518.1): the four box-commands routes, driven through the real
 // worker.fetch against real SQLite and the real schema.sql (the #2658 contract
@@ -14,7 +15,7 @@ import { openDb } from './lib/d1-sqlite.bh-1030.js';
 const SECRET = 'test-secret';
 const NOW_MS = Date.parse('2026-09-26T12:00:00Z');
 const iso = (sAgo) => new Date(NOW_MS - sAgo * 1000).toISOString().replace(/\.\d{3}Z$/, 'Z');
-const SCHEMA = fileURLToPath(new URL('../schema.sql', import.meta.url));
+const SCHEMA = jobsSchemaFile();
 const MACHINE = 'e7843d1c4a2b98';
 
 async function open(t, hooks = {}) {
@@ -38,8 +39,8 @@ async function call(DB, method, path, body) {
   return { status: res.status, body: await res.json() };
 }
 
-const cmds = (db) => db.prepare('SELECT * FROM box_commands ORDER BY id').all();
-const row = (db, id) => db.prepare('SELECT * FROM box_commands WHERE id=?').get(id);
+const cmds = (db) => db.prepare('SELECT * FROM box_commands_v2 ORDER BY id').all();
+const row = (db, id) => db.prepare('SELECT * FROM box_commands_v2 WHERE id=?').get(id);
 const audits = (db, action) => db.prepare('SELECT * FROM hub_lease_changes WHERE action=? ORDER BY id').all(action);
 function seed(db, over = {}) {
   const r = {
@@ -47,7 +48,7 @@ function seed(db, over = {}) {
     requested_by: 'console', requested_at: iso(600), claimed_by: null, claimed_at: null, ...over,
   };
   const res = db.prepare(
-    'INSERT INTO box_commands (box,type,target,args,reason,status,requested_by,requested_at,claimed_by,claimed_at) VALUES (?,?,?,?,?,?,?,?,?,?)',
+    'INSERT INTO box_commands_v2 (box,type,target,args,reason,status,requested_by,requested_at,claimed_by,claimed_at) VALUES (?,?,?,?,?,?,?,?,?,?)',
   ).run(r.box, r.type, r.target, r.args, r.reason, r.status, r.requested_by, r.requested_at, r.claimed_by, r.claimed_at);
   return Number(res.lastInsertRowid);
 }
@@ -238,9 +239,9 @@ test('W7: TTL from settings (fallback 1800), strict cutoff, oldest first, and a 
   const claim = (claimer = 'project-3-1') => call(env.DB, 'POST', '/api/box-commands/claim', { claimer, boxes: ['project-3-1'] });
   const fresh = seed(env.db, { status: 'claimed', claimed_by: 'a', claimed_at: iso(10) });
   assert.deepEqual((await claim('b')).body, { command: null }, 'a fresh claim is not re-offered');
-  env.db.prepare('UPDATE box_commands SET claimed_at=? WHERE id=?').run(iso(1800), fresh);
+  env.db.prepare('UPDATE box_commands_v2 SET claimed_at=? WHERE id=?').run(iso(1800), fresh);
   assert.deepEqual((await claim('b')).body, { command: null }, 'exactly at the TTL is not stale');
-  env.db.prepare('UPDATE box_commands SET claimed_at=? WHERE id=?').run(iso(1801), fresh);
+  env.db.prepare('UPDATE box_commands_v2 SET claimed_at=? WHERE id=?').run(iso(1801), fresh);
   let r = await claim('b');
   assert.equal(r.body.command.id, fresh);
   assert.equal(row(env.db, fresh).claimed_by, 'b');
@@ -252,11 +253,11 @@ test('W7: TTL from settings (fallback 1800), strict cutoff, oldest first, and a 
   env.db.prepare("UPDATE settings SET value='abc' WHERE key='box_commands_claim_ttl_s'").run();
   const s2 = seed(env.db, { type: 'cli_update', status: 'claimed', claimed_by: 'a', claimed_at: iso(61) });
   assert.deepEqual((await claim('c')).body, { command: null }, 'an unparseable setting falls back to 1800');
-  env.db.prepare('UPDATE box_commands SET claimed_at=? WHERE id=?').run(iso(1801), s2);
+  env.db.prepare('UPDATE box_commands_v2 SET claimed_at=? WHERE id=?').run(iso(1801), s2);
   assert.equal((await claim('c')).body.command.id, s2);
 
   // Oldest first.
-  env.db.prepare('DELETE FROM box_commands').run();
+  env.db.prepare('DELETE FROM box_commands_v2').run();
   const older = seed(env.db, { type: 'harness_sync' });
   seed(env.db, { type: 'cli_update' });
   assert.equal((await claim()).body.command.id, older);
@@ -267,9 +268,9 @@ test('W7b: a claim that loses the CAS race answers null and leaves the winner', 
   const env = await open(t, hooks); if (!env) return;
   const id = seed(env.db);
   hooks.beforeRun = (sql) => {
-    if (/UPDATE box_commands SET status='claimed'/.test(sql)) {
+    if (/UPDATE box_commands_v2 SET status='claimed'/.test(sql)) {
       hooks.beforeRun = null;
-      env.db.prepare(`UPDATE box_commands SET status='claimed', claimed_by='other', claimed_at=? WHERE id=?`).run(iso(0), id);
+      env.db.prepare(`UPDATE box_commands_v2 SET status='claimed', claimed_by='other', claimed_at=? WHERE id=?`).run(iso(0), id);
     }
   };
   const r = await call(env.DB, 'POST', '/api/box-commands/claim', { claimer: 'project-3-1', boxes: ['project-3-1'] });
@@ -327,7 +328,7 @@ test('W9: schema.sql applied a second time is a no-op and the open index still d
 
 test('W10: with the table missing, the routes answer 503 schema not applied, never a 500', async (t) => {
   const env = await open(t); if (!env) return;
-  env.db.exec('DROP TABLE box_commands');
+  env.db.exec('DROP TABLE box_commands_v2');
   const g = await call(env.DB, 'GET', '/api/box-commands');
   assert.equal(g.status, 503);
   assert.equal(g.body.error, 'box_commands schema not applied');

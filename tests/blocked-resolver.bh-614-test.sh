@@ -124,9 +124,14 @@ L1M="RESULT_MALFORMED PR_CREATED  | STACKED on ticket/TK-1883 (https://github.co
 # A. The classifier. Extracted and CALLED — a table in the test that agrees
 #    with a table in the test proves nothing.
 # ═══════════════════════════════════════════════════════════════════════════
+# BH-5241: the corpus is the driver plus bin/lib/br/*.sh (tests/lib/br-corpus.sh),
+# because the ladder functions moved out of the driver into bin/lib/br/ladder.sh.
+# shellcheck source=tests/lib/br-corpus.sh
+. "$DIR/tests/lib/br-corpus.sh" || exit 1
+br_corpus "$H" "$T/br-corpus.sh" || exit 1
 : > "$T/cls.sh"
 for fn in br_action br_reason_of br_ladder_class br_ladder_rung br_skips_mechanical; do
-  awk -v f="^$fn\\(\\)" '$0 ~ f {p=1} p{print} p&&/^}$/{exit}' "$H/bin/blocked-resolver.sh" >> "$T/cls.sh"
+  awk -v f="^$fn\\(\\)" '$0 ~ f {p=1} p{print} p&&/^}$/{exit}' "$T/br-corpus.sh" >> "$T/cls.sh"
 done
 [ -s "$T/cls.sh" ] && ok || bad "A: could not extract the classifier functions"
 cls()   { bash -c '. "$0"; br_reason_of "$1"' "$T/cls.sh" "$1"; }
@@ -151,9 +156,9 @@ klass() { bash -c '. "$0"; br_ladder_class "$1"' "$T/cls.sh" "$1"; }
 # B1. br_from_builds offers the record — and its negatives.
 # ═══════════════════════════════════════════════════════════════════════════
 : > "$T/src.sh"
-awk '/^br_from_builds\(\) \{/{p=1} p{print} p&&/^}$/{exit}' "$H/bin/blocked-resolver.sh" > "$T/src.sh"
-awk '/^br_rkey\(\) \{/{p=1} p{print} p&&/^}$/{exit}' "$H/bin/blocked-resolver.sh" >> "$T/src.sh"
-awk '/^br_from_queue\(\) \{/{p=1} p{print} p&&/^}$/{exit}' "$H/bin/blocked-resolver.sh" >> "$T/src.sh"
+awk '/^br_from_builds\(\) \{/{p=1} p{print} p&&/^}$/{exit}' "$T/br-corpus.sh" > "$T/src.sh"
+awk '/^br_rkey\(\) \{/{p=1} p{print} p&&/^}$/{exit}' "$T/br-corpus.sh" >> "$T/src.sh"
+awk '/^br_from_queue\(\) \{/{p=1} p{print} p&&/^}$/{exit}' "$T/br-corpus.sh" >> "$T/src.sh"
 [ -s "$T/src.sh" ] && ok || bad "B1: could not extract br_from_builds/br_from_queue"
 builds() { H="$H" ST="$H/state/blocked-resolver" ONLY=tproj \
            bash -c '. "$0"; br_from_builds' "$T/src.sh" 2>/dev/null; }

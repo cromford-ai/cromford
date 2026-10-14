@@ -190,10 +190,10 @@ if git -C "$DIR" rev-parse --verify origin/main >/dev/null 2>&1; then
   if ! grep -qE "^(\.harness/specs/BH-903/|guardrails/inapp-prompt|${SLICE_PROMPTS%|}|docs/notes/2026-09-18-BH-815)" <<<"$(printf '%s\n' "$CHANGED")"; then
     echo "SKIP (this branch is not BH-903's slice) — the negative-diff arm judges only the ticket's own branch."
   else
-  if printf '%s\n' "$CHANGED" | grep -qx 'docs/EVENTS.md'; then
+  if grep -qx 'docs/EVENTS.md' <<<"$CHANGED"; then
     bad "this branch edits docs/EVENTS.md — the finding belongs in the dated note (D37, guardrails/doc-monolith-edit)"
   else ok; fi
-  if printf '%s\n' "$CHANGED" | grep -q '^worker/'; then
+  if grep -q '^worker/' <<<"$CHANGED"; then
     bad "this branch edits worker/ — the board-facing webhook receiver is its own ticket, not this one"
   else ok; fi
   fi

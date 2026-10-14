@@ -1095,7 +1095,7 @@ nothing honest to write. Every account the pool can ship is exactly that shape:
 pool's filter kept only `status: ok`, so it kept nothing, ranked nothing, and
 shipped the one default token to every machine — which was weekly-capped that
 morning, so every pool Claude call failed and the ladder fell through to the
-metered vendors at roughly $N-340 an hour until someone read the log.
+metered vendors at roughly $140-340 an hour until someone read the log.
 
 The hub's own picker never had this problem. `account_headroom` has always
 counted an unreadable poll as "no evidence against", because refusing every

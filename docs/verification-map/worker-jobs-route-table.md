@@ -1,7 +1,7 @@
 # The jobs worker answers from a table, not a chain (BH-1195)
 
-**What it is:** `worker/jobs/src/index.js` is the worker's ENTRY and its ROUTE
-TABLE, and nothing else. Every handler lives in `worker/jobs/src/routes/<family>.js`
+**What it is:** `worker/jobs/src/index.js` is the worker's ENTRY, and nothing
+else; the gated ROUTE TABLE is built from `test/route-table.d` (BH-4607, below). Every handler lives in `worker/jobs/src/routes/<family>.js`
 as a `[method, matcher, handler]` row; the shared half — constants, transition
 graphs, `computeDora`, `computeAnchored`, `decorateLane`, the SQL the routes
 bind — lives in `worker/jobs/src/lib/core.js`; the clock, the JSON response and
@@ -72,3 +72,12 @@ rows and the boxes' files are exactly what they were.
   keying the table on path, re-points routes whose overlap the order resolves.
 - **Handlers stay out of `index.js`.** The file is the entry and the table; a
   body inlined back into it is the chain growing again, one route at a time.
+- **The fragment IS the registration (BH-4607).** `index.js` lists only the
+  four open families. `ROUTES` comes from `#routes`: under wrangler the
+  git-ignored `src/routes.gen.js`, which `wrangler.jsonc`'s `build.command`
+  renders with `node scripts/routes-build.mjs`, and under node
+  `test/lib/routes.node.js`, which reads `route-table.d` at load time. A new
+  family is `src/routes/<family>.js` plus its fragment, never an `index.js`
+  edit, and a module with no fragment is not mounted (404). Verified by
+  `cd worker/jobs && node --test test/route-registry.bh-4607.test.js` and
+  `HARNESS_TEST_SANDBOX=1 bash tests/worker-routes-render.bh-4607-test.sh`.

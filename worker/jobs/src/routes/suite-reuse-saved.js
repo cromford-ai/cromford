@@ -1,12 +1,14 @@
 // suite-reuse-saved routes — the suite ledger's READ half (BH-5354.3 / BH-5369).
 //
-// Mission Control's SUITE REUSE section reads these two. Both are bearer-only:
+// Mission Control's SUITE REUSE section reads the first two; the hub lane
+// bin/impact-learn-lane.sh reads the third (BH-6460). All are bearer-only:
 // they sit in ROUTES, after the bearer check, so an x-suite-ledger-token (the
 // CI credential, which can only write) is a 401 here. The bearer is the builder
 // class and sees both classes, which the console shows in separate rows.
 //
 //   GET /api/suite-results/saved?days=14[&repo=]  -> per (day, repo, class) sums
 //   GET /api/suite-results/runs?day=YYYY-MM-DD[&repo=][&class=] -> that day's runs
+//   GET /api/suite-results/passes?repo=R&since=YYYY-MM-DD -> per-suite passes and fails
 //
 // The table, its write route and its validation are the contract's
 // (routes/suite-results.js, lib/suite-results.js); this file only reads.
@@ -122,6 +124,34 @@ export const routes = [
         const rows = all.slice(0, RUNS_LIMIT)
           .map((row) => ({ ...row, url: runUrl(row), reused_suites: reusedSuites(row) }));
         return json(200, { day, capped: all.length > RUNS_LIMIT, rows });
+      });
+    },
+  ],
+
+  // The learned-edge expiry read (BH-6460). passes: the runs of `ok` rows first
+  // seen on or after `since`; fails: every fail on a row written on or after
+  // `since`. A row that straddles `since` counts its fails but not its passes.
+  // `since` is bound as the bare day: ISO stamps of that day sort after it. A
+  // suite with no row since is absent, and the reader keeps its edge.
+  [
+    "GET", "/api/suite-results/passes",
+    async ({ env, url }) => {
+      const q = url.searchParams;
+      const repo = q.get("repo");
+      if (repo === null || repo === "") return bad("repo is required");
+      if (!REPO_RE.test(repo)) return bad(`repo must match ${REPO_RE}`);
+      const since = q.get("since");
+      if (parseDay(since) === null) return bad("since must be a real YYYY-MM-DD date");
+      return d1Guarded("suite_results", async () => {
+        await ensureTable(env, "suite_results");
+        const { results } = await env.DB.prepare(
+          `SELECT suite,
+             SUM(CASE WHEN status = 'ok' AND first_at >= ?2 THEN runs ELSE 0 END) AS passes,
+             SUM(fails) AS fails
+           FROM suite_results WHERE repo = ?1 AND updated_at >= ?2
+           GROUP BY suite ORDER BY suite`
+        ).bind(repo, since).all();
+        return json(200, { repo, since, suites: results || [] });
       });
     },
   ],

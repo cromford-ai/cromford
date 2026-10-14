@@ -69,8 +69,13 @@ INNER
 # ═══════════════════════════════════════════════════════════════════════════
 # Section A — br_ticket_id in-process against a stubbed board API.
 # ═══════════════════════════════════════════════════════════════════════════
-awk '/^br_rkey\(\) \{/{p=1} p{print} p&&/^\}$/{exit}' "$DIR/bin/blocked-resolver.sh" > "$T/brlib.sh"
-awk '/^br_cap_key\(\) \{/{p=1} p{print} p&&/^\}$/{exit}' "$DIR/bin/blocked-resolver.sh" >> "$T/brlib.sh"
+# BH-5241: the corpus is the driver plus bin/lib/br/*.sh (tests/lib/br-corpus.sh),
+# because the record functions moved out of the driver into bin/lib/br/record.sh.
+# shellcheck source=tests/lib/br-corpus.sh
+. "$DIR/tests/lib/br-corpus.sh" || exit 1
+br_corpus "$DIR" "$T/br-corpus.sh" || exit 1
+awk '/^br_rkey\(\) \{/{p=1} p{print} p&&/^\}$/{exit}' "$T/br-corpus.sh" > "$T/brlib.sh"
+awk '/^br_cap_key\(\) \{/{p=1} p{print} p&&/^\}$/{exit}' "$T/br-corpus.sh" >> "$T/brlib.sh"
 awk '/^br_ticket_id\(\) \{/{p=1} p{print} p&&/^\}$/{exit}' "$DIR/bin/blocked-resolver.sh" >> "$T/brlib.sh"
 grep -q '^br_ticket_id()' "$T/brlib.sh" && ok || bad "A0: could not extract br_ticket_id"
 

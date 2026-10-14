@@ -51,6 +51,11 @@ command -v gh_rest >/dev/null 2>&1 \
 # shellcheck source=bin/lib/slice-remainder.sh
 command -v slice_remainder_settle >/dev/null 2>&1 \
   || { [ -r "$(dirname "${BASH_SOURCE[0]}")/slice-remainder.sh" ] && . "$(dirname "${BASH_SOURCE[0]}")/slice-remainder.sh"; }
+# BH-6308: with no open child, close a parent the merged slices delivered, or
+# file the rest as one child and close it. Guarded the same way.
+# shellcheck source=bin/lib/slice-closeout.sh
+command -v sco_settle >/dev/null 2>&1 \
+  || { [ -r "$(dirname "${BASH_SOURCE[0]}")/slice-closeout.sh" ] && . "$(dirname "${BASH_SOURCE[0]}")/slice-closeout.sh"; }
 
 # _issue_env <harness> <VAR> <default> -> the value
 #   Environment first, then env/global.env, then the default. READS the env file
@@ -335,7 +340,7 @@ issue_strip_ai_build() {
     printf 'strip-noop\n'; return 0
   fi
   ibody=$(printf '%s' "$out" | jq -r '.body // ""' 2>/dev/null)
-  if printf '%s\n' "$ibody" | grep -qE '^Part of #[0-9]+'; then
+  if grep -qE '^Part of #[0-9]+' <<<"$ibody"; then
     printf 'kept-split-child\n'; return 0
   fi
   if [ "$(_issue_switch "$h" CLOSE_STRIP_AI_BUILD close-strip-ai-build-off)" != 1 ]; then
@@ -391,6 +396,21 @@ issue_slice_settle() {
       ISSUE_CLOSE_ERR="children read failed (${kids#ERR:})"
       printf 'close-deferred:children-read\n'; return 1; }
     if [ -z "$kids" ]; then
+      # BH-6308: nothing is left (close) or the rest gets one child (file, then
+      # close). rc 3 (switched off, dry run, parent closed, a local remainder)
+      # runs the path below unchanged.
+      if command -v sco_settle >/dev/null 2>&1; then
+        w=$(sco_settle "$repo" "$n" "$pr" "$g" "$rec" "$h"); src=$?
+        case "$src" in
+          4) [ -n "$rec" ] && touch "$rec/issue-commented" 2>/dev/null
+             printf 'closed-slice:%s\n' "$w"; return 0 ;;
+          0) [ -n "$rec" ] && touch "$rec/issue-commented" 2>/dev/null
+             printf 'kept-slice:%s\n' "$w"; return 0 ;;
+          1) ISSUE_CLOSE_ERR="slice close-out: $w"
+             printf 'close-deferred:slice-closeout\n'; return 1 ;;
+        esac
+        src=3
+      fi
       if [ "$g" = slice:plan ] && command -v slice_remainder_settle >/dev/null 2>&1; then
         w=$(slice_remainder_settle "$repo" "$n" "$pr" "$rec" "$h"); src=$?
         case "$src" in

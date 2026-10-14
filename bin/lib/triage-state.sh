@@ -387,6 +387,67 @@ _ts_owned() {
   return 1
 }
 
+# _ts_human_step <dir> <key> <label> — BH-6536, GitHub boards only. rc 0 sets
+# _TS_HS to `human-step:<state>` when the ticket waits on, or has, a person's
+# HUMAN-STEP-DONE: answer to a human-step REVIEW_BLOCKED build. Both branches
+# need the label's NEWEST record to be that REVIEW_BLOCKED record, not
+# superseded or abandoned by bin/blocked-resolver.sh: any newer record (a
+# rebuild's PLAN_BLOCKED, say) means the flow ended and the decision stands
+# (BH-6536 review B2). Then (a) its ticket_stage row is newer than that record,
+# or (b) a person answered after it (`done-unclaimed`, which also writes the
+# stage row, lane triage). For (b), a local review.md that is not a human-step
+# BLOCK (nh_sd_human_only rc 1) is not this flow; with no readable review.md
+# the reason says only what is known. The gate is local (the cached thread has
+# such a comment); only then one ledger read and one bor_union per tick
+# ($d/bor.tsv). Any read that fails is rc 1: the decision stands.
+_ts_human_step() {
+  local d="$1" key="$2" label="$3" h p raw pf row rc st sat nt="" nr="" nd="" res dir ev who at rd="" hrc=2 why
+  h=$(_ts_h); p="${PROJECT:-}"; raw="$d/$key.raw"; _TS_HS=""
+  case "$key" in ''|*[!0-9]*) return 1 ;; esac
+  pf="${NH_DONE_PREFIX:-HUMAN-STEP-DONE:}"
+  jq -e --arg pf "$pf" '[.doc.comments[]? | (.body // "") | tostring | gsub("\r"; "") | split("\n")
+      | map(sub("^[ \t]+"; "")) | map(select(length > 0)) | (first // "") | startswith($pf)] | any' "$raw" >/dev/null 2>&1 || return 1
+  # shellcheck source=bin/lib/needs-human.sh
+  declare -F nh_sd_done_after >/dev/null 2>&1 || { [ -r "$h/bin/lib/needs-human.sh" ] && . "$h/bin/lib/needs-human.sh" 2>/dev/null; }
+  # shellcheck source=bin/lib/builds-of-record.sh
+  declare -F bor_union >/dev/null 2>&1 || { [ -r "$h/bin/lib/builds-of-record.sh" ] && . "$h/bin/lib/builds-of-record.sh" 2>/dev/null; }
+  declare -F nh_sd_done_after nh_sd_stage_put bor_union job_ledger_row >/dev/null 2>&1 || return 1
+  row=$(job_ledger_row ticket_stage "$p#$key" 2>/dev/null); rc=$?
+  [ "$rc" = 1 ] && return 1
+  [ -e "$d/bor.tsv" ] || { bor_union "$p" 2>/dev/null; echo "#rc=$?"; } > "$d/bor.tsv"
+  grep -qx '#rc=1' "$d/bor.tsv" && return 1
+  # the label's newest record (epoch, result, dir)
+  while IFS=$'\t' read -r at res dir; do
+    [ -n "$at" ] || continue
+    at=$(date -u -d "$at" +%s 2>/dev/null) || continue
+    [ "$at" -gt "${nt:-0}" ] && { nt=$at; nr=$res; nd=$dir; }
+  done < <(awk -F'\t' -v k="$label" '$1==k {print $4 "\t" $5 "\t" $2}' "$d/bor.tsv")
+  case "${nr:-}" in REVIEW_BLOCKED*) ;; *) return 1 ;; esac
+  for dir in "$h/builds/$nd" "$h/builds/pool-$nd" "$h/builds/fly-$nd"; do
+    [ -n "$nd" ] && [ -d "$dir" ] || continue
+    [ -e "$dir/.blocked-resolver-superseded" ] || [ -e "$dir/.blocked-resolver-abandoned" ] && return 1
+    [ -n "$rd" ] || rd=$dir
+  done
+  if [ -n "$row" ]; then
+    st=$(printf '%s' "$row" | jq -r '.detail' 2>/dev/null | awk '{print $1}')
+    sat=$(printf '%s' "$row" | jq -r '.detail' 2>/dev/null | sed -nE 's/^[^ ]+ by [^ ]+ at ([^ ]+): .*/\1/p')
+    if [ -n "$sat" ]; then sat=$(date -u -d "$sat" +%s 2>/dev/null) || sat=0; else sat=0; fi
+    case " $NH_SD_STATES " in *" $st "*) [ "$sat" -gt "$nt" ] && { _TS_HS="human-step:$st"; return 0; } ;; esac
+  fi
+  if [ -n "$rd" ] && [ -r "$rd/review.md" ]; then
+    nh_sd_human_only "$rd/review.md" >/dev/null 2>&1; hrc=$?
+    [ "$hrc" = 1 ] && return 1
+  fi
+  ev=$(nh_sd_done_after "$(jq -c '.doc.comments' "$raw" 2>/dev/null)" "$(_ts_iso "$nt")") || return 1
+  who=$(printf '%s\n' "$ev" | sed -nE 's/^author: (@[^ ]*) at (.*)$/\1/p'); at=$(printf '%s\n' "$ev" | sed -nE 's/^author: @[^ ]* at (.*)$/\1/p')
+  if [ "$hrc" = 0 ]; then why="bin/review-rescue.sh checks build $nd from $(_ts_iso $((nt + 5400)))"
+  else why="this box cannot read the review of build $nd; the rescue lane decides from $(_ts_iso $((nt + 5400)))"; fi
+  AGENT_CALL_LANE=triage nh_sd_stage_put "$p" "$key" "$label" human-step-done \
+    "$who posted HUMAN-STEP-DONE at $at; $why" >/dev/null 2>&1
+  _TS_HS="human-step:done-unclaimed"
+  return 0
+}
+
 # ts_precheck — the deterministic pass. Reads HARNESS/PROJECT (and EW_KEYS,
 # STAMP, LOG from the tick). Writes state/triage-state/<p>/decisions.tsv
 # (key, label, decision, reason, input_hash, seed), one observe row per open
@@ -401,7 +462,7 @@ ts_precheck() {
   TS_MODE=off; TS_READY=0; TS_ROWS_OK=0; TS_LLM=""; TS_SKIPSET=" "; TS_ENQ=""; TS_LLM_KEYS=""; export TS_ROWS_OK
   [ -n "$p" ] && [ -n "$h" ] || return 0
   d=$(_ts_dir "$p")
-  rm -f "$d/decisions.tsv" "$d/prs.json" "$d/pr-decisions.tsv" 2>/dev/null
+  rm -f "$d/decisions.tsv" "$d/prs.json" "$d/pr-decisions.tsv" "$d/bor.tsv" 2>/dev/null
   _ts_knobs "$p"
   TS_MODE=$(ts_mode "$h" "$p")
   [ "$TS_MODE" = off ] && return 0
@@ -597,6 +658,9 @@ ts_precheck() {
   : > "$d/decisions.tsv"
   while IFS=$'\t' read -r -u 3 key label dec reason hash seed base note; do
     [ "$note" = restamp ] && restamped="$restamped $label"
+    # BH-6536: a human-step REVIEW_BLOCKED ticket is never the model's nor a launch.
+    [ "$gh" = 1 ] && [ "$dec" != stamp ] && _ts_human_step "$d" "$key" "$label" \
+      && { dec=skip; reason=$_TS_HS; _ts_log "triage-state: $label skip :: human step: ${_TS_HS#human-step:}"; }
     if [ "$dec" = candidate ]; then
       tat=$(jq -r --arg k "$key" '.[]? | select(.ticket_key==$k) | .triaged_at // empty' "$rowsf" 2>/dev/null | head -1)
       if lh=$(_ts_owned "$key" "$label" "$hash" "$tat" "$gh"); then
@@ -830,7 +894,7 @@ ts_tick() {
   case "${TICK_SCOPE:-}
 ${BOARD_SEC:-}" in *"board gate: REOFFER "*) can_end=0 ;; esac
   if [ "$can_end" = 1 ] && [ -z "$want" ] && [ -z "${QLINES:-}${QDIRS:-}${RDIRS:-}" ] \
-     && ! printf '%s\n%s\n' "${TICK_SCOPE:-}" "${BOARD_SEC:-}" | grep -qE 'UNBLOCKED|STACKABLE|^board prs:'; then
+     && ! grep -qE 'UNBLOCKED|STACKABLE|^board prs:' <<<"$(printf '%s\n%s\n' "${TICK_SCOPE:-}" "${BOARD_SEC:-}")"; then
     # A ts-deferred tick read only owed keys, never the board: its scope is not
     # full, so rt_gate_consume absorbs the fingerprint without stamping the
     # daily sweep's clock (state/<p>.gate-meta).

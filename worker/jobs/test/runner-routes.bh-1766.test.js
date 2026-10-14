@@ -4,6 +4,7 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { DatabaseSync } from 'node:sqlite';
 import worker from '../src/index.js';
+import { jobsSchemaSql } from './lib/jobs-schema.js';
 
 // BH-1766 (BH-1749.4) — the runner per build stage as model_routes rows.
 //   S*: the stage.* seed rows schema.sql ships (claude first, codex fallback,
@@ -15,7 +16,7 @@ import worker from '../src/index.js';
 //       write is audited.
 // Driven through worker.fetch against the SQL that ships, like the #1510 suites.
 const SECRET = 'test-secret';
-const SCHEMA = readFileSync(fileURLToPath(new URL('../schema.sql', import.meta.url)), 'utf8');
+const SCHEMA = jobsSchemaSql();
 const STAGES = ['triage', 'plan', 'preplan', 'execute', 'review', 'fix'];
 
 // Copied from model-routes-ui.bh-1510-3.test.js (not imported: test files stay

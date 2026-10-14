@@ -4,6 +4,7 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { DatabaseSync } from 'node:sqlite';
 import worker from '../src/index.js';
+import { jobsSchemaSql } from './lib/jobs-schema.js';
 
 // BH-5773 — one slow human_verdict_mode read no longer fails a verdict read.
 // The read is retried once; a read that still fails answers with the last good
@@ -14,7 +15,7 @@ import worker from '../src/index.js';
 // ONE env.DB wrapper per fixture so the per-isolate cache can hit.
 const SECRET = 'test-secret';
 const LEAD = 'lead-test-token';
-const SCHEMA = readFileSync(fileURLToPath(new URL('../schema.sql', import.meta.url)), 'utf8');
+const SCHEMA = jobsSchemaSql();
 const PROTECTED_SQL = /FROM settings WHERE key IN \(\?1, \?2\)/;
 const isModeRead = (sql, binds) => PROTECTED_SQL.test(sql) && binds[0] === 'human_verdict_mode';
 const OVERLOADED = 'D1_ERROR: D1 DB is overloaded. Requests queued for too long.';

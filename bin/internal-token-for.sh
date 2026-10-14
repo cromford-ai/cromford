@@ -6,7 +6,7 @@
 #
 # WHY NOT A NAME TABLE. The variable name differs per project and is not
 # derivable from the project name — project-2 calls it PROJECT_2_INTERNAL_API_TOKEN
-# and project-8 calls it IA_INTERNAL_API_TOKEN — and fleet.conf has no
+# and project-8 calls it PROJECT_8_INTERNAL_API_TOKEN — and fleet.conf has no
 # column for it. A per-project map of those names is exactly the hardcoded
 # project list tests/fleet-projects-not-hardcoded-test.sh exists to forbid, and
 # the map that used to live in stale-owed-tickets.sh had drifted: it named

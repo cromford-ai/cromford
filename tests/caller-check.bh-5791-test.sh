@@ -102,7 +102,7 @@ G add z.sh && G commit -qm "K7: three more callers"
 ck "$T/plan-none.md"
 S=$(bash -c '. "$HARNESS/bin/lib/caller-check.sh" || exit 9; cc_section "$1" 2' _ "$T/callers.txt" 2>/dev/null)
 [ "$(printf '%s\n' "$S" | grep -c '^- `greet`')" = 2 ] && ok || bad "K7: a cap of 2 must print 2 greet bullets: $S"
-printf '%s\n' "$S" | grep -qF '… and 3 more in callers.txt on the build box' && ok || bad "K7: the cap must count the rest (5 callers, 2 shown): $S"
+grep -qF '… and 3 more in callers.txt on the build box' <<<"$S" && ok || bad "K7: the cap must count the rest (5 callers, 2 shown): $S"
 S=$(bash -c '. "$HARNESS/bin/lib/caller-check.sh" || exit 9; cc_section "$1" 0' _ "$T/callers.txt" 2>/dev/null)
 [ -z "$S" ] && ok || bad "K7: a cap of 0 must give an empty section: $S"
 G reset -q --hard "$K1_SHA"
@@ -111,7 +111,7 @@ G reset -q --hard "$K1_SHA"
 ck "$T/plan-none.md" 0123456789abcdef0123456789abcdef01234567
 [ "$RC" = 3 ] && ok || bad "K8: an unresolvable base must answer rc 3 (rc=$RC)"
 S=$(bash -c '. "$HARNESS/bin/lib/caller-check.sh" || exit 9; cc_section "$1" 60' _ "$T/callers.txt" 2>/dev/null)
-printf '%s\n' "$S" | grep -q 'The caller check could not run:' && ok || bad "K8: the section must say it could not run: $S"
+grep -q 'The caller check could not run:' <<<"$S" && ok || bad "K8: the section must say it could not run: $S"
 
 # K10: a JS signature change; the plan lists nothing, so the diff finds it
 G checkout -q -B ticket/k10 "$BASE_SHA"
@@ -141,8 +141,8 @@ G branch -q -f fake-main "$BASE_SHA"
 G update-ref refs/remotes/origin/fake-main "$BASE_SHA"
 OUT=$(cd "$R" && env BUILD="$T/build" PROJECT=tproj KEY=BH-5791 BASE=fake-main \
       bash -c 'STAMP() { echo TS; }; RESULT() { echo "$*" > "$0.result"; }; . "$0"; printf "%s" "$CALLERS_SECTION"' "$T/ck-block.sh" 2>"$T/k5.err"); RC=$?
-printf '%s\n' "$OUT" | grep -v '^$' | head -1 | grep -qx '## Interface callers (BH-5791)' && ok || bad "K5: CALLERS_SECTION must start with the heading (rc=$RC): $OUT $(head -3 "$T/k5.err")"
-printf '%s\n' "$OUT" | grep -qF '`greet` y.sh:5 — left alone — no reason in the plan' && ok || bad "K5: the section must list the left-alone caller: $OUT"
+[ "$(awk 'NF { print; exit }' <<<"$OUT")" = '## Interface callers (BH-5791)' ] && ok || bad "K5: CALLERS_SECTION must start with the heading (rc=$RC): $OUT $(head -3 "$T/k5.err")"
+grep -qF '`greet` y.sh:5 — left alone — no reason in the plan' <<<"$OUT" && ok || bad "K5: the section must list the left-alone caller: $OUT"
 [ "$(grep -c 'caller check: ' "$T/build/pipeline.log" 2>/dev/null)" = 1 ] && ok || bad "K5: exactly one caller check log line: $(cat "$T/build/pipeline.log" 2>/dev/null)"
 [ ! -e "$T/ck-block.sh.result" ] && ok || bad "K5: the block must never call RESULT"
 [ -s "$T/build/callers.txt" ] && ok || bad "K5: the block must write callers.txt"

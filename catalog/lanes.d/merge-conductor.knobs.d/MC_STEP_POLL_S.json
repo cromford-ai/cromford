@@ -1,0 +1,11 @@
+{
+  "env": "MC_STEP_POLL_S",
+  "type": "int",
+  "default": 5,
+  "min": 1,
+  "max": 60,
+  "unit": "seconds",
+  "zero_means": null,
+  "note": "How often the worker watchdog reads the step trail for MC_STEP_TIMEOUT_S and MC_STEP_SLOW_S (BH-6351). A step timeout lands within this many seconds. Settings row: lane.merge-conductor.mc_step_poll_s.",
+  "read_in": "bin/lib/fanin.sh"
+}

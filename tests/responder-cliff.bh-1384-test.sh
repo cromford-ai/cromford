@@ -641,7 +641,7 @@ else
   WAS=$(printf '%s\n' "$PDIFF" | grep '^-' | grep -vE '^---' | grep -oE "$MRE" | sort -u)
   NEWLIT=""
   for m in $(printf '%s\n' "$ADDED" | grep -oE "$MRE" | sort -u); do
-    printf '%s\n' "$WAS" | grep -qxF "$m" || NEWLIT="$NEWLIT $m"
+    grep -qxF "$m" <<<"$WAS" || NEWLIT="$NEWLIT $m"
   done
   [ -z "$NEWLIT" ] \
     && ok || bad "A9: the product diff adds a hardcoded model literal:$NEWLIT"

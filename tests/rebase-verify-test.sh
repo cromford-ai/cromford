@@ -263,6 +263,7 @@ if ! command -v jq >/dev/null; then
 else
 mkdir -p "$T/bin/lib" "$T/logs" "$T/flags" "$T/locks" "$T/env" "$T/tmp"
 cp "$DIR/bin/merge-sweep.sh" "$T/bin/sweep.sh"
+mkdir -p "$T/bin/lib" && cp -rL "$DIR/bin/lib/ms" "$T/bin/lib/" || exit 1   # BH-5242: the sweep loads bin/lib/ms/
 cp "$DIR/bin/jobs-client.sh" "$DIR/bin/fleet-conf.sh" "$T/bin/"
 mkdir -p "$T/bin/lib/jobs" && cp "$DIR"/bin/lib/jobs/*.sh "$T/bin/lib/jobs/"
 cp "$DIR/bin/lib/gh-pr-list.sh" "$DIR/bin/lib/merge-conductor-lib.sh" "$DIR/bin/lib/gh-rest.sh" "$DIR/bin/lib/gh-rest-var.sh" "$T/bin/lib/"

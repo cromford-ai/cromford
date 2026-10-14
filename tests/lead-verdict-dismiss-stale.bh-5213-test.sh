@@ -8,10 +8,11 @@
 #   D1  MERGE on H dismisses the lane's own CHANGES_REQUESTED on G != H, and the
 #       message names the old head, the new head and the verdict row
 #   D2  a person's CHANGES_REQUESTED is never dismissed (even one quoting the
-#       marker), nor a bot review without the marker, nor the lane's own AT H
+#       marker), nor a bot review without the marker; the lane's own AT H is
+#       (BH-6548: a lead MERGE on H supersedes it)
 #   D3  BLOCK on H dismisses nothing and reads no reviews
-#   D4  a second MERGE on H makes no GitHub review call at all; with the flag
-#       gone it finds nothing and dismisses nothing
+#   D4  a second lead MERGE on H reads the reviews again (BH-6548: mode verdict
+#       keeps no clean flag) and finds nothing left to dismiss
 #   D5  a refused dismissal never changes post's exit, says so, and the next
 #       MERGE post retries it; LV_DISMISS_STALE=0 reads nothing
 #   D6  the sweep dismisses exactly the eligible fixtures; --dry-run writes nothing
@@ -126,21 +127,25 @@ reset; fixtures 7
 lv post "$SLUG" 7 "$HD" MERGE --source lead --reviewer box:hub
 [ "$RC" = 0 ] && ok || bad "D1 post rc=$RC: $(cat "$T/out" "$T/err")"
 [ "$(state 7 1)" = DISMISSED ] && ok || bad "D1 the lane's own BLOCK review on G was not dismissed: $(cat "$T/log/gh")"
-[ "$(puts)" = 1 ] && ok || bad "D1/D2 want exactly one dismissal, got $(puts): $(grep '^PUT' "$T/log/gh")"
+# TEST-CHANGE BH-6548: a lead MERGE on HD now also dismisses review 4 (own BLOCK AT HD)
+[ "$(puts)" = 2 ] && ok || bad "D1/D2 want exactly two dismissals, got $(puts): $(grep '^PUT' "$T/log/gh")"
 MSG=$(sed -n 's/^1 //p' "$T/log/dismissed-7" 2>/dev/null)
 case "$MSG" in *"${G:0:12}"*) ok ;; *) bad "D1 the message does not name the old head ${G:0:12}: $MSG" ;; esac
 case "$MSG" in *"${HD:0:12}"*) ok ;; *) bad "D1 the message does not name the new head ${HD:0:12}: $MSG" ;; esac
 case "$MSG" in *"#42"*) ok ;; *) bad "D1 the message does not name the verdict row #42: $MSG" ;; esac
 case "$MSG" in *MERGE*) ok ;; *) bad "D1 the message does not name the verdict: $MSG" ;; esac
-grep -q 'dismissed 1 stale lead BLOCK review' "$T/err" && ok || bad "D1 the dismissal is not reported: $(cat "$T/err")"
+# TEST-CHANGE BH-6548: two dismissals (reviews 1 and 4)
+grep -q 'dismissed 2 stale lead BLOCK review' "$T/err" && ok || bad "D1 the dismissal is not reported: $(cat "$T/err")"
 [ "$(state 7 2)" = CHANGES_REQUESTED ] && ok || bad "D2 a person's review was dismissed"
 [ "$(state 7 3)" = CHANGES_REQUESTED ] && ok || bad "D2 a bot review with no lead marker was dismissed"
-[ "$(state 7 4)" = CHANGES_REQUESTED ] && ok || bad "D2 the lane's own review AT the merged head was dismissed"
+# TEST-CHANGE BH-6548: the lane's own BLOCK AT the merged head is now dismissed
+[ "$(state 7 4)" = DISMISSED ] && ok || bad "D2 a lead MERGE on HD did not dismiss the lane's own review AT HD (BH-6548)"
 [ "$(state 7 5)" = COMMENTED ] && ok || bad "D2 a COMMENT review was touched"
 # MERGE-WITH-NOTES does the same
 reset; fixtures 7
 lv post "$SLUG" 7 "$HD" MERGE-WITH-NOTES --source lead --reviewer box:hub
-[ "$RC" = 0 ] && [ "$(state 7 1)" = DISMISSED ] && [ "$(puts)" = 1 ] && ok || bad "D1 MERGE-WITH-NOTES rc=$RC puts=$(puts)"
+# TEST-CHANGE BH-6548: two dismissals (reviews 1 and 4)
+[ "$RC" = 0 ] && [ "$(state 7 1)" = DISMISSED ] && [ "$(puts)" = 2 ] && ok || bad "D1 MERGE-WITH-NOTES rc=$RC puts=$(puts)"
 # a human-run MERGE on a PR with ONLY a person's review dismisses nothing
 reset; jq -sc . > "$T/gh/reviews-7.json" <<EOF
 $(rv 2 "$PERSON" "$G" CHANGES_REQUESTED "$MARK please rename this")
@@ -155,13 +160,14 @@ lv post "$SLUG" 7 "$HD" BLOCK --source lead --reviewer box:hub
 [ "$(puts)" = 0 ] && [ "$(revgets)" = 0 ] && ok || bad "D3 a BLOCK dismissed ($(puts)) or read reviews ($(revgets))"
 [ "$(state 7 1)" = CHANGES_REQUESTED ] && ok || bad "D3 the BLOCK review is gone"
 
-# ── D4: a second MERGE on the same head makes no review call at all ──
+# ── D4: a second MERGE on the same head reads again and dismisses nothing ──
 reset; fixtures 7
 lv post "$SLUG" 7 "$HD" MERGE --source lead --reviewer box:hub
 : > "$T/log/gh"
 lv post "$SLUG" 7 "$HD" MERGE --source lead --reviewer box:hub
 [ "$RC" = 0 ] && ok || bad "D4 second post rc=$RC"
-[ "$(puts)" = 0 ] && [ "$(revgets)" = 0 ] && ok || bad "D4 the second MERGE made calls: $(cat "$T/log/gh")"
+# TEST-CHANGE BH-6548: mode verdict keeps no clean flag, so the second lead MERGE reads
+[ "$(puts)" = 0 ] && [ "$(revgets)" -ge 1 ] && ok || bad "D4 the second MERGE dismissed or did not read: $(cat "$T/log/gh")"
 # ...and with the clean flag gone it reads, finds nothing left, dismisses nothing
 scratch_rm "$H/state/lead-stale-review"; : > "$T/log/gh"
 lv post "$SLUG" 7 "$HD" MERGE --source lead --reviewer box:hub

@@ -61,7 +61,7 @@ for F in fly-pool-alpha builder-fly-alpha fly-pool-app-alpha; do
 done
 [ -f "$S/flags/fly-pool-beta" ] && [ -f "$S/flags/builder-fly-beta" ] \
   && ok || bad "beta must end up routed on its own"
-printf '%s\n' "$OUT" | grep -q '^FLY_ONBOARD beta OK:' \
+grep -q '^FLY_ONBOARD beta OK:' <<<"$OUT" \
   && ok || bad "beta's verdict must be about beta: $OUT"
 
 echo "fly-onboard-isolation: $PASS pass, $FAIL fail"

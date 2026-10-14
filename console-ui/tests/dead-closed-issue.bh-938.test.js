@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { render } from 'preact-render-to-string';
 import { h } from 'preact';
 import {
-  onRequest, archiveDead, excludeClosedIssues, _resetClosedCache, _resetHeldCache
+  onRequest, archiveDead, excludeClosedIssues, _resetClosedCache, _resetHeldCache, _resetStageCache
 } from '../functions/api/dash/kanban/pipeline.js';
 import { filterPipeline, pipelineRows } from '../src/lib/kanban.js';
 import { PipelineBoard, PipelineList } from '../src/screens/Kanban.js';
@@ -114,7 +114,8 @@ function withFetch(route, fn) {
   };
   _resetClosedCache();
   _resetHeldCache();
-  return Promise.resolve(fn(calls)).finally(() => { globalThis.fetch = real; _resetClosedCache(); _resetHeldCache(); });
+  _resetStageCache();
+  return Promise.resolve(fn(calls)).finally(() => { globalThis.fetch = real; _resetClosedCache(); _resetHeldCache(); _resetStageCache(); });
 }
 
 const jsonRes = (body, status = 200) =>
@@ -181,8 +182,9 @@ const baseline = async () => {
   // Every DEAD card carries age_min, which archiveDead reads before any clock,
   // so a fixed anchor gives the same answer as the function's own real clock.
   const b = archiveDead(payload(DEAD), { now: Date.parse('2026-09-24T12:00:00Z'), includeArchived: false });
-  // The hold read fails the same way, so it marks nothing and says so too.
-  return JSON.parse(JSON.stringify({ ...b, dead_closed_known: false, held_known: false }));
+  // The hold read fails the same way, so it marks nothing and says so too,
+  // and so does the ticket_stage read (BH-6536).
+  return JSON.parse(JSON.stringify({ ...b, dead_closed_known: false, held_known: false, stage_known: false }));
 };
 
 test('5. fail open: no env makes exactly one fetch and hides nothing', () =>

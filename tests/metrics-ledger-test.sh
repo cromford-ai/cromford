@@ -29,6 +29,9 @@
 # Run from anywhere: tests/metrics-ledger-test.sh   (exit 0 = all pass)
 set -uo pipefail
 . "$(dirname "$0")/lib/scratch.sh" || exit 1
+# TEST-CHANGE BH-6052: the day stamp below is read by the code and again here; never straddle 00:00Z.
+. "$(dirname "$0")/lib/day-boundary.sh" || exit 1
+clear_boundary 86400 30 || exit 1
 # BH-3223: scratch.sh blanks JOBS_URL; this suite's fake curl answers a worker URL.
 export JOBS_URL=https://jobs.invalid
 DIR=$(cd "$(dirname "$0")/.." && pwd)

@@ -238,8 +238,10 @@ reset "$HD" "$HD" MERGE; tick
 [ "$(postn)" = 0 ] && ok || bad "R4 a changed patch was replayed: $(cat "$T/log/post")"
 [ "$(reqs)" = 1 ] && ok || bad "R4 want one request, got $(reqs)"
 B=$(reqbody)
+# TEST-CHANGE (BH-6391): a re-review now also carries the lead-prev: group after the
+# lead-delta: note; the old prefix is matched exactly, then the new group's head.
 case "$(jq -r .scope_notes <<<"$B" 2>/dev/null)" in
-  "auto: builder APPROVE on ${HD:0:12}; lead-delta:$G lines:12/40 files:1") ok ;;
+  "auto: builder APPROVE on ${HD:0:12}; lead-delta:$G lines:12/40 files:1; lead-prev:$G word:MERGE "*) ok ;;
   *) bad "R4 scope_notes: $B" ;;
 esac
 [ "$(jq -r .prior_verdict_ref <<<"$B" 2>/dev/null)" = "lead MERGE on $G12 (verdict row #5)" ] && ok || bad "R4 prior_verdict_ref: $B"

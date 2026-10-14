@@ -1,0 +1,34 @@
+{
+  "id": "main-red-recheck",
+  "name": "Main-red flagged recheck",
+  "scope": "hub",
+  "script": "bin/main-red-recheck.sh",
+  "cadence": "*/5 * * * *",
+  "boxes": [
+    "hub"
+  ],
+  "switch": {
+    "kind": "flag",
+    "name": "lane-off-main-red-recheck",
+    "aliases": []
+  },
+  "wired": true,
+  "knobs": [
+    {
+      "env": "MAIN_RED_RECHECK_MIN",
+      "type": "int",
+      "default": 5,
+      "min": 0,
+      "max": 60,
+      "unit": "minutes",
+      "zero_means": "off",
+      "note": "BH-6502: minutes between rechecks of the repos with a main-red freeze up. The cron line is */5, so a value under 5 runs every tick. 0 = off; the hourly pass in the merge conductor still runs."
+    }
+  ],
+  "stats": {
+    "cost_stage": null,
+    "cost_project_filter": null,
+    "lanes_row": false,
+    "log": "logs/main-red.log"
+  }
+}

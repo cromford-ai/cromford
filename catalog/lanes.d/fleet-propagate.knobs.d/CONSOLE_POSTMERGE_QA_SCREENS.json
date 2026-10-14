@@ -1,0 +1,9 @@
+{
+  "env": "CONSOLE_POSTMERGE_QA_SCREENS",
+  "type": "string",
+  "default": "/ /now /kanban /jobs /t/BH-5909 /machines /lead-reviews",
+  "zero_means": null,
+  "read_in": "bin/console-postmerge-qa.sh",
+  "note": "BH-5909 slice 3: the console paths the post-merge QA run loads, space-separated, never globbed. /machines is the fleet screen; /t/<key> is the sample ticket detail. Read as ${CONSOLE_POSTMERGE_QA_SCREENS:-}, then this settings row, then the default.",
+  "settable": true
+}

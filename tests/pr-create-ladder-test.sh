@@ -30,6 +30,7 @@ set -uo pipefail
 . "$(dirname "$0")/lib/scratch.sh" 2>/dev/null || { T=$(mktemp -d) && trap 'rm -rf "$T"' EXIT; }
 DIR=$(cd "$(dirname "$0")/.." && pwd)
 . "$DIR/tests/lib/rb-all.sh" || exit 1
+. "$DIR/tests/lib/hold-gate-fixture.sh" || exit 1  # BH-6091: the pr-open HOLD gate for a pipeline slice
 RB_ALL=$(rb_all "$DIR" "$T/run-build.all.sh")
 # One clock read for the whole file (bin/test-determinism-lint.sh); nothing below
 # depends on its value — it only keeps the fixture directory names unique.
@@ -435,6 +436,7 @@ entry_point() { # entry_point <branch> -> runs run-build.sh's own blocks; BUILDD
   marked '# >>> result pr url ratchet' '# <<< result pr url ratchet' "$RB_ALL" >  "$BLK"
   marked '# >>> pr create call'        '# <<< pr create call'        "$RB_ALL" >> "$BLK"
   [ -s "$BLK" ] || return 1
+  hold_gate_prepend "$RB_ALL" "$BLK"   # BH-6091: the real gate, a no-HOLD ticket read
   BUILDDIR="$CASE/b"; mkdir -p "$BUILDDIR"
   ( cd "$BUILDDIR" \
     && git init -q . \

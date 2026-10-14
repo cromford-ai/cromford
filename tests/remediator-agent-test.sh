@@ -17,6 +17,9 @@
 # Run from anywhere: tests/remediator-agent-test.sh   (exit 0 = all pass)
 set -uo pipefail
 . "$(dirname "$0")/lib/scratch.sh" || exit 1
+# TEST-CHANGE BH-6052: the day stamp below is read by the code and again here; never straddle 00:00Z.
+. "$(dirname "$0")/lib/day-boundary.sh" || exit 1
+clear_boundary 86400 30 || exit 1
 DIR=$(cd "$(dirname "$0")/.." && pwd)
 mkdir -p "$T/bin/remediations" "$T/prompts" "$T/logs" "$T/state" "$T/flags" "$T/env" "$T/fakebin"
 . "$DIR/tests/lib/model-route-stub.sh" || exit 1; model_routes_fixture "$T" project-3 x-os || exit 1  # BH-1510.2: lanes read models from model_routes

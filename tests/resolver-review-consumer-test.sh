@@ -225,8 +225,13 @@ export GH_TOKEN=""
 # br_shape and br_num ride along because br_fix_cap reads the RECORD for every
 # reason but this one (BH-579's shape + contested bonus), exactly as
 # tests/blocked-resolver-test.sh extracts them.
+# BH-5241: the corpus is the driver plus bin/lib/br/*.sh (tests/lib/br-corpus.sh),
+# because the ladder functions moved out of the driver into bin/lib/br/ladder.sh.
+# shellcheck source=tests/lib/br-corpus.sh
+. "$DIR/tests/lib/br-corpus.sh" || exit 1
+br_corpus "$H" "$T/br-corpus.sh" || exit 1
 for fn in br_action br_reason_of br_ladder_class br_ladder_rung br_fix_cap br_shape br_num; do
-  awk -v f="^$fn\\(\\)" '$0 ~ f {p=1} p{print} p&&/^}$/{exit}' "$H/bin/blocked-resolver.sh" >> "$T/cls.sh"
+  awk -v f="^$fn\\(\\)" '$0 ~ f {p=1} p{print} p&&/^}$/{exit}' "$T/br-corpus.sh" >> "$T/cls.sh"
 done
 export CLS="$T/cls.sh"
 CL() { bash -c '. "$CLS"; "$@"' _ "$@"; }

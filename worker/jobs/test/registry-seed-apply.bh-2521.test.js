@@ -4,6 +4,7 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import worker from '../src/index.js';
 import { SEED_REGISTRY_SQL, REGISTRY_SEED_ACTOR } from '../src/lib/core.js';
+import { jobsSchemaSql } from './lib/jobs-schema.js';
 
 // BH-2521.2 (BH-2676): the worker side of "plan preview, then apply, with
 // actor". A console apply must pass the same fleet gate the CLI enforces, must
@@ -16,7 +17,7 @@ import { SEED_REGISTRY_SQL, REGISTRY_SEED_ACTOR } from '../src/lib/core.js';
 // ORDER of executed writes, and it can be told to throw on one statement.
 
 const SECRET = 'test-secret';
-const SCHEMA = readFileSync(fileURLToPath(new URL('../schema.sql', import.meta.url)), 'utf8');
+const SCHEMA = jobsSchemaSql();
 let DatabaseSync = null;
 try { ({ DatabaseSync } = await import('node:sqlite')); } catch { DatabaseSync = null; }
 // Dynamic, so a missing module reads as failing cases, not a file that will not load.

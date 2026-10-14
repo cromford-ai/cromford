@@ -35,7 +35,7 @@ printf 'CLOUDFLARE_API_TOKEN=%s\n' "$CF_TOKEN" > "$H/env/cloudflare.env"
 cat > "$H/bin/beat.sh" <<EOF
 #!/bin/bash
 printf '%s\n' "\$1" >> "$T/beats.txt"
-if [ -f "$T/beat-fail" ] && printf '%s' "\$1" | grep -q '"kind":"build"'; then exit 1; fi
+if [ -f "$T/beat-fail" ] && grep -q '"kind":"build"' <<<"\$1"; then exit 1; fi
 exit 0
 EOF
 chmod +x "$H/bin/beat.sh"

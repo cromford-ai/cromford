@@ -16,6 +16,7 @@
 # No network, nothing written outside $T.
 set -uo pipefail
 . "$(dirname "$0")/lib/scratch.sh" || exit 1
+. "$(dirname "$0")/lib/jobs-schema.sh" && jobs_schema_render || exit 1
 DIR=$(cd "$(dirname "$0")/.." && pwd)
 PASS=0; FAIL=0
 ok()  { PASS=$((PASS+1)); }
@@ -249,7 +250,13 @@ J="$DIR/catalog/lanes.d/fly-pool.json"
 jq -e '.knobs[] | select(.env=="POOL_TEST_POSTGRES_SETUP")' "$J" >/dev/null && bad "P9: POOL_TEST_POSTGRES_SETUP is replaced by POOL_TEST_SETUP_CMD" || ok
 # Turning it on for a project is a settings change after merge, never a seed.
 ls "$DIR"/worker/jobs/schema.d/*bh-5962* >/dev/null 2>&1 && bad "P9: no schema.d seed: project-6-os is turned on by a settings row after merge" || ok
-grep -q 'pool_test_postgres' "$DIR/worker/jobs/schema.sql" && bad "P9: worker/jobs/schema.sql must carry no pool_test_postgres seed" || ok
+# A missing schema.sql is a failure, never a pass: grep exits 2 on it, and
+# `grep -q … && bad || ok` read that as ok (lead review lr-6093).
+if [ -r "$DIR/worker/jobs/schema.sql" ]; then
+  grep -q 'pool_test_postgres' "$DIR/worker/jobs/schema.sql" && bad "P9: worker/jobs/schema.sql must carry no pool_test_postgres seed" || ok
+else
+  bad "P9: worker/jobs/schema.sql is missing, so the no-seed check checked nothing"
+fi
 
 # P8 — the image block bakes the pin.
 PIN="$DIR/bin/lib/pgtest-pin.sh"

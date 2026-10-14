@@ -184,7 +184,7 @@ gate "$W" -- bash tests/midline.sh; host
 case "$JOUT" in *BLIND*) bad "2b the BLIND rule fired on a mid-line phrase: $JOUT" ;; *) ok ;; esac
 
 # ── 3. the host line names the REAL head, and labels the synthetic commit ────
-hostline() { printf '%s\n' "$JOUT" | grep -m1 'host git context'; }
+hostline() { grep -m1 'host git context' <<<"$JOUT"; }
 gate --full "$W" tests/probe.sh; host
 HL=$(hostline)
 case "$HL" in *"HEAD $REAL"*) ok ;; *) bad "3a the host line did not name the client's HEAD ($REAL): $HL" ;; esac

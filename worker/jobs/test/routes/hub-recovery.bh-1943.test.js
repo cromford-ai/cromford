@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import worker from '../../src/index.js';
 import { openDb } from '../lib/d1-sqlite.bh-1030.js';
 import { SECRET, iso } from '../lib/harness.js';
+import { jobsSchemaSql } from '../lib/jobs-schema.js';
 
 // BH-1943 (BH-1909.1): GET /api/hub/recovery and POST /api/hub/promote, the two
 // routes #1942 left as 501 stubs.
@@ -573,7 +574,7 @@ test('G9: re-applying schema.sql keeps one hub.promote_enabled row and an operat
   const h = await open(t); if (!h) return;
   setPromote(h, '1');
   const { readFileSync } = await import('node:fs');
-  h.db.exec(readFileSync(new URL('../../schema.sql', import.meta.url), 'utf8'));
+  h.db.exec(jobsSchemaSql());
   const rows = settingRows(h);
   assert.equal(rows.length, 1);
   assert.equal(rows[0].value, '1');

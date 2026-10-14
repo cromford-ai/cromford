@@ -224,3 +224,29 @@ rt_pause_builds() {
 BUILDS PAUSED (BH-1672): a live builds pause covers $PROJECT ($why). Triage this tick as usual, but launch NO run-build.sh this tick, including relaunches and STACK_BASE launches. Leave every queue line where it is and treat free build slots as 0. The next tick re-checks the pause and re-offers the queue."
 }
 # <<< pauses
+
+# >>> dispatch mode (BH-6350)
+# rt_dispatch_mode — called right after rt_pause_builds, before SHARD_SOP is
+# taken from PROMPT_TEXT. In dispatch mode hotfix-only (bin/lib/dispatch-mode.sh)
+# triage still runs, because the results sweep and close-outs must, but the
+# prompt is told to launch run-build.sh only for a hotfix-labelled or
+# allow-listed ticket. bin/lib/rb/gates.sh `# >>> dispatch mode gate` enforces
+# the same rule at the launch, so this directive saves the agent's turns and is
+# not the guard. Also runs the age alert (dm_age_alert), which resolves itself
+# on any other mode. One log line per tick in hotfix-only; nothing otherwise.
+rt_dispatch_mode() {
+  [ -r "$HARNESS/bin/lib/dispatch-mode.sh" ] && . "$HARNESS/bin/lib/dispatch-mode.sh" 2>/dev/null
+  command -v dm_read >/dev/null 2>&1 || return 0
+  dm_read "$PROJECT"
+  [ "$DM_UNREADABLE" = 1 ] && echo "$STAMP [$PROJECT] dispatch mode unreadable, reading normal" >> "$LOG"
+  dm_age_alert "$PROJECT"
+  [ "$DM_MODE" = hotfix-only ] || return 0
+  local lbl=hotfix allow
+  command -v hotfix_label >/dev/null 2>&1 && lbl=$(hotfix_label "$HARNESS")
+  allow=$(dm_allow_text)
+  echo "$STAMP [$PROJECT] DISPATCH-MODE hotfix-only (allow-list: $allow) — triage runs; only hotfix or allow-listed tickets may launch" >> "$LOG"
+  PROMPT_TEXT="$PROMPT_TEXT
+
+DISPATCH MODE hotfix-only (BH-6350): $PROJECT builds only tickets with the \`$lbl\` label or issue numbers $allow. Launch run-build.sh for no other ticket this tick. Leave every other ticket as it is: keep its ai-build label, post no comment, write no queue line. Results sweep, close-outs and open-PR work run as usual."
+}
+# <<< dispatch mode

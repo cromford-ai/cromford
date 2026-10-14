@@ -219,7 +219,12 @@ grep -q 'PATCH .*pulls/2 -f base=main' "$T/events.txt" && ok || bad "B: the reta
 grep -q '^PUSH' "$T/events.txt" && bad "B: a conflicted replay must never be pushed" || ok
 [ "$(origin_rev ticket/bh-2)" = "$CHEAD" ] && ok || bad "B: origin's child head must be untouched"
 [ -e "$PEND" ] && bad "B: the pending follow must be cleared once the resolver owns the child" || ok
-BRFN=$(sed -n '/^br_reason_of() {/,/^}/p' "$DIR/bin/blocked-resolver.sh")
+# BH-5241: the corpus is the driver plus bin/lib/br/*.sh (tests/lib/br-corpus.sh),
+# because the ladder functions moved out of the driver into bin/lib/br/ladder.sh.
+# shellcheck source=tests/lib/br-corpus.sh
+. "$DIR/tests/lib/br-corpus.sh" || exit 1
+br_corpus "$DIR" "$T/br-corpus.sh" || exit 1
+BRFN=$(sed -n '/^br_reason_of() {/,/^}/p' "$T/br-corpus.sh")
 [ -n "$BRFN" ] && eval "$BRFN" && [ "$(br_reason_of "$R")" = conflict-unresolvable ] \
   && ok || bad "B: bin/blocked-resolver.sh must read this reason as conflict-unresolvable"
 

@@ -25,8 +25,14 @@
 # bin/lib/mc-prequeue.d/ that defines pq_resolve <slug> <num> <url> <head>
 # <main> <path>; on a miss or a pending entry the gate asks it. Without one, a
 # miss proceeds, which is the conductor's behaviour before this gate existed.
+#
+# THE KNOBS (lane merge-conductor; defaults in PQ_KNOB_DEFAULTS below):
+# MC_PREQUEUE_FRESH_COMMITS (BH-6335) is how many commits behind the current
+# main a reused non-red verdict's main may be (mc-prequeue.d/dispatch.sh).
+# MC_PREQUEUE_TRACE (BH-6335) 1 asks the gate to run its suites under the trace
+# (mc-prequeue.d/learned.sh).
 
-PQ_KNOB_DEFAULTS="MC_PREQUEUE_GATE=1 MC_PREQUEUE_FRESH_S=1800 MC_PREQUEUE_DEADLINE_S=2400 MC_PREQUEUE_REUSE=1 MC_BATCH_SOLO=1 MC_BATCH_SOLO_MAX_MEMBERS=13"
+PQ_KNOB_DEFAULTS="MC_PREQUEUE_GATE=1 MC_PREQUEUE_FRESH_S=1800 MC_PREQUEUE_DEADLINE_S=2400 MC_PREQUEUE_REUSE=1 MC_BATCH_SOLO=1 MC_BATCH_SOLO_MAX_MEMBERS=13 MC_PREQUEUE_FRESH_COMMITS=3 MC_PREQUEUE_TRACE=1"
 
 # pq_knob <NAME> — a merge-conductor lane knob for this project, a non-negative
 #   integer, else its default from PQ_KNOB_DEFAULTS (the _bej_knob pattern).

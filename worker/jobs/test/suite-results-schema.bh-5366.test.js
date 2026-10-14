@@ -1,16 +1,15 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
-import { fileURLToPath } from 'node:url';
 import { ensureTable, CREATED_TABLES } from '../src/index.js';
 import { LANES_REGISTRY } from '../src/lib/core.js';
 import { REUSE_DEFAULTS } from '../src/lib/suite-results.js';
 import { lookupSql, priorSql } from '../src/routes/suite-results.js';
+import { jobsSchemaSql } from './lib/jobs-schema.js';
 
 // BH-5354.0 (BH-5366): the suite ledger's two tables, their worker self-create
 // mirror, and the knob defaults the worker falls back to, pinned to the registry.
 
-const SCHEMA = readFileSync(fileURLToPath(new URL('../schema.sql', import.meta.url)), 'utf8');
+const SCHEMA = jobsSchemaSql();
 const TABLES = ['suite_results', 'suite_reuse_runs'];
 
 async function sqlite(t) {

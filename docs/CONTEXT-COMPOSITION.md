@@ -6,6 +6,12 @@ This document is the contract. `catalog/context-budgets.json` is the manifest th
 makes it enforceable, and `tests/context-budget-manifest-test.sh` is what stops a
 lane shipping without a row in it.
 
+The manifest is composed, not committed (BH-6487). Its sources are in
+`catalog/context-budgets.d/`: `_head.json` and `_tail.json` hold the top-level
+keys, and each `NNNN-<lane>.json` is a JSON array of lane objects. A new lane is
+a new file, NNNN = its ticket number. `bin/context-budgets-build.sh` composes
+them into `catalog/context-budgets.json`, and `--check` names a bad fragment.
+
 It argues from measurements taken on 2026-08-24, not from taste. Where a rule cites
 a number, that number came off the hub.
 
@@ -17,13 +23,13 @@ One day of measurement across the fleet, in the order it was found:
 
 | finding | measurement |
 |---|---|
-| Orchestrator sessions grew without bound | one session: 5,070 api calls, 27MB on disk, 2,436 tool results totalling 4.3MB, individual results 171–216KB, peak `cache_read` **999,307 tokens** — about $N/day |
+| Orchestrator sessions grew without bound | one session: 5,070 api calls, 27MB on disk, 2,436 tool results totalling 4.3MB, individual results 171–216KB, peak `cache_read` **999,307 tokens** — about $666/day |
 | The composed briefing was never the problem | first `cache_write` per turn: **21,912 tokens**. STATE.md + CLAUDE.md files + rendered history ≈ 66KB. Fine. |
 | Turn count was never the problem | 53 turns in a day. Real conversations. A wake-gate would have saved nothing. |
 | grok project-triage ran hot | 267 calls, **482K mean** input, p95 1.7M, max 3.7M, 62% over xAI's 200K cliff |
 | …but its assembled prompt is tiny | largest SOP 17,219 bytes; queue `head -40`; dirs `head -20`. **Under ~25K tokens all in** — 25–150x too small to explain the mean |
 | A healthy lane exists, and it is not special | **alerts-medic: 30K mean**, comparable judgement, 6% of the context |
-| The account overage nobody could see | **$N** in one weekly window, reported by the rollup as **$4.33** |
+| The account overage nobody could see | **$18,863** in one weekly window, reported by the rollup as **$4.33** |
 
 Two conclusions follow, and every rule below is one of them applied:
 
@@ -57,7 +63,7 @@ Two numbers per lane in `catalog/context-budgets.json`:
 
 **No row means review-blocking.** Not because the number will be right first time —
 several were guesses on 2026-08-24 and will move — but because an undeclared lane
-cannot be over budget. That is exactly how the $N accumulated: not a wrong
+cannot be over budget. That is exactly how the $18,863 accumulated: not a wrong
 number, an unwatched one.
 
 Ceilings are chosen against real economics, not roundness. Board lanes sit under
@@ -131,7 +137,7 @@ These catch regressions. They are not how a lane gets to its target:
 
 **A flag whose absence costs money is backwards.** Fresh-context turns used to
 require a flag to be *present*, with "rm the flag to fall back" written next to it —
-so $N/day was one deleted file away, and an absent flag on a rebuilt box silently
+so $666/day was one deleted file away, and an absent flag on a rebuilt box silently
 restored it. The safe path has to be what you get when nobody remembers anything.
 
 **Ship the unverified thing with the instrument that will convict it.** Neither
@@ -199,7 +205,7 @@ is visible.
 
 **One owner per project, and two owners is worse than either.** Measured
 2026-08-24: project-1 was triaged by the hub *and* by `10.0.0.1`
-simultaneously, ~$N/7d against ~$N/7d. The duplicated spend was the smaller
+simultaneously, ~$328/7d against ~$185/7d. The duplicated spend was the smaller
 half. Two agents on one board is a **race** — both fetch the same changed
 tickets, both decide, both comment, both move — and because neither knows the
 other exists, **nothing errors**. The symptom reaches the client before it

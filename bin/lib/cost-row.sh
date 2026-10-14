@@ -212,7 +212,7 @@ cost_row_auth_account() {
   if [ -n "$lbl" ]; then
     COST_ROW_AUTH_ACCOUNT="$lbl"; COST_ROW_ACCT_FROM=label; return 0
   fi
-  if printf '%s' "$name" | grep -qE '^[a-z0-9][a-z0-9._-]{0,39}$'; then
+  if grep -qE '^[a-z0-9][a-z0-9._-]{0,39}$' <<<"$name"; then
     root=$(_cost_row_root)
     if [ -n "${ACCOUNTS_DIR:-}" ]; then dir="$ACCOUNTS_DIR"
     elif [ -n "$root" ] && command -v harness_env_dir >/dev/null 2>&1; then dir="$(harness_env_dir "$root")/accounts.d"

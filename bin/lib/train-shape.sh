@@ -30,7 +30,7 @@
 _TRAIN_SHAPE_LOADED=1
 
 train_is_train() { # train_is_train <title> <head-ref>
-  printf '%s' "${1:-}" | grep -qiE '^[[:space:]]*(merge train|batch\()' && return 0
+  grep -qiE '^[[:space:]]*(merge train|batch\()' <<<"${1:-}" && return 0
   case "${2:-}" in
     train/*|batch/*) return 0 ;;
   esac

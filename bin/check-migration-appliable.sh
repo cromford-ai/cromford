@@ -71,7 +71,7 @@ classify_stream() {
   while IFS= read -r ST; do
     [ -n "$ST" ] || continue
     U=$(echo "$ST" | tr '[:lower:]' '[:upper:]')
-    SNIP=$(echo "$ST" | head -c 110)
+    SNIP=$(head -c 110 <<<"$ST")
     # .ts-only arms first (BH-4924). A .sql line, or a .ts line none of them
     # decides, falls through to the shared block, so .sql reports are
     # byte-identical to before.
@@ -102,7 +102,7 @@ classify_stream() {
         echo "$F: FLAGGED (CREATE FUNCTION/TRIGGER/EXTENSION — outside the appliable allowlist): $SNIP" ;;
       "DROP "*|"TRUNCATE "*|"DELETE "*) echo "$F: FLAGGED (destructive statement — never auto-merged): $SNIP" ;;
       "GRANT "*)
-        if echo "$U" | grep -qE 'TO +(ANON|AUTHENTICATED)\b'; then
+        if grep -qE 'TO +(ANON|AUTHENTICATED)\b' <<<"$U"; then
           echo "$F: FLAGGED (GRANT to anon/authenticated — breaks the deny-by-default RLS posture): $SNIP"
         else
           echo "$F: FLAGGED (GRANT — outside the appliable allowlist): $SNIP"

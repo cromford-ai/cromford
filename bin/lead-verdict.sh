@@ -80,6 +80,8 @@
 # LV_CLIENT_LEVEL, and the worker refuses (426, "git pull") a row from a client
 # below the lead_verdict_min_client settings row (0 = off, the seed). An old
 # checkout publishes no lead-verdict status, and only the worker can refuse it.
+# At row 4 a checkout older than BH-6548 is refused, so it cannot leave a bot
+# BLOCK standing on the head a person just merged.
 #
 # THE AUTHORITY RULE (BH-3683). The hub's lead-review lane is the verdict
 # authority: its --source lead MERGE publishes lead-verdict with no Mac
@@ -174,9 +176,10 @@ LEAD_VERDICT_TOKEN_FILE="${LEAD_VERDICT_TOKEN_FILE:-$HOME/.config/cromford/lead-
 HUMAN_VERDICT_TOKEN_FILE="${HUMAN_VERDICT_TOKEN_FILE:-$HOME/.config/cromford/human-verdict-token}"
 # What this script can do, sent on every lead|human post (x-lead-verdict-client):
 # 1 = the BH-1525 row only; 2 = + the BH-3348 head check and lead-verdict status,
-# and bash-3.2 safe libs (BH-3565); 3 = + the BH-3683 authority check. Raise it
-# with the next capability the worker must be able to insist on.
-LV_CLIENT_LEVEL=3
+# and bash-3.2 safe libs (BH-3565); 3 = + the BH-3683 authority check; 4 = + a
+# lead|human MERGE dismisses the bot BLOCK on the same head (BH-6548, BH-6617).
+# Raise it with the next capability the worker must be able to insist on.
+LV_CLIENT_LEVEL=4
 
 # lv_post_lead <json-body> <source> — POST /api/verdicts with the bearer AND the
 #   lead token (and, for source human, the human token when its file is
@@ -263,29 +266,53 @@ lv_lane_comment() {
   return 0
 }
 
-# lv_dismiss_stale <repo> <pr> <sha> <verdict> <row-ref> — BH-5213: once a
-#   MERGE / MERGE-WITH-NOTES has published success on <sha>, the lead lane's OWN
-#   standing CHANGES_REQUESTED reviews on older heads are dismissed
+# lv_dismiss_stale <repo> <pr> <sha> <verdict> <row-ref> <source> — BH-5213:
+#   once a MERGE / MERGE-WITH-NOTES has published success on <sha>, the lead
+#   lane's OWN standing CHANGES_REQUESTED reviews are dismissed
 #   (bin/lib/lead-stale-review.sh; a person's review is never touched), so
-#   Mergify's #changes-requested-reviews-by=0 lets the PR queue. Best effort:
-#   the row and the status already stand, so a failure is one stderr line and
-#   never changes the exit; bin/pipeline-health.sh names what is left
-#   (stale-review). A head whose pass completed clean is flagged under
-#   state/lead-stale-review/, and a second MERGE on it makes no GitHub call.
+#   Mergify's #changes-requested-reviews-by=0 lets the PR queue.
+#   BH-6548: for source lead or human this includes a review AT <sha> (mode
+#   verdict): the post is itself a verdict on that code, and only a post that
+#   published reaches here. A risk-tier sign-off did not read the code, so it
+#   dismisses older-head reviews only (mode merge).
+#   Best effort: the row and the status already stand, so a failure is one
+#   stderr line and never changes the exit; bin/pipeline-health.sh names what
+#   is left (stale-review). In mode merge a head whose pass completed clean is
+#   flagged under state/lead-stale-review/, and a second MERGE on it makes no
+#   GitHub call. Mode verdict never uses the flag: a re-review can post a new
+#   BLOCK on the same head after a clean pass, and the flag is per box, so a
+#   flag would make the next MERGE skip that BLOCK. A lib whose LSR_MODES has
+#   no verdict (an old checkout) gets the older-head pass and one stderr line.
 #   LV_DISMISS_STALE=0 skips it (bin/lead-review-land.sh runs its own step 2d,
 #   with retries, on the same head).
 lv_dismiss_stale() {
-  local root flag out
+  local root flag out mode=merge rc=0
   [ "${LV_DISMISS_STALE:-1}" = 0 ] && return 0
-  command -v lsr_dismiss_stale >/dev/null 2>&1 || . "$SELF_DIR/lib/lead-stale-review.sh" 2>/dev/null || return 0
-  command -v lsr_dismiss_stale >/dev/null 2>&1 || return 0
+  case "${6:-}" in lead|human) mode=verdict ;; esac
+  command -v lsr_dismiss_stale >/dev/null 2>&1 || . "$SELF_DIR/lib/lead-stale-review.sh" 2>/dev/null
+  if ! command -v lsr_dismiss_stale >/dev/null 2>&1; then
+    echo "lead-verdict: bin/lib/lead-stale-review.sh did not load; lead BLOCK reviews on $1#$2 not dismissed - re-run this post" >&2
+    return 0
+  fi
   root="${HARNESS:-}"
   flag="$root/state/lead-stale-review/clean-$(printf '%s' "$1" | tr 'A-Z/' 'a-z_')-$2-$3"
-  [ -n "$root" ] && [ -e "$flag" ] && return 0
-  out=$(mktemp "${TMPDIR:-/tmp}/lead-verdict-d.XXXXXX") || return 0
-  if lsr_dismiss_stale "$1" "$2" "$3" "$4" "$5" > "$out"; then
+  [ "$mode" = merge ] && [ -n "$root" ] && [ -e "$flag" ] && return 0
+  if ! out=$(mktemp "${TMPDIR:-/tmp}/lead-verdict-d.XXXXXX"); then
+    echo "lead-verdict: no temp file; lead BLOCK reviews on $1#$2 not dismissed - re-run this post" >&2
+    return 0
+  fi
+  if [ "$mode" = verdict ]; then
+    case " ${LSR_MODES:-} " in
+      *" verdict "*) lsr_dismiss_stale "$1" "$2" "$3" "$4" "$5" "" verdict "" > "$out" || rc=$? ;;
+      *) echo "lead-verdict: $SELF_DIR/lib/lead-stale-review.sh predates BH-6548, so a lead BLOCK review on the same head ${3:0:12} of $1#$2 was not checked; git pull this checkout and re-run this post" >&2
+         lsr_dismiss_stale "$1" "$2" "$3" "$4" "$5" > "$out" || rc=$? ;;
+    esac
+  else lsr_dismiss_stale "$1" "$2" "$3" "$4" "$5" > "$out" || rc=$?; fi
+  if [ "$rc" = 0 ]; then
     [ "$LSR_DISMISSED" = 0 ] || echo "lead-verdict: dismissed $LSR_DISMISSED stale lead BLOCK review(s) on $1#$2 superseded by $4 on ${3:0:12}: $(tr '\n' ' ' < "$out")" >&2
-    [ -n "$root" ] && mkdir -p "${flag%/*}" 2>/dev/null && : > "$flag" 2>/dev/null
+    [ "$mode" = merge ] && [ -n "$root" ] && mkdir -p "${flag%/*}" 2>/dev/null && : > "$flag" 2>/dev/null
+  elif [ "$mode" = verdict ]; then
+    echo "lead-verdict: stale lead BLOCK reviews on $1#$2 not all dismissed ($LSR_FAILED failed or unreadable, HTTP ${GH_REST_STATUS:-000}): $(tr '\n' ' ' < "$out")- re-run this post to retry (bin/lead-stale-review-sweep.sh retries older-head reviews only)" >&2
   else
     echo "lead-verdict: stale lead BLOCK reviews on $1#$2 not all dismissed ($LSR_FAILED failed or unreadable, HTTP ${GH_REST_STATUS:-000}): $(tr '\n' ' ' < "$out")- the next MERGE post or bin/lead-stale-review-sweep.sh retries" >&2
   fi
@@ -373,7 +400,7 @@ lv_post() {
   desc=$(vs_lead_desc "$(printf '%s' "$resp" | jq -c '.verdict' 2>/dev/null)" "$desc")
   if vs_publish "$repo" "$sha" "$state" "$desc" "$url"; then
     [ -z "$lane_hit" ] || lv_lane_comment "$repo" "$pr" "$sha" "$lane_hit"
-    [ "$verdict" = BLOCK ] || lv_dismiss_stale "$repo" "$pr" "$sha" "$verdict" "#$(printf '%s' "$resp" | jq -r '.verdict.id // "?"')"
+    [ "$verdict" = BLOCK ] || lv_dismiss_stale "$repo" "$pr" "$sha" "$verdict" "#$(printf '%s' "$resp" | jq -r '.verdict.id // "?"')" "$source"
     return 0
   fi
   echo "lead-verdict: row recorded, $(vs_context) status NOT published on ${sha:0:12}; Mergify will not queue this head until it is (re-run this post, or publish it by hand)" >&2

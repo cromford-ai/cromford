@@ -26,6 +26,7 @@
 # Run from anywhere: tests/ticket-ownership.bh-1526-test.sh   (exit 0 = pass)
 set -uo pipefail
 . "$(dirname "$0")/lib/scratch.sh" || exit 1
+. "$(dirname "$0")/lib/jobs-schema.sh" && jobs_schema_render || exit 1
 # BH-3223: scratch.sh blanks JOBS_URL; this suite's fake curl answers a worker URL.
 export JOBS_URL=https://jobs.invalid
 # TEST-CHANGE (BH-1585): the open-PR list is REST now (a page plus per-PR reads);
@@ -654,6 +655,7 @@ ST="$T/sw"; mkdir -p "$ST"
 fx_mc_harness "$DIR" "$ST" || bad "I0: the sweep fixture did not build"
 [ -f "$DIR/bin/merge-sweep.sh" ] || exit 1   # impact: this suite drives the whole sweep
 cp "$DIR/bin/merge-sweep.sh" "$DIR/bin/fleet-conf.sh" "$DIR/bin/jobs-client.sh" "$ST/h/bin/"
+mkdir -p "$ST/h/bin/lib" && cp -rL "$DIR/bin/lib/ms" "$ST/h/bin/lib/" || exit 1   # BH-5242: the sweep loads bin/lib/ms/
 mkdir -p "$ST/h/bin/lib/jobs"; cp "$DIR"/bin/lib/jobs/*.sh "$ST/h/bin/lib/jobs/"
 cp "$DIR/bin/lib/ticket-ownership.sh" "$DIR/bin/lib/hold.sh" "$ST/h/bin/lib/"
 for s in beat.sh deploy-request.sh codegraph-ensure.sh lane-alert.sh; do printf '#!/bin/bash\nexit 0\n' > "$ST/h/bin/$s"; chmod +x "$ST/h/bin/$s"; done

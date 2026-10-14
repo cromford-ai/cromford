@@ -53,24 +53,24 @@ cd "$T/fixture" || exit 1
 
 # Full/warning mode must see the cross-file SC2128 on the sourcer.
 FULL_WARN=$("$REAL" --severity=warning --format=gcc sourcer.sh lib.sh 2>&1 || true)
-if printf '%s' "$FULL_WARN" | grep -q "^sourcer.sh:.*SC2128"; then ok
+if grep -q "^sourcer.sh:.*SC2128" <<<"$FULL_WARN"; then ok
 else bad "full warning mode should report SC2128 on the sourcer, got:\n$FULL_WARN"; fi
 
 # The lib gets SC2034 (array appears unused) in full mode; we record it so the
 # test does not fire on an unrelated warning later.
-if printf '%s' "$FULL_WARN" | grep -q "^lib.sh:.*SC2034"; then ok
+if grep -q "^lib.sh:.*SC2034" <<<"$FULL_WARN"; then ok
 else bad "full warning mode should report SC2034 on the lib, got:\n$FULL_WARN"; fi
 
 # Per-file/warning mode on the sourcer drops SC2128 (it becomes SC2154 because
 # the variable is referenced but not assigned). The exact drop is what we care
 # about, not the replacement code.
 ONE_WARN=$("$REAL" --severity=warning --format=gcc sourcer.sh 2>&1 || true)
-if printf '%s' "$ONE_WARN" | grep -q "^sourcer.sh:.*SC2128"; then
+if grep -q "^sourcer.sh:.*SC2128" <<<"$ONE_WARN"; then
   bad "per-file warning mode still reports SC2128 — the cross-file finding is no longer dropped:\n$ONE_WARN"
 else ok; fi
 
 # The per-file warning must not be empty or report an unrelated code.
-if printf '%s' "$ONE_WARN" | grep -qE "SC2154|SC2034"; then ok
+if grep -qE "SC2154|SC2034" <<<"$ONE_WARN"; then ok
 else bad "per-file warning mode produced unexpected output:\n$ONE_WARN"; fi
 
 # Error severity (the flags bin/ci-shellcheck.sh actually uses) must show no

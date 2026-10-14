@@ -53,9 +53,9 @@ first=$(ranked | sed -n 1p); second=$(ranked | sed -n 2p)
 case "$first" in *" 5 "*merge-conductor.sh*"GET repos/F/R/pulls/N") ok ;; *) bad "1: rank 1 should be merge-conductor pulls/N x5, got [$first]" ;; esac
 case "$second" in *" 3 "*stuck-work.sh*"GET repos/F/R/issues/N/comments") ok ;; *) bad "1: rank 2 should be stuck-work comments x3, got [$second]" ;; esac
 [ "$(ranked | wc -l)" = 2 ] && ok || bad "1: expected 2 ranked rows, got $(ranked | wc -l)"
-printf '%s\n' "$OUT" | grep -q '^TOTAL  calls=8  counted=8  uncounted=0  per_hour=8$' && ok || bad "1: TOTAL line wrong: $OUT"
-printf '%s\n' "$OUT" | grep -q '^gh-ledger-report: .* window 2026-10-04T18:30:00Z..2026-10-04T19:30:00Z (1h) — 1 hour file(s)$' \
-  && ok || bad "1: header wrong: $(printf '%s\n' "$OUT" | head -1)"
+grep -q '^TOTAL  calls=8  counted=8  uncounted=0  per_hour=8$' <<<"$OUT" && ok || bad "1: TOTAL line wrong: $OUT"
+grep -q '^gh-ledger-report: .* window 2026-10-04T18:30:00Z..2026-10-04T19:30:00Z (1h) — 1 hour file(s)$' <<<"$OUT" \
+  && ok || bad "1: header wrong: $(head -1 <<<"$OUT")"
 
 # ---- 2. id collapse: raw ids fold into N, a 40-hex sha into SHA -------------
 D2="$T/l2"; mkdir -p "$D2"
@@ -84,7 +84,7 @@ run --last 1h --dir "$D3"
 # ---- 4. --top 2 prints 2 rows; TOTAL still sums everything ------------------
 run --last 1h --top 2 --dir "$D3"
 [ "$(ranked | wc -l)" = 2 ] && ok || bad "4: --top 2 printed $(ranked | wc -l) rows"
-printf '%s\n' "$OUT" | grep -q '^TOTAL  calls=10 ' && ok || bad "4: TOTAL should still be 10: $OUT"
+grep -q '^TOTAL  calls=10 ' <<<"$OUT" && ok || bad "4: TOTAL should still be 10: $OUT"
 run --last 1h --top 0 --dir "$D3"
 [ "$(ranked | wc -l)" = 4 ] && ok || bad "4: --top 0 should print all 4, got $(ranked | wc -l)"
 
@@ -96,7 +96,7 @@ row "$D5" 2026-10-04T19:15:00Z this-hour.sh GET repos/F/R/pulls 200 1
 run --last 1h --dir "$D5"
 grep -q 'old.sh' <<<"$OUT" && bad "5: a 61-min-old row is in --last 1h" || ok
 ranked | grep -q 'prev-hour.sh' && ranked | grep -q 'this-hour.sh' && ok || bad "5: --last 1h did not read both hour files: $OUT"
-printf '%s\n' "$OUT" | grep -q '— 2 hour file(s)$' && ok || bad "5: header should name 2 files: $(printf '%s\n' "$OUT" | head -1)"
+grep -q '— 2 hour file(s)$' <<<"$OUT" && ok || bad "5: header should name 2 files: $(head -1 <<<"$OUT")"
 run --last 2h --dir "$D5"
 ranked | grep -q 'old.sh' && ok || bad "5: --last 2h dropped the 61-min-old row: $OUT"
 run --last 20m --dir "$D5"
@@ -109,7 +109,7 @@ row "$D6" 2026-10-04T19:11:00Z etag.sh GET repos/F/R/pulls 304 0
 row "$D6" 2026-10-04T19:12:00Z etag.sh GET repos/F/R/pulls 000 0
 run --last 1h --dir "$D6"
 ranked | awk '{print $2,$3,$4}' | grep -qx '4 2 2' && ok || bad "6: calls/counted/uncounted should be 4 2 2: $OUT"
-printf '%s\n' "$OUT" | grep -q '^TOTAL  calls=4  counted=2  uncounted=2 ' && ok || bad "6: TOTAL counted wrong: $OUT"
+grep -q '^TOTAL  calls=4  counted=2  uncounted=2 ' <<<"$OUT" && ok || bad "6: TOTAL counted wrong: $OUT"
 
 # ---- 7. no API call ---------------------------------------------------------
 [ ! -s "$T/gh-calls.txt" ] && ok || bad "7: the report called gh: $(cat "$T/gh-calls.txt")"
@@ -118,7 +118,7 @@ printf '%s\n' "$OUT" | grep -q '^TOTAL  calls=4  counted=2  uncounted=2 ' && ok 
 run --last 1h --dir "$T/nope"
 [ "$RC" = 2 ] && ok || bad "8: missing dir should be rc 2, got $RC"
 grep -q 'calls=0' <<<"$OUT" && bad "8: missing dir printed a zero TOTAL" || ok
-printf '%s\n' "$OUT" | grep -q "$T/nope" && ok || bad "8: missing dir message should name it: $OUT"
+grep -q "$T/nope" <<<"$OUT" && ok || bad "8: missing dir message should name it: $OUT"
 for a in abc 0h -1 5d 1.5h ''; do
   run --last "$a" --dir "$D1"
   [ "$RC" = 2 ] && ok || bad "8: --last '$a' should be rc 2, got $RC"
@@ -134,10 +134,10 @@ GH_LEDGER_REPORT_NOW=yesterday run --dir "$D1"
 D8="$T/l8"; mkdir -p "$D8"
 run --last 1h --dir "$D8"
 [ "$RC" = 0 ] && ok || bad "8: empty window should be rc 0, got $RC"
-printf '%s\n' "$OUT" | grep -qx 'no ledger rows in window' && ok || bad "8: empty window line missing: $OUT"
+grep -qx 'no ledger rows in window' <<<"$OUT" && ok || bad "8: empty window line missing: $OUT"
 grep -q '^TOTAL' <<<"$OUT" && bad "8: empty window printed a TOTAL" || ok
 run -h
-[ "$RC" = 0 ] && printf '%s\n' "$OUT" | grep -q -- '--last' && ok || bad "8: -h should print usage rc 0"
+[ "$RC" = 0 ] && grep -q -- '--last' <<<"$OUT" && ok || bad "8: -h should print usage rc 0"
 
 # ---- 9. a torn row is skipped -----------------------------------------------
 D9="$T/l9"; mkdir -p "$D9"
@@ -145,12 +145,12 @@ row "$D9" 2026-10-04T19:10:00Z whole.sh GET repos/F/R/pulls 200 1
 printf '2026-10-04T19:11:00Z\ttorn.sh\tcromford\tGET\trepos/F/R/pulls\n' >> "$D9/2026-10-04T19.tsv"
 run --last 1h --dir "$D9"
 grep -q torn.sh <<<"$OUT" && bad "9: a 5-column row was counted: $OUT" || ok
-printf '%s\n' "$OUT" | grep -q '^TOTAL  calls=1 ' && ok || bad "9: TOTAL should be 1: $OUT"
+grep -q '^TOTAL  calls=1 ' <<<"$OUT" && ok || bad "9: TOTAL should be 1: $OUT"
 
 # ---- 10. the default dir is $HARNESS/state/gh-rest-ledger -------------------
 mkdir -p "$T/h/state"; cp -R "$D1" "$T/h/state/gh-rest-ledger"
 OUT=$(HARNESS="$T/h" "$REPORT" --last 1h 2>&1); RC=$?
-[ "$RC" = 0 ] && printf '%s\n' "$OUT" | grep -q '^TOTAL  calls=8 ' && ok || bad "10: default dir not read: rc $RC $OUT"
+[ "$RC" = 0 ] && grep -q '^TOTAL  calls=8 ' <<<"$OUT" && ok || bad "10: default dir not read: rc $RC $OUT"
 
 [ ! -s "$T/gh-calls.txt" ] && ok || bad "end: the report called gh: $(cat "$T/gh-calls.txt")"
 echo "gh-ledger-report.bh-4477: $PASS passed, $FAIL failed"

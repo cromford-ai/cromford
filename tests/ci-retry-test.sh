@@ -143,7 +143,7 @@ case "$LAST2" in
   "semgrep --version|bin/ci-tool-present.sh semgrep "[0-9]*"|") ok ;;
   *) bad "W2: the step must END unguarded on 'semgrep --version' then 'bin/ci-tool-present.sh semgrep <pin>' (got: $LAST2)" ;;
 esac
-printf '%s\n' "$STEP" | head -1 | grep -qx 'set -euo pipefail' \
+head -1 <<<"$STEP" | grep -qx 'set -euo pipefail' \
   && ok || bad "W2: the step must start with 'set -euo pipefail' so a failed install stops it"
 
 echo "ci-retry: $PASS passed, $FAIL failed"

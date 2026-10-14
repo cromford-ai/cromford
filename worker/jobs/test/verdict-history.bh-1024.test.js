@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import worker, { computeDora } from '../src/index.js';
+import { jobsSchemaSql } from './lib/jobs-schema.js';
 
 // BH-1024 — A SECOND REVIEW ROUND MUST NOT ERASE THE FIRST, AND A VERDICT
 // review-prs WRITES MUST BE REACHABLE THROUGH /api/verdict.
@@ -20,7 +21,7 @@ import worker, { computeDora } from '../src/index.js';
 // `t.skip` when node:sqlite is missing, the settings-schema.test.js rule: a
 // silent pass here would hide exactly the check that makes the file appliable.
 
-const SCHEMA = readFileSync(fileURLToPath(new URL('../schema.sql', import.meta.url)), 'utf8');
+const SCHEMA = jobsSchemaSql();
 const SECRET = 'test-secret';
 const PR = 'https://github.com/example-org/demo-os/pull/12';
 const SHA1 = 'aaaaaaa1111aaaaaaa1111aaaaaaa1111aaaaaaa1';

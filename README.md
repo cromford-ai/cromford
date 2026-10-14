@@ -1,139 +1,170 @@
-<p align="center">
-  <a href="https://cromford.dev"><img src="docs/assets/cromford-banner.svg" alt="Cromford: the software factory" width="100%"></a>
-</p>
-
-<p align="center">
-  <a href="https://cromford.dev/quickstart/"><strong>Quickstart</strong></a> ·
-  <a href="https://cromford.dev">Docs</a> ·
-  <a href="https://github.com/cromford-ai/cromford/discussions">Discussions</a> ·
-  <a href="CONTRIBUTING.md">Contributing</a> ·
-  <a href="LICENSE">Apache 2.0</a>
-</p>
-
 # Cromford
 
-**The software factory.** Every other coding agent stops when the pull request opens. Ours starts there.
+Cromford is the open-source software factory ([cromford.dev](https://cromford.dev)). It takes tickets off a product board,
+decides which are actually ready to build, plans them, builds them on a remote
+machine, reviews the result adversarially, opens a PR, QAs the preview, merges,
+confirms the deploy rolled, and then checks in production that the thing it
+merged is really there.
 
-File a ticket on your board. Cromford plans it, builds it, reviews it, merges it, checks the deploy and tests it in production. Then it comments on your ticket with what shipped, direct links, and what it cost.
+It runs unattended. The design problem it exists to solve is not "can a model
+write code" — it is what has to be true around the model so that a loop nobody
+is watching does not open the wrong PR, spend money twice, or tell a customer
+something shipped when it did not.
 
-It runs on your own accounts: your GitHub, your Cloudflare, your machines and your model keys. Nothing is hosted for you unless you want it to be.
+## The pipeline
 
-<p align="center"><img src="docs/assets/the-line.svg" alt="The line: one ticket moving through eight stations" width="100%"></p>
+One ticket moves through fixed stages. Each has its own runner, its own model,
+its own budget, and its own idea of what "done" means.
 
-## Where other agents stop
+| Stage | Script | What it does | Refuses when |
+|---|---|---|---|
+| **triage** | `bin/run-triage.sh` | Reads the whole ticket thread and decides RUN or SKIP | The last word is a question to the customer that nobody answered |
+| **plan** | `bin/run-build.sh` | Writes the change down first, ending in named acceptance tests | It cannot name a test that would fail today |
+| **build** | `bin/run-build.sh` | Implements against the plan, on a watcher box or a Fly machine | Tests were weakened rather than made to pass |
+| **review** | `bin/run-build.sh`, `bin/review-prs.sh` | An adversarial pass over the diff, never the author's own session | The verify script does not prove the behaviour it claims |
+| **preview QA** | `bin/e2e-smoke.sh` | Loads the PR's own preview deployment and clicks | The route 404s or the preview never built |
+| **merge** | `bin/merge-conductor.sh` (owner; observe-only until its flags), `bin/merge-queue.sh`, `bin/merge-sweep.sh` | Every harness PR sits in one named state with an age budget; queued per project so two builds never race the same base | CI is not green, the base moved, the head moved after the approval, or the tier is wrong |
+| **deploy-verify** | `bin/deploy-train.sh` | Confirms a production deployment actually followed the merge | No deployment appeared within the window |
+| **post-merge QA** | `bin/postmerge-qa.sh` | Drives the real production surface | The shipped behaviour is not there |
 
-A coding agent that opens a pull request has done the easy part. Someone still has to review it, merge it, ship it, check it in production and tell the person who asked. That is most of the job.
+Stages talk through files and a database, not through one long conversation. A
+stage that dies is restartable because its inputs are on disk.
 
-| | A typical coding agent | Cromford |
-|---|---|---|
-| Reads the ticket thread and asks when something is unclear | | ✓ |
-| Writes acceptance tests before the code | | ✓ |
-| Writes the code and opens a PR | ✓ | ✓ |
-| Has a separate reviewer that can block the merge | | ✓ |
-| Merges through a queue, holds risky changes for a person | | ✓ |
-| Confirms production is running the merged commit | | ✓ |
-| Signs in as a user and checks the new behavior | | ✓ |
-| Reports back on the ticket with links and the cost | | ✓ |
+**Merge tiers.** A build lands in tier 1 or tier 2. Tier 1 is eligible for
+automatic merge once review approves and CI is green. Tier 2 waits for a human.
+`flags/automerge-disabled` forces every build to tier 2 —
+`bin/run-build.sh:1592`.
 
-## Quickstart
+## What holds it together
 
-You need a GitHub account, a Cloudflare account, a Fly account or a VM, and a model key.
+**Deterministic before LLM.** Anything a script can decide, a script decides.
+The gate that says "this ticket has an unanswered question on it" is a status
+field and a comparison, not a judgement call — so it costs nothing, never
+drifts, and is testable (`bin/triage-gate.sh`; on GitHub-Issues projects its
+fingerprint also carries the open harness PRs, so a merge or a check flip
+wakes the tick). The model is asked only the questions that genuinely need
+reading comprehension.
+
+**Configuration is data.** Which model a stage uses, what a lane may spend,
+which projects are enrolled, what may run concurrently: rows and registry files,
+not constants. `fleet.conf` is the project registry and no script keeps its own
+copy — `tests/fleet-projects-not-hardcoded-test.sh` fails if one tries.
+
+**A fleet of boxes, plus an optional pool.** Each project's watcher runs on a
+box; `fleet.conf` column 6 says which. One box is the hub and runs the
+cross-project lanes. Builds can optionally be pushed to an ephemeral Fly machine
+per build instead of running on the watcher — opt-in, and nothing breaks if you
+never enable it (`bin/fly-pool.sh`).
+
+**Multi-vendor lanes.** Every stage names a runner. When the primary is missing,
+unauthenticated, or fails, `bin/agent-call.sh` walks a fixed ladder —
+claude → grok → codex-configured openrouter → fireworks — alerting as it
+degrades, and refusing to walk it at all when the failure was a budget stop or a
+kill. The order is pinned by `tests/agent-call-provider-order-test.sh`.
+
+**Every call is priced.** `bin/agent-call.sh` appends a 16-column row to
+`logs/cost.csv` for each call. `bin/cost-rows-push.sh` ships rows to D1 every 10
+minutes; `bin/cost-rollup.sh` builds the per-PR view nightly. A model with no
+price in `catalog/model-prices.json` raises a daily alert rather than quietly
+costing $0.
+
+**It learns from its own PRs.** Review findings are mined for repeats
+(`bin/rule-miner.sh`), and a family of repeats becomes a guardrail under
+`guardrails/` — a rule that fails next time in CI instead of being found again
+by a reviewer. Nothing in that lane merges or loosens a gate; it only tightens.
+
+## Run it on your own accounts
+
+<!-- selfhost:begin -->
+You can run Cromford on your own Cloudflare, GitHub, Fly (or VM) and model
+accounts. Fork it, copy the settings template, fill it in, and check it:
 
 ```bash
-# 1. Fork, clone and configure
-gh repo fork cromford-ai/cromford --clone
-cd cromford && cp env-templates/selfhost.conf.example selfhost.conf
-
-# 2. See every resource your install needs, before anything is created
+gh repo fork <upstream-owner>/<repo> --clone
+cp env-templates/selfhost.conf.example selfhost.conf
 bin/selfhost-install.sh --config selfhost.conf --dry-run
-
-# 3. Add a repo and file a ticket
-bin/load-project.sh acme/invoices --project invoices --box <your-hub>
-gh issue create -R acme/invoices --label ai-build --title "Export the invoices list as CSV"
 ```
 
-Triage picks up the issue, and your first pull request follows. Cromford only ever acts on issues labeled `ai-build`.
+The dry-run prints every resource, env line, spend cap and secret name, and
+creates nothing. The installer's `--apply` step is not built yet, so resources
+are still built by hand. [docs/SELF-HOST.md](docs/SELF-HOST.md) walks through
+every setting, the caps, upgrades and the common failures.
+<!-- selfhost:end -->
 
-The full guide, including creating the resources from your dry-run plan, is at **[cromford.dev/quickstart](https://cromford.dev/quickstart/)**.
+## Read next
 
-## What's in the box
+| If you want to | Read |
+|---|---|
+| Run it on your own accounts, from a fork | [docs/SELF-HOST.md](docs/SELF-HOST.md) |
+| Stand up your own fleet, or join one | [docs/OPERATOR-SETUP.md](docs/OPERATOR-SETUP.md) |
+| Recover a wiped box (Orgo snapshot + R2 state backup) | [docs/RESTORE.md](docs/RESTORE.md) |
+| Make your app drivable by the harness | [docs/BOARD-API-CONTRACT.md](docs/BOARD-API-CONTRACT.md) |
+| Contribute a change | [CONTRIBUTING.md](CONTRIBUTING.md) |
+| Understand what a build actually does, step by step | [docs/RUN-BUILD-GRAPH.md](docs/RUN-BUILD-GRAPH.md) |
+| Understand the database and who writes what | [docs/DB-COORDINATION-SPEC.md](docs/DB-COORDINATION-SPEC.md) |
+| Understand how context is composed and budgeted | [docs/CONTEXT-COMPOSITION.md](docs/CONTEXT-COMPOSITION.md) |
+| Make a lane advance on a GitHub event instead of its cron tick | [docs/EVENTS.md](docs/EVENTS.md) |
+| Know which LLM account pays for what | [docs/ACCOUNT-ROUTING.md](docs/ACCOUNT-ROUTING.md) |
+| Read what went wrong before, and what the rule is now | [docs/LESSONS.md](docs/LESSONS.md) |
+| Run a factory day to day: what went wrong, the defaults, the knobs | [docs/OPERATING.md](docs/OPERATING.md) |
+| Understand how this repository relates to Cromford | [docs/ABOUT.md](docs/ABOUT.md) |
+| See the dated notes this README used to be | [docs/CHANGELOG-NOTES.md](docs/CHANGELOG-NOTES.md) |
 
-- **A bill on every change.** Every model call is priced and rolled up to the pull request it served.
-- **Hard spending caps.** A ceiling per call and per lane per day, on by default. The line stops at the cap and tells you.
-- **Review that can say no.** A separate session reads the diff against the ticket. Approval is tied to the exact commit it read.
-- **A merge queue with judgment.** Routine changes merge on their own. Schema, auth, billing and very large diffs wait for a person.
-- **Checked in production.** After the deploy, Cromford signs in like a user and confirms the change is really there.
-- **Mistakes become checks.** Review findings that keep coming back turn into rules that fail in CI.
-- **Archie, the operator.** Watches the goals you set and messages you only when something needs you.
-- **Mission Control.** A web console for the whole fleet: what's building, what needs you, and what it all cost.
+Repeated procedures are repo-managed skills, one `SKILL.md` per competency under
+[skills/](skills/), deployed to every box by `bin/sync-skills.sh`. A session
+loads a tested procedure on demand instead of carrying it in every prompt.
 
-## Any model
+## Verification contract
 
-Use Claude, Codex, Grok, OpenRouter or Fireworks. Every stage of the line has its own model route, stored as data: pick a primary for each stage and line up the others as fallbacks. Put your strongest model on review and a cheaper one on triage, then change your mind without a deploy.
+**Run the suite:**
 
-## Talk to it from your AI tool
-
-Cromford ships an MCP server, so you can run the factory from Claude Code, Claude Desktop, Cursor, VS Code, Windsurf or any other tool that speaks the Model Context Protocol. Ask "what is the fleet doing?", "why is this PR stuck?" or "hand this plan to the factory", and your assistant answers from your own Mission Control.
-
-```json
-{
-  "mcpServers": {
-    "cromford": {
-      "command": "node",
-      "args": ["/path/to/cromford/mcp/server.mjs"],
-      "env": { "HARNESS_CONSOLE_URL": "https://<your-console>.workers.dev" }
-    }
-  }
-}
+```
+for t in tests/*.sh tests/mc/*.sh; do bash "$t"; done
 ```
 
-- **Read tools:** fleet and project status, builds, pipeline, PRs, alerts, costs, machines, logs, and a chat line to the orchestrator.
-- **Action tools:** file a ticket, comment, hold, run triage, pause or resume a board, fetch build artifacts.
-- **Guarded actions:** merging a PR and turning automerge on need an explicit `confirm: true`, and only reach repos on your allowlist.
-- Your console secret stays on your machine. It never appears in a tool result or a log.
+No network, no secrets, no fixtures to generate. Some suites need `jq`,
+`semgrep` or `codegraph` and skip cleanly without them; CI sets
+`CODEGRAPH_REQUIRED=1` and `SEMGREP_REQUIRED=1` to turn those skips into
+failures (`.github/workflows/harness-ci.yml`).
 
-Setup and the full tool list: [cromford.dev](https://cromford.dev).
+**Load-bearing suites** — these encode decisions rather than mechanics, and a
+failure in one is a design regression, not a flake:
 
-## How it fits together
+| Suite | What it protects |
+|---|---|
+| `tests/fleet-projects-not-hardcoded-test.sh` | No script may keep its own copy of the project list |
+| `tests/cron-fleet-parity-test.sh` | The registry and the committed crontabs agree |
+| `tests/agent-call-provider-order-test.sh` | The vendor failover ladder is the order it claims |
+| `tests/iron-law-guard-test.sh`, `tests/lane-fence-test.sh` | The act-time command fence still denies what it must |
+| `tests/alert-loop-test.sh` | An alerting lane cannot alert about its own alerts |
+| `tests/board-lane-loop-test.sh` | The triage lane corrects an app's automated board move at most once per ticket and commit, then alerts and stops (TK-135 loop) |
+| `tests/evals-suite-test.sh` | A prompt change still makes the same triage decisions. It drives `tests/evals/run-evals.sh`, which the `tests/*.sh` glob does not reach on its own |
 
-```mermaid
-flowchart LR
-  board["Your board<br/>GitHub Issues"] --> triage
-  subgraph line["The line"]
-    direction LR
-    triage --> plan --> build --> review --> merge --> deploy["deploy check"] --> qa["prod QA"] --> close["close-out"]
-  end
-  close --> board
-  hub["Hub<br/>your VM or Fly"] -. runs .-> line
-  builders["Builders<br/>one per project"] -. build .-> build
-  jobs["Jobs, locks, watchdog<br/>Cloudflare"] -. coordinate .-> hub
-  models["Model routes<br/>Claude, Codex, Grok, OpenRouter, Fireworks"] -. power .-> line
-  console["Mission Control"] -. watch .-> jobs
+**Platform.** The suite is written for Linux. On anything else, run it in the
+container. The runner lives in `bin/`, not `tests/`, so the loop above never
+re-enters it:
+
+```
+bin/run-tests-in-docker.sh
 ```
 
-More detail in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
+That builds a small Debian image with the tools the suite needs and runs the
+whole thing inside it. It is close to CI but not identical — CI additionally
+installs `semgrep` and `codegraph` and sets `*_REQUIRED=1`, which turns two
+clean skips into real checks. Measured on the tree this was written against:
 
-## We build Cromford with Cromford
+| | pass | fail |
+|---|---:|---:|
+| Debian trixie (the container) | 121 | 3 |
+| macOS 15, bash 3.2 | 96 | 28 |
 
-Most changes to Cromford are planned, built, reviewed and merged by Cromford. When the factory gets something wrong, it shows up in our own work first, and the fix becomes a check that keeps it from happening again.
+Most of the macOS gap is `mapfile`, bash 3.2 syntax and GNU-coreutils flags —
+the platform, not the code. Three suites fail in the container but pass in CI;
+they are named in the script's header, and that header says plainly that their
+cause is not yet understood rather than guessing at one.
 
-## Make it better
+The container needs Docker and network for the first build, so the "no network,
+no secrets" claim above is about the suite itself, not about fetching an image.
 
-Cromford works with the accounts above. A few optional services make it faster and calmer, such as a merge queue, hosted CI runners and chat alerts. See [Optional services](https://cromford.dev) on the docs site for what each adds and how to switch it on.
-
-## Community
-
-- Questions and ideas: [Discussions](https://github.com/cromford-ai/cromford/discussions)
-- Bugs and feature requests: [Issues](https://github.com/cromford-ai/cromford/issues)
-- Contributing: [CONTRIBUTING.md](CONTRIBUTING.md)
-- Security reports: [SECURITY.md](SECURITY.md)
-
-Want us to run it for you? **Cromford Cloud** is coming.
-
-## License
-
-Apache 2.0. See [LICENSE](LICENSE) and [NOTICE](NOTICE).
-
-Cromford™ is a trademark of its owner. The license covers the code, not the name. Forks are welcome to say they are based on Cromford, but not to call themselves Cromford.
-
-<sub>Named for Cromford Mill in Derbyshire, England. Richard Arkwright's mill turned a craft into a line in 1771. This one runs on tokens.</sub>
+**Before you push**, if you are contributing to this repository, also run
+`bash tests/no-client-identifiers-test.sh`. See [CONTRIBUTING.md](CONTRIBUTING.md).

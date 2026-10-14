@@ -12,6 +12,10 @@
 #   alert    one ALERTS line per (hotfix KEY, deciding line) when a ticket with
 #            the hotfix label is declined for a HOLD (BH-6297). Never changes
 #            the decline, stdout or the exit code.
+#   mode     dispatch mode hotfix-only (bin/lib/dispatch-mode.sh, BH-6350): a
+#            key with no hotfix label and not on the allow-list is declined
+#            on stdout with no per-key line; ONE line per run names them:
+#              DISPATCH-MODE hotfix-only: <k> key(s) wait (<KEYS>); allow-list: <n,n|none>
 #   kill     flags/fastpath-off on the box declines everything.
 #   stack    FASTPATH_STACK_BASE=<branch> FASTPATH_STACK_PARENT=<n>
 #            [FASTPATH_STACK_PARENT_PR=<url>], exactly one key (BH-3684,
@@ -206,6 +210,15 @@ if command -v flag_active >/dev/null 2>&1; then
 else
   [ -f "$HARNESS/flags/paused-$project" ] && decline_all "project paused"
 fi
+
+# ---- 2b. the dispatch mode (BH-6350) ----------------------------------------
+# Read once per run. In hotfix-only, condition 15c below holds a key that has no
+# hotfix label and is not on the row's allow-list. The lib absent: normal.
+DM_MODE=normal; DM_ALLOW=""; DM_WAIT=""; DM_UNREADABLE=0
+# shellcheck source=bin/lib/dispatch-mode.sh
+[ -r "$HARNESS/bin/lib/dispatch-mode.sh" ] && . "$HARNESS/bin/lib/dispatch-mode.sh" 2>/dev/null
+command -v dm_read >/dev/null 2>&1 && dm_read "$project"
+[ "$DM_UNREADABLE" = 1 ] && log "dispatch mode unreadable, reading normal"
 
 # ---- 3. the key prefix ------------------------------------------------------
 # shellcheck source=bin/lib/preplan-lib.sh
@@ -441,6 +454,11 @@ close_re  = re.compile(r"\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\s+#(\d+)", 
 # as the lift regex: an unsynced box lifts nothing new. Below close_re on
 # purpose: the block above is bin/orphan-reconcile.sh's verbatim (T1.32).
 lead_re   = re.compile(os.environ.get("HOLD_LIFT_LEAD_RE") or r"(?!)")
+# A COMMENT OPENING WITH `HOLD:` or `HOLD —` holds whatever follows (BH-6091,
+# #5962: "HOLD: the lead reversed the RESUME above" read as a lift). Asked after
+# lead_re and before lift_re, the order bin/lib/hold.sh decides in. The same
+# fallback: a box with an old hold.sh holds nothing new.
+holdlead_re = re.compile(os.environ.get("HOLD_LEAD_RE") or r"(?!)")
 # A COMMENT HOLDS ONLY WHEN ITS FIRST NON-BLANK LINE STARTS WITH HOLD (BH-6297,
 # bin/lib/hold.sh HOLD_COMMENT_RE). Read only by the no-lib fallback walk in
 # condition 12; the fallback is the same literal.
@@ -505,8 +523,10 @@ if FP_HOLD:
 else:
     # THE NO-LIB FALLBACK: a box mid-sync without bin/lib/hold.sh. The thread
     # is walked newest-first (the payload is oldest-first), the first DECISIVE
-    # comment decides, and neutral comments are skipped. No bot filter and no
-    # lift vocabulary (the fallbacks above never match), so an unsynced box
+    # comment decides, and neutral comments are skipped. A comment that opens
+    # with `HOLD:` or `HOLD —` holds before the lift vocabulary is asked
+    # (HOLD_LEAD_RE, BH-6091), the order bin/lib/hold.sh decides in. No bot
+    # filter and no lift vocabulary (the fallbacks above never match), so an unsynced box
     # holds at least as much as the lib would. Our own ambiguity note
     # (hold_ambiguous_note) names the lift words, so it is never read.
     thread = [str(c.get("body") or "") for c in comments if isinstance(c, dict)]
@@ -517,6 +537,9 @@ else:
             if liftneg_re.search(c):
                 continue
             held = False
+            break
+        if holdlead_re.search(c):
+            held = True
             break
         if lift_re.search(c) and not liftneg_re.search(c):
             held = False
@@ -897,6 +920,21 @@ for key in "${KEYS[@]}"; do
     *) decline "$key" "issue unreadable"; continue ;;
   esac
 
+  # ---- 15c. the dispatch mode (BH-6350) -------------------------------------
+  # hotfix-only holds a key with no hotfix label that is not on the allow-list.
+  # The key is still printed as declined, so the caller contract holds, but the
+  # per-key log line is replaced by ONE line per run after the loop. Nothing is
+  # written to the ticket: it keeps ai-build and waits for the next run.
+  if [ "$DM_MODE" = hotfix-only ]; then
+    dm_hf=0
+    command -v hotfix_labels_json_has >/dev/null 2>&1 \
+      && hotfix_labels_json_has "$(cat "$TD/issue-$n.raw.json" 2>/dev/null)" "$HARNESS" && dm_hf=1
+    if ! dm_admit_ticket "$n" "$dm_hf"; then
+      printf '%s\n' "$key"; declined=$((declined+1)); DM_WAIT="${DM_WAIT:+$DM_WAIT }$KEY"
+      continue
+    fi
+  fi
+
   # ---- 16-18, the pre-check ------------------------------------------------
   # Cheap, in condition order, and read again under the launch lock below.
   if ! local_eligible "$KEY"; then
@@ -983,5 +1021,9 @@ for key in "${KEYS[@]}"; do
   fi
 done
 
+if [ -n "$DM_WAIT" ]; then
+  DM_N=$(printf '%s' "$DM_WAIT" | wc -w | tr -d ' ')
+  log "DISPATCH-MODE hotfix-only: $DM_N key(s) wait ($DM_WAIT); allow-list: $(dm_allow_text)$([ "${DM_BAD:-0}" = 1 ] && printf " (row value unparseable: '%s')" "$DM_VALUE")$( command -v hotfix_lane_on >/dev/null 2>&1 && [ "$(hotfix_lane_on "$HARNESS")" = 0 ] && printf ' (hotfix lane is off; only the allow-list builds)')"
+fi
 [ "$declined" -eq 0 ] && exit 0
 exit 1

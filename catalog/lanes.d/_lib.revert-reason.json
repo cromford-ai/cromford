@@ -1,0 +1,67 @@
+{
+  "libs": [
+    {
+      "id": "revert-reason",
+      "file": "bin/lib/revert-reason.sh",
+      "note": "BH-6160. The reopen lane (bin/reopen-metrics.sh) finds the reverts on each project's default branch and saves the failure signal of each one (a failed status or check run on the reverted merge, a deploy_rollback row, the revert PR's own text) as the ledger row revert_reason/\"<project> <KEY>\" (saved | no-signal | unreadable), mirrored in state/revert-reasons/<project>/ on the hub. The build plan prompt (bin/lib/rb/plan.sh) and the weekly lookback summary read it. Read only toward GitHub; fails open.",
+      "knobs": [
+        {
+          "env": "REVERT_REASON",
+          "type": "int",
+          "default": 1,
+          "min": 0,
+          "max": 1,
+          "zero_means": "off",
+          "required": false,
+          "note": "1 = the reopen lane reads each revert on the default branch and saves its failure signal, and the plan prompt carries it. 0 = no GitHub read, no row written or read, no prompt text."
+        },
+        {
+          "env": "REVERT_REASON_LOOKBACK_D",
+          "type": "int",
+          "default": 7,
+          "min": 1,
+          "max": 30,
+          "required": false,
+          "note": "Days of default-branch commits the daily run lists for reverts. A revert older than this is not read again."
+        },
+        {
+          "env": "REVERT_REASON_PAGES",
+          "type": "int",
+          "default": 3,
+          "min": 1,
+          "max": 10,
+          "required": false,
+          "note": "Pages of 100 commits read per project per run."
+        },
+        {
+          "env": "REVERT_REASON_MAX_COMMENTS",
+          "type": "int",
+          "default": 3,
+          "min": 1,
+          "max": 10,
+          "required": false,
+          "note": "The newest revert-PR texts (body and comments, bots dropped) saved per revert, each cut to 500 characters."
+        },
+        {
+          "env": "REVERT_REASON_MAX_PER_RUN",
+          "type": "int",
+          "default": 20,
+          "min": 0,
+          "max": 200,
+          "zero_means": "no revert read this run",
+          "required": false,
+          "note": "Reverts read per reopen-lane run, fleet-wide. Reverts over the cap are left for the next run and counted in the run line."
+        },
+        {
+          "env": "REVERT_REASON_MAX_AGE_D",
+          "type": "int",
+          "default": 30,
+          "min": 1,
+          "max": 365,
+          "required": false,
+          "note": "A saved revert reason older than this many days is not put into the build plan prompt."
+        }
+      ]
+    }
+  ]
+}

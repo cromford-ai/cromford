@@ -19,6 +19,7 @@
 set -uo pipefail
 . "$(dirname "$0")/lib/scratch.sh" || exit 1
 DIR=$(cd "$(dirname "$0")/.." && pwd)
+"$DIR/bin/lanes-build.sh" --root "$DIR" --write >/dev/null || { echo "FAIL: cannot write catalog/lanes.json"; exit 1; }
 "$DIR/bin/llm-sites-build.sh" --compose --repo "$DIR" >/dev/null || { echo "FAIL: cannot compose catalog/llm-sites.json"; exit 1; }
 PASS=0; FAIL=0
 ok()  { PASS=$((PASS+1)); }
@@ -67,8 +68,10 @@ while IFS= read -r line; do
 done <<< "$OUT"
 
 # --- 2: the wiring ----------------------------------------------------------
-grep -q 'from "./routes/queue-risk.js"' "$INDEX" && ok || bad "src/index.js must import routes/queue-risk.js"
-grep -q '^  \.\.\.queueRisk,$' "$INDEX" && ok || bad "src/index.js must spread ...queueRisk into ROUTES"
+# TEST-CHANGE (BH-4607): a family is registered by its route-table.d fragment; index.js no longer lists gated families.
+[ "$(ls "$DIR"/worker/jobs/test/route-table.d/[0-9][0-9][0-9]-queue-risk.txt 2>/dev/null | wc -l)" = 1 ] && ok \
+  || bad "queue-risk has no route-table.d fragment (BH-4607: the fragment IS the registration)"
+grep -q 'from "./routes/queue-risk.js"' "$INDEX" && bad "index.js hand-registers queue-risk: the fragment registers it (BH-4607)" || ok
 if [ -n "$FRAG" ] && grep -qx 'POST /api/queue-risk' "$FRAG" && grep -qx 'GET /api/queue-risk' "$FRAG"; then ok
 else bad "worker/jobs/test/route-table.d/<NNN>-queue-risk.txt must list POST and GET /api/queue-risk"
 fi

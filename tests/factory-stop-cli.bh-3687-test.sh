@@ -31,8 +31,8 @@ PASS=0; FAIL=0
 ok()  { PASS=$((PASS+1)); }
 bad() { FAIL=$((FAIL+1)); echo "FAIL: $1"; }
 eq()  { if [ "$2" = "$3" ]; then ok; else bad "$1: expected '$3', got '$2'"; fi; }
-has() { if printf '%s' "$2" | grep -qF -- "$3"; then ok; else bad "$1: '$3' not in: $2"; fi; }
-hasnt() { if printf '%s' "$2" | grep -qF -- "$3"; then bad "$1: '$3' unexpectedly in: $2"; else ok; fi; }
+has() { if grep -qF -- "$3" <<<"$2"; then ok; else bad "$1: '$3' not in: $2"; fi; }
+hasnt() { if grep -qF -- "$3" <<<"$2"; then bad "$1: '$3' unexpectedly in: $2"; else ok; fi; }
 
 CLI="${CLI_UNDER_TEST:-$DIR/bin/factory-stop.sh}"
 H="$T/h"
@@ -233,7 +233,7 @@ if [ -z "${CLI_UNDER_TEST:-}" ]; then
     sed "$2" "$CLI" > "$m"
     if cmp -s "$m" "$CLI"; then bad "M $1: the mutation did not apply"; return; fi
     out=$(CLI_UNDER_TEST="$m" HARNESS_TEST_SANDBOX=1 bash "$0" 2>&1)
-    printf '%s\n' "$out" | grep -q "^FAIL: $3" && ok || bad "M $1: $3 stayed green under the mutant"
+    grep -q "^FAIL: $3" <<<"$out" && ok || bad "M $1: $3 stayed green under the mutant"
   }
   mutant no-reread 's/^confirmed() {$/confirmed() { return 0;/' "C2b PUT 200, re-read 0 row-less -> rc 1"
   mutant no-alert '/alert-line.sh" --id factory-stop-unrecorded/s/^/: /' "C4 exactly one alert"

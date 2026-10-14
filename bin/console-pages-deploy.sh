@@ -215,4 +215,28 @@ else
   alert --severity warn --id console-pages-probe fleet-propagate "[$(hostname)] Pages probes at $C7: /api/coord/jobs=$c1 /api/ideas/list=$c2 (want 403/403; 404 = Functions bundle missing, 503 = CONSOLE_DB/HARNESS_SECRET binding missing — skills/console-deploy step 1)"
   log "probes $c1/$c2"
 fi
+
+# >>> post-merge QA (BH-5909)
+# Keep a copy of the dist/ just shipped and launch bin/console-postmerge-qa.sh
+# on it, detached in its own session with its own timeout: a slow drive never
+# holds this deploy, and this deploy's timeout never cuts a drive. The copy is
+# made under a temp name and renamed, so the QA run never reads a half copy.
+PQ=$(cp_knob CONSOLE_POSTMERGE_QA "${CONSOLE_POSTMERGE_QA:-}" 0)
+if [ "$PQ" = 1 ] && [ -x "$H/bin/console-postmerge-qa.sh" ]; then
+  PQD="$H/state/console-postmerge-qa"; PQT="$PQD/dist-$CSHA.tmp.$$"
+  pq_rm() { case "$1" in "$H/state/console-postmerge-qa/dist-"?*) rm -rf -- "$1" ;; esac; }
+  if mkdir -p "$PQD" && cp -RP -- "$D/console-ui/dist" "$PQT" && pq_rm "$PQD/dist-$CSHA" && mv -- "$PQT" "$PQD/dist-$CSHA"; then
+    PTO=$(cp_knob CONSOLE_POSTMERGE_QA_TIMEOUT_S "${CONSOLE_POSTMERGE_QA_TIMEOUT_S:-}" 900)
+    if [ "$PTO" -lt 120 ] || [ "$PTO" -gt 3600 ]; then log "CONSOLE_POSTMERGE_QA_TIMEOUT_S=$PTO is outside 120..3600 — using 900"; PTO=900; fi
+    pre=; command -v setsid >/dev/null 2>&1 && pre=setsid
+    ( HARNESS="$H" HARNESS_CHECKOUT="$CO" HARNESS_ENV_DIR="$HENV" $pre timeout -k 30 "$PTO" \
+        "$H/bin/console-postmerge-qa.sh" "$CSHA" "$PQD/dist-$CSHA" </dev/null \
+        >>"$H/logs/console-postmerge-qa.log" 2>&1 5>&- 9>&- 8>&- 7>&- 6>&- & ) || true
+    log "post-merge QA launched at $C7"
+  else
+    pq_rm "$PQT"
+    log "post-merge QA not launched at $C7: the copy of dist/ failed"
+  fi
+fi
+# <<< post-merge QA
 exit 0

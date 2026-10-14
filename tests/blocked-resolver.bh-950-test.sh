@@ -340,7 +340,12 @@ grep -q -- '--jq' "$T/gh.txt" \
 # P6. br_regen_offered, driven directly over its OWN source. Extracted rather
 #     than paraphrased: a matcher rewritten in the test proves nothing.
 # ════════════════════════════════════════════════════════════════════════════
-awk '$0 ~ /^br_regen_offered\(\)/ {f=1} f{print} f&&/^}$/{exit}' "$H/bin/blocked-resolver.sh" > "$T/offered.sh"
+# BH-5241: the corpus is the driver plus bin/lib/br/*.sh (tests/lib/br-corpus.sh),
+# because the ladder functions moved out of the driver into bin/lib/br/ladder.sh.
+# shellcheck source=tests/lib/br-corpus.sh
+. "$DIR/tests/lib/br-corpus.sh" || exit 1
+br_corpus "$H" "$T/br-corpus.sh" || exit 1
+awk '$0 ~ /^br_regen_offered\(\)/ {f=1} f{print} f&&/^}$/{exit}' "$T/br-corpus.sh" > "$T/offered.sh"
 grep -q '^br_regen_offered()' "$T/offered.sh" && ok \
   || bad "P6: could not extract br_regen_offered from bin/blocked-resolver.sh"
 offered() { bash -c '. "$0"; br_regen_offered "$1" "$2"' "$T/offered.sh" "$1" "$2"; }

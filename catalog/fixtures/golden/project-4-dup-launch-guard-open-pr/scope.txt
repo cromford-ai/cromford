@@ -1,1 +1,1 @@
-board rb_c4e8: CHANGED 7302 "Bulk-approve bills under a threshold" (waitingOn: requester -> team; comments: 2 -> 3; activity)
+board rb_c4e8: CHANGED 7302 "Bulk-approve orders under a threshold" (waitingOn: requester -> team; comments: 2 -> 3; activity)

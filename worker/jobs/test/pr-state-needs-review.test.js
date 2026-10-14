@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url';
 import worker from '../src/index.js';
 import { ensureColumns } from '../src/lib/core.js';
 import { openDb } from './lib/d1-sqlite.bh-1030.js';
+import { jobsSchemaSql } from './lib/jobs-schema.js';
 
 // BH-4953 (BH-4950.0) — PR gate facts as `state='gate'` rows in
 // pr_state_events, and the one query that answers "needs lead review".
@@ -17,7 +18,7 @@ import { openDb } from './lib/d1-sqlite.bh-1030.js';
 //
 // `t.skip` when node:sqlite is absent: a silent pass would hide the checks.
 
-const SCHEMA = readFileSync(fileURLToPath(new URL('../schema.sql', import.meta.url)), 'utf8');
+const SCHEMA = jobsSchemaSql();
 const SECRET = 'test-secret';
 const REPO = 'o/r';
 const NEW_COLS = ['draft', 'closed', 'held', 'hotfix', 'ci_green_sha', 'builder_approved_sha',

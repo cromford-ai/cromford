@@ -62,15 +62,26 @@ async function readThroughput(db, win) {
       WHERE a.artifact_kind='pr_url' AND a.artifact_ref IN (SELECT key FROM ledgers
                                                   WHERE kind='merge' AND status='merged' AND created_at>=?1 AND created_at<?2)`,
     win.from, win.to);
+  // BH-6727: the merged set first, then the tickets it names, then their jobs.
+  // CROSS JOIN fixes the order (SQLite never reorders it): the merge window is
+  // read first, through idx_ledgers_kind_status_created, and each merge finds
+  // its artifact by (artifact_kind, artifact_ref).
+  // The earlier correlated EXISTS re-ran the merge -> artifact -> job lookup
+  // for EVERY jobs row (1,293,710 rows read a call on 49k jobs). Same rows out:
+  // each (project, ticket_id) with a merged PR in the window, and the earliest
+  // non-null issue_created_at among that ticket's jobs.
   const jobs = await all(db,
-    `SELECT project, ticket_id, MIN(issue_created_at) AS issue_created_at FROM jobs
-      WHERE issue_created_at IS NOT NULL AND ticket_id IS NOT NULL
-        AND EXISTS (SELECT 1 FROM job_artifacts a JOIN jobs j2 ON j2.id=a.job_id
-                     WHERE a.artifact_kind='pr_url'
-                       AND a.artifact_ref IN (SELECT key FROM ledgers
-                                             WHERE kind='merge' AND status='merged' AND created_at>=?1 AND created_at<?2)
-                       AND j2.project=jobs.project AND j2.ticket_id=jobs.ticket_id)
-      GROUP BY project, ticket_id`,
+    `WITH t AS MATERIALIZED (
+       SELECT DISTINCT j2.project AS project, j2.ticket_id AS ticket_id
+         FROM ledgers l
+         CROSS JOIN job_artifacts a ON a.artifact_kind='pr_url' AND a.artifact_ref=l.key
+         JOIN jobs j2 ON j2.id=a.job_id
+        WHERE l.kind='merge' AND l.status='merged' AND l.created_at>=?1 AND l.created_at<?2
+          AND j2.ticket_id IS NOT NULL)
+     SELECT j.project AS project, j.ticket_id AS ticket_id, MIN(j.issue_created_at) AS issue_created_at
+       FROM t JOIN jobs j ON j.project=t.project AND j.ticket_id=t.ticket_id
+      WHERE j.issue_created_at IS NOT NULL
+      GROUP BY j.project, j.ticket_id`,
     win.from, win.to);
   return { ok: true, merged: merges.length, ...filingToMerge(merges, artifacts, jobs) };
 }

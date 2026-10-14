@@ -8,10 +8,10 @@
         {
           "env": "STACK_WAIT_PARENT_MERGE",
           "type": "string",
-          "default": "rollouts",
+          "default": "plan",
           "zero_means": null,
           "required": false,
-          "note": "off | rollouts | all. When a stacked child waits for its parent to merge instead of building on the parent's open branch: off = never (pre-BH-5234), rollouts = a rollout wave child (an issue body line 'Rollout wave N of M:'), all = every child. An invalid value is rollouts, with one line in logs/stale-parent.log. Read by sp_wait_mode."
+          "note": "off | rollouts | all | plan. When a stacked child waits for its parent to merge instead of building on the parent's open branch: off = never (pre-BH-5234), rollouts = a rollout wave child (an issue body line 'Rollout wave N of M:'), all = every child, plan (BH-6389) = rollouts plus every child whose plan has no '## Stack' section with files disjoint from the parent's diff and plan files (bin/lib/stack-wait.sh), bounded by STACK_WAIT_CAP_H; a hotfix child is exempt. rollouts restores the pre-BH-6389 behaviour. An invalid value is plan, with one line in logs/stale-parent.log. Read by sp_wait_mode."
         },
         {
           "env": "HOLD_PUSH_REWRITE_GUARD",

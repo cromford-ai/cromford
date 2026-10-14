@@ -8,6 +8,7 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import worker from '../src/index.js';
 import { openDb } from './lib/d1-sqlite.bh-1030.js';
+import { jobsSchemaFile } from './lib/jobs-schema.js';
 
 // BH-3448 (BH-3434.1): the hub_probe_requests ledger and its routes, driven
 // through the worker's real fetch handler against node:sqlite running the
@@ -20,7 +21,7 @@ import { openDb } from './lib/d1-sqlite.bh-1030.js';
 //   GET  /api/hub-probe/count-today  today's claims of one probe
 // The shapes asserted are the ones bin/lib/jobs/hub-probe.sh parses.
 const SECRET = 'test-secret';
-const SCHEMA = fileURLToPath(new URL('../schema.sql', import.meta.url));
+const SCHEMA = jobsSchemaFile();
 const SPLITTER = fileURLToPath(new URL('../../../bin/lib/d1-schema.sh', import.meta.url));
 
 const call = (o, path, { method = 'GET', body, auth = true } = {}) => {

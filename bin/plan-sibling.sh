@@ -285,10 +285,10 @@ while IFS=$'\t' read -r SN PRN; do
   done <<< "$HITS"
   SIBKEY="$PU-$SN"
   if [ -z "$REAL" ]; then
-    psib_log "PLAN_SIBLING $KEY choice=build vs $SIBKEY pr=#$PRN fragment-only files=[$(pairs_csv "$(printf '%s\n' "$HITS" | head -3)")]"
+    psib_log "PLAN_SIBLING $KEY choice=build vs $SIBKEY pr=#$PRN fragment-only files=[$(pairs_csv "$(head -3 <<<"$HITS")")]"
     continue
   fi
-  CSV=$(pairs_csv "$(printf '%s' "$REAL" | head -3)")
+  CSV=$(pairs_csv "$(head -3 <<<"$REAL")")
   psib_log "PLAN_SIBLING $KEY choice=after after=$SIBKEY pr=#$PRN files=[$CSV]$INC"
   printf 'OVERLAP_DEFER %s vs %s files=[%s]\n' "$KEY" "$SIBKEY" "$CSV"
   exit 1

@@ -26,9 +26,10 @@ NODE_TEST="$DIR/worker/jobs/test/box-console-commands-routes.bh-2528.test.js"
 
 # --- 1: the module exists and is registered ---------------------------------
 if [ -f "$ROUTE" ]; then ok; else bad "missing $ROUTE"; fi
-grep -q '^import { routes as boxConsoleCommands } from "./routes/box-console-commands.js";$' "$INDEX" && ok \
-  || bad "index.js does not import the box-console-commands routes"
-grep -q '^  \.\.\.boxConsoleCommands,$' "$INDEX" && ok || bad "index.js ROUTES does not spread boxConsoleCommands"
+# TEST-CHANGE (BH-4607): a family is registered by its route-table.d fragment; index.js no longer lists gated families.
+[ "$(ls "$DIR"/worker/jobs/test/route-table.d/[0-9][0-9][0-9]-box-console-commands.txt 2>/dev/null | wc -l)" = 1 ] && ok \
+  || bad "box-console-commands has no route-table.d fragment (BH-4607: the fragment IS the registration)"
+grep -q 'from "./routes/box-console-commands.js"' "$INDEX" && bad "index.js hand-registers box-console-commands: the fragment registers it (BH-4607)" || ok
 
 # --- 2: no template-literal SQL ---------------------------------------------
 # A missing file must fail here too, not pass as "no hits" (D3).

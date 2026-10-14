@@ -288,7 +288,7 @@ cd "$DIR"
 # ...and run-build.sh must actually use it at the PR-time push.
 # BH-2504: the PR-time push is RB_PUSH, which pushes through bin/lib/hold-push.sh
 # under an explicit --force-with-lease — both halves are pinned.
-grep -q '{ RB_PUSH -u && track_pushed; }' "$RB" \
+grep -q '{ RB_PUSH -u pr-push && track_pushed; }' "$RB" \
   && ok || bad "the PR-time push is not RB_PUSH — the rebase would reject it and defer the build"
 grep -q -- '--force-with-lease=\$br:\$lease' "$DIR/bin/lib/hold-push.sh" \
   && ok || bad "bin/lib/hold-push.sh does not push --force-with-lease — the rebase would reject it and defer the build"

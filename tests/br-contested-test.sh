@@ -411,11 +411,16 @@ rm -f "$HOLD"
 # ---- 9h. THE PARSER AND THE RECURRENCE RULE, driven as the pure functions they
 #          are. These decide whether other people's PRs get parked, so the
 #          negatives are the point.
+# BH-5241: the corpus is the driver plus bin/lib/br/*.sh (tests/lib/br-corpus.sh),
+# because the record functions moved out of the driver into bin/lib/br/record.sh.
+# shellcheck source=tests/lib/br-corpus.sh
+. "$DIR/tests/lib/br-corpus.sh" || exit 1
+br_corpus "$H" "$T/br-corpus.sh" || exit 1
 : > "$T/pure.sh"
 for fn in br_paths_of_reason br_recurring_paths br_conflict_note br_json_edit \
           br_file br_load br_save br_num br_shape br_fix_cap br_rebuild_cap \
           br_note_conflict_lines; do
-  awk -v f="^$fn\\(\\)" '$0 ~ f {p=1} p{print} p&&/^}$/{exit}' "$H/bin/blocked-resolver.sh" >> "$T/pure.sh"
+  awk -v f="^$fn\\(\\)" '$0 ~ f {p=1} p{print} p&&/^}$/{exit}' "$T/br-corpus.sh" >> "$T/pure.sh"
 done
 mkdir -p "$T/purestate/tproj"
 pure() { bash -c '

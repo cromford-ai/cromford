@@ -85,7 +85,7 @@ AF="$T/afail"; mktree "$AF"
 printf '#!/bin/bash\nH="$(cd "$(dirname "$0")/.." && pwd)"\nprintf "%%s\\n" "$1" >> "$H/beats.jsonl"\nexit 1\n' > "$AF/bin/beat.sh"
 RC=$(run_rollup "$AF" "$DIR/bin/cost-rollup.sh")
 AFL=$(grep -F "$A_TEXT" "$AF/logs/ALERTS.log" 2>/dev/null)
-[ "$(printf '%s' "$AFL" | grep -c .)" = 1 ] && grep -qE "$STAMP_RE" <<<"$AFL" && ok \
+[ "$(grep -c . <<<"$AFL")" = 1 ] && grep -qE "$STAMP_RE" <<<"$AFL" && ok \
   || bad "A6: with beat.sh failing, ALERTS.log must still get the line once (got: ${AFL:-none})"
 [ -n "$(alert_beats "$AF")" ] && [ ! -f "$AF/state/alert-line-sent/$(sha "$AFL")" ] && ok \
   || bad "A7: a failed beat must be attempted and leave no sent-marker"

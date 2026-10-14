@@ -433,6 +433,8 @@ case "$*" in
   *"api -i -X GET repos/example-org/cromford/rulesets"*) restpr --raw 200 '[]' ;;
   *"api -i -X GET repos/example-org/cromford/contents/.mergify.yml"*) restpr --raw 200 "{\"content\":\"$MGFY_YML\"}" ;;
   *"api -i -X GET repos/"*"/actions/workflows/prequeue-gate.yml"*) restpr --raw 200 '{"id":7,"state":"active"}' ;;
+  # BH-6161: a requeue after an ejection asks the pre-queue gate, which reads main's tip.
+  *"api -i -X GET repos/example-org/cromford/commits/main") restpr --raw 200 '{"sha":"89f7dd83c7020a196f9a5082fd2a51e91398200a"}' ;;
   *"api -i -X GET repos/"*"/commits/"*"/check-runs"*)
     SHA=$(sed -n 's|.*/commits/\([0-9a-f]*\)/check-runs.*|\1|p' <<<"$*")
     N=$(grep -lx "$SHA" "$T"/head-* 2>/dev/null | head -1); N=${N##*-}
@@ -479,6 +481,13 @@ case "$*" in
   *"pr list -R example-org/cromford --state open"*) cat "$T/list.json" ;;
   *"pr list"*) echo "[]" ;;
   *"actions/runs?head_sha="*) restpr --runs 'completed|success' ;;
+  # BH-6336: the no-verdict gate reads the failing batch run's jobs and its
+  # failed-job log. Draft #20 failed a real test, so the fan-in names a shard
+  # whose tests failed: not a no-verdict batch, and #4428's rule decides.
+  *"api repos/"*"/actions/runs/"*"/jobs"*)
+    printf '{"total_count":2,"jobs":[{"name":"Pure-logic gate fixtures","status":"completed","conclusion":"failure"},{"name":"Tests, traced (shard 1/2)","status":"completed","conclusion":"failure"}]}\n' ;;
+  *"run view "*"--log-failed"*)
+    printf "Pure-logic gate fixtures\tthe verdict\t2026-10-07T01:00:00Z ##[error]shard 1/2: 1 of 5 tests failed. Open 'Tests, traced (shard 1/2)'\n" ;;
   *"api rate_limit"*) echo '{"resources":{"core":{"remaining":5000,"limit":5000,"reset":2000000000},"graphql":{"remaining":5000,"limit":5000,"reset":2000000000}}}' ;;
   *) echo "" ;;
 esac
@@ -517,6 +526,15 @@ printf '[{"filename":"console-ui/src/a.js"}]' > "$E/files-14.json"
 # run's log (bin/lib/mc-prequeue.d/batch-solo.sh): its one failing suite.
 mkdir -p "$E/h/state/merge-conductor/prequeue"
 printf 'ok %s %s 11 12 13 14\n' "$BASE40" "$WSUITE" > "$E/h/state/merge-conductor/prequeue/batchsolo_example-org_cromford_20"
+# BH-6161: a requeue after an ejection waits for a pre-queue run on current
+# main. The bystanders' runs on that main came back green (the gate's own
+# writer, pq_cache_put), so the gate answers proceed and dispatches nothing.
+for n in 11 13 14; do
+  eval "h=\$H$n"
+  ( MC_STATE_DIR="$E/h/state/merge-conductor"; . "$E/h/bin/lib/mc-prequeue.sh" \
+    && pq_cache_put "$(pq_key example-org/cromford "$n" "$h" 89f7dd83c7020a196f9a5082fd2a51e91398200a)" green 1791700000 "9$n" "" ) \
+    || bad "E1 fixture: the green pre-queue verdict for #$n"
+done
 touch "$E/h/flags/merge-conductor-actions" "$E/h/flags/merge-conductor-merge"
 ( cd "$E" && PATH="$E/fakebin:$PATH" HARNESS="$E/h" HARNESS_SECRET=x JOBS_URL=http://jobs.test \
   MC_ENQUEUE_SETTLE=0 MC_MERGE_SETTLE=0 MC_MERGIFY_SETTLE=0 MC_MERGIFY_WAIT_S=0 MC_QUEUE_TTL=0 \

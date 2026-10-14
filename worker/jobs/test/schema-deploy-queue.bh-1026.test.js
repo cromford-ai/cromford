@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url';
 import { DatabaseSync } from 'node:sqlite';
 import worker from '../src/index.js';
 import { ensureColumns, ADDED_COLUMNS } from '../src/lib/core.js';
+import { jobsSchemaSql } from './lib/jobs-schema.js';
 
 // BH-1026.0 (BH-1364) — the queues-are-rows CONTRACT slice, driven against THE
 // SQL THAT SHIPS: the `deploy_queue` table, `build_queue.machine`, the three
@@ -23,7 +24,7 @@ import { ensureColumns, ADDED_COLUMNS } from '../src/lib/core.js';
 // proves the shipped SQL behaves vanish quietly on a runtime change.
 
 const SECRET = 'test-secret';
-const SCHEMA = readFileSync(fileURLToPath(new URL('../schema.sql', import.meta.url)), 'utf8');
+const SCHEMA = jobsSchemaSql();
 
 // A D1-shaped facade over node:sqlite, with every statement it is asked to
 // prepare recorded: the claim route's QUERY ORDER is part of what "an absent

@@ -374,7 +374,7 @@ SEC=$(sed -n '/^\*\*What the enqueue and the apply do today/,/^### /p' "$DIR/doc
 [ -n "$SEC" ] && ok || bad "6.3 the enqueue/apply section of the map could not be read"
 grep -q 'stub' <<<"$(printf '%s' "$SEC")" \
   && bad "6.3 that section still calls the enqueue/apply path a stub: $SEC" || ok
-printf '%s' "$SEC" | grep -q 'rc 6' \
+grep -q 'rc 6' <<<"$SEC" \
   && ok || bad "6.4 the map states the enqueue's real rc 6: $SEC"
 grep -q 'mc_pool_rebase_fail' "$DIR/docs/verification-map/rebase-on-pool.md" \
   && ok || bad "6.5 the map names mc_pool_rebase_fail as the stand-down path"

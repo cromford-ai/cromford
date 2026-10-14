@@ -54,10 +54,10 @@ cat > "$A/in.json" <<'JSON'
 JSON
 inv() { jq -c "$1" "$A/in.json" > "$A/v.json"; }
 BASE_IN=$(dig inapp "$A/in.json"); RC=$?
-[ "$RC" = 0 ] && printf '%s' "$BASE_IN" | grep -qE "$HEX16" && ok \
+[ "$RC" = 0 ] && grep -qE "$HEX16" <<<"$BASE_IN" && ok \
   || bad "(A) the in-app base thread must digest to 16 hex, rc 0 (rc=$RC out='$BASE_IN')"
 same_in() { local d; d=$(dig inapp "$A/v.json"); [ -n "$BASE_IN" ] && [ "$d" = "$BASE_IN" ] && ok || bad "(A) in-app $1 must NOT move the digest ($d vs $BASE_IN)"; }
-diff_in() { local d; d=$(dig inapp "$A/v.json"); printf '%s' "$d" | grep -qE "$HEX16" && [ "$d" != "$BASE_IN" ] && ok || bad "(A) in-app $1 MUST move the digest ($d vs $BASE_IN)"; }
+diff_in() { local d; d=$(dig inapp "$A/v.json"); grep -qE "$HEX16" <<<"$d" && [ "$d" != "$BASE_IN" ] && ok || bad "(A) in-app $1 MUST move the digest ($d vs $BASE_IN)"; }
 
 inv '.ticket.comments += [{"id":"c3","author":{"userId":"u-h","name":"project-1 team harness"},"body":"triage: holding","createdAt":"2026-09-25T02:00:00Z","isInternal":false}] | .ticket.commentCount=3 | .ticket.lastActivityAt="2026-09-25T02:00:00Z"'
 same_in "a self-authored comment (+count, +lastActivityAt)"
@@ -117,7 +117,7 @@ inv '.ticket.comments[0] = {"id":"c9","author":{"userId":"u-carol","name":"Carol
 diff_in "a comment deleted and another added (same count)"
 # the project-9 shape: metadata under .ticket, thread in the sibling .comments
 jq -c '{ticket: (.ticket | del(.comments)), comments: .ticket.comments}' "$A/in.json" > "$A/v.json"
-D=$(dig inapp "$A/v.json"); printf '%s' "$D" | grep -qE "$HEX16" && ok || bad "(A) the sibling-comments in-app shape must digest (got '$D')"
+D=$(dig inapp "$A/v.json"); grep -qE "$HEX16" <<<"$D" && ok || bad "(A) the sibling-comments in-app shape must digest (got '$D')"
 
 cat > "$A/gh.json" <<'JSON'
 {"issue":{"number":563,"title":"c","body":"b","state":"open","labels":[{"name":"ai-build"}],"assignees":[],
@@ -127,9 +127,9 @@ cat > "$A/gh.json" <<'JSON'
 JSON
 ghv() { jq -c "$1" "$A/gh.json" > "$A/v.json"; }
 BASE_GH=$(dig gh "$A/gh.json"); RC=$?
-[ "$RC" = 0 ] && printf '%s' "$BASE_GH" | grep -qE "$HEX16" && ok || bad "(A) the GitHub base thread must digest (rc=$RC out='$BASE_GH')"
+[ "$RC" = 0 ] && grep -qE "$HEX16" <<<"$BASE_GH" && ok || bad "(A) the GitHub base thread must digest (rc=$RC out='$BASE_GH')"
 same_gh() { local d; d=$(dig gh "$A/v.json"); [ -n "$BASE_GH" ] && [ "$d" = "$BASE_GH" ] && ok || bad "(A) gh $1 must NOT move the digest ($d vs $BASE_GH)"; }
-diff_gh() { local d; d=$(dig gh "$A/v.json"); printf '%s' "$d" | grep -qE "$HEX16" && [ "$d" != "$BASE_GH" ] && ok || bad "(A) gh $1 MUST move the digest ($d vs $BASE_GH)"; }
+diff_gh() { local d; d=$(dig gh "$A/v.json"); grep -qE "$HEX16" <<<"$d" && [ "$d" != "$BASE_GH" ] && ok || bad "(A) gh $1 MUST move the digest ($d vs $BASE_GH)"; }
 ghv '.comments += [{"id":13,"user":{"login":"cromford[bot]","type":"Bot"},"body":"note"}] | .issue.comments=3 | .issue.updated_at="2026-09-25T09:00:00Z"'
 same_gh "a comment by our own App"
 ghv '.issue.labels += [{"name":"needs-info"}] | .issue.updated_at="2026-09-25T09:00:00Z" | .issue.assignees=[{"login":"x"}]'

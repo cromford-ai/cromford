@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import worker, { OPEN_ROUTES } from '../src/index.js';
+import { jobsSchemaSql } from './lib/jobs-schema.js';
 
 // POST /api/wakes/lane (BH-4092, part 1 of BH-4057): the lead-chain doorbell.
 //
@@ -14,7 +15,7 @@ import worker, { OPEN_ROUTES } from '../src/index.js';
 // schema.sql applied, driven through `worker.fetch` (D2). A bad body must run
 // no INSERT at all (D11), so every statement is recorded.
 
-const SCHEMA = readFileSync(fileURLToPath(new URL('../schema.sql', import.meta.url)), 'utf8');
+const SCHEMA = jobsSchemaSql();
 const SECRET = 'test-secret';
 
 // Same D1-shaped adapter as wakes-nudge.bh-2754.

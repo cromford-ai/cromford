@@ -3,13 +3,14 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { ensureTable, CREATED_TABLES } from '../src/index.js';
+import { jobsSchemaSql } from './lib/jobs-schema.js';
 
 // BH-1068: the alerts table and its worker self-create mirror are the contract
 // every other slice of BH-1030 imports. This test proves schema.sql is
 // idempotent, carries the expected indexes and seeds, and that the in-worker
 // CREATED_TABLES.alerts entry creates the same shape.
 
-const SCHEMA = readFileSync(fileURLToPath(new URL('../schema.sql', import.meta.url)), 'utf8');
+const SCHEMA = jobsSchemaSql();
 
 function parseAlertsTable(sql) {
   const start = sql.search(/CREATE\s+TABLE\s+IF\s+NOT\s+EXISTS\s+alerts\s*\(/is);

@@ -315,7 +315,7 @@ _llm_setting_only() {
   _lg_setting_lookup "$key"
 }
 
-_llm_is_num() { printf '%s' "${1:-}" | grep -qE '^[0-9]+(\.[0-9]+)?$'; }
+_llm_is_num() { grep -qE '^[0-9]+(\.[0-9]+)?$' <<<"${1:-}"; }
 
 # --- the day's spend, from D1 ------------------------------------------------
 
@@ -370,7 +370,7 @@ _llm_ceiling_off() {
 # ceiling: the switch is on, no row, `off`, 0 or junk (junk is logged).
 _llm_ceiling() {
   local lane="${1:-}" v
-  printf '%s' "$lane" | grep -qE '^[a-z0-9_.-]{1,42}$' || return 1
+  grep -qE '^[a-z0-9_.-]{1,42}$' <<<"$lane" || return 1
   command -v _lg_setting_lookup >/dev/null 2>&1 || return 1
   _llm_ceiling_off && return 1
   v=$(_lg_setting_lookup "spend.ceiling.$lane.day_usd" 2>/dev/null) || return 1
@@ -525,7 +525,7 @@ llm_gate_runner_ok() {
   # BH-2581: the per-stage list, a SECOND list the rung must also pass. A stage
   # that cannot spell a knob name reads nothing rather than some other knob.
   sfx=$(printf '%s' "$st" | tr '[:lower:]-' '[:upper:]_')
-  printf '%s' "$sfx" | grep -qE '^[A-Z0-9_]+$' || return 0
+  grep -qE '^[A-Z0-9_]+$' <<<"$sfx" || return 0
   slist=$(lane_knob "$lane" "LLM_RUNNER_ALLOWED_$sfx" "$pj" 2>/dev/null)
   [ -n "$slist" ] || return 0
   slist=$(_llm_runner_list "$slist"); slist="${slist#,}"; slist="${slist%,}"

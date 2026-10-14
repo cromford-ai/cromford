@@ -25,7 +25,9 @@
 # Run from anywhere: tests/routing-cas-proxy.bh-2488-test.sh   (exit 0 = all pass)
 set -uo pipefail
 . "$(dirname "$0")/lib/scratch.sh" || exit 1
+. "$(dirname "$0")/lib/jobs-schema.sh" && jobs_schema_render || exit 1
 DIR=$(cd "$(dirname "$0")/.." && pwd)
+"$DIR/bin/lanes-build.sh" --root "$DIR" --write >/dev/null || { echo "FAIL: cannot write catalog/lanes.json"; exit 1; }
 "$DIR/bin/llm-sites-build.sh" --compose --repo "$DIR" >/dev/null || { echo "FAIL: cannot compose catalog/llm-sites.json"; exit 1; }
 PASS=0; FAIL=0
 ok()  { PASS=$((PASS+1)); }
@@ -49,6 +51,20 @@ command -v node >/dev/null 2>&1 || { echo "routing-cas-proxy: SKIPPED — node i
 W="$T/w"
 mkdir -p "$W/worker/jobs" "$W/catalog"
 cp -R "$(dirname "$WORKER")" "$W/worker/jobs/src" || bad "cannot copy the worker sources"
+# TEST-CHANGE (BH-4987): core.js resolves `#schema-sql` through the worker's
+# package.json, and under Node that composes schema.d/ through test/lib/, so
+# the scratch tree carries all three beside src/.
+cp "$DIR/worker/jobs/package.json" "$W/worker/jobs/" || bad "cannot copy the worker package.json (BH-4987)"
+cp -R "$DIR/worker/jobs/schema.d" "$W/worker/jobs/schema.d" || bad "cannot copy worker/jobs/schema.d (BH-4987)"
+mkdir -p "$W/worker/jobs/test/lib" || bad "cannot create the worker test/lib (BH-4987)"
+cp "$DIR/worker/jobs/test/lib/jobs-schema.js" "$DIR/worker/jobs/test/lib/schema-sql.node.js" "$W/worker/jobs/test/lib/" \
+  || bad "cannot copy the Node schema composer (BH-4987)"
+# TEST-CHANGE (BH-4607): index.js imports ROUTES from `#routes`, which under
+# Node is test/lib/routes.node.js reading test/route-table.d/, so the scratch
+# tree carries both.
+cp "$DIR/worker/jobs/test/lib/routes.node.js" "$W/worker/jobs/test/lib/" \
+  && cp -R "$DIR/worker/jobs/test/route-table.d" "$W/worker/jobs/test/route-table.d" \
+  || bad "cannot copy the Node route loader and test/route-table.d (BH-4607)"
 # The staff routes import agent-core/ by a relative path (BH-5559), so the
 # scratch tree carries it beside worker/, as the deployed bundle does.
 cp -R "$DIR/agent-core" "$W/agent-core" || bad "cannot copy agent-core (the worker imports it, BH-5559)"

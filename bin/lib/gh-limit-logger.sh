@@ -106,6 +106,12 @@ gh() {
   # first `set -euo pipefail` lane that sources it (section 4p of
   # tests/gh-default-identity-test.sh is that lane).
   msg=$(grep -m1 -iE "$_GHLL_RE" "$ef" 2>/dev/null) || msg=""
+  # A 401 inside a conductor worker marks the worker (bin/lib/gh-rest-auth.sh):
+  # its next gh_rest sends nothing. An `if`, not a bare `&&` chain, for the same
+  # set -e reason as the line above.
+  if [ -n "${GH_REST_AUTH_FAIL_FILE:-}" ] && grep -qE 'HTTP 401|Bad credentials' "$ef" 2>/dev/null; then
+    : > "$GH_REST_AUTH_FAIL_FILE" 2>/dev/null || true
+  fi
   rm -f "$ef" 2>/dev/null
   if [ -n "$msg" ]; then
     # Every failure below is swallowed on purpose: the caller's rc is the gh

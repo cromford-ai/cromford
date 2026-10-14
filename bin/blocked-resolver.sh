@@ -225,6 +225,11 @@ if [ -f "$HENV/global.env" ]; then set -a; # shellcheck disable=SC1091
 # no bn_put, and every note is written to the hub file exactly as before.
 # shellcheck source=bin/lib/build-note-db.sh
 { [ -r "$H/bin/lib/build-note-db.sh" ] && . "$H/bin/lib/build-note-db.sh"; } || true
+# BH-6128: a run on a Fly lane machine (LANE_RUN_ID set) fetched its hub inputs
+# through this lib and writes its changes back through it. Fail-open on the hub:
+# no lib, no write-back and no pre-apply, and a tick runs exactly as before.
+# shellcheck source=bin/lib/lane-run-inputs.sh
+{ [ -r "$H/bin/lib/lane-run-inputs.sh" ] && . "$H/bin/lib/lane-run-inputs.sh"; } || true
 
 # --- BH-594: the owning box's entry ------------------------------------------
 # `blocked-resolver.sh --fix-here <project> <rkey> <reason> <url> <record> <tkey>`
@@ -862,6 +867,17 @@ else
   br_cron_unlock() { flock -u 8 2>/dev/null; exec 8>&-; }
 fi
 fi
+# A HUB RUN OF ONE PROJECT FIRST TAKES IN WHAT A LANE MACHINE WROTE (BH-6128).
+# A project that ran on Fly has write-backs in the jobs worker; the hub
+# publisher applies them every ten minutes, and this applies them now, so a
+# lane moved back to the hub never starts on state older than the machine's.
+# Only for a project the publisher has seen; a failure is one line and the run
+# goes on.
+if [ -n "$ONLY" ] && [ -z "${LANE_RUN_ID:-}" ] && [ "$BR_FIX_HERE" != 1 ] && [ "$BR_DISPATCH" != 1 ] \
+   && [ -d "$H/state/lane-run-inputs/blocked-resolver/$ONLY" ] && command -v lri_apply_pending >/dev/null 2>&1; then
+  BR_PRE_APPLY=$(lri_apply_pending blocked-resolver "$ONLY" 2>&1) \
+    || say "$ONLY: the lane machine's write-backs were not all applied before this run ($BR_PRE_APPLY) — the publisher retries them"
+fi
 # WHEN THIS TICK BEGAN (BH-1457). Taken HERE, the instant the tick knows it is
 # the tick, and not at the top of the rung loop: discovery is part of what a
 # tick spends, and on a fleet with 785 candidates it is a real share of it. The
@@ -906,11 +922,11 @@ case "$FIX_LANE_TIMEOUT" in ''|*[!0-9]*) ;; *) [ "$((FIX_LANE_TIMEOUT / 3))" -gt
 # move out one slice at a time: ladder.sh (the classifier) and record.sh (the
 # per-key json) first, the discovery reads, the gates and the rungs after.
 #
-# THIS SLICE IS DARK. The modules are sourced HERE, ABOVE the inline copies that
-# still follow, so the inline definition wins byte for byte and the modules are
-# inert. Nothing about a tick changes today; the cut that deletes the inline
-# copies is a separate change, and tests/br-split-layout-test.sh case 4 holds the
-# two texts identical until it happens.
+# LADDER AND RECORD ARE CUT (BH-5241). ladder.sh is the only copy of the
+# classifier and of br_regen_rung, and record.sh is the only copy of the
+# per-key json layer, so both are load-bearing. tests/br-split-layout-test.sh
+# case 4 holds every mapped name absent from this file;
+# tests/br/driver-ceiling.tsv caps its size.
 #
 # Modules resolve off $H, the way bin/run-triage.sh resolves bin/lib/rt and
 # bin/run-build.sh resolves bin/lib/rb. A SCRIPT has a harness root; only a
@@ -927,7 +943,7 @@ case "$FIX_LANE_TIMEOUT" in ''|*[!0-9]*) ;; *) [ "$((FIX_LANE_TIMEOUT / 3))" -gt
 # classifier — every park answered `none`, nothing fixed, and a log line that
 # reads exactly like a quiet tick.
 BR_LIB_DIR="$H/bin/lib/br"
-BR_MODULES="ladder record"
+BR_MODULES="discovery keys ladder record"
 for _br_m in $BR_MODULES; do
   # shellcheck source=/dev/null
   if [ -r "$BR_LIB_DIR/$_br_m.sh" ] && . "$BR_LIB_DIR/$_br_m.sh"; then continue; fi
@@ -1007,627 +1023,6 @@ if [ "$BR_DISPATCH" = 1 ]; then
 fi
 # <<< resolver modules
 
-# ---------------------------------------------------------------------------
-# The classifier. PURE: a reason word in, an action word out, nothing read and
-# nothing written. It is the one place that decides what the ladder does with a
-# park, which is what makes it the thing the fixture test drives directly.
-#
-# An UNKNOWN reason answers `none` on purpose. A future gate that invents a new
-# park must be added here deliberately; silently rebuilding on a reason nobody
-# has thought about is how an agent ladder turns into a loop. Until it is added,
-# that park still pages through the conductor exactly as it does today.
-# ---------------------------------------------------------------------------
-# br_ladder_class <reason> -> rebase-conflict|ci-red|review-blocked|orphaned-parent|prequeue-red|""
-#   The three park classes that are about a BRANCH somebody can still fix. They
-#   are what the rung ladder applies to; everything else (a dead pool machine, a
-#   malformed plan, a BUILD_DEAD record) has no branch to fix and keeps going
-#   straight to REBUILD FRESH.
-#
-#   `ci-red` is NON-FLAKY by construction and not by a test here: the conductor
-#   forgives a red whose every failing test is a known flake (mc_flake_rerun)
-#   and re-runs any other red once (mc_red_rerun) BEFORE it parks the head as
-#   RED_TWICE, so a red that reaches this lane has already survived both.
-#
-#   `orphaned-parent` (2026-09-16) is the fourth: the PR this branch was cut
-#   from CLOSED without merging, and bin/merge-conductor.sh could not simply
-#   retarget the child because it still carries the dead parent's commits or it
-#   conflicts with main. There IS a branch to fix — the fix is to take the dead
-#   parent's commits out of it — so it belongs to the ladder rather than going
-#   straight to a rebuild.
-#
-#   `provenance-ci-red` (BH-3630) is a provenance park the conductor saw APPROVE + CI red on; same ladder as red-ci-twice.
-#
-#   `stale-replan` (BH-3935) is the PR-owner age ladder's park: nobody moved the
-#   PR for pr_stale.replan_days. Its only rung is bin/lib/br/opt/stale.sh's
-#   re-plan; br_one stops it before the ladder when that module is off.
-#   `prequeue-red` (BH-4549) is NOT ci-red: the pre-queue gate parks a head
-#   whose suites fail merged onto current main, and that head is GREEN on its
-#   own PR CI, so the ci-red supersede guard would decline it green-at-head.
-br_ladder_class() {
-  case "${1:-}" in
-    conflict-unresolvable|rebase-gate-red)      echo rebase-conflict ;;
-    red-ci-twice|red-twice|queue-ejected-twice|provenance-ci-red|queue-dequeued) echo ci-red ;;
-    head-not-reapproved)                        echo review-blocked ;;
-    orphaned-child)                             echo orphaned-parent ;;
-    stale-replan)                               echo stale-replan ;;
-    prequeue-red)                               echo prequeue-red ;;
-    *)                                          echo "" ;;
-  esac
-}
-
-# br_skips_mechanical <class> — rc 0 for the classes whose rung 1 answers
-#   nothing. Rung 1 is "merge origin/main into the branch and re-run CI", which
-#   is a real answer to a conflict or a stale red, and no answer at all to a
-#   review finding (review-blocked: the findings are already posted) or to a
-#   branch carrying an abandoned parent's commits (orphaned-parent: merging main
-#   does not take them out). Both start at the fix round. So does prequeue-red:
-#   the gate already ran this exact head merged onto main, so a main merge plus
-#   a CI re-run answers nothing.
-br_skips_mechanical() {
-  case "${1:-}" in review-blocked|orphaned-parent|prequeue-red) return 0 ;; esac
-  return 1
-}
-
-# br_ladder_rung <class> <mechanicals> <fixrounds> [<fixcap>]
-#                                       -> mechanical|fix-round|rebuild-fresh
-#   PURE, so the order is a thing the fixture drives rather than a thing the
-#   reader believes. A review-blocked park skips rung 1: merging main into the
-#   branch answers nothing a reviewer asked for, and the findings are already
-#   posted, so its ladder is fix round then rebuild. An orphaned-parent park
-#   skips it for the same shape of reason (br_skips_mechanical).
-#
-#   THE FIX CAP IS AN ARGUMENT (BH-579) because it is no longer one number: a
-#   small conflict buys two rounds and a contested winner buys a bonus one
-#   (br_fix_cap). It is passed in rather than read here so the rung CHOSEN and
-#   the rung that RUNS read the same cap. Absent, it is today's single round.
-br_ladder_rung() {
-  local class="${1:-}" mech="${2:-0}" fix="${3:-0}" cap="${4:-${BR_MAX_FIXROUNDS:-1}}"
-  case "$mech" in ''|*[!0-9]*) mech=0 ;; esac
-  case "$fix"  in ''|*[!0-9]*) fix=0 ;; esac
-  case "$cap"  in ''|*[!0-9]*) cap="${BR_MAX_FIXROUNDS:-1}" ;; esac
-  case "$cap"  in ''|*[!0-9]*) cap=1 ;; esac
-  if ! br_skips_mechanical "$class" && [ "$mech" -lt "${BR_MAX_MECHANICAL:-1}" ]; then echo mechanical; return 0; fi
-  if [ "$fix" -lt "$cap" ]; then echo fix-round; return 0; fi
-  echo rebuild-fresh
-}
-
-# br_regen_offered <state-json> <head> — rc 0 when this TICKET has already been
-#   offered the regenerate rung on THIS head. Pure jq over the record, no file
-#   I/O, so the dedup is a thing the fixture drives.
-#
-#   Keyed on head8 and not on the ticket alone: a regenerate that pushes moves
-#   the head, CI runs, and the park that comes back is a genuinely new fact. An
-#   EMPTY head is rc 1 — absent is not "already offered" (D11), and the rung
-#   body refuses a park with no head of its own anyway.
-br_regen_offered() {
-  local st="${1:-}" head="${2:-}"
-  [ -n "$head" ] || return 1
-  printf '%s' "$st" | jq -e --arg h "${head:0:8}" \
-    '[.attempts[]? | select((.action == "regen") or (.action == "regen-noop"))
-                   | select((.detail // "") | contains("head8=" + $h))] | length > 0' \
-    >/dev/null 2>&1
-}
-
-# br_eject_runs <pr-url> [<head>] — the failing batch runs the merge conductor
-#   handed over for a queue-ejected-twice park (mc_eject_fix_now, BH-6000): the
-#   lines of its mc_eject_runs_file after the head on line 1, and ONLY while
-#   that head is the PR's head now. <head> is the caller's head; empty reads the
-#   conductor row's head (mc_row_field field 4). A file for another head is
-#   stale (the fix round pushed a new head, and that head's runs could not be
-#   read): it is removed and answers rc 1, so neither the ladder nor the brief
-#   ever acts on an older head's runs (lead review lr-6024). rc 0 printed at
-#   least one run; rc 1 no file, an empty or stale one, no head to compare, or
-#   no conductor lib on this box.
-br_eject_runs() {
-  local u="${1:-}" h="${2:-}" f out fh=""
-  command -v mc_eject_runs_file >/dev/null 2>&1 || return 1
-  case "$u" in https://github.com/*/*/pull/*) ;; *) return 1 ;; esac
-  f=$(mc_eject_runs_file "$(mc_slug_of_url "$u")#$(mc_num_of_url "$u")")
-  [ -s "$f" ] || return 1
-  if [ -z "$h" ] && command -v mc_row_field >/dev/null 2>&1; then
-    h=$(mc_row_field "$(mc_slug_of_url "$u")#$(mc_num_of_url "$u")" 4 2>/dev/null)
-  fi
-  [ "${#h}" -ge 7 ] || return 1
-  { IFS= read -r fh < "$f"; } 2>/dev/null
-  [ "${#fh}" -ge 7 ] || return 1
-  case "$h" in "$fh"*) ;; *) case "$fh" in "$h"*) ;; *) rm -f "$f" 2>/dev/null; return 1 ;; esac ;; esac
-  out=$(tail -n +2 "$f" 2>/dev/null)
-  [ -n "$out" ] || return 1
-  printf '%s\n' "$out"
-}
-
-# br_regen_ladder <class> <ladder-action> -> the action to DISPATCH.
-#   RUNG 1b, THE REGENERATE RUNG (BH-950.2). A ci-red park whose mechanical rung
-#   is spent went straight to an agent fix round, and 12 of the parks in the #950
-#   census were red on a GENERATED file that was stale — a drift one more merge
-#   of main answers for free. So between rung 1 and rung 2 the ci-red class gets
-#   one more tokenless merge (mc_rebase, which regenerates the generated-files
-#   table on the way through), and only the class that merge can help:
-#   review-blocked has posted findings a merge answers nothing about,
-#   orphaned-parent needs its parent's commits taken OUT, and a rebase-conflict
-#   park has already had exactly this merge refused at rung 1.
-#
-#   BR_REGEN_RUNG=0 prints the ladder's own answer, so the dispatch is the
-#   pre-BH-950 one to the letter.
-br_regen_ladder() {
-  local class="${1:-}" action="${2:-}"
-  if [ "${BR_REGEN_RUNG:-1}" != 0 ] && [ "$class" = ci-red ]; then
-    case "$action" in fix-round|rebuild-fresh) printf 'regen'; return 0 ;; esac
-  fi
-  printf '%s' "$action"
-}
-
-br_action() { # br_action <reason> -> ladder|rebuild-fresh|adjudicate|re-review|none
-  # The ladder owns the branch classes unless it is switched off, in which case
-  # every reason answers exactly what it answered before it shipped.
-  if [ "${BR_LADDER:-1}" != 0 ] && [ -n "$(br_ladder_class "${1:-}")" ]; then echo ladder; return 0; fi
-  case "${1:-}" in
-    head-not-reapproved|orphaned-child)     echo fix-round ;;
-    # THE REVIEW LANE'S OWN VERDICT (BH-872). Deliberately NOT a ladder class:
-    # rung 1 (merge main / re-run CI) answers nothing a reviewer asked for, and
-    # rung 3 (close the PR and rebuild the ticket) is not the answer to a review
-    # finding on a PR that may have no ticket at all. Fix round, then ABANDONED.
-    review-changes-requested)               echo fix-round ;;
-    iron-law|test-tamper|rescue-real-deletion) echo adjudicate ;;
-    no-verdict)                             echo re-review ;;
-    # The rebuild this lane started has ENDED. A dead machine is worth another
-    # rebuild; a planner that could not decompose the ticket, a plan that
-    # stopped on an open question and a review that refused the diff are all
-    # TICKET-level stops, and a second rebuild ends exactly the same way.
-    rebuild-build-dead)                     echo rebuild-fresh ;;
-    rebuild-decompose-failed|rebuild-plan-blocked|rebuild-review-blocked) echo abandon-rebuild ;;
-    # THE ENQUEUE ITSELF DID NOT LAND (BH-488). Not a ticket-level stop and not
-    # a new rung: the PR is already closed and the record already marked, so the
-    # only thing owed is the enqueue, tried again.
-    rebuild-enqueue-failed)                 echo rebuild-retry ;;
-    conflict-unresolvable|rebase-gate-red|queue-ejected-twice|merge-failed-twice|\
-    queue-enqueue-failed-twice|red-ci-twice|red-twice|provenance-ci-red|reproduction-gate|intent-gate|\
-    pool-died-twice|pool-deferred-max|rescue-giving-up|plan-malformed|plan-blocked|\
-    build-dead|pr-create-failed)            echo rebuild-fresh ;;
-    # BH-1770 (the operator, 2026-09-24): bin/lane-reaper.sh killed this run past its
-    # per-lane deadline, and THIS lane owns the relaunch, never the sweep. There
-    # is no branch to fix — the run never finished — so it is a fresh build on
-    # the capped ladder, and ABANDONED with one alert when that is spent.
-    abandoned-timeout)                      echo rebuild-fresh ;;
-    *)                                      echo none ;;
-  esac
-}
-
-# br_reason_of <raw-reason-string> -> the normalized word br_action understands.
-# The raw strings are whatever the parking lane wrote, and they carry detail
-# ("conflict-unresolvable: CONFLICT (content): Merge conflict in x.ts"). Matched
-# on the PREFIX, so the detail rides along in the log without confusing this.
-br_reason_of() {
-  case "${1:-}" in
-    conflict-unresolvable*)      echo conflict-unresolvable ;;
-    rebase-gate-red*)            echo rebase-gate-red ;;
-    queue-ejected-twice*)        echo queue-ejected-twice ;;
-    merge-failed-twice*)         echo merge-failed-twice ;;
-    queue-enqueue-failed-twice*) echo queue-enqueue-failed-twice ;;
-    no-verdict*)                 echo no-verdict ;;
-    head-not-reapproved*)        echo head-not-reapproved ;;
-    red-ci-twice*)               echo red-ci-twice ;;
-    # RED_TWICE (2026-09-15): the conductor re-ran this head's failed jobs once
-    # and CI came back red on the SAME head. Same answer as its cross-head
-    # sibling above — a branch whose own CI will not go green is rebuilt fresh
-    # against current main; the fix round needs posted review findings and a red
-    # CI run has none, so br_fix_round would only fall through to this anyway.
-    red-twice*)                  echo red-twice ;;
-    # 2026-09-16: the raw reason carries the dead base branch and the parent's
-    # PR url, and the fix round reads both out of it — so it is matched on the
-    # prefix like every other reason here and the detail rides along.
-    orphaned-child*)             echo orphaned-child ;;
-    # BH-3935: bin/lib/pr-owner/stale.sh's rung 2 writes it, with the age in
-    # the detail ("stale-replan: no head or verdict change for 5d").
-    stale-replan*)               echo stale-replan ;;
-    # BH-872: the raw reason carries the PR and the head it was read at, so it
-    # is matched on the prefix like every other reason and the detail rides
-    # along into the log.
-    review-changes-requested*)   echo review-changes-requested ;;
-    # BH-614: the build was approved and its branch pushed, and the create
-    # opened nothing (bin/run-build.sh's ratchet refused the url-less claim, or
-    # bin/fly-pool.sh's reap rewrote a legacy line RESULT_MALFORMED). There is no
-    # PR to read and no finding to fix, so no rung of the ladder applies — only a
-    # fresh build against current main answers it.
-    pr-create-failed*)           echo pr-create-failed ;;
-    # BH-1770: a run bin/lane-reaper.sh killed past its deadline (REAPED on the
-    # record). br_from_builds writes it; the relaunch is this lane's.
-    abandoned-timeout*)          echo abandoned-timeout ;;
-    iron-law*)                   echo iron-law ;;
-    # A REBUILD'S OWN OUTCOME (2026-09-16, project-5 #1645). These four are
-    # written by br_from_rebuilds and by nothing else: they mean the fresh build
-    # THIS lane enqueued has finished, and they are deliberately distinct from
-    # their bare siblings. `build-dead` is a record nobody has acted on yet;
-    # `rebuild-build-dead` is our own rebuild dying, which spends the next
-    # counter without re-closing a PR that rung 3 already closed.
-    rebuild-build-dead*)         echo rebuild-build-dead ;;
-    rebuild-decompose-failed*)   echo rebuild-decompose-failed ;;
-    rebuild-plan-blocked*)       echo rebuild-plan-blocked ;;
-    rebuild-review-blocked*)     echo rebuild-review-blocked ;;
-    rebuild-enqueue-failed*)     echo rebuild-enqueue-failed ;;
-    # BH-3630: a `provenance` park the conductor saw verdict=APPROVE + ci=red
-    # on. The conductor's row only ever says `provenance`; br_from_conductor
-    # writes this word after reading the conductor's own detail for the head
-    # (br_prov_promote), so a bare `provenance` still answers "" below.
-    provenance-ci-red*)          echo provenance-ci-red ;;
-    # BH-4549: the pre-queue gate's park, `prequeue-red: <suites> on main <m12>
-    # — …` (tracer) or `prequeue-red: <suites> (reproduced alone on <base12>,
-    # batch #n)` (batch-solo). The fix round re-reads the suites and the sha.
-    prequeue-red*)               echo prequeue-red ;;
-    # A LOSER OF A CONTESTED PATH IS NOT THE LADDER'S (BH-579). Another ticket
-    # won the path this PR conflicts on and holds it; this lane answers the hold
-    # itself (br_one's loser skip) and the conductor gets the row back when the
-    # hold is released. An empty answer is what keeps the row out of
-    # br_from_conductor entirely, so no rung is ever offered to a loser.
-    contested*)                  echo "" ;;
-    *)                           echo "" ;;
-  esac
-}
-
-# ---------------------------------------------------------------------------
-# State. One json per (project, key). rkey is the FILE name, so it is sanitized:
-# a conductor key is `example-org/project-5#510` and both of those characters are
-# trouble in a path and in a lock name.
-# ---------------------------------------------------------------------------
-br_rkey() { printf '%s' "${1//[^A-Za-z0-9._-]/-}"; }
-# br_cap_key <project> <rkey> <ticket-key> — the key the REBUILD cap counts on.
-# A conductor rkey carries the PR NUMBER, and a rebuild produces a NEW PR, so a
-# cap counted on it starts from zero on every rung: 10 -> rebuild -> 11 ->
-# rebuild -> 12, for ever. The TICKET is what is being rebuilt, so every rebuild
-# of one ticket shares one counter and the ladder is bounded per ticket. The
-# queue and build sources already key on the ticket, so this is their key too.
-br_cap_key() {
-  local p="$1" rkey="$2" tkey="$3"
-  case "$tkey" in ''|-) printf '%s' "$rkey" ;; *) br_rkey "$p-$tkey" ;; esac
-}
-br_file() { echo "$ST/$1/$2.json"; }
-br_load() { # br_load <project> <rkey> — prints the json (a fresh one if absent)
-  local f row=""; f=$(br_file "$1" "$2")
-  if [ -s "$f" ]; then cat "$f"; return 0; fi
-  # THE FILE IS GONE: ASK THE ROW (BH-2317). br_save mirrors the counters and
-  # the outcome into ledgers(kind=br_record), so a wiped or rebuilt hub gets
-  # them back instead of running an ABANDONED ladder again and telling the
-  # client twice. Only rc 0 restores; a real miss or an outage is today's zero
-  # shape. A miss (or an outage) is remembered in $BR_ROW_MISS for the tick (the
-  # lane sets it; br_load runs inside $(...), so a shell variable would not
-  # survive), which keeps a never-written key at one read per tick (D21).
-  if command -v job_ledger_row >/dev/null 2>&1 \
-     && ! { [ -n "${BR_ROW_MISS:-}" ] && grep -qxF "$1/$2" "$BR_ROW_MISS" 2>/dev/null; }; then
-    row=$(job_ledger_row br_record "$1/$2" 2>/dev/null </dev/null) \
-      || { row=""; [ -n "${BR_ROW_MISS:-}" ] && printf '%s\n' "$1/$2" >> "$BR_ROW_MISS" 2>/dev/null; }
-  fi
-  printf '%s' "$row" | jq -c --arg p "$1" --arg k "$2" --arg t "$(STAMP)" -n '
-    {project:$p,rkey:$k,first_seen:$t,rebuilds:0,fixrounds:0,mechanicals:0,regens:0,adjudications:0,rereviews:0,outcome:"",attempts:[]}
-    + ((try input catch null) as $r
-       | if ($r | type) != "object" then {} else
-           (try ($r.detail | fromjson) catch null) as $d
-           | if ($d | type) != "object" then {} else
-               ($d | with_entries(select(.key as $x
-                   | ["rebuilds","fixrounds","mechanicals","regens","adjudications","rereviews"] | index($x))
-                 | select(.value | type == "number")))
-               + (if ($d.first_seen | type) == "string" then {first_seen:$d.first_seen} else {} end)
-               + {outcome: (if $r.status == "open" then "" else ($r.status // "") end), restored:"ledger"}
-             end
-         end)'
-}
-# br_save <project> <rkey> <json> — THE ONE WRITE of a ticket's record
-#   (BH-2317). The file first, exactly as every writer did it, and rc 1 when
-#   that fails; then the counters and the outcome as a ledgers(kind=br_record)
-#   row, fail-open and its rc ignored — br_record's file-then-row order, so a
-#   row with no file behind it cannot happen and the next write heals a missed
-#   row. status is the outcome (`open` when there is none), detail the counters.
-br_save() {
-  local f status detail
-  f=$(br_file "$1" "$2"); mkdir -p "$(dirname "$f")" 2>/dev/null
-  printf '%s\n' "$3" > "$f" || return 1
-  command -v job_ledger_put >/dev/null 2>&1 || return 0
-  status=$(printf '%s' "$3" | jq -r '(.outcome // "") | if . == "" then "open" else . end' 2>/dev/null) || return 0
-  detail=$(printf '%s' "$3" | jq -c '{rebuilds,fixrounds,mechanicals,regens,adjudications,rereviews,first_seen}' 2>/dev/null) || return 0
-  [ -n "$status" ] && job_ledger_put br_record "$1/$2" "$status" "$detail" >/dev/null 2>&1 </dev/null
-  return 0
-}
-br_num() { # br_num <json> <field>
-  local v; v=$(printf '%s' "$1" | jq -r "(.$2 // 0)" 2>/dev/null)
-  case "$v" in ''|*[!0-9]*) echo 0 ;; *) echo "$v" ;; esac
-}
-# br_rows_count <pr-url> <rebuild|fixround|adjudicate> — how many attempts of
-#   this kind the ROWS hold for this PR (BH-1388), or NOTHING at all when the
-#   flag is off, the url is blank or unparseable, or the worker is out.
-#
-#   pr_attempt_count prints nothing at rc 1 by design: an outage is not a count,
-#   and a cap that read a blink as zero would buy a rebuild it had already
-#   bought (D11). rc 2 is a MEASURED zero and prints 0, which can never raise a
-#   cap. So the caller's rule is simply "empty means the file's counter stands".
-br_rows_count() {
-  local url="${1:-}" kind="${2:-}" slug num n rc
-  case "$url" in ''|-) return 0 ;; esac
-  [ -n "$kind" ] || return 0
-  type pr_rows_on >/dev/null 2>&1 || return 0
-  pr_rows_on || return 0
-  slug=$(br_slug_of_url "$url") || return 0
-  num=$(mc_num_of_url "$url"); [ -n "$num" ] || return 0
-  n=$(pr_attempt_count "$slug" "$num" "$kind" 2>/dev/null); rc=$?
-  [ "$rc" -eq 0 ] || [ "$rc" -eq 2 ] || return 0
-  case "$n" in ''|*[!0-9]*) return 0 ;; esac
-  printf '%s' "$n"
-}
-# br_cap_rows <project> <rkey> <reason> <file-count> <pr-url> <kind> <field>
-#   THE CAP IS max(file, rows), never rows-only-when-the-file-is-absent.
-#   "Absent" is knowable only inside br_load, and br_hold_gate runs before every
-#   cap read and can br_record a `held` attempt — which CREATES the file with
-#   zero counters. An absent-only rule would then find a file and let a wiped
-#   hub evade the cap, which is the one outcome BH-1388 forbids. Rows <= file
-#   whenever the file is genuine (the rows are per PR and collapse on an
-#   unchanged head; the file is per ticket cap-key and counts every bump), so
-#   the max equals the file everywhere the file is authoritative and equals the
-#   rows only after a wipe. Prints the count to use; says so when it raised one.
-br_cap_rows() {
-  local p="$1" rkey="$2" reason="$3" n="$4" url="$5" kind="$6" field="$7" r
-  r=$(br_rows_count "$url" "$kind")
-  if [ -n "$r" ] && [ "$r" -gt "$n" ] 2>/dev/null; then
-    say "$p/$rkey [$reason]: the record says $n $field but pr_attempts holds $r — a rebuilt hub, the rows count"
-    printf '%s' "$r"; return 0
-  fi
-  printf '%s' "$n"
-}
-# br_record <project> <rkey> <action> <reason> <detail> [field-to-bump] [pr-url] [head]
-#   Appends the attempt AND bumps its counter in one write. The attempt list is
-#   what the ABANDONED alert prints: "what was tried" has to be a fact on disk,
-#   not a reconstruction from log greps.
-#
-#   THE ROW IS THE SECOND WRITE (BH-1388). When the bump is one of the three
-#   ladder counters and the caller handed in the PR url, the same attempt is
-#   PUT to pr_attempts — mc_attempt_put's ordering exactly (bin/lib/mc/locks.sh):
-#   the FILE first, so "a row with no file line" cannot happen, then the row,
-#   whose rc is ignored because the file line already exists and the next bump
-#   heals the row. The url is an ARGUMENT and not a record field because the
-#   record has never carried one (br_load's fresh shape), so the eight bumping
-#   call sites pass it and every other caller is unchanged.
-br_record() {
-  local p="$1" k="$2" act="$3" why="$4" detail="$5" bump="${6:-}" purl="${7:-}" phead="${8:-}"
-  local f cur kind slug num
-  f=$(br_file "$p" "$k"); mkdir -p "$(dirname "$f")" 2>/dev/null
-  cur=$(br_load "$p" "$k")
-  # The attempt carries its PR url when the caller handed one in (the fix-round
-  # and rebuild call sites do): bin/lib/br/opt/cirepair.sh reads it to tell this
-  # PR's rounds from an earlier PR's on a record it has not stamped yet.
-  cur=$(printf '%s' "$cur" | jq -c --arg a "$act" --arg w "$why" --arg d "$detail" --arg t "$(STAMP)" --arg u "$purl" \
-    '.attempts += [{at:$t,action:$a,reason:$w,detail:$d} + (if $u == "" or $u == "-" then {} else {url:$u} end)] | .updated = $t' 2>/dev/null) || return 1
-  [ -n "$bump" ] && cur=$(printf '%s' "$cur" | jq -c --arg b "$bump" '.[$b] = ((.[$b] // 0) + 1)' 2>/dev/null)
-  br_save "$p" "$k" "$cur" || return 1
-  # A RECORDED RUNG IS RESOLVER ACTIVITY (BH-3630). When the conductor holds a
-  # claim for this PR (mc_resolver_claim), its active_at moves, and the
-  # conductor's 24h re-page stays quiet while rungs keep landing. No claim, no-op.
-  case "$purl" in
-    https://github.com/*/pull/*)
-      command -v mc_resolver_claim_touch >/dev/null 2>&1 \
-        && mc_resolver_claim_touch "$(br_slug_of_url "$purl")#$(mc_num_of_url "$purl")" 2>/dev/null ;;
-  esac
-  case "$bump" in
-    rebuilds)      kind=rebuild ;;
-    fixrounds)     kind=fixround ;;
-    adjudications) kind=adjudicate ;;
-    *)             kind="" ;;
-  esac
-  case "$purl" in ''|-) kind="" ;; esac
-  if [ -n "$kind" ] && type pr_rows_on >/dev/null 2>&1 && pr_rows_on; then
-    if slug=$(br_slug_of_url "$purl"); then
-      num=$(mc_num_of_url "$purl")
-      [ -n "$num" ] && pr_attempt_put "$slug" "$num" "$kind" "${phead:--}" >/dev/null 2>&1
-    fi
-  fi
-  return 0
-}
-# br_event <event> <project> <cap-key> <reason> <detail> — ONE line per rung
-#   transition, in the shape every later reader wants: a grep-able `EVENT
-#   <name>` line in this lane's log and a fleet_event beat for the console.
-#   A ladder whose transitions are only visible as prose is a ladder nobody can
-#   count, and counting them is how the next "121 rebuilds, zero fix rounds"
-#   gets noticed in a day rather than in a month.
-br_event() {
-  local ev="$1" p="$2" ck="$3" why="$4" detail="$5"
-  say "EVENT $ev $p/$ck [$why] $detail"
-  command -v bhw_event_ack >/dev/null 2>&1 && bhw_event_ack "$ev"
-  [ -x "$H/bin/beat.sh" ] || return 0
-  "$H/bin/beat.sh" "$(jq -nc --arg e "$ev" --arg p "$p" --arg k "$ck" --arg w "$why" \
-      --arg d "$detail" --arg ts "$(STAMP)" \
-      '{kind:"fleet_event",project:$p,rkey:("resolver:"+$p+"/"+$k),event:$e,reason:$w,detail:$d,ts:$ts}' 2>/dev/null)" \
-    >/dev/null 2>&1 || true
-  return 0
-}
-
-# br_row_closed <project> <ticket-key> <record> <pr-url> <stage> <detail> <reason>
-#   THE BUILD ROW OF A PR THIS LANE CLOSED UNMERGED (BH-389). br_event tells the
-#   fleet feed; nothing told the closed PR's own build row, so it kept its last
-#   stage and the console counted project-5 #1237/#1239/#1242/#1220 as shipped.
-#   One `kind:"build"` beat, `superseded` or `abandoned`, `merged:false` always,
-#   addressed by run-build's own bkey (bin/run-build.sh BKEY) when there is a
-#   record and by the PR url regardless. No tier/verdict, so an earlier review
-#   is not rewritten. Only ever called after br_close_pr answered 0 — which it
-#   also answers for a PR that is already closed OR merged; the rungs read
-#   `merged` first, so only a merge landing between that read and the close
-#   could reach here with a merged PR.
-#
-#   A ROW FROM br_from_rebuilds SENDS NOTHING (BH-389 review B1). Those rows
-#   pair the REBUILD's record with `parked_url`, the OLD PR rung 3 closed and
-#   already beat `superseded`. A beat there would hang the old PR on the
-#   rebuild's row (two rows claiming one PR) and say "closed unmerged" about a
-#   build that never had a PR. The old row keeps its superseded stage; the
-#   rebuild's own row already ended at its own dead stage. `rebuild-enqueue-failed`
-#   is NOT in this list: it carries `parked_rec`, the old PR's own record, and
-#   its first successor is named only when that retry lands.
-br_row_closed() {
-  local p="$1" tkey="${2:--}" rec="${3:--}" url="${4:--}" stage="$5" detail="$6" reason="${7:-}" bkey=""
-  case "$reason" in
-    rebuild-build-dead|rebuild-decompose-failed|rebuild-plan-blocked|rebuild-review-blocked) return 0 ;;
-  esac
-  [ -n "$rec" ] && [ "$rec" != "-" ] && [ -d "$rec" ] && [ -n "$tkey" ] && [ "$tkey" != "-" ] \
-    && bkey="build:$p:$tkey:$(basename "$rec")"
-  [ -n "$url" ] || url="-"
-  [ -n "$bkey" ] || [ "$url" != "-" ] || return 0
-  [ -x "$H/bin/beat.sh" ] || return 0
-  "$H/bin/beat.sh" "$(jq -nc --arg b "$bkey" --arg p "$p" --arg k "$tkey" --arg s "$stage" \
-      --arg u "$url" --arg d "$detail" \
-      '{kind:"build",project:$p,ticket_key:$k,stage:$s,merged:false,detail:$d}
-       + (if $b == "" then {} else {bkey:$b} end)
-       + (if $u == "-" then {} else {pr_url:$u} end)' 2>/dev/null)" \
-    >/dev/null 2>&1 || true
-  return 0
-}
-
-br_set_outcome() {
-  local f cur; f=$(br_file "$1" "$2"); mkdir -p "$(dirname "$f")" 2>/dev/null
-  cur=$(br_load "$1" "$2" | jq -c --arg o "$3" --arg t "$(STAMP)" '.outcome=$o | .updated=$t' 2>/dev/null) || return 1
-  br_save "$1" "$2" "$cur"
-}
-br_set_flag() { # br_set_flag <project> <rkey> <field> — sets .<field>=true on the record
-  local f cur; f=$(br_file "$1" "$2"); mkdir -p "$(dirname "$f")" 2>/dev/null
-  cur=$(br_load "$1" "$2" | jq -c --arg k "$3" --arg t "$(STAMP)" '.[$k]=true | .updated=$t' 2>/dev/null) || return 1
-  br_save "$1" "$2" "$cur"
-}
-
-# br_set_field <project> <cap-key> <field> <value> — one scalar on the record.
-# The rebuild rung uses it for `parked_url` (the PR it just closed, which the
-# rebuild-outcome path needs later to move that row and name it in the comment)
-# and for `rebuild_result` (the RESULT line the outcome was read from, so the
-# abandon can quote it even when the evidence was a queue row rather than a
-# directory). An empty value is written as "-", never as an empty string that a
-# later reader would have to guess about.
-# br_set_num <project> <cap-key> <field> <n> — the same, for a COUNTER.
-#   br_set_field writes every value as a JSON string, and br_record's bump is
-#   `.[$b] = ((.[$b] // 0) + 1)` — arithmetic, which dies on a string ("string
-#   and number cannot be added") and takes the whole attempt record with it. So
-#   a field any rung increments is reset through this one, with --argjson.
-br_set_num() {
-  local f cur v="${4:-0}"
-  case "$v" in ''|*[!0-9]*) v=0 ;; esac
-  f=$(br_file "$1" "$2"); mkdir -p "$(dirname "$f")" 2>/dev/null
-  cur=$(br_load "$1" "$2" | jq -c --arg k "$3" --argjson v "$v" --arg t "$(STAMP)" \
-        '.[$k]=$v | .updated=$t' 2>/dev/null) || return 1
-  br_save "$1" "$2" "$cur"
-}
-br_set_field() {
-  local f cur v="${4:-}"; [ -n "$v" ] || v="-"
-  f=$(br_file "$1" "$2"); mkdir -p "$(dirname "$f")" 2>/dev/null
-  cur=$(br_load "$1" "$2" | jq -c --arg k "$3" --arg v "$v" --arg t "$(STAMP)" \
-        '.[$k]=$v | .updated=$t' 2>/dev/null) || return 1
-  br_save "$1" "$2" "$cur"
-}
-
-# br_push_field <project> <cap-key> <field> <value> — append <value> to a JSON
-# ARRAY field on the record, once. rc 1 when the write did not happen, which the
-# caller must treat as "do not do the thing this mark was guarding" (D16): the
-# review fix round appends the head it is about to work on BEFORE the agent
-# runs, and a round whose head was not recorded is a round that runs again on
-# every tick for ever.
-br_push_field() {
-  local f cur; f=$(br_file "$1" "$2"); mkdir -p "$(dirname "$f")" 2>/dev/null
-  cur=$(br_load "$1" "$2" | jq -c --arg k "$3" --arg v "$4" --arg t "$(STAMP)" \
-        '.[$k] = (((.[$k] // []) + [$v]) | unique) | .updated=$t' 2>/dev/null) || return 1
-  [ -n "$cur" ] || return 1
-  br_save "$1" "$2" "$cur"
-}
-
-# br_has_field_value <json> <field> <value> — rc 0 when the array field already
-# contains the value. The (PR, head) dedupe test, read off the record.
-br_has_field_value() {
-  printf '%s' "${1:-}" | jq -e --arg k "$2" --arg v "$3" \
-    '((.[$k] // []) | index($v)) != null' >/dev/null 2>&1
-}
-
-# br_set_num <project> <cap-key> <field> <n> — the NUMERIC twin of br_set_field,
-# for counters a later reader compares as a number (`enqueue_failures`). Written
-# as a json number, never as a string: br_num reads either, but a counter that
-# renders as "6" in the record is one more thing an operator has to think about.
-br_set_num() {
-  local f cur v="${4:-0}"
-  case "$v" in ''|*[!0-9]*) v=0 ;; esac
-  f=$(br_file "$1" "$2"); mkdir -p "$(dirname "$f")" 2>/dev/null
-  cur=$(br_load "$1" "$2" | jq -c --arg k "$3" --argjson v "$v" --arg t "$(STAMP)" \
-        '.[$k]=$v | .updated=$t' 2>/dev/null) || return 1
-  br_save "$1" "$2" "$cur"
-}
-
-# br_seen_rebuild <project> <cap-key> <record-name> — remember a rebuild record
-# whose outcome has been consumed, so a landed rebuild is recorded ONCE and not
-# re-recorded on every tick until something else moves the ticket on.
-br_seen_rebuild() {
-  local f cur; f=$(br_file "$1" "$2"); mkdir -p "$(dirname "$f")" 2>/dev/null
-  cur=$(br_load "$1" "$2" | jq -c --arg n "$3" --arg t "$(STAMP)" \
-        '.rebuild_seen = ((.rebuild_seen // []) + [$n] | unique) | .updated=$t' 2>/dev/null) || return 1
-  br_save "$1" "$2" "$cur"
-}
-
-# br_json_edit <project> <cap-key> <jq-filter> [jq args…]
-#   ONE jq write over the ticket's record, in br_record's shape: load, apply,
-#   rewrite. A filter that fails leaves the file exactly as it was and answers
-#   rc 1 — a half-applied record is how "stamped contested without a hold"
-#   happens, so there is no path here that writes part of a change.
-br_json_edit() {
-  local p="$1" k="$2" filter="$3"; shift 3
-  local f cur
-  f=$(br_file "$p" "$k"); mkdir -p "$(dirname "$f")" 2>/dev/null
-  cur=$(br_load "$p" "$k" | jq -c "$@" "$filter" 2>/dev/null) || return 1
-  [ -n "$cur" ] || return 1
-  br_save "$p" "$k" "$cur"
-  return 0
-}
-
-# ---------------------------------------------------------------------------
-# THE SHAPE OF A PARK (BH-579). Two ladders, and which one a ticket is on is a
-# MEASUREMENT, never a guess: `.conflict_lines` is written only by
-# mc_conflict_lines (the fix round's own tree) and by the conductor's sidecar,
-# and it is kept as a MAX — a stale small measure can be raised by a later
-# large one, never lowered, which is the conservative side of a wrong answer.
-#
-# UNKNOWN IS LARGE, AND 0 IS UNKNOWN. An absent, empty or unparseable
-# measurement answers `large`, which is exactly today's ladder: the small shape
-# has to be earned. A measured ZERO is the same answer, because zero is what an
-# honest measurement of a conflict with no `<<<<<<<` markers reports — a
-# delete/modify (`UD`) conflict is exactly that shape, and it is the shape a
-# sibling that DELETED or RENAMED this ticket's file leaves behind. Reading that
-# 0 as "a nought-line conflict" would put the hardest conflicts on the SHORT
-# ladder: one rebuild instead of three, then ABANDONED. `.conflict_lines` is a
-# MAX, so the same conflict could never raise it afterwards either.
-# ---------------------------------------------------------------------------
-br_shape() { # br_shape <json> -> small|large
-  local n
-  n=$(printf '%s' "${1:-}" | jq -r '.conflict_lines // ""' 2>/dev/null)
-  case "$n" in ''|0|*[!0-9]*) echo large; return 0 ;; esac
-  if [ "$n" -le "${SMALL_CONFLICT_LINES:-300}" ]; then echo small; else echo large; fi
-}
-# br_fix_cap <json> [<reason>] — how many fix rounds THIS ticket has bought. The
-#   contested bonus rides on top of whichever shape it is on, and it is read from
-#   the record rather than passed around, so the rung chosen and the rung that
-#   runs can never disagree.
-#
-#   THE REASON IS THE SECOND ARGUMENT (BH-872), because one reason does not read
-#   the record at all: a review verdict is worth BR_REVIEW_FIX_ROUNDS (2) rounds,
-#   since the second one answers the findings the reviewer raised on what the
-#   FIRST one pushed. A review park has no conflict of its own to be small or
-#   large and no contested bonus to ride on, so that branch is the whole answer.
-#   Every other reason — and an absent one, which is how the ladder calls this —
-#   keeps the shape-driven cap, byte for byte.
-br_fix_cap() {
-  local st="${1:-}" reason="${2:-}" base
-  case "$reason" in
-    review-changes-requested) printf '%s\n' "${BR_REVIEW_FIX_ROUNDS:-2}"; return 0 ;;
-    queue-dequeued) echo 1; return 0 ;;   # BH-3728: one round per (pr, head, class) claim; the dequeue-watch lane counts rounds across heads
-  esac
-  # The BR_-prefixed spellings are the documented knobs; the bare ones are what
-  # this script assigns them to at startup, and are read first so a caller that
-  # sourced only these functions still sees the knob.
-  if [ "$(br_shape "$st")" = small ]; then base="${MAX_FIXROUNDS_SMALL:-${BR_MAX_FIXROUNDS_SMALL:-2}}"
-  else base="${MAX_FIXROUNDS:-${BR_MAX_FIXROUNDS:-1}}"; fi
-  case "$base" in ''|*[!0-9]*) base=1 ;; esac
-  echo $(( base + $(br_num "$st" fixround_bonus) ))
-}
-br_rebuild_cap() { # br_rebuild_cap <json>
-  local cap
-  if [ "$(br_shape "${1:-}")" = small ]; then cap="${MAX_REBUILDS_SMALL:-1}"; else cap="${MAX_REBUILDS:-3}"; fi
-  case "$cap" in ''|*[!0-9]*) cap=3 ;; esac
-  echo "$cap"
-}
 # br_note_conflict_lines <project> <cap-key> <n> — record a measurement, biggest
 #   wins. A non-numeric n is not a measurement and is dropped rather than read
 #   as zero, and NEITHER IS A ZERO: the sidecar of a delete/modify conflict
@@ -1852,7 +1247,7 @@ br_yield_request() {
   rows=$(br_rounds_live | sort -s -t$'\t' -k1,1n) || return 1
   [ -n "$rows" ] || return 1
   printf '%s\n' "$rows" | awk -F'\t' '$2==1{found=1} END{exit found?1:0}' || return 1
-  oldest=$(printf '%s\n' "$rows" | head -1 | cut -f3)
+  oldest=$(head -1 <<<"$rows" | cut -f3)
   [ -n "$oldest" ] || return 1
   # Idempotent: an existing marker is left exactly as it is.
   [ -e "${oldest%.json}.yield" ] && return 0
@@ -1888,157 +1283,9 @@ br_yield_take() {
 # "-" is the empty field everywhere, so a reader splitting on tabs never shifts.
 # ---------------------------------------------------------------------------
 
-# br_key_shape <text> — the ticket key that <text> STARTS with, or nothing.
-# Every board in this fleet keys the same way and always has: letters, a dash,
-# digits (TK-775, TK-1617, TK-88, TK-131, AIO-472). Whatever follows the number
-# is decoration somebody else added — a rebuild's -r2, a branch slug, a build
-# dir's timestamp, a title's ": " — and is dropped. The key comes back
-# UPPER-CASED because bin/run-build.sh lower-cases it into the branch name and
-# the queue, the board and the cap counter all want it back the way it was.
-#
-# The shape is the whole guard. A branch like `fix/report-nav-anchors` carries
-# no key and must answer NOTHING rather than a guess: an enqueue with an
-# invented key buys a quarantine (bin/fly-pool.sh) or builds the wrong ticket.
-br_key_shape() {
-  local k
-  k=$(printf '%s' "${1:-}" | sed -nE 's/^([A-Za-z]{2,8})-([0-9]{1,6})($|[^0-9].*$)/\1-\2/p' | head -1)
-  [ -n "$k" ] || return 1
-  printf '%s' "$k" | tr '[:lower:]' '[:upper:]'
-}
-
-# br_key_from_branch <branch> — the key a harness branch name carries.
-# bin/run-build.sh names every branch it cuts `ticket/<key lower-cased>`, plus
-# an -rN suffix when the remote already holds that name; the other shapes here
-# (TK-775-something, TK-775, feat/TK-775-slug) are what a hand-cut or
-# fix-round branch looks like. Only the segment after the last slash is read,
-# so the prefix (ticket/, feat/, fix/) never has to be enumerated.
-br_key_from_branch() {
-  local br="${1:-}"
-  case "$br" in ''|-) return 1 ;; esac
-  br_key_shape "${br##*/}"
-}
-
-# br_key_from_title <title> — "TK-775: what it does", "[TK-1617] what it does".
-# The key is read at the FRONT of the title only, because that is where
-# bin/run-build.sh puts it; a key mentioned mid-sentence is usually a reference
-# to a different ticket ("supersedes TK-700") and must not be built.
-br_key_from_title() {
-  local t="${1:-}"
-  case "$t" in ''|-) return 1 ;; esac
-  case "$t" in '['*|'('*) t="${t:1}" ;; esac
-  br_key_shape "$t"
-}
-
-# br_key_from_dir <project> <record-dir> — the key the pipeline itself wrote
-# into the build dir name: pool-<project>-<KEY>-<stamp> or <project>-<KEY>-<stamp>.
-br_key_from_dir() {
-  local p="$1" rec="${2:--}" bn core
-  case "$rec" in ''|-) return 1 ;; esac
-  bn=$(basename "$rec"); core="${bn#pool-}"
-  case "$core" in "$p"-*) br_key_shape "${core#"$p"-}" ;; *) return 1 ;; esac
-}
-
-# br_ticket_key <project> <record> <branch> [title] — THE ONE DERIVATION of the
-# TICKET key (TK-510), which is what an enqueue needs. Prints
-# "<KEY><TAB><source>"; rc 1 when nothing anywhere carries a key.
-#
-# ONE ORDER, NAMED OUT LOUD (BH-488). There used to be two: discovery read
-# record -> branch, the rebuild rung read branch -> title -> record, and neither
-# said which source had won — so "derived TK-9 from the PR/record" left an
-# operator with three places to go looking. The order is the pipeline's own
-# ledger first (the build record's ticket-meta.json, then the directory name the
-# pipeline itself wrote, and only ever a record THIS project's pipeline wrote),
-# then the PR head branch, then the PR title prefix. The record is first because
-# it is the one artifact written by the process that knows which ticket this is;
-# a branch and a title are names somebody chose.
-#
-# The -rN suffix a previous rebuild added is stripped by the parsers below, so
-# every attempt enqueues the SAME ticket rather than inventing keys.
-#
-# The source words are `record`, `branch`, `title` — br_key_source_phrase turns
-# them into the words a log line uses.
-br_ticket_key() {
-  local p="$1" rec="${2:--}" br="${3:-}" title="${4:-}" k dk
-  # WHOSE RECORD IS THIS? Asked FIRST, before the file is read. br_key_from_dir
-  # is the prefix test that says the pipeline wrote this record for THIS
-  # project, and a record belonging to another one must not hand this project a
-  # key out of a ticket-meta.json this project never wrote — a foreign key here
-  # enqueues somebody else's ticket on this board.
-  if dk=$(br_key_from_dir "$p" "$rec"); then
-    if [ -s "$rec/ticket-meta.json" ]; then
-      k=$(jq -r '(.key // .ticket_key // "")' "$rec/ticket-meta.json" 2>/dev/null)
-      k=$(br_key_shape "$k") && { printf '%s\t%s' "$k" record; return 0; }
-    fi
-    printf '%s\t%s' "$dk" record; return 0
-  fi
-  k=$(br_key_from_branch "$br")     && { printf '%s\t%s' "$k" branch; return 0; }
-  k=$(br_key_from_title "$title")   && { printf '%s\t%s' "$k" title;  return 0; }
-  return 1
-}
-
-# br_key_source_phrase <source-word> — how a log line says where the key came
-# from. Kept next to the resolver so the vocabulary has one home.
-br_key_source_phrase() {
-  case "${1:-}" in
-    record) printf 'the build record' ;;
-    branch) printf 'the PR branch' ;;
-    title)  printf 'the PR title' ;;
-    *)      printf 'an unnamed source' ;;
-  esac
-}
-
-# br_derive_ticket_key <project> <pr-url> <record> — the SECOND ask, made where
-# the first one could not have worked.
-#
-# 2026-09-15: project-5 #1124 (TK-775) at 06:14Z and #1136 (TK-1109) at 07:34Z
-# were both closed by the rebuild rung and then NOT re-enqueued — "no ticket
-# key — cannot enqueue a fresh build" — so neither ticket had an owner until the
-# box happened to relaunch it. The key was never missing: it was on the branch
-# (ticket/TK-775) the whole time. br_conductor_emit asks gh for that branch at
-# DISCOVERY, which runs before br_one installs the repo's own installation token
-# (br_use_token), and gh with the wrong token answers "Could not resolve to a
-# Repository" — an empty branch, silently. Their build records were no help
-# either: mc_record_for only matches a RESULT whose first line STARTS with
-# `PR_CREATED`, and both of these read `RESULT_UNVERIFIED PR_CREATED ...`.
-#
-# So the ask is repeated here, inside the token — but through br_ticket_key,
-# which is the one resolver (BH-488). This function's job is only to FETCH what
-# that resolver reads: the head branch and the title, from a PR gh can now
-# actually see. rc 1 only when every source genuinely carries no key, and the
-# caller alerts on that rather than giving up quietly.
-#
-# IT PRINTS THE BARE KEY and leaves the source in BR_KEY_SOURCE (and the key in
-# BR_TICKET_KEY), because a caller that wants both must NOT use `$( )`: a global
-# set inside a command substitution dies with the subshell, the same lesson
-# br_pr_ref documents. br_one calls it with stdout redirected and reads the
-# globals.
+# br_derive_ticket_key (bin/lib/br/keys.sh) sets these.
 BR_TICKET_KEY=""
 BR_KEY_SOURCE=""
-br_derive_ticket_key() {
-  local p="$1" url="${2:--}" rec="${3:--}" br="" title="" out
-  BR_TICKET_KEY=""; BR_KEY_SOURCE=""
-  if [ -n "$url" ] && [ "$url" != "-" ]; then
-    # A read that did not answer leaves both empty and falls through exactly as
-    # an empty branch and an empty title do today; the 75 is in the log, and
-    # br_nokey_alert is still the give-up said out loud.
-    br=$(br_pr_field "$url" .head.ref 'head branch')
-    title=$(br_pr_field "$url" .title 'pr title')
-  fi
-  out=$(br_ticket_key "$p" "$rec" "$br" "$title") || return 1
-  BR_TICKET_KEY="${out%%	*}"; BR_KEY_SOURCE="${out##*	}"
-  printf '%s' "$BR_TICKET_KEY"
-}
-
-# br_nokey_alert <project> <rkey> <pr-url> <record> — the give-up, said out loud.
-# ONCE per key: this lane re-offers the same park every ten minutes, and an
-# alert that repeats 144 times a day is an alert nobody reads.
-br_nokey_alert() {
-  local p="$1" rkey="$2" url="${3:--}" rec="${4:--}" f
-  f="$ST/$p/$rkey.nokey-alerted"; mkdir -p "$(dirname "$f")" 2>/dev/null
-  [ -e "$f" ] && return 0
-  : > "$f"
-  "$H/bin/lane-alert.sh" blocked-resolver "$p/$rkey: a fresh rebuild was refused because NO ticket key could be derived — not from the PR branch, not from its title, not from the build record. The stale PR (${url:--no url}) is already closed, so nothing owns this ticket until somebody names it. Record: ${rec:--none}. Fix: re-enqueue the ticket by key." >/dev/null 2>&1 || true
-}
 
 # br_prov_promote <key> <row-head> — BH-3630. Prints `provenance-ci-red` when
 #   the conductor's own detail for this park (mc_prov_detail_get, written by the
@@ -2103,6 +1350,9 @@ br_unmapped() {
   return 0
 }
 
+# br_key_in_only's memo (bin/lib/br/keys.sh).
+declare -A _BR_ONLY_REPO=()
+
 # br_conductor_emit <key> <reason> <url> — the shared tail of both conductor
 # sources: resolve the project, the build record, the branch and the ticket key,
 # and print the candidate row. rc 1 when the key does not belong to a project
@@ -2113,21 +1363,6 @@ br_unmapped() {
 #   path — and it rides out as an 8th tuple field so the drain can say how old
 #   the oldest thing it did NOT reach is. Every other source prints 7 fields and
 #   an absent 8th reads as "unknown", which is never treated as 0 (D11).
-# br_key_in_only <owner/repo#n> — rc 0 when this run may look at the key: a
-# whole-fleet scan looks at every key, a project run only at its project's.
-# Asked BEFORE any GitHub read or claim on a conductor key (BH-5913 audit): the
-# hand-off loop read every repo's PRs, on whatever credential the run held, and
-# only br_conductor_emit dropped the other projects afterwards. Memoised per repo.
-declare -A _BR_ONLY_REPO=()
-br_key_in_only() {
-  local slug="${1%%#*}" p
-  [ -n "$ONLY" ] || return 0
-  if [ -z "${_BR_ONLY_REPO[$slug]+x}" ]; then
-    p=$("$H/bin/project-of.sh" --repo "$slug" 2>/dev/null) || p=""
-    _BR_ONLY_REPO[$slug]="$p"
-  fi
-  [ "${_BR_ONLY_REPO[$slug]}" = "$ONLY" ]
-}
 br_conductor_emit() {
   local key="$1" reason="$2" url="$3" parked="${4:--}" project rec br tkey kr
   # Conductor keys are owner/repository#PR, not fleet project names. Resolve
@@ -2430,570 +1665,6 @@ br_from_conductor() {
     case "$parked" in ''|*[!0-9]*) parked="-" ;; esac
     br_conductor_emit "$key" "$reason" "$url" "$parked" || continue
   done <<<"$hsrc"
-}
-
-# The pool's parked queue rows. The DB is the source when it answers; the
-# .failed.json files bin/fly-pool.sh writes beside the queue are the fallback,
-# because a worker outage must not make a parked ticket invisible — invisible is
-# exactly the state this lane exists to end.
-br_from_queue() {
-  local p k rsn seen="" line lrc=1 rows_only=0 qtmp=""
-  # BH-1026.3: once nothing WRITES the sidecar, reading it is reading a file
-  # that no longer exists — but only once. The fallback loop below still runs
-  # with the flag off (the pool writes the file then) and still runs when the
-  # list did not answer, because a worker outage must not make a parked ticket
-  # invisible. rc 1 is the only value that means "could not ask": rc 0 with no
-  # rows is a real answer and means nothing is parked.
-  command -v build_queue_rows_only_on >/dev/null 2>&1 && build_queue_rows_only_on && rows_only=1
-  if command -v queue_list >/dev/null 2>&1; then
-    # Through a temp file, not a process substitution: the rc of the list is
-    # what decides whether the fallback runs, and `done < <(...)` throws it away.
-    qtmp=$(mktemp "${TMPDIR:-/tmp}/br-queue.XXXXXX" 2>/dev/null) || qtmp=""
-    if [ -n "$qtmp" ]; then
-      queue_list "" failed > "$qtmp" 2>/dev/null; lrc=$?
-    fi
-    while IFS=$'\t' read -r p k _tid _st _tg _att _by _en rsn _meta; do
-      [ -n "${p:-}" ] && [ -n "${k:-}" ] || continue
-      [ -z "$ONLY" ] || [ "$ONLY" = "$p" ] || continue
-      # A row whose reason begins PR_CREATE_FAILED is deliberately NOT a park
-      # here (BH-614): bin/fly-pool.sh closes it FAILED at reap time, seconds
-      # after the build ended, and bin/pr-url-reconcile.sh needs its ten-minute
-      # window to find out whether the PR opened anyway. The RECORD is the
-      # intake, behind br_from_builds' 90-minute floor.
-      # A LANE FAILURE IS NOT A REBUILD (2026-09-23 pool loop). A row whose
-      # reason is the runner lane's own verdict — RUNNER_EXHAUSTED, or
-      # class=auth — deferred because every account or floor under it was out,
-      # and a fresh rebuild meets the same lane and spends a machine finding
-      # out: 71 tickets went round that loop in one night. bin/fly-pool.sh no
-      # longer parks such a row; this skips the ones parked before it stopped.
-      case "$rsn" in *RUNNER_EXHAUSTED*|*" class=auth"*) continue ;; esac
-      case "$rsn" in
-        *"died "*times*|*"died twice"*) printf 'queue\t%s\t%s\tpool-died-twice\t-\t-\t%s\t-\n' "$p" "$(br_rkey "$p-$k")" "$k" ;;
-        *"deferred "*times*)            printf 'queue\t%s\t%s\tpool-deferred-max\t-\t-\t%s\t-\n' "$p" "$(br_rkey "$p-$k")" "$k" ;;
-        # BH-5912: the per-key spawn cap closed rows this way before BH-4859
-        # made it a timed retry, and nothing owned them. Same rebuild ladder.
-        *"spawn cap"*"deferred to a human"*) printf 'queue\t%s\t%s\tpool-deferred-max\t-\t-\t%s\t-\n' "$p" "$(br_rkey "$p-$k")" "$k" ;;
-        *) continue ;;
-      esac
-      seen="$seen $p/$k"
-    done < "${qtmp:-/dev/null}"
-    [ -n "$qtmp" ] && rm -f "$qtmp"
-  fi
-  # The rows answered and they are the source: the sidecar loop is what this
-  # slice removes.
-  [ "$rows_only" = 1 ] && [ "$lrc" -ne 1 ] && return 0
-  for f in "$H"/state/build-queue/*/*.failed.json; do
-    [ -f "$f" ] || continue
-    p=$(basename "$(dirname "$f")"); k=$(jq -r '.key // ""' "$f" 2>/dev/null)
-    [ -n "$k" ] || continue
-    [ -z "$ONLY" ] || [ "$ONLY" = "$p" ] || continue
-    case " $seen " in *" $p/$k "*) continue ;; esac
-    printf 'queue\t%s\t%s\tpool-died-twice\t-\t-\t%s\t-\n' "$p" "$(br_rkey "$p-$k")" "$k"
-  done
-}
-
-# Build records that ended on a terminal nothing re-enters: the REVIEW_BLOCKED
-# gates, the PLAN_MALFORMED hold, the resume lane's BUILD_DEAD, and the two
-# shapes bin/review-rescue.sh retires (`.review-rescued` on a still-blocked
-# record, and a re-scan that found a real deletion).
-#
-# PLAN_BLOCKED IS DELIBERATELY NOT HERE FOR BOARD PROJECTS. On an in-app product
-# board the open question is addressed to the CLIENT, and the client does answer
-# — the early-engagement incident is the standing lesson about building past one. On a
-# GitHub-Issues lane the planner no longer parks at all (bin/run-build.sh's
-# assumption-forward rule), so any PLAN_BLOCKED record there is from before that
-# shipped and is exactly a rebuild candidate.
-br_from_builds() {
-  local d bn core project rest key first rec_reason prefix pl bproj
-  local -a bglob=()
-  local -A bseen=()
-  local bi="" bp rows bdir bupd bres bjob bep bst bsx bat bate bnow
-  local -a bor_items=() bor_p=() bor_key=() bor_res=() bor_ep=()
-  # LEDGER-ONLY RECORDS (BH-2349). A build whose record never reached this box
-  # is still in the jobs ledger. Only rows with a job id and NO local dir are
-  # added: a local dir stays the glob's below, markers and all, so nothing is
-  # offered twice. An outage (rc 1) or an empty ledger (rc 2) adds nothing and
-  # the glob is the whole answer, exactly as before the ledger existed.
-  if command -v bor_union >/dev/null 2>&1; then
-    bnow=$(date -u +%s)
-    while IFS= read -r bp; do
-      [ -n "$bp" ] || continue
-      [ -z "$ONLY" ] || [ "$ONLY" = "$bp" ] || continue
-      rows=$(bor_union "$bp" 2>/dev/null) || continue
-      while IFS=$'\t' read -r _ bdir _ bupd bres _ bjob; do
-        [ -n "$bdir" ] && [ "${bjob:--}" != - ] || continue
-        bor_local_dir "$bdir" >/dev/null 2>&1 && continue
-        case "$bdir" in "$bp"-*) ;; *) continue ;; esac
-        rest="${bdir#"$bp"-}"; key="${rest%-*}"
-        [ -n "$key" ] || continue
-        [ -n "$bupd" ] || continue
-        bep=$(date -u -d "$bupd" +%s 2>/dev/null) || continue
-        # NOT RE-OFFERED. There is no dir to carry .blocked-resolver-superseded,
-        # so the ticket's own state is the marker: this build already consumed
-        # (rebuild_seen), or a ladder attempt at or after the record, means the
-        # resolver has acted on it. An unreadable state file fails closed.
-        # Read directly, not via br_load: its ledger restore (BH-2317) brings back
-        # counters, not rebuild_seen or attempts, so a wiped file is "not seen" either way.
-        bst="$ST/$bp/$(br_rkey "$bp-$key").json"
-        if [ -f "$bst" ]; then
-          bsx=$(jq -r --arg b "$bdir" '[
-              ((.rebuild_seen // []) | any(. == $b or . == ("pool-" + $b) or . == ("fly-" + $b))),
-              ([.attempts[]? | select((.action // "") | . != "held" and . != "stalled" and . != "stall-cleared" and (startswith("hold-") | not))] | last | (.at // ""))
-            ] | @tsv' "$bst" 2>/dev/null) || continue
-          [ "${bsx%%$'\t'*}" = false ] || continue
-          bat="${bsx#*$'\t'}"
-          if [ -n "$bat" ]; then
-            bate=$(date -u -d "$bat" +%s 2>/dev/null) || continue
-            [ "$bate" -lt "$bep" ] || continue
-          fi
-        fi
-        bor_items+=("ledger:${#bor_p[@]}")
-        bor_p+=("$bp"); bor_key+=("$key"); bor_res+=("$bres"); bor_ep+=("$bep")
-      done <<<"$rows"
-    done < <("$H/bin/fleet-conf.sh" --projects 2>/dev/null)
-  fi
-  # NO FORK PER RECORD, AND A PROJECT RUN READS ONLY ITS OWN (BH-6044). On
-  # 2026-10-11 builds/ held 7,887 dirs, and this walk forked bin/project-of.sh
-  # (and through it fleet-conf.sh) for every record before it dropped the rows
-  # of other projects. The second glob also matched every pool-* dir again.
-  # Since BH-5913 thirteen project runs did that whole walk at once: ~4,700 s
-  # of discovery each, the hub at load 80 on 8 vCPUs, and the merge conductor's
-  # workers killed at their deadline before their first line. So a project run
-  # globs builds/<p>-*/ and builds/pool-<p>-*/ only, the fleet glob visits each
-  # dir once, and the owner of a dir is matched in this shell against ONE read
-  # of the project list — project-of.sh --prefix's own rule: `pool-` stripped,
-  # the longest project name that prefixes `<name>-` wins (project-6-os over
-  # project-6). A list that cannot be read owns nothing, as project-of.sh did.
-  pl=$("$H/bin/fleet-conf.sh" --projects 2>/dev/null | awk '{ print length, $0 }' | sort -rn | cut -d' ' -f2-) || pl=""
-  if [ -n "$ONLY" ]; then
-    bglob=("$H"/builds/pool-"$ONLY"-*/ "$H"/builds/"$ONLY"-*/)
-  else
-    bglob=("$H"/builds/pool-*-*/ "$H"/builds/*-*/)
-  fi
-  for d in "${bglob[@]}" "${bor_items[@]}"; do
-    bi=""
-    case "$d" in ledger:*) bi="${d#ledger:}" ;; esac
-    if [ -n "$bi" ]; then
-      # A ledger-only record has no dir: `-` is its record, as on the queue source.
-      project="${bor_p[$bi]}"; key="${bor_key[$bi]}"; first="${bor_res[$bi]}"; d=-
-    else
-    [ -d "$d" ] || continue
-    d="${d%/}"; bn="${d##*/}"
-    # `*-*` matches every pool-* dir as well: each record is visited once.
-    [ -n "${bseen[$d]:-}" ] && continue
-    bseen[$d]=1
-    [ -f "$d/RESULT" ] || continue
-    [ -f "$d/.blocked-resolver-abandoned" ] && continue
-    [ -f "$d/.blocked-resolver-superseded" ] && continue
-    core="${bn#pool-}"; core="${core#pool-}"; project=""
-    for bproj in $pl; do
-      case "$core" in "$bproj"-*) project="$bproj"; break ;; esac
-    done
-    [ -n "$project" ] || continue
-    [ -z "$ONLY" ] || [ "$ONLY" = "$project" ] || continue
-    rest="${core#"$project"-}"; key="${rest%-*}"
-    [ -n "$key" ] || continue
-    # HELD, AND RE-READ ON EVERY TICK. The incident's own shape is a park whose
-    # PR is already closed, so the conductor has no row for it and this source is
-    # the only one that can re-offer it. While the ladder's state still says HELD
-    # the row IS offered — br_one re-reads the issue, answers rc 3 for as long as
-    # the hold stands (no rung, no slot, no line) and resumes the ladder with its
-    # counters intact the moment the thread lifts it. With no HELD row the marker
-    # is the twin of .blocked-resolver-abandoned: out of the candidate list.
-    if [ -f "$d/.blocked-resolver-held" ] \
-       && [ "$(jq -r '.outcome // ""' "$ST/$project/$(br_rkey "$project-$key").json" 2>/dev/null)" != HELD ]; then
-      continue
-    fi
-    first=$(head -1 "$d/RESULT" 2>/dev/null)
-    fi
-    rec_reason=""
-    case "$first" in
-      "REVIEW_BLOCKED test-tamper"*)       rec_reason=test-tamper ;;
-      "REVIEW_BLOCKED reproduction-gate"*) rec_reason=reproduction-gate ;;
-      "REVIEW_BLOCKED intent-gate"*)       rec_reason=intent-gate ;;
-      "REVIEW_BLOCKED"*)                   rec_reason=rescue-giving-up ;;
-      "PLAN_MALFORMED"*)                   rec_reason=plan-malformed ;;
-      "BUILD_DEAD"*)                       rec_reason=build-dead ;;
-      # A FAILED CREATE IS TAKEN FROM THE RECORD ONLY, NEVER FROM THE QUEUE ROW
-      # (BH-614). bin/fly-pool.sh closes that row FAILED the moment it reaps, and
-      # an intake there would rebuild within seconds — while
-      # bin/pr-url-reconcile.sh (every 10 minutes) is still working out whether
-      # the PR did open after all on a later rung and re-linking line 1 to
-      # PR_CREATED. Rebuilding into that is two PRs for one ticket. The
-      # 90-minute record floor below IS the reconciler's window, by
-      # construction, and a record it re-linked reads PR_CREATED here and is
-      # never offered.
-      "PR_CREATE_FAILED"*)                 rec_reason=pr-create-failed ;;
-      # BH-765's spelling of the same park, for a record an older pool image
-      # wrote: the reap judged field 2 and found no PR url. It is read here as
-      # the same reason and never as a PR_CREATED. RESULT_UNVERIFIED is
-      # deliberately NOT in this list — that is a PR that could not be READ, the
-      # alert medic owns it, and rebuilding it would open a second PR.
-      "RESULT_MALFORMED PR_CREATED"*)      rec_reason=pr-create-failed ;;
-      # A RUN THE LANE REAPER KILLED (BH-1770). the operator, 2026-09-24: the relaunch
-      # is this lane's, on the capped ladder, and never the sweep's. Only with
-      # REAPED: the reaper writes the verdict BEFORE it signals, so a verdict
-      # with no REAPED is a kill that has not landed and a lane that may still
-      # hold its claim — relaunching into that is two builds of one ticket.
-      "ABANDONED_TIMEOUT"*)
-        [ -f "$d/REAPED" ] && rec_reason=abandoned-timeout ;;
-      "PLAN_BLOCKED"*)
-        prefix=$("$H/bin/fleet-conf.sh" "$project" board_prefix 2>/dev/null)
-        [ "$prefix" = "-" ] && rec_reason=plan-blocked ;;
-    esac
-    # A rescue that found a REAL deletion is a test-tamper ADJUDICATION, not a
-    # rebuild: the question "was removing that test legitimate" has an answer,
-    # and rebuilding without answering it just produces the same block again.
-    [ -s "$d/test-tamper-rescan.txt" ] && grep -q 'JUSTIFICATION: NONE' "$d/test-tamper-rescan.txt" 2>/dev/null && rec_reason=rescue-real-deletion
-    [ -n "$rec_reason" ] || continue
-    # A record whose terminal was only reached MINUTES ago still belongs to the
-    # lanes that own the first retry (review-rescue, the watchdog's resume pass). This
-    # lane is the backstop, so it waits them out.
-    #
-    # A REAPED RUN WAITS ONLY FOR THE SWEEP'S CLOSE-OUT (BH-1770). Nobody but
-    # this lane retries it — the reaper has finished and resume-dead-builds
-    # skips any dir with a RESULT — so the one thing worth waiting for is the
-    # sweep's honest board comment, which this lane's COMMENTED marker would
-    # otherwise pre-empt. COMMENTED means it has been said; the 90-minute floor
-    # is the backstop for a sweep that never gets there.
-    #
-    # A LEDGER-ONLY record is aged by its ledger updated_at, on the same floors.
-    if [ -n "$bi" ]; then [ $((bnow - bor_ep[bi])) -gt 5400 ] || continue
-    elif [ "$rec_reason" = abandoned-timeout ] && [ -f "$d/COMMENTED" ]; then :
-    else [ -n "$(find "$d/RESULT" -mmin +90 2>/dev/null)" ] || continue; fi
-    # REVIEW_BLOCKED specifically is bin/review-rescue.sh's first: it re-runs the
-    # gate and can re-open the PR for a build that was only ever blocked by a
-    # scanner bug, which is cheaper than any rung here. `.review-rescued` is the
-    # marker it writes when it is finished with a record either way. The 6-hour
-    # floor is the honest backstop for the case where that lane is switched off
-    # (flags/review-rescue-disabled) and the marker will never arrive — without
-    # it, one flag would make this whole class invisible again.
-    #
-    # A CONTRACT-FIRST CHILD BLOCKED ON TAMPER SKIPS THAT BACKSTOP (BH-1047).
-    # review-rescue re-runs the SAME scanner, so on a tamper record whose report
-    # says CONTRACT_CHILD: it will reach the same answer and the six hours buy
-    # nothing but the delay five project-4 fillers already paid (TK-1828, 1872,
-    # 1896, 1908, 1909 - a day or two each, then a person ruled on them by hand).
-    # The adjudication is the rung that can actually answer "was that stub flip
-    # legitimate", so it runs once the 90-minute floor above has passed, like
-    # every other park here.
-    #
-    # The two lanes therefore share this record from minute 90, so the guard
-    # runs both ways: bin/review-rescue.sh skips any record stamped
-    # `.blocked-resolver-superseded`, which is what br_rebuild_fresh writes when
-    # an adjudication here has closed the PR and enqueued the fresh build.
-    # Without that, the rescue tick after an ACCEPT would open a second PR on
-    # the old branch and buy a second review for one ticket.
-    #
-    # TAMPER ONLY, and the reason is that the scanner prints CONTRACT_CHILD: on
-    # every `.N` child's scan including the clean ones. A contract child parked
-    # on the repro gate or the intent gate has a report with that line in it and
-    # a block the rescue lane CAN still help with, so it keeps the backstop it
-    # has today.
-    case "$rec_reason" in
-      test-tamper|reproduction-gate|intent-gate|rescue-giving-up)
-        [ -f "$d/.review-rescued" ] \
-          || { [ "$rec_reason" = test-tamper ] \
-               && grep -qs '^CONTRACT_CHILD:' "$d/test-tamper-rescan.txt" "$d/test-tamper.txt"; } \
-          || [ -n "$(find "$d/RESULT" -mmin +360 2>/dev/null)" ] \
-          || { [ -n "$bi" ] && [ $((bnow - bor_ep[bi])) -gt 21600 ]; } || continue ;;
-    esac
-    printf 'build\t%s\t%s\t%s\t-\t%s\t%s\t-\n' "$project" "$(br_rkey "$project-$key")" "$rec_reason" "$d" "$key"
-  done
-}
-
-# THE REBUILD THIS LANE STARTED HAS FINISHED — the fourth source (2026-09-16).
-#
-# Rung 3 closed a PR and enqueued a fresh build, and then nothing in this lane
-# ever asked how that build ended. project-5 #1645: rebuild enqueued 14:24Z, the
-# fresh build ended DECOMPOSE_FAILED at 14:39Z, and the ticket sat untouched —
-# no rebuild 2, no abandon, no comment, and a board whose last word was still
-# "Built and opened for review". The other three sources could not see it
-# either: br_from_builds waits 90 minutes (6 hours for a REVIEW_BLOCKED), reads
-# PLAN_BLOCKED only on a GitHub-Issues lane and DECOMPOSE_FAILED never, and the
-# original record was marked superseded before the enqueue precisely so it would
-# not be re-offered.
-#
-# So the ticket's own state file is the source: a record with no outcome whose
-# LAST attempt was `rebuild-fresh` has a build in flight, and the answer is
-# whichever RESULT arrived after that attempt.
-
-# br_rebuild_outcome <RESULT first line> -> the reason word, or nothing.
-# PURE, so §1 of the fixture drives it as a table. Anything not listed here
-# belongs to the lane that owns it today (a BUILD_DEFERRED to the pool's own
-# re-offer, a DECOMPOSED to the dispatcher) and is NOT consumed: a classifier
-# that gates an irreversible ABANDON has to answer "not mine" far more often
-# than it answers at all.
-br_rebuild_outcome() {
-  case "${1:-}" in
-    "PR_CREATED "*|"RESULT_UNVERIFIED PR_CREATED"*|"PR_MERGED"*) echo rebuild-landed ;;
-    "BUILD_DEAD"*)        echo rebuild-build-dead ;;
-    # The rebuild ran past its deadline and bin/lane-reaper.sh killed it
-    # (BH-1770): a dead run like any other, so it spends the next rebuild.
-    # br_from_rebuilds consumes it only once the record carries REAPED.
-    "ABANDONED_TIMEOUT"*) echo rebuild-build-dead ;;
-    "DECOMPOSE_FAILED"*)  echo rebuild-decompose-failed ;;
-    "PLAN_BLOCKED"*)      echo rebuild-plan-blocked ;;
-    "REVIEW_BLOCKED"*)    echo rebuild-review-blocked ;;
-    # A rebuild that itself ends PR_CREATE_FAILED (or RESULT_MALFORMED) is "not
-    # mine" here on purpose (BH-614): it re-enters through br_from_builds after
-    # the 90-minute floor, on the same per-ticket `rebuilds` counter, so one
-    # PR-open failure buys one rebuild and the third park ends ABANDONED.
-    *)                    echo "" ;;
-  esac
-}
-
-# br_rebuild_artifact <RESULT line> <OUTCOME> — the file a person should open.
-# The RESULT line usually names it ("… see /root/harness/builds/…/plan.md"), and
-# when it does not, each outcome has one conventional file. Never invented: with
-# neither, the caller says "the build record" rather than a plausible path.
-br_rebuild_artifact() {
-  local line="${1:-}" oc="${2:-}" a=""
-  a=$(printf '%s' "$line" | sed -nE 's#.*[[:space:]]see[[:space:]]+([^[:space:]]+).*#\1#p' | head -1)
-  [ -n "$a" ] || a=$(printf '%s' "$line" | grep -oE '(^| )/[^ ]+' | tail -1 | tr -d ' ')
-  if [ -z "$a" ]; then
-    case "$oc" in
-      DECOMPOSE_FAILED) a="decompose-run.txt" ;;
-      PLAN_BLOCKED)     a="plan.md" ;;
-      REVIEW_BLOCKED)   a="review.md" ;;
-    esac
-  fi
-  printf '%s' "$a"
-}
-
-br_from_rebuilds() {
-  local f p ck key st at at_ep url seen d dn ep out res res_ep rec n=0
-  local qrow qat qep wj recname now oc last prec brc bdir bupd bres
-  local -A bor_rows=() bor_rc=()
-  now=$(date -u +%s)
-  for f in "$ST"/*/*.json; do
-    [ -f "$f" ] || continue
-    # THE EFFECTIVE budget, not the knob (review M12): on a tick that carried
-    # unspent rungs the fleet may spend up to twice BR_PER_TICK, and a source
-    # that stopped at the knob would leave the carry nothing to buy.
-    [ "$n" -lt "${EFF_PER_TICK:-$PER_TICK}" ] || break
-    # NO FORK BEFORE THE PROJECT FILTER (BH-6044): all 13 project runs walk
-    # every project's state files, so a fork here is paid 13 times per file.
-    p="${f%/*}"; p="${p##*/}"
-    [ -z "$ONLY" ] || [ "$ONLY" = "$p" ] || continue
-    st=$(cat "$f" 2>/dev/null); [ -n "$st" ] || continue
-    oc=$(printf '%s' "$st" | jq -r '.outcome // ""' 2>/dev/null)
-    ck="${f##*/}"; ck="${ck%.json}"
-    # THE ENQUEUE THAT DID NOT LAND (BH-488). Rung 3 closed the PR, marked the
-    # record superseded and released the conductor's hand-off BEFORE the enqueue
-    # — so when the enqueue answers rc 1 there is no source left that can see
-    # this ticket: the conductor row is CLOSED, the record is marked, the queue
-    # never got a row. "Retried next tick" was false for seven hours on
-    # project-5 #1315/#1383. THIS is the source that re-offers it, and the retry
-    # rung re-tries the ENQUEUE ONLY — it never closes a PR a second time.
-    #
-    # BOTH NON-TERMINAL ENQUEUE ANSWERS COME BACK HERE (BH-1007). rc 1 writes
-    # `rebuild-fresh-failed` and rc 4 writes `rebuild-fresh-board-miss`, and the
-    # two are the same shape of unfinished business: the PR is closed, the row
-    # is on its way to CLOSED, and the queue row is still owed. Re-offering only
-    # the first is how the board-miss cap became unreachable — the conductor's
-    # closed-without-merging sweep (bin/merge-conductor.sh) moves the row to
-    # CLOSED on its next tick, br_from_conductor reads BLOCKED_HUMAN/RED_TWICE
-    # only, and a park recorded as a board miss was then never revisited:
-    # board_misses frozen at 1, no second miss, no cap, no abandon, no page —
-    # the silent orphan BH-1007 was filed about. The cap only ever ran in a
-    # fixture with no conductor, where the row stayed BLOCKED_HUMAN and rung 3
-    # was re-entered each tick.
-    #
-    # HELD is allowed here and nowhere else in this source: br_hold_gate can
-    # park the retry, and the row has to keep being offered so br_hold_recheck
-    # sees the lift. A held row costs no slot (br_one answers rc 3).
-    # A data-lane park's own rows (BH-4926) are read past the same way.
-    last=$(printf '%s' "$st" | jq -r '[.attempts[]? | select((.action // "") | . != "held" and . != "stalled" and . != "stall-cleared" and (startswith("hold-") | not) and (startswith("data-lane") | not) and . != "escalate-data-lane")] | last | (.action // "")' 2>/dev/null)
-    case "$last" in
-      rebuild-fresh-failed|rebuild-fresh-board-miss)
-      case "$oc" in ''|HELD) ;; *) continue ;; esac
-      # A PR-number cap key means no key was EVER derivable (the rc-2 refusal,
-      # which is counted and capped by br_rebuild_fresh). There is nothing to
-      # enqueue with, so there is nothing to retry.
-      case "$ck" in "$p"-*) ;; *) continue ;; esac
-      key=$(br_key_shape "${ck#"$p"-}") || continue
-      url=$(printf '%s' "$st" | jq -r '.parked_url // "-"' 2>/dev/null)
-      prec=$(printf '%s' "$st" | jq -r '.parked_rec // "-"' 2>/dev/null)
-      printf 'rebuild\t%s\t%s\t%s\t%s\t%s\t%s\t-\n' "$p" "$ck" rebuild-enqueue-failed "${url:--}" "${prec:--}" "$key"
-      n=$((n+1))
-      continue
-      ;;
-    esac
-    # Terminal, or no rebuild in flight: the last attempt is what says whether
-    # this lane is waiting on a build of its own. A rebuild parked on a human
-    # step (BH-3443: HELD with nh_placed) is still offered, so br_one re-reads
-    # its hold on every tick the way it does for rebuild-fresh-failed above;
-    # held, it costs no slot (rc 3).
-    case "$oc" in
-      '') ;;
-      HELD) [ -n "$(printf '%s' "$st" | jq -r '.nh_placed // ""' 2>/dev/null)" ] || continue ;;
-      # Parked on the data lane (BH-4926): offered so br_one re-reads the
-      # ledger and the probe; parked, it costs no slot (rc 3).
-      DATA_LANE) ;;
-      *) continue ;;
-    esac
-    # THE HOLD AND STALL ATTEMPTS ARE NOT LADDER ATTEMPTS, so they are read past.
-    # `held`, `hold-unreadable` and `hold-lifted` are written by a gate that
-    # spends no rung and starts no build; counting one of them as "the last thing
-    # this lane did" would hide a rebuild that IS in flight — one rate-limited
-    # read while a fresh build is running would drop the ticket out of this
-    # source for good, which is the project-5 #1645 shape all over again.
-    # `stalled` and `stall-cleared` (BH-1122) are the same shape and were bought
-    # by the same mistake once: a stall that displaced `rebuild-fresh-failed`
-    # would make the STALLED alert's own instruction false, because clearing
-    # .outcome would put back a row this source no longer recognises.
-    [ "$last" = rebuild-fresh ] || continue
-    at=$(printf '%s' "$st" | jq -r '[.attempts[]? | select((.action // "") | . != "held" and . != "stalled" and . != "stall-cleared" and (startswith("hold-") | not) and (startswith("data-lane") | not) and . != "escalate-data-lane")] | last | (.at // "")' 2>/dev/null)
-    # AN UNREADABLE TIMESTAMP ABORTS. Everything below is "did this RESULT arrive
-    # after the rebuild started", and without a start there is no such question.
-    [ -n "$at" ] || continue
-    at_ep=$(date -u -d "$at" +%s 2>/dev/null) || continue
-    # The cap key is <project>-<KEY> whenever a key was derivable. When it is not
-    # (a PR-number key like o-tproj-77) there is no build to poll for, and the
-    # nokey cap in br_rebuild_fresh is that park's answer instead.
-    case "$ck" in "$p"-*) ;; *) continue ;; esac
-    key=$(br_key_shape "${ck#"$p"-}") || continue
-    url=$(printf '%s' "$st" | jq -r '.parked_url // "-"' 2>/dev/null)
-    seen=$(printf '%s' "$st" | jq -r '(.rebuild_seen // []) | join(" ")' 2>/dev/null)
-    # THE RECORD. Every shape the rebuild can land in: a pool build reaped onto
-    # the hub (pool-…), a fly lane's own dir, a box/hub build, and the relayed
-    # copy (<project>-<KEY>-remote<stamp>, which the third glob already covers).
-    # The ORIGINAL record is marked superseded before the enqueue, so it can
-    # never match; an already-abandoned one is somebody's closed evidence.
-    rec=""; res=""; res_ep=0; recname=""
-    # THE LEDGER FIRST (BH-2349): bor_union is the ledger's rows plus every local
-    # record it does not name, read once per project per call. Its updated_at
-    # replaces the RESULT mtime (a local-only row's updated_at IS that mtime).
-    # An outage (rc 1) or no lib is the glob below, unchanged.
-    brc=1
-    if command -v bor_union >/dev/null 2>&1; then
-      if [ -z "${bor_rc[$p]+x}" ]; then
-        bor_rows[$p]=$(bor_union "$p" 2>/dev/null); bor_rc[$p]=$?
-      fi
-      brc="${bor_rc[$p]}"
-    fi
-    if [ "$brc" != 1 ]; then
-      while IFS=$'\t' read -r _ bdir _ bupd bres _ _; do
-        # The trailing dash keeps BH-23 from answering for BH-234.
-        case "$bdir" in "$p-$key-"*) ;; *) continue ;; esac
-        d=$(bor_local_dir "$bdir" 2>/dev/null) || d=""
-        if [ -n "$d" ]; then
-          [ -f "$d/.blocked-resolver-superseded" ] && continue
-          [ -f "$d/.blocked-resolver-abandoned" ] && continue
-          dn=$(basename "$d")
-        else
-          dn="$bdir"
-        fi
-        case " $seen " in *" $dn "*|*" $bdir "*|*" pool-$bdir "*|*" fly-$bdir "*) continue ;; esac
-        [ -n "$bupd" ] || continue
-        ep=$(date -u -d "$bupd" +%s 2>/dev/null) || continue
-        [ "$ep" -ge "$at_ep" ] || continue
-        [ "$ep" -ge "$res_ep" ] || continue
-        rec="$d"; recname="$dn"; res_ep="$ep"; res="$bres"
-        # A local RESULT wins over the ledger's copy of line 1: bin/pr-url-reconcile.sh
-        # rewrites it in place (PR_CREATE_FAILED -> PR_CREATED), and the ledger
-        # line would rebuild into a PR that did open (BH-614).
-        [ -n "$d" ] && [ -f "$d/RESULT" ] && res=$(head -1 "$d/RESULT" 2>/dev/null)
-      done <<<"${bor_rows[$p]}"
-    else
-    for d in "$H"/builds/pool-"$p"-"$key"-* "$H"/builds/fly-"$p"-"$key"-* \
-             "$H"/builds/"$p"-"$key"-*; do
-      d="${d%/}"
-      [ -d "$d" ] && [ -f "$d/RESULT" ] || continue
-      [ -f "$d/.blocked-resolver-superseded" ] && continue
-      [ -f "$d/.blocked-resolver-abandoned" ] && continue
-      dn=$(basename "$d")
-      case " $seen " in *" $dn "*) continue ;; esac
-      ep=$(date -u -r "$d/RESULT" +%s 2>/dev/null) || continue
-      # A RESULT older than the rebuild attempt is a PREVIOUS build of this
-      # ticket, not the one we started. Two newer ones: the newest wins and the
-      # other is left to br_from_builds exactly as today.
-      [ "$ep" -ge "$at_ep" ] || continue
-      [ "$ep" -ge "$res_ep" ] || continue
-      rec="$d"; recname="$dn"; res_ep="$ep"; res=$(head -1 "$d/RESULT" 2>/dev/null)
-    done
-    fi
-    # THE LEDGER ROW is the fallback for a remote build whose record never
-    # reached this box: bin/fly-pool.sh closes the row `done` with the RESULT
-    # line as its reason. Fail closed on anything it cannot place in time.
-    if [ -z "$res" ] && command -v queue_list >/dev/null 2>&1; then
-      qrow=$(queue_list "$p" "done" 2>/dev/null \
-             | awk -F'\t' -v k="$key" '$2==k && $4=="done" {print; exit}')
-      if [ -n "$qrow" ]; then
-        qat=$(cut -f8 <<<"$qrow")
-        # AN EXTERNAL BUILD IS ALWAYS OLDER THAN OUR ATTEMPT (BH-947 review I1).
-        # `>= at_ep` asks "did this RESULT arrive after the rebuild started",
-        # which is the right question for a build THIS LANE enqueued. For a job
-        # somebody else queued, the attempt br_rebuild_wait records is written at
-        # FIRST SIGHTING — always after the worker's own enqueue — so that test
-        # can never be true and the build the lane is holding for would never be
-        # consumed: the next tick reads the row as `done`, finds no result, and
-        # buys a second build on top of one that already produced a PR. The wait
-        # field is what says the row IS that job: an external hold writes
-        # `wait_job=<KEY>@<enqueued_at>` (br_rebuild_wait) or, when the re-probe
-        # behind a `duplicate` answer could not read a row, the placeholder
-        # `<KEY>@duplicate-race`. A job this lane enqueued has a ledger id there
-        # (`~rN`), so neither shape can match one of our own rows.
-        wj=$(printf '%s' "$st" | jq -r '.wait_job // ""' 2>/dev/null)
-        if [ -n "$qat" ] && qep=$(date -u -d "$qat" +%s 2>/dev/null) \
-           && { [ "$qep" -ge "$at_ep" ] || [ "$wj" = "$key@$qat" ] || [ "$wj" = "$key@duplicate-race" ]; }; then
-          case " $seen " in *" queue:$qat "*) continue ;; esac
-          res=$(cut -f9 <<<"$qrow"); res_ep="$qep"; recname="queue:$qat"
-        else
-          say "$p/$ck: the pool queue row for $key carries '$qat', which is either unreadable or older than this rebuild — not consumed"
-        fi
-      fi
-    fi
-    [ -n "$res" ] || continue
-    out=$(br_rebuild_outcome "$res"); [ -n "$out" ] || continue
-    # A REAP THAT HAS NOT LANDED IS NOT AN ENDING (BH-1770). The reaper writes
-    # ABANDONED_TIMEOUT before it signals and REAPED once the lane is gone and
-    # its claim released; between the two the run may still be alive. Only a
-    # record on THIS box can carry REAPED, so a ledger-row answer never counts.
-    case "$res" in
-      "ABANDONED_TIMEOUT"*)
-        if [ -z "$rec" ] || [ ! -f "$rec/REAPED" ]; then
-          say "$p/$ck: the fresh rebuild was reaped but the kill has not landed yet (no REAPED on ${recname:-its record}) — not consumed this tick"
-          continue
-        fi ;;
-    esac
-    # REVIEW_BLOCKED IS NOT OURS YET. bin/review-rescue.sh re-runs the gate and
-    # can rewrite this very record to PR_CREATED (review-rescue.sh:315), so
-    # abandoning on sight would throw away a rescue and leave a live PR under an
-    # ABANDONED ticket. The floor is the one br_from_builds already uses: the
-    # marker that lane writes when it is finished, its kill flag, or 6 hours.
-    if [ "$out" = rebuild-review-blocked ] \
-       && ! { [ -n "$rec" ] && [ -f "$rec/.review-rescued" ]; } \
-       && ! flag_on review-rescue-disabled \
-       && [ $((now - res_ep)) -lt 21600 ]; then
-      say "$p/$ck: the fresh rebuild is REVIEW_BLOCKED and bin/review-rescue.sh has not finished with ${recname:-it} — not consumed this tick"
-      continue
-    fi
-    # IT LANDED. The rebuild produced a PR and the conductor owns it from here:
-    # no counter, no send, and the record is remembered so this is written once
-    # rather than on every tick until the new PR moves.
-    if [ "$out" = rebuild-landed ]; then
-      if [ "$OBSERVE" = 1 ]; then
-        say "$p/$ck: WOULD record the fresh rebuild as landed ($(printf '%.80s' "$res")) — observe mode"
-        continue
-      fi
-      br_record "$p" "$ck" rebuild-landed rebuild-landed "the fresh rebuild landed: $(printf '%.160s' "$res")"
-      [ -n "$recname" ] && br_seen_rebuild "$p" "$ck" "$recname"
-      # A finished build is never re-held: the wait is cleared right after the
-      # rebuild-landed record above.
-      [ "$OBSERVE" = 1 ] || br_set_wait "$p" "$ck" -
-      say "$p/$ck: the fresh rebuild landed ($(printf '%.100s' "$res")) — the conductor owns the new PR from here"
-      continue
-    fi
-    # The RESULT line rides on the record: the abandon quotes it, and on the
-    # ledger-row path there is no directory for it to re-read.
-    [ "$OBSERVE" = 1 ] || br_set_field "$p" "$ck" rebuild_result "$res"
-    # A result has arrived for the held build; do not keep waiting.
-    [ "$OBSERVE" = 1 ] || br_set_wait "$p" "$ck" -
-    printf 'rebuild\t%s\t%s\t%s\t%s\t%s\t%s\t-\n' "$p" "$ck" "$out" "${url:--}" "${rec:--}" "$key"
-    n=$((n+1))
-  done
 }
 
 # br_rank_rows — the 7-column candidate TSV with the PRIORITY RANK prepended as
@@ -3414,12 +2085,6 @@ br_from_reviews() {
   done < <("$H/bin/fleet-conf.sh" --projects 2>/dev/null)
 }
 # <<< br-reviews
-
-br_candidates() {
-  br_from_rebuilds; br_from_conductor; br_from_queue; br_from_builds; br_from_reviews
-  # BH-4664: an external PR source, when bin/lib/br/opt/external.sh is installed.
-  ! command -v br_opt_external_candidates >/dev/null 2>&1 || br_opt_external_candidates
-}
 
 # br_round_robin — the candidate TSV (SRC P RKEY REASON URL REC TKEY) on stdin,
 # the same lines out, interleaved by project: the project this lane looked at
@@ -4769,7 +3434,7 @@ br_dl_rcr_bound() {
   case "$rc" in 0) ;; 1) return 1 ;; *) return 2 ;; esac
   body=$(printf '%s' "$b64" | base64 -d 2>/dev/null | tr -d '\r')
   case "$body" in "$BR_LEAD_HDR"*) return 1 ;; esac
-  printf '%s\n' "$body" | grep -qxF -- "DATA_LANE: $BR_DL_FILE" || return 1
+  grep -qxF -- "DATA_LANE: $BR_DL_FILE" <<<"$body" || return 1
   return 0
 }
 
@@ -5574,126 +4239,6 @@ br_mechanical() {
       # about this box. The free rung is still there for the tick after somebody
       # fixes the box.
       br_setup_blocked "$p" "$ck" "$rkey" "$reason" "$url" "mc_rebase rc=$rc on $slug — a clone or credential problem; see the credential line in merge-conductor.log" mechanical
-      return 0 ;;
-  esac
-}
-
-# RUNG 1b: REGENERATE (BH-950.2). One more merge of origin/main into the branch,
-# and nothing else. No model, no tokens.
-#
-# WHY IT IS ITS OWN RUNG. Rung 1 merges main once, and the commonest red CI in
-# this repo is a GENERATED file that main has since moved: the generated-files
-# table is rebuilt by the merge itself (mc_regen_table, bin/lib/merge-conductor-lib.sh),
-# so a park sitting on that drift is one free merge from green. 12 of the open
-# PRs in the #950 census were parked there, and each of them was about to buy an
-# agent fix round to do what a merge does for nothing.
-#
-# AND IT IS BOUNDED, twice: br_regen_offered refuses a head this ticket has
-# already been offered the rung on, and `regens` refuses a ticket that has spent
-# BR_MAX_REGEN of them however far main has moved since. A regenerate that
-# landed nothing DOES NOT DELAY THE PARK — the displaced ladder answer (the fix
-# round, or the rebuild when the fix round is spent) is dispatched in the SAME
-# tick, so this rung can only ever cost a merge.
-br_regen_rung() {
-  local p="$1" rkey="$2" reason="$3" url="$4" rec="$5" tkey="$6" next="${7:-fix-round}"
-  local ck st n slug br head out rc ref ckey rvw
-  ck=$(br_cap_key "$p" "$rkey" "$tkey")
-  st=$(br_load "$p" "$ck")
-  # The displaced answer, dispatched by name. Everything below that cannot take
-  # the rung comes through here, so "the park moved this tick" is one path.
-  br_regen_next() {
-    case "$next" in
-      rebuild-fresh) br_rebuild_fresh "$p" "$rkey" "$reason" "$url" "$rec" "$tkey" ;;
-      *)             br_fix_round     "$p" "$rkey" "$reason" "$url" "$rec" "$tkey" ;;
-    esac
-  }
-  # OBSERVE BEFORE THE PR READ, the way br_mechanical does it: a dry run costs
-  # this lane no GitHub call at all. The head8 dedup and the bound are read from
-  # the PR below, so the sentence names the condition rather than claiming the
-  # rung would certainly be taken.
-  if [ "$OBSERVE" = 1 ]; then
-    say "$p/$rkey [$reason]: WOULD take the regenerate rung unless it was already offered on this head or the ticket has spent BR_MAX_REGEN=$MAX_REGEN (merge origin/main into the PR branch, which regenerates the generated files once #969 lands) and then $next — observe mode"
-    return 0
-  fi
-  slug=$("$H/bin/fleet-conf.sh" "$p" repo 2>/dev/null)
-  [ -n "$slug" ] || slug=$(br_slug_of_url "$url") || slug=""
-  br=""; head=""
-  if [ -n "$url" ] && [ "$url" != "-" ]; then
-    ref=$(br_pr_ref "$url" "$slug"); rc=$?
-    # rc 2 IS "GITHUB DID NOT ANSWER" (see br_pr_ref): no rung spent, no state
-    # written, the park is re-offered next tick — exactly as rung 1 treats it.
-    if [ "$rc" = 2 ]; then
-      say "$p/$rkey [$reason]: PR read FAILED (${ref:-no detail}) — retrying next tick, no rung spent"
-      return 0
-    fi
-    [ "$rc" = 0 ] && read -r slug br head <<<"$ref"
-    # The head this rung read is the head this lane now knows the PR on (BH-1642).
-    [ "$rc" = 0 ] && br_sup_seen "$p" "$ck" "$url" "$head"
-    [ -n "${slug:-}" ] && br_use_token "$slug"
-  fi
-  if [ -z "$slug" ] || [ -z "${br:-}" ] || [ -z "${head:-}" ]; then
-    say "$p/$rkey [$reason]: no branch/head for ${url:--} even after re-reading it under ${slug:-no repo}'s own token — nothing to regenerate, $next"
-    br_regen_next; return 0
-  fi
-  if br_regen_offered "$st" "$head"; then
-    say "$p/$rkey [$reason]: the regenerate rung was already offered on ${head:0:8} — $next"
-    br_regen_next; return 0
-  fi
-  # AND THE PER-TICKET BOUND ON LANDED REGENERATES, read after the head so the
-  # more precise sentence (this exact head) is the one a park on an unchanged
-  # head gets. main keeps moving, so the head8 dedup above would let a ticket
-  # LAND a regenerate per new head for ever; this is what ends that. It does not
-  # bound mc_rebase calls — the dedup does, at one per distinct head.
-  n=$(br_num "$st" regens)
-  if [ "$n" -ge "$MAX_REGEN" ]; then
-    say "$p/$rkey [$reason]: the regenerate rung has already run $n time(s) (BR_MAX_REGEN=$MAX_REGEN) — $next"
-    br_regen_next; return 0
-  fi
-  br_event resolver_rung "$p" "$ck" "$reason" "rung 1b regenerate: mc_rebase on $br at ${head:0:8}"
-  out=$(mc_rebase "$slug" "$p" "$br" "$head" "$url"); rc=$?
-  # Same as rung 1: the setup alert is cleared the moment the rung RAN. rc 4 is
-  # the setup arm below and must not clear it.
-  case "$rc" in 0|1|2|3|5|6) rm -f "$ST/$p/$ck.setup-alerted" 2>/dev/null ;; esac
-  case "$rc" in
-    0|5)
-      if [ -n "$out" ] && [ "$out" != "$head" ]; then
-        br_record "$p" "$ck" regen "$reason" "regenerated $br: pushed ${out:0:8} over head8=${head:0:8} (mc_rebase rc=$rc)" regens
-        say "$p/$rkey [$reason]: REGENERATE — pushed ${out:0:8} over ${head:0:8}; CI runs on the new head and the conductor judges it"
-        return 0
-      fi
-      # Nothing landed, so nothing was regenerated. Recorded against the head so
-      # this park is never offered the rung on it again, the counter is NOT spent
-      # (no merge happened), and the ladder's own answer runs now.
-      br_record "$p" "$ck" regen-noop "$reason" "mc_rebase rc=$rc left head8=${head:0:8} in place — $next now"
-      say "$p/$rkey [$reason]: the regenerate rung had nothing to merge into $br at ${head:0:8} — $next"
-      br_regen_next; return 0 ;;
-    1|2)
-      # A conflict, or a merged tree the hub's gate refuses: nothing regenerated
-      # landed, and both are exactly what the fix round exists for. Same tick.
-      br_record "$p" "$ck" regen-noop "$reason" "mc_rebase rc=$rc left head8=${head:0:8} in place — $next now"
-      say "$p/$rkey [$reason]: the regenerate rung could not land (mc_rebase rc=$rc) — $next"
-      br_regen_next; return 0 ;;
-    3|7)
-      # The head moved under the lease, or the pool queue refused it. Nothing is
-      # spent and nothing is said twice — the next tick reads the new head.
-      say "$p/$rkey [$reason]: the regenerate rung's lease was rejected or the pool queue was unreachable (mc_rebase rc=$rc) — no rung spent, retried next tick"
-      return 0 ;;
-    6)
-      # The pool took it: a queue row exists and a machine is rebasing this
-      # branch, so the rung RAN, and the conductor row leaves the park the same
-      # way rung 1's rc-6 arm leaves it.
-      ckey="$(mc_slug_of_url "$url")#$(mc_num_of_url "$url")"; rvw=$(mc_row_field "$ckey" 5)
-      br_record "$p" "$ck" regen "$reason" \
-        "queued a pool rebase of $br at head8=${head:0:8} ($(mc_pool_rebase_key "$(mc_num_of_url "$url")" "$head")); the conductor reads the pool's result" regens
-      mc_transition "$ckey" REBASING "pool rebase queued by the resolver's regenerate rung" "$head" "${rvw:--}" "$url" "-" "-" "${rec:--}" >/dev/null
-      say "$p/$rkey [$reason]: REGENERATE — pool rebase queued for ${head:0:8}; the row leaves the park and the conductor reads the result"
-      return 0 ;;
-    *)
-      # SETUP FAILED (rc 4 and any rc mc_rebase does not document): a fact about
-      # this box, not an event about the PR. It spends nothing, cascades into
-      # nothing — the fix round wants the same clone and the same credential —
-      # and pages once per episode (br_setup_blocked).
-      br_setup_blocked "$p" "$ck" "$rkey" "$reason" "$url" "mc_rebase rc=$rc on $slug — a clone or credential problem; see the credential line in merge-conductor.log" regen
       return 0 ;;
   esac
 }
@@ -7438,7 +5983,7 @@ br_fix_round() {
     while IFS= read -r f; do
       [ -n "$f" ] || continue
       markers="$markers"$'\n'"--- $f ---"$'\n'"$(grep -n -B4 -A12 '^<<<<<<<' "$wt/$f" 2>/dev/null | head -c 2000)"
-    done < <(printf '%s\n' "$conflicts" | head -5)
+    done < <(head -5 <<<"$conflicts")
     if [ "$mref" = main ]; then
       brief="$brief"$'\n\n'"THE MERGE OF origin/main IS IN PROGRESS IN YOUR WORKTREE AND THESE PATHS ARE CONFLICTED. Resolve every one of them, keeping BOTH sides' intent (main's change is already reviewed and merged; this branch's change is what the ticket asked for), \`git add\` each file and commit the merge. Conflicted paths:"$'\n'"$conflicts"$'\n'"$markers"
     else
@@ -8114,11 +6659,18 @@ Write your reasoning, then the LAST LINE of your answer must be exactly one word
           # BH-408's to make (it would switch every ACCEPT from a rebuild to a
           # resume) and is named in the PR body.
           if br_hold_gate "$p" "$rkey" "$reason" "$url" "$rec" "$tkey"; then
+            if [ -n "${LANE_RUN_ID:-}" ]; then
+              # A LANE MACHINE BUILDS NOTHING ITSELF (BH-6128): it holds a copy
+              # of the record, not the build, so the resume is a fresh enqueue.
+              say "$p/$rkey [test-tamper]: ADJUDICATED ACCEPT — TEST-CHANGE written into $rec/plan.md; this run is on a lane machine, so it is rebuilt fresh"
+              br_rebuild_fresh "$p" "$rkey" "$reason" "$url" "$rec" "$tkey"
+            else
             say "$p/$rkey [test-tamper]: ADJUDICATED ACCEPT — TEST-CHANGE written into $rec/plan.md, resuming the build"
             # 8>&- is belt to br_cron_unlock's braces: the lane lock is already
             # released and closed by the time a rung runs, and a detached build
             # that inherited the fd would hold it for its whole life anyway.
             RESUME_BUILD="$rec" HARNESS="$H" setsid nohup "$H/bin/run-build.sh" "$p" "$tid" "$tkey" >> "$rec/blocked-resolver-resume.log" 2>&1 8>&- &
+            fi
           fi
         else
           # >>> test-tamper build note
@@ -8559,7 +7111,7 @@ $lines" || crc=$?
   # watcher can read before it enqueues. An operator releases it with
   # `jobs-client.sh ledger-put abandoned "<project> <KEY>" released`.
   [ "$tkey" != "-" ] && command -v job_ledger_put >/dev/null 2>&1 \
-    && job_ledger_put abandoned "$p $tkey" abandoned "$(printf '%s' "$why" | head -c 300)" >/dev/null 2>&1
+    && job_ledger_put abandoned "$p $tkey" abandoned "$(head -c 300 <<<"$why")" >/dev/null 2>&1
   line="[blocked-resolver] ABANDONED $p/$rkey ($reason): $why. This is an outcome record, not a review request — the agent ladder ran and did not land it. Attempts:
 $lines
 Evidence: ${rec:-no build record}${url:+ | $url}"
@@ -8784,7 +7336,7 @@ br_competitors() {
     seen=$((seen+1))
     k=$(br_key_from_branch "$bkey" 2>/dev/null) || k="-"
     [ -n "$k" ] && [ "$k" = "$wkey" ] && continue
-    printf '%s\n' "$(mc_pr_files "$slug" "$num" "$url" "$head" 2>/dev/null)" | grep -Fxq -- "$path" || continue
+    grep -Fxq -- "$path" <<<"$(mc_pr_files "$slug" "$num" "$url" "$head" 2>/dev/null)" || continue
     prs=$(printf '%s' "$prs" | jq -c --argjson n "$num" --arg u "$url" --arg k "${k:--}" \
             '. + [{num:$n,url:$u,key:$k}]' 2>/dev/null) || return 1
   done < <(printf '%s' "$list" | jq -r '.[]? | "\(.number)\t\(.url)\t\(.headRefOid)\t\(.headRefName)"' 2>/dev/null)
@@ -8895,7 +7447,7 @@ br_contested_hold() {
     say "$p/$ck [$tkey]: $(tr '\n' ' ' <<<"$recs")recurred but no open PR or planned ticket touches any of them — nothing to hold, rebuilding as before"
     return 1
   fi
-  first=$(printf '%s' "$heldpaths" | head -1)
+  first=$(head -1 <<<"$heldpaths")
   arr=$(printf '%s' "$heldpaths" | sed '/^$/d' | jq -R . | jq -sc .)
   nums=$(printf '%s' "$allprs" | jq -r '[.[].num] | join(", ")' 2>/dev/null)
   keys=$(printf '%s' "$alltix" | jq -r 'join(", ")' 2>/dev/null)
@@ -9214,7 +7766,7 @@ br_one() {
   case "$url" in
     https://github.com/*/*/pull/*)
       if held=$(mc_contested_loser "$p" "$(mc_slug_of_url "$url")" "$(mc_num_of_url "$url")") && [ -n "$held" ]; then
-        held=$(printf '%s\n' "$held" | head -1)
+        held=$(head -1 <<<"$held")
         say "$p/$rkey: held: contested $(cut -f1 <<<"$held") (winner $(cut -f2 <<<"$held"))"
         # rc 0, NOT the BH-1122 rc 3, on purpose: a held PR eats a PER_TICK slot
         # while spending nothing. PER_TICK counts rungs, so rc 3 would be the
@@ -9409,7 +7961,13 @@ br_one() {
       br_needs_human_park "$p" "$rkey" "$reason" "$url" "$rec" "$tkey" "$ck" "$st"
       case "$?" in
         3) br_quiet needs-human; br_reset_token; return 3 ;;
-        4) action=rebuild-fresh ;;
+        4) # BH-6536: a human-step-only BLOCK whose step is done is re-reviewed
+           # on its built branch by bin/review-rescue.sh (shape D), not rebuilt.
+           if command -v nh_sd_pending >/dev/null 2>&1 && [ -d "$rec" ] && nh_sd_pending "$rec" "$p"; then
+             [ -e "$rec/.human-step-said" ] || { say "$p/$rkey [$reason]: human step done — bin/review-rescue.sh re-reviews the built branch of ${rec##*/}; no rebuild"; : > "$rec/.human-step-said"; }
+             br_quiet needs-human; br_reset_token; return 3
+           fi
+           action=rebuild-fresh ;;
       esac ;;
   esac
   # <<< needs-human park
@@ -9884,7 +8442,7 @@ done
 # the same thing in visit order, for the line. STOPREASON is decided by the
 # loop's own exit and never inferred afterwards (D9/D13): `budget` only when the
 # break below actually ran.
-VISITED=" "; VISITLIST=""; STOPREASON=drained
+VISITED=" "; VISITLIST=""; STOPREASON=drained; BR_EXIT=0
 NOW_TICK=$(date -u +%s)
 # HOW OLD IS THE OLDEST THING THIS TICK DID NOT TOUCH (BH-1122). `rungs=4/4
 # reason=budget` reads the same whether the lane is one rung behind or seven
@@ -10049,6 +8607,14 @@ for LINE in ${CANDS[@]+"${CANDS[@]}"}; do
   # share counts the same thing for the same reason — a held ticket at the top
   # of a capped project would otherwise be that project's entire tick.
   [ "$RC" = 3 ] || { N=$((N+1)); NP[$PB]=$(( ${NP[$PB]:-0} + 1 )); }
+  # OFF THE HUB, EVERY CANDIDATE'S WRITES REACH THE HUB BEFORE THE NEXT ONE
+  # (BH-6128). A write-back that fails stops the run: no later rung runs on
+  # state the hub has not received, and the run exits 75.
+  if [ -n "${LANE_RUN_ID:-}" ] && command -v lri_checkpoint >/dev/null 2>&1 \
+     && ! BR_CKPT=$(lri_checkpoint blocked-resolver "$PB" 2>&1); then
+    say "$PB/$RKEY: the write-back to the hub failed ($(printf '%s' "$BR_CKPT" | tail -n 1)) — this run stops before its next candidate"
+    STOPREASON=writeback-failed; BR_EXIT=75; break
+  fi
 done
 
 # ONE LINE PER TICK (BH-980), and only when there was something to do. An idle
@@ -10342,4 +8908,4 @@ exec 8>&-
 # THE HAND-OFF SWEEP (BH-5125), after everything above has had its say.
 [ "$BHW_ON" = 1 ] && bhw_sweep "$STOPREASON"
 hb_done blocked-resolver
-exit 0
+exit "$BR_EXIT"

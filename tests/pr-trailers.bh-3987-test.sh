@@ -20,6 +20,7 @@ set -uo pipefail
 . "$(dirname "$0")/lib/scratch.sh" || exit 1
 DIR=$(cd "$(dirname "$0")/.." && pwd)
 . "$DIR/tests/lib/rb-all.sh" || exit 1
+. "$DIR/tests/lib/hold-gate-fixture.sh" || exit 1  # BH-6091: the pr-open HOLD gate for a pipeline slice
 RB_ALL=$(rb_all "$DIR" "$T/run-build.all.sh")
 # One clock read for the whole file; it only keeps fixture names unique.
 NOW=$(date -u +%s)
@@ -167,6 +168,7 @@ marked() { awk -v s="$1" -v e="$2" 'index($0,s){f=1} f{print} f && index($0,e){e
 BLK="$T/create-call.sh"
 marked '# >>> pr create call' '# <<< pr create call' "$RB_ALL" > "$BLK"
 [ -s "$BLK" ] && ok || bad "T3: '# >>> pr create call' is missing from the pipeline"
+hold_gate_prepend "$RB_ALL" "$BLK"   # BH-6091: the real gate, a no-HOLD ticket read
 
 new_case() { # new_case <name> -> CASE with a git repo as the build dir
   CASE="$T/case-$1-$NOW"; export CASE

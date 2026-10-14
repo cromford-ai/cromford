@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import worker from '../src/index.js';
+import { jobsSchemaSql } from './lib/jobs-schema.js';
 
 // BH-3426 (BH-3422.1) — the model-watch routes over model_watch and cost_rows,
 // every case driven through worker.fetch against a node:sqlite D1 stand-in.
@@ -10,7 +11,7 @@ import worker from '../src/index.js';
 // every added line under worker/ for model literals.
 
 const SECRET = 's3cret';
-const SCHEMA = readFileSync(fileURLToPath(new URL('../schema.sql', import.meta.url)), 'utf8');
+const SCHEMA = jobsSchemaSql();
 
 function sqliteDB(db) {
   const prepare = (sql) => {

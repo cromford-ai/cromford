@@ -80,18 +80,18 @@ case "\$*" in
   # THE QUEUE'S DECISION READS ARE REST (BH-784): mq_pr goes through
   # gh api -i -X GET repos/$SLUG/pulls/<n>, judged on the HTTP status line, so
   # the stub prints a whole response. Same facts the --json arms below carry:
-  # an OPEN, MERGEABLE PR on ticket/aio-41, MERGED once something has been
+  # an OPEN, MERGEABLE PR on ticket/TK-41, MERGED once something has been
   # merged, and cccccccc3333 as the merge commit.
   *"api -i -X GET repos/$SLUG/pulls/"*)
-    if [ -s "$T/gh-merges.txt" ]; then restpr MERGED "$H1" ticket/aio-41 main "" MERGEABLE CLEAN operator cccccccc3333
-    else restpr OPEN "$H1" ticket/aio-41 main "" MERGEABLE CLEAN operator; fi ;;
+    if [ -s "$T/gh-merges.txt" ]; then restpr MERGED "$H1" ticket/TK-41 main "" MERGEABLE CLEAN operator cccccccc3333
+    else restpr OPEN "$H1" ticket/TK-41 main "" MERGEABLE CLEAN operator; fi ;;
   # The head-time read is REST since BH-1131 (repos/<slug>/pulls/<n>/commits),
   # never the CLI's GraphQL --json commits. (No backticks: this is an unquoted
   # heredoc, and a backtick here would RUN what it describes.)
   *"api repos/$SLUG/pulls/"*"/commits"*) cat "$T/headtime" 2>/dev/null; exit 0 ;;
   *"--json headRefOid"*) echo "$H1" ;;
-  *"--json state,mergeable,headRefName"*) echo "OPEN MERGEABLE ticket/aio-41" ;;
-  *"--json state,headRefName"*) echo "OPEN ticket/aio-41" ;;
+  *"--json state,mergeable,headRefName"*) echo "OPEN MERGEABLE ticket/TK-41" ;;
+  *"--json state,headRefName"*) echo "OPEN ticket/TK-41" ;;
   *"--json state"*) [ -s "$T/gh-merges.txt" ] && echo MERGED || echo OPEN ;;
   *"--json mergeCommit"*) echo cccccccc3333 ;;
   *) echo "" ;;
@@ -203,7 +203,7 @@ run_gate() { # run_gate ; prints the RESULT line
   printf 'VERDICT: APPROVE\n' > "$T/h/builds/gate/review.md"; printf 'plan\n' > "$T/h/builds/gate/plan.md"
   : > "$T/h/builds/gate/pipeline.log"
   ( cd "$T" && PATH="$T/fakebin:$PATH" HARNESS="$T/h" BUILD="$T/h/builds/gate" ALERTS="$T/h/logs/ALERTS.log" \
-      PROJECT=demo-os KEY=AIO-41 SLUG="$SLUG" TIER=1 PR_URL="https://github.com/$SLUG/pull/41" \
+      PROJECT=demo-os KEY=TK-41 SLUG="$SLUG" TIER=1 PR_URL="https://github.com/$SLUG/pull/41" \
       QA_NOTE="" MIG_NOTE="" REBASE_NOTE="" CLOSES_LINE="${RG_CLOSES:-Closes #41}" HEADBOUND_SHA="$H1" \
       BUILDER_NO_MERGE= \
       bash -c 'set -uo pipefail

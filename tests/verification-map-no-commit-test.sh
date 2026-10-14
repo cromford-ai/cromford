@@ -210,12 +210,12 @@ if command -v mc_regen_table >/dev/null 2>&1; then
     "$(printf 'rules/CLAUDE.md\tbin/render-rules.sh --write')" \
     "$(printf 'docs/PR-OWNERSHIP.md\tbin/render-doc-sections.sh --write')" \
     "$(printf 'worker/jobs/schema.sql\tbin/schema-build.sh --write')")
-  # The last four rows are the ones still COMMITTED: rules/CLAUDE.md (BH-1336),
-  # a render five box scripts copy verbatim, docs/PR-OWNERSHIP.md (BH-5235.2),
-  # linked by path, and worker/jobs/schema.sql, the composition of
-  # worker/jobs/schema.d/ (BH-4987). Each is declared here so a conflict on it is
-  # regenerated instead of hand merged. GT-2 pins the same list; the two must
-  # not drift.
+  # Of the last three rows two are still COMMITTED: rules/CLAUDE.md (BH-1336),
+  # a render five box scripts copy verbatim, and docs/PR-OWNERSHIP.md
+  # (BH-5235.2), linked by path. worker/jobs/schema.sql, the composition of
+  # worker/jobs/schema.d/, is not in git since BH-6005 (BH-5239.4 deleted the
+  # Cloud schema row). Each is declared here so a conflict on it is regenerated
+  # instead of hand merged. GT-2 pins the same list; the two must not drift.
   if [ "$TBL" = "$WANT" ]; then ok
   else bad "NC-4: mc_regen_table over a tree with NO committed README must still print the declared rows, the verification-map README among them (the table lives in docs/verification-map/index/tail.md). Got:
 $(printf '%s' "$TBL" | cat -v)"; fi
@@ -293,7 +293,7 @@ if command -v mc_resolve_conflicts >/dev/null 2>&1; then
   git -C "$OLD" checkout -q ticket/bh-90099
   git -C "$OLD" merge -q --no-edit main >/dev/null 2>&1
   CONF=$(git -C "$OLD" diff --name-only --diff-filter=U)
-  if printf '%s\n' "$CONF" | grep -qx 'docs/verification-map/README.md'; then ok
+  if grep -qx 'docs/verification-map/README.md' <<<"$CONF"; then ok
   else bad "NC-8: the fixture did not produce the modify/delete this case is about — it proves nothing (conflicts: ${CONF:-none})"; fi
   # And it really has no markers, which is why the union resolver cannot help.
   grep -q '<<<<<<<' "$OLD/docs/verification-map/README.md" 2>/dev/null \
@@ -372,7 +372,7 @@ if command -v mc_resolve_conflicts >/dev/null 2>&1; then
   git -C "$ORI" checkout -q ticket/bh-90097
   git -C "$ORI" merge -q --no-edit main >/dev/null 2>&1
   CONF9=$(git -C "$ORI" diff --name-only --diff-filter=U)
-  printf '%s\n' "$CONF9" | grep -qx 'docs/x.log' && ok \
+  grep -qx 'docs/x.log' <<<"$CONF9" && ok \
     || bad "NC-9: the fixture did not produce the delete/modify this case is about (conflicts: ${CONF9:-none})"
 
   OUT=$(mc_resolve_conflicts "$ORI" ticket/bh-90097 2>/dev/null); RC=$?

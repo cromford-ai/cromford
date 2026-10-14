@@ -21,6 +21,7 @@ import { TriageWasteSection } from './TriageWaste.js';
 import { LaneDedupSection } from './LaneDedup.js';
 import { CostBreakerSection } from './CostBreaker.js';
 import { CostCapsSection } from './CostCaps.js';
+import { LaneSpendSection } from './LaneSpend.js';
 import { CostCapHistorySection } from './CostCapHistory.js';
 
 // The title row, with the LLM SITES link beside it (BH-2556). Its own
@@ -78,6 +79,7 @@ export function CostsScreen() {
       <${CostBreakerSection}/>
       <${CostCapsSection}/>
       <${CostCapHistorySection}/>
+      <${LaneSpendSection}/>
 
       ${gaps.length ? html`
         <div class="footnote" style="flex-direction:column;align-items:flex-start;gap:4px">

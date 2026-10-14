@@ -507,12 +507,12 @@ if [ -x "$H/bin/route-shadow-report.sh" ] || [ -s "$H/bin/route-shadow-report.sh
 : > "$T/reqs"
 REP=$(wenv bash "$H/bin/route-shadow-report.sh" --no-send --print 2>"$T/rep.err"); rc=$?
 [ "$rc" = 0 ] && ok || bad "F1 report rc=$rc: $(head -3 "$T/rep.err")"
-printf '%s\n' "$REP" | grep -q 'builds: 4' && ok || bad "F1 total builds missing: $REP"
-printf '%s\n' "$REP" | grep -q 'would move off the live execute model: 2 (50%)' && ok || bad "F2 the would-move share is wrong: $REP"
-printf '%s\n' "$REP" | grep -q 'build.execute.lite: 2 (50%)' && ok || bad "F2 the lite-role share is wrong: $REP"
-printf '%s\n' "$REP" | grep -qE 'project-3 +2 +1 \(50%\)' && ok || bad "F3 the per-project row for project-3 is wrong: $REP"
-printf '%s\n' "$REP" | grep -qE 'project-5 +2 +1 \(50%\)' && ok || bad "F3 the per-project row for project-5 is wrong: $REP"
-printf '%s\n' "$REP" | grep -qE '\(no rule\) +1' && ok || bad "F4 unmatched builds are named, not dropped: $REP"
+grep -q 'builds: 4' <<<"$REP" && ok || bad "F1 total builds missing: $REP"
+grep -q 'would move off the live execute model: 2 (50%)' <<<"$REP" && ok || bad "F2 the would-move share is wrong: $REP"
+grep -q 'build.execute.lite: 2 (50%)' <<<"$REP" && ok || bad "F2 the lite-role share is wrong: $REP"
+grep -qE 'project-3 +2 +1 \(50%\)' <<<"$REP" && ok || bad "F3 the per-project row for project-3 is wrong: $REP"
+grep -qE 'project-5 +2 +1 \(50%\)' <<<"$REP" && ok || bad "F3 the per-project row for project-5 is wrong: $REP"
+grep -qE '\(no rule\) +1' <<<"$REP" && ok || bad "F4 unmatched builds are named, not dropped: $REP"
 grep -q 'GET /route-shadow?since=' "$T/reqs" && ok || bad "F5 the report did not read the worker's shadow rows"
 [ -s "$H/state/route-shadow/latest.txt" ] && ok || bad "F6 no state/route-shadow/latest.txt"
 FAKE=down wenv bash "$H/bin/route-shadow-report.sh" --no-send --print > "$T/rep.down" 2>&1; rc=$?

@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import worker from '../src/index.js';
+import { jobsSchemaSql } from './lib/jobs-schema.js';
 
 // BH-3557: GET /api/metrics/cost-breakdown, a grouped read over cost_rows so
 // the fleet's spend is labelled by project, stage, runner, model, billing mode
@@ -10,7 +11,7 @@ import worker from '../src/index.js';
 // real worker.fetch over a real schema.sql in node:sqlite, clock pinned.
 
 const SECRET = 'test-secret';
-const SCHEMA = readFileSync(fileURLToPath(new URL('../schema.sql', import.meta.url)), 'utf8');
+const SCHEMA = jobsSchemaSql();
 
 let DatabaseSync = null;
 try { ({ DatabaseSync } = await import('node:sqlite')); } catch { DatabaseSync = null; }

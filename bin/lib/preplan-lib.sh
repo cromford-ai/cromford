@@ -412,8 +412,10 @@ preplan_fetch() {
 }
 
 # preplan_planned_files <harness> <project> <key> -> the files this ticket's
-#   pre-plan says it will touch, one per line. rc 1 and NOTHING printed when no
-#   list exists anywhere — "we could not ask" must never read as "no overlap".
+#   pre-plan says it will touch, one per line. rc 1 and NOTHING printed when the
+#   index answered and holds no list for the key; rc 2 and nothing printed when
+#   it could not be asked (no jq, no jobs client, the index read failed). Both
+#   must never read as "no overlap"; rc 2 lets a caller say WHY there is no list.
 #
 #   LOCAL DIRECTORY FIRST. On a watcher box that is the same file the builder
 #   will adopt and the answer costs no request; only the hub, whose plans/ dir is
@@ -423,9 +425,10 @@ preplan_planned_files() {
   [ -n "$h" ] && [ -n "$p" ] && [ -n "$k" ] || return 1
   f=$(preplan_dir "$h" "$p" "$k")/planned-files.txt
   [ -s "$f" ] && { cat "$f"; return 0; }
-  command -v jq >/dev/null 2>&1 || return 1
-  _preplan_client "$h" || return 1
-  l=$(preplan_index "$p" 2>/dev/null | awk -F'\t' -v k="$k" '$1==k {print $4; exit}')
+  command -v jq >/dev/null 2>&1 || return 2
+  _preplan_client "$h" || return 2
+  l=$(preplan_index "$p" 2>/dev/null) || return 2
+  l=$(printf '%s\n' "$l" | awk -F'\t' -v k="$k" '$1==k {print $4; exit}')
   [ -n "$l" ] || return 1
   printf '%s\n' "$l" | tr '|' '\n' | sed '/^$/d'
 }
@@ -808,7 +811,7 @@ preplan_small_reason() {
   local h="${1:-}" p="${2:-}" k="${3:-}" mid="${4:-}" line tok v t kind
   [ -n "$h" ] && [ -n "$p" ] && [ -n "$k" ] || return 1
   [ "$(preplan_skip_small_on "$h")" = 1 ] || return 1
-  if [ -n "$mid" ] && printf '%s\n' "$mid" | grep -qxF -- "$k"; then
+  if [ -n "$mid" ] && grep -qxF -- "$k" <<<"$mid"; then
     printf 'build-running: %s is being built now, and its PLAN stage plans it\n' "$k"; return 0
   fi
   line=$(_preplan_queue_line "$h" "$k")

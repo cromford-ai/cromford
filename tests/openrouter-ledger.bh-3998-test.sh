@@ -109,7 +109,7 @@ L1_ROWS=(2026-09-25T00:00:00Z openrouter 100.00 ""
 vendor 2026-09-20T23:00:00Z ok 1000.00 - 2026-10-03T23:00:00Z ok 1200.00 - 2026-10-02T00:00:00Z error - -
 rows "${L1_ROWS[@]}"
 out=$("$CLI" --since "$S" --until "$U" 2>"$T/err"); rc=$?
-check "L1 CLI line 1" "$(printf '%s\n' "$out" | head -1)" "openrouter scope=account state=ok vendor_usd=200.00 rows_usd=100.00 rows_n=3 unpriced_n=2 killed_n=0 span=2026-09-20T23:00:00Z..2026-10-03T23:00:00Z"
+check "L1 CLI line 1" "$(head -1 <<<"$out")" "openrouter scope=account state=ok vendor_usd=200.00 rows_usd=100.00 rows_n=3 unpriced_n=2 killed_n=0 span=2026-09-20T23:00:00Z..2026-10-03T23:00:00Z"
 check "L1 CLI rc 0" "$rc" 0
 out=$(lib "$S" "$U"); rc=$?
 check "L1 lib prints exactly one line" "$(printf '%s\n' "$out" | wc -l | tr -d ' ')" 1
@@ -125,7 +125,7 @@ has "L2 harness-keys sum" "$out" "openrouter scope=harness-keys state=ok vendor_
 check "L2 rc 0" "$rc" 0
 # Since BH-4001 the lines after line 1 name keys (the per-key table); the
 # tracer's own line and stderr still name none.
-all="$(printf '%s\n' "$out" | head -1) $(cat "$T/err")"
+all="$(head -1 <<<"$out") $(cat "$T/err")"
 hasnt "L2 no harness-a printed" "$all" harness-a
 hasnt "L2 no project-4-app printed" "$all" project-4-app
 hasnt "L2 no secret printed" "$out $(cat "$T/err")" test-secret-xyz
@@ -197,7 +197,7 @@ vendor "$A9" ok 10.00 - "$B9" ok 12.50 -
 rows "$(iso $((NOW - 86400)))" openrouter 2.00 ""
 out=$("$CLI" 2>"$T/err"); rc=$?
 check "L9 no-flag CLI rc 0" "$rc" 0
-check "L9 no-flag CLI reads the last 7 days" "$(printf '%s\n' "$out" | head -1)" "openrouter scope=account state=ok vendor_usd=2.50 rows_usd=2.00 rows_n=1 unpriced_n=0 killed_n=0 span=$A9..$B9"
+check "L9 no-flag CLI reads the last 7 days" "$(head -1 <<<"$out")" "openrouter scope=account state=ok vendor_usd=2.50 rows_usd=2.00 rows_n=1 unpriced_n=0 killed_n=0 span=$A9..$B9"
 [[ "$A9" > "$WK" ]] && ok "L9 span starts inside the last 7 days" || bad "L9 span start" "$A9 vs $WK"
 
 # ── L10 ──

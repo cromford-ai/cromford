@@ -220,7 +220,7 @@ split_chain_due() {
     keys=()
     while IFS= read -r k; do
       k=$(printf '%s' "$k" | tr -d '[:space:]')
-      printf '%s' "$k" | grep -qE '^[A-Za-z]+-[0-9]+$' && keys+=("$k")
+      grep -qE '^[A-Za-z]+-[0-9]+$' <<<"$k" && keys+=("$k")
     done < <(printf '%s\n' "${l#DECOMPOSED }" | tr ',' '\n')
     for (( i = 1; i < ${#keys[@]}; i++ )); do
       c="${keys[$i]}"
@@ -320,7 +320,7 @@ split_chain_take_lines() {
   due=$(split_chain_due "$h" "$p" --any-offer) || due=""
   while IFS=$'\t' read -r c parent deps; do
     [ -n "$c" ] || continue
-    printf '%s\n' "$keys" | grep -qxF -- "$c" || continue
+    grep -qxF -- "$c" <<<"$keys" || continue
     id=$(jq -r --arg k "$c" '.[$k] // empty' "$h/state/$p.keymap.json" 2>/dev/null) || id=""
     title=""
     [ -n "$id" ] && title=$(jq -r --arg id "$id" \

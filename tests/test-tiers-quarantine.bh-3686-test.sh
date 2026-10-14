@@ -104,7 +104,7 @@ tt "$T/abc" batch "${BASE[@]}" --quarantine "$T/qglob"
   || bad "Q5: a glob and a ../ token are each ignored out loud: $ERR"
 
 # ── Q6. a broken join hands the WHOLE batch back, b included; nightly is rc 2.
-printf '#!/bin/bash\nawk "$@" | head -1\n' > "$T/awk-truncates"; chmod +x "$T/awk-truncates"
+printf '#!/bin/bash\nawk "$@" | head -1\n' > "$T/awk-truncates"; chmod +x "$T/awk-truncates"  # determinism: ok race-sigpipe-echo printf writes a stub; the pipe is awk | head inside it, and the stub exists to truncate
 OUT=$(TEST_TIERS_AWK="$T/awk-truncates" bash "$TT" batch "${BASE[@]}" --quarantine "$T/qb" < "$T/abc" 2>"$T/err"); RC=$?
 { [ "$RC" = 0 ] && [ "$OUT" = "$(cat "$T/abc")" ] && grep -q 'FAIL-SAFE' "$T/err"; } && ok \
   || bad "Q6: the fail-safe must return a, b and c (rc=$RC): $OUT / $(cat "$T/err")"

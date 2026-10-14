@@ -56,7 +56,8 @@ blk() { awk -v b="$2" 'index($0, "# >>> " b) {f=1; next} index($0, "# <<< " b) {
   fnx "$DIR/bin/lib/mc/queue.sh" mc_eject_runs_file
   fnx "$DIR/bin/lib/mc/queue.sh" mc_eject_fix_now
   fnx "$DIR/bin/lib/mc/classify.sh" mc_handoff_id
-  fnx "$DIR/bin/blocked-resolver.sh" br_eject_runs; } > "$T/fns.sh"
+  # TEST-CHANGE (BH-5241): br_eject_runs lives in the ladder module since the cut.
+  fnx "$DIR/bin/lib/br/ladder.sh" br_eject_runs; } > "$T/fns.sh"
 for f in bej_eject_runs_parse bej_eject_runs mc_eject_runs_file mc_eject_fix_now br_eject_runs; do
   grep -qE "^$f\(\)[[:space:]]*\{" "$T/fns.sh" && ok || bad "could not extract $f"
 done

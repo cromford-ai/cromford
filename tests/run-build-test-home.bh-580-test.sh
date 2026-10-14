@@ -95,7 +95,10 @@ grep -qF 'PLAN ONLY - do not modify' "$T/p1.txt" \
 planprompt 0 "$T/p2.txt"
 [ "$(head -c 25 "$T/p2.txt")" = 'PLAN ONLY - do not modify' ] \
   && ok || bad "A2: with no lib the prompt must still START with 'PLAN ONLY' (got: $(head -c 40 "$T/p2.txt" 2>/dev/null))"
-{ printf '%s' "$(th_plan_rule AB-1)"; cat "$T/p2.txt"; } > "$T/p2-plus-rule.txt"
+# TEST-CHANGE (BH-5788): the lib also adds th_fragment_rule after th_plan_rule
+# (it prints only in a checkout with worker/*/schema.d/, judged from the cwd
+# like the block itself), so the prefix is both sentences.
+{ printf '%s' "$(th_plan_rule AB-1)$(th_fragment_rule AB-1 .)"; cat "$T/p2.txt"; } > "$T/p2-plus-rule.txt"
 cmp -s "$T/p1.txt" "$T/p2-plus-rule.txt" \
   && ok || bad "A2: the ONLY difference between the two prompts must be the rule prefix"
 

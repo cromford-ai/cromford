@@ -319,7 +319,8 @@ for FN in ics mcs; do
 
   # S3u: a SLICE plan with no remainder pages once, critical, and never warns
   reset; routes; printf '# BH-4477\n\nSLICE: C0 of #4477\n\n## Tasks\n' > "$REC/plan.md"
-  W=$($FN); RC=$?
+  # BH-6308: the legacy path, behind its switch; the default is pinned in tests/slice-closeout-closes.bh-6308-test.sh
+  W=$(SLICE_CLOSEOUT_SETTLE=0 $FN); RC=$?
   [ "$RC" = 0 ] && [ "$W" = kept-slice:no-children+label-kept ] && ok || bad "S3u[$FN]: word (rc=$RC w=$W)"
   [ "$(n_post)" = 1 ] && [ "$(head -1 "$T/posted.txt")" = "$NOKID_LINE" ] && ok || bad "S3u[$FN]: today's no-children comment ($(head -1 "$T/posted.txt"))"
   [ "$(n_alert)" = 1 ] && grep -q -- '--severity critical' "$T/h/logs/ALERTS.log" && grep -q 'SLICE_REMAINDER_UNKNOWN' "$T/h/logs/ALERTS.log" \
@@ -328,7 +329,8 @@ for FN in ics mcs; do
   grep -q -- '--severity warn' "$T/h/logs/ALERTS.log" && bad "S3u[$FN]: the page replaces the warn alert" || ok
   [ "$(n_create)" = 0 ] && [ "$(n_delete)" = 0 ] && ok || bad "S3u[$FN]: nothing filed, label kept"
   rerun
-  W=$($FN); RC=$?
+  # BH-6308: the legacy path, behind its switch; the default is pinned in tests/slice-closeout-closes.bh-6308-test.sh
+  W=$(SLICE_CLOSEOUT_SETTLE=0 $FN); RC=$?
   [ "$RC" = 0 ] && [ "$(n_post)" = 0 ] && [ "$(n_alert)" = 1 ] && [ -f "$REC/slice-remainder/unknown-paged" ] && ok \
     || bad "S3u[$FN]: a re-run posts and pages nothing more (rc=$RC post=$(n_post) alerts=$(n_alert))"
 done

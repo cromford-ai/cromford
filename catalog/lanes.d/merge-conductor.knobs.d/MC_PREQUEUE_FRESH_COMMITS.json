@@ -1,0 +1,11 @@
+{
+  "env": "MC_PREQUEUE_FRESH_COMMITS",
+  "type": "int",
+  "default": 3,
+  "min": 0,
+  "max": 1000,
+  "unit": "commits",
+  "zero_means": null,
+  "read_in": "bin/lib/mc-prequeue.sh",
+  "note": "BH-6335: a reused non-red pre-queue verdict for an older main counts only when that main is at most this many commits behind the current main (one compare read per pair, bin/lib/mc-prequeue.d/dispatch.sh pq_main_behind). More, a diverged pair or an unreadable compare: the gate runs again first and the row is held. A red parks at any distance. 0 = only a verdict on the current main tip counts. Per project: lane.merge-conductor.<project>.mc_prequeue_fresh_commits."
+}

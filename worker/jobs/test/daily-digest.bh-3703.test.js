@@ -24,6 +24,7 @@ import {
 } from '../src/lib/daily-digest/shape.js';
 import { readCoreSections } from '../src/lib/daily-digest/core-sections.js';
 import { readStateSections } from '../src/lib/daily-digest/state-sections.js';
+import { jobsSchemaSql } from './lib/jobs-schema.js';
 
 const SECRET = 'test-secret';
 const ANCHOR = Date.now();  // determinism: ok the single anchor; the route's own clock is compared against it
@@ -319,7 +320,7 @@ test('BH-3703 GET /api/metrics/daily-digest on a real schema', async (t) => {
     db.exec(`DELETE FROM model_routes WHERE role='stage.daily-digest'`);
     db.prepare(`INSERT INTO model_route_changes (scope, project, role, position, actor, reason, at)
                 VALUES ('hub', NULL, 'stage.daily-digest', 0, 'operator', 'removed on purpose', '2026-09-30T00:00:00Z')`).run();
-    const schema = readFileSync(new URL('../schema.sql', import.meta.url), 'utf8');
+    const schema = jobsSchemaSql();
     const seed = schema.split(/;\s*\n/).find((s) => /'stage\.daily-digest', 0/.test(s));
     assert.ok(seed, 'the stage.daily-digest seed statement is in schema.sql');
     db.exec(seed);
@@ -327,7 +328,7 @@ test('BH-3703 GET /api/metrics/daily-digest on a real schema', async (t) => {
   });
 
   await t.test('SEED3: no CREATE or ALTER statement in schema.sql mentions daily-digest', () => {
-    const schema = readFileSync(new URL('../schema.sql', import.meta.url), 'utf8');
+    const schema = jobsSchemaSql();
     const ddl = schema.split(/;\s*\n/).filter((s) => /^\s*(CREATE|ALTER|DROP)\b/im.test(s.replace(/--.*$/gm, '')));
     for (const s of ddl) assert.doesNotMatch(s.replace(/--.*$/gm, ''), /daily[-_]digest/i);
   });

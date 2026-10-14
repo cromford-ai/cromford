@@ -8,6 +8,7 @@
 
 import { json } from "../lib/http.js";
 import { laneDedupResponse } from "../lib/lane-dedup.js";
+import { readFleetFlag } from "../lib/harness-flags.js";
 import {
   numOrNull, intOrNull, str, ensureColumns, ensureTable, ANCHOR_DEFAULT_ACCOUNT_MAP,
   ANCHOR_DEFAULT_MAX_FACTOR, ANCHOR_OFF_FLAG, parseAccountMap, anchorWindow,
@@ -305,9 +306,7 @@ export const routes = [
         now: Date.parse(t),
       });
       const lim = Math.min(Math.max(Number(url.searchParams.get("limit")) || 500, 1), 1000);
-      const offRow = await env.DB.prepare(
-        "SELECT active FROM pause_flags WHERE name=?1"
-      ).bind(ANCHOR_OFF_FLAG).first();
+      const offRow = await readFleetFlag(env, ANCHOR_OFF_FLAG);
       const offReason = String(env.COST_ANCHOR_OFF || "") === "1"
         ? "COST_ANCHOR_OFF=1 on the worker"
         : (offRow && Number(offRow.active) === 1 ? `the ${ANCHOR_OFF_FLAG} flag is set` : null);

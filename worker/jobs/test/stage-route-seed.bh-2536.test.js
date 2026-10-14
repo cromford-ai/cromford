@@ -4,13 +4,14 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { DatabaseSync } from 'node:sqlite';
 import worker from '../src/index.js';
+import { jobsSchemaSql } from './lib/jobs-schema.js';
 
 // BH-2536 — a stage.<x> route for every catalogued agent-call stage, seeded as
 // ONE claude rung (what agent-call runs for an unrouted stage today: claude, no
 // fallback). Driven against THE SQL THAT SHIPS, and through worker.fetch for the
 // PUT the Models page sends, like runner-routes.bh-1766.test.js.
 const SECRET = 'test-secret';
-const SCHEMA = readFileSync(fileURLToPath(new URL('../schema.sql', import.meta.url)), 'utf8');
+const SCHEMA = jobsSchemaSql();
 const NEW_ROLES = [
   'qa', 'preplan-files', 'prodqa', 'repro', 'lead-review', 'map', 'signals',
   'ideate', 'synth', 'prd', 'mockup', 'revise', 'remediate', 'mine', 'feature-map-draft', 'readout', 'chat',

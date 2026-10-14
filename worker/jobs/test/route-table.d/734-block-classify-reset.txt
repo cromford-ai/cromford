@@ -1,0 +1,4 @@
+# BLOCK CLASSIFY RESET (BH-5915): re-open a classify run parked because the
+# lead report was cut at the 4000-unit artifact cap, right after the
+# block-findings family.
+POST /api/block-classify/reset

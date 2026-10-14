@@ -297,7 +297,7 @@ drive_census() { # drive_census <census file> <report 0|1>
       f2=$(printf '%s\n' "$log" | awk 'NR==1{print $2}')
       f3=$(printf '%s\n' "$log" | awk 'NR==1{print $3}')
       if [ "$n" = 1 ] && [ "$f2 $f3" = "$verb" ] &&
-         printf '%s' "$(gshim_env)" | grep -q "^depth=1 $verb"; then
+         grep -q "^depth=1 $verb" <<<"$(gshim_env)"; then
         :
       else
         N_LOGGED=$((N_LOGGED + 1))
@@ -316,7 +316,7 @@ drive_census() { # drive_census <census file> <report 0|1>
       # Exempt from the api-call assertion by design: cloning is git's job and
       # the handler execs it. The git side is asserted once, below.
       :
-    elif printf '%s' "$calls" | grep -q '^api '; then
+    elif grep -q '^api ' <<<"$calls"; then
       [ "$report" = 1 ] && ok
     else
       N_TRANSLATED=$((N_TRANSLATED + 1))

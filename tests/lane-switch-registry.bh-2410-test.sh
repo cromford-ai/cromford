@@ -57,7 +57,7 @@ for n in $C4; do
             | nocomment | cut -d: -f1 | sort -u)
   [ -n "$found" ] || bad "L8b $n: the read pattern found no reader in bin/ or fly/"
   for r in $found; do
-    printf '%s\n' "$listed" | grep -qxF "$r" && ok || bad "L8b $n: $r reads flags/$n but is not in readers"
+    grep -qxF "$r" <<<"$listed" && ok || bad "L8b $n: $r reads flags/$n but is not in readers"
   done
 done
 
@@ -121,7 +121,7 @@ cat > "$H/bin/toy-reader.sh" <<'SH'
 SH
 out=$(lsf_cases toy-off probe stopped ran); rc=$?
 [ "$rc" -ne 0 ] && ok || bad "L8g lsf_cases rc 0 on a bare [ -f ] reader"
-printf '%s\n' "$out" | grep -qF 'FAIL: lsf toy-off (i):' && ok || bad "L8g case (i) not named: $out"
+grep -qF 'FAIL: lsf toy-off (i):' <<<"$out" && ok || bad "L8g case (i) not named: $out"
 
 # L8g2 — a reader that gets every answer right but reads the rows itself, so a
 # contradicting file is never logged: case (ii) fails on the missing line alone.

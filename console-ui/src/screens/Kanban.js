@@ -204,7 +204,23 @@ export function PipelineBoard({ board, external, shipped, showEmpty, emptyNote, 
 // every identity cell links where its card linked, and the table scrolls inside
 // its own container at narrow widths rather than pushing the page sideways.
 export function PipelineList({ board, external, shipped, emptyNote, onToggleAudit }) {
-  const rows = pipelineRows(board, external);
+  // BH-6536: a ticket_stage card's reason, and a synthetic card's project link,
+  // joined back onto its row by the row key pipelineRows builds.
+  const staged = new Map();
+  for (const [col, cards] of Object.entries((board && board.columns) || {})) {
+    for (const c of Array.isArray(cards) ? cards : []) {
+      if (c && (c.stage_why || c.synthetic === 'ticket_stage')) staged.set(`${col}:${cardKey(c)}`, c);
+    }
+  }
+  const rows = pipelineRows(board, external).map((r) => {
+    const c = staged.get(r.key);
+    if (!c) return r;
+    return {
+      ...r,
+      stageWhy: c.stage_why || null,
+      route: c.synthetic === 'ticket_stage' ? `/p/${encodeURIComponent(c.project)}` : r.route
+    };
+  });
 
   const columns = [
     {
@@ -228,7 +244,8 @@ export function PipelineList({ board, external, shipped, emptyNote, onToggleAudi
           ? html` <span class="tag tag--idle"
               title="the GitHub issue is closed — hidden from the default DEAD view, never deleted">ISSUE CLOSED</span>`
           : null}
-        ${r.held ? html` <${HeldTag} held=${true} ...${r.held}/>` : null}`
+        ${r.held ? html` <${HeldTag} held=${true} ...${r.held}/>` : null}
+        ${r.stageWhy ? html` <span class="card__body card__why" title=${r.stageWhy}>${r.stageWhy}</span>` : null}`
     },
     {
       key: 'project', label: 'PROJECT', sort: (r) => r.project,
@@ -380,7 +397,9 @@ function DeadArchiveNote({ view, onToggle }) {
 
 function Card({ card, column }) {
   const kind = cardKind(card);
-  const to = cardRoute(card);
+  // BH-6536: a ticket_stage card has no build row behind it; it links to its
+  // project, never to a /builds/ page that does not exist.
+  const to = card && card.synthetic === 'ticket_stage' ? `/p/${encodeURIComponent(card.project)}` : cardRoute(card);
 
   if (kind === 'queue') {
     return html`
@@ -443,8 +462,9 @@ function Card({ card, column }) {
           ${done ? '✓ ' : ''}${agoFromMinutes(card.age_min ?? minutesSince(card.updated_at))}
         </span>
       </div>
-      <span class="card__body" title=${card.stage || undefined}>${card.stage ? stageLabel(card.stage) : '—'}</span>
-      ${station !== null ? html`<div class="card__track"><${StationTrack} at=${station} state=${done ? 'done' : 'now'}
+      <span class="card__body" title=${card.stage || undefined}>${card.stage ? stageLabel(card.stage) || card.stage : '—'}</span>
+      ${card.stage_why ? html`<span class="card__body card__why" title=${card.stage_why}>${card.stage_why}</span>` : null}
+      ${station !== null ? html`<div class="card__track" title=${STATIONS.map((s, i) => `${String(i + 1).padStart(2, '0')} ${s}`).join(' · ')}><${StationTrack} at=${station} state=${done ? 'done' : 'now'}
         label=${card.ticket || card.bkey || `build #${card.id}`} compact=${true}/></div>` : null}
       <span class="card__foot">
         <span>${card.project}</span>

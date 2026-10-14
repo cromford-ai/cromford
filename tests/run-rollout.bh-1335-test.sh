@@ -394,7 +394,7 @@ e1_env_path_pin() {
     bad "E1: bin/test-impact.sh is missing"; return
   fi
   ALWAYS=$(HARNESS_TEST_SANDBOX=1 "$DIR/bin/test-impact.sh" always --root "$DIR" 2>/dev/null)
-  printf '%s\n' "$ALWAYS" | grep -qx 'tests/env-path-test.sh' \
+  grep -qx 'tests/env-path-test.sh' <<<"$ALWAYS" \
     && ok || bad "E1: bin/test-impact.sh always must yield tests/env-path-test.sh"
 }
 

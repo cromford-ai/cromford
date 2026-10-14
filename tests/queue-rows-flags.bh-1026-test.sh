@@ -182,9 +182,9 @@ FLAG_BQ=0 lib 'build_queue_rows_only_on' >/dev/null
 printf 'project-3\tFR-9\tclaimed\t1857abc\n' > "$ROWS"
 rm -f "$ACTIVE"
 OUT=$(FLAG_BQ=1 lib 'build_queue_active_key project-3; echo "rc=$?"')
-[ "$(printf '%s' "$OUT" | head -1)" = "$(printf 'TK-9\t1857abc')" ] \
-  && ok || bad "flag on + a claimed row must print key<TAB>machine with no file at all, got: $(printf '%s' "$OUT" | head -1 | cat -A)"
-printf '%s' "$OUT" | grep -q '^rc=0$' \
+[ "$(head -1 <<<"$OUT")" = "$(printf 'TK-9\t1857abc')" ] \
+  && ok || bad "flag on + a claimed row must print key<TAB>machine with no file at all, got: $(head -1 <<<"$OUT" | cat -A)"
+grep -q '^rc=0$' <<<"$OUT" \
   && ok || bad "an active key is rc 0, got: $OUT"
 
 # A claimed row that predates the column prints `-`, never a bare tab and never
@@ -207,8 +207,8 @@ done
 : > "$ROWS"
 printf '{"key":"TK-5","machine":"deadbeef"}\n' > "$ACTIVE"
 OUT=$(FLAG_BQ=0 lib 'build_queue_active_key project-3; echo "rc=$?"')
-[ "$(printf '%s' "$OUT" | head -1)" = "$(printf 'TK-5\t-')" ] \
-  && ok || bad "flag off must answer from <p>-active.json, got: $(printf '%s' "$OUT" | head -1 | cat -A)"
+[ "$(head -1 <<<"$OUT")" = "$(printf 'TK-5\t-')" ] \
+  && ok || bad "flag off must answer from <p>-active.json, got: $(head -1 <<<"$OUT" | cat -A)"
 [ "$(qreqs)" = 0 ] && ok || bad "flag off must make NO queue request: $(cat "$T/req.txt")"
 
 # AN OUTAGE FALLS TO THE FILE and never prints an empty answer as "nothing
@@ -256,9 +256,9 @@ OUT=$(FLAG_BQ=1 lib 'build_queue_active_key; echo "rc=$?"')
 printf 'project-3\tFR-1\tclaimed\t-\nproject-3\tFR-9\tclaimed\t1857abc\n' > "$ROWS"
 printf '{"key":"TK-9"}\n' > "$ACTIVE"
 OUT=$(FLAG_BQ=1 lib 'build_queue_active_key project-3 TK-9; echo "rc=$?"')
-[ "$(printf '%s' "$OUT" | head -1)" = "$(printf 'TK-9\t1857abc')" ] \
-  && ok || bad "a stale claim for ANOTHER key must not mask the key being asked about, got: $(printf '%s' "$OUT" | head -1 | cat -A)"
-printf '%s' "$OUT" | grep -q '^rc=0$' && ok || bad "the keyed read is rc 0 when that key is claimed, got: $OUT"
+[ "$(head -1 <<<"$OUT")" = "$(printf 'TK-9\t1857abc')" ] \
+  && ok || bad "a stale claim for ANOTHER key must not mask the key being asked about, got: $(head -1 <<<"$OUT" | cat -A)"
+grep -q '^rc=0$' <<<"$OUT" && ok || bad "the keyed read is rc 0 when that key is claimed, got: $OUT"
 # …and the same fixture, asked about a key nothing holds, is rc 1: the helper
 # must not report SOMEBODY ELSE's claim as this key's.
 OUT=$(FLAG_BQ=1 lib 'build_queue_active_key project-3 TK-140; echo "rc=$?"')

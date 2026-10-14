@@ -1,0 +1,17 @@
+# catalog/perf-ticket.tsv — the rules that make a ticket a perf/cost ticket
+# (BH-6372). Read by pt_classify in bin/lib/perf-ticket.sh. Tab-separated:
+# kind, value, note. Lines that start with # are comments.
+# kind label: the value is compared lower-cased and exactly with each ticket
+# label (trimmed, lower-cased).
+# kind phrase: the value is an ERE, matched case-insensitively against the
+# title and the body. The first row that matches wins.
+# Never add a bare cost, spend, minutes or ci row: a broad list measured 4
+# false hits in 200 issues (BH-6372).
+label	perf	the perf label
+label	cost	the cost label
+phrase	ci minutes	CI time as the target
+phrase	minutes saved	a saving stated in minutes
+phrase	review spend	the review lane cost
+phrase	save[sd]? (ci|review|build|metered)	a saving on a metered lane
+phrase	metered ci	the metered CI cost
+phrase	cut (ci|review|build) (minutes|spend|cost|time)	a cut on a metered lane

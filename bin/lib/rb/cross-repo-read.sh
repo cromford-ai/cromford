@@ -13,7 +13,8 @@
 # plans name other repos in prose all the time, and a path like bin/lib looks
 # like a slug.
 #
-#   xrepo_plan_note                  the PLAN prompt sentence
+#   xrepo_plan_note                  the PLAN prompt sentence, plus the repos
+#                                    GH_EXTRA_READ_REPOS says this build reads
 #   xrepo_declared <plan.md> [own]   the declared slugs, one per line: the own
 #                                    slug dropped, deduped, at most 10
 #   xrepo_probe <owner/repo>         ok | missing | unknown <why>
@@ -32,6 +33,10 @@ XREPO_MAX=10
 
 xrepo_plan_note() {
   printf '%s ' "CROSS-REPO READS: if this plan copies or reads code from any GitHub repo other than this project's own, write one line per repo, exactly \`CROSS-REPO-READ: <owner>/<repo>\`, at the start of the line; the build checks that it can read each one before execute."
+  # BH-6576: on a pool machine with a read-only token, name what it reads and
+  # how. Unset (every other build): the note above is the whole note.
+  [ -n "${GH_EXTRA_READ_REPOS:-}" ] && printf '%s ' "This build can READ these repos (read-only): ${GH_EXTRA_READ_REPOS}. Read them with git (git clone --depth 1 https://github.com/<repo> /tmp/<name>); gh and the GitHub API use the project token and cannot read them."
+  return 0
 }
 
 xrepo_declared() {

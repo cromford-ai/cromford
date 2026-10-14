@@ -100,7 +100,7 @@ ilc_hits() {
     }')
   if [ -x "$cr" ] && [ -s "$df" ]; then
     out=$("$cr" "$df" 2>/dev/null); rc=$?
-    if [ "$rc" = 2 ] || printf '%s\n' "$out" | grep -q '^CHECK-ERROR '; then
+    if [ "$rc" = 2 ] || grep -q '^CHECK-ERROR ' <<<"$out"; then
       echo "checks-run could not run (rc $rc)" >&2; return 2
     fi
     if [ "$rc" = 1 ]; then

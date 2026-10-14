@@ -65,7 +65,7 @@ LANES=$(jq -r '[.sites[] | select(.through_agent_call == true) | .lane | select(
 N=$(printf '%s\n' "$LANES" | grep -c .)
 [ "$N" -ge 20 ] && ok || bad "1: only $N lanes derived from llm-sites.json — the ratchet would be vacuous"
 for l in lead-review claude-auth-check; do
-  printf '%s\n' "$LANES" | grep -qx "$l" && ok || bad "1: derived lane set lacks $l"
+  grep -qx "$l" <<<"$LANES" && ok || bad "1: derived lane set lacks $l"
 done
 if OUT=$(check_knobs "$T/lanes.json" "$SITES"); then ok
 else while IFS= read -r line; do bad "1: missing/malformed knob: $line"; done <<< "$OUT"; fi
@@ -80,11 +80,11 @@ jq '(.lanes[] | select(.id == "lead-review") | .knobs) += [
   "$T/lanes-mut.json" > "$T/lanes-mut2.json"
 OUT=$(check_knobs "$T/lanes-mut2.json" "$SITES"); RC=$?
 [ "$RC" -ne 0 ] && ok || bad "2: a registry without lead-review LLM_USD_CAP_DAY passed the checker"
-printf '%s\n' "$OUT" | grep -qx 'lead-review LLM_USD_CAP_DAY' && ok \
+grep -qx 'lead-review LLM_USD_CAP_DAY' <<<"$OUT" && ok \
   || bad "2: the checker did not name 'lead-review LLM_USD_CAP_DAY': $OUT"
 jq '.sites += [{id:"ghost",lane:"ghost-lane",through_agent_call:true}]' "$SITES" > "$T/sites-ghost.json"
 OUT=$(check_knobs "$T/lanes.json" "$T/sites-ghost.json"); RC=$?
-[ "$RC" -ne 0 ] && printf '%s\n' "$OUT" | grep -qx 'ghost-lane NO-LANE' && ok \
+[ "$RC" -ne 0 ] && grep -qx 'ghost-lane NO-LANE' <<<"$OUT" && ok \
   || bad "2: a site naming an unregistered lane passed the checker (rc $RC): $OUT"
 
 # ── 3: isolation through the real bin/agent-call.sh ─────────────────────────

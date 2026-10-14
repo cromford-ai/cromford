@@ -30,6 +30,7 @@
 # Run from anywhere: tests/vendor-spend-pull-test.sh   (exit 0 = all pass)
 set -uo pipefail
 . "$(dirname "$0")/lib/scratch.sh" || exit 1
+. "$(dirname "$0")/lib/jobs-schema.sh" && jobs_schema_render || exit 1
 # BH-1941: the script under test resolves its vendor base URL through
 # endpoint_url (env, else the registry default); this sandbox composes no
 # registry, so the env carries today's URL — the registry default itself.
@@ -171,7 +172,7 @@ ROW=$(csvrow xai)
 [ "$(field "$ROW" 6)" = computed ] && [ "$(field "$ROW" 7)" = no-spend-endpoint ] && ok \
   || bad "xai should be computed/no-spend-endpoint: $ROW"
 [ "$(field "$ROW" 5)" = 4.0000 ] && ok || bad "xai estimate should sum only in-window grok rows (want 4.0000, got $(field "$ROW" 5))"
-printf '%s' "$ROW" | grep -q 'ESTIMATE' && ok || bad "the xai row does not say its number is an estimate: $ROW"
+grep -q 'ESTIMATE' <<<"$ROW" && ok || bad "the xai row does not say its number is an estimate: $ROW"
 
 # 3. THE ONE THAT MATTERS: no cost rows at all is an EMPTY usd, not $0.00.
 reset_state
@@ -185,7 +186,7 @@ sed -i '/^XAI_API_KEY=/d' "$T/env/global.env"
 run --vendor xai
 ROW=$(csvrow xai)
 [ -z "$(field "$ROW" 5)" ] && ok || bad "a keyless vendor published usd='$(field "$ROW" 5)' instead of nothing"
-printf '%s' "$ROW" | grep -q 'XAI_API_KEY' && ok || bad "the keyless row does not name the missing env var: $ROW"
+grep -q 'XAI_API_KEY' <<<"$ROW" && ok || bad "the keyless row does not name the missing env var: $ROW"
 echo "XAI_API_KEY=xai-FIXTUREKEYNOTREAL0002" >> "$T/env/global.env"
 
 # codex has no admin key anywhere in this fleet, so it must say so and price nothing.
@@ -194,7 +195,7 @@ run --vendor codex
 ROW=$(csvrow codex)
 [ "$(field "$ROW" 7)" = no-spend-endpoint ] && [ -z "$(field "$ROW" 5)" ] && ok \
   || bad "codex should be no-spend-endpoint with no usd: $ROW"
-printf '%s' "$ROW" | grep -q 'OPENAI_ADMIN_KEY' && ok || bad "the codex row does not name what would arm it: $ROW"
+grep -q 'OPENAI_ADMIN_KEY' <<<"$ROW" && ok || bad "the codex row does not name what would arm it: $ROW"
 
 # ═══════════════════════════════════════════════════════════════════════════
 # ═══════════════════════════════════════════════════════════════════════════
@@ -216,8 +217,8 @@ run --vendor fireworks
 ROW=$(csvrow fireworks)
 [ -z "$(field "$ROW" 5)" ] && ok \
   || bad "2 UNPRICED rows published usd='$(field "$ROW" 5)' instead of nothing"
-printf '%s' "$ROW" | grep -q 'UNPRICED' && ok || bad "the row does not say the rows were unpriced: $ROW"
-printf '%s' "$ROW" | grep -q 'NOT \$0' && ok || bad "the row does not distinguish itself from a real zero: $ROW"
+grep -q 'UNPRICED' <<<"$ROW" && ok || bad "the row does not say the rows were unpriced: $ROW"
+grep -q 'NOT \$0' <<<"$ROW" && ok || bad "the row does not distinguish itself from a real zero: $ROW"
 
 # (b) A partly priced window is a FLOOR and says so, rather than quietly
 # reporting the priced half as the whole bill.
@@ -228,7 +229,7 @@ reset_state
 run --vendor fireworks
 ROW=$(csvrow fireworks)
 [ "$(field "$ROW" 5)" = 3.5000 ] && ok || bad "the priced rows did not sum (want 3.5000, got $(field "$ROW" 5))"
-printf '%s' "$ROW" | grep -q 'FLOOR' && ok || bad "a partly-unpriced window is not flagged as a floor: $ROW"
+grep -q 'FLOOR' <<<"$ROW" && ok || bad "a partly-unpriced window is not flagged as a floor: $ROW"
 
 # (c) THE CREDENTIAL READER MUST NOT SQUEEZE INTERNAL WHITESPACE. A Fly token is
 # literally "FlyV1 fm2_..." with a space in the middle. Deleting it yields a 401
@@ -358,7 +359,7 @@ ROW=$(csvrow fly)
 USD=$(field "$ROW" 5)
 python3 -c "import sys;v=float(sys.argv[1]);sys.exit(0 if abs(v-0.4575)<0.002 else 1)" "$USD" 2>/dev/null \
   && ok || bad "fly priced \$$USD, expected ~\$0.4575 (1h of one 8x performance/16GB machine + a 40GB volume)"
-printf '%s' "$ROW" | grep -q 'fly-prices.json\|catalog' && ok || bad "the fly row does not name where its prices came from: $ROW"
+grep -q 'fly-prices.json\|catalog' <<<"$ROW" && ok || bad "the fly row does not name where its prices came from: $ROW"
 grep -q 'pool-a' "$T/push.log" && ok || bad "the per-app breakdown did not reach raw"
 # A stopped machine must contribute no compute. Same fixtures, volume removed.
 reset_state
@@ -407,7 +408,7 @@ sed -i '/^VENDOR_SKIP=/d' "$T/env/global.env"
 # --dry-run writes nothing anywhere
 reset_state
 OUT=$(HARNESS="$T" "$T/bin/vendor-spend-pull.sh" --vendor openrouter --dry-run 2>/dev/null)
-printf '%s' "$OUT" | grep -q '^[0-9-]*T.*,openrouter,' && ok || bad "--dry-run printed no row: $OUT"
+grep -q '^[0-9-]*T.*,openrouter,' <<<"$OUT" && ok || bad "--dry-run printed no row: $OUT"
 [ -s "$T/push.log" ] && bad "--dry-run pushed to the DB" || ok
 grep -q ',openrouter,' "$T/logs/vendor-spend.csv" 2>/dev/null && bad "--dry-run appended to the CSV" || ok
 

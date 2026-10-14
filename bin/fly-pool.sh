@@ -115,6 +115,10 @@ HOTFIX_ON=1
 # shellcheck source=bin/lib/deferral-after.sh
 . "$HARNESS/bin/lib/deferral-after.sh" 2>/dev/null \
   || . "$(dirname "${BASH_SOURCE[0]}")/lib/deferral-after.sh" 2>/dev/null || true
+# BH-6536: nh_sd_stage_lines, the ticket_stage reasons the pool tick prints.
+# shellcheck source=bin/lib/needs-human.sh
+. "$HARNESS/bin/lib/needs-human.sh" 2>/dev/null \
+  || . "$(dirname "${BASH_SOURCE[0]}")/lib/needs-human.sh" 2>/dev/null || true
 command -v hotfix_lane_on >/dev/null 2>&1 && HOTFIX_ON=$(hotfix_lane_on "$HARNESS")
 job_is_hot() {
   [ "$HOTFIX_ON" = 1 ] || return 1
@@ -154,6 +158,15 @@ mkdir -p "$POOL" "$PDIR" "$HARNESS/state/build-queue/$P"
 # dedicated app; without it the pool refuses to spawn (reap still runs).
 # shellcheck source=/dev/null
 [ -r "$HARNESS/bin/jobs-client.sh" ] && [ -d "$HARNESS/bin/lib/jobs" ] && . "$HARNESS/bin/jobs-client.sh"
+# BH-6350: the dispatch mode, read once per tick. In hotfix-only a queued job
+# that dm_job_admit refuses (a plain fresh build: no hotfix, rebase, rebuild,
+# death requeue or allow-list hit) is skipped and stays queued, in the spawn
+# loop and in the reuse handoff alike. A tree without the lib reads normal.
+DM_MODE=normal; DM_HELD=""
+# shellcheck source=bin/lib/dispatch-mode.sh
+. "$HARNESS/bin/lib/dispatch-mode.sh" 2>/dev/null \
+  || . "$(dirname "${BASH_SOURCE[0]}")/lib/dispatch-mode.sh" 2>/dev/null || true
+command -v dm_read >/dev/null 2>&1 && dm_read "$P"
 # The pool-result row (BH-2643): the reap reads a stopped machine's result from
 # it. A tree without the lib reads nothing, and the reap is what it always was.
 # shellcheck source=bin/lib/pool-result-row.sh
@@ -432,12 +445,23 @@ command -v mc_pool_rebase_apply >/dev/null 2>&1 \
 # HOLD gate for the spawn loop (BH-1075)
 # shellcheck source=bin/lib/hold.sh
 [ -r "$HARNESS/bin/lib/hold.sh" ] && . "$HARNESS/bin/lib/hold.sh"
+# The HOLD verdict kept across ticks, keyed on the issue listing (BH-6549)
+# shellcheck source=bin/lib/pool-hold-cache.sh
+[ -r "$HARNESS/bin/lib/pool-hold-cache.sh" ] && . "$HARNESS/bin/lib/pool-hold-cache.sh"
 # Per-tick REST caches for the spawn-decision reads (BH-1075)
 declare -A _POOL_HEAD_CACHE=() _POOL_PR_CACHE=() _POOL_HOLD_CACHE=() _POOL_COMMENT_CACHE=()
+# The listing key per issue number, and the per-tick hold-cache counters (BH-6549)
+declare -A _POOL_HOLD_LKEY=()
+_POOL_HOLD_LIST=""; _POOL_HOLD_LIB=""; _PHC_V=""; _PHC_TTL=""; _PHC_PAGES=""
+_PHC_HITS=0; _PHC_MISSES=0; _PHC_BAD=0; _PHC_READ_S=0; _PHC_GATED=0
 # The PR the open-PR gate found, so the one comment it posts can NAME it. Kept
 # out of _POOL_PR_CACHE because that one answers y/n/u and a caller reads it
 # with a case: a third value would have to be parsed everywhere it is read.
 declare -A _POOL_PR_NUM=() _POOL_PR_URL=()
+# The repo's open-PR list, read once per tick for the parent-done check
+# (BH-6671): compact [{ref,title}], its read state (ok | u), and y/n/u per key.
+_POOL_OPEN_LIST=""; _POOL_OPEN_LIST_ST=""
+declare -A _POOL_PR_ANY_CACHE=()
 # <<< gh default auth
 # WHICH CREDENTIAL CAN SEE A REPO (BH-765). The reap gate below used to read
 # env/github-admin.env by hand, which meant it spent the one org-admin PAT on
@@ -616,6 +640,10 @@ pool_gh_answered() {
 # shellcheck source=bin/lib/gh-rest.sh
 [ -r "$HARNESS/bin/lib/gh-rest.sh" ] && . "$HARNESS/bin/lib/gh-rest.sh"
 # <<< pr verify rest
+# BH-6576: a ticket body line `Spec-repo: <owner>/<repo>` names a repo its
+# build may read; spawn_one unions it into the BH-5910 read-only token.
+# shellcheck source=bin/lib/spec-repos.sh
+[ -r "$HARNESS/bin/lib/spec-repos.sh" ] && . "$HARNESS/bin/lib/spec-repos.sh"
 # >>> pool terminal / spawn cap / hold gate (BH-1075)
 # THE THREE READS BELOW STILL HAVE THEIR OWN READER, AND ON PURPOSE (BH-781
 # review round 2). BH-781 converted the PR_CREATED reap gate above to
@@ -759,6 +787,48 @@ pr_exists_for_key_rest() {
   return 2
 }
 
+# pr_open_for_key_any_rest <key> -> rc 0 if an open PR belongs to <key>, 1 if
+# none, 2 if unreadable (BH-6671). pr_exists_for_key_rest reads head= exactly,
+# so a re-run PR on `ticket/bh-6518-r2` (#6647) was "no open PR" and the pool
+# released BH-6501 while its parent was open. This reads the open-PR list (paged,
+# once per tick) and matches a head ref `ticket/<key>` or `ticket/<key>-r<N>`
+# (the grammar of bin/lib/ticket-branch.sh; `-<N>` split children and `-local`
+# are other branches) or a title that starts `<KEY>:`. Only the parent-done
+# check asks it: the self open-PR gate keeps the exact read, because the rebuild
+# ladder opens a `-r<N>` re-plan while the PARKED PR it replaces stays open.
+# Ten full pages with no short one is a capped read, not "none": rc 2.
+pr_open_for_key_any_rest() {
+  local key="${1:-}" k K _p _out _code _body _n _hit
+  [ -n "$key" ] && [ -n "$POOL_SLUG" ] || return 2
+  [[ "$key" =~ ^[A-Za-z][A-Za-z0-9]*-[0-9]+$ ]] || return 2
+  case "${_POOL_PR_ANY_CACHE[$key]:-}" in y) return 0 ;; n) return 1 ;; u) return 2 ;; esac
+  if [ -z "$_POOL_OPEN_LIST_ST" ]; then
+    _POOL_OPEN_LIST="[]"; _POOL_OPEN_LIST_ST=u
+    for _p in 1 2 3 4 5 6 7 8 9 10; do
+      _out=$(pool_rest_read "repos/$POOL_SLUG/pulls?state=open&per_page=100&page=$_p" "${POOL_SLUG_TOK:-}")
+      _code=$(head -n 1 <<<"$_out"); _body=$(tail -n +2 <<<"$_out")
+      [ "$_code" = 200 ] || break
+      _n=$(jq -r 'if type == "array" then length else empty end' 2>/dev/null <<<"$_body")
+      case "$_n" in ''|*[!0-9]*) break ;; esac
+      _POOL_OPEN_LIST=$(jq -c --argjson acc "$_POOL_OPEN_LIST" \
+        '$acc + [.[] | {ref: (.head.ref // ""), title: (.title // "")}]' 2>/dev/null <<<"$_body") || break
+      [ "$_n" -lt 100 ] && { _POOL_OPEN_LIST_ST=ok; break; }
+    done
+  fi
+  [ "$_POOL_OPEN_LIST_ST" = ok ] || { _POOL_PR_ANY_CACHE[$key]=u; return 2; }
+  k=$(printf '%s' "$key" | tr '[:upper:]' '[:lower:]')
+  K=$(printf '%s' "$key" | tr '[:lower:]' '[:upper:]')
+  _hit=$(jq -r --arg k "$k" --arg K "$K" \
+    'any(.[]; (.ref | ascii_downcase | test("^ticket/" + $k + "(-r[0-9]+)?$"))
+              or (.title | ascii_upcase | startswith($K + ":")))' 2>/dev/null <<<"$_POOL_OPEN_LIST")
+  case "$_hit" in
+    true)  _POOL_PR_ANY_CACHE[$key]=y; return 0 ;;
+    false) _POOL_PR_ANY_CACHE[$key]=n; return 1 ;;
+  esac
+  _POOL_PR_ANY_CACHE[$key]=u
+  return 2
+}
+
 # pool_hold_check <ticket-id> -> cached hold_check, rc 0 clear / 1 held / 2 unreadable.
 pool_hold_check() {
   local ticket="${1:-}" v
@@ -810,6 +880,96 @@ pool_hold_check() {
   _POOL_HOLD_CACHE[$ticket]="$v"
   printf '%s\n' "$v"
   case "$v" in held*) return 1 ;; clear*) return 0 ;; *) return 2 ;; esac
+}
+
+# THE HOLD VERDICT ACROSS TICKS (BH-6549). pool_hold_check above reads the
+# issue and its whole thread for every held row on every tick, and its
+# _POOL_HOLD_CACHE dies with the $( ) it runs in. On the loaded hub a thread
+# read costs 30-45 s, so 19 held project-6 tickets cost about 12 min of a 30
+# min cycle. The three functions below run in the CALLER's shell: one open
+# ai-build issue listing per tick gives each issue's "<updated_at>|<comments>",
+# and bin/lib/pool-hold-cache.sh answers a held verdict from
+# $PDIR/hold-cache/<n>.json while that key, the hold.sh checksum and the TTL
+# all still match. It keeps only held verdicts, so it can keep a row held and
+# never release one; every other case is the full read above.
+
+# pool_hold_cache_knobs — POOL_HOLD_CACHE_TTL_S and POOL_HOLD_LIST_MAX_PAGES
+# (lane knobs, exported by lane_env_apply), read once per process. A value that
+# is not a number in range falls back to its default with one line.
+pool_hold_cache_knobs() {
+  [ -n "$_PHC_TTL" ] && return 0
+  _PHC_TTL="${POOL_HOLD_CACHE_TTL_S:-21600}"
+  case "$_PHC_TTL" in
+    ''|*[!0-9]*) say "POOL_HOLD_CACHE_TTL_S=$_PHC_TTL is not a number of seconds (0-604800) — using 21600"; _PHC_TTL=21600 ;;
+    *) [ "$_PHC_TTL" -le 604800 ] || { say "POOL_HOLD_CACHE_TTL_S=$_PHC_TTL is not a number of seconds (0-604800) — using 21600"; _PHC_TTL=21600; } ;;
+  esac
+  _PHC_PAGES="${POOL_HOLD_LIST_MAX_PAGES:-10}"
+  case "$_PHC_PAGES" in
+    ''|*[!0-9]*) say "POOL_HOLD_LIST_MAX_PAGES=$_PHC_PAGES is not a number of pages (1-50) — using 10"; _PHC_PAGES=10 ;;
+    *) [ "$_PHC_PAGES" -ge 1 ] && [ "$_PHC_PAGES" -le 50 ] \
+         || { say "POOL_HOLD_LIST_MAX_PAGES=$_PHC_PAGES is not a number of pages (1-50) — using 10"; _PHC_PAGES=10; } ;;
+  esac
+  return 0
+}
+
+# pool_hold_list_prime — the open ai-build issue listing, once per process,
+# into _POOL_HOLD_LKEY[<n>]. _POOL_HOLD_LIST says how it went: ok, truncated
+# (the page cap was reached on a full page; later issues miss) or
+# unreadable(<code>) (every row misses: the table is emptied).
+pool_hold_list_prime() {
+  [ -n "$_POOL_HOLD_LIST" ] && return 0
+  local page=1 _out _code _body _rows _len n u c
+  _POOL_HOLD_LIB=$(cksum < "$HARNESS/bin/lib/hold.sh" 2>/dev/null | awk '{print $1 "-" $2}')
+  while [ "$page" -le "$_PHC_PAGES" ]; do
+    _out=$(pool_rest_read "repos/$POOL_SLUG/issues?state=open&labels=ai-build&per_page=100&page=$page" "${POOL_SLUG_TOK:-}")
+    _code=$(head -n 1 <<<"$_out"); _body=$(tail -n +2 <<<"$_out")
+    if [ "$_code" != 200 ]; then
+      _POOL_HOLD_LKEY=(); _POOL_HOLD_LIST="unreadable(${_code:-none})"; return 0
+    fi
+    if ! _rows=$(phc_listing_keys "$_body"); then
+      _POOL_HOLD_LKEY=(); _POOL_HOLD_LIST="unreadable(body)"; return 0
+    fi
+    while IFS=$'\t' read -r n u c; do
+      [ -n "$n" ] && [ -n "$c" ] && _POOL_HOLD_LKEY[$n]="$u|$c"
+    done <<<"$_rows"
+    _len=$(jq 'length' <<<"$_body" 2>/dev/null)
+    case "$_len" in ''|*[!0-9]*) _len=0 ;; esac
+    [ "$_len" -ge 100 ] || { _POOL_HOLD_LIST=ok; return 0; }
+    page=$((page + 1))
+  done
+  _POOL_HOLD_LIST=truncated
+  return 0
+}
+
+# pool_hold_cache_lookup <ticket> — rc 0 hit (the verdict is in _PHC_V), rc 1
+# miss: read the thread. A board ticket (not a number) is never looked up.
+pool_hold_cache_lookup() {
+  local t="${1:-}" key rc
+  _PHC_V=""
+  case "$t" in ''|*[!0-9]*) return 1 ;; esac
+  command -v phc_get >/dev/null 2>&1 && command -v hold_check >/dev/null 2>&1 || return 1
+  pool_hold_cache_knobs
+  _PHC_GATED=1
+  if [ "$_PHC_TTL" = 0 ]; then _POOL_HOLD_LIST=off; return 1; fi
+  pool_hold_list_prime
+  key="${_POOL_HOLD_LKEY[$t]:-}"
+  _PHC_V=$(phc_get "$PDIR/hold-cache" "$t" "$key" "$_POOL_HOLD_LIB" "$_PHC_TTL" "$(date +%s)"); rc=$?
+  if [ "$rc" = 0 ] && [ -n "$_PHC_V" ]; then _PHC_HITS=$((_PHC_HITS + 1)); return 0; fi
+  _PHC_V=""; _PHC_MISSES=$((_PHC_MISSES + 1))
+  [ "$rc" = 3 ] && _PHC_BAD=$((_PHC_BAD + 1))
+  return 1
+}
+
+# pool_hold_cache_store <ticket> <verdict> — after a full read. The key is the
+# one the listing gave BEFORE the read, so a comment that lands between the two
+# costs one extra read next tick, never a stale hit.
+pool_hold_cache_store() {
+  local t="${1:-}"
+  case "$t" in ''|*[!0-9]*) return 0 ;; esac
+  command -v phc_put >/dev/null 2>&1 || return 0
+  [ -n "$_PHC_TTL" ] && [ "$_PHC_TTL" != 0 ] || return 0
+  phc_put "$PDIR/hold-cache" "$t" "${_POOL_HOLD_LKEY[$t]:-}" "$_POOL_HOLD_LIB" "$(date +%s)" "${2:-}" || true
+  return 0
 }
 
 # A RE-ARM IS AN INSTRUCTION, NOT A HEARTBEAT (review round 1, Important-4).
@@ -1363,8 +1523,9 @@ pool_after_churned() {
 }
 # pool_after_open <blocker-key> — rc 0 when the blocker still holds: it is in
 # flight in this pool (a pool json or a queue file names it, or its queue row is
-# queued/claimed), or an open PR carries its branch. rc 1 when it is done. rc 2
-# when the PR read did not answer: the row waits, it is not released on silence.
+# queued/claimed), or an open PR is on its branch, on a `-r<N>` re-run branch, or
+# titled `<KEY>:` (BH-6671). rc 1 when it is done. rc 2 when a PR read did not
+# answer: the row waits, it is not released on silence.
 pool_after_open() {
   local other="$1" st
   grep -lsE "\"key\": *\"$other\"" "$POOL"/*.json >/dev/null 2>&1 && return 0
@@ -1374,6 +1535,8 @@ pool_after_open() {
     case "$st" in queued|claimed) return 0 ;; esac
   fi
   pr_exists_for_key_rest "$other"
+  case $? in 0) return 0 ;; 1) ;; *) return 2 ;; esac
+  pr_open_for_key_any_rest "$other"
   case $? in 0) return 0 ;; 1) return 1 ;; *) return 2 ;; esac
 }
 # pool_after_cycle <key> — rc 0 and the cycle's byte-smallest key when the
@@ -1477,8 +1640,34 @@ pool_after_gate() {
 }
 # <<< after release (BH-5967)
 # pool_spawn_decision <job-file> <key> <ticket-id> -> rc 0 spawn, 1 skip.
+# pool_sibling_stack <jf> <key> <ticket> <branch> <sibling> — gate 0c's stack
+# arm (BH-6374). Requeue the row with stack_base=<branch>, its attempt, counts
+# and hotfix flag kept, then add stack_base to the queue file. Says the stack
+# line only when both the requeue and the rewrite worked. An abandoned ticket
+# (QROW rc 1) is closed by QROW and its file is left as it is.
+pool_sibling_stack() {
+  local jf="$1" k="$2" t="$3" b="$4" s="$5" att d x hf meta
+  att=$(jq -r '.attempt // 0' "$jf" 2>/dev/null); case "$att" in ''|*[!0-9]*) att=0 ;; esac
+  d=$(jq -r '.deferrals // 0' "$jf" 2>/dev/null); case "$d" in ''|*[!0-9]*) d=0 ;; esac
+  x=$(jq -r '.deaths // 0' "$jf" 2>/dev/null); case "$x" in ''|*[!0-9]*) x=0 ;; esac
+  hf=$(jq -r '.hotfix // false' "$jf" 2>/dev/null)
+  meta=$(jq -nc --argjson d "$d" --argjson x "$x" --arg sb "$b" --arg hf "$hf" \
+    '{deferrals:$d,deaths:$x,stack_base:$sb} + (if $hf == "true" then {hotfix:true} else {} end)')
+  if QROW requeue "$k" "sibling stack on $b (BH-6374)" "$att" "$meta" "$t"; then
+    if jq --arg sb "$b" '. + {stack_base:$sb}' "$jf" > "$jf.sib.$$" 2>/dev/null && mv -f "$jf.sib.$$" "$jf"; then
+      say "SIBLING_SERIAL $k stacks on $b (open PR of $s) — requeued with stack_base; spawns next tick"
+      return 0
+    fi
+    rm -f "$jf.sib.$$"
+    say "SIBLING_SERIAL $k: requeued with stack_base=$b but the queue file $jf could not be rewritten — re-checked next tick"
+    return 1
+  fi
+  say "SIBLING_SERIAL $k: not stacked on $b — the ticket was abandoned by an operator, the row is closed and the queue file is left"
+  return 1
+}
+
 pool_spawn_decision() {
-  local JF="${1:-}" KEY="${2:-}" TICKET="${3:-}" v _pr_rc _psd_sentinel
+  local JF="${1:-}" KEY="${2:-}" TICKET="${3:-}" v _pr_rc _psd_sentinel _psd_ss _psd_ssrc _psd_t0 _psd_sb
   # 0. A REBASE ROW IS NOT A TICKET, AND ALL FOUR GATES BELOW READ IT AS ONE
   # (review round 1, BLOCK-1). bin/merge-conductor.sh enqueues its pool rebases
   # as `RB-<pr>-<head8>` rows whose ticket_id is the PR NUMBER
@@ -1518,6 +1707,27 @@ pool_spawn_decision() {
     return 1
   fi
   # <<< execute-empty stop
+  # 0c. A SIBLING PART WAITS FOR ITS SIBLING (BH-6374). bin/sibling-serial.sh
+  # answers rc 3 and one SIBLING_SERIAL line when a part (TK-142.2) shares a
+  # planned file with a sibling in flight, an open sibling PR, or a lower
+  # sibling queued. The row stays queued: no QROW write, no deferral count, no
+  # alert. It reads only hub state, so it sits above pool_gates_applicable.
+  # A line that ends ` stackable base=<branch>` (one open sibling PR is the only
+  # blocker) on a row with no stack_base yet is requeued ONCE with that
+  # stack_base instead (C1): the next tick builds it on the BH-1174 STACK path,
+  # and check skips the PR the row stacks on (SIBLING_STACK_BASE).
+  if [ -x "$HARNESS/bin/sibling-serial.sh" ]; then
+    _psd_sb=$(jq -r '.stack_base // ""' "$JF" 2>/dev/null); case "$_psd_sb" in *[!A-Za-z0-9._/-]*) _psd_sb="" ;; esac
+    _psd_ss=$(HARNESS="$HARNESS" SIBLING_QDIR="$QDIR" SIBLING_STACK_BASE="$_psd_sb" "$HARNESS/bin/sibling-serial.sh" check "$P" "$KEY" 2>>"$LOG"); _psd_ssrc=$?
+    if [ "$_psd_ssrc" = 3 ] && [ -n "$_psd_ss" ]; then
+      if [ -z "$_psd_sb" ] && [[ "$_psd_ss" =~ \ stackable\ base=([A-Za-z0-9._/-]+)$ ]]; then
+        pool_sibling_stack "$JF" "$KEY" "$TICKET" "${BASH_REMATCH[1]}" "$(printf '%s\n' "$_psd_ss" | awk '{print $5}')"
+        return 1
+      fi
+      say "$_psd_ss — no machine spawned; re-checked next tick"; return 1
+    fi
+    case "$_psd_ss" in SIBLING_SERIAL_RELEASED*) say "$_psd_ss" ;; esac
+  fi
   if ! pool_gates_applicable; then
     [ -n "${_POOL_GATES_SAID:-}" ] || {
       # NOT "pool $P: ..." — that exact prefix is the per-tick throughput line
@@ -1532,8 +1742,17 @@ pool_spawn_decision() {
   # the blocker is done, then released in the same tick. Before the HOLD read,
   # because a held row needs no other read.
   pool_after_gate "$JF" "$KEY" "$TICKET" || return 1
-  # 1. HOLD gate (skip and retry next tick; leave the queue file).
-  v=$(pool_hold_check "$TICKET" 2>/dev/null) || true
+  # 1. HOLD gate (skip and retry next tick; leave the queue file). A cached
+  # held verdict whose listing key did not change answers without a read
+  # (BH-6549); it takes the same held arm below as a fresh one.
+  if command -v pool_hold_cache_lookup >/dev/null 2>&1 && pool_hold_cache_lookup "$TICKET"; then
+    v="$_PHC_V"
+  else
+    _psd_t0=$SECONDS
+    v=$(pool_hold_check "$TICKET" 2>/dev/null) || true
+    _PHC_READ_S=$((_PHC_READ_S + SECONDS - _psd_t0))
+    command -v pool_hold_cache_store >/dev/null 2>&1 && pool_hold_cache_store "$TICKET" "$v"
+  fi
   case "$v" in
     held*)
       # A HOLD THAT CAN NEVER LIFT ITSELF PARKS THE ROW (review round 2, Nit-1).
@@ -1958,6 +2177,33 @@ push_build_note() { # push_build_note <machine-id> <key>
   return 0
 }
 # <<< build-note relay
+# >>> bake-evidence relay (BH-6259)
+# The hub's pool-bake evidence (the `bake phases` lines of
+# logs/fleet-propagate.log and the step timings of logs/fly-image-build/) exists
+# only on the hub, and a cromford ticket about a slow bake is planned on a
+# pool machine. bin/bake-evidence.sh prints a bounded digest of it, copied to
+# /data/harness/state/bake-evidence.txt at dispatch. Only for the harness's own
+# project: the pool's repo (POOL_SLUG, from bin/fleet-conf.sh) equals
+# HARNESS_REPO (bin/lib/deployment.sh), so no project name is written here. Never
+# fatal: no digest or a failed push costs the evidence, never the build.
+push_bake_evidence() { # push_bake_evidence <machine-id>
+  local mid="${1:-}" tmp rc=0 hrepo
+  [ -n "$mid" ] && [ -n "${POOL_SLUG:-}" ] || return 0
+  hrepo=$( . "$HARNESS/bin/lib/deployment.sh" 2>/dev/null && printf '%s' "${HARNESS_REPO:-}" )
+  [ -n "$hrepo" ] && [ "${POOL_SLUG,,}" = "${hrepo,,}" ] || return 0
+  [ -x "$HARNESS/bin/bake-evidence.sh" ] || return 0
+  tmp=$(mktemp "${TMPDIR:-/tmp}/bake-ev-XXXX") || return 0
+  HARNESS="$HARNESS" timeout 20 "$HARNESS/bin/bake-evidence.sh" > "$tmp" 2>/dev/null || rc=$?
+  if [ "$rc" = 0 ] && [ -s "$tmp" ]; then
+    if mput "$mid" "$tmp" /data/harness/state/bake-evidence.txt; then
+      say "relayed the hub bake evidence to $mid"
+    else
+      say "$mid: bake-evidence push FAILED — this build plans without it"
+    fi
+  fi
+  rm -f "$tmp"; return 0
+}
+# <<< bake-evidence relay
 
 # >>> App-token rotation (the operator, 2026-09-14)
 # The hub already walks every live machine once a tick and already knows each
@@ -2367,6 +2613,12 @@ next_job_or_destroy() { # hand this machine the next queued job, or destroy it
         say "$MID: its build deferred on a build slot still held on the machine — destroying instead of reusing" ;;
     esac
   fi
+  # ...and never reuse a machine that holds a read token for its ticket's spec
+  # repos (BH-6576): the next ticket did not ask for that access.
+  if [ "$REUSE_OK" = 1 ] && command -v spec_repos_machine_has >/dev/null 2>&1 && spec_repos_machine_has "$MF"; then
+    REUSE_OK=0
+    say "$MID carries a read token for $KEY's spec repos — destroying instead of reusing"
+  fi
   if [ "$MSTATE" = "started" ] && [ "$REUSE_OK" = 1 ]; then
     # Hotfix jobs first when the helper is there, today's mtime order when it is
     # not. The fallback is not defensive noise: tests/pool-account-routing-test.sh
@@ -2399,6 +2651,19 @@ next_job_or_destroy() { # hand this machine the next queued job, or destroy it
         say "$NKEY: hotfix deferred on a reused machine last time — left for a fresh spawn (POOL_HOTFIX_FRESH_AFTER_DEFER)"
         continue
       fi
+      # ...and never a ticket whose body declares spec repos (BH-6576): this
+      # machine has no read token for them. A fresh spawn mints one.
+      # The read uses the token the spawn gates read this repo with: the hub's
+      # default PAT can 404 on a project repo (see pool_slug_token_arm).
+      SPEC_REPOS=""
+      if command -v spec_repos_load >/dev/null 2>&1; then
+        command -v pool_slug_token_arm >/dev/null 2>&1 && pool_slug_token_arm
+        SPEC_REPOS_GH_TOKEN="${POOL_SLUG_TOK:-}" spec_repos_load "${POOL_SLUG:-}" "$NTICKET" 2>>"${LOG:-/dev/null}"
+        if [ -n "$SPEC_REPOS" ]; then
+          say "$NKEY declares spec repos — left for a fresh spawn"
+          continue
+        fi
+      fi
       # ...and never a row the spawn gate would refuse (BH-1075, review round 1).
       # THIS HANDOFF IS A BUILD, metered exactly like a spawned one — it just
       # skips the ~5 minutes of boot. Without this line every gate in
@@ -2410,6 +2675,9 @@ next_job_or_destroy() { # hand this machine the next queued job, or destroy it
       # and sources it with nothing else from this file, and a hard dependency
       # on a helper defined 1000 lines up would make the reuse loop find no jobs
       # at all and destroy a machine that had work waiting.
+      # ...and never a job the dispatch mode holds (BH-6350): the spawn loop's
+      # one tick line names it, so nothing is said here.
+      if command -v dm_job_admit >/dev/null 2>&1 && ! dm_job_admit "$NJ"; then continue; fi
       if command -v pool_spawn_decision >/dev/null 2>&1; then
         pool_spawn_decision "$NJ" "$NKEY" "$NTICKET" || continue
         # AND IT COUNTS (review round 2, Important-2). The gate above CHECKS the
@@ -2466,7 +2734,7 @@ next_job_or_destroy() { # hand this machine the next queued job, or destroy it
           && { queue_release "$P" "$NKEY" "machine $MID could not be cleaned for the handoff" >/dev/null 2>&1 || true; }
         break
       fi
-      SLOTANS=$(printf '%s\n' "$SLOTANS" | grep -m1 '^SLOTCLEAN ' | tr -d '\r')
+      SLOTANS=$(grep -m1 '^SLOTCLEAN ' <<<"$SLOTANS" | tr -d '\r')
       case "$SLOTANS" in
         "SLOTCLEAN held"*)
           say "$MID: build slot still held after cleanup (${SLOTANS#SLOTCLEAN held }) — destroying instead of reusing"
@@ -2516,6 +2784,7 @@ next_job_or_destroy() { # hand this machine the next queued job, or destroy it
         push_preplan "$MID" "$NKEY"
         push_reroute "$MID" "$NKEY"
         push_build_note "$MID" "$NKEY"
+        push_bake_evidence "$MID"
         # Flag-off only: under the flag this claim ran above the push, as a gate.
         [ "${ROWS_ONLY:-0}" = 1 ] || \
           { command -v queue_claim >/dev/null 2>&1 && queue_claim "$P" fly "$NKEY" >/dev/null 2>&1; }
@@ -3541,7 +3810,7 @@ for MF in "$POOL"/*.json; do
     DWORD="died"; DKIND="dead machine"
     if [ -n "$ROW_RLINE" ]; then
       DNEXT=$DTHS; DWORD="stopped after job done"; DKIND="machine stopped after job done"
-      say "machine $MID for $KEY stopped (state=${MSTATE:-gone}) after job done (result from the pool-result row: $(printf '%s' "$ROW_RLINE" | head -c 80)) — not a death; requeue attempt=$NEXT deaths=$DTHS"
+      say "machine $MID for $KEY stopped (state=${MSTATE:-gone}) after job done (result from the pool-result row: $(head -c 80 <<<"$ROW_RLINE")) — not a death; requeue attempt=$NEXT deaths=$DTHS"
     else
       say "machine $MID for $KEY dead (state=${MSTATE:-gone}) attempt=$ATT deaths=$DTHS -> $DDISP"
     fi
@@ -3814,6 +4083,10 @@ else
   # is how "the pool is keeping up" stops being a guess (the operator, 2026-09-14).
   say "pool $P: queued=$QUEUED running=$LIVE spawning=$BUDGET cap=$CAPTXT$HOT_TXT"
 fi
+# BH-6536: a ticket held in the review column by a human step says why it is not queued.
+command -v nh_sd_stage_lines >/dev/null 2>&1 && while IFS=$'\t' read -r SK _ SST _ SRE; do
+  [ -e "$QDIR/$SK.json" ] || say "pool $P: $SK not queued :: $SST: $SRE"
+done < <(nh_sd_stage_lines "$P")
 [ "$BUDGET" -gt 0 ] || [ "$HOTFIX_EXTRA" -gt 0 ] || exit 0
 # pipeline-health halts spawns after 2 consecutive gate refusals — every
 # refused spawn costs ~10min of performance-8x proving the same drift again.
@@ -3852,7 +4125,7 @@ pool_bundle_reason() {
   [ -n "$why" ] || why=$(printf '%s\n' "$err" | grep -v '^[[:space:]]*$' | tail -n 1)
   why=$(printf '%s' "$why" | tr -d '\000-\037' | cut -c1-240)
   [ -n "$why" ] || why="fly-envbundle.sh exited rc $rc and printed no reason"
-  if printf '%s' "$why" | grep -Eq 'gh[pousr]_[A-Za-z0-9]{20,}|github_pat_|sk-ant-|sk-or-|=[A-Za-z0-9_./+-]{32,}'; then
+  if grep -Eq 'gh[pousr]_[A-Za-z0-9]{20,}|github_pat_|sk-ant-|sk-or-|=[A-Za-z0-9_./+-]{32,}' <<<"$why"; then
     why="reason withheld: the bundler's output looked like a credential"
   fi
   printf '%s\n' "$why"
@@ -3970,6 +4243,13 @@ spawn_one() { # spawn_one <job-file> <key> <ticket-id> <attempt> <deferrals> <de
     pool_spawn_cap_unrecord "$KEY" "$SPAWNCAPTS"
     pool_unclaim "$KEY" "harness sync to $MID failed"; return 1
   fi
+  # SPEC REPOS (BH-6576): the repos this ticket's body names on a `Spec-repo:`
+  # line. The swap block below adds them to the read-only token; the machine
+  # json records them, so next_job_or_destroy never hands this machine on.
+  SPEC_REPOS=""
+  command -v spec_repos_load >/dev/null 2>&1 \
+    && SPEC_REPOS_GH_TOKEN="${POOL_SLUG_TOK:-}" spec_repos_load "$POOL_SLUG" "$TICKET" 2>>"$LOG"
+  [ -n "$SPEC_REPOS" ] && say "$KEY declares spec repos $SPEC_REPOS (read-only)"
   # PER-MACHINE GITHUB CREDENTIAL (2026-09-14). fly-envbundle.sh puts the owning
   # box's PAT in the bundle as GH_TOKEN, which is how a builder pushes and opens
   # its PR. That PAT is the fleet's whole GitHub identity, it never expires, and
@@ -4037,8 +4317,16 @@ spawn_one() { # spawn_one <job-file> <key> <ticket-id> <attempt> <deferrals> <de
         # them (contents+metadata read); fly/gh-credential.sh answers it for those
         # repos only. No token: the machine still ships, and the plan stage stops
         # a build that needs the repo (PLAN_BLOCKED cross-repo-read).
-        if [ -n "$MEXP" ] && [ -n "${EXTRA_READ_REPOS:-}" ]; then
-          XTOK=$(pool_gh_token --extra-read "$EXTRA_READ_REPOS" --min-life "$POOL_GH_TOKEN_MIN_LIFE" "$PSLUG" 2>"$TMP/xread.err") || XTOK=""
+        # SPEC REPOS (BH-6576): the ticket's own `Spec-repo:` repos join the
+        # knob's list, the project slug and the knob's own repos dropped. Empty
+        # for every other ticket, so the list and the mint are the knob's alone.
+        XREAD_SPEC=""
+        [ -n "${SPEC_REPOS:-}" ] && command -v spec_repos_extra >/dev/null 2>&1 \
+          && XREAD_SPEC=$(spec_repos_extra "${EXTRA_READ_REPOS:-}" "$SPEC_REPOS" "$PSLUG")
+        XREAD_SRC="${EXTRA_READ_REPOS:-}"
+        [ -n "$XREAD_SPEC" ] && XREAD_SRC="${XREAD_SRC:+$XREAD_SRC,}$XREAD_SPEC"
+        if [ -n "$MEXP" ] && [ -n "$XREAD_SRC" ]; then
+          XTOK=$(pool_gh_token --extra-read "$XREAD_SRC" --min-life "$POOL_GH_TOKEN_MIN_LIFE" "$PSLUG" 2>"$TMP/xread.err") || XTOK=""
           XMISS=""
           while IFS= read -r XLINE; do
             XREPO=$(printf '%s' "$XLINE" | sed -n 's/.*EXTRA_READ_REPO_MISSING \([^ ]*\).*/\1/p')
@@ -4049,7 +4337,12 @@ spawn_one() { # spawn_one <job-file> <key> <ticket-id> <attempt> <deferrals> <de
             find "$HARNESS/flags" -maxdepth 1 -name 'alerted-extra-read-missing-*' -mmin +2880 -delete 2>/dev/null
             XFLAG="$HARNESS/flags/alerted-extra-read-missing-$P-$(printf '%s' "$XREPO" | tr -c 'A-Za-z0-9._-' '-')-$(date -u +%Y%m%d)"
             if [ ! -f "$XFLAG" ]; then
-              HARNESS="$HARNESS" "$HARNESS/bin/alert-line.sh" "[pool/$P] EXTRA_READ_REPO_MISSING $XREPO — lane.fly-pool.$P.extra_read_repos names it, but the pool App cannot read it, so pool/$P builds cannot read it. Install the builders App on $XREPO (same owner as $PSLUG), or remove it from the setting."
+              # A repo the knob does not name came from the ticket's Spec-repo line.
+              if [[ ",${XREAD_SPEC,,}," == *",${XREPO,,},"* ]]; then
+                HARNESS="$HARNESS" "$HARNESS/bin/alert-line.sh" "[pool/$P] EXTRA_READ_REPO_MISSING $XREPO — ticket $KEY declares it as Spec-repo, but the pool App cannot read it. Install the builders App on $XREPO (same owner as $PSLUG)."
+              else
+                HARNESS="$HARNESS" "$HARNESS/bin/alert-line.sh" "[pool/$P] EXTRA_READ_REPO_MISSING $XREPO — lane.fly-pool.$P.extra_read_repos names it, but the pool App cannot read it, so pool/$P builds cannot read it. Install the builders App on $XREPO (same owner as $PSLUG), or remove it from the setting."
+              fi
               touch "$XFLAG" 2>/dev/null
             fi
           done < "$TMP/xread.err"
@@ -4060,7 +4353,7 @@ spawn_one() { # spawn_one <job-file> <key> <ticket-id> <attempt> <deferrals> <de
           # joined by commas. A space-separated row or a `$(...)` word cannot
           # reach the builder's shell.
           XLIST=""; XSEEN=" "; XN=0
-          IFS=$', \t\n' read -r -d '' -a XWORDS <<< "$EXTRA_READ_REPOS" || true
+          IFS=$', \t\n' read -r -d '' -a XWORDS <<< "$XREAD_SRC" || true
           while IFS= read -r XW; do
             [[ "$XW" =~ ^[A-Za-z0-9-]+/[A-Za-z0-9._-]+$ ]] || continue
             [ "${XW,,}" = "${PSLUG,,}" ] && continue
@@ -4091,10 +4384,11 @@ spawn_one() { # spawn_one <job-file> <key> <ticket-id> <attempt> <deferrals> <de
           else
             grep -v '^GH_EXTRA_READ_TOKEN=' "$TMP/global.env" 2>/dev/null | grep -v '^GH_EXTRA_READ_REPOS=' > "$TMP/global.env.x" \
               && mv "$TMP/global.env.x" "$TMP/global.env" && chmod 600 "$TMP/global.env" 2>/dev/null
-            say "$MID: no read-only token for $EXTRA_READ_REPOS — the machine ships with the $PSLUG token only"
+            say "$MID: no read-only token for $XREAD_SRC — the machine ships with the $PSLUG token only"
           fi
           XTOK=""; XMISS=""; XLIST=""; XWORDS=()
         fi
+        XREAD_SRC=""; XREAD_SPEC=""
       else
         rm -f "$TMP/global.env.new" "$TMP/gh-token"
         if ! grep -q '^GH_TOKEN=' "$TMP/global.env" 2>/dev/null; then
@@ -4212,6 +4506,7 @@ spawn_one() { # spawn_one <job-file> <key> <ticket-id> <attempt> <deferrals> <de
     push_preplan "$MID" "$KEY"
     push_reroute "$MID" "$KEY"
     push_build_note "$MID" "$KEY"
+    push_bake_evidence "$MID"
     mv "$JF" "$QDIR/.$KEY.dispatched" 2>/dev/null; rm -f "$QDIR/.$KEY.dispatched"
     # `deaths` rides from the job file onto the machine json: the REAP pass
     # reads it back off $MF, so dropping it here would reset the count and the
@@ -4225,13 +4520,17 @@ spawn_one() { # spawn_one <job-file> <key> <ticket-id> <attempt> <deferrals> <de
     # `spawn_cap_ts` ($SPAWNCAPTS, BH-1279) is the exact line pool_spawn_cap_record
     # appended to this key's .spawns log above. Absent for a RB-* key, which the
     # cap never charges in the first place.
-    jq -nc --arg m "$MID" --arg k "$KEY" --arg t "$TICKET" --argjson a "$ATT" --argjson d "$SDEF" --argjson x "$SDTH" --arg ts "$(STAMP)" --arg sb "$SSB" --arg hf "$SHF" --arg ge "$MEXP" --arg aa "$MACCT" --arg sct "$SPAWNCAPTS" \
+    # `spec_repos` (BH-6576) names the repos this machine's read-only token was
+    # asked for by the ticket's `Spec-repo:` line. Absent for every other ticket;
+    # next_job_or_destroy never reuses a machine that carries it.
+    jq -nc --arg m "$MID" --arg k "$KEY" --arg t "$TICKET" --argjson a "$ATT" --argjson d "$SDEF" --argjson x "$SDTH" --arg ts "$(STAMP)" --arg sb "$SSB" --arg hf "$SHF" --arg ge "$MEXP" --arg aa "$MACCT" --arg sct "$SPAWNCAPTS" --arg sr "${SPEC_REPOS:-}" \
       '{machine:$m,key:$k,ticket_id:$t,attempt:$a,deferrals:$d,deaths:$x,spawned_at:$ts}
        + (if $sb == "" then {} else {stack_base:$sb} end)
        + (if $hf == "true" then {hotfix:true} else {} end)
        + (if $ge == "" then {} else {gh_token_expires_at:$ge} end)
        + (if $aa == "" then {} else {auth_account:$aa} end)
-       + (if $sct == "" then {} else {spawn_cap_ts:$sct} end)' > "$POOL/$MID.json"
+       + (if $sct == "" then {} else {spawn_cap_ts:$sct} end)
+       + (if $sr == "" then {} else {spec_repos:$sr} end)' > "$POOL/$MID.json"
     # >>> machines rows (BH-1035)
     # Record the spawn in the machine registry, after the json the pool itself
     # reads. Fail-open: a broken worker does not stop the pool from running the
@@ -4351,6 +4650,10 @@ for JF in $(hotfix_first $(ls -tr "$QDIR"/*.json 2>/dev/null)); do
   # machines. This is the dedupe the parallelism made necessary.
   case "$TICK_KEYS" in *" $KEY "*) continue ;; esac
   TICK_KEYS="$TICK_KEYS$KEY "
+  # Dispatch mode (BH-6350): a held job stays queued; LAUNCHED is untouched.
+  if command -v dm_job_admit >/dev/null 2>&1 && ! dm_job_admit "$JF"; then
+    DM_HELD="${DM_HELD:+$DM_HELD }$KEY"; continue
+  fi
   # Spawn-decision gate: HOLD, open PR, terminal state, per-key cap (BH-1075)
   if ! pool_spawn_decision "$JF" "$KEY" "$TICKET"; then continue; fi
   # A release in the gate rewrote the file (BH-5967): the machine carries the
@@ -4365,6 +4668,13 @@ for JF in $(hotfix_first $(ls -tr "$QDIR"/*.json 2>/dev/null)); do
   spawn_one "$JF" "$KEY" "$TICKET" "$ATT" "$SDEF" "$SDTH" "$SSB" &
   if [ "$JF_HOT" = 1 ]; then HOT_LAUNCHED=$((HOT_LAUNCHED+1)); else LAUNCHED=$((LAUNCHED+1)); fi
 done
+# One hold-cache line per tick (BH-6549), only when a GitHub-issue row reached
+# the HOLD gate. NOT "pool $P: ..." (tests/pool-autoscale-test.sh reads that).
+[ "$_PHC_GATED" = 1 ] && say "hold cache: hits=$_PHC_HITS misses=$_PHC_MISSES bad=$_PHC_BAD listing=${_POOL_HOLD_LIST:-none} read_s=$_PHC_READ_S ttl_s=$_PHC_TTL"
+if [ -n "$DM_HELD" ]; then
+  DM_N=$(printf '%s' "$DM_HELD" | wc -w | tr -d ' ')
+  say "DISPATCH-MODE hotfix-only: held $DM_N queued job(s) ($DM_HELD) — they stay queued; allow-list: $(dm_allow_text)"
+fi
 if [ "${#QUAR[@]}" = 1 ]; then
   HARNESS="$HARNESS" "$HARNESS/bin/alert-line.sh" "[pool/$P] QUARANTINED malformed queue entry ${QUAR[0]} — find its producer"
 elif [ "${#QUAR[@]}" -gt 1 ]; then

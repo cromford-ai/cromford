@@ -1,0 +1,23 @@
+{
+  "libs": [
+    {
+      "id": "dispatch-mode",
+      "file": "bin/lib/dispatch-mode.sh",
+      "note": "BH-6350: the per-project dispatch mode (normal | hotfix-only | paused). The mode is the harness_flags row dispatch-mode-<project> (value `hotfix-only` or `hotfix-only:<n>,<n>`; cleared = normal); paused is the existing paused-<project> row. The fastpath, triage, run-build, fly-pool and fly-dispatch read it through dm_read. dm_age_alert pages once (lane-alert id dispatch-mode-hotfix-only:<p>) when hotfix-only has stood longer than DISPATCH_MODE_ALERT_H, resolved through lib_env_apply dispatch-mode <project>. tests/dispatch-hotfix-only.bh-6350-test.sh drives it.",
+      "knobs": [
+        {
+          "env": "DISPATCH_MODE_ALERT_H",
+          "type": "int",
+          "default": 24,
+          "min": 1,
+          "max": 720,
+          "unit": "hours",
+          "zero_means": null,
+          "required": false,
+          "settable": true,
+          "note": "Hours a project may stay in dispatch mode hotfix-only before one alert fires. The clock starts on the first tick that reads hotfix-only (state/dispatch-mode/<p>.since, seeded from the row's set_at), so an allow-list edit does not restart it. Per-project rows lib.dispatch-mode.<p>.dispatch_mode_alert_h win. Read by bin/lib/dispatch-mode.sh as ${DISPATCH_MODE_ALERT_H:-24}."
+        }
+      ]
+    }
+  ]
+}

@@ -62,6 +62,11 @@ docs/LLM_CALL_SITES.md
 # last element. Every reader composes it first, at this same path.
 catalog/llm-sites.json
 
+# The context budget MANIFEST is COMPOSED from catalog/context-budgets.d/
+# (_head.json, _tail.json, one NNNN-<lane>.json per added lane) by
+# bin/context-budgets-build.sh, and must never be committed (BH-6487).
+catalog/context-budgets.json
+
 # The lane registry's RENDERS are GENERATED and must never be committed
 # (BH-1247, on BH-1175's rule): the ten cron/<box>.cron, catalog/lanes.json and
 # env-templates/global.env.example. BH-1178 split their sources into fragments
@@ -100,6 +105,25 @@ docs/config-inventory/deployment.md
 docs/config-inventory/index.html
 docs/config-inventory/inventory.json
 docs/config-inventory/registry-drift.tsv
+
+# worker/jobs/schema.sql is GENERATED and must never be committed (BH-6005).
+# It is the composition of worker/jobs/schema.d/NNNN-<name>.sql; committed, it
+# was the factory's most frequent merge conflict (two branches that each added a
+# fragment both re-rendered it). Compose it with `bin/schema-build.sh --write`,
+# or `--worker jobs --to <path>`; the deploy, CI and the test corpus compose
+# their own. `bin/schema-build.sh --check` refuses it back in git.
+worker/jobs/schema.sql
+
+# The jobs worker's route-family table is GENERATED and must never be committed
+# (BH-4607, on BH-1175's rule). It is a function of worker/jobs/test/route-table.d/.
+# wrangler.jsonc's build.command renders it before every bundle; Node never reads
+# it (package.json "#routes" sends Node to test/lib/routes.node.js).
+worker/jobs/src/routes.gen.js
+
+# The coord proxy's fragment write rows are GENERATED and must never be
+# committed (BH-6487, on BH-1175's rule). A function of console-ui/functions/_lib/coord-writes.d/.
+# `npm run build` and cpv_coord_writes render them; Node reads the directory.
+console-ui/functions/_lib/coord-writes.gen.js
 
 # The CI suite durations are DATA CI composes from its own runs and must never
 # be committed (BH-5518 C1). Every PR that added an always-run suite had to add

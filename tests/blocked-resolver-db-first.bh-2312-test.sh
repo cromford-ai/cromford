@@ -69,11 +69,16 @@ printf '{"artifacts":[]}\n200\n'
 STUB
 chmod +x "$T/fakebin/curl"
 
+# BH-6461: the key family moved to bin/lib/br/keys.sh; the corpus is the driver
+# plus bin/lib/br/*.sh (tests/lib/br-corpus.sh), so the extraction finds it there.
+# shellcheck source=tests/lib/br-corpus.sh
+. "$DIR/tests/lib/br-corpus.sh" || exit 1
+br_corpus "$DIR" "$T/br-corpus.sh" || exit 1
 # The code under test: the lane's own function text.
 extract() { # extract <out-file> [sed-expr applied to the extracted text]
   : > "$1"
   for fn in br_from_builds br_from_rebuilds br_rebuild_outcome br_key_shape br_park_time; do
-    awk -v f="^$fn\\\\(\\\\) \\\\{" '$0 ~ f {p=1} p{print} p&&/^}$/{exit}' "$DIR/bin/blocked-resolver.sh" >> "$1"
+    awk -v f="^$fn\\\\(\\\\) \\\\{" '$0 ~ f {p=1} p{print} p&&/^}$/{exit}' "$T/br-corpus.sh" >> "$1"
   done
   [ -z "${2:-}" ] || sed -i "$2" "$1"
 }

@@ -447,7 +447,7 @@ case "$S1LINE" in
   *) bad "S1: the tick prompt must carry the split line; prompt head: $(printf '%s' "$PROMPT" | head -5 | tr '\n' '|') err: $(head -3 "$T/rt.err" | tr '\n' '|')" ;;
 esac
 case "$S1LINE" in *'SPLIT_DEFER TK-202 :: <reason>'*) ok ;; *) bad "S1: the line must carry the SPLIT_DEFER instruction" ;; esac
-printf '%s\n' "$PROMPT" | grep -q '^TICK SCOPE (deterministic' && ok || bad "S1: a split-ready tick must be a SCOPED tick"
+grep -q '^TICK SCOPE (deterministic' <<<"$PROMPT" && ok || bad "S1: a split-ready tick must be a SCOPED tick"
 . "$DIR/bin/lib/triage-shards-lib.sh"
 SK=$(triage_shard_key board "$P" 0 "$S1LINE" 2>/dev/null)
 [ "$SK" = TK-202 ] && ok || bad "S1: triage_shard_key board must parse TK-202 out of the line, got '$SK'"

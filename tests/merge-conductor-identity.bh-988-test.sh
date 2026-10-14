@@ -291,13 +291,13 @@ run_tick
 BUDGETTEXT=$(held_bodies BUDGET); STUCKTEXT=$(held_bodies STUCK)
 { [ -n "$BUDGETTEXT" ] || [ -n "$STUCKTEXT" ]; } \
   && ok || bad "the real tick must still surface a genuinely blocked row (budget + TTL) — got nothing: $(cat "$T/req.log")"
-printf '%s' "$BUDGETTEXT" | grep -qF 'in WAIT_CI:' \
+grep -qF 'in WAIT_CI:' <<<"$BUDGETTEXT" \
   && ok || bad "mc_budget_check must be on the tick's path (no budget page held: '$BUDGETTEXT')"
-printf '%s' "$STUCKTEXT" | grep -qF 'STUCK:' \
+grep -qF 'STUCK:' <<<"$STUCKTEXT" \
   && ok || bad "mc_stuck_check must be on the tick's path (no STUCK page held: '$STUCKTEXT')"
-printf '%s' "$STUCKTEXT" | grep -qF 'waiting on a required check to report on this head' \
+grep -qF 'waiting on a required check to report on this head' <<<"$STUCKTEXT" \
   && ok || bad "a genuinely blocked row must keep today's waiting-on sentence end to end: '$STUCKTEXT'"
-printf '%s\n%s' "$BUDGETTEXT" "$STUCKTEXT" | grep -qF "$WHY2B" \
+grep -qF "$WHY2B" <<<"$(printf '%s\n%s' "$BUDGETTEXT" "$STUCKTEXT")" \
   && ok || bad "the tick must pass the ROW REASON to the checks — it is what the guard keys on"
 # ... and NOTHING reached ALERTS.log, which is the whole of BH-1201: a lane an
 # operator switched to observe does not page about age.

@@ -18,6 +18,9 @@
 # Run from anywhere: bash tests/untriaged-digest.bh-2756-test.sh   (exit 0 = all pass)
 set -uo pipefail
 . "$(dirname "$0")/lib/scratch.sh" || exit 1
+# TEST-CHANGE BH-6052: the day stamp below is read by the code and again here; never straddle 00:00Z.
+. "$(dirname "$0")/lib/day-boundary.sh" || exit 1
+clear_boundary 86400 34 || exit 1
 DIR=$(cd "$(dirname "$0")/.." && pwd)
 . "$(dirname "$0")/lib/rendered.sh" || exit 1
 PASS=0; FAIL=0

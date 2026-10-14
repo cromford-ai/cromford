@@ -6,6 +6,7 @@ import worker from '../src/index.js';
 import { clearCapSeeds } from './lib/d1-sqlite.bh-1030.js';
 import { CAP_KEY_PREFIX_RE, capFleetKey, validateCapValue } from '../src/lib/cost-caps.js';
 import { seedRegistryPlan } from '../src/lib/core.js';
+import { jobsSchemaSql } from './lib/jobs-schema.js';
 
 // BH-2564 (BH-2511 W1-W3): the worker half of the cost-caps editor.
 // K/V pin the key shapes and the value grammar the shell readers
@@ -13,7 +14,7 @@ import { seedRegistryPlan } from '../src/lib/core.js';
 // real route table, over schema.sql applied to an in-memory sqlite.
 
 const SECRET = 'test-secret';
-const SCHEMA = readFileSync(fileURLToPath(new URL('../schema.sql', import.meta.url)), 'utf8');
+const SCHEMA = jobsSchemaSql();
 
 let DatabaseSync = null;
 try { ({ DatabaseSync } = await import('node:sqlite')); } catch { DatabaseSync = null; }

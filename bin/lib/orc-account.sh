@@ -131,22 +131,22 @@ orc_fail_class() { # orc_fail_class <rc> <text>
   case "$rc" in
     124|137|143) ORC_FAIL_CLASS=transient; ORC_FAIL_DETAIL=timeout; return 0 ;;
   esac
-  m=$(printf '%s\n' "$text" | grep -m1 -oiE "$LADDER_EXHAUST_REGEX" 2>/dev/null | head -1)
+  m=$(grep -m1 -oiE "$LADDER_EXHAUST_REGEX" 2>/dev/null <<<"$text" | head -1)
   if [ -n "$m" ]; then
     ORC_FAIL_CLASS=account-exhausted; ORC_FAIL_MATCH=$(printf '%s' "$m" | tr 'A-Z' 'a-z')
-    if printf '%s\n' "$text" | grep -qiE "$ORC_CREDITS_REGEX" 2>/dev/null; then
+    if grep -qiE "$ORC_CREDITS_REGEX" 2>/dev/null <<<"$text"; then
       ORC_FAIL_DETAIL=credits
     else
       ORC_FAIL_DETAIL=quota
     fi
     return 0
   fi
-  m=$(printf '%s\n' "$text" | grep -m1 -oiE "$LADDER_AUTH_REGEX" 2>/dev/null | head -1)
+  m=$(grep -m1 -oiE "$LADDER_AUTH_REGEX" 2>/dev/null <<<"$text" | head -1)
   if [ -n "$m" ]; then
     ORC_FAIL_CLASS=auth; ORC_FAIL_DETAIL=credential; ORC_FAIL_MATCH=$(printf '%s' "$m" | tr 'A-Z' 'a-z')
     return 0
   fi
-  m=$(printf '%s\n' "$text" | grep -m1 -oiE "$LADDER_TRANSIENT_REGEX" 2>/dev/null | head -1)
+  m=$(grep -m1 -oiE "$LADDER_TRANSIENT_REGEX" 2>/dev/null <<<"$text" | head -1)
   if [ -n "$m" ]; then
     ORC_FAIL_CLASS=transient; ORC_FAIL_DETAIL=vendor; ORC_FAIL_MATCH=$(printf '%s' "$m" | tr 'A-Z' 'a-z')
     return 0

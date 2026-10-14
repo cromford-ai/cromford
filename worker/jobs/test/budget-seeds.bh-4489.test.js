@@ -2,12 +2,13 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
+import { jobsSchemaSql } from './lib/jobs-schema.js';
 
 // BH-4489: the budget.* hard-cap defaults ride schema.sql as INSERT OR IGNORE
 // rows, so bin/harness-sync.sh applies them before deploy and an operator's (or
 // the self-host installer's) value is never reset by a re-apply.
 
-const SCHEMA = readFileSync(fileURLToPath(new URL('../schema.sql', import.meta.url)), 'utf8');
+const SCHEMA = jobsSchemaSql();
 
 async function freshDb(t) {
   let DatabaseSync;

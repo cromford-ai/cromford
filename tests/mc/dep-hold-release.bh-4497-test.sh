@@ -229,7 +229,7 @@ stuck=$(grep -F "$SLUG#41" "$ALERTS" | grep STUCK)
 [ -n "$stuck" ] && ok || bad "C5 setup: a READY row past its TTL pages STUCK (alerts: $(cat "$ALERTS"); log: $(clog))"
 grep -q "#40 QUEUED" <<<"$stuck" \
   && bad "C5 THE DEFECT: the STUCK page replays the cached tick-1 hold '#40 QUEUED' after #40 merged: $stuck" || ok
-printf '%s' "$stuck" | grep -q "waiting on the merge itself — the PR-dependency gate, read this tick: released — no declared dependency in the PR body; issue #20; the READY arm goes on" && ok \
+grep -q "waiting on the merge itself — the PR-dependency gate, read this tick: released — no declared dependency in the PR body; issue #20; the READY arm goes on" <<<"$stuck" && ok \
   || bad "C5 the STUCK page names the live read (released, issue #20 with no sibling waiting): $stuck"
 
 # ============================================================================
@@ -238,7 +238,7 @@ printf '%s' "$stuck" | grep -q "waiting on the merge itself — the PR-dependenc
 reset; order_fixture; tick
 age41; : > "$ALERTS"; tick
 stuck=$(grep -F "$SLUG#41" "$ALERTS" | grep STUCK)
-printf '%s' "$stuck" | grep -q "the PR-dependency gate, read this tick: still open — it declares Order 2 behind #19 (PR #40 QUEUED)" && ok \
+grep -q "the PR-dependency gate, read this tick: still open — it declares Order 2 behind #19 (PR #40 QUEUED)" <<<"$stuck" && ok \
   || bad "C6 a still-held STUCK page names the dependency as read this tick, still open: ${stuck:-<no STUCK alert>} (log: $(clog))"
 [ "$(enq)" = 0 ] && ok || bad "C6 a still-held row is not enqueued (argv: $(cat "$T/c-enq.txt"))"
 

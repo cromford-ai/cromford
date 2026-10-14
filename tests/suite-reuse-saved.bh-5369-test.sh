@@ -52,7 +52,7 @@ const R = 'example-org/cromford';
 eq('ci-link',       runUrl({ class: 'ci', repo: R, run_key: '123-1-0' }), 'https://github.com/' + R + '/actions/runs/123/attempts/1');
 eq('builder-null',  runUrl({ class: 'builder', repo: R, run_key: '123-1-0' }), null);
 eq('bad-repo-null', runUrl({ class: 'ci', repo: '../evil', run_key: '123-1-0' }), null);
-eq('gate-key-null', runUrl({ class: 'ci', repo: R, run_key: 'cromford-BH-1-gate-1' }), null);
+eq('gate-key-null', runUrl({ class: 'ci', repo: R, run_key: 'example-BH-1-gate-1' }), null);
 eq('suites-none',   reusedSuites({}), null);
 eq('suites-bad',    reusedSuites({ reused_suites: '{x' }), null);
 " 2>&1)
@@ -66,7 +66,9 @@ done <<< "$OUT"
 
 # --- 3: the screen's shape ----------------------------------------------------
 grep -q "from '../lib/suite-reuse.js'" "$SCREEN" && ok || bad "CiHealth.js must render SUITE REUSE from lib/suite-reuse.js"
-grep -q 'routes/suite-reuse-saved.js' "$INDEX" && ok || bad "index.js must register the suite-reuse-saved routes"
+# TEST-CHANGE (BH-4607): a family is registered by its route-table.d fragment; index.js no longer lists gated families.
+[ "$(ls "$DIR"/worker/jobs/test/route-table.d/[0-9][0-9][0-9]-suite-reuse-saved.txt 2>/dev/null | wc -l)" = 1 ] && ok \
+  || bad "suite-reuse-saved has no route-table.d fragment (BH-4607: the fragment IS the registration)"
 CODE=$(grep -hvE '^[[:space:]]*//' "$SCREEN" "$LIB")
 if [[ "$CODE" =~ (^|[^A-Za-z_.])(window\.)?(confirm|alert|prompt)[[:space:]]*\( ]]; then
   bad "a native dialog in the SUITE REUSE section"
@@ -79,6 +81,7 @@ if [ ! -f "$DIR/catalog/lanes.json" ]; then
   HARNESS_TEST_SANDBOX=1 "$DIR/bin/lanes-build.sh" --root "$DIR" --write > /dev/null 2>&1 \
     || bad "could not generate catalog/lanes.json the worker imports"
 fi
+"$DIR/bin/llm-sites-build.sh" --compose --repo "$DIR" >/dev/null || { echo "FAIL: cannot compose catalog/llm-sites.json"; exit 1; }
 if node -e "require('node:sqlite')" > /dev/null 2>&1; then
   if WOUT=$(cd "$DIR/worker/jobs" && node --test test/suite-reuse-saved.bh-5354.test.js test/route-table.test.js 2>&1); then ok
   else bad "worker/jobs/test/suite-reuse-saved.bh-5354.test.js failed:"; printf '%s\n' "$WOUT" | grep -E '^not ok|Error' | head -20

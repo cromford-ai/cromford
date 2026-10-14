@@ -27,6 +27,7 @@
 # Run from anywhere: bash tests/gh-rest-quota-test.sh   (exit 0 = all pass)
 set -uo pipefail
 . "$(dirname "$0")/lib/scratch.sh" || exit 1
+. "$(dirname "$0")/lib/jobs-schema.sh" && jobs_schema_render || exit 1
 DIR=$(cd "$(dirname "$0")/.." && pwd)
 LIB="$DIR/bin/lib/gh-rest.sh"
 REPORT="$DIR/bin/gh-quota-report.sh"
@@ -140,7 +141,7 @@ if [ "$(nled)" = 1 ]; then ok; else bad "2a: exactly one ledger line per call, g
 if [ "$(ledger | awk -F'\t' '{print NF}')" = 14 ]; then ok
 else bad "2b: the ledger line must carry 14 tab-separated columns, got $(ledger | awk -F'\t' '{print NF}')"; fi
 # ts lane project method path-class status counted remaining reset bucket resource source used limit
-if printf '%s' "$(col 1 1)" | grep -qE '^20[0-9][0-9]-[0-9][0-9]-[0-9][0-9]T[0-9][0-9]:[0-9][0-9]:[0-9][0-9]Z$'; then ok
+if grep -qE '^20[0-9][0-9]-[0-9][0-9]-[0-9][0-9]T[0-9][0-9]:[0-9][0-9]:[0-9][0-9]Z$' <<<"$(col 1 1)"; then ok
 else bad "2c: column 1 must be a UTC ISO timestamp, got '$(col 1 1)'"; fi
 [ "$(col 1 2)" = merge-conductor ] && ok || bad "2d: column 2 is the lane, got '$(col 1 2)'"
 [ "$(col 1 3)" = project-4 ] && ok || bad "2e: column 3 is the project, got '$(col 1 3)'"
@@ -409,24 +410,24 @@ printf '2026-09-22T18:00:01Z\tmerge-sweep\tproject-3\tGET\trepos/o/r/issues/N\t2
 [ -x "$REPORT" ] && ok || bad "7a: bin/gh-quota-report.sh must exist and be executable"
 OUT=$(HARNESS="$T/h" bash "$REPORT" day 2>&1); rc=$?
 [ "$rc" = 0 ] && ok || bad "7b: the report exits 0 on a readable ledger, got $rc — $OUT"
-if printf '%s' "$OUT" | grep -qE '2026-09-22T17[[:space:]]+merge-conductor[[:space:]]+2'; then ok
+if grep -qE '2026-09-22T17[[:space:]]+merge-conductor[[:space:]]+2' <<<"$OUT"; then ok
 else bad "7c: the report must sum calls per lane per hour; got:
 $OUT"; fi
-if printf '%s' "$OUT" | grep -qE '2026-09-22T17[[:space:]]+merge-sweep[[:space:]]+1'; then ok
+if grep -qE '2026-09-22T17[[:space:]]+merge-sweep[[:space:]]+1' <<<"$OUT"; then ok
 else bad "7d: each lane gets its own row per hour; got:
 $OUT"; fi
 # counted is reported beside calls: 4 calls, 3 of them charged. Asserted as the
 # whole TOTAL line (review S-5): round 1 grepped for '4', which any digit 4
 # anywhere in the report satisfied.
-if printf '%s' "$OUT" | grep -qE '^TOTAL[[:space:]]+calls=4[[:space:]]+counted=3$'; then ok
+if grep -qE '^TOTAL[[:space:]]+calls=4[[:space:]]+counted=3$' <<<"$OUT"; then ok
 else bad "7e: the TOTAL line must read calls=4 counted=3; got:
 $OUT"; fi
 # The buckets are SPLIT, never summed: 3 app calls and 1 PAT call are two
 # meters, and adding their remainings together is not a burn-down of either.
-if printf '%s' "$OUT" | grep -qE '^app[[:space:]]+3[[:space:]]+2$'; then ok
+if grep -qE '^app[[:space:]]+3[[:space:]]+2$' <<<"$OUT"; then ok
 else bad "7e2: the bucket block must show app 3 calls / 2 counted; got:
 $OUT"; fi
-if printf '%s' "$OUT" | grep -qE '^pat-abc123def456[[:space:]]+1[[:space:]]+1$'; then ok
+if grep -qE '^pat-abc123def456[[:space:]]+1[[:space:]]+1$' <<<"$OUT"; then ok
 else bad "7e3: and the PAT bucket separately; got:
 $OUT"; fi
 # The report writes nothing and deletes nothing (review S-1): it is the command
@@ -441,12 +442,12 @@ HARNESS="$T/h" bash "$REPORT" day >/dev/null 2>&1
   || bad "7e4: the report must not sweep — a 10-day-old file it was shown is gone"
 [ ! -f "$LED/.swept" ] && ok || bad "7e5: nor stamp a sweep it did not do"
 rm -f "$LED/2026-09-01T00.tsv"
-if printf '%s' "$OUT" | grep -q 'repos/o/r/pulls/N'; then ok
+if grep -q 'repos/o/r/pulls/N' <<<"$OUT"; then ok
 else bad "7f: the top path classes must be named; got:
 $OUT"; fi
 # `hour` reads only the newest hour file, so the two hours cannot be confused.
 OUT1=$(HARNESS="$T/h" bash "$REPORT" hour 2>&1)
-if printf '%s' "$OUT1" | grep -q 'project-3\|2026-09-22T18'; then ok
+if grep -q 'project-3\|2026-09-22T18' <<<"$OUT1"; then ok
 else bad "7g: the default window is the newest hour; got:
 $OUT1"; fi
 if ! grep -q 'merge-conductor' <<<"$(printf '%s' "$OUT1")"; then ok
@@ -456,7 +457,7 @@ $OUT1"; fi
 # that reads as "nothing burned it".
 ledreset
 OUT2=$(HARNESS="$T/h" bash "$REPORT" day 2>&1); rc=$?
-if [ "$rc" = 0 ] && printf '%s' "$OUT2" | grep -qi 'no ledger\|no calls'; then ok
+if [ "$rc" = 0 ] && grep -qi 'no ledger\|no calls' <<<"$OUT2"; then ok
 else bad "7i: an empty ledger says so in words (rc $rc); got:
 $OUT2"; fi
 
@@ -480,19 +481,19 @@ export GH_QUOTA_RESERVE=600
 fx 200 1234 6600 "$((NOW + 900))" '{"ok":true}'
 GH_TOKEN=ghs_exampleinstallationtoken gh_rest GET repos/o/r/pulls > "$T/out"
 LINE=$(gh_quota_line 2>/dev/null)
-printf '%s' "$LINE" | grep -q '^QUOTA ' && ok || bad "9a: the line starts with QUOTA, got '$LINE'"
-printf '%s' "$LINE" | grep -q 'rem=1234' && ok || bad "9b: it names remaining, got '$LINE'"
-printf '%s' "$LINE" | grep -q 'reserve=600' && ok || bad "9c: it names the reserve, got '$LINE'"
+grep -q '^QUOTA ' <<<"$LINE" && ok || bad "9a: the line starts with QUOTA, got '$LINE'"
+grep -q 'rem=1234' <<<"$LINE" && ok || bad "9b: it names remaining, got '$LINE'"
+grep -q 'reserve=600' <<<"$LINE" && ok || bad "9c: it names the reserve, got '$LINE'"
 # It NAMES ITS BUCKET and defaults to the shared app one (review I-1): before
 # the fix this field was whichever token answered last, so a PAT's 4,900 and
 # the App's 98 were printed identically.
-printf '%s' "$LINE" | grep -q 'bucket=app' && ok || bad "9b2: it names the bucket, got '$LINE'"
+grep -q 'bucket=app' <<<"$LINE" && ok || bad "9b2: it names the bucket, got '$LINE'"
 # A PAT reading in the same box must not leak into the app line.
 reset
 fx 200 4900 5000 "$((NOW + 900))" '{"ok":true}'
 GH_TOKEN=ghp_notarealpatvalue gh_rest GET repos/o/r/pulls > "$T/out"
 LINE3=$(gh_quota_line 2>/dev/null)
-printf '%s' "$LINE3" | grep -q 'rem=1234' && ok \
+grep -q 'rem=1234' <<<"$LINE3" && ok \
   || bad "9b3: the app line must still read the app bucket after a PAT call, got '$LINE3'"
 # A reading whose window has ALREADY RESET is an unknown, not a small number
 # (review I-3): the bucket refilled at that reset, and a paused fleet would
@@ -503,8 +504,8 @@ ledreset; reset
 fx 200 5 6600 "$((NOW - 3600))" '{"ok":true}'
 GH_TOKEN=ghs_exampleinstallationtoken gh_rest GET repos/o/r/pulls > "$T/out"
 LINE4=$(gh_quota_line 2>/dev/null)
-printf '%s' "$LINE4" | grep -q 'stale=1' && ok || bad "9e: a past-reset reading says stale=1, got '$LINE4'"
-printf '%s' "$LINE4" | grep -q 'rem=?' && ok \
+grep -q 'stale=1' <<<"$LINE4" && ok || bad "9e: a past-reset reading says stale=1, got '$LINE4'"
+grep -q 'rem=?' <<<"$LINE4" && ok \
   || bad "9e2: and drops the number, which is no longer a reading, got '$LINE4'"
 # The gate agrees with it: that same stale reading refuses nothing.
 reset
@@ -516,7 +517,7 @@ GH_REST_OPTIONAL=1 GH_TOKEN=ghs_exampleinstallationtoken \
 # unread bucket must not look like.
 ledreset
 LINE2=$(gh_quota_line 2>/dev/null)
-if printf '%s' "$LINE2" | grep -q 'rem=?'; then ok
+if grep -q 'rem=?' <<<"$LINE2"; then ok
 else bad "9d: an unknown remaining renders as ?, never 0, got '$LINE2'"; fi
 unset GH_QUOTA_RESERVE
 

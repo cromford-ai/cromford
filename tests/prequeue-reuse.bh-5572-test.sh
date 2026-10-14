@@ -129,6 +129,9 @@ case "\$*" in
   *"api -i -X GET repos/$SLUG/actions/workflows/prequeue-gate.yml"|*"api -i -X GET repos/$SLUG/actions/workflows/prequeue-gate.yml "*)
     restpr --raw 200 '{"id":5,"path":".github/workflows/prequeue-gate.yml"}' ;;
   *"api -i -X GET repos/$SLUG/commits/main"|*"api -i -X GET repos/$SLUG/commits/main "*) restpr --raw 200 "{\"sha\":\"\$MN\"}" ;;
+  # TEST-CHANGE (BH-6335): reusing an older main's verdict now reads how far
+  # main moved (pq_main_behind). Main B is main A plus one commit.
+  *"api -i -X GET repos/$SLUG/compare/"*) restpr --raw 200 '{"status":"ahead","ahead_by":1}' ;;
   *"api -i -X GET repos/$SLUG/rulesets"*) restpr --raw 200 '[]' ;;
   *"api -i -X GET repos/$SLUG/contents/.mergify.yml"*) restpr --raw 200 '{"content":"$MGFY_YML"}' ;;
   *"actions/runs?head_sha="*) restpr --raw 200 '{"workflow_runs":[{"id":1,"name":"CI","status":"completed","conclusion":"success","run_started_at":"2026-10-05T01:00:00Z"}]}' ;;

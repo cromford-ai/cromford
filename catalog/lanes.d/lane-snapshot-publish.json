@@ -1,0 +1,17 @@
+{
+  "id": "lane-snapshot-publish",
+  "name": "Lane snapshot publish",
+  "scope": "hub",
+  "script": "bin/lane-snapshot-publish.sh",
+  "cadence": "2,12,22,32,42,52 * * * *",
+  "boxes": [
+    "hub"
+  ],
+  "switch": {
+    "kind": "flag",
+    "name": "lane-off-lane-snapshot-publish",
+    "aliases": []
+  },
+  "wired": true,
+  "knobs": []
+}

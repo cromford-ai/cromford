@@ -154,7 +154,7 @@ mutant() {  # mutant <label> <sed-expr> <must-fail-pattern>
   sed "$2" "$LS" > "$m"
   if cmp -s "$m" "$LS"; then bad "$1 the mutation did not apply to $LS"; return; fi
   out=$(LS_UNDER_TEST="$m" LS_MUTANT=1 HARNESS_TEST_SANDBOX=1 bash "$0" 2>&1)
-  if printf '%s\n' "$out" | grep -q "^FAIL: $3"; then ok; else bad "$1 the mutant left $3 green: $out"; fi
+  if grep -q "^FAIL: $3" <<<"$out"; then ok; else bad "$1 the mutant left $3 green: $out"; fi
 }
 mutant M1 '/^  LANE_SWITCH_SRC=none; export LANE_SWITCH_SRC$/a\  [ "${LANE_GATE_DISABLE:-}" = 1 ] \&\& return 1' "L1"
 mutant M2 '/^    file) \[ -f "\$3" \]; return \$? ;;$/d' "L2 file mode"

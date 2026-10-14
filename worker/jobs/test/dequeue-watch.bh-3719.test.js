@@ -4,6 +4,7 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import worker, { CREATED_TABLES } from '../src/index.js';
 import { d1 } from './lib/d1-sqlite.bh-1030.js';
+import { jobsSchemaSql } from './lib/jobs-schema.js';
 
 // BH-3727 (BH-3719.1): the dequeue-watch ledger — dequeue_events and
 // dequeue_actions, and the seven bearer routes over them. Every request goes
@@ -11,7 +12,7 @@ import { d1 } from './lib/d1-sqlite.bh-1030.js';
 // if its handler changes. Every DB here starts BARE (no schema.sql), so each
 // route's self-create is what makes its table.
 
-const SCHEMA = readFileSync(fileURLToPath(new URL('../schema.sql', import.meta.url)), 'utf8');
+const SCHEMA = jobsSchemaSql();
 const SECRET = 's3cret';
 const BASE = 'https://jobs.example/api/dequeue-watch';
 const H1 = '0123456789abcdef0123456789abcdef01234567';

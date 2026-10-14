@@ -35,6 +35,7 @@
 # Run from anywhere: tests/account-lease-cas-test.sh   (exit 0 = all pass)
 set -uo pipefail
 . "$(dirname "$0")/lib/scratch.sh" || exit 1
+. "$(dirname "$0")/lib/jobs-schema.sh" && jobs_schema_render || exit 1
 DIR=$(cd "$(dirname "$0")/.." && pwd)
 PASS=0; FAIL=0
 ok()  { PASS=$((PASS+1)); }
@@ -284,8 +285,20 @@ grep -q 'ON CONFLICT(account, machine_id)' <<<"$CLAIM" \
   && ok || bad "G: a re-claim by the same machine is not an upsert: $CLAIM"
 grep -q 'account_leases' "$DIR/worker/jobs/schema.sql" \
   && ok || bad "G: account_leases is not in schema.sql"
-grep -q 'account_leases:' <<<"$WORKER_SRC" \
-  && ok || bad "G: account_leases is not in CREATED_TABLES — it would ship dead until a hand-run schema apply"
+# TEST-CHANGE (BH-4987): CREATED_TABLES derives from worker/jobs/schema.d, so
+# account_leases has no hand entry to grep. The derived entry is asked of the
+# real parser over the real composed schema (importing core.js itself would need
+# the git-ignored catalog/lanes.json); worker/jobs/test/created-tables.bh-4987
+# T1 pins that the exported map carries every derived table.
+LEASE_DERIVED=$(node --input-type=module -e "
+  const { createdTablesFrom } = await import('$DIR/worker/jobs/src/lib/created-tables.js');
+  const { jobsSchemaSql } = await import('$DIR/worker/jobs/test/lib/jobs-schema.js');
+  const e = createdTablesFrom(jobsSchemaSql()).account_leases || [];
+  console.log(/^CREATE TABLE IF NOT EXISTS account_leases\b/.test(e[0] || '') ? 'yes' : 'no');
+" 2>&1)
+if grep -q 'account_leases:' <<<"$WORKER_SRC"; then ok
+elif grep -q 'createdTablesFrom(SCHEMA_SQL)' <<<"$WORKER_SRC" && [ "$LEASE_DERIVED" = yes ]; then ok
+else bad "G: account_leases is not in CREATED_TABLES — it would ship dead until a hand-run schema apply ($LEASE_DERIVED)"; fi
 
 # The client's rc contract, driven for real against the fake: 0 won, 1 refused,
 # 2 unknown. A caller that cannot tell 1 from 2 would treat an outage as a full

@@ -624,7 +624,7 @@ to_dedupe_open_prs() {
   # never a duplicate of it, so it never enters the pairing.
   rows=$(while IFS=$'\t' read -r num ref base login created; do
            id=$(to_pr_identity "$ref") || continue
-           if [ -n "$base" ] && printf '%s\n' "$heads" | grep -qxF -- "$base" \
+           if [ -n "$base" ] && grep -qxF -- "$base" <<<"$heads" \
               && [ "$(to_pr_identity "$base" 2>/dev/null)" = "$id" ]; then continue; fi
            printf '%s\t%s\t%010d\t%s\n' "$id" "$created" "$num" "$login"
          done <<<"$rows" | LC_ALL=C sort)

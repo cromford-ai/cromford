@@ -199,7 +199,7 @@ grep -qi prequeue "$ALERTS" 2>/dev/null && bad "E4 no prequeue alert (alerts: $(
 reset; touch "$T/tip-down"; put "$SLUG" 41 "$H1" "$M" green; tick
 [ "$(enq)" = 0 ] && ok || bad "E5 an unreadable tip enqueues nothing (argv: $(cat "$T/c-enq.txt"))"
 [ "$(state41)" = READY ] && ok || bad "E5 the row stays READY (state '$(state41)')"
-printf '%s' "$(why41)" | grep -q "	$H1	prequeue-pending	main tip unreadable, asked next tick" && ok \
+grep -q "	$H1	prequeue-pending	main tip unreadable, asked next tick" <<<"$(why41)" && ok \
   || bad "E5 the ready-why note says prequeue-pending / main tip unreadable (note: $(why41))"
 grep -qi prequeue "$ALERTS" 2>/dev/null && bad "E5 no alert for an unreadable tip (alerts: $(cat "$ALERTS"))" || ok
 [ "$(grep -c 'budget' <<<"$(clog 40)")" = 0 ] && ok || bad "E5 a hold asks no merge budget (log: $(clog))"
@@ -234,7 +234,7 @@ reset
 printf 'pq_resolve() { PQ_WHY=stub; echo hold; }\n' > "$T/h/bin/lib/mc-prequeue.d/stub.sh"
 tick
 [ "$(enq)" = 0 ] && ok || bad "E9 a hook's hold enqueues nothing (argv: $(cat "$T/c-enq.txt"))"
-printf '%s' "$(why41)" | grep -q "	prequeue-pending	stub$" && ok || bad "E9 the hook's PQ_WHY is the note (note: $(why41))"
+grep -q "	prequeue-pending	stub$" <<<"$(why41)" && ok || bad "E9 the hook's PQ_WHY is the note (note: $(why41))"
 reset
 printf 'pq_resolve() { echo bogus; }\n' > "$T/h/bin/lib/mc-prequeue.d/stub.sh"
 tick; enqueued "E9 a hook's unknown word proceeds"

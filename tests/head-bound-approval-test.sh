@@ -380,6 +380,7 @@ grep -q 'rc=2' <<<"$OUT" \
 # 4. the hub sweep parks a PR whose head is not the head that was approved
 # ============================================================================
 cp "$DIR/bin/merge-sweep.sh" "$T/bin/sweep.sh"
+mkdir -p "$T/bin/lib" && cp -rL "$DIR/bin/lib/ms" "$T/bin/lib/" || exit 1   # BH-5242: the sweep loads bin/lib/ms/
 # The sweep's decision reads are REST now (BH-784): ONE `gh api -i -X GET
 # repos/o/r/pulls/7` answers state, mergeStateStatus, author and headRefOid
 # together, and the diff is the same path under the v3.diff media type — so the

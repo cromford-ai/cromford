@@ -1,0 +1,9 @@
+# @hub-lanes
+
+# lane-snapshot-publish (BH-6128, BH-6047 part 5 of 5): for each project, apply
+# the write-backs Fly lane machines posted, then publish the project's
+# blocked-resolver snapshot through the jobs worker when the lane is placed
+# fly (bin/lib/lane-run-inputs.sh). 2,12,...: two minutes before the
+# resolver's dispatch at 4,14,... Lease (BH-1000): a box that does not hold it
+# runs nothing. Off: flags/lane-off-lane-snapshot-publish.
+2,12,22,32,42,52 * * * * /root/harness/bin/hub-lease.sh check && /root/harness/bin/lane-snapshot-publish.sh >> /root/harness/logs/lane-snapshot-publish-cron.log 2>&1

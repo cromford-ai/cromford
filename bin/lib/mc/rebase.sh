@@ -1900,7 +1900,7 @@ mc_path_is_union() {
 MC_REGENERATED_PATHS_CONF="${MC_REGENERATED_PATHS_CONF:-$MC_H/config/regenerated-paths.conf}"
 # The pool-image fallback, as for MC_GENERATED_PATHS_DEFAULT. Keep in step with
 # config/regenerated-paths.conf.
-MC_REGENERATED_PATHS_DEFAULT=$'docs/notes/INDEX.md\tbin/render-doc-index.sh\nworker/jobs/schema.sql\tbin/schema-build.sh --write\nrules/CLAUDE.md\tbin/render-rules.sh --write\ndocs/PR-OWNERSHIP.md\tbin/render-doc-sections.sh --write'
+MC_REGENERATED_PATHS_DEFAULT=$'docs/notes/INDEX.md\tbin/render-doc-index.sh\nrules/CLAUDE.md\tbin/render-rules.sh --write\ndocs/PR-OWNERSHIP.md\tbin/render-doc-sections.sh --write'
 
 # mc_regen_paths — the table, `<path><TAB><command>` a line, comments stripped.
 mc_regen_paths() {
@@ -2293,6 +2293,8 @@ mc_resolve_conflicts() {
       mc_resolve_append_union "$wt" "$f" || { printf '%s\n' "$conf"; return 1; }
       unioned=1; continue
     fi
+    # BH-6374: an add/add whose real base is a squash-merged stack parent.
+    [ "${MC_SQUASH_BASE_MERGE:-1}" != 0 ] && mc_resolve_squash_base "$wt" "$f" && continue
     case "$f" in
       package.json) ( cd "$wt" && mc_resolve_package_json ) >/dev/null 2>&1 || { printf '%s\n' "$conf"; return 1; } ;;
       *.md)         ( cd "$wt" && mc_resolve_md_union "$f" ) >/dev/null 2>&1 || { printf '%s\n' "$conf"; return 1; } ;;
@@ -2356,6 +2358,69 @@ mc_union_trailer() {
   # The first trailer gets a blank line above it; later ones join its paragraph.
   if ! grep -q '^Union-resolved: ' "$m" && [ -n "$(tail -n 1 "$m")" ]; then printf '\n' >> "$m" || return 1; fi
   printf '%s\n' "$line" >> "$m"
+}
+
+# mc_resolve_squash_base <worktree> <path>   (BH-6374)
+#   rc 0 = an add/add path merged with the squash commit as its base, staged,
+#          trailer written | rc 1 = not this shape, or declined: the path is
+#          exactly as git left it and the caller's next arm runs.
+#   Nothing on stdout (mc_resolve_conflicts' stdout is the conflict list).
+#
+#   THE SHAPE. A child built STACKED on a parent PR's branch carries the files
+#   the parent created. The parent then merges as a SQUASH, so main gets the
+#   same files in a commit the child does not have. Merging main into the child
+#   finds no common base for them (the merge base predates both) and git calls
+#   each one add/add (stages 2 and 3, no stage 1), although main's real change
+#   is only what landed after the squash (project-6-os #209/#210/#211).
+#
+#   THE BASE IT USES, AND ITS PROOF. A = the OLDEST commit on MERGE_HEAD since
+#   the merge base that added the path: after a squash merge, the squash
+#   commit. A is used only when A's blob equals the path's blob at some commit
+#   on the branch since the merge base, i.e. the branch already carries that
+#   exact state (the stacked parent's tip). Without that proof, A is just
+#   another side's add, and the path stays a real conflict.
+#
+#   ORIENTATION: mc_rebase merges main INTO the branch, so stage 2 is the
+#   branch and stage 3 is main: `git merge-file -p <stage2> <A:path> <stage3>`.
+#   Only a clean merge-file (rc 0) is taken. The `Union-resolved:` trailer makes
+#   mc_rebase re-review the merged head rather than rebind the approval.
+mc_resolve_squash_base() {
+  local wt="$1" f="$2" stages mb a ab c proof="" d rc
+  stages=$(git -C "$wt" ls-files -u -- "$f" 2>/dev/null | awk '{print $3}' | sort -u | tr '\n' ' ')
+  [ "$stages" = "2 3 " ] || return 1
+  mb=$(git -C "$wt" merge-base HEAD MERGE_HEAD 2>/dev/null) || {
+    mc_log "$f: add/add, but no merge in progress or no merge base — squash-base merge declined (BH-6374)"; return 1; }
+  a=$(git -C "$wt" log --no-renames --diff-filter=A --format=%H MERGE_HEAD "^$mb" -- "$f" 2>/dev/null | tail -n 1)
+  [ -n "$a" ] || { mc_log "$f: add/add, no commit on the merged side added it — squash-base merge declined (no add, BH-6374)"; return 1; }
+  ab=$(git -C "$wt" rev-parse -q --verify "$a:$f" 2>/dev/null) || ab=""
+  if [ -n "$ab" ]; then
+    for c in $(git -C "$wt" rev-list "$mb..HEAD" -- "$f" 2>/dev/null); do
+      [ "$(git -C "$wt" rev-parse -q --verify "$c:$f" 2>/dev/null)" = "$ab" ] && { proof="$c"; break; }
+    done
+  fi
+  [ -n "$proof" ] || {
+    mc_log "$f: add/add, ${a:0:8} added it but no branch commit since the merge base has that content — squash-base merge declined (no proof, BH-6374)"; return 1; }
+  d=$(mktemp -d "${TMPDIR:-/tmp}/mc-squash-XXXXXX" 2>/dev/null) || { mc_log "$f: could not make a scratch dir — squash-base merge declined (BH-6374)"; return 1; }
+  if ! git -C "$wt" show ":2:$f" > "$d/ours" 2>/dev/null || ! git -C "$wt" show "$a:$f" > "$d/base" 2>/dev/null \
+     || ! git -C "$wt" show ":3:$f" > "$d/theirs" 2>/dev/null; then
+    rm -rf "$d"; mc_log "$f: could not read a stage — squash-base merge declined (BH-6374)"; return 1
+  fi
+  git merge-file -p "$d/ours" "$d/base" "$d/theirs" > "$d/out" 2>/dev/null; rc=$?
+  if [ "$rc" != 0 ]; then
+    rm -rf "$d"
+    mc_log "$f: add/add with squash base ${a:0:8}, but the branch and main change the same lines — left a real conflict (merge-file conflict, rc $rc, BH-6374)"
+    return 1
+  fi
+  if ! cat "$d/out" > "$wt/$f" \
+     || ! mc_union_trailer "$wt" "Union-resolved: $f (squash base ${a:0:8}, BH-6374)" \
+     || ! git -C "$wt" add -- "$f" >/dev/null 2>&1; then
+    rm -rf "$d"; mc_regen_restore "$wt" "$f"
+    mc_log "$f: squash-base merge could not write, record or stage the result — left a real conflict (BH-6374)"
+    return 1
+  fi
+  rm -rf "$d"
+  mc_log "$f: add/add merged with the squash commit ${a:0:8} as the base (proof: ${proof:0:8} on the branch has the same blob) — staged (BH-6374)"
+  return 0
 }
 
 # mc_resolve_append_union <worktree> <path>   (BH-4641)
@@ -3950,7 +4015,7 @@ mc_no_overlap() {
   hit=$(printf '%s\n' "$prf" | grep -xF -f <(printf '%s\n' "$mainf") | head -1)
   [ -z "$hit" ] || return 1
   n=$(printf '%s\n' "$mainf" | grep -c . || true)
-  printf '%s file(s) landed under it: %s' "$n" "$(printf '%s\n' "$mainf" | head -4 | paste -sd, -)"
+  printf '%s file(s) landed under it: %s' "$n" "$(head -4 <<<"$mainf" | paste -sd, -)"
   return 0
 }
 
@@ -4480,11 +4545,13 @@ head_lag_gc() { find "$MC_STATE_DIR/head-lag" -maxdepth 1 -type f -mtime +3 -del
 #   is taken only when no head was passed or it EQUALS the head: a refs file up
 #   to a TTL old can carry a pre-push tip, so a tip that would start a lag clock
 #   is confirmed by the live branches/ read below first.
+#   BH-6462: the refs read takes this tick's pin (MC_REFS_PIN_PREFIX, set by
+#   tick_project; bin/lib/pr-snapshot-refs.sh, THE PIN) before the cache.
 head_lag_tip() {
   local slug="$1" br="$2" out="$3" head="${4:-}" memo rc=0 sha
   memo=$(tick_memo_file headtip "$slug#$br")
   if [ -s "$memo" ]; then cp "$memo" "$out" 2>/dev/null && return 0; fi
-  if command -v prs_branch_tip >/dev/null 2>&1 && prs_branch_tip "$slug" "$br" > "$out" 2>/dev/null \
+  if command -v prs_branch_tip >/dev/null 2>&1 && PRS_REFS_PIN_PREFIX="${MC_REFS_PIN_PREFIX:-}" prs_branch_tip "$slug" "$br" > "$out" 2>/dev/null \
      && { [ -z "$head" ] || [ "$(cat "$out")" = "$head" ]; }; then
     mkdir -p "$MC_TICK_DIR" 2>/dev/null && cp "$out" "$memo" 2>/dev/null
     return 0
@@ -4633,6 +4700,9 @@ head_lag_check() {
   fi
   if [ "${sk:-0}" != 0 ]; then head_lag_after_kick "$key" "$url" "$head" "$tip" "$ss" "$sk" "${sa:-0}" "$mins" "${so:--}" "${sr:-0}"; return 1; fi
   [ $((now - ss)) -ge $((mins * 60)) ] || return 1
+  # BH-6670: the kick is a close/reopen WRITE, so it is its own step, and a
+  # step timeout in it pages (bin/lib/fanin.sh holds only read-only steps).
+  command -v mc_step >/dev/null 2>&1 && mc_step head-lag-kick
   head_lag_kick "$p" "$key" "$slug" "$num" "$url" "$head" "$tip" "$ss" "$(( (now - ss) / 60 ))" "${sr:-0}" "$sd"
 }
 

@@ -14,5 +14,6 @@
 hub-lease	cmd	bin/hub-lease.sh check	does this box hold the hub lease (a GET; refreshes its own local cache file only)
 hub-lease-api	jobs-get	/api/hub-lease	the hub lease row as the jobs worker holds it
 flags	jobs-get	/api/flags	the coordination flags (pauses, kill switches)
-lead-protected-paths	jobs-get	/api/lead-protected-paths	the protected-path globs the lead review enforces
+lead-protected-paths	jobs-get	/api/lead-protected-paths?repo=example-org/cromford	the protected-path globs the lead review enforces for example-org/cromford (the route is per repo: no repo is HTTP 400, BH-6641)
 npm-registry	https-get	https://registry.npmjs.org/-/ping	is the npm registry answering
+outcome-check-dry-run	cmd	bin/outcome-check.sh --dry-run	the outcome-check lane's decisions for the merges now due (BH-6382); reads only, no ledger put, no issue POST, no ALERTS line

@@ -1,9 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
-import { fileURLToPath } from 'node:url';
 import { DatabaseSync } from 'node:sqlite';
 import worker, { CREATED_TABLES } from '../src/index.js';
+import { jobsSchemaSql } from './lib/jobs-schema.js';
 
 // BH-5430 — the record of the merge-queue break-risk score, one row per scored
 // PR head (schema.sql's queue_risk_scores block and its CREATED_TABLES copy).
@@ -17,7 +16,8 @@ import worker, { CREATED_TABLES } from '../src/index.js';
 // Driven through worker.fetch against THE SQL THAT SHIPS (worker/jobs/schema.sql),
 // the risk-tiers.bh-5022 idiom.
 const SECRET = 'test-secret';
-const SCHEMA = readFileSync(fileURLToPath(new URL('../schema.sql', import.meta.url)), 'utf8');
+// The composition of worker/jobs/schema.d/ (BH-6005): schema.sql is a render.
+const SCHEMA = jobsSchemaSql();
 
 function sqliteDB(db) {
   const bindAndRun = (sql, binds) => ({

@@ -76,7 +76,7 @@ fi
 nc=$(printf '%s\n' "$cand" | grep -c . || true)
 [ "$nc" -ge 5 ] && ok || bad "R2: the scan found only $nc candidate lines under bin/, want >= 5 (a broken scan must not pass)"
 for f in bin/lib/pr-dep-gate.sh bin/dep-verify.sh bin/unblocked-children.sh bin/decompose-parent-close.sh bin/lib/ticket-branch.sh; do
-  printf '%s\n' "$cand" | grep -q "^$f:" && ok || bad "R2: the scan did not see $f"
+  grep -q "^$f:" <<<"$cand" && ok || bad "R2: the scan did not see $f"
 done
 
 # R3: mutation seed — a scratch tree with suffix-less sites is flagged
@@ -94,8 +94,8 @@ g() { local re='^ticket/([A-Za-z]+)-([0-9]+)(-r[0-9]+)?$'; [[ $1 =~ $re ]]; }
 br = re.compile(r"^ticket/[a-z0-9]+-%d(-r\d+)?$" % n)
 EOF
 off=$(offenders "$T/seed")
-printf '%s\n' "$off" | grep -q '^bin/lib/bad.sh:1:' && ok || bad "R3: the seed bash site was not flagged: $off"
-printf '%s\n' "$off" | grep -q '^bin/bad.py:1:' && ok || bad "R3: the seed python site was not flagged: $off"
+grep -q '^bin/lib/bad.sh:1:' <<<"$off" && ok || bad "R3: the seed bash site was not flagged: $off"
+grep -q '^bin/bad.py:1:' <<<"$off" && ok || bad "R3: the seed python site was not flagged: $off"
 grep -q '^bin/good.sh:' <<<"$off" && bad "R3: a commented or suffix-aware line was flagged: $off" || ok
 
 echo "ticket-branch-ratchet.bh-3835: $PASS passed, $FAIL failed"

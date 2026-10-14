@@ -85,6 +85,10 @@ FLY_DISPATCH_WIP="${FLY_DISPATCH_WIP:-1}"
 # never decides that a ticket is urgent, it only honours a flag already on it.
 # shellcheck source=bin/lib/hotfix-lib.sh
 [ -r "$BIN/lib/hotfix-lib.sh" ] && . "$BIN/lib/hotfix-lib.sh" 2>/dev/null
+# BH-6350: the dispatch mode (normal | hotfix-only | paused), read per project in
+# the next job pick. Absent, every project reads normal.
+# shellcheck source=bin/lib/dispatch-mode.sh
+[ -r "$BIN/lib/dispatch-mode.sh" ] && . "$BIN/lib/dispatch-mode.sh" 2>/dev/null
 # One owner per ticket (BH-1526): the claim below asks the ticket's HOLD first.
 # shellcheck source=bin/lib/ticket-ownership.sh
 [ -r "$BIN/lib/ticket-ownership.sh" ] && . "$BIN/lib/ticket-ownership.sh" 2>/dev/null
@@ -472,7 +476,7 @@ dispatch_project() {
   # --- (1) active job with a RESULT ready -> ingest ---------------------------
   if [ -f "$active" ]; then
     if [ "$st" = "started" ]; then
-      if bssh "$p" "[ -f /run/harness/RESULT ] && echo yes || echo no" 2>/dev/null | grep -q yes; then
+      if grep -q yes <<<"$(bssh "$p" "[ -f /run/harness/RESULT ] && echo yes || echo no" 2>/dev/null)"; then
         say "$p" "RESULT present on builder — invoking results ingest"
         "$BIN/fly-results-ingest.sh" "$p" || say "$p" "results-ingest returned nonzero"
         return 0
@@ -564,6 +568,12 @@ dispatch_project() {
   # buildable again with nothing to re-enqueue. The reading is bin/lib/hold.sh's;
   # a read that did not answer is not a hold and the row is offered as before.
   # `_nj*` are deliberately not `local`, for the bare-subshell reason above.
+  #
+  # DISPATCH MODE hotfix-only (BH-6350) skips a job dm_job_admit refuses, the
+  # same way as a HOLD: it stays queued, and one line per tick names them all.
+  # `DM_MODE` stays set for the rows pick below.
+  DM_MODE=normal; _njdm=""
+  command -v dm_read >/dev/null 2>&1 && dm_read "$p"
   for _nj in $( { [ "$hf_on" = 1 ] && grep -l '"hotfix": *true' "$qdir"/*.json 2>/dev/null | grep -v '\.failed\.json$' | sort
                   ls -1 "$qdir"/*.json 2>/dev/null | grep -v '\.failed\.json$' | sort; } | awk '!seen[$0]++' ); do
     _njt=$(jq -r '.ticket_id // ""' "$_nj" 2>/dev/null) || _njt=""
@@ -572,8 +582,12 @@ dispatch_project() {
       say "$p" "HOLD, skipping $(basename "$_nj" .json) (${_njh#*	}) — it stays queued; the next unheld row is offered instead"
       continue
     fi
+    if command -v dm_job_admit >/dev/null 2>&1 && ! dm_job_admit "$_nj"; then
+      _njdm="$_njdm $(basename "$_nj" .json)"; continue
+    fi
     next_job="$_nj"; break
   done
+  [ -n "$_njdm" ] && say "$p" "DISPATCH-MODE hotfix-only, skipping:$_njdm — they stay queued"
   # <<< next job pick
 
   # >>> rows pick (BH-1026.3)
@@ -598,13 +612,17 @@ dispatch_project() {
   if [ "$rows_only" = 1 ]; then
     next_job=""
     rm -rf "$rowdir"; mkdir -p "$rowdir"
-    local _rk _rtid _ratt _rmeta _rhot _rtid_pick="" _ratt_pick="" _rmeta_pick=""
+    local _rk _rtid _ratt _rmeta _rhot _rtid_pick="" _ratt_pick="" _rmeta_pick="" _rdm=""
     while IFS="$(printf '\t')" read -r _ _rk _rtid _ _ _ratt _ _ _ _rmeta; do
       [ -n "${_rk:-}" ] || continue
       # A key already live on a pool machine is not queued work (TK-70,
       # 2026-08-13): the file path never saw one because the pool moves the file
       # away at spawn, and the row path has to say so itself.
       grep -ls "\"key\": *\"$_rk\"" "$HARNESS/state/fly-pool/$p/"*.json >/dev/null 2>&1 && continue
+      # Dispatch mode (BH-6350): the row form of the file pick's skip above.
+      if command -v dm_meta_admit >/dev/null 2>&1 && ! dm_meta_admit "$_rtid" "${_rmeta:-}"; then
+        _rdm="$_rdm $_rk"; continue
+      fi
       _rhot=$(printf '%s' "${_rmeta:-}" | jq -r '.hotfix // false' 2>/dev/null)
       if [ "$hf_on" = 1 ] && [ "$_rhot" = true ]; then
         row_key="$_rk"; _rtid_pick="$_rtid"; _ratt_pick="$_ratt"; _rmeta_pick="$_rmeta"; break
@@ -614,6 +632,7 @@ dispatch_project() {
     done <<ROWPICK
 $rlist
 ROWPICK
+    [ -n "$_rdm" ] && say "$p" "DISPATCH-MODE hotfix-only, skipping rows:$_rdm — they stay queued"
     if [ -n "$row_key" ] && command -v queue_row_job_file >/dev/null 2>&1; then
       # rc 3 (an unusable rebase object) has already closed the row and said so
       # once in the top loop; there is simply nothing to dispatch this tick.

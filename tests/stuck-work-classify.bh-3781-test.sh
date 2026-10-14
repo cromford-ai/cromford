@@ -23,6 +23,7 @@ if [ "${SW_CLEAN_ENV:-}" != 1 ]; then
     SW_NO_MUTANTS="${SW_NO_MUTANTS:-}" bash "$0"
 fi
 . "$(dirname "$0")/lib/scratch.sh" || exit 1
+. "$(dirname "$0")/lib/jobs-schema.sh" && jobs_schema_render || exit 1
 DIR=$(cd "$(dirname "$0")/.." && pwd)
 SRC=${SW_CLASSIFY_SRC:-$DIR/bin/lib/stuck-work/classify.sh}
 FIX="$DIR/tests/fixtures/stuck-work"

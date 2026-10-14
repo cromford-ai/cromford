@@ -312,8 +312,8 @@ judge() { # judge <other-key> <pairs> — report the non-fragment pairs (max 3);
     [ -n "$pr" ] || continue
     fragment_safe "$pr" || real="$real$pr"$'\n'
   done <<< "$2"
-  [ -n "$real" ] && report "$1" "$(printf '%s' "$real" | head -3)"
-  hotspot_log "PLAN_HOTSPOT $KEY choice=build vs $1 fragment-only files=[$(pairs_csv "$(printf '%s\n' "$2" | head -3)")]"
+  [ -n "$real" ] && report "$1" "$(head -3 <<<"$real")"
+  hotspot_log "PLAN_HOTSPOT $KEY choice=build vs $1 fragment-only files=[$(pairs_csv "$(head -3 <<<"$2")")]"
 }
 
 SEEN=$(mktemp); FCD=$(mktemp -d); trap 'rm -f "$CLAIMED" "$UNJUDGED" "$SEEN"; rm -rf "$FCD" "$PHD"' EXIT

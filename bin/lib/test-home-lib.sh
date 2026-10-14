@@ -94,5 +94,16 @@ th_exec_note() { # th_exec_note <record> — one sentence per pair, each ending 
 }
 th_plan_rule() { # th_plan_rule <KEY> — the planner sentence, key lower-cased in the examples
   local k; k=$(_th_key "${1:-}")
-  printf "TEST FILES ARE PER-TICKET: new test cases go in a NEW file named for this ticket (\`tests/<tier>/<area>.%s.test.ts\`, shell suites \`tests/<area>.%s-test.sh\`), never appended to an existing shared test file, unless this ticket's scope is to CHANGE an existing test's behaviour (a bug reproduction next to the case it fixes, a spec change to an existing case). List the per-ticket file in the plan's files-to-touch. Each test asserts the fields this ticket owns, never the whole payload; a whole-output pin belongs only in a contract test (\`*.contract.test.*\` or a \`# contract-test\` header). " "$k" "$k"
+  printf "TEST FILES ARE PER-TICKET: new test cases go in a NEW file named for this ticket (\`tests/<tier>/<area>.%s.test.ts\`, shell suites \`tests/<area>.%s-test.sh\`), never appended to an existing shared test file, unless this ticket's scope is to CHANGE an existing test's behaviour (a bug reproduction next to the case it fixes, a spec change to an existing case). List the per-ticket file in the plan's files-to-touch. Each test asserts the fields this ticket owns, never the whole payload; a whole-output pin belongs only in a contract test (\`*.contract.test.*\` or a \`# contract-test\` header). TESTS THAT MUST CHANGE: an existing test of ANOTHER ticket (a name like \`tests/<area>.<other-key>-test.sh\`) changes only when it pins a premise this ticket changes. List each such test under '## Tests that must change', one line each as '- \`<path>\`: <the premise this ticket changes>', and name it in files-to-touch too; write 'None' when there is none. The PR body copies these lines as TEST-CHANGE: lines, and the pre-review self-check refuses an edit to another ticket's test without one. " "$k" "$k"
+}
+th_fragment_rule() { # th_fragment_rule <KEY> <repo-dir> — the shared-list sentence, only for a repo with worker/*/schema.d/
+  local k d
+  for d in "${2:-.}"/worker/*/schema.d; do
+    [ -d "$d" ] || continue
+    k=$(_th_key "${1:-}")
+    # The schema name allows no dot, so a child key bh-5235.2 is bh-5235-2 there.
+    printf "SHARED LISTS ARE FRAGMENTS: a new table is a new \`worker/<w>/schema.d/<yyyymmddhhmm>-%s-<name>.sql\` (the UTC minute you create it, then this ticket's key; never a picked NNNN number) plus \`bin/schema-build.sh --write\`; a new jobs-worker route family is \`worker/jobs/src/routes/<family>.js\` plus \`worker/jobs/test/route-table.d/%s-<family>.txt\`, never an \`index.js\` edit or a picked number. Never append to a shared list. " "${k//./-}" "$k"
+    return 0
+  done
+  return 0
 }

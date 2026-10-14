@@ -1,0 +1,11 @@
+{
+  "env": "CONSOLE_POSTMERGE_QA",
+  "type": "int",
+  "default": 0,
+  "min": 0,
+  "max": 1,
+  "zero_means": "off",
+  "read_in": "bin/console-pages-deploy.sh",
+  "note": "BH-5909 slice 3: 1 = after each console-ui Pages deploy, bin/console-pages-deploy.sh keeps the shipped dist/ and launches bin/console-postmerge-qa.sh, which deploys it to the postmerge-qa alias, drives it at 1280px and 375px as the read-only QA session, and posts one comment on the merged PR. Both scripts read ${CONSOLE_POSTMERGE_QA:-}, then this settings row, default 0. Turn it on after cromford-console #46 is deployed and the first preview QA is green.",
+  "settable": true
+}

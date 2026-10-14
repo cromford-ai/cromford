@@ -1,0 +1,11 @@
+{
+  "env": "POOL_HOLD_LIST_MAX_PAGES",
+  "type": "int",
+  "default": 10,
+  "min": 1,
+  "max": 50,
+  "unit": "pages",
+  "zero_means": null,
+  "required": false,
+  "note": "BH-6549: the most pages (100 issues each) of the open ai-build issue listing the pool reads per tick for its hold cache keys. An issue past the last page has no key, so its row reads its thread as before, and the tick's `hold cache:` line says listing=truncated."
+}

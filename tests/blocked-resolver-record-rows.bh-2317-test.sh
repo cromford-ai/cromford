@@ -150,7 +150,12 @@ fn_body() {
     f                                { print }
     f && /^\}$/                      { exit }' "$1"
 }
-for fn in br_file br_load; do fn_body "$DIR/bin/blocked-resolver.sh" "$fn"; done > "$T/brload.sh"
+# BH-5241: the corpus is the driver plus bin/lib/br/*.sh (tests/lib/br-corpus.sh),
+# because the record functions moved out of the driver into bin/lib/br/record.sh.
+# shellcheck source=tests/lib/br-corpus.sh
+. "$DIR/tests/lib/br-corpus.sh" || exit 1
+br_corpus "$DIR" "$T/br-corpus.sh" || exit 1
+for fn in br_file br_load; do fn_body "$T/br-corpus.sh" "$fn"; done > "$T/brload.sh"
 grep -q '^br_load()' "$T/brload.sh" && ok || bad "B3: could not lift br_load"
 bl() { # bl <key> — br_load's answer, with the lane's globals
   ( ST="$T/st"; STAMP() { echo 2026-09-25T00:00:00Z; }; . "$H/bin/jobs-client.sh"; . "$T/brload.sh"

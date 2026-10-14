@@ -79,13 +79,14 @@ render, for the same reason: `bin/pr-owner-sweep.sh`, `bin/lib/pr-health.sh`
 and the docs link it by path and readers browse it on GitHub, so it stays in git, and a conflict on it is resolved
 by `bin/render-doc-sections.sh --write` over the merged `docs/PR-OWNERSHIP.d/`.
 
-**So is `worker/jobs/schema.sql`** (BH-4987). It is composed from
-`worker/jobs/schema.d/NNNN-<name>.sql` by `bin/schema-build.sh`, so a new table
-is a new fragment rather than an append to one shared file, and the composed
-file stays committed because about 220 readers (the D1 apply in
-`bin/harness-sync.sh`, `bin/worker-schema-upgrade.sh`, CI, the worker tests)
-read it from the tree or from `git show`. A conflict on it is settled by
-re-running `bin/schema-build.sh --write` over the merged fragments.
+**`worker/jobs/schema.sql` is NOT in git** (BH-6005). It is composed from
+`worker/jobs/schema.d/NNNN-<name>.sql` by `bin/schema-build.sh` and is
+git-ignored: committed, it was the factory's most frequent merge conflict. Each
+reader composes it where it reads it: `bin/harness-sync.sh`'s deploy (`--to`
+into its snapshot, before the D1 apply and `wrangler deploy`), CI and the lints
+(`--ref` for a base revision), and the test corpus (`tests/lib/jobs-schema.sh`,
+`worker/jobs/test/lib/jobs-schema.js`). `bin/schema-build.sh --check` refuses it
+back in git. Its row below is unmarked, so a build's diff never carries it.
 
 The third column says so. A row marked `committed` is a render this repo's CI
 checks, so a build commits it; an unmarked row is reset out of a build's diff
@@ -111,4 +112,4 @@ column.
 | `catalog/lanes.json` | `bin/lanes-build.sh --write` |
 | `rules/CLAUDE.md` | `bin/render-rules.sh --write` | committed |
 | `docs/PR-OWNERSHIP.md` | `bin/render-doc-sections.sh --write` | committed |
-| `worker/jobs/schema.sql` | `bin/schema-build.sh --write` | committed |
+| `worker/jobs/schema.sql` | `bin/schema-build.sh --write` |  |

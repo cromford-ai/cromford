@@ -272,13 +272,13 @@ evidence_locate() { # evidence_locate <build> <test> — <pass|fail|none>TAB<art
       # The test's own name is not a marker: tests/ok-test.sh must not read its
       # own basename as a pass, and `bad` in a name is not a failure.
       scrub=$(printf '%s' "$content" | sed -E "s@$epath@ @g; s@$ebase@ @g" 2>/dev/null)
-      if printf '%s' "$scrub" | grep -qE "$FAIL_RE"; then
+      if grep -qE "$FAIL_RE" <<<"$scrub"; then
         printf 'fail\t%s:%s\t%s\n' "$f" "$ln" "$(_ev_clean "$content")"
         return 0
       fi
-      if printf '%s' "$scrub" | grep -qiE "$SKIP_RE"; then
+      if grep -qiE "$SKIP_RE" <<<"$scrub"; then
         : # a skipped case decides nothing on this line; try the next hit/file
-      elif [ -z "$passref" ] && printf '%s' "$scrub" | grep -qE "$PASS_RE"; then
+      elif [ -z "$passref" ] && grep -qE "$PASS_RE" <<<"$scrub"; then
         passref="$f:$ln"; passnote=$(_ev_clean "$content")
       fi
     done <<< "$nm"
@@ -296,7 +296,7 @@ evidence_locate() { # evidence_locate <build> <test> — <pass|fail|none>TAB<art
     while IFS= read -r vhit; do
       [ -n "$vhit" ] || continue
       vln=${vhit%%:*}; vcontent=${vhit#*:}
-      printf '%s' "$vcontent" | grep -qE "$RUN_RE" && ln="$vln"
+      grep -qE "$RUN_RE" <<<"$vcontent" && ln="$vln"
     done <<< "$(grep -nE "(^|[^A-Za-z0-9_./-])($epath)([^A-Za-z0-9_./-]|\.([^A-Za-z0-9_-]|\$)|\$)" \
                 "$build/$f" 2>/dev/null)"
     if [ -n "$ln" ]; then

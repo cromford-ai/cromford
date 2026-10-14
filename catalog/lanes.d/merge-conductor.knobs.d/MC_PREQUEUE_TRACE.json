@@ -1,0 +1,11 @@
+{
+  "env": "MC_PREQUEUE_TRACE",
+  "type": "int",
+  "default": 1,
+  "min": 0,
+  "max": 1,
+  "unit": null,
+  "zero_means": "off",
+  "read_in": "bin/lib/mc-prequeue.sh",
+  "note": "BH-6335: 1 = the pre-queue gate runs its suites under bin/test-trace-safety.sh (the check Tests cannot touch a real harness), so a write outside the temp roots is a red verdict why=trace before the queue. Sent as the workflow input trace=1 by bin/lib/mc-prequeue.d/learned.sh. 0 = the suites run bare, as before. Per project: lane.merge-conductor.<project>.mc_prequeue_trace."
+}

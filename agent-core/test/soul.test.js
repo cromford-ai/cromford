@@ -18,12 +18,14 @@ test('P1: the archie soul parses into non-empty MAY, NEVER and REPORT lists', ()
   const s = parseSoul(archie);
   assert.ok(s.may.length > 0, 'MAY is empty');
   assert.ok(s.report.length > 0, 'REPORT is empty');
-  assert.equal(s.never.length, 6, `NEVER: ${JSON.stringify(s.never)}`);
+  assert.equal(s.never.length, 7, `NEVER: ${JSON.stringify(s.never)}`);
   const never = s.never.map(norm);
   assert.ok(never.includes('a push to main'), JSON.stringify(never));
   assert.ok(never.includes('a production db write'), JSON.stringify(never));
   assert.ok(never.includes('a direct merge (gh pr merge)'), JSON.stringify(never));
   assert.ok(never.includes('a write to a client-visible board other than a ticket comment the triage rules allow'), JSON.stringify(never));
+  // BH-5751: each box launch is money the owner approves; the parenthesis keeps it one item
+  assert.ok(never.some((n) => n.startsWith("launching a box without the owner's yes for that one launch")), JSON.stringify(never));
   assert.ok(s.report.map(norm).includes('a daily factory digest'), JSON.stringify(s.report));
   // the comma inside "(client repos included)" does not split the item
   assert.ok(s.may.some((m) => m.includes('(client repos included)')), JSON.stringify(s.may));

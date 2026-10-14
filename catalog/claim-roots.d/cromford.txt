@@ -1,0 +1,10 @@
+# Top-level dirs a cromford plan may claim, beyond the defaults.
+# Read by bin/lib/claim-roots.sh (bin/planned-files.sh, bin/planned-files-cheap.sh).
+bin
+catalog
+worker
+console-ui
+cron
+fly
+config
+tests

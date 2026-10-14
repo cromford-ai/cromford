@@ -132,3 +132,13 @@ every 10 on the hub, plus the per-box crons for `bin/merge-queue.sh`,
   the flag file is gone.
 - **Nothing is read when main is green.** The flag read comes first, so a green
   repo costs zero extra GitHub calls per PR per lane pass.
+- **A freeze is never judged last, and never silently.** A scheduled pass
+  judges the repos with a flag up before all others (BH-6352). A flagged repo
+  that a pass does not decide gets one `decision=none reason=<why>` line in
+  `logs/main-red.log`, and each pass ends with one `pass end:` line.
+- **A freeze is re-checked every 5 minutes, not once an hour (BH-6502).** The
+  `main-red-recheck` hub lane runs `bin/main-red-detector.sh --flagged-only`
+  every `main_red_recheck_min` minutes (settings row
+  `lane.main-red-recheck.main_red_recheck_min`, default 5, 0 = off). It uses the
+  same decision code as the hourly pass. A repo with no flag is never read by
+  it, and with no flag up it makes no GitHub read at all.

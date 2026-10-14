@@ -41,6 +41,16 @@
 // a build card in ANY column whose key's newest row is `held` comes back with
 // `held: {by, at, why}` for the HELD chip. A hold hides nothing and changes no
 // count. A failed read marks nothing and says so (`held_known: false`).
+//
+// TICKET STAGES (BH-6536) — the same read-time join for the human-step and
+// re-review flow: bin/lib/needs-human/step-done.sh writes
+// ledgers(kind=ticket_stage, key=<project>#<n>, status = the kanban column,
+// detail '<state> by <lane> at <iso>: <reason>'). A build card for the key gets
+// `stage_state` and `stage_why` and keeps its own `stage`. A key with no card (TK-232: the console worker had
+// none) gets a synthetic card in that column, counted in `stage_added`, so the
+// ticket and its reason are on the board in every state. A closed issue, a row
+// older than ARCHIVE_AFTER_MIN or an unknown column adds nothing. A failed read
+// changes no column and says so (`stage_known: false`).
 
 import { HOLD_LEDGER_KIND, holdFromLedger } from '../../../../src/lib/ticket-hold.js';
 
@@ -279,6 +289,114 @@ export async function heldTicketKeys(env) {
   return value;
 }
 
+export const STAGE_LEDGER_KIND = 'ticket_stage';
+const STAGE_LIMIT = 1000;
+// The hold detail shape: '<state> by <lane> at <iso>: <reason>'.
+const STAGE_DETAIL = /^\S+ by (.+?) at (\S+): (.*)$/s;
+let stageCache = null;
+const STAGE_TTL_MS = 60000;
+export function _resetStageCache() { stageCache = null; }
+
+// Map `<project>#<n>` -> {column, state, by, at, why}, or null. ONE page of
+// ledgers(kind=ticket_stage), newest first; a key counts by its newest row
+// only. Null on no secret, a non-200, a body that is not { ledgers: [...] } or
+// a throw — FAIL OPEN, and only a success is cached.
+export async function ticketStages(env) {
+  if (!env || !env.HARNESS_SECRET) return null;
+  const now = Date.now();
+  if (stageCache && now - stageCache.at < STAGE_TTL_MS) return stageCache.value;
+  let rows;
+  try {
+    const res = await fetch(`${JOBS}/api/ledger?kind=${STAGE_LEDGER_KIND}&limit=${STAGE_LIMIT}`,
+      { headers: { authorization: `Bearer ${env.HARNESS_SECRET}` } });
+    if (res.status !== 200) return null;
+    const body = await res.json();
+    if (!body || !Array.isArray(body.ledgers)) return null;
+    rows = body.ledgers;
+  } catch {
+    return null;
+  }
+  const stages = new Map();
+  for (const r of rows) {
+    if (!r || r.key == null || stages.has(String(r.key))) continue;
+    const detail = typeof r.detail === 'string' ? r.detail : '';
+    const m = STAGE_DETAIL.exec(detail);
+    stages.set(String(r.key), {
+      column: r.status ?? null,
+      state: detail.split(/\s/)[0] || null,
+      by: m ? m[1] : null,
+      at: m ? m[2] : (r.updated_at ?? null),
+      why: m ? m[3] : (detail || null)
+    });
+  }
+  stageCache = { at: now, value: stages };
+  return stages;
+}
+
+// `TK-232` -> `MK`, the prefix a project's build cards carry. Null when none.
+function ticketPrefix(columns, project) {
+  for (const cards of Object.values(columns)) {
+    if (!Array.isArray(cards)) continue;
+    for (const c of cards) {
+      if (!c || c.project !== project) continue;
+      const m = typeof c.ticket === 'string' ? /^([A-Za-z][A-Za-z0-9]*)-\d+$/.exec(c.ticket) : null;
+      if (m) return m[1];
+    }
+  }
+  return null;
+}
+
+// The stage join, pure. `stages` is the ticketStages Map, or null when the
+// ledger could not be read — and null changes no column.
+export function surfaceStages(payload, stages, { closed = null, now = Date.now() } = {}) {
+  if (!payload || typeof payload !== 'object') return payload;
+  if (!(stages instanceof Map)) return { ...payload, stage_known: false };
+  const src = payload.columns && typeof payload.columns === 'object' ? payload.columns : null;
+  const out = { ...payload, stage_known: true, stage_added: 0 };
+  if (!src) return out;
+  const columns = Object.fromEntries(Object.entries(src).map(([k, v]) => [k, Array.isArray(v) ? [...v] : v]));
+  let added = 0;
+  // A synthetic card is a card: the column header reads counts[col], so the
+  // count beside the column moves with it (lead review lr-6621-e59f79a9aa94).
+  const counts = { ...(payload.counts || {}) };
+  for (const [key, s] of stages) {
+    if (!s || !Array.isArray(columns[s.column])) continue;
+    if (closed instanceof Set && closed.has(key)) continue;
+    const t = Date.parse(s.at || '');
+    if (Number.isFinite(t) && (now - t) / 60000 > ARCHIVE_AFTER_MIN) continue;
+    let hit = false;
+    for (const [col, cards] of Object.entries(columns)) {
+      if (!Array.isArray(cards)) continue;
+      columns[col] = cards.map((c) => {
+        if (closedIssueKey(c) !== key) return c;
+        hit = true;
+        // The card keeps its own live stage; the row's state rides beside it.
+        return { ...c, stage_state: s.state, stage_why: s.why };
+      });
+    }
+    if (hit) continue;
+    const i = key.lastIndexOf('#');
+    const project = key.slice(0, i);
+    const n = key.slice(i + 1);
+    const prefix = ticketPrefix(src, project);
+    columns[s.column].push({
+      id: `stage:${key}`,
+      project,
+      ticket: prefix ? `${prefix}-${n}` : `#${n}`,
+      stage: s.state,
+      stage_why: s.why,
+      updated_at: s.at,
+      synthetic: STAGE_LEDGER_KIND
+    });
+    counts[s.column] = (Number(counts[s.column]) || 0) + 1;
+    added++;
+  }
+  out.columns = columns;
+  if (added) out.counts = counts;
+  out.stage_added = added;
+  return out;
+}
+
 export async function onRequest(context) {
   const { request, env } = context;
   const url = new URL(request.url);
@@ -338,6 +456,9 @@ export async function onRequest(context) {
     { includeArchived, complete: issues ? issues.complete : true });
   const holds = await heldTicketKeys(env);
   const marked = markHeld(body, holds ? holds.held : null, { complete: holds ? holds.complete : true });
+  // A closed issue's key gets no synthetic card. An unread closed set is null,
+  // which closes nothing: the stage row still shows.
+  const staged = surfaceStages(marked, await ticketStages(env), { closed: issues ? issues.closed : null, now: Date.now() });
   out.set('content-type', 'application/json');
-  return new Response(JSON.stringify(marked), { status: 200, statusText: upstream.statusText, headers: out });
+  return new Response(JSON.stringify(staged), { status: 200, statusText: upstream.statusText, headers: out });
 }

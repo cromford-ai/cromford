@@ -111,7 +111,7 @@ case "$OUT" in "PLAN_HOTSPOT BH-B choice=after after=BH-A fold=not-offered files
   *) bad "case 1: record stdout: $OUT" ;; esac
 hlog | grep -q 'PLAN_HOTSPOT BH-B choice=after after=BH-A fold=not-offered' && ok \
   || bad "case 1: logs/plan-hotspot.log lacks the after line: $(hlog)"
-if grep -rq 'Blocked-by' "$H/state" "$H/logs" || printf '%s' "$OUT" | grep -q 'Blocked-by'; then
+if grep -rq 'Blocked-by' "$H/state" "$H/logs" || grep -q 'Blocked-by' <<<"$OUT"; then
   bad "case 1: something wrote Blocked-by"; else ok; fi
 
 # ---------- 2. fragment-only overlap is not held ----------------------------

@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import worker from '../src/index.js';
+import { jobsSchemaSql } from './lib/jobs-schema.js';
 
 // BH-4059 (slice BH-4171): a finished Fly build rings the queue doorbell.
 //
@@ -17,7 +18,7 @@ import worker from '../src/index.js';
 // The harness is a copy of build-queue-wake.bh-4059's, not an import: that
 // file belongs to the tracer slice (BH-4169).
 
-const SCHEMA = readFileSync(fileURLToPath(new URL('../schema.sql', import.meta.url)), 'utf8');
+const SCHEMA = jobsSchemaSql();
 const SECRET = 'test-secret';
 
 // `failWakes` makes every statement that writes the wakes table throw, the way

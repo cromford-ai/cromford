@@ -153,7 +153,7 @@ L1=$(printf '%s\n' "$OUT" | sed -n 1p); L2=$(printf '%s\n' "$OUT" | sed -n 2p)
 [ "$(printf '%s' "$L1" | awk -F'\t' '{print NF}')" = "10" ] \
   && ok || bad "5d row 1 has $(printf '%s' "$L1" | awk -F'\t' '{print NF}') columns, wanted 10"
 # A tab or newline inside text must not shift the columns a reader parses.
-printf '%s' "$L1" | grep -qF 'first\tline\nwrapped' \
+grep -qF 'first\tline\nwrapped' <<<"$L1" \
   && ok || bad "5e text was not tab/newline escaped: '$L1'"
 [ "$(printf '%s' "$L2" | cut -f7)" = "" ] && ok || bad "5f null mark did not render empty: '$L2'"
 # The limit reaches the URL.

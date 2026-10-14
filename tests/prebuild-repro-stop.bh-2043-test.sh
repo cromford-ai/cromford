@@ -277,16 +277,16 @@ text_ok() {
   case "$b" in *"https://app.example/clients/77"*) ok ;; *) bad "T-text $l: URL missing" ;; esac
   case "$b" in *"Totals row read 1,240.00, matching the three invoices"*) ok ;; *) bad "T-text $l: observed text missing" ;; esac
   case "$b" in *"opened the client, read the totals row"*) ok ;; *) bad "T-text $l: steps missing" ;; esac
-  printf '%s' "$b" | grep -qi screenshot && ok || bad "T-text $l: no screenshot ask"
+  grep -qi screenshot <<<"$b" && ok || bad "T-text $l: no screenshot ask"
   grep -q '—' <<<"$b" && bad "T-text $l: em dash in the comment" || ok
   grep -qiE 'fixed it|we fixed|is fixed|working on' <<<"$b" && bad "T-text $l: a fix or progress claim" || ok
 }
 NR_LEAD="We tried to reproduce this before building a fix, and we couldn't see the problem."
 AF_LEAD="We tried this before building and it looks like it already works."
 text_ok app-nr "$C1BODY" "$NR_LEAD"
-printf '%s' "$C1BODY" | grep -q '<blockquote>' && ok || bad "T-text app-nr: observed not in a blockquote"
+grep -q '<blockquote>' <<<"$C1BODY" && ok || bad "T-text app-nr: observed not in a blockquote"
 text_ok gh-nr "$C5BODY" "$NR_LEAD"
-printf '%s\n' "$C5BODY" | grep -q '^> Totals row read' && ok || bad "T-text gh-nr: observed not in a > quote"
+grep -q '^> Totals row read' <<<"$C5BODY" && ok || bad "T-text gh-nr: observed not in a > quote"
 Ht=$(mkh taf); THREAD_JSON="$TH1" BOARD=app VERDICT=ALREADY_FIXED run "$Ht" "$T/taf"
 text_ok app-af "$(bodyof "$Ht/curl-body.1")" "$AF_LEAD"
 [ "$(lstat "$Ht" "$TH1")" = already_fixed ] && ok || bad "T-text app-af: ledger '$(lstat "$Ht" "$TH1")'"
@@ -300,14 +300,14 @@ case "$b" in *'<script>'*) bad "T-text esc: raw <script> in the body" ;; *) ok ;
 # No prebuild-repro.md: every field is "not recorded", the ask is still there.
 Ht=$(mkh tnomd); THREAD_JSON="$TH1" BOARD=app NO_MD=1 run "$Ht" "$T/tnomd"
 b=$(bodyof "$Ht/curl-body.1")
-[ "$RC" = 10 ] && [ "$(printf '%s' "$b" | grep -o 'not recorded' | wc -l)" = 4 ] && printf '%s' "$b" | grep -qi screenshot && ok \
+[ "$RC" = 10 ] && [ "$(grep -o 'not recorded' <<<"$b" | wc -l)" = 4 ] && grep -qi screenshot <<<"$b" && ok \
   || bad "T-text nomd: rc $RC, 'not recorded' x$(printf '%s' "$b" | grep -o 'not recorded' | wc -l)"
 # T-cap
 Ht=$(mkh tcap); big=$(head -c 4000 /dev/zero | tr '\0' a); bigs=$(head -c 4000 /dev/zero | tr '\0' s)
 THREAD_JSON="$TH1" BOARD=app OBSERVED="$big" STEPS="$bigs" run "$Ht" "$T/tcap"
 b=$(bodyof "$Ht/curl-body.1")
 [ "$RC" = 10 ] && [ "${#b}" -le 5000 ] && [ "${#b}" -gt 3000 ] && ok || bad "T-cap: rc $RC, body ${#b} chars"
-printf '%s' "$b" | grep -qi screenshot && ok || bad "T-cap: the ask was cut"
+grep -qi screenshot <<<"$b" && ok || bad "T-cap: the ask was cut"
 # T-err — a 200 that is not a comment object.
 Ht=$(mkh terr); THREAD_JSON="$TH1" BOARD=app CURL_MODE=errjson run "$Ht" "$T/terr"
 [ "$RC" = 11 ] && [ "$(cnt "$Ht/curl.log" '/turn$')" = 0 ] && ok || bad "T-err: rc $RC, turns $(cnt "$Ht/curl.log" '/turn$')"

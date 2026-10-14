@@ -204,7 +204,7 @@ for f in $FILES; do
        && jq -e --arg f "$f" '.readers | index($f)' "$c" >/dev/null 2>&1; then ok
     else bad "C1 $f reads $n: catalog/switches.d/$n.json missing, misnamed, or its readers lack $f"; fi
   done
-  low=$(printf '%s\n' "$names" | head -1)
+  low=$(head -1 <<<"$names")
   case "$low" in [g-o]*) ok ;; *) bad "O1 $f: lowest-sorted switch '$low' is outside g–o" ;; esac
 done
 X_NAMES='lane-checkpoints-off|size-gate-enforce-off|preplan-speculative-off|overlap-schedule-off|preplan-skip-small-off|monitor-off|main-red-detector-off'

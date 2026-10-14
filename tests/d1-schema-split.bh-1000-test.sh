@@ -31,6 +31,7 @@ ok()  { PASS=$((PASS+1)); }
 bad() { FAIL=$((FAIL+1)); echo "FAIL: $1"; }
 
 command -v node >/dev/null || { echo "d1-schema-split.bh-1000-test: SKIP — node missing"; exit 0; }
+. "$(dirname "$0")/lib/jobs-schema.sh" && jobs_schema_render || exit 1
 SCHEMA="$ROOT/worker/jobs/schema.sql"
 [ -r "$SCHEMA" ] || { echo "d1-schema-split.bh-1000-test: no $SCHEMA"; exit 1; }
 # shellcheck source=bin/lib/d1-schema.sh
@@ -104,7 +105,7 @@ case "$OUT" in
     echo "d1-schema-split.bh-1000-test: $PASS pass, $FAIL fail (SKIP — node:sqlite unavailable; the shell-side splitter checks still ran)"
     [ "$FAIL" -eq 0 ]; exit $? ;;
 esac
-has() { printf '%s\n' "$OUT" | grep -q "$1"; }
+has() { grep -q "$1" <<<"$OUT"; }
 
 [ "$NRC" = 0 ] && ok || bad "applying the split statements failed (rc=$NRC): $OUT"
 has "^COUNT=$COUNT\$" \

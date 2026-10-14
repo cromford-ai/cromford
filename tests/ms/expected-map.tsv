@@ -1,0 +1,4 @@
+# tests/ms/expected-map.tsv — BH-5242: module<TAB>function, the binding ownership map of bin/lib/ms/, read by tests/ms-split-layout.bh-5242-test.sh (M3, M4, M5). Each slice that moves a sweep concern adds its rows.
+terminal	sweep_record_fp
+terminal	sweep_terminal
+terminal	sweep_relog_line

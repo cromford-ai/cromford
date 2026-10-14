@@ -74,10 +74,15 @@ printf '%s\n' 'project-6 o/project-6 - - 2 box-a 100.0.0.9' \
               'tproj o/tproj - - 2 box-a 100.0.0.9' > "$H/fleet.conf"
 ST="$H/state/blocked-resolver"
 
+# BH-6461: the key family moved to bin/lib/br/keys.sh; the corpus is the driver
+# plus bin/lib/br/*.sh (tests/lib/br-corpus.sh), so the extraction finds it there.
+# shellcheck source=tests/lib/br-corpus.sh
+. "$DIR/tests/lib/br-corpus.sh" || exit 1
+br_corpus "$DIR" "$T/br-corpus.sh" || exit 1
 extract() { # extract <out-file>
   : > "$1"
   for fn in br_from_builds br_key_shape; do
-    awk -v f="^$fn\\\\(\\\\) \\\\{" '$0 ~ f {p=1} p{print} p&&/^}$/{exit}' "$DIR/bin/blocked-resolver.sh" >> "$1"
+    awk -v f="^$fn\\\\(\\\\) \\\\{" '$0 ~ f {p=1} p{print} p&&/^}$/{exit}' "$T/br-corpus.sh" >> "$1"
   done
 }
 extract "$T/fn.sh"
@@ -172,7 +177,7 @@ done
 chmod +x "$T/fakebin/"*
 : > "$T/fnr.sh"
 for fn in br_from_rebuilds br_key_shape; do
-  awk -v f="^$fn\\\\(\\\\) \\\\{" '$0 ~ f {p=1} p{print} p&&/^}$/{exit}' "$DIR/bin/blocked-resolver.sh" >> "$T/fnr.sh"
+  awk -v f="^$fn\\\\(\\\\) \\\\{" '$0 ~ f {p=1} p{print} p&&/^}$/{exit}' "$T/br-corpus.sh" >> "$T/fnr.sh"
 done
 grep -q '^br_from_rebuilds() {' "$T/fnr.sh" && ok || bad "setup: could not extract br_from_rebuilds"
 for i in $(seq 1 20); do
@@ -223,7 +228,8 @@ EXP_L=$( { printf 'o/r#1\treview-blocked\thttps://github.com/o/r/pull/1\n'
            printf 'o/r#2\tred-twice\thttps://github.com/o/r/pull/2\n'
            for i in $(seq 1 30); do printf 'o/r#%s\tci-red\thttps://github.com/o/r/pull/%s\n' $((100 + i)) $((100 + i)); done; } | sort)
 [ "$OUT" = "$EXP_L" ] && ok \
-  || bad "L2: rows differ — newest line per PR inside 48 h, no WAITING line, no bad stamp: got$(printf '\n%s' "$OUT" | head -5)"
+  || bad "L2: rows differ — newest line per PR inside 48 h, no WAITING line, no bad stamp: got
+$(head -5 <<<"$OUT")"
 
 # ═════════════════════════════════════════════════════════════════════════════
 # P. the other fleet-wide record walks fork nothing per record

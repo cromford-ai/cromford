@@ -1,0 +1,1 @@
+{"name":"sibling-serial-off","readers":["bin/sibling-serial.sh"],"box_scoped":true,"what":"turns off the sibling-part check, so the fleet pool spawns a part (TK-142.2) beside a sibling that shares its planned files, as before BH-6374"}

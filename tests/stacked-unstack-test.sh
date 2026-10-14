@@ -27,6 +27,7 @@ set -uo pipefail
 . "$(dirname "$0")/lib/scratch.sh" 2>/dev/null || { T=$(mktemp -d); trap 'rm -rf "$T"' EXIT; }
 DIR=$(cd "$(dirname "$0")/.." && pwd)
 . "$DIR/tests/lib/rb-all.sh" || exit 1
+. "$DIR/tests/lib/hold-gate-fixture.sh" || exit 1  # BH-6091: the pr-open HOLD gate for a pipeline slice
 RB_ALL=$(rb_all "$DIR" "$T/run-build.all.sh")
 PASS=0; FAIL=0
 ok()  { PASS=$((PASS+1)); }
@@ -251,7 +252,7 @@ fixture_assert() { # fixture_assert <name> <dir> <child>
   [ "$head" = ticket/bh-574 ] \
     || { fixture_fail "$n" "the child's HEAD is '$head', not ticket/bh-574"; return 1; }
   psha=$(git -C "$c" rev-parse --verify -q origin/ticket/TK-611 2>/dev/null)
-  printf '%s' "$psha" | grep -qE '^[0-9a-f]{40,64}$' \
+  grep -qE '^[0-9a-f]{40,64}$' <<<"$psha" \
     || { fixture_fail "$n" "origin/ticket/TK-611 does not resolve to a sha (got '$psha')"; return 1; }
   git -C "$c" merge-base --is-ancestor "$psha" HEAD 2>/dev/null \
     || { fixture_fail "$n" "the parent tip $psha is not an ancestor of the child's HEAD — the child was not cut from ticket/TK-611 (HEAD: $(git -C "$c" log --oneline HEAD 2>/dev/null | tr '\n' ' '))"; return 1; }
@@ -518,6 +519,7 @@ awk '/^# >>> pr create call/{f=1;next} /^# <<< pr create call/{exit} f' \
 [ -s "$T/create.sh" ] && ok || bad "could not extract the pr-create block — markers missing?"
 grep -q 'gh pr create --head "\$BRANCH" --base "\$BASE"' "$T/create.sh" \
   && ok || bad "the extracted block must be the REAL create call — if this moved, this suite is testing a ghost"
+hold_gate_prepend "$RB_ALL" "$T/create.sh"   # BH-6091: the real gate, a no-HOLD ticket read
 # The terminal call site, lifted verbatim out of the file rather than retyped:
 # if it is ever renamed, this suite fails instead of quietly proving nothing.
 PRLINE=$(grep -F 'RESULT "PR_CREATED $PR_URL$QA_NOTE' "$RB_ALL" | head -1)

@@ -1,0 +1,21 @@
+{
+  "libs": [
+    {
+      "id": "slice-closeout",
+      "file": "bin/lib/slice-closeout.sh",
+      "note": "BH-6308: when a slice merge finds no open child issue, sco_settle decides from the merged plan's Requirements coverage matrix. Covered closes the parent with the merged PR links; uncovered or undecided files ONE child with the rest and then closes the parent. Called from issue_slice_settle and mc_close_shipped. Resolved at call time with lib_env_apply slice-closeout.",
+      "knobs": [
+        {
+          "env": "SLICE_CLOSEOUT_SETTLE",
+          "type": "int",
+          "default": 1,
+          "min": 0,
+          "max": 1,
+          "zero_means": "the no-children path of BH-4662 and BH-5961 runs as before: the parent stays open with ai-build",
+          "required": false,
+          "note": "1 = a slice close-out that finds no open child never leaves the parent open with no child. Read by sco_knob."
+        }
+      ]
+    }
+  ]
+}

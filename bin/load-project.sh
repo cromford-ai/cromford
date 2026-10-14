@@ -547,6 +547,14 @@ echo
 echo "== LOADED: $PROJECT =="
 echo "hand it work: label an issue 'ai-build' on $SLUG (or use the /harness skill to file a plan)"
 echo
+# Browser QA wiring (BH-6254). project-6-os enrolled here and merged 47+ PRs with
+# no vercel.conf row, prod `-`, no QA account and deploy kind `none`, so no
+# browser QA ran and nothing said so. Never fatal: the `||` keeps the exit code.
+# >>> browser QA (BH-6254) -- tests/load-project-qa-wiring.bh-6254-test.sh runs this block
+echo "== browser QA =="
+bin/qa-wiring-check.sh "$PROJECT" || echo "browser QA is not wired for $PROJECT. Fix each OWED line above (docs/onboarding-a-repo.md, 'Wire browser QA'). The daily qa-wiring-sweep lane alerts until it is fixed."
+echo
+# <<< browser QA
 # ── THE DOORBELL (2026-09-16) ────────────────────────────────────────────────
 # Onboarding used to end here, and cromford is what that cost. docs/EVENTS.md
 # 4.3 designed the webhook as ONE ORG-LEVEL hook and told everyone there was
@@ -618,5 +626,5 @@ cat <<BANNER
   Put it:  ssh root@$BOX, then append it to env/$PROJECT.env (chmod 600)
 ======================================================================
 BANNER
-echo "other optional env on $BOX in env/$PROJECT.env: DEPLOY_HOOK_URL, QA_* (authed preview QA)"
+echo "other optional env on $BOX in env/$PROJECT.env: DEPLOY_HOOK_URL (QA_* is required: see == browser QA == above)"
 command -v gh_auth_reset >/dev/null 2>&1 && gh_auth_reset || true

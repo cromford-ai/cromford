@@ -12,6 +12,8 @@
 #   bin/testhost-tick.sh used       stamp the use and nothing else
 #   bin/testhost-tick.sh state      print the machine's Fly state, change nothing
 #   bin/testhost-tick.sh busy       ask the host what is running, change nothing
+#   bin/testhost-tick.sh idle [<id>] print the host's idle seconds (0 = busy), or
+#                                   `unknown` with rc 2; change nothing
 #
 # WHY IT EXISTS. `bin/remote-gate.sh` runs the suite on one performance-16x
 # machine shared by every agent in a drain (app `bh-testhost-example-org`, org
@@ -64,6 +66,8 @@
 #                            machine's ROOT disk is above this percent, 0 = off;
 #                            every started machine is probed and logged (85,
 #                            registry default — no literal here, BH-1597)
+#   TESTHOST_UNKNOWN_ALERT_TICKS consecutive ticks that read state=unknown
+#                            before testhost-state-unknown is raised  (3)
 # Machine: `testhost.machine_id` (a settings row) if there is one, else the
 # first machine in the app.
 #
@@ -92,6 +96,9 @@ H="$HARNESS"
 # BH-4080: HARNESS_REPO, the CI health row's repo when nothing else names one.
 # shellcheck source=bin/lib/deployment.sh
 . "${HARNESS_DEPLOYMENT_FILE-$(dirname "${BASH_SOURCE[0]}")/lib/deployment.sh}" || exit 1
+# flyctl's path, PATH first and then the install directories (BH-6061).
+# shellcheck source=bin/lib/fly-bin.sh
+. "${HARNESS}/bin/lib/fly-bin.sh" 2>/dev/null || . "$(dirname "$0")/lib/fly-bin.sh" || exit 1
 command -v lane_gate_or_exit >/dev/null 2>&1 && lane_gate_or_exit testhost-tick
 # ...and the knobs, from the same registry (BH-1165). Without this the four
 # TESTHOST_* rows an operator writes on the settings page are decoration: the
@@ -113,6 +120,8 @@ DISK_ALERT_PCT="${TESTHOST_DISK_ALERT_PCT:-}"
 case "$IDLE_MIN" in ''|*[!0-9]*) IDLE_MIN=30 ;; esac
 case "$BUSY_WINDOW_MIN" in ''|*[!0-9]*) BUSY_WINDOW_MIN=120 ;; esac
 case "$CI_HOLD_MIN" in ''|*[!0-9]*) CI_HOLD_MIN=10 ;; esac
+UNKNOWN_TICKS="${TESTHOST_UNKNOWN_ALERT_TICKS:-3}"
+case "$UNKNOWN_TICKS" in ''|*[!0-9]*|0) UNKNOWN_TICKS=3 ;; esac
 
 log() {
   mkdir -p "$H/logs" 2>/dev/null || return 0
@@ -155,27 +164,66 @@ _th_token() {
   return 1
 }
 
+# THE LOOKUP COMES BEFORE ANY CHECK (BH-6061). The old `command -v flyctl ||
+# return 127` ran before /root/.fly/bin went on PATH, and cron's PATH has no
+# /root/.fly/bin, so from cron every call here returned 127 and every tick read
+# state=unknown for 13 days. fly_bin looks in PATH first, then the install
+# directories, so a stub on PATH is never shadowed by an installed flyctl.
 _th_fly() { # _th_fly <args...> — flyctl, with whatever credential this box has
-  local tok
-  command -v flyctl >/dev/null 2>&1 || return 127
+  local tok bin
+  bin=$(fly_bin) || return 127
   tok=$(_th_token) || tok=""
   if [ -n "$tok" ]; then
-    FLY_ACCESS_TOKEN="$tok" FLY_API_TOKEN="$tok" PATH="/root/.fly/bin:$PATH" flyctl "$@"
+    FLY_ACCESS_TOKEN="$tok" FLY_API_TOKEN="$tok" "$bin" "$@"
   else
-    PATH="/root/.fly/bin:$PATH" flyctl "$@"
+    "$bin" "$@"
   fi
 }
 
+# _th_fail_cause <output> <what failed> — set TH_CAUSE for a flyctl call that
+# failed. The output's first line goes in, cut to 120 characters and with any
+# token shape replaced, because the cause lands in an alert and in the log.
+TH_CAUSE=""
+_th_fail_cause() {
+  local line
+  if ! fly_bin >/dev/null 2>&1; then
+    TH_CAUSE="flyctl not found (PATH, \$HOME/.fly/bin, /root/.fly/bin)"
+    return 0
+  fi
+  line=$(printf '%s\n' "$1" | sed -n '/[^[:space:]]/{p;q;}' \
+    | sed -E 's/FlyV1 [^ ]*/[redacted]/g; s/fm[0-9]_[A-Za-z0-9_-]*/[redacted]/g' | cut -c1-120)
+  if printf '%s' "$1" | grep -qiE 'unauthori|not authenticated|401|access token'; then
+    TH_CAUSE="auth failure: $line"
+  else
+    TH_CAUSE="$2: $line"
+  fi
+}
+
+# _th_machine_load — set MID, rc 1 (TH_CAUSE says why) when the app has none
+# we can see. It sets a global rather than printing so the cause survives;
+# _th_machine is the printing form for callers inside $(…).
 MID=""
-_th_machine() { # print the machine id, rc 1 when the app has none we can see
-  local id
-  [ -n "$MID" ] && { printf '%s' "$MID"; return 0; }
+_th_machine_load() {
+  local id out rc errf
+  [ -n "$MID" ] && return 0
   id=$(_th_get testhost.machine_id) || id=""
   if [ -z "$id" ]; then
-    id=$(_th_fly machine list -a "$APP" --json 2>/dev/null | jq -r '.[0].id // empty' 2>/dev/null)
+    errf=$(mktemp) || errf=/dev/null
+    out=$(_th_fly machine list -a "$APP" --json 2>"$errf"); rc=$?
+    if [ "$rc" != 0 ]; then
+      _th_fail_cause "$(cat "$errf" 2>/dev/null; printf '%s' "$out")" "no machine id: machine list failed"
+      [ "$errf" = /dev/null ] || rm -f "$errf"
+      return 1
+    fi
+    [ "$errf" = /dev/null ] || rm -f "$errf"
+    id=$(printf '%s' "$out" | jq -r '.[0].id // empty' 2>/dev/null)
+    [ -n "$id" ] || { TH_CAUSE="no machine id: $APP lists no machine"; return 1; }
   fi
-  [ -n "$id" ] || return 1
-  MID="$id"; printf '%s' "$id"
+  MID="$id"
+}
+_th_machine() { # print the machine id, rc 1 when the app has none we can see
+  _th_machine_load || return 1
+  printf '%s' "$MID"
 }
 
 # _th_read_state — sets TH_STATE (started|stopped|purged|…|unknown) and
@@ -189,16 +237,20 @@ _th_machine() { # print the machine id, rc 1 when the app has none we can see
 # carries, and the reason that string is matched here. The size the machine
 # really is comes out of the same answer: CPU Kind plus vCPUs is what Fly calls
 # performance-16x.
+#
+# Every unknown sets TH_CAUSE (BH-6061): an unknown with no cause is what let the
+# cron PATH bug run for 13 days as a quiet "nothing to stop".
 TH_STATE=unknown
 OBSERVED_SIZE=""
 _th_read_state() {
   local id out norm kind vcpu state
-  TH_STATE=unknown; OBSERVED_SIZE=""
-  id=$(_th_machine) || return 0
-  out=$(_th_fly machine status "$id" -a "$APP" 2>&1) || return 0
+  TH_STATE=unknown; OBSERVED_SIZE=""; TH_CAUSE=""
+  _th_machine_load || return 0
+  id="$MID"
+  out=$(_th_fly machine status "$id" -a "$APP" 2>&1) || { _th_fail_cause "$out" "API error"; return 0; }
   case "$out" in *"was not found in app"*) TH_STATE=purged; return 0 ;; esac
   state=$(printf '%s\n' "$out" | awk -F': *' '/^State:/{print $2; exit}' | tr -d '[:space:]')
-  [ -n "$state" ] || return 0
+  [ -n "$state" ] || { TH_CAUSE="no State: line in flyctl output"; return 0; }
   TH_STATE="$state"
   norm=$(printf '%s\n' "$out" | sed 's/│/|/g')
   kind=$(printf '%s\n' "$norm" | awk -F'|' '/CPU Kind/{gsub(/[ \t]/,"",$2); print $2; exit}')
@@ -257,12 +309,20 @@ _th_stamp_use() { # rc 0 written, rc 1 the worker did not take it
 # certificate, a machine that answers something unparseable: all rc 2, all no
 # stop. The cost of not stopping is a machine that bills until the next tick
 # succeeds; the cost of stopping wrongly is somebody's drain.
+#
+# _th_busy [<machine-id>]: with an id the probe goes to that machine (the `idle`
+# verb); with none it goes where flyctl picks, which is what the tick has always
+# done.
 BUSY_N=0
 _th_busy() {
-  local out n probe
+  local mid="${1:-}" out n probe
   BUSY_N=0
   probe='/bin/sh -c '"'"'d=$(find /srv/tmp /srv/tmp/runs /srv/runs -mindepth 1 -maxdepth 1 ! -path /srv/tmp/runs ! -path /srv/runs -mmin -'"$BUSY_WINDOW_MIN"' 2>/dev/null | wc -l); p=$(pgrep -fc "[b]ash tests/|[b]ash -s" 2>/dev/null); [ -n "$p" ] || p=0; echo TESTHOST_BUSY $((d+p))'"'"
-  out=$(_th_fly ssh console -a "$APP" -C "$probe" 2>&1) || return 2
+  if [ -n "$mid" ]; then
+    out=$(_th_fly ssh console -a "$APP" --machine "$mid" -C "$probe" </dev/null 2>&1) || return 2
+  else
+    out=$(_th_fly ssh console -a "$APP" -C "$probe" 2>&1) || return 2
+  fi
   n=$(printf '%s\n' "$out" | awk '/^TESTHOST_BUSY /{print $2; exit}')
   case "$n" in ''|*[!0-9]*) return 2 ;; esac
   BUSY_N="$n"
@@ -273,6 +333,49 @@ _th_busy() {
 _th_record_state() { # _th_record_state <state>
   case "$1" in ''|unknown) return 0 ;; esac
   _th_set testhost.machine_state "$1" || return 1
+  return 0
+}
+
+# ── the unknown-state streak (BH-6061) ──────────────────────────────────────
+# A tick that cannot read the machine state stops nothing, which is the safe
+# direction for one tick and a silent bill for many. So the streak is counted in
+# state/testhost-tick/unknown-streak as `<count> <fired 0|1> <cause>`, and at
+# TESTHOST_UNKNOWN_ALERT_TICKS one testhost-state-unknown alert names the cause.
+# The file is box-local on purpose: losing it on a hub-lease move only delays
+# the alert. SEND FIRST, STAMP SECOND, as everywhere in this lane.
+_th_unknown_note() {
+  local f n=0 fired=0 cause="" text
+  f="$H/state/testhost-tick/unknown-streak"
+  [ -f "$f" ] && read -r n fired cause < "$f"
+  case "$n" in ''|*[!0-9]*) n=0 ;; esac
+  case "$fired" in 1) ;; *) fired=0 ;; esac
+  if [ "$TH_STATE" != unknown ]; then
+    [ -f "$f" ] || return 0
+    if [ "$fired" = 1 ]; then
+      if _ci_send_resolve testhost-state-unknown "testhost-tick reads $APP again: state $TH_STATE after $n unknown ticks."; then
+        rm -f "$f"; log "testhost-state-unknown resolved (state $TH_STATE)"
+      else
+        log "could not send the testhost-state-unknown resolve — the streak file stays and the next tick retries"
+      fi
+    else
+      rm -f "$f"
+    fi
+    return 0
+  fi
+  n=$(( n + 1 ))
+  cause="${TH_CAUSE:-no cause recorded}"
+  mkdir -p "$(dirname "$f")" 2>/dev/null
+  printf '%s %s %s\n' "$n" "$fired" "$cause" > "$f" 2>/dev/null || log "could not write $f — the unknown streak is not counted"
+  [ "$fired" = 1 ] && return 0
+  [ "$n" -ge "$UNKNOWN_TICKS" ] || return 0
+  text="testhost-tick read state=unknown for $APP on $n ticks in a row. Cause: $cause. The idle stop cannot run while the state is unknown, so the host can bill with nobody on it. Run bin/testhost-tick.sh state on the hub to check."
+  if _ci_send testhost-state-unknown warn "$text"; then
+    printf '%s 1 %s\n' "$n" "$cause" > "$f" 2>/dev/null \
+      || log "the testhost-state-unknown alert went out but $f was not stamped — the next tick may repeat it (--id dedup catches that)"
+    say "state unknown on $n ticks in a row — alerted (testhost-state-unknown): $cause"
+  else
+    log "the testhost-state-unknown alert did not send — the next tick tries again"
+  fi
   return 0
 }
 
@@ -601,8 +704,9 @@ cmd_tick() {
   _th_read_state
   _th_size_note
   _th_record_state "$TH_STATE" || true
+  _th_unknown_note
   if [ "$TH_STATE" != started ]; then
-    log "state=$TH_STATE idle=${idle}s — nothing to stop"
+    log "state=$TH_STATE idle=${idle}s — nothing to stop${TH_CAUSE:+ ($TH_CAUSE)}"
     return 0
   fi
   if [ "$idle" -lt "$(( IDLE_MIN * 60 ))" ]; then
@@ -656,6 +760,25 @@ cmd_ensure() {
   return 0
 }
 
+# cmd_idle [<machine-id>] — READ-ONLY, for bin/fly-idle-reaper.sh: it stamps
+# nothing and stops nothing. Prints the idle seconds (now - testhost.last_used),
+# 0 when the machine says it is busy, or `unknown` with rc 2 when either witness
+# cannot answer. It needs the same two witnesses as the stop, so the reaper and
+# this tick can never disagree about whether the host is in use.
+cmd_idle() {
+  local mid="${1:-}" lu now idle brc
+  case "$mid" in *[!a-z0-9]*) echo unknown; return 2 ;; esac
+  lu=$(_th_get testhost.last_used) || { echo unknown; return 2; }
+  case "$lu" in ''|*[!0-9]*) echo unknown; return 2 ;; esac
+  _th_busy "$mid"; brc=$?
+  case "$brc" in
+    0) echo 0 ;;
+    1) now=$(date -u '+%s'); idle=$(( now - lu )); [ "$idle" -lt 0 ] && idle=0; echo "$idle" ;;
+    *) echo unknown; return 2 ;;
+  esac
+  return 0
+}
+
 RC=0
 case "$VERB" in
   tick|"")  cmd_tick; RC=$? ;;
@@ -673,8 +796,9 @@ case "$VERB" in
               2) printf 'unknown\n' ;;
               *) printf 'idle\n' ;;
             esac ;;
+  idle)     cmd_idle "${2:-}"; RC=$? ;;
   -h|--help|help)
-    echo "usage: testhost-tick.sh [tick|ensure|used|state]"
+    echo "usage: testhost-tick.sh [tick|ensure|used|state|busy|idle [<machine-id>]]"
     echo "  tick    check the bh-ci runner pool (alert after CI_RUNNERS_ALERT_HOLD_MIN minutes"
     echo "          empty or unreadable), log every started machine's disk (alert above"
     echo "          TESTHOST_DISK_ALERT_PCT), then stop the shared test host once it has been"
@@ -682,7 +806,8 @@ case "$VERB" in
     echo "  ensure  stamp the use and start the host if it is stopped (bin/remote-gate.sh calls this)"
     echo "  used    stamp the use and nothing else"
     echo "  state   print the machine's Fly state, change nothing"
-    echo "  busy    ask the host what is running (run roots + live suites), change nothing" ;;
-  *) echo "testhost-tick: unknown verb '$VERB' (tick|ensure|used|state|busy)" >&2; exit 2 ;;
+    echo "  busy    ask the host what is running (run roots + live suites), change nothing"
+    echo "  idle    print the host's idle seconds (0 = busy), or 'unknown' with rc 2; change nothing" ;;
+  *) echo "testhost-tick: unknown verb '$VERB' (tick|ensure|used|state|busy|idle)" >&2; exit 2 ;;
 esac
 exit "$RC"

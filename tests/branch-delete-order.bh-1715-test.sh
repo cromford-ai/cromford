@@ -281,6 +281,7 @@ grep -q -- '--delete-branch' "$CASE/pr-merge.log" 2>/dev/null && bad "D3: no --d
 vpf_export || exit 1
 S="$T/sw"; mkdir -p "$S/bin/lib/jobs" "$S/bin/lib/mc" "$S/logs" "$S/state" "$S/flags" "$S/locks" "$S/env" "$S/tmp" "$S/fakebin"
 cp "$DIR/bin/merge-sweep.sh" "$S/bin/sweep.sh"
+mkdir -p "$S/bin/lib" && cp -rL "$DIR/bin/lib/ms" "$S/bin/lib/" || exit 1   # BH-5242: the sweep loads bin/lib/ms/
 cp "$DIR/bin/jobs-client.sh" "$DIR/bin/fleet-conf.sh" "$S/bin/"
 cp "$DIR"/bin/lib/jobs/*.sh "$S/bin/lib/jobs/"; cp "$DIR"/bin/lib/mc/*.sh "$S/bin/lib/mc/"
 cp "$DIR/bin/lib/gh-pr-list.sh" "$DIR/bin/lib/merge-conductor-lib.sh" "$DIR/bin/lib/gh-rest.sh" "$DIR/bin/lib/gh-rest-var.sh" \

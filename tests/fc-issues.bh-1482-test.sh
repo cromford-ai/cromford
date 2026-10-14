@@ -64,14 +64,14 @@ case "$1 $2" in
     ISSUE="$3"
     # The parent's labels — both the inheritance read (BH-637) and the
     # complete-rerun re-park read (BH-1482) ask for this shape.
-    if printf '%s' "$*" | grep -qF -- '--json labels'; then
+    if grep -qF -- '--json labels' <<<"$*"; then
       PLJ="${PARENT_LABELS_JSON:-}"
       [ -n "$PLJ" ] || PLJ='{"labels":[]}'
       printf '%s\n' "$PLJ"
       exit 0
     fi
     # The real gh -q flag extracts a field from the JSON; simulate it.
-    if printf '%s' "$*" | grep -qF '.title'; then
+    if grep -qF '.title' <<<"$*"; then
       case "$ISSUE" in
         701) printf '%s\n' "$TITLE0" ;;
         702) printf '%s\n' "$TITLE1" ;;

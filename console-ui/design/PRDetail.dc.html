@@ -71,9 +71,9 @@
       </div>
       <div style="display: flex; flex-direction: column; gap: 12px; padding: 18px 20px; border: 1px solid #16241A; border-radius: 2px; background: #090F0A; flex-grow: 1; min-height: 0; overflow: hidden; font-size: 11.5px; line-height: 1.75; color: #A8C0AD">
         <span style="font-size: 13px; font-weight: 700; color: #E8F5E8"># Plan — TK-207 Vendor 1099 threshold report</span>
-        <span><span style="color: #6E8F77">## Scope</span> — New report page /reports/1099 listing vendors crossing the $N threshold per project-2 year, CSV export, drill to vendor detail. DB-driven threshold (Setting row, code fallback 600).</span>
+        <span><span style="color: #6E8F77">## Scope</span> — New report page /reports/1099 listing vendors crossing the $600 threshold per project-2 year, CSV export, drill to vendor detail. DB-driven threshold (Setting row, code fallback 600).</span>
         <span><span style="color: #6E8F77">## Files</span> — src/app/reports/1099/page.tsx (new) · src/lib/reports/vendor-1099.ts (new) · src/app/api/reports/1099/route.ts (new) · prisma additive: Setting seed row</span>
-        <span><span style="color: #6E8F77">## Acceptance tests</span> — tests/reports/vendor-1099.test.ts: threshold boundary at exactly $N · multi-entity vendor rollup · excluded vendor types · CSV column parity with screen</span>
+        <span><span style="color: #6E8F77">## Acceptance tests</span> — tests/reports/vendor-1099.test.ts: threshold boundary at exactly $600 · multi-entity vendor rollup · excluded vendor types · CSV column parity with screen</span>
         <span style="color: #4E6B55">## Edge cases — voided payments excluded · vendors paid across entities counted per-entity · …</span>
         <span style="color: #2B3D30">─ ─ ─ 48KB window · open full file on box ─ ─ ─</span>
       </div>

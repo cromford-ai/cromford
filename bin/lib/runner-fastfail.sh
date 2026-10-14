@@ -35,7 +35,7 @@ _rff_int() { # _rff_int <value> <default> — the value when it is a whole numbe
 }
 _rff_cooldown() { _rff_int "${RUNNER_FASTFAIL_COOLDOWN_S:-}" 1800; }
 _rff_fast_s()   { local s; s=$(_rff_int "${RUNNER_FASTFAIL_S:-}" 5); [ "$s" -gt 0 ] || s=5; echo "$s"; }
-_rff_name_ok()  { printf '%s' "${1:-}" | grep -Eq '^[a-z0-9_-]+$'; }
+_rff_name_ok()  { grep -Eq '^[a-z0-9_-]+$' <<<"${1:-}"; }
 _rff_file()     { printf '%s/state/runner-fastfail/%s' "$1" "$2"; }
 _rff_field() { # _rff_field <file> <name> — one key=value field of the marker
   [ -r "$1" ] || return 0

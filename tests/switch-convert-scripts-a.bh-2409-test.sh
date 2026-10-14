@@ -97,7 +97,7 @@ past_pr_url_reconcile_off() { [ -e "$SWF_ROOT/locks/pr-url-reconcile.lock" ]; }
 # S6 remediate-agent.sh — no flags/remediation-agent-enabled, so past the switch
 # it stops on `tier-2 remediator is not enabled`; honoured it prints the kill line.
 go_remediation_disabled()  { run remediate-agent.sh some-akey; }
-past_remediation_disabled() { [ "$RC" = 1 ] && printf '%s' "$OUT" | grep -q 'tier-2 remediator is not enabled'; }
+past_remediation_disabled() { [ "$RC" = 1 ] && grep -q 'tier-2 remediator is not enabled' <<<"$OUT"; }
 
 for n in $NAMES; do
   fn=${n//-/_}

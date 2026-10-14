@@ -4,6 +4,7 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { DatabaseSync } from 'node:sqlite';
 import worker from '../src/index.js';
+import { jobsSchemaSql } from './lib/jobs-schema.js';
 
 // BH-3849 — with human_verdict_mode=enforce, a source=human row recorded with
 // only the lead token (auth='lead-token', written while the mode was shadow) no
@@ -14,7 +15,7 @@ import worker from '../src/index.js';
 const SECRET = 'test-secret';
 const LEAD = 'lead-test-token';
 const HUMAN = 'human-test-token';
-const SCHEMA = readFileSync(fileURLToPath(new URL('../schema.sql', import.meta.url)), 'utf8');
+const SCHEMA = jobsSchemaSql();
 const MODE_SQL = /FROM settings WHERE key='human_verdict_mode'/;
 // BH-3846 reads the mode through protectedMode: one SELECT, key bound as ?1.
 const PROTECTED_SQL = /FROM settings WHERE key IN \(\?1, \?2\)/;

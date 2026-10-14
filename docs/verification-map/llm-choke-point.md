@@ -12,7 +12,7 @@ cap is compared against).
 calls are used and make sure we monitor them for costs and operations and
 pathway … all LLM costs must be gated in a way we can see the costs and control
 the pathway and the operation."* That morning `bin/alert-triage.sh` had spent
-$N in twelve hours by descending a ladder that costs ~100x the standing lane
+$793 in twelve hours by descending a ladder that costs ~100x the standing lane
 (grok cliff → codex → Fable over OpenRouter), and nothing in the fleet could
 have stopped it before the money was gone: no per-lane pathway control, no daily
 ceiling that runs before the call, and refusals indistinguishable from billed
@@ -48,7 +48,7 @@ calling `codex exec` and `grok -p` with a 1800s timeout and no cost row at all.
    caught the alternative: matching `filter == null OR filter == project` in one
    pass made `run-triage` collide with all three filtered triage lanes, so
    `lane.alert-triage.llm_usd_cap_day` was a row nothing ever read and nothing
-   logged it — the cap on the lane that spent the $N silently never firing.
+   logged it — the cap on the lane that spent the $793, silently never firing.
 4. **Unset is unlimited.** `LLM_LANE_ENABLED` defaults to 1, `LLM_RUNNER_ALLOWED`
    to empty (every rung — today's ladder), `LLM_USD_CAP_DAY` to 0. A fleet with
    no settings rows behaves byte-for-byte as it did before this landed, and the
@@ -130,7 +130,7 @@ calling `codex exec` and `grok -p` with a 1800s timeout and no cost row at all.
   A cap set to stop a runaway will therefore stop it up to ten minutes and
   ~$11 late, not instantly. Reading the local rows after the push cursor would
   close it, and is deliberately NOT done here: a cap that reads one box's own
-  file is the bug `tests/llm-gate-test.sh` case 5 exists to pin (a $N local
+  file is the bug `tests/llm-gate-test.sh` case 5 exists to pin (a $900 local
   row must not refuse a fleet day that cost $0.20). The real close is a
   push-on-write or a shorter cadence, in phase 3.
 - **`LLM_RUNNER_ALLOWED` is per LANE, with the same sharing caveat as the cap.**

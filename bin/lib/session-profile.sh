@@ -210,7 +210,7 @@ session_profile_build() {
   #    the fleet rules).
   local ss="${SESSION_PROFILE_SETTING_SOURCES:-}"
   if [ -n "$ss" ]; then
-    if printf '%s' "$ss" | grep -qE '^(user|project|local)(,(user|project|local))*$'; then
+    if grep -qE '^(user|project|local)(,(user|project|local))*$' <<<"$ss"; then
       SP_ARGS+=(--setting-sources "$ss")
     else
       _sp_log "$st: SESSION_PROFILE_SETTING_SOURCES '$ss' is not a user/project/local list — not passed"

@@ -1,0 +1,68 @@
+{
+  "libs": [
+    {
+      "id": "reopen-reason",
+      "file": "bin/lib/reopen-reason.sh",
+      "note": "BH-6159. The reopen lane (bin/reopen-metrics.sh) saves the comments posted around each reopen as the ledger row reopen_reason/\"<project> <key>\" (saved | no-comment | unreadable), mirrored in state/reopen-reasons/<project>/<key>.json on the hub. The build plan prompt (bin/lib/rb/plan.sh), the triage prompt (bin/run-triage.sh) and the weekly lookback summary read it. Fails open.",
+      "knobs": [
+        {
+          "env": "REOPEN_REASON",
+          "type": "int",
+          "default": 1,
+          "min": 0,
+          "max": 1,
+          "zero_means": "off",
+          "required": false,
+          "note": "1 = the reopen lane reads the board thread around each reopen and saves it, and the plan and triage prompts carry it. 0 = no board read, no row written or read, no prompt text; the weekly lookback count of reopens stays."
+        },
+        {
+          "env": "REOPEN_REASON_WINDOW_H",
+          "type": "int",
+          "default": 24,
+          "min": 1,
+          "max": 168,
+          "required": false,
+          "note": "Hours before and after the status-change activity in which a comment counts as the reopen reason. A board with no activity feed uses the reopen day plus and minus one day."
+        },
+        {
+          "env": "REOPEN_REASON_MAX_COMMENTS",
+          "type": "int",
+          "default": 5,
+          "min": 1,
+          "max": 20,
+          "required": false,
+          "note": "The newest comments in the window that are saved. The row is cut to 3800 bytes by dropping the oldest comment first."
+        },
+        {
+          "env": "REOPEN_REASON_MAX_PER_RUN",
+          "type": "int",
+          "default": 20,
+          "min": 0,
+          "max": 500,
+          "zero_means": "no board reads this run",
+          "required": false,
+          "note": "Board reads per reopen-lane run, fleet-wide. Rows over the cap are left for the next run and counted in the run line."
+        },
+        {
+          "env": "REOPEN_REASON_MAX_AGE_D",
+          "type": "int",
+          "default": 30,
+          "min": 1,
+          "max": 365,
+          "required": false,
+          "note": "A saved reason older than this many days is not put into the build plan prompt."
+        },
+        {
+          "env": "REOPEN_REASON_TRIAGE_CACHE_S",
+          "type": "int",
+          "default": 3600,
+          "min": 0,
+          "max": 86400,
+          "zero_means": "no cache",
+          "required": false,
+          "note": "Seconds the triage note is reused from state/reopen-reasons/triage-<project>.txt before the ledger is read again. On a failed read a cache under 24 h is used."
+        }
+      ]
+    }
+  ]
+}

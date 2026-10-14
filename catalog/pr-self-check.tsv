@@ -23,8 +23,11 @@
 closes-not-met	refuse	-	"Closes/Fixes/Resolves #N" while an acceptance item is marked not met (- [ ], "not met", REFUTED)
 evidence-head	refuse	docs/notes/*,docs/verification-map/entries/*,.harness/specs/*	an evidence sha in the body that is not the head, or an ancestor whose PR files changed after it
 plan-files	refuse	docs/notes/*,docs/verification-map/entries/*,.harness/specs/*,tests/mc/expected-map.d/*	a diff file the plan's "Files to touch" does not name, with no line under "## Files outside the plan"
+test-ownership	refuse	-	an edit to another ticket's test file (tests/*.<other-key>-test.sh) with no TEST-CHANGE: line naming it and the premise (BH-6392, D51)
+foreign-commits	refuse	-	a first-parent commit whose subject leads with another ticket's key, on a PR not based on that ticket's branch and not STACKED_WAIT (BH-6394, D66)
 body-why	refuse	always	a `## Why` section that says why the change exists	section=^#+[[:space:]]+why
 body-acceptance	refuse	always	an acceptance-test section or a gate table	section=^#+[[:space:]]+.*(acceptance|gate|evidence|verification);table
 body-mutation	note	added=tests/*-test.sh,tests/*.test.*,tests/*/*-test.sh	mutation or red-first evidence for each new test suite	line=mutation|red[- ]first|red on|went red|[0-9]+ (passed|pass), [0-9]+ fail|fail(s|ed)? (first|before)
-body-d1	note	touched=bin/merge-conductor.sh,bin/lib/mc/*,bin/merge-sweep.sh,bin/pr-owner-sweep.sh,bin/lib/pr-owner/*,bin/lead-review-land.sh,bin/lib/ticket-ownership.sh,bin/lib/merge-conductor-lib.sh,.mergify.yml;knob	a D1 / kill-knob callout: what turns this off with no deploy	line=kill[- ]?(switch|knob)|D1[^A-Za-z0-9]+(call-?out|kill)
+body-schema-stamp	note	added=worker/*/schema.d/[0-9][0-9][0-9][0-9]-*.sql	a line saying why a new schema.d fragment uses a picked NNNN number: a new fragment should be <yyyymmddhhmm>-<ticket-key>-<name>.sql, which no other build can collide with (BH-5788; a follow-up turns this note into a refusal once the open NNNN PRs drain)	line=picked NNNN|NNNN number
+body-d1	note	touched=bin/merge-conductor.sh,bin/lib/mc/*,bin/merge-sweep.sh,bin/lib/ms/*,bin/pr-owner-sweep.sh,bin/lib/pr-owner/*,bin/lead-review-land.sh,bin/lib/ticket-ownership.sh,bin/lib/merge-conductor-lib.sh,.mergify.yml;knob	a D1 / kill-knob callout: what turns this off with no deploy	line=kill[- ]?(switch|knob)|D1[^A-Za-z0-9]+(call-?out|kill)
 body-live-probe	refuse	ticket=probe	the live probe output the ticket names	section=probe;line=probe.*rc=|rc=[0-9]+

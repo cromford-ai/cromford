@@ -4,6 +4,7 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import worker from '../src/index.js';
 import { shapeLaneDedup } from '../src/lib/lane-dedup.js';
+import { jobsSchemaSql } from './lib/jobs-schema.js';
 
 // BH-2669 (BH-2537 slice 3): GET /api/metrics/lane-dedup aggregates cost_rows
 // into calls per distinct input (guard_fp), ticket and PR for each lane. Driven
@@ -12,7 +13,7 @@ import { shapeLaneDedup } from '../src/lib/lane-dedup.js';
 // alone); rows are seeded through POST /api/metrics/cost-rows.
 
 const SECRET = 'test-secret';
-const SCHEMA = readFileSync(fileURLToPath(new URL('../schema.sql', import.meta.url)), 'utf8');
+const SCHEMA = jobsSchemaSql();
 let DatabaseSync = null;
 try { ({ DatabaseSync } = await import('node:sqlite')); } catch { DatabaseSync = null; }
 

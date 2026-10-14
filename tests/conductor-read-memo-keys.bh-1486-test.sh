@@ -203,7 +203,7 @@ EOF
   chmod +x "$T/fakebin/git"
 }
 mk_git "$BASESHA"
-REC="$T/h/builds/demo-os-AIO-43-202609220001"; mkdir -p "$REC"
+REC="$T/h/builds/demo-os-TK-43-202609220001"; mkdir -p "$REC"
 echo "PR_CREATED https://github.com/example-org/demo-os/pull/43" > "$REC/RESULT"
 printf 'findings\nTIER: 2\nVERDICT: APPROVE\n' > "$REC/review.md"
 echo "$H1" > "$REC/reviewed-sha"
@@ -216,11 +216,11 @@ case "\$*" in
   *"/pulls/43/files"*) restpr --raw 200 '[]' ;;
   *"api -i -X GET repos/example-org/demo-os/pulls/43"*"v3.diff"*) restpr --diff ;;
   *"api -i -X GET repos/example-org/demo-os/pulls/43"*)
-    restpr OPEN "$H1" ticket/aio-43 main "" MERGEABLE CLEAN app/cromford "" ;;
+    restpr OPEN "$H1" ticket/TK-43 main "" MERGEABLE CLEAN app/cromford "" ;;
   *"api -i -X GET repos/example-org/demo-os/pulls -f state=all"*) restpr --raw 200 '[]' ;;
   *"pr list -R example-org/demo-os --state open"*)
     cat <<J
-[{"number":43,"url":"https://github.com/example-org/demo-os/pull/43","headRefOid":"$H1","headRefName":"ticket/aio-43","isDraft":false,"mergeStateStatus":"CLEAN","mergeable":"MERGEABLE","state":"OPEN","labels":[],"baseRefName":"main","updatedAt":"2026-09-22T10:00:00Z"}]
+[{"number":43,"url":"https://github.com/example-org/demo-os/pull/43","headRefOid":"$H1","headRefName":"ticket/TK-43","isDraft":false,"mergeStateStatus":"CLEAN","mergeable":"MERGEABLE","state":"OPEN","labels":[],"baseRefName":"main","updatedAt":"2026-09-22T10:00:00Z"}]
 J
     ;;
   *"pr list"*) echo "[]" ;;

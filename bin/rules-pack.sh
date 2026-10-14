@@ -221,9 +221,10 @@ done
 
 # rp_lanes_render <dir> — route-fragments reads the git-ignored
 # catalog/lanes.json, which a snapshot or an archive never carries, and the
-# catalog/llm-sites.json composed from catalog/llm-sites.d/ (BH-4987). A tree
-# with no llm-sites.d/ still commits that file and needs no compose. Both
-# renders run THIS checkout's trusted script against <dir>, never <dir>'s own
+# catalog/llm-sites.json composed from catalog/llm-sites.d/ (BH-4987), and the
+# catalog/context-budgets.json composed from catalog/context-budgets.d/
+# (BH-6487). A tree with no .d/ directory still commits that file and needs no
+# compose. All three renders run THIS checkout's trusted script against <dir>, never <dir>'s own
 # copy: <dir> is the judged PR head, and this runs as root outside the nobody
 # sandbox.
 rp_lanes_render() {
@@ -231,13 +232,17 @@ rp_lanes_render() {
     [ -x "$ROOT/bin/llm-sites-build.sh" ] || return 1
     "$ROOT/bin/llm-sites-build.sh" --repo "$1" --compose >>"$W/lanes-render.log" 2>&1 || return 1
   fi
+  if [ -d "$1/catalog/context-budgets.d" ] && [ ! -e "$1/catalog/context-budgets.json" ]; then
+    [ -x "$ROOT/bin/context-budgets-build.sh" ] || return 1
+    "$ROOT/bin/context-budgets-build.sh" --repo "$1" --compose >>"$W/lanes-render.log" 2>&1 || return 1
+  fi
   [ -e "$1/catalog/lanes.json" ] && return 0
   [ -x "$ROOT/bin/lanes-build.sh" ] || return 1
   "$ROOT/bin/lanes-build.sh" --root "$1" --write >>"$W/lanes-render.log" 2>&1
 }
 case " ${SEL[*]} " in *" route-fragments "*)
   if [ -z "${CNR_WHY[route-fragments]:-}" ] && ! rp_lanes_render "$RUN_DIR"; then
-    CNR_WHY[route-fragments]="bin/lanes-build.sh could not render catalog/lanes.json, or bin/llm-sites-build.sh could not compose catalog/llm-sites.json"
+    CNR_WHY[route-fragments]="bin/lanes-build.sh could not render catalog/lanes.json, bin/llm-sites-build.sh could not compose catalog/llm-sites.json, or bin/context-budgets-build.sh could not compose catalog/context-budgets.json"
   fi ;;
 esac
 for id in "${SEL[@]}"; do

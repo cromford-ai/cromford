@@ -211,7 +211,7 @@ fanin_alerts() { grep -F 'FANIN' "$T/c-alerts.txt"; }
 # C1 — a healthy tick: 4 PRs, one a draft.
 ctick
 L=$(fanin_lines)
-[ "$(printf '%s\n' "$L" | grep -c .)" = 1 ] && grep -q 'FANIN merge-conductor example-org/demo-os: enumerated 4 accounted 4 (' <<<"$L" \
+[ "$(grep -c . <<<"$L")" = 1 ] && grep -q 'FANIN merge-conductor example-org/demo-os: enumerated 4 accounted 4 (' <<<"$L" \
   && ok || bad "C1: one tick = exactly one 'FANIN merge-conductor example-org/demo-os: enumerated 4 accounted 4' line (got: ${L:-none}; stderr: $(tail -3 "$T/tick.err"))"
 grep -q 'skipped:draft 1' <<<"$L" && ok || bad "C1: the draft #16 is accounted skipped:draft (got: $L)"
 # ...and the UNVERIFIABLE early return is accounted with its reason
@@ -327,7 +327,7 @@ rfanin() { grep -F 'FANIN reconcile-prs' "$RLOG" 2>/dev/null; }
 # R1 + R4 — one line; every row accounted with its outcome.
 rtick
 L=$(rfanin)
-[ "$(printf '%s\n' "$L" | grep -c .)" = 1 ] && grep -q 'FANIN reconcile-prs fleet: enumerated 8 accounted 8 (' <<<"$L" \
+[ "$(grep -c . <<<"$L")" = 1 ] && grep -q 'FANIN reconcile-prs fleet: enumerated 8 accounted 8 (' <<<"$L" \
   && ok || bad "R1: exactly one 'FANIN reconcile-prs fleet: enumerated 8 accounted 8' line (got: ${L:-none}; stderr: $(tail -3 "$T/r.err"))"
 for o in 'merged 1' 'closed 1' 'skipped:open 1' 'skipped:no-url 1' 'skipped:unread 1' 'skipped:closed-unsettled 1'; do
   grep -qF "$o" <<<"$L" && ok || bad "R1: outcome '$o' in the tally (got: $L)"

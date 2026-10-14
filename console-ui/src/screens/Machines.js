@@ -8,12 +8,27 @@ import { agoFromMinutes, healthFromAge, minutesFromPingText, minutesSince, snaps
 import { Section, Skeleton, Empty, ErrorBox, healthColor, Legend } from '../ui/primitives.js';
 import { flyMachines, flyOrphans, flyProjectProps, flyUnreadableReason } from '../lib/fly.js';
 import { SortableTable } from '../ui/SortableTable.js';
+import { FlyIdlePanel } from './FlyIdlePanel.js';
 import { Dot } from '../ui/icons.js';
 import { useConfirm } from '../ui/Modal.js';
 import { PauseReasonForm } from '../ui/PauseForms.js';
 import { COMMAND_LABELS, flyAppFor, flyDestroyText, flyStopText, requestBoxCommand, shapeBoxCommands } from '../lib/box-commands.js';
+import { QUOTE_POLL, detailView, failTag } from '../lib/box-op-detail.js';
+import { orgoBoxIds, orgoStateFor, orgoAccounts, shapeOrgoComputers, specsText, specsSortKey, flyOnPool } from '../lib/orgo-state.js';
+import { FlyPoolControls, LaunchBoxSection, runLaunch, runResize, runRetire } from '../ui/BoxOpForms.js';
 
-export function MachinesScreen() {
+// BH-5750: the three box ops whose dialogs are more than a reason form.
+const OWN_FLOWS = { orgo_resize_quote: runResize, orgo_retire: runRetire, orgo_launch_quote: runLaunch };
+
+// The Orgo read for the ORGO STATE column. A 404/503 is a route not deployed
+// (or a table not applied): "not available", which is not "no data" (D23).
+const readOrgo = () => api.orgoComputers().then(shapeOrgoComputers).catch((e) => {
+  if (e && (e.status === 404 || e.status === 503)) return { unavailable: true, reason: e.message };
+  throw e;
+});
+
+// `quotePoll` overrides QUOTE_POLL (5 s, 180 s); only a test passes it.
+export function MachinesScreen({ quotePoll } = {}) {
   const m = useApi(() => api.machines(), [], { intervalMs: 30000 });
   const data = m.data || {};
   const boxes = data.boxes || {};
@@ -21,6 +36,8 @@ export function MachinesScreen() {
   const flyErrors = data.fly_errors || [];
   const boxFilter = useSearchParam('box');
   const cmds = useApi(() => api.boxCommands(boxFilter || undefined).then((p) => shapeBoxCommands(p)), [boxFilter], { intervalMs: 30000 });
+  const orgoRead = useApi(readOrgo, [], { intervalMs: 60000 });
+  const orgo = orgoRead.data || (orgoRead.error ? { error: orgoRead.error.message || String(orgoRead.error) } : null);
   const [dialog, confirm] = useConfirm();
   const [banner, setBanner] = useState(null);
   const reloadCmds = cmds.reload;
@@ -29,7 +46,10 @@ export function MachinesScreen() {
   // banner. The request is only ever queued here; the box's lane runs it.
   const boxOp = useCallback(async (type, ctx, text, tone) => {
     const label = COMMAND_LABELS[type];
-    const res = await requestBoxCommand(type, ctx, {
+    const own = OWN_FLOWS[type];
+    const res = own ? await own(ctx, {
+      confirm, post: api.boxCommand, list: () => api.boxCommands('hub'), poll: quotePoll || QUOTE_POLL
+    }) : await requestBoxCommand(type, ctx, {
       ask: (form) => confirm({
         title: label, confirmLabel: label, tone, confirmBlocked: true,
         body: ({ setBlocked }) => html`<${PauseReasonForm} text=${text} value=${form} onBlocked=${setBlocked}/>`
@@ -39,7 +59,7 @@ export function MachinesScreen() {
     if (!res) return;
     setBanner(res);
     reloadCmds();
-  }, [confirm, reloadCmds]);
+  }, [confirm, reloadCmds, quotePoll]);
 
   // BH-4993: the boxes' health in words, the Fleet headline's own rule.
   const mh = fleetHeadline({ boxes: m.data ? boxes : null });
@@ -70,12 +90,14 @@ export function MachinesScreen() {
             ? `watchdog unreachable — ${data.watchdog_error}`
             : 'liveness from the watchdog worker, which survives the hub going down'}>
           ${boxRows.length
-            ? html`<${BoxesTable} rows=${boxRows} onAction=${boxOp}/>`
+            ? html`<${BoxesTable} rows=${boxRows} onAction=${boxOp} orgo=${orgo}/>`
             : html`<${Empty} title="no box pings"
                 note=${data.watchdog_error
                   ? `The watchdog did not answer (${data.watchdog_error}), so box liveness is unknown — not necessarily bad.`
                   : 'The watchdog answered but knows of no boxes yet.'} />`}
         <//>
+
+        <${LaunchBoxSection} accounts=${orgoAccounts(orgo)} onAction=${boxOp} />
 
         ${flyProjectProps(data).map((p) => html`
           <${FlyProject} key=${p.project} ...${p} onAction=${boxOp} />`)}
@@ -98,6 +120,7 @@ export function MachinesScreen() {
           : null}
       ` : null}
 
+      <${FlyIdlePanel}/>
       <${BoxCommandsSection} state=${cmds} box=${boxFilter}/>
       ${dialog}
     </div>`;
@@ -117,7 +140,16 @@ export const BOX_STATE_LEGEND = [
 
 // The ORGO BOXES table and what its STATE column means. Exported so a render
 // test can drive it; the screen keeps the empty branch.
-export function BoxesTable({ rows: boxRows, onAction }) {
+// BH-5750: `orgo` is the Orgo read (shapeOrgoComputers' output, or
+// { unavailable } / { error } / null while loading) behind ORGO STATE and
+// SPECS. Each row's Orgo box id comes from its name (orgoBoxIds); the hub and
+// a row with no id get no Orgo buttons.
+export function BoxesTable({ rows: rawRows, onAction, orgo = null }) {
+  const ids = orgoBoxIds(rawRows.map((r) => r.name));
+  const accounts = orgoAccounts(orgo);
+  const now = Date.now();
+  const boxRows = rawRows.map((r) => ({ ...r, orgoId: ids[r.name], orgoState: orgoStateFor(r.name, orgo, now) }));
+  const orgoIds = boxRows.map((r) => r.orgoId).filter((id) => id && id !== 'hub');
   return html`
             <${SortableTable}
                 columns=${[
@@ -144,7 +176,21 @@ export function BoxesTable({ rows: boxRows, onAction }) {
                       </span>`;
                     }
                   },
-                  { key: 'actions', label: 'ACTIONS', sort: null, cell: (r) => html`<${BoxActions} box=${r.name} onAction=${onAction}/>` }
+                  {
+                    key: 'orgo', label: 'ORGO STATE', sort: (r) => r.orgoState.text,
+                    cell: (r) => html`<span style="overflow-wrap:normal" class=${r.orgoState.tone ? `tag tag--${r.orgoState.tone}` : 'tag'}
+                      title=${r.orgoState.computer ? `Orgo ${r.orgoState.computer.orgo_id} on ${r.orgoState.computer.account || 'no account'}` : undefined}>${r.orgoState.text}</span>`
+                  },
+                  {
+                    key: 'specs', label: 'SPECS', sort: (r) => specsSortKey(r.orgoState.computer),
+                    cell: (r) => html`<span>${specsText(r.orgoState.computer) || '—'}</span>`
+                  },
+                  {
+                    key: 'actions', label: 'ACTIONS', sort: null,
+                    cell: (r) => html`<${BoxActions} box=${r.name} orgoId=${r.orgoId} onAction=${onAction}
+                      account=${r.orgoState.computer ? r.orgoState.computer.account : null} accounts=${accounts}
+                      others=${orgoIds.filter((id) => id !== r.orgoId)}/>`
+                  }
                 ]}
                 rows=${boxRows}
                 rowKey=${(r) => r.name}
@@ -153,14 +199,27 @@ export function BoxesTable({ rows: boxRows, onAction }) {
 }
 
 // The ORGO BOXES actions cell. Each button asks for one command on this box.
-export function BoxActions({ box, onAction }) {
+// BH-5750: a row with an Orgo box id that is not the hub also gets RESTART,
+// RESIZE, STOP and RETIRE. The hub runs them, so they are queued for 'hub'.
+export function BoxActions({ box, orgoId, account, accounts, others, onAction }) {
   const ask = (type) => () => onAction(type, { box },
     `Run ${COMMAND_LABELS[type]} on ${box}? It is queued for that box's box-ops lane.`, 'warn');
+  const orgo = typeof orgoId === 'string' && orgoId !== 'hub';
+  const ctx = { box: orgoId, account: account || undefined };
   return html`
     <span style=${ACTIONS_STYLE}>
       <button class="btn btn--sm" type="button" onClick=${ask('backup_now')}>BACKUP NOW</button>
       <button class="btn btn--sm" type="button" onClick=${ask('harness_sync')}>SYNC</button>
       <button class="btn btn--sm" type="button" onClick=${ask('cli_update')}>CLI UPDATE</button>
+      ${orgo ? html`
+        <button class="btn btn--sm" type="button"
+          onClick=${() => onAction('orgo_restart', ctx, `Restart Orgo box ${orgoId} (${box})? It is queued for the hub's box-ops lane. It costs nothing.`, 'warn')}>RESTART</button>
+        <button class="btn btn--sm" type="button"
+          onClick=${() => onAction('orgo_resize_quote', { ...ctx, accounts })}>RESIZE</button>
+        <button class="btn btn--sm btn--warn" type="button"
+          onClick=${() => onAction('orgo_stop', ctx, `Stop Orgo box ${orgoId} (${box})? Its lanes pause first. The stop never lifts that pause; the BOX COMMANDS row shows the NEXT step.`, 'warn')}>STOP</button>
+        <button class="btn btn--sm btn--danger" type="button"
+          onClick=${() => onAction('orgo_retire', { box: orgoId, others: others || [] })}>RETIRE</button>` : null}
     </span>`;
 }
 
@@ -206,7 +265,12 @@ export function BoxCommandsSection({ state, box }) {
             { key: 'target', label: 'TARGET', sort: (r) => r.target, cell: (r) => html`<span>${r.target || '—'}</span>` },
             {
               key: 'status', label: 'STATUS', sort: (r) => r.statusRank,
-              cell: (r) => html`<span class=${STATUS_TAG[r.status] || 'tag tag--warn'}>${(r.status || 'unknown').toUpperCase()}</span>`
+              cell: (r) => {
+                const why = failTag(r);
+                return why
+                  ? html`<span class="tag tag--warn">${why}</span>`
+                  : html`<span class=${STATUS_TAG[r.status] || 'tag tag--warn'}>${(r.status || 'unknown').toUpperCase()}</span>`;
+              }
             },
             { key: 'reason', label: 'REASON', sort: (r) => r.reason, flex: true, cell: (r) => html`<span>${r.reason || '—'}</span>` },
             { key: 'by', label: 'BY', sort: (r) => r.requested_by, cell: (r) => html`<span>${r.requested_by || '—'}</span>` },
@@ -214,7 +278,7 @@ export function BoxCommandsSection({ state, box }) {
               key: 'age', label: 'AGE', sort: (r) => r.ageMin,
               cell: (r) => r.ageMin === null ? html`<span class="na">—</span>` : html`<span>${agoFromMinutes(r.ageMin)}</span>`
             },
-            { key: 'detail', label: 'DETAIL', sort: null, cell: (r) => html`<span>${r.detail || '—'}</span>` }
+            { key: 'detail', label: 'DETAIL', sort: null, cell: (r) => html`<${DetailCell} detail=${r.detail}/>` }
           ]}
           rows=${data.rows}
           rowKey=${(r) => r.id}
@@ -226,6 +290,18 @@ export function BoxCommandsSection({ state, box }) {
             <span>showing the newest ${data.rows.length}; older commands are not listed</span>
           </div>` : null}` : null}
     <//>`;
+}
+
+// BH-5750: a DETAIL cell. Each NEXT: field (the step a stop leaves for a
+// human) is its own line in its own <code> block; the rest reads as one line.
+function DetailCell({ detail }) {
+  const v = detailView(detail);
+  if (!v.text.length && !v.next.length) return html`<span>—</span>`;
+  return html`
+    <span style="display:flex;flex-direction:column;gap:4px;min-width:0">
+      ${v.text.length ? html`<span>${v.text.join(' | ')}</span>` : null}
+      ${v.next.map((n, i) => html`<code key=${i} style="display:block;white-space:pre-wrap;overflow-wrap:anywhere">${n}</code>`)}
+    </span>`;
 }
 
 export function FlyProject({ project, fly, flyErrors, onAction }) {
@@ -274,5 +350,6 @@ export function FlyProject({ project, fly, flyErrors, onAction }) {
             ${orphans.map((o) => o.key || o.ticket_id).join(', ')} building, but Fly no longer returns that machine.
             It was destroyed between the beat and now; without this line the build would vanish silently mid-flight.</span>
         </div>` : null}
+      <${FlyPoolControls} project=${project} onPool=${flyOnPool(project, fly)} onAction=${onAction} />
     <//>`;
 }

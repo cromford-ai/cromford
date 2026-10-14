@@ -97,9 +97,9 @@ cp "$DIR/tests/gh-graphql-reads-allowlist.tsv" "$T/mut.tsv"
 sed -i 's|^[0-9]* bin/review-rescue\.sh$|3 bin/review-rescue.sh|' "$T/mut.tsv"
 echo '1 bin/lib/fc-issues.sh' >> "$T/mut.tsv"
 Z=$(zero_grant "$T/mut.tsv")
-printf '%s\n' "$Z" | grep -q '^Z2 bin/review-rescue.sh granted 3,' && ok \
+grep -q '^Z2 bin/review-rescue.sh granted 3,' <<<"$Z" && ok \
   || bad "Z3 mutation: raising bin/review-rescue.sh to 3 did not fire Z2: ${Z:-<none>}"
-printf '%s\n' "$Z" | grep -q '^Z2 bin/lib/fc-issues.sh granted 1,' && ok \
+grep -q '^Z2 bin/lib/fc-issues.sh granted 1,' <<<"$Z" && ok \
   || bad "Z3 mutation: granting bin/lib/fc-issues.sh 1 did not fire Z2: ${Z:-<none>}"
 
 echo "gh-graphql-issue-verbs: $PASS passed, $FAIL failed"

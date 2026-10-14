@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url';
 import { openDb } from './lib/d1-sqlite.bh-1030.js';
 import { call } from './lib/harness.js';
 import { confirmed, auditStmt, knownBox } from '../src/lib/hub-recovery.js';
+import { jobsSchemaSql } from './lib/jobs-schema.js';
 
 // BH-1942 (BH-1909.0): the hub-recovery contract. Two additive tables applied
 // from the real schema.sql, the three shared helpers the sibling routes build
@@ -13,7 +14,7 @@ import { confirmed, auditStmt, knownBox } from '../src/lib/hub-recovery.js';
 // and promote, #1944 the four restore-lab routes (their suites are under
 // test/routes/), so no stub is left.
 
-const SCHEMA = readFileSync(fileURLToPath(new URL('../schema.sql', import.meta.url)), 'utf8');
+const SCHEMA = jobsSchemaSql();
 const T = '2026-09-24T12:00:00Z';
 
 const CHANGES_COLUMNS = [

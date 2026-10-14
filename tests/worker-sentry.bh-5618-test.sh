@@ -1,7 +1,7 @@
 #!/bin/bash
 # tests/worker-sentry.bh-5618-test.sh — BH-5618: harness-jobs reports
 # exceptions to Sentry when HARNESS_SENTRY_DSN is bound, and does nothing when
-# it is not.
+# it is not. (The Cloud worker moved to example-org/cromford-web, BH-5239.)
 # Runs worker/jobs/test/sentry.bh-5618.test.js unless WORKER_JOBS_CI_JOB=1 (the
 # Jobs worker CI job runs it there with `npm test`, same rule as
 # jobs-worker-test).
@@ -19,6 +19,7 @@
 set -uo pipefail
 . "$(dirname "$0")/lib/scratch.sh" || exit 1
 DIR=$(cd "$(dirname "$0")/.." && pwd)
+"$DIR/bin/llm-sites-build.sh" --compose --repo "$DIR" >/dev/null || { echo "FAIL: cannot compose catalog/llm-sites.json"; exit 1; }
 command -v node >/dev/null 2>&1 || { echo "worker-sentry.bh-5618-test: SKIPPED — node is not installed on this box"; exit 0; }
 PASS=0; FAIL=0
 ok()  { PASS=$((PASS+1)); }
@@ -38,10 +39,9 @@ for SRC in "$JOBS_LIB" "$SYNC" "$WF" \
 done
 
 # ── X2 ──────────────────────────────────────────────────────────────────────
-for CFG in "$DIR/worker/jobs/wrangler.jsonc"; do
-  if grep -qE '^[[:space:]]*"compatibility_flags":[[:space:]]*\[[^]]*"nodejs_compat"' "$CFG"; then ok
-  else bad "X2: $CFG does not set compatibility_flags [\"nodejs_compat\"]"; fi
-done
+CFG="$DIR/worker/jobs/wrangler.jsonc"
+if grep -qE '^[[:space:]]*"compatibility_flags":[[:space:]]*\[[^]]*"nodejs_compat"' "$CFG"; then ok
+else bad "X2: $CFG does not set compatibility_flags [\"nodejs_compat\"]"; fi
 
 # ── X3 ──────────────────────────────────────────────────────────────────────
 # The worker-jobs job block, comment lines dropped: an explanation that says

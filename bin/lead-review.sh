@@ -186,6 +186,20 @@
 #                           `protected:<p1>,<p2>` token (BH-5582) names one line
 #                           per file under DELTA REVIEW for full scrutiny; a
 #                           token that does not parse is a full review.
+#   re-review (BH-6391)     scope_notes carrying `lead-prev:<G> word:<W> ...`
+#                           (bin/lib/lead-prev.sh) adds `## Re-review` between
+#                           `## Rules pack` and `## Host suite`: G, its word, the
+#                           own commits, own files and main files since G, and
+#                           G's report outside delta mode. After a BLOCK on a
+#                           head whose G was MERGE or MERGE-WITH-NOTES,
+#                           lpv_downgrade rewrites each `- [BLOCK] path:line`
+#                           on a file of H, on a line unchanged since G, with
+#                           no `main-cause:` naming a main file or `own-cause:`
+#                           naming an own file of the delta, to `- [NOTE
+#                           unchanged-since <G12>]`; with no BLOCK line left the
+#                           verdict is MERGE-WITH-NOTES, and the report adds
+#                           `- re-review: from <G12> (<W>); <k> BLOCK finding(s)
+#                           ...`. Git that cannot answer keeps the BLOCK, logged.
 #   builder review (BH-5355) not in delta mode, with LEAD_REVIEW_BUILDS_ON_BUILDER
 #                           on (default; settings row, read once a tick; any
 #                           value but on|off is off, logged): the review-prs.sh
@@ -297,8 +311,15 @@ command -v verdict_prime >/dev/null 2>&1 && verdict_prime || true
 # every review is a full review.
 # shellcheck source=bin/lib/builder-review.sh
 . "$H/bin/lib/builder-review.sh" 2>/dev/null || log "bin/lib/builder-review.sh missing; every lead review is a full review this tick"
+# BH-6372.3, optional: the outcome cap (an INCONCLUSIVE claim row on a perf/cost
+# PR caps the verdict at BLOCK). Without it every verdict stands as the agent gave it.
+# shellcheck source=bin/lib/lead-outcome-cap.sh
+. "$H/bin/lib/lead-outcome-cap.sh" 2>/dev/null || log "bin/lib/lead-outcome-cap.sh missing; no outcome cap this tick"
 # BH-5294, optional: delta mode. Without it every request is a full review.
 . "$H/bin/lib/lead-delta.sh" 2>/dev/null || true
+# BH-6391, optional: the re-review section and the NOTE pass. Without it a
+# re-review reads and answers as a first review.
+. "$H/bin/lib/lead-prev.sh" 2>/dev/null || true
 # BH-5873: the worklist's gate loader (header, THE GATES). Without it no
 # worklist item starts; request rows still run.
 LG_OK=0; . "$H/bin/lib/lead-gates.sh" 2>/dev/null && LG_OK=1
@@ -800,7 +821,7 @@ claim_req() {
   res=$(lr_post "/$1/claim" "$(jq -nc --arg j "$2" --arg b "$JOBS_BOX" '{job_id:$j,box:$b}')" 2>&1) && return 0
   case "$res" in
     *"HTTP 503")
-      log "claim of $1 for $3 answered 503 ($(printf '%s' "${res%HTTP 503}" | head -c 200)); tick ended"
+      log "claim of $1 for $3 answered 503 ($(head -c 200 <<<"${res%HTTP 503}")); tick ended"
       job_update "$2" status=failed; return 2 ;;
   esac
   log "claim of $1 for $3 refused: $res"; job_update "$2" status=failed 'meta={"reason":"claim refused"}'; return 1
@@ -868,7 +889,9 @@ review_one() {
   local r="$1" id repo pr sha project key model job rc pr_json live state base title body left res n st rw rprev rhow rby rsrc
   local suite_cmd suite_line suite_rc ci_ok pf out verdict report empty rmodel ad akind hdr
   local RP_STATE="" RP_TAIL="" rp_rc rp_ci harness_repo dmode="" dprev="" dline="" dreport lb tn tslug tdone thread_note total half lfp lstage lnote
+  local capr="" capo capf ctitle clabels
   local resets mreset since f what fields="" bfp bchg rsn bmode="" bline="" ldp_rc="" dbytes ldp_why nprod ldp_mode ldp_find
+  local lpv=0 lpk="" lprc
   # BH-5873: the mode the gates chose (full|delta|replay). Nothing reads it yet;
   # child 2 of #5870 (delta and replay) does.
   # shellcheck disable=SC2034
@@ -1348,6 +1371,22 @@ review_one() {
   git -C "$WT" diff "origin/$base...$sha" > "$WT.diff" 2>&1 || echo "(the diff could not be read)" >> "$WT.diff"
   fi
   # <<< delta mode
+  # >>> re-review (BH-6391): a `lead-prev:<G>` group in scope_notes (set by
+  # bin/lead-review-enqueue.sh) adds a `## Re-review` prompt section: G, its
+  # word, the own commits and files and the main files since G, and G's report
+  # (delta mode already shows it). After a BLOCK on an approved G, lpv_downgrade
+  # keeps each finding on a line unchanged since G as a NOTE.
+  rm -f "$WT.rereview" "$WT.lpvmain" "$WT.lpvown"
+  if command -v lpv_parse >/dev/null 2>&1 && lpv_parse "$dsn"; then
+    lpv=1
+    git -C "$REPO_DIR" fetch -q origin "$LPV_PREV" >/dev/null 2>&1
+    LPV_MAINF=""; LPV_OWNF=""
+    lpv_section "$REPO_DIR" "origin/$base" "$pr" "$repo" "$sha" "$H/state/lead-reviews" "$([ "$dmode" = delta ] && echo 0 || echo 1)" > "$WT.rereview" 2>/dev/null
+    printf '%s\n' "$LPV_MAINF" > "$WT.lpvmain"
+    printf '%s\n' "$LPV_OWNF" > "$WT.lpvown"
+    log "$key: re-review of ${LPV_PREV:0:12} ($LPV_WORD)"
+  fi
+  # <<< re-review
   # Over the limit, a full review reads the diff in parts (bin/lib/lead-diff-parts.sh):
   # ldp_rc 0 = $WT.parts replaces the diff; 2 = the PR's own tests do not fit.
   # A cut diff never reaches the reviewer (lead review BLOCK at b5426ef9d: a cut
@@ -1448,6 +1487,7 @@ review_one() {
       "skipped (CI green"*) printf '%s\n' "$RP_TAIL" ;;
       *) [ -n "$RP_TAIL" ] && printf 'stderr tail:\n%s\n' "$RP_TAIL" ;;
     esac
+    [ -s "$WT.rereview" ] && { printf '\n## Re-review\n'; cat "$WT.rereview"; }
     printf '\n## Host suite\n%s\n' "$suite_line"
     tail -n 80 "$WT.suite"
     printf '\n## Live probes\n'
@@ -1518,14 +1558,51 @@ review_one() {
       || log "empty artifact put for $key failed"
     fail_terminal "$id" "$job" "$sha" empty "$model"; return
   fi
+  # BH-6391: a BLOCK after an approved head keeps its findings on unchanged lines as NOTEs.
+  if [ "$verdict" = BLOCK ] && [ "$lpv" = 1 ] && { [ "$LPV_WORD" = MERGE ] || [ "$LPV_WORD" = MERGE-WITH-NOTES ]; }; then
+    lprc=0
+    if cp -f "$out" "$out.lpvkeep" 2>/dev/null; then
+      lpk=$(lpv_downgrade "$REPO_DIR" "$LPV_PREV" "$sha" "$out" "$WT.lpvmain" "$WT.lpvown") || lprc=$?
+    else lprc=5
+    fi
+    # Fail closed: a rewrite whose verdict no longer reads restores the model's answer.
+    if [ "$lprc" = 0 ] && [ "$(lr_verdict "$out")" = unknown ]; then
+      mv -f "$out.lpvkeep" "$out" && lprc=3 || lprc=4
+    fi
+    rm -f "$out.lpvkeep"
+    case "$lprc" in
+      0) verdict=$(lr_verdict "$out")
+         log "$key: $lpk BLOCK finding(s) on lines unchanged since ${LPV_PREV:0:12} kept as NOTE; verdict $verdict" ;;
+      3) lpk=""; log "$key: re-review rewrite left no readable verdict; the model's BLOCK stands" ;;
+      4) lpk=""; log "$key: re-review rewrite left no readable verdict and the answer could not be restored; BLOCK" ;;
+      5) lpk=""; log "$key: re-review check could not copy the answer; the model's BLOCK stands" ;;
+      2) lpk=""; log "$key: re-review check could not read git; the model's BLOCK stands" ;;
+      *) lpk="" ;;
+    esac
+  fi
+  # BH-6372.3: the outcome cap. The ticket is the one the thread read (when it
+  # read), else loc_cap reads #$tn itself; no ticket number is class unknown.
+  capr=""
+  if command -v loc_cap >/dev/null 2>&1; then
+    printf '%s\n' "$body" > "$WT.capbody"; capf=""; ctitle=""; clabels=""
+    if [ -n "$tn" ] && [ -z "$thread_note" ] && jq -r '.body // ""' "$WT.issue" > "$WT.capticket" 2>/dev/null; then
+      capf="$WT.capticket"; ctitle=$(jq -r '.title // ""' "$WT.issue"); clabels=$(jq -r '[.labels[]?.name] | join(",")' "$WT.issue")
+    fi
+    capo=$(loc_cap "$verdict" "$WT.capbody" "$capf" "$ctitle" "$clabels" ${tn:+"$repo" "$tn"} 2>"$WT.capnote") \
+      && { verdict=BLOCK; capr=$(sed -n 2p <<<"$capo"); log "$key: outcome cap: $capr"; }
+    while IFS= read -r ll; do [ -n "$ll" ] && log "$key: $ll"; done < "$WT.capnote"
+  fi
   { printf '%s# Lead review %s (%s#%s at %s)\n\n- verdict: %s\n- %s\n- rules pack: %s\n- reviewer model: %s\n- checklist: v%s\n- pr body: %s\n' \
       "$RVLINE" "$key" "$repo" "$pr" "$sha" "$verdict" "$suite_line" "$RP_STATE" "$model" "$CK_VER" "$bfp"
+    [ -n "$capr" ] && printf -- '- outcome cap: %s\n' "$capr"
     [ "$dmode" = delta ] && printf -- '- review mode: delta from %s\n' "$dprev"
     [ "$bmode" = build-on ] && printf -- '- review mode: %s\n' "$bline"
+    [ -n "$lpk" ] && printf -- '- re-review: from %s (%s); %s BLOCK finding(s) on lines unchanged since then kept as NOTE\n' "${LPV_PREV:0:12}" "$LPV_WORD" "$lpk"
     [ "$ldp_rc" = 0 ] && printf -- '- diff read in parts: %s of %s files; not read: %s; digest: %s files\n' \
       "$LDP_READ_FILES" "$LDP_TOTAL_FILES" "$(ldp_unread_line)" "$LDP_DIGEST_FILES"
     printf '\n'
-    cat "$out"; } > "$report.tmp.$$" && mv -f "$report.tmp.$$" "$report" \
+    if [ -n "$capr" ]; then loc_demote "$out"; printf '\nVERDICT: BLOCK\n'; else cat "$out"; fi
+  } > "$report.tmp.$$" && mv -f "$report.tmp.$$" "$report" \
     || { log "could not write $report"; job_update "$job" status=failed; return; }
   finish_done "$id" "$job" "$sha" "$verdict" "$report" "$model" "$suite_line" "$key"
 }

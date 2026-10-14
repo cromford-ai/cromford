@@ -263,7 +263,7 @@ cmd_set() {
     && die "'$env' is not settable: it is a command/host/path/identity this lane runs as root, registered so it is visible, not so it can be written from a page (catalog/lanes.json: settable:false). Change it in env/global.env on the box."
   mn=$(jq -r --arg i "$id" --arg e "$env" '.lanes[]|select(.id==$i)|.knobs[]?|select(.env==$e)|.min // empty' "$REG")
   mx=$(jq -r --arg i "$id" --arg e "$env" '.lanes[]|select(.id==$i)|.knobs[]?|select(.env==$e)|.max // empty' "$REG")
-  if printf '%s' "$val" | grep -qE '^-?[0-9]+(\.[0-9]+)?$'; then
+  if grep -qE '^-?[0-9]+(\.[0-9]+)?$' <<<"$val"; then
     [ -n "$mn" ] && awk -v v="$val" -v m="$mn" 'BEGIN{exit !(v<m)}' && die "$env min is $mn"
     [ -n "$mx" ] && awk -v v="$val" -v m="$mx" 'BEGIN{exit !(v>m)}' && die "$env max is $mx"
   fi
@@ -286,7 +286,7 @@ cmd_set() {
     local fc="${FLEET_CONF:-$HARNESS/fleet.conf}" projects
     [ -r "$fc" ] || die "cannot check project '$p': $fc is not readable — nothing was written"
     projects=$(awk 'NF && $1!~/^#/{print $1}' "$fc")
-    printf '%s\n' "$projects" | grep -qxF -- "$p" \
+    grep -qxF -- "$p" <<<"$projects" \
       || die "no project '$p' in $fc — nothing was written. Projects: $(printf '%s' "$projects" | paste -sd, - | sed 's/,/, /g')"
     # A knob that declares `project_scoped: true` takes a project row on ANY
     # lane (BH-1770): lane-reaper runs on every box, but its deadline is per
@@ -359,7 +359,7 @@ cmd_seed() {
   rows=$(printf '%s' "$resp" | jq -r '.settings[]?|select(.actor != "registry-seed")|.key' 2>/dev/null | tr '\n' ' ')
   while IFS=$'\t' read -r id env scope; do
     [ -n "$env" ] || continue
-    printf '%s' "$env" | grep -qE '(^|_)(TOKEN|SECRET|PASSWORD|CREDENTIALS?|KEY|URL|HOOK|WEBHOOK)$|HOOK' && continue
+    grep -qE '(^|_)(TOKEN|SECRET|PASSWORD|CREDENTIALS?|KEY|URL|HOOK|WEBHOOK)$|HOOK' <<<"$env" && continue
     val="${!env:-}"
     [ -n "$val" ] || continue
     if [ "$scope" = project ] && [ -n "$proj" ]; then key="lane.$id.$proj.$env"; else key="lane.$id.$env"; fi

@@ -228,7 +228,7 @@ ingest_one() {
       *) why="db copy could not be written (rc $frc)" ;;
     esac
     # RESULT present?
-    bssh "[ -f /run/harness/RESULT ] && echo yes || echo no" | grep -q yes || { rmdir "$builddir" 2>/dev/null || true; return 0; }
+    grep -q yes <<<"$(bssh "[ -f /run/harness/RESULT ] && echo yes || echo no")" || { rmdir "$builddir" 2>/dev/null || true; return 0; }
     # --- pull RESULT (small text) via console cat -----------------------------
     bssh "cat /run/harness/RESULT" > "$builddir/RESULT" 2>>"$DLOG"
     [ -s "$builddir/RESULT" ] || { say "$p" "RESULT empty after pull for $key — leaving builder state; retry next tick"; rm -f "$builddir/RESULT"; rmdir "$builddir" 2>/dev/null || true; return 0; }

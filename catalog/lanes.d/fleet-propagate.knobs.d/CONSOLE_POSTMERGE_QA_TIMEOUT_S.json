@@ -1,0 +1,11 @@
+{
+  "env": "CONSOLE_POSTMERGE_QA_TIMEOUT_S",
+  "type": "int",
+  "default": 900,
+  "min": 120,
+  "max": 3600,
+  "zero_means": null,
+  "read_in": "bin/console-pages-deploy.sh",
+  "note": "BH-5909 slice 3: seconds the detached post-merge QA run (alias upload, session mint, drive) may run. Read by bin/console-pages-deploy.sh as ${CONSOLE_POSTMERGE_QA_TIMEOUT_S:-}, then this settings row, default 900; a value outside 120..3600 is one log line and the default.",
+  "settable": true
+}

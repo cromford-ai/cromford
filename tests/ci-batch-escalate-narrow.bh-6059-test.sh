@@ -135,7 +135,7 @@ selected "N1 nested" bin/lib/archie-fm-watch/common.sh
 selected D1 bin/lib/br/opt/README.md
 { cat "$T/always"; specific bin/lib/br/opt/README.md; } | LC_ALL=C sort -u > "$T/d1.allowed"
 EXTRA=$(LC_ALL=C comm -13 "$T/d1.allowed" <(LC_ALL=C sort -u "$T/list"))
-[ -z "$EXTRA" ] && ok || bad "D1: suites selected only through a root row: $(printf '%s\n' "$EXTRA" | head -3) ($(printf '%s\n' "$EXTRA" | grep -c .) total)"
+[ -z "$EXTRA" ] && ok || bad "D1: suites selected only through a root row: $(head -3 <<<"$EXTRA") ($(printf '%s\n' "$EXTRA" | grep -c .) total)"
 grep -qxF tests/blocked-resolver-opt-hooks.bh-1468-test.sh "$T/list" && ok \
   || bad "D1: the suite that reads the README by name must still run"
 

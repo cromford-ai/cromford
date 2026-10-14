@@ -224,12 +224,14 @@ mc_pr_diff() {
 }
 
 # mc_pr_diff_or_local <pr-url> <outfile> <slug> <project> <num> <base-ref> <head>
-#   The iron-law scan's diff read (BH-5914). The API diff first, exactly as
-#   mc_pr_diff. When GitHub answers 406 (the diff is too large for the API:
-#   example-org/project-6 #27, 837 files, +175,936 lines, 2026-10-10) the same
-#   diff comes from a local clone instead (mc_pr_diff_local). Any other failure
-#   (a 403/429 rate limit, a 5xx, no answer) is returned as it was: rc 75, and
-#   the caller keeps the BH-784 rule that an unread diff is never a clean one.
+#   The iron-law scan's diff read (BH-5914, BH-6000). The API diff first,
+#   exactly as mc_pr_diff. When the API read fails FOR ANY REASON (a 406 "too
+#   large": example-org/project-6 #27, 837 files, 2026-10-10; a 403/429 rate
+#   limit; a 5xx; no answer at all) the same diff comes from a local clone
+#   instead (mc_pr_diff_local), which spends no API budget. Before BH-6000 only
+#   a 406 fell back, and #5993 logged "the diff read was UNVERIFIABLE" on every
+#   tick. The BH-784 rule is unchanged: a diff that neither read produces is
+#   rc 75, and the caller never takes it for a clean one.
 #   rc 0 = <outfile> holds the WHOLE diff.
 #   rc 3 = <outfile> holds the diff, but MC_DIFF_UNSCANNED file(s) in it have no
 #          text to scan (binary): the caller scans what is there and HOLDS.
@@ -240,8 +242,7 @@ mc_pr_diff_or_local() {
   MC_DIFF_UNSCANNED=0
   mc_pr_diff "$url" "$out" && return 0
   st=$(mc_rest_status 2>/dev/null)
-  [ "$st" = 406 ] || return 75
-  mc_pr_diff_local "$slug" "$project" "$num" "$base" "$head" "$out"
+  MC_DIFF_API_STATUS="${st:-000}" mc_pr_diff_local "$slug" "$project" "$num" "$base" "$head" "$out"
 }
 
 # mc_pr_diff_local <slug> <project> <num> <base-ref> <head> <outfile>
@@ -286,10 +287,10 @@ mc_pr_diff_local() {
   nbin=$(printf '%s' "$bins" | grep -c .)
   if [ "${nbin:-0}" -gt 0 ]; then
     MC_DIFF_UNSCANNED="$nbin"
-    mc_log "$slug#$num diff too large for the API (HTTP 406) — iron-law scan reads a local git diff of ${head:0:8}; $nbin file(s) not scanned (binary, no text to read): $(awk 'NR <= 20' <<<"$bins" | paste -sd, -)"
+    mc_log "$slug#$num diff read from the API failed (HTTP ${MC_DIFF_API_STATUS-000}) — iron-law scan reads a local git diff of ${head:0:8}; $nbin file(s) not scanned (binary, no text to read): $(awk 'NR <= 20' <<<"$bins" | paste -sd, -)"
     return 3
   fi
-  mc_log "$slug#$num diff too large for the API (HTTP 406) — iron-law scan reads a local git diff of ${head:0:8} instead (every file scanned)"
+  mc_log "$slug#$num diff read from the API failed (HTTP ${MC_DIFF_API_STATUS-000}) — iron-law scan reads a local git diff of ${head:0:8} instead (every file scanned)"
   return 0
 }
 
@@ -418,6 +419,19 @@ mc_close_shipped() {
           if command -v _issue_open_children >/dev/null 2>&1; then
             kids=$(_issue_open_children "$slug" "$num" "$MC_H") || { printf 'close-deferred:children-read\n'; return 1; }
             if [ -z "$kids" ]; then
+              # BH-6308: close a parent the merged slices delivered, or file the
+              # rest as one child and close it (the same words as
+              # issue_slice_settle); rc 3 runs the path below unchanged.
+              if command -v sco_settle >/dev/null 2>&1; then
+                w=$(sco_settle "$slug" "$num" "$pr" "$g" "$rec" "$MC_H"); src=$?
+                case "$src" in
+                  4) [ -n "$rec" ] && touch "$rec/issue-commented" 2>/dev/null
+                     printf 'closed-slice:%s\n' "$w"; return 0 ;;
+                  0) [ -n "$rec" ] && touch "$rec/issue-commented" 2>/dev/null
+                     printf 'kept-slice:%s\n' "$w"; return 0 ;;
+                  1) printf 'close-deferred:slice-closeout\n'; return 1 ;;
+                esac
+              fi
               # BH-5961: a SLICE plan files its remaining slices first (the same
               # four answers as issue_slice_settle). rc 2 already paged critical,
               # so the warn alert below is skipped.
@@ -1384,6 +1398,20 @@ mc_ready_why_last() {
   line=$(grep -F "$key " "$MC_LOG" 2>/dev/null | grep -F "${head:0:8}" \
          | grep -E "MERGE_HELD|READY and HELD by" | tail -1)
   [ -n "$line" ] && printf '%s' "$line"
+  return 0
+}
+
+# mc_ready_why_kind <key> <head> -> the KIND of the ready-why note (field 3)
+#   when that note is for this head, else nothing. mc_ready_rekick reads it to
+#   tell a hold (main-red, dep-hold, ...) from a note that only says what this
+#   tick did (prequeue-pending, queue-held, worker-locked, ...).
+mc_ready_why_kind() {
+  local key="${1:-}" head="${2:-}" f ts h k t
+  [ -n "$key" ] && [ -n "$head" ] || return 0
+  f="$MC_STATE_DIR/ready-why/$(mc_handoff_id "$key")"
+  if [ -r "$f" ] && IFS=$'\t' read -r ts h k t < "$f" && [ "$h" = "$head" ] && [ -n "$k" ]; then
+    printf '%s' "$k"
+  fi
   return 0
 }
 
@@ -3305,13 +3333,16 @@ ci_absent_escalate() {
 #                        status, and Mergify waits on it for good. Never over a
 #                        failure, never without an approval bound to the head.
 #                        Every other repo: no re-kick, as before.
-#   Everything else (HEAD_MOVED, READY, STACKED_WAIT, WAIT_REVIEW) has no
-#   re-kick that is not somebody else's decision, and says so. READY stays
-#   there on purpose (BH-4596 review F1): a READY row past its TTL is one the
-#   conductor itself may be holding (main-red freeze, PR dependency, unread
-#   diff, base guard, budget), and its own mc_enqueue_mergify publishes the
-#   status only once those gates pass. A republish here would hand Mergify a
-#   clearance ahead of them.
+#     READY              (BH-6000) a keyed conductor run for this PR now,
+#                        ONCE per (PR, head), and only when the conductor has
+#                        recorded no hold for this head (mc_ready_rekick). A
+#                        READY row the conductor itself holds (main-red freeze,
+#                        PR dependency, unread diff, base guard, budget: its
+#                        ready-why note) is left alone, as BH-4596's review F1
+#                        asked. The re-kick is a fresh run of the READY arm with
+#                        every gate, never a republish ahead of them.
+#   Everything else (HEAD_MOVED, STACKED_WAIT, WAIT_REVIEW) has no re-kick that
+#   is not somebody else's decision, and says so.
 #   Optional args 13-15 (BH-4596): <verdict> <reviewed> <provider>, read only by
 #   the QUEUED arm; a caller that passes 12 gets the old answer there.
 stuck_rekick() {
@@ -3381,9 +3412,66 @@ stuck_rekick() {
       mc_log "$key stuck in NEEDS_HUMAN_VERDICT past its TTL — only a human verdict moves it: $why" ;;
     QUEUED)
       mc_vs_ttl_republish "$key" "$st" "$slug" "$num" "$url" "$head" "${13:-}" "${14:-}" "${15:-}" ;;
+    READY)
+      mc_ready_rekick "$key" "$slug" "$num" "$url" "$head" ;;
     *)
       mc_log "$key stuck in $st past its TTL — no deterministic re-kick for this state; the alert is the action" ;;
   esac
+  return 0
+}
+
+# mc_ready_rekick <key> <slug> <num> <url> <head> — the READY arm of
+#   stuck_rekick (BH-6000). #5982 sat in READY past its TTL with "no
+#   deterministic re-kick for this state" on every tick. The STUCK page already
+#   went out once (mc_stuck_check): this adds the move, once per (PR, head):
+#     a recorded HOLD for this head, or one this tick already knows (a red
+#       main, an unread diff) -> no re-kick: the conductor is holding it on
+#       purpose, and a re-kick would only repeat that gate's answer (BH-4596
+#       review F1). A hold is a ready-why note of a kind in the `holds` list,
+#       or, with no note on this head, a MERGE_HELD / HELD-by log line
+#       (mc_ready_why_last). A note of any other kind (prequeue-pending,
+#       queue-held, gh-unread, state-moved, merge-lock, enqueue-failed,
+#       merge-failed, worker-locked, lead-unread) only says what one tick did,
+#       so the row is re-kicked (Fable review of 9fc9454d1, finding 1).
+#     already re-kicked on this head (`readykick` attempt) -> nothing more
+#     observe mode -> a WOULD line, nothing written
+#     else -> stamp `readykick <key> <head>` FIRST, then launch the PR's own
+#       keyed conductor run (kw_conductor: MC_ONLY_PR, its PR lock, setsid),
+#       which runs the READY arm with all its gates and enqueues.
+#   A launch the keyed wake refuses (off, deduped) is logged; the stamp stays,
+#   so the re-kick is never repeated on the same head. Always rc 0.
+mc_ready_rekick() {
+  local key="$1" slug="$2" num="$3" url="$4" head="$5" held="" kind
+  local holds=" main-red dep-hold dep-unread diff-unread ticket-hold lead-held block-gate block-gate-unread budget merges-off lead-unpinned "
+  kind=$(mc_ready_why_kind "$key" "$head")
+  if [ -z "$kind" ]; then held=$(mc_ready_why_last "$key" "$head")
+  elif [[ "$holds" == *" $kind "* ]]; then held=$(mc_ready_why_last "$key" "$head"); held="${held:-$kind}"
+  fi
+  # The holds this tick already knows, before the READY arm writes its note:
+  # stuck_rekick runs ahead of that arm in pr_worker, so on the first tick a
+  # row is past its TTL the note may not exist yet. A red main and an unread
+  # diff are both decided by then (MAIN_RED, DIFF_UNREAD in the worker's scope).
+  [ -z "$held" ] && [ -n "${MAIN_RED:-}" ] && held="main is red (flags/${MAIN_RED})"
+  [ -z "$held" ] && [ "${DIFF_UNREAD:-0}" = 1 ] && held="${DIFF_WHY:-the diff read was UNVERIFIABLE so the iron-law scan NOT run}"
+  if [ -n "$held" ]; then
+    mc_log "$key stuck in READY past its TTL on ${head:0:8} — the conductor holds it on purpose ($held); no re-kick, the alert is the action"; return 0; fi
+  if mc_attempt_has "readykick $key $head" 2>/dev/null; then
+    mc_log "$key stuck in READY past its TTL and ${head:0:8} has already had its one re-kick — the alert is the action"; return 0; fi
+  if [ "${ACTIONS:-0}" != 1 ]; then
+    mc_log "$key stuck in READY past its TTL — would re-kick a keyed conductor run on ${head:0:8} (observe mode: nothing written)"; return 0; fi
+  mc_attempt_put "readykick $key $head"
+  command -v kw_conductor >/dev/null 2>&1 || . "$MC_H/bin/lib/keyed-wake.sh" 2>/dev/null
+  # THE LAUNCHER HOLDS THIS PR'S LOCK (lead review lr-6015): this runs inside
+  # pr_worker, which keeps fd 9 until it exits, so the keyed run would lose
+  # the `flock -n` race and skip, and this once-per-head re-kick would be gone.
+  # The run waits for the lock instead, up to this worker's own deadline (the
+  # longest the launcher can still hold it).
+  local kwait="${MC_WORKER_DEADLINE_S:-180}"; case "$kwait" in ''|*[!0-9]*|0) kwait=180 ;; esac
+  if command -v kw_conductor >/dev/null 2>&1 && KW_PR_LOCK_WAIT_S="$kwait" kw_conductor "$slug" "$num" "READY past its TTL on ${head:0:8}"; then
+    mc_log "$key stuck in READY past its TTL — re-kicked once: a keyed conductor run for ${head:0:8} started now (it runs the READY arm with every gate and enqueues): $url"
+  else
+    mc_log "$key stuck in READY past its TTL — the re-kick could not launch a keyed run (keyed wake off or deduped); recorded once for ${head:0:8}, the next tick's READY arm is the retry: $url"
+  fi
   return 0
 }
 

@@ -2,12 +2,13 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
+import { jobsSchemaSql } from './lib/jobs-schema.js';
 
 // BH-1054: the Fly machine registry schema chunk must be additive and re-runnable.
 // The worker routes are in a sibling slice; here we only prove the SQL and the
 // worker-side table definition constants.
 
-const SCHEMA = readFileSync(fileURLToPath(new URL('../schema.sql', import.meta.url)), 'utf8');
+const SCHEMA = jobsSchemaSql();
 
 // BH-1054 spells the state vocabulary out; this is that list verbatim.
 const TICKET_STATES = [

@@ -4,8 +4,8 @@
 #
 # WHY. The image installed Debian trixie's apt nodejs, a node 20 with no
 # node:sqlite, while CI pins node-version '22' in .github/workflows/harness-ci.yml.
-# So the worker/jobs node tests ended "suite did
-# not run" on a Mac and passed in CI. fly/testhost/ had the same bug and fixed it
+# So the worker/jobs node tests (and the tests/cloud-* suites, since removed
+# by BH-6303) ended "suite did not run" on a Mac and passed in CI. fly/testhost/ had the same bug and fixed it
 # with fly/testhost/node-install.sh (BH-1617); the local image now uses that
 # same installer, and this file picks the version it is handed.
 #

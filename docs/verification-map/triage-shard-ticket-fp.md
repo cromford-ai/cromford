@@ -9,7 +9,7 @@ in scope is re-bought having not moved at all. A shard that concludes "hold,
 nothing to do" is a billed empty result, and it was re-offered on every RUN
 tick. The 2026-09-17..19 runaway-spend audit measured it at project-4 2,073 shards
 in three days, project-1 TK-265 153 sessions on one ticket, and cromford
-$N/day.
+$896/day.
 
 So the unit of dedup moved to where the unit of spend already is. Before a key's
 session is bought, the dispatcher takes a fingerprint of that ticket's world and

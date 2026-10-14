@@ -1,0 +1,10 @@
+# BLOCK FINDINGS (BH-5806, BH-5794.1): the block-learning loop's classify
+# wave. The taxonomy, the classify ledger (pending, claim before the paid call,
+# settle) and the console's weekly view, appended after staff at the END of the
+# table.
+GET /api/block-categories
+GET /api/block-classify/pending
+POST /api/block-classify/claim
+POST /api/block-classify/settle
+GET /api/block-findings/weekly
+GET /api/block-findings

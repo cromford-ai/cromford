@@ -36,9 +36,44 @@
 #                             escalate; BH-6059: the files the selection reads,
 #                             not all of bin/lib/ and catalog/), test-impact's
 #                             own full answer (unknown reach -> `unmapped: <p>`,
-#                             infra -> `selection input: <p>`, a bin/lib/ or
-#                             catalog/ path with no specific map row ->
-#                             `unmapped path <p>`) and a selection of every suite.
+#                             infra -> `selection input: <p>`, a bin/lib/,
+#                             catalog/ or tests/lib/ path with no specific map
+#                             row -> `unmapped path <p>`; BH-6371: a tests/lib/
+#                             helper selects through its helper closure) and a
+#                             selection of every suite. BH-6371: a TI_BASE..HEAD
+#                             diff of the rules file itself that cbe_add_only
+#                             proves add-only does not escalate; the reason
+#                             says `escalation rows added only (<kinds>)`, and
+#                             an added spa (worker) row sets spa=1 (worker=1).
+#                             BH-6490: a STACKED batch escalates only on its
+#                             OWN diff, checking_base_sha..HEAD, where the sha
+#                             is the draft body's one `checking_base_sha:`
+#                             line (the tip after the PRs queued ahead). A path
+#                             a lower batch brought never escalates: that batch
+#                             ran its own corpus, and if it fails this batch is
+#                             requeued. A test-impact full answer on such a
+#                             path is judged again on the own diff, and the
+#                             list is that selection plus the whole diff's
+#                             --map-only selection. The reason then says
+#                             `own diff: <k> of <m> paths, base <sha8>;
+#                             inherited: <p>`. Two shas, a sha that is not
+#                             between TI_BASE and HEAD, or an empty own diff is
+#                             today's answer, said on a `ci-plan: own diff: off
+#                             (<why>)` line, never inside a full reason.
+#                             BH-6688: a .github/workflows/harness-ci.yml
+#                             diff that bin/test-impact-workflow.sh calls
+#                             non-test jobs only (lint, determinism,
+#                             prompt-evals, ci-timings) does not escalate and
+#                             selects through the map (TI_WORKFLOW_BASE); the
+#                             reason says `workflow: non-test jobs only
+#                             (<jobs>)`. Off with CI_PLAN_CHANGED_FILE (no
+#                             git range). With CI_PLAN_MEMBER_REACH=1 (the plan
+#                             job; never a shard) the plan also prints
+#                             `ci-plan: member reach: full <k> of <n> members
+#                             (#<n> <path>; …)`, each member's own files
+#                             selected as a batch select, or `member reach:
+#                             unreadable (<why>)`. REPORT ONLY: it changes no
+#                             output, list or rc.
 #   pull_request              bin/test-impact.sh ci-select, exactly as before
 #                             (a train, the `full` label, an infra path or an
 #                             unknown reach still selects the whole corpus).
@@ -97,8 +132,13 @@
 # empty when reuse is off). Seam: CI_PLAN_SUITE_REUSE (the helper).
 # A GREEN COVERS THE SUITES THAT RAN. Each reused suite went green on the CI run
 # that recorded it, traced clean (`ok`: rc 0, no HIT, no TIMEOUT) at this exact
-# input fingerprint, and is named with that run in a `reuse: reused <suite>
-# from <run_id> (<d>s)` line, then `reuse: on — ran X reused R of N (saved ~Ss)`.
+# input fingerprint, and is named with that run and the fingerprint in a
+# `reuse: reused <suite> from <run_id> (<d>s) fp <64-hex>` line (BH-6406; a
+# shard reads the fp from the fingerprints.tsv beside CI_PLAN_REUSED_FILE, and
+# says `fp -` without one), then `reuse: on — ran X reused R of N (saved ~Ss)`.
+# THE NIGHTLY RUN NEVER REUSES (BH-6406): --tier nightly or CI_EVENT=schedule
+# never looks up and ignores CI_PLAN_REUSED_FILE, `reuse: off: nightly never
+# reuses`, so the nightly run on main stays a true full run.
 #
 # NEVER A GREEN OF NOTHING. An empty or unreadable selection, or a test-impact
 # that fails, is rc 2 and publishes no shard count, so the run goes red instead
@@ -111,7 +151,9 @@
 # corpus (1 when the corpus runs at all), summary (one line for the fan-ins),
 # quarantine (the normalised CI_QUARANTINE, space-joined, or `-` for none;
 # written on every path, corpus=0 included) and escalation (why a batch runs
-# the corpus, `-` when it does not and on every non-batch path), spa and
+# the corpus, `-` when it does not and on every non-batch path), own_base (the
+# stacked batch's own-diff base, BH-6490; `-` for none and on every non-batch
+# path), spa and
 # worker (BH-4969: 0 only on a batch-selected batch none of whose paths
 # cbe_affects that job, so the console-ui / worker-jobs job runs just its
 # "not affected by this batch" step; 1 on every other path), reused (suites
@@ -134,7 +176,9 @@
 # through $CI_PLAN_GH with CI_REPO and the job's own token) and
 # CI_PLAN_ESCALATION (the plan job's `escalation` output, which a shard passes
 # so it never re-reads the network: a reason forces the corpus, `-` skips only
-# the member read; empty or unset reads the members). BH-5795: CI_BASE_REF
+# the member read; empty or unset reads the members) and CI_PLAN_OWN_BASE (the
+# plan job's `own_base` output, BH-6490: a shard has no body; - is none, empty
+# or unset reads the body). BH-5795: CI_BASE_REF
 # (github.base_ref) and CI_DISPATCH_SCOPE (the dispatch input `scope`); the plan
 # job and every shard pass both, so they plan the same list. Test seams:
 # CI_PLAN_MAIN_REF (main's ref, default origin/main), CI_PLAN_IMPACT (the
@@ -154,7 +198,7 @@ while [ $# -gt 0 ]; do
     --out)      [ $# -ge 2 ] || { echo "ci-plan: --out needs a path" >&2; exit 2; }; OUT="$2"; shift ;;
     --expect-n) [ $# -ge 2 ] || { echo "ci-plan: --expect-n needs a number" >&2; exit 2; }; EXPECT="$2"; shift ;;
     --tier)     [ "${2:-}" = nightly ] || { echo "ci-plan: --tier takes 'nightly'" >&2; exit 2; }; TIER=nightly; shift ;;
-    -h|--help)  sed -n '2,141p' "$0"; exit 0 ;;
+    -h|--help)  sed -n '2,188p' "$0"; exit 0 ;;
     *) echo "ci-plan: unknown argument $1" >&2; exit 2 ;;
   esac
   shift
@@ -249,6 +293,82 @@ member_full() {
   return 1
 }
 
+# own_base — the base of a STACKED batch's own diff (BH-6490). Sets OWN_BASE
+# (40-hex, or - for none) and OWN_NOTE (`own diff: off (<why>)` when a sha was
+# given and refused, else empty); the own paths go to $TMP/own. The sha is
+# CI_PLAN_OWN_BASE when set (a shard; - is none), else the one
+# `checking_base_sha:` line of the draft body. Any doubt is -, today's answer.
+own_base() {
+  local sha n tb
+  OWN_BASE=-; OWN_NOTE=""
+  if [ -n "${CI_PLAN_OWN_BASE:-}" ]; then
+    sha="$CI_PLAN_OWN_BASE"
+    [ "$sha" != - ] || return 0
+  else
+    sha=$(printf '%s\n' "${CI_PR_BODY:-}" | tr -d '\r' \
+      | sed -n 's/^checking_base_sha: \([0-9a-f]\{40\}\)[[:space:]]*$/\1/p' | LC_ALL=C sort -u)
+    n=$(grep -c . <<<"$sha")
+    [ "$n" -gt 0 ] || return 0
+    [ "$n" = 1 ] || { OWN_NOTE="own diff: off ($n checking_base_sha values)"; return 0; }
+  fi
+  [[ $sha =~ ^[0-9a-f]{40}$ ]] || { OWN_NOTE="own diff: off (not a sha: $sha)"; return 0; }
+  [ -z "${CI_PLAN_CHANGED_FILE:-}" ] || { OWN_NOTE="own diff: off (no git range)"; return 0; }
+  tb=$(git -C "$ROOT" rev-parse -q --verify "${TI_BASE:-}^{commit}" 2>/dev/null) \
+    || { OWN_NOTE="own diff: off (cannot read the batch base)"; return 0; }
+  [ "$sha" != "$tb" ] || return 0
+  git -C "$ROOT" merge-base --is-ancestor "$tb" "$sha" 2>/dev/null \
+    || { OWN_NOTE="own diff: off (${sha:0:8} is not above the batch base ${tb:0:8})"; return 0; }
+  git -C "$ROOT" merge-base --is-ancestor "$sha" HEAD 2>/dev/null \
+    || { OWN_NOTE="own diff: off (${sha:0:8} is not below HEAD)"; return 0; }
+  git -C "$ROOT" diff --no-renames --name-only "$sha" HEAD > "$TMP/own" 2>/dev/null \
+    || { OWN_NOTE="own diff: off (cannot diff from ${sha:0:8})"; return 0; }
+  grep -q . "$TMP/own" || { OWN_NOTE="own diff: off (the diff from ${sha:0:8} is empty)"; return 0; }
+  OWN_BASE="$sha"
+}
+
+# wf_nontest <base> — rc 0 with WFNOTE when bin/test-impact-workflow.sh says
+# the harness-ci.yml diff from <base> to HEAD touches non-test jobs only (its
+# rc 1, BH-6688). Any other answer, or no git range, is rc 1: escalate.
+wf_nontest() {
+  local l rc=0
+  [ -z "${CI_PLAN_CHANGED_FILE:-}" ] || return 1
+  l=$(bash "$SELF_DIR/test-impact-workflow.sh" "$1" HEAD --root "$ROOT" 2>/dev/null) || rc=$?
+  [ "$rc" = 1 ] || return 1
+  WFNOTE="$l"
+}
+
+# member_reach — REPORT ONLY (BH-6688): RLINE_REACH says how many of the
+# draft's #<n> refs (member_full's set and cap) reach the whole corpus on their
+# own files, selected as a batch select against one map. Any failed read is
+# `member reach: unreadable (<why>)`, never `full 0`.
+member_reach() {
+  local gh="${CI_PLAN_GH:-gh}" repo="${CI_REPO:-}" refs n k=0 m=0 why="" rows r
+  RLINE_REACH=""
+  [ -n "$repo" ] || { RLINE_REACH="member reach: unreadable (no repository to ask)"; return 0; }
+  command -v "$gh" >/dev/null 2>&1 || { RLINE_REACH="member reach: unreadable (gh is not on this runner)"; return 0; }
+  refs=$(printf '%s\n%s\n' "${TI_PR_TITLE:-}" "${CI_PR_BODY:-}" | grep -oE '#[0-9]+' | tr -d '#' | sort -un)
+  [ -n "$refs" ] || { RLINE_REACH="member reach: unreadable (the draft names no #<n>)"; return 0; }
+  [ "$(grep -c . <<<"$refs")" -le "$MF_MAX" ] \
+    || { RLINE_REACH="member reach: unreadable (more than $MF_MAX refs)"; return 0; }
+  "$IMPACT" map --out "$TMP/reach.map" 2>/dev/null && [ -s "$TMP/reach.map" ] \
+    || { RLINE_REACH="member reach: unreadable (the map could not be built)"; return 0; }
+  for n in $refs; do
+    "$gh" api --paginate "repos/$repo/pulls/$n/files" --jq '.[].filename' > "$TMP/reach.$n" 2>/dev/null \
+      && grep -q . "$TMP/reach.$n" \
+      || { RLINE_REACH="member reach: unreadable (#$n files could not be read)"; return 0; }
+    rows=$(TI_BATCH_SELECT=1 "$IMPACT" select --why --changed "$TMP/reach.$n" --map "$TMP/reach.map" 2>/dev/null) \
+      && [ -n "$rows" ] \
+      || { RLINE_REACH="member reach: unreadable (#$n could not be selected)"; return 0; }
+    m=$((m + 1))
+    r=$(awk -F'\t' '$2 == "full" { print $3; exit }' <<<"$rows")
+    [ -n "$r" ] || continue
+    k=$((k + 1))
+    case "$r" in *" ("*")") r="${r##* (}"; r="${r%)}" ;; esac
+    why="$why${why:+; }#$n $r"
+  done
+  RLINE_REACH="member reach: full $k of $m members${why:+ ($why)}"
+}
+
 # batch_select — a merge-queue batch runs the IMPACT SET of its combined diff
 # (BH-4968). Builds $CH once (the tier step reuses it), then either escalates to
 # the corpus with a reason (ESCALATION) or runs `select --changed`. Every failure
@@ -279,11 +399,44 @@ batch_select() {
   elif ! . "$SELF_DIR/lib/ci-batch-escalate.sh" 2>/dev/null || ! command -v cbe_reason >/dev/null 2>&1; then
     ESCALATION="the escalation rules could not be read"
   else
+    # BH-6490: a stacked batch escalates on its OWN diff ($OWNCH), never on a
+    # path a lower batch brought; that batch ran its own corpus, and if it
+    # fails this batch is requeued. Selection below still reads all of $CH.
+    own_base
+    OWNCH="$TMP/ownchanged"
+    if [ "$OWN_BASE" != - ]; then cp "$TMP/own" "$OWNCH"; EBASE="$OWN_BASE"; else cp "$CH" "$OWNCH"; EBASE="$TI_BASE"; fi
     while IFS= read -r p; do
       [ -n "$p" ] || continue
+      # BH-6371: a diff to the rules file that only adds escalate, spa or
+      # worker rows selects through the map. Proven on the batch's own diff;
+      # a diff that fails, or anything but add-only, escalates as before.
+      if [ "$p" = catalog/ci-batch-escalate.tsv ] \
+         && git -C "$ROOT" diff --no-renames -U0 "$EBASE" HEAD -- catalog/ci-batch-escalate.tsv > "$TMP/cbe.diff" 2>/dev/null \
+         && CBE_ADDED=$(cbe_add_only "$TMP/cbe.diff"); then
+        ADDNOTE="escalation rows added only ($(printf '%s\n' "$CBE_ADDED" | paste -sd, -))"
+        continue
+      fi
+      # BH-6688: a workflow diff in non-test jobs only selects through the map.
+      [ "$p" = .github/workflows/harness-ci.yml ] && wf_nontest "$EBASE" && continue
       if r=$(cbe_reason "$p"); then ESCALATION="$r"; break; fi
-    done < "$CH"
+    done < "$OWNCH"
     [ "$ESCALATION" != - ] || grep -q . "$CH" || ESCALATION="the batch diff is empty"
+    # The inherited paths never escalate. The first one that would have is
+    # named in the reason; an inherited add-only rules diff still turns its
+    # spa/worker job on.
+    if [ "$ESCALATION" = - ] && [ "$OWN_BASE" != - ]; then
+      awk 'NR == FNR { o[$0] = 1; next } !($0 in o)' "$OWNCH" "$CH" > "$TMP/inherited"
+      while IFS= read -r p; do
+        [ -n "$p" ] || continue
+        if [ "$p" = catalog/ci-batch-escalate.tsv ] \
+           && git -C "$ROOT" diff --no-renames -U0 "$TI_BASE" HEAD -- catalog/ci-batch-escalate.tsv > "$TMP/cbe.inh.diff" 2>/dev/null \
+           && r=$(cbe_add_only "$TMP/cbe.inh.diff"); then
+          CBE_ADDED=$(printf '%s\n%s\n' "$CBE_ADDED" "$r" | grep . | LC_ALL=C sort -u); continue
+        fi
+        [ "$p" = .github/workflows/harness-ci.yml ] && wf_nontest "$TI_BASE" && continue
+        [ -n "$INHERITED" ] || ! cbe_reason "$p" > /dev/null || INHERITED="$p"
+      done < "$TMP/inherited"
+    fi
   fi
 
   if [ "$ESCALATION" != - ]; then
@@ -297,10 +450,38 @@ batch_select() {
   # from, which a <base>..<head> select sets itself and --changed does not.
   # TI_BATCH_SELECT (BH-6059): catalog/ is not infra here, and a bin/lib/ or
   # catalog/ path the map has no specific row for is `unmapped path (<p>)`.
-  TI_NAMED_BASE="$TI_BASE" TI_BATCH_SELECT=1 "$IMPACT" select --changed "$CH" --out "$LIST" 2>"$WHY" \
+  # TI_WORKFLOW_BASE (BH-6688): the base the workflow classifier reads, the
+  # same one each escalation loop used: the whole diff ($CH, the inherited
+  # loop) reads $TI_BASE, the own diff ($OWNCH, the own loop) reads $EBASE.
+  # In an unstacked batch the two are the same. None without a git range.
+  local wfb="" wfo=""
+  [ -n "${CI_PLAN_CHANGED_FILE:-}" ] || { wfb="${TI_BASE:-}"; wfo="${EBASE:-$TI_BASE}"; }
+  TI_WORKFLOW_BASE="$wfb" TI_NAMED_BASE="$TI_BASE" TI_BATCH_SELECT=1 "$IMPACT" select --changed "$CH" --out "$LIST" 2>"$WHY" \
     || { echo "ci-plan: bin/test-impact.sh select failed: $(cat "$WHY")" >&2; exit 2; }
-  r=$(sed -n 's/^impact: [0-9]* of [0-9]* suites (\(.*\))$/\1/p' "$WHY" | tail -1)
-  [ -n "$r" ] || { echo "ci-plan: bin/test-impact.sh select failed: no impact line: $(cat "$WHY")" >&2; exit 2; }
+  r=$(impact_reason "$WHY") || exit 2
+  # BH-6490: a full answer on an INHERITED path is judged again on the own
+  # diff. If that selects, the list is the own selection plus what the map
+  # picks for the whole diff (--map-only), so coverage does not shrink.
+  case "$r" in
+    "full: unknown reach ("*")"|"full: unmapped path ("*")"|"full: infra change ("*")") p="${r#full: * (}"; p="${p%)}" ;;
+    *) p="" ;;
+  esac
+  if [ -n "$p" ] && [ "$OWN_BASE" != - ] && ! grep -qxF -- "$p" "$OWNCH"; then
+    [ -n "$INHERITED" ] || INHERITED="$p"
+    TI_WORKFLOW_BASE="$wfo" TI_NAMED_BASE="$OWN_BASE" TI_BATCH_SELECT=1 "$IMPACT" select --changed "$OWNCH" --out "$LIST" 2>"$WHY" \
+      || { echo "ci-plan: bin/test-impact.sh select failed: $(cat "$WHY")" >&2; exit 2; }
+    r=$(impact_reason "$WHY") || exit 2
+    case "$r" in
+      "full: "*) ;;
+      *) TI_WORKFLOW_BASE="$wfb" TI_NAMED_BASE="$TI_BASE" TI_BATCH_SELECT=1 "$IMPACT" select --changed "$CH" --map-only --out "$TMP/inh.list" 2>"$WHY" \
+           || { echo "ci-plan: bin/test-impact.sh select failed: $(cat "$WHY")" >&2; exit 2; }
+         r2=$(impact_reason "$WHY") || exit 2
+         case "$r2" in
+           "full: "*) r="$r2"; cp "$TMP/inh.list" "$LIST" ;;
+           *) LC_ALL=C sort -u "$LIST" "$TMP/inh.list" > "$TMP/union" && cp "$TMP/union" "$LIST" ;;
+         esac ;;
+    esac
+  fi
   MODE=full
   case "$r" in
     "full: unknown reach ("*")") p="${r#full: unknown reach (}"; ESCALATION="unmapped: ${p%)}" ;;
@@ -314,7 +495,19 @@ batch_select() {
   if [ "$MODE" = batch-selected ] && [ -n "$tot" ] && [ "${sel:-0}" -ge "$tot" ]; then
     MODE=full; ESCALATION="the selection is every suite"
   fi
-  if [ "$ESCALATION" != - ]; then REASON="full: $ESCALATION"; else REASON="$r"; fi
+  if [ "$ESCALATION" != - ]; then REASON="full: $ESCALATION"; else REASON="$r${ADDNOTE:+; $ADDNOTE}${WFNOTE:+; $WFNOTE}"; fi
+  if [ "$MODE" = batch-selected ] && [ -n "$INHERITED" ]; then
+    REASON="$REASON; own diff: $(grep -c . "$OWNCH") of $(grep -c . "$CH") paths, base ${OWN_BASE:0:8}; inherited: $INHERITED"
+  fi
+}
+
+# impact_reason <why-file> — the reason in test-impact's `impact:` line; rc 1
+# (and says so) when there is none.
+impact_reason() {
+  local r
+  r=$(sed -n 's/^impact: [0-9]* of [0-9]* suites (\(.*\))$/\1/p' "$1" | tail -1)
+  [ -n "$r" ] || { echo "ci-plan: bin/test-impact.sh select failed: no impact line: $(cat "$1")" >&2; return 1; }
+  printf '%s\n' "$r"
 }
 
 # main_fork — main's merge-base with HEAD on stdout (BH-5795), the base a
@@ -333,7 +526,8 @@ pr_select() {
   [ -z "$BASENOTE" ] || REASON="$REASON; $BASENOTE"
 }
 
-CORPUS=1; ESCALATION=-; BATCH=0; SPA=1; WORKER=1; BASENOTE=""; PRSEL=0
+CORPUS=1; ESCALATION=-; BATCH=0; SPA=1; WORKER=1; BASENOTE=""; PRSEL=0; CBE_ADDED=""; ADDNOTE=""
+OWN_BASE=-; OWN_NOTE=""; INHERITED=""; WFNOTE=""; RLINE_REACH=""
 # The reuse outputs are written only for a caller that takes part in reuse (the
 # plan job sets CI_PLAN_REUSE=1, a shard CI_PLAN_REUSED_FILE); any other caller
 # keeps the output keys it had.
@@ -355,7 +549,9 @@ case "$EV" in
     case "${TI_PR_HEAD_REF:-}" in
       mergify/merge-queue/*)
         TIER="batch"; BATCH=1
-        batch_select ;;
+        batch_select
+        # The plan job only: a shard (CI_PLAN_ESCALATION set) never reads members.
+        [ "${CI_PLAN_MEMBER_REACH:-}" != 1 ] || [ -n "${CI_PLAN_ESCALATION:-}" ] || member_reach ;;
       *)
         MODE=selected; PRSEL=1
         # BH-5795: a stacked or feature-branch base is diffed against main.
@@ -394,7 +590,7 @@ if [ "$CORPUS" = 0 ]; then
   [ -z "$OUT" ] || : > "$OUT"
   if [ -n "${GITHUB_OUTPUT:-}" ]; then
     { echo "corpus=0"; echo "mode=$MODE"; echo "count=0"; echo "n=0"; echo "shards=[]"; echo "summary=$SUMMARY"
-      echo "quarantine=$QLIST"; echo "escalation=$ESCALATION"; echo "spa=$SPA"; echo "worker=$WORKER"
+      echo "quarantine=$QLIST"; echo "escalation=$ESCALATION"; echo "own_base=$OWN_BASE"; echo "spa=$SPA"; echo "worker=$WORKER"
       [ "$REUSE_KEYS" = 0 ] || { echo "reused=0"; echo "saved_s=0"; echo "reuse=-"; }; } >> "$GITHUB_OUTPUT"
   fi
   exit 0
@@ -433,11 +629,15 @@ if [ "$MODE" = batch-selected ] && [ -r "${CH:-}" ] \
     [ "$WORKER" = 1 ] || ! cbe_affects worker "$p" || WORKER=1
     [ "$SPA$WORKER" != 11 ] || break
   done < "$CH"
+  # An added spa (worker) row names paths that job now builds from (BH-6371).
+  printf '%s\n' "$CBE_ADDED" | grep -qx spa && SPA=1
+  printf '%s\n' "$CBE_ADDED" | grep -qx worker && WORKER=1
 fi
 
 # reuse_eligible — rc 0 when this corpus may ask the ledger (see SUITE REUSE in
 # the header). A push here is already a full corpus (corpus=0 exited above).
 reuse_eligible() {
+  [ "$EV" = nightly ] || [ "$EV" = schedule ] && return 1
   [ "$EV" = push ] && return 0
   [ "$BATCH" = 1 ] || return 1
   case "$ESCALATION" in
@@ -451,11 +651,18 @@ reuse_eligible() {
 REUSE_BIN="${CI_PLAN_SUITE_REUSE:-$SELF_DIR/suite-reuse.sh}"
 REUSE=-; REUSED_N=0; SAVED=0
 : > "$TMP/reused.tsv"; : > "$TMP/fp.tsv"
-if [ -n "${CI_PLAN_REUSED_FILE:-}" ]; then
+if [ -n "${CI_PLAN_REUSED_FILE:-}" ] && { [ "$EV" = nightly ] || [ "$EV" = schedule ]; }; then
+  # BH-6406: the nightly run is a true full run. A reused list handed to it is
+  # ignored, never subtracted.
+  REUSE="off: nightly never reuses"
+elif [ -n "${CI_PLAN_REUSED_FILE:-}" ]; then
   # A shard: the plan job's list, no ledger call. Unreadable is a refusal,
-  # never a silently fuller list on one shard.
+  # never a silently fuller list on one shard. The fingerprints beside it name
+  # each reused suite's fp; without them the line says `fp -`.
   { [ -r "$CI_PLAN_REUSED_FILE" ] && cp "$CI_PLAN_REUSED_FILE" "$TMP/reused.tsv"; } \
     || { echo "ci-plan: cannot read CI_PLAN_REUSED_FILE ($CI_PLAN_REUSED_FILE)" >&2; exit 2; }
+  f="$(dirname "$CI_PLAN_REUSED_FILE")/fingerprints.tsv"
+  [ -r "$f" ] && cp "$f" "$TMP/fp.tsv" 2>/dev/null || : > "$TMP/fp.tsv"
 elif [ "${CI_PLAN_REUSE:-}" = 1 ] && reuse_eligible; then
   if HARNESS_CHECKOUT="$ROOT" "$REUSE_BIN" plan --class ci --repo "${CI_REPO:-}" --ctx "${CI_REUSE_CTX:-}" \
        --suites "$LIST" --run "$TMP/reuse.run" --reused "$TMP/reused.tsv" --fingerprints "$TMP/fp.tsv" \
@@ -507,7 +714,9 @@ N=$(( (COUNT + PER - 1) / PER ))
 SHARDS=$(awk -v n="$N" 'BEGIN { s = "["; for (i = 0; i < n; i++) s = s (i ? "," : "") i; print s "]" }')
 
 case "$REUSE" in
-  on) awk -F'\t' '{ print "reuse: reused " $1 " from " $2 " (" $3 "s)" }' "$TMP/reused.tsv"
+  on) awk -F'\t' 'FILENAME == ARGV[1] { fp[$1] = $2; next }
+        { print "reuse: reused " $1 " from " $2 " (" $3 "s) fp " ((fp[$1] ~ /^[0-9a-f]+$/) ? fp[$1] : "-") }' \
+        "$TMP/fp.tsv" "$TMP/reused.tsv"
       RLINE="reuse: on — ran $COUNT reused $REUSED_N of $((COUNT + REUSED_N)) (saved ~${SAVED}s)" ;;
   -)  RLINE="" ;;
   *)  RLINE="reuse: $REUSE" ;;
@@ -520,11 +729,17 @@ if [ -n "$RLINE" ]; then
   fi
 fi
 SUMMARY="impact: $COUNT of $TOTAL suites ($REASON) — $N shard(s), mode=$MODE"
+# BH-6490: a refused checking_base_sha is said on its own line, never in a full
+# REASON (bin/ci-batch-ledger.sh reads the escalation out of that).
+[ -z "$OWN_NOTE" ] || echo "ci-plan: $OWN_NOTE"
+[ -z "$RLINE_REACH" ] || echo "ci-plan: $RLINE_REACH"
 echo "$SUMMARY"
 # On the run page, not only in the plan log: what the batch ran and why.
 if [ "$BATCH" = 1 ] && { [ "${GITHUB_ACTIONS:-}" = true ] || [ -n "${GITHUB_STEP_SUMMARY:-}" ]; }; then
   echo "::notice title=ci-plan::mode=$MODE count=$COUNT total=$TOTAL n=$N reason=$REASON"
-  [ -z "${GITHUB_STEP_SUMMARY:-}" ] || printf '%s\nescalation: %s\nspa: %s worker: %s\n' "$SUMMARY" "$ESCALATION" "$SPA" "$WORKER" >> "$GITHUB_STEP_SUMMARY" 2>/dev/null || true
+  [ -z "$OWN_NOTE" ] || echo "::notice title=ci-plan own diff::$OWN_NOTE"
+  [ -z "${GITHUB_STEP_SUMMARY:-}" ] || printf '%s\nescalation: %s\nown base: %s%s\nspa: %s worker: %s\n' "$SUMMARY" "$ESCALATION" "$OWN_BASE" "${OWN_NOTE:+ ($OWN_NOTE)}" "$SPA" "$WORKER" >> "$GITHUB_STEP_SUMMARY" 2>/dev/null || true
+  [ -z "${GITHUB_STEP_SUMMARY:-}" ] || [ -z "$RLINE_REACH" ] || printf '%s\n' "$RLINE_REACH" >> "$GITHUB_STEP_SUMMARY" 2>/dev/null || true
 fi
 
 if [ -n "$EXPECT" ] && [ "$EXPECT" != "$N" ]; then
@@ -538,7 +753,7 @@ else cat "$LIST"; fi
 if [ -n "${GITHUB_OUTPUT:-}" ]; then
   { echo "mode=$MODE"; echo "count=$COUNT"; echo "total=$TOTAL"; echo "n=$N"
     echo "shards=$SHARDS"; echo "corpus=1"; echo "summary=$SUMMARY"; echo "quarantine=$QLIST"
-    echo "escalation=$ESCALATION"; echo "spa=$SPA"; echo "worker=$WORKER"
+    echo "escalation=$ESCALATION"; echo "own_base=$OWN_BASE"; echo "spa=$SPA"; echo "worker=$WORKER"
     [ "$REUSE_KEYS" = 0 ] || { echo "reused=$REUSED_N"; echo "saved_s=$SAVED"; echo "reuse=$REUSE"; }
   } >> "$GITHUB_OUTPUT"
 fi

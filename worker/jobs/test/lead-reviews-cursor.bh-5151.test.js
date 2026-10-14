@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url';
 import { DatabaseSync } from 'node:sqlite';
 import worker, { CREATED_TABLES } from '../src/index.js';
 import { ADDED_COLUMNS } from '../src/lib/core.js';
+import { jobsSchemaSql } from './lib/jobs-schema.js';
 
 // BH-5151 — GET /api/lead-reviews reads the WHOLE queue through an
 // `after=<created_at>,<rowid>` cursor (next_after on a truncated page), and
@@ -13,7 +14,7 @@ import { ADDED_COLUMNS } from '../src/lib/core.js';
 // against THE SQL THAT SHIPS (worker/jobs/schema.sql), the bh-1949 idiom.
 const SECRET = 'test-secret';
 const LEAD = 'lead-test-token';
-const SCHEMA = readFileSync(fileURLToPath(new URL('../schema.sql', import.meta.url)), 'utf8');
+const SCHEMA = jobsSchemaSql();
 
 function sqliteDB(db) {
   const bindAndRun = (sql, binds) => ({

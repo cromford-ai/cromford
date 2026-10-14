@@ -42,6 +42,7 @@ mkdir -p "$T/bin/lib/jobs" && cp "$DIR"/bin/lib/jobs/*.sh "$T/bin/lib/jobs/"
 cp "$DIR/bin/review-tighten.sh" "$T/bin/review-tighten.sh"
 cp "$DIR/bin/lib/lane-switch.sh" "$DIR/bin/lib/lane-gate.sh" "$T/bin/lib/"
 cp "$DIR/bin/merge-sweep.sh"    "$T/bin/merge-sweep.sh"
+mkdir -p "$T/bin/lib" && cp -rL "$DIR/bin/lib/ms" "$T/bin/lib/" || exit 1   # BH-5242: the sweep loads bin/lib/ms/
 echo "HARNESS_SECRET=test-secret" > "$T/env/global.env"
 PASS=0; FAIL=0
 ok()  { PASS=$((PASS+1)); }

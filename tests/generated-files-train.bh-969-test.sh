@@ -221,7 +221,7 @@ R0_BR=$(
 [ -n "$R0_BR" ] && ok || bad "R0: regen_table could not be extracted from bin/batch-resolve.sh"
 [ "$R0_MC" = "$R0_BR" ] && ok \
   || bad "R0: mc_regen_table must byte-match regen_table (mc='$R0_MC' br='$R0_BR')"
-printf '%s\n' "$R0_MC" | grep -qx 'docs/verification-map/README.md	bin/gen.sh' && ok \
+grep -qx 'docs/verification-map/README.md	bin/gen.sh' <<<"$R0_MC" && ok \
   || bad "R0: the fixture's row must parse to path<TAB>command (got '$R0_MC')"
 
 # ============================================================================

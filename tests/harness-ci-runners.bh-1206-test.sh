@@ -233,7 +233,7 @@ pin_pair semgrep 'semgrep=='
 # a python without the flag (an older hosted pip) refuses the flag itself. A
 # step that hard-codes either answer works on exactly one fleet, and CI_RUNNER
 # can point at the other between one run and the next.
-if printf '%s\n' "$CODE" | grep -q 'pip install'; then
+if grep -q 'pip install' <<<"$CODE"; then
   case "$CODE" in
     *"pip install --help"*) ok ;;
     *) bad "C: a pip install with no capability probe — it assumes one fleet's python" ;;

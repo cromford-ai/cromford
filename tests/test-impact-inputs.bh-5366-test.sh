@@ -85,7 +85,7 @@ PATH="$SH:$PATH" "$TI" --root "$R" inputs > "$T/n.out" 2> "$T/n.err"; rc=$?
 # I5 the real tree.
 "$TI" inputs > "$T/real.tsv" 2> "$T/real.err"; rc=$?
 [ "$rc" = 0 ] && ok "I5 real tree rc 0" || bad "I5 real tree rc=$rc: $(head -3 "$T/real.err")"
-missing=$(cd "$DIR" && ls tests/*.sh | while IFS= read -r s; do grep -qxF "$(printf '%s\t%s' "$s" "$s")" "$T/real.tsv" || echo "$s"; done | head -3)
+missing=$(cd "$DIR" && ls tests/*.sh | while IFS= read -r s; do grep -qxF "$(printf '%s\t%s' "$s" "$s")" "$T/real.tsv" || echo "$s"; done | awk 'NR <= 3')
 [ -z "$missing" ] && ok "I5 every suite has a self row" || bad "I5 suites with no self row: $missing"
 grep -qxF "$(printf '@infra\tbin/suite-reuse.sh')" "$T/real.tsv" && [ -f "$DIR/bin/suite-reuse.sh" ] \
   && ok "I5 bin/suite-reuse.sh is infra in the real tree" || bad "I5 bin/suite-reuse.sh not infra"

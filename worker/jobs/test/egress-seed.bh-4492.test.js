@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
+import { jobsSchemaSql } from './lib/jobs-schema.js';
 
 // BH-4492: the egress allowlist is two settings rows, seeded by schema.sql.
 // bin/lib/egress.sh reads egress.stage.<stage>.hosts per build-stage call:
@@ -9,7 +10,7 @@ import { fileURLToPath } from 'node:url';
 // model APIs only. Applied, not grepped: the rows must exist after the file is
 // applied, and a re-apply (every deploy) must not reset an operator's edit.
 
-const SCHEMA = readFileSync(fileURLToPath(new URL('../schema.sql', import.meta.url)), 'utf8');
+const SCHEMA = jobsSchemaSql();
 const AGENT_CALL = readFileSync(fileURLToPath(new URL('../../../bin/agent-call.sh', import.meta.url)), 'utf8');
 
 async function db(t) {

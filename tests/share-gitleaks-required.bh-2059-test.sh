@@ -63,7 +63,7 @@ else
   else
     ok
     BODY=$(printf '%s\n' "$S" | awk -F'\t' -v s="$STEP" '$1 == s { print $2 }')
-    printf '%s\n' "$BODY" | grep -qx 'set -euo pipefail' \
+    grep -qx 'set -euo pipefail' <<<"$BODY" \
       && ok || bad "A1: the gitleaks step must run under set -euo pipefail"
     G_IF=$(printf '%s\n' "$BODY" | sed -n 's/^if ! bin\/ci-tool-present\.sh gitleaks \([0-9][0-9.]*\); then$/\1/p' | head -1)
     G_END=$(printf '%s\n' "$BODY" | tail -1 | sed -n 's/^bin\/ci-tool-present\.sh gitleaks \([0-9][0-9.]*\)$/\1/p')
@@ -82,11 +82,11 @@ else
     fi
 
     # A3. the checksum: a 64-hex literal, checked before anything is unpacked.
-    printf '%s\n' "$BODY" | grep -qE '^SHA=[0-9a-f]{64}$' \
+    grep -qE '^SHA=[0-9a-f]{64}$' <<<"$BODY" \
       && ok || bad "A3: the gitleaks step must pin a 64-hex sha256 literal (SHA=...)"
     LN_SUM=$(printf '%s\n' "$BODY" | grep -n 'sha256sum -c' | head -1 | cut -d: -f1)
     LN_TAR=$(printf '%s\n' "$BODY" | grep -n '^tar ' | head -1 | cut -d: -f1)
-    LN_INS=$(printf '%s\n' "$BODY" | grep -n 'install -m' | head -1 | cut -d: -f1)
+    LN_INS=$(grep -n 'install -m' <<<"$BODY" | head -1 | cut -d: -f1)
     if [ -z "$LN_SUM" ]; then bad "A3: the gitleaks step never runs sha256sum -c on the download"
     elif [ -z "$LN_TAR" ] || [ -z "$LN_INS" ]; then bad "A3: the gitleaks step has no tar/install line to order the checksum against"
     elif [ "$LN_SUM" -lt "$LN_TAR" ] && [ "$LN_SUM" -lt "$LN_INS" ]; then ok
@@ -102,7 +102,7 @@ else
     SHA_CI=$(printf '%s\n' "$BODY" | sed -n 's/^SHA=\([0-9a-f]\{64\}\)$/\1/p' | head -1)
     for F in "$DIR/bin/share/mapping.py" "$DIR/bin/share/overlay/tests/no-client-identifiers-test.sh"; do
       if [ -z "$SHA_CI" ]; then bad "A3b: no SHA= literal to look for in $(basename "$F")"
-      elif grep -q "[\"']$SHA_CI[\"']," "$F"; then ok
+      elif grep -q "[\"']${SHA_CI}[\"']," "$F"; then ok
       else bad "A3b: $(basename "$F") does not list the gitleaks checksum in KNOWN_PUBLIC_CHECKSUMS — the share publish will refuse harness-ci.yml as a leak"
       fi
     done

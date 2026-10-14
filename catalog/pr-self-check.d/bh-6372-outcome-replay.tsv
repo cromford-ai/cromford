@@ -1,0 +1,14 @@
+# catalog/pr-self-check.d/ — more rows for the pre-review self-check. Each file
+# is one ticket's rows; bin/lib/pr-self-check.sh reads them after
+# catalog/pr-self-check.tsv, in C filename order. The columns and the triggers
+# are in that file's header. Add a new file here; never append to the main file.
+# This file (BH-6380, BH-6372.2): a perf/cost PR must carry an "Outcome replay"
+# section with a target line and a measured number.
+#   param `perf`: the linked ticket is perf/cost by pt_classify
+#     (bin/lib/perf-ticket.sh, catalog/perf-ticket.tsv), with one parent hop.
+#   match `under=<heading-ERE>>><line-ERE>`: a line under that heading matches;
+#     `&` ANDs the two terms. The target term follows pt_parse_target's grammar,
+#     with one known gap: under= matches without case (grep -i), and the parser
+#     needs `Target metric:` and a lower-case id. So `target metric: MQ from 1
+#     to 2` passes this row, and pt_parse_target cannot read it.
+body-outcome-replay	refuse	perf	an "Outcome replay" section with a target and a measured number	under=outcome replay>>^[[:space:]]*(- )?target metric:[[:space:]]*[a-z0-9][a-z0-9-]*[[:space:]]+from[[:space:]]+-?[0-9]+(\.[0-9]+)?[[:space:]]+to[[:space:]]+-?[0-9]+(\.[0-9]+)?([[:space:]]|$)&under=outcome replay>>measured[^0-9]*[0-9]

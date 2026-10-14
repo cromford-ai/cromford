@@ -66,7 +66,7 @@ BOX=$(local_box_name)
 export FLEET_CONF="${FLEET_CONF:-$H/fleet.conf}"
 PROJECTS=$("$H/bin/fleet-conf.sh" --projects-on-box "$BOX" 2>/dev/null)
 if [ -n "$ONLY" ]; then
-  printf '%s\n' "$PROJECTS" | grep -qxF -- "$ONLY" \
+  grep -qxF -- "$ONLY" <<<"$PROJECTS" \
     || { echo "conflict-hotspots-fleet: $ONLY is not a project on box $BOX" >&2; exit 2; }
   PROJECTS=$ONLY
 fi

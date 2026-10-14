@@ -1,0 +1,264 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Harness Spend & State Audit — 2026-09-19</title>
+<style>
+  :root{--bg:#FCFCFC;--ink:#1A1A1A;--muted:#5C5C5C;--line:#E6E6E6;--accent:#2563EB;--card:#FFFFFF;--red:#B91C1C;--amber:#B45309;--green:#15803D;--soft:#F3F4F6}
+  *{box-sizing:border-box}
+  html,body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Inter,Helvetica,Arial,sans-serif}
+  nav{position:sticky;top:0;z-index:5;background:rgba(252,252,252,.96);backdrop-filter:blur(6px);border-bottom:1px solid var(--line)}
+  nav .in{max-width:1600px;margin:0 auto;padding:10px 20px;display:flex;gap:14px;flex-wrap:wrap;align-items:center}
+  nav a{color:var(--muted);text-decoration:none;font-size:13px;padding:4px 8px;border-radius:6px}
+  nav a:hover{background:var(--soft);color:var(--ink)}
+  nav .brand{font-weight:700;color:var(--ink);font-size:14px;margin-right:6px}
+  main{max-width:1600px;margin:0 auto;padding:24px 20px 80px}
+  h1{font-size:28px;line-height:1.2;margin:8px 0 6px}
+  h2{font-size:21px;margin:40px 0 12px;padding-top:8px;border-top:1px solid var(--line)}
+  h3{font-size:16px;margin:22px 0 8px}
+  p{max-width:960px}
+  .lede{color:var(--muted);max-width:960px;margin-bottom:18px}
+  .pill{display:inline-block;font-size:12px;padding:2px 9px;border-radius:999px;border:1px solid var(--line);background:var(--card);color:var(--muted);margin-right:6px}
+  .pill.red{color:var(--red);border-color:#F3C5C5;background:#FEF2F2}
+  .pill.amber{color:var(--amber);border-color:#F5D9A8;background:#FFFBEB}
+  .pill.green{color:var(--green);border-color:#BBE5C8;background:#F0FDF4}
+  .pill.blue{color:var(--accent);border-color:#C7D7FB;background:#EFF4FF}
+  .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:14px;margin:14px 0}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:14px 16px}
+  .card h4{margin:0 0 6px;font-size:14px}
+  .card .big{font-size:26px;font-weight:700;letter-spacing:-.01em}
+  .card .sub{color:var(--muted);font-size:13px}
+  .two{display:grid;grid-template-columns:1fr 1fr;gap:18px}
+  .cols2{columns:2;column-gap:28px;max-width:1300px}
+  .cols2 li{break-inside:avoid;margin-bottom:6px}
+  .tbl{overflow-x:auto;border:1px solid var(--line);border-radius:10px;background:var(--card);margin:12px 0}
+  table{border-collapse:collapse;width:100%;font-size:13.5px}
+  th,td{padding:8px 10px;border-bottom:1px solid var(--line);vertical-align:top;text-align:left}
+  th{background:var(--soft);font-weight:600;position:sticky;top:0}
+  tr:last-child td{border-bottom:0}
+  td.num,th.num{text-align:right;white-space:nowrap;font-variant-numeric:tabular-nums}
+  code{font:12.5px ui-monospace,SFMono-Regular,Menlo,monospace;background:var(--soft);padding:1px 5px;border-radius:4px}
+  .note{border-left:3px solid var(--accent);background:#F5F8FF;padding:10px 14px;border-radius:0 8px 8px 0;max-width:960px;margin:12px 0}
+  .warn{border-left-color:var(--red);background:#FEF6F6}
+  ol.rank li{margin-bottom:10px}
+  .muted{color:var(--muted)}
+  .placeholder{border:1px dashed var(--line);border-radius:10px;padding:16px;color:var(--muted);background:var(--card)}
+  @media (max-width:900px){.two{grid-template-columns:1fr}.cols2{columns:1}h1{font-size:23px}}
+</style>
+</head>
+<body>
+<nav><div class="in">
+  <span class="brand">Harness audit · 2026-09-19</span>
+  <a href="#tldr">TL;DR</a>
+  <a href="#day">What happened today</a>
+  <a href="#incident">The runaway lane</a>
+  <a href="#loops">Every loop with the same shape</a>
+  <a href="#spend">Spend by lane</a>
+  <a href="#fixes">Ranked fixes</a>
+  <a href="#state">Cron ticks & filesystem state</a>
+  <a href="#tickets">Tickets</a>
+</div></nav>
+<main>
+<h1>Harness spend and state audit</h1>
+<p class="lede">Read-only audit of the cromford fleet after the 2026-09-19 Mac drain round. Part one answers "which lane went wild, and where else can that happen"; part two inventories what still runs on cron ticks and filesystem state instead of the jobs database. Money is from every box's <code>cost.csv</code> unioned (15,298 rows over 09-17 to 09-19); rows the ledgers never priced are estimated from <code>catalog/model-prices.json</code> and marked <em>est</em>.</p>
+
+<h2 id="tldr">TL;DR</h2>
+<div class="grid">
+  <div class="card"><h4>3-day fleet spend</h4><div class="big">≈ $16.6K</div><div class="sub">$13.1K priced + ≈$3.5K unpriced (openrouter / fireworks / codex rows with a blank cost)</div></div>
+  <div class="card"><h4>Repeat purchases of an unchanged input</h4><div class="big">≈ $4–5K</div><div class="sub">project-5 reviews ~$1.1K · triage shards ~$2K · pre-plan ~$1.5K · autopilot ~$0.4K · conductor fallback re-reviews ~$0.3K</div></div>
+  <div class="card"><h4>The lane that went wild</h4><div class="big">review-prs</div><div class="sub">project-5 box, a wiped dedup ledger: 460 verdicts on 122 distinct PR+head; one PR reviewed 52 times</div></div>
+  <div class="card"><h4>Loops with the same shape, still live</h4><div class="big">4</div><div class="sub">triage shards, pre-plan re-plans, review-autopilot re-buys, conductor fallback re-reviews</div></div>
+</div>
+<ul class="cols2">
+  <li><strong>One incident, one cause.</strong> <code>state/project-5.pr-reviews.json</code> became a 0-byte or non-object file, so the pre-call check "was this head already reviewed" read <em>never</em> for every open PR, every tick. BH-977 (#978) fixed the write; the ledger file is still the only truth the lane consults.</li>
+  <li><strong>The same shape recurs wherever the dedup key lives in a plain file on one box.</strong> Every ledger in the fleet is a file under <code>/root/harness/state</code>; a truncated, rsynced-mid-write or hand-repaired file re-buys everything open on the next tick. GitHub and the D1 jobs worker already hold the answer and are never asked first.</li>
+  <li><strong>$3.5K in three days is invisible.</strong> All 1,987 openrouter, fireworks and codex rows carry a blank cost. The openrouter fallback bills Fable at API rate with zero prompt-cache reads, 10 to 40× the subscription lane per call.</li>
+  <li><strong>The fixes are ticket-sized and filed</strong> (#1015 to #1022), ranked by dollars saved per day, each with red-first acceptance tests. The two biggest (per-ticket triage-shard dedup, pre-plan re-plan cap) are worth ≈$2K a day between them.</li>
+  <li><strong>Today's hub outage was a different class:</strong> a merge (#785) gated 52 cron lanes on a lease whose D1 table was a hand step nobody had done. Ticket #1000. Part two of this report is about that class.</li>
+</ul>
+
+<h2 id="day">What happened today (the drain round)</h2>
+<div class="two">
+  <div>
+    <h3>Merged and landed</h3>
+    <p>Sixteen cromford PRs were rebased by hand, reviewed head-bound on this Mac (the fleet's Claude accounts were at their monthly cap), and recorded in the conductor's own ledger so the hub merges them on green CI. Nine merged during the round; the rest are landed and cycling through CI behind the main-red freeze.</p>
+    <p><span class="pill green">merged</span> #971 #933 #956 #957 #889 #961 #592 #999 #993 (+ #978 #919 #785 by the harness itself)</p>
+    <p><span class="pill blue">landed, awaiting CI/freeze</span> #967 #955 #908 #891 #874 #966 #929 #926 #911 #943 #1005 #1009 #1010</p>
+    <p><span class="pill amber">held</span> #909 (rebase onto #966 after it merges; duplicate REST helper)</p>
+  </div>
+  <div>
+    <h3>Three things that were silently wrong</h3>
+    <ol>
+      <li><strong>App GraphQL exhaustion stopped all merges.</strong> Two conductor reads used <code>gh pr view</code>; with the installation's GraphQL budget gone every READY row logged <em>"state changed under the tick ()"</em> and ticks ended <code>merges=0</code>. Hot-patched to REST on the hub with a self-retiring loop; #999 and #1005 make it durable. Ticket #994.</li>
+      <li><strong>The hub stopped itself for 29 minutes.</strong> #785 gated 52 cron lines on <code>hub-lease.sh check</code>; the lease route threw Cloudflare 1101 because the <code>hub_lease</code> D1 table was a hand step never applied. No page. Table created, lanes resumed 19:00Z. Ticket #1000.</li>
+      <li><strong>Every settings read had failed since 2026-08-28</strong> (≈550 an hour) for the same reason: no <code>settings</code> table. Every lane read code defaults for three weeks. Fixed the same way.</li>
+    </ol>
+  </div>
+</div>
+
+<h2 id="incident">The runaway lane, from the ledgers</h2>
+<p>Lane: <code>bin/review-prs.sh</code> on the project-5 box (cron <code>7,37 * * * *</code>). Dedup: <code>state/project-5.pr-reviews.json</code>, checked as <code>.[num].sha == headRefOid</code> before each paid review. When that file became a 0-byte / non-object value (most likely the 09-16 21:00Z hand repair of <code>state/project-5.json</code>), the check answered "never reviewed" for every open head, every tick, from 09-17 00:00Z until the ledger was repaired at ~14:20Z on 09-19.</p>
+<div class="grid">
+  <div class="card"><h4>Verdicts posted</h4><div class="big">460</div><div class="sub">on 122 distinct PR+head → 3.77× repeat ratio</div></div>
+  <div class="card"><h4>Worst single PR</h4><div class="big">52×</div><div class="sub">#229 @553a9e0, identical REQUEST_CHANGES over 32 h (~$125)</div></div>
+  <div class="card"><h4>Review spend, three days</h4><div class="big">$1,506</div><div class="sub">$367 → $548 → $591; a fresh head costs ~$2.40, so ≈$1,100 bought nothing new</div></div>
+  <div class="card"><h4>Stopped by</h4><div class="big">BH-977</div><div class="sub">#978: a jq write that produced no object is refused; deployed to the box 18:29Z</div></div>
+</div>
+<div class="note warn"><strong>Why review did not catch it.</strong> The dedup code was right there in the function and read before the call. What failed was the <em>store</em>: a plain file, on one box, with no second source of truth. GitHub already held the posted review for that sha and the D1 jobs worker held the verdict row; neither was consulted. That is the pattern to fix fleet-wide, not the jq write.</div>
+<p class="muted">The project-1 "213 identical comments on TK-88" is a different incident (2026-08-13 to 08-16, the partner fork harness on another box); it did not recur in this window.</p>
+
+<h2 id="loops">Every loop with the same shape</h2>
+<p>Each metered call site was judged against the fleet's metered-API checklist: a persisted dedup key read <em>before</em> the call; keyed on something stable (PR+head, ticket+plan hash, alert family) rather than something that moves each tick; "succeeded but empty" distinct from "failed" and terminal; an attempt cap; terminal state written on every non-success exit; and survival of a hub restart, sync or state-file wipe.</p>
+<div class="tbl"><table>
+<thead><tr><th>#</th><th>Lane</th><th>Dedup key (where it lives)</th><th>Before the call?</th><th>Cap / terminal?</th><th>Wipe-safe?</th><th>Rating</th><th>Evidence</th></tr></thead>
+<tbody>
+<tr><td>1</td><td>review-prs (external PRs)<br><code>bin/review-prs.sh:383-386, :458</code></td><td><code>state/&lt;project&gt;.pr-reviews.json</code>, box file</td><td>yes</td><td>no-verdict ×2 then frozen; merge retries 6</td><td><strong>no</strong></td><td><span class="pill red">ACTIVE RUNAWAY</span></td><td>460/122, #229 ×52, ~$1.1K waste</td></tr>
+<tr><td>2</td><td>review-autopilot (aging PRs, hub)<br><code>bin/review-autopilot.sh:88, :170, :187-196</code></td><td><code>state/review-autopilot/&lt;slug&gt;-&lt;num&gt;-&lt;head12&gt;</code></td><td>yes</td><td>key written only <em>after</em> <code>gh pr comment</code> succeeds; empty → retry hourly</td><td>no</td><td><span class="pill red">ACTIVE RUNAWAY</span></td><td>156 of 372 spends re-bought; project-4 #1541 ×16</td></tr>
+<tr><td>3</td><td>merge-conductor head-bound re-review<br><code>merge-conductor-lib.sh:3489, :3661</code>; cap <code>merge-conductor.sh:885-900</code></td><td>rereview job file + <code>attempts.txt</code> lanefail rows</td><td>yes</td><td>5 reads/head, but the park is re-derived to HEAD_MOVED and re-arms</td><td>partial</td><td><span class="pill red">ACTIVE RUNAWAY</span></td><td>421 spawns / 305 heads, 157 with no verdict; #818 ×8; fallback reads billed then rejected</td></tr>
+<tr><td>4</td><td>triage shards (queue-pending / results-sweep)<br><code>bin/lib/rt/shards.sh:169-241</code>; brake <code>bin/triage-gate.sh:277-353</code></td><td>tick-level queue fingerprint only; <strong>no per-ticket key</strong></td><td>tick yes / ticket no</td><td>none per ticket</td><td>n/a</td><td><span class="pill red">ACTIVE RUNAWAY</span></td><td>project-4 2,073 shards/3d (TK-1673 ×97, every one "hold"); cromford $896 on 09-18</td></tr>
+<tr><td>5</td><td>triage single session<br><code>bin/lib/rt/launch.sh:11</code>, <code>bin/triage-gate.sh</code></td><td><code>state/&lt;project&gt;.gate.json</code>, consumed on rc=0 only</td><td>yes</td><td>none beyond the gate</td><td>n/a</td><td><span class="pill amber">RISK</span></td><td>project-5 09-17: 1,168 rc≠0 sessions on the same fingerprint</td></tr>
+<tr><td>6</td><td>pre-plan<br><code>bin/preplan-tick.sh:125-133</code>, <code>preplan-lib.sh:225-247</code>, <code>run-preplan.sh:119</code></td><td><code>plans/&lt;p&gt;-&lt;key&gt;/base-sha</code>; stale when main moves in a planned path</td><td>yes</td><td><strong>no cap on re-plans</strong>; key is main's sha</td><td>n/a</td><td><span class="pill red">ACTIVE RUNAWAY</span></td><td>project-4 152 stale re-plans on 09-18 ($1,037); TK-1847 ~50 in 3d</td></tr>
+<tr><td>7</td><td>alert-triage <code>bin/alert-triage.sh:235</code></td><td><code>state/alert-families.json</code>, 6 h per family</td><td>yes</td><td>4 families/tick</td><td>hub file</td><td><span class="pill amber">RISK</span></td><td>1.6×, bounded; ≈600K tokens per session, unpriced</td></tr>
+<tr><td>8</td><td>medic <code>bin/alerts-medic.sh:319</code></td><td>family + 7 d park</td><td>yes</td><td>4/pass</td><td>hub file</td><td><span class="pill green">SAFE as a loop</span></td><td>1.1×; 465M tokens/3d unpriced (volume risk)</td></tr>
+<tr><td>9</td><td>watchdog responder <code>bin/watchdog-responder.sh:557-618</code></td><td><code>state/responder/handled.json</code>, 12 h</td><td>yes</td><td>12 h cooldown</td><td>hub file</td><td><span class="pill green">SAFE as a loop</span></td><td>≈3.9M tokens per call on fable-OR (≈$40 each), unpriced</td></tr>
+<tr><td>10</td><td>blocked-resolver fix / adjudicate / rebuild <code>bin/blocked-resolver.sh:1938, :2045, :1656</code></td><td><code>state/blocked-resolver/&lt;p&gt;/&lt;ck&gt;.json</code> counters</td><td>yes</td><td>1 / 1 / 3 then ABANDONED</td><td>hub file</td><td><span class="pill green">SAFE</span></td><td>persisted counters; noise only</td></tr>
+<tr><td>13</td><td>agent-call.sh (the choke point)<br><code>bin/agent-call.sh:705</code>, ladder <code>:1197-1350</code></td><td><strong>none</strong>; fallback rungs fire for any stage on rc≠0</td><td>no</td><td>runner retries then descend</td><td>n/a</td><td><span class="pill amber">RISK (structural)</span></td><td>1,987 rows / ≈$3.5K in 3d with blank cost; fable-via-openrouter with 0 cache reads</td></tr>
+<tr><td>16</td><td>postmerge-qa <code>bin/postmerge-qa.sh:340</code></td><td><code>state/postmerge-qa-done.txt</code></td><td>yes</td><td>once</td><td>hub file</td><td><span class="pill amber">dead feed</span></td><td>30,698 "prod not yet serving sha, requeued" lines in 3d (no spend)</td></tr>
+<tr><td>15</td><td>planned-files-cheap <code>bin/planned-files-cheap.sh:344</code></td><td>TTL marker; refuses to call if the marker cannot be written</td><td>yes</td><td>TTL</td><td>box file</td><td><span class="pill green">SAFE (the reference shape)</span></td><td>—</td></tr>
+</tbody></table></div>
+<p class="muted">Sites 11, 12, 14, 17, 18, 19 (review-rescue, run-build, run-decompose, lander, remediate-agent, the human-driven and daily lanes) are cadence-bounded or once-per-key and are listed in the source report.</p>
+
+<h2 id="spend">Spend by lane, three days</h2>
+<div class="tbl"><table>
+<thead><tr><th>Stage</th><th class="num">09-17 calls / $</th><th class="num">09-18 calls / $</th><th class="num">09-19 (to 20:20Z)</th><th class="num">3-day $</th><th class="num">unpriced est</th><th>Repeat ratio (calls ÷ distinct inputs)</th></tr></thead>
+<tbody>
+<tr><td>review (all review-stage rows)</td><td class="num">295 / 776</td><td class="num">988 / 1,394</td><td class="num">735 / 1,042</td><td class="num">3,212</td><td class="num">+822</td><td>project-5 review-prs 3.77 · autopilot 1.7 · conductor 1.38 · others 1.0</td></tr>
+<tr><td>triage, project boards</td><td class="num">5,297 / ~1,040</td><td class="num">3,714 / ~2,035</td><td class="num">1,593 / ~640</td><td class="num">~3,715</td><td class="num">+~2,300</td><td>project-4 14.7–18.4 · project-1 13.7–21.5 · project-3 12.8–18.8 · project-5 4.1–8.7 · cromford 3.2–5.0</td></tr>
+<tr><td>triage, alert-triage</td><td class="num">496 / 49</td><td class="num">215 / 39</td><td class="num">319 / 19</td><td class="num">107</td><td class="num">+~200</td><td>1.6 (max 3 per family)</td></tr>
+<tr><td>triage, medic</td><td class="num">143 / 0</td><td class="num">145 / 0</td><td class="num">144 / 0</td><td class="num">0</td><td class="num">+8</td><td>1.1</td></tr>
+<tr><td>triage, responder</td><td class="num">19 / 6</td><td class="num">15 / 5</td><td class="num">19 / 6</td><td class="num">17</td><td class="num">+~300</td><td>~1.0 (12 h cooldown)</td></tr>
+<tr><td>pre-plan</td><td class="num">285 / 1,235</td><td class="num">489 / 2,059</td><td class="num">223 / 781</td><td class="num">4,075</td><td class="num">+57</td><td>project-4 4.3 (152 stale re-plans on 09-18) · cromford 2.3</td></tr>
+<tr><td>execute</td><td class="num">95 / 911</td><td class="num">97 / 94</td><td class="num">26 / 104</td><td class="num">1,110</td><td class="num">+129</td><td>1.0; rebuilds capped at 3</td></tr>
+<tr><td>plan</td><td class="num">100 / 479</td><td class="num">0</td><td class="num">0</td><td class="num">479</td><td class="num">+45</td><td>1.6 (three tickets planned 4× each through rebuilds)</td></tr>
+<tr><td>orchestrator</td><td class="num">67 / 126</td><td class="num">43 / 72</td><td class="num">17 / 46</td><td class="num">244</td><td class="num">0</td><td>human-driven</td></tr>
+<tr><td>fix / decompose / prodqa</td><td class="num">22 / 77</td><td class="num">3 / 7</td><td class="num">3 / 11</td><td class="num">95</td><td class="num">0</td><td>capped</td></tr>
+<tr><td><strong>total</strong></td><td class="num"><strong>≈4,700</strong></td><td class="num"><strong>≈5,700</strong></td><td class="num"><strong>≈2,650</strong></td><td class="num"><strong>≈13,060</strong></td><td class="num"><strong>≈3,520</strong></td><td></td></tr>
+</tbody></table></div>
+<h3>Worst single inputs</h3>
+<div class="tbl"><table>
+<thead><tr><th>Lane</th><th>Input</th><th>Repeat count</th><th class="num">Cost</th><th>Loop</th></tr></thead>
+<tbody>
+<tr><td>project-5 review-prs</td><td>project-5#229 @553a9e0</td><td>52 identical REQUEST_CHANGES</td><td class="num">~$125</td><td>wiped ledger, <code>.[num].sha</code> never equals head</td></tr>
+<tr><td>project-5 review-prs</td><td>#2551 @0222cd8; 15 more PRs</td><td>37; 12–19 each</td><td class="num">~$540</td><td>same</td></tr>
+<tr><td>project-4 triage shards</td><td>TK-1673, TK-1423, TK-1735, TK-1847, TK-1650 …</td><td>97, 89, 67, 67, 66 sessions, each "hold: file absent on main"</td><td class="num">$11–17 each (grok)</td><td>queue-pending shard per ticket per RUN tick</td></tr>
+<tr><td>project-1 / cromford triage shards</td><td>TK-265 (153), TK-266 (138), BH-648 (64), BH-647 (60)</td><td>on Fable</td><td class="num">$78, $63, $46, $34</td><td>same, on the expensive lane</td></tr>
+<tr><td>project-4 pre-plan</td><td>TK-1847 (~50), TK-1841 (~45), four more (~30 each)</td><td>PREPLAN_STALE on every merge touching prisma/schema.prisma</td><td class="num">~$4 each</td><td>no cap; key is main's sha</td></tr>
+<tr><td>review-autopilot</td><td>project-4 #1541 @d8a5ba0</td><td>16 buys, comment never posted</td><td class="num">~$50</td><td>state written only after the post succeeds</td></tr>
+<tr><td>merge-conductor re-review</td><td>cromford #818 @d5e8152c; #744, #704, project-5 #2640, #2584</td><td>8 spawns each</td><td class="num">$2–6 per read</td><td>fallback read billed then rejected on provenance; cap resets on re-park</td></tr>
+</tbody></table></div>
+
+<h2 id="fixes">Ranked fixes (filed as tickets)</h2>
+<ol class="rank">
+  <li><strong>#1015 Per-ticket dedup for triage shards</strong> — ≈$1,000–1,500/day. Persist a per-key fingerprint (queue line minus timestamps and prose, referenced PR states, the key's RESULT set); identical → no shard. The tick brake stays as backstop.</li>
+  <li><strong>#1016 Cap and terminalize pre-plan re-plans</strong> — ≈$800–1,200/day. Two stale re-plans per ticket per 24 h, then a terminal defer-to-build marker (the build stage plans anyway). The in-flight <code>ticket/bh-475-cap</code> PR adds the three-outcome ledger for the no-plan case.</li>
+  <li><strong>#1017 review-prs dedup that survives a wiped ledger</strong> — prevents a $500–600/day recurrence. Ask GitHub (free) or the D1 verdict row for an existing harness review of this sha before buying; the file is a cache, not the truth.</li>
+  <li><strong>#1018 review-autopilot caches the review before posting</strong> — ≈$150–250/day. A failed <code>gh pr comment</code> re-posts from cache next tick with no model call; two empty outputs → terminal.</li>
+  <li><strong>#1019 Conductor never buys a fallback review it will reject</strong> — the loop plus ≈$250/day when OpenRouter-Fable serves. Claude-only intent to agent-call; one lane failure per (head, lane-health epoch); no re-arm from BLOCKED_HUMAN unless the sha moved.</li>
+  <li><strong>#1020 Cost-capture parity</strong> — makes ≈$1.2K/day visible. Price every openrouter / fireworks / codex row at write time; alert on blank-cost bursts; decide whether the <code>anthropic/</code>-via-openrouter rung should be opt-in per stage.</li>
+  <li><strong>#1021 Consume a failing single-session triage after 3 attempts.</strong></li>
+  <li><strong>#1022 Age out post-merge QA requeues</strong> — a dead feed, not a spend.</li>
+</ol>
+<div class="note"><strong>The cross-cutting rule these share:</strong> the dedup store must be a durable, shared record (GitHub itself or the D1 jobs worker), read before the call, with the three outcomes written back. Part two of this report is the inventory of every fact that still lives only in a file on one box.</div>
+
+<h2 id="state">Cron ticks and filesystem state vs the jobs database</h2>
+<p>Read-only inventory of every committed cron line, every filesystem store <code>bin/</code> references, and every "read a log to decide" site, mapped against the jobs worker's D1 schema. The question for each fact: who holds it, who else holds it, and which copy wins when they disagree.</p>
+<div class="grid">
+  <div class="card"><h4>Cron lines committed</h4><div class="big">267</div><div class="sub">10 cron files (hub 72), 78 scripts, ≈1,370 invocations/hour fleet-wide (hub ≈490)</div></div>
+  <div class="card"><h4>GitHub calls per hour, steady state</h4><div class="big">2,500–4,500</div><div class="sub">≈1,500–3,000 from five hub lanes asking "is this PR open / green / approved / merged" on five different clocks</div></div>
+  <div class="card"><h4>Filesystem state paths vs DB tables</h4><div class="big">486 vs 37</div><div class="sub">state 193 · flags 110 · locks 57 · logs-as-state 126; live hub <code>state/</code> is 554 MB, <code>flags/</code> 340 entries, <code>locks/</code> 3,153 stale files</div></div>
+  <div class="card"><h4>Double-homed facts</h4><div class="big">≈35</div><div class="sub">file and row both hold it; 6 have precedence rules that disagree today; ≈25 fleet-relevant stores have no DB twin at all</div></div>
+</div>
+<h3>The six facts whose two homes disagree today</h3>
+<div class="tbl"><table>
+<thead><tr><th>Fact</th><th>Homes</th><th>How it splits</th></tr></thead>
+<tbody>
+<tr><td><strong>The reviewed sha bound to a PR's approval</strong></td><td><em>Six</em>: build record <code>reviewed-sha</code>, <code>state/&lt;p&gt;.pr-reviews.json</code>, <code>attempts.txt</code> <code>apverdict</code> lines, record <code>review-head</code>, <code>job_artifacts(verdict)</code>, <code>ledgers(pr_state)</code></td><td>After a conductor rebase the record says the new head, the artifact may say the old one (the sweep's head-bound gate parks an approved PR), pr-reviews.json says pre-rebase (autopilot buys a duplicate review), a stale <code>apverdict</code> suppresses a needed re-approval. The highest-risk split in the fleet, and the shape of today's whole drain round.</td></tr>
+<tr><td>Conductor per-PR state</td><td><code>pr-state.tsv</code> ("the ledger of record") + <code>ledgers(pr_state)</code></td><td>The row overwrites on every transition; a failed PUT is silently missing on rehydrate; <code>alerted</code> marks exist only in the file, so a rebuilt hub re-pages every closed-unmerged PR.</td></tr>
+<tr><td>Build queue membership</td><td><code>state/build-queue/&lt;p&gt;/*.json</code> + <code>build_queue</code></td><td>Row-first on the watcher, file-first on the pool, row→file materialisation on the hub: the TK-70 double-build shape. A failed <code>queue_done</code> leaves a claimed row with no file.</td></tr>
+<tr><td>Merge queue membership</td><td><code>state/merge-queue/&lt;p&gt;/&lt;num&gt;</code> (+<code>.blocked</code>) + <code>merge_queue</code></td><td>File leads; rows are materialised back into files; a <code>.blocked</code> entry is re-touched and re-put while the row still says blocked with the old reason.</td></tr>
+<tr><td>Pause and kill flags</td><td><code>flags/*</code> file (the flag), <code>pause_flags</code> row, and a third copy in <code>state/flags-db/</code></td><td>Apply-once reconcile plus ≈15 bare <code>[ -f flags/… ]</code> readers: an operator <code>rm</code> leaves the console saying paused while the box builds.</td></tr>
+<tr><td>Hub lease</td><td><code>state/hub-lease.json</code> (60 s cache) + <code>hub_lease</code> row with an epoch fence</td><td>The cache never re-validates the epoch, so a promote elsewhere gives two hubs for 60 to 600 s. Today's outage was this row's table not existing at all.</td></tr>
+</tbody></table></div>
+<div class="two">
+  <div>
+    <h3>No database twin at all (a hub wipe repeats paid work)</h3>
+    <ul>
+      <li><code>state/merge-conductor/attempts.txt</code>: 396 KB, 5,240 lines, 65 read/write sites. A hub rebuild rehydrates PR state from D1 but starts with an empty attempts file, so it re-approves, re-rebases and re-kicks CI on every open PR.</li>
+      <li><code>state/deploy-queue/</code>: a train that departs and fails its ledger write leaves nothing anywhere.</li>
+      <li>The entire alerts substrate: one alert lives in up to six mirrors (ALERTS.log + cursor, per-alert JSON, per-box quarantine drained over ssh, families, deferred spool, medic parks, ≈250 day-stamped <code>flags/alerted-*</code>) plus the console DB. No <code>alerts</code> table exists.</li>
+      <li>Fly machine registry and pool claims; routing enrollment flags (<code>builder-fly-*</code>, <code>fly-pool-*</code>, <code>pool-halt-*</code>) propagated by rsync and edited by hand on two boxes.</li>
+      <li>Blocked-resolver ladder counters: a wipe resets <code>MAX_REBUILDS=3</code> to three more full builds per parked PR.</li>
+      <li>Review-autopilot markers and daily spend caps; external-PR verdicts (never reach <code>job_artifacts</code>); <code>postmerge-qa-done.txt</code>, whose header promises a ledger that no code writes.</li>
+      <li><code>state/overlap-defer/</code>: written, never read back, so a ticket re-offered to another box buys the plan again, the exact loop the file exists to stop.</li>
+    </ul>
+  </div>
+  <div>
+    <h3>"Grep the log as a state store" (≈30 sites, 18 scripts)</h3>
+    <ul>
+      <li><code>logs/READY-QUEUE.log</code> <em>is</em> the work queue: seven readers, sha256'd into the triage brake, PR numbers regexed out for the gating vector, appended over ssh by another lane, and the model is told to mutate it.</li>
+      <li><code>blocked-resolver.sh:574</code> regex-parses <code>merge-conductor.log</code> for hand-offs as a candidate source for its whole ladder.</li>
+      <li><code>pipeline-health.sh:138-145</code> writes <code>flags/pool-halt-&lt;P&gt;</code> from a grep of <code>fly-pool.log</code>: a log grep halts spawning.</li>
+      <li><code>tier2-merge-sweep.sh:61-63</code> authorises a merge from <code>tail -2 review.md | grep APPROVE</code>.</li>
+      <li><code>review-tighten.sh:138</code> decides a merge gate from a CSV when the table is unreachable.</li>
+      <li><code>state/closeout-aged-out.tsv</code>: 45 MB, grepped every 10 minutes, no pruner anywhere.</li>
+      <li><code>pipeline-health.sh:676</code>: the fleet's 24 h hard cost ceiling comes from <code>ssh tail -1500 logs/cost.csv</code> on every box, while <code>cost_rows</code> holds the same numbers.</li>
+    </ul>
+  </div>
+</div>
+<div class="note"><strong>One drift finding that gates the plan.</strong> The audit found the live hub crontab carrying <code>hub-lease.sh renew</code> and 40-plus gated lines that main did not have; that gap closed during the round when #785 (BH-432) merged at 18:26Z, and the rest of that story is ticket #1000. What remains from slice 0 is the epoch re-validation and re-pointing the hub's checkout at <code>origin/main</code>.</div>
+<h3>Migration plan, ranked (split-brain risk, then polling saved, then size)</h3>
+<p>Every slice is additive on the schema, lands dark behind a flag row, keeps the file as a write-through cache for one full cycle before the file read is deleted, and is written red-first in the fleet's test shape. Sizes are AI sessions.</p>
+<div class="tbl"><table>
+<thead><tr><th>#</th><th>Slice</th><th>Fixes</th><th>Saves</th><th class="num">Size</th><th>Ticket</th></tr></thead>
+<tbody>
+<tr><td>0</td><td>Hub-lease epoch gap; hub checkout on <code>origin/main</code></td><td>two hubs for 60–600 s after a promote</td><td>—</td><td class="num">0.5</td><td>#1023</td></tr>
+<tr><td>1</td><td>One home for the reviewed sha and the verdict: <code>job_artifacts(verdict)</code> is the only authority, all six rebinders call <code>job_verdict_rebind</code>, a <code>verdict_history</code> table so round 2 stops overwriting round 1</td><td>the highest split in the fleet; duplicate paid re-reviews; head-bound parks of approved PRs</td><td>the whole class today's drain round hand-worked</td><td class="num">1</td><td>#1024</td></tr>
+<tr><td>2</td><td>Conductor state and attempts become rows (<code>pr_state_events</code> append-only, <code>pr_attempts</code> keyed (repo, number, kind, sha)); the tick is keyed to the PR that woke; the merge-sweep line retires; blocked-resolver reads BLOCKED_HUMAN rows instead of grepping the conductor log</td><td>hub rebuild = re-approve / re-rebase / re-kick everything</td><td>≈1,000–2,500 GitHub calls/hr</td><td class="num">2–3</td><td>#1025</td></tr>
+<tr><td>3</td><td>Queues are rows only: <code>build_queue</code>, <code>merge_queue</code>, new <code>deploy_queue</code>; enqueue at the moment an APPROVE verdict is written; delete the ssh drains and materialisers</td><td>the double-build shape; vanished deploy batches</td><td>≈30 ssh/hr per flagged project, ≈30 flyctl/hr per builder, the 6×/hr builds re-grep</td><td class="num">2</td><td>#1026</td></tr>
+<tr><td>4</td><td>Flags DB-authoritative with the file as a derived cache (all ≈15 bare readers go through <code>flag_active</code>); routing enrollment becomes a <code>routing</code> table</td><td>console says paused, box builds; Fly routing split across boxes</td><td>rsync-propagated flags</td><td class="num">1</td><td>#1027</td></tr>
+<tr><td>5</td><td>An <code>alerts</code> table; alert lanes become claims; the six mirrors collapse into row state</td><td>duplicate pages, lost alerts from unreachable boxes, medic re-opening historic alerts</td><td>48 ssh/hr, 240 cursor tails/hr, bounds ≈30 model sessions/hr</td><td class="num">3</td><td>#1030</td></tr>
+<tr><td>6</td><td>One liveness fact (<code>lanes</code> + <code>box_status</code>); fold <code>resume-dead-builds</code> into the jobs watchdog</td><td>three answers to "is this box alive"</td><td>32–64 ssh/hr</td><td class="num">1–2</td><td>#1031</td></tr>
+<tr><td>7</td><td>Cost rows written at the source; rollups, cost breaker and cache-hit report as worker queries; <code>model_prices</code> as a table</td><td>frozen <code>summary.json</code> driving budgets; CSV as the vendor-spend baseline</td><td>≈30 ssh/hr scrape + 6 scp/day</td><td class="num">1–2</td><td>#1032</td></tr>
+<tr><td>8</td><td>Retire the log-as-state stores: READY-QUEUE.log → <code>build_queue.status='ready'</code>; <code>closeout_aged</code> table; branch from the job row, not <code>pipeline.log</code></td><td>mislinked PRs, a halt flag from a log grep, the 45 MB grep</td><td>the ssh appends and the 45 MB read every 10 min</td><td class="num">2</td><td>#1033</td></tr>
+<tr><td>9</td><td>Wire the remaining eleven polling lanes to the wake kinds that already exist (closed / synchronize / check_suite / push / deployment_status / workflow_run); cron lines become ≥30-minute backstops, then go</td><td>latency, not correctness</td><td>≈500–800 GitHub calls/hr plus the deploy verify loops</td><td class="num">2–3</td><td>#1034</td></tr>
+<tr><td>10</td><td>Fly <code>machines</code> table; pool file claims become rows</td><td>dispatch to a dead machine, two pools for one key</td><td>log greps for reaping</td><td class="num">1–2</td><td>#1035</td></tr>
+<tr><td>11</td><td>The no-twin idempotency ledgers (autopilot markers and caps, lander, batch membership, overlap-defer read-back, postmerge-qa ledger, plan-malformed, migration-alerted)</td><td>paid work repeated after a hub wipe</td><td>—</td><td class="num">1</td><td>#1036</td></tr>
+</tbody></table></div>
+<h3>What stays on the filesystem, on purpose</h3>
+<ul class="cols2">
+  <li>Build worktrees, <code>builds/&lt;record&gt;/</code> artifacts, <code>plans/</code> contents, the repos: the work itself. The DB holds pointers and verdicts, not the tree.</li>
+  <li>Logs as logs (<code>logs/*.log</code>, <code>cost.csv</code> as write-ahead, <code>ALERTS.log</code> as the local audit trail): append-only and hardened; what changes is that nothing reads them to decide.</li>
+  <li><code>locks/*.lock</code> for in-process mutual exclusion on one box only. What must not remain is a lock file used as a fleet-wide claim or a liveness probe.</li>
+  <li>Identity and credentials (<code>state/box-id</code>, <code>state/box-name</code>, <code>env/*</code>, App tokens, account files): bootstrap material that must work with no DB.</li>
+  <li>Caches with a TTL whose loss is a cache miss, not a fact loss (the lease cache, gh-budget, overlap-guard PR lists, model prices once the table is the source).</li>
+  <li>The fifteen legitimately clocked lanes (watchdog-ping, state-backup, harden-state, clock-sync, disk-clean, meter polls, security-scan, digests, weekly reviews): they keep their cadence and should write rows, not files.</li>
+</ul>
+
+<h2 id="tickets">Tickets filed today</h2>
+<div class="tbl"><table>
+<thead><tr><th>#</th><th>What</th><th>Kind</th></tr></thead>
+<tbody>
+<tr><td>#1000</td><td>Hub outage 18:31–19:00Z: #785 gated 52 cron lanes on hub-lease while the hub_lease D1 table (hand step) did not exist; worker 1101, no page; plus the settings table gap since 08-28</td><td><span class="pill red">hotfix / postmortem</span></td></tr>
+<tr><td>#994 · #1005 · #1012</td><td>Dependency gate and pre-merge state guard read the PR over REST, never GraphQL (App GraphQL exhaustion held every READY row); the under-asserted null-base test case</td><td><span class="pill red">hotfix</span></td></tr>
+<tr><td>#1008 · #1010 · #1009</td><td>Main red on the rb-modules-source seam guard (two new raw readers) and README union-merge drift; fix-main-red PRs</td><td><span class="pill red">fix-main-red</span></td></tr>
+<tr><td>#1015 – #1022</td><td>The eight ranked metered-spend fixes above</td><td><span class="pill amber">metered-spend</span></td></tr>
+<tr><td>#1023 – #1027 · #1030 – #1036</td><td>State→DB slices 0–4 and 5–11, one ticket each (#1028 is the epic that links them)</td><td><span class="pill blue">state-to-db</span></td></tr>
+<tr><td>#1037 · #1038 · #1039</td><td>Spend gaps beyond the ranked eight: the agent-call choke-point guard and claude-only intent, remediate-agent dedup, volume caps for alert-triage / medic / responder</td><td><span class="pill amber">metered-spend</span></td></tr>
+<tr><td>#1040 · #1041 · #1042 · #1043 · #1044</td><td>Double-homed facts no slice named (migration ledger fails open; remote result relayed twice, client-visible; pr-owners clock skew, rehydrate cursor, catalog stamp, stale keymap; per-box copies of shared facts: account leases, gh budget, box-id) and hub state hygiene</td><td><span class="pill blue">state-to-db / hygiene</span></td></tr>
+<tr><td>#986 · #987 · #988 · #989 · #997 · #998</td><td>Review follow-ups carried out of today's head-bound reviews (ALERTS wording, main-red gate glob, identity-blocked STUCK pages, App self-review, --explain ledger writes, hardcoded model string in the mc/ split)</td><td><span class="pill blue">follow-up</span></td></tr>
+</tbody></table></div>
+<p class="muted">Source reports (markdown, session scratchpad): audit-runaway-spend.md, audit-cron-vs-db.md. Evidence pointers for every number are in the appendix of the spend report.</p>
+</main>
+</body>
+</html>

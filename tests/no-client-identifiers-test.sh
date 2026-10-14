@@ -135,9 +135,9 @@ def is_fixture_literal(s):
 # a client list in exactly that form. Only these extensions may hold bytes that
 # are not valid text (the malformed-input fixtures carry control bytes on
 # purpose); anything else non-text is refused outright.
-TEXT_EXT = {'', '.conf', '.cron', '.css', '.csv', '.diff', '.drop', '.editorconfig',
+TEXT_EXT = {'', '.conf', '.cron', '.css', '.csv', '.diff', '.dockerfile', '.drop', '.editorconfig',
             '.env', '.example', '.gitignore', '.golden', '.html', '.js',
-            '.json', '.jsonc', '.jsonl', '.jsx', '.lock', '.log', '.md',
+            '.json', '.jsonc', '.jsonl', '.jsx', '.list', '.lock', '.log', '.md',
             '.mjs', '.cjs', '.order', '.patch', '.py', '.sh', '.sql', '.svg', '.toml',
             '.ts', '.tsx', '.tsv', '.txt', '.xml', '.yaml', '.yml'}
 FONT_EXT = {'.eot', '.otf', '.ttf', '.woff', '.woff2'}
@@ -145,7 +145,7 @@ FONT_EXT = {'.eot', '.otf', '.ttf', '.woff', '.woff2'}
 # ---- 1. shapes -------------------------------------------------------------
 PATTERNS = [
     ("private network address", r"\b100\.\d{1,3}\.\d{1,3}\.\d{1,3}\b"),
-    ("board ticket key",     r"\b(?:AR|FR|PB|IA|SO|TS|MK|OM|CF|SG|MO)-\d{1,5}\b"),
+    ("board ticket key",     r"\b(?:AR|FR|PB|IA|SO|TS|MK|OM|CF|SG|MO|AIO)-\d{1,5}\b"),
     ("account uuid",         r"\b(?!00000000-0000-0000-0000-)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b"),
     ("32-hex account id",    r"\b(?!0{32})(?!x{32})[0-9a-f]{32}\b"),
     ("hosting project id",   r"\b(?:team|prj)_(?!EXAMPLE)[A-Za-z0-9]{20,}\b"),

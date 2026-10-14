@@ -47,7 +47,7 @@ TSE_INPROGRESS_RE="\\b(in[ -]progress|under[ -]?way|ongoing)\\b|\\balready (buil
 TSE_TAG_RE='\[evidence:[[:space:]]*([^]]*)\]'
 
 tse_inprogress() {
-  printf '%s\n' "${1:-}" | grep -Eiq -- "$TSE_INPROGRESS_RE"
+  grep -Eiq -- "$TSE_INPROGRESS_RE" <<<"${1:-}"
 }
 
 # tse__root — the harness root, or rc 1. Trailing slashes dropped so the

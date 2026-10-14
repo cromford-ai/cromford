@@ -26,6 +26,7 @@
 #
 # Run: HARNESS_TEST_SANDBOX=1 bash tests/dequeue-watch-ship-dark.bh-3859-test.sh
 . "$(dirname "$0")/lib/scratch.sh" || exit 1
+. "$(dirname "$0")/lib/jobs-schema.sh" && jobs_schema_render || exit 1
 set -uo pipefail
 DIR=$(cd "$(dirname "$0")/.." && pwd)
 FX="$DIR/tests/fixtures/dequeue-watch"
@@ -146,7 +147,7 @@ CASE=D1-seed
 seeds=$(grep -E "^INSERT OR IGNORE INTO settings" -A1 "$DIR/worker/jobs/schema.sql" | grep -F "'lane.dequeue-watch.dequeue_watch_act'")
 eq "dequeue_watch_act seeds (INSERT OR IGNORE)" "$(printf '%s' "$seeds" | grep -c .)" 1
 eq "dequeue_watch_act mentions in schema.sql" "$(grep -cF "'lane.dequeue-watch.dequeue_watch_act'" "$DIR/worker/jobs/schema.sql")" 1
-printf '%s' "$seeds" | grep -qF "('lane.dequeue-watch.dequeue_watch_act','0'," && ok || bad "the seed value is not '0': $seeds"
+grep -qF "('lane.dequeue-watch.dequeue_watch_act','0'," <<<"$seeds" && ok || bad "the seed value is not '0': $seeds"
 REG="$DIR/catalog/lanes.d/dequeue-watch.json"
 eq "registry DEQUEUE_WATCH_ACT default" "$(jq -r '.knobs[] | select(.env == "DEQUEUE_WATCH_ACT") | .default' "$REG")" 0
 eq "registry DEQUEUE_WATCH_OBSERVE_TICKS default" "$(jq -r '.knobs[] | select(.env == "DEQUEUE_WATCH_OBSERVE_TICKS") | .default' "$REG")" 12

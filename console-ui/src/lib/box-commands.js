@@ -4,7 +4,12 @@
 // guessed: a blank reason, an unknown type or a Fly target we cannot name is
 // refused, never filled in.
 
-export const BOX_COMMAND_TYPES = ['backup_now', 'harness_sync', 'cli_update', 'fly_machine_stop', 'fly_machine_destroy'];
+// BH-5750: the worker's list is worker/jobs/src/lib/box-command-types.js; the
+// Pages build cannot import it, so worker/jobs/test/box-command-types-drift
+// .bh-5750.test.js holds the two lists and the schema CHECK equal.
+export const ORGO_TYPES = ['orgo_restart', 'orgo_stop', 'orgo_resize_quote', 'orgo_resize', 'orgo_retire', 'orgo_launch_quote', 'orgo_launch'];
+export const FLY_POOL_TYPES = ['fly_pool_cap', 'fly_onboard'];
+export const BOX_COMMAND_TYPES = ['backup_now', 'harness_sync', 'cli_update', 'fly_machine_stop', 'fly_machine_destroy', ...ORGO_TYPES, ...FLY_POOL_TYPES];
 export const FLY_TYPES = ['fly_machine_stop', 'fly_machine_destroy'];
 
 export const COMMAND_LABELS = {
@@ -12,17 +17,69 @@ export const COMMAND_LABELS = {
   harness_sync: 'SYNC',
   cli_update: 'CLI UPDATE',
   fly_machine_stop: 'STOP',
-  fly_machine_destroy: 'DESTROY'
+  fly_machine_destroy: 'DESTROY',
+  orgo_restart: 'RESTART',
+  orgo_stop: 'STOP BOX',
+  orgo_resize_quote: 'RESIZE PRICE',
+  orgo_resize: 'RESIZE',
+  orgo_retire: 'RETIRE',
+  orgo_launch_quote: 'LAUNCH PRICE',
+  orgo_launch: 'LAUNCH',
+  fly_pool_cap: 'POOL CAP',
+  fly_onboard: 'ONBOARD TO POOL'
 };
+
+// The args each Orgo / Fly pool type sends, beyond box, type, target and
+// reason. Required ones are refused when blank, never filled in.
+const ORGO_FIELDS = {
+  orgo_restart: { opt: ['account'] },
+  orgo_stop: { opt: ['account'] },
+  orgo_resize_quote: { req: ['account'], spec: 'any' },
+  orgo_resize: { req: ['account', 'quote_id', 'confirm_monthly_usd'], spec: 'any' },
+  orgo_retire: { opt: ['to', 'ip', 'delete'] },
+  orgo_launch_quote: { req: ['account', 'project'], spec: 'all' },
+  orgo_launch: { req: ['account', 'project', 'quote_id', 'confirm_monthly_usd'], spec: 'all' },
+  fly_pool_cap: { req: ['cap'] },
+  fly_onboard: { opt: ['cap'] }
+};
+const SPECS = ['vcpus', 'mem_gb', 'disk_gb'];
+const absent = (v) => v === undefined || v === null || (typeof v === 'string' && !v.trim());
+const tidy = (v) => (typeof v === 'string' ? v.trim() : v);
+
+// The body for an Orgo / Fly pool type. The target is ctx.box (the Orgo box
+// id) or, for the Fly pool types, ctx.project; the body's box is always
+// 'hub', which runs them. quote_id and confirm_monthly_usd are passed
+// through as received: this module never computes a price.
+function ownerCommandFor(type, ctx) {
+  const id = FLY_POOL_TYPES.includes(type) ? ctx.project : ctx.box;
+  if (blank(id)) return { error: FLY_POOL_TYPES.includes(type) ? 'project required' : 'box required' };
+  const f = ORGO_FIELDS[type];
+  const body = { box: 'hub', type, target: id.trim() };
+  for (const k of f.req || []) {
+    if (absent(ctx[k])) return { error: `${k} required` };
+    body[k] = tidy(ctx[k]);
+  }
+  for (const k of f.opt || []) if (!absent(ctx[k])) body[k] = tidy(ctx[k]);
+  if (f.spec) {
+    for (const k of SPECS) {
+      if (absent(ctx[k])) { if (f.spec === 'all') return { error: `${k} required` }; continue; }
+      body[k] = ctx[k];
+    }
+    if (!SPECS.some((k) => k in body)) return { error: 'vcpus, mem_gb or disk_gb required' };
+  }
+  return { ...body, reason: ctx.reason.trim(), confirm: true };
+}
 
 const STATUS_RANK = { requested: 0, claimed: 1, fail: 2, ok: 3 };
 
 const blank = (v) => typeof v !== 'string' || !v.trim();
 
 // The exact POST body, or { error } when any part of it would be a guess.
-export function boxCommandFor(type, { box, reason, project, app, machineId } = {}) {
+export function boxCommandFor(type, ctx = {}) {
+  const { box, reason, project, app, machineId } = ctx;
   if (!BOX_COMMAND_TYPES.includes(type)) return { error: `unknown type ${type}` };
   if (blank(reason)) return { error: 'reason required' };
+  if (ORGO_FIELDS[type]) return ownerCommandFor(type, ctx);
   if (FLY_TYPES.includes(type)) {
     for (const [field, v] of [['project', project], ['app', app], ['machineId', machineId]]) {
       if (blank(v)) return { error: `${field} required` };

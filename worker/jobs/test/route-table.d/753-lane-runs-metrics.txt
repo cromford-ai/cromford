@@ -1,0 +1,8 @@
+# LANE-RUNS METRICS (BH-6127, BH-6047 part 4 of 5): Mission Control's lane-run
+# list, run detail and metrics, and the queue-wait alert tick and ack. The
+# family is spread after lane-fleet in src/index.js, so it takes 753.
+GET /api/lane-runs
+GET re:/^\/api\/lane-runs\/(\d+)$/
+GET /api/lane-runs/metrics
+POST /api/lane-runs/wait-tick
+POST /api/lane-runs/wait-ack

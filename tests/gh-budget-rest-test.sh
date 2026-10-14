@@ -72,6 +72,7 @@ unset GH_ADMIN_TOKEN GITHUB_TOKEN
 B="$T/b"
 mkdir -p "$B/bin/lib" "$B/logs" "$B/state" "$B/flags" "$B/locks" "$B/env" "$B/tmp" "$B/fakebin"
 cp "$DIR/bin/merge-sweep.sh" "$B/bin/sweep.sh"
+mkdir -p "$B/bin/lib" && cp -rL "$DIR/bin/lib/ms" "$B/bin/lib/" || exit 1   # BH-5242: the sweep loads bin/lib/ms/
 cp "$DIR/bin/jobs-client.sh" "$DIR/bin/fleet-conf.sh" "$B/bin/"
 mkdir -p "$B/bin/lib/jobs" && cp "$DIR"/bin/lib/jobs/*.sh "$B/bin/lib/jobs/"
 cp "$DIR/bin/lib/gh-pr-list.sh" "$DIR/bin/lib/merge-conductor-lib.sh" "$DIR/bin/lib/gh-app-auth.sh" "$B/bin/lib/"

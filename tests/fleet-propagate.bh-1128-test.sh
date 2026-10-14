@@ -124,9 +124,9 @@ RC=$?
 [ "$(jsonq .hub)" = fail ] && ok || bad "hub must be fail (got: $(jsonq .hub))"
 
 REASON=$(jsonq .hub_reason)
-printf '%s' "$REASON" | grep -Eq '^checkout on main, ahead 1 / behind 1: .+' \
+grep -Eq '^checkout on main, ahead 1 / behind 1: .+' <<<"$REASON" \
   && ok || bad "hub_reason must name the branch and the ahead/behind counts (got: $REASON)"
-printf '%s' "$REASON" | grep -q 'fast-forward' \
+grep -q 'fast-forward' <<<"$REASON" \
   && ok || bad "hub_reason must carry git's own first error line (got: $REASON)"
 
 grep -q 'hub: git pull --ff-only FAILED (checkout on main, ahead 1 / behind 1: ' "$H/logs/fleet-propagate.log" \

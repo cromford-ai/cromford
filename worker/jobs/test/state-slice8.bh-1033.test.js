@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import worker, { ensureTable } from '../src/index.js';
+import { jobsSchemaSql } from './lib/jobs-schema.js';
 
 // BH-1033 (state→DB slice 8) — the `ready` build_queue status and the
 // closeout_aged table, driven through the worker's real fetch handler against
@@ -18,7 +19,7 @@ import worker, { ensureTable } from '../src/index.js';
 // here too, because bin/jobs-client.sh reads exactly these fields.
 
 const SECRET = 'test-secret';
-const SCHEMA = readFileSync(fileURLToPath(new URL('../schema.sql', import.meta.url)), 'utf8');
+const SCHEMA = jobsSchemaSql();
 
 // A D1-shaped facade over node:sqlite. D1 reports rows changed on run(), which
 // is what the closeout route's "recorded or duplicate" answer is computed from,

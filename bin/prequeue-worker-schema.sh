@@ -20,6 +20,8 @@
 #      bin/prequeue-invariants.sh): worker/jobs/src/lib/core.js imports it.
 #      Then catalog/llm-sites.json, composed from catalog/llm-sites.d/ when
 #      that directory exists (BH-4987): lib/llm-sites-catalog.js imports it.
+#      Then catalog/context-budgets.json, composed from catalog/context-budgets.d/
+#      when that directory exists (BH-6487): routes/llm-sites.js imports it.
 #   2. `npm ci --no-audit --no-fund` in worker/jobs — the same install as the
 #      CI job "Jobs worker — routes + schema" in .github/workflows/harness-ci.yml.
 #   3. `node --test --test-reporter=tap <files>`. The reporter is pinned so the
@@ -34,7 +36,8 @@
 #
 # The last line is always `worker-schema: rc=<rc> pass=<n> skipped=<n>` once
 # node ran. It writes nothing in the tree except catalog/lanes.json,
-# catalog/llm-sites.json and worker/jobs/node_modules/, all git-ignored.
+# catalog/llm-sites.json, catalog/context-budgets.json and
+# worker/jobs/node_modules/, all git-ignored.
 #
 # Exit: 0 green | 1 red (a test failed, a skip, no pass, no summary, npm ci
 # failed, a file missing, node or npm not on PATH) | 2 no argument, or an
@@ -69,6 +72,10 @@ fi
 if [ -d catalog/llm-sites.d ]; then
   "$ROOT/bin/llm-sites-build.sh" --repo "$ROOT" --compose > /dev/null \
     || { fail "could not compose catalog/llm-sites.json"; exit 1; }
+fi
+if [ -d catalog/context-budgets.d ]; then
+  "$ROOT/bin/context-budgets-build.sh" --repo "$ROOT" --compose > /dev/null \
+    || { fail "could not compose catalog/context-budgets.json"; exit 1; }
 fi
 
 LOG=$(mktemp) || exit 1

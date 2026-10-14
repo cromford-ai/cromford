@@ -156,10 +156,10 @@ plan_with "$T/c1.md" '- function `flag_active`: stricter. callers: left alone: t
 - not-a-kind `ignored`: dropped.'
 S=$(lib pc_symbols "$T/c1.md" "$R" HEAD 2>/dev/null)
 [ "$(printf '%s\n' "$S" | grep -c '^listed')" = 4 ] && ok || bad "C1: want 4 listed rows, got: $S"
-printf '%s\n' "$S" | grep -qxF "listed${TAB}function${TAB}flag_active${TAB}the arg is optional" && ok || bad "C1: function row or its reason is wrong: $S"
-printf '%s\n' "$S" | grep -qxF "listed${TAB}verb${TAB}flags-cli.sh${TAB}" && ok || bad "C1: verb row missing: $S"
-printf '%s\n' "$S" | grep -qxF "listed${TAB}route${TAB}GET /api/flags${TAB}" && ok || bad "C1: route row missing: $S"
-printf '%s\n' "$S" | grep -qxF "listed${TAB}format${TAB}## Flag list${TAB}" && ok || bad "C1: format row missing: $S"
+grep -qxF "listed${TAB}function${TAB}flag_active${TAB}the arg is optional" <<<"$S" && ok || bad "C1: function row or its reason is wrong: $S"
+grep -qxF "listed${TAB}verb${TAB}flags-cli.sh${TAB}" <<<"$S" && ok || bad "C1: verb row missing: $S"
+grep -qxF "listed${TAB}route${TAB}GET /api/flags${TAB}" <<<"$S" && ok || bad "C1: route row missing: $S"
+grep -qxF "listed${TAB}format${TAB}## Flag list${TAB}" <<<"$S" && ok || bad "C1: format row missing: $S"
 plan_with "$T/c1n.md" 'None.'
 S=$(lib pc_symbols "$T/c1n.md" "$R" HEAD 2>/dev/null)
 [ -z "$S" ] && ok || bad "C1: a None section must give 0 rows, got: $S"

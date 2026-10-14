@@ -10,6 +10,17 @@
 # cron line, no switch, no script to gate — so it never enters `lanes` and no
 # lane reader sees it; bin/lib/lane-gate.sh's lib_env_apply reads `libs`.
 #
+# A NEW KNOB IS A NEW FILE (BH-4987): `<owner>.knobs.d/<ENV>.json` holds one
+# knob object, appended to the owner's `knobs` after its inline knobs, in C
+# order of file name. <owner> is a lane id or `_lib.<lib-id>`. Two builds that
+# appended to one inline array both edited its last element and conflicted;
+# two fragment files never do. The file is named for the env, not `NNNN-`,
+# because two branches that pick the same number collide add/add, and an env
+# is unique per owner anyway. A fragment with no owner, a name that is not
+# `<ENV>.json`, a file that is not one object, an `.env` that is not its name,
+# or an env the owner already has is refused (rc 1, the file named).
+# bin/lanes-knob-lint.sh keeps new knobs out of the inline arrays.
+#
 # WHY (BH-1178). The registry is the thing every new lane has to be added to,
 # and it is one 3,100-line array: two builds registering two unrelated lanes
 # land in adjacent hunks and git calls it a conflict. Splitting it makes adding
@@ -138,9 +149,49 @@ compose() {
   dupes=$(printf '%s' "$all" | jq -r 'group_by(.id)[] | select(length>1) | "lanes-build.sh: duplicate lib id \u0027\(.[0].id)\u0027 in \(map(._lb_src) | join(" and "))"')
   [ -z "$dupes" ] || { printf '%s\n' "$dupes" >&2; rm -rf -- "$lbtmp"; return 1; }
   printf '%s' "$all" | jq -c 'map(del(._lb_src)) | sort_by(.id)' > "$lbtmp/libs.json"
-  jq -s --slurpfile hdr "$HDR" --slurpfile libs "$lbtmp/libs.json" \
-    '{version: $hdr[0].version, note: $hdr[0].note, lanes: sort_by(.id), libs: $libs[0]}' \
+
+  # The knob fragments: `<owner>.knobs.d/<ENV>.json`, one knob object each,
+  # collected as [{owner, knob}] in C order of dir, then file name.
+  local kd kf kn owner what
+  : > "$lbtmp/kn.ndjson"
+  while IFS= read -r kd; do
+    [ -n "$kd" ] && [ -e "$kd" ] || continue
+    owner=$(basename "$kd" .knobs.d)
+    case "$owner" in
+      _lib.*) jq -e --arg id "${owner#_lib.}" 'any(.[]; .id == $id)' "$lbtmp/libs.json" >/dev/null 2>&1 ;;
+      _*)     false ;;
+      *)      grep -qxF -- "$owner" "$ids" ;;
+    esac || { echo "lanes-build.sh: $kd has no owner: no lane '$owner' and no lib '${owner#_lib.}' (a knob dir is <lane-id>.knobs.d or _lib.<lib-id>.knobs.d)" >&2; rm -rf -- "$lbtmp"; return 1; }
+    [ -d "$kd" ] || { echo "lanes-build.sh: $kd is not a directory" >&2; rm -rf -- "$lbtmp"; return 1; }
+    while IFS= read -r kf; do
+      [ -n "$kf" ] && [ -e "$kf" ] || continue
+      kn=$(basename "$kf")
+      [[ "$kn" =~ ^[A-Z][A-Z0-9_]*\.json$ ]] && [ -f "$kf" ] \
+        || { echo "lanes-build.sh: $kf is not a knob fragment: a file in $(basename "$kd")/ is named <ENV>.json, ENV matching ^[A-Z][A-Z0-9_]*\$" >&2; rm -rf -- "$lbtmp"; return 1; }
+      what=$(jq -r --arg e "${kn%.json}" 'if type != "object" then "not one knob object" elif .env != $e then "holds env \(.env | tojson), not \($e)" else "ok" end' "$kf" 2>/dev/null) || what="not valid JSON"
+      [ "$what" = ok ] || { echo "lanes-build.sh: $kf: $what — a knob fragment holds ONE knob object whose .env is its file name" >&2; rm -rf -- "$lbtmp"; return 1; }
+      jq -c --arg o "$owner" '{owner: $o, knob: .}' "$kf" >> "$lbtmp/kn.ndjson"
+    done <<<"$(printf '%s\n' "$kd"/* | LC_ALL=C sort)"
+  done <<<"$(printf '%s\n' "$SRC"/*.knobs.d | LC_ALL=C sort)"
+  jq -s . "$lbtmp/kn.ndjson" > "$lbtmp/kn.json"
+
+  jq -s --slurpfile hdr "$HDR" --slurpfile libs "$lbtmp/libs.json" --slurpfile kn "$lbtmp/kn.json" \
+    'def frags($o): $kn[0] | map(select(.owner == $o) | .knob);
+     def addk($o): frags($o) as $f | if ($f | length) > 0 then .knobs = ((.knobs // []) + $f) else . end;
+     {version: $hdr[0].version, note: $hdr[0].note,
+      lanes: (map(addk(.id)) | sort_by(.id)),
+      libs: ($libs[0] | map(addk("_lib." + .id)))}' \
     "${lane_files[@]}" > "$dst" || { echo "lanes-build.sh: jq refused the composition" >&2; rm -rf -- "$lbtmp"; return 1; }
+  # A fragment may not repeat an env its owner already has inline: two knobs
+  # with one env is one setting read two ways. Only owners with fragments are
+  # checked; two fragments of one owner cannot collide (the file name is the env).
+  dupes=$(jq -r --slurpfile kn "$lbtmp/kn.json" --arg src "$SRC" '
+      ($kn[0] | map(.owner) | unique) as $own
+      | ([.lanes[] | {o: .id, k: .knobs}] + [.libs[] | {o: ("_lib." + .id), k: .knobs}])[]
+      | select(.o as $o | $own | index($o))
+      | .o as $o | (.k | map(.env) | group_by(.) | map(select(length > 1) | .[0]))[]
+      | "lanes-build.sh: \($src)/\($o).knobs.d/\(.).json: knob \(.) is already in the inline knobs of \($o) — move it, do not repeat it"' "$dst")
+  [ -z "$dupes" ] || { printf '%s\n' "$dupes" >&2; rm -rf -- "$lbtmp"; return 1; }
   rm -rf -- "$lbtmp"
   [ -s "$dst" ] || { echo "lanes-build.sh: composed an empty registry — refusing it" >&2; return 1; }
   composed=$(jq -r '.lanes|length' "$dst")

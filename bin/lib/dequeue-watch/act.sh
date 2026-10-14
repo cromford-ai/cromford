@@ -232,10 +232,10 @@ _dqw_lead() {
         --notes "dequeue-watch: $class on ${head:0:12}, $why" 2>&1 >/dev/null); rc=$?
   if [ "$rc" = 0 ]; then
     _dqw_set "$slug" "$num" "$head" "$class" "done" "" "lead verdict requested" "$sa"
-  elif printf '%s' "$err" | grep -q 'HTTP 409'; then
+  elif grep -q 'HTTP 409' <<<"$err"; then
     _dqw_set "$slug" "$num" "$head" "$class" "done" "" "lead verdict already requested (409)" "$sa"
   else
-    _dqw_set "$slug" "$num" "$head" "$class" failed "" "lead-verdict request rc $rc: $(printf '%s' "$err" | head -1)" "$sa"
+    _dqw_set "$slug" "$num" "$head" "$class" failed "" "lead-verdict request rc $rc: $(head -1 <<<"$err")" "$sa"
   fi
   return 0
 }

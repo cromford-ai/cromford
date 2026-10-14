@@ -64,7 +64,10 @@ kw_conductor() {
   # run's own wakes of other PRs never inherit its marker (BH-4842). The
   # backstop's window (MC_WORKERS_DONE_BY, MC_WINDOW_DEFER_FILE) is cleared:
   # a detached run is not under that fire's `timeout`.
-  ( MC_ONLY_PR="$slug#$num" WAKE_LAUNCH=1 MC_FANIN_SOLO_RUN="${KW_FANIN_SOLO:-}" MC_WORKERS_DONE_BY= MC_WINDOW_DEFER_FILE= setsid "$script" </dev/null >/dev/null 2>&1 9>&- 8>&- 7>&- 6>&- & ) 2>/dev/null
+  # MC_PR_LOCK_WAIT_S is set from KW_PR_LOCK_WAIT_S on every launch, empty
+  # unless the caller holds this PR's lock itself (mc_ready_rekick): then the
+  # run waits for it instead of skipping (mc_pr_lock_take).
+  ( MC_ONLY_PR="$slug#$num" WAKE_LAUNCH=1 MC_FANIN_SOLO_RUN="${KW_FANIN_SOLO:-}" MC_PR_LOCK_WAIT_S="${KW_PR_LOCK_WAIT_S-}" MC_WORKERS_DONE_BY= MC_WINDOW_DEFER_FILE= setsid "$script" </dev/null >/dev/null 2>&1 9>&- 8>&- 7>&- 6>&- & ) 2>/dev/null
   if command -v mc_log >/dev/null 2>&1; then
     mc_log "$slug#$num KEYED_WAKE: conductor launched for this PR now${why:+ ($why)} — the cron tick stays the backstop"
   fi

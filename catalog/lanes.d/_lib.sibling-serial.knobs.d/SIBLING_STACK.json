@@ -1,0 +1,11 @@
+{
+  "env": "SIBLING_STACK",
+  "read_in": "bin/sibling-serial.sh",
+  "type": "int",
+  "default": 1,
+  "min": 0,
+  "max": 1,
+  "zero_means": "the pool waits instead of stacking",
+  "required": false,
+  "note": "BH-6374 C1. 1 = a part whose only blocker is ONE open sibling PR gets a check line ending ` stackable base=<branch>`, and bin/fly-pool.sh gate 0c requeues the row once with that stack_base (log: SIBLING_SERIAL <K> stacks on <branch>), so it builds on the BH-1174 STACK path. 0 = check prints no stackable suffix and the pool waits, as in C0. STACKED_BUILDS=0 or flags/stacked-builds-off also stops it."
+}

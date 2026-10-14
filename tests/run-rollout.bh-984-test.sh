@@ -444,15 +444,15 @@ a16_code_preserved() {
   [ "$(jq 'length' "$T/b/children.json" 2>/dev/null)" = 2 ] \
     && ok || bad "code-preserved wave count (a fenced fake heading must not open a third wave)"
   W1=$(jq -r '.[0].body' "$T/b/children.json" 2>/dev/null)
-  printf '%s' "$W1" | grep -Fq '`npm test`' \
+  grep -Fq '`npm test`' <<<"$W1" \
     && ok || bad "code-preserved wave 1 body lost an inline code span: $W1"
-  printf '%s' "$W1" | grep -Fq '`bin/run-build.sh`' \
+  grep -Fq '`bin/run-build.sh`' <<<"$W1" \
     && ok || bad "code-preserved wave 1 body lost a second inline code span: $W1"
-  printf '%s' "$W1" | grep -Fq '```sh' \
+  grep -Fq '```sh' <<<"$W1" \
     && ok || bad "code-preserved wave 1 body lost its fence marker: $W1"
-  printf '%s' "$W1" | grep -Fq 'make all' \
+  grep -Fq 'make all' <<<"$W1" \
     && ok || bad "code-preserved wave 1 body lost its fenced content: $W1"
-  printf '%s' "$W1" | grep -Fq '### Wave 99: fake, not a real wave' \
+  grep -Fq '### Wave 99: fake, not a real wave' <<<"$W1" \
     && ok || bad "code-preserved wave 1 body lost the fenced fake-heading line verbatim: $W1"
   [ "$(jq -r '.[1].title' "$T/b/children.json" 2>/dev/null)" = "finish" ] \
     && ok || bad "code-preserved wave 2 title (parsing must resume correctly after the fence closes)"
@@ -539,9 +539,9 @@ a20_indented_code() {
   ! grep -qx 'indented code' <<<"$(jq -r '.[].title' "$T/b/children.json" 2>/dev/null)" \
     && ok || bad "indented-code filed a phantom wave titled 'indented code'"
   W2=$(jq -r '.[1].body' "$T/b/children.json" 2>/dev/null)
-  printf '%s' "$W2" | grep -Fq '    ### Wave 9: indented code' \
+  grep -Fq '    ### Wave 9: indented code' <<<"$W2" \
     && ok || bad "indented-code wave 2 body lost the indented heading-shaped line verbatim: $W2"
-  printf '%s' "$W2" | grep -Fq '    make all' \
+  grep -Fq '    make all' <<<"$W2" \
     && ok || bad "indented-code wave 2 body lost the indented body line verbatim: $W2"
   [ "$(jq -r '.[2].title' "$T/b/children.json" 2>/dev/null)" = "third" ] \
     && ok || bad "indented-code wave 3 title (parsing must resume correctly after the indented block)"
@@ -563,13 +563,13 @@ a21_pre_code_block() {
   ! grep -qx 'phantom' <<<"$(jq -r '.[].title' "$T/b/children.json" 2>/dev/null)" \
     && ok || bad "pre-code-block filed a phantom wave titled 'phantom'"
   W2=$(jq -r '.[1].body' "$T/b/children.json" 2>/dev/null)
-  printf '%s' "$W2" | grep -Fq '<pre><code>' \
+  grep -Fq '<pre><code>' <<<"$W2" \
     && ok || bad "pre-code-block wave 2 body lost the <pre><code> open tag: $W2"
-  printf '%s' "$W2" | grep -Fq '### Wave 9: phantom' \
+  grep -Fq '### Wave 9: phantom' <<<"$W2" \
     && ok || bad "pre-code-block wave 2 body lost the fenced fake-heading line verbatim: $W2"
-  printf '%s' "$W2" | grep -Fq '## comment line inside code' \
+  grep -Fq '## comment line inside code' <<<"$W2" \
     && ok || bad "pre-code-block wave 2 body lost the fenced ## line verbatim: $W2"
-  printf '%s' "$W2" | grep -Fq '</code></pre>' \
+  grep -Fq '</code></pre>' <<<"$W2" \
     && ok || bad "pre-code-block wave 2 body lost the </code></pre> close tag: $W2"
   [ "$(jq -r '.[2].title' "$T/b/children.json" 2>/dev/null)" = "third" ] \
     && ok || bad "pre-code-block wave 3 title (the ## line inside the block must not have ended the section)"
@@ -607,7 +607,7 @@ a23_backtick_masked_precode() {
   [ "$(jq 'length' "$T/b/children.json" 2>/dev/null)" = 3 ] \
     && ok || bad "backticked-pre-mention wave count (a backtick-wrapped <pre><code> mention must not swallow later waves)"
   W2=$(jq -r '.[1].body' "$T/b/children.json" 2>/dev/null)
-  printf '%s' "$W2" | grep -Fq '`<pre><code>`' \
+  grep -Fq '`<pre><code>`' <<<"$W2" \
     && ok || bad "backticked-pre-mention wave 2 body lost the backtick-wrapped mention verbatim: $W2"
   [ "$(jq -r '.[2].title' "$T/b/children.json" 2>/dev/null)" = "c" ] \
     && ok || bad "backticked-pre-mention wave 3 title (must still be filed as its own wave)"

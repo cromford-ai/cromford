@@ -13,6 +13,7 @@
 #   HARNESS_TEST_SANDBOX=1 bash tests/size-threshold-settings.bh-4985-test.sh
 set -uo pipefail
 . "$(dirname "$0")/lib/scratch.sh" || exit 1
+. "$(dirname "$0")/lib/jobs-schema.sh" && jobs_schema_render || exit 1
 DIR=$(cd "$(dirname "$0")/.." && pwd)
 . "$DIR/tests/lib/rb-all.sh" || exit 1
 PASS=0; FAIL=0

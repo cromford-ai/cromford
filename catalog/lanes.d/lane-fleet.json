@@ -1,0 +1,48 @@
+{
+  "id": "lane-fleet",
+  "name": "Lane-run Fly fleet (autoscaler)",
+  "scope": "hub",
+  "script": "bin/lane-fleet.sh",
+  "cadence": "* * * * *",
+  "boxes": [
+    "hub"
+  ],
+  "switch": {
+    "kind": "flag",
+    "name": "lane-off-lane-fleet",
+    "aliases": []
+  },
+  "wired": true,
+  "knobs": [
+    {
+      "env": "JOBS_URL",
+      "type": "string",
+      "default": "",
+      "zero_means": null,
+      "note": "no static default — bin/jobs-client.sh resolves it on the box. Read by bin/lane-fleet.sh as ${JOBS_URL:-}: the jobs worker the tick reads stats and machine rows from and writes them to; empty logs 'not configured' and makes no Fly call. NOT settable from the control plane — it is a command, a host, a path, an identity or a test seam a root lane uses, so only env/global.env on the box moves it; no reviewed min/max yet, so nothing is clamped.",
+      "settable": false
+    },
+    {
+      "env": "LANE_FLEET_FLY",
+      "type": "string",
+      "default": "",
+      "zero_means": null,
+      "note": "The flyctl binary bin/lane-fleet.sh runs; empty uses `fly_bin` (bin/lib/fly-bin.sh): PATH, then `$FLYCTL_INSTALL/bin`, `$HOME/.fly/bin`, `${FLY_BIN_DIR:-/root/.fly/bin}`. Tests point it at a stub. NOT settable from the control plane — it is a command, a host, a path, an identity or a test seam a root lane uses, so only env/global.env on the box moves it; no reviewed min/max yet, so nothing is clamped.",
+      "settable": false
+    },
+    {
+      "env": "LANE_FLEET_NOW",
+      "type": "string",
+      "default": "",
+      "zero_means": null,
+      "note": "Test seam: epoch seconds bin/lane-fleet.sh uses as now for its log stamp, the cost `through` minute and the alert day; empty uses the clock. NOT settable from the control plane — it is a command, a host, a path, an identity or a test seam a root lane uses, so only env/global.env on the box moves it; no reviewed min/max yet, so nothing is clamped.",
+      "settable": false
+    }
+  ],
+  "stats": {
+    "cost_stage": null,
+    "cost_project_filter": null,
+    "lanes_row": false,
+    "log": "logs/lane-fleet.log"
+  }
+}

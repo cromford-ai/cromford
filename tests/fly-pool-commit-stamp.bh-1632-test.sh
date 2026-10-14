@@ -48,7 +48,7 @@ out=$(HARNESS="$H" HARNESS_ENV_DIR="$H/env" HARNESS_REPO="$REPO" PATH="$W/stub:$
 [ "$rc" = 0 ] && ok "fly-sync-harness rc 0" || bad "fly-sync-harness rc=$rc: $out"
 got=$(tar xzOf "$W/captured.tgz" ./HARNESS_COMMIT 2>/dev/null || tar xzOf "$W/captured.tgz" HARNESS_COMMIT 2>/dev/null)
 [ "$got" = "$HEAD_SHA" ] && ok "sync tarball HARNESS_COMMIT = HEAD" || bad "sync tarball HARNESS_COMMIT='$got' want $HEAD_SHA"
-echo "$out" | grep -q "harness@${HEAD_SHA:0:7}" && ok ".sync-sha stays short" || bad "sync output: $out"
+grep -q "harness@${HEAD_SHA:0:7}" <<<"$out" && ok ".sync-sha stays short" || bad "sync output: $out"
 
 # 3. bin/fly-pool.sh push site goes through the helper
 grep -q 'harness_tarball "\$TB" /root/harness-checkout' "$ROOT/bin/fly-pool.sh" && ok "fly-pool.sh uses harness_tarball" || bad "fly-pool.sh push does not use harness_tarball"

@@ -13,10 +13,10 @@
 # three chances for two of them to drift.
 #
 # THE FLAG-OFF FILE IS BYTE-FOR-BYTE THE ONE THE INLINE CODE WROTE. Every field
-# that was absent then is absent now: `deaths` is the one addition and it is
-# emitted only when the row's meta carries it (the pool's death requeue does;
-# nothing else ever has). tests/fly-lane-db-test.sh, tests/hotfix-cap-exempt-
-# test.sh, tests/stacked-child-builds-test.sh and
+# that was absent then is absent now: `deaths` is emitted only when the row's
+# meta carries it (the pool's death requeue does; nothing else ever has), and
+# `rebuild` only when the meta carries `blocked_resolver`.
+# tests/fly-lane-db-test.sh, tests/hotfix-cap-exempt-test.sh, tests/stacked-child-builds-test.sh and
 # tests/rebase-on-pool-reap.bh-542-test.sh pin that.
 
 # queue_row_job_file <project> <dest> <key> <ticket_id> <attempt> <meta-json>
@@ -33,7 +33,7 @@
 queue_row_job_file() {
   local project="${1:-}" dest="${2:-}" key="${3:-}" ticket="${4:-}" attempt="${5:-}" meta="${6:-}"
   local h="${HARNESS:-/root/harness}" tag="${QRJ_TAG:-fly-dispatch/${1:-}}"
-  local ts def sb hf fs rb bad bf bv dth tmp
+  local ts def sb hf fs rb bad bf bv dth tmp brs
   [ -n "$project" ] && [ -n "$dest" ] && [ -n "$key" ] || return 1
   ts=$(date -u '+%Y-%m-%d %H:%M:%SZ')
   case "${ticket:-}" in -) ticket="" ;; esac
@@ -42,7 +42,7 @@ queue_row_job_file() {
   # asks this question of EVERY queued row on EVERY tick, and four extra `jq`
   # processes per row per tick is a cost with no reader — the only thing a
   # validate-only call can answer is the rebase refusal.
-  if [ "$dest" = "-" ]; then def=0; dth=""; sb=""; hf=false; fs=false
+  if [ "$dest" = "-" ]; then def=0; dth=""; sb=""; hf=false; fs=false; brs=false
   else
     # `deferrals` is the stand-down count, carried in the row's meta so it
     # survives this hub-side round trip; `attempt` stays the death count. Losing
@@ -69,6 +69,11 @@ queue_row_job_file() {
     # machine, which the pool's reuse handoff leaves for a fresh spawn.
     fs=$(printf '%s' "${meta:-}" | jq -r '.fresh_spawn // false' 2>/dev/null)
     case "${fs:-}" in true) fs=true ;; *) fs=false ;; esac
+    # `rebuild` (BH-6350): a blocked-resolver rebuild (br_enqueue_fresh puts
+    # `blocked_resolver` in the row meta) is a ticket that was admitted once
+    # already, so the pool's dispatch-mode filter (dm_job_admit) lets it pass.
+    brs=$(printf '%s' "${meta:-}" | jq -r 'if type == "object" then ((.blocked_resolver // "") | tostring) else "" end' 2>/dev/null)
+    case "${brs:-}" in ''|null|false) brs=false ;; *) brs=true ;; esac
   fi
   # `rebase` is the WHOLE meta object, carried across in one piece (BH-486.2,
   # #542). Under REBASE_ON_POOL the conductor's enqueue writes a row whose meta
@@ -122,11 +127,12 @@ queue_row_job_file() {
   tmp="$(dirname "$dest")/.$(basename "$dest").db"
   jq -nc --arg t "$ticket" --arg k "$key" --argjson a "$attempt" --argjson d "$def" \
      --arg ts "$ts" --arg sb "${sb:-}" --arg hf "${hf:-false}" --arg rb "${rb:-}" \
-     --arg dx "${dth:-}" --arg fs "${fs:-false}" \
+     --arg dx "${dth:-}" --arg fs "${fs:-false}" --arg rbd "${brs:-false}" \
        '{ticket_id:$t,key:$k,attempt:$a,deferrals:$d,enqueued_at:$ts,source:"db"}
         + (if $sb == "" then {} else {stack_base:$sb} end)
         + (if $hf == "true" then {hotfix:true} else {} end)
         + (if $fs == "true" then {fresh_spawn:true} else {} end)
+        + (if $rbd == "true" then {rebuild:true} else {} end)
         + (if $rb == "" then {} else {rebase:($rb|fromjson)} end)
         + (if $dx == "" then {} else {deaths:($dx|tonumber)} end)' > "$tmp" \
     && mv "$tmp" "$dest" && return 0

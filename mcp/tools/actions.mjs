@@ -1,6 +1,7 @@
 // Action tools: each sends exactly one POST /api/dash/action {type, ...args}.
-// Names and argument shapes match the hosted MCP tool surface. The
-// schemas are closed, so an argument named `type` is refused before the
+// Names and argument shapes follow the Cloud worker's `mcp-tools.js` (moved out
+// of this repo, BH-5239). The schemas are closed, so an argument
+// named `type` is refused before the
 // spread below could override it.
 import { forward } from '../lib/tools.mjs';
 import { checkArgs } from './lib/schema.mjs';

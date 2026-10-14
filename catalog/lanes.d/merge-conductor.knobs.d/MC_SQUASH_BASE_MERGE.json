@@ -1,0 +1,11 @@
+{
+  "env": "MC_SQUASH_BASE_MERGE",
+  "read_in": "bin/lib/mc/rebase.sh",
+  "type": "int",
+  "default": 1,
+  "min": 0,
+  "max": 1,
+  "unit": null,
+  "zero_means": "off",
+  "note": "BH-6374. 1: mc_resolve_conflicts merges an add/add path with the squash commit as its base (git merge-file <branch> <squash:path> <main>) when a stacked child's base PR merged as a squash and the branch carries that exact blob. A clean result is staged with a Union-resolved trailer, so the approval is re-reviewed, never rebound. 0: the path stays a real conflict, as before. The conductor rebase and the pool rebase job both read it."
+}

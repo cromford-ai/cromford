@@ -11,7 +11,8 @@
 #   2  every raw-pat marker cites a ticket key, and none of them is 425
 #   3  each raw-pat script's registry note names the key its marker cites
 #   4  the REAL ratchet suite hands GH_APP_RATCHET_OWNER_TOKEN to its owner
-#      read as GH_TOKEN; unset, the read goes out on the caller's own GH_TOKEN
+#      read as GH_TOKEN; unset, the read carries no caller credential (BH-6672:
+#      tests/lib/scratch.sh strips the caller's GH_TOKEN)
 #   5  the same suite goes red with `is CLOSED` when the owner read says closed
 #   6  the workflow: the shard job may read issues, the tests/ step gets the
 #      token on pull requests only, and no step in the job sets GH_TOKEN
@@ -127,8 +128,12 @@ else
   run_suite open - ambient-FIXTURE-1984; rc=$?
   if [ "$rc" -ne 0 ]; then
     bad "case 4: the ratchet suite was rc $rc with no owner token"; sed 's/^/    /' "$T/out.txt"
-  elif ! grep -qx 'token=ambient-FIXTURE-1984' "$T/gh.log" || grep -qv 'token=ambient-FIXTURE-1984' "$T/gh.log"; then
-    bad "case 4: without GH_APP_RATCHET_OWNER_TOKEN the read must use the caller's GH_TOKEN (log: $(tr '\n' ' ' < "$T/gh.log"))"
+  # TEST-CHANGE (BH-6672): tests/lib/scratch.sh strips every inherited GitHub
+  # credential, so with no owner token the read carries NO caller GH_TOKEN (it
+  # used to go out on the caller's own token). The ambient fixture must never
+  # reach the stub, and the read still happens (one logged call, token unset).
+  elif grep -q 'token=ambient-FIXTURE-1984' "$T/gh.log" || ! grep -qx 'token=<unset>' "$T/gh.log"; then
+    bad "case 4: without GH_APP_RATCHET_OWNER_TOKEN the read must carry no caller credential (log: $(tr '\n' ' ' < "$T/gh.log"))"
   else
     ok
   fi

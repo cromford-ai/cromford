@@ -646,7 +646,7 @@ while IFS= read -r line; do
     ;;
   esac
   code=$(printf '%s\n' "$line" | sed 's/[[:space:]]#.*$//; s/^[[:space:]]*#.*$//')
-  printf '%s\n' "$code" | grep -Eq '(^|[[:space:];|&(]|\$\()[[:space:]]*gh[[:space:]]+(pr|issue|run)[[:space:]]' \
+  grep -Eq '(^|[[:space:];|&(]|\$\()[[:space:]]*gh[[:space:]]+(pr|issue|run)[[:space:]]' <<<"$code" \
     && { echo "$f:$n"; hits=$((hits+1)); }
 done < "$f"
 [ "$hits" = 0 ] || exit 1

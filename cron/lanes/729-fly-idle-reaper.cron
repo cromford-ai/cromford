@@ -1,0 +1,12 @@
+# @hub-lanes
+
+# ── FLY IDLE MACHINE STOP (BH-6061) ─────────────────────────────────────────
+# Every 5 minutes from :02 (BH-5781 spread): list every app the org token sees,
+# ask each app's idle signal (catalog/fly-idle-signals.json), and `flyctl
+# machine stop` a started machine idle more than the settings row
+# fly.idle_stop_after_s (900). Never destroys. Each stop writes a row to the jobs
+# worker; Mission Control shows them on /machines. An app with no signal is
+# never stopped and alerts after 1 h. Hub only: the hub holds FLY_API_TOKEN and
+# sees every box's queue claims. Single run per box (locks/fly-idle-reaper.lock).
+# Off via the lane's flags/lane-off-<id> flag (bin/harness-ctl.sh off <id>).
+2-59/5 * * * * /root/harness/bin/hub-lease.sh check && /root/harness/bin/fly-idle-reaper.sh >> /root/harness/logs/fly-idle-reaper.log 2>&1

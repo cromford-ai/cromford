@@ -4,6 +4,7 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { DatabaseSync } from 'node:sqlite';
 import worker, { CREATED_TABLES } from '../src/index.js';
+import { jobsSchemaSql } from './lib/jobs-schema.js';
 
 // BH-1949 (BH-1525.1) — the /api/lead-reviews routes over the lead_review_requests
 // table BH-1948 shipped. Driven through worker.fetch against THE SQL THAT SHIPS
@@ -11,7 +12,7 @@ import worker, { CREATED_TABLES } from '../src/index.js';
 // compare-and-set UPDATEs, and only a real engine can prove a second claimer loses.
 const SECRET = 'test-secret';
 const LEAD = 'lead-test-token';
-const SCHEMA = readFileSync(fileURLToPath(new URL('../schema.sql', import.meta.url)), 'utf8');
+const SCHEMA = jobsSchemaSql();
 
 function sqliteDB(db) {
   const bindAndRun = (sql, binds) => ({

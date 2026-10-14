@@ -23,7 +23,7 @@
       "max": 200,
       "unit": "PRs",
       "zero_means": "unlimited",
-      "note": "PRs (WAIT_CI or READY, approved on their head) one backstop fire hands to the keyed conductor run: the keys the last fire deferred first, then the harness's own repo, then the oldest. The rest are logged as deferred and the next fire takes them first (state/merge-conductor/backstop-carry). The run also starts a PR worker only while 15 s or more are left before its worker cap (MC_BACKSTOP_TIMEOUT_S minus 45 s), and hands the rest to the next fire the same way, so a fire never takes more than it can finish. 6 fits one 240-290 s window (14 keys died at 290 s on 2026-10-08). 0 is no cap. Row: lane.merge-conductor-backstop.mc_backstop_max_keys"
+      "note": "DEPRECATED (BH-6000, 2026-10-11): no effect. Every candidate PR (WAIT_CI or READY, approved on its head) now gets its own detached keyed conductor run under its own per-key lock, so there is nothing to cap and nothing is carried to a later fire. A value other than the default is named in the backstop log. Row: lane.merge-conductor-backstop.mc_backstop_max_keys"
     },
     {
       "env": "MC_BACKSTOP_TIMEOUT_S",
@@ -33,7 +33,7 @@
       "max": 290,
       "unit": "seconds",
       "zero_means": null,
-      "note": "timeout on the keyed conductor run, which must end before the next */5 fire. Each PR worker of that run is capped at this minus 45 s, never under 30 s (BH-4918), so a slow PR is killed alone before the timeout kills the whole run. A non-number falls back to 240. Row: lane.merge-conductor-backstop.mc_backstop_timeout_s"
+      "note": "timeout on EACH per-PR keyed conductor run (BH-6000: one run per candidate). Each run's PR worker is capped at this minus 45 s, never under 30 s (BH-4918), so the run keeps time for its own fan-in and enqueue. A non-number falls back to 240. Row: lane.merge-conductor-backstop.mc_backstop_timeout_s"
     }
   ],
   "stats": {

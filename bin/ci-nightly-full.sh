@@ -187,7 +187,7 @@ failed_suites() {
     else
       echo "Job $name: log unreadable." >> "$out.notes"
     fi
-  done < <(printf '%s\n' "$jobs" | head -n "$MAX_LOGS")
+  done < <(head -n "$MAX_LOGS" <<<"$jobs")
   LC_ALL=C sort -u -o "$out" "$out"
 }
 

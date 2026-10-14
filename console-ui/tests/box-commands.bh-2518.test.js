@@ -28,8 +28,9 @@ test('C1: a blank reason is refused, never defaulted', () => {
   }
 });
 
-test('C2: the five schema types, each labelled; an unknown type is refused', () => {
-  assert.deepEqual(BOX_COMMAND_TYPES, ['backup_now', 'harness_sync', 'cli_update', 'fly_machine_stop', 'fly_machine_destroy']);
+test('C2: the schema types (BH-5750: fourteen), each labelled; an unknown type is refused', () => {
+  assert.deepEqual(BOX_COMMAND_TYPES, ['backup_now', 'harness_sync', 'cli_update', 'fly_machine_stop', 'fly_machine_destroy',
+    'orgo_restart', 'orgo_stop', 'orgo_resize_quote', 'orgo_resize', 'orgo_retire', 'orgo_launch_quote', 'orgo_launch', 'fly_pool_cap', 'fly_onboard']);
   for (const t of BOX_COMMAND_TYPES) assert.equal(typeof COMMAND_LABELS[t], 'string', t);
   assert.match(boxCommandFor('rm_rf', { box: 'hub-1', reason: 'x' }).error, /unknown type rm_rf/);
 });

@@ -13,7 +13,7 @@ harness mechanisms and be able to stop or start them or change their values min
 max etc."* That morning the fleet ran 267 cron lines behind about 40 `flags/*`
 switches whose names nobody could derive from the lane they stopped, and whose
 `0` meant *off* for `TRIAGE_MAX_FAMILIES` and *unlimited* for the autopilot
-daily cap. `bin/alert-triage.sh` burned $N in twelve hours (#1039) and the
+daily cap. `bin/alert-triage.sh` burned $793 in twelve hours (#1039) and the
 only way to stop it was to know which file to touch on which box. Nothing
 listed the mechanisms, so nothing could show an operator the one that was
 burning.
@@ -204,7 +204,7 @@ on an `external` claim whose script turns out to be in this repo.
    `RUNNER_TRIAGE` and the two `HOUSEKEEPING_RUNNER`s NAME a runner out of the
    closed list `bin/agent-call.sh` dispatches (`runner_ready` refuses anything
    else and the case has no default arm), and which runner triage runs on is the
-   spend lever the $N night turned on. Section 17 of the registry
+   spend lever the $793 night turned on. Section 17 of the registry
    suite refuses a new hazard-shaped name that is not marked and not on that
    named list, and section 18
    refuses a `default` carrying shell text (`$(date +%s)`) that the page would

@@ -1,0 +1,8 @@
+{
+  "env": "BOX_OPS_REPO_ROOT",
+  "type": "string",
+  "default": "",
+  "zero_means": null,
+  "note": "Not a knob: the git checkout of the harness repo that an orgo_retire command passes to bin/box-ops.sh retire --root and an orgo_launch_quote or orgo_launch command passes to bin/box-launch.sh --root (both write that working tree, and launch runs git fetch there; the PR and merge stay a human step). Read by bin/box-ops.sh as ${BOX_OPS_REPO_ROOT:-}. Unset, not a checkout top level, or the live harness root: the command fails \"not configured: BOX_OPS_REPO_ROOT\" and nothing runs, so a launch never reaches the Orgo create. A path a root lane writes, so only env/global.env on the hub moves it. NOT settable from the control plane (BH-5750).",
+  "settable": false
+}

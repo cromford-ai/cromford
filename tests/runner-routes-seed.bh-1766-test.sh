@@ -140,7 +140,7 @@ EXTRA_ENV="" run
 R5A_RC=$RC; R5A_OUT=$(cat "$T/out")
 printf 'RUNNER_REVIEW_FALLBACK="Codex "\nRUNNER_FIX=claude-code\n' > "$T/env/global.env"
 run --apply
-if [ "$R5A_RC" = 0 ] && printf '%s' "$R5A_OUT" | grep -q 'stage.review: grok(m-grok) -> codex(m-codex)' \
+if [ "$R5A_RC" = 0 ] && grep -q 'stage.review: grok(m-grok) -> codex(m-codex)' <<<"$R5A_OUT" \
    && [ "$RC" = 1 ] && grep -q 'refused: RUNNER_FIX=claude-code' "$T/out" && [ "$(puts)" = 0 ]; then ok
 else bad "R5 first rc=$R5A_RC out=$R5A_OUT / second rc=$RC out=$(cat "$T/out")"; fi
 
@@ -173,8 +173,8 @@ A=$(grep 'stage.execute:' "$T/out")
 route stage.execute 7 "codex:m-codex"
 run
 B=$(grep 'stage.execute:' "$T/out")
-if printf '%s' "$A" | grep -q 'codex(m-codex) -> claude(m-claude-stage)' \
-   && printf '%s' "$B" | grep -q 'codex(m-codex) -> claude(m-claude-ladder)'; then ok
+if grep -q 'codex(m-codex) -> claude(m-claude-stage)' <<<"$A" \
+   && grep -q 'codex(m-codex) -> claude(m-claude-ladder)' <<<"$B"; then ok
 else bad "R7 a=$A b=$B"; fi
 
 echo "R8: a runner with no <runner>.default model is refused, not guessed"

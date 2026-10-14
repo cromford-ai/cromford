@@ -12,7 +12,7 @@
 #   B3  docs/MIRROR-NOTES.md is gone, docs/ABOUT.md is there, nothing links the old page
 #   B4  CONTRIBUTING.md welcomes issues and PRs, states Apache inbound = outbound, links cromford.dev
 #   B5  no PUBLIC_DOC_FILES file carries a PUBLIC_DOC_FORBIDDEN phrase; NOTICE names Cromford
-#   B6  internal paths and names are unchanged
+#   B6  internal paths are unchanged; the harness's project id is cromford, once
 #   B7  fail-loud: a moved anchor, or forbidden wording in an entry doc, stops sanitize
 #   B8  the console title says Cromford; OPERATOR-SETUP calls nothing a private repository
 #
@@ -91,8 +91,12 @@ grep -q 'Cromford' "$M/NOTICE" && ! grep -qi 'private' "$M/NOTICE" && ok \
 # B6
 [ ! -e "$M/bin/publish-share.sh" ] && [ -f "$M/bin/run-build.sh" ] && ok \
   || bad "B6 internal paths moved (publish-share.sh shipped, or run-build.sh missing)"
+# The harness's own project id is renamed with the repo (BH-6494: cromford
+# becomes cromford in the public tree), and the website row that upstream
+# already calls cromford becomes cromford-web, so the id stays unique.
 if grep -q '^cromford' "$SRC/fleet.conf" 2>/dev/null; then
-  grep -q '^cromford' "$M/fleet.conf" && ok || bad "B6 the cromford project id in fleet.conf was rebranded"
+  [ "$(grep -c '^cromford ' "$M/fleet.conf")" = 1 ] && ! grep -q '^cromford' "$M/fleet.conf" && ok \
+    || bad "B6 fleet.conf must carry the cromford project id once and no cromford row: $(grep -E '^(cromford|cromford)' "$M/fleet.conf" | tr '\n' '|')"
 fi
 grep -q 'bin/run-tests-in-docker.sh' "$M/README.md" && ok || bad "B6 README lost an internal script path"
 

@@ -25,6 +25,9 @@
 #   6. the build (`npm ci --ignore-scripts`, vite build) runs in its own copy of
 #      the head under $CONSOLE_PREVIEW_BUILD_TMP, as an unprivileged user with a
 #      clean env (cpv_run_unpriv). Only the plain files of dist come back.
+#      Each build command runs in its own PID namespace, so nothing it starts
+#      outlives it, and no build starts while a process of the build user is
+#      alive (BH-6073).
 #   7. THE DEPLOY TREE HOLDS NO FILE FROM THE PR BUT ITS BUILT dist/. Its
 #      functions/ and the src/ they import are origin/main's (reviewed), so a
 #      PR's Functions code never runs on Pages before review. There is no
@@ -54,11 +57,14 @@
 # head: the run stops at once and raises one console-preview-box alert, so a
 # broken hub never makes every open console PR terminal. Only an upload Pages
 # refuses for the head's own dist/ is the head's; any other upload error,
-# unknown ones included, is the box's. And one head never stalls the lane: the
-# same head as the run's upload box fault more than MAX_ATTEMPTS runs in a row
-# is skipped so the next head is tried, and is charged only if a later head
-# uploads in that run and it then fails again
-# (state/console-preview-deploy/.box-streak).
+# unknown ones included, is the box's. A 401, 403 or 429 is the box's only
+# after an error word, never inside a file name (dist/403.html). And one head
+# never stalls the lane: the same head as the run's upload box fault more than
+# MAX_ATTEMPTS runs in a row is skipped so the next head is tried, and is
+# charged only if a later head uploads in that run, the run did not stop on a
+# box fault, and it then fails again (state/console-preview-deploy/.box-streak).
+# The streak survives a charge, so the next run skips that head with no alert.
+# A retry that uploads runs QA and posts the comment like any other deploy.
 #
 # Knobs (catalog/lanes.d/console-preview-deploy.json, lane_env_apply):
 # CONSOLE_PREVIEW_DEPLOY (0), CONSOLE_PREVIEW_MAX_PER_RUN (3),
@@ -205,6 +211,8 @@ jq -r --arg s "$SLUG" '.[]? | [(.number|tostring), (.head.ref // ""), (.head.sha
 #   the upload box fault is freed by the streak guard in the main loop.
 BOX_WHY=""; BOX_STAGE=""
 # upload_fault <clean log> <wrangler rc> — box | head
+# A 401, 403 or 429 is the box's only after an error word (`HTTP 403`,
+# `status: 429`, `Error 401.`), never inside a file name (`dist/403.html`).
 # The head patterns read wrangler's error block only (from the first
 # `[ERROR]` line on). Wrangler logs `Uploading _headers` and `Uploading
 # _redirects` on every deploy before its /deployments POST, so a head pattern
@@ -214,7 +222,7 @@ upload_fault() {
   local err
   case "$2" in 124|137) echo box; return ;; esac
   err=$(sed -n '/\[ERROR\]/,$p' "$1")
-  if grep -qiE 'authentication error|code: 10000|unauthori[sz]ed|forbidden|invalid api token|[^0-9](401|403|429)[^0-9]|enotfound|econnreset|econnrefused|etimedout|eai_again|fetch failed|getaddrinfo|socket hang up|rate limit|too many requests|internal server error|service unavailable|bad gateway|gateway time-?out|npm (err!|error)|enospc|enomem|eacces|etarget' "$1"; then
+  if grep -qiE 'authentication error|code: 10000|unauthori[sz]ed|forbidden|invalid api token|(status|http|code|error|received|returned|response)[^0-9a-z/]{0,12}(401|403|429)([^0-9a-z./_-]|\.([^a-z0-9]|$)|$)|enotfound|econnreset|econnrefused|etimedout|eai_again|fetch failed|getaddrinfo|socket hang up|rate limit|too many requests|internal server error|service unavailable|bad gateway|gateway time-?out|npm (err!|error)|enospc|enomem|eacces|etarget' "$1"; then
     echo box
   elif [ -n "$err" ] && grep -qiE 'mib in size|too large|exceeds|too many files|maximum number of files|_redirects|_headers|invalid (asset|file|path)' <<<"$err"; then
     echo head
@@ -223,7 +231,7 @@ upload_fault() {
   fi
 }
 deploy_one() {
-  local n="$1" alias="$2" sha="$3" url="$4" s7=${3:0:7} drc ps urc=0 why
+  local n="$1" alias="$2" sha="$3" url="$4" s7=${3:0:7} drc ps urc=0 brc=0 why
   BOX_STAGE=build
   box() { BOX_WHY="$1"; log "#$n $1 at $s7 — not charged to the head; this run stops"; return 3; }
   # 1. The build: the PR head in its own tree, unprivileged, clean env, no
@@ -236,12 +244,15 @@ deploy_one() {
   cpv_run_unpriv "$B" "$B/console-ui" 600 npm ci --ignore-scripts --no-audit --no-fund >"$D/ci.log" 2>&1 || urc=$?
   [ "$urc" = 125 ] && { box "build not isolated: $(tail -n 1 "$D/ci.log")"; return; }
   [ "$urc" = 0 ] || { log "#$n npm ci failed at $s7 — preview not deployed"; return 1; }
-  cpv_run_unpriv "$B" "$B/console-ui" 300 npm run build >"$D/build.log" 2>&1 \
-    || { log "#$n vite build failed at $s7 — preview not deployed"; return 1; }
+  cpv_run_unpriv "$B" "$B/console-ui" 300 npm run build >"$D/build.log" 2>&1 || brc=$?
+  [ "$brc" = 125 ] && { box "build not isolated: $(tail -n 1 "$D/build.log")"; return; }
+  [ "$brc" = 0 ] || { log "#$n vite build failed at $s7 — preview not deployed"; return 1; }
   # 2. The deploy tree: origin/main's functions/ and src/, the PR's dist/ only.
   git -C "$CO" archive origin/main console-ui/functions console-ui/src | tar -x -C "$D"
   ps=("${PIPESTATUS[@]}")
   [ "${ps[0]}" = 0 ] && [ "${ps[1]}" = 0 ] || { box "main's functions could not be copied (git archive rc=${ps[0]}, tar rc=${ps[1]})"; return; }
+  # BH-6487: the proxy's #coord-writes import needs package.json and the rendered table.
+  why=$(cpv_coord_writes "$CO" origin/main "$D" 2>&1) || { box "main's coord write table did not render (${why:-no reason})"; return; }
   cpv_copy_dist "$B/console-ui/dist" "$D/console-ui/dist" 2>>"$D/build.log" \
     || { log "#$n build output of $s7 refused: $(tail -n 1 "$D/build.log") — preview not deployed"; return 1; }
   grep -q '^cpv_copy_dist: stripped' "$D/build.log" && log "#$n $(grep '^cpv_copy_dist: stripped' "$D/build.log" | tail -n 1 | sed 's/^cpv_copy_dist: //') (Pages would run them as server code; main's Functions deploy instead)"
@@ -330,13 +341,40 @@ charge_fail() {
   log "#$n head ${sha:0:7} failed $k times — terminal, not built again"
 }
 
+# box_alert <n> <sha> — the one console-preview-box alert, from the loop or the retry.
+box_alert() {
+  [ -x "$H/bin/lane-alert.sh" ] && "$H/bin/lane-alert.sh" --id console-preview-box console-preview-deploy \
+    "[console-preview] The hub could not build or deploy a preview: $BOX_WHY (PR #$1 head ${2:0:12}). This is the box, not the PR: no head is charged, and this run stopped. Fix it on the hub; the next tick tries again. logs/console-preview-deploy.log has the lines." >/dev/null 2>&1 || true
+}
+
+# qa_and_post <n> <sha> <url> <outdir> — after a deploy: QA, the kept comment
+#   body, then the comment (post_one records done or `posting <k>`).
+qa_and_post() {
+  local n="$1" sha="$2" url="$3" out="$4" res
+  if qa_one "$n" "$sha" "$url" "$out"; then res=PASS; passed=$((passed + 1)); else res=FAIL; qfailed=$((qfailed + 1)); fi
+  {
+    printf 'Console preview: %s\n\n' "$url"
+    printf 'Head %s, deployed to Cloudflare Pages by the console-preview-deploy lane. Its Functions are origin/main'"'"'s; only the built dist/ is this head'"'"'s.\n\n' "$sha"
+    printf 'Browser QA of the preview, signed in as a read-only QA session (loads only, no clicks), at 1440px and 390px:\n\n```\n'
+    grep -E '^(FAIL: |SCREEN |QA COVERAGE: |QA: )' "$out/qa.md" | head -40
+    printf '```\n\nQA: %s for head %s. Screenshots: %s on the hub.\n' "$res" "$sha" "$out"
+    printf '<!-- console-preview sha=%s url=%s -->\n<!-- console-qa sha=%s result=%s -->\n' "$sha" "$url" "$sha" "$res"
+  } > "$out/comment.md"
+  log "#$n QA $res at ${sha:0:7}"
+  post_one "$n" "$sha" "$out/comment.md" 0 || true
+}
+
 # THE STREAK HEAD (lead BLOCK at 1f9246916). A head that was the run's upload
 # box fault more than MAX_ATTEMPTS runs in a row is skipped (PEND) so the run can
 # try the next head. Only if a later head uploads in this run (PROVEN: the box
-# can upload) is the skipped head tried once more, and an upload box fault then
-# is its own. An account-wide fault (a token that can read but not upload)
-# never uploads anything, so it charges no head however long it lasts.
-PEND=""; PEND_N=""; PEND_ALIAS=""; PEND_URL=""; PEND_NATT=0; PROVEN=0
+# can upload, set only by an upload after PEND) and the loop did not stop on a
+# box fault (BOXSTOP) is the skipped head tried once more, and an upload box
+# fault then is its own. The streak survives a charge that is not terminal, and
+# another head's upload: only the head's own upload or its terminal charge ends
+# it. A build-stage box fault on the retry raises the console-preview-box alert
+# and charges nothing. An account-wide fault (a token that can read but not
+# upload) never uploads anything, so it charges no head however long it lasts.
+PEND=""; PEND_N=""; PEND_ALIAS=""; PEND_URL=""; PEND_NATT=0; PROVEN=0; BOXSTOP=0
 seen=0; console=0; deployed=0; deferred=0; failed=0; passed=0; qfailed=0; terminal=0; attempts=0
 # A per-run ceiling on build attempts, so failing heads cannot hold the lane for hours.
 ACAP=$((MAX * 2))
@@ -387,9 +425,8 @@ while IFS=$'\t' read -r n br sha kind; do
     fi
   fi
   if [ "$drc" = 3 ]; then
-    [ -x "$H/bin/lane-alert.sh" ] && "$H/bin/lane-alert.sh" --id console-preview-box console-preview-deploy \
-      "[console-preview] The hub could not build or deploy a preview: $BOX_WHY (PR #$n head ${sha:0:12}). This is the box, not the PR: no head is charged, and this run stopped. Fix it on the hub; the next tick tries again. logs/console-preview-deploy.log has the lines." >/dev/null 2>&1 || true
-    break
+    box_alert "$n" "$sha"
+    BOXSTOP=1; break
   fi
   if [ "$drc" != 0 ]; then
     # A failure takes no MAX_PER_RUN slot (lead BLOCK at 9935bb529): only a
@@ -399,31 +436,32 @@ while IFS=$'\t' read -r n br sha kind; do
     charge_fail "$n" "$sha" "$natt"
     continue
   fi
-  deployed=$((deployed + 1)); PROVEN=1
-  [ -z "$PEND" ] && rm -f "$SD/.box-streak"
-  if qa_one "$n" "$sha" "$url" "$QO"; then res=PASS; passed=$((passed + 1)); else res=FAIL; qfailed=$((qfailed + 1)); fi
-  {
-    printf 'Console preview: %s\n\n' "$url"
-    printf 'Head %s, deployed to Cloudflare Pages by the console-preview-deploy lane. Its Functions are origin/main'"'"'s; only the built dist/ is this head'"'"'s.\n\n' "$sha"
-    printf 'Browser QA of the preview, signed in as a read-only QA session (loads only, no clicks), at 1440px and 390px:\n\n```\n'
-    grep -E '^(FAIL: |SCREEN |QA COVERAGE: |QA: )' "$QO/qa.md" | head -40
-    printf '```\n\nQA: %s for head %s. Screenshots: %s on the hub.\n' "$res" "$sha" "$QO"
-    printf '<!-- console-preview sha=%s url=%s -->\n<!-- console-qa sha=%s result=%s -->\n' "$sha" "$url" "$sha" "$res"
-  } > "$QO/comment.md"
-  log "#$n QA $res at $s7"
-  post_one "$n" "$sha" "$QO/comment.md" 0 || true
+  deployed=$((deployed + 1))
+  # Only an upload AFTER the streak head was skipped proves the box can upload.
+  [ -n "$PEND" ] && PROVEN=1
+  # Only the streak head's own upload ends its streak.
+  ss=""; read -r ss _ 2>/dev/null < "$SD/.box-streak"
+  [ "$ss" = "$sha" ] && rm -f "$SD/.box-streak"
+  qa_and_post "$n" "$sha" "$url" "$QO"
 done < "$TMP/prs.tsv"
 
-# The streak head, once a later head proved the box can upload: one more try.
-if [ -n "$PEND" ] && [ "$PROVEN" = 1 ]; then
+# The streak head, once a later head proved the box can upload and the loop
+# did not stop on a box fault: one more try.
+if [ -n "$PEND" ] && [ "$PROVEN" = 1 ] && [ "$BOXSTOP" = 0 ]; then
   drc=0; deploy_one "$PEND_N" "$PEND_ALIAS" "$PEND" "$PEND_URL" || drc=$?
   case "$D" in "$H/state/console-preview-snap."?*) rm -rf -- "$D" ;; esac; D=""; cleanup_build
-  rm -f "$SD/.box-streak"
   if [ "$drc" = 0 ]; then
-    log "#$PEND_N head ${PEND:0:7} uploads now — its streak is cleared; the next tick deploys it and runs QA"
+    rm -f "$SD/.box-streak"
+    deployed=$((deployed + 1))
+    qa_and_post "$PEND_N" "$PEND" "$PEND_URL" "$QD/$PEND_N-${PEND:0:12}"
   elif [ "$drc" = 1 ] || [ "$BOX_STAGE" = upload ]; then
     log "#$PEND_N head ${PEND:0:7} failed its upload again while another head uploaded this run — charged to the head"
     charge_fail "$PEND_N" "$PEND" "$PEND_NATT"
+    # The streak survives a charge, so the next run skips the head at once,
+    # with no alert; a terminal head is never tried again, so its streak ends.
+    [ $((PEND_NATT + 1)) -ge "$MAXATT" ] && rm -f "$SD/.box-streak"
+  else
+    box_alert "$PEND_N" "$PEND"
   fi
 fi
 log "open PRs $seen, console heads $console, deploys $deployed (failed $failed), QA pass $passed fail $qfailed, deferred $deferred (max_per_run $MAX), terminal heads $terminal"

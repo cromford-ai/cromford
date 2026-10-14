@@ -161,7 +161,7 @@ if [ -z "${LG_UNDER_TEST:-}" ]; then
   if cmp -s "$M" "$LG"; then bad "M3 the block marker was not found"
   else
     MOUT=$(LG_UNDER_TEST="$M" HARNESS_TEST_SANDBOX=1 bash "$0" 2>&1)
-    printf '%s\n' "$MOUT" | grep -q '^FAIL: G1' && ok || bad "M3 G1 stayed green without the block"
+    grep -q '^FAIL: G1' <<<"$MOUT" && ok || bad "M3 G1 stayed green without the block"
   fi
 fi
 

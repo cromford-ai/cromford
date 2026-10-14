@@ -27,6 +27,7 @@
 # Run: HARNESS_TEST_SANDBOX=1 bash tests/archie-research-scout.bh-4762-test.sh
 set -uo pipefail
 . "$(dirname "$0")/lib/scratch.sh" || exit 1
+. "$(dirname "$0")/lib/jobs-schema.sh" && jobs_schema_render || exit 1
 DIR=$(cd "$(dirname "$0")/.." && pwd)
 command -v jq >/dev/null 2>&1 || { echo "archie-research-scout: jq is required"; exit 1; }
 command -v python3 >/dev/null 2>&1 || { echo "archie-research-scout: python3 is required"; exit 1; }

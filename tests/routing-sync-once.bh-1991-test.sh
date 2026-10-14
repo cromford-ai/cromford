@@ -196,7 +196,7 @@ for m in down http500; do
   OUT=$(CURL_MODE=$m envrun bash "$PF" 2>"$T/pf.err"); RC=$?
   [ "$BEFORE" = "$(snap "$H")" ] && ok || bad "B4 $m: \$HARNESS must be byte-identical: $(diff <(printf '%s\n' "$BEFORE") <(snap "$H") | head -5)"
   [ ! -e "$H/logs/jobs-client.log" ] && ok || bad "B4 $m: logs/jobs-client.log must not be created: $(cat "$H/logs/jobs-client.log")"
-  [ "$RC" = 1 ] && printf '%s\n' "$OUT" | grep -q '^\[FAIL\] 4 .*http=' && ok || bad "B4 $m: rc 1 and the [FAIL] 4 http= line (rc=$RC): $OUT"
+  [ "$RC" = 1 ] && grep -q '^\[FAIL\] 4 .*http=' <<<"$OUT" && ok || bad "B4 $m: rc 1 and the [FAIL] 4 http= line (rc=$RC): $OUT"
   grep -q 'jobs-client:' "$T/pf.err" && ok || bad "B4 $m: the jobs-client diagnostic must reach stderr: $(cat "$T/pf.err")"
 done
 sed '/^_jobs_log() { printf .routing-flip-preflight: jobs-client:/d' "$DIR/bin/routing-flip-preflight.sh" > "$T/pf-mutant.sh"

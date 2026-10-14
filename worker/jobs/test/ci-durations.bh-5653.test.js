@@ -10,10 +10,11 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import worker from '../src/index.js';
 import { openDb } from './lib/d1-sqlite.bh-1030.js';
+import { jobsSchemaSql } from './lib/jobs-schema.js';
 
 const HARNESS = 'fixture-harness-secret';
 const TOKEN = 'fixture-ci-token';
-const SCHEMA = readFileSync(fileURLToPath(new URL('../schema.sql', import.meta.url)), 'utf8');
+const SCHEMA = jobsSchemaSql();
 const TABLES = ['ci_duration_runs', 'ci_suite_duration_samples', 'ci_suite_durations'];
 const PATH = '/api/ci/suite-durations';
 

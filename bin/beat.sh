@@ -221,7 +221,7 @@ rem_try() {
     out=$(timeout 60 "$handler" "$akey" "$line" "$payload" </dev/null 2>/dev/null); rc=$?
     # One line, bounded: a handler's summary is evidence, not a transcript, and
     # this log is read by humans. Handlers never print secrets; truncate anyway.
-    out=$(printf '%s' "$out" | head -1 | tr -d '\t\r' | cut -c1-300)
+    out=$(head -1 <<<"$out" | tr -d '\t\r' | cut -c1-300)
     case "$rc" in
       0)   verdict=REMEDIATED ;;
       10)  verdict=TERMINAL ;;
@@ -242,7 +242,7 @@ rem_try() {
   # gets even when that bound is the thing that fails.
   [ -n "$agent" ] || return 1
   out=$(timeout "$REM_AGENT_BOUND" "$agent" "$akey" "$line" "$payload" </dev/null 2>/dev/null); rc=$?
-  out=$(printf '%s' "$out" | head -1 | tr -d '\t\r' | cut -c1-300)
+  out=$(head -1 <<<"$out" | tr -d '\t\r' | cut -c1-300)
   case "$rc" in
     0)   verdict=REMEDIATED ;;
     10)  verdict=TERMINAL ;;

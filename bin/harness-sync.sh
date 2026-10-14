@@ -231,6 +231,18 @@ if [ -x "$CHECKOUT/bin/llm-sites-build.sh" ]; then
   "$CHECKOUT/bin/llm-sites-build.sh" --repo "$CHECKOUT" >>"$LOG" 2>&1 \
     || echo "$(STAMP) harness sync: docs/LLM_CALL_SITES.md could not be regenerated" >> "$LOG"
 fi
+# >>> context budget manifest compose (BH-6487)
+# catalog/context-budgets.json is composed from catalog/context-budgets.d/ and
+# no longer committed, and every runtime reader (agent-call, llm-gate, the
+# budget DB sync below, cost-rollup) reads it from this checkout or from the
+# $HARNESS/catalog copy the rsync below makes. A refused compose is one ALERT
+# per box; the sync goes on, and the last good file stays in both places (the
+# composer never writes on refusal, and the catalog rsync has no --delete).
+if [ -x "$CHECKOUT/bin/context-budgets-build.sh" ] \
+   && ! "$CHECKOUT/bin/context-budgets-build.sh" --compose --repo "$CHECKOUT" >>"$LOG" 2>&1; then
+  HARNESS="$HARNESS" "$HARNESS/bin/alert-line.sh" --id "budgets-compose-$(hostname)" "[$(hostname)] harness sync: catalog/context-budgets.json could NOT be composed from catalog/context-budgets.d — lanes keep the last good manifest; fix the fragment bin/context-budgets-build.sh --check names (update-runners.log)"
+fi
+# <<< context budget manifest compose
 # An already-current checkout still deploys: this is the explicit deploy command,
 # and the box that authored a commit has a fresh checkout with STALE live files —
 # skipping the rsync there left the hub failing its own gate (caught first run).
@@ -253,6 +265,9 @@ fi
 # catalog/ BEFORE bin/ (BH-1644): a new bin/lib reader must never be live
 # without the registry entry that gives its knob a default.
 [ -d "$CHECKOUT/catalog" ] && rsync -a "$CHECKOUT/catalog/" "$HARNESS/catalog/" 2>>"$LOG"
+# agent-core/ before bin/ too: bin/staff-core.mjs imports ../agent-core/src
+# relative to itself, so the package must be live before its reader (BH-5561).
+[ -d "$CHECKOUT/agent-core" ] && rsync -a --delete "$CHECKOUT/agent-core/" "$HARNESS/agent-core/" 2>>"$LOG"
 rsync -a "$CHECKOUT/bin/" "$HARNESS/bin/" 2>>"$LOG"
 rsync -a "$CHECKOUT/prompts/" "$HARNESS/prompts/" 2>>"$LOG"
 # fly/ too: bin/fly-image-build.sh bakes fly/Dockerfile + fly/entrypoint.sh from
@@ -299,7 +314,9 @@ chmod +x "$HARNESS"/checks/*/check.sh "$HARNESS"/guardrails/*/check.sh 2>/dev/nu
 # below, so a routine deploy is not a PUT per tick. Fail-open: a missed sync
 # leaves every lane on the catalog-file fallback chain and retries next deploy;
 # it never blocks or delays the deploy itself.
-CSHA=$(git -C "$CHECKOUT" rev-list -1 HEAD -- catalog/context-budgets.json 2>/dev/null)
+# The manifest's sources are catalog/context-budgets.d/ since BH-6487; the old
+# path stays in the pathspec for a checkout from before the split.
+CSHA=$(git -C "$CHECKOUT" rev-list -1 HEAD -- catalog/context-budgets.d catalog/context-budgets.json 2>/dev/null)
 CSTATE="$HARNESS/state/catalog-synced"
 # A STAMP EQUAL TO THE SHA SAYS "PUSHED ONCE", NOT "STILL THERE" (BH-1042, audit
 # fact #30: a DB reset with the stamp left behind meant nobody ever re-pushed
@@ -400,6 +417,47 @@ schema_alert_s() {
     case "$v" in ''|*[!0-9]*) v="" ;; esac
   fi
   printf '%s\n' "${v:-$D1_APPLY_ALERT_S_DEFAULT}"
+}
+
+# deploy_alert_repeat_s — seconds between two `wrangler deploy FAILED` ALERTS
+# for one worker while its deploy keeps failing. Same reader as schema_alert_s:
+# env, then the settings row, then the code default. 0 alerts on every failure.
+HARNESS_SYNC_DEPLOY_ALERT_REPEAT_S_DEFAULT=3600
+deploy_alert_repeat_s() {
+  local v="${HARNESS_SYNC_DEPLOY_ALERT_REPEAT_S:-}"
+  case "$v" in ''|*[!0-9]*) v="" ;; esac
+  if [ -z "$v" ] && [ -x "$HARNESS/bin/jobs-client.sh" ]; then
+    v=$("$HARNESS/bin/jobs-client.sh" setting-get lane.fleet-propagate.harness_sync_deploy_alert_repeat_s 2>/dev/null | tr -d '[:space:]')
+    case "$v" in ''|*[!0-9]*) v="" ;; esac
+  fi
+  printf '%s\n' "${v:-$HARNESS_SYNC_DEPLOY_ALERT_REPEAT_S_DEFAULT}"
+}
+
+# deploy_fail_note <wname> <wsha> <snap> — one failed `wrangler deploy`. The
+# first failure ALERTs; while it keeps failing it ALERTs again at most once per
+# deploy_alert_repeat_s, and a held failure is one update-runners.log line.
+# state/worker-deploy-failing-<w> is "<first_epoch> <last_alert_epoch> <count>";
+# any other content, or a last alert in the future, counts as absent.
+# HARNESS_SYNC_NOW pins the clock for tests.
+deploy_fail_note() {
+  local wname="$1" wsha="$2" snap="$3" f first="" last="" count=0 now rep since
+  f="$HARNESS/state/worker-deploy-failing-$wname"
+  now="${HARNESS_SYNC_NOW:-$(date +%s)}"
+  if read -r first last count _ < "$f" 2>/dev/null \
+     && [[ "$first $last $count" =~ ^[0-9]+\ [0-9]+\ [0-9]+$ ]] && [ "$last" -le "$now" ]; then
+    count=$((count + 1))
+  else
+    first="$now"; last=""; count=1
+  fi
+  since=$(date -u -d "@$first" '+%F %TZ')
+  rep=$(deploy_alert_repeat_s)
+  if [ -z "$last" ] || [ $((now - last)) -ge "$rep" ]; then
+    HARNESS="$HARNESS" "$HARNESS/bin/alert-line.sh" --id "worker-deploy-failed-$wname-$(hostname)" "[$(hostname)] worker/$wname changed (${wsha:0:7}) but wrangler deploy FAILED — LIVE WORKER IS STALE; the next successful update-runners run redeploys it; if it keeps failing the alert medic owns this line (worker snapshot of ${snap:0:7}, see update-runners.log) — failing since $since ($count failed attempt(s)); repeats at most once per ${rep}s while it keeps failing"
+    last="$now"
+  else
+    echo "$(STAMP) worker $wname deploy FAILED again ($count since $since); alert held, next in $((rep - (now - last)))s" >> "$LOG"
+  fi
+  printf '%s %s %s\n' "$first" "$last" "$count" > "$f.tmp" && mv -f "$f.tmp" "$f"
 }
 
 # schema_send <worker-dir> <name> <database> <stmt>... — apply the statements
@@ -592,11 +650,12 @@ worker_schema_apply() {
   return 0
 }
 
-# snapshot_tree <sha> — materialise worker/, catalog/, the lane composer, the
-# schema composer and the llm-sites composer of commit <sha> into a fresh
-# directory under state/ and
-# print its path. What a worker deploy bundles must be ONE commit (#1548 review
-# C1): the worker phase runs outside the deploy lock, so a concurrent
+# snapshot_tree <sha> — materialise worker/, catalog/, agent-core/, the lane
+# composer, the schema composer and the llm-sites composer of commit <sha> into
+# a fresh directory under state/ and print its path. agent-core/ is there
+# because worker/jobs's staff routes import ../../../../agent-core/ (BH-5559),
+# and without it the bundle cannot resolve them (BH-6687).
+# What a worker deploy bundles must be ONE commit (#1548 review C1): the worker phase runs outside the deploy lock, so a concurrent
 # harness-sync can `git pull` the checkout while `wrangler deploy` bundles, and
 # a pull that brings code AND the schema.sql statement it reads would put that
 # code live before the statement is applied. `git archive` reads objects by sha, which a pull never changes.
@@ -604,7 +663,7 @@ snapshot_tree() {
   local d p paths=()
   # Only the paths this commit has: `git archive` refuses the whole call on a
   # pathspec that matches nothing (a repo with no catalog/, no composer).
-  for p in worker catalog bin/lanes-build.sh bin/schema-build.sh bin/llm-sites-build.sh bin/lib; do
+  for p in worker catalog agent-core bin/lanes-build.sh bin/schema-build.sh bin/llm-sites-build.sh bin/context-budgets-build.sh bin/lib; do
     git -C "$CHECKOUT" cat-file -e "$1:$p" 2>/dev/null && paths+=("$p")
   done
   d=$(mktemp -d "$HARNESS/state/worker-snap.XXXXXX" 2>/dev/null) || return 1
@@ -626,7 +685,8 @@ snapshot_drop() {
 # nothing this pass reads; the next pass sees the new key and applies before it
 # deploys.
 deploy_workers() {
-  local SNAP ROOT="" WNAME WDIR WSHA WLANES WLSHA WSITES WSSHA WSTATE WDB
+  local SNAP ROOT="" WNAME WDIR WSHA WLANES WLSHA WCSHA WSITES WSSHA WSTATE WDB
+  local wfail wf_first wf_count
   SNAP=$(git -C "$CHECKOUT" rev-parse HEAD 2>/dev/null) || return 0
   # Only the worker-lock holder is here, so any snapshot left behind is from a
   # killed pass and nobody is reading it.
@@ -667,6 +727,14 @@ deploy_workers() {
       WLANES=1
     fi
     # <<< lane registry bundled into the worker
+    # >>> agent-core bundled into the worker (BH-6687)
+    # A worker that imports agent-core/ bundles it, so an agent-core/-only
+    # commit must move this worker's key, or the live worker keeps the old code.
+    if git -C "$CHECKOUT" grep -q 'agent-core/' "$SNAP" -- "worker/$WNAME" 2>/dev/null; then
+      WCSHA=$(git -C "$CHECKOUT" rev-list -1 "$SNAP" -- agent-core 2>/dev/null)
+      [ -n "$WCSHA" ] && WSHA="$WSHA-core-$WCSHA"
+    fi
+    # <<< agent-core bundled into the worker
     # >>> llm-sites catalog bundled into the worker (BH-4987)
     # worker/jobs also imports catalog/llm-sites.json statically, and that file
     # is composed from catalog/llm-sites.d/ and no longer committed. Same two
@@ -680,6 +748,17 @@ deploy_workers() {
       WSITES=1
     fi
     # <<< llm-sites catalog bundled into the worker
+    # >>> budget manifest bundled into the worker (BH-6487)
+    # worker/jobs/src/routes/llm-sites.js imports catalog/context-budgets.json,
+    # composed from catalog/context-budgets.d/ since BH-6487. Same two rules.
+    WBUDGETS=0
+    if git -C "$CHECKOUT" grep -q 'catalog/context-budgets\.json' "$SNAP" -- "worker/$WNAME" 2>/dev/null \
+       && git -C "$CHECKOUT" cat-file -e "$SNAP:catalog/context-budgets.d" 2>/dev/null; then
+      WBSHA=$(git -C "$CHECKOUT" rev-list -1 "$SNAP" -- catalog/context-budgets.d bin/context-budgets-build.sh 2>/dev/null)
+      [ -n "$WBSHA" ] && WSHA="$WSHA-budgets-$WBSHA"
+      WBUDGETS=1
+    fi
+    # <<< budget manifest bundled into the worker
     WSTATE="$HARNESS/state/worker-deployed-$WNAME"
     [ "$(cat "$WSTATE" 2>/dev/null)" = "$WSHA" ] && continue
     if [ -z "$ROOT" ] && ! ROOT=$(snapshot_tree "$SNAP"); then
@@ -711,6 +790,15 @@ deploy_workers() {
       fi
     fi
     # <<< llm-sites catalog compose
+    # >>> budget manifest compose (BH-6487) — the llm-sites rule: a refused
+    # compose stops THIS worker, no apply, no deploy, no stamp, one ALERT.
+    if [ "$WBUDGETS" = 1 ]; then
+      if ! "$ROOT/bin/context-budgets-build.sh" --compose --repo "$ROOT" >>"$LOG" 2>&1; then
+        HARNESS="$HARNESS" "$HARNESS/bin/alert-line.sh" "[$(hostname)] worker/$WNAME catalog/context-budgets.json could NOT be composed from catalog/context-budgets.d at ${SNAP:0:7} — deploy of $WNAME SKIPPED; fix the fragment bin/context-budgets-build.sh --check names (update-runners.log)"
+        continue
+      fi
+    fi
+    # <<< budget manifest compose
     # >>> schema compose (BH-6005)
     # worker/<w>/schema.sql is composed from worker/<w>/schema.d/ (BH-4987), and
     # the file is leaving git (BH-6005). So the snapshot's schema.sql is composed
@@ -756,8 +844,15 @@ deploy_workers() {
         && timeout 300 npx --yes wrangler deploy >>"$LOG" 2>&1); then
       echo "$WSHA" > "$WSTATE"
       echo "$(STAMP) worker $WNAME deployed at ${WSHA:0:7} (snapshot of ${SNAP:0:7})" >> "$LOG"
+      wfail="$HARNESS/state/worker-deploy-failing-$WNAME"
+      if [ -e "$wfail" ]; then
+        if read -r wf_first _ wf_count _ < "$wfail" 2>/dev/null && [[ "$wf_first $wf_count" =~ ^[0-9]+\ [0-9]+$ ]]; then
+          echo "$(STAMP) worker $WNAME deploy recovered after $wf_count failed attempt(s) since $(date -u -d "@$wf_first" '+%F %TZ')" >> "$LOG"
+        fi
+        rm -f "$wfail"
+      fi
     else
-      HARNESS="$HARNESS" "$HARNESS/bin/alert-line.sh" "[$(hostname)] worker/$WNAME changed (${WSHA:0:7}) but wrangler deploy FAILED — LIVE WORKER IS STALE; the next successful update-runners run redeploys it; if it keeps failing the alert medic owns this line (worker snapshot of ${SNAP:0:7}, see update-runners.log)"
+      deploy_fail_note "$WNAME" "$WSHA" "$SNAP"
     fi
   done
   [ -n "$ROOT" ] && snapshot_drop "$ROOT"

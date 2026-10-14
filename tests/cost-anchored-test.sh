@@ -171,8 +171,8 @@ coldef() { awk "/^const $1 = \\[/{f=1} f{print} f&&/^\\];/{exit}" "$SCREEN"; }
 for t in prColumns ticketColumns boxColumns; do
   block=$(coldef "$t")
   [ -n "$block" ] && ok || bad "$t is missing — \$/PR, \$/ticket and \$/box are all required"
-  printf '%s' "$block" | grep -q "rawCol" && ok || bad "$t carries no RAW column"
-  printf '%s' "$block" | grep -q "anchoredCol" && ok || bad "$t carries no ANCHORED column"
+  grep -q "rawCol" <<<"$block" && ok || bad "$t carries no RAW column"
+  grep -q "anchoredCol" <<<"$block" && ok || bad "$t carries no ANCHORED column"
 done
 # Totals, and they are the WINDOW's totals rather than the page's.
 grep -q "TOTAL" "$SCREEN" && ok || bad "the anchored tables carry no totals row"

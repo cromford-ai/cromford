@@ -14,14 +14,18 @@ lib-root	delta	suite	tests/lib-root-literal-ratchet.bh-2613-test.sh	-	a bin/lib 
 alert-writers	delta	suite	tests/alert-writers-ratchet.bh-2314-test.sh	python3	no raw ALERTS.log writes
 jobs-client-modules	tree	suite	tests/jobs-client-modules.bh-1194-test.sh	-	jobs-client module map gaps and fixtures copying the real client
 switch	delta	suite	tests/switch-ratchet.bh-2320-test.sh	jq	switch ratchet
+lanes-knob-delta	delta	cmd	bin/lanes-knob-lint.sh --base <fork> .	jq	a new knob on an existing lane is a catalog/lanes.d/<owner>.knobs.d/<ENV>.json file (BH-4987)
 grep-q	tree	builtin	rp_grep_q	-	a file-grep piped into grep -q flakes under pipefail
 model-literal	tree	suite	tests/model-literal-lint.sh	-	model ids come from the resolver, not literals
 model-id-delta	delta	builtin	rp_model_id_delta	-	this diff adds no model id literal
+schema-fragment	delta	builtin	rp_schema_fragment	-	a new CREATE TABLE goes in a new worker/*/schema.d fragment, never an existing one (BH-5788)
+schema-fragment-name	delta	builtin	rp_schema_fragment_name	-	a new worker/*/schema.d fragment never reuses an NNNN number the base has; a stamp-form one (<yyyymmddhhmm>-<ticket-key>-<name>.sql) is later than every stamp fragment at the base (BH-5788)
+discipline-dupes	tree	builtin	rp_discipline_dupes	-	no two build-discipline rules claim the same D number (BH-5788)
 test-sources	tree	cmd	bin/test-sources-lint.sh	-	test suites source helpers with a same-line handler
 changelog-headers	tree	cmd	bin/changelog-header-lint.sh	-	no per-ticket changelog bullet (# - BH-N: / // - BH-N:) in a comment
 determinism	tree	cmd	bin/test-determinism-lint.sh --changed <fork>	-	tests do not read the real clock or network
 agent-push	tree	suite	tests/agent-push-ratchet.bh-2741-test.sh	-	agent push ratchet
-route-fragments	tree	cmd	cd worker/jobs && node --test test/route-table.test.js	node	worker route fragments are unique
+route-fragments	tree	cmd	cd worker/jobs && node --test test/route-table.test.js test/route-registry.bh-4607.test.js	node	worker route fragments are unique and index.js registers no gated family
 checks-tree	tree	cmd	bin/checks-run.sh --tree .	-	the repo checks/ over the whole tree
 date-bomb	delta	cmd	bin/test-date-bomb-lint.sh --base <fork> .	-	no hard-coded deadline date that expires against the real clock
 scratch-closure	delta	suite	tests/scratch-closure-lint.bh-4552-test.sh	-	a new or edited suite hand-copies bin/lib files instead of scratch_install_closure

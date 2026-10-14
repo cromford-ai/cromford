@@ -26,6 +26,7 @@ mkdir -p "$T/logs" "$T/locks" "$T/flags" "$T/state" "$T/bin" "$T/fakebin" "$T/bu
 cp "$DIR/bin/jobs-client.sh" "$T/bin/jobs-client.sh"
 mkdir -p "$T/bin/lib/jobs" && cp "$DIR"/bin/lib/jobs/*.sh "$T/bin/lib/jobs/"
 cp "$DIR/bin/merge-sweep.sh" "$T/bin/merge-sweep.sh"
+mkdir -p "$T/bin/lib" && cp -rL "$DIR/bin/lib/ms" "$T/bin/lib/" || exit 1   # BH-5242: the sweep loads bin/lib/ms/
 cp "$DIR/bin/alert-line.sh" "$T/bin/"
 # Since BH-784 the sweep's decision reads go through the conductor lib and
 # bin/lib/gh-rest.sh. Without both in the scratch box's bin/lib the sweep's

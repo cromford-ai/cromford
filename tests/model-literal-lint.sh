@@ -168,7 +168,7 @@ while IFS= read -r line; do
   [ -n "$line" ] || continue
   rel="${line#"$ROOT"/}"
   path="${rel%%:*}"; HIT_PATH[$path]=1
-  if printf '%s\n' "$ALLOW_PATHS" | grep -qxF -- "$path"; then
+  if grep -qxF -- "$path" <<<"$ALLOW_PATHS"; then
     echo "exempt: $rel"; NE=$((NE+1))
   else
     echo "$rel"; NA=$((NA+1))

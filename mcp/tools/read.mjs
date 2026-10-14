@@ -1,5 +1,6 @@
 // Read tools: each forwards one GET (chat: one POST) to the console API.
-// Names and argument shapes match the hosted MCP tool surface.
+// Names and argument shapes follow the Cloud worker's `mcp-tools.js` (moved out
+// of this repo, BH-5239).
 import { forward } from '../lib/tools.mjs';
 import { checkArgs } from './lib/schema.mjs';
 

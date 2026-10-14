@@ -3,7 +3,7 @@
 //
 //   node ci-durations-worker.bh-5653.mjs worker <log>
 //       The REAL jobs worker (worker/jobs/src/index.js) over node:sqlite with
-//       worker/jobs/schema.sql applied. HARNESS_SECRET 'fixture-harness-secret',
+//       the composed jobs schema applied. HARNESS_SECRET 'fixture-harness-secret',
 //       CI_DURATIONS_TOKEN 'fixture-ci-token'. GET /__samples answers the row
 //       count of ci_suite_duration_samples (a test hook, never a worker route).
 //       Exit 3 when node:sqlite is missing, so the suite can SKIP visibly.
@@ -28,7 +28,8 @@ if (mode === 'worker') {
   const worker = (await import(`${ROOT}worker/jobs/src/index.js`)).default;
   const { d1 } = await import(`${ROOT}worker/jobs/test/lib/d1-sqlite.bh-1030.js`);
   const db = new DatabaseSync(':memory:');
-  db.exec(readFileSync(`${ROOT}worker/jobs/schema.sql`, 'utf8'));
+  const { jobsSchemaSql } = await import(`${ROOT}worker/jobs/test/lib/jobs-schema.js`);
+  db.exec(jobsSchemaSql());
   const env = { DB: d1(db), HARNESS_SECRET: 'fixture-harness-secret', CI_DURATIONS_TOKEN: 'fixture-ci-token' };
   handle = async (method, path, headers, body) => {
     if (path === '/__samples') {

@@ -22,5 +22,5 @@ LOG="$AV_HARNESS/logs/fleet-propagate.log"
 LAST=$(tail -c 20000 "$LOG" | { grep -F -- "..$SHA " || true; } | tail -n 1) || exit 75
 [[ "$LAST" =~ \ hub=ok\ boxes=([0-9]+)/([0-9]+)\  ]] || exit 1
 [ "${BASH_REMATCH[1]}" = "${BASH_REMATCH[2]}" ] && [ "${BASH_REMATCH[1]}" -gt 0 ] || exit 1
-printf '%s\n' "$LAST" | grep -qE ' failed=| cron=(render-failed|install-failed|refused-)' && exit 1
+grep -qE ' failed=| cron=(render-failed|install-failed|refused-)' <<<"$LAST" && exit 1
 echo "fleet-propagate-partial: ${LAST}"

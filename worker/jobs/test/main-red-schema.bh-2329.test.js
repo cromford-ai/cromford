@@ -4,12 +4,13 @@ import { readFileSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { openDb } from './lib/d1-sqlite.bh-1030.js';
+import { jobsSchemaFile } from './lib/jobs-schema.js';
 
 // BH-2371 (BH-2329.0): the main_red detail table, the main_red_events audit
 // table and their two indexes, applied from the real schema.sql. The routes
 // that write them are a sibling slice; here we only prove the SQL.
 
-const SCHEMA_PATH = fileURLToPath(new URL('../schema.sql', import.meta.url));
+const SCHEMA_PATH = jobsSchemaFile();
 const REPO_ROOT = fileURLToPath(new URL('../../../', import.meta.url));
 
 const MAIN_RED_COLUMNS = [
@@ -93,7 +94,7 @@ test('applying schema.sql a second time is a no-op that keeps existing rows', as
 });
 
 test('the harness-sync splitter emits the main_red CREATE as one whole statement', (t) => {
-  const r = spawnSync('bash', ['-c', '. bin/lib/d1-schema.sh && d1_schema_statements worker/jobs/schema.sql'], {
+  const r = spawnSync('bash', ['-c', '. bin/lib/d1-schema.sh && d1_schema_statements "$1"', '_', jobsSchemaFile()], {
     cwd: REPO_ROOT, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024,
   });
   if (r.error && r.error.code === 'ENOENT') { t.skip('bash unavailable'); return; }

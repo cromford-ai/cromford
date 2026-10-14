@@ -1,0 +1,6 @@
+# FLY IDLE (BH-6061): the Fly idle reaper's stop ledger and started-machine
+# snapshot, and the Mission Control read, appended after staff findings at the
+# END of the table.
+POST /api/fly-idle/stops
+PUT /api/fly-idle/machines
+GET /api/fly-idle

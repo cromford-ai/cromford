@@ -45,10 +45,12 @@ exits **2**: a lint that scans for nothing must never report green.
 | `clock-new-date` | error | `new Date()` with no argument |
 | `clock-rolling-window` | error | a rolling window (`?window=`, `?days=`, `?since=`) asked for by a file whose fixtures are frozen in calendar time — **the #360 shape** |
 | `clock-date-cmd` | warn | shell `date` rendering a calendar field in a file that pins no anchor |
+| `race-wall-bound` | warn | an elapsed wall-clock capture in a shell test (`SECONDS=0`, `X=$((SECONDS - t0))`, `EPOCHSECONDS`). A bound on it goes red under load on PRs that did not touch the code (BH-6508, stuck-work-dispatch AT-1a). Assert the order of events with a marker instead. Warn only, until the 12 suites that still carry one are fixed |
 | `rand-bash` | error | `$RANDOM` |
 | `rand-js` | error | `Math.random` |
 | `race-sleep` | error | a foreground `sleep` of `race_sleep_min_s` (2s) or more used as synchronisation |
 | `race-sigpipe` | error | a short-circuiting consumer (`grep -q`, `grep -m`, `--max-count`, `--quiet`, `--silent`, `head`) on the right of a `git` pipe — **the BH-1232 shape** |
+| `race-sigpipe-echo` | error | the same short-circuiting consumers on the right of a `printf` or `echo` pipe. With a big `$X`, `printf '%s\n' "$X" \| grep -q y` reads a TRUE match as a miss under pipefail (BH-6109, PR #6108). Read from a here-string: `grep -q y <<<"$X"`, or `grep -q y < <(printf …)` when the bytes must stay exact. Test files only until the bin/ sweep adds its `scope` line ([note](notes/2026-10-12-BH-6109-sigpipe-echo-rule.md)) |
 | `branch-arm-ungated` | error | a *"this branch must not touch X"* arm: a `git diff --name-only` against main asserted on with `bad`/`eq`/`fail`, in a block that never gates on whose branch it is |
 | `date-empty-stamp` | error | `date -d "$VAR"` in a `bin/**.sh` script with no `[ -n ]` test (or `[ -z ] ||` test) on `VAR` in the call line or the `date_guard_lookback` (6) lines above it. GNU `date -d ""` exits 0 and prints today's midnight, so the `\|\|` fallback never runs. Waive a checked site with `# determinism: ok date-empty-stamp <why>` |
 

@@ -179,6 +179,19 @@ command -v prs_open_list >/dev/null 2>&1 && export HPL_SNAPSHOT=1
 # what tests/gh-no-graphql-decision-guard-test.sh scans this file for.
 # gh-rest: no-graphql
 . "$H/bin/lib/merge-conductor-lib.sh"
+# >>> tick scope (BH-6518)
+# The keyed-tick parse, the full-tick window and the tick mode live in
+# bin/lib/mc/tick-scope.sh, a driver-only file (no module header, so the lib's
+# other users never load it). A box mid-sync can see this script new and that
+# file missing or old: the tick refuses, before any GitHub read, rather than
+# run a scope it cannot parse.
+# shellcheck source=bin/lib/mc/tick-scope.sh
+if ! . "$H/bin/lib/mc/tick-scope.sh" || ! declare -F mc_keyed_tick_parse >/dev/null || ! declare -F mc_full_tick_window >/dev/null || ! declare -F mc_tick_mode >/dev/null; then
+  HARNESS="$H" "$H/bin/alert-line.sh" --id conductor-module-missing "CONDUCTOR MODULE MISSING: bin/lib/mc/tick-scope.sh is missing or unusable on $(hostname) — the box's bin/ is half-synced; no PR was ticked this tick" 2>/dev/null || true
+  mc_log "bin/lib/mc/tick-scope.sh is missing or unusable — refusing the tick"
+  exit 1
+fi
+# <<< tick scope (BH-6518)
 # The REST contract the review poster's comment goes out on (BH-783): sourcing
 # it costs no API budget and has no side effect, and without it rp_post can only
 # answer "not posted".
@@ -244,6 +257,10 @@ command -v fr_reentry_gate >/dev/null 2>&1 || {
 # fr_reentry_gate. A tree without it gates re-entry exactly as above.
 # shellcheck source=bin/lib/mc-batch-eject.sh
 [ -r "$H/bin/lib/mc-batch-eject.sh" ] && . "$H/bin/lib/mc-batch-eject.sh"
+# Why a head left the queue, and the pre-queue gate before its requeue
+# (BH-6161). A tree without it ejects and requeues exactly as before.
+# shellcheck source=bin/lib/mc-eject-cause.sh
+[ -r "$H/bin/lib/mc-eject-cause.sh" ] && . "$H/bin/lib/mc-eject-cause.sh"
 # The pre-queue isolation gate (BH-4545). A tree without it enqueues a READY
 # head exactly as before.
 # shellcheck source=bin/lib/mc-prequeue.sh
@@ -256,6 +273,9 @@ command -v fr_reentry_gate >/dev/null 2>&1 || {
 # it ticks exactly as before.
 # shellcheck source=bin/lib/mc-ci-timeout.sh
 [ -r "$H/bin/lib/mc-ci-timeout.sh" ] && . "$H/bin/lib/mc-ci-timeout.sh"
+# The fast parent merge (BH-5520). Optional: a tree without it ticks as before.
+# shellcheck source=bin/lib/mc-stack-fast.sh
+[ -r "$H/bin/lib/mc-stack-fast.sh" ] && . "$H/bin/lib/mc-stack-fast.sh"
 # The Sentry reporter (BH-5617): the WORKER_DEADLINE and autoenqueue-ledger
 # events. Optional like the libs above: without it, the `command -v
 # sentry_report` guards are false and the tick runs as before.
@@ -275,6 +295,7 @@ command -v fr_reentry_gate >/dev/null 2>&1 || {
   fanin_trap_run() { :; }; fanin_streak() { echo 0; }; mc_fanin_solo() { return 1; }; fanin_account() { :; }
   mc_worker_bounded() { pr_worker "$@"; }
   mc_window_cap() { :; }; mc_window_defer() { :; }; mc_fanin_mark_locked() { :; }
+  mc_step() { :; }
 }
 # Lane liveness (BH-638). Optional exactly like the libs above: a box whose
 # harness sync has not landed bin/lib/heartbeat.sh runs this tick byte-for-byte
@@ -300,54 +321,12 @@ mc_init
 # Once per tick, before anything reads the cache. Bounded, and it keeps the last
 # cache on an outage, so a worker that is down never stops the tick.
 pause_refresh || true
-# THE KEYED TICK (BH-1387). bin/wake-loop.sh may hand this run the PR keys it
-# drained, as MC_ONLY_PR=owner/repo#n[,owner/repo#n…]; the run then does only
-# those PRs and none of the fleet sweeps, which stay the cron tick's. Parsed
-# ONCE, with `read -a` so a key crossing the process boundary is never globbed
-# against the cwd. Empty = today's tick. A value with no valid key is a full
-# tick plus one line: wake-loop never writes one, and doing everything is what
-# an unkeyed launch does anyway. Keys are lowercased and deduped on that form
-# (BH-1841: GitHub slugs are case-insensitive); the log line shows each key as
-# the caller first spelled it.
-MC_ONLY_KEYS=""; _mc_only_shown=""
-if [ -n "${MC_ONLY_PR:-}" ]; then
-  IFS=, read -r -a _mc_only_toks <<<"$MC_ONLY_PR"
-  for _t in "${_mc_only_toks[@]}"; do
-    [[ "$_t" =~ ^[^#[:space:]]+#[0-9]+$ ]] || continue
-    case "$MC_ONLY_KEYS" in
-      *" ${_t,,} "*) ;;
-      *) MC_ONLY_KEYS="${MC_ONLY_KEYS:- }${_t,,} "; _mc_only_shown="${_mc_only_shown:+$_mc_only_shown,}$_t" ;;
-    esac
-  done
-  if [ -z "$MC_ONLY_KEYS" ]; then
-    mc_log "MC_ONLY_PR ignored: '$MC_ONLY_PR' holds no owner/repo#number key — running the full tick"
-  else
-    _k="${MC_ONLY_KEYS# }"; _k="${_k% }"; _n=$(wc -w <<<"$_k")
-    mc_log "keyed tick: $_n key(s) — $_mc_only_shown"
-    # tick-<p>.json is the cadence hold's clock (BH-1486): a keyed tick reads the
-    # hold and never restarts it, or every wake would push back that project's
-    # full sweep.
-    mc_tick_metrics() { :; }
-  fi
-fi
-# >>> full-tick window (BH-5521)
-# The full tick is the hourly safety sweep, and it is BOUNDED: a worker starts
-# only while MC_FULL_TICK_BUDGET_S (default 1500 s, 0 = no bound) has room for
-# it, through the BH-4842 window (mc_window_cap). A PR that does not fit is
-# accounted deferred:window and logged; the next wake for it or the next sweep
-# takes it. A caller's own window (the keyed backstop) wins. Plain assignment,
-# never exported: a detached lane must not inherit this tick's deadline.
-if [ -z "$MC_ONLY_KEYS" ] && ! [[ "${MC_WORKERS_DONE_BY:-}" =~ ^[0-9]+$ ]]; then
-  _mc_ftb="${MC_FULL_TICK_BUDGET_S:-1500}"
-  [[ "$_mc_ftb" =~ ^[0-9]+$ ]] || _mc_ftb=1500
-  if [ "$_mc_ftb" -gt 0 ]; then
-    MC_WORKERS_DONE_BY=$(( $(date +%s) + _mc_ftb ))
-    MC_WINDOW_NEXT="the next hourly sweep or a wake for this PR takes it"
-    export -n MC_WORKERS_DONE_BY MC_WINDOW_NEXT 2>/dev/null
-    mc_log "full tick: worker window ${_mc_ftb}s (MC_FULL_TICK_BUDGET_S) — a PR that does not fit is deferred, not started"
-  fi
-fi
-# <<< full-tick window (BH-5521)
+# THE KEYED TICK (BH-1387, BH-1841): MC_ONLY_PR -> MC_ONLY_KEYS. The parse is
+# mc_keyed_tick_parse, in bin/lib/mc/tick-scope.sh (BH-6518).
+mc_keyed_tick_parse
+# THE FULL-TICK WINDOW (BH-5521): MC_FULL_TICK_BUDGET_S -> MC_WORKERS_DONE_BY.
+# The window is mc_full_tick_window, in bin/lib/mc/tick-scope.sh (BH-6518).
+mc_full_tick_window
 # NO GLOBAL LOCK (2026-09-14), AND SINCE 2026-09-15 NO PROJECT LOCK EITHER. The
 # parallelism boundary and the single-instance guard are now the per-PR lock
 # pr_worker takes (mc_pr_lock): two overlapping ticks can never handle the same
@@ -358,31 +337,11 @@ fi
 flag_on() { # the file is the flag; flag_active reconciles it from the DB row first
   if command -v flag_active >/dev/null 2>&1; then flag_active "$1"; else [ -f "$H/flags/$1" ]; fi
 }
-KILL=0;    flag_on automerge-disabled && KILL=1
-ACTIONS=0; flag_on merge-conductor-actions && ACTIONS=1
-MERGES=0;  flag_on merge-conductor-merge && MERGES=1
-if flag_on merge-conductor-observe; then ACTIONS=0; MERGES=0; fi
-if [ "$KILL" = 1 ]; then ACTIONS=0; MERGES=0; fi
-if [ "$MERGES" = 1 ] && [ "$ACTIONS" = 0 ]; then MERGES=0; mc_log "merge flag set without the actions flag — merges refused this tick"; fi
-# A FLEET MERGES PAUSE (BH-1672) LOWERS MERGES AND NOTHING ELSE. It never sets
-# KILL: rebases, re-reviews and every other action go on, and MODE, derived
-# below from the lowered MERGES, reads `actions` rather than `kill-switch`.
-# Every merge and enqueue path this tick forks reads MERGES (the merge arm, the
-# requeue, the tier-2 enqueue, the settle and the stacked merge), so this one
-# line covers them all. tick_project asks again per project (a fleet row
-# matches there too), which is where a project row is honoured.
-if pause_active fleet merges; then
-  MERGES=0; mc_log "PAUSED(merges) fleet — no PR merges or enters a merge queue this tick; rebases and actions continue"
-fi
-MODE=observe; [ "$ACTIONS" = 1 ] && MODE=actions; [ "$MERGES" = 1 ] && MODE=merge; [ "$KILL" = 1 ] && MODE="kill-switch"
-# THE MODE REACHES THE LIB (BH-1201). The two age pagers hold their pages under
-# kill-switch/observe instead of sending them, and they live in bin/lib/mc/, in
-# pr_worker subshells this process forks — so the word travels as an exported
-# variable rather than an argument. EXPORTED FROM HERE AND NOWHERE ELSE: the
-# five other lanes that source the lib (merge-sweep, blocked-resolver,
-# review-prs, batch-resolve, run-build) leave it unset and page exactly as they
-# do today.
-MC_MODE="$MODE"; export MC_MODE
+# THE TICK MODE (BH-1201, BH-1672): the fleet flags and the fleet merges pause
+# -> KILL, ACTIONS, MERGES, MODE and the exported MC_MODE. The rule is
+# mc_tick_mode, in bin/lib/mc/tick-scope.sh (BH-6518). It calls flag_on, so the
+# call stays after the flag_on definition above.
+mc_tick_mode
 # The cron line is */30 since C2, and bin/merge-conductor-backstop.sh runs keyed
 # ticks every 5 minutes under `timeout 240`, so the rhythm is 300 and the
 # expected-by is 30 minutes. A killed tick is normal: as a `cron` lane (BH-4717)
@@ -582,6 +541,9 @@ MC_CLOSED_WATCH_DIR="$MC_STATE_DIR/closed-watch"
 #   the append-only attempts/cap files.
 pr_worker() {
   local ROW="$1"
+  # 1 from the READY transition on: every later mc_step logs STEP_START/STEP_END
+  # (BH-6351, THE STEP LINES at bin/lib/fanin.sh mc_step).
+  local MC_STEP_LOG=0
   IFS=$'\t' read -r NUM URL HEAD BR DRAFT MSTATE MGABLE PSTATE RAWINQ RAWLBL BASEREF UPDATED CROSS <<<"$ROW"
   # The placeholders come straight back off again: every consumer below was
   # written against "" for absent, and `-` is a tsv concern, not theirs.
@@ -617,6 +579,7 @@ pr_worker() {
   # repo's plain PRs behind a PR nothing is merging. The answer comes from the
   # marker the tick wrote before any worker started, so the parent and the
   # worker cannot disagree about which PR is the emergency.
+  mc_step lock-probe
   HOTFIX_THIS=0
   if hotfix_pending_is "$P" "$NUM"; then HOTFIX_THIS=1; trap 'hotfix_pending_drop "$P" "$NUM"' EXIT; fi
   # THE LOCK IS THIS PR'S, NOT THE PROJECT'S (2026-09-15). Everything below —
@@ -629,7 +592,7 @@ pr_worker() {
   # to expire and no way to wedge a PR — provided no detached child inherits it,
   # which is what the 9>&- on every setsid line in the lib is for.
   exec 9>"$(mc_pr_lock "$P" "$NUM")"
-  flock -n 9 || { mc_count_inc "$P" locked >/dev/null
+  mc_pr_lock_take || { mc_count_inc "$P" locked >/dev/null
     # A PR another worker holds is a PR this tick's land fan-out did not reach,
     # so the base sha must not be recorded as handled over it (BH-870).
     [ "${LAND_FIRE:-0}" = 1 ] && mc_count_inc "$P" landdeferred >/dev/null
@@ -695,11 +658,16 @@ pr_worker() {
   # without the epoch ever moving, and the release this change exists to give it
   # depended on some OTHER lane (br_rereview, per resolver tick) happening to
   # read the latch first. Read here, the observation is this row's own.
+  # THE OLD head-lag SPAN IS FOUR STEPS (BH-6670): lane-epoch, head-lag,
+  # handoff-sticky, park-holds. A kill names the one that was running, and the
+  # trail times each. bin/lib/fanin.sh holds a step timeout in a read-only one.
+  mc_step lane-epoch
   MC_LANE_EPOCH=$(mc_lane_epoch)
   # A HEAD THE PR OBJECT HAS NOT CAUGHT UP WITH (BH-1529) is read before every
   # other arm — they would all be judging a head GitHub is still reporting
   # wrong — and AFTER the lane-epoch observation above, which must see every
   # row before any return (BH-1019).
+  mc_step head-lag
   head_lag_check "$P" "$KEY" "$SLUG" "$NUM" "$URL" "$HEAD" "$BR" "${CROSS:--}" && return 0
   # A HAND-OFF TO THE RESOLVER IS STICKY (2026-09-14). This row is parked with
   # bin/blocked-resolver.sh and nothing this tick can do moves it, so the tick
@@ -713,6 +681,7 @@ pr_worker() {
   # nothing to ask, and a release is honoured ONCE per (PR, head) — a label that
   # stays on the PR (observe mode never removes it, and a removal can fail) must
   # not release every re-park on that head and recreate the oscillation.
+  mc_step handoff-sticky
   if mc_handoff_sticky "$KEY" "$HEAD"; then
     # A PARK ON OUR OWN RE-REVIEW BLOCK IS RE-CHECKED FOR A NEWER HUMAN MERGE
     # (BH-3814). A lead/human MERGE row on this exact head, newer than the
@@ -751,6 +720,7 @@ pr_worker() {
   # to end. The hold is keyed on the HEAD, so a push to this branch ends it by
   # construction and the PR comes straight back to this lane. One line per
   # (PR, head), like every other marker.
+  mc_step park-holds
   if TRAINURL=$(mc_batch_held "$SLUG" "$NUM" "$HEAD"); then
     # COUNTED BEFORE THE RETURN. The batch lane is spawned off this counter, and
     # a held member is exactly a PR that lane owns — counting it only after the
@@ -788,6 +758,7 @@ pr_worker() {
            mc_log "$KEY PARKED on ${HEAD:0:8} — loser of the contested hold on $CPATH (winner $CWIN); bin/blocked-resolver.sh owns it and nothing here merges it until the winner lands or the hold expires: $URL"; }
     return 0
   fi
+  mc_step verdict-read
   # HEADBOUND is the head-bound gate's answer BOUND TO THE HEAD IT JUDGED:
   # `n/a` bare, or `<word>@<sha>` for reapproved|blocked|no-verdict, or "-" for
   # a record written before it existed. It only steers a PR whose head MOVED,
@@ -807,6 +778,7 @@ pr_worker() {
   # The audit of a base-conflict rebase whose push GitHub already lists
   # (BH-1677); rebase_consume below audits the one it reads itself.
   eject_rebased_moved "$KEY" "$SLUG" "$NUM" "$URL" "$HEAD"
+  mc_step rebase-result
   # A FINISHED DETACHED REBASE IS READ FIRST (2026-09-14). Its result is the
   # newest fact about this PR, and applying it is this tick's whole business
   # with that PR — exactly as the inline rebase was.
@@ -856,6 +828,7 @@ pr_worker() {
      && mc_lead_ready "$KEY" "$SLUG" "$NUM" "$HEAD" "$VERDICT" "$REVIEWED" "$HEADBOUND"; then
     VERDICT=APPROVE; REVIEWED="$HEAD"
   fi
+  mc_step ci-read
   # THE CHECK-RUN READ IS MEMOISED ACROSS TICKS (BH-1486), on terminal answers
   # only. The fingerprint is computed BEFORE the read on purpose: everything
   # below that touches CI on this head — the red mark a few lines down, a
@@ -922,6 +895,7 @@ pr_worker() {
   # ladder ends in a fresh rebuild, and rebuilding a ticket because a runner was
   # OOM-killed twice is the exact waste this exists to stop. It is one ALERTS
   # line with an owner, and the row stays WAIT_CI.
+  mc_step identity
   # >>> identity block
   # BEFORE THE FLAKE LADDER, BECAUSE THE LADDER IS THE BURNED RETRY (BH-800,
   # 2026-09-18). `green:BLOCKED` is one of the two shapes the ladder answers, so
@@ -1112,7 +1086,15 @@ pr_worker() {
       1) return 0 ;;
     esac
   fi
+  # A fast-tracked child whose parent left the queue unmerged goes back onto the parent's branch (BH-5520).
+  # An owed Depends-On removal is retried first; a closed parent whose branch
+  # refuses the child parks it on the resolver-owned orphan reason.
+  MSF_ORPHAN=""
+  command -v msf_depends_settle >/dev/null 2>&1 && msf_depends_settle "$SLUG" "$KEY" "$NUM" "$ACTIONS"
+  if command -v msf_eligible >/dev/null 2>&1 && [ -n "$PBASE" ] && [ "${BASEREF:-}" = "$PBASE" ] \
+     && msf_check_revoke "$SLUG" "$KEY" "$NUM" "$URL" "$HEAD" "$ACTIONS"; then BASEREF="$MSF_BASE"; fi
   MC_STACK=""; MC_STACK_BASE=""; MC_RT_THIS_TICK=0
+  [ -n "${MSF_ORPHAN:-}" ] && { MC_STACK=parent-closed-orphan; MC_STACK_BASE="$MSF_ORPHAN"; }
   if [ -n "$PBASE" ] && [ -n "${BASEREF:-}" ] && [ "$BASEREF" != "$PBASE" ]; then
     MC_STACK=wait; MC_STACK_BASE="$BASEREF"
     # ONE read per (repo, parent branch) per tick (BH-1486): N children of one
@@ -1151,7 +1133,7 @@ pr_worker() {
         # A CONFLICT IS A FIX ROUND NOW, not a wait: the child is parked
         # conflict-unresolvable, and bin/blocked-resolver.sh's round merges the
         # PR's own base (the parent branch) for a stacked child, never main.
-        SMWHY=""; SMKEY=""
+        SMWHY=""; SMKEY=""; SMRC=""
         if [ "$ACTIONS" = 1 ] && [ "${CROSS:--}" = false ]; then
           if [ "${MC_STACK_PARENT_MERGE:-1}" != 0 ] && { [ "$MSTATE" = DIRTY ] || [ "$MGABLE" = CONFLICTING ]; }; then
             SMWHY=dirty; SMKEY="stackmerge $KEY $HEAD"
@@ -1185,6 +1167,11 @@ pr_worker() {
           else
             budget_spent "$P" rebase "$KEY"
           fi
+        fi
+        # A child of a QUEUED parent joins the parent's batch (BH-5520, bin/lib/mc-stack-fast.sh).
+        if command -v msf_eligible >/dev/null 2>&1 && [ "${SMRC:-}" != 5 ] && [ "${CROSS:--}" = false ] \
+           && msf_try "$SLUG" "$P" "$KEY" "$NUM" "${PARURL:-}" "$HEAD" "$REVIEWED" "$VERDICT" "$CI" "$MSTATE" "$MGABLE" "$BASEREF" "$BR" "$PBASE" "$ACTIONS"; then
+          MC_STACK=""; MC_STACK_BASE=""; BASEREF="$PBASE"
         fi ;;
       MERGED)
         if [ "$ACTIONS" = 1 ] && mc_retarget_base "$SLUG" "$NUM" "$PBASE"; then
@@ -1542,6 +1529,7 @@ pr_worker() {
   # (BH-1019.) Same shape, same reason, the other stop: without it the park is
   # undone on the next tick by the very head drift that produced it, and the
   # spawn re-arms on a head nobody has pushed to (cromford#818).
+  mc_step diff-scan
   # THE EPOCH IS READ HERE, FOR EVERY ROW (BH-1019 review, BLOCK 1). It used
   # to be evaluated only inside the lanefail and spawn arms — which a PARKED row
   # never reaches — so a lane recovery was invisible to exactly the rows waiting
@@ -1666,6 +1654,7 @@ pr_worker() {
       mc_nhv_gate "$SLUG" "$NUM" "$HEAD" "$ACTIONS"
     fi
   fi
+  mc_step classify
   IFS=$'\t' read -r STATE WHY <<<"$(mc_classify "$PSTATE" "$EFF" "$MGABLE" "$HEAD" "$REVIEWED" "$VERDICT" "$PROV" "$CI" "$REDS" "$TIGHT" "$SCAN" "$PREARM" "$PREV" "${HEADBOUND:--}")"
   # ---- the merge-queue re-entry arm (BH-636) ------------------------------
   # A head the merge queue already EJECTED is not READY, whatever the PR's own
@@ -1731,8 +1720,10 @@ pr_worker() {
        || { [ "$PROVIDER" = mergify ] && grep -qE '(^|,)dequeued(,|$)' <<<"${RAWLBL:-}"; }; }; then
     EJN=$(mc_eject_head_strikes "$KEY" "$HEAD")
     EJWHY="queue-ejected — push a fix; the next head is enqueued on its own merits"
+    command -v ec_head_why >/dev/null 2>&1 && QS2=$(ec_head_why "$SLUG" "$NUM" "$HEAD") && [ -n "$QS2" ] && EJWHY="queue-ejected: $QS2 — push a fix; the next head is enqueued on its own merits"
     if [ "${EJN:-0}" -ge 2 ]; then
       STATE=BLOCKED_HUMAN; WHY="queue-ejected-twice"
+      command -v ec_summary >/dev/null 2>&1 && QS2=$(ec_summary "$SLUG" "$NUM") && [ -n "$QS2" ] && WHY="queue-ejected-twice: $QS2"
     elif [ "$PROVIDER" != mergify ] || [ "${MC_QUEUE_REENTRY:-1}" = 0 ]; then
       STATE=WAIT_CI; WHY="$EJWHY"
     elif [ -n "$(mc_requeued_mark "$KEY" "$HEAD")" ]; then
@@ -1778,11 +1769,22 @@ pr_worker() {
          && mc_eject_culprit_mark "$SLUG" "$NUM" "$KEY" "$HEAD" "$EJSOLO" >/dev/null 2>&1; then
       EJN=$(mc_eject_head_strikes "$KEY" "$HEAD")
       if [ "${EJN:-0}" -ge 2 ]; then STATE=BLOCKED_HUMAN; WHY="queue-ejected-twice"
+        command -v ec_summary >/dev/null 2>&1 && QS2=$(ec_summary "$SLUG" "$NUM") && [ -n "$QS2" ] && WHY="queue-ejected-twice: $QS2"
       else STATE=WAIT_CI; WHY="ejected on ${HEAD:0:8} as the culprit: never re-queued; only a new head clears it"; fi
     # <<< eject culprit
     elif [ "$MERGES" != 1 ]; then
       mc_log "$KEY would REQUEUE $KEY $HEAD (merge mode off) — every check is green at this head, the approval is bound to it and the merge is clean${FR_LINE:+; $FR_LINE}"
       STATE=WAIT_CI; WHY="$EJWHY"
+    # The pre-queue gate before the requeue (BH-6161): the head merged onto
+    # current main must pass a run dispatched after its ejection. Before the
+    # budget, so a held head spends no requeue unit (the READY arm's order).
+    elif command -v ec_requeue_gate >/dev/null 2>&1 \
+         && ! ec_requeue_gate "$SLUG" "$NUM" "$URL" "$HEAD" "$PBASE" "$(ec_last_at "$SLUG" "$NUM" "$HEAD")"; then
+      case "$EC_PQ_WORD" in
+        red)    STATE=BLOCKED_HUMAN; WHY="$EC_PQ_WHY" ;;
+        rebase) STATE=NEEDS_REBASE;  WHY="prequeue after ejection: $EC_PQ_WHY" ;;
+        *)      STATE=WAIT_CI;       WHY="queue-ejected: $EC_PQ_WHY" ;;
+      esac
     elif ! mc_tick_budget_take "$P" requeue "${MC_REQUEUE_CAP:-5}"; then
       mc_log "$KEY REQUEUE_DEFERRED $KEY $HEAD — this project has spent its ${MC_REQUEUE_CAP:-5} re-queues for this tick; re-offered on the next one"
       STATE=WAIT_CI; WHY="$EJWHY"
@@ -1935,6 +1937,8 @@ pr_worker() {
     READY|NEEDS_REBASE) [ "$VERDICT" = APPROVE ] && mc_count_inc "$P" batchable >/dev/null ;;
   esac
   SINCE=$(mc_transition "$KEY" "$STATE" "$WHY" "$HEAD" "$REVIEWED" "$URL" "$VERDICT" "$MSTATE" "$REC")
+  if [ "$STATE" = READY ]; then MC_STEP_LOG=1; fi
+  mc_step ready-checks
   # `ci=absent` and `ci=flake`, not `ci=none`, in every line a person reads
   # (BH-636): "none" reads as "nothing to report" when what it means is "GitHub
   # never built this head" or "the runs were killed", which are the two things
@@ -1960,8 +1964,10 @@ pr_worker() {
   # mc_transition, so it judges this tick's state, and before the arms, so a
   # spawn takes the REBASING transition the way the NEEDS_REBASE arm's does.
   # rc 0 means it spawned and this PR's tick is over.
+  mc_step land-rebase
   land_rebase_arm && return 0
   # ---- actions, behind the flags ------------------------------------------
+  mc_step "arm:$STATE"
   case "$STATE" in
     RED_TWICE)
       # THE PARK IS THE HAND-OFF. RED_TWICE is not a state this lane can move
@@ -2097,6 +2103,7 @@ pr_worker() {
       [ "$ACTIONS" = 1 ] || return 0
       headbound_review moved "$KEY" "$SLUG" "$NUM" "$P" "$URL" "$REC" "$HEAD" "$REVIEWED" "$VERDICT" "$MSTATE" "$CI" ;;
     READY)
+      mc_step base-guard
       # NOTHING MERGES INTO ANYTHING BUT THE PROJECT'S BASE (BH-410). This runs
       # before the freeze, before the flags and before the budget, because it is
       # not a policy about WHEN to merge — it is the answer to "would this write
@@ -2143,6 +2150,7 @@ pr_worker() {
           return 0
         fi
       fi
+      mc_step dep-gate
       # >>> dep gate
       # AN OPEN DECLARED DEPENDENCY HOLDS THIS MERGE (BH-629). #615 merged with
       # "Depends on #459 (PR #609)" in its own body while #609 was still open,
@@ -2223,6 +2231,7 @@ pr_worker() {
       # pipeline-health's sweepstall detector and the STUCK READY page can tell
       # a PR held on purpose from one nobody is landing. These three returns
       # were silent, and 816 false sweepstall pages came out of that silence.
+      mc_step ticket-hold
       command -v to_lane_hold >/dev/null 2>&1 && to_lane_hold "$P" "$SLUG" "$NUM" \
         && { mc_ready_why "$KEY" "$HEAD" ticket-hold "held by a HOLD on its ticket or on its own thread (to_lane_hold; the MERGE_HELD line names it)"; return 0; }
       # THE PRE-QUEUE GATE (BH-4545): a head that fails its suites merged onto
@@ -2236,6 +2245,7 @@ pr_worker() {
       # main, so the row goes to NEEDS_REBASE. `defer` is a dispatch the gate
       # skipped because the lead fence or the block gate below will refuse this
       # head; the arm goes on so they refuse it as usual (`# >>> prequeue defer`).
+      mc_step prequeue
       PQ_DEFER=0
       if [ "$MERGES" = 1 ] && [ "${QUEUE:-0}" = 1 ] && [ "${PREV:-}" != QUEUED ] && command -v pq_gate >/dev/null 2>&1; then
         pq_gate "$SLUG" "$NUM" "$URL" "$HEAD" "$PBASE" >/dev/null
@@ -2285,6 +2295,7 @@ pr_worker() {
       # `// ""` so a field GitHub answers null renders as EMPTY and the guard
       # ABSTAINS on it; the bare template would print the word `null`, which is
       # not a branch name and would refuse every merge on the fleet.
+      mc_step state-guard
       # >>> pre-merge state guard
       # THIS READ IS REST, NEVER `gh pr view` (BH-994, 2026-09-19; the whole
       # merge family followed it in BH-784). It is the read that actually stops
@@ -2353,6 +2364,7 @@ pr_worker() {
       # feeds the lane-wide outage alert. AHEAD of the block gate, whose clean
       # scan would otherwise restart that alert's count on every tick. No row,
       # no budget, no alert for a lead PR simply waiting on its lead.
+      mc_step lead-fence
       MC_LEAD_CLEARED=0
       if command -v to_lane_lead_fence >/dev/null 2>&1; then
         to_lane_lead_fence "$P" "$SLUG" "$NUM" "$HEAD" "$NLOGIN"; MC_LEAD_RC=$?
@@ -2366,6 +2378,7 @@ pr_worker() {
         fi
         MC_LEAD_CLEARED="$TO_LEAD_CLEARED"   # to_lane_lead_hold always sets it
       fi
+      mc_step block-gate
       # >>> block gate
       # A HUMAN BLOCK ON THE THREAD REFUSES THE MERGE (BH-762). The verdict this
       # row carries was true when the review was written; the thread has had
@@ -2446,6 +2459,7 @@ pr_worker() {
           return 0
         fi
       fi
+      mc_step enqueue
       # The refusal above sits BEFORE the take, so a PR that never reached gh
       # costs the project no unit of this tick's merge budget.
       mc_tick_budget_take "$P" merge "$MERGE_BUDGET" || { budget_spent "$P" merge "$KEY"
@@ -2490,6 +2504,7 @@ pr_worker() {
              mc_transition "$KEY" QUEUED "enqueued at ${HEAD:0:8}" "$HEAD" "$REVIEWED" "$URL" "$VERDICT" "$MSTATE" "$REC" >/dev/null ;;
           2) mc_count_inc "$P" merges >/dev/null
              command -v ae_mark >/dev/null 2>&1 && ae_mark "$P" asked "$KEY" "$HEAD"
+             mc_step settle
              conductor_settle "$KEY" "$URL" "$P" "$SLUG" "$BR" "$REC" "$JOB" "$HEAD" "$REVIEWED" "$VERDICT" "$MSTATE" "by:conductor (merge queue, landed in-tick)" ;;
           # rc 3: the request is in place and the QUEUE never answered. That is
           # a standing condition on the REPO — Mergify told us so in as many
@@ -2532,8 +2547,9 @@ pr_worker() {
              [ "$N" -ge 1 ] && { mc_transition "$KEY" BLOCKED_HUMAN "queue-enqueue-failed-twice: ${ERR:-?}" "$HEAD" "$REVIEWED" "$URL" "$VERDICT" "$MSTATE" "$REC" >/dev/null
                mc_log "$KEY BLOCKED_AGENT queue-enqueue-failed-twice: the $PROVIDER merge queue refused a READY PR twice (${ERR:-no reason given}) — handed to bin/blocked-resolver.sh (fresh rebuild against current main): $URL"; } ;;
         esac
-      elif ERR=$(mc_merge_locked "$P" mc_merge "$URL" "$HEAD"); RC=$?; [ "$RC" = 0 ]; then
+      elif mc_step merge; ERR=$(mc_merge_locked "$P" mc_merge "$URL" "$HEAD"); RC=$?; [ "$RC" = 0 ]; then
         mc_count_inc "$P" merges >/dev/null
+        mc_step settle
         conductor_settle "$KEY" "$URL" "$P" "$SLUG" "$BR" "$REC" "$JOB" "$HEAD" "$REVIEWED" "$VERDICT" "$MSTATE" "by:conductor" "$ERR"
       elif [ "$RC" = 99 ]; then
         # Nothing was written — another PR of this project was merging — so this
@@ -2645,6 +2661,7 @@ tick_project() {
   # GitHub's native queue (a merge_queue ruleset rule), `mergify` is the Mergify
   # App reading .mergify.yml, `none` is today's synchronous path.
   PROVIDER=$(mc_queue_provider "$SLUG")
+  command -v msf_eligible >/dev/null 2>&1 && msf_sweep "$SLUG"
   # AN UNREADABLE PROBE HOLDS THE TICK (BH-2275). `unknown` is not `none`: a
   # 5xx on .mergify.yml used to read as "no queue", and every READY PR on a
   # Mergify repo was merged directly around it. Nothing on this repo moves this
@@ -2736,8 +2753,8 @@ tick_project() {
       # The PR's own state first (it is the same read for both providers and it
       # carries the branch the issue close needs), then, only for a PR that is
       # still OPEN, the provider-aware question "does the queue still hold it".
-      QV=$(mc_pr_view "$QURL" '"\(.STATE) \(.head.ref)"' 2>/dev/null) || QV=""
-      read -r QPS QBR <<<"$QV"
+      QV=$(mc_pr_view "$QURL" '"\(.STATE) \(.head.ref) \(.head.sha // "")"' 2>/dev/null) || QV=""
+      read -r QPS QBR QLIVE <<<"$QV"
       [ -n "${QPS:-}" ] || { mc_log "$QKEY still QUEUED: GitHub read UNVERIFIABLE (HTTP $(mc_rest_status)) — row left as-is"; continue; }
       QREC=$(mc_record_for "$QURL" || true)
       # Five fields, not four: mc_verdict's 5th is the head-bound outcome. It is
@@ -2847,15 +2864,25 @@ tick_project() {
             [ -n "$QDQ" ] && mc_dequeue_surface "$QKEY" "$QURL" "$QHEAD" "$QDQ" "$MERGES"
           fi
           # <<< dequeue surface
+          # WHAT THE CAUSE WAS (BH-6161): one comments read, one record line, one
+          # EJECT_CAUSE line, and the cause in the row reason below.
+          QEC=""; QEWHY=""
+          if command -v ec_cause >/dev/null 2>&1 && [ "$(ec_knob MC_EJECT_CAUSE 1)" != 0 ]; then
+            QEC=$(ec_cause "$PROVIDER" "$SLUG" "$QURL" "$QHEAD" "${QLIVE:-}")
+            QORD=first; [ -n "$(mc_requeued_mark "$QKEY" "$QHEAD")" ] && QORD=again
+            ec_record "$SLUG" "${QKEY##*#}" "$QHEAD" "$QORD" "${QEC%%$'\t'*}" "${QEC#*$'\t'}"
+            QEWHY="${QEC%%$'\t'*}"; [ -n "${QEC#*$'\t'}" ] && QEWHY="$QEWHY (${QEC#*$'\t'})"
+            mc_log "EJECT_CAUSE $QKEY ${QHEAD:0:8} $QORD $QEWHY"
+          fi
           if [ "${EJN:-1}" -ge 2 ]; then
             mc_log "$QKEY EJECTED from the merge queue again on ${QHEAD:0:8} (ejections: $EJN, provider $PROVIDER)"
-            mc_transition "$QKEY" BLOCKED_HUMAN "queue-ejected-twice" "$QHEAD" "$QREV" "$QURL" "$QVERDICT" UNKNOWN "$QREC" >/dev/null
+            mc_transition "$QKEY" BLOCKED_HUMAN "queue-ejected-twice${QEWHY:+: $(ec_summary "$SLUG" "${QKEY##*#}")}" "$QHEAD" "$QREV" "$QURL" "$QVERDICT" UNKNOWN "$QREC" >/dev/null
             mc_log "$QKEY BLOCKED_AGENT queue-ejected-twice — its batch build fails against current main, which its own checks never test; handed to bin/blocked-resolver.sh (its ladder: an agent fix round with the failing batch runs when they could be read, else merge main / re-run CI first; then a fresh rebuild): $QURL"
             # BH-6000 part 5: the fix round starts now, with the two failing runs.
             mc_eject_fix_now "$P" "$SLUG" "$QKEY" "$QHEAD" "$QURL"
           else
-            mc_log "$QKEY ejected from the merge queue on ${QHEAD:0:8} — the batch build went red (provider $PROVIDER)"
-            mc_transition "$QKEY" WAIT_CI "queue-ejected" "$QHEAD" "$QREV" "$QURL" "$QVERDICT" UNKNOWN "$QREC" >/dev/null
+            mc_log "$QKEY ejected from the merge queue on ${QHEAD:0:8} — cause: ${QEWHY:-not read (MC_EJECT_CAUSE=0)} (provider $PROVIDER)"
+            mc_transition "$QKEY" WAIT_CI "queue-ejected${QEWHY:+: $QEWHY}" "$QHEAD" "$QREV" "$QURL" "$QVERDICT" UNKNOWN "$QREC" >/dev/null
           fi ;;
       esac
       exec 9>&-
@@ -3119,6 +3146,12 @@ tick_project() {
     _batch+=("$ROW")
   done
   [ "$_solo" = 1 ] && ROWS=("${_batch[@]}")
+  # THE REFS PIN (BH-6462): one refs read per branch prefix for the whole tick,
+  # before any worker starts, so no worker's head-lag step reads them again.
+  local MC_REFS_PIN_PREFIX _pinbr=()
+  MC_REFS_PIN_PREFIX="$MC_TICK_DIR/$(mc_safe_name "${MC_TICK_ID:-notick}").refspin-"
+  mapfile -t _pinbr < <(printf '%s\n' "${ROWS[@]}" | cut -f4)
+  command -v prs_refs_pin >/dev/null 2>&1 && prs_refs_pin "$SLUG" "$MC_REFS_PIN_PREFIX" "${_pinbr[@]}"
   local _wcap
   for ROW in "${ROWS[@]}"; do
     [ -n "$ROW" ] || continue

@@ -60,10 +60,10 @@ done
 cmp -s "$T/m/env/global.env" "$T/global.env.orig" && ok || bad "(a) bytes differ through the symlink"
 [ ! -e "$T/m/env.pre-migrate" ] && [ -z "$(find "$T/m" -maxdepth 1 -name 'env.pre-migrate*' 2>/dev/null)" ] && ok || bad "(a) pre-migrate backup left on disk"
 [ -z "$(find "$T" -maxdepth 1 -name '*.tmp.*' 2>/dev/null)" ] && ok || bad "(a) tmp tree left on disk"
-if printf '%s%s' "$OUT" "$ERR" | grep -q 'FIXTURE_SECRET'; then
+if grep -q 'FIXTURE_SECRET' <<<"$OUT$ERR"; then
   bad "(a) secret content in output: $OUT $ERR"
 else ok; fi
-printf '%s' "$OUT" | grep -q 'migrated' && ok || bad "(a) stdout does not report the migration: $OUT"
+grep -q 'migrated' <<<"$OUT" && ok || bad "(a) stdout does not report the migration: $OUT"
 
 # ---------------------------------------------------------------------------
 # (b) second run is a no-op: rc 0, tree byte-identical, says already migrated
@@ -72,7 +72,7 @@ BEFORE=$(listing "$T/m-etc")
 OUT2=$("$MIG" --harness "$T/m" --dest "$T/m-etc" 2>&1); RC=$?
 [ "$RC" -eq 0 ] && ok || bad "(b) rc=$RC want 0 ($OUT2)"
 [ "$(listing "$T/m-etc")" = "$BEFORE" ] && ok || bad "(b) dest tree changed on the second run"
-printf '%s' "$OUT2" | grep -q 'already migrated' && ok || bad "(b) no 'already migrated' in output: $OUT2"
+grep -q 'already migrated' <<<"$OUT2" && ok || bad "(b) no 'already migrated' in output: $OUT2"
 
 # ---------------------------------------------------------------------------
 # (c) Fly/pool shape: env is a symlink somewhere else -> refuse, untouched
@@ -117,7 +117,7 @@ RES=$(env -u HARNESS_ENV_DIR ETC_HARNESS_ENV="$T/m-etc" bash -c '. "$1/bin/lib/e
 # ---------------------------------------------------------------------------
 OUT7=$("$MIG" --harness "$T/n" --nope 2>&1); RC=$?
 [ "$RC" -eq 2 ] && ok || bad "(g) unknown flag rc=$RC want 2 ($OUT7)"
-printf '%s' "$OUT7" | grep -qi 'usage' && ok || bad "(g) no usage text: $OUT7"
+grep -qi 'usage' <<<"$OUT7" && ok || bad "(g) no usage text: $OUT7"
 
 # ---------------------------------------------------------------------------
 # (h) pre-existing EMPTY dest is reused: migration proceeds, rc 0
@@ -148,7 +148,7 @@ else
   [ -L "$T/i/env" ] && ok || bad "(i) armed fixture did not create symlink"
   [ -z "$(find "$T/i" -maxdepth 1 -name 'env.pre-migrate*' 2>/dev/null)" ] && ok || bad "(i) pre-migrate backup left on disk for armed fixture"
   cmp -s "$T/i-etc/global.env" "$T/i/env/global.env" && ok || bad "(i) armed fixture bytes differ through the symlink"
-  if printf '%s%s' "$OUT9" "$ERR9" | grep -q 'FIXTURE_SECRET_ARMED'; then
+  if grep -q 'FIXTURE_SECRET_ARMED' <<<"$OUT9$ERR9"; then
     bad "(i) secret content in output: $OUT9 $ERR9"
   else ok; fi
 fi

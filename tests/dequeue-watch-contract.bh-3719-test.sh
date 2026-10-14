@@ -27,8 +27,9 @@ grep -q '/root/harness' "$LIB" && bad "$LIB carries a /root/harness literal (D43
 
 # --- W1 ------------------------------------------------------------------------
 if [ -f "$ROUTE" ] && node --check "$ROUTE" 2>/dev/null; then ok; else bad "W1 missing or unparseable $ROUTE"; fi
-grep -q '^import { routes as dequeueWatch } from "./routes/dequeue-watch.js";' "$DIR/worker/jobs/src/index.js" && ok \
-  || bad "W1 worker/jobs/src/index.js does not import $ROUTE"
+# TEST-CHANGE (BH-4607): a family is registered by its route-table.d fragment; index.js no longer lists gated families.
+[ "$(ls "$DIR"/worker/jobs/test/route-table.d/[0-9][0-9][0-9]-dequeue-watch.txt 2>/dev/null | wc -l)" = 1 ] && ok \
+  || bad "dequeue-watch has no route-table.d fragment (BH-4607: the fragment IS the registration)"
 W1=$(cd "$DIR/worker/jobs" && node --input-type=module -e '
   const { ROUTES } = (await import("./src/index.js")).default;
   console.log(ROUTES.filter(([, m]) => typeof m === "string" && m.startsWith("/api/dequeue-watch/")).map(([v, m]) => v + " " + m).join("|"));

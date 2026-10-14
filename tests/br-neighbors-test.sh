@@ -42,6 +42,7 @@ mkdir -p "$H/bin"
 cp "$DIR/bin/blocked-resolver.sh" "$DIR/bin/fly-pool.sh" "$DIR/bin/merge-sweep.sh" \
    "$DIR/bin/merge-conductor.sh" "$DIR/bin/fleet-conf.sh" "$DIR/bin/project-of.sh" \
    "$DIR/bin/box-for.sh" "$H/bin/"
+mkdir -p "$H/bin/lib" && cp -rL "$DIR/bin/lib/ms" "$H/bin/lib/" || exit 1   # BH-5242: the sweep loads bin/lib/ms/
 fx_br_harness "$DIR" "$T" || exit 1
 [ -d "$DIR/bin/lib/br" ] || exit 1   # impact: this suite runs when bin/lib/br/ changes
 

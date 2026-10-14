@@ -1,0 +1,11 @@
+{
+  "env": "MC_STEP_HOLD_MAX",
+  "type": "int",
+  "default": 2,
+  "min": 0,
+  "max": 20,
+  "unit": "count",
+  "zero_means": "off",
+  "note": "How many step timeouts in a read-only PR worker step (lane-epoch, head-lag, park-holds) are held per (PR, head, step) before one pages (BH-6670). A held kill writes one STEP_HELD line and the outcome killed:slow-read, with no lane alert and no Sentry event; the row is left as it is and the next tick works the PR again. The next kill past the cap writes STEP_TIMEOUT, a warn alert and a Sentry event. Not a number reads as 2. Settings row: lane.merge-conductor.mc_step_hold_max.",
+  "read_in": "bin/lib/fanin.sh"
+}

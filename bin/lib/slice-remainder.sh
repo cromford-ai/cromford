@@ -181,7 +181,7 @@ slice_remainder_parse() {
   i=$((k + 1))
   while [ "$i" -le "$prev" ]; do
     text=$(printf '%s\n' "$recs" | awk -F'\t' -v j="$i" '($1 == "I" || $1 == "C") && $2 == j { print $3 }')
-    title=$(_slr_title "$(printf '%s\n' "$text" | head -1)")
+    title=$(_slr_title "$(head -1 <<<"$text")")
     [ -n "$title" ] || { printf 'bad:empty:C%s\n' "$i"; return 2; }
     tests=$(printf '%s\n' "$recs" | awk -F'\t' -v j="$i" '$1 == "T" && $2 == j { print "- " $3 }')
     [ -n "$tests" ] || tests="None were named for this slice. Its own plan writes them."
@@ -221,6 +221,11 @@ _slr_alert() {
 
 slice_remainder_settle() {
   local slug="${1:-}" n="${2:-}" pr="${3:-}" rec="${4:-}" h="${5:-${HARNESS:-${H:-}}}" d rc=0
+  # Optional (BH-6308): a plan read from elsewhere than <record>/plan.md (a
+  # remote build's merged spec), and the key and project when the record name
+  # does not carry them. Five args behave exactly as before.
+  local plan="${6:-${4:-}/plan.md}"
+  local _SLR_KEY="${7:-}" _SLR_PROJECT="${8:-}" _SLR_PLAN="$plan"
   # The switch: lane_switch slice-remainder-off (a settings row, else
   # flags/slice-remainder-off), or SLICE_REMAINDER_FILE=0 (env or
   # env/global.env). Default on.
@@ -231,7 +236,7 @@ slice_remainder_settle() {
   fi
   case "$(_slr_env "$h" SLICE_REMAINDER_FILE 1)" in 0|no|off|false) printf 'remainder-skip:off\n'; return 3 ;; esac
   [ -n "$rec" ] && [ -d "$rec" ] || { printf 'remainder-skip:no-record\n'; return 3; }
-  [ -r "$rec/plan.md" ] || { printf 'remainder-skip:no-plan\n'; return 3; }
+  [ -r "$plan" ] || { printf 'remainder-skip:no-plan\n'; return 3; }
   d="$rec/slice-remainder"
   mkdir -p "$d" 2>/dev/null || { printf 'remainder-deferred:record-write\n'; return 1; }
   # A DEDUPE, not a queue: a second lane on the same record skips and is
@@ -260,15 +265,19 @@ _slr_settle_locked() {
   [ -n "$st" ] || { printf 'remainder-deferred:parent-read\n'; return 1; }
   [ "$st" = open ] || { printf 'remainder-skip:parent-closed\n'; return 3; }
   # bin/run-build.sh names a record <project>-<KEY>-<12-digit stamp>.
-  base=$(basename "$rec")
-  [[ "$base" =~ -([A-Za-z][A-Za-z0-9]*-$n)-[0-9]{12}$ ]] || { printf 'remainder-skip:no-key\n'; return 3; }
-  key="${BASH_REMATCH[1]}"
-  project="${base%-"$key"-*}"; project="${project#pool-}"
+  if [ -n "${_SLR_KEY:-}" ]; then
+    key="$_SLR_KEY"; project="${_SLR_PROJECT:-}"
+  else
+    base=$(basename "$rec")
+    [[ "$base" =~ -([A-Za-z][A-Za-z0-9]*-$n)-[0-9]{12}$ ]] || { printf 'remainder-skip:no-key\n'; return 3; }
+    key="${BASH_REMATCH[1]}"
+    project="${base%-"$key"-*}"; project="${project#pool-}"
+  fi
   prn="${pr##*/pull/}"; prn="${prn%%/*}"
   # The spec is decided once per record: a plan edited later never yields a
   # second, different set of children.
   if [ ! -s "$d/children.json" ]; then
-    w=$(slice_remainder_parse "$rec/plan.md" "$n" "$d/children.json.tmp" "$pr" 2>>"$d/parse.log")
+    w=$(slice_remainder_parse "${_SLR_PLAN:-$rec/plan.md}" "$n" "$d/children.json.tmp" "$pr" 2>>"$d/parse.log")
     if [ "${w%%:*}" = ok ]; then
       mv -f "$d/children.json.tmp" "$d/children.json"
     else

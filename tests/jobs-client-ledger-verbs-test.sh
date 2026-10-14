@@ -63,7 +63,7 @@ clearlog
 OUT=$(CURL_RESP="$T/put-ok.json" client pr-owners-put example-org/testproj testproj "$STATEF"); RC=$?
 [ "$RC" -eq 0 ] && ok || bad "pr_owners_put rc=$RC"
 REQ=$(lastreq)
-echo "$REQ" | grep -q 'PUT https://jobs.test/api/pr-owners' && ok || bad "pr_owners_put did not PUT /api/pr-owners: $REQ"
+grep -q 'PUT https://jobs.test/api/pr-owners' <<<"$REQ" && ok || bad "pr_owners_put did not PUT /api/pr-owners: $REQ"
 BODY=$(echo "$REQ" | cut -d' ' -f3-)
 printf '%s' "$BODY" | jq -e '.complete == true' >/dev/null 2>&1 && ok || bad "pr_owners_put body missing complete=true"
 printf '%s' "$BODY" | jq -e '.repo == "example-org/testproj"' >/dev/null 2>&1 && ok || bad "pr_owners_put body missing repo"
@@ -95,7 +95,7 @@ clearlog
 OUT=$(CURL_RESP="$T/put-ok.json" client pr-owners-put example-org/emptyproj emptyproj "$EMPTYF"); RC=$?
 [ "$RC" -eq 0 ] && ok || bad "pr_owners_put empty map rc=$RC (want 0)"
 REQ=$(lastreq)
-echo "$REQ" | grep -q 'PUT https://jobs.test/api/pr-owners' && ok || bad "pr_owners_put empty map sent no request: $REQ"
+grep -q 'PUT https://jobs.test/api/pr-owners' <<<"$REQ" && ok || bad "pr_owners_put empty map sent no request: $REQ"
 BODY=$(echo "$REQ" | cut -d' ' -f3-)
 printf '%s' "$BODY" | jq -e '.complete == true and (.rows | type == "array" and length == 0)' >/dev/null 2>&1 \
   && ok || bad "pr_owners_put empty map body: $BODY"
@@ -211,8 +211,8 @@ case "$REQ" in
   "GET https://jobs.test/api/decisions?"*) ok ;;
   *) bad "log_rehydrate did not GET the decisions route: $REQ" ;;
 esac
-echo "$REQ" | grep -q 'limit=5000' && ok || bad "log_rehydrate limit=5000 missing: $REQ"
-echo "$REQ" | grep -q 'since=20' && ok || bad "log_rehydrate since cursor missing: $REQ"
+grep -q 'limit=5000' <<<"$REQ" && ok || bad "log_rehydrate limit=5000 missing: $REQ"
+grep -q 'since=20' <<<"$REQ" && ok || bad "log_rehydrate since cursor missing: $REQ"
 # rehydrating findings hits the findings route (kind is the path segment)
 rm -f "$T/logs/findings.log"; clearlog
 CURL_RESP="$T/rehydrate-two.json" client log-rehydrate findings "$T/logs/findings.log"; RC=$?
@@ -440,10 +440,10 @@ clearlog
 OUT=$(CURL_RESP="$T/ledgers.json" client ledger-page pr_state 1000 2026-09-01T00:00:00Z); RC=$?
 [ "$RC" -eq 0 ] && ok || bad "ledger_page rc=$RC"
 REQ=$(lastreq)
-echo "$REQ" | grep -q 'GET https://jobs.test/api/ledger' && ok || bad "ledger_page GET path: $REQ"
-echo "$REQ" | grep -q 'before=2026-09-01T00%3A00%3A00Z' && ok || bad "ledger_page before= param: $REQ"
-echo "$REQ" | grep -q 'kind=pr_state' && ok || bad "ledger_page kind param"
-echo "$REQ" | grep -q 'limit=1000' && ok || bad "ledger_page limit param"
+grep -q 'GET https://jobs.test/api/ledger' <<<"$REQ" && ok || bad "ledger_page GET path: $REQ"
+grep -q 'before=2026-09-01T00%3A00%3A00Z' <<<"$REQ" && ok || bad "ledger_page before= param: $REQ"
+grep -q 'kind=pr_state' <<<"$REQ" && ok || bad "ledger_page kind param"
+grep -q 'limit=1000' <<<"$REQ" && ok || bad "ledger_page limit param"
 printf '%s' "$OUT" | jq -e '.ledgers | length == 1' >/dev/null 2>&1 && ok || bad "ledger_page did not print the raw payload: $OUT"
 
 # no third argument -> no before= in the query at all

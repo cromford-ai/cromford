@@ -4,6 +4,7 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { DatabaseSync } from 'node:sqlite';
 import worker from '../src/index.js';
+import { jobsSchemaSql } from './lib/jobs-schema.js';
 
 // BH-2512 — GET /api/model-routes?unrouted_since=<ts> lists every stage the
 // cost ledger saw since <ts> that has no stage.<x> route agent-call would use
@@ -12,7 +13,7 @@ import worker from '../src/index.js';
 // exactly what it was (bin/lib/model-route.sh and the gap-check lane read it).
 // Driven against the SQL that ships (schema.sql), like the #1510.x suites.
 const SECRET = 'test-secret';
-const SCHEMA = readFileSync(fileURLToPath(new URL('../schema.sql', import.meta.url)), 'utf8');
+const SCHEMA = jobsSchemaSql();
 
 function sqliteDB(db) {
   const prepare = (sql) => {

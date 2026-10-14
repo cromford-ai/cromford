@@ -47,6 +47,7 @@ mkdir -p "$T/h/bin/lib" "$T/h/logs" "$T/h/state" "$T/h/flags" "$T/h/locks" "$T/h
 cp "$DIR/bin/lib/gh-pr-list.sh" "$DIR/bin/lib/merge-conductor-lib.sh" "$DIR/bin/lib/gh-rest.sh" "$DIR/bin/lib/gh-rest-var.sh" "$T/h/bin/lib/"
 mkdir -p "$T/h/bin/lib/mc" && cp "$DIR"/bin/lib/mc/*.sh "$T/h/bin/lib/mc/"
 cp "$DIR/bin/merge-conductor.sh" "$DIR/bin/merge-sweep.sh" "$DIR/bin/fleet-conf.sh" "$DIR/bin/jobs-client.sh" "$T/h/bin/"
+mkdir -p "$T/h/bin/lib" && cp -rL "$DIR/bin/lib/ms" "$T/h/bin/lib/" || exit 1   # BH-5242: the sweep loads bin/lib/ms/
 mkdir -p "$T/h/bin/lib/jobs" && cp "$DIR"/bin/lib/jobs/*.sh "$T/h/bin/lib/jobs/"
 H1=aaaaaaaa1111; H2=bbbbbbbb2222; MSHA=cccccccc3333
 printf 'mgfy example-org/mgfy-os - - 2 box-m\n' > "$T/h/fleet.conf"

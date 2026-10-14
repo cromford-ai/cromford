@@ -34,7 +34,7 @@ bad() { FAIL=$((FAIL+1)); echo "FAIL: $1"; }
 command -v jq >/dev/null || { echo "jq missing — skipping"; exit 0; }
 
 H1=aaaaaaaa1111
-PB=ticket/aio-378-r2     # the parent branch of the ticket's own case
+PB=ticket/TK-378-r2     # the parent branch of the ticket's own case
 
 export HARNESS="$T/h"
 mkdir -p "$T/h/bin/lib" "$T/h/logs" "$T/h/state" "$T/h/flags" "$T/h/locks" "$T/h/builds" "$T/h/env" "$T/fakebin"
@@ -86,7 +86,7 @@ type mc_base_guard >/dev/null 2>&1 && ok || bad "mc_base_guard is not defined in
 printf 'demo-os example-org/demo-os https://demo.example /api/board 2 box-demo\n' > "$T/h/fleet.conf"
 : > "$T/h/env/global.env"
 printf '#!/bin/bash\necho "" > "$4"; exit 0\n' > "$T/h/bin/agent-call.sh"; chmod +x "$T/h/bin/agent-call.sh"
-REC="$T/h/builds/demo-os-AIO-41-202609160001"; mkdir -p "$REC"
+REC="$T/h/builds/demo-os-TK-41-202609160001"; mkdir -p "$REC"
 echo "PR_CREATED https://github.com/example-org/demo-os/pull/41" > "$REC/RESULT"
 printf 'findings\nTIER: 2\nVERDICT: APPROVE\n' > "$REC/review.md"
 echo "$H1" > "$REC/reviewed-sha"
@@ -124,9 +124,9 @@ printf '%s\n' "\$*" >> "$T/gh-calls.txt"
 pr41() {
   local msha=""; [ "\$1" = MERGED ] && msha=cccccccc3333
   if [ -n "$freshbase" ]; then
-    restpr "\$1" "$H1" ticket/aio-41 "$freshbase" "" MERGEABLE CLEAN app/cromford "\$msha"
+    restpr "\$1" "$H1" ticket/TK-41 "$freshbase" "" MERGEABLE CLEAN app/cromford "\$msha"
   else
-    restpr --raw 200 "\$(restpr "\$1" "$H1" ticket/aio-41 main "" MERGEABLE CLEAN app/cromford "\$msha" \
+    restpr --raw 200 "\$(restpr "\$1" "$H1" ticket/TK-41 main "" MERGEABLE CLEAN app/cromford "\$msha" \
                         | tail -1 | jq -c '.base.ref=null')"
   fi
 }
@@ -150,7 +150,7 @@ case "\$*" in
   *"api -i -X GET repos/example-org/demo-os/pulls -f state=all"*) restpr --raw 200 '[]' ;;
   *"pr list -R example-org/demo-os --state open"*)
     cat <<'J'
-[{"number":41,"url":"https://github.com/example-org/demo-os/pull/41","headRefOid":"$H1","headRefName":"ticket/aio-41","isDraft":false,"mergeStateStatus":"CLEAN","mergeable":"MERGEABLE","state":"OPEN","labels":[]$listbase}]
+[{"number":41,"url":"https://github.com/example-org/demo-os/pull/41","headRefOid":"$H1","headRefName":"ticket/TK-41","isDraft":false,"mergeStateStatus":"CLEAN","mergeable":"MERGEABLE","state":"OPEN","labels":[]$listbase}]
 J
     ;;
   *"pr list"*) echo "[]" ;;
@@ -184,7 +184,7 @@ OBSERVE()  { rm -f "$T/h/flags/merge-conductor-actions" "$T/h/flags/merge-conduc
 # ============================================================================
 TSVQ=$(grep -o "jq -r '\.\[\] | \[\.number.*@tsv' 2>/dev/null" "$T/h/bin/merge-conductor.sh" | head -1 | sed "s/^jq -r '//; s/' 2>\/dev\/null$//")
 [ -n "$TSVQ" ] && ok || bad "could not find the conductor's own PR-list jq in the script"
-ROW=$(printf '[{"number":41,"url":"u","headRefOid":"h","headRefName":"ticket/aio-41","isDraft":false,"mergeStateStatus":"CLEAN","mergeable":"MERGEABLE","state":"OPEN","labels":[],"baseRefName":"%s"}]' "$PB" | jq -r "$TSVQ")
+ROW=$(printf '[{"number":41,"url":"u","headRefOid":"h","headRefName":"ticket/TK-41","isDraft":false,"mergeStateStatus":"CLEAN","mergeable":"MERGEABLE","state":"OPEN","labels":[],"baseRefName":"%s"}]' "$PB" | jq -r "$TSVQ")
 # BH-1486 added `updatedAt` as the 12th column and BH-1529 `isCrossRepository`
 # as the 13th, so this read — which is pr_worker's, variable for variable —
 # takes thirteen names. A fixture with no updatedAt must land the documented
@@ -235,10 +235,10 @@ grep -q "reason=merge refused: based on $PB, not main" "$T/h/logs/merge-conducto
 #    (eleven until BH-1486 appended `updatedAt`, twelve until BH-1529 appended
 #    `isCrossRepository`).
 # ============================================================================
-ROW=$(jq -rn --arg pb "$PB" '[{number:41,url:"u",headRefOid:"h",headRefName:"ticket/aio-41",isDraft:false,mergeStateStatus:"CLEAN",mergeable:"MERGEABLE",state:"OPEN",labels:[],baseRefName:$pb,title:"a\tb\tc"}]' | jq -r "$TSVQ")
+ROW=$(jq -rn --arg pb "$PB" '[{number:41,url:"u",headRefOid:"h",headRefName:"ticket/TK-41",isDraft:false,mergeStateStatus:"CLEAN",mergeable:"MERGEABLE",state:"OPEN",labels:[],baseRefName:$pb,title:"a\tb\tc"}]' | jq -r "$TSVQ")
 [ "$(printf '%s' "$ROW" | wc -l)" = 0 ] && ok || bad "a title with tabs must not split the row across lines"
 IFS=$'\t' read -r C1 C2 C3 C4 C5 C6 C7 C8 C9 C10 C11 C12 C13 <<<"$ROW"
-[ "$C1" = 41 ] && [ "$C2" = u ] && [ "$C3" = h ] && [ "$C4" = ticket/aio-41 ] && [ "$C5" = false ] \
+[ "$C1" = 41 ] && [ "$C2" = u ] && [ "$C3" = h ] && [ "$C4" = ticket/TK-41 ] && [ "$C5" = false ] \
   && [ "$C6" = CLEAN ] && [ "$C7" = MERGEABLE ] && [ "$C8" = OPEN ] && [ "$C9" = false ] \
   && [ "$C10" = - ] && [ "$C11" = "$PB" ] && [ "$C12" = - ] && [ "$C13" = - ] \
   && ok || bad "every column must parse to its fixture value with tabs in the title (got: $C1|$C2|$C3|$C4|$C5|$C6|$C7|$C8|$C9|$C10|$C11|$C12|$C13)"
@@ -269,7 +269,7 @@ TICK
 #    kick), and it is approved at that head: it classifies READY in the SAME
 #    tick and must land.
 # ============================================================================
-REC42="$T/h/builds/demo-os-AIO-42-202609160002"; mkdir -p "$REC42"
+REC42="$T/h/builds/demo-os-TK-42-202609160002"; mkdir -p "$REC42"
 echo "PR_CREATED https://github.com/example-org/demo-os/pull/42" > "$REC42/RESULT"
 printf 'findings\nTIER: 2\nVERDICT: APPROVE\n' > "$REC42/review.md"
 echo "$H1" > "$REC42/reviewed-sha"
@@ -280,7 +280,7 @@ cat > "$T/fakebin/gh" <<EOF
 printf '%s\n' "\$*" >> "$T/gh-calls.txt"
 pr42() { # pr42 <OPEN|MERGED> — the fresh read says main, because the retarget landed
   local msha=""; [ "\$1" = MERGED ] && msha=cccccccc3333
-  restpr "\$1" "$H1" ticket/aio-42 main "" MERGEABLE CLEAN app/cromford "\$msha"
+  restpr "\$1" "$H1" ticket/TK-42 main "" MERGEABLE CLEAN app/cromford "\$msha"
 }
 plist() { # plist <OPEN|MERGED|CLOSED> <pr-number>
   restpr --raw 200 "[\$(restpr "\$1" x - - '' | tail -1 \
@@ -302,7 +302,7 @@ case "\$*" in
   *"pr list -R example-org/demo-os --state open"*)
     B42=ticket/TK-39; [ -f "$T/retargeted42" ] && B42=main
     cat <<J
-[{"number":42,"url":"https://github.com/example-org/demo-os/pull/42","headRefOid":"$H1","headRefName":"ticket/aio-42","isDraft":false,"mergeStateStatus":"CLEAN","mergeable":"MERGEABLE","state":"OPEN","labels":[],"baseRefName":"\$B42"}]
+[{"number":42,"url":"https://github.com/example-org/demo-os/pull/42","headRefOid":"$H1","headRefName":"ticket/TK-42","isDraft":false,"mergeStateStatus":"CLEAN","mergeable":"MERGEABLE","state":"OPEN","labels":[],"baseRefName":"\$B42"}]
 J
     ;;
   *"pr list"*) echo "[]" ;;

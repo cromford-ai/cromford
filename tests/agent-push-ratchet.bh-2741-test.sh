@@ -33,8 +33,8 @@ NEGATE_RE="(do not|don't|never|not|must-not)[^.]{0,40}push"
 
 # offends <line> — rc 0 when the line instructs a push.
 offends() {
-  printf '%s\n' "$1" | grep -qiE "$OFFEND_RE" || return 1
-  printf '%s\n' "$1" | grep -qiE "$NEGATE_RE" && return 1
+  grep -qiE "$OFFEND_RE" <<<"$1" || return 1
+  grep -qiE "$NEGATE_RE" <<<"$1" && return 1
   return 0
 }
 

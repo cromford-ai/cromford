@@ -152,6 +152,21 @@ case "\$M \$URL" in
 esac
 EOF
 chmod +x "$T/fakebin/curl"
+# The timeout seam (D2). The backstop starts every keyed run as
+# `timeout <TO> merge-conductor.sh`. A file $T/to-<n> holds a SHORTER timeout
+# for #n's run only, so D2 can kill the slow run by `timeout` while its
+# siblings keep the fire's own, longer one. Any other `timeout` call passes
+# through unchanged.
+REAL_TIMEOUT=$(command -v timeout) || { echo "timeout missing"; exit 1; }
+cat > "$T/fakebin/timeout" <<EOF
+#!/bin/bash
+N="\${MC_ONLY_PR##*#}"
+case "\${2:-}" in
+  */merge-conductor.sh) [ -n "\$N" ] && [ -s "$T/to-\$N" ] && { shift; set -- "\$(cat "$T/to-\$N")" "\$@"; } ;;
+esac
+exec "$REAL_TIMEOUT" "\$@"
+EOF
+chmod +x "$T/fakebin/timeout"
 touch "$T/h/flags/merge-conductor-actions" "$T/h/flags/merge-conductor-merge" "$T/h/flags/conductor-owns-merges"
 CLOG="$T/h/logs/merge-conductor.log"
 ROWS="$T/h/state/merge-conductor/pr-state.tsv"
@@ -162,9 +177,14 @@ reset_calls() { : > "$T/c-posts.txt"; : > "$T/c-calls.txt"; : > "$T/c-alerts.txt
 # bs [env...] — one backstop fire in its own session; output in $T/bs.out.
 # MC_BACKSTOP_MAX_KEYS=0: every case here is about ONE run over all its rows (7
 # in D1/D2), and the default cap is 6 since BH-4842.
+# TEST-CHANGE (BH-6000): the backstop now starts one DETACHED run per
+# candidate and returns at once; bs then waits for every run to end (each holds
+# its locks/mc-backstop-<key>.lock for its whole life), so the cases below read
+# finished runs exactly as before.
 bs() { ( cd "$T" && setsid -w env -u MC_ONLY_PR PATH="$T/fakebin:$PATH" HARNESS="$T/h" HARNESS_SECRET=x JOBS_URL=http://worker.test GH_TOKEN=pat-default \
   MC_BACKSTOP_MAX_KEYS=0 MC_MERGE_BUDGET=0 MC_ENQUEUE_SETTLE=0 MC_MERGE_SETTLE=0 MC_MERGIFY_SETTLE=0 MC_MERGIFY_WAIT_S=0 MC_QUEUE_TTL=0 MC_PREQUEUE_GATE=0 "$@" \
-  bash "$T/h/bin/merge-conductor-backstop.sh" > "$T/bs.out" 2>&1 ) 2>/dev/null; }
+  bash "$T/h/bin/merge-conductor-backstop.sh" > "$T/bs.out" 2>&1 ) 2>/dev/null
+  local lk; for lk in "$T/h/locks"/mc-backstop-*.lock; do [ -e "$lk" ] && flock -w 300 "$lk" true 2>/dev/null; done; sleep 0.5; }
 posted() { grep -c "issues/$1/comments -f body=@mergifyio queue" "$T/c-posts.txt" 2>/dev/null || true; }
 since() { tail -n +"$(( ${1:-0} + 1 ))" "$CLOG" 2>/dev/null; }
 loglen() { if [ -f "$CLOG" ]; then wc -l < "$CLOG"; else echo 0; fi; }
@@ -176,11 +196,28 @@ loglen() { if [ -f "$CLOG" ]; then wc -l < "$CLOG"; else echo 0; fi; }
 # dead run.
 # ============================================================================
 list > "$T/list.json"; rows $PRS; reset_calls
-echo 60 > "$T/slow-34"
-bs MC_WORKER_DEADLINE_S=0 MC_BACKSTOP_TIMEOUT_S=10
-grep -q 'hit timeout 10' "$T/bs.out" && ok || bad "D2 setup: the keyed run is killed by the backstop's 10s timeout (bs: $(cat "$T/bs.out"))"
+# TEST-CHANGE (lead review lr-6015 of 9fc9454d1): one fire-wide 10 s timeout
+# also killed the six siblings on a box where 7 concurrent runs take ~27 s
+# each (49/2 there), so D2 depended on box speed. Now the fire's timeout is
+# 150 s (its worker cap 105 s), far above a concurrent run's length, and only
+# #34's run gets a 50 s timeout (the $T/to-34 seam), with its read slower than
+# that (300 s). 50 s is above the time a run needs to reach the read, and
+# below #34's worker cap (105 s), so `timeout` kills #34's run, not its
+# deadline. The same facts are asserted: #34's run hit timeout and never
+# reached fan-in, the six siblings are enqueued, the next fire names #34.
+echo 300 > "$T/slow-34"; echo 50 > "$T/to-34"
+bs MC_WORKER_DEADLINE_S=0 MC_BACKSTOP_TIMEOUT_S=150
+rm -f "$T/to-34"
+grep -q "$SLUG#34: keyed conductor run hit timeout" "$T/bs.out" && ok || bad "D2 setup: #34's keyed run is killed by its timeout (bs: $(cat "$T/bs.out"))"
+grep -qx 34 "$T/slow-hit.txt" 2>/dev/null && ok || bad "D2 setup: #34's run reached the slow read before the kill (slow-hit: $(cat "$T/slow-hit.txt" 2>/dev/null))"
+[ "$(grep -c 'keyed conductor run rc=0' "$T/bs.out")" = 6 ] && ok || bad "D2 setup: the six sibling runs end rc=0, none hit a timeout (bs: $(cat "$T/bs.out"))"
 N2=0; for n in 31 32 33 35 36 37; do N2=$((N2 + $(posted "$n"))); done
-[ "$N2" = 0 ] && ok || bad "D2 the group kill takes the healthy siblings' enqueue with it (posted $N2)"
+# TEST-CHANGE (BH-6000): this was the red-first proof of the stall, "the group
+# kill takes the healthy siblings' enqueue with it (posted 0)". With one keyed
+# run per PR the stall cannot happen: the timeout kills #34's run alone, and
+# the six siblings, each in its own run, are enqueued even with the deadline
+# off. So the case now asserts the fix: posted 6.
+[ "$N2" = 6 ] && ok || bad "D2 with one run per PR the timeout kills #34's run alone, and the six siblings are enqueued (posted $N2)"
 rm -f "$T/slow-34"; : > "$T/c-alerts.txt"
 rows 31; bs MC_WORKER_DEADLINE_S=0
 DA=$(grep -F 'run died before fan-in' "$T/c-alerts.txt")
@@ -201,9 +238,12 @@ for n in 31 32 33 35 36 37; do
 done
 [ "$(posted 34)" = 0 ] && ok || bad "D1(a) no enqueue for the slow #34 (got $(posted 34))"
 FL=$(since "$M0" | grep -F "FANIN merge-conductor $SLUG:")
-grep -q 'enumerated 7 accounted 7 (' <<<"$FL" && ok || bad "D1(b) FANIN enumerated 7 accounted 7 (got: ${FL:-none})"
-grep -qE 'killed:deadline( rc=[0-9]+)? 1(,|\))' <<<"$FL" && ok || bad "D1(b) FANIN counts one killed:deadline (got: ${FL:-none})"
-grep -q 'READY held:budget 6' <<<"$FL" && ok || bad "D1(b) the six siblings are READY held:budget (MC_MERGE_BUDGET=0; ae_project enqueues them) (got: ${FL:-none})"
+# TEST-CHANGE (BH-6000): each PR now has its own keyed run, so the one FANIN
+# line "enumerated 7 accounted 7 (...)" is seven lines, one per run, each
+# "enumerated 1 accounted 1". The same facts are asserted over the seven.
+[ "$(grep -c 'enumerated 1 accounted 1 (' <<<"$FL")" = 7 ] && ok || bad "D1(b) FANIN: seven runs, each enumerated 1 accounted 1 (got: ${FL:-none})"
+[ "$(grep -cE 'killed:deadline( rc=[0-9]+)? 1(,|\))' <<<"$FL")" = 1 ] && ok || bad "D1(b) FANIN counts one killed:deadline (got: ${FL:-none})"
+[ "$(grep -c 'READY held:budget 1' <<<"$FL")" = 6 ] && ok || bad "D1(b) the six siblings are READY held:budget (MC_MERGE_BUDGET=0; ae_project enqueues them) (got: ${FL:-none})"
 ! grep -q 'missing:\|run died before fan-in' <<<"$(since "$M0")" && ! grep -q 'missing:\|run died before fan-in' "$T/c-alerts.txt" \
   && ok || bad "D1(c) no missing:/run died before fan-in ($(grep 'FANIN' "$T/c-alerts.txt"))"
 DL=$(grep -F "WORKER_DEADLINE $SLUG#34" "$T/c-alerts.txt")

@@ -5,12 +5,13 @@ import { fileURLToPath } from 'node:url';
 import { ensureTable } from '../src/index.js';
 import { d1 } from './lib/d1-sqlite.bh-1030.js';
 import { CONFIG_KINDS, configChangeStmts } from '../src/lib/config-changes.js';
+import { jobsSchemaSql } from './lib/jobs-schema.js';
 
 // BH-2617 (BH-2513 contract): the config_changes audit table, its worker
 // self-create mirror, and configChangeStmts, the statement builder the
 // console-controls routes batch next to their own writes.
 
-const SCHEMA = readFileSync(fileURLToPath(new URL('../schema.sql', import.meta.url)), 'utf8');
+const SCHEMA = jobsSchemaSql();
 
 async function sqlite(t) {
   try {

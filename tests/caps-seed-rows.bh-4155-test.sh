@@ -26,6 +26,7 @@
 # Run from anywhere: tests/caps-seed-rows.bh-4155-test.sh   (exit 0 = all pass)
 set -uo pipefail
 . "$(dirname "$0")/lib/scratch.sh" || exit 1
+. "$(dirname "$0")/lib/jobs-schema.sh" && jobs_schema_render || exit 1
 DIR=$(cd "$(dirname "$0")/.." && pwd)
 # shellcheck source=tests/lib/rendered.sh
 . "$(dirname "$0")/lib/rendered.sh" || exit 1

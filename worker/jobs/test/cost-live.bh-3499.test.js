@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import worker from '../src/index.js';
+import { jobsSchemaSql } from './lib/jobs-schema.js';
 
 // BH-3499 (BH-3481.2): live cost rows. A running session's meter POSTs its
 // running total to /api/cost/live, keyed on (box, row_hash); GET answers what
@@ -17,7 +18,7 @@ import worker from '../src/index.js';
 const SECRET = 'test-secret';
 const NOW = Date.now(); // determinism: ok the single anchor; worker.fetch stamps t off the real clock, so every fixture age derives from this one read
 const iso = (ms) => new Date(ms).toISOString().replace(/\.\d{3}Z$/, 'Z');
-const SCHEMA = readFileSync(fileURLToPath(new URL('../schema.sql', import.meta.url)), 'utf8');
+const SCHEMA = jobsSchemaSql();
 const ROUTE_SRC = fileURLToPath(new URL('../src/routes/cost-live.js', import.meta.url));
 let DatabaseSync = null;
 try { ({ DatabaseSync } = await import('node:sqlite')); } catch { DatabaseSync = null; }

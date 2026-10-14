@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import worker from '../src/index.js';
+import { jobsSchemaSql } from './lib/jobs-schema.js';
 
 // BH-4059 (slice BH-4169): a fly build landing in `build_queue` rings the
 // doorbell.
@@ -14,7 +15,7 @@ import worker from '../src/index.js';
 // `worker.fetch` (D2) over a node:sqlite database with schema.sql applied, so
 // the assertions are on rows LEFT, not on statements issued.
 
-const SCHEMA = readFileSync(fileURLToPath(new URL('../schema.sql', import.meta.url)), 'utf8');
+const SCHEMA = jobsSchemaSql();
 const SECRET = 'test-secret';
 
 // The D1-shaped adapter from wakes-nudge.bh-2754. `failWakes` makes every

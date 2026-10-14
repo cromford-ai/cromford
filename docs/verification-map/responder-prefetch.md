@@ -21,7 +21,7 @@ itself instead of being pointed at decision lines that are not there. This is
 not a rare branch: `bin/agent-call.sh` refuses `AGENT_CALL_NO_TOOLS=1` on any
 runner but claude, so every pass on a hub whose triage runner fell back to
 `codex` takes it. BH-654; the lane was carrying a median 4.27M input tokens per
-call ($N over 68h) before this.
+call ($559 over 68h) before this.
 
 **How an operator reaches it:** `cron/hub.cron` `*/20` on the hub, and on demand
 through `bin/watchdog-poll.sh` command type `respond`. Nothing sources this

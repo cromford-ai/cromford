@@ -3,8 +3,8 @@
 # bin/lib/jobs/flags.sh — the box's flags. BH-4153: the three ported families are harness_flags ROWS read DB-first; every other name keeps BH-5004's pause_flags row-first answer with the flags/ file as mirror and fallback. Sourced by bin/jobs-client.sh (JC_MODULES), never run. Public entry: bin/lib/flags.sh.
 
 # --- BH-4153: the ported families ----------------------------------------------
-# `paused-*`, `automerge-disabled`, `automerge-disabled-*` and `lanedown-*`
-# (FLAG_PORTED_RE, the same list as worker/jobs/src/lib/harness-flags.js) are
+# `paused-*`, `automerge-disabled`, `automerge-disabled-*`, `lanedown-*` and
+# `dispatch-mode-*` (BH-6350, bin/lib/dispatch-mode.sh) (FLAG_PORTED_RE, the same list as worker/jobs/src/lib/harness-flags.js) are
 # ROWS. On a box with a worker configured no flags/ file is written for them:
 #
 #   flag_has   [--scope S] [--cached] <name>        rc 0 on, 1 off, 2 UNKNOWN
@@ -345,7 +345,7 @@ _flag_set_file() {
 
 
 # --- BH-4153: harness_flags verbs ---------------------------------------------
-FLAG_PORTED_RE='^(paused-.+|automerge-disabled|automerge-disabled-.+|lanedown-.+)$'
+FLAG_PORTED_RE='^(paused-.+|automerge-disabled|automerge-disabled-.+|lanedown-.+|dispatch-mode-.+)$'
 
 _flag_ported()        { [[ "${1:-}" =~ $FLAG_PORTED_RE ]]; }
 _flag_name_ok()       { [ -n "${1:-}" ] && [[ "$1" != *[!A-Za-z0-9._-]* ]]; }
@@ -448,7 +448,7 @@ flag_fetch() { # flag_fetch [--scope S] <name>
   case "$rc" in
     0) row=$(printf '%s' "$resp" | _flag_norm "$name" "$scope")
        if [ -z "$row" ] || ! _flag_row_epoch "$row" >/dev/null; then
-         JOBS_ALERT=0 _jobs_log "flag $name: row unreadable ($(printf '%s' "$resp" | head -c 120)) — answered from the cache, never as off"
+         JOBS_ALERT=0 _jobs_log "flag $name: row unreadable ($(head -c 120 <<<"$resp")) — answered from the cache, never as off"
          return 1
        fi
        _flag_store "$scope" "$name" "$row"; return 0 ;;

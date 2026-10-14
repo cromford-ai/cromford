@@ -32,7 +32,7 @@ bad() { FAIL=$((FAIL+1)); echo "FAIL: $1"; }
 DF=$(sed -n "/<<'DOCKERFILE'/,/^DOCKERFILE$/p" "$RUNNER" | sed '1d;$d')
 [ -n "$DF" ] && ok \
   || bad "1: could not extract the DOCKERFILE heredoc from $RUNNER (the check below would be vacuous)"
-printf '%s\n' "$DF" | grep -q 'apt-get install' && ok \
+grep -q 'apt-get install' <<<"$DF" && ok \
   || bad "1: the extracted Dockerfile has no apt-get install line: $DF"
 printf '%s\n' "$DF" | sed -n '/apt-get install/,/rm -rf/p' | grep -qw 'rsync' && ok \
   || bad "1: the image installs no rsync, so every harness-sync suite skips inside it: $DF"
@@ -40,13 +40,13 @@ printf '%s\n' "$DF" | sed -n '/apt-get install/,/rm -rf/p' | grep -qw 'rsync' &&
 # ── 2. the default image tag moved off the pre-rsync one ────────────────────
 TAG_LINE=$(grep -n '^IMAGE=' "$RUNNER")
 [ -n "$TAG_LINE" ] && ok || bad "2: no default IMAGE= line in $RUNNER"
-printf '%s\n' "$TAG_LINE" | grep -q 'cromford-tests:' && ok \
+grep -q 'cromford-tests:' <<<"$TAG_LINE" && ok \
   || bad "2: the default IMAGE does not name a cromford-tests tag: $TAG_LINE"
 grep -q 'cromford-tests:trixie}' <<<"$(printf '%s\n' "$TAG_LINE")" && \
   bad "2: the default IMAGE is still cromford-tests:trixie — a machine that already built that tag reuses an image with no rsync: $TAG_LINE" \
   || ok
 # trixie.2 is the apt-node-20 image: a machine holding it would keep running
-# the worker node suites against a node with no node:sqlite.
+# the worker/jobs node tests against a node with no node:sqlite.
 grep -q 'cromford-tests:trixie\.2}' <<<"$(printf '%s\n' "$TAG_LINE")" && \
   bad "2: the default IMAGE is still cromford-tests:trixie.2 — a machine that already built that tag reuses an image whose node is Debian's node 20: $TAG_LINE" \
   || ok

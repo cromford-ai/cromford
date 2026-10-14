@@ -124,7 +124,7 @@ BS_REFUSE=""
 
 _bs_root() { printf '%s' "${HARNESS:-${H:-}}"; }
 
-_bs_key_ok() { printf '%s' "${1:-}" | grep -Eq '^[a-z0-9_.-]{1,64}$'; }
+_bs_key_ok() { grep -Eq '^[a-z0-9_.-]{1,64}$' <<<"${1:-}"; }
 
 # A ticket is in progress while its dir holds ADMITTED and no RESULT (RESULT()
 # in bin/run-build.sh writes it at ticket end; a resume removes it). A call
@@ -191,7 +191,7 @@ _bs_row() {
     || { BS_REASON="settings-unreadable"; return 2; }
   v=$(printf '%s' "$v" | tr -d '[:space:]')
   [ "$v" = off ] && return 3
-  if printf '%s' "$v" | grep -Eq "$re"; then BS_VALUE="$v"; return 0; fi
+  if grep -Eq "$re" <<<"$v"; then BS_VALUE="$v"; return 0; fi
   BS_REASON="cap-unreadable:$key"
   return 2
 }
@@ -455,7 +455,7 @@ bs_gate() {
     fi
   fi
   over=$(printf '%s' "$axes" | _bs_tightest)
-  win=$(printf '%s\n' "$over" | head -1)
+  win=$(head -1 <<<"$over")
   if [ -n "$unread" ]; then
     if [ "$inb" = 1 ]; then
       # Fail closed in a build. A build-stage axis that is over still stops it

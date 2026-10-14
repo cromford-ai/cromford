@@ -6,6 +6,7 @@
 # write-through on routing-set, fly-pool-<p> never rewritten.
 set -uo pipefail
 . "$(dirname "$0")/lib/scratch.sh" || exit 1
+. "$(dirname "$0")/lib/jobs-schema.sh" && jobs_schema_render || exit 1
 DIR=$(cd "$(dirname "$0")/.." && pwd)
 H="$T/h"
 mkdir -p "$H/logs" "$H/state" "$H/bin/lib/jobs" "$H/env" "$H/flags" "$H/fly" "$T/fakebin" "$T/rows"

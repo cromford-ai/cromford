@@ -1,0 +1,4 @@
+# tests/mc/expected-map.d/BH-6000-4.tsv — BH-6000 part 3, lead review lr-6015:
+# the PR lock take that a re-kicked keyed run waits on; origin=lib, a new
+# module function.
+locks	mc_pr_lock_take	lib

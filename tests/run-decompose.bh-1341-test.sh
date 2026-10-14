@@ -70,7 +70,7 @@ case "$1 $2" in
   "issue view")
     ISSUE="$3"
     # The real gh -q flag extracts a field from the JSON; simulate it.
-    if printf '%s' "$*" | grep -qF '.title'; then
+    if grep -qF '.title' <<<"$*"; then
       # A transport failure of the title read: gh exits non-zero and prints
       # nothing. This is the ordinary transient (502, rate limit, token blip) a
       # rerun meets, and it must never be read as "the title differs".

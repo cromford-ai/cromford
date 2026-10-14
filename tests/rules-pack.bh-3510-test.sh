@@ -69,6 +69,12 @@ commit() { rd_git "$R" add -A && rd_git "$R" commit -qm "$1"; }
 R="$T/r"
 mkdir -p "$R"
 git -C "$DIR" archive HEAD | tar -x -C "$R" || { echo "FAIL: cannot archive HEAD"; exit 1; }
+# TEST-CHANGE (BH-6005.4): worker/jobs/schema.sql is not in git any more. The
+# R6c-g cases model the BH-4987 split, a tree that COMMITS the render, so the
+# fixture composes it and tracks it (the .gitignore line is dropped here only).
+"$R/bin/schema-build.sh" --root "$R" --worker jobs --to "$R/worker/jobs/schema.sql" 2>/dev/null \
+  || { echo "FAIL: cannot compose the fixture's worker/jobs/schema.sql"; exit 1; }
+sed -i '/^worker\/jobs\/schema\.sql$/d' "$R/.gitignore"
 rd_fixture_repo "$R" || { echo "FAIL: cannot build the fixture repo"; exit 1; }
 rd_git "$R" config gc.auto 0; rd_git "$R" config maintenance.auto false
 B0=$(rd_git "$R" rev-parse HEAD)
@@ -328,9 +334,11 @@ to=$(js o8 '[.components[]|select(.rc == 124)|.id]|join(",")')
 [ -z "$to" ] && ok || bad "R8 component(s) hit the ${R8_BUDGET_S}x2 s timeout: $to (a component that cannot finish, not runner speed)"
 [ "$(js o8 '"\(.base) \(.head)"')" = "$B0 $B0" ] && ok || bad "R8 base/head $(js o8 '"\(.base) \(.head)"') (want $B0 $B0)"
 # TEST-CHANGE (BH-5797): the pack gained fast-lints-data and marker-reason, and
-# (BH-5789) fixture-hygiene; (BH-4582) tier-wording, so the real catalog has 19
-# components. The assertion still pins the exact count.
-[ "$(js o8 '.components|length')" = 19 ] && ok || bad "R8 $(js o8 '.components|length') components (want 19)"
+# (BH-5789) fixture-hygiene; (BH-4582) tier-wording; (BH-4987) lanes-knob-delta,
+# so the real catalog has 20 components. The assertion still pins the exact count.
+# TEST-CHANGE (BH-5788): schema-fragment, schema-fragment-name and
+# discipline-dupes make it 23.
+[ "$(js o8 '.components|length')" = 23 ] && ok || bad "R8 $(js o8 '.components|length') components (want 23)"
 cnr=$(js o8 '.could_not_run - ["date-bomb"] | join(",")')
 [ -z "$cnr" ] && ok || bad "R8 could_not_run beyond date-bomb: $cnr"
 [ "$(js o8 '.components[]|select(.id=="route-fragments").state')" = green ] && ok \

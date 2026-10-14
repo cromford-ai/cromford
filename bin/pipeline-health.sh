@@ -16,20 +16,41 @@
 # PR checks, so a PR webhook wake can re-judge them cheaply and retract through
 # the same epilogue (BH-4055). Known names: stalepr, leadunqueued. An unknown
 # name is logged and dropped; a list with no known name logs one line and exits
-# 0, never a full run. Every ACTIVE key outside the selected sections is carried
-# (a skipped check is not a cleared one), and a sections run that finds
-# locks/pipeline-health.lock held skips. The cron run takes no arguments and
-# never waits on that lock.
+# 0, never a full run. The run owns only the selected namespaces: every other
+# ACTIVE key is carried from the ACTIVE the epilogue reads under its lock
+# (BH-6616), and a sections run that finds locks/pipeline-health.lock held skips.
+#
+# --dispatch is the cron run (BH-5941). It starts one detached
+# `pipeline-health.sh --project <p>` per project through bin/lib/project-lanes.sh
+# and then runs the FLEET sections itself. --project <p> runs only the
+# per-project sections for <p>, on locks/pipeline-health-<p>.lock. With no
+# arguments (an operator's run) every section runs in one process. A fleet or
+# whole run takes locks/pipeline-health.lock but never skips on it (a sections
+# run may hold it); it skips only when another full run holds
+# locks/pipeline-health-full.lock (fd 7, BH-6044), with the log line `full run
+# skipped, another full run is in flight`. No run ever waits on a lane lock.
+# docs/notes/2026-10-11-BH-5941-pipeline-health-per-project.md.
 set -uo pipefail
 # BH-4055: argv first, before anything is sourced.
+PH_DISPATCH=""; PH_PROJECT=""; PH_PROJECT_SET=""
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --sections) PH_SECTIONS="${2:-}"; shift 2 || shift ;;
     --sections=*) PH_SECTIONS="${1#--sections=}"; shift ;;
+    --dispatch) PH_DISPATCH=1; shift ;;
+    --project) PH_PROJECT="${2:-}"; PH_PROJECT_SET=1; shift 2 || shift ;;
+    --project=*) PH_PROJECT="${1#--project=}"; PH_PROJECT_SET=1; shift ;;
     *) shift ;;
   esac
 done
 PH_SECTIONS="${PH_SECTIONS:-}"
+# BH-5941: one run mode per process.
+PH_NMODE=0
+for _M in "$PH_DISPATCH" "$PH_PROJECT_SET" "$PH_SECTIONS"; do [ -n "$_M" ] && PH_NMODE=$((PH_NMODE + 1)); done
+if [ "$PH_NMODE" -gt 1 ]; then
+  echo "pipeline-health: --dispatch, --project and --sections are exclusive" >&2
+  exit 2
+fi
 # Overridable so the fixtures can drive the detector blocks against a scratch
 # tree; cron never sets it, so production resolves to exactly the path it always has.
 H="${HARNESS:-/root/harness}"
@@ -101,6 +122,64 @@ done
 # GitHub API budget guard for non-essential reads (stalepr, starved).
 if [ -r "$H/bin/lib/gh-budget.sh" ]; then # shellcheck source=bin/lib/gh-budget.sh
   . "$H/bin/lib/gh-budget.sh"; fi
+# BH-5941: the per-project runner (pl_dispatch, pl_lock_take, pl_token).
+if [ -r "$H/bin/lib/project-lanes.sh" ]; then # shellcheck source=bin/lib/project-lanes.sh
+  . "$H/bin/lib/project-lanes.sh"; fi
+
+# >>> run mode (BH-5941)
+# all       no arguments: every section, one process (an operator's run)
+# fleet     --dispatch, after the dispatch: the fleet sections only
+# project   --project <p>: the per-project sections for <p> only
+# sections  --sections <csv>: the named PR checks (BH-4055)
+mkdir -p "$H/logs" "$H/locks"
+PROJECTS=$(awk '$1!~/^#/ && NF>=2 {print $1}' "$H/fleet.conf" 2>/dev/null | grep -vE "redirect" || true)
+PH_MODE=all
+if [ -n "$PH_PROJECT_SET" ]; then
+  case "$PH_PROJECT" in
+    ''|.*|*[!A-Za-z0-9._-]*) PH_NOTP=1 ;;
+    *) case $'\n'"$PROJECTS"$'\n' in *$'\n'"$PH_PROJECT"$'\n'*) PH_NOTP=0 ;; *) PH_NOTP=1 ;; esac ;;
+  esac
+  if [ "$PH_NOTP" = 1 ]; then
+    echo "$(STAMP) --project '$PH_PROJECT' is not a project in fleet.conf — no run" >> "$H/logs/pipeline-health.log"
+    exit 2
+  fi
+  # The runner (bin/project-lane-run.sh) already holds the project lock on
+  # PL_LOCK_FD. A run started by hand takes the same lock, so a hand run and a
+  # dispatched run of one project never overlap.
+  if [ "${PL_LANE:-}" = pipeline-health ] && [ "${PL_PROJECT:-}" = "$PH_PROJECT" ] \
+     && [ -n "${PL_LOCK_FD:-}" ] && { : >&"$PL_LOCK_FD"; } 2>/dev/null; then
+    :
+  elif command -v pl_lock_take >/dev/null 2>&1; then
+    pl_lock_take pipeline-health "$PH_PROJECT" 9 || {
+      echo "$(STAMP) pipeline-health: a run of $PH_PROJECT is still live (locks/pipeline-health-$PH_PROJECT.lock held) — exiting"; exit 0; }
+  else
+    exec 9>"$H/locks/pipeline-health-$PH_PROJECT.lock"
+    flock -n 9 || {
+      echo "$(STAMP) pipeline-health: a run of $PH_PROJECT is still live (locks/pipeline-health-$PH_PROJECT.lock held) — exiting"; exit 0; }
+  fi
+  PH_MODE=project; PROJECTS="$PH_PROJECT"
+  # `set -a; . env/global.env` above can reset GH_TOKEN: re-arm the project's own.
+  command -v pl_token >/dev/null 2>&1 && pl_token >/dev/null 2>&1 || true
+elif [ -n "$PH_DISPATCH" ]; then
+  PH_SPREAD="${PH_DISPATCH_SPREAD_SECS:-540}"
+  case "$PH_SPREAD" in
+    ''|*[!0-9]*) echo "$(STAMP) PH_DISPATCH_SPREAD_SECS='$PH_SPREAD' is not a whole number — using 540" >> "$H/logs/pipeline-health.log"
+       PH_SPREAD=540 ;;
+  esac
+  if command -v pl_dispatch >/dev/null 2>&1; then
+    # Before the fleet lock: a live fleet run never stops a project dispatch.
+    PH_DLINE=$(pl_dispatch pipeline-health "$PH_SPREAD" "$H/bin/pipeline-health.sh" --project)
+    echo "$(STAMP) $PH_DLINE" >> "$H/logs/pipeline-health.log"
+    PH_MODE=fleet
+  else
+    echo "$(STAMP) project-lanes.sh not loaded — this tick runs every section in one process" >> "$H/logs/pipeline-health.log"
+  fi
+elif [ -n "$PH_SECTIONS" ]; then
+  PH_MODE=sections
+fi
+ph_proj()  { case "$PH_MODE" in all|project) return 0 ;; esac; return 1; }
+ph_fleet() { case "$PH_MODE" in all|fleet) return 0 ;; esac; return 1; }
+# <<< run mode
 
 # >>> sections filter (BH-4055)
 # PH_SECTIONS narrows the run to the PR checks; PH_ALL=1 is the full cron run.
@@ -119,12 +198,24 @@ if [ -n "$PH_SECTIONS" ]; then
   fi
 fi
 PH_ALL=0; [ -z "$PH_SECTIONS" ] && PH_ALL=1
-ph_on() { [ "$PH_ALL" = 1 ] || case " $PH_SEL " in *" $1 "*) return 0 ;; *) return 1 ;; esac; }
-# Dedupe, never a queue (D33): a sections run that finds a run in flight leaves
-# it to that run or the next cron tick; the cron run never waits.
+ph_on() {
+  case "$PH_MODE" in
+    project) [ "$1" = stalepr ] ;;
+    fleet)   [ "$1" = leadunqueued ] ;;
+    *) [ "$PH_ALL" = 1 ] || case " $PH_SEL " in *" $1 "*) return 0 ;; *) return 1 ;; esac ;;
+  esac
+}
+# Dedupe, never a queue (D33): a run that finds a run in flight leaves it to
+# that run or the next cron tick; no run waits. A project run holds its own
+# lock on fd 9 (above): opening the fleet lock on fd 9 would drop it.
 mkdir -p "$H/locks"
+if [ "$PH_MODE" != project ]; then
 exec 9>"$H/locks/pipeline-health.lock"
 if [ "$PH_ALL" = 1 ]; then
+  # A full run never waits on and never skips for a sections run (main's rule,
+  # lead review lr-5990): a PR-closed wake's sections run holds this lock, and
+  # skipping here would cancel that tick's fleet sections. Full-vs-full overlap
+  # is the fd 7 lock below.
   flock -n 9 || true
   # ONE FULL RUN AT A TIME (BH-6044). The cron run never waits on a sections
   # run, and it used to never wait on another full run either: on 2026-10-11
@@ -139,6 +230,7 @@ if [ "$PH_ALL" = 1 ]; then
   [ "$_ph_frc" = 75 ] && { echo "$(STAMP) full run skipped, another full run is in flight" >> "$H/logs/pipeline-health.log"; exit 0; }
 else
   flock -n 9 || { echo "$(STAMP) sections run skipped, a run is in flight" >> "$H/logs/pipeline-health.log"; exit 0; }
+fi
 fi
 # <<< sections filter
 
@@ -155,7 +247,10 @@ NOW=$(date +%s)
 # (costcap et al under a stamp) would false-retract on the ticks they skip.
 FIRED="$H/state/health-fired.$$"; : > "$FIRED"
 ACTIVE="$H/state/health-active.txt"; touch "$ACTIVE"
-RETRACT_NS="noprogress|stuckqueue|strandedqueue|staledequeue|leadunqueued|staleremote|emptyurl|tickloop|stalepr|uncommented|hungmachine|driftfail|sweepstall|starved|overcap|hubreposhallow|tmpfull|backupstale|backupmissing|restoredrillfail|restoredrillstale|preplanzero|wakearmed|staleparent"
+RETRACT_NS="noprogress|stuckqueue|strandedqueue|staledequeue|leadunqueued|staleremote|emptyurl|tickloop|stalepr|uncommented|hungmachine|driftfail|sweepstall|starved|overcap|hubreposhallow|tmpfull|backupstale|backupmissing|restoredrillfail|restoredrillstale|preplanzero|wakearmed|staleparent|stalehold|stalledblocker"
+# BH-5941: the per-project namespaces. Each key is <ns>:<project>[:…]; a project
+# run owns its own, the fleet run owns every other key (the epilogue).
+PH_PROJ_NS="stuckqueue poolhalt uncommented emptyurl staleremote tickloop stalepr starved strandedqueue staledequeue staleparent noprogress stalehold stalledblocker"
 
 # >>> alert emit cap (BH-2364)
 # Every [pipeline-health] line goes through bin/alert-line.sh, which notes
@@ -190,9 +285,13 @@ alert_emit() { # alert_emit <text> [id] — one alert line, through the helper u
 alert() { # alert <ttl-secs> <key> <line>
   local ttl=$1 key=$2 line=$3 last aid
   echo "$key" >> "$FIRED"
-  last=$(jq -r --arg k "$key" '.[$k] // 0' "$DEDUP")
-  [ $(( NOW - last )) -lt "$ttl" ] && return 0
-  jq --arg k "$key" --argjson t "$NOW" '.[$k]=$t' "$DEDUP" > "$DEDUP.tmp" && mv "$DEDUP.tmp" "$DEDUP"
+  # Project runs share this file (BH-5941): read, compare and write under one
+  # short lock. A wait that expires goes on: a lost stamp re-pages, silence hides.
+  { flock -w 5 7 2>/dev/null
+    last=$(jq -r --arg k "$key" '.[$k] // 0' "$DEDUP")
+    [ $(( NOW - last )) -lt "$ttl" ] && return 0
+    jq --arg k "$key" --argjson t "$NOW" '.[$k]=$t' "$DEDUP" > "$DEDUP.tmp.$$" && mv "$DEDUP.tmp.$$" "$DEDUP"
+  } 7>"$DEDUP.lock"
   # One console row per condition (BH-4053): the row is keyed on ph-<key>, so a
   # changed PR list refreshes the row instead of opening one. Folded here, not
   # only in alert-line.sh, so alertid, akey and alias are the same string.
@@ -220,17 +319,17 @@ alert() { # alert <ttl-secs> <key> <line>
 alert_digest() {
   local ttl=$1 key=$2 line=$3 last
   echo "$key" >> "$FIRED"
-  last=$(jq -r --arg k "$key" '.[$k] // 0' "$DEDUP")
-  [ $(( NOW - last )) -lt "$ttl" ] && return 0
-  jq --arg k "$key" --argjson t "$NOW" '.[$k]=$t' "$DEDUP" > "$DEDUP.tmp" && mv "$DEDUP.tmp" "$DEDUP"
+  { flock -w 5 7 2>/dev/null
+    last=$(jq -r --arg k "$key" '.[$k] // 0' "$DEDUP")
+    [ $(( NOW - last )) -lt "$ttl" ] && return 0
+    jq --arg k "$key" --argjson t "$NOW" '.[$k]=$t' "$DEDUP" > "$DEDUP.tmp.$$" && mv "$DEDUP.tmp.$$" "$DEDUP"
+  } 7>"$DEDUP.lock"
   echo "$(STAMP) [digest] $line" >> "$H/logs/pipeline-health.log"
   "$H/bin/beat.sh" "$(jq -nc --arg akey "health:$key" --arg l "[pipeline-health] $line" \
     '{kind:"fleet_alert",project:"fleet",severity:"warn",akey:$akey,line:$l}')" >/dev/null 2>&1 || true
 }
 
-PROJECTS=$(awk '$1!~/^#/ && NF>=2 {print $1}' "$H/fleet.conf" 2>/dev/null | grep -vE "redirect" || true)
-
-if [ "$PH_ALL" = 1 ]; then
+if ph_proj; then
 # ── 1. Queue entries older than 45m: queued means someone promised a build ───
 # >>> stuck queue (tests/pipeline-health-stuck-queue-test.sh runs this block)
 for P in $PROJECTS; do
@@ -246,8 +345,12 @@ for P in $PROJECTS; do
   done
 done
 # <<< stuck queue
+fi # ph_proj
 
 # ── 2. Spawn without reap >90m: a machine that boots and never reports ───────
+# Keyed by machine id, so it is a FLEET section (BH-5941): it must sit outside
+# every ph_proj group, or --dispatch (fleet + project runs) never reaches it.
+if ph_fleet; then
 # >>> hung machine liveness (tests/routing-writers.bh-1373-test.sh runs this block)
 grep -E "spawned [0-9a-f]{14}" "$H/logs/fly-pool.log" 2>/dev/null | tail -30 | while read -r LN; do
   MID=$(grep -oE "[0-9a-f]{14}" <<<"$LN" | head -1)
@@ -294,7 +397,9 @@ grep -E "spawned [0-9a-f]{14}" "$H/logs/fly-pool.log" 2>/dev/null | tail -30 | w
   fi
 done
 # <<< hung machine liveness
+fi # ph_fleet
 
+if ph_proj; then
 # ── 3. Consecutive gate refusals: stop paying to spawn machines that refuse ──
 # >>> pool refusal halt (tests/pipeline-health-skip-closed.bh-637-test.sh runs this block)
 for P in $PROJECTS; do
@@ -345,8 +450,17 @@ done
 CLOSEOUT_TSV="$H/state/closeout-aged-out.tsv"
 CLOSEOUT_LOCK="$H/locks/closeout-aged-out.lock"
 CLOSEOUT_AGE_S=$(closeout_age_out_s 2>/dev/null) || CLOSEOUT_AGE_S=604800
+CO_EU_RE='^PR_CREATED *(\||$)'
 for P in $PROJECTS; do
   N=0; NAGED=0; NTERM=0; OLDEST=""
+  # The skip set (BH-5941, bin/lib/closeout-terminal.sh): a dir already aged out
+  # with this RESULT mtime is counted and not read again. No lib, no skip.
+  CO_SKIP_ON=0
+  if type closeout_skip_load >/dev/null 2>&1; then
+    CO_SKIP_ON=1; CO_SKIP_F=$(closeout_skip_file "$H" "$P")
+    closeout_skip_load "$CO_SKIP_F"
+    closeout_mtimes "$H"/builds/$P-*/RESULT "$H"/builds/pool-$P-*/RESULT
+  fi
   for D in "$H"/builds/$P-* "$H"/builds/pool-$P-*; do
     [ -f "$D/RELAYED" ] && continue   # custody moved to the owning box's copy
     # A DEFERRAL OWES NOBODY A CLOSE-OUT (2026-09-11). bin/fly-pool.sh keeps the
@@ -356,6 +470,10 @@ for P in $PROJECTS; do
     # here every hour for a build that never ran. The sentinel is the primary
     # test; the RESULT head covers dirs written before the sentinel existed.
     [ -f "$D/DEFERRED" ] && continue
+    if [ "$CO_SKIP_ON" = 1 ] && [ ! -f "$D/COMMENTED" ] \
+       && closeout_skip_hit "${D##*/}" "$NOW" "$CLOSEOUT_AGE_S" >/dev/null; then
+      NAGED=$((NAGED+1)); continue
+    fi
     # Line 1 is read with `read`, never `head | grep` (BH-6044): this loop visits
     # every build record of every project, and two forks per record kept the hub
     # CPU starved.
@@ -371,9 +489,12 @@ for P in $PROJECTS; do
     [ "$AGE" -gt 3600 ] || continue
     if [ "$AGE" -gt "$CLOSEOUT_AGE_S" ]; then
       NAGED=$((NAGED+1))
-      type closeout_record_aged >/dev/null 2>&1 && \
+      if type closeout_record_aged >/dev/null 2>&1 && \
         closeout_record_aged "$CLOSEOUT_TSV" "$CLOSEOUT_LOCK" "$P" "$(basename "$D")" "$R1" \
-          "aged-out >$((CLOSEOUT_AGE_S/3600))h ($((AGE/3600))h)"
+          "aged-out >$((CLOSEOUT_AGE_S/3600))h ($((AGE/3600))h)" && [ "$CO_SKIP_ON" = 1 ]; then
+        CO_K=aged; [[ $R1 =~ $CO_EU_RE ]] && CO_K=emptyurl
+        closeout_skip_add "$CO_SKIP_F" "${D##*/}" "$((NOW - AGE))" "$CO_K"
+      fi
       continue
     fi
     if type closeout_terminal >/dev/null 2>&1 && \
@@ -382,6 +503,7 @@ for P in $PROJECTS; do
     fi
     N=$((N+1)); OLDEST="$(basename "$D") ($((AGE/3600))h)"
   done
+  [ "$CO_SKIP_ON" = 1 ] && closeout_skip_prune "$CO_SKIP_F"
   # The summary goes to this lane's own log and nowhere else. A summary that
   # pages would be the problem restated.
   [ $((NAGED+NTERM+N)) -gt 0 ] && \
@@ -406,9 +528,19 @@ CLOSEOUT_AGE_S=$(closeout_age_out_s 2>/dev/null) || CLOSEOUT_AGE_S=604800
 EMPTY_URL_RE='^PR_CREATED *(\||$)'
 for P in $PROJECTS; do
   EAGED=0; EOPEN=0; ENAMES=""
+  CO_SKIP_ON=0
+  if type closeout_skip_load >/dev/null 2>&1; then
+    CO_SKIP_ON=1; CO_SKIP_F=$(closeout_skip_file "$H" "$P")
+    closeout_skip_load "$CO_SKIP_F"
+    closeout_mtimes "$H"/builds/$P-*/RESULT "$H"/builds/pool-$P-*/RESULT
+  fi
   for D in "$H"/builds/pool-$P-* "$H"/builds/$P-*; do
     [ -f "$D/RELAYED" ] && continue   # custody moved to the owning box's copy
     [ -f "$D/RESULT" ] && [ ! -f "$D/COMMENTED" ] || continue
+    if [ "$CO_SKIP_ON" = 1 ] && closeout_skip_hit "${D##*/}" "$NOW" "$CLOSEOUT_AGE_S" >/dev/null; then
+      [ "${CO_SKIP[${D##*/}]#*$'\t'}" = emptyurl ] && EAGED=$((EAGED+1))
+      continue
+    fi
     E1=""; { IFS= read -r E1 < "$D/RESULT"; } 2>/dev/null   # no fork per record (BH-6044)
     [[ "$E1" =~ $EMPTY_URL_RE ]] || continue
     EAGE=$(( NOW - $(stat -c %Y "$D/RESULT") ))
@@ -416,9 +548,12 @@ for P in $PROJECTS; do
       EAGED=$((EAGED+1))
       # Check 4 usually recorded this dir already; the audit file is a set, so
       # the second caller adds nothing.
-      type closeout_record_aged >/dev/null 2>&1 && \
+      if type closeout_record_aged >/dev/null 2>&1 && \
         closeout_record_aged "$CLOSEOUT_TSV" "$CLOSEOUT_LOCK" "$P" "$(basename "$D")" \
-          "$E1" "aged-out >$((CLOSEOUT_AGE_S/3600))h (empty-url)"
+          "$E1" "aged-out >$((CLOSEOUT_AGE_S/3600))h (empty-url)" \
+         && [ "$CO_SKIP_ON" = 1 ] && [ -z "${CO_SKIP[${D##*/}]:-}" ]; then
+        closeout_skip_add "$CO_SKIP_F" "${D##*/}" "$((NOW - EAGE))" emptyurl
+      fi
       continue
     fi
     EOPEN=$((EOPEN+1)); ENAMES="$ENAMES $(basename "$D")"
@@ -426,7 +561,7 @@ for P in $PROJECTS; do
   [ $((EAGED+EOPEN)) -gt 0 ] && \
     echo "$(STAMP) $P empty-url: aged-out $EAGED, still-open $EOPEN" >> "$H/logs/pipeline-health.log"
   [ "$EOPEN" -gt 0 ] && alert 21600 "emptyurl:$P:$EOPEN" \
-    "$P: $EOPEN PR_CREATED result(s) with EMPTY URL ($(printf '%s\n' $ENAMES | head -5 | tr '\n' ' ')) — the gh --head fix regressed or a new path leaks partial results (aged-out $EAGED ignored)"
+    "$P: $EOPEN PR_CREATED result(s) with EMPTY URL ($(head -5 <<<"$(printf '%s\n' $ENAMES)" | tr '\n' ' ')) — the gh --head fix regressed or a new path leaks partial results (aged-out $EAGED ignored)"
 done
 # <<< empty url
 for P in $PROJECTS; do
@@ -469,14 +604,14 @@ for P in $PROJECTS; do
   # this very check ran for days over project-5 with a 404 under 2>/dev/null.
   if command -v gh_repo_use_token >/dev/null 2>&1; then
     gh_repo_use_token "$SLUG" || { gh_repo_invisible_alert pipeline-health "$SLUG" "$P: aging-PR check (stalepr) skipped, no PR seen"
-      grep -qxF "stalepr:$P" "${ACTIVE:-/dev/null}" 2>/dev/null && echo "stalepr:$P" >> "${FIRED:-/dev/null}"; continue; }
+      [ -n "${FIRED:-}" ] && echo "+=stalepr:$P" >> "$FIRED"; continue; }
   fi
   # A draft is not merge-owned work: it cannot be merged until someone takes it
   # out of draft, so it never fits "built work with no merge owner" (2026-09-13,
   # the project-1 #630 wave: intentionally-draft, alerting every 6h).
   LISTED=$(harness_pr_list "$SLUG" open number,createdAt,title,isDraft 2>/dev/null) || \
     { command -v gh_repo_list_failed >/dev/null 2>&1 && gh_repo_list_failed pipeline-health "$SLUG" "$P: aging-PR check (stalepr) skipped this tick"
-      grep -qxF "stalepr:$P" "${ACTIVE:-/dev/null}" 2>/dev/null && echo "stalepr:$P" >> "${FIRED:-/dev/null}"; continue; }
+      [ -n "${FIRED:-}" ] && echo "+=stalepr:$P" >> "$FIRED"; continue; }
   # BH-3997: the same PRs as ` prs=<owner/repo>#<n>,…`, at the END of the line,
   # for bin/alerts-merge-resolve.sh (and the ph-awaitmerge collapse key).
   IFS=$'\t' read -r STALE PRS < <(printf '%s' "$LISTED" | \
@@ -489,12 +624,13 @@ command -v gh_repo_token_reset >/dev/null 2>&1 && gh_repo_token_reset
 else
   # A SKIPPED CHECK IS NOT A CLEARED ONE (BH-4054): carry last run's keys into
   # this run's set, so the epilogue neither retracts them nor drops their stamp.
-  grep -a '^stalepr:' "${ACTIVE:-/dev/null}" >> "${FIRED:-/dev/null}" 2>/dev/null || true
+  # The marker is resolved under the ACTIVE lock in the epilogue (BH-6616).
+  [ -n "${FIRED:-}" ] && echo "+^stalepr:" >> "$FIRED"
 fi
 # <<< stalepr detector
 fi # ph_on stalepr
 
-if [ "$PH_ALL" = 1 ]; then
+if ph_fleet; then
 # ── 12. Sweep should have landed: a CLEAN, Fable-approved PR the sweep never merged
 # (2026-09-12, the 10-hour project-5 loss). Six APPROVE'd PRs sat open and
 # mergeable for days; bin/merge-sweep.sh skipped every one of them silently
@@ -686,6 +822,9 @@ for D in "$H"/builds/pool-*-*/ "$H"/builds/*-*/; do
 done
 command -v gh_repo_token_reset >/dev/null 2>&1 && gh_repo_token_reset
 # <<< sweep should have landed
+fi # ph_fleet
+
+if ph_proj; then
 
 # ── 13. Starved project: launchable work, nothing running, nothing queued, for hours
 # (2026-09-12). The project-5 tick answered "gate no-change (63 tickets)" from
@@ -991,6 +1130,96 @@ else
   command -v gh_repo_token_reset >/dev/null 2>&1 && gh_repo_token_reset
 fi
 # <<< stale parent
+
+# ── 13f. Two silent stalls (BH-6308). #6000 sat a day on a HOLD that named a
+# Mac session nobody ran, and #5240's hard dependents waited on it after its
+# last slice merged; nothing paged either one. Per project: ONE search for open
+# ai-build issues with HOLD in a comment (capped at STALL_MAX_THREADS, page-cut
+# alert past it), then bin/lib/stall-alerts.sh judges each thread
+# (stalehold:<p>:<n>); and ONE open ai-build issue list, whose hard Blocked-by
+# pairs are judged against the parent's merged slices
+# (stalledblocker:<p>:<child>:<parent>). Read-only. Runs every tick, so both are
+# in RETRACT_NS; a skipped or failed read carries the standing keys.
+# >>> stall alerts (BH-6308) (tests/stall-alerts.bh-6308-test.sh runs this block)
+st_carry() { awk -v p="$1" 'index($0, p) == 1' "$ACTIVE" >> "$FIRED" 2>/dev/null || true; }
+STH=0; STP=0; STMAX=30; STW=12; STPART=""; STF=$(mktemp "${TMPDIR:-/tmp}/ph-stall.XXXXXX") || STF=""
+# shellcheck source=bin/lib/stall-alerts.sh
+if [ -r "$H/bin/lib/stall-alerts.sh" ] && . "$H/bin/lib/stall-alerts.sh"; then
+  STH=$(stall_knob STALL_HOLD_CHECK); STP=$(stall_knob STALL_PARENT_CHECK)
+  STMAX=$(stall_knob STALL_MAX_THREADS); STW=$(stall_knob STALL_OWNER_WINDOW_H)
+fi
+if [ -z "$STF" ] || ! command -v stall_parent_judge >/dev/null 2>&1 || gh_budget_low pipeline-health; then
+  st_carry "stalehold:"; st_carry "stalledblocker:"
+elif [ "$STH" = 1 ] || [ "$STP" = 1 ]; then
+  for P in $PROJECTS; do
+    SLUG=$(awk -v p="$P" '$1==p{print $2}' "$H/fleet.conf")
+    case "$SLUG" in */*) ;; *) continue ;; esac
+    STPFX=$(preplan_key_prefix "$H" "$P") && { ! command -v gh_repo_use_token >/dev/null 2>&1 || gh_repo_use_token "$SLUG"; } \
+      || { st_carry "stalehold:$P:"; st_carry "stalledblocker:$P:"; continue; }
+    STPRS=""
+    if [ "$STH" = 1 ]; then
+      STC=$(stall_hold_candidates "$SLUG"); STRC=$?
+      [ "$STRC" = 1 ] && { st_carry "stalehold:$P:"; STC='[]'; }
+      if [ "$STRC" = 2 ] || [ "$(jq 'length' <<<"$STC")" -gt "$STMAX" ]; then
+        alert 21600 "stalehold:$P:page-cut" "$P: the stale HOLD check found more HOLD threads than it reads in one tick ($STMAX, STALL_MAX_THREADS, or a search past 100); the rest were not judged this tick"
+        # Only the threads past the cut carry their keys (lead review lr-6333):
+        # a judged thread that a person RESUMEd still retracts its page. A search
+        # past 100 has threads this tick never listed, so it carries them all.
+        if [ "$STRC" = 2 ]; then st_carry "stalehold:$P:"
+        else
+          while IFS= read -r N; do st_carry "stalehold:$P:$N"; done < <(jq -r --argjson m "$STMAX" '.[$m:][] | .number' <<<"$STC" 2>/dev/null)
+        fi
+      fi
+      while IFS=$'\t' read -r N STURL; do
+        gh_rest_issue_comments "$SLUG" "$N" 200 > "$STF" || { st_carry "stalehold:$P:$N"; continue; }
+        # A THREAD AT THE READ CAP IS CUT SHORT (lead review lr-6333): the list
+        # is oldest first, so the newest HOLD or RESUME can be past comment 200.
+        # It is not judged this tick, and its standing key is carried.
+        [ "$(jq 'length' "$STF" 2>/dev/null)" -lt 200 ] 2>/dev/null || { st_carry "stalehold:$P:$N"; continue; }
+        STCM=$(cat "$STF")
+        STJ=$(stall_hold_judge "$(jq -c --argjson n "$N" '.[] | select(.number == $n)' <<<"$STC")" "$STCM" "$NOW")
+        [ $? = 2 ] && { st_carry "stalehold:$P:$N"; continue; }
+        IFS=$'\t' read -r STV STAGE STAT STAU STLN <<<"$STJ"
+        [ "$STV" = stale ] || continue
+        [ -n "$STPRS" ] || { gh_rest_pr_list_all "$SLUG" open 200 > "$STF" && STPRS=$(cat "$STF") || STPRS='?'; }
+        [ -n "$STPART" ] || STPART=$(_jobs_req GET "/api/participants?status=approved" 2>/dev/null) || STPART='?'
+        STO=$(stall_owner_active "$P" "$SLUG" "$N" "$STPFX-$N" "$STLN" "$NOW" "$STPRS" "$STPART") && continue
+        STO=$(cut -f2- <<<"$STO")
+        alert 21600 "stalehold:$P:$N" "$P #$N: HOLD is $((STAGE / 3600))h old and its owner is not active: \"$STLN\" (by $STAU, $STAT). No live agent named in it, no build in ${STW}h, no PR push in ${STW}h${STO:+; $STO}. If the hold is stale, comment RESUME on $STURL."
+      done < <(jq -r --argjson m "$STMAX" '.[:$m][] | [.number, .html_url] | @tsv' <<<"$STC" 2>/dev/null)
+    fi
+    if [ "$STP" = 1 ]; then
+      gh_rest_issue_list "$SLUG" open ai-build 200 > "$STF" && STOPEN=$(cat "$STF") || { st_carry "stalledblocker:$P:"; STOPEN='[]'; }
+      [ "$(jq 'length' <<<"$STOPEN")" -ge 200 ] && st_carry "stalledblocker:$P:"
+      # ONE JUDGE PER PARENT A TICK, AND AT MOST STALL_MAX_THREADS PARENTS
+      # (lead review lr-6333). The judge reads two timelines and does not use
+      # the child, so children of one parent share its answer. A parent past
+      # the cap is not judged this tick: its pair keys are carried and one
+      # page-cut alert says so, the same shape as the HOLD threads above.
+      unset STPJ STPJRC; declare -A STPJ=() STPJRC=(); STPCUT=0
+      while IFS=$'\t' read -r CHILD STB64; do
+        for PARENT in $(stall_hard_blockers "$(base64 -d <<<"$STB64")"); do
+          [ -n "$STPRS" ] || { gh_rest_pr_list_all "$SLUG" open 200 > "$STF" && STPRS=$(cat "$STF") || STPRS='?'; }
+          if [ -z "${STPJRC[$PARENT]+x}" ]; then
+            if [ "${#STPJRC[@]}" -ge "$STMAX" ]; then
+              STPCUT=1; st_carry "stalledblocker:$P:$CHILD:$PARENT"; continue
+            fi
+            STPJ[$PARENT]=$(stall_parent_judge "$P" "$SLUG" "$CHILD" "$PARENT" "$NOW" "$STOPEN" "$STPRS" "$STPFX"); STPJRC[$PARENT]=$?
+          fi
+          STJ=${STPJ[$PARENT]}; STRC=${STPJRC[$PARENT]}
+          [ "$STRC" = 2 ] && st_carry "stalledblocker:$P:$CHILD:$PARENT"
+          [ "$STRC" = 0 ] || continue
+          IFS=$'\t' read -r _ PRURL STAGE <<<"$STJ"
+          alert 21600 "stalledblocker:$P:$CHILD:$PARENT" "$P #$CHILD waits on hard Blocked-by #$PARENT, but #$PARENT is still open: its last slice $PRURL merged $((STAGE / 3600))h ago, and it has no open PR and no running build. If its scope is done, close #$PARENT; else file the rest as a child issue."
+        done
+      done < <(jq -r '.[] | [.number, ((.body // "") | @base64)] | @tsv' <<<"$STOPEN" 2>/dev/null)
+      [ "$STPCUT" = 1 ] && alert 21600 "stalledblocker:$P:page-cut" "$P: the stalled-blocker check found more hard-blocking parents than it judges in one tick ($STMAX, STALL_MAX_THREADS); the rest were not judged this tick"
+    fi
+  done
+  command -v gh_repo_token_reset >/dev/null 2>&1 && gh_repo_token_reset
+fi
+[ -z "$STF" ] || rm -f "$STF"
+# <<< stall alerts
 fi # PH_ALL
 
 # ── 13d. A lead-cleared PR that never reached the queue (BH-3778). Ten PRs sat
@@ -1011,7 +1240,7 @@ fi # PH_ALL
 # $FIRED: the epilogue only RESOLVEs a key a read actually found clean.
 if ph_on leadunqueued; then
 # >>> lead merge unqueued (BH-3778)
-lu_carry() { awk -v p="$1" 'index($0, p) == 1' "$ACTIVE" >> "$FIRED" 2>/dev/null || true; }
+lu_carry() { printf '+^%s\n' "$1" >> "$FIRED"; }
 if gh_budget_low pipeline-health; then
   lu_carry "leadunqueued:"
 else
@@ -1076,7 +1305,7 @@ fi
 # <<< lead merge unqueued
 fi # ph_on leadunqueued
 
-if [ "$PH_ALL" = 1 ]; then
+if ph_fleet; then
 # ── 14. Perma-red check on main (E2E policy, the operator 2026-09-12, point 5). A
 # workflow that has been red on main for days is not a signal any more: every
 # PR inherits its red, UNSTABLE stops meaning anything, and the sweep's
@@ -1180,6 +1409,77 @@ if [ $(( NOW - $(cat "$FR_STAMP" 2>/dev/null || echo 0) )) -ge "${FLAKERATE_EVER
   fi
 fi
 # <<< flake rate
+
+# ── 8c. Merge-queue batches per day: full mode vs batch-selected (BH-6407) ───
+# #6371: 12 of 13 batches ran the whole corpus after #5454, and nothing counted
+# it. One GET /api/ci-batches per CI_BATCH_MODES_EVERY, one line in
+# logs/pipeline-health.log. A measurement only, never a page, same reason as 8b.
+# A count it could not take reads `unknown (<why>)`, never 0.
+# >>> ci batch modes (BH-6407) (tests/pipeline-health-ci-batch-modes.bh-6407-test.sh runs this block)
+CBM_STAMP="$H/state/ci-batch-modes.stamp"
+CBM_EVERY="${CI_BATCH_MODES_EVERY:-3600}"; case "$CBM_EVERY" in ''|*[!0-9]*) CBM_EVERY=3600 ;; esac
+CBM_D="${CI_BATCH_MODES_DAYS:-7}"
+{ [[ "$CBM_D" =~ ^[0-9]+$ ]] && [ "$CBM_D" -ge 1 ] && [ "$CBM_D" -le 30 ]; } || CBM_D=7
+if ! command -v ci_batch_modes_eval >/dev/null 2>&1 && [ -r "$H/bin/lib/ci-batch-modes.sh" ]; then
+  # shellcheck source=bin/lib/ci-batch-modes.sh
+  . "$H/bin/lib/ci-batch-modes.sh"
+fi
+if command -v ci_batch_modes_eval >/dev/null 2>&1 && command -v _jobs_req >/dev/null 2>&1 \
+   && [ $(( NOW - $(cat "$CBM_STAMP" 2>/dev/null || echo 0) )) -ge "$CBM_EVERY" ]; then
+  echo "$NOW" > "$CBM_STAMP"
+  CBM_TODAY=$(date -u -d "@$NOW" +%Y-%m-%d)
+  CBM_SINCE=$(date -u -d "@$(( NOW - (CBM_D - 1) * 86400 ))" +%Y-%m-%d)
+  CBM_WHY=""
+  if ! CBM_JSON=$(_jobs_req GET "/api/ci-batches?since=$CBM_SINCE&limit=5000" 2>/dev/null); then
+    CBM_WHY="no answer from GET /api/ci-batches"
+  else
+    CBM_LINE=$(ci_batch_modes_eval "$CBM_JSON" "$CBM_SINCE" "$CBM_TODAY"); CBM_RC=$?
+    case "$CBM_RC" in 0) ;; 2) CBM_WHY="answer truncated" ;; *) CBM_WHY="answer not a ci-batches list" ;; esac
+  fi
+  if [ -z "$CBM_WHY" ]; then
+    echo "$(STAMP) ci batch modes ${CBM_D}d (merge-queue batches per UTC day of completed_at): $CBM_LINE" >> "$H/logs/pipeline-health.log"
+  else
+    echo "$(STAMP) ci batch modes ${CBM_D}d: unknown ($CBM_WHY)" >> "$H/logs/pipeline-health.log"
+  fi
+fi
+# <<< ci batch modes
+
+# ── 8d. Self-check refusals after PR open, per UTC day (BH-6393) ─────────────
+# The builder now runs every pr-self-check rule before it opens or edits the
+# PR, so a refusal the hub enqueue still finds after open is what that step
+# missed. Counted from the enqueue's own hold files: one
+# state/lead-review-enqueue/selfcheck-<SAFE>-<N>-<H12> per refused (PR, head),
+# line 1 the epoch of its first refusal. The enqueue deletes them after 7
+# days, so 7 days is the window. A measurement, never a page. A box with no
+# enqueue state says `not counted`, never 0.
+# >>> self-check post-open count (BH-6393) (tests/builder-self-check-prepush.bh-6393-test.sh runs this block)
+PSO_STAMP="$H/state/psc-postopen.stamp"
+if [ $(( NOW - $(cat "$PSO_STAMP" 2>/dev/null || echo 0) )) -ge 3600 ]; then
+  echo "$NOW" > "$PSO_STAMP"
+  PSO_DIR="$H/state/lead-review-enqueue"
+  if [ -d "$PSO_DIR" ]; then
+    PSO_COUNTS=$(for PSO_F in "$PSO_DIR"/selfcheck-*; do
+        [ -f "$PSO_F" ] || continue
+        PSO_N="${PSO_F##*/}"
+        case "$PSO_N" in selfcheck-notes-*) continue ;; esac
+        PSO_E=$(head -1 "$PSO_F" 2>/dev/null)
+        [[ "$PSO_E" =~ ^[0-9]+$ ]] || continue
+        printf '%s %s\n' "$PSO_E" "${PSO_N%-*}"
+      done | awk -v now="$NOW" '
+        { d = int(now / 86400) - int($1 / 86400); if (d < 0 || d > 6) next
+          h[d]++; if (!((d, $2) in s)) { s[d, $2] = 1; p[d]++ } }
+        END { for (i = 0; i < 7; i++) print i, h[i] + 0, p[i] + 0 }')
+    PSO_LINE=""
+    while read -r PSO_I PSO_H PSO_P; do
+      [ -n "$PSO_I" ] || continue
+      PSO_LINE="$PSO_LINE $(date -u -d "@$(( NOW - PSO_I * 86400 ))" +%Y-%m-%d) $PSO_H/$PSO_P"
+    done <<<"$PSO_COUNTS"
+    echo "$(STAMP) self-check refusals after PR open by UTC day (heads/PRs):$PSO_LINE" >> "$H/logs/pipeline-health.log"
+  else
+    echo "$(STAMP) self-check refusals after PR open: not counted (no state/lead-review-enqueue on this box)" >> "$H/logs/pipeline-health.log"
+  fi
+fi
+# <<< self-check post-open count
 
 
 # ── 9. Spend: a $/PR budget, and a fleet daily ceiling ───────────────────────
@@ -1829,13 +2129,52 @@ if [ "$SC_SEED" = 1 ]; then
       done
       touch "$SC_MARK"
     else
-      _SCE=$(printf '%s\n' "$SC_OUT" | grep -m1 '^error ' || true)
-      [ -n "$_SCE" ] || _SCE=$(printf '%s\n' "$SC_OUT" | grep -m1 . || true)
+      _SCE=$(grep -m1 '^error ' <<<"$SC_OUT" || true)
+      [ -n "$_SCE" ] || _SCE=$(grep -m1 . <<<"$SC_OUT" || true)
       alert 86400 "spendceilingseed:fleet" "spend ceilings were not seeded today: ${_SCE:-seeder rc $SC_RC}. No lane lost a ceiling it had; lanes without a row have none."
     fi
   fi
 fi
 # <<< spend ceiling seed
+
+# ── 9a2. Lane spend push for Mission Control (BH-5526 C4) ───────────────────
+# Once per UTC day, after the spend alerts block above wrote today's p99 table,
+# bin/spend-lane-push.sh writes one D1 `ledgers` row per lane (kind spend_p99)
+# with its p99 and its alert line at SPEND_ALERT_P99_MULT x p99, the line the
+# spend alert judges. GET /api/metrics/lane-spend reads the rows for /costs.
+# The marker lane-pushed-<day> is written only on rc 0, so a partial failure
+# pushes again next tick (an upsert); a failed day raises one
+# spendlanepush:fleet alert. Nothing is refused or held by this block.
+# >>> spend lane push
+SP_DAY=$(date -u -d "@$NOW" +%Y%m%d)
+SP_BASE="$H/state/spend-alerts/baseline-$SP_DAY.tsv"
+SP_MARK="$H/state/spend-alerts/lane-pushed-$SP_DAY"
+if [ -f "$SP_BASE" ] && [ ! -f "$SP_MARK" ]; then
+  SP_MULT=$(sa_knob SPEND_ALERT_P99_MULT 1.5)
+  SP_REG=""
+  # shellcheck source=bin/lib/lanes-registry.sh
+  if [ -r "$H/bin/lib/lanes-registry.sh" ] && . "$H/bin/lib/lanes-registry.sh" 2>/dev/null; then
+    SP_REG=$(lanes_json_path "$H" 2>/dev/null) || SP_REG=""
+  fi
+  [ -n "$SP_REG" ] || SP_REG="$H/catalog/lanes.json"
+  SP_BIN="$(dirname "$0")/spend-lane-push.sh"; [ -x "$SP_BIN" ] || SP_BIN="$H/bin/spend-lane-push.sh"
+  SP_RC=0
+  SP_OUT=$("$SP_BIN" --baseline "$SP_BASE" --day "$SP_DAY" --mult "$SP_MULT" --registry "$SP_REG" 2>&1) || SP_RC=$?
+  while IFS= read -r _SPL; do
+    [ -n "$_SPL" ] && echo "$(STAMP) spend lane push: $_SPL" >> "$H/logs/pipeline-health.log"
+  done <<< "$SP_OUT"
+  if [ "$SP_RC" = 0 ]; then
+    for _SPF in "$H"/state/spend-alerts/lane-pushed-*; do
+      [ -f "$_SPF" ] && [ "$_SPF" != "$SP_MARK" ] && rm -f "$_SPF"
+    done
+    touch "$SP_MARK"
+  else
+    _SPE=$(grep -m1 '^error ' <<<"$SP_OUT" || true)
+    [ -n "$_SPE" ] || _SPE=$(grep -m1 . <<<"$SP_OUT" || true)
+    alert 86400 "spendlanepush:fleet" "the lane spend table for Mission Control was not pushed today: ${_SPE:-pusher rc $SP_RC}. /costs LANE SPEND shows no alert line for the lanes it missed; nothing is refused or held."
+  fi
+fi
+# <<< spend lane push
 
 # ── 9b. The cost rollup's own liveness ──────────────────────────────────────
 # bin/cost-rollup.sh is the ONLY writer of state/cost/, and every dollar figure
@@ -2571,13 +2910,6 @@ fi
 # <<< preplan hit rate
 fi # PH_ALL
 
-# A sections run judged only its own namespaces: every other ACTIVE key is
-# carried into this run's set, so the epilogue neither retracts it nor drops it
-# from health-active.txt (the budget-low rule, BH-4054).
-if [ "$PH_ALL" != 1 ]; then
-  awk -v sel=" $PH_SEL " '{ ns = $0; sub(/:.*/, "", ns); if (index(sel, " " ns " ") == 0) print }' "$ACTIVE" >> "$FIRED" 2>/dev/null || true
-fi
-
 # ── Wake classes armed but not driven (BH-4060) ───────────────────────────────
 # A `wake-lanes-<class>` flag is on, yet bin/wake-loop.sh has not logged its
 # `wake classes armed:` line for WAKE_ARMED_WATCH_S (registry default 3600, 0 =
@@ -2586,6 +2918,7 @@ fi
 # (BH-4053) and the line text refreshes it. Runs every tick and retracts when the
 # line returns or the flags go. bin/lib/wake-armed-watch.sh decides; an answer it
 # cannot give (no flag_active, no lib) is UNKNOWN and carries a standing key.
+if [ "$PH_MODE" != project ]; then
 # >>> wake classes armed (BH-4060)
 WA_WIN="${WAKE_ARMED_WATCH_S:-}"
 if ! command -v wake_armed_watch_eval >/dev/null 2>&1 && [ -r "$H/bin/lib/wake-armed-watch.sh" ]; then
@@ -2604,6 +2937,7 @@ case "$WA_TAG" in
   SKIP) [ "$WA_AGE" = unknown ] && { grep '^wakearmed:' "$ACTIVE" >> "$FIRED" 2>/dev/null || true; } ;;
 esac
 # <<< wake classes armed
+fi # not a project run
 
 # ── Retraction epilogue: conditions that cleared since last run ──────────────
 # A key in last run's active set, in a retractable namespace, absent from this
@@ -2616,20 +2950,52 @@ esac
 # folded by the same expression, carried as a structured resolved:true beat that
 # bin/beat.sh resolves against the state row and sends on the channel the alert
 # used. The RESOLVED text line is the audit record; its re-beat is log-only.
+#
+# KEY OWNERSHIP (BH-5941). A project run and the fleet run write this file at
+# the same time, so the read and the write sit under one short lock, and each
+# run replaces only the keys it OWNS. The namespace is the text before the first
+# ':' and the owner is the next field. A project run owns the PH_PROJ_NS keys of
+# its own project. The fleet run owns every other key, plus the PH_PROJ_NS keys
+# of a project no longer in fleet.conf, so those retract once. A key no run
+# owns this tick (a held project) is carried. A sections run owns only the
+# PH_SEL namespaces. A whole run owns every key. A skipped check writes a carry
+# marker to $FIRED (`+=<key>` exact, `+^<prefix>` prefix), and the carry is read
+# here from the ACTIVE read under the lock, so a key another run retracted in
+# the meantime stays retracted (BH-6616).
 sort -u "$FIRED" > "$FIRED.sorted"
-while IFS= read -r K; do
-  [ -n "$K" ] || continue
-  grep -qE "^($RETRACT_NS):" <<<"$K" || continue
-  grep -qxF "$K" "$FIRED.sorted" && continue
-  alert_emit "[pipeline-health] RESOLVED $K — condition no longer holds"
-  echo "$(STAMP) RESOLVED $K — condition no longer holds" >> "$H/logs/pipeline-health.log"
-  jq --arg k "$K" 'del(.[$k])' "$DEDUP" > "$DEDUP.tmp" && mv "$DEDUP.tmp" "$DEDUP"
-  RAID="ph-$(printf '%s' "$K" | tr -c 'A-Za-z0-9_.-' '_' | cut -c1-117)"
-  "$H/bin/beat.sh" "$(jq -nc --arg akey "alert:$RAID" --arg id "$RAID" --arg l "[pipeline-health] RESOLVED $K — condition no longer holds" \
-    '{kind:"alert",project:"fleet",akey:$akey,alertid:$id,resolved:true,line:$l}')" >/dev/null 2>&1 || true
-  "$H/bin/beat.sh" "$(jq -nc --arg akey "health:$K" --arg l "[pipeline-health] RESOLVED $K — condition no longer holds" \
-    '{kind:"fleet_alert",project:"fleet",akey:$akey,resolved:true,line:$l}')" >/dev/null 2>&1 || true
-done < "$ACTIVE"
+: > "$FIRED.new"; : > "$FIRED.retract"
+{
+flock -w 5 6 2>/dev/null \
+  || echo "$(STAMP) epilogue: state/health-active.txt.lock not taken in 5s — writing without it" >> "$H/logs/pipeline-health.log"
+# shellcheck disable=SC2086
+awk -v mode="${PH_MODE:-all}" -v pns=" ${PH_PROJ_NS:-} " -v me="${PH_PROJECT:-}" -v sel=" ${PH_SEL:-} " \
+    -v projs=" $(printf '%s ' ${PROJECTS:-}) " -v rns="^($RETRACT_NS):" \
+    -v outn="$FIRED.new" -v outr="$FIRED.retract" '
+  function owned(k,   ns, o, isp) {
+    if (mode == "sections") { ns = k; sub(/:.*/, "", ns); return index(sel, " " ns " ") > 0 }
+    if (mode != "project" && mode != "fleet") return 1
+    ns = k; sub(/:.*/, "", ns)
+    o = substr(k, length(ns) + 2); sub(/:.*/, "", o)
+    isp = (index(k, ":") > 0 && index(pns, " " ns " ") > 0)
+    if (mode == "project") return isp && o == me
+    return !isp || index(projs, " " o " ") == 0
+  }
+  function carried(k,   i) {
+    if (k in cx) return 1
+    for (i = 1; i <= ncp; i++) if (index(k, cp[i]) == 1) return 1
+    return 0
+  }
+  FILENAME == ARGV[1] && substr($0, 1, 1) == "+" {
+    if (substr($0, 2, 1) == "=") cx[substr($0, 3)] = 1; else cp[++ncp] = substr($0, 3)
+    next
+  }
+  FILENAME == ARGV[1] { if ($0 != "" && owned($0)) { fired[$0] = 1; print > outn }; next }
+  $0 == "" { next }
+  !owned($0) { print > outn; next }
+  !($0 in fired) && carried($0) { print > outn; next }
+  !($0 in fired) && $0 ~ rns { print > outr }
+' "$FIRED.sorted" "$ACTIVE"
+sort -u "$FIRED.new" > "$FIRED.sorted"; rm -f "$FIRED.new"
 mv -f "$FIRED.sorted" "$ACTIVE"
 # >>> active stamp (BH-4056)
 # The touch at the top of the pass makes $ACTIVE's mtime "a pass STARTED", so
@@ -2646,6 +3012,23 @@ if [ ! -e "$FIRED.sorted" ]; then
     || rm -f "$H/state/health-active.stamp.tmp"
 fi
 # <<< active stamp
+} 6>"$ACTIVE.lock"
+while IFS= read -r K; do
+  [ -n "$K" ] || continue
+  alert_emit "[pipeline-health] RESOLVED $K — condition no longer holds"
+  echo "$(STAMP) RESOLVED $K — condition no longer holds" >> "$H/logs/pipeline-health.log"
+  { flock -w 5 7 2>/dev/null
+    jq --arg k "$K" 'del(.[$k])' "$DEDUP" > "$DEDUP.tmp.$$" && mv "$DEDUP.tmp.$$" "$DEDUP"
+  } 7>"$DEDUP.lock"
+  RAID="ph-$(printf '%s' "$K" | tr -c 'A-Za-z0-9_.-' '_' | cut -c1-117)"
+  "$H/bin/beat.sh" "$(jq -nc --arg akey "alert:$RAID" --arg id "$RAID" --arg l "[pipeline-health] RESOLVED $K — condition no longer holds" \
+    '{kind:"alert",project:"fleet",akey:$akey,alertid:$id,resolved:true,line:$l}')" >/dev/null 2>&1 || true
+  "$H/bin/beat.sh" "$(jq -nc --arg akey "health:$K" --arg l "[pipeline-health] RESOLVED $K — condition no longer holds" \
+    '{kind:"fleet_alert",project:"fleet",akey:$akey,resolved:true,line:$l}')" >/dev/null 2>&1 || true
+done < "$FIRED.retract"
+rm -f "$FIRED.retract"
 rm -f "$FIRED"
 
+# The per-project tick time (BH-5938 asked to measure it).
+[ "$PH_MODE" = project ] && echo "$(STAMP) pipeline-health project $PH_PROJECT: run done in $(( $(date +%s) - NOW ))s" >> "$H/logs/pipeline-health.log"
 exit 0

@@ -28,8 +28,9 @@
 #   F1b the sections land before the `---` / "Plan: harness build" footer,
 #       and the attribution line stays last
 #   F2  a complete body: no fix turn
-#   F3  the fix turn writes nothing: the body is unchanged, the log names what
-#       is still missing, and the PR still opens (the span returns)
+#   F3  the fix turn writes nothing: the original body lines stay, the
+#       findings section names what is still missing (BH-6393), the log names
+#       it, and the PR still opens (the span returns)
 #   F4  PR_SELF_CHECK=0: no fix turn, one log line (lead review lr-5846)
 #   C1  CI runs the body rules on the event's PR body, report only
 # A real git fixture: main, then one branch per diff shape.
@@ -187,8 +188,14 @@ fixrun f2 "$FULL" ""
 fixrun f3 "Refs #5
 
 $ACC" ""
-cmp -s <(printf 'Refs #5\n\n%s\n' "$ACC") "$T/f3/pr-body.md" && grep -q SPAN_DONE "$T/f3/out" && grep -q 'pr body: still missing.*body-why' "$T/f3/pipeline.log" 2>/dev/null && ok \
-  || bad "F3 an empty fix changed the body, stopped the span or logged nothing: $(cat "$T/f3/out") $(cat "$T/f3/pipeline.log" 2>/dev/null)"
+# TEST-CHANGE (BH-6393): an unfixable body now gains the builder's
+# `## Pre-open check: refusals left` section after its 2 checks, so the body is
+# the original lines, in order, plus that section naming body-why.
+F3B=$(awk '/^## Pre-open check: refusals left$/{exit} {print}' "$T/f3/pr-body.md")
+[ "$(printf '%s\n' "$F3B" | sed -e :a -e '/^\n*$/{$d;N;ba' -e '}')" = "$(printf 'Refs #5\n\n%s' "$ACC")" ] \
+  && sed -n '/^## Pre-open check: refusals left$/,$p' "$T/f3/pr-body.md" | grep -q '^- body-why:' \
+  && grep -q SPAN_DONE "$T/f3/out" && grep -q 'pr body: still missing.*body-why' "$T/f3/pipeline.log" 2>/dev/null && ok \
+  || bad "F3 an empty fix lost the original body, wrote no findings naming body-why, stopped the span or logged nothing: $(cat "$T/f3/pr-body.md") $(cat "$T/f3/out") $(cat "$T/f3/pipeline.log" 2>/dev/null)"
 
 # F4 (lead review lr-5846): PR_SELF_CHECK=0 buys no fix turn
 B4="$T/f4"; mkdir -p "$B4"; printf 'Refs #5\n\n%s\n' "$ACC" > "$B4/pr-body.md"; printf '## Why\nx y z\n' > "$B4/fix.txt"

@@ -167,7 +167,7 @@ N=$(mk human nextjs-app)
 study a12 "$N"
 eq "A12 rc" "$RC" 0
 last=$(tail -n 1 "$T/a12.out")
-if printf '%s\n' "$last" | grep -Eq '^READINESS LEVEL: [0-9]+/[0-9]+$'; then ok; else bad "A12 last line: [$last]"; fi
+if grep -Eq '^READINESS LEVEL: [0-9]+/[0-9]+$' <<<"$last"; then ok; else bad "A12 last line: [$last]"; fi
 READINESS_LEVELS="$T/missing.json" study a12u "$N"
 eq "A12 unknown last line" "$(tail -n 1 "$T/a12u.out")" "READINESS LEVEL: unknown"
 

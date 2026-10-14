@@ -1,0 +1,13 @@
+{
+  "number": 5544,
+  "title": "Make three flaky tests deterministic: rules-pack R8 and review-prs-parallel R6 and the shard SIGPIPE default",
+  "body": "Make three flaky tests deterministic: rules-pack R8, review-prs-parallel R6, and the SIGPIPE default in shards. (the operator, 2026-10-08, test-value analysis.)\n\n## Why\nFlaky tests caused 14% of red merge-queue batches (~2,400 wall-min and ~15,600 runner-min a week). The top three:\n1. `tests/rules-pack.bh-3510-test.sh` R8: a 60 s wall-clock budget against a run that takes 61 s under CI load (~5,500 runner-min/week).\n2. `tests/review-prs-parallel.bh-5284-test.sh` R6: it wants a peak of 12 workers in flight and sees 10 under load (~4,500 runner-min/week). #5365 added a barrier, but R6 still fails in batches.\n3. CI runners start steps with SIGPIPE ignored, as #5221 found. Pipe-dependent tests fail with \"write error: Broken pipe\" (`restore-drill` and others), ~1,600 runner-min/week.\n\n## Scope\n1. **R8:** replace the wall-clock budget with a work bound (count the components run or the steps taken) or a CPU-time bound that does not depend on runner load. Keep what R8 protects: the pack must not hang.\n2. **R6:** prove peak concurrency with a deterministic barrier (each stub call waits until N have started, bounded) or by asserting the pool's own launch log. Never assert a wall-clock peak.\n3. **SIGPIPE:** start each test shard with SIGPIPE at its default action (`env --default-signal=PIPE`, as #5221 does in remote-gate). Add a test that fails if a shard starts with it ignored.\n\n## Acceptance tests (red first)\n- R8, R6 and the broken-pipe cases fail under the CI conditions (load, SIGPIPE ignored) before the fix and pass 20 out of 20 under load after.\n- Each assertion still fails when the behavior it protects is broken: a hung pack, a serial pool, a pipe error.\n",
+  "labels": [
+    {
+      "name": "ai-build"
+    },
+    {
+      "name": "hotfix"
+    }
+  ]
+}

@@ -102,6 +102,7 @@ decisions still belong to the old console.
 
 ```bash
 cd /root/harness-checkout/worker/jobs
+../../bin/schema-build.sh --worker jobs --write   # schema.sql is not in git; this composes it from schema.d/
 npx --yes wrangler@3 d1 execute harness-jobs --remote --file=./schema.sql </dev/null
 npx --yes wrangler@3 deploy </dev/null
 ```

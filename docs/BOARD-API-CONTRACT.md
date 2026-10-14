@@ -606,6 +606,14 @@ Buildability is decided differently, because there are no verdicts: labeled
 HOLD (`prompts/TEMPLATE-GH.md:29-30`). The issue body is the spec and the newest
 comment is the latest word.
 
+A body line `Spec-repo: <owner>/<repo>` (or `Spec-repos:` with a comma list)
+lets that ticket's pool build READ another repo of the same owner. The key must
+start the line; a mention in a sentence, a fenced line or a comment does not
+count. The pool adds the repo to the machine's read-only token, and a machine
+with that token is never reused for another ticket. The builders App must be
+installed on the repo (`bin/lib/spec-repos.sh`,
+`docs/notes/2026-10-14-BH-6576-spec-repos.md`).
+
 One asymmetry worth knowing: **self-write absorption is disabled on this lane**.
 On GitHub the harness's comments post as the same actor as a human's, so there
 is no safe way to tell them apart, and absorbing could eat a real reply

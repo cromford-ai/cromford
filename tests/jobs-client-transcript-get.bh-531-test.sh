@@ -139,7 +139,7 @@ OUT=$( export PATH="$T/fakebin:$PATH" HARNESS="$T/h" HARNESS_ENV_DIR="$T/h/env" 
 USAGE=$( ( export PATH="$T/fakebin:$PATH" HARNESS="$T/h" HARNESS_ENV_DIR="$T/h/env" \
                   HARNESS_SECRET=test-secret JOBS_URL=https://jobs.invalid
            bash "$T/h/bin/jobs-client.sh" no-such-verb ) 2>&1 )
-printf '%s' "$USAGE" | grep -q 'transcript-get <job-id>' \
+grep -q 'transcript-get <job-id>' <<<"$USAGE" \
   && ok || bad "transcript-get is missing from the usage string"
 
 echo "jobs-client-transcript-get.bh-531-test: $PASS pass, $FAIL fail"

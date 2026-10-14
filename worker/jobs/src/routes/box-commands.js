@@ -14,10 +14,25 @@
 //     box_command_refused audit row (actor "unknown" when none is given). No
 //     command row.
 //   - reason missing or blank → 400 {error:"reason_required"}.
-//   - type not one of TYPES → 400; box not [A-Za-z0-9._-]{1,64} → 400.
+//   - type not one of TYPES (lib/box-command-types.js) → 400.
+//   - an OWNER_ONLY type (the Orgo and Fly pool controls, BH-5750) from an
+//     actor not in env.BOX_OPS_OWNERS → 403 {error:"owner_only"} and ONE
+//     box_command_refused audit row (outcome refused:owner). No command row.
+//   - box not [A-Za-z0-9._-]{1,64} → 400.
 //   - box other than 'hub' without a box_status row → 409 {error:"unknown_box"}.
 //   - Fly types: box must be 'hub', target a machine id ([0-9a-z]{8,32]), and
 //     project and app [A-Za-z0-9._-]{1,64}; they are stored as args JSON.
+//     OWNER_ONLY types: box 'hub' and the per-type args of
+//     lib/box-command-args.js orgoArgs, stored as args JSON; each failure is
+//     400. A costing type (orgo_resize, orgo_launch) needs quote_id and
+//     confirm_monthly_usd (400 confirm_token_required without them), and the
+//     quote must be an ok row of its quote type for the same target and args,
+//     requested by the same actor, finished within settings
+//     box_ops_quote_ttl_s (fallback 900 s), whose recorded figure equals
+//     confirm_monthly_usd as a number; else 409 {error:"stale_quote"} and ONE
+//     audit row (refused:quote). An open row of the same (box, type, target)
+//     with other args is 409 {error:"open_command_differs", id}, never a
+//     silent dedup.
 //     Other types: target must be absent or '', args is null, project and app
 //     are ignored. Each failure is 400.
 //   - otherwise INSERT OR IGNORE the command and its box_command_request audit
@@ -49,9 +64,8 @@
 import { json, d1Guarded } from "../lib/http.js";
 import { laneName, strictInt, isoPlusSeconds } from "../lib/core.js";
 import { confirmed, auditStmt, knownBox } from "../lib/hub-recovery.js";
-
-const TYPES = ["backup_now", "fly_machine_stop", "fly_machine_destroy", "harness_sync", "cli_update"];
-const FLY = new Set(["fly_machine_stop", "fly_machine_destroy"]);
+import { TYPES, FLY, OWNER_ONLY, QUOTE_OF } from "../lib/box-command-types.js";
+import { normActor, isOwner, orgoArgs, quoteMatches, QUOTE_TTL_S } from "../lib/box-command-args.js";
 const MACHINE_RE = /^[0-9a-z]{8,32}$/;
 const HISTORY_LIMIT = 50;
 // Fallback for the operator's settings row. THE ROW WINS whenever it parses as
@@ -60,6 +74,12 @@ const CLAIM_TTL_S = 1800;
 // A bound on the claim's IN list, well under D1's bind-parameter limit.
 const MAX_BOXES = 50;
 const NAME_ERR = "must match [A-Za-z0-9._-]{1,64}";
+
+async function quoteTtl(env) {
+  const v = await env.DB.prepare("SELECT value FROM settings WHERE key='box_ops_quote_ttl_s'").first("value");
+  const n = strictInt(v);
+  return n !== null && n > 0 ? n : QUOTE_TTL_S;
+}
 
 async function claimTtl(env) {
   const v = await env.DB.prepare("SELECT value FROM settings WHERE key='box_commands_claim_ttl_s'").first("value");
@@ -74,11 +94,12 @@ function shape(row) {
   try { return { ...row, args: JSON.parse(row.args) }; } catch { return row; }
 }
 
-const byId = async (env, id) => shape(await env.DB.prepare("SELECT * FROM box_commands WHERE id=?1").bind(id).first());
+const byId = async (env, id) => shape(await env.DB.prepare("SELECT * FROM box_commands_v2 WHERE id=?1").bind(id).first());
 
 export const routes = [
   ["POST", "/api/box-commands", ({ env, t, body }) => d1Guarded("box_commands", async () => {
-    const actor = laneName(body.actor) || "unknown";
+    // An Access email has an '@', which laneName refuses; normActor keeps it.
+    const actor = laneName(body.actor) || normActor(body.actor) || "unknown";
     const reason = typeof body.reason === "string" ? body.reason.trim().slice(0, 500) : null;
     if (!confirmed(body)) {
       const rawBox = typeof body.box === "string" ? body.box.slice(0, 64) : null;
@@ -90,12 +111,36 @@ export const routes = [
     if (!reason) return json(400, { error: "reason_required" });
     const type = body.type;
     if (!TYPES.includes(type)) return json(400, { error: `type must be one of ${TYPES.join(", ")}` });
+    const refuse = async (status, error, outcome, extra = {}) => {
+      await env.DB.batch([auditStmt(env, {
+        action: "box_command_refused", target: typeof body.box === "string" ? body.box.slice(0, 64) : null, actor, reason, outcome,
+      }, t)]);
+      return json(status, { error, ...extra });
+    };
+    if (OWNER_ONLY.has(type) && !isOwner(env, actor)) return refuse(403, "owner_only", "refused:owner");
     const box = name(body.box);
     if (!box) return json(400, { error: `box is required and ${NAME_ERR}` });
+    // The owner types are all addressed to 'hub'; orgoArgs refuses any other box.
+    const a = OWNER_ONLY.has(type) ? orgoArgs(type, body) : null;
+    if (a?.error) return json(400, { error: a.error });
     if (box !== "hub" && !(await knownBox(env, box))) return json(409, { error: "unknown_box" });
     let target = "";
     let args = null;
-    if (FLY.has(type)) {
+    if (a) {
+      if (QUOTE_OF[type]) {
+        const quote = await env.DB.prepare("SELECT * FROM box_commands_v2 WHERE id=?1").bind(a.args.quote_id).first();
+        const cutoff = isoPlusSeconds(t, -(await quoteTtl(env)));
+        if (!quoteMatches(quote, { type, target: a.target, args: a.args, actor, cutoff })) {
+          return refuse(409, "stale_quote", "refused:quote");
+        }
+      }
+      const open = await env.DB.prepare(
+        "SELECT id, args FROM box_commands_v2 WHERE box=?1 AND type=?2 AND target=?3 AND status IN ('requested','claimed') LIMIT 1",
+      ).bind(box, type, a.target).first();
+      if (open && open.args !== JSON.stringify(a.args)) return json(409, { error: "open_command_differs", id: open.id });
+      target = a.target;
+      args = JSON.stringify(a.args);
+    } else if (FLY.has(type)) {
       if (box !== "hub") return json(400, { error: "Fly machine commands are addressed to box 'hub'" });
       if (!(typeof body.target === "string" && MACHINE_RE.test(body.target))) {
         return json(400, { error: "target must be a Fly machine id ([0-9a-z]{8,32})" });
@@ -110,13 +155,13 @@ export const routes = [
     }
     const res = await env.DB.batch([
       env.DB.prepare(
-        "INSERT OR IGNORE INTO box_commands (box,type,target,args,reason,status,requested_by,requested_at) VALUES (?1,?2,?3,?4,?5,'requested',?6,?7)",
+        "INSERT OR IGNORE INTO box_commands_v2 (box,type,target,args,reason,status,requested_by,requested_at) VALUES (?1,?2,?3,?4,?5,'requested',?6,?7)",
       ).bind(box, type, target, args, reason, actor, t),
       auditStmt(env, { action: "box_command_request", target: box, actor, reason, outcome: "ok" }, t),
     ]);
     const deduped = Number(res[0]?.meta?.changes || 0) === 0;
     const row = await env.DB.prepare(
-      "SELECT * FROM box_commands WHERE box=?1 AND type=?2 AND target=?3 AND status IN ('requested','claimed') ORDER BY id DESC LIMIT 1",
+      "SELECT * FROM box_commands_v2 WHERE box=?1 AND type=?2 AND target=?3 AND status IN ('requested','claimed') ORDER BY id DESC LIMIT 1",
     ).bind(box, type, target).first();
     if (!row) return json(503, { error: "box_commands unavailable", detail: "the open command was not readable after its insert" });
     return json(deduped ? 200 : 201, { id: row.id, status: row.status, command: shape(row), deduped });
@@ -127,8 +172,8 @@ export const routes = [
     const box = raw ? laneName(raw) : "";
     if (raw && !box) return json(400, { error: `box ${NAME_ERR}` });
     const stmt = box
-      ? env.DB.prepare("SELECT * FROM box_commands WHERE box=?1 ORDER BY id DESC LIMIT ?2").bind(box, HISTORY_LIMIT + 1)
-      : env.DB.prepare("SELECT * FROM box_commands ORDER BY id DESC LIMIT ?1").bind(HISTORY_LIMIT + 1);
+      ? env.DB.prepare("SELECT * FROM box_commands_v2 WHERE box=?1 ORDER BY id DESC LIMIT ?2").bind(box, HISTORY_LIMIT + 1)
+      : env.DB.prepare("SELECT * FROM box_commands_v2 ORDER BY id DESC LIMIT ?1").bind(HISTORY_LIMIT + 1);
     const rows = (await stmt.all()).results || [];
     return json(200, { commands: rows.slice(0, HISTORY_LIMIT).map(shape), truncated: rows.length > HISTORY_LIMIT, as_of: t });
   })],
@@ -143,11 +188,11 @@ export const routes = [
     const boxes = [...new Set(list)];
     const cutoff = isoPlusSeconds(t, -(await claimTtl(env)));
     const cand = await env.DB.prepare(
-      "SELECT id FROM box_commands WHERE box IN (SELECT value FROM json_each(?2)) AND (status='requested' OR (status='claimed' AND claimed_at < ?1)) ORDER BY id LIMIT 1",
+      "SELECT id FROM box_commands_v2 WHERE box IN (SELECT value FROM json_each(?2)) AND (status='requested' OR (status='claimed' AND claimed_at < ?1)) ORDER BY id LIMIT 1",
     ).bind(cutoff, JSON.stringify(boxes)).first("id");
     if (cand === null) return json(200, { command: null });
     const r = await env.DB.prepare(
-      "UPDATE box_commands SET status='claimed', claimed_by=?1, claimed_at=?2 WHERE id=?3 AND (status='requested' OR (status='claimed' AND claimed_at < ?4))",
+      "UPDATE box_commands_v2 SET status='claimed', claimed_by=?1, claimed_at=?2 WHERE id=?3 AND (status='requested' OR (status='claimed' AND claimed_at < ?4))",
     ).bind(claimer, t, cand, cutoff).run();
     if (Number(r?.meta?.changes || 0) === 0) return json(200, { command: null });
     return json(200, { command: await byId(env, cand) });
@@ -163,7 +208,7 @@ export const routes = [
       return json(400, { error: "detail must be a string of at most 500 characters" });
     }
     const r = await env.DB.prepare(
-      "UPDATE box_commands SET status=?1, finished_at=?2, detail=?3 WHERE id=?4 AND status='claimed' AND claimed_by=?5",
+      "UPDATE box_commands_v2 SET status=?1, finished_at=?2, detail=?3 WHERE id=?4 AND status='claimed' AND claimed_by=?5",
     ).bind(body.ok ? "ok" : "fail", t, detail, id, claimer).run();
     if (Number(r?.meta?.changes || 0) === 0) return json(409, { error: "not_claimed_by_you" });
     return json(200, { ok: true, command: await byId(env, id) });

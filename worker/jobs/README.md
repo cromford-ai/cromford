@@ -20,9 +20,13 @@ deploy here cannot take down the console or the Telegram relay.
 ## Layout (BH-1195)
 
 ```
-src/index.js            the fetch entry + ROUTES/OPEN_ROUTES, the ordered table
+src/index.js            the fetch entry; OPEN_ROUTES, and ROUTES from "#routes"
 src/lib/http.js         nowIso, json, bearerOk, readBody
 src/lib/router.js       first-match-wins resolution over the table
+src/lib/route-families.js  which families make up ROUTES, from the fragments
+src/routes.gen.js       GENERATED, git-ignored: ROUTES for the wrangler bundle
+scripts/routes-build.mjs   renders src/routes.gen.js (wrangler build.command)
+test/lib/routes.node.js ROUTES for node, read from the fragments at load time
 src/lib/core.js         constants, transition graphs, SQL, computeDora,
                         computeAnchored, decorateLane … (the shared half)
 src/routes/<family>.js  one file per route family, each exporting
@@ -35,6 +39,19 @@ chain inside `fetch`. Order is still load-bearing (`GET /api/jobs/:id` above
 chain it replaced, entry for entry. A new route is added to the family module
 AND to that fixture. The bearer still sits between the two tables: `OPEN_ROUTES`
 holds only `/webhooks/github`, everything else is reached after `bearerOk`.
+
+A new route family is a module plus a fragment, never an edit to `src/index.js`
+(BH-4607). Write `src/routes/<family>.js` and `test/route-table.d/<NNN>-<family>.txt`;
+the three-digit number is the family's place in `ROUTES`. `src/index.js` imports
+`ROUTES` from `#routes`. `package.json` maps that to `src/routes.gen.js` under
+`workerd` (wrangler's `build.command` runs `node scripts/routes-build.mjs` before
+every bundle) and to `test/lib/routes.node.js` under `default` (node), so no
+suite renders anything. A stray fragment name, a shared number or a fragment
+with no module fails the render, and so fails the deploy.
+`test/route-registry.bh-4607.test.js` fails if a gated import or spread comes
+back to `src/index.js`. The open families (webhooks, ci-durations, ci-test-tiers,
+suite-results) stay imported by hand in `src/index.js`, because they sit in front
+of the bearer.
 
 ## Deploy
 
@@ -81,8 +98,13 @@ it counted, which no longer exist on the reset database.
 
 By hand, from this directory, with the hub's CF token in the environment:
 
+The statements to run come from `schema.sql`, which is not in git (BH-6005). The
+first command composes it from `schema.d/`, and the same goes for the
+`--file=./schema.sql` steps in the per-phase sections below:
+
 ```bash
 set -a; . /root/harness/env/cloudflare.env; set +a
+../../bin/schema-build.sh --worker jobs --write
 npx wrangler d1 execute harness-jobs --remote --command "<one statement>"   # additive, re-runnable
 npx wrangler deploy
 ```
@@ -152,7 +174,7 @@ Details and the live probe: `docs/verification-map/worker-sentry.md`.
 caps reach a fly builder at all — fly-sync tars `bin/prompts/rules/fleet.conf`
 and never `catalog/`, so on the very machines that run build lanes the manifest
 is absent, and every stage fell through to the hardcoded tier and budget-stopped
-mid-run (TK-109, $N). Push the file after any change to it:
+mid-run (TK-109, $424). Push the file after any change to it:
 
 ```bash
 /root/harness/bin/jobs-client.sh catalog-sync              # finds the checkout copy

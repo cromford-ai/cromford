@@ -7,7 +7,13 @@
 # autoenqueue ledger skip (about 150 skips on 2026-10-08), the review pool
 # capped below 3 by /tmp, and the merge conductor's WORKER_DEADLINE kill.
 #
-# sentry_report <level> <lane> <reason> <message> [extra-json]
+# sentry_report <level> <lane> <reason> <message> [extra-json] [tags-json]
+#   tags-json (BH-6346) is a JSON object of extra tags, for example
+#   {"step":"ci-read"}. An object at extra-json's `.tags` (BH-6351) is read the
+#   same way and then deleted from extra; tags-json wins over it on a clash.
+#   Only a key matching ^[a-z][a-z0-9_]{0,31}$ with a string value is kept, each
+#   value cut to 200 chars, at most 8 entries, and the five standard tags win on
+#   a clash. Anything else is ignored. The fingerprint does not change.
 #   Posts ONE event to the envelope endpoint of HARNESS_SENTRY_DSN, with
 #   `curl --max-time 5`. ALWAYS rc 0, and it prints NOTHING on stdout or stderr:
 #   bin/lib/fanin.sh reads mc_fanin_outcome's stdout as the outcome word, and
@@ -115,7 +121,7 @@ _sr_body() {
   local level="$1" lane="$2" reason="$3" msg="$4" extra="$5"
   local h="${HARNESS:-${H:-}}" dsn="${HARNESS_SENTRY_DSN:-}"
   local scheme key host path proj url cap now fp dir verdict id box sha
-  local tmpd envf resp code crc ev body
+  local tmpd envf resp code crc ev body xt='{}' at='{}'
   [ -n "$dsn" ] && [ -n "$h" ] || return 0
   [ -n "$lane" ] || lane=unknown
   [ -n "$reason" ] || reason=unknown
@@ -132,6 +138,16 @@ _sr_body() {
   if ! jq -e 'type == "object"' <<<"$extra" >/dev/null 2>&1; then
     extra=$(jq -nc --arg r "${extra:0:1000}" '{extra_raw: $r}')
   fi
+  # Extra tags: extra-json's own .tags object (BH-6351), then the 6th argument,
+  # which wins on a clash. .tags leaves extra either way.
+  if [ -n "${6:-}" ] && jq -e 'type == "object"' <<<"$6" >/dev/null 2>&1; then at=$6; fi
+  xt=$(jq -c --argjson a "$at" '
+    def clean: if type == "object" then to_entries
+      | map(select((.key | test("^[a-z][a-z0-9_]{0,31}$")) and (.value | type == "string")) | .value |= .[0:200])
+      | .[0:8] | from_entries else {} end;
+    ((.tags | clean) + ($a | clean)) | to_entries | .[0:8] | from_entries' <<<"$extra" 2>/dev/null)
+  [ -n "$xt" ] || xt='{}'
+  extra=$(jq -c 'del(.tags)' <<<"$extra" 2>/dev/null) || extra='{}'
   proj=$(jq -r '.project // empty | strings' <<<"$extra" 2>/dev/null)
   [ -n "$proj" ] || proj="${PROJECT:-}"
   [ -n "$proj" ] || proj=-
@@ -190,11 +206,11 @@ _sr_body() {
   # when the subshell exits, after this function returned and its locals died.
   ev=$(jq -nc --arg id "$id" --argjson ts "$now" --arg lv "$level" --arg lane "$lane" \
     --arg box "$box" --arg sha "$sha" --arg msg "${msg:0:1000}" --arg proj "$proj" \
-    --arg reason "$reason" --argjson extra "$extra" '
+    --arg reason "$reason" --argjson extra "$extra" --argjson xt "$xt" '
     {event_id: $id, timestamp: $ts, level: $lv, platform: "other", logger: $lane,
      server_name: $box, message: {formatted: $msg},
      fingerprint: [$lane, $proj, $reason],
-     tags: {lane: $lane, project: $proj, box: $box, harness_sha: $sha, reason: $reason},
+     tags: ($xt + {lane: $lane, project: $proj, box: $box, harness_sha: $sha, reason: $reason}),
      extra: $extra}
     + (if $sha == "unknown" then {} else {release: $sha} end)') || { rm -f "$envf" "$resp"; return 0; }
   {

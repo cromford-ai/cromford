@@ -36,7 +36,11 @@ import { existsSync, readdirSync, readFileSync } from 'node:fs';
 // TEST-CHANGE (Lane E): CHAIN's data moved into test/route-table.d/; every
 // assertion below compares against the same list, entry for entry.
 const FRAG_DIR = new URL('./route-table.d/', import.meta.url);
-const FRAG_RE = /^(\d{3})-([a-z0-9-]+)\.txt$/;
+// TEST-CHANGE (BH-5788): a fragment may also be <ticket-key>-<family>.txt.
+// The regexp is route-families.js's FRAG_RE: group 2 or group 4 is the family,
+// and only a numbered fragment (group 1) has an order number.
+const FRAG_RE = /^(?:(\d{3})-([a-z0-9-]+)|([a-z]+-\d+(?:[.-]\d+)?)-([a-z][a-z0-9-]*))\.txt$/;
+const familyOf = (f) => { const m = f.match(FRAG_RE); return m[2] ?? m[4]; };
 const fragFiles = () => (existsSync(FRAG_DIR) ? readdirSync(FRAG_DIR) : []).sort();
 const fragLines = (f) => readFileSync(new URL(f, FRAG_DIR), 'utf8')
   .split('\n').filter((l) => l.trim() !== '' && !l.startsWith('#'));
@@ -70,12 +74,12 @@ test('every entry is [method, matcher, handler] and every handler is a function'
 // no two share an order number, and each one is exactly the routes its family
 // module exports, in order, so a signature filed under the wrong family is
 // named here rather than only as a shifted index in the comparison above.
-test('route-table.d: every file is an <NNN>-<family>.txt fragment with a unique number', () => {
+test('route-table.d: every file is an <NNN>-<family>.txt or <ticket-key>-<family>.txt fragment with a unique number', () => {
   const files = fragFiles();
   assert.ok(files.length > 0, 'test/route-table.d holds no fragments');
   const bad = files.filter((f) => !FRAG_RE.test(f));
-  assert.deepEqual(bad, [], 'not a <NNN>-<family>.txt fragment, so never read');
-  const nums = files.map((f) => f.slice(0, 3));
+  assert.deepEqual(bad, [], 'not a <NNN>-<family>.txt or <ticket-key>-<family>.txt fragment, so never read');
+  const nums = files.map((f) => f.match(FRAG_RE)[1]).filter(Boolean);
   assert.deepEqual(nums.filter((n, i) => nums.indexOf(n) !== i), [], 'two fragments share an order number');
 });
 
@@ -83,7 +87,7 @@ test('route-table.d: each fragment is exactly its family module\'s routes, in or
   const files = fragFiles().filter((f) => FRAG_RE.test(f));
   assert.ok(files.length > 0, 'test/route-table.d holds no fragments');
   for (const f of files) {
-    const family = f.match(FRAG_RE)[2];
+    const family = familyOf(f);
     const mod = await import(new URL(`../src/routes/${family}.js`, import.meta.url)).catch(() => null);
     assert.ok(mod && Array.isArray(mod.routes), `${f}: src/routes/${family}.js does not export routes`);
     assert.deepEqual(mod.routes.map(sigOf), fragLines(f), `${f} disagrees with src/routes/${family}.js`);

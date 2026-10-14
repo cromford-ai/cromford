@@ -30,7 +30,7 @@ LINT="$DIR/tests/model-literal-lint.sh"
 # ── 1. this repo is at 0 ─────────────────────────────────────────────────────
 OUT=$(bash "$LINT" "$DIR" 2>&1); RC=$?
 [ "$RC" = 0 ] && ok || bad "1 the lint over the repo must exit 0, got $RC: $(printf '%s\n' "$OUT" | tail -5)"
-printf '%s\n' "$OUT" | grep -qF 'model-literal-lint: 0 model-id literal line(s)' \
+grep -qF 'model-literal-lint: 0 model-id literal line(s)' <<<"$OUT" \
   && ok || bad "1 the lint must report 0 literal lines: $(printf '%s\n' "$OUT" | tail -3)"
 
 # ── scratch tree: the two vocabulary files plus whatever a case plants ──────
@@ -48,10 +48,10 @@ printf '#!/bin/bash\n# nothing here\nclaude -p --model claude-opus-5-5 "hi"\n' >
 commit_tree "$TR"
 OUT=$(bash "$LINT" "$TR" 2>&1); RC=$?
 [ "$RC" = 1 ] && ok || bad "2 a planted literal must fail the lint by default (rc 1), got $RC"
-printf '%s\n' "$OUT" | grep -q "bin/x.sh:3:" && ok || bad "2 the failure must name bin/x.sh:3: $OUT"
+grep -q "bin/x.sh:3:" <<<"$OUT" && ok || bad "2 the failure must name bin/x.sh:3: $OUT"
 OUT=$(bash "$LINT" --warn "$TR" 2>&1); RC=$?
 [ "$RC" = 0 ] && ok || bad "2 --warn must list and exit 0, got $RC"
-printf '%s\n' "$OUT" | grep -q "bin/x.sh:3:" && ok || bad "2 --warn must still list bin/x.sh:3: $OUT"
+grep -q "bin/x.sh:3:" <<<"$OUT" && ok || bad "2 --warn must still list bin/x.sh:3: $OUT"
 bash "$LINT" --strict "$TR" >/dev/null 2>&1; RC=$?
 [ "$RC" = 1 ] && ok || bad "2 --strict stays an accepted alias for the default, got $RC"
 # A clean tree is green with no flag at all.
@@ -97,7 +97,7 @@ for f in sorted(glob.glob(sys.argv[1] + "/*.json")):
 print(n); print("\n".join(bad))
 PY
 )
-[ "$(printf '%s\n' "$KNOBS" | head -1)" -gt 0 ] 2>/dev/null && ok || bad "5 found no *_MODEL knobs in catalog/lanes.d — the walk read nothing"
+[ "$(head -1 <<<"$KNOBS")" -gt 0 ] 2>/dev/null && ok || bad "5 found no *_MODEL knobs in catalog/lanes.d — the walk read nothing"
 [ -z "$(printf '%s\n' "$KNOBS" | sed 1d | grep .)" ] && ok || bad "5 *_MODEL knobs with a model default: $(printf '%s\n' "$KNOBS" | sed 1d)"
 
 # ── 6. the bootstrap smoke block, as shipped ────────────────────────────────
@@ -152,7 +152,7 @@ grep -qx 'GET /api/model-routes/bootstrap.smoke' "$S/req.log" \
 for ans in none down; do
   run_smoke "$ans"
   [ "$RC" = 1 ] && ok || bad "6 ($ans) no route must be FATAL rc 1, got $RC: $OUT"
-  printf '%s\n' "$OUT" | grep -q 'no model route for bootstrap.smoke' \
+  grep -q 'no model route for bootstrap.smoke' <<<"$OUT" \
     && ok || bad "6 ($ans) the FATAL must name bootstrap.smoke: $OUT"
   [ ! -s "$S/claude.args" ] && ok || bad "6 ($ans) agent-call must never run without a routed model: $(cat "$S/claude.args")"
   grep -q SMOKE_DONE <<<"$OUT" && bad "6 ($ans) the block must stop the bootstrap" || ok

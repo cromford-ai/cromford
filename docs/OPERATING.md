@@ -8,7 +8,8 @@ with its trade-off.
 
 Settings rows are read and written with `bin/jobs-client.sh setting-get <key>`
 and `setting-set <key> <value>`. Lane knobs are declared, with their defaults
-and ranges, in `catalog/lanes.d/<lane>.json`. A code constant is only ever the
+and ranges, in `catalog/lanes.d/<lane>.json`. A NEW knob on an existing lane goes
+in its own file, `catalog/lanes.d/<lane>.knobs.d/<ENV>.json` (BH-4987). A code constant is only ever the
 fallback for a key with no row, and it always equals the seeded default.
 One exception: `LEAD_REVIEW_WORKER_MEM_MB` is 700 in the registry (required,
 so it is exported with no row) and 2048 in `bin/lib/review-pool.sh`. The code

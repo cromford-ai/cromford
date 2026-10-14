@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import worker from '../src/index.js';
+import { jobsSchemaSql } from './lib/jobs-schema.js';
 
 // BH-2010 (BH-1627 follow-up 1): a routing row carries an AUDIT TRAIL, the way
 // model_routes does. Every PUT /api/routing that changes a row appends one
@@ -12,7 +13,7 @@ import worker from '../src/index.js';
 // worker's REAL fetch handler over node:sqlite built from schema.sql.
 
 const SECRET = 'test-secret';
-const SCHEMA = readFileSync(fileURLToPath(new URL('../schema.sql', import.meta.url)), 'utf8');
+const SCHEMA = jobsSchemaSql();
 
 let DatabaseSync = null;
 try { ({ DatabaseSync } = await import('node:sqlite')); } catch { DatabaseSync = null; }

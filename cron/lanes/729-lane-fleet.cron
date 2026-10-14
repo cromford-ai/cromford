@@ -1,0 +1,12 @@
+# @hub-lanes
+
+# ── LANE FLEET (BH-6126, BH-6047 part 3 of 5) ───────────────────────────────
+# Every minute the tick reads GET /api/lane-runs/stats, the Fly
+# machine list of the app lane-run and GET /api/lane-fleet/machines, then
+# starts at most one machine (queue wait over lane_fleet.scale_up_wait_s, or
+# below lane_fleet.warm_floor) or stops at most one idle machine above the
+# floor, and posts per-minute cost rows. Knobs are lane_fleet.* settings rows.
+# flock -n on locks/lane-fleet.lock dedupes. One line per tick in
+# logs/lane-fleet.log. Off: flags/lane-off-lane-fleet
+# (bin/harness-ctl.sh off lane-fleet).
+* * * * * /root/harness/bin/hub-lease.sh check && /root/harness/bin/lane-fleet.sh tick >> /root/harness/logs/lane-fleet-cron.log 2>&1

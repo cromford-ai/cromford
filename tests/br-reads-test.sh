@@ -37,6 +37,11 @@ cp "$DIR/bin/blocked-resolver.sh" "$DIR/bin/fly-pool.sh" "$DIR/bin/merge-sweep.s
    "$DIR/bin/box-for.sh" "$H/bin/"
 fx_br_harness "$DIR" "$T" || exit 1
 [ -d "$DIR/bin/lib/br" ] || exit 1   # impact: this suite runs when bin/lib/br/ changes
+# BH-6461: the key family moved to bin/lib/br/keys.sh; the corpus is the driver
+# plus bin/lib/br/*.sh (tests/lib/br-corpus.sh), so the extraction finds it there.
+# shellcheck source=tests/lib/br-corpus.sh
+. "$DIR/tests/lib/br-corpus.sh" || exit 1
+br_corpus "$H" "$T/br-corpus.sh" || exit 1
 
 # ============================================================================
 # 6b. THE TICKET KEY IS DERIVED, NOT GIVEN UP ON.
@@ -58,7 +63,7 @@ fx_br_harness "$DIR" "$T" || exit 1
 } > "$T/keys.sh"
 for fn in br_key_shape br_key_from_branch br_key_from_title br_key_from_dir \
           br_ticket_key br_slug_of_url br_pr_field br_derive_ticket_key; do
-  awk -v F="^$fn\\(\\)" '$0~F{f=1} f{print} f&&/^}$/{exit}' "$H/bin/blocked-resolver.sh"
+  awk -v F="^$fn\\(\\)" '$0~F{f=1} f{print} f&&/^}$/{exit}' "$T/br-corpus.sh"
 done >> "$T/keys.sh"
 [ "$(grep -c '^br_.*() {' "$T/keys.sh")" = 8 ] && ok || bad "could not extract the eight key-derivation functions"
 K() { HARNESS="$H" bash -c '. "$0"; "$@" || echo NONE' "$T/keys.sh" "$@"; }
@@ -79,7 +84,7 @@ done
 
 # --- the PR title -------------------------------------------------------------
 for pair in "TK-775: report nav anchors:TK-775" "[TK-1617] discount toggle:TK-1617" \
-            "(TK-88) the thing:TK-88" "AIO-472 something:AIO-472"; do
+            "(TK-88) the thing:TK-88" "TK-472 something:TK-472"; do
   got=$(K br_key_from_title "${pair%:*}")
   [ "$got" = "${pair##*:}" ] && ok || bad "title '${pair%:*}' must derive ${pair##*:}, got '$got'"
 done

@@ -80,7 +80,7 @@ POLL_BLK=$(awk '/# Telegram group attribution \(2026-08-31\)/,/^        ATTRIB=/
   | sed "s#/root/harness/state/telegram-topics.json#$TOPICS#g")
 POLL_BLK="$POLL_BLK
 fi"
-printf '%s' "$POLL_BLK" | grep -q 'TG_THREAD=\$(jq' && ok || bad "could not lift the chat-handler block from bin/poll-commands.sh"
+grep -q 'TG_THREAD=\$(jq' <<<"$POLL_BLK" && ok || bad "could not lift the chat-handler block from bin/poll-commands.sh"
 
 ENVV=(HARNESS="$T" HARNESS_SECRET=test-secret JOBS_URL=https://jobs.test JOBS_BOX=testbox
       JOBS_RETRIES=0 REQ_LOG="$T/req.log")

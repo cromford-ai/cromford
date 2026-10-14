@@ -3,7 +3,7 @@
 # (BH-3509, BH-3477.0): the stub entry point, its catalog, the snapshot lib
 # stubs, the date-bomb lint stub and the three fly-pool knobs.
 #
-#   R0a. --list prints exactly the 19 catalog ids.
+#   R0a. --list prints exactly the 23 catalog ids.
 #   R0b. every catalog row has 6 TAB fields with valid shape/kind/needs.
 #   R0c. every suite/cmd argv script path exists in the repo.
 #   C1.  bad args -> rc 2; a valid run answers the pack contract.
@@ -41,8 +41,11 @@ run() {
 # step runs the CI fast lints) and marker-reason (a marker carries its reason).
 # TEST-CHANGE (BH-5789): and fixture-hygiene (the delta lint for test fixtures).
 # TEST-CHANGE (BH-4582): and tier-wording (no "tier-2 waits for a human" wording).
+# TEST-CHANGE (BH-4987): and lanes-knob-delta (a new knob is its own fragment file).
+# TEST-CHANGE (BH-5788): and schema-fragment, schema-fragment-name and
+# discipline-dupes (three builtins).
 # The list still pins every id exactly.
-WANT="agent-push alert-writers changelog-headers checks-tree date-bomb determinism fast-lints-data fixture-hygiene grep-q jobs-client-modules lib-root marker-reason model-id-delta model-literal route-fragments scratch-closure switch test-sources tier-wording"
+WANT="agent-push alert-writers changelog-headers checks-tree date-bomb determinism discipline-dupes fast-lints-data fixture-hygiene grep-q jobs-client-modules lanes-knob-delta lib-root marker-reason model-id-delta model-literal route-fragments schema-fragment schema-fragment-name scratch-closure switch test-sources tier-wording"
 run bash "$RP" --list
 LIST_IDS=$(printf '%s\n' "$OUT" | awk 'NF {print $1}' | sort | tr '\n' ' ' | sed 's/ $//')
 CAT_IDS=$( [ -r "$CAT" ] && grep -v '^#' "$CAT" | awk -F'\t' 'NF {print $1}' | sort | tr '\n' ' ' | sed 's/ $//')
@@ -53,7 +56,8 @@ if [ -n "$CAT_IDS" ] && [ "$CAT_IDS" = "$WANT" ]; then ok; else bad "R0a catalog
 # --- R0b ------------------------------------------------------------------
 if [ -r "$CAT" ]; then
   rows=$(grep -v '^#' "$CAT" | grep -c .)
-  [ "$rows" -eq 19 ] && ok || bad "R0b catalog has $rows rows (want 19)"
+  # TEST-CHANGE (BH-5788): three new rows, 20 -> 23.
+  [ "$rows" -eq 23 ] && ok || bad "R0b catalog has $rows rows (want 23)"
   badnf=$(grep -v '^#' "$CAT" | grep . | awk -F'\t' 'NF!=6 {print $1}')
   [ -z "$badnf" ] && ok || bad "R0b rows without exactly 6 TAB fields: $badnf"
   badval=$(grep -v '^#' "$CAT" | grep . | awk -F'\t' '
@@ -65,6 +69,9 @@ if [ -r "$CAT" ]; then
   [ "$(field route-fragments 5)" = node ] && ok || bad "R0b route-fragments needs '$(field route-fragments 5)' (want node)"
   [ "$(field grep-q 3)|$(field grep-q 4)" = "builtin|rp_grep_q" ] && ok || bad "R0b grep-q is not builtin rp_grep_q"
   [ "$(field model-id-delta 3)|$(field model-id-delta 4)" = "builtin|rp_model_id_delta" ] && ok || bad "R0b model-id-delta is not builtin rp_model_id_delta"
+  [ "$(field schema-fragment 2)|$(field schema-fragment 3)|$(field schema-fragment 4)" = "delta|builtin|rp_schema_fragment" ] && ok || bad "R0b schema-fragment is not delta builtin rp_schema_fragment"
+  [ "$(field schema-fragment-name 2)|$(field schema-fragment-name 3)|$(field schema-fragment-name 4)" = "delta|builtin|rp_schema_fragment_name" ] && ok || bad "R0b schema-fragment-name is not delta builtin rp_schema_fragment_name"
+  [ "$(field discipline-dupes 2)|$(field discipline-dupes 3)|$(field discipline-dupes 4)" = "tree|builtin|rp_discipline_dupes" ] && ok || bad "R0b discipline-dupes is not tree builtin rp_discipline_dupes"
 else
   bad "R0b no catalog at $CAT"
 fi

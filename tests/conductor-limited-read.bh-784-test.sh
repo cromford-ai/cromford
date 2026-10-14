@@ -650,6 +650,7 @@ rm -f "$T/fakebin/sleep" "$T/fakebin/git" "$T/head403" "$T/pulls41-seen" \
 # ============================================================================
 [ "$MUT" = 1 ] || {
 cp "$DIR/bin/merge-sweep.sh" "$T/h/bin/"
+mkdir -p "$T/h/bin/lib" && cp -rL "$DIR/bin/lib/ms" "$T/h/bin/lib/" || exit 1   # BH-5242: the sweep loads bin/lib/ms/
 SLOG="$T/h/logs/merge-sweep.log"
 SREC="$T/h/builds/pool-issuer-IS-9-202609180003"
 mkdir -p "$SREC"
@@ -957,7 +958,7 @@ while IFS= read -r f; do
       ;;
     esac
     code=$(printf '%s\n' "$line" | sed 's/[[:space:]]#.*$//; s/^[[:space:]]*#.*$//')
-    printf '%s\n' "$code" | grep -Eq '(^|[[:space:];|&(]|\$\()[[:space:]]*gh[[:space:]]+(pr|issue|run)[[:space:]]' \
+    grep -Eq '(^|[[:space:];|&(]|\$\()[[:space:]]*gh[[:space:]]+(pr|issue|run)[[:space:]]' <<<"$code" \
       && { echo "$f:$n"; hits=$((hits+1)); }
   done < "$f"
 done < <(find "$root" -type f -name '*.sh' | sort)

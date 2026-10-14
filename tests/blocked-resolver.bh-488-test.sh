@@ -46,6 +46,11 @@ cp "$DIR/bin/blocked-resolver.sh" "$DIR/bin/fleet-conf.sh" "$DIR/bin/project-of.
 # shellcheck source=tests/lib/br-modules.sh
 . "$DIR/tests/lib/br-modules.sh" || exit 1
 br_modules_install "$DIR" "$H" || exit 1
+# BH-6461: the key family moved to bin/lib/br/keys.sh; the corpus is the driver
+# plus bin/lib/br/*.sh (tests/lib/br-corpus.sh), so the extraction finds it there.
+# shellcheck source=tests/lib/br-corpus.sh
+. "$DIR/tests/lib/br-corpus.sh" || exit 1
+br_corpus "$H" "$T/br-corpus.sh" || exit 1
 cp "$DIR/bin/lib/gh-pr-list.sh" "$DIR/bin/lib/merge-conductor-lib.sh" \
    "$DIR/bin/lib/rebuild-ledger.sh" "$H/bin/lib/"
 # bin/blocked-resolver.sh now REQUIRES the REST contract (#783): without it the
@@ -172,7 +177,7 @@ JOBS_OK
 # ============================================================================
 for fn in br_key_shape br_key_from_branch br_key_from_title br_key_from_dir \
           br_ticket_key br_key_source_phrase; do
-  awk -v F="^$fn\\(\\)" '$0~F{f=1} f{print} f&&/^}$/{exit}' "$H/bin/blocked-resolver.sh"
+  awk -v F="^$fn\\(\\)" '$0~F{f=1} f{print} f&&/^}$/{exit}' "$T/br-corpus.sh"
 done > "$T/keys.sh"
 [ "$(grep -c '^br_.*() {' "$T/keys.sh")" = 6 ] && ok \
   || bad "could not extract the key-resolution family (got $(grep -c '^br_.*() {' "$T/keys.sh") of 6)"

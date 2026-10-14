@@ -324,7 +324,7 @@ touch "$T/h/flags/pr-state-rows"
 drv() { PATH="$T/fakebin:$PATH" HARNESS="$T/h" HARNESS_SECRET=x JOBS_URL=https://jobs.invalid JOBS_RETRIES=0 \
   bash -c '. "$HARNESS/bin/jobs-client.sh" >/dev/null 2>&1 || exit 90; pr_attempt_list "$@"' _ "$@"; }
 OUT=$(drv example-org/demo-os 91 headlag); RC=$?
-[ "$RC" = 0 ] && printf '%s\n' "$OUT" | grep -qx "$NEW91 reopened" \
+[ "$RC" = 0 ] && grep -qx "$NEW91 reopened" <<<"$OUT" \
   && ok || bad "I: pr_attempt_list must print every sha of the kind at rc 0 (rc=$RC out=$OUT)"
 OUT=$(drv example-org/demo-os 91 no-such-kind); RC=$?
 [ "$RC" = 2 ] && [ -z "$OUT" ] && ok || bad "I: no rows must be rc 2 and silent (rc=$RC out=$OUT)"

@@ -117,7 +117,7 @@ check "D3 fleet footer(): pr_merges=0 sync_merges=1 merge_tree_errors=0" \
   '[ "$(ffoot pr_merges)" = 0 ] && [ "$(ffoot sync_merges)" = 1 ] && [ "$(ffoot merge_tree_errors)" = 0 ]'
 check "D3 new keys are at the end of the footer" 'printf "%s\n" "$OUT" | tail -n 1 | grep -Eq " merge_tree_errors=0 branches_mergify_skipped=2 remote_check=off branches_stale_skipped=0$"'
 run -C "$T/r1" --ref main --now "$NOW" --markdown
-check "D3 markdown names the mergify skip" 'printf "%s\n" "$OUT" | grep -q "Skipped 2 mergify/ refs"'
+check "D3 markdown names the mergify skip" 'grep -q "Skipped 2 mergify/ refs" <<<"$OUT"'
 # An explicit mergify prefix still scans its refs (name loses the prefix).
 run -C "$T/r1" --ref main --now "$NOW" --branches refs/remotes/origin/mergify/
 check "D3 explicit mergify prefix scans 2" '[ "$(foot branches_scanned)" = 2 ] && [ "$(foot branches_mergify_skipped)" = 0 ]'
@@ -157,7 +157,7 @@ check "D4 cold.txt = feat/x,live (row: $(row cold.txt))" '[ "$(field cold.txt 4)
 check "D4 remote_check=on branches_stale_skipped=1" '[ "$(foot remote_check)" = on ] && [ "$(foot branches_stale_skipped)" = 1 ]'
 check "D4 branches_scanned=2" '[ "$(foot branches_scanned)" = 2 ]'
 run -C "$T/r4" --now "$NOW" --markdown
-check "D4 markdown names the stale skip" 'printf "%s\n" "$OUT" | grep -q "Skipped 1 local refs that origin no longer has"'
+check "D4 markdown names the stale skip" 'grep -q "Skipped 1 local refs that origin no longer has" <<<"$OUT"'
 run -C "$T/r4" --now "$NOW" --no-remote-check
 check "D4 --no-remote-check scans gone" '[ "$(field cold.txt 4)" = "feat/x,gone,live" ] && [ "$(foot remote_check)" = off ] && [ "$(foot branches_stale_skipped)" = 0 ]'
 run -C "$T/r4" --now "$NOW" --branches refs/heads/

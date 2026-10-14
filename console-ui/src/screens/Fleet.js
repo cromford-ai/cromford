@@ -23,7 +23,8 @@ import {
 import { useConfirm } from '../ui/Modal.js';
 import { FleetPauseForm, PauseReasonForm } from '../ui/PauseForms.js';
 import { FactoryStopBanner } from '../ui/FactoryStopBanner.js';
-import { shapeProjectFlags, wipInputError, cellText, flagSortValue } from '../lib/flagrows.js';
+import { shapeFleetCells, wipInputError, cellText, flagSortValue } from '../lib/flagrows.js';
+import { formatModeValue, allowInputError, parseAllowInput, modeText, modeRank } from '../lib/dispatch-mode.js';
 
 // Same map as Now.js, so LAST RESULT reads in the colours /now uses.
 const TONE_CLASS = { green: 'tag tag--green', dead: 'tag tag--dead', warn: 'tag tag--warn', muted: 'tag tag--idle' };
@@ -72,20 +73,43 @@ export function FleetScreen() {
   const flyErrors = (machines.data && machines.data.fly_errors) || [];
   const pauseView = shapePauses(pausesApi.data, Date.now());
   const pauses = pauseView.rows;
-  const flagCells = shapeProjectFlags(flagsApi.error ? null : flagsApi.data,
+  const flagCells = shapeFleetCells(flagsApi.error ? null : flagsApi.data,
     routingApi.error ? null : routingApi.data, rows.map((r) => r.project));
 
   // One flag write at a time (BH-5643). The latch covers the dialog and the
   // PUT, so a double click sends one request. The cell never changes on the
   // click: it shows only what the re-read after the PUT says.
+  // It resolves true when the write landed, so a caller with a second write
+  // (SET MODE) stops at the first refusal.
   const writeFlag = useCallback(async (project, name, active, value, reason, done) => {
     setFlagBusy(project);
     setEndMsg(null);
     try {
       await api.setFlag(name, active, value, reason);
       setEndMsg({ ok: true, text: `${name} ${done}. Re-read shows the row.` });
+      return true;
     } catch (e) {
       setEndMsg({ ok: false, text: `${name} refused — ${e.message}` });
+      return false;
+    } finally {
+      flagLatch.current = false;
+      setFlagBusy(null);
+      flagsApi.reload();
+    }
+  }, [flagsApi]);
+
+  // The soft CLEAR of a fleet-scope row, the /flags screen's DELETE. The
+  // coord proxy refuses a DELETE with no reason.
+  const clearFlag = useCallback(async (project, name, reason) => {
+    setFlagBusy(project);
+    setEndMsg(null);
+    try {
+      await api.clearCoordFlag(new URLSearchParams({ name, scope: 'fleet', reason }).toString());
+      setEndMsg({ ok: true, text: `${name} cleared. Re-read shows the row.` });
+      return true;
+    } catch (e) {
+      setEndMsg({ ok: false, text: `${name} refused — ${e.message}` });
+      return false;
     } finally {
       flagLatch.current = false;
       setFlagBusy(null);
@@ -114,6 +138,55 @@ export function FleetScreen() {
     if (!ok || !form.reason.trim()) return;
     await writeFlag(project, `paused-${project}`, target, null, form.reason.trim(), target ? 'set on' : 'set off');
   }, [confirm, writeFlag]);
+
+  // SET MODE (BH-6350): normal, hotfix-only with an allow-list, or paused,
+  // with a required reason. paused is the paused-<p> row; hotfix-only is the
+  // dispatch-mode-<p> row (scope fleet). Each write is one PUT or DELETE
+  // through the coord proxy, which the worker records as one config_changes
+  // row. The dispatch row is written before the pause is lifted, so the
+  // project never reads normal on the way to hotfix-only.
+  const setMode = useCallback(async (project, cell) => {
+    const cur = cell && cell.mode;
+    if (flagLatch.current || !cur) return;
+    flagLatch.current = true;
+    setFlagBusy(project);
+    const form = { mode: cur.mode, allow: (cur.allow || []).join(', '), reason: '' };
+    let ok = false;
+    try {
+      ok = await confirm({
+        title: `SET MODE ${project}`, confirmLabel: 'SET', confirmBlocked: true,
+        body: ({ setBlocked }) => html`<${DispatchModeForm} project=${project} value=${form} onBlocked=${setBlocked}/>`
+      });
+    } finally {
+      if (!ok || dispatchFormError(form)) { flagLatch.current = false; setFlagBusy(null); }
+    }
+    if (!ok || dispatchFormError(form)) return;
+    const reason = form.reason.trim();
+    const dispatchName = `dispatch-mode-${project}`;
+    const pausedName = `paused-${project}`;
+    const steps = [];
+    if (form.mode === 'paused') {
+      steps.push(() => writeFlag(project, pausedName, true, null, reason, 'set on'));
+    } else {
+      if (form.mode === 'hotfix-only') {
+        const value = formatModeValue(parseAllowInput(form.allow));
+        steps.push(() => writeFlag(project, dispatchName, true, value, reason, `set to ${value}`));
+      } else if (cur.dispatch_on) {
+        steps.push(() => clearFlag(project, dispatchName, reason));
+      }
+      if (cell.paused === true) steps.push(() => writeFlag(project, pausedName, false, null, reason, 'set off'));
+    }
+    if (!steps.length) {
+      flagLatch.current = false;
+      setFlagBusy(null);
+      setEndMsg({ ok: true, text: `${project} is already ${form.mode}. Nothing written.` });
+      return;
+    }
+    for (const step of steps) {
+      flagLatch.current = true;
+      if (!(await step())) break;
+    }
+  }, [confirm, writeFlag, clearFlag]);
 
   // SAVE one project's wip limit. A bad number is refused here, with no request.
   const saveWip = useCallback(async (project, text) => {
@@ -267,7 +340,8 @@ export function FleetScreen() {
           : projects.error && !projects.data
             ? html`<${ErrorBox} error=${projects.error} onRetry=${projects.reload}/>`
             : html`<${ProjectsTable} rows=${rows} recentRuns=${snap.recent_runs || {}} pauses=${pauses}
-                flagCells=${flagCells} onPause=${togglePause} onSaveWip=${saveWip} busy=${flagBusy} />`}
+                flagCells=${flagCells} onPause=${togglePause} onSaveWip=${saveWip} onSetMode=${setMode}
+                busy=${flagBusy} />`}
         <${Legend} items=${FLEET_FLAGS_LEGEND}/>
         <div class="footnote">
           <${Clock}/>
@@ -435,10 +509,12 @@ function ExternalTile({ lane, snapshotAgeMin }) {
 // BoxTile and FlyTile are: the QUEUE cell's held/failed tail is a claim about
 // what an operator SEES, and the only honest way to check it is to render the
 // real table and read the HTML back.
-export function ProjectsTable({ rows, recentRuns, pauses = [], flagCells = null, onPause = null, onSaveWip = null, busy = null }) {
+export function ProjectsTable({
+  rows, recentRuns, pauses = [], flagCells = null, onPause = null, onSaveWip = null, onSetMode = null, busy = null
+}) {
   // BH-5643: with no flagCells (a caller that reads no flags) every flag cell
   // is null, which renders "—" and offers no button.
-  const cellFor = (r) => (flagCells && flagCells[r.project]) || { paused: null, wip: null, route: null };
+  const cellFor = (r) => (flagCells && flagCells[r.project]) || { paused: null, wip: null, route: null, mode: null };
   const columns = [
     {
       key: 'project', label: 'PROJECT', sort: (r) => r.project,
@@ -523,6 +599,10 @@ export function ProjectsTable({ rows, recentRuns, pauses = [], flagCells = null,
       }
     },
     {
+      key: 'mode', label: 'MODE', sort: (r) => { const m = cellFor(r).mode; return m ? modeRank(m.mode) : null; },
+      cell: (r) => html`<${ModeCell} row=${r} cell=${cellFor(r)} onSet=${onSetMode} busy=${busy}/>`
+    },
+    {
       key: 'wip', label: 'WIP', sort: (r) => flagSortValue('wip', cellFor(r)), align: 'right',
       cell: (r) => html`<${WipCell} project=${r.project} wip=${cellFor(r).wip} onSave=${onSaveWip} busy=${busy}/>`
     },
@@ -577,6 +657,82 @@ function WipCell({ project, wip, onSave, busy }) {
         <button type="submit" class="btn btn--sm" disabled=${busy !== null}>SAVE</button>
       </form>` : null}
     </span>`;
+}
+
+const MODE_TAG = { paused: 'tag tag--bad', 'hotfix-only': 'tag tag--warn', normal: 'tag tag--idle' };
+const REPO_SLUG = /^[\w.-]+\/[\w.-]+$/;
+
+// The MODE cell (BH-6350): the mode as read, its allow-list (issue links when
+// the row carries a repo slug), SET, and a link to the /flags row and its
+// audit trail. The title holds the allow-list and when the row was set.
+function ModeCell({ row, cell, onSet, busy }) {
+  const m = cell.mode;
+  const allow = (m && m.allow) || [];
+  const title = !m ? 'flag state not readable'
+    : [m.mode === 'normal' ? `dispatch-mode-${row.project} not set` : null,
+      allow.length ? `allow-list: ${allow.join(', ')}` : null,
+      m.set_at ? `set ${m.set_at}` : null].filter(Boolean).join(' · ') || m.mode;
+  const repo = typeof row.repo === 'string' && REPO_SLUG.test(row.repo) ? row.repo : null;
+  return html`
+    <span style="display:inline-flex;gap:6px;align-items:center;flex-wrap:wrap">
+      <span class=${m ? MODE_TAG[m.mode] || 'tag' : 'na'} title=${title}>${modeText(m)}</span>
+      ${allow.length ? html`<span class="na" style="white-space:nowrap">${allow.map((n, i) => html`${i ? ', ' : ''}${repo
+        ? html`<a key=${n} href=${`https://github.com/${repo}/issues/${n}`} target="_blank" rel="noopener">#${n}</a>`
+        : html`<span key=${n}>#${n}</span>`}`)}</span>` : null}
+      ${onSet && m ? html`<button type="button" class="btn btn--sm"
+        disabled=${busy !== null} onClick=${() => onSet(row.project, cell)}>SET</button>` : null}
+      <${Link} to="/flags" title=${`dispatch-mode-${row.project} and paused-${row.project} on /flags`}>flags<//>
+    </span>`;
+}
+
+// What still stops SET MODE: a blank reason, or a bad allow-list for
+// hotfix-only. null when the form may be sent.
+export function dispatchFormError(form) {
+  if (!form.reason || !form.reason.trim()) return 'A reason is required.';
+  if (form.mode === 'hotfix-only') return allowInputError(form.allow);
+  return null;
+}
+
+const DISPATCH_MODES = [
+  { mode: 'normal', text: 'every ready ticket builds' },
+  { mode: 'hotfix-only', text: 'only hotfix-labelled and allow-listed tickets start a build' },
+  { mode: 'paused', text: 'the project pause (paused-<p>): triage and new launches stop' }
+];
+
+// SET MODE's dialog body, on PauseReasonForm's pattern: it writes through to
+// `value` and tells the dialog whether confirm may be pressed.
+export function DispatchModeForm({ project, value, onBlocked }) {
+  const [f, setF] = useState({ ...value });
+  const set = (k, v) => {
+    value[k] = v;
+    setF({ ...value });
+    if (onBlocked) onBlocked(dispatchFormError(value) !== null);
+  };
+  const allowErr = f.mode === 'hotfix-only' ? allowInputError(f.allow) : null;
+  return html`
+    <div style="display:flex;flex-direction:column;gap:10px">
+      <span>Set the dispatch mode of <b>${project}</b>. Boxes pick up the rows through flag sync.</span>
+      <div role="radiogroup" aria-label="mode" style="display:flex;flex-direction:column;gap:6px">
+        ${DISPATCH_MODES.map((o) => html`<label key=${o.mode} style="display:flex;gap:8px;align-items:flex-start">
+          <input type="radio" name="dispatch-mode" value=${o.mode} checked=${f.mode === o.mode}
+            onChange=${() => set('mode', o.mode)}/>
+          <span><b>${o.mode}</b> · ${o.text}</span>
+        </label>`)}
+      </div>
+      <label class="knob" style="width:100%">
+        <span class="knob__label">ALLOW-LIST (HOTFIX-ONLY)</span>
+        <input class="knob__input" style="width:100%" type="text" inputmode="numeric" aria-label="allow-list"
+          value=${f.allow} disabled=${f.mode !== 'hotfix-only'} onInput=${(e) => set('allow', e.target.value)}
+          placeholder="issue numbers, e.g. 6291, 6292" />
+      </label>
+      ${allowErr ? html`<span class="knob__note knob__note--bad" style="max-width:none" role="status">${allowErr}</span>` : null}
+      <label class="knob" style="width:100%">
+        <span class="knob__label">REASON</span>
+        <input class="knob__input" style="width:100%" type="text" aria-label="reason" value=${f.reason}
+          onInput=${(e) => set('reason', e.target.value)} placeholder="why, for the record" required aria-required="true" />
+      </label>
+      ${f.reason.trim() ? null : html`<span class="knob__note knob__note--bad" style="max-width:none" role="status">A reason is required.</span>`}
+    </div>`;
 }
 
 // The FLAGS column's sort value: an active pause row outranks the flag file,

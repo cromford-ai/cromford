@@ -91,8 +91,10 @@ else
 fi
 
 # --- wiring ------------------------------------------------------------------
-[ "$(grep -c 'routes/daily-digest.js' "$INDEX")" = 1 ] && ok || bad "index.js must import the route module once"
-[ "$(grep -c '\.\.\.dailyDigest,' "$INDEX")" = 1 ] && ok || bad "index.js must spread dailyDigest into ROUTES once"
+# TEST-CHANGE (BH-4607): a family is registered by its route-table.d fragment; index.js no longer lists gated families.
+[ "$(ls "$DIR"/worker/jobs/test/route-table.d/[0-9][0-9][0-9]-daily-digest.txt 2>/dev/null | wc -l)" = 1 ] && ok \
+  || bad "daily-digest has no route-table.d fragment (BH-4607: the fragment IS the registration)"
+grep -q 'from "./routes/daily-digest.js"' "$INDEX" && bad "index.js hand-registers daily-digest: the fragment registers it (BH-4607)" || ok
 grep -qx 'GET /api/metrics/daily-digest' "$DIR"/worker/jobs/test/route-table.d/*-daily-digest.txt 2>/dev/null \
   && ok || bad "no route-table fragment for GET /api/metrics/daily-digest"
 

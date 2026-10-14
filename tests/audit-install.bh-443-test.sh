@@ -127,20 +127,20 @@ reset
 BEFORE=$(find "$T/h" | sort)
 OUT=$(env PATH="$T/fakebin-empty:/usr/bin:/bin" "${REDIR[@]}" bash "$S" --check 2>&1); RC=$?
 [ "$RC" -eq 1 ] && ok || bad "--check with no auditctl must answer rc 1 (rc=$RC): $OUT"
-printf '%s' "$OUT" | grep -qi 'not installed' && ok || bad "--check must say the package is not installed: $OUT"
-printf '%s' "$OUT" | grep -q 'loaded harness rules: 0 (expected 4)' && ok \
+grep -qi 'not installed' <<<"$OUT" && ok || bad "--check must say the package is not installed: $OUT"
+grep -q 'loaded harness rules: 0 (expected 4)' <<<"$OUT" && ok \
   || bad "--check must print the loaded count against the expected one: $OUT"
-printf '%s' "$OUT" | grep -q 'kill switch: none' && ok || bad "--check must report the kill switches: $OUT"
+grep -q 'kill switch: none' <<<"$OUT" && ok || bad "--check must report the kill switches: $OUT"
 [ "$(find "$T/h" | sort)" = "$BEFORE" ] && ok || bad "--check must write NOTHING: $(diff <(printf '%s\n' "$BEFORE") <(find "$T/h" | sort))"
 # a kill switch does not silence --check: a silent rc 0 would read as healthy
 printf 'AUDIT_INSTALL=0\n' > "$T/h/env/global.env"
 OUT=$(env PATH="$T/fakebin-empty:/usr/bin:/bin" "${REDIR[@]}" bash "$S" --check 2>&1); RC=$?
-printf '%s' "$OUT" | grep -q 'kill switch: AUDIT_INSTALL=0' && ok || bad "--check must still answer under a kill switch: $OUT"
+grep -q 'kill switch: AUDIT_INSTALL=0' <<<"$OUT" && ok || bad "--check must still answer under a kill switch: $OUT"
 : > "$T/h/env/global.env"
 BEFORE=$(find "$T/h" | sort)
 ERR=$(env PATH="$FULLPATH" "${REDIR[@]}" bash "$S" bogus 2>&1 >/dev/null); RC=$?
 [ "$RC" -eq 2 ] && ok || bad "an unknown argument must exit 2 (rc=$RC)"
-printf '%s' "$ERR" | grep -q 'usage' && ok || bad "an unknown argument must print usage on stderr: $ERR"
+grep -q 'usage' <<<"$ERR" && ok || bad "an unknown argument must print usage on stderr: $ERR"
 [ "$(find "$T/h" | sort)" = "$BEFORE" ] && ok || bad "a usage error must write nothing"
 
 # ── 3. the kill switches stop the install path dead ─────────────────────────

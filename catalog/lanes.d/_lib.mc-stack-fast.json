@@ -1,0 +1,32 @@
+{
+  "libs": [
+    {
+      "id": "mc-stack-fast",
+      "file": "bin/lib/mc-stack-fast.sh",
+      "note": "BH-5520. The merge conductor's fast parent merge: a stacked child whose parent row is QUEUED on its reviewed head, and which is itself APPROVE on its head, green and clean on a merge_method=merge repo, is retargeted to the project base and enqueued behind the parent in the same tick. A parent that leaves the queue unmerged revokes it (dequeue, base moved back). Applied by the lib at file scope, in a subshell; the code literal after the read is the documented fallback when there is no registry.",
+      "knobs": [
+        {
+          "env": "MC_STACK_FAST",
+          "type": "int",
+          "default": 1,
+          "min": 0,
+          "max": 1,
+          "unit": "flag",
+          "zero_means": "a stacked child waits STACKED_WAIT until its parent merges (pre-BH-5520)",
+          "required": true,
+          "note": "1 lets a stacked child of a QUEUED parent retarget to the project base and enqueue behind the parent in the same tick. Marks already written are still revoked when their parent leaves the queue."
+        },
+        {
+          "env": "MC_STACK_FAST_MARK_TTL_S",
+          "type": "int",
+          "default": 604800,
+          "min": 3600,
+          "max": 2592000,
+          "unit": "seconds",
+          "required": true,
+          "note": "How long a stack-fast mark (state/merge-conductor/stack-fast/<slug>#<num>) is kept before msf_sweep drops it. Longer than any batch lifetime, so only marks whose child or parent finished long ago are dropped."
+        }
+      ]
+    }
+  ]
+}

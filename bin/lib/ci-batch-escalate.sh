@@ -14,6 +14,15 @@
 #                       deleting a row cannot un-gate the job) or a row of that
 #                       kind matches. FAILS CLOSED: an unreadable rules file or
 #                       an unknown kind answers rc 0.
+#   cbe_add_only <diff-file>
+#                       rc 0 when the `git diff -U0` output in <diff-file> (of
+#                       the rules file) only ADDS rows (BH-6371): no removed
+#                       line, at least one added row, and every added line is
+#                       blank, a # comment, or `pattern<TAB>kind<TAB>why` with
+#                       a non-empty pattern and kind escalate, spa or worker.
+#                       Prints the added kinds, one per line, sorted and
+#                       unique. Anything else is rc 1, an empty or missing
+#                       file and a header line it does not know included.
 #
 # The rules are catalog/ci-batch-escalate.tsv (see its header), or
 # CI_BATCH_ESCALATE_TSV. FAILS CLOSED: a rules file that cannot be read, or one
@@ -64,4 +73,26 @@ cbe_affects() {
     [ "$kind" = "$k" ] && _cbe_match "$p" "$pat" && return 0
   done < "$tsv"
   return 1
+}
+
+cbe_add_only() {
+  [ -s "${1:-}" ] && [ -r "$1" ] || return 1
+  local kinds
+  kinds=$(LC_ALL=C awk '
+    /^diff --git / { hunk = 0; next }
+    !hunk && (/^index / || /^--- / || /^\+\+\+ /) { next }
+    /^@@ / { hunk = 1; next }
+    !hunk { bad = 1; exit }
+    /^\\ / { next }
+    /^ / { next }
+    /^-/ { bad = 1; exit }
+    /^\+/ { l = substr($0, 2)
+            if (l ~ /^[ \t]*$/ || l ~ /^#/) next
+            n = split(l, f, "\t")
+            if (n < 3 || f[1] == "" || (f[2] != "escalate" && f[2] != "spa" && f[2] != "worker")) { bad = 1; exit }
+            rows++; print f[2]; next }
+    { bad = 1; exit }
+    END { exit((bad || rows == 0) ? 1 : 0) }
+  ' "$1") || return 1
+  printf '%s\n' "$kinds" | LC_ALL=C sort -u
 }

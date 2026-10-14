@@ -4,6 +4,7 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { DatabaseSync } from 'node:sqlite';
 import worker from '../src/index.js';
+import { jobsSchemaSql } from './lib/jobs-schema.js';
 
 // BH-3565 — a lead/human verdict from a bin/lead-verdict.sh older than the
 // lead_verdict_min_client settings row is refused 426 and nothing is written.
@@ -12,7 +13,7 @@ import worker from '../src/index.js';
 // that can. Driven against THE SQL THAT SHIPS (schema.sql), through worker.fetch.
 const SECRET = 'test-secret';
 const LEAD = 'lead-test-token';
-const SCHEMA = readFileSync(fileURLToPath(new URL('../schema.sql', import.meta.url)), 'utf8');
+const SCHEMA = jobsSchemaSql();
 
 function sqliteDB(db) {
   const bindAndRun = (sql, binds) => ({

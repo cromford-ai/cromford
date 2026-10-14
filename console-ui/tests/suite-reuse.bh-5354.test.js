@@ -107,7 +107,7 @@ test('4 an open day: its DAY button is expanded and the runs table renders, a ci
   const url = `https://github.com/${BH}/actions/runs/123/attempts/1`;
   const runs = loaded({ day: TODAY, capped: false, rows: [
     run('123-1-0', `${TODAY}T10:00:00Z`, { url }),
-    run('cromford-BH-1-gate-1', `${TODAY}T11:00:00Z`, { class: 'builder' }),
+    run('example-BH-1-gate-1', `${TODAY}T11:00:00Z`, { class: 'builder' }),
     run('124-1-0', `${TODAY}T09:00:00Z`, { url: 'https://evil.example/x' }),
   ] });
   const out = view({ openDay, runs });
@@ -116,8 +116,8 @@ test('4 an open day: its DAY button is expanded and the runs table renders, a ci
   assert.ok(out.includes(`RUNS · ${TODAY} · ${BH} · ci`));
   assert.ok(out.includes(`<a href="${url}" target="_blank" rel="noopener noreferrer"`));
   assert.ok(!out.includes('evil.example'), 'a non-GitHub url is dropped, never linked');
-  assert.ok(/<span[^>]*>cromford-BH-1-gate-1<\/span>/.test(out), 'a builder run is plain text');
-  const order = ['cromford-BH-1-gate-1', '123-1-0', '124-1-0'].map((k) => out.indexOf(`>${k}<`));
+  assert.ok(/<span[^>]*>example-BH-1-gate-1<\/span>/.test(out), 'a builder run is plain text');
+  const order = ['example-BH-1-gate-1', '123-1-0', '124-1-0'].map((k) => out.indexOf(`>${k}<`));
   assert.deepEqual([...order].sort((a, b) => a - b), order, 'runs newest first');
   // The DAY button and the run's SUITES button call the handlers the screen
   // passes. preact-render-to-string runs no handlers, so find the real tables

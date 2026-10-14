@@ -30,6 +30,11 @@ set -uo pipefail
 # this bridge answers those reads from the GraphQL list this stub describes.
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/gh-list-bridge.sh" || exit 1
 DIR=$(cd "$(dirname "$0")/.." && pwd)
+# BH-6672: this suite printed a pool box's real App token. No credential, HOME
+# or gh login from the box reaches it, even if scratch.sh ever stops unsetting.
+unset GH_TOKEN GITHUB_TOKEN
+export HOME="$T/home" GH_CONFIG_DIR="$T/gh-config"
+mkdir -p "$HOME"
 # BH-1625: the lane under test reads every verdict through bin/lib/verdict-parse.sh,
 # which this suite's scratch harness / extracted block does not carry by itself.
 # shellcheck source=tests/lib/verdict-fixture.sh
@@ -740,7 +745,7 @@ reset
 allprs
 run
 BR=$(batch_branches)
-printf '%s' "$BR" | grep -qE "^batch/$PROJ/[0-9]{8}T[0-9]{6}Z-[0-9]+-[0-9]+$" && ok \
+grep -qE "^batch/$PROJ/[0-9]{8}T[0-9]{6}Z-[0-9]+-[0-9]+$" <<<"$BR" && ok \
   || bad "the branch name must carry a per-process component, not a subshell counter (got '$BR')"
 grep -q 'BRANCH_SEQ' "$DIR/bin/batch-resolve.sh" \
   && bad "the subshell counter must be gone, not merely worked around" || ok
@@ -798,7 +803,9 @@ reset
 allprs
 touch "$T/mergify-on"
 mv "$T/fakebin/gh" "$T/fakebin/gh.real"
-printf '#!/bin/bash\nprintf "%%s\\t%%s\\n" "${GH_TOKEN:-none}" "$*" >> "%s/gh-tokens.txt"\nexec "%s/fakebin/gh.real" "$@"\n' "$T" "$T" > "$T/fakebin/gh"
+# TEST-CHANGE (BH-6672): the wrapper logs the token's first 4 characters plus
+# `*` (`ghs_*`, or `none`), never the value, so no failure message can print it.
+printf '#!/bin/bash\nt="${GH_TOKEN:-}"; [ -n "$t" ] && t="${t:0:4}*" || t=none\nprintf "%%s\\t%%s\\n" "$t" "$*" >> "%s/gh-tokens.txt"\nexec "%s/fakebin/gh.real" "$@"\n' "$T" "$T" > "$T/fakebin/gh"
 chmod +x "$T/fakebin/gh"; : > "$T/gh-tokens.txt"
 run
 grep -q $'^ghs_[^\t]*\tpr create' "$T/gh-tokens.txt" \

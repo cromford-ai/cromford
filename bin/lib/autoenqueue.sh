@@ -29,7 +29,7 @@
 #   G0 provider mergify, MC_AUTOENQUEUE on       G1 not draft, base = pbase, not
 #   train/*, not already queued, no hold label    G2 no enqueued row for this
 #   head (worker ledger, file fallback, fail closed; an unusable ledger read is
-#   retried once after 2 s, BH-5463)   G3 APPROVE bound to THIS
+#   read again after 2 s, 5 s and 10 s, BH-5463, BH-6433)   G3 APPROVE bound to THIS
 #   head, or a standing MERGE/MERGE-WITH-NOTES on it; any standing non-merge
 #   word refuses   GR (harness rows) the conductor's READY mark for this head,
 #   this tick   G4 every required check completed/success on the head, latest run (the
@@ -102,27 +102,44 @@ _ae_file_status() {
 # file); rc 2 a miss in both; rc 1 unreadable (worker down AND no file line):
 # the caller skips this tick.
 #
-# ONE BLINK IS NOT AN OUTAGE (BH-5463). On 2026-10-08 08:15:32-39Z the ledger
-# answered rc 1 for 18 READY PRs in a row and nothing was sent that tick; at
-# 08:21Z the same reads answered rc 2. A final rc 1 is read once more after 2 s
-# (_ae_noretry says when not). Each read leaves _jobs_req's answer word in
-# _ae_ledger_code_file, so the skip line can name it: a `$( )` loses JOBS_HTTP.
+# ONE BLINK IS NOT AN OUTAGE (BH-5463, BH-6433). On 2026-10-08 08:15:32-39Z the
+# ledger answered rc 1 for 18 READY PRs in a row and nothing was sent that tick;
+# at 08:21Z the same reads answered rc 2. On 2026-10-13 07:15Z one read answered
+# a 500 (`error code: 1101`) and one 2 s retry was too short. A final rc 1 is
+# read again after each wait of _ae_backoff (default 2 5 10: four reads); a
+# config fault (no-secret, no-url) is read once. Each failed read writes one
+# log line with the endpoint, the answer word and the start of the body. Each
+# read leaves _jobs_req's answer word in _ae_ledger_code_file and its body in
+# <that>.body, and the loop leaves the read count in <that>.tries: a `$( )`
+# loses JOBS_HTTP and JOBS_BODY.
+AE_LEDGER_EP='GET /api/ledger?kind=autoenqueue'
 _ae_status() {
-  local st rc fst try=0 cf
+  local st rc fst cf i=0 n w waits key
   cf=$(_ae_ledger_code_file)
-  while :; do
-    rc=1; { : > "$cf"; } 2>/dev/null
-    if command -v job_ledger_get >/dev/null 2>&1; then st=$(JOBS_STATUS_FILE="$cf" job_ledger_get "$AE_KIND" "$1@$2"); rc=$?; fi
-    [ "$rc" = 0 ] && { printf '%s' "$st"; return 0; }
+  waits=$(_ae_backoff)
+  set -- "$1" "$2" $waits
+  n=$(( $# - 1 ))
+  key="${1#https://github.com/}"; key="${key/\/pull\//#}"
+  while [ "$i" -lt "$n" ]; do
+    i=$((i + 1)); rc=1
+    { : > "$cf"; : > "$cf.body"; } 2>/dev/null
+    if command -v job_ledger_get >/dev/null 2>&1; then
+      st=$(JOBS_STATUS_FILE="$cf" JOBS_BODY_FILE="$cf.body" job_ledger_get "$AE_KIND" "$1@$2"); rc=$?
+    fi
+    [ "$rc" = 0 ] && { { echo "$i" > "$cf.tries"; } 2>/dev/null; printf '%s' "$st"; return 0; }
     # A worker miss is NOT "never sent": a PUT that failed while the file write
     # landed leaves the only record here, and the file holds nothing but our own
     # writes. So a file line answers a miss as well as an outage.
     fst=$(_ae_file_status "$1" "$2")
     [ -n "$fst" ] && { printf '%s' "$fst"; return 0; }
     [ "$rc" = 2 ] && return 2
-    [ "$try" = 0 ] && [ -z "$(_ae_noretry)" ] || return 1
-    try=1; _ae_sleep 2
+    { echo "$i" > "$cf.tries"; } 2>/dev/null
+    _ae_log "$key at ${2:0:8}: ledger read $i/$n failed — $AE_LEDGER_EP $(_ae_ledger_code) body=$(_ae_ledger_body)"
+    case "$(_ae_ledger_code)" in no-secret|no-url) return 1 ;; esac
+    [ "$i" -lt "$n" ] || break
+    w=$((i + 2)); _ae_sleep "${!w}"
   done
+  return 1
 }
 _ae_sleep() { sleep "$1"; }
 # _ae_ledger_code_file — where this tick's last ledger read left its answer word.
@@ -136,17 +153,55 @@ _ae_ledger_code() {
   case "$c" in http=2*) c="$c (no status in the answer)" ;; '') c=unknown ;; esac
   printf '%s' "$c"
 }
+# _ae_ledger_body — the last read's answer body as one line of at most 200
+# bytes (CR, LF and TAB to a space, other control bytes dropped), or `-`.
+_ae_ledger_body() {
+  local b
+  b=$(head -c 200 "$(_ae_ledger_code_file).body" 2>/dev/null | tr '\r\n\t' '   ' | tr -d '\000-\037\177')
+  printf '%s' "${b:--}"
+}
+# _ae_ledger_tries — how many reads the last _ae_status made, or `?`.
+_ae_ledger_tries() {
+  local t; t=$(head -1 "$(_ae_ledger_code_file).tries" 2>/dev/null)
+  case "$t" in ''|*[!0-9]*) t='?' ;; esac
+  printf '%s' "$t"
+}
 # _ae_noretry — why an unusable ledger read is NOT read again, or nothing. After
-# the burst alert (ae_project) a hard outage would cost every later row ~36 s.
+# the burst alert (ae_project) a hard outage would cost every later row ~17 s.
 _ae_noretry() {
   if [ "${MC_AE_LEDGER_RETRY:-1}" = 0 ]; then printf 'mc_ae_ledger_retry=0'
   elif [ "${AE_LEDGER_ALERTED:-0}" = 1 ]; then printf 'the ledger burst alert fired this tick'; fi
 }
-# _ae_ledger_why — "<code>, retried once after 2s" or "<code>, no retry: <why>".
+# _ae_backoff — the waits in seconds before each re-read, space separated:
+# nothing when _ae_noretry says so, else MC_AE_LEDGER_BACKOFF (1 to 5 integers,
+# each 0..60). Unset or empty is the default `2 5 10`; anything else invalid is
+# the default and one log line a tick.
+_ae_backoff() {
+  [ -n "$(_ae_noretry)" ] && return 0
+  local v="${MC_AE_LEDGER_BACKOFF:-}" t out="" k=0
+  if [ -n "$v" ]; then
+    for t in $v; do
+      case "$t" in ''|*[!0-9]*) out=""; break ;; esac
+      [ "$((10#$t))" -le 60 ] || { out=""; break; }
+      k=$((k + 1)); out="${out:+$out }$((10#$t))"
+    done
+    [ "$k" -le 5 ] || out=""
+    if [ -z "$out" ]; then
+      _ae_once aebackoff "${MC_TICK_ID:-notick}" "$v" && _ae_log "MC_AE_LEDGER_BACKOFF='$v' is not 1 to 5 integers of 0..60 — using 2 5 10"
+    fi
+  fi
+  printf '%s' "${out:-2 5 10}"
+}
+# _ae_ledger_why — "<code>, read <n> times, waits 2s 5s 10s", "<code>, retried
+# once after <w>s" (one wait) or "<code>, no retry: <why>".
 _ae_ledger_why() {
-  local n; n=$(_ae_noretry)
-  if [ -n "$n" ]; then printf '%s, no retry: %s' "$(_ae_ledger_code)" "$n"
-  else printf '%s, retried once after 2s' "$(_ae_ledger_code)"; fi
+  local n c w waits=""; n=$(_ae_noretry); c=$(_ae_ledger_code)
+  if [ -n "$n" ]; then printf '%s, no retry: %s' "$c" "$n"; return; fi
+  case "$c" in no-secret|no-url) printf '%s, no retry: a config fault' "$c"; return ;; esac
+  set -- $(_ae_backoff)
+  if [ "$#" = 1 ]; then printf '%s, retried once after %ss' "$c" "$1"; return; fi
+  for w in "$@"; do waits="$waits ${w}s"; done
+  printf '%s, read %s times, waits%s' "$c" "$(_ae_ledger_tries)" "$waits"
 }
 # _ae_record <url> <head> <status> <detail-json> — ledger + file, rc 1 when BOTH failed.
 _ae_record() {
@@ -365,8 +420,9 @@ _ae_gates() {
     # BH-5617: this skip was silent for 150 rows on 2026-10-08. The reporter
     # caps itself per (lane, project, reason), so one per PR is safe.
     command -v sentry_report >/dev/null 2>&1 && sentry_report warning merge-conductor autoenqueue-ledger-unreadable \
-      "$key not enqueued: the autoenqueue ledger is unreadable ($(_ae_ledger_why))" \
-      "$(jq -nc --arg p "${AE_P:-}" --arg k "$key" --arg h "$head" --arg c "$(_ae_ledger_code)" '{project:$p,pr:$k,head:$h,ledger_code:$c}')"
+      "$key not enqueued: $AE_LEDGER_EP unreadable after $(_ae_ledger_tries) attempts (last $(_ae_ledger_code))" \
+      "$(jq -nc --arg p "${AE_P:-}" --arg k "$key" --arg h "$head" --arg c "$(_ae_ledger_code)" --arg e "$AE_LEDGER_EP" --arg a "$(_ae_ledger_tries)" \
+        '{project:$p,pr:$k,head:$h,ledger_code:$c,endpoint:$e,attempts:$a}')"
     _ae_skip "$key" "$head" ledger "the autoenqueue ledger is unreadable ($(_ae_ledger_why)) and the file has no line — nothing sent this tick"; return 1
   fi
   AE_LEDGER_READ=1

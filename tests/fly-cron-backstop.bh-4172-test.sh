@@ -39,7 +39,7 @@ one_line() {
   lines=$(grep -F -- "$needle" "$HUB")
   n=$(printf '%s' "$lines" | grep -c .)
   if [ "$n" -ne 1 ]; then bad "$label: expected exactly 1 line with $needle in the hub crontab, found $n"; return; fi
-  if printf '%s\n' "$lines" | grep -Eq -- "$want"; then ok "$label: $lines"
+  if grep -Eq -- "$want" <<<"$lines"; then ok "$label: $lines"
   else bad "$label: line does not match $want: $lines"; fi
 }
 

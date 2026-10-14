@@ -123,7 +123,7 @@ else bad "B: the shards hold $COUNT entries for ${#LIST[@]} suites"; fi
 
 # Balance: 13 suites over 4 shards is 4,3,3,3 — never 13,0,0,0.
 SIZES=$(printf '%s\n' "$SH" | cut -d' ' -f1 | LC_ALL=C sort | uniq -c | awk '{print $1}' | LC_ALL=C sort -n)
-MIN=$(printf '%s\n' "$SIZES" | head -1); MAX=$(printf '%s\n' "$SIZES" | tail -1)
+MIN=$(head -1 <<<"$SIZES"); MAX=$(printf '%s\n' "$SIZES" | tail -1)
 if [ -n "$MIN" ] && [ -n "$MAX" ] && [ $((MAX - MIN)) -le 1 ]; then ok
 else bad "B: the shards are unbalanced (smallest $MIN, largest $MAX)"; fi
 
@@ -278,7 +278,7 @@ EREV=(); for ((k = ${#ELIST[@]} - 1; k >= 0; k--)); do EREV+=("${ELIST[$k]}"); d
 # 20,20,30,40 -> 10 s) and is placed exactly once.
 NP=$(eplan 4 "${ELIST[@]}" tests/zz-new-test.sh)
 NROW=$(printf '%s\n' "$NP" | awk -F'\t' '$3 == "tests/zz-new-test.sh"')
-[ "$(printf '%s\n' "$NROW" | grep -c .)" -eq 1 ] && ok || bad "E: a suite with no duration was placed $(printf '%s\n' "$NROW" | grep -c .) times"
+[ "$(grep -c . <<<"$NROW")" -eq 1 ] && ok || bad "E: a suite with no duration was placed $(grep -c . <<<"$NROW") times"
 [ "$(printf '%s\n' "$NROW" | cut -f2)" = "10000" ] && ok || bad "E: a suite with no duration must weigh the median (10000 ms), got '$NROW'"
 
 # An absolute path (bin/test-trace-safety.sh's shape) weighs what the relative one does.
@@ -340,18 +340,18 @@ case "$NAME" in "Pure-logic gate fixtures"|"Tests cannot touch a real harness") 
 # The matrix IS the plan's list of shard indexes, and the runner's /N is the
 # plan's n — the two values the old test compared as literals. ci-plan.sh
 # derives both from one number (tests/ci-plan-test.sh P4), so they cannot drift.
-printf '%s\n' "$SB" | grep -q '^        shard: \${{ fromJSON(needs.plan.outputs.shards) }}$' && ok \
+grep -q '^        shard: \${{ fromJSON(needs.plan.outputs.shards) }}$' <<<"$SB" && ok \
   || bad "D: tests-shard's matrix must be 'shard: \${{ fromJSON(needs.plan.outputs.shards) }}'"
 case "$SB" in *"fail-fast: false"*) ok ;; *) bad "D: tests-shard must set fail-fast: false, or one red shard hides the rest" ;; esac
-printf '%s\n' "$SB" | grep -q '^    needs: \[plan\]$' && ok || bad "D: tests-shard must need the plan job"
-printf '%s\n' "$SB" | grep -q "SHARD: \${{ matrix.shard }}" && ok || bad "D: the suite step must take SHARD from matrix.shard, not a typed number"
-printf '%s\n' "$SB" | grep -q "PLAN_N: \${{ needs.plan.outputs.n }}" && ok || bad "D: the suite step must take PLAN_N from the plan"
+grep -q '^    needs: \[plan\]$' <<<"$SB" && ok || bad "D: tests-shard must need the plan job"
+grep -q "SHARD: \${{ matrix.shard }}" <<<"$SB" && ok || bad "D: the suite step must take SHARD from matrix.shard, not a typed number"
+grep -q "PLAN_N: \${{ needs.plan.outputs.n }}" <<<"$SB" && ok || bad "D: the suite step must take PLAN_N from the plan"
 CMD=$(printf '%s\n' "$SB" | grep -v '^[[:space:]]*#' | awk '/bin\/test-trace-safety\.sh --gate/ { on = 1 } on { print } on && !/\\$/ { exit }' | tr -s ' \n' ' ')
 case "$CMD" in *'--shard "$SHARD/$PLAN_N"'*) ok ;; *) bad "D: the tracer must get --shard \"\$SHARD/\$PLAN_N\", got: $CMD" ;; esac
 case "$CMD" in *'--only-file "$RUNNER_TEMP/impact.txt"'*) ok ;; *) bad "D: the tracer must be narrowed to the plan's list, got: $CMD" ;; esac
 case "$CMD" in *'--verdict "$RUNNER_TEMP/verdict/shard-$SHARD.txt"'*) ok ;; *) bad "D: the tracer must write the shard's verdict file, got: $CMD" ;; esac
 # The re-plan must be held to the plan job's count.
-printf '%s\n' "$SB" | grep -q 'bin/ci-plan.sh --out "$RUNNER_TEMP/impact.txt" --expect-n "$PLAN_N"' && ok \
+grep -q 'bin/ci-plan.sh --out "$RUNNER_TEMP/impact.txt" --expect-n "$PLAN_N"' <<<"$SB" && ok \
   || bad "D: tests-shard must re-plan with --expect-n the plan job's n"
 # The verdict leaves the shard whatever the suite step answered.
 UP=$(printf '%s\n' "$SB" | awk '/uses: actions\/upload-artifact@/ { on = 1 } on { print }')

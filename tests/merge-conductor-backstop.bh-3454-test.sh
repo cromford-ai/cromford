@@ -32,8 +32,13 @@ EOF
 chmod +x "$R/bin/merge-conductor.sh"
 printf '#!/bin/bash\nprintf "%%s\\n" "$*" >> "%s/r-gh.txt"; exit 1\n' "$T" > "$T/rbin/gh"; chmod +x "$T/rbin/gh"
 row() { printf '%s\t%s\t%s\t%s\t%s\t-\t-\t%s/%s\n' "$1" "$2" "$3" "$4" "$5" "$U" "${1##*#}"; }
+# TEST-CHANGE (BH-6000): the backstop now starts one DETACHED run per
+# candidate and returns at once, so bs waits (bounded) for the recorder runs to
+# land before the assertions read rec.txt. Nothing asserted below is weaker.
 bs() { : > "$T/rec.txt"; : > "$T/r-gh.txt"; ( cd "$T" && env PATH="$T/rbin:$PATH" HARNESS="$R" "$@" \
-  bash "$R/bin/merge-conductor-backstop.sh" > "$T/bs.out" 2>&1 ); echo $? > "$T/bs.rc"; }
+  bash "$R/bin/merge-conductor-backstop.sh" > "$T/bs.out" 2>&1 ); echo $? > "$T/bs.rc"
+  local want n=0; want=$(sed -n 's/.*: \([0-9]*\) detached keyed conductor run(s) started.*/\1/p' "$T/bs.out" | tail -1)
+  while [ "$(grep -c . "$T/rec.txt" 2>/dev/null || echo 0)" -lt "${want:-0}" ] && [ "$n" -lt 40 ]; do sleep 0.25; n=$((n + 1)); done; }
 nrec() { grep -c . "$T/rec.txt" 2>/dev/null || true; }
 keys() { cut -f1 "$T/rec.txt" | head -1; }
 
@@ -61,17 +66,19 @@ row "$SLUG#8" READY $((NOW-60)) "$H2" "$H2" >> "$R/state/merge-conductor/pr-stat
 [ "$(keys)" = "$SLUG#8" ] && ok || bad "B3 control: only $SLUG#8 is keyed (got: $(keys))"
 [ "$(cut -f2 "$T/rec.txt")" = 1 ] && ok || bad "B3 the keyed run carries WAKE_LAUNCH=1"
 
-# B4: 25 candidates, cap 20 — oldest `since` first, 5 deferred.
+# B4: 25 candidates. TEST-CHANGE (BH-6000): this case pinned ONE run taking the
+# 20 oldest keys (cap MC_BACKSTOP_MAX_KEYS) and deferring 5, and a default cap
+# of 6. The batching is what starved PRs: now every candidate gets its own run
+# in the same fire, the cap is a deprecated no-op, and nothing is deferred.
 : > "$R/state/merge-conductor/pr-state.tsv"
 for i in $(seq 1 25); do row "$SLUG#$((100+i))" WAIT_CI $((NOW-i*60)) "$H1" "$H1" >> "$R/state/merge-conductor/pr-state.tsv"; done
 bs MC_BACKSTOP_MAX_KEYS=20
-WANT=$(for i in $(seq 25 -1 6); do printf '%s#%s\n' "$SLUG" $((100+i)); done | paste -sd, -)
-[ "$(keys)" = "$WANT" ] && ok || bad "B4 20 keys, oldest first (got: $(keys))"
-grep -q '5 deferred' "$T/bs.out" && ok || bad "B4 a '5 deferred' line (got: $(cat "$T/bs.out"))"
-# The default is 6, what one 240-290 s run finishes (BH-4842; it was 20, and a
-# 14-key run died at 290 s before fan-in on 2026-10-08).
-bs; [ "$(keys | tr , '\n' | grep -c .)" = 6 ] && ok || bad "B4 the default cap is 6"
-bs MC_BACKSTOP_MAX_KEYS=0; [ "$(keys | tr , '\n' | grep -c .)" = 25 ] && ok || bad "B4 cap 0 = no cap"
+WANT=$(for i in $(seq 1 25); do printf '%s#%s\n' "$SLUG" $((100+i)); done | sort | paste -sd, -)
+[ "$(cut -f1 "$T/rec.txt" | sort | paste -sd, -)" = "$WANT" ] && ok || bad "B4 every one of the 25 candidates gets its own run (got: $(cut -f1 "$T/rec.txt" | sort | paste -sd, -))"
+grep -q ',' <<<"$(cut -f1 "$T/rec.txt")" && bad "B4 a run keyed to more than one PR" || ok
+grep -qi 'deferred' "$T/bs.out" && bad "B4 nothing is deferred (got: $(cat "$T/bs.out"))" || ok
+bs; [ "$(nrec)" = 25 ] && ok || bad "B4 the default (deprecated) cap caps nothing (runs: $(nrec))"
+bs MC_BACKSTOP_MAX_KEYS=0; [ "$(nrec)" = 25 ] && ok || bad "B4 cap 0: every candidate runs (runs: $(nrec))"
 
 # B5: the lane's own switch, and the conductor's two, stand it down.
 for f in lane-off-merge-conductor-backstop automerge-disabled lane-off-merge-conductor; do
@@ -153,6 +160,8 @@ printf '%s\tWAIT_CI\t%s\t%s\t%s\t-\t-\t%s\n' "$SLUG#31" $((NOW-600)) "$H1" "$H1"
 ( cd "$T" && env -u MC_ONLY_PR PATH="$T/fakebin:$PATH" HARNESS="$T/h" HARNESS_SECRET=x JOBS_URL=http://worker.test GH_TOKEN=pat-default \
   MC_MERGE_BUDGET=0 MC_ENQUEUE_SETTLE=0 MC_MERGE_SETTLE=0 MC_MERGIFY_SETTLE=0 MC_MERGIFY_WAIT_S=0 MC_QUEUE_TTL=0 \
   bash "$T/h/bin/merge-conductor-backstop.sh" > "$T/b1.out" 2>&1 )
+# TEST-CHANGE (BH-6000): the run is detached now; wait (bounded) for it to end.
+n=0; while pgrep -f "$T/h/bin/merge-conductor.sh" >/dev/null 2>&1 && [ "$n" -lt 240 ]; do sleep 0.5; n=$((n + 1)); done
 [ "$(grep -c . "$T/c-posts.txt")" = 1 ] && ok || bad "B1 one backstop run posts @mergifyio queue for #31 (posts: $(grep -c . "$T/c-posts.txt"); out: $(tail -3 "$T/b1.out"); log: $(grep -i '31\|keyed\|autoenqueue' "$T/h/logs/merge-conductor.log" | tail -8))"
 grep -q "keyed tick: 1 key(s) — $SLUG#31" "$T/h/logs/merge-conductor.log" && ok || bad "B1 the conductor ran KEYED on $SLUG#31"
 [ -s "$T/c-merges.txt" ] && bad "B1 no merge call ($(cat "$T/c-merges.txt"))" || ok

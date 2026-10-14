@@ -156,7 +156,7 @@ route_features() { # route_features <build> -> JSON
   if [ -s "$plan" ]; then scan=$(_rr_plan_scan "$plan"); else scan="0 0 0"; fi
   read -r acc inv con <<<"$scan"
   title=$(jq -r '.title // ""' "$b/ticket-meta.json" 2>/dev/null)
-  printf '%s' "$title" | grep -Eq '^[A-Za-z][A-Za-z0-9]*-[0-9]+\.0:' && u0=1
+  grep -Eq '^[A-Za-z][A-Za-z0-9]*-[0-9]+\.0:' <<<"$title" && u0=1
   [ "$con" = 1 ] && u0=1
   jq -nc \
     --arg plan "$([ -s "$plan" ] && echo 1 || echo 0)" --arg kind "$kind" --arg repro "${repro:-}" \

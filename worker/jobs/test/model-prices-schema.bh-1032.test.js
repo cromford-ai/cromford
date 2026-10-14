@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import worker, { ensureTable, CREATED_TABLES } from '../src/index.js';
+import { jobsSchemaSql } from './lib/jobs-schema.js';
 
 // BH-1032: `model_prices` is a NEW table, and `bin/harness-sync.sh` runs
 // `npx wrangler deploy` and nothing else — there is no `wrangler d1 execute`
@@ -17,7 +18,7 @@ import worker, { ensureTable, CREATED_TABLES } from '../src/index.js';
 // answers 200 and the rows read back.
 
 const SECRET = 'test-secret';
-const SCHEMA = readFileSync(fileURLToPath(new URL('../schema.sql', import.meta.url)), 'utf8');
+const SCHEMA = jobsSchemaSql();
 
 let DatabaseSync = null;
 try { ({ DatabaseSync } = await import('node:sqlite')); } catch { DatabaseSync = null; }

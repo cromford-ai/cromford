@@ -172,7 +172,7 @@ rn3() {
   out=$( cd "$r" && "$script" "$cflag" 2>&1 ); rc=$?
   [ "$rc" != 0 ] && ok || bad "RN-3 $label: $script $cflag accepted a TRACKED $path (rc 0)"
   grep -qi 'tracked' <<<"$out" \
-    && ok || bad "RN-3 $label: the refusal does not say the file is tracked: $(printf '%s' "$out" | head -2 | tr '\n' ' ')"
+    && ok || bad "RN-3 $label: the refusal does not say the file is tracked: $(head -2 <<<"$out" | tr '\n' ' ')"
   grep -qF "$path" <<<"$out" \
     && ok || bad "RN-3 $label: the refusal does not name $path"
 }
@@ -196,7 +196,7 @@ O4=$( cd "$R4" && bin/lanes-build.sh --check 2>&1 ); RC4=$?
 for PAIR in "lanes-build.sh:--check" "render-env-example.sh:--check" "render-cron.sh:--check"; do
   S=${PAIR%%:*}; F=${PAIR#*:}
   O=$( cd "$DIR" && "bin/$S" "$F" 2>&1 ); RC=$?
-  [ "$RC" = 0 ] && ok || bad "RN-5 bin/$S $F refused this repo's own sources (rc $RC): $(printf '%s' "$O" | head -3 | tr '\n' ' ')"
+  [ "$RC" = 0 ] && ok || bad "RN-5 bin/$S $F refused this repo's own sources (rc $RC): $(head -3 <<<"$O" | tr '\n' ' ')"
 done
 # Negative: a source that renders differently on each run must be REFUSED, or
 # "deterministic" is a word and not a check. The non-determinism is put in the
@@ -244,9 +244,9 @@ N5=$(cat "$T/nondet.count" 2>/dev/null || echo 0)
 [ "${N5:-0}" -ge 2 ] && ok \
   || bad "RN-5 the non-determinism probe was never read (count=${N5:-0}) — --check cannot have rendered twice"
 [ "$RC5" != 0 ] && ok \
-  || bad "RN-5 --check accepted a source that does not render to the same bytes twice (rc 0): $(printf '%s' "$O5" | head -2 | tr '\n' ' ')"
+  || bad "RN-5 --check accepted a source that does not render to the same bytes twice (rc 0): $(head -2 <<<"$O5" | tr '\n' ' ')"
 grep -qi 'twice\|deterministic\|same bytes' <<<"$O5" \
-  && ok || bad "RN-5 the refusal does not say what was wrong: $(printf '%s' "$O5" | head -2 | tr '\n' ' ')"
+  && ok || bad "RN-5 the refusal does not say what was wrong: $(head -2 <<<"$O5" | tr '\n' ' ')"
 fi
 
 # ── RN-6 --check-committed still answers the OLD question, both ways ────────
@@ -398,13 +398,13 @@ R11=$(scratch_repo r11)
 ( cd "$R11" && git init -q . && git add -A && git commit -qm base \
   && git update-ref refs/remotes/origin/main HEAD ) >/dev/null 2>&1
 O11=$( cd "$R11" && bin/render-diff.sh origin/main 2>&1 ); RC11=$?
-[ "$RC11" = 0 ] && ok || bad "RN-11 render-diff.sh failed on an unchanged tree (rc $RC11): $(printf '%s' "$O11" | head -3 | tr '\n' ' ')"
+[ "$RC11" = 0 ] && ok || bad "RN-11 render-diff.sh failed on an unchanged tree (rc $RC11): $(head -3 <<<"$O11" | tr '\n' ' ')"
 grep -qi 'no change\|identical\|unchanged' <<<"$O11" \
-  && ok || bad "RN-11 an unchanged tree must say so plainly. Got: $(printf '%s' "$O11" | head -3 | tr '\n' ' ')"
+  && ok || bad "RN-11 an unchanged tree must say so plainly. Got: $(head -3 <<<"$O11" | tr '\n' ' ')"
 add_lane "$R11" zz-diff-probe 11
 ( cd "$R11" && git add -A && git commit -qm "add a lane" ) >/dev/null 2>&1
 O11B=$( cd "$R11" && bin/render-diff.sh origin/main 2>&1 ); RC11B=$?
-[ "$RC11B" = 0 ] && ok || bad "RN-11 render-diff.sh failed on a real lane addition (rc $RC11B): $(printf '%s' "$O11B" | head -5 | tr '\n' ' ')"
+[ "$RC11B" = 0 ] && ok || bad "RN-11 render-diff.sh failed on a real lane addition (rc $RC11B): $(head -5 <<<"$O11B" | tr '\n' ' ')"
 grep -q 'zz-diff-probe' <<<"$O11B" \
   && ok || bad "RN-11 the diff does not show the crontab line the box would gain"
 grep -q 'cron/project-4.cron' <<<"$O11B" \

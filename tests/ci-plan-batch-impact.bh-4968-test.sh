@@ -237,10 +237,10 @@ bplan console-ui/src/screens/Jobs.js -- "${FK[@]}" FAKE_NOREASON=1
 : > "$T/sink"; bplan console-ui/src/screens/Jobs.js -- "${FK[@]}"
 grep -q '^select ' "$T/sink" && ok || bad "9: a batch must ask test-impact select: $(cat "$T/sink")"
 # the reason is the plan's whole REASON: the select's, then the tier step's note
-printf '%s\n' "$OUT" | grep -qx '::notice title=ci-plan::mode=batch-selected count=30 total=300 n=1 reason=selected: 1 changed path(s); tiers: .*' && ok \
+grep -qx '::notice title=ci-plan::mode=batch-selected count=30 total=300 n=1 reason=selected: 1 changed path(s); tiers: .*' <<<"$OUT" && ok \
   || bad "9: the run page must carry the ci-plan notice [$OUT]"
 { has "impact: 30 of 300 suites (selected: 1 changed path(s); tiers: " "$SUM" && has " — 1 shard(s), mode=batch-selected" "$SUM" \
-    && printf '%s\n' "$SUM" | grep -qx 'escalation: -'; } && ok \
+    && grep -qx 'escalation: -' <<<"$SUM"; } && ok \
   || bad "9: the step summary must carry the impact line and the escalation [$SUM]"
 
 # 10. a select of every suite is a full run, whatever it called itself.
@@ -258,8 +258,8 @@ GO=$(cat "$T/go" 2>/dev/null)
 has "::notice" "$OUT" && bad "11: an ordinary PR prints no ci-plan notice [$OUT]" || ok
 [ ! -s "$T/sum" ] && ok || bad "11: an ordinary PR writes no step summary: $(cat "$T/sum")"
 [ "$(cut -d' ' -f1 "$T/sink" | sort -u)" = ci-select ] && ok || bad "11: an ordinary PR only calls ci-select: $(cat "$T/sink")"
-[ "$(printf '%s\n' "$GO" | sed 's/=.*//' | tr '\n' ' ')" = "mode count total n shards corpus summary quarantine escalation spa worker " ] && ok \
-  || bad "11: an ordinary PR's outputs are the old keys plus escalation, spa and worker (BH-4969): $(printf '%s\n' "$GO" | sed 's/=.*//' | tr '\n' ' ')"
+[ "$(printf '%s\n' "$GO" | sed 's/=.*//' | tr '\n' ' ')" = "mode count total n shards corpus summary quarantine escalation own_base spa worker " ] && ok \
+  || bad "11: an ordinary PR's outputs are the old keys plus escalation, own_base (BH-6490), spa and worker (BH-4969): $(printf '%s\n' "$GO" | sed 's/=.*//' | tr '\n' ' ')"
 
 echo "ci-plan-batch-impact.bh-4968-test.sh: $PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ] || exit 1

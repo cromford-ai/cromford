@@ -66,16 +66,16 @@ DOLLAR cap does page, once per lane per UTC day: nobody chose that one.)
   is how the lanes registry (BH-1132) says this about every knob, and
   `lane_caps_knobs <lane>` emits those rows **from the library that owns the
   numbers**, with the cap that is resolved right now as the `default` — so a
-  settings page can never show $N while the lane runs on $50.
+  settings page can never show $200 while the lane runs on $50.
 - `off` (dollar cap only) — deliberately **uncapped**.
 - Anything else that is not a number is IGNORED and named in the lane log. An
   operator typo may not silently remove a bound, and it may not silently remove
   the de-noising layer either. `.` and `..` are refused for the same reason now
   that `0` binds: `awk` reads them as 0, and a cap has to be written, not implied.
 
-## Why alert-triage is $5/day and not $N
+## Why alert-triage is $5/day and not $120
 
-$N was ~2x the $39–$61/day this lane ran at **before** BH-1039 — and that
+$120 was ~2x the $39–$61/day this lane ran at **before** BH-1039 — and that
 baseline was itself ~150 sessions a day concluding `handled=0 escalated=0
 noise=1`. Deterministic settlement, the fix-PR brake and the cliff refusal exist
 so that work never reaches a model, so a cap sized to the old number would not

@@ -60,9 +60,14 @@ export const routes = [
     async ({ env, url, t }) => {
       const hours = Math.min(168, Math.max(1, intOrNull(url.searchParams.get("hours")) ?? 24));
       const since = new Date(Date.parse(t) - hours * 3600e3).toISOString().replace(/\.\d{3}Z$/, "Z");
+      // BH-6727: the window is read FIRST, through idx_wakes_at, and only then
+      // grouped. Written as a plain GROUP BY, D1 (no ANALYZE statistics) walked
+      // a (repo, ...) index to get the groups in order and read every wake:
+      // 205,634 rows a call, 284 calls in 2 h, for an hours=1 window of ~1,200.
       const rows = await env.DB.prepare(
-        `SELECT repo, COUNT(*) n, MAX(at) last_at, GROUP_CONCAT(DISTINCT kind) kinds
-           FROM wakes WHERE at >= ?1 GROUP BY repo ORDER BY repo ASC`
+        `WITH w AS MATERIALIZED (SELECT repo, at, kind FROM wakes WHERE at >= ?1)
+         SELECT repo, COUNT(*) n, MAX(at) last_at, GROUP_CONCAT(DISTINCT kind) kinds
+           FROM w GROUP BY repo ORDER BY repo ASC`
       ).bind(since).all();
       return json(200, { repos: rows.results || [], since, hours, as_of: t });
     },

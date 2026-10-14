@@ -62,6 +62,6 @@ mc_queue_batch_only() {
   [ -n "$yml" ] || yml="$b64"
   # The provider is mergify only when .mergify.yml declares queue_rules, so a
   # text without it is not the file we were told about: could not tell.
-  printf '%s\n' "$yml" | grep -q '^[[:space:]]*queue_rules:' || return 0
+  grep -q '^[[:space:]]*queue_rules:' <<<"$yml" || return 0
   printf '%s\n' "$yml" | mc_queue_batch_only_yml
 }

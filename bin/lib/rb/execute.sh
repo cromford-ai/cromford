@@ -61,7 +61,7 @@ CKPT_STOP
 CG_LINE=$(head -1 "$BUILD/execute-run.txt" 2>/dev/null)
 case "$CG_LINE" in
   "AGENT_CALL_REFUSED call-guard "*)
-    CG_LINE=$(printf '%s' "$CG_LINE" | head -c 300)
+    CG_LINE=$(head -c 300 <<<"$CG_LINE")
     echo "$(STAMP) [$PROJECT/$KEY] EXECUTE refused by the call-guard before the call: $CG_LINE" >> "$BUILD/pipeline.log"
     RESULT "BUILD_DEFERRED execute refused by the call-guard: $CG_LINE"; exit 3 ;;
 esac
@@ -157,7 +157,7 @@ fi
 # is not a merge and not a deploy, and no PR is created any earlier.
 PUSH_BRANCH() { # PUSH_BRANCH <after-what>
   GH_LIVE
-  if RB_PUSH -u 2>>"$BUILD/pipeline.log"; then
+  if RB_PUSH -u "$1" 2>>"$BUILD/pipeline.log"; then
     track_pushed
     echo "$(STAMP) [$PROJECT/$KEY] branch pushed after $1 — the tree is on origin, not only on this machine" >> "$BUILD/pipeline.log"
   else

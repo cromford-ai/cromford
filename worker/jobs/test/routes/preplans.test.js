@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { SECRET, call, iso, now, worker } from '../lib/harness.js';
+import { jobsSchemaSql } from '../lib/jobs-schema.js';
 
 const PP = (over) => ({
   project: 'project-5', ticket_key: 'TK-1', base_sha: 'abc1234', ticket_fp: 'fp-1',
@@ -110,7 +111,7 @@ test('the self-applied CREATE and schema.sql describe the same preplans table', 
   };
   const w = await call('/api/preplans', { method: 'POST', body: ppBody() });
   const issued = w.db._calls.find((c) => /CREATE TABLE IF NOT EXISTS preplans/.test(c.sql)).sql;
-  const schema = readFileSync(new URL('../../schema.sql', import.meta.url), 'utf8');
+  const schema = jobsSchemaSql();
   const declared = /CREATE TABLE IF NOT EXISTS preplans \([\s\S]*?\n\);/.exec(schema);
   assert.ok(declared, 'schema.sql no longer declares preplans');
   assert.deepEqual(cols(issued), cols(declared[0]));

@@ -37,6 +37,20 @@ the `ai-build` label, and bootstraps the box over ssh (crons, repo clone, smoke)
 Loading builds NOTHING — the watcher only acts on `ai-build` issues.
 Verify: the summary line, then `ssh root@<box> 'crontab -l | grep <project>'`.
 
+**Browser QA wiring — a load is NOT done until all five are set** (project-6-os
+merged 47 PRs with zero browser QA because these were missing; cromford #6254
+makes load-project check them). Check with
+`ssh root@10.0.0.9 'cd /root/harness; bin/postmerge-qa.sh <project> --dry-run'`:
+1. `vercel.conf` row `<project> <teamId> <projectId> <prod-domain>` (preview QA).
+2. A real prod URL in the registry (`--prod`; `bin/prod-url.sh <project>`), never `-`.
+3. A Clerk QA test account on the PROD instance: create a user, record its id in
+   hub `state/qa-accounts.json`, and put `QA_TEST_USER_ID` + `QA_CLERK_SECRET_KEY`
+   (prod `sk_live`) in hub `env/<project>.env`. the operator approved test accounts for prod QA.
+4. `deploy.<project>.kind` is not `none` (prod smoke on).
+5. The prod host is one Clerk prod accepts: `curl -H "Origin: <prod>" https://clerk.<root>/v1/environment`
+   must return 200. A `*.vercel.app` host returns 400 `origin_invalid` — use a
+   subdomain of the Clerk root domain.
+
 The fleet registry is D1 (BH-5651). To load into it, set `REGISTRY_SOURCE=db`
 and `REGISTRY_ADMIN_TOKEN` in the shell that runs `bin/load-project.sh`, with
 `HARNESS_SECRET` and `JOBS_URL` (or the fleet default):

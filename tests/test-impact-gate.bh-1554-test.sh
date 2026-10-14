@@ -123,7 +123,7 @@ grep -qF -- '- `tests/zz-fast-test.sh`' "$T/b1.md" \
 plan_order() { gate --runner plan 2>/dev/null | sed -n 's/^plan: *\([^ ]*\).*/\1/p'; }
 printf 'tests/zz-fast-test.sh\t1\ntests/aa-slow-test.sh\t30\ntests/reads-test.sh\t0\n' > "$DUR"
 ORDER=$(plan_order)
-[ "$(printf '%s\n' "$ORDER" | head -1)" = tests/zz-fast-test.sh ] \
+[ "$(head -1 <<<"$ORDER")" = tests/zz-fast-test.sh ] \
   && ok || bad "O1: the shortest recorded suite in the tier must be planned first (got: $(printf '%s' "$ORDER" | tr '\n' ' '))"
 SELF_LAST=$(printf '%s\n' "$ORDER" | grep -n 'aa-slow\|zy-fast\|zz-fast' | tail -1 | cut -d: -f1)
 READS_AT=$(printf '%s\n' "$ORDER" | grep -n 'reads-test' | cut -d: -f1)

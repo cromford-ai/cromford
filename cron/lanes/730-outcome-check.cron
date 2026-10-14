@@ -1,0 +1,10 @@
+# @hub-lanes
+
+# ── PERF PR OUTCOME CHECK (BH-6382, BH-6372) ────────────────────────────────
+# A merged perf PR states `Target metric: <id> from <a> to <b>`. At merge + 6 h
+# this lane measures the metric on live data (bin/lib/outcome-metrics.d/) and,
+# when it did not move toward the target, files ONE issue on the PR's repo.
+# Every 30 minutes; at most OUTCOME_CHECK_MAX_PRS PRs a tick, skipped while the
+# GitHub bucket is low. One run per box (locks/outcome-check.lock, flock -n).
+# Kill: bin/harness-ctl.sh off outcome-check.
+*/30 * * * * /root/harness/bin/hub-lease.sh check && /root/harness/bin/outcome-check.sh >/dev/null 2>&1

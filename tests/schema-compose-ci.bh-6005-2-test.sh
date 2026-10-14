@@ -259,7 +259,7 @@ if git -C "$DIR" archive HEAD | tar -x -C "$TT" && mkrepo "$TT" && commit "$TT" 
   printf '%s\n' worker/plain/src/index.js worker/jobs/schemax.sql worker/jobs/src/schema.d.js \
     worker/jobs/schema.d/README docs/x.md > "$T/neg"
   OUT=$("$TI" select --changed "$T/neg" --root "$TT" --map "$T/map" --map-only --why 2>/dev/null)
-  grep -qP '\tworker/(plain|jobs)/schema\.sql$' <<<"$OUT" && bad "T2/N1: a negative path was aliased: $(grep -P '\tworker/[a-z]+/schema\.sql$' <<<"$OUT" | head -3)" || ok
+  grep -qP '\tworker/[a-z]+/schema\.sql$' <<<"$OUT" && bad "T2/N1: a negative path was aliased: $(grep -P '\tworker/[a-z]+/schema\.sql$' <<<"$OUT" | head -3)" || ok
   grep -q . <<<"$OUT" && ok || bad "T2/N1: --map-only selected nothing (vacuous)"
 
   # T3: schema.sql untracked — the index carries the alias, so a suite that

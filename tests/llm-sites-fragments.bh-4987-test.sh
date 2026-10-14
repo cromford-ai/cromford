@@ -137,10 +137,13 @@ fi
 # S2 two branches each add a fragment: a clean merge, both sites composed.
 # =============================================================================
 fresh s2
-BASEN=$(jq 'length' "$W/catalog/llm-sites.d/0000-base.json")
-gitc -C "$W" checkout -qb a; fragment "$W/catalog/llm-sites.d/0001-site-a.json" site-a
+# TEST-CHANGE (BH-5561 main merge): the repo now has fragments past 0000-base
+# (a new site is a new file), so the count is every fragment's sites, and the
+# two test fragments are numbered 9999 so they sort after every real one.
+BASEN=$(cat "$W"/catalog/llm-sites.d/[0-9]*.json | jq -s 'map(length) | add')
+gitc -C "$W" checkout -qb a; fragment "$W/catalog/llm-sites.d/9999-site-a.json" site-a
 gitc -C "$W" add -A >/dev/null; gitc -C "$W" commit -qm a
-gitc -C "$W" checkout -q main; gitc -C "$W" checkout -qb b; fragment "$W/catalog/llm-sites.d/0001-site-b.json" site-b
+gitc -C "$W" checkout -q main; gitc -C "$W" checkout -qb b; fragment "$W/catalog/llm-sites.d/9999-site-b.json" site-b
 gitc -C "$W" add -A >/dev/null; gitc -C "$W" commit -qm b
 gitc -C "$W" merge -q --no-edit a >"$T/s2.merge" 2>&1; MRC=$?
 [ "$MRC" = 0 ] && ok || bad "S2 git merge of two fragment branches must exit 0, got $MRC: $(cat "$T/s2.merge")"

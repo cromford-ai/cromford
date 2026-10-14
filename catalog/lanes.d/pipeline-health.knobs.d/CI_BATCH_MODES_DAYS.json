@@ -1,0 +1,10 @@
+{
+  "env": "CI_BATCH_MODES_DAYS",
+  "type": "int",
+  "default": 7,
+  "min": 1,
+  "max": 30,
+  "unit": "days",
+  "zero_means": null,
+  "note": "BH-6407: UTC days, today included, that the 'ci batch modes' line in logs/pipeline-health.log counts merge-queue batches for (full / batch-selected / other per day of completed_at). Out of range or not a whole number falls back to 7."
+}

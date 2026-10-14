@@ -28,10 +28,10 @@ bin/vendor-spend-pull.sh"
 # shellcheck disable=SC2086
 LINT=$(cd "$DIR" && HARNESS_TEST_SANDBOX=1 bin/test-determinism-lint.sh $FILES 2>&1); rc=$?
 [ "$rc" -eq 0 ] && ok || bad "A1: lint rc $rc"
-if printf '%s\n' "$LINT" | grep -q 'date-empty-stamp'; then
+if grep -q 'date-empty-stamp' <<<"$LINT"; then
   bad "A1: date-empty-stamp findings remain:"; printf '%s\n' "$LINT" | grep 'date-empty-stamp'
 else ok; fi
-if printf '%s\n' "$LINT" | grep -q 'waiver-no-reason'; then
+if grep -q 'waiver-no-reason' <<<"$LINT"; then
   bad "A1: waiver-no-reason:"; printf '%s\n' "$LINT" | grep 'waiver-no-reason'
 else ok; fi
 

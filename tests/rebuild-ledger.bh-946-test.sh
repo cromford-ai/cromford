@@ -40,9 +40,14 @@ command -v jq >/dev/null || { echo "rebuild-ledger.bh-946-test: SKIPPED — jq i
 ST="$T/st"; mkdir -p "$ST"
 # The clock is PINNED: every `at`/`updated` this suite asserts is this literal.
 STAMP() { printf '2026-09-19 00:00:00Z'; }
+# BH-5241: the corpus is the driver plus bin/lib/br/*.sh (tests/lib/br-corpus.sh),
+# because the record functions moved out of the driver into bin/lib/br/record.sh.
+# shellcheck source=tests/lib/br-corpus.sh
+. "$DIR/tests/lib/br-corpus.sh" || exit 1
+br_corpus "$DIR" "$T/br-corpus.sh" || exit 1
 {
-  grep -m1 '^br_file()' "$DIR/bin/blocked-resolver.sh"
-  awk '$0 ~ /^br_load\(\)/ {f=1} f{print} f&&/^}$/{exit}' "$DIR/bin/blocked-resolver.sh"
+  grep -m1 '^br_file()' "$T/br-corpus.sh"
+  awk '$0 ~ /^br_load\(\)/ {f=1} f{print} f&&/^}$/{exit}' "$T/br-corpus.sh"
 } > "$T/rowlib.sh"
 grep -q 'br_file()' "$T/rowlib.sh" && grep -q 'br_load()' "$T/rowlib.sh" && ok \
   || bad "could not extract br_file/br_load from bin/blocked-resolver.sh — sections 1-4 would test a paraphrase"
@@ -222,9 +227,9 @@ CLI empty queue-row tproj TK-9 >/dev/null; RC=$?
 CLI down queue-row tproj TK-9 >/dev/null; RC=$?
 [ "$RC" = 1 ] && ok || bad "the queue-row verb must exit 1 on an outage, got $RC"
 USAGE=$( ( QENV ok; bash "$T/h/bin/jobs-client.sh" no-such-verb ) 2>&1 )
-printf '%s' "$USAGE" | grep -q 'queue-row <project> <key>' \
+grep -q 'queue-row <project> <key>' <<<"$USAGE" \
   && ok || bad "queue-row is missing from the usage string"
-printf '%s' "$USAGE" | grep -q 'queue-status <project> <key>' \
+grep -q 'queue-status <project> <key>' <<<"$USAGE" \
   && ok || bad "queue-status fell out of the usage string"
 
 # ══ 6. The two hooks are REAL (BH-487.2) ════════════════════════════════════

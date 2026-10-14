@@ -144,7 +144,7 @@ mkdir -p "$T/plain"
 printf '# - %s-1: x\n' BH >"$T/plain/x.sh"
 GIT_CEILING_DIRECTORIES="$T" run bash "$LINT" "$T/plain"
 [ "$RC" -eq 2 ] && ok || bad "N5 rc $RC (want 2): $OUT $ERR"
-printf '%s' "$ERR" | grep -q 'not a git work tree' && ok || bad "N5 stderr [$ERR] lacks the reason"
+grep -q 'not a git work tree' <<<"$ERR" && ok || bad "N5 stderr [$ERR] lacks the reason"
 [ -z "$OUT" ] && ok || bad "N5 printed stdout: $OUT"
 
 # --- N6 -------------------------------------------------------------------
@@ -152,7 +152,7 @@ row=$(grep -v '^#' "$CAT" | awk -F'\t' '$1=="changelog-headers"{print $2, $3, $4
 [ "$row" = "tree cmd bin/changelog-header-lint.sh" ] && ok || bad "N6 catalog row [$row]"
 run bash "$RP" --list
 [ "$RC" -eq 0 ] && ok || bad "N6 --list rc $RC: $ERR"
-printf '%s\n' "$OUT" | grep -q '^changelog-headers' && ok || bad "N6 --list lacks changelog-headers: $OUT"
+grep -q '^changelog-headers' <<<"$OUT" && ok || bad "N6 --list lacks changelog-headers: $OUT"
 HARNESS_TEST_SANDBOX=1 run bash "$RP" --runner local --only changelog-headers --tree "$DIR" --out "$T/rp"
 [ "$RC" -eq 0 ] && ok || bad "N6 rules-pack --only changelog-headers rc $RC (want 0): $OUT $ERR"
 

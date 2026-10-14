@@ -309,6 +309,12 @@ EOF
     HOTFIX_LABEL HOTFIX_LANE LEAD_REVIEW_CONCURRENCY LEAD_REVIEW_BOX_MAX LEAD_REVIEW_TMP_MIN_MB LLM_USD_CAP_DAY \
     REVIEW_POOL_TMP_PATH LEAD_REVIEW_AUTO_REPOS LEAD_REVIEW_MAX_PER_PR_DAY LEAD_REVIEW_SPILLOVER \
     LEAD_REVIEW_RERUN_MAX HARNESS_PARTICIPANT_TOKEN_FILE LEAD_REVIEW_REQUIRE_BUILDER_APPROVE
+  # TEST-CHANGE (BH-5876): gate 13 (bin/lib/lead-gates.d/90-caps.sh) holds every
+  # worklist head when either cap knob is empty, and this scratch harness has no
+  # catalog/lanes.json to export them. 4 is lw_pr_day_ok's own fallback; 50 is
+  # above every suite's per-tick item count. A tick that sets either keeps it.
+  export LEAD_REVIEW_ENQUEUE_MAX_PER_TICK="${LEAD_REVIEW_ENQUEUE_MAX_PER_TICK:-50}" \
+    LEAD_REVIEW_MAX_PER_PR_DAY="${LEAD_REVIEW_MAX_PER_PR_DAY:-4}"
 }
 
 # The suites that source this fixture test the worklist, so it is on

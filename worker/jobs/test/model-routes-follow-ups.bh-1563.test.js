@@ -4,6 +4,7 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { DatabaseSync } from 'node:sqlite';
 import worker from '../src/index.js';
+import { jobsSchemaSql } from './lib/jobs-schema.js';
 
 // BH-1563 — the two worker halves of the #1560 round-2 review:
 //
@@ -26,7 +27,7 @@ import worker from '../src/index.js';
 // Driven against the SQL that ships (schema.sql) through worker.fetch, the
 // #1510.3 suite's idiom.
 const SECRET = 'test-secret';
-const SCHEMA = readFileSync(fileURLToPath(new URL('../schema.sql', import.meta.url)), 'utf8');
+const SCHEMA = jobsSchemaSql();
 
 // Each .bind() returns its OWN statement (see the #1510.3 suite: model-routes.js
 // prepares once and binds per rung).

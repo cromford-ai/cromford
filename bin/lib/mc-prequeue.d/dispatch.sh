@@ -28,6 +28,15 @@
 # dispatched: the answer is defer. One PREQUEUE log line per decision.
 # 0 = the rule before BH-5572: verdicts aged from dispatch, no merge test, no
 # veto.
+#
+# FRESH AGAINST MAIN (BH-6335, knob MC_PREQUEUE_FRESH_COMMITS, default 3). A
+# non-red verdict for an OLDER main counts, under either rule above, only when
+# that main is at most K commits behind the current main (pq_main_behind: one
+# compare read per pair, none for the same sha). More than K, a diverged pair,
+# or a compare that cannot be read: the candidate is skipped with one
+# `PREQUEUE reuse ... -> stale-commits behind=<n|unreadable> k=<K>` line, and
+# with no other candidate the head is dispatched again and held. A red parks at
+# any distance, as before.
 
 PQ_WF=prequeue-gate.yml
 PQ_VERDICT_RE='^(green|red|no-selection|conflict|could-not-run) main=([0-9a-f]{40}) head=([0-9a-f]{40}) suites=([^ ]*)( why=[^ ]+)?$'
@@ -66,6 +75,8 @@ pq_dispatch() {
     args=(-f "pr=$num" -f "head=$head" -f "main=$main"); [ -n "$suites" ] && args+=(-f "suites=$suites")
     # shellcheck disable=SC2207
     [ -z "$suites" ] && declare -F pq_invariants_args >/dev/null && args+=($(pq_invariants_args))
+    # shellcheck disable=SC2207
+    [ -z "$suites" ] && declare -F pq_learned_args >/dev/null && args+=($(pq_learned_args))
     gh workflow run "$PQ_WF" -R "$slug" --ref main "${args[@]}" >/dev/null 2>&1 && exit 0
     pq_cache_put "$path" could-not-run "$now" dispatch-refused "" alerted
     exit 1
@@ -217,6 +228,50 @@ pq_dispatch_veto() {
   return 1
 }
 
+# pq_main_behind <slug> <verdict-main> <main> — prints how many commits <main>
+#   has that <verdict-main> lacks, and sets _pq_bn to it: 0 for the same sha
+#   with no read, else one compare read (memoised per pair in _pq_behind for
+#   this pq_resolve call, so call it in this shell, not in a $( )).
+#   rc 1, nothing printed and _pq_bn empty when the read fails (rc 75 too), the
+#   pair diverged or main is behind, or the answer is not a whole number.
+pq_main_behind() {
+  local slug="$1" vm="$2" m="$3" raw="" st n
+  _pq_bn=""
+  [ "$vm" = "$m" ] && { _pq_bn=0; echo 0; return 0; }
+  # Outside pq_resolve there is no memo: a local one keeps the subscript a string.
+  declare -p _pq_behind >/dev/null 2>&1 || local -A _pq_behind=()
+  if [ -n "${_pq_behind[$vm.$m]+x}" ]; then n="${_pq_behind[$vm.$m]}"
+  else
+    n=""
+    if mc_rest_var raw gh_rest GET "repos/$slug/compare/$vm...$m?per_page=1"; then
+      read -r st n <<<"$(jq -r '"\(.status // "-") \(.ahead_by // "-")"' <<<"$raw" 2>/dev/null)"
+      case "$st" in ahead|identical) ;; *) n="" ;; esac
+      case "$n" in ''|*[!0-9]*) n="" ;; esac
+    fi
+    _pq_behind[$vm.$m]="$n"
+  fi
+  [ -n "$n" ] || return 1
+  _pq_bn="$n"; echo "$n"
+}
+
+# pq_fresh_ok <slug> <num> <head> <verdict-main> <main> <age> <verdict> — rc 0
+#   when a non-red candidate's main is at most MC_PREQUEUE_FRESH_COMMITS behind;
+#   else one stale-commits log line and rc 1. A red is always rc 0. Inside
+#   pq_resolve the answer is memoised per verdict main in _pq_fok, so the
+#   dispatch-time and the read-time pass log a stale candidate once.
+pq_fresh_ok() {
+  local b k
+  [ "$7" = red ] && return 0
+  declare -p _pq_fok >/dev/null 2>&1 || local -A _pq_fok=()
+  [ -n "${_pq_fok[$4]+x}" ] && return "${_pq_fok[$4]}"
+  k=$(pq_knob MC_PREQUEUE_FRESH_COMMITS)
+  if pq_main_behind "$1" "$4" "$5" >/dev/null && [ "$_pq_bn" -le "$k" ]; then _pq_fok[$4]=0; return 0; fi
+  b="$_pq_bn"
+  pq_reuse_log "$2" "$3" "$4" "$5" "$6" "$7" "stale-commits behind=${b:-unreadable} k=$k"
+  _pq_fok[$4]=1
+  return 1
+}
+
 # pq_reuse_log <num> <head> <verdict-main> <main> <age> <verdict> <outcome>
 pq_reuse_log() {
   mc_log "PREQUEUE reuse #$1 head=${2:0:12} verdict-main=${3:0:12} current-main=${4:0:12} age=${5}s verdict=$6 -> $7"
@@ -227,6 +282,7 @@ pq_resolve() {
   local slug="$1" num="$2" url="$3" head="$4" main="$5" path="$6" pre f m st at rest now fresh
   local best="" bm="" bat=-1 sib="" keep_main="$PQ_MAIN" keep_suites="$PQ_SUITES"
   local reuse vt age rbest="" rbm="" rvt=-1 rage=0 mt mrc veto
+  local -A _pq_behind=() _pq_fok=()
   [ -n "${MC_H:-}" ] && [ -n "${MC_STATE_DIR:-}" ] || { echo proceed; return 0; }
   pq_prune
   pq_wf_present "$slug"
@@ -252,18 +308,22 @@ pq_resolve() {
     m="${f#"$pre"}"; [[ "$m" =~ ^[0-9a-f]{40}$ ]] || continue
     read -r st at rest <<<"$(pq_cache_get "$f")"
     case "$at" in ''|*[!0-9]*) continue ;; esac
+    # BH-6161: after a queue ejection, a verdict dispatched before it is not reused.
+    [ "${PQ_MIN_AT:-0}" -gt 0 ] 2>/dev/null && [ "$at" -lt "$PQ_MIN_AT" ] && continue
     if [ $((now - at)) -lt "$fresh" ]; then
       case "$st" in
         pending) sib="$m" ;;
         green|red|no-selection|conflict|could-not-run)
-          [ "$at" -gt "$bat" ] && { bat="$at"; best="$st $rest"; bm="$m"; } ;;
+          [ "$at" -gt "$bat" ] && pq_fresh_ok "$slug" "$num" "$head" "$m" "$main" "$((now - at))" "$st" \
+            && { bat="$at"; best="$st $rest"; bm="$m"; } ;;
       esac
     fi
     [ "$reuse" != 0 ] || continue
     case "$st" in green|red|no-selection|conflict|could-not-run) ;; *) continue ;; esac
     vt=$(stat -c %Y "$f" 2>/dev/null); case "$vt" in ''|*[!0-9]*) continue ;; esac
     age=$((now - vt)); [ "$age" -ge 0 ] && [ "$age" -lt "$fresh" ] || continue
-    [ "$vt" -gt "$rvt" ] && { rvt="$vt"; rbest="$st $rest"; rbm="$m"; rage="$age"; }
+    [ "$vt" -gt "$rvt" ] && pq_fresh_ok "$slug" "$num" "$head" "$m" "$main" "$age" "$st" \
+      && { rvt="$vt"; rbest="$st $rest"; rbm="$m"; rage="$age"; }
   done
   if [ -n "$rbest" ]; then
     read -r st _ rest <<<"$rbest"

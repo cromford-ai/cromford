@@ -161,8 +161,13 @@ chmod +x "$T/fakebin"/*
 # bin/lib/br/*.sh beside a copy of the script (tests/br-split-layout-test.sh
 # case 7 refuses a fixture that copies the lane without its modules, and it is
 # right to — a half-installed lane refuses its own tick).
-awk '/^br_rkey\(\) \{/{p=1} p{print} p&&/^}$/{exit}'      "$DIR/bin/blocked-resolver.sh" >> "$T/src.sh"
-awk '/^br_from_queue\(\) \{/{p=1} p{print} p&&/^}$/{exit}' "$DIR/bin/blocked-resolver.sh" >> "$T/src.sh"
+# BH-5241: the corpus is the driver plus bin/lib/br/*.sh (tests/lib/br-corpus.sh),
+# because the record functions moved out of the driver into bin/lib/br/record.sh.
+# shellcheck source=tests/lib/br-corpus.sh
+. "$DIR/tests/lib/br-corpus.sh" || exit 1
+br_corpus "$DIR" "$T/br-corpus.sh" || exit 1
+awk '/^br_rkey\(\) \{/{p=1} p{print} p&&/^}$/{exit}'      "$T/br-corpus.sh" >> "$T/src.sh"
+awk '/^br_from_queue\(\) \{/{p=1} p{print} p&&/^}$/{exit}' "$T/br-corpus.sh" >> "$T/src.sh"
 grep -q '^br_from_queue() {' "$T/src.sh" && grep -q '^br_rkey() {' "$T/src.sh" \
   && ok || bad "precondition: br_from_queue/br_rkey did not extract — every assertion below would be vacuous"
 
@@ -184,7 +189,7 @@ OUT=$(FLAG_BQ=1 queue)
 N=$(printf '%s\n' "$OUT" | grep -c 'pool-died-twice')
 [ "$N" = 1 ] \
   && ok || bad "a failed row saying 'died 2 times' must be offered exactly once as pool-died-twice, got $N: $OUT"
-printf '%s' "$OUT" | grep -q 'project-5-TK-1' \
+grep -q 'project-5-TK-1' <<<"$OUT" \
   && ok || bad "the offered tuple must name the resolver key, got: $OUT"
 
 # ══ 2. THE SIDECAR LOOP IS GONE UNDER THE FLAG, AND ONLY UNDER IT ═══════════
