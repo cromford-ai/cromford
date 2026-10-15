@@ -14,7 +14,9 @@
 #      key to github-app.pem and github-app.env (GH_APP_ID,
 #      GH_APP_PRIVATE_KEY_FILE, every GH_APP_INSTALLATION_* variable), mode 600,
 #      the file bin/gh-token.sh reads;
-#   4. execs bin/lane-run-worker.sh --machine "$FLY_MACHINE_ID".
+#   4. exports LANE_RUN_CODE_SYNC=1, so the worker pulls main of the harness
+#      repo before a claim (bin/lib/lane-run-code.sh), and execs
+#      bin/lane-run-worker.sh --machine "$FLY_MACHINE_ID".
 set -u
 H="${HARNESS:-/opt/harness}"
 for v in HARNESS_SECRET JOBS_URL FLY_MACHINE_ID; do
@@ -37,5 +39,5 @@ if [ -n "${GH_APP_ID:-}" ] && [ -n "${GH_APP_PRIVATE_KEY:-}" ]; then
     || { echo "lane-run-entrypoint: cannot write $ENVD/github-app.env" >&2; exit 78; }
 fi
 unset GH_APP_PRIVATE_KEY
-export HARNESS="$H"
+export HARNESS="$H" LANE_RUN_CODE_SYNC=1
 exec "$H/bin/lane-run-worker.sh" --machine "$FLY_MACHINE_ID"

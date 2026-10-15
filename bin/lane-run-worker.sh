@@ -6,12 +6,21 @@
 # (bin/lib/lane-placement.sh). This loop, on a machine, takes one row at a
 # time and runs it exactly as the hub would:
 #
+#   0. code      when lrc_enabled && lrc_due (lib/lane-run-code.sh; only on a
+#                lane-run machine, LANE_RUN_CODE_SYNC=1): lrc_sync fetches main
+#                and swaps in bin/, catalog/ and fleet.conf. Its one result
+#                line goes to the log and to stderr; after a swap (rc 10) the
+#                loop re-execs itself with its own argv. No run is in flight.
 #   1. claim     POST /api/lane-runs/claim {machine}. 204 = the queue is empty:
 #                sleep lane_run.poll_s (1..300, fallback 15), or with --once
 #                exit 0. A transport failure logs one line; --once exits 1.
 #   2. check     lane and project are path-safe names and args[0] is a path
 #                under bin/ with no `..`. A bad row is logged and NOT run and
 #                NOT reported: its lease runs out and the row is re-claimed.
+#                When $H/<args[0]> is not an executable file, the row is NOT
+#                run and is reported rc 127 at once (no retry), with prof
+#                `PROF lane-run rc=127 reason=command-missing err=<args[0]> not
+#                in harness <HARNESS_COMMIT 12|unknown>`.
 #   3. inputs    lri_fetch <lane> <project> <state dir> (lib/lane-run-inputs.sh).
 #                A non-zero rc does NOT run the lane: the row is reported rc 66
 #                with prof `PROF lri_fetch rc=<n> <lane>/<project>`, and the
@@ -19,16 +28,23 @@
 #                `lane-alert.sh --id lane-inputs-<lane>` line naming the project.
 #   4. run       LANE_RUN_ID=<id> setsid -w bin/project-lane-run.sh <lane>
 #                <project> 0 $H/<args[0]> <args[1..]>, with lrh_start/lrh_stop
-#                (lib/lane-run-heartbeat.sh) around the wait. Its output goes to
-#                logs/<lane>-cron.log, as on the hub.
+#                (lib/lane-run-heartbeat.sh) around the wait. Its stdout, then
+#                its stderr, go to logs/<lane>-cron.log, as on the hub.
 #   5. write     unless lrh_lost: lri_checkpoint <lane> <project> posts what the
 #      back      run changed since its last checkpoint. A failure reports rc 75
 #                (EX_TEMPFAIL), never the run's own rc.
 #   6. report    unless lrh_lost: POST /api/lane-runs/<id>/report {machine, rc,
 #                prof}. rc is the run's real exit status (127 when it could not
 #                start); prof is the run's last line that starts `PROF `,
-#                at most 512 bytes. A failed report logs one line, and the
-#                lease re-runs the row.
+#                at most 512 bytes. When rc is not 0 the prof is that line (or
+#                `PROF lane-run`) + ` rc=<n> reason=<r> err=<first non-empty
+#                stderr line>`, reason `command-missing` for 126/127 else
+#                `exit-nonzero`; the jobs worker answers such a row `failed`.
+#                A command-missing rc writes ONE `lane-alert.sh --id
+#                lane-run-command-missing-<lane>` per lane per
+#                lane_run.command_missing_alert_s (60..86400, fallback 3600),
+#                stamped in state/lane-run-worker/command-missing-<lane>.at.
+#                A failed report logs one line, and the lease re-runs the row.
 #
 # TERM or INT (a Fly stop, BH-6495) with a run in flight: the run's process
 # group gets TERM, the loop waits up to lane_run.term_grace_s (1..25, fallback
@@ -44,6 +60,7 @@
 # logs/lane-run-worker.log, stamped from LANE_RUN_NOW (epoch) when it is set.
 # Contract: docs/notes/2026-10-12-BH-6124-lane-runs.md.
 set -uo pipefail
+LW_ARGV=("$@")
 H="${HARNESS:-$(cd "$(dirname "$0")/.." && pwd)}"
 export HARNESS="$H"
 # shellcheck source=bin/jobs-client.sh
@@ -54,6 +71,8 @@ export HARNESS="$H"
 . "$H/bin/lib/lane-run-heartbeat.sh" || exit 1
 # shellcheck source=bin/lib/lane-run-inputs.sh
 . "$H/bin/lib/lane-run-inputs.sh" || exit 1
+# shellcheck source=bin/lib/lane-run-code.sh
+. "$H/bin/lib/lane-run-code.sh" || exit 1
 
 ONCE=0; MACHINE=""
 while [ "$#" -gt 0 ]; do
@@ -95,8 +114,46 @@ RESP="$H/state/lane-run-worker/claim-$$.json"
 trap 'rm -f "$RESP"' EXIT
 declare -A LW_ALERTED=()
 # The run in flight, for the TERM trap: id, lane, project, pid (= its process
-# group, setsid), output file and the grace read when it started.
-LW_ID=""; LW_LANE=""; LW_PROJECT=""; LW_PID=""; LW_OUT=""; LW_GRACE=20
+# group, setsid), output files and the grace read when it started.
+LW_ID=""; LW_LANE=""; LW_PROJECT=""; LW_PID=""; LW_OUT=""; LW_ERR=""; LW_GRACE=20
+
+# lw_now — epoch seconds, LANE_RUN_NOW when it is set.
+lw_now() {
+  if [[ ${LANE_RUN_NOW:-} =~ ^[0-9]+$ ]]; then printf '%s' "$LANE_RUN_NOW"; else date -u +%s; fi
+}
+
+# lw_commit12 — the first 12 characters of $H/HARNESS_COMMIT, else `unknown`.
+lw_commit12() {
+  local c
+  c=$(head -n 1 "$H/HARNESS_COMMIT" 2>/dev/null | tr -d '[:space:]')
+  [[ $c =~ ^[0-9a-f]{7,40}$ ]] && printf '%s' "${c:0:12}" || printf unknown
+}
+
+lw_missing_alert_s() {
+  local v
+  v=$(setting_get lane_run.command_missing_alert_s 2>/dev/null) || v=""
+  v=$(printf '%s' "$v" | tr -d '[:space:]')
+  case "$v" in ''|*[!0-9]*) v=3600 ;; esac
+  [ "$v" -ge 60 ] && [ "$v" -le 86400 ] || v=3600
+  printf '%s' "$v"
+}
+
+# lw_alert_missing <lane> <project> <rc> <detail> — at most one alert per lane
+# per lw_missing_alert_s. The stamp holds the epoch of the last alert and is
+# written only after lane-alert.sh returns.
+lw_alert_missing() {
+  local lane="$1" project="$2" rc="$3" detail="$4" stamp now last
+  stamp="$H/state/lane-run-worker/command-missing-$lane.at"
+  now=$(lw_now)
+  last=$(head -n 1 "$stamp" 2>/dev/null)
+  if [[ $last =~ ^[0-9]+$ ]] && [ $((now - last)) -lt "$(lw_missing_alert_s)" ]; then return 0; fi
+  [ -x "$H/bin/lane-alert.sh" ] || return 0
+  "$H/bin/lane-alert.sh" --severity warn --id "lane-run-command-missing-$lane" "$lane" \
+    "lane machine $MACHINE ran $lane/$project with rc $rc (command-missing: $detail); harness $(lw_commit12). The row is failed and not retried. Check that the lane-run machine runs current harness code." \
+    >/dev/null 2>&1
+  printf '%s\n' "$now" > "$stamp" 2>/dev/null
+  return 0
+}
 
 # lw_release <id> <lane> <project> — the TERM hand-off's write.
 lw_release() {
@@ -119,7 +176,7 @@ lw_on_term() {
   wait "$LW_PID" 2>/dev/null
   kill "$timer" 2>/dev/null; wait "$timer" 2>/dev/null
   lrh_stop
-  cat "$LW_OUT" >> "$H/logs/$LW_LANE-cron.log" 2>/dev/null; rm -f "$LW_OUT"
+  cat "$LW_OUT" "$LW_ERR" >> "$H/logs/$LW_LANE-cron.log" 2>/dev/null; rm -f "$LW_OUT" "$LW_ERR"
   lw_release "$LW_ID" "$LW_LANE" "$LW_PROJECT"
   exit 0
 }
@@ -139,7 +196,7 @@ lw_report() {
 
 # lw_run <claim payload file> — steps 2-6 for one claimed row.
 lw_run() {
-  local f="$1" id lane project n out pid rc prof fo frc
+  local f="$1" id lane project n out err pid rc prof fo frc reason eline
   local -a args=()
   id=$(jq -r '.id // empty' "$f" 2>/dev/null)
   lane=$(jq -r '.lane // empty' "$f" 2>/dev/null)
@@ -152,6 +209,13 @@ lw_run() {
   fi
   if ! [[ ${args[0]} =~ ^bin/[A-Za-z0-9._/-]+$ ]] || [[ /${args[0]}/ == */../* ]]; then
     lw_log "run $id: args[0] '${args[0]}' is not a path under bin/; not run, not reported"; return 0
+  fi
+  if [ ! -f "$H/${args[0]}" ] || [ ! -x "$H/${args[0]}" ]; then
+    lw_log "run $id $lane/$project: ${args[0]} is not an executable file in the harness; not run"
+    prof="PROF lane-run rc=127 reason=command-missing err=${args[0]} not in harness $(lw_commit12)"
+    lw_alert_missing "$lane" "$project" 127 "${args[0]} not in harness"
+    lw_report "$id" "$lane" "$project" 127 "${prof:0:512}"
+    return 0
   fi
   fo=$(lri_fetch "$lane" "$project" "$H/state/$lane/$project" 2>&1); frc=$?
   if [ "$frc" != 0 ]; then
@@ -167,23 +231,31 @@ lw_run() {
   fi
   [ -z "$fo" ] || lw_log "run $id $lane/$project: $fo"
   out="$H/state/lane-run-worker/run-$id.out"
+  err="$H/state/lane-run-worker/run-$id.err"
   LW_GRACE=$(lw_term_grace_s)
   if command -v setsid >/dev/null 2>&1; then
     LANE_RUN_ID="$id" setsid -w "$H/bin/project-lane-run.sh" "$lane" "$project" 0 "$H/${args[0]}" "${args[@]:1}" \
-      > "$out" 2>&1 < /dev/null &
+      > "$out" 2> "$err" < /dev/null &
   else
     LANE_RUN_ID="$id" "$H/bin/project-lane-run.sh" "$lane" "$project" 0 "$H/${args[0]}" "${args[@]:1}" \
-      > "$out" 2>&1 < /dev/null &
+      > "$out" 2> "$err" < /dev/null &
   fi
   pid=$!
-  LW_LANE="$lane"; LW_PROJECT="$project"; LW_PID="$pid"; LW_OUT="$out"; LW_ID="$id"
+  LW_LANE="$lane"; LW_PROJECT="$project"; LW_PID="$pid"; LW_OUT="$out"; LW_ERR="$err"; LW_ID="$id"
   lrh_start "$id" "$pid"
   wait "$pid"; rc=$?
   LW_ID=""
   lrh_stop
-  cat "$out" >> "$H/logs/$lane-cron.log" 2>/dev/null
-  prof=$(grep '^PROF ' "$out" 2>/dev/null | tail -n 1 | head -c 512)
-  rm -f "$out"
+  cat "$out" "$err" >> "$H/logs/$lane-cron.log" 2>/dev/null
+  prof=$(grep -h '^PROF ' "$out" "$err" 2>/dev/null | tail -n 1 | head -c 512)
+  if [ "$rc" != 0 ]; then
+    case "$rc" in 126|127) reason=command-missing ;; *) reason=exit-nonzero ;; esac
+    eline=$(grep -m 1 -v '^[[:space:]]*$' "$err" 2>/dev/null | tr -d '\r')
+    prof="${prof:-PROF lane-run} rc=$rc reason=$reason err=$eline"
+    prof=$(printf '%s' "$prof" | head -c 512)
+    [ "$reason" = command-missing ] && lw_alert_missing "$lane" "$project" "$rc" "${eline:-${args[0]} exited $rc}"
+  fi
+  rm -f "$out" "$err"
   if lrh_lost; then
     lw_log "run $id $lane/$project rc $rc: lease lost; not reported"; return 0
   fi
@@ -196,6 +268,12 @@ lw_run() {
 }
 
 while :; do
+  if lrc_enabled && lrc_due; then
+    LW_CODE=$(lrc_sync); lrc=$?
+    lw_log "$LW_CODE"
+    echo "lane-run-worker $MACHINE: $LW_CODE" >&2
+    [ "$lrc" = 10 ] && exec "$H/bin/lane-run-worker.sh" "${LW_ARGV[@]}"
+  fi
   # Into a file, not $( ): JOBS_HTTP must survive the call to tell 204 apart.
   _jobs_req POST /api/lane-runs/claim "$(jq -nc --arg m "$MACHINE" '{machine:$m}')" > "$RESP"; crc=$?
   if [ "$crc" != 0 ]; then

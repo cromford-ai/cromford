@@ -22,9 +22,11 @@
 #       answer carries a PROF line with deferred=<x>, x not `-`: the machine
 #       left that PR's work to the hub (bin/merge-conductor-pr.sh).
 #   mc_fly_failed_for <rows-json> <key>
-#       rc 0 + a word (died | rc=<n> | no-prof) when the NEWEST row of <key> is
-#       finished and failed: status died, an rc that is not 0 (75 =
-#       UNVERIFIABLE included), or no `PROF mc-pr` line. A machine that cannot
+#       rc 0 + a word (died | command-missing | rc=<n> | no-prof) when the
+#       NEWEST row of <key> is finished and failed: status died, status failed
+#       (the jobs worker's answer for rc != 0; rc 126/127 is command-missing),
+#       a done row with an rc that is not 0 (75 = UNVERIFIABLE included; a
+#       worker that still answers done), or no `PROF mc-pr` line. A machine that cannot
 #       run the worker fails the same way on every try, so the hub must run
 #       that head itself (lead review of #6624). rc 1 otherwise: no row, a live
 #       newest row, or a clean run.
@@ -110,6 +112,8 @@ mc_fly_failed_for() {
   d=$(printf '%s' "${1:-}" | jq -r --arg k "${2:-}" '
     first(.rows[]? | select(.project == $k)) // {} |
     if (.status // "") == "died" then "died"
+    elif (.status // "") == "failed" then
+      (if (.rc == 126 or .rc == 127) then "command-missing" else "rc=\(.rc)" end)
     elif (.status // "") != "done" then ""
     elif (.rc != null and .rc != 0) then "rc=\(.rc)"
     elif ((.prof_line // "") | test("(^| )PROF mc-pr ")) | not then "no-prof"

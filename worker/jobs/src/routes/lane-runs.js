@@ -12,7 +12,10 @@
 // schema not applied" rather than a 500.
 //
 // A row is `done` only through the report route, which needs the claimer's
-// machine id and an integer rc. A missing rc is a 400, never a 0.
+// machine id and an integer rc. A missing rc is a 400, never a 0. D1 keeps
+// `done` + rc for every rc, but the report answer and the prefix read give a
+// row with rc != 0 as `failed` with a reason (lib/lane-run-status.js), so a
+// non-zero run never reads as a success.
 //
 // The release route (BH-6495) is the SIGTERM hand-off: the claimer sets its
 // row back to `queued` and keeps `attempts`, so another machine re-claims it
@@ -24,6 +27,7 @@
 import { d1Guarded, json } from "../lib/http.js";
 import { isoPlusSeconds, laneName, leaseWon, str } from "../lib/core.js";
 import { sweepDead } from "./lane-runs-lease.js";
+import { failReason, runStatus } from "../lib/lane-run-status.js";
 
 const ARGS_MAX = 64;
 const ARG_BYTES_MAX = 4096;
@@ -146,7 +150,8 @@ export const routes = [
       const r = await env.DB.prepare(
         "UPDATE lane_runs SET status='done', rc=?1, prof_line=?2, finished_at=?3 WHERE id=?4 AND status='claimed' AND claimed_by=?5"
       ).bind(rc, prof, t, id, machine).run();
-      if (leaseWon(r)) return json(200, { id, status: "done", rc, as_of: t });
+      const answer = { status: runStatus({ status: "done", rc }), rc, reason: failReason(rc) };
+      if (leaseWon(r)) return json(200, { id, ...answer, as_of: t });
       const row = await env.DB.prepare("SELECT status, claimed_by, rc FROM lane_runs WHERE id=?1").bind(id).first();
       if (!row) return json(404, { error: "no such lane run", id });
       if (row.status === "queued" || row.status === "died") {
@@ -155,7 +160,7 @@ export const routes = [
       if (row.claimed_by !== machine) {
         return json(409, { error: "not reported", reason: "not_claimer", id, status: row.status });
       }
-      if (Number(row.rc) === rc) return json(200, { id, status: "done", rc, replay: true, as_of: t });
+      if (Number(row.rc) === rc) return json(200, { id, ...answer, replay: true, as_of: t });
       return json(409, { error: "not reported", reason: "rc_mismatch", id, status: row.status, rc: Number(row.rc) });
     }),
   ],
@@ -210,8 +215,9 @@ export const routes = [
       const truncated = rows.length > limit;
       return json(200, {
         rows: rows.slice(0, limit).map((r) => ({
-          id: Number(r.id), lane: r.lane, project: r.project, status: r.status, claimed_by: r.claimed_by,
-          attempts: Number(r.attempts), rc: r.rc === null ? null : Number(r.rc), prof_line: r.prof_line,
+          id: Number(r.id), lane: r.lane, project: r.project, status: runStatus(r), claimed_by: r.claimed_by,
+          attempts: Number(r.attempts), rc: r.rc === null ? null : Number(r.rc),
+          reason: r.status === "done" ? failReason(r.rc) : null, prof_line: r.prof_line,
           enqueued_at: r.enqueued_at, finished_at: r.finished_at,
         })),
         truncated, as_of: t,

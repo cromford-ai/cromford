@@ -10,10 +10,13 @@
 #   flyctl apps create lane-run
 #   flyctl secrets set HARNESS_SECRET=... JOBS_URL=... GH_APP_ID=... \
 #     GH_APP_PRIVATE_KEY=... GH_APP_INSTALLATION_<OWNER>=... -a lane-run --stage
-#   flyctl deploy . -c fly/lane-run.toml --build-only --push --image-label latest
+#   flyctl deploy . -c fly/lane-run.toml --build-only --push --image-label latest \
+#     --build-arg HARNESS_COMMIT=$(git rev-parse HEAD)
 # The deploy pushes registry.fly.io/lane-run:latest, the image the settings row
 # lane_fleet.image names. GH_APP_PRIVATE_KEY is the PEM text; the entrypoint
-# writes it to a mode-600 file at boot. No key is in the image.
+# writes it to a mode-600 file at boot. No key is in the image. A machine
+# pulls main of the harness repo with that App's token before its claims
+# (bin/lib/lane-run-code.sh), so the installation must be able to read it.
 app = "lane-run"
 
 [build]

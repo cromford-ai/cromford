@@ -21,7 +21,10 @@
 #                none when no lane is queued), `flyctl machine list -a lane-run
 #                --json`, GET /api/lane-fleet/machines. A failed read does
 #                nothing else this tick (no start, no stop) and writes one
-#                ALERTS line per read kind per UTC day.
+#                ALERTS line per read kind per UTC day. After the listing,
+#                lfi_log_images (lib/lane-fleet-image.sh) logs one `image <id>
+#                <ref> digest=<d> harness_commit=<c>` line per started machine
+#                whose digest is new (state/lane-fleet/images.tsv).
 #   4. adopt     a Fly `started` machine with no starting/started row is
 #                recorded: `starting` when Fly's updated_at is younger than
 #                start_grace_s (a lost record write), else `started`.
@@ -138,6 +141,8 @@ flock -n 9 || { lf_log "lock held; another tick is running"; exit 0; }
 . "$H/bin/lib/fly-cost-row.sh" || exit 0
 # shellcheck source=bin/lib/fly-bin.sh
 . "$H/bin/lib/fly-bin.sh" 2>/dev/null || true
+# shellcheck source=bin/lib/lane-fleet-image.sh
+. "$H/bin/lib/lane-fleet-image.sh" 2>/dev/null || true
 [ -n "${JOBS_URL:-}" ] || { lf_log "not configured (JOBS_URL empty); no Fly call"; exit 0; }
 
 # lf_alert <kind> <text> [hour] — one ALERTS line per kind per UTC day; with
@@ -225,6 +230,7 @@ if ! timeout 30 "$FLY" machine list -a "$LF_APP" --json > "$LIST" 2> "$LIST.err"
   lf_read_fail fly-list "$FERR"
 fi
 jq -e 'type == "array"' "$LIST" >/dev/null 2>&1 || lf_read_fail fly-list "not a JSON array"
+command -v lfi_log_images >/dev/null 2>&1 && lfi_log_images "$LIST" "$H/state/lane-fleet/images.tsv" lf_log
 _jobs_req GET /api/lane-fleet/machines > "$ROWS" || lf_read_fail machines "http ${JOBS_HTTP:-none}"
 jq -e '.machines | type == "array"' "$ROWS" >/dev/null 2>&1 || lf_read_fail machines "no machines array"
 
@@ -391,6 +397,7 @@ if [ "$DEC" = start ]; then
       lf_record "$REUSE" starting "$DECIDED_AT" "$kind" "$cpus" "$mem" || {
         lf_log "record of start $REUSE failed (http ${JOBS_HTTP:-none}); Fly's state holds the next tick back"
         lf_alert record "machine $REUSE started but its row was not written (http ${JOBS_HTTP:-none})"; }
+      lf_log "start $REUSE: machine start image=$(command -v lfi_ref >/dev/null 2>&1 && lfi_ref "$LIST" "$REUSE")"
       ACTION="start $REUSE $WHY"
     else
       lf_log "machine start $REUSE failed: $(printf '%s' "$out" | tr '\n' ' ' | cut -c1-200); destroying it"
@@ -418,6 +425,7 @@ if [ "$DEC" = start ]; then
       lf_record "$mid" starting "$DECIDED_AT" "$kind" "$cpus" "$MEM" || {
         lf_log "record of start $mid failed (http ${JOBS_HTTP:-none}); Fly's state holds the next tick back"
         lf_alert record "machine $mid started but its row was not written (http ${JOBS_HTTP:-none})"; }
+      lf_log "start $mid: machine run image=$IMAGE"
       ACTION="start $mid $WHY"
     fi
   fi
