@@ -1,0 +1,39 @@
+{
+  "base": "https://os.example.test",
+  "paths": ["/clients", "/reports", "/settings", "/ok"],
+  "mode": "production",
+  "signedInAs": "user_fixture_qa",
+  "landed": "https://os.example.test/dashboard",
+  "screens": [
+    {"path": "/clients", "viewport": "1280", "url": "https://os.example.test/clients", "status": 200, "landedOnAuthWall": false,
+     "consoleErrors": ["TypeError: Cannot read properties of undefined (reading 'name')"], "failedRequests": [],
+     "horizontalScroll": false, "nativeDialog": null, "shot": "/tmp/fixture/_clients-1280.png", "error": null},
+    {"path": "/clients", "viewport": "375", "url": "https://os.example.test/clients", "status": 200, "landedOnAuthWall": false,
+     "consoleErrors": [], "failedRequests": ["GET https://os.example.test/api/clients (net::ERR_FAILED)"],
+     "horizontalScroll": true, "nativeDialog": "confirm: Delete this client?", "shot": "/tmp/fixture/_clients-375.png", "error": null},
+    {"path": "/reports", "viewport": "1280", "url": "https://os.example.test/reports", "status": 500, "landedOnAuthWall": false,
+     "consoleErrors": [], "failedRequests": [], "horizontalScroll": false, "nativeDialog": null,
+     "shot": "/tmp/fixture/_reports-1280.png", "error": null},
+    {"path": "/reports", "viewport": "375", "url": null, "status": null, "landedOnAuthWall": false,
+     "consoleErrors": [], "failedRequests": [], "horizontalScroll": null, "nativeDialog": null,
+     "shot": null, "error": "TimeoutError: page.goto: Timeout 45000ms exceeded."},
+    {"path": "/settings", "viewport": "1280", "url": "https://os.example.test/sign-in", "status": 200, "landedOnAuthWall": true,
+     "consoleErrors": [], "failedRequests": [], "horizontalScroll": false, "nativeDialog": null,
+     "shot": "/tmp/fixture/_settings-1280.png", "error": null},
+    {"path": "/settings", "viewport": "375", "url": "https://os.example.test/settings", "status": 404, "landedOnAuthWall": false,
+     "consoleErrors": [], "failedRequests": [], "horizontalScroll": false, "nativeDialog": null,
+     "shot": "/tmp/fixture/_settings-375.png", "error": null},
+    {"path": "/ok", "viewport": "1280", "url": "https://os.example.test/ok", "status": 200, "landedOnAuthWall": false,
+     "consoleErrors": [], "failedRequests": [], "horizontalScroll": false, "nativeDialog": null,
+     "shot": "/tmp/fixture/_ok-1280.png", "error": null},
+    {"path": "/ok", "viewport": "375", "url": "https://os.example.test/ok", "status": 200, "landedOnAuthWall": false,
+     "consoleErrors": [], "failedRequests": [], "horizontalScroll": false, "nativeDialog": null,
+     "shot": "/tmp/fixture/_ok-375.png", "error": null}
+  ],
+  "flows": [
+    {"persona": "rep", "flow": "new-quote", "verdict": "fail", "steps": [{"ok": true, "shot": null}], "reason": "step 3 expect text \"Quote saved\": not found within 10000ms"},
+    {"persona": "rep", "flow": "browse-clients", "verdict": "pass", "steps": [{"ok": true, "shot": null}], "reason": null},
+    {"persona": "admin", "flow": "delete-client", "verdict": "skipped", "steps": [], "reason": null}
+  ],
+  "failures": []
+}

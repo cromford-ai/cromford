@@ -38,6 +38,7 @@ Layout: repos live in `/root/repos/<project>`, harness scripts in `/root/harness
 - [Token discipline (fleet-wide, 2026-08-22)](#token-discipline-fleet-wide-2026-08-22)
 - [Claim discipline (the operator, 2026-08-30 — "it said done but it wasn't")](#claim-discipline-operator-2026-08-30--it-said-done-but-it-wasnt)
 - [Reports & explanations: Simplified Technical English (the operator, 2026-10-07)](#reports--explanations-simplified-technical-english-operator-2026-10-07)
+- [QA findings: collect first, one ticket per screen or flow (the operator, 2026-10-15)](#qa-findings-collect-first-one-ticket-per-screen-or-flow-operator-2026-10-15)
 
 ## Iron guardrails (this machine)
 
@@ -182,3 +183,14 @@ Write every status report, Telegram reply, alert, run summary, handoff, PR body,
 Example. Not: "Heads up, the pipeline kicked off a bunch of retries overnight after review got stuck, so a few PRs are waiting." Yes: "The review lane stopped at 02:00. A stale claim blocked it. The pipeline retried 14 builds. Four PRs are in the queue."
 
 Scope: this governs the content of reports, not voice writing. On a client-facing board comment, the "Voice for board comments" rule still sets the tone: a short warm opener and closer are fine. The status and the steps between them are STE.
+
+## QA findings: collect first, one ticket per screen or flow (the operator, 2026-10-15)
+
+When the factory tests, it must act like one engineer who reads every problem before opening a ticket. Ten tickets for one screen is ten PRs that collide on one file.
+
+1. A QA pass never files a ticket per finding. It writes every finding to one ledger for the run, grouped by screen or flow (route or flow name), with severity, repro and cause.
+2. After the pass, the lane files ONE ticket per screen or flow, with all its items as a checklist. One PR then fixes the whole screen or flow.
+3. Before it files, the lane reads the open issues and open PRs of that board for the same screen or flow. If one exists, the lane adds the new items to it as a comment. It never adds scope to a ticket whose PR is already approved: those items go to a new follow-up ticket, `Blocked-by:` that PR.
+4. Exceptions. A HIGH that blocks a launch flow or leaks data is filed (or alerted) at once, and it still goes in the ledger and in its group. If two groups edit one file, the second group's ticket gets `Blocked-by:` the first.
+- Follow-ups that a build or a review finds follow the same rule: one follow-up ticket per screen or flow, every item as a checklist.
+- In cromford, lanes call `bin/lib/group-findings.sh` (`gf_run`) and never file per finding. The switch is the settings row `lib.group-findings.<board>.group_findings` (default 0, off).

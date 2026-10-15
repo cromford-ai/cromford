@@ -1,0 +1,32 @@
+{
+  "base": "https://os.example.test",
+  "paths": ["/clients", "/reports", "/settings"],
+  "mode": "production",
+  "signedInAs": "user_fixture_qa",
+  "landed": "https://os.example.test/dashboard",
+  "screens": [
+    {"path": "/clients", "viewport": "1280", "url": "https://os.example.test/clients", "status": 502, "landedOnAuthWall": false,
+     "consoleErrors": [], "failedRequests": [], "horizontalScroll": false, "nativeDialog": null,
+     "shot": "/tmp/fixture/_clients-1280.png", "error": null},
+    {"path": "/clients", "viewport": "375", "url": "https://os.example.test/clients", "status": 200, "landedOnAuthWall": false,
+     "consoleErrors": ["Hydration failed because the server rendered HTML didn't match the client."],
+     "failedRequests": ["POST https://os.example.test/api/clients/search (net::ERR_CONNECTION_RESET)"],
+     "horizontalScroll": false, "nativeDialog": null, "shot": "/tmp/fixture/_clients-375.png", "error": null},
+    {"path": "/reports", "viewport": "1280", "url": null, "status": null, "landedOnAuthWall": false,
+     "consoleErrors": [], "failedRequests": [], "horizontalScroll": null, "nativeDialog": null,
+     "shot": null, "error": "Error: page.goto: net::ERR_NAME_NOT_RESOLVED"},
+    {"path": "/reports", "viewport": "375", "url": "https://os.example.test/reports", "status": 200, "landedOnAuthWall": false,
+     "consoleErrors": [], "failedRequests": [], "horizontalScroll": false, "nativeDialog": null,
+     "shot": "/tmp/fixture/_reports-375.png", "error": null},
+    {"path": "/settings", "viewport": "1280", "url": "https://os.example.test/settings", "status": 200, "landedOnAuthWall": false,
+     "consoleErrors": [], "failedRequests": [], "horizontalScroll": false, "nativeDialog": null,
+     "shot": "/tmp/fixture/_settings-1280.png", "error": null},
+    {"path": "/settings", "viewport": "375", "url": "https://os.example.test/settings", "status": 200, "landedOnAuthWall": false,
+     "consoleErrors": [], "failedRequests": [], "horizontalScroll": false, "nativeDialog": "alert: Saved",
+     "shot": "/tmp/fixture/_settings-375.png", "error": null}
+  ],
+  "flows": [
+    {"persona": "rep", "flow": "new-quote", "verdict": "fail", "steps": [], "reason": "step 1 click \"New quote\": locator not found"}
+  ],
+  "failures": []
+}

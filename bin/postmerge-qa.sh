@@ -591,6 +591,17 @@ Now drive the FLOW that failed, as the same signed-in user, with a HEADLESS play
       "$PROD" "${MSHA:0:8}" "$(tail -c 1200 "$REPORT" 2>/dev/null)")" >/dev/null 2>&1 || true
 
   if [ "$VERDICT" = FAIL ]; then
+    # BH-6902: collect first, then one issue per screen or flow (off per board
+    # until lib.group-findings.<board>.group_findings is 1). Fail-open.
+    # shellcheck source=bin/lib/group-findings.sh
+    if [ -r "$SELF/lib/group-findings.sh" ] && . "$SELF/lib/group-findings.sh"; then
+      GF_OBS=()
+      while IFS= read -r -d '' GF_F; do GF_OBS+=("$GF_F"); done < <(find "$OUT" -name observed.json -type f -print0 2>/dev/null)
+      gf_from_observed "$P" ${GF_OBS[@]+"${GF_OBS[@]}"} > "$BUILD/qa-findings.jsonl" 2>>"$LOG"
+      GF_SLUG=$(sed -nE 's#^https://github\.com/([^/]+/[^/]+)/pull/[0-9]+.*#\1#p' <<<"$PR_URL")
+      gf_run "$BUILD/qa-findings.jsonl" "$BUILD" "$GF_SLUG" >/dev/null 2>>"$LOG" || true
+      say "$BK: $(tail -1 "$BUILD/group-findings.md" 2>/dev/null || echo 'group-findings: no summary written')"
+    fi
     echo "$(STAMP) [$P] POST-MERGE PROD QA FAILED for $KEY (${MSHA:0:8}, $PR_URL): $(grep -m1 '^FAIL: ' "$REPORT" 2>/dev/null || echo 'see '"$REPORT")" >> "$ALERTS"
     "$SELF/beat.sh" "$(jq -nc --arg p "$P" --arg akey "prodqa:$P:$MSHA" \
       --arg l "PROD QA FAILED after merge: $KEY is live at $PROD and a real signed-in drive found defects ($PR_URL)" \

@@ -1,0 +1,31 @@
+{
+  "libs": [
+    {
+      "id": "group-findings",
+      "file": "bin/lib/group-findings.sh",
+      "note": "BH-6902. A QA run collects its findings first, then files ONE issue per screen or flow (gf_run). bin/postmerge-qa.sh calls it on a FAIL verdict. gf_run reads both knobs per board with lib_env_apply group-findings <board>, so a row lib.group-findings.<board>.<env lowercased> wins for that board.",
+      "knobs": [
+        {
+          "env": "GROUP_FINDINGS",
+          "type": "int",
+          "default": 0,
+          "min": 0,
+          "max": 1,
+          "zero_means": "off",
+          "required": false,
+          "note": "1: gf_run reads the open issues and PRs of the board's repo and files one issue per screen or flow, or comments on the open one. 0 (the default): no GitHub call, every ledger row is `off`. Turn it on per board with the row lib.group-findings.<board>.group_findings. Read as ${GROUP_FINDINGS:-0}."
+        },
+        {
+          "env": "GROUP_FINDINGS_URGENT_RANK",
+          "type": "int",
+          "default": 3,
+          "min": 1,
+          "max": 4,
+          "zero_means": null,
+          "required": false,
+          "note": "The lowest severity (1 low, 2 medium, 3 high, 4 critical) at which a finding with class data-leak or launch-blocker is filed at once as its own issue. It also stays in its group's checklist. Read as ${GROUP_FINDINGS_URGENT_RANK:-3}."
+        }
+      ]
+    }
+  ]
+}
