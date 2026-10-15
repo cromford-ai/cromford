@@ -1,0 +1,68 @@
+{
+  "id": "staff-outcomes",
+  "name": "Staff outcome resolver (a filed staff finding's GitHub issue closes as merged, rejected or noise; demote on overrule, propose promotions and noise suppressions)",
+  "scope": "hub",
+  "script": "bin/staff-outcomes.sh",
+  "cadence": "37 * * * *",
+  "boxes": [
+    "hub"
+  ],
+  "switch": {
+    "kind": "flag",
+    "name": "staff-off-all",
+    "aliases": []
+  },
+  "wired": true,
+  "stats": {
+    "cost_stage": null,
+    "cost_project_filter": null,
+    "lanes_row": false,
+    "log": "logs/staff-outcomes.log"
+  },
+  "knobs": [
+    {
+      "env": "STAFF_OUTCOMES_ENABLED",
+      "type": "int",
+      "default": 1,
+      "min": 0,
+      "max": 1,
+      "zero_means": "off",
+      "note": "BH-5563: 0 stops every resolver run after the kill-flag check and before any read. Read by bin/staff-outcomes.sh as ${STAFF_OUTCOMES_ENABLED:-1}; out of range is one warn line and the default.",
+      "settable": true
+    },
+    {
+      "env": "STAFF_OUTCOMES_MAX",
+      "type": "int",
+      "default": 60,
+      "min": 1,
+      "max": 500,
+      "zero_means": null,
+      "note": "BH-5563: GitHub issue reads per run. At the cap the cursor (state/staff-outcomes/cursor) is saved at the last id read and the next run goes on from there; at the end of the list it goes back to 0.",
+      "settable": true
+    },
+    {
+      "env": "STAFF_NOISE_LABEL",
+      "type": "string",
+      "default": "staff-noise",
+      "zero_means": null,
+      "note": "BH-5563: the issue label that makes a closed staff issue `noise` (exact match after trim and lowercase; it wins over a completed close). Noise feeds a suppression proposal, so it must be an explicit label.",
+      "settable": true
+    },
+    {
+      "env": "STAFF_OUTCOMES_FIXTURE",
+      "type": "string",
+      "default": "",
+      "zero_means": null,
+      "note": "Test seam: a file bin/staff-outcomes.sh sources after its libs, only when HARNESS_TEST_SANDBOX=1. NOT settable from the control plane: it names a file a root lane sources.",
+      "settable": false
+    },
+    {
+      "env": "HARNESS_TEST_SANDBOX",
+      "type": "string",
+      "default": "",
+      "zero_means": null,
+      "note": "Test seam gate: bin/staff-outcomes.sh sources STAFF_OUTCOMES_FIXTURE only when this is 1 (the test harness sets it). Never set on a box, and NOT settable from the control plane.",
+      "settable": false
+    }
+  ]
+}

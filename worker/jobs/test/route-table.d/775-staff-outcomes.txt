@@ -1,0 +1,10 @@
+# STAFF OUTCOMES (BH-5563, BH-5556.6): the learning loop. An outcome closes a
+# filed finding (merged, rejected, noise), demotes on an overrule and proposes
+# a promotion or a noise suppression; precision per agent and class; a human
+# decides a pending suppression. Numbered 775, after 772-retention (and
+# 773/774 taken by #6784): a ticket-keyed name sorted after the zz-a/zz-b
+# sentinels of tests/route-keyed-merge.bh-5788-test.sh M1.
+POST /api/staff/outcomes
+GET /api/staff/outcomes/pending
+GET /api/staff/precision
+POST /api/staff/suppressions/decide

@@ -27,7 +27,9 @@
 #      line with a staff:* label is dropped (output is never input). At most
 #      STAFF_MAX_ITEMS lines are claimed; the rest come back next tick
 #      (logged deferred=<n>).
-#   7. CLAIM each line (POST /api/staff/findings/claim) BEFORE any spend. New =
+#   7. CLAIM each line (POST /api/staff/findings/claim) BEFORE any spend, with
+#      its class (.class, else .source.kind): an approved family suppression
+#      matches on it. New =
 #      200. Our own row still `claimed` = PENDING. Another agent's claim,
 #      suppressed or staff_filed = dropped. agent_not_active stops the tick.
 #   8. PENDING with state/staff/<agent>/acted/<fp>.json: the act already
@@ -218,7 +220,7 @@ summary() {
 : > "$TMPD/new"
 while IFS= read -r line; do
   COLLECTED=$((COLLECTED+1))
-  jq -c --arg a "$AGENT" '{agent: $a, item, title, source, observedAt}' <<<"$line" > "$TMPD/claim.json"
+  jq -c --arg a "$AGENT" '{agent: $a, item, title, source, observedAt, class: (.class // .source.kind)}' <<<"$line" > "$TMPD/claim.json"
   resp=$(_jobs_req_file POST /api/staff/findings/claim "$TMPD/claim.json"); rc=$?
   fp=$(jq -r '.fingerprint // ""' <<<"$resp" 2>/dev/null)
   state=""

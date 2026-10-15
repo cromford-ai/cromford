@@ -73,7 +73,7 @@ RESET; run
 [ "$RC" = 0 ] && ok "D1 rc 0" || bad "D1 rc $RC: $(cat "$T/run.out")"
 grep -q ' wakes.age dry=1 counted=5 removed=0 backlog=1$' "$H/logs/d1-retention.log" && ok "D1 wakes.age counted 5, removed 0" \
   || bad "D1 log: $(cat "$H/logs/d1-retention.log")"
-grep -qE ' run ret-[^ ]+ dry=1 rules=6 removed=0 errors=0$' <<<"$(lastlog)" && ok "D1 run line" || bad "D1 run line: $(lastlog)"
+grep -qE ' run ret-[^ ]+ dry=1 rules=12 removed=0 errors=0$' <<<"$(lastlog)" && ok "D1 run line" || bad "D1 run line: $(lastlog)"
 [ "$(get "SELECT COUNT(*) n FROM wakes" | jq -r '.[0].n')" = 6 ] && ok "D1 no wake removed" || bad "D1 wakes removed on a dry run"
 
 # --- D2: real run ------------------------------------------------------------
@@ -81,9 +81,9 @@ sql "UPDATE settings SET value='0' WHERE key='retention.dry_run'"
 RESET; run
 grep -q ' wakes.age dry=0 counted=5 removed=5 backlog=0$' "$H/logs/d1-retention.log" && ok "D2 wakes.age removed 5" \
   || bad "D2 log: $(cat "$H/logs/d1-retention.log")"
-grep -qE ' run ret-[^ ]+ dry=0 rules=6 removed=5 errors=0$' <<<"$(lastlog)" && ok "D2 run line sums the rules" || bad "D2 run line: $(lastlog)"
+grep -qE ' run ret-[^ ]+ dry=0 rules=12 removed=5 errors=0$' <<<"$(lastlog)" && ok "D2 run line sums the rules" || bad "D2 run line: $(lastlog)"
 [ "$(get "SELECT COUNT(*) n FROM wakes" | jq -r '.[0].n')" = 1 ] && ok "D2 the recent wake stays" || bad "D2 wakes left: $(get 'SELECT key FROM wakes')"
-[ "$(get "SELECT COUNT(*) n FROM retention_runs WHERE dry_run=0" | jq -r '.[0].n')" = 6 ] && ok "D2 one audit row per rule" \
+[ "$(get "SELECT COUNT(*) n FROM retention_runs WHERE dry_run=0" | jq -r '.[0].n')" = 12 ] && ok "D2 one audit row per rule" \
   || bad "D2 audit rows: $(get 'SELECT rule, dry_run FROM retention_runs')"
 
 # --- D3: not configured ------------------------------------------------------

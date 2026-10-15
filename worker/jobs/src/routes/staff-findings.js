@@ -10,18 +10,23 @@
 // the roster) is 409 staff_filed before the ledger is touched: a lane's output
 // is never its own input. The claim is ONE statement that also checks
 // staff_suppressions, so a suppression and a claim cannot race: an active
-// suppression whose expires_at is after now answers 409 suppressed. Every
+// suppression whose expires_at is after now answers 409 suppressed. A
+// suppression matches the item's own fingerprint OR its family, the
+// familyFingerprint of (agent, classSlug(class, else source.kind)) from
+// lib/staff-family.js, which is the key a noise proposal is made on. Every
 // refusal writes nothing. A claim that wrote nothing and has no row to explain
 // it is a 500 claim_unresolved, never a success.
 //
 // POST /api/staff/suppressions records a human-approved, expiring mute for one
-// fingerprint, status 'active'. The approver is a human: archie or a staff
+// fingerprint, status 'active'. A 'pending' row (a noise proposal) never
+// matches a claim until a human approves it. The approver is a human: archie or a staff
 // agent name is 403 agent_approver. expiresAt is stored as YYYY-MM-DDTHH:MM:SSZ,
 // the nowIso() shape, so the TEXT comparison in the claim is a time comparison.
 // An expired suppression (expires_at at or before now) no longer matches.
 
 import { json, d1Guarded } from "../lib/http.js";
 import { fingerprint, canonicalUrl, isOwnOutput, validate } from "../../../../agent-core/src/index.js";
+import { classSlug, familyFingerprint } from "../lib/staff-family.js";
 import FINDING from "../../../../agent-core/schema/finding.schema.json" with { type: "json" };
 import SUPPRESSION from "../../../../agent-core/schema/suppression.schema.json" with { type: "json" };
 
@@ -48,9 +53,9 @@ const suppressionOut = (r) => ({
 });
 
 const readFinding = (env, fp) => env.DB.prepare(`SELECT * FROM staff_findings WHERE fingerprint=?1`).bind(fp).first();
-const activeSuppression = (env, fp, t) => env.DB.prepare(
-  `SELECT * FROM staff_suppressions WHERE fingerprint=?1 AND status='active' AND expires_at > ?2 ORDER BY expires_at DESC LIMIT 1`
-).bind(fp, t).first();
+const activeSuppression = (env, fp, t, familyFp) => env.DB.prepare(
+  `SELECT * FROM staff_suppressions WHERE fingerprint IN (?1, ?3) AND status='active' AND expires_at > ?2 ORDER BY expires_at DESC LIMIT 1`
+).bind(fp, t, familyFp).first();
 const rosterNames = async (env) => {
   const { results } = await env.DB.prepare(`SELECT name FROM staff_agents`).all();
   return (results || []).map((r) => r.name);
@@ -75,6 +80,8 @@ export const routes = [
       const finding = { agent: name, fingerprint: fp, title: b.title, source, observedAt: b.observedAt };
       const v = validate(FINDING, finding);
       if (!v.ok) return json(400, { error: "finding", errors: v.errors });
+      const cls = typeof b.class === "string" && b.class.trim() !== "" ? b.class : source.kind;
+      const familyFp = familyFingerprint(name, classSlug(cls));
 
       return d1Guarded("staff_findings", async () => {
         const agent = await env.DB.prepare(`SELECT name, status FROM staff_agents WHERE name=?1`).bind(name).first();
@@ -93,10 +100,10 @@ export const routes = [
               observed_at, status, claimed_at, updated_at)
            SELECT ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, 'claimed', ?9, ?9
             WHERE NOT EXISTS (SELECT 1 FROM staff_suppressions
-                               WHERE fingerprint = ?1 AND status = 'active' AND expires_at > ?9)`
+                               WHERE fingerprint IN (?1, ?10) AND status = 'active' AND expires_at > ?9)`
         ).bind(
           fp, name, finding.title, source.kind, source.url, JSON.stringify(source.labels),
-          typeof source.filedBy === "string" ? source.filedBy : null, finding.observedAt, t,
+          typeof source.filedBy === "string" ? source.filedBy : null, finding.observedAt, t, familyFp,
         ).run();
 
         if (changesOf(res) === 1) {
@@ -104,7 +111,7 @@ export const routes = [
           if (!row) return json(500, { error: "claim_unresolved", fingerprint: fp });
           return json(200, { claimed: true, fingerprint: fp, finding: findingOut(row) });
         }
-        const s = await activeSuppression(env, fp, t);
+        const s = await activeSuppression(env, fp, t, familyFp);
         if (s) {
           return json(409, {
             claimed: false, error: "suppressed", fingerprint: fp,

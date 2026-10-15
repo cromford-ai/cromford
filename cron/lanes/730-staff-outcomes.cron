@@ -1,0 +1,11 @@
+# @hub-lanes
+
+# ── STAFF OUTCOME RESOLVER (BH-5563) ────────────────────────────────────────
+# Hourly at :37 bin/staff-outcomes.sh reads each filed staff finding's GitHub
+# issue (REST, at most STAFF_OUTCOMES_MAX reads a run, a rotating cursor) and
+# posts its outcome: merged, rejected or noise (label staff-noise). The worker
+# closes the finding, demotes the agent one level on an overrule, and proposes
+# a promotion or a noise suppression that a human approves. No model call;
+# flock -n dedupes. Off: STAFF_OUTCOMES_ENABLED=0, flags/staff-off-all, or
+# flags/staff-off-<agent> for one agent's rows.
+37 * * * * /root/harness/bin/hub-lease.sh check && /root/harness/bin/staff-outcomes.sh >/dev/null 2>&1
