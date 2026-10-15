@@ -71,6 +71,7 @@ INSTALL() {
            bin/jobs-client.sh $(cd "$DIR" && printf "%s " bin/lib/mc/*.sh); do
     ( cd "$DIR" && scratch_install_closure "$L" "$r" ) >/dev/null || { echo "setup: could not install $L"; return 1; }
   done
+  mkdir -p "$r/catalog" && cp -r "$DIR/catalog/lane-run-inputs.d" "$r/catalog/" || return 1
   mv "$r/bin/jobs-client.sh" "$r/bin/jobs-client-real.sh"
   cat > "$r/bin/jobs-client.sh" <<'EOF'
 # shellcheck shell=bash
@@ -251,7 +252,7 @@ done
   && ok "O4 the conductor log carries only its hand-off lines" || bad "O4 conductor log: $(cat "$M4/logs/merge-conductor.log")"
 [ ! -e "$M4/env/global.env" ] || [ ! -s "$M4/env/global.env" ] && ok "O4 env/ never rides" || bad "O4 env fetched"
 # The live-root guard: a populated builds/ with no .managed is a live harness.
-G="$T/g"; mkdir -p "$G/builds/p-BH-1-x"; cp -r "$M4/bin" "$G/"
+G="$T/g"; mkdir -p "$G/builds/p-BH-1-x"; cp -r "$M4/bin" "$M4/catalog" "$G/"
 FO=$(lib "$G" lri_fetch blocked-resolver rt x 2>&1); rc=$?
 [ "$rc" = 2 ] && ok "O4 a populated root without .managed is refused rc 2" || bad "O4 guard rc=$rc $FO"
 [ ! -e "$G/fleet.conf" ] && ok "O4 the refused root is unchanged" || bad "O4 guard wrote into the root"

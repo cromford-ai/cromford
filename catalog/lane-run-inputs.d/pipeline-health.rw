@@ -1,0 +1,28 @@
+# catalog/lane-run-inputs.d/pipeline-health.rw — the per-project files one
+# `bin/pipeline-health.sh --project $p` run writes. A write-back may carry
+# these only. The ro snapshot is these plus pipeline-health.ro. The inventory,
+# with file:line for each entry, is in
+# docs/notes/2026-10-14-BH-6719-lane-run-inputs-manifests.md.
+#
+# NOT CARRIED. A project run also writes these fleet-wide files. A per-file
+# compare-and-set from N project runs would conflict on every tick, so they
+# block a later flip of pipeline-health to Fly, and the flip ticket must solve
+# them:
+#   logs/ALERTS.log (appends, bin/alert-line.sh:87)
+#   state/health-active.txt, state/health-active.stamp
+#   state/health-alerted.json
+#   state/closeout-aged-out.tsv (appends, bin/lib/closeout-terminal.sh:148)
+#   state/alert-line-sent/*, state/alerts/*, state/alert-quarantine.jsonl,
+#   logs/alerts-state.log
+#   /root/repos/$p refs (stale-parent, bin/pipeline-health.sh:1094-1119)
+# Secrets, locks and machine-local caches are never carried: env/*, locks/*,
+# state/gh-*, state/gh-budget/*, state/settings-cache.json, state/lane-gate/*.
+# logs/pipeline-health.log rides back as the lane log (.lri/log-append).
+#
+# closeout-aged.tsv: bin/lib/closeout-terminal.sh:173-252
+state/pipeline-health/$p/*
+# bin/pipeline-health.sh:998-1004
+state/pipeline-health/noprogress/$p.stranded
+state/pipeline-health/noprogress/$p.parked
+# bin/pipeline-health.sh:421-422
+flags/pool-halt-$p

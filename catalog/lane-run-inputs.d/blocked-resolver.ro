@@ -1,0 +1,12 @@
+# catalog/lane-run-inputs.d/blocked-resolver.ro — what one blocked-resolver
+# run for project $p reads and never writes back. The snapshot is
+# blocked-resolver.rw plus these lines.
+#
+# The conductor's log rides as its hand-off lines only.
+@lines logs/merge-conductor.log handed to bin/blocked-resolver\.sh
+state/build-queue/$p/*.json
+state/merge-conductor/pr-state.tsv
+logs/merge-conductor.log (hand-off lines only)
+plans/$p-*/planned-files.txt
+flags/*
+fleet.conf

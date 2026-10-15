@@ -1,0 +1,40 @@
+# catalog/lane-run-inputs.d/pipeline-health.ro — what one
+# `bin/pipeline-health.sh --project $p` run reads and never writes back.
+# The file:line after each entry is where the run reads it.
+#
+# The record files the run reads in a build dir: bin/pipeline-health.sh:462-546
+# (RESULT, RELAYED, DEFERRED, COMMENTED), bin/lib/closeout-terminal.sh:77
+# (SUPERSEDED), bin/queued-fly-relayed.sh:15-23 (job.json).
+@token <record file> RESULT COMMENTED RELAYED DEFERRED SUPERSEDED job.json
+# Fleet-wide logs and ledgers ride as this project's lines only.
+# bin/pipeline-health.sh:415,418
+@lines logs/fly-pool.log \[pool/$p\] reaped
+# bin/pipeline-health.sh:589-590
+@lines logs/$p.log rc=(0|skip) ::
+# bin/lib/closeout-terminal.sh:146 (rows are proj TAB builddir TAB ...)
+@lines state/closeout-aged-out.tsv ^$p[[:space:]]
+# bin/pipeline-health.sh:462-488,535-546,578
+builds/$p-<KEY>-*/<record file>
+builds/pool-$p-<KEY>-*/<record file>
+# bin/pipeline-health.sh:336-342
+state/build-queue/$p/*.json
+# bin/pipeline-health.sh:575
+state/remote-results/$p/*.json
+# bin/pipeline-health.sh:980-983
+state/stranded-watch/$p/.count
+# bin/pipeline-health.sh:990-992
+state/merge-conductor/pr-state.tsv
+# bin/lib/closeout-terminal.sh:146
+state/closeout-aged-out.tsv (this project's rows only)
+# bin/pipeline-health.sh:917,1068,1082
+state/health-active.txt
+# bin/pipeline-health.sh:291
+state/health-alerted.json
+# bin/lib/preplan-lib.sh:515 (the lane image does not bake prompts/)
+prompts/$p.md
+logs/fly-pool.log (this project's pool lines only)
+logs/$p.log (run-result lines only)
+# bin/lib/lane-gate.sh:238, bin/lib/alert-state.sh:57, bin/beat.sh:170
+flags/*
+# bin/pipeline-health.sh:135,601,989
+fleet.conf

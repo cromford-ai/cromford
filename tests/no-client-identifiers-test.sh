@@ -138,7 +138,7 @@ def is_fixture_literal(s):
 TEXT_EXT = {'', '.conf', '.cron', '.css', '.csv', '.diff', '.dockerfile', '.drop', '.editorconfig',
             '.env', '.example', '.gitignore', '.golden', '.html', '.js',
             '.json', '.jsonc', '.jsonl', '.jsx', '.list', '.lock', '.log', '.md',
-            '.mjs', '.cjs', '.order', '.patch', '.py', '.sh', '.sql', '.svg', '.toml',
+            '.mjs', '.cjs', '.order', '.patch', '.py', '.ro', '.rw', '.sh', '.sql', '.svg', '.toml',
             '.ts', '.tsx', '.tsv', '.txt', '.xml', '.yaml', '.yml'}
 FONT_EXT = {'.eot', '.otf', '.ttf', '.woff', '.woff2'}
 
