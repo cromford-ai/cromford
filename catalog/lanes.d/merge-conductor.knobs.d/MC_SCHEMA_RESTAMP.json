@@ -1,0 +1,11 @@
+{
+  "env": "MC_SCHEMA_RESTAMP",
+  "read_in": "bin/lib/mc-prequeue.d/restamp.sh",
+  "type": "int",
+  "default": 1,
+  "min": 0,
+  "max": 1,
+  "unit": null,
+  "zero_means": "off",
+  "note": "BH-6842: 1 = before a READY head is queued, the pre-queue gate renames each PR-added worker/*/schema.d stamp fragment that is not later than main's newest to consecutive UTC minutes (bin/lib/schema-restamp.sh), rewrites its references, and pushes one commit 'restamp schema fragments (no SQL change)'; the head holds that tick and bin/lib/lead-carry.sh carries the lead MERGE across the commit. A restamp that cannot run holds the head and sends one warn alert. 0 = off: no restamp and no hold, as before. Per project: lane.merge-conductor.<project>.mc_schema_restamp."
+}

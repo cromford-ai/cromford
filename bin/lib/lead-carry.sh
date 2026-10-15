@@ -13,7 +13,9 @@
 # MERGE / MERGE-WITH-NOTES from another head G onto <head> in the same tick,
 # only when patch_same (bin/lib/patch-same.sh) proves <head> carries G's patch:
 # no new non-merge commit since G and no hand-resolved merge (main-merge), or a
-# byte-exact rebase (patch-id). Cheapest first:
+# byte-exact rebase (patch-id); or when restamp_same (bin/lib/schema-restamp.sh)
+# proves every new commit is a clean main merge or a schema-fragment restamp
+# (restamp, BH-6842). Cheapest first:
 #   MC_LEAD_CARRY=0, ACTIONS!=1, or the attempts line `leadcarry <key> <head>`
 #     -> rc 1, nothing read.
 #   history unreadable or truncated, no clone, fetch failed, la_decide rc 2
@@ -98,7 +100,12 @@ lead_carry() {
   pold=$(_ps_patch_id "$repo" origin/main "$ph") || pold="-"
   pnew=$(_ps_patch_id "$repo" origin/main "$head") || pnew="-"
   if ! how=$(patch_same "$repo" origin/main "$ph" "$head"); then
-    _lc_done "$key" "$head" refused "$ph" "$pw" "$pid" - "$pold" "$pnew" "patch changed (a new commit or a resolved conflict)"; return 1
+    # BH-6842: the conductor's restamp commit (renames + reference rewrites
+    # only, bin/lib/schema-restamp.sh), alone or with clean main merges.
+    command -v restamp_same >/dev/null 2>&1 || { [ -r "$_lc_dir/schema-restamp.sh" ] && . "$_lc_dir/schema-restamp.sh"; }
+    if ! { command -v restamp_same >/dev/null 2>&1 && how=$(restamp_same "$repo" origin/main "$ph" "$head"); }; then
+      _lc_done "$key" "$head" refused "$ph" "$pw" "$pid" - "$pold" "$pnew" "patch changed (a new commit or a resolved conflict)"; return 1
+    fi
   fi
 
   # The authority says yes before any row is written.

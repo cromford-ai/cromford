@@ -295,6 +295,10 @@ command -v verdict_prime >/dev/null 2>&1 && verdict_prime || true
 # every line is a finding, as before.
 # shellcheck source=bin/lib/review-env-fail.sh
 . "$H/bin/lib/review-env-fail.sh" 2>/dev/null || log "bin/lib/review-env-fail.sh missing; every rules-pack line counts as a finding this tick"
+# BH-6842: a rules-pack line whose only fault is the schema stamp order is a
+# NOTE (the merge conductor restamps before it queues). Missing = a finding.
+# shellcheck source=bin/lib/schema-restamp.sh
+. "$H/bin/lib/schema-restamp.sh" 2>/dev/null || log "bin/lib/schema-restamp.sh missing; a schema stamp-order line counts as a finding this tick"
 # BH-5151, optional: the open-PR list (hotfix order + the dead-row sweep) and the
 # hotfix label's name. Without them the tick still runs, ordered by priority.
 . "$H/bin/lib/pr-snapshot.sh" 2>/dev/null || log "bin/lib/pr-snapshot.sh missing; no hotfix order and no dead-row sweep this tick"
@@ -1221,18 +1225,28 @@ review_one() {
         # the env lines kept as NOTEs.
         : > "$WT.rpenv"; cp "$WT.rpout" "$WT.rpreal" 2>/dev/null
         command -v rev_env_split >/dev/null 2>&1 && rev_env_split "$WT.rpout" "$WT.rpreal" "$WT.rpenv"
-        if [ -s "$WT.rpenv" ] && ! grep -q '[^[:space:]]' "$WT.rpreal"; then
+        # BH-6842: a stamp-order line alone is a NOTE and the review goes on.
+        : > "$WT.rpstamp"
+        command -v sr_stamp_split >/dev/null 2>&1 && sr_stamp_split "$WT.rpreal" "$WT.rpreal2" "$WT.rpstamp" \
+          && mv -f "$WT.rpreal2" "$WT.rpreal"
+        if [ -s "$WT.rpstamp" ] && [ ! -s "$WT.rpenv" ] && ! grep -q '[^[:space:]]' "$WT.rpreal"; then
+          RP_STATE="clean except schema stamp order (NOTE, the merge conductor restamps before queueing)"
+          RP_TAIL=$(printf 'Each line below is a stamp-order NOTE, not a BLOCK: the merge conductor renames the fragment to the current UTC minute before it queues the PR, and the lead approval is carried across that restamp commit.\n'; cat "$WT.rpstamp")
+          log "rules pack red for $key on schema stamp order only ($(grep -c . "$WT.rpstamp") line(s)); a NOTE, the review goes on"
+        elif [ -s "$WT.rpenv" ] && ! grep -q '[^[:space:]]' "$WT.rpreal"; then
           log "rules pack red for $key on environment failures only ($(head -n 1 "$WT.rpenv" | cut -c1-200)); review-failed, no verdict, requeued by lead-review-land"
           fail_terminal "$id" "$job" "$sha" "review-failed: env: $(head -n 1 "$WT.rpenv" | tr -d '\r' | cut -c1-300)" rules-pack; return
+        else
+          { printf '%s# Lead review %s (%s#%s at %s)\n\n- verdict: BLOCK\n- rules pack: red\n- reviewer model: rules-pack\n- pr body: %s\n\nFindings\n' \
+              "$RVLINE" "$key" "$repo" "$pr" "$sha" "$bfp"
+            awk 'NF {print "- [BLOCK] " $0}' "$WT.rpreal"
+            awk 'NF {print "- [NOTE] environment, not a finding: " $0}' "$WT.rpenv"
+            awk 'NF {print "- [NOTE] stamp order, the merge path restamps: " $0}' "$WT.rpstamp"
+            printf '\nVERDICT: BLOCK\n'; } > "$report.tmp.$$" && mv -f "$report.tmp.$$" "$report" \
+            || { log "could not write $report"; job_update "$job" status=failed; return; }
+          log "rules pack red for $key; BLOCK with no agent call"
+          finish_done "$id" "$job" "$sha" BLOCK "$report" rules-pack "rules pack: red" "$key"; return  # rules-pack BLOCK: no agent call
         fi
-        { printf '%s# Lead review %s (%s#%s at %s)\n\n- verdict: BLOCK\n- rules pack: red\n- reviewer model: rules-pack\n- pr body: %s\n\nFindings\n' \
-            "$RVLINE" "$key" "$repo" "$pr" "$sha" "$bfp"
-          awk 'NF {print "- [BLOCK] " $0}' "$WT.rpreal"
-          awk 'NF {print "- [NOTE] environment, not a finding: " $0}' "$WT.rpenv"
-          printf '\nVERDICT: BLOCK\n'; } > "$report.tmp.$$" && mv -f "$report.tmp.$$" "$report" \
-          || { log "could not write $report"; job_update "$job" status=failed; return; }
-        log "rules pack red for $key; BLOCK with no agent call"
-        finish_done "$id" "$job" "$sha" BLOCK "$report" rules-pack "rules pack: red" "$key"; return  # rules-pack BLOCK: no agent call
         ;;
       *) RP_STATE="could not run (rc $rp_rc)"; RP_TAIL=$(tail -n 20 "$WT.rperr") ;;
     esac
@@ -1484,7 +1498,7 @@ review_one() {
     printf '\n## Scope notes\n%s\n\n## Prior verdict\n%s\n\n## Rules pack\n%s\n' \
       "$(jq -r '.scope_notes // "none"' <<<"$r")" "$(jq -r '.prior_verdict_ref // "none"' <<<"$r")" "$RP_STATE"
     case "$RP_STATE" in
-      "skipped (CI green"*) printf '%s\n' "$RP_TAIL" ;;
+      "skipped (CI green"*|"clean except schema stamp order"*) printf '%s\n' "$RP_TAIL" ;;
       *) [ -n "$RP_TAIL" ] && printf 'stderr tail:\n%s\n' "$RP_TAIL" ;;
     esac
     [ -s "$WT.rereview" ] && { printf '\n## Re-review\n'; cat "$WT.rereview"; }

@@ -74,6 +74,15 @@ pq_gate() {
   if [ "$rc" != 0 ] || [[ ! "$PQ_MAIN" =~ ^[0-9a-f]{40}$ ]]; then
     PQ_MAIN=""; PQ_WHY="main tip unreadable, asked next tick"; PQ_VERDICT=hold; echo hold; return 0
   fi
+  # BH-6842: a stale schema stamp is restamped before the queue (mc-prequeue.d/
+  # restamp.sh). A push or a refusal holds this tick and publishes nothing.
+  local rs="" rw rn
+  declare -F pq_restamp >/dev/null && rs=$(pq_restamp "$slug" "$num" "$head" "$PQ_MAIN" 2>/dev/null | tail -n 1)
+  case "$rs" in
+    "pushed "*) read -r _ rw rn <<<"$rs"
+      PQ_WHY="restamped ${rn:-?} schema fragment(s) to ${rw:0:12}; the new head is asked next tick"; PQ_VERDICT=hold; echo hold; return 0 ;;
+    "held "*) PQ_WHY="schema restamp held: ${rs#held }"; PQ_VERDICT=hold; echo hold; return 0 ;;
+  esac
   path=$(pq_key "$slug" "$num" "$head" "$PQ_MAIN")
   export PQ_PATH="$path"
   line=$(pq_cache_get "$path")
