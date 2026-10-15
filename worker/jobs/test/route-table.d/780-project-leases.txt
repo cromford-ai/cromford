@@ -1,0 +1,6 @@
+# PROJECT LEASES (BH-6883, BH-6881.1): one lease per (lane, project) with a
+# fence token. acquire takes a free or expired row (fence + 1) or extends the
+# caller's own; renew and release need holder AND fence. Bearer-gated.
+POST /api/project-leases/acquire
+POST /api/project-leases/renew
+POST /api/project-leases/release
