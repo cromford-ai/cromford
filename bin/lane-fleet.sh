@@ -14,11 +14,14 @@
 #                max_machines 0 (0..1000, 0 = no ceiling), vm_size
 #                shared-cpu-2x, vm_memory_mb 2048 (256..65536), start_grace_s
 #                180 (30..3600), failed_start_backoff_s 900 (60..86400),
-#                image registry.fly.io/lane-run:latest. The image row must name
+#                image registry.fly.io/lane-run:latest, target_drain_s 60
+#                (10..3600), max_starts_per_tick 5 (1..50). The image row must name
 #                a tag or digest of registry.fly.io/lane-run: the machine gets
 #                the lane-run Fly secrets, so any other image uses the default.
-#   3. read      GET /api/lane-runs/stats (W = the largest oldest_queued_wait_s;
-#                none when no lane is queued), `flyctl machine list -a lane-run
+#   3. read      GET /api/lane-runs/stats?run_p50=1 (W = the largest
+#                oldest_queued_wait_s, none when no lane is queued; WORK = the
+#                sum over queued lanes of queued x run_p50_s, a lane with no
+#                done sample adds 0), `flyctl machine list -a lane-run
 #                --json`, GET /api/lane-fleet/machines. A failed read does
 #                nothing else this tick (no start, no stop) and writes one
 #                ALERTS line per read kind per UTC day. After the listing,
@@ -50,19 +53,23 @@
 #   6. decide    lf_decide: in flight -> none; a failed start this tick, or a
 #                last_failed_at younger than failed_start_backoff_s -> none
 #                (a start that never claims is not retried every minute); max
-#                set and LIVE+INFLIGHT >= max -> none; LIVE < floor -> start;
-#                W > scale_up_wait_s -> start (equal is not over). Only when no
-#                start is due and W is none (no queued run a stop could kill):
-#                lf_pick_stop stops the not-busy, not-in-flight machine with
-#                the largest idle_s > idle_stop_s, and only while LIVE > floor.
-#                At most one start or one stop per tick.
-#   7. start     a Fly `stopped` machine is reused (`machine start`); a failed
-#                reuse destroys it (not found = gone) and starts nothing this
-#                tick. Else `machine run` with the size rows; the id comes
-#                from the `Machine ID:` line only. The id is recorded as
-#                `starting`, with started_at = the tick's decision time, before
-#                the tick exits. No id = nothing recorded,
-#                one ALERTS line per UTC day, retried next tick.
+#                set and LIVE+INFLIGHT >= max -> none. Else n = the largest of
+#                floor - LIVE, ceil(WORK / target_drain_s) - LIVE, and 1 when
+#                W > scale_up_wait_s (equal is not over); n <= 0 -> none. n is
+#                capped by max_starts_per_tick and by the room under max (BH-6885).
+#                Only when no start is due and W is none (no queued run a stop
+#                could kill): lf_pick_stop stops the not-busy, not-in-flight
+#                machine with the largest idle_s > idle_stop_s, and only while
+#                LIVE > floor. At most n starts or one stop per tick.
+#   7. start     up to n machines: each Fly `stopped` machine in id order is
+#                reused (`machine start`), then `machine run` with the size
+#                rows; the id comes from the `Machine ID:` line only. Each id is
+#                recorded as `starting`, with started_at = the tick's decision
+#                time, before the tick exits. The first failure ends the batch
+#                (one `start batch stopped after <k> of <n>` line when k > 0):
+#                a failed reuse destroys the machine (not found = gone); a run
+#                with no id records nothing and writes one ALERTS line per UTC
+#                day. The next tick retries.
 #   8. stop      last cost rows first, then `machine stop`, then the row is
 #                marked stopped. A failed stop changes no row and writes one
 #                ALERTS line per machine per UTC day.
@@ -72,8 +79,8 @@
 #                usd_per_s null, an UNPRICED row, never $0).
 #  10. log       one line in logs/lane-fleet.log:
 #                tick wait=<W|none> live=<n> inflight=<n> floor=<n> max=<n|none>
-#                action=<start <mid> <reason>|stop <mid> idle=<s>|none <reason>>
-#                cost=<written>/<already>
+#                action=<start <mid>[,<mid>...] <reason>|stop <mid> idle=<s>|none <reason>>
+#                cost=<written>/<already> work=<s>s desired=<n>
 #
 # Exit 0 on every path but a usage error (2). Seams for tests: LANE_FLEET_NOW
 # (epoch), LANE_FLEET_FLY (the flyctl binary; empty uses fly_bin from
@@ -85,18 +92,33 @@ set -uo pipefail
 
 LF_APP=lane-run
 
-# lf_decide <W|none> <LIVE> <INFLIGHT> <FLOOR> <UPWAIT> <MAX> [HOLD]
-#   prints `start <reason>` or `none <reason>`. W none (or empty) = no queue.
-#   HOLD > 0 = a failed start this tick or inside the backoff: no start.
+# lf_decide <W|none> <LIVE> <INFLIGHT> <FLOOR> <UPWAIT> <MAX> [HOLD] [WORK_S]
+#           [TARGET_S] [MAXSTARTS]
+#   prints `start <n> <reason>` or `none <reason>`. W none (or empty) = no
+#   queue. HOLD > 0 = a failed start this tick or inside the backoff: no start.
+#   WORK_S = queued run seconds (default 0); desired machines =
+#   ceil(WORK_S / TARGET_S) (default 60). n = the largest of floor - LIVE,
+#   desired - LIVE and 1 when W > UPWAIT, capped by MAXSTARTS (default 1) and
+#   by MAX - LIVE - INFLIGHT when MAX > 0. Reasons: below-floor, queue-depth,
+#   queue-wait.
 lf_decide() {
   local w="${1:-none}" live="$2" inflight="$3" floor="$4" up="$5" max="$6" hold="${7:-0}"
+  local work="${8:-0}" target="${9:-60}" maxs="${10:-1}" nf nw nq n why
   [ -n "$w" ] || w=none
+  [ "$target" -gt 0 ] 2>/dev/null || target=60
+  [ "$maxs" -gt 0 ] 2>/dev/null || maxs=1
   if [ "$inflight" -gt 0 ]; then echo "none start-in-flight"; return 0; fi
   if [ "$hold" -gt 0 ]; then echo "none failed-start-hold"; return 0; fi
   if [ "$max" -gt 0 ] && [ $((live + inflight)) -ge "$max" ]; then echo "none at-max"; return 0; fi
-  if [ "$live" -lt "$floor" ]; then echo "start below-floor"; return 0; fi
-  if [ "$w" != none ] && [ "$w" -gt "$up" ]; then echo "start queue-wait"; return 0; fi
-  echo "none wait-under-threshold"
+  nf=$((floor - live))
+  nw=$(( (work + target - 1) / target - live ))
+  nq=0; [ "$w" != none ] && [ "$w" -gt "$up" ] && nq=1
+  n=$nf; [ "$nw" -gt "$n" ] && n=$nw; [ "$nq" -gt "$n" ] && n=$nq
+  if [ "$n" -le 0 ]; then echo "none wait-under-threshold"; return 0; fi
+  if [ "$nf" -gt 0 ]; then why=below-floor; elif [ "$nw" -ge "$nq" ]; then why=queue-depth; else why=queue-wait; fi
+  [ "$n" -gt "$maxs" ] && n=$maxs
+  [ "$max" -gt 0 ] && [ "$n" -gt $((max - live - inflight)) ] && n=$((max - live - inflight))
+  echo "start $n $why"
 }
 
 # lf_pick_stop <LIVE> <FLOOR> <IDLE_S> <machines json array>
@@ -178,6 +200,8 @@ IDLE=$(lf_int idle_stop_s 600 60 86400)
 MAX=$(lf_int max_machines 0 0 1000)
 GRACE=$(lf_int start_grace_s 180 30 3600)
 BACKOFF=$(lf_int failed_start_backoff_s 900 60 86400)
+TARGET=$(lf_int target_drain_s 60 10 3600)
+MAXSTARTS=$(lf_int max_starts_per_tick 5 1 50)
 MEM=$(lf_int vm_memory_mb 2048 256 65536)
 SIZE=$(lf_str vm_size shared-cpu-2x '^[a-z0-9-]{1,40}$')
 # Pinned to the app's own repository: Fly gives every machine in lane-run the
@@ -215,10 +239,15 @@ STATS="$W_DIR/stats.json"; LIST="$W_DIR/fly-list.json"; ROWS="$W_DIR/machines.js
 
 # ---- read (any failure: no action) ------------------------------------------
 lf_read_fail() { lf_log "tick read failed: $1 ($2); no start, no stop"; lf_alert "$1" "$1 read failed ($2); no machine is started or stopped until it answers"; exit 0; }
-_jobs_req GET /api/lane-runs/stats > "$STATS" || lf_read_fail stats "http ${JOBS_HTTP:-none}"
+_jobs_req GET "/api/lane-runs/stats?run_p50=1" > "$STATS" || lf_read_fail stats "http ${JOBS_HTTP:-none}"
 jq -e '.lanes | type == "array"' "$STATS" >/dev/null 2>&1 || lf_read_fail stats "no lanes array"
 W=$(jq -r '[.lanes[].oldest_queued_wait_s | select(type == "number")] | max // "none" | tostring' "$STATS")
 case "$W" in none) ;; *[!0-9]*|'') lf_read_fail stats "bad wait '$W'" ;; esac
+# The queued work in run seconds (BH-6885). A lane with no done sample
+# (run_p50_s null) adds 0; the wait rule still starts one machine for it.
+WORK=$(jq -r '[.lanes[] | select((.run_p50_s | type) == "number" and (.queued | type) == "number")
+  | .queued * .run_p50_s] | add // 0 | floor | tostring' "$STATS")
+case "$WORK" in *[!0-9]*|'') lf_read_fail stats "bad work '$WORK'" ;; esac
 if ! timeout 30 "$FLY" machine list -a "$LF_APP" --json > "$LIST" 2> "$LIST.err"; then
   FERR=$(tr '\n' ' ' < "$LIST.err" | cut -c1-200)
   # An auth answer is the token, not Fly: name the cause (BH-6741).
@@ -382,52 +411,62 @@ LIVE=$(( LIVE - LOST )); [ "$LIVE" -ge 0 ] || LIVE=0
 CANDS=$(jq -c --argjson fs "$FLY_STARTED" --argjson fl "$FAILED_IDS" '[.machines[] | select(.machine_id as $i | ($fs | index($i)) and ($fl | index($i) | not))]' "$ROWS")
 
 # ---- decide -----------------------------------------------------------------
-read -r DEC WHY <<<"$(lf_decide "$W" "$LIVE" "$INFLIGHT" "$FLOOR" "$UPWAIT" "$MAX" "$HOLD")"
+read -r DEC N WHY <<<"$(lf_decide "$W" "$LIVE" "$INFLIGHT" "$FLOOR" "$UPWAIT" "$MAX" "$HOLD" "$WORK" "$TARGET" "$MAXSTARTS")"
+[ "$DEC" = start ] || { WHY="$N${WHY:+ $WHY}"; N=0; }
 ACTION="none $WHY"
 STOPPED=""
 if [ "$DEC" = start ]; then
-  # The start is recorded at the tick's decision time, before `machine start`
+  # Every start is recorded at the tick's decision time, before `machine start`
   # or `machine run`, never at the POST time: a machine that claims a run
   # before the POST lands still counts that claim (re-review finding 2).
   DECIDED_AT=$(date -u -d "@$NOW" +%Y-%m-%dT%H:%M:%SZ)
-  REUSE=$(jq -r '[.[] | select(.state == "stopped") | .id] | sort | .[0] // empty' "$LIST")
-  if [ -n "$REUSE" ]; then
-    if out=$(timeout 120 "$FLY" machine start "$REUSE" -a "$LF_APP" 2>&1); then
-      read -r kind cpus mem <<<"$(lf_guest "$REUSE")"
-      lf_record "$REUSE" starting "$DECIDED_AT" "$kind" "$cpus" "$mem" || {
-        lf_log "record of start $REUSE failed (http ${JOBS_HTTP:-none}); Fly's state holds the next tick back"
-        lf_alert record "machine $REUSE started but its row was not written (http ${JOBS_HTTP:-none})"; }
-      lf_log "start $REUSE: machine start image=$(command -v lfi_ref >/dev/null 2>&1 && lfi_ref "$LIST" "$REUSE")"
-      ACTION="start $REUSE $WHY"
+  mapfile -t REUSES < <(jq -r '[.[] | select(.state == "stopped") | .id] | sort | .[]' "$LIST")
+  kind=""; cpus=""
+  [[ "$SIZE" =~ ^(shared-cpu|performance)-([0-9]+)x$ ]] && { kind=${BASH_REMATCH[1]%-cpu}; cpus=${BASH_REMATCH[2]}; }
+  STARTED=""; K=0; RI=0; FAILWHY=""
+  while [ "$K" -lt "$N" ]; do
+    if [ "$RI" -lt "${#REUSES[@]}" ]; then
+      REUSE=${REUSES[$RI]}; RI=$((RI + 1))
+      if out=$(timeout 120 "$FLY" machine start "$REUSE" -a "$LF_APP" 2>&1); then
+        read -r rkind rcpus rmem <<<"$(lf_guest "$REUSE")"
+        lf_record "$REUSE" starting "$DECIDED_AT" "$rkind" "$rcpus" "$rmem" || {
+          lf_log "record of start $REUSE failed (http ${JOBS_HTTP:-none}); Fly's state holds the next tick back"
+          lf_alert record "machine $REUSE started but its row was not written (http ${JOBS_HTTP:-none})"; }
+        lf_log "start $REUSE: machine start image=$(command -v lfi_ref >/dev/null 2>&1 && lfi_ref "$LIST" "$REUSE")"
+        STARTED="$STARTED,$REUSE"; K=$((K + 1))
+      else
+        lf_log "machine start $REUSE failed: $(printf '%s' "$out" | tr '\n' ' ' | cut -c1-200); destroying it"
+        dout=$(timeout 60 "$FLY" machine destroy "$REUSE" -a "$LF_APP" --force 2>&1); drc=$?
+        case "$drc:$dout" in
+          0:*|*"not found"*|*"Could not find"*) lf_record "$REUSE" destroyed >/dev/null; lf_log "destroyed $REUSE" ;;
+          *) lf_log "destroy $REUSE FAILED rc=$drc: $(printf '%s' "$dout" | tr '\n' ' ' | cut -c1-200)"
+             lf_alert "destroy-$REUSE" "machine destroy $REUSE FAILED rc=$drc; it is still in $LF_APP and the next tick retries the reuse" ;;
+        esac
+        FAILWHY="reuse-failed $REUSE"; break
+      fi
     else
-      lf_log "machine start $REUSE failed: $(printf '%s' "$out" | tr '\n' ' ' | cut -c1-200); destroying it"
-      dout=$(timeout 60 "$FLY" machine destroy "$REUSE" -a "$LF_APP" --force 2>&1); drc=$?
-      case "$drc:$dout" in
-        0:*|*"not found"*|*"Could not find"*) lf_record "$REUSE" destroyed >/dev/null; lf_log "destroyed $REUSE" ;;
-        *) lf_log "destroy $REUSE FAILED rc=$drc: $(printf '%s' "$dout" | tr '\n' ' ' | cut -c1-200)"
-           lf_alert "destroy-$REUSE" "machine destroy $REUSE FAILED rc=$drc; it is still in $LF_APP and the next tick retries the reuse" ;;
-      esac
-      ACTION="none reuse-failed $REUSE"
-    fi
-  else
-    kind=""; cpus=""
-    [[ "$SIZE" =~ ^(shared-cpu|performance)-([0-9]+)x$ ]] && { kind=${BASH_REMATCH[1]%-cpu}; cpus=${BASH_REMATCH[2]}; }
-    out=$(timeout 180 "$FLY" machine run "$IMAGE" --app "$LF_APP" --detach --restart no \
-            --vm-size "$SIZE" --vm-memory "$MEM" -e LANE_RUN=1 2>&1)
-    # The id comes off the "Machine ID:" line ONLY (fly-pool.sh: the first bare
-    # hex run can be the image digest).
-    mid=$(printf '%s\n' "$out" | sed -n 's/.*[Mm]achine ID:[[:space:]]*\([0-9a-z]\{8,32\}\).*/\1/p' | head -1)
-    if [ -z "$mid" ]; then
-      lf_log "machine run gave no Machine ID: $(printf '%s' "$out" | tr '\n' ' ' | cut -c1-200)"
-      lf_alert start "flyctl machine run in $LF_APP gave no machine id; nothing recorded, the next tick retries"
-      ACTION="none start-failed"
-    else
+      out=$(timeout 180 "$FLY" machine run "$IMAGE" --app "$LF_APP" --detach --restart no \
+              --vm-size "$SIZE" --vm-memory "$MEM" -e LANE_RUN=1 2>&1)
+      # The id comes off the "Machine ID:" line ONLY (fly-pool.sh: the first bare
+      # hex run can be the image digest).
+      mid=$(printf '%s\n' "$out" | sed -n 's/.*[Mm]achine ID:[[:space:]]*\([0-9a-z]\{8,32\}\).*/\1/p' | head -1)
+      if [ -z "$mid" ]; then
+        lf_log "machine run gave no Machine ID: $(printf '%s' "$out" | tr '\n' ' ' | cut -c1-200)"
+        lf_alert start "flyctl machine run in $LF_APP gave no machine id; nothing recorded, the next tick retries"
+        FAILWHY="start-failed"; break
+      fi
       lf_record "$mid" starting "$DECIDED_AT" "$kind" "$cpus" "$MEM" || {
         lf_log "record of start $mid failed (http ${JOBS_HTTP:-none}); Fly's state holds the next tick back"
         lf_alert record "machine $mid started but its row was not written (http ${JOBS_HTTP:-none})"; }
       lf_log "start $mid: machine run image=$IMAGE"
-      ACTION="start $mid $WHY"
+      STARTED="$STARTED,$mid"; K=$((K + 1))
     fi
+  done
+  if [ "$K" -gt 0 ]; then
+    ACTION="start ${STARTED#,} $WHY"
+    [ -z "$FAILWHY" ] || lf_log "start batch stopped after $K of $N: $FAILWHY"
+  else
+    ACTION="none $FAILWHY"
   fi
 elif [ "$W" = none ]; then
   SMID=$(lf_pick_stop "$LIVE" "$FLOOR" "$IDLE" "$CANDS")
@@ -451,5 +490,5 @@ while read -r mid; do
 done < <(jq -r --argjson fl "$FAILED_IDS" '.[] | select(. as $i | $fl | index($i) | not)' <<<"$FLY_STARTED" | head -500)
 
 MAXS=$MAX; [ "$MAX" = 0 ] && MAXS=none
-lf_log "tick wait=$W live=$LIVE inflight=$INFLIGHT floor=$FLOOR max=$MAXS action=$ACTION cost=$COST_W/$COST_A"
+lf_log "tick wait=$W live=$LIVE inflight=$INFLIGHT floor=$FLOOR max=$MAXS action=$ACTION cost=$COST_W/$COST_A work=${WORK}s desired=$(( (WORK + TARGET - 1) / TARGET ))"
 exit 0

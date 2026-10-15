@@ -134,16 +134,16 @@ echo "D: lf_decide / lf_pick_stop table"
 ( . "$H/bin/lane-fleet.sh"
   chk() { local want="$1" got; shift; got=$(lf_decide "$@")
     [ "$got" = "$want" ] && echo "ok lf_decide $* -> $got" || echo "FAIL lf_decide $* -> '$got' (want '$want')"; }
-  chk "start queue-wait" 300 1 0 1 60 0                # D1
-  chk "start queue-wait" 61 3 0 1 60 0                 # D2
-  chk "start below-floor" none 0 0 1 60 0              # D3
-  chk "start queue-wait" 300 49 0 1 60 0               # D4: 0 = no ceiling
+  chk "start 1 queue-wait" 300 1 0 1 60 0              # D1
+  chk "start 1 queue-wait" 61 3 0 1 60 0               # D2
+  chk "start 1 below-floor" none 0 0 1 60 0            # D3
+  chk "start 1 queue-wait" 300 49 0 1 60 0             # D4: 0 = no ceiling
   chk "none start-in-flight" 86400 1 1 1 60 0          # D5
   chk "none wait-under-threshold" 60 1 0 1 60 0        # D6: equal is not over
   chk "none wait-under-threshold" none 1 0 1 60 0      # D7
   chk "none start-in-flight" 300 4 1 1 60 5            # D8: 4 live + 1 in flight at max 5
   chk "none at-max" 300 5 0 1 60 5                     # D9
-  chk "start below-floor" none 0 0 1 60 0              # D9b
+  chk "start 1 below-floor" none 0 0 1 60 0            # D9b
   chk "none failed-start-hold" 300 1 0 1 60 0 1        # D15: hold beats wait
   chk "none failed-start-hold" none 0 0 1 60 0 1       # D16: hold beats floor
   chk "none start-in-flight" 300 1 1 1 60 0 1          # D17

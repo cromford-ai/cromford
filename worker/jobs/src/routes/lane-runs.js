@@ -17,6 +17,18 @@
 // row with rc != 0 as `failed` with a reason (lib/lane-run-status.js), so a
 // non-zero run never reads as a success.
 //
+// A claim may name `prefer` (BH-6885): the projects whose repo clones the
+// machine keeps warm. The claim then takes the oldest live row of a preferred
+// project, except that any live row that waited longer than
+// lane_run.prefer_max_wait_s (seed 60, 0 = no preference) comes first, oldest
+// first. With no prefer the order is enqueued_at, id. The claim reads
+// idx_lane_runs_claim, never a scan of lane_runs.
+//
+// The stats route answers `run_p50_s` per queued lane when asked with
+// `run_p50=1`: the median run seconds (finished_at - claimed_at) of the lane's
+// newest 50 done rows, through idx_lane_runs_lane. bin/lane-fleet.sh sizes its
+// starts with it.
+//
 // The release route (BH-6495) is the SIGTERM hand-off: the claimer sets its
 // row back to `queued` and keeps `attempts`, so another machine re-claims it
 // and sweepDead still counts the try. The prefix read lists one lane's rows
@@ -25,7 +37,7 @@
 // before it enqueues (bin/lib/mc/fly-workers.sh).
 
 import { d1Guarded, json } from "../lib/http.js";
-import { isoPlusSeconds, laneName, leaseWon, str } from "../lib/core.js";
+import { isoPlusSeconds, laneName, leaseWon, percentile, str } from "../lib/core.js";
 import { sweepDead } from "./lane-runs-lease.js";
 import { failReason, runStatus } from "../lib/lane-run-status.js";
 
@@ -33,6 +45,7 @@ const ARGS_MAX = 64;
 const ARG_BYTES_MAX = 4096;
 const ARGS_JSON_BYTES_MAX = 16384;
 const LANES_FILTER_MAX = 32;
+const PREFER_MAX = 64;
 const PROF_BYTES_MAX = 512;
 const LIST_LIMIT_MAX = 50;
 // The settings rows and their documented code fallbacks.
@@ -40,18 +53,36 @@ const LEASE_KEY = "lane_run.lease_s";
 const LEASE_DEFAULT_S = 120;
 const LEASE_MIN_S = 30;
 const LEASE_MAX_S = 3600;
+const PREFER_KEY = "lane_run.prefer_max_wait_s";
+const PREFER_DEFAULT_S = 60;
+const PREFER_MAX_S = 3600;
+// The stats route samples at most RUN_P50_LANES_MAX queued lanes, and the
+// newest RUN_SAMPLE_N done rows of each.
+const RUN_P50_LANES_MAX = 50;
+const RUN_SAMPLE_N = 50;
 // args[0] is a path under the machine's own harness root, never absolute.
 const CMD_RE = /^bin\/[A-Za-z0-9._/-]+$/;
 
 const LIVE = "(status='queued' OR (status='claimed' AND lease_until < ?2))";
-// Binds: ?1 machine ?2 now ?3 lease_until ?4 lanes JSON array or NULL.
-const CLAIM_SQL = `UPDATE lane_runs SET status='claimed', claimed_by=?1, claimed_at=?2,
+// Binds: ?1 machine ?2 now ?3 lease_until ?4 lanes JSON array or NULL
+// ?5 prefer JSON array or NULL ?6 the prefer cutoff (now - prefer_max_wait_s)
+// or NULL. The subquery spells LIVE as a status IN list and names the index:
+// with table statistics (ANALYZE, 20,000 rows) SQLite planned a SCAN of
+// lane_runs for the OR form of LIVE, and for the IN form without INDEXED BY.
+export const CLAIM_SQL = `UPDATE lane_runs SET status='claimed', claimed_by=?1, claimed_at=?2,
   heartbeat_at=?2, lease_until=?3, attempts=attempts+1
-  WHERE id=(SELECT id FROM lane_runs WHERE ${LIVE}
+  WHERE id=(SELECT id FROM lane_runs INDEXED BY idx_lane_runs_claim
+            WHERE status IN ('queued','claimed') AND (status='queued' OR lease_until < ?2)
             AND (?4 IS NULL OR lane IN (SELECT value FROM json_each(?4)))
-            ORDER BY enqueued_at, id LIMIT 1)
+            ORDER BY CASE WHEN ?5 IS NULL THEN 0
+                          WHEN enqueued_at < ?6 THEN 0
+                          WHEN project IN (SELECT value FROM json_each(?5)) THEN 1
+                          ELSE 2 END, enqueued_at, id LIMIT 1)
     AND ${LIVE}
   RETURNING id, lane, project, args_json, attempts, lease_until`;
+// One lane's newest done rows, for the run p50. Binds: ?1 lane.
+export const RUN_SAMPLE_SQL = `SELECT claimed_at, finished_at FROM lane_runs
+  WHERE lane=?1 AND status='done' ORDER BY id DESC LIMIT ${RUN_SAMPLE_N}`;
 
 const bytes = (s) => new TextEncoder().encode(s).length;
 
@@ -92,6 +123,20 @@ async function leaseSeconds(env) {
   return n >= LEASE_MIN_S && n <= LEASE_MAX_S ? n : LEASE_DEFAULT_S;
 }
 
+// lane_run.prefer_max_wait_s: digits 0..3600, else the code default.
+async function preferMaxWaitSeconds(env) {
+  const r = await env.DB.prepare("SELECT value FROM settings WHERE key=?1").bind(PREFER_KEY).first();
+  const s = r ? String(r.value).trim() : "";
+  const n = /^\d+$/.test(s) ? Number(s) : NaN;
+  return n >= 0 && n <= PREFER_MAX_S ? n : PREFER_DEFAULT_S;
+}
+
+// The run seconds of a done row, or null when a stamp is missing or bad.
+function runSeconds(r) {
+  const d = Date.parse(r.finished_at) - Date.parse(r.claimed_at);
+  return r.claimed_at && r.finished_at && Number.isFinite(d) ? Math.max(0, Math.floor(d / 1000)) : null;
+}
+
 const NAME_ERR = "must match [A-Za-z0-9._-]{1,64}";
 
 export const routes = [
@@ -127,9 +172,23 @@ export const routes = [
         }
         lanes = JSON.stringify(l);
       }
+      let prefer = null;
+      if (body.prefer !== undefined && body.prefer !== null) {
+        const p = body.prefer;
+        if (!Array.isArray(p) || p.length > PREFER_MAX || !p.every((x) => laneName(x) === x)) {
+          return json(400, { error: `prefer must be an array of at most ${PREFER_MAX} project names` });
+        }
+        if (p.length > 0) prefer = JSON.stringify(p);
+      }
+      let cutoff = null;
+      if (prefer !== null) {
+        const s = await preferMaxWaitSeconds(env);
+        if (s === 0) prefer = null;
+        else cutoff = isoPlusSeconds(t, -s);
+      }
       await sweepDead(env, t);
       const lease = isoPlusSeconds(t, await leaseSeconds(env));
-      const row = await env.DB.prepare(CLAIM_SQL).bind(machine, t, lease, lanes).first();
+      const row = await env.DB.prepare(CLAIM_SQL).bind(machine, t, lease, lanes, prefer, cutoff).first();
       if (!row) return new Response(null, { status: 204 });
       return json(200, {
         id: Number(row.id), lane: row.lane, project: row.project, args: JSON.parse(row.args_json),
@@ -231,6 +290,8 @@ export const routes = [
       const raw = url.searchParams.get("lane");
       const lane = laneName(raw);
       if (raw !== null && raw !== "" && !lane) return json(400, { error: `lane ${NAME_ERR}` });
+      const p50 = url.searchParams.get("run_p50");
+      if (p50 !== null && p50 !== "1") return json(400, { error: "run_p50 must be 1 when present" });
       const rows = (await env.DB.prepare(
         `SELECT lane,
            SUM(status='queued') AS queued, SUM(status='claimed') AS claimed,
@@ -246,7 +307,21 @@ export const routes = [
         oldest_queued_wait_s: r.oldest_queued ? Math.max(0, Math.floor((now - Date.parse(r.oldest_queued)) / 1000)) : null,
         live_claimers: Number(r.live_claimers),
       }));
-      return json(200, { lanes, as_of: t });
+      if (p50 === null) return json(200, { lanes, as_of: t });
+      // The run p50 of each queued lane, at most RUN_P50_LANES_MAX lanes (the
+      // most queued first); a lane past the cap answers null and the answer
+      // says truncated.
+      const queuedLanes = lanes.filter((l) => l.queued > 0)
+        .sort((a, b) => b.queued - a.queued || (a.lane < b.lane ? -1 : a.lane > b.lane ? 1 : 0));
+      const sampled = new Set(queuedLanes.slice(0, RUN_P50_LANES_MAX).map((l) => l.lane));
+      for (const l of queuedLanes) {
+        if (!sampled.has(l.lane)) { l.run_p50_s = null; l.run_p50_n = null; continue; }
+        const rs = (await env.DB.prepare(RUN_SAMPLE_SQL).bind(l.lane).all()).results || [];
+        const xs = rs.map(runSeconds).filter((x) => x !== null).sort((a, b) => a - b);
+        l.run_p50_s = percentile(xs, 50);
+        l.run_p50_n = xs.length;
+      }
+      return json(200, { lanes, run_p50_truncated: queuedLanes.length > sampled.size, as_of: t });
     }),
   ],
 ];

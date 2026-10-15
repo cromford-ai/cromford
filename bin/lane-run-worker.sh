@@ -11,7 +11,9 @@
 #                and swaps in bin/, catalog/ and fleet.conf. Its one result
 #                line goes to the log and to stderr; after a swap (rc 10) the
 #                loop re-execs itself with its own argv. No run is in flight.
-#   1. claim     POST /api/lane-runs/claim {machine}. 204 = the queue is empty:
+#   1. claim     POST /api/lane-runs/claim {machine, prefer}. prefer = the
+#                projects of the clone cache (step 7), newest first; none = no
+#                prefer key. 204 = the queue is empty:
 #                sleep lane_run.poll_s (1..300, fallback 15), or with --once
 #                exit 0. A transport failure logs one line; --once exits 1.
 #   2. check     lane and project are path-safe names and args[0] is a path
@@ -45,6 +47,14 @@
 #                lane_run.command_missing_alert_s (60..86400, fallback 3600),
 #                stamped in state/lane-run-worker/command-missing-<lane>.at.
 #                A failed report logs one line, and the lease re-runs the row.
+#   7. clone     the clone cache is ${REPOS_ROOT:-/root/repos}: its direct
+#      cache     children that are real dirs (not symlinks) with a .git and a
+#                path-safe name, newest mtime first. After each claimed row
+#                the run's own clone (if any) is touched; then, ONLY on a
+#                lane-run machine (LANE_RUN=1), every clone past the newest
+#                lane_run.clone_cache_n (1..64, fallback 8) is removed, one
+#                `clone cache: evicted <name> (keep <n>)` line each. A failed
+#                removal logs one line and the loop goes on.
 #
 # TERM or INT (a Fly stop, BH-6495) with a run in flight: the run's process
 # group gets TERM, the loop waits up to lane_run.term_grace_s (1..25, fallback
@@ -108,6 +118,51 @@ lw_term_grace_s() {
   case "$v" in ''|*[!0-9]*) v=20 ;; esac
   [ "$v" -ge 1 ] && [ "$v" -le 25 ] || v=20
   printf '%s' "$v"
+}
+
+# lw_clone_cache_n — lane_run.clone_cache_n, 1..64, else 8. Never 0: a bad
+# row must not delete every clone.
+lw_clone_cache_n() {
+  local v
+  v=$(setting_get lane_run.clone_cache_n 2>/dev/null) || v=""
+  v=$(printf '%s' "$v" | tr -d '[:space:]')
+  case "$v" in ''|*[!0-9]*) v=8 ;; esac
+  [ "${#v}" -le 3 ] && [ "$v" -ge 1 ] && [ "$v" -le 64 ] || v=8
+  printf '%s' "$((10#$v))"
+}
+
+# lw_clones — the clone cache, one name per line, newest mtime first, then name.
+lw_clones() {
+  local r="${REPOS_ROOT:-/root/repos}" d n
+  [ -d "$r" ] || return 0
+  for d in "$r"/*; do
+    n=${d##*/}
+    [ -d "$d" ] && [ ! -L "$d" ] && [ -e "$d/.git" ] && pl_name_ok "$n" || continue
+    printf '%s %s\n' "$(stat -c %Y "$d" 2>/dev/null || echo 0)" "$n"
+  done | sort -k1,1nr -k2,2 | cut -d' ' -f2
+}
+
+# lw_prefer — the newest lane_run.clone_cache_n clone names as a JSON array.
+lw_prefer() {
+  lw_clones | head -n "$(lw_clone_cache_n)" | jq -R . | jq -sc .
+}
+
+# lw_cache_trim [project] — step 7.
+lw_cache_trim() {
+  local r="${REPOS_ROOT:-/root/repos}" p="${1:-}" keep n
+  if [ -n "$p" ] && pl_name_ok "$p" && [ -d "$r/$p" ] && [ ! -L "$r/$p" ] && [ -e "$r/$p/.git" ]; then
+    touch "$r/$p" 2>/dev/null
+  fi
+  [ "${LANE_RUN:-}" = 1 ] || return 0
+  keep=$(lw_clone_cache_n)
+  while IFS= read -r n; do
+    [ -n "$n" ] || continue
+    if rm -rf --one-file-system -- "${r:?}/$n" 2>/dev/null; then
+      lw_log "clone cache: evicted $n (keep $keep)"
+    else
+      lw_log "clone cache: evict $n failed"
+    fi
+  done < <(lw_clones | tail -n +$((keep + 1)))
 }
 
 RESP="$H/state/lane-run-worker/claim-$$.json"
@@ -275,7 +330,8 @@ while :; do
     [ "$lrc" = 10 ] && exec "$H/bin/lane-run-worker.sh" "${LW_ARGV[@]}"
   fi
   # Into a file, not $( ): JOBS_HTTP must survive the call to tell 204 apart.
-  _jobs_req POST /api/lane-runs/claim "$(jq -nc --arg m "$MACHINE" '{machine:$m}')" > "$RESP"; crc=$?
+  _jobs_req POST /api/lane-runs/claim "$(jq -nc --arg m "$MACHINE" --argjson p "$(lw_prefer)" \
+    '{machine:$m} + (if ($p | length) > 0 then {prefer:$p} else {} end)')" > "$RESP"; crc=$?
   if [ "$crc" != 0 ]; then
     lw_log "claim failed (rc $crc, http ${JOBS_HTTP:-none})"
     [ "$ONCE" = 1 ] && exit 1
@@ -288,4 +344,5 @@ while :; do
     sleep "$(lw_poll_s)" & wait "$!"; continue
   fi
   lw_run "$RESP"
+  lw_cache_trim "$(jq -r '.project // empty' "$RESP" 2>/dev/null)"
 done
