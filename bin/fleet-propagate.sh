@@ -103,10 +103,15 @@
 #   POOL_BAKE_TIMEOUT_S      per-bake timeout, default 1800. A TEST override
 #                            like FLEET_PROPAGATE_PATH; production never sets it.
 #
-# A pool whose last ok bake is not from TODAY is cold — its next bake pays for
-# the whole checkout + install + build — so it goes in a SERIAL lane, one at a
-# time, which runs alongside the capped lane: at most POOL_BAKE_PARALLEL+1
-# remote builds, and never two cold ones. --check names the lane per pool.
+# A pool whose last ok bake is older than the warm bust is cold — its next bake
+# pays for the whole checkout + install + build — so it goes in a SERIAL lane,
+# one at a time, which runs alongside the capped lane: at most
+# POOL_BAKE_PARALLEL+1 remote builds, and never two cold ones. --check names
+# the lane per pool. The bust is state/fly/warm-bust (bin/lib/warm-bust.sh):
+# the nightly bin/fly-image-refresh.sh rolls it at 05:40Z, so the ticks after
+# 00:00Z stay warm. With no valid bust file, cold is "not baked TODAY".
+# The refresh holds locks/fleet-propagate-bake.lock (fd 6) while it bakes, so
+# a tick in that window defers its pools as it does for any running bake step.
 #
 # WHY A FAILED BAKE SAYS WHY. That incident's alert said only "failed: project-4
 # …" and every cause had to be read out of the out files, so each failure is
@@ -171,6 +176,9 @@ H="${HARNESS:-/root/harness}"
 # BH-2523: the fly_images row, the bake time a fresh hub reads first.
 # shellcheck source=bin/lib/fly-image-row.sh
 [ -r "$H/bin/lib/fly-image-row.sh" ] && . "$H/bin/lib/fly-image-row.sh" 2>/dev/null
+# BH-6710: the warm bust the nightly refresh rolls; pool_cold reads it.
+# shellcheck source=bin/lib/warm-bust.sh
+. "$H/bin/lib/warm-bust.sh" 2>/dev/null || . "$(dirname "${BASH_SOURCE[0]}")/lib/warm-bust.sh" 2>/dev/null || true
 # BH-1372: pool check through the routing contract when loaded, the bare file otherwise.
 fp_has_pool() { if command -v routing_pool_app >/dev/null 2>&1; then routing_pool_app "$1" >/dev/null 2>&1; else flag_on fly-pool-app "$1"; fi; }
 . "${HARNESS:-/root/harness}/bin/lib/env-path.sh" 2>/dev/null || . "$(dirname "${BASH_SOURCE[0]}")/lib/env-path.sh" 2>/dev/null || harness_env_dir() { printf '%s\n' "${1:-${HARNESS:-/root/harness}}/env"; }; HENV=$(harness_env_dir "$H")
@@ -575,10 +583,19 @@ pool_bake_date() { # pool_bake_date <project> — UTC date of its last ok bake, 
   printf '%s' "$(date -u -d "@$S" +%F 2>/dev/null || printf '%s' never)"
 }
 
-pool_cold() { # pool_cold <project> — true when its warm layer is not today's
-  # fly-image-build.sh passes WARM_BUST=$(date -u +%F), so a layer baked on any
-  # earlier date is rebuilt from scratch by this bake: checkout, install, build.
-  # Absent or unusable is cold — the conservative side, same as the debounce's.
+pool_cold() { # pool_cold <project> — true when its warm layer is not the current bust's
+  # fly-image-build.sh passes the date in state/fly/warm-bust as WARM_BUST, and
+  # bin/fly-image-refresh.sh rolls that file when it starts (BH-6710). So a
+  # layer baked before the bust epoch is rebuilt from scratch: checkout,
+  # install, build. With no valid bust file the build passes $(date -u +%F),
+  # and a layer baked on any earlier date is cold. Absent or unusable is cold —
+  # the conservative side, same as the debounce's.
+  local B S
+  if declare -F warm_bust_read >/dev/null 2>&1 && read -r _ B < <(warm_bust_read "$FLY_STATE" "$NOW_S"); then
+    S=$(stamp_of "$1")
+    [ -z "$S" ] || [ "$S" -lt "$B" ]
+    return
+  fi
   [ "$(pool_bake_date "$1")" != "$TODAY" ]
 }
 

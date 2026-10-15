@@ -46,6 +46,9 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 # BH-2523: the fly_images row — written on a pushed ref, read for the last bake.
 # shellcheck source=bin/lib/fly-image-row.sh
 [ -r "$HERE/lib/fly-image-row.sh" ] && . "$HERE/lib/fly-image-row.sh"
+# BH-6710: the warm-layer bust key the nightly refresh rolls (state/fly/warm-bust).
+# shellcheck source=bin/lib/warm-bust.sh
+[ -r "$HERE/lib/warm-bust.sh" ] && . "$HERE/lib/warm-bust.sh"
 FLYDIR="$(cd "$HERE/../fly" && pwd)" || { echo "FATAL: fly/ dir not found next to bin/"; exit 1; }
 DOCKERFILE="$FLYDIR/Dockerfile"
 [ -f "$DOCKERFILE" ] || { echo "FATAL: $DOCKERFILE missing"; exit 1; }
@@ -105,8 +108,11 @@ fi
 # the image (see fly/Dockerfile warm-bake section). The repo slug comes from
 # fleet.conf; the clone token is bin/gh-token.sh's answer for it, passed ONLY as
 # a BuildKit --build-secret (never a --build-arg — args persist in image
-# history). WARM_BUST (today's date) busts the depot layer cache so the nightly
-# refresh actually re-bakes instead of reusing yesterday's clone layer.
+# history). WARM_BUST busts the depot layer cache so the nightly refresh
+# actually re-bakes instead of reusing yesterday's clone layer. Its value is
+# the date in state/fly/warm-bust, which bin/fly-image-refresh.sh rolls when it
+# starts (BH-6710), so a propagate bake after 00:00Z reuses the layer the last
+# refresh built. No valid bust file: today's date, as before.
 # Missing slug or token => warm bake skipped, image builds cold (old behavior).
 SLUG=""
 for FC in "${FLEET_CONF:-}" "$H/fleet.conf" "$HERE/../fleet.conf"; do
@@ -134,9 +140,17 @@ if [ -n "$SLUG" ] && [ "$SLUG" != "-" ] && [ -n "$GHTOK" ] && [ "${WARM_BAKE:-1}
     || echo "== warm bake SKIPPED: the hub gh token cannot read $SLUG (403) — image builds cold =="
 fi
 if [ "$WARM_READABLE" = 1 ]; then
+  # WARM_BUST_NOW is a test clock seam; production never sets it.
+  WB_NOW="${WARM_BUST_NOW:-$(date -u +%s)}"
+  WARM_BUST=""; WARM_BUST_SRC=date
+  if declare -F warm_bust_read >/dev/null 2>&1; then
+    read -r WARM_BUST _ < <(warm_bust_read "$H/state/fly" "$WB_NOW") && WARM_BUST_SRC=state
+  fi
+  [ -n "$WARM_BUST" ] || { WARM_BUST=$(date -u -d "@$WB_NOW" +%F 2>/dev/null || date -u +%F); WARM_BUST_SRC=date; }
   WARM_ARGS=(--build-arg "WARM_REPO_SLUG=$SLUG" --build-arg "WARM_PROJECT=$PROJECT" \
-             --build-arg "WARM_BUST=$(date -u +%F)" --build-secret "gh_token=$GHTOK")
+             --build-arg "WARM_BUST=$WARM_BUST" --build-secret "gh_token=$GHTOK")
   echo "== warm bake enabled for $SLUG (checkout + install + build caches) =="
+  echo "== warm bust: $WARM_BUST ($WARM_BUST_SRC) =="
   # BH-3463: the warm `next build` gets its own timeout (fly/warm-build.sh), so a
   # hung build ships a cold warm layer instead of holding the whole bake until
   # fleet-propagate's outer timeout kills it with nothing pushed. The

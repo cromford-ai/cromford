@@ -31,6 +31,9 @@ LOG="$H/logs/fly-image-refresh.log"
 # bake_last_baked) for the per-dependency drift check below.
 # shellcheck source=bin/lib/bake-deps.sh
 [ -r "$H/bin/lib/bake-deps.sh" ] && . "$H/bin/lib/bake-deps.sh"
+# BH-6710: warm_bust_roll, the key every pool bake's warm layer is cached by.
+# shellcheck source=bin/lib/warm-bust.sh
+[ -r "$H/bin/lib/warm-bust.sh" ] && . "$H/bin/lib/warm-bust.sh"
 
 # _bake_alert_once <flag-suffix> <line> — one ALERTS.log line per flag per UTC
 # day; the lane runs nightly and a stuck image must not page every night twice.
@@ -80,6 +83,40 @@ command -v routing_sync_all >/dev/null 2>&1 && { routing_sync_all >/dev/null 2>&
 # Only when this hub builds pool images at all (a fly-pool-* flag exists).
 compgen -G "$H/flags/fly-pool-*" >/dev/null 2>&1 \
   && command -v bake_deps >/dev/null 2>&1 && command -v setting_get >/dev/null 2>&1 && _bake_norow_fleet
+
+# --- BH-6710: one bake lane with fleet-propagate, then roll the warm bust -----
+# The refresh bakes every pool serially on the same org remote builder that
+# bin/fleet-propagate.sh bakes on. Unlocked, it ran beside the propagate lanes
+# (2026-10-14 06:11Z: four builds at once, project-2 build 1473s against
+# 198s alone). So it holds the propagate bake lock (fd 6) for its whole run; a
+# propagate tick that finds it held defers its pools to a later tick. The wait
+# for a running propagate bake step is bounded and fails open: the refresh
+# never skips. Then it rolls state/fly/warm-bust, so the warm layer this run
+# builds is the one every bake reuses until the next refresh, and the first
+# propagate tick after 00:00Z no longer rebuilds every pool cold.
+if compgen -G "$H/flags/fly-pool-*" >/dev/null 2>&1; then
+  WAIT="${FLY_IMAGE_REFRESH_LOCK_WAIT_S:-2100}"
+  case "$WAIT" in
+    ''|*[!0-9]*)
+      echo "$(date -u '+%F %T Z') FLY_IMAGE_REFRESH_LOCK_WAIT_S=$WAIT is not a number of seconds — using 2100" >> "$LOG"
+      WAIT=2100 ;;
+  esac
+  mkdir -p "$H/locks" 2>/dev/null
+  if ! exec 6>"$H/locks/fleet-propagate-bake.lock"; then
+    echo "$(date -u '+%F %T Z') bake lock cannot be opened ($H/locks/fleet-propagate-bake.lock) — baking without it" >> "$LOG"
+  elif flock -w "$WAIT" 6; then
+    echo "$(date -u '+%F %T Z') bake lock taken" >> "$LOG"
+  else
+    echo "$(date -u '+%F %T Z') bake lock busy for ${WAIT}s — baking without it" >> "$LOG"
+  fi
+  # WARM_BUST_NOW is a test clock seam; production never sets it.
+  WB_NOW="${WARM_BUST_NOW:-$(date -u +%s)}"
+  if command -v warm_bust_roll >/dev/null 2>&1 && warm_bust_roll "$H/state/fly" "$WB_NOW"; then
+    echo "$(date -u '+%F %T Z') warm bust rolled to $(date -u -d "@$WB_NOW" +%F)" >> "$LOG"
+  else
+    echo "$(date -u '+%F %T Z') warm bust NOT rolled (bin/lib/warm-bust.sh missing or $H/state/fly not writable) — bakes keep the last bust or the date rule" >> "$LOG"
+  fi
+fi
 
 for F in "$H"/flags/fly-pool-*; do
   [ -f "$F" ] || continue

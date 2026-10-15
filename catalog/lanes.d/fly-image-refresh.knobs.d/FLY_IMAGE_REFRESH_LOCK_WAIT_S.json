@@ -1,0 +1,10 @@
+{
+  "env": "FLY_IMAGE_REFRESH_LOCK_WAIT_S",
+  "type": "int",
+  "default": 2100,
+  "min": 0,
+  "max": null,
+  "unit": "s",
+  "zero_means": null,
+  "note": "Read by bin/fly-image-refresh.sh as ${FLY_IMAGE_REFRESH_LOCK_WAIT_S:-2100}: the most seconds the nightly refresh waits for locks/fleet-propagate-bake.lock (fd 6, the propagate bake lock) before it bakes. Default 2100 = one propagate bake at its maximum (1800 s build limit + 300 s push grace). When the wait runs out it logs one line and bakes without the lock; it never skips. A value that is not a number of seconds is named in the log and 2100 is used. Registered by BH-6710."
+}

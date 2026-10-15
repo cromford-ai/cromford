@@ -1,0 +1,8 @@
+{
+  "env": "WARM_BUST_NOW",
+  "type": "string",
+  "default": "",
+  "zero_means": null,
+  "note": "no static default — the script computes it ($(date -u +%s)). Read by bin/fly-image-refresh.sh and bin/fly-image-build.sh as ${WARM_BUST_NOW:-$(date -u +%s)}: the epoch the warm bust is rolled and read at (BH-6710). A test clock seam; NOT settable from the control plane, so a settings row can never move the bust key.",
+  "settable": false
+}

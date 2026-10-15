@@ -24,6 +24,22 @@ So the fan-out is bounded and every failure is named:
 /root/harness/bin/fleet-propagate.sh`. The nightly `bin/fly-image-refresh.sh`
 (05:40Z) is a different lane and is already serial — it reads neither knob.
 
+**The warm bust and the refresh lock (BH-6710).** The warm layer's cache key
+(`WARM_BUST`) is the date in `state/fly/warm-bust` (`<YYYY-MM-DD> <epoch>`,
+`bin/lib/warm-bust.sh`). The nightly refresh rolls it when it starts, so the
+propagate ticks between 00:00Z and 05:40Z reuse the last refresh's layer. A pool
+is cold when its last `ok` bake is older than the bust epoch. With no valid bust
+file (missing, garbage, or older than yesterday) the old rule holds: cold = not
+baked today, and `fly-image-build.sh` passes today's date. The refresh holds
+`locks/fleet-propagate-bake.lock` (fd 6) for its whole run, so a propagate tick
+in that window defers its pools and a later tick bakes them. Its wait for a
+running propagate bake step is `FLY_IMAGE_REFRESH_LOCK_WAIT_S` (default 2100);
+when the wait runs out it logs `bake lock busy for <W>s — baking without it` and
+bakes. `logs/fly-image-refresh.log` carries `bake lock taken` and `warm bust
+rolled to <date>`; `logs/fly-image-build.log` carries `== warm bust: <date>
+(state|date) ==` per bake. Drive it with `HARNESS_TEST_SANDBOX=1 bash
+tests/pool-bake-cause.bh-6710-test.sh`.
+
 **How to drive it:**
 
 | what | how |
@@ -54,9 +70,11 @@ So the fan-out is bounded and every failure is named:
   logs one line naming the value it refused and uses 2 — never unlimited.
 - **`0` is unlimited, and it lifts the WARM cap only.** Cold pools stay serial
   whatever the knob says, because one cold bake at a time is the whole point.
-- **A cold pool is never in the parallel lane.** Cold = no `ok` bake stamped
-  with today's UTC date, which is the exact expression `fly-image-build.sh`
-  passes as `WARM_BUST`. Absent, unparseable and future stamps are all cold.
+- **A cold pool is never in the parallel lane.** Cold = no `ok` bake at or
+  after the bust epoch in `state/fly/warm-bust`, or, with no valid bust file,
+  no `ok` bake stamped with today's UTC date. Each is the exact key
+  `fly-image-build.sh` passes as `WARM_BUST`. Absent, unparseable and future
+  stamps are all cold.
 - **The cold lane does not consume a cap slot.** It runs beside the capped lane,
   so a cold day does not also starve the pools that are cheap to bake.
 - **`ok` never carries a reason.** The classifier runs only for a non-zero rc.
