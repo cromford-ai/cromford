@@ -42,7 +42,10 @@ FD=docs/PR-OWNERSHIP.d
 # TEST-CHANGE (BH-3933, #5087): enroll, the ownerless clock and the D1 kill knob
 # (§0, §2, §7, §8, §9, §10) landed in the fragments, so the pin moved from
 # 5ad22a891b2e6d27 to the render of that text.
-BASE_SHA=28fd59dcde365903
+# TEST-CHANGE (BH-6814, #6846): the stacked-PR guard and the close-path ticket
+# HOLD (§10, rule 3 and the to_merge_hold paragraph) landed in the fragments,
+# so the pin moved from 28fd59dcde365903 to the render of that text.
+BASE_SHA=5e31bf4f72404d51
 STEP='lane renders generate and their sources validate'
 
 PASS=0; FAIL=0

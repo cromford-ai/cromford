@@ -380,7 +380,7 @@ while read -r PROJECT SLUG; do
   command -v gh_auth_for >/dev/null 2>&1 && gh_auth_for "$SLUG" || true
   OPENF="$TD/open.json"; MERGEDF="$TD/merged.json"
   if ! gh pr list -R "$SLUG" --state open --limit "$PR_LIMIT" \
-       --json number,title,headRefName,headRefOid,author,labels,body,mergeable,updatedAt,createdAt,url,isDraft \
+       --json number,title,headRefName,headRefOid,baseRefName,author,labels,body,mergeable,updatedAt,createdAt,url,isDraft \
        > "$OPENF" 2>/dev/null || [ ! -s "$OPENF" ]; then
     command -v gh_repo_list_failed >/dev/null 2>&1 &&
       gh_repo_list_failed pr-owner-sweep "$SLUG" "no open PR was classified this run"
@@ -660,6 +660,15 @@ def park_of(labels, body):
         return ("park: `parked` label (no expiry date)", 0)
     return None
 
+# STACKED (BH-6814): the open PRs based on each branch. A PR another open PR is
+# based on is not a duplicate to close: closing it strands that PR on a branch
+# that never merges. A list without baseRefName stacks nothing.
+stacked_on = {}
+for p in prs:
+    b = str(p.get("baseRefName") or "")
+    if b:
+        stacked_on.setdefault(b, []).append(str(p.get("number")))
+
 rows, out = [], {}
 for p in sorted(prs, key=lambda x: int(x.get("number", 0) or 0)):
     if not isinstance(p, dict) or "number" not in p:
@@ -737,7 +746,7 @@ for p in sorted(prs, key=lambda x: int(x.get("number", 0) or 0)):
     # The hook context (BH-3932) rides as five trailing columns. An empty field
     # is `-`, because IFS=tab collapses empty fields and would shift the rest.
     dash = lambda v: str(v) if v not in (None, "") else "-"
-    # BH-3936: four more for the superseded hook, then the branch (BH-3933). EKEY is the branch/title key,
+    # BH-3936: four more for the superseded hook, then the branch (BH-3933) and STACKED (BH-6814). EKEY is the branch/title key,
     # else the body's FIRST line read with the same anchored title_re, so an
     # external branch name still resolves and "UTF-8" mid-sentence still cannot.
     # The key must carry a prefix this repo's harness PRs use, and a bot that
@@ -768,7 +777,8 @@ for p in sorted(prs, key=lambda x: int(x.get("number", 0) or 0)):
                  dash(author), dash(p.get("createdAt")), "1" if p.get("isDraft") else "0",
                  dash(mergeable), dash(p.get("headRefOid")),
                  ekey, mdup, "-", dash(mc.get("%s#%d" % (SLUG, n))),
-                 dash(p.get("headRefName"))])
+                 dash(p.get("headRefName")),
+                 ",".join(x for x in stacked_on.get(str(p.get("headRefName") or ""), []) if x != sn) or "-"])
 
 # KEEPER (BH-3936, D4): for a key with 2+ open PRs, the one that stays is the
 # highest-numbered member the conductor has READY/QUEUED/MERGING, else the
@@ -861,7 +871,7 @@ PYEOF
   # ownerless clock neither advances nor resets for this repo.
   [ "$PO_MC_OK" = 1 ] || PO_REPO_UNREAD=1
   R_OWNED=0; R_ENR=0; R_OWNERLESS=0; R_SUP=0; R_STALE=0
-  while IFS=$'\t' read -r NUM STATE ACTION KEY REASON URL AUTHOR CREATED DRAFT MERGEABLE HEAD EKEY MERGED_DUP KEEPER MCSTATE BRANCH; do
+  while IFS=$'\t' read -r NUM STATE ACTION KEY REASON URL AUTHOR CREATED DRAFT MERGEABLE HEAD EKEY MERGED_DUP KEEPER MCSTATE BRANCH STACKED; do
     # THE HOOKS (BH-3932), on every PR whatever its class: superseded first (rc 0
     # = it closed the PR, nothing else runs for it), then enroll, stale, health.
     PO_PROJECT="$PROJECT" PO_SLUG="$SLUG" PO_NUM="$NUM" PO_HEAD="$HEAD" PO_AUTHOR="$AUTHOR"
@@ -870,7 +880,7 @@ PYEOF
     PO_MC_STATE="${MC_STATE_OF["$SLUG#$NUM"]:--}"; PO_MC_REASON="${MC_REASON_OF["$SLUG#$NUM"]:--}"
     PO_MC_HEAD="${MC_HEAD_OF["$SLUG#$NUM"]:--}"; PO_MC_SINCE="${MC_SINCE_OF["$SLUG#$NUM"]:--}"
     PO_OWNED=0; [ "$STATE" = OWNED ] && PO_OWNED=1
-    PO_EKEY="${EKEY:--}" PO_MERGED_DUP="${MERGED_DUP:--}" PO_KEEPER="${KEEPER:--}"
+    PO_EKEY="${EKEY:--}" PO_MERGED_DUP="${MERGED_DUP:--}" PO_KEEPER="${KEEPER:--}" PO_STACKED="${STACKED:--}"
     # The conductor detail map above is the same mc read; its column only fills a gap.
     [ "$PO_MC_STATE" = - ] && PO_MC_STATE="${MCSTATE:--}"
     # The classifier calls every outside author EXTERNAL before it looks at the

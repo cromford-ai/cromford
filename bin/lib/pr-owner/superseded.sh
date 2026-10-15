@@ -5,7 +5,7 @@
 # po_superseded — called once per open PR, FIRST and before the class gate.
 #   Takes no args; reads the sweep's per-PR context (PO_PROJECT PO_SLUG PO_NUM
 #   PO_HEAD PO_AUTHOR PO_CLASS PO_KEY PO_EKEY PO_MERGED_DUP PO_KEEPER
-#   PO_MC_STATE) and its run state (PO_MC_OK N_ACT MAX_ACTIONS HELD CLOSED DRY
+#   PO_MC_STATE PO_STACKED) and its run state (PO_MC_OK N_ACT MAX_ACTIONS HELD CLOSED DRY
 #   TD, say).
 #   rc 0 = the PR was closed, and the sweep skips every later hook and arm for
 #   it; rc 2 = declined. First match wins, whatever the class:
@@ -26,13 +26,18 @@
 #     3 duplicate  another open PR for the same key is the keeper (PO_KEEPER).
 #                  Never a PR the blocked resolver owns (conductor row
 #                  BLOCKED_HUMAN or RED_TWICE): its rebuild rung closes that
-#                  one itself, after its own settle window.
+#                  one itself, after its own settle window. Never a PR that
+#                  another open PR is stacked on (PO_STACKED: their base is
+#                  this PR's head branch), held as `#n:stacked` (BH-6814):
+#                  the close would strand them on a branch that never merges.
 #   Each close is one comment then one close over REST, counted against
 #   MAX_ACTIONS, held as `#n:cap` past it, logged only under DRY=1. A PR this
 #   hook closed before (pr_superseded row `closed`) that is open again was
 #   reopened by a human, and is never closed again. A PR or ticket under a HOLD
 #   (to_merge_hold, the answer every merge lane gives) is never closed either,
-#   and a hold that cannot be read holds.
+#   and a hold that cannot be read holds. On an issues board the ticket's own
+#   HOLD binds a lead's PR too (BH-6814): to_merge_hold exempts the lead from
+#   the ticket hold for a merge, but a close is not a merge.
 #
 # ph_ticket_status <project> <KEY> — prints open|done|rejected|unknown, rc 0.
 #   rc 1 (nothing printed) = the board could not be read. Cached per run in $TD.
@@ -136,7 +141,18 @@ _po_ss_held() {
   # The redirections live INSIDE the subshell: on a bare assignment they cost
   # the substitution's exit status.
   # shellcheck source=bin/lib/ticket-ownership.sh
-  v=$( exec </dev/null 2>/dev/null; [ -r "$lib" ] && . "$lib" || exit 3; to_merge_hold "${PO_PROJECT:--}" "$PO_SLUG" "$PO_NUM" ) || rc=$?
+  # The ticket read after it (BH-6814) has no lead exemption: the key's digits
+  # are the issue (_ph_ts_issue's rule), and a product board has no such ticket.
+  v=$( exec </dev/null 2>/dev/null; [ -r "$lib" ] && . "$lib" || exit 3
+       to_merge_hold "${PO_PROJECT:--}" "$PO_SLUG" "$PO_NUM" && exit 0
+       s=$(to_issue_repo "${PO_PROJECT:--}") || exit 1
+       n="${PO_EKEY:--}"; n="${n##*-}"; [[ "$n" =~ ^[0-9]+$ ]] || exit 1
+       t=$(to_hold_verdict "$s" "$n"); r=$?
+       case "$r" in
+         0) printf 'ticket #%s is held (%s)\n' "$n" "${t#*	}"; exit 0 ;;
+         2) printf 'the hold on ticket #%s could not be read (%s)\n' "$n" "${t#*	}"; exit 0 ;;
+       esac
+       exit 1 ) || rc=$?
   case "$rc" in
     1) return 1 ;;
     3) v="bin/lib/ticket-ownership.sh is not loadable, so a hold cannot be read" ;;
@@ -253,6 +269,10 @@ po_superseded() {
         _po_ss_say "${PO_SLUG}#$PO_NUM: older duplicate of #$keep, but the blocked resolver owns it (${PO_MC_STATE}) — its rebuild rung closes it"
         return 2 ;;
     esac
+    if [ "${PO_STACKED:--}" != - ]; then
+      _po_ss_say "${PO_SLUG}#$PO_NUM: older duplicate of #$keep, but #${PO_STACKED//,/, #} is stacked on its branch — closing it would strand that PR, kept"
+      HELD="${HELD:+$HELD,}#$PO_NUM:stacked"; return 2
+    fi
     local by="newer-#$keep"
     [ "$keep" -lt "$PO_NUM" ] 2>/dev/null && by="ready-#$keep"
     _po_ss_close "$by" "Closing this one: #$keep is the PR for $ek that we're landing, so this one is a duplicate. If it has something #$keep doesn't, reopen it and say so."

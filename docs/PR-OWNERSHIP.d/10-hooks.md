@@ -68,6 +68,10 @@ the first of these matches, whatever its class:
 3. another open PR for the same key is the keeper (`PO_KEEPER`), unless the
    blocked resolver owns this one (conductor row `BLOCKED_HUMAN` or
    `RED_TWICE`): its rebuild rung closes that PR after its own settle window.
+   It never closes a PR that another open PR is stacked on (that PR's base is
+   this PR's head branch): the close would strand it on a branch that never
+   merges, so both stay open and the summary holds it as `#n:stacked`
+   (BH-6814).
 
 Rules 2 and 3 need the conductor's rows (`PO_MC_OK=1`): the product-board
 skip, the keeper choice and the resolver guard all read them, so with the rows
@@ -76,7 +80,11 @@ neither.
 
 Before any close, `to_merge_hold` (`bin/lib/ticket-ownership.sh`) is asked: a
 HOLD on the PR or its ticket, or a hold it cannot read, holds the PR
-(`#n:hold`).
+(`#n:hold`). `to_merge_hold` exempts a lead's PR (`lead_pr_authors`) from the
+ticket hold, because it answers for a merge. A close is not a merge, so on an
+issues board the hook then reads the ticket itself (the key's digits are the
+issue) with no lead exemption: a HOLD newer than its last RESUME, or a thread
+it cannot read, holds a lead's PR too (BH-6814).
 
 The key (`PO_EKEY`) is the branch/title key, else the body's first line, and
 only when its prefix is one a harness-authored PR in this repo (open, or in the

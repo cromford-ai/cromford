@@ -48,7 +48,16 @@ case "$1 $2" in
     # bg_read's thread reads (--paginate) are unreadable, so health counts no
     # CI-only block; the token's visibility probe sees the repo.
     case "$*" in *--paginate*) exit 1 ;; esac
+    # TEST-CHANGE (BH-6814): hold_check's plain issue read answers the issue,
+    # as GitHub does, since the superseded hook now reads an issues-board
+    # ticket's hold for every PR. A 404 is gh's non-zero exit.
+    case "$#:$2" in 2:repos/*/issues/*)
+      n="${2##*/}"; [ "$(cat "$F/issue-$n.code" 2>/dev/null || echo 404)" = 200 ] || exit 1
+      cat "$F/issue-$n.json"; exit 0 ;;
+    esac
     echo 1234; exit 0 ;;
+  # hold_check's comments read: the ticket's thread is empty.
+  "api --paginate") case "$3" in repos/*/issues/*/comments*) echo '[]'; exit 0 ;; esac; exit 1 ;;
 esac
 case "$*" in
   *"pr list"*"--state open"*)   cat "$F/open.json"; exit 0 ;;
@@ -340,6 +349,7 @@ nowrite && ok || bad "B1 UTF-8 / WRANGLER-3 never read an unrelated issue and cl
 setup "$BH"
 opens "$(pr 412 'BH-71: contributor fix' contrib/bh-71 collaborator-1)"
 mergeds "$(merged 406 'BH-71: shipped' ticket/bh-71)"
+issue 71 200 '{"number":71,"state":"closed","state_reason":"completed","labels":[]}'
 run
 closed 412 && ok || bad "B1 an external PR on a known prefix still closes: $(W)"
 
