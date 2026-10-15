@@ -1,0 +1,8 @@
+GET /api/main-red-state/verdict
+PUT /api/main-red-state/verdict
+GET /api/main-red-state/pr-errors
+PUT /api/main-red-state/pr-errors
+POST /api/main-red-state/pr-errors/prune
+GET /api/main-red-state/pairs
+POST /api/main-red-state/pairs
+POST /api/main-red-state/pairs/resolve

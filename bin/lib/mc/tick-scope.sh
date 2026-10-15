@@ -84,6 +84,9 @@ KILL=0;    flag_on automerge-disabled && KILL=1
 ACTIONS=0; flag_on merge-conductor-actions && ACTIONS=1
 MERGES=0;  flag_on merge-conductor-merge && MERGES=1
 if flag_on merge-conductor-observe; then ACTIONS=0; MERGES=0; fi
+# BH-4156: bin/mc-state-drill.sh runs one tick with MC_DRILL=1. It must not be
+# able to rebase, review or merge, whatever the flags say.
+if [ "${MC_DRILL:-0}" = 1 ]; then ACTIONS=0; MERGES=0; fi
 if [ "$KILL" = 1 ]; then ACTIONS=0; MERGES=0; fi
 if [ "$MERGES" = 1 ] && [ "$ACTIONS" = 0 ]; then MERGES=0; mc_log "merge flag set without the actions flag — merges refused this tick"; fi
 # A FLEET MERGES PAUSE (BH-1672) LOWERS MERGES AND NOTHING ELSE. It never sets

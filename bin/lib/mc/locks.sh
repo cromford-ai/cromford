@@ -450,7 +450,10 @@ mc_attempt_row_put() {
     [ -e "$tick.pr-rows-down" ] && { pr_rows_trip; return 0; }
   fi
   IFS=$'\t' read -r repo num kind sha <<< "$k"
-  pr_attempt_put "$repo" "$num" "$kind" "$sha" >/dev/null 2>&1 && return 0
+  if pr_attempt_put "$repo" "$num" "$kind" "$sha" >/dev/null 2>&1; then
+    [ -n "$tick" ] && _mc_memo_add "$repo" "$num" "$kind" "$sha"
+    return 0
+  fi
   if [ -n "$tick" ]; then
     mkdir -p "$MC_TICK_DIR" 2>/dev/null
     ( set -C; : > "$tick.pr-rows-putfail" ) 2>/dev/null || return 0
@@ -460,6 +463,118 @@ mc_attempt_row_put() {
     _MC_ROW_PUTFAIL=1
     mc_log "pr-state-rows row write failed for '$1' — the file line is still written (logged once for this process)"
   fi
+  return 0
+}
+
+# --- BH-4156: one attempt read per repo per tick -----------------------------
+# Every mc_attempt_has / mc_attempt_rows of a PR-keyed line was its own GET
+# /api/pr-attempts, per PR per line. tick_project now calls mc_tick_prefetch
+# once per repo, before the workers start: ONE pr_attempt_batch read of the
+# attempt rows of every PR the tick works, kept as a per-tick memo in
+# MC_TICK_DIR:
+#   <tick>.batch-<repo>.tsv        `<number>\t<kind>\t<sha>`, the route's order
+#   <tick>.batch-<repo>.add        rows this tick wrote (mc_attempt_row_put and
+#                                  the back-fill), oldest first
+#   <tick>.batch-<repo>.covered    the numbers the answer covers
+#   <tick>.batch-<repo>.uncovered  numbers mc_attempt_clear took back
+# A PR is answered from the memo only when it is covered and not uncovered.
+# Anything else reads per PR, exactly as before: no MC_TICK_ID, the flag down,
+# a 404 (route not deployed), an outage, a number the route's row cap left
+# out. Appends are one short line each, so parallel workers never lose one.
+# mc_tick_gc deletes the memo files with the other tick files.
+
+# _mc_memo_base <repo> — the memo path prefix for this tick; rc 1 with no tick.
+_mc_memo_base() {
+  [ -n "${MC_TICK_ID:-}" ] && [ -n "${1:-}" ] || return 1
+  printf '%s/%s.batch-%s' "$MC_TICK_DIR" "$(mc_safe_name "$MC_TICK_ID")" "$(mc_safe_name "$1")"
+}
+
+# _mc_memo_clear_stamp <repo> <num> — the CROSS-TICK clear stamp. Keyed ticks
+# run beside the full tick, and a worker can start minutes after its tick's
+# prefetch. A clear in tick B un-covers the PR in B's memo only, so A's memo
+# would still answer "attempted" from its snapshot and warm the cleared line
+# back. mc_attempt_clear touches this stamp (no MC_TICK_ID needed), and
+# _mc_memo_covered refuses a PR whose stamp is not older than its own snapshot.
+# mc_tick_gc prunes stamps with the other tick files.
+_mc_memo_clear_stamp() {
+  [ -n "${1:-}" ] && [ -n "${2:-}" ] || return 1
+  printf '%s/memo-cleared.%s.%s' "$MC_TICK_DIR" "$(mc_safe_name "$1")" "$(mc_safe_name "$2")"
+}
+
+# _mc_memo_covered <repo> <num> — rc 0 when this tick's memo answers that PR.
+_mc_memo_covered() {
+  local b c
+  b=$(_mc_memo_base "${1:-}") || return 1
+  [ -f "$b.covered" ] && grep -qxF -- "${2:-}" "$b.covered" || return 1
+  [ -f "$b.uncovered" ] && grep -qxF -- "$2" "$b.uncovered" && return 1
+  # A clear at or after the snapshot (any tick): the PR reads per PR.
+  c=$(_mc_memo_clear_stamp "$1" "$2") || return 1
+  [ -e "$c" ] && ! [ "$c" -ot "$b.covered" ] && return 1
+  return 0
+}
+
+# _mc_memo_rows <repo> <num> [kind] — the shas of that PR's rows (one kind, or
+# every kind when empty), newest first: this tick's own writes, newest first,
+# then the route's rows in the route's order. The order GET /api/pr-attempts
+# answers in.
+_mc_memo_rows() {
+  local b
+  b=$(_mc_memo_base "$1") || return 1
+  { if [ -f "$b.add" ]; then tac "$b.add"; fi; if [ -f "$b.tsv" ]; then cat "$b.tsv"; fi; } 2>/dev/null \
+    | N="$2" K="${3:-}" awk -F'\t' '$1 == ENVIRON["N"] && (ENVIRON["K"] == "" || $2 == ENVIRON["K"]) { print $3 }'
+}
+
+# _mc_memo_has <repo> <num> <kind> <sha> — rc 0 when the memo holds that row.
+_mc_memo_has() {
+  local b
+  b=$(_mc_memo_base "$1") || return 1
+  local f
+  for f in "$b.tsv" "$b.add"; do
+    [ -f "$f" ] && grep -qxF -- "$2"$'\t'"$3"$'\t'"$4" "$f" && return 0
+  done
+  return 1
+}
+
+# _mc_memo_add <repo> <num> <kind> <sha> — a row this tick wrote, so a later
+# read in the same tick sees it. Only for a covered PR, and never twice (the
+# PUT dedupes on the same key, so the DB keeps the first row's place).
+_mc_memo_add() {
+  local b
+  _mc_memo_covered "$1" "$2" || return 0
+  case "$3$4" in *$'\t'*|*$'\n'*|*$'\r'*) return 0 ;; esac
+  _mc_memo_has "$1" "$2" "$3" "$4" && return 0
+  b=$(_mc_memo_base "$1") || return 0
+  printf '%s\t%s\t%s\n' "$2" "$3" "$4" >> "$b.add" 2>/dev/null
+  return 0
+}
+
+# mc_tick_prefetch <slug> <row…> — the one batch read for this repo this tick.
+# <row> is a tick_project row, its number in field 1. Always rc 0: a 404 or an
+# outage logs one line and leaves every PR to its per-PR read, which decides
+# (and latches the twin off itself if the worker is really down).
+mc_tick_prefetch() {
+  local slug="${1:-}" b r rc
+  local -a nums=()
+  shift
+  [ -n "$slug" ] && [ -n "${MC_TICK_ID:-}" ] || return 0
+  type pr_rows_on >/dev/null 2>&1 && pr_rows_on || return 0
+  declare -F pr_attempt_batch >/dev/null 2>&1 || return 0
+  [ -e "$MC_TICK_DIR/$(mc_safe_name "$MC_TICK_ID").pr-rows-down" ] && return 0
+  for r in "$@"; do r="${r%%$'\t'*}"; [[ "$r" =~ ^[0-9]+$ ]] && nums+=("$r"); done
+  [ "${#nums[@]}" -gt 0 ] || return 0
+  mkdir -p "$MC_TICK_DIR" 2>/dev/null
+  b=$(_mc_memo_base "$slug") || return 0
+  rm -f "$b.tsv" "$b.add" "$b.covered" "$b.uncovered" 2>/dev/null
+  pr_attempt_batch "$slug" "$b.tsv.tmp" "$b.covered.tmp" "${nums[@]}"; rc=$?
+  case "$rc" in
+    0|1)
+      # The rows land before the covered list: a reader that sees a number
+      # covered always sees its rows.
+      mv -f "$b.tsv.tmp" "$b.tsv" 2>/dev/null && mv -f "$b.covered.tmp" "$b.covered" 2>/dev/null
+      [ "$rc" = 1 ] && mc_log "$slug: conductor-state batch read failed for part of ${#nums[@]} PR(s) — those PRs read per PR this tick" ;;
+    2) mc_log "$slug: conductor-state route not deployed — per-PR reads this tick" ;;
+  esac
+  rm -f "$b.tsv.tmp" "$b.covered.tmp" 2>/dev/null
   return 0
 }
 
@@ -500,14 +615,21 @@ mc_attempt_has() {
     mkdir -p "$MC_TICK_DIR" 2>/dev/null
   fi
   IFS=$'\t' read -r repo num kind sha <<< "$k"
-  # Called in THIS shell, never through `$( )`: pr_rows_trip has to latch in a
-  # shell that outlives the call.
-  pr_attempt_has "$repo" "$num" "$kind" "$sha" >/dev/null 2>&1; rc=$?
+  if [ -n "$tick" ] && _mc_memo_covered "$repo" "$num"; then
+    # BH-4156: this tick's batch read covers the PR. A memo hit is the row
+    # answering, a memo miss is the measured miss: the same two arms below.
+    if _mc_memo_has "$repo" "$num" "$kind" "$sha"; then rc=0; else rc=2; fi
+  else
+    # Called in THIS shell, never through `$( )`: pr_rows_trip has to latch in
+    # a shell that outlives the call.
+    pr_attempt_has "$repo" "$num" "$kind" "$sha" >/dev/null 2>&1; rc=$?
+  fi
   case "$rc" in
     0) grep -qxF "$1" "$MC_ATTEMPTS" 2>/dev/null || echo "$1" >> "$MC_ATTEMPTS"
        return 0 ;;
     2) if grep -qxF "$1" "$MC_ATTEMPTS" 2>/dev/null; then
-         pr_attempt_put "$repo" "$num" "$kind" "$sha" >/dev/null 2>&1
+         pr_attempt_put "$repo" "$num" "$kind" "$sha" >/dev/null 2>&1 \
+           && [ -n "$tick" ] && _mc_memo_add "$repo" "$num" "$kind" "$sha"
          return 0
        fi
        [ -n "$tick" ] && echo "$1" >> "$tick.attempt-miss"
@@ -542,6 +664,12 @@ mc_attempt_rows() {
     tick="$MC_TICK_DIR/$(mc_safe_name "$MC_TICK_ID")"
     [ -e "$tick.pr-rows-down" ] && { pr_rows_trip; return 3; }
     mkdir -p "$MC_TICK_DIR" 2>/dev/null
+    # BH-4156: a PR this tick's batch read covers is answered from the memo.
+    if _mc_memo_covered "${key%#*}" "${key##*#}"; then
+      _mc_memo_rows "${key%#*}" "${key##*#}" "$lk" > "$out"
+      [ -s "$out" ] && return 0
+      return 2
+    fi
   fi
   pr_attempt_list "${key%#*}" "${key##*#}" "$lk" > "$out" 2>/dev/null; rc=$?
   case "$rc" in
@@ -908,6 +1036,16 @@ mc_attempt_clear() {
     ) 9>>"$MC_ATTEMPTS.lock" 2>/dev/null
     rm -f "$tmp"
   fi
+  # BH-4156: the PR leaves this tick's memo BEFORE the row is deleted, so no
+  # later read in the tick can answer "attempted" from the memo. The stamp does
+  # the same for every OTHER tick's memo; it is touched again after the delete,
+  # so a snapshot taken while the delete ran is refused too.
+  k=$(mc_attempt_pr_key "$1 $2 $3") && {
+    _mc_memo_covered "${k%%$'\t'*}" "$(cut -f2 <<<"$k")" \
+      && echo "$(cut -f2 <<<"$k")" >> "$(_mc_memo_base "${k%%$'\t'*}").uncovered"
+    mkdir -p "$MC_TICK_DIR" 2>/dev/null
+    touch "$(_mc_memo_clear_stamp "${k%%$'\t'*}" "$(cut -f2 <<<"$k")")" 2>/dev/null
+  }
   # Outside the subshell on purpose: pr_rows_trip below has to latch in a shell
   # that outlives the call.
   type pr_rows_on >/dev/null 2>&1 && pr_rows_on || return 0
@@ -923,6 +1061,7 @@ mc_attempt_clear() {
   # there the file already said "attempted" and a lost row costs one extra
   # attempt, here a lost delete costs the respawn itself.
   case "$rc" in 0|2) : ;; *) pr_rows_trip ;; esac
+  touch "$(_mc_memo_clear_stamp "$repo" "$num")" 2>/dev/null
   return 0
 }
 

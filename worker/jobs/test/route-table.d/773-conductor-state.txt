@@ -1,0 +1,3 @@
+# BH-4156 (BH-4141.4): one read of the attempt rows of many PRs of one repo,
+# so a merge-conductor tick reads its attempts once per repo, not per PR.
+GET /api/conductor-state

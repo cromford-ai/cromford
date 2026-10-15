@@ -25,7 +25,10 @@
 # THE FILE IS STILL THE CACHE, FOR ONE CYCLE (the epic's rule). Every lane
 # writes its file FIRST and its row second, and reads the file first, asking the
 # row only when the file has nothing. So a ledger outage costs nothing and the
-# cycle that deletes the file reads is a later slice.
+# cycle that deletes the file reads is a later slice. bin/review-autopilot.sh
+# took that slice (BH-4156): with the flag up its rows are the record (lt_row
+# and lt_put_rc, at the end of this file). It writes a file only as a local
+# cache: a body over LT_DETAIL_MAX, or a row write that failed until it lands.
 #
 # IT SHIPS DARK. Nothing here does anything until the `no-twin-ledgers` pause
 # flag is up — the DB row, materialised on each box as `flags/no-twin-ledgers` by
@@ -37,7 +40,17 @@
 # THE KINDS AND THEIR KEYS (the key is always the identity the FILENAME encoded,
 # so the two halves can never disagree about what "this one" means):
 #
-#   review_autopilot      <owner/repo>#<num>@<head12>   reviewed | skipped
+#   review_autopilot      <owner/repo>#<num>@<head12>   the head's state word
+#                         (reviewed | skipped | reviewed-unposted | empty |
+#                         failed | *-terminal); detail = the WHOLE record text
+#                         (BH-4156: the first line the key file held, plus its
+#                         sha= lines). A row written before BH-4156 holds only
+#                         reviewed | skipped with a short detail.
+#   review_autopilot_body <owner/repo>#<num>@<head12>   cached | dropped; detail =
+#                         the paid-for, unposted review comment (BH-4156)
+#   review_autopilot_pr   <owner/repo>#<num>            reviewed; detail = the
+#                         head12, then the newest `reviewed` record (BH-4156,
+#                         for the verdict replay)
 #   review_autopilot_cap  <project> <YYYYMMDD>          the count, as text
 #   lander                <project>#<num>@<head>        attempted
 #   batch_member          <owner/repo>#<num>@<head>     landed | red | abandoned
@@ -140,4 +153,57 @@ lt_put() { # lt_put <kind> <key> <status> [detail] — write-through, always rc 
   declare -F job_ledger_put >/dev/null 2>&1 || return 0
   job_ledger_put "$1" "$2" "$3" "${4:-}" >/dev/null 2>&1 || _LT_DOWN=1
   return 0
+}
+
+# THE ROW AS A RECORD, NOT A TWIN (BH-4156). bin/review-autopilot.sh keeps no
+# file when the flag is up: the row is the only record. So it needs the two
+# things the twin verbs above do not give: the row's DETAIL on a read, and a
+# write that says whether it landed. Both keep the flag, the breaker and the
+# rc contract of the verbs above.
+#
+# The column limits are the worker's (worker/jobs/src/routes/ledger.js, PUT
+# /api/ledger): status is cut at 128 characters and detail at 4000, silently.
+# A cut record is a record nobody wrote, so lt_put_rc REFUSES a value over
+# either limit (rc 3) and sends nothing. The limit is counted in BYTES: the
+# route counts UTF-16 units, and a UTF-8 byte count is never smaller.
+LT_STATUS_MAX=128
+LT_DETAIL_MAX=4000
+LT_DETAIL=""
+
+# lt_row <kind> <key> — the status AND the detail. Sets LT_VAL and LT_DETAIL
+# (both empty unless rc 0). rc 0 hit | 2 no row | 1 off/outage/unparseable. An
+# rc 1 trips the breaker, exactly as lt_read does.
+lt_row() {
+  local j rc=1
+  LT_VAL=""; LT_DETAIL=""
+  [ -n "${1:-}" ] && [ -n "${2:-}" ] || return 1
+  lt_down && return 1
+  lt_on || return 1
+  declare -F job_ledger_row >/dev/null 2>&1 || return 1
+  j=$(job_ledger_row "$1" "$2"); rc=$?
+  if [ "$rc" = 0 ]; then
+    LT_VAL=$(jq -r '.status // ""' <<<"$j" 2>/dev/null) || rc=1
+    LT_DETAIL=$(jq -r '.detail // ""' <<<"$j" 2>/dev/null) || rc=1
+    [ -n "$LT_VAL" ] || rc=1
+  fi
+  case "$rc" in 0|2) ;; *) rc=1 ;; esac
+  [ "$rc" = 0 ] || { LT_VAL=""; LT_DETAIL=""; }
+  [ "$rc" = 1 ] && _LT_DOWN=1
+  return "$rc"
+}
+
+# lt_put_rc <kind> <key> <status> [detail] — a write that reports.
+#   rc 0 written | 1 not written (flag off, breaker open, no client, the worker
+#   refused or did not answer; the last two trip the breaker) | 3 refused: the
+#   status or detail is over the column limit, nothing was sent.
+lt_put_rc() {
+  [ -n "${1:-}" ] && [ -n "${2:-}" ] && [ -n "${3:-}" ] || return 1
+  [ "$(printf '%s' "$3" | wc -c)" -le "$LT_STATUS_MAX" ] || return 3
+  [ "$(printf '%s' "${4:-}" | wc -c)" -le "$LT_DETAIL_MAX" ] || return 3
+  lt_down && return 1
+  lt_on || return 1
+  declare -F job_ledger_put >/dev/null 2>&1 || return 1
+  job_ledger_put "$1" "$2" "$3" "${4:-}" >/dev/null 2>&1 && return 0
+  _LT_DOWN=1
+  return 1
 }

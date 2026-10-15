@@ -80,3 +80,54 @@ held_page_release() {
   out=$(printf '%s' "$resp" | jq -r '.released // 0' 2>/dev/null) || return 1
   printf '%s\n' "$out"
 }
+
+# pr_attempt_batch <repo> <out-tsv> <covered-file> <n…> — the `pr_attempts`
+#   rows of many PRs of one repo, one GET /api/conductor-state per 200 numbers
+#   (BH-4156: the merge conductor's one attempt read per repo per tick).
+#   Writes `<number>\t<kind>\t<sha>` lines to <out-tsv> in the route's order
+#   (number ascending, newest first inside one number) and one COVERED number
+#   per line to <covered-file>. Only a covered number is answered: a number the
+#   route left out (its row cap) is not in the file, and its reader asks per PR.
+#   A row whose kind or sha holds a tab or a line break cannot be a TSV field,
+#   so its number is left out of <covered-file> too.
+#   rc 0 every chunk answered | rc 2 the route answered 404 (a box synced before
+#   the worker deploy), nothing written | rc 1 an outage or a 200 without the
+#   `numbers` and `attempts` arrays, in some chunk: that chunk adds nothing,
+#   and the chunks that did answer stay in the files.
+pr_attempt_batch() {
+  local repo="${1:-}" out="${2:-}" cov="${3:-}" n i q resp rc lines fail=0 answered=0 chunk
+  local -a nums=()
+  [ -n "$repo" ] && [ -n "$out" ] && [ -n "$cov" ] && [ $# -ge 4 ] || return 1
+  shift 3
+  for n in "$@"; do case "$n" in ''|*[!0-9]*) return 1 ;; esac; nums+=("$n"); done
+  { : > "$out" && : > "$cov"; } 2>/dev/null || return 1
+  for (( i = 0; i < ${#nums[@]}; i += 200 )); do
+    chunk=$(printf '%s\n' ${nums[@]+"${nums[@]}"} | sed -n "$((i + 1)),$((i + 200))p" | paste -sd, -)
+    q=$(jq -nr --arg r "$repo" --arg n "$chunk" '"repo="+($r|@uri)+"&numbers="+($n|@uri)') || return 1
+    resp=$(_jobs_req GET "/api/conductor-state?$q"); rc=$?
+    if [ "$rc" = 2 ] && [ "$answered" = 0 ]; then : > "$out"; : > "$cov"; return 2; fi
+    [ "$rc" = 0 ] || { fail=1; continue; }
+    # C = a covered number, A = a row, X = a number whose row cannot be a line.
+    lines=$(printf '%s' "$resp" | jq -r '
+      if (.numbers|type) == "array" and (.attempts|type) == "array"
+         and all(.numbers[]; type == "number")
+         and all(.attempts[]; (.number|type) == "number" and (.kind|type) == "string" and (.sha|type) == "string")
+      then (.numbers[] | "C\t\(.)"),
+           (.attempts[] | if (.kind + .sha | test("[\t\n\r]")) then "X\t\(.number)"
+                          else "A\t\(.number)\t\(.kind)\t\(.sha)" end)
+      else error("no arrays") end' 2>/dev/null) || { fail=1; continue; }
+    answered=1
+    printf '%s\n' "$lines" | awk -F'\t' -v out="$out" -v cov="$cov" '
+      { l[NR] = $0; t[NR] = $1; num[NR] = $2 }
+      $1 == "X" { bad[$2] = 1 }
+      $1 == "C" { c[$2] = 1 }
+      END {
+        for (i = 1; i <= NR; i++) {
+          if (t[i] == "A" && (num[i] in c) && !(num[i] in bad)) { s = l[i]; sub(/^A\t/, "", s); print s >> out }
+          if (t[i] == "C" && !(num[i] in bad)) print num[i] >> cov
+        }
+      }'
+  done
+  [ "$fail" = 0 ] || return 1
+  return 0
+}

@@ -1,0 +1,8 @@
+{
+  "env": "HARNESS_TEST_SANDBOX",
+  "type": "string",
+  "default": "",
+  "zero_means": null,
+  "note": "Test seam gate: bin/review-autopilot.sh reads REVIEW_AUTOPILOT_NOW only when this is 1 (the test harness sets it). Never set on a box, and NOT settable from the control plane.",
+  "settable": false
+}

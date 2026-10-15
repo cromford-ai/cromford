@@ -3172,6 +3172,8 @@ tick_project() {
   MC_REFS_PIN_PREFIX="$MC_TICK_DIR/$(mc_safe_name "${MC_TICK_ID:-notick}").refspin-"
   mapfile -t _pinbr < <(printf '%s\n' "${ROWS[@]}" | cut -f4)
   command -v prs_refs_pin >/dev/null 2>&1 && prs_refs_pin "$SLUG" "$MC_REFS_PIN_PREFIX" "${_pinbr[@]}"
+  # THE ATTEMPTS READ (BH-4156): one batch read of these PRs' attempt rows.
+  command -v mc_tick_prefetch >/dev/null 2>&1 && mc_tick_prefetch "$SLUG" "${ROWS[@]}"
   local _wcap
   # ON A LANE-RUN MACHINE (BH-6495, bin/lib/mc/fly-workers.sh). With the
   # conductor_workers_on_fly switch on, a row is enqueued as one lane_runs row

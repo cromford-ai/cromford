@@ -43,7 +43,7 @@
       "type": "int",
       "default": 1,
       "zero_means": "off",
-      "note": "Read by bin/main-red-pr-pair.sh as ${MAIN_RED_PAIR_FREEZE:-1}. BH-1451: when a PR pair fires AND bin/main-red-detector.sh's own state/main-red/<slug>.verdict says decision=none, this lane raises flags/main-red-<slug> (reason=pr-pair-suspected, owner=main-red-pr-pair) and every merge lane holds. 0 = the lane alerts exactly as it did before BH-1451 and writes no flag; a freeze it already raised is still cleared, so the switch cannot strand one."
+      "note": "Read by bin/main-red-pr-pair.sh as ${MAIN_RED_PAIR_FREEZE:-1}. BH-1451: when a PR pair fires AND bin/main-red-detector.sh's own verdict (the main_red_verdicts row since BH-4156, or state/main-red/<slug>.verdict with no row store) says decision=none, this lane raises flags/main-red-<slug> (reason=pr-pair-suspected, owner=main-red-pr-pair) and every merge lane holds. 0 = the lane alerts exactly as it did before BH-1451 and writes no flag; a freeze it already raised is still cleared, so the switch cannot strand one."
     },
     {
       "env": "MAIN_RED_PAIR_LEDGER_DAYS",

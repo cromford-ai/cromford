@@ -72,6 +72,29 @@
 #   failed-terminal <stamp> n=<k> rc=<rc>   REVIEW_AUTOPILOT_FAIL_TRIES deaths.
 #                                           No further call for this head.
 #
+# THE RECORD IS A ROW WHEN THE `no-twin-ledgers` FLAG IS UP (BH-4156). A file
+# on one machine is a record a wiped or replaced hub does not have, and it
+# re-buys every review it ever dispatched. With the flag up this lane writes NO
+# record file: each state line above (the whole text, sha= lines included) is
+# the `ledgers` row review_autopilot <owner/repo>#<num>@<head12> (status = the
+# state word), the cached comment is review_autopilot_body (same key, status
+# `cached`), the daily count is review_autopilot_cap, and the PR's newest
+# `reviewed` head (for the verdict replay) is review_autopilot_pr
+# <owner/repo>#<num>. The ledger's detail column holds 4000 characters, so a
+# comment over 4000 bytes is never cut into a row: it is cached in the local
+# `<key>.body` file instead (a cache, not the record), and so is a body whose
+# row write failed. ap_body_get reads the row, then that file, so a long review
+# whose post fails is re-posted with no model call, asks the PR first, and goes
+# `unposted-terminal` with an alert, as in file mode. A record row whose write
+# failed is kept in `<key>.pending` until the next tick writes it (ap_rec_get),
+# so a lost write never resets a bound. The row
+# is read first, and an unreadable row (the worker down, a pending record that
+# still did not write, or a legacy file that did not import) buys nothing and
+# posts nothing for that head this tick. A leftover key file is imported once
+# (ap_import_legacy) and removed; a body file stays as the local cache.
+# diff-<repo>-<n>.txt stays a file: it is the model's scratch input, not a
+# record. With the flag down, everything is the file record described above.
+#
 # AND THE RC THAT WRITES NOTHING AT ALL (BH-1066). bin/agent-call.sh exits
 # 74/75/76/77/78/79 when nothing was called and nothing was billed — the lane's
 # own spend/pathway gate (BH-1141), a lock, no account with headroom, the hub
@@ -93,6 +116,22 @@ export AGENT_CALL_LANE=review-autopilot
 H="${HARNESS:-/root/harness}"
 . "${HARNESS:-/root/harness}/bin/lib/env-path.sh" 2>/dev/null || . "$(dirname "${BASH_SOURCE[0]}")/lib/env-path.sh" 2>/dev/null || harness_env_dir() { printf '%s\n' "${1:-${HARNESS:-/root/harness}}/env"; }; HENV=$(harness_env_dir "$H")
 set -a; . "$HENV/global.env" 2>/dev/null; set +a
+
+# --print-body <owner/repo> <num> <head12> — the operator's half of an
+# `unposted-terminal` alert in row mode (BH-4156): print the cached comment
+# from its review_autopilot_body row. Read-only, no lock, no lane gate.
+if [ "${1:-}" = --print-body ]; then
+  [[ "${2:-}" == */* ]] && [[ "${3:-}" =~ ^[0-9]+$ ]] && [[ "${4:-}" =~ ^[0-9a-f]{12}$ ]] \
+    || { echo "usage: $0 --print-body <owner/repo> <num> <head12>" >&2; exit 2; }
+  # shellcheck source=bin/jobs-client.sh
+  [ -r "$H/bin/jobs-client.sh" ] && . "$H/bin/jobs-client.sh"
+  # shellcheck source=bin/lib/ledger-twin.sh
+  . "$H/bin/lib/ledger-twin.sh" || exit 1
+  lt_row review_autopilot_body "$2#$3@$4"; PB_RC=$?
+  if [ "$PB_RC" = 0 ] && [ "$LT_VAL" = cached ]; then printf '%s\n' "$LT_DETAIL"; exit 0; fi
+  echo "no cached review body for $2#$3@$4 (ledger rc $PB_RC, status '${LT_VAL:-none}'; the no-twin-ledgers flag must be up)" >&2
+  exit 1
+fi
 
 # --- BH-1132: the lane's one off-switch -------------------------------------
 # flags/all-off, flags/lane-off-review-autopilot, or the D1 pause_flags row of the
@@ -141,8 +180,10 @@ STAMP() { date -u '+%Y-%m-%d %H:%M:%SZ'; }
 command -v gh >/dev/null || { echo "$(STAMP) gh not installed — nothing to do" >> "$LOG"; exit 0; }
 
 NOW=$(date +%s)
+# A pinned clock for a sandboxed suite only (tests/review-autopilot-rows.bh-4156-test.sh).
+if [ "${HARNESS_TEST_SANDBOX:-}" = 1 ] && [[ ${REVIEW_AUTOPILOT_NOW:-} =~ ^[0-9]+$ ]]; then NOW=$REVIEW_AUTOPILOT_NOW; fi
 CUTOFF=$(( NOW - 43200 ))                       # 12h, same threshold as stalepr
-DAY=$(date -u +%Y%m%d)
+DAY=$(date -u -d "@$NOW" +%Y%m%d)
 CAP="${REVIEW_AUTOPILOT_DAILY_CAP:-0}"          # dispatched reviews / project / UTC day; 0 = unlimited (default since 2026-09-14)
 POST_TRIES="${REVIEW_AUTOPILOT_POST_TRIES:-6}"  # gh attempts at ONE cached review before it parks (no model spend either way)
 FAIL_TRIES="${REVIEW_AUTOPILOT_FAIL_TRIES:-3}"  # agent calls that DIED (rc≠0, billed or unknowable) before this head is parked
@@ -168,20 +209,26 @@ find "$STATE" -maxdepth 1 -type f ! -name 'count-*' ! -name '*.body' -mtime +90 
 # unless someone is told. One ALERTS line + one beat, at the transition, naming
 # the exact command that delivers it. "Stopping is an alert, not a whisper."
 ap_unposted_alert() {
-  local slug="$1" num="$2" key="$3" h12="$4" tries="$5" line
+  local slug="$1" num="$2" key="$3" h12="$4" tries="$5" line where post
+  where="$key.body"
+  post="gh pr comment $num -R $slug --body-file $key.body (the .body is kept until the PR closes)"
+  if [ "${AP_ROWS:-0}" = 1 ] && [ ! -s "$key.body" ]; then
+    where="the ledger row review_autopilot_body $slug#$num@$h12"
+    post="$H/bin/review-autopilot.sh --print-body $slug $num $h12 > /tmp/ra-$num.md && gh pr comment $num -R $slug --body-file /tmp/ra-$num.md (the row is kept)"
+  fi
   # $tries counts POST ATTEMPTS AND COMMENT READS, because a failed marker read
   # falls through to tries+1 (deliberately: it is what keeps the lane bounded
   # when the comments endpoint stays down). Saying "gh refused to post it N
   # times" sends an operator hunting for N post failures that may never have
   # happened — one post and five dead reads reach the same bound.
-  line="[review-autopilot] $slug#$num @$h12 unposted-terminal: review paid for and cached at $key.body but it could not be delivered $tries times (post attempts + comment reads), a box verdict row that would not record counting as one too — post it by hand: gh pr comment $num -R $slug --body-file $key.body (the .body is kept until the PR closes); if the PR already carries this head's review, record its row instead: bin/lead-verdict.sh post $slug $num <full-sha> <verdict> --source box"
+  line="[review-autopilot] $slug#$num @$h12 unposted-terminal: review paid for and cached at $where but it could not be delivered $tries times (post attempts + comment reads), a box verdict row that would not record counting as one too — post it by hand: $post; if the PR already carries this head's review, record its row instead: bin/lead-verdict.sh post $slug $num <full-sha> <verdict> --source box"
   HARNESS="$H" "$H/bin/alert-line.sh" "$line"
   "$H/bin/beat.sh" "$(jq -nc --arg akey "review-autopilot-unposted:$slug#$num:$h12" --arg l "$line" \
     '{kind:"fleet_alert",project:"fleet",akey:$akey,line:$l}')" >/dev/null 2>&1 || true
 }
 
-# ap_post <slug> <num> <key> <verdict> <tries> — put the comment cached at
-# <key>.body on the PR, record its box row (ap_box_row) and settle <key>.
+# ap_post <slug> <num> <key> <verdict> <tries> — put the cached comment (the
+# file AP_BODYF names: <key>.body, or this tick's copy of the body row) on the PR, record its box row (ap_box_row) and settle <key>.
 # rc 0 = it is up and the key says `reviewed`; rc 1 = it is not, and the key
 # says what the next tick does; rc 2 = an earlier post had landed, settled with
 # nothing sent this tick; rc 3 = the comment is up but its box row failed, so
@@ -192,9 +239,9 @@ ap_unposted_alert() {
 # rc=<rc>` are two shapes of the same fact — "this head was billed and produced
 # nothing usable, k times". Reading them with two regexes let a head that
 # alternates the two reset its own counter every tick and never go terminal.
-ap_attempts() {
+ap_attempts() { # ap_attempts <record text>
   local n
-  n=$(sed -nE 's/^(empty|failed) .* n=([0-9]+).*$/\2/p' "$1" 2>/dev/null | head -1)
+  n=$(sed -nE 's/^(empty|failed) .* n=([0-9]+).*$/\2/p' <<<"$1" 2>/dev/null | head -1)
   printf '%s' "${n:-0}"
 }
 
@@ -312,6 +359,183 @@ ap_skip_downgrade() {
             } else print line[i] } }'
 }
 
+# --- THE RECORD, FILE OR ROW (BH-4156) ---------------------------------------
+# AP_ROWS=1 when the no-twin-ledgers flag is up (set below, once per process,
+# after the ledger library is sourced). Every read and write of a head's record
+# goes through these, so the dispatch below is the same in both modes.
+AP_ROWS=0
+AP_TMP=""
+KSTATE=""; KREC=""; AP_REC_WHY=""; AP_REC_LINE=""; AP_BODYF=""; AP_BODY_LOCAL=""
+
+# ap_rec_get <key-path> <rk> -> rc 0 (KSTATE = the first line, KREC = the whole
+# text) | 2 no record | 1 unreadable (AP_REC_WHY says why).
+ap_rec_get() {
+  local first w
+  KSTATE=""; KREC=""; AP_REC_WHY=""
+  if [ "$AP_ROWS" != 1 ]; then
+    [ -f "$1" ] || return 2
+    KREC=$(cat "$1" 2>/dev/null); KSTATE=$(head -1 "$1" 2>/dev/null)
+    return 0
+  fi
+  # A key file still on disk is a record whose import did not land. Reading
+  # past it would buy the review it records, so it is unreadable until it imports.
+  if [ -e "$1" ]; then AP_REC_WHY="the legacy file $1 is still on disk (its import did not land)"; return 1; fi
+  # A record whose row write failed is newer than the row: write it first.
+  if [ -e "$1.pending" ]; then
+    first=$(head -1 "$1.pending" 2>/dev/null); w="${first%% *}"; w="${w#status=}"
+    if [ -n "$w" ] && lt_put_rc review_autopilot "$2" "$w" "$(cat "$1.pending")"; then
+      rm -f "$1.pending"
+      echo "$(STAMP) row review_autopilot $2 recorded the pending '$first' from $1.pending" >> "$LOG"
+    else
+      AP_REC_WHY="the pending record $1.pending did not write to its row yet"; return 1
+    fi
+  fi
+  lt_row review_autopilot "$2"
+  case "$?" in
+    0) ;;
+    2) return 2 ;;
+    *) AP_REC_WHY="the ledger did not answer"; return 1 ;;
+  esac
+  first="${LT_DETAIL%%$'\n'*}"; w="${first%% *}"; w="${w#status=}"
+  if [ -n "$first" ] && [ "$w" = "$LT_VAL" ]; then
+    KSTATE="$first"; KREC="$LT_DETAIL"
+  elif [ "$LT_VAL" = reviewed ] || [ "$LT_VAL" = skipped ]; then
+    # A row the BH-1036 twin wrote: the status word and a short detail. Both
+    # words are settled states, so it reads as one.
+    KSTATE="$LT_VAL (row written before BH-4156) ${LT_DETAIL//$'\n'/ }"; KREC="$KSTATE"
+  else
+    KSTATE="$LT_VAL: ${LT_DETAIL//$'\n'/ }"; KREC="$KSTATE"
+  fi
+  return 0
+}
+
+# ap_rec_put <key-path> <rk> <text> -> rc 0 recorded | 1 not. The file mode
+# writes <text> byte for byte, as every printf here always did.
+ap_rec_put() {
+  local st
+  AP_REC_LINE="${3%%$'\n'*}"
+  if [ "$AP_ROWS" != 1 ]; then printf '%s' "$3" > "$1"; return; fi
+  st="${AP_REC_LINE%% *}"; st="${st#status=}"
+  lt_put_rc review_autopilot "$2" "$st" "$3" && { rm -f "$1.pending"; return 0; }
+  # The record is kept locally until a later tick writes it (ap_rec_get), so a
+  # failed write after a billed call never reads as "no record".
+  printf '%s' "$3" > "$1.pending" 2>/dev/null
+  echo "$(STAMP) row review_autopilot $2 did NOT record '$AP_REC_LINE' (ledger write failed or refused) — kept in $1.pending" >> "$LOG"
+  return 1
+}
+
+# ap_body_put <key-path> <rk> <comment> -> rc 0 cached | 1 not cached (write
+# failed). In row mode a body the row refuses (over the ledger's detail limit,
+# rc 3) or a failed row write is cached in the local `<key>.body` file instead,
+# and AP_BODY_LOCAL says why. Either way AP_BODYF names a file holding the
+# comment, for this tick's post.
+ap_body_put() {
+  local rc
+  AP_BODY_LOCAL=""
+  if [ "$AP_ROWS" != 1 ]; then printf '%s' "$3" > "$1.body"; AP_BODYF="$1.body"; return 0; fi
+  AP_BODYF="$AP_TMP/body"
+  printf '%s' "$3" > "$AP_BODYF" || return 1
+  lt_put_rc review_autopilot_body "$2" cached "$3"; rc=$?
+  [ "$rc" = 0 ] && { rm -f "$1.body"; return 0; }
+  printf '%s' "$3" > "$1.body" 2>/dev/null && [ -s "$1.body" ] || { rm -f "$1.body"; return 1; }
+  AP_BODYF="$1.body"
+  if [ "$rc" = 3 ]; then AP_BODY_LOCAL="it is over the ledger's $LT_DETAIL_MAX-byte detail limit"; else AP_BODY_LOCAL="the ledger write failed"; fi
+  return 0
+}
+
+# ap_body_get <key-path> <rk> -> rc 0 (AP_BODYF names the cached comment) |
+# 2 gone | 1 unreadable. Row mode reads the row, then the local `<key>.body`
+# cache (ap_body_put).
+ap_body_get() {
+  local rc
+  AP_BODYF=""
+  if [ "$AP_ROWS" != 1 ]; then [ -s "$1.body" ] || return 2; AP_BODYF="$1.body"; return 0; fi
+  lt_row review_autopilot_body "$2"; rc=$?
+  if [ "$rc" = 0 ] && [ "$LT_VAL" = cached ] && [ -n "$LT_DETAIL" ]; then
+    AP_BODYF="$AP_TMP/body"
+    printf '%s' "$LT_DETAIL" > "$AP_BODYF" || return 1
+    return 0
+  fi
+  [ -s "$1.body" ] && { AP_BODYF="$1.body"; return 0; }
+  case "$rc" in 0|2) return 2 ;; *) return 1 ;; esac
+}
+
+# ap_settle <key-path> <rk> <text> — a `reviewed` record: the head's record, the
+# PR's newest-reviewed pointer (row mode, for the verdict replay; best effort),
+# and the cached comment dropped. rc is the record write's.
+ap_settle() {
+  ap_rec_put "$1" "$2" "$3" || return 1
+  if [ "$AP_ROWS" = 1 ]; then
+    lt_put_rc review_autopilot_pr "${2%@*}" reviewed "${2##*@}
+$3" || echo "$(STAMP) row review_autopilot_pr ${2%@*} did not record (a later head is reviewed, not replayed)" >> "$LOG"
+    lt_put_rc review_autopilot_body "$2" dropped "-" || true
+  fi
+  rm -f "$1.body"
+  return 0
+}
+
+# ap_import_legacy <owner/repo> — row mode only. A key or body file left by the
+# file mode is PUT as its row, then removed. Body first: a key imported without
+# its body would read "cached body is gone" and buy the review again. A body
+# the row refuses (over the detail limit) stays as the local cache that
+# ap_body_get reads, so its key still imports. A row
+# that is already there wins (it is newer than any file), so a re-run imports
+# nothing twice and a stale file never overwrites a row. A file that does not
+# import stays, and its head reads unreadable (ap_rec_get) until it does.
+ap_import_legacy() {
+  local slug="$1" pre f name num h12 rk txt st rc
+  pre="$STATE/${slug//\//-}-"
+  for f in "$pre"*; do
+    [ -f "$f" ] || continue
+    case "$f" in *.body) continue ;; esac
+    name="${f#"$pre"}"; num="${name%-*}"; h12="${name##*-}"
+    case "$num" in ''|*[!0-9]*) continue ;; esac
+    [[ "$h12" =~ ^[0-9a-f]{12}$ ]] || continue
+    rk="$slug#$num@$h12"
+    lt_row review_autopilot "$rk"; rc=$?
+    if [ "$rc" = 1 ]; then
+      echo "$(STAMP) import of legacy key $f stopped: the ledger did not answer (the file is kept)" >> "$LOG"
+      return 1
+    fi
+    if [ "$rc" = 0 ]; then
+      rm -f "$f"
+      lt_row review_autopilot_body "$rk" && [ "$LT_VAL" = cached ] && rm -f "$f.body"
+      echo "$(STAMP) legacy key $f removed: row review_autopilot $rk is already there and wins" >> "$LOG"
+      continue
+    fi
+    if [ -f "$f.body" ]; then
+      lt_put_rc review_autopilot_body "$rk" cached "$(cat "$f.body")"; rc=$?
+      case "$rc" in
+        0) rm -f "$f.body" ;;
+        3) echo "$(STAMP) legacy body $f.body is over the ledger's $LT_DETAIL_MAX-byte detail limit: NOT cached as a row, kept as the local cache that ap_body_get reads" >> "$LOG" ;;
+        *) echo "$(STAMP) import of legacy body $f.body failed (the files are kept; the head buys nothing until it imports)" >> "$LOG"; continue ;;
+      esac
+    fi
+    txt=$(cat "$f" 2>/dev/null); st="${txt%%[ $'\n']*}"; st="${st#status=}"
+    if [ -n "$st" ] && lt_put_rc review_autopilot "$rk" "$st" "$txt"; then
+      rm -f "$f"
+      echo "$(STAMP) imported legacy key $f as row review_autopilot $rk ($st)" >> "$LOG"
+    else
+      echo "$(STAMP) import of legacy key $f failed ('$(head -c 80 "$f" 2>/dev/null | tr -d '\n')'; the file is kept and the head buys nothing until it imports)" >> "$LOG"
+    fi
+  done
+  return 0
+}
+
+# ap_cap_charge — one review charged to today's count: the count file, or in
+# row mode the review_autopilot_cap row (the tick's own count moves even when
+# the write fails, so this tick never undercounts; the failure is logged).
+ap_cap_charge() {
+  if [ "$AP_ROWS" != 1 ]; then echo $(( CNT + 1 )) > "$CNTF"; return 0; fi
+  LCAP=$(( CNT + 1 ))
+  [ "$CAP_UNREAD" = 0 ] && lt_put_rc review_autopilot_cap "$P $DAY" "$LCAP" && return 0
+  # The count file folds into the row on the next tick (the higher wins), so a
+  # failed write never reads low.
+  echo "$LCAP" > "$CNTF" 2>/dev/null
+  echo "$(STAMP) [$P] the daily count row review_autopilot_cap '$P $DAY' did NOT record $LCAP — kept in $CNTF" >> "$LOG"
+  return 0
+}
+
 ap_post() {
   local slug="$1" num="$2" key="$3" verdict="$4" tries="$5"
   # Declared one per line: a `local a=$(cmd) b` swallows the rc and `set -u`
@@ -323,11 +547,10 @@ ap_post() {
   local do_post=1
   local row_failed=0
   local rk
+  local txt
   h12="${key##*-}"
-  # The row twin's key is the head, exactly as the filename is (BH-1036). Both
-  # `reviewed` writes below are the SAME settled fact, so both twin it: this is
-  # the only place the key reaches `reviewed`, and a twin that missed the
-  # promote-without-posting branch would re-buy that review after a wipe.
+  # The row key is the head, exactly as the filename is (BH-1036, BH-4156).
+  # The comment to post is the file AP_BODYF names (ap_body_put/ap_body_get).
   rk="$slug#$num@$h12"
   # A RE-POST ASKS THE PR FIRST (BH-1066). `gh pr comment` can put the comment
   # up and still exit nonzero — a 502 reading the response, a token that died
@@ -373,9 +596,8 @@ ap_post() {
         # first post: a failed row leaves the key unsettled and counted, and
         # the next tick finds this same marker and retries the row alone.
         if ap_box_row "$slug" "$num" "$key" "$verdict" || [ "$?" = 3 ]; then
-          printf 'reviewed %s verdict=%s\n%s' "$(STAMP)" "$verdict" "$(ap_sha_line "$key")" > "$key"
-          lt_put review_autopilot "$rk" reviewed "verdict=$verdict"
-          rm -f "$key.body"
+          printf -v txt 'reviewed %s verdict=%s\n%s' "$(STAMP)" "$verdict" "$(ap_sha_line "$key")"
+          ap_settle "$key" "$rk" "$txt" || return 3
           echo "$(STAMP) [$slug#$num] this lane's own marker for @$h12 is already on the PR (an earlier post landed but exited nonzero, or its box row failed) — promoted to reviewed without posting" >> "$LOG"
           # rc 2, NOT 0: the key is settled but NOTHING went to the PR this tick,
           # and the caller must not log a post or beat a dispatched review for a
@@ -392,12 +614,13 @@ ap_post() {
       echo "$(STAMP) [$slug#$num] could not read the PR's comments — not re-posting blind this tick" >> "$LOG"
     fi
   fi
-  if [ "$do_post" = 1 ] && gh pr comment "$num" -R "$slug" --body-file "$key.body" >/dev/null 2>&1; then
+  if [ "$do_post" = 1 ] && gh pr comment "$num" -R "$slug" --body-file "$AP_BODYF" >/dev/null 2>&1; then
     # The comment is up; the row goes BEFORE the `reviewed` line (BH-1951).
     if ap_box_row "$slug" "$num" "$key" "$verdict" || [ "$?" = 3 ]; then
-      printf 'reviewed %s verdict=%s\n%s' "$(STAMP)" "$verdict" "$(ap_sha_line "$key")" > "$key"
-      lt_put review_autopilot "$rk" reviewed "verdict=$verdict"
-      rm -f "$key.body"
+      printf -v txt 'reviewed %s verdict=%s\n%s' "$(STAMP)" "$verdict" "$(ap_sha_line "$key")"
+      # A record that did not land is rc 3: the comment is up, and the next
+      # tick finds this head's marker and settles it with no second comment.
+      ap_settle "$key" "$rk" "$txt" || return 3
       return 0
     fi
     row_failed=1
@@ -407,10 +630,12 @@ ap_post() {
     # The body is deliberately NOT removed: it is paid-for work, and an
     # operator posting it by hand is cheaper than buying it again. Record the
     # terminal state first, then tell someone it is there.
-    printf 'unposted-terminal %s verdict=%s tries=%s\n' "$(STAMP)" "$verdict" "$tries" > "$key"
+    printf -v txt 'unposted-terminal %s verdict=%s tries=%s\n' "$(STAMP)" "$verdict" "$tries"
+    ap_rec_put "$key" "$rk" "$txt"
     ap_unposted_alert "$slug" "$num" "$key" "$h12" "$tries"
   else
-    printf 'status=reviewed-unposted %s verdict=%s tries=%s\n' "$(STAMP)" "$verdict" "$tries" > "$key"
+    printf -v txt 'status=reviewed-unposted %s verdict=%s tries=%s\n' "$(STAMP)" "$verdict" "$tries"
+    ap_rec_put "$key" "$rk" "$txt"
   fi
   [ "$row_failed" = 1 ] && return 3
   return 1
@@ -462,6 +687,12 @@ done
 # A box mid-sync can carry this script without the library; every verb then
 # answers "no row", which is today's behaviour exactly.
 declare -F lt_on >/dev/null 2>&1 || { lt_on() { return 1; }; lt_get() { return 1; }; lt_read() { LT_VAL=""; return 1; }; lt_seen() { return 1; }; lt_put() { return 0; }; }
+# The record mode, once per process (BH-4156). The flag up = rows only.
+if lt_on; then
+  AP_ROWS=1
+  AP_TMP=$(mktemp -d "${TMPDIR:-/tmp}/review-autopilot.XXXXXX") || { echo "$(STAMP) row mode: mktemp failed — nothing done this tick" >> "$LOG"; exit 0; }
+  trap 'rm -rf "$AP_TMP"' EXIT
+fi
 
 # IS THIS PROJECT'S REVIEWING PAUSED (BH-1684, BH-1672)? A pause used to be an
 # env edit on one box that nobody could see and that never expired; it is now a
@@ -549,6 +780,7 @@ for P in $PROJECTS; do
   # carry is ASKED, and only `state` coming back not-open deletes. A read that
   # failed proves nothing and keeps the body (D12). The key is left alone: it is
   # terminal state and the 90-day sweep owns it.
+  [ "$AP_ROWS" = 1 ] && ap_import_legacy "$SLUG"
   OPEN_NUMS=""
   [ -n "$RAW_PRS" ] && OPEN_NUMS=$(jq -r '.[].number' <<<"$RAW_PRS" 2>/dev/null || echo "")
   for BODYF in "$STATE/${SLUG//\//-}"-*.body; do
@@ -576,12 +808,28 @@ for P in $PROJECTS; do
   CNTF="$STATE/count-$P-$DAY"
   # THE CAP ROW IS READ ONCE PER PROJECT PER TICK (BH-1036 r1, I3), not once per
   # open PR. It cannot change inside a tick except by this lane's own writes,
-  # and those move $CNTF in the same breath — so a per-PR read bought nothing
+  # and those move LCAP (ap_cap_charge) in the same breath — so a per-PR read bought nothing
   # and multiplied the cost of a hung worker by the size of the PR list.
-  LCAP=""
-  if lt_on && lt_read review_autopilot_cap "$P $DAY"; then
-    LCAP="$LT_VAL"
-    case "${LCAP:-}" in ''|*[!0-9]*) LCAP="" ;; esac
+  # Row mode (BH-4156): the row IS the count. An unreadable row is a count
+  # nobody knows, so with a cap set nothing is bought for this project this
+  # tick. A leftover count file folds into the row (the higher wins) and goes.
+  LCAP=""; CAP_UNREAD=0
+  if [ "$AP_ROWS" = 1 ]; then
+    lt_read review_autopilot_cap "$P $DAY"
+    case "$?" in
+      0) LCAP="$LT_VAL"; case "$LCAP" in ''|*[!0-9]*) LCAP=""; CAP_UNREAD=1 ;; esac ;;
+      2) LCAP=0 ;;
+      *) CAP_UNREAD=1 ;;
+    esac
+    if [ -f "$CNTF" ]; then
+      FCNT=$(cat "$CNTF" 2>/dev/null)
+      case "$FCNT" in ''|*[!0-9]*) FCNT=0 ;; esac
+      if [ "$CAP_UNREAD" = 1 ]; then :   # the file stays until the row can be read
+      elif [ "$FCNT" -le "$LCAP" ]; then rm -f "$CNTF"
+      elif lt_put_rc review_autopilot_cap "$P $DAY" "$FCNT"; then LCAP="$FCNT"; rm -f "$CNTF"
+      else CAP_UNREAD=1
+      fi
+    fi
   fi
   while IFS=$'\t' read -r NUM SHA BASEREF TITLE; do
     [ -n "$NUM" ] && [ -n "$SHA" ] || continue
@@ -589,14 +837,24 @@ for P in $PROJECTS; do
     KEY="$STATE/${SLUG//\//-}-$NUM-$HEAD12"
     RK="$SLUG#$NUM@$HEAD12"
     # THE DEDUP RUNS BEFORE THE SPEND, and it answers three things, not two:
-    # already done, already PAID FOR but not delivered, or genuinely new.
-    if [ -f "$KEY" ]; then
-      KSTATE=$(head -1 "$KEY" 2>/dev/null)
+    # already done, already PAID FOR but not delivered, or genuinely new. In
+    # row mode an unreadable row is a fourth answer: buy nothing, post nothing.
+    ap_rec_get "$KEY" "$RK"; REC_RC=$?
+    if [ "$REC_RC" = 1 ]; then
+      echo "$(STAMP) [$P] #$NUM @$HEAD12 row review_autopilot $RK is unreadable ($AP_REC_WHY) — not reviewing and not posting for this head this tick" >> "$LOG"
+      continue
+    fi
+    if [ "$REC_RC" = 0 ]; then
       case "$KSTATE" in
         status=reviewed-unposted*)
           KVERDICT=$(sed -nE 's/^status=reviewed-unposted .* verdict=([A-Z-]+) tries=[0-9]+$/\1/p' <<<"$KSTATE")
           KTRIES=$(sed -nE 's/^status=reviewed-unposted .* tries=([0-9]+)$/\1/p' <<<"$KSTATE")
-          if [ -s "$KEY.body" ]; then
+          ap_body_get "$KEY" "$RK"; BODY_RC=$?
+          if [ "$BODY_RC" = 1 ]; then
+            echo "$(STAMP) [$P] #$NUM @$HEAD12 the cached body row review_autopilot_body $RK is unreadable — not reviewing and not posting for this head this tick" >> "$LOG"
+            continue
+          fi
+          if [ "$BODY_RC" = 0 ]; then
             ap_post "$SLUG" "$NUM" "$KEY" "${KVERDICT:-UNPARSED}" "${KTRIES:-0}"; AP_RC=$?
             case "$AP_RC" in
               0)
@@ -606,14 +864,15 @@ $SLUG#$NUM -> ${KVERDICT:-UNPARSED}" ;;
               2)
                 echo "$(STAMP) [$P] #$NUM @$HEAD12 cached review was already on the PR — settled without posting -> ${KVERDICT:-UNPARSED} (nothing sent this tick) https://github.com/$SLUG/pull/$NUM" >> "$LOG" ;;
               3)
-                echo "$(STAMP) [$P] #$NUM @$HEAD12 the review is on the PR but its box verdict row did not record ($(head -1 "$KEY")) — the next tick retries the row, no model call" >> "$LOG" ;;
+                echo "$(STAMP) [$P] #$NUM @$HEAD12 the review is on the PR but its box verdict row or its record did not record ($AP_REC_LINE) — the next tick retries the row, no model call" >> "$LOG" ;;
               *)
-                echo "$(STAMP) [$P] #$NUM @$HEAD12 cached review still would not post ($(head -1 "$KEY"))" >> "$LOG" ;;
+                echo "$(STAMP) [$P] #$NUM @$HEAD12 cached review still would not post ($AP_REC_LINE)" >> "$LOG" ;;
             esac
             continue
           fi
-          # The cache is gone (the 90-day sweep caught it, or someone removed
-          # it): there is nothing left to post, so this head buys one review
+          # The cache is gone (the PR-closed drain or a hand delete removed it,
+          # or neither the row nor the local file could be written): there
+          # is nothing left to post, so this head buys one review
           # again rather than sitting undelivered for ever.
           echo "$(STAMP) [$P] #$NUM @$HEAD12 was reviewed-unposted but the cached body is gone — reviewing again" >> "$LOG"
           ;;
@@ -628,17 +887,10 @@ $SLUG#$NUM -> ${KVERDICT:-UNPARSED}" ;;
           # exactly like "already reviewed". It still buys nothing — an
           # unreadable guard is not permission to spend — but now it says so
           # once per tick, with the path an operator deletes.
-          echo "$(STAMP) [$P] #$NUM @$HEAD12 key $KEY has unreadable state ('$(head -c 80 "$KEY" 2>/dev/null | tr -d '\n')') — not reviewing and not posting for this head until the key is fixed or removed" >> "$LOG"
+          AP_WHERE="key $KEY"; [ "$AP_ROWS" = 1 ] && AP_WHERE="row review_autopilot $RK"
+          echo "$(STAMP) [$P] #$NUM @$HEAD12 $AP_WHERE has unreadable state ('$(printf '%s' "$KSTATE" | head -c 80 | tr -d '\n')') — not reviewing and not posting for this head until it is fixed or removed" >> "$LOG"
           continue ;;
       esac
-    # AND THE ROW TWIN IS THE HALF THAT SURVIVES A STATE WIPE (BH-1036). It is
-    # consulted only when the file is GONE: every state the file can be in is
-    # richer than the row (a cached-but-unposted body, a bounded empty/failed
-    # retry) and is decided above, unchanged. A row says `reviewed` or `skipped`
-    # — both settled — and only ever for THIS head, exactly as the filename's
-    # own semantics gave; a row at a different head is a different review.
-    elif lt_seen review_autopilot "$RK"; then
-      continue
     fi
 
     # >>> autopilot ledger skip (BH-1024, BH-3930; tests/verdict-single-home.bh-1024-test.sh and tests/review-autopilot-dedupe.bh-3930-test.sh drive this block)
@@ -659,8 +911,8 @@ $SLUG#$NUM -> ${KVERDICT:-UNPARSED}" ;;
       case "$RB_RC" in
         0) RB_S=$(printf '%s' "$RB_SOURCE" | tr -cd 'A-Za-z0-9._-'); RB_W=$(printf '%s' "$RB_WORD" | tr -cd 'A-Z-')
            echo "$(STAMP) [$P] #$NUM @$HEAD12 already reviewed: $RB_S verdict $RB_W is the ledger verdict bound to this head — standing down" >> "$LOG"
-           printf 'skipped %s: %s verdict %s bound to this head (ledger)\n' "$(STAMP)" "$RB_S" "$RB_W" > "$KEY"
-           lt_put review_autopilot "$RK" skipped "$RB_S verdict $RB_W bound to this head (ledger)"
+           printf -v AP_TXT 'skipped %s: %s verdict %s bound to this head (ledger)\n' "$(STAMP)" "$RB_S" "$RB_W"
+           ap_rec_put "$KEY" "$RK" "$AP_TXT"
            review_skip_log "$LOG" "$SLUG" "$NUM" "$SHA" review-autopilot
            continue ;;
         1) echo "$(STAMP) [$P] #$NUM @$HEAD12 review_dedupe unreadable (review_bought rc 1) — falling through to the file check" >> "$LOG" ;;
@@ -673,8 +925,8 @@ $SLUG#$NUM -> ${KVERDICT:-UNPARSED}" ;;
     XSHA=$(jq -r --arg n "$NUM" '.[$n].sha // ""' "$H/state/$P.pr-reviews.json" 2>/dev/null || echo "")
     if [ "$XSHA" = "$SHA" ]; then
       echo "$(STAMP) [$P] #$NUM @$HEAD12 already reviewed by review-prs — standing down" >> "$LOG"
-      printf 'skipped %s: review-prs.sh reviewed this head\n' "$(STAMP)" > "$KEY"
-      lt_put review_autopilot "$RK" skipped "review-prs.sh reviewed this head"
+      printf -v AP_TXT 'skipped %s: review-prs.sh reviewed this head\n' "$(STAMP)"
+      ap_rec_put "$KEY" "$RK" "$AP_TXT"
       continue
     fi
 
@@ -689,21 +941,32 @@ $SLUG#$NUM -> ${KVERDICT:-UNPARSED}" ;;
     # box row for this head (which mc_autopilot_verdict reads), and nothing is
     # bought, counted or posted.
     # Anything it cannot prove falls through to the review below, as before.
-    AP_PREV=""
+    # Row mode (BH-4156) reads the PR's newest `reviewed` head from its
+    # review_autopilot_pr row (head12, then the record) instead of the files.
+    AP_PREV12=""; AP_PREVREC=""
     if command -v patch_same >/dev/null 2>&1 && [ -d "${REPOS_ROOT:-/root/repos}/$P/.git" ]; then
-      for AP_F in $(ls -t "$STATE/${SLUG//\//-}-$NUM-"* 2>/dev/null); do
-        case "$AP_F" in "$KEY"|*.body) continue ;; esac
-        AP_L=$(head -1 "$AP_F" 2>/dev/null)
-        if [[ "$AP_L" =~ ^reviewed\ .*\ verdict=[A-Z-]+$ ]]; then AP_PREV="$AP_F"; break; fi
-      done
+      if [ "$AP_ROWS" = 1 ]; then
+        if lt_row review_autopilot_pr "$SLUG#$NUM"; then
+          AP_L="${LT_DETAIL#*$'\n'}"
+          if [[ "${LT_DETAIL%%$'\n'*}" =~ ^[0-9a-f]{12}$ ]] && [ "${LT_DETAIL%%$'\n'*}" != "$HEAD12" ] \
+             && [[ "${AP_L%%$'\n'*}" =~ ^reviewed\ .*\ verdict=[A-Z-]+$ ]]; then
+            AP_PREV12="${LT_DETAIL%%$'\n'*}"; AP_PREVREC="$AP_L"
+          fi
+        fi
+      else
+        for AP_F in $(ls -t "$STATE/${SLUG//\//-}-$NUM-"* 2>/dev/null); do
+          case "$AP_F" in "$KEY"|*.body|*.pending) continue ;; esac
+          AP_L=$(head -1 "$AP_F" 2>/dev/null)
+          if [[ "$AP_L" =~ ^reviewed\ .*\ verdict=[A-Z-]+$ ]]; then AP_PREV12="${AP_F##*-}"; AP_PREVREC=$(cat "$AP_F" 2>/dev/null); break; fi
+        done
+      fi
     fi
-    if [ -n "$AP_PREV" ]; then
+    if [ -n "$AP_PREV12" ]; then
       AP_REPO="${REPOS_ROOT:-/root/repos}/$P"
-      AP_PREV12="${AP_PREV##*-}"
-      AP_LINE=$(head -1 "$AP_PREV")
+      AP_LINE="${AP_PREVREC%%$'\n'*}"
       # The full reviewed sha when the key recorded one (ap_sha_line); an older key
       # has only its 12-hex name, which resolves locally or fails closed.
-      AP_PREVSHA=$(sed -n 's/^sha=\([0-9a-f]\{40\}\)$/\1/p' "$AP_PREV" 2>/dev/null | head -1)
+      AP_PREVSHA=$(sed -n 's/^sha=\([0-9a-f]\{40\}\)$/\1/p' <<<"$AP_PREVREC" 2>/dev/null | head -1)
       [ "${AP_PREVSHA:0:12}" = "$AP_PREV12" ] || AP_PREVSHA=""
       if patch_same_fetch "$AP_REPO" "$AP_PREVSHA" "$SHA" \
          && AP_HOW=$(patch_same "$AP_REPO" origin/main "${AP_PREVSHA:-$AP_PREV12}" "$SHA"); then
@@ -716,8 +979,8 @@ $SLUG#$NUM -> ${KVERDICT:-UNPARSED}" ;;
           echo "$(STAMP) [$P] #$NUM @$HEAD12 verdict replay from $AP_PREV12 ($AP_V) held: its box row did not record — no key written, no review bought; the next tick replays again" >> "$LOG"
           continue
         fi
-        printf 'reviewed %s verdict=%s\nreplayed_from=%s how=%s\nsha=%s\n' "$(STAMP)" "$AP_V" "$AP_PREV12" "$AP_HOW" "$SHA" > "$KEY"
-        lt_put review_autopilot "$RK" reviewed "verdict=$AP_V replayed_from=$AP_PREV12 how=$AP_HOW"
+        printf -v AP_TXT 'reviewed %s verdict=%s\nreplayed_from=%s how=%s\nsha=%s\n' "$(STAMP)" "$AP_V" "$AP_PREV12" "$AP_HOW" "$SHA"
+        ap_settle "$KEY" "$RK" "$AP_TXT"
         echo "$(STAMP) [$P] #$NUM @$HEAD12 verdict REPLAYED from $AP_PREV12 ($AP_V): own patch unchanged ($AP_HOW) — no review bought, no post, cap unchanged" >> "$LOG"
         command -v review_saving_event >/dev/null 2>&1 \
           && review_saving_event "$P" review-autopilot "$SLUG" "$NUM" "$SHA" REUSED "from=$AP_PREV12 to=${SHA:0:12} how=$AP_HOW" || true
@@ -726,12 +989,18 @@ $SLUG#$NUM -> ${KVERDICT:-UNPARSED}" ;;
     fi
     # <<< autopilot verdict replay
 
-    CNT=$(cat "$CNTF" 2>/dev/null || echo 0)
     # THE CAP SURVIVES A WIPE TOO, or a fresh box buys a second day's worth of
-    # reviews under a cap that reads zero. The HIGHER of the two counts wins: a
-    # row that reads low — a blip, a write that never landed — must not be what
-    # buys a 41st review.
-    [ -n "$LCAP" ] && [ "$LCAP" -gt "${CNT:-0}" ] && CNT="$LCAP"
+    # reviews under a cap that reads zero: in row mode the count is the row
+    # (BH-4156), and a row nobody could read buys nothing while a cap is set.
+    if [ "$AP_ROWS" = 1 ]; then
+      if [ "$CAP_UNREAD" = 1 ] && [ "$CAP" -gt 0 ]; then
+        echo "$(STAMP) [$P] the daily count row review_autopilot_cap '$P $DAY' is unreadable with a cap of $CAP — #$NUM and any remaining PRs buy nothing this tick" >> "$LOG"
+        break
+      fi
+      CNT="${LCAP:-0}"
+    else
+      CNT=$(cat "$CNTF" 2>/dev/null || echo 0)
+    fi
     if [ "$CAP" -gt 0 ] && [ "${CNT:-0}" -ge "$CAP" ]; then
       echo "$(STAMP) [$P] daily review cap $CAP reached — #$NUM and any remaining PRs wait for tomorrow" >> "$LOG"
       break
@@ -877,30 +1146,27 @@ VERDICT: MERGE|MERGE-WITH-NOTES|BLOCK — <one-line reason>
         echo "$(STAMP) [$P] #$NUM @$HEAD12 agent-call returned before billing (rc=$AC_RC: ${AC_MARK:-no marker}) — nothing called, nothing posted, no key written, cap unchanged; retries next tick" >> "$LOG"
         continue ;;
       0)
-        # The cap's row twin moves with the file counter, on EVERY path that
-        # charges — an rc-0 review here, a call that died below. A twin that
-        # only mirrored the happy path would read low after a wipe, and a low
-        # cap is what buys the 41st review (BH-1036).
-        echo $(( CNT + 1 )) > "$CNTF"
-        lt_put review_autopilot_cap "$P $DAY" "$(( CNT + 1 ))" ;;
+        # The count moves on EVERY path that charges — an rc-0 review here, a
+        # call that died below. A count that only moved on the happy path would
+        # read low, and a low cap is what buys the 41st review (BH-1036).
+        ap_cap_charge ;;
       *)
         # It DIED: billed, or billed in a way we cannot see from here. Count it,
         # and never post what is in the out file — a partial review, or a
         # `CONTEXT KILL:` truncation, is a verdict on code nobody finished
         # reading. Bounded like every other retry on this lane.
-        echo $(( CNT + 1 )) > "$CNTF"
-        lt_put review_autopilot_cap "$P $DAY" "$(( CNT + 1 ))"
+        ap_cap_charge
         # ONE COUNTER FOR BOTH NON-SUCCESS TRACKS (head-bound review of #1093).
         # Read separately, `empty` and `failed` reset each other, so a head that
         # alternates rc!=0 and rc 0/empty cycles n=1 for ever — billed every
         # tick, never terminal, unbounded at the default cap of 0.
-        FN=$(ap_attempts "$KEY")
+        FN=$(ap_attempts "$KREC")
         FN=$(( FN + 1 ))
         if [ "$FN" -ge "$FAIL_TRIES" ]; then
-          printf 'failed-terminal %s n=%s rc=%s\n' "$(STAMP)" "$FN" "$AC_RC" > "$KEY"
+          printf -v AP_TXT 'failed-terminal %s n=%s rc=%s\n' "$(STAMP)" "$FN" "$AC_RC"; ap_rec_put "$KEY" "$RK" "$AP_TXT"
           echo "$(STAMP) [$P] #$NUM @$HEAD12 the review call died (rc=$AC_RC) $FN times — terminal, no further calls for this head (spend counted: $(( CNT + 1 ))/$CAP)" >> "$LOG"
         else
-          printf 'failed %s n=%s rc=%s\n' "$(STAMP)" "$FN" "$AC_RC" > "$KEY"
+          printf -v AP_TXT 'failed %s n=%s rc=%s\n' "$(STAMP)" "$FN" "$AC_RC"; ap_rec_put "$KEY" "$RK" "$AP_TXT"
           echo "$(STAMP) [$P] #$NUM @$HEAD12 the review call died (rc=$AC_RC) — attempt $FN of $FAIL_TRIES, nothing posted (spend counted: $(( CNT + 1 ))/$CAP)" >> "$LOG"
         fi
         continue ;;
@@ -910,13 +1176,13 @@ VERDICT: MERGE|MERGE-WITH-NOTES|BLOCK — <one-line reason>
       # BILLED, AND NOT A FAILURE TO RETRY FOR EVER. One more tick may catch a
       # transient; a second empty answer is the vendor saying there is nothing
       # here, and it is terminal. Writing nothing is what made this hourly.
-      EN=$(ap_attempts "$KEY")      # shared with the failed track, see above
+      EN=$(ap_attempts "$KREC")     # shared with the failed track, see above
       EN=$(( EN + 1 ))
       if [ "$EN" -ge 2 ]; then
-        printf 'empty-terminal %s n=%s\n' "$(STAMP)" "$EN" > "$KEY"
+        printf -v AP_TXT 'empty-terminal %s n=%s\n' "$(STAMP)" "$EN"; ap_rec_put "$KEY" "$RK" "$AP_TXT"
         echo "$(STAMP) [$P] #$NUM @$HEAD12 produced an empty review twice — terminal, no further calls for this head (spend counted: $(( CNT + 1 ))/$CAP)" >> "$LOG"
       else
-        printf 'empty %s n=%s\n' "$(STAMP)" "$EN" > "$KEY"
+        printf -v AP_TXT 'empty %s n=%s\n' "$(STAMP)" "$EN"; ap_rec_put "$KEY" "$RK" "$AP_TXT"
         echo "$(STAMP) [$P] #$NUM @$HEAD12 produced an empty review — one retry left (spend counted: $(( CNT + 1 ))/$CAP)" >> "$LOG"
       fi
       continue
@@ -952,8 +1218,19 @@ _Automatic adversarial review ($RA_SERVED) of \`$HEAD12\`, dispatched because th
     # gh call next hour instead of another Fable review. Body first, key second:
     # the key is the guard, and a guard whose payload is missing is worse than
     # neither (the dispatch above re-reviews that case rather than posting air).
-    printf '%s' "$POSTED" > "$KEY.body"
-    printf 'status=reviewed-unposted %s verdict=%s tries=0\n' "$(STAMP)" "$VERDICT" > "$KEY"
+    # Row mode (BH-4156): a comment over the ledger's detail limit is never
+    # cut. It is cached in the local <key>.body file instead (ap_body_put), so a
+    # failed post is re-posted with no model call, bounded by POST_TRIES.
+    AP_CACHED=1
+    ap_body_put "$KEY" "$RK" "$POSTED"; BODY_RC=$?
+    if [ "$BODY_RC" != 0 ]; then
+      AP_CACHED=0
+      echo "$(STAMP) [$P] #$NUM @$HEAD12 the review is not cached: the body file write failed — it is posted now, and a failed post means the next tick reviews again" >> "$LOG"
+    elif [ -n "$AP_BODY_LOCAL" ]; then
+      echo "$(STAMP) [$P] #$NUM @$HEAD12 the review is cached in the local file $KEY.body, not as a row: $AP_BODY_LOCAL" >> "$LOG"
+    fi
+    printf -v AP_TXT 'status=reviewed-unposted %s verdict=%s tries=0\n' "$(STAMP)" "$VERDICT"
+    ap_rec_put "$KEY" "$RK" "$AP_TXT"
     ap_post "$SLUG" "$NUM" "$KEY" "$VERDICT" 0; AP_RC=$?   # rc 2 (promote) is impossible at tries=0
     case "$AP_RC" in
       0)
@@ -965,7 +1242,12 @@ $SLUG#$NUM -> $VERDICT" ;;
         DISPATCHED="$DISPATCHED
 $SLUG#$NUM -> $VERDICT" ;;
       *)
-        echo "$(STAMP) [$P] #$NUM @$HEAD12 verdict=$VERDICT but the comment did NOT post — the review is cached at $KEY.body and the next tick re-posts it with no model call" >> "$LOG" ;;
+        if [ "$AP_CACHED" = 1 ]; then
+          AP_WHERE="$KEY.body"; [ "$AP_ROWS" = 1 ] && [ -z "$AP_BODY_LOCAL" ] && AP_WHERE="the row review_autopilot_body $RK"
+          echo "$(STAMP) [$P] #$NUM @$HEAD12 verdict=$VERDICT but the comment did NOT post — the review is cached at $AP_WHERE and the next tick re-posts it with no model call" >> "$LOG"
+        else
+          echo "$(STAMP) [$P] #$NUM @$HEAD12 verdict=$VERDICT but the comment did NOT post — the review is not cached, so the next tick reviews again" >> "$LOG"
+        fi ;;
     esac
   done <<<"$PRS"
 done

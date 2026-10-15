@@ -140,11 +140,11 @@ done
 
 STAMP() { date -u '+%Y-%m-%d %H:%M:%SZ'; }
 LOG="$H/logs/main-red-pr-pair.log"
-# EXPLAIN CREATES NOTHING but the log dir log() writes into: locks/ and
-# state/main-red are the lane's, and a dry run that mkdirs them has already
-# changed the tree it was asked to only describe.
+# EXPLAIN CREATES NOTHING but the log dir log() writes into: locks/ is the
+# lane's, and a dry run that mkdirs it has already changed the tree it was
+# asked to only describe. state/main-red/ is made only where a file is written.
 if [ "$EXPLAIN" = 1 ]; then mkdir -p "$H/logs" 2>/dev/null
-else mkdir -p "$H/logs" "$H/locks" "$H/state/main-red" 2>/dev/null; fi
+else mkdir -p "$H/logs" "$H/locks" 2>/dev/null; fi
 log() { echo "$(STAMP) $*" >> "$LOG"; [ "$EXPLAIN" = 1 ] && echo "$*"; return 0; }
 
 # env lives in /etc/harness/env on a real box and in $H/env in a fixture tree;
@@ -174,6 +174,10 @@ command -v lane_env_apply    >/dev/null 2>&1 && lane_env_apply    main-red-pr-pa
 # nothing and behaves as it did.
 # shellcheck source=/dev/null
 [ -r "$H/bin/jobs-client.sh" ] && . "$H/bin/jobs-client.sh"
+# The verdict, the head ledger and the pair marks are rows (BH-4156). Without
+# the lib mrs_on says "no DB here" and today's files stay the record.
+# shellcheck source=bin/lib/main-red-state.sh
+. "$(dirname "${BASH_SOURCE[0]}")/lib/main-red-state.sh" 2>/dev/null || mrs_on() { return 1; }
 [ "${MAIN_RED_PAIR:-1}" = 0 ] && exit 0
 command -v lane_switch >/dev/null 2>&1 || . "$(dirname "${BASH_SOURCE[0]}")/lib/lane-switch.sh" 2>/dev/null || lane_switch() { [ -e "${HARNESS:-${H:-/root/harness}}/flags/$1" ]; }
 lane_switch main-red-pr-pair-off file && exit 0
@@ -379,12 +383,17 @@ pr_head_error() { # pr_head_error <owner/repo> <head-sha> <pr-updated-at>
 # rule at mr_publish): the hub is correct even if the PUT dies. The `.published`
 # marker is the detector's, on purpose — its own green tick republishes OFF for
 # a clear whose PUT died, and that self-heal covers a freeze raised here too.
+# The marker is the ledgers row main_red_published/<name> (BH-4156), with the
+# detector's file fallback (bin/main-red-detector.sh mr_mark) where the row
+# cannot be written.
 mrp_publish() {
-  local n="$1" onoff="$2" mark="$H/state/main-red/$1.published"
+  local n="$1" onoff="$2" mark="$H/state/main-red/$1.published" rc=2
   command -v flag_set >/dev/null 2>&1 || return 0
   if flag_set "$n" "$onoff" "${3:-}" >/dev/null 2>&1; then
-    mkdir -p "$H/state/main-red" 2>/dev/null
-    if [ "$onoff" = on ]; then : > "$mark"; else rm -f "$mark"; fi
+    if mrs_on; then mrs_published_set "$n" "$onoff"; rc=$?; fi
+    if [ "$rc" = 0 ]; then rm -f "$mark"; return 0; fi
+    [ "$rc" = 2 ] || log "$n: published marker row not written — state/main-red/$n.published holds it until a write lands"
+    if [ "$onoff" = on ]; then mkdir -p "$H/state/main-red" 2>/dev/null; : > "$mark"; else rm -f "$mark"; fi
     return 0
   fi
   log "$n: could not be published to the coordination DB — the hub file is authoritative, boxes see it on the next successful publish"
@@ -399,7 +408,7 @@ mrp_publish() {
 # freeze that was never raised.
 MRP_FROZE=0
 mrp_suspect_freeze() {
-  local slug="$1" dashed="$2" job="$3" err="$4" prs="$5" flag verdict dec
+  local slug="$1" dashed="$2" job="$3" err="$4" prs="$5" flag verdict dec vrow vrc
   MRP_FROZE=0
   flag="$H/flags/main-red-$dashed"
   if [ "$PAIR_FREEZE" = 0 ]; then
@@ -411,12 +420,24 @@ mrp_suspect_freeze() {
     log "$slug: flags/main-red-$dashed is already up — merges are held, nothing rewritten here"
     return 0
   fi
-  verdict="$H/state/main-red/$dashed.verdict"
-  if [ ! -f "$verdict" ]; then
-    log "$slug: bin/main-red-detector.sh has never looked at this repo here — there is no $dashed.verdict to read, and an absent verdict is not a decision, so this pair alerts and freezes nothing"
-    return 0
-  fi
-  dec=$(sed -n 's/^decision=//p' "$verdict" | head -1)
+  # The verdict is the main_red_verdicts row (BH-4156). The file decides only
+  # where there is no row store (no DB here, or a worker that answers 404
+  # because it predates the route). An unreadable row is not a decision.
+  vrc=2
+  if mrs_on; then vrow=$(mrs_verdict_get "$slug"); vrc=$?; fi
+  case "$vrc" in
+    0) dec=$(cut -f1 <<<"$vrow") ;;
+    3) log "$slug: bin/main-red-detector.sh has never looked at this repo — there is no verdict row to read, and an absent verdict is not a decision, so this pair alerts and freezes nothing"
+       return 0 ;;
+    2) verdict="$H/state/main-red/$dashed.verdict"
+       if [ ! -f "$verdict" ]; then
+         log "$slug: bin/main-red-detector.sh has never looked at this repo here — there is no $dashed.verdict to read, and an absent verdict is not a decision, so this pair alerts and freezes nothing"
+         return 0
+       fi
+       dec=$(sed -n 's/^decision=//p' "$verdict" | head -1) ;;
+    *) log "$slug: the detector's verdict row is unreadable — an unreadable verdict is not a decision, so this pair alerts and freezes nothing"
+       return 0 ;;
+  esac
   if [ "$dec" != none ]; then
     log "$slug: the detector's own verdict is decision=${dec:-(unset)} — it HAS looked, so this pair alerts and freezes nothing"
     return 0
@@ -446,6 +467,7 @@ mrp_resolve_freeze() {
 pr_pair_signal() { # pr_pair_signal <owner/repo>
   local slug="$1" dashed ledger marks wledger list n rows num head upd f rowfile groups grc
   local hash cnt prs job err text id marker seen unknown=0 capped=0 still froze=0
+  local rowmode=0 scratch="" krc h j e ra pmode=file ptmp="" prc mprs
   type harness_pr_list >/dev/null 2>&1 || {
     log "$slug: bin/lib/gh-pr-list.sh is not readable — no PR-pair signal this tick"; return 0; }
   if command -v gh_repo_use_token >/dev/null 2>&1; then
@@ -462,6 +484,30 @@ pr_pair_signal() { # pr_pair_signal <owner/repo>
     || { log "$slug: open PR list unreadable — no PR-pair signal this tick"; return 0; }
   n=$(jq 'length' <<<"$list" 2>/dev/null) \
     || { log "$slug: open PR list unreadable (not JSON) — no PR-pair signal this tick"; return 0; }
+  # THE HEAD LEDGER IS ROWS (BH-4156): main_red_pr_errors, one read for every
+  # head this tick looks at. The rows are laid out as today's <head>.tsv files
+  # in a scratch dir that dies with the tick, so the loop below reads them the
+  # way it read the ledger dir, and each fresh verdict is PUT as a row. With no
+  # row store (no DB here, or a worker that answers 404) the ledger dir is the
+  # record, as before. An unreadable read is "we could not look": no signal.
+  if mrs_on; then
+    scratch=$(mktemp -d "${TMPDIR:-/tmp}/main-red-rows.XXXXXX") || {
+      log "$slug: no scratch dir for the head rows — no PR-pair signal this tick"; return 0; }
+    # shellcheck disable=SC2046 # one word per head sha; a sha holds no space
+    mrs_pr_errors_get "$slug" "$scratch/known.tsv" $(jq -r --argjson cap "$PAIR_MAX" \
+      'sort_by(.updatedAt // "") | reverse | .[0:$cap][] | .headRefOid // empty' <<<"$list" 2>/dev/null)
+    krc=$?
+    case "$krc" in
+      0) rowmode=1; mkdir -p "$scratch/ledger"
+         while IFS=$'\t' read -r h j e ra; do
+           [[ "$h" =~ ^[A-Za-z0-9._-]+$ ]] && printf '%s\t%s\t%s\n' "$j" "$e" "$ra" > "$scratch/ledger/$h.tsv"
+         done < "$scratch/known.tsv"
+         ledger="$scratch/ledger" ;;
+      2) rm -rf "$scratch"; scratch="" ;;
+      *) rm -rf "$scratch"
+         log "$slug: the PR head rows are unreadable — no PR-pair signal this tick"; return 0 ;;
+    esac
+  fi
   # A ROW IS TERMINAL FOR $LEDGER_DAYS and the cron lane trusts it, so explain
   # writes its fresh verdicts to a scratch dir that dies with the process and
   # prunes nothing. Rows that already exist are READ, so the explain output is
@@ -469,9 +515,31 @@ pr_pair_signal() { # pr_pair_signal <owner/repo>
   wledger="$ledger"
   if [ "$EXPLAIN" = 1 ]; then
     wledger=$(mktemp -d "${TMPDIR:-/tmp}/main-red-explain.XXXXXX") || {
+      [ -n "$scratch" ] && rm -rf "$scratch"
       log "$slug: no scratch dir for --explain — no PR-pair signal this tick"; return 0; }
+  elif [ "$rowmode" = 1 ]; then
+    mrs_pr_errors_prune "$slug" "$LEDGER_DAYS" || log "$slug: the head rows older than $LEDGER_DAYS day(s) were not pruned this tick"
+    # The file ledger this replaced: each file in the ledger window becomes its
+    # row before it goes, so a head whose run logs expired keeps its verdict.
+    # The route is write-once, so a re-run imports nothing twice. A file whose
+    # PUT failed stays for the next tick.
+    for f in "$H/state/main-red/pr-errors/$dashed"/*.tsv; do
+      [ -f "$f" ] || continue
+      h="${f##*/}"; h="${h%.tsv}"
+      if [ -s "$f" ] && [[ "$h" =~ ^[A-Za-z0-9._-]+$ ]] && [ ! -e "$scratch/ledger/$h.tsv" ] \
+         && ! mrp_row_stale "$f" && [ -z "$(find "$f" -mtime +"$LEDGER_DAYS" 2>/dev/null)" ]; then
+        IFS=$'\t' read -r j e ra < "$f"
+        if ! mrs_pr_error_put "$slug" "$h" "$j" "$e" "$ra"; then
+          log "$slug: the legacy head file for ${h:0:8} was not imported as a row — it is kept for the next tick"
+          continue
+        fi
+        cp "$f" "$scratch/ledger/$h.tsv"
+      fi
+      rm -f "$f"
+    done
+    rmdir "$H/state/main-red/pr-errors/$dashed" "$H/state/main-red/pr-errors" 2>/dev/null
   else
-    mkdir -p "$ledger" "$marks" 2>/dev/null
+    mkdir -p "$ledger" 2>/dev/null
     find "$ledger" -type f -name '*.tsv' -mtime +"$LEDGER_DAYS" -delete 2>/dev/null
   fi
   # ZERO OPEN PRs IS AN ANSWER, not a missing one — the unreadable cases already
@@ -480,7 +548,7 @@ pr_pair_signal() { # pr_pair_signal <owner/repo>
   # return here would leave that marker open until somebody opened a PR again.
   [ "$n" -gt "$PAIR_MAX" ] && { capped=1; log "$slug: $n open PRs — capped at the $PAIR_MAX most recently updated for the PR-pair signal, the rest are not read this tick"; }
   rowfile=$(mktemp "${TMPDIR:-/tmp}/main-red-pairs.XXXXXX") || {
-    [ "$wledger" = "$ledger" ] || rm -rf "$wledger"; return 0; }
+    [ "$wledger" = "$ledger" ] || rm -rf "$wledger"; [ -n "$scratch" ] && rm -rf "$scratch"; return 0; }
   if [ "${n:-0}" -gt 0 ]; then
     rows=$(jq -r --argjson cap "$PAIR_MAX" 'sort_by(.updatedAt // "") | reverse | .[0:$cap][]
                                             | "\(.number)\t\(.headRefOid // "")\t\(.updatedAt // "")"' <<<"$list" 2>/dev/null)
@@ -496,6 +564,11 @@ pr_pair_signal() { # pr_pair_signal <owner/repo>
         f="$wledger/$head.tsv"
         pr_head_error "$slug" "$head" "$upd" > "$f" || rm -f "$f"
         [ "$EXPLAIN" = 1 ] && [ -s "$f" ] && echo "WOULD RECORD $slug $head :: $(cat "$f")"
+        if [ "$rowmode" = 1 ] && [ "$EXPLAIN" != 1 ] && [ -s "$f" ]; then
+          IFS=$'\t' read -r j e ra < "$f"
+          mrs_pr_error_put "$slug" "$head" "$j" "$e" "$ra" \
+            || log "$slug: the row for head ${head:0:8} was not written — that head is read again next tick"
+        fi
       fi
       # A head with no verdict is not a head with no failure. Count it: the
       # resolve sweep below may not claim "the shared cause is gone" on a look
@@ -551,9 +624,39 @@ PYEOF
   grc=$?
   rm -f "$rowfile"
   [ "$wledger" = "$ledger" ] || rm -rf "$wledger"
+  [ -n "$scratch" ] && rm -rf "$scratch"
   if [ "$grc" -ne 0 ]; then
     log "$slug: the grouping step failed (python3 exit $grc) — no PR-pair verdict this tick, open pairs left alone"
     groups=""; unknown=$((unknown + 1))
+  fi
+  # THE PAIR MARKS ARE ROWS (BH-4156): main_red_pairs, one open row per pair.
+  # The open rows are read once here. With no row store the marker files under
+  # pairs/<owner>-<repo>/ are the record, as before. An unreadable read (or a
+  # truncated one) is "we could not look": no send, no freeze, no resolve.
+  if [ "$EXPLAIN" != 1 ]; then
+    ptmp=$(mktemp -d "${TMPDIR:-/tmp}/main-red-open.XXXXXX") || {
+      log "$slug: no scratch dir for the pair rows — no pair alert this tick"; return 0; }
+    prc=2
+    if mrs_on; then mrs_pairs_open "$slug" "$ptmp/open.tsv"; prc=$?; fi
+    case "$prc" in
+      0) pmode=row
+         # A marker file from before the rows is opened as its row, then removed.
+         for marker in "$marks"/*; do
+           [ -f "$marker" ] || continue
+           hash=$(basename "$marker")
+           awk -F'\t' -v h="$hash" '$1==h {f=1} END {exit !f}' "$ptmp/open.tsv" && { rm -f "$marker"; continue; }
+           if mrs_pair_open "$slug" "$hash" "$(sed -n 's/^job=//p' "$marker" | head -1)" \
+                "$(sed -n 's/^first_error=//p' "$marker" | head -1)" "$(sed -n 's/^prs=//p' "$marker" | head -1)" </dev/null; then
+             rm -f "$marker"
+           fi
+         done
+         rmdir "$marks" "$H/state/main-red/pairs" 2>/dev/null
+         mrs_pairs_open "$slug" "$ptmp/open.tsv" || {
+           rm -rf "$ptmp"; log "$slug: the open pair rows are unreadable — no pair alert, freeze or resolve this tick"; return 0; } ;;
+      2) mkdir -p "$marks" 2>/dev/null ;;
+      *) rm -rf "$ptmp"
+         log "$slug: the open pair rows are unreadable — no pair alert, freeze or resolve this tick"; return 0 ;;
+    esac
   fi
   seen=" "
   while IFS=$'\t' read -r hash cnt prs job err; do
@@ -570,7 +673,8 @@ PYEOF
     # nothing new and still tells the truth: the flag is there.
     if [ "$froze" = 0 ]; then mrp_suspect_freeze "$slug" "$dashed" "$job" "$err" "$prs"; froze=1; fi
     [ "$MRP_FROZE" = 1 ] && text="$text Merges for $slug are held while flags/main-red-$dashed exists — land the fix as a PR labelled $MRP_LABEL."
-    if [ -f "$marker" ]; then
+    if { [ "$pmode" = row ] && awk -F'\t' -v h="$hash" '$1==h {f=1} END {exit !f}' "$ptmp/open.tsv"; } \
+       || { [ "$pmode" = file ] && [ -f "$marker" ]; }; then
       log "$slug: $cnt open PRs ($prs) still fail \"$job\" the same way — alert $id already open, no second send"
       continue
     fi
@@ -578,7 +682,12 @@ PYEOF
     # that did. Send first: lane-alert.sh dedupes on --id in state/alerts/, so a
     # marker that fails to write costs one suppressed repeat, not a lost page.
     "$H/bin/lane-alert.sh" --severity critical --id "$id" main-red "$text" >/dev/null 2>&1
-    { echo "job=$job"; echo "first_error=$err"; echo "prs=$prs"; echo "detected=$(STAMP)"; } > "$marker"
+    if [ "$pmode" = row ]; then
+      mrs_pair_open "$slug" "$hash" "$job" "$err" "$prs" </dev/null \
+        || log "$slug: the row for pair $hash was not written — the next tick sends again, and lane-alert.sh dedupes on --id"
+    else
+      { echo "job=$job"; echo "first_error=$err"; echo "prs=$prs"; echo "detected=$(STAMP)"; } > "$marker"
+    fi
     log "ALERT(pair) $text"
   done <<<"$groups"
   [ "$EXPLAIN" = 1 ] && return 0
@@ -591,18 +700,25 @@ PYEOF
   # standing, and a real fix resolves on the next complete tick.
   if [ "$unknown" -gt 0 ]; then
     log "$slug: $unknown open PR head(s) have no verdict this tick (runs still in flight, or a read that failed) — open pairs left alone rather than called fixed"
-    return 0
+    rm -rf "$ptmp"; return 0
   fi
   # AND THE FREEZE COMES DOWN ON THE SAME EVIDENCE AS A RESOLVE (BH-1451): a
   # COMPLETE look that found no pair at all. While the cap bites the look is
   # partial by construction — heads past it were never read — so a freeze waits
   # for a tick that saw every open PR, exactly as the marker sweep below does.
   if [ "$seen" = " " ] && [ "$capped" != 1 ]; then mrp_resolve_freeze "$slug" "$dashed"; fi
-  for marker in "$marks"/*; do
-    [ -f "$marker" ] || continue
-    hash=$(basename "$marker")
+  # One "hash<TAB>job<TAB>prs" line per open pair, from the rows or the files.
+  if [ "$pmode" = row ]; then cut -f1,2,4 "$ptmp/open.tsv" > "$ptmp/sweep.tsv"
+  else
+    for marker in "$marks"/*; do
+      [ -f "$marker" ] || continue
+      printf '%s\t%s\t%s\n' "$(basename "$marker")" "$(sed -n 's/^job=//p' "$marker" | head -1)" \
+        "$(sed -n 's/^prs=//p' "$marker" | head -1)"
+    done > "$ptmp/sweep.tsv"
+  fi
+  while IFS=$'\t' read -r -u 3 hash job mprs; do
+    [ -n "$hash" ] || continue
     case "$seen" in *" $hash "*) continue ;; esac
-    job=$(sed -n 's/^job=//p' "$marker" | head -1)
     # THE CAP IS A PARTIAL LOOK TOO. Heads past it were never read, so a pair
     # whose PRs merely fell out of the newest-$PAIR_MAX window (any other PR
     # getting updated pushes them out) is absent from the grouping without
@@ -611,7 +727,7 @@ PYEOF
     # the open list (the full list is in hand, up to 100); otherwise say so.
     if [ "$capped" = 1 ]; then
       still=""
-      for num in $(sed -n 's/^prs=//p' "$marker" | head -1 | tr -d '#,'); do
+      for num in $(tr -d '#,' <<<"$mprs"); do
         jq -e --argjson n "$num" 'any(.[]?; .number==$n)' <<<"$list" >/dev/null 2>&1 && still="$still #$num"
       done
       if [ -n "$still" ]; then
@@ -621,9 +737,15 @@ PYEOF
     fi
     "$H/bin/lane-alert.sh" --resolve --id "main-red-prs:$dashed:$hash" main-red \
       "$slug: no open PR still fails \"$job\" with that first error — the shared cause is gone." >/dev/null 2>&1
-    rm -f "$marker"
+    if [ "$pmode" = row ]; then
+      mrs_pair_resolve "$slug" "$hash" \
+        || log "$slug: the row for pair $hash was not stamped resolved — the next tick resolves it again"
+    else
+      rm -f "$marks/$hash"
+    fi
     log "ALERT(pair-resolve) $slug: \"$job\" no longer shared by two open PRs"
-  done
+  done 3< "$ptmp/sweep.tsv"
+  rm -rf "$ptmp"
 }
 
 for SLUG in $REPOS; do

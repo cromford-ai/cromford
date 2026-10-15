@@ -407,15 +407,19 @@ printf 'review_autopilot_cap\tdemo-os %s\t40\t\n' "$B_DAY" >> "$B/rows.tsv"
 b_run REVIEW_AUTOPILOT_DAILY_CAP=40
 [ "$(b_agent)" = 1 ] && ok || bad "B3: with the flag off the rows must change nothing (agent: $(b_agent))"
 
-# B4. The write-through order, flag on and no rows: the review is bought, the
-# marker FILE is written, and the row follows it. The file is the cache, so it
-# can never be the thing that is missing after a successful post.
+# B4. Flag on and no rows: the review is bought and its record is the ROW.
+# TEST-CHANGE (BH-4156): this lane's one-cycle file cache is gone — with the
+# flag up it writes NO marker file, and the row carries the whole record
+# (tests/review-autopilot-rows.bh-4156-test.sh pins the rest).
 touch "$B/h/flags/no-twin-ledgers"
 : > "$B/rows.tsv"
 b_run
 [ "$(b_agent)" = 1 ] && ok || bad "B4: an empty ledger must buy exactly one review (agent: $(b_agent))"
-[ -f "$B/h/state/review-autopilot/example-org-demo-os-101-$B_H12" ] && ok \
-  || bad "B4: the marker file must still be written (the one-cycle write-through cache)"
+[ ! -e "$B/h/state/review-autopilot/example-org-demo-os-101-$B_H12" ] && ok \
+  || bad "B4: with the flag up no marker file may be written (BH-4156: the row is the record)"
+grep 'PUT https://jobs.test/api/ledger' "$B/req.log" | cut -d' ' -f3- \
+  | jq -se 'map(select(.kind == "review_autopilot" and .status == "reviewed" and (.detail | startswith("reviewed ")))) | length == 1' \
+  >/dev/null 2>&1 && ok || bad "B4: the reviewed row must carry the whole record line: $(grep PUT "$B/req.log")"
 grep -q 'PUT https://jobs.test/api/ledger' "$B/req.log" && ok \
   || bad "B4: no ledger PUT was made: $(cat "$B/req.log")"
 grep 'PUT https://jobs.test/api/ledger' "$B/req.log" | cut -d' ' -f3- \

@@ -1,0 +1,2 @@
+# tests/jobs-client-modules.d/20-BH-4156.tsv — the one-request attempt batch read (BH-4156).
+conductor	pr_attempt_batch

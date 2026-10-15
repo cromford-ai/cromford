@@ -11,7 +11,7 @@
 #
 # WHAT. When at least one flags/main-red-<owner>-<repo> freeze is up (the two
 # switch files main-red-detector-off and main-red-pr-pair-off are not freezes)
-# and the cadence allows it, this lane writes state/main-red/recheck.last and
+# and the cadence allows it, this lane writes the recheck stamp and
 # runs `bin/main-red-detector.sh --flagged-only`: the same decision code as the
 # hourly pass, on the flagged repos only. The hourly pass is unchanged.
 #
@@ -25,7 +25,10 @@
 # lane.main-red-recheck.main_red_recheck_min > env > 5. The cron line is */5, so
 # a value under 5 runs every tick. A run is allowed 30 s early (cron jitter).
 # The stamp is written BEFORE the detector starts: a detector that fails waits
-# one cadence, it is not retried every tick.
+# one cadence, it is not retried every tick. The stamp is the ledgers row
+# main_red_recheck/last (BH-4156). state/main-red/recheck.last is used only
+# where there is no row store (no DB here, or no ledger verb). An unreadable
+# row starts no detector this tick and says so in logs/main-red.log.
 #
 # Kill switch: bin/harness-ctl.sh off main-red-recheck (flags/lane-off-main-red-recheck)
 # Tests: tests/main-red-flagged-recheck.bh-6502-test.sh
@@ -39,6 +42,10 @@ export HARNESS="$H"
 command -v lane_gate_or_exit >/dev/null 2>&1 && lane_gate_or_exit main-red-recheck
 if [ -f "$HENV/global.env" ]; then set -a; # shellcheck disable=SC1091
   . "$HENV/global.env"; set +a; fi
+# shellcheck source=/dev/null
+command -v _jobs_req >/dev/null 2>&1 || { [ -r "$H/bin/jobs-client.sh" ] && . "$H/bin/jobs-client.sh"; }
+# shellcheck source=bin/lib/main-red-state.sh
+. "$(dirname "${BASH_SOURCE[0]}")/lib/main-red-state.sh" 2>/dev/null || mrs_on() { return 1; }
 command -v lane_env_apply >/dev/null 2>&1 && lane_env_apply main-red-recheck
 
 MIN="${MAIN_RED_RECHECK_MIN:-5}"
@@ -57,10 +64,25 @@ done
 
 STAMPF="$H/state/main-red/recheck.last"
 now=$(date +%s)
-last=$(tr -dc '0-9' < "$STAMPF" 2>/dev/null)
-if [ -n "$last" ] && [ $(( now - last )) -ge 0 ] && [ $(( now - last )) -lt $(( MIN * 60 - 30 )) ]; then
+src=2
+if mrs_on; then last=$(mrs_recheck_get); src=$?; fi
+case "$src" in
+  0|3) ;;
+  2) last=$(tr -dc '0-9' < "$STAMPF" 2>/dev/null) ;;
+  *) mkdir -p "$H/logs" 2>/dev/null
+     echo "$(date -u '+%Y-%m-%d %H:%M:%SZ') main-red-recheck: the recheck stamp row is unreadable — no recheck this tick" >> "$H/logs/main-red.log"
+     exit 0 ;;
+esac
+if [ -n "${last:-}" ] && [ $(( now - last )) -ge 0 ] && [ $(( now - last )) -lt $(( MIN * 60 - 30 )) ]; then
   exit 0
 fi
-mkdir -p "$H/state/main-red" 2>/dev/null
-printf '%s\n' "$now" > "$STAMPF"
+wrc=2
+if [ "$src" != 2 ]; then mrs_recheck_set "$now"; wrc=$?; fi
+case "$wrc" in
+  0) rm -f "$STAMPF" ;;
+  2) mkdir -p "$H/state/main-red" 2>/dev/null
+     printf '%s\n' "$now" > "$STAMPF" ;;
+  *) mkdir -p "$H/logs" 2>/dev/null
+     echo "$(date -u '+%Y-%m-%d %H:%M:%SZ') main-red-recheck: the recheck stamp row was not written — the next tick may recheck again" >> "$H/logs/main-red.log" ;;
+esac
 exec "$H/bin/main-red-detector.sh" --flagged-only

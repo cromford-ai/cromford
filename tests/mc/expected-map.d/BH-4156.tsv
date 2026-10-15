@@ -1,0 +1,10 @@
+# tests/mc/expected-map.d/BH-4156.tsv — 2026-10-14: the per-tick attempt memo and
+# its prefetch (one GET /api/conductor-state per repo per tick) live in locks.sh
+# beside the other per-tick caches; origin=lib because all are new functions.
+locks	_mc_memo_base	lib
+locks	_mc_memo_clear_stamp	lib
+locks	_mc_memo_covered	lib
+locks	_mc_memo_rows	lib
+locks	_mc_memo_has	lib
+locks	_mc_memo_add	lib
+locks	mc_tick_prefetch	lib

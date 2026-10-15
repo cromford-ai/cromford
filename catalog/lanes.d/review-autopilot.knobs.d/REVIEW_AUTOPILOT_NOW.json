@@ -1,0 +1,8 @@
+{
+  "env": "REVIEW_AUTOPILOT_NOW",
+  "type": "string",
+  "default": "",
+  "settable": false,
+  "zero_means": null,
+  "note": "Test seam (BH-4156): epoch seconds bin/review-autopilot.sh uses as now, only when HARNESS_TEST_SANDBOX=1. NOT settable from the control plane."
+}

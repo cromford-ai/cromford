@@ -1,12 +1,16 @@
 # @hub-lanes
 # PR-pair canary (BH-632): two OPEN PRs failing the same job with the same first
 # error means main is probably red, hours before main's own run history says so.
-# WRITES: state/main-red/pairs/ (one marker per open condition), state/main-red/
-# pr-errors/ (one terminal verdict per head sha) and logs/main-red-pr-pair.log.
+# WRITES: the main_red_pairs rows (one open row per condition), the
+# main_red_pr_errors rows (one terminal verdict per head sha) and
+# logs/main-red-pr-pair.log (BH-4156). With no row store (no JOBS_URL or
+# HARNESS_SECRET, or a worker without the routes) the files are the record:
+# state/main-red/pairs/ and state/main-red/pr-errors/.
 # WRITES NO flags/main-red-* EXCEPT the suspected freeze (BH-1451): when a pair
-# fires AND state/main-red/<slug>.verdict says the detector has no decision, this
+# fires AND the detector's verdict (the main_red_verdicts row, or
+# state/main-red/<slug>.verdict with no row store) has no decision, this
 # lane raises flags/main-red-<slug> (owner=main-red-pr-pair) and clears it on the
 # first complete look with no pair. Where the detector HAS decided — red, green,
-# or no verdict file at all — the freeze stays its business, because a pair can
+# or no verdict at all — the freeze stays its business, because a pair can
 # be one shared flake.
 */10 * * * * /root/harness/bin/hub-lease.sh check && /root/harness/bin/main-red-pr-pair.sh >/dev/null 2>&1

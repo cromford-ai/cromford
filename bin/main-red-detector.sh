@@ -175,15 +175,15 @@
 # carries qred_t= and qred_done= (that newest red's created_at and updated_at)
 # and raised= (the episode's first raise, kept across a new-sha rewrite).
 #
-# AND EVERY TICK LEAVES A VERDICT (BH-1451): state/main-red/<owner>-<repo>.verdict
-# carries decision=red|green|held|none, the reason, the sha that decided and
-# when. `held` is the streak arm's re-test hold (BH-1281) — the detector looked,
-# declined to raise, and its sha names the run it is waiting on, not a verdict.
-# It is a last-write cell, rewritten whole on every path including the ones that
-# decide nothing, and it exists so another lane can ask "has the detector
-# LOOKED?" rather than inferring it from the absence of a flag. bin/main-red-pr-pair.sh
-# raises its suspected freeze only against decision=none; an ABSENT file freezes
-# nothing, so a box running an older copy of this script cannot surprise anyone.
+# AND EVERY TICK LEAVES A VERDICT (BH-1451): the repo's main_red_verdicts row
+# (BH-4156; else state/main-red/<owner>-<repo>.verdict) carries decision=red|
+# green|held|none|infra, the reason, the sha and when. `held` is the streak
+# arm's re-test hold (BH-1281): the detector looked, declined to raise, and its
+# sha names the run it waits on. It is a last-write cell, rewritten whole on
+# every path including the ones that decide nothing, so another lane can ask
+# "has the detector LOOKED?" rather than infer it from a missing flag.
+# bin/main-red-pr-pair.sh freezes only against decision=none; an ABSENT verdict
+# freezes nothing, so a box running an older copy of this script cannot surprise anyone.
 #
 # SCHEDULED RUNS ARE NOT CODE EVIDENCE (BH-3769). On 2026-10-01 project-5's
 # quarterly access-review report, a `schedule` run, went red on a sha main had
@@ -267,7 +267,7 @@
 #               (BH-6502, above). bin/main-red-recheck.sh runs it every 5 min.
 #   --explain   print what this tick WOULD do, and exit. READ-ONLY (BH-997):
 #               takes no lock, writes and clears no flags/main-red-* file,
-#               publishes no pause row, writes no state/main-red/*.verdict,
+#               publishes no pause row, writes no verdict row or file,
 #               sends no alert. Its only writes are its own lines in
 #               logs/main-red.log and the shared settings cache
 #               (state/settings-cache.json) its settings-row reads
@@ -311,6 +311,11 @@ if [ -f "$HENV/global.env" ]; then set -a
 # with no client publishes nothing and behaves exactly as it did.
 # shellcheck source=/dev/null
 [ -r "$H/bin/jobs-client.sh" ] && . "$H/bin/jobs-client.sh"
+# The verdict and the published marker are rows (BH-4156). Without the lib
+# (a tree that carries this script alone) mrs_on says "no DB here" and the
+# files below stay the record, exactly as before.
+# shellcheck source=bin/lib/main-red-state.sh
+. "$(dirname "${BASH_SOURCE[0]}")/lib/main-red-state.sh" 2>/dev/null || mrs_on() { return 1; }
 [ "${MAIN_RED_DETECT:-1}" = 0 ] && exit 0
 # shellcheck source=lib/lane-switch.sh
 command -v lane_switch >/dev/null 2>&1 || . "$(dirname "${BASH_SOURCE[0]}")/lib/lane-switch.sh" 2>/dev/null || lane_switch() { [ -e "${HARNESS:-${H:-/root/harness}}/flags/$1" ]; }
@@ -552,27 +557,50 @@ for _mrl in main-red-queue-thaw main-red-queue-attr main-red-queue-dispatch; do
   . "$H/bin/lib/$_mrl.sh" 2>/dev/null || . "$(dirname "${BASH_SOURCE[0]}")/lib/$_mrl.sh" 2>/dev/null || true
 done
 
+# mr_mark <flag-basename> on|off — the published marker (BH-4156): the ledgers
+# row main_red_published/<name>, status on|off. state/main-red/<name>.published
+# is the file it replaced. A landed row write removes a leftover file. When the
+# row cannot be written (no DB here, a worker that answers 404, an outage) the
+# file is written as before: a marker left ON only costs one harmless OFF
+# republish later, and a lost one would leave every box frozen.
+mr_mark() {
+  local pf="$H/state/main-red/$1.published" rc=2
+  if mrs_on; then mrs_published_set "$1" "$2"; rc=$?; fi
+  if [ "$rc" = 0 ]; then rm -f "$pf"; return 0; fi
+  [ "$rc" = 2 ] || log "$1: published marker row not written — state/main-red/$1.published holds it until a write lands"
+  if [ "$2" = on ]; then mkdir -p "$H/state/main-red" 2>/dev/null; : > "$pf"; else rm -f "$pf"; fi
+  return 0
+}
+# mr_marked <flag-basename> — rc 0 when the marker is ON (the row says on, or
+# the fallback file is there), 1 when it is not, 2 when the row is unreadable
+# and no file says on: do not act on it.
+mr_marked() {
+  local rc=2
+  [ -f "$H/state/main-red/$1.published" ] && return 0
+  if mrs_on; then mrs_published_get "$1"; rc=$?; fi
+  case "$rc" in 0) return 0 ;; 3|2) return 1 ;; *) return 2 ;; esac
+}
+
 # mr_publish <flag-basename> on|off <reason> — the row every OTHER box reads.
 # ORDER IS ALWAYS file -> row -> alert: the hub is correct even if the PUT dies,
 # and the next red tick republishes (this is called on the still-red tick too,
 # which is what makes a missed PUT self-heal). flag_set only touch/rm's the
 # file, so the flag BODY written just above — sha, workflow, job, since, reason
 # — is untouched and the conductor's MAIN_RED_WHY line still reads it.
-# Returns flag_set's rc, and keeps state/main-red/<name>.published while the
-# row is known to be ON: written on a landed `on` PUT, removed on a landed `off`
+# Returns flag_set's rc, and keeps the published marker (mr_mark) while the
+# row is known to be ON: set on a landed `on` PUT, cleared on a landed `off`
 # PUT. The marker is what makes the OFF side self-heal. The red side republishes
 # every tick because the flag file is there to prompt it; after `rm -f "$FLAG"`
 # a green tick has no file, so a dead `off` PUT used to leave the row active
 # and every box frozen until a hand ran `flag_set ... off` (#957 review, item 2).
 mr_publish() {
-  local n="$1" onoff="$2" mark="$H/state/main-red/$1.published"
+  local n="$1" onoff="$2"
   # The row IS the freeze as every other box sees it, so a dry run names it and
   # writes nothing — not even state/main-red/.
   [ "$EXPLAIN" = 1 ] && { log "WOULD PUBLISH $n=$onoff (${3:-})"; log "WOULD PUBLISH detail $n=$onoff"; return 0; }
   command -v flag_set >/dev/null 2>&1 || return 0
   if flag_set "$n" "$onoff" "${3:-}" >/dev/null 2>&1; then
-    mkdir -p "$H/state/main-red" 2>/dev/null
-    if [ "$onoff" = on ]; then : > "$mark"; else rm -f "$mark"; fi
+    mr_mark "$n" "$onoff"
     mr_row "$n" "$onoff" "${3:-}"
     return 0
   fi
@@ -643,7 +671,12 @@ mr_cleared_load() {
 # which is also what a repo that was never checked looks like.
 # Last-write, rewritten whole, keyed on the slug. Nothing dedupes on it and a
 # missing one is read as "do not act", so it cannot go stale into an action.
-# --explain writes NOTHING here: the file is a fact about a tick that happened.
+# --explain writes NOTHING here: the record is a fact about a tick that happened.
+# BH-4156: the record is the main_red_verdicts row. state/main-red/<slug>.verdict
+# is written only where the row cannot be (no DB here, or a worker that
+# answers 404 because it predates the route), and a landed row removes a
+# leftover file. A row write that fails writes no file: the reader does not act
+# on an unreadable row, so a file would only be read by nobody.
 # mr_count_read — one byte in $MR_READS_F per GitHub Actions GET, in a
 # --flagged-only pass only (the file is unset otherwise). A file, not a
 # variable: read_jobs runs inside $(...). The rerun POST is not counted.
@@ -651,12 +684,19 @@ mr_count_read() { [ -n "${MR_READS_F:-}" ] && printf x >> "$MR_READS_F" 2>/dev/n
 mr_verdict() {
   MR_DECIDED["$1"]=1
   [ "$EXPLAIN" = 1 ] && return 0
-  local d="$H/state/main-red"
-  # the top-level mkdir makes logs/ flags/ locks/, never state/ — so this one
-  # is not redundant and a tree without it silently records nothing.
-  mkdir -p "$d" 2>/dev/null || return 0
-  { echo "decision=${2:-none}"; echo "reason=${3:-}"; echo "sha=${4:-}"; echo "at=$(STAMP)"; } \
-    > "$d/$(echo "$1" | tr '/' '-').verdict" 2>/dev/null
+  local d="$H/state/main-red" vrc=2
+  local vf="$d/$(echo "$1" | tr '/' '-').verdict"
+  if mrs_on; then mrs_verdict_put "$1" "${2:-none}" "${3:-}" "${4:-}"; vrc=$?; fi
+  if [ "$vrc" = 0 ]; then
+    rm -f "$vf"
+  elif [ "$vrc" = 2 ]; then
+    # the top-level mkdir makes logs/ flags/ locks/, never state/ — so this one
+    # is not redundant and a tree without it silently records nothing.
+    mkdir -p "$d" 2>/dev/null || return 0
+    { echo "decision=${2:-none}"; echo "reason=${3:-}"; echo "sha=${4:-}"; echo "at=$(STAMP)"; } > "$vf" 2>/dev/null
+  else
+    log "$1: verdict row not written (decision=${2:-none}) — the coordination DB did not take it, and a reader does not act on an unreadable verdict"
+  fi
   # A freeze this tick did not judge is said in the log too (BH-6352).
   if [ "${2:-none}" = none ] && mr_flag_up "$(mr_flag_name "$1")"; then
     log "$1: decision=none reason=${3:-unknown} flag=$(mr_flag_name "$1") — the freeze stays up"
@@ -1402,7 +1442,7 @@ for SLUG in $REPOS; do
         continue
       fi
       mr_verdict "$SLUG" red operator-cleared "$CSHA"
-      rm -f "$FLAG" "$H/state/main-red/$CNAME.published"
+      rm -f "$FLAG"; mr_mark "$CNAME" off
       log "$SLUG: main still red on ${CSHA:0:8} but an operator cleared this sha — no freeze, no page"
       continue
     fi
@@ -1636,10 +1676,13 @@ for SLUG in $REPOS; do
       # happened; if the published marker is still there, the `off` PUT of that
       # clear died and the row is still ON for every box. Republish OFF until it
       # lands. No alert: the resolve already paged on the tick the file went.
-      if [ -f "$H/state/main-red/$(basename "$FLAG").published" ]; then
+      mr_marked "$(basename "$FLAG")"; MRC=$?
+      if [ "$MRC" = 0 ]; then
         if mr_publish "$(basename "$FLAG")" off "main is green"; then
           log "$SLUG: main green — the row was still published ON from a clear whose PUT died; published OFF now"
         fi
+      elif [ "$MRC" = 2 ] && [ "$EXPLAIN" != 1 ]; then
+        log "$SLUG: main green — the published marker row is unreadable, so no OFF republish this tick (the next tick reads it again)"
       fi
       # A HELD STREAK IS NOT A GREEN MAIN. Saying "main green" here would be a
       # false line in the one log an operator reads to find out why no freeze
