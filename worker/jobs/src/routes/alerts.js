@@ -317,6 +317,7 @@ export const routes = [
         const holes = ids.map((_, j) => `?${j + 1}`).join(",");
         // `resolved` counts the rows that MOVED — an unknown id and an already
         // resolved one both count zero, and neither is an error.
+        // sql-ident-ok: holes is a ?N placeholder list built from the ids index
         const r = await env.DB.prepare(
           `UPDATE alerts SET state='resolved' WHERE state<>'resolved' AND id IN (${holes})`
         ).bind(...ids).run();
@@ -367,6 +368,7 @@ export const routes = [
         for (const slice of slices) {
           if (candidates.length >= limit) break;
           const w = alertWhere({ state, unclaimed: true, min_age_s: minAge || 0, ids: slice }, t, knobs);
+          // sql-ident-ok: w.where comes from alertWhere(), every value a hole() bind; the LIMIT is a ?N index
           const rows = await env.DB.prepare(
             `SELECT * FROM alerts WHERE ${w.where} ORDER BY first_seen ASC LIMIT ?${w.binds.length + 1}`
           ).bind(...w.binds, limit - candidates.length).all();
@@ -394,6 +396,7 @@ export const routes = [
         // come from this route.
         const w = alertWhere(
           { state: "quarantined", unclaimed: true, older_than_s: knobs.flush_ttl_s }, t, knobs);
+        // sql-ident-ok: w.where comes from alertWhere(), every value a hole() bind; the LIMIT is a ?N index
         const rows = await env.DB.prepare(
           `SELECT * FROM alerts WHERE ${w.where} ORDER BY first_seen ASC LIMIT ?${w.binds.length + 1}`
         ).bind(...w.binds, ALERT_CLAIM_MAX).all();
@@ -432,6 +435,7 @@ export const routes = [
         }, t, knobs);
 
         if (families || q.get("group") === "family") {
+          // sql-ident-ok: w.where comes from alertWhere(), every value a hole() bind; ALERT_LIST_MAX is a module number const
           const rows = await env.DB.prepare(
             `SELECT family, MAX(claimed_at) AS last_claimed_at, COUNT(*) AS n FROM alerts
              WHERE ${w.where} GROUP BY family ORDER BY last_claimed_at DESC LIMIT ${ALERT_LIST_MAX}`
@@ -441,6 +445,7 @@ export const routes = [
         const asked = intOrNull(q.get("limit"));
         const limit = asked === null || asked < 1 ? 200 : Math.min(asked, ALERT_LIST_MAX);
         // limit+1 rows, so `truncated` is measured rather than guessed.
+        // sql-ident-ok: w.where comes from alertWhere(), every value a hole() bind; the LIMIT is a ?N index
         const rows = await env.DB.prepare(
           `SELECT * FROM alerts WHERE ${w.where} ORDER BY last_seen DESC, id ASC LIMIT ?${w.binds.length + 1}`
         ).bind(...w.binds, limit + 1).all();

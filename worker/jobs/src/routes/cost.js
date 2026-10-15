@@ -154,6 +154,7 @@ export const routes = [
     "GET", "/api/metrics/burn",
     async ({ env, url, t }) => {
       const days = Math.min(Math.max(Number(url.searchParams.get("days")) || 30, 1), 400);
+      // sql-ident-ok: days is a Number clamped to 1..400
       const rows = await env.DB.prepare(
         `SELECT * FROM burn_days ORDER BY day DESC LIMIT ${days}`
       ).all();
@@ -273,6 +274,7 @@ export const routes = [
     "GET", "/api/metrics/pr-costs",
     async ({ env, url, t }) => {
       const lim = Math.min(Math.max(Number(url.searchParams.get("limit")) || 200, 1), 1000);
+      // sql-ident-ok: lim is a Number clamped to 1..1000
       const rows = await env.DB.prepare(
         `SELECT * FROM pr_costs ORDER BY cost_usd DESC LIMIT ${lim}`
       ).all();
@@ -341,6 +343,7 @@ export const routes = [
              FROM extra_usage_snapshots WHERE ts>=?1 AND ts<?2
             ORDER BY ts ASC LIMIT 2000`
         ).bind(win.from, win.to).all(),
+        // sql-ident-ok: PR_COSTS_CAP is a local number const
         env.DB.prepare(
           `SELECT pr_url, cost_usd, stage_breakdown, build_dirs, auth_account, updated_at
              FROM pr_costs ORDER BY updated_at DESC LIMIT ${PR_COSTS_CAP}`
@@ -486,6 +489,7 @@ export const routes = [
       // exclusive bound would drop every row sharing that second.
       const until = str(url.searchParams.get("until"), 64);
       if (until) { binds.push(until); where.push(`ts<=?${binds.length}`); }
+      // sql-ident-ok: where uses column names from a literal list, values bound; lim is a clamped Number
       const rows = await env.DB.prepare(
         `SELECT * FROM cost_rows${where.length ? " WHERE " + where.join(" AND ") : ""}
          ORDER BY ts DESC LIMIT ${lim}`
@@ -536,6 +540,7 @@ export const routes = [
         const lProject = str(url.searchParams.get("project"), 128) || null;
         const lSince = str(url.searchParams.get("since"), 64) || (t.slice(0, 10) + "T00:00:00Z");
         const lUntil = str(url.searchParams.get("until"), 64) || null;
+        // sql-ident-ok: the lStage null check picks one of two literal strings
         const lr = await env.DB.prepare(
           "SELECT SUM(COALESCE(cost_usd,0)) AS usd, COUNT(*) AS calls," +
           " SUM(CASE WHEN row_source='refused' THEN 1 ELSE 0 END) AS refused," +
@@ -564,6 +569,7 @@ export const routes = [
       binds.push(since); where.push(`ts>=?${binds.length}`);
       const until = str(url.searchParams.get("until"), 64);
       if (until) { binds.push(until); where.push(`ts<=?${binds.length}`); }
+      // sql-ident-ok: where uses column names from a literal list, values bound
       const row = await env.DB.prepare(
         `SELECT SUM(COALESCE(cost_usd,0)) AS usd, COUNT(*) AS calls,
                 SUM(CASE WHEN row_source='refused' THEN 1 ELSE 0 END) AS refused,

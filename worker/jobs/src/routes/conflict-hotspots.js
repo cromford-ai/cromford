@@ -157,6 +157,7 @@ export const routes = [
       for (let i = 0; i < clean.length; i += ROWS_PER_INSERT) {
         const chunk = clean.slice(i, i + ROWS_PER_INSERT);
         const values = chunk.map((_, j) => `(${Array.from({ length: 10 }, (_, k) => `?${j * 10 + k + 1}`).join(", ")})`);
+        // sql-ident-ok: values is ?N placeholder tuples built from the chunk index
         stmts.push(env.DB.prepare(
           "INSERT INTO conflict_hotspots (project, file, conflicts, rebases, prs, window_days, since, until, ref_sha, run_at) "
           + `VALUES ${values.join(", ")}`

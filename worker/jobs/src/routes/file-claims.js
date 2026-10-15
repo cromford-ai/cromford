@@ -53,6 +53,7 @@ export const routes = [
         set.push(["overlap_not_before", isoPlusSeconds(t, nb)]);
       }
       const cols = set.map(([c]) => c);
+      // sql-ident-ok: cols holds column names pushed as literals by this handler, values bound
       await env.DB.prepare(
         `INSERT INTO job_claims (job_id, updated_at, ${cols.join(", ")}) `
         + `VALUES (?1, ?2, ${cols.map((_, i) => `?${i + 3}`).join(", ")}) `
@@ -85,6 +86,7 @@ export const routes = [
       // A live table has no claim columns until the first call widens it.
       await ensureColumns(env, "job_claims");
       // TEXT compare on expires: both sides are YYYY-MM-DDTHH:MM:SSZ.
+      // sql-ident-ok: FILE_CLAIM_LIST_MAX is a number const in lib, the rest is literal text
       const rows = (await env.DB.prepare(
         "SELECT j.id AS job_id, j.ticket_id, j.box, c.planned_files, c.files_claimed_at, c.files_expires_at "
         + "FROM jobs j JOIN job_claims c ON c.job_id=j.id "

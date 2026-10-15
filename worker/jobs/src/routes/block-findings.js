@@ -86,6 +86,7 @@ export const routes = [
     "GET", "/api/block-categories",
     async ({ env, url, t }) => d1Guarded("block_categories", async () => {
       const all = url.searchParams.get("all") === "1";
+      // sql-ident-ok: the boolean `all` picks one of two literal strings
       const { results } = await env.DB.prepare(
         `SELECT * FROM block_categories ${all ? "" : "WHERE status = 'active'"} ORDER BY id`
       ).all();
@@ -228,6 +229,7 @@ export const routes = [
       const weeks = qInt(url.searchParams, "weeks", 8, 1, 52);
       if (weeks === undefined) return bad("weeks");
       const from = mondayOf(Date.parse(t) - (weeks - 1) * 7 * 86400000);
+      // sql-ident-ok: WEEK_SQL is a module const date expression
       const { results } = await env.DB.prepare(
         `SELECT ${WEEK_SQL} AS week, f.category, c.name, count(*) AS findings,
                 count(DISTINCT f.verdict_id) AS verdicts, count(DISTINCT f.repo || '#' || f.pr) AS prs
@@ -270,6 +272,7 @@ export const routes = [
         binds.push(v); where.push(`f.verdict_id = ?${binds.length}`);
       }
       binds.push(limit);
+      // sql-ident-ok: where holds literal column = ?N clauses and the WEEK_SQL module const
       const { results } = await env.DB.prepare(
         `SELECT f.*, v.report_url FROM block_findings f LEFT JOIN verdicts v ON v.id = f.verdict_id
           ${where.length ? `WHERE ${where.join(" AND ")}` : ""}

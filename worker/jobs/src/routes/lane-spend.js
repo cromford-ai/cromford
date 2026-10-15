@@ -103,6 +103,7 @@ export const routes = [
         for (let i = 0; i < ids.length; i += CHUNK) {
           const part = ids.slice(i, i + CHUNK);
           const marks = part.map((_, j) => `?${j + 3}`).join(",");
+          // sql-ident-ok: marks is a ?N placeholder list built from the chunk index
           stmts.push(env.DB.prepare(
             "SELECT lane_id, SUM(COALESCE(cost_usd,0)) AS usd, COUNT(*) AS calls FROM cost_rows" +
             ` WHERE lane_id IN (${marks}) AND ts >= ?1 AND ts < ?2 GROUP BY lane_id`

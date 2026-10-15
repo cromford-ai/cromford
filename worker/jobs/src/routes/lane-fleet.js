@@ -219,6 +219,7 @@ export const routes = [
         return json(200, { written: 0, already: 0, costed_until: m.costed_until, incomplete: false, as_of: t });
       }
       const end = from + n * 60000;
+      // sql-ident-ok: RUNS_MAX is a module number const
       const runs = (await env.DB.prepare(
         `SELECT lane, project, status, claimed_at, finished_at, heartbeat_at FROM lane_runs
           WHERE claimed_by=?1 AND claimed_at < ?2 AND (finished_at IS NULL OR finished_at >= ?3)

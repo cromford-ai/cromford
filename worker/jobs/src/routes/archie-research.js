@@ -249,6 +249,7 @@ export const routes = [
       }
       binds.push(LIST_MAX + 1);
       return d1Guarded("archie_research", async () => {
+        // sql-ident-ok: LIST_COLS is a module const column list; where holds literal column = ?N clauses
         const rows = (await env.DB.prepare(
           `SELECT ${LIST_COLS} FROM archie_research WHERE ${where.join(" AND ")}
             ORDER BY day ASC, id ASC LIMIT ?${binds.length}`

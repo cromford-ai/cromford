@@ -56,6 +56,7 @@ export const routes = [
            parent_key=?3, base_sha=?4, pack_md=?5, bytes=?6, box=COALESCE(?7, box), updated_at=?8`
       ).bind(project, key, parent, baseSha, packMd, bytes, str(body.box, 64), t).run();
       // The row WITHOUT its pack: the publisher has the pack on disk already.
+      // sql-ident-ok: CONTEXT_PACK_INDEX_COLS is a const column list in lib/core.js
       const row = await env.DB.prepare(
         `SELECT ${CONTEXT_PACK_INDEX_COLS} FROM context_packs WHERE project=?1 AND ticket_key=?2`
       ).bind(project, key).first();
@@ -75,6 +76,7 @@ export const routes = [
       if (!key) return json(400, { error: `key is required and ${KEY_RULE}` });
       // The READ creates it too: an honest 404 on a fresh D1, never a 500.
       await ensureTable(env, "context_packs");
+      // sql-ident-ok: CONTEXT_PACK_COLS is a const column list in lib/core.js
       const row = await env.DB.prepare(
         `SELECT ${CONTEXT_PACK_COLS} FROM context_packs WHERE project=?1 AND ticket_key=?2`
       ).bind(project, key).first();

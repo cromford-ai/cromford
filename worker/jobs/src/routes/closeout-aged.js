@@ -53,6 +53,7 @@ export const routes = [
       // Math.max(1, …): SQLite reads LIMIT -1 as UNBOUNDED, so junk here would
       // return the whole table instead of nothing.
       const limit = Math.min(Math.max(1, Number(url.searchParams.get("limit")) || 200), 500);
+      // sql-ident-ok: where holds literal column=?N clauses; limit is a clamped Number
       const rows = await env.DB.prepare(
         "SELECT * FROM closeout_aged"
         + (where.length ? ` WHERE ${where.join(" AND ")}` : "")

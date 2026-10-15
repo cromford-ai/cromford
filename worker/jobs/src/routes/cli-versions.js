@@ -54,6 +54,7 @@ export const routes = [
         // the alert the check script already wrote.
         if (after && after !== "missing" && (cli === "claude" || cli === "codex")) {
           const col = cli === "claude" ? "cli_version" : "codex_version";
+          // sql-ident-ok: col is a ternary of two literal column names
           stmts.push(env.DB.prepare(
             `INSERT INTO box_status (box, host, ${col}, cli_checked_at, actor, updated_at)
              VALUES (?1,?2,?3,?4,?5,?6)
@@ -81,6 +82,7 @@ export const routes = [
         const v = str(url.searchParams.get(k), max);
         if (v) { binds.push(v); where.push(`${k}=?${binds.length}`); }
       }
+      // sql-ident-ok: where uses column names from a literal list, values bound; lim is a clamped Number
       const rows = await env.DB.prepare(
         `SELECT * FROM cli_versions${where.length ? " WHERE " + where.join(" AND ") : ""}
          ORDER BY at DESC LIMIT ${lim}`

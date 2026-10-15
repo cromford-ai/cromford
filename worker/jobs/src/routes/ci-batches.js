@@ -50,6 +50,7 @@ export const routes = [
       row.as_of = t;
       const binds = COLS.map((c) => row[c]);
       return d1Guarded("ci_batches", async () => {
+        // sql-ident-ok: COLS is a module const column list, mapped to ?N placeholders
         await env.DB.prepare(
           `INSERT INTO ci_batches (${COLS.join(", ")}) VALUES (${COLS.map((_, i) => `?${i + 1}`).join(", ")}) ` +
           `ON CONFLICT(run_id) DO UPDATE SET ${COLS.slice(1).map((c) => `${c}=excluded.${c}`).join(", ")}`
@@ -80,6 +81,7 @@ export const routes = [
       // One past the limit, so `truncated` says the list really was cut.
       binds.push(limit + 1);
       return d1Guarded("ci_batches", async () => {
+        // sql-ident-ok: COLS is a module const column list; where holds literal column=?N clauses
         const res = await env.DB.prepare(
           `SELECT ${COLS.join(", ")} FROM ci_batches${where.length ? ` WHERE ${where.join(" AND ")}` : ""} ` +
           `ORDER BY completed_at DESC, run_id DESC LIMIT ?${binds.length}`

@@ -196,11 +196,13 @@ export const routes = [
       // live (queued or claimed) whenever it was enqueued.
       const IN_WINDOW = "(enqueued_at >= ?1 OR status IN ('queued','claimed'))";
       const [laneRows, machineRows, sample] = await Promise.all([
+        // sql-ident-ok: IN_WINDOW is a local literal clause with ?N binds
         env.DB.prepare(
           `SELECT lane, SUM(status='queued') AS queued, SUM(status='claimed') AS claimed,
                   SUM(status='done') AS done, SUM(status='died') AS died
              FROM lane_runs WHERE ${IN_WINDOW} GROUP BY lane ORDER BY lane LIMIT ?2`
         ).bind(since, GROUP_MAX + 1).all(),
+        // sql-ident-ok: IN_WINDOW is a local literal clause with ?N binds
         env.DB.prepare(
           `SELECT claimed_by AS machine, SUM(status='claimed') AS claimed, SUM(status='done') AS done,
                   SUM(status='died') AS died, MAX(claimed_at) AS last_claimed_at

@@ -258,12 +258,14 @@ export const routes = [
       }
 
       return d1Guarded("archie_actions", async () => {
+        // sql-ident-ok: where holds literal column = ?N clauses, every value a bind
         const groups = (await env.DB.prepare(
           `SELECT playbook, mode, action, outcome, COUNT(*) AS n FROM archie_actions
             WHERE ${where.join(" AND ")} GROUP BY playbook, mode, action, outcome`
         ).bind(...binds).all()).results || [];
 
         if (summary) {
+          // sql-ident-ok: where holds literal column = ?N clauses, every value a bind
           const nls = await env.DB.prepare(
             `SELECT COUNT(*) AS n FROM archie_actions WHERE ${where.join(" AND ")}
                AND mode = 'on' AND action = 'restack' AND outcome = 'done'
@@ -306,6 +308,7 @@ export const routes = [
           const k = byAction ? g.action : g.outcome;
           by[k] = (by[k] || 0) + Number(g.n);
         }
+        // sql-ident-ok: where holds literal column = ?N clauses, every value a bind; the LIMIT is a ?N index
         const rows = (await env.DB.prepare(
           `SELECT * FROM archie_actions WHERE ${where.join(" AND ")}
             ORDER BY created_at DESC, id DESC LIMIT ?${binds.length + 1}`

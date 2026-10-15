@@ -99,11 +99,13 @@ export const routes = [
           const mine = `EXISTS (SELECT 1 FROM archie_decisions d WHERE d.escalation_key = ?2 AND d.mode = 'auto' AND d.created_at = ?3)`;
           await env.DB.batch([
             insert,
+            // sql-ident-ok: mine is a local literal EXISTS clause with ?N binds
             env.DB.prepare(
               `INSERT INTO initiative_events (initiative_id, dedupe_key, kind, status, note, attempts, actor, created_at, updated_at)
                SELECT ?1, ?4, 'reply', 'approve', NULL, 0, 'archie', ?3, ?3 WHERE ${mine}
                ON CONFLICT(dedupe_key) DO NOTHING`
             ).bind(b.initiative_id, key, t, replyKey),
+            // sql-ident-ok: mine is a local literal EXISTS clause with ?N binds
             env.DB.prepare(
               `UPDATE initiatives SET last_decision = 'approve', last_decision_note = NULL, updated_at = ?3
                 WHERE id = ?1 AND ${mine}`
@@ -153,10 +155,12 @@ export const routes = [
         const counts = b.choice === "approve" && row.sensitive === 0 && !isProtected(before);
         const won = `EXISTS (SELECT 1 FROM archie_decisions d WHERE d.id = ?2 AND d.choice_key = ?3 AND d.chosen_at = ?4)`;
         const classUpdate = b.choice === "approve"
+          // sql-ident-ok: won is a local literal EXISTS clause with ?N binds
           ? env.DB.prepare(
             `UPDATE archie_classes SET streak = streak + 1, updated_at = ?4
               WHERE class = ?1 AND ?5 = 1 AND ${won}`
           ).bind(row.class, row.id, b.choice_key, t, counts ? 1 : 0)
+          // sql-ident-ok: won is a local literal EXISTS clause with ?N binds
           : env.DB.prepare(
             `UPDATE archie_classes SET streak = 0, state = 'ask_first', updated_at = ?4,
                     reverted_at = CASE WHEN state = 'delegated' THEN ?4 ELSE reverted_at END

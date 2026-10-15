@@ -113,6 +113,7 @@ async function settleMedians(db, suites, window, t) {
   const bySuite = new Map();
   for (const part of chunk(suites, IN_LIST_MAX)) {
     const marks = part.map((_, i) => `?${i + 1}`).join(",");
+    // sql-ident-ok: marks is a ?N placeholder list built from the chunk index
     const { results } = await db.prepare(
       `SELECT suite, run_id, seconds FROM ci_suite_duration_samples WHERE suite IN (${marks}) ORDER BY suite, run_id DESC`,
     ).bind(...part).all();
@@ -123,6 +124,7 @@ async function settleMedians(db, suites, window, t) {
     }
   }
   const rows = [...bySuite].map(([suite, samples]) => ({ suite, ...medianOf(samples), samples: samples.length }));
+  // sql-ident-ok: each row adds the literal (?,?,?,?,?) placeholder tuple
   const stmts = chunk(rows, MEDIAN_ROWS_PER_STMT).map((part) => db.prepare(
     "INSERT INTO ci_suite_durations (suite, seconds, source_run, samples, updated_at) VALUES "
     + part.map(() => "(?,?,?,?,?)").join(",")
@@ -170,12 +172,14 @@ export const routes = [
         const stmts = [
           db.prepare("INSERT INTO ci_duration_runs (run_id, digest, suites, source, posted_at) VALUES (?1, ?2, ?3, ?4, ?5)")
             .bind(v.runId, digest, v.rows.length, v.source, t),
+          // sql-ident-ok: each row adds the literal (?,?,?) placeholder tuple
           ...chunk(v.rows, SAMPLE_ROWS_PER_STMT).map((part) => db.prepare(
             "INSERT INTO ci_suite_duration_samples (suite, run_id, seconds) VALUES "
             + part.map(() => "(?,?,?)").join(","),
           ).bind(...part.flatMap((r) => [r.suite, v.runId, r.seconds]))),
           ...chunk(suites, IN_LIST_MAX).map((part) => {
             const marks = part.map((_, i) => `?${i + 1}`).join(",");
+            // sql-ident-ok: marks is a ?N placeholder list built from the chunk index
             return db.prepare(
               "DELETE FROM ci_suite_duration_samples WHERE (suite, run_id) IN ("
               + "SELECT suite, run_id FROM (SELECT suite, run_id, ROW_NUMBER() OVER "

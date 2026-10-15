@@ -72,6 +72,7 @@ export const routes = [
       // Which rows exist already tells an insert from an update; the batch's
       // own change counts tell a write from a refused one.
       const marks = rows.map((_, i) => `?${i + 2}`).join(",");
+      // sql-ident-ok: marks is a ?N placeholder list built from the rows index
       const have = await env.DB.prepare(
         `SELECT row_hash FROM cost_rows_live WHERE box=?1 AND row_hash IN (${marks})`
       ).bind(box, ...rows.map((r) => r.row_hash)).all();
@@ -115,6 +116,7 @@ export const routes = [
       // bound rides in a rowid subquery. The ingest already succeeded, so a
       // failed prune is left for the next POST.
       try {
+        // sql-ident-ok: PRUNE_BATCH is a module number const
         await env.DB.prepare(
           `DELETE FROM cost_rows_live WHERE rowid IN
              (SELECT rowid FROM cost_rows_live WHERE updated_at < ?1 LIMIT ${PRUNE_BATCH})`
@@ -141,6 +143,7 @@ export const routes = [
 
       // The sums come from every matching row, never from the capped page
       // below: a sum over a truncated page is silently short.
+      // sql-ident-ok: W uses column names from a literal list, values bound; SETTLED is a module const clause
       const agg = await env.DB.prepare(
         `SELECT
            SUM(CASE WHEN s=0 AND fresh=1 AND cost_usd IS NOT NULL THEN cost_usd END) AS in_flight_sum,
@@ -159,6 +162,7 @@ export const routes = [
         : Number(agg.in_flight_priced || 0) === 0 ? null
         : round4(Number(agg.in_flight_sum));
 
+      // sql-ident-ok: SETTLED is a module const clause; W uses literal column names; GET_LIMIT is a module number const
       const page = await env.DB.prepare(
         `SELECT l.*, ${SETTLED} AS settled_, (l.updated_at >= ?) AS fresh_
          FROM cost_rows_live l WHERE ${W} ORDER BY l.updated_at DESC LIMIT ${GET_LIMIT + 1}`

@@ -16,6 +16,7 @@
 
 import { json } from "../lib/http.js";
 import { laneName, str } from "../lib/core.js";
+import { sqlIdent } from "../lib/sql-ident.js";
 
 // Copied verbatim from routes/queue.js:22, not exported from there: the sha is
 // normalised ONCE and IDENTICALLY at every door to deploy_queue (D17), or a
@@ -46,11 +47,16 @@ async function transition({ env, t, project, sha, reason, actor }, { name, from,
   // also match a same-second write that won the race.
   const jobId = `deploy-queue:${project}/${sha}`;
   const detail = JSON.stringify({ reason, from, to });
+  // The three status words go into the SQL text below: one that is not a plain
+  // word throws here, before any write.
+  for (const w of [from, to, verdict]) sqlIdent(w);
   const res = await env.DB.batch([
+    // sql-ident-ok: from/to come from the ACTIONS literals, checked by sqlIdent above
     env.DB.prepare(
       `UPDATE deploy_queue SET status='${to}', claimed_by=NULL, reason=?3, updated_at=?4
        WHERE project=?1 AND sha=?2 AND status='${from}' AND departed_at IS NULL AND updated_at=?5`
     ).bind(project, sha, reason, t, row.updated_at),
+    // sql-ident-ok: verdict/to come from the ACTIONS literals, checked by sqlIdent above
     env.DB.prepare(
       `INSERT INTO stage_events (job_id, stage, verdict, actor, detail, created_at)
        SELECT ?1, 'deploy-queue', '${verdict}', ?2, ?3, ?4

@@ -63,6 +63,7 @@ export const routes = [
       // newer one of those must not keep the queue row alive.
       if (job.ticket_id) {
         const qreason = `ABANDONED by ${actor} from job ${id}: ${reason}`.slice(0, 512);
+        // sql-ident-ok: landed is a local literal EXISTS clause with ?N binds
         stmts.push(env.DB.prepare(
           `UPDATE build_queue SET status='failed', reason=?1, finished_at=?2, updated_at=?2
            WHERE project=?3 AND ticket_key=?4 AND status IN ('ready','queued')

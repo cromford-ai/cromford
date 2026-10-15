@@ -200,12 +200,14 @@ export const routes = [
               attempts = COALESCE(?6, initiative_events.attempts),
               actor = excluded.actor, updated_at = excluded.updated_at`;
         const event = advance
+          // sql-ident-ok: upsertTail is a local literal ON CONFLICT clause
           ? env.DB.prepare(
             `INSERT INTO initiative_events (initiative_id, dedupe_key, kind, status, value, body, attempts, actor, created_at, updated_at)
              SELECT ?1, ?2, 'check', ?3, ?4, ?5, COALESCE(?6, 0), ?7, ?8, ?8
               WHERE EXISTS (SELECT 1 FROM initiatives WHERE id = ?1 AND next_check_at = ?9 AND status = 'active')
              ${upsertTail}`
           ).bind(b.id, key, b.status, value, text, attempts, actor, t, b.due_at)
+          // sql-ident-ok: upsertTail is a local literal ON CONFLICT clause
           : env.DB.prepare(
             `INSERT INTO initiative_events (initiative_id, dedupe_key, kind, status, value, body, attempts, actor, created_at, updated_at)
              VALUES (?1, ?2, 'check', ?3, ?4, ?5, COALESCE(?6, 0), ?7, ?8, ?8)

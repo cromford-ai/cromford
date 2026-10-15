@@ -147,6 +147,7 @@ export const routes = [
       const box = str(url.searchParams.get("box"), 128);
       if (box) { binds.push(box); where.push(`box = ?${binds.length}`); }
       binds.push(GH_LEDGER_READ_LIMIT + 1);
+      // sql-ident-ok: where holds literal column = ?N clauses, every value a bind
       const res = await env.DB.prepare(
         `SELECT box, lane, meter, resource, path_class,
                 SUM(calls) AS calls, SUM(counted) AS counted,

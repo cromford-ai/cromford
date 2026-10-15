@@ -50,6 +50,7 @@ export const routes = [
       await ensureTable(env, "fleet_cooldowns");
       // Bounded sweep of rows expired more than a day ago, so the table cannot
       // grow without a reader.
+      // sql-ident-ok: LIST_CAP is a module number const
       await env.DB.prepare(
         "DELETE FROM fleet_cooldowns WHERE rowid IN (SELECT rowid FROM fleet_cooldowns "
         + `WHERE CAST(until_at AS INTEGER) <= ?1 LIMIT ${LIST_CAP})`
@@ -91,10 +92,12 @@ export const routes = [
       await ensureTable(env, "fleet_cooldowns");
       const now = epoch(t);
       const rows = kind === null
+        // sql-ident-ok: LIST_CAP is a module number const
         ? await env.DB.prepare(
           "SELECT * FROM fleet_cooldowns WHERE CAST(until_at AS INTEGER) > ?1 "
           + `ORDER BY kind, vendor, subject LIMIT ${LIST_CAP}`
         ).bind(now).all()
+        // sql-ident-ok: LIST_CAP is a module number const
         : await env.DB.prepare(
           "SELECT * FROM fleet_cooldowns WHERE kind=?1 AND CAST(until_at AS INTEGER) > ?2 "
           + `ORDER BY kind, vendor, subject LIMIT ${LIST_CAP}`

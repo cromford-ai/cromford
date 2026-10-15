@@ -55,6 +55,7 @@ function clampInt(v, dflt, lo, hi) {
 }
 
 async function paidCount(env, project, stage, fp, since) {
+  // sql-ident-ok: PAID is a module const status tuple
   const row = await env.DB.prepare(
     `SELECT COUNT(*) AS n FROM call_guard
       WHERE project=?1 AND stage=?2 AND fp=?3 AND at>=?4 AND status IN ${PAID}`
@@ -63,6 +64,7 @@ async function paidCount(env, project, stage, fp, since) {
 }
 
 async function topFingerprints(env, project, stage, since) {
+  // sql-ident-ok: PAID is a module const status tuple
   const rows = await env.DB.prepare(
     `SELECT fp,
             SUM(CASE WHEN status='refused' THEN 1 ELSE 0 END) AS refused,
@@ -130,6 +132,7 @@ export const routes = [
       // THE COUNT AND THE INSERT ARE ONE STATEMENT. SQLite (and D1) serialise
       // writes, so the sub-select sees every claim committed before this one:
       // two boxes asking at the same instant cannot both slip under `max`.
+      // sql-ident-ok: PAID is a module const status tuple
       const ins = await env.DB.prepare(
         `INSERT INTO call_guard (call_id, project, stage, fp, status, box, runner, at)
          SELECT ?1, ?2, ?3, ?4, 'claimed', ?5, ?6, ?7
@@ -193,6 +196,7 @@ export const routes = [
       if (!project || !stage || !fp) return json(400, { error: "project, stage and fp are required" });
       const actor = str(url.searchParams.get("actor"), 64) || null;
       const reason = str(url.searchParams.get("reason"), 500) || "manual reset";
+      // sql-ident-ok: PAID is a module const status tuple
       const res = await env.DB.prepare(
         `UPDATE call_guard SET status='reset:'||status, settled_at=?4
           WHERE project=?1 AND stage=?2 AND fp=?3 AND status IN ${PAID}`
@@ -219,6 +223,7 @@ export const routes = [
       if (project) { binds.push(project); where.push(`project=?${binds.length}`); }
       if (stage) { binds.push(stage); where.push(`stage=?${binds.length}`); }
       // `w` is the window; `r` is each key's newest reset in it, by rowid.
+      // sql-ident-ok: where holds literal column=?N clauses, every value a bind
       const rows = await env.DB.prepare(
         `WITH w AS (SELECT rowid AS rid, * FROM call_guard WHERE ${where.join(" AND ")}),
               r AS (SELECT project, stage, fp,

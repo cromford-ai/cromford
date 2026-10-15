@@ -564,6 +564,7 @@ export const routes = [
       // retirement does restart it, because that expectation is genuinely new.
       await env.DB.batch(stmts);
       const holes = keys.map((_, i) => `?${i + 2}`).join(",");
+      // sql-ident-ok: holes is a ?N placeholder list built from the keys index
       const retired = await env.DB.prepare(
         `UPDATE lanes SET retired_at=?1, updated_at=?1
           WHERE retired_at IS NULL AND expected_since IS NOT NULL

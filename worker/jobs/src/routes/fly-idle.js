@@ -48,6 +48,7 @@ function chunked(env, sql, cols, rows) {
   for (let i = 0; i < rows.length; i += per) {
     const chunk = rows.slice(i, i + per);
     const values = chunk.map((_, j) => `(${Array.from({ length: cols }, (_, k) => `?${j * cols + k + 1}`).join(", ")})`);
+    // sql-ident-ok: sql is a literal INSERT prefix from the two callers in this file; values is ?N tuples
     out.push(env.DB.prepare(sql + values.join(", ")).bind(...chunk.flat()));
   }
   return out;

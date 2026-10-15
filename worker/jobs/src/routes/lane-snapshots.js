@@ -160,8 +160,10 @@ export const routes = [
       if (!row) return json(404, { error: "no_snapshot" });
       const through = Number(row.applied_through);
       const cap = await maxPending(env);
+      // sql-ident-ok: WB_PENDING is a module const clause with ?N binds
       const wb = (await env.DB.prepare(`SELECT id, sha FROM lane_snapshot_writebacks WHERE ${WB_PENDING} ORDER BY id LIMIT ?4`)
         .bind(g.lane, g.project, through, cap + 1).all()).results || [];
+      // sql-ident-ok: WB_PENDING is a module const clause with ?N binds
       const cnt = await env.DB.prepare(`SELECT COUNT(*) AS n FROM lane_snapshot_writebacks WHERE ${WB_PENDING}`)
         .bind(g.lane, g.project, through).first();
       return json(200, {
@@ -260,12 +262,14 @@ export const routes = [
       }
       let rejected = 0;
       if (rej.length) {
+        // sql-ident-ok: WB_OPEN is a module const clause with ?N binds
         const r = await env.DB.prepare(
           `UPDATE lane_snapshot_writebacks SET rejected_at=?4
            WHERE ${WB_OPEN} AND id IN (SELECT value FROM json_each(?5))`
         ).bind(g.lane, g.project, through, t, JSON.stringify(rej)).run();
         rejected = Number(r.meta.changes) || 0;
       }
+      // sql-ident-ok: WB_OPEN is a module const clause with ?N binds
       const a = await env.DB.prepare(`UPDATE lane_snapshot_writebacks SET applied_at=?4 WHERE ${WB_OPEN}`)
         .bind(g.lane, g.project, through, t).run();
       const cut = isoPlusSeconds(t, -PRUNE_AFTER_S);
