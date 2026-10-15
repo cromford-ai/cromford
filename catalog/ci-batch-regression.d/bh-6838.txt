@@ -1,0 +1,8 @@
+# catalog/ci-batch-regression.d/bh-6838.txt — the seed of the batch-fail
+# regression list (BH-6838). Format: catalog/ci-batch-regression.d/README.md.
+#
+# #6830 (draft for #6784, BH-4156): #6784 added worker/jobs/test/route-table.d/
+# fragments; tests/route-keyed-merge.bh-5788-test.sh failed in the batch. The
+# builder gate had selected it as `source` and left it to CI by the cap
+# (comment 6185155501).
+tests/route-keyed-merge.bh-5788-test.sh	worker/jobs/test/route-table.d/,worker/jobs/scripts/routes-build.mjs

@@ -119,3 +119,4 @@ catalog/model-prices.json	worker	worker/jobs/test/route-rules.p4.test.js reads i
 catalog/readiness-levels.json	worker	worker/jobs/test/settings-conf-value.bh-2411.test.js reads it
 worker/jobs/src/lib/box-command-args.js	spa	console-ui/tests/machines-orgo-actions.bh-5750.test.js imports it (BH-5750)
 console-ui/src/lib/box-commands.js	worker	worker/jobs/test/box-command-types-drift.bh-5750.test.js imports it (BH-5750)
+catalog/ci-batch-regression.d/	escalate	the regression list bin/ci-plan.sh and bin/test-impact.sh read (BH-6838)

@@ -1,0 +1,31 @@
+{
+  "id": "ci-plan-settings",
+  "name": "CI full-trigger settings projection",
+  "scope": "hub",
+  "script": "bin/ci-plan-settings.sh",
+  "cadence": "23 * * * *",
+  "boxes": [
+    "hub"
+  ],
+  "switch": {
+    "kind": "flag",
+    "name": "lane-off-ci-plan-settings",
+    "aliases": []
+  },
+  "wired": true,
+  "knobs": [
+    {
+      "env": "CI_FULL_TRIGGERS",
+      "type": "string",
+      "default": "",
+      "zero_means": null,
+      "note": "BH-6838: the full-trigger delta over catalog/ci-batch-escalate.tsv, projected by bin/ci-plan-settings.sh into the repo variable CI_FULL_TRIGGERS that bin/ci-plan.sh reads. Space-separated tokens: +<pattern> adds an escalate row, -<pattern> removes the escalate row with that exact pattern. A self row (the files that decide what a batch runs) cannot be removed, and a token with `..` or no sign is dropped. Empty = the committed rules. A value over 256 chars is refused (warn alert ci-plan-settings-projection:<slug>, the old variable stays)."
+    }
+  ],
+  "stats": {
+    "cost_stage": null,
+    "cost_project_filter": null,
+    "lanes_row": false,
+    "log": "logs/ci-plan-settings.log"
+  }
+}

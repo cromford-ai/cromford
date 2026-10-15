@@ -22,13 +22,16 @@ The symptom was a repo-level red that only ever spoke in PR-level alerts:
 Scans every test file (`tests/*.sh`, `**/test/*.js`, `*.test.*`, `*-test.sh`)
 for clock reads, randomness and sleep-based races — plus whatever a `scope` line
 hands to ONE rule (see **Per-rule scope** below; today that is `race-sigpipe`
-over `bin/**.sh`). Runs in CI as its own job (**Test determinism lint**), so a
-PR that adds one fails there and nowhere else.
+over `bin/**.sh`). Runs strict once a night on main, in the `lints` job of
+`.github/workflows/harness-nightly.yml`: a red lint makes the night red and
+files a ticket. In Harness CI its own job (**Test determinism lint**) runs it
+`--warn-only` since BH-6838: a finding is a `::warning::` on the PR and never
+blocks a merge.
 
 ```bash
-bin/test-determinism-lint.sh                 # the whole tree (what CI runs)
+bin/test-determinism-lint.sh                 # the whole tree (the nightly lints job)
 bin/test-determinism-lint.sh tests/foo-test.sh
-bin/test-determinism-lint.sh --warn-only     # report, never fail (local look)
+bin/test-determinism-lint.sh --warn-only     # report, never fail (the CI job)
 bin/test-determinism-lint.sh --list          # which files would be scanned
                                              # (test files AND scoped paths)
 bin/test-determinism-lint.sh --rules         # the resolved conf and rule table

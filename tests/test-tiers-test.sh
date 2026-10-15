@@ -150,8 +150,15 @@ NN=$(awk -F'\t' '$2 == "nightly"' "$SHIPPED" | grep -c .)
 # tiered nightly, it would reach main untested every time.
 ALWAYS=$(bash "$DIR/bin/test-impact.sh" always 2>/dev/null)
 [ -n "$ALWAYS" ] && ok || bad "T8: bin/test-impact.sh always printed nothing — the guardrail below would check nothing"
-BOTH=$(awk -F'\t' '$2 == "nightly" { print $1 }' "$SHIPPED" | grep -xF -f <(printf '%s\n' "$ALWAYS") || true)
+# BH-6838 (the operator, 2026-10-15): the test-hygiene suites move to the nightly run
+# on purpose. A row whose reason starts `BH-6838: test hygiene` is the one
+# exception, and the exception set is pinned to exactly the day-boundary guard
+# (the fixture-hygiene suite stays in the batch: its rules are leak checks).
+BOTH=$(awk -F'\t' '$2 == "nightly" && $5 !~ /^BH-6838: test hygiene/ { print $1 }' "$SHIPPED" | grep -xF -f <(printf '%s\n' "$ALWAYS") || true)
 [ -z "$BOTH" ] && ok || bad "T8: always-selected suites must stay in the batch, not nightly: $(tr '\n' ' ' <<<"$BOTH")"
+HYG=$(awk -F'\t' '$2 == "nightly" && $5 ~ /^BH-6838: test hygiene/ { print $1 }' "$SHIPPED" | LC_ALL=C sort | paste -sd' ' -)
+[ "$HYG" = "tests/day-boundary-guard.bh-6052-test.sh" ] && ok \
+  || bad "T8: the BH-6838 hygiene exception must name exactly the day-boundary guard: '$HYG'"
 
 # ── T9. a broken join or write never shrinks the batch: the output must be the
 # input minus the nightly rows it dropped, or the WHOLE list comes back.

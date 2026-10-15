@@ -134,6 +134,10 @@ drive() { # drive <subcommand> [VAR=VAL ...]
   ( export HARNESS="$HH" NOW REPOS_ROOT="$T/repos" GH_TOKEN=test-token-cnf GH_BUDGET_TTL_S=3600 GH_BUDGET_DB=0 \
            CNF_FX="$FX" CNF_POLL_SLEEP=0 HARNESS_TEST_SANDBOX=1 JOBS_URL= PATH="$STUB:$PATH"
     unset CI_NIGHTLY_FULL_HOUR CI_NIGHTLY_FULL_LOOKBACK_DAYS CI_NIGHTLY_FULL_MAX_LOGS
+    # BH-6838: dispatch is off unless the knob is 1; these cases pin the
+    # dispatch path itself, so it is on (the off case is in
+    # tests/nightly-ticket-split.bh-6838-test.sh, N6).
+    export CI_NIGHTLY_FULL_DISPATCH=1
     while [ $# -gt 0 ]; do export "${1?}"; shift; done
     timeout 120 bash "$HH/bin/ci-nightly-full.sh" "$sub" ) >"$T/out.txt" 2>&1
   echo $? > "$T/rc.txt"

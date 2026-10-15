@@ -32,7 +32,7 @@
 # to ~500 suites, and 80 of them took 820 s serially on an idle test host (the
 # #1541 review). So the gate is bounded twice, strongest reason first:
 #
-#   self > reads > always > named > source > learned > closure
+#   self > reads = regression > always > named > source > learned > closure
 #
 # self is the diff's own suites; reads is a suite that greps, diffs or counts
 # over the changed file; always is the whole-tree ratchets (the gh-rest line
@@ -41,7 +41,9 @@
 # a changed file defines counts, not only the changed ones. learned is a path
 # edge a failed merge-queue batch taught the map (catalog/test-impact-learned.d/,
 # BH-6459): one batch's evidence, so it ranks above closure and below a suite
-# that names the file.
+# that names the file. regression is a row of the committed batch-fail list
+# (catalog/ci-batch-regression.d/, BH-6838): a suite that already failed a
+# batch for this path, so it ranks with reads and the cap never leaves it to CI.
 #
 #   --cap     at most this many suites          (TEST_IMPACT_GATE_CAP, 80)
 #   --budget  stop STARTING suites after this   (TEST_IMPACT_GATE_BUDGET_S, 450)
@@ -353,7 +355,7 @@ fi
 # One row per suite: its strongest reason's rank, then every reason it has,
 # strongest first — the table a reviewer reads leads with the pin.
 awk -F'\t' '
-  BEGIN { r["self"] = 0; r["reads"] = 1; r["always"] = 2; r["named"] = 3
+  BEGIN { r["self"] = 0; r["reads"] = 1; r["regression"] = 1; r["always"] = 2; r["named"] = 3
           r["source"] = 4; r["learned"] = 5; r["closure"] = 6; r["full"] = 7 }
   { k = ($2 in r) ? r[$2] : 7
     if (!($1 in best) || k < best[$1]) best[$1] = k

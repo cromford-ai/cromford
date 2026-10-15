@@ -1,5 +1,5 @@
 #!/bin/bash
-# bin/ci-plan.sh [--out <list>] [--expect-n <n>] [--tier nightly] — WHAT one Harness CI run
+# bin/ci-plan.sh [--out <list>] [--expect-n <n>] [--tier nightly|nightly-full] — WHAT one Harness CI run
 # tests, and HOW MANY shard jobs it takes (CI cost cut, 2026-09-24).
 #
 # WHY IT EXISTS. MonkCI bills every job, and rounds each one up to the minute.
@@ -103,10 +103,28 @@
 # catalog/test-tiers.tsv puts in the NIGHTLY tier, and runs a GUARD only when
 # the batch's diff (TI_BASE..HEAD) touches a path it guards — bin/test-tiers.sh
 # owns that decision and says it on stderr. `--tier nightly` plans the other
-# half: the nightly and guard tiers only, for .github/workflows/harness-nightly.yml.
+# half: the nightly and guard tiers only. `--tier nightly-full` (BH-6838) plans
+# the WHOLE corpus, mode=nightly-full, for .github/workflows/harness-nightly.yml:
+# no tier step, no suite reuse (`reuse: off: nightly never reuses`), rc 2 on an
+# empty list.
 # Only the batch is tiered: a push that bypassed the queue, the `full` label and
 # a dispatch still run everything. A tier step that FAILS leaves the batch list
 # whole (a warning, never a smaller run); a nightly plan that fails is rc 2.
+#
+# THE REGRESSION LIST (BH-6838). After the tier step, a batch adds every suite
+# of catalog/ci-batch-regression.d/ whose paths its diff touches (and every `*`
+# row), read through `bin/test-impact.sh regression --changed` (the one next to
+# this script, never the CI_PLAN_IMPACT seam). A quarantined
+# suite is not added. One `ci-plan: regression <suite> (<file>)` stderr line per
+# add, and the reason says `+<k> regression`. A read that fails is one
+# `ci-plan: regression: off (<why>)` stderr line and the list stays as it is.
+#
+# THE FULL-TRIGGER DELTA (BH-6838). CI_FULL_TRIGGERS (the repo variable,
+# projected from the ci-plan-settings row by bin/ci-plan-settings.sh) adds
+# (`+<pattern>`) or removes (`-<pattern>`) escalate rows of
+# catalog/ci-batch-escalate.tsv; bin/lib/ci-batch-escalate.sh owns the grammar.
+# A batch publishes the normalised value as `full_triggers` (`-` for none) and
+# every shard re-plans with THAT, so the two agree on --expect-n.
 #
 # QUARANTINE (BH-3686). CI_QUARANTINE (the repo variable, written from the
 # flaky_quarantine rows) names flaky suites, whitespace separated. It is
@@ -161,7 +179,8 @@
 # written on every path, corpus=0 included) and escalation (why a batch runs
 # the corpus, `-` when it does not and on every non-batch path), own_base (the
 # stacked batch's own-diff base, BH-6490; `-` for none and on every non-batch
-# path), spa and
+# path), full_triggers (a batch only: the normalised CI_FULL_TRIGGERS, `-` for
+# none, BH-6838), spa and
 # worker (BH-4969: 0 only on a batch-selected batch none of whose paths
 # cbe_affects that job, so the console-ui / worker-jobs job runs just its
 # "not affected by this batch" step; 1 on every other path), reused (suites
@@ -207,8 +226,9 @@ while [ $# -gt 0 ]; do
   case "$1" in
     --out)      [ $# -ge 2 ] || { echo "ci-plan: --out needs a path" >&2; exit 2; }; OUT="$2"; shift ;;
     --expect-n) [ $# -ge 2 ] || { echo "ci-plan: --expect-n needs a number" >&2; exit 2; }; EXPECT="$2"; shift ;;
-    --tier)     [ "${2:-}" = nightly ] || { echo "ci-plan: --tier takes 'nightly'" >&2; exit 2; }; TIER=nightly; shift ;;
-    -h|--help)  sed -n '2,188p' "$0"; exit 0 ;;
+    --tier)     case "${2:-}" in nightly|nightly-full) TIER="$2" ;;
+                  *) echo "ci-plan: --tier takes 'nightly' or 'nightly-full'" >&2; exit 2 ;; esac; shift ;;
+    -h|--help)  sed -n '2,206p' "$0"; exit 0 ;;
     *) echo "ci-plan: unknown argument $1" >&2; exit 2 ;;
   esac
   shift
@@ -238,6 +258,13 @@ for tok in ${QTOK[@]+"${QTOK[@]}"}; do
   [ -f "$ROOT/$tok" ] && printf '%s\n' "$tok"
 done | LC_ALL=C sort -u > "$QUAR"
 QLIST=$(paste -sd' ' "$QUAR"); QLIST="${QLIST:--}"
+
+# The full-trigger delta, normalised once (see the header). A lib that cannot
+# be read is `-` here; the batch escalation then fails closed on its own.
+FTRIG=-
+if . "$SELF_DIR/lib/ci-batch-escalate.sh" 2>/dev/null && command -v cbe_delta_norm >/dev/null 2>&1; then
+  FTRIG=$(cbe_delta_norm "${CI_FULL_TRIGGERS:-}")
+fi
 
 # queue_tested — rc 0 when this push's tree needs no corpus (see the header).
 # Reads GitHub through $CI_PLAN_GH (default gh, authenticated with the job's
@@ -578,6 +605,7 @@ OWN_BASE=-; OWN_NOTE=""; INHERITED=""; WFNOTE=""; RLINE_REACH=""; MB=""; PINNED=
 REUSE_KEYS=0
 [ "${CI_PLAN_REUSE:-}" != 1 ] && [ -z "${CI_PLAN_REUSED_FILE:-}" ] || REUSE_KEYS=1
 if [ "$TIER" = nightly ]; then EV=nightly; fi
+if [ "$TIER" = nightly-full ]; then EV=nightly-full; fi
 if [ "$EV" = workflow_dispatch ] && [ "${CI_DISPATCH_SCOPE:-}" = impact ]; then EV=dispatch-impact; fi
 case "$EV" in
   push)
@@ -621,6 +649,12 @@ case "$EV" in
     TI_EVENT=nightly "$IMPACT" ci-select --out "$LIST" 2>"$WHY" \
       || { echo "ci-plan: bin/test-impact.sh ci-select failed: $(cat "$WHY")" >&2; exit 2; }
     REASON="the nightly tier" ;;
+  nightly-full)
+    # BH-6838: the whole traced corpus, nightly on main. No tier step.
+    MODE=nightly-full
+    TI_EVENT=nightly "$IMPACT" ci-select --out "$LIST" 2>"$WHY" \
+      || { echo "ci-plan: bin/test-impact.sh ci-select failed: $(cat "$WHY")" >&2; exit 2; }
+    REASON="the full corpus, nightly on main" ;;
   *)
     MODE=full
     TI_EVENT="${EV:-unknown}" "$IMPACT" ci-select --out "$LIST" 2>"$WHY" \
@@ -660,6 +694,24 @@ elif [ "$TIER" = nightly ]; then
   cp "$TMP/tiered" "$LIST"
 fi
 
+# THE REGRESSION UNION (BH-6838), after the tier step: a regression suite with
+# a nightly row still runs in the batch. See the header.
+if [ "$TIER" = batch ]; then
+  if "$SELF_DIR/test-impact.sh" regression --changed "$CH" > "$TMP/reg" 2> "$TMP/reg.why"; then
+    REG_N=0
+    while IFS=$'\t' read -r s p; do
+      [ -n "$s" ] && [ -f "$ROOT/$s" ] || continue
+      grep -qxF -- "$s" "$LIST" && continue
+      if grep -qxF -- "$s" "$QUAR"; then echo "ci-plan: regression $s ($p) not added: quarantined" >&2; continue; fi
+      printf '%s\n' "$s" >> "$LIST"; REG_N=$((REG_N + 1))
+      echo "ci-plan: regression $s ($p)" >&2
+    done < <(LC_ALL=C sort -t "$(printf '\t')" -k1,1 -u "$TMP/reg")
+    [ "$REG_N" = 0 ] || REASON="$REASON; +$REG_N regression"
+  else
+    echo "ci-plan: regression: off ($(tr '\n' ' ' < "$TMP/reg.why" | cut -c1-200))" >&2
+  fi
+fi
+
 # SPA AND WORKER GATING (BH-4969). Only a batch that stays batch-selected can
 # switch a job off, and only when no changed path ($CH, renames as both paths)
 # affects it. A lib that cannot be sourced, or a path list that cannot be
@@ -681,7 +733,7 @@ fi
 # reuse_eligible — rc 0 when this corpus may ask the ledger (see SUITE REUSE in
 # the header). A push here is already a full corpus (corpus=0 exited above).
 reuse_eligible() {
-  [ "$EV" = nightly ] || [ "$EV" = schedule ] && return 1
+  [ "$EV" = nightly ] || [ "$EV" = nightly-full ] || [ "$EV" = schedule ] && return 1
   [ "$EV" = push ] && return 0
   [ "$BATCH" = 1 ] || return 1
   case "$ESCALATION" in
@@ -695,7 +747,7 @@ reuse_eligible() {
 REUSE_BIN="${CI_PLAN_SUITE_REUSE:-$SELF_DIR/suite-reuse.sh}"
 REUSE=-; REUSED_N=0; SAVED=0
 : > "$TMP/reused.tsv"; : > "$TMP/fp.tsv"
-if [ -n "${CI_PLAN_REUSED_FILE:-}" ] && { [ "$EV" = nightly ] || [ "$EV" = schedule ]; }; then
+if { [ -n "${CI_PLAN_REUSED_FILE:-}" ] || [ "$EV" = nightly-full ]; } && { [ "$EV" = nightly ] || [ "$EV" = nightly-full ] || [ "$EV" = schedule ]; }; then
   # BH-6406: the nightly run is a true full run. A reused list handed to it is
   # ignored, never subtracted.
   REUSE="off: nightly never reuses"
@@ -798,6 +850,7 @@ if [ -n "${GITHUB_OUTPUT:-}" ]; then
   { echo "mode=$MODE"; echo "count=$COUNT"; echo "total=$TOTAL"; echo "n=$N"
     echo "shards=$SHARDS"; echo "corpus=1"; echo "summary=$SUMMARY"; echo "quarantine=$QLIST"
     echo "escalation=$ESCALATION"; echo "own_base=$OWN_BASE"; echo "spa=$SPA"; echo "worker=$WORKER"
+    [ "$BATCH" = 0 ] || echo "full_triggers=$FTRIG"
     [ "$REUSE_KEYS" = 0 ] || { echo "reused=$REUSED_N"; echo "saved_s=$SAVED"; echo "reuse=$REUSE"; }
   } >> "$GITHUB_OUTPUT"
 fi

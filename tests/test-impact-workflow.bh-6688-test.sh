@@ -47,7 +47,7 @@ git -C "$W" init -q && gcommit "$W" base || { echo "FAIL: cannot commit the scra
 WBASE=$(git -C "$W" rev-parse HEAD)
 # The anchors the cases edit must still be where the cases think they are.
 for a in '^  lint:$' '^  determinism:$' '^  tests-shard:$' '^  plan:$' '^  ci-timings:$' '^  harness-safety:$' \
-         '^    name: Syntax \+ shellcheck \+ config integrity$' '^        run: bin/test-determinism-lint.sh$' \
+         '^    name: Syntax \+ shellcheck \+ config integrity$' '^          out=\$\(bin/test-determinism-lint\.sh --warn-only 2>&1\)$' \
          "^          CI_PLAN_REUSE: '1'$" '^  workflow_dispatch:$'; do
   grep -qE "$a" "$W/$WF" || bad "fixture: the workflow has no line matching $a"
 done
@@ -60,7 +60,7 @@ wcase() {
   L=$(bash "$CLASSIFY" "$WBASE" HEAD --root "$W"); RC=$?
 }
 e_lint()   { sed -i 's/^    name: Syntax + shellcheck + config integrity$/& (renamed)/' "$1"; }
-e_det()    { sed -i 's|^        run: bin/test-determinism-lint.sh$|& --strict|' "$1"; sed -i '1i # a top comment' "$1"; }
+e_det()    { sed -i 's|^          out=$(bin/test-determinism-lint.sh --warn-only 2>&1)$|& # edited|' "$1"; sed -i '1i # a top comment' "$1"; }
 e_shard()  { sed -i 's/^  tests-shard:$/&\n    # a shard note/' "$1"; }
 e_plan()   { sed -i "s/^          CI_PLAN_REUSE: '1'$/&\n          CI_PLAN_EXTRA: '1'/" "$1"; }
 e_on()     { sed -i 's/^  workflow_dispatch:$/& # dispatch/' "$1"; }

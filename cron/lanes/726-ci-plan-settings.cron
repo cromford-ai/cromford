@@ -1,0 +1,9 @@
+# @hub-lanes
+
+# ── CI FULL-TRIGGER SETTINGS PROJECTION (BH-6838) ───────────────────────────
+# bin/ci-plan-settings.sh — projects the settings row CI_FULL_TRIGGERS (the
+# full-trigger delta over catalog/ci-batch-escalate.tsv) into the repo Actions
+# variable that bin/ci-plan.sh reads. Same value = no write; a failed projection
+# is one warn alert and CI keeps the old variable.
+# Kill: bin/harness-ctl.sh off ci-plan-settings.
+23 * * * * /root/harness/bin/hub-lease.sh check && /root/harness/bin/ci-plan-settings.sh >/dev/null 2>&1

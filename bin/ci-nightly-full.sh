@@ -9,10 +9,13 @@
 # main is the net under the map: when it is red, a suite failed that no batch
 # picked, and the ticket says which changed files the map missed for it.
 #
-# dispatch (cron 17 * * * *). Acts at the first tick where the UTC hour is
+# dispatch (cron 17 * * * *). OFF unless CI_NIGHTLY_FULL_DISPATCH=1 (BH-6838:
+# the nightly workflow runs the corpus on main each day, and a red dispatch run
+# can freeze merges; bin/lib/main-red-queue-dispatch.sh still self-dispatches
+# when a freeze needs it). On, it acts at the first tick where the UTC hour is
 # >= CI_NIGHTLY_FULL_HOUR (default 3), once per UTC date. In order, each skip a
 # log line `dispatch: skip <reason>`:
-#   before-hour; already-dispatched (<date>/run.json exists); automerge-disabled
+#   dispatch-off (the knob is not 1: no claim dir, no gh call); before-hour; already-dispatched (<date>/run.json exists); automerge-disabled
 #   (flags/automerge-disabled); gh-budget-low (bin/lib/gh-budget.sh);
 #   merge-armed (an open PR labelled merge-queue: the full run never competes
 #   with a batch for runners) or merge-armed-unknown (that read failed, so no
@@ -45,7 +48,7 @@
 #
 # Knobs (settings rows via lane_env_apply, code default as fallback):
 #   CI_NIGHTLY_FULL_HOUR [3]  CI_NIGHTLY_FULL_LOOKBACK_DAYS [3]
-#   CI_NIGHTLY_FULL_MAX_LOGS [8]
+#   CI_NIGHTLY_FULL_MAX_LOGS [8]  CI_NIGHTLY_FULL_DISPATCH [0]
 # Kill switch: bin/harness-ctl.sh off ci-nightly-full (flags/lane-off-ci-nightly-full)
 # Tests: tests/ci-nightly-full.bh-4964-test.sh
 set -uo pipefail
@@ -94,6 +97,7 @@ knob() { # knob <ENV> <default> <min> <max> — an integer in range; anything el
 HOUR_AT=$(knob CI_NIGHTLY_FULL_HOUR 3 0 23)
 LOOKBACK=$(knob CI_NIGHTLY_FULL_LOOKBACK_DAYS 3 1 14)
 MAX_LOGS=$(knob CI_NIGHTLY_FULL_MAX_LOGS 8 1 30)
+DISPATCH_ON=$(knob CI_NIGHTLY_FULL_DISPATCH 0 0 1)
 POLL_SLEEP="${CNF_POLL_SLEEP:-10}"; case "$POLL_SLEEP" in ''|*[!0-9]*) POLL_SLEEP=10 ;; esac
 iso() { date -u -d "@$1" '+%Y-%m-%dT%H:%M:%SZ'; }
 alert_once() { # alert_once <date> <kind> <message> — one ALERTS line per date per kind
@@ -126,6 +130,10 @@ do_dispatch() {
   local today hour dir n sha rc what id i
   today=$(date -u -d "@$NOW" +%F); hour=$(date -u -d "@$NOW" +%H); hour=$((10#$hour))
   dir="$S/$today"
+  # BH-6838: off by default. The nightly workflow (harness-nightly.yml) runs
+  # the corpus on main each day, and a red dispatch run of harness-ci.yml can
+  # freeze merges. First gate: no claim dir, no gh call.
+  [ "$DISPATCH_ON" = 1 ] || { log "dispatch: skip dispatch-off (CI_NIGHTLY_FULL_DISPATCH=$DISPATCH_ON)"; return 0; }
   [ "$hour" -lt "$HOUR_AT" ] && { log "dispatch: skip before-hour ($hour < $HOUR_AT)"; return 0; }
   [ -f "$dir/run.json" ] && { log "dispatch: skip already-dispatched $today"; return 0; }
   paused && { log "dispatch: skip automerge-disabled"; return 0; }

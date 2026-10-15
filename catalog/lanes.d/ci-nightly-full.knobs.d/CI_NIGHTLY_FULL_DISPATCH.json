@@ -1,0 +1,10 @@
+{
+  "env": "CI_NIGHTLY_FULL_DISPATCH",
+  "read_in": "bin/ci-nightly-full.sh",
+  "type": "int",
+  "default": 0,
+  "min": 0,
+  "max": 1,
+  "zero_means": null,
+  "note": "BH-6838: 1 turns on `dispatch`, the daily full harness-ci run on main. Default 0 (off): the nightly workflow (harness-nightly.yml) runs the whole corpus on main each day and files one issue per red suite, and a red dispatch run of harness-ci.yml can freeze merges. Off logs `dispatch: skip dispatch-off` and makes no gh call. `collect` runs either way."
+}

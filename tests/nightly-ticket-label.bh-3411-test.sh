@@ -55,7 +55,7 @@ chmod +x "$T/gh"
 mkdir -p "$T/v"
 printf 'tests=1\nfailed=1\n' > "$T/v/shard-0.txt"
 printf -- '--- tests/a-test.sh rc=1 1s\n' > "$T/v/shard-0.log"
-MARK='<!-- harness-nightly-red -->'
+MARK='<!-- harness-nightly-red:tests/a-test.sh -->'
 printf '[]\n' > "$T/none.json"
 jq -n --arg m "$MARK" '[{number:77,body:("old " + $m)}]' > "$T/open.json"
 LABELLED='{"number":101,"labels":[{"name":"ai-build"}]}'

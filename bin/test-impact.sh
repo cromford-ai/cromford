@@ -19,6 +19,9 @@
 #                                          that put it there, or the catalog
 #   bin/test-impact.sh inputs              every input of every suite, for the
 #                                          suite fingerprint (BH-5366; v2 BH-6406)
+#   bin/test-impact.sh regression [--changed <f>]
+#                                          the batch-fail regression rows
+#                                          (BH-6838), or the ones <f> touches
 #
 # Flags: --root <dir> (default: this checkout), --out <file> (default: stdout),
 #        --map <file> (use this map instead of building one — tests only),
@@ -84,6 +87,14 @@
 # --why` prints a learned path pick that the suite text does not name as
 # `learned` (BH-6459); a learned `*` row stays `always`.
 #
+# Rows also come from catalog/ci-batch-regression.d/*.txt, the BATCH-FAIL
+# REGRESSION LIST (BH-6838): `<suite>\t<paths>` rows a person commits for a
+# suite that failed a merge-queue batch (ti_regression_rows). `select --why`
+# prints every such pick as `regression`, a `*` row included, and the builder
+# gate ranks it with `reads`, so the cap never leaves it to CI.
+# `bin/test-impact.sh regression [--changed <f>]` prints the rows, or the rows
+# a changed list touches, as `<suite>\t<path>`; bin/ci-plan.sh reads it.
+#
 # A suite's paths are the literal repo paths its TEXT names, closed over what
 # those scripts `source`. That is a static over-approximation on purpose: it can
 # name a file the suite never actually opens (harmless — one extra suite runs),
@@ -136,7 +147,7 @@ while [ $# -gt 0 ]; do
     --changed) [ $# -ge 2 ] || { echo "test-impact: --changed needs a path" >&2; exit 2; }
             CHANGED_FILE="$2"; shift ;;
     --changed=*) CHANGED_FILE="${1#--changed=}" ;;
-    -h|--help) sed -n '2,48p' "$0"; exit 0 ;;
+    -h|--help) sed -n '2,51p' "$0"; exit 0 ;;
     -*)     echo "test-impact: unknown flag $1" >&2; exit 2 ;;
     *)      if [ -z "$CMD" ]; then CMD="$1"; else ARGS+=("$1"); fi ;;
   esac
@@ -151,7 +162,8 @@ fi
 # The same for the three select-only flags: `map --why` printing an ordinary
 # map would read as a map that had been explained.
 if { [ "$WHY" = 1 ] || [ -n "$CHANGED_FILE" ] || [ "$MAP_ONLY" = 1 ]; } && [ "$CMD" != select ]; then
-  echo "test-impact: --why, --changed and --map-only are only for 'select' (got '${CMD:-<none>}')" >&2; exit 2
+  [ "$CMD" = regression ] && [ "$WHY" = 0 ] && [ "$MAP_ONLY" = 0 ] || {
+  echo "test-impact: --why, --changed and --map-only are only for 'select' (got '${CMD:-<none>}')" >&2; exit 2; }
 fi
 [ -d "$ROOT" ] || { echo "test-impact: no such root: $ROOT" >&2; exit 2; }
 ROOT="$(cd "$ROOT" && pwd)"
@@ -605,6 +617,56 @@ ti_learned_rows() {
   done < "$TI_TMP/learned"
 }
 
+# ti_regression_rows — `<suite>\t<path>` for each path of each data line of
+# each catalog/ci-batch-regression.d/*.txt (BH-6838). A line is
+# `<suite>\t<paths>`; <paths> is `*` or a comma list of files, `<dir>/` rows
+# and globs. A glob is expanded against the tracked files, so a map row is
+# always a file, a directory or `*`. A suite or a path not in the tree is
+# dropped, the learned-edge rule (tests/ci-plan-nightly-split.bh-6838-test.sh
+# A4 fails the PR that leaves one). No directory or no fragment is 0 rows. A
+# fragment awk cannot read is rc 2, so the map fails and select is the corpus.
+ti_regression_rows() {
+  local dir="$ROOT/catalog/ci-batch-regression.d" f s p frags=() ps
+  [ -d "$dir" ] || return 0
+  for f in "$dir"/*.txt; do
+    if [ -e "$f" ] || [ -L "$f" ]; then frags+=("$f"); fi
+  done
+  [ "${#frags[@]}" -gt 0 ] || return 0
+  LC_ALL=C awk -F'\t' '/^[ \t]*(#|$)/ { next }
+    NF >= 2 && $1 != "" && $2 != "" { n = split($2, a, ","); for (i = 1; i <= n; i++) {
+      gsub(/^[ ]+|[ ]+$/, "", a[i]); if (a[i] != "") print $1 "\t" a[i] } }' \
+      "${frags[@]}" > "$TI_TMP/regression" || {
+    echo "test-impact: a batch-fail regression fragment could not be read — refusing to hand back a short map" >&2
+    return 2
+  }
+  while IFS=$'\t' read -r s p; do
+    [[ "$s" =~ ^tests/(mc/)?[A-Za-z0-9._-]+\.sh$ ]] && [ -f "$ROOT/$s" ] || continue
+    case "$p" in
+      *..*) continue ;;
+      '*') printf '%s\t*\n' "$s" ;;
+      */) [ -d "$ROOT/$p" ] && printf '%s\t%s\n' "$s" "$p" ;;
+      *[*?[]*)
+        [ -f "$TI_TMP/regression.index" ] || ti_files > "$TI_TMP/regression.index" || return 2
+        while IFS= read -r ps; do
+          # shellcheck disable=SC2053 # the row IS a glob
+          [[ $ps == $p ]] && printf '%s\t%s\n' "$s" "$ps"
+        done < "$TI_TMP/regression.index" ;;
+      *)  [ -f "$ROOT/$p" ] && printf '%s\t%s\n' "$s" "$p" ;;
+    esac
+  done < "$TI_TMP/regression"
+  return 0
+}
+
+# ti_regression_touched <rows> <changed> — the rows a changed list touches: a
+# `*` row always, a file row on an equal path, a `<dir>/` row on a path under it.
+ti_regression_touched() {
+  LC_ALL=C awk -F'\t' 'FILENAME == ARGV[1] { if ($0 != "") ch[++n] = $0; next }
+    $2 == "*" { print; next }
+    { for (i = 1; i <= n; i++)
+        if ($2 == ch[i] || ($2 ~ /\/$/ && index(ch[i], $2) == 1)) { print $1 "\t" ch[i]; } }
+  ' "$2" "$1" | LC_ALL=C sort -u
+}
+
 # ti_treedir_rows — `<suite>\t<dir>/` for a suite that scans a whole source
 # directory with a BARE name (BH-6688 fix round). The path extractor drops a
 # bare directory token on purpose: `the bin/ lane` in prose is not a
@@ -730,6 +792,10 @@ ti_build_map() {
   # in learned.rows is what ti_why_rows reads to print the `learned` kind.
   ti_learned_rows > "$TI_TMP/learned.rows" || return 2
   cat "$TI_TMP/learned.rows" >> "$TI_TMP/raw" || return 2
+  # The batch-fail regression list (BH-6838). regression.rows is what
+  # ti_why_rows reads to print the `regression` kind.
+  ti_regression_rows > "$TI_TMP/regression.rows" || return 2
+  cat "$TI_TMP/regression.rows" >> "$TI_TMP/raw" || return 2
   # A suite that scans a whole source directory by its bare name (ti_treedir_rows).
   ti_treedir_rows >> "$TI_TMP/raw" || return 2
 
@@ -1092,6 +1158,16 @@ ti_why_rows() {
       ' "$TI_TMP/learned.rows" "$pairs" "$TI_TMP/why.rootvars" "${files[@]}" )
   fi
   ti_named_rows "$changed"
+  # The batch-fail regression list (BH-6838): every row the diff touches, a
+  # `*` row included, is a `regression` reason of its own, whatever else
+  # picked the suite. With --map <file> the rows are read here.
+  if [ ! -f "$TI_TMP/regression.rows" ]; then
+    ti_regression_rows > "$TI_TMP/regression.rows" 2>/dev/null || {
+      : > "$TI_TMP/regression.rows"
+      echo "test-impact: regression rows unreadable — no regression kind" >&2
+    }
+  fi
+  ti_regression_touched "$TI_TMP/regression.rows" "$changed" | awk -F'\t' '{ print $1 "\tregression\t" $2 }'
 }
 
 # ti_named_rows <changed> — suites that name a function a changed script
@@ -1752,8 +1828,19 @@ case "$CMD" in
     if [ -n "$OUT" ]; then ti_always_why > "$OUT"; else ti_always_why; fi ;;
   inputs)
     if [ -n "$OUT" ]; then ti_inputs > "$OUT"; else ti_inputs; fi ;;
+  regression)
+    # BH-6838: the rows, or the rows a --changed list touches. An unreadable
+    # fragment or --changed list is rc 2, never a short answer.
+    ti_regression_rows > "$TI_TMP/regression.rows" || exit 2
+    if [ -n "$CHANGED_FILE" ]; then
+      [ -r "$CHANGED_FILE" ] || { echo "test-impact: cannot read the --changed list $CHANGED_FILE" >&2; exit 2; }
+      ti_regression_touched "$TI_TMP/regression.rows" "$CHANGED_FILE" > "$TI_TMP/regression.out" || exit 2
+    else
+      LC_ALL=C sort -u "$TI_TMP/regression.rows" > "$TI_TMP/regression.out" || exit 2
+    fi
+    if [ -n "$OUT" ]; then cp "$TI_TMP/regression.out" "$OUT"; else cat "$TI_TMP/regression.out"; fi ;;
   ""|help)
-    sed -n '2,48p' "$0"; exit 0 ;;
+    sed -n '2,51p' "$0"; exit 0 ;;
   *)
-    echo "test-impact: unknown command '$CMD' (map, select, ci-select, orphans, audit, always, always-why, inputs)" >&2; exit 2 ;;
+    echo "test-impact: unknown command '$CMD' (map, select, ci-select, orphans, audit, always, always-why, inputs, regression)" >&2; exit 2 ;;
 esac

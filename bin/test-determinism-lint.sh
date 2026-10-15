@@ -36,7 +36,8 @@
 # No conf = rc 2 and a message. A lint that scans for nothing must never report
 # green.
 #
-#   --warn-only   report findings, always exit 0 (for a local look, never CI)
+#   --warn-only   report findings, always exit 0 (a local look, and the PR job
+#                 since BH-6838; the nightly run on main is strict)
 #   --list        print the files that WOULD be scanned, and exit
 #   --rules       print the resolved conf path and rule table, and exit
 #   --changed <ref>  scan only the files that differ from <ref> (committed,

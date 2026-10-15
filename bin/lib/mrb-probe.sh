@@ -16,8 +16,8 @@
 #           outside tests/ and an unanchored `x--- tests/...` are all ignored.
 #   rc:     0. Reads all of stdin, so a writer piping a large log never takes
 #           SIGPIPE.
-#   The anchored expression is the one bin/nightly-ticket.sh reads shard logs
-#   with. The timestamp must start with a digit: `[0-9TZ:.-]+ ` alone would
+#   bin/nightly-ticket.sh reads the same `--- <suite> rc=<n>` lines with a
+#   narrower path class since BH-6838. The timestamp must start with a digit: `[0-9TZ:.-]+ ` alone would
 #   also eat the `--- ` of an untimestamped result line.
 mrb_suites_from_log() {
   sed -E 's/\r$//; s/^[0-9][0-9TZ:.-]* //' \

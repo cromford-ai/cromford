@@ -131,3 +131,4 @@ tests/preplan-speculative-test.sh	nightly	10	-	slow and never failed: 10s median
 tests/qa-ban-guard-test.sh	nightly	10	-	slow and never failed: 10s median, 0 failures in 35 sampled batch runs (test-value 2026-09-28)
 tests/rebase-on-pool-test.sh	nightly	10	-	slow and never failed: 10s median, 0 failures in 35 sampled batch runs (test-value 2026-09-28)
 tests/triage-noise-budget.bh-1168-test.sh	nightly	10	-	slow and never failed: 10s median, 0 failures in 35 sampled batch runs (test-value 2026-09-28)
+tests/day-boundary-guard.bh-6052-test.sh	nightly	10	-	BH-6838: test hygiene, nightly on main

@@ -56,6 +56,7 @@ tests/mc-batch-prefetch.bh-4156-test.sh:generic-api-key:273
 tests/mc-state-drill.bh-4156-test.sh:generic-api-key:60
 tests/mc-state-drill.bh-4156-test.sh:generic-api-key:140
 tests/merge-pr-release.bh-4917-test.sh:generic-api-key:59
+tests/nightly-ticket-split.bh-6838-test.sh:generic-api-key:262
 tests/no-client-identifiers-test.sh:aws-access-token:51
 tests/openrouter-audit.bh-4001-test.sh:generic-api-key:21
 tests/plan-contract-seams.bh-6384-test.sh:generic-api-key:161

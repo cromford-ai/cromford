@@ -3,13 +3,16 @@
 # (bin/nightly-ticket.sh, 2026-09-28).
 #
 # The nightly and guard tiers left the merge-queue batch on the promise that a
-# red night is seen. This drives that promise against a stub gh:
-#   N1  no open nightly ticket: one issue is OPENED, naming the failing suite,
-#       the trace hit and the shard that left no verdict — and not the suite
-#       that passed
-#   N2  an open ticket carrying the marker: it gets a COMMENT, no second issue
+# red night is seen. This drives that promise against a stub gh. Since BH-6838
+# a failing suite gets its OWN issue (tests/nightly-ticket-split.bh-6838-test.sh
+# pins that in depth); the run-level ticket below is for the reds that are not
+# a suite (a trace hit, a shard with no verdict, a failed plan, strict):
+#   N1  no open ticket: the failing suite gets its own issue, and the run-level
+#       ticket is OPENED naming the suite, the trace hit and the shard that
+#       left no verdict — and not the suite that passed
+#   N2  open tickets carrying the markers: each gets a COMMENT, no new issue
 #       (a pull request carrying the marker text is not that ticket)
-#   N2b the open ticket is found past the first page of open items
+#   N2b the open tickets are found past the first page of open items
 #   N3  a failed plan with no logs still files, and says the plan failed
 #   N7  a red strict ratchet pass is quoted; a dead strict job is named
 #   N4  GitHub refusing the read or the write is rc 1, never a quiet 0
@@ -68,8 +71,10 @@ HIT c-slow-test.sh unlink OUTSIDE-A-TEMP-ROOT (fixture line, nothing ran)
 --- tests/c-slow-test.sh rc=0 2s
 EOF
 MARK='<!-- harness-nightly-red -->'
+SMARK='<!-- harness-nightly-red:tests/a-slow-test.sh -->'
 printf '[]\n' > "$T/none.json"
-jq -n --arg m "$MARK" '[{number:5,body:("pr " + $m),pull_request:{url:"x"}},{number:77,body:("old " + $m)},{number:9,body:"other"}]' > "$T/open.json"
+# BH-6838: the failing suite's own open issue (#78) sits next to the run-level one.
+jq -n --arg m "$MARK" --arg sm "$SMARK" '[{number:5,body:("pr " + $m),pull_request:{url:"x"}},{number:77,body:("old " + $m)},{number:78,body:("suite " + $sm)},{number:9,body:"other"}]' > "$T/open.json"
 
 run() { # run <open.json> [VAR=value ...]
   local open="$1"; shift
@@ -93,6 +98,9 @@ has 'c-slow-test.sh' "$SINK" && ok || bad "N1: the trace hit must be named: $SIN
 has 'Shard(s) 1 left no verdict' "$SINK" && ok || bad "N1: the shard with no verdict must be named: $SINK"
 has 'https://example.invalid/run/1' "$SINK" && ok || bad "N1: the run must be linked: $SINK"
 has "opened #101" "$OUT" && ok || bad "N1: it must say what it opened: $OUT"
+# BH-6838: the failing suite has its own issue, with its own marker and title.
+has "title=Nightly: tests/a-slow-test.sh red on main" "$SINK" && ok || bad "N1: the failing suite must get its own issue: $SINK"
+has "$SMARK" "$SINK" && ok || bad "N1: the suite's issue must carry its own marker: $SINK"
 
 # N2. an open ticket: a comment on it, never a second issue.
 run "$T/open.json"
@@ -101,14 +109,16 @@ has "== POST repos/o/r/issues/77/comments" "$SINK" && ok || bad "N2: the open ti
 grep -qx '== POST repos/o/r/issues' <<<"$SINK" && bad "N2: a second issue was opened: $SINK" || ok
 has "issues/5/comments" "$SINK" && bad "N2: a pull request is not the ticket: $SINK" || ok
 has "updated #77" "$OUT" && ok || bad "N2: it must say what it updated: $OUT"
+has "== POST repos/o/r/issues/78/comments" "$SINK" && ok || bad "N2: the suite's open issue #78 must get the comment: $SINK"
 
 # N2b. MORE THAN A PAGE of newer open items (issues and PRs) in front of the
 # ticket: it is still found and commented on, never duplicated.
 jq -n '[range(0;100) | {number:(1000+.), body:"unrelated", pull_request:(if . % 2 == 0 then {url:"x"} else null end)}]' > "$T/page1.json"
-jq -n --arg m "$MARK" '[{number:12,body:("old " + $m)}]' > "$T/page2.json"
+jq -n --arg m "$MARK" --arg sm "$SMARK" '[{number:12,body:("old " + $m)},{number:13,body:("suite " + $sm)}]' > "$T/page2.json"
 run "$T/page1.json" FAKE_OPEN2="$T/page2.json"
 [ "$RC" = 0 ] && ok || bad "N2b: rc=$RC: $OUT"
 grep -qx '== POST repos/o/r/issues/12/comments' <<<"$SINK" && ok || bad "N2b: the ticket on page 2 must get the comment: $SINK"
+grep -qx '== POST repos/o/r/issues/13/comments' <<<"$SINK" && ok || bad "N2b: the suite's issue on page 2 must get the comment: $SINK"
 grep -qx '== POST repos/o/r/issues' <<<"$SINK" && bad "N2b: a second ticket was opened because the first was past page 1: $SINK" || ok
 
 # N3. the plan failed and nothing ran: still a ticket, saying so.

@@ -23,6 +23,23 @@
 #                       Prints the added kinds, one per line, sorted and
 #                       unique. Anything else is rc 1, an empty or missing
 #                       file and a header line it does not know included.
+#   cbe_delta_norm <delta>
+#                       the full-trigger delta (BH-6838), normalised: the kept
+#                       tokens, first place kept, space-joined, or `-` for
+#                       none. One stderr line per dropped token.
+#   cbe_delta_apply <rules> <delta>
+#                       prints <rules> with the delta applied, rc 1 when
+#                       <rules> cannot be read. Silent: cbe_delta_norm says
+#                       what it drops.
+#
+# THE FULL-TRIGGER DELTA (BH-6838) is CI_FULL_TRIGGERS: the settings row
+# `CI_FULL_TRIGGERS` on the ci-plan-settings lane, projected into the repo
+# variable of the same name by bin/ci-plan-settings.sh. Tokens are
+# whitespace-separated. `+<pattern>` adds an escalate row; `-<pattern>` removes
+# the escalate row with exactly that pattern. A token with no +/- sign, with
+# `..`, or a `-` of a self row (_CBE_SELF: the files that decide what a batch
+# runs) is dropped. Unset, empty or `-` is the committed file, byte for byte.
+# cbe_reason reads the rules with the delta applied.
 #
 # The rules are catalog/ci-batch-escalate.tsv (see its header), or
 # CI_BATCH_ESCALATE_TSV. FAILS CLOSED: a rules file that cannot be read, or one
@@ -40,6 +57,54 @@ _cbe_match() {
   esac
 }
 
+# The self rows: a delta can never remove these (BH-6838). The two runner rows
+# (tests/lib/scratch.sh, bin/lib/suite-runner.sh) are here because the plan
+# keeps them: removing one lets a runner change land untested.
+_CBE_SELF=' .github/ bin/ci-plan.sh bin/test-impact*.sh catalog/ci-batch-escalate.tsv bin/lib/ci-batch-escalate.sh catalog/ci-batch-regression.d/ tests/lib/scratch.sh bin/lib/suite-runner.sh '
+
+# _cbe_delta_tokens <delta> — `<token>\t<why>` per token, why `ok` or the drop reason.
+_cbe_delta_tokens() {
+  local t seen=' ' toks=()
+  read -r -d '' -a toks <<<"${1:-}" || true
+  for t in ${toks[@]+"${toks[@]}"}; do
+    case "$t" in
+      -) continue ;;
+      *..*) printf '%s\tignored (..)\n' "$t"; continue ;;
+      [+-]) printf '%s\tignored (no pattern)\n' "$t"; continue ;;
+      +*) ;;
+      -*) case "$_CBE_SELF" in *" ${t#-} "*) printf '%s\trefused (a self row)\n' "$t"; continue ;; esac ;;
+      *) printf '%s\tignored (no + or - sign)\n' "$t"; continue ;;
+    esac
+    case "$seen" in *" $t "*) continue ;; esac
+    seen="$seen$t "
+    printf '%s\tok\n' "$t"
+  done
+}
+
+cbe_delta_norm() {
+  local t why out=""
+  while IFS=$'\t' read -r t why; do
+    [ -n "$t" ] || continue
+    if [ "$why" = ok ]; then out="$out${out:+ }$t"
+    else echo "ci-batch-escalate: CI_FULL_TRIGGERS token $t $why" >&2; fi
+  done < <(_cbe_delta_tokens "${1:-}")
+  printf '%s\n' "${out:--}"
+}
+
+cbe_delta_apply() {
+  local rules="$1" delta="${2:-}" t why add="" del=" "
+  [ -r "$rules" ] || return 1
+  while IFS=$'\t' read -r t why; do
+    [ "$why" = ok ] || continue
+    case "$t" in +*) add="$add${t#+}"$'\n' ;; -*) del="$del${t#-} " ;; esac
+  done < <(_cbe_delta_tokens "$delta")
+  if [ -z "$add" ] && [ "$del" = " " ]; then cat "$rules"; return; fi
+  LC_ALL=C awk -F'\t' -v del="$del" '$2 == "escalate" && index(del, " " $1 " ") > 0 { next } { print }' "$rules" || return 1
+  printf '%s' "$add" | while IFS= read -r t; do
+    [ -n "$t" ] && printf '%s\tescalate\tCI_FULL_TRIGGERS (the ci-plan-settings row, BH-6838)\n' "$t"
+  done
+}
+
 cbe_reason() {
   local p="$1" tsv="${CI_BATCH_ESCALATE_TSV:-$_CBE_DIR/../../catalog/ci-batch-escalate.tsv}"
   local pat kind _why rows=0 esc=0 allow=0
@@ -50,7 +115,7 @@ cbe_reason() {
         escalate) rows=$((rows + 1)); _cbe_match "$p" "$pat" && esc=1 ;;
         allow)    _cbe_match "$p" "$pat" && allow=1 ;;
       esac
-    done < "$tsv"
+    done < <(cbe_delta_apply "$tsv" "${CI_FULL_TRIGGERS:-}")
   fi
   if [ "$rows" -eq 0 ]; then
     echo "selection input: catalog/ci-batch-escalate.tsv unreadable"; return 0

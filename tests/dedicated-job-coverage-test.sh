@@ -13,7 +13,10 @@
 # (the worker suites, which still run for a builder's pre-push gate). What keeps
 # that from being a hole is this suite, which pins the other side:
 #   D1  the determinism job runs the lint over the whole tree, on every event,
-#       with nothing that could soften it, and it is a required check
+#       and it is a required check. Since BH-6838 it runs --warn-only on a PR
+#       and a batch, and the STRICT whole-tree run is the nightly `lints` job
+#       (.github/workflows/harness-nightly.yml), with nothing that could
+#       soften it
 #   D2  the worker job runs exactly when the traced shards do, renders the
 #       registry, runs `npm test` in worker/jobs, and refuses a skipped test
 #   D3  worker/jobs `npm test` covers every node file the three suites name
@@ -44,7 +47,16 @@ d = jobs.get("determinism") or {}
 ok() if d.get("name") == "Test determinism lint" else bad(f"D1: no 'Test determinism lint' job (got {d.get('name')!r})")
 ok() if not d.get("if") else bad(f"D1: the determinism job must run on every event: if: {d.get('if')!r}")
 runs = [str(s.get("run", "")).strip() for s in d.get("steps") or [] if s.get("run")]
-ok() if "bin/test-determinism-lint.sh" in runs else bad(f"D1: the job must run bare `bin/test-determinism-lint.sh` (whole tree, no --warn-only): {runs!r}")
+ok() if any("bin/test-determinism-lint.sh --warn-only" in r for r in runs) else bad(f"D1: the CI job must run `bin/test-determinism-lint.sh --warn-only` over the whole tree (BH-6838): {runs!r}")
+# BH-6838: the strict whole-tree scan is the nightly lints job.
+nwf = yaml.safe_load(open(os.path.join(wf_dir, "harness-nightly.yml")))
+ln = ((nwf.get("jobs") or {}).get("lints") or {})
+lruns = "\n".join(str(s.get("run", "")) for s in ln.get("steps") or [])
+import re as _re
+ok() if _re.search(r"(^|\s)bin/test-determinism-lint\.sh\s*$", lruns, _re.M) and "--warn-only" not in lruns \
+    else bad(f"D1: the nightly lints job must run bare `bin/test-determinism-lint.sh` (whole tree, strict): {lruns!r}")
+ok() if not ln.get("if") else bad(f"D1: the nightly lints job must run on every nightly event: if: {ln.get('if')!r}")
+ok() if not any(s.get("continue-on-error") for s in ln.get("steps") or []) else bad("D1: a nightly lint step with continue-on-error gates nothing")
 ok() if not any(s.get("continue-on-error") for s in d.get("steps") or []) else bad("D1: a lint step with continue-on-error gates nothing")
 m = yaml.safe_load(open(mergify_path))
 for r in m.get("queue_rules") or []:

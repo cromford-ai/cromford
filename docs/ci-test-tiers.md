@@ -6,6 +6,8 @@ BH-5653 slice C1 (BH-5637.2), 2026-10-10. `catalog/test-tiers.tsv` can also live
 
 `catalog/test-tiers.tsv` says which tier each suite runs in: `batch`, `nightly` or `guard`. `bin/test-tiers.sh` has the format and the rules. `bin/ci-plan.sh` applies it to the merge-queue batch and to the nightly run. A suite with no row is `batch`.
 
+Since BH-6838 the nightly run (`.github/workflows/harness-nightly.yml`) plans the whole corpus with `bin/ci-plan.sh --tier nightly-full`, so every `nightly` suite runs there each night. The batch still drops `nightly` suites after its tier step. Then it adds back each suite of the batch-fail regression list (`catalog/ci-batch-regression.d/`) whose paths the batch's diff touches. The day-boundary guard has a `nightly` row (BH-6838: test hygiene). The fixture-hygiene suite stays in the batch: its rules are leak checks. An operator copies the committed rows into the worker set with `bin/ci-test-tiers.sh put`.
+
 The file decides which suites a batch skips. So the worker copy has two hard rules:
 
 1. Only `HARNESS_SECRET` (a box or an operator) can write a set. CI's scoped `CI_DURATIONS_TOKEN` can only read.
