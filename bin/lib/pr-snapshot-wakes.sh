@@ -29,6 +29,14 @@
 #                 from which changed.tsv has no gap
 #   wakes.lock    `flock -n` dedupe; the loser writes nothing
 #
+# SUMMARY FIRST (BH-6799). A read asks the wakes summary once, for 168 hours,
+# before any page. When the summary row for <slug> (byte for byte) carries a
+# last_id that is all digits and not above wakes.wm, there is no new wake for
+# the repo, so the page read is skipped and the read is complete with nothing
+# new. A failed summary, no row, an absent or non-digit last_id (a worker that
+# predates BH-6799), an unreadable wm or a last_id above wm all page as before:
+# only the worker's own word that nothing is new can skip a read.
+#
 # AT MOST ONE READ PER PR_SNAPSHOT_TTL_S: inside it every function answers
 # from wakes.state, a failed read included. A read that fails or returns a
 # malformed page keeps NO page of it (wm and changed.tsv stay put) and is
@@ -71,15 +79,14 @@ _prsw_put() {
   return "$rc"
 }
 
-# _prsw_summary_fresh <slug> — rc 0 when the summary names <slug> exactly with
-# a recent last_at. Every other answer, an unreadable one included, is rc 1.
+# _prsw_summary_fresh <slug> <rows> — rc 0 when the summary rows (the
+# wakes_summary TSV the refresh already read) name <slug> exactly with a recent
+# last_at. Every other answer, no rows included, is rc 1.
 _prsw_summary_fresh() {
-  local slug="$1" stale now rows rc=0 repo last ep
-  command -v wakes_summary >/dev/null 2>&1 || return 1
+  local slug="$1" rows="$2" stale now repo last ep
+  [ -n "$rows" ] || return 1
   stale=$(_prsw_int "${PR_SNAPSHOT_FEED_STALE_S:-}")
   now=$(date +%s)
-  rows=$(wakes_summary 1 2>/dev/null) || rc=$?
-  [ "$rc" = 0 ] || return 1
   while IFS=$'\t' read -r repo _ last _; do
     [ "$repo" = "$slug" ] || continue
     ep=$(jq -rn --arg a "$last" '$a | sub("\\.[0-9]+Z$"; "Z") | fromdateiso8601' 2>/dev/null) || continue
@@ -89,10 +96,23 @@ _prsw_summary_fresh() {
   return 1
 }
 
+# _prsw_summary_last <slug> <rows> — prints the last_id of the row that names
+# <slug> exactly, rc 0, only when it is all digits. Otherwise prints nothing, rc 1.
+_prsw_summary_last() {
+  local slug="$1" rows="$2" repo lid
+  while IFS=$'\t' read -r repo _ _ _ lid; do
+    [ "$repo" = "$slug" ] || continue
+    case "$lid" in ''|*[!0-9]*) return 1 ;; esac
+    printf '%s' "$lid"; return 0
+  done <<<"$rows"
+  return 1
+}
+
 # _prsw_refresh <slug> — the throttled read. rc 0 when wakes.state is from
 # inside the TTL afterwards (read now, or recently), rc 1 when it is not.
 _prsw_refresh() {
   local slug="$1" d now ttl fd since page rc rows n top max tmp cnt=0 ok=1 complete=0 fresh=0 cov q old
+  local srows="" wmraw lid skip=0
   d=$(_prs_dir "$slug" 2>/dev/null) || return 1
   command -v _jobs_req >/dev/null 2>&1 || return 1
   now=$(date +%s)
@@ -102,11 +122,19 @@ _prsw_refresh() {
   mkdir -p "$d" 2>/dev/null || return 1
   if ! { exec {fd}>"$d/wakes.lock"; } 2>/dev/null; then return 1; fi
   if ! flock -n "$fd"; then exec {fd}>&-; return 1; fi
-  since=$(_prsw_int "$(tr -dc '0-9' 2>/dev/null < "$d/wakes.wm")")
+  wmraw=$(tr -dc '0-9' 2>/dev/null < "$d/wakes.wm")
+  since=$(_prsw_int "$wmraw")
   max="$since"
   tmp="$d/changed.tsv.new.$$"; : > "$tmp" 2>/dev/null || { exec {fd}>&-; return 1; }
   q=$(jq -rn --arg s "$slug" '$s | @uri')
-  while :; do
+  if command -v wakes_summary >/dev/null 2>&1; then
+    srows=$(wakes_summary 168 2>/dev/null) || srows=""
+  fi
+  if [ -n "$wmraw" ] && lid=$(_prsw_summary_last "$slug" "$srows") \
+     && [ "$((10#$lid))" -le "$since" ]; then
+    skip=1
+  fi
+  while [ "$skip" = 0 ]; do
     rc=0; page=$(JOBS_ALERT=0 _jobs_req GET "/api/wakes?since=$since&repo=$q&limit=$PRSW_PAGE") || rc=$?
     [ "$rc" = 0 ] || { ok=0; break; }
     rc=0; rows=$(printf '%s' "$page" | jq -r 'if type == "object" and (.wakes | type) == "array" then .wakes[]
@@ -144,7 +172,7 @@ _prsw_refresh() {
     rm -f "$d/changed.tsv.tmp.$$"
   fi
   rm -f "$tmp"
-  _prsw_summary_fresh "$slug" && fresh=1
+  _prsw_summary_fresh "$slug" "$srows" && fresh=1
   _prsw_put "$d/wakes.state" "$(printf '%s\t%s\t%s\t%s' "$now" "$complete" "$fresh" "$cov")"
   exec {fd}>&-
   return 0

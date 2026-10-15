@@ -44,10 +44,15 @@ function noFullScan(lines, allow = []) {
   assert.deepEqual(bad, [], `full scan of a hot table:\n  ${lines.join('\n  ')}`);
 }
 
-test('I1: GET /api/wakes/summary?hours=1 reads the window through idx_wakes_at, not every wake', { skip: !vol }, async () => {
-  const lines = planOf(await reads('/api/wakes/summary?hours=1'), /FROM wakes WHERE at >=/);
+// BH-6799: the summary no longer reads the window from `wakes`. It folds the
+// wakes above MAX(wake_repo_last.last_id) into wake_repo_last (a rowid range;
+// its plan is pinned in wakes-summary-table.bh-6799) and answers from that table.
+test('I1: GET /api/wakes/summary?hours=1 answers from wake_repo_last and reads no wakes window', { skip: !vol }, async () => {
+  const log = await reads('/api/wakes/summary?hours=1');
+  assert.ok(!log.some((r) => /FROM wakes WHERE at >=/.test(r.sql)), 'no window read over wakes');
+  const lines = planOf(log, /FROM wake_repo_last WHERE last_at >=/);
   noFullScan(lines);
-  assert.ok(lines.some((l) => /SEARCH wakes USING INDEX idx_wakes_at/.test(l)), lines.join(' | '));
+  assert.ok(!lines.some((l) => /\bwakes\b/.test(l)), lines.join(' | '));
 });
 
 test('I2: GET /api/wakes?since=&repo= walks (repo, id)', { skip: !vol }, async () => {  // determinism: ok since= is a wake id cursor, not a time

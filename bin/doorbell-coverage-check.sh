@@ -191,7 +191,12 @@ for R in $TARGETS; do
   if [ "$RING_STATE" = ringing ]; then
     RINGING=$((RINGING+1))
     echo "$(STAMP) $R doorbell=armed ring=ringing n=$RING_N last=$RING_LAST" >> "$LOG"
-    say "$R: doorbell armed (ringing, $RING_N wakes/${RING_H}h, last $RING_LAST)"
+    # BH-6799: the summary has no per-window count any more (n is `-`), so the
+    # count is printed only when the worker sent one.
+    case "$RING_N" in
+      ''|*[!0-9]*) say "$R: doorbell armed (ringing, last $RING_LAST)" ;;
+      *) say "$R: doorbell armed (ringing, $RING_N wakes/${RING_H}h, last $RING_LAST)" ;;
+    esac
     continue
   fi
   ST=$(doorbell_state "$R")
@@ -260,6 +265,31 @@ if [ -z "$ONE" ]; then
         echo "$(STAMP) prune days=$RET_D failed (worker did not answer)" >> "$LOG"
       fi ;;
   esac
+
+  # >>> stale wake cursors (BH-6799). A box whose wake-loop stops leaves its
+  # cursor behind while the table grows (probe-operator-mac: 327,178 rows behind,
+  # and nothing said so). GET /api/wakes/cursor?all=1 marks a cursor `stale`
+  # when it is more than wakes.cursor_lag_alert_rows behind MAX(id) AND has
+  # not moved for wakes.cursor_lag_alert_s (settings rows). Read AFTER the
+  # prune, so a cursor the prune just deleted is never alerted. ONE ALERTS line
+  # per stale box per UTC day (alert_once). A failed read is one LOG line and
+  # no alert: the worker being down is not evidence that a box is stuck.
+  CUR_ROWS=""
+  if command -v _jobs_req >/dev/null 2>&1 \
+     && CUR_JSON=$(JOBS_ALERT=0 _jobs_req GET "/api/wakes/cursor?all=1" 2>/dev/null) \
+     && CUR_ROWS=$(printf '%s' "$CUR_JSON" | jq -r 'if (.cursors | type) == "array" then
+          .cursors[] | select(.stale == true) | [ .box, .lag, .updated_at ] | map(tostring) | @tsv
+        else error("shape") end' 2>/dev/null); then
+    STALE_N=0
+    while IFS=$'\t' read -r C_BOX C_LAG C_UPD; do
+      [ -n "$C_BOX" ] || continue
+      STALE_N=$((STALE_N+1))
+      alert_once "cursor-$C_BOX" "the wake cursor of box $C_BOX is $C_LAG wakes behind MAX(wakes.id) and has not moved since $C_UPD. Its wake-loop is down or stuck, and each claim it makes re-reads the rows above that cursor. Needs (operator): stop or fix the wake-loop on $C_BOX, or let the daily prune drop the cursor once it falls below MIN(wakes.id). Thresholds: settings rows wakes.cursor_lag_alert_rows and wakes.cursor_lag_alert_s."
+    done <<< "$CUR_ROWS"
+    echo "$(STAMP) cursor-lag stale=$STALE_N" >> "$LOG"
+  else
+    echo "$(STAMP) cursor-lag check failed (worker did not answer)" >> "$LOG"
+  fi
 fi
 
 echo "$(STAMP) checked=$SEEN missing=$MISSING unreadable=$UNREADABLE ringing=$RINGING" >> "$LOG"

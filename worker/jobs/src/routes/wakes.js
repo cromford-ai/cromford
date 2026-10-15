@@ -13,6 +13,7 @@ import {
   intOrNull,
   laneName,
 } from "../lib/core.js";
+import { settingsRows } from "../lib/settings-cache.js";
 
 // An integer in [lo, hi] and NOTHING else — not "30", not 1.5, not "1e2", not
 // null, not an object. `days` gates an irreversible DELETE, so the usual
@@ -24,6 +25,16 @@ const wholeInRange = (v, lo, hi) =>
 // D1 binds at most 100 values per statement. Every sliced statement below
 // derives its slice from this, so a comment and a literal can't drift (BH-3944).
 const D1_MAX_BINDS = 100;
+
+// A whole-number settings row in [lo, hi], or `def` when the row is absent or
+// not one (the retention.js rule): a junk knob uses the documented default.
+const intSettingOr = (byKey, key, def, lo, hi) => {
+  const row = byKey.get(key);
+  const v = row ? String(row.value).trim() : "";
+  if (!/^\d+$/.test(v)) return def;
+  const n = Number(v);
+  return n >= lo && n <= hi ? n : def;
+};
 
 const NUDGE_REASONS = new Set(["untriaged", "unblocked"]);
 const NUDGE_DEDUPE_RE = /^[a-z0-9:#-]{1,64}$/;
@@ -55,26 +66,49 @@ export const routes = [
   // reads this BEFORE it reads a repo's hooks: rows in `wakes` can only come
   // from a live webhook, so a repo that has rung is armed by evidence, and a
   // hooks read that 403s for our PAT cannot make it look unarmed.
+  //
+  // BH-6799: the answer comes from `wake_repo_last`, one row per repo (tens of
+  // rows), not from an aggregate over every wake in the window. Each call
+  // first FOLDS the wakes above the table's own watermark, MAX(last_id), into
+  // it: a rowid range read of the few wakes written since the last call (the
+  // first call after the deploy reads the history once). MATERIALIZED keeps
+  // that range read first; without it SQLite walked idx_wakes_repo_id for the
+  // GROUP BY and read every wake. `WHERE true` is SQLite's parse rule for an
+  // INSERT ... SELECT ... ON CONFLICT. The fold is idempotent (MAX upserts, a
+  // set union of kinds), so two racing calls give the same rows. A fold that
+  // throws is a 500: the caller reads that as "cannot tell".
+  //
+  // Each row is {repo, last_id, last_at, kinds}: there is no per-window count.
+  // `kinds` is every kind the repo ever rang with, sorted and comma-joined.
+  // bin/lib/pr-snapshot-wakes.sh compares `last_id` with its own watermark.
   [
     "GET", "/api/wakes/summary",
     async ({ env, url, t }) => {
       const hours = Math.min(168, Math.max(1, intOrNull(url.searchParams.get("hours")) ?? 24));
       const since = new Date(Date.parse(t) - hours * 3600e3).toISOString().replace(/\.\d{3}Z$/, "Z");
-      // BH-6727: the window is read FIRST, through idx_wakes_at, and only then
-      // grouped. Written as a plain GROUP BY, D1 (no ANALYZE statistics) walked
-      // a (repo, ...) index to get the groups in order and read every wake:
-      // 205,634 rows a call, 284 calls in 2 h, for an hours=1 window of ~1,200.
-      // The cost grows with the window: it reads every wake in it. The callers ask
-      // hours=1 (bin/lib/pr-snapshot-wakes.sh) and 24 (the daily doorbell lane).
-      // hours=168, the cap, read ~200k wakes and took 430 ms against 231 ms
-      // before the rewrite (#6749 review); no caller asks for it. A caller that
-      // needs a week should get a daily rollup, not this read.
-      const rows = await env.DB.prepare(
-        `WITH w AS MATERIALIZED (SELECT repo, at, kind FROM wakes WHERE at >= ?1)
-         SELECT repo, COUNT(*) n, MAX(at) last_at, GROUP_CONCAT(DISTINCT kind) kinds
-           FROM w GROUP BY repo ORDER BY repo ASC`
-      ).bind(since).all();
-      return json(200, { repos: rows.results || [], since, hours, as_of: t });
+      await ensureTable(env, "wake_repo_last");
+      await env.DB.prepare(
+        `WITH w AS MATERIALIZED (SELECT id, repo, at, kind FROM wakes
+           WHERE id > (SELECT COALESCE(MAX(last_id), 0) FROM wake_repo_last))
+         INSERT INTO wake_repo_last (repo, last_id, last_at, kinds)
+         SELECT repo, MAX(id), MAX(at), json_group_array(DISTINCT kind) FROM w WHERE true GROUP BY repo
+         ON CONFLICT(repo) DO UPDATE SET
+           kinds = (SELECT json_group_array(value) FROM (
+                     SELECT value FROM json_each(wake_repo_last.kinds)
+                     UNION SELECT value FROM json_each(excluded.kinds) ORDER BY value)),
+           last_at = MAX(wake_repo_last.last_at, excluded.last_at),
+           last_id = MAX(wake_repo_last.last_id, excluded.last_id)`
+      ).run();
+      const rows = (await env.DB.prepare(
+        `SELECT repo, last_id, last_at, kinds FROM wake_repo_last WHERE last_at >= ?1 ORDER BY repo ASC`
+      ).bind(since).all()).results || [];
+      const repos = rows.map((r) => ({
+        repo: r.repo,
+        last_id: Number(r.last_id),
+        last_at: r.last_at,
+        kinds: JSON.parse(r.kinds).map(String).sort().join(","),
+      }));
+      return json(200, { repos, since, hours, as_of: t });
     },
   ],
 
@@ -94,8 +128,15 @@ export const routes = [
   // running a paid lane twice (the same trade as the ack below).
   //
   // The claim does NOT move the cursor: the box PUTs /api/wakes/cursor after it
-  // has acted, with `scanned_top` — the highest id SCANNED, capped or not, so a
-  // capped scan is drained next call, never skipped (D12).
+  // has acted, with `scanned_top` — the highest id the scan EXAMINED, so a
+  // capped scan is drained next call, never skipped (D12). BH-6799: the scan is
+  // bounded by `id <= MAX(id)` read just before it. A scan that returns fewer
+  // than `limit` rows examined every row in (cursor, MAX], matching or not, so
+  // scanned_top is MAX. Before, it was the last MATCHING id, and a box whose
+  // repos rang rarely re-read every other repo's rows above it on each poll
+  // (project-6: 67,159 rows behind, 4,557 rows a call). A capped scan answers
+  // its last returned id, as before. A row written after the MAX read is above
+  // MAX, so the next claim scans it.
   [
     "POST", "/api/wakes/claim",
     async ({ env, t, body }) => {
@@ -115,14 +156,17 @@ export const routes = [
       }
       const cur = await env.DB.prepare(`SELECT cursor FROM wake_cursors WHERE box=?1`).bind(box).first();
       const cursor = cur ? Number(cur.cursor) : 0;
+      const top = await env.DB.prepare(`SELECT MAX(id) AS hi FROM wakes`).first();
+      const hi = top && top.hi !== null && top.hi !== undefined ? Number(top.hi) : cursor;
       // Each list is ONE json bind (json_each), so a long repo list can never
-      // reach the bind cap.
+      // reach the bind cap. The lower(repo) and kind predicates are what
+      // idx_wakes_repo_lc_id and idx_wakes_kind_id serve (BH-6799): keep their text.
       const scanned = (await env.DB.prepare(
-        `SELECT * FROM wakes WHERE id > ?1
+        `SELECT * FROM wakes WHERE id > ?1 AND id <= ?5
            AND (lower(repo) IN (SELECT value FROM json_each(?2))
                 OR kind IN (SELECT value FROM json_each(?3)))
          ORDER BY id ASC LIMIT ?4`
-      ).bind(cursor, JSON.stringify(repos), JSON.stringify(kinds), b.limit).all()).results || [];
+      ).bind(cursor, JSON.stringify(repos), JSON.stringify(kinds), b.limit, hi).all()).results || [];
       const mine = new Set();
       const CLAIM_SLICE = D1_MAX_BINDS - 2;  // ?1 box, ?2 t
       for (let i = 0; i < scanned.length; i += CLAIM_SLICE) {
@@ -133,7 +177,9 @@ export const routes = [
         ).bind(box, t, ...slice).all();
         for (const row of r.results || []) mine.add(Number(row.wake_id));
       }
-      const scannedTop = scanned.length ? scanned[scanned.length - 1].id : cursor;
+      const scannedTop = scanned.length >= b.limit
+        ? Number(scanned[scanned.length - 1].id)
+        : Math.max(cursor, hi);
       return json(200, {
         wakes: scanned.filter((w) => mine.has(Number(w.id))),
         cursor, scanned_top: scannedTop, as_of: t,
@@ -144,9 +190,35 @@ export const routes = [
   // ── GET /api/wakes/cursor?box= — this box's watermark, or null ──────────
   // An unknown box is `cursor: null`, never 0: the client must be able to tell
   // "no cursor yet" from "cursor at the start".
+  //
+  // ?all=1 (BH-6799) lists every box's cursor with its lag behind MAX(id) and a
+  // `stale` flag: lag > wakes.cursor_lag_alert_rows (default 10000) AND the
+  // cursor has not moved for wakes.cursor_lag_alert_s (default 3600). A junk or
+  // absent settings row uses its default. bin/doorbell-coverage-check.sh writes
+  // one ALERTS line a day per stale box. wake_cursors holds tens of rows.
   [
     "GET", "/api/wakes/cursor",
     async ({ env, url, t }) => {
+      if (url.searchParams.get("all") === "1") {
+        const { byKey } = await settingsRows(env);
+        const lagRows = intSettingOr(byKey, "wakes.cursor_lag_alert_rows", 10000, 0, Number.MAX_SAFE_INTEGER);
+        const lagS = intSettingOr(byKey, "wakes.cursor_lag_alert_s", 3600, 0, 31536000);
+        const top = await env.DB.prepare(`SELECT MAX(id) AS hi FROM wakes`).first();
+        const maxId = top && top.hi !== null && top.hi !== undefined ? Number(top.hi) : 0;
+        const rows = (await env.DB.prepare(
+          `SELECT box, cursor, updated_at FROM wake_cursors ORDER BY box ASC`
+        ).all()).results || [];
+        const nowMs = Date.parse(t);
+        const cursors = rows.map((r) => {
+          const cursor = Number(r.cursor);
+          const lag = Math.max(0, maxId - cursor);
+          const movedMs = Date.parse(r.updated_at);
+          // An updated_at that does not parse is not "recent": it cannot prove the box moved.
+          const idle = Number.isNaN(movedMs) || nowMs - movedMs > lagS * 1000;
+          return { box: r.box, cursor, updated_at: r.updated_at, lag, stale: lag > lagRows && idle };
+        });
+        return json(200, { max_id: maxId, lag_rows: lagRows, lag_s: lagS, cursors, as_of: t });
+      }
       const box = laneName(url.searchParams.get("box"));
       if (!box) return json(400, { error: "box required ([A-Za-z0-9._-]{1,64})" });
       const row = await env.DB.prepare(`SELECT cursor FROM wake_cursors WHERE box=?1`).bind(box).first();
@@ -313,9 +385,21 @@ export const routes = [
             WHERE NOT EXISTS (SELECT 1 FROM wakes w WHERE w.id = c.wake_id) LIMIT ?1)`
       ).bind(limit).run();
       const claimsDeleted = (c.meta && c.meta.changes) || 0;
+      // BH-6799: a box cursor below MIN(id) has not moved past any wake the
+      // table still holds, for the whole retention window, so the box is dead
+      // (probe-operator-mac sat 327,178 rows behind MAX). Its row goes. An empty
+      // `wakes` gives a NULL MIN and deletes nothing. A live box that was wrong
+      // here reseeds on its next PUT; claims still dedupe, so nothing re-runs.
+      // wake_cursors holds tens of rows. Runs last, after both sweeps.
+      await ensureTable(env, "wake_cursors");
+      const cd = await env.DB.prepare(
+        `DELETE FROM wake_cursors WHERE cursor < (SELECT MIN(id) FROM wakes)`
+      ).run();
+      const cursorsDeleted = (cd.meta && cd.meta.changes) || 0;
       return json(200, {
         deleted, before, days, limit, capped: deleted === limit,
-        claims_deleted: claimsDeleted, claims_capped: claimsDeleted === limit, as_of: t,
+        claims_deleted: claimsDeleted, claims_capped: claimsDeleted === limit,
+        cursors_deleted: cursorsDeleted, as_of: t,
       });
     },
   ],

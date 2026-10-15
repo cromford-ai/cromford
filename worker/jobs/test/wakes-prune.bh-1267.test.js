@@ -290,8 +290,11 @@ test('prune: a database with no wakes table self-creates it and answers 200', as
   assert.equal(r.status, 200, `a missing table must not 500: ${JSON.stringify(r.body)}`);
   assert.equal(r.body.deleted, 0);
   const names = indexNames(fx.db);
-  // BH-6727 added idx_wakes_repo_id (schema.d/202610141900): the self-create carries it too.
-  assert.deepEqual(names, ['idx_wakes_at', 'idx_wakes_dedupe', 'idx_wakes_repo_id', 'idx_wakes_unacked'],
+  // BH-6727 added idx_wakes_repo_id (schema.d/202610141900) and BH-6799 added
+  // idx_wakes_kind_id and idx_wakes_repo_lc_id (schema.d/202610150809): the
+  // self-create carries them too.
+  assert.deepEqual(names, ['idx_wakes_at', 'idx_wakes_dedupe', 'idx_wakes_kind_id', 'idx_wakes_repo_id',
+    'idx_wakes_repo_lc_id', 'idx_wakes_unacked'],
     `the self-create must bring every index with it; got ${names.join(', ')}`);
   fx.db.close();
 });

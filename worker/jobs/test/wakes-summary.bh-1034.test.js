@@ -11,8 +11,9 @@ import { jobsSchemaSql } from './lib/jobs-schema.js';
 // suppresses a client-visible alert on the strength of this answer, and a fake
 // D1 that returns whatever the test handed it would prove only that the route
 // calls prepare(). schema.sql is APPLIED into node:sqlite and the route's own
-// SQL is the thing executed: GROUP BY, MAX(at), GROUP_CONCAT(DISTINCT kind) and
-// the `at >= ?1` window all have to be right in the engine, not in a regex.
+// SQL is the thing executed: the fold into wake_repo_last (BH-6799), MAX(at),
+// the kinds union and the `last_at >= ?1` window all have to be right in the
+// engine, not in a regex.
 
 const SCHEMA = jobsSchemaSql();
 const SECRET = 'test-secret';
@@ -73,7 +74,9 @@ const ROWS = [
 ];
 const OLD = { repo: 'example-org/project-4', kind: 'deploy', key: 'def5678', at: iso(30 * H) };
 
-test('summary: one row per repo, with the count, the newest at, and every kind', async (t) => {
+// BH-6799: the answer comes from wake_repo_last, so a row carries the newest
+// wake id (last_id) and no per-window count (n).
+test('summary: one row per repo, with the newest id, the newest at, and every kind', async (t) => {
   const fx = await fixture(t, ROWS);
   if (!fx) return;
   const r = await call(fx, '');
@@ -81,11 +84,12 @@ test('summary: one row per repo, with the count, the newest at, and every kind',
   assert.equal(r.body.repos.length, 2, 'two repos rang, so two rows');
   const project-3 = r.body.repos.find((x) => x.repo === 'example-org/project-3');
   assert.ok(project-3, 'the repo that rang twice is missing from the summary');
-  assert.equal(project-3.n, 2);
+  assert.equal(project-3.last_id, 2, 'last_id is the newest wake id of the repo');
+  assert.equal('n' in project-3, false, 'no per-window count');
   assert.equal(project-3.last_at, iso(1 * H), 'last_at must be the NEWEST wake, not the oldest');
   assert.deepEqual(String(project-3.kinds).split(',').sort(), ['pr', 'push']);
   const ts = r.body.repos.find((x) => x.repo === 'example-org/project-5');
-  assert.equal(ts.n, 1);
+  assert.equal(ts.last_id, 3);
   assert.equal(ts.kinds, 'pr');
   assert.equal(r.body.hours, 24, 'no ?hours means 24');
   assert.equal(Date.parse(r.body.as_of) - Date.parse(r.body.since), 24 * H);
@@ -141,11 +145,16 @@ test('summary: nobody rang is an ANSWER — 200 with an empty list, never a 404'
   fx.db.close();
 });
 
-test('summary: the whole report is ONE statement — no per-repo N+1', async (t) => {
+// BH-6799: the report is one fold (a rowid-range read of the new wakes, grouped
+// by repo, upserted into wake_repo_last) and ONE read of wake_repo_last, plus the
+// table's ensureTable belt on the first call. Never a statement per repo.
+test('summary: one fold and ONE read of wake_repo_last — no per-repo N+1', async (t) => {
   const fx = await fixture(t, [...ROWS, OLD]);
   if (!fx) return;
   await call(fx, '');
-  assert.equal(fx.calls.length, 1, `expected 1 statement, got ${fx.calls.length}: ${fx.calls.join(' | ')}`);
-  assert.match(fx.calls[0], /GROUP BY repo/);
+  const rest = fx.calls.filter((c) => !/^CREATE /.test(c));
+  assert.equal(rest.length, 2, `expected the fold and one read, got ${rest.length}: ${rest.join(' | ')}`);
+  assert.match(rest[0], /^WITH w AS MATERIALIZED .* INSERT INTO wake_repo_last .* GROUP BY repo/);
+  assert.match(rest[1], /^SELECT repo, last_id, last_at, kinds FROM wake_repo_last WHERE last_at >= \?1/);
   fx.db.close();
 });

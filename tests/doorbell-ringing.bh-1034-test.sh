@@ -127,8 +127,14 @@ LAST="2026-09-19T21:00:00Z"   # determinism: ok a literal echoed back by the stu
 reset; summary "$(R example-org/project-3 3 "$LAST" 'pr,push')"
 OUT=$("$DIR/bin/jobs-client.sh" wakes-summary 24 2>/dev/null); RC=$?
 [ "$RC" = 0 ] && ok || bad "wakes-summary rc=$RC, expected 0"
-EXPECT=$(printf 'example-org/project-3\t3\t%s\tpr,push' "$LAST")
+# BH-6799: a 5th column, last_id; a worker that sent none prints `-`.
+EXPECT=$(printf 'example-org/project-3\t3\t%s\tpr,push\t-' "$LAST")
 [ "$OUT" = "$EXPECT" ] && ok || bad "wakes-summary TSV wrong: $(printf '%q' "$OUT")"
+# BH-6799: the worker's new answer has last_id and no n: n prints `-`.
+reset; printf '{"repos":[{"repo":"example-org/project-3","last_id":4242,"last_at":"%s","kinds":"pr,push"}]}' "$LAST" > "$T/summary.json"
+OUT=$("$DIR/bin/jobs-client.sh" wakes-summary 24 2>/dev/null); RC=$?
+EXPECT=$(printf 'example-org/project-3\t-\t%s\tpr,push\t4242' "$LAST")
+[ "$RC" = 0 ] && [ "$OUT" = "$EXPECT" ] && ok || bad "wakes-summary TSV of a last_id answer wrong: rc=$RC $(printf '%q' "$OUT")"
 grep -q '/api/wakes/summary?hours=24' "$T/calls/curl" && ok \
   || bad "the hours argument did not reach the route: $(cat "$T/calls/curl" 2>/dev/null)"
 
@@ -157,6 +163,13 @@ grep -q 'Test/unreadable/hooks' "$T/calls/gh" 2>/dev/null \
 case "$(logline Test/unreadable)" in
   *"doorbell=armed ring=ringing n=3 last=$LAST"*) ok ;;
   *) bad "ringing log line wrong: $(logline Test/unreadable)" ;;
+esac
+# BH-6799: the new answer has no count, so the line names none.
+reset; printf '{"repos":[{"repo":"Test/unreadable","last_id":9,"last_at":"%s","kinds":"pr"}]}' "$LAST" > "$T/summary.json"
+run --repo Test/unreadable --strict
+case "$OUT" in
+  *"Test/unreadable: doorbell armed (ringing, last $LAST)"*) ok ;;
+  *) bad "a ringing repo with no count was not reported armed without one — $OUT" ;;
 esac
 
 # ───────────────────────────────────────────────────────────────────────────

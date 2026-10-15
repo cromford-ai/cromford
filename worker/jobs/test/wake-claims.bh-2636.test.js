@@ -144,7 +144,9 @@ test('A3: a capped claim reports scanned_top; the next claim after a PUT returns
 
   const empty = await claim(fx, { box: 'b', repos: ['example-org/none'], limit: 10 });
   assert.deepEqual(empty.body.wakes, []);
-  assert.equal(empty.body.scanned_top, 0, 'an empty scan reports the cursor it started from');
+  // BH-6799: an uncapped scan examined every row up to MAX(id), matching or
+  // not, so it reports MAX (it was the cursor it started from, 0).
+  assert.equal(empty.body.scanned_top, all[149], 'an uncapped empty scan reports MAX(id)');
 
   // 150 fresh ids for a new box: two slices (99 + 51), every one returned.
   const c = await claim(fx, { box: 'c', repos: ['example-org/x'], limit: 150 });

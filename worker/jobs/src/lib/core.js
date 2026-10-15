@@ -1291,6 +1291,9 @@ export const CREATED_TABLE_OVERRIDES = {
     "CREATE INDEX IF NOT EXISTS idx_wakes_at ON wakes(at)",
     // BH-6727 (schema.d/202610141900): the cursor read WHERE id > ? AND repo = ?.
     "CREATE INDEX IF NOT EXISTS idx_wakes_repo_id ON wakes(repo, id)",
+    // BH-6799 (schema.d/202610150809): the claim's lower(repo) and kind ranges.
+    "CREATE INDEX IF NOT EXISTS idx_wakes_repo_lc_id ON wakes(lower(repo), id)",
+    "CREATE INDEX IF NOT EXISTS idx_wakes_kind_id ON wakes(kind, id)",
   ],
   // BH-2636 — POST /api/wakes/prune now sweeps orphan claims, and the prune is
   // a daily lane that already self-creates `wakes`; without this belt it would

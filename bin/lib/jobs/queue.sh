@@ -840,7 +840,9 @@ wake_cooldown_take() {
 
 # wakes_summary [hours]
 #   WHO HAS RUNG in the last <hours> (the worker clamps to 1..168; default 24).
-#   TSV: repo, n, last_at, kinds.
+#   TSV: repo, n, last_at, kinds, last_id. Since BH-6799 the worker answers
+#   from wake_repo_last: no per-window count (n prints `-`), and last_id is the
+#   repo's newest wake id. A field the worker did not send prints `-`.
 #
 #   rc 1 with EMPTY stdout on ANY failure, and the 404 of a worker that predates
 #   the route is one of them — deliberately, not by accident. The caller is
@@ -856,8 +858,8 @@ wakes_summary() {
   local hours="${1:-}" q="" resp JOBS_ALERT=0
   case "$hours" in ''|*[!0-9]*) ;; *) q="?hours=$hours" ;; esac
   resp=$(_jobs_req GET "/api/wakes/summary$q") || return 1
-  printf '%s' "$resp" | jq -r '.repos[]? | [ .repo, (.n // 0), (.last_at // "-"),
-    (.kinds // "-") ] | @tsv' 2>/dev/null
+  printf '%s' "$resp" | jq -r '.repos[]? | [ .repo, (.n // "-"), (.last_at // "-"),
+    (.kinds // "-"), (.last_id // "-") ] | @tsv' 2>/dev/null
 }
 
 # wakes_prune <days>
