@@ -37,8 +37,11 @@
 #      cloudflare.env, else from origin/main's worker/jobs/wrangler.jsonc.
 #      Before the first deploy of a run, the lane checks that the Pages
 #      project's PREVIEW environment has no production write binding (no D1,
-#      KV or R2, no secret-named env var). A binding found, or a config that
-#      does not read, stops every deploy this run with one alert.
+#      KV or R2, no secret-named env var). A binding found is removed with ONE
+#      PATCH that touches only deployment_configs.preview
+#      (CONSOLE_PREVIEW_STRIP_BINDINGS, default 1), then the config is read
+#      again. A re-read that still binds something, a PATCH that fails, or a
+#      config that does not read stops every deploy this run with one alert.
 #   8. QA: the hub mints a read-only QA session from the console worker
 #      (POST /api/qa/session, Bearer HARNESS_SECRET; cromford-console #46)
 #      and bin/console-qa-run.mjs signs in on the PREVIEW origin
@@ -69,7 +72,8 @@
 # Knobs (catalog/lanes.d/console-preview-deploy.json, lane_env_apply):
 # CONSOLE_PREVIEW_DEPLOY (0), CONSOLE_PREVIEW_MAX_PER_RUN (3),
 # CONSOLE_PREVIEW_QA_SCREENS ("/"), CONSOLE_PREVIEW_BUILD_USER (nobody),
-# CONSOLE_PREVIEW_BUILD_TMP (/tmp), CONSOLE_PREVIEW_WRANGLER (3.114.17).
+# CONSOLE_PREVIEW_BUILD_TMP (/tmp), CONSOLE_PREVIEW_WRANGLER (3.114.17),
+# CONSOLE_PREVIEW_STRIP_BINDINGS (1).
 # Off switch: bin/harness-ctl.sh off console-preview-deploy.
 # Secrets: the API token lives only in the deploy subshell's env and is scrubbed
 # from the deploy log; HARNESS_SECRET and the QA token never reach a log line or
@@ -148,40 +152,104 @@ TOKV=$( set -a; . "$CFENV" >/dev/null 2>&1; set +a; printf '%s' "${CLOUDFLARE_AP
 cpv_scrub() { CP_TOK="$TOKV" awk '{t=ENVIRON["CP_TOK"]; if (t!="") while ((i=index($0,t))>0) $0=substr($0,1,i-1) "***" substr($0,i+length(t)); gsub(/Bearer[ \t]+[^ \t]+/,"Bearer ***"); print}' "$1"; }
 
 # THE PREVIEW ENVIRONMENT HAS NO PRODUCTION WRITE BINDING, or nothing deploys.
+# Fail closed: every non-empty key of the preview config that is not a plain
+# setting is a binding (D1, KV, R2, services, Durable Objects, queues, AI,
+# Hyperdrive, Analytics Engine, and whatever Cloudflare adds next), and an env
+# var is a secret when its type is secret_text or its name says so.
+PREVIEW_JQ='.result.deployment_configs.preview as $p
+  | def plain: IN("env_vars","compatibility_date","compatibility_flags","usage_model","fail_open",
+                  "always_use_latest_compatibility_date","build_image_major_version","placement",
+                  "limits","wrangler_config_hash");
+    def secret: ((.value.type // "") == "secret_text") or (.key | test("SECRET|TOKEN|KEY|PASSWORD"; "i"));
+    def bindings: $p | to_entries[] | select(.key | plain | not)
+      | select((.value | type) as $t | ($t == "object" or $t == "array") and (.value | length) > 0);
+    def secrets: ($p.env_vars // {}) | to_entries[] | select(secret);'
+# preview_findings <project.json> — the findings as one comma list; empty = clean.
+preview_findings() {
+  jq -r "$PREVIEW_JQ"' [ (bindings | "\(.key) \(.value | if type == "object" then keys | join("/") else length | tostring end)"),
+                          (secrets | "env var \(.key)") ] | join(", ")' "$1"
+}
+# preview_strip_body <project.json> — {deployment_configs:{preview:{…nulls}}}:
+#   each object-typed binding's names and each secret env var set to null. An
+#   array-typed binding cannot be nulled by name, so it is listed in .cannot.
+#   The body never holds a production key or a plain env var.
+preview_strip_body() {
+  jq -c "$PREVIEW_JQ"' ([bindings | select(.value | type == "object") | {key, value: (.value | map_values(null))}] | from_entries)
+      + ([secrets | {key, value: null}] | if length > 0 then {env_vars: from_entries} else {} end)
+    | {body: {deployment_configs: {preview: .}}, cannot: [bindings | select(.value | type == "array") | .key]}' "$1"
+}
+STRIP="${CONSOLE_PREVIEW_STRIP_BINDINGS:-1}"
+case "$STRIP" in 0|1) ;; *) log "CONSOLE_PREVIEW_STRIP_BINDINGS='$STRIP' is not 0 or 1 — using 1"; STRIP=1 ;; esac
+# get_project — the Pages project config into $TMP/project.json; rc 0 = read.
+get_project() {
+  ( set -a; . "$CFENV"; set +a
+    curl -sS --max-time 30 -H "Authorization: Bearer ${CLOUDFLARE_API_TOKEN:-}" \
+      "${CONSOLE_PREVIEW_CF_API:-https://api.cloudflare.com/client/v4}/accounts/$ACCT/pages/projects/$(console_pages_project)" ) \
+    > "$TMP/project.json" 2>"$TMP/project.err"
+}
+# strip_preview_bindings — ONE PATCH that nulls the preview findings of
+#   $TMP/project.json. rc 0 when Cloudflare answers success; rc 1 with
+#   STRIP_WHY set. The token stays in the subshell; the response is never logged.
+STRIP_WHY=""
+strip_preview_bindings() {
+  local plan cannot
+  plan=$(preview_strip_body "$TMP/project.json" 2>/dev/null) || { STRIP_WHY="the strip body did not build"; return 1; }
+  cannot=$(jq -r '.cannot | join(", ")' <<<"$plan")
+  [ -n "$cannot" ] && { STRIP_WHY="array-typed bindings cannot be removed by name: $cannot"; return 1; }
+  jq -c '.body' <<<"$plan" > "$TMP/strip.json"
+  jq -e '.deployment_configs.preview | length > 0' "$TMP/strip.json" >/dev/null 2>&1 || { STRIP_WHY="nothing to remove by name"; return 1; }
+  if ! ( set -a; . "$CFENV"; set +a
+         curl -sS --max-time 30 -X PATCH -H "Authorization: Bearer ${CLOUDFLARE_API_TOKEN:-}" -H 'content-type: application/json' \
+           --data-binary @"$TMP/strip.json" \
+           "${CONSOLE_PREVIEW_CF_API:-https://api.cloudflare.com/client/v4}/accounts/$ACCT/pages/projects/$(console_pages_project)" ) \
+         > "$TMP/strip.out" 2>"$TMP/strip.err"; then
+    STRIP_WHY="the PATCH did not complete ($(cpv_scrub "$TMP/strip.err" | tail -n 1 | cut -c1-160))"; return 1
+  fi
+  jq -e '.success == true' "$TMP/strip.out" >/dev/null 2>&1 \
+    || { STRIP_WHY="Cloudflare did not answer success to the PATCH ($(jq -r '[.errors[]?.code // empty] | map(tostring) | join(",")' "$TMP/strip.out" 2>/dev/null | cut -c1-80))"; return 1; }
+  return 0
+}
 BINDINGS_OK=""
 preview_bindings_clean() {
   [ -n "$BINDINGS_OK" ] && { [ "$BINDINGS_OK" = yes ]; return; }
-  local why=""
-  if ! ( set -a; . "$CFENV"; set +a
-         curl -sS --max-time 30 -H "Authorization: Bearer ${CLOUDFLARE_API_TOKEN:-}" \
-           "${CONSOLE_PREVIEW_CF_API:-https://api.cloudflare.com/client/v4}/accounts/$ACCT/pages/projects/$(console_pages_project)" ) \
-         > "$TMP/project.json" 2>"$TMP/project.err"; then
+  local why="" found why2
+  if ! get_project; then
     why="the Pages project config did not read"
   elif ! jq -e '.success == true and (.result.deployment_configs.preview | type == "object")' "$TMP/project.json" >/dev/null 2>&1; then
     why="the Pages project config did not answer success with a preview config"
   else
-    # Fail closed: every non-empty key of the preview config that is not a
-    # plain setting is a binding (D1, KV, R2, services, Durable Objects, queues,
-    # AI, Hyperdrive, Analytics Engine, and whatever Cloudflare adds next), and
-    # an env var is a secret when its type is secret_text or its name says so.
-    why=$(jq -r '.result.deployment_configs.preview as $p
-      | [ ($p | to_entries[]
-           | select(.key | IN("env_vars","compatibility_date","compatibility_flags","usage_model","fail_open",
-                              "always_use_latest_compatibility_date","build_image_major_version","placement",
-                              "limits","wrangler_config_hash") | not)
-           | select((.value | type) as $t | ($t == "object" or $t == "array") and (.value | length) > 0)
-           | "\(.key) \(.value | if type == "object" then keys | join("/") else length | tostring end)"),
-          (($p.env_vars // {}) | to_entries[]
-           | select(((.value.type // "") == "secret_text") or (.key | test("SECRET|TOKEN|KEY|PASSWORD"; "i")))
-           | "env var \(.key)") ]
-      | join(", ")' "$TMP/project.json" 2>/dev/null) || why="(the config did not parse)"
-    [ -n "$why" ] && why="the preview environment has production bindings: $why"
+    found=$(preview_findings "$TMP/project.json" 2>/dev/null) || found="(the config did not parse)"
+    if [ -n "$found" ]; then
+      why="the preview environment has production bindings: $found"
+      # At most one strip per run; the re-read decides, never the PATCH answer.
+      if [ "$STRIP" = 1 ]; then
+        if strip_preview_bindings; then
+          if ! get_project; then
+            why="$why; the lane removed them, but the re-read of the config failed"
+          else
+            why2=$(preview_findings "$TMP/project.json" 2>/dev/null) || why2="(the config did not parse)"
+            if [ -z "$why2" ] && jq -e '.success == true and (.result.deployment_configs.preview | type == "object")' "$TMP/project.json" >/dev/null 2>&1; then
+              why=""
+              log "removed from the preview environment: $found (Pages project $(console_pages_project)); the re-read is clean"
+              [ -x "$H/bin/lane-alert.sh" ] && "$H/bin/lane-alert.sh" --log-only console-preview-deploy \
+                "[console-preview] The lane removed $found from the preview environment of Pages project $(console_pages_project). The production environment is not changed. The re-read shows no binding and no secret, so previews deploy again." >/dev/null 2>&1 || true
+              [ -x "$H/bin/lane-alert.sh" ] && "$H/bin/lane-alert.sh" --resolve --id console-preview-bindings console-preview-deploy \
+                "[console-preview] The preview environment binds nothing now; previews deploy again." >/dev/null 2>&1 || true
+            else
+              why="the preview environment still has production bindings after the lane removed them: ${why2:-the re-read did not answer success}"
+            fi
+          fi
+        else
+          why="$why; the lane could not remove them: $STRIP_WHY"
+        fi
+      fi
+    fi
   fi
   if [ -n "$why" ]; then
     BINDINGS_OK=no
     log "$why — no preview is deployed this run"
     [ -x "$H/bin/lane-alert.sh" ] && "$H/bin/lane-alert.sh" --id console-preview-bindings console-preview-deploy \
-      "[console-preview] $why. A preview runs unreviewed code against whatever Pages binds to its preview environment, so no preview deploys until it binds nothing (no D1, KV, R2, service, Durable Object or other binding) and no secret (Pages project $(console_pages_project), Settings -> Preview)." >/dev/null 2>&1 || true
+      "[console-preview] $why. A preview runs unreviewed code against whatever Pages binds to its preview environment, so no preview deploys until it binds nothing (no D1, KV, R2, service, Durable Object or other binding) and no secret (Pages project $(console_pages_project), Settings -> Preview). CONSOLE_PREVIEW_STRIP_BINDINGS=$STRIP." >/dev/null 2>&1 || true
     return 1
   fi
   BINDINGS_OK=yes
@@ -356,7 +424,7 @@ qa_and_post() {
     printf 'Console preview: %s\n\n' "$url"
     printf 'Head %s, deployed to Cloudflare Pages by the console-preview-deploy lane. Its Functions are origin/main'"'"'s; only the built dist/ is this head'"'"'s.\n\n' "$sha"
     printf 'Browser QA of the preview, signed in as a read-only QA session (loads only, no clicks), at 1440px and 390px:\n\n```\n'
-    grep -E '^(FAIL: |SCREEN |QA COVERAGE: |QA: )' "$out/qa.md" | head -40
+    grep -E '^(FAIL: |SCREEN |PREVIEW GAP: |QA COVERAGE: |QA: )' "$out/qa.md" | head -40
     printf '```\n\nQA: %s for head %s. Screenshots: %s on the hub.\n' "$res" "$sha" "$out"
     printf '<!-- console-preview sha=%s url=%s -->\n<!-- console-qa sha=%s result=%s -->\n' "$sha" "$url" "$sha" "$res"
   } > "$out/comment.md"

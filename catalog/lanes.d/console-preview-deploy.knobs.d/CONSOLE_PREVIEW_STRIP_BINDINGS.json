@@ -1,0 +1,10 @@
+{
+  "env": "CONSOLE_PREVIEW_STRIP_BINDINGS",
+  "type": "int",
+  "default": 1,
+  "min": 0,
+  "max": 1,
+  "zero_means": "off",
+  "note": "BH-6923: 1 (the default) = when the Pages project's preview environment binds anything, the lane sends ONE PATCH per run that sets those preview bindings and secret env vars to null (never the production environment), reads the config again, and deploys only on a clean re-read. 0 = refuse and alert, with no PATCH. A value that is not 0 or 1 is one log line and the default.",
+  "settable": true
+}

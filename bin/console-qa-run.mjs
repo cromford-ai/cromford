@@ -18,6 +18,15 @@
 // and `QA: PASS|FAIL`, and exits non-zero on FAIL. playwright is resolved from
 // <resolve-root>, then from the global npm root.
 //
+// A KNOWN PREVIEW GAP is not a defect (BH-6923). The preview environment binds
+// nothing, so main's Pages Functions that need CONSOLE_DB, HARNESS_SECRET or
+// LEAD_VERDICT_TOKEN answer 503 with their own "<binding> is not set|bound on
+// this Pages project" error. Each such same-origin /api/ response prints one
+// `PREVIEW GAP: <METHOD> <path> — <binding> not bound in the preview
+// environment` line (before QA COVERAGE), and the screen's record loses one
+// 503 "Failed to load resource" console error per gap response. Every other
+// console error, failed request, HTTP status or scroll still fails.
+//
 // The structure is the pool's bin/console-screen-drive.mjs (#5951), moved onto
 // the token flow and the 1440/390 widths.
 import { mkdirSync, writeFileSync } from "fs";
@@ -65,17 +74,65 @@ export function consoleFailures(rec) {
   return out;
 }
 
+const GAP_RE = /^(CONSOLE_DB|HARNESS_SECRET|LEAD_VERDICT_TOKEN) is not (set|bound) on this Pages project/;
+
+// previewGap(status, url, base, body, method) — {key, binding} when the
+// response is a known preview gap, else null. Only a 503 from <base>'s own
+// origin under /api/ whose JSON error matches GAP_RE counts.
+export function previewGap(status, url, base, body, method = "GET") {
+  if (status !== 503) return null;
+  let u;
+  try {
+    u = new URL(url);
+    if (u.origin !== new URL(base).origin || !u.pathname.startsWith("/api/")) return null;
+  } catch {
+    return null;
+  }
+  let err;
+  try {
+    err = JSON.parse(body).error;
+  } catch {
+    return null;
+  }
+  const m = typeof err === "string" ? GAP_RE.exec(err) : null;
+  return m ? { key: `${method} ${u.pathname}`, binding: m[1] } : null;
+}
+
+// The one formatter of the report line, for main and the tests.
+export function previewGapLine(gap) {
+  return `PREVIEW GAP: ${gap.key} — ${gap.binding} not bound in the preview environment`;
+}
+
+const E503 = "Failed to load resource: the server responded with a status of 503";
+
+// dropGapErrors(rec, n) — a copy of rec without its first n 503 resource
+// errors (one per gap response the screen saw). Other errors stay.
+export function dropGapErrors(rec, n) {
+  if (!(n > 0)) return rec;
+  let left = n;
+  const consoleErrors = rec.consoleErrors.filter((e) => {
+    if (left > 0 && e.startsWith(E503)) {
+      left--;
+      return false;
+    }
+    return true;
+  });
+  return { ...rec, consoleErrors };
+}
+
 async function main() {
   const [base, resolveRoot, outDir, ...paths] = process.argv.slice(2);
   const failures = [];
   const screens = [];
+  const gaps = new Map();
   const token = process.env.CONSOLE_QA_TOKEN || "";
   const clean = (s) => (token ? String(s).split(token).join("***") : String(s));
   const finish = () => {
     try {
-      writeFileSync(join(outDir, "observed.json"), clean(JSON.stringify({ base, paths, screens, failures }, null, 2)));
+      writeFileSync(join(outDir, "observed.json"), clean(JSON.stringify({ base, paths, screens, failures, gaps: [...gaps.values()] }, null, 2)));
     } catch { /* the printed report is the record of last resort */ }
     for (const f of failures) console.log(clean(`FAIL: ${f}`));
+    for (const g of gaps.values()) console.log(clean(g));
     const shots = screens.filter((s) => s.shot).length;
     console.log(`QA COVERAGE: screens=${screens.length} flows=0 shots=${shots}`);
     const pass = failures.length === 0 && screens.length > 0;
@@ -112,12 +169,30 @@ async function main() {
       failures.push(`the QA session did not hold: GET /api/dash/fleet answered ${pst === null ? "no response" : `HTTP ${pst}`} after /qa-login/ — no screen driven`);
       return finish();
     }
+    // The gap responses of the screen being driven. Only a /api/ 503 has its
+    // body read; a body that does not read is not a gap (fail closed).
+    let cur = null;
+    ctx.on("response", (r) => {
+      if (!cur || r.status() !== 503) return;
+      let path;
+      try {
+        path = new URL(r.url()).pathname;
+      } catch {
+        return;
+      }
+      if (!path.startsWith("/api/")) return;
+      cur.push(r.text().then((b) => previewGap(r.status(), r.url(), base, b, r.request().method())).catch(() => null));
+    });
     const viewports = viewportsFor(process.env.CONSOLE_QA_WIDTHS || "");
     for (const path of paths) {
       for (const viewport of viewports) {
+        cur = [];
         const rec = await driveScreen(ctx, { base, path, viewport, outDir });
+        const seen = (await Promise.all(cur)).filter(Boolean);
+        cur = null;
+        for (const g of seen) if (!gaps.has(g.key)) gaps.set(g.key, previewGapLine(g));
         screens.push(rec);
-        const f = consoleFailures(rec);
+        const f = consoleFailures(dropGapErrors(rec, seen.length));
         failures.push(...f);
         console.log(`SCREEN ${path} ${viewport.name} ${f.length ? "fail" : "ok"}`);
       }

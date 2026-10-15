@@ -79,7 +79,7 @@ curl -s "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/pa
 ```
 
 `secret_text` values never come back from the API — you see the key, not the value.
-Set or repair **both `production` and `preview`**:
+Set or repair **`production` only**:
 
 ```bash
 # HARNESS_SECRET is read from env, never typed into the command line or a file.
@@ -88,10 +88,17 @@ curl -s -X PATCH "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCO
   -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" -H 'Content-Type: application/json' \
   -d "$(jq -nc --arg s "$HARNESS_SECRET" --arg db 00000000-0000-0000-0000-000000000001 '
     {deployment_configs: {
-      production: {env_vars: {HARNESS_SECRET: {type:"secret_text", value:$s}}, d1_databases: {CONSOLE_DB: {id:$db}}},
-      preview:    {env_vars: {HARNESS_SECRET: {type:"secret_text", value:$s}}, d1_databases: {CONSOLE_DB: {id:$db}}}}}')" \
+      production: {env_vars: {HARNESS_SECRET: {type:"secret_text", value:$s}}, d1_databases: {CONSOLE_DB: {id:$db}}}}}')" \
   | jq '.success, [.errors[]?.message]'
 ```
+
+**The preview environment binds nothing** (BH-6923). Never add `HARNESS_SECRET`,
+`CONSOLE_DB` or any other binding or secret to `preview`: a preview runs unreviewed PR
+code. The console-preview lane (`bin/console-preview-deploy.sh`) refuses a preview
+environment that binds anything, and strips what it finds with one PATCH to
+`deployment_configs.preview` only (`CONSOLE_PREVIEW_STRIP_BINDINGS`, default 1). On a
+preview, a 503 that names one of these bindings is expected: the lane's QA reports it
+as a `PREVIEW GAP:` line, not as a failure.
 
 Config changes only take effect for **deployments made after them** — PATCH first,
 then deploy. Never widen a binding to work around a 503: `CONSOLE_DB` is read-only
