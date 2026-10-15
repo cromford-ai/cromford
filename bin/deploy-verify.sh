@@ -19,6 +19,14 @@ set -a; . "$HENV/global.env" 2>/dev/null; [ -f "$HENV/$PROJECT.env" ] && . "$HEN
 # shellcheck source=bin/lib/deploy-kind.sh
 . "$HARNESS/bin/lib/deploy-kind.sh" 2>/dev/null || . "$(dirname "${BASH_SOURCE[0]}")/lib/deploy-kind.sh" 2>/dev/null || deploy_kind() { return 2; }
 KIND=$(deploy_kind "$PROJECT")
+# BH-6786: the smoke probe is a browser page load (Clerk 404s anything else) on
+# <prod><deploy.<project>.smoke_path>. The fallback keeps the bare curl on the
+# bare URL, so a half-synced box still smokes.
+# shellcheck source=bin/lib/smoke-probe.sh
+. "$HARNESS/bin/lib/smoke-probe.sh" 2>/dev/null || . "$(dirname "${BASH_SOURCE[0]}")/lib/smoke-probe.sh" 2>/dev/null || {
+  smoke_url() { printf '%s\n' "$2"; }
+  smoke_code() { curl -s -o /dev/null -w '%{http_code}' -m 30 -L "$1"; }
+}
 if [ "$KIND" = none ]; then
   echo "$(STAMP) [$PROJECT] deploy-verify SKIP: $PROJECT has no GitHub production deployment (deploy.kind=none)" >> "$BUILD/pipeline.log"
   if [ -s "$BUILD/hotfix-migrate.json" ]; then
@@ -62,7 +70,7 @@ SMOKE_ONLY() {
     sleep "${DEPLOY_HOOK_WAIT:-420}"   # give the hook build time
   fi
   PROD=$("$HARNESS/bin/prod-url.sh" "$PROJECT") || exit 0
-  CODE=$(curl -s -o /dev/null -w '%{http_code}' -m 30 -L "$PROD")
+  PROD=$(smoke_url "$PROJECT" "$PROD"); CODE=$(smoke_code "$PROD")
   case "$CODE" in
     2*|3*|404)
       echo "$(STAMP) [$PROJECT] deploy-verify (smoke-only: $1): prod answers $CODE for ${SHA:0:8}" >> "$BUILD/pipeline.log"
@@ -142,7 +150,7 @@ done
 [ "$STATE" = "success" ] || FAIL "no successful production deployment within 20 min"
 
 PROD=$("$HARNESS/bin/prod-url.sh" "$PROJECT") || exit 0
-CODE=$(curl -s -o /dev/null -w '%{http_code}' -m 30 -L "$PROD")
+PROD=$(smoke_url "$PROJECT" "$PROD"); CODE=$(smoke_code "$PROD")
 case "$CODE" in
   2*|3*)
     echo "$(STAMP) [$PROJECT] deploy-verify OK: prod deployed ${SHA:0:8}, $PROD -> $CODE" >> "$BUILD/pipeline.log"
