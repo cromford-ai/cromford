@@ -1,0 +1,11 @@
+{
+  "env": "MC_HEAD_LAG_READ_TIMEOUT_S",
+  "type": "int",
+  "default": 30,
+  "min": 0,
+  "max": 200,
+  "unit": "seconds",
+  "zero_means": "off",
+  "note": "Wall time each GitHub read of the head-lag branch tip (the refs read on a cache miss and the live branches/ read) may take before it is cut (BH-6810). A cut read writes one HEAD_LAG_HELD reason=tip-read-timeout line per (PR, head), with no STEP_TIMEOUT, no alert and no Sentry event; the PR carries on that tick and the tip is read again next tick. Not a number reads as 30. Settings row: lane.merge-conductor.mc_head_lag_read_timeout_s.",
+  "read_in": "bin/lib/mc/rebase.sh"
+}

@@ -671,7 +671,13 @@ pr_worker() {
   # other arm — they would all be judging a head GitHub is still reporting
   # wrong — and AFTER the lane-epoch observation above, which must see every
   # row before any return (BH-1019).
+  # BH-6810: head-lag logs STEP_START/STEP_END on every run (knob
+  # MC_STEP_LOG_HEAD_LAG, default 1, 0 = only when slow), so the next slow read
+  # shows where the time went. The flag is restored for the steps after it.
+  local mc_sl0="$MC_STEP_LOG"
+  [ "${MC_STEP_LOG_HEAD_LAG:-1}" = 0 ] || MC_STEP_LOG=1
   mc_step head-lag
+  MC_STEP_LOG="$mc_sl0"
   head_lag_check "$P" "$KEY" "$SLUG" "$NUM" "$URL" "$HEAD" "$BR" "${CROSS:--}" && return 0
   # A HAND-OFF TO THE RESOLVER IS STICKY (2026-09-14). This row is parked with
   # bin/blocked-resolver.sh and nothing this tick can do moves it, so the tick

@@ -1,0 +1,10 @@
+{
+  "env": "MC_STEP_LOG_HEAD_LAG",
+  "type": "int",
+  "default": 1,
+  "min": 0,
+  "max": 1,
+  "zero_means": "off",
+  "note": "1 = the head-lag step of a PR worker logs STEP_START and STEP_END took=<n>s on every run, not only after a READY transition or when slow (BH-6810). 0 = the old rule (a STEP_END line only past MC_STEP_SLOW_S). Not 0 reads as 1. Settings row: lane.merge-conductor.mc_step_log_head_lag.",
+  "read_in": "bin/merge-conductor.sh"
+}

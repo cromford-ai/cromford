@@ -1,0 +1,4 @@
+# tests/mc/expected-map.d/BH-6810.tsv — the knob reader for the head-lag tip
+# read bound (MC_HEAD_LAG_READ_TIMEOUT_S, bin/lib/mc/rebase.sh, BH-6810), beside
+# head_lag_tip, its only caller; origin=lib because it is a new module function.
+rebase	head_lag_read_timeout_s	lib

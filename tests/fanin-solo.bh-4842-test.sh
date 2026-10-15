@@ -289,24 +289,30 @@ since() { tail -n +"$(($1 + 1))" "$CLOG"; }
 wait_for() { local i=0; while ! grep -qF -- "$2" <<<"$(since "$1")" && [ "$i" -lt 100 ]; do sleep 0.1; i=$((i+1)); done; grep -qF -- "$2" <<<"$(since "$1")"; }
 
 # K1 — TERMed mid-worker: the next tick's alert names the signal; the stage
-# comes from the real worker's mc_log. In this fixture #13's worker writes no
-# log line before its CI read (where it is killed), so its why: carries the
-# stamp and no stage; #11's worker logged its classification, and the dead
-# run's .stage dir holds exactly that line until the next tick reaps it.
+# comes from the real worker's mc_log. TEST-CHANGE BH-6810: head-lag now logs
+# its STEP_START/STEP_END on every run (MC_STEP_LOG_HEAD_LAG, default 1), so
+# #13's worker logs its head-lag STEP_START and STEP_END, and nothing else,
+# before its CI read (where it is killed). Its why: carries the stamp AND that
+# STEP_END as its stage, and never a line the worker did not log. #11's worker
+# logged its classification, and the dead run's .stage dir holds exactly that
+# line until the next tick reaps it.
 termtick || bad "K1: setup — the TERMed tick left no ledger"
 [ -s "$T/killed.txt" ] && ok || bad "K1: setup — the stub never TERMed the tick during #13's worker"
 SD=$(find "$LDIR/.stage" -mindepth 1 -maxdepth 1 -type d -name 'example-org_demo-os.*' 2>/dev/null | head -1)
 S11=$(cat "$SD/example-org_demo-os_11" 2>/dev/null)
 [ -n "$S11" ] && grep -q '^example-org/demo-os#11 ' <<<"$S11" && grep -qF -- " $S11" "$CLOG" \
   && ok || bad "K1: the real worker's mc_log wrote #11's stage file (got: '${S11:-}' in ${SD:-no .stage dir})"
-[ ! -s "$SD/example-org_demo-os_13" ] && ! grep -q '^[^ ]* [^ ]* example-org/demo-os#13 ' "$CLOG" \
-  && ok || bad "K1: setup — #13's worker logged before its CI read; the no-stage assertion below needs updating"
+S13=$(cat "$SD/example-org_demo-os_13" 2>/dev/null)
+L13=$(grep '^[^ ]* [^ ]* example-org/demo-os#13 ' "$CLOG")
+grep -Eq "^$K13 STEP_END step=head-lag took=[0-9]+s( started=[^ ]+)?$" <<<"$S13" && grep -qF -- " $S13" <<<"$L13" \
+  && [ -n "$L13" ] && ! grep -vqE " $K13 STEP_(START|END) step=head-lag( |$)" <<<"$L13" \
+  && ok || bad "K1: setup — #13's worker logs only its head-lag step lines before its CI read, and the STEP_END is its stage (stage: '${S13:-}'; log: ${L13:-none})"
 M=$(wc -l < "$CLOG"); : > "$T/c-alerts.txt"; ctick
 A=$(grep -F 'FANIN' "$T/c-alerts.txt")
 grep -qF "ALERT FANIN merge-conductor example-org/demo-os: enumerated 4 accounted 3 missing: $K13 (run died before fan-in) run: signal=TERM after=" <<<"$A" \
   && ok || bad "K1: the alert names #13 and the run's signal (got: ${A:-none}; stderr: $(tail -3 "$T/tick.err"))"
-grep -Eq "why: $K13 signal=TERM after=[0-9]+s$" <<<"$A" \
-  && ok || bad "K1: why: names #13's signal, and no stage it never logged (got: ${A:-none})"
+grep -Eq "why: $K13 signal=TERM after=[0-9]+s stage: \"$K13 STEP_END step=head-lag took=[0-9]+s( started=[^ ]+)?\"$" <<<"$A" \
+  && ok || bad "K1: why: names #13's signal and the one stage it logged, no other (got: ${A:-none})"
 [ ! -d "$SD" ] && ok || bad "K1: the next tick reaped the dead run's .stage dir ($SD)"
 [ "$(streak13)" = 0 ] && ok || bad "K1: the healthy tick after it cleared #13's streak (got $(streak13))"
 

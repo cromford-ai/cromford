@@ -30,9 +30,10 @@
 #          other 75 — skip this tick, leave state as it is.
 #
 # READING THE STATUS. GH_REST_STATUS (3 digits, or 000 when no status line came
-# back) and GH_REST_REASON (rate-limit | network | empty | bad-args |
+# back) and GH_REST_REASON (rate-limit | network | timeout | empty | bad-args |
 # quota-reserve | auth | auth-skipped | empty string) are set in the shell that
-# CALLS a helper. `auth` is a 401. `auth-skipped` is a call refused with no
+# CALLS a helper. `timeout` is a call that passed GH_REST_TIMEOUT_S with no
+# status line (BH-6810; only a caller that sets that variable gets a bound). `auth` is a 401. `auth-skipped` is a call refused with no
 # request, status 401, because an earlier call of the same conductor worker got
 # a 401 (BH-6346, bin/lib/gh-rest-auth.sh); outside a worker it never occurs. The
 # SAME SCOPE RULE governs GH_REST_QUOTA_REMAINING / GH_REST_QUOTA_LIMIT /
@@ -109,7 +110,7 @@ _gh_rest_sniff() {
 
 gh_rest() { # gh_rest <method> <path> [extra args for the REST call...]
   # GH_TOKEN is local (C2): the gate may put the App token on THIS call; the caller's shell never keeps it.
-  local m="${1:-}" p="${2:-}" tmp st body etagkey= etagval= extra=() use_etag=0 GH_TOKEN="${GH_TOKEN:-}" ct0=""
+  local m="${1:-}" p="${2:-}" tmp st body etagkey= etagval= extra=() use_etag=0 GH_TOKEN="${GH_TOKEN:-}" ct0="" trc=0 bound=()
   if [ -z "$m" ] || [ -z "$p" ]; then _gh_rest_bad_args; return 75; fi
   shift 2
   GH_REST_STATUS=000; GH_REST_REASON=; GH_REST_QUOTA_REMAINING=; GH_REST_QUOTA_LIMIT=; GH_REST_QUOTA_RESET=; GH_REST_QUOTA_RETRY_AFTER=
@@ -129,11 +130,19 @@ gh_rest() { # gh_rest <method> <path> [extra args for the REST call...]
     etagval=$(_gh_etag_read_etag "$etagkey")
     [ -n "$etagval" ] && extra=(-H "If-None-Match: $etagval")
   fi
-  # `|| true`: gh exits non-zero on every 4xx/5xx, and an errexit caller must
+  # `|| trc=$?`: gh exits non-zero on every 4xx/5xx, and an errexit caller must
   # reach the mapping below rather than die on gh's own rc.
   # ${extra[@]+…}: bash < 4.4 (macOS /bin/bash 3.2) calls an empty array unbound under set -u (BH-3565).
   if [ -n "${HARNESS_CALL_TRACE_FILE:-}" ] && command -v call_trace_t0 >/dev/null 2>&1; then call_trace_t0 ct0; fi
-  gh api -i -X "$m" "$p" "$@" ${extra[@]+"${extra[@]}"} > "$tmp" 2>/dev/null || true
+  # BH-6810: GH_REST_TIMEOUT_S (opt-in, caller-scoped, unset = no bound) runs
+  # the gh BINARY under `timeout`, so a stalled connection ends the call. A
+  # gh() test stub is left unbounded; the gh-limit-logger wrapper is skipped for
+  # this call (its 401 marker is still set below by _gh_auth_observe).
+  if [[ "${GH_REST_TIMEOUT_S:-}" =~ ^[1-9][0-9]*$ ]] && command -v timeout >/dev/null 2>&1 \
+     && { ! declare -F gh >/dev/null || declare -F _ghll_count >/dev/null; }; then
+    bound=(timeout -k 5 "$GH_REST_TIMEOUT_S")
+  fi
+  ${bound[@]+"${bound[@]}"} gh api -i -X "$m" "$p" "$@" ${extra[@]+"${extra[@]}"} > "$tmp" 2>/dev/null || trc=$?
   # The FIRST status line only, and no pipe: `sed | head` can answer 141 under
   # pipefail and take an errexit caller down with it.
   st=$(sed -n '/^HTTP\/[0-9.]* [0-9][0-9][0-9]/{s/^HTTP\/[0-9.]* \([0-9][0-9][0-9]\).*/\1/p;q;}' "$tmp")
@@ -144,7 +153,7 @@ gh_rest() { # gh_rest <method> <path> [extra args for the REST call...]
   # branching below — so the 000/network path is ledgered too, which is the most
   # interesting row in the file the hour the shared bucket drains.
   if command -v _gh_quota_observe >/dev/null 2>&1; then _gh_quota_observe "$tmp" "$m" "$p" "$st"; fi
-  if [ -z "$st" ]; then rm -f "$tmp"; GH_REST_REASON=network; return 75; fi
+  if [ -z "$st" ]; then rm -f "$tmp"; GH_REST_REASON=network; [ "${#bound[@]}" -gt 0 ] && case "$trc" in 124|137) GH_REST_REASON=timeout ;; esac; return 75; fi
   GH_REST_STATUS=$st
   if [ "$st" = 401 ]; then
     GH_REST_REASON=auth

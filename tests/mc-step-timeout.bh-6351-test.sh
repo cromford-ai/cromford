@@ -335,7 +335,8 @@ grep -qE "$SLUG#191 STEP_END step=dep-gate took=[0-9]+s result=step-timeout$" <<
 since "$M0" | grep -F "$SLUG#191 STEP_" | tail -2 | head -1 | grep -q 'step=dep-gate .*result=step-timeout' \
   && since "$M0" | grep -F "$SLUG#191 STEP_" | tail -1 | grep -q 'STEP_TIMEOUT step=dep-gate' && ok || bad "T3 the dep-gate STEP_END comes just before the STEP_TIMEOUT line"
 ! grep -qE "$SLUG#191 STEP_START step=(classify|ci-read|verdict-read)" <<<"$(since "$M0")" && ok || bad "T3 no STEP_START before the READY transition"
-[ "$(since "$M0" | grep -c "$SLUG#192 STEP_")" = 0 ] && ok || bad "T3 the WAIT_CI row #192 has no STEP lines ($(since "$M0" | grep -F '#192' | tail -3))"
+# BH-6810: head-lag logs its STEP_START/STEP_END on every run (MC_STEP_LOG_HEAD_LAG=1).
+[ "$(since "$M0" | grep "$SLUG#192 STEP_" | grep -vc ' step=head-lag')" = 0 ] && ok || bad "T3 the WAIT_CI row #192 has no STEP lines but head-lag's ($(since "$M0" | grep -F '#192' | tail -3))"
 [ "$(grep -F "$SLUG#192"$'\t' "$ROWS" | cut -f2)" = WAIT_CI ] && ok || bad "T3 setup: #192 stays WAIT_CI ($(grep -F "$SLUG#192" "$ROWS"))"
 
 # ============================================================================

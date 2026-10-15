@@ -4572,8 +4572,14 @@ head_lag_gc() { find "$MC_STATE_DIR/head-lag" -maxdepth 1 -type f -mtime +3 -del
 #   is confirmed by the live branches/ read below first.
 #   BH-6462: the refs read takes this tick's pin (MC_REFS_PIN_PREFIX, set by
 #   tick_project; bin/lib/pr-snapshot-refs.sh, THE PIN) before the cache.
+#   BH-6810: both GitHub reads (the refs read on a cache miss and the live
+#   branches/ read) are bounded by MC_HEAD_LAG_READ_TIMEOUT_S (default 30 s,
+#   0 = off, not a number = 30) through gh_rest's GH_REST_TIMEOUT_S. A read
+#   that passes it is rc 75 with HEAD_LAG_WHY "HTTP 000 timeout".
+head_lag_read_timeout_s() { local s="${MC_HEAD_LAG_READ_TIMEOUT_S:-30}"; [[ "$s" =~ ^[0-9]+$ ]] || s=30; printf '%s\n' "$((10#$s))"; }
 head_lag_tip() {
-  local slug="$1" br="$2" out="$3" head="${4:-}" memo rc=0 sha
+  local slug="$1" br="$2" out="$3" head="${4:-}" memo rc=0 sha GH_REST_TIMEOUT_S
+  GH_REST_TIMEOUT_S=$(head_lag_read_timeout_s); [ "$GH_REST_TIMEOUT_S" -gt 0 ] || GH_REST_TIMEOUT_S=
   memo=$(tick_memo_file headtip "$slug#$br")
   if [ -s "$memo" ]; then cp "$memo" "$out" 2>/dev/null && return 0; fi
   if command -v prs_branch_tip >/dev/null 2>&1 && PRS_REFS_PIN_PREFIX="${MC_REFS_PIN_PREFIX:-}" prs_branch_tip "$slug" "$br" > "$out" 2>/dev/null \
@@ -4682,6 +4688,13 @@ head_lag_check() {
   t=$(mktemp "${TMPDIR:-/tmp}/mc-tip.XXXXXX") || return 1
   if ! head_lag_tip "$slug" "$br" "$t" "$head"; then
     rm -f "$t"
+    # BH-6810: a read that passed its bound is a named HELD reason, said once
+    # per (PR, head). The PR carries on (rc 1), as for any unreadable tip.
+    if [ "${GH_REST_REASON:-}" = timeout ]; then
+      mc_attempt_has "headlag-held $key $head" 2>/dev/null || { mc_attempt_put "headlag-held $key $head"
+        mc_log "$key HEAD_LAG_HELD reason=tip-read-timeout: the tip read of $br passed $(head_lag_read_timeout_s)s — head-lag not checked on ${head:0:8} this tick; the PR carries on, asked again every tick"; }
+      return 1
+    fi
     # Said once per (PR, head): a PR whose branch is gone stays unreadable on
     # every tick, and a line per tick would bury the log.
     mc_attempt_has "headlag-unread $key $head" 2>/dev/null || { mc_attempt_put "headlag-unread $key $head"

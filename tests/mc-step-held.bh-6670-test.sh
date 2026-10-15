@@ -303,7 +303,7 @@ grep -Eq 'lane-epoch=[0-9]+s head-lag=[0-9]+s handoff-sticky=[0-9]+s park-holds=
 fresh; echo 2 > "$F/tipstall"
 M0=$(loglen)
 tick MC_WORKER_DEADLINE_S=30 MC_STEP_TIMEOUT_S=20 MC_STEP_SLOW_S=1
-since "$M0" | grep -Eq "$SLUG#1 STEP_END step=head-lag took=[2-9]s started=" && ok || bad "P2 a slow head-lag sub-step logs its STEP_END ($(since "$M0" | grep STEP_ | tail -5))"
+since "$M0" | grep -Eq "$SLUG#1 STEP_END step=head-lag took=[2-9]s( started=.*)?$" && ok || bad "P2 a slow head-lag sub-step logs its STEP_END ($(since "$M0" | grep STEP_ | tail -5))"
 ! grep -qE 'STEP_HELD|STEP_TIMEOUT' <<<"$(since "$M0")" && ok || bad "P2 a read under the step timeout is not held ($(since "$M0" | grep -E 'STEP_HELD|STEP_TIMEOUT'))"
 # MC_STEP_LOG=1 through mc_step: one STEP_END per sub-step, in order.
 ( . "$DIR/bin/lib/fanin.sh"
