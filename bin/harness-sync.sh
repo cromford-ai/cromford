@@ -203,34 +203,9 @@ if [ "$RC" = "10" ]; then
 fi
 AFTER=$(git -C "$CHECKOUT" rev-parse --short HEAD 2>/dev/null)
 
-# THE GENERATED INDEX, REBUILT ON THIS BOX (BH-1175).
-# docs/verification-map/README.md is generated and git-ignored, so a fresh
-# checkout simply does not have it — and bin/verification-map.sh renders the
-# project primer FROM that file. Without this line every primer on every box
-# would render "ABSENT: no docs/verification-map/README.md", which is a true
-# statement about the checkout and a false one about the repo.
-#
-# Best-effort on purpose: docs are not what shapes a build (the same reasoning
-# as the docs-edit note above), so a generator having a bad day must never turn
-# a deploy into a failure. It runs BEFORE the rsyncs so a box that dies halfway
-# still has the code it pulled.
-if [ -x "$CHECKOUT/bin/verification-map-build.sh" ]; then
-  "$CHECKOUT/bin/verification-map-build.sh" --repo "$CHECKOUT" >>"$LOG" 2>&1 \
-    || echo "$(STAMP) harness sync: verification-map index could not be regenerated (primers will render it ABSENT)" >> "$LOG"
-fi
-# docs/LLM_CALL_SITES.md is generated and git-ignored too (BH-1268), and it is
-# the page docs/verification-map/llm-choke-point.md sends a reader to for the
-# leak list. Same best-effort contract as the index above: a render is cheap
-# (one jq pass over catalog/llm-sites.json) and a generator having a bad day
-# must never turn a deploy into a failure.
-#
-# The orphan LIST is deliberately NOT rendered here. Nothing on a box reads it —
-# its gate is `bin/test-impact.sh orphans --check`, which runs in CI — and
-# building it costs a full test-impact map (~3s) on every sync of every box.
-if [ -x "$CHECKOUT/bin/llm-sites-build.sh" ]; then
-  "$CHECKOUT/bin/llm-sites-build.sh" --repo "$CHECKOUT" >>"$LOG" 2>&1 \
-    || echo "$(STAMP) harness sync: docs/LLM_CALL_SITES.md could not be regenerated" >> "$LOG"
-fi
+# The git-ignored doc indexes (docs/verification-map/README.md, BH-1175, and
+# docs/LLM_CALL_SITES.md, BH-1268) are rebuilt by bin/docs-sync.sh, launched
+# detached after the success stamp below (BH-6806, "doc indexes, detached").
 # >>> context budget manifest compose (BH-6487)
 # catalog/context-budgets.json is composed from catalog/context-budgets.d/ and
 # no longer committed, and every runtime reader (agent-call, llm-gate, the
@@ -941,6 +916,28 @@ if [ -x "$HARNESS/bin/model-prices-deploy-sync.sh" ]; then
       >>"$HARNESS/logs/model-prices-deploy-sync.log" 2>&1 9>&- 8>&- 7>&- 6>&- & ) || true
 fi
 # <<< model prices on deploy
+# >>> doc indexes, detached (BH-6806)
+# docs/verification-map/README.md and docs/LLM_CALL_SITES.md are generated and
+# git-ignored, so each box rebuilds them; bin/verification-map.sh renders the
+# project primers from the README. That build ran in the foreground before the
+# rsyncs until BH-6806: on the hub under load it ran 20+ minutes, fleet-propagate's
+# `timeout 300` killed every sync (rc 124) for about 6 hours on 2026-10-14, and
+# merged code and the worker were not live. Nothing in a sync or a worker
+# deploy reads either file, so the build runs HERE, after the rsyncs, the worker
+# phase and the stamp, in its own session (setsid, out of the process group
+# that timeout kills), bounded by DOCS_SYNC_TIMEOUT_S, 6-9 closed like the
+# model-prices hook above. bin/docs-sync.sh takes its own `flock -n`, skips a
+# build whose inputs are unchanged, and writes one duration line per build to
+# update-runners.log; a failed or killed build stamps nothing and is retried by
+# the next sync.
+if [ -x "$HARNESS/bin/docs-sync.sh" ]; then
+  _ds_pre=; command -v setsid >/dev/null 2>&1 && _ds_pre=setsid
+  _ds_to="${DOCS_SYNC_TIMEOUT_S:-1800}"; case "$_ds_to" in ''|0|*[!0-9]*) _ds_to=1800 ;; esac
+  ( HARNESS="$HARNESS" HARNESS_CHECKOUT="$CHECKOUT" $_ds_pre timeout -k 30 "$_ds_to" \
+      "$HARNESS/bin/docs-sync.sh" </dev/null \
+      >>"$HARNESS/logs/docs-sync.log" 2>&1 9>&- 8>&- 7>&- 6>&- & ) || true
+fi
+# <<< doc indexes
 # >>> cost caps seed on deploy (BH-4155)
 # A registry-seed cap row binds above catalog/{cost,lane}-caps.conf, and
 # schema.sql's INSERT OR IGNORE never moves one, so a reviewed catalog edit

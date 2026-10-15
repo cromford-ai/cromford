@@ -1,0 +1,8 @@
+{
+  "env": "DOCS_SYNC_TIMEOUT_S",
+  "type": "int",
+  "default": 1800,
+  "zero_means": null,
+  "read_in": "bin/harness-sync.sh",
+  "note": "BH-6806: seconds the detached doc-index build (bin/docs-sync.sh: docs/LLM_CALL_SITES.md and docs/verification-map/README.md) may run. Read by bin/harness-sync.sh as ${DOCS_SYNC_TIMEOUT_S:-1800} for the `timeout` of the detached launch; 0 or a non-numeric value is the default. A killed run stamps nothing, so the next sync rebuilds. No reviewed min/max yet, so nothing is clamped."
+}
