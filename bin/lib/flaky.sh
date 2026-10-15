@@ -243,9 +243,18 @@ flaky_run_tests_strict() {
 # It also drops ANSI CSI escapes (BH-3857): vitest and jest colour their FAIL
 # lines in Actions logs (`\e[31m FAIL \e[39m src/x.test.ts`), and a coloured
 # line matched no runner shape, so a coloured log named nothing at all.
+# BH-5373: the log GitHub serves spells the escape as the two characters `^[`,
+# not the byte, so both forms are stripped. And a line that opens with
+# `[36;1m` is GitHub's echo of a step's `run:` script (it follows
+# `##[group]Run …`), not output: it is dropped. harness-ci.yml's comment
+# `# A failed install must FAIL the job` read as a failing test named that
+# sentence on every red batch draft (#6503, #6555, #6563, #6573), so
+# _bs_facts answered `skip not-paths` and the impact map `unknown` on all of them.
 _flaky_strip_gh_prefix() {
   local t=$'\t' e=$'\033'
-  sed -E "s/^[^${t}]*${t}[^${t}]*${t}//; s/${e}\[[0-9;]*[A-Za-z]//g"
+  sed -E "s/^[^${t}]*${t}[^${t}]*${t}//
+    /^([0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9:.]+Z[[:space:]]*)?(${e}|\^\[)\[36;1m/d
+    s/(${e}|\^\[)\[[0-9;]*[A-Za-z]//g"
 }
 
 # _flaky_parse_tagged — the strict path's parse (stdin: a log with gh's

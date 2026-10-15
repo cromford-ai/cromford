@@ -23,14 +23,17 @@
 #
 # A MEMBER REACHES an S unit when `test-impact.sh select --why` on its files
 # names that suite, always-suites included (a failing always-suite is reached
-# by every member, so it is `several`). The select runs as a BATCH select
-# (TI_BATCH_SELECT=1, BH-6688), the same rules the batch's own selection
-# used: a catalog/ or tests/lib/ path reaches the suites the map ties to it,
-# not the corpus. Without it, 17 of 20 replayed members reached `*` and the
-# decision was never `eject`. A `full` row (a runner or workflow path, a file
-# main's map cannot place, a file the PR adds) reaches everything: `*`, and
-# the row's reason goes to `<files>.full`, logged as BATCH_IMPACT_FULL. Each
-# draft logs BATCH_IMPACT_REACH, the members that reached `*`. It
+# by every member, so it is `several`), or when its own file list holds the
+# suite (BH-5373: select skips a changed tests/ path, so a PR that ADDS the
+# failing suite, which main's map has never seen, reached nothing). The select
+# runs as a BATCH select (TI_BATCH_SELECT=1, BH-6688), the same rules the
+# batch's own selection used: a catalog/ or tests/lib/ path reaches the suites
+# the map ties to it, not the corpus. Without it, 17 of 20 replayed members
+# reached `*` and the decision was never `eject`. A `full` row (a runner or
+# workflow path, a file main's map cannot place, a file the PR adds) reaches
+# everything: `*`, and the row's reason goes to `<files>.full`, logged as
+# BATCH_IMPACT_FULL. Each draft logs BATCH_IMPACT_REACH, the members that
+# reached `*`. It
 # reaches a P unit when one of its files is under the prefix, or its reach is
 # `*`. A member whose head, dequeue comment or file list cannot be read, or
 # whose newest dequeue comment is not this draft's at its current head, is `?`,
@@ -165,8 +168,8 @@ bim_candidates() {
     awk -F'\t' -v m="$m" -v rf="$rd/$m.reach" -v ff="$rd/$m.files" '
       function enc(x) { gsub(/%/, "%25", x); gsub(/ /, "%20", x); gsub(/,/, "%2C", x); return x }
       BEGIN { while ((getline l < rf) > 0) { if (l == "*") all = 1; R[l] = 1 }
-              while ((getline l < ff) > 0) if (l != "") F[++nf] = l }
-      $1 == "S" && !(("S" $2) in seen) { if (all || ($2 in R)) { seen["S" $2] = 1; hit[++h] = $2 } }
+              while ((getline l < ff) > 0) if (l != "") { F[++nf] = l; OWN[l] = 1 } }
+      $1 == "S" && !(("S" $2) in seen) { if (all || ($2 in R) || ($2 in OWN)) { seen["S" $2] = 1; hit[++h] = $2 } }
       $1 == "P" && !(("P" $2) in seen) {
         ok = all; for (i = 1; i <= nf && !ok; i++) if (index(F[i], $3) == 1) ok = 1
         if (ok) { seen["P" $2] = 1; hit[++h] = $2 } }

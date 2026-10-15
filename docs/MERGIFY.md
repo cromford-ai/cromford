@@ -463,7 +463,9 @@ webhook left wrong (docs/notes/2026-10-10-BH-5670-merge-queue-reconcile.md).
 
 ## 6. Parallel lanes (BH-4979)
 
-**Status: shipped dark.** `config/mergify/repos/cromford.conf` says `queue_mode=serial`,
+**Status: shipped dark, still serial (checked by BH-5373 on 2026-10-13).** BH-5373 did not flip
+it: `MERGIFY_CI_KEY` is not on the hub yet, so the step 3 probe below cannot run.
+`config/mergify/repos/cromford.conf` says `queue_mode=serial`,
 so `.mergify.yml` is unchanged and the queue still runs one serial stream of batches. With no
 settings row the conductor runs in `shadow` mode. It works out each PR's lane and logs it,
 and it uploads nothing.
