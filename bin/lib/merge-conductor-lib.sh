@@ -25,7 +25,9 @@
 #     mc/log.sh stubs nothing for them; verdict-status.sh (BH-3348) because
 #     mc_enqueue_mergify publishes the lead-verdict status.
 # mc/block-ci.sh (BH-3932) is the READY arm's CI-block hook, optional so a
-# hand-built mc/ still loads. mc/snapshot-refs.sh (BH-4659) loads prs_branch_tip
+# hand-built mc/ still loads. mc/spawn-remote.sh (BH-6888) is the machine's
+# queued rebase, optional too: mc/rebase.sh checks `command -v mc_remote_on`.
+# mc/snapshot-refs.sh (BH-4659) loads prs_branch_tip
 # AFTER the $MC_H list, so its gh_rest never pre-empts gh-rest.sh; optional too.
 # MC_H is restated in mc/log.sh because a stubbed
 # module may not set it. tests/gh-app-ratchet-test.sh reads the mc/load.sh
@@ -42,6 +44,7 @@ command -v verdict_parse >/dev/null 2>&1 || { [ -r "${BASH_SOURCE[0]%/*}/verdict
 command -v mc_queue_batch_only >/dev/null 2>&1 || { [ -r "${BASH_SOURCE[0]%/*}/queue-batch-only.sh" ] && . "${BASH_SOURCE[0]%/*}/queue-batch-only.sh"; }
 . "$MC_LIB_DIR/load.sh" || { echo "merge-conductor-lib: the mc modules did not load from $MC_LIB_DIR" >&2; exit 1; }
 [ -r "$MC_LIB_DIR/block-ci.sh" ] && . "$MC_LIB_DIR/block-ci.sh"
+[ -r "$MC_LIB_DIR/spawn-remote.sh" ] && . "$MC_LIB_DIR/spawn-remote.sh"
 command -v gh_auth_for >/dev/null 2>&1 || { [ -r "$MC_H/bin/lib/gh-app-auth.sh" ] && . "$MC_H/bin/lib/gh-app-auth.sh"; }
 [ -r "$MC_H/bin/lib/gh-pr-merge.sh" ] && . "$MC_H/bin/lib/gh-pr-merge.sh"
 [ -r "$MC_H/bin/lib/review-model.sh" ] && . "$MC_H/bin/lib/review-model.sh"

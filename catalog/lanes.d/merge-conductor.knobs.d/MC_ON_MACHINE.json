@@ -3,6 +3,6 @@
   "type": "string",
   "default": "",
   "zero_means": null,
-  "note": "Not a knob: set to 1 by bin/merge-conductor-pr.sh for the keyed conductor run of one PR on a lane-run machine (BH-6495). Read by bin/merge-conductor.sh and bin/lib/mc/rebase.sh as ${MC_ON_MACHINE:-}: 1 = no enqueue, no land fan-out and no detached rebase/re-review from this run; the deferred work is written to MC_PR_DEFERRED_FILE for the hub. Unset on the hub, which keeps today's behaviour. NOT settable from the control plane.",
+  "note": "Not a knob: set to 1 by bin/merge-conductor-pr.sh for the keyed conductor run of one PR on a lane-run machine (BH-6495). Read by bin/merge-conductor.sh and bin/lib/mc/rebase.sh as ${MC_ON_MACHINE:-}: 1 = no enqueue, no land fan-out and no detached rebase/re-review from this run; the deferred work is written to MC_PR_DEFERRED_FILE for the hub. Exception (BH-6888): with the settings row conductor_remote_spawn (or conductor_remote_spawn.<project>) at 1 and a pool app, a machine enqueues its rebase as a pool build_queue row instead of deferring it; re-review and deploy-verify still defer. Unset on the hub, which keeps today's behaviour. NOT settable from the control plane.",
   "settable": false
 }

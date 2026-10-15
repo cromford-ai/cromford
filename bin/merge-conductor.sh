@@ -2103,9 +2103,11 @@ pr_worker() {
           [ "$RC" = 0 ] || mc_tick_budget_give "$P" rebase
           case "$RC" in
             0) mc_attempt_put "rebase $KEY $HEAD"; mc_count_inc "$P" rebases >/dev/null
-               mc_log "$KEY REBASE_SPAWNED — detached rebase of ${HEAD:0:8} into $BR (job $JOBF)"
+               mc_log "$KEY REBASE_SPAWNED — detached rebase of ${HEAD:0:8} into $BR ($(mc_rebase_job_ref "$SLUG" "$NUM" "$P" "$HEAD"))"
                mc_transition "$KEY" REBASING "REBASING ${HEAD:0:8} (detached rebase spawned)" "$HEAD" "$REVIEWED" "$URL" "$VERDICT" "$MSTATE" "$REC" >/dev/null ;;
-            3) mc_log "$KEY REBASE_QUEUED — ${MC_REBASE_PARALLEL:-0} rebases already running fleet-wide (operator-set MC_REBASE_PARALLEL); spawning on a later tick" ;;
+            3) if [ "${MC_ON_MACHINE:-}" = 1 ]; then mc_log "$KEY REBASE_DEFERRED ${HEAD:0:8} — $(mc_rebase_spawn_why 3)"
+               else mc_log "$KEY REBASE_QUEUED — ${MC_REBASE_PARALLEL:-0} rebases already running fleet-wide (operator-set MC_REBASE_PARALLEL); spawning on a later tick"; fi ;;
+            4) mc_log "$KEY REBASE_ON_RECORD ${HEAD:0:8} — $(mc_rebase_spawn_why 4)" ;;
             *) mc_log "$KEY detached rebase could not be spawned (rc $RC)" ;;
           esac ;;
       esac ;;

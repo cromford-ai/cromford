@@ -67,7 +67,8 @@ shim 'shopt -s extdebug; declare -F mc_slug_of_url | cut -d" " -f3; for f in $(d
 [ "$(sed -n 1p <<<"$OUT")" = "$MC/classify.sh" ] && ok \
   || bad "CU-1 mc_slug_of_url must come from mc/classify.sh, got '$(sed -n 1p <<<"$OUT")'"
 # block-ci.sh is the shim's own optional sibling, sourced after the modules.
-[ "$(sed -n 2p <<<"$OUT")" = "block-ci classify locks log module-map queue rebase settle " ] && ok \
+# spawn-remote.sh (BH-6888) is another optional sibling of the shim.
+[ "$(sed -n 2p <<<"$OUT")" = "block-ci classify locks log module-map queue rebase settle spawn-remote " ] && ok \
   || bad "CU-1 mc files that define functions: '$(sed -n 2p <<<"$OUT")'"
 grep -qx CONTINUED <<<"$OUT" && ok || bad "CU-1 the caller must continue after a clean load"
 fakes

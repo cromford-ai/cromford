@@ -927,6 +927,12 @@ mc_pool_rebase_enqueue() {
   num=$(mc_num_of_url "$url")
   [ -n "$num" ] || { mc_log "${url:--} pool rebase: no PR number in that url — nothing queued, nothing spent"; return 7; }
   key=$(mc_pool_rebase_key "$num" "$head")
+  # ON A MACHINE WITH conductor_remote_spawn ON (BH-6888) the row is the whole
+  # record: no job file, no attempts clear. The machine's run ends with it.
+  if [ "${MC_ON_MACHINE:-}" = 1 ] && command -v mc_remote_on >/dev/null 2>&1 && mc_remote_on "$project"; then
+    mc_remote_rebase_spawn "$slug" "$num" "$project" "$br" "$head" "$url"
+    case "$?" in 0|4) return 6 ;; *) return 7 ;; esac
+  fi
   mkdir -p "$MC_RB_DIR" 2>/dev/null || { mc_log "$url pool rebase: $MC_RB_DIR is not writable — nothing spent"; return 7; }
   jf=$(mc_rb_file "$slug" "$num" "$head"); out="${jf%.json}.out"
   started=$(mc_now)
@@ -3339,6 +3345,30 @@ mc_rb_fail() {
     "$(mc_rr_field "$jf" head_sha)" - "$(mc_rr_field "$jf" out_file)"
 }
 
+# mc_rebase_job_ref <owner/repo> <num> <project> <head> — what a spawn log line
+#   names as the job. On a machine with conductor_remote_spawn on (BH-6888) it is
+#   the queue row RB-<pr>-<head8>, because no local job file exists; elsewhere
+#   `job <file>`, as before.
+mc_rebase_job_ref() {
+  if [ "${MC_ON_MACHINE:-}" = 1 ] && command -v mc_remote_on >/dev/null 2>&1 && mc_remote_on "$3"; then
+    printf 'queue row %s' "$(mc_pool_rebase_key "$2" "$4")"
+  else
+    printf 'job %s' "$(mc_rb_file "$1" "$2" "$4")"
+  fi
+}
+
+# mc_rebase_spawn_why <rc> — the words of a spawn refusal for a log line.
+#   rc 3 on a machine is the hand-back to the hub (deferred=rebase), not the
+#   cap; rc 4 is a finished rebase of this head on record.
+mc_rebase_spawn_why() {
+  case "$1" in
+    3) if [ "${MC_ON_MACHINE:-}" = 1 ]; then printf 'deferred to the hub (deferred=rebase)'
+       else printf '%s rebases already running' "$(mc_rb_running)"; fi ;;
+    4) printf 'a finished rebase of this head is on record; rebase_consume applies it' ;;
+    *) printf 'spawn failed (rc %s)' "$1" ;;
+  esac
+}
+
 # mc_rebase_spawn <owner/repo> <num> <project> <branch> <head> <url> [cap]
 #   rc 0 spawned | rc 3 at the admission limit (try next tick) | rc 1 setup failed
 #   | rc 4 this (PR, head) already has a finished rebase on record (BH-2358).
@@ -3358,7 +3388,12 @@ mc_rebase_spawn() {
   # detached rebase job would outlive the run and its result file would never reach
   # the hub. rc 3 is the cap answer every caller reads as "a later tick", and
   # the hub runs this PR itself on its next tick (deferred=rebase).
+  # With conductor_remote_spawn on (BH-6888), the rebase is a queued pool job
+  # instead: rc 0 queued or in flight, rc 4 a result on record, rc 3 deferred.
   if [ "${MC_ON_MACHINE:-}" = 1 ]; then
+    if command -v mc_remote_on >/dev/null 2>&1 && mc_remote_on "$project"; then
+      mc_remote_rebase_spawn "$slug" "$num" "$project" "$br" "$head" "$url"; return $?
+    fi
     [ -n "${MC_PR_DEFERRED_FILE:-}" ] && echo rebase >> "$MC_PR_DEFERRED_FILE"
     return 3
   fi
@@ -4249,11 +4284,18 @@ land_rebase_arm() {
   case "$lrc" in
     0) mc_attempt_put "$mark"
        mc_count_inc "$P" landspawned >/dev/null; mc_count_inc "$P" rebases >/dev/null
-       mc_log "$KEY LAND_REBASE_SPAWNED main ${LAND_SHA:0:8} — detached rebase of ${HEAD:0:8} into $BR (job $(mc_rb_file "$SLUG" "$NUM" "$HEAD"))"
+       mc_log "$KEY LAND_REBASE_SPAWNED main ${LAND_SHA:0:8} — detached rebase of ${HEAD:0:8} into $BR ($(mc_rebase_job_ref "$SLUG" "$NUM" "$P" "$HEAD"))"
        mc_transition "$KEY" REBASING "REBASING ${HEAD:0:8} (land rebase spawned, main ${LAND_SHA:0:8})" "$HEAD" "$REVIEWED" "$URL" "$VERDICT" "$MSTATE" "$REC" >/dev/null
        return 0 ;;
     3) mc_count_inc "$P" landdeferred >/dev/null
-       mc_log "$KEY LAND_DEFER $(mc_rb_running) rebases already running (MC_LAND_REBASE_PARALLEL=${MC_LAND_REBASE_PARALLEL:-4}) — spawned on a later tick"
+       if [ "${MC_ON_MACHINE:-}" = 1 ]; then
+         mc_log "$KEY LAND_DEFER ${HEAD:0:8} $(mc_rebase_spawn_why 3)"
+       else
+         mc_log "$KEY LAND_DEFER $(mc_rb_running) rebases already running (MC_LAND_REBASE_PARALLEL=${MC_LAND_REBASE_PARALLEL:-4}) — spawned on a later tick"
+       fi
+       return 1 ;;
+    4) mc_count_inc "$P" landdeferred >/dev/null
+       mc_log "$KEY LAND_DEFER ${HEAD:0:8}: $(mc_rebase_spawn_why 4)"
        return 1 ;;
     *) mc_count_inc "$P" landdeferred >/dev/null
        mc_log "$KEY LAND_DEFER spawn of ${HEAD:0:8} failed (rc $lrc) — offered again next tick"
@@ -4308,11 +4350,15 @@ eject_rebase_arm() {
   mc_rebase_spawn "$SLUG" "$NUM" "$P" "$BR" "$HEAD" "$URL" "${MC_LAND_REBASE_PARALLEL:-4}"; erc=$?
   if [ "$erc" != 0 ]; then
     mc_attempt_clear ejectrebase "$KEY" "$HEAD"
-    mc_log "$KEY EJECT_REBASE_DEFER $HEAD — spawn refused (rc $erc; $(mc_rb_running) rebases running, MC_LAND_REBASE_PARALLEL=${MC_LAND_REBASE_PARALLEL:-4}); offered again next tick"
+    if [ "$erc" = 3 ] && [ "${MC_ON_MACHINE:-}" != 1 ]; then
+      mc_log "$KEY EJECT_REBASE_DEFER $HEAD — spawn refused (rc $erc; $(mc_rb_running) rebases running, MC_LAND_REBASE_PARALLEL=${MC_LAND_REBASE_PARALLEL:-4}); offered again next tick"
+    else
+      mc_log "$KEY EJECT_REBASE_DEFER $HEAD — $(mc_rebase_spawn_why "$erc") (rc $erc)"
+    fi
     return 1
   fi
   mc_attempt_put "rebase $KEY $HEAD"; mc_count_inc "$P" rebases >/dev/null
-  mc_log "EJECT_REBASE_SPAWNED $KEY $HEAD — detached rebase of ${HEAD:0:8} into $BR after a base-conflict ejection (job $jf)"
+  mc_log "EJECT_REBASE_SPAWNED $KEY $HEAD — detached rebase of ${HEAD:0:8} into $BR after a base-conflict ejection ($(mc_rebase_job_ref "$SLUG" "$NUM" "$P" "$HEAD"))"
   mc_transition "$KEY" REBASING "REBASING ${HEAD:0:8} (rebase after a base-conflict ejection)" "$HEAD" "$REVIEWED" "$URL" "$VERDICT" "$MSTATE" "$REC" >/dev/null
   return 0
 }
@@ -4427,7 +4473,29 @@ eject_rebased_moved() {
 #   GitHub, and a job spawned before the flag went off must still be recorded.
 rebase_consume() {
   local key="$1" slug="$2" num="$3" url="$4" rec="$5" head="$6" reviewed="$7" verdict="$8" mstate="$9"
-  local jf st rc out pst
+  local jf st rc out pst res outc
+  # ON A MACHINE WITH conductor_remote_spawn ON (BH-6888) the result is the
+  # queue row, read through the API; there is no local job file. A CONFLICT,
+  # GATE_RED or lease rejection is applied once per (key, head), the marker
+  # written last (BH-523). A REBASED moved the PR: the hub reap already did the
+  # rebind (or not), so this run only logs the sha and lets the classifier read
+  # the head GitHub lists. A failed, empty, stale or defer row reopens the
+  # NEEDS_REBASE arm's mark, so the arm calls the spawn again this tick and the
+  # spawn retries or hands the PR back (mc_remote_rebase_reopen).
+  if [ "${MC_ON_MACHINE:-}" = 1 ] && command -v mc_remote_on >/dev/null 2>&1 && mc_remote_on "$P"; then
+    res=$(mc_remote_rebase_result "$P" "$num" "$head") || return 1
+    IFS=$'\t' read -r outc rc out <<<"$res"
+    [ "$outc" = ok ] || { mc_remote_rebase_reopen "$key" "$head" "$outc" "$out"; return 1; }
+    case "$rc" in
+      0) mc_log "$key remote rebase of ${head:0:8} pushed $out — the classifier reads the listed head"; return 1 ;;
+      1|2|3)
+        mc_attempt_has "rebasedone $key $head" 2>/dev/null && return 1
+        rebase_result "$key" "$url" "$rec" "$head" "$reviewed" "$verdict" "$mstate" "$rc" "$out"
+        mc_attempt_put "rebasedone $key $head"
+        return 0 ;;
+    esac
+    return 1
+  fi
   # THE KILL SWITCH IS ABOUT THE DETACHED LANE, NOT ABOUT THE POOL (BH-486).
   # With MC_DETACHED_REBASE=0 and the flag OFF this is the single-line guard it
   # replaced. With the knob at 0 and the flag ON, a result a pool machine

@@ -1,0 +1,6 @@
+# tests/mc/expected-map.d/BH-6888.tsv — BH-6888 (BH-6881.4, slice C0): the two
+# rebase helpers that name a spawned rebase job (a queue row on a machine with
+# conductor_remote_spawn on, a job file elsewhere) and word a spawn refusal for
+# the log (bin/lib/mc/rebase.sh); origin=lib because they are new module functions.
+rebase	mc_rebase_job_ref	lib
+rebase	mc_rebase_spawn_why	lib
