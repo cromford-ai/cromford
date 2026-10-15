@@ -1,0 +1,53 @@
+{
+  "libs": [
+    {
+      "id": "pre-arm-preview",
+      "file": "bin/lib/pre-arm-preview.sh",
+      "note": "BH-6501: the Vercel preview gate inside bin/pre-arm-guards.sh. A gated repo's PR head whose own newest Vercel preview is ERROR answers rc 1 (park); a preview still building answers rc 3 (retry). The state comes from the vercel-deploy-snapshot files; a missing or stale snapshot never holds a merge. Resolved at call time with lib_env_apply pre-arm-preview; tests/pre-arm-preview.bh-6501-test.sh drives it.",
+      "knobs": [
+        {
+          "env": "PRE_ARM_PREVIEW_PROJECTS",
+          "type": "string",
+          "default": "project-3",
+          "zero_means": null,
+          "required": false,
+          "settable": true,
+          "note": "The fleet.conf projects the preview gate checks, a space list. A value that names no project (for example `off`) turns the gate off fleet-wide. Read as ${PRE_ARM_PREVIEW_PROJECTS-project-3}."
+        },
+        {
+          "env": "PRE_ARM_PREVIEW_EXEMPT_BRANCHES",
+          "type": "string",
+          "default": "rollback/* revert-*",
+          "zero_means": null,
+          "required": false,
+          "settable": true,
+          "note": "Head branch globs the preview gate never holds, a space list. Rollback PRs (project-3 #486/#499/#501) had a FAILED preview and must still land; revert-* is GitHub's revert branch name."
+        },
+        {
+          "env": "PRE_ARM_PREVIEW_WAIT_MIN",
+          "type": "int",
+          "default": 20,
+          "min": 0,
+          "max": 120,
+          "unit": "minutes",
+          "zero_means": "never wait",
+          "required": false,
+          "settable": true,
+          "note": "A head preview still BUILDING, QUEUED or INITIALIZING and younger than this answers rc 3 (retry next tick). Older, it does not hold the merge. 0 = never wait."
+        },
+        {
+          "env": "PRE_ARM_PREVIEW_STALE_MIN",
+          "type": "int",
+          "default": 30,
+          "min": 5,
+          "max": 240,
+          "unit": "minutes",
+          "zero_means": null,
+          "required": false,
+          "settable": true,
+          "note": "A snapshot whose generated_at is older than this is blind: the gate logs one line and does not hold the merge. The snapshot lane runs every 4 minutes, so 30 = 7 missed runs."
+        }
+      ]
+    }
+  ]
+}

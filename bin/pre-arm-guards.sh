@@ -5,7 +5,11 @@
 #   plus every test that imports a module the PR changed), wait for it, and
 #   answer:
 #     rc 0  green — arm the merge
-#     rc 1  RED   — stdout lists the failing test files, one per line; PARK
+#     rc 1  RED   — stdout lists the failing test files, one per line; PARK.
+#           Also a gated repo (PRE_ARM_PREVIEW_PROJECTS, default project-3) whose
+#           PR head's newest Vercel preview is ERROR: stdout is the one line
+#           `vercel-preview: Vercel preview ERROR on <head12> (<url>)`, and no
+#           workflow is dispatched (bin/lib/pre-arm-preview.sh)
 #     rc 2  could not check (no such workflow on that repo, gh/API failure,
 #           a failure before any test ran) — the caller logs and decides;
 #           fail-open by default since most fleet repos carry no suite
@@ -17,7 +21,9 @@
 #           nothing was proven either way, so the caller must not merge on it
 #           and must not park on it: try again next tick. A run that outlives
 #           the wait is never "could not check" — that read merged the exact
-#           PRs whose importer set is largest (2026-09-12).
+#           PRs whose importer set is largest (2026-09-12). Also a gated
+#           repo whose head preview is still BUILDING, QUEUED or INITIALIZING
+#           and younger than PRE_ARM_PREVIEW_WAIT_MIN minutes.
 #
 # Why: CI at a PR head is green against the main of THAT moment. The class of
 # test that only fails when the repo changed underneath the PR — ratchets
@@ -42,6 +48,34 @@ command -v gh_auth_for >/dev/null 2>&1 && gh_auth_for "$SLUG" || true
 # checked (rc 2), which is the "could not check" answer the caller already has.
 # shellcheck source=bin/lib/gh-rest.sh
 [ -r "$(cd "$(dirname "$0")" && pwd)/lib/gh-rest.sh" ] && . "$(cd "$(dirname "$0")" && pwd)/lib/gh-rest.sh"
+
+# >>> vercel preview gate (BH-6501; tests/pre-arm-preview.bh-6501-test.sh drives this block)
+# A gated repo's head whose own newest Vercel preview is ERROR parks (rc 1); a
+# preview still building retries (rc 3). Every other answer logs one stderr line
+# (`off` logs nothing) and the workflow check below runs as before.
+# shellcheck source=bin/lib/pre-arm-preview.sh
+[ -r "$(cd "$(dirname "$0")" && pwd)/lib/pre-arm-preview.sh" ] && . "$(cd "$(dirname "$0")" && pwd)/lib/pre-arm-preview.sh"
+if command -v pap_check >/dev/null 2>&1; then
+  H="${HARNESS:-/root/harness}"
+  pap_knobs
+  if pap_enabled "$SLUG"; then
+    PAP_HEAD=""; PAP_REF=""
+    HR=$(pap_head "$SLUG" "$PR") || HR=""
+    read -r PAP_HEAD PAP_REF <<<"$HR"
+    IFS=$'\t' read -r PAP_W PAP_D <<<"$(pap_check "$SLUG" "${PAP_HEAD:-}" "${PAP_REF:-}")"
+    case "$PAP_W" in
+      red)  echo "vercel-preview: ${PAP_D}"
+            echo "pre-arm preview: RED $SLUG#$PR — $PAP_D" >&2
+            command -v gh_auth_reset >/dev/null 2>&1 && gh_auth_reset; exit 1 ;;
+      wait) echo "pre-arm preview: WAIT $SLUG#$PR — $PAP_D — not green, retry" >&2
+            command -v gh_auth_reset >/dev/null 2>&1 && gh_auth_reset; exit 3 ;;
+      off)  ;;
+      *)    [ "$PAP_D" = - ] && PAP_D=""
+            echo "pre-arm preview: $PAP_W $SLUG#$PR${PAP_D:+ — $PAP_D}" >&2 ;;
+    esac
+  fi
+fi
+# <<< vercel preview gate
 command -v gh_rest >/dev/null 2>&1 || { echo "bin/lib/gh-rest.sh is not readable — could not check $SLUG#$PR" >&2; exit 2; }
 gh_rest GET "repos/$SLUG/actions/workflows/$WORKFLOW" >/dev/null 2>&1 || { echo "no $WORKFLOW on $SLUG" >&2; exit 2; }
 
