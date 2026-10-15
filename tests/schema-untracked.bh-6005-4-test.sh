@@ -27,7 +27,9 @@
 #      pins that nothing is tracked under the Cloud dir)
 #   U3 the real repo: --check rc 0 with the file absent and with it present
 #   U4 a scratch copy with no schema.sql: three schema node tests pass and leave
-#      no schema.sql behind (the corpus composes for itself, BH-6005.1)
+#      no schema.sql behind (the corpus composes for itself, BH-6005.1). It
+#      composes lanes, llm-sites and context-budgets; it needs no node_modules,
+#      and a missing node, a failed compose or a node-level skip is a FAIL
 #   U5 the additive gate reads the fragments: a DROP in a fragment is red
 #   U6 the regenerated-paths row for schema.sql is gone: mc_regen_cmd_for_path
 #      answers rc 1 for it, with the real conf and with no conf
@@ -174,21 +176,36 @@ run "$U3" --check --worker jobs
 [ "$RC" = 0 ] && ok || bad "U3 --check with a fresh render present must be rc 0 (rc=$RC: $(cat "$T/err"))"
 
 # ── U4 the node schema tests compose for themselves ───────────────────────────
-if command -v node >/dev/null 2>&1 && [ -d "$DIR/worker/jobs/node_modules" ]; then
+if command -v node >/dev/null 2>&1; then
   U4="$T/u4"; mkdir -p "$U4"
-  # worker/jobs/src imports ../../agent-core (the shared runtime).
+  # worker/jobs/src imports ../../agent-core (the shared runtime). The three
+  # tests need no npm install (@sentry/cloudflare loads lazily).
   git -C "$DIR" archive HEAD worker/jobs bin catalog agent-core | tar -x -C "$U4"
   rm -f "$U4/worker/jobs/schema.sql"
-  ln -s "$DIR/worker/jobs/node_modules" "$U4/worker/jobs/node_modules"
-  "$U4/bin/lanes-build.sh" --root "$U4" --write >/dev/null 2>&1
-  # The worker also imports catalog/llm-sites.json, composed and git-ignored
-  # since BH-4987 (#6264), so the archive does not carry it.
-  "$U4/bin/llm-sites-build.sh" --compose --repo "$U4" >/dev/null 2>&1
+  # The worker imports catalog/llm-sites.json (BH-4987) and
+  # catalog/context-budgets.json (BH-6487): both composed and git-ignored, so
+  # the archive carries neither. A compose that fails is a FAIL, not a skip.
+  U4C=ok
+  "$U4/bin/lanes-build.sh" --root "$U4" --write >"$T/u4c.out" 2>&1 \
+    || { U4C=bad; bad "U4 could not compose catalog/lanes.json ($(tail -3 "$T/u4c.out"))"; }
+  "$U4/bin/llm-sites-build.sh" --compose --repo "$U4" >"$T/u4c.out" 2>&1 \
+    || { U4C=bad; bad "U4 could not compose catalog/llm-sites.json ($(tail -3 "$T/u4c.out"))"; }
+  "$U4/bin/context-budgets-build.sh" --compose --repo "$U4" >"$T/u4c.out" 2>&1 \
+    || { U4C=bad; bad "U4 could not compose catalog/context-budgets.json ($(tail -3 "$T/u4c.out"))"; }
   ( cd "$U4/worker/jobs" && node --test test/settings-schema.test.js test/alerts-schema.bh-1068.test.js test/cost-caps-schema-seed.bh-4155.test.js ) >"$T/u4.out" 2>&1; R4=$?
-  [ "$R4" = 0 ] && ok || bad "U4 the schema node tests must pass with no schema.sql (rc=$R4: $(tail -5 "$T/u4.out"))"
+  # rc 0 is not enough: a test that skips itself (settings-schema without
+  # node:sqlite) exits 0. The TAP summary must say 0 failed and 0 skipped.
+  F4=$(sed -n 's/^# fail \([0-9]*\)$/\1/p' "$T/u4.out" | tail -1)
+  S4=$(sed -n 's/^# skipped \([0-9]*\)$/\1/p' "$T/u4.out" | tail -1)
+  if [ "$R4" = 0 ] && [ "$F4" = 0 ] && [ "$S4" = 0 ]; then ok
+  elif [ "$R4" = 0 ] && [ "$F4" = 0 ]; then
+    bad "U4 ${S4:-an unknown number of (no '# skipped' line)} node tests skipped; a skip is not a pass (rc=0: $(tail -5 "$T/u4.out"))"
+  else
+    bad "U4 the schema node tests must pass with no schema.sql (rc=$R4 compose=$U4C: $(grep -m2 -E 'Cannot find module|Error' "$T/u4.out") $(tail -5 "$T/u4.out"))"
+  fi
   [ ! -e "$U4/worker/jobs/schema.sql" ] && ok || bad "U4 the node tests must not leave a schema.sql behind"
 else
-  echo "NOTE: U4 skipped — node or worker/jobs/node_modules missing (npm ci in worker/jobs first)"
+  bad "U4 needs node on PATH to run the schema node tests; a check that cannot run is a FAIL"
 fi
 
 # ── U5 the additive gate reads the fragments ──────────────────────────────────
