@@ -51,7 +51,7 @@ check "S5 lead_authority.x bypasses" 'net|rc=0|calls=1' "$(js 'setting_get lead_
 check "S5 human_verdict_mode bypasses" 'net|rc=0|calls=1' "$(js 'setting_get human_verdict_mode')"
 check "S5 human_verdict_sig_mode.sig bypasses" 'net|rc=0|calls=1' "$(js 'setting_get human_verdict_sig_mode.sig')"
 check "S5 risk_tier.x bypasses" 'net|rc=0|calls=1' "$(js 'setting_get risk_tier.x')"
-check "S5 lead_protected_paths_extra.x bypasses" 'net|rc=0|calls=1' "$(js 'setting_get lead_protected_paths_extra.x')"
+check "S5 human_verdict_mode.sig bypasses" 'net|rc=0|calls=1' "$(js 'setting_get human_verdict_mode.sig')"
 # S6: the hot loops — archie's per-playbook loop and the $( )-lost memo.
 check "S6 archie loop of 5" '33333|rc=0|calls=0' "$(js 'for i in 1 2 3 4 5; do setting_get archie.cap.p$i; done')"
 check "S6 closeout_aged_table_on in \$( ) x3" 'yyy|rc=0|calls=0' \

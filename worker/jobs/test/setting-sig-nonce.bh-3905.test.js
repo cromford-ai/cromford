@@ -200,9 +200,9 @@ test('N7 a protected PUT with the key unset writes no sig row and no sig_seq', a
   assert.equal(sigCount(db), 0);
 });
 
-test('L1 lead_authority.* and lead_protected_paths_extra.* PUTs are signed; other keys are not', async () => {
+test('L1 lead_authority.* and risk_tier.* PUTs are signed; other keys are not', async () => {
   const db = openDb();
-  for (const k of ['lead_authority.example-org.cromford', 'lead_protected_paths_extra.example-org.cromford']) {
+  for (const k of ['lead_authority.example-org.cromford', 'risk_tier.low_globs']) {
     const r = await putSetting(db, k, 'human');
     assert.equal(r.status, 200, JSON.stringify(r.body));
     assert.equal(r.body.signed, true, k);
@@ -236,12 +236,12 @@ test('P1 settingProof answers none, proven, mismatch and null', async () => {
   assert.equal(settingSigMessageV2('k', 'v', 7), 'bh-setting-v2\nk\nv\n7');
 });
 
-test('P2 isProtectedSetting covers the two switches, the two lead prefixes and risk_tier. (BH-5022)', () => {
-  assert.deepEqual(PROTECTED_PREFIXES, ['lead_authority.', 'lead_protected_paths_extra.', 'risk_tier.']);
-  for (const k of ['human_verdict_mode', 'human_verdict_sig_mode', 'lead_authority.x', 'lead_protected_paths_extra.y', 'risk_tier.low_globs']) {
+test('P2 isProtectedSetting covers the two switches, lead_authority. and risk_tier. (BH-5022)', () => {
+  assert.deepEqual(PROTECTED_PREFIXES, ['lead_authority.', 'risk_tier.']);
+  for (const k of ['human_verdict_mode', 'human_verdict_sig_mode', 'lead_authority.x', 'risk_tier.low_globs']) {
     assert.equal(isProtectedSetting(k), true, k);
   }
-  for (const k of ['lead_verdict_min_client', 'human_verdict_mode.sig', 'lead_authority', 'x.lead_authority.y']) {
+  for (const k of ['lead_verdict_min_client', 'human_verdict_mode.sig', 'lead_authority', 'x.lead_authority.y', 'lead_protected_paths_extra.y']) {
     assert.equal(isProtectedSetting(k), false, k);
   }
 });

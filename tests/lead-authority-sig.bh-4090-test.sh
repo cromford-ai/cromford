@@ -6,7 +6,7 @@
 # answers by path from $W/<key>.code + $W/<key>.json) and gh (REST) are stubbed.
 #   LS1  mode human; lead_authority answers the effective `human` -> la_decide lead rc 1
 #   LS2  the lead_protected_paths read answers 409 with no fresh cache -> la_decide rc 2
-#        HOLD (BH-4148: was the extras row); the extras 409 is still setting_get rc 9
+#        HOLD (BH-4148: was the extras row); an unproven signed row's 409 is still setting_get rc 9
 #   LS3  control: a proven lane, no extras, unprotected files -> rc 0
 # Run from anywhere: HARNESS_TEST_SANDBOX=1 bash tests/lead-authority-sig.bh-4090-test.sh
 set -uo pipefail
@@ -21,7 +21,7 @@ command -v jq >/dev/null || { echo "jq missing — skipping"; exit 0; }
 IN=example-org/cromford
 HEAD=aaaaaaaa11111111111111111111111111111111
 K=lead_authority.example-org.cromford
-X=lead_protected_paths_extra.example-org.cromford
+X=risk_tier.low_globs
 M=lead_authority_mode.example-org.cromford
 G="$T/gh"; W="$T/worker"; mkdir -p "$G" "$W" "$T/fakebin" "$T/tmp"
 cp "$DIR/tests/lib/rest-emit.sh" "$T/fakebin/restpr"; chmod +x "$T/fakebin/restpr"
@@ -90,7 +90,7 @@ R=$(decide)
 case "$R" in "rc=2 reason=the protected paths of $IN could not be read"*) ok ;; *) bad "LS2 want rc 2 HOLD, got: $R" ;; esac
 grep -q '^GET .*/api/lead-protected-paths' "$LPPF.log" && ok || bad "LS2 the protected paths were never read: $(cat "$LPPF.log" 2>/dev/null)"
 rm -f "$LPPDOWN"
-# the 409 an unproven extras row still gets is setting_get rc 9 through the real _jobs_req
+# the 409 an unproven signed row still gets is setting_get rc 9 through the real _jobs_req
 answer "$X" 409 "{\"error\":\"$X signature does not verify; re-PUT it with the human token\",\"key\":\"$X\"}"
 RC=$( ( . "$H/bin/jobs-client.sh" >/dev/null 2>&1; setting_get "$X" >/dev/null; echo $? ) 2>/dev/null)
 [ "$RC" = 9 ] && ok || bad "LS2 setting_get rc $RC (want 9)"

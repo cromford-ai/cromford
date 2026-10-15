@@ -186,7 +186,7 @@ _setting_key_ok() { # _setting_key_ok <key>
 # differ from the list row (worker/jobs/src/routes/verdicts.js
 # PROTECTED_HUMAN_KEYS and PROTECTED_PREFIXES, plus the v1 `<key>.sig` rows).
 # They always go to the worker.
-_SETTING_SIGNED_KEYS="human_verdict_mode human_verdict_sig_mode *.sig lead_authority.* lead_protected_paths_extra.* risk_tier.*"
+_SETTING_SIGNED_KEYS="human_verdict_mode human_verdict_sig_mode *.sig lead_authority.* risk_tier.*"
 _setting_cache_file() { [ -n "${JOBS_HARNESS:-}" ] && printf '%s' "$JOBS_HARNESS/state/settings-cache.json"; }
 
 # _setting_cached <key> — rc 0 + value, or rc 2 (no row), from a fresh cache.

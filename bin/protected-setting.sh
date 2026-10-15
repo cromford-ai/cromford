@@ -1,6 +1,6 @@
 #!/bin/bash
 # bin/protected-setting.sh <key> <value> [note] — BH-4090: PUT one protected
-# setting (lead_authority.*, lead_protected_paths_extra.*, human_verdict_mode,
+# setting (lead_authority.*, risk_tier.*, human_verdict_mode,
 # human_verdict_sig_mode) WITH the human verdict token, so the worker accepts a
 # loosening and signs the value into setting_sigs. Run on the operator's Mac, the only
 # place the token lives.

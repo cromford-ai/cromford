@@ -7,7 +7,7 @@ import { createHmac } from 'node:crypto';
 import worker from '../src/index.js';
 import { jobsSchemaSql } from './lib/jobs-schema.js';
 
-// BH-4090 (BH-3905 child 4): the lead_authority.* and lead_protected_paths_extra.*
+// BH-4090 (BH-3905 child 4): the lead_authority.* and risk_tier.*
 // rows behind the setting signature. A bearer PUT that LOOSENS one needs the
 // human token; a single-key GET answers the effective value of an unproven row
 // (human / 409 under sig enforce, as stored + a warn in shadow); the bulk list
@@ -18,7 +18,7 @@ const HUMAN = 'human-test-token';
 const KEY = 'sig-test-key';
 const SCHEMA = jobsSchemaSql();
 const K = 'lead_authority.example-org.cromford';
-const X = 'lead_protected_paths_extra.example-org.cromford';
+const X = 'risk_tier.low_globs';
 
 function sqliteDB(db) {
   const bindAndRun = (sql, binds) => ({
@@ -140,7 +140,7 @@ test('L3 the human token loosens and the write is signed at the next seq', async
   assert.equal((await put(db, K, 'lane', { human: 'nope' })).status, 403);
 });
 
-test('L4 extras: the bearer may only add globs', async () => {
+test('L4 risk_tier globs: the bearer may only add globs', async () => {
   const db = openDb();
   await ok(put(db, X, 'a b'));
   await ok(put(db, X, 'b  a\tc'));
@@ -209,7 +209,7 @@ test('L6 in shadow an unproven row reads as stored with a warn; L6b an unreadabl
   assert.equal(g.body.setting.unproven, true);
 });
 
-test('L7 an unproven extras row is 409 under enforce, stored in shadow; the PUT judges the effective value', async () => {
+test('L7 an unproven risk_tier row is 409 under enforce, stored in shadow; the PUT judges the effective value', async () => {
   const db = openDb();
   await ok(put(db, X, 'a b'));
   setRaw(db, X, 'a');
@@ -234,7 +234,7 @@ test('L7 an unproven extras row is 409 under enforce, stored in shadow; the PUT 
   assert.equal(no2.status, 403, JSON.stringify(no2.body));
   assert.equal(no2.body.from, 'human');
   await ok(put(db, K, 'human'));
-  // the human token repairs the extras row
+  // the human token repairs the risk_tier row
   await ok(put(db, X, 'a b', { human: HUMAN }));
   assert.equal((await ok(get(db, X))).body.setting.value, 'a b');
 });

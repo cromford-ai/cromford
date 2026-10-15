@@ -115,7 +115,7 @@ function redactSig(row) {
 }
 
 // ── The lead_* rows behind the signature (BH-4090, BH-3905 item 10) ──────
-// lead_authority.* and lead_protected_paths_extra.* are signed into
+// lead_authority.* and risk_tier.* (PROTECTED_PREFIXES) are signed into
 // setting_sigs on every accepted PUT (BH-4087). A row whose newest signature
 // does not verify was written around the PUT (a raw D1 write), and is judged
 // by human_verdict_sig_mode: shadow reads it as stored with a warn; enforce
@@ -134,7 +134,7 @@ async function leadProof(env, key, row) {
 // The effective value of a lead_* row:
 //   { kind: "stored" }                    trusted, or shadow (warned)
 //   { kind: "human", stored_value }       lead_authority.* unproven under enforce
-//   { kind: "conflict" }                  extras unproven under enforce
+//   { kind: "conflict" }                  risk_tier.* unproven under enforce
 async function effectiveLead(env, key, row) {
   const { proof, trusted } = await leadProof(env, key, row);
   if (trusted) return { kind: "stored" };
@@ -154,8 +154,8 @@ async function effectiveLead(env, key, row) {
 
 // Is `to` looser than `from` (the current value as judged; null = no row,
 // undefined = unknowable)? null when a bearer may write it, else what the 403
-// says. Normalised the way bin/lib/lead-authority.sh reads them: authority with
-// all whitespace removed (la_decide), extras as a whitespace-split set (_la_extras).
+// says. Authority is normalised the way bin/lib/lead-authority.sh reads it, with
+// all whitespace removed (la_decide); risk_tier.* is a whitespace-split glob set.
 function leadLoosening(key, from, to) {
   if (key.startsWith("lead_authority.")) {
     const f = from == null ? from : from.replace(/\s+/g, "");
@@ -332,8 +332,7 @@ export const routes = [
         ? await env.DB.prepare("SELECT * FROM settings WHERE key=?1").bind(key).first()
         : (await settingsRows(env)).byKey.get(key) ?? null;
       // BH-4090: an unproven lead_* row under sig enforce answers its strict
-      // value: `human` for authority, a 409 (setting_get rc 9, la_decide HOLD)
-      // for extras.
+      // value: `human` for authority, a 409 (setting_get rc 9) for risk_tier.*.
       const eff = isLeadKey(key) ? await effectiveLead(env, key, row) : { kind: "stored" };
       if (eff.kind === "human") {
         return json(200, { key, setting: { key, value: "human", unproven: true, stored_value: eff.stored_value },

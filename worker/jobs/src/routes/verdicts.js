@@ -174,11 +174,12 @@ async function firstRowBySig(env, repo, pr, rows) {
 // setting_sigs row (BH-3905) and the v1 `<key>.sig` row (routes/settings.js).
 export const PROTECTED_HUMAN_KEYS = ["human_verdict_mode", "human_verdict_sig_mode"];
 
-// BH-3905: the lead_* key families that are signed into setting_sigs on every
-// accepted PUT too. A code constant, not a settings row: a row would let a D1
-// writer un-protect a key. BH-5022: risk_tier.* decides which PRs merge with no
-// review at all, so its globs, limits and modes are signed the same way.
-export const PROTECTED_PREFIXES = ["lead_authority.", "lead_protected_paths_extra.", "risk_tier."];
+// BH-3905: the key families that are signed into setting_sigs on every
+// accepted PUT too: lead_authority.* and risk_tier.*. A code constant, not a
+// settings row: a row would let a D1 writer un-protect a key. BH-5022:
+// risk_tier.* decides which PRs merge with no review at all, so its globs,
+// limits and modes are signed the same way.
+export const PROTECTED_PREFIXES = ["lead_authority.", "risk_tier."];
 
 export function isProtectedSetting(key) {
   return PROTECTED_HUMAN_KEYS.includes(key) || PROTECTED_PREFIXES.some((p) => key.startsWith(p));
