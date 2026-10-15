@@ -1,0 +1,29 @@
+# catalog/lane-run-inputs.d/watchdog-responder.rw — the per-project files one
+# `bin/watchdog-responder.sh $p` run writes. A write-back may carry these only.
+# The ro snapshot is these plus watchdog-responder.ro. The inventory, with
+# file:line for each entry, is in
+# docs/notes/2026-10-14-BH-6720-llm-alert-lanes-offhub.md.
+#
+# NOT CARRIED. A project run also writes these fleet-wide files, and they
+# block a flip of watchdog-responder to Fly:
+#   state/responder/handled.json (one JSON keyed <project>:<key>, rewritten
+#     under a lock, bin/watchdog-responder.sh:134-141,239,257,285,911-916;
+#     not a project-keyed TSV, so @row does not fit)
+#   logs/responder.log (every project run appends to one log,
+#     bin/watchdog-responder.sh:74; the lane log that rides back is
+#     logs/watchdog-responder.log)
+#   logs/ALERTS.log, flags/lane-caps-degraded-*, logs/lane-caps.log,
+#   logs/model-route.log, logs/agent-rules.log, logs/cost.csv
+# The prompt launches /root/harness/bin/run-build.sh by absolute path
+# (bin/watchdog-responder.sh:364), and the board token comes from
+# bin/internal-token-for.sh (env/$p.env, bin/watchdog-responder.sh:405,523),
+# a second per-project credential a lane machine does not have.
+# Secrets, locks and machine-local caches are never carried: env/*, locks/*,
+# state/gh-*, state/settings-cache.json, state/lane-gate/*.
+#
+# stale-history.json, stale-owed.json, .wedgekeys
+# (bin/watchdog-responder.sh:133,219-225,253-267,906-907)
+state/watchdog-responder/$p/**
+# bin/watchdog-responder.sh:784,790-810,816-851
+logs/responder-decide.$p.txt
+logs/responder-run.$p.txt

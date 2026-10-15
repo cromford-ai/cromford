@@ -1,0 +1,8 @@
+{
+  "env": "CLI_CHECK_UU_LOGS",
+  "type": "string",
+  "default": "",
+  "zero_means": null,
+  "note": "BH-6742: test seam, no static default — the probe reads /var/log/harness-unattended.log and /var/log/unattended-upgrades/unattended-upgrades.log. Read inside the probe as ${CLI_CHECK_UU_LOGS:-...}: the files whose newest write is the `last run` of the security-updates report line. NOT settable from the control plane — paths a test sets, so only env moves them.",
+  "settable": false
+}

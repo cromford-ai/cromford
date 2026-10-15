@@ -1,0 +1,8 @@
+{
+  "env": "CLI_CHECK_FEED_CURL",
+  "type": "string",
+  "default": "",
+  "zero_means": null,
+  "note": "BH-6742: test seam, no static default (the fetcher is curl; the feeds are nodejs.org/dist/index.json and the GitHub releases of tailscale/tailscale). Read by bin/cli-version-check.sh as ${CLI_CHECK_FEED_CURL:-...} for the node and tailscale release feeds. NOT settable from the control plane: a command or a URL a test sets, so only env moves it.",
+  "settable": false
+}

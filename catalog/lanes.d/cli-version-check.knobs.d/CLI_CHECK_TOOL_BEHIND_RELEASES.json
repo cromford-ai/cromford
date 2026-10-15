@@ -1,0 +1,11 @@
+{
+  "env": "CLI_CHECK_TOOL_BEHIND_RELEASES",
+  "type": "int",
+  "default": 3,
+  "min": 0,
+  "max": 1000,
+  "unit": "releases",
+  "zero_means": null,
+  "settable": true,
+  "note": "BH-6742. bin/cli-version-check.sh writes one ALERTS line per box per UTC day when node (its own major line) or tailscale is MORE than this many releases behind the vendor's latest. Read as ${CLI_CHECK_TOOL_BEHIND_RELEASES:-3}; non-numeric falls back to 3."
+}

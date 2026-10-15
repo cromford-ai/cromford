@@ -81,7 +81,8 @@ case "$(fact runs_on)" in *vars.CI_RUNNER*) ok ;; *) bad "W: runs-on reads vars.
 RN=$(fact run_name); RN=${RN//'${{ inputs.pr }}'/4545}; RN=${RN//'${{ inputs.head }}'/$H1}; RN=${RN//'${{ inputs.main }}'/$M}
 [ -n "$RN" ] && [ "$RN" = "$(title 4545 "$H1" "$M")" ] && ok || bad "W: run-name equals pq_run_title (got '$RN' vs '$(title 4545 "$H1" "$M")')"
 # TEST-CHANGE (BH-6335): their env, PQ_LEARNED_IN and PQ_TRACE_IN.
-[ "$(fact env)" = "PQ_HEAD,PQ_INVARIANTS_IN,PQ_LEARNED_IN,PQ_MAIN,PQ_PR,PQ_SUITES_IN,PQ_TRACE_IN" ] && ok || bad "W: inputs reach the script through env only (got '$(fact env)')"
+# TEST-CHANGE (BH-6522): PQ_GIT_TOKEN, the job token for the one pull-head fetch.
+[ "$(fact env)" = "PQ_GIT_TOKEN,PQ_HEAD,PQ_INVARIANTS_IN,PQ_LEARNED_IN,PQ_MAIN,PQ_PR,PQ_SUITES_IN,PQ_TRACE_IN" ] && ok || bad "W: inputs reach the script through env only (got '$(fact env)')"
 grep -q '\${{' "$T/w/run.sh" && bad "W: no \${{ }} expression inside the run script (script injection)" || ok
 case "$(fact shell)" in *-e*|None) bad "W: the run step must not use errexit (shell '$(fact shell)')" ;; *) ok ;; esac
 [ "$(grep -c 'title=prequeue-verdict' "$T/w/run.sh")" = 1 ] && ok || bad "W: exactly one verdict print in the script"

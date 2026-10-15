@@ -1,0 +1,8 @@
+{
+  "env": "CLI_CHECK_ETC",
+  "type": "string",
+  "default": "",
+  "zero_means": null,
+  "note": "BH-6742: test seam, no static default — the probe reads /etc. Read inside the probe as ${CLI_CHECK_ETC:-/etc}: where it looks for apt/apt.conf.d/52harness-security-only and cron.d/harness-security-updates (the `setup yes|NO` of the security-updates report line). NOT settable from the control plane — a path a test sets, so only env moves it.",
+  "settable": false
+}

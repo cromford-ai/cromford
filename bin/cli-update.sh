@@ -71,10 +71,29 @@
 # (is_hub_box/local_box_name), never from `hostname`. Fail-open, same as the
 # cost-mirror push below: a worker outage costs the DB mirror, never the update.
 #
+# FLYCTL AND gh (BH-6742, the operator 2026-10-14: "make sure the fly cli ... are
+# regularly getting updated"). Two more tools in the same daily pass, same CSV
+# row, same DB push, after the three runner CLIs:
+#   flyctl  on every box that has it (only the hub calls Fly). Found at
+#           $HOME/.fly/bin/flyctl first (the installer's home, not on cron's
+#           PATH), else `command -v flyctl`/`fly`. The binary is copied to
+#           <bin>.prev before `flyctl version upgrade`; a run that leaves it
+#           missing or older puts .prev back. A no-op day keeps the old .prev.
+#   gh      from GitHub's own apt repo (cli.github.com), not the Ubuntu archive
+#           that lags upstream (hub: 2.45.0 from 2025-07). The repo and its key
+#           are added once (sources.list.d/github-cli.list, keyrings/
+#           githubcli-archive-keyring.gpg), then `apt-get install gh` from that
+#           list only. apt keeps the old package when the install fails; a run
+#           that leaves gh missing or older reinstalls the dpkg version it had.
+# CLI_UPDATE_SYS_TOOLS (default "flyctl gh"; empty on a scratch box with
+# CLI_UPDATE_HOME set) names them; a box without apt-get skips gh, a box
+# without flyctl skips flyctl (no row).
+#
 # Overrides (tests only; production never sets them): HARNESS, CLI_UPDATE_HOME,
 # CLI_UPDATE_NPM_PREFIX, CLI_UPDATE_NPM_PREFIXES, CLI_UPDATE_LINK_DIRS,
 # CLI_UPDATE_CLIS, CLI_UPDATE_GROK_INSTALLER, CLI_UPDATE_JOBS_CLIENT,
-# CLI_UPDATE_TIMEOUT, BOX_NAME (hub identity, per bin/lib/hub-box.sh).
+# CLI_UPDATE_TIMEOUT, BOX_NAME (hub identity, per bin/lib/hub-box.sh),
+# CLI_UPDATE_SYS_TOOLS, CLI_UPDATE_APT_ETC, CLI_UPDATE_GH_KEY_URL.
 set -uo pipefail
 H="${HARNESS:-/root/harness}"
 . "${HARNESS:-/root/harness}/bin/lib/env-path.sh" 2>/dev/null || . "$(dirname "${BASH_SOURCE[0]}")/lib/env-path.sh" 2>/dev/null || harness_env_dir() { printf '%s\n' "${1:-${HARNESS:-/root/harness}}/env"; }; HENV=$(harness_env_dir "$H")
@@ -367,5 +386,107 @@ for CLI in $CLIS; do
     fi
   fi
   unset BV BL BR SKEY
+done
+
+# --- system tools: flyctl and gh (BH-6742) -----------------------------------
+# A scratch box (CLI_UPDATE_HOME set, tests only) never reaches the real apt or
+# a real flyctl unless it names CLI_UPDATE_SYS_TOOLS itself.
+if [ -n "${CLI_UPDATE_HOME:-}" ]; then SYS_TOOLS="${CLI_UPDATE_SYS_TOOLS-}"; else SYS_TOOLS="${CLI_UPDATE_SYS_TOOLS-flyctl gh}"; fi
+APT_ETC="${CLI_UPDATE_APT_ETC:-/etc/apt}"
+GH_KEY_URL="${CLI_UPDATE_GH_KEY_URL:-https://cli.github.com/packages/githubcli-archive-keyring.gpg}"
+GH_LIST="$APT_ETC/sources.list.d/github-cli.list"
+GH_KEYRING="$APT_ETC/keyrings/githubcli-archive-keyring.gpg"
+
+# sys_record <tool> <before> <after> <method> <path> <note> — the same CSV row,
+# stdout line and DB push as a runner CLI. Sets RC=1 when it ended worse.
+sys_record() {
+  local tool="$1" before="$2" after="$3" method="$4" path="$5" note="$6" ok=1 at
+  at=$(date -u '+%Y-%m-%dT%H:%M:%SZ')
+  if [ "$after" = missing ]; then ok=0; RC=1; log "$tool: MISSING after update"
+  elif ! cli_version_ge "$after" "$before"; then ok=0; RC=1; log "$tool: WORSE after update ($before -> $after)"
+  fi
+  note=$(printf '%s' "$note" | tr -d ',\n' | sed 's/;$//')
+  [ "$before" != "$after" ] && log "$tool: $before -> $after ($method)"
+  echo "$at,$BOX,$tool,$before,$after,$method,$ok,$path,$note" >> "$CSV"
+  echo "$tool $before -> $after method=$method ok=$ok path=${path:--} ${note:+note=$note}"
+  if declare -F metric_cli_version >/dev/null 2>&1; then
+    metric_cli_version "$BOX" "$tool" "$before" "$after" "$method" "$ok" "$at" "$path" "$note" update \
+      || log "$tool: DB push skipped/failed (http=${JOBS_HTTP:-none}) — CSV row is the record"
+  fi
+}
+
+# flyctl_update — on a box that has flyctl. Keeps the previous binary.
+flyctl_update() {
+  local bin real before after note=""
+  bin="$HOMEDIR/.fly/bin/flyctl"
+  [ -x "$bin" ] || bin=$(command -v flyctl 2>/dev/null || command -v fly 2>/dev/null || true)
+  [ -n "$bin" ] && [ -x "$bin" ] || { log "flyctl: not installed on this box — skipped"; return 0; }
+  real=$(readlink -f "$bin" 2>/dev/null || echo "$bin")
+  before=$(cli_version_of "$bin")
+  rm -f "$real.prev.tmp"
+  cp -p "$real" "$real.prev.tmp" 2>>"$LOG" || { log "flyctl: could not copy $real — no rollback copy, update skipped"; sys_record flyctl "$before" "$before" upgrade "$bin" "no-prev-copy;skipped"; return 0; }
+  if ! run_logged "flyctl version upgrade" "$bin" version upgrade; then
+    note="${note}upgrade-failed;"; log "flyctl: version upgrade FAILED — keeping what is installed"
+  fi
+  after=$(cli_version_of "$bin")
+  if [ "$after" = missing ] || ! cli_version_ge "$after" "$before"; then
+    if cp -p "$real.prev.tmp" "$real" 2>>"$LOG"; then
+      log "flyctl: $after after the upgrade — restored the previous binary ($before)"
+      note="${note}restored-prev;"; after=$(cli_version_of "$bin")
+    fi
+    rm -f "$real.prev.tmp"
+  elif [ "$after" != "$before" ]; then
+    mv -f "$real.prev.tmp" "$real.prev" 2>>"$LOG" && note="${note}prev-kept;" \
+      && log "flyctl: previous $before kept at $real.prev — rollback: cp -p $real.prev $real"
+  else
+    rm -f "$real.prev.tmp"
+  fi
+  sys_record flyctl "$before" "$after" upgrade "$bin" "$note"
+}
+
+# gh_update — gh from GitHub's own apt repo. Needs apt-get and root.
+gh_update() {
+  local before after pkgv note="" bin
+  command -v apt-get >/dev/null 2>&1 || { log "gh: no apt-get on this box — skipped"; return 0; }
+  bin=$(command -v gh 2>/dev/null || true)
+  before=$(cli_version_of "${bin:-/nonexistent}")
+  pkgv=$(dpkg-query -W -f='${Version}' gh 2>/dev/null || true)
+  if [ ! -s "$GH_LIST" ] || [ ! -s "$GH_KEYRING" ]; then
+    mkdir -p "$APT_ETC/keyrings" "$APT_ETC/sources.list.d" 2>>"$LOG"
+    if run_logged "curl $GH_KEY_URL" curl -fsSL -o "$GH_KEYRING.tmp" "$GH_KEY_URL" && [ -s "$GH_KEYRING.tmp" ]; then
+      mv -f "$GH_KEYRING.tmp" "$GH_KEYRING" && chmod 644 "$GH_KEYRING"
+      printf 'deb [arch=%s signed-by=%s] https://cli.github.com/packages stable main\n' \
+        "$(dpkg --print-architecture 2>/dev/null || echo amd64)" "$GH_KEYRING" > "$GH_LIST"
+      log "gh: added GitHub's apt repo ($GH_LIST)"; note="${note}repo-added;"
+    else
+      rm -f "$GH_KEYRING.tmp"
+      log "gh: could not fetch GitHub's apt key — keeping what is installed"
+      sys_record gh "$before" "$before" apt "${bin:-}" "key-fetch-failed"; return 0
+    fi
+  fi
+  if run_logged "apt-get update (github-cli.list)" apt-get update -o "Dir::Etc::sourcelist=$GH_LIST" \
+       -o Dir::Etc::sourceparts=- -o APT::Get::List-Cleanup=0; then
+    run_logged "apt-get install gh" env DEBIAN_FRONTEND=noninteractive apt-get install -y -o Dpkg::Options::=--force-confold gh \
+      || { note="${note}install-failed;"; log "gh: apt-get install FAILED — apt keeps the old package"; }
+  else
+    note="${note}apt-update-failed;"; log "gh: apt-get update of the GitHub list FAILED — keeping what is installed"
+  fi
+  hash -r 2>/dev/null; bin=$(command -v gh 2>/dev/null || true)
+  after=$(cli_version_of "${bin:-/nonexistent}")
+  if { [ "$after" = missing ] || ! cli_version_ge "$after" "$before"; } && [ -n "$pkgv" ]; then
+    if run_logged "apt-get install gh=$pkgv" env DEBIAN_FRONTEND=noninteractive apt-get install -y --allow-downgrades "gh=$pkgv"; then
+      note="${note}restored-prev;"; hash -r 2>/dev/null; bin=$(command -v gh 2>/dev/null || true)
+      after=$(cli_version_of "${bin:-/nonexistent}")
+    fi
+  fi
+  sys_record gh "$before" "$after" apt "${bin:-}" "$note"
+}
+
+for TOOL in $SYS_TOOLS; do
+  case "$TOOL" in
+    flyctl) flyctl_update ;;
+    gh)     gh_update ;;
+    *)      log "unknown system tool '$TOOL' in CLI_UPDATE_SYS_TOOLS — skipped" ;;
+  esac
 done
 exit "$RC"

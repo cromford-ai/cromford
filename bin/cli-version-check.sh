@@ -40,7 +40,25 @@
 # Overrides (tests only): HARNESS, HARNESS_CHECKOUT, HARNESS_ALERTS,
 # CLI_CHECK_BOXES ("local" = the hub), CLI_CHECK_SSH, CLI_CHECK_CATALOG; and,
 # inside the probe (exported through the ssh stub): CLI_CHECK_ENV_FILE,
-# CLI_CHECK_LOGIN_PATH, CLI_CHECK_HOME.
+# CLI_CHECK_LOGIN_PATH, CLI_CHECK_HOME, CLI_CHECK_ETC, CLI_CHECK_UU_LOGS.
+#
+# OS SECURITY UPDATES (BH-6742). The probe also prints `sec <last-run|never>
+# <pending|unknown> <setup 1|0>`: the newest unattended-upgrade log write, the
+# security packages a read-only `apt-get -s upgrade` would still install, and
+# whether bin/security-updates-ensure.sh's apt.conf and cron files exist. The
+# report gets one line per box: "<id> security updates: last run <at>, <n>
+# pending, setup yes|NO". It is a report, not an alert. A box judged from its
+# self-report is not ssh'd, so its line says it was not probed today.
+#
+# NODE AND TAILSCALE (BH-6742). The probe prints `tool node <v>` and `tool
+# tailscale <v>`. Each is compared with the vendor's release feed (cached, see
+# feed_rows): "<id> tools: node <v> (current | latest <x>: <n> releases, <d>
+# days behind | latest unknown ...)". One ALERTS line per box per UTC day when
+# a tool is more than CLI_CHECK_TOOL_BEHIND_RELEASES (default 3) releases or
+# CLI_CHECK_TOOL_BEHIND_DAYS (default 30) days behind; both are settable lane
+# knobs. A feed it cannot read is "latest unknown" and never alerts. Test
+# seams: CLI_CHECK_FEED_CURL, CLI_CHECK_FEED_NODE_URL,
+# CLI_CHECK_FEED_TAILSCALE_URL, CLI_CHECK_FEED_TTL_S.
 set -uo pipefail
 H="${HARNESS:-/root/harness}"
 . "${HARNESS:-/root/harness}/bin/lib/env-path.sh" 2>/dev/null || . "$(dirname "${BASH_SOURCE[0]}")/lib/env-path.sh" 2>/dev/null || harness_env_dir() { printf '%s\n' "${1:-${HARNESS:-/root/harness}}/env"; }; HENV=$(harness_env_dir "$H")
@@ -138,6 +156,30 @@ done
 M=$(env | grep -E '^[A-Z_]*MODEL[A-Z_]*=' | cut -d= -f2- | tr -c 'A-Za-z0-9._/\n-' ' ' | tr '\n' ' ')
 echo "models ${M:0:400}"
 echo "box $(tr -dc 'a-z0-9-' < /root/harness/state/box-id 2>/dev/null) host $(hostname 2>/dev/null)"
+# OS security updates (BH-6742): the newest unattended-upgrade log write, the
+# security packages apt would still install (a read-only simulation), and
+# whether bin/security-updates-ensure.sh's apt.conf and cron files are there.
+SEC_ETC="${CLI_CHECK_ETC:-/etc}"; lm=0; last=never
+for f in ${CLI_CHECK_UU_LOGS:-/var/log/harness-unattended.log /var/log/unattended-upgrades/unattended-upgrades.log}; do
+  m=$(stat -c %Y "$f" 2>/dev/null) || continue; [ "$m" -gt "$lm" ] && lm=$m
+done
+[ "$lm" -gt 0 ] && last=$(date -u -d "@$lm" +%Y-%m-%dT%H:%M:%SZ)
+pend=unknown
+# A failed or timed-out simulation stays `unknown`, never a count of 0.
+if command -v apt-get >/dev/null 2>&1 && sim=$(timeout 60 apt-get -s -o Debug::NoLocking=1 upgrade 2>/dev/null); then
+  pend=$(printf '%s\n' "$sim" | grep -c '^Inst .*-security')
+fi
+setup=0
+[ -s "$SEC_ETC/apt/apt.conf.d/52harness-security-only" ] && [ -s "$SEC_ETC/cron.d/harness-security-updates" ] && setup=1
+echo "sec $last ${pend:-unknown} $setup"
+# node and tailscale (BH-6742): the versions this box runs.
+# Looked up on the login PATH first, then this shell's: a node installed under
+# /usr/local/bin is still found from ssh's narrower PATH.
+nb=$( PATH="$LOGIN_PATH:$PATH"; command -v node 2>/dev/null ); tb=$( PATH="$LOGIN_PATH:$PATH"; command -v tailscale 2>/dev/null )
+nv=""; [ -n "$nb" ] && nv=$(timeout 10 "$nb" --version 2>/dev/null | head -1 | grep -oE '[0-9]+(\.[0-9]+)+' | head -1)
+tv=""; [ -n "$tb" ] && tv=$(timeout 10 "$tb" version 2>/dev/null | head -1 | grep -oE '[0-9]+(\.[0-9]+)+' | head -1)
+echo "tool node ${nv:-missing}"
+echo "tool tailscale ${tv:-missing}"
 echo "probe-done"
 PROBE_EOF
 
@@ -223,6 +265,95 @@ declare -A HUBV=()
 OK=0; BEHIND=0; UNREACH=0; REPORT=""; ROWS="[]"
 : > "$TSV.tmp"
 # The hub first, so every other box has something to be behind.
+# --- node and tailscale against the vendor's release feed (BH-6742) -----------
+# feed_rows <tool> -> "<version>\t<epoch>" per stable release, from the cached
+# feed: $H/state/tool-feeds/<tool>.tsv, fetched again when older than
+# CLI_CHECK_FEED_TTL_S (default 86400). A failed fetch or an unparseable answer
+# is rc 1 = "latest unknown", never "current": a stale cache is not used, and
+# the failure is not cached, so the next run asks again. One fetch per tool per
+# run, whatever the box count.
+#   node       https://nodejs.org/dist/index.json (dated, every line)
+#   tailscale  the GitHub releases of tailscale/tailscale (dated; no draft or
+#              prerelease)
+FEED_DIR="$H/state/tool-feeds"
+FEED_TTL="${CLI_CHECK_FEED_TTL_S:-86400}"; [[ $FEED_TTL =~ ^[0-9]+$ ]] || FEED_TTL=86400
+FEED_CURL="${CLI_CHECK_FEED_CURL:-curl}"
+TOOL_BEHIND_REL="${CLI_CHECK_TOOL_BEHIND_RELEASES:-3}"; [[ $TOOL_BEHIND_REL =~ ^[0-9]+$ ]] || TOOL_BEHIND_REL=3
+TOOL_BEHIND_DAYS="${CLI_CHECK_TOOL_BEHIND_DAYS:-30}"; [[ $TOOL_BEHIND_DAYS =~ ^[0-9]+$ ]] || TOOL_BEHIND_DAYS=30
+declare -A FEED_FAILED=()
+feed_url() {
+  case "$1" in
+    node)      printf '%s' "${CLI_CHECK_FEED_NODE_URL:-https://nodejs.org/dist/index.json}" ;;
+    tailscale) printf '%s' "${CLI_CHECK_FEED_TAILSCALE_URL:-https://api.github.com/repos/tailscale/tailscale/releases?per_page=100}" ;;
+  esac
+}
+feed_parse() { # feed_parse <tool> < raw JSON
+  case "$1" in
+    node) jq -r '.[] | select((.version // "") | test("^v[0-9]+\\.[0-9]+\\.[0-9]+$"))
+            | [(.version | ltrimstr("v")), ((.date + "T00:00:00Z") | fromdateiso8601)] | @tsv' ;;
+    tailscale) jq -r '.[] | select((.draft | not) and (.prerelease | not))
+            | select((.tag_name // "") | test("^v[0-9]+\\.[0-9]+\\.[0-9]+$"))
+            | [(.tag_name | ltrimstr("v")), (.published_at | fromdateiso8601)] | @tsv' ;;
+    *) return 1 ;;
+  esac
+}
+feed_rows() {
+  local t="$1" f="$FEED_DIR/$1.tsv" m tmp
+  # A file this run wrote is newer than NOW (taken at the start): age 0.
+  if m=$(stat -c %Y "$f" 2>/dev/null) && [ -s "$f" ] && [ $(( NOW > m ? NOW - m : 0 )) -lt "$FEED_TTL" ]; then
+    cat "$f"; return 0
+  fi
+  [ -n "${FEED_FAILED[$t]:-}" ] && return 1
+  mkdir -p "$FEED_DIR" 2>/dev/null; tmp="$f.tmp.$$"
+  if timeout 40 "$FEED_CURL" -fsSL --max-time 30 "$(feed_url "$t")" 2>/dev/null | feed_parse "$t" > "$tmp" 2>/dev/null && [ -s "$tmp" ]; then
+    mv -f "$tmp" "$f"; cat "$f"; return 0
+  fi
+  rm -f "$tmp"; FEED_FAILED[$t]=1
+  echo "$(STAMP) tool feed for $t unreadable ($(feed_url "$t")) — its latest is unknown this run" >> "$LOG"
+  return 1
+}
+# ensure_feed <tool> — fills FEED_DATA[<tool>] (the rows) or FEED_FAILED[<tool>]
+# ONCE per run. It must run in this shell, never in $( ): a memo set in a
+# subshell is lost, and every box would fetch a dead feed again (lead review of
+# #6787: 11 boxes, 11 fetches of up to 40 s, 11 log lines).
+declare -A FEED_DATA=() FEED_DONE=()
+ensure_feed() {
+  local t="$1" r
+  [ -n "${FEED_DONE[$t]:-}" ] && return 0
+  FEED_DONE[$t]=1
+  if r=$(feed_rows "$t"); then FEED_DATA[$t]="$r"; else FEED_FAILED[$t]=1; fi
+}
+# tool_gap <tool> <version> -> sets TG_LATEST, TG_REL (releases newer than
+# <version>) and TG_DAYS (days since the oldest of them came out); rc 1 when the
+# latest is unknown. node counts its own major line only: a new major is a
+# migration, not an update.
+tool_gap() {
+  local t="$1" v="$2" rows line rv rd oldest=""
+  TG_LATEST=""; TG_REL=0; TG_DAYS=0
+  ensure_feed "$t"
+  [ -z "${FEED_FAILED[$t]:-}" ] || return 1
+  rows="${FEED_DATA[$t]:-}"
+  [ "$t" = node ] && rows=$(awk -F'\t' -v m="${v%%.*}" 'index($1, m ".") == 1' <<<"$rows")
+  [ -n "$rows" ] || return 1
+  while IFS=$'\t' read -r rv rd; do
+    [ -n "$rv" ] || continue
+    if [ -z "$TG_LATEST" ] || cli_version_gt "$rv" "$TG_LATEST"; then TG_LATEST="$rv"; fi
+    if cli_version_gt "$rv" "$v"; then
+      TG_REL=$((TG_REL + 1))
+      if [ -z "$oldest" ] || [ "$rd" -lt "$oldest" ]; then oldest="$rd"; fi
+    fi
+  done <<<"$rows"
+  [ -n "$oldest" ] && TG_DAYS=$(( (NOW - oldest) / 86400 ))
+  [ "$TG_DAYS" -ge 0 ] || TG_DAYS=0
+  return 0
+}
+TOOL_ALERTED="$H/state/tool-behind-alerted"
+# The marks only need today's lines: keep those, drop the rest.
+if [ -s "$TOOL_ALERTED" ]; then
+  grep "^$(date -u -d "@$NOW" +%F) " "$TOOL_ALERTED" > "$TOOL_ALERTED.tmp" 2>/dev/null; mv -f "$TOOL_ALERTED.tmp" "$TOOL_ALERTED" 2>/dev/null
+fi
+TODAY=$(date -u -d "@$NOW" +%F)
+
 ORDERED=$(printf '%s\n' "$BOXES" | grep -x local; printf '%s\n' "$BOXES" | grep -vx local)
 for BOX in $ORDERED; do
   ID=$(cron_box_id_for "$BOX")
@@ -286,6 +417,15 @@ for BOX in $ORDERED; do
     ROWS=$(jq -c --arg b "$ID" --arg c "$CLI" --arg v "$V" --arg p "$P" --arg n "${CLI_REASONS:-$CLI_NOTE}" --arg ok "$CLI_OK" --arg t "$AT" \
       '. + [{box:$b,cli:$c,at:$t,source:"check",version_before:$v,version_after:$v,method:"check",ok:$ok,path:$p,note:$n}]' <<<"$ROWS" 2>/dev/null || echo "$ROWS")
   done < <(grep '^cli ' <<<"$OUT")
+  # OS security updates (BH-6742): reported per box, never an alert.
+  read -r _ SEC_LAST SEC_PEND SEC_SETUP < <(grep '^sec ' <<<"$OUT"; echo)
+  if [ -n "${SEC_LAST:-}" ]; then
+    SECLINE="security updates: last run $SEC_LAST, $SEC_PEND pending, setup $([ "$SEC_SETUP" = 1 ] && echo yes || echo NO)"
+  elif [ -n "$SR_AT" ]; then
+    SECLINE="security updates: not probed today (judged from its self-report)"
+  else
+    SECLINE="security updates: not reported by the probe"
+  fi
   if [ -n "$REASONS" ]; then
     BEHIND=$((BEHIND+1)); REPORT="$REPORT\n  $ID: $REASONS"
     FIX="/root/harness/bin/cli-update.sh on $ID"; [ "$BOX" = local ] || FIX="ssh root@$BOX /root/harness/bin/cli-update.sh"
@@ -298,6 +438,29 @@ for BOX in $ORDERED; do
       REPORT="$REPORT\n  $ID ok"
     fi
   fi
+  REPORT="$REPORT\n  $ID $SECLINE"
+  # node and tailscale (BH-6742): versions and the gap to the vendor's latest.
+  TOOLLINE=""; TOOLALERT=""; TOOLMARKS=""
+  while read -r _ TN TV; do
+    [ -n "${TN:-}" ] || continue
+    if [ "$TV" = missing ]; then TOOLLINE="$TOOLLINE, $TN missing"; continue; fi
+    if ! tool_gap "$TN" "$TV"; then TOOLLINE="$TOOLLINE, $TN $TV (latest unknown: the feed could not be read)"; continue; fi
+    if [ "$TG_REL" = 0 ]; then TOOLLINE="$TOOLLINE, $TN $TV (current)"; continue; fi
+    TOOLLINE="$TOOLLINE, $TN $TV (latest $TG_LATEST: $TG_REL releases, $TG_DAYS days behind)"
+    if [ "$TG_REL" -gt "$TOOL_BEHIND_REL" ] || [ "$TG_DAYS" -gt "$TOOL_BEHIND_DAYS" ]; then
+      grep -qxF "$TODAY $ID $TN $TV" "$TOOL_ALERTED" 2>/dev/null && continue
+      TOOLALERT="${TOOLALERT:+$TOOLALERT; }$TN $TV is $TG_REL releases and $TG_DAYS days behind $TG_LATEST"
+      TOOLMARKS="${TOOLMARKS:+$TOOLMARKS
+}$TODAY $ID $TN $TV"
+    fi
+  done < <(grep '^tool ' <<<"$OUT")
+  if [ -n "$TOOLLINE" ]; then REPORT="$REPORT\n  $ID tools: ${TOOLLINE#, }"
+  elif [ -n "$SR_AT" ]; then REPORT="$REPORT\n  $ID tools: not probed today (judged from its self-report)"
+  fi
+  # Through bin/alert-line.sh (the sanctioned writer), one row per box a day.
+  [ -n "$TOOLALERT" ] && HARNESS="$H" "$HERE/alert-line.sh" --id "tool-behind-$ID" \
+    "[$ID] TOOL VERSIONS: $TOOLALERT (limits: more than $TOOL_BEHIND_REL releases or $TOOL_BEHIND_DAYS days, settings rows lane.cli-version-check.cli_check_tool_behind_*). Fix: update it on the box; details in logs/cli-version-check.log." \
+    && printf '%s\n' "$TOOLMARKS" >> "$TOOL_ALERTED"
 done
 mv -f "$TSV.tmp" "$TSV" 2>/dev/null
 

@@ -1,0 +1,26 @@
+# catalog/lane-run-inputs.d/alert-triage.rw — the per-project files one
+# `bin/alert-triage.sh $p` run writes. A write-back may carry these only. The ro
+# snapshot is these plus alert-triage.ro. The inventory, with file:line for each
+# entry, is in docs/notes/2026-10-14-BH-6720-llm-alert-lanes-offhub.md.
+#
+# NOT CARRIED. A project run also writes these fleet-wide files. A per-file
+# compare-and-set from N project runs would conflict on every tick, so they
+# block a flip of alert-triage to Fly:
+#   logs/ALERTS.log (appends, bin/alert-triage.sh:559,1394,1409,1428,1504,1689)
+#   state/triage-prstate.json (STEP 0, bin/triage-spool-retire.sh:140)
+#   state/alert-triage-expired-*.tsv (bin/triage-spool-retire.sh:137)
+#   state/alert-triage-cliff-parked.tsv (bin/alert-triage.sh:1640)
+#   state/lane-noise-alert-triage.count (bin/lib/lane-caps.sh:616)
+#   flags/lane-caps-degraded-*, logs/lane-caps.log, logs/model-route.log
+#   state/alerts/*, state/alert-line-sent/*, logs/cost.csv, flags/alerted-*
+# The shared seeds state/alert-families.json, state/alert-triage-cliff.json and
+# state/alert-fix-prs.json (bin/alert-triage.sh:645,648,671) are read only when
+# the project's own copy is absent, and the project's copy rides below.
+# Secrets, locks and machine-local caches are never carried: env/*, locks/*,
+# state/gh-*, state/settings-cache.json, state/lane-gate/*.
+# logs/alert-triage.log rides back as the lane log (.lri/log-append).
+#
+# inbox.tsv, work.tsv, deferred.tsv (bin/alert-triage.sh:213,231,
+# bin/lib/triage-inbox.sh:47), alert-families.json, alert-triage-cliff.json,
+# alert-fix-prs.json (bin/alert-triage.sh:644,647,670)
+state/alert-triage/$p/**

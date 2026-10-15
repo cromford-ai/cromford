@@ -1,0 +1,11 @@
+{
+  "id": "cost-rows-push",
+  "kind": "feed",
+  "lane": "cost-rows-push",
+  "max_age_h": 2,
+  "probe": {
+    "path": "/api/metrics/cost-rows?limit=1",
+    "at": ".cost_rows[0].ts"
+  },
+  "note": "BH-5566: the newest D1 cost_rows row, fleet-wide. The boxes push cost rows every 10 minutes, so 2 h is 12 missed pushes. This is a proxy: cost_rows.ts is the time of the model call in the row, not the time of the push, so a fleet with no model call for 2 h also reads as dead. Read by bin/staff/dispatcher-collect.sh (dead-feed)."
+}

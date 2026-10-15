@@ -1,0 +1,16 @@
+# catalog/lane-run-inputs.d/alert-triage.ro — what one `bin/alert-triage.sh $p`
+# run reads and never writes back. The file:line after each entry is where the
+# run reads it. The inventory is in
+# docs/notes/2026-10-14-BH-6720-llm-alert-lanes-offhub.md.
+#
+# A project run does not parse logs/ALERTS.log: it reads its inbox
+# (bin/lib/triage-inbox.sh:47, bin/alert-triage.sh:211-231) and only appends to
+# ALERTS.log. The tooled session can open it from the orientation map
+# (bin/triage-map.sh:176), so it rides as the lines that name the project as a
+# whole token. A line that names no project rides in no snapshot.
+@lines logs/ALERTS.log (^|[^A-Za-z0-9_.-])$p([^A-Za-z0-9_.-]|$)
+logs/ALERTS.log (this project's lines only)
+# bin/alert-triage.sh:1420, bin/fleet-conf.sh:64
+fleet.conf
+# bin/alert-triage.sh:42,143, bin/lib/lane-gate.sh:238, bin/lib/alert-state.sh:57
+flags/*

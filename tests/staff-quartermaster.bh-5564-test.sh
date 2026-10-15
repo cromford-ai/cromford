@@ -329,7 +329,7 @@ if node -e 'require("node:sqlite")' >/dev/null 2>&1; then
     const db = new DatabaseSync(":memory:");
     db.exec(require("node:fs").readFileSync(process.argv[1], "utf8"));
     db.exec(require("node:fs").readFileSync(process.argv[2], "utf8"));
-    const r = db.prepare("SELECT agent, lane FROM staff_lanes ORDER BY agent, lane").all();
+    const r = db.prepare("SELECT agent, lane FROM staff_lanes WHERE agent = ? ORDER BY agent, lane").all("quartermaster");
     console.log(r.map((x) => x.agent + ":" + x.lane).join(" "));
   ' "$T/schema.sql" "${SEED:-/dev/null}" 2>&1)
   eq "Q9 staff_lanes after the seed applies twice" "$GOT" "$(for L in $LANES7; do printf 'quartermaster:%s ' "$L"; done | sed 's/ $//')"

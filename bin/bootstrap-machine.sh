@@ -162,6 +162,9 @@ command -v unzip >/dev/null || apt-get install -y unzip
 command -v rsync >/dev/null || apt-get install -y rsync
 # Newer Orgo images ship without cron (box-project-2-1, 2026-07-24).
 command -v crontab >/dev/null || apt-get install -y cron
+# OS security updates from the first boot (BH-6742): security pockets only,
+# no reboot, no service restart. bin/update-runners.sh repeats it daily.
+"$HERE/security-updates-ensure.sh" || true
 # Run the daemon under supervisord like the hub so it survives restarts.
 pgrep -x cron >/dev/null || {
   if [ -d /etc/supervisor/conf.d ]; then

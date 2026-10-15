@@ -1,0 +1,11 @@
+{
+  "env": "CLI_CHECK_FEED_TTL_S",
+  "type": "int",
+  "default": 86400,
+  "min": 0,
+  "max": 604800,
+  "unit": "seconds",
+  "zero_means": null,
+  "settable": true,
+  "note": "BH-6742. How long bin/cli-version-check.sh reuses its cached vendor release feed (state/tool-feeds/<tool>.tsv) before it fetches it again. A failed fetch is never cached and a stale cache is never used: the latest is then unknown. Read as ${CLI_CHECK_FEED_TTL_S:-86400}. 0 = fetch on every run."
+}

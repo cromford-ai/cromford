@@ -55,10 +55,14 @@ test('BH-5559 staff charter and autonomy', async (t) => {
       assert.equal(r.soul_path, `prompts/staff/${r.name}-soul.md`, r.name);
       assert.ok(r.role.length > 0, r.name);
     }
-    // BH-5564: quartermaster owns the 7 cost lanes; no other agent has a lane yet.
-    assert.equal(db.prepare("SELECT count(*) AS n FROM staff_lanes WHERE agent <> 'quartermaster'").get().n, 0);
+    // BH-5564: quartermaster owns the 7 cost lanes; BH-5566: dispatcher owns the
+    // 11 health lanes; no other agent has a lane yet.
+    assert.equal(db.prepare("SELECT count(*) AS n FROM staff_lanes WHERE agent NOT IN ('quartermaster', 'dispatcher')").get().n, 0);
     assert.deepEqual(db.prepare("SELECT lane FROM staff_lanes WHERE agent = 'quartermaster' ORDER BY lane").all().map((r) => r.lane),
       ['cap-loss-detector', 'ci-minutes-watch', 'cost-local-brake', 'cost-reconcile', 'extra-usage-track', 'orchestrator-burn', 'vendor-spend-pull']);
+    assert.deepEqual(db.prepare("SELECT lane FROM staff_lanes WHERE agent = 'dispatcher' ORDER BY lane").all().map((r) => r.lane),
+      ['fleet-slo', 'healthcheck', 'heartbeat-reaper', 'hub-probe', 'jobs-watchdog', 'lane-run-wait-alert', 'pipeline-health',
+        'served-sha-watch', 'watchdog-ping', 'watchdog-poll', 'watchdog-responder']);
     assert.equal(db.prepare('SELECT count(*) AS n FROM staff_classes').get().n, 0);
     assert.equal(db.prepare('SELECT count(*) AS n FROM staff_decisions').get().n, 0);
     assert.equal(db.prepare("SELECT value FROM settings WHERE key='staff.delegate_after'").get().value, '5');

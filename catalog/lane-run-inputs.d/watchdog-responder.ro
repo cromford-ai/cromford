@@ -1,0 +1,21 @@
+# catalog/lane-run-inputs.d/watchdog-responder.ro — what one
+# `bin/watchdog-responder.sh $p` run reads and never writes back. The
+# file:line after each entry is where the run reads it. The inventory is in
+# docs/notes/2026-10-14-BH-6720-llm-alert-lanes-offhub.md.
+#
+# The run reads state/stale-owed.json (bin/watchdog-responder.sh:217), not
+# logs/ALERTS.log, and model-route.sh only appends to it. It rides as the
+# lines that name the project as a whole token.
+@lines logs/ALERTS.log (^|[^A-Za-z0-9_.-])$p([^A-Za-z0-9_.-]|$)
+logs/ALERTS.log (this project's lines only)
+# bin/watchdog-responder.sh:217-220. One JSON object keyed by project: it
+# rides whole (every project's entry), and the run keeps its own (line 220).
+state/stale-owed.json
+# bin/watchdog-responder.sh:274-283
+state/build-queue/$p/*.json
+# bin/watchdog-responder.sh:284
+state/fly-pool/$p/*.json
+# bin/lib/llm-lane-project.sh (llp_arm), bin/watchdog-responder.sh:322,385
+fleet.conf
+# bin/watchdog-responder.sh:78,144, bin/lib/lane-gate.sh:238, bin/lib/alert-state.sh:57
+flags/*

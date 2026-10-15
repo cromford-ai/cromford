@@ -1,0 +1,24 @@
+# catalog/lane-run-inputs.d/alerts-medic.rw — the per-project files one
+# `bin/alerts-medic.sh $p` run writes. A write-back may carry these only. The ro
+# snapshot is these plus alerts-medic.ro. The inventory, with file:line for each
+# entry, is in docs/notes/2026-10-14-BH-6720-llm-alert-lanes-offhub.md.
+#
+# NOT CARRIED. A project run also writes these fleet-wide files, and they
+# block a flip of alerts-medic to Fly:
+#   logs/ALERTS.log (appends, bin/alerts-medic.sh:384,691,705,762)
+#   logs/medic.log (every project run appends to one log, bin/alerts-medic.sh:53;
+#     the lane log that rides back is logs/alerts-medic.log)
+#   flags/alerted-medic-*, flags/lane-caps-degraded-*, logs/lane-caps.log,
+#   logs/model-route.log, logs/cost.csv
+# The shared seeds state/medic-seen.txt, state/medic-families.json and
+# state/medic-parked.json (bin/alerts-medic.sh:133-139) are read only when the
+# project's own copy is absent, and the project's copy rides below.
+# bin/alerts-medic.sh:19 sets HARNESS=/root/harness with no condition.
+# Secrets, locks and machine-local caches are never carried: env/*, locks/*,
+# state/gh-*, state/settings-cache.json, state/lane-gate/*.
+#
+# medic-seen.txt, medic-families.json, medic-parked.json
+# (bin/alerts-medic.sh:132,346-347,813-814,830,846)
+state/alerts-medic/$p/**
+# bin/alerts-medic.sh:725-726,791
+logs/medic-run.$p.txt

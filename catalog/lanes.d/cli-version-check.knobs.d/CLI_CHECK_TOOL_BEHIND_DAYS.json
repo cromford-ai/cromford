@@ -1,0 +1,11 @@
+{
+  "env": "CLI_CHECK_TOOL_BEHIND_DAYS",
+  "type": "int",
+  "default": 30,
+  "min": 0,
+  "max": 3650,
+  "unit": "days",
+  "zero_means": null,
+  "settable": true,
+  "note": "BH-6742. bin/cli-version-check.sh writes one ALERTS line per box per UTC day when node or tailscale has been behind for MORE than this many days (counted from the release date of the oldest newer release). Read as ${CLI_CHECK_TOOL_BEHIND_DAYS:-30}; non-numeric falls back to 30."
+}

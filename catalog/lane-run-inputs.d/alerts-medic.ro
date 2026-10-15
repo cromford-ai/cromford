@@ -1,0 +1,14 @@
+# catalog/lane-run-inputs.d/alerts-medic.ro — what one `bin/alerts-medic.sh $p`
+# run reads and never writes back. The file:line after each entry is where the
+# run reads it. The inventory is in
+# docs/notes/2026-10-14-BH-6720-llm-alert-lanes-offhub.md.
+#
+# The run reads its alerts from the alerts API and table
+# (bin/alerts-medic.sh:236-262), not from logs/ALERTS.log, and only appends to
+# it. It rides as the lines that name the project as a whole token.
+@lines logs/ALERTS.log (^|[^A-Za-z0-9_.-])$p([^A-Za-z0-9_.-]|$)
+logs/ALERTS.log (this project's lines only)
+# bin/lib/llm-lane-project.sh (llp_arm), bin/fleet-conf.sh:64
+fleet.conf
+# bin/lib/lane-gate.sh:238, bin/lib/lane-switch.sh:150,206, bin/lib/alert-state.sh:57,174
+flags/*

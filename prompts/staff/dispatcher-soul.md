@@ -25,3 +25,5 @@ REPORT:
 - a box that stopped sending heartbeats
 - a queue that grows for more than one hour
 - an alert that stays open for more than one day
+- a declared feed with no success inside its window
+- a deploy followed by no feature output for its declared window

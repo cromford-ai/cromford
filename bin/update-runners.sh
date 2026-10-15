@@ -60,6 +60,12 @@ CHECKOUT=/root/harness-checkout
 # Fail-open: it always exits 0, and a problem is its log line.
 [ -x /root/harness/bin/tmpfs-ensure.sh ] && /root/harness/bin/tmpfs-ensure.sh >> "$LOG" 2>&1 || true
 
+# --- OS security updates (BH-6742) ----------------------------------------------
+# unattended-upgrades on the security pockets only, no reboot, needrestart in
+# list mode, and the 04:17Z cron line. Writes only what differs, so a set-up box
+# changes nothing. Fail-open: it always exits 0, and a problem is its log line.
+[ -x /root/harness/bin/security-updates-ensure.sh ] && /root/harness/bin/security-updates-ensure.sh >> "$LOG" 2>&1 || true
+
 # --- Runner CLIs: claude + codex + grok, through bin/cli-update.sh (2026-09-06) -
 # Was two inline `npm install -g` lines above the sync. They were a wish, not a
 # mechanism: project-9's PATH claude was a NATIVE install npm never touched, its

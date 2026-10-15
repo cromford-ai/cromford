@@ -1,0 +1,11 @@
+{
+  "id": "vendor-spend-pull",
+  "kind": "feed",
+  "lane": "vendor-spend-pull",
+  "max_age_h": 3,
+  "probe": {
+    "path": "/api/metrics/vendor-spend?limit=1",
+    "at": ".vendor_spend[0].ts"
+  },
+  "note": "BH-5566: the newest D1 vendor_spend row of any status. The pull runs hourly and writes a row per vendor on every poll, an error row included, so 3 h is 3 missed pulls. A vendor that fails on every poll is the pull's own alert (note_outcome), not this feed. Read by bin/staff/dispatcher-collect.sh (dead-feed)."
+}
