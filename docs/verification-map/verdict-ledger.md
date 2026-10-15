@@ -185,6 +185,12 @@ GET /api/verdict/history?pr=<url>   ->  {pr, job_id, rounds:[…], truncated, as
    -> TSV per round: verdict, reviewed_sha, tier, provenance, source, created_at, job_id
 ```
 
+**A D1 overload is a 503, not a 500 (BH-6807).** When the BH-6690 D1 retry
+gives up after 3 attempts, `/api/verdict` and `/api/verdict/history` answer
+`503 {error:"…overloaded…", retryable:true, d1_attempts:3}` with one warn line
+and one Sentry event, and `bin/lib/jobs/req.sh` retries that answer once
+(`cd worker/jobs && node --test test/verdict-overload.bh-6807.test.js`).
+
 **`job_id` is the standing owner; the ROUNDS are keyed on the PR.** The top-level
 `job_id` is resolved exactly the way `/api/verdict` resolves it — the ranking
 above, build job first — so the history answers for the same row a merge gate
