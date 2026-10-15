@@ -102,10 +102,10 @@ FIX() {
 echo "M1: lri_paths blocked-resolver prints main's list"
 GOLDEN_RO=$(sed -n '/^GOLDEN_RO$/,/^GOLDEN_RO_END$/p' "$0" | sed '1d;$d')
 OUT=$(L "$T/none" lri_paths blocked-resolver demo ro); rc=$?
-[ "$rc" = 0 ] && [ "$OUT" = "$GOLDEN_RO" ] && ok "M1 ro equals the 20-line golden" \
+[ "$rc" = 0 ] && [ "$OUT" = "$GOLDEN_RO" ] && ok "M1 ro equals the 22-line golden" \
   || bad "M1 ro rc=$rc: $(diff <(printf '%s\n' "$GOLDEN_RO") <(printf '%s\n' "$OUT"))"
 OUT=$(L "$T/none" lri_paths blocked-resolver demo rw); rc=$?
-[ "$rc" = 0 ] && [ "$OUT" = "$(head -n 14 <<<"$GOLDEN_RO")" ] && ok "M1 rw equals the first 14 lines" \
+[ "$rc" = 0 ] && [ "$OUT" = "$(head -n 15 <<<"$GOLDEN_RO")" ] && ok "M1 rw equals the first 15 lines" \
   || bad "M1 rw rc=$rc: $OUT"
 
 # ============================================================================
@@ -317,12 +317,14 @@ builds/demo-<KEY>-*/<record file>
 builds/pool-demo-<KEY>-*/<record file>
 builds/fly-demo-<KEY>-*/<record file>
 state/build-notes/demo/*
+state/pool/demo/*.terminal-noted
 state/build-queue/demo/*.json
 state/merge-conductor/pr-state.tsv
 logs/merge-conductor.log (hand-off lines only)
 plans/demo-*/planned-files.txt
 flags/*
 fleet.conf
+state/pool/demo/*.terminal
 GOLDEN_RO_END
 GOLDEN_LIST_RO
 d builds/demo-BH-1-a

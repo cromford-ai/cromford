@@ -19,4 +19,4 @@ worker/jobs/src/lib/deployment-defaults.js   billing-account  the jobs worker's 
 bin/lib/restore-drill-orgo.sh                orgo-host  the Orgo VM vendor's own API base, already the ORGO_API_BASE knob's default; another operator's vendor is a different drill driver, not a different host
 
 # ── the public-mirror sanitizer must name what it scrubs ─────────────────────
-bin/share/mapping.py                         billing-account,box-host,gh-org,operator-email,operator-login,tailnet-ip,workers-subdomain  maps every deployment literal to its example-org placeholder for the share mirror; it holds them BY DESIGN
+bin/share/mapping.py                         billing-account,box-host,gh-org,harness-repo,operator-email,operator-login,tailnet-ip,workers-subdomain  maps every deployment literal to its example-org placeholder for the share mirror; it holds them BY DESIGN

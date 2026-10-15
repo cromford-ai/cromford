@@ -33,7 +33,7 @@
 queue_row_job_file() {
   local project="${1:-}" dest="${2:-}" key="${3:-}" ticket="${4:-}" attempt="${5:-}" meta="${6:-}"
   local h="${HARNESS:-/root/harness}" tag="${QRJ_TAG:-fly-dispatch/${1:-}}"
-  local ts def sb hf fs rb bad bf bv dth tmp brs
+  local ts def sb hf fs rb bad bf bv dth tmp brs cb
   [ -n "$project" ] && [ -n "$dest" ] && [ -n "$key" ] || return 1
   ts=$(date -u '+%Y-%m-%d %H:%M:%SZ')
   case "${ticket:-}" in -) ticket="" ;; esac
@@ -42,7 +42,7 @@ queue_row_job_file() {
   # asks this question of EVERY queued row on EVERY tick, and four extra `jq`
   # processes per row per tick is a cost with no reader — the only thing a
   # validate-only call can answer is the rebase refusal.
-  if [ "$dest" = "-" ]; then def=0; dth=""; sb=""; hf=false; fs=false; brs=false
+  if [ "$dest" = "-" ]; then def=0; dth=""; sb=""; hf=false; fs=false; brs=false; cb=""
   else
     # `deferrals` is the stand-down count, carried in the row's meta so it
     # survives this hub-side round trip; `attempt` stays the death count. Losing
@@ -74,6 +74,21 @@ queue_row_job_file() {
     # already, so the pool's dispatch-mode filter (dm_job_admit) lets it pass.
     brs=$(printf '%s' "${meta:-}" | jq -r 'if type == "object" then ((.blocked_resolver // "") | tostring) else "" end' 2>/dev/null)
     case "${brs:-}" in ''|null|false) brs=false ;; *) brs=true ;; esac
+    # `continue_branch` (BH-6821): the pool reap requeued a build whose push was
+    # rejected on a remote that diverged, and the next one starts from the
+    # remote head. It reaches `git` on the machine as TARGET_BRANCH, so a value
+    # outside the stack_base charset is REFUSED, not dropped: a build that lost
+    # it would push over the same diverged branch again.
+    cb=$(printf '%s' "${meta:-}" | jq -r 'if type == "object" then (.continue_branch // "") else "" end' 2>/dev/null)
+    case "${cb:-}" in
+      *[!A-Za-z0-9._/-]*)
+        command -v queue_done >/dev/null 2>&1 \
+          && { queue_done "$project" "$key" failed "continue_branch rejected (charset)" >/dev/null 2>&1 || true; }
+        [ -x "$h/bin/alert-line.sh" ] && HARNESS="$h" "$h/bin/alert-line.sh" \
+          "[$tag] $key: this row's continue_branch is not a branch name — the row is closed FAILED and NO queue file was written."
+        printf '%s: continue_branch rejected — row closed failed, no queue file written\n' "$key"
+        return 3 ;;
+    esac
   fi
   # `rebase` is the WHOLE meta object, carried across in one piece (BH-486.2,
   # #542). Under REBASE_ON_POOL the conductor's enqueue writes a row whose meta
@@ -127,9 +142,10 @@ queue_row_job_file() {
   tmp="$(dirname "$dest")/.$(basename "$dest").db"
   jq -nc --arg t "$ticket" --arg k "$key" --argjson a "$attempt" --argjson d "$def" \
      --arg ts "$ts" --arg sb "${sb:-}" --arg hf "${hf:-false}" --arg rb "${rb:-}" \
-     --arg dx "${dth:-}" --arg fs "${fs:-false}" --arg rbd "${brs:-false}" \
+     --arg dx "${dth:-}" --arg fs "${fs:-false}" --arg rbd "${brs:-false}" --arg cb "${cb:-}" \
        '{ticket_id:$t,key:$k,attempt:$a,deferrals:$d,enqueued_at:$ts,source:"db"}
         + (if $sb == "" then {} else {stack_base:$sb} end)
+        + (if $cb == "" then {} else {continue_branch:$cb} end)
         + (if $hf == "true" then {hotfix:true} else {} end)
         + (if $fs == "true" then {fresh_spawn:true} else {} end)
         + (if $rbd == "true" then {rebuild:true} else {} end)

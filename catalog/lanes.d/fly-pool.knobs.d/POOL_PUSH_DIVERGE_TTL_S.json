@@ -1,0 +1,11 @@
+{
+  "env": "POOL_PUSH_DIVERGE_TTL_S",
+  "type": "int",
+  "default": 604800,
+  "min": 3600,
+  "max": 2592000,
+  "unit": "seconds",
+  "required": false,
+  "note": "BH-6821: how long a push-rejected divergence (state/pool/<p>/<KEY>.push-diverged) counts as the key's one requeue. A second divergence inside it is terminal and writes one ALERTS line. An older strike is a new event and requeues again.",
+  "read_in": "bin/lib/pool-push-rejected.sh"
+}

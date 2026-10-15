@@ -1,0 +1,11 @@
+{
+  "env": "POOL_PUSH_LANDED_OPEN",
+  "type": "int",
+  "default": 1,
+  "min": 0,
+  "max": 1,
+  "zero_means": "off",
+  "required": false,
+  "note": "BH-6821: a pool build reported 'push of <branch> rejected' is compared with the remote branch. If the remote holds the built head, the hub opens the PR and the row closes done. If the remote diverged, ONE build is requeued from the remote head. 0 = off: every push rejection is terminal, as before.",
+  "read_in": "bin/lib/pool-push-rejected.sh"
+}

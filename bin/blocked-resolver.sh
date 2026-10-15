@@ -438,6 +438,8 @@ command -v is_hub_box >/dev/null 2>&1 || is_hub_box() { [ "${1:-}" = local ]; }
 # landed it runs every fix round exactly as before.
 # shellcheck source=bin/lib/fixround-closure-lint.sh
 [ -r "$H/bin/lib/fixround-closure-lint.sh" ] && . "$H/bin/lib/fixround-closure-lint.sh"
+# shellcheck source=bin/lib/br-pool-terminals.sh
+[ -r "$H/bin/lib/br-pool-terminals.sh" ] && . "$H/bin/lib/br-pool-terminals.sh"
 
 # br_queue_enq <project> <key> — the enqueued_at stamp of the worker's row for
 # this key, if it has one and we can read it. rc 1 on no row / no reader /
@@ -8904,6 +8906,8 @@ fi
 # The lane lock is already released by br_cron_unlock inside the first
 # dispatched rung; this closes the fd on every other path out (an idle
 # tick, a tick whose every row was held) so nothing leaves it open.
+# The push-rejected pool terminals, listed and told once (BH-6821).
+command -v br_pool_terminal_pass >/dev/null 2>&1 && br_pool_terminal_pass "$ONLY"
 exec 8>&-
 # THE HAND-OFF SWEEP (BH-5125), after everything above has had its say.
 [ "$BHW_ON" = 1 ] && bhw_sweep "$STOPREASON"

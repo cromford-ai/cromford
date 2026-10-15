@@ -699,6 +699,16 @@ _run_job() {
   adopt_head=$( cd "$REPO" && gh pr list --state open --limit 50 --json headRefName,title 2>/dev/null | jq -r --arg k "$key" '[.[]|select(.title|test("(^|[^A-Za-z0-9-])" + $k + "([^0-9]|$)"))][0].headRefName // empty' )
   if [ -n "$adopt_head" ]; then
     log "open PR titled with $key found — building on its head $adopt_head (continue-mode)"
+  else
+    # A requeue after a push rejected on a diverged remote (BH-6821) starts
+    # from the remote head. An open PR's head above still wins.
+    local continue_branch
+    continue_branch=$(jq -r '.continue_branch // ""' "$JOB" 2>/dev/null)
+    case "$continue_branch" in *[!A-Za-z0-9._/-]*) continue_branch="" ;; esac
+    if [ -n "$continue_branch" ]; then
+      log "job carries continue_branch=$continue_branch — building on the remote head (continue-mode)"
+      adopt_head="$continue_branch"
+    fi
   fi
   # Machine rules for the claude CLI: boxes render ~/.claude/CLAUDE.md via
   # update-runners; builders only got them via the context-gate's one-shot

@@ -1,0 +1,10 @@
+# @hub-lanes
+
+# ── HUB-LOAD-SAMPLE LANE (BH-6882, part of #6881) ───────────────────────────
+# Every 10 min. 30 ps samples 1 s apart (runnable share by bin/<name>.sh), one
+# vmstat 5 2 (steal, us/sy/id/wa) and the /proc/stat forks delta over 10 s. One
+# line in state/hub-load/<UTC date>.tsv, one hub-load ledger row. Prunes tsv
+# files older than hub_load.keep_days; one ALERTS line per UTC hour when the
+# runnable p90 of the last 6 runs is over hub_load.max_runnable.
+# Off: flags/lane-off-hub-load-sample (bin/harness-ctl.sh off hub-load-sample).
+*/10 * * * * /root/harness/bin/hub-lease.sh check && /root/harness/bin/hub-load-sample.sh >> /root/harness/logs/hub-load-sample-cron.log 2>&1

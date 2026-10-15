@@ -38,7 +38,9 @@ bin/test-determinism-lint.sh --rules         # the resolved conf and rule table
 ```
 
 `error` findings exit 1. `warn` findings print and do not. No rule file at all
-exits **2**: a lint that scans for nothing must never report green.
+exits **2**: a lint that scans for nothing must never report green. On exit 1
+the last line names the first finding, after the fix-or-waive footer:
+`test-determinism-lint: first finding: <file>:<line>: <rule>`.
 
 ### The rules
 
@@ -313,7 +315,9 @@ gets once somebody merges into a red main. **The open PRs know first.** For each
 repo in `MAIN_RED_PAIR_REPOS` it reads the open harness PRs
 (`bin/lib/gh-pr-list.sh`), works out what each head sha's newest failing
 **required** run failed on — job name plus the first error-shaped line of that
-job's log — and groups them.
+job's log — and groups them. For the **Test determinism lint** job that first
+error is the lint's `first finding:` line, never its fixed footer, so two PRs
+that fail the lint on different files do not pair (BH-6880).
 
 | state | what happens |
 | --- | --- |

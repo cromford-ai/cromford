@@ -1,0 +1,11 @@
+    1     0 Ss   init            /fly/init
+    2     0 S    kthreadd        [kthreadd]
+  999     1 S    bash            /bin/bash /root/harness/bin/fly-pool.sh example-proj
+ 1000   999 S    bash            bash -c jq -r .x /tmp/example.json
+ 1001  1000 R    jq              jq -r .x /tmp/example.json
+ 2001     2 R    kworker/0:1     [kworker/0:1]
+ 3001     1 R+   bash            /bin/bash /root/harness/bin/merge-conductor.sh --tick
+ 3002     1 S    sleep           sleep 60
+ 3003  999 S    node            node /tmp/example-build.js
+ 4001  4002 R    loopy           loopy --spin
+ 4002  4001 S    loopy-parent    loopy-parent

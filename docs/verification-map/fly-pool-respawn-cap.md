@@ -19,11 +19,13 @@ remote burned a new machine every two minutes until a human noticed
 | region | what it does |
 |---|---|
 | `# >>> pool terminal / spawn cap / hold gate (BH-1075)` | `pool_spawn_decision` — HOLD, open PR, terminal state, `After:` hold (BH-5912), per-key spawn cap; `RB-*` rebase rows are exempt from all five |
-| `# >>> push-rejected terminal (BH-1075)` | reaps a `BUILD_DEFERRED push of ticket/<key> rejected` as terminal instead of requeuing |
+| `# >>> push-rejected terminal (BH-1075)` | reaps a `BUILD_DEFERRED push of ticket/<key> rejected` as terminal instead of requeuing; since BH-6821 it first compares the built head with the remote (`bin/lib/pool-push-rejected.sh`): landed -> the hub opens the PR, diverged -> one requeue from the remote head |
 
 There is **no UI route.** The operator surfaces are files and log lines:
 
 - `logs/fly-pool.log` — `terminal BH-...: push rejected at <sha> — not requeued`,
+  `push-rejected BH-...: landed at <sha> -> PR <url>`,
+  `push-rejected BH-...: diverged -> requeue 1 from <sha>` (BH-6821),
   `skipping BH-...: HOLD`, `skipping BH-...: open PR exists`,
   `skipping BH-...: terminal head unchanged`,
   `skipping BH-...: After: <OTHER> <why> — no machine spawned; re-checked next tick` (BH-5912),
@@ -33,7 +35,9 @@ There is **no UI route.** The operator surfaces are files and log lines:
   `terminal BH-...: an explicit human re-arm (<ts>) re-arms one attempt`,
   `RB-<pr>-<head8>: rebase row — the ticket spawn gates do not apply`.
 - `state/pool/<project>/<key>.terminal` — JSON with `branch`, `head_sha`,
-  `reason`, `created_at`.
+  `reason`, `created_at`, and `ticket_id` (BH-6821).
+- `state/pool/<project>/<key>.push-diverged` — the one divergence requeue a key
+  gets inside `POOL_PUSH_DIVERGE_TTL_S` (BH-6821).
 - `state/pool/<project>/<key>.spawns` — one epoch timestamp per spawn that
   reached a machine and got its job (BH-4859: infra failures are never
   counted).

@@ -467,4 +467,9 @@ echo "test-determinism-lint: $NFILES files scanned, $ERRS findings, $WARNS warni
 [ "$ERRS" -eq 0 ] && exit 0
 [ "$WARN_ONLY" = 1 ] && { echo "(--warn-only: not failing)"; exit 0; }
 echo "Fix the line, pin the file's clock, or waive it with a reason:  # determinism: ok <why this is deterministic>"
+# The LAST line names the first finding (BH-6880). bin/main-red-pr-pair.sh groups
+# failing PRs on the line before the runner's "Process completed with exit code
+# 1.", and the fixed footer above made every failure of this job read the same.
+# File, line and rule only: two PRs that share one inherited finding still match.
+awk -F'\t' '$1=="E"{ printf "test-determinism-lint: first finding: %s:%s: %s\n", $2, $3, $4; exit }' "$SCAN"
 exit 1

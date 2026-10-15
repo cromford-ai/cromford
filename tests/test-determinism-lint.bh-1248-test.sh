@@ -31,7 +31,9 @@ bad() { FAIL=$((FAIL+1)); echo "FAIL: $1"; }
 # leak in and change the answer.
 run() { OUT=$(HARNESS="$T/h" bash "$LINT" "$@" 2>&1); RC=$?; }
 has() { grep -qE "$1" <<<"$OUT"; }
-count() { grep -c "$1" <<<"$OUT"; }
+# count <re> -> the findings that match; the "first finding:" last line a failing
+# run prints (BH-6880) repeats one finding's rule and is not counted again.
+count() { grep -v '^test-determinism-lint: first finding: ' <<<"$OUT" | grep -c "$1"; }
 case_dir() { rm -rf "$T/c"; mkdir -p "$T/c/tests" "$T/c/bin"; }
 
 # ── A. the bin/ shape is caught ──────────────────────────────────────────────

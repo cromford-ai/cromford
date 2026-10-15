@@ -25,6 +25,9 @@ bad() { FAIL=$((FAIL+1)); echo "FAIL: $1"; }
 # scratch tree so a box-local flags/determinism-lint.conf can never leak in.
 run() { OUT=$(HARNESS="$T/h" bash "$LINT" "$@" 2>&1); RC=$?; }
 has() { grep -qE "$1" <<<"$OUT"; }
+# count <re> -> the findings that match. The "first finding:" line a failing run
+# ends with (BH-6880) repeats one finding's rule, so it is not counted again.
+count() { grep -v '^test-determinism-lint: first finding: ' <<<"$OUT" | grep -c "$1"; }
 case_dir() { rm -rf "$T/c"; mkdir -p "$T/c/tests" "$T/c/pkg/test" "$T/c/bin"; }
 
 # ── 1. what gets scanned ─────────────────────────────────────────────────────
@@ -148,7 +151,7 @@ run "$T/c"
   || bad "the rolling-window-over-frozen-fixtures shape was not caught (rc=$RC): $OUT"
 # THE PIN IS PER LINE, NOT PER FILE: the broken file already carried a ?day= in
 # another test, so a file-level pin would have read it as safe.
-[ "$(grep -c 'clock-rolling-window' <<<"$OUT")" = 1 ] && ok || bad "the day-pinned call was reported too: $OUT"
+[ "$(count 'clock-rolling-window')" = 1 ] && ok || bad "the day-pinned call was reported too: $OUT"
 # fix it the way #360 did
 sed -i 's|cost-anchored?window=24h|cost-anchored?day=2026-09-14|' "$T/c/pkg/test/cost.test.js"
 run "$T/c"
@@ -178,7 +181,7 @@ for i in $(seq 1 40); do [ -f "$T/done" ] && break; sleep 3; done
 EOF
 run "$T/c"
 { [ "$RC" = 1 ] && has 'sleepy-test\.sh:3: race-sleep'; } && ok || bad "a foreground wait was not reported (rc=$RC): $OUT"
-[ "$(grep -c 'race-sleep' <<<"$OUT")" = 1 ] && ok \
+[ "$(count 'race-sleep')" = 1 ] && ok \
   || bad "sub-threshold sleeps, lock holders, retry loops or comments were reported: $OUT"
 
 # ── 10. every threshold and pattern is config, not a constant ────────────────
@@ -222,7 +225,7 @@ EOF
 run "$T/c"
 { [ "$RC" = 1 ] && has 'piped-test\.sh:3: race-sigpipe' && has 'piped-test\.sh:4: race-sigpipe'; } && ok \
   || bad "a short-circuiting consumer on a git pipe was not caught (rc=$RC): $OUT"
-[ "$(grep -c 'race-sigpipe' <<<"$OUT")" = 2 ] && ok \
+[ "$(count 'race-sigpipe')" = 2 ] && ok \
   || bad "capture-first, merge-base and a read-to-EOF consumer are not races and must be quiet: $OUT"
 
 # ── 14. this repo's own tree is clean ────────────────────────────────────────

@@ -1,0 +1,74 @@
+{
+  "id": "hub-load-sample",
+  "name": "Hub load sampler",
+  "scope": "hub",
+  "script": "bin/hub-load-sample.sh",
+  "cadence": "*/10 * * * *",
+  "boxes": [
+    "hub"
+  ],
+  "switch": {
+    "kind": "flag",
+    "name": "lane-off-hub-load-sample",
+    "aliases": []
+  },
+  "wired": true,
+  "knobs": [
+    {
+      "env": "HUB_LOAD_SAMPLES",
+      "type": "string",
+      "default": "",
+      "unit": null,
+      "zero_means": null,
+      "read_in": "bin/hub-load-sample.sh",
+      "note": "BH-6882 test seam: ps samples per run, 1..300. Empty = 30, the documented default in the script. NOT settable from the control plane.",
+      "settable": false
+    },
+    {
+      "env": "HUB_LOAD_INTERVAL_S",
+      "type": "string",
+      "default": "",
+      "unit": null,
+      "zero_means": null,
+      "read_in": "bin/hub-load-sample.sh",
+      "note": "BH-6882 test seam: seconds between ps samples. Empty = 1. NOT settable from the control plane.",
+      "settable": false
+    },
+    {
+      "env": "HUB_LOAD_FORK_WINDOW_S",
+      "type": "string",
+      "default": "",
+      "unit": null,
+      "zero_means": null,
+      "read_in": "bin/hub-load-sample.sh",
+      "note": "BH-6882 test seam: seconds between the two /proc/stat processes reads. Empty = 10; 0 = forks_s NA. NOT settable from the control plane.",
+      "settable": false
+    },
+    {
+      "env": "HUB_LOAD_PROC_STAT",
+      "type": "string",
+      "default": "",
+      "unit": null,
+      "zero_means": null,
+      "read_in": "bin/hub-load-sample.sh",
+      "note": "BH-6882 test seam: the file the processes counter is read from. Empty = /proc/stat. NOT settable from the control plane.",
+      "settable": false
+    },
+    {
+      "env": "HUB_LOAD_NOW",
+      "type": "string",
+      "default": "",
+      "unit": null,
+      "zero_means": null,
+      "read_in": "bin/hub-load-sample.sh",
+      "note": "BH-6882 test seam: epoch seconds used instead of the clock (tsv date, ledger slot, retention, alert hour). Only all-digit values are used. NOT settable from the control plane.",
+      "settable": false
+    }
+  ],
+  "stats": {
+    "cost_stage": null,
+    "cost_project_filter": null,
+    "lanes_row": false,
+    "log": "logs/hub-load-sample.log"
+  }
+}

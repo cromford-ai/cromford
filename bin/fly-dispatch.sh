@@ -150,6 +150,10 @@ flock -n 9 || { say "" "another tick holds the lock — skip"; exit 0; }
 . "$HARNESS/bin/lib/queue-row-job.sh" 2>/dev/null \
   || . "$(dirname "${BASH_SOURCE[0]}")/lib/queue-row-job.sh" 2>/dev/null \
   || say "" "bin/lib/queue-row-job.sh is missing — no queue file can be materialised from a row this tick"
+# A push-rejected pool terminal is never claimed (BH-6821). Absent lib = no guard.
+# shellcheck source=bin/lib/pool-claim-guard.sh
+. "$HARNESS/bin/lib/pool-claim-guard.sh" 2>/dev/null \
+  || . "$(dirname "${BASH_SOURCE[0]}")/lib/pool-claim-guard.sh" 2>/dev/null || true
 # THE REGISTRY ANSWERS THIS (2026-09-11). This was one of nine copies of the
 # same table across bin/ — a box that moved had to be found in all nine, and
 # until fleet.conf grew a `tailnet_ip` column it genuinely could not answer.
@@ -266,7 +270,28 @@ ROWFEED
       # would be materialised again next tick and get a SECOND machine. The file
       # is written only if the compare-and-swap won.
       command -v queue_row_job_file >/dev/null 2>&1 || continue
-      queue_claim "$P" fly "$RK" >/dev/null 2>&1 || continue
+      # A PUSH-REJECTED TERMINAL IS NOT CLAIMED (BH-6821). fly-pool's terminal
+      # gate re-arms it on a moved head or a RETRY, or closes the row failed. On
+      # a pool project it gets the hub file it reads, with no claim taken.
+      RWHY=""
+      command -v pool_claim_guard >/dev/null 2>&1 && { RWHY=$(pool_claim_guard "$P" "$RK") || true; }
+      if [ -n "$RWHY" ]; then
+        say "$P" "refused claim of $RK: $RWHY — fly-pool's terminal gate owns its re-arm"
+        # Only when absent (the loop head already skips a present file; this
+        # keeps the write one-shot if that check moves). rc 3 is a refused meta
+        # (row closed FAILED): say it, never swallow it.
+        if flag_on fly-pool "$P" && [ ! -f "$HARNESS/state/build-queue/$P/$RK.json" ]; then
+          RRC=0; RSAY=$(queue_row_job_file "$P" "$HARNESS/state/build-queue/$P/$RK.json" \
+                          "$RK" "$RTID" "$RATT" "$RMETA" 2>/dev/null) || RRC=$?
+          [ "$RRC" = 0 ] || say "$P" "hub job file for $RK not written (rc $RRC)${RSAY:+: $RSAY}"
+        fi
+        continue
+      fi
+      RCRC=0; queue_claim "$P" fly "$RK" >/dev/null 2>&1 || RCRC=$?
+      if [ "$RCRC" != 0 ]; then
+        say "$P" "claim of $RK refused (rc $RCRC): row is $(queue_status "$P" "$RK" 2>/dev/null || echo unreadable)"
+        continue
+      fi
       # The field extraction, the rebase normalisation and the charset refusal
       # all live in bin/lib/queue-row-job.sh now (BH-1026.3) — this path and the
       # pool's read one copy of them. rc 3 is the refusal (row closed FAILED, one
@@ -612,13 +637,18 @@ dispatch_project() {
   if [ "$rows_only" = 1 ]; then
     next_job=""
     rm -rf "$rowdir"; mkdir -p "$rowdir"
-    local _rk _rtid _ratt _rmeta _rhot _rtid_pick="" _ratt_pick="" _rmeta_pick="" _rdm=""
+    local _rk _rtid _ratt _rmeta _rhot _rtid_pick="" _ratt_pick="" _rmeta_pick="" _rdm="" _rcg=""
     while IFS="$(printf '\t')" read -r _ _rk _rtid _ _ _ratt _ _ _ _rmeta; do
       [ -n "${_rk:-}" ] || continue
       # A key already live on a pool machine is not queued work (TK-70,
       # 2026-08-13): the file path never saw one because the pool moves the file
       # away at spawn, and the row path has to say so itself.
       grep -ls "\"key\": *\"$_rk\"" "$HARNESS/state/fly-pool/$p/"*.json >/dev/null 2>&1 && continue
+      # A push-rejected terminal is skipped, never claimed (BH-6821).
+      if command -v pool_claim_guard >/dev/null 2>&1 && ! _rcg=$(pool_claim_guard "$p" "$_rk"); then
+        say "$p" "refused claim of $_rk: $_rcg — fly-pool's terminal gate owns its re-arm"
+        continue
+      fi
       # Dispatch mode (BH-6350): the row form of the file pick's skip above.
       if command -v dm_meta_admit >/dev/null 2>&1 && ! dm_meta_admit "$_rtid" "${_rmeta:-}"; then
         _rdm="$_rdm $_rk"; continue
@@ -752,7 +782,7 @@ ROWPICK
     queue_claim "$p" fly "$key" "$(jq -r '.machine_id // ""' "$sf" 2>/dev/null)" >/dev/null 2>&1 || crc=$?
     if [ "$crc" != 0 ]; then
       rm -f "$next_job"
-      say "$p" "$key: the queue row refused this claim (rc $crc) — nothing dispatched, re-offered next tick"
+      say "$p" "$key: the queue row refused this claim (rc $crc; row is $(queue_status "$p" "$key" 2>/dev/null || echo unreadable)) — nothing dispatched, re-offered next tick"
       return 0
     fi
   fi

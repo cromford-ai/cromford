@@ -23,3 +23,5 @@ builds/$p-<KEY>-*/<record file>
 builds/pool-$p-<KEY>-*/<record file>
 builds/fly-$p-<KEY>-*/<record file>
 state/build-notes/$p/*
+# The push-rejected terminal comment's sentinel (BH-6821), read by fly-pool too.
+state/pool/$p/*.terminal-noted

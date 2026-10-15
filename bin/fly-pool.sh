@@ -643,6 +643,9 @@ pool_gh_answered() {
 # shellcheck source=bin/lib/gh-rest.sh
 [ -r "$HARNESS/bin/lib/gh-rest.sh" ] && . "$HARNESS/bin/lib/gh-rest.sh"
 # <<< pr verify rest
+# BH-6821: a push-rejected deferral whose push landed gets its PR from the hub.
+# shellcheck source=bin/lib/pool-push-rejected.sh
+[ -r "$HARNESS/bin/lib/pool-push-rejected.sh" ] && . "$HARNESS/bin/lib/pool-push-rejected.sh"
 # BH-6576: a ticket body line `Spec-repo: <owner>/<repo>` names a repo its
 # build may read; spawn_one unions it into the BH-5910 read-only token.
 # shellcheck source=bin/lib/spec-repos.sh
@@ -692,11 +695,12 @@ pool_key_branch() { printf 'ticket/%s' "$(printf '%s' "$1" | tr '[:upper:]' '[:l
 
 pool_terminal_path() { printf '%s/%s.terminal' "$PDIR" "$1"; }
 
-pool_terminal_write() { # pool_terminal_write <key> <branch> <head_sha> <reason>
-  local key="${1:-}" br="${2:-}" sha="${3:-unknown}" reason="${4:-}" ts
+pool_terminal_write() { # pool_terminal_write <key> <branch> <head_sha> <reason> [ticket_id]
+  local key="${1:-}" br="${2:-}" sha="${3:-unknown}" reason="${4:-}" tid="${5:-}" ts
   ts=$(STAMP)
   mkdir -p "$PDIR"
-  jq -nc --arg br "$br" --arg sha "$sha" --arg reason "$reason" --arg ts "$ts"     '{branch:$br,head_sha:$sha,reason:$reason,created_at:$ts}' > "$(pool_terminal_path "$key")"
+  jq -nc --arg br "$br" --arg sha "$sha" --arg reason "$reason" --arg ts "$ts" --arg tid "$tid" \
+    '{branch:$br,head_sha:$sha,reason:$reason,created_at:$ts} + (if $tid == "" or $tid == "null" then {} else {ticket_id:$tid} end)' > "$(pool_terminal_path "$key")"
   # BH-5001: and the row, so a respawn decided on ANY hub reads the verdict.
   command -v psr_terminal_put >/dev/null 2>&1 && { psr_terminal_put "$P" "$key" "$br" "$sha" "$reason" "$ts" || true; }
   return 0
@@ -3082,7 +3086,7 @@ for MF in "$POOL"/*.json; do
                qa.md e2e.md evidence.md changed-files.txt \
                reviewed-sha headbound-outcome headbound-review.md headbound-review-run.txt harness-suite-head.txt \
                pipeline.log cost.csv validate.txt red.txt green.txt mutation-check.txt context.json gh-stderr.log \
-               execute-transcript.md stop-reason.txt; do
+               execute-transcript.md stop-reason.txt ticket-meta.json; do
         T=$(mktemp); if mexec "$MID" "base64 -w0 $RB/$A 2>/dev/null" > "$T" && [ -s "$T" ]; then base64 -d "$T" > "$LOCAL/$A" 2>/dev/null; fi; rm -f "$T"
       done
       # The machine's bill, under the machine's own box id. Before the RESULT is
@@ -3184,6 +3188,9 @@ for MF in "$POOL"/*.json; do
         continue ;;
     esac
     # <<< pool rebase reap
+    # A push reported rejected whose push in fact landed (BH-6821): the hub
+    # opens the PR and RLINE becomes PR_CREATED, which the gate below verifies.
+    command -v ppr_reap_landed >/dev/null 2>&1 && { ppr_reap_landed || true; }
     # --- A DEFERRAL IS NOT A RESULT (2026-09-11, the pool-cap refusal class) --
     # bin/run-build.sh writes BUILD_DEFERRED + exit 3 for "not now, not a
     # failure" — a busy slot, a key already building, a file overlap, or a
@@ -3249,9 +3256,15 @@ for MF in "$POOL"/*.json; do
       fi
       # >>> push-rejected terminal (BH-1075)
       if [[ "$RLINE" == "BUILD_DEFERRED push of ticket/"* ]] && [[ "$RLINE" == *"rejected"* ]]; then
+        # A remote that diverged from the built head is requeued ONCE from the
+        # remote head instead (BH-6821, bin/lib/pool-push-rejected.sh).
+        if command -v ppr_reap_diverged >/dev/null 2>&1 && ppr_reap_diverged; then
+          next_job_or_destroy
+          continue
+        fi
         BR=$(pool_key_branch "$KEY")
         HEADSHA=$(branch_head_rest "$BR")
-        pool_terminal_write "$KEY" "$BR" "${HEADSHA:-unknown}" "$RLINE"
+        pool_terminal_write "$KEY" "$BR" "${HEADSHA:-unknown}" "$RLINE" "$TICKET"
         : > "$LOCAL/TERMINAL"
         : > "$LOCAL/COMMENTED"
         # AND THE ROW CLOSES (review round 2, Important-3). A terminal that left
@@ -3261,6 +3274,7 @@ for MF in "$POOL"/*.json; do
         # records, in the one place a human or bin/blocked-resolver.sh looks.
         QROW failed "$KEY" "push to ticket/$(printf '%s' "$KEY" | tr '[:upper:]' '[:lower:]') rejected at ${HEADSHA:-unknown} — terminal, not respawned (state/pool/$P/$KEY.terminal)"
         say "terminal $KEY: push rejected at ${HEADSHA:-unknown} — not requeued"
+        command -v ppr_terminal_note >/dev/null 2>&1 && ppr_terminal_note
         next_job_or_destroy
         continue
       fi

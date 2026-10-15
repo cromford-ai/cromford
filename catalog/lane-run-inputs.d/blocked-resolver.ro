@@ -10,3 +10,5 @@ logs/merge-conductor.log (hand-off lines only)
 plans/$p-*/planned-files.txt
 flags/*
 fleet.conf
+# The push-rejected pool terminals the run lists (BH-6821).
+state/pool/$p/*.terminal

@@ -30,7 +30,7 @@
 #   T_REBASE T_TIER UN_BASEF UN_HOW UN_NEWERR UN_TC UN_TSC_FLAGS UN_WHYNOT VERDICT_PROV
 #   VERDICT_RSHA VERDICT_WORD VERIFY_LINE WHAT_BASE WHAT_LIST WHAT_MB WHY_EXCERPT WP_RC WP_WHY _ASSUM _SPECC
 #   _CL_ISSUE
-#   CALLERS_SECTION CK_BASE CK_RC CK_SUM
+#   CALLERS_SECTION CK_BASE CK_RC CK_SUM RB_BUILT_SHA
 # shellcheck shell=bash
 
 rb_pr() {
@@ -748,11 +748,16 @@ echo "$(STAMP) [$PROJECT/$KEY] PR (tier $TIER)" >> "$BUILD/pipeline.log"
 # ahead with the wip commits — never fatal, docs/CHECKPOINTS.md.
 CKPT_SQUASH_WIP || CKPT_SQUASH_REFUSED pr
 # <<< pre-pr squash
+# >>> pr push
+# The rejected line names the head this build made: the pool reap compares it
+# with the remote branch, and a push that did land gets its PR from the hub.
 GH_LIVE
 { RB_PUSH -u pr-push && track_pushed; } || { sleep 10; GH_LIVE; RB_PUSH -u pr-push && track_pushed; } || {
-  echo "$(STAMP) [$PROJECT/$KEY] the push of $BRANCH was REJECTED (a HOLD on the ticket, an unreadable hold, or the lease) — deferring, no PR claimed" >> "$BUILD/pipeline.log"
-  RESULT "BUILD_DEFERRED push of $BRANCH rejected"; exit 3
+  RB_BUILT_SHA=$(git rev-parse HEAD 2>/dev/null) || RB_BUILT_SHA=""
+  echo "$(STAMP) [$PROJECT/$KEY] the push of $BRANCH at ${RB_BUILT_SHA:-an unreadable head} was REJECTED (a HOLD on the ticket, an unreadable hold, or the lease) — deferring, no PR claimed" >> "$BUILD/pipeline.log"
+  RESULT "BUILD_DEFERRED push of $BRANCH rejected${RB_BUILT_SHA:+ at $RB_BUILT_SHA}"; exit 3
 }
+# <<< pr push
 # What/why for humans (the operator 2026-08-24: the body showed only models+cost —
 # our own rule says what/why + verify evidence). Deterministic, no model call:
 # the commit subjects are the WHAT, the plan's opening section is the WHY,
