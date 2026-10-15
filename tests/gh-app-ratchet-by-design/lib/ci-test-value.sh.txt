@@ -1,0 +1,1 @@
+Exempt by BH-6636 (2026-10-14): operator-a5 fix brief for lead review verdict #2216 asked for a once-per-run `gh api --help` probe of --allow-escape-sequences. The call sends no request, so there is no identity to arm; every GitHub read in the file goes through gh_rest. Full reason: the gh-identity line at the top of bin/lib/ci-test-value.sh.

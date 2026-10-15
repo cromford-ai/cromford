@@ -1,0 +1,7 @@
+2026-10-14T08:00:00.0000000Z ##[group]Run TRACE_SAFETY_TEST_TIMEOUT=900 bin/test-trace-safety.sh --gate --shard 2/4
+2026-10-14T08:00:00.0000001Z ##[endgroup]
+2026-10-14T08:00:01.0000000Z --- tests/epsilon-fixture-test.sh rc=0 3s
+2026-10-14T08:15:01.0000000Z --- tests/delta-fixture-test.sh rc=124 900s
+2026-10-14T08:15:01.0000001Z delta: waiting on fixture lock
+2026-10-14T08:15:01.0000002Z EXIT 124 delta-fixture-test.sh
+2026-10-14T08:15:02.0000000Z ##[error]The job has exceeded the maximum execution time of 20m0s

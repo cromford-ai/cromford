@@ -55,6 +55,10 @@ else bad "X3: the worker-jobs job does not run 'npm ci' in worker/jobs before 'n
 
 # ── X4 ──────────────────────────────────────────────────────────────────────
 BLK=$(sed -n '/# >>> worker npm ci (BH-5618)/,/# <<< worker npm ci/p' "$SYNC")
+# TEST-CHANGE (BH-6764): the block's failure path is deploy_fail_note (one
+# ALERT, then at most hourly) and its success path deploy_fail_clear, so the
+# harness runs those two and the knob reader they call, from the same file.
+FNS=$(sed -n '/^HARNESS_SYNC_DEPLOY_ALERT_REPEAT_S_DEFAULT=/,/^# schema_send /p' "$SYNC" | sed '$d')
 if [ -z "$BLK" ]; then
   bad "X4: no '# >>> worker npm ci (BH-5618)' block in bin/harness-sync.sh"
 else
@@ -66,11 +70,15 @@ else
     printf '#!/bin/bash\necho "npm $*" >> "%s/npm.calls"\nexit %s\n' "$W" "$2" > "$W/fakebin/npm"
     printf '#!/bin/bash\necho "$*" >> "%s/alerts"\n' "$W" > "$W/h/bin/alert-line.sh"
     chmod +x "$W/fakebin/npm" "$W/h/bin/alert-line.sh"
-    { echo 'for WNAME in jobs; do'
+    { echo "STAMP() { date -u '+%F %TZ'; }"
+      printf '%s\n' "$FNS"
+      echo 'SNAP=0123456789abcdef'
+      echo 'for WNAME in jobs; do'
       echo 'WSHA=0123456789abcdef'
       printf '%s\n' "$BLK"
       echo 'echo deploy-reached >> "$W/after"'
       echo 'done'; } > "$W/run.sh"
+    mkdir -p "$W/h/state"
     PATH="$W/fakebin:$PATH" W="$W" WDIR="$W/wdir" HARNESS="$W/h" LOG="$W/log" bash "$W/run.sh"
   }
   x4_run ok 0 1

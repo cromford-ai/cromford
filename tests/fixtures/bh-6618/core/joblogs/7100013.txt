@@ -1,0 +1,6 @@
+2026-10-12T10:20:00.0000000Z ##[group]Run bin/ci-shard-fanin.sh
+2026-10-12T10:20:00.0000001Z [36;1mbin/ci-shard-fanin.sh[0m
+2026-10-12T10:20:00.0000002Z ##[endgroup]
+2026-10-12T10:20:01.0000000Z --- tests/alpha-fixture-test.sh rc=0 1s
+2026-10-12T10:20:01.0000001Z shard 1/4 verdict: fail
+2026-10-12T10:20:02.0000000Z ##[error]Process completed with exit code 1.

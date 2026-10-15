@@ -59,6 +59,8 @@ command -v node >/dev/null 2>&1 && command -v jq >/dev/null 2>&1 && command -v f
 
 H="$T/h"
 mkdir -p "$H/bin" "$H/logs" "$H/locks" "$H/state" "$H/env" "$H/flags" "$H/catalog" "$T/fx"
+# BH-6741: the tick loads the Fly token from env/fly.env and makes no Fly call without one.
+printf 'FLY_API_TOKEN=fixture-fly-token\n' > "$H/env/fly.env"
 for L in bin/lane-fleet.sh bin/jobs-client.sh bin/alert-line.sh; do
   ( cd "$REPO" && scratch_install_closure "$L" "$H" ) >/dev/null 2>&1 || bad "setup: could not install $L"
 done

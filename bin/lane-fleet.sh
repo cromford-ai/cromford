@@ -183,6 +183,28 @@ IMAGE=$(lf_str image registry.fly.io/lane-run:latest '^registry\.fly\.io/lane-ru
 FLY="${LANE_FLEET_FLY:-$(fly_bin 2>/dev/null || true)}"
 [ -n "$FLY" ] || { lf_log "flyctl not found (PATH, \$HOME/.fly/bin, \${FLY_BIN_DIR:-/root/.fly/bin}); nothing done"; lf_alert fly-missing "flyctl not found on $(hostname 2>/dev/null) (PATH, \$HOME/.fly/bin, \${FLY_BIN_DIR:-/root/.fly/bin}); the lane-run fleet starts and stops no machine" hour; exit 0; }
 
+# ---- the Fly token (BH-6741) -----------------------------------------------
+# env/fly.env, loaded the way bin/fly-pool.sh loads it. The lane-run app's own
+# token wins, else the org token. flyctl reads FLY_ACCESS_TOKEN; with no token it
+# falls back to the interactive login in ~/.fly/config.yml, which expires (the
+# hub tick of 2026-10-14 17:52Z: "your flyctl session has expired"). So with no
+# token there is no Fly call at all, and one ALERTS line per UTC hour.
+# shellcheck source=bin/lib/env-path.sh
+. "$H/bin/lib/env-path.sh" 2>/dev/null || harness_env_dir() { printf '%s\n' "${1:-$H}/env"; }
+HENV=$(harness_env_dir "$H")
+# shellcheck disable=SC1091
+set -a; . "$HENV/fly.env" 2>/dev/null; set +a
+# The app token's name follows bin/fly-pool.sh's rule: FLY_API_TOKEN_<APP>,
+# here FLY_API_TOKEN_LANE_RUN. A credential, so it is not a registry knob.
+TV="FLY_API_TOKEN_$(echo "$LF_APP" | tr '[:lower:].-' '[:upper:]__')"
+FLY_ACCESS_TOKEN="${!TV:-${FLY_API_TOKEN:-}}"
+if [ -z "$FLY_ACCESS_TOKEN" ]; then
+  lf_log "Fly token missing for $LF_APP (no FLY_API_TOKEN_LANE_RUN or FLY_API_TOKEN in $HENV/fly.env); no Fly call, no start, no stop"
+  lf_alert fly-token-missing "Fly token missing for $LF_APP: $HENV/fly.env has no FLY_API_TOKEN_LANE_RUN or FLY_API_TOKEN; the lane-run fleet starts and stops no machine" hour
+  exit 0
+fi
+export FLY_ACCESS_TOKEN FLY_API_TOKEN="$FLY_ACCESS_TOKEN"
+
 W_DIR="$H/state/lane-fleet"
 STATS="$W_DIR/stats.json"; LIST="$W_DIR/fly-list.json"; ROWS="$W_DIR/machines.json"
 
@@ -192,8 +214,16 @@ _jobs_req GET /api/lane-runs/stats > "$STATS" || lf_read_fail stats "http ${JOBS
 jq -e '.lanes | type == "array"' "$STATS" >/dev/null 2>&1 || lf_read_fail stats "no lanes array"
 W=$(jq -r '[.lanes[].oldest_queued_wait_s | select(type == "number")] | max // "none" | tostring' "$STATS")
 case "$W" in none) ;; *[!0-9]*|'') lf_read_fail stats "bad wait '$W'" ;; esac
-timeout 30 "$FLY" machine list -a "$LF_APP" --json > "$LIST" 2> "$LIST.err" \
-  || lf_read_fail fly-list "$(tr '\n' ' ' < "$LIST.err" | cut -c1-200)"
+if ! timeout 30 "$FLY" machine list -a "$LF_APP" --json > "$LIST" 2> "$LIST.err"; then
+  FERR=$(tr '\n' ' ' < "$LIST.err" | cut -c1-200)
+  # An auth answer is the token, not Fly: name the cause (BH-6741).
+  if grep -qiE 'unauthori[sz]ed|not authorized|session has expired|\b401\b|(invalid|expired|bad) (access )?token|token (is )?(invalid|expired|not valid)' <<<"$FERR"; then
+    lf_log "tick read failed: Fly token rejected for $LF_APP ($FERR); no start, no stop"
+    lf_alert fly-token-rejected "Fly token rejected for $LF_APP ($FERR); renew FLY_API_TOKEN_LANE_RUN or FLY_API_TOKEN in $HENV/fly.env; no machine is started or stopped until it works" hour
+    exit 0
+  fi
+  lf_read_fail fly-list "$FERR"
+fi
 jq -e 'type == "array"' "$LIST" >/dev/null 2>&1 || lf_read_fail fly-list "not a JSON array"
 _jobs_req GET /api/lane-fleet/machines > "$ROWS" || lf_read_fail machines "http ${JOBS_HTTP:-none}"
 jq -e '.machines | type == "array"' "$ROWS" >/dev/null 2>&1 || lf_read_fail machines "no machines array"

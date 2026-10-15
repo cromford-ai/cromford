@@ -433,17 +433,22 @@ deploy_alert_repeat_s() {
   printf '%s\n' "${v:-$HARNESS_SYNC_DEPLOY_ALERT_REPEAT_S_DEFAULT}"
 }
 
-# deploy_fail_note <wname> <wsha> <snap> — one failed `wrangler deploy`. The
-# first failure ALERTs; while it keeps failing it ALERTs again at most once per
-# deploy_alert_repeat_s, and a held failure is one update-runners.log line.
-# state/worker-deploy-failing-<w> is "<first_epoch> <last_alert_epoch> <count>";
-# any other content, or a last alert in the future, counts as absent.
+# deploy_fail_note <wname> <wsha> <snap> [<stage> <message>] — one failed
+# worker-deploy step. <stage> is `deploy` (the default: `wrangler deploy`,
+# BH-6687) or one of the steps before it (BH-6764): `sites-compose`,
+# `budgets-compose`, `schema-compose`, `npm-ci`, with <message> the ALERT text.
+# The first failure ALERTs; while that step keeps failing it ALERTs again at
+# most once per deploy_alert_repeat_s, and a held failure is one
+# update-runners.log line. The state is per worker AND per step:
+# state/worker-<stage>-failing-<w> is "<first_epoch> <last_alert_epoch>
+# <count>"; any other content, or a last alert in the future, counts as
+# absent. deploy_fail_clear removes it when the step passes.
 # HARNESS_SYNC_NOW pins the clock for tests.
 deploy_fail_note() {
-  local wname="$1" wsha="$2" snap="$3" f first="" last="" count=0 now rep since
-  f="$HARNESS/state/worker-deploy-failing-$wname"
+  local wname="$1" wsha="$2" snap="$3" stage="${4:-deploy}" msg="${5:-}" f first="" last="" count=0 now rep since
+  f="$HARNESS/state/worker-$stage-failing-$wname"
   now="${HARNESS_SYNC_NOW:-$(date +%s)}"
-  if read -r first last count _ < "$f" 2>/dev/null \
+  if read -r first last count _ 2>/dev/null < "$f" \
      && [[ "$first $last $count" =~ ^[0-9]+\ [0-9]+\ [0-9]+$ ]] && [ "$last" -le "$now" ]; then
     count=$((count + 1))
   else
@@ -452,12 +457,24 @@ deploy_fail_note() {
   since=$(date -u -d "@$first" '+%F %TZ')
   rep=$(deploy_alert_repeat_s)
   if [ -z "$last" ] || [ $((now - last)) -ge "$rep" ]; then
-    HARNESS="$HARNESS" "$HARNESS/bin/alert-line.sh" --id "worker-deploy-failed-$wname-$(hostname)" "[$(hostname)] worker/$wname changed (${wsha:0:7}) but wrangler deploy FAILED — LIVE WORKER IS STALE; the next successful update-runners run redeploys it; if it keeps failing the alert medic owns this line (worker snapshot of ${snap:0:7}, see update-runners.log) — failing since $since ($count failed attempt(s)); repeats at most once per ${rep}s while it keeps failing"
+    [ -n "$msg" ] || msg="[$(hostname)] worker/$wname changed (${wsha:0:7}) but wrangler deploy FAILED — LIVE WORKER IS STALE; the next successful update-runners run redeploys it; if it keeps failing the alert medic owns this line (worker snapshot of ${snap:0:7}, see update-runners.log)"
+    HARNESS="$HARNESS" "$HARNESS/bin/alert-line.sh" --id "worker-$stage-failed-$wname-$(hostname)" "$msg — failing since $since ($count failed attempt(s)); repeats at most once per ${rep}s while it keeps failing"
     last="$now"
   else
-    echo "$(STAMP) worker $wname deploy FAILED again ($count since $since); alert held, next in $((rep - (now - last)))s" >> "$LOG"
+    echo "$(STAMP) worker $wname $stage FAILED again ($count since $since); alert held, next in $((rep - (now - last)))s" >> "$LOG"
   fi
   printf '%s %s %s\n' "$first" "$last" "$count" > "$f.tmp" && mv -f "$f.tmp" "$f"
+}
+
+# deploy_fail_clear <wname> <stage> — the step passed: remove its failing state
+# and log the recovery, so the next failure alerts at once with a count of 1.
+deploy_fail_clear() {
+  local f="$HARNESS/state/worker-$2-failing-$1" first count
+  [ -e "$f" ] || return 0
+  if read -r first _ count _ < "$f" 2>/dev/null && [[ "$first $count" =~ ^[0-9]+\ [0-9]+$ ]]; then
+    echo "$(STAMP) worker $1 $2 recovered after $count failed attempt(s) since $(date -u -d "@$first" '+%F %TZ')" >> "$LOG"
+  fi
+  rm -f "$f"
 }
 
 # schema_send <worker-dir> <name> <database> <stmt>... — apply the statements
@@ -686,7 +703,6 @@ snapshot_drop() {
 # deploys.
 deploy_workers() {
   local SNAP ROOT="" WNAME WDIR WSHA WLANES WLSHA WCSHA WSITES WSSHA WSTATE WDB
-  local wfail wf_first wf_count
   SNAP=$(git -C "$CHECKOUT" rev-parse HEAD 2>/dev/null) || return 0
   # Only the worker-lock holder is here, so any snapshot left behind is from a
   # killed pass and nobody is reading it.
@@ -785,18 +801,20 @@ deploy_workers() {
     # would stamp a key it does not serve.
     if [ "$WSITES" = 1 ]; then
       if ! "$ROOT/bin/llm-sites-build.sh" --compose --repo "$ROOT" >>"$LOG" 2>&1; then
-        HARNESS="$HARNESS" "$HARNESS/bin/alert-line.sh" "[$(hostname)] worker/$WNAME catalog/llm-sites.json could NOT be composed from catalog/llm-sites.d at ${SNAP:0:7} — deploy of $WNAME SKIPPED; fix the fragment bin/llm-sites-build.sh --check names (update-runners.log)"
+        deploy_fail_note "$WNAME" "$WSHA" "$SNAP" sites-compose "[$(hostname)] worker/$WNAME catalog/llm-sites.json could NOT be composed from catalog/llm-sites.d at ${SNAP:0:7} — deploy of $WNAME SKIPPED; fix the fragment bin/llm-sites-build.sh --check names (update-runners.log)"
         continue
       fi
+      deploy_fail_clear "$WNAME" sites-compose
     fi
     # <<< llm-sites catalog compose
     # >>> budget manifest compose (BH-6487) — the llm-sites rule: a refused
     # compose stops THIS worker, no apply, no deploy, no stamp, one ALERT.
     if [ "$WBUDGETS" = 1 ]; then
       if ! "$ROOT/bin/context-budgets-build.sh" --compose --repo "$ROOT" >>"$LOG" 2>&1; then
-        HARNESS="$HARNESS" "$HARNESS/bin/alert-line.sh" "[$(hostname)] worker/$WNAME catalog/context-budgets.json could NOT be composed from catalog/context-budgets.d at ${SNAP:0:7} — deploy of $WNAME SKIPPED; fix the fragment bin/context-budgets-build.sh --check names (update-runners.log)"
+        deploy_fail_note "$WNAME" "$WSHA" "$SNAP" budgets-compose "[$(hostname)] worker/$WNAME catalog/context-budgets.json could NOT be composed from catalog/context-budgets.d at ${SNAP:0:7} — deploy of $WNAME SKIPPED; fix the fragment bin/context-budgets-build.sh --check names (update-runners.log)"
         continue
       fi
+      deploy_fail_clear "$WNAME" budgets-compose
     fi
     # <<< budget manifest compose
     # >>> schema compose (BH-6005)
@@ -808,9 +826,10 @@ deploy_workers() {
     # fails stops THIS worker: no apply, no deploy, no stamp, one ALERT.
     if [ -d "$WDIR/schema.d" ]; then
       if ! "$ROOT/bin/schema-build.sh" --root "$ROOT" --worker "$WNAME" --to "$WDIR/schema.sql" >>"$LOG" 2>&1; then
-        HARNESS="$HARNESS" "$HARNESS/bin/alert-line.sh" "[$(hostname)] worker/$WNAME schema.sql could NOT be composed from schema.d at ${SNAP:0:7} — deploy of $WNAME SKIPPED so code never runs ahead of its schema; the next update-runners run retries (update-runners.log)"
+        deploy_fail_note "$WNAME" "$WSHA" "$SNAP" schema-compose "[$(hostname)] worker/$WNAME schema.sql could NOT be composed from schema.d at ${SNAP:0:7} — deploy of $WNAME SKIPPED so code never runs ahead of its schema; the next update-runners run retries (update-runners.log)"
         continue
       fi
+      deploy_fail_clear "$WNAME" schema-compose
     fi
     # <<< schema compose
     # >>> d1 schema apply
@@ -835,22 +854,17 @@ deploy_workers() {
     # as the schema apply: no deploy and NO STAMP on a failed install.
     if [ -f "$WDIR/package-lock.json" ]; then
       if ! (cd "$WDIR" && timeout 300 npm ci --omit=dev --no-audit --no-fund >>"$LOG" 2>&1); then
-        HARNESS="$HARNESS" "$HARNESS/bin/alert-line.sh" "[$(hostname)] worker/$WNAME npm ci FAILED (${WSHA:0:7}) — deploy of $WNAME SKIPPED, LIVE WORKER IS STALE; the next update-runners run retries (update-runners.log)"
+        deploy_fail_note "$WNAME" "$WSHA" "$SNAP" npm-ci "[$(hostname)] worker/$WNAME npm ci FAILED (${WSHA:0:7}) — deploy of $WNAME SKIPPED, LIVE WORKER IS STALE; the next update-runners run retries (update-runners.log)"
         continue
       fi
+      deploy_fail_clear "$WNAME" npm-ci
     fi
     # <<< worker npm ci
     if (cd "$WDIR" && set -a && . "$CFENV" && set +a \
         && timeout 300 npx --yes wrangler deploy >>"$LOG" 2>&1); then
       echo "$WSHA" > "$WSTATE"
       echo "$(STAMP) worker $WNAME deployed at ${WSHA:0:7} (snapshot of ${SNAP:0:7})" >> "$LOG"
-      wfail="$HARNESS/state/worker-deploy-failing-$WNAME"
-      if [ -e "$wfail" ]; then
-        if read -r wf_first _ wf_count _ < "$wfail" 2>/dev/null && [[ "$wf_first $wf_count" =~ ^[0-9]+\ [0-9]+$ ]]; then
-          echo "$(STAMP) worker $WNAME deploy recovered after $wf_count failed attempt(s) since $(date -u -d "@$wf_first" '+%F %TZ')" >> "$LOG"
-        fi
-        rm -f "$wfail"
-      fi
+      deploy_fail_clear "$WNAME" deploy
     else
       deploy_fail_note "$WNAME" "$WSHA" "$SNAP"
     fi

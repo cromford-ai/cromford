@@ -1,0 +1,14 @@
+﻿2026-10-12T10:00:01.1000000Z ##[group]Run TRACE_SAFETY_TEST_TIMEOUT=900 bin/test-trace-safety.sh --gate --shard 1/4
+2026-10-12T10:00:01.1000001Z ##[endgroup]
+2026-10-12T10:00:02.2000000Z --- tests/alpha-fixture-test.sh rc=0 0s
+2026-10-12T10:00:02.2000000Z --- tests/beta-fixture-test.sh rc=1 0s
+2026-10-12T10:00:02.2000000Z    --- tests/other-fixture-test.sh rc=1 2s
+2026-10-12T10:00:02.2000000Z FAIL notes.txt
+2026-10-12T10:00:02.2000000Z FAIL: beta row count 3 != 4
+2026-10-12T10:00:02.2000000Z EXIT 1 beta-fixture-test.sh
+2026-10-12T10:00:02.2000000Z --- tests/mc/gamma-fixture-test.sh rc=2 0s
+2026-10-12T10:00:02.2000000Z gamma: timed out waiting for 192.0.2.10
+2026-10-12T10:00:02.2000000Z EXIT 2 gamma-fixture-test.sh
+2026-10-12T10:00:02.2000000Z TRACE: 3 tests, 2 nonzero exit(s), 0 hit(s)
+2026-10-12T10:00:02.2000000Z GATE: pure-logic fail (2 of 3 failed), trace clean (0 hit(s))
+2026-10-12T10:00:03.3000000Z ##[error]Process completed with exit code 1.
