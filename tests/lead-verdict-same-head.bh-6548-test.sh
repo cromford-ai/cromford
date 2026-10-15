@@ -44,7 +44,13 @@ install_tree() {
 }
 install_tree
 [ -r "$H/bin/lib/lead-stale-review.sh" ] || bad "the closure of bin/lead-verdict.sh does not carry bin/lib/lead-stale-review.sh"
-cp "$DIR/catalog/lead-protected-paths.tsv" "$H/catalog/"
+# BH-4148: the lead reads its protected paths from the jobs worker route (rows),
+# with catalog/lead-protected-paths.seed.tsv as the floor. demo-os has no rows,
+# so it is not governed, as it was under the old catalog file.
+cp "$DIR/catalog/lead-protected-paths.seed.tsv" "$H/catalog/"
+. "$DIR/tests/lib/lpp-stub.sh" || exit 1
+lpp_set "$T/lpp.json" example-org/demo-os
+lpp_install "$T/fakebin" "$T/lpp.json" "$T/lpp-down"
 
 cat > "$T/fakebin/curl" <<'EOF'
 #!/bin/bash
@@ -55,6 +61,7 @@ for a in "$@"; do
   prev="$a"
 done
 case "$m ${url#https://jobs.test}" in
+  *"/api/lead-protected-paths"*) "$(dirname "$0")/lpp-answer" "$m" "$url"; exit 0 ;;
   "POST /api/verdicts"*) printf '%s\n%s' '{"verdict":{"id":42,"repo":"example-org/demo-os","pr":7,"head_sha":"x","verdict":"MERGE","source":"human","created_at":"2026-10-13T00:00:00Z"},"human_verified":true}' 201 ;;
   *) printf '%s\n%s' '{"value":null}' 200 ;;
 esac

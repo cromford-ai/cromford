@@ -51,9 +51,9 @@ tests/lib/tracker-jira-stub.sh:generic-api-key:38
 tests/load-project-db.bh-5650-test.sh:curl-auth-header:111
 tests/main-red-state-rows.bh-4156-test.sh:generic-api-key:59
 tests/mc-batch-prefetch.bh-4156-test.sh:generic-api-key:53
-tests/mc-batch-prefetch.bh-4156-test.sh:generic-api-key:254
+tests/mc-batch-prefetch.bh-4156-test.sh:generic-api-key:273
 tests/mc-state-drill.bh-4156-test.sh:generic-api-key:60
-tests/mc-state-drill.bh-4156-test.sh:generic-api-key:121
+tests/mc-state-drill.bh-4156-test.sh:generic-api-key:140
 tests/merge-pr-release.bh-4917-test.sh:generic-api-key:59
 tests/no-client-identifiers-test.sh:aws-access-token:51
 tests/openrouter-audit.bh-4001-test.sh:generic-api-key:21

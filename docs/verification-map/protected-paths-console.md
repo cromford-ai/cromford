@@ -2,8 +2,8 @@
 
 The lead's protected-path globs, one table per repo, editable from the console.
 The rows are `lead_protected_paths` in the jobs D1 (BH-4146). The lead lane
-(`bin/lib/lead-authority.sh`) still reads `catalog/lead-protected-paths.tsv`
-until its DB cutover ships, so a row added here does not change gating yet.
+(`bin/lib/lead-authority.sh`) reads these rows (BH-4148), so a row added here
+gates the next la_decide.
 
 ## Where it is
 

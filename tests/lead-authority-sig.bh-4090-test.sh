@@ -5,11 +5,13 @@
 # real bin/lib/jobs/*.sh, lead-authority.sh and catalog; only curl (the worker,
 # answers by path from $W/<key>.code + $W/<key>.json) and gh (REST) are stubbed.
 #   LS1  mode human; lead_authority answers the effective `human` -> la_decide lead rc 1
-#   LS2  the extras row answers 409 -> setting_get rc 9 -> la_decide rc 2 HOLD
+#   LS2  the lead_protected_paths read answers 409 with no fresh cache -> la_decide rc 2
+#        HOLD (BH-4148: was the extras row); the extras 409 is still setting_get rc 9
 #   LS3  control: a proven lane, no extras, unprotected files -> rc 0
 # Run from anywhere: HARNESS_TEST_SANDBOX=1 bash tests/lead-authority-sig.bh-4090-test.sh
 set -uo pipefail
 . "$(dirname "$0")/lib/scratch.sh" || exit 1
+. "$(dirname "$0")/lib/lpp-stub.sh" || exit 1
 DIR=$(cd "$(dirname "$0")/.." && pwd)
 PASS=0; FAIL=0
 ok()  { PASS=$((PASS+1)); }
@@ -40,6 +42,7 @@ url=""
 for a in "\$@"; do case "\$a" in http*) url="\$a" ;; esac; done
 p="\${url#https://jobs.test}"
 printf 'GET %s\n' "\$p" >> "$W/log"
+case "\$p" in /api/lead-protected-paths*) lpp-answer GET "\$url"; exit 0 ;; esac
 k="\${p#/api/settings/}"
 if [ -f "$W/\$k.code" ]; then printf '%s\n%s' "\$(cat "$W/\$k.json")" "\$(cat "$W/\$k.code")"
 else printf '%s\n%s' '{"error":"no such setting"}' 404; fi
@@ -50,7 +53,12 @@ H="$T/h"; mkdir -p "$H/logs" "$H/state" "$H/catalog"
 for f in bin/jobs-client.sh bin/lib/gh-rest.sh bin/lib/lead-authority.sh; do
   scratch_install_closure "$f" "$H" >/dev/null || exit 1
 done
-cp "$DIR/catalog/lead-protected-paths.tsv" "$H/catalog/"
+# TEST-CHANGE BH-4148 (merge of main): the lead protected paths come from the
+# lead_protected_paths rows (tests/lib/lpp-stub.sh), not the deleted TSV. The rows
+# are the cromford globs the TSV held (the fixture).
+LPPF="$T/lpp.json"; LPPDOWN="$T/lpp-down"
+set -f; lpp_set "$LPPF" example-org/cromford $(cat "$DIR/tests/fixtures/lead-protected-paths.bh-4148.txt"); set +f
+lpp_install "$T/fakebin" "$LPPF" "$LPPDOWN"
 printf '#!/bin/bash\nexit 0\n' > "$H/bin/lane-alert.sh"; chmod +x "$H/bin/lane-alert.sh"
 
 export PATH="$T/fakebin:$PATH" HARNESS="$H" HARNESS_SECRET=s JOBS_URL=https://jobs.test JOBS_RETRIES=0 \
@@ -73,13 +81,17 @@ answer "$K" 200 "{\"key\":\"$K\",\"setting\":{\"key\":\"$K\",\"value\":\"human\"
 R=$(decide)
 case "$R" in "rc=1 reason=lane authority revoked"*) ok ;; *) bad "LS1 want rc 1 lane authority revoked, got: $R" ;; esac
 
-# LS2 — the extras row answers the 409 the worker gives an unproven extras row
-reset
-answer "$X" 409 "{\"error\":\"$X signature does not verify; re-PUT it with the human token\",\"key\":\"$X\"}"
+# LS2 — TEST-CHANGE BH-4148: the extras settings row is gone (a protected glob is
+# a lead_protected_paths row now), so the HOLD on an unreadable extras row
+# becomes the same fail-closed rule on the new read: the rows answer the 409 and
+# no cache is fresh -> la_decide rc 2 HOLD.
+reset; rm -f "$H/state/lead-authority/"globs-*.cache; printf 409 > "$LPPDOWN"
 R=$(decide)
-case "$R" in "rc=2 reason=the protected-paths extras row could not be read"*) ok ;; *) bad "LS2 want rc 2 HOLD, got: $R" ;; esac
-grep -q "^GET /api/settings/$X" "$W/log" && ok || bad "LS2 the extras row was never read: $(cat "$W/log")"
-# the 409 really is setting_get rc 9 through the real _jobs_req
+case "$R" in "rc=2 reason=the protected paths of $IN could not be read"*) ok ;; *) bad "LS2 want rc 2 HOLD, got: $R" ;; esac
+grep -q '^GET .*/api/lead-protected-paths' "$LPPF.log" && ok || bad "LS2 the protected paths were never read: $(cat "$LPPF.log" 2>/dev/null)"
+rm -f "$LPPDOWN"
+# the 409 an unproven extras row still gets is setting_get rc 9 through the real _jobs_req
+answer "$X" 409 "{\"error\":\"$X signature does not verify; re-PUT it with the human token\",\"key\":\"$X\"}"
 RC=$( ( . "$H/bin/jobs-client.sh" >/dev/null 2>&1; setting_get "$X" >/dev/null; echo $? ) 2>/dev/null)
 [ "$RC" = 9 ] && ok || bad "LS2 setting_get rc $RC (want 9)"
 

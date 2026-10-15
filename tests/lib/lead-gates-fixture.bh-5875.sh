@@ -5,7 +5,8 @@
 # lgf_setup (after lwf_setup) gives the scratch harness:
 #   - example-org/cromford in fleet.conf (box box-demo) and in
 #     LEAD_REVIEW_AUTO_REPOS, with a clone at $T/repos/cromford;
-#   - the real catalog/silence-markers.tsv and catalog/lead-protected-paths.tsv;
+#   - the real catalog/silence-markers.tsv (the lead protected paths are the
+#     lead_protected_paths rows lwf_setup already serves, BH-4148);
 #   - a curl in front of the fixture's: GET /api/verdict?pr= answers $FX/jv.json
 #     ({} = no builder row; jv.fail = 500), POST /api/risk-tiers answers 201.
 #     Both are logged to $T/log/worker like the fixture's own requests;
@@ -29,7 +30,9 @@ lgf_setup() {
   printf '%s\n' 'cromford example-org/cromford https://bh.test /api/board 1 box-demo' >> "$H/fleet.conf"
   git clone -q "$O" "$T/repos/cromford"
   mkdir -p "$H/catalog"
-  cp "$src/catalog/silence-markers.tsv" "$src/catalog/lead-protected-paths.tsv" "$H/catalog/"
+  # TEST-CHANGE BH-4140: globs come from the DB, not the TSV. lwf_setup's
+  # lpp-answer serves the cromford rows; the curl below falls through to it.
+  cp "$src/catalog/silence-markers.tsv" "$H/catalog/"
   export LEAD_REVIEW_AUTO_REPOS="$BH"
   mv "$T/fakebin/curl" "$T/fakebin/curl.fx"
   cat > "$T/fakebin/curl" <<EOF

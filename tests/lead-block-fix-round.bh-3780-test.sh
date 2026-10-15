@@ -23,8 +23,10 @@
 #          same head again, nothing from the old review on the pushed head, and
 #          nothing while the ticket waits on a human.
 # Run from anywhere: HARNESS_TEST_SANDBOX=1 bash tests/lead-block-fix-round.bh-3780-test.sh
+# TEST-CHANGE BH-4140: globs come from the DB, not the TSV
 set -uo pipefail
 . "$(dirname "$0")/lib/scratch.sh" || exit 1
+. "$(dirname "$0")/lib/lpp-stub.sh" || exit 1
 DIR=$(cd "$(dirname "$0")/.." && pwd)
 PASS=0; FAIL=0
 ok()  { PASS=$((PASS+1)); }
@@ -146,12 +148,15 @@ SHA3=$(printf 'c%.0s' {1..40})
 SLUG=example-org/demo-os
 mkdir -p "$T/fakebin" "$T/log" "$T/tmp" "$T/cfg"
 printf 'lead-test-token\n' > "$T/cfg/token"; chmod 600 "$T/cfg/token"
-H="$T/h"; mkdir -p "$H/bin/lib/jobs" "$H/bin/lib/needs-human" "$H/state" "$H/logs" "$H/catalog"
+H="$T/h"; mkdir -p "$H/bin/lib/jobs" "$H/bin/lib/needs-human" "$H/state" "$H/logs"
 cp "$DIR/bin/jobs-client.sh" "$DIR/bin/lead-verdict.sh" "$H/bin/"
 cp "$DIR"/bin/lib/jobs/*.sh "$H/bin/lib/jobs/"
 for f in env-path lead-reviews verdicts hub-box lane-gate gh-rest gh-app-auth verdict-status lead-authority needs-human; do cp "$DIR/bin/lib/$f.sh" "$H/bin/lib/"; done
 cp "$DIR"/bin/lib/needs-human/*.sh "$H/bin/lib/needs-human/"
-cp "$DIR/catalog/lead-protected-paths.tsv" "$H/catalog/"
+# The lead_protected_paths rows (tests/lib/lpp-stub.sh): none for $SLUG until L6
+# adds one; $T/lpp-down is never created here.
+LPP="$T/lpp.json"; printf '{"rows":[]}' > "$LPP"
+lpp_install "$T/fakebin" "$LPP" "$T/lpp-down"
 cp "$LRL" "$H/bin/lead-review-land.sh"
 echo box-hub > "$H/state/box-name"
 printf '#!/bin/bash\nprintf "%%s\\n" "$*" >> "%s"\nexit 0\n' "$T/log/alerts" > "$H/bin/lane-alert.sh"
@@ -204,6 +209,7 @@ case "$m $p" in
   # TEST-CHANGE BH-4145: default mode is now lane; this suite pins human-mode behaviour
   "GET /api/settings/lead_authority_mode") out='{"setting":{"key":"lead_authority_mode","value":"human"}}' ;;
   "GET /api/lead-reviews"*) out=$(cat "@T@/requests.json") ;;
+  *"/api/lead-protected-paths"*) lpp-answer "$m" "$url" "$body"; exit 0 ;;
   "POST /api/lead-reviews/"*/promoted)
     if [ "$lead" != 1 ]; then code=403; out='{"error":"needs the lead token"}'
     else out='{"request":{"promoted_verdict_at":"2026-09-29T00:00:00Z"}}'; fi ;;
@@ -416,7 +422,7 @@ grep -q 'names no ticket' "$T/log/alertline" 2>/dev/null && bad "L5r warned that
 #        (a BLOCK is never withheld, bin/lead-verdict.sh); the human verdict stays
 #        required on the MERGE that follows (BH-3683: withheld, one beat). ──
 reset
-printf '%s\tbin/protected.sh\n' "$SLUG" >> "$H/catalog/lead-protected-paths.tsv"
+"$T/fakebin/lpp-answer" PUT http://lpp.stub/api/lead-protected-paths "{\"repo\":\"$SLUG\",\"glob\":\"bin/protected.sh\",\"op\":\"add\",\"added_by\":\"t\"}" >/dev/null
 echo '[{"filename":"bin/protected.sh"}]' > "$T/files-7.json"
 tick
 [ "$(grep -c "^POST repos/$SLUG/pulls/7/reviews event=REQUEST_CHANGES commit_id=$SHA\$" "$T/log/gh")" = 1 ] && ok || bad "L6 the protected BLOCK was not posted as REQUEST_CHANGES: $(grep reviews "$T/log/gh")"
@@ -427,7 +433,8 @@ echo "$SHA2" > "$T/head-7"; setreqs "$(req lr-2 done MERGE 7 "$SHA2")"; tick
 grep -q -- "--id lead-human-needed-example-org_demo-os-7-${SHA2:0:12} " "$T/log/alerts" && ok || bad "L6 the MERGE after the fix must ask for the human verdict: $(cat "$T/log/alerts")"
 LOGF | grep -q "lead review lr-2: MERGE recorded as advice; lead-verdict status withheld" && ok || bad "L6 the MERGE was not withheld: $(LOGF | tail -3)"
 grep -q "^POST repos/$SLUG/statuses/$SHA2 " "$T/log/gh" && bad "L6 a lead status was published on the protected PR" || ok
-sed -i "\#^$SLUG\tbin/protected.sh\$#d" "$H/catalog/lead-protected-paths.tsv"
+"$T/fakebin/lpp-answer" PUT http://lpp.stub/api/lead-protected-paths "{\"repo\":\"$SLUG\",\"glob\":\"bin/protected.sh\",\"op\":\"remove\"}" >/dev/null
+scratch_rm "$H/state/lead-authority"
 
 # ── T1/T2: the same findings on two heads -> counted 1 then 2, the hold on the second ──
 reset

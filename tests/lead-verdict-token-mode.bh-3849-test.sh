@@ -8,9 +8,13 @@
 #   M2 token file 0600 -> no 'not 600' line
 #   M3 the token value is never in stdout or stderr
 #   M4 no token file   -> no 'not 600' line (BH-3831 C2 counts its two lines)
+# demo-os has no lead_protected_paths rows: the stub worker answers GET
+# /api/lead-protected-paths from tests/lib/lpp-stub.sh with none ($T/lpp.json).
 # Run from anywhere: HARNESS_TEST_SANDBOX=1 bash tests/lead-verdict-token-mode.bh-3849-test.sh
+# TEST-CHANGE BH-4140: globs come from the DB, not the TSV
 set -uo pipefail
 . "$(dirname "$0")/lib/scratch.sh" || exit 1
+. "$(dirname "$0")/lib/lpp-stub.sh" || exit 1
 DIR=$(cd "$(dirname "$0")/.." && pwd)
 PASS=0; FAIL=0
 ok()  { PASS=$((PASS+1)); }
@@ -21,6 +25,7 @@ SLUG=example-org/demo-os
 HEAD1=dddddddd44444444444444444444444444444444
 G="$T/gh"; W="$T/worker"; mkdir -p "$G" "$W" "$T/fakebin" "$T/tmp" "$T/tok"
 cp "$DIR/tests/lib/rest-emit.sh" "$T/fakebin/restpr"; chmod +x "$T/fakebin/restpr"
+lpp_install "$T/fakebin" "$T/lpp.json" "$T/lpp-down"
 cat > "$T/fakebin/gh" <<EOF
 #!/bin/bash
 printf '%s\n' "\$*" >> "$G/calls"
@@ -45,6 +50,7 @@ while [ \$# -gt 0 ]; do case "\$1" in
   *) shift ;;
 esac; done
 case "\$M \$URL" in
+$(lpp_curl_case M URL D)
   "POST "*/api/verdicts)
     printf '%s\n' "\$D" >> "$W/posted"
     hv=false; grep -qx 'x-human-verdict-token: human-test-token' "$W/hdrs" 2>/dev/null && hv=true
@@ -60,12 +66,11 @@ chmod +x "$T/fakebin/gh" "$T/fakebin/curl"
 printf 'lead-test-token\n' > "$T/tok/lead"; chmod 600 "$T/tok/lead"
 printf 'human-test-token\n' > "$T/tok/human"; chmod 600 "$T/tok/human"
 
-H="$T/h"; mkdir -p "$H/bin/lib/jobs" "$H/logs" "$H/state" "$H/catalog"
+H="$T/h"; mkdir -p "$H/bin/lib/jobs" "$H/logs" "$H/state"
 cp "$DIR/bin/lead-verdict.sh" "$DIR/bin/jobs-client.sh" "$H/bin/"
 cp "$DIR"/bin/lib/jobs/*.sh "$H/bin/lib/jobs/"
 cp "$DIR/bin/lib/verdict-status.sh" "$DIR/bin/lib/gh-rest.sh" "$DIR/bin/lib/gh-app-auth.sh" "$H/bin/lib/" 2>/dev/null
 for f in env-path lead-reviews verdicts hub-box lane-gate lead-authority; do cp "$DIR/bin/lib/$f.sh" "$H/bin/lib/"; done
-cp "$DIR/catalog/lead-protected-paths.tsv" "$H/catalog/"
 
 export PATH="$T/fakebin:$PATH" HARNESS="$H" HARNESS_SECRET=s JOBS_URL=https://jobs.test JOBS_RETRIES=0 \
   JOBS_BOX=mac-lead TMPDIR="$T/tmp" LEAD_VERDICT_TOKEN_FILE="$T/tok/lead" HUMAN_VERDICT_TOKEN_FILE="$T/tok/human" \

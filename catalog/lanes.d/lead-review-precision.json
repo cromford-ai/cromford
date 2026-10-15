@@ -60,7 +60,7 @@
       "min": 0,
       "max": 1,
       "zero_means": null,
-      "note": "BH-3683: a fraction, not a percent. A governed repo (catalog/lead-protected-paths.tsv) whose lead MERGE precision is under this, with at least LEAD_REVIEW_PRECISION_MIN_N scored, has its lead_authority row set to human:precision (every lead MERGE is advice until a --source human verdict) and pages once; at or above it, a human:precision row goes back to lane. Below the warn line on purpose: the warn digest leads, the page follows. Read as ${LEAD_REVIEW_AUTHORITY_MIN_PRECISION:-0.8}."
+      "note": "BH-3683: a fraction, not a percent. A governed repo (live lead_protected_paths rows) whose lead MERGE precision is under this, with at least LEAD_REVIEW_PRECISION_MIN_N scored, has its lead_authority row set to human:precision (every lead MERGE is advice until a --source human verdict) and pages once; at or above it, a human:precision row goes back to lane. Below the warn line on purpose: the warn digest leads, the page follows. Read as ${LEAD_REVIEW_AUTHORITY_MIN_PRECISION:-0.8}."
     }
   ],
   "stats": {

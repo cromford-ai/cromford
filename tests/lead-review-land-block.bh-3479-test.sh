@@ -5,7 +5,9 @@
 # bin/lead-verdict.sh and the libs, with only these stubbed:
 #   * curl — a stateful jobs worker (lead-reviews list, verdicts rows, the
 #            /promoted stamp) plus GET /api/jobs/<job>/artifacts, answered from
-#            $T/artifacts-<job>.json (500 when $T/art500 exists);
+#            $T/artifacts-<job>.json (500 when $T/art500 exists), and GET
+#            /api/lead-protected-paths answered by tests/lib/lpp-stub.sh with no
+#            rows for demo-os ($T/lpp.json);
 #   * gh   — GitHub: pulls/<n> answers the head ($T/head-<n>, else $SHA);
 #            TEST-CHANGE (BH-5213): a posted review is authored by the hub App,
 #            cromford[bot] (type Bot), as on GitHub (#4952 review
@@ -27,8 +29,10 @@
 #         person's (review finding 1: Mergify's changes-requested gate)
 #   L12   a stamp-only BLOCK retry after the PR moved posts nothing (finding 2)
 # Run from anywhere: HARNESS_TEST_SANDBOX=1 bash tests/lead-review-land-block.bh-3479-test.sh
+# TEST-CHANGE BH-4140: globs come from the DB, not the TSV
 set -uo pipefail
 . "$(dirname "$0")/lib/scratch.sh" || exit 1
+. "$(dirname "$0")/lib/lpp-stub.sh" || exit 1
 DIR=$(cd "$(dirname "$0")/.." && pwd)
 PASS=0; FAIL=0
 ok()  { PASS=$((PASS+1)); }
@@ -45,9 +49,11 @@ build() {
   cp "$DIR/bin/jobs-client.sh" "$DIR/bin/lead-verdict.sh" "$H/bin/"
   cp "$DIR"/bin/lib/jobs/*.sh "$H/bin/lib/jobs/"
   for f in env-path lead-reviews verdicts hub-box lane-gate gh-rest gh-app-auth verdict-status; do cp "$DIR/bin/lib/$f.sh" "$H/bin/lib/"; done
-  # TEST-CHANGE (BH-3683): the lane requires bin/lib/lead-authority.sh and its
-  # catalog; demo-os is not governed, so nothing this suite pins moves.
-  mkdir -p "$H/catalog"; cp "$DIR/bin/lib/lead-authority.sh" "$H/bin/lib/"; cp "$DIR/catalog/lead-protected-paths.tsv" "$H/catalog/"
+  # TEST-CHANGE (BH-3683): the lane requires bin/lib/lead-authority.sh; demo-os
+  # has no lead_protected_paths rows (the stub answers none), so it is not
+  # governed and nothing this suite pins moves.
+  # scratch-closure-allow: BH-4148 kept main's one-lib copy beside this hand-built harness and only dropped the deleted TSV from the line; the reader is the subject, its jobs read is stubbed
+  cp "$DIR/bin/lib/lead-authority.sh" "$H/bin/lib/"
   cp "$DIR/bin/lead-review-land.sh" "$H/bin/"
   # BH-5213: step 2d's own-review rule lives in bin/lib/lead-stale-review.sh.
   scratch_install_closure bin/lead-review-land.sh "$H" >/dev/null || { echo "closure install of bin/lead-review-land.sh failed"; exit 1; }
@@ -56,6 +62,7 @@ build() {
   echo box-hub > "$H/state/box-name"
 }
 mkdir -p "$T/fakebin" "$T/log" "$T/tmp" "$T/cfg"
+lpp_install "$T/fakebin" "$T/lpp.json" "$T/lpp-down"
 printf 'lead-test-token\n' > "$T/cfg/token"; chmod 600 "$T/cfg/token"
 build "$T"
 
@@ -80,6 +87,7 @@ printf 'worker %s %s\n' "$m" "${p%%\?*}" >> "@T@/log/seq"
 qp() { printf '%s' "${p#*\?}" | tr '&' '\n' | sed -n "s/^$1=//p" | head -1; }
 code=200; out='{}'
 case "$m $p" in
+@LPP@
   "GET /api/lead-reviews"*) out=$(cat "@T@/requests.json") ;;
   "POST /api/lead-reviews/"*/promoted)
     if [ "$lead" != 1 ]; then code=403; out='{"error":"needs the lead token"}'
@@ -151,6 +159,8 @@ esac
 exit 0
 EOF
 sed -i "s#@T@#$T#g; s#@SHA@#$SHA#g" "$T/fakebin/curl" "$T/fakebin/gh"
+LPPARM=$(lpp_curl_case m url body)
+awk -v arm="$LPPARM" '$0 == "@LPP@" { print arm; next } { print }' "$T/fakebin/curl" > "$T/fakebin/curl.tmp" && mv "$T/fakebin/curl.tmp" "$T/fakebin/curl"
 chmod +x "$T/fakebin/curl" "$T/fakebin/gh"
 
 export PATH="$T/fakebin:$PATH" HARNESS="$H" HARNESS_SECRET=test-secret JOBS_URL=https://jobs.test \

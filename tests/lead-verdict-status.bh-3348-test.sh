@@ -15,8 +15,10 @@
 #      (promoted, stamp).
 #   E4/E5 the check-run readers skip the status context (tier2 G4, stuck batch).
 # Run from anywhere: HARNESS_TEST_SANDBOX=1 bash tests/lead-verdict-status.bh-3348-test.sh
+# TEST-CHANGE BH-4140: globs come from the DB, not the TSV
 set -uo pipefail
 . "$(dirname "$0")/lib/scratch.sh" || exit 1
+. "$(dirname "$0")/lib/lpp-stub.sh" || exit 1
 DIR=$(cd "$(dirname "$0")/.." && pwd)
 PASS=0; FAIL=0
 ok()  { PASS=$((PASS+1)); }
@@ -28,6 +30,10 @@ HEAD1=aaaaaaaa11111111111111111111111111111111
 HEAD2=bbbbbbbb22222222222222222222222222222222
 G="$T/gh"; W="$T/worker"; mkdir -p "$G" "$W" "$T/fakebin" "$T/tmp" "$T/tok"
 cp "$DIR/tests/lib/rest-emit.sh" "$T/fakebin/restpr"; chmod +x "$T/fakebin/restpr"
+# BH-4140: the lead_protected_paths rows, read by bin/lib/lead-authority.sh through
+# the jobs worker (tests/lib/lpp-stub.sh). demo-os has none: not governed.
+LPPF="$T/lpp.json"; DOWNF="$T/lpp-down"
+lpp_install "$T/fakebin" "$LPPF" "$DOWNF"
 
 # The stub gh. $G/head is the PR's head; $G/pull = 404|500|none forces the PR
 # read; $G/status-code (default 201) answers the statuses POST. TEST-CHANGE
@@ -52,12 +58,14 @@ esac
 exit 0
 EOF
 # The stub jobs worker: POST /api/verdicts answers 201 with row #21, or 403
-# when $W/refuse exists; everything else 404.
+# when $W/refuse exists; GET /api/lead-protected-paths the stub above;
+# everything else 404.
 cat > "$T/fakebin/curl" <<EOF
 #!/bin/bash
 URL="\${!#}"; M=GET; D=""
 while [ \$# -gt 0 ]; do case "\$1" in -X) M="\$2"; shift 2 ;; --data-binary) D="\$2"; shift 2 ;; *) shift ;; esac; done
 case "\$M \$URL" in
+$(lpp_curl_case M URL D)
   "POST "*/api/verdicts)
     printf '%s\n' "\$D" >> "$W/posted"
     if [ -f "$W/refuse" ]; then printf '{"error":"source=lead needs the lead verdict token"}\n403\n'
@@ -74,9 +82,11 @@ cp "$DIR/bin/lead-verdict.sh" "$DIR/bin/jobs-client.sh" "$H/bin/"
 cp "$DIR"/bin/lib/jobs/*.sh "$H/bin/lib/jobs/"
 cp "$DIR/bin/lib/verdict-status.sh" "$DIR/bin/lib/gh-rest.sh" "$DIR/bin/lib/gh-app-auth.sh" "$H/bin/lib/" 2>/dev/null
 for f in env-path lead-reviews verdicts hub-box lane-gate; do cp "$DIR/bin/lib/$f.sh" "$H/bin/lib/"; done
-# TEST-CHANGE (BH-3683): the land lane (section L) requires bin/lib/lead-authority.sh,
-# and a lib with no catalog withholds every lead MERGE; demo-os is not governed.
-mkdir -p "$H/catalog"; cp "$DIR/bin/lib/lead-authority.sh" "$H/bin/lib/"; cp "$DIR/catalog/lead-protected-paths.tsv" "$H/catalog/"
+# TEST-CHANGE (BH-3683, BH-4140): the land lane (section L) requires
+# bin/lib/lead-authority.sh, and unreadable lead_protected_paths rows withhold
+# every lead MERGE; demo-os has no rows, so it is not governed.
+# scratch-closure-allow: BH-4148 kept main's one-lib copy beside this hand-built harness and only dropped the deleted TSV from the line; the reader is the subject, its jobs read is stubbed
+cp "$DIR/bin/lib/lead-authority.sh" "$H/bin/lib/"
 cp "$DIR/bin/lead-review-land.sh" "$H/bin/"
 # TEST-CHANGE (BH-6548): a MERGE post that cannot load bin/lib/lead-stale-review.sh
 # now says so on stderr, so the tree carries the CLI's whole closure.

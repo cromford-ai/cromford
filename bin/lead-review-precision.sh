@@ -27,8 +27,9 @@
 # LEAD_REVIEW_PRECISION_WARN, ONE warn beat a day (--id lead-precision-<day>,
 # plus the warned-<day> flag written after lane-alert.sh succeeds).
 #
-# THE AUTHORITY GATE (BH-3683). For each scored repo in catalog scope
-# (catalog/lead-protected-paths.tsv, bin/lib/lead-authority.sh) with no error,
+# THE AUTHORITY GATE (BH-3683). For each scored repo in scope (it has live
+# lead_protected_paths rows, bin/lib/lead-authority.sh; unreadable rows hold the
+# repo with its authority unchanged) with no error,
 # a precision and lead_merge >= LEAD_REVIEW_PRECISION_MIN_N:
 #   precision < LEAD_REVIEW_AUTHORITY_MIN_PRECISION and the settings row
 #     lead_authority.<owner>.<name> reads lane (or there is none): the row is
@@ -240,8 +241,8 @@ while IFS=$'\t' read -r SLUG P N E; do
   SC=0; la_scope "$SLUG" || SC=$?
   case "$SC" in
     0) ;;
-    1) log "$SLUG: scored but not governed: add it to catalog/lead-protected-paths.tsv to gate it"; continue ;;
-    *) log "$SLUG: catalog/lead-protected-paths.tsv is unreadable; authority unchanged"; continue ;;
+    1) log "$SLUG: scored but not governed: no live lead_protected_paths rows (add one on SETTINGS → PROTECTED PATHS to gate it)"; continue ;;
+    *) log "$SLUG: protected paths unreadable (jobs worker, no fresh cache); held: authority unchanged"; continue ;;
   esac
   if [ "$E" != - ] || [ "$P" = null ] || [ "$N" -lt "$MIN_N" ]; then
     log "$SLUG: authority unchanged: precision $P, n=$N (min $MIN_N), error $E"; continue

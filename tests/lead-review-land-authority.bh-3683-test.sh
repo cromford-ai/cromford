@@ -2,12 +2,13 @@
 # tests/lead-review-land-authority.bh-3683-test.sh — BH-3683: the hub land lane,
 # bin/lead-review-land.sh, is the lead-verdict authority for a normal PR (no Mac
 # anywhere) and records only advice on a PR that touches a protected path. Run
-# WHOLE against a scratch harness carrying the real jobs client, lead-verdict.sh,
-# bin/lib/lead-authority.sh and catalog/lead-protected-paths.tsv, with only these
-# stubbed:
+# WHOLE against a scratch harness carrying the real jobs client, lead-verdict.sh
+# and bin/lib/lead-authority.sh, with only these stubbed:
 #   * curl — a stateful jobs worker (the bh-1951 shape): lead-review list from
 #            $T/requests.json, POST/GET /api/verdicts over $T/vrows.json, the
-#            promoted stamp, and GET /api/settings/<key> (404: no row);
+#            promoted stamp, GET /api/settings/<key> (404: no row), and GET
+#            /api/lead-protected-paths answered by tests/lib/lpp-stub.sh (the
+#            repo's lead_protected_paths rows, $T/lpp.json);
 #   * gh   — PR 41's head, its files ($T/files.json), the statuses POST;
 #   * $H/bin/lane-alert.sh — records its argv in $T/log/alerts.
 #   L1 acceptance 2: an unprotected PR gets a published lead-verdict from the hub
@@ -15,8 +16,10 @@
 #   L3 a withheld MERGE is not spot-checked; a published one still is (item 4)
 #   L4 the lane never claims --source human
 # Run from anywhere: HARNESS_TEST_SANDBOX=1 bash tests/lead-review-land-authority.bh-3683-test.sh
+# TEST-CHANGE BH-4140: globs come from the DB, not the TSV
 set -uo pipefail
 . "$(dirname "$0")/lib/scratch.sh" || exit 1
+. "$(dirname "$0")/lib/lpp-stub.sh" || exit 1
 DIR=$(cd "$(dirname "$0")/.." && pwd)
 PASS=0; FAIL=0
 ok()  { PASS=$((PASS+1)); }
@@ -30,7 +33,10 @@ cp "$DIR"/bin/lib/jobs/*.sh "$H/bin/lib/jobs/"
 for f in env-path lead-reviews verdicts hub-box lane-gate gh-rest gh-app-auth verdict-status lead-authority; do
   [ -f "$DIR/bin/lib/$f.sh" ] && cp "$DIR/bin/lib/$f.sh" "$H/bin/lib/"
 done
-[ -f "$DIR/catalog/lead-protected-paths.tsv" ] && cp "$DIR/catalog/lead-protected-paths.tsv" "$H/catalog/"
+# The globs this suite exercises: L2 touches bin/lib/verdict-status.sh, L3/L5 .mergify.yml.
+LPP="$T/lpp.json"
+lpp_install "$T/fakebin" "$LPP" "$T/lpp-down"
+lpp_set "$LPP" "$REPO" .mergify.yml bin/lib/verdict-status.sh
 printf '#!/bin/bash\n[ -e "%s" ] && exit 1\nprintf "%%s\\n" "$*" >> "%s"\nexit 0\n' "$T/alertfail" "$T/log/alerts" > "$H/bin/lane-alert.sh"
 printf 'lead-test-token\n' > "$T/cfg/token"; chmod 600 "$T/cfg/token"
 SHA=$(printf 'a%.0s' {1..40})
@@ -55,6 +61,7 @@ printf '%s %s %s lead=%s\n' "\$m" "\$p" "\$body" "\$lead" >> "$T/log/worker"
 qp() { printf '%s' "\${p#*\?}" | tr '&' '\n' | sed -n "s/^\$1=//p" | head -1; }
 code=200; out='{}'
 case "\$m \$p" in
+$(lpp_curl_case m url body)
   "GET /api/lead-reviews"*) out=\$(cat "$T/requests.json") ;;
   "POST /api/lead-reviews/"*/promoted)
     if [ "\$lead" != 1 ]; then code=403; out='{"error":"needs the lead token"}'

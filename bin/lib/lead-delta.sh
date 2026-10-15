@@ -34,8 +34,8 @@
 # own (the over-max 342/499 lines of #5582).
 #
 # PROTECTED PATHS. .mergify.yml, .github/, a schema or migrations file, or one
-# of the repo's lead protected paths (bin/lib/lead-authority.sh la_globs:
-# catalog/lead-protected-paths.tsv plus the extras row). A replay never
+# of the repo's lead protected paths (bin/lib/lead-authority.sh la_globs: the
+# live lead_protected_paths rows plus the seed floor). A replay never
 # crosses one in the own delta. A delta covers one only when the lead's word
 # on G was MERGE or MERGE-WITH-NOTES, the own delta is at most
 # LEAD_DELTA_PROTECTED_MAX_LINES lines (0 = never), and every protected path

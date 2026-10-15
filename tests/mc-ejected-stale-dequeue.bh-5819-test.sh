@@ -21,6 +21,7 @@
 # Run from anywhere (exit 0 = all pass).
 set -uo pipefail
 . "$(dirname "$0")/lib/scratch.sh" || exit 1
+. "$(dirname "$0")/lib/lpp-stub.sh" || exit 1
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/gh-list-bridge.sh" || exit 1
 DIR=$(cd "$(dirname "$0")/.." && pwd)
 # shellcheck source=tests/lib/verdict-fixture.sh
@@ -51,7 +52,13 @@ for s in bin/merge-sweep.sh bin/fleet-conf.sh bin/jobs-client.sh bin/lib/mc-stal
   scratch_install_closure "$s" "$T/h" >/dev/null || { echo "FAIL: closure of $s"; exit 1; }
 done
 cp "$DIR/tests/lib/rest-emit.sh" "$T/fakebin/restpr"; chmod +x "$T/fakebin/restpr"
-mkdir -p "$T/h/catalog"; cp "$DIR/catalog/lead-protected-paths.tsv" "$T/h/catalog/"
+mkdir -p "$T/h/catalog"
+# TEST-CHANGE BH-4148 (merge of main): the lead protected paths come from the
+# lead_protected_paths rows (tests/lib/lpp-stub.sh), not the deleted TSV. The rows
+# are the cromford globs the TSV held (the fixture).
+LPPF="$T/lpp.json"; LPPDOWN="$T/lpp-down"
+set -f; lpp_set "$LPPF" example-org/cromford $(cat "$DIR/tests/fixtures/lead-protected-paths.bh-4148.txt"); set +f
+lpp_install "$T/fakebin" "$LPPF" "$LPPDOWN"
 : > "$T/h/env/global.env"
 printf 'mgfy example-org/mgfy-os - - 2 box-m\n' > "$T/h/fleet.conf"
 export FLEET_CONF="$T/h/fleet.conf"
@@ -133,6 +140,7 @@ cat > "$T/fakebin/curl" <<EOF
 #!/bin/bash
 URL="\${!#}"
 case "\$URL" in
+  */api/lead-protected-paths*) lpp-answer GET "\$URL"; exit 0 ;;
   */api/ledger) printf '{"ok":true}\n200\n' ;;
   */api/verdicts\?*)
     if [ -s "$T/verdict" ]; then printf '{"standing":%s}\n200\n' "\$(cat "$T/verdict")"; else printf '{"standing":null}\n200\n'; fi ;;

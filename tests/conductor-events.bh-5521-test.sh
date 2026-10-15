@@ -429,7 +429,12 @@ KT="$T/k"; KH="$KT/h"; KB="$KT/fakebin"
 mkdir -p "$KH/bin/lib" "$KH/logs" "$KH/state" "$KH/flags" "$KH/locks" "$KH/builds" "$KH/env" "$KH/tmp" "$KB"
 scratch_install_closure bin/merge-conductor.sh "$KH" >/dev/null || { echo "closure failed"; exit 1; }
 cp "$DIR/bin/fleet-conf.sh" "$KH/bin/fleet-conf.sh"
-mkdir -p "$KH/catalog"; cp "$DIR/catalog/lead-protected-paths.tsv" "$KH/catalog/"
+# BH-4148 (#4614): the lead's protected paths are worker rows now, not
+# catalog/lead-protected-paths.tsv. The fake worker answers the route
+# (tests/lib/lpp-stub.sh) with no rows for this repo, as the deleted TSV did.
+mkdir -p "$KH/catalog"
+. "$DIR/tests/lib/lpp-stub.sh" || exit 1
+lpp_install "$KB" "$KT/lpp-rows.json" "$KT/lpp-down"
 scratch_install_closure bin/jobs-client.sh "$KH" >/dev/null || { echo "closure jobs failed"; exit 1; }
 for s in agent-call beat deploy-request pre-arm-guards codegraph-ensure; do printf '#!/bin/bash\nexit 0\n' > "$KH/bin/$s.sh"; done
 chmod +x "$KH/bin/"*.sh
@@ -486,7 +491,9 @@ chmod +x "$KB/gh"
 cat > "$KB/curl" <<'EOF'
 #!/bin/bash
 URL="${!#}"
+m=GET; prev=""; for a in "$@"; do [ "$prev" = -X ] && m="$a"; prev="$a"; done
 case "$URL" in
+  */api/lead-protected-paths*) "$(dirname "$0")/lpp-answer" "$m" "$URL"; exit 0 ;;
   */api/verdicts\?*) printf '{"standing":null}\n200\n' ;;
   */api/settings/lead_pr_authors) printf '{"setting":{"key":"lead_pr_authors","value":"lead-fixture-bot"}}\n200\n' ;;
   *) printf '{"error":"not found"}\n404\n' ;;

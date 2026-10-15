@@ -207,12 +207,15 @@ grep -q "^CHECK-HIT worker-schema-ensure-columns $FRAG:1 .*fixture_col" <<<"$OUT
 # ── R: the risk tier ────────────────────────────────────────────────────────
 if command -v jq >/dev/null 2>&1; then
   mkdir -p "$T/rt" "$T/tmp"
-  : > "$T/rt/catalog.tsv"
   R1OUT=$(
-    export TMPDIR="$T/tmp" LA_CATALOG="$T/rt/catalog.tsv"
+    # TEST-CHANGE BH-4140: globs come from the DB, not the TSV. The empty
+    # catalog (LA_CATALOG, no longer read) is an empty lead_protected_paths
+    # answer, so rule 1 reads no protected glob and is not capped as unreadable.
+    export TMPDIR="$T/tmp" HARNESS="$T/rt"
     setting_get() { return 2; }
     # shellcheck source=bin/lib/risk-tier.sh
     . "$DIR/bin/lib/risk-tier.sh" || exit 1
+    _jobs_req() { printf '{"rows":[]}'; }
     jq -nc '{total_commits:1, commits:[], files:[{filename:"worker/jobs/schema.d/0100-x.sql", additions:3, deletions:0, status:"added"}]}' > "$T/rt/r1.json"
     rt_classify "$T/rt/r1.json" example-org/demo-os
   )

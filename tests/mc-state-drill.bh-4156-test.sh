@@ -55,7 +55,7 @@ for s in bin/mc-state-drill.sh bin/merge-conductor.sh bin/jobs-client.sh bin/fle
   scratch_install_closure "$s" "$L" >/dev/null || { echo "closure install failed for $s"; exit 1; }
 done
 scratch_rm "$L/bin/lib/gh-limit-logger.sh"
-cp "$DIR/catalog/lead-protected-paths.tsv" "$L/catalog/" || exit 1
+cp "$DIR/catalog/lead-protected-paths.seed.tsv" "$L/catalog/" || exit 1
 printf 'demo %s - - 2 box-m\n' "$SLUG" > "$L/fleet.conf"
 printf 'JOBS_URL=http://worker.test\nHARNESS_SECRET=secret-fixture-4156\nJOBS_RETRIES=0\nJOBS_ALERT=0\n' > "$L/env/global.env"
 for s in agent-call beat deploy-request pre-arm-guards codegraph-ensure lane-alert; do printf '#!/bin/bash\nexit 0\n' > "$L/bin/$s.sh"; chmod +x "$L/bin/$s.sh"; done
@@ -67,8 +67,27 @@ touch -d '2026-10-01 00:00:00' "$L/state/merge-conductor/attempts.txt" "$L/state
 snap() { find "$L/state" -printf '%P %T@ %s\n' | sort; }
 SNAP0=$(snap)
 
+# TEST-CHANGE BH-4148: the lead reads protected paths from the jobs route, not
+# catalog/lead-protected-paths.tsv. The fake worker of BH-4156 has no such
+# route, so a wrapper answers it through lpp-stub (no rows for the demo repo:
+# not governed, as under the old catalog file) and hands every other request
+# to the fake, so its req.log counts are unchanged.
+. "$DIR/tests/lib/lpp-stub.sh" || exit 1
+lpp_wrap() {
+  local d="$1"; lpp_set "$d/lpp.json" "$SLUG"; lpp_install "$d/bin" "$d/lpp.json" "$d/lpp-down"
+  mv "$d/bin/curl" "$d/bin/curl.fja"
+  cat > "$d/bin/curl" <<'LPPEOF'
+#!/bin/bash
+URL="${!#}"; M=GET; a=("$@")
+for ((i = 0; i < ${#a[@]}; i++)); do [ "${a[i]}" = -X ] && M="${a[i+1]}"; done
+case "$URL" in *"/api/lead-protected-paths"*) "$(dirname "$0")/lpp-answer" "$M" "$URL"; exit 0 ;; esac
+exec "$(dirname "$0")/curl.fja" "$@"
+LPPEOF
+  chmod +x "$d/bin/curl"
+}
 fja_install "$T/w" || exit 1
-cp "$T/w/bin/curl" "$FB/curl"
+lpp_wrap "$T/w" || exit 1
+cp "$T/w/bin/curl" "$T/w/bin/curl.fja" "$T/w/bin/lpp-answer" "$FB/"
 cp "$DIR/tests/lib/rest-emit.sh" "$FB/restpr"; chmod +x "$FB/restpr"
 jq -nc --arg s "$SLUG" --arg h "$(hd 1)" '[{number:1, html_url:("https://github.com/"+$s+"/pull/1"),
   title:"t", body:"", draft:false, state:"open", merged_at:null, labels:[], user:{login:"operator",type:"User"},

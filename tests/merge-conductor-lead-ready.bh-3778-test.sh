@@ -11,8 +11,10 @@
 #   U  the pure mc_lead_ready gate table, its readers stubbed
 #   C  real bin/merge-conductor.sh ticks against a fake gh and a fake worker
 # Run from anywhere (exit 0 = all pass).
+# TEST-CHANGE BH-4140: globs come from the DB, not the TSV
 set -uo pipefail
 . "$(dirname "$0")/lib/scratch.sh" || exit 1
+. "$(dirname "$0")/lib/lpp-stub.sh" || exit 1
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/gh-list-bridge.sh" || exit 1
 DIR=$(cd "$(dirname "$0")/.." && pwd)
 # shellcheck source=tests/lib/verdict-fixture.sh
@@ -97,9 +99,11 @@ mkdir -p "$T/h/bin/lib/jobs" && cp "$DIR"/bin/lib/jobs/*.sh "$T/h/bin/lib/jobs/"
 : > "$T/h/env/global.env"
 printf 'mgfy example-org/mgfy-os - - 2 box-m\n' > "$T/h/fleet.conf"
 export FLEET_CONF="$T/h/fleet.conf"
-# The repo is governed: one protected glob, so la_scope is rc 0.
-printf 'example-org/mgfy-os\tprotected/**\n' > "$T/lpp.tsv"
-export LA_CATALOG="$T/lpp.tsv"
+# The repo is governed: one lead_protected_paths row (the worker stub,
+# tests/lib/lpp-stub.sh), so la_scope is rc 0.
+LPP="$T/lpp.json"
+lpp_install "$T/fakebin" "$LPP" "$T/lpp-down"
+lpp_set "$LPP" example-org/mgfy-os 'protected/**'
 printf '#!/bin/bash\necho "" > "$4"; exit 0\n' > "$T/h/bin/agent-call.sh"; chmod +x "$T/h/bin/agent-call.sh"
 for s in beat deploy-request pre-arm-guards codegraph-ensure lane-alert; do
   printf '#!/bin/bash\nprintf "%%s\\n" "$*" >> "%s/lane-alerts.txt"\nexit 0\n' "$T" > "$T/h/bin/$s.sh"; chmod +x "$T/h/bin/$s.sh"
@@ -163,6 +167,8 @@ cat > "$T/fakebin/curl" <<EOF
 URL="\${!#}"
 case "\$URL" in
   */api/ledger) printf '{"ok":true}\n200\n' ;;
+  # TEST-CHANGE BH-4140: the lead_protected_paths rows (only ever read here)
+  */api/lead-protected-paths*) lpp-answer GET "\$URL"; exit 0 ;;
   */api/verdicts\?*)
     if [ -s "$T/verdict" ] && [ "\${URL#*head=\$(cat "$T/vhead")}" != "\$URL" ]; then
       printf '{"standing":%s,"rows":[],"truncated":false}\n200\n' "\$(cat "$T/verdict")"

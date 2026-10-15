@@ -78,7 +78,7 @@ cat >> "$T/h/bin/lib/mc/queue.sh" <<EOF
 eval "_fx_enq_real() \$(declare -f mc_enqueue | tail -n +2)"
 mc_enqueue() { local n="\${1##*/}"; [ -e "$T/enqstall-\$n" ] && sleep "\$(cat "$T/enqstall-\$n")"; _fx_enq_real "\$@"; }
 EOF
-mkdir -p "$T/h/catalog" && cp "$DIR/catalog/lead-protected-paths.tsv" "$T/h/catalog/" || exit 1
+mkdir -p "$T/h/catalog" && cp "$DIR/catalog/lead-protected-paths.seed.tsv" "$T/h/catalog/" || exit 1
 printf 'demo %s - - 2 box-m\n' "$SLUG" > "$T/h/fleet.conf"; export FLEET_CONF="$T/h/fleet.conf"
 : > "$T/h/env/global.env"
 for s in agent-call beat deploy-request pre-arm-guards codegraph-ensure; do printf '#!/bin/bash\nexit 0\n' > "$T/h/bin/$s.sh"; chmod +x "$T/h/bin/$s.sh"; done
@@ -144,6 +144,7 @@ cat > "$T/fakebin/curl" <<EOF
 #!/bin/bash
 URL="\${!#}"; M=GET
 while [ \$# -gt 0 ]; do case "\$1" in -X) M="\$2"; shift 2 ;; *) shift ;; esac; done
+case "\$URL" in *"/api/lead-protected-paths"*) "\$(dirname "\$0")/lpp-answer" "\$M" "\$URL"; exit 0 ;; esac
 case "\$M \$URL" in
   "PUT "*/api/ledger) printf '{"ok":true}\n200\n' ;;
   "GET "*/api/verdicts\?*) printf '{"standing":null}\n200\n' ;;
@@ -152,6 +153,11 @@ case "\$M \$URL" in
 esac
 EOF
 chmod +x "$T/fakebin/curl"
+# BH-4148: the lead reads protected paths from the jobs route. The demo repo has
+# no rows, so it is not governed, as it was under the old catalog file.
+. "$DIR/tests/lib/lpp-stub.sh" || exit 1
+lpp_set "$T/lpp.json" "$SLUG"
+lpp_install "$T/fakebin" "$T/lpp.json" "$T/lpp-down"
 # The Sentry curl: keeps each envelope it is handed, answers 200.
 cat > "$T/fakebin/sentry-curl" <<EOF
 #!/bin/bash

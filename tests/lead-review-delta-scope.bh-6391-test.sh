@@ -113,11 +113,16 @@ chmod +x "$Q/bin/lead-verdict.sh" "$Q/bin/lane-alert.sh" "$Q/bin/agent-call.sh"
 scratch_install_closure bin/lead-review-enqueue.sh "$Q" >/dev/null || bad "closure of bin/lead-review-enqueue.sh"
 scratch_install_closure bin/jobs-client.sh "$Q" >/dev/null || bad "closure of bin/jobs-client.sh"
 cp "$SRC/catalog/lanes.d/_lib.json" "$SRC/catalog/lanes.d/_lib.lead-delta.json" "$Q/catalog/lanes.d/"
-cp "$SRC/catalog/lead-protected-paths.tsv" "$Q/catalog/"
+cp "$SRC/catalog/lead-protected-paths.seed.tsv" "$Q/catalog/"
 printf 'lead-test-token\n' > "$T/cfg/token"; chmod 600 "$T/cfg/token"
 printf 'demo-os example-org/demo-os https://demo.test /api 3 box-hub\n' > "$Q/fleet.conf"
 git clone -q "$OR" "$T/qrepos/demo-os"
 
+# BH-4148: the lead reads protected paths from the jobs route. demo-os has no
+# rows, so it is not governed, as it was under the old catalog file.
+. "$SRC/tests/lib/lpp-stub.sh" || exit 1
+lpp_set "$T/lpp.json" example-org/demo-os
+mkdir -p "$T/qbin"; lpp_install "$T/qbin" "$T/lpp.json" "$T/lpp-down"
 cat > "$T/qbin/curl" <<EOF
 #!/bin/bash
 m=GET; body=""; url=""; prev=""; hdrs=""
@@ -131,6 +136,7 @@ for a in "\$@"; do
   prev="\$a"
 done
 case "\$body" in @*) body=\$(cat "\${body#@}") ;; esac
+case "\$url" in *"/api/lead-protected-paths"*) "\$(dirname "\$0")/lpp-answer" "\$m" "\$url"; exit 0 ;; esac
 lead=0; grep -q '^x-lead-verdict-token: lead-test-token' <<<"\$hdrs" && lead=1
 p="\${url#https://jobs.test}"
 printf '%s %s %s lead=%s\n' "\$m" "\$p" "\$body" "\$lead" >> "$T/log/qworker"
@@ -357,6 +363,7 @@ for a in "\$@"; do
   prev="\$a"
 done
 case "\$body" in @*) body=\$(cat "\${body#@}") ;; esac
+case "\$url" in *"/api/lead-protected-paths"*) "\$(dirname "\$0")/lpp-answer" "\$m" "\$url"; exit 0 ;; esac
 p="\${url#https://jobs.test}"
 printf '%s %s %s\n' "\$m" "\$p" "\$body" >> "$T/log/worker"
 code=200; out='{}'
@@ -377,6 +384,7 @@ esac
 exit 0
 EOF
 chmod +x "$T/fakebin/curl" "$T/fakebin/gh"
+lpp_install "$T/fakebin" "$T/lpp.json" "$T/lpp-down"
 LLOG="$B2/logs/lead-review.log"
 # setup2 <head> <scope notes> <answer> — one request; G's report is on the box
 setup2() {
@@ -482,7 +490,7 @@ L="$T/hl"; mkdir -p "$L/state" "$L/logs" "$L/catalog" "$T/lbin" "$T/llog" "$T/lt
 scratch_install_closure bin/lead-review-land.sh "$L" >/dev/null || bad "closure of bin/lead-review-land.sh"
 scratch_install_closure bin/lead-verdict.sh "$L" >/dev/null || bad "closure of bin/lead-verdict.sh"
 scratch_install_closure bin/jobs-client.sh "$L" >/dev/null || bad "closure of bin/jobs-client.sh"
-cp "$SRC/catalog/lead-protected-paths.tsv" "$L/catalog/"
+cp "$SRC/catalog/lead-protected-paths.seed.tsv" "$L/catalog/"
 SHA=$(printf 'a%.0s' {1..40})
 cat > "$T/lbin/curl" <<'EOF'
 #!/bin/bash
@@ -497,6 +505,7 @@ for a in "$@"; do
   prev="$a"
 done
 case "$body" in @*) body=$(cat "${body#@}") ;; esac
+case "$url" in *"/api/lead-protected-paths"*) "$(dirname "$0")/lpp-answer" "$m" "$url"; exit 0 ;; esac
 lead=0; grep -q '^x-lead-verdict-token: lead-test-token' <<<"$hdrs" && lead=1
 p="${url#https://jobs.test}"
 printf '%s %s %s lead=%s\n' "$m" "$p" "$body" "$lead" >> "@T@/llog/worker"
@@ -534,6 +543,7 @@ exit 0
 EOF
 printf '#!/bin/bash\nexit 0\n' > "$L/bin/lane-alert.sh"
 chmod +x "$T/lbin/curl" "$T/lbin/gh" "$L/bin/lane-alert.sh"
+lpp_install "$T/lbin" "$T/lpp.json" "$T/lpp-down"
 LANDLOG="$L/logs/lead-review-land.log"
 # lreset <verdict> <scope notes>
 lreset() {

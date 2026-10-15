@@ -9,8 +9,10 @@
 # (the fixture itself is untouched):
 #   * its verdict-status.sh stub is replaced by one that sources the REAL
 #     bin/lib/lead-authority.sh, with setting_get answering $T/set/<key> (no
-#     file = no row, rc 2) and a scratch catalog governing example-org/mgfy-os on
-#     .mergify.yml. vs_publish / vs_context stay stubs (logged to vs-calls.txt);
+#     file = no row, rc 2) and _jobs_req answering GET /api/lead-protected-paths
+#     from one lead_protected_paths row governing example-org/mgfy-os on
+#     .mergify.yml (tests/lib/lpp-stub.sh; every other path still reaches the
+#     real jobs client). vs_publish / vs_context stay stubs (logged to vs-calls.txt);
 #   * its fake gh is wrapped: pulls/<n>/files answers $T/files.json ($T/files500
 #     = HTTP 500), actions/runs answers $T/ci (success|failure); everything else
 #     reaches the fixture's gh. $HARNESS/bin/lane-alert.sh records to $T/alerts.
@@ -21,9 +23,12 @@
 #      leaves the park and enqueues, alerts unchanged
 #   N4 lane + red CI -> not enqueued, no success published
 # Run from anywhere: HARNESS_TEST_SANDBOX=1 bash tests/mc/no-human-park.bh-4145-test.sh
+# TEST-CHANGE BH-4140: globs come from the DB, not the TSV
 set -uo pipefail
 # shellcheck source=tests/lib/scratch.sh
 . "$(dirname "$0")/../lib/scratch.sh" || exit 1
+# shellcheck source=tests/lib/lpp-stub.sh
+. "$(dirname "$0")/../lib/lpp-stub.sh" || exit 1
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/../lib/gh-list-bridge.sh" || exit 1
 DIR=$(cd "$(dirname "$0")/../.." && pwd)
 # shellcheck source=tests/lib/verdict-fixture.sh
@@ -40,10 +45,21 @@ command -v flock >/dev/null || { echo "flock missing — skipping"; exit 0; }
 nhvf_setup || { echo "FAIL: fixture setup"; exit 1; }
 cp "$DIR/bin/lib/lead-authority.sh" "$T/h/bin/lib/lead-authority.sh" || exit 1
 mkdir -p "$T/set"
-printf 'example-org/mgfy-os\t.mergify.yml\n' > "$T/catalog.tsv"
-export LA_CATALOG="$T/catalog.tsv"
+LPP="$T/lpp.json"; LPPDOWN="$T/lpp-down"
+lpp_install "$T" "$LPP" "$LPPDOWN"
+lpp_set "$LPP" example-org/mgfy-os .mergify.yml
+# The conductor sources bin/jobs-client.sh before this stub, so the real
+# _jobs_req is kept as _jobs_req_real and only the rows route is answered here.
 cat > "$T/h/bin/lib/verdict-status.sh" <<EOF
 . "$T/h/bin/lib/lead-authority.sh"
+$(declare -f lpp_install lpp_jobs_req)
+eval "\$(declare -f _jobs_req 2>/dev/null | sed '1s/^_jobs_req /_jobs_req_real /')"
+_jobs_req() {
+  case "\$2" in
+    /api/lead-protected-paths*) lpp_jobs_req "$LPP" "$LPPDOWN" "\$@" ;;
+    *) command -v _jobs_req_real >/dev/null 2>&1 || return 1; _jobs_req_real "\$@" ;;
+  esac
+}
 setting_get() {
   [ -f "$T/set/\$1" ] || return 2
   cat "$T/set/\$1"

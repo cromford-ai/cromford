@@ -22,7 +22,8 @@
 #   G12     LEAD_REVIEW_WORKLIST=0: no gate code runs; the request row is reviewed.
 #   L1-L8b  the Lead-Lane gate (see each case). L8/L8b: the compare base is
 #           the PR's own base (pulls/<n> .base.ref), as the enqueue's gate 12.
-#   P1      catalog/lead-protected-paths.tsv protects the lib and every gate file.
+#   P1      the committed protected globs (catalog/lead-protected-paths.seed.tsv,
+#           BH-4148) protect the lib and every gate file.
 # Run from anywhere: HARNESS_TEST_SANDBOX=1 bash tests/lead-gates-loader.bh-5870-test.sh
 set -uo pipefail
 . "$(dirname "$0")/lib/scratch.sh" || exit 1
@@ -333,7 +334,10 @@ grep -q "compare/main\\.\\.\\.$SHA" "$T/log/gh" && ok || bad "L8b 101 (base main
 # ── P1: the lead-protected catalog covers the lib and every gate file ──
 p1=$(
   . "$LWF_SRC/bin/lib/lead-authority.sh" || exit 1
-  globs=$(_la_committed example-org/cromford) || exit 1
+  # TEST-CHANGE BH-4148: the committed TSV is gone; the committed globs are the
+  # seed file, which protects every path that has no lead_protected_paths row yet.
+  globs=$(HARNESS="$LWF_SRC" _la_seed_floor example-org/cromford "")
+  [ -n "$globs" ] || exit 1
   for f in bin/lib/lead-gates.sh bin/lib/lead-gates.d/15-lead-lane-commit.sh; do
     hit=0
     while IFS= read -r g; do _la_match "$f" "$g" && hit=1; done <<<"$globs"

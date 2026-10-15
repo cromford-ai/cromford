@@ -15,6 +15,7 @@
 # Run from anywhere: HARNESS_TEST_SANDBOX=1 bash tests/risk-tier-rules-lane.bh-5325-test.sh
 set -uo pipefail
 . "$(dirname "$0")/lib/scratch.sh" || exit 1
+. "$(dirname "$0")/lib/lpp-stub.sh" || exit 1
 DIR=$(cd "$(dirname "$0")/.." && pwd)
 PASS=0; FAIL=0
 ok()  { PASS=$((PASS+1)); }
@@ -32,7 +33,13 @@ GR=rules/topics/01-iron-guardrails.md
 # ════════════════════════════════════════════════════════════════════════════
 mkdir -p "$T/set" "$T/cmp" "$T/tmp"
 export TMPDIR="$T/tmp"
-export LA_CATALOG="$DIR/catalog/lead-protected-paths.tsv"
+# TEST-CHANGE BH-4148 (merge of main): the lead protected paths come from the
+# lead_protected_paths rows (tests/lib/lpp-stub.sh), not the deleted TSV. The rows
+# are the cromford globs the TSV held (the fixture); the in-shell classifier reads
+# them through _jobs_req, the curl stubs below through lpp-answer.
+LPPF="$T/lpp.json"; LPPDOWN="$T/lpp-down"
+set -f; lpp_set "$LPPF" example-org/cromford $(cat "$DIR/tests/fixtures/lead-protected-paths.bh-4148.txt"); set +f
+_jobs_req() { lpp_jobs_req "$LPPF" "$LPPDOWN" "$@"; }
 setting_get() {
   [ -e "$T/set/$1.rc1" ] && return 1
   [ -f "$T/set/$1" ] || return 2
@@ -138,7 +145,11 @@ cmpf c10 '[["rules/topics/12-x.md",291,0,null,"added"],["rules/CLAUDE.md",9,0]]'
 reset_set; RT_RULES_LOADED=""; rt_rules_load
 [ -n "$SIG10" ] && [ "$SIG10" != "$RT_RULES_SIG" ] && ok || bad "C10 the row does not change RT_RULES_SIG"
 # protected paths unreadable: never low
-( LA_CATALOG="$T/no-such-catalog.tsv"; cls c1; [ "$TIER" = medium ] ) && ok || bad "C10 protected paths unreadable read low"
+# TEST-CHANGE BH-4148: unreadable was a missing TSV (LA_CATALOG, no longer read);
+# it is now the rows read failing (500) with no fresh cache.
+( printf 500 > "$LPPDOWN"; rm -f "${HARNESS:-$T/no-harness}/state/lead-authority/"globs-*.cache
+  cls c1; [ "$TIER" = medium ] ) && ok || bad "C10 protected paths unreadable read low"
+rm -f "$LPPDOWN"
 
 # ════════════════════════════════════════════════════════════════════════════
 # The rules fixture repo: main, a clean topic head, a stale-render head,
@@ -232,7 +243,7 @@ scratch_install_closure bin/jobs-client.sh "$Q" >/dev/null || bad "closure of bi
 scratch_install_closure bin/lead-review.sh "$Q" >/dev/null || bad "closure of bin/lead-review.sh"
 scratch_install_closure bin/render-rules.sh "$Q" >/dev/null || bad "closure of bin/render-rules.sh"
 cp "$DIR/catalog/lanes.d/_lib.json" "$DIR/catalog/lanes.d/_lib.lead-delta.json" "$Q/catalog/lanes.d/"
-cp "$DIR/catalog/lead-protected-paths.tsv" "$Q/catalog/"
+lpp_install "$T/qbin" "$LPPF" "$LPPDOWN"   # TEST-CHANGE BH-4148: rows, not the TSV
 printf 'lead-test-token\n' > "$T/cfg/token"; chmod 600 "$T/cfg/token"
 printf 'cromford example-org/cromford https://demo.test /api 3 box-hub\n' > "$Q/fleet.conf"
 printf 'queue_rules:\n  - name: default\n    queue_conditions:\n      - check-success = "CI"\n' | base64 | tr -d '\n' > "$T/mergify.b64"
@@ -255,6 +266,7 @@ p="\${url#https://jobs.test}"
 printf '%s %s %s lead=%s\n' "\$m" "\$p" "\$body" "\$lead" >> "$T/log/qworker"
 code=200; out='{}'
 case "\$m \$p" in
+$(lpp_curl_case m url body)
   "GET /api/verdict?pr="*) code=404; out='{"error":"no job for this pr"}' ;;
   "GET /api/verdicts?"*standing_only=1*) out='{"standing":null,"rows":[],"truncated":false}' ;;
   "GET /api/verdicts?"*) out='{"rows":[],"truncated":false}' ;;
@@ -375,6 +387,7 @@ ereset "$HS" enforce; etick
 # F: the lead-PR fence
 # ════════════════════════════════════════════════════════════════════════════
 FH="$T/fence/h"; FX="$T/fence/fx"; mkdir -p "$FH/state" "$FH/logs" "$FX" "$T/fence/fakebin"
+lpp_install "$T/fence/fakebin" "$LPPF" "$LPPDOWN"   # TEST-CHANGE BH-4148: the same rows for the fence
 scratch_install_closure bin/jobs-client.sh "$FH" >/dev/null || bad "closure of bin/jobs-client.sh (fence)"
 scratch_install_closure bin/lib/ticket-ownership.sh "$FH" >/dev/null || bad "closure of bin/lib/ticket-ownership.sh"
 scratch_install_closure bin/lib/verdicts.sh "$FH" >/dev/null || bad "closure of bin/lib/verdicts.sh"
@@ -383,6 +396,7 @@ cat > "$T/fence/fakebin/curl" <<EOF
 URL="\${!#}"; M=GET
 while [ \$# -gt 0 ]; do case "\$1" in -X) M="\$2"; shift 2 ;; *) shift ;; esac; done
 case "\$M \$URL" in
+$(lpp_curl_case M URL body)
   "GET "*/api/verdicts\?*) printf '%s\n200\n' "\$(jq -nc --argjson s "\$(cat "$FX/standing")" '{standing:\$s,rows:[]}')" ;;
   "GET "*/api/settings/lead_pr_authors) printf '{"setting":{"key":"lead_pr_authors","value":"operator"}}\n200\n' ;;
   *) printf '{"error":"not found"}\n404\n' ;;

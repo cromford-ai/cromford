@@ -19,6 +19,7 @@
 # Run from anywhere: HARNESS_TEST_SANDBOX=1 bash tests/lead-review-land-retry.bh-5773-test.sh
 set -uo pipefail
 . "$(dirname "$0")/lib/scratch.sh" || exit 1
+. "$(dirname "$0")/lib/lpp-stub.sh" || exit 1
 DIR=$(cd "$(dirname "$0")/.." && pwd)
 PASS=0; FAIL=0
 ok()  { PASS=$((PASS+1)); }
@@ -29,7 +30,12 @@ H="$T/h"; mkdir -p "$H/state" "$H/logs" "$H/catalog" "$T/fakebin" "$T/log" "$T/t
 scratch_install_closure bin/lead-review-land.sh "$H" >/dev/null || { echo "closure install failed (lane)"; exit 1; }
 scratch_install_closure bin/lead-verdict.sh "$H" >/dev/null || { echo "closure install failed (lead-verdict)"; exit 1; }
 scratch_install_closure bin/jobs-client.sh "$H" >/dev/null || { echo "closure install failed (jobs-client)"; exit 1; }
-cp "$DIR/catalog/lead-protected-paths.tsv" "$H/catalog/"
+# TEST-CHANGE BH-4148 (merge of main): the lead protected paths come from the
+# lead_protected_paths rows (tests/lib/lpp-stub.sh), not the deleted TSV. The rows
+# are the cromford globs the TSV held (the fixture).
+LPPF="$T/lpp.json"; LPPDOWN="$T/lpp-down"
+set -f; lpp_set "$LPPF" example-org/cromford $(cat "$DIR/tests/fixtures/lead-protected-paths.bh-4148.txt"); set +f
+lpp_install "$T/fakebin" "$LPPF" "$LPPDOWN"
 printf 'lead-test-token\n' > "$T/cfg/token"; chmod 600 "$T/cfg/token"
 
 SHA=$(printf 'a%.0s' {1..40})
@@ -61,6 +67,7 @@ append() {
 }
 code=200; out='{}'
 case "$m $p" in
+  *"/api/lead-protected-paths"*) lpp-answer "$m" "$url" "$body"; exit 0 ;;
   "GET /api/lead-reviews"*) out=$(cat "@T@/requests.json") ;;
   "POST /api/lead-reviews/"*/promoted) out='{"request":{"promoted_verdict_at":"2026-10-09T20:00:00Z"}}' ;;
   "POST /api/verdicts")

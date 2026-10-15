@@ -21,6 +21,7 @@
 # Run from anywhere: HARNESS_TEST_SANDBOX=1 bash tests/lead-verdict-dismiss-stale.bh-5213-test.sh
 set -uo pipefail
 . "$(dirname "$0")/lib/scratch.sh" || exit 1
+. "$(dirname "$0")/lib/lpp-stub.sh" || exit 1
 DIR=$(cd "$(dirname "$0")/.." && pwd)
 PASS=0; FAIL=0
 ok()  { PASS=$((PASS+1)); }
@@ -35,7 +36,12 @@ for s in bin/lead-verdict.sh bin/lead-stale-review-sweep.sh bin/jobs-client.sh b
   scratch_install_closure "$s" "$H" >/dev/null || { echo "closure install of $s failed"; exit 1; }
 done
 [ -r "$H/bin/lib/lead-stale-review.sh" ] || bad "the closure of bin/lead-verdict.sh does not carry bin/lib/lead-stale-review.sh"
-cp "$DIR/catalog/lead-protected-paths.tsv" "$H/catalog/"
+# TEST-CHANGE BH-4148 (merge of main): the lead protected paths come from the
+# lead_protected_paths rows (tests/lib/lpp-stub.sh), not the deleted TSV. The rows
+# are the cromford globs the TSV held (the fixture).
+LPPF="$T/lpp.json"; LPPDOWN="$T/lpp-down"
+set -f; lpp_set "$LPPF" example-org/cromford $(cat "$DIR/tests/fixtures/lead-protected-paths.bh-4148.txt"); set +f
+lpp_install "$T/fakebin" "$LPPF" "$LPPDOWN"
 
 cat > "$T/fakebin/curl" <<'EOF'
 #!/bin/bash
@@ -46,6 +52,7 @@ for a in "$@"; do
   prev="$a"
 done
 case "$m ${url#https://jobs.test}" in
+  *"/api/lead-protected-paths"*) lpp-answer "$m" "$url" "$body"; exit 0 ;;
   "POST /api/verdicts") printf '%s\n%s' '{"verdict":{"id":42,"repo":"example-org/demo-os","pr":7,"head_sha":"x","verdict":"MERGE","source":"lead","created_at":"2026-10-07T00:00:00Z"}}' 201 ;;
   *) printf '%s\n%s' '{"value":null}' 200 ;;
 esac

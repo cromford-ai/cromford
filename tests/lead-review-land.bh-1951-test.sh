@@ -8,11 +8,15 @@
 #            GET /api/verdicts answers from it (rows id DESC, `standing` = the
 #            newest lead/human row on the head, the worker's SQL rule), so the
 #            end-to-end case reads back exactly what the lane wrote;
+#            GET /api/lead-protected-paths is tests/lib/lpp-stub.sh (no rows:
+#            demo-os is not governed);
 #   * ssh  — records any call (there must be none).
 # Every request is logged to $T/log/worker as "<METHOD> <path> <body> lead=<0|1>".
 # Run from anywhere: HARNESS_TEST_SANDBOX=1 bash tests/lead-review-land.bh-1951-test.sh
+# TEST-CHANGE BH-4140: globs come from the DB, not the TSV
 set -uo pipefail
 . "$(dirname "$0")/lib/scratch.sh" || exit 1
+. "$(dirname "$0")/lib/lpp-stub.sh" || exit 1
 DIR=$(cd "$(dirname "$0")/.." && pwd)
 PASS=0; FAIL=0
 ok()  { PASS=$((PASS+1)); }
@@ -25,9 +29,13 @@ cp "$DIR"/bin/lib/jobs/*.sh "$H/bin/lib/jobs/"
 # TEST-CHANGE (BH-3348): lead-verdict.sh post reads the PR head and publishes
 # the lead-verdict status through gh-rest / gh-app-auth / verdict-status.
 for f in env-path lead-reviews verdicts hub-box lane-gate gh-rest gh-app-auth verdict-status; do cp "$DIR/bin/lib/$f.sh" "$H/bin/lib/"; done
-# TEST-CHANGE (BH-3683): the lane requires bin/lib/lead-authority.sh, which reads
-# catalog/lead-protected-paths.tsv (demo-os is not governed, so nothing else moves).
-mkdir -p "$H/catalog"; cp "$DIR/bin/lib/lead-authority.sh" "$H/bin/lib/"; cp "$DIR/catalog/lead-protected-paths.tsv" "$H/catalog/"
+# TEST-CHANGE (BH-3683, BH-4140): the lane requires bin/lib/lead-authority.sh, which
+# reads the lead_protected_paths rows from the worker (demo-os has none, so it is
+# not governed and nothing else moves).
+# scratch-closure-allow: BH-4148 kept main's one-lib copy beside this hand-built harness and only dropped the deleted TSV from the line; the reader is the subject, its jobs read is stubbed
+cp "$DIR/bin/lib/lead-authority.sh" "$H/bin/lib/"
+LPPF="$T/lpp.json"; DOWNF="$T/lpp-down"
+lpp_install "$T/fakebin" "$LPPF" "$DOWNF"
 [ -f "$DIR/bin/lead-review-land.sh" ] && cp "$DIR/bin/lead-review-land.sh" "$H/bin/"
 printf 'lead-test-token\n' > "$T/cfg/token"; chmod 600 "$T/cfg/token"
 
@@ -54,6 +62,7 @@ printf '%s %s %s lead=%s\n' "\$m" "\$p" "\$body" "\$lead" >> "$T/log/worker"
 qp() { printf '%s' "\${p#*\?}" | tr '&' '\n' | sed -n "s/^\$1=//p" | head -1; }
 code=200; out='{}'
 case "\$m \$p" in
+$(lpp_curl_case m url body)
   "GET /api/lead-reviews"*)
     if [ -e "$T/lr404" ]; then code=404; out='{"error":"unknown endpoint","worker":"harness-jobs"}'
     elif [ -e "$T/lr500" ]; then code=500; out='{"error":"boom"}'

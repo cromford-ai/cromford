@@ -2,9 +2,8 @@
 # tests/lead-authority.bh-3683-test.sh — BH-3683: the hub lead-review lane is the
 # verdict authority, and a PR touching a protected path needs a --source human
 # verdict before anything publishes `lead-verdict: success`. Driven against a
-# scratch harness carrying the real bin/lib/lead-authority.sh, the real
-# catalog/lead-protected-paths.tsv, bin/lead-verdict.sh and the conductor lib,
-# with only these stubbed:
+# scratch harness carrying the real bin/lib/lead-authority.sh, bin/lead-verdict.sh
+# and the conductor lib, with only these stubbed:
 #   * gh   — GitHub REST: pulls/<n> answers $G/head (then $G/head-after-files
 #            once a files page was read), pulls/<n>/files answers $G/files.json
 #            ($G/files500 = 500, $G/filesfull = every page full), statuses POST
@@ -12,15 +11,19 @@
 #   * curl — the jobs worker: settings rows from $W/set/<key> ($W/set503 = an
 #            outage), POST /api/verdicts, GET /api/verdicts (standing = $W/standing);
 #            every call logged to $W/log, bodies to $W/posted, lead headers to $W/hdr;
+#            GET /api/lead-protected-paths answered by tests/lib/lpp-stub.sh
+#            (rows in $LPPF, seeded with the cromford globs; $DOWNF = 500);
 #   * $H/bin/lane-alert.sh — records its argv in $T/alerts.
-#   G  glob semantics, la_globs (extras only add), _la_key
-#   D  la_decide: scope, files, rename, unreadable, authority row, sources, catalog
+#   G  glob semantics, la_globs (the DB rows), _la_key
+#   D  la_decide: scope, files, rename, unreadable, authority row, sources, rows unreadable
 #   P  bin/lead-verdict.sh post: withheld on a protected PR (exit 5), human publishes
 #   V  bin/lead-verdict.sh authority + usage
 #   C  mc_enqueue_mergify obeys the same rule
 # Run from anywhere: HARNESS_TEST_SANDBOX=1 bash tests/lead-authority.bh-3683-test.sh
+# TEST-CHANGE BH-4140: globs come from the DB, not the TSV
 set -uo pipefail
 . "$(dirname "$0")/lib/scratch.sh" || exit 1
+. "$(dirname "$0")/lib/lpp-stub.sh" || exit 1
 DIR=$(cd "$(dirname "$0")/.." && pwd)
 PASS=0; FAIL=0
 ok()  { PASS=$((PASS+1)); }
@@ -33,6 +36,12 @@ HEAD=aaaaaaaa11111111111111111111111111111111
 HEAD2=bbbbbbbb22222222222222222222222222222222
 G="$T/gh"; W="$T/worker"; mkdir -p "$G" "$W/set" "$T/fakebin" "$T/tmp" "$T/tok"
 cp "$DIR/tests/lib/rest-emit.sh" "$T/fakebin/restpr"; chmod +x "$T/fakebin/restpr"
+LPPF="$T/lpp.json"; DOWNF="$T/lpp-down"
+lpp_install "$T/fakebin" "$LPPF" "$DOWNF"
+# The cromford lead_protected_paths rows: every cromford glob of catalog/lead-protected-paths.seed.tsv,
+# as listed in the fixture below (suite F of lead-authority-db.bh-4148 pins the two equal).
+BH_GLOBS_F="$DIR/tests/fixtures/lead-protected-paths.bh-4148.txt"
+seed() { set -f; lpp_set "$LPPF" "$IN" $(cat "$BH_GLOBS_F"); set +f; }
 
 cat > "$T/fakebin/gh" <<EOF
 #!/bin/bash
@@ -75,6 +84,7 @@ p="\${url#https://jobs.test}"
 printf '%s %s\n' "\$m" "\$p" >> "$W/log"
 code=200; out='{}'
 case "\$m \$p" in
+$(lpp_curl_case m url body)
   "GET /api/settings/"*)
     k="\${p#/api/settings/}"
     if [ -e "$W/set503" ]; then code=503; out='{"error":"down"}'
@@ -92,13 +102,12 @@ EOF
 chmod +x "$T/fakebin/gh" "$T/fakebin/curl"
 printf 'lead-test-token\n' > "$T/tok/lead"; chmod 600 "$T/tok/lead"
 
-H="$T/h"; mkdir -p "$H/bin/lib/jobs" "$H/logs" "$H/state" "$H/catalog"
+H="$T/h"; mkdir -p "$H/bin/lib/jobs" "$H/logs" "$H/state"
 cp "$DIR/bin/lead-verdict.sh" "$DIR/bin/jobs-client.sh" "$H/bin/"
 cp "$DIR"/bin/lib/jobs/*.sh "$H/bin/lib/jobs/"
 for f in verdict-status gh-rest gh-app-auth env-path lead-reviews verdicts hub-box lane-gate lead-authority; do
   [ -f "$DIR/bin/lib/$f.sh" ] && cp "$DIR/bin/lib/$f.sh" "$H/bin/lib/"
 done
-[ -f "$DIR/catalog/lead-protected-paths.tsv" ] && cp "$DIR/catalog/lead-protected-paths.tsv" "$H/catalog/"
 printf '#!/bin/bash\nprintf "%%s\\n" "$*" >> "%s"\nexit 0\n' "$T/alerts" > "$H/bin/lane-alert.sh"
 chmod +x "$H/bin/lane-alert.sh"
 
@@ -109,6 +118,7 @@ unset LEAD_VERDICT_CONTEXT GH_TOKEN
 reset() {
   rm -f "$G"/* "$W"/log "$W"/posted "$W"/hdr "$W"/standing "$W"/set503 "$W"/set/* "$T/alerts"
   scratch_rm "$H/state/lead-authority"
+  rm -f "$LPPF" "$LPPF.raw" "$LPPF.log" "$DOWNF"; seed
   echo "$HEAD" > "$G/head"; echo '[{"filename":"README.md"}]' > "$G/files.json"
   # TEST-CHANGE BH-4145: default mode is now lane; this suite pins human-mode behaviour
   printf human > "$W/set/lead_authority_mode"
@@ -126,7 +136,9 @@ decide() { lib "la_decide $1 $2 $HEAD $3; echo \"rc=\$? reason=\${LA_REASON:-}\"
 cli() { bash "$H/bin/lead-verdict.sh" "$@" 2>"$T/cli.err"; }
 
 [ -f "$DIR/bin/lib/lead-authority.sh" ] && ok || bad "bin/lib/lead-authority.sh does not exist"
-[ -f "$DIR/catalog/lead-protected-paths.tsv" ] && ok || bad "catalog/lead-protected-paths.tsv does not exist"
+# TEST-CHANGE BH-4140: globs come from the DB, not the TSV. The TSV check is now
+# a check on the fixture the rows are seeded from (seed() reads it).
+[ -s "$BH_GLOBS_F" ] && ok || bad "$BH_GLOBS_F is missing or empty: seed() would serve no rows"
 
 # ============================================================================
 # G. globs
@@ -138,20 +150,20 @@ R=$(lib '_la_match config/mergify/repos/cromford.conf "config/mergify/**" && ech
          _la_match docs/.mergify.yml.md .mergify.yml && echo n4
          _la_match .mergify.yml .mergify.yml && echo y5')
 [ "$(tr '\n' ' ' <<<"$R")" = "y1 y2 y5 " ] && ok || bad "G1 glob semantics (want 'y1 y2 y5 ', got '$(tr '\n' ' ' <<<"$R")')"
-reset; printf 'bin/foo.sh docs/x/**' > "$W/set/lead_protected_paths_extra.example-org.cromford"
+# G2: la_globs is the DB rows and nothing else (the settings row that used to
+# add globs no longer governs: tests/lead-authority-db.bh-4148-test.sh D6).
+reset
 R=$(lib "la_globs $IN"); RC=$?
-[ "$RC" = 0 ] && grep -qx '.mergify.yml' <<<"$R" && grep -qx 'config/mergify/\*\*' <<<"$R" && grep -qx 'bin/foo.sh' <<<"$R" \
-  && grep -qx 'docs/x/\*\*' <<<"$R" && ok || bad "G2 la_globs = committed + both extras (rc $RC): $R"
-printf -- '-.mergify.yml' > "$W/set/lead_protected_paths_extra.example-org.cromford"
-R=$(lib "la_globs $IN")
-grep -qx '.mergify.yml' <<<"$R" && ok || bad "G2 an extras row cannot drop .mergify.yml: $R"
+WANT=$(cat "$BH_GLOBS_F")
+[ "$RC" = 0 ] && [ "$R" = "$WANT" ] && grep -qx '.mergify.yml' <<<"$R" && ok || bad "G2 la_globs = the DB rows (rc $RC): $R"
 # G4 (2026-10-01): the paths that ENFORCE this file (the conductor's publish
 # path), CI, and the agent secret-read guard (BH-3689) are protected too.
 reset
 R=$(lib "la_globs $IN")
+[ "$R" = "$WANT" ] && ok || bad "G4 la_globs = the fixture's lead_protected_paths rows: $R"
 for g in 'bin/lib/mc/\*\*' 'bin/merge-conductor.sh' '.github/workflows/\*\*' 'bin/secret-read-guard.py' \
          'bin/secret-read-guard-install.sh' 'rules/settings.json'; do
-  grep -qx "$g" <<<"$R" && ok || bad "G4 committed globs must protect $g: $R"
+  grep -qx "$g" <<<"$R" && ok || bad "G4 the DB rows must protect $g: $R"
 done
 R=$(lib '_la_match bin/lib/mc/queue.sh "bin/lib/mc/**" && echo y1
          _la_match .github/workflows/harness-ci.yml ".github/workflows/**" && echo y2
@@ -218,10 +230,11 @@ R=$(decide "$IN" 7 conductor)
 jq -nc --arg h "$HEAD" '{verdict:"MERGE",source:"lead",id:6,created_at:"x",head_sha:$h}' > "$W/standing"
 R=$(decide "$IN" 7 conductor)
 [ "${R%% *}" = rc=1 ] && ok || bad "D8 conductor with a standing lead MERGE = rc 1 ($R)"
-reset; mv "$H/catalog/lead-protected-paths.tsv" "$T/catalog.bak" 2>/dev/null
+reset; touch "$DOWNF"
 R=$(decide "$OUT" 41 lead)
-[ "${R%% *}" = rc=2 ] && ok || bad "D9 no catalog = rc 2 for an out-of-scope repo too ($R)"
-mv "$T/catalog.bak" "$H/catalog/lead-protected-paths.tsv" 2>/dev/null
+[ "${R%% *}" = rc=2 ] && grep -q 'the protected paths of example-org/demo-os could not be read' <<<"$R" && ok \
+  || bad "D9 worker 500 on the route, no cache = rc 2 for an out-of-scope repo too ($R)"
+rm -f "$DOWNF"
 
 # ============================================================================
 # P. bin/lead-verdict.sh post
@@ -255,13 +268,14 @@ cli post "$IN" 7 "$HEAD" MERGE --source lead >/dev/null; RC=$?
 # ============================================================================
 reset
 OUTV=$(cli authority "$IN"); RC=$?
-[ "$RC" = 0 ] && grep -q 'in scope: yes' <<<"$OUTV" && grep -q '\.mergify\.yml' <<<"$OUTV" && grep -q 'authority: lane (no row)' <<<"$OUTV" \
+[ "$RC" = 0 ] && grep -q 'in scope: yes' <<<"$OUTV" && grep -q '^globs (lead_protected_paths, from db): ' <<<"$OUTV" \
+  && grep -qx '  \.mergify\.yml' <<<"$OUTV" && grep -q 'authority: lane (no row)' <<<"$OUTV" \
   && ok || bad "V1 authority prints scope, globs and the row (rc $RC): $OUTV $(cat "$T/cli.err")"
 files .mergify.yml
 OUTV=$(cli authority "$IN" 7 "$HEAD")
 grep -q 'human required:' <<<"$OUTV" && grep -q '\.mergify\.yml' <<<"$OUTV" && ok || bad "V1 with pr+sha it prints the decision: $OUTV"
 OUTV=$(cli authority "$OUT")
-grep -q 'in scope: no' <<<"$OUTV" && ok || bad "V1 an out-of-scope repo says so: $OUTV"
+grep -q "in scope: no (no live lead_protected_paths rows; the lane is the authority)" <<<"$OUTV" && ok || bad "V1 an out-of-scope repo says so: $OUTV"
 [ "$(statuses)" = 0 ] && [ ! -f "$W/posted" ] && ok || bad "V1 the authority verb writes nothing"
 cli >/dev/null; grep -q '5 (post)' "$T/cli.err" && ok || bad "V1 usage prints the exit-5 line: $(cat "$T/cli.err")"
 

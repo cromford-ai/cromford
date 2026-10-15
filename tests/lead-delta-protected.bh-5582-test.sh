@@ -45,6 +45,7 @@
 # Run from anywhere: HARNESS_TEST_SANDBOX=1 bash tests/lead-delta-protected.bh-5582-test.sh
 set -uo pipefail
 . "$(dirname "$0")/lib/scratch.sh" || exit 1
+. "$(dirname "$0")/lib/lpp-stub.sh" || exit 1
 . "$(dirname "$0")/lib/lead-worklist-fixture.bh-4956.sh" || exit 1
 SRC=$(cd "$(dirname "$0")/.." && pwd)
 PASS=0; FAIL=0
@@ -111,7 +112,13 @@ chmod +x "$Q/bin/lead-verdict.sh" "$Q/bin/lane-alert.sh" "$Q/bin/agent-call.sh"
 scratch_install_closure bin/lead-review-enqueue.sh "$Q" >/dev/null || bad "closure of bin/lead-review-enqueue.sh"
 scratch_install_closure bin/jobs-client.sh "$Q" >/dev/null || bad "closure of bin/jobs-client.sh"
 cp "$SRC/catalog/lanes.d/_lib.json" "$SRC/catalog/lanes.d/_lib.lead-delta.json" "$Q/catalog/lanes.d/"
-cp "$SRC/catalog/lead-protected-paths.tsv" "$Q/catalog/"
+# TEST-CHANGE BH-4148 (merge of main): the lead protected paths come from the
+# lead_protected_paths rows (tests/lib/lpp-stub.sh), not the deleted TSV. The rows
+# are the cromford globs the TSV held (the fixture).
+LPPF="$T/lpp.json"; LPPDOWN="$T/lpp-down"
+set -f; lpp_set "$LPPF" example-org/cromford $(cat "$SRC/tests/fixtures/lead-protected-paths.bh-4148.txt"); set +f
+lpp_install "$T/qbin" "$LPPF" "$LPPDOWN"
+lpp_install "$T/fakebin" "$LPPF" "$LPPDOWN"
 printf 'lead-test-token\n' > "$T/cfg/token"; chmod 600 "$T/cfg/token"
 printf 'demo-os example-org/demo-os https://demo.test /api 3 box-hub\n' > "$Q/fleet.conf"
 git clone -q "$OR" "$T/qrepos/demo-os"
@@ -140,6 +147,7 @@ p="\${url#https://jobs.test}"
 printf '%s %s %s lead=%s\n' "\$m" "\$p" "\$body" "\$lead" >> "$T/log/qworker"
 code=200; out='{}'
 case "\$m \$p" in
+$(lpp_curl_case m url body)
   "GET /api/verdict?pr="*)
     n="\${p##*%2F}"
     if [ -f "$T/jv/\$n.json" ]; then out=\$(cat "$T/jv/\$n.json"); else code=404; out='{"error":"no job for this pr"}'; fi ;;
@@ -201,10 +209,11 @@ hasw() { summ | grep -qw -- "$1"; }
 
 # ── the lib on its own: ld_classify on a clone of the fixture ──
 LC="$T/lclone"; git clone -q "$OR" "$LC"; git -C "$LC" fetch -q origin "$H1" "$H2" "$H6" 2>/dev/null
-# cls <G> <H> [word] — ld_classify with example-org/cromford, the TSV as the protected list
+# cls <G> <H> [word] — ld_classify with example-org/cromford, its lead_protected_paths rows as the protected list
 cls() {
   ( HARNESS="$Q"; . "$Q/bin/lib/lead-authority.sh"; . "$Q/bin/lib/patch-same.sh"; . "$Q/bin/lib/lead-delta.sh"
     setting_get() { return 2; }
+    _jobs_req() { lpp_jobs_req "$LPPF" "$LPPDOWN" "$@"; }   # TEST-CHANGE BH-4148: the rows, not the TSV
     ld_classify "$LC" origin/main "$1" "$2" example-org/cromford "${3:-}" ) 2>/dev/null
 }
 V=$(cls "$G" "$H1" MERGE)
@@ -291,6 +300,7 @@ p="\${url#https://jobs.test}"
 printf '%s %s %s\n' "\$m" "\$p" "\$body" >> "$T/log/worker"
 code=200; out='{}'
 case "\$m \$p" in
+$(lpp_curl_case m url body)
   "GET /api/lead-reviews"*) out=\$(cat "$T/requests.json") ;;
   "POST /api/jobs") out='{"job":{"id":"job-7"}}' ;;
   "GET /api/model-routes/"*) out='{"ladder":[{"position":0,"model":"stub-model","runner":"claude"}],"source":"hub"}' ;;

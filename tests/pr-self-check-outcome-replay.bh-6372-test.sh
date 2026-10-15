@@ -278,12 +278,17 @@ scratch_install_closure bin/lead-review-enqueue.sh "$Q" >/dev/null || bad "closu
 scratch_install_closure bin/jobs-client.sh "$Q" >/dev/null || bad "closure of bin/jobs-client.sh"
 scratch_install_closure bin/lead-review.sh "$Q" >/dev/null || bad "closure of bin/lead-review.sh"
 cp "$SRC/catalog/lanes.d/_lib.json" "$SRC/catalog/lanes.d/_lib.lead-delta.json" "$Q/catalog/lanes.d/"
-cp "$SRC/catalog/lead-protected-paths.tsv" "$SRC/catalog/pr-self-check.tsv" "$SRC/catalog/perf-ticket.tsv" "$Q/catalog/"
+cp "$SRC/catalog/lead-protected-paths.seed.tsv" "$SRC/catalog/pr-self-check.tsv" "$SRC/catalog/perf-ticket.tsv" "$Q/catalog/"
 cp -R "$SRC/catalog/pr-self-check.d" "$Q/catalog/"
 printf 'lead-test-token\n' > "$T/cfg/token"; chmod 600 "$T/cfg/token"
 printf 'demo-os example-org/demo-os https://demo.test /api 3 box-hub\n' > "$Q/fleet.conf"
 git clone -q "$OR" "$T/qrepos/demo-os"
 printf 'queue_rules:\n  - name: default\n    queue_conditions:\n      - check-success = "CI"\n' | base64 | tr -d '\n' > "$T/mergify.b64"
+# BH-4148: the lead reads protected paths from the jobs route. demo-os has no
+# rows, so it is not governed, as it was under the old catalog file.
+. "$SRC/tests/lib/lpp-stub.sh" || exit 1
+lpp_set "$T/lpp.json" example-org/demo-os
+mkdir -p "$T/qbin"; lpp_install "$T/qbin" "$T/lpp.json" "$T/lpp-down"
 cat > "$T/qbin/curl" <<EOF
 #!/bin/bash
 m=GET; body=""; url=""; prev=""; hdrs=""
@@ -297,6 +302,7 @@ for a in "\$@"; do
   prev="\$a"
 done
 case "\$body" in @*) body=\$(cat "\${body#@}") ;; esac
+case "\$url" in *"/api/lead-protected-paths"*) "\$(dirname "\$0")/lpp-answer" "\$m" "\$url"; exit 0 ;; esac
 lead=0; grep -q '^x-lead-verdict-token: lead-test-token' <<<"\$hdrs" && lead=1
 p="\${url#https://jobs.test}"
 printf '%s %s %s lead=%s\n' "\$m" "\$p" "\$body" "\$lead" >> "$T/log/qworker"

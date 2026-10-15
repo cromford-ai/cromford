@@ -5,9 +5,11 @@
 # withheld: la_decide answers rc 0 with LA_PROTECTED_HIT=1, a lead MERGE
 # publishes lead-verdict: success and leaves ONE PR comment per head, and
 # la_human_needed pages nobody. Under human, BH-3683 exactly.
-# Driven against a scratch harness carrying the real bin/lib/lead-authority.sh,
-# the real catalog/lead-protected-paths.tsv and the real bin/lead-verdict.sh,
-# with the fake gh/curl/lane-alert of tests/lead-authority.bh-3683-test.sh plus:
+# Driven against a scratch harness carrying the real bin/lib/lead-authority.sh
+# and the real bin/lead-verdict.sh, with the fake gh/curl/lane-alert of
+# tests/lead-authority.bh-3683-test.sh plus:
+#   * GET /api/lead-protected-paths — tests/lib/lpp-stub.sh, rows in $LPPF
+#     seeded with the cromford globs (demo-os has none);
 #   * $W/set503.<key> — that one settings key answers 503;
 #   * POST repos/*/issues/*/comments answers $G/comment-status (default 201),
 #     every body logged to $G/comments.
@@ -21,8 +23,10 @@
 #   M8 bin/lead-verdict.sh post under lane: success, one comment, dedupe, 500 retry
 #   M9 every hold (rc 2) and every non-hit
 # Run from anywhere: HARNESS_TEST_SANDBOX=1 bash tests/lead-authority-mode.bh-4145-test.sh
+# TEST-CHANGE BH-4140: globs come from the DB, not the TSV
 set -uo pipefail
 . "$(dirname "$0")/lib/scratch.sh" || exit 1
+. "$(dirname "$0")/lib/lpp-stub.sh" || exit 1
 DIR=$(cd "$(dirname "$0")/.." && pwd)
 PASS=0; FAIL=0
 ok()  { PASS=$((PASS+1)); }
@@ -40,6 +44,11 @@ HEAD=aaaaaaaa11111111111111111111111111111111
 HEAD2=bbbbbbbb22222222222222222222222222222222
 G="$T/gh"; W="$T/worker"; mkdir -p "$G" "$W/set" "$T/fakebin" "$T/tmp" "$T/tok"
 cp "$DIR/tests/lib/rest-emit.sh" "$T/fakebin/restpr"; chmod +x "$T/fakebin/restpr"
+LPPF="$T/lpp.json"; DOWNF="$T/lpp-down"
+lpp_install "$T/fakebin" "$LPPF" "$DOWNF"
+# The cromford lead_protected_paths rows: every cromford glob of catalog/lead-protected-paths.seed.tsv,
+# as listed in the fixture below (suite F of lead-authority-db.bh-4148 pins the two equal).
+BH_GLOBS_F="$DIR/tests/fixtures/lead-protected-paths.bh-4148.txt"
 
 cat > "$T/fakebin/gh" <<EOF
 #!/bin/bash
@@ -77,6 +86,7 @@ p="\${url#https://jobs.test}"
 printf '%s %s\n' "\$m" "\$p" >> "$W/log"
 code=200; out='{}'
 case "\$m \$p" in
+$(lpp_curl_case m url body)
   "GET /api/settings/"*)
     k="\${p#/api/settings/}"
     if [ -e "$W/set503" ] || [ -e "$W/set503.\$k" ]; then code=503; out='{"error":"down"}'
@@ -93,14 +103,13 @@ EOF
 chmod +x "$T/fakebin/gh" "$T/fakebin/curl"
 printf 'lead-test-token\n' > "$T/tok/lead"; chmod 600 "$T/tok/lead"
 
-H="$T/h"; mkdir -p "$H/bin/lib/jobs" "$H/logs" "$H/state" "$H/catalog"
+H="$T/h"; mkdir -p "$H/bin/lib/jobs" "$H/logs" "$H/state"
 cp "$CLI" "$DIR/bin/jobs-client.sh" "$H/bin/"
 cp "$DIR"/bin/lib/jobs/*.sh "$H/bin/lib/jobs/"
 for f in verdict-status gh-rest gh-app-auth env-path lead-reviews verdicts hub-box lane-gate; do
   [ -f "$DIR/bin/lib/$f.sh" ] && cp "$DIR/bin/lib/$f.sh" "$H/bin/lib/"
 done
 cp "$LIB" "$H/bin/lib/lead-authority.sh"
-cp "$DIR/catalog/lead-protected-paths.tsv" "$H/catalog/"
 printf '#!/bin/bash\nprintf "%%s\\n" "$*" >> "%s"\nexit 0\n' "$T/alerts" > "$H/bin/lane-alert.sh"
 chmod +x "$H/bin/lane-alert.sh"
 
@@ -111,6 +120,7 @@ unset LEAD_VERDICT_CONTEXT GH_TOKEN
 reset() {
   rm -f "${G:?}"/* "${W:?}"/log "$W"/posted "$W"/set503* "$W"/set/* "$T/alerts"
   scratch_rm "$H/state/lead-authority"
+  rm -f "$LPPF" "$LPPF.raw" "$LPPF.log" "$DOWNF"; set -f; lpp_set "$LPPF" "$IN" $(cat "$BH_GLOBS_F"); set +f
   echo "$HEAD" > "$G/head"; echo '[{"filename":"README.md"}]' > "$G/files.json"
 }
 files() { printf '%s\n' "$@" | jq -Rsc 'split("\n") | map(select(length > 0)) | map({filename:.})' > "$G/files.json"; }
@@ -134,8 +144,8 @@ grep -qF 'reason=touches protected paths: .mergify.yml; cleared to merge on the 
   || bad "M1 the lane reason names the path ($R)"
 grep -q ' hit=1 ' <<<"$R" && ok || bad "M1 LA_PROTECTED_HIT=1 ($R)"
 grep -q "^GET /api/settings/lead_authority\.$KEY\$" "$W/log" && bad "M1 lane must not read the authority row" || ok
-# The plan's REPRO, verbatim.
-REPRO=$(cd "$DIR" && bash -c 'setting_get(){ return 2; }; gh_rest(){ case "$2" in *"/files"*) echo "[{\"filename\":\".mergify.yml\"}]";; *) echo "{\"head\":{\"sha\":\"aaaaaaaa11111111111111111111111111111111\"}}";; esac; }; . bin/lib/lead-authority.sh; rc=0; la_decide example-org/cromford 1 aaaaaaaa11111111111111111111111111111111 lead || rc=$?; echo "rc=$rc $LA_REASON"; [ "$rc" = 0 ]'); RC=$?
+# The plan's REPRO, verbatim but for _jobs_req (BH-4140: the globs are DB rows; one row here).
+REPRO=$(cd "$DIR" && bash -c 'setting_get(){ return 2; }; _jobs_req(){ echo "{\"rows\":[{\"repo\":\"example-org/cromford\",\"glob\":\".mergify.yml\",\"removed_at\":null}]}"; }; gh_rest(){ case "$2" in *"/files"*) echo "[{\"filename\":\".mergify.yml\"}]";; *) echo "{\"head\":{\"sha\":\"aaaaaaaa11111111111111111111111111111111\"}}";; esac; }; . bin/lib/lead-authority.sh; rc=0; la_decide example-org/cromford 1 aaaaaaaa11111111111111111111111111111111 lead || rc=$?; echo "rc=$rc $LA_REASON"; [ "$rc" = 0 ]'); RC=$?
 [ "$RC" = 0 ] && [ "$REPRO" = 'rc=0 touches protected paths: .mergify.yml; cleared to merge on the lead verdict (lead_authority_mode=lane)' ] && ok \
   || bad "M1 the plan's REPRO exits 0 (rc $RC: $REPRO)"
 reset; files .mergify.yml bin/lead-verdict.sh bin/lib/verdicts.sh bin/merge-conductor.sh rules/settings.json bin/secret-read-guard.py

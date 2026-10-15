@@ -41,6 +41,7 @@
 # Run from anywhere: HARNESS_TEST_SANDBOX=1 bash tests/lead-review-postscript.bh-6090-test.sh
 set -uo pipefail
 . "$(dirname "$0")/lib/scratch.sh" || exit 1
+. "$(dirname "$0")/lib/lpp-stub.sh" || exit 1
 SRC=$(cd "$(dirname "$0")/.." && pwd)
 PASS=0; FAIL=0
 ok()  { PASS=$((PASS+1)); }
@@ -287,7 +288,10 @@ mkdir -p "$HL/state" "$HL/logs" "$HL/catalog" "$L/fakebin" "$L/log" "$L/tmp" "$L
 scratch_install_closure bin/lead-review-land.sh "$HL" >/dev/null || bad "closure of bin/lead-review-land.sh"
 scratch_install_closure bin/lead-verdict.sh "$HL" >/dev/null || bad "closure of bin/lead-verdict.sh"
 scratch_install_closure bin/jobs-client.sh "$HL" >/dev/null || bad "closure of bin/jobs-client.sh (land)"
-cp "$SRC/catalog/lead-protected-paths.tsv" "$HL/catalog/"
+# TEST-CHANGE BH-4140: globs come from the DB, not the TSV. The lead protected
+# paths are the lead_protected_paths rows (tests/lib/lpp-stub.sh). demo-os has
+# none, as it had no TSV line: an empty rows file.
+lpp_install "$L/fakebin" "$L/lpp.json" "$L/lpp-down"
 printf '#!/bin/bash\nprintf "%%s\\n" "$*" >> "%s"\nexit 0\n' "$L/log/alerts" > "$HL/bin/lane-alert.sh"
 chmod +x "$HL/bin/lane-alert.sh"
 echo box-hub > "$HL/state/box-name"
@@ -314,6 +318,7 @@ printf '%s %s %s lead=%s\n' "$m" "$p" "$body" "$lead" >> "@L@/log/worker"
 qp() { printf '%s' "${p#*\?}" | tr '&' '\n' | sed -n "s/^$1=//p" | head -1; }
 code=200; out='{}'
 case "$m $p" in
+  *"/api/lead-protected-paths"*) lpp-answer "$m" "$url" "$body"; exit 0 ;;
   "GET /api/lead-reviews"*) out=$(cat "@L@/requests.json") ;;
   "POST /api/lead-reviews/"*/promoted)
     if [ "$lead" != 1 ]; then code=403; out='{"error":"needs the lead token"}'

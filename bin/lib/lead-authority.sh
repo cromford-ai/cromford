@@ -4,12 +4,30 @@
 # never executed.
 #
 # THE RULE. The hub's lead-review lane is the verdict authority: its MERGE
-# publishes the gating status with no Mac involved. A PROTECTED PATH is a glob
-# in catalog/lead-protected-paths.tsv (`<owner/repo>\t<glob>`) for the PR's
-# repo, plus the space-separated globs of the settings row
-# lead_protected_paths_extra.<owner>.<name>. The row can only ADD: removing a
-# committed glob takes a PR to the catalog, which is itself protected. A glob
-# cannot contain a space (the row's separator).
+# publishes the gating status with no Mac involved. A PROTECTED PATH is the glob
+# of a live lead_protected_paths row of the PR's repo, a table in the jobs worker
+# (BH-4146) read with GET /api/lead-protected-paths?repo=<owner/name, lowercased>
+# (BH-4148). Rows are added and removed from SETTINGS -> PROTECTED PATHS in the
+# console (BH-4147). A glob cannot contain whitespace; a row that has one is
+# ignored here.
+# THE CACHE. Every successful read, an empty one too, is written atomically to
+# state/lead-authority/globs-<owner_name>.cache. It is read ONLY when the GET
+# fails (an outage, a 404 from a worker without the route, a body whose rows is
+# not an array, no jobs client loaded), and only while it is younger than the
+# settings row lead_protected_paths_cache_max_s (DB-driven; at least 60, code
+# fallback 86400 s). Older or missing, the rows are unreadable: rc 2, a hold,
+# never "not governed".
+# THE SEED FLOOR (BH-4148 review). catalog/lead-protected-paths.seed.tsv
+# (<owner/repo><TAB><glob>, the globs the deleted TSV held) is what
+# bin/lead-protected-paths-seed.sh PUTs. Until a glob of it has been DECIDED in
+# the DB, meaning a row for it exists, live or removed (the GET asks all=1), it
+# stays protected. So an unseeded table, a partial seed or a D1 reset holds
+# those paths instead of silently ungoverning them, and a console remove
+# still un-protects one, because the removed row is a decision. Once every
+# glob has a row, the file changes no answer. A missing file is no floor.
+# The file is read under the harness root ($HARNESS, else $H). With no root (the
+# lead's Mac, through verdict-status.sh) it is read next to this lib, at
+# ../../catalog/. A set root never falls back to the lib's tree.
 # What a protected path does depends on THE MODE (BH-4145), the settings row
 # lead_authority_mode.<owner>.<name>, else the global lead_authority_mode:
 #   lane   (the default: neither row exists) — a protected hit is REPORTED, not
@@ -26,8 +44,8 @@
 #   An unreadable mode row, or a value other than lane|human after trimming and
 #   lowercasing, is rc 2 (hold), never coerced to lane.
 #   Set it: bin/jobs-client.sh setting-set lead_authority_mode[.<owner>.<name>] lane|human
-# A repo with no catalog line is not governed at all: every other fleet repo is
-# unchanged and costs no read (not even the mode row).
+# A repo with no live rows is not governed at all: it costs the one GET of its
+# rows and no other read (not even the mode row).
 #
 # la_decide <owner/repo> <pr> <head-sha> <lead|conductor|human>
 #   rc 0  this writer may publish success. Under lane, LA_PROTECTED_HIT=1 when
@@ -45,8 +63,13 @@
 #   previous_filename, so a rename or delete out of a protected path counts),
 #   then its head is read again: a head that moved during the read is rc 2, so
 #   the answer is bound to the sha being published.
-# la_scope <owner/repo>   rc 0 governed, 1 not, 2 the catalog is unreadable.
+# la_scope <owner/repo>   rc 0 governed (live rows), 1 not (a successful empty
+#   answer), 2 the rows are unreadable (worker down and no fresh cache).
 # la_globs <owner/repo>   the globs in force, one per line (rc 2 = unreadable).
+# _la_db_globs <owner/repo> — runs in the caller's shell: LA_GLOBS (the globs,
+#   one per line, may be empty: live rows plus the undecided seed floor),
+#   LA_GLOBS_FLOOR (the floor part alone) and LA_GLOBS_SRC (`db`, or
+#   `cache <path>`); rc 0 read, rc 2 unreadable.
 # la_human_needed <owner/repo> <pr> <head> <reason> <lane> — under mode lane,
 #   rc 0 with no beat and no marker. Under human, or an unreadable mode, ONE warn beat per
 #   head naming the command that publishes the status, deduped by
@@ -62,15 +85,14 @@
 # gh-rest: no-graphql
 
 _la_root() { printf '%s' "${HARNESS:-${H:-}}"; }
-_la_catalog() { printf '%s' "${LA_CATALOG:-${BASH_SOURCE[0]%/*}/../../catalog/lead-protected-paths.tsv}"; }
 
-# _la_key <owner/repo> — `owner.name`, lowercased; rc 2 when the longer of the
-# two keys built on it (the extras row) would not be a legal settings key.
+# _la_key <owner/repo> — `owner.name`, lowercased; rc 2 when the longest key
+# built on it (lead_authority_mode.<owner>.<name>) would not be a legal settings key.
 _la_key() {
   local k
   [[ "${1:-}" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] || return 2
   k=$(printf '%s' "$1" | tr 'A-Z/' 'a-z.')
-  [ $(( ${#k} + 27 )) -le 64 ] || return 2
+  [ $(( ${#k} + 20 )) -le 64 ] || return 2
   printf '%s' "$k"
 }
 
@@ -82,40 +104,78 @@ _la_match() {
   [[ $p == $g ]]
 }
 
-# _la_committed <owner/repo> — the catalog's globs for the repo. rc 2 = no catalog.
-_la_committed() {
-  local cat slug
-  cat=$(_la_catalog)
-  [ -r "$cat" ] || return 2
+# _la_cache_max — seconds a last-good cache may answer for: the settings row
+# lead_protected_paths_cache_max_s when it is digits and at least 60, else 86400.
+_la_cache_max() {
+  local v=""
+  command -v setting_get >/dev/null 2>&1 && v=$(setting_get lead_protected_paths_cache_max_s 2>/dev/null | tr -d '[:space:]')
+  case "$v" in ''|*[!0-9]*) v=86400 ;; esac
+  [ "$v" -ge 60 ] 2>/dev/null || v=86400
+  printf '%s' "$v"
+}
+
+# _la_seed_floor <owner/repo, lowercased> <decided globs> — the seed file's
+# globs for the repo that have no row in the DB yet, one per line. The file is
+# under the harness root, else (no root) next to this lib.
+_la_seed_floor() {
+  local root f
+  root=$(_la_root)
+  if [ -n "$root" ]; then
+    f="$root/catalog/lead-protected-paths.seed.tsv"
+  else
+    f="${BASH_SOURCE[0]:-}"
+    case "$f" in */*) f="${f%/*}" ;; '') return 0 ;; *) f=. ;; esac
+    f="$f/../../catalog/lead-protected-paths.seed.tsv"
+  fi
+  [ -r "$f" ] || return 0
+  printf '%s\n' "$2" | awk -F'\t' -v r="$1" '
+    FNR == NR { if (NF) seen[$0] = 1; next }
+    /^#/ || NF != 2 || $2 ~ /[[:space:]]/ { next }
+    tolower($1) == r && !($2 in seen) && !out[$2]++ { print $2 }' - "$f" 2>/dev/null
+}
+
+_la_db_globs() {
+  local slug on root c="" resp rc=1 g d tmp max
+  LA_GLOBS=""; LA_GLOBS_SRC=""; LA_GLOBS_FLOOR=""
+  [[ "${1:-}" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] || return 2
   slug=$(printf '%s' "$1" | tr 'A-Z' 'a-z')
-  awk -F '\t' -v s="$slug" '/^[[:space:]]*#/ || NF < 2 { next } tolower($1) == s && $2 != "" { print $2 }' "$cat"
-}
-
-la_scope() {
-  local g rc=0
-  g=$(_la_committed "$1") || rc=$?
-  [ "$rc" = 0 ] || return 2
-  [ -n "$g" ]
-}
-
-# _la_extras <owner/repo> — the extras row's globs, one per line. rc 0 read
-# (possibly none), rc 2 unreadable.
-_la_extras() {
-  local k v rc=0 g
-  k=$(_la_key "$1") || return 2
-  command -v setting_get >/dev/null 2>&1 || return 2
-  v=$(setting_get "lead_protected_paths_extra.$k") || rc=$?
-  case "$rc" in 0) ;; 2) return 0 ;; *) return 2 ;; esac
-  # Split on whitespace with tr, never an unquoted $v: `docs/**` would glob.
-  printf '%s\n' "$v" | tr -s ' \t' '\n\n' | awk 'NF'
+  on=$(printf '%s' "$slug" | tr '/' '_')
+  root=$(_la_root)
+  [ -z "$root" ] || c="$root/state/lead-authority/globs-$on.cache"
+  if command -v _jobs_req >/dev/null 2>&1; then
+    rc=0; resp=$(_jobs_req GET "/api/lead-protected-paths?repo=$slug&all=1" 2>/dev/null) || rc=$?
+  fi
+  if [ "$rc" = 0 ] && printf '%s' "$resp" | jq -e '.rows | type == "array"' >/dev/null 2>&1 \
+    && g=$(printf '%s' "$resp" | jq -r --arg r "$slug" '.rows[] | select(.removed_at == null)
+         | select((.repo // "" | ascii_downcase) == $r) | .glob
+         | select(type == "string" and length > 0 and (test("\\s") | not))' 2>/dev/null) \
+    && d=$(printf '%s' "$resp" | jq -r --arg r "$slug" '.rows[] | select((.repo // "" | ascii_downcase) == $r)
+         | .glob | select(type == "string")' 2>/dev/null); then
+    LA_GLOBS_FLOOR=$(_la_seed_floor "$slug" "$d")
+    LA_GLOBS=$(printf '%s\n%s\n' "$g" "$LA_GLOBS_FLOOR" | awk 'NF && !seen[$0]++'); LA_GLOBS_SRC=db
+    # A failed cache write is ignored: the worker answered.
+    if [ -n "$c" ] && mkdir -p "${c%/*}" 2>/dev/null && tmp=$(mktemp "${c%/*}/.globs.XXXXXX" 2>/dev/null); then
+      { [ -z "$LA_GLOBS" ] || printf '%s\n' "$LA_GLOBS"; } > "$tmp" 2>/dev/null && mv -f "$tmp" "$c" 2>/dev/null || rm -f "$tmp"
+    fi
+    return 0
+  fi
+  [ -n "$c" ] && [ -f "$c" ] || return 2
+  max=$(_la_cache_max)
+  # find -mmin, not stat: stat's flags differ between GNU and BSD (the Mac).
+  [ -n "$(find "$c" -mmin -$((max / 60)) 2>/dev/null)" ] || return 2
+  LA_GLOBS=$(awk 'NF' "$c" 2>/dev/null) || return 2
+  LA_GLOBS_SRC="cache $c"
+  return 0
 }
 
 la_globs() {
-  local c e
-  c=$(_la_committed "$1") || return 2
-  e=$(_la_extras "$1") || return 2
-  printf '%s\n' "$c"
-  [ -z "$e" ] || printf '%s\n' "$e"
+  _la_db_globs "$1" || return 2
+  [ -z "$LA_GLOBS" ] || printf '%s\n' "$LA_GLOBS"
+}
+
+la_scope() {
+  _la_db_globs "$1" || return 2
+  [ -n "$LA_GLOBS" ]
 }
 
 # _la_authority <owner/repo> — the authority row's value into LA_AUTH (`lane`
@@ -180,12 +240,10 @@ la_decide() {
   LA_REASON=""; LA_PROTECTED_HIT=""; LA_PROTECTED_PATHS=""
   case "$source" in human) LA_REASON="a human verdict"; return 0 ;; lead|conductor) ;; *) LA_REASON="unknown source '$source'"; return 2 ;; esac
   head=$(printf '%s' "$head" | tr 'A-F' 'a-f')
-  la_scope "$slug"
-  case "$?" in
-    0) ;;
-    1) LA_REASON="not governed"; return 0 ;;
-    *) LA_REASON="catalog $(_la_catalog) is unreadable"; return 2 ;;
-  esac
+  # One read of the rows per decision: the scope and the match both use it.
+  _la_db_globs "$slug" || { LA_REASON="the protected paths of $slug could not be read (jobs worker, no cache younger than $(_la_cache_max)s)"; return 2; }
+  [ -n "$LA_GLOBS" ] || { LA_REASON="not governed"; return 0; }
+  globs="$LA_GLOBS"
   if [ "$source" = conductor ] && command -v vd_standing >/dev/null 2>&1; then
     line=$(vd_standing "$slug" "$pr" "$head" 2>/dev/null) || line=""
     if [ "$(printf '%s' "$line" | cut -f2)" = human ]; then
@@ -204,7 +262,6 @@ la_decide() {
       *) LA_REASON="the authority row lead_authority.$(_la_key "$slug") reads '$LA_AUTH', not lane|human|human:precision"; return 2 ;;
     esac
   fi
-  globs=$(la_globs "$slug") || { LA_REASON="the protected-paths extras row could not be read"; return 2; }
   files=$(_la_files "$slug" "$pr") || { LA_REASON="the files of $slug#$pr could not be read whole"; return 2; }
   f=$(mktemp "${TMPDIR:-/tmp}/lead-authority.XXXXXX") || { LA_REASON="mktemp failed"; return 2; }
   grc=0; GH_ETAG=0 gh_rest GET "repos/$slug/pulls/$pr" > "$f" 2>/dev/null || grc=$?

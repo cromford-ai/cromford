@@ -18,8 +18,10 @@
 # The worker half (426 below lead_verdict_min_client) is
 # worker/jobs/test/verdicts-client-level.bh-3565.test.js, run at the end.
 # Run from anywhere: HARNESS_TEST_SANDBOX=1 bash tests/lead-verdict-bash32.bh-3565-test.sh
+# TEST-CHANGE BH-4140: globs come from the DB, not the TSV
 set -uo pipefail
 . "$(dirname "$0")/lib/scratch.sh" || exit 1
+. "$(dirname "$0")/lib/lpp-stub.sh" || exit 1
 DIR=$(cd "$(dirname "$0")/.." && pwd)
 PASS=0; FAIL=0
 ok()  { PASS=$((PASS+1)); }
@@ -127,6 +129,10 @@ grep -q 'If-None-Match' "$T/c5.calls" 2>/dev/null && bad "C5 GH_ETAG=0 must send
 SLUG=example-org/demo-os
 G="$T/gh"; W="$T/worker"; mkdir -p "$G" "$W" "$T/fakebin" "$T/tok"
 cp "$DIR/tests/lib/rest-emit.sh" "$T/fakebin/restpr"
+# BH-4140: the lead_protected_paths rows, read by bin/lib/lead-authority.sh
+# through the jobs worker. demo-os has none (not governed), as it had no TSV line.
+LPPF="$T/lpp.json"; DOWNF="$T/lpp-down"
+lpp_install "$T/fakebin" "$LPPF" "$DOWNF"
 cat > "$T/fakebin/gh" <<EOF
 #!/bin/bash
 case "\$*" in
@@ -145,6 +151,7 @@ while [ \$# -gt 0 ]; do case "\$1" in
   -H) case "\$2" in @*) cat "\${2#@}" >> "$W/hdr" ;; *) printf '%s\n' "\$2" >> "$W/hdr" ;; esac; shift 2 ;;
   *) shift ;; esac; done
 case "\$M \$URL" in
+$(lpp_curl_case M URL D)
   "POST "*/api/verdicts)
     printf '%s\n' "\$D" >> "$W/posted"
     printf '%s\n201\n' "\$(jq -c '{verdict:(. + {id:21,created_at:"2026-09-29T10:00:00Z"})}' <<<"\$D")" ;;
@@ -158,10 +165,9 @@ while IFS= read -r f; do
   case "$f" in MISSING:*|"") continue ;; esac
   mkdir -p "$H/${f%/*}"; cp "$DIR/$f" "$H/$f"
 done <<<"$CL"
-# TEST-CHANGE (BH-3683): the closure now carries bin/lib/lead-authority.sh, which
-# reads catalog/lead-protected-paths.tsv (data, not sourced, so not in $CL). A Mac
-# checkout has it; without it every lead MERGE is withheld (exit 5).
-mkdir -p "$H/catalog"; cp "$DIR/catalog/lead-protected-paths.tsv" "$H/catalog/"
+# TEST-CHANGE (BH-3683, BH-4140): the closure carries bin/lib/lead-authority.sh,
+# which reads the lead_protected_paths rows from the worker (the stub above), not
+# a TSV; when they are unreadable every lead MERGE is withheld (exit 5).
 
 export PATH="$T/fakebin:$PATH" HARNESS="$H" HARNESS_SECRET=s JOBS_URL=https://jobs.test JOBS_RETRIES=0 \
   JOBS_BOX=mac-lead TMPDIR="$T/tmp" LEAD_VERDICT_TOKEN_FILE="$T/tok/lead" GH_APP_TOKENS=0

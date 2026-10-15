@@ -203,7 +203,7 @@ for s in bin/merge-conductor.sh bin/fleet-conf.sh bin/jobs-client.sh; do
   scratch_install_closure "$s" "$F/h" >/dev/null || { echo "closure install failed for $s"; exit 1; }
 done
 scratch_rm "$F/h/bin/lib/gh-limit-logger.sh"
-mkdir -p "$F/h/catalog" && cp "$DIR/catalog/lead-protected-paths.tsv" "$F/h/catalog/" || exit 1
+mkdir -p "$F/h/catalog" && cp "$DIR/catalog/lead-protected-paths.seed.tsv" "$F/h/catalog/" || exit 1
 printf 'demo %s - - 2 box-m\n' "$SLUG" > "$F/h/fleet.conf"
 : > "$F/h/env/global.env"
 for s in agent-call beat deploy-request pre-arm-guards codegraph-ensure; do printf '#!/bin/bash\nexit 0\n' > "$F/h/bin/$s.sh"; chmod +x "$F/h/bin/$s.sh"; done
@@ -245,7 +245,26 @@ esac
 exit 0
 EOF
 chmod +x "$F/fakebin/gh"
+# TEST-CHANGE BH-4148: the lead reads protected paths from the jobs route, not
+# catalog/lead-protected-paths.tsv. The fake worker of BH-4156 has no such
+# route, so a wrapper answers it through lpp-stub (no rows for the demo repo:
+# not governed, as under the old catalog file) and hands every other request
+# to the fake, so its req.log counts are unchanged.
+. "$DIR/tests/lib/lpp-stub.sh" || exit 1
+lpp_wrap() {
+  local d="$1"; lpp_set "$d/lpp.json" "$SLUG"; lpp_install "$d/bin" "$d/lpp.json" "$d/lpp-down"
+  mv "$d/bin/curl" "$d/bin/curl.fja"
+  cat > "$d/bin/curl" <<'LPPEOF'
+#!/bin/bash
+URL="${!#}"; M=GET; a=("$@")
+for ((i = 0; i < ${#a[@]}; i++)); do [ "${a[i]}" = -X ] && M="${a[i+1]}"; done
+case "$URL" in *"/api/lead-protected-paths"*) "$(dirname "$0")/lpp-answer" "$M" "$URL"; exit 0 ;; esac
+exec "$(dirname "$0")/curl.fja" "$@"
+LPPEOF
+  chmod +x "$d/bin/curl"
+}
 fja_install "$F/w" || exit 1
+lpp_wrap "$F/w" || exit 1
 touch "$F/h/flags/pr-state-rows"
 for n in $PRS; do printf '%s\t%s\t%s\t%s\t%s\t-\t-\t%s/%s\n' "$SLUG#$n" READY $((NOW-600)) "$(hd "$n")" "$(hd "$n")" "$GU" "$n"; done > "$F/h/state/merge-conductor/pr-state.tsv"
 row_f() { printf '%s\t%s\t%s\t%s\n' "$SLUG" "$1" "$2" "$3" >> "$F/w/db.tsv"; }

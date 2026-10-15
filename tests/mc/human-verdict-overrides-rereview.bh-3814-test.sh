@@ -34,9 +34,12 @@
 #       without one is offered the fix round; rc 2 keeps today's ladder
 #
 # Run from anywhere: tests/mc/human-verdict-overrides-rereview.bh-3814-test.sh   (exit 0 = all pass)
+# TEST-CHANGE BH-4140: globs come from the DB, not the TSV
 set -uo pipefail
 # shellcheck source=tests/lib/scratch.sh
 . "$(dirname "$0")/../lib/scratch.sh" || exit 1
+# shellcheck source=tests/lib/lpp-stub.sh
+. "$(dirname "$0")/../lib/lpp-stub.sh" || exit 1
 # The open-PR list is REST (BH-1585); this bridge answers it from the list stub.
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/../lib/gh-list-bridge.sh" || exit 1
 DIR=$(cd "$(dirname "$0")/../.." && pwd)
@@ -82,6 +85,8 @@ case "\$M \$URL" in
   "PUT "*/api/ledger) printf '{"ok":true}\n200\n' ;;
   # TEST-CHANGE BH-4145: default mode is now lane; this suite pins human-mode behaviour
   "GET "*/api/settings/lead_authority_mode) printf '{"setting":{"key":"lead_authority_mode","value":"human"}}\n200\n' ;;
+  # TEST-CHANGE BH-4140: the lead_protected_paths rows (tests/lib/lpp-stub.sh, section L)
+  *"/api/lead-protected-paths"*) lpp-answer "\$M" "\$URL"; exit 0 ;;
   *) printf '{"error":"not found"}\n404\n' ;;
 esac
 EOF
@@ -342,14 +347,16 @@ TICK
 parked_no_override N1
 
 # --- L: a lead MERGE is only an override where lead authority stands (BH-3683)
-# The real bin/lib/lead-authority.sh (through verdict-status.sh, as in prod), a
-# catalog that is the real one plus this repo's protected glob, and a PR whose
-# files touch it. lead_authority_mode=human (the curl arm above, BH-4145): the
+# The real bin/lib/lead-authority.sh (through verdict-status.sh, as in prod),
+# the production rows plus one PUT-added row for this repo's protected glob (the
+# worker stub, tests/lib/lpp-stub.sh), and a PR whose files touch it. lead_authority_mode=human (the curl arm above, BH-4145): the
 # lane is the authority except on the path.
 cp "$DIR/bin/lib/verdict-status.sh" "$DIR/bin/lib/lead-authority.sh" "$T/h/bin/lib/" || exit 1
-mkdir -p "$T/h/catalog"
-{ cat "$DIR/catalog/lead-protected-paths.tsv"; printf '%s\tbin/merge-conductor.sh\n' "$SLUG"; } > "$T/h/catalog/lead-protected-paths.tsv"
-grep -q "^$SLUG	bin/merge-conductor.sh" "$T/h/catalog/lead-protected-paths.tsv" || exit 1
+LPP="$T/lpp.json"
+lpp_install "$T/fakebin" "$LPP" "$T/lpp-down"
+set -f; lpp_set "$LPP" example-org/cromford $(cat "$DIR/tests/fixtures/lead-protected-paths.bh-4148.txt"); set +f
+"$T/fakebin/lpp-answer" PUT http://lpp.stub/api/lead-protected-paths "{\"repo\":\"$SLUG\",\"glob\":\"bin/merge-conductor.sh\",\"op\":\"add\",\"added_by\":\"t\"}" >/dev/null
+jq -e --arg r "$(printf '%s' "$SLUG" | tr 'A-Z' 'a-z')" '[.rows[] | select(.repo == $r and .glob == "bin/merge-conductor.sh")] | length == 1' "$LPP" >/dev/null || exit 1
 printf '[{"filename":"bin/merge-conductor.sh"},{"filename":"src/x.ts"}]' > "$T/files.json"
 reset_tick
 rr_put "$H1" BLOCK "$T1"

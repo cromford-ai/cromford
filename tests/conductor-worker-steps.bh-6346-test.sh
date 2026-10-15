@@ -58,7 +58,12 @@ done
 # copies. gh-limit-logger.sh wraps gh in a function that calls `command gh`,
 # which would step around tests/lib/gh-list-bridge.sh; U8 drives it on its own.
 scratch_rm "$T/h/bin/lib/gh-limit-logger.sh"
-mkdir -p "$T/h/catalog" && cp "$DIR/catalog/lead-protected-paths.tsv" "$T/h/catalog/" || exit 1
+# BH-4148 (#4614): the lead's protected paths are worker rows, not
+# catalog/lead-protected-paths.tsv; the fake worker answers the route with no
+# rows for the repo (tests/lib/lpp-stub.sh), as the deleted TSV did.
+mkdir -p "$T/h/catalog" "$T/fakebin"
+. "$DIR/tests/lib/lpp-stub.sh" || exit 1
+lpp_install "$T/fakebin" "$T/lpp-rows.json" "$T/lpp-down"
 printf 'demo %s - - 2 box-m\n' "$SLUG" > "$T/h/fleet.conf"; export FLEET_CONF="$T/h/fleet.conf"
 : > "$T/h/env/global.env"
 for s in agent-call beat deploy-request pre-arm-guards codegraph-ensure; do printf '#!/bin/bash\nexit 0\n' > "$T/h/bin/$s.sh"; chmod +x "$T/h/bin/$s.sh"; done
@@ -137,6 +142,7 @@ cat > "$T/fakebin/curl" <<EOF
 URL="\${!#}"; M=GET
 while [ \$# -gt 0 ]; do case "\$1" in -X) M="\$2"; shift 2 ;; *) shift ;; esac; done
 case "\$M \$URL" in
+  *"/api/lead-protected-paths"*) "\$(dirname "\$0")/lpp-answer" "\$M" "\$URL"; exit 0 ;;
   "PUT "*/api/ledger) printf '{"ok":true}\n200\n' ;;
   "GET "*/api/verdicts\?*) printf '{"standing":null}\n200\n' ;;
   "GET "*/api/settings/lead_pr_authors) printf '{"setting":{"key":"lead_pr_authors","value":"the-lead"}}\n200\n' ;;

@@ -7,7 +7,9 @@
 # real bin/lead-verdict.sh) against a scratch harness with only these stubbed:
 #   * curl — the jobs worker: GET /api/verdicts from $T/vrows.json, GET/PUT
 #            /api/settings over $T/set/<key> ($T/set503 = GET outage, $T/put500 =
-#            PUT refused), POST /api/verdicts;
+#            PUT refused), POST /api/verdicts, and GET /api/lead-protected-paths
+#            answered by tests/lib/lpp-stub.sh (rows in $T/lpp.json, $T/lpp-down
+#            = 500) — the repo is governed by its lead_protected_paths rows;
 #   * gh   — the closed-PR list ($T/pulls1.json), main's commits
 #            ($T/commits.json), check runs (none), PR heads, PR files
 #            ($T/files.json), the statuses POST;
@@ -16,8 +18,10 @@
 #   * $H/bin/lane-alert.sh — records `rc=<n> <argv>` in $T/log/alerts and exits
 #            with $T/alertrc (default 0).
 # Run from anywhere: HARNESS_TEST_SANDBOX=1 bash tests/lead-review-precision-authority.bh-3683-test.sh
+# TEST-CHANGE BH-4140: globs come from the DB, not the TSV
 set -uo pipefail
 . "$(dirname "$0")/lib/scratch.sh" || exit 1
+. "$(dirname "$0")/lib/lpp-stub.sh" || exit 1
 DIR=$(cd "$(dirname "$0")/.." && pwd)
 PASS=0; FAIL=0
 ok()  { PASS=$((PASS+1)); }
@@ -30,7 +34,8 @@ cp "$DIR"/bin/lib/jobs/*.sh "$H/bin/lib/jobs/"
 for f in env-path hub-box lane-gate gh-rest gh-app-auth verdict-status verdicts lead-reviews lead-authority; do
   [ -f "$DIR/bin/lib/$f.sh" ] && cp "$DIR/bin/lib/$f.sh" "$H/bin/lib/"
 done
-[ -f "$DIR/catalog/lead-protected-paths.tsv" ] && cp "$DIR/catalog/lead-protected-paths.tsv" "$H/catalog/"
+LPP="$T/lpp.json"; LPPDOWN="$T/lpp-down"
+lpp_install "$T/fakebin" "$LPP" "$LPPDOWN"
 printf 'lead-test-token\n' > "$T/tok/lead"; chmod 600 "$T/tok/lead"
 
 NOW=$(date +%s)
@@ -62,6 +67,7 @@ printf '%s %s %s\n' "\$m" "\$p" "\$body" >> "$T/log/worker"
 qp() { printf '%s' "\${p#*\?}" | tr '&' '\n' | sed -n "s/^\$1=//p" | head -1; }
 code=200; out='{}'
 case "\$m \$p" in
+$(lpp_curl_case m url body)
   "GET /api/verdicts?"*)
     out=\$(jq -c --arg r "\$(qp repo)" --argjson pr "\$(qp pr)" --arg h "\$(qp head)" '
       [.[] | select(.repo == \$r and .pr == \$pr)] | sort_by(-.id) as \$rows
@@ -130,7 +136,10 @@ score() {
 }
 reset() {
   rm -f "$T/log"/* "$T"/{pulls500,set503,put500,alertrc,nextday} "$T/set"/* "$H/logs/lead-review-precision.log"
+  rm -f "$LPP" "$LPP.log" "$LPPDOWN"
   scratch_rm "$H/state/lead-review-precision"
+  scratch_rm "$H/state/lead-authority"
+  lpp_set "$LPP" "$REPO" .mergify.yml bin/lib/lead-authority.sh
   echo box-hub > "$H/state/box-name"
   echo '[{"filename":"README.md"}]' > "$T/files.json"
   # TEST-CHANGE BH-4145: default mode is now lane; this suite pins human-mode behaviour
@@ -201,9 +210,9 @@ K=$(jq -c '.knobs[] | select(.env == "LEAD_REVIEW_AUTHORITY_MIN_PRECISION") | [.
 reset; run LEAD_REVIEW_AUTHORITY_MIN_PRECISION=0.5
 [ "$(puts)" = 0 ] && ok || bad "R7 a threshold of 0.5 does not revoke at 0.6"
 
-# ── R8: a scored repo outside the catalog is named, not governed ────────────
+# ── R8: a scored repo with no lead_protected_paths rows is named, not governed
 reset; run LEAD_REVIEW_AUTO_REPOS="$REPO example-org/demo-os"
-[ "$(LOGF | grep -c 'example-org/demo-os: scored but not governed')" = 1 ] && ok || bad "R8 one 'not governed' line: $(LOGF)"
+[ "$(LOGF | grep -c 'example-org/demo-os: scored but not governed: no live lead_protected_paths rows')" = 1 ] && ok || bad "R8 one 'not governed' line: $(LOGF)"
 grep -q 'lead_authority.example-org.demo-os' "$T/log/worker" && bad "R8 an ungoverned repo's row is never read" || ok
 
 # ── R9 (BH-4145): under lead_authority_mode=lane a drop revokes nothing ─────
@@ -215,6 +224,14 @@ reset; rm -f "$T/set/lead_authority_mode"; run LEAD_REVIEW_AUTHORITY_MIN_PRECISI
 [ "$(LOGF | grep -c 'lead_authority_mode=lane (no row), so nothing is withheld')" = 1 ] && ok || bad "R9 one log line names the mode: $(LOGF)"
 printf lane > "$T/set/lead_authority_mode"; run LEAD_REVIEW_AUTHORITY_MIN_PRECISION=0.8
 [ "$(puts)" = 0 ] && [ "$(crit)" = 0 ] && ok || bad "R9 an explicit lane row behaves the same (puts $(puts), pages $(crit))"
+# ── R10 (BH-4148): the rows are unreadable (route 500, no cache): authority unchanged ──
+reset; touch "$LPPDOWN"; run LEAD_REVIEW_AUTHORITY_MIN_PRECISION=0.8
+[ ! -e "$H/state/lead-authority/globs-example-org_cromford.cache" ] && ok || bad "R10 no cache exists to fall back to"
+grep -q '^GET /api/lead-protected-paths' "$T/log/worker" && ok || bad "R10 the run asked the worker for the rows: $(cat "$T/log/worker" 2>/dev/null)"
+[ "$(LOGF | grep -c "$REPO: protected paths unreadable (jobs worker, no fresh cache); held: authority unchanged")" = 1 ] && ok || bad "R10 one 'held: authority unchanged' line: $(LOGF)"
+[ "$(puts)" = 0 ] && [ ! -f "$T/set/$KEY" ] && ok || bad "R10 the authority row is never written: $(grep PUT "$T/log/worker" 2>/dev/null)"
+grep -q "$KEY" "$T/log/worker" && bad "R10 the authority row is not even read: $(grep "$KEY" "$T/log/worker")" || ok
+[ "$(crit)" = 0 ] && [ "$(owed)" = 0 ] && ok || bad "R10 nothing is paged or owed (pages $(crit), owed $(owed))"
 
 echo "lead-review-precision-authority: $PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ]

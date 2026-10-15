@@ -36,7 +36,7 @@
           "unit": "lines",
           "zero_means": "off",
           "required": true,
-          "note": "BH-5582. Own-change lines (main-merge lines excluded) at or under which a re-review whose delta touches a lead protected path (catalog/lead-protected-paths.tsv, .github/, .mergify.yml, schema, migrations) stays in delta mode, when the lead's word on the earlier head was MERGE or MERGE-WITH-NOTES. The prompt names each protected file for full scrutiny. It protects the lead's full read of a large protected change. Each time it fires, one full Opus lead review of the whole branch is not bought. 0 = every protected delta is a full review (the BH-5294 behaviour). Read by bin/lib/lead-delta.sh with no literal."
+          "note": "BH-5582. Own-change lines (main-merge lines excluded) at or under which a re-review whose delta touches a lead protected path (the lead_protected_paths rows, .github/, .mergify.yml, schema, migrations) stays in delta mode, when the lead's word on the earlier head was MERGE or MERGE-WITH-NOTES. The prompt names each protected file for full scrutiny. It protects the lead's full read of a large protected change. Each time it fires, one full Opus lead review of the whole branch is not bought. 0 = every protected delta is a full review (the BH-5294 behaviour). Read by bin/lib/lead-delta.sh with no literal."
         }
       ]
     }

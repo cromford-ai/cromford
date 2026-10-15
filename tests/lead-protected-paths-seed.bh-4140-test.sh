@@ -1,6 +1,6 @@
 #!/bin/bash
 # tests/lead-protected-paths-seed.bh-4140-test.sh — the one-time seed of the
-# lead_protected_paths rows from catalog/lead-protected-paths.tsv (BH-4146,
+# lead_protected_paths rows from catalog/lead-protected-paths.seed.tsv (BH-4146,
 # BH-4140.1). Drives the real bin/lead-protected-paths-seed.sh over the real
 # transport (bin/jobs-client.sh -> curl) to a loopback stub that keeps a live
 # (repo, glob) set and answers like the worker route: 201 on a new add, 200 on
@@ -19,7 +19,9 @@ set -uo pipefail
 . "$(dirname "$0")/lib/scratch.sh" || exit 1
 DIR=$(cd "$(dirname "$0")/.." && pwd)
 SEED="$DIR/bin/lead-protected-paths-seed.sh"
-TSV="$DIR/catalog/lead-protected-paths.tsv"
+# TEST-CHANGE BH-4148: the TSV is deleted; the seed reads its successor, the
+# seed file. Every assertion is unchanged.
+TSV="$DIR/catalog/lead-protected-paths.seed.tsv"
 # TEST-CHANGE (merge of main, 2026-10-04): the expected count is the catalog's
 # own glob count, not a literal 31. Main grew the catalog to 35 while this PR
 # was open; the assertions are unchanged, only the number is derived.

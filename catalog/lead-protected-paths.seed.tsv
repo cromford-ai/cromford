@@ -1,13 +1,15 @@
-# <owner/repo><TAB><glob>, one per line (BH-3683). A PR touching any of these needs a --source human
-# lead verdict before lead-verdict publishes. The settings row
-# lead_protected_paths_extra.<owner>.<name> can ADD globs; only a PR removes one.
+# <owner/repo><TAB><glob>, one per line: the SEED of the jobs worker's lead_protected_paths
+# rows (BH-4148). Not the source of truth: the DB rows are. bin/lead-protected-paths-seed.sh
+# PUTs these; until a glob has a row in the DB (live or removed), bin/lib/lead-authority.sh
+# still treats it as protected, so an unseeded or reset table never ungoverns them.
+# Add or remove a protected path on SETTINGS -> PROTECTED PATHS, not here.
 example-org/cromford	.mergify.yml
 example-org/cromford	config/mergify/**
 example-org/cromford	bin/lead-verdict.sh
 example-org/cromford	bin/lib/verdict-status.sh
 example-org/cromford	bin/lib/verdicts.sh
 example-org/cromford	bin/lib/lead-authority.sh
-example-org/cromford	catalog/lead-protected-paths.tsv
+example-org/cromford	catalog/lead-protected-paths.seed.tsv
 example-org/cromford	bin/lead-review.sh
 example-org/cromford	bin/lib/lead-gates*
 example-org/cromford	bin/lead-review-land.sh
@@ -29,10 +31,6 @@ example-org/cromford	bin/share/gitleaks-gate.py
 example-org/cromford	bin/share/leakcheck.py
 example-org/cromford	catalog/switches.d/*-off.json
 example-org/cromford	worker/jobs/src/routes/verdicts.js
-# 2026-10-01 (the operator): close the gaps found after BH-3683 merged. The conductor's
-# own publish path is what ENFORCES this file (mc_enqueue_mergify -> la_decide),
-# so changing it must not be lane-approvable; nor CI (the checks every verdict
-# rides on) nor the agent secret-read guard (BH-3689).
 example-org/cromford	bin/lib/mc/**
 example-org/cromford	bin/merge-conductor.sh
 example-org/cromford	.github/workflows/**

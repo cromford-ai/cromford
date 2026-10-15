@@ -36,7 +36,7 @@
 # row a participant machine wrote (auth=participant) with `lead review by <name>: `.
 #
 # WHO MAY PUBLISH SUCCESS (BH-3683). Both publishers ask bin/lib/lead-authority.sh
-# (la_decide) first, loaded below: on a repo in catalog/lead-protected-paths.tsv,
+# (la_decide) first, loaded below: on a repo with live lead_protected_paths rows,
 # a PR touching a protected path, or a repo whose lane authority is revoked,
 # needs a --source human verdict before success is published. A failure (BLOCK)
 # is never asked. vs_publish itself does not decide; its callers do.

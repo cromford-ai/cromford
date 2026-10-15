@@ -3,10 +3,12 @@
 # "$DIR/bin/lib/risk-tier.sh", sourced as it is (with the real
 # "$DIR/bin/lib/lead-authority.sh" beside it) against fixture compare answers.
 # setting_get is stubbed: rc 2 (no row) unless $T/set/<key> holds a value, or
-# $T/set/<key>.rc1 exists (an outage). LA_CATALOG points at a fixture catalog.
+# $T/set/<key>.rc1 exists (an outage). The protected-path rows come from the
+# jobs worker (BH-4148): _jobs_req is tests/lib/lpp-stub.sh, rows in $LPPF.
 # Run from anywhere: HARNESS_TEST_SANDBOX=1 bash tests/risk-tier.bh-5022-test.sh
 set -uo pipefail
 . "$(dirname "$0")/lib/scratch.sh" || exit 1
+. "$(dirname "$0")/lib/lpp-stub.sh" || exit 1
 DIR=$(cd "$(dirname "$0")/.." && pwd)
 PASS=0; FAIL=0
 ok()  { PASS=$((PASS+1)); }
@@ -15,8 +17,12 @@ command -v jq >/dev/null || { echo "jq missing — skipping"; exit 0; }
 
 mkdir -p "$T/set" "$T/cmp" "$T/tmp"
 export TMPDIR="$T/tmp"
-printf 'example-org/demo-os\tbin/guarded.sh\nexample-org/demo-os\tcatalog/lanes.d/**\n' > "$T/catalog.tsv"
-export LA_CATALOG="$T/catalog.tsv"
+# TEST-CHANGE BH-4148 (merge of main): globs come from the DB, not the TSV.
+# The same two demo-os globs the fixture catalog held, as lead_protected_paths rows.
+unset HARNESS H
+LPPF="$T/lpp.json"; DOWNF="$T/lpp-down"
+lpp_set "$LPPF" example-org/demo-os 'bin/guarded.sh' 'catalog/lanes.d/**'
+_jobs_req() { lpp_jobs_req "$LPPF" "$DOWNF" "$@"; }
 setting_get() {
   [ -e "$T/set/$1.rc1" ] && return 1
   [ -f "$T/set/$1" ] || return 2
@@ -171,7 +177,7 @@ reset_set
 case "$WHY" in *"rules unreadable"*) ok ;; *) bad "A9 reason: $WHY" ;; esac
 reset_set
 # ...and the protected-path list unreadable is medium too
-LA_CATALOG="$T/missing.tsv" cls a1
+printf '500' > "$DOWNF"; cls a1; rm -f "$DOWNF"
 [ "$TIER" = medium ] && ok || bad "A9b no catalog left it '$TIER' ($WHY)"
 
 # A10: a rename out of .mergify.yml -> high

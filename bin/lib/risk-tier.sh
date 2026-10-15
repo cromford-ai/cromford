@@ -8,8 +8,9 @@
 # THE RULES, in order (the first that answers wins):
 #   0. 300 or more compare files (GitHub's cap)           -> high, "diff too large to read whole"
 #   1. any filename OR previous_filename matching a high, a sensitive or a lead
-#      protected glob (la_globs: catalog/lead-protected-paths.tsv plus its
-#      extras row, ALWAYS high, no risk_tier row can remove them)  -> high
+#      protected glob (la_globs: the repo's lead_protected_paths rows plus the
+#      seed floor, catalog/lead-protected-paths.seed.tsv globs that have no row
+#      yet, BH-4148; ALWAYS high, no risk_tier row can remove them)  -> high
 #   2. every path is a low path, and changed lines (additions + deletions) are
 #      under the low limit                                 -> low
 #      every path is a low path, but the low limit or over  -> medium

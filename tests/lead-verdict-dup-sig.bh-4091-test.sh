@@ -7,9 +7,13 @@
 # real CLI against a stub gh (head + statuses) and a stub curl (the worker).
 #   L1 201 carries "human_sig_duplicate_of":30 -> stderr WARNING names #30; rc 0
 #   L2 201 without the key                     -> no WARNING; rc 0
+# demo-os has no lead_protected_paths rows: the stub worker answers GET
+# /api/lead-protected-paths from tests/lib/lpp-stub.sh with none ($T/lpp.json).
 # Run from anywhere: HARNESS_TEST_SANDBOX=1 bash tests/lead-verdict-dup-sig.bh-4091-test.sh
+# TEST-CHANGE BH-4140: globs come from the DB, not the TSV
 set -uo pipefail
 . "$(dirname "$0")/lib/scratch.sh" || exit 1
+. "$(dirname "$0")/lib/lpp-stub.sh" || exit 1
 DIR=$(cd "$(dirname "$0")/.." && pwd)
 PASS=0; FAIL=0
 ok()  { PASS=$((PASS+1)); }
@@ -21,6 +25,7 @@ HEAD1=cccccccc33333333333333333333333333333333
 G="$T/gh"; W="$T/worker"; mkdir -p "$G" "$W" "$T/fakebin" "$T/tmp" "$T/tok"
 cp "$DIR/tests/lib/rest-emit.sh" "$T/fakebin/restpr"; chmod +x "$T/fakebin/restpr"
 
+lpp_install "$T/fakebin" "$T/lpp.json" "$T/lpp-down"
 cat > "$T/fakebin/gh" <<EOF
 #!/bin/bash
 printf '%s\n' "\$*" >> "$G/calls"
@@ -42,6 +47,7 @@ while [ \$# -gt 0 ]; do case "\$1" in
   *) shift ;;
 esac; done
 case "\$M \$URL" in
+$(lpp_curl_case M URL D)
   "POST "*/api/verdicts)
     dup='{}'; [ -f "$W/dup" ] && dup='{"human_sig_duplicate_of":30}'
     printf '%s\n201\n' "\$(jq -c --argjson dup "\$dup" '{verdict:(. + {id:31,created_at:"2026-10-01T10:00:00Z"}),human_verified:true,human_signed:true,human_verdict_mode:"shadow"} + \$dup' <<<"\$D")" ;;
@@ -52,12 +58,11 @@ chmod +x "$T/fakebin/gh" "$T/fakebin/curl"
 printf 'lead-test-token\n' > "$T/tok/lead"; chmod 600 "$T/tok/lead"
 printf 'human-test-token\n' > "$T/tok/human"; chmod 600 "$T/tok/human"
 
-H="$T/h"; mkdir -p "$H/bin/lib/jobs" "$H/logs" "$H/state" "$H/catalog"
+H="$T/h"; mkdir -p "$H/bin/lib/jobs" "$H/logs" "$H/state"
 cp "$DIR/bin/lead-verdict.sh" "$DIR/bin/jobs-client.sh" "$H/bin/"
 cp "$DIR"/bin/lib/jobs/*.sh "$H/bin/lib/jobs/"
 cp "$DIR/bin/lib/verdict-status.sh" "$DIR/bin/lib/gh-rest.sh" "$DIR/bin/lib/gh-app-auth.sh" "$H/bin/lib/" 2>/dev/null
 for f in env-path lead-reviews verdicts hub-box lane-gate lead-authority; do cp "$DIR/bin/lib/$f.sh" "$H/bin/lib/"; done
-cp "$DIR/catalog/lead-protected-paths.tsv" "$H/catalog/"
 
 export PATH="$T/fakebin:$PATH" HARNESS="$H" HARNESS_SECRET=s JOBS_URL=https://jobs.test JOBS_RETRIES=0 \
   JOBS_BOX=mac-lead TMPDIR="$T/tmp" LEAD_VERDICT_TOKEN_FILE="$T/tok/lead" HUMAN_VERDICT_TOKEN_FILE="$T/tok/human" \

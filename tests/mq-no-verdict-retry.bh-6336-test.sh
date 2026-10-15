@@ -219,7 +219,12 @@ cp "$DIR/tests/lib/rest-emit.sh" "$T/fakebin/restpr"; chmod +x "$T/fakebin/restp
 printf 'JOBS_URL=http://jobs.test\nHARNESS_SECRET=fixture-secret\n' > "$T/h/env/global.env"
 printf 'mgfy example-org/mgfy-os - - 2 box-m\n' > "$T/h/fleet.conf"
 export FLEET_CONF="$T/h/fleet.conf"
-mkdir -p "$T/h/catalog"; cp "$DIR/catalog/lead-protected-paths.tsv" "$T/h/catalog/"
+# BH-4148 (#4614): the lead's protected paths are worker rows, not
+# catalog/lead-protected-paths.tsv; the fake worker answers the route with no
+# rows for the repo (tests/lib/lpp-stub.sh), as the deleted TSV did.
+mkdir -p "$T/h/catalog" "$T/fakebin"
+. "$DIR/tests/lib/lpp-stub.sh" || exit 1
+lpp_install "$T/fakebin" "$T/lpp-rows.json" "$T/lpp-down"
 printf 'tests/g-test.sh\tguard\t5\tbin/x.sh\tr\n' > "$T/h/catalog/test-tiers.tsv"
 printf '#!/bin/bash\necho "" > "$4"; exit 0\n' > "$T/h/bin/agent-call.sh"
 for s in beat deploy-request pre-arm-guards codegraph-ensure; do printf '#!/bin/bash\nexit 0\n' > "$T/h/bin/$s.sh"; done
@@ -342,6 +347,10 @@ SHIM
 } > "$T/fakebin/gh"
 chmod +x "$T/fakebin/gh"
 { printf '#!/bin/bash\n'; cat <<'EOF'
+URL="${!#}"; M=GET; prev=""; for a in "$@"; do [ "$prev" = -X ] && M="$a"; prev="$a"; done
+case "$URL" in
+  */api/lead-protected-paths*) "$(dirname "$0")/lpp-answer" "$M" "$URL"; exit 0 ;;
+esac
 printf '{"error":"not found"}\n404\n'
 EOF
 } > "$T/fakebin/curl"

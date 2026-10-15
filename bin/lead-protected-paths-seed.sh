@@ -1,7 +1,10 @@
 #!/bin/bash
-# lead-protected-paths-seed.sh — one-time seed of the jobs worker's
-# lead_protected_paths rows from catalog/lead-protected-paths.tsv (BH-4146,
-# BH-4140.1).
+# lead-protected-paths-seed.sh — seed of the jobs worker's
+# lead_protected_paths rows from catalog/lead-protected-paths.seed.tsv (BH-4146,
+# BH-4140.1). Since BH-4148 the rows are the source of truth; until a seed
+# glob has a row, bin/lib/lead-authority.sh still protects it (the seed floor),
+# so this is what turns that floor into rows the console can edit. Run it once
+# on the hub; a re-run re-adds a glob the console removed, so don't loop it.
 #
 # Usage: bin/lead-protected-paths-seed.sh [--tsv <path>]
 #        bin/lead-protected-paths-seed.sh -h
@@ -22,7 +25,7 @@ set -uo pipefail
 
 usage() { sed -n '2,/^set -uo/p' "$0" | sed '$d' | sed 's/^# \{0,1\}//'; }
 
-TSV="$(dirname "$0")/../catalog/lead-protected-paths.tsv"
+TSV="$(dirname "$0")/../catalog/lead-protected-paths.seed.tsv"
 while [ $# -gt 0 ]; do
   case "$1" in
     -h|--help) usage; exit 0 ;;

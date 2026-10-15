@@ -14,6 +14,7 @@
 # Run from anywhere: HARNESS_TEST_SANDBOX=1 bash tests/lead-verdict-participant.bh-5352-test.sh
 set -uo pipefail
 . "$(dirname "$0")/lib/scratch.sh" || exit 1
+. "$(dirname "$0")/lib/lpp-stub.sh" || exit 1
 DIR=$(cd "$(dirname "$0")/.." && pwd)
 PASS=0; FAIL=0
 ok()  { PASS=$((PASS+1)); }
@@ -48,6 +49,7 @@ while [ \$# -gt 0 ]; do case "\$1" in
   -H) case "\$2" in @*) cp "\${2#@}" "$W/hdr" ;; esac; shift 2 ;;
   *) shift ;; esac; done
 case "\$M \$URL" in
+$(lpp_curl_case M URL D)
   "POST "*/api/verdicts)
     printf '%s\n' "\$D" >> "$W/posted"
     case "\$(cat "$W/mode")" in
@@ -65,7 +67,12 @@ printf 'lead-test-token\n' > "$T/tok/lead"; chmod 600 "$T/tok/lead"
 H="$T/h"; mkdir -p "$H/logs" "$H/state" "$H/catalog"
 scratch_install_closure bin/lead-verdict.sh "$H" >/dev/null || { echo "FAIL: closure of bin/lead-verdict.sh"; exit 1; }
 scratch_install_closure bin/jobs-client.sh "$H" >/dev/null || { echo "FAIL: closure of bin/jobs-client.sh"; exit 1; }
-cp "$DIR/catalog/lead-protected-paths.tsv" "$H/catalog/"
+# TEST-CHANGE BH-4148 (merge of main): the lead protected paths come from the
+# lead_protected_paths rows (tests/lib/lpp-stub.sh), not the deleted TSV. The rows
+# are the cromford globs the TSV held (the fixture).
+LPPF="$T/lpp.json"; LPPDOWN="$T/lpp-down"
+set -f; lpp_set "$LPPF" example-org/cromford $(cat "$DIR/tests/fixtures/lead-protected-paths.bh-4148.txt"); set +f
+lpp_install "$T/fakebin" "$LPPF" "$LPPDOWN"
 
 export PATH="$T/fakebin:$PATH" HARNESS="$H" HARNESS_SECRET=s JOBS_URL=https://jobs.test JOBS_RETRIES=0 \
   JOBS_BOX=mac-test-1 TMPDIR="$T/tmp" GH_APP_TOKENS=0 \

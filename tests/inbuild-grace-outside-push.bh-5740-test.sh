@@ -24,6 +24,7 @@
 # Run from anywhere: HARNESS_TEST_SANDBOX=1 bash tests/inbuild-grace-outside-push.bh-5740-test.sh
 set -uo pipefail
 . "$(dirname "$0")/lib/scratch.sh" || exit 1
+. "$(dirname "$0")/lib/lpp-stub.sh" || exit 1
 DIR=$(cd "$(dirname "$0")/.." && pwd)
 PASS=0; FAIL=0
 ok()  { PASS=$((PASS+1)); }
@@ -36,7 +37,12 @@ scratch_install_closure bin/lead-review-enqueue.sh "$H" >/dev/null || exit 1
 scratch_install_closure bin/jobs-client.sh "$H" >/dev/null || exit 1
 scratch_install_closure bin/lead-review.sh "$H" >/dev/null || exit 1
 cp "$DIR/catalog/lanes.d/_lib.json" "$DIR/catalog/lanes.d/_lib.lead-delta.json" "$H/catalog/lanes.d/"
-cp "$DIR/catalog/lead-protected-paths.tsv" "$H/catalog/"
+# TEST-CHANGE BH-4148 (merge of main): the lead protected paths come from the
+# lead_protected_paths rows (tests/lib/lpp-stub.sh), not the deleted TSV. The rows
+# are the cromford globs the TSV held (the fixture).
+LPPF="$T/lpp.json"; LPPDOWN="$T/lpp-down"
+set -f; lpp_set "$LPPF" example-org/cromford $(cat "$DIR/tests/fixtures/lead-protected-paths.bh-4148.txt"); set +f
+lpp_install "$T/fakebin" "$LPPF" "$LPPDOWN"
 printf 'lead-test-token\n' > "$T/cfg/token"; chmod 600 "$T/cfg/token"
 printf 'cromford example-org/cromford https://demo.test /api 3 box-hub\n' > "$H/fleet.conf"
 printf 'queue_rules:\n  - name: default\n    queue_conditions:\n      - check-success = "CI"\n' | base64 | tr -d '\n' > "$T/mergify.b64"
@@ -62,6 +68,7 @@ p="\${url#https://jobs.test}"
 printf '%s %s %s lead=%s\n' "\$m" "\$p" "\$body" "\$lead" >> "$T/log/worker"
 code=200; out='{}'
 case "\$m \$p" in
+$(lpp_curl_case m url body)
   "GET /api/verdict?pr="*)
     n="\${p##*%2F}"; echo "\$n" >> "$T/log/vcount"; k=\$(wc -l < "$T/log/vcount")
     if [ -f "$T/v500-from" ] && [ "\$k" -ge "\$(cat "$T/v500-from")" ]; then code=500; out='{"error":"boom"}'

@@ -17,8 +17,8 @@
 #      `blocked@<head>` — a lead MERGE never overrides a builder BLOCK here;
 #   3. the builder verdict does not already cover the head (APPROVE on HEAD is
 #      rc 1: nothing to do);
-#   4. the repo is governed (la_scope rc 0: catalog/lead-protected-paths.tsv,
-#      a file read, no network);
+#   4. the repo is governed (la_scope rc 0: live lead_protected_paths rows,
+#      one jobs-worker GET or the last-good cache);
 #   5. a lead/human MERGE or MERGE-WITH-NOTES stands on THIS head (vd_standing);
 #   6. la_decide <slug> <pr> <head> conductor is rc 0 — no protected path and
 #      the lane is the authority. rc 1 (a human verdict is required) and rc 2

@@ -19,6 +19,7 @@
 # Run from anywhere: HARNESS_TEST_SANDBOX=1 bash tests/lead-verdict-risk-tier.bh-5022-test.sh
 set -uo pipefail
 . "$(dirname "$0")/lib/scratch.sh" || exit 1
+. "$(dirname "$0")/lib/lpp-stub.sh" || exit 1
 # BH-4956: these cases review one PR more than the per-PR-day tripwire allows
 # (LEAD_REVIEW_MAX_PER_PR_DAY, default 4, state/lead-review/started.tsv).
 export LEAD_REVIEW_MAX_PER_PR_DAY=50
@@ -39,7 +40,12 @@ LEAD=operator
 VH="$T/lv/h"; VF="$T/lv/fx"; mkdir -p "$VH/state" "$VH/logs" "$VF" "$T/lv/fakebin" "$T/tmp"
 scratch_install_closure bin/jobs-client.sh "$VH" >/dev/null || exit 1
 scratch_install_closure bin/lead-verdict.sh "$VH" >/dev/null || exit 1
-mkdir -p "$VH/catalog"; printf 'example-org/other\tx\n' > "$VH/catalog/lead-protected-paths.tsv"
+# TEST-CHANGE BH-4148 (merge of main): globs come from the DB, not the TSV.
+# The lead_protected_paths rows (tests/lib/lpp-stub.sh): only example-org/other has
+# one, so demo-os is not governed.
+LPPF="$T/lv/lpp.json"; DOWNF="$T/lv/lpp-down"
+lpp_install "$T/lv/fakebin" "$LPPF" "$DOWNF"
+lpp_set "$LPPF" example-org/other x
 printf 'lead-test-token\n' > "$T/lv/token"; chmod 600 "$T/lv/token"
 cat > "$T/lv/fakebin/curl" <<EOF
 #!/bin/bash
@@ -58,6 +64,7 @@ p="\${url#https://jobs.test}"
 lead=0; grep -q '^x-lead-verdict-token: lead-test-token' <<<"\$hdrs" && lead=1
 printf '%s %s %s lead=%s\n' "\$m" "\$p" "\$body" "\$lead" >> "$VF/worker"
 case "\$m \$p" in
+$(lpp_curl_case m url body)
   "POST /api/verdicts")
     if [ -f "$VF/c400" ]; then printf '{"error":"source risk-tier may only say MERGE"}\n400'
     else printf '%s\n201' "\$(jq -c '{verdict:(. + {id:31,created_at:"2026-10-07T00:00:00Z"})}' <<<"\$body")"; fi ;;
@@ -106,7 +113,7 @@ lvreset; lv post "$SLUG" 41 "$SHA" MERGE --source risk-tier
 [ "$LRC" = 1 ] && [ ! -s "$VF/worker" ] && ok || bad "C2 no --note: rc=$LRC $(cat "$VF/worker" 2>/dev/null)"
 
 # C5: a protected-path hit is never published by risk-tier (lane mode), exit 5
-printf '%s\tdocs/**\n' "$SLUG" > "$VH/catalog/lead-protected-paths.tsv"
+lpp_set "$LPPF" "$SLUG" 'docs/**'
 lvreset; lv post "$SLUG" 41 "$SHA" MERGE --source risk-tier --note "low risk: docs only"
 [ "$LRC" = 5 ] && ok || bad "C5 rc=$LRC: $(cat "$VF/out")"
 [ -z "$(statuses)" ] && ok || bad "C5 published on a protected path: $(statuses)"
@@ -124,7 +131,7 @@ lvreset; lv post "$SLUG" 41 "$SHA" MERGE --source risk-tier --note "low risk: do
 [ -z "$(statuses)" ] && ok || bad "C5b published: $(statuses)"
 grep -q '^POST /api/verdicts ' "$VF/worker" 2>/dev/null && bad "C5b a withheld risk-tier sign-off wrote a row: $(cat "$VF/worker")" || ok
 mv "$VF/files.json.keep" "$VF/files.json"
-printf 'example-org/other\tx\n' > "$VH/catalog/lead-protected-paths.tsv"
+lpp_set "$LPPF" "$SLUG"
 
 # ════════════════════════════════════════════════════════════════════════════
 # C3: bin/lead-review.sh tick supersedes a request on a risk-tier head

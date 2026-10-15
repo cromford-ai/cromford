@@ -85,7 +85,7 @@
 #
 # THE AUTHORITY RULE (BH-3683). The hub's lead-review lane is the verdict
 # authority: its --source lead MERGE publishes lead-verdict with no Mac
-# involved. On a repo listed in catalog/lead-protected-paths.tsv, a lead MERGE /
+# involved. On a repo with live lead_protected_paths rows (jobs worker), a lead MERGE /
 # MERGE-WITH-NOTES first asks la_decide (bin/lib/lead-authority.sh), and the
 # answer depends on lead_authority_mode (BH-4145; per repo
 # lead_authority_mode.<owner>.<name>, else global):
@@ -528,27 +528,18 @@ lv_list() {
 #   force for the repo, and with a head the answer a lead MERGE would get.
 lv_authority() {
   [ $# = 1 ] || [ $# = 3 ] || usage
-  local repo="$1" pr="${2:-}" sha="${3:-}" c e rc
+  local repo="$1" pr="${2:-}" sha="${3:-}" rc
   [[ "$repo" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] || die "repo must be owner/name, got '$repo'"
   # shellcheck source=bin/lib/verdict-status.sh
   command -v vs_publish >/dev/null 2>&1 || . "$SELF_DIR/lib/verdict-status.sh" 2>/dev/null
   command -v la_decide >/dev/null 2>&1 || die "bin/lib/lead-authority.sh did not load"
   echo "repo: $repo"
-  rc=0; la_scope "$repo" || rc=$?
-  case "$rc" in
-    0) echo "in scope: yes" ;;
-    1) echo "in scope: no (no line in catalog/lead-protected-paths.tsv; the lane is the authority)"; return 0 ;;
-    *) die "catalog/lead-protected-paths.tsv is unreadable; every lead MERGE is withheld" ;;
-  esac
-  c=$(_la_committed "$repo")
-  echo "committed globs (catalog/lead-protected-paths.tsv):"
-  printf '%s\n' "$c" | sed 's/^/  /'
-  if e=$(_la_extras "$repo"); then
-    echo "extra globs (settings row lead_protected_paths_extra.$(_la_key "$repo")):"
-    if [ -n "$e" ]; then printf '%s\n' "$e" | sed 's/^/  /'; else echo "  none"; fi
-  else
-    echo "extra globs: UNREADABLE (settings row lead_protected_paths_extra.$(_la_key "$repo"))"
-  fi
+  _la_db_globs "$repo" || die "the protected paths of $repo could not be read (jobs worker down and no fresh cache); la_decide holds every lead MERGE (rc 2)"
+  echo "globs (lead_protected_paths, from $LA_GLOBS_SRC): $(printf '%s' "$LA_GLOBS" | awk 'NF' | wc -l | tr -d ' ')"
+  [ -z "$LA_GLOBS" ] || printf '%s\n' "$LA_GLOBS" | sed 's/^/  /'
+  [ -z "${LA_GLOBS_FLOOR:-}" ] || echo "of which $(printf '%s\n' "$LA_GLOBS_FLOOR" | awk 'NF' | wc -l | tr -d ' ') have no DB row yet: the seed floor (catalog/lead-protected-paths.seed.tsv) still protects them; bin/lead-protected-paths-seed.sh on the hub turns them into rows"
+  [ -n "$LA_GLOBS" ] || { echo "in scope: no (no live lead_protected_paths rows; the lane is the authority)"; return 0; }
+  echo "in scope: yes"
   if _la_authority "$repo"; then echo "authority: $LA_AUTH ($LA_AUTH_SRC)"
   else echo "authority: UNREADABLE (settings row lead_authority.$(_la_key "$repo"))"; fi
   [ -n "$pr" ] || return 0

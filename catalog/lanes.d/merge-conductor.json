@@ -379,7 +379,7 @@
       "max": 1,
       "unit": null,
       "zero_means": "off",
-      "note": "BH-3778: on a repo in catalog/lead-protected-paths.tsv, a standing lead/human MERGE or MERGE-WITH-NOTES on the live head that la_decide lets the lane clear counts as an approval bound to that head (bin/lib/mc-lead-ready.sh), so the PR reaches READY and mc_enqueue_mergify. Never over a builder BLOCK. 0 = off, the pre-BH-3778 behavior."
+      "note": "BH-3778: on a repo with live lead_protected_paths rows, a standing lead/human MERGE or MERGE-WITH-NOTES on the live head that la_decide lets the lane clear counts as an approval bound to that head (bin/lib/mc-lead-ready.sh), so the PR reaches READY and mc_enqueue_mergify. Never over a builder BLOCK. 0 = off, the pre-BH-3778 behavior."
     },
     {
       "env": "MC_EJECTED_REQUEUE",

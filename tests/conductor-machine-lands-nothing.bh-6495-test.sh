@@ -37,7 +37,7 @@ KT="$T/k"; KH="$KT/h"; KB="$KT/fakebin"
 mkdir -p "$KH/bin/lib" "$KH/logs" "$KH/state" "$KH/flags" "$KH/locks" "$KH/builds" "$KH/env" "$KH/tmp" "$KB"
 scratch_install_closure bin/merge-conductor.sh "$KH" >/dev/null || { echo "setup: closure failed"; exit 1; }
 cp "$DIR/bin/fleet-conf.sh" "$KH/bin/fleet-conf.sh"
-mkdir -p "$KH/catalog"; cp "$DIR/catalog/lead-protected-paths.tsv" "$KH/catalog/"
+mkdir -p "$KH/catalog"; cp "$DIR/catalog/lead-protected-paths.seed.tsv" "$KH/catalog/"
 scratch_install_closure bin/jobs-client.sh "$KH" >/dev/null || { echo "setup: closure jobs failed"; exit 1; }
 for s in agent-call beat deploy-request pre-arm-guards codegraph-ensure; do printf '#!/bin/bash\nexit 0\n' > "$KH/bin/$s.sh"; done
 printf '#!/bin/bash\nprintf "%%s\\n" "$*" >> "%s/alerts.txt"\nexit 0\n' "$KT" > "$KH/bin/lane-alert.sh"
@@ -101,6 +101,7 @@ cat > "$KB/curl" <<EOF
 #!/bin/bash
 URL="\${!#}"
 case "\$URL" in
+  */api/lead-protected-paths*) "$KB/lpp-answer" GET "\$URL"; exit 0 ;;
   */api/verdict\?*) if [ -s "$KT/ledger.json" ]; then printf '%s\n200\n' "\$(cat "$KT/ledger.json")"; else printf '{"error":"not found"}\n404\n'; fi ;;
   */api/verdicts\?*) printf '{"standing":null}\n200\n' ;;
   */api/settings/lead_pr_authors) printf '{"setting":{"key":"lead_pr_authors","value":"lead-fixture-bot"}}\n200\n' ;;
@@ -108,6 +109,12 @@ case "\$URL" in
 esac
 EOF
 chmod +x "$KB/curl"
+# TEST-CHANGE BH-4148: the lead reads protected paths from the jobs route, not
+# catalog/lead-protected-paths.tsv; the fixture repo has no rows, so it is not
+# governed, as under the old catalog file.
+. "$DIR/tests/lib/lpp-stub.sh" || exit 1
+lpp_set "$KT/lpp.json" "$KSLUG"
+lpp_install "$KB" "$KT/lpp.json" "$KT/lpp-down"
 touch "$KH/flags/merge-conductor-actions" "$KH/flags/merge-conductor-merge"
 ktick() {
   ( cd "$KT" && env PATH="$KB:$PATH" HARNESS="$KH" HARNESS_SECRET=x JOBS_URL=http://worker.test GH_TOKEN=pat-fixture \

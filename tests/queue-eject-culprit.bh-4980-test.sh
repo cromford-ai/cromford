@@ -18,6 +18,7 @@
 # Run from anywhere: HARNESS_TEST_SANDBOX=1 bash tests/queue-eject-culprit.bh-4980-test.sh
 set -uo pipefail
 . "$(dirname "$0")/lib/scratch.sh" || exit 1
+. "$(dirname "$0")/lib/lpp-stub.sh" || exit 1
 # E1's conductor parses review verdicts (vpf).
 # shellcheck source=tests/lib/verdict-fixture.sh
 . "$(dirname "$0")/lib/verdict-fixture.sh" || exit 1
@@ -415,7 +416,13 @@ cp "$DIR/tests/lib/rest-emit.sh" "$E/fakebin/restpr"; chmod +x "$E/fakebin/restp
 printf 'JOBS_URL=http://jobs.test\nHARNESS_SECRET=x\n' > "$E/h/env/global.env"
 printf 'bh example-org/cromford - - 2 box-m\n' > "$E/h/fleet.conf"
 export FLEET_CONF="$E/h/fleet.conf"
-mkdir -p "$E/h/catalog"; cp "$DIR/catalog/lead-protected-paths.tsv" "$E/h/catalog/"; printf 'tests/g-test.sh\tguard\t5\tbin/x.sh\tr\n' > "$E/h/catalog/test-tiers.tsv"
+# TEST-CHANGE BH-4148 (merge of main): the lead protected paths come from the
+# lead_protected_paths rows (tests/lib/lpp-stub.sh), not the deleted TSV. The rows
+# are the cromford globs the TSV held (the fixture); the curl stub below answers them.
+LPPF="$T/lpp.json"; LPPDOWN="$T/lpp-down"
+set -f; lpp_set "$LPPF" example-org/cromford $(cat "$DIR/tests/fixtures/lead-protected-paths.bh-4148.txt"); set +f
+lpp_install "$E/fakebin" "$LPPF" "$LPPDOWN"
+mkdir -p "$E/h/catalog"; printf 'tests/g-test.sh\tguard\t5\tbin/x.sh\tr\n' > "$E/h/catalog/test-tiers.tsv"
 printf '#!/bin/bash\necho "" > "$4"; exit 0\n' > "$E/h/bin/agent-call.sh"
 for s in beat deploy-request pre-arm-guards codegraph-ensure; do printf '#!/bin/bash\nexit 0\n' > "$E/h/bin/$s.sh"; done
 chmod +x "$E/h/bin/"*.sh
@@ -495,7 +502,13 @@ exit 0
 SHIM
 } > "$E/fakebin/gh"
 chmod +x "$E/fakebin/gh"
-printf '#!/bin/bash\nprintf '"'"'{"error":"not found"}\\n404\\n'"'"'\n' > "$E/fakebin/curl"; chmod +x "$E/fakebin/curl"
+cat > "$E/fakebin/curl" <<'CURL'
+#!/bin/bash
+# TEST-CHANGE BH-4148: the lead protected paths read answers the rows; every other worker call 404s, as before.
+case "${!#}" in */api/lead-protected-paths*) lpp-answer GET "${!#}"; exit 0 ;; esac
+printf '{"error":"not found"}\n404\n'
+CURL
+chmod +x "$E/fakebin/curl"
 : > "$E/gh-calls.txt"; : > "$E/attr-comments.txt"; : > "$E/comments.txt"; : > "$E/dispatches.txt"
 : > "$E/label-adds.txt"; : > "$E/merges.txt"
 EA="$E/h/state/merge-conductor/attempts.txt"; mkdir -p "${EA%/*}"; : > "$EA"

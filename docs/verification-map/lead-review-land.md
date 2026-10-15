@@ -36,8 +36,10 @@ view is `bin/lead-verdict.sh show <owner/repo> <pr> <head-sha>`.
   for a truncated list (`truncated-<YYYYMMDD>`) and one for a missing lead token
   file (`no-token-<YYYYMMDD>`).
 
-**Protected paths (BH-3683):** on a repo listed in
-`catalog/lead-protected-paths.tsv`, a lead MERGE on a PR that touches a
+**Protected paths (BH-3683):** on a repo with live `lead_protected_paths`
+rows (BH-4148: `GET /api/lead-protected-paths?repo=`, with a last-good cache in
+`state/lead-authority/globs-<owner_name>.cache`; unreadable rows hold every lead
+MERGE), a lead MERGE on a PR that touches a
 protected path (or on any PR once the repo's `lead_authority` row reads `human`
 or `human:precision`) is posted as advice: `bin/lead-verdict.sh post` exits 5,
 the row's note carries `authority:human-required`, no `lead-verdict` status is

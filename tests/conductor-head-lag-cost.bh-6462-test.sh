@@ -328,7 +328,7 @@ for s in bin/merge-conductor.sh bin/fleet-conf.sh bin/jobs-client.sh; do
 done
 [ -f "$F/h/bin/lib/call-trace.sh" ] || bad "H1 the conductor's closure installs $DIR/bin/lib/call-trace.sh"
 scratch_rm "$F/h/bin/lib/gh-limit-logger.sh"
-mkdir -p "$F/h/catalog" && cp "$DIR/catalog/lead-protected-paths.tsv" "$F/h/catalog/" || exit 1
+mkdir -p "$F/h/catalog" && cp "$DIR/catalog/lead-protected-paths.seed.tsv" "$F/h/catalog/" || exit 1
 printf 'demo %s - - 2 box-m\n' "$SLUG" > "$F/h/fleet.conf"
 : > "$F/h/env/global.env"
 for s in agent-call beat deploy-request pre-arm-guards codegraph-ensure; do printf '#!/bin/bash\nexit 0\n' > "$F/h/bin/$s.sh"; chmod +x "$F/h/bin/$s.sh"; done
@@ -377,6 +377,7 @@ cat > "$F/fakebin/curl" <<'EOF'
 #!/bin/bash
 URL="${!#}"; M=GET
 while [ $# -gt 0 ]; do case "$1" in -X) M="$2"; shift 2 ;; *) shift ;; esac; done
+case "$URL" in *"/api/lead-protected-paths"*) "$(dirname "$0")/lpp-answer" "$M" "$URL"; exit 0 ;; esac
 case "$M $URL" in
   "PUT "*/api/ledger) printf '{"ok":true}\n200\n' ;;
   "GET "*/api/verdicts\?*) printf '{"standing":null}\n200\n' ;;
@@ -384,6 +385,11 @@ case "$M $URL" in
 esac
 EOF
 chmod +x "$F/fakebin/curl"
+# BH-4148: the lead reads protected paths from the jobs route. demo-os has no
+# rows, so it is not governed, as it was under the old catalog file.
+. "$DIR/tests/lib/lpp-stub.sh" || exit 1
+lpp_set "$F/lpp.json" example-org/demo-os
+lpp_install "$F/fakebin" "$F/lpp.json" "$F/lpp-down"
 touch "$F/h/flags/merge-conductor-actions" "$F/h/flags/merge-conductor-merge" "$F/h/flags/conductor-owns-merges"
 for n in $PRS; do printf '%s\t%s\t%s\t%s\t%s\t-\t-\t%s/%s\n' "$SLUG#$n" READY $((NOW-600)) "$(hd "$n")" "$(hd "$n")" "$U" "$n"; done > "$F/h/state/merge-conductor/pr-state.tsv"
 : > "$F/c-calls.txt"

@@ -30,6 +30,7 @@
 # Run from anywhere: tests/merge-path-stall.bh-4918-test.sh   (exit 0 = all pass)
 set -uo pipefail
 . "$(dirname "$0")/lib/scratch.sh" || exit 1
+. "$(dirname "$0")/lib/lpp-stub.sh" || exit 1
 DIR=$(cd "$(dirname "$0")/.." && pwd)
 PASS=0; FAIL=0
 ok()  { PASS=$((PASS+1)); }
@@ -73,8 +74,12 @@ cat >> "$T/h/bin/lib/heartbeat.sh" <<EOF
 eval "_fx_hb_tick_real() \$(declare -f hb_tick | tail -n +2)"
 hb_tick() { case "\${2:-}" in "pr "*) [ -e "$T/silent-\${2#pr }" ] && exit 0 ;; esac; _fx_hb_tick_real "\$@"; }
 EOF
-# The lead authority the enqueue asks (R2) reads its protected-path catalog.
-mkdir -p "$T/h/catalog" && cp "$DIR/catalog/lead-protected-paths.tsv" "$T/h/catalog/" || exit 1
+# The lead authority the enqueue asks (R2) reads its protected paths.
+# TEST-CHANGE BH-4148 (merge of main): globs come from the DB, not the TSV.
+# The lead_protected_paths rows (tests/lib/lpp-stub.sh): example-org/demo has none,
+# so it is not governed, as it was not in the deleted TSV.
+LPPF="$T/lpp.json"; DOWNF="$T/lpp-down"
+lpp_install "$T/fakebin" "$LPPF" "$DOWNF"
 printf 'demo %s - - 2 box-m\n' "$SLUG" > "$T/h/fleet.conf"; export FLEET_CONF="$T/h/fleet.conf"
 : > "$T/h/env/global.env"
 for s in agent-call beat deploy-request pre-arm-guards codegraph-ensure; do printf '#!/bin/bash\nexit 0\n' > "$T/h/bin/$s.sh"; chmod +x "$T/h/bin/$s.sh"; done
@@ -145,6 +150,7 @@ cat > "$T/fakebin/curl" <<EOF
 URL="\${!#}"; M=GET
 while [ \$# -gt 0 ]; do case "\$1" in -X) M="\$2"; shift 2 ;; *) shift ;; esac; done
 case "\$M \$URL" in
+$(lpp_curl_case M URL NOBODY)
   "PUT "*/api/ledger) printf '{"ok":true}\n200\n' ;;
   "GET "*/api/verdicts\?*) printf '{"standing":null}\n200\n' ;;
   "GET "*/api/settings/lead_pr_authors) printf '{"setting":{"key":"lead_pr_authors","value":"the-lead"}}\n200\n' ;;

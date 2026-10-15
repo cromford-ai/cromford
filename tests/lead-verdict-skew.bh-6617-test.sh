@@ -38,7 +38,12 @@ install_tree() {
 install_tree
 # real_lib — put the real lib back over a stub (the closure install skips a file that exists)
 real_lib() { rm -f "$H/bin/lib/lead-stale-review.sh"; install_tree; }
-cp "$REPO_DIR/catalog/lead-protected-paths.tsv" "$H/catalog/"
+# TEST-CHANGE BH-4148: the lead reads protected paths from the jobs route; the demo
+# repo has no rows, so it is not governed, as under the old catalog file.
+cp "$REPO_DIR/catalog/lead-protected-paths.seed.tsv" "$H/catalog/"
+. "$REPO_DIR/tests/lib/lpp-stub.sh" || exit 1
+lpp_set "$T/lpp.json" "$SLUG"
+lpp_install "$T/fakebin" "$T/lpp.json" "$T/lpp-down"
 
 # The stub worker. A POST /api/verdicts copies the client-level line of its
 # header file (-H @file) to @T@/log/client; the secrets in that file are never read.
@@ -52,6 +57,7 @@ for a in "$@"; do
   prev="$a"
 done
 case "$m ${url#https://jobs.test}" in
+  *"/api/lead-protected-paths"*) "$(dirname "$0")/lpp-answer" "$m" "$url"; exit 0 ;;
   "POST /api/verdicts"*) printf '%s\n%s' '{"verdict":{"id":42,"repo":"example-org/demo-os","pr":7,"head_sha":"x","verdict":"MERGE","source":"human","created_at":"2026-10-14T00:00:00Z"},"human_verified":true}' 201 ;;
   *) printf '%s\n%s' '{"value":null}' 200 ;;
 esac

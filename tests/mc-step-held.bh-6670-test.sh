@@ -172,7 +172,7 @@ for s in bin/merge-conductor.sh bin/fleet-conf.sh bin/jobs-client.sh; do
   scratch_install_closure "$s" "$F/h" >/dev/null || { echo "closure install failed for $s"; exit 1; }
 done
 scratch_rm "$F/h/bin/lib/gh-limit-logger.sh"
-mkdir -p "$F/h/catalog" && cp "$DIR/catalog/lead-protected-paths.tsv" "$F/h/catalog/" || exit 1
+mkdir -p "$F/h/catalog" && cp "$DIR/catalog/lead-protected-paths.seed.tsv" "$F/h/catalog/" || exit 1
 printf 'demo %s - - 2 box-m\n' "$SLUG" > "$F/h/fleet.conf"
 : > "$F/h/env/global.env"
 for s in agent-call beat deploy-request pre-arm-guards codegraph-ensure; do printf '#!/bin/bash\nexit 0\n' > "$F/h/bin/$s.sh"; chmod +x "$F/h/bin/$s.sh"; done
@@ -222,6 +222,7 @@ cat > "$F/fakebin/curl" <<'EOF'
 #!/bin/bash
 URL="${!#}"; M=GET
 while [ $# -gt 0 ]; do case "$1" in -X) M="$2"; shift 2 ;; *) shift ;; esac; done
+case "$URL" in *"/api/lead-protected-paths"*) "$(dirname "$0")/lpp-answer" "$M" "$URL"; exit 0 ;; esac
 case "$M $URL" in
   "PUT "*/api/ledger) printf '{"ok":true}\n200\n' ;;
   "GET "*/api/verdicts\?*) printf '{"standing":null}\n200\n' ;;
@@ -229,6 +230,11 @@ case "$M $URL" in
 esac
 EOF
 chmod +x "$F/fakebin/curl"
+# TEST-CHANGE BH-4148: the lead reads protected paths from the jobs route; the demo
+# repo has no rows, so it is not governed, as under the old catalog file.
+. "$DIR/tests/lib/lpp-stub.sh" || exit 1
+lpp_set "$F/lpp.json" "$SLUG"
+lpp_install "$F/fakebin" "$F/lpp.json" "$F/lpp-down"
 # The Sentry curl: keeps each envelope it is handed, answers 200.
 cat > "$F/fakebin/sentry-curl" <<EOF
 #!/bin/bash

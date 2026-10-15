@@ -20,6 +20,7 @@
 # Run from anywhere: HARNESS_TEST_SANDBOX=1 bash tests/jev-risk-shadow.bh-5024-test.sh
 set -uo pipefail
 . "$(dirname "$0")/lib/scratch.sh" || exit 1
+. "$(dirname "$0")/lib/lpp-stub.sh" || exit 1
 DIR=$(cd "$(dirname "$0")/.." && pwd)
 PASS=0; FAIL=0
 ok()  { PASS=$((PASS+1)); }
@@ -31,7 +32,13 @@ H="$T/h"; mkdir -p "$H/state" "$H/logs" "$T/fakebin" "$T/log" "$T/tmp" "$T/cfg" 
 scratch_install_closure bin/jobs-client.sh "$H" >/dev/null || exit 1
 scratch_install_closure bin/lead-review-enqueue.sh "$H" >/dev/null || exit 1
 [ -f "$DIR/bin/jev-risk.sh" ] && { scratch_install_closure bin/jev-risk.sh "$H" >/dev/null || exit 1; }
-mkdir -p "$H/catalog"; cp "$DIR/catalog/lead-protected-paths.tsv" "$H/catalog/"
+mkdir -p "$H/catalog"
+# TEST-CHANGE BH-4148 (merge of main): the lead protected paths come from the
+# lead_protected_paths rows (tests/lib/lpp-stub.sh), not the deleted TSV. The rows
+# are the cromford globs the TSV held (the fixture).
+LPPF="$T/lpp.json"; LPPDOWN="$T/lpp-down"
+set -f; lpp_set "$LPPF" example-org/cromford $(cat "$DIR/tests/fixtures/lead-protected-paths.bh-4148.txt"); set +f
+lpp_install "$T/fakebin" "$LPPF" "$LPPDOWN"
 printf 'lead-test-token\n' > "$T/cfg/token"; chmod 600 "$T/cfg/token"
 printf 'cromford example-org/cromford https://demo.test /api 3 box-hub\n' > "$H/fleet.conf"
 
@@ -78,6 +85,7 @@ qp() { printf '%s' "\${p#*\?}" | tr '&' '\n' | sed -n "s/^\$1=//p" | head -1; }
 jkey() { jq -r '[.repo, (.pr|tostring), (.head_sha|ascii_downcase), .question_version] | join("|")' <<<"\$body"; }
 code=200; out='{}'
 case "\$m \$p" in
+$(lpp_curl_case m url body)
   "GET /api/settings/risk_tier.mode.example-org.cromford")
     if [ -f "$T/mode" ]; then out=\$(jq -nc --arg v "\$(cat "$T/mode")" '{setting:{key:"risk_tier.mode.example-org.cromford",value:\$v}}')
     else code=404; out='{"error":"no such setting"}'; fi ;;

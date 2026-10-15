@@ -51,7 +51,9 @@ done
 # The lib under test. Absent on main: the red this suite opens on.
 [ -r "$DIR/bin/lib/mc-eject-cause.sh" ] && { scratch_install_closure bin/lib/mc-eject-cause.sh "$T/h" >/dev/null || { echo "FAIL: closure of mc-eject-cause.sh"; exit 1; }; }
 cp "$DIR/tests/lib/rest-emit.sh" "$T/fakebin/restpr"; chmod +x "$T/fakebin/restpr"
-mkdir -p "$T/h/catalog"; cp "$DIR/catalog/lead-protected-paths.tsv" "$T/h/catalog/"
+mkdir -p "$T/h/catalog" "$T/fakebin"
+. "$DIR/tests/lib/lpp-stub.sh" || exit 1
+lpp_install "$T/fakebin" "$T/lpp-rows.json" "$T/lpp-down"
 : > "$T/h/env/global.env"
 printf 'mgfy example-org/mgfy-os - - 2 box-m\n' > "$T/h/fleet.conf"
 export FLEET_CONF="$T/h/fleet.conf"
@@ -126,7 +128,9 @@ chmod +x "$T/fakebin/gh"
 cat > "$T/fakebin/curl" <<'EOF'
 #!/bin/bash
 URL="${!#}"
+m=GET; prev=""; for a in "$@"; do [ "$prev" = -X ] && m="$a"; prev="$a"; done
 case "$URL" in
+  */api/lead-protected-paths*) "$(dirname "$0")/lpp-answer" "$m" "$URL"; exit 0 ;;
   */api/ledger) printf '{"ok":true}\n200\n' ;;
   */api/verdicts\?*) printf '{"standing":null}\n200\n' ;;
   *) printf '{"error":"not found"}\n404\n' ;;

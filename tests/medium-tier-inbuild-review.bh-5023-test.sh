@@ -25,6 +25,7 @@
 # Run from anywhere: HARNESS_TEST_SANDBOX=1 bash tests/medium-tier-inbuild-review.bh-5023-test.sh
 set -uo pipefail
 . "$(dirname "$0")/lib/scratch.sh" || exit 1
+. "$(dirname "$0")/lib/lpp-stub.sh" || exit 1
 DIR=$(cd "$(dirname "$0")/.." && pwd)
 PASS=0; FAIL=0
 ok()  { PASS=$((PASS+1)); }
@@ -43,7 +44,12 @@ for s in bin/lead-review-land.sh bin/lead-review-enqueue.sh bin/jobs-client.sh b
 done
 cp "$DIR/prompts/lead-review.md" "$DIR/prompts/lead-review-checklist.md" "$BH/prompts/"
 cp "$DIR/catalog/lanes.d/_lib.json" "$BH/catalog/lanes.d/"
-cp "$DIR/catalog/lead-protected-paths.tsv" "$BH/catalog/"; cp "$DIR/catalog/lead-protected-paths.tsv" "$HH/catalog/"
+# TEST-CHANGE BH-4148 (merge of main): the lead protected paths come from the
+# lead_protected_paths rows (tests/lib/lpp-stub.sh), not the deleted TSV. The rows
+# are the cromford globs the TSV held (the fixture).
+LPPF="$T/lpp.json"; LPPDOWN="$T/lpp-down"
+set -f; lpp_set "$LPPF" example-org/cromford $(cat "$DIR/tests/fixtures/lead-protected-paths.bh-4148.txt"); set +f
+lpp_install "$T/fakebin" "$LPPF" "$LPPDOWN"
 echo box-demo > "$BH/state/box-name"
 echo box-hub > "$HH/state/box-name"
 printf 'cromford example-org/cromford https://demo.test /api/board 1 box-demo\n' > "$BH/fleet.conf"
@@ -83,6 +89,7 @@ upd() { jq -c --arg id "\$1" "map(if .id == \\\$id then \$2 else . end)" "\$R" >
 row() { jq -c --arg id "\$1" '[.[] | select(.id == \$id)] | first // empty' "\$R"; }
 code=200; out='{}'
 case "\$m \$p" in
+$(lpp_curl_case m url body)
   "GET /api/settings/"*)
     k="\${p#/api/settings/}"
     if [ -f "$T/set/\$k" ]; then out=\$(jq -nc --arg k "\$k" --arg v "\$(cat "$T/set/\$k")" '{setting:{key:\$k,value:\$v}}')

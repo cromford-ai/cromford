@@ -3,7 +3,8 @@
 # review suites share. Sourced AFTER tests/lib/scratch.sh (it needs $T), never
 # executed. lwf_setup builds a scratch harness carrying bin/lead-review.sh's
 # real bin/lib closure (scratch_install_closure), the lead-delta knob registry
-# and the lead protected paths (catalog/), and fake curl / gh / df on PATH:
+# and the lead protected paths (lead_protected_paths rows via tests/lib/lpp-stub.sh,
+# BH-4148), and fake curl / gh / df on PATH:
 #
 #   the jobs worker (curl), state under $FX:
 #     GET  /api/pr-state/needs-review?repo=  needs.<o_r>.json rows | needs.<o_r>.fail = 500
@@ -72,7 +73,12 @@ lwf_setup() {
   done
   [ -r "$H/bin/lib/jobs/req.sh" ] || { echo "the closure did not install bin/lib/jobs/*.sh"; exit 1; }
   cp "$LWF_SRC/catalog/lanes.d/_lib.json" "$LWF_SRC/catalog/lanes.d/_lib.lead-delta.json" "$H/catalog/lanes.d/"
-  cp "$LWF_SRC/catalog/lead-protected-paths.tsv" "$H/catalog/"
+  # BH-4148: the lead protected paths are lead_protected_paths rows (the TSV is
+  # gone): the cromford globs of the fixture, answered by lpp-answer.
+  . "$LWF_SRC/tests/lib/lpp-stub.sh" || { echo "tests/lib/lpp-stub.sh did not source"; exit 1; }
+  LPPF="$T/lpp.json"; LPPDOWN="$T/lpp-down"
+  set -f; lpp_set "$LPPF" example-org/cromford $(cat "$LWF_SRC/tests/fixtures/lead-protected-paths.bh-4148.txt"); set +f
+  lpp_install "$T/fakebin" "$LPPF" "$LPPDOWN"
   cp "$LWF_SRC/prompts/lead-review.md" "$LWF_SRC/prompts/lead-review-checklist.md" "$H/prompts/"
   echo box-demo > "$H/state/box-name"
   printf '%s\n' \
@@ -131,6 +137,7 @@ p="\${url#https://jobs.test}"
 qv() { printf '%s' "\$p" | sed -n "s/.*[?&]\$1=\\([^&]*\\).*/\\1/p" | sed 's/%2F/\\//g; s/%2f/\\//g'; }
 code=200; out='{}'
 case "\$m \$p" in
+  *"/api/lead-protected-paths"*) lpp-answer "\$m" "\$url" "\$body"; exit 0 ;;
   "GET /api/pr-state/needs-review"*)
     f="$FX/needs.\$(qv repo | tr '/' '_')"
     if [ -e "\$f.fail" ]; then code=500; out='{"error":"fixture outage"}'
