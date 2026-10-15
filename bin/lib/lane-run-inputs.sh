@@ -66,6 +66,21 @@
 #   @row <path> <lockname>   (.rw only, once) <path> is a fleet-wide TSV keyed
 #                            by project in column 1; a write-back carries this
 #                            project's row, merged under locks/<lockname>.lock
+#   @rows <path> <ERE>       (.rw only, once a path; <path> is a literal path
+#                            line of the .rw and not the @row path) <path> is a
+#                            fleet-wide file that rides as this project's lines
+#                            only: the snapshot holds the lines <ERE> matches,
+#                            the machine writes back its copy whole, and
+#                            .lri/base.tsv holds the sha256 of those lines at
+#                            fetch time. The hub replaces the project's lines
+#                            under <path>.lock (the lock mc_row_put takes) when
+#                            its own project lines still have that sha, else it
+#                            counts a conflict. A write-back line <ERE> does not
+#                            match, a deletion of <path>, or a base line with no
+#                            member rejects the write-back. In <ERE> $p is the
+#                            project and $slug its lower-case fleet.conf repo,
+#                            each with `.` escaped. Every match is
+#                            case-insensitive (`grep -iE`, _lri_rows_lines).
 # A record dir member (type d) is allowed for the parent dir of a glob whose
 # parent segment holds <KEY>. A file under a glob whose last segment has a
 # wildcard or a token is capped at LRI_FILE_MAX bytes. The manifest dir is
@@ -229,10 +244,12 @@ _lri_glob() {
 # into _LRI_M[$LRI_K|...]: print.rw/print.ro (the lines lri_paths prints),
 # re.rw/re.ro and dre.rw/dre.ro (anchored file and record-dir EREs; ro holds
 # rw too), walk.rw/walk.ro (_lri_list's specs), lines (path TAB ERE per
-# @lines), row and rowlock. rc 1 via _lri_bad on the first malformed line.
+# @lines), rows (path TAB ERE per @rows), row and rowlock. rc 1 via _lri_bad
+# on the first malformed line.
 _lri_compile() {
   local lane="$1" p="$2" pe mode f n line where name g e words=() paths=() lines="" row="" rowlock="" rowat=""
-  local -A tok=() lit=() lp=()
+  local rows="" slug=""
+  local -A tok=() lit=() lp=() rp=()
   local pr_rw="" pr_ro="" re_rw="" re_ro="" dr_rw="" dr_ro="" wk_rw="" wk_ro=""
   local re_glob='^(([<][^>]*[>]|[^[:space:]<])+)([[:space:]].*)?$'
   pe="${p//./\\.}"
@@ -263,6 +280,20 @@ _lri_compile() {
           g="${BASH_REMATCH[1]//\$p/$p}"; e="${BASH_REMATCH[2]//\$p/$pe}"
           grep -qE -- "$e" /dev/null 2>/dev/null; [ $? -le 1 ] || { _lri_bad "$where" "the @lines ERE does not compile"; return 1; }
           lines+="$g"$'\t'"$e"$'\t'"$where"$'\n'; lp[$g]=1 ;;
+        '@rows'[[:space:]]*)
+          [ "$mode" = rw ] || { _lri_bad "$where" "@rows is allowed in .rw only"; return 1; }
+          [[ $line =~ ^@rows[[:space:]]+([^[:space:]]+)[[:space:]]+(.+)$ ]] \
+            || { _lri_bad "$where" "@rows needs a path and an ERE"; return 1; }
+          g="${BASH_REMATCH[1]//\$p/$p}"; e="${BASH_REMATCH[2]}"
+          case "$e" in
+            *"\$slug"*)
+              [ -n "$slug" ] || slug=$(_lri_slug "$p") || { _lri_bad "$where" "@rows: no repo for $p in fleet.conf"; return 1; }
+              e="${e//\$slug/$slug}" ;;
+          esac
+          e="${e//\$p/$pe}"
+          grep -qiE -- "$e" /dev/null 2>/dev/null; [ $? -le 1 ] || { _lri_bad "$where" "the @rows ERE does not compile"; return 1; }
+          [ -z "${rp[$g]:-}" ] || { _lri_bad "$where" "a second @rows for $g (the first is at ${rp[$g]})"; return 1; }
+          rp[$g]="$where"; rows+="$g"$'\t'"$e"$'\t'"$where"$'\n' ;;
         '@row'[[:space:]]*)
           [ "$mode" = rw ] || { _lri_bad "$where" "@row is allowed in .rw only"; return 1; }
           [ -z "$row" ] || { _lri_bad "$where" "a second @row (the first is at $rowat)"; return 1; }
@@ -296,13 +327,94 @@ _lri_compile() {
     [ -n "$g" ] || continue
     [ -n "${lit[ro:$g]:-}" ] || { _lri_bad "$where" "the @lines path is not a path line of the .ro"; return 1; }
   done <<<"$lines"
+  while IFS=$'\t' read -r g e where; do
+    [ -n "$g" ] || continue
+    [ -n "${lit[rw:$g]:-}" ] || { _lri_bad "$where" "the @rows path is not a path line of the .rw"; return 1; }
+    [ "$g" != "$row" ] || { _lri_bad "$where" "the @rows path is the @row path"; return 1; }
+  done <<<"$rows"
   _LRI_M[$LRI_K|walk.rw]="$wk_rw"; _LRI_M[$LRI_K|walk.ro]="$wk_rw$wk_ro"
   _LRI_M[$LRI_K|print.rw]="$pr_rw"; _LRI_M[$LRI_K|print.ro]="$pr_ro"
   re_ro="$re_rw${re_rw:+${re_ro:+|}}$re_ro"; dr_ro="$dr_rw${dr_rw:+${dr_ro:+|}}$dr_ro"
   _LRI_M[$LRI_K|re.rw]="${re_rw:+^($re_rw)\$}"; _LRI_M[$LRI_K|re.ro]="${re_ro:+^($re_ro)\$}"
   _LRI_M[$LRI_K|dre.rw]="${dr_rw:+^($dr_rw)\$}"; _LRI_M[$LRI_K|dre.ro]="${dr_ro:+^($dr_ro)\$}"
   _LRI_M[$LRI_K|lines]="$(printf '%s' "$lines" | cut -f1,2)"
+  _LRI_M[$LRI_K|rows]="$(printf '%s' "$rows" | cut -f1,2)"
   _LRI_M[$LRI_K|row]="$row"; _LRI_M[$LRI_K|rowlock]="$rowlock"
+}
+
+# _lri_slug <project> — the project's repo from fleet.conf (bin/fleet-conf.sh
+# beside this lib), lower-cased, `.` escaped for an ERE. rc 1 when the repo is
+# empty or `-`.
+_lri_slug() {
+  local s="${BASH_SOURCE[0]}" r
+  case "$s" in */*) s="${s%/*}" ;; *) s=. ;; esac
+  r=$(bash "$s/../fleet-conf.sh" "$1" repo 2>/dev/null) || r=""
+  r=$(printf '%s' "$r" | tr -d '[:space:]')
+  case "$r" in ''|-) return 1 ;; esac
+  r="${r,,}"
+  printf '%s' "${r//./\\.}"
+}
+
+# _lri_rows <project> — LRI_ROWS, the lane's @rows (path TAB ERE a line),
+# empty when it has none. The lane is $LRI_LANE, else LRI_LANE_DEFAULT. rc 1
+# when the manifest is malformed.
+_lri_rows() {
+  LRI_ROWS=""
+  _lri_load "${LRI_LANE:-$LRI_LANE_DEFAULT}" "$1" || return 1
+  LRI_ROWS="${_LRI_M[$LRI_K|rows]:-}"
+}
+
+# _lri_rows_ere <relpath> — rc 0 when <relpath> is an @rows path of LRI_ROWS
+# (set by _lri_rows), with its ERE in LRI_RE.
+_lri_rows_ere() {
+  local g e
+  LRI_RE=""
+  while IFS=$'\t' read -r g e; do
+    [ -n "$g" ] && [ "$g" = "$1" ] && { LRI_RE="$e"; return 0; }
+  done <<<"$LRI_ROWS"
+  return 1
+}
+
+# _lri_rows_lines <ERE> <file> — the project's lines of <file>, in file order.
+# THE one matcher of an @rows file: the snapshot, the validate and the hub
+# apply all read lines through it. A missing file has no lines.
+_lri_rows_lines() {
+  [ -f "$2" ] || return 0
+  grep -iE -- "$1" "$2" 2>/dev/null
+  return 0
+}
+
+# _lri_rows_apply <relpath> <ERE> <base sha|-> <new-file> — the hub
+# compare-and-set of one project's lines of an @rows file, under
+# <relpath>.lock (fd 8: fd 9 holds the lane-snapshot lock, always taken
+# first). rc 0 = applied, or the hub lines already equal <new-file> (a
+# re-apply); rc 1 = conflict, the file is untouched; rc 2 = the lock is busy
+# or the file cannot be written. Every other line stays in place; the new
+# lines go where the first old project line was, else at the end.
+_lri_rows_apply() {
+  local rel="$1" ere="$2" base="$3" new="$4" root f empty want
+  root=$(_lri_root); f="$root/$rel"
+  empty=$(printf '' | sha256sum | awk '{print $1}')
+  [ "$base" = - ] && base="$empty"
+  want=$(_lri_sha "$new")
+  mkdir -p "$(dirname "$f")" 2>/dev/null || return 2
+  (
+    exec 8>>"$f.lock" || exit 2
+    flock -w 10 8 || exit 2
+    cur=$(_lri_rows_lines "$ere" "$f" | sha256sum | awk '{print $1}')
+    [ "$cur" = "$want" ] && exit 0
+    [ "$cur" = "$base" ] || exit 1
+    src="$f"; [ -f "$f" ] || src=/dev/null
+    nums=$(grep -niE -- "$ere" "$src" 2>/dev/null | cut -d: -f1 | paste -sd, -)
+    awk -v nums="$nums" -v newf="$new" '
+      BEGIN { n = split(nums, a, ","); for (i = 1; i <= n; i++) m[a[i]] = 1; first = (n ? a[1] : 0) }
+      FNR == first { while ((getline l < newf) > 0) print l; next }
+      FNR in m { next }
+      { print }
+      END { if (!first) while ((getline l < newf) > 0) print l }
+    ' "$src" > "$f.tmp.$$" || { rm -f "$f.tmp.$$"; exit 2; }
+    mv -f "$f.tmp.$$" "$f" || { rm -f "$f.tmp.$$"; exit 2; }
+  )
 }
 
 # _lri_row <project> — LRI_ROW and LRI_ROWLOCK from the lane's @row, empty
@@ -391,9 +503,10 @@ _lri_members() {
 # passes lri_member_ok (ro for a snapshot, rw plus the .lri/ control members
 # for a write-back). A trailing `/` on a directory member is dropped first.
 _lri_validate() {
-  local p="$1" f="$2" kind="$3" t n mode=ro bad=0 list
+  local p="$1" f="$2" kind="$3" t n mode=ro bad=0 list g e
   [ "$kind" = writeback ] && mode=rw
   _lri_row "$p" || return 1
+  _lri_rows "$p" || return 1
   list=$(_lri_members "$f") || return 1
   [ -n "$list" ] || return 1
   while IFS=$'\t' read -r t n; do
@@ -418,7 +531,19 @@ _lri_validate() {
   tar -xzOf "$f" .lri/deletions 2>/dev/null | while IFS= read -r n; do
     [ -n "$n" ] || continue
     [ "$n" != "$LRI_ROW" ] && lri_member_ok "$p" "$n" - rw || exit 1
-  done
+  done || return 1
+  # An @rows path carries this project's lines only: a member with any other
+  # line, a deletion of it, or a base line with no member refuses it all.
+  while IFS=$'\t' read -r g e; do
+    [ -n "$g" ] || continue
+    tar -xzOf "$f" .lri/deletions 2>/dev/null | grep -qxF -- "$g" && return 1
+    if printf '%s\n' "$list" | awk -F'\t' -v g="$g" '$1 == "-" && $2 == g {f = 1} END {exit !f}'; then
+      [ "$(tar -xzOf "$f" "$g" 2>/dev/null | grep -cviE -- "$e")" = 0 ] || return 1
+    else
+      tar -xzOf "$f" .lri/base.tsv 2>/dev/null | cut -f1 | grep -qxF -- "$g" && return 1
+    fi
+  done <<<"$LRI_ROWS"
+  return 0
 }
 
 # _lri_base_line <project> <line> — rc 0 when one .lri/base.tsv line is
@@ -444,12 +569,12 @@ _lri_b64_file() { jq -j '.b64 // empty' "$1" 2>/dev/null | base64 -d > "$2" 2>/d
 
 lri_publish() {
   local lane="${1:-}" p="${2:-}" root api tmp maxb days list sha bytes cur cur_at through n=0 part rc lk
-  local LRI_LANE="$lane" lines path ere logs=()
+  local LRI_LANE="$lane" lines rows path ere logs=()
   root=$(_lri_root)
   [ -n "$root" ] || return 1
   _lri_load "$lane" "$p" || { printf '%s\n' "${_LRI_M[$LRI_K|err]}" >&2; return 1; }
   _lri_has || return 1
-  lines="${_LRI_M[$LRI_K|lines]:-}"
+  lines="${_LRI_M[$LRI_K|lines]:-}"; rows="${_LRI_M[$LRI_K|rows]:-}"
   _lri_client || return 1
   maxb=$(_lri_setting lane_snapshot.max_bytes 33554432)
   days=$(_lri_setting lane_snapshot.builds_days 30)
@@ -475,6 +600,16 @@ lri_publish() {
     touch -d @0 "$tmp/x/$path"
     logs+=("$path")
   done <<<"$lines"
+  # An @rows path rides as this project's lines only, whole (a cut copy would
+  # give a wrong base sha), and never as the walked file.
+  while IFS=$'\t' read -r path ere; do
+    [ -n "$path" ] || continue
+    grep -vxF -- "$path" "$tmp/list.files" > "$tmp/list.next"; mv -f "$tmp/list.next" "$tmp/list.files"
+    mkdir -p "$tmp/x/$(dirname "$path")" || return 1
+    _lri_rows_lines "$ere" "$root/$path" > "$tmp/x/$path" || return 1
+    touch -d @0 "$tmp/x/$path"
+    logs+=("$path")
+  done <<<"$rows"
   [ "${#logs[@]}" = 0 ] || logs=(-C "$tmp/x" "${logs[@]}")
   tar --no-recursion --sort=name --owner=0 --group=0 --numeric-owner --format=gnu \
       -cf "$tmp/snap.tar" -C "$root" -T "$tmp/list.files" ${logs[@]+"${logs[@]}"} 2>/dev/null || return 1
@@ -670,11 +805,18 @@ _lri_checkpoint_locked() {
   local lane="$1" p="$2" root st tmp now base cur rel t off size machine changed=0
   root=$(_lri_root); st=$(_lri_state "$lane" "$p")
   _lri_row "$p" || return 1
+  _lri_rows "$p" || return 1
   tmp=$(mktemp -d "${TMPDIR:-/tmp}/lri-ckpt.XXXXXX") || return 1
   # shellcheck disable=SC2064
   trap "rm -rf '$tmp'; trap - RETURN" RETURN
   mkdir -p "$tmp/x/.lri"
   : > "$tmp/x/.lri/base.tsv"; : > "$tmp/x/.lri/deletions"; : > "$tmp/files"
+  # A missing @rows file is "no lines": it rides as an empty member, never as
+  # a deletion.
+  while IFS=$'\t' read -r rel t; do
+    [ -n "$rel" ] && [ ! -e "$root/$rel" ] || continue
+    mkdir -p "$root/$(dirname "$rel")" && : > "$root/$rel"
+  done <<<"$LRI_ROWS"
   # The rw files now, with their sha.
   _lri_list "$p" rw 0 | awk -F'\t' '$1 == "-" {print $2}' | while IFS= read -r rel; do
     printf '%s\t%s\n' "$rel" "$(_lri_sha "$root/$rel")"
@@ -749,7 +891,8 @@ lri_apply_pending() {
 }
 
 _lri_apply_locked() {
-  local lane="$1" p="$2" root st api tmp list id sha applied=0 conflicts=0 rejected=0 through="" rej=() rc=0 x rel base cur line logs_through
+  local lane="$1" p="$2" root st api tmp list id sha applied=0 conflicts=0 rejected=0 through="" rej=() rc=0 x rel base cur line logs_through busy=0
+  _lri_rows "$p" || return 1
   root=$(_lri_root); st=$(_lri_state "$lane" "$p"); api="/api/lane-snapshots/$lane/$p"
   logs_through=$(cat "$st/logs-through" 2>/dev/null); case "$logs_through" in ''|*[!0-9]*) logs_through=0 ;; esac
   tmp=$(mktemp -d "${TMPDIR:-/tmp}/lri-apply.XXXXXX") || return 1
@@ -775,6 +918,13 @@ _lri_apply_locked() {
       while IFS= read -r line || [ -n "$line" ]; do
         _lri_base_line "$p" "$line" || continue
         rel="$LRI_REL"; base="$LRI_BASE"
+        # An @rows path: compare-and-set of this project's lines only. A busy
+        # file lock stops here unacked; the next tick re-applies it.
+        if _lri_rows_ere "$rel"; then
+          _lri_rows_apply "$rel" "$LRI_RE" "$base" "$x/$rel"
+          case $? in 0) ;; 1) conflicts=$((conflicts + 1)) ;; *) busy=1; break ;; esac
+          continue
+        fi
         cur=$(_lri_sha "$root/$rel"); cur="${cur:--}"
         if [ -f "$x/$rel" ]; then
           [ "$cur" = "$(_lri_sha "$x/$rel")" ] && continue
@@ -786,6 +936,7 @@ _lri_apply_locked() {
         fi
       done < "$x/.lri/base.tsv"
     fi
+    [ "$busy" = 0 ] || { rc=1; break; }
     [ -s "$x/.lri/visited.tsv" ] && _lri_visited_merge "$p" "$x/.lri/visited.tsv"
     # The log bytes are not idempotent: logs-through records the newest id
     # whose bytes are in the hub log, so a re-apply after a failed ack skips
