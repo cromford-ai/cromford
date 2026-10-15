@@ -28,6 +28,10 @@
 - **No dead rows:** every identity cell links to its detail view.
 - **Full recursive drill-down:** every level of detail the system holds must be reachable by clicking — detail pages are themselves drillable down to the atomic record. The test on any page: "what's the next question a user would click into?" — make it clickable. An aggregate we store components for but can't expand is a finding; fix it.
 
+### Performance by default (the operator, 2026-10-15; BH-6946)
+- PERFORMANCE BY DEFAULT (BH-6946): a plan for a screen or loader lists its reads, which of them run in parallel, the expected statement count, the indexes they use, and the loading skeleton.
+- PERFORMANCE BY DEFAULT (BH-6946), each one a BLOCK: a new sequential await over independent reads; a list read in a layout where a count would do; a route without loading.tsx; a repeated config read without a request memo; a list query without a matching index at seeded volume; unbounded rows to the client; a speed claim without before and after numbers; a client snapshot that holds a token, is not keyed by user and company, or survives sign-out; a key screen with two or more independent requests in sequence before its first content.
+
 ### Code-level gotchas that bite in PRs (from the operator's global rules)
 - **Never use `VERCEL_URL`/`.vercel.app` for serverless self-fetch** — Deployment Protection 401s it. Always the custom production domain for internal `fetch()` from crons/webhooks.
 - **`CRON_SECRET` comparisons: always `.trim()`** — trailing-newline env values silently break header equality.

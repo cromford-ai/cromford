@@ -1,0 +1,43 @@
+BH-6946 replay fixture. A CONSTRUCTED regression, not a merged PR.
+Source file: example-org/project-6 src/app/os/departments/[slug]/(overview)/page.tsx
+at project-6 4af10c1 (TK-702 slice 3, #770). That file loads five independent
+reads in one Promise.all: departmentSampleTools, loadWorkspace, departmentFacts,
+listAddedBlocks, connectNotReady. This box could not read project-6 when the
+fixture was written, so the hunk below is a reconstruction around those five
+names: the call arguments and the context lines are not a verbatim copy. The +
+side replaces the Promise.all with a for loop that awaits each loader in turn.
+git apply ignores this preamble.
+
+diff --git a/src/app/os/departments/[slug]/(overview)/page.tsx b/src/app/os/departments/[slug]/(overview)/page.tsx
+--- a/src/app/os/departments/[slug]/(overview)/page.tsx
++++ b/src/app/os/departments/[slug]/(overview)/page.tsx
+@@ -1,13 +1,22 @@
+ export default async function DepartmentOverviewPage({ params }: { params: Promise<{ slug: string }> }) {
+   const { slug } = await params;
+-  const [tools, workspace, facts, blocks, notReady] = await Promise.all([
+-    departmentSampleTools(slug),
+-    loadWorkspace(slug),
+-    departmentFacts(slug),
+-    listAddedBlocks(slug),
+-    connectNotReady(slug),
+-  ]);
++  const loaders = [
++    () => departmentSampleTools(slug),
++    () => loadWorkspace(slug),
++    () => departmentFacts(slug),
++    () => listAddedBlocks(slug),
++    () => connectNotReady(slug),
++  ];
++  const results: unknown[] = [];
++  for (const load of loaders) {
++    results.push(await load());
++  }
++  const [tools, workspace, facts, blocks, notReady] = results as [
++    Awaited<ReturnType<typeof departmentSampleTools>>, Awaited<ReturnType<typeof loadWorkspace>>,
++    Awaited<ReturnType<typeof departmentFacts>>, Awaited<ReturnType<typeof listAddedBlocks>>,
++    Awaited<ReturnType<typeof connectNotReady>>,
++  ];
+   return (
+     <DepartmentOverview tools={tools} workspace={workspace} facts={facts} blocks={blocks} notReady={notReady} />
+   );
+ }
