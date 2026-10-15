@@ -1,0 +1,3 @@
+# LANE RUNS BATCH (BH-6886, BH-6881.8): pl_dispatch enqueues a fly lane's
+# projects in one call per 500 rows (bin/lib/lane-placement.sh lp_enqueue_batch).
+POST /api/lane-runs/batch

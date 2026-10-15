@@ -9,7 +9,8 @@
 # bin/project-lane-run.sh and the real bin/lane-run-worker.sh.
 #
 #   F1  lane_placement.demo=fly, 21 projects, 1 held: `placed: 20 fly, 0 hub`,
-#       0 hub runs, 20 enqueue POSTs, 20 queued rows, none for the held one
+#       0 hub runs, 1 batch POST and 0 per-row POSTs (BH-6886), 20 queued
+#       rows, none for the held one
 #   F2  3 `lane-run-worker.sh --once` machines drain the 20 rows: every row
 #       done with the fake lane's rc, claimer in {m1,m2,m3}, argv byte for
 #       byte, PROF line stored, stats done=20 queued=0
@@ -18,7 +19,8 @@
 #   F5  no lane row (default=hub seed): 20 hub runs, 0 enqueues, 0 alerts
 #   F7  the adversarial placement table (lp_decide), one case via pl_dispatch
 #   F6  a second dispatch while the rows are queued: 20 already live, 0 hub
-#   F8  3 failed enqueues: 17 fly, 3 hub runs, ONE lane-placement alert
+#   F8  a worker with no batch route (NO_BATCH=1) takes the per-row path,
+#       and 3 failed enqueues: 17 fly, 3 hub runs, ONE lane-placement alert
 #   F11 a row whose command is missing is reported non-zero, never 0
 #   F9  a closed worker port: hub for all, `settings unreadable`, no alert
 #   F12 a command outside $H/bin stays on the hub, with the reason
@@ -119,7 +121,8 @@ case "$OUT" in "demo dispatch: started 0 project run(s) (period 0s, no cap), 1 h
 case "$OUT" in *"; placed: 20 fly, 0 hub (lane_placement.demo=fly)"*) ok "F1 placed: 20 fly" ;; *) bad "F1 summary: $OUT" ;; esac
 wait_runs
 [ "$(nhub)" = 0 ] && ok "F1 0 hub runs" || bad "F1 hub runs: $(nhub)"
-[ "$(nposts "$LOG1")" = 20 ] && ok "F1 20 enqueue POSTs" || bad "F1 posts: $(nposts "$LOG1")"
+[ "$(grep -c '^POST /api/lane-runs/batch 200$' "$LOG1")" = 1 ] && ok "F1 1 batch POST (BH-6886)" || bad "F1 batch posts: $(grep -c '^POST /api/lane-runs/batch' "$LOG1")"
+[ "$(nposts "$LOG1")" = 0 ] && ok "F1 0 per-row enqueue POSTs" || bad "F1 per-row posts: $(nposts "$LOG1")"
 R=$(rows)
 [ "$(jq '[.rows[] | select(.status == "queued" and .lane == "demo")] | length' <<<"$R")" = 20 ] && ok "F1 20 queued rows" || bad "F1 rows: $R"
 [ "$(jq '[.rows[] | select(.project == "p21")] | length' <<<"$R")" = 0 ] && ok "F1 the held project has no row" || bad "F1 held row"
@@ -223,7 +226,7 @@ wait_runs
 
 # ============================================================================
 echo "F8: three failed enqueues fall back to the hub with ONE alert"
-srv w2 FAIL_ENQUEUE_N=3 || true
+srv w2 NO_BATCH=1 FAIL_ENQUEUE_N=3 || true
 export JOBS_URL="http://127.0.0.1:$PORT"
 CLEAN; FLEET 20; setting lane_placement.demo fly
 dispatch demo 0 "$H/bin/fake-lane.sh"

@@ -45,10 +45,15 @@
 #     project never overlap. rc 1 when it is held.
 #
 # PLACEMENT (BH-6124, lib/lane-placement.sh): before the loop, lp_decide reads
-# where the lane runs. For a lane placed `fly`, each eligible project is
-# enqueued as a lane_runs row (lp_enqueue) instead of started here; a row that
-# is already live counts as `live`; a failed enqueue starts that project here
-# as today and the dispatch writes ONE alert. The summary line gains
+# where the lane runs. For a lane placed `fly`, the loop collects the eligible
+# projects and, after it, lp_enqueue_batch enqueues them as lane_runs rows in
+# one POST /api/lane-runs/batch per 500 projects (BH-6886), so a tick costs
+# the same few forks and calls for 10 projects or 1000. A row the answer names
+# enqueued counts as `fly`, one it names already_live counts as `live`. Every
+# other project (a failed batch, a project the answer leaves out) starts here
+# as today, and the dispatch writes ONE alert. When the worker answers 404 (it
+# has no batch route yet), the projects not yet placed take the per-row path,
+# lp_enqueue, with the same rules. The summary line gains
 # `; placed: <n> fly, <m> hub (<reason>)` after the text above.
 #
 # Needs $H (the harness root). Defines functions only. Nothing runs on source.
@@ -112,10 +117,29 @@ pl_token() {
   gh_auth_for "$PL_SLUG"
 }
 
+# _pl_start_one <lane> <project> <period-secs> <cmd> [args...] — start one
+# project's run here. Counts it in the caller's n, shown and more.
+_pl_start_one() {
+  local lane="$1" p="$2" period="$3" off
+  shift 3
+  off=$(pl_offset "$lane" "$p" "$period")
+  # setsid: the run leaves cron's process group. Every fd above 2 is closed
+  # for the child by the runner script itself, so no dispatcher lock leaks.
+  if command -v setsid >/dev/null 2>&1; then
+    setsid "$H/bin/project-lane-run.sh" "$lane" "$p" "$off" "$@" \
+      >>"$H/logs/$lane-cron.log" 2>&1 </dev/null &
+  else
+    "$H/bin/project-lane-run.sh" "$lane" "$p" "$off" "$@" \
+      >>"$H/logs/$lane-cron.log" 2>&1 </dev/null &
+  fi
+  n=$((n + 1))
+  if [ "$n" -le 20 ]; then shown="${shown:+$shown }$p@${off}s"; else more=$((more + 1)); fi
+}
+
 # pl_dispatch <lane> <period-secs> <cmd> [args...]
 pl_dispatch() {
-  local lane="$1" period="$2" projects p off n=0 held=0 shown="" more=0
-  local nfly=0 live=0 nfail=0 erc placed
+  local lane="$1" period="$2" projects p n=0 held=0 shown="" more=0
+  local nfly=0 live=0 nfail=0 erc brc placed flyp=""
   shift 2
   pl_name_ok "$lane" || { echo "pl_dispatch: bad lane name '$lane'" >&2; return 2; }
   [ "$#" -gt 0 ] || { echo "pl_dispatch: no command" >&2; return 2; }
@@ -135,27 +159,25 @@ pl_dispatch() {
     if command -v lane_project_held >/dev/null 2>&1 && lane_project_held "$lane" "$p"; then
       held=$((held + 1)); continue
     fi
-    if [ "$LP_PLACE" = fly ]; then
-      lp_enqueue "$lane" "$p" "$@"; erc=$?
-      case "$erc" in
-        0) nfly=$((nfly + 1)); continue ;;
-        3) live=$((live + 1)); continue ;;
-        *) nfail=$((nfail + 1)) ;;
-      esac
-    fi
-    off=$(pl_offset "$lane" "$p" "$period")
-    # setsid: the run leaves cron's process group. Every fd above 2 is closed
-    # for the child by the runner script itself, so no dispatcher lock leaks.
-    if command -v setsid >/dev/null 2>&1; then
-      setsid "$H/bin/project-lane-run.sh" "$lane" "$p" "$off" "$@" \
-        >>"$H/logs/$lane-cron.log" 2>&1 </dev/null &
-    else
-      "$H/bin/project-lane-run.sh" "$lane" "$p" "$off" "$@" \
-        >>"$H/logs/$lane-cron.log" 2>&1 </dev/null &
-    fi
-    n=$((n + 1))
-    if [ "$n" -le 20 ]; then shown="${shown:+$shown }$p@${off}s"; else more=$((more + 1)); fi
+    if [ "$LP_PLACE" = fly ]; then flyp+="$p"$'\n'; continue; fi
+    _pl_start_one "$lane" "$p" "$period" "$@"
   done <<<"$projects"
+  if [ -n "$flyp" ]; then
+    lp_enqueue_batch "$lane" "$flyp" "$@"; brc=$?
+    nfly=$((nfly + LP_B_ENQ)); live=$((live + LP_B_LIVE))
+    while IFS= read -r p; do
+      [ -n "$p" ] || continue
+      if [ "$brc" = 2 ]; then
+        lp_enqueue "$lane" "$p" "$@"; erc=$?
+        case "$erc" in
+          0) nfly=$((nfly + 1)); continue ;;
+          3) live=$((live + 1)); continue ;;
+        esac
+      fi
+      nfail=$((nfail + 1))
+      _pl_start_one "$lane" "$p" "$period" "$@"
+    done <<<"$LP_B_LEFT"
+  fi
   [ "$more" = 0 ] || shown="$shown +$more more"
   placed="; placed: $nfly fly, $n hub ($LP_WHY)"
   [ "$live" = 0 ] || placed="$placed, $live already live"

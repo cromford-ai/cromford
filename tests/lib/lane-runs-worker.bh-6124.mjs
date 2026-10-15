@@ -11,6 +11,9 @@
 //   DELETE /__setting {key}       removes it
 //   GET /__lane_runs              every lane_runs row, args parsed
 //   FAIL_ENQUEUE_N=<n> (env)      the first n POST /api/lane-runs answer 500
+//   NO_BATCH=1 (env)              POST /api/lane-runs/batch answers 404, as a
+//                                 worker that predates the route (BH-6886)
+//   FAIL_BATCH_N=<n> (env)        the first n POST /api/lane-runs/batch answer 500
 //
 // Prints the port on stdout once it listens. Every request appends one line
 // `<METHOD> <path> <status>` to <log>. Exits 3 when node:sqlite is missing, so
@@ -30,6 +33,8 @@ const { jobsSchemaSql } = await import(`${ROOT}worker/jobs/test/lib/jobs-schema.
 db.exec(jobsSchemaSql());
 const env = { DB: d1(db), HARNESS_SECRET: 'fixture-harness-secret' };
 let failEnqueue = Number(process.env.FAIL_ENQUEUE_N || 0);
+const noBatch = process.env.NO_BATCH === '1';
+let failBatch = Number(process.env.FAIL_BATCH_N || 0);
 
 const handle = async (method, path, headers, body) => {
   if (path === '/__setting') {
@@ -45,6 +50,11 @@ const handle = async (method, path, headers, body) => {
   }
   if (method === 'POST' && path === '/api/lane-runs' && failEnqueue > 0) {
     failEnqueue -= 1;
+    return [500, '{"error":"fixture failure"}'];
+  }
+  if (method === 'POST' && path === '/api/lane-runs/batch' && noBatch) return [404, '{"error":"not found"}'];
+  if (method === 'POST' && path === '/api/lane-runs/batch' && failBatch > 0) {
+    failBatch -= 1;
     return [500, '{"error":"fixture failure"}'];
   }
   const h = { 'content-type': 'application/json' };
