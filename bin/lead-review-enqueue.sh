@@ -37,6 +37,19 @@
 #            tier never signs off such a head, except a lead-authored low
 #            rules-text head (BH-5325, below). The scope note says
 #            `auto: CI green on <sha12>`.
+#   stepdone (BH-6696, bin/lib/lead-step-done.sh) a builder REQUEST_CHANGES or
+#            BLOCK bound to the head is answered when the PR's author is
+#            confirmed not a lead (rt_lead_skip), and lsd_check finds, on the
+#            ticket issue (to_pr_issue), a person's HUMAN-STEP-DONE: or RESUME
+#            comment after the newest NEEDS-HUMAN: comment and strictly after
+#            the builder verdict row's updated_at. Then the head goes on to the
+#            request path below (verdict, traced, risk, self, cap), never to the
+#            replay, and the risk tier never signs it off (REQFOR is set). The
+#            scope note says `auto: HUMAN-STEP-DONE after the builder's <V> on
+#            <sha12>; human step answered after the builder's <V>: <url> by
+#            @<login> at <at>: <text>`. Not answered = skipped_no_approve as
+#            before; a thread, verdict time or issue it cannot read is the same
+#            skip, its reason ending `; human-step check: <why>`.
 #   verdict  vd_standing on the head: a lead/human/risk-tier verdict stands =
 #            skipped_verdict; rc 2 = unreadable. A standing risk-tier row whose
 #            status post returned rc 4 (marker state/lead-review-enqueue/
@@ -357,6 +370,9 @@ LCW=0; . "$H/bin/lib/lead-chain-wake.sh" 2>/dev/null && LCW=1
 LD=0; . "$H/bin/lib/lead-delta.sh" 2>/dev/null && command -v ld_classify >/dev/null 2>&1 && LD=1
 # The re-review token (BH-6391, header `prev`). Missing, no request carries it.
 . "$H/bin/lib/lead-prev.sh" 2>/dev/null || true
+# A person's answer to the builder's refusal (BH-6696, header `stepdone`).
+# Missing, a refused head is skipped as before.
+. "$H/bin/lib/lead-step-done.sh" 2>/dev/null || true
 # BH-5630: ONE REVIEW GATE. A head with no builder APPROVE bound to it is
 # requested when its CI is green, read through the lead lane's own definition
 # (bin/lead-review.sh's `lead ci green` block: every check the base branch's
@@ -669,6 +685,7 @@ request() {
   [ -n "$dnote" ] && notes="$notes; $dnote"
   [ -n "${PSCNOTE:-}" ] && notes="$notes; $PSCNOTE"
   [ -n "${TNOTE:-}" ] && notes="$notes; $TNOTE"
+  [ -n "${SDNOTE:-}" ] && notes="$notes; $SDNOTE"
   # The worker caps scope_notes at 4000 chars (worker/jobs/src/routes/lead-reviews.js);
   # over it, the lead-prev file lists become their counts (BH-6391).
   command -v lpv_fit >/dev/null 2>&1 && notes=$(lpv_fit "$notes" 4000)
@@ -1106,18 +1123,44 @@ for SLUG in $AUTO_REPOS; do
     # BH-5630: with the builder gate off (REQB=0, the default) a head with no
     # builder row at all (job_verdict rc 2), or a builder APPROVE on an EARLIER
     # head, is UNAPPROVED, not skipped: it takes the replay below, and then a
-    # request only if its CI is green. A builder BLOCK is still skipped: the
-    # pipeline's fix round is working on that PR. An unreadable ledger (rc 1)
-    # is skipped too.
-    V=""; RSHA=""; REQFOR=""; JRC=0; TNOTE=""
+    # request only if its CI is green. A builder BLOCK or REQUEST_CHANGES on
+    # THIS head is still skipped (the fix round owns it), unless a person
+    # answered its NEEDS-HUMAN step (BH-6696). One on an EARLIER head does not
+    # stand: it is unapproved, like an APPROVE on an earlier head (BH-6696,
+    # second case). An unreadable ledger (rc 1) is skipped too.
+    V=""; RSHA=""; REQFOR=""; JRC=0; TNOTE=""; SDONE=0; SDNOTE=""
     JV=$(job_verdict "$URL" 2>/dev/null) || JRC=$?
     [ "$JRC" = 0 ] && IFS=$'\t' read -r V _ _ _ _ RSHA <<<"$JV"
     RSHA=$(printf '%s' "$RSHA" | tr 'A-F' 'a-f')
     REBOUND=0; APPROVED=1
     if [ "$JRC" = 2 ] && [ "$REQB" = 0 ]; then
       APPROVED=0
+    elif [ "$V" != APPROVE ] && [[ "$RSHA" =~ ^[0-9a-f]{40}$ ]] && [ "$RSHA" != "$HEAD" ]; then
+      # BH-6696 (second case): a builder REQUEST_CHANGES or BLOCK bound to an
+      # EARLIER head does not stand here: a fix round pushed since. The head is
+      # unapproved, like an APPROVE on an earlier head: replay, then the CI gate.
+      if [ "$REQB" = 1 ]; then NOAPP=$((NOAPP + 1))
+        skip_line no-approve "$SLUG#$N @$H12: the builder's $V is on ${RSHA:0:12}, not this head, and LEAD_REVIEW_REQUIRE_BUILDER_APPROVE=1"; continue
+      fi
+      log "$SLUG#$N @$H12: the builder's $V is on ${RSHA:0:12}, an earlier head; it does not stand on this head"
+      APPROVED=0
     elif [ "$V" != APPROVE ]; then
-      NOAPP=$((NOAPP + 1)); noapp_why; skip_line no-approve "$SLUG#$N @$H12: $NAWHY"; continue
+      # BH-6696 (header, `stepdone`): a person answered the step the builder's
+      # refusal of THIS head raised. Only for a confirmed non-lead author.
+      SDRC=1; SDWHY=""
+      if { [ "$V" = REQUEST_CHANGES ] || [ "$V" = BLOCK ]; } && [ "$RSHA" = "$HEAD" ] && command -v lsd_check >/dev/null 2>&1; then
+        rt_lead_skip "$WORK/pr"
+        if [ -z "$RLEAD" ]; then
+          lsd_check "$SLUG" "$WORK/pr" "$URL" "$V"; SDRC=$?
+          [ "$SDRC" = 2 ] && SDWHY="; human-step check: $LSDWHY"
+        fi
+      fi
+      if [ "$SDRC" = 0 ]; then
+        SDONE=1; SDNOTE="$LSDNOTE"; REQFOR="HUMAN-STEP-DONE after the builder's $V"
+        log "$SLUG#$N @$H12: the builder's $V is answered by $LSDLOG; requesting a lead review on the same head"
+      else
+        NOAPP=$((NOAPP + 1)); noapp_why; skip_line no-approve "$SLUG#$N @$H12: $NAWHY$SDWHY"; continue
+      fi
     elif [ "$RSHA" != "$HEAD" ]; then
       HB=$(job_verdict_headbound "$URL" 2>/dev/null | tr 'A-F' 'a-f')
       if [ "$HB" = "reapproved@$HEAD" ]; then REBOUND=1
@@ -1159,7 +1202,9 @@ for SLUG in $AUTO_REPOS; do
     # onto a rebound head; it is never delta-reviewed and never replayed onto
     # an unapproved head.
     DMODE=""; DNOTE=""; DPRIOR=""; DUPNOTE=""; LPVH=""; LPVW=""; LPVNOTE=""
-    if [ "$REBOUND" = 1 ] || [ "$APPROVED" = 0 ] || [ "$LD" = 1 ]; then
+    # BH-6696: a head the builder refused (SDONE=1) is never replayed or
+    # delta-reviewed: it gets a full lead review.
+    if [ "$SDONE" = 0 ] && { [ "$REBOUND" = 1 ] || [ "$APPROVED" = 0 ] || [ "$LD" = 1 ]; }; then
       PH=""; PW=""; PID=""; WHY=""
       # A truncated history cannot prove which lead row is newest: unreadable.
       if ! JOBS_ALERT=0 _jobs_req GET "/api/verdicts?repo=$SLUG&pr=$N" > "$WORK/vd" 2>/dev/null \
