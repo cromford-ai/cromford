@@ -701,20 +701,15 @@ fi
 # <<< trigger actor gate (BH-4490)
 
 # >>> tripwire paused skip
-# BH-3481.4: a build of this ticket tripped the mid-build spend tripwire
-# (bin/lib/build-tripwire.sh wrote ledger build-tripwire "<p> <KEY>" paused).
-# Nothing is enqueued or built until an operator releases it. FAIL-OPEN like
-# the abandoned skip: unreadable (rc 2) builds as today, with one log line.
+# BH-3481.4 wrote ledger build-tripwire "<p> <KEY>" paused when a build of this
+# ticket tripped the mid-build spend tripwire. Since BH-6705 the tripwire never
+# stops a build: a trip writes `alerted`, and a leftover `paused` row gets one
+# log line and the build runs. Unreadable (rc 2) also builds, with one line.
 command -v tw_paused >/dev/null 2>&1 || . "$HARNESS/bin/lib/build-tripwire.sh" 2>/dev/null || true
 TW_RC=1
 command -v tw_paused >/dev/null 2>&1 && { tw_paused "$PROJECT" "$KEY"; TW_RC=$?; }
 if [ "$TW_RC" = 0 ]; then
-  TW_LINE="SKIP_TRIPWIRE $KEY — a build of this ticket tripped the mid-build tripwire; release: bin/jobs-client.sh ledger-put build-tripwire \"$PROJECT $KEY\" released"
-  echo "$(STAMP) [$PROJECT/$KEY] $TW_LINE" >> "$BUILD/pipeline.log"
-  mkdir -p "$HARNESS/logs" 2>/dev/null
-  echo "$(STAMP) [$PROJECT/$KEY] $TW_LINE" >> "$HARNESS/logs/${PROJECT}.log" 2>/dev/null || true
-  RESULT "BUILD_REFUSED $TW_LINE"
-  exit 3
+  echo "$(STAMP) [$PROJECT/$KEY] tripwire: leftover paused row for $KEY ignored; the tripwire never stops a build (BH-6705)" >> "$BUILD/pipeline.log"
 elif [ "$TW_RC" = 2 ]; then
   echo "$(STAMP) [$PROJECT/$KEY] tripwire pause row unreadable; building as today (fail-open)" >> "$BUILD/pipeline.log"
 fi

@@ -4,6 +4,8 @@
 # and run-build's CC() dispatcher.
 #
 # The stubs answer "off" and never trip, so the product behaviour is unchanged.
+# Since BH-6705 neither $BUILD/TRIPWIRE nor tw_check_build stops a call or a
+# build (T15, CC0, CC2, CC3); $OUT.tripwire still stops a session's ladder (LS).
 # What this suite pins is that the call sites are WIRED: with the stubs a call
 # is the call it always was, and with a marker file or a fake lib in place the
 # seam does what the contract says. Every agent-call case drives the REAL
@@ -204,17 +206,18 @@ PN=$(grep -c ',eval,claude,' "$T/logs/cost.csv" 2>/dev/null)
 [ -n "$PO" ] && [ "$PO" -ge "$PN" ] && [ "$PN" = 3 ] && ok || bad "NOOP-ON the non-build push ran before its row (lines at push '${PO:-none}', claude rows now $PN)"
 
 # =============================================================================
-# T15 — $BUILD/TRIPWIRE refuses the call before anything is called
+# T15 — $BUILD/TRIPWIRE no longer refuses the call (BH-6705: the tripwire
+# never stops a build); a leftover marker is ignored and the call is made
 # =============================================================================
 reset; mkdir -p "$T/builds/b15"
 echo "spend 40.00 over 3x expected" > "$T/builds/b15/TRIPWIRE"
 R=$(call "$AC" "$T/builds/b15/plan-run.txt")
-[ "$R" = 74 ] && ok || bad "T15 rc=$R, want 74"
-head -1 "$T/builds/b15/plan-run.txt" 2>/dev/null | grep -q '^AGENT_CALL_REFUSED tripwire eval spend 40.00' \
+[ "$R" = 0 ] && ok || bad "T15 rc=$R, want 0"
+[ "$(cat "$T/builds/b15/plan-run.txt" 2>/dev/null)" = "the answer" ] \
   && ok || bad "T15 \$OUT: $(head -1 "$T/builds/b15/plan-run.txt" 2>/dev/null)"
-[ -s "$T/order" ] && bad "T15 a vendor was called: $(tr '\n' ' ' < "$T/order")" || ok
-grep -q 'TRIPWIRE REFUSED' "$T/logs/failovers.log" && ok || bad "T15 no failovers.log line"
-grep -q 'refused:tripwire' "$T/logs/cost.csv" 2>/dev/null && ok || bad "T15 no zero-cost refused row"
+[ "$(cat "$T/order")" = claude ] && ok || bad "T15 claude was not called: $(tr '\n' ' ' < "$T/order")"
+grep -q 'TRIPWIRE REFUSED' "$T/logs/failovers.log" && bad "T15 a TRIPWIRE REFUSED failovers.log line" || ok
+grep -q 'refused:tripwire' "$T/logs/cost.csv" 2>/dev/null && bad "T15 a refused:tripwire cost row" || ok
 # T15-neg-a: same shape, no TRIPWIRE -> proceeds
 reset; mkdir -p "$T/builds/b16"
 R=$(call "$AC" "$T/builds/b16/plan-run.txt")
@@ -302,34 +305,34 @@ cc() {
       echo "returned $?" > "$SINK/returned"' )
   echo $?
 }
-# CC0: TRIPWIRE already there -> terminal, agent-call never called
-R=$(PRE_TW="spend 40.00 before" cc cc0)
-[ "$R" = 3 ] && ok || bad "CC0 rc=$R, want 3"
-[ -e "$T/cc/cc0/agent-call" ] && bad "CC0 agent-call ran on a paused build" || ok
-head -1 "$T/cc/cc0/result" 2>/dev/null | grep -qx 'BUILD_REFUSED TRIPWIRE_PAUSED spend 40.00 before' \
-  && ok || bad "CC0 RESULT: $(cat "$T/cc/cc0/result" 2>/dev/null)"
-grep -q '^tripwire_paused|spend 40.00 before' "$T/cc/cc0/bb" 2>/dev/null && ok || bad "CC0 BB: $(cat "$T/cc/cc0/bb" 2>/dev/null)"
-[ -e "$T/cc/cc0/returned" ] && bad "CC0 CC returned to its caller instead of ending the build" || ok
+# CC0: a leftover TRIPWIRE -> ignored (BH-6705): agent-call runs, its rc passes through
+R=$(PRE_TW="spend 40.00 before" cc cc0 AC_RC=7)
+[ "$R" = 0 ] && [ "$(cat "$T/cc/cc0/returned" 2>/dev/null)" = "returned 7" ] && ok \
+  || bad "CC0 CC did not hand back agent-call's rc 7 (subshell rc=$R, $(cat "$T/cc/cc0/returned" 2>/dev/null))"
+[ -e "$T/cc/cc0/agent-call" ] && ok || bad "CC0 agent-call did not run with a leftover TRIPWIRE"
+[ -e "$T/cc/cc0/result" ] || [ -e "$T/cc/cc0/bb" ] && bad "CC0 RESULT/BB: $(cat "$T/cc/cc0/result" "$T/cc/cc0/bb" 2>/dev/null)" || ok
 # CC1: no TRIPWIRE, the real stub lib loaded -> agent-call's rc passes through
 R=$(cc cc1 AC_RC=7 TWLIB="$DIR/bin/lib/build-tripwire.sh")
 [ "$R" = 0 ] && [ "$(cat "$T/cc/cc1/returned" 2>/dev/null)" = "returned 7" ] && ok \
   || bad "CC1 CC did not hand back agent-call's rc 7 (subshell rc=$R, $(cat "$T/cc/cc1/returned" 2>/dev/null))"
 [ -e "$T/cc/cc1/agent-call" ] && ok || bad "CC1 agent-call did not run"
 [ -e "$T/cc/cc1/result" ] || [ -e "$T/cc/cc1/bb" ] && bad "CC1 a RESULT/BB was written with no tripwire" || ok
-# CC2: the call itself trips -> terminal after the call
-R=$(cc cc2 WRITE_TW=1)
-[ "$R" = 3 ] && [ -e "$T/cc/cc2/agent-call" ] && ok || bad "CC2 rc=$R (want 3 after the call)"
-head -1 "$T/cc/cc2/result" 2>/dev/null | grep -qx 'BUILD_REFUSED TRIPWIRE_PAUSED spend 9.99 after' \
-  && ok || bad "CC2 RESULT: $(cat "$T/cc/cc2/result" 2>/dev/null)"
-# CC3: tw_check_build trips before the call -> terminal, no agent-call
+# CC2: a TRIPWIRE written during the call -> ignored, CC returns agent-call's rc
+R=$(cc cc2 WRITE_TW=1 AC_RC=7)
+[ "$R" = 0 ] && [ -e "$T/cc/cc2/agent-call" ] && [ "$(cat "$T/cc/cc2/returned" 2>/dev/null)" = "returned 7" ] \
+  && ok || bad "CC2 subshell rc=$R $(cat "$T/cc/cc2/returned" 2>/dev/null) (want returned 7 after the call)"
+[ -e "$T/cc/cc2/result" ] || [ -e "$T/cc/cc2/bb" ] && bad "CC2 RESULT/BB: $(cat "$T/cc/cc2/result" "$T/cc/cc2/bb" 2>/dev/null)" || ok
+# CC3: a tw_check_build that answers rc 0 and writes TRIPWIRE -> CC still calls
+# (it reads no answer from the check) and returns agent-call's rc
 cat > "$T/tw-trips.sh" <<'EOF'
-tw_check_build() { echo "rule-x $1 $2" > "$3/TRIPWIRE"; echo noise; return 0; }
+tw_check_build() { echo "rule-x $1 $2" > "$3/TRIPWIRE"; echo noise; touch "$SINK/tw-called"; return 0; }
 EOF
-R=$(cc cc3 TWLIB="$T/tw-trips.sh")
-[ "$R" = 3 ] && ok || bad "CC3 rc=$R, want 3 (tw_check_build tripped before the call)"
-[ -e "$T/cc/cc3/agent-call" ] && bad "CC3 agent-call ran after tw_check_build tripped" || ok
-head -1 "$T/cc/cc3/result" 2>/dev/null | grep -qx 'BUILD_REFUSED TRIPWIRE_PAUSED rule-x demo-os DEMO-1' \
-  && ok || bad "CC3 RESULT: $(cat "$T/cc/cc3/result" 2>/dev/null)"
+R=$(cc cc3 TWLIB="$T/tw-trips.sh" AC_RC=7)
+[ "$R" = 0 ] && [ "$(cat "$T/cc/cc3/returned" 2>/dev/null)" = "returned 7" ] && ok \
+  || bad "CC3 subshell rc=$R $(cat "$T/cc/cc3/returned" 2>/dev/null), want returned 7"
+[ -e "$T/cc/cc3/tw-called" ] && ok || bad "CC3 CC did not run the tripwire check before the call"
+[ -e "$T/cc/cc3/agent-call" ] && ok || bad "CC3 agent-call did not run after the check"
+[ -e "$T/cc/cc3/result" ] || [ -e "$T/cc/cc3/bb" ] && bad "CC3 RESULT/BB: $(cat "$T/cc/cc3/result" "$T/cc/cc3/bb" 2>/dev/null)" || ok
 
 echo "tripwire-seams.bh-3481-test: $PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ]

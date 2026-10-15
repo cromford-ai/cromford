@@ -305,13 +305,14 @@ R=$(cc c2 WRITE_BS=1 AC_RC=74)
 R=$(cc c3 AC_RC=7)
 [ "$R" = 0 ] && [ "$(cat "$T/cc/c3/returned" 2>/dev/null)" = "returned 7" ] && ok || bad "C3 rc passthrough: $R $(cat "$T/cc/c3/returned" 2>/dev/null)"
 [ -e "$T/cc/c3/result" ] || [ -e "$T/cc/c3/bb" ] && bad "C3 RESULT/BB written with no marker" || ok
-# TRIPWIRE keeps precedence when both markers are there
+# A leftover TRIPWIRE beside BUDGET_STOP: BUDGET_STOP ends the build, because
+# the tripwire never stops a build since BH-6705
 rm -rf "$T/cc/c4"; mkdir -p "$T/cc/c4/build"; echo "spend 1 2" > "$T/cc/c4/build/TRIPWIRE"; echo "budget_stop x" > "$T/cc/c4/build/BUDGET_STOP"
 ( export SINK="$T/cc/c4" BUILD="$T/cc/c4/build"
   bash -c 'HARNESS="'"$T"'/h"; PROJECT=demo-os; KEY=DEMO-1
     BB() { :; }; RESULT() { printf "%s\n" "$*" >> "$SINK/result"; }
     . "'"$T"'/cc.sh"; CC execute model 60 "$BUILD/execute-run.txt" P' )
-grep -q '^BUILD_REFUSED TRIPWIRE_PAUSED' "$T/cc/c4/result" 2>/dev/null && ok || bad "C4 TRIPWIRE lost precedence: $(cat "$T/cc/c4/result" 2>/dev/null)"
+[ "$(cat "$T/cc/c4/result" 2>/dev/null)" = "BUILD_REFUSED BUDGET_STOP budget_stop x" ] && ok || bad "C4 a leftover TRIPWIRE beside BUDGET_STOP: $(cat "$T/cc/c4/result" 2>/dev/null)"
 
 # =============================================================================
 # N1 — the console stage mapping (console-ui/src/lib/stages.js)

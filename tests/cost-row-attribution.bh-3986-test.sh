@@ -277,13 +277,15 @@ RR=$(awk -F, 'NR>1 && $18=="refused" {l=$0} END{print l}' "$T/logs/cost.csv")
 case "$(fld "$RR" 24)" in refused:call-guard:repeat*) ok ;; *) bad "AC2(b) the note must still START with refused:call-guard:repeat: '$(fld "$RR" 24)'" ;; esac
 case "$(fld "$RR" 24)" in *requested_model=claude-opus-5-5*) ok ;; *) bad "AC2(b) the refused note lacks requested_model=claude-opus-5-5: '$(fld "$RR" 24)'" ;; esac
 
-# (c) the tripwire refusal, a grok execute primary
+# (c) a refusal on a grok execute primary in a build dir (the call guard; the
+# tripwire refusal this case used is gone since BH-6705)
 reset
-echo "rule-x fired" > "$T/builds/b1/TRIPWIRE"
-rc=$(call "$T/builds/b1/out" execute "a2c" RUNNER_EXECUTE=grok)
+CG_EXEC=(RUNNER_EXECUTE=grok CALL_GUARD=1 CALL_GUARD_STAGES=execute CALL_GUARD_MAX_MAP=execute=1)
+call "$T/builds/b1/out" execute "a2c" "${CG_EXEC[@]}" >/dev/null
+rc=$(call "$T/builds/b1/out2" execute "a2c" "${CG_EXEC[@]}")
 RT=$(awk -F, 'NR>1 && $18=="refused" {l=$0} END{print l}' "$T/logs/cost.csv")
-[ "$rc" = 74 ] && [ "$(fld "$RT" 5)" = grok ] && [ "$(fld "$RT" 6)" = grok-4.6 ] && ok || bad "AC2(c) tripwire row must carry grok-4.6 (rc $rc): $RT"
-case "$(fld "$RT" 24)" in refused:tripwire*requested_model=claude-opus-5-5*) ok ;; *) bad "AC2(c) tripwire note '$(fld "$RT" 24)'" ;; esac
+[ "$rc" = 74 ] && [ "$(fld "$RT" 5)" = grok ] && [ "$(fld "$RT" 6)" = grok-4.6 ] && ok || bad "AC2(c) refused row must carry grok-4.6 (rc $rc): $RT"
+case "$(fld "$RT" 24)" in refused:call-guard:repeat*requested_model=claude-opus-5-5*) ok ;; *) bad "AC2(c) refused note '$(fld "$RT" 24)'" ;; esac
 
 # (d) claude: a guard refusal and a served call carry no token
 reset
@@ -299,11 +301,11 @@ grep -q requested_model= "$T/logs/cost.csv" && bad "AC2(d) a claude row that ser
 # (e) no grok.default route: the honest fallback, still a row, still the note
 reset
 rm -f "$T/state/model-routes/grok.default.tsv" "$T/state/model-routes/grok.default@testproj.tsv"
-echo "rule-x fired" > "$T/builds/b1/TRIPWIRE"
-rc=$(call "$T/builds/b1/out" execute "a2e" RUNNER_EXECUTE=grok)
+call "$T/builds/b1/out" execute "a2e" "${CG_EXEC[@]}" >/dev/null
+rc=$(call "$T/builds/b1/out2" execute "a2e" "${CG_EXEC[@]}")
 RM=$(awk -F, 'NR>1 && $18=="refused" {l=$0} END{print l}' "$T/logs/cost.csv")
 [ "$rc" = 74 ] && [ "$(fld "$RM" 6)" = claude-opus-5-5 ] && ok || bad "AC2(e) a route miss keeps the requested model (rc $rc): $RM"
-case "$(fld "$RM" 24)" in refused:tripwire*requested_model=claude-opus-5-5*) ok ;; *) bad "AC2(e) route-miss note '$(fld "$RM" 24)'" ;; esac
+case "$(fld "$RM" 24)" in refused:call-guard:repeat*requested_model=claude-opus-5-5*) ok ;; *) bad "AC2(e) route-miss note '$(fld "$RM" 24)'" ;; esac
 mrs_fixture "$T" testproj
 
 # ============================================================================

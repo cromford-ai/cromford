@@ -18,24 +18,22 @@
 #           it counts toward spend, never toward the repeat count.
 # Knobs: catalog/lanes.d/_lib.build-tripwire.json, resolved at CALL time through
 # lib_env_apply build-tripwire (settings row > env > the registry default, which
-# the fallbacks below mirror). BUILD_TRIPWIRE=0 stops new trips; it does not
-# un-trip a build whose dir already holds TRIPWIRE.
+# the fallbacks below mirror). BUILD_TRIPWIRE=1 measures and alerts; 0 (the
+# default) measures nothing.
+#
+# The tripwire ALERTS and never stops a build (BH-6705, the operator 2026-10-14). No
+# function here kills a session, refuses a call or ends a build.
 #
 # Root: ${HARNESS:-${H:-}} and nothing else.
 #
-# The markers:
-#   $BUILD/TRIPWIRE   the build is paused. Line 1 is the verdict, then a
-#                     plain-English diagnosis. CC() ends the build on it with
-#                     BB tripwire_paused + RESULT "BUILD_REFUSED TRIPWIRE_PAUSED
-#                     <first line>" + exit 3; agent-call refuses any call whose
-#                     $OUT sits in that build dir (AGENT_CALL_REFUSED tripwire,
-#                     rc 74).
-#   $OUT.tripwire     this claude session was stopped by the tripwire; first
-#                     word is the rule. agent-call stops the ladder on it like
-#                     a context kill and notes the cost row `tripwire:<rule>`.
-#   ledger build-tripwire "<project> <KEY>" = paused   the next launch of the
-#                     ticket is refused by rb_gate_prelude until an operator
-#                     writes `released`.
+# What a trip writes:
+#   $BUILD/tripwire-alert.txt   line 1 is the verdict, then a plain-English
+#                     diagnosis. No code reads it; the page names its path.
+#   $BUILD/.tripwire.claim      one trip per build dir: later checks of the
+#                     dir return at once and page nothing.
+#   ledger build-tripwire "<project> <KEY>" = alerted   read by the daily
+#                     digest. An old `paused` row is inert: the launch guard
+#                     logs one line and builds (bin/lib/rb/gates.sh).
 #
 #   tw_expected <project> <build-dir>
 #       Prints the expected spend (%.4f), or 0 when there is no figure. rc 0.
@@ -45,13 +43,13 @@
 #         trip<TAB>repeat<TAB>fp=..<TAB>count=..<TAB>max=..<TAB>spend=..<TAB>expected=..<TAB>unpriced_rows=..
 #         ok<TAB>spend=..<TAB>expected=<..|unarmed><TAB>mult=..<TAB>top_fp=<fp|->:<n><TAB>unpriced_rows=..
 #   tw_trip <project> <key> <build-dir> <verdict-line>
-#       Pauses the build: TRIPWIRE, the ledger row, one critical page. Only the
-#       first caller per build dir does anything. rc 0 always.
+#       Alerts: tripwire-alert.txt, the `alerted` ledger row, one critical
+#       page. Only the first caller per build dir does anything. rc 0 always.
 #   tw_paused <project> <key>
-#       rc 0 = paused, 1 = no row / released, 2 = unreadable.
+#       rc 0 = an old paused row, 1 = no row / released / alerted, 2 = unreadable.
 #   tw_check_build <project> <key> <build-dir> <live-usd>
-#       rc 0 = tripped (now or before; prints the verdict line). rc 1 = not
-#       tripped, or the tripwire is off; prints nothing.
+#       Measures the build and calls tw_trip on a trip. rc 1 always and
+#       prints nothing: no caller can read a stop from it.
 
 _TW_LIB=$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)
 
@@ -75,7 +73,7 @@ _tw_knobs() {
     fi
     trap 'for k in BUILD_TRIPWIRE BUILD_TRIPWIRE_MULT BUILD_TRIPWIRE_SHAPE_S BUILD_TRIPWIRE_SHAPE_M BUILD_TRIPWIRE_SHAPE_L BUILD_TRIPWIRE_SHAPE_XL BUILD_TRIPWIRE_REPEAT_MAX; do printf "%s\t%s\n" "$k" "${!k:-}" >&3; done' EXIT
     lib_env_apply build-tripwire >/dev/null 2>&1) || true
-  _TW_ON="${BUILD_TRIPWIRE:-1}"
+  _TW_ON="${BUILD_TRIPWIRE:-0}"
   _TW_MULT="${BUILD_TRIPWIRE_MULT:-5}"
   _TW_S="${BUILD_TRIPWIRE_SHAPE_S:-0.5}"
   _TW_M="${BUILD_TRIPWIRE_SHAPE_M:-1}"
@@ -187,7 +185,7 @@ tw_eval() {
 }
 
 tw_trip() {
-  local p="${1:-}" k="${2:-}" b="${3:-}" v="${4:-}" root="" rule s e es t per shape why f stages d top tfp tn u prow text
+  local p="${1:-}" k="${2:-}" b="${3:-}" v="${4:-}" root="" rule s e es t per shape why f stages d top tfp tn u arow text
   b="${b%/}"
   [ -n "$b" ] && [ -d "$b" ] || return 0
   # One caller per build dir: the live meter and CC(), or two review lenses,
@@ -219,16 +217,15 @@ tw_trip() {
     else printf 'top repeated guard_fp: %s x%s (paid rows)\n' "$tfp" "$tn"; fi
     printf 'unpriced rows: %s\n' "${u:-?}"
     printf 'live session: %s\n' "${SESSION_ID:-none}"
-    printf 'release: bin/jobs-client.sh ledger-put build-tripwire "%s %s" released\n' "$p" "$k"
-  } > "$b/TRIPWIRE.tmp" 2>/dev/null && mv -f "$b/TRIPWIRE.tmp" "$b/TRIPWIRE" 2>/dev/null
+  } > "$b/tripwire-alert.txt.tmp" 2>/dev/null && mv -f "$b/tripwire-alert.txt.tmp" "$b/tripwire-alert.txt" 2>/dev/null
   root=$(_tw_root) || root=""
-  prow=FAILED
+  arow=FAILED
   if [ -n "$root" ] && [ -x "$root/bin/jobs-client.sh" ] \
-     && "$root/bin/jobs-client.sh" ledger-put build-tripwire "$p $k" paused >/dev/null 2>&1; then
-    prow=written
+     && "$root/bin/jobs-client.sh" ledger-put build-tripwire "$p $k" alerted >/dev/null 2>&1; then
+    arow=written
   fi
-  printf 'pause_row: %s\n' "$prow" >> "$b/TRIPWIRE" 2>/dev/null || true
-  text="TRIPWIRE $p/$k ${rule:-?}: spend ${s:-?} vs expected $es x $_TW_MULT (shape $shape); top fp ${tfp:--} x${tn:-?}; build ${b##*/}; pause_row=$prow; release: bin/jobs-client.sh ledger-put build-tripwire \"$p $k\" released; diagnosis $b/TRIPWIRE"
+  printf 'alert_row: %s\n' "$arow" >> "$b/tripwire-alert.txt" 2>/dev/null || true
+  text="TRIPWIRE (alert only, build continues) $p/$k ${rule:-?}: spend ${s:-?} vs expected $es x $_TW_MULT (shape $shape); top fp ${tfp:--} x${tn:-?}; build ${b##*/}; alert_row=$arow; diagnosis $b/tripwire-alert.txt"
   if [ -n "$root" ] && [ -x "$root/bin/lane-alert.sh" ]; then
     "$root/bin/lane-alert.sh" --severity critical --id "tripwire:$p:$k:${b##*/}" build-tripwire "$text" >/dev/null 2>&1 || true
   elif [ -n "$root" ] && [ -x "$root/bin/alert-line.sh" ]; then
@@ -256,13 +253,14 @@ tw_paused() {
 tw_check_build() {
   local p="${1:-}" k="${2:-}" b="${3:-}" live="${4:-}" e v
   [ -n "$b" ] && [ -d "$b" ] || return 1
+  # Already alerted: the live meter polls every minute, so skip the re-measure.
+  [ -e "$b/.tripwire.claim" ] && return 1
   _tw_knobs
   case "$(printf '%s' "$_TW_ON" | tr '[:upper:]' '[:lower:]')" in 0|off|false|no) return 1 ;; esac
-  if [ -f "$b/TRIPWIRE" ]; then head -1 "$b/TRIPWIRE"; return 0; fi
   e=$(_tw_expect "$p" "$b")
   v=$(tw_eval "$b/cost.csv" "$live" "$e" "$_TW_MULT" "$_TW_RMAX")
   case "$v" in
-    trip*) tw_trip "$p" "$k" "$b" "$v"; printf '%s\n' "$v"; return 0 ;;
+    trip*) tw_trip "$p" "$k" "$b" "$v" ;;
   esac
   return 1
 }

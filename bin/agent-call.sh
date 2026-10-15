@@ -397,10 +397,10 @@ command -v call_guard_precall >/dev/null 2>&1 || call_guard_precall() { CG_STATE
 command -v call_guard_rung_ok >/dev/null 2>&1 || call_guard_rung_ok() { return 0; }
 command -v call_guard_finish  >/dev/null 2>&1 || call_guard_finish()  { return 0; }
 CG_STATE=""; CG_REASON=""
-# THE LIVE-COST AND TRIPWIRE SEAMS (BH-3481.0). The libs are stubs today:
-# cost_live_on answers off and nothing writes a tripwire marker, so every line
-# that reads them below is inert. A box whose sync has not landed them gets the
-# same answers from these fallbacks.
+# THE LIVE-COST AND TRIPWIRE SEAMS (BH-3481.0). The tripwire alerts only and
+# never stops a call (BH-6705): tw_check_build always answers rc 1, so the live
+# meter never writes $OUT.tripwire and the lines that read it below are inert.
+# A box whose sync has not landed the libs runs with no meter and no check.
 # shellcheck source=bin/lib/cost-live.sh
 if   [ -r "$(dirname "$0")/lib/cost-live.sh" ]; then . "$(dirname "$0")/lib/cost-live.sh"
 elif [ -r "$HARNESS/bin/lib/cost-live.sh" ];    then . "$HARNESS/bin/lib/cost-live.sh"; fi
@@ -4112,21 +4112,6 @@ cg_finish() { # cg_finish <rc>
 # THE REPEAT-KILL STOP (BH-2538) runs first, so a refused call never claims a
 # guard slot: this work was context-killed CONTEXT_KILL_REPEAT_MAX times in the
 # window, a person has been told, and buying the same session again is waste.
-#
-# THE TRIPWIRE STOP (BH-3481) runs before both: a build dir holding TRIPWIRE is
-# paused, and no call whose output lands in it is made. Same build-dir rule as
-# the cost.csv tee. Nothing writes that file yet (the tripwire lib is a stub).
-case "$OUT" in
-  */builds/*/*)
-    _TWB=$(dirname "$OUT")
-    if [ -f "$_TWB/TRIPWIRE" ]; then
-      printf 'AGENT_CALL_REFUSED tripwire %s %s\n' "$STAGE" "$(head -1 "$_TWB/TRIPWIRE" 2>/dev/null | tr -d '\r\n' | cut -c1-200)" \
-        | tee "$OUT.err" > "$OUT" 2>/dev/null
-      echo "$(STAMP) [$PROJECT] $STAGE TRIPWIRE REFUSED before the call ($_TWB/TRIPWIRE) — nothing called, nothing billed." >> "$HARNESS/logs/failovers.log"
-      ac_refused_row tripwire
-      exit 74
-    fi ;;
-esac
 # >>> budget-stop precall (BH-4488, BH-4489)
 # THE BUDGET STOP comes next, for every stage and every scope (bin/lib/budget-
 # stop.sh's header has the table). A build dir holding BUDGET_STOP is over its

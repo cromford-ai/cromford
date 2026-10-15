@@ -3,17 +3,17 @@
     {
       "id": "build-tripwire",
       "file": "bin/lib/build-tripwire.sh",
-      "note": "BH-3481.4: the mid-build spend tripwire. A build trips when its spend (the build's cost.csv plus the live session) passes BUILD_TRIPWIRE_MULT x expected, where expected = usd_per_pr x the plan's shape factor, or when BUILD_TRIPWIRE_REPEAT_MAX paid rows carry one guard_fp. A trip writes $BUILD/TRIPWIRE, the ledger row build-tripwire \"<project> <KEY>\" = paused and one critical page; the next launch of the ticket is refused until an operator writes `released`. Thresholds are multiples of the operator's own usd_per_pr (conf.cost-caps.* rows / catalog/cost-caps.conf through cost_budget_for); there is no dollar budget anywhere in the tripwire. Resolved at call time with lib_env_apply build-tripwire; tests/build-tripwire.bh-3501-test.sh drives it.",
+      "note": "BH-3481.4: the mid-build spend tripwire, alert only since BH-6705. A build trips when its spend (the build's cost.csv plus the live session) passes BUILD_TRIPWIRE_MULT x expected, where expected = usd_per_pr x the plan's shape factor, or when BUILD_TRIPWIRE_REPEAT_MAX paid rows carry one guard_fp. A trip writes one critical page, the ledger row build-tripwire \"<project> <KEY>\" = alerted and $BUILD/tripwire-alert.txt. It never stops a build (BH-6705). Thresholds are multiples of the operator's own usd_per_pr (conf.cost-caps.* rows / catalog/cost-caps.conf through cost_budget_for); there is no dollar budget anywhere in the tripwire. Resolved at call time with lib_env_apply build-tripwire; tests/build-tripwire.bh-3501-test.sh and tests/build-tripwire-alert-only.bh-6705-test.sh drive it.",
       "knobs": [
         {
           "env": "BUILD_TRIPWIRE",
           "type": "int",
-          "default": 1,
+          "default": 0,
           "min": 0,
           "max": 1,
           "zero_means": "off",
           "required": false,
-          "note": "Master switch for the build tripwire. 1 = on, 0 = off: no new trips (a build whose dir already holds TRIPWIRE stays paused). Read as ${BUILD_TRIPWIRE:-1}."
+          "note": "Alert switch for the build tripwire. 1 = measure and alert (one critical page and an alerted ledger row per build dir), 0 = off. It never stops a build: no value of any tripwire knob stops a build (BH-6705). Read as ${BUILD_TRIPWIRE:-0}."
         },
         {
           "env": "BUILD_TRIPWIRE_MULT",

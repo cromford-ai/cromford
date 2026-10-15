@@ -78,8 +78,8 @@ command -v job_artifact_put >/dev/null 2>&1 && [ -n "${JOB_ID:-}" ] \
 # shellcheck source=../lane-switch.sh
 command -v lane_switch >/dev/null 2>&1 || . "${BASH_SOURCE[0]%/*}/../lane-switch.sh" 2>/dev/null || lane_switch() { [ -e "${HARNESS:-${H:-/root/harness}}/flags/$1" ]; }
 CKPT_ACTIVE=0; CKPT_PID=""; CKPT_RESUME_NOTE=""; CKPT_WIP_N="${CKPT_WIP_N:-0}"
-# THE BUILD TRIPWIRE seam (BH-3481.0), read by CC() below. Fail-open: a box
-# mid-sync without the lib has no check, and CC still honours $BUILD/TRIPWIRE.
+# THE BUILD TRIPWIRE seam (BH-3481.0), read by CC() below. Alert only since
+# BH-6705: the check never stops a build. A box without the lib has no check.
 # shellcheck source=../build-tripwire.sh
 command -v tw_check_build >/dev/null 2>&1 || . "${BASH_SOURCE[0]%/*}/../build-tripwire.sh" 2>/dev/null || true
 CKPT_ON() { # read at every call site, so a flag dropped mid-build still lands
@@ -290,19 +290,12 @@ $prompt" ;;
                && _fp="$BUILD_CALL_FP:${out##*/}:t$_tree" ;;
     esac
   fi
-  # BH-3481.0: a build whose dir holds TRIPWIRE is paused. Checked before the
-  # call (tw_check_build may write it; the lib is a stub that never does yet)
-  # and after it, and either way the build ends here with its terminal. A
-  # paused build never calls agent-call.
+  # BH-3481.0: the build tripwire measures the spend so far and alerts on a
+  # trip. It never stops the build (BH-6705), so its answer is not read.
   if [ -n "${BUILD:-}" ]; then
-    [ -f "$BUILD/TRIPWIRE" ] || { command -v tw_check_build >/dev/null 2>&1 && tw_check_build "$PROJECT" "${KEY:-}" "$BUILD" 0 >/dev/null; }
-    if [ -f "$BUILD/TRIPWIRE" ]; then
-      BB tripwire_paused "" "" "" false "$(head -c 1200 "$BUILD/TRIPWIRE")"
-      RESULT "BUILD_REFUSED TRIPWIRE_PAUSED $(head -1 "$BUILD/TRIPWIRE")"
-      exit 3
-    fi
+    command -v tw_check_build >/dev/null 2>&1 && tw_check_build "$PROJECT" "${KEY:-}" "$BUILD" 0 >/dev/null || true
     # BH-4488: a build dir holding BUDGET_STOP is over its hard cap (agent-call
-    # wrote it on the refused call). Same terminal shape, after TRIPWIRE.
+    # wrote it on the refused call). The build ends here with its terminal.
     if [ -f "$BUILD/BUDGET_STOP" ]; then
       BB budget_stop "" BUDGET_STOP "" false "$(head -c 1200 "$BUILD/BUDGET_STOP")"
       RESULT "BUILD_REFUSED BUDGET_STOP $(head -1 "$BUILD/BUDGET_STOP")"
@@ -323,11 +316,6 @@ $prompt" ;;
   local _rc=0
   AGENT_CALL_STEER=1 AGENT_CALL_LANE=fly-pool AGENT_CALL_ARTIFACT_KIND="$_ak" AGENT_CALL_ARTIFACT_FILE="$_af" AGENT_CALL_FP="$_fp" \
     "$HARNESS/bin/agent-call.sh" "$stage" "$PROJECT" "$model" "$to" "$out" "$prompt" || _rc=$?
-  if [ -n "${BUILD:-}" ] && [ -f "$BUILD/TRIPWIRE" ]; then
-    BB tripwire_paused "" "" "" false "$(head -c 1200 "$BUILD/TRIPWIRE")"
-    RESULT "BUILD_REFUSED TRIPWIRE_PAUSED $(head -1 "$BUILD/TRIPWIRE")"
-    exit 3
-  fi
   if [ -n "${BUILD:-}" ] && [ -f "$BUILD/BUDGET_STOP" ]; then
     BB budget_stop "" BUDGET_STOP "" false "$(head -c 1200 "$BUILD/BUDGET_STOP")"
     RESULT "BUILD_REFUSED BUDGET_STOP $(head -1 "$BUILD/BUDGET_STOP")"
