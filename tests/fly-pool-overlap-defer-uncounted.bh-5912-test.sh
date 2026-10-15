@@ -15,6 +15,7 @@
 #   A4/A5  negative controls: other deferral shapes still count
 #   B1-B4  the step-3b After: gate on the spawn loop (stub and real plan-after.sh)
 #   B5     the same gate on next_job_or_destroy's reuse handoff
+#   B6     a hotfix row skips the step-3b gate and spawns (BH-6292)
 #
 # HOW IT DRIVES: the real bin/fly-pool.sh, run as a subprocess against a
 # scratch harness with fly/gh stubs (the tests/fly-pool-refused-not-counted.
@@ -160,8 +161,8 @@ reset_state() { # reset_state [builds]
   return 0
 }
 
-queue_bh1016() { # queue_bh1016 [deferrals]
-  jq -nc --argjson d "${1:-0}" '{ticket_id:"1016",key:"BH-1016",attempt:1,deferrals:$d,deaths:0,enqueued_at:"2026-09-19T21:28:00Z"}' \
+queue_bh1016() { # queue_bh1016 [deferrals] [hotfix]
+  jq -nc --argjson d "${1:-0}" --arg hf "${2:-}" '{ticket_id:"1016",key:"BH-1016",attempt:1,deferrals:$d,deaths:0,enqueued_at:"2026-09-19T21:28:00Z"} + (if $hf == "hotfix" then {hotfix:true} else {} end)' \
     > "$H/state/build-queue/project-5/BH-1016.json"
 }
 
@@ -363,6 +364,48 @@ SHAPES=(
   grep -q 'skipping BH-1016: After: BH-1015 PR #55 open' "$H/logs/fly-pool.log" \
     && ok "B5: the handoff logged the After: skip" \
     || bad "B5: no After: skip on the handoff: $(cat "$H/logs/fly-pool.log")"
+}
+
+# ── B6: a hotfix row with a live After: hold spawns (BH-6292) ──────────────
+# A key labelled hotfix after it deferred carries `hotfix:true` and
+# deferrals > 0. The pool must not ask plan-after.sh: a hotfix is never
+# deferred. B1 is the control: the same stub without the flag skips the key.
+# The REAL plan-after.sh with a live marker and an in-flight sibling (B3's
+# fixture) is the second half: it would hold, and the hotfix still spawns.
+{
+  reset_state builds
+  write_fly_stub ""
+  write_gh_stub "" 0
+  : > "$T/fly-calls"
+  stub_plan_after 3 "AFTER BH-1015 PR #55 open"
+  queue_bh1016 1 hotfix
+  run_pool
+  [ -s "$T/pa-calls" ] && bad "B6: plan-after.sh was asked about a hotfix row: $(cat "$T/pa-calls")" \
+    || ok "B6: plan-after.sh not called for a hotfix row"
+  ls "$H/state/fly-pool/project-5"/*.json >/dev/null 2>&1 \
+    && ok "B6: the hotfix key spawns despite the hold" \
+    || bad "B6: no machine spawned for a hotfix row: $(cat "$H/logs/fly-pool.log")"
+  grep -q 'machine run' "$T/fly-calls" && ok "B6: fly machine run was called" || bad "B6: no fly machine run"
+  grep -q 'skipping BH-1016: After:' "$H/logs/fly-pool.log" \
+    && bad "B6: the hotfix row was skipped on its After: hold" || ok "B6: no After: skip line"
+  grep -q 'BH-1016 is a hotfix: After: hold not checked' "$H/logs/fly-pool.log" \
+    && ok "B6: the hotfix bypass is logged" \
+    || bad "B6: no hotfix bypass line: $(cat "$H/logs/fly-pool.log")"
+
+  reset_state builds
+  write_fly_stub ""
+  write_gh_stub "" 0
+  scratch_install_closure bin/plan-after.sh "$H" >/dev/null || bad "B6: closure install of bin/plan-after.sh failed"
+  mkdir -p "$H/state/overlap-after/project-5" "$H/state/claims/project-5"
+  printf 'BH-1015\t%s\n' "$((NOW-60))" > "$H/state/overlap-after/project-5/BH-1016"
+  : > "$H/state/claims/project-5/BH-1015"
+  queue_bh1016 1 hotfix
+  run_pool
+  ls "$H/state/fly-pool/project-5"/*.json >/dev/null 2>&1 \
+    && ok "B6: real plan-after.sh hold: the hotfix key still spawns" \
+    || bad "B6: real plan-after.sh hold kept the hotfix key: $(cat "$H/logs/fly-pool.log")"
+  grep -q 'skipping BH-1016: After: BH-1015 in flight' "$H/logs/fly-pool.log" \
+    && bad "B6: the real hold skipped the hotfix key" || ok "B6: no real-hold skip line"
 }
 
 echo "fly-pool-overlap-defer-uncounted: $PASS passed, $FAIL failed"

@@ -1846,11 +1846,15 @@ pool_spawn_decision() {
   # Only rc 3 with output skips; any other answer spawns, as before. The row
   # stays queued (the HOLD arm's shape), with no QROW and no ALERTS line: a wait
   # on a sibling is normal. Before the cap on purpose: a held key must not log
-  # or page a cap.
+  # or page a cap. A hotfix row is never held (BH-6292: a hotfix is never
+  # deferred). The machine's gates.sh skips the same hold on HOTFIX=1, so a key
+  # labelled hotfix after its defer spawns now.
   local _psd_d _psd_pa _psd_parc
   _psd_d=$(jq -r '.deferrals // 0' "$JF" 2>/dev/null)
   case "$_psd_d" in ''|*[!0-9]*) _psd_d=0 ;; esac
-  if [ "$_psd_d" -gt 0 ] && [ -x "$HARNESS/bin/plan-after.sh" ]; then
+  if [ "$_psd_d" -gt 0 ] && job_is_hot "$JF"; then
+    say "$KEY is a hotfix: After: hold not checked — a hotfix is never deferred"
+  elif [ "$_psd_d" -gt 0 ] && [ -x "$HARNESS/bin/plan-after.sh" ]; then
     _psd_pa=$(HARNESS="$HARNESS" "$HARNESS/bin/plan-after.sh" check "$P" "$KEY" 2>/dev/null); _psd_parc=$?
     if [ "$_psd_parc" = 3 ] && [ -n "$_psd_pa" ]; then
       say "skipping $KEY: After: ${_psd_pa#AFTER } — no machine spawned; re-checked next tick"

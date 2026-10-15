@@ -1202,11 +1202,22 @@ fi
 # choice "after". Only rc 3 holds: a
 # missing script, an unreadable PR answer or any other rc goes on to PLAN,
 # where plan-overlap judges it again exactly as before.
-if [ -n "$NB_F" ] && [ -x "$HARNESS/bin/plan-after.sh" ]; then
+# BH-6292: a hotfix is never held. Past PLAN_AFTER_MAX_MIN, check answers
+# `EXPIRED <OTHER>`; that key goes to $BUILD/after-expired, which
+# `plan-sibling.sh inflight` (the plan overlap block) reads, so the same pair
+# does not start a new hold and the ticket dispatches.
+if [ -n "$NB_F" ] && [ "${HOTFIX:-}" = 1 ]; then
+  echo "$(STAMP) [$PROJECT/$KEY] AFTER_HOLD skipped hotfix — a hotfix is never deferred" >> "$BUILD/pipeline.log"
+elif [ -n "$NB_F" ] && [ -x "$HARNESS/bin/plan-after.sh" ]; then
   PA=$("$HARNESS/bin/plan-after.sh" check "$PROJECT" "$KEY" 2>>"$BUILD/pipeline.log"); PA_RC=$?
   if [ "$PA_RC" = 3 ] && [ -n "$PA" ]; then
     RESULT "BUILD_DEFERRED After: ${PA#AFTER } — $KEY overlaps it on a non-splittable file and builds after it merges; re-checked each tick before any plan is bought"
     exit 3
+  fi
+  PA_X=$(printf '%s\n' "$PA" | sed -n 's/^EXPIRED \([A-Za-z0-9._-]\{1,64\}\)$/\1/p' | head -1)
+  if [ "$PA_RC" = 0 ] && [ -n "$PA_X" ]; then
+    printf '%s\n' "$PA_X" > "$BUILD/after-expired"
+    echo "$(STAMP) [$PROJECT/$KEY] AFTER_CAP $KEY after=$PA_X cap=PLAN_AFTER_MAX_MIN — dispatching anyway" >> "$BUILD/pipeline.log"
   fi
 fi
 # <<< overlap not-before
@@ -2439,7 +2450,10 @@ done
 # KILL FLAG: OVERLAP_SCHED=0 (or flags/plan-overlap-off) — the helper exits 0
 # before reading anything and this block is a no-op, so the pipeline is
 # byte-for-byte what it was before this change.
-if [ -x "$HARNESS/bin/plan-overlap.sh" ]; then
+# BH-6292: a hotfix (HOTFIX=1, `# >>> hotfix detect`) runs none of the checks.
+if [ "${HOTFIX:-}" = 1 ]; then
+  echo "$(STAMP) [$PROJECT/$KEY] PLAN_OVERLAP skipped hotfix — a hotfix is never deferred" >> "$BUILD/pipeline.log"
+elif [ -x "$HARNESS/bin/plan-overlap.sh" ]; then
   PO_MSG=$(PLAN_OVERLAP_REPO="${REPO:-}" "$HARNESS/bin/plan-overlap.sh" "$PROJECT" "$BUILD/plan.md" 2>>"$BUILD/pipeline.log"); PO_RC=$?
   # BH-4988 r2: a SIBLING (same `Part of #P`) that finished building but whose
   # PR is still open is in none of plan-overlap's in-flight sources, so it is
@@ -2447,6 +2461,11 @@ if [ -x "$HARNESS/bin/plan-overlap.sh" ]; then
   # line and rc, so the defer below is the same path; any rc but 1 is build.
   if [ "$PO_RC" = 0 ] && [ -x "$HARNESS/bin/plan-sibling.sh" ]; then
     PO_MSG=$(PLAN_OVERLAP_REPO="${REPO:-}" PLAN_SIBLING_STACK_ON="${STACK_ON:-}" "$HARNESS/bin/plan-sibling.sh" check "$PROJECT" "$BUILD" 2>>"$BUILD/pipeline.log"); PO_RC=$?
+  fi
+  # BH-6292: ANY ticket's open PR that edits a file on the conflict hotspot
+  # list this plan also edits. Same line and rc; any rc but 1 is build.
+  if [ "$PO_RC" = 0 ] && [ -x "$HARNESS/bin/plan-sibling.sh" ]; then
+    PO_MSG=$(PLAN_OVERLAP_REPO="${REPO:-}" PLAN_SIBLING_STACK_ON="${STACK_ON:-}" "$HARNESS/bin/plan-sibling.sh" inflight "$PROJECT" "$BUILD" 2>>"$BUILD/pipeline.log"); PO_RC=$?
   fi
   if [ "$PO_RC" = 1 ] && [ -n "$PO_MSG" ]; then
     case "${OVERLAP_DEFER_NOTBEFORE_SECS:-600}" in ''|*[!0-9]*) PO_NB=600 ;; *) PO_NB="${OVERLAP_DEFER_NOTBEFORE_SECS:-600}" ;; esac

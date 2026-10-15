@@ -20,7 +20,7 @@
 #     rc 0 written, rc 1 not written (bad line, bad key).
 #   plan-after.sh check <project> <KEY>
 #     rc 0  build: no marker (file or fleet row); or it expired (PLAN_AFTER_MAX_MIN, default 360,
-#           0 = never); or a mutual pair released the byte-smaller key; or OTHER
+#           0 = never; stdout is then `EXPIRED <OTHER>`, BH-6292); or a mutual pair released the byte-smaller key; or OTHER
 #           is finished with no open PR (marker removed); or the PR question
 #           was unreadable (marker KEPT, `choice=unjudged`: plan-overlap
 #           re-judges at plan time, which is the behaviour before this file).
@@ -131,17 +131,23 @@ NOW=$(date -u +%s)
 # same row the not-before block reads its window from. Only the key's NEWEST
 # overlap_defer row counts, and only when it is a `deferred` After: row; any
 # later row (a `proceeded` verdict, a defer that recorded no After:) ends it.
-# The window asked for is PLAN_AFTER_MAX_MIN, so a row old enough to fall out
-# of it has expired anyway. READ ONLY: a fleet row cannot be removed from here
+# THE WINDOW IS WIDER THAN THE CAP (BH-6292 review). The worker returns only
+# rows with updated_at > since, and a held ticket writes no new row while it
+# waits, so the row's updated_at is when the hold began. Asking for exactly
+# the cap window hid every row past the cap: no EXPIRED, and the in-flight
+# check started a fresh hold, forever. So the read reaches FEED_SPAN caps back
+# and the age test below judges the row. A held ticket is re-offered every few
+# minutes, so it is re-checked long before its row leaves that window.
+# READ ONLY: a fleet row cannot be removed from here
 # (no job is open yet at this gate), so a release re-judges it next time and
 # releases again; it never strands a ticket past the ceiling.
-FEED_LIMIT=500; FEED_ST=unread; FEED=""
+FEED_LIMIT=500; FEED_ST=unread; FEED=""; FEED_SPAN=4
 fleet_feed() {
   case "$FEED_ST" in ok) return 0 ;; none) return 1 ;; esac
   FEED_ST=none
   command -v job_artifact_feed >/dev/null 2>&1 || return 1
   local since=""
-  [ "$MAX" -gt 0 ] && since=$(date -u -d "@$(( NOW - MAX * 60 ))" '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null)
+  [ "$MAX" -gt 0 ] && since=$(date -u -d "@$(( NOW - MAX * 60 * FEED_SPAN ))" '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null)
   FEED=$(job_artifact_feed overlap_defer "$PROJECT" "$since" "$FEED_LIMIT" 2>/dev/null) || return 1
   FEED_ST=ok
 }
@@ -186,6 +192,7 @@ drop() { [ "$SRC" = local ] && rm -f "$F"; return 0; }
 if [ "$MAX" -gt 0 ] && [ $(( NOW - AT )) -ge $(( MAX * 60 )) ]; then
   drop
   hotspot "choice=expired after=$OTHER (held $(( (NOW - AT) / 60 ))m, ceiling ${MAX}m)$SRCN"
+  echo "EXPIRED $OTHER"
   exit 0
 fi
 

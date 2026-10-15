@@ -1,0 +1,12 @@
+{
+  "env": "PLAN_INFLIGHT_MAX_PRS",
+  "read_in": "bin/plan-sibling.sh",
+  "type": "int",
+  "default": 40,
+  "min": 1,
+  "max": 300,
+  "unit": "PRs",
+  "zero_means": null,
+  "required": false,
+  "note": "BH-6292. Cap on open PRs whose changed files `plan-sibling.sh inflight` judges per plan, oldest first. Past it the rest are not judged and the decision logs incomplete=1. A file list is cached per PR head sha in state/plan-inflight/<project>/. Below 1 is raised to 1."
+}

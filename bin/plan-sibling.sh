@@ -32,6 +32,21 @@
 #     failed post is logged and retried at the next defer; it never fails a build.
 #     The PR number in the copy is read from this build's `PLAN_SIBLING ...
 #     choice=after after=<OTHER> pr=#<n>` pipeline.log line, when check wrote one.
+#   plan-sibling.sh inflight <project> <build-dir>
+#     For ANY ticket on a GitHub-Issues board, not only a child. The
+#     candidate set is check's list UNION the edited paths of the plan's
+#     `## Shared files` section (psib_shared_files). Only the paths on the
+#     first PLAN_INFLIGHT_HOT_TOP rows of $BUILD/.hotspots.txt (the conflict
+#     hotspot list rb_plan wrote) count. No hot path: exit 0, no GitHub read.
+#     Else the open PRs on ticket/<prefix>-<n>[-rN] or agent/<PREFIX>-<n> (not
+#     this ticket's number, not PLAN_SIBLING_STACK_ON, not the key named in
+#     $BUILD/after-expired), oldest first, at most PLAN_INFLIGHT_MAX_PRS of
+#     them. Their file lists are cached at
+#     state/plan-inflight/<project>/<pr>.<head_sha>.
+#     exit 0  build: no hot path, no hit, in-app board, kill switch, hot list
+#             unread, or a read failed (`unjudged=`).
+#     exit 1  a hot path is in an open PR. stdout is exactly
+#             `OVERLAP_DEFER <KEY> vs <OTHER> files=[p,p]`, OTHER keeps any -rN.
 #   exit 2  usage.
 #
 # THE OVERLAP RULE is plan-overlap.sh's `overlap` (file == file, or dir-prefix,
@@ -39,23 +54,46 @@
 # `fragment_safe`, both copied here rather than extracted while open PR #5310
 # rewrites that file. Keep the two in step.
 #
-# Every choice is one PLAN_SIBLING line on stderr (the build's pipeline.log) and
-# in logs/plan-hotspot.log.
+# Every choice is one PLAN_SIBLING line (PLAN_INFLIGHT for inflight) on stderr
+# (the build's pipeline.log) and in logs/plan-hotspot.log.
 #
 # KILL FLAG: plan-overlap's own (OVERLAP_SCHED=0|off|false|no, env or
 # env/global.env; or lane_switch plan-overlap-off), then PLAN_SIBLING_SEQ=0 for
-# check and PLAN_SIBLING_COMMENT=0 for note (catalog/lanes.d/_lib.plan-sibling.json).
+# check, PLAN_INFLIGHT_HOT_TOP=0 for inflight and PLAN_SIBLING_COMMENT=0 for
+# note (catalog/lanes.d/_lib.plan-sibling.json and its knobs.d/).
 set -uo pipefail
+
+# psib_shared_files <plan.md> — the paths the plan's `## Shared files` section
+# says it EDITS, one per line. A bullet's path is its backticked first token or
+# its first word; a line that says "named only" and a `None` line are skipped,
+# fenced lines are ignored, and a path outside [A-Za-z0-9._/@+-] is dropped.
+psib_shared_files() {
+  [ -r "${1:-}" ] || return 0
+  awk '
+    /^```/ { if (in_s) fence = !fence; next }
+    /^## / { in_s = ($0 ~ /^## Shared files[[:space:]]*$/); fence = 0; next }
+    !in_s || fence { next }
+    /^[[:space:]]*[-*][[:space:]]+/ {
+      if (tolower($0) ~ /named only/) next
+      l = $0; sub(/^[[:space:]]*[-*][[:space:]]+/, "", l)
+      if (substr(l, 1, 1) == "`") { l = substr(l, 2); p = index(l, "`"); if (!p) next; l = substr(l, 1, p - 1) }
+      else { sub(/[[:space:]].*$/, "", l); sub(/[:,]$/, "", l) }
+      if (tolower(l) == "none" || l !~ /^[A-Za-z0-9._\/@+-]+$/) next
+      print l
+    }' "$1"
+}
+[ "${BASH_SOURCE[0]}" = "$0" ] || return 0
+
 MODE="${1:-}"
 HARNESS="${HARNESS:-/root/harness}"
 HERE="$(cd "$(dirname "$0")" && pwd)"
 case "$MODE" in
-  check) [ $# -eq 3 ] || MODE="" ;;
+  check|inflight) [ $# -eq 3 ] || MODE="" ;;
   note)  [ $# -eq 5 ] || MODE="" ;;
   *)     MODE="" ;;
 esac
 if [ -z "$MODE" ]; then
-  echo "usage: plan-sibling.sh check <project> <build-dir> | note <project> <KEY> \"<OVERLAP_DEFER line>\" <build-dir>" >&2
+  echo "usage: plan-sibling.sh check|inflight <project> <build-dir> | note <project> <KEY> \"<OVERLAP_DEFER line>\" <build-dir>" >&2
   exit 2
 fi
 PROJECT="$2"
@@ -95,7 +133,7 @@ PART_JQ='def part_of: [(. // "") | split("\n")[] | capture($re; "i").n][0] // ""
 parent_of() { jq -r --arg re "$PART_RE" "$PART_JQ"' part_of' 2>/dev/null; }
 
 valid_key "$PROJECT" || { echo "plan-sibling: refusing project '$PROJECT'" >&2; [ "$MODE" = note ] && exit 1; exit 0; }
-if [ "$MODE" = check ]; then BUILD="$3"; else BUILD="$5"; fi
+if [ "$MODE" = note ]; then BUILD="$5"; else BUILD="$3"; fi
 [ -d "$BUILD" ] || exit 0
 PARENT=$(jq '.body // ""' "$BUILD/ticket-meta.json" 2>/dev/null | parent_of)
 
@@ -110,7 +148,9 @@ if [ "$MODE" = note ]; then
   fi
   NUM="${KEY##*-}"
   case "$NUM" in ''|*[!0-9]*) echo "plan-sibling: no issue number in '$KEY'" >&2; exit 1 ;; esac
-  [ -n "$PARENT" ] || exit 0
+  # BH-6292: a non-child is noted only when inflight held it on an open PR.
+  INF=$(grep -o "PLAN_INFLIGHT $KEY choice=after after=$OTHER pr=#[0-9]*" "$BUILD/pipeline.log" 2>/dev/null | tail -1 | sed 's/.*pr=#//')
+  [ -n "$PARENT" ] || [ -n "$INF" ] || exit 0
   [ "$("$HARNESS/bin/fleet-conf.sh" "$PROJECT" board_prefix 2>/dev/null)" = - ] || exit 0
   if off "$(genv PLAN_SIBLING_COMMENT)"; then psib_log "PLAN_SIBLING $KEY comment=off after=$OTHER"; exit 0; fi
   SLUG=$("$HARNESS/bin/fleet-conf.sh" "$PROJECT" repo 2>/dev/null)
@@ -134,7 +174,14 @@ if [ "$MODE" = note ]; then
   PRN=$(grep -o "PLAN_SIBLING $KEY choice=after after=$OTHER pr=#[0-9]*" "$BUILD/pipeline.log" 2>/dev/null | tail -1 | sed 's/.*pr=#//')
   BODY=$(mktemp "${TMPDIR:-/tmp}/plan-sibling.XXXXXX") || exit 0
   trap 'rm -f "$BODY"' EXIT
-  if [ -n "$PRN" ]; then
+  if [ -n "$INF" ]; then
+    # `Blocked-by #<n>` with NO colon: every dependency parser reads
+    # `Blocked-by: #` from issue bodies, so this comment never becomes one.
+    ON=$(printf '%s' "$OTHER" | sed -nE 's/^.*-([0-9]+)(-r[0-9]+)?$/\1/p')
+    { [ -n "$ON" ] && printf 'Blocked-by #%s\n\n' "$ON"
+      printf "Holding this one until %s (#%s) merges. Both edit %s, which are on this project's conflict hotspot list, and building them side by side would conflict at merge. It starts on its own once that PR is merged or closed, or after the wait cap. Nothing for you to do.\n\n<!-- plan-sibling:%s:%s -->\n" \
+        "$OTHER" "$INF" "$FT" "$KEY" "$OTHER"; } > "$BODY"
+  elif [ -n "$PRN" ]; then
     printf "Holding this one until %s (#%s) merges. Both plan to edit %s, and building them side by side would conflict at merge. It re-checks before every planning pass and starts on its own once %s's PR is merged or closed. Nothing for you to do.\n\n<!-- plan-sibling:%s:%s -->\n" \
       "$OTHER" "$PRN" "$FT" "$OTHER" "$KEY" "$OTHER" > "$BODY"
   else
@@ -155,18 +202,121 @@ if [ "$MODE" = note ]; then
   exit 0
 fi
 
+# The file list a plan is judged on: the declared touch list (BH-5965), else
+# planned-files.txt.
+psib_cfiles() {
+  if [ "$(cat "$BUILD/touch-source" 2>/dev/null)" = declared ] && [ -s "$BUILD/touch-files.txt" ]; then
+    printf '%s\n' "$BUILD/touch-files.txt"
+  else
+    printf '%s\n' "$BUILD/planned-files.txt"
+  fi
+}
+psib_key() {
+  local k
+  k=$(jq -r '.key // .ticket_key // empty' "$BUILD/ticket-meta.json" 2>/dev/null)
+  [ -n "$k" ] || k=$(basename "$BUILD" | sed -E "s/^${PROJECT}-//; s/-[0-9]{8,}$//")
+  printf '%s\n' "$k"
+}
+
+# =============================================================================
+# inflight (BH-6292)
+# =============================================================================
+if [ "$MODE" = inflight ]; then
+  TOP=$(num "$(genv PLAN_INFLIGHT_HOT_TOP)" 10); [ "$TOP" -le 50 ] || TOP=50
+  [ "$TOP" -gt 0 ] || exit 0
+  MAXR=$(num "$(genv PLAN_INFLIGHT_MAX_PRS)" 40); [ "$MAXR" -ge 1 ] || MAXR=1
+  KEY=$(psib_key)
+  valid_key "$KEY" || exit 0
+  if [ "$("$HARNESS/bin/fleet-conf.sh" "$PROJECT" board_prefix 2>/dev/null)" != - ]; then
+    psib_log "PLAN_INFLIGHT $KEY choice=build unjudged=in-app-board"; exit 0
+  fi
+  # An unread hot list is never "no hotspots", and it never defers.
+  if [ ! -s "$BUILD/.hotspots.txt" ] \
+     || grep 'HOTSPOT_CLAIM' "$BUILD/pipeline.log" 2>/dev/null | tail -1 | grep -q 'source=none'; then
+    psib_log "PLAN_INFLIGHT $KEY choice=build unjudged=hotlist"; exit 0
+  fi
+  TMPD=$(mktemp -d "${TMPDIR:-/tmp}/plan-sibling.XXXXXX") || exit 0
+  trap 'rm -rf "$TMPD"' EXIT
+  head -n "$TOP" "$BUILD/.hotspots.txt" | awk 'NF' > "$TMPD/hot"
+  { cat "$(psib_cfiles)" 2>/dev/null; psib_shared_files "$BUILD/plan.md"; } | awk 'NF && !s[$0]++' > "$TMPD/cand"
+  grep -Fxf "$TMPD/hot" "$TMPD/cand" > "$TMPD/hotset" 2>/dev/null
+  if [ ! -s "$TMPD/hotset" ]; then psib_log "PLAN_INFLIGHT $KEY choice=build hot=0"; exit 0; fi
+  NH=$(wc -l < "$TMPD/hotset" | tr -d ' ')
+  SLUG=$("$HARNESS/bin/fleet-conf.sh" "$PROJECT" repo 2>/dev/null)
+  [ -n "$SLUG" ] || { psib_log "PLAN_INFLIGHT $KEY choice=build unjudged=no-repo hot=$NH"; exit 0; }
+  PREFIX="${KEY%-*}"; MYNUM="${KEY##*-}"
+  if [ "$PREFIX" = "$KEY" ] || ! valid_key "$PREFIX"; then
+    psib_log "PLAN_INFLIGHT $KEY choice=build unjudged=key-shape"; exit 0
+  fi
+  PU=$(printf '%s' "$PREFIX" | tr '[:lower:]' '[:upper:]'); PL=$(printf '%s' "$PREFIX" | tr '[:upper:]' '[:lower:]')
+  EXPIRED=$(head -1 "$BUILD/after-expired" 2>/dev/null)
+  # shellcheck source=bin/lib/gh-rest-list.sh
+  . "$HERE/lib/gh-rest-list.sh" 2>/dev/null
+  RC=0; gh_rest_pr_list_all "$SLUG" open 300 > "$TMPD/pulls.json" || RC=$?
+  [ "$RC" = 0 ] || { psib_log "PLAN_INFLIGHT $KEY choice=build unjudged=pulls rc=$RC hot=$NH"; exit 0; }
+  case "$(jq 'if type=="array" then length else -1 end' "$TMPD/pulls.json" 2>/dev/null)" in
+    ''|-1) psib_log "PLAN_INFLIGHT $KEY choice=build unjudged=pulls rc=shape hot=$NH"; exit 0 ;;
+  esac
+  # <pr number> TAB <n>[-rN] TAB <head sha>, oldest PR first.
+  jq -r --arg pl "$PL" --arg pu "$PU" --arg stack "${PLAN_SIBLING_STACK_ON:-}" '
+    .[]? | (.head.ref // "") as $r | select($r != "" and $r != $stack)
+    | (if ($r|startswith("ticket/"+$pl+"-")) then ($r|ltrimstr("ticket/"+$pl+"-"))
+       elif ($r|startswith("agent/"+$pu+"-")) then ($r|ltrimstr("agent/"+$pu+"-")) else "" end) as $t
+    | select(($r|startswith("agent/") and ($t|test("^[0-9]+$"))) or ($r|startswith("ticket/") and ($t|test("^[0-9]+(-r[0-9]+)?$"))))
+    | "\(.number)\t\($t)\t\(.head.sha // "")"' "$TMPD/pulls.json" 2>/dev/null \
+    | awk -F'\t' -v me="$MYNUM" '{ split($2, t, "-") } t[1] != me' | sort -n -k1,1 > "$TMPD/prs"
+  NP=$(awk 'NF' "$TMPD/prs" | wc -l | tr -d ' ')
+  CDIR="$HARNESS/state/plan-inflight/$PROJECT"
+  UNJ=""; INC=""; READ=0
+  while IFS=$'\t' read -r PRN T SHA; do
+    [ -n "$PRN" ] || continue
+    OTHER="$PU-$T"
+    if [ -n "$EXPIRED" ] && [ "$OTHER" = "$EXPIRED" ]; then
+      psib_log "PLAN_INFLIGHT $KEY choice=build vs $OTHER cap=PLAN_AFTER_MAX_MIN expired"; continue
+    fi
+    if [ "$READ" -ge "$MAXR" ]; then INC=" incomplete=1"; break; fi
+    READ=$((READ+1))
+    [[ "$SHA" =~ ^[0-9a-f]{7,64}$ ]] || SHA=""
+    CF="$CDIR/$PRN.$SHA"
+    if [ -n "$SHA" ] && [ -f "$CF" ]; then
+      cp "$CF" "$TMPD/theirs"
+    else
+      RC=0; gh_rest GET "repos/$SLUG/pulls/$PRN/files" -F per_page=100 > "$TMPD/f.json" || RC=$?
+      NF=$(jq 'if type=="array" then length else -1 end' "$TMPD/f.json" 2>/dev/null)
+      if [ "$RC" != 0 ] || [ -z "$NF" ] || [ "$NF" = -1 ]; then
+        UNJ="$UNJ${UNJ:+,}files:#$PRN"; psib_log "PLAN_INFLIGHT $KEY unjudged=files:#$PRN rc=$RC"; continue
+      fi
+      jq -r '.[].filename // empty' "$TMPD/f.json" > "$TMPD/theirs" 2>/dev/null
+      if [ "$NF" -ge 100 ]; then
+        INC=" incomplete=1"   # one page only: judged, never cached as the whole list
+      elif [ -n "$SHA" ] && mkdir -p "$CDIR" 2>/dev/null; then
+        cp "$TMPD/theirs" "$CF.tmp.$$" 2>/dev/null && mv -f "$CF.tmp.$$" "$CF" 2>/dev/null
+        rm -f "$CF.tmp.$$"
+      fi
+    fi
+    HITS=$(grep -Fxf "$TMPD/theirs" "$TMPD/hotset" 2>/dev/null | head -3)
+    [ -n "$HITS" ] || continue
+    CSV=$(printf '%s\n' "$HITS" | awk '{ printf "%s%s,%s", (NR > 1 ? "," : ""), $0, $0 }')
+    psib_log "PLAN_INFLIGHT $KEY choice=after after=$OTHER pr=#$PRN files=[$CSV]$INC"
+    printf 'OVERLAP_DEFER %s vs %s files=[%s]\n' "$KEY" "$OTHER" "$CSV"
+    exit 1
+  done < "$TMPD/prs"
+  if [ -n "$UNJ" ]; then
+    psib_log "PLAN_INFLIGHT $KEY choice=build hot=$NH prs=$NP unjudged=$UNJ$INC"
+  else
+    psib_log "PLAN_INFLIGHT $KEY choice=build hot=$NH prs=$NP disjoint$INC"
+  fi
+  exit 0
+fi
+
 # =============================================================================
 # check
 # =============================================================================
 off "$(genv PLAN_SIBLING_SEQ)" && exit 0
-CFILES="$BUILD/planned-files.txt"
 # BH-5965: a plan that declares its files is judged on that list (bin/touch-files.sh).
-if [ "$(cat "$BUILD/touch-source" 2>/dev/null)" = declared ] && [ -s "$BUILD/touch-files.txt" ]; then
-  CFILES="$BUILD/touch-files.txt"
-fi
+CFILES=$(psib_cfiles)
 [ -s "$CFILES" ] || exit 0
-KEY=$(jq -r '.key // .ticket_key // empty' "$BUILD/ticket-meta.json" 2>/dev/null)
-[ -n "$KEY" ] || KEY=$(basename "$BUILD" | sed -E "s/^${PROJECT}-//; s/-[0-9]{8,}$//")
+KEY=$(psib_key)
 [ -n "$PARENT" ] || exit 0
 if [ "$("$HARNESS/bin/fleet-conf.sh" "$PROJECT" board_prefix 2>/dev/null)" != - ]; then
   psib_log "PLAN_SIBLING $KEY choice=build unjudged=in-app-board"; exit 0

@@ -1,0 +1,12 @@
+{
+  "env": "PLAN_INFLIGHT_HOT_TOP",
+  "read_in": "bin/plan-sibling.sh",
+  "type": "int",
+  "default": 10,
+  "min": 0,
+  "max": 50,
+  "unit": "rows",
+  "zero_means": "off",
+  "required": false,
+  "note": "BH-6292. How many rows of the conflict hotspot list ($BUILD/.hotspots.txt, conflicts DESC) count as hot for `plan-sibling.sh inflight`. A plan whose files (or edited `## Shared files` paths) include one of them is held behind any open ticket PR that changes it. 0 = off (inflight exits 0 before any read). Above 50 is cut to 50."
+}
