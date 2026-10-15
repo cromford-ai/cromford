@@ -1,0 +1,15 @@
+# catalog/ci-test-value/infra-patterns.tsv — rule I3.pattern of the CI test value
+# report (bin/lib/ci-test-value/rules.d/10-infra.sh). A failed unit whose log
+# excerpt matches a row is infra: the runner or the network failed, not the test.
+# Format: <POSIX ERE>\t<why>, one row per line, matched with LC_ALL=C grep -E,
+# first match wins in file order. A line that starts with # is a comment. A row
+# with a bad ERE is skipped. Match an error the tool prints, never a word a test
+# assertion can print: "rate limit" alone also matches a FAIL line that expects it.
+catalog/lanes\.json: No such file	catalog/lanes.json was not built on the runner
+ci-durations.*(missing|not found)	the CI durations file was missing on the runner
+curl: \((6|7|28|35)\)	curl could not reach the host (DNS, connect, timeout or TLS)
+API rate limit exceeded	the GitHub API rate limit was spent
+No space left on device	the runner disk was full
+Could not resolve host	DNS failed on the runner
+runner has received a shutdown signal	the runner was shut down
+::error title=CI infra	a CI infra step reported an error (bin/ci-retry.sh, bin/ci-apt-update.sh)

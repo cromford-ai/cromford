@@ -1,0 +1,5 @@
+2026-10-14T08:00:00.0000000Z ##[group]Run bin/test-trace-safety.sh --gate --shard 2/4
+2026-10-14T08:00:00.0000001Z ##[endgroup]
+2026-10-14T08:00:03.0000000Z --- tests/retry-fixture-test.sh rc=1 3s
+2026-10-14T08:00:03.0000001Z FAIL: retry fixture saw a stale row
+2026-10-14T08:00:04.0000000Z ##[error]Process completed with exit code 1.

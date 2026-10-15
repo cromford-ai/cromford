@@ -160,6 +160,11 @@ run_cli() { # run_cli <case> <fixture dir> [env NAME=V ...] -- [cli args...]
     "$CLI" "$@" > "$T/$c.out" 2> "$T/$c.err" || RC=$?
 }
 gets() { grep -c -v -e ' rate_limit$' "$1" 2>/dev/null || true; } # REST GETs that are not the budget read
+# The rules (rules.d/20-flake.sh, 50-main-flake.sh) read GitHub in the rule
+# subshell. Each such read is one line of <out>/.rules-scratch/<runid>/reads,
+# and coverage.gh_reads does not count it, so a driver-read check subtracts it.
+rule_reads() { cat "$1"/.rules-scratch/*/reads 2>/dev/null | grep -c . || true; }
+driver_gets() { echo $(( $(gets "$1") - $(rule_reads "$2") )); } # driver_gets <shim log> <out>
 data_rows() { grep -c -v '^#' "$1" 2>/dev/null || true; }
 
 # ── AT-3: the parser ────────────────────────────────────────────────────────
@@ -315,7 +320,7 @@ check "AT-OUT one row per fixture failure, unit/rc/run_url from the fixture, unk
 check "AT-OUT the job_url column is the job's html_url" "$U/9100002/job/7100021" "$(grep -v '^#' "$OCC" | sed -n 4p | cut -f14)"
 grep -v '^#' "$OCC" | LC_ALL=C sort -c -t"$TAB" -k1,1n -k2,2n -k3,3n -k8,8 && ok "AT-OUT rows are sorted" || bad "AT-OUT rows are not sorted"
 check "AT-OUT summary line" \
-  "ctv: occurrences=5 red_runs=3 read=3 unread=0 gh_reads=$(gets "$T/ro.shim") incomplete=false report=$OUT/2026-10-14/ci-test-value.json" \
+  "ctv: occurrences=5 red_runs=3 read=3 unread=0 gh_reads=$(driver_gets "$T/ro.shim" "$OUT") incomplete=false report=$OUT/2026-10-14/ci-test-value.json" \
   "$(cat "$T/ro.out")"
 EX="$OUT/cache/excerpt"
 grep -q 'FAIL: beta row count 3 != 4' "$EX/7100011-1.txt" && ok "AT-OUT the beta excerpt holds its failure" || bad "AT-OUT beta excerpt: $(cat "$EX/7100011-1.txt" 2>&1)"
@@ -330,11 +335,11 @@ jqv() { jq -r "$1" "$J" 2>/dev/null; }
 check "AT-RT totals.occurrences equals the data rows" "$(data_rows "$OCC")" "$(jqv .totals.occurrences)"
 check "AT-RT rules[U1.undecided] equals the data rows" "$(data_rows "$OCC")" "$(jqv '.rules["U1.undecided"]')"
 check "AT-RT totals.by_class.unknown" 5 "$(jqv .totals.by_class.unknown)"
-check "AT-RT coverage.gh_reads equals the shim's non-rate_limit GETs" "$(gets "$T/ro.shim")" "$(jqv .coverage.gh_reads)"
+check "AT-RT coverage.gh_reads equals the shim's non-rate_limit GETs minus the rule reads" "$(driver_gets "$T/ro.shim" "$OUT")" "$(jqv .coverage.gh_reads)"
 check "AT-RT coverage counts" "16 3 3 0 false 0 " "$(jqv '.coverage|"\(.runs_listed) \(.red_runs) \(.red_runs_read) \(.unread) \(.incomplete) \(.days_unlisted) \(.stop)"')"
 check "AT-RT window, repo, generated_at" "2026-09-15 2026-10-14 30 example-org/cromford 2026-10-14T12:00:00Z" \
   "$(jqv '"\(.window.from) \(.window.to) \(.window.days) \(.repo) \(.generated_at)"')"
-check "AT-RT 30 days list in 60 reads, 3 jobs reads, 4 log reads" 67 "$(gets "$T/ro.shim")"
+check "AT-RT 30 days list in 60 reads, 3 jobs reads, 4 log reads" 67 "$(driver_gets "$T/ro.shim" "$OUT")"
 
 # ── AT-5c: a second run reads only what can still change ───────────────────
 cp "$OCC" "$T/occ.first"
@@ -343,7 +348,7 @@ check "AT-5c the second run is rc 0" 0 "$RC"
 check "AT-5c the second run re-reads only today's listing" \
   "GET repos/example-org/cromford/actions/workflows/harness-ci.yml/runs?created=2026-10-14&per_page=1
 GET repos/example-org/cromford/actions/workflows/harness-ci.yml/runs?created=2026-10-14&status=failure&per_page=100&page=1" \
-  "$(grep -v ' rate_limit$' "$T/ro2.shim")"
+  "$(awk 'NR == FNR { r["GET " $0] = 1; next } !($0 in r) && $0 !~ / rate_limit$/' <(cat "$OUT"/.rules-scratch/*/reads 2>/dev/null) "$T/ro2.shim")"
 cmp -s "$T/occ.first" "$OCC" && ok "AT-5c the cached run gives the same rows" || bad "AT-5c rows differ: $(diff "$T/occ.first" "$OCC")"
 [ -e "$OUT/cache/list/2026-10-14-all.json" ] && bad "AT-5c today's listing was cached" || ok "AT-5c today's listing is not cached"
 

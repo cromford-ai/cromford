@@ -1,0 +1,2 @@
+tests/ci-test-value-infra-flake.bh-6618-test.sh	bin/fixture-reach.sh
+tests/ci-test-value.bh-6618-test.sh	*

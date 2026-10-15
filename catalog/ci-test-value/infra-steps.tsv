@@ -1,0 +1,14 @@
+# catalog/ci-test-value/infra-steps.tsv — rule I2.step of the CI test value report
+# (bin/lib/ci-test-value/rules.d/10-infra.sh). A failed job whose first failed
+# step name matches a row is infra: the step sets up the runner, it runs no test.
+# Format: <POSIX ERE>\t<why>, one row per line, first match wins in file order.
+# A line that starts with # is a comment. A row with a bad ERE is skipped.
+# tests/ci-test-value-infra-flake.bh-6618-test.sh (CAT) refuses a row that
+# matches a test step: run the traced corpus, trace shard, worker-jobs unit
+# tests, console-ui unit tests, fan-in.
+^Set up job$	the runner failed to set up the job
+^(I|i)nstall 	a tool install step failed
+^"?infra: 	a step marked infra: failed
+(C|c)heckout	the checkout step failed
+^(Run actions/)?(D|d)ownload	an artifact download step failed
+^(Run actions/)?(U|u)pload	an artifact upload step failed

@@ -1,0 +1,6 @@
+2026-10-14T08:00:00.0000000Z ##[group]Run bin/test-trace-safety.sh --gate --shard 1/4
+2026-10-14T08:00:00.0000001Z ##[endgroup]
+2026-10-14T08:00:02.0000000Z --- tests/lanes-fixture-test.sh rc=1 2s
+2026-10-14T08:00:02.0000001Z cat: catalog/lanes.json: No such file or directory
+2026-10-14T08:00:02.0000002Z FAIL: lanes fixture read no lane rows
+2026-10-14T08:00:03.0000000Z ##[error]Process completed with exit code 1.

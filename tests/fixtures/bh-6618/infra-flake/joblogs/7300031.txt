@@ -1,0 +1,5 @@
+2026-10-14T08:00:00.0000000Z ##[group]Run bin/test-trace-safety.sh --gate --shard 3/4
+2026-10-14T08:00:00.0000001Z ##[endgroup]
+2026-10-14T08:00:01.0000000Z --- tests/ratelimit-fixture-test.sh rc=1 1s
+2026-10-14T08:00:01.0000001Z FAIL: expected rate limit message, got none
+2026-10-14T08:00:02.0000000Z ##[error]Process completed with exit code 1.
