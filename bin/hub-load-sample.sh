@@ -22,6 +22,8 @@
 #      yesterday's) is over settings row hub_load.max_runnable (default 8):
 #      one bin/lane-alert.sh --log-only line per UTC hour
 #      (latch: state/hub-load/alert-hour).
+#   7. After the summary line: bin/hub-load-baseline.sh, which posts the 24 h
+#      baseline once (its own log, logs/hub-load-baseline.log).
 #
 # Summary line (logs/hub-load-sample.log), exit 0 on every path:
 #   <ts> runnable= steal= forks_s= samples=<ok>/<want> push=<ok|failed|
@@ -241,4 +243,5 @@ else
 fi
 
 summary "runnable=$RUNNABLE steal=$ST forks_s=$FORKS samples=$OK/$SAMPLES push=$PUSH pruned=$PRUNED alert=$ALERT keep_days=$KEEP($KEEP_SRC) max_runnable=$MAXR($MAXR_SRC)"
+[ -x "$SELF/hub-load-baseline.sh" ] && "$SELF/hub-load-baseline.sh" >/dev/null 2>&1
 exit 0
