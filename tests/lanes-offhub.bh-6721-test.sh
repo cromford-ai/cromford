@@ -11,12 +11,16 @@
 #   O3     every C8 lane that is not moved: no fragment names
 #          lane_placement.<lane>, and the note has exactly one
 #          "- `<lane>`: stays on the hub: <reason>" line with a reason.
+#          A dispatch-ready lane (pl_dispatch and both manifests, BH-6894)
+#          may carry a lane_placement.<lane> row whose value is `hub`.
 #   T      the note's table has one row per C8 lane, and its moved/stays cell
 #          agrees with the fragments.
 #   M-a    scratch: a fly fragment for dequeue-watch turns O1/O2 and O3 red
 #   M-b    scratch: the note without its metrics-collect line turns O3 red
 #   M-c    scratch: a lane_placement.archie-fm.hub_only row is not a move
 #   M-d    scratch: fly fragment + pl_dispatch call + both manifests: O1/O2 green
+#   M-e    scratch: a hub row for a dispatch-ready dequeue-watch: O3 green;
+#          a second row for it with another value: O3 red
 #
 # Run from anywhere: tests/lanes-offhub.bh-6721-test.sh (exit 0 = pass)
 set -uo pipefail
@@ -66,6 +70,13 @@ check_o12() {
   return "$rc"
 }
 
+# dispatch_ready <root> <lane> — rc 0 when the lane calls pl_dispatch and has
+# both manifests (BH-6894).
+dispatch_ready() {
+  calls_pl_dispatch "$1" "$2" && [ -f "$1/catalog/lane-run-inputs.d/$2.ro" ] \
+    && [ -f "$1/catalog/lane-run-inputs.d/$2.rw" ]
+}
+
 # the_note <root> — the one BH-6721 note, or rc 1.
 the_note() {
   local -a n=("$1"/docs/notes/*-BH-6721-lanes-offhub.md)
@@ -80,7 +91,15 @@ check_o3() {
   n=$(the_note "$r") || { echo "    no docs/notes/*-BH-6721-lanes-offhub.md"; return 1; }
   for l in $C8_LANES; do
     [[ $moved == *" $l "* ]] && continue
-    if cat "$r"/worker/jobs/schema.d/*.sql 2>/dev/null \
+    if dispatch_ready "$r" "$l"; then
+      # BH-6894: a lane on pl_dispatch with both manifests may seed its
+      # placement, and the value must be hub.
+      if cat "$r"/worker/jobs/schema.d/*.sql 2>/dev/null \
+          | grep -E "'lane_placement\.$(re_lane "$l")'[[:space:]]*," \
+          | grep -vqE "'lane_placement\.$(re_lane "$l")'[[:space:]]*,[[:space:]]*'hub'"; then
+        echo "    $l: stays, but a schema fragment sets lane_placement.$l to a value other than hub"; rc=1
+      fi
+    elif cat "$r"/worker/jobs/schema.d/*.sql 2>/dev/null \
         | grep -qE "lane_placement\.$(re_lane "$l")([^[:alnum:]_-]|$)"; then
       echo "    $l: stays, but a schema fragment names lane_placement.$l"; rc=1
     fi
@@ -114,13 +133,17 @@ check_o3 "$DIR" && ok "O3: each staying lane has no placement fragment and one r
 check_t "$DIR" && ok "T: the note's table has one row per C8 lane" || bad "T on the real tree"
 
 # mk <name> — sets S to a scratch root with the fragments, the note, the
-# catalog and the dequeue-watch closure.
+# catalog and the dequeue-watch closure. The pr-url-reconcile closure and the
+# committed manifests ride too: the real fragments seed its placement hub,
+# which O3 allows only for a dispatch-ready lane (BH-6894).
 mk() {
   local f; S="$T/$1"; local s="$S"
   mkdir -p "$s/worker/jobs" "$s/docs/notes" "$s/catalog"
   cp -r "$DIR/worker/jobs/schema.d" "$s/worker/jobs/"
   for f in "$DIR"/docs/notes/*-BH-6721-lanes-offhub.md; do [ -f "$f" ] && cp "$f" "$s/docs/notes/"; done
   ( cd "$DIR" && scratch_install_closure bin/dequeue-watch.sh "$s" ) >/dev/null || bad "setup: closure of bin/dequeue-watch.sh"
+  ( cd "$DIR" && scratch_install_closure bin/pr-url-reconcile.sh "$s" ) >/dev/null || bad "setup: closure of bin/pr-url-reconcile.sh"
+  [ -d "$DIR/catalog/lane-run-inputs.d" ] && cp -r "$DIR/catalog/lane-run-inputs.d" "$s/catalog/"
 }
 fly_row() { printf "INSERT OR IGNORE INTO settings (key, value, description, actor, updated_at) VALUES\n  ('%s','%s','fixture BH-6721','seed','2099-01-01T00:00:00Z');\n" "$2" "$3" \
   > "$1/worker/jobs/schema.d/209901010000-bh-6721-fixture.sql"; }
@@ -156,6 +179,19 @@ printf 'state/$p.fixture\n' > "$S/catalog/lane-run-inputs.d/dequeue-watch.rw"
 check_o12 "$S" && ok "M-d: O1/O2 green for a moved lane on pl_dispatch with manifests" || bad "M-d: O1/O2 red: $(check_o12 "$S")"
 rm "$S/catalog/lane-run-inputs.d/dequeue-watch.rw"
 check_o12 "$S" && bad "M-d: O1/O2 green without the .rw manifest" || ok "M-d: O1/O2 red without the .rw manifest"
+
+echo "M-e: a hub row for a dispatch-ready lane"
+mk me; fly_row "$S" lane_placement.dequeue-watch hub
+printf 'pl_dispatch dequeue-watch "$@"\n' >> "$S/bin/dequeue-watch.sh"
+mkdir -p "$S/catalog/lane-run-inputs.d"
+printf 'state/$p.fixture\n' > "$S/catalog/lane-run-inputs.d/dequeue-watch.ro"
+printf 'state/$p.fixture\n' > "$S/catalog/lane-run-inputs.d/dequeue-watch.rw"
+O=$(check_o3 "$S") && ok "M-e: O3 green for a hub row on a dispatch-ready lane" || bad "M-e: O3 red: $O"
+printf "INSERT OR IGNORE INTO settings (key, value, description, actor, updated_at) VALUES\n  ('lane_placement.dequeue-watch','off','fixture BH-6894','seed','2099-01-01T00:00:00Z');\n" \
+  > "$S/worker/jobs/schema.d/209901010001-bh-6894-fixture.sql"
+O=$(check_o3 "$S") && bad "M-e: O3 green with a non-hub row" \
+  || { grep -q 'dequeue-watch: stays, but a schema fragment sets lane_placement.dequeue-watch to a value other than hub' <<<"$O" \
+       && ok "M-e: O3 red on a non-hub row" || bad "M-e: O3 red for another reason: $O"; }
 
 echo "PASS=$PASS FAIL=$FAIL"
 [ "$FAIL" = 0 ]

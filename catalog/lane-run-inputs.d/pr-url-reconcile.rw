@@ -1,0 +1,34 @@
+# catalog/lane-run-inputs.d/pr-url-reconcile.rw — the files one
+# `bin/pr-url-reconcile.sh --project $p` run writes. A write-back may carry
+# these only. The ro snapshot is these plus pr-url-reconcile.ro. The inventory
+# is in docs/notes/2026-10-15-BH-6894-pr-url-reconcile-per-project.md.
+#
+# NOT CARRIED. A project run also writes these. They block a later flip of
+# pr-url-reconcile to Fly, and the flip ticket must solve them:
+#   logs/ALERTS.log (appends: alert() bin/pr-url-reconcile.sh:346, valert()
+#     :408; the fix is the jobs-API alert lines of #6889)
+#   /root/repos/$p (slug_of reads its origin :323 when fleet.conf has no
+#     repo; the restack arm's mc_restack, bin/lib/mc/rebase.sh, rebases and
+#     pushes in it and writes the conductor's logs)
+#   logs/pr-url-reconcile.stderr.log (:256, gh's stderr; machine-local)
+#   logs/gh-rate.log (bin/lib/gh-limit-logger.sh:123; machine-local)
+# Secrets, locks and machine-local caches are never carried: env/*, locks/*,
+# state/lane-gate/*. logs/pr-url-reconcile.log rides back as the lane log
+# (.lri/log-append). No @row: the lane writes no fleet-wide TSV.
+#
+# The record files a run writes, under the three record globs below:
+#   RESULT                              relink tmp+mv :364
+#   pipeline.log                        _gpc_rung_create appends :671
+#   .pr-url-reconciled                  relink :365, the merged arm :827
+#   .pr-url-reconcile-alerted           alert() :347 (default marker)
+#   .pr-url-reconcile-mislinked         :894
+#   .pr-url-reconcile-mislink-alerted   alert() :347 via :888
+#   .pr-url-reconcile-restack-tries     restack_try :517, cleared :682
+#   .pr-url-reconcile-restack-gaveup    alert() :347 via :522
+#   .pr-url-reconcile-restacked         restack_orphan :615, :630
+#   .verdict-handoff-done               verdict_handoff :473
+@token <record file> RESULT pipeline.log .pr-url-reconciled .pr-url-reconcile-alerted .pr-url-reconcile-mislinked .pr-url-reconcile-mislink-alerted .pr-url-reconcile-restack-tries .pr-url-reconcile-restack-gaveup .pr-url-reconcile-restacked .verdict-handoff-done
+# bin/pr-url-reconcile.sh:693-704 (records), :706-712 (the project filter)
+builds/$p-<KEY>-*/<record file>
+builds/pool-$p-<KEY>-*/<record file>
+builds/fly-$p-<KEY>-*/<record file>

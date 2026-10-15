@@ -3,4 +3,7 @@
 # cap writes PR_CREATE_FAILED, and the sweep below only walks records whose line 1
 # says PR_CREATED — so the PR that WAS opened is invisible. This runs three
 # minutes ahead of each sweep tick, so a relinked record is swept on the next one.
-3,13,23,33,43,53 * * * * /root/harness/bin/hub-lease.sh check && /root/harness/bin/pr-url-reconcile.sh >> /root/harness/logs/pr-url-reconcile.log 2>&1
+# BH-6894: --dispatch starts one `pr-url-reconcile.sh --project <p>` per project
+# (bin/lib/project-lanes.sh), each at a stable offset inside
+# PR_URL_RECONCILE_DISPATCH_SPREAD_SECS (120 s, ahead of the :06 sweep).
+3,13,23,33,43,53 * * * * /root/harness/bin/hub-lease.sh check && /root/harness/bin/pr-url-reconcile.sh --dispatch >> /root/harness/logs/pr-url-reconcile.log 2>&1

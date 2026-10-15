@@ -222,3 +222,19 @@ which is what `bin/fly-pool.sh`'s url-shape gate writes for a url-less claim fro
 an older pool image — and re-links it on exactly the same terms, keeping the
 original as `RECONCILED_FROM:`. See
 [pr-create-failed-owned.md](pr-create-failed-owned.md).
+
+**Per project (BH-6894).** The cron line runs `bin/pr-url-reconcile.sh
+--dispatch`. It calls `pl_dispatch` (`bin/lib/project-lanes.sh`), which starts
+one `--project <p>` run per project at a stable offset inside
+`PR_URL_RECONCILE_DISPATCH_SPREAD_SECS` (default 120 s), or enqueues a
+`lane_runs` row per project when `lane_placement.pr-url-reconcile` is `fly`
+(seeded `hub`). A `--project <p>` run walks only `<p>`'s records, holds
+`locks/pr-url-reconcile-<p>.lock` plus a shared `locks/pr-url-reconcile.lock`,
+and ends its summary line with ` project=<p>`. With no flag the run is the
+fleet walk, as before. The run-inputs manifests are
+`catalog/lane-run-inputs.d/pr-url-reconcile.ro` and `.rw`. Drive it with
+`HARNESS_TEST_SANDBOX=1 bash tests/pr-url-reconcile-per-project.bh-6894-test.sh`;
+on the hub, `grep 'pr-url-reconcile dispatch' logs/pr-url-reconcile.log` shows
+one dispatch line per tick and `grep 'project=' logs/pr-url-reconcile.log` one
+summary line per project. See
+[the BH-6894 note](../notes/2026-10-15-BH-6894-pr-url-reconcile-per-project.md).

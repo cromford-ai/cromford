@@ -1,0 +1,20 @@
+# catalog/lane-run-inputs.d/pr-url-reconcile.ro — what one
+# `bin/pr-url-reconcile.sh --project $p` run reads and never writes back.
+# The snapshot is pr-url-reconcile.rw plus these lines. The file:line after
+# each entry is where the run reads it.
+#
+# The record files read only:
+#   review.md                     verdict_of :335
+#   ticket-meta.json              restack_orphan :652
+#   pr-body.md                    restack_orphan :657, :667
+#   .blocked-resolver-abandoned   the walk :741
+#   .blocked-resolver-superseded  the walk :754
+# A token name of its own: a second <record file> would replace the .rw one.
+@token <read file> review.md ticket-meta.json pr-body.md .blocked-resolver-abandoned .blocked-resolver-superseded
+builds/$p-<KEY>-*/<read file>
+builds/pool-$p-<KEY>-*/<read file>
+builds/fly-$p-<KEY>-*/<read file>
+# bin/pr-url-reconcile.sh:179, :268, :321 (bin/fleet-conf.sh)
+fleet.conf
+# bin/pr-url-reconcile.sh:401 (flags/merge-conductor-actions), bin/lib/lane-gate.sh
+flags/*

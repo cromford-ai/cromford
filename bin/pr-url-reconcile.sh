@@ -95,8 +95,36 @@
 #     bin/lib/lane-switch.sh; the flag file decides only when neither row exists.
 #   PR_URL_RECONCILE_MAX                              records asked about per tick (50)
 #   PR_URL_RECONCILE_DEADLINE_SECS                    wall-clock budget per tick (240)
+#   PR_URL_RECONCILE_DISPATCH_SPREAD_SECS             --dispatch start window (120)
 # Both caps report what they did NOT get to (`unwalked=`), never drop it silently.
+#
+# RUN MODES (BH-6894, docs/notes/2026-10-15-BH-6894-pr-url-reconcile-per-project.md):
+#   (no flag)      the fleet run: every project's records, one process, an
+#                  exclusive locks/pr-url-reconcile.lock. Today's run.
+#   --project <p>  only <p>'s records (builds/<p>-*, pool-<p>-*, fly-<p>-*).
+#                  Lock locks/pr-url-reconcile-<p>.lock (the runner's, when
+#                  bin/project-lane-run.sh started it), plus a SHARED lock on
+#                  locks/pr-url-reconcile.lock, so a fleet run and a project
+#                  run never overlap. The caps count per project run. The
+#                  summary line ends ` project=<p>`.
+#   --dispatch     pl_dispatch (bin/lib/project-lanes.sh): one `--project <p>`
+#                  run per project, on the hub or as lane_runs rows when
+#                  lane_placement.pr-url-reconcile is fly. Takes no lock.
 set -uo pipefail
+# BH-6894: argv first, before anything is sourced.
+PUR_DISPATCH=""; PUR_PROJECT=""; PUR_PROJECT_SET=""
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --dispatch) PUR_DISPATCH=1; shift ;;
+    --project) PUR_PROJECT="${2:-}"; PUR_PROJECT_SET=1; shift 2 || shift ;;
+    --project=*) PUR_PROJECT="${1#--project=}"; PUR_PROJECT_SET=1; shift ;;
+    *) shift ;;
+  esac
+done
+if [ -n "$PUR_DISPATCH" ] && [ -n "$PUR_PROJECT_SET" ]; then
+  echo "pr-url-reconcile: --dispatch and --project are exclusive" >&2
+  exit 2
+fi
 HARNESS="${HARNESS:-/root/harness}"
 # The env dir is RESOLVED, never spelled (tests/env-path-test.sh): on a pool
 # machine it is a tmpfs, on a box /etc/harness/env, and $HARNESS/env is a compat
@@ -133,15 +161,69 @@ mkdir -p "$HARNESS/logs" "$HARNESS/locks" 2>/dev/null
 lane_switch pr-url-reconcile-off && exit 0
 [ "${PR_URL_RECONCILE:-1}" = 0 ] && exit 0
 
-# DEDUPE, NEVER A QUEUE: if a tick is still running, this one has nothing to add.
-exec 9>"$HARNESS/locks/pr-url-reconcile.lock"
-flock -n 9 || exit 0
-
 # ONE clock read for the whole tick.
 NOW=$(date -u +%s)
 NOW_ISO=$(date -u -d "@$NOW" '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null || date -u '+%Y-%m-%dT%H:%M:%SZ')
 STAMP() { date -u -d "@$NOW" '+%Y-%m-%d %H:%M:%SZ' 2>/dev/null || printf '%s' "$NOW_ISO"; }
 say() { printf '%s [pr-url-reconcile] %s\n' "$(STAMP)" "$*" >> "$LOG"; }
+
+# >>> run mode (BH-6894)
+# The per-project runner (pl_dispatch, pl_lock_take) needs $H.
+H="$HARNESS"
+if [ -r "$HARNESS/bin/lib/project-lanes.sh" ]; then # shellcheck source=bin/lib/project-lanes.sh
+  . "$HARNESS/bin/lib/project-lanes.sh"; fi
+PUR_MODE=fleet
+if [ -n "$PUR_PROJECT_SET" ]; then
+  case "$PUR_PROJECT" in
+    ''|.*|*[!A-Za-z0-9._-]*) PUR_NOTP=1 ;;
+    *) case $'\n'"$("$HARNESS/bin/fleet-conf.sh" --projects 2>/dev/null)"$'\n' in
+         *$'\n'"$PUR_PROJECT"$'\n'*) PUR_NOTP=0 ;;
+         *) PUR_NOTP=1 ;;
+       esac ;;
+  esac
+  if [ "$PUR_NOTP" = 1 ]; then
+    say "--project '$PUR_PROJECT' is not a project in fleet.conf — no run"
+    exit 2
+  fi
+  # bin/project-lane-run.sh already holds the project lock on PL_LOCK_FD. A
+  # run started by hand takes the same lock, so the two never overlap.
+  if [ "${PL_LANE:-}" = pr-url-reconcile ] && [ "${PL_PROJECT:-}" = "$PUR_PROJECT" ] \
+     && [ -n "${PL_LOCK_FD:-}" ] && { : >&"$PL_LOCK_FD"; } 2>/dev/null; then
+    :
+  elif command -v pl_lock_take >/dev/null 2>&1; then
+    pl_lock_take pr-url-reconcile "$PUR_PROJECT" 9 || {
+      say "a run of $PUR_PROJECT is still live (locks/pr-url-reconcile-$PUR_PROJECT.lock held) — exiting"; exit 0; }
+  else
+    exec 9>"$HARNESS/locks/pr-url-reconcile-$PUR_PROJECT.lock"
+    flock -n 9 || {
+      say "a run of $PUR_PROJECT is still live (locks/pr-url-reconcile-$PUR_PROJECT.lock held) — exiting"; exit 0; }
+  fi
+  # SHARED on fd 8, never fd 9: fd 9 is the runner's project lock, and
+  # `exec 9>` would release it. A fleet run holds this file exclusive.
+  exec 8>"$HARNESS/locks/pr-url-reconcile.lock"
+  flock -s -n 8 || {
+    say "project $PUR_PROJECT: a fleet run holds locks/pr-url-reconcile.lock — exiting"; exit 0; }
+  PUR_MODE=project
+elif [ -n "$PUR_DISPATCH" ]; then
+  PUR_SPREAD="${PR_URL_RECONCILE_DISPATCH_SPREAD_SECS:-120}"
+  case "$PUR_SPREAD" in
+    ''|*[!0-9]*) say "PR_URL_RECONCILE_DISPATCH_SPREAD_SECS='$PUR_SPREAD' is not a whole number — using 120"
+       PUR_SPREAD=120 ;;
+  esac
+  if command -v pl_dispatch >/dev/null 2>&1; then
+    # No lock here: a dispatcher holding the fleet lock would make every
+    # project run that starts at offset 0 skip.
+    say "$(pl_dispatch pr-url-reconcile "$PUR_SPREAD" "$HARNESS/bin/pr-url-reconcile.sh" --project)"
+    exit 0
+  fi
+  say "project-lanes.sh not loaded — this tick walks every project in one process"
+fi
+if [ "$PUR_MODE" = fleet ]; then
+  # DEDUPE, NEVER A QUEUE: if a tick is still running, this one has nothing to add.
+  exec 9>"$HARNESS/locks/pr-url-reconcile.lock"
+  flock -n 9 || exit 0
+fi
+# <<< run mode
 
 # shellcheck source=bin/lib/gh-app-auth.sh
 [ -r "$HARNESS/bin/lib/gh-app-auth.sh" ] && . "$HARNESS/bin/lib/gh-app-auth.sh"   # per-repo App token (#425)
@@ -605,8 +687,29 @@ restack_orphan() { # restack_orphan <record dir> <project> <key> <slug> <branch>
 
 WALKED=0; LINKED=0; ALERTED=0; SKIPPED=0; UNWALKED=0
 
+# records — the record dirs to walk, newest first. A project run lists only
+# its own three prefixes; an empty list walks nothing (a bare `ls -1dt` would
+# list the cwd).
+records() {
+  local -a ds=()
+  if [ "$PUR_MODE" = project ]; then
+    shopt -s nullglob
+    ds=("$HARNESS"/builds/{"$PUR_PROJECT"-,pool-"$PUR_PROJECT"-,fly-"$PUR_PROJECT"-}*/)
+    shopt -u nullglob
+    [ "${#ds[@]}" -gt 0 ] || return 0
+    ls -1dt "${ds[@]}" 2>/dev/null
+  else
+    ls -1dt "$HARNESS"/builds/*/ 2>/dev/null
+  fi
+}
+
 while IFS= read -r D; do
   D="${D%/}"
+  # A project run walks only records that bucket to its project: `pa-x-…`
+  # matches the `pa-` glob, but project_of (longest name first) says pa-x.
+  if [ "$PUR_MODE" = project ] && [ "$(project_of "$(basename "$D")")" != "$PUR_PROJECT" ]; then
+    continue
+  fi
   [ -f "$D/RESULT" ] || continue
   L1=$(head -n 1 "$D/RESULT")
   # ONLY a failed create, or a record THIS LANE relinked on an earlier tick that
@@ -798,9 +901,9 @@ while IFS= read -r D; do
   LINKED=$((LINKED+1))
   say "$BD: linked $BRANCH to $URL (line 1 rewritten so the sweep can see it)"
   verdict_handoff "$D" "$PROJ" "$KEY" "$BRANCH" "$URL"
-done < <(ls -1dt "$HARNESS"/builds/*/ 2>/dev/null)
+done < <(records)
 
-say "tick: walked=$WALKED links=$LINKED alerts=$ALERTED skipped=$SKIPPED unwalked=$UNWALKED cap=$MAX deadline=${DEADLINE}s"
+say "tick: walked=$WALKED links=$LINKED alerts=$ALERTED skipped=$SKIPPED unwalked=$UNWALKED cap=$MAX deadline=${DEADLINE}s${PUR_PROJECT_SET:+ project=$PUR_PROJECT}"
 # BH-1295: this lane's reads go through gh_pr_rest_read (bin/lib/gh-pr-create.sh),
 # a separate contract from gh_rest with no ETag cache of its own — this lane
 # sources neither gh-rest.sh nor gh-rest-etag.sh, so the guard below is a

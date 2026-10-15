@@ -1,0 +1,10 @@
+{
+  "env": "PR_URL_RECONCILE_DISPATCH_SPREAD_SECS",
+  "type": "int",
+  "default": 120,
+  "min": 0,
+  "max": 540,
+  "unit": "seconds",
+  "zero_means": null,
+  "note": "BH-6894: the cron line runs pr-url-reconcile.sh --dispatch, which starts one run per project (bin/lib/project-lanes.sh). Each project starts at a stable offset inside this window. 120, not 540: the lane runs at :03 and its links must be ready for the merge sweep at :06. 0 starts every project run at once. A non-number falls back to 120 with one log line."
+}
