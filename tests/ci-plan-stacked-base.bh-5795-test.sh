@@ -119,8 +119,9 @@ plan workflow_dispatch TI_BASE=
 { [ "$RC" -eq 0 ] && [ "$(out mode)" = full ]; } && ok || bad "C5: a plain dispatch is the full corpus (rc=$RC mode=$(out mode)) [$OUT]"
 
 # ── C6. a shard re-plans with --expect-n and agrees on a stacked base
-plan pull_request CI_BASE_REF=ticket/parent; N1=$(out n)
-PLAN_ARGS="--expect-n ${N1:-x}" plan pull_request CI_BASE_REF=ticket/parent
+# BH-6801: the shard reads the plan job's merge-base pin, so both runs pass it.
+plan pull_request CI_BASE_REF=ticket/parent CI_PLAN_MAIN_BASE_FILE="$T/main-base.txt"; N1=$(out n)
+PLAN_ARGS="--expect-n ${N1:-x}" plan pull_request CI_BASE_REF=ticket/parent CI_PLAN_MAIN_BASE_FILE="$T/main-base.txt"
 [ "$RC" -eq 0 ] && ok || bad "C6: the shard's re-plan must agree with the plan job (n=$N1, rc=$RC) [$OUT]"
 
 # ── Z1. 0 suites on a PR that changes bin/: an error that names the path

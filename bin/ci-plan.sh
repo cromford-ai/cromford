@@ -84,6 +84,14 @@
 #                             yet either, and the queue never tests this head
 #                             as it stands. No merge-base = no base = the full
 #                             corpus, said in the reason.
+#                             BH-6801: the plan job writes the merge-base it
+#                             used to CI_PLAN_MAIN_BASE_FILE (`main_base=<sha
+#                             or ->`, `base_ref=<CI_BASE_REF or ->`) and a
+#                             shard (--expect-n) reads it instead of reading
+#                             origin/main, which can move between the jobs.
+#                             A shard with no pin, a bad sha or another base
+#                             ref is rc 1; a pin the plan job cannot write is
+#                             rc 2. The impact dispatch below does the same.
 #   workflow_dispatch with    BH-5795: the checked-out head's impact set
 #     CI_DISPATCH_SCOPE=impact against main's merge-base, mode=selected. This
 #                             is how a DIRTY head (GitHub runs no pull_request
@@ -168,6 +176,8 @@
 # --expect-n <n>: the shard jobs re-plan (the list is cheaper to recompute than
 # to ship) and pass the plan job's n; a disagreement is rc 1, because two jobs
 # that split the corpus differently can each be green and still drop suites.
+# The one input a shard does NOT recompute is main's merge-base on a stacked PR
+# or an impact dispatch: it reads CI_PLAN_MAIN_BASE_FILE (BH-6801).
 #
 # Inputs (environment): CI_EVENT (github.event_name) and the TI_* variables
 # bin/test-impact.sh ci-select reads (TI_BASE, TI_PR_TITLE, TI_PR_LABELS,
@@ -516,6 +526,40 @@ main_fork() {
   git -C "$ROOT" merge-base "${CI_PLAN_MAIN_REF:-origin/main}" HEAD 2>/dev/null
 }
 
+# main_base — main's merge-base for a stacked PR or an impact dispatch, in MB
+# (BH-6801). The plan job (no --expect-n) reads it with main_fork and writes it
+# to CI_PLAN_MAIN_BASE_FILE (`main_base=<sha|->`, `base_ref=<ref|->`); a failed
+# write is rc 2. A shard (--expect-n) reads that file and never calls main_fork,
+# because origin/main can move between the two checkouts; no usable pin is rc 1.
+# rc 1 here = no merge-base (MB empty, the full corpus), the same answer on both.
+main_base() {
+  local f="${CI_PLAN_MAIN_BASE_FILE:-}" mb ref want="${CI_BASE_REF:-}"
+  if [ -z "$EXPECT" ]; then
+    MB=$(main_fork) || MB=""
+    [ -z "$f" ] || { printf 'main_base=%s\nbase_ref=%s\n' "${MB:--}" "${want:--}" > "$f"; } 2>/dev/null \
+      || { echo "ci-plan: cannot write the main merge-base pin $f" >&2; exit 2; }
+    [ -n "$MB" ]; return
+  fi
+  if [ -z "$f" ] || [ ! -r "$f" ] || ! mb=$(sed -n 's/^main_base=//p' "$f" | tail -1) \
+     || ! printf '%s\n' "$mb" | grep -qxE -- '-|[0-9a-f]{40}'; then
+    echo "ci-plan: this shard has no main merge-base from the plan job (${f:-CI_PLAN_MAIN_BASE_FILE unset}): a stacked PR's shard must not recompute it, because main can move between the plan job and the shards (BH-6801)" >&2
+    exit 1
+  fi
+  ref=$(sed -n 's/^base_ref=//p' "$f" | tail -1)
+  if [ "$ref" != "${want:--}" ]; then
+    echo "ci-plan: the plan job pinned main's merge-base for base '${ref:-<none>}', but this shard's base is '${want:--}' (BH-6801)" >&2
+    exit 1
+  fi
+  MB=""; [ "$mb" != - ] || return 1
+  if ! git -C "$ROOT" cat-file -e "$mb^{commit}" 2>/dev/null; then
+    echo "ci-plan: the plan job's main merge-base $mb is not a commit in this checkout (BH-6801)" >&2; exit 1
+  fi
+  if ! git -C "$ROOT" merge-base --is-ancestor "$mb" HEAD 2>/dev/null; then
+    echo "ci-plan: the plan job's main merge-base $mb is not an ancestor of HEAD (BH-6801)" >&2; exit 1
+  fi
+  MB="$mb"; PINNED=" (pinned by the plan job)"
+}
+
 # pr_select — a PR head's (or an impact dispatch's) ci-select, sets REASON.
 # A selection that comes back empty is rc 2 below; this only runs it.
 pr_select() {
@@ -527,7 +571,7 @@ pr_select() {
 }
 
 CORPUS=1; ESCALATION=-; BATCH=0; SPA=1; WORKER=1; BASENOTE=""; PRSEL=0; CBE_ADDED=""; ADDNOTE=""
-OWN_BASE=-; OWN_NOTE=""; INHERITED=""; WFNOTE=""; RLINE_REACH=""
+OWN_BASE=-; OWN_NOTE=""; INHERITED=""; WFNOTE=""; RLINE_REACH=""; MB=""; PINNED=""
 # The reuse outputs are written only for a caller that takes part in reuse (the
 # plan job sets CI_PLAN_REUSE=1, a shard CI_PLAN_REUSED_FILE); any other caller
 # keeps the output keys it had.
@@ -556,8 +600,8 @@ case "$EV" in
         MODE=selected; PRSEL=1
         # BH-5795: a stacked or feature-branch base is diffed against main.
         if [ -n "${CI_BASE_REF:-}" ] && [ "$CI_BASE_REF" != main ]; then
-          if MB=$(main_fork); then
-            TI_BASE="$MB"; BASENOTE="base $CI_BASE_REF is not main: impact against main's merge-base ${MB:0:8}"
+          if main_base; then
+            TI_BASE="$MB"; BASENOTE="base $CI_BASE_REF is not main: impact against main's merge-base ${MB:0:8}$PINNED"
           else
             TI_BASE=""; BASENOTE="base $CI_BASE_REF is not main and main's merge-base could not be read"
           fi
@@ -568,7 +612,7 @@ case "$EV" in
   dispatch-impact)
     # BH-5795: the head's own impact set, e.g. a DIRTY head GitHub will not test.
     MODE=selected; PRSEL=1
-    if MB=$(main_fork); then TI_BASE="$MB"; BASENOTE="dispatched on the head: impact against main's merge-base ${MB:0:8}"
+    if main_base; then TI_BASE="$MB"; BASENOTE="dispatched on the head: impact against main's merge-base ${MB:0:8}$PINNED"
     else TI_BASE=""; BASENOTE="dispatched on the head, and main's merge-base could not be read"; fi
     export TI_BASE
     pr_select ;;
