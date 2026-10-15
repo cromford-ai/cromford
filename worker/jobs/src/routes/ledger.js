@@ -5,12 +5,15 @@
 // VERBATIM — same SQL, same validation, same status codes, same response keys —
 // so this file changed where the code lives and nothing about what it answers.
 // Since then GET /api/ledger's list has gained the BH-2450 `before_key` cursor.
+// GET with a key now falls back to the archive store for listed kinds (BH-6780).
 // src/index.js holds the ordered table that decides which of these runs.
 
 import { json } from "../lib/http.js";
 import {
   str, jobId, isoPlusSeconds,
 } from "../lib/core.js";
+import { ledgerArchiveLookup } from "../lib/ledger-archive.js";
+import { claimArchiveGuard } from "../lib/ledger-archive-claim.js";
 
 export const routes = [
   // ── Ledgers (phase 2) ──────────────────────────────────────────────────
@@ -27,7 +30,12 @@ export const routes = [
       if (key !== null && key !== "") {
         const row = await env.DB.prepare("SELECT * FROM ledgers WHERE kind=?1 AND key=?2")
           .bind(kind, key).first();
-        if (!row) return json(404, { error: "not found" });
+        if (!row) {
+          const a = await ledgerArchiveLookup(env, kind, key);
+          if (a.status === 200) return json(200, { ledger: a.row, archived: true });
+          if (a.status === 503) return json(503, { error: a.error });
+          return json(404, { error: "not found" });
+        }
         return json(200, { ledger: row });
       }
       const lim = Math.min(Number(url.searchParams.get("limit")) || 200, 1000);
@@ -108,6 +116,8 @@ export const routes = [
       }
       const actor = body.actor ? String(body.actor).slice(0, 128) : null;
       const detail = body.detail ? String(body.detail).slice(0, 4000) : null;
+      const guard = await claimArchiveGuard(env, kind, key, t);
+      if (guard) return guard;
       const cutoff = isoPlusSeconds(t, -staleS);
       // ?1..?7 are fixed; the terminal list binds from ?8 on (≤ 15 binds total).
       const term = terminal.map((_, i) => `?${8 + i}`);
