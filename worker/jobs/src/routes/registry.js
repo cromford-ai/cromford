@@ -25,6 +25,7 @@
 // whitespace, and a trimmed value hides what the sender actually sent.
 
 import { d1Guarded, json } from "../lib/http.js";
+import { sqlIdent } from "../lib/sql-ident.js";
 
 export const SLUG_RE = /^[a-z0-9][a-z0-9-]{0,63}$/;
 export const HOST_RE = /^[a-z0-9][a-z0-9.-]{0,63}$/;
@@ -215,8 +216,9 @@ export async function readMeta(env) {
 export async function readAll(env) {
   const out = {};
   for (const [name, spec] of Object.entries(TABLES)) {
+    // sql-ident-ok: TABLES const (table, cols, order); MAX_ROWS + 1 is a number const
     const r = await env.DB.prepare(
-      `SELECT ${spec.cols.join(", ")} FROM ${spec.table} ORDER BY ${spec.order} LIMIT ${MAX_ROWS + 1}`
+      `SELECT ${spec.cols.map(sqlIdent).join(", ")} FROM ${sqlIdent(spec.table)} ORDER BY ${spec.order} LIMIT ${MAX_ROWS + 1}`
     ).all();
     out[name] = r.results || [];
   }
@@ -237,7 +239,8 @@ function chunkedInserts(env, table, cols, rows, tail) {
       const marks = cols.map((c) => { binds.push(r[c] ?? null); return `?${binds.length}`; });
       return `(${marks.join(",")})`;
     });
-    stmts.push(env.DB.prepare(`INSERT INTO ${table} (${cols.join(", ")}) VALUES ${values.join(",")}${tail}`).bind(...binds));
+    // sql-ident-ok: TABLES const or the literal registry_audit cols; values is ?N marks; tail names a subset of cols
+    stmts.push(env.DB.prepare(`INSERT INTO ${sqlIdent(table)} (${cols.map(sqlIdent).join(", ")}) VALUES ${values.join(",")}${tail}`).bind(...binds));
   }
   return stmts;
 }
@@ -269,8 +272,9 @@ export async function applyRegistry(env, t, actor, have, meta, want, { deletes }
     for (const [k, { row, was }] of current) {
       if (!deletes) { stale.push(`${spec.entity}:${k}`); continue; }
       changed += 1;
-      const where = spec.pk.map((c, i) => `${c}=?${i + 1}`).join(" AND ");
-      stmts.push(env.DB.prepare(`DELETE FROM ${spec.table} WHERE ${where}`).bind(...spec.pk.map((c) => row[c])));
+      const where = spec.pk.map(sqlIdent).map((c, i) => `${c}=?${i + 1}`).join(" AND ");
+      // sql-ident-ok: TABLES const (table, pk)
+      stmts.push(env.DB.prepare(`DELETE FROM ${sqlIdent(spec.table)} WHERE ${where}`).bind(...spec.pk.map((c) => row[c])));
       audit.push({ at: t, actor, entity: spec.entity, key: k, old_value: was, new_value: null, version });
     }
     if (!upserts.length) continue;
@@ -294,6 +298,7 @@ export async function applyRegistry(env, t, actor, have, meta, want, { deletes }
 // overlay (bin/render-cron.sh) gives such a lane zero boxes instead of falling
 // back to its file .boxes.
 async function readKnownLanes(env) {
+  // sql-ident-ok: MAX_ROWS + 1 is a number const
   const r = await env.DB.prepare(
     `SELECT DISTINCT substr(key, 1, instr(key, '/') - 1) AS lane FROM registry_audit WHERE entity='lane_box' ORDER BY 1 LIMIT ${MAX_ROWS + 1}`
   ).all();

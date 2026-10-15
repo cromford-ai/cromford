@@ -18,3 +18,4 @@ allow-list	lead	(allow-?list|baseline)[^/]*(/|\.(txt|tsv|json|example|conf)$)	-	
 scratch-closure	lead	!\.md$	-	scratch-closure-allo[w]	a scratch-closure lint marker
 gh-guard	lead	!\.md$	-	gh-guard-allo[w]	a gh guard marker
 determinism	lead	!\.md$	-	#[[:space:]]*determinism:[[:space:]]*o[k]	a determinism lint marker
+sql-ident	lead	!\.md$	-	sql-ident-o[k]:	a SQL identifier marker (BH-6514)
