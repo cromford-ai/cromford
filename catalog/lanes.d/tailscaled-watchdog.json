@@ -1,0 +1,30 @@
+{
+  "id": "tailscaled-watchdog",
+  "name": "tailscaled watchdog",
+  "scope": "box",
+  "script": "bin/tailscaled-watchdog.sh",
+  "cadence": "*/2 * * * *",
+  "boxes": [
+    "project-4",
+    "hub",
+    "project-6",
+    "project-6-os",
+    "project-1",
+    "project-3",
+    "project-9",
+    "small",
+    "project-2",
+    "project-5"
+  ],
+  "switch": {
+    "kind": "flag",
+    "name": "lane-off-tailscaled-watchdog"
+  },
+  "wired": true,
+  "stats": {
+    "cost_stage": null,
+    "cost_project_filter": null,
+    "lanes_row": false,
+    "log": "logs/tailscaled-watchdog.log"
+  }
+}

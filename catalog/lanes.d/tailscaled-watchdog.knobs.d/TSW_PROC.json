@@ -1,0 +1,8 @@
+{
+  "env": "TSW_PROC",
+  "type": "string",
+  "default": "/proc",
+  "zero_means": null,
+  "note": "Not a knob: the /proc root bin/tailscaled-watchdog.sh writes oom_score_adj under (BH-6693). A test seam (tests/tailscaled-watchdog.bh-6693-test.sh). A path the lane writes as root, so NOT settable from the control plane.",
+  "settable": false
+}

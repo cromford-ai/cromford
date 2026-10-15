@@ -309,7 +309,10 @@ if pend running; then
 fi
 
 # ---------- S4 tailnet (Orgo bash) ----------
-TSD='setsid -f /usr/sbin/tailscaled --tun=userspace-networking --state=/var/lib/tailscale/tailscaled.state --socket=/var/run/tailscale/tailscaled.sock >/tmp/tailscaled.log 2>&1'
+# The start command lives in one place (BH-6693): bin/tailscaled-watchdog.sh
+# runs the same string when an OOM kill takes tailscaled.
+. "$HERE/lib/tailscaled-start.sh" || exit 1
+TSD="$TSD_START"
 if pend tailnet; then
   CMD="pgrep -x sshd >/dev/null || /usr/sbin/sshd; pgrep -x cron >/dev/null || /usr/sbin/cron;"
   CMD="$CMD command -v tailscale >/dev/null 2>&1 || curl -fsSL https://tailscale.com/install.sh | sh;"

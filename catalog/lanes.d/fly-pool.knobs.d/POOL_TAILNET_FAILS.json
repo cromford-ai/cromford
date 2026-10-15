@@ -1,0 +1,12 @@
+{
+  "env": "POOL_TAILNET_FAILS",
+  "type": "int",
+  "default": 3,
+  "min": 1,
+  "max": 20,
+  "unit": "failures",
+  "zero_means": null,
+  "required": false,
+  "note": "BH-6693: bin/lib/pool-tailnet.sh writes one ALERTS line naming a box as 'tailnet unreachable' when the pool's env bundle fails 'ssh env extract from <box>' POOL_TAILNET_FAILS times inside POOL_TAILNET_WINDOW_S. One line per episode; a quiet window ends the episode.",
+  "read_in": "bin/lib/pool-tailnet.sh"
+}

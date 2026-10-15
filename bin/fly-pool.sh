@@ -448,6 +448,9 @@ command -v mc_pool_rebase_apply >/dev/null 2>&1 \
 # The HOLD verdict kept across ticks, keyed on the issue listing (BH-6549)
 # shellcheck source=bin/lib/pool-hold-cache.sh
 [ -r "$HARNESS/bin/lib/pool-hold-cache.sh" ] && . "$HARNESS/bin/lib/pool-hold-cache.sh"
+# A box off the tailnet is named once, not only per ticket (BH-6693)
+# shellcheck source=bin/lib/pool-tailnet.sh
+[ -r "$HARNESS/bin/lib/pool-tailnet.sh" ] && . "$HARNESS/bin/lib/pool-tailnet.sh"
 # Per-tick REST caches for the spawn-decision reads (BH-1075)
 declare -A _POOL_HEAD_CACHE=() _POOL_PR_CACHE=() _POOL_HOLD_CACHE=() _POOL_COMMENT_CACHE=()
 # The listing key per issue number, and the per-tick hold-cache counters (BH-6549)
@@ -4188,6 +4191,7 @@ spawn_one() { # spawn_one <job-file> <key> <ticket-id> <attempt> <deferrals> <de
     EB_WHY=$(pool_bundle_reason "$EB_RC" "$EB_ERR")
     rm -rf "$TMP"
     say "env bundle FAILED for $KEY: $EB_WHY — no machine spawned, job stays queued"
+    command -v ptn_note >/dev/null 2>&1 && ptn_note "$P" "$EB_WHY"
     pool_unclaim "$KEY" "env bundle failed: $EB_WHY"; return 1
   fi
   local SPAWNCAPTS=""

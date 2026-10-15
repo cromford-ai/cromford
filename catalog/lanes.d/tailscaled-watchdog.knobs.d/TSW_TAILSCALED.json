@@ -1,0 +1,8 @@
+{
+  "env": "TSW_TAILSCALED",
+  "type": "string",
+  "default": "/usr/sbin/tailscaled",
+  "zero_means": null,
+  "note": "Not a knob: the tailscaled binary bin/tailscaled-watchdog.sh checks before it starts anything (BH-6693). A box without it does nothing. A test seam (tests/tailscaled-watchdog.bh-6693-test.sh). A path the lane runs as root, so NOT settable from the control plane.",
+  "settable": false
+}

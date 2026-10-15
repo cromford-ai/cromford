@@ -1,0 +1,4 @@
+# tailscaled watchdog (BH-6693): every 2 minutes start tailscaled again when an OOM kill took it
+# (bin/lib/tailscaled-start.sh, the string box-launch.sh uses), and keep tailscaled at
+# oom_score_adj -900 (not sshd: its children would inherit it). Off via flags/lane-off-tailscaled-watchdog.
+*/2 * * * * /root/harness/bin/tailscaled-watchdog.sh >/dev/null 2>&1
