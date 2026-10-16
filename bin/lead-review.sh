@@ -64,6 +64,11 @@
 # records, and the tick waits for it. Each worker's review budget is
 # LEAD_REVIEW_DEADLINE_S from its own start. The summary adds
 # `concurrency=K running=N started=M` (N = still running when starts closed).
+# The tick releases its lock when starts close, BEFORE that wait (BH-6984), so
+# a later tick starts more reviews while these run: it counts every live worker
+# on the box (state/lead-review/pool, rpool_box_running) against K and the
+# fleet-wide row. The per-key lock and the job_open claim keep one request to
+# one worker.
 #
 # THE LEAD CHAIN (BH-4057, BH-5317). A worker whose terminal result (done, or
 # outcome=failed) the jobs worker accepted rings lead-land on its way out
@@ -74,8 +79,9 @@
 # head), a failed result post, or a review whose rules pack could not run
 # (`withheld`: the cron still lands it). The summary counts rings as rung=N.
 # A tick that finds the lock held writes state/lead-review/rerun-owed; the
-# holder, once it ends and unlocks, relaunches ONE tick for it however many
-# were skipped, or when it left work deferred to its deadline.
+# holder, once its starts close and it unlocks, relaunches ONE tick for it
+# however many were skipped, and once it ends, one when it left work deferred
+# to its deadline.
 # The chain is bounded by LEAD_REVIEW_RERUN_MAX (0 = off). Kill switch for the
 # ring: flags/lead-chain-wake-off (the rerun is local and bounded).
 #
@@ -1651,12 +1657,13 @@ if [ "$MODE" = one ]; then
 fi
 
 # A tick DEDUPE, never a wait (BH-3930): a lead review runs 7-9 minutes, and a
-# second tick on the same request paid for it twice. fd 7 is held for the whole
-# tick; the agent call inherits it, so a tick killed mid-review keeps the lock
-# until that call ends too. The host suite and the rules pack are repo code and
-# run with fd 7 closed, so a process they leave behind never pins it.
-# cleanup never touches it. A tick that finds it held owes a rerun (BH-5317):
-# the holder relaunches one tick when it ends.
+# second tick on the same request paid for it twice. fd 7 is held while the
+# tick decides and starts (BH-6984: released when starts close, before the wait
+# for running reviews); the agent call inherits it, so a tick killed while it
+# starts keeps the lock until that call ends too. The host suite and the rules
+# pack are repo code and run with fd 7 closed, so a process they leave behind
+# never pins it. cleanup never touches it. A tick that finds it held owes a
+# rerun (BH-5317): the holder relaunches one tick when it unlocks.
 STATE="$H/state/lead-review"; mkdir -p "$H/locks" "$STATE"
 exec 7>"$H/locks/lead-review-tick.lock"
 flock -n 7 || { : > "$STATE/rerun-owed"; log "tick skipped: the previous tick still holds locks/lead-review-tick.lock (a review is running) (rerun owed)"; exit 0; }
@@ -1933,11 +1940,24 @@ lr_ring_land() {
   return 0
 }
 lr_worker_exit() { cleanup; lr_ring_land; RPOOL_RESULT="$R"; }
+# A free slot counts every live worker on the box: a tick that released its
+# lock may still run some (BH-6984).
 lr_slot_free() {
-  local r; r=$(rpool_running)
+  local r; r=$(rpool_box_running)
   [ "$r" -lt "$RPOOL_K" ] && lw_concurrency_ok "$r"
 }
-RPOOL_TMP_PREFIX=lr
+# lr_rerun <force> — launch the owed (0) or forced (1) rerun (BH-5317); logs its line.
+lr_rerun() {
+  local line
+  line=$(command -v lcw_rerun >/dev/null 2>&1 && lcw_rerun "$H/bin/lead-review.sh" "$STATE" "${LEAD_REVIEW_RERUN_MAX:-}" "$1" tick)
+  [ -n "$line" ] && log "$line"
+  return 0
+}
+# lr_unlock — release the tick lock: flock -u releases the open file
+# description, so a process this tick left behind holding fd 7 does not pin it.
+LR_LOCKED=1
+lr_unlock() { [ "$LR_LOCKED" = 1 ] || return 1; LR_LOCKED=0; flock -u 7 2>/dev/null; exec 7>&-; return 0; }
+RPOOL_TMP_PREFIX=lr RPOOL_LIVE_DIR="$STATE/pool"
 rpool_init lead-review LEAD_REVIEW "$CONC" "$QF.pool" log
 command -v lr_capped_check >/dev/null 2>&1 && lr_capped_check "$CONC" "$(local_box_name)"
 if [ -z "$stopped" ]; then
@@ -1958,7 +1978,7 @@ if [ -z "$stopped" ]; then
       lr_slot_free && { slot=1; break; }
       [ "$SECONDS" -ge "$DEADLINE" ] && break
       if [ "$LW_CONC_WHY" = unreadable ]; then closed_by=concurrency-unreadable; break; fi
-      if [ "$LW_CONC_WHY" = full ] && [ "$(rpool_running)" -eq 0 ]; then
+      if [ "$LW_CONC_WHY" = full ] && [ "$(rpool_box_running)" -eq 0 ]; then
         log "lead_review.concurrency is full fleet-wide and none runs here; no new review starts this tick"
         closed_by=concurrency; break
       fi
@@ -2001,21 +2021,21 @@ if [ -z "$stopped" ]; then
     [ -n "$stopped" ] && break
   done
   running_at_close=$(rpool_running)
-  [ "$running_at_close" -gt 0 ] && log "starts closed concurrency=$RPOOL_K running=$running_at_close started=$RPOOL_STARTED; waiting for the running reviews to record"
+  [ "$running_at_close" -gt 0 ] && log "starts closed concurrency=$RPOOL_K running=$running_at_close started=$RPOOL_STARTED; waiting for the running reviews to record (tick lock released)"
+  # BH-6984: unlock BEFORE the wait, so the next tick or doorbell starts more
+  # reviews while these run, and launch the rerun a skipped tick owed now.
+  lr_unlock && lr_rerun 0
   rpool_wait_all
 fi
 rpool_finish
 rung=$(wc -l < "$QF.rung" 2>/dev/null | tr -d ' '); rung="${rung:-0}"
 log "tick seen=$seen owned=$owned done=$done_n superseded=$superseded failed=$failed skipped=$skipped deferred=$deferred concurrency=$RPOOL_K running=$running_at_close started=$RPOOL_STARTED worklist=$WL_N paid=$paid replayed=$replayed capped=$capped held=$held${ratelimited:+ ratelimited=$ratelimited} rung=$rung total=$TOTAL$PLUS prs=$PRS$PLUS${stopped:+ stopped=$stopped left=$((${#ORDER[@]} - visited))}$([ "$SPILL_ON" = 1 ] && printf ' spill=%s' "$spill")"
-# The owed rerun (BH-5317). Unlock first: flock -u releases the open file
-# description, so a process this tick left behind holding fd 7 does not pin it.
-# A rerun is owed when a tick skipped on the lock (the marker), or forced when
-# this tick deferred work to its deadline. Never into a refusal it would only
-# repeat: low /tmp, a spend cap, the concurrency row, a stopped worker, a rate
-# pause.
-flock -u 7 2>/dev/null; exec 7>&-
+# The rerun (BH-5317). It is owed when a tick skipped on the lock (the marker),
+# or forced when this tick deferred work to its deadline. Never into a refusal
+# it would only repeat: low /tmp, a spend cap, the concurrency row, a stopped
+# worker, a rate pause. A tick that unlocked when its starts closed launched
+# the owed one then; here it launches only a forced one.
 force=0
 [ "$deferred" -gt 0 ] && [ -z "$closed_by" ] && [ -z "$stopped" ] && ! rpool_paused && force=1
-line=$(command -v lcw_rerun >/dev/null 2>&1 && lcw_rerun "$H/bin/lead-review.sh" "$STATE" "${LEAD_REVIEW_RERUN_MAX:-}" "$force" tick)
-[ -n "$line" ] && log "$line"
+if lr_unlock; then lr_rerun "$force"; elif [ "$force" = 1 ]; then lr_rerun 1; fi
 exit 0

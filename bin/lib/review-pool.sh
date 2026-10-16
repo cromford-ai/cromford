@@ -40,6 +40,14 @@
 #     (rpool_wait_all) before its summary, so a worker still running at the
 #     tick's deadline finishes and records its verdict. Its claim and heartbeat
 #     are its own (opened inside the worker), so they stay valid throughout.
+#     A tick that ends early (TERM, INT) leaves a live worker's scratch to the
+#     worker: rpool_finish removes nothing while one of its workers runs (BH-6984).
+#   * when the lane sets RPOOL_LIVE_DIR (lead-review: state/lead-review/pool),
+#     holds the file <dir>/<tickpid>-<id> (its pid) while it runs, so a LATER
+#     tick of the lane counts it (rpool_box_running) against the slot cap
+#     while this tick waits for it with its tick lock released (BH-6984). Its
+#     EXIT trap removes the file; after a SIGKILL the tick's collect does, and
+#     a file whose pid is gone is not counted and is removed by the count.
 #
 # GUARDRAILS (all read with the lane's knob prefix P, LEAD_REVIEW or REVIEW):
 #   P_CONCURRENCY      K, resolved by the lane (registry knob, settings row
@@ -58,6 +66,9 @@
 #                                (P_WORKER_MEM_MB + P_WORKER_TMP_MB);
 #                        tmp     (free /tmp - P_TMP_MIN_MB) / P_WORKER_TMP_MB
 #                                (default 256).
+#                      The memory and tmp terms add back the workers other
+#                      ticks still run here (rpool_others), which already
+#                      use their share of what is free (BH-6984).
 #                      The smallest wins (a tie keeps the earlier term) and is
 #                      logged once a tick as `concurrency capped at N by
 #                      cpu|memory|tmp (<inputs>)`. A term it cannot read is
@@ -105,7 +116,9 @@
 #   rpool_reap                  collect finished workers, never blocks
 #   rpool_wait_one              block until one worker finishes, collect it
 #   rpool_wait_all              collect every worker
-#   rpool_running               the number of live workers
+#   rpool_running               the number of live workers of this tick
+#   rpool_box_running           that plus the live workers other ticks of the
+#                               lane left running on this box (RPOOL_LIVE_DIR)
 #   rpool_finish                remove $RPOOL_DIR and any <prefix><tickpid>-* left
 #   rpool_rate_limited <out>    rc 0 when <out>/<out>.err reads as a rate limit
 #   rpool_rate_hit / rpool_rate_ok   start or extend / clear the backoff
@@ -113,7 +126,7 @@
 # A collected worker calls the lane's `rpool_on_result <id> <result>`.
 
 RPOOL_K=1; RPOOL_DIR=""; RPOOL_LANE=""; RPOOL_PFX=""; RPOOL_LOGFN=""; RPOOL_CAP_BY=""; RPOOL_CAP_WHY=""
-RPOOL_TMP_PREFIX=""
+RPOOL_TMP_PREFIX=""; RPOOL_LIVE_DIR=""
 RPOOL_STARTED=0
 declare -gA _RPOOL_PIDS=()   # pid -> id
 declare -gA _RPOOL_SPEND_AT=() _RPOOL_SPEND_RC=()
@@ -171,10 +184,11 @@ _rpool_mem_free_mb() {
 }
 
 rpool_init() { # rpool_init <lane> <prefix> <k> <dir> <logfn>
-  local k="${3:-1}" box n reason="" mem tmp per min h="${HARNESS:-${H:-}}" sw ncpu wc used tper
+  local k="${3:-1}" box n reason="" mem tmp per min h="${HARNESS:-${H:-}}" sw ncpu wc used tper oth
   RPOOL_LANE="$1"; RPOOL_PFX="$2"; RPOOL_DIR="$4"; RPOOL_LOGFN="${5:-}"
   RPOOL_STARTED=0; _RPOOL_PIDS=(); RPOOL_CAP_BY=""; RPOOL_CAP_WHY=""
   mkdir -p "$RPOOL_DIR" 2>/dev/null
+  [ -n "$RPOOL_LIVE_DIR" ] && mkdir -p "$RPOOL_LIVE_DIR" 2>/dev/null
   case "$k" in 0) k=1000; reason="" ;; *) _rpool_int "$k" || k=1 ;; esac
   # The sweep's own flock makes a second concurrent tick's call a no-op, and
   # its own lane gate honours flags/lane-off-tmp-sweep.
@@ -188,20 +202,21 @@ rpool_init() { # rpool_init <lane> <prefix> <k> <dir> <logfn>
       wc=$(_rpool_knob WORKER_CPUS 1); n=$((ncpu / wc))
       [ "$n" -lt "$k" ] && { k=$n; reason="cpu (${ncpu} vCPU, ${wc} a worker)"; RPOOL_CAP_BY=cpu; }
     fi
+    oth=$(rpool_others)
     if mem=$(_rpool_mem_free_mb); then
       per=$(_rpool_knob WORKER_MEM_MB 2048)
       if [ "$(_rpool_tmp_fstype)" = tmpfs ]; then
         used=$(_rpool_tmp_used_mb); tper=$(_rpool_knob WORKER_TMP_MB 256)
-        n=$(( (mem - used) / (per + tper) ))
+        n=$(( (mem - used) / (per + tper) + oth ))
         [ "$n" -lt "$k" ] && { k=$n; reason="memory (${mem}MB free, ${used}MB in tmpfs $(_rpool_tmp_path), ${per}+${tper}MB a worker)"; RPOOL_CAP_BY=memory; }
       else
-        n=$((mem / per))
+        n=$((mem / per + oth))
         [ "$n" -lt "$k" ] && { k=$n; reason="memory (${mem}MB free, ${per}MB a worker)"; RPOOL_CAP_BY=memory; }
       fi
     fi
     if tmp=$(_rpool_tmp_free_mb); then
       per=$(_rpool_knob WORKER_TMP_MB 256); min=$(_rpool_knob TMP_MIN_MB 1536)
-      n=$(( (tmp - min) / per ))
+      n=$(( (tmp - min) / per + oth ))
       [ "$n" -lt "$k" ] && { k=$n; reason="tmp ($(_rpool_tmp_path) ${tmp}MB free, ${min}MB floor, ${per}MB a worker)"; RPOOL_CAP_BY=tmp; }
     fi
   fi
@@ -248,6 +263,7 @@ RPOOL_ID=""; RPOOL_RESULT=""; RPOOL_ON_EXIT=""
 rpool_gate_open() { [ -n "$RPOOL_ID" ] && : > "$RPOOL_DIR/$RPOOL_ID.g" 2>/dev/null; return 0; }
 _rpool_worker_exit() {
   [ -n "$RPOOL_ON_EXIT" ] && "$RPOOL_ON_EXIT"
+  [ -n "$RPOOL_LIVE_DIR" ] && rm -f "$RPOOL_LIVE_DIR/$$-$RPOOL_ID" 2>/dev/null
   rm -rf "$RPOOL_DIR/tmp.$RPOOL_ID" 2>/dev/null
   [ -n "${RPOOL_TMP_OWN:-}" ] && rm -rf --one-file-system -- "$RPOOL_TMP_OWN" 2>/dev/null
   rpool_gate_open
@@ -260,6 +276,7 @@ rpool_start() { # rpool_start <id> <cmd...>
   rm -f "$RPOOL_DIR/$id.g" "$RPOOL_DIR/$id.r" 2>/dev/null
   (
     RPOOL_ID="$id"; RPOOL_RESULT=""; RPOOL_ON_EXIT=""
+    [ -n "$RPOOL_LIVE_DIR" ] && printf '%s\n' "$BASHPID" > "$RPOOL_LIVE_DIR/$$-$id" 2>/dev/null
     export -n RPOOL_TMP_OWN 2>/dev/null; RPOOL_TMP_OWN=""
     mkdir -p "$RPOOL_DIR/tmp.$id" 2>/dev/null && export TMPDIR="$RPOOL_DIR/tmp.$id"
     if own=$(_rpool_own_tmp "$id"); then
@@ -276,6 +293,20 @@ rpool_start() { # rpool_start <id> <cmd...>
 
 # --- the tick side -------------------------------------------------------------
 rpool_running() { printf '%s' "${#_RPOOL_PIDS[@]}"; }
+# rpool_others — the live workers other ticks of the lane run on this box
+# (RPOOL_LIVE_DIR; 0 without it). A file whose pid is gone is removed here.
+rpool_others() {
+  local f p n=0
+  [ -n "$RPOOL_LIVE_DIR" ] && [ -d "$RPOOL_LIVE_DIR" ] || { printf 0; return 0; }
+  for f in "$RPOOL_LIVE_DIR"/*-*; do
+    [ -f "$f" ] || continue
+    case "${f##*/}" in "$$-"*) continue ;; esac
+    read -r p < "$f" 2>/dev/null || p=""
+    if _rpool_int "$p" && _rpool_alive "$p"; then n=$((n + 1)); else rm -f "$f" 2>/dev/null; fi
+  done
+  printf '%s' "$n"
+}
+rpool_box_running() { printf '%s' "$(( ${#_RPOOL_PIDS[@]} + $(rpool_others) ))"; }
 # _rpool_alive <pid> — rc 0 while it runs. A zombie (exited, not yet waited
 # for: what a SIGKILLed worker leaves) is not alive.
 _rpool_alive() {
@@ -297,6 +328,7 @@ _rpool_collect() { # <pid>: wait, read the result, hand it to the lane
   [ -n "$res" ] || [ -e "$RPOOL_DIR/$id.r" ] || { res=killed; _rpool_log "worker $id ended with no result (rc=$rc)"; }
   rm -f "$RPOOL_DIR/$id.g" "$RPOOL_DIR/$id.r" 2>/dev/null
   rm -rf "$RPOOL_DIR/tmp.$id" 2>/dev/null
+  [ -n "$RPOOL_LIVE_DIR" ] && rm -f "$RPOOL_LIVE_DIR/$$-$id" 2>/dev/null
   # what a SIGKILLed worker's trap could not remove; a no-op after a normal exit
   own=$(_rpool_own_tmp "$id") && rm -rf --one-file-system -- "$own" 2>/dev/null
   command -v rpool_on_result >/dev/null 2>&1 && rpool_on_result "$id" "$res"
@@ -327,7 +359,10 @@ rpool_gate_wait() { # rpool_gate_wait <id>
   return 0
 }
 rpool_finish() {
-  local d
+  local d pid
+  # A tick that ends while a worker runs (TERM, INT) takes none of its scratch:
+  # the worker removes its own when it exits (BH-6984).
+  for pid in "${!_RPOOL_PIDS[@]}"; do _rpool_alive "$pid" && return 0; done
   [ -n "$RPOOL_DIR" ] && rm -rf "$RPOOL_DIR" 2>/dev/null
   if d=$(_rpool_own_tmp x); then
     for d in "${d%x}"*; do

@@ -5,9 +5,11 @@
 # "$DIR/bin/lib/review-bought.sh" and "$DIR/bin/lib/patch-same.sh" included:
 #
 #   bin/lead-review.sh tick (D1-D3)
-#     D1  tick 1 blocks inside its agent call; tick 2 exits 0 at once with
-#         `tick skipped` (flock -n on locks/lead-review-tick.lock, never a wait).
-#         One agent call, one job_open.
+#     D1  tick 1 blocks inside its agent call; tick 2 exits 0 at once. Since
+#         BH-6984 tick 1 releases locks/lead-review-tick.lock when its starts
+#         close, so tick 2 is not skipped on it: it reaches the claim, and the
+#         DB claim (job_open 409) refuses it (`skip <key>: `), never a wait.
+#         One agent call, two job_opens (the second refused).
 #     D2  tick 1 killed -9 (its whole process group): the lock is free, and the
 #         next tick finishes from the stored lead_review_report artifact with no
 #         agent call.
@@ -152,12 +154,12 @@ S0=$SECONDS; tick1; S1=$SECONDS
 [ "$RC" -eq 0 ] && ok || bad "D1 tick 2 rc=$RC out=$(cat "$T/out")"
 [ $((S1 - S0)) -lt 20 ] && ok || bad "D1 tick 2 took $((S1 - S0))s: it waited for tick 1"
 [ -e "$T/release" ] && bad "D1 tick 1 released before tick 2 ran" || ok
-grep -q 'tick skipped: the previous tick still holds locks/lead-review-tick.lock' "$LLOG" && ok \
-  || bad "D1 no 'tick skipped' line: $(cat "$LLOG")"
+grep -q "skip $KEY: " "$LLOG" && ok \
+  || bad "D1 tick 2 was not refused by the job_open claim: $(cat "$LLOG")"
 : > "$T/release"; wait "$P1"; RC1=$?
 [ "$RC1" -eq 0 ] && ok || bad "D1 tick 1 rc=$RC1 out=$(cat "$T/out1")"
 [ "$(agents)" = 1 ] && ok || bad "D1 agent called $(agents) time(s), want 1"
-[ "$(opens)" = 1 ] && ok || bad "D1 job_open called $(opens) time(s), want 1: $(cat "$T/log/worker")"
+[ "$(opens)" = 2 ] && ok || bad "D1 job_open called $(opens) time(s), want 2 (tick 2's refused): $(cat "$T/log/worker")"
 grep -q "done $KEY: VERDICT MERGE" "$LLOG" && ok || bad "D1 tick 1 did not finish: $(cat "$LLOG")"
 # a later tick, with nothing running, is not skipped
 rm -f "$LLOG"; tick1
