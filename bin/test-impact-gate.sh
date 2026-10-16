@@ -191,9 +191,9 @@
 # is printed with a `plan:` prefix, so nothing reading the log for pass markers
 # (bin/lib/evidence.sh) can mistake a listed reason for a result.
 #
-# SUITE REUSE (BH-5354.1). On the local and isolated runners only, when the
-# checkout carries an executable bin/suite-reuse.sh, the gate hands the run list
-# minus the fast tier to `bin/suite-reuse.sh plan --class builder`. A suite the
+# SUITE REUSE (BH-5354.1). On the local, isolated and traced runners only, when
+# the checkout carries an executable bin/suite-reuse.sh, the gate hands the run
+# list minus the fast tier to `bin/suite-reuse.sh plan`. A suite the
 # suite ledger already saw pass at the same input fingerprint leaves the run
 # list and prints `impact-gate: reused <suite> from <run_id> (<d>s)`, never
 # `impact-gate: done`: HARNESS_IMPACT_GATE_RUN (bin/lib/rb/gates.sh) lists the
@@ -204,6 +204,19 @@
 # including a helper answer that does not match the list it was given, prints
 # `suite-reuse: off (<why>)` and every suite runs. SUITE_REUSE=off is the kill
 # switch. The repo is SUITE_REUSE_REPO, else origin's <owner>/<name>.
+# The ledger class is SUITE_REUSE_CLASS (builder, the default, or ci) and the
+# ctx is SUITE_REUSE_CTX (default: the runner name); any other class, or a ctx
+# off ^[A-Za-z0-9._:/-]{1,64}$, prints `suite-reuse: off (bad ...)` and every
+# suite runs. The prequeue gate (.github/workflows/prequeue-gate.yml) passes
+# class ci and the merge-queue batch's ctx, so each reads the other's greens
+# (BH-6925). The ci token comes in as SUITE_LEDGER_TOKEN, or on the fd named by
+# SUITE_LEDGER_TOKEN_FD (3-9; read once, then closed; a bad or empty fd is
+# `off`). Both names leave the environment before anything else runs, and the
+# token reaches only the two bin/suite-reuse.sh calls, so no suite inherits it.
+# Class ci records only from --runner traced, because a ci green must mean
+# traced clean; another runner prints `suite-reuse: record skipped (class ci
+# records traced runs only)`. On traced, a suite in the hits file is recorded
+# fail whatever its rc.
 #
 # FRESH MAIN (BH-6459). A whole-repo ratchet (a line ceiling, a registry count,
 # a generated-file check) can be green on HEAD and green on main, and red on the
@@ -230,6 +243,20 @@
 # result is the merge's. bin/lib/rb/gates.sh turns it on for the pool builder
 # through the fly-pool knob TEST_IMPACT_GATE_FRESH_MAIN.
 set -uo pipefail
+
+# The ledger token, first: read off its fd (or the env), then gone from the
+# environment, so no lookup, knob read or suite below inherits it.
+SR_TOKEN="${SUITE_LEDGER_TOKEN:-}"; SR_TOKEN_WHY=""
+if [ -n "${SUITE_LEDGER_TOKEN_FD+x}" ]; then
+  case "$SUITE_LEDGER_TOKEN_FD" in
+    [3-9]) _srfd="$SUITE_LEDGER_TOKEN_FD"; SR_TOKEN=""
+           { IFS= read -r SR_TOKEN <&"$_srfd"; } 2>/dev/null || :
+           [ -n "$SR_TOKEN" ] || SR_TOKEN_WHY="ledger token fd unreadable"
+           exec {_srfd}<&- 2>/dev/null; unset _srfd ;;
+    *) SR_TOKEN=""; SR_TOKEN_WHY="bad SUITE_LEDGER_TOKEN_FD" ;;
+  esac
+fi
+unset SUITE_LEDGER_TOKEN SUITE_LEDGER_TOKEN_FD
 
 SELF_DIR="$(cd "$(dirname "$0")" && pwd)"
 ROOT="$(cd "$SELF_DIR/.." && pwd)"
@@ -671,9 +698,17 @@ fi
 # that is not a partition of what it was handed is treated as off here.
 SR_ON=0; SR_R=0; SR_S=0
 : > "$TMP/sr.reused"; : > "$TMP/sr.fp"
-case "$RUNNER" in local|isolated)
+SR_CLASS="${SUITE_REUSE_CLASS:-builder}"; SR_CTX="${SUITE_REUSE_CTX:-$RUNNER}"
+case "$RUNNER" in local|isolated|traced)
   if [ -x "$ROOT/bin/suite-reuse.sh" ]; then
     SR_ON=1
+    case "$SR_CLASS" in builder|ci) ;; *) SR_ON=0; echo "suite-reuse: off (bad SUITE_REUSE_CLASS)" ;; esac
+    if [ "$SR_ON" = 1 ] && ! [[ "$SR_CTX" =~ ^[A-Za-z0-9._:/-]{1,64}$ ]]; then
+      SR_ON=0; echo "suite-reuse: off (bad SUITE_REUSE_CTX)"
+    fi
+    if [ "$SR_ON" = 1 ] && [ -n "$SR_TOKEN_WHY" ]; then SR_ON=0; echo "suite-reuse: off ($SR_TOKEN_WHY)"; fi
+  fi
+  if [ "$SR_ON" = 1 ]; then
     if [ -s "$TMP/fast.list" ]; then grep -vxF -f "$TMP/fast.list" "$TMP/run.list" > "$TMP/sr.in" || true
     else cp "$TMP/run.list" "$TMP/sr.in"; fi
     # A fresh suite runs on the merge: its HEAD fingerprint must never be
@@ -690,7 +725,8 @@ case "$RUNNER" in local|isolated)
       echo "suite-reuse: off (no repo)"
     else
       rm -f "$TMP/sr.run"
-      ( cd "$ROOT" && bin/suite-reuse.sh plan --class builder --repo "$SR_REPO" --ctx "$RUNNER" --suites "$TMP/sr.in" \
+      ( cd "$ROOT" && SUITE_LEDGER_TOKEN="$SR_TOKEN" bin/suite-reuse.sh plan --class "$SR_CLASS" --repo "$SR_REPO" \
+          --ctx "$SR_CTX" --suites "$TMP/sr.in" \
           --run "$TMP/sr.run" --reused "$TMP/sr.reused" --fingerprints "$TMP/sr.fp" --rev "$HEAD_REF" ) > "$TMP/sr.plan.out"
       grep -v '^suite-reuse: reused ' "$TMP/sr.plan.out"
       if ! [ -r "$TMP/sr.run" ] || ! [ -r "$TMP/sr.reused" ] \
@@ -849,10 +885,20 @@ fi
 # ── SUITE REUSE: record what ran, after the verdict is out ──────────────────
 # Last, so a slow ledger cannot cost the lines above to a stage timeout. Budget
 # and remote rows drop out on the rc test; nothing ran on 125.
+# A ci green means traced clean (the merge-queue batch writes ok only for a
+# traced-clean suite), so class ci records only from the traced runner, and
+# there a suite in the hits file is fail whatever its rc.
 if [ "$SR_ON" = 1 ] && [ -s "$TMP/sr.fp" ] && [ "$RC" != 125 ]; then
-  awk 'NF >= 3 && $2 ~ /^[0-9]+$/ && $3 ~ /^[0-9]+$/ { print $1 "\t" ($2 == 0 ? "ok" : "fail") "\t" $3 }' \
-    "$TMP/progress" > "$TMP/sr.results"
-  ( cd "$ROOT" && bin/suite-reuse.sh record --repo "$SR_REPO" --ctx "$RUNNER" --run-key "$SR_KEY" \
-      --fingerprints "$TMP/sr.fp" --results "$TMP/sr.results" --reused "$TMP/sr.reused" )
+  if [ "$SR_CLASS" = ci ] && [ "$RUNNER" != traced ]; then
+    echo "suite-reuse: record skipped (class ci records traced runs only)"
+  else
+    : > "$TMP/sr.hits"
+    [ "$RUNNER" = traced ] && cp "${TRACE_HITS:-$TMP/hits}" "$TMP/sr.hits" 2>/dev/null
+    awk -v hf="$TMP/sr.hits" 'FILENAME == hf { hit[$1] = 1; next }
+      NF >= 3 && $2 ~ /^[0-9]+$/ && $3 ~ /^[0-9]+$/ { print $1 "\t" (($2 == 0 && !($1 in hit)) ? "ok" : "fail") "\t" $3 }' \
+      "$TMP/sr.hits" "$TMP/progress" > "$TMP/sr.results"
+    ( cd "$ROOT" && SUITE_LEDGER_TOKEN="$SR_TOKEN" bin/suite-reuse.sh record --repo "$SR_REPO" --ctx "$SR_CTX" \
+        --run-key "$SR_KEY" --fingerprints "$TMP/sr.fp" --results "$TMP/sr.results" --reused "$TMP/sr.reused" )
+  fi
 fi
 exit "$RC"

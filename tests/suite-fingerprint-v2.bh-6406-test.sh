@@ -24,8 +24,9 @@
 #   V7c the rules lib removed, then edit h3 -> all move (fails closed)
 #   V8  the `inputs` rows themselves, and CI_BATCH_ESCALATE_TSV in the
 #       environment changes nothing
-#   V9  the canonical text is `suite-fp v2`: the same lib with a v1 header
-#       gives another fingerprint, so no v1 ledger row can match
+#   V9  the canonical text is `suite-fp v3` (BH-6925 added the image line): the
+#       same lib with a v2 header gives another fingerprint, so no older ledger
+#       row can match
 set -uo pipefail
 DIR=$(cd "$(dirname "$0")/.." && pwd)
 # shellcheck source=lib/scratch.sh
@@ -115,12 +116,12 @@ CI_BATCH_ESCALATE_TSV="$T/other.tsv" "$R/bin/test-impact.sh" --root "$R" inputs 
 cmp -s "$T/in.tsv" "$T/in-env2.tsv" && ok "V8 CI_BATCH_ESCALATE_TSV=<other rules>: byte-identical rows" \
   || bad "V8 the environment's rules file leaked in: $(diff "$T/in.tsv" "$T/in-env2.tsv" | head -5)"
 
-# ── V9 the canonical text names v2 ─────────────────────────────────────────
-sed 's/suite-fp v2/suite-fp v1/g' "$R/bin/lib/suite-fingerprint.sh" > "$T/sfp-v1.sh"
+# ── V9 the canonical text names v3 ─────────────────────────────────────────
+sed 's/suite-fp v3/suite-fp v2/g' "$R/bin/lib/suite-fingerprint.sh" > "$T/sfp-v1.sh"
 ( cd "$R" && . "$T/sfp-v1.sh" && sfp_compute HEAD "$T/suites" "$T/v9" ) 2>/dev/null
-grep -q 'suite-fp v2' "$R/bin/lib/suite-fingerprint.sh" && ok "V9 the lib writes suite-fp v2" || bad "V9 no suite-fp v2 in the lib"
+grep -q 'suite-fp v3' "$R/bin/lib/suite-fingerprint.sh" && ok "V9 the lib writes suite-fp v3" || bad "V9 no suite-fp v3 in the lib"
 [ -n "$(col "$T/v9" tests/u4.sh)" ] && [ "$(col "$T/v9" tests/u4.sh)" != "$(col "$LAST" tests/u4.sh)" ] \
-  && ok "V9 a v1 header gives another fingerprint for u4" || bad "V9 v1=$(col "$T/v9" tests/u4.sh) v2=$(col "$LAST" tests/u4.sh)"
+  && ok "V9 a v2 header gives another fingerprint for u4" || bad "V9 v2=$(col "$T/v9" tests/u4.sh) v3=$(col "$LAST" tests/u4.sh)"
 
 # ── V1-V6 ──────────────────────────────────────────────────────────────────
 check V1 v1 tests/lib/h1.sh "tests/u1.sh"

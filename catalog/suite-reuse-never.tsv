@@ -19,3 +19,8 @@
 # a variable named nc; the docker suites drive a fake docker on PATH. None
 # reads a live host, so no row would be true. Add a row with its reason when
 # a suite that does is written.
+#
+# FLAKES (BH-6925). A suite that flakes (red and green on the same inputs) goes
+# here as `<suite>\tflake: <why>`. It then runs on every gate (builder, prequeue,
+# the merge-queue batch) and is never recorded, so a lucky green is never
+# reused. No suite is listed as a flake yet.

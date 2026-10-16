@@ -4,16 +4,19 @@
 # The one helper every suite runner calls: before it runs a selection, `plan`
 # asks the harness-jobs suite ledger which of those suites already went green
 # at the same input fingerprint, and hands back the ones still to run; after,
-# `record` writes what happened so the next run can reuse it. No runner calls
-# it yet. Doc: docs/notes/2026-10-08-BH-5354-suite-reuse.md.
+# `record` writes what happened so the next run can reuse it. Callers:
+# bin/test-impact-gate.sh (the builder and prequeue gates) and bin/ci-plan.sh
+# (the merge-queue batch). Doc: docs/notes/2026-10-08-BH-5354-suite-reuse.md.
 #
 #   bin/suite-reuse.sh plan --class ci|builder --repo R --ctx C --suites IN \
 #       --run OUT --reused OUT.tsv --fingerprints OUT.tsv [--rev HEAD]
 #     Always writes all three outputs. --run gets the suites to execute, in
 #     IN's order; --reused gets `<suite>\t<run_id>\t<duration_s>\t<class>` per
 #     suite skipped; --fingerprints gets bin/lib/suite-fingerprint.sh's rows,
-#     for `record`. Prints `suite-reuse: reused <suite> from <run_id> (<d>s)`
-#     per hit and `suite-reuse: ran X reused R of N (saved ~Ss)`.
+#     for `record`. Prints `suite-reuse: image <id>` once the fingerprints are
+#     written (the runner image id in the key, bin/lib/suite-fingerprint.sh),
+#     then `suite-reuse: reused <suite> from <run_id> (<d>s)` per hit and
+#     `suite-reuse: ran X reused R of N (saved ~Ss)`.
 #     FAIL-SAFE: on ANY failure (SUITE_REUSE not on, no credential, no URL,
 #     a --class the credential does not carry, dirty tree, fingerprint failure,
 #     curl error or timeout, a non-200, unparseable JSON, the server's knob off,
@@ -128,6 +131,7 @@ cmd_plan() {
     [ "$rc" -eq 3 ] && plan_off "dirty tree"
     plan_off "fingerprint failed"
   fi
+  echo "suite-reuse: image ${SFP_IMAGE_ID:-}"
   case "${SUITE_REUSE:-on}" in
     on) ;;
     off) plan_off "knob off" ;;

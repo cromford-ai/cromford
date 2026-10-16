@@ -8,7 +8,8 @@
 # Writes `<suite>\t<fp>\t<never-reason or ->`, one row per suite in
 # <suites-file>, in input order. The fingerprint is
 #
-#   sha256( "suite-fp v2\n"
+#   sha256( "suite-fp v3\n"
+#         + "image\t<image id>\n"
 #         + "infra\t<infra_hash>\n"
 #         + sorted unique "<path>\t<git object id or ->" over the suite's inputs )
 #
@@ -28,8 +29,22 @@
 # global helpers, e.g. tests/lib/scratch.sh), when no suite reaches it (a
 # helper no suite names after the closure, a catalog/ file with no specific
 # map row), or when the rules cannot be read (then every such path is, the
-# v1 set). A *.md there is never infra. The header names v2, so no v1 ledger
-# row can match a v2 fingerprint.
+# v1 set). A *.md there is never infra.
+#
+# v3 (BH-6925): the runner image id is a line of the text, so a green on one
+# image is never reused on another. sfp_image_id decides it, first match wins:
+#   1. SUITE_IMAGE_ID when non-empty, verbatim; it must match
+#      ^[A-Za-z0-9._:@+/-]{1,128}$, else rc 2 (stderr names it) and no
+#      fingerprint is written.
+#   2. ImageOS and ImageVersion both set (GitHub-hosted runner variables), each
+#      ^[A-Za-z0-9._-]{1,64}$: `gh:<ImageOS>:<ImageVersion>`.
+#   3. Else `os:<ID>:<VERSION_ID>:<uname -m>` from /etc/os-release when it has
+#      an ID, else `os:<uname -s>:<uname -r>:<uname -m>`; a character outside
+#      the rule-1 set becomes `_`.
+# OS-level facts only, no tool versions: the batch plan job fingerprints with no
+# setup-node step, and the shards that ran the suites have one. sfp_compute
+# sets SFP_IMAGE_ID to the id after a write. The header names v3, so no older
+# ledger row can match a v3 fingerprint.
 #
 # NEVER REUSED (fp `-`, the reason in column 3), checked in this order:
 #   always            the suite runs on every diff (a `*` inputs row)
@@ -39,9 +54,10 @@
 #                     (another ref, the network, the live harness state)
 #   unknown suite     the inputs list has no row for it
 #
-# rc: 0 written; 2 refused (rev is not HEAD, not a checkout, the inputs or the
-# fast-lint list could not be built); 3 dirty tree (stderr says so) — the
-# inputs are read from the work tree, so a dirty one has no honest fingerprint.
+# rc: 0 written; 2 refused (rev is not HEAD, not a checkout, a bad
+# SUITE_IMAGE_ID, the inputs or the fast-lint list could not be built); 3 dirty
+# tree (stderr says so) — the inputs are read from the work tree, so a dirty one
+# has no honest fingerprint.
 #
 # The root is $HARNESS_CHECKOUT, else the git toplevel of $PWD. No other default.
 
@@ -51,8 +67,30 @@ _sfp_sha256() { # _sfp_sha256 <file>... — `<hex>  <file>` lines
   if command -v sha256sum >/dev/null 2>&1; then sha256sum "$@"; else shasum -a 256 "$@"; fi
 }
 
+# sfp_image_id — the runner image id on stdout, rc 0; rc 2 on a bad override.
+sfp_image_id() {
+  local id os ver arch
+  if [ -n "${SUITE_IMAGE_ID:-}" ]; then
+    [[ "$SUITE_IMAGE_ID" =~ ^[A-Za-z0-9._:@+/-]{1,128}$ ]] \
+      || { echo "suite-fingerprint: SUITE_IMAGE_ID is not 1-128 of [A-Za-z0-9._:@+/-]" >&2; return 2; }
+    printf '%s\n' "$SUITE_IMAGE_ID"; return 0
+  fi
+  if [[ "${ImageOS:-}" =~ ^[A-Za-z0-9._-]{1,64}$ && "${ImageVersion:-}" =~ ^[A-Za-z0-9._-]{1,64}$ ]]; then
+    printf 'gh:%s:%s\n' "$ImageOS" "$ImageVersion"; return 0
+  fi
+  arch=$(uname -m 2>/dev/null) || arch=""
+  os=""; ver=""
+  if [ -r /etc/os-release ]; then
+    os=$(. /etc/os-release > /dev/null 2>&1; printf '%s' "${ID:-}")
+    ver=$(. /etc/os-release > /dev/null 2>&1; printf '%s' "${VERSION_ID:-}")
+  fi
+  if [ -n "$os" ]; then id="os:$os:$ver:$arch"
+  else id="os:$(uname -s 2>/dev/null):$(uname -r 2>/dev/null):$arch"; fi
+  printf '%s\n' "$id" | LC_ALL=C sed 's#[^A-Za-z0-9._:@+/-]#_#g'
+}
+
 sfp_compute() {
-  local rev="${1:-}" suites="${2:-}" out="${3:-}" root rsha hsha st w rc
+  local rev="${1:-}" suites="${2:-}" out="${3:-}" root rsha hsha st w rc img
   [ -n "$rev" ] && [ -r "$suites" ] && [ -n "$out" ] || {
     echo "suite-fingerprint: usage: sfp_compute <rev> <suites-file> <out-tsv>" >&2; return 2; }
   root="${HARNESS_CHECKOUT:-}"
@@ -63,15 +101,17 @@ sfp_compute() {
   [ -n "$rsha" ] && [ "$rsha" = "$hsha" ] || { echo "suite-fingerprint: rev is not HEAD" >&2; return 2; }
   st=$(git -C "$root" status --porcelain 2>/dev/null) || { echo "suite-fingerprint: git status failed" >&2; return 2; }
   [ -z "$st" ] || { echo "suite-fingerprint: dirty tree" >&2; return 3; }
+  img=$(sfp_image_id) || return 2
 
   w=$(mktemp -d "${TMPDIR:-/tmp}/suite-fp.XXXXXX") || return 2
-  _sfp_compute "$root" "$rsha" "$suites" "$out" "$w"; rc=$?
+  _sfp_compute "$root" "$rsha" "$suites" "$out" "$w" "$img"; rc=$?
   rm -rf "$w"
+  [ "$rc" -ne 0 ] || SFP_IMAGE_ID="$img"
   return "$rc"
 }
 
 _sfp_compute() {
-  local root="$1" rsha="$2" suites="$3" out="$4" w="$5" infra_hash
+  local root="$1" rsha="$2" suites="$3" out="$4" w="$5" img="$6" infra_hash
   git -C "$root" ls-tree -r -t --full-tree -z "$rsha" | tr '\0' '\n' \
     | awk '{ i = index($0, "\t"); split(substr($0, 1, i - 1), a, " "); print substr($0, i + 1) "\t" a[3] }' > "$w/tree" \
     || { echo "suite-fingerprint: git ls-tree failed" >&2; return 2; }
@@ -114,7 +154,7 @@ _sfp_compute() {
   mkdir -p "$w/c" || return 2
   LC_ALL=C sort -t "$(printf '\t')" -k1,1 -k2,2 -u "$w/inputs" > "$w/inputs.sorted"
   LC_ALL=C awk -F'\t' -v tf="$w/tree" -v ff="$w/fast" -v nf="$w/never" -v of="$w/oot" \
-      -v sf="$w/suites" -v cdir="$w/c" -v ih="$infra_hash" '
+      -v sf="$w/suites" -v cdir="$w/c" -v ih="$infra_hash" -v im="$img" '
     FILENAME == tf { id[$1] = $2; next }
     FILENAME == ff { if ($1 != "") fast[$1] = 1; next }
     FILENAME == nf { if ($0 !~ /^[ \t]*#/ && $1 != "") never[$1] = $2; next }
@@ -138,7 +178,7 @@ _sfp_compute() {
         else if (!(s in known)) r = "unknown suite"
         else {
           r = "-"; f = cdir "/" n
-          printf "suite-fp v2\ninfra\t%s\n%s", ih, rows[s] > f; close(f)
+          printf "suite-fp v3\nimage\t%s\ninfra\t%s\n%s", im, ih, rows[s] > f; close(f)
         }
         print n "\t" s "\t" r
       }
