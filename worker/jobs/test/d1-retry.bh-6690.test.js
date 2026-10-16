@@ -1,8 +1,8 @@
 // BH-6690: the harness-jobs worker retries a D1 call that fails with
-// "D1 DB is overloaded", at most 3 attempts with exponential backoff and
-// jitter, and rethrows every other error at once. On give-up the error carries
-// d1Attempts, and the one Sentry event withSentry already sends carries it as
-// tag d1_attempts. Sentry sends are counted through a stubbed globalThis.fetch,
+// "D1 DB is overloaded", at most 5 attempts (BH-6813; 3 in BH-6690) with
+// exponential backoff and jitter, and rethrows every other error at once.
+// On give-up the error carries d1Attempts, and the one Sentry event withSentry
+// already sends carries it as tag d1_attempts. Sentry sends are counted through a stubbed globalThis.fetch,
 // as in sentry.bh-5618.test.js; the DSN is a fixture on a reserved TLD.
 import { test } from "node:test";
 import assert from "node:assert/strict";
@@ -45,26 +45,26 @@ test("A1: two overloads then success — returns the value after 3 calls, expone
   assert.deepEqual(got, { ok: 1 });
   assert.equal(fn.calls, 3);
   assert.equal(c.waits.length, 2);
-  assert.ok(c.waits[0] >= 25 && c.waits[0] <= 50, `wait 1 in [25,50]: ${c.waits[0]}`);
-  assert.ok(c.waits[1] >= 50 && c.waits[1] <= 100, `wait 2 in [50,100]: ${c.waits[1]}`);
-  assert.ok(c.waits[1] > 25, "wait 2 is above wait 1's lower bound");
+  assert.ok(c.waits[0] >= 50 && c.waits[0] <= 100, `wait 1 in [50,100]: ${c.waits[0]}`);
+  assert.ok(c.waits[1] >= 100 && c.waits[1] <= 200, `wait 2 in [100,200]: ${c.waits[1]}`);
+  assert.ok(c.waits[1] > 50, "wait 2 is above wait 1's lower bound");
 });
 
-test("A2: overload on every call — gives up after 3 attempts, same error, d1Attempts=3, onGiveUp once", async () => {
+test("A2: overload on every call — gives up after 5 attempts, same error, d1Attempts=5, onGiveUp once", async () => {
   const { withD1Retry } = await lib();
   const c = clock();
   const err = new Error(OVERLOAD);
-  const fn = seq([err, err, err, err]);
+  const fn = seq([err, err, err, err, err, err]);
   const gave = [];
   await assert.rejects(
     () => withD1Retry(fn, { sleep: c.sleep, random: c.random, onGiveUp: (e, n) => gave.push([e, n]) }),
     (e) => e === err,
   );
-  assert.equal(fn.calls, 3);
-  assert.equal(err.d1Attempts, 3);
+  assert.equal(fn.calls, 5);
+  assert.equal(err.d1Attempts, 5);
   assert.equal(gave.length, 1);
   assert.equal(gave[0][0], err);
-  assert.equal(gave[0][1], 3);
+  assert.equal(gave[0][1], 5);
 });
 
 test("A3: a SQL syntax error — no retry, rethrown at once, no mark", async () => {
@@ -79,15 +79,15 @@ test("A3: a SQL syntax error — no retry, rethrown at once, no mark", async () 
 });
 
 // The decision table: retry if and only if the message holds
-// "D1 DB is overloaded" and attempts < 3.
+// "D1 DB is overloaded" and attempts < 5.
 const TABLE = [
-  ["D1", "Cloudflare text 1, always", [OVERLOAD, OVERLOAD, OVERLOAD], 3, false],
-  ["D2", "Cloudflare text 2, always", [OVERLOAD_2, OVERLOAD_2, OVERLOAD_2], 3, false],
-  ["D3", "overload on attempt 2 of 3 is still retried", [OVERLOAD, OVERLOAD], 3, true],
+  ["D1", "Cloudflare text 1, always", [OVERLOAD, OVERLOAD, OVERLOAD, OVERLOAD, OVERLOAD], 5, false],
+  ["D2", "Cloudflare text 2, always", [OVERLOAD_2, OVERLOAD_2, OVERLOAD_2, OVERLOAD_2, OVERLOAD_2], 5, false],
+  ["D3", "overload on attempt 4 of 5 is still retried", [OVERLOAD, OVERLOAD, OVERLOAD, OVERLOAD], 5, true],
   ["D4", "one overload then success", [OVERLOAD_2], 2, true],
   ["D5", "syntax error", ['near "SELEC": syntax error'], 1, false],
   ["D6", "no such table", ["D1_ERROR: no such table: hub_lease"], 1, false],
-  ["D7", "overload on attempt 3 of 3 gives up", [OVERLOAD, OVERLOAD, OVERLOAD, "never reached"], 3, false],
+  ["D7", "overload on attempt 5 of 5 gives up", [OVERLOAD, OVERLOAD, OVERLOAD, OVERLOAD, OVERLOAD, "never reached"], 5, false],
   ["D8", "a thrown non-Error string", ["__string__"], 1, false],
 ];
 
@@ -236,13 +236,13 @@ test("E1: the real worker answers GET /api/flags 200 after two D1 overloads", as
     "the first statement ran 3 times: 2 overloads, then success");
 });
 
-test("E2: the real worker gives up after 3 attempts with d1Attempts=3 on the error", async () => {
+test("E2: the real worker gives up after 5 attempts with d1Attempts=5 on the error", async () => {
   const db = overloadedDb(Infinity);
   await assert.rejects(
     () => worker.fetch(flagsReq(), { DB: db, HARNESS_SECRET: "test-secret" }),
-    (e) => /D1 DB is overloaded/.test(e.message) && e.d1Attempts === 3,
+    (e) => /D1 DB is overloaded/.test(e.message) && e.d1Attempts === 5,
   );
-  assert.equal(db.execs, 3);
+  assert.equal(db.execs, 5);
 });
 
 test("S1: beforeSend tags d1_attempts from the marked error", async () => {
@@ -279,7 +279,7 @@ async function settle(ctx) {
   }
 }
 
-test("S3: a give-up on the real worker sends exactly one event with d1_attempts=3", async (t) => {
+test("S3: a give-up on the real worker sends exactly one event with d1_attempts=5", async (t) => {
   const real = globalThis.fetch;
   const posts = [];
   globalThis.fetch = async (url, init = {}) => {
@@ -300,5 +300,5 @@ test("S3: a give-up on the real worker sends exactly one event with d1_attempts=
   );
   await settle(ctx);
   assert.equal(posts.length, 1, "exactly one envelope reaches Sentry");
-  assert.match(posts[0], /"d1_attempts":"3"/);
+  assert.match(posts[0], /"d1_attempts":"5"/);
 });

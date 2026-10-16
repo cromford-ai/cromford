@@ -8,11 +8,15 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import worker from "../src/index.js";
+import { D1_RETRY_ATTEMPTS } from "../src/lib/d1-retry.js";
 
 const DSN = "https://fixturepubkey@sentry.test/42";
 const OVERLOAD = "D1_ERROR: D1 DB is overloaded. Requests queued for too long.";
 const SYNTAX = 'D1_ERROR: near "SELEC": syntax error';
 const PR = "https://github.com/example-org/cromford/pull/6807";
+// One more overload than the retry makes attempts, so every attempt fails
+// (BH-6813 moved the count from 3 to 5; read it, do not repeat it).
+const GIVE_UP = Array(D1_RETRY_ATTEMPTS + 1).fill(OVERLOAD);
 
 // A fake D1 binding for the real worker. The prLedgerJob artifact read (the
 // one statement on `artifact_kind='pr_url'` with LIMIT 1) throws the next
@@ -112,9 +116,9 @@ test("V5: a ledger miss still answers 404 'no job has recorded this PR'", async 
   assert.equal(s.posts.length, 0);
 });
 
-test("V2: overload on every attempt -> 503 retryable, 3 attempts, 1 warn, 1 Sentry send, no throw", async (t) => {
+test("V2: overload on every attempt -> 503 retryable, D1_RETRY_ATTEMPTS attempts, 1 warn, 1 Sentry send, no throw", async (t) => {
   const s = spies(t);
-  const db = ledgerDb({ fail: [OVERLOAD, OVERLOAD, OVERLOAD, OVERLOAD] });
+  const db = ledgerDb({ fail: GIVE_UP });
   const ctx = new Ctx();
   const res = await worker.fetch(req("/api/verdict"), env(db), ctx);
   await settle(ctx);
@@ -122,12 +126,12 @@ test("V2: overload on every attempt -> 503 retryable, 3 attempts, 1 warn, 1 Sent
   const body = await res.json();
   assert.match(body.error, /overloaded/i, "the predicate bin/lib/jobs/req.sh greps for");
   assert.equal(body.retryable, true);
-  assert.equal(body.d1_attempts, 3);
-  assert.equal(db.ledgerCalls, 3);
+  assert.equal(body.d1_attempts, D1_RETRY_ATTEMPTS);
+  assert.equal(db.ledgerCalls, D1_RETRY_ATTEMPTS);
   assert.equal(s.warns.length, 1);
-  assert.match(s.warns[0], /GET \/api\/verdict gave up on D1 overload after 3 attempt/);
+  assert.match(s.warns[0], new RegExp(`GET /api/verdict gave up on D1 overload after ${D1_RETRY_ATTEMPTS} attempt`));
   assert.equal(s.posts.length, 1, "exactly one envelope reaches Sentry");
-  assert.match(s.posts[0], /"d1_attempts":"3"/);
+  assert.match(s.posts[0], new RegExp(`"d1_attempts":"${D1_RETRY_ATTEMPTS}"`));
 });
 
 test("V3: a non-overload error is tried once and rethrown, no warn", async (t) => {
@@ -145,7 +149,7 @@ test("V3: a non-overload error is tried once and rethrown, no warn", async (t) =
 
 test("V4: /api/verdict/history answers 503 retryable on an overload give-up", async (t) => {
   const s = spies(t);
-  const db = ledgerDb({ fail: [OVERLOAD, OVERLOAD, OVERLOAD, OVERLOAD] });
+  const db = ledgerDb({ fail: GIVE_UP });
   const ctx = new Ctx();
   const res = await worker.fetch(req("/api/verdict/history"), env(db), ctx);
   await settle(ctx);
@@ -153,8 +157,8 @@ test("V4: /api/verdict/history answers 503 retryable on an overload give-up", as
   const body = await res.json();
   assert.match(body.error, /overloaded/i);
   assert.equal(body.retryable, true);
-  assert.equal(body.d1_attempts, 3);
-  assert.equal(db.ledgerCalls, 3);
+  assert.equal(body.d1_attempts, D1_RETRY_ATTEMPTS);
+  assert.equal(db.ledgerCalls, D1_RETRY_ATTEMPTS);
   assert.equal(s.warns.length, 1);
   assert.match(s.warns[0], /GET \/api\/verdict\/history gave up/);
 });

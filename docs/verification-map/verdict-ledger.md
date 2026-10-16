@@ -186,8 +186,8 @@ GET /api/verdict/history?pr=<url>   ->  {pr, job_id, rounds:[…], truncated, as
 ```
 
 **A D1 overload is a 503, not a 500 (BH-6807).** When the BH-6690 D1 retry
-gives up after 3 attempts, `/api/verdict` and `/api/verdict/history` answer
-`503 {error:"…overloaded…", retryable:true, d1_attempts:3}` with one warn line
+gives up after 5 attempts (BH-6813), `/api/verdict` and `/api/verdict/history` answer
+`503 {error:"…overloaded…", retryable:true, d1_attempts:5}` with one warn line
 and one Sentry event, and `bin/lib/jobs/req.sh` retries that answer once
 (`cd worker/jobs && node --test test/verdict-overload.bh-6807.test.js`).
 

@@ -57,8 +57,8 @@ export async function prLedgerJob(db, pr) {
   return { hit, job: job || null };
 }
 
-// BH-6807: THE GIVE-UP ANSWER. lib/d1-retry.js retries a "D1 DB is
-// overloaded" rejection 3 times and then rethrows it. Out of a route, that
+// BH-6807: THE GIVE-UP ANSWER. lib/d1-retry.js tries a "D1 DB is
+// overloaded" rejection D1_RETRY_ATTEMPTS times and then rethrows it. Out of a route, that
 // rethrow left the worker as a 500 with no body, and bin/lib/jobs/req.sh
 // (BH-5781) retries only a 503 whose body says "overloaded". So a verdict route
 // that gives up answers exactly that: 503 {error, retryable:true, d1_attempts},

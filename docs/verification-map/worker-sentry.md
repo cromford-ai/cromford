@@ -8,9 +8,15 @@ no DSN the handler runs unchanged and `@sentry/cloudflare` is never imported.
 
 **What is sent:** the exception and its stack, with tags `lane`
 (`harness-jobs`), `box` (`cloudflare`), `project` (`-`) and
-`harness_sha` (`HARNESS_SHA`, else `unknown`). An error that
+`harness_sha` (`HARNESS_SHA`, else `unknown`). The deploy in
+`bin/harness-sync.sh` sets `HARNESS_SHA` to the full sha of the snapshot it
+deployed (`wrangler deploy --var HARNESS_SHA:<sha>`), for each worker whose
+`src/` names `HARNESS_SHA` (BH-6813). An error that
 `worker/jobs/src/lib/d1-retry.js` gave up on also carries tag `d1_attempts`
-(the attempt count, `3`). `beforeSend` removes the request
+(the attempt count, `5`) and tag `d1_op`: `<method> <VERB> <table>` of the
+call that gave up, for example `all PRAGMA pause_flags` or
+`batch(4) UPDATE stages`. `d1_op` never holds SQL text, a literal or a bound
+value. `beforeSend` removes the request
 body, cookies, query string, and every header, `extra`, `contexts` and
 breadcrumb key that matches `authorization|cookie|token|secret`.
 
@@ -26,13 +32,15 @@ breadcrumb key that matches `authorization|cookie|token|secret`.
 request, memoised per binding. `ensureTable` and `ensureColumns` in
 `lib/core.js` key their caches on the raw binding (`rawDb`), so the raw
 binding and the proxy share one cache entry. Every `first`, `all`, `run`, `raw`, `batch` and
-`exec` call that fails with `D1 DB is overloaded` runs again, at most 3
-attempts in total. The wait before attempt n+1 is `d/2` plus a random part up
-to `d/2`, where `d = min(1000, 50 * 2^(n-1))` ms. Any other error rethrows
-after one call. After the 3rd failure the same error rethrows with
-`d1Attempts = 3`, and the one event withSentry sends carries tag
-`d1_attempts`. There is no second capture. Verified by
-`worker/jobs/test/d1-retry.bh-6690.test.js`.
+`exec` call that fails with `D1 DB is overloaded` runs again, at most 5
+attempts in total (BH-6813; 3 before). The wait before attempt n+1 is `d/2`
+plus a random part up to `d/2`, where `d = min(1000, 100 * 2^(n-1))` ms, so a
+give-up sleeps 750 to 1500 ms in total. Any other error rethrows after one
+call. After the 5th failure the same error rethrows with `d1Attempts = 5` and
+`d1Op`, and the one event withSentry sends carries tags `d1_attempts` and
+`d1_op`. There is no second capture. Verified by
+`worker/jobs/test/d1-retry.bh-6690.test.js` and
+`worker/jobs/test/d1-retry.bh-6813.test.js`.
 
 **Deploy:** `harness-jobs` sets `compatibility_flags: ["nodejs_compat"]`. The
 `# >>> worker npm ci (BH-5618)` block of `bin/harness-sync.sh` runs
@@ -43,7 +51,8 @@ the stamp, so the next run retries.
 **Where the secret is set:** `harness-jobs` has `HARNESS_SENTRY_DSN`.
 
 **Verified by:** `tests/worker-sentry.bh-5618-test.sh`, which runs
-`worker/jobs/test/sentry.bh-5618.test.js` and drives the harness-sync block.
+`worker/jobs/test/sentry.bh-5618.test.js` and drives the harness-sync block,
+and `tests/harness-sync-sha-var.bh-6813-test.sh` for the `HARNESS_SHA` var.
 
 **Live probe (hub, read-only):**
 1. `grep "worker jobs deployed" /root/harness/logs/update-runners.log | tail -1`
@@ -53,3 +62,9 @@ the stamp, so the next run retries.
    event shows only after a real exception. Do not force one on prod.
 4. After a deploy of BH-6690, read the 24 h event count of issue
    CROMFORD-HARNESS-W (7791943763). Pass: below 10 (113 before).
+5. After a deploy of BH-6813, read the newest event of issue
+   CROMFORD-HARNESS-19 (7792534404), if any. Pass: 0 new events in 24 h. An
+   event that does come must carry `harness_sha` equal to the full snapshot
+   sha whose first 7 characters the step 1 line names after `snapshot of`,
+   `d1_attempts` `5`, and
+   a `d1_op` that names the query.

@@ -21,8 +21,9 @@
 //     (fail-open: D1 is often the thing that is failing);
 //   - cap: at most HARNESS_SENTRY_MAX_PER_FP_HOUR events (default 6) per
 //     worker + exception type + message head per UTC hour, per isolate;
-//   - tags lane/box/project/harness_sha (and d1_attempts on a D1 overload
-//     give-up, BH-6690), then scrubEvent.
+//   - tags lane/box/project/harness_sha (harness_sync's deploy sets
+//     HARNESS_SHA to the snapshot sha, BH-6813), and d1_attempts plus d1_op
+//     on a D1 overload give-up (lib/d1-retry.js), then scrubEvent.
 
 let sdk;
 let sdkFailed = false;
@@ -99,6 +100,7 @@ async function gate(event, worker, pauseFlags, hint) {
   // BH-6690: lib/d1-retry.js marks a D1 overload it gave up on.
   const ex = hint && hint.originalException;
   if (ex && typeof ex.d1Attempts === "number") event.tags.d1_attempts = String(ex.d1Attempts);
+  if (ex && typeof ex.d1Op === "string") event.tags.d1_op = ex.d1Op;
   return scrubEvent(event);
 }
 

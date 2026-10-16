@@ -835,8 +835,12 @@ deploy_workers() {
       deploy_fail_clear "$WNAME" npm-ci
     fi
     # <<< worker npm ci
+    # BH-6813: a worker whose src reads HARNESS_SHA (the Sentry harness_sha tag)
+    # gets the snapshot sha as a var, so each event names the build it ran.
+    local WVAR=()
+    grep -rqs HARNESS_SHA "$WDIR/src" && WVAR=(--var "HARNESS_SHA:$SNAP")
     if (cd "$WDIR" && set -a && . "$CFENV" && set +a \
-        && timeout 300 npx --yes wrangler deploy >>"$LOG" 2>&1); then
+        && timeout 300 npx --yes wrangler deploy "${WVAR[@]}" >>"$LOG" 2>&1); then
       echo "$WSHA" > "$WSTATE"
       echo "$(STAMP) worker $WNAME deployed at ${WSHA:0:7} (snapshot of ${SNAP:0:7})" >> "$LOG"
       deploy_fail_clear "$WNAME" deploy
