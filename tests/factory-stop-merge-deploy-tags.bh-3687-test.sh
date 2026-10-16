@@ -6,16 +6,17 @@
 # real catalog/lanes.d, through a lane that sources the real
 # bin/lib/lane-gate.sh (which sources the real bin/lib/factory-stop.sh):
 #   T1 the `merge` set is exactly batch-resolve merge-conductor
-#      merge-conductor-backstop merge-queue rebase-train, and the `deploy` set
+#      merge-conductor-backstop merge-queue rebase-train repair-on-push (BH-6963:
+#      it pushes rebases to PR branches, as rebase-train does), and the `deploy` set
 #      is exactly apply-migrations deploy-train fleet-propagate
 #      migration-autopilot (the launch set belongs to its own slice);
-#   T2 switch ON: each of the nine exits 0 before its sentinel, logs
+#   T2 switch ON: each of the ten exits 0 before its sentinel, logs
 #      `[lane-gate] <id>[/demo] SKIPPED — factory-stop (<tag> lane; ...)` and
 #      posts a `paused` liveness; switch OFF: each runs; untagged real lanes
 #      (review-prs, pipeline-health) run with the switch ON;
 #   M1 (D1) rebase-train's tag stripped in a scratch lanes.d turns T1 red;
 #   M2 (D1) deploy-train flipped to `merge` turns both T1 comparisons red.
-# Header wiring of the nine real scripts to lane_gate_or_exit is pinned by
+# Header wiring of the ten real scripts to lane_gate_or_exit is pinned by
 # tests/lanes-registry-test.sh section 5.
 # Run from anywhere (exit 0 = all pass).
 set -uo pipefail
@@ -26,7 +27,7 @@ ok()  { PASS=$((PASS+1)); }
 bad() { FAIL=$((FAIL+1)); echo "FAIL: $1"; }
 eq()  { if [ "$2" = "$3" ]; then ok; else bad "$1: expected '$3', got '$2'"; fi; }
 
-MERGE_SET="batch-resolve merge-conductor merge-conductor-backstop merge-queue rebase-train"
+MERGE_SET="batch-resolve merge-conductor merge-conductor-backstop merge-queue rebase-train repair-on-push"
 DEPLOY_SET="apply-migrations deploy-train fleet-propagate migration-autopilot"
 NOW=1758300000
 mkdir -p "$T/h/bin/lib" "$T/h/flags" "$T/h/state" "$T/h/logs" "$T/h/catalog" "$T/src/catalog"
@@ -112,7 +113,7 @@ for tag in merge deploy; do
   done
 done
 
-# T2 OFF (M3) — the same nine run when the switch is OFF.
+# T2 OFF (M3) — the same ten run when the switch is OFF.
 for id in $MERGE_SET $DEPLOY_SET; do
   reset; rows 0
   run "$id"

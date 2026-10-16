@@ -1,0 +1,11 @@
+# @hub-lanes
+
+# ── REPAIR ON PUSH (BH-6963, BH-6542 wave 1) ────────────────────────────────
+# Every minute. Reads the push wakes (a push to a repo's default branch) above
+# its own wake cursor, reads the paths each push changed once, and runs the
+# conductor's mc_rebase at once on every open harness PR whose files intersect
+# them, under the conductor's PR lock. At most REPAIR_PUSH_BUDGET (default 8)
+# rebases a tick; a capped wake stays above the cursor. flock -n dedupes. One
+# REPAIR line per decision in logs/repair-on-push.log. Off:
+# flags/lane-off-repair-on-push (bin/harness-ctl.sh off repair-on-push).
+* * * * * /root/harness/bin/hub-lease.sh check && /root/harness/bin/repair-on-push.sh >> /root/harness/logs/repair-on-push-cron.log 2>&1

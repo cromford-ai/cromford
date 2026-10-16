@@ -2903,11 +2903,20 @@ export function wakeOf(event, p) {
     case "merge_group":
       if (!["checks_requested", "destroyed"].includes(action)) return null;
       return { kind: "merge_group", key: sha(obj(pay.merge_group).head_sha) };
-    // MAIN ONLY. A push to a feature branch is the build's own business and
-    // would wake the deploy train for something it must never depart on.
-    case "push":
-      if (String(pay.ref || "") !== "refs/heads/main") return null;
-      return { kind: "push", key: sha(pay.after) };
+    // DEFAULT BRANCH ONLY (repository.default_branch, else main). A push to a
+    // feature branch is the build's own business and would wake the deploy
+    // train for something it must never depart on. `event` carries the compare
+    // range push.<before>..<after> for bin/repair-on-push.sh, only when both
+    // are full shas and before is not the all-zero sha of a new branch.
+    case "push": {
+      const db = String(obj(pay.repository).default_branch || "");
+      const def = /^[A-Za-z0-9._\/-]{1,200}$/.test(db) && !db.includes("..") ? db : "main";
+      if (String(pay.ref || "") !== "refs/heads/" + def) return null;
+      const b = sha(pay.before), a = sha(pay.after);
+      const full = (v) => /^[0-9a-f]{40}$/.test(v);
+      const range = full(b) && full(a) && !/^0+$/.test(b);
+      return { kind: "push", key: a, ...(range ? { event: `push.${b}..${a}` } : {}) };
+    }
     case "deployment_status": {
       const state = String(obj(pay.deployment_status).state || "");
       if (state === "success") return { kind: "deploy", key: sha(obj(pay.deployment).sha) };

@@ -185,7 +185,7 @@ export const routes = [
 
         const pay = payload && typeof payload === "object" ? payload : {};
         const action = String(pay.action || "");
-        const ev = /^[a-z_]{1,32}$/.test(action) ? `${event}.${action}` : event;
+        const ev = w.event || (/^[a-z_]{1,32}$/.test(action) ? `${event}.${action}` : event);
         return json(200, await recordWake(env, t, {
           vendor: "github", deliveryId, repo, kind: w.kind, key: w.key, ev, keepS, extra: mq,
         }));

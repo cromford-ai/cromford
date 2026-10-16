@@ -70,7 +70,7 @@ and writes no row. The subscription list is `bin/webhook-rearm.sh --print-events
 | `check_run` | `completed` | `checks` (head sha) | `bin/merge-conductor.sh` (hub, keyed by head sha via pr-state.tsv, unkeyed on a miss) |
 | `status` | `success` `failure` `error` (`pending` dropped) — BH-4058 | `checks` (sha) | `bin/merge-conductor.sh` (hub, keyed by head sha via pr-state.tsv, unkeyed on a miss) |
 | `workflow_run` | `completed` — BH-4058 | `checks` (head sha) | `bin/merge-conductor.sh` (hub, keyed by head sha via pr-state.tsv, unkeyed on a miss) |
-| `push` | `refs/heads/main` only | `push` (after sha) | `bin/deploy-train.sh` + the `push` wake class |
+| `push` | the repo's default branch only (`repository.default_branch`, else `main`) — BH-6963 | `push` (after sha; event `push.<before>..<after>` when both are full shas and `before` is not all zeros, else `push`) | `bin/deploy-train.sh` + the `push` wake class + `bin/repair-on-push.sh` (reads by its own cursor, not a claim) |
 | `deployment_status` | `success` | `deploy` (deployment sha) | `bin/postmerge-qa.sh` + the `deploy` wake class |
 | `deployment_status` | `failure` `error` — BH-4058 | `deploy_failed` (deployment sha) | recorded; no lane yet (#1034 follow-up); cron covers it |
 | `merge_group` | `checks_requested` `destroyed` — BH-4058 | `merge_group` (head sha) | recorded; no lane yet (#1034 follow-up); cron covers it |
@@ -101,6 +101,7 @@ the command is byte-identical to the pre-fast-path tick.
 |---|---|---|---|
 | `pr`, `checks` | `bin/merge-conductor.sh` | the hub (it is fleet-wide) | `cooled pr fleet`, one launch per batch |
 | `push` (main) | `bin/deploy-train.sh <project>` | the hub | `cooled push <project>` |
+| `push` (main) | `bin/repair-on-push.sh` (its own `* * * * *` cron, not launched by the wake loop): `mc_rebase` on each open harness PR whose files intersect the push | the hub | its wake cursor (`wake_cursors` box `repair-on-push`), the conductor PR lock, `REPAIR_PUSH_BUDGET` |
 | `push` (main) | `bin/launch-fastpath.sh <project> <keys>` first, then `bin/run-triage.sh <project>` for the declined keys | the box `fleet.conf` names | `cooled triage <project>`, **and** `bin/unblocked-children.sh` must name a released child |
 | `deploy` | `bin/postmerge-qa.sh <project>` | the hub | `cooled deploy <project>` |
 | `issue` | `touch state/wake-<project>`, then `bin/launch-fastpath.sh <project> <key>` first, then `bin/run-triage.sh <project>` for the declined keys | the box `fleet.conf` names | `cooled triage <project>` |

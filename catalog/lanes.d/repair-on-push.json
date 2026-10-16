@@ -1,0 +1,59 @@
+{
+  "id": "repair-on-push",
+  "name": "Repair on push",
+  "scope": "hub",
+  "factory_stop": "merge",
+  "script": "bin/repair-on-push.sh",
+  "cadence": "* * * * *",
+  "boxes": [
+    "hub"
+  ],
+  "switch": {
+    "kind": "flag",
+    "name": "lane-off-repair-on-push",
+    "aliases": []
+  },
+  "wired": true,
+  "knobs": [
+    {
+      "env": "REPAIR_PUSH_BUDGET",
+      "type": "int",
+      "default": 8,
+      "min": 0,
+      "max": 50,
+      "unit": "rebases",
+      "zero_means": "off",
+      "read_in": "bin/repair-on-push.sh",
+      "note": "BH-6963: mc_rebase calls per tick across the fleet. 0 = no rebase this tick. A wake whose intersecting PRs did not all get a call stays above the cursor and is read again next tick.",
+      "settable": true
+    },
+    {
+      "env": "REPAIR_PUSH_WAKES",
+      "type": "int",
+      "default": 20,
+      "min": 1,
+      "max": 200,
+      "unit": "wakes",
+      "zero_means": null,
+      "read_in": "bin/repair-on-push.sh",
+      "note": "BH-6963: push wakes read per tick (GET /api/wakes?since=<cursor>&kind=push&limit=).",
+      "settable": true
+    },
+    {
+      "env": "REPAIR_PUSH_SKIP_STATES",
+      "type": "string",
+      "default": "QUEUED REBASING BLOCKED_HUMAN MERGED CLOSED ABANDONED",
+      "unit": null,
+      "zero_means": null,
+      "read_in": "bin/repair-on-push.sh",
+      "note": "BH-6963: pr_state states the lane never rebases. QUEUED is in it because a push ejects a PR from the merge queue. NOT settable from the control plane.",
+      "settable": false
+    }
+  ],
+  "stats": {
+    "cost_stage": null,
+    "cost_project_filter": null,
+    "lanes_row": false,
+    "log": "logs/repair-on-push.log"
+  }
+}
