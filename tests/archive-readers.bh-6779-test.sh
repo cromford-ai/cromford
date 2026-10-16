@@ -29,8 +29,8 @@ done
 command -v node >/dev/null 2>&1 || { echo "archive-readers: SKIPPED — node is not installed on this box"; exit 0; }
 
 # The worker imports three composed catalogs that are never committed.
-"$DIR/bin/lanes-build.sh" --root "$DIR" --write >/dev/null || { echo "FAIL: cannot write catalog/lanes.json"; exit 1; }
-"$DIR/bin/llm-sites-build.sh" --compose --repo "$DIR" >/dev/null || { echo "FAIL: cannot compose catalog/llm-sites.json"; exit 1; }
+. "$DIR/tests/lib/worker-catalogs.sh" || exit 1
+worker_catalogs "$DIR" || exit 1
 "$DIR/bin/context-budgets-build.sh" --compose --repo "$DIR" >/dev/null || { echo "FAIL: cannot compose catalog/context-budgets.json"; exit 1; }
 
 # The helper loads and exports its four functions.

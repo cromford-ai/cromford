@@ -19,8 +19,8 @@
 set -uo pipefail
 . "$(dirname "$0")/lib/scratch.sh" || exit 1
 DIR=$(cd "$(dirname "$0")/.." && pwd)
-"$DIR/bin/lanes-build.sh" --root "$DIR" --write >/dev/null || { echo "FAIL: cannot write catalog/lanes.json"; exit 1; }
-"$DIR/bin/llm-sites-build.sh" --compose --repo "$DIR" >/dev/null || { echo "FAIL: cannot compose catalog/llm-sites.json"; exit 1; }
+. "$DIR/tests/lib/worker-catalogs.sh" || exit 1
+worker_catalogs "$DIR" || exit 1
 CO="$DIR/bin/component-of.sh"
 CAT="$DIR/catalog/components.tsv"
 PASS=0; FAIL=0

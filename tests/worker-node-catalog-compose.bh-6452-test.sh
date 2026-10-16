@@ -20,14 +20,19 @@
 #             that helper imports jobs/src/index.js (signal A's pattern). The
 #             helper starts the worker as a server (spend-lane-push.bh-6174
 #             runs lane-spend-worker.bh-6174.mjs; merge-queue batch #6471).
-#   compliant a line has both 'llm-sites-build.sh' and '--compose'.
-# A suite with signal A or B that is not compliant is an offender. The fix is
-# the line tests/box-commands-worker.bh-2518-test.sh already has:
+#   compliant a line has both 'llm-sites-build.sh' and '--compose'; or one
+#             line sources tests/lib/worker-catalogs.sh and another calls
+#             worker_catalogs (BH-7119). A source with no call composes nothing.
+# A suite with signal A, B or C that is not compliant is an offender. The fix is
+# the two helper lines, put after DIR=:
+#   . "$DIR/tests/lib/worker-catalogs.sh" || exit 1
+#   worker_catalogs "$DIR" || exit 1
+# The inline line stays compliant (the suites in a variant shape keep it):
 #   "$DIR/bin/llm-sites-build.sh" --compose --repo "$DIR" >/dev/null || { echo "FAIL: cannot compose catalog/llm-sites.json"; exit 1; }
-# put after DIR= (or after the lanes-build.sh block when there is one).
 #
-# Cases: R0 the real tree; R1-R4 copies of real suites with and without that
-# line; N1-N4 suites that must not be flagged. Fixtures live under $T only.
+# Cases: R0 the real tree; R1-R6 copies of real suites with and without the
+# compose; R7-R9 the helper sourced and called, sourced only, named only in a
+# comment; N1-N5 suites that must not be flagged. Fixtures live under $T only.
 #
 # Run: HARNESS_TEST_SANDBOX=1 bash tests/worker-node-catalog-compose.bh-6452-test.sh   (exit 0 = pass)
 set -uo pipefail
@@ -42,6 +47,14 @@ SELF=$(basename "$0")
 
 # code <file>: the file's non-comment lines.
 code() { grep -v '^[[:space:]]*#' "$1" 2>/dev/null; }
+
+# helper_called <body>: rc 0 when one line sources tests/lib/worker-catalogs.sh
+# and another line calls worker_catalogs.
+helper_called() {
+  grep -qE '^[[:space:]]*(\.|source)[[:space:]].*lib/worker-catalogs\.sh' <<<"$1" || return 1
+  grep -vE '^[[:space:]]*(\.|source)[[:space:]].*lib/worker-catalogs\.sh' <<<"$1" \
+    | grep -qE '(^|[^A-Za-z0-9_])worker_catalogs([[:space:]]|$)'
+}
 
 # scan <ROOT>: one line per offender, "<suite path relative to root>: <why>".
 # The glob is "$ROOT"/tests/*.sh on purpose: that is the "$DIR"/tests/* signal
@@ -77,6 +90,7 @@ scan() {
     fi
     [ -n "$why" ] || continue
     printf '%s\n' "$body" | grep 'llm-sites-build\.sh' | grep -qe '--compose' && continue
+    helper_called "$body" && continue
     rel=${f#"$ROOT"/}
     echo "$rel: $why, and the suite never runs bin/llm-sites-build.sh --compose"
   done
@@ -91,13 +105,15 @@ if [ -z "$OUT" ]; then ok "R0 real tree: no suite loads the worker without compo
 else
   bad "R0 real tree has offenders:"
   printf '%s\n' "$OUT" | sed 's/^/         /'
-  echo "       fix: add the compose line (see this file's header) after DIR= or the lanes-build.sh block in each suite above"
+  echo "       fix: add the two helper lines (see this file's header) after DIR= in each suite above:"
+  echo "         . \"\$DIR/tests/lib/worker-catalogs.sh\" || exit 1"
+  echo "         worker_catalogs \"\$DIR\" || exit 1"
 fi
 
 # --- R1/R2: signal A, a copy of ci-plan-reuse-full --------------------------------
 A_SRC="$DIR/tests/ci-plan-reuse-full.bh-6406-test.sh"
 RA=$(fixture a)
-grep -v 'llm-sites-build\.sh' "$A_SRC" > "$RA/tests/ci-plan-reuse-full.bh-6406-test.sh"
+grep -v -e 'llm-sites-build\.sh' -e 'worker[-_]catalogs' "$A_SRC" > "$RA/tests/ci-plan-reuse-full.bh-6406-test.sh"
 OUT=$(scan "$RA")
 case $OUT in
   "tests/ci-plan-reuse-full.bh-6406-test.sh: imports worker/jobs/src/index.js"*) ok "R1 driver import without compose: flagged" ;;
@@ -112,7 +128,7 @@ B_SRC="$DIR/tests/staff-record.bh-5561-test.sh"
 B_JS="$DIR/worker/jobs/test/staff-record.bh-5561.test.js"
 RB=$(fixture b)
 cp "$B_JS" "$RB/worker/jobs/test/"
-grep -v 'llm-sites-build\.sh' "$B_SRC" > "$RB/tests/staff-record.bh-5561-test.sh"
+grep -v -e 'llm-sites-build\.sh' -e 'worker[-_]catalogs' "$B_SRC" > "$RB/tests/staff-record.bh-5561-test.sh"
 OUT=$(scan "$RB")
 case $OUT in
   "tests/staff-record.bh-5561-test.sh: node --test worker/jobs/test/staff-record.bh-5561.test.js imports ../src/index.js"*)
@@ -128,18 +144,50 @@ C_SRC="$DIR/tests/spend-lane-push.bh-6174-test.sh"
 C_LIB="$DIR/tests/lib/lane-spend-worker.bh-6174.mjs"
 RC_=$(fixture c)
 mkdir -p "$RC_/tests/lib"; cp "$C_LIB" "$RC_/tests/lib/"
-grep -v 'llm-sites-build\.sh' "$C_SRC" > "$RC_/tests/spend-lane-push.bh-6174-test.sh"
+grep -v -e 'llm-sites-build\.sh' -e 'worker[-_]catalogs' "$C_SRC" > "$RC_/tests/spend-lane-push.bh-6174-test.sh"
 OUT=$(scan "$RC_")
 case $OUT in
   "tests/spend-lane-push.bh-6174-test.sh: node runs tests/lib/lane-spend-worker.bh-6174.mjs, which imports worker/jobs/src/index.js"*)
     ok "R5 node on a worker-server helper without compose: flagged" ;;
   *) bad "R5 node on a worker-server helper without compose: want the suite flagged, got [$OUT]" ;;
 esac
-{ grep -v 'llm-sites-build\.sh' "$C_SRC" | sed -n '1,/^DIR=/p'
+{ grep -v -e 'llm-sites-build\.sh' -e 'worker[-_]catalogs' "$C_SRC" | sed -n '1,/^DIR=/p'
   printf '%s\n' '"$DIR/bin/llm-sites-build.sh" --compose --repo "$DIR" >/dev/null || exit 1'
-  grep -v 'llm-sites-build\.sh' "$C_SRC" | sed '1,/^DIR=/d'; } > "$RC_/tests/spend-lane-push.bh-6174-test.sh"
+  grep -v -e 'llm-sites-build\.sh' -e 'worker[-_]catalogs' "$C_SRC" | sed '1,/^DIR=/d'; } > "$RC_/tests/spend-lane-push.bh-6174-test.sh"
 OUT=$(scan "$RC_")
 [ -z "$OUT" ] && ok "R6 node on a worker-server helper with compose: clean" || bad "R6 with compose: want nothing, got [$OUT]"
+
+# --- R7-R9: signal B, the staff-record copy with the BH-7119 helper ------------
+# helper_suite <root> <lines>: the staff-record copy, no inline compose and no
+# helper lines, with <lines> put after DIR=.
+helper_suite() {
+  { grep -v -e 'llm-sites-build\.sh' -e 'worker[-_]catalogs' "$B_SRC" | sed -n '1,/^DIR=/p'
+    printf '%s\n' "$2"
+    grep -v -e 'llm-sites-build\.sh' -e 'worker[-_]catalogs' "$B_SRC" | sed '1,/^DIR=/d'; } > "$1/tests/staff-record.bh-5561-test.sh"
+}
+SRC_LINE='. "$DIR/tests/lib/worker-catalogs.sh" || exit 1'
+CALL_LINE='worker_catalogs "$DIR" || exit 1'
+RH=$(fixture h)
+cp "$B_JS" "$RH/worker/jobs/test/"
+helper_suite "$RH" "$SRC_LINE
+$CALL_LINE"
+OUT=$(scan "$RH")
+[ -z "$OUT" ] && ok "R7 helper sourced and called before node --test: clean" || bad "R7 helper sourced and called: want nothing, got [$OUT]"
+helper_suite "$RH" "$SRC_LINE"
+OUT=$(scan "$RH")
+case $OUT in
+  "tests/staff-record.bh-5561-test.sh: node --test worker/jobs/test/staff-record.bh-5561.test.js imports ../src/index.js"*)
+    ok "R8 helper sourced, worker_catalogs never called: flagged" ;;
+  *) bad "R8 helper sourced, never called: want the suite flagged, got [$OUT]" ;;
+esac
+helper_suite "$RH" "# $SRC_LINE
+# $CALL_LINE"
+OUT=$(scan "$RH")
+case $OUT in
+  "tests/staff-record.bh-5561-test.sh: node --test worker/jobs/test/staff-record.bh-5561.test.js imports ../src/index.js"*)
+    ok "R9 helper named only in a comment: flagged" ;;
+  *) bad "R9 helper named only in a comment: want the suite flagged, got [$OUT]" ;;
+esac
 
 # --- N5: node on a tests/lib helper that does not import the worker ------------
 RN=$(fixture n5)
@@ -156,7 +204,7 @@ if code "$N1_JS" | grep -q 'src/index\.js'; then
 else
   RN=$(fixture n1)
   cp "$N1_JS" "$RN/worker/jobs/test/"
-  grep -v 'llm-sites-build\.sh' "$B_SRC" | sed 's#test/staff-record\.bh-5561\.test\.js test/route-table\.test\.js#test/account-usage-contract.bh-167.test.js#' \
+  grep -v -e 'llm-sites-build\.sh' -e 'worker[-_]catalogs' "$B_SRC" | sed 's#test/staff-record\.bh-5561\.test\.js test/route-table\.test\.js#test/account-usage-contract.bh-167.test.js#' \
     > "$RN/tests/n1-test.sh"
   if grep -q 'node --test.*account-usage-contract\.bh-167\.test\.js' "$RN/tests/n1-test.sh"; then
     OUT=$(scan "$RN")
@@ -180,7 +228,7 @@ fi
 # --- N3: index.js named only in a comment or a [ -r ] path check ------------------
 RN=$(fixture n3)
 cp "$B_JS" "$RN/worker/jobs/test/"
-grep -v 'llm-sites-build\.sh' "$B_SRC" | grep -v 'node --test' > "$RN/tests/staff-record.bh-5561-test.sh"
+grep -v -e 'llm-sites-build\.sh' -e 'worker[-_]catalogs' "$B_SRC" | grep -v 'node --test' > "$RN/tests/staff-record.bh-5561-test.sh"
 printf '# import("worker/jobs/src/index.js") is named in a comment only\n' >> "$RN/tests/staff-record.bh-5561-test.sh"
 if grep -q 'src/index\.js' "$RN/tests/staff-record.bh-5561-test.sh"; then
   OUT=$(scan "$RN")

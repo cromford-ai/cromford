@@ -12,8 +12,8 @@ set -uo pipefail
 DIR=$(readlink -f "$(dirname "$0")/..")
 . "$(dirname "$0")/lib/scratch.sh" || exit 1
 . "$(dirname "$0")/lib/jobs-schema.sh" && jobs_schema_render || exit 1
-"$DIR/bin/lanes-build.sh" --root "$DIR" --write >/dev/null || { echo "FAIL: cannot write catalog/lanes.json"; exit 1; }
-"$DIR/bin/llm-sites-build.sh" --compose --repo "$DIR" >/dev/null || { echo "FAIL: cannot compose catalog/llm-sites.json"; exit 1; }
+. "$DIR/tests/lib/worker-catalogs.sh" || exit 1
+worker_catalogs "$DIR" || exit 1
 SCHEMA="$DIR/worker/jobs/schema.sql"
 STANDBY_ROUTES="$DIR/worker/jobs/src/routes/hub-standby.js"
 VERIFY_ROUTES="$DIR/worker/jobs/src/routes/hub-standby-verify.js"

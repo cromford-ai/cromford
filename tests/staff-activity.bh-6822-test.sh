@@ -33,8 +33,8 @@ set -uo pipefail
 DIR=$(cd "$(dirname "$0")/.." && pwd)
 command -v jq >/dev/null 2>&1 || { echo "staff-activity: jq is required"; exit 1; }
 command -v node >/dev/null 2>&1 || { echo "staff-activity: node is required"; exit 1; }
-"$DIR/bin/lanes-build.sh" --root "$DIR" --write >/dev/null || { echo "FAIL: cannot write catalog/lanes.json"; exit 1; }
-"$DIR/bin/llm-sites-build.sh" --compose --repo "$DIR" >/dev/null || { echo "FAIL: cannot compose catalog/llm-sites.json"; exit 1; }
+. "$DIR/tests/lib/worker-catalogs.sh" || exit 1
+worker_catalogs "$DIR" || exit 1
 
 PASS=0; FAIL=0
 ok()  { PASS=$((PASS+1)); }

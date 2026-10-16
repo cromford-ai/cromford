@@ -22,8 +22,8 @@ set -uo pipefail
 DIR=$(cd "$(dirname "$0")/.." && pwd)
 # worker/jobs/src/index.js imports catalog/lanes.json and catalog/llm-sites.json,
 # both git-ignored: build them first (BH-6540, BH-6452).
-"$DIR/bin/lanes-build.sh" --root "$DIR" --write >/dev/null || { echo "FAIL: cannot write catalog/lanes.json"; exit 1; }
-"$DIR/bin/llm-sites-build.sh" --compose --repo "$DIR" >/dev/null || { echo "FAIL: cannot compose catalog/llm-sites.json"; exit 1; }
+. "$DIR/tests/lib/worker-catalogs.sh" || exit 1
+worker_catalogs "$DIR" || exit 1
 PASS=0; FAIL=0
 ok()  { PASS=$((PASS+1)); }
 bad() { FAIL=$((FAIL+1)); echo "FAIL: $1"; }
