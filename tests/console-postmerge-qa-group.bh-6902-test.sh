@@ -37,6 +37,11 @@ bad() { FAIL=$((FAIL+1)); echo "FAIL: $1"; }
 for c in git jq flock timeout; do command -v "$c" >/dev/null || { echo "$c missing — skipping"; exit 0; }; done
 export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@example.invalid GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@example.invalid
 export GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null
+# BH-7123 wave B: this suite pins the grouping and filing mechanics with medium
+# console findings. The follow-up floor (review.followup_min_level, seeded
+# `core`) would hold those groups; it has its own cases in
+# tests/followup-chain-guard.bh-7123-test.sh, so here it reads `always`.
+export REVIEW_LEVEL_FOLLOWUP_MIN_LEVEL=always
 unset CONSOLE_POSTMERGE_QA CONSOLE_POSTMERGE_QA_SCREENS CONSOLE_PAGES_URL CONSOLE_PAGES_PROJECT CLOUDFLARE_API_TOKEN \
       CLOUDFLARE_ACCOUNT_ID CONSOLE_PREVIEW_WRANGLER CONSOLE_QA_WIDTHS CONSOLE_WORKER_URL GROUP_FINDINGS GROUP_FINDINGS_URGENT_RANK
 SLUG=o/console-fixture

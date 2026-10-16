@@ -34,7 +34,9 @@
 # The held tails are hold:comment|title|body|label, abandon:comment, closed,
 # label-absent, hold:waiting-on-human <at> <action> (BH-3443) and
 # hold:human-fix <at> <line> (BH-5125); the clear tails are no-hold,
-# lifted-by-comment <at> and lifted-by-human-step <at>.
+# lifted-by-comment <at>, lifted-by-human-step <at> and
+# hold:go-live <at> <step> (BH-7123 wave B: an open go-live step that gates
+# nothing; hold_is_pause still reads it as a pause for ticket ownership).
 #
 # THE WHY NAMES THE LINE THAT DECIDED (BH-1461): `hold:body <line>`,
 # `hold:title <line>`, `hold:comment <at> <line>`. The verdict TOKEN in front is
@@ -184,8 +186,22 @@ HOLD_NH_TAG_RE='<!--[ \t]*nh-fp:[0-9a-f]+[ \t]*-->'
 # or body. Lifted exactly as NEEDS-HUMAN: is (a person's done directly over it,
 # or the lift vocabulary), and a person's HOLD/ABANDON under it still stands.
 HOLD_HUMAN_FIX_RE='(?m)^(Taken by:[ \t]*\S|\[human-fix\])'
+# A GO-LIVE STEP IS VISIBLE, NEVER A PAUSE (BH-7123 wave B). A review's
+# `NEEDS_HUMAN:` for a step a user depends on at go-live (a live connector key,
+# a vendor console, DNS, a product decision; catalog/review-golive.tsv) used to
+# park the ticket like any other human step and fail the merge gate with it. A
+# marker whose action opens `go-live:` (bin/needs-human-hold.sh, source go-live)
+# classifies CLEAR with the tail `hold:go-live <at> <step>`: bin/fly-pool.sh and
+# bin/blocked-resolver.sh read the first word and proceed, the console and
+# bin/lib/ticket-ownership.sh (hold_is_pause) still see the open step, and a
+# person's HUMAN-STEP-DONE / RESUME directly over it lifts it exactly as an
+# ordinary marker. Everything else on the thread decides as if the go-live
+# marker were not there: a person's HOLD, an ABANDON or an unanswered ordinary
+# NEEDS-HUMAN under or over it still holds. Same bot rule: the placer's tagged
+# marker is heard, an untagged bot line is nothing.
+HOLD_GOLIVE_RE='(?m)^NEEDS-HUMAN:[ \t]*go-live:'
 export HOLD_WORD_RE HOLD_COMMENT_RE HOLD_LIFT_RE HOLD_NEG_RE HOLD_BODY_RE HOLD_ABANDON_RE HOLD_TITLE_RE HOLD_LIFT_LEAD_RE HOLD_LEAD_RE
-export HOLD_NEEDS_HUMAN_RE HOLD_HUMAN_DONE_RE HOLD_NH_TAG_RE HOLD_HUMAN_FIX_RE
+export HOLD_NEEDS_HUMAN_RE HOLD_HUMAN_DONE_RE HOLD_NH_TAG_RE HOLD_HUMAN_FIX_RE HOLD_GOLIVE_RE
 
 # THE MARKER ON OUR OWN AMBIGUITY NOTE (hold_ambiguous_note). The note names the
 # lift words in capitals and a box may post it on a PAT (user.type User), so a
@@ -255,7 +271,8 @@ hold__read() {
 # original index breaks ties, so two comments in the same second keep the order
 # GitHub gave them.
 HOLD__JQ_DEFS='
-    def decide: if test($nh) then "needs-human"
+    def decide: if test($nh) and test($gl) then "golive"
+                elif test($nh) then "needs-human"
                 elif test($hf) then "human-fix"
                 elif test($lead) then (if test($neg) then "none" else "lift" end)
                 elif test($holdlead) then "hold"
@@ -315,6 +332,7 @@ hold_classify() {
         --arg bodyre "$HOLD_BODY_RE" --arg ab "$HOLD_ABANDON_RE" --arg titlere "$HOLD_TITLE_RE" \
         --arg lead "$HOLD_LIFT_LEAD_RE" --arg holdlead "$HOLD_LEAD_RE" --arg mark "$HOLD_AMBIGUOUS_MARK" \
         --arg nh "$HOLD_NEEDS_HUMAN_RE" --arg hf "$HOLD_HUMAN_FIX_RE" --arg done "$HOLD_HUMAN_DONE_RE" \
+        --arg gl "$HOLD_GOLIVE_RE" \
         --arg nhtag "$HOLD_NH_TAG_RE" "$HOLD__JQ_DEFS"'
     input as $i
     | input as $c
@@ -335,7 +353,13 @@ hold_classify() {
         ( thread($c)
             | map(. + { d: (.body | decide) })
             | map(select(.d != "none"))
-            | map(select((.bot | not) or (.d == "needs-human" and (.body | test($nhtag))))) ) as $ds
+            | map(select((.bot | not) or (.d == "needs-human" and (.body | test($nhtag))) or (.d == "golive" and (.body | test($nhtag))))) ) as $dsall
+        # THE GO-LIVE STEP IS TRANSPARENT TO THE DECISION (BH-7123 wave B): the
+        # thread decides as if its go-live markers were not there ($ds), and only
+        # a CLEAR answer is then re-worded to name the newest open step
+        # (hold:go-live, below). A held answer is never softened by one.
+        | ($dsall | map(select(.d != "golive"))) as $ds
+        | ($dsall | to_entries | map(select(.value.d == "golive")) | first) as $gi
         | (($i.title // "") | tostring) as $title
         | (($i.body // "") | tostring) as $body
         # THE BODY NEEDS AN EXPLICIT LINE, THE TITLE ITS IDIOM (HOLD_TITLE_RE):
@@ -345,13 +369,28 @@ hold_classify() {
             if ($title | test($titlere)) then "held\thold:title" + ($title | say($titlere))
             elif ($body | test($bodyre)) then "held\thold:body" + ($body | say($bodyre))
             else $dflt end;
+        # golive($ans): a clear answer names the newest go-live marker that no
+        # newer lift word lifted: a done DIRECTLY over it lifts it (the ordinary
+        # marker rule), a newer done or lift anywhere lifts it, else the step is
+        # open and the verdict reads `clear<TAB>hold:go-live <at> <step>`.
+        def golive($ans):
+            if ($ans | startswith("clear")) and $gi != null then
+              ($dsall[:$gi.key] | map(select(.d == "lift" or .d == "done"))) as $newer
+              | if ($newer | length) == 0 then
+                  "clear\thold:go-live " + $gi.value.at + " "
+                  + ($gi.value.body | hit($gl) | sub("^NEEDS-HUMAN:[ \t]*go-live:[ \t]*"; "") | gsub("\t"; " ") | .[0:160])
+                elif $gi.key > 0 and $dsall[$gi.key - 1].d == "done" and ($ans | startswith("clear\tno-hold")) then
+                  "clear\tlifted-by-human-step " + $dsall[$gi.key - 1].at
+                else $ans end
+            else $ans end;
         # THE HUMAN STEP (BH-3443): the newest non-done entry is a marker with a
         # done directly over it. The done lifts that marker, and every older
         # marker and done with it (the person answered the newest ask), but
         # never a HOLD or ABANDON a person wrote further down. A human-fix
         # marker (BH-5125) is lifted the same way.
         ([ $ds | to_entries[] | select(.value.d != "done") | .key ] | first) as $k
-        | if $k != null and $k > 0 and ($ds[$k].d == "needs-human" or $ds[$k].d == "human-fix") then
+        | golive(
+          if $k != null and $k > 0 and ($ds[$k].d == "needs-human" or $ds[$k].d == "human-fix") then
             $ds[$k - 1] as $lifter
             | ($ds[$k + 1:] | map(select(.d == "hold" or .d == "abandon" or .d == "lift")) | first) as $rest
             | if $rest == null then titlebody("clear\tlifted-by-human-step " + $lifter.at)
@@ -368,7 +407,7 @@ hold_classify() {
                 + ($dec.body | hit($nh) | sub("^NEEDS-HUMAN:[ \t]*"; "") | gsub("\t"; " ") | .[0:160])
               elif $dec.d == "human-fix" then "held\thold:human-fix " + $dec.at + ($dec.body | say($hf))
               else "held\thold:comment " + $dec.at + ($dec.body | say($hold)) end
-          end
+          end)
       end' 2>/dev/null)
   case "$out" in
     held*)  printf '%s\n' "$out"; return 1 ;;
@@ -453,7 +492,8 @@ hold_ambiguous() {
   out=$(printf '%s\n' "$cj" | jq -rn \
         --arg hold "$HOLD_COMMENT_RE" --arg lift "$HOLD_LIFT_RE" --arg neg "$HOLD_NEG_RE" \
         --arg ab "$HOLD_ABANDON_RE" --arg lead "$HOLD_LIFT_LEAD_RE" --arg holdlead "$HOLD_LEAD_RE" --arg mark "$HOLD_AMBIGUOUS_MARK" \
-        --arg nh "$HOLD_NEEDS_HUMAN_RE" --arg hf "$HOLD_HUMAN_FIX_RE" --arg done "$HOLD_HUMAN_DONE_RE" "$HOLD__JQ_DEFS"'
+        --arg nh "$HOLD_NEEDS_HUMAN_RE" --arg hf "$HOLD_HUMAN_FIX_RE" --arg done "$HOLD_HUMAN_DONE_RE" \
+        --arg gl "$HOLD_GOLIVE_RE" "$HOLD__JQ_DEFS"'
     input as $c
     | (people($c) | first) as $p
     | if $p == null or ($p.body | decide) != "none" or ($p.id | type) != "number" then empty

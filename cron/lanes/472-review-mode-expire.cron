@@ -1,0 +1,11 @@
+# @hub-lanes
+
+# ── REVIEW-MODE EXPIRE (BH-7123 wave B) ─────────────────────────────────────
+# The review dial (bin/review-mode.sh) writes review.mode[.<project>] with an
+# expiry in review.mode_until[.<project>]; cowboy and off default to 6h. Every
+# 15 minutes this reads the settings snapshot once and flips any expired
+# non-levels row back to levels, clears its until row and posts one operator
+# line. Idempotent; an unreadable settings read changes nothing. flock -n
+# dedupes. Off: flags/lane-off-review-mode-expire or bin/harness-ctl.sh off
+# review-mode-expire. It logs itself to logs/review-mode-expire.log.
+*/15 * * * * /root/harness/bin/hub-lease.sh check && /root/harness/bin/review-mode-expire.sh >/dev/null 2>&1

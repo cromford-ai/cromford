@@ -10,11 +10,12 @@
 # would notice, and 63 of 153 BLOCK verdicts (one rebuild+review+CI round each)
 # held nothing that met it (docs/REVIEW_SEVERITY_AUDIT_2026-10-16.html).
 #
-# WHAT. Three pieces, all read from settings rows (see
-# worker/jobs/schema.d/202610161737-bh-7123-review-levels.sql):
+# WHAT. All of it read from settings rows (see
+# worker/jobs/schema.d/202610161737-bh-7123-review-levels.sql and the wave B
+# fragments):
 #   rl_mode <project>     strict | shadow | levels | cowboy | off
 #   rl_prompt_note <p>    the `## Review level` text a lane appends to its prompt
-#   rl_cap <file> <p> --approve W --block W [--lens inbuild|prs|lead]
+#   rl_cap <file> <p> --approve W --block W [--lens inbuild|prs|lead] [--golive note|stand]
 #                         THE DEMOTER. Rewrites the review in place: a finding
 #                         tagged BLOCK/HIGH/MEDIUM/... that names no ALWAYS-BLOCK
 #                         class (catalog/review-always-block.tsv) and matches no
@@ -29,9 +30,19 @@
 #                         nothing; strict changes nothing. Idempotent: a file
 #                         that carries the `Review level (BH-7123)` line is read,
 #                         not rewritten. Prints
-#                         `mode=M demoted=K standing=S verdict=V untagged=U`.
+#                         `mode=M demoted=K standing=S verdict=V untagged=U[ golive=G]`.
 #                         rc 0 rewritten or nothing to do; rc 1 strict/shadow;
 #                         rc 2 unreadable file or bad arguments.
+#                         `--golive note` (wave B): a GO-LIVE human step is
+#                         rewritten to `[HUMAN go-live] <text>` (lead, prs) or
+#                         `HUMAN_GOLIVE: <text>` (inbuild), does not stand, and
+#                         is counted in golive=G; the hold placers
+#                         (bin/lead-review-land.sh lrl_golive_route,
+#                         bin/lib/needs-human/classify.sh nh_on_golive) read
+#                         those lines and the ticket gets a hold that does not
+#                         pause the PR. Default `stand` = wave A: it stands.
+#   rl_golive_opt <p>     note | stand, from the row review.golive_gates_merge.
+#   rl_judged_mode <file> the mode a report was judged under (wave B).
 # THE GRAMMAR GUARD. A keyword net cannot tell "shows the wrong text when the
 # agent is Off" (a real bug) from "the Live step reads 'changed'" (a nit); only
 # the reviewer can, by its `[BLOCK <class>]` tag. So an untagged BLOCK-word
@@ -88,6 +99,14 @@ rl_knob() {
 }
 
 rl_mode() { rl_knob review.mode "${1:-}" levels '^(strict|shadow|levels|cowboy|off)$'; }
+
+# rl_golive_opt [project] -> note | stand: what rl_cap's --golive should read
+# (wave B). review.golive_gates_merge (seeded 0; per project
+# review.golive_gates_merge.<project>): 0 = a go-live human step is a note the
+# hold placers read and the PR merges; 1 = it stands and gates, as in wave A.
+rl_golive_opt() {
+  case "$(rl_knob review.golive_gates_merge "${1:-}" 0 '^[01]$')" in 1) printf 'stand' ;; *) printf 'note' ;; esac
+}
 
 # _rl_catalog_re <file> — the EREs of a catalog joined with |, comments dropped.
 _rl_catalog_re() {
@@ -155,6 +174,26 @@ rl_line_golive() { rl_catalogs_load || return 1; [ -n "$_RL_GOLIVE_RE" ] || retu
 # rl_line_nit <line> — rc 0 when the finding is known review noise.
 rl_line_nit()    { rl_catalogs_load || return 1; [ -n "$_RL_NIT_RE" ] || return 1; grep -qiE "$_RL_NIT_RE" <<<"$1"; }
 
+# _rl_golive_rewrite <line> <lens> — the go-live human step as the line the hold
+# placers read: `HUMAN_GOLIVE: <text>` on its own line for the in-build lens
+# (bin/lib/needs-human/classify.sh nh_on_golive), `[HUMAN go-live] <text>` for
+# the lead and PR lenses (bin/lead-review-land.sh lrl_golive_route).
+_rl_golive_rewrite() {
+  local line="$1" lens="$2" text
+  if grep -qE '^[[:space:]]*NEEDS_HUMAN:' <<<"$line"; then
+    text=$(sed -E 's/^[[:space:]]*NEEDS_HUMAN:[[:space:]]*//' <<<"$line")
+    if [ "$lens" = inbuild ]; then printf 'HUMAN_GOLIVE: %s\n' "$text"
+    else printf '[HUMAN go-live] %s\n' "$text"; fi
+    return 0
+  fi
+  if [ "$lens" = inbuild ]; then
+    text=$(sed -E 's/^[[:space:]]*([-*]|[0-9]+[.)])?[[:space:]]*(\*\*)?\[BLOCK needs-human\][[:space:]]*//I' <<<"$line")
+    printf 'HUMAN_GOLIVE: %s\n' "$text"
+  else
+    sed -E 's/\[BLOCK needs-human\]/[HUMAN go-live]/I' <<<"$line"
+  fi
+}
+
 # rl_prompt_note <project> — the `## Review level` section for a prompt.
 rl_prompt_note() {
   local p="${1:-}" mode ms pct flows
@@ -164,6 +203,21 @@ rl_prompt_note() {
   flows=$(rl_knob review.core_flows "$p" "" '.*')
   printf '\n## Review level (BH-7123)\nmode: %s. Tag every finding [BLOCK <class>] (class from the ALWAYS-BLOCK list in the REVIEW LEVELS rule) or [NOTE]; a review whose findings are all [NOTE] approves. Speed: a BLOCK only for a measured regression on a key screen over %s ms or over %s%% more DB statements, or on a perf ticket. Core flows of this project%s: %s.\n' \
     "$mode" "$ms" "$pct" "${p:+ ($p)}" "${flows:-none listed; review at smoke level}"
+}
+
+# rl_judged_mode <report> — the mode a lead report or a posted review was judged
+# under: the report header `- review level (BH-7123): mode <m>` (also `mode=<m>`),
+# the body marker `Review level (BH-7123): mode <m>,` or the review-prs footer
+# `Review level (BH-7123): mode <m>`. No marker = strict (the pre-levels
+# behaviour); unreadable = strict, rc 1.
+rl_judged_mode() {
+  local f="${1:-}" m=""
+  if [ -z "$f" ] || [ ! -r "$f" ]; then printf 'strict'; return 1; fi
+  m=$(sed -nE 's/^- review level \(BH-7123\): mode[= ]([a-z]+)([ ,;.].*)?$/\1/p' "$f" 2>/dev/null | tail -1)
+  [ -n "$m" ] || m=$(sed -nE 's/^Review level \(BH-7123\): mode ([a-z]+),.*/\1/p' "$f" 2>/dev/null | tail -1)
+  [ -n "$m" ] || m=$(sed -nE 's/.*Review level \(BH-7123\): mode ([a-z]+)([ ,;.].*)?$/\1/p' "$f" 2>/dev/null | tail -1)
+  case "$m" in strict|shadow|levels|cowboy|off) ;; *) m=strict ;; esac
+  printf '%s' "$m"
 }
 
 # _rl_last_verdict_ln <file> <words-ere> — the line number of the LAST anchored
@@ -179,23 +233,30 @@ _rl_final_start() {
   printf '%s' "${n:-0}"
 }
 
-# rl_cap <file> <project> --approve WORD --block WORD [--lens inbuild|prs|lead]
+# rl_cap <file> <project> --approve WORD --block WORD [--lens inbuild|prs|lead] [--golive note|stand]
 rl_cap() {
-  local f="${1:-}" p="${2:-}" aw="" bw="" lens="inbuild" mode start n k=0 s=0 u=0 line newl vln vword marker tmp tagre grammar=0 final
+  local f="${1:-}" p="${2:-}" aw="" bw="" lens="inbuild" golive="stand" mode start n k=0 s=0 u=0 g=0 line newl vln vword marker tmp tagre grammar=0 final gsum
   shift 2 2>/dev/null || true
   while [ $# -gt 0 ]; do
     case "$1" in
       --approve) aw="${2:-}"; shift 2 ;;
       --block) bw="${2:-}"; shift 2 ;;
       --lens) lens="${2:-inbuild}"; shift 2 ;;
+      --golive) case "${2:-}" in note) golive=note ;; *) golive=stand ;; esac; shift 2 ;;
       *) shift ;;
     esac
   done
   [ -n "$f" ] && [ -r "$f" ] && [ -n "$aw" ] && [ -n "$bw" ] || return 2
   mode=$(rl_mode "$p")
   if grep -q '^Review level (BH-7123):' "$f" 2>/dev/null; then
-    # Already capped: answer from the marker line, change nothing.
-    sed -nE 's/^Review level \(BH-7123\): mode ([a-z]+), ([0-9]+) finding\(s\) demoted to NOTE, ([0-9]+) BLOCK stands; verdict ([A-Za-z_-]+)\..*/mode=\1 demoted=\2 standing=\3 verdict=\4 untagged=0/p' "$f" | tail -1
+    # Already capped: answer from the marker line, change nothing. The untagged
+    # and go-live counts ride the marker's optional tail sentences.
+    local mk ut gl
+    mk=$(grep '^Review level (BH-7123):' "$f" | tail -1)
+    ut=$(sed -nE 's/.* ([0-9]+) untagged finding\(s\) kept.*/\1/p' <<<"$mk"); ut="${ut:-0}"
+    gl=$(sed -nE 's/.* ([0-9]+) go-live step\(s\) routed.*/\1/p' <<<"$mk")
+    sed -nE 's/^Review level \(BH-7123\): mode ([a-z]+), ([0-9]+) finding\(s\) demoted to NOTE, ([0-9]+) BLOCK stands; verdict ([A-Za-z_-]+)\..*/mode=\1 demoted=\2 standing=\3 verdict=\4/p' <<<"$mk" | tr -d '\n'
+    printf ' untagged=%s%s\n' "$ut" "${gl:+ golive=$gl}"
     return 0
   fi
   case "$mode" in strict) printf 'mode=strict demoted=0 standing=0 verdict=unchanged untagged=0\n'; return 1 ;; esac
@@ -214,16 +275,22 @@ rl_cap() {
     if [ "$n" -le "$start" ] || { [ -n "$vln" ] && [ "$n" -ge "$vln" ]; }; then
       printf '%s\n' "$line" >> "$tmp"; continue
     fi
-    # A go-live human ask stands (and keeps its NEEDS_HUMAN: line for the hold).
+    # A go-live human ask: under --golive stand it stands (and keeps its
+    # NEEDS_HUMAN: line for the hold); under --golive note (wave B) it is
+    # rewritten for the hold placers, counted in golive=G, and gates nothing.
     if grep -qE '^[[:space:]]*NEEDS_HUMAN:[[:space:]]*[^[:space:]]' <<<"$line"; then
-      if rl_line_golive "$line"; then s=$((s+1)); printf '%s\n' "$line" >> "$tmp"
+      if rl_line_golive "$line"; then
+        if [ "$golive" = note ]; then g=$((g+1)); _rl_golive_rewrite "$line" "$lens" >> "$tmp"
+        else s=$((s+1)); printf '%s\n' "$line" >> "$tmp"; fi
       else k=$((k+1)); sed -E 's/^([[:space:]]*)NEEDS_HUMAN:[[:space:]]*/\1NOTE not verified here (demoted, BH-7123): /' <<<"$line" >> "$tmp"
       fi
       continue
     fi
     if grep -qiE "$RL_FIND_RE" <<<"$line"; then
       if grep -qiE "\[BLOCK needs-human\]" <<<"$line"; then
-        if rl_line_golive "$line"; then s=$((s+1)); printf '%s\n' "$line" >> "$tmp"
+        if rl_line_golive "$line"; then
+          if [ "$golive" = note ]; then g=$((g+1)); _rl_golive_rewrite "$line" "$lens" >> "$tmp"
+          else s=$((s+1)); printf '%s\n' "$line" >> "$tmp"; fi
         else k=$((k+1)); sed -E 's/\[BLOCK needs-human\]/[NOTE not verified here, demoted from BLOCK needs-human]/' <<<"$line" >> "$tmp"
         fi
         continue
@@ -250,16 +317,17 @@ rl_cap() {
     fi
     printf '%s\n' "$line" >> "$tmp"
   done < "$f"
-  if [ "$k" = 0 ]; then
-    # Nothing to demote: the file is the model's answer, byte for byte.
+  gsum=""; [ "$g" = 0 ] || gsum=" golive=$g"
+  if [ "$k" = 0 ] && [ "$g" = 0 ]; then
+    # Nothing to demote or route: the file is the model's answer, byte for byte.
     rm -f "$tmp"
     printf 'mode=%s demoted=0 standing=%s verdict=%s untagged=%s\n' "$mode" "$s" "${vword:-unknown}" "$u"
     return 0
   fi
   if [ "$mode" = shadow ]; then
     rm -f "$tmp"
-    echo "review-level: WOULD demote $k finding(s), $s standing, verdict ${vword:-unknown}$([ "$s" = 0 ] && [ "$vword" = "$bw" ] && printf ' -> %s' "$aw") (shadow, $lens)" >&2
-    printf 'mode=shadow demoted=%s standing=%s verdict=%s untagged=%s\n' "$k" "$s" "${vword:-unknown}" "$u"
+    echo "review-level: WOULD demote $k finding(s), $s standing, verdict ${vword:-unknown}$([ "$s" = 0 ] && [ "$vword" = "$bw" ] && printf ' -> %s' "$aw")${gsum:+,$gsum} (shadow, $lens)" >&2
+    printf 'mode=shadow demoted=%s standing=%s verdict=%s untagged=%s%s\n' "$k" "$s" "${vword:-unknown}" "$u" "$gsum"
     return 1
   fi
   if [ "$s" = 0 ] && [ -n "$vln" ] && [ "$vword" = "$bw" ]; then
@@ -271,6 +339,7 @@ rl_cap() {
   fi
   marker="Review level (BH-7123): mode $mode, $k finding(s) demoted to NOTE, $s BLOCK stands; verdict ${vword:-unknown}."
   [ "$u" = 0 ] || marker="$marker $u untagged finding(s) kept (grammar not used)."
+  [ "$g" = 0 ] || marker="$marker $g go-live step(s) routed to the ticket."
   if [ -n "$vln" ]; then
     # The marker sits right above the verdict block (TIER:/VERDICT:), never after it.
     awk -v ln="$vln" -v m="$marker" 'NR==ln{ if (prev !~ /^[[:space:]]*TIER/) print m } {print; prev=$0}' "$tmp" > "$tmp.2" && mv -f "$tmp.2" "$tmp"
@@ -281,6 +350,6 @@ rl_cap() {
     printf '%s\n' "$marker" >> "$tmp"
   fi
   cat "$tmp" > "$f" && rm -f "$tmp" || { rm -f "$tmp"; return 2; }
-  printf 'mode=%s demoted=%s standing=%s verdict=%s untagged=%s\n' "$mode" "$k" "$s" "${vword:-unknown}" "$u"
+  printf 'mode=%s demoted=%s standing=%s verdict=%s untagged=%s%s\n' "$mode" "$k" "$s" "${vword:-unknown}" "$u" "$gsum"
   return 0
 }

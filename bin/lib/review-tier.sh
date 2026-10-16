@@ -133,13 +133,25 @@ RT_FILES
 }
 
 # review_tier_cap <T0|T1|T2> -> how many lens fix rounds this tier buys.
-# 0 means uncapped, which is what every tier did before this existed, so an
-# unrecognised tier keeps today's behaviour instead of inventing a limit.
+# review_tier_cap <T0|T1|T2> [project] -> how many lens fix rounds this tier buys.
+# T0 1, T1 2. T2 (and an unrecognised tier) reads the settings row
+# review.fix_rounds_max[.<project>] through rl_knob (bin/lib/review-level.sh,
+# BH-7123 wave B; seeded 2 by wave A), the same row the resolver's review cap
+# reads, so a ticket buys the same number of rounds before and after its PR.
+# Without that lib on the box the answer is 0, uncapped, which is what every
+# tier did before this existed. review.mode cowboy / off buys no round at all;
+# that is the caller's FIX_ROUNDS_OFF (bin/lib/rb/review.sh), because 0 here
+# means uncapped and bin/evidence-summary.sh reads `cap=N` as a number.
 review_tier_cap() {
+  local cap
   case "${1:-}" in
     T0) printf '1\n' ;;
     T1) printf '2\n' ;;
-    *)  printf '0\n' ;;
+    *)  if command -v rl_knob >/dev/null 2>&1; then
+          cap=$(rl_knob review.fix_rounds_max "${2:-}" 2 '^[0-9]{1,2}$' 2>/dev/null 7>&- 8>&-)
+          case "$cap" in ''|*[!0-9]*) cap=2 ;; esac
+          printf '%s\n' "$cap"
+        else printf '0\n'; fi ;;
   esac
 }
 

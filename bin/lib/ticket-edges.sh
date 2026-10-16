@@ -142,7 +142,8 @@ te_holds_from_comments() {
   jq -rn \
     --arg hold "$HOLD_COMMENT_RE" --arg lift "$HOLD_LIFT_RE" --arg neg "$HOLD_NEG_RE" \
     --arg ab "$HOLD_ABANDON_RE" --arg lead "$HOLD_LIFT_LEAD_RE" --arg holdlead "$HOLD_LEAD_RE" --arg mark "$HOLD_AMBIGUOUS_MARK" \
-    --arg nh "$HOLD_NEEDS_HUMAN_RE" --arg hf "$HOLD_HUMAN_FIX_RE" --arg done "$HOLD_HUMAN_DONE_RE" "$HOLD__JQ_DEFS"'
+    --arg nh "$HOLD_NEEDS_HUMAN_RE" --arg hf "$HOLD_HUMAN_FIX_RE" --arg done "$HOLD_HUMAN_DONE_RE" \
+    --arg gl "${HOLD_GOLIVE_RE:-}" "$HOLD__JQ_DEFS"'
     input as $c
     | if ($c | type) != "array" then empty else
         people($c)[]

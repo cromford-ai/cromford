@@ -45,3 +45,7 @@ discovery	br_rebuild_outcome	mod
 discovery	br_rebuild_artifact	mod
 discovery	br_from_rebuilds	mod
 discovery	br_candidates	mod
+cap	br_env_for_project	mod
+cap	br_floor_stands	mod
+cap	br_cap_notes	mod
+record	br_review_fix_cap	mod

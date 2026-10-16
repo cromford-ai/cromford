@@ -266,7 +266,7 @@ echo "--- A5: nothing new routes through bin/lane-alert.sh"
 #   warn page (and its resolve) for a committed price catalog past its age.
 #   BH-4926 (blocked-resolver): data-lane-escalate: — one call, the warn page a
 #   data-lane park sends once per fp (br_dl_escalate).
-declare -A LA_NEW=( [blocked-resolver]="fix-round-queue-missing- fix-round-unclaimed- fix-round-stale-claim- br-unmapped- data-lane-escalate:" [update-model-prices]="model-prices-catalog-stale" )
+declare -A LA_NEW=( [blocked-resolver]="fix-round-queue-missing- fix-round-unclaimed- fix-round-stale-claim- br-unmapped- data-lane-escalate: review-cap-notes:" [update-model-prices]="model-prices-catalog-stale" )
 # STRICT (--strict / RATCHET_MODE=strict): the counts pinned at BH-2363 are a
 # per-file ceiling; blocked-resolver is 19 + BH-2674's three fix-round pages
 # + BH-3630's br-unmapped- page; update-model-prices is 6 + BH-3990's

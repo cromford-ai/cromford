@@ -1,0 +1,14 @@
+# catalog/review-ratchet-categories.tsv — which block_categories causes sit on
+# the ALWAYS-BLOCK floor (BH-7123 wave B). Read by bin/lesson-propose.sh: a
+# lesson for a category listed here may propose a GATE (a lint, a check or a
+# stop that refuses a build); a lesson for any other category may propose only
+# a NOTE-level check or a prompt sentence, never a refuse/stop, and its issue
+# body says so. Tab-separated: block_categories.id, the ALWAYS-BLOCK class(es)
+# from catalog/review-always-block.tsv it maps to (| separated), note. Lines
+# that start with # are comments. Edit this file, not the lane.
+iron-law	model-id|destructive-migration|money|auth-bypass	a hardcoded model id, a table with no RLS, a metered call with no dedup, a native dialog: the iron laws the lead brief blocks by itself
+weakened-or-missing-tests	weakened-test	an existing test softened, skipped or deleted to get green
+guard-silenced	weakened-test	a scratch-closure-allow marker or an allow-list literal added to get green
+evidence-not-bound-to-head	weakened-test	FRAUD: false-completion: a done claim the evidence does not support
+fixture-leak-hygiene	secret	a credential-shaped literal or a real name in a fixture
+acceptance-item-unmet	wrong-data|core-flow-broken	a named ticket item not delivered: a missing screen, a wrong stored value

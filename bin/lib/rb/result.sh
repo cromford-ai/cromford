@@ -1040,7 +1040,7 @@ if [ "$TIER" = "1" ] && [ -n "$PR_URL" ] && [ -z "${BUILDER_NO_MERGE:-}" ] && [ 
     # the note, which is the same shape the QA/migration notes already use.
     echo "$(STAMP) [$PROJECT/$KEY] tier-1 merge ENQUEUED in $SLUG's merge queue — the merge conductor settles it" >> "$BUILD/pipeline.log"
     BB pr_created "$TIER" "APPROVE" "$PR_URL" false "$(printf 'REVIEW:\n%s' "$(tail -c 900 "$BUILD/review.md")")"
-    RESULT "PR_CREATED $PR_URL | QUEUED: in the repo's merge queue, the merge conductor settles it${PREPR_NOTE:-}${HOLD_YIELD_NOTE:-}"
+    RESULT "PR_CREATED $PR_URL | QUEUED: in the repo's merge queue, the merge conductor settles it${PREPR_NOTE:-}${HOLD_YIELD_NOTE:-}${NH_GOLIVE_SUFFIX:-}"
     # >>> live emit handoff conductor
     type LIVE >/dev/null 2>&1 && LIVE handoff conductor "tier 1: enqueued in the repo's merge queue, the merge conductor settles it"
     # <<< live emit handoff conductor
@@ -1064,7 +1064,7 @@ if [ "$TIER" = "1" ] && [ -n "$PR_URL" ] && [ -z "${BUILDER_NO_MERGE:-}" ] && [ 
       echo "$(STAMP) [$PROJECT/$KEY] tier-1 merge failed, leaving PR open" >> "$ALERTS"
     fi
     BB pr_created "$TIER" "APPROVE" "$PR_URL" false "$(printf 'REVIEW:\n%s' "$(tail -c 900 "$BUILD/review.md")")"
-    RESULT "PR_CREATED $PR_URL${PREPR_NOTE:-}${HOLD_YIELD_NOTE:-}"
+    RESULT "PR_CREATED $PR_URL${PREPR_NOTE:-}${HOLD_YIELD_NOTE:-}${NH_GOLIVE_SUFFIX:-}"
   fi
 else
   # THE LEDGER SAYS THE SAME THING THE RESULT SAYS. Every other tier-1 branch
@@ -1089,7 +1089,7 @@ else
     fi
   fi
   # <<< live emit handoff
-  RESULT "PR_CREATED $PR_URL$QA_NOTE$MIG_NOTE$REBASE_NOTE${STACK_NOTE:-}${PREPR_NOTE:-}${HOLD_YIELD_NOTE:-}"
+  RESULT "PR_CREATED $PR_URL$QA_NOTE$MIG_NOTE$REBASE_NOTE${STACK_NOTE:-}${PREPR_NOTE:-}${HOLD_YIELD_NOTE:-}${NH_GOLIVE_SUFFIX:-}"
 fi
 # <<< tier-1 merge gate
 

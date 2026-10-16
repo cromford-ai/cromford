@@ -70,6 +70,10 @@ HENV=$(harness_env_dir "$H")
   . "$SELF/lib/gh-rest-var.sh" 2>/dev/null || true
   . "$SELF/lib/gh-rest-list.sh" 2>/dev/null || true
   . "$SELF/lib/pr-trailers.sh" 2>/dev/null || true
+  # BH-7123 wave B: the ratchet floor (rl_judged_mode) and the judged-mode
+  # resolver (rj_verdict_modes); a lesson never learns from a cowboy sprint.
+  . "$SELF/lib/review-level.sh" 2>/dev/null || true
+  . "$SELF/lib/review-judged.sh" 2>/dev/null || true
 }
 # shellcheck source=bin/lib/deployment.sh
 . "${HARNESS_DEPLOYMENT_FILE-$SELF/lib/deployment.sh}" 2>/dev/null || exit 0
@@ -118,6 +122,58 @@ lp_put() {
 }
 # lp_det <detail-json> <jq-update>: the detail with fields set.
 lp_det() { local d="${1:-}"; [ -n "$d" ] || d='{}'; jq -c "$2" <<<"$d"; }
+
+# ── the ratchet floor (BH-7123 wave B) ───────────────────────────────────────
+# A lesson may propose a GATE (a lint, a check or a stop that refuses a build)
+# only when its category's cause is on the ALWAYS-BLOCK floor —
+# catalog/review-ratchet-categories.tsv maps block_categories ids to the
+# classes of catalog/review-always-block.tsv. Any other category gets a
+# NOTE-level check or a prompt sentence, never a refuse/stop, and the issue body
+# says so. Otherwise the ratchet would teach the system to block on the very
+# nits the review levels just demoted.
+lp_floor_classes() { # lp_floor_classes <category> — its ALWAYS-BLOCK classes, rc 1 none
+  local f="$H/catalog/review-ratchet-categories.tsv" out
+  [ -r "$f" ] || f="$SELF/../catalog/review-ratchet-categories.tsv"
+  [ -r "$f" ] || return 1
+  out=$(awk -F'\t' -v c="$1" '$0 !~ /^#/ && $1 == c {print $2; exit}' "$f")
+  [ -n "$out" ] || return 1
+  printf '%s' "$out"
+}
+lp_level_apply() { # lp_level_apply <category> <draft-json> — .level gate|note, .classes
+  local cls; cls=$(lp_floor_classes "$1") || cls=""
+  jq -c --arg c "$cls" 'if $c == "" then .level = "note" | .classes = null else .level = "gate" | .classes = $c end' <<<"$2"
+}
+# lp_filter_judged <trigger-json> — drop the BLOCK verdicts whose lead report
+# was judged under cowboy or off (bin/lib/review-judged.sh reads the hub's
+# report, else the verdict row's report: token); the trigger's blocks and
+# verdict_ids shrink, .dropped lists what left. Unreachable = kept: a sprint
+# the ratchet cannot see teaches it nothing either way.
+lp_filter_judged() {
+  local tr="$1" modes='{}' repo pr id mode rows prdrop=0 drop_prs='[]'
+  command -v rj_verdict_modes >/dev/null 2>&1 || { printf '%s' "$tr" | jq -c '.dropped = [] | .dropped_prs = []'; return 0; }
+  while IFS=$'\t' read -r repo pr; do
+    [ -n "$repo" ] && [[ "$pr" =~ ^[0-9]+$ ]] || continue
+    rows=$(rj_verdict_modes "$repo" "$pr" 2>/dev/null)
+    if [ -n "$rows" ]; then
+      # the verdict rows name their ids: drop exactly those judged cowboy/off
+      while IFS=$'\t' read -r id mode; do
+        [ -n "$id" ] || continue
+        case "$mode" in cowboy|off) modes=$(jq -c --arg i "$id" --arg m "$mode" '. + {($i): $m}' <<<"$modes") ;; esac
+      done <<<"$rows"
+    else
+      # no rows reachable, but the hub holds the PR's lead report: a cowboy/off
+      # report takes ONE BLOCK off the count for that PR (the id is not known)
+      case "$(rj_pr_mode "$repo" "$pr" 2>/dev/null)" in
+        cowboy|off) prdrop=$((prdrop + 1)); drop_prs=$(jq -c --arg r "$repo" --argjson p "$pr" '. + [{repo:$r, pr:$p}]' <<<"$drop_prs") ;;
+      esac
+    fi
+  done < <(jq -r '.prs[]? | [.repo, (.pr | tostring)] | @tsv' <<<"$tr")
+  jq -c --argjson m "$modes" --argjson n "$prdrop" --argjson dp "$drop_prs" '($m | keys | map(tonumber)) as $cb
+    | .dropped = [.verdict_ids[] | select(IN($cb[]))]
+    | .verdict_ids = (.verdict_ids - .dropped)
+    | .dropped_prs = $dp
+    | .blocks = ([(.verdict_ids | length) - $n, 0] | max)' <<<"$tr"
+}
 
 # lp_open_lists: the open issues and PRs of REPO, read once a tick into
 # $TMPD/open-issues.json and $TMPD/open-prs.json. rc 1 when either cannot be
@@ -177,6 +233,9 @@ lp_body() {
     jq -r '"This change comes from a cause that repeats in code-review BLOCKs. bin/lesson-propose.sh drafted it from the evidence below.\n\nCategory: `\(.id)` (\(.name // .id))"' <<<"$tr"
     [ -n "$path" ] && printf 'Prompt file: `%s`\n' "$path"
     jq -r '"Target: \(.target)\n\n### The change\n\n**\(.title)**\n\n\(.text)\n" + (if (.why // "") != "" then "\nWhy: \(.why)\n" else "" end)' <<<"$d"
+    jq -r 'if .target != "check" then empty
+      elif .level == "gate" then "\nLevel: gate (ALWAYS-BLOCK class \(.classes)): this check may refuse or stop a build (ratchet floor, BH-7123).\n"
+      else "\nLevel: note: this check reports a [NOTE] in the review; it never refuses, stops or blocks a build (ratchet floor, BH-7123: the cause is not on the ALWAYS-BLOCK list, catalog/review-ratchet-categories.tsv).\n" end' <<<"$d"
     if jq -e '(.acceptance_tests // []) | length > 0' <<<"$d" >/dev/null; then
       printf '\n#### Acceptance tests\n\n'
       jq -r '.acceptance_tests[] | "- \(.)"' <<<"$d"
@@ -279,6 +338,8 @@ lp_open_issue() {
 # (undelivered), apply the held rule, then open the PR or the issue.
 lp_deliver() {
   local cat="$1" tr="$2" d="$3" fp="$4" att="$5" target kind path det open_on rc o ok od on held
+  # Every draft, fresh or stored, carries its level before it is written anywhere.
+  d=$(lp_level_apply "$cat" "$d")
   target=$(jq -r .target <<<"$d")
   case "$target" in
     plan-lesson) kind=pr; path="$PLAN_FILE" ;;
@@ -349,7 +410,7 @@ lp_bug_draft() {
 # lp_prompt <trigger> <out-file>: the drafting prompt. rc 1 when a prompt file
 # cannot be read from BASE.
 lp_prompt() {
-  local tr="$1" out="$2" p repo pr
+  local tr="$1" out="$2" p repo pr cls
   lp_contents "$PLAN_FILE" "$TMPD/pc.md" || return 1
   lp_contents "$BD_FILE" "$TMPD/bd.md" || return 1
   {
@@ -367,6 +428,12 @@ Answer with exactly one line of JSON and nothing else:
 
 EOF
     jq -r --argjson sd "$SINCE_DAYS" '"CATEGORY: \(.id): \(.name // .id). \(.description // "")\nSuggested stage: \(.suggested_stage // "none"). \(.blocks) BLOCK verdicts in \($sd) days, \(.findings) findings, \(.infra_false) infra or false.\n"' <<<"$tr"
+    if cls=$(lp_floor_classes "$(jq -r .id <<<"$tr")"); then
+      echo "LEVEL: this category's cause is on the ALWAYS-BLOCK floor (class $cls, catalog/review-always-block.tsv). A check you propose may refuse or stop a build."
+    else
+      echo "LEVEL: this category's cause is not on the ALWAYS-BLOCK floor (catalog/review-always-block.tsv). A check you propose must be NOTE-level: it reports a [NOTE] in the review and never refuses, stops or blocks a build. A plan-lesson or builder-rule sentence is fine."
+    fi
+    echo
     echo "CURRENT PLAN LESSONS (§10 of prompts/plan-contract.md):"
     awk '/^## 10\./{s=1;next} /^## /{s=0} s && /^- /' "$TMPD/pc.md"
     echo
@@ -392,8 +459,19 @@ EOF
 
 # lp_one <trigger-json>: dedup, then draft and deliver one trigger.
 lp_one() {
-  local tr="$1" cat ids fp row rc st det at_s att=0 hit d run ans prompt infra same h0
+  local tr="$1" cat ids fp row rc st det at_s att=0 hit d run ans prompt infra same h0 dropped left
   cat=$(jq -r .id <<<"$tr")
+  # BH-7123 wave B: a BLOCK judged under cowboy or off teaches nothing. Drop
+  # those verdicts first; a trigger that falls under min_blocks is skipped.
+  tr=$(lp_filter_judged "$tr")
+  dropped=$(jq '(.dropped | length) + (.dropped_prs | length)' <<<"$tr"); left=$(jq '.blocks' <<<"$tr")
+  if [ "${dropped:-0}" -gt 0 ]; then
+    if [ "$left" -lt "$MIN_BLOCKS" ]; then
+      log "$cat: $dropped of $((left + dropped)) BLOCK verdicts were judged under review.mode cowboy/off and do not teach; $left left, under min_blocks $MIN_BLOCKS; skipped"
+      SKIPPED=$((SKIPPED + 1)); return
+    fi
+    log "$cat: $dropped of $((left + dropped)) BLOCK verdicts were judged under review.mode cowboy/off and are left out; $left remain"
+  fi
   ids=$(jq -r '.verdict_ids | sort | map(tostring) | join(",")' <<<"$tr")
   fp=$(printf '%s|%s' "$cat" "$ids" | sha256sum | cut -c1-16)
 
@@ -582,6 +660,7 @@ tick() {
   SINCE_DAYS=$(jq -r '.settings.since_days' <<<"$resp")
   COOLDOWN_DAYS=$(jq -r '.settings.cooldown_days' <<<"$resp")
   MAX_ATTEMPTS=$(jq -r '.settings.max_attempts' <<<"$resp")
+  MIN_BLOCKS=$(jq -r '.settings.min_blocks // 3' <<<"$resp"); case "$MIN_BLOCKS" in ''|*[!0-9]*) MIN_BLOCKS=3 ;; esac
   SINCE=$(jq -r '.since' <<<"$resp")
   n=$(jq '.clusters | length' <<<"$resp")
   [ "$(jq '.categories | length' <<<"$resp")" -gt 0 ] || [ "$n" -gt 0 ] || exit 0

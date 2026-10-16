@@ -56,7 +56,7 @@ command -v jq >/dev/null || { echo "jq missing — skipping"; exit 0; }
 BR="$DIR/bin/blocked-resolver.sh"
 BRD="$DIR/bin/lib/br"
 MAP="$DIR/tests/br/expected-map.tsv"
-MODULES="discovery keys ladder record"
+MODULES="discovery keys ladder record cap"
 
 # fn_body <file> <name> — the function's source as the file carries it:
 # `^name() {` through the next `^}`. The same extraction five resolver suites
@@ -289,7 +289,7 @@ N6C=$(grep -cF "RESOLVER MODULE MISSING: bin/lib/br/ladder.sh" "$H/logs/ALERTS.l
 
 # 6d — the module list is a LITERAL. tests and the sibling slices read it off
 # this line; a computed one would be the lane running code inside every reader.
-grep -qxF 'BR_MODULES="discovery keys ladder record"' "$BR" && ok \
+grep -qxF 'BR_MODULES="discovery keys ladder record cap"' "$BR" && ok \
   || bad "6d: bin/blocked-resolver.sh must carry the literal BR_MODULES line, got: $(grep -m1 '^BR_MODULES=' "$BR")"
 
 # ── 7. the fixture rule, ratcheted ──────────────────────────────────────────

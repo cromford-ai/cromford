@@ -148,6 +148,30 @@ fi
 # DB first, because that is where the metrics ledger lives now; the CSV
 # bin/outcome-metrics.sh writes FIRST is the fallback, so a worker outage
 # degrades the source and never the measurement. Which one was used is logged.
+# BH-7123 wave B: a merge judged under review.mode cowboy or off is a sprint,
+# not a signal. bin/lib/review-judged.sh reads the hub's lead report of each
+# merged PR (else the verdict row's report: token); a cowboy/off merge leaves
+# both the numerator and the denominator, so a sprint never teaches the lane to
+# tighten. Unreachable = kept, as before.
+CB_SKIPPED=0
+if . "$BIN/lib/review-judged.sh" 2>/dev/null && command -v rj_pr_mode >/dev/null 2>&1; then
+  KEEP="$WORK/merges.keep"; : > "$KEEP"
+  while IFS=$'\t' read -r PRU PRREST; do
+    [ -n "$PRU" ] || continue
+    PRREPO=$(sed -E 's|^https://github\.com/([^/]+/[^/]+)/pull/([0-9]+).*|\1|' <<<"$PRU")
+    PRNUM=$(sed -E 's|^https://github\.com/[^/]+/[^/]+/pull/([0-9]+).*|\1|' <<<"$PRU")
+    case "$(rj_pr_mode "$PRREPO" "$PRNUM" 2>/dev/null)" in
+      cowboy|off) CB_SKIPPED=$((CB_SKIPPED+1)); continue ;;
+    esac
+    printf '%s\t%s\n' "$PRU" "$PRREST" >> "$KEEP"
+  done < "$MERGES"
+  mv -f "$KEEP" "$MERGES"
+  if [ ! -s "$MERGES" ]; then
+    echo "$(STAMP) every merged PR in the ledger was judged under cowboy/off (cowboy_skipped=$CB_SKIPPED) — nothing measured, every gate left exactly as it was" >> "$LOG"
+    exit 0
+  fi
+fi
+
 OUTCOMES="$WORK/outcomes.tsv"; : > "$OUTCOMES"
 OUT_SRC="ledger"
 if command -v metric_outcomes_list >/dev/null 2>&1; then
@@ -319,5 +343,5 @@ while IFS=$'\t' read -r REPO N BAD RED RATE; do
   fi
 done < "$COUNTS"
 
-echo "$(STAMP) measured=$MEASURED tightened=$TIGHTENED cleared=$CLEARED held=$HELD outcomes_source=$OUT_SRC$([ "$DRY" = 1 ] && echo " dry=1")" >> "$LOG"
+echo "$(STAMP) measured=$MEASURED tightened=$TIGHTENED cleared=$CLEARED held=$HELD outcomes_source=$OUT_SRC cowboy_skipped=$CB_SKIPPED$([ "$DRY" = 1 ] && echo " dry=1")" >> "$LOG"
 exit 0

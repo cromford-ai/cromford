@@ -75,8 +75,11 @@ finish_done() {
     job_artifact_put lead_review_report "$5" "$detail" "$2" \
       || { log "artifact put for $8 failed; job left open for the watchdog"; lr_fail_counted "$1" "$2" "$3" "artifact put failed" open; return; }
   fi
-  post_result "$1" "$(jq -nc --arg j "$2" --arg s "$3" --arg v "$4" --arg p "$5" --arg m "$6" \
-    '{job_id:$j,head_sha:$s,outcome:"done",verdict:$v,report_ref:$p,reviewer_model:$m}')" \
+  # LR_DONE_DETAIL (BH-7123 wave B): a short note the caller sets for this one
+  # result (`golive:N`, bin/lead-review.sh), carried on the row's detail so the
+  # land lane needs no artifact read to know a MERGE noted a go-live step.
+  post_result "$1" "$(jq -nc --arg j "$2" --arg s "$3" --arg v "$4" --arg p "$5" --arg m "$6" --arg d "${LR_DONE_DETAIL:-}" \
+    '{job_id:$j,head_sha:$s,outcome:"done",verdict:$v,report_ref:$p,reviewer_model:$m} + (if $d == "" then {} else {detail:$d} end)')" \
     || { log "$8 reviewed ($4) but the result post failed; job left open for the watchdog"; lr_fail_counted "$1" "$2" "$3" "result post failed" open; return; }
   LR_RING=1; LR_RING_REPORT="$5"
   job_update "$2" status=done; log "done $8: VERDICT $4 ($7)"; R="done"

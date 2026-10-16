@@ -212,15 +212,27 @@ for SLUG in $REPOS; do
   score_repo "$SLUG" >> "$W/repos" || log "$SLUG: could not build its result; left out of $DAY.json"
 done
 
+# BH-7123 wave B: the false-BLOCK counter, report-only. demoted / (demoted +
+# standing) over the `Review level (BH-7123)` markers of the lead reports this
+# box holds (state/lead-reviews/*.md) in the window: how much of what the model
+# called BLOCK the review levels demoted to NOTE. Next to precision in the day
+# file (top-level `false_block`) and the log line; no gate reads it.
+FB='{"reports":0,"demoted":0,"standing":0,"rate":null}'
+if [ -r "$H/bin/lib/review-false-block.sh" ] && . "$H/bin/lib/review-false-block.sh" 2>/dev/null && command -v rfb_count >/dev/null 2>&1; then
+  FB=$(rfb_count "$H/state/lead-reviews" "$DAYS") || FB='{"reports":0,"demoted":0,"standing":0,"rate":null}'
+else
+  log "bin/lib/review-false-block.sh did not load; false_block not counted this run"
+fi
+
 FILE="$STATE/$DAY.json"
 OUTF=$(mktemp "$STATE/.$DAY.XXXXXX") || { log "mktemp in $STATE failed; nothing written"; exit 0; }
-if ! jq -sS --arg day "$DAY" --argjson days "$DAYS" '{day:$day, window_days:$days, repos:.}' "$W/repos" > "$OUTF" \
+if ! jq -sS --arg day "$DAY" --argjson days "$DAYS" --argjson fb "$FB" '{day:$day, window_days:$days, false_block:$fb, repos:.}' "$W/repos" > "$OUTF" \
    || ! mv -f "$OUTF" "$FILE"; then
   log "could not write $FILE; nothing recorded"; exit 0
 fi
 OUTF=""
 
-log "day=$DAY window=${DAYS}d $(jq -r '[.repos[] | "\(.repo) lead_merge=\(.lead_merge) reverted=\(.reverted) batch_failed=\(.batch_failed) unreadable=\(.unreadable) precision=\(.precision // "null") truncated=\(.truncated)\(if .error then " error=\(.error)" else "" end)"] | join("; ")' "$FILE")"
+log "day=$DAY window=${DAYS}d $(jq -r '[.repos[] | "\(.repo) lead_merge=\(.lead_merge) reverted=\(.reverted) batch_failed=\(.batch_failed) unreadable=\(.unreadable) precision=\(.precision // "null") truncated=\(.truncated)\(if .error then " error=\(.error)" else "" end)"] | join("; ")' "$FILE") false_block=$(jq -r '"\(.demoted)/\(.demoted + .standing) rate=\(.rate // "null") reports=\(.reports)"' <<<"$FB")"
 
 LOW=$(jq -r --argjson w "$WARN" --argjson m "$MIN_N" \
   '[.repos[] | select(.precision != null and .lead_merge >= $m and .precision < $w)

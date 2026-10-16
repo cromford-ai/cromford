@@ -1,0 +1,40 @@
+{
+  "id": "review-mode-expire",
+  "name": "Review mode expiry (the dial's clock)",
+  "scope": "hub",
+  "script": "bin/review-mode-expire.sh",
+  "cadence": "*/15 * * * *",
+  "boxes": [
+    "hub"
+  ],
+  "switch": {
+    "kind": "flag",
+    "name": "lane-off-review-mode-expire",
+    "aliases": []
+  },
+  "wired": true,
+  "knobs": [
+    {
+      "env": "REVIEW_MODE_EXPIRE_NOW",
+      "type": "string",
+      "default": "",
+      "zero_means": null,
+      "note": "Test seam: epoch seconds bin/review-mode-expire.sh uses as now, only when HARNESS_TEST_SANDBOX=1. Never set on a box; NOT settable from the control plane. The lane has no operator knob: the dial is bin/review-mode.sh and the rows review.mode[.<project>] / review.mode_until[.<project>].",
+      "settable": false
+    },
+    {
+      "env": "HARNESS_TEST_SANDBOX",
+      "type": "string",
+      "default": "",
+      "zero_means": null,
+      "note": "Test seam gate: bin/review-mode-expire.sh honours REVIEW_MODE_EXPIRE_NOW only when this is 1 (the test harness sets it). Never set on a box, and NOT settable from the control plane.",
+      "settable": false
+    }
+  ],
+  "stats": {
+    "cost_stage": null,
+    "cost_project_filter": null,
+    "lanes_row": false,
+    "log": "logs/review-mode-expire.log"
+  }
+}

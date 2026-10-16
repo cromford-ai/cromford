@@ -114,6 +114,42 @@ nh_on_block() {
   return 0
 }
 
+# nh_on_golive <project> <issue> <review.md> <build-dir> — BH-7123 wave B: the
+# go-live step an APPROVED lens still names. rl_cap --golive note (bin/lib/
+# review-level.sh) rewrites a go-live `NEEDS_HUMAN:` line to `HUMAN_GOLIVE:
+# <step>` and the verdict no longer waits on it; this reads the first such line
+# of the final round, places the hold with source `go-live` (a visible step on
+# the ticket that bin/lib/hold.sh reads as clear, never a pause), and prints the
+# RESULT suffix " NEEDS_HUMAN:<fp>:go-live: <step>" for the PR_CREATED line. No
+# line, no issue number, no fingerprint = nothing printed. Never fails the caller.
+nh_on_golive() {
+  local f="${3:-}" line val low action="" fp root prc
+  case "${2:-}" in ''|*[!0-9]*) return 0 ;; esac
+  [ -n "$f" ] && [ -r "$f" ] || return 0
+  while IFS= read -r line; do
+    val=$(_nh_clean "$(printf '%s' "$line" | sed -E 's/^[[:space:]]*HUMAN_GOLIVE:[[:space:]]*//')")
+    low=$(printf '%s' "$val" | tr '[:upper:]' '[:lower:]')
+    case "${low%.}" in ''|none|n/a|na|no|nothing|-|'<'*'>') continue ;; esac
+    action="$val"; break
+  done < <(_nh_final "$f" | _nh_lines | grep -E '^[[:space:]]*HUMAN_GOLIVE:[[:space:]]*[^[:space:]]' || true)
+  [ -n "$action" ] || return 0
+  fp=$(nh_fingerprint "$action" 2>/dev/null) || return 0
+  if [ -n "${4:-}" ] && [ -d "$4" ] && [ -w "$4" ]; then
+    printf 'action: go-live: %s\nfp: %s\n' "$action" "$fp" > "$4/needs-human.txt" 2>/dev/null || true
+  fi
+  root=${HARNESS:-${H:-}}
+  if [ -n "$root" ] && [ -x "$root/bin/needs-human-hold.sh" ]; then
+    "$root/bin/needs-human-hold.sh" "$1" "$2" "$fp" "go-live: $action" go-live >/dev/null 2>&1; prc=$?
+  else
+    prc=127
+  fi
+  if [ -n "${4:-}" ] && [ -d "$4" ] && [ -w "$4" ]; then
+    printf '%s needs-human go-live: %s "%s" — placer rc=%s; the PR does not wait on it\n' "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" "$fp" "$action" "$prc" >> "$4/pipeline.log" 2>/dev/null || true
+  fi
+  printf ' NEEDS_HUMAN:%s:go-live: %s' "$fp" "$action"
+  return 0
+}
+
 # nh_prompt_field_note — the one reviewer sentence, with a leading space: it is
 # spliced straight after "…VERDICT: BLOCK." at the end of REVIEW_PROMPT.
 nh_prompt_field_note() {

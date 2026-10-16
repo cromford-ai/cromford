@@ -86,6 +86,15 @@
 #                 is logged and off) above cksum("<repo>#<pr>@<head>") % 100:
 #                 one warn lane-alert beat, lead-spotcheck-<id> (lrl_spotcheck).
 #                 The same heads are sampled on every rerun; it gates nothing.
+#              2d-go-live. BH-7123 wave B: a MERGE / MERGE-WITH-NOTES whose
+#                 result detail says golive:N (bin/lead-review.sh, rl_cap
+#                 --golive note) reads the report once and places each
+#                 `- [HUMAN go-live] <step>` on the ticket through
+#                 bin/needs-human-hold.sh with source go-live (lrl_golive_route):
+#                 a visible step bin/lib/hold.sh reads as clear, so the pool and
+#                 the resolver proceed and the PR lands. It gates nothing — not
+#                 the row, the ring or the stamp; a placer failure is one log
+#                 line and one warn (lead-golive-<id>). Flag golive-<id>.
 #              2d. MERGE / MERGE-WITH-NOTES recorded (now or on an earlier tick)
 #                 and a lead BLOCK row on another head of the PR: every standing
 #                 CHANGES_REQUESTED review whose body carries a
@@ -281,24 +290,92 @@ lrl_reviews() {
 #     shas dropped, so moved line numbers keep the print), counted once per head
 #     in the review_block_fp ledger. At the trip count the hold is placed first,
 #     and its one ask (the placer's step 8) carries the first finding.
+# lrl_ticket_of <repo> — the ticket a PR's hold goes on: the fleet.conf project
+#   whose repo is <repo>, on an issues board, and the issue number in the PR
+#   branch ticket/<KEY>-<n> (LRL_BRANCH, read by lrl_pr_head). Sets LRL_TP,
+#   LRL_TISSUE and LRL_TWHY (why not, when one of them is empty). rc 0 always.
+lrl_ticket_of() {
+  local repo="$1" q bp
+  LRL_TP=""; LRL_TISSUE=""; LRL_TWHY=""
+  while read -r q; do
+    [ -n "$q" ] || continue
+    [ "$("$H/bin/fleet-conf.sh" "$q" repo 2>/dev/null)" = "$repo" ] && { LRL_TP="$q"; break; }
+  done < <("$H/bin/fleet-conf.sh" --projects 2>/dev/null)
+  if [ -z "$LRL_TP" ]; then LRL_TWHY="no fleet.conf project has repo $repo"
+  else
+    bp=$("$H/bin/fleet-conf.sh" "$LRL_TP" board_prefix 2>/dev/null)
+    if [ "$bp" != - ]; then LRL_TWHY="$LRL_TP is not an issues board"
+    elif [[ "${LRL_BRANCH:-}" =~ ^ticket/[A-Za-z]+-([0-9]+)(-r[0-9]+)?$ ]]; then LRL_TISSUE="${BASH_REMATCH[1]}"
+    else LRL_TWHY="branch '${LRL_BRANCH:-}' names no ticket"
+    fi
+  fi
+  return 0
+}
+
+# lrl_golive_route <id> <safe_id> <repo> <pr> <head> <row-json> <detail> — BH-7123
+#   wave B (C3b): the MERGE / MERGE-WITH-NOTES path's hold. bin/lead-review.sh's
+#   rl_cap --golive note rewrote each go-live human step to `- [HUMAN go-live]
+#   <step>` and put `golive:N` in the request's result detail; the step gates
+#   nothing. Here, when <detail> says golive:N (N > 0), the report artifact is
+#   read once (lead_review_report of the result's job) and every `[HUMAN
+#   go-live]` line places a hold on the ticket through bin/needs-human-hold.sh
+#   with source `go-live` (a visible step bin/lib/hold.sh reads as clear; the
+#   placer's one ask is the ring). The PR lands either way: nothing here gates
+#   the row, the stamp or the conductor ring — a placer that fails is one log
+#   line and one warn alert. Flag golive-<id>, so a re-landing posts nothing
+#   twice (the placer's fp dedupe is the backstop). rc 0 always.
+lrl_golive_route() {
+  local id="$1" sid="$2" repo="$3" pr="$4" head="$5" row="$6" detail="${7:-}" at="$3#$4 @${5:0:12} lead review $1"
+  local n jid af arc body line action fp prc placed=0 failed=0
+  n=$(printf '%s' "$detail" | sed -nE 's/.*(^|[ ;])golive:([0-9]+).*/\2/p')
+  case "$n" in ''|0|*[!0-9]*) return 0 ;; esac
+  lrl_flag_done "$STATE/golive-$sid" && return 0
+  if ! declare -F nh_fingerprint >/dev/null 2>&1; then
+    log "$at: $n go-live step(s) noted but the needs-human lib is missing; no hold placed, the PR lands"; return 0
+  fi
+  jid=$(jq -r '.job_id // ""' <<<"$row" 2>/dev/null)
+  if [ -z "$jid" ]; then log "$at: $n go-live step(s) noted but the row has no job id to read the report from; no hold placed, the PR lands"; return 0; fi
+  af=$(mktemp "${TMPDIR:-/tmp}/lead-review-land-g.XXXXXX") || { log "$at: mktemp failed; no go-live hold placed, the PR lands"; return 0; }
+  arc=0; JOBS_ALERT=0 job_artifact_detail lead_review_report "$jid" > "$af" 2>/dev/null || arc=$?
+  if [ "$arc" != 0 ]; then
+    rm -f "$af"; log "$at: the report artifact of job $jid could not be read (rc $arc, HTTP ${JOBS_HTTP:-none}); no go-live hold placed this tick, the PR lands; the next landing of this request retries"; return 0
+  fi
+  body=$(jq -r 'if (.body | type) == "string" then .body else empty end' "$af" 2>/dev/null); rm -f "$af"
+  if [ -z "${LRL_BRANCH:-}" ]; then lrl_pr_head "$repo" "$pr" >/dev/null 2>&1 || true; fi
+  lrl_ticket_of "$repo"
+  if [ -z "$LRL_TISSUE" ]; then
+    log "$at: $n go-live step(s) noted but no hold can be placed ($LRL_TWHY); the PR lands, the step stays in the review"
+    lrl_flag_set "$STATE/golive-$sid"; return 0
+  fi
+  while IFS= read -r line; do
+    action=$(printf '%s' "$line" | sed -E 's/^[[:space:]]*([-*]|[0-9]+[.)])?[[:space:]]*(\*\*)?\[HUMAN go-live\][[:space:]]*//I' | tr -s '\t\r ' ' ')
+    action=${action:0:160}
+    [ -n "$action" ] || continue
+    fp=$(nh_fingerprint "$action") || fp=$(printf 'golive%s%s' "$sid" "$action" | sha1sum | cut -c1-12)
+    prc=0; HARNESS="$H" "$H/bin/needs-human-hold.sh" "$LRL_TP" "$LRL_TISSUE" "$fp" \
+      "go-live: lead review of $repo#$pr @${head:0:12}: $action" go-live >/dev/null 2>&1 || prc=$?
+    case "$prc" in
+      0) placed=$((placed + 1)); log "$at: go-live hold placed on $LRL_TP#$LRL_TISSUE fp $fp (placer rc 0: placed, already there, or needs-human-hold-off on); the PR lands" ;;
+      *) failed=$((failed + 1)); log "$at: go-live hold on $LRL_TP#$LRL_TISSUE NOT placed (placer rc $prc) for: $action; the PR lands" ;;
+    esac
+  done < <(printf '%s\n' "$body" | grep -iE '^[[:space:]]*([-*]|[0-9]+[.)])?[[:space:]]*(\*\*)?\[HUMAN go-live\]' | head -5)
+  if [ "$failed" -gt 0 ]; then
+    "$H/bin/lane-alert.sh" --severity warn --id "lead-golive-$sid" --project "$LRL_TP" lead-review-land \
+      "[lead-review-land] $repo#$pr @${head:0:12}: $failed go-live step(s) from the lead review could not be placed on $LRL_TP#$LRL_TISSUE (needs-human-hold.sh refused); the PR lands anyway — a person must read the review's [HUMAN go-live] lines: https://github.com/$repo/pull/$pr" >/dev/null 2>&1 \
+      || log "$at: the go-live alert-line could not be sent"
+  fi
+  [ "$placed" -gt 0 ] || [ "$failed" -gt 0 ] || log "$at: detail says golive:$n but the report carries no [HUMAN go-live] line; nothing placed"
+  lrl_flag_set "$STATE/golive-$sid"
+  return 0
+}
+
 lrl_block_route() {
   local id="$1" sid="$2" repo="$3" pr="$4" head="$5" bf="$6" at="$3#$4 @${5:0:12} lead review $1"
-  local p="" issue="" why="" q bp fp action nhl prc rc first
+  local p="" issue="" why="" fp action nhl prc rc first
   if ! declare -F nh_fingerprint >/dev/null 2>&1; then
     log "$at: needs-human lib missing; findings posted with no hold route"; return 0
   fi
-  while read -r q; do
-    [ -n "$q" ] || continue
-    [ "$("$H/bin/fleet-conf.sh" "$q" repo 2>/dev/null)" = "$repo" ] && { p="$q"; break; }
-  done < <("$H/bin/fleet-conf.sh" --projects 2>/dev/null)
-  if [ -z "$p" ]; then why="no fleet.conf project has repo $repo"
-  else
-    bp=$("$H/bin/fleet-conf.sh" "$p" board_prefix 2>/dev/null)
-    if [ "$bp" != - ]; then why="$p is not an issues board"
-    elif [[ "${LRL_BRANCH:-}" =~ ^ticket/[A-Za-z]+-([0-9]+)(-r[0-9]+)?$ ]]; then issue="${BASH_REMATCH[1]}"
-    else why="branch '${LRL_BRANCH:-}' names no ticket"
-    fi
-  fi
+  lrl_ticket_of "$repo"; p="$LRL_TP"; issue="$LRL_TISSUE"; why="$LRL_TWHY"
   nhl=$(grep -m1 -E '^- \[BLOCK needs-human\]' "$bf")
   if [ -n "$nhl" ]; then
     lrl_flag_done "$STATE/nh-$sid" && return 0
@@ -759,6 +836,13 @@ while IFS= read -r ROW; do
       # 2d. A recorded MERGE dismisses the older lead BLOCK reviews still standing.
       if [ "$VERDICT" != BLOCK ] && [ "$PRC" != 3 ] && [ "$OLDBLOCK" != no ]; then
         lrl_dismiss "$ID" "$SAFE_ID" "$REPO" "$PR" "$HEAD" "$VERDICT" "$SJOB" merge "$ROWREF" || continue
+      fi
+      # 2d-go-live. BH-7123 wave B: a recorded MERGE / MERGE-WITH-NOTES whose result
+      # detail says golive:N puts the review's [HUMAN go-live] step(s) on the ticket
+      # as a visible hold the pool and the resolver read as clear (lrl_golive_route).
+      # It gates nothing: the row, the ring and the stamp below run as before.
+      if [ "$VERDICT" != BLOCK ] && [ "$PRC" != 3 ]; then
+        lrl_golive_route "$ID" "$SAFE_ID" "$REPO" "$PR" "$HEAD" "$ROW" "$DETAIL" || true
       fi
       # 2e. BH-4057: a recorded MERGE / MERGE-WITH-NOTES rings the merge conductor for this PR now
       # (keyed tick, kw_conductor's own MC_KEYED_WAKE_MIN_S stamp dedupes). BLOCK belongs to the

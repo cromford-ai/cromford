@@ -535,7 +535,15 @@ fi
 # Fix rounds this tier buys. 0 = uncapped, which is what every tier did before,
 # so an unrecognised tier keeps today's behaviour rather than inventing a limit.
 FIX_ROUND_CAP=0
-command -v review_tier_cap >/dev/null 2>&1 && FIX_ROUND_CAP=$(review_tier_cap "$REVIEW_TIER")
+command -v review_tier_cap >/dev/null 2>&1 && FIX_ROUND_CAP=$(review_tier_cap "$REVIEW_TIER" "$PROJECT")
+# BH-7123 wave B: in review.mode cowboy or off no lens fix round is bought at
+# all (the resolver's review cap reads 0 there too). A flag, not a cap of 0,
+# because 0 means uncapped to FIX_ROUND_ALLOWED and `cap=N` is numeric to
+# bin/evidence-summary.sh.
+FIX_ROUNDS_OFF=0
+if command -v rl_mode >/dev/null 2>&1; then
+  case "$(rl_mode "$PROJECT" 2>/dev/null 7>&- 8>&-)" in cowboy|off) FIX_ROUNDS_OFF=1 ;; esac
+fi
 
 # The lens list THIS diff earns. T0 buys ONE lens; every other tier keeps the
 # same two conditions as before, evaluated once and up front because the
@@ -573,6 +581,10 @@ FIX_ROUNDS_SPENT() {
 # it happens; adjudication below is untouched, so a lens that still refuses
 # exits on its own existing terminal.
 FIX_ROUND_ALLOWED() {
+  if [ "${FIX_ROUNDS_OFF:-0}" = 1 ]; then
+    echo "$(STAMP) [$PROJECT/$KEY] FIX-ROUND OFF: review.mode is cowboy/off for $PROJECT (BH-7123) — no lens fix round; the lens is adjudicated on the verdict it gave" >> "$BUILD/pipeline.log"
+    return 1
+  fi
   [ "${FIX_ROUND_CAP:-0}" -gt 0 ] || return 0
   local _spent; _spent=$(FIX_ROUNDS_SPENT)
   [ "$_spent" -lt "$FIX_ROUND_CAP" ] && return 0
@@ -599,8 +611,12 @@ LENS_APPROVED() {
   # names no ALWAYS-BLOCK class becomes a NOTE and a lens with no BLOCK left
   # approves. Idempotent, so every caller may run it; the security and refute
   # lenses are never capped (their whole brief is the ALWAYS-BLOCK floor).
+  # --golive (wave B): a go-live human step becomes `HUMAN_GOLIVE: <step>` and
+  # gates nothing while review.golive_gates_merge reads 0 (rl_golive_opt); the
+  # hold is placed from that line after the lenses (nh_on_golive, below).
   if [ "$1" = review ] && command -v rl_cap >/dev/null 2>&1 && [ -s "$(LENS_ART review)" ]; then
-    local _rl; _rl=$(rl_cap "$(LENS_ART review)" "$PROJECT" --approve APPROVE --block BLOCK --lens inbuild 2>>"$BUILD/pipeline.log") \
+    local _rl _gl=stand; command -v rl_golive_opt >/dev/null 2>&1 && _gl=$(rl_golive_opt "$PROJECT" 2>/dev/null 7>&- 8>&-)
+    _rl=$(rl_cap "$(LENS_ART review)" "$PROJECT" --approve APPROVE --block BLOCK --lens inbuild --golive "$_gl" 2>>"$BUILD/pipeline.log") \
       && echo "$(STAMP) [$PROJECT/$KEY] review level: $_rl" >> "$BUILD/pipeline.log"
   fi
   verdict_is APPROVE -L "$(LENS_ART "$1")" 2>/dev/null; }
@@ -656,9 +672,57 @@ LENS_HEAD_MATCHES() { [ "$(cat "$BUILD/review-head" 2>/dev/null)" = "$(git rev-p
 # assembled at runtime is an exit path that document cannot audit — which is
 # exactly the "unaudited exit" shape the graph exists to stop. All three keep
 # their no-requeue close-out rule (docs/RUN-BUILD-GRAPH.md).
-LENS_REFUSE() { # LENS_REFUSE <lens> — never returns
+# LENS_GOLIVE_PASS — BH-7123 wave B (C3d): a general-lens BLOCK whose EVERY
+# blocking line is a human step (nh_sd_human_only, bin/lib/needs-human/
+# step-done.sh) and whose level cap shows no standing BLOCK is not a refusal:
+# the go-live step rides to the ticket as a `go-live` hold and the PR opens.
+# rc 0 = treat the lens as approved: review.md's final VERDICT line is rewritten
+# to APPROVE under a marker line, and NH_GOLIVE_SUFFIX carries
+# ` NEEDS_HUMAN:<fp>:go-live: <step>` for the PR_CREATED RESULT (bin/lib/rb/
+# result.sh). rc 1 = today's refusal. Only while review.golive_gates_merge
+# reads 0 (rl_golive_opt note); strict/shadow modes never rewrite (rl_cap rc 1,
+# standing unknown), so they refuse as before. In levels mode rl_cap has
+# usually flipped the verdict already (LENS_APPROVED); this is the guard for a
+# report whose verdict line rl_cap could not read, or a human-only BLOCK whose
+# lines carry no go-live shape.
+LENS_GOLIVE_PASS() {
+  local _f _rl _st _hs _gl _sfx
+  _f=$(LENS_ART review); [ -s "$_f" ] || return 1
+  command -v rl_cap >/dev/null 2>&1 && command -v nh_sd_human_only >/dev/null 2>&1 || return 1
+  _gl=stand; command -v rl_golive_opt >/dev/null 2>&1 && _gl=$(rl_golive_opt "$PROJECT" 2>/dev/null 7>&- 8>&-)
+  [ "$_gl" = note ] || return 1
+  _rl=$(rl_cap "$_f" "$PROJECT" --approve APPROVE --block BLOCK --lens inbuild --golive note 2>/dev/null) || return 1
+  _st=$(printf '%s' "$_rl" | sed -nE 's/.* standing=([0-9]+).*/\1/p')
+  [ "$_st" = 0 ] || return 1
+  # rl_cap flips the verdict itself when it can read the verdict line; when it
+  # could not (a report with no anchored VERDICT line it recognises) the lens
+  # passes only if every blocking line is a human step (nh_sd_human_only) or a
+  # go-live step was noted, and the last BLOCK verdict is rewritten under a
+  # marker so every later reader of review.md sees APPROVE.
+  if ! { command -v verdict_is >/dev/null 2>&1 && verdict_is APPROVE -L "$_f" 2>/dev/null; } \
+     && ! grep -qE '^[[:space:]]*VERDICT:[[:space:]]*APPROVE[[:space:]]*$' "$_f"; then
+    if ! _hs=$(nh_sd_human_only "$_f" 2>/dev/null); then
+      grep -qE '^[[:space:]]*HUMAN_GOLIVE:[[:space:]]*[^[:space:]]' "$_f" || return 1
+    fi
+    awk 'BEGIN{n=0} {l[++n]=$0} /^[[:space:]]*VERDICT:[[:space:]]*BLOCK[[:space:]]*$/{v=n}
+         END{for(i=1;i<=n;i++){ if(i==v){print "Review level (BH-7123): every blocking line is a human step and no ALWAYS-BLOCK finding stands; the go-live step rides to the ticket as a hold, the PR opens."; print "VERDICT: APPROVE"} else print l[i] }}' \
+      "$_f" > "$_f.golive.$$" && mv -f "$_f.golive.$$" "$_f" || { rm -f "$_f.golive.$$"; return 1; }
+  fi
+  _sfx=""
+  command -v nh_on_golive >/dev/null 2>&1 && _sfx=$(nh_on_golive "$PROJECT" "${NH_ISSUE:-}" "$_f" "$BUILD" 2>/dev/null || true)
+  NH_GOLIVE_SUFFIX="${_sfx}"
+  echo "$(STAMP) [$PROJECT/$KEY] review lens: human-only BLOCK with no standing finding ($_rl) — approved; go-live step${_sfx:+ noted:$_sfx}${_sfx:-: none (a verification this box cannot run is a note)}" >> "$BUILD/pipeline.log"
+  return 0
+}
+
+LENS_REFUSE() { # LENS_REFUSE <lens> — never returns, except the go-live pass
   # A refusal from a lens, its fix round or the merged re-review that ran out
   # of runner lane is a deferral, not a verdict (BH-1853): see STAGE_LANE_DEFER.
+  # BH-7123 wave B: a human-only general-lens BLOCK with no standing finding is
+  # not a refusal (LENS_GOLIVE_PASS); the caller's refuse fallback carries on.
+  # Guarded: the lens block is also run extracted, without this file's helpers
+  # (tests/needs-human-contract.bh-3442-test.sh); a missing helper is "no pass".
+  if [ "$1" = review ] && command -v LENS_GOLIVE_PASS >/dev/null 2>&1 && LENS_GOLIVE_PASS; then return 0; fi
   LENS_VARS "$1"
   # fix-run.txt / review2-run.txt are the general lens's OWN fix round and
   # re-review on the sequential path (they are its L_FIXRUN / L_RUN2), and the
@@ -1057,6 +1121,20 @@ $(cat "$BUILD/fix-delta.diff")
   git rev-parse HEAD > "$BUILD/review-head"
 fi
 fi  # end REVIEW checkpoint
+# >>> go-live hold (BH-7123 wave B)
+# An APPROVED general lens may still name a go-live step: rl_cap --golive note
+# (LENS_APPROVED) rewrote it to `HUMAN_GOLIVE: <step>` and the verdict did not
+# wait on it. The hold goes on the TICKET now, source go-live (visible, never a
+# pause: bin/lib/hold.sh reads it as clear), and the PR_CREATED RESULT carries
+# ` NEEDS_HUMAN:<fp>:go-live: <step>` (bin/lib/rb/result.sh). LENS_GOLIVE_PASS
+# may have placed it already; the placer dedupes on the fingerprint anyway.
+NH_GOLIVE_SUFFIX="${NH_GOLIVE_SUFFIX:-}"
+if [ -z "$NH_GOLIVE_SUFFIX" ] && command -v nh_on_golive >/dev/null 2>&1 \
+   && grep -qE '^[[:space:]]*HUMAN_GOLIVE:[[:space:]]*[^[:space:]]' "$BUILD/review.md" 2>/dev/null; then
+  NH_GOLIVE_SUFFIX=$(nh_on_golive "$PROJECT" "${NH_ISSUE:-}" "$BUILD/review.md" "$BUILD" 2>/dev/null || true)
+  [ -z "$NH_GOLIVE_SUFFIX" ] || echo "$(STAMP) [$PROJECT/$KEY] go-live step rides to the ticket as a hold, the PR does not wait on it:$NH_GOLIVE_SUFFIX" >> "$BUILD/pipeline.log"
+fi
+# <<< go-live hold
 # <<< review lenses
 STAGE_END lenses "$T_LENSES"
 

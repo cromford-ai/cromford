@@ -49,6 +49,9 @@ _GF_DIR="${BASH_SOURCE[0]%/*}"
 [ -r "$_GF_DIR/gh-rest-list.sh" ] && . "$_GF_DIR/gh-rest-list.sh"
 # shellcheck source=bin/lib/block-gate.sh
 [ -r "$_GF_DIR/block-gate.sh" ] && . "$_GF_DIR/block-gate.sh"
+# shellcheck source=bin/lib/review-level.sh
+# rl_knob (BH-7123): the follow-up floor and the core flows are settings rows.
+[ -r "$_GF_DIR/review-level.sh" ] && . "$_GF_DIR/review-level.sh"
 
 # The key normaliser, as a jq def so gf_run, gf_key and the replay share ONE
 # implementation (D17). Empty in, empty out: a finding with no screen or flow
@@ -233,9 +236,62 @@ _gf_own_files() {
 
 _gf_sum() { printf '%s\n' "$1" >> "$_GF_SUMMARY_BODY"; }
 
+# ── the follow-up floor (BH-7123 wave B) ─────────────────────────────────────
+# review.followup_min_level (per board review.followup_min_level.<board>, then
+# the fleet row, then the CODE default `always` = today's behaviour; the DB seed
+# is `core`): the lowest level whose findings may become a follow-up ticket.
+#   never   file no group ticket (an urgent data-leak / launch-blocker is filed
+#           by _gf_urgent before the groups and is not a group ticket: the
+#           ALWAYS-BLOCK floor never comes off)
+#   core    file only a group with a high|critical row, or whose screen or flow
+#           is a core flow of the board (review.core_flows.<board>: a comma list;
+#           a token is a core flow when the group key contains it)
+#   always  every group, as before
+# The row is read through rl_knob (bin/lib/review-level.sh) with the jobs
+# client sourced in a subshell when the caller did not; no row readable means
+# `always`, so a settings outage files as before rather than silently less.
+_gf_rl() { # _gf_rl <base> <board> <default> <regex>
+  local v
+  # The read runs in a subshell: a jobs client that refuses to source (no
+  # secret, no env dir in a scratch harness) kills only the subshell, and an
+  # EMPTY answer is the default, never a level of its own. An empty level once
+  # read as `core` and floored every medium group of a run (CI, 2026-10-16).
+  v=$( command -v setting_get >/dev/null 2>&1 || { [ -r "$_GF_DIR/../jobs-client.sh" ] && . "$_GF_DIR/../jobs-client.sh" 2>/dev/null; } || true
+       if command -v rl_knob >/dev/null 2>&1; then rl_knob "$1" "$2" "$3" "$4" 2>/dev/null; else printf '%s' "$3"; fi ) || v=""
+  if [ -n "$v" ] && grep -qE "$4" <<<"$v"; then printf '%s' "$v"; else printf '%s' "$3"; fi
+}
+# _gf_under_floor <gk> <board> <key> — rc 0 when the group may not be filed;
+# _GF_FLOOR_WHY says why.
+_gf_under_floor() {
+  local gk="$1" board="$2" key="$3" lvl top flows tok lk
+  lvl=$(_gf_rl review.followup_min_level "$board" always '^(always|core|never)$')
+  _GF_FLOOR_WHY=""
+  case "$lvl" in
+    always) return 1 ;;
+    never)  _GF_FLOOR_WHY="level never"; return 0 ;;
+  esac
+  top=$(jq -r --arg g "$gk" '[.[] | select(.gid == $g) | .severity] | map({"low":1,"medium":2,"high":3,"critical":4}[.]) | max // 0' "$_GF_NORM")
+  [ "${top:-0}" -ge 3 ] && return 1
+  flows=$(_gf_rl review.core_flows "$board" "" '.*')
+  lk=$(printf '%s' "$key" | tr '[:upper:]' '[:lower:]')
+  while IFS= read -r tok; do
+    tok=$(printf '%s' "$tok" | sed -E 's/^[[:space:]]+//; s/[[:space:]]+$//' | tr '[:upper:] ' '[:lower:]-')
+    [ -n "$tok" ] || continue
+    case "$lk" in *"$tok"*) return 1 ;; esac
+  done < <(printf '%s' "$flows" | tr ',' '\n')
+  _GF_FLOOR_WHY="level core: highest severity $(jq -r --argjson t "${top:-0}" -n '{"0":"none","1":"low","2":"medium"}[$t|tostring]'), not a core flow"
+  return 0
+}
+# _gf_is_followup_issue <number> — rc 0 when that open issue is itself a follow-up.
+_gf_is_followup_issue() {
+  jq -e --argjson n "$1" 'any(.[]; .number == $n and ((.body // "") as $b
+    | ($b | contains("<!-- findings-followup-of:"))
+      or (($b | split("\n") | map(select(test("\\S"))) | .[0] // "") | test("^\\s*Follow-up-of:\\s*#"))))' "$_GF_ISSUES" >/dev/null 2>&1
+}
+
 # _gf_group <gk> — act on ONE group. Sets _GF_LAST to its action.
 _gf_group() {
-  local gk="$1" board key n bf res st num url cand target="" approved="" first="" ap blk
+  local gk="$1" board key n bf res st num url cand target="" approved="" first="" ap blk chain_note=""
   board=$(jq -r --arg g "$gk" '[.[] | select(.gid == $g)][0].board' "$_GF_NORM")
   key=$(jq -r --arg g "$gk" '[.[] | select(.gid == $g)][0].gk' "$_GF_NORM")
   n=$(jq --arg g "$gk" '[.[] | select(.gid == $g)] | length' "$_GF_NORM")
@@ -244,6 +300,13 @@ _gf_group() {
   if jq -e -s --arg g "$gk" 'any(.[]; (.board + "|" + .group_key) == $g
         and (.action == "filed" or .action == "commented" or .action == "followup"))' "$_GF_LEDGER" >/dev/null 2>&1; then
     _GF_LAST=done; _gf_sum "- $key: $n item(s), already acted on in this run"; return 0
+  fi
+  # The follow-up floor (BH-7123): a group under it gets no ticket and no
+  # comment; its rows end `floor` with the reason, never silently dropped.
+  if _gf_under_floor "$gk" "$board" "$key"; then
+    _gf_mark "$gk" floor "$(jq -nc --arg w "$_GF_FLOOR_WHY" '{note:$w}')"
+    _GF_LAST=floor; _GF_N_FLOOR=$((_GF_N_FLOOR+1))
+    _gf_sum "- $key: $n item(s), under the follow-up floor ($_GF_FLOOR_WHY; review.followup_min_level)"; return 0
   fi
   blk=$(_gf_blocked_by "$gk")
   bf="$_GF_TMP/body"
@@ -269,6 +332,12 @@ _gf_group() {
     if [ -z "$ap" ]; then target="$cand"; break; fi
     approved="$approved $ap"
   done
+  # No follow-up of a follow-up (BH-7123): when every open issue of the group
+  # has an approved PR and the first of them is itself a follow-up, the new
+  # scope is a comment on it, never a third ticket in the chain.
+  if [ -z "$target" ] && [ -n "$first" ] && _gf_is_followup_issue "$first"; then
+    target="$first"; chain_note=" (#$first is itself a follow-up; no follow-up of a follow-up, BH-7123)"
+  fi
   if [ -n "$target" ]; then
     # Scope comment. Already posted by this run? Then record it and stop.
     local ct="$_GF_TMP/comments.json" rc=0
@@ -293,7 +362,7 @@ _gf_group() {
     res=$(_gf_post "repos/$_GF_SLUG/issues/$target/comments" "$bf"); read -r st num url <<<"$res"
     if [ "$st" = ok ]; then
       _gf_mark "$gk" commented "$(jq -nc --argjson i "$target" --arg u "$url" '{issue:$i, url:$u}')"; _gf_own_files "$gk" "#$target"
-      _GF_LAST=commented; _GF_N_COMMENTED=$((_GF_N_COMMENTED+1)); _gf_sum "- $key: $n item(s), commented on #$target"
+      _GF_LAST=commented; _GF_N_COMMENTED=$((_GF_N_COMMENTED+1)); _gf_sum "- $key: $n item(s), commented on #$target$chain_note"
     else
       _gf_mark "$gk" failed "$(jq -nc --argjson i "$target" --arg h "$num" '{issue:$i, http:$h}')"
       _GF_LAST=failed; _GF_N_FAILED=$((_GF_N_FAILED+1)); _gf_sum "- $key: $n item(s), FAILED to comment on #$target (http $num)"
@@ -367,7 +436,7 @@ _gf_urgent() {
 gf_run() { # gf_run <findings.jsonl> <run_dir> <owner/repo> [--dry-run]
   local in="${1:-}" rd="${2:-}" slug="${3:-}" b on rank g rc=0 total groups invalid boards
   local _GF_RUN _GF_LEDGER _GF_NORM _GF_TMP _GF_ISSUES _GF_SLUG="$slug" _GF_DRY=0 _GF_PRS="" _GF_FILES _GF_LAST
-  local _GF_SUMMARY_BODY _GF_N_FILED=0 _GF_N_COMMENTED=0 _GF_N_FOLLOWUP=0 _GF_N_URGENT=0 _GF_N_DEFERRED=0 _GF_N_FAILED=0
+  local _GF_SUMMARY_BODY _GF_N_FILED=0 _GF_N_COMMENTED=0 _GF_N_FOLLOWUP=0 _GF_N_URGENT=0 _GF_N_DEFERRED=0 _GF_N_FAILED=0 _GF_N_FLOOR=0 _GF_FLOOR_WHY=""
   [ "${4:-}" = --dry-run ] && _GF_DRY=1
   if [ ! -r "$in" ] || [ ! -d "$rd" ] || ! [[ "$slug" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]]; then
     echo "gf_run: want <findings.jsonl> <run_dir> <owner/repo> [--dry-run]" >&2; return 2
@@ -459,8 +528,8 @@ gf_run() { # gf_run <findings.jsonl> <run_dir> <owner/repo> [--dry-run]
   fi
   { printf '# group-findings: run %s\n\n' "$_GF_RUN"
     cat "$_GF_SUMMARY_BODY"
-    printf '\ngroup-findings: %s findings, %s groups, filed %s, commented %s, followup %s, urgent %s, deferred %s, failed %s, invalid %s%s\n' \
-      "$total" "$groups" "$_GF_N_FILED" "$_GF_N_COMMENTED" "$_GF_N_FOLLOWUP" "$_GF_N_URGENT" "$_GF_N_DEFERRED" "$_GF_N_FAILED" "$invalid" \
+    printf '\ngroup-findings: %s findings, %s groups, filed %s, commented %s, followup %s, urgent %s, deferred %s, failed %s, invalid %s, floor %s%s\n' \
+      "$total" "$groups" "$_GF_N_FILED" "$_GF_N_COMMENTED" "$_GF_N_FOLLOWUP" "$_GF_N_URGENT" "$_GF_N_DEFERRED" "$_GF_N_FAILED" "$invalid" "$_GF_N_FLOOR" \
       "$([ "$_GF_DRY" = 1 ] && echo ' (dry run, nothing posted)')"
   } > "$rd/group-findings.md"
   rm -rf "$_GF_TMP"

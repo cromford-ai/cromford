@@ -356,10 +356,18 @@ br_shape() { # br_shape <json> -> small|large
 #   large and no contested bonus to ride on, so that branch is the whole answer.
 #   Every other reason — and an absent one, which is how the ladder calls this —
 #   keeps the shape-driven cap, byte for byte.
+#
+#   THE PROJECT IS THE THIRD ARGUMENT (BH-7123 wave B): the review cap is a
+#   settings row (br_review_fix_cap), per project first, so the project has to
+#   reach this read. Absent, the fleet row answers.
 br_fix_cap() {
-  local st="${1:-}" reason="${2:-}" base
+  local st="${1:-}" reason="${2:-}" p="${3:-}" base
   case "$reason" in
-    review-changes-requested) printf '%s\n' "${BR_REVIEW_FIX_ROUNDS:-2}"; return 0 ;;
+    review-changes-requested)
+      # A suite that lifts br_fix_cap alone has no br_review_fix_cap: the
+      # documented knob (default 2) answers, as before BH-7123.
+      if command -v br_review_fix_cap >/dev/null 2>&1; then br_review_fix_cap "$p"; else echo "${BR_REVIEW_FIX_ROUNDS:-2}"; fi
+      return 0 ;;
     queue-dequeued) echo 1; return 0 ;;   # BH-3728: one round per (pr, head, class) claim; the dequeue-watch lane counts rounds across heads
   esac
   # The BR_-prefixed spellings are the documented knobs; the bare ones are what
@@ -371,6 +379,40 @@ br_fix_cap() {
   else base="${MAX_FIXROUNDS:-${BR_MAX_FIXROUNDS:-1}}"; fi
   case "$base" in ''|*[!0-9]*) base=1 ;; esac
   echo $(( base + $(br_num "$st" fixround_bonus) ))
+}
+# br_review_fix_cap [<project>] — the fix rounds a review verdict buys per
+#   TICKET (BH-7123 wave B). The settings row review.fix_rounds_max.<project>,
+#   then review.fix_rounds_max (seeded 2 by wave A), through rl_knob
+#   (bin/lib/review-level.sh); the registry knob BR_REVIEW_FIX_ROUNDS is the
+#   default when no row answers, and 2 when neither the lib nor the knob is
+#   there. In review.mode cowboy or off (rl_mode) the cap is 0: no fix round,
+#   the park goes straight to its terminal (merge with notes, or abandon on an
+#   ALWAYS-BLOCK finding). Memoised per project for the tick: br_prepass reads
+#   it once per candidate row, and a settings read per row is the fork the
+#   prepass exists to avoid. fd 7 and 8 are closed for the read: the lane holds
+#   its scan lock on 8, and a settings read must not inherit it.
+#   The answer is printed AND left in _BR_REVIEW_CAP_OUT, so br_prepass can read
+#   it without a `$( )` fork per row.
+_BR_REVIEW_CAP_MEMO=" "; _BR_REVIEW_CAP_OUT=2
+br_review_fix_cap() {
+  local p="${1:-}" key="${1:--}" mode cap hit
+  # ${VAR:-} throughout: a suite that lifts this function alone runs it under
+  # set -u with no memo line above it.
+  case "${_BR_REVIEW_CAP_MEMO:-}" in *" $key="*)
+    hit="${_BR_REVIEW_CAP_MEMO#* "$key"=}"; _BR_REVIEW_CAP_OUT="${hit%% *}"; printf '%s\n' "$_BR_REVIEW_CAP_OUT"; return 0 ;;
+  esac
+  cap="${BR_REVIEW_FIX_ROUNDS:-2}"
+  if command -v rl_mode >/dev/null 2>&1; then
+    mode=$(rl_mode "$p" 2>/dev/null 7>&- 8>&-)
+    case "$mode" in cowboy|off) cap=0 ;;
+      *) command -v rl_knob >/dev/null 2>&1 \
+           && cap=$(rl_knob review.fix_rounds_max "$p" "${BR_REVIEW_FIX_ROUNDS:-2}" '^[0-9]{1,2}$' 2>/dev/null 7>&- 8>&-) ;;
+    esac
+  fi
+  case "$cap" in ''|*[!0-9]*) cap=2 ;; esac
+  _BR_REVIEW_CAP_MEMO="${_BR_REVIEW_CAP_MEMO:- }$key=$cap "
+  _BR_REVIEW_CAP_OUT="$cap"
+  printf '%s\n' "$cap"
 }
 br_rebuild_cap() { # br_rebuild_cap <json>
   local cap

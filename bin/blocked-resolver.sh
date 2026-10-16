@@ -165,8 +165,13 @@
 # stamped ESCALATED then stay terminal and are never backfilled.
 #
 # KNOBS (code constants are the documented fallback, env/global.env overrides):
-#   BR_REVIEW_FIX_ROUNDS      2       fix rounds per TICKET for a review verdict
-#                                     before br_abandon is the terminal
+#   BR_REVIEW_FIX_ROUNDS      2       fix rounds per TICKET for a review verdict;
+#                                     since BH-7123 wave B the settings row
+#                                     review.fix_rounds_max[.<project>] outranks
+#                                     it (br_review_fix_cap), review.mode
+#                                     cowboy/off reads 0, and the terminal is
+#                                     br_cap_notes (merge with notes) unless an
+#                                     ALWAYS-BLOCK finding stands (br_abandon)
 #                                     (every other reason keeps BR_MAX_FIXROUNDS)
 #   BR_CONFLICT_FIX_ROUNDS    2       fix rounds per TICKET for a SMALL measured
 #                                     conflict before rebuild-fresh (BH-6964);
@@ -306,6 +311,7 @@ fi
 # nothing is exported and the lane behaves byte-for-byte as it does today.
 command -v lane_env_apply    >/dev/null 2>&1 && lane_env_apply    blocked-resolver
 
+
 # The per-repo App token, and then the "which PAT can see this repo" probe that
 # is still the fallback. Both guarded: a box whose harness sync has not landed
 # gh-app-auth.sh yet runs today's code instead of dying on an unset function.
@@ -336,6 +342,13 @@ command -v lane_env_apply    >/dev/null 2>&1 && lane_env_apply    blocked-resolv
 # behaviour.
 # shellcheck source=bin/lib/hold.sh
 [ -r "$H/bin/lib/hold.sh" ] && . "$H/bin/lib/hold.sh"
+# THE REVIEW LEVELS (BH-7123 wave B): rl_mode / rl_knob read the review cap row
+# (bin/lib/br/record.sh br_review_fix_cap) and rl_line_blocks says whether a
+# standing finding is on the ALWAYS-BLOCK floor (br_cap_notes). Guarded like
+# the libs above: without it the cap is the registry knob and every review
+# terminal is today's abandon.
+# shellcheck source=bin/lib/review-level.sh
+[ -r "$H/bin/lib/review-level.sh" ] && . "$H/bin/lib/review-level.sh"
 # A HAND-OFF ACTS, SAYS WHY NOT, OR PAGES (BH-5125): the claim/ack/sweep record
 # the main loop keeps for every candidate. The ticket thread reader and the
 # untrusted-input wrapper are what br_fix_round's DIRECTIVE reads and wraps the
@@ -950,7 +963,7 @@ case "$FIX_LANE_TIMEOUT" in ''|*[!0-9]*) ;; *) [ "$((FIX_LANE_TIMEOUT / 3))" -gt
 # classifier — every park answered `none`, nothing fixed, and a log line that
 # reads exactly like a quiet tick.
 BR_LIB_DIR="$H/bin/lib/br"
-BR_MODULES="discovery keys ladder record"
+BR_MODULES="discovery keys ladder record cap"
 for _br_m in $BR_MODULES; do
   # shellcheck source=/dev/null
   if [ -r "$BR_LIB_DIR/$_br_m.sh" ] && . "$BR_LIB_DIR/$_br_m.sh"; then continue; fi
@@ -1757,7 +1770,8 @@ br_review_verdict() {
 # THE REVIEWS LIST, READ ONCE (BH-2200). The PR's reviews over the REST
 # contract (bin/lib/gh-rest.sh; a plain call into a file, never `$( )`), 100 a
 # page, oldest first (GitHub's order), as a compact JSON array of
-# {l login, t user type, a author_association, c commit_id, s state, b body}.
+# {l login, t user type, a author_association, c commit_id, s state, b body,
+# id review id (BH-7123 wave B: br_cap_notes dismisses by it)}.
 # Both pickers below read this one answer, so finding the lane's own verdict AND
 # a lead's costs the same read the lane always made.
 #   rc 0 the array on stdout ([] when the PR has none, or is gone: 404)
@@ -1769,7 +1783,7 @@ br_review_rows() {
     grc=0; gh_rest GET "repos/$slug/pulls/$num/reviews?per_page=100&page=$page" > "$f" 2>/dev/null || grc=$?
     [ "$grc" = 44 ] && break
     if [ "$grc" != 0 ] || ! jq -e 'type == "array"' "$f" >/dev/null 2>&1; then rm -f "$f"; return 2; fi
-    acc=$(jq -c --argjson acc "$acc" '$acc + [ .[] | {l:(.user.login // ""), t:(.user.type // ""), a:(.author_association // ""), c:(.commit_id // ""), s:(.state // ""), b:(.body // "")} ]' "$f" 2>/dev/null) \
+    acc=$(jq -c --argjson acc "$acc" '$acc + [ .[] | {l:(.user.login // ""), t:(.user.type // ""), a:(.author_association // ""), c:(.commit_id // ""), s:(.state // ""), b:(.body // ""), id:(.id // 0)} ]' "$f" 2>/dev/null) \
       || { rm -f "$f"; return 2; }
     len=$(jq 'length' "$f" 2>/dev/null)
     [ "${len:-0}" -lt 100 ] && break
@@ -2444,7 +2458,10 @@ br_prepass() {
     # shape-driven one; `conflict_lines` of `-`, `0` or a non-number is LARGE,
     # exactly as br_shape reads it.
     case "$reason" in
-      review-changes-requested) cap="${BR_REVIEW_FIX_ROUNDS:-2}" ;;
+      # The review cap is the settings row (BH-7123 wave B), memoised per
+      # project inside br_review_fix_cap, so this loop still forks nothing new
+      # after the first row of a project.
+      review-changes-requested) br_review_fix_cap "${p:-}" >/dev/null; cap="$_BR_REVIEW_CAP_OUT" ;;
       *)
         case "$rconf" in
           ''|-|0|*[!0-9]*) cap="${MAX_FIXROUNDS:-${BR_MAX_FIXROUNDS:-1}}" ;;
@@ -5103,11 +5120,17 @@ br_fix_terminal() {
   case "${3:-}" in
     review-changes-requested)
       br_review_cleared "$1" "$2" "$3" "$4" && return 0
+      # BH-7123 wave B: at the cap, findings none of which is on the
+      # ALWAYS-BLOCK floor merge with notes (br_cap_notes, rc 0 = handled this
+      # tick); a standing floor line keeps today's abandon.
+      br_cap_notes "$1" "$2" "$3" "$4" "$5" "${6:--}" && return 0
       br_abandon "$1" "$(br_cap_key "$1" "$2" "${6:--}")" "$3" "$4" "$5" \
         "the review findings outlasted the harness fix round(s) on this branch" "${6:--}" || true ;;
     *) br_rebuild_fresh "$@" ;;
   esac
 }
+
+
 
 # br_review_cleared <project> <rkey> <reason> <pr-url>
 #   rc 0 the review terminal must NOT close this PR this tick (one line says
@@ -5163,7 +5186,9 @@ br_fix_terminal_word() {
   [ "${BR_XPR_ACTIVE-}" = 1 ] && { printf 'PARKED for the author instead'; return 0; }
   case "${1:-}" in
     external-*)               printf 'PARKED for the author instead' ;;
-    review-changes-requested) printf 'ABANDONED instead' ;;
+    # BH-7123 wave B: the review terminal decides between the two inside
+    # br_fix_terminal (br_cap_notes), so the line names both, never one.
+    review-changes-requested) printf 'merged with notes (no ALWAYS-BLOCK finding) or ABANDONED instead' ;;
     *)                        printf 'REBUILD FRESH instead' ;;
   esac
 }
@@ -5735,7 +5760,7 @@ br_fix_round() {
   # missing or unusable answer falls back to today's single round rather than to
   # zero or to unbounded — the same shape br_num uses on every number this lane
   # reads.
-  cap=$(br_fix_cap "$st" "$reason" 2>/dev/null)
+  cap=$(br_fix_cap "$st" "$reason" "$p" 2>/dev/null)
   case "$cap" in ''|*[!0-9]*) cap="${MAX_FIXROUNDS:-${BR_MAX_FIXROUNDS:-1}}" ;; esac
   if [ "$n" -ge "$cap" ]; then
     say "$p/$rkey [$reason]: the fix round already ran $n time(s) of $cap — $(br_fix_terminal_word "$reason")"
@@ -6283,7 +6308,7 @@ $live$brief"
     # next tick would not offer it again: "rounds remaining" would mean the park
     # sits with no round, no terminal and nobody told. Its remaining round is for
     # the next head, and for THIS head a failed round is the terminal.
-    st=$(br_load "$p" "$ck"); cap=$(br_fix_cap "$st" "$reason")
+    st=$(br_load "$p" "$ck"); cap=$(br_fix_cap "$st" "$reason" "$p")
     if [ "$reason" != review-changes-requested ] && [ "$((n+1))" -lt "$cap" ]; then
       say "$p/$rkey [$reason]: fix round $((n+1)) of $cap did not land — fix round $((n+2)) next tick (agent rc=$rc, verify rc=$vrc)"
       br_wt_drop "the round did not land and another one is owed"
@@ -6470,7 +6495,7 @@ $(head -c 4000 "$unaddr")" >/dev/null 2>&1 || true
     # Same split as the no-verified-commit exit above: a review park's head is
     # already marked spent, so it goes to its terminal rather than waiting for a
     # round that would never be offered.
-    st=$(br_load "$p" "$ck"); cap=$(br_fix_cap "$st" "$reason")
+    st=$(br_load "$p" "$ck"); cap=$(br_fix_cap "$st" "$reason" "$p")
     if [ "$reason" != review-changes-requested ] && [ "$((n+1))" -lt "$cap" ]; then
       # Somebody just moved this head. With a round still owed the right answer
       # is the next round on the head they pushed, not a rebuild of a branch
@@ -8182,6 +8207,9 @@ if [ "$BR_FIX_HERE" = 1 ]; then
     exit 2
   fi
   _fh_p="${BR_FIX_ARGS[0]}"; _fh_ck=$(br_cap_key "$_fh_p" "${BR_FIX_ARGS[1]}" "${BR_FIX_ARGS[5]}")
+  # The project's own lane rows (BH-7123 wave B): the hub's tick applied them
+  # for its project; the hopped round reads the same rows on this box.
+  br_env_for_project "$_fh_p"
   # The round reads GitHub as its project from the first call (BH-5913 audit:
   # its first PR read ran on the box's default PAT).
   BR_HOME_SLUG=$("$H/bin/fleet-conf.sh" "$_fh_p" repo 2>/dev/null) || BR_HOME_SLUG=""
@@ -8518,6 +8546,9 @@ for LINE in ${CANDS[@]+"${CANDS[@]}"}; do
   LIDX=$((LIDX+1))
   IFS=$'\t' read -r SRC P RKEY REASON URL REC TKEY PARKED <<<"$LINE"
   [ -n "${RKEY:-}" ] || continue
+  # THIS PROJECT'S LANE ROWS (BH-7123 wave B): applied as the row's project
+  # changes, memoised, the tick budgets kept fleet-wide (br_env_for_project).
+  br_env_for_project "$P"
   [ -z "$BR_HOME_SLUG" ] || br_home_token
   # >>> project hold
   # IS THIS PROJECT HELD (BH-1465)? Asked here — above the budget break, above

@@ -1760,10 +1760,14 @@ Style (external teams pay tokens to read this): terse, direct, declarative. No p
   # a REQUEST_CHANGES with no standing BLOCK becomes APPROVE: the posted review
   # body, the GitHub review state and the ledger all follow the rewritten text.
   # review.mode=strict leaves the model's answer alone; shadow logs WOULD.
+  # --golive (BH-7123 wave B): a go-live human step becomes `[HUMAN go-live]
+  # <step>` and gates nothing while review.golive_gates_merge reads 0; the
+  # review body carries it, and the lead's landing places the ticket hold.
   RL_OUT=""
   if [ -n "$VERDICT" ] && command -v rl_cap >/dev/null 2>&1; then
+    RL_GOLIVE=stand; command -v rl_golive_opt >/dev/null 2>&1 && RL_GOLIVE=$(rl_golive_opt "$PROJECT" 2>/dev/null 7>&- 8>&-)
     printf '%s\n' "$REVIEW" > "$OUT_FILE.rl"
-    RL_OUT=$(rl_cap "$OUT_FILE.rl" "$PROJECT" --approve APPROVE --block REQUEST_CHANGES --lens prs 2>>"$LOG") && {
+    RL_OUT=$(rl_cap "$OUT_FILE.rl" "$PROJECT" --approve APPROVE --block REQUEST_CHANGES --lens prs --golive "$RL_GOLIVE" 2>>"$LOG") && {
       REVIEW=$(cat "$OUT_FILE.rl")
       VERDICT=$(printf '%s\n' "$REVIEW" | verdict_parse -w 'APPROVE|REQUEST_CHANGES' 2>/dev/null) || VERDICT=""
     }

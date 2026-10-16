@@ -200,7 +200,7 @@
       "max": 10,
       "unit": "rounds",
       "zero_means": null,
-      "note": "Fix rounds a review verdict gets per ticket before the lane escalates instead."
+      "note": "Fix rounds a review verdict gets per ticket before the lane merges with notes (no ALWAYS-BLOCK finding) or abandons. Since BH-7123 the settings row review.fix_rounds_max[.<project>] outranks this knob, and review.mode cowboy|off reads as 0; this is the fallback when no row is readable."
     },
     {
       "env": "BR_PRS_CACHE_SECS",

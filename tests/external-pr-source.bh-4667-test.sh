@@ -494,7 +494,10 @@ OUTR=$( export H; . "$T/lift.sh"; br_fix_terminal_word review-changes-requested 
 OUTA=$( export H; . "$T/lift.sh"; BR_XPR_ACTIVE=1 br_fix_terminal_word build-dead )
 [ "$OUTW" = 'PARKED for the author instead' ] && [ "$OUTA" = 'PARKED for the author instead' ] && ok \
   || bad "X8e: an external row's terminal word is PARKED for the author instead (got '$OUTW' / '$OUTA')"
-[ "$OUTR" = 'ABANDONED instead' ] && ok || bad "X8e: the review terminal word is unchanged (got '$OUTR')"
+# TEST-CHANGE (BH-7123 wave B): the review terminal decides between merging
+# with notes and ABANDONED inside br_fix_terminal (br_cap_notes), so its word
+# names both; it still names ABANDONED, and the external words are unchanged.
+case "$OUTR" in *ABANDONED*notes*|*notes*ABANDONED*) ok ;; *) bad "X8e: the review terminal word names both outcomes (got '$OUTR')" ;; esac
 
 echo "external-pr-source.bh-4667: $PASS passed, $FAIL failed"
 [ "$FAIL" = 0 ]

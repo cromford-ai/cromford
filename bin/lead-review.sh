@@ -733,7 +733,7 @@ review_one() {
   local RP_STATE="" RP_TAIL="" rp_rc rp_ci harness_repo dmode="" dprev="" dline="" dreport lb tn tslug tdone thread_note total half lfp lstage lnote
   local capr="" capo capf ctitle clabels
   local resets mreset since f what fields="" bfp bchg rsn bmode="" bline="" ldp_rc="" dbytes ldp_why nprod ldp_mode ldp_find
-  local lpv=0 lpk="" lprc imode="" imodel ire ckl imm
+  local lpv=0 lpk="" lprc imode="" imodel ire ckl imm rlcap="" rlgl=0 rlgo
   # BH-5873: the mode the gates chose (full|delta|replay). Nothing reads it yet;
   # child 2 of #5870 (delta and replay) does.
   # shellcheck disable=SC2034
@@ -1242,6 +1242,23 @@ review_one() {
     fi
   fi
   # <<< intent review
+  # >>> cap-reached re-review (BH-7123 wave B). bin/blocked-resolver.sh asked
+  # for this review after the ticket spent its fix-round cap on findings none
+  # of which is an ALWAYS-BLOCK class (br_cap_notes): the scope token
+  # `review-level:cap-reached` on a fresh request, or — when the head's request
+  # row was already done and was reset instead — the ledger row
+  # review_cap "<repo>#<pr>@<head>" = cap-reached. Either makes this ONE review
+  # run rl_cap in cowboy mode (REVIEW_LEVEL_MODE, which rl_knob honours above
+  # every row): every finding without an ALWAYS-BLOCK class is a NOTE and the
+  # verdict lands MERGE-WITH-NOTES; the floor still stands. The ledger read is a
+  # network read, so fd 7 and 8 are closed for it.
+  rlcap=""
+  if [[ "$dsn" =~ (^|[[:space:];])review-level:cap-reached([[:space:];]|$) ]]; then rlcap=scope
+  elif command -v job_ledger_get >/dev/null 2>&1 \
+       && [ "$(job_ledger_get review_cap "$repo#$pr@$sha" 2>/dev/null 7>&- 8>&- </dev/null)" = cap-reached ]; then rlcap=ledger
+  fi
+  [ -z "$rlcap" ] || log "$key: notes-only re-review (the fix-round cap is spent, $rlcap): every finding without an ALWAYS-BLOCK class is a NOTE"
+  # <<< cap-reached re-review
   # >>> re-review (BH-6391): a `lead-prev:<G>` group in scope_notes (set by
   # bin/lead-review-enqueue.sh) adds a `## Re-review` prompt section: G, its
   # word, the own commits and files and the main files since G, and G's report
@@ -1459,11 +1476,21 @@ review_one() {
   # outcome cap (a perf ticket's INCONCLUSIVE claim still caps at BLOCK below).
   # Fail closed like lpv_downgrade: a rewrite whose verdict no longer reads
   # restores the model's answer. strict/shadow modes rewrite nothing (rc 1).
-  rlk=""
+  rlk=""; rlgl=0
   if [ "$verdict" = BLOCK ] && command -v rl_cap >/dev/null 2>&1; then
     rlrc=0
+    # --golive (wave B): a go-live human step becomes `- [HUMAN go-live] <step>`
+    # and gates nothing while review.golive_gates_merge reads 0; the land lane
+    # places it on the ticket from the result detail's golive:N. A cap-reached
+    # re-review (rlcap, above) runs the demoter in cowboy mode for this one call.
+    rlgo=stand; command -v rl_golive_opt >/dev/null 2>&1 && rlgo=$(rl_golive_opt "$project" 2>/dev/null 7>&- 8>&-)
     if cp -f "$out" "$out.rlkeep" 2>/dev/null; then
-      rlk=$(rl_cap "$out" "$project" --approve MERGE-WITH-NOTES --block BLOCK --lens lead 2>"$WT.rlnote") || rlrc=$?
+      if [ -n "$rlcap" ]; then
+        rlk=$(REVIEW_LEVEL_MODE=cowboy rl_cap "$out" "$project" --approve MERGE-WITH-NOTES --block BLOCK --lens lead --golive "$rlgo" 2>"$WT.rlnote") || rlrc=$?
+      else
+        rlk=$(rl_cap "$out" "$project" --approve MERGE-WITH-NOTES --block BLOCK --lens lead --golive "$rlgo" 2>"$WT.rlnote") || rlrc=$?
+      fi
+      rlgl=$(printf '%s' "$rlk" | sed -nE 's/.* golive=([0-9]+).*/\1/p'); case "$rlgl" in ''|*[!0-9]*) rlgl=0 ;; esac
     else rlrc=5
     fi
     if [ "$rlrc" = 0 ] && [ "$(lr_verdict "$out")" = unknown ]; then
@@ -1501,6 +1528,8 @@ review_one() {
   { printf '%s# Lead review %s (%s#%s at %s)\n\n- verdict: %s\n- %s\n- rules pack: %s\n- reviewer model: %s\n- checklist: %s\n- review level (BH-7123): mode %s%s\n- pr body: %s\n' \
       "$RVLINE" "$key" "$repo" "$pr" "$sha" "$verdict" "$suite_line" "$RP_STATE" "$model" "$ckl" "$(rl_mode "$project" 2>/dev/null || echo unknown)" "${rlk:+; $rlk}" "$bfp"
     [ -n "$capr" ] && printf -- '- outcome cap: %s\n' "$capr"
+    # BH-7123 wave B: a cap-reached (notes-only) re-review says so under the header.
+    [ -n "$rlcap" ] && printf -- '- review level (BH-7123): cap-reached notes-only re-review (%s): the fix-round cap is spent; every finding without an ALWAYS-BLOCK class is a NOTE\n' "$rlcap"
     [ "$dmode" = delta ] && printf -- '- review mode: delta from %s\n' "$dprev"
     [ "$bmode" = build-on ] && printf -- '- review mode: %s\n' "$bline"
     [ "$imode" = intent ] && printf -- '- review mode: intent (risk tier medium, route review-intent)\n'
@@ -1511,7 +1540,11 @@ review_one() {
     if [ -n "$capr" ]; then loc_demote "$out"; printf '\nVERDICT: BLOCK\n'; else cat "$out"; fi
   } > "$report.tmp.$$" && mv -f "$report.tmp.$$" "$report" \
     || { log "could not write $report"; job_update "$job" status=failed; return; }
+  # BH-7123 wave B: the go-live count rides on the result row's detail, so
+  # bin/lead-review-land.sh reads the report only for a MERGE that noted one.
+  LR_DONE_DETAIL=""; [ "${rlgl:-0}" -gt 0 ] 2>/dev/null && LR_DONE_DETAIL="golive:$rlgl"
   finish_done "$id" "$job" "$sha" "$verdict" "$report" "$model" "$suite_line" "$key"
+  LR_DONE_DETAIL=""
 }
 
 # The heartbeat (BH-5351, header) logs to the lane log. Its interval is read

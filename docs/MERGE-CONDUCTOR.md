@@ -2062,13 +2062,14 @@ ladder counted on the number restarts at zero on every rung and never ends.
 `BR_MAX_MECHANICAL` (1), `BR_MAX_FIXROUNDS` (1), `BR_MAX_REBUILDS` (3), and `BR_LADDER=0`
 restores exactly the pre-ladder behaviour — every branch reason straight to a rebuild.
 The fix-round cap is read per REASON through `br_fix_cap`, so the review verdict gets its own
-(`BR_REVIEW_FIX_ROUNDS`, 2) while every other reason keeps `BR_MAX_FIXROUNDS`. **Every one of
+(the settings row `review.fix_rounds_max[.<project>]`, seeded 2, BH-7123 wave B; `BR_REVIEW_FIX_ROUNDS`
+is the fallback when no row answers) while every other reason keeps `BR_MAX_FIXROUNDS`. **Every one of
 these is a knob with a documented code default, never a constant** — set them in
 `env/global.env`, which is the file the lane sources `set -a`:
 
 | Knob | Default | What it bounds |
 |---|---|---|
-| `BR_REVIEW_FIX_ROUNDS` | 2 | fix rounds per TICKET for a `review-changes-requested` park before `br_abandon` is the terminal (BH-4149). The second round exists because the reviewer's next verdict is about what the FIRST round pushed |
+| `BR_REVIEW_FIX_ROUNDS` | 2 | fix rounds per TICKET for a `review-changes-requested` park (BH-4149). The second round exists because the reviewer's next verdict is about what the FIRST round pushed. **Since BH-7123 wave B** the settings row `review.fix_rounds_max[.<project>]` outranks it (`br_review_fix_cap`), `review.mode` cowboy/off reads 0, and at the cap the terminal is `br_cap_notes` — outcome `CAP_NOTES`: the stale harness `REQUEST_CHANGES` is dismissed, ONE notes-only lead re-review of the head is requested (scope token `review-level:cap-reached`, ledger row `review_cap <slug>#<pr>@<head>` = cap-reached; bin/lead-review.sh runs its demoter in cowboy mode for that one review, so it lands MERGE-WITH-NOTES) and ONE warn alert names the ticket. `br_abandon` is the terminal only when a standing finding is on the ALWAYS-BLOCK floor (`rl_line_blocks`), or a PERSON's `CHANGES_REQUESTED` stands |
 | `BR_REVIEW_LOOKBACK_SECS` | 172800 (48h) | how recently an open harness PR must have been updated for `br_from_reviews` to read its reviews at all — the bound on that source's extra REST reads, alongside `gh_budget_low` |
 
 #### Two shapes, and a contested path holds its losers (BH-579, 2026-09-17)

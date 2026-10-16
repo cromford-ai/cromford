@@ -17,10 +17,18 @@ gshim_cmd_issue_create() {
   gshim_prw_parse "--title:v:title -t:v:title --body:v:body -b:v:body \
 --body-file:v:bodyfile -F:v:bodyfile --label:m:label -l:m:label"
   gshim_slug ""
-  local inp out
+  local inp out bf
+  # BH-7123 wave B (followup-guard.sh): a build whose own ticket is a follow-up
+  # files no follow-ups — refused with one stderr line, nothing posted — and
+  # every issue a build files names its parent on the first body line.
+  if command -v gshim_fu_guard >/dev/null 2>&1; then gshim_fu_guard || exit 1; fi
   gshim_prw_body_init
   gshim_prw_str title "${GSHIM_PRW[title]:-}"
-  gshim_prw_bodyfield body
+  bf=$(gshim_bodyfile "${GSHIM_PRW[body]:-}" "${GSHIM_PRW[bodyfile]:-}") || exit 1
+  if [ -n "${HARNESS_TICKET:-}" ] && command -v gshim_fu_prepend >/dev/null 2>&1; then
+    bf=$(gshim_fu_prepend "$bf" "#$HARNESS_TICKET") || exit 1
+  fi
+  if [ -n "$bf" ]; then gshim_prw_raw body "$bf"; else gshim_prw_str body ""; fi
   [ -n "${GSHIM_PRW[label]:-}" ] && gshim_prw_split labels "${GSHIM_PRW[label]}"
   inp=$(gshim_prw_build) || exit 1
   out=$(gshim_api -X POST "repos/$GSHIM_SLUG/issues" --input "$inp") || exit $?
