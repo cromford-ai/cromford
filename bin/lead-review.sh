@@ -545,61 +545,16 @@ lr_ci_jobs_green() {
 }
 # <<< lead ci green
 
-# lr_rp_inputs <root> — the rules pack's own inputs, derived from the TRUSTED
-#   install at <root> (the box's copy the lead runs, never the PR's): the pack
-#   itself, its libs (bin/lib/rules-pack*.sh), its catalog, every repo path a
-#   catalog row's command names (a `cd <dir>` is that whole directory), and every
-#   repo path any of those files names (the libs they source, the confs they
-#   read, the checks/ tree). One entry a line; a directory ends in `/` and
-#   covers everything under it. rc 1 = the list cannot be built (no catalog, or
-#   it names nothing): the caller then runs the pack.
-lr_rp_inputs() {
-  local root="${1:-}" cat f t p l1
-  cat="$root/catalog/rules-pack.tsv"
-  [ -r "$cat" ] && [ -r "$root/bin/rules-pack.sh" ] || return 1
-  l1=$({
-    printf '%s\n' bin/rules-pack.sh catalog/rules-pack.tsv
-    for f in "$root"/bin/lib/rules-pack*.sh; do [ -e "$f" ] && printf '%s\n' "${f#"$root"/}"; done
-    awk -F'\t' '!/^#/ && NF >= 4 {print $4}' "$cat" \
-      | grep -oE '(cd[[:space:]]+)?(bin|tests|catalog|checks|worker|config|prompts|cron|env-templates|docs)/[A-Za-z0-9_./*-]*' \
-      | sed -E 's/^cd[[:space:]]+(.*[^/])$/\1\//; s/^cd[[:space:]]+//'
-  } | sort -u)
-  [ -n "$l1" ] || return 1
-  {
-    printf '%s\n' "$l1"
-    while IFS= read -r t; do
-      p="$root/$t"
-      [ -f "$p" ] || continue
-      grep -oE '(bin|tests|catalog|checks|worker|config|prompts)/[A-Za-z0-9_./-]*' "$p" 2>/dev/null
-    done <<<"$l1"
-  } | sed -E 's/\.+$//; s/\*.*$//; s/\/+$//' | while IFS= read -r t; do
-      # A top-level directory (bin, tests, worker, ...) is the tree the pack
-      # JUDGES, not the pack: only checks/ holds rules. A name that is not in
-      # the install is a fixture name or a fragment (`#!/bin/bash`), never an
-      # input, except the generated registry, whose source is catalog/lanes.d/.
-      case "$t" in ''|*..*) continue ;; catalog/lanes.json) t=catalog/lanes.d ;; esac
-      case "$t" in */*|checks) ;; *) continue ;; esac
-      if [ -d "$root/$t" ]; then printf '%s/\n' "$t"
-      elif [ -f "$root/$t" ]; then printf '%s\n' "$t"; fi
-    done | sort -u
-}
-
-# lr_rp_touched <root> <tree> <base-ref> <sha> — rc 0 (and LR_RP_WHY) when the
-#   PR's diff base...sha touches any rules-pack input, or when that cannot be
-#   known (the list or the diff cannot be read): then the lead's own trusted
-#   pack runs. rc 1 only when the diff is read and touches none of them.
-lr_rp_touched() {
-  local inputs changed hit
-  LR_RP_WHY=""
-  inputs=$(lr_rp_inputs "$1") && [ -n "$inputs" ] || { LR_RP_WHY="the rules pack's inputs could not be listed"; return 0; }
-  changed=$(git -C "$2" diff --no-renames --name-only "$3...$4" 2>/dev/null) || { LR_RP_WHY="the diff ${3}...${4:0:12} could not be read"; return 0; }
-  [ -n "$changed" ] || { LR_RP_WHY="the diff ${3}...${4:0:12} is empty"; return 0; }
-  hit=$(awk 'NR == FNR { if ($0 ~ /\/$/) d[$0] = 1; else f[$0] = 1; next }
-             ($0 in f) { print; exit }
-             { for (k in d) if (index($0, k) == 1) { print; exit } }' <(printf '%s\n' "$inputs") <(printf '%s\n' "$changed"))
-  [ -n "$hit" ] && { LR_RP_WHY="the PR changes the rules pack's own input $hit"; return 0; }
-  return 1
-}
+# split-host: bin/lib/lead-review/ max-growth=40
+# The lane's function groups, one concern a module, loaded through the module
+# map (docs/MODULE-MAP.md). New code goes there: bin/split-host-growth-lint.sh
+# refuses more than 40 net new lines in this file in one PR.
+# shellcheck source=bin/lib/lead-review/load.sh
+if ! . "$H/bin/lib/lead-review/load.sh"; then
+  log "bin/lib/lead-review/ did not load; lead-review tick skipped"
+  HARNESS="$H" "$H/bin/alert-line.sh" --id "lead-review-modules-$(hostname)" "LEAD REVIEW MODULE MISSING: bin/lib/lead-review/ is missing or unusable on $(hostname); no lead review ran this tick" >/dev/null 2>&1 || true
+  exit 0
+fi
 
 # lr_ci_cfg_inputs <tree> <base-ref> — the files that decide what the PR's CI
 #   runs, read from the BASE branch (never the PR's head): a PR that edits any of
@@ -746,149 +701,10 @@ lr_pick_review() {
   log "no message of $n in session $sid for $2 holds findings and a verdict; unreadable"; return 1
 }
 
-# lr_detail <body-file> <path> <verdict> — the lead_review_report detail JSON,
-#   {body,path,verdict}. The worker keeps the first 4000 UTF-16 units of a detail
-#   (worker/jobs/src/routes/job-artifacts.js `.slice(0, 4000)`), and a cut there
-#   is invalid JSON, so the cap is applied here on the ENCODED length in those
-#   units: past it the body is the longest prefix that fits and the object says
-#   truncated:true (the disk report stays the whole one).
-lr_detail() {
-  jq -Rsc --arg p "$2" --arg v "$3" --argjson cap 4000 '
-    def u16: explode | map(if . > 65535 then 2 else 1 end) | add // 0;
-    def cut($n): {body: (explode[0:$n] | implode), path: $p, verdict: $v, truncated: true};
-    . as $b
-    | if ({body: $b, path: $p, verdict: $v} | tojson | u16) <= $cap then {body: $b, path: $p, verdict: $v}
-      else [0, ($b | explode | length)]
-        | until(.[0] >= .[1]; ((.[0] + .[1] + 1) / 2 | floor) as $m
-            | if ($b | cut($m) | tojson | u16) <= $cap then [$m, .[1]] else [.[0], $m - 1] end)
-        | .[0] as $n | $b | cut($n)
-      end' "$1"
-}
-
 WT=""; BEAT=""; LRBEAT=""; REPO_DIR=""; LR_KEYFD=""
 QF="$H/tmp/lead-review-queue-$$"  # the tick's queue files (BH-5151), removed at exit
-cleanup() {
-  [ -n "$BEAT" ] && job_beat_stop "$BEAT"; BEAT=""
-  [ -n "$LRBEAT" ] && job_beat_stop "$LRBEAT"; LRBEAT=""
-  [ -n "$LR_KEYFD" ] && exec 8>&-; LR_KEYFD=""
-  if [ -n "$WT" ]; then
-    git -C "$REPO_DIR" worktree remove --force "$WT" >/dev/null 2>&1
-    rm -rf "$WT" "$WT".*; git -C "$REPO_DIR" worktree prune >/dev/null 2>&1; WT=""
-  fi
-}
 trap 'cleanup; rm -f "$QF".*; command -v rpool_finish >/dev/null 2>&1 && rpool_finish' EXIT
 trap 'cleanup; rm -f "$QF".*; command -v rpool_finish >/dev/null 2>&1 && rpool_finish; exit 130' INT TERM
-
-post_result() { # post_result <id> <json> — rc 0 only on a 2xx
-  local res
-  res=$(lr_post "/$1/result" "$2" 2>&1) && return 0
-  log "result post for $1 failed: $res"; return 1
-}
-# fail_terminal <id> <job> <sha> <detail> [model] — outcome=failed, then the job failed.
-# A delivered outcome=failed is terminal, so it rings lead-land (BH-5317).
-fail_terminal() {
-  post_result "$1" "$(jq -nc --arg j "$2" --arg s "$3" --arg d "$4" --arg m "${5:-}" \
-    '{job_id:$j,head_sha:$s,outcome:"failed",detail:$d} + (if $m == "" then {} else {reviewer_model:$m} end)')" \
-    || return
-  LR_RING=1
-  job_update "$2" status=failed
-}
-
-# lr_count_fail <id> <job> <sha> <reason> — one COUNTED failure on this head
-#   (header): the pr_attempts row lead-review-<n>. rc 0 = it was the third, and
-#   outcome=failed detail="attempts-exhausted: <reason>" was delivered (the job
-#   is failed) and the gate fact review_failed_sha written. rc 1 = not terminal:
-#   counted below 3, or the count could not be read or written (logged, never
-#   read as a success); the caller fails the job or leaves it as before.
-lr_count_fail() {
-  local n where="$LR_RING_REPO#$LR_RING_PR@${3:0:12}"
-  n=$(lw_attempts "$LR_RING_REPO" "$LR_RING_PR" "$3") || { log "attempts on $where unreadable; '$4' not counted"; return 1; }
-  n=$((n + 1))
-  lw_attempt_add "$LR_RING_REPO" "$LR_RING_PR" "$3" "$n" || { log "attempt $n on $where ($4) not recorded"; return 1; }
-  log "counted attempt $n of 3 on $where: $4"
-  [ "$n" -ge 3 ] || return 1
-  fail_terminal "$1" "$2" "$3" "attempts-exhausted: $4"
-  [ "$LR_RING" = 1 ] || { log "attempts exhausted on $where but the failed result was not delivered"; return 1; }
-  pr_gate_event_put "$LR_RING_REPO" "$LR_RING_PR" "lead-review-failed@${3:0:12}" lead-review:failed "review_failed_sha=$3" >/dev/null 2>&1 \
-    || log "review_failed_sha for $where not recorded"
-  log "failed $where: attempts-exhausted: $4"; R=failed
-  return 0
-}
-
-# lr_left_running <why> — this worker ends on purpose and leaves its request row
-#   `running`: the release marker (lw_release) tells the next tick that takes the
-#   claim over that it is not a crashed claim, so the takeover is not counted.
-#   A marker that cannot be written is logged: that takeover then counts.
-lr_left_running() {
-  lw_release "$LR_RING_REPO" "$LR_RING_PR" "$LR_RING_SHA" \
-    || log "release marker for $LR_RING_REPO#$LR_RING_PR@${LR_RING_SHA:0:12} ($1) not written; the next takeover counts"
-}
-
-# lr_fail_counted <id> <job> <sha> <reason> [open] — a counted failure that ENDS
-#   this worker: lr_count_fail, and when it is not terminal, the release marker
-#   (the failure is counted once, never again as a takeover) and the job failed,
-#   or with `open` left for the watchdog.
-lr_fail_counted() {
-  lr_count_fail "$1" "$2" "$3" "$4" && return 0
-  lr_left_running "$4"
-  [ "${5:-}" = open ] || job_update "$2" status=failed
-  return 1
-}
-
-# claim_req <id> <job> <key> — rc 0 claimed; rc 1 refused (logged, job failed);
-#   rc 2 the worker answered 503 (BH-5151: d1Guarded's storage fault): one line,
-#   the job failed once, and the caller ends the tick.
-claim_req() {
-  local res
-  res=$(lr_post "/$1/claim" "$(jq -nc --arg j "$2" --arg b "$JOBS_BOX" '{job_id:$j,box:$b}')" 2>&1) && return 0
-  case "$res" in
-    *"HTTP 503")
-      log "claim of $1 for $3 answered 503 ($(head -c 200 <<<"${res%HTTP 503}")); tick ended"
-      job_update "$2" status=failed; return 2 ;;
-  esac
-  log "claim of $1 for $3 refused: $res"; job_update "$2" status=failed 'meta={"reason":"claim refused"}'; return 1
-}
-
-# finish_done <id> <job> <sha> <verdict> <report> <model> <suite_line> <key> [stored] —
-# artifact (ref = the report path, detail = its body, lr_detail) -> result
-# done -> job done, each only when the one before it succeeded. The fresh
-# review and the BH-2202 replays all end here, so none can stamp a job done
-# without a delivered result. stored=1 is the artifact replay: the row it read
-# IS the artifact, and re-encoding a truncated body would drop its flag.
-finish_done() {
-  local detail
-  if [ "${9:-}" != 1 ]; then
-    detail=$(lr_detail "$5" "$5" "$4") || { log "artifact detail for $8 could not be built; job left open for the watchdog"; return; }
-    # A cut detail is a prefix (BH-5915): the whole report also goes to the
-    # job's transcript ledger as lead_report, fail-open, so the hub can read it.
-    if jq -e '.truncated == true' <<<"$detail" >/dev/null 2>&1; then
-      HARNESS="$H" JOB_ID="$2" JOB_PHASE_ID= TRANSCRIPT_SOURCE=lead_report \
-        bash "$H/bin/transcript-push.sh" lead-review pipeline "" "$5" >/dev/null 2>&1 || true
-      log "full report for $8 handed to transcript-push.sh as lead_report (job $2)"
-    fi
-    job_artifact_put lead_review_report "$5" "$detail" "$2" \
-      || { log "artifact put for $8 failed; job left open for the watchdog"; lr_fail_counted "$1" "$2" "$3" "artifact put failed" open; return; }
-  fi
-  post_result "$1" "$(jq -nc --arg j "$2" --arg s "$3" --arg v "$4" --arg p "$5" --arg m "$6" \
-    '{job_id:$j,head_sha:$s,outcome:"done",verdict:$v,report_ref:$p,reviewer_model:$m}')" \
-    || { log "$8 reviewed ($4) but the result post failed; job left open for the watchdog"; lr_fail_counted "$1" "$2" "$3" "result post failed" open; return; }
-  LR_RING=1; LR_RING_REPORT="$5"
-  job_update "$2" status=done; log "done $8: VERDICT $4 ($7)"; R="done"
-}
-
-# BH-5284: an agent call refused for a rate or concurrency limit (a 429,
-# "overloaded", the account's concurrency cap) bought no review. It records no
-# verdict, writes no .empty and posts no result: the job fails and the request
-# is left for a later tick, exactly as a before-billing refusal (rc 74..79) is.
-# R=ratelimited tells the tick to pause new starts (rpool_rate_hit, for
-# LEAD_REVIEW_RATE_BACKOFF_S, doubling to 900s); it is never counted as a
-# failed review.
-lr_rate_limited() { [ "$1" -ne 0 ] && command -v rpool_rate_limited >/dev/null 2>&1 && rpool_rate_limited "$2"; }
-lr_release_rl() { # lr_release_rl <key> <job> <rc>
-  log "agent call for $1 hit a rate or concurrency limit (rc=$3); no verdict recorded, request left for a later tick"
-  lr_left_running "rate limited"
-  job_update "$2" status=failed; R=ratelimited
-}
 
 R=""
 # The lead-land ring (BH-5317). Globals, because the worker's exit trap reads
@@ -1876,23 +1692,6 @@ if [ "$WL_N" -gt 0 ]; then
   fi
 fi
 
-# supersede_dead <request-json> <project> <why> — job, claim, outcome=superseded,
-#   job done. No model call.
-supersede_dead() {
-  local r="$1" id pr sha key job rc
-  id=$(jq -r '.id' <<<"$r"); pr=$(jq -r '.pr' <<<"$r"); sha=$(jq -r '.head_sha' <<<"$r"); key="lr-$pr-${sha:0:12}"
-  R=skipped
-  job=$(job_open "$2" "$key" lead_review review lead-review); rc=$?
-  [ "$rc" -eq 9 ] && { log "skip $key: $job"; return; }
-  [ "$rc" -eq 0 ] || { log "job_open for $key failed (worker unusable); tick ended"; R=stop; return; }
-  claim_req "$id" "$job" "$key"; rc=$?
-  [ "$rc" -eq 2 ] && { R=stop; return; }
-  [ "$rc" -eq 0 ] || return
-  post_result "$id" "$(jq -nc --arg j "$job" --arg s "$sha" --arg d "$3" '{job_id:$j,head_sha:$s,outcome:"superseded",detail:$d}')" \
-    || { log "superseded $key not recorded; job left open for the watchdog"; R=failed; return; }
-  job_update "$job" status=done; log "superseded $key: $3"; R=superseded
-}
-
 # Pass 2, dead rows before any budget. A candidate is superseded only when one
 # live pulls/<n> read (cached per PR for the tick) confirms it: the open-PR
 # list may be PR_SNAPSHOT_TTL_S stale, and a live row is a real request.
@@ -1929,61 +1728,6 @@ done
 # /tmp below LEAD_REVIEW_TMP_MIN_MB; one already running finishes and records,
 # and the tick waits for it before the summary.
 running_at_close=0 closed_by="" ratelimited="" paid=0 replayed=0 capped=0 held=0
-rpool_on_result() {
-  case "$2" in
-    done) done_n=$((done_n + 1)) ;; superseded) superseded=$((superseded + 1)) ;;
-    failed|killed) failed=$((failed + 1)) ;; stop) stopped=worker ;;
-    paid) paid=$((paid + 1)) ;; replayed) replayed=$((replayed + 1)) ;; capped) capped=$((capped + 1)) ;;
-    ratelimited) ratelimited=$((${ratelimited:-0} + 1)); rpool_rate_hit ;; *) skipped=$((skipped + 1)) ;;
-  esac
-  [ "$2" = done ] && rpool_rate_ok
-  return 0
-}
-# The worker's clock starts at its own start: a review started late in the tick
-# gets the same budget a tick's first review always had, never a shorter one.
-lr_worker() {
-  SECONDS=0; RPOOL_ON_EXIT=lr_worker_exit
-  # The rules pack builds its nobody-reachable snapshot here, not in the shared
-  # /tmp, so it goes with the worker on every exit path (RPOOL_TMP_PREFIX below).
-  [ -n "$RPOOL_TMP_OWN" ] && export RULES_PACK_SNAPSHOT_TMP="$RPOOL_TMP_OWN"
-  LR_RING=0 LR_RING_REPO="" LR_RING_PR="" LR_RING_SHA="" LR_RING_REPORT="" LR_RING_RP=""
-  review_one "$1" "$2" "${3:-full}"
-}
-# lr_ring_land — in the worker's exit trap, so it runs before the tick collects
-# the result, and on TERM too. Rings only after a delivered terminal result.
-lr_ring_land() {
-  local rp sha12 rc
-  [ "$LR_RING" = 1 ] || return 0
-  sha12="${LR_RING_SHA:0:12}"
-  rp="$LR_RING_RP"
-  [ -z "$rp" ] && [ -n "$LR_RING_REPORT" ] && rp=$(sed -n 's/^- rules pack: //p' "$LR_RING_REPORT" 2>/dev/null | head -n 1)
-  case "$rp" in
-    "could not run"*)
-      log "lead-land doorbell withheld for $LR_RING_REPO#$LR_RING_PR@$sha12 (rules pack could not run); the */15 cron covers it"
-      return 0 ;;
-  esac
-  if ! command -v lcw_ring >/dev/null 2>&1; then
-    log "lead-land doorbell not rung for $LR_RING_REPO#$LR_RING_PR (lib missing); the */15 cron covers it"; return 0
-  fi
-  # In a subshell: this runs inside the worker's EXIT trap, where a bare
-  # `return` (as _lcw_off's) answers the status from before the trap, so the
-  # kill switch read as ON every time.
-  ( lcw_ring lead-land "$LR_RING_REPO" "$LR_RING_PR" "$LR_RING_SHA" ); rc=$?
-  if [ "$rc" -eq 0 ]; then
-    log "lead-land doorbell rung for $LR_RING_REPO#$LR_RING_PR@$sha12"
-    echo x >> "$QF.rung"
-  else
-    log "lead-land doorbell not rung for $LR_RING_REPO#$LR_RING_PR (rc $rc); the */15 cron covers it"
-  fi
-  return 0
-}
-lr_worker_exit() { cleanup; lr_ring_land; RPOOL_RESULT="$R"; }
-# A free slot counts every live worker on the box: a tick that released its
-# lock may still run some (BH-6984).
-lr_slot_free() {
-  local r; r=$(rpool_box_running)
-  [ "$r" -lt "$RPOOL_K" ] && lw_concurrency_ok "$r"
-}
 # lr_rerun <force> — launch the owed (0) or forced (1) rerun (BH-5317); logs its line.
 lr_rerun() {
   local line
@@ -1996,6 +1740,7 @@ lr_rerun() {
 LR_LOCKED=1
 lr_unlock() { [ "$LR_LOCKED" = 1 ] || return 1; LR_LOCKED=0; flock -u 7 2>/dev/null; exec 7>&-; return 0; }
 RPOOL_TMP_PREFIX=lr RPOOL_LIVE_DIR="$STATE/pool"
+# The pool reads LEAD_REVIEW_RATE_BACKOFF_S under the LEAD_REVIEW prefix (bin/lib/review-pool.sh).
 rpool_init lead-review LEAD_REVIEW "$CONC" "$QF.pool" log
 command -v lr_capped_check >/dev/null 2>&1 && lr_capped_check "$CONC" "$(local_box_name)"
 if [ -z "$stopped" ]; then

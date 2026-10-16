@@ -403,9 +403,14 @@ function asdir(p)  { if (p in DIR_) return p; if (((p "/")) in DIR_) return p "/
 # gain, and it is out of the ticket's stated design. It is written down here
 # rather than left to be rediscovered: the safe reading of a small selection is
 # "the map knows about `source`", not "nothing else can be affected".
+#
+# THE MODULE MAP (BH-6293). A module dir's load.sh sources its modules through
+# `mm_load "${BASH_SOURCE[0]%/*}"` (bin/lib/module-map.sh), which names no file.
+# So a non-comment line with that call gives the edge <script> -> <its own dir>/,
+# and a change to any module selects every suite that reaches the loader.
 ti_source_edges() {
   local idx="$1"
-  ( cd "$ROOT" && grep -REHn '^[[:space:]]*(\.|source)[[:space:]]|shellcheck source=' \
+  ( cd "$ROOT" && grep -REHn '^[[:space:]]*(\.|source)[[:space:]]|shellcheck source=|mm_load[[:space:]]+"?\$\{BASH_SOURCE' \
       --include='*.sh' --include='*.bash' bin cron fly checks guardrails 2>/dev/null ) |
   awk -F: -v idxfile="$idx" "$TI_AWK_INDEX"'
     FILENAME == idxfile { FILE_[$0] = 1; adddirs($0); next }
@@ -413,9 +418,12 @@ ti_source_edges() {
       script = $1
       line = $0
       sub(/^[^:]*:[0-9]*:/, "", line)
+      sd = substr(script, 1, lastslash(script))
+      if (line !~ /^[[:space:]]*#/ && line ~ /mm_load[[:space:]]+"?\$\{BASH_SOURCE\[0\]%\/\*\}"?/) {
+        print script "\t" sd; next
+      }
       gsub(/\$\{?[A-Za-z_][A-Za-z0-9_]*\}?/, " ", line)
       n = split(line, w, /[^A-Za-z0-9._\/@+-]+/)
-      sd = substr(script, 1, lastslash(script))
       for (i = 1; i <= n; i++) {
         t = w[i]
         if (t == "" || t !~ /\//) continue

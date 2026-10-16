@@ -175,6 +175,8 @@ t9d() {
   local H="$T/lr" FB="$T/lr-fakebin" L="$T/lr-log"
   mkdir -p "$H/bin/lib/jobs" "$H/prompts" "$H/catalog/lanes.d" "$H/state" "$FB" "$L" "$T/lr-repos" "$T/lr-tmp"
   cp "$DIR/bin/jobs-client.sh" "$DIR/bin/box-for.sh" "$DIR/bin/fleet-conf.sh" "$DIR/bin/lead-review.sh" "$H/bin/"
+  # TEST-CHANGE (BH-6293): bin/lead-review.sh loads its modules from bin/lib/lead-review/.
+  scratch_install_closure bin/lib/lead-review/load.sh "$H" >/dev/null || { bad "t9d: closure install of bin/lib/lead-review failed"; return; }
   cp "$DIR"/bin/lib/jobs/*.sh "$H/bin/lib/jobs/"
   local f
   for f in env-path lead-reviews verdicts model-route verdict-parse gh-rest hub-box lane-gate review-pool lead-worklist; do

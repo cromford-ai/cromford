@@ -11,6 +11,7 @@ example-org/cromford	bin/lib/verdicts.sh
 example-org/cromford	bin/lib/lead-authority.sh
 example-org/cromford	catalog/lead-protected-paths.seed.tsv
 example-org/cromford	bin/lead-review.sh
+example-org/cromford	bin/lib/lead-review/**
 example-org/cromford	bin/lib/lead-gates*
 example-org/cromford	bin/lead-review-land.sh
 example-org/cromford	bin/lead-review-enqueue.sh

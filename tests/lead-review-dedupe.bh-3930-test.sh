@@ -59,6 +59,8 @@ export GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null
 # ═════════════════════════ part 1: bin/lead-review.sh ═════════════════════════
 H="$T/h"; mkdir -p "$H/bin/lib/jobs" "$H/prompts" "$H/catalog/lanes.d" "$H/state" "$T/fakebin" "$T/log" "$T/repos" "$T/tmp"
 cp "$DIR/bin/jobs-client.sh" "$DIR/bin/box-for.sh" "$DIR/bin/fleet-conf.sh" "$DIR/bin/lead-review.sh" "$H/bin/"
+# TEST-CHANGE (BH-6293): bin/lead-review.sh loads its modules from bin/lib/lead-review/.
+scratch_install_closure bin/lib/lead-review/load.sh "$H" >/dev/null || { echo "closure install of bin/lib/lead-review failed"; exit 1; }
 cp "$DIR"/bin/lib/jobs/*.sh "$H/bin/lib/jobs/"
 for f in env-path lead-reviews verdicts model-route verdict-parse gh-rest hub-box lane-gate review-bought review-pool lead-worklist; do
   cp "$DIR/bin/lib/$f.sh" "$H/bin/lib/"

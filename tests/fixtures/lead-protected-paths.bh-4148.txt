@@ -6,6 +6,7 @@ bin/lib/verdicts.sh
 bin/lib/lead-authority.sh
 catalog/lead-protected-paths.seed.tsv
 bin/lead-review.sh
+bin/lib/lead-review/**
 bin/lib/lead-gates*
 bin/lead-review-land.sh
 bin/lead-review-enqueue.sh
