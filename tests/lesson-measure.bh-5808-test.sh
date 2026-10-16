@@ -47,6 +47,10 @@ check "A1 plan-contract §10 still has the '- docs/OPERATING' bullet wave 2 writ
 # branch's own diff is read, and only while it is non-empty. On main after the
 # merge (or with no origin/main) the diff is empty and L11 is skipped.
 L11_FILES=$(git -C "$DIR" diff --name-only "$(git -C "$DIR" merge-base origin/main HEAD 2>/dev/null)" HEAD 2>/dev/null)
+# BH-7123: the scope rule is BH-5808's own. On any other branch (or a merge-queue
+# draft carrying another ticket's diff) the lead review is in scope for that
+# ticket, so L11 reads only a bh-5808 branch; elsewhere it is skipped.
+case "$(git -C "$DIR" rev-parse --abbrev-ref HEAD 2>/dev/null)" in *5808*) ;; *) L11_FILES="" ;; esac
 if [ -z "$L11_FILES" ]; then
   echo "L11: skip — empty branch diff vs origin/main (merged, or no origin/main here)"
 else

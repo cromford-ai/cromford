@@ -16,8 +16,8 @@
   - A test runs `EXPLAIN QUERY PLAN` (SQLite/D1) or `EXPLAIN` (Postgres) on seeded data at realistic volume and asserts the hot queries use an index (no full `SCAN` of a large table). A later index goes in a new additive migration (`CREATE INDEX IF NOT EXISTS`).
   - No correlated subquery that re-runs per row over a large table. A poll or dashboard that recomputes an aggregate over all history gets a summary table or a short cache.
   - Every growing table has a retention rule: what the rows are for, how long they keep value, and a scheduled job that deletes or archives the rest (window in a settings row, dry-run first, one audit row per run). Money and history rows are archived, never silently deleted.
-  - Reviews BLOCK on a new table or query without its index, a new per-row correlated subquery, or a growing table with no retention rule.
-- **De-AI voice** on every AI→human text surface (use the project's `withHumanVoice`-style wrapper if present; new LLM call sites without it are review-blockers).
+  - Reviews BLOCK on a new per-row correlated subquery over a large table; a missing index or retention rule is a review note that names the fix (BH-7123).
+- **De-AI voice** on every AI→human text surface (use the project's `withHumanVoice`-style wrapper if present; a new LLM call site without it is a review note).
 - **Never hand-append to a shared index.** If a build needs to register itself in a repo-wide table, list or registry, it writes its OWN file keyed by the ticket and a generator concatenates them. N concurrent builds appending to one file is N guaranteed conflicts on a hunk no ticket is about. Any file every build touches is a serialization point in a system designed to be parallel.
 
 ### UI/UX standards (every interface, no exceptions)
@@ -27,10 +27,11 @@
 - **List/table over big cards for any browse/index/library/triage page** — dense rows beat card walls. Big cards only for a genuine dashboard/hero or single featured object. Convert card-grid index pages to list/table when you touch them.
 - **No dead rows:** every identity cell links to its detail view.
 - **Full recursive drill-down:** every level of detail the system holds must be reachable by clicking — detail pages are themselves drillable down to the atomic record. The test on any page: "what's the next question a user would click into?" — make it clickable. An aggregate we store components for but can't expand is a finding; fix it.
+- Severity in review (BH-7123): the UI rules above are build defaults. A reviewer notes a miss; it is a BLOCK only when a user cannot finish a core flow.
 
 ### Performance by default (the operator, 2026-10-15; BH-6946)
 - PERFORMANCE BY DEFAULT (BH-6946): a plan for a screen or loader lists its reads, which of them run in parallel, the expected statement count, the indexes they use, and the loading skeleton.
-- PERFORMANCE BY DEFAULT (BH-6946), each one a BLOCK: a new sequential await over independent reads; a list read in a layout where a count would do; a route without loading.tsx; a repeated config read without a request memo; a list query without a matching index at seeded volume; unbounded rows to the client; a speed claim without before and after numbers; a client snapshot that holds a token, is not keyed by user and company, or survives sign-out; a key screen with two or more independent requests in sequence before its first content.
+- PERFORMANCE BY DEFAULT (BH-6946), each one a [NOTE] (a BLOCK only on a measured regression on a key screen over the REVIEW LEVELS thresholds, or on a perf ticket): a new sequential await over independent reads; a list read in a layout where a count would do; a route without loading.tsx; a repeated config read without a request memo; a list query without a matching index at seeded volume; unbounded rows to the client; a speed claim without before and after numbers; a client snapshot that holds a token, is not keyed by user and company, or survives sign-out; a key screen with two or more independent requests in sequence before its first content.
 
 ### Code-level gotchas that bite in PRs (from the operator's global rules)
 - **Never use `VERCEL_URL`/`.vercel.app` for serverless self-fetch** — Deployment Protection 401s it. Always the custom production domain for internal `fetch()` from crons/webhooks.

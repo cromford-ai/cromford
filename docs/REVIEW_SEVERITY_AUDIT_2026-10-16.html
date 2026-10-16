@@ -1,0 +1,292 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Review severity audit — BH-7123</title>
+<style>
+:root{--bg:#FCFCFC;--ink:#1A1A1A;--muted:#5B5B5B;--accent:#2563EB;--line:#E5E7EB;--card:#FFFFFF;--red:#B91C1C;--red-bg:#FEF2F2;--green:#15803D;--green-bg:#F0FDF4;--amber:#B45309;--amber-bg:#FFFBEB;--blue-bg:#EFF6FF}
+*{box-sizing:border-box}
+html,body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.55 -apple-system,BlinkMacSystemFont,"Inter","Segoe UI",Helvetica,Arial,sans-serif}
+a{color:var(--accent);text-decoration:none}a:hover{text-decoration:underline}
+nav{position:sticky;top:0;z-index:10;background:rgba(252,252,252,.94);backdrop-filter:blur(8px);border-bottom:1px solid var(--line)}
+nav .in{max-width:1600px;margin:0 auto;padding:10px 24px;display:flex;gap:18px;flex-wrap:wrap;align-items:center;font-size:13.5px}
+nav b{margin-right:6px}
+main{max-width:1600px;margin:0 auto;padding:28px 24px 80px}
+h1{font-size:34px;line-height:1.15;margin:0 0 6px;letter-spacing:-.01em}
+h2{font-size:24px;margin:52px 0 14px;padding-top:8px;border-top:2px solid var(--ink);letter-spacing:-.01em}
+h3{font-size:17px;margin:26px 0 8px}
+p{margin:8px 0;max-width:1100px}
+.sub{color:var(--muted);font-size:15px;margin-bottom:22px}
+.grid{display:grid;gap:16px}
+.g2{grid-template-columns:repeat(2,minmax(0,1fr))}.g3{grid-template-columns:repeat(3,minmax(0,1fr))}.g4{grid-template-columns:repeat(4,minmax(0,1fr))}.g5{grid-template-columns:repeat(5,minmax(0,1fr))}
+@media(max-width:1100px){.g4,.g5{grid-template-columns:repeat(2,minmax(0,1fr))}.g3{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media(max-width:640px){.g2,.g3,.g4,.g5{grid-template-columns:1fr}main{padding:20px 16px 60px}h1{font-size:27px}}
+.card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:16px 18px}
+.kpi{padding:18px 20px}.kpi .n{font-size:40px;font-weight:700;letter-spacing:-.02em;line-height:1}.kpi .l{color:var(--muted);font-size:13.5px;margin-top:8px}
+.kpi.red .n{color:var(--red)}.kpi.green .n{color:var(--green)}.kpi.blue .n{color:var(--accent)}
+.pill{display:inline-block;font-size:12px;font-weight:600;padding:2px 9px;border-radius:999px;border:1px solid var(--line);background:#F3F4F6;color:var(--ink);white-space:nowrap}
+.pill.red{background:var(--red-bg);color:var(--red);border-color:#FECACA}.pill.green{background:var(--green-bg);color:var(--green);border-color:#BBF7D0}.pill.amber{background:var(--amber-bg);color:var(--amber);border-color:#FDE68A}.pill.blue{background:var(--blue-bg);color:var(--accent);border-color:#BFDBFE}
+.tbl{overflow-x:auto;border:1px solid var(--line);border-radius:12px;background:var(--card)}
+table{border-collapse:collapse;width:100%;font-size:14px}
+th,td{padding:9px 12px;border-bottom:1px solid var(--line);vertical-align:top;text-align:left}
+th{background:#F8FAFC;font-weight:600;font-size:13px;color:var(--muted);white-space:nowrap}
+tr:last-child td{border-bottom:0}
+td.r,th.r{text-align:right;font-variant-numeric:tabular-nums}
+code,pre{font:13px/1.5 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
+code{background:#F3F4F6;padding:1px 5px;border-radius:5px}
+pre{background:#0F172A;color:#E2E8F0;padding:14px 16px;border-radius:10px;overflow-x:auto;margin:10px 0}
+pre code{background:none;padding:0;color:inherit}
+blockquote{margin:8px 0;padding:8px 14px;border-left:3px solid var(--line);color:#333;background:#FAFAFA;border-radius:0 8px 8px 0;font-size:14px}
+.callout{border-left:4px solid var(--accent);background:var(--blue-bg);padding:12px 16px;border-radius:0 10px 10px 0;margin:14px 0;max-width:1100px}
+.callout.red{border-color:var(--red);background:var(--red-bg)}.callout.green{border-color:var(--green);background:var(--green-bg)}.callout.amber{border-color:var(--amber);background:var(--amber-bg)}
+ul,ol{padding-left:22px;max-width:1100px}li{margin:4px 0}
+.ex{font-size:13.5px}.ex .q{color:#333;margin:4px 0}.ex .m{color:var(--muted);font-size:12.5px}
+.flow{display:flex;flex-wrap:wrap;gap:8px;align-items:center;font-size:13.5px;margin:10px 0}
+.flow .s{background:var(--card);border:1px solid var(--line);border-radius:8px;padding:6px 10px}.flow .a{color:var(--muted)}
+.small{font-size:13px;color:var(--muted)}
+.two{columns:2;column-gap:28px;max-width:none}.two li{break-inside:avoid}
+@media(max-width:900px){.two{columns:1}}
+</style>
+</head>
+<body>
+<nav><div class="in">
+<b>BH-7123</b>
+<a href="#summary">Summary</a><a href="#lanes">Where blocks come from</a><a href="#corpus">Corpus</a><a href="#exemplars">Exemplars</a><a href="#human">NEEDS-HUMAN</a><a href="#causes">Root causes</a><a href="#design">The fix</a><a href="#cowboy">Cowboy mode</a><a href="#rules">Your rules</a><a href="#rollout">Rollout</a><a href="#tests">Acceptance</a>
+</div></nav>
+<main>
+
+<h1>Review &amp; QA strictness: what blocked us, and the fix</h1>
+<div class="sub">cromford · ticket <a href="https://github.com/example-org/cromford/issues/7123">BH-7123</a> · window 2026-09-25 → 2026-10-16 · project-6-os + project-5, cromford sampled · research by three parallel agents (block corpus, prompt audit, code-path trace) · 2026-10-16</div>
+
+<h2 id="summary">1. Summary</h2>
+<div class="grid g5">
+  <div class="card kpi red"><div class="n">76%</div><div class="l">of 713 hand-classified BLOCK findings on project-6 + project-5 are below the bar (no real-world user harm)</div></div>
+  <div class="card kpi red"><div class="n">41%</div><div class="l">of the 153 BLOCK verdicts contain <em>nothing</em> that meets the bar — 63 full rebuild + review + CI rounds spent on nits</div></div>
+  <div class="card kpi red"><div class="n">46%</div><div class="l">of project-6 fix rounds (57 of 125) would vanish; 49 project-6 + 8 project-5 PRs would have merged on first review</div></div>
+  <div class="card kpi blue"><div class="n">37</div><div class="l">NEEDS-HUMAN holds; 9 were "run e2e with Clerk dev keys", 2 were "run the CI check" — a step CI itself performs</div></div>
+  <div class="card kpi green"><div class="n">90</div><div class="l">verdicts that DO stand — tenant leaks, money bugs, data loss, red builds. The review is worth keeping; its dial is wrong</div></div>
+</div>
+
+<div class="callout" style="margin-top:18px">
+<b>The one-line diagnosis.</b> Every reviewer in the harness is binary. The lane that reviews project-6 and project-5 (<code>bin/review-prs.sh:1555</code>) asks the model for "severity-tagged findings" and then for <code>VERDICT: APPROVE or REQUEST_CHANGES</code> with <b>no rule connecting severity to verdict</b>. The in-build lenses (<code>bin/lib/rb/review.sh:772</code>) have no NOTE grammar at all. So a 2 px padding finding and a cross-company data leak become the same object: a <code>review-changes-requested</code> park, the same two fix rounds, the same terminal (close the PR or rebuild from scratch, plan stage included). Nothing in the ladder knows what the finding was about.
+</div>
+<div class="callout amber">
+<b>And the system only ratchets tighter.</b> <code>bin/lesson-propose.sh</code> drafts a new gate for any BLOCK category with ≥3 hits in 14 days ("pick the EARLIEST stage that would have stopped it"). <code>review-tighten.sh</code> only tightens. <code>lead-review-precision.sh</code> measures bad MERGEs, never bad BLOCKs. There is no false-BLOCK metric anywhere, so nothing ever pushes back. BH-7072 and BH-7074 (open) are the ratchet's latest output.
+</div>
+
+<h2 id="lanes">2. Where the blocks come from (three reviewers, one vocabulary problem)</h2>
+<div class="grid g3">
+<div class="card"><h3 style="margin-top:0">A. <code>review-prs</code> lane — <span class="pill red">project-6 + project-5</span></h3>
+<p class="small">Posts a GitHub PR review as <code>cromford-board[bot]</code>: <code>[HIGH]/[MEDIUM]/[LOW]</code> findings + <code>VERDICT: APPROVE|REQUEST_CHANGES</code>. REQUEST_CHANGES = BLOCK; the fix round consumes it. 125 + 21 RC reviews in the window. <b>This is where your pain is.</b> The prompt enumerates every iron law and all nine BH-6946 perf items "each one a BLOCK"; severity tags are decorative.</p></div>
+<div class="card"><h3 style="margin-top:0">B. In-build lenses — <span class="pill">every project</span></h3>
+<p class="small"><code>bin/lib/rb/review.sh</code>: 1–3 lenses before a PR exists. "Last line must be exactly VERDICT: APPROVE or VERDICT: BLOCK." No NOTE form. A BLOCK → one fix round → <code>REVIEW_BLOCKED</code>, exit 6, <b>no PR is opened</b> (TK-734's "branch with no PR"). Review tier T2 is uncapped. "A task with no VALIDATE evidence is a blocking finding" → NOT RUN (needs Clerk) → <code>needs-human/classify.sh</code> regex <code>NH_RE_CRED</code> turns it into a NEEDS-HUMAN hold.</p></div>
+<div class="card"><h3 style="margin-top:0">C. Lead review — <span class="pill">cromford (+project-4/cromford)</span></h3>
+<p class="small"><code>bin/lead-review.sh</code> + <code>prompts/lead-review.md</code>. The only lane with <code>[NOTE]</code> and <code>MERGE-WITH-NOTES</code>, but "one real BLOCK finding makes the verdict BLOCK", checklist v8 has 15 items each with BLOCK clauses, and <code>lead-outcome-cap.sh</code> forces BLOCK on any INCONCLUSIVE perf claim. <code>[BLOCK needs-human]</code> fails the <code>lead-verdict</code> commit status, so Mergify will not queue — the hold gates the merge.</p></div>
+</div>
+
+<h3>What a BLOCK costs today</h3>
+<div class="flow">
+<span class="s">finding (any kind)</span><span class="a">→</span><span class="s">REQUEST_CHANGES / BLOCK</span><span class="a">→</span><span class="s">park <code>review-changes-requested</code></span><span class="a">→</span><span class="s">fix round 1: agent + merge main + push + full CI + re-review</span><span class="a">→</span><span class="s">fix round 2 (same)</span><span class="a">→</span><span class="s"><b>ABANDON</b> (close PR) or <b>REBUILD FRESH</b> (plan → execute → 80-suite gate → lenses → PR → CI → review)</span>
+</div>
+<p class="small">Caps: <code>BR_REVIEW_FIX_ROUNDS</code>=2 per ticket (env knob; the per-project row exists but <code>blocked-resolver.sh:307</code> never reads it), <code>BR_MAX_REBUILDS</code>=3, <code>LEAD_REVIEW_MAX_PER_PR_DAY</code>=4. Live right now: project-6-os queue 11 deep, oldest 382 min; of the last 40 merged project-6 PRs, 10 carry an <code>-r2/-r3/-r4</code> rebuild suffix.</p>
+
+<h2 id="corpus">3. The corpus: 713 BLOCK findings, hand-classified by user impact</h2>
+<div class="grid g2">
+<div class="tbl"><table>
+<tr><th>Impact class</th><th class="r">project-6</th><th class="r">project-5</th><th>Would the operator block?</th></tr>
+<tr><td>TEST_PROCESS_PROOF — missing test / proof / evidence / plan / PR-body / docs formality</td><td class="r">152</td><td class="r">15</td><td><span class="pill">no</span></td></tr>
+<tr><td>EDGE_CASE_RARE — races, &gt;N rows, clock skew, missing-table paths</td><td class="r">131</td><td class="r">16</td><td><span class="pill">no</span></td></tr>
+<tr><td><b>FUNCTIONAL_WRONG_DATA_OR_MISSING_UI</b></td><td class="r">85</td><td class="r">15</td><td><span class="pill green">yes</span></td></tr>
+<tr><td>VISUAL_MINOR — px, contrast ratio, skeleton height, stray separator</td><td class="r">69</td><td class="r">6</td><td><span class="pill">no</span></td></tr>
+<tr><td>STYLE_NIT_COPY — copy, comments, dead code, unused bindings, formatting</td><td class="r">57</td><td class="r">6</td><td><span class="pill">no</span></td></tr>
+<tr><td>OTHER — iron-law process (hardcoded config, retention, EXPLAIN proof, no-dead-rows, sortable), migration numbering</td><td class="r">40</td><td class="r">5</td><td><span class="pill">no</span></td></tr>
+<tr><td>PERF_MINOR — sequential await, loading.tsx, request memo, index proof, bundle</td><td class="r">24</td><td class="r">7</td><td><span class="pill">no</span></td></tr>
+<tr><td><b>DATA_LOSS_MONEY_MIGRATION</b></td><td class="r">20</td><td class="r">6</td><td><span class="pill green">yes</span></td></tr>
+<tr><td><b>BUILD_RED_TYPECHECK</b></td><td class="r">17</td><td class="r">6</td><td><span class="pill green">yes</span></td></tr>
+<tr><td><b>SECURITY_TENANT_AUTH</b></td><td class="r">16</td><td class="r">0</td><td><span class="pill green">yes</span></td></tr>
+<tr><td>ENV_HUMAN_STEP — apply migration, add label, keys</td><td class="r">12</td><td class="r">5</td><td><span class="pill">no</span></td></tr>
+<tr><td><b>CORE_FLOW_BROKEN</b></td><td class="r">2</td><td class="r">0</td><td><span class="pill green">yes</span></td></tr>
+<tr><td><b>PERF_MAJOR</b></td><td class="r">1</td><td class="r">0</td><td><span class="pill green">yes</span></td></tr>
+<tr><td><b>Total</b></td><td class="r"><b>626</b></td><td class="r"><b>87</b></td><td>545 below the bar (76%)</td></tr>
+</table></div>
+<div>
+<div class="card"><h3 style="margin-top:0">Rounds per PR — actual vs. under the bar</h3>
+<div class="tbl"><table>
+<tr><th>REQUEST_CHANGES rounds</th><th class="r">0</th><th class="r">1</th><th class="r">2</th><th class="r">3</th></tr>
+<tr><td>project-6 today (191 PRs)</td><td class="r">81</td><td class="r">97</td><td class="r">11</td><td class="r">2</td></tr>
+<tr><td>project-6 under the bar</td><td class="r"><b>130</b></td><td class="r">51</td><td class="r">8</td><td class="r">2</td></tr>
+<tr><td>project-5 today (31 PRs)</td><td class="r">14</td><td class="r">13</td><td class="r">4</td><td class="r">–</td></tr>
+<tr><td>project-5 under the bar</td><td class="r"><b>22</b></td><td class="r">7</td><td class="r">2</td><td class="r">–</td></tr>
+</table></div>
+<p class="small" style="margin-top:10px">106 of 110 blocked project-6 PRs merged anyway — the blocks delayed, they did not prevent. The severity tag does not predict the bar: 44 of 118 <code>[HIGH]</code> findings fail it (12 are "No CI result: cancelled"), and <a href="https://github.com/example-org/project-6/pull/289#pullrequestreview-5509977337">#289</a> "Any company request can read every company's spend" was tagged <code>[LOW]</code>. In 51 of the 63 falling verdicts the top tag was MEDIUM — the reviewer almost always finds a MEDIUM to hang REQUEST_CHANGES on.</p></div>
+<div class="card" style="margin-top:16px"><h3 style="margin-top:0">Noise, by what the review was asked to prove</h3>
+<div class="tbl"><table>
+<tr><th>Demand</th><th class="r">findings</th><th>note</th></tr>
+<tr><td>"No CI result on this head: cancelled" as HIGH</td><td class="r">13</td><td>cancelled = superseded push; merge queue reruns CI; never a code defect</td></tr>
+<tr><td>Visual evidence: side-by-side PNGs 1440+390 light/dark, computed-value table, design-guard</td><td class="r">15 + 9 NH</td><td>box has no Clerk keys → converts into NEEDS-HUMAN</td></tr>
+<tr><td>BH-6946 perf-by-default "each one a BLOCK"</td><td class="r">36</td><td>0 user-visible; the one real PERF_MAJOR was found independently</td></tr>
+<tr><td>Iron laws as process (config 19, retention 10, EXPLAIN 9, dead-rows 6, sortable 1)</td><td class="r">45</td><td>two whole verdicts BLOCK-tagged on these alone</td></tr>
+<tr><td>Migration hygiene (apply proof, order, file-number clash)</td><td class="r">15</td><td><a href="https://github.com/example-org/project-6/pull/739#issuecomment-6195526902">#739</a> blocked on a file number alone</td></tr>
+<tr><td>Docs/plan/PR-body consistency, scope-stacking</td><td class="r">~60</td><td>scope-stacking is a stacked-PR artefact</td></tr>
+</table></div></div>
+</div>
+</div>
+
+<h2 id="exemplars">4. Exemplars</h2>
+<div class="grid g2">
+<div class="card ex"><h3 style="margin-top:0">Trivial blocks (each cost a full round)</h3>
+<p class="q"><a href="https://github.com/example-org/project-6/pull/839#pullrequestreview-5541212291">project-6#839</a> — "<b>[BLOCK – BH-6946, repeated config read without a request memo]</b> … reads the same runtime_setting row in the same request" <span class="m">one duplicate settings read</span></p>
+<p class="q"><a href="https://github.com/example-org/project-5/pull/3662#pullrequestreview-5541213350">project-5#3662</a> — "<b>[BLOCK: sequential independent reads]</b> getCurrentWorkspace waits for the IntakeSession read" + "<b>[BLOCK: client snapshot]</b> the tab's sessionStorage holds the typed text"</p>
+<p class="q"><a href="https://github.com/example-org/project-6/pull/648#pullrequestreview-5528381922">project-6#648</a> — "<b>[BLOCKING — no dead rows]</b> the cost rows have no link" + "<b>[BLOCKING — sortable data tables]</b> headers are plain &lt;th&gt;"</p>
+<p class="q"><a href="https://github.com/example-org/project-6/pull/881#pullrequestreview-5543507765">project-6#881</a> — "<b>BLOCK (speed claim without numbers)</b>: the PR has no 'after' numbers"</p>
+<p class="q"><a href="https://github.com/example-org/project-6/pull/378#pullrequestreview-5513518193">project-6#378</a> — "<b>[blocker]</b> /sign-in LCP at 3,490 ms (target 2,500) and score 88 (target 90)" + "CI on head was cancelled, not passed" + "Lighthouse on the preview, 3 runs … screenshots at 1440 and 390 px, light and dark"</p>
+<p class="q"><a href="https://github.com/example-org/project-6/pull/476#pullrequestreview-5524347429">project-6#476</a> — "<b>[MEDIUM]</b> … sees '+32 vs last month · ' with nothing after it"</p>
+<p class="q"><a href="https://github.com/example-org/project-5/pull/3529#pullrequestreview-5518389200">project-5#3529</a> — "<b>[MEDIUM]</b> Dark muted text fails WCAG AA … 4.47:1"</p>
+<p class="q"><a href="https://github.com/example-org/project-6/pull/344#pullrequestreview-5512070368">project-6#344</a> (+11 more) — "<b>[HIGH]</b> No CI test run on head. The ci workflow … show cancelled"</p>
+<p class="q"><a href="https://github.com/example-org/project-6/pull/401#pullrequestreview-5513978237">project-6#401</a>, two rounds — "<b>[medium]</b> The repo's change note is missing" + "The UI PR has no design evidence"</p>
+<p class="q"><a href="https://github.com/example-org/project-6/pull/703#issuecomment-6194974233">project-6#703</a> (orchestrator; same on #697, #740) — "<b>BLOCK on evidence. The code passes</b> … requires side-by-side PNGs (prototype | main | PR) at 1440 px, light and dark"</p>
+<p class="q"><a href="https://github.com/example-org/project-6/pull/739#issuecomment-6195526902">project-6#739</a> — "<b>BLOCK on the migration number only. The code is correct</b>"</p>
+<p class="q"><a href="https://github.com/example-org/project-5/pull/3434#pullrequestreview-5356847967">project-5#3434</a> — a docs-only PR blocked on CLAUDE.md wording</p>
+<p class="q"><a href="https://github.com/example-org/project-6/pull/563#pullrequestreview-5526777689">project-6#563</a> — "<b>[NIT]</b> clock() writes 8:00, but the UTC labels write 08:00" <span class="m">carried through 3 rounds</span></p>
+</div>
+<div class="card ex"><h3 style="margin-top:0">Genuine catches (the baby — keep these)</h3>
+<p class="q"><span class="pill red">security</span> <a href="https://github.com/example-org/project-6/pull/770#pullrequestreview-5537028779">#770</a> client can read company data through 26 API routes · <a href="https://github.com/example-org/project-6/pull/782#pullrequestreview-5537435698">#782</a> user erase deletes data from every company · <a href="https://github.com/example-org/project-6/pull/721#pullrequestreview-5534920776">#721</a> grants outlive membership · <a href="https://github.com/example-org/project-6/pull/540#pullrequestreview-5525686369">#540</a> any member can save a write permission · <a href="https://github.com/example-org/project-6/pull/289#pullrequestreview-5509977337">#289</a> cross-company spend read · <a href="https://github.com/example-org/project-6/pull/274#pullrequestreview-5506891157">#274</a> any member can resume a workflow and spend tokens · <a href="https://github.com/example-org/project-6/pull/612#pullrequestreview-5527922143">#612</a> open redirect</p>
+<p class="q"><span class="pill red">money / data loss</span> #363 4xx refusals become fake spend · #365 HTTP error priced as a full answer · #352 billed-empty retried (breaks dedup-before-spend) · #645 billed unreadable answer hidden · #634 publish deletes a newer draft · #607 saving one editor wipes the other · #726 live-mode messages lost with no error · ts#3498 toggling On overwrites status · ts#3505 worker reads a source nobody paid for</p>
+<p class="q"><span class="pill red">core flow / red build</span> #382 claim cookie never set (dead claim flow) · #525 hours pill can break every /os page · real red CI on #528 #546 #767 #779 #865 · ts#3499–3505 typecheck OOM</p>
+<p class="q"><span class="pill red">wrong data / dead UI</span> #557 concurrent writes store a wrong number · #563 describe form changes a stored weekday time · #601 every agent's history says "No runs yet" in prod · #272 three "Connect &lt;tool&gt;" links go to a screen that cannot connect · ts#3503 dead "Set your hourly rate" link · #747 a merge drops a job's guardrails</p>
+<div class="callout green" style="margin:14px 0 0;max-width:none"><b>Every one of these stays a BLOCK under the new model.</b> They are all in the always-block list (tenant, auth, money, data loss, red build, core flow a user cannot finish, clearly wrong data / dead UI). The fix removes the 545 nits and keeps the 168 that matter.</div>
+</div>
+</div>
+
+<h2 id="human">5. NEEDS-HUMAN: 37 holds, almost none of them human decisions</h2>
+<div class="tbl"><table>
+<tr><th>Reason</th><th class="r">n</th><th>Example</th><th>Should it hold a merge?</th></tr>
+<tr><td>Run e2e / design-guard with Clerk dev keys (+DATABASE_URL, Chromium)</td><td class="r">9</td><td>TK-594 "On a host with Chromium and the Clerk dev keys, run npm run design-guard and npm run e2e"</td><td><span class="pill">no — a verification the box lacks; note it</span></td></tr>
+<tr><td>Apply migration to prod + post verify SELECTs</td><td class="r">8</td><td>TK-152 "Apply prisma/sql/0011_workflows.sql to prod, then post the 2 verify SELECTs"</td><td><span class="pill amber">data lane — park, don't hold the PR</span></td></tr>
+<tr><td>Lighthouse ×3 / network-idle on a preview</td><td class="r">5</td><td>TK-309 "Run Lighthouse mobile 3x on main and 3x on this branch"</td><td><span class="pill">no</span></td></tr>
+<tr><td>Read a CI log with a real GitHub token (box token 403s)</td><td class="r">3</td><td>TK-657</td><td><span class="pill">no — harness defect</span></td></tr>
+<tr><td>Re-run CI / add <code>full-ci</code> label</td><td class="r">2</td><td>TK-734 "Run the ci check (it has the Clerk dev keys)"</td><td><span class="pill">no — CI does this itself</span></td></tr>
+<tr><td>Set env/secrets on Vercel/GitHub</td><td class="r">2</td><td>TK-3</td><td><span class="pill green">yes — go-live step</span></td></tr>
+<tr><td>Product decision</td><td class="r">2</td><td>TK-678 "the operator must decide the Fireflies auth"</td><td><span class="pill green">yes</span></td></tr>
+<tr><td>Live vendor probe / other</td><td class="r">6</td><td>TK-224 rerun harness suite for a failure outside the diff</td><td><span class="pill">mostly no</span></td></tr>
+</table></div>
+<p class="small">28 raised by review, 7 re-raised by the resolver with the same fingerprint; 4 tickets got the same hold twice. Only ~4 of 37 are things a person actually has to decide or hold a key for. Today all 37 gate the merge and wait for ever (the SLA only alerts).</p>
+
+<h2 id="causes">6. Root causes, in order of leverage</h2>
+<ol>
+<li><b>No severity → verdict rule in any reviewer.</b> <code>review-prs.sh:1555</code> ("severity-tagged … VERDICT: APPROVE or REQUEST_CHANGES"), <code>rb/review.sh:772</code> (binary, no NOTE form), <code>lead-review.md:33</code> ("one real BLOCK finding makes the verdict BLOCK"). The model is asked to find everything and given one lever.</li>
+<li><b>Nits are written as BLOCK in the prompts, verbatim, in 12 places.</b> "PERFORMANCE BY DEFAULT (BH-6946), each one a BLOCK" · "a speed claim without before and after numbers" · build-discipline D22 "the touched-file iron laws are BLOCK-level, not style: sortable headers, no dead identity rows, native dialogs, 375px" · "new behavior with no new test is a blocking finding" · "a task with no VALIDATE evidence is a blocking finding" · checklist v8 items 4, 7, 8, 11, 13, 14, 15 · <code>intent.md:7-10</code>.</li>
+<li><b>Verifications the box cannot run become human holds.</b> <code>execute.sh:51</code> records NOT RUN → <code>review.sh:772</code> blocks on it → <code>needs-human/classify.sh:4</code> regex <code>NH_RE_CRED</code> ("key/env var … build box lacks") → <code>hold:waiting-on-human</code>. Repo CLAUDE.md demands (design evidence PNGs, docs/notes) feed the same chute.</li>
+<li><b>The ladder has no severity.</b> Same park, same 2 rounds, same ABANDON/REBUILD for every finding. The per-project fix-round row is never read (<code>blocked-resolver.sh:307</code> calls <code>lane_env_apply</code> without a project).</li>
+<li><b>Follow-up tickets have no floor and no chain guard.</b> Six prompts say <i>how</i> to group follow-ups, none says <i>whether</i>. <code>gh issue create</code> goes through a shim with no marker, depth check or cap. Checklist item 8 makes an undeclared deferral a BLOCK, so builders declare every nit as a ticket.</li>
+<li><b>Mechanical false positives tagged HIGH.</b> "No CI result: cancelled" (13 verdict-leading findings) — a superseded push, not a defect. Migration file-number clashes. Stacked-PR "scope-stacking".</li>
+<li><b>The ratchet.</b> <code>lesson-propose.sh</code> (min_blocks 3 / 14 days) proposes a new gate per BLOCK category; nothing measures false BLOCKs; nothing loosens.</li>
+</ol>
+
+<h2 id="design">7. The fix: strictness scales to user impact, fully autonomous</h2>
+<p>One shared severity model, rendered into every reviewer from settings rows, plus one mechanical demoter so a model that still writes BLOCK on a nit is corrected without a human. Then delete the sentences that say "each one a BLOCK".</p>
+
+<div class="grid g3">
+<div class="card"><h3 style="margin-top:0"><span class="pill red">ALWAYS BLOCK</span> at any level</h3>
+<ul class="small" style="padding-left:18px">
+<li>data loss; destructive or non-additive migration; new table with no RLS</li>
+<li>cross-company (tenant) read or write</li>
+<li>auth or permission bypass; secret in a commit; open redirect</li>
+<li>wrong money or billing; metered call with no dedup before the spend</li>
+<li>red main; build or typecheck that does not pass (real, not "cancelled")</li>
+<li>a core user flow a user cannot finish</li>
+<li>clearly wrong data, or a screen/button the ticket asked for that is missing or dead</li>
+<li>hardcoded <code>claude-*</code> model id</li>
+</ul></div>
+<div class="card"><h3 style="margin-top:0"><span class="pill amber">CORE-FLOW</span> level</h3>
+<p class="small">The diff touches a flow in <code>review.core_flows.&lt;project&gt;</code> (project-6-os: company setup, departments, dashboards, agents, workflows). Check: the flow works end to end, and the screen looks like the reference <i>to a person's eye</i>. A few px, copy, a cache window, an eviction policy, a missing <code>loading.tsx</code>, a sequential await, a missing sort indicator, a missing test for a branch no user reaches → <code>[NOTE]</code>. One follow-up ticket per screen at most, only for a defect a user would notice.</p></div>
+<div class="card"><h3 style="margin-top:0"><span class="pill">SMOKE</span> level — everything else</h3>
+<p class="small">It works and breaks nothing else. Every other observation is a <code>[NOTE]</code>. File no follow-up ticket. <b>Speed:</b> BLOCK only a measured regression on a key screen over <code>review.perf_block_ms</code> (300) or <code>review.perf_block_stmt_pct</code> (20); never ask for a perf proof unless the ticket is a perf ticket. "A speed claim without numbers" is a NOTE.</p></div>
+</div>
+
+<h3>7.1 The six changes</h3>
+<div class="tbl"><table>
+<tr><th style="width:26%">Change</th><th>What</th><th style="width:30%">Where</th></tr>
+<tr><td><b>1. Severity grammar in every reviewer</b></td><td>Each finding is tagged <code>[BLOCK &lt;class&gt;]</code> (class from the always-block list, or <code>core-flow</code>) or <code>[NOTE]</code>. A review whose findings are all NOTE ends <code>APPROVE</code> / <code>MERGE-WITH-NOTES</code>. A <code>LEVEL: always|core|smoke</code> line sits above the verdict. The PR body gains <code>## Notes not blocked on</code> so nothing is lost — it is deferred, visibly.</td><td><code>bin/review-prs.sh:1555</code> (project-6/project-5 — first), <code>bin/lib/rb/review.sh:772,395,983</code>, <code>prompts/lead-review.md</code>, <code>lead-review-checklist.md</code> → v9, <code>lead-review.d/intent.md</code>, <code>bin/review-autopilot.sh:1064</code></td></tr>
+<tr><td><b>2. One shared level rule + the demoter</b></td><td>A stage fragment <code>prompts/iron-laws.d/20261016-review-levels.md</code> (<code>stages: review fix qa prodqa lead-review</code>) carries the three levels, rendered from settings rows at call time. Then <code>bin/lib/review-level-cap.sh</code> — the <code>lpv_downgrade</code>/<code>loc_cap</code> shape that already exists — rewrites any <code>[BLOCK]</code> line that matches no always-block pattern (catalog <code>catalog/review-always-block.tsv</code>) into <code>[NOTE demoted:&lt;level&gt;]</code>, flips the verdict when no BLOCK remains, and appends the demoted lines to the PR body. Shadow mode first (<code>WOULD demote</code>), then enforce.</td><td>new fragment + lib + catalog; called in <code>lead-review.sh</code> after <code>loc_cap</code> (:1457), in <code>rb/review.sh</code> before <code>LENS_APPROVED</code>, in <code>review-prs.sh</code> before posting</td></tr>
+<tr><td><b>3. Round cap for non-BLOCK findings</b></td><td><code>review.fix_rounds_max</code> (default 2, per project) read by the resolver; at the cap, if the standing review has no always-block line, request one notes-only re-review → <code>MERGE-WITH-NOTES</code> → the conductor merges. One <code>warn</code> alert names the ticket (the single escalation). No hold, no abandon, no rebuild. Fix <code>blocked-resolver.sh:307</code> to read per-project rows. In-build T2 reads the same row instead of uncapped.</td><td><code>bin/lib/br/record.sh:359</code>, <code>blocked-resolver.sh:5098,2447,307</code>, <code>bin/lib/review-tier.sh:138</code></td></tr>
+<tr><td><b>4. NEEDS-HUMAN never gates a merge</b></td><td><code>[BLOCK needs-human]</code> → <code>[HUMAN go-live]</code>: it does not change the verdict. The hold moves to the MERGE path: post the go-live step on the ticket (new source <code>go-live</code>), ring once, the PR lands, the ticket stays visible as <code>human-step-waiting</code> but is not frozen. <code>nh_on_block</code> holds only when the action matches a go-live catalog (<code>connector|vendor console|live key|DNS|domain|billing account|product decision</code>); "run e2e with Clerk keys" becomes <code>[NOTE] not verified here</code>. Drop <code>NH_RE_CRED</code>. In-build: a lens whose only blocking lines are human steps APPROVEs with the suffix instead of <code>exit 6</code>.</td><td><code>prompts/lead-review.md:47-50</code>, <code>bin/lead-review-land.sh:284-340</code>, <code>bin/lib/needs-human/classify.sh:4,77,117</code>, <code>bin/lib/rb/review.sh:647-669</code>, <code>bin/lib/hold.sh</code></td></tr>
+<tr><td><b>5. No follow-up chains, and a floor</b></td><td>Every follow-up's first body line is <code>Follow-up-of: #&lt;n&gt;</code>. A ticket that is itself a follow-up files no follow-ups (its notes stay in the PR body). The <code>gh issue create</code> shim refuses when the running build's ticket carries the marker. <code>review.followup_min_level=core</code>: smoke-level findings never become tickets; <code>gf_run</code> refuses a group below it.</td><td><code>bin/lib/gh-shim/issue-write.sh:16-29</code>, <code>bin/lib/group-findings.sh:303</code>, <code>rules/topics/12-qa-findings.md:9</code>, the six "FOLLOW-UPS ARE GROUPED" prompts</td></tr>
+<tr><td><b>6. Kill the mechanical false positives</b></td><td>"CI cancelled" on a superseded head is not a finding (the live-CI block already says so; add the sentence). A migration file-number clash is a NOTE with the rename. Stacked-PR scope-stacking is a NOTE. The ratchet: <code>lesson-propose.sh</code> may propose a <i>gate</i> only for an always-block cause; everything else proposes a NOTE-level check. Add the missing counter-metric: <code>block_findings.waived</code> + a weekly false-BLOCK rate next to the precision number.</td><td><code>review-prs.sh</code> live-CI section, <code>bin/lesson-propose.sh:357</code>, <code>bin/lead-review-precision.sh</code>, <code>bin/lesson-classify.sh</code></td></tr>
+</table></div>
+
+<h3>7.2 Settings rows (one additive <code>schema.d</code> fragment, <code>INSERT OR IGNORE</code>, audited via <code>config_changes</code>)</h3>
+<div class="tbl"><table>
+<tr><th>Key</th><th>Default</th><th>Read by</th></tr>
+<tr><td><code>review.mode[.&lt;project&gt;]</code></td><td><code>levels</code> (<code>strict</code> = today · <code>shadow</code> = log only · <code>cowboy</code> · <code>off</code>)</td><td>every reviewer + demoter + resolver — see §8</td></tr>
+<tr><td><code>review.mode_until[.&lt;project&gt;]</code></td><td>empty</td><td>expiry for a non-default mode; a cron flips back and announces</td></tr>
+<tr><td><code>review.always_block</code></td><td>the list above, as patterns</td><td>fragment render + demoter; never demoted in any mode</td></tr>
+<tr><td><code>review.core_flows.&lt;project&gt;</code></td><td>project-6-os: <code>company setup, departments, dashboards, agents, workflows</code>; others empty = smoke</td><td>fragment + level pick from diff paths</td></tr>
+<tr><td><code>review.perf_block_ms</code> / <code>review.perf_block_stmt_pct</code></td><td>300 / 20</td><td>fragment + demoter + lead-outcome-cap</td></tr>
+<tr><td><code>review.fix_rounds_max[.&lt;project&gt;]</code></td><td>2</td><td>blocked-resolver + in-build round counter</td></tr>
+<tr><td><code>review.followup_min_level</code> / <code>review.followup_chain</code></td><td><code>core</code> / <code>0</code></td><td>prompts, gh-shim, group-findings</td></tr>
+<tr><td><code>gates.&lt;project&gt;.&lt;stage&gt;</code></td><td>unset = on</td><td>per-stage override: <code>plan-contract | in-build-review | lead-review | qa | size-gate | tier-gate</code></td></tr>
+<tr><td><code>qa.overflow_px</code></td><td>4</td><td><code>qa-drive.mjs:151</code> (today hard-coded +1)</td></tr>
+</table></div>
+<p class="small">Naming note: avoid the <code>risk_tier.</code>/<code>lead_authority.</code> prefixes (signed, token-gated) and <code>*.require_*</code> / <code>lane_placement.*</code> (BH-7074's lint would demand a live-probes block). Keys ≤ 64 chars.</p>
+
+<h2 id="cowboy">8. Cowboy mode: one dial per project, time-boxed, audited</h2>
+<div class="grid g4">
+<div class="card"><h3 style="margin-top:0"><span class="pill">strict</span></h3><p class="small">Today's behavior. Kept so the before/after can be measured and so a project can opt back in.</p></div>
+<div class="card"><h3 style="margin-top:0"><span class="pill blue">levels</span> — the new default</h3><p class="small">Always-block list blocks; core-flow and smoke levels as in §7; 2 non-BLOCK rounds then merge-with-notes; human steps never gate.</p></div>
+<div class="card"><h3 style="margin-top:0"><span class="pill amber">cowboy</span></h3><p class="small"><code>levels</code> with <code>fix_rounds_max=0</code>, every non-always finding a NOTE, no follow-up tickets, no human holds. <b>The always-block floor stays on</b> — tenant leaks, data loss, money, red main still stop. Everything else lands with notes on first review.</p></div>
+<div class="card"><h3 style="margin-top:0"><span class="pill red">off</span></h3><p class="small">No review at all: the <code>lead-verdict</code> status is auto-stamped, green CI merges. Exists for completeness; recommended never to leave on. The floor in <code>cowboy</code> costs nothing and catches the only things you cannot iterate your way out of.</p></div>
+</div>
+<ul style="margin-top:14px">
+<li><b>Time-boxed by default.</b> <code>bin/gates.sh cowboy project-6-os --for 6h</code> writes <code>review.mode.project-6-os=cowboy</code> + <code>review.mode_until</code>; a cron flips back to <code>levels</code> at expiry and posts to the operator channel. <code>--for forever</code> if you mean it.</li>
+<li><b>One row overrides every scattered kill switch</b> that exists today: <code>needs-human-hold-off</code>, <code>tier_gate_mode</code>, <code>group_findings</code>, console-QA gate, size gate, <code>BR_REVIEW_FIX_ROUNDS</code>, <code>LEAD_REVIEW_INCONCLUSIVE_BLOCK</code>. Per-stage surgery via <code>gates.&lt;project&gt;.&lt;stage&gt;=off</code> when you want to keep the lead review but kill plan-contract strictness, say.</li>
+<li><b>Audited and visible.</b> Every flip is a <code>config_changes</code> row; Mission Control shows mode + expiry countdown per project; every verdict and PR body carries <code>judged at: &lt;mode&gt;</code> so a cowboy sprint can be audited afterwards.</li>
+<li><b>The ratchet ignores it.</b> <code>lesson-propose</code> and <code>review-tighten</code> skip anything merged under <code>cowboy</code>/<code>off</code>, so a sprint never teaches the system to tighten.</li>
+<li>Mechanically it is a few extra rows on the same code path as <code>levels</code> — not a second system.</li>
+</ul>
+
+<h2 id="rules">9. Your own global rules that are doing the blocking — a severity decision for you</h2>
+<p>These were ported faithfully from <code>~/.claude/CLAUDE.md</code> into <code>rules/topics/04-building-software.md</code> and copied into the prompts. They are good <i>build defaults</i>; the harness also made them <i>review blocks</i>. Proposed re-leveling:</p>
+<div class="tbl"><table>
+<tr><th>Rule (source)</th><th>Harness text today</th><th>Proposed in review</th></tr>
+<tr><td>Sortable table headers · No dead rows · Full recursive drill-down · List over cards · Mobile 375 px</td><td>D22 "BLOCK-level, not style"; QA prompts FAIL on them</td><td><span class="pill">NOTE</span> — BLOCK only when a core flow cannot be finished. Stay as build defaults the builder must do; the reviewer notes misses.</td></tr>
+<tr><td>Performance by default (BH-6946): parallel reads, loading.tsx, request memo, speed claim needs numbers, client snapshot</td><td>"each one a BLOCK" ×12</td><td><span class="pill">NOTE</span> — BLOCK only a measured regression on a key screen over the thresholds, or on a perf ticket</td></tr>
+<tr><td>Test-first: "new behavior with no new test is a blocking review finding" · red-before-green</td><td>BLOCK in rb/review.sh:772, intent.md:7, D62/D63</td><td><span class="pill amber">BLOCK at core-flow / always-block paths; NOTE at smoke</span></td></tr>
+<tr><td>Database-driven assumptions (no hardcoded thresholds)</td><td>checklist:29 "[BLOCK] a hardcoded threshold, rate"</td><td><span class="pill">NOTE</span> (name the row) — except <code>claude-*</code> model ids, which stay <span class="pill red">BLOCK</span></td></tr>
+<tr><td>Indexes + retention on every table (BH-6730), EXPLAIN on seeded data</td><td>"Reviews BLOCK on a new table without its index, a growing table with no retention rule"</td><td><span class="pill amber">BLOCK a per-row correlated subquery over a large table; NOTE a missing index or retention rule (name the index)</span></td></tr>
+<tr><td>De-AI every OS text</td><td>"review-blockers"</td><td><span class="pill">NOTE</span></td></tr>
+<tr><td>Designer prototype: "a visual check gates the merge" (BH-6557)</td><td>side-by-side PNGs 1440/390 light/dark + computed-value table</td><td><span class="pill amber">a visual check to a person's eye on core-flow screens; px deltas and copy are notes; never a NEEDS-HUMAN</span></td></tr>
+<tr><td>Native dialogs · RLS on new tables · additive-only schema · metered-API dedup · secrets</td><td>BLOCK</td><td><span class="pill red">BLOCK</span> — keep</td></tr>
+<tr><td>"A PR that gates a lane must prove the dependency live BEFORE merge" (BH-1000 / BH-7074)</td><td>BLOCK + live probe</td><td><span class="pill amber">keep only for cron preconditions (always-block); otherwise NOTE</span></td></tr>
+<tr><td>"When in doubt, comment on the ticket and stop" · tripwire</td><td>the general stop bias</td><td>reword: "when in doubt about <i>harm</i>, stop; when in doubt about <i>polish</i>, note and merge"</td></tr>
+</table></div>
+<p class="small">If you approve this table, the same re-leveling should be mirrored into <code>~/.claude/CLAUDE.md</code> (a short "Severity in review" paragraph under Building Software) so the three homes stay consistent and the next port doesn't re-inflate them.</p>
+
+<h2 id="rollout">10. Rollout — ~2 AI coding sessions, atomic lane, no restart</h2>
+<ol>
+<li><b>Session 1, wave A (hotfix, lands first):</b> <code>review-prs.sh</code> prompt + the severity grammar + the demoter in shadow for project-6/project-5; "CI cancelled" sentence; settings fragment + <code>bin/lib/review-level.sh</code> + the two catalogs; <code>NH_RE_CRED</code> dropped; perf-prose edits in the 12 files + the two pinned BH-6946 tests updated (flagged in the PR body per test-integrity). Acceptance tests red first.</li>
+<li><b>Session 1, wave B:</b> in-build lens grammar (<code>rb/review.sh</code>), lead-review prompt + checklist v9, round cap read in the resolver (+ the per-project <code>lane_env_apply</code> fix), NEEDS-HUMAN → go-live path, follow-up chain guard in the shim. Flip <code>review.mode=levels</code> fleet-wide after one day of shadow lines read.</li>
+<li><b>Session 2:</b> <code>bin/gates.sh</code> + expiry cron + Mission Control mode column; <code>lesson-propose</code> gate-only-for-always-block; false-BLOCK weekly metric; <code>rules/topics/13-review-levels.md</code> + render; close/re-scope BH-7072 and BH-7074; mirror to <code>~/.claude/CLAUDE.md</code>.</li>
+</ol>
+<div class="callout amber"><b>Bigger-than-hotfix items, flagged honestly:</b> the perf prose lives in 12 files + 2 pinned tests (mechanical but wide); the in-build <code>LENS_REFUSE</code> → APPROVE-with-suffix is a run-build graph change with its own test; the resolver terminal (<code>CAP_NOTES</code>) needs a ladder fixture — safer first step is cap-read + notes-only re-review, leaving <code>br_abandon</code> as fallback; <code>hold.sh</code> regexes are exported into <code>orphan-reconcile.sh</code>'s python, so the go-live tail touches both engines. Open tickets that overlap and should be folded, not collided with: BH-7041 (low-small skip), BH-7118/7043 (verdict carry — a carried row must carry level + notes), BH-7042 (merge main only on conflict), BH-7116.</div>
+
+<h2 id="tests">11. Acceptance tests (red first), mapped to the ticket</h2>
+<ul class="two">
+<li><code>tests/review-level-cap.bh-7123-test.sh</code> A1: a report with <code>[BLOCK]</code> "2 px padding" + <code>[BLOCK]</code> "loading.tsx missing" at <code>LEVEL: smoke</code> → MERGE-WITH-NOTES, 2 demoted, PR body gains <code>## Notes not blocked on</code>.</li>
+<li>A2: <code>[BLOCK]</code> "cross-company read in listClients()" → BLOCK at every level and in <code>cowboy</code>.</li>
+<li>A3: non-perf ticket, "+100 ms on Library" → NOTE; "+400 ms on Home (key screen)" with <code>review.perf_block_ms=300</code> → BLOCK.</li>
+<li>A4: a third round with only non-always findings → merges with notes + one warn alert; no rebuild row.</li>
+<li>A5: <code>setting_set review.perf_block_ms 50</code> → A3's +100 ms becomes BLOCK with no deploy.</li>
+<li><code>tests/needs-human-golive.bh-7123-test.sh</code>: "run CI with the Clerk keys" → no hold, a <code>[NOTE] not verified here</code>; "add the live Stripe key before go-live" → hold, PR still lands.</li>
+<li>Follow-up chain: a build whose ticket body carries <code>Follow-up-of: #n</code> calling <code>gh issue create</code> → refused, rc 1.</li>
+<li>"CI cancelled" on a superseded head → not a finding.</li>
+<li>Cowboy: <code>review.mode.x=cowboy</code> + <code>mode_until</code> in the past → cron flips to <code>levels</code>, one announce; a verdict rendered under cowboy carries <code>judged at: cowboy</code>; <code>lesson-propose</code> skips it.</li>
+<li>Replay: feed the 153 corpus verdicts through the demoter in shadow; assert ≥ 60 of 63 sub-bar verdicts flip to notes and 0 of the 90 genuine ones do.</li>
+<li><code>tests/stage-iron-laws.bh-6557-test.sh</code> extension: the new fragment reaches <code>review</code>, <code>fix</code>, <code>qa</code>, <code>prodqa</code>, <code>lead-review</code>.</li>
+</ul>
+
+<p class="small" style="margin-top:40px">Sources: block corpus (1,496 finding rows, hand-classified for project-6/project-5; D1 <code>block_findings</code> via the console proxy for cromford), prompt audit (every quote file:line), code-path trace (verdict → ladder → hold → follow-up → settings). Working files in the session scratchpad; the CSV is reproducible from the raw GitHub comments with <code>parse.py / classify.py / build.py</code>.</p>
+</main>
+</body>
+</html>

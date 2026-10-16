@@ -337,6 +337,10 @@ command -v verdict_prime >/dev/null 2>&1 && verdict_prime || true
 # PR caps the verdict at BLOCK). Without it every verdict stands as the agent gave it.
 # shellcheck source=bin/lib/lead-outcome-cap.sh
 . "$H/bin/lib/lead-outcome-cap.sh" 2>/dev/null || log "bin/lib/lead-outcome-cap.sh missing; no outcome cap this tick"
+# BH-7123: the review level cap. A [BLOCK] that names no ALWAYS-BLOCK class
+# (catalog/review-always-block.tsv) is a NOTE; a report with no BLOCK left is
+# MERGE-WITH-NOTES. Missing lib = the model's verdict stands, as before.
+. "$H/bin/lib/review-level.sh" 2>/dev/null || log "bin/lib/review-level.sh missing; no review level cap this tick"
 # BH-5294, optional: delta mode. Without it every request is a full review.
 . "$H/bin/lib/lead-delta.sh" 2>/dev/null || true
 # BH-6391, optional: the re-review section and the NOTE pass. Without it a
@@ -1451,6 +1455,31 @@ review_one() {
       *) lpk="" ;;
     esac
   fi
+  # BH-7123: the review level cap, after the re-review downgrade and before the
+  # outcome cap (a perf ticket's INCONCLUSIVE claim still caps at BLOCK below).
+  # Fail closed like lpv_downgrade: a rewrite whose verdict no longer reads
+  # restores the model's answer. strict/shadow modes rewrite nothing (rc 1).
+  rlk=""
+  if [ "$verdict" = BLOCK ] && command -v rl_cap >/dev/null 2>&1; then
+    rlrc=0
+    if cp -f "$out" "$out.rlkeep" 2>/dev/null; then
+      rlk=$(rl_cap "$out" "$project" --approve MERGE-WITH-NOTES --block BLOCK --lens lead 2>"$WT.rlnote") || rlrc=$?
+    else rlrc=5
+    fi
+    if [ "$rlrc" = 0 ] && [ "$(lr_verdict "$out")" = unknown ]; then
+      mv -f "$out.rlkeep" "$out" && rlrc=3 || rlrc=4
+    fi
+    rm -f "$out.rlkeep"
+    case "$rlrc" in
+      0) verdict=$(lr_verdict "$out"); log "$key: review level: $rlk; verdict $verdict" ;;
+      1) log "$key: review level: ${rlk:-no rewrite}"; rlk="" ;;
+      3) log "$key: review level rewrite left no readable verdict; the model's BLOCK stands"; rlk="" ;;
+      4) log "$key: review level rewrite left no readable verdict and the answer could not be restored; BLOCK"; rlk="" ;;
+      *) log "$key: review level cap rc $rlrc; the model's BLOCK stands"; rlk="" ;;
+    esac
+    while IFS= read -r ll; do [ -n "$ll" ] && log "$key: $ll"; done < "$WT.rlnote" 2>/dev/null
+    rm -f "$WT.rlnote"
+  fi
   # BH-6372.3: the outcome cap. The ticket is the one the thread read (when it
   # read), else loc_cap reads #$tn itself; no ticket number is class unknown.
   capr=""
@@ -1465,8 +1494,12 @@ review_one() {
   fi
   # The report names the checklist it read; an intent review read none.
   ckl="v$CK_VER"; [ "$imode" = intent ] && ckl="none (intent review)"
-  { printf '%s# Lead review %s (%s#%s at %s)\n\n- verdict: %s\n- %s\n- rules pack: %s\n- reviewer model: %s\n- checklist: %s\n- pr body: %s\n' \
-      "$RVLINE" "$key" "$repo" "$pr" "$sha" "$verdict" "$suite_line" "$RP_STATE" "$model" "$ckl" "$bfp"
+  # BH-7123: every report names the mode it was judged under, with the cap
+  # summary when the cap ran (a BLOCK answer). It sits ABOVE `- pr body:`, which
+  # readers treat as the last header line before the agent's text
+  # (tests/lead-review-inconclusive-block.bh-6381-test.sh L2).
+  { printf '%s# Lead review %s (%s#%s at %s)\n\n- verdict: %s\n- %s\n- rules pack: %s\n- reviewer model: %s\n- checklist: %s\n- review level (BH-7123): mode %s%s\n- pr body: %s\n' \
+      "$RVLINE" "$key" "$repo" "$pr" "$sha" "$verdict" "$suite_line" "$RP_STATE" "$model" "$ckl" "$(rl_mode "$project" 2>/dev/null || echo unknown)" "${rlk:+; $rlk}" "$bfp"
     [ -n "$capr" ] && printf -- '- outcome cap: %s\n' "$capr"
     [ "$dmode" = delta ] && printf -- '- review mode: delta from %s\n' "$dprev"
     [ "$bmode" = build-on ] && printf -- '- review mode: %s\n' "$bline"

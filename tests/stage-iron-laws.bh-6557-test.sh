@@ -6,8 +6,9 @@
 #   A1  sil_text on the real fragment returns the ticket block byte for byte
 #   A2  sil_text decision table: whole-word stage match, CRLF / extra spaces,
 #       no-header file skipped, name order, missing dir
-#   A3  driven: preplan plan execute fix review qa prodqa carry both law titles
-#       in ONE --append-system-prompt; triage and lead-review carry none
+#   A3  driven: preplan plan execute fix review qa prodqa carry all three law
+#       titles in ONE --append-system-prompt; triage carries none; lead-review
+#       carries only REVIEW LEVELS (BH-7123 lists it, the 2026-10-13 laws do not)
 #   A4  driven: a codex runner gets the laws in front of its prompt text
 #   A5  driven: a caller's AGENT_SYSTEM_APPEND comes first; the laws are not
 #       exported to the child; no prompts dir = today's behavior
@@ -29,9 +30,12 @@ bad() { FAIL=$((FAIL+1)); echo "FAIL: $1"; }
 LAWS_DIR="$DIR/prompts/iron-laws.d"
 # sha256 of the ticket's law block. Four quoted 16-hex pieces: the share leak
 # check reads a bare 64-hex run as a token (tests/jobs-client-usage.bh-5235-test.sh).
-TICKET_SHA="70a5f4f7a4aab3fd""437e052a9888eef1""ef30d6681da9b9e0""a52a3f119ad6fcff"
+# BH-7123 re-pinned it: the 2026-10-13 fragment's review lines are notes, and
+# the plan stage also carries prompts/iron-laws.d/20261016-review-levels.md.
+TICKET_SHA="434fa0d2ea7b0b5a""fae40d3c64bfec33""e61b3c7214b1cc58""2018615de26e782e"
 T1='PERFORMANCE BY DEFAULT'
 T2="BUILDING FROM A DESIGNER'S PROTOTYPE"
+T3='REVIEW LEVELS (iron law, BH-7123'
 MEMBERS="preplan plan execute fix review qa prodqa"
 
 # ── A1 ─────────────────────────────────────────────────────────────────────
@@ -41,6 +45,8 @@ got=$(sil_text plan "$LAWS_DIR"; printf x); got="${got%x}"
   || bad "A1 sil_text plan is not the ticket block (sha $(printf '%s' "$got" | sha256sum | cut -c1-12))"
 case "$got" in *"PERFORMANCE BY DEFAULT (iron law, 2026-10-13)"*) ok ;; *) bad "A1 performance title missing" ;; esac
 case "$got" in *"BUILDING FROM A DESIGNER'S PROTOTYPE (iron law, 2026-10-13)"*) ok ;; *) bad "A1 prototype title missing" ;; esac
+case "$got" in *"$T3"*) ok ;; *) bad "A1 review-levels title missing" ;; esac
+case "$got" in *"each one a BLOCK"*|*"REVIEW blocks on"*|*"a visual check gates the merge"*) bad "A1 the plan block still carries a BLOCK-level review line (BH-7123)" ;; *) ok ;; esac
 
 # ── A2 ─────────────────────────────────────────────────────────────────────
 echo "--- A2"
@@ -141,13 +147,18 @@ for st in $MEMBERS; do
   [ -s "$T/sink" ] || { bad "A3 $st: claude never ran (rc=$RC)"; continue; }
   append_has "$T1" && ok || bad "A3 $st: '$T1' missing from --append-system-prompt"
   append_has "$T2" && ok || bad "A3 $st: '$T2' missing from --append-system-prompt"
+  append_has "$T3" && ok || bad "A3 $st: '$T3' missing from --append-system-prompt"
   [ "$(appends)" = 1 ] && ok || bad "A3 $st: want exactly one --append-system-prompt, got $(appends)"
 done
-for st in triage lead-review; do
-  RC=$(run_call "$st")
-  [ -s "$T/sink" ] || { bad "A3 $st: claude never ran (rc=$RC)"; continue; }
-  [ "$(appends)" = 0 ] && ok || bad "A3 $st: a non-member stage got --append-system-prompt: $(cat "$T/sink.append.1")"
-done
+RC=$(run_call triage)
+[ -s "$T/sink" ] || bad "A3 triage: claude never ran (rc=$RC)"
+[ "$(appends)" = 0 ] && ok || bad "A3 triage: a non-member stage got --append-system-prompt: $(cat "$T/sink.append.1")"
+RC=$(run_call lead-review)
+[ -s "$T/sink" ] || bad "A3 lead-review: claude never ran (rc=$RC)"
+[ "$(appends)" = 1 ] && ok || bad "A3 lead-review: want exactly one --append-system-prompt (the review-levels law), got $(appends)"
+append_has "$T3" && ok || bad "A3 lead-review: '$T3' missing from --append-system-prompt"
+append_has "$T1" && bad "A3 lead-review: '$T1' reached a stage its fragment does not list" || ok
+append_has "$T2" && bad "A3 lead-review: '$T2' reached a stage its fragment does not list" || ok
 
 # ── A4 ─────────────────────────────────────────────────────────────────────
 echo "--- A4"

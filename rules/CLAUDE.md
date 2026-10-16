@@ -39,6 +39,7 @@ Layout: repos live in `/root/repos/<project>`, harness scripts in `/root/harness
 - [Claim discipline (the operator, 2026-08-30 — "it said done but it wasn't")](#claim-discipline-operator-2026-08-30--it-said-done-but-it-wasnt)
 - [Reports & explanations: Simplified Technical English (the operator, 2026-10-07)](#reports--explanations-simplified-technical-english-operator-2026-10-07)
 - [QA findings: collect first, one ticket per screen or flow (the operator, 2026-10-15)](#qa-findings-collect-first-one-ticket-per-screen-or-flow-operator-2026-10-15)
+- [Review levels (BH-7123)](#review-levels-bh-7123)
 
 ## Iron guardrails (this machine)
 
@@ -81,8 +82,8 @@ Creation is supported on all four boards (project-1 + project-2 via the internal
   - A test runs `EXPLAIN QUERY PLAN` (SQLite/D1) or `EXPLAIN` (Postgres) on seeded data at realistic volume and asserts the hot queries use an index (no full `SCAN` of a large table). A later index goes in a new additive migration (`CREATE INDEX IF NOT EXISTS`).
   - No correlated subquery that re-runs per row over a large table. A poll or dashboard that recomputes an aggregate over all history gets a summary table or a short cache.
   - Every growing table has a retention rule: what the rows are for, how long they keep value, and a scheduled job that deletes or archives the rest (window in a settings row, dry-run first, one audit row per run). Money and history rows are archived, never silently deleted.
-  - Reviews BLOCK on a new table or query without its index, a new per-row correlated subquery, or a growing table with no retention rule.
-- **De-AI voice** on every AI→human text surface (use the project's `withHumanVoice`-style wrapper if present; new LLM call sites without it are review-blockers).
+  - Reviews BLOCK on a new per-row correlated subquery over a large table; a missing index or retention rule is a review note that names the fix (BH-7123).
+- **De-AI voice** on every AI→human text surface (use the project's `withHumanVoice`-style wrapper if present; a new LLM call site without it is a review note).
 - **Never hand-append to a shared index.** If a build needs to register itself in a repo-wide table, list or registry, it writes its OWN file keyed by the ticket and a generator concatenates them. N concurrent builds appending to one file is N guaranteed conflicts on a hunk no ticket is about. Any file every build touches is a serialization point in a system designed to be parallel.
 
 ### UI/UX standards (every interface, no exceptions)
@@ -92,10 +93,11 @@ Creation is supported on all four boards (project-1 + project-2 via the internal
 - **List/table over big cards for any browse/index/library/triage page** — dense rows beat card walls. Big cards only for a genuine dashboard/hero or single featured object. Convert card-grid index pages to list/table when you touch them.
 - **No dead rows:** every identity cell links to its detail view.
 - **Full recursive drill-down:** every level of detail the system holds must be reachable by clicking — detail pages are themselves drillable down to the atomic record. The test on any page: "what's the next question a user would click into?" — make it clickable. An aggregate we store components for but can't expand is a finding; fix it.
+- Severity in review (BH-7123): the UI rules above are build defaults. A reviewer notes a miss; it is a BLOCK only when a user cannot finish a core flow.
 
 ### Performance by default (the operator, 2026-10-15; BH-6946)
 - PERFORMANCE BY DEFAULT (BH-6946): a plan for a screen or loader lists its reads, which of them run in parallel, the expected statement count, the indexes they use, and the loading skeleton.
-- PERFORMANCE BY DEFAULT (BH-6946), each one a BLOCK: a new sequential await over independent reads; a list read in a layout where a count would do; a route without loading.tsx; a repeated config read without a request memo; a list query without a matching index at seeded volume; unbounded rows to the client; a speed claim without before and after numbers; a client snapshot that holds a token, is not keyed by user and company, or survives sign-out; a key screen with two or more independent requests in sequence before its first content.
+- PERFORMANCE BY DEFAULT (BH-6946), each one a [NOTE] (a BLOCK only on a measured regression on a key screen over the REVIEW LEVELS thresholds, or on a perf ticket): a new sequential await over independent reads; a list read in a layout where a count would do; a route without loading.tsx; a repeated config read without a request memo; a list query without a matching index at seeded volume; unbounded rows to the client; a speed claim without before and after numbers; a client snapshot that holds a token, is not keyed by user and company, or survives sign-out; a key screen with two or more independent requests in sequence before its first content.
 
 ### Code-level gotchas that bite in PRs (from the operator's global rules)
 - **Never use `VERCEL_URL`/`.vercel.app` for serverless self-fetch** — Deployment Protection 401s it. Always the custom production domain for internal `fetch()` from crons/webhooks.
@@ -196,5 +198,15 @@ When the factory tests, it must act like one engineer who reads every problem be
 2. After the pass, the lane files ONE ticket per screen or flow, with all its items as a checklist. One PR then fixes the whole screen or flow.
 3. Before it files, the lane reads the open issues and open PRs of that board for the same screen or flow. If one exists, the lane adds the new items to it as a comment. It never adds scope to a ticket whose PR is already approved: those items go to a new follow-up ticket, `Blocked-by:` that PR.
 4. Exceptions. A HIGH that blocks a launch flow or leaks data is filed (or alerted) at once, and it still goes in the ledger and in its group. If two groups edit one file, the second group's ticket gets `Blocked-by:` the first.
-- Follow-ups that a build or a review finds follow the same rule: one follow-up ticket per screen or flow, every item as a checklist.
+- A build or review files a follow-up only for a core-flow defect a user would notice, one per screen or flow with every item as a checklist; smoke-level findings stay as [NOTE] lines in the review, and a follow-up ticket's own review files no follow-up (BH-7123).
 - In cromford, lanes call `bin/lib/group-findings.sh` (`gf_run`) and never file per finding. The switch is the settings row `lib.group-findings.<board>.group_findings` (default 0, off).
+
+## Review levels (BH-7123)
+
+REVIEW LEVELS (iron law, BH-7123, 2026-10-16). Strictness scales to user impact. A review hunts for what would hurt a real user, not for every defect. Tag every finding `[BLOCK <class>]` or `[NOTE]`. A BLOCK needs a class from the ALWAYS-BLOCK list below; a finding with no such class is a NOTE, whatever its size. A review whose findings are all NOTEs ends APPROVE (or MERGE-WITH-NOTES): the PR merges and the notes ride in the review for a later cleanup ticket.
+ALWAYS BLOCK, at every level, in every mode. Classes: `data-loss` (rows, documents or user input lost or overwritten); `tenant-leak` (a cross-company or cross-workspace read or write); `auth-bypass` (a missing or fail-open auth, role or permission check; an open redirect; injection); `money` (wrong billing, double charge, a metered call with no dedup before the spend, a billed answer dropped); `destructive-migration` (a non-additive schema change, a new table with no RLS on Supabase); `red-build` (main is red, or the build or typecheck of this head does not pass; a CANCELLED run on a superseded head is not red); `core-flow-broken` (a flow a user cannot finish: sign-in, the ticket's own primary action, a dead button or link the ticket asked for); `wrong-data` (a stored or shown value that is wrong, a screen the ticket asked for that is missing); `secret` (a credential in a commit or a log); `model-id` (a hardcoded claude-* model string); `weakened-test` (an existing test softened, skipped or deleted to get green).
+CORE-FLOW level: the diff touches a flow the project lists in `review.core_flows.<project>`. Check that the flow works end to end and that the screen looks like the reference to a person's eye. A few px, copy, contrast, a cache window, an eviction policy, a missing loading.tsx, a sequential await, a missing sort indicator, a dead non-identity row, a missing test for a branch no user reaches: `[NOTE]`. Never a BLOCK, never NEEDS_HUMAN, never a new ticket. At most one follow-up ticket per screen, and only for a defect a user would notice.
+SMOKE level (everything else): it works and breaks nothing else. Every other observation is a `[NOTE]`. File no follow-up ticket.
+SPEED: a BLOCK only for a measured regression on a key screen over the thresholds the `## Review level` section gives (defaults 300 ms or 20% more DB statements), or when the ticket is a perf ticket. Ask for no perf proof otherwise. "A speed claim without numbers" is a `[NOTE]`.
+HUMAN STEPS: `NEEDS_HUMAN:` / `[BLOCK needs-human]` only for a go-live step a user depends on (a live connector key, a vendor console, a DNS or billing account, a product decision). A verification this box cannot run (no Clerk key, no prod database, no browser, no CI token, a Lighthouse run, a design screenshot) is `[NOTE] not verified here: <what>`, and the verdict does not wait on it.
+PROCESS: a plan, PR body, docs/notes, change note, migration file number, scope-stacking or evidence-format gap is a `[NOTE]`. A VALIDATE recorded NOT RUN because it needs a key, prod or a browser is a `[NOTE]`. A requirement of the ticket the diff does not deliver is `[BLOCK wrong-data]` or `[BLOCK core-flow-broken]`, not a process note.

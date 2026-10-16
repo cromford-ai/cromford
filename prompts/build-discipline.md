@@ -15,7 +15,7 @@ numbers (D1, D14…) in findings so recurrence stays measurable.
 - **D5 No forward-written claims.** Never write a comment, docstring, PR line, or doc describing behavior you have not confirmed the code has. Cut a planned behavior → update every claim about it in the same commit.
 - **D6 Record true exit codes.** Never pipe a verification command through `tail`/`head`/`grep` and then claim it passed — the unpiped exit code is the claim. Fabricated or synthesized red.txt output is a firing offense for a build.
 - **D7 Execute it once as shipped, before the PR:** every documented script command verbatim from its own header; every new/changed page rendered including the zero-row/empty state; `npx tsc --noEmit` green; multi-row path of any batch SQL exercised; new screens reachable by clicking from the nav (nav entry ships in the same PR).
-- **D8 Human steps ride in the PR body.** Any manual step (migration apply, env var, prompt push, republish) and any verification you could NOT run (no DATABASE_URL, suite unrunnable) appears verbatim in the PR body AND board comment as a named condition — a step mentioned only in the plan/log is dropped.
+- **D8 Human steps ride in the PR body.** Any manual step (migration apply, env var, prompt push, republish) and any verification you could NOT run (no DATABASE_URL, suite unrunnable) appears verbatim in the PR body AND board comment as a named condition — a step mentioned only in the plan/log is dropped. A verification you could not run is a `[NOTE] not verified here` line, not a condition the review waits on (BH-7123).
 
 ## C. Failure, absence, completeness (23 builds)
 - **D9 Never map failure to success.** Check `res.ok` and the specific result fields before acting; CLIs/verifiers aggregate failures and exit nonzero; a caught error surfaces in status — never a recorded SUCCESS, never a success counter bumped on an error path.
@@ -37,7 +37,7 @@ numbers (D1, D14…) in findings so recurrence stays measurable.
 - **D21 Bound recurring work:** explicit concurrency, total deadline, and row caps on every cron/sweep phase; no per-run unbounded row growth.
 
 ## F. UI & client code (10 builds)
-- **D22 The touched-file iron laws are BLOCK-level, not style:** sortable headers sorting the displayed value, no dead identity rows, no native dialogs, 375px no-body-scroll — on every file you touch, verified, not assumed.
+- **D22 The touched-file iron laws are findings at the level the REVIEW LEVELS rule gives them (BH-7123): a BLOCK on a core flow a user cannot finish, a [NOTE] everywhere else:** sortable headers sorting the displayed value, no dead identity rows, no native dialogs, 375px no-body-scroll — on every file you touch, verified, not assumed.
 - **D23 Client async discipline:** `useTransition` for navigation pending states (no hand-rolled booleans), AbortController or request-versioning on racy fetches, pending reset in `finally`, load failure rendered distinctly from "no data".
 - **D24 Server code never calls an export of a `"use client"` module** — client exports render as components or pass as props; shared helpers live in a shared non-client module.
 

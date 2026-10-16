@@ -148,9 +148,12 @@ export async function driveScreen(ctx, { base, path, viewport, outDir }) {
     await page.waitForTimeout(1500);
     record.url = page.url();
     record.landedOnAuthWall = isAuthWall(new URL(record.url).pathname);
-    // +1 absorbs sub-pixel layout rounding; anything wider is a real overflow.
+    // QA_OVERFLOW_PX (default 4, the qa.overflow_px row) absorbs sub-pixel rounding and a few px
+    // of overflow on a non-core screen; anything wider is a real overflow (BH-7123).
+    const overflowPx = Number.parseInt(process.env.QA_OVERFLOW_PX || "4", 10) || 4;
     record.horizontalScroll = await page.evaluate(
-      () => document.documentElement.scrollWidth > document.documentElement.clientWidth + 1,
+      (px) => document.documentElement.scrollWidth > document.documentElement.clientWidth + px,
+      overflowPx,
     );
     const shot = join(outDir, `${path.replace(/[^a-zA-Z0-9]+/g, "_") || "root"}-${viewport.name}.png`);
     await page.screenshot({ path: shot, fullPage: false });

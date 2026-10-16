@@ -59,7 +59,7 @@ for f in bin/lib/rb/plan.sh bin/run-preplan.sh bin/lib/rb/execute.sh prompts/lea
   has_law "$DIR/$f" && ok || bad "L2 $f does not carry the index/retention law"
 done
 grep -q 'per-row correlated subquery' "$DIR/prompts/lead-review.md" && ok || bad "L2 lead-review.md item 2 does not name the correlated subquery"
-head -1 "$DIR/prompts/lead-review-checklist.md" | grep -qx 'Checklist-Version: 8' && ok || bad "L2 the lead checklist is not version 8"
+head -1 "$DIR/prompts/lead-review-checklist.md" | grep -qx 'Checklist-Version: 9' && ok || bad "L2 the lead checklist is not version 9"
 grep -qE '^15\. Indexes and retention \(BH-6730\)' "$DIR/prompts/lead-review-checklist.md" && ok || bad "L2 the lead checklist has no item 15"
 
 # ── L3 the rule text, self-contained ──────────────────────────────────────────
@@ -68,7 +68,7 @@ for line in \
   'A later index goes in a new additive migration (`CREATE INDEX IF NOT EXISTS`).' \
   'No correlated subquery that re-runs per row over a large table. A poll or dashboard that recomputes an aggregate over all history gets a summary table or a short cache.' \
   'Every growing table has a retention rule: what the rows are for, how long they keep value, and a scheduled job that deletes or archives the rest (window in a settings row, dry-run first, one audit row per run). Money and history rows are archived, never silently deleted.' \
-  'Reviews BLOCK on a new table or query without its index, a new per-row correlated subquery, or a growing table with no retention rule.'; do
+  'Reviews BLOCK on a new per-row correlated subquery over a large table; a missing index or retention rule is a review note that names the fix (BH-7123).'; do
   grep -qF -- "$line" "$DIR/rules/CLAUDE.md" && ok || bad "L3 rules/CLAUDE.md lacks: ${line:0:70}"
   grep -qF -- "$line" "$DIR/CLAUDE.md" && ok || bad "L3 CLAUDE.md lacks: ${line:0:70}"
 done

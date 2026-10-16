@@ -16,7 +16,7 @@ NH_RE_HUMAN='\bneeds? (a|an) (human|person|operator)([^-[:alnum:]]|$)|\bonly (a|
 NH_RE_HUB='\b(run|rerun|re-run|execute|probe)\b.{0,120}\bfrom the hub\b|\b(run|runs)\b.{0,40}\bas the hub( conductor)?(.s)? (github )?(identity|app|token)\b'
 NH_RE_PASTE='\bpaste[sd]?\b.{0,120}\boutputs?\b.{0,120}\bpr body\b|\boutputs?\b.{0,40}\b(go|goes|pasted?) (in|into) the pr body\b'
 NH_RE_CRED='\b(credential|secret|token|app key|api key|env file|env var)s?\b.{0,80}\b(build|builder|pool) (box|machine)\b.{0,40}\b(lacks?|does ?n.t have|has no|cannot|can.t)\b|\b(build|builder|pool) (box|machine)\b.{0,40}\b(lacks?|does ?n.t have|has no)\b.{0,80}\b(credential|secret|token|app key|api key|env file|env var)'
-NH_RE_NEG='\b(no|not|never|without|does ?n.t|do ?n.t)\b.{0,24}\b(need|needs|require|requires)\b.{0,6}\b(a |an )?(human|person|operator)\b|non-blocking|\((minor|nit)\)|\b(now|already|was|been) (answered|resolved|cleared|addressed)\b|\bnot (only |just )?from the hub\b'
+NH_RE_NEG='\b(no|not|never|without|does ?n.t|do ?n.t)\b.{0,24}\b(need|needs|require|requires)\b.{0,6}\b(a |an )?(human|person|operator)\b|non-blocking|\((minor|nit)\)|\b(now|already|was|been) (answered|resolved|cleared|addressed)\b|\bnot (only |just )?from the hub\b|not verified here|NOTE demoted'
 
 # _nh_final <file> — the final review round: the text after the LAST `=== `
 # header (review.sh writes one before a merged re-review, whose VERDICT-*: tags
@@ -43,7 +43,13 @@ _nh_clean() {
 # and no negative, or nothing.
 _nh_fallback() {
   local hit
-  hit=$(_nh_lines | grep -iE "$NH_RE_HUMAN|$NH_RE_HUB|$NH_RE_PASTE|$NH_RE_CRED" | grep -viE "$NH_RE_NEG" | sed -n 1p) || true
+  # BH-7123: NH_RE_CRED is no longer a shape. "The build box lacks the Clerk
+  # key" describes a VERIFICATION the box could not run (e2e, design-guard, a
+  # Lighthouse run), which the review levels make a `[NOTE] not verified here`,
+  # never a hold: 9 of 37 holds in 2026-09-25..10-16 were that sentence. A
+  # go-live credential a user depends on is still asked for with an explicit
+  # `NEEDS_HUMAN:` line, which the structured path above reads.
+  hit=$(_nh_lines | grep -iE "$NH_RE_HUMAN|$NH_RE_HUB|$NH_RE_PASTE" | grep -viE "$NH_RE_NEG" | sed -n 1p) || true
   printf '%s' "$hit"
 }
 
@@ -111,5 +117,5 @@ nh_on_block() {
 # nh_prompt_field_note — the one reviewer sentence, with a leading space: it is
 # spliced straight after "…VERDICT: BLOCK." at the end of REVIEW_PROMPT.
 nh_prompt_field_note() {
-  printf '%s\n' " If a BLOCK finding can only be cleared by a person (a step needing a credential, key, env file or host this build box lacks, such as a probe run from the hub), write 'NEEDS_HUMAN: <one-line action>' on its own line above the 'TIER:' line; otherwise write no such line."
+  printf '%s\n' " Write 'NEEDS_HUMAN: <one-line action>' on its own line above the 'TIER:' line ONLY for a go-live step a user depends on that no build can do (a live connector key, a vendor console, a production credential, a product decision). A verification this box cannot run (a key, env file, browser, prod database or host it lacks) is a '[NOTE] not verified here: <what>', never NEEDS_HUMAN; otherwise write no such line."
 }

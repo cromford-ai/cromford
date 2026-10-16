@@ -172,6 +172,9 @@ rp_freeze() {
 # way. Two spellings of one figure is how they come to disagree.
 # shellcheck source=/dev/null
 [ -r "$HARNESS/bin/jobs-client.sh" ] && . "$HARNESS/bin/jobs-client.sh"
+# BH-7123: review levels. rl_prompt_note rides into the prompt; rl_cap demotes a
+# finding that names no ALWAYS-BLOCK class to a NOTE before the verdict posts.
+. "${HARNESS}/bin/lib/review-level.sh" 2>/dev/null || true
 # tg_holds (BH-4580): the tier_gate_mode row, read through setting_get above.
 # A tree without the lib merges as before (the bin/lib/rb/pr.sh rule).
 # shellcheck source=bin/lib/tier-gate.sh
@@ -1530,11 +1533,15 @@ rp_one_pr() { for _rp_once in 1; do
     RP_LIVE_CI=$(frp_ci_text "$(frp_ci "$SLUG" "$SHA")")
   fi
   # <<< review-prs live ci
+  # BH-7123: the `## Review level` section (mode, speed thresholds, core flows),
+  # read from settings rows at call time. Empty when the lib is not loaded.
+  RP_LEVEL_NOTE=""
+  command -v rl_prompt_note >/dev/null 2>&1 && RP_LEVEL_NOTE=$(rl_prompt_note "$PROJECT" 2>/dev/null) || RP_LEVEL_NOTE=""
   PROMPT="Adversarial review of an EXTERNAL team PR on $SLUG (#$NUM by $AUTHOR): \"$TITLE\".
 You are the harness reviewer. The repo checkout at $REPO_DIR is on main (may be behind the PR); use it to read surrounding context. Judge ONLY the diff below.${RP_SCRATCH:+
 Scratch space: if you need a checkout of the PR head or any temporary file, create it under $RP_SCRATCH (for example: git -C $REPO_DIR worktree add --detach $RP_SCRATCH/head $SHA). Create nothing else under /tmp. The harness deletes $RP_SCRATCH when this review ends.}
 
-Apply the standing iron laws (from /root/.claude/CLAUDE.md, which you must read): additive-only schema + RLS on new tables (Supabase projects), indexes for every query on a new table in the same migration (proven with EXPLAIN on seeded data), no per-row correlated subquery over a large table, a retention rule (scheduled delete/archive, window in a settings row) for every growing table, DB-driven config not hardcoded (incl. no hardcoded claude-* model strings), exactly-once writes where money/records move, dedup-before-spend on metered/billable APIs (transcription, LLM tokens, embeddings, enrichment, SMS/email — a PERSISTED 'have we already paid for this?' check must run BEFORE the billable call, never after; 'succeeded but returned nothing' is still billed and is TERMINAL, never retried; key the ledger on a stable fingerprint of the input, not a presigned/tokenized URL), De-AI voice on AI->human surfaces, mobile-responsive UI, no native dialogs, sortable data tables, no dead rows, VERCEL_URL self-fetch ban, CRON_SECRET .trim(), new-env-var-must-be-listed rule, and FOLLOW-UPS ARE GROUPED: a follow-up found during a build or review goes into ONE follow-up ticket per screen or flow, with every item as a checklist, never one ticket per finding (BH-6902). PERFORMANCE BY DEFAULT (BH-6946), each one a BLOCK: a new sequential await over independent reads; a list read in a layout where a count would do; a route without loading.tsx; a repeated config read without a request memo; a list query without a matching index at seeded volume; unbounded rows to the client; a speed claim without before and after numbers; a client snapshot that holds a token, is not keyed by user and company, or survives sign-out; a key screen with two or more independent requests in sequence before its first content.
+Apply the standing iron laws (from /root/.claude/CLAUDE.md, which you must read) under its REVIEW LEVELS rule (BH-7123): a finding is a BLOCK only when it carries a class from the ALWAYS-BLOCK list (data-loss, tenant-leak, auth-bypass, money, destructive-migration, red-build, core-flow-broken, wrong-data, secret, model-id, weakened-test); every other finding, an iron law included, is a [NOTE] that rides in the review for a later cleanup and does not stop the merge. The laws:additive-only schema + RLS on new tables (Supabase projects), indexes for every query on a new table in the same migration (proven with EXPLAIN on seeded data), no per-row correlated subquery over a large table, a retention rule (scheduled delete/archive, window in a settings row) for every growing table, DB-driven config not hardcoded (incl. no hardcoded claude-* model strings), exactly-once writes where money/records move, dedup-before-spend on metered/billable APIs (transcription, LLM tokens, embeddings, enrichment, SMS/email — a PERSISTED 'have we already paid for this?' check must run BEFORE the billable call, never after; 'succeeded but returned nothing' is still billed and is TERMINAL, never retried; key the ledger on a stable fingerprint of the input, not a presigned/tokenized URL), De-AI voice on AI->human surfaces, mobile-responsive UI, no native dialogs, sortable data tables, no dead rows, VERCEL_URL self-fetch ban, CRON_SECRET .trim(), new-env-var-must-be-listed rule, and FOLLOW-UPS ARE GROUPED: a follow-up found during a build or review goes into ONE follow-up ticket per screen or flow, with every item as a checklist, never one ticket per finding (BH-6902). PERFORMANCE BY DEFAULT (BH-6946), each one a [NOTE] (a BLOCK only on a measured regression on a key screen over the REVIEW LEVELS thresholds, or on a perf ticket): a new sequential await over independent reads; a list read in a layout where a count would do; a route without loading.tsx; a repeated config read without a request memo; a list query without a matching index at seeded volume; unbounded rows to the client; a speed claim without before and after numbers; a client snapshot that holds a token, is not keyed by user and company, or survives sign-out; a key screen with two or more independent requests in sequence before its first content.
 
 Also judge: correctness bugs, security (injection, authz, secrets in code), and honest scope.
 
@@ -1543,7 +1550,7 @@ Verification limits: you may read files, but do NOT run installs/builds (no buil
 PR body:
 $BODY
 ${RP_LIVE_CI:+
-LIVE CI ON THIS HEAD, read from GitHub by the harness just now (trust it over any Evidence block or CI claim in the PR body, which may describe an older head):
+LIVE CI ON THIS HEAD, read from GitHub by the harness just now (trust it over any Evidence block or CI claim in the PR body, which may describe an older head). A run that shows cancelled was superseded by a newer push and the merge queue re-runs CI on the head it merges: cancelled is not red and not a finding. Only a FAILED run is [BLOCK red-build]:
 $RP_LIVE_CI
 }
 Recent review thread (your prior findings may be here; check whether they were addressed):
@@ -1552,10 +1559,11 @@ $THREAD
 DIFF:
 $DIFF
 
-Output format: start with a 2-4 sentence summary, then numbered findings (severity-tagged, file:line, concrete fix each), then EXACTLY two final lines:
+Output format: start with a 2-4 sentence summary, then numbered findings (each tagged [BLOCK <class>] with a class from the ALWAYS-BLOCK list, or [NOTE]; file:line; concrete fix each), then EXACTLY two final lines:
 TIER: 1 or 2   (1 = trivial/safe to auto-merge: docs, copy, isolated fix with tests, no schema/auth/money/cron surface; 2 = higher-risk class (reported, not gated))
-VERDICT: APPROVE or REQUEST_CHANGES
-
+VERDICT: APPROVE or REQUEST_CHANGES   (REQUEST_CHANGES only when at least one [BLOCK <class>] finding stands; a review whose findings are all [NOTE] is APPROVE, and the notes are the cleanup list)
+${RP_LEVEL_NOTE:+
+$RP_LEVEL_NOTE}
 Style (external teams pay tokens to read this): terse, direct, declarative. No preamble beyond the static-review disclaimer, no restating the PR body, no inventory of everything that checked out — at most one sentence of verified-good context. A finding is: what breaks, where, the fix. Cut every sentence that does not change what the author does next."
 
   # >>> review-prs bought (BH-3930; tests/review-dedupe-lanes.bh-3940-test.sh drives this block)
@@ -1746,6 +1754,23 @@ Style (external teams pay tokens to read this): terse, direct, declarative. No p
   # is empty, the no-verdict path below.
   VERDICT=$(printf '%s\n' "$REVIEW" | verdict_parse -w 'APPROVE|REQUEST_CHANGES' 2>/dev/null) || VERDICT=""
   TIER=$(grep -oE "TIER:? *\**[12]" <<<"$REVIEW" | grep -oE "[12]" | tail -1)
+  # >>> review-prs level cap (BH-7123; tests/review-level-cap.bh-7123-test.sh drives the lib)
+  # THE DEMOTER. A finding tagged BLOCK/HIGH/MEDIUM that names no ALWAYS-BLOCK
+  # class (catalog/review-always-block.tsv) becomes `[NOTE demoted from …]`, and
+  # a REQUEST_CHANGES with no standing BLOCK becomes APPROVE: the posted review
+  # body, the GitHub review state and the ledger all follow the rewritten text.
+  # review.mode=strict leaves the model's answer alone; shadow logs WOULD.
+  RL_OUT=""
+  if [ -n "$VERDICT" ] && command -v rl_cap >/dev/null 2>&1; then
+    printf '%s\n' "$REVIEW" > "$OUT_FILE.rl"
+    RL_OUT=$(rl_cap "$OUT_FILE.rl" "$PROJECT" --approve APPROVE --block REQUEST_CHANGES --lens prs 2>>"$LOG") && {
+      REVIEW=$(cat "$OUT_FILE.rl")
+      VERDICT=$(printf '%s\n' "$REVIEW" | verdict_parse -w 'APPROVE|REQUEST_CHANGES' 2>/dev/null) || VERDICT=""
+    }
+    rm -f "$OUT_FILE.rl"
+    echo "$(STAMP) [$PROJECT] #$NUM @${SHA:0:7} review level: ${RL_OUT:-not applied} -> verdict ${VERDICT:-unknown}" >> "$LOG"
+  fi
+  # <<< review-prs level cap
   # A cheap-model read (BH-2545 trivial route) is recorded at TIER 2 at most.
   # The tier is a label here: merge_step merges any APPROVE whatever its tier,
   # so what keeps a cheap read from merging is RP_ADVISORY, not this cap.
@@ -1787,10 +1812,16 @@ Style (external teams pay tokens to read this): terse, direct, declarative. No p
     continue
   fi
 
+  # BH-7123: the footer says which review mode judged this head, every time,
+  # so a reader can tell a review under the levels from one under strict
+  # without opening the box's log (the marker line above TIER: appears only
+  # when something was demoted).
+  RL_FOOT=""
+  command -v rl_mode >/dev/null 2>&1 && RL_FOOT=" Review level (BH-7123): mode $(rl_mode "$PROJECT" 2>/dev/null || echo unknown)${RL_OUT:+, $RL_OUT}."
   POSTED="$REVIEW
 
 ---
-_$RP_MARKER $SHA. Static review — no build run. Push fixes and the next pass re-reviews; approved PRs merge automatically._"
+_$RP_MARKER $SHA. Static review — no build run. Push fixes and the next pass re-reviews; approved PRs merge automatically.${RL_FOOT}_"
   # WHICH GITHUB STATE THE VERDICT CARRIES (BH-872). An APPROVE approves, as it
   # always has. A REQUEST_CHANGES on an EXTERNAL author's PR still blocks — that
   # is a real refusal and it should hold. On a HARNESS-authored PR it posts as a

@@ -55,14 +55,28 @@ N=1
 for LINE in "F2 needs a person to rotate the key" \
             "run the lead-verdict probe from the hub" \
             "the probe has to run as the hub conductor's GitHub identity" \
-            "paste the curl output into the PR body" \
-            "the build box lacks the HARNESS app key credential"; do
+            "paste the curl output into the PR body"; do
   N=$((N+1)); blockmd "p$N" "## Findings
 - a real code finding about the retry loop
 $LINE"
   CL "$T/p$N.md"
-  [ "$RC" = 0 ] && [ "$OUT" = "needs-human$TAB$LINE" ] && ok || bad "P2-P5: shape '$LINE' gave '$OUT' rc $RC"
+  [ "$RC" = 0 ] && [ "$OUT" = "needs-human$TAB$LINE" ] && ok || bad "P2-P4: shape '$LINE' gave '$OUT' rc $RC"
 done
+# P5 (BH-7123): "the build box lacks <credential>" is no longer a shape. It
+# describes a verification the box could not run, which the review levels make
+# a `[NOTE] not verified here`, never a hold (it was 9 of 37 holds in
+# 2026-09-25..10-16). Only an explicit NEEDS_HUMAN: line asks for a person now.
+N=$((N+1)); blockmd "p$N" "## Findings
+- a real code finding about the retry loop
+the build box lacks the HARNESS app key credential"
+CL "$T/p$N.md"
+[ "$RC" = 1 ] && [ "$OUT" = none ] && ok || bad "P5: the credential shape must no longer classify (gave '$OUT' rc $RC)"
+blockmd "p$N-b" "## Findings
+- [NOTE] not verified here: the build box lacks the Clerk dev keys, so e2e did not run
+- a real code finding; this needs a human to check the vendor console
+NEEDS_HUMAN: add the live Stripe key on Vercel before go-live"
+CL "$T/p$N-b.md"
+[ "$RC" = 0 ] && [ "$OUT" = "needs-human${TAB}add the live Stripe key on Vercel before go-live" ] && ok || bad "P5b: the explicit NEEDS_HUMAN line must still win (gave '$OUT' rc $RC)"
 
 # P6: a merged re-review in the real format (review.sh's header, tags stripped).
 cat > "$T/p6.md" <<'EOF'

@@ -15,6 +15,12 @@
 #       NOT RUN with the rc and exits 0. That is a skip, never a pass.
 # Offline (CI): HARNESS_TEST_SANDBOX=1 bash tests/perf-law-review-replay.bh-6946-test.sh
 # Live, once by hand: PERF_LAW_REPLAY=1 REVIEW_MODEL=<model> HARNESS_TEST_SANDBOX=1 bash tests/perf-law-review-replay.bh-6946-test.sh
+# perf-law-review-replay (BH-6946, re-sided by BH-7123): the review prompt's
+# performance law, replayed against a fixture diff that turns a Promise.all into
+# a sequential for-await. Under the REVIEW LEVELS rule a sequential await is a
+# [NOTE], not a BLOCK (a BLOCK needs a measured regression over the thresholds
+# or a perf ticket), so the live replay (PERF_LAW_REPLAY=1) expects VERDICT:
+# APPROVE with a [NOTE] line that names the sequential await.
 set -uo pipefail
 . "$(dirname "$0")/lib/scratch.sh" || exit 1
 DIR=$(cd "$(dirname "$0")/.." && pwd)
@@ -41,7 +47,7 @@ done
 
 # ── O2 the replay prompt carries R from the real review prompt ───────────────
 R=$(grep -E '^Adversarially review the diff of branch' "$DIR/bin/lib/rb/review.sh" \
-      | grep -oE 'PERFORMANCE BY DEFAULT \(BH-6946\), each one a BLOCK:.*before its first content\.')
+      | grep -oE 'PERFORMANCE BY DEFAULT \(BH-6946\), each one a \[NOTE\] \(a BLOCK only [^)]*\):.*before its first content\.')
 [ -n "$R" ] && ok || bad "O2 the general review line of bin/lib/rb/review.sh carries no performance law"
 PROMPT="Review this diff of a Next.js server page against these rules. $R
 
@@ -61,8 +67,9 @@ if [ "${PERF_LAW_REPLAY:-}" = 1 ]; then
   else
     echo "--- live review output"; cat "$T/out.txt"; echo "---"
     last=$(grep -v '^[[:space:]]*$' "$T/out.txt" | tail -1)
-    [ "$last" = "VERDICT: BLOCK" ] && ok || bad "LIVE last line is '$last', not VERDICT: BLOCK"
-    grep -E '^\[BLOCK\]' "$T/out.txt" | grep -qiE 'sequential|in sequence|await' && ok || bad "LIVE no [BLOCK] line names the sequential await"
+    [ "$last" = "VERDICT: APPROVE" ] && ok || bad "LIVE last line is '$last', not VERDICT: APPROVE (a sequential await is a [NOTE] under the REVIEW LEVELS rule, BH-7123)"
+    grep -E '^\[NOTE\]' "$T/out.txt" | grep -qiE 'sequential|in sequence|await' && ok || bad "LIVE no [NOTE] line names the sequential await"
+    grep -qE '^\[BLOCK' "$T/out.txt" && bad "LIVE a [BLOCK] line on a diff with no ALWAYS-BLOCK class" || ok
   fi
 else
   echo "SKIP live replay (set PERF_LAW_REPLAY=1)"

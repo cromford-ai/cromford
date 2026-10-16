@@ -67,6 +67,12 @@ command -v jq >/dev/null || { echo "jq missing — skipping"; exit 0; }
 command -v flock >/dev/null || { echo "FAIL: flock missing"; exit 1; }
 export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@example.invalid GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@example.invalid
 export GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null
+# BH-7123: this suite pins the re-review scope mechanics (lpv_downgrade) with
+# classless fixture findings and a `[BLOCK needs-human] f.txt:5` that is not a
+# go-live step. The review level cap (bin/lib/review-level.sh) would read that
+# human ask as a verification note; it has its own suite
+# (tests/review-level-cap.bh-7123-test.sh), so here it is inert.
+export REVIEW_LEVEL_MODE=strict
 unset LEAD_DELTA_REVIEW_MAX_LINES LEAD_DELTA_REVIEW_MAX_BYTES LEAD_DELTA_PROTECTED_MAX_LINES AGENT_CALL_FP AGENT_CALL_GUARD_STAGE
 
 # ───────────────────────────── the fixture repo ─────────────────────────────

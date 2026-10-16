@@ -268,7 +268,7 @@ drive "$T/body-5454.md"
 rm -f "$T/gh-fail"
 
 # ════ C1: the checklist ═════════════════════════════════════════════════════
-head -1 "$SRC/prompts/lead-review-checklist.md" | grep -qx 'Checklist-Version: 8' && ok || bad "C1 checklist is not version 8"
+head -1 "$SRC/prompts/lead-review-checklist.md" | grep -qx 'Checklist-Version: 9' && ok || bad "C1 checklist is not version 9"
 grep -q 'outcome replay' "$SRC/prompts/lead-review-checklist.md" && grep -q 'k of N' "$SRC/prompts/lead-review-checklist.md" \
   && ok || bad "C1 checklist does not name the outcome replay and k of N"
 

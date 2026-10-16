@@ -1,0 +1,12 @@
+# catalog/review-golive.tsv — the human steps that may still hold a ticket
+# (BH-7123). Read by rl_golive_re in bin/lib/review-level.sh. Tab-separated:
+# kind, ere, note. A `NEEDS_HUMAN:` line or a `[BLOCK needs-human]` finding
+# whose text matches one of these EREs (grep -iE) is a go-live step a user
+# depends on and stands. Any other human ask is a verification this box could
+# not run: rl_cap rewrites it to `NOTE not verified here:` and the verdict does
+# not wait on it. Lines that start with # are comments.
+connector	live (connector|integration|oauth|api) (key|credential|secret|token|app)|connector (key|credential|secret)|composio|fireflies auth|zoom app|slack app	a live third-party connector a user depends on
+vendor-console	vendor console|(stripe|clerk|vercel|supabase|cloudflare|github) (dashboard|console|settings) .{0,40}(set|add|create|rotate|enable)|set .{0,60} (on|in) (vercel|github|supabase|cloudflare|fly)	a setting only a person can change in a vendor console
+credential-live	production (key|secret|credential)|prod (key|secret|credential)|live (stripe|clerk) key|rotate the (key|secret|credential)|add the live	a production credential to be issued or rotated
+infra	\bdns\b|domain (record|verification|setup)|billing account|payment method|webhook (url|secret) (in|on) (stripe|github|slack|zoom)	DNS, domain, billing account, webhook registration
+decision	product decision|(operator|the orchestrator|a person|the owner|the client) (must|has to|needs to) (decide|choose|pick|confirm|approve|sign off)|design question|which (option|variant|copy) (ships|to ship)	a decision only a person can make
