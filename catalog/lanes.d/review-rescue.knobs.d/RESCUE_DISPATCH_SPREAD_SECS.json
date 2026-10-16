@@ -1,0 +1,11 @@
+{
+  "env": "RESCUE_DISPATCH_SPREAD_SECS",
+  "read_in": "bin/review-rescue.sh",
+  "type": "int",
+  "default": 600,
+  "min": 0,
+  "max": 1500,
+  "unit": "seconds",
+  "zero_means": null,
+  "note": "BH-6893: the cron line runs review-rescue.sh --dispatch, which starts (or, placed fly, enqueues) one `--project <p>` run per project and exits. Each project starts at a stable offset inside this window (bin/lib/project-lanes.sh). 0 starts every project run at once. Keep it under the 30-minute cadence. A non-number falls back to 600 with one log line."
+}

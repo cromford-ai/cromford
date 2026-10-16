@@ -1,0 +1,18 @@
+# catalog/lane-run-inputs.d/review-rescue.ro — what one
+# `bin/review-rescue.sh --project $p` run reads and never writes back. The
+# snapshot is review-rescue.rw plus these lines.
+#
+# The record files the run reads only. bin/review-rescue.sh: pipeline.log 864 ·
+# reviewed-sha 854 · review-head 855 · .blocked-resolver-superseded
+# 1075,1119 · .blocked-resolver-abandoned 791,1076.
+@token <record input> pipeline.log reviewed-sha review-head .blocked-resolver-superseded .blocked-resolver-abandoned
+builds/$p-<KEY>-*/<record input>
+builds/pool-$p-<KEY>-*/<record input>
+builds/fly-$p-<KEY>-*/<record input>
+# resolver_acted (bin/review-rescue.sh:919-921), from ledger_materialize.
+state/blocked-resolver/$p/*.json
+# bin/review-rescue.sh:214 (fleet-projects-or-alert.sh), 279, 378, 1050.
+fleet.conf
+# The lane gate and the kill switch: bin/review-rescue.sh:135, 217
+# (bin/lib/lane-gate.sh, bin/lib/lane-switch.sh).
+flags/*

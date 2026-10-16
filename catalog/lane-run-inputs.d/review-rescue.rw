@@ -1,0 +1,44 @@
+# catalog/lane-run-inputs.d/review-rescue.rw — the hub files one
+# `bin/review-rescue.sh --project $p` run writes and may write back from a Fly
+# lane machine. The ro snapshot is these plus review-rescue.ro. Format:
+# docs/notes/2026-10-14-BH-6719-lane-run-inputs-manifests.md. The inventory is
+# in docs/notes/2026-10-15-BH-6893-review-rescue-per-project.md.
+#
+# NOT CARRIED. A project run also writes these. Each one blocks a later flip of
+# review-rescue to Fly, and the flip ticket must solve it:
+#   logs/ALERTS.log (appends through bin/alert-line.sh: bin/review-rescue.sh:209,
+#     349, 691, 1093, 1122) — waits for the alert path off the hub (#6889)
+#   $REPOS/$p: the fetch, the throwaway worktree, the main merge and hold_push
+#     (bin/review-rescue.sh:482-564) — a lane machine has no clone
+#   builds/.pool-*.tmp.* (ledger_materialize staging, renamed in the same run,
+#     bin/review-rescue.sh:994-1011)
+#   state/ticket-stage/$p.tsv.lockd and $p.tsv.tmp.* (the writer's own lock and
+#     temp file, bin/lib/needs-human/step-done.sh:186-190)
+# Secrets, locks and machine-local caches are never carried: env/*, locks/*,
+# state/gh-*, state/settings-cache.json, state/lane-gate/*,
+# state/alert-line-sent/*, state/alerts/*, flags/alerted-*, logs/cost.csv,
+# logs/gh-calls/* (bin/lib/gh-limit-logger.sh).
+# logs/review-rescue.log rides back as the lane log (.lri/log-append).
+#
+# The files of a build record the run writes. bin/review-rescue.sh:
+# RESULT, RESULT.tmp 468,678 · review.md 616-651 (the rescue review) · plan.md
+# 572-579,1000 · pr-body.md 582-590 · rescue-lane.log 297-298 ·
+# rescue-review-run.txt 633,644 · test-tamper-rescan.txt 502-508 ·
+# .rescue-attempts 440-441 · .review-rescued 331,386,475,510,685,1096,1123 ·
+# .verdict-backfilled 827-870 · .human-step-checked 398,402 ·
+# .human-step-none 1043 · .human-step-waiting-said 411-413 ·
+# .rescue-materialized and .stale-flagged 999 · .conflicts-with-main 542-560 ·
+# .findings-general 634,649
+@token <record file> RESULT RESULT.tmp review.md plan.md pr-body.md rescue-lane.log rescue-review-run.txt test-tamper-rescan.txt .rescue-attempts .review-rescued .verdict-backfilled .human-step-checked .human-step-none .human-step-waiting-said .rescue-materialized .stale-flagged .conflicts-with-main .findings-general
+# The candidate walk (bin/review-rescue.sh:1052-1131) and rescue_one (:305-738).
+builds/$p-<KEY>-*/<record file>
+# The walk, and ledger_materialize's new builds/pool-<build_dir>/ (:994-1005).
+builds/pool-$p-<KEY>-*/<record file>
+# verdict_backfill (bin/review-rescue.sh:773-875).
+builds/fly-$p-<KEY>-*/<record file>
+# nh_sd_stage_put (bin/lib/needs-human/step-done.sh:181), called at
+# bin/review-rescue.sh:410,422,471,550,686,703,708,734,1094.
+state/ticket-stage/$p.tsv
+# bhw_claim (bin/lib/handoff-watch.sh:103-117; the id is bhw_id's <p>-<KEY>),
+# called at bin/review-rescue.sh:726-727.
+state/blocked-resolver/handoffs/claims/$p-<KEY>

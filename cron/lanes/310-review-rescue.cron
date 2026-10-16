@@ -1,2 +1,5 @@
 # @hub-lanes
-7,37 * * * * /root/harness/bin/hub-lease.sh check && /root/harness/bin/review-rescue.sh
+# BH-6893: --dispatch starts one `review-rescue.sh --project <p>` run per project
+# (bin/lib/project-lanes.sh, placement lane_placement.review-rescue) and exits.
+# The project runs append their output to logs/review-rescue-cron.log.
+7,37 * * * * /root/harness/bin/hub-lease.sh check && /root/harness/bin/review-rescue.sh --dispatch >> /root/harness/logs/review-rescue-cron.log 2>&1

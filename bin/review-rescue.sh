@@ -84,6 +84,26 @@
 # fetch loads it; a pause_flags row reconciled into the file, then the file),
 # else the bare file, which is what a still-warm settings cache leaves.
 set -uo pipefail
+# RUN MODES (BH-6893). No argument is the fleet run: every project's records in
+# one process. `--project <p>` (or `--project=<p>`) works on <p>'s records only,
+# under locks/review-rescue-<p>.lock. `--dispatch` is the cron tick: pl_dispatch
+# starts (or, placed fly, enqueues) one `--project` run per project and returns.
+# Any other argument is ignored with one log line. The mode block is below the
+# lane gate and the kill switch.
+RR_DISPATCH=""; RR_PROJECT=""; RR_PROJECT_SET=""; RR_JUNK=""
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --dispatch) RR_DISPATCH=1 ;;
+    --project) RR_PROJECT_SET=1; RR_PROJECT="${2-}"; [ "$#" -ge 2 ] && shift ;;
+    --project=*) RR_PROJECT_SET=1; RR_PROJECT="${1#--project=}" ;;
+    *) RR_JUNK="${RR_JUNK:+$RR_JUNK }'$1'" ;;
+  esac
+  shift
+done
+if [ -n "$RR_DISPATCH" ] && [ -n "$RR_PROJECT_SET" ]; then
+  echo "review-rescue: --dispatch and --project do not go together — no run" >&2
+  exit 2
+fi
 # BH-2303: every model call this lane makes names the lane, so its cost rows
 # carry lane_id and its LLM_* knobs (on/off, runners, daily cap) bind it alone.
 export AGENT_CALL_LANE=review-rescue
@@ -179,9 +199,10 @@ RESCUE_PARALLEL="${RESCUE_PARALLEL:-}"   # 0 = unlimited (default since 2026-09-
 # materialize every historic REVIEW_BLOCKED row the ledger holds.
 RESCUE_LEDGER_LOOKBACK_H="${RESCUE_LEDGER_LOOKBACK_H:-}"
 case "$RESCUE_LEDGER_LOOKBACK_H" in ''|*[!0-9]*|0) RESCUE_LEDGER_LOOKBACK_H=168 ;; esac
-# RESCUE_ONLY=<project>: restrict a (manual) run to one project's build dirs.
-# Oldest-first is right for the cron, wrong for an operator who needs one
-# project's stranded builds back before the rest of the fleet's.
+# RESCUE_ONLY=<project>: restrict a run to one project's build dirs, in all
+# three passes. Oldest-first is right for the cron, wrong for an operator who
+# needs one project's stranded builds back before the rest of the fleet's.
+# `--project <p>` (BH-6893) sets it to <p>.
 RESCUE_ONLY="${RESCUE_ONLY:-}"
 STAMP() { date -u '+%Y-%m-%d %H:%M:%SZ'; }
 say() { echo "$(STAMP) $*" >> "$LOG"; }
@@ -201,6 +222,59 @@ lane_switch review-rescue-disabled && exit 0
 # host's authenticated gh, talking to example-org/project-5, in place of the
 # suite's fake. Appending keeps the cron need and drops the shadowing.
 export PATH="$PATH:/usr/local/bin"
+
+# >>> run mode (BH-6893)
+# fleet     no argument: every project's records, one process (today's run)
+# project   --project <p>: <p>'s records only (RESCUE_ONLY=<p>, PROJECTS=<p>)
+# dispatch  --dispatch: pl_dispatch, then exit; the dispatcher touches no record
+RR_MODE=fleet
+mkdir -p "$H/logs" "$H/locks" 2>/dev/null
+[ -z "$RR_JUNK" ] || say "unknown argument(s) $RR_JUNK ignored — this is the fleet run"
+if [ -n "$RR_PROJECT_SET$RR_DISPATCH" ] && [ -r "$H/bin/lib/project-lanes.sh" ]; then
+  # shellcheck source=bin/lib/project-lanes.sh
+  . "$H/bin/lib/project-lanes.sh"
+fi
+if [ -n "$RR_PROJECT_SET" ]; then
+  case "$RR_PROJECT" in
+    ''|.*|*[!A-Za-z0-9._-]*) RR_NOTP=1 ;;
+    *) case $'\n'"$PROJECTS"$'\n' in *$'\n'"$RR_PROJECT"$'\n'*) RR_NOTP=0 ;; *) RR_NOTP=1 ;; esac ;;
+  esac
+  if [ "$RR_NOTP" = 1 ]; then
+    say "--project '$RR_PROJECT' is not a project in fleet.conf — no run"
+    exit 2
+  fi
+  # The runner (bin/project-lane-run.sh) already holds the project lock on
+  # PL_LOCK_FD. A run started by hand takes the same lock, so a hand run and a
+  # dispatched run of one project never overlap. Fd 9 stays the parent's:
+  # rescue_one's `exec 9>build-key-…` runs in its own subshell.
+  if [ "${PL_LANE:-}" = review-rescue ] && [ "${PL_PROJECT:-}" = "$RR_PROJECT" ] \
+     && [ -n "${PL_LOCK_FD:-}" ] && { : >&"$PL_LOCK_FD"; } 2>/dev/null; then
+    :
+  elif command -v pl_lock_take >/dev/null 2>&1; then
+    pl_lock_take review-rescue "$RR_PROJECT" 9 || {
+      say "a run of $RR_PROJECT is still live (locks/review-rescue-$RR_PROJECT.lock held) — exiting"; exit 0; }
+  else
+    exec 9>"$H/locks/review-rescue-$RR_PROJECT.lock"
+    flock -n 9 || {
+      say "a run of $RR_PROJECT is still live (locks/review-rescue-$RR_PROJECT.lock held) — exiting"; exit 0; }
+  fi
+  RR_MODE=project; RESCUE_ONLY="$RR_PROJECT"; PROJECTS="$RR_PROJECT"
+  # `set -a; . env/global.env` above can reset GH_TOKEN: re-arm the project's own.
+  command -v pl_token >/dev/null 2>&1 && pl_token >/dev/null 2>&1 || true
+  say "project run $RR_PROJECT"
+elif [ -n "$RR_DISPATCH" ]; then
+  RR_SPREAD="${RESCUE_DISPATCH_SPREAD_SECS:-600}"
+  case "$RR_SPREAD" in
+    *[!0-9]*) say "RESCUE_DISPATCH_SPREAD_SECS='$RR_SPREAD' is not a whole number — using 600"; RR_SPREAD=600 ;;
+  esac
+  if command -v pl_dispatch >/dev/null 2>&1; then
+    # Every pass of this lane is per project, so the dispatcher has no fleet part.
+    say "$(pl_dispatch review-rescue "$RR_SPREAD" "$H/bin/review-rescue.sh" --project)"
+    exit 0
+  fi
+  say "project-lanes.sh not loaded — this tick is the fleet run, in one process"
+fi
+# <<< run mode
 
 slug_for() { awk -v p="$1" '$1==p {print $2}' "$H/fleet.conf"; }
 is_tamper_block() { case "$1" in "REVIEW_BLOCKED test-tamper"*) return 0 ;; *) return 1 ;; esac; }
@@ -697,9 +771,16 @@ VB_MAX="${VERDICT_BACKFILL_MAX:-}"
 case "$VB_MAX" in ''|*[!0-9]*) VB_MAX=25 ;; esac
 
 verdict_backfill() {
-  local n=0 D BN FIRST V PROJECT CORE REST KEY JOB RC STATE RSHA PROV WHY
+  local n=0 D BN FIRST V PROJECT CORE REST KEY JOB RC STATE RSHA PROV WHY DIRS
   command -v job_for_record >/dev/null 2>&1 || return 0
-  for D in "$H"/builds/*/; do
+  # One project's run walks that project's record dirs only. A glob that
+  # matches nothing stays literal and has no RESULT, so it is skipped below.
+  if [ -n "$RESCUE_ONLY" ]; then
+    DIRS=("$H"/builds/"$RESCUE_ONLY"-*/ "$H"/builds/pool-"$RESCUE_ONLY"-*/ "$H"/builds/fly-"$RESCUE_ONLY"-*/)
+  else
+    DIRS=("$H"/builds/*/)
+  fi
+  for D in "${DIRS[@]}"; do
     [ "$n" -lt "$VB_MAX" ] || break
     D="${D%/}"
     [ -f "$D/RESULT" ] || continue
@@ -729,6 +810,8 @@ verdict_backfill() {
     BN=$(basename "$D")
     CORE="${BN#pool-}"; CORE="${CORE#fly-}"
     PROJECT=$("$H/bin/project-of.sh" --prefix "$CORE" 2>/dev/null || echo "")
+    # `pa-*` also matches `pa-x-…`: a record of another project is not this run's.
+    [ -z "$RESCUE_ONLY" ] || [ "$PROJECT" = "$RESCUE_ONLY" ] || continue
     KEY=""
     if [ -n "$PROJECT" ]; then REST="${CORE#"$PROJECT"-}"; KEY="${REST%-*}"; fi
     [ -n "$PROJECT" ] && [ -n "$KEY" ] || { say "$BN: cannot parse project/key — no verdict backfilled, and nothing marked"; continue; }
@@ -978,6 +1061,11 @@ while read -r R; do
   fi
   FIRST=$(head -1 "$R" 2>/dev/null)
   grep -q "REVIEW_BLOCKED" <<<"$FIRST" || continue
+  # The basename test above lets `pa-x-…` into a `pa` run: the registry decides.
+  if [ -n "$RESCUE_ONLY" ]; then
+    read -r RRP _ <<<"$(sd_rec_ids "$D")"
+    [ "${RRP:-}" = "$RESCUE_ONLY" ] || continue
+  fi
   # >>> shape D candidates (BH-6536)
   # A verdict-bearing BLOCK whose final round is a human step only. It is
   # collected whole here and rotated below, so a record that waits on a person
@@ -1035,7 +1123,11 @@ while read -r R; do
     touch "$D/.review-rescued"; continue
   fi
   CANDS+=("$D")
-done < <(find "$H/builds" -maxdepth 2 -name RESULT -mmin +90 2>/dev/null | xargs -r ls -tr 2>/dev/null)
+done < <(if [ -n "$RESCUE_ONLY" ]; then
+           find "$H"/builds/"$RESCUE_ONLY"-*/ "$H"/builds/pool-"$RESCUE_ONLY"-*/ -maxdepth 1 -name RESULT -mmin +90 2>/dev/null
+         else
+           find "$H/builds" -maxdepth 2 -name RESULT -mmin +90 2>/dev/null
+         fi | xargs -r ls -tr 2>/dev/null)
 # Shape D rotates: the record checked longest ago (.human-step-checked, touched
 # on every thread read) goes first, oldest RESULT first among the unchecked.
 SD_CANDS=()
