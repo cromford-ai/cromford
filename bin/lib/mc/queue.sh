@@ -1664,15 +1664,20 @@ mc_mergify_required_checks() {
 #   comma-separated); rc 75 when the page cannot be read or does not hold every run.
 mc_mergify_batch_green() {
   local slug="$1" sha="$2" req="${3:-}" body rc=0 out
+  # BH-7121: crs_status (completed_at + a green conclusion is completed).
+  # Absent lib -> rc 75, unreadable, as for an unreadable page.
+  # shellcheck source=bin/lib/mc/check-run-state.sh
+  [ -n "${CRS_JQ_DEFS:-}" ] || . "${BASH_SOURCE[0]%/*}/check-run-state.sh" 2>/dev/null
+  [ -n "${CRS_JQ_DEFS:-}" ] || return 75
   mc_rest_var body gh_rest GET "repos/$slug/commits/$sha/check-runs?per_page=100" || rc=$?
   [ "$rc" = 0 ] || return 75
-  out=$(jq -r --arg req "$req" '
+  out=$(jq -r --arg req "$req" "$CRS_JQ_DEFS"'
     (.check_runs // []) as $all
     | [$all[] | select((.app.slug // "") != "mergify")] as $c
     | [$req | split("\n")[] | select(length > 0) | . as $n | select(any($c[]; .name == $n) | not)] as $miss
     | if (.total_count // 0) > ($all | length) then "partial"
       elif ($c | length) == 0 then "none"
-      elif ([$c[] | select(.status != "completed"
+      elif ([$c[] | select(crs_status != "completed"
                or ((.conclusion // "") | IN("success", "neutral", "skipped") | not))] | length) > 0 then "notgreen"
       elif ($miss | length) > 0 then "missing:" + ($miss | join(", "))
       else ([$c[].completed_at | fromdateiso8601] | max | tostring) end' <<<"$body" 2>/dev/null) || return 75

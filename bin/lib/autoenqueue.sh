@@ -57,6 +57,11 @@
 # the ruleset stay the gates; ejection and re-entry stay the conductor's.
 # gh-rest: no-graphql
 
+# BH-7121: crs_word, the effective status of a check run (G4). Absent lib ->
+# crs_word undefined -> G4 reads the check as unreadable, never green.
+# shellcheck source=bin/lib/mc/check-run-state.sh
+. "${BASH_SOURCE[0]%/*}/mc/check-run-state.sh" 2>/dev/null || true
+
 AE_KIND=autoenqueue
 AE_BODY='@mergifyio queue'
 AE_MAX_FAILS=3
@@ -483,8 +488,7 @@ _ae_gates() {
   fi
   while IFS= read -r c; do
     [ -n "$c" ] || continue
-    cw=$(jq -r --arg c "$c" '[.check_runs[]? | select(.name==$c)] | sort_by(.started_at // "") | last
-          | if . == null then "absent" else (.status + "/" + (.conclusion // "none")) end' "$t" 2>/dev/null)
+    cw=$(crs_word "$t" "$c" 2>/dev/null)
     [ "$cw" = completed/success ] || { rm -f "$t"; _ae_skip "$key" "$head" check "'$c' is ${cw:-unreadable} on this head"; return 1; }
   done <<<"$AE_CHECKS"
   rm -f "$t"

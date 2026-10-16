@@ -139,10 +139,12 @@ landing_eligible() {
   if [ "$rc" != 0 ] || ! jq -e '(.check_runs | type == "array") and ((.total_count // 0) <= (.check_runs | length))' "$t" >/dev/null 2>&1; then
     rm -f "$t"; _landing_refuse unreadable-checks; return 1
   fi
+  # BH-7121: crs_word reads completed_at too. Absent lib -> empty -> fast-checks.
+  # shellcheck source=bin/lib/mc/check-run-state.sh
+  command -v crs_word >/dev/null 2>&1 || . "${BASH_SOURCE[0]%/*}/check-run-state.sh" 2>/dev/null
   while IFS= read -r c; do
     [ -n "$c" ] || continue
-    cw=$(jq -r --arg c "$c" '[.check_runs[] | select(.name == $c)] | sort_by(.started_at // "") | last
-          | if . == null then "absent" else (.status + "/" + (.conclusion // "none")) end' "$t" 2>/dev/null)
+    cw=$(crs_word "$t" "$c" 2>/dev/null)
     [ "$cw" = completed/success ] || { rm -f "$t"; _landing_refuse fast-checks; return 1; }
   done <<<"$names"
   rm -f "$t"
