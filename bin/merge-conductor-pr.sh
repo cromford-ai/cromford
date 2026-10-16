@@ -14,7 +14,9 @@
 #               `PROF mc-pr state=HEAD_MOVED reason=head-moved deferred=-` and
 #               exits 0: the hub enqueues the new head as a new row. A PR that
 #               is gone prints state=ABSENT and exits 0. A read that cannot be
-#               verified prints state=UNVERIFIABLE and exits 75.
+#               verified prints state=UNVERIFIABLE and exits 75, with reason
+#               head-read-rc<n>-<GH_REST_STATUS>-<GH_REST_REASON|none>
+#               [-via-<app|default|admin|unknown>].
 #   3. run      bin/merge-conductor.sh with MC_ONLY_PR=<owner/repo>#<pr>,
 #               MC_FANIN_SOLO_RUN=1 and MC_ON_MACHINE=1: today's keyed tick for
 #               this one PR. MC_ON_MACHINE=1 makes the detached rebase,
@@ -73,7 +75,12 @@ gh_rest GET "repos/$SLUG/pulls/$NUM" > "$TMP" || grc=$?
 case "$grc" in
   0) ;;
   44) prof ABSENT pr-absent -; exit 0 ;;
-  *) prof UNVERIFIABLE "head-read-rc$grc" -; exit 75 ;;
+  *)
+    # The status and reason of the read (BH-6942): gh_rest ran as a plain
+    # command, so they are still in this shell.
+    HRW="head-read-rc$grc-${GH_REST_STATUS:-000}-${GH_REST_REASON:-none}"
+    command -v gh_repo_current_rung >/dev/null 2>&1 && HRW="$HRW-via-$(gh_repo_current_rung)"
+    prof UNVERIFIABLE "$(printf '%s' "$HRW" | tr -cd 'A-Za-z0-9._:-')" -; exit 75 ;;
 esac
 NOW=$(jq -r '.head.sha // empty' "$TMP" 2>/dev/null)
 [ -n "$NOW" ] || { prof UNVERIFIABLE head-read-no-sha -; exit 75; }

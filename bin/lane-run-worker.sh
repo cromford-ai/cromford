@@ -11,9 +11,17 @@
 #                and swaps in bin/, catalog/ and fleet.conf. Its one result
 #                line goes to the log and to stderr; after a swap (rc 10) the
 #                loop re-execs itself with its own argv. No run is in flight.
-#   1. claim     POST /api/lane-runs/claim {machine, prefer}. prefer = the
-#                projects of the clone cache (step 7), newest first; none = no
-#                prefer key. 204 = the queue is empty:
+#   0b. repos    once per process start, when lrr_enabled (lib/lane-run-repos.sh;
+#                on with LANE_RUN_CODE_SYNC=1, or LANE_RUN_REPO_CHECK=1):
+#                lrr_check reads each fleet repo once and writes the projects
+#                whose repo this machine cannot read (404, 401) to
+#                state/lane-run-worker/skip-prefixes. A re-exec checks again.
+#   1. claim     POST /api/lane-runs/claim {machine, prefer, skip_prefixes}.
+#                prefer = the projects of the clone cache (step 7), newest
+#                first; none = no prefer key. skip_prefixes = `<project>.`
+#                each from the skip file when it is not empty, so a
+#                merge-conductor-pr row of such a repo stays queued for the
+#                hub. 204 = the queue is empty:
 #                sleep lane_run.poll_s (1..300, fallback 15), or with --once
 #                exit 0. A transport failure logs one line; --once exits 1.
 #   2. check     lane and project are path-safe names and args[0] is a path
@@ -83,6 +91,8 @@ export HARNESS="$H"
 . "$H/bin/lib/lane-run-inputs.sh" || exit 1
 # shellcheck source=bin/lib/lane-run-code.sh
 . "$H/bin/lib/lane-run-code.sh" || exit 1
+# shellcheck source=bin/lib/lane-run-repos.sh
+. "$H/bin/lib/lane-run-repos.sh" || exit 1
 
 ONCE=0; MACHINE=""
 while [ "$#" -gt 0 ]; do
@@ -322,6 +332,7 @@ lw_run() {
   return 0
 }
 
+lrr_enabled && lrr_check
 while :; do
   if lrc_enabled && lrc_due; then
     LW_CODE=$(lrc_sync); lrc=$?
@@ -330,8 +341,12 @@ while :; do
     [ "$lrc" = 10 ] && exec "$H/bin/lane-run-worker.sh" "${LW_ARGV[@]}"
   fi
   # Into a file, not $( ): JOBS_HTTP must survive the call to tell 204 apart.
-  _jobs_req POST /api/lane-runs/claim "$(jq -nc --arg m "$MACHINE" --argjson p "$(lw_prefer)" \
-    '{machine:$m} + (if ($p | length) > 0 then {prefer:$p} else {} end)')" > "$RESP"; crc=$?
+  # The skip file is read only while the check is on: a file left by an
+  # earlier process with the check on must not filter claims once it is off.
+  LW_SKIP='[]'; lrr_enabled && LW_SKIP=$(lrr_skip_json); [ -n "$LW_SKIP" ] || LW_SKIP='[]'
+  _jobs_req POST /api/lane-runs/claim "$(jq -nc --arg m "$MACHINE" --argjson p "$(lw_prefer)" --argjson s "$LW_SKIP" \
+    '{machine:$m} + (if ($p | length) > 0 then {prefer:$p} else {} end)
+     + (if $s == [] then {} else {skip_prefixes:$s} end)')" > "$RESP"; crc=$?
   if [ "$crc" != 0 ]; then
     lw_log "claim failed (rc $crc, http ${JOBS_HTTP:-none})"
     [ "$ONCE" = 1 ] && exit 1

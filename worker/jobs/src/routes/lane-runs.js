@@ -35,6 +35,21 @@
 // whose project starts with a prefix, newest first: the merge-conductor-pr
 // lane keys a row as <project>.<pr>.<head12>, and the hub reads one PR's rows
 // before it enqueues (bin/lib/mc/fly-workers.sh).
+//
+// The claim takes an optional `skip_prefixes` (BH-6942): at most 64 strings of
+// [A-Za-z0-9._-]{1,65}. A row whose project starts with one of them, byte for
+// byte, is not claimed and stays `queued` with its attempts unchanged. A
+// machine sends `<project>.` for each fleet repo it cannot read
+// (bin/lib/lane-run-repos.sh), so a merge-conductor-pr row of that repo waits
+// for the hub, which takes it back after MC_FLY_QUEUE_STALE_S (no-capacity).
+// A refused row must also END, or it stays `queued` forever: one row per head
+// pushed, each one holding bin/lane-fleet.sh's oldest-wait signal up (lead
+// review of #6960). So a claim that carries skip_prefixes first ends, in ONE
+// statement (REFUSED_SQL), every `queued` row that its own skip and lanes
+// filters refuse and that waited lane_run.refused_max_wait_s or longer (seed
+// 600, 0 = never): status `died`, rc NULL, prof_line `withdrawn
+// refused-at-claim ...`. The hub reads that row as no-capacity, not as a
+// machine failure (mc_fly_stale_for). No other claim and no other row changes.
 
 import { d1Guarded, json } from "../lib/http.js";
 import { isoPlusSeconds, laneName, leaseWon, percentile, str } from "../lib/core.js";
@@ -45,6 +60,8 @@ const ARGS_MAX = 64;
 const ARG_BYTES_MAX = 4096;
 const ARGS_JSON_BYTES_MAX = 16384;
 const LANES_FILTER_MAX = 32;
+const SKIP_PREFIXES_MAX = 64;
+const SKIP_PREFIX_RE = /^[A-Za-z0-9._-]{1,65}$/;
 const PREFER_MAX = 64;
 const PROF_BYTES_MAX = 512;
 const LIST_LIMIT_MAX = 50;
@@ -56,6 +73,11 @@ const LEASE_MAX_S = 3600;
 const PREFER_KEY = "lane_run.prefer_max_wait_s";
 const PREFER_DEFAULT_S = 60;
 const PREFER_MAX_S = 3600;
+const REFUSED_KEY = "lane_run.refused_max_wait_s";
+const REFUSED_DEFAULT_S = 600;
+const REFUSED_MAX_S = 86400;
+// At most this many refused rows end per claim; the next claim ends the rest.
+const REFUSED_END_MAX = 100;
 // The stats route samples at most RUN_P50_LANES_MAX queued lanes, and the
 // newest RUN_SAMPLE_N done rows of each.
 const RUN_P50_LANES_MAX = 50;
@@ -66,20 +88,39 @@ const CMD_RE = /^bin\/[A-Za-z0-9._/-]+$/;
 const LIVE = "(status='queued' OR (status='claimed' AND lease_until < ?2))";
 // Binds: ?1 machine ?2 now ?3 lease_until ?4 lanes JSON array or NULL
 // ?5 prefer JSON array or NULL ?6 the prefer cutoff (now - prefer_max_wait_s)
-// or NULL. The subquery spells LIVE as a status IN list and names the index:
-// with table statistics (ANALYZE, 20,000 rows) SQLite planned a SCAN of
-// lane_runs for the OR form of LIVE, and for the IN form without INDEXED BY.
+// or NULL ?7 skip_prefixes JSON array or NULL. The subquery spells LIVE as a
+// status IN list and names the index: with table statistics (ANALYZE, 20,000
+// rows) SQLite planned a SCAN of lane_runs for the OR form of LIVE, and for
+// the IN form without INDEXED BY. The skip prefix test is substr, not LIKE:
+// `_` is a LIKE wildcard and project names carry it.
 export const CLAIM_SQL = `UPDATE lane_runs SET status='claimed', claimed_by=?1, claimed_at=?2,
   heartbeat_at=?2, lease_until=?3, attempts=attempts+1
   WHERE id=(SELECT id FROM lane_runs INDEXED BY idx_lane_runs_claim
             WHERE status IN ('queued','claimed') AND (status='queued' OR lease_until < ?2)
             AND (?4 IS NULL OR lane IN (SELECT value FROM json_each(?4)))
+            AND (?7 IS NULL OR NOT EXISTS (SELECT 1 FROM json_each(?7) AS s
+                                           WHERE substr(project, 1, length(s.value)) = s.value))
             ORDER BY CASE WHEN ?5 IS NULL THEN 0
                           WHEN enqueued_at < ?6 THEN 0
                           WHEN project IN (SELECT value FROM json_each(?5)) THEN 1
                           ELSE 2 END, enqueued_at, id LIMIT 1)
     AND ${LIVE}
   RETURNING id, lane, project, args_json, attempts, lease_until`;
+// Ends the refused rows that waited too long (BH-6942, lead review of #6960).
+// Binds: ?1 now ?2 the cutoff (now - lane_run.refused_max_wait_s) ?3 lanes JSON
+// array or NULL ?4 skip_prefixes JSON array (never NULL here) ?5 prof_line.
+// The same skip and lanes filters as CLAIM_SQL, so a claim ends only rows it
+// would refuse itself. `enqueued_at <= ?2` reads "waited ?2 or more", the
+// hub's own rule (mc_fly_stale_for). idx_lane_runs_claim (status,
+// enqueued_at) serves the range.
+export const REFUSED_SQL = `UPDATE lane_runs SET status='died', finished_at=?1, prof_line=?5
+  WHERE id IN (SELECT id FROM lane_runs INDEXED BY idx_lane_runs_claim
+               WHERE status='queued' AND enqueued_at <= ?2
+               AND (?3 IS NULL OR lane IN (SELECT value FROM json_each(?3)))
+               AND EXISTS (SELECT 1 FROM json_each(?4) AS s
+                           WHERE substr(project, 1, length(s.value)) = s.value)
+               ORDER BY enqueued_at, id LIMIT ${REFUSED_END_MAX})
+    AND status='queued'`;
 // One lane's newest done rows, for the run p50. Binds: ?1 lane.
 export const RUN_SAMPLE_SQL = `SELECT claimed_at, finished_at FROM lane_runs
   WHERE lane=?1 AND status='done' ORDER BY id DESC LIMIT ${RUN_SAMPLE_N}`;
@@ -129,6 +170,14 @@ async function preferMaxWaitSeconds(env) {
   const s = r ? String(r.value).trim() : "";
   const n = /^\d+$/.test(s) ? Number(s) : NaN;
   return n >= 0 && n <= PREFER_MAX_S ? n : PREFER_DEFAULT_S;
+}
+
+// lane_run.refused_max_wait_s: digits 0..86400, else the code default.
+async function refusedMaxWaitSeconds(env) {
+  const r = await env.DB.prepare("SELECT value FROM settings WHERE key=?1").bind(REFUSED_KEY).first();
+  const s = r ? String(r.value).trim() : "";
+  const n = /^\d+$/.test(s) ? Number(s) : NaN;
+  return n >= 0 && n <= REFUSED_MAX_S ? n : REFUSED_DEFAULT_S;
 }
 
 // The run seconds of a done row, or null when a stamp is missing or bad.
@@ -186,9 +235,25 @@ export const routes = [
         if (s === 0) prefer = null;
         else cutoff = isoPlusSeconds(t, -s);
       }
+      let skip = null;
+      if (body.skip_prefixes !== undefined && body.skip_prefixes !== null) {
+        const s = body.skip_prefixes;
+        if (!Array.isArray(s) || s.length > SKIP_PREFIXES_MAX
+            || !s.every((x) => typeof x === "string" && SKIP_PREFIX_RE.test(x))) {
+          return json(400, { error: `skip_prefixes must be an array of at most ${SKIP_PREFIXES_MAX} strings of [A-Za-z0-9._-]{1,65}` });
+        }
+        if (s.length > 0) skip = JSON.stringify(s);
+      }
       await sweepDead(env, t);
+      if (skip !== null) {
+        const w = await refusedMaxWaitSeconds(env);
+        if (w > 0) {
+          await env.DB.prepare(REFUSED_SQL).bind(t, isoPlusSeconds(t, -w), lanes, skip,
+            `withdrawn refused-at-claim machine=${machine} waited>=${w}s`).run();
+        }
+      }
       const lease = isoPlusSeconds(t, await leaseSeconds(env));
-      const row = await env.DB.prepare(CLAIM_SQL).bind(machine, t, lease, lanes, prefer, cutoff).first();
+      const row = await env.DB.prepare(CLAIM_SQL).bind(machine, t, lease, lanes, prefer, cutoff, skip).first();
       if (!row) return new Response(null, { status: 204 });
       return json(200, {
         id: Number(row.id), lane: row.lane, project: row.project, args: JSON.parse(row.args_json),

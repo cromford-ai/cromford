@@ -29,15 +29,21 @@
 #       worker that still answers done), or no `PROF mc-pr` line. A machine that cannot
 #       run the worker fails the same way on every try, so the hub must run
 #       that head itself (lead review of #6624). rc 1 otherwise: no row, a live
-#       newest row, or a clean run.
+#       newest row, a clean run, or a `died` row whose prof_line starts
+#       `withdrawn ` (a row every machine refused at claim; mc_fly_stale_for).
 #   mc_fly_stale_for <rows-json> <key> <now-epoch> <stale-s>
 #       rc 0 + the age in seconds when the NEWEST row of <key> is queued and was
 #       enqueued <stale-s> or more seconds ago: no machine took it (no
-#       capacity, no fleet). rc 1 otherwise. MC_FLY_QUEUE_STALE_S is the knob
-#       (default 600, the ticket's "unclaimed for 10 min" rollback line).
+#       capacity, no fleet). rc 0 + the word `withdrawn` when the NEWEST row of
+#       <key> is `died` with a prof_line that starts `withdrawn `: the jobs
+#       worker ended it because the machines refused it at claim for
+#       lane_run.refused_max_wait_s (BH-6942). rc 1 otherwise.
+#       MC_FLY_QUEUE_STALE_S is the knob (default 600, the ticket's "unclaimed
+#       for 10 min" rollback line).
 #   mc_fly_enqueue <project> <slug> <pr> <head>
 #       sets MC_FLY_KEY. rc 0 = enqueued (201), 3 = already live (409),
-#       4 = a row of another head of this PR is live (MC_FLY_OTHER names it),
+#       4 = a row of another head of this PR is live (MC_FLY_OTHER names it;
+#       a queued row of another head past MC_FLY_QUEUE_STALE_S does not count),
 #       5 = the machine deferred this head (MC_FLY_DEFERRED), 6 = no valid key,
 #       7 = the machine run of this head failed (MC_FLY_FAILED), 8 = its row
 #       waits unclaimed past MC_FLY_QUEUE_STALE_S (MC_FLY_STALE), 1 = the read
@@ -111,7 +117,8 @@ mc_fly_failed_for() {
   local d
   d=$(printf '%s' "${1:-}" | jq -r --arg k "${2:-}" '
     first(.rows[]? | select(.project == $k)) // {} |
-    if (.status // "") == "died" then "died"
+    if (.status // "") == "died" and ((.prof_line // "") | startswith("withdrawn ")) then ""
+    elif (.status // "") == "died" then "died"
     elif (.status // "") == "failed" then
       (if (.rc == 126 or .rc == 127) then "command-missing" else "rc=\(.rc)" end)
     elif (.status // "") != "done" then ""
@@ -126,7 +133,8 @@ mc_fly_stale_for() {
   local a
   a=$(printf '%s' "${1:-}" | jq -r --arg k "${2:-}" --argjson now "${3:-0}" --argjson st "${4:-600}" '
     first(.rows[]? | select(.project == $k)) // {} |
-    if (.status // "") != "queued" then ""
+    if (.status // "") == "died" and ((.prof_line // "") | startswith("withdrawn ")) then "withdrawn"
+    elif (.status // "") != "queued" then ""
     else ((.enqueued_at // "") | try fromdateiso8601 catch null) as $t |
       if $t == null then "" elif ($now - $t) >= $st then ($now - $t | tostring) else "" end
     end' 2>/dev/null) || return 1
@@ -160,8 +168,15 @@ mc_fly_enqueue() {
     rows=$(_jobs_req GET "/api/lane-runs/by-prefix?lane=$MC_FLY_LANE&project_prefix=$p.$n.&live=1&limit=50") || return 1
     [ "$(printf '%s' "$rows" | jq -r '.truncated' 2>/dev/null)" = false ] || return 1
   fi
-  MC_FLY_OTHER=$(printf '%s' "$rows" | jq -r --arg k "$MC_FLY_KEY" \
-    'first(.rows[] | select((.status == "queued" or .status == "claimed") and .project != $k)) | .project' 2>/dev/null)
+  # A queued row of another head that waited MC_FLY_QUEUE_STALE_S or longer
+  # does not count (lead review of #6960): every machine may refuse it at
+  # claim (BH-6942 skip_prefixes), so counting it could skip this PR for up to
+  # lane_run.refused_max_wait_s, until a refusing claim ends that row (died,
+  # withdrawn). A claimed row still counts.
+  MC_FLY_OTHER=$(printf '%s' "$rows" | jq -r --arg k "$MC_FLY_KEY" --argjson now "$(date -u +%s)" --argjson st "$st" \
+    'first(.rows[] | select(.project != $k and (.status == "claimed" or (.status == "queued"
+       and ((((.enqueued_at // "") | try fromdateiso8601 catch null) as $t | $t == null or ($now - $t) < $st))))))
+     | .project' 2>/dev/null)
   [ -n "$MC_FLY_OTHER" ] && return 4
   lp_enqueue "$MC_FLY_LANE" "$MC_FLY_KEY" "$root/bin/merge-conductor-pr.sh" "$p" "$slug#$n" "$head"; rc=$?
   case "$rc" in 0|3) return "$rc" ;; esac
@@ -204,8 +219,18 @@ mc_fly_arm() {
     esac
   fi
   MC_FLY_N_FB=$(( ${MC_FLY_N_FB:-0} + 1 )); _mc_fly_count fb
-  mc_log "$slug#$num fallback=$why${MC_FLY_DEFERRED:+ ($MC_FLY_DEFERRED)}${MC_FLY_FAILED:+ ($MC_FLY_FAILED at ${MC_FLY_KEY:-?})}${MC_FLY_STALE:+ (${MC_FLY_KEY:-?} unclaimed for ${MC_FLY_STALE}s)} — this PR runs on the hub this tick"
+  mc_log "$slug#$num fallback=$why${MC_FLY_DEFERRED:+ ($MC_FLY_DEFERRED)}${MC_FLY_FAILED:+ ($MC_FLY_FAILED at ${MC_FLY_KEY:-?})}$(_mc_fly_stale_note) — this PR runs on the hub this tick"
   return 1
+}
+
+# _mc_fly_stale_note — the fallback line's note for rc 8: the age of a queued
+# row, or that the jobs worker ended a refused row (MC_FLY_STALE=withdrawn).
+_mc_fly_stale_note() {
+  case "${MC_FLY_STALE:-}" in
+    '') ;;
+    withdrawn) printf ' (%s withdrawn: refused at claim by every machine)' "${MC_FLY_KEY:-?}" ;;
+    *) printf ' (%s unclaimed for %ss)' "${MC_FLY_KEY:-?}" "$MC_FLY_STALE" ;;
+  esac
 }
 
 # _mc_fly_count enq|skip|fb — one word per row into MC_FLY_COUNT_FILE, the

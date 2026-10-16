@@ -72,6 +72,11 @@ unset GH_TOKEN GITHUB_TOKEN GH_ENTERPRISE_TOKEN GITHUB_ENTERPRISE_TOKEN MC_GIT_T
 # quarter-hour minute. A suite that runs a lane at :00/:15/:30/:45 must not
 # wait for it; tests/lane-start-offset.bh-5781-test.sh unsets this to drive it.
 export LANE_START_SPREAD_S=0
+# BH-6942: LANE_RUN_CODE_SYNC=1 also turns on the lane-run worker's boot repo
+# check (bin/lib/lane-run-repos.sh), one GitHub read per fleet.conf repo. A
+# suite with no gh stub must not reach GitHub through it;
+# tests/lane-run-head-read.bh-6942-test.sh sets it to 1 to drive it.
+export LANE_RUN_REPO_CHECK=0
 # BH-5337: rpool_init (bin/lib/review-pool.sh) caps a review pool at the box's
 # vCPU count and counts a tmpfs /tmp as RAM. A pool suite that runs K workers
 # at once must size K the same on a 2 vCPU runner with a tmpfs /tmp as on a
