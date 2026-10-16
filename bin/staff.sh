@@ -22,6 +22,17 @@
 #   4. GET /api/staff/agent?name=<agent>. Unreadable or not active: exit 0.
 #   5. The soul must pass the agent-core parser (bin/staff-core.mjs soul). A
 #      soul that fails is one log line and one warn beat (id staff-soul-<agent>).
+#  5a. CHAT (BH-6823): POST /api/staff/chat/take claims at most
+#      STAFF_CHAT_MAX_NOTES operator notes for this tick (tick_key). A failed
+#      take is one log line and the tick goes on: chat never blocks findings.
+#      Taken notes go in the prompt as `## Messages`, with the agent's last
+#      log lines as `## Last ticks`, and ride the SAME model call as the
+#      findings: notes alone open the call (no collector, a failed collector
+#      or 0 items), nothing new and no note is still 0 calls. After rc 0 a
+#      note with a `replies` entry is settled with its reply (dashes folded),
+#      one without is unanswered (billed, terminal); POST
+#      /api/staff/chat/settle. Every other exit releases the taken notes
+#      (EXIT trap, before the tick record).
 #   6. COLLECT: bin/staff/<agent>-collect.sh prints JSONL, one item per line:
 #      {"item":…, "title":…, "source":{"kind","url","labels"[,"filedBy"]},
 #      "observedAt":…[, "class":…]}. Absent = 0 items, silent. rc != 0 =
@@ -72,6 +83,7 @@
 #      COST_RUN_ID=staff-tick:<tick_key>, so its cost row carries that run_id.
 #      A failed post is one line in logs/staff-ticks.log, never staff.log,
 #      and never changes the exit code. A killed tick records nothing.
+#      The EXIT trap runs chat_release (5a) first, then the tick record.
 #
 # OFF: STAFF_ENABLED=0, staff-off-all, staff-kill-all, staff-off-<agent>,
 # staff-kill-<agent>.
@@ -191,7 +203,21 @@ tick_record() {
     >> "$H/logs/staff-ticks.log" 2>/dev/null
   return 0
 }
-trap 'tick_record; rm -rf "$TMPD"' EXIT
+# >>> staff chat release
+# chat_release: taken notes that were not settled go back to pending (one
+# settle with `release`). A failed release is one log line; the worker's take
+# lease returns them.
+chat_release() {
+  [ "${NOTES_N:-0}" -gt 0 ] && [ "${CHAT_SETTLED:-0}" = 0 ] || return 0
+  local rrc=0
+  jq -n --arg a "$AGENT" --arg k "$TICK_KEY" --slurpfile n "$TMPD/notes" \
+    '{agent: $a, tick_key: $k, replies: [], unanswered: [], release: [$n[].id]}' > "$TMPD/release.json" 2>/dev/null || rrc=$?
+  [ "$rrc" = 0 ] && { _jobs_req_file POST /api/staff/chat/settle "$TMPD/release.json" >/dev/null 2>&1 || rrc=$?; }
+  [ "$rrc" = 0 ] || log "chat release failed (rc=$rrc); the take lease returns $NOTES_N note(s)"
+  return 0
+}
+# <<< staff chat release
+trap 'chat_release; tick_record; rm -rf "$TMPD"' EXIT
 
 # ═════ roster row and soul ═══════════════════════════════════════════════════
 row=$(_jobs_req GET "/api/staff/agent?name=$AGENT"); rc=$?
@@ -222,15 +248,45 @@ SJ=$(node "$SELF/staff-core.mjs" soul "$H/$SOUL" 2>/dev/null) || soul_fail "staf
 [ "$(jq -r '.ok' <<<"$SJ" 2>/dev/null)" = true ] || soul_fail "$(jq -r '.errors | join("; ")' <<<"$SJ" 2>/dev/null)"
 NEVER=$(jq -c '.never' <<<"$SJ")
 
+# >>> staff chat take
+NOTES_N=0; CHAT_SETTLED=0; REPLIED=0
+: > "$TMPD/notes"
+MAX_NOTES=$(knob_int STAFF_CHAT_MAX_NOTES "${STAFF_CHAT_MAX_NOTES:-5}" 5 1 20)
+jq -n --arg a "$AGENT" --arg k "$TICK_KEY" --argjson l "$MAX_NOTES" '{agent: $a, tick_key: $k, limit: $l}' > "$TMPD/take.json"
+take=$(_jobs_req_file POST /api/staff/chat/take "$TMPD/take.json"); rc=$?
+if [ "$rc" != 0 ]; then
+  log "chat take failed (rc=$rc); notes wait for the next tick"
+elif ! jq -e '(.notes | type) == "array"' <<<"$take" >/dev/null 2>&1; then
+  log "chat take failed (rc=0, unparsable answer); notes wait for the next tick"
+else
+  jq -c '.notes[] | objects | select((.id | type) == "number" and (.text | type) == "string") | {id, text, at}' \
+    <<<"$take" > "$TMPD/notes" 2>/dev/null || : > "$TMPD/notes"
+  NOTES_N=$(grep -c . "$TMPD/notes")
+  nf=$(jq -r '.failed | if type == "array" then length else 0 end' <<<"$take" 2>/dev/null)
+  [ "${nf:-0}" -gt 0 ] 2>/dev/null && log "chat: $nf note(s) failed after the attempt cap"
+fi
+if [ "$NOTES_N" -gt 0 ]; then
+  { grep -F "agent=$AGENT " "$LOG" 2>/dev/null | tail -n 10
+    grep -F "agent=$AGENT " "$DIGEST" 2>/dev/null | tail -n 5; } | cut -c1-300 > "$TMPD/lastticks"
+fi
+# <<< staff chat take
+
 # ═════ collect ═══════════════════════════════════════════════════════════════
 PHASE=collect
 COL="$H/bin/staff/$AGENT-collect.sh"
-[ -x "$COL" ] || exit 0
+# >>> staff chat collect
+# No collector, or a failed one, with notes taken: no item, the notes go on.
+if [ ! -x "$COL" ]; then
+  [ "$NOTES_N" -gt 0 ] || exit 0
+  : > "$TMPD/raw"
+else
 crc=0
 COLLECT_T0=$(date +%s)
 timeout "$COLLECT_T" "$COL" > "$TMPD/raw" 2>/dev/null || crc=$?
 COLLECT_RC=$crc; COLLECT_S=$(( $(date +%s) - COLLECT_T0 ))
-if [ "$crc" != 0 ]; then log "collector rc=$crc; nothing claimed"; exit 0; fi
+if [ "$crc" != 0 ]; then log "collector rc=$crc; nothing claimed"; [ "$NOTES_N" -gt 0 ] || exit 0; : > "$TMPD/raw"; fi
+fi
+# <<< staff chat collect
 # One classified line per input line: ok, staff (a staff:* label) or bad.
 grep -v '^[[:space:]]*$' "$TMPD/raw" | jq -cR '
   (try fromjson catch null) as $o
@@ -252,8 +308,8 @@ COLLECTED=0; NEWN=0; PENDN=0; REPLAYED=0; CALLS=0
 DIGESTED=0; FILED=0; REFUSED=0; UNSUPPORTED=0; FAILED=0; HELD=0
 # A tick that claimed nothing of its own writes no line.
 summary() {
-  [ $((NEWN + PENDN + DEFERRED + BADN)) -gt 0 ] || return 0
-  log "level=$LEVEL collected=$COLLECTED new=$NEWN pending=$PENDN replayed=$REPLAYED deferred=$DEFERRED model_calls=$CALLS digested=$DIGESTED filed=$FILED refused=$REFUSED unsupported=$UNSUPPORTED failed=$FAILED held=$HELD"
+  [ $((NEWN + PENDN + DEFERRED + BADN + NOTES_N)) -gt 0 ] || return 0
+  log "level=$LEVEL collected=$COLLECTED new=$NEWN pending=$PENDN replayed=$REPLAYED deferred=$DEFERRED model_calls=$CALLS digested=$DIGESTED filed=$FILED refused=$REFUSED unsupported=$UNSUPPORTED failed=$FAILED held=$HELD notes=$NOTES_N replied=$REPLIED"
 }
 : > "$TMPD/new"
 while IFS= read -r line; do
@@ -381,8 +437,8 @@ while IFS= read -r it; do
 done < "$TMPD/new"
 
 TODO=$(grep -c . "$TMPD/todo")
-# Nothing left for the model is a normal end.
-[ "$TODO" -gt 0 ] || { PHASE=done; summary; exit 0; }
+# Nothing left for the model, and no operator note, is a normal end.
+[ "$TODO" -gt 0 ] || [ "$NOTES_N" -gt 0 ] || { PHASE=done; summary; exit 0; }
 
 # ═════ one model turn ════════════════════════════════════════════════════════
 PHASE=model
@@ -400,9 +456,16 @@ while IFS= read -r fp; do
     || { log "cannot write the attempt for ${fp:0:12}; no model call"; summary; exit 0; }
 done < <(jq -r .fingerprint "$TMPD/todo")
 pf="$TMPD/prompt.md"; raw="$TMPD/answer"
-{ cat "$H/$SOUL"; printf '\n\n'; cat "$H/catalog/prompts/staff-tick.md" 2>/dev/null; printf '\n## Items\n'
+{ cat "$H/$SOUL"; printf '\n\n'; cat "$H/catalog/prompts/staff-tick.md" 2>/dev/null
+  # >>> staff chat prompt
+  if [ "$NOTES_N" -gt 0 ]; then
+    printf '\n## Messages\n'; jq -sc '.' "$TMPD/notes"
+    printf '\n## Last ticks\n'; cat "$TMPD/lastticks" 2>/dev/null
+  fi
+  # <<< staff chat prompt
+  printf '\n## Items\n'
   jq -sc '.' "$TMPD/todo"; } > "$pf"
-callfp=$(jq -r .fingerprint "$TMPD/todo" | sort | sha256sum | cut -c1-64)
+callfp=$({ jq -r .fingerprint "$TMPD/todo"; jq -r '"note:\(.id)"' "$TMPD/notes"; } | sort | sha256sum | cut -c1-64)
 # agent-call's _budget_for reads AGENT_CALL_BUDGET_USD_<STAGE>: STAFF_TICK.
 env AGENT_CALL_LANE=staff STAFF_AGENT="$AGENT" AGENT_CALL_FP="staff:$AGENT:$callfp" AGENT_CALL_BUDGET_USD_STAFF_TICK="$USD" \
   COST_RUN_ID="staff-tick:$TICK_KEY" "$H/bin/agent-call.sh" staff-tick fleet "$model" 300 "$raw" "@$pf" >/dev/null 2>&1
@@ -412,8 +475,31 @@ if [ "$rc" != 0 ]; then
   log "agent-call rc=$rc; $TODO item(s) stay claimed and retry up to $MAX_ATT attempts"
   summary; exit 0
 fi
-dec=$(sed '/^[[:space:]]*```/d' "$raw" 2>/dev/null | awk '!p && index($0,"{"){ $0=substr($0,index($0,"{")); p=1 } p' \
-  | jq -cn 'first(inputs) | select(type == "object" and (.decisions | type) == "array") | .decisions' 2>/dev/null)
+sed '/^[[:space:]]*```/d' "$raw" 2>/dev/null | awk '!p && index($0,"{"){ $0=substr($0,index($0,"{")); p=1 } p' \
+  | jq -cn 'first(inputs) | select(type == "object")' > "$TMPD/answer.json" 2>/dev/null
+dec=$(jq -c 'select((.decisions | type) == "array") | .decisions' "$TMPD/answer.json" 2>/dev/null)
+# >>> staff chat settle
+# A note with a non-empty reply is answered; one without is unanswered (billed
+# and terminal). Em and en dashes fold to ", ", whitespace folds, 4000 chars.
+if [ "$NOTES_N" -gt 0 ]; then
+  jq -n --arg a "$AGENT" --arg k "$TICK_KEY" --slurpfile n "$TMPD/notes" --slurpfile ans "$TMPD/answer.json" '
+    ($ans[0].replies // [] | if type == "array" then [.[] | objects] else [] end) as $r
+    | [$n[] | . as $x
+       | {id: $x.id, text: ([$r[] | select((.id | tostring) == ($x.id | tostring)) | .text | strings
+           | gsub("\\s*[\u2014\u2013]\\s*"; ", ") | gsub("\\s+"; " ") | ltrimstr(" ") | rtrimstr(" ") | .[0:4000]
+           | select(. != "")] | .[0])}] as $all
+    | {agent: $a, tick_key: $k, replies: [$all[] | select(.text != null)],
+       unanswered: [$all[] | select(.text == null) | .id], release: []}' > "$TMPD/settle.json" 2>/dev/null
+  settled=$(_jobs_req_file POST /api/staff/chat/settle "$TMPD/settle.json"); rc=$?
+  if [ "$rc" = 0 ]; then
+    CHAT_SETTLED=1
+    REPLIED=$(jq -r '.replied | numbers' <<<"$settled" 2>/dev/null); [[ $REPLIED =~ ^[0-9]+$ ]] || REPLIED=0
+  else
+    log "chat settle failed (rc=$rc); $NOTES_N note(s) are released"
+  fi
+fi
+[ "$TODO" -gt 0 ] || { PHASE=done; summary; exit 0; }
+# <<< staff chat settle
 if [ -z "$dec" ]; then
   log "agent-call answered rc 0 with no parsable decisions (model_empty); $TODO item(s) recorded failed"
   while IFS= read -r it; do

@@ -43,10 +43,27 @@ export const NON_TARGETS = NON_PROJECTS;
 // project can ever collide with it.
 export const ALL_THREADS = '__all__';
 
-export function buildTargets(projects) {
+// BH-6823: a staff agent's thread is a target too, keyed `staff:<agent>`. It
+// is not a command turn: the tab renders the agent's own chat pane
+// (screens/staff/agent-chat.js), which the agent reads on its next tick.
+// Archie is not a staff agent and has no thread.
+export const STAFF_PREFIX = 'staff:';
+const STAFF_AGENT_RE = /^[a-z][a-z0-9-]{1,39}$/;
+const isStaffAgent = (a) => typeof a === 'string' && STAFF_AGENT_RE.test(a) && a !== 'archie' && a !== 'all';
+
+// The agent of a `staff:<agent>` target key, or null for any other key.
+export function staffAgentOf(key) {
+  if (typeof key !== 'string' || !key.startsWith(STAFF_PREFIX)) return null;
+  const a = key.slice(STAFF_PREFIX.length);
+  return isStaffAgent(a) ? a : null;
+}
+
+export function buildTargets(projects, staff = []) {
+  const agents = [...new Set((staff || []).filter(isStaffAgent))];
   return [
     { key: ORCHESTRATOR, label: 'HUB ORCHESTRATOR' },
-    ...(projects || []).filter((p) => !NON_TARGETS.has(String(p))).map((p) => ({ key: p, label: p }))
+    ...(projects || []).filter((p) => !NON_TARGETS.has(String(p))).map((p) => ({ key: p, label: p })),
+    ...agents.map((a) => ({ key: `${STAFF_PREFIX}${a}`, label: `STAFF ${a.toUpperCase()}`, kind: 'staff', agent: a }))
   ];
 }
 

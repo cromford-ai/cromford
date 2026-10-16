@@ -405,6 +405,11 @@ export const api = {
   staffAutonomy: (agent) => get(coordPath(`/api/staff/autonomy?agent=${encodeURIComponent(agent)}`)),
   staffSetAutonomy: (body) => post(coordPath('/api/staff/agents/autonomy'), body),
   staffSetDelegation: (body) => post(coordPath('/api/staff/classes/delegation'), body),
+  // BH-6823: one staff agent's chat thread (newest first, `before` the id
+  // cursor `next` of the last page) and a send. The proxy stamps the actor.
+  staffChat: (agent, before) => get(coordPath(`/api/staff/chat?agent=${encodeURIComponent(agent)}${
+    before === undefined || before === null ? '' : `&before=${encodeURIComponent(before)}`}`)),
+  staffChatSend: (body) => post(coordPath('/api/staff/chat'), body),
   // BH-6822: the agent page's timeline (one page, `before` the cursor of the
   // last row shown) and one tick with its cost rows.
   staffActivity: (agent, { before, limit } = {}) => {

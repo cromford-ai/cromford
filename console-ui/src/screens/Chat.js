@@ -7,8 +7,9 @@ import { useDocumentVisible } from '../lib/hooks.js';
 import {
   ORCHESTRATOR, mergeMessages, pendingCommandIds, optimisticTurn,
   buildTargets, filterByTarget, messageTarget, unreadByTarget, markSeen, pendingWaitLabel,
-  cursorFor, advanceCursor, ALL_THREADS, replyFailure, orcQueue, ORC_RUNNING_STALE_MIN
+  cursorFor, advanceCursor, ALL_THREADS, replyFailure, orcQueue, ORC_RUNNING_STALE_MIN, staffAgentOf
 } from '../lib/chat.js';
+import { AgentChat } from './staff/agent-chat.js';
 import { Empty, Skeleton, Cursor } from '../ui/primitives.js';
 import { agoFromMinutes, healthFromAge, minutesSince, whenLabel, fmtDuration } from '../lib/format.js';
 import { Dot } from '../ui/icons.js';
@@ -52,8 +53,24 @@ export function ChatScreen({ initialQueue = null } = {}) {
   // key and cannot inherit it (that inheritance is what skips messages).
   const cursorsRef = useRef({});
 
+  // BH-6823: one STAFF tab per staff agent, from one roster read. A failed
+  // read means no staff tabs: the command threads do not depend on it.
+  const [staffRows, setStaffRows] = useState([]);
+  useEffect(() => {
+    let alive = true;
+    api.staffRoster().then((res) => {
+      if (!alive || !res || !Array.isArray(res.agents)) return;
+      setStaffRows(res.agents.filter((a) => a && a.kind === 'staff' && typeof a.name === 'string'));
+    }, (e) => {
+      if (alive && e instanceof AuthError) window.dispatchEvent(new CustomEvent('dash:unauthorized'));
+    });
+    return () => { alive = false; };
+  }, []);
+  const staffNames = staffRows.map((a) => a.name);
+
   const projects = (fleet.data && fleet.data.projects) || [];
-  const targets = useMemo(() => buildTargets(projects), [projects.join(',')]);
+  const targets = useMemo(() => buildTargets(projects, staffNames), [projects.join(','), staffNames.join(',')]);
+  const staffAgent = staffAgentOf(target);
 
   // One request a tick covers every thread (the untargeted read is guaranteed
   // to return them all, each message carrying its target), so unread dots are
@@ -159,7 +176,7 @@ export function ChatScreen({ initialQueue = null } = {}) {
     : 0;
   const wait = pendingWaitLabel({ messages: thread, target, waitingMs });
 
-  const isBox = target !== ORCHESTRATOR;
+  const isBox = target !== ORCHESTRATOR && !staffAgent;
   const now = Date.now();
   const hubAge = fleet.data ? fleet.data.snapshot_age_min : null;
   const q = queue ? orcQueue(queue, now) : { running: null, waiting: [] };
@@ -175,7 +192,9 @@ export function ChatScreen({ initialQueue = null } = {}) {
     <div class="page" style="min-height:0">
       <${PageHeadline} chip="CHAT"
         line1=${hubAge === null || hubAge === undefined ? 'The orchestrator is unseen.' : `The orchestrator was last seen ${agoFromMinutes(hubAge)} ago.`}
-        line2=${`${thread.length} ${thread.length === 1 ? 'message' : 'messages'} in this thread.`}/>
+        line2=${staffAgent
+          ? `The ${staffAgent} thread is read on the agent's next tick.`
+          : `${thread.length} ${thread.length === 1 ? 'message' : 'messages'} in this thread.`}/>
       <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
         <${Link} to="/" class="crumb">← FLEET<//>
         <span class=${hubHealth === 'ok' ? 'pill' : hubHealth === 'warn' ? 'pill pill--warn' : 'pill pill--dead'}>
@@ -211,18 +230,25 @@ export function ChatScreen({ initialQueue = null } = {}) {
               : ''}</span>
         </div>` : null}
 
-      ${hubHealth === 'dead' && fleet.data ? html`
+      ${staffAgent ? html`
+        <div class="footnote">
+          <span>talking to the staff agent <b style="color:var(--soft-2)">${staffAgent}</b>: it reads this thread on its next tick.
+            <${Link} to=${`/staff/${staffAgent}`}>open the ${staffAgent} page<//></span>
+        </div>
+        <${AgentChat} key=${staffAgent} agent=${staffAgent} row=${staffRows.find((a) => a.name === staffAgent) || null}/>` : null}
+
+      ${hubHealth === 'dead' && fleet.data && !staffAgent ? html`
         <div class="banner">
           <span>The hub has not beaten in ${hubAge}m. A turn sent now is queued as a command and will be
             answered whenever the hub comes back — it is not lost, but do not expect a reply while it is down.</span>
         </div>` : null}
 
-      ${error ? html`
+      ${error && !staffAgent ? html`
         <div class="banner"><span>chat error — <b>${error.message}</b></span></div>` : null}
 
-      ${!isBox ? html`<${ChatQueueStrip} queue=${q} failed=${queueErr} outIds=${outIds}/>` : null}
+      ${!isBox && !staffAgent ? html`<${ChatQueueStrip} queue=${q} failed=${queueErr} outIds=${outIds}/>` : null}
 
-      <div class="chat">
+      ${staffAgent ? null : html`<div class="chat">
         <div class="chat__thread" ref=${threadRef}>
           ${!loaded && !messages.length ? html`<${Skeleton} rows=${3} height=${34}/>` : null}
           ${loaded && !thread.length
@@ -261,7 +287,7 @@ export function ChatScreen({ initialQueue = null } = {}) {
           <span class="footnote__spacer"></span>
           <span>${thread.length} in this thread · ${messages.length} across all</span>
         </div>
-      </div>
+      </div>`}
     </div>`;
 }
 

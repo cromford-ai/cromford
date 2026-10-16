@@ -134,6 +134,8 @@ _jobs_req_file() {
         inactive) printf '{"claimed":false,"error":"agent_not_active","status":"paused"}'; return 9 ;;
         same:*) printf '{"claimed":false,"error":"already_claimed","fingerprint":"%s","finding":{"id":1,"agent":"watchman","status":"%s"}}' "$fp" "${mode#same:}"; return 9 ;;
       esac ;;
+    # BH-6823: every tick past the soul check takes its chat notes; none here.
+    /api/staff/chat/take) printf '{"notes":[],"failed":[]}'; return 0 ;;
     /api/staff/findings/record)
       [ -f "$FXT/record.fail" ] && return 1
       printf '{"ok":true}'; return 0 ;;

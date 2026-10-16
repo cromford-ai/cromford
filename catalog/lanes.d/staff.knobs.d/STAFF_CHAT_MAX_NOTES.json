@@ -1,0 +1,12 @@
+{
+  "env": "STAFF_CHAT_MAX_NOTES",
+  "type": "int",
+  "default": 5,
+  "min": 1,
+  "max": 20,
+  "unit": "notes",
+  "zero_means": null,
+  "read_in": "bin/staff.sh",
+  "note": "BH-6823: operator chat notes one staff tick takes (POST /api/staff/chat/take limit) and answers in its one model call. The rest wait for the next tick. Out of range is one warn line and the default.",
+  "settable": true
+}

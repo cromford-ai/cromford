@@ -37,6 +37,7 @@ export function d1(db, hooks = {}) {
       const stmt = db.prepare(sql);
       let binds = [];
       const api = {
+        _isRead: /^\s*(SELECT|WITH)\b/i.test(sql),
         bind(...v) {
           if (v.length > D1_MAX_BINDS) throw new Error('too many SQL variables');
           binds = v.map(normalize);
@@ -59,7 +60,10 @@ export function d1(db, hooks = {}) {
       };
       return api;
     },
-    async batch(stmts) { return Promise.all(stmts.map((s) => s.run())); },
+    // D1's batch answers a read with its rows in `results` (BH-6823, lead
+    // review of #7155: the staff chat routes batch their reads). A write keeps
+    // run()'s answer and its beforeRun hook.
+    async batch(stmts) { return Promise.all(stmts.map((s) => (s._isRead ? s.all() : s.run()))); },
   };
 }
 

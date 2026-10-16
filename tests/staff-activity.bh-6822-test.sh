@@ -130,6 +130,8 @@ _jobs_req_file() {
     /api/staff/findings/claim)
       fp=$(jq -cS .item "$3" | sha256sum | cut -c1-64)
       printf '{"claimed":true,"fingerprint":"%s","finding":{"agent":"watchman","status":"claimed"}}' "$fp"; return 0 ;;
+    # BH-6823: every tick past the soul check takes its chat notes; none here.
+    /api/staff/chat/take) printf '{"notes":[],"failed":[]}'; return 0 ;;
     /api/staff/findings/record) printf '{"ok":true}'; return 0 ;;
     /api/staff/ticks)
       [ -f "$FXT/ticks.fail" ] && return 1

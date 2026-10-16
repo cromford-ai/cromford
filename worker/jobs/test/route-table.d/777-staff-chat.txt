@@ -1,0 +1,7 @@
+# STAFF CHAT (BH-6823): one chat thread per staff agent. The thread page, the
+# operator send, and the box's take and settle for one bin/staff.sh tick,
+# appended after staff-activity. No earlier route matches these paths.
+GET /api/staff/chat
+POST /api/staff/chat
+POST /api/staff/chat/take
+POST /api/staff/chat/settle

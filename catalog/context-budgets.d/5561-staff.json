@@ -25,10 +25,23 @@
           "source": "the agent's collector output, fingerprinted, minus acted, claimed and suppressed items",
           "cap": "STAFF_MAX_ITEMS items (default 20)",
           "purpose": "THE SCOPED DELTA: only findings no tick has acted on"
+        },
+        {
+          "component": "operator messages",
+          "source": "POST /api/staff/chat/take: the operator notes this tick claimed (BH-6823), as the ## Messages section",
+          "cap": "STAFF_CHAT_MAX_NOTES notes (default 5) x 4000 chars",
+          "purpose": "what a person asked the agent in the console; answered in the same call"
+        },
+        {
+          "component": "last ticks",
+          "source": "the agent's last 10 lines of logs/staff.log and last 5 of logs/staff-digest.log, only when a note was taken",
+          "cap": "15 lines x 300 chars",
+          "purpose": "what the agent did on its last ticks, so it can answer a note about it"
         }
       ],
       "bounds": [
-        "[lane:max_items] at most STAFF_MAX_ITEMS findings are claimed and put in the prompt; the rest are deferred to the next tick (VERIFIED: tests/staff-heartbeat.bh-5561-test.sh H10)"
+        "[lane:max_items] at most STAFF_MAX_ITEMS findings are claimed and put in the prompt; the rest are deferred to the next tick (VERIFIED: tests/staff-heartbeat.bh-5561-test.sh H10)",
+        "[lane:max_notes] at most STAFF_CHAT_MAX_NOTES notes per tick (VERIFIED: tests/staff-chat-tick.bh-6823-test.sh C5)"
       ],
       "measured_before": null,
       "measured_before_note": "never measured: the stage is new in BH-5561.",

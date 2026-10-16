@@ -116,7 +116,8 @@ test('S4 every id read and delete of the staff rules uses an index', async (t) =
   const staff = RULES.filter((r) => r.table.startsWith('staff_'));
   // TEST-CHANGE (merge BH-6822 + BH-6824): staff_ticks.age and staff_autonomy_changes.age
   // are the seventh and eighth staff_* rules.
-  assert.equal(staff.length, 8);
+  // TEST-CHANGE (BH-6823): staff_chat.age is the ninth.
+  assert.equal(staff.length, 9);
   for (const r of staff) {
     for (const sql of [r.ids, ...(r.pre || []), r.del]) {
       const lines = db.prepare(`EXPLAIN QUERY PLAN ${sql}`).all(...(sql === r.ids ? [ago(30), 10] : ['[1]'])).map((x) => x.detail);
@@ -289,7 +290,7 @@ test('S8 every growing staff_* table this PR writes has a retention rule', async
   const covered = new Set(RULES.map((r) => r.table));
   // staff_agents and staff_classes are bounded (one row per agent, per agent x
   // class). staff_decisions 'staff:<fp>' rows go with their finding (pre).
-  for (const tbl of ['staff_outcomes', 'staff_promotions', 'staff_findings', 'staff_suppressions']) {
+  for (const tbl of ['staff_outcomes', 'staff_promotions', 'staff_findings', 'staff_suppressions', 'staff_chat']) {
     assert.ok(covered.has(tbl), `${tbl} has no retention rule`);
   }
   const f = RULES.find((r) => r.rule === 'staff_findings.done');
