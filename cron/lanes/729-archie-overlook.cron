@@ -1,0 +1,12 @@
+# @hub-lanes
+
+# ── ARCHIE OVERLOOKER LANE (BH-5562) ────────────────────────────────────────
+# Every 15 minutes (8 past, off the staff tick's minute) bin/archie-overlook.sh
+# checks the staff agents with no model call. An agent with 25 same-class
+# actions or 10 filings in one UTC day gets flags/staff-off-<agent> and one warn
+# beat. A staff fingerprint on two or more open issues is one warn beat; the
+# GitHub lists run only after a new filing. On Monday (UTC) Archie sends one
+# weekly staff report through his own beat gate. flock -n dedupes. Off:
+# ARCHIE_OVERLOOK_ENABLED=0, flags/lane-off-archie-overlook, or
+# bin/harness-ctl.sh off archie-overlook.
+8-58/15 * * * * /root/harness/bin/hub-lease.sh check && /root/harness/bin/archie-overlook.sh >/dev/null 2>&1
