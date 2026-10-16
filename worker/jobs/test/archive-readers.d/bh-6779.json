@@ -58,63 +58,58 @@
   },
   {
    "file": "src/routes/cost.js",
-   "line_hint": 335,
+   "line_hint": 345,
    "match": "FROM cost_rows WHERE ts>=?1 AND ts<?2\n            GROUP BY box, auth_account",
    "table": "cost_rows",
    "window": "caller day",
    "class": "wide",
-   "status": "pending",
-   "slice": "C1 of #7035"
+   "status": "ported"
   },
   {
    "file": "src/routes/cost.js",
-   "line_hint": 365,
+   "line_hint": 382,
    "match": "SUM(COALESCE(cost_usd,0)) AS usd FROM cost_rows\n          WHERE auth_account=?1",
    "table": "cost_rows",
    "window": "caller day",
    "class": "wide",
-   "status": "pending",
-   "slice": "C1 of #7035"
+   "status": "ported"
   },
   {
    "file": "src/routes/cost.js",
-   "line_hint": 490,
+   "line_hint": 522,
    "match": "`SELECT * FROM cost_rows${where.length",
    "table": "cost_rows",
    "window": "caller since/until",
    "class": "wide",
    "status": "pending",
-   "slice": "C1 of #7035 (ported in #6777)"
+   "slice": "#6777 (BH-6774 C0)"
   },
   {
    "file": "src/routes/cost.js",
-   "line_hint": 544,
+   "line_hint": 580,
    "match": "FROM cost_rows WHERE stage=?4 AND ts>=?1",
    "table": "cost_rows",
    "window": "caller since/until",
    "class": "wide",
-   "status": "pending",
-   "slice": "C1 of #7035"
+   "status": "ported"
   },
   {
    "file": "src/routes/cost.js",
-   "line_hint": 546,
+   "line_hint": 582,
    "match": "FROM cost_rows WHERE lane_id=?3 AND ts>=?1",
    "table": "cost_rows",
    "window": "caller since/until",
    "class": "wide",
-   "status": "pending",
-   "slice": "C1 of #7035"
+   "status": "ported"
   },
   {
    "file": "src/routes/cost.js",
-   "line_hint": 571,
+   "line_hint": 613,
    "match": "FROM cost_rows WHERE ${where.join(\" AND \")}",
    "table": "cost_rows",
    "window": "caller since/until",
    "class": "wide",
-   "status": "pending",
-   "slice": "C1 of #7035"
+   "status": "ported"
   },
   {
    "file": "src/routes/lane-spend.js",

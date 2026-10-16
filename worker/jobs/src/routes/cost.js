@@ -14,6 +14,7 @@ import {
   ANCHOR_DEFAULT_MAX_FACTOR, ANCHOR_OFF_FLAG, parseAccountMap, anchorWindow,
   meterAccounts, anchorSpanCandidates, computeAnchored,
 } from "../lib/core.js";
+import { readHistory, mergeAggregate, mergeGroups, worstState } from "../lib/archive-read.js";
 
 // ── Price versions (BH-5652) ────────────────────────────────────────────
 // Every statement below is a constant string with bound parameters only. Each
@@ -106,6 +107,9 @@ const SLUG_UPSERT = `
 // never take one of their names.
 const FLY_RESERVED = new Set(["updated_at", "source", "versions", "_comment"]);
 const PRICE_AUDIT_KINDS = new Set(["model", "fly", "slug"]);
+
+// GET /api/metrics/llm-spend: how the hot and archive aggregates add up.
+const SPEND_MERGE = Object.freeze({ usd: "sum", calls: "sum", refused: "sum", settled: "sum" });
 
 export const routes = [
   // ── Metrics ledger (2026-08-29) ────────────────────────────────────────
@@ -331,12 +335,18 @@ export const routes = [
       // full rather than letting a silent truncation read as "no PRs".
       const PR_COSTS_CAP = 3000;
 
-      const [rowSums, snaps, prRows, mergeRows] = await Promise.all([
-        env.DB.prepare(
-          `SELECT box, auth_account AS account, SUM(COALESCE(cost_usd,0)) AS usd, COUNT(*) AS calls
+      // rowSums reads the archive too when the window reaches it (BH-7059):
+      // ?day= in the past can. The 24h default never does (the 1-day floor).
+      const [rs, snaps, prRows, mergeRows] = await Promise.all([
+        readHistory(env, {
+          table: "cost_rows", since: win.from, now: t,
+          hot: {
+            sql: `SELECT box, auth_account AS account, SUM(COALESCE(cost_usd,0)) AS usd, COUNT(*) AS calls
              FROM cost_rows WHERE ts>=?1 AND ts<?2
-            GROUP BY box, auth_account LIMIT 500`
-        ).bind(win.from, win.to).all(),
+            GROUP BY box, auth_account LIMIT 500`,
+            binds: [win.from, win.to],
+          },
+        }),
         env.DB.prepare(
           `SELECT box, ts, extra_used_usd, weekly_pct, weekly_resets_at, extra_enabled,
                   spend_limit_reached
@@ -363,22 +373,40 @@ export const routes = [
       // last poll, not over the whole window. Only the accounts that could
       // produce a factor are asked for (anchorSpanCandidates), and that set is
       // capped, so this is a handful of aggregates and never a fan-out.
+      // The span reads reuse the rowSums reach: no second MAX read.
       const candidates = anchorSpanCandidates(meters);
-      const spanRows = await Promise.all(candidates.map((m) => env.DB.prepare(
-        `SELECT SUM(COALESCE(cost_usd,0)) AS usd FROM cost_rows
-          WHERE auth_account=?1 AND ts>=?2 AND ts<=?3`
-      ).bind(m.label, m.span_from, m.span_to).first()));
+      const reach = rs.state === "read" ? "reach" : rs.state;
+      const spanReads = await Promise.all(candidates.map((m) => readHistory(env, {
+        table: "cost_rows", since: m.span_from, now: t, method: "first", reach,
+        hot: {
+          sql: `SELECT SUM(COALESCE(cost_usd,0)) AS usd FROM cost_rows
+          WHERE auth_account=?1 AND ts>=?2 AND ts<=?3`,
+          binds: [m.label, m.span_from, m.span_to],
+        },
+      })));
       const spanSums = {};
-      candidates.forEach((m, i) => { spanSums[m.label] = (spanRows[i] && spanRows[i].usd) || 0; });
+      candidates.forEach((m, i) => {
+        const r = mergeAggregate(spanReads[i].hot, spanReads[i].archive, { usd: "sum" });
+        spanSums[m.label] = (r && r.usd) || 0;
+      });
+      // With no archive answer mergeGroups returns the hot rows unchanged.
+      const { rows: rowSums } = mergeGroups(rs.hot.results || [], rs.archive && (rs.archive.results || []), {
+        by: ["box", "account"], spec: { usd: "sum", calls: "sum" }, pickBy: "box", limit: 500,
+        compare: (a, b) => String(a.box ?? "").localeCompare(String(b.box ?? ""))
+          || String(a.account ?? "").localeCompare(String(b.account ?? "")),
+      });
 
       const payload = computeAnchored({
         ...win, meters, spanSums,
-        rowSums: rowSums.results || [],
+        rowSums,
         prCosts: prRows.results || [],
         merges: mergeRows.results || [],
         maxFactor, limit: lim, prCostsCap: PR_COSTS_CAP,
       });
-      return json(200, { ...payload, disabled: false, max_factor: maxFactor, as_of: t });
+      return json(200, {
+        ...payload, disabled: false, max_factor: maxFactor,
+        archive: worstState([rs.state, ...spanReads.map((r) => r.state)]), as_of: t,
+      });
     },
   ],
 
@@ -540,23 +568,29 @@ export const routes = [
         const lProject = str(url.searchParams.get("project"), 128) || null;
         const lSince = str(url.searchParams.get("since"), 64) || (t.slice(0, 10) + "T00:00:00Z");
         const lUntil = str(url.searchParams.get("until"), 64) || null;
-        // sql-ident-ok: the lStage null check picks one of two literal strings
-        const lr = await env.DB.prepare(
-          "SELECT SUM(COALESCE(cost_usd,0)) AS usd, COUNT(*) AS calls," +
-          " SUM(CASE WHEN row_source='refused' THEN 1 ELSE 0 END) AS refused," +
-          " SUM(CASE WHEN row_source='settled' THEN 1 ELSE 0 END) AS settled" +
-          (lStage !== null
-            ? " FROM cost_rows WHERE stage=?4 AND ts>=?1 AND (?2 IS NULL OR ts<=?2)" +
-              " AND (?5 IS NULL OR project=?5) AND (lane_id=?3 OR lane_id IS NULL)"
-            : " FROM cost_rows WHERE lane_id=?3 AND ts>=?1 AND (?2 IS NULL OR ts<=?2)" +
-              " AND (?5 IS NULL OR project=?5)")
-        ).bind(lSince, lUntil, laneRaw, lStage, lProject).first();
+        // The gate's default `since` (today) never reaches the archive (BH-7059).
+        const lh = await readHistory(env, {
+          table: "cost_rows", since: lSince, now: t, method: "first",
+          hot: {
+            // sql-ident-ok: the lStage null check picks one of two literal strings
+            sql: "SELECT SUM(COALESCE(cost_usd,0)) AS usd, COUNT(*) AS calls," +
+              " SUM(CASE WHEN row_source='refused' THEN 1 ELSE 0 END) AS refused," +
+              " SUM(CASE WHEN row_source='settled' THEN 1 ELSE 0 END) AS settled" +
+              (lStage !== null
+                ? " FROM cost_rows WHERE stage=?4 AND ts>=?1 AND (?2 IS NULL OR ts<=?2)" +
+                  " AND (?5 IS NULL OR project=?5) AND (lane_id=?3 OR lane_id IS NULL)"
+                : " FROM cost_rows WHERE lane_id=?3 AND ts>=?1 AND (?2 IS NULL OR ts<=?2)" +
+                  " AND (?5 IS NULL OR project=?5)"),
+            binds: [lSince, lUntil, laneRaw, lStage, lProject],
+          },
+        });
+        const lr = mergeAggregate(lh.hot, lh.archive, SPEND_MERGE);
         return json(200, {
           usd: Number((lr && lr.usd) || 0),
           calls: Number((lr && lr.calls) || 0),
           refused: Number((lr && lr.refused) || 0),
           settled: Number((lr && lr.settled) || 0),
-          lane: laneRaw, since: lSince, until: lUntil, as_of: t,
+          lane: laneRaw, since: lSince, until: lUntil, archive: lh.state, as_of: t,
         });
       }
       const where = [], binds = [];
@@ -569,19 +603,24 @@ export const routes = [
       binds.push(since); where.push(`ts>=?${binds.length}`);
       const until = str(url.searchParams.get("until"), 64);
       if (until) { binds.push(until); where.push(`ts<=?${binds.length}`); }
-      // sql-ident-ok: where uses column names from a literal list, values bound
-      const row = await env.DB.prepare(
-        `SELECT SUM(COALESCE(cost_usd,0)) AS usd, COUNT(*) AS calls,
+      const h = await readHistory(env, {
+        table: "cost_rows", since, now: t, method: "first",
+        hot: {
+          // sql-ident-ok: where uses column names from a literal list, values bound
+          sql: `SELECT SUM(COALESCE(cost_usd,0)) AS usd, COUNT(*) AS calls,
                 SUM(CASE WHEN row_source='refused' THEN 1 ELSE 0 END) AS refused,
                 SUM(CASE WHEN row_source='settled' THEN 1 ELSE 0 END) AS settled
-           FROM cost_rows WHERE ${where.join(" AND ")}`
-      ).bind(...binds).first();
+           FROM cost_rows WHERE ${where.join(" AND ")}`,
+          binds,
+        },
+      });
+      const row = mergeAggregate(h.hot, h.archive, SPEND_MERGE);
       return json(200, {
         usd: Number((row && row.usd) || 0),
         calls: Number((row && row.calls) || 0),
         refused: Number((row && row.refused) || 0),
         settled: Number((row && row.settled) || 0),
-        since, until: until || null, as_of: t,
+        since, until: until || null, archive: h.state, as_of: t,
       });
     },
   ],
