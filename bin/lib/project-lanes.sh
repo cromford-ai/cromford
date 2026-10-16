@@ -44,6 +44,33 @@
 #     (`<lane script> <project>`), so a manual run and a dispatched run of one
 #     project never overlap. rc 1 when it is held.
 #
+# A LANE THAT HAS A WHOLE-FLEET MODE TOO (BH-5944, the six lanes in
+# docs/notes/2026-10-13-BH-5944-project-loops-runner.md):
+#
+#   pl_lane_lock <lane> <project> — one project's run takes its locks. The
+#     project lock locks/<lane>-<project>.lock on fd 9 (the runner's, when
+#     PL_LANE/PL_PROJECT/PL_LOCK_FD name this run; else pl_lock_take here), then
+#     the legacy fleet lock locks/<lane>.lock SHARED on fd 4. Many project runs
+#     hold the fleet lock at once; a whole-fleet run takes it exclusive, so a
+#     whole-fleet run and a project run never overlap. rc 0 held, rc 1 busy,
+#     rc 2 bad name. Never waits.
+#   pl_lane_lock_all <lane> — the whole-fleet run's exclusive locks/<lane>.lock
+#     on fd 9, for a lane that had no lock before. rc 1 busy.
+#   pl_lane_dispatch <lane> <window-secs> <cmd> [args...] — pl_dispatch with a
+#     period of window x PL_DISPATCH_SPREAD_PCT / 100 (lib_env_apply
+#     project-lanes; default 100, 0 starts every run at once). Prints the line.
+#   pl_agg_lock <lane> / pl_agg_unlock — locks/<lane>-agg.lock on fd 5, waited
+#     for at most 30 s, held only around a read-merge-write of a shared file.
+#     rc 1 on the time limit.
+#
+# TEST SEAMS (HARNESS_TEST_SANDBOX=1 only, settable:false):
+#   PL_TEST_BARRIER=<dir>:<n> — after pl_lane_lock holds both locks it appends
+#     `<lane> <project> <pid>` to <dir>/holders and waits (0.2 s steps, 60 s at
+#     most) until the file has <n> lines; at the limit it writes
+#     `<lane> <project>` to <dir>/timeouts. PL_TEST_BARRIER_EXIT=1 then exits 0.
+#   PL_TEST_LOCK_WAIT_S — the 30 s wait of pl_agg_lock (and of archie-fm's cap
+#     lock), so a suite does not sit 30 s on a held lock.
+#
 # PLACEMENT (BH-6124, lib/lane-placement.sh): before the loop, lp_decide reads
 # where the lane runs. For a lane placed `fly`, the loop collects the eligible
 # projects and, after it, lp_enqueue_batch enqueues them as lane_runs rows in
@@ -189,4 +216,98 @@ pl_dispatch() {
       >/dev/null 2>&1 || true
   fi
   return 0
+}
+
+# pl_wait_s — the lock wait in seconds: 30, or PL_TEST_LOCK_WAIT_S in a sandbox.
+pl_wait_s() {
+  local w=30
+  [ "${HARNESS_TEST_SANDBOX:-}" = 1 ] && [[ ${PL_TEST_LOCK_WAIT_S:-} =~ ^[0-9]+$ ]] && w=$PL_TEST_LOCK_WAIT_S
+  printf '%s' "$w"
+}
+
+# pl_test_barrier <lane> <project> — the PL_TEST_BARRIER seam (header).
+pl_test_barrier() {
+  local spec="${PL_TEST_BARRIER:-}" dir n i=0
+  [ -n "$spec" ] && [ "${HARNESS_TEST_SANDBOX:-}" = 1 ] || return 0
+  dir="${spec%:*}"; n="${spec##*:}"
+  case "$n" in ''|*[!0-9]*) return 0 ;; esac
+  [ -d "$dir" ] || return 0
+  printf '%s %s %s\n' "$1" "$2" "$$" >> "$dir/holders"
+  until [ "$(wc -l < "$dir/holders")" -ge "$n" ]; do
+    i=$((i + 1))
+    if [ "$i" -ge 300 ]; then printf '%s %s\n' "$1" "$2" >> "$dir/timeouts"; break; fi
+    sleep 0.2
+  done
+  [ "${PL_TEST_BARRIER_EXIT:-}" = 1 ] && exit 0
+  return 0
+}
+
+# pl_lane_lock <lane> <project> — see the header.
+pl_lane_lock() {
+  local lane="$1" p="$2" own=0
+  pl_name_ok "$lane" && pl_name_ok "$p" || return 2
+  [ -n "${H:-}" ] || return 2
+  mkdir -p "$H/locks" 2>/dev/null
+  if [ "${PL_LANE:-}" = "$lane" ] && [ "${PL_PROJECT:-}" = "$p" ] && [ "${PL_LOCK_FD:-}" = 9 ]; then
+    :   # the runner holds locks/<lane>-<project>.lock on fd 9
+  else
+    pl_lock_take "$lane" "$p" 9 || return 1
+    own=1
+  fi
+  if ! { exec 4>"$H/locks/$lane.lock"; } 2>/dev/null || ! flock -n -s 4; then
+    exec 4>&-
+    [ "$own" = 1 ] && { flock -u 9 2>/dev/null; exec 9>&-; }
+    return 1
+  fi
+  pl_test_barrier "$lane" "$p"
+  return 0
+}
+
+# pl_lane_lock_all <lane> — see the header.
+pl_lane_lock_all() {
+  local lane="$1"
+  pl_name_ok "$lane" || return 2
+  [ -n "${H:-}" ] || return 2
+  mkdir -p "$H/locks" 2>/dev/null
+  { exec 9>"$H/locks/$lane.lock"; } 2>/dev/null || return 1
+  flock -n 9 || { exec 9>&-; return 1; }
+  return 0
+}
+
+# pl_lane_dispatch <lane> <window-secs> <cmd> [args...] — see the header.
+pl_lane_dispatch() {
+  local lane="$1" win="$2" pct period
+  shift 2
+  command -v lib_env_apply >/dev/null 2>&1 && lib_env_apply project-lanes >/dev/null 2>&1
+  pct="${PL_DISPATCH_SPREAD_PCT:-100}"
+  if ! [[ $pct =~ ^[0-9]+$ ]] || [ "$((10#$pct))" -gt 100 ]; then
+    echo "$lane dispatch: PL_DISPATCH_SPREAD_PCT='$pct' is not 0..100; using 100" >&2
+    pct=100
+  fi
+  case "$win" in ''|*[!0-9]*) win=0 ;; esac
+  period=$(( win * 10#$pct / 100 ))
+  pl_dispatch "$lane" "$period" "$@"
+}
+
+# pl_agg_lock <lane> / pl_agg_unlock — see the header.
+pl_agg_lock() {
+  local lane="$1"
+  pl_name_ok "$lane" || return 2
+  [ -n "${H:-}" ] || return 2
+  mkdir -p "$H/locks" 2>/dev/null
+  { exec 5>"$H/locks/$lane-agg.lock"; } 2>/dev/null || return 1
+  flock -w "$(pl_wait_s)" 5 || { exec 5>&-; return 1; }
+  return 0
+}
+pl_agg_unlock() {
+  flock -u 5 2>/dev/null
+  exec 5>&-
+  return 0
+}
+
+# pl_project_known <project> — rc 0 when fleet.conf names it (a file read, no
+# worker request), so a lane refuses an unknown project before any lock.
+pl_project_known() {
+  pl_name_ok "${1:-}" && [ -n "${H:-}" ] || return 1
+  "$H/bin/fleet-conf.sh" --projects 2>/dev/null | grep -qxF -- "$1"
 }

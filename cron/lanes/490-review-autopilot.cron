@@ -1,2 +1,2 @@
 # @hub-lanes
-17 * * * * /root/harness/bin/hub-lease.sh check && /root/harness/bin/review-autopilot.sh
+17 * * * * /root/harness/bin/hub-lease.sh check && /root/harness/bin/review-autopilot.sh --dispatch >> /root/harness/logs/review-autopilot-cron.log 2>&1

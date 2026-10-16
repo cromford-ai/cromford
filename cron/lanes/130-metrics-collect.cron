@@ -1,1 +1,1 @@
-38 * * * * /root/harness/bin/metrics-collect.sh >/dev/null 2>&1
+38 * * * * /root/harness/bin/metrics-collect.sh --dispatch >> /root/harness/logs/metrics-collect-cron.log 2>&1

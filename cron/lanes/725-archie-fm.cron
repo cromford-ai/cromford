@@ -9,4 +9,4 @@
 # archie_actions row before any write, so a second tick does nothing; flock -n
 # dedupes. Off: ARCHIE_FM_ENABLED=0, flags/lane-off-archie-fm,
 # bin/harness-ctl.sh off archie-fm, or the settings row archie.manage=off.
-*/10 * * * * /root/harness/bin/hub-lease.sh check && /root/harness/bin/archie-fm.sh >/dev/null 2>&1
+*/10 * * * * /root/harness/bin/hub-lease.sh check && /root/harness/bin/archie-fm.sh --dispatch >> /root/harness/logs/archie-fm-cron.log 2>&1

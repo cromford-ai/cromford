@@ -1,2 +1,2 @@
 # @hub-lanes
-50 * * * * /root/harness/bin/hub-lease.sh check && /root/harness/bin/stale-owed-tickets.sh
+50 * * * * /root/harness/bin/hub-lease.sh check && /root/harness/bin/stale-owed-tickets.sh --dispatch >> /root/harness/logs/stale-owed-tickets-cron.log 2>&1

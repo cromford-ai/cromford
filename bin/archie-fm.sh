@@ -7,10 +7,15 @@
 # BH-4585): append-only unions, regenerated drift, a flaky suite re-run once,
 # else a fix round with Archie's diagnosis as its brief.
 #
-#   archie-fm.sh [tick] [--project <p>] [--pr <owner/repo#n>]
-#     no argument is a tick: the cron line, every 10 minutes. --project and
-#     --pr narrow one tick to one project or one PR (the entrypoint a wake-up
-#     can call once #4063 lands).
+#   archie-fm.sh [tick] [--project <p>] [--pr <owner/repo#n>] | --dispatch
+#     --dispatch is the cron line, every 10 minutes (BH-5944): it starts one
+#     detached `archie-fm.sh tick --project <p>` per fleet project through the
+#     per-project runner (bin/lib/project-lanes.sh, a 300 s window) and returns.
+#     --project <p> alone is one project's tick: its lock is
+#     locks/archie-fm-<p>.lock (the runner's fd 9) plus locks/archie-fm.lock
+#     SHARED, and ARCHIE_FM_PROJECTS_PER_TICK does not apply. No argument (a
+#     whole-fleet tick) and --pr keep the exclusive locks/archie-fm.lock.
+#     --pr narrows one tick to one PR (the entrypoint a wake-up can call).
 #
 # TICK, in this order:
 #   1. lane_gate_or_exit / lane_env_apply archie-fm; ARCHIE_FM_ENABLED=0 exits;
@@ -79,19 +84,30 @@
 set -uo pipefail
 H="${HARNESS:-/root/harness}"
 SELF="$(cd "$(dirname "$0")" && pwd)"
+DISPATCH=0
+[ "${1:-}" = --dispatch ] && [ $# = 1 ] && { DISPATCH=1; shift; }
 [ "${1:-}" = tick ] && shift
 ONLY_PROJECT=""; ONLY_PR=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --project) ONLY_PROJECT="${2:-}"; shift 2 ;;
     --pr) ONLY_PR="${2:-}"; shift 2 ;;
-    *) echo "usage: archie-fm.sh [tick] [--project <p>] [--pr <owner/repo#n>]" >&2; exit 2 ;;
+    *) echo "usage: archie-fm.sh [tick] [--project <p>] [--pr <owner/repo#n>] | --dispatch" >&2; exit 2 ;;
   esac
 done
 if [ -n "$ONLY_PR" ] && ! [[ $ONLY_PR =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+#[0-9]+$ ]]; then
   echo "archie-fm: --pr wants <owner/repo#n>, got '$ONLY_PR'" >&2; exit 2
 fi
-if [ "${ARCHIE_FM_TIMED:-}" != 1 ] && command -v timeout >/dev/null 2>&1; then
+# shellcheck source=bin/lib/project-lanes.sh
+[ -r "$H/bin/lib/project-lanes.sh" ] && . "$H/bin/lib/project-lanes.sh"
+# One project's tick (BH-5944): --project with no --pr, on the runner's locks.
+PROJECT_RUN=0
+if [ -n "$ONLY_PROJECT" ] && [ -z "$ONLY_PR" ]; then
+  command -v pl_project_known >/dev/null 2>&1 && pl_project_known "$ONLY_PROJECT" || {
+    echo "archie-fm: fleet.conf names no project '$ONLY_PROJECT' (or bin/lib/project-lanes.sh is missing)" >&2; exit 2; }
+  PROJECT_RUN=1
+fi
+if [ "$DISPATCH" = 0 ] && [ "${ARCHIE_FM_TIMED:-}" != 1 ] && command -v timeout >/dev/null 2>&1; then
   CEIL=4320
   # The suite's seam for a tick that outlives its backstop. Sandbox only.
   if [ "${HARNESS_TEST_SANDBOX:-}" = 1 ] && [[ ${ARCHIE_FM_TICK_CEILING_S:-} =~ ^[0-9]+$ ]]; then CEIL=$ARCHIE_FM_TICK_CEILING_S; fi
@@ -153,8 +169,22 @@ case "${ARCHIE_FM_ENABLED:-1}" in
   1) ;;
   *) log "warn: ARCHIE_FM_ENABLED=${ARCHIE_FM_ENABLED} is not 0 or 1; using the default 1" ;;
 esac
-exec 9>"$H/locks/archie-fm.lock" || exit 0
-flock -n 9 || exit 0
+if [ "$DISPATCH" = 1 ]; then
+  if ! command -v pl_lane_dispatch >/dev/null 2>&1; then
+    echo "$(date -u +%FT%TZ) archie-fm dispatch: bin/lib/project-lanes.sh is not loaded — no project run started"
+    exit 1
+  fi
+  rc=0; line=$(pl_lane_dispatch archie-fm 300 "$H/bin/archie-fm.sh" tick --project) || rc=$?
+  echo "$(date -u +%FT%TZ) $line"
+  exit "$rc"
+fi
+if [ "$PROJECT_RUN" = 1 ]; then
+  # The runner already holds fd 9; it is never re-opened here.
+  pl_lane_lock archie-fm "$ONLY_PROJECT" || exit 0
+else
+  exec 9>"$H/locks/archie-fm.lock" || exit 0
+  flock -n 9 || exit 0
+fi
 
 AFM_RETRY_S=$(knob_int ARCHIE_FM_RETRY_S "${ARCHIE_FM_RETRY_S:-1800}" 1800 60 86400)
 AFM_MAX_ATT=$(knob_int ARCHIE_FM_MAX_ATTEMPTS "${ARCHIE_FM_MAX_ATTEMPTS:-3}" 3 1 10)
@@ -344,7 +374,7 @@ for P in "${PROJS[@]:$START}" "${PROJS[@]:0:$START}"; do
   SLUG=$("$H/bin/fleet-conf.sh" "$P" repo 2>/dev/null)
   case "$SLUG" in */*) ;; *) continue ;; esac
   [ -z "$ONLY_PR" ] || [ "${ONLY_PR%#*}" = "$SLUG" ] || continue
-  if [ "$MAXP" -gt 0 ] && [ "$NPROJ" -ge "$MAXP" ]; then
+  if [ "$PROJECT_RUN" = 0 ] && [ "$MAXP" -gt 0 ] && [ "$NPROJ" -ge "$MAXP" ]; then
     log "ARCHIE_FM_PROJECTS_PER_TICK=$MAXP reached; $P and the rest wait for the next tick"; break
   fi
   if ! MODE=$(afm_mode "$P"); then

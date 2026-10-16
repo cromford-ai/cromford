@@ -130,8 +130,7 @@ afm_rr_act() {
     '{park_reason: $r, park_since: $s, old_head: $h, onto: $t}')
   why="parked: ${AFM_RR_REASON:0:400}"
   if [ "$mode" = on ]; then
-    afm_cap_ok "$p" || return 0
-    afm_claim "$key" "$p" "$slug" "$n" on repair "$why" "$ev"; rc=$?
+    afm_cap_claim "$p" afm_claim "$key" "$p" "$slug" "$n" on repair "$why" "$ev"; rc=$?
   else
     afm_claim "$key" "$p" "$slug" "$n" observe would_repair "$why" "$ev"; rc=$?
   fi

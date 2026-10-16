@@ -19,9 +19,50 @@
 #      Then the builds-of-record ledger (BH-2350): a REVIEW_BLOCKED build with
 #      NO dir on this box and no `verdict` artifact on its job is the same
 #      orphan, invisible to the find. Deduped in state/stale-owed-orphans.json.
+#
+# THREE MODES (BH-5944, the per-project runner bin/lib/project-lanes.sh):
+#   stale-owed-tickets.sh --dispatch   the cron line. Runs the section-4 find
+#       once, then starts one detached `stale-owed-tickets.sh <project>` per
+#       fleet project (pl_lane_dispatch, a 600 s window) and returns.
+#   stale-owed-tickets.sh <project>    one board project's sweep (steps 1-3
+#       and its ledger pass). Its count is ITS OWN ROW,
+#       state/stale-owed-tickets/<project>/entry.json = {"v":1,"at":…,
+#       "entry":{count,tickets}} or "entry":null when it was skipped (no
+#       token/base, the board list failed). so_aggregate then rebuilds
+#       state/stale-owed.json from the rows. Its lock is
+#       locks/stale-owed-tickets-<project>.lock plus locks/stale-owed-tickets.lock
+#       SHARED; a project with no board is one log line, exit 0.
+#   stale-owed-tickets.sh              the whole-fleet sweep (hand runs): the
+#       exclusive locks/stale-owed-tickets.lock, every board project, section 4.
+# The shared maps (stale-owed.json, stale-owed-queued.json,
+# stale-owed-orphans.json) keep their shapes; every read-merge-write of one is
+# made under locks/stale-owed-tickets-agg.lock (30 s at most) and changes only
+# the run's own `<project>:` keys.
 set -uo pipefail
 H="${HARNESS:-/root/harness}"
 . "${HARNESS:-/root/harness}/bin/lib/env-path.sh" 2>/dev/null || . "$(dirname "${BASH_SOURCE[0]}")/lib/env-path.sh" 2>/dev/null || harness_env_dir() { printf '%s\n' "${1:-${HARNESS:-/root/harness}}/env"; }; HENV=$(harness_env_dir "$H")
+usage() { echo "usage: stale-owed-tickets.sh [--dispatch | <project>]" >&2; exit 2; }
+RUN_MODE=fleet; ONLY_P=""
+case "$#" in
+  0) ;;
+  1) case "$1" in --dispatch) RUN_MODE=dispatch ;; -*|''|.*|*[!A-Za-z0-9._-]*) usage ;; *) RUN_MODE=project; ONLY_P=$1 ;; esac ;;
+  *) usage ;;
+esac
+# shellcheck source=bin/lib/project-lanes.sh
+. "$H/bin/lib/project-lanes.sh" 2>/dev/null || . "$(dirname "${BASH_SOURCE[0]}")/lib/project-lanes.sh" 2>/dev/null || true
+if [ "$RUN_MODE" != fleet ] && ! command -v pl_lane_lock >/dev/null 2>&1; then
+  echo "stale-owed-tickets: bin/lib/project-lanes.sh is missing; only the whole-fleet sweep works" >&2; exit 1
+fi
+if [ "$RUN_MODE" = project ] && ! pl_project_known "$ONLY_P"; then
+  echo "stale-owed-tickets: fleet.conf names no project '$ONLY_P'" >&2; exit 2
+fi
+if ! command -v pl_agg_lock >/dev/null 2>&1; then
+  # A box mid-sync without the runner lib runs only the whole-fleet sweep; it
+  # takes the same two locks inline.
+  pl_lane_lock_all() { mkdir -p "$H/locks" 2>/dev/null; exec 9>"$H/locks/$1.lock" && flock -n 9; }
+  pl_agg_lock() { mkdir -p "$H/locks" 2>/dev/null; exec 5>"$H/locks/$1-agg.lock" && flock -w 30 5; }
+  pl_agg_unlock() { flock -u 5 2>/dev/null; exec 5>&-; }
+fi
 
 # >>> lane gate (BH-1165) — one off-switch and one source of numbers for this
 # lane. lane_gate_or_exit exits 0 when flags/all-off, flags/lane-off-stale-owed-tickets
@@ -74,16 +115,68 @@ BOARD_PROJECTS=$("$H/bin/fleet-projects-or-alert.sh" stale-owed --with-board) ||
   echo "$(STAMP) FATAL: fleet.conf unreadable — no projects to sweep, exiting" >> "$LOG"; exit 1; }
 # <<< board projects
 
-OUT='{}'
-for P in $BOARD_PROJECTS; do
+case "$RUN_MODE" in
+  project)
+    pl_lane_lock stale-owed-tickets "$ONLY_P" || {
+      echo "$(STAMP) $ONLY_P: busy (a run of $ONLY_P, or a whole-fleet sweep, holds its lock)" >> "$LOG"; exit 0; }
+    case " $(printf '%s ' $BOARD_PROJECTS)" in
+      *" $ONLY_P "*) ;;
+      *) echo "$(STAMP) $ONLY_P: no board in fleet.conf — nothing to sweep" >> "$LOG"; exit 0 ;;
+    esac ;;
+  fleet)
+    pl_lane_lock_all stale-owed-tickets || { echo "$(STAMP) busy (another sweep holds locks/stale-owed-tickets.lock)" >> "$LOG"; exit 0; } ;;
+esac
+
+# so_entry <project> <entry-json|null> — the project's own row (tmp + mv).
+so_entry() {
+  local d="$H/state/stale-owed-tickets/$1"
+  mkdir -p "$d" 2>/dev/null || { echo "$(STAMP) $1: cannot create $d — the count is not recorded" >> "$LOG"; return 1; }
+  jq -nc --argjson at "$NOW" --argjson e "$2" '{v: 1, at: $at, entry: $e}' > "$d/entry.json.tmp.$$" 2>/dev/null \
+    && mv "$d/entry.json.tmp.$$" "$d/entry.json"
+}
+
+# so_queued_merge <project> <queueable-json> — stamp the keys just queued in
+# state/stale-owed-queued.json, re-read under the agg lock so a concurrent
+# project's keys are never lost. Only `<project>:` keys change.
+so_queued_merge() {
+  local CD="$H/state/stale-owed-queued.json"
+  pl_agg_lock stale-owed-tickets || { echo "$(STAMP) $1: the agg lock was not free — the queued keys are not stamped, they queue again next run" >> "$LOG"; return 1; }
+  { jq -c 'if type == "object" then . else {} end' "$CD" 2>/dev/null || echo '{}'; } \
+    | jq -c --argjson now "$NOW" --arg p "$1" --argjson q "$2" 'reduce $q[] as $t (.; .[$p + ":" + $t.key] = $now)' > "$CD.tmp" \
+    && mv "$CD.tmp" "$CD"
+  pl_agg_unlock
+}
+
+# so_aggregate — state/stale-owed.json from the rows: the current map cut to
+# the board projects, then `.[p] = entry` for every row (a null entry deletes
+# the key: a skipped project is absent, as it has always been). Under the agg lock.
+so_aggregate() {
+  local cur P f e
+  pl_agg_lock stale-owed-tickets || { echo "$(STAMP) aggregate: the agg lock was not free — state/stale-owed.json is unchanged, the next run rebuilds it" >> "$LOG"; return 1; }
+  cur=$(jq -c 'if type == "object" then . else {} end' "$H/state/stale-owed.json" 2>/dev/null) || cur='{}'
+  [ -n "$cur" ] || cur='{}'
+  cur=$(jq -c --arg b " $(printf '%s ' $BOARD_PROJECTS)" 'with_entries(select(. as $e | $b | contains(" " + $e.key + " ")))' <<<"$cur")
+  for P in $BOARD_PROJECTS; do
+    f="$H/state/stale-owed-tickets/$P/entry.json"
+    e=$(jq -c 'select(.v == 1 and has("entry")) | .entry' "$f" 2>/dev/null) || continue
+    [ -n "$e" ] || continue
+    cur=$(jq -c --arg p "$P" --argjson e "$e" 'if $e == null then del(.[$p]) else .[$p] = $e end' <<<"$cur")
+  done
+  printf '%s\n' "$cur" > "$H/state/stale-owed.json.tmp" && mv "$H/state/stale-owed.json.tmp" "$H/state/stale-owed.json"
+  pl_agg_unlock
+}
+
+# so_board <project> — steps 1-3 for one board project.
+so_board() {
+  P="$1"
   set -a; . "$HENV/$P.env" 2>/dev/null; set +a
   BASEURL=$("$H/bin/fleet-conf.sh" "$P" prod); [ "$BASEURL" = "-" ] && BASEURL=""
   PREFIX=$("$H/bin/fleet-conf.sh" "$P" board_prefix)
   TOKEN=$("$H/bin/internal-token-for.sh" "$P") || TOKEN=""
-  [ -n "$TOKEN" ] && [ -n "$BASEURL" ] || { echo "$(STAMP) $P: no token/base — skipped" >> "$LOG"; continue; }
+  [ -n "$TOKEN" ] && [ -n "$BASEURL" ] || { echo "$(STAMP) $P: no token/base — skipped" >> "$LOG"; so_entry "$P" null; return 0; }
   BOARDS=$(curl -s -m 20 -H "Authorization: Bearer $TOKEN" -H "User-Agent: curl/8" "$BASEURL$PREFIX/boards")
   BID=$(echo "$BOARDS" | jq -r 'if type=="array" then .[0].id else (.boards[0].id // empty) end' 2>/dev/null)
-  [ -n "$BID" ] || { echo "$(STAMP) $P: board list failed" >> "$LOG"; continue; }
+  [ -n "$BID" ] || { echo "$(STAMP) $P: board list failed" >> "$LOG"; so_entry "$P" null; return 0; }
   # BH-1007: a row with no .key is keyed `<keyPrefix>-<number>`, and keyPrefix is
   # a property of the BOARD (project-4 schema.prisma Board.keyPrefix, default "AR",
   # the same field the app builds `key` from), NOT fleet.conf column 4 — that
@@ -113,7 +206,7 @@ for P in $BOARD_PROJECTS; do
       | {key: (.key // (if .number != null then (if $kp == "" then "#" else $kp + "-" end) + (.number|tostring) else .id end)), title: (.title // "(untitled)"|.[0:70]), status, waitingOn, hours: ((($now - (($t | sub("\\.[0-9]+Z$";"Z") | fromdateiso8601?) // $now)) / 3600) | floor)}
     ]' 2>/dev/null) || STALE='[]'
   N=$(echo "$STALE" | jq 'length')
-  OUT=$(echo "$OUT" | jq -c --arg p "$P" --argjson s "$STALE" '.[$p] = {count: ($s|length), tickets: $s}')
+  so_entry "$P" "$(jq -nc --argjson s "$STALE" '{count: ($s|length), tickets: $s}')"
   # Probe-leak scan: open "[E2E] ..." tickets are CI cleanup failures piling up
   # on a client-facing board (60 leaked on project-4 before anyone noticed). One
   # ALERTS line per project per day.
@@ -135,9 +228,11 @@ for P in $BOARD_PROJECTS; do
   # per 24h — an open ticket the watcher already declined re-fired a bail
   # comment on every sweep. Counts stay full; only the READY-QUEUE line and the
   # force-triage flag are suppressed for keys queued in the last 24h.
-  CD="$H/state/stale-owed-queued.json"; [ -s "$CD" ] || echo '{}' > "$CD"
-  QUEUEABLE=$(echo "$STALE" | jq -c --argjson now "$NOW" --slurpfile cd "$CD" --arg p "$P" \
-    '[ .[] | select((($cd[0][$p + ":" + .key] // 0) | . < ($now - 86400))) ]')
+  CD="$H/state/stale-owed-queued.json"
+  CDJ=$(jq -c 'if type == "object" then . else {} end' "$CD" 2>/dev/null) || CDJ='{}'
+  [ -n "$CDJ" ] || CDJ='{}'
+  QUEUEABLE=$(echo "$STALE" | jq -c --argjson now "$NOW" --argjson cd "$CDJ" --arg p "$P" \
+    '[ .[] | select((($cd[$p + ":" + .key] // 0) | . < ($now - 86400))) ]')
   NQ=$(echo "$QUEUEABLE" | jq 'length')
   if [ "$NQ" -gt 0 ]; then
     # `project=` names the owner (BH-4120): a box's READY-QUEUE.log is shared by
@@ -166,15 +261,15 @@ for P in $BOARD_PROJECTS; do
         || echo "$(STAMP) $P: push to box $IP FAILED" >> "$LOG"
     fi
     echo "$(STAMP) $P: $N owed-stale, $NQ queued (rest in 24h cooldown)" >> "$LOG"
-    jq -c --argjson now "$NOW" --arg p "$P" --argjson q "$QUEUEABLE" \
-      'reduce $q[] as $t (.; .[$p + ":" + $t.key] = $now)' "$CD" > "$CD.tmp" && mv "$CD.tmp" "$CD"
+    so_queued_merge "$P" "$QUEUEABLE"
   elif [ "$N" -gt 0 ]; then
     echo "$(STAMP) $P: $N owed-stale, all in 24h cooldown — nothing queued" >> "$LOG"
   fi
-done
-printf '%s\n' "$OUT" > "$H/state/stale-owed.json.tmp" && mv "$H/state/stale-owed.json.tmp" "$H/state/stale-owed.json"
+}
 
 # --- 4. orphaned builds (review died mid-run; nothing owns the retry) --------
+# so_find_orphans — the dirs on this box. Once per dispatch, not per project.
+so_find_orphans() {
 find "$H/builds" -maxdepth 2 -name RESULT -mmin +90 2>/dev/null | while read -r R; do
   D=$(dirname "$R")
   [ -f "$D/.stale-flagged" ] && continue
@@ -183,6 +278,7 @@ find "$H/builds" -maxdepth 2 -name RESULT -mmin +90 2>/dev/null | while read -r 
   HARNESS="$H" "$H/bin/alert-line.sh" "[stale-sweep] ORPHANED BUILD: $(basename "$D") — RESULT=REVIEW_BLOCKED but review.md has no VERDICT (review died mid-run). Hub: re-run the review stage or close it out; nothing else will."
   touch "$D/.stale-flagged"
 done
+}
 
 # The ledger pass (BH-2350). The find above covers every dir on this box; this
 # covers the REVIEW_BLOCKED builds the ledger records with no dir here, whose
@@ -192,6 +288,9 @@ done
 # bor_union or job_verdict_state) alerts nothing and stamps nothing.
 # STALE_ORPHAN_LOOKBACK_H (settings row, default 168) bounds the window, so the
 # first run does not page for every historic REVIEW_BLOCKED row in the ledger.
+# so_ledger <project>... — the ledger pass for these projects. Each stamp and
+# the prune re-read and rewrite the map under the agg lock (keys <p>:<bdir>).
+so_ledger() {
 if command -v bor_union >/dev/null 2>&1 && command -v job_verdict_state >/dev/null 2>&1; then
   ORF="$H/state/stale-owed-orphans.json"
   LOOKBACK_H="${STALE_ORPHAN_LOOKBACK_H:-168}"
@@ -201,7 +300,7 @@ if command -v bor_union >/dev/null 2>&1 && command -v job_verdict_state >/dev/nu
   [ -n "$ORPH" ] || ORPH='{}'
   STAGED=$'\n'"$(sed -n 's/^JOB_ID: //p' "$H"/builds/*/RESULT 2>/dev/null)"$'\n'
   ERRF=$(mktemp 2>/dev/null) || ERRF="$H/state/.stale-owed-bor.err"
-  for P in $BOARD_PROJECTS; do
+  for P in "$@"; do
     ROWS=$(bor_union "$P" 2>"$ERRF"); RC=$?
     if [ "$RC" = 1 ]; then
       echo "$(STAMP) $P: ledger read failed — local find only" >> "$LOG"; continue
@@ -226,13 +325,39 @@ if command -v bor_union >/dev/null 2>&1 && command -v job_verdict_state >/dev/nu
       # once; a stamp with no line cannot happen.
       HARNESS="$H" "$H/bin/alert-line.sh" "[stale-sweep] ORPHANED BUILD: $BDIR ($P $KEY, box $BOX, job $JOB) — ledger RESULT=REVIEW_BLOCKED and the job has no verdict artifact (review died mid-run, no local dir on this box). Hub: re-run the review stage or close it out; nothing else will."
       ORPH=$(jq -c --arg k "$OK" --argjson now "$NOW" '.[$k] = $now' <<<"$ORPH")
-      { printf '%s\n' "$ORPH" > "$ORF.tmp" && mv -f "$ORF.tmp" "$ORF"; } 2>/dev/null
+      if pl_agg_lock stale-owed-tickets; then
+        { { jq -c 'if type == "object" then . else {} end' "$ORF" 2>/dev/null || echo '{}'; } \
+            | jq -c --arg k "$OK" --argjson now "$NOW" '.[$k] = $now' > "$ORF.tmp" && mv -f "$ORF.tmp" "$ORF"; } 2>/dev/null
+        pl_agg_unlock
+      fi
     done <<<"$ROWS"
   done
   rm -f "$ERRF"
   # Prune keys past the window plus a day: their rows can no longer be candidates.
-  if [ -s "$ORF" ]; then
+  if [ -s "$ORF" ] && pl_agg_lock stale-owed-tickets; then
     jq -c --argjson cut $(( NOW - LOOKBACK_H * 3600 - 86400 )) 'with_entries(select(.value >= $cut))' "$ORF" > "$ORF.tmp" 2>/dev/null \
       && mv -f "$ORF.tmp" "$ORF" 2>/dev/null
+    pl_agg_unlock
   fi
 fi
+}
+
+case "$RUN_MODE" in
+  dispatch)
+    so_find_orphans
+    rc=0; line=$(pl_lane_dispatch stale-owed-tickets 600 "$H/bin/stale-owed-tickets.sh") || rc=$?
+    echo "$(STAMP) $line"
+    exit "$rc" ;;
+  project)
+    so_board "$ONLY_P"
+    so_ledger "$ONLY_P"
+    so_aggregate
+    exit 0 ;;
+esac
+# The whole-fleet sweep.
+# shellcheck disable=SC2086  # the board list is one name per word
+for P in $BOARD_PROJECTS; do so_board "$P"; done
+so_aggregate
+so_find_orphans
+# shellcheck disable=SC2086
+so_ledger $BOARD_PROJECTS

@@ -1,0 +1,10 @@
+{
+  "env": "FLEET_STATUS_PUSH_ROW_WAIT_S",
+  "type": "int",
+  "default": 60,
+  "min": 0,
+  "max": 300,
+  "unit": "seconds",
+  "zero_means": null,
+  "note": "BH-5944: how long `fleet-status-push.sh --dispatch` waits (1 s steps) for every fleet project's own run to write state/fleet-status-push/<p>/row.json (v 1, at >= the dispatch start). A row still missing or late at the limit is computed by the dispatch itself, so the push always carries every project. 0 = no wait: the dispatch computes every row itself at once. Not a whole number is 60, with one log line."
+}

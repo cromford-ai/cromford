@@ -150,6 +150,9 @@ fly_row() { printf "INSERT OR IGNORE INTO settings (key, value, description, act
 
 echo "M-a: fly fragment for dequeue-watch, no pl_dispatch, no manifest"
 mk ma; fly_row "$S" lane_placement.dequeue-watch fly
+# BH-5944 put dequeue-watch on pl_dispatch through bin/lib/project-lanes.sh.
+# Empty the scratch copy of the lib so the fixture lane is NOT on pl_dispatch.
+: > "$S/bin/lib/project-lanes.sh"
 [ "$(moved_lanes "$S")" = dequeue-watch ] && ok "M-a: moved_lanes = dequeue-watch" || bad "M-a: moved_lanes = '$(moved_lanes "$S")'"
 check_o12 "$S" && bad "M-a: O1/O2 stayed green" || ok "M-a: O1/O2 red"
 O=$(check_o12 "$S"); grep -q 'not on pl_dispatch' <<<"$O" && grep -q 'no lane-run-inputs.d/dequeue-watch.ro' <<<"$O" \

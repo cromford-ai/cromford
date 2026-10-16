@@ -106,6 +106,18 @@
 # Those five codes now write no key, charge no cap, post nothing, and retry on
 # the next tick. "Succeeded but returned nothing" (rc 0, empty out) is still
 # billed and still terminal — it is a different fact.
+#
+# THREE MODES (BH-5944, the per-project runner bin/lib/project-lanes.sh):
+#   review-autopilot.sh --dispatch   the cron line. Runs the fleet-wide steps
+#       once (the wake backstop, the housekeeping sweep, the pause refresh),
+#       then starts one detached `review-autopilot.sh <project>` per fleet
+#       project (pl_lane_dispatch, an 1800 s window) and returns.
+#   review-autopilot.sh <project>    one project's tick: its lock is
+#       locks/review-autopilot-<project>.lock plus locks/review-autopilot.lock
+#       SHARED, the fleet-wide steps are skipped, and its end beat carries
+#       project <project> and akey review-autopilot:<project>:<YYYYmmdd-HH>.
+#   review-autopilot.sh              the whole-fleet tick, as before (hand runs,
+#       the wake launch).
 set -uo pipefail
 # BH-2303: every model call this lane makes names the lane, so its cost rows
 # carry lane_id and its LLM_* knobs (on/off, runners, daily cap) bind it alone.
@@ -116,10 +128,11 @@ export AGENT_CALL_LANE=review-autopilot
 H="${HARNESS:-/root/harness}"
 . "${HARNESS:-/root/harness}/bin/lib/env-path.sh" 2>/dev/null || . "$(dirname "${BASH_SOURCE[0]}")/lib/env-path.sh" 2>/dev/null || harness_env_dir() { printf '%s\n' "${1:-${HARNESS:-/root/harness}}/env"; }; HENV=$(harness_env_dir "$H")
 set -a; . "$HENV/global.env" 2>/dev/null; set +a
-
 # --print-body <owner/repo> <num> <head12> — the operator's half of an
 # `unposted-terminal` alert in row mode (BH-4156): print the cached comment
 # from its review_autopilot_body row. Read-only, no lock, no lane gate.
+# It runs BEFORE the mode parser below: that parser takes 0 or 1 argument and
+# would send this 4-argument call to usage (exit 2). Lead review of #7000.
 if [ "${1:-}" = --print-body ]; then
   [[ "${2:-}" == */* ]] && [[ "${3:-}" =~ ^[0-9]+$ ]] && [[ "${4:-}" =~ ^[0-9a-f]{12}$ ]] \
     || { echo "usage: $0 --print-body <owner/repo> <num> <head12>" >&2; exit 2; }
@@ -131,6 +144,19 @@ if [ "${1:-}" = --print-body ]; then
   if [ "$PB_RC" = 0 ] && [ "$LT_VAL" = cached ]; then printf '%s\n' "$LT_DETAIL"; exit 0; fi
   echo "no cached review body for $2#$3@$4 (ledger rc $PB_RC, status '${LT_VAL:-none}'; the no-twin-ledgers flag must be up)" >&2
   exit 1
+fi
+
+usage() { echo "usage: review-autopilot.sh [--dispatch | <project> | --print-body <owner/repo> <num> <head12>]" >&2; exit 2; }
+RUN_MODE=fleet; ONLY_P=""
+case "$#" in
+  0) ;;
+  1) case "$1" in --dispatch) RUN_MODE=dispatch ;; -*|''|.*|*[!A-Za-z0-9._-]*) usage ;; *) RUN_MODE=project; ONLY_P=$1 ;; esac ;;
+  *) usage ;;
+esac
+# shellcheck source=bin/lib/project-lanes.sh
+[ -r "$H/bin/lib/project-lanes.sh" ] && . "$H/bin/lib/project-lanes.sh"
+if [ "$RUN_MODE" = project ] && ! { command -v pl_project_known >/dev/null 2>&1 && pl_project_known "$ONLY_P"; }; then
+  echo "review-autopilot: fleet.conf names no project '$ONLY_P' (or bin/lib/project-lanes.sh is missing)" >&2; exit 2
 fi
 
 # --- BH-1132: the lane's one off-switch -------------------------------------
@@ -168,11 +194,17 @@ command -v lane_gate_or_exit >/dev/null 2>&1 && lane_gate_or_exit review-autopil
 command -v lane_env_apply    >/dev/null 2>&1 && lane_env_apply    review-autopilot
 
 mkdir -p "$H/logs" "$H/locks" "$H/state/review-autopilot"
-exec 9>"$H/locks/review-autopilot.lock"; flock -n 9 || exit 0
+case "$RUN_MODE" in
+  fleet) exec 9>"$H/locks/review-autopilot.lock"; flock -n 9 || exit 0 ;;
+  project) pl_lane_lock review-autopilot "$ONLY_P" || exit 0 ;;
+esac
 # >>> wake backstop (BH-1034/BH-1060): a wake launch just ran this lane; the next cron tick within the window stands down. Fails open.
-# shellcheck source=bin/lib/wake-lanes.sh
-[ -r "$H/bin/lib/wake-lanes.sh" ] && . "$H/bin/lib/wake-lanes.sh"
-command -v wake_backstop_skip >/dev/null 2>&1 && wake_backstop_skip review-autopilot fleet && exit 0
+# A project run skips it: its dispatch already asked.
+if [ "$RUN_MODE" != project ]; then
+  # shellcheck source=bin/lib/wake-lanes.sh
+  [ -r "$H/bin/lib/wake-lanes.sh" ] && . "$H/bin/lib/wake-lanes.sh"
+  command -v wake_backstop_skip >/dev/null 2>&1 && wake_backstop_skip review-autopilot fleet && exit 0
+fi
 # <<< wake backstop
 LOG="$H/logs/review-autopilot.log"
 STATE="$H/state/review-autopilot"
@@ -201,8 +233,10 @@ DISPATCHED=""                                   # "<slug>#<n> -> <verdict>" line
 # sweep deleted it at 90 days and the money went with it. It is dropped when its
 # PR is no longer open instead (the drain below), and the KEY still ages out, so
 # a head nobody ever merged is reviewed once more after a quarter.
-find "$STATE" -maxdepth 1 -name 'count-*' -mtime +7 -delete 2>/dev/null
-find "$STATE" -maxdepth 1 -type f ! -name 'count-*' ! -name '*.body' -mtime +90 -delete 2>/dev/null
+if [ "$RUN_MODE" != project ]; then
+  find "$STATE" -maxdepth 1 -name 'count-*' -mtime +7 -delete 2>/dev/null
+  find "$STATE" -maxdepth 1 -type f ! -name 'count-*' ! -name '*.body' -mtime +90 -delete 2>/dev/null
+fi
 
 # ap_unposted_alert <slug> <num> <key> <h12> <tries> — a head that ran out of
 # post attempts is a PAID-FOR review sitting on disk that nobody will ever see
@@ -641,7 +675,7 @@ ap_post() {
   return 1
 }
 
-PROJECTS=$(awk '$1!~/^#/ && NF>=2 {print $1}' "$H/fleet.conf" 2>/dev/null | grep -vE "redirect" || true)
+PROJECTS=$(awk -v only="$ONLY_P" '$1!~/^#/ && NF>=2 && (only == "" || $1 == only) {print $1}' "$H/fleet.conf" 2>/dev/null | grep -vE "redirect" || true)
 # shellcheck source=bin/lib/gh-repo-token.sh
 [ -r "$H/bin/lib/gh-repo-token.sh" ] && . "$H/bin/lib/gh-repo-token.sh"
 # WHOSE PRs ARE OURS. The harness author SET (bin/lib/gh-pr-list.sh,
@@ -708,8 +742,19 @@ fi
 declare -F pause_active >/dev/null 2>&1 || { pause_active() { return 1; }; pause_label() { return 0; }; pause_refresh() { return 0; }; pause_env_shapes() { return 0; }; }
 declare -F pause_why >/dev/null 2>&1 || pause_why() { return 0; }
 # Once per tick, before any project is judged, so every project in this tick
-# reads the same cache. A failed refresh keeps the last cache (#1683).
-pause_refresh || true
+# reads the same cache. A failed refresh keeps the last cache (#1683). A
+# project run reads the cache its dispatch refreshed.
+[ "$RUN_MODE" = project ] || pause_refresh || true
+
+if [ "$RUN_MODE" = dispatch ]; then
+  if ! command -v pl_lane_dispatch >/dev/null 2>&1; then
+    echo "$(STAMP) review-autopilot dispatch: bin/lib/project-lanes.sh is not loaded — no project run started"
+    exit 1
+  fi
+  rc=0; line=$(pl_lane_dispatch review-autopilot 1800 "$H/bin/review-autopilot.sh") || rc=$?
+  echo "$(STAMP) $line"
+  exit "$rc"
+fi
 
 
 for P in $PROJECTS; do
@@ -1256,7 +1301,7 @@ done
 # did, it does not page anyone.
 if [ -n "$DISPATCHED" ]; then
   LINE="review-autopilot: $(grep -c . <<<"$DISPATCHED") aging PR(s) reviewed (merge still human) —$(tr '\n' ' ' <<<"$DISPATCHED")"
-  "$H/bin/beat.sh" "$(jq -nc --arg akey "review-autopilot:$(date -u +%Y%m%d-%H)" --arg l "$LINE" \
-    '{kind:"pr_review",project:"fleet",akey:$akey,line:$l}')" >/dev/null 2>&1 || true
+  "$H/bin/beat.sh" "$(jq -nc --arg akey "review-autopilot:${ONLY_P:+$ONLY_P:}$(date -u +%Y%m%d-%H)" --arg l "$LINE" \
+    --arg p "${ONLY_P:-fleet}" '{kind:"pr_review",project:$p,akey:$akey,line:$l}')" >/dev/null 2>&1 || true
 fi
 exit 0

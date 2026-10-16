@@ -9,4 +9,4 @@
 # Observe only: DEQUEUE_WATCH_ACT=0 (logs WOULD_<ACTION>, does nothing).
 # Off: the dequeue-watch-off switch (flags/dequeue-watch-off), DEQUEUE_WATCH=0,
 # flags/lane-off-dequeue-watch, or bin/harness-ctl.sh off dequeue-watch.
-*/5 * * * * /root/harness/bin/hub-lease.sh check && /root/harness/bin/dequeue-watch.sh >/dev/null 2>&1
+*/5 * * * * /root/harness/bin/hub-lease.sh check && /root/harness/bin/dequeue-watch.sh --dispatch >> /root/harness/logs/dequeue-watch-cron.log 2>&1

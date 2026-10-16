@@ -1,0 +1,55 @@
+{
+  "libs": [
+    {
+      "id": "project-lanes",
+      "file": "bin/lib/project-lanes.sh",
+      "note": "BH-5913: the per-project lane runner. pl_dispatch starts one detached run per fleet project (bin/project-lane-run.sh), each with its own lock locks/<lane>-<project>.lock. BH-5944 adds pl_lane_lock (the project lock plus the legacy locks/<lane>.lock held SHARED, so a whole-fleet run and a project run never overlap), pl_lane_lock_all, pl_lane_dispatch (the dispatch period from PL_DISPATCH_SPREAD_PCT, resolved through lib_env_apply project-lanes) and pl_agg_lock. docs/notes/2026-10-10-BH-5913-project-lanes.md, docs/notes/2026-10-13-BH-5944-project-loops-runner.md.",
+      "knobs": [
+        {
+          "env": "PL_DISPATCH_SPREAD_PCT",
+          "type": "int",
+          "default": 100,
+          "min": 0,
+          "max": 100,
+          "unit": "percent",
+          "zero_means": "every project run of a dispatch starts at once",
+          "required": false,
+          "settable": true,
+          "note": "BH-5944: the share of each lane's dispatch window that pl_lane_dispatch spreads the project runs over (dequeue-watch 50 s, archie-fm 300 s, review-autopilot 1800 s, fleet-status-push 0 s, metrics-collect 600 s, stale-owed-tickets 600 s). Each project starts at a stable offset inside window x PCT / 100. Not a whole number in 0..100 is 100, with one stderr line. Read as ${PL_DISPATCH_SPREAD_PCT:-100}."
+        },
+        {
+          "env": "PL_TEST_BARRIER",
+          "type": "string",
+          "default": "",
+          "zero_means": null,
+          "required": false,
+          "settable": false,
+          "note": "BH-5944 test seam, honoured only under HARNESS_TEST_SANDBOX=1: <dir>:<n>. After pl_lane_lock holds both locks it appends `<lane> <project> <pid>` to <dir>/holders and waits (60 s at most) until the file has <n> lines; at the limit it writes `<lane> <project>` to <dir>/timeouts. Empty in prod."
+        },
+        {
+          "env": "PL_TEST_BARRIER_EXIT",
+          "type": "int",
+          "default": 0,
+          "min": 0,
+          "max": 1,
+          "zero_means": "the run goes on past the barrier",
+          "required": false,
+          "settable": false,
+          "note": "BH-5944 test seam, honoured only with PL_TEST_BARRIER under HARNESS_TEST_SANDBOX=1: 1 = the run exits 0 after the barrier, so a suite proves the lock concurrency without the lane body."
+        },
+        {
+          "env": "PL_TEST_LOCK_WAIT_S",
+          "type": "int",
+          "default": 30,
+          "min": 0,
+          "max": 30,
+          "unit": "seconds",
+          "zero_means": "a held lock is a time-out at once",
+          "required": false,
+          "settable": false,
+          "note": "BH-5944 test seam, honoured only under HARNESS_TEST_SANDBOX=1: the wait of pl_agg_lock and of archie-fm's day-cap lock (afm_cap_claim). Prod is always 30 s."
+        }
+      ]
+    }
+  ]
+}

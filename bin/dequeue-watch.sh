@@ -6,6 +6,16 @@
 # on a stale status, wait out a red main, queue a bounded fix round for a real
 # break, or hold it for a person. It pages when a dequeued head stays unowned.
 #
+# THREE MODES (BH-5944, the per-project runner bin/lib/project-lanes.sh):
+#   dequeue-watch.sh --dispatch   the cron line. Starts one detached
+#       `dequeue-watch.sh <project>` per fleet project (pl_lane_dispatch, a 50 s
+#       window) and returns. The observe tick below runs here, once per dispatch.
+#   dequeue-watch.sh <project>    one project's tick. Its lock is
+#       locks/dequeue-watch-<project>.lock (the runner's fd 9) plus
+#       locks/dequeue-watch.lock SHARED; either held = summary `locked`. Its
+#       summary line ends ` project=<project>`.
+#   dequeue-watch.sh              the whole-fleet tick, as before (hand runs).
+#
 # One tick: gates → flock dedupe → libs (fail-open: a missing one is one warn
 # and ` lib-missing`) → ` gh-budget` when GitHub is low → per Mergify project in
 # fleet.conf: the open merge-queue/dequeued PRs (unread list = skip the project,
@@ -41,6 +51,19 @@
 set -uo pipefail
 H="${HARNESS:-/root/harness}"
 SELF="$(cd "$(dirname "$0")" && pwd)"
+# Arguments, checked before the timeout re-exec and any worker request.
+usage() { echo "usage: dequeue-watch.sh [--dispatch | <project>]" >&2; exit 2; }
+RUN_MODE=fleet; ONLY_P=""
+case "$#" in
+  0) ;;
+  1) case "$1" in --dispatch) RUN_MODE=dispatch ;; -*|''|.*|*[!A-Za-z0-9._-]*) usage ;; *) RUN_MODE=project; ONLY_P=$1 ;; esac ;;
+  *) usage ;;
+esac
+# shellcheck source=bin/lib/project-lanes.sh
+[ -r "$H/bin/lib/project-lanes.sh" ] && . "$H/bin/lib/project-lanes.sh"
+if [ "$RUN_MODE" = project ] && ! { command -v pl_project_known >/dev/null 2>&1 && pl_project_known "$ONLY_P"; }; then
+  echo "dequeue-watch: fleet.conf names no project '$ONLY_P' (or bin/lib/project-lanes.sh is missing)" >&2; exit 2
+fi
 # Bounded (D21): the whole tick inside 4 minutes, well inside its */5. Not an
 # exec: a tick the timeout kills writes no summary, so this wrapper writes it.
 # DEQUEUE_WATCH_TICK_TIMEOUT_S is a sandbox-only test seam; prod is always 240.
@@ -81,9 +104,33 @@ warn() { "$H/bin/lane-alert.sh" --severity warn --id "$1" dequeue-watch "$2" >/d
 
 if lane_switch dequeue-watch-off file; then summary off; exit 0; fi
 [ "${DEQUEUE_WATCH:-1}" = 0 ] && { summary disabled; exit 0; }
+if [ "$RUN_MODE" = dispatch ]; then
+  if ! command -v pl_lane_dispatch >/dev/null 2>&1; then
+    echo "$(date -u +%FT%TZ) dequeue-watch dispatch: bin/lib/project-lanes.sh is not loaded — no project run started"
+    exit 1
+  fi
+  rc=0; line=$(pl_lane_dispatch dequeue-watch 50 "$H/bin/dequeue-watch.sh") || rc=$?
+  echo "$(date -u +%FT%TZ) $line"
+  # Ship dark (BH-3859): a dispatch is one observe tick, whatever its project count.
+  # shellcheck disable=SC1091
+  [ -r "$SELF/lib/observe-report.sh" ] && . "$SELF/lib/observe-report.sh" 2>/dev/null
+  if [ "$rc" = 0 ] && [ "${DEQUEUE_WATCH_ACT:-0}" != 1 ] && declare -F observe_report_tick >/dev/null; then
+    OBS="${DEQUEUE_WATCH_OBSERVE_TICKS:-12}"
+    if ! [[ "$OBS" =~ ^[0-9]+$ ]] || [ "$OBS" -lt 1 ]; then
+      note "DEQUEUE_WATCH_OBSERVE_TICKS='$OBS' is not a positive integer, using 12"
+      OBS=12
+    fi
+    observe_report_tick dequeue-watch "$OBS" "$LOG" "bin/harness-ctl.sh set dequeue-watch DEQUEUE_WATCH_ACT 1" "$TICK_START" || true
+  fi
+  exit "$rc"
+fi
 # Dedupe, not a queue: a tick still running owns this one; the lock goes with the process.
-exec 9>"$H/locks/dequeue-watch.lock" || { summary locked; exit 0; }
-flock -n 9 || { summary locked; exit 0; }
+if [ "$RUN_MODE" = project ]; then
+  pl_lane_lock dequeue-watch "$ONLY_P" || { summary "locked project=$ONLY_P"; exit 0; }
+else
+  exec 9>"$H/locks/dequeue-watch.lock" || { summary locked; exit 0; }
+  flock -n 9 || { summary locked; exit 0; }
+fi
 
 export HARNESS="$H"
 # shellcheck disable=SC1091
@@ -115,7 +162,7 @@ if [ -n "$MISSING" ]; then
   summary "lib-missing${MISSING}"
   exit 0
 fi
-PROJECTS=$(awk '$1 !~ /^#/ && NF >= 2 { print $1, $2 }' "$H/fleet.conf" 2>/dev/null)
+PROJECTS=$(awk -v only="$ONLY_P" '$1 !~ /^#/ && NF >= 2 && (only == "" || $1 == only) { print $1, $2 }' "$H/fleet.conf" 2>/dev/null)
 # No project, no GitHub read at all, the budget probe included.
 if [ -n "$PROJECTS" ] && declare -F gh_budget_low >/dev/null; then
   gh_budget_low dequeue-watch; [ $? = 0 ] && { summary gh-budget; exit 0; }
@@ -206,9 +253,10 @@ while read -r P SLUG; do
   dqw_gather_resolve "$P" "$SLUG" "$NUMS"
 done <<<"$PROJECTS"
 
-summary "tick projects=$NP dequeued=$ND recorded=$NR acted=$NA would=$NW owned=$NO unread=$NU stale=$NS skipped=$NK$CUT${ERR:+ err=$ERR}"
-# Ship dark (BH-3859): every full observe tick counts toward the one report.
-if [ "${DEQUEUE_WATCH_ACT:-0}" != 1 ] && declare -F observe_report_tick >/dev/null; then
+summary "tick projects=$NP dequeued=$ND recorded=$NR acted=$NA would=$NW owned=$NO unread=$NU stale=$NS skipped=$NK$CUT${ERR:+ err=$ERR}${ONLY_P:+ project=$ONLY_P}"
+# Ship dark (BH-3859): every full observe tick counts toward the one report. A
+# project run is not a tick of its own: its dispatch counted it.
+if [ "$RUN_MODE" = fleet ] && [ "${DEQUEUE_WATCH_ACT:-0}" != 1 ] && declare -F observe_report_tick >/dev/null; then
   OBS="${DEQUEUE_WATCH_OBSERVE_TICKS:-12}"
   if ! [[ "$OBS" =~ ^[0-9]+$ ]] || [ "$OBS" -lt 1 ]; then
     note "DEQUEUE_WATCH_OBSERVE_TICKS='$OBS' is not a positive integer, using 12"

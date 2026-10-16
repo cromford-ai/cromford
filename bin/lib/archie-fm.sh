@@ -176,6 +176,34 @@ afm_cap_ok() {
   return 0
 }
 
+# afm_cap_claim <project> <claim-cmd> [args...] -> <claim-cmd>'s rc (afm_claim
+#   at every call site), or 100 when no claim was made: the cap is full or unreadable (afm_cap_ok said why), or
+#   locks/archie-fm-cap-<playbook>.lock was not free within 30 s (one log
+#   line). The lock (fd 5) is held around the read AND the claim, so two
+#   project ticks at used = cap-1 can not both claim (BH-5944). It is never
+#   held across an action.
+afm_cap_claim() {
+  local p="$1" lf w=30 rc
+  shift
+  [ -n "${AFM_H:-}" ] || { afm_log "$p: no harness root for the $AFM_PLAYBOOK cap lock; nothing done"; return 100; }
+  [ "${HARNESS_TEST_SANDBOX:-}" = 1 ] && [[ ${PL_TEST_LOCK_WAIT_S:-} =~ ^[0-9]+$ ]] && w=$PL_TEST_LOCK_WAIT_S
+  lf="$AFM_H/locks/archie-fm-cap-$AFM_PLAYBOOK.lock"
+  mkdir -p "$AFM_H/locks" 2>/dev/null
+  if ! { exec 5>"$lf"; } 2>/dev/null; then
+    afm_log "$p: the $AFM_PLAYBOOK cap lock could not be opened; nothing done"; return 100
+  fi
+  if ! flock -w "$w" 5; then
+    exec 5>&-
+    afm_log "$p: the $AFM_PLAYBOOK cap lock was not free in ${w}s; nothing done"; return 100
+  fi
+  if ! afm_cap_ok "$p"; then
+    flock -u 5; exec 5>&-; return 100
+  fi
+  "$@"; rc=$?
+  flock -u 5; exec 5>&-
+  return "$rc"
+}
+
 # afm_classify <project> <slug> <pr-json> -> rc 0 stacked-parent-merged, and
 #   AFM_PARENT=`<parent-num>\t<parent-url>\t<parent-head>\t<target>` (a
 #   global, not stdout: GH_REST_STATUS must survive for the caller) and
@@ -437,11 +465,11 @@ afm_isolated() {
            rm -rf "$w"; AFM_CUR_SNAP=""; return 125; }
     timeout -k 30 "$bound" setpriv --reuid="$uid" --regid="$gid" --clear-groups \
       env -i PATH="$PATH" HOME="$w/home" TMPDIR="$w/tmp" LANG=C.UTF-8 LC_ALL=C.UTF-8 HARNESS_TEST_SANDBOX=1 \
-      bash -c 'cd "$1" || exit 125; shift; exec "$@"' _ "$w/repo" "$@" >> "$out" 2>&1 </dev/null 7>&- 8>&- 9>&- &
+      bash -c 'cd "$1" || exit 125; shift; exec "$@"' _ "$w/repo" "$@" >> "$out" 2>&1 </dev/null 4>&- 5>&- 7>&- 8>&- 9>&- &
   else
     timeout -k 30 "$bound" \
       env -i PATH="$PATH" HOME="$w/home" TMPDIR="$w/tmp" LANG=C.UTF-8 LC_ALL=C.UTF-8 HARNESS_TEST_SANDBOX=1 \
-      bash -c 'cd "$1" || exit 125; shift; exec "$@"' _ "$w/repo" "$@" >> "$out" 2>&1 </dev/null 7>&- 8>&- 9>&- &
+      bash -c 'cd "$1" || exit 125; shift; exec "$@"' _ "$w/repo" "$@" >> "$out" 2>&1 </dev/null 4>&- 5>&- 7>&- 8>&- 9>&- &
   fi
   AFM_SUITE_PID=$!
   wait "$AFM_SUITE_PID"; r=$?
@@ -695,8 +723,7 @@ afm_act() {
     '{onto: $o, parent_head: $u, old_head: $h, parent_pr: $pn, parent_url: $pu, retarget: $o, conductor_state: $cs, child_base: $cb}')
   # >>> afm claim
   if [ "$mode" = on ]; then
-    afm_cap_ok "$p" || return 0
-    afm_claim "$key" "$p" "$slug" "$n" on restack "stacked on #$pn, which merged" "$ev"; rc=$?
+    afm_cap_claim "$p" afm_claim "$key" "$p" "$slug" "$n" on restack "stacked on #$pn, which merged" "$ev"; rc=$?
   else
     afm_claim "$key" "$p" "$slug" "$n" observe would_restack "stacked on #$pn, which merged" "$ev"; rc=$?
   fi
@@ -809,8 +836,7 @@ afm_dl_act() {
   ev=$(jq -nc --arg d "$dir" --arg f "$file" --arg h "$head" '{build_dir: $d, file: $f, head: $h}')
   # >>> dl claim
   if [ "$mode" = on ]; then
-    afm_cap_ok "$p" || return 0
-    afm_claim "$key" "$p" "$slug" "$n" on apply "apply $file ahead of merge" "$ev"; rc=$?
+    afm_cap_claim "$p" afm_claim "$key" "$p" "$slug" "$n" on apply "apply $file ahead of merge" "$ev"; rc=$?
   else
     afm_claim "$key:observe" "$p" "$slug" "$n" observe would_apply "apply $file ahead of merge" "$ev"; rc=$?
   fi
@@ -829,7 +855,7 @@ afm_dl_act() {
   fi
   # Backgrounded and waited on, as a suite: a TERM to the tick reaches
   # afm_on_term at once, which kills the apply and closes this row deferred.
-  timeout -k 10 "$bound" "${AFM_H:-}/bin/data-lane-apply.sh" "$p" "$n" "$dir" > "$out" 2>/dev/null </dev/null 8>&- 9>&- &
+  timeout -k 10 "$bound" "${AFM_H:-}/bin/data-lane-apply.sh" "$p" "$n" "$dir" > "$out" 2>/dev/null </dev/null 4>&- 5>&- 8>&- 9>&- &
   AFM_SUITE_PID=$!
   wait "$AFM_SUITE_PID"; rc=$?
   AFM_SUITE_PID=""

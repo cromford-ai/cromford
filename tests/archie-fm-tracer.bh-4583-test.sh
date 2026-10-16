@@ -601,8 +601,12 @@ tick ARCHIE_FM_NOW=$((NOW + 1800))
 check "AT9 ...and a tick past ARCHIE_FM_RETRY_S reclaims it and restacks" '[ "$(row outcome)/$(row attempts)" = done/2 ] && at1_own_only'
 
 # ── the cron line and the registry ───────────────────────────────────────────
-check "cron: one hub-lease-gated */10 line for bin/archie-fm.sh" \
-  '[ "$(grep -c "^\*/10 \* \* \* \* /root/harness/bin/hub-lease.sh check && /root/harness/bin/archie-fm.sh >/dev/null 2>&1$" "$DIR/cron/lanes/725-archie-fm.cron")" = 1 ]'
+# TEST-CHANGE: BH-5944 — the cron line runs `archie-fm.sh --dispatch` (one run
+# per project on bin/lib/project-lanes.sh) into its own cron log. The pattern is
+# grep'd directly, never through eval: a `>> /root/harness/...` in an eval'd
+# string reads as a write to the real harness.
+AFM_CRON_RE='^\*/10 \* \* \* \* /root/harness/bin/hub-lease.sh check && /root/harness/bin/archie-fm.sh --dispatch >> /root/harness/logs/archie-fm-cron.log 2>&1$'
+eq "cron: one hub-lease-gated */10 line for bin/archie-fm.sh --dispatch" "$(grep -cE "$AFM_CRON_RE" "$DIR/cron/lanes/725-archie-fm.cron")" 1
 check "registry: hub lane, flag switch, no cost stage" \
   'jq -e ".scope == \"hub\" and .script == \"bin/archie-fm.sh\" and .switch.name == \"lane-off-archie-fm\" and .stats.cost_stage == null" "$DIR/catalog/lanes.d/archie-fm.json" >/dev/null'
 

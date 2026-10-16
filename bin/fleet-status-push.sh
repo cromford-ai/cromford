@@ -5,6 +5,19 @@
 # harness itself is dead inside (API key, cron, disk) and the worker pages.
 # Also what /status answers from — keep it small and glanceable.
 set -uo pipefail
+#
+# THREE MODES (BH-5944, the per-project runner bin/lib/project-lanes.sh):
+#   fleet-status-push.sh --dispatch   the cron line. Starts one detached
+#       `fleet-status-push.sh <project>` per fleet project (all at once), waits
+#       up to FLEET_STATUS_PUSH_ROW_WAIT_S (default 60) for their rows, computes
+#       any row still missing itself, then builds and pushes the ONE snapshot
+#       from the rows.
+#   fleet-status-push.sh <project>    one project's run: it writes only its
+#       own row, state/fleet-status-push/<project>/row.json (fsp_project_row).
+#       No push, no beat. Its lock is locks/fleet-status-push-<project>.lock
+#       plus locks/fleet-status-push.lock SHARED (bin/lib/project-lanes.sh).
+#   fleet-status-push.sh              the whole-fleet push, as before. It takes
+#       no lock; every row is computed here.
 # BH-1138: no __pycache__ next to bin/*.py. The interpreter writes bytecode
 # beside any module it IMPORTS; gitignore has no say over a path that is
 # already tracked, and a whole-tree `git add -A` then re-commits it — which
@@ -27,6 +40,19 @@ set -a; . "$HENV/global.env"; set +a
 # BH-4080: HARNESS_HUB_BOX, the hub's fleet name when HUB_BOX_NAME is unset.
 # shellcheck source=bin/lib/deployment.sh
 . "${HARNESS_DEPLOYMENT_FILE-$(dirname "${BASH_SOURCE[0]}")/lib/deployment.sh}" || exit 1
+usage() { echo "usage: fleet-status-push.sh [--dispatch | <project>]" >&2; exit 2; }
+RUN_MODE=fleet; ONLY_P=""
+case "$#" in
+  0) ;;
+  1) case "$1" in --dispatch) RUN_MODE=dispatch ;; -*|''|.*|*[!A-Za-z0-9._-]*) usage ;; *) RUN_MODE=project; ONLY_P=$1 ;; esac ;;
+  *) usage ;;
+esac
+# The runner. A whole-fleet run does not need it.
+# shellcheck source=bin/lib/project-lanes.sh
+[ "$RUN_MODE" = fleet ] || { [ -r "$H/bin/lib/project-lanes.sh" ] && . "$H/bin/lib/project-lanes.sh"; }
+if [ "$RUN_MODE" = project ] && ! { command -v pl_project_known >/dev/null 2>&1 && pl_project_known "$ONLY_P"; }; then
+  echo "fleet-status-push: fleet.conf names no project '$ONLY_P' (or bin/lib/project-lanes.sh is missing)" >&2; exit 2
+fi
 
 # >>> lane gate (BH-1165) — one off-switch and one source of numbers for this
 # lane. lane_gate_or_exit exits 0 when flags/all-off, flags/lane-off-fleet-status-push
@@ -64,15 +90,15 @@ FLEET_PROJECTS=$("$H/bin/fleet-conf.sh" --projects 2>/dev/null)
 # shellcheck source=bin/lib/pool-state-rows.sh
 . "$H/bin/lib/pool-state-rows.sh" 2>/dev/null || . "$(dirname "${BASH_SOURCE[0]}")/lib/pool-state-rows.sh" 2>/dev/null || true
 
-PROJECTS='{}'
-# Registry-driven (2026-08-23): this was a hardcoded four while fleet.conf had
-# grown to a dozen, so every project added after the original boxes was invisible
-# to /status and to Mission Control. A project with no triage log yet reports
-# age -1 (unknown) rather than "55 years stale" — a freshly enrolled project must
-# not read as a dead one.
-# BH-1372: one routing sync per tick so a row-only enrollment reads true below.
-command -v routing_sync_all >/dev/null 2>&1 && { routing_sync_all >/dev/null 2>&1 || true; }
-for P in $FLEET_PROJECTS; do
+# fsp_project_row <project> — ONE project's part of the snapshot (BH-5944), as
+# one JSON line: {"v":1,"project":p,"at":<epoch>,"row":{the seven .projects[p]
+# fields},"rrp":<remote results pending>,"lane":{project,box,cadence_min,
+# offset_min} or null}. A project run writes it to state/fleet-status-push/<p>/
+# row.json; the dispatch and the whole-fleet run aggregate the rows below.
+# Reads NOW. rc 1 when the row could not be built.
+fsp_project_row() {
+  local P="$1" MT AGE LAST HELD FAILEDN HELDKEYS HROWS K QD QAGE QROWS QOLD QEPOCH JF JAGE POOL ROW
+  local N J JK SIB RD BOX OFF LANE
   if [ -f "$H/logs/$P.log" ]; then
     MT=$(stat -c %Y "$H/logs/$P.log" 2>/dev/null || echo 0)
     AGE=$(( (NOW - MT) / 60 ))
@@ -178,9 +204,128 @@ for P in $FLEET_PROJECTS; do
   fi
   [ -n "$QAGE" ] || QAGE=0
   POOL=false; flag_on fly-pool "$P" && POOL=true
-  PROJECTS=$(echo "$PROJECTS" | jq -c --arg p "$P" --argjson a "$AGE" --arg l "$LAST" --argjson q "${QD:-0}" --argjson qa "$QAGE" --argjson fp "$POOL" --argjson hd "${HELD:-0}" --argjson fl "${FAILEDN:-0}" \
-    '.[$p]={triage_log_age_min:$a,last_line:$l,queue_depth:$q,oldest_queued_min:$qa,held:$hd,failed:$fl,pool:$fp}')
-done
+  ROW=$(jq -nc --argjson a "$AGE" --arg l "$LAST" --argjson q "${QD:-0}" --argjson qa "$QAGE" --argjson fp "$POOL" --argjson hd "${HELD:-0}" --argjson fl "${FAILEDN:-0}" \
+    '{triage_log_age_min:$a,last_line:$l,queue_depth:$q,oldest_queued_min:$qa,held:$hd,failed:$fl,pool:$fp}') || return 1
+  # The remote results this project's staging never consumed (section 5 below).
+  N=0
+  for J in "$H/state/remote-results/$P/"*.json; do
+    [ -f "$J" ] || continue
+    JK=$(basename "$J" .json); SIB=0
+    for RD in "$H/builds/pool-$P-$JK-"*/RELAYED "$H/builds/$P-$JK-"*/RELAYED; do
+      [ -f "$RD" ] && { SIB=1; break; }
+    done
+    [ "$SIB" = 1 ] && continue
+    # An unreadable mtime counts as fresh: this field's healthy value is 0, and
+    # inventing pending work out of a stat failure is how a portability bug
+    # becomes a page.
+    MT=$(stat -c %Y "$J" 2>/dev/null || stat -f %m "$J" 2>/dev/null || echo "$NOW")
+    [ $(( NOW - MT )) -gt 1800 ] && N=$((N+1))
+  done
+  # The (project, box) pair the registry expects to tick (EXPECTED LANES below).
+  # box-for.sh, not fleet-conf.sh directly: legacy rows carry no box column and
+  # resolve by naming convention, and reimplementing that here would be a second
+  # copy of the mapping to drift.
+  BOX=$("$H/bin/box-for.sh" "$P" 2>/dev/null) || BOX=""
+  LANE=null
+  if [ -n "$BOX" ]; then
+    # "local" means the hub runs this lane itself; the lane must be keyed on the
+    # name the BOX reports (bin/box-name.sh, from its own crontab ping line) or
+    # the expectation and the heartbeat would never meet on the same row.
+    [ "$BOX" = local ] && BOX="${HUB_BOX_NAME:-$HARNESS_HUB_BOX}"
+    OFF=$("$H/bin/fleet-conf.sh" "$P" offset 2>/dev/null) || OFF=""
+    case "$OFF" in ''|*[!0-9]*) OFF=0 ;; esac
+    LANE=$(jq -nc --arg p "$P" --arg b "$BOX" --argjson o "$OFF" \
+      '{project:$p, box:$b, cadence_min:10, offset_min:$o}' 2>/dev/null) || LANE=null
+  fi
+  jq -nc --arg p "$P" --argjson at "$(date +%s)" --argjson row "$ROW" --argjson rrp "${N:-0}" --argjson lane "${LANE:-null}" \
+    '{v: 1, project: $p, at: $at, row: $row, rrp: $rrp, lane: $lane}'
+}
+
+# fsp_row_ok <project> <since-epoch> — rc 0 when the project's own run wrote a
+# v1 row for it at or after <since>.
+fsp_row_ok() {
+  jq -e --arg p "$1" --argjson t "$2" '.v == 1 and .project == $p and (.at | type) == "number" and .at >= $t
+    and (.row | type) == "object"' "$H/state/fleet-status-push/$1/row.json" >/dev/null 2>&1
+}
+
+
+# >>> project modes (BH-5944)
+if [ "$RUN_MODE" = project ]; then
+  # One project's run: its own row, nothing else. No push, no beat.
+  pl_lane_lock fleet-status-push "$ONLY_P" || exit 0
+  RD="$H/state/fleet-status-push/$ONLY_P"
+  mkdir -p "$RD" 2>/dev/null
+  if R=$(fsp_project_row "$ONLY_P") && [ -n "$R" ]; then
+    printf '%s\n' "$R" > "$RD/row.json.tmp.$$" && mv "$RD/row.json.tmp.$$" "$RD/row.json"
+  else
+    echo "$(date -u '+%Y-%m-%d %H:%M:%SZ') $ONLY_P: the project row could not be built; the dispatch computes it" >> "$H/logs/fleet-status-push.log"
+  fi
+  exit 0
+fi
+# Registry-driven (2026-08-23): this was a hardcoded four while fleet.conf had
+# grown to a dozen, so every project added after the original boxes was invisible
+# to /status and to Mission Control. A project with no triage log yet reports
+# age -1 (unknown) rather than "55 years stale" — a freshly enrolled project must
+# not read as a dead one.
+# BH-1372: one routing sync per tick so a row-only enrollment reads true below.
+command -v routing_sync_all >/dev/null 2>&1 && { routing_sync_all >/dev/null 2>&1 || true; }
+ROWS=""
+if [ "$RUN_MODE" = dispatch ]; then
+  # The project runs write their rows; this waits for them (1 s steps, at most
+  # FLEET_STATUS_PUSH_ROW_WAIT_S) and computes any row still missing or late
+  # itself, so the push always carries every project. A held project starts
+  # no run, so it is not waited for.
+  WAIT="${FLEET_STATUS_PUSH_ROW_WAIT_S:-60}"
+  case "$WAIT" in
+    ''|*[!0-9]*) echo "$(date -u '+%Y-%m-%d %H:%M:%SZ') FLEET_STATUS_PUSH_ROW_WAIT_S='$WAIT' is not a number of seconds; using 60" >> "$H/logs/fleet-status-push.log"
+                 WAIT=60 ;;
+  esac
+  T0=$(date +%s)
+  mkdir -p "$H/logs" 2>/dev/null
+  if command -v pl_lane_dispatch >/dev/null 2>&1; then
+    line=$(pl_lane_dispatch fleet-status-push 0 "$H/bin/fleet-status-push.sh") || true
+    echo "$(date -u +%FT%TZ) $line"
+  else
+    echo "$(date -u +%FT%TZ) fleet-status-push dispatch: bin/lib/project-lanes.sh is not loaded — every row is computed here"
+    WAIT=0
+  fi
+  WAITFOR=""
+  for P in $FLEET_PROJECTS; do
+    command -v lane_project_held >/dev/null 2>&1 && lane_project_held fleet-status-push "$P" && continue
+    WAITFOR="$WAITFOR $P"
+  done
+  WAITED=0
+  while [ "$WAITED" -lt "$WAIT" ]; do
+    LEFT=""
+    for P in $WAITFOR; do fsp_row_ok "$P" "$T0" || LEFT="$LEFT $P"; done
+    WAITFOR=$LEFT
+    [ -n "$WAITFOR" ] || break
+    sleep 1; WAITED=$((WAITED + 1))
+  done
+  NRUN=0; NHERE=0
+  for P in $FLEET_PROJECTS; do
+    if fsp_row_ok "$P" "$T0"; then
+      R=$(jq -c . "$H/state/fleet-status-push/$P/row.json" 2>/dev/null) && NRUN=$((NRUN + 1))
+    else
+      R=$(fsp_project_row "$P") && NHERE=$((NHERE + 1))
+    fi
+    [ -n "$R" ] && ROWS="$ROWS$R"$'\n'
+  done
+  echo "$(date -u '+%Y-%m-%d %H:%M:%SZ') dispatch: $NRUN project row(s) from their runs, $NHERE computed here after ${WAITED}s" >> "$H/logs/fleet-status-push.log"
+else
+  for P in $FLEET_PROJECTS; do
+    R=$(fsp_project_row "$P") && [ -n "$R" ] && ROWS="$ROWS$R"$'\n'
+  done
+fi
+# The fleet's .projects, remote_results_pending and expected lanes ARE the rows.
+PROJECTS=$(printf '%s' "$ROWS" | jq -sc 'reduce .[] as $r ({}; .[$r.project] = $r.row)' 2>/dev/null) || PROJECTS='{}'
+[ -n "$PROJECTS" ] || PROJECTS='{}'
+RRP=$(printf '%s' "$ROWS" | jq -sc 'reduce .[] as $r ({}; .[$r.project] = ($r.rrp // 0))' 2>/dev/null) || RRP='{}'
+[ -n "$RRP" ] || RRP='{}'
+LANES=$(printf '%s' "$ROWS" | jq -sc '[.[] | .lane | select(type == "object")]' 2>/dev/null) || LANES='[]'
+[ -n "$LANES" ] || LANES='[]'
+# <<< project modes
+
 # Page-fatigue guard (2026-08-14, the 05:26 phone-spam screenshot): the worker
 # pages on every push where a nonzero count persists, so an unchanged pile
 # re-paged the operator every cycle all night. Report a project's stale count only when
@@ -492,24 +637,7 @@ fi
 # ledger the hub json is only a backup copy and its build dir is stamped
 # RELAYED, so counting those paged 73 project-5 keys the box had already pulled
 # (2026-09-14). Zero for every project is the healthy answer.
-RRP='{}'
-for P in $FLEET_PROJECTS; do
-  N=0
-  for J in "$H/state/remote-results/$P/"*.json; do
-    [ -f "$J" ] || continue
-    JK=$(basename "$J" .json); SIB=0
-    for RD in "$H/builds/pool-$P-$JK-"*/RELAYED "$H/builds/$P-$JK-"*/RELAYED; do
-      [ -f "$RD" ] && { SIB=1; break; }
-    done
-    [ "$SIB" = 1 ] && continue
-    # An unreadable mtime counts as fresh: this field's healthy value is 0, and
-    # inventing pending work out of a stat failure is how a portability bug
-    # becomes a page.
-    MT=$(stat -c %Y "$J" 2>/dev/null || stat -f %m "$J" 2>/dev/null || echo "$NOW")
-    [ $(( NOW - MT )) -gt 1800 ] && N=$((N+1))
-  done
-  RRP=$(printf %s "$RRP" | jq -c --arg p "$P" --argjson n "$N" '.[$p]=$n' 2>/dev/null) || RRP='{}'
-done
+# Built per project by fsp_project_row and aggregated above (BH-5944).
 
 # 6. HUB — the box's own vitals, straight off /proc and df. Linux-only by
 # construction: on a Mac (the test fixtures) the reads fail and every field is
@@ -814,22 +942,7 @@ fi
 # defines an offset as "triage fires at offset, offset+10, ... offset+50", i.e.
 # every 10 minutes. It is recorded ON the row so the staleness threshold the
 # worker derives is a DB fact every reader shares, not a constant in a script.
-LANES='[]'
-for P in $FLEET_PROJECTS; do
-  # box-for.sh, not fleet-conf.sh directly: legacy rows carry no box column and
-  # resolve by naming convention, and reimplementing that here would be a second
-  # copy of the mapping to drift.
-  BOX=$("$H/bin/box-for.sh" "$P" 2>/dev/null) || BOX=""
-  [ -n "$BOX" ] || continue
-  # "local" means the hub runs this lane itself; the lane must be keyed on the
-  # name the BOX reports (bin/box-name.sh, from its own crontab ping line) or
-  # the expectation and the heartbeat would never meet on the same row.
-  [ "$BOX" = local ] && BOX="${HUB_BOX_NAME:-$HARNESS_HUB_BOX}"
-  OFF=$("$H/bin/fleet-conf.sh" "$P" offset 2>/dev/null) || OFF=""
-  case "$OFF" in ''|*[!0-9]*) OFF=0 ;; esac
-  LANES=$(printf %s "$LANES" | jq -c --arg p "$P" --arg b "$BOX" --argjson o "$OFF" \
-    '. + [{project:$p, box:$b, cadence_min:10, offset_min:$o}]' 2>/dev/null) || LANES='[]'
-done
+# Built per project by fsp_project_row and aggregated above (BH-5944).
 # shellcheck source=/dev/null
 [ -r "$H/bin/jobs-client.sh" ] && . "$H/bin/jobs-client.sh"
 if command -v lanes_expect >/dev/null 2>&1; then

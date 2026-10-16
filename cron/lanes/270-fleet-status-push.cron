@@ -1,2 +1,2 @@
 # @hub-lanes
-*/10 * * * * /root/harness/bin/hub-lease.sh check && /root/harness/bin/fleet-status-push.sh
+*/10 * * * * /root/harness/bin/hub-lease.sh check && /root/harness/bin/fleet-status-push.sh --dispatch >> /root/harness/logs/fleet-status-push-cron.log 2>&1
