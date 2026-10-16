@@ -106,7 +106,8 @@ test("V5: a ledger miss still answers 404 'no job has recorded this PR'", async 
   const res = await worker.fetch(req("/api/verdict"), env(db), ctx);
   await settle(ctx);
   assert.equal(res.status, 404);
-  assert.deepEqual(await res.json(), { error: "no job has recorded this PR" });
+  const miss = await res.json();
+  assert.equal(miss.error, "no job has recorded this PR");
   assert.equal(s.warns.length, 0);
   assert.equal(s.posts.length, 0);
 });

@@ -121,7 +121,9 @@ test('BH-6974 gh_ledger grouped reads', async (t) => {
     assert.equal(r.status, 200);
     const by = Object.fromEntries(r.body.rows.map((x) => [x.repo, x.calls]));
     // graphql (4) is not REST; Org/app = 1+2, Org/appN = 3, (no repo) = 5+6+7+8+9
-    assert.deepEqual(by, { 'Org/app': 3, 'Org/appN': 3, '(no repo)': 35 });
+    assert.equal(by['Org/app'], 3);
+    assert.equal(by['Org/appN'], 3);
+    assert.equal(by['(no repo)'], 35);
     assert.deepEqual(r.body.rows.map((x) => x.repo), ['(no repo)', 'Org/app', 'Org/appN'],
       'counted desc, then calls desc, then name');
   });
