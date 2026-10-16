@@ -88,6 +88,7 @@ export const routes = [
         await ensureTable(env, "suite_reuse_runs");
         const binds = [cutoff];
         if (r.repo) binds.push(r.repo);
+        // sql-ident-ok: the repo clause is a literal picked by r.repo, which binds as ?2
         const { results } = await env.DB.prepare(
           `SELECT substr(created_at, 1, 10) AS day, repo, class, COUNT(*) AS runs,
              SUM(ran) AS ran, SUM(reused) AS reused, SUM(saved_s) AS saved_s
@@ -116,6 +117,7 @@ export const routes = [
       if (cls) { binds.push(cls); where += ` AND class = ?${binds.length}`; }
       return d1Guarded("suite_reuse_runs", async () => {
         await ensureTable(env, "suite_reuse_runs");
+        // sql-ident-ok: where holds literal column clauses with ?N binds; RUNS_LIMIT is a module number const
         const { results } = await env.DB.prepare(
           `SELECT * FROM suite_reuse_runs WHERE ${where}
            ORDER BY created_at DESC, run_key LIMIT ${RUNS_LIMIT + 1}`

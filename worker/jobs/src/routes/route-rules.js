@@ -245,6 +245,7 @@ export const routes = [
       const days = Number.isInteger(dRaw) && dRaw >= 1 && dRaw <= 365 ? dRaw : 30;
       const since = new Date(Date.parse(t) - days * 86400000).toISOString().replace(/\.\d{3}Z$/, "Z");
       const byRule = rule !== null ? "AND vh.job_id IN (SELECT s.job_id FROM route_shadow s WHERE s.project=?1 AND s.rule=?3)" : "";
+      // sql-ident-ok: byRule is a literal subquery or empty; rule binds as ?3
       const row = await env.DB.prepare(
         `SELECT count(*) AS reviewed, coalesce(sum(CASE WHEN vh.verdict='BLOCK' THEN 1 ELSE 0 END),0) AS blocked
            FROM verdict_history vh JOIN jobs j ON j.id = vh.job_id

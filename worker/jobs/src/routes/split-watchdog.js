@@ -119,6 +119,7 @@ export const routes = [
         if (v !== null && v !== "") { where.push(clause); binds.push(v); }
       }
       await ensureTable(env, "split_watchdog_actions");
+      // sql-ident-ok: where holds literal column=? clauses; limit is a Number clamped to SW_LIST_MAX
       const rows = (await env.DB.prepare(
         `SELECT * FROM split_watchdog_actions WHERE ${where.join(" AND ")} `
         + `ORDER BY last_at DESC, child ASC, step ASC, reason_fp ASC LIMIT ${limit + 1}`

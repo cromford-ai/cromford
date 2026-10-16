@@ -63,6 +63,7 @@ export const routes = [
         const clause = nums.length === 0 ? ""
           : chunked ? ` AND number NOT IN (${nums.map((_, i) => `?${i + 3}`).join(",")})`
           : " AND updated_at<?1";
+        // sql-ident-ok: clause is empty, a literal, or a ?N placeholder list over the bound numbers
         stmts.push(env.DB.prepare(
           `UPDATE pr_owners SET closed_at=?1 WHERE repo=?2 AND closed_at IS NULL${clause}`
         ).bind(...(chunked ? [t, repo, ...nums] : [t, repo])));
@@ -83,6 +84,7 @@ export const routes = [
       if (!repo) return json(400, { error: "repo required" });
       const all = url.searchParams.get("all") === "1";
       const where = all ? "repo=?1" : "repo=?1 AND closed_at IS NULL";
+      // sql-ident-ok: where is one of two literal clauses; repo binds as ?1
       const rows = await env.DB.prepare(
         `SELECT * FROM pr_owners WHERE ${where} ORDER BY number ASC LIMIT 500`
       ).bind(repo).all();

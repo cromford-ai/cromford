@@ -50,6 +50,7 @@ export const routes = [
     "GET", "/api/metrics/outcomes",
     async ({ env, url, t }) => {
       const lim = Math.min(Math.max(Number(url.searchParams.get("limit")) || 200, 1), 1000);
+      // sql-ident-ok: lim is a Number clamped to 1..1000
       const rows = await env.DB.prepare(
         `SELECT * FROM outcome_metrics ORDER BY created_at DESC LIMIT ${lim}`
       ).all();

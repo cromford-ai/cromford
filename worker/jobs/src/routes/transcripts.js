@@ -61,6 +61,7 @@ export const routes = [
         str(body.actor, 128), t).run();
       // The stored row WITHOUT its body: the pusher has the text already, and
       // echoing 150KB back onto a box that is mid-build is pure cost.
+      // sql-ident-ok: TRANSCRIPT_INDEX_COLS is an export const column list in lib/core.js
       const row = await env.DB.prepare(
         `SELECT ${TRANSCRIPT_INDEX_COLS} FROM job_transcripts
           WHERE job_id=?1 AND phase_id=?2 AND attempt=?3`
@@ -75,6 +76,7 @@ export const routes = [
     "GET", /^\/api\/jobs\/([^/]+)\/transcripts$/,
     async ({ env, t, m: trListMatch }) => {
       const id = decodeURIComponent(trListMatch[1]);
+      // sql-ident-ok: TRANSCRIPT_INDEX_COLS is an export const column list in lib/core.js
       const rows = await env.DB.prepare(
         `SELECT ${TRANSCRIPT_INDEX_COLS} FROM job_transcripts WHERE job_id=?1
           ORDER BY phase_id ASC, attempt ASC LIMIT 100`

@@ -68,6 +68,7 @@ export const routes = [
       const where = [], binds = [];
       if (box) { binds.push(box); where.push(`box=?${binds.length}`); }
       if (until) { binds.push(until); where.push(`ts<=?${binds.length}`); }
+      // sql-ident-ok: where holds literal column clauses with ?N binds; lim is a Number clamped to 1..1000
       const rows = await env.DB.prepare(
         `SELECT * FROM extra_usage_snapshots${where.length ? " WHERE " + where.join(" AND ") : ""}
          ORDER BY ts DESC, box DESC LIMIT ${lim}`
@@ -145,6 +146,7 @@ export const routes = [
       }
       const since = str(url.searchParams.get("since"), 40);
       if (since) { binds.push(since); where.push(`window_end>=?${binds.length}`); }
+      // sql-ident-ok: where uses column names from a literal list, values bound; lim is a Number clamped to 1..1000
       const rows = await env.DB.prepare(
         `SELECT * FROM cost_reconciliation${where.length ? " WHERE " + where.join(" AND ") : ""}
          ORDER BY window_end DESC LIMIT ${lim}`
@@ -171,17 +173,20 @@ export const routes = [
               SUM(input_toks IS NULL AND output_toks IS NULL AND cache_read IS NULL
                   AND cache_write IS NULL) AS untokened_calls`;
       const [groups, projects, snapshots] = (await Promise.all([
+        // sql-ident-ok: aggregates is a local literal; LIMITS is a local const object of numbers
         env.DB.prepare(
           `SELECT NULLIF(TRIM(auth_account),'') AS account, ${aggregates},
                   MIN(ts) AS first_ts, MAX(ts) AS last_ts
              FROM cost_rows WHERE ts>=?1 AND ts<?2
             GROUP BY 1 ORDER BY SUM(COALESCE(cost_usd,0)) DESC LIMIT ${LIMITS.groups}`
         ).bind(win.from, win.to).all(),
+        // sql-ident-ok: aggregates is a local literal; LIMITS is a local const object of numbers
         env.DB.prepare(
           `SELECT NULLIF(TRIM(auth_account),'') AS account, project, ${aggregates}
              FROM cost_rows WHERE ts>=?1 AND ts<?2
             GROUP BY 1, project ORDER BY SUM(COALESCE(cost_usd,0)) DESC LIMIT ${LIMITS.projects}`
         ).bind(win.from, win.to).all(),
+        // sql-ident-ok: LIMITS is a local const object of numbers
         env.DB.prepare(
           `SELECT box, ts, session_pct, weekly_pct, weekly_resets_at, extra_enabled,
                   extra_used_usd, spend_limit_reached

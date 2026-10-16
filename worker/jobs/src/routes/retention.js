@@ -146,6 +146,7 @@ async function runRule(env, r, o) {
   out.cutoff = iso(o.nowMs - days * DAY_MS);
   try {
     if (o.dryRun) {
+      // sql-ident-ok: r.ids is literal subquery text from the RULES module const
       const row = await env.DB.prepare(`SELECT COUNT(*) AS n FROM (${r.ids})`).bind(out.cutoff, o.countCap + 1).first();
       const n = Number(row ? row.n : 0);
       out.counted = Math.min(n, o.countCap);

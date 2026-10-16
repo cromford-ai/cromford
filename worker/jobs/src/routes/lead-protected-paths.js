@@ -38,6 +38,7 @@ export const routes = [
         if (!repo) return json(400, { error: "repo must be owner/name" });
         const all = url.searchParams.get("all") === "1";
         await ensureTable(env, "lead_protected_paths");
+        // sql-ident-ok: COLS is a module const column list; the removed_at clause is one of two literals picked by all
         const r = await env.DB.prepare(
           `SELECT ${COLS} FROM lead_protected_paths WHERE repo=?1${all ? "" : " AND removed_at IS NULL"} ORDER BY id`
         ).bind(repo).all();
@@ -54,6 +55,7 @@ export const routes = [
         if (!repo) return json(400, { error: "repo must be owner/name" });
         if (!validGlob(b.glob)) return json(400, { error: "glob must be a string of 1-200 chars with no whitespace" });
         if (b.op !== "add" && b.op !== "remove") return json(400, { error: "op must be add or remove" });
+        // sql-ident-ok: COLS is a module const column list; repo and glob bind
         const live = () => env.DB.prepare(
           `SELECT ${COLS} FROM lead_protected_paths WHERE repo=?1 AND glob=?2 AND removed_at IS NULL`
         ).bind(repo, b.glob).first();
@@ -75,6 +77,7 @@ export const routes = [
           "UPDATE lead_protected_paths SET removed_at=?3 WHERE repo=?1 AND glob=?2 AND removed_at IS NULL"
         ).bind(repo, b.glob, t).run();
         if (Number(up?.meta?.changes) === 0) return json(404, { error: "not live" });
+        // sql-ident-ok: COLS is a module const column list; repo, glob and removed_at bind
         const row = await env.DB.prepare(
           `SELECT ${COLS} FROM lead_protected_paths WHERE repo=?1 AND glob=?2 AND removed_at=?3 ORDER BY id DESC LIMIT 1`
         ).bind(repo, b.glob, t).first();

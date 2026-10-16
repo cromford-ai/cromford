@@ -280,11 +280,13 @@ export const routes = [
           "SELECT * FROM build_queue WHERE project=?1 AND ticket_key=?2 AND status='queued'"
         ).bind(project, key).first();
       } else if (target) {
+        // sql-ident-ok: RANK is a local literal CASE expression
         row = await env.DB.prepare(
           `SELECT * FROM build_queue WHERE project=?1 AND target=?2 AND status='queued'
            ORDER BY ${RANK}, enqueued_at ASC LIMIT 1`
         ).bind(project, target).first();
       } else {
+        // sql-ident-ok: RANK is a local literal CASE expression
         row = await env.DB.prepare(
           `SELECT * FROM build_queue WHERE project=?1 AND status='queued'
            ORDER BY ${RANK}, enqueued_at ASC LIMIT 1`
@@ -325,6 +327,7 @@ export const routes = [
           });
         }
         const holes = skipped.map((_, i) => `?${i + 2}`).join(",");
+        // sql-ident-ok: holes and the target clause are ?N placeholders over bound keys; RANK is a local literal CASE expression
         row = await env.DB.prepare(
           `SELECT * FROM build_queue WHERE project=?1 AND status='queued'
              AND ticket_key NOT IN (${holes})${target ? ` AND target=?${skipped.length + 2}` : ""}
@@ -375,6 +378,7 @@ export const routes = [
       // to done/failed is still today's exact statement.
       const releasing = status === "queued";
       if (releasing) await ensureColumns(env, "build_queue");
+      // sql-ident-ok: the machine reset is a literal picked by releasing
       await env.DB.prepare(
         `UPDATE build_queue SET status=?3, reason=?4,
            claimed_by=CASE WHEN ?3='queued' THEN NULL ELSE claimed_by END,

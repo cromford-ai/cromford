@@ -58,6 +58,7 @@ export const routes = [
       const binds = [];
       if (active === "1") { binds.push(t); where.push(`ended_at IS NULL AND expires_at > ?${binds.length}`); }
       if (scope !== null) { binds.push(scope); where.push(`scope = ?${binds.length}`); }
+      // sql-ident-ok: where holds literal column clauses with ?N binds; CAP is a module number const
       const rows = (await env.DB.prepare(
         `SELECT * FROM pauses${where.length ? " WHERE " + where.join(" AND ") : ""} ORDER BY id DESC LIMIT ${CAP + 1}`
       ).bind(...binds).all()).results || [];
@@ -118,6 +119,7 @@ export const routes = [
   [
     "POST", "/api/pauses/expire",
     async ({ env, t }) => d1Guarded("pauses", async () => {
+      // sql-ident-ok: CAP is a module number const
       const rows = (await env.DB.prepare(
         `UPDATE pauses SET ended_at=expires_at, end_reason='expired'
          WHERE id IN (SELECT id FROM pauses WHERE ended_at IS NULL AND expires_at <= ?1 ORDER BY id LIMIT ${CAP})

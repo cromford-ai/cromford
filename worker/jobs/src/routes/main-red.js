@@ -135,10 +135,12 @@ export const routes = [
 
       const stillRed = flagActiveSql(name);
       const [ev] = await env.DB.batch([
+        // sql-ident-ok: stillRed is one of two literal EXISTS clauses from flagActiveSql(); the name binds as ?1
         env.DB.prepare(
           `INSERT INTO main_red_events (name, action, sha, actor, reason, at)
            SELECT ?1, 'clear', ?2, ?3, ?4, ?5 WHERE ${stillRed}`
         ).bind(name, mr ? mr.sha : null, actor, reason, t),
+        // sql-ident-ok: stillRed is one of two literal EXISTS clauses from flagActiveSql(); the name binds as ?1
         env.DB.prepare(
           `UPDATE main_red SET active=0, cleared_sha=sha, cleared_at=?2, cleared_by=?3, clear_reason=?4, updated_at=?2
             WHERE name=?1 AND ${stillRed}`

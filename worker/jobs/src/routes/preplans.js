@@ -100,6 +100,7 @@ export const routes = [
         .toISOString().replace(/\.\d{3}Z$/, "Z");
       await env.DB.prepare("DELETE FROM preplans WHERE updated_at < ?1").bind(cutoff).run();
       // The row WITHOUT its plan: the publisher has the plan on disk already.
+      // sql-ident-ok: PREPLAN_INDEX_COLS is an export const column list in lib/core.js
       const row = await env.DB.prepare(
         `SELECT ${PREPLAN_INDEX_COLS} FROM preplans WHERE project=?1 AND ticket_key=?2`
       ).bind(project, key).first();
@@ -130,6 +131,7 @@ export const routes = [
         if (!row) return json(404, { error: "no such preplan" });
         return json(200, { preplan: row, as_of: t });
       }
+      // sql-ident-ok: PREPLAN_INDEX_COLS is an export const column list in lib/core.js
       const rows = await env.DB.prepare(
         `SELECT ${PREPLAN_INDEX_COLS} FROM preplans WHERE project=?1
           ORDER BY updated_at DESC LIMIT 500`

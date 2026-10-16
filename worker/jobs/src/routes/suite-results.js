@@ -145,6 +145,7 @@ export const routes = [
         }
         await env.DB.prepare(UPSERT_SQL)
           .bind(body.repo, body.ctx, cls, items, body.run_id, body.head_sha || null, t).run();
+        // sql-ident-ok: PRUNE_CAP is a module number const
         await env.DB.prepare(
           `DELETE FROM suite_results WHERE rowid IN
              (SELECT rowid FROM suite_results WHERE updated_at < ?1 LIMIT ${PRUNE_CAP})`

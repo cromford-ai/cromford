@@ -85,6 +85,7 @@ export const routes = [
       const actor = typeof body.actor === "string" && body.actor !== "" ? body.actor.slice(0, 128) : null;
       const ifAbsent = body.if_absent === true;
       return d1Guarded("product_proposals", async () => {
+        // sql-ident-ok: the ON CONFLICT clause is one of two literals picked by ifAbsent
         const res = await env.DB.prepare(
           "INSERT INTO product_proposals (project, proposal_id, status, record, actor, created_at, updated_at) "
           + "VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?6) "

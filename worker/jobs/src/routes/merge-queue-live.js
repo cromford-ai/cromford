@@ -60,6 +60,7 @@ export async function readMergeQueueLive(env, { project, t }) {
   let where = `(finished_at IS NULL OR finished_at >= ?1)`;
   if (repo) { binds.push(repo); where += ` AND lower(repo) = lower(?2)`; }
   binds.push(BATCH_CAP + 1);
+  // sql-ident-ok: where holds literal clauses, repo and the limit bind as ?N
   const res = await env.DB.prepare(
     `SELECT repo, draft_pr, members_json, base_sha, started_at, finished_at, outcome FROM merge_queue_batches
       WHERE ${where} ORDER BY started_at DESC, draft_pr DESC LIMIT ?${binds.length}`
@@ -73,6 +74,7 @@ export async function readMergeQueueLive(env, { project, t }) {
   const counts = new Map();
   if (kept.length) {
     const drafts = [...new Set(kept.map((b) => b.draft_pr))];
+    // sql-ident-ok: the IN list and the LIMIT are ?N placeholders built from the drafts index
     const cr = await env.DB.prepare(
       `SELECT repo, draft_pr, name, status, conclusion FROM merge_queue_checks
         WHERE draft_pr IN (${drafts.map((_, i) => `?${i + 1}`).join(",")}) LIMIT ?${drafts.length + 1}`

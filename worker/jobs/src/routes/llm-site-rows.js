@@ -30,6 +30,7 @@ export const routes = [
       binds.push(a.lane);
       where += ` AND (lane_id = ?${binds.length} OR lane_id IS NULL)`;
     }
+    // sql-ident-ok: where holds literal clauses with ?N marks over the bound stages and lane; LIMIT is a module number const
     const r = await env.DB.prepare(
       "SELECT ts, box, project, ticket, pr, stage, lane_id, runner, model, billing_mode, rc, cost_usd, row_source, note" +
       ` FROM cost_rows WHERE ${where} ORDER BY ts DESC, box, line_no DESC LIMIT ${LIMIT}`

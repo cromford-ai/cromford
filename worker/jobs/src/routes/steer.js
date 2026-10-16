@@ -114,6 +114,7 @@ export const routes = [
       const ticket = url.searchParams.get("ticket") || "";
       if (!project || !TICKET_RE.test(ticket)) return json(400, { error: "project and ticket required" });
       await ensureTable(env, "steer_notes");
+      // sql-ident-ok: LIST_MAX is a module number const
       const rows = await env.DB.prepare(
         `SELECT * FROM steer_notes WHERE project=?1 AND ticket=?2 ORDER BY id DESC LIMIT ${LIST_MAX}`
       ).bind(project, ticket).all();

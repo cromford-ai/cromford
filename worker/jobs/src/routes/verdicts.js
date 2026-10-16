@@ -486,6 +486,7 @@ export const routes = [
           }
           // IS, not =: an auth NULL row must never be caught by NULL logic.
           const unproven = mode === "enforce" ? "\n               AND NOT (source='human' AND auth IS 'lead-token')" : "";
+          // sql-ident-ok: STANDING_SOURCES is a frozen export const in lib/verdict-sources.js; unproven is a literal picked by mode
           standing = await env.DB.prepare(
             `SELECT * FROM verdicts WHERE repo=?1 AND pr=?2 AND head_sha=?3
                AND source IN (${STANDING_SOURCES.map((s) => `'${s}'`).join(",")})${unproven}

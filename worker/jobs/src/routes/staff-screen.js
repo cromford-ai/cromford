@@ -72,6 +72,7 @@ export const routes = [
 
       const open = new Map();
       const phase2 = await d1Guarded("staff_findings", async () => {
+        // sql-ident-ok: CLOSED_SQL is a module const list of quoted literal status words
         const { results } = await env.DB.prepare(
           `SELECT agent, COUNT(*) AS n FROM staff_findings WHERE status NOT IN (${CLOSED_SQL}) GROUP BY agent`
         ).all();
@@ -108,6 +109,7 @@ export const routes = [
         if (known) return known;
       }
       return d1Guarded("staff_findings", async () => {
+        // sql-ident-ok: COLUMNS, CLOSED_SQL and FINDINGS_MAX are module consts
         const { results } = await env.DB.prepare(
           `SELECT ${COLUMNS} FROM staff_findings
             WHERE agent=?1 AND status NOT IN (${CLOSED_SQL})

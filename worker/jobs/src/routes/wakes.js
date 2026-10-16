@@ -172,6 +172,7 @@ export const routes = [
       for (let i = 0; i < scanned.length; i += CLAIM_SLICE) {
         const slice = scanned.slice(i, i + CLAIM_SLICE).map((w) => w.id);
         const values = slice.map((_, j) => `(?${j + 3},?1,?2)`).join(",");
+        // sql-ident-ok: values is (?N,?1,?2) placeholder tuples built from the slice index
         const r = await env.DB.prepare(
           `INSERT OR IGNORE INTO wake_claims(wake_id, box, claimed_at) VALUES ${values} RETURNING wake_id`
         ).bind(box, t, ...slice).all();
@@ -295,6 +296,7 @@ export const routes = [
       const kind = url.searchParams.get("kind");
       if (kind) { binds.push(kind); where.push(`kind=?${binds.length}`); }
       const limit = Math.min(Math.max(1, Number(url.searchParams.get("limit")) || 200), 500);
+      // sql-ident-ok: where holds literal column clauses with ?N binds; limit is a Number clamped to 1..500
       const rows = await env.DB.prepare(
         `SELECT * FROM wakes WHERE ${where.join(" AND ")} ORDER BY id ASC LIMIT ${limit}`
       ).bind(...binds).all();
@@ -322,6 +324,7 @@ export const routes = [
       for (let i = 0; i < ids.length; i += ACK_SLICE) {
         const slice = ids.slice(i, i + ACK_SLICE);
         const holes = slice.map((_, j) => `?${j + 2}`).join(",");
+        // sql-ident-ok: holes is a ?N placeholder list built from the slice index
         const r = await env.DB.prepare(
           `UPDATE wakes SET acked_at=?1 WHERE acked_at IS NULL AND id IN (${holes})`
         ).bind(t, ...slice).run();

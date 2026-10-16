@@ -144,6 +144,7 @@ export const routes = [
         }
         // The cap gate: the rank comparison sits in the WHERE, so the read
         // and the write cannot disagree. The table CHECK backs it.
+        // sql-ident-ok: RANK_SQL is a module helper called only with the literals ?2 and cap
         const res = await env.DB.prepare(
           `UPDATE staff_agents SET autonomy = ?2, updated_at = ?3, note = ?4
             WHERE name = ?1 AND ${RANK_SQL("?2")} <= ${RANK_SQL("cap")}`

@@ -27,6 +27,7 @@ export const routes = [
     async ({ env, body }) => d1Guarded("reconcile_owner_beat", async () => {
       const box = laneName(body && body.box);
       if (!box) return json(400, { error: "box required ([A-Za-z0-9._-]{1,64})" });
+      // sql-ident-ok: NOW is a module const strftime expression
       await env.DB.prepare(
         `INSERT INTO reconcile_owner_beat (lane, box, beat_at, expected_since, updated_at) VALUES (?, ?, ${NOW}, ${NOW}, ${NOW}) ` +
         "ON CONFLICT(lane) DO UPDATE SET box=excluded.box, beat_at=excluded.beat_at, updated_at=excluded.updated_at",
@@ -67,6 +68,7 @@ export const routes = [
     async ({ env, body }) => d1Guarded("reconcile_owner_beat", async () => {
       const alerted = body && body.alerted;
       if (typeof alerted !== "boolean") return json(400, { error: "alerted must be a boolean" });
+      // sql-ident-ok: NOW is a module const strftime expression
       const r = await env.DB.prepare(
         `UPDATE reconcile_owner_beat SET alerted_at = CASE WHEN ? THEN ${NOW} ELSE NULL END, updated_at = ${NOW} WHERE lane=?`,
       ).bind(alerted ? 1 : 0, LANE).run();

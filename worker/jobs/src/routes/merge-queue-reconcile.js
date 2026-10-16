@@ -74,6 +74,7 @@ function membersOf(raw) {
 // → { repos: Map<lower repo, {repo, prs:[…], batches:[…]}>, complete }
 async function activeOf(env, t) {
   const cutoff = isoS(Date.parse(t) - WINDOW_S * 1000);
+  // sql-ident-ok: STAGE_WORD_SQL is a module const CASE expression; the IN list is ?N placeholders over the TERMINAL const
   const pr = await env.DB.prepare(
     `SELECT e.id, e.repo, e.number, e.reason, e.at FROM pr_state_events e
       WHERE e.state = 'queue' AND e.at >= ?1
@@ -108,6 +109,7 @@ async function newestOf(env, repo, prs) {
   const out = new Map();
   for (let i = 0; i < prs.length; i += IN_CHUNK) {
     const part = prs.slice(i, i + IN_CHUNK);
+    // sql-ident-ok: the IN list is ?N placeholders built from the part index; repo and numbers bind
     const res = await env.DB.prepare(
       `SELECT e.id, e.number, e.reason FROM pr_state_events e
         WHERE e.state = 'queue' AND lower(e.repo) = lower(?1) AND e.number IN (${part.map((_, j) => `?${j + 2}`).join(",")})

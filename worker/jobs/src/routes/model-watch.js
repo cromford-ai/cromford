@@ -101,6 +101,7 @@ async function setState({ env, body, t }) {
   sets.push(`updated_at=?${binds.length - 2}`);
   return d1Guarded("model_watch", async () => {
     await ensureTable(env, "model_watch");
+    // sql-ident-ok: sets names columns only from the STATE and AUDIT module const lists, every value a ?N bind
     const r = await env.DB.prepare(
       `UPDATE model_watch SET ${sets.join(", ")} WHERE vendor=?${binds.length - 1} AND model_id=?${binds.length}`,
     ).bind(...binds).run();

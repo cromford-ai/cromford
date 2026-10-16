@@ -147,6 +147,7 @@ const MAX_UNROUTED = 500;
 async function unroutedStages(env, since, project) {
   let rows;
   try {
+    // sql-ident-ok: the project clause is a literal picked by project, which binds as ?3
     const r = await env.DB.prepare(
       `SELECT lower(c.stage) AS stage, c.project AS project, count(*) AS calls,
               max(c.ts) AS last_seen, group_concat(DISTINCT c.runner) AS runners
@@ -582,6 +583,7 @@ export const routes = [
         const norm = normalizeProject(rawProject === null ? undefined : rawProject);
         if (!norm.ok) return json(400, { error: "project must be a bare token, <= 64 chars" });
         const limit = Math.min(Math.max(Number(url.searchParams.get("limit")) || 100, 1), MAX_CHANGES);
+        // sql-ident-ok: the project clause is a literal picked by norm.project, which binds as ?3
         const rows = await env.DB.prepare(
           `SELECT id, scope, project, role, position, before_model, before_runner,
                   after_model, after_runner, actor, reason, at
