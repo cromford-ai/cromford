@@ -81,6 +81,7 @@ tests/tracker-linear.bh-4077-test.sh:generic-api-key:36
 tests/tracker-port.bh-4075-test.sh:generic-api-key:33
 tests/transcript-scrub-test.sh:generic-api-key:30
 tests/transcript-scrub-test.sh:curl-auth-header:89
+worker/jobs/test/alert-lines-resolved.bh-6892.test.js:generic-api-key:12
 worker/jobs/test/alert-lines.bh-6889.test.js:generic-api-key:18
 worker/jobs/test/conductor-state.bh-4156.test.js:generic-api-key:16
 worker/jobs/test/landing-decisions.bh-6744.test.js:generic-api-key:18

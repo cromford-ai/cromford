@@ -29,7 +29,8 @@ export const APPLIED_SQL = `UPDATE alert_lines SET applied_at=?1
 WHERE applied_at IS NULL AND id IN (SELECT value FROM json_each(?2))`;
 
 const NAME_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
-const SEVERITIES = ["info", "warn", "critical"];
+// "resolved" (BH-6892): a machine's retraction; the hub replay beats resolved:true.
+const SEVERITIES = ["info", "warn", "critical", "resolved"];
 const LINE_MAX = 2000;
 const STAMP_MAX = 40;
 const ID_MAX = 120;

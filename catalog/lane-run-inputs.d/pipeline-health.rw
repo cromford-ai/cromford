@@ -4,17 +4,27 @@
 # with file:line for each entry, is in
 # docs/notes/2026-10-14-BH-6719-lane-run-inputs-manifests.md.
 #
-# NOT CARRIED. A project run also writes these fleet-wide files. A per-file
-# compare-and-set from N project runs would conflict on every tick, so they
-# block a later flip of pipeline-health to Fly, and the flip ticket must solve
-# them:
-#   logs/ALERTS.log (appends, bin/alert-line.sh:87)
-#   state/health-active.txt, state/health-active.stamp
-#   state/health-alerted.json
-#   state/closeout-aged-out.tsv (appends, bin/lib/closeout-terminal.sh:148)
-#   state/alert-line-sent/*, state/alerts/*, state/alert-quarantine.jsonl,
-#   logs/alerts-state.log
-#   /root/repos/$p refs (stale-parent, bin/pipeline-health.sh:1094-1119)
+# The fleet-wide files a project run also writes, one choice per file
+# (BH-6892, docs/notes/2026-10-16-BH-6892-pipeline-health-offhub.md):
+#   state/health-active.txt      @rows below: this project's PH_PROJ_NS keys
+#                                (PH_PROJ_NS in bin/pipeline-health.sh, the
+#                                epilogue's owned()); the epilogue lock is the apply lock
+#   state/health-active.stamp    not written on a machine (`# >>> active stamp`)
+#   state/health-alerted.json    read-only on a machine: the run keeps its
+#                                stamps in state/pipeline-health/$p/alerted.json
+#                                (`# >>> machine dedup`)
+#   state/closeout-aged-out.tsv  @rows below; every writer takes <path>.lock
+#                                (checks 4 and 5, bin/disk-clean.sh step 4)
+#   logs/ALERTS.log              not written: every line is a POST to
+#                                /api/alert-lines (alert_emit, the epilogue)
+#   state/alert-line-sent/*, state/alerts/*,
+#   logs/alerts-state.log        not written: no beat.sh call on a machine;
+#                                the hub's replay of each line writes them
+#   state/alert-quarantine.jsonl not written anywhere for a machine alert: the
+#                                replay beats kind:"alert", and beat.sh
+#                                quarantines only kind:"fleet_alert"
+#   /root/repos/$p refs          not read: stale-parent reads GitHub REST
+#                                (`# >>> stale parent`, bin/lib/stale-parent-rest.sh)
 # Secrets, locks and machine-local caches are never carried: env/*, locks/*,
 # state/gh-*, state/gh-budget/*, state/settings-cache.json, state/lane-gate/*.
 # logs/pipeline-health.log rides back as the lane log (.lri/log-append).
@@ -26,3 +36,10 @@ state/pipeline-health/noprogress/$p.stranded
 state/pipeline-health/noprogress/$p.parked
 # bin/pipeline-health.sh:421-422
 flags/pool-halt-$p
+# bin/pipeline-health.sh epilogue (the retraction pass). The ERE's list is
+# PH_PROJ_NS of bin/pipeline-health.sh; tests/pipeline-health-offhub.bh-6892-test.sh M1 pins it.
+state/health-active.txt
+@rows state/health-active.txt ^(stuckqueue|poolhalt|uncommented|emptyurl|staleremote|tickloop|stalepr|starved|strandedqueue|staledequeue|staleparent|noprogress|stalehold|stalledblocker):$p(:|$)
+# bin/lib/closeout-terminal.sh:148 (rows are proj TAB builddir TAB ...)
+state/closeout-aged-out.tsv
+@rows state/closeout-aged-out.tsv ^$p[[:space:]]

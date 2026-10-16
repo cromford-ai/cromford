@@ -138,7 +138,7 @@ for want in 'state/build-queue/demo/*.json' "logs/fly-pool.log (this project's p
 done
 OUT=$(L "$T/none" lri_paths pipeline-health demo rw); rc=$?
 grep -qxF 'state/pipeline-health/demo/*' <<<"$OUT" && ok "M2 rw holds state/pipeline-health/demo/*" || bad "M2 rw: $OUT"
-for no in 'flags/*' 'fleet.conf' 'state/health-active.txt'; do
+for no in 'flags/*' 'fleet.conf' 'state/health-alerted.json'; do
   grep -qxF -- "$no" <<<"$OUT" && bad "M2 rw holds $no" || ok "M2 rw does not hold $no"
 done
 
@@ -176,13 +176,13 @@ WB() { local w="$1" id="$2" rel; shift 2
   jq -n --rawfile b <(base64 -w0 "$w.tgz") '{b64:$b}' > "$T/wb-$id.json"
   jq -n --argjson i "$id" --arg s "$(sha256sum "$w.tgz" | cut -d' ' -f1)" '{writebacks:[{id:$i, sha:$s}]}' > "$T/wblist.json"
 }
-H4="$T/h4"; mkdir -p "$H4/state"; echo hub > "$H4/state/health-active.txt"
-WB "$T/wb1" 1 state/health-active.txt || exit 1
+H4="$T/h4"; mkdir -p "$H4/state"; echo hub > "$H4/state/health-alerted.json"
+WB "$T/wb1" 1 state/health-alerted.json || exit 1
 ( export HARNESS="$H4"; . "$LIB" || exit 99; LRI_LANE=pipeline-health _lri_validate demo "$T/wb1.tgz" writeback ) \
-  && bad "M4 _lri_validate accepted state/health-active.txt" || ok "M4 _lri_validate refuses state/health-active.txt"
+  && bad "M4 _lri_validate accepted state/health-alerted.json" || ok "M4 _lri_validate refuses state/health-alerted.json"
 AP=$(L "$H4" lri_apply_pending pipeline-health demo); rc=$?
 [ "$AP" = "applied=0 conflicts=0 rejected=1" ] && ok "M4 apply: $AP" || bad "M4 apply rc=$rc: $AP"
-[ "$(cat "$H4/state/health-active.txt")" = hub ] && ok "M4 the hub state/health-active.txt is unchanged" || bad "M4 health-active.txt changed"
+[ "$(cat "$H4/state/health-alerted.json")" = hub ] && ok "M4 the hub state/health-alerted.json is unchanged" || bad "M4 health-alerted.json changed"
 WB "$T/wb2" 2 state/pipeline-health/demo/closeout-aged.tsv || exit 1
 AP=$(L "$H4" lri_apply_pending pipeline-health demo); rc=$?
 [ "$rc" = 0 ] && [ "$AP" = "applied=1 conflicts=0 rejected=0" ] && ok "M4 apply: $AP" || bad "M4 apply rc=$rc: $AP"
@@ -279,6 +279,7 @@ pipeline-health demo state/pipeline-health/demo/closeout-aged.tsv - rw accept
 pipeline-health demo builds/demo-BH-1-x/RESULT - ro accept
 pipeline-health demo builds/demo-BH-1-x d ro accept
 pipeline-health demo logs/fly-pool.log - ro accept
+pipeline-health demo state/health-active.txt - rw accept
 blocked-resolver project-4 builds/project-4-TK-1-x/RESULT - ro refuse
 blocked-resolver p1 builds/p10-BH-1-x/RESULT - ro refuse
 blocked-resolver p1 plans/p1-x/y/planned-files.txt - ro refuse
@@ -286,7 +287,7 @@ blocked-resolver p1 flags/x - rw refuse
 blocked-resolver p1 state/blocked-resolver/p1/x.json l rw refuse
 blocked-resolver p1 ../x - ro refuse
 blocked-resolver p1 state/blocked-resolver/p1/../../x - rw refuse
-pipeline-health demo state/health-active.txt - rw refuse
+pipeline-health demo state/health-alerted.json - rw refuse
 pipeline-health demo builds/demo-BH-1-x/transcript.txt - ro refuse
 pipeline-health demo builds/demo-BH-1-x/RESULT - rw refuse
 pipeline-health demo logs/fly-pool.log - rw refuse

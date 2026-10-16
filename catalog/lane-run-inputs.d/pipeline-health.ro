@@ -11,8 +11,6 @@
 @lines logs/fly-pool.log \[pool/$p\] reaped
 # bin/pipeline-health.sh:589-590
 @lines logs/$p.log rc=(0|skip) ::
-# bin/lib/closeout-terminal.sh:146 (rows are proj TAB builddir TAB ...)
-@lines state/closeout-aged-out.tsv ^$p[[:space:]]
 # bin/pipeline-health.sh:462-488,535-546,578
 builds/$p-<KEY>-*/<record file>
 builds/pool-$p-<KEY>-*/<record file>
@@ -24,11 +22,8 @@ state/remote-results/$p/*.json
 state/stranded-watch/$p/.count
 # bin/pipeline-health.sh:990-992
 state/merge-conductor/pr-state.tsv
-# bin/lib/closeout-terminal.sh:146
-state/closeout-aged-out.tsv (this project's rows only)
-# bin/pipeline-health.sh:917,1068,1082
-state/health-active.txt
-# bin/pipeline-health.sh:291
+# bin/pipeline-health.sh (the DEDUP seed): read once to seed
+# state/pipeline-health/$p/alerted.json on a machine, never written there
 state/health-alerted.json
 # bin/lib/preplan-lib.sh:515 (the lane image does not bake prompts/)
 prompts/$p.md

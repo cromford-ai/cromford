@@ -20,6 +20,8 @@
 # to the jobs API (bin/lib/alert-line-remote.sh alr_post) and, on success, none
 # of a-c runs here: the hub's bin/lane-snapshot-publish.sh replays it. A failed
 # post falls through to a-c.
+# --severity resolved (BH-6892) is a retraction: the beat carries resolved:true
+# and no severity, so beat.sh closes the row the --id opened.
 H=${HARNESS:-/root/harness}
 # BH-1138: the akey mint imports bin/alert_family.py; no __pycache__ beside it.
 export PYTHONDONTWRITEBYTECODE=1
@@ -73,7 +75,7 @@ fi
 RC=1
 if [ -x "$H/bin/beat.sh" ] && PAYLOAD=$(jq -nc --arg akey "$AKEY" --arg p "$PROJ" --arg l "$LINE" \
      --arg s "$SEV" --arg id "$AID" '{kind:"alert",akey:$akey,project:$p,line:$l}
-       + (if $s != "" then {severity:$s} else {} end) + (if $id != "" then {alertid:$id} else {} end)' 2>/dev/null) \
+       + (if $s == "resolved" then {resolved:true} elif $s != "" then {severity:$s} else {} end) + (if $id != "" then {alertid:$id} else {} end)' 2>/dev/null) \
    && [ -n "$PAYLOAD" ]; then
   if command -v timeout >/dev/null 2>&1; then
     BEAT_STRICT=1 timeout 30 "$H/bin/beat.sh" "$PAYLOAD" >/dev/null 2>&1; RC=$?

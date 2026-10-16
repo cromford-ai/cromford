@@ -165,9 +165,13 @@ if [ -s "$TSV" ]; then
   mkdir -p "$H/locks" 2>/dev/null
   # The lock closeout_record_aged takes, so no append interleaves with the
   # rewrite. Held elsewhere means nothing is touched this run; tomorrow retries.
+  # Both locks (BH-6892): closeout_record_aged and the hub's @rows apply of a
+  # machine write-back take $TSV.lock; the old lock stays first.
   COUNTS=$(
     exec 9>"$H/locks/closeout-aged-out.lock" 2>/dev/null || exit 3
     flock -w 5 9 || exit 4
+    exec 8>"$TSV.lock" 2>/dev/null || exit 3
+    flock -w 5 8 || exit 4
     : > "$KEEPTMP" || exit 5
     : > "$DROPTMP" || exit 5
     # No interval quantifiers in the pattern: /usr/bin/awk is mawk on Debian and
@@ -196,7 +200,7 @@ if [ -s "$TSV" ]; then
   rm -f "$KEEPTMP" "$DROPTMP" "$LIVETMP"
   case "$PRC" in
     0) read -r tsv_kept tsv_archived tsv_kept_live <<< "$COUNTS" ;;
-    3) say "tsv prune skipped: cannot open locks/closeout-aged-out.lock" ;;
+    3) say "tsv prune skipped: cannot open locks/closeout-aged-out.lock or state/closeout-aged-out.tsv.lock" ;;
     4) say "tsv prune skipped: lock held" ;;
     6) say "tsv prune failed: archive append to ${ARCHF##*/} - the tsv is untouched" ;;
     7) say "tsv prune failed: rewrite - the dropped rows are in ${ARCHF##*/} AND still in the tsv" ;;

@@ -1,0 +1,12 @@
+{
+  "env": "STALE_PARENT_REST_DIFF_MAX",
+  "read_in": "bin/lib/stale-parent-rest.sh",
+  "type": "int",
+  "default": 120,
+  "min": 1,
+  "max": 1000,
+  "unit": "commit diffs per project per tick",
+  "zero_means": null,
+  "required": false,
+  "note": "BH-6892: on a lane-run machine (LANE_RUN_ID set) bin/pipeline-health.sh's stale-parent section reads commit diffs from GitHub REST (bin/lib/stale-parent-rest.sh) and reads at most this many uncached diffs per project per tick; the PRs past it keep their keys to the next tick, with one pipeline-health.log line. Read by spr_budget_init; a value outside 1..1000 is 120."
+}

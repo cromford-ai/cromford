@@ -235,8 +235,36 @@ fi
 # <<< sections filter
 
 DEDUP="$H/state/health-alerted.json"
-[ -s "$DEDUP" ] || echo '{}' > "$DEDUP"
+DEDUP_LOCK="$DEDUP.lock"
 NOW=$(date +%s)
+# >>> machine dedup (BH-6892)
+# On a lane-run machine (LANE_RUN_ID set) a project run keeps its TTL stamps in
+# state/pipeline-health/<p>/alerted.json, which its write-back carries: a JSON
+# map cannot ride as @rows, and N project runs writing the fleet file would
+# conflict on every tick. The first run seeds it from the snapshot's fleet file
+# with this project's keys (second ':' field) and its leadunqueued:<slug># keys.
+# A stamp older than 8 days is dropped at the seed and on each write: the
+# largest TTL here is 604800 s, so such a stamp can never suppress a page.
+# The lock is under locks/, which a write-back never carries.
+PH_DEDUP_KEEP_S=0
+if [ -n "${LANE_RUN_ID:-}" ] && [ "$PH_MODE" = project ]; then
+  DEDUP="$H/state/pipeline-health/$PH_PROJECT/alerted.json"
+  DEDUP_LOCK="$H/locks/ph-alerted-$PH_PROJECT.lock"
+  PH_DEDUP_KEEP_S=691200
+  if [ ! -s "$DEDUP" ]; then
+    mkdir -p "${DEDUP%/*}"
+    PH_SLUG=$(awk -v p="$PH_PROJECT" '$1==p{print $2}' "$H/fleet.conf" 2>/dev/null)
+    jq --arg p "$PH_PROJECT" --arg lu "leadunqueued:${PH_SLUG,,}#" --arg slug "$PH_SLUG" \
+       --argjson now "$NOW" --argjson keep "$PH_DEDUP_KEEP_S" '
+      with_entries(select((((.key | split(":"))[1]) == $p
+                           or ($slug != "" and (.key | ascii_downcase | startswith($lu))))
+                          and (.value | type) == "number" and .value >= $now - $keep))' \
+      "$H/state/health-alerted.json" > "$DEDUP.tmp.$$" 2>/dev/null && mv -f "$DEDUP.tmp.$$" "$DEDUP" \
+      || { rm -f "$DEDUP.tmp.$$"; echo '{}' > "$DEDUP"; }
+  fi
+fi
+# <<< machine dedup
+[ -s "$DEDUP" ] || echo '{}' > "$DEDUP"
 
 # Retraction bookkeeping (the operator 2026-08-21, deterministic): every alert() call
 # records that its CONDITION held this run (even when the TTL dedupe suppresses
@@ -266,6 +294,17 @@ ALQ_N=0
 # the console row on it, and past the cap the alias carries the re-beat there.
 alert_emit() { # alert_emit <text> [id] — one alert line, through the helper up to the cap
   ALQ_N=$((ALQ_N + 1))
+  # Off the hub (BH-6892) every line is a POST to /api/alert-lines through the
+  # helper, past the cap too: a machine's ALERTS.log is read by nobody, and the
+  # hub's replay (bin/lib/alert-line-remote.sh alr_apply) notes the row there.
+  if [ -n "${LANE_RUN_ID:-}" ]; then
+    if [ -n "${2:-}" ]; then
+      HARNESS="$H" "$H/bin/alert-line.sh" --id "$2" --project "${PH_PROJECT:-}" "$1"
+    else
+      HARNESS="$H" "$H/bin/alert-line.sh" --project "${PH_PROJECT:-}" "$1"
+    fi
+    return 0
+  fi
   if [ "$ALQ_N" -le "$ALQ_MAX" ]; then
     if [ -n "${2:-}" ]; then
       HARNESS="$H" "$H/bin/alert-line.sh" --id "$2" "$1"
@@ -290,8 +329,10 @@ alert() { # alert <ttl-secs> <key> <line>
   { flock -w 5 7 2>/dev/null
     last=$(jq -r --arg k "$key" '.[$k] // 0' "$DEDUP")
     [ $(( NOW - last )) -lt "$ttl" ] && return 0
-    jq --arg k "$key" --argjson t "$NOW" '.[$k]=$t' "$DEDUP" > "$DEDUP.tmp.$$" && mv "$DEDUP.tmp.$$" "$DEDUP"
-  } 7>"$DEDUP.lock"
+    jq --arg k "$key" --argjson t "$NOW" --argjson keep "${PH_DEDUP_KEEP_S:-0}" \
+      '.[$k]=$t | if $keep > 0 then with_entries(select((.value | type) == "number" and .value >= $t - $keep)) else . end' \
+      "$DEDUP" > "$DEDUP.tmp.$$" && mv "$DEDUP.tmp.$$" "$DEDUP"
+  } 7>"${DEDUP_LOCK:-$DEDUP.lock}"
   # One console row per condition (BH-4053): the row is keyed on ph-<key>, so a
   # changed PR list refreshes the row instead of opening one. Folded here, not
   # only in alert-line.sh, so alertid, akey and alias are the same string.
@@ -304,6 +345,9 @@ alert() { # alert <ttl-secs> <key> <line>
   # alertid too (BH-4054): without it this beat is keyed from its text, and a
   # collapse rule (BH-3997's ph-awaitmerge) outranks the alias, so it opened a
   # second row the epilogue's ph-<key> retraction never closes.
+  # Off the hub (BH-6892) there is no beat: the hub's replay of the line above
+  # carries the same ph-<key> id to the same console row.
+  [ -n "${LANE_RUN_ID:-}" ] && return 0
   "$H/bin/beat.sh" "$(jq -nc --arg akey "health:$key" --arg id "$aid" --arg l "[pipeline-health] $line" \
     '{kind:"fleet_alert",project:"fleet",akey:$akey,alertid:$id,line:$l}')" >/dev/null 2>&1 || true
 }
@@ -323,7 +367,7 @@ alert_digest() {
     last=$(jq -r --arg k "$key" '.[$k] // 0' "$DEDUP")
     [ $(( NOW - last )) -lt "$ttl" ] && return 0
     jq --arg k "$key" --argjson t "$NOW" '.[$k]=$t' "$DEDUP" > "$DEDUP.tmp.$$" && mv "$DEDUP.tmp.$$" "$DEDUP"
-  } 7>"$DEDUP.lock"
+  } 7>"${DEDUP_LOCK:-$DEDUP.lock}"
   echo "$(STAMP) [digest] $line" >> "$H/logs/pipeline-health.log"
   "$H/bin/beat.sh" "$(jq -nc --arg akey "health:$key" --arg l "[pipeline-health] $line" \
     '{kind:"fleet_alert",project:"fleet",severity:"warn",akey:$akey,line:$l}')" >/dev/null 2>&1 || true
@@ -448,7 +492,7 @@ done
 # without a close-out are ever looked up.
 # >>> no board close-out (tests/pipeline-health-closeout-ageout-test.sh runs this block)
 CLOSEOUT_TSV="$H/state/closeout-aged-out.tsv"
-CLOSEOUT_LOCK="$H/locks/closeout-aged-out.lock"
+CLOSEOUT_LOCK="$CLOSEOUT_TSV.lock"   # the lock the @rows apply takes (BH-6892)
 CLOSEOUT_AGE_S=$(closeout_age_out_s 2>/dev/null) || CLOSEOUT_AGE_S=604800
 CO_EU_RE='^PR_CREATED *(\||$)'
 for P in $PROJECTS; do
@@ -523,7 +567,7 @@ done
 # first run after this deploys and then stays quiet.
 # >>> empty url (tests/pipeline-health-closeout-ageout-test.sh runs this block)
 CLOSEOUT_TSV="$H/state/closeout-aged-out.tsv"
-CLOSEOUT_LOCK="$H/locks/closeout-aged-out.lock"
+CLOSEOUT_LOCK="$CLOSEOUT_TSV.lock"   # the lock the @rows apply takes (BH-6892)
 CLOSEOUT_AGE_S=$(closeout_age_out_s 2>/dev/null) || CLOSEOUT_AGE_S=604800
 EMPTY_URL_RE='^PR_CREATED *(\||$)'
 for P in $PROJECTS; do
@@ -1078,21 +1122,44 @@ fi
 # patch-id is already on the default branch under another sha. Read-only, a
 # page and never a push. Runs every tick, so it is in RETRACT_NS; a failed read
 # or fetch carries that project's standing keys (a skip is never a clear).
+# On a lane-run machine (LANE_RUN_ID set, BH-6892) there is no hub clone: the
+# same verdict comes from GitHub REST through bin/lib/stale-parent-rest.sh
+# (patch-ids of REST diffs, cached in state/pipeline-health/<p>/patch-ids.tsv,
+# at most STALE_PARENT_REST_DIFF_MAX diff reads per project per tick), and no
+# git command runs on $HUB_REPOS.
 # >>> stale parent (BH-5234) (tests/stale-parent-detect.bh-5234-test.sh runs this block)
 sp_carry() { awk -v p="$1" 'index($0, p) == 1' "$ACTIVE" >> "$FIRED" 2>/dev/null || true; }
+# sp_page <P> <NUM> <base> <url> <rows> — the one page for a PR's stale commits.
+sp_page() {
+  local k last pairs
+  k=$(grep -c . <<<"$5")
+  last=$(tail -n 1 <<<"$5" | cut -f1)
+  pairs=$(awk -F'\t' 'NR <= 3 {printf "%s%s=%s \"%s\"", (NR > 1 ? ", " : ""), substr($1, 1, 8), substr($2, 1, 8), $3} END {if (NR > 3) printf ", …"}' <<<"$5")
+  alert 21600 "staleparent:$1:$2" \
+    "$1 #$2 stale-parent: carries $k commit(s) already on $3 under another sha ($pairs) — run git rebase --onto origin/$3 $last on its branch, or let the conductor restack it: $4"
+}
 SPCHK=1; SPMAX=30
 # shellcheck source=bin/lib/stale-parent.sh
 if [ -r "$H/bin/lib/stale-parent.sh" ] && . "$H/bin/lib/stale-parent.sh"; then
   SPCHK=$(sp_knob STALE_PARENT_CHECK); SPMAX=$(sp_knob STALE_PARENT_MAX_PRS)
 fi
+SPREST=""
+if [ -n "${LANE_RUN_ID:-}" ]; then
+  # shellcheck source=bin/lib/stale-parent-rest.sh
+  [ -r "$H/bin/lib/stale-parent-rest.sh" ] && . "$H/bin/lib/stale-parent-rest.sh" \
+    && command -v spr_stale_commits >/dev/null 2>&1 && SPREST=1
+fi
 if [ "$SPCHK" = 0 ]; then
   :
-elif gh_budget_low pipeline-health || ! command -v sp_stale_commits >/dev/null 2>&1; then
+elif gh_budget_low pipeline-health || ! command -v sp_stale_commits >/dev/null 2>&1 \
+     || { [ -n "${LANE_RUN_ID:-}" ] && [ -z "$SPREST" ]; }; then
   sp_carry "staleparent:"
 else
   for P in $PROJECTS; do
-    SPREPO="${HUB_REPOS:-/root/repos}/$P"
-    [ -d "$SPREPO/.git" ] || continue
+    if [ -z "$SPREST" ]; then
+      SPREPO="${HUB_REPOS:-/root/repos}/$P"
+      [ -d "$SPREPO/.git" ] || continue
+    fi
     SLUG=$(awk -v p="$P" '$1==p{print $2}' "$H/fleet.conf")
     case "$SLUG" in */*) ;; *) continue ;; esac
     if command -v gh_repo_use_token >/dev/null 2>&1; then gh_repo_use_token "$SLUG" || { sp_carry "staleparent:$P:"; continue; }; fi
@@ -1111,6 +1178,30 @@ else
       sp_carry "staleparent:$P:"
       SPROWS=$(head -n "$SPMAX" <<<"$SPROWS")
     fi
+    if [ -n "$SPREST" ]; then
+      # REST (BH-6892). Counters move only after spr_stale_commits returns, and
+      # its rows go through a file: a $( ) would lose the counters and the cache.
+      spr_budget_init; SPCF="$H/state/pipeline-health/$P/patch-ids.tsv"; SPJ=0; SPLEFT=0
+      while IFS=$'\t' read -r NUM SPB SPURL; do
+        if [ "$SPLEFT" -gt 0 ]; then sp_carry "staleparent:$P:$NUM"; SPLEFT=$((SPLEFT + 1)); continue; fi
+        spr_stale_commits "$SLUG" "$SPB" "$NUM" "$SPCF" > "$FIRED.sp" 2>/dev/null; SPRC=$?
+        case "$SPRC" in
+          0) SPJ=$((SPJ + 1)) ;;
+          2) sp_carry "staleparent:$P:"
+             echo "$(STAMP) stale-parent rest $P: the $SPB commit list is past 3 pages, project carried" >> "$H/logs/pipeline-health.log"
+             break ;;
+          3) sp_carry "staleparent:$P:$NUM"; SPLEFT=1; continue ;;
+          *) sp_carry "staleparent:$P:$NUM"; continue ;;
+        esac
+        SPHIT=$(cat "$FIRED.sp")
+        [ -n "$SPHIT" ] && sp_page "$P" "$NUM" "$SPB" "$SPURL" "$SPHIT"
+      done <<<"$SPROWS"
+      rm -f "$FIRED.sp"
+      spr_cache_save "$SPCF" 2>/dev/null || true
+      [ "$SPLEFT" -gt 0 ] && echo "$(STAMP) stale-parent rest $P: diff budget spent, $SPLEFT PR(s) left for next tick" >> "$H/logs/pipeline-health.log"
+      echo "$(STAMP) stale-parent rest $P: judged $SPJ PR(s), $SPR_FETCHED diff(s) fetched, $SPR_CACHED cached" >> "$H/logs/pipeline-health.log"
+      continue
+    fi
     SPDEF=$(head -n 1 <<<"$SPROWS" | cut -f2)
     SPREFS=("+refs/heads/$SPDEF:refs/remotes/origin/$SPDEF")
     while IFS=$'\t' read -r NUM _ _; do SPREFS+=("+refs/pull/$NUM/head:refs/ph-stale/$NUM"); done <<<"$SPROWS"
@@ -1120,11 +1211,7 @@ else
     while IFS=$'\t' read -r NUM SPB SPURL; do
       SPHIT=$(sp_stale_commits "$SPREPO" "refs/remotes/origin/$SPB" "refs/ph-stale/$NUM") || { sp_carry "staleparent:$P:$NUM"; continue; }
       [ -n "$SPHIT" ] || continue
-      SPK=$(grep -c . <<<"$SPHIT")
-      SPLAST=$(tail -n 1 <<<"$SPHIT" | cut -f1)
-      SPPAIRS=$(awk -F'\t' 'NR <= 3 {printf "%s%s=%s \"%s\"", (NR > 1 ? ", " : ""), substr($1, 1, 8), substr($2, 1, 8), $3} END {if (NR > 3) printf ", …"}' <<<"$SPHIT")
-      alert 21600 "staleparent:$P:$NUM" \
-        "$P #$NUM stale-parent: carries $SPK commit(s) already on $SPB under another sha ($SPPAIRS) — run git rebase --onto origin/$SPB $SPLAST on its branch, or let the conductor restack it: $SPURL"
+      sp_page "$P" "$NUM" "$SPB" "$SPURL" "$SPHIT"
     done <<<"$SPROWS"
   done
   command -v gh_repo_token_reset >/dev/null 2>&1 && gh_repo_token_reset
@@ -3005,7 +3092,9 @@ mv -f "$FIRED.sorted" "$ACTIVE"
 # (bin/ph_active.py) resolves nothing unless the stamp is fresh and its n
 # matches the file. A failed write leaves the old stamp, which only makes the
 # groom hold, so it never fails the pass.
-if [ ! -e "$FIRED.sorted" ]; then
+# Not on a lane-run machine (BH-6892): the stamp counts the whole file, and a
+# machine holds one project's lines. The hub's fleet run keeps writing it.
+if [ ! -e "$FIRED.sorted" ] && [ -z "${LANE_RUN_ID:-}" ]; then
   jq -nc --argjson at "$(date +%s)" --argjson n "$(( $(wc -l < "$ACTIVE") ))" --arg ns "$RETRACT_NS" \
     '{at:$at,n:$n,retract_ns:$ns}' > "$H/state/health-active.stamp.tmp" 2>/dev/null \
     && mv -f "$H/state/health-active.stamp.tmp" "$H/state/health-active.stamp" \
@@ -3015,12 +3104,21 @@ fi
 } 6>"$ACTIVE.lock"
 while IFS= read -r K; do
   [ -n "$K" ] || continue
-  alert_emit "[pipeline-health] RESOLVED $K — condition no longer holds"
+  RAID="ph-$(printf '%s' "$K" | tr -c 'A-Za-z0-9_.-' '_' | cut -c1-117)"
+  if [ -n "${LANE_RUN_ID:-}" ]; then
+    # Off the hub (BH-6892): ONE line, posted with severity resolved. The hub
+    # replays it as `alert-line.sh --severity resolved --id <RAID>`, whose beat
+    # carries resolved:true and closes the row alert() opened under that id.
+    HARNESS="$H" "$H/bin/alert-line.sh" --severity resolved --id "$RAID" --project "${PH_PROJECT:-}" \
+      "[pipeline-health] RESOLVED $K — condition no longer holds"
+  else
+    alert_emit "[pipeline-health] RESOLVED $K — condition no longer holds"
+  fi
   echo "$(STAMP) RESOLVED $K — condition no longer holds" >> "$H/logs/pipeline-health.log"
   { flock -w 5 7 2>/dev/null
     jq --arg k "$K" 'del(.[$k])' "$DEDUP" > "$DEDUP.tmp.$$" && mv "$DEDUP.tmp.$$" "$DEDUP"
-  } 7>"$DEDUP.lock"
-  RAID="ph-$(printf '%s' "$K" | tr -c 'A-Za-z0-9_.-' '_' | cut -c1-117)"
+  } 7>"${DEDUP_LOCK:-$DEDUP.lock}"
+  [ -n "${LANE_RUN_ID:-}" ] && continue
   "$H/bin/beat.sh" "$(jq -nc --arg akey "alert:$RAID" --arg id "$RAID" --arg l "[pipeline-health] RESOLVED $K — condition no longer holds" \
     '{kind:"alert",project:"fleet",akey:$akey,alertid:$id,resolved:true,line:$l}')" >/dev/null 2>&1 || true
   "$H/bin/beat.sh" "$(jq -nc --arg akey "health:$K" --arg l "[pipeline-health] RESOLVED $K — condition no longer holds" \
