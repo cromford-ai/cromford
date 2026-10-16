@@ -22,7 +22,7 @@
       "max": 365,
       "unit": "days",
       "zero_means": null,
-      "note": "Days bin/alerts-groom.sh keeps flags/alerted-*-YYYYMMDD, by the date in the name. Code fallback ${ALERT_FLAG_RETENTION_DAYS-7} (7 when unset); below 2 or not a whole number the groom refuses and deletes nothing, so today's and yesterday's flag always survive."
+      "note": "Days bin/alerts-groom.sh keeps flags/alerted-*-YYYYMMDD and the dated box flags degraded-<box>-YYYYMMDD, authprobe-inconclusive-<box>-YYYYMMDD and lane-caps-degraded-<lane>-YYYYMMDD-<cksum> (dated by its middle segment), by the date in the name. Code fallback ${ALERT_FLAG_RETENTION_DAYS-7} (7 when unset); below 2 or not a whole number the groom refuses and deletes nothing, so today's and yesterday's flag always survive."
     },
     {
       "env": "ALERTS_GROOM_MIGRATION_JOBS",

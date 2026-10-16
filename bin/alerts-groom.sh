@@ -34,8 +34,15 @@ command -v lane_env_apply    >/dev/null 2>&1 && lane_env_apply    alerts-groom
 # or not a whole number deletes nothing (reject, never clamp a destructive knob),
 # so today's and yesterday's flag always survive. Local filesystem work: it runs
 # before, and does not depend on, the console env below.
+# The same knob and cutoff also groom three dated box flag families (BH-5934),
+# each written once a day and checked only by today's name: degraded-<box>-<day>
+# and authprobe-inconclusive-<box>-<day> (bin/claude-auth-check.sh), dated by the
+# last segment, and lane-caps-degraded-<lane>-<day>-<cksum> (bin/lib/lane-caps.sh),
+# dated by the segment BEFORE an all-digit cksum. One loop and one rm serve all
+# four families (the BH-4154 flags/ writer ratchet counts each rm); the box
+# families get their own log line and count.
 groom_alert_flags() {
-  local days="${ALERT_FLAG_RETENTION_DAYS-7}" cutoff f d n=0
+  local days="${ALERT_FLAG_RETENTION_DAYS-7}" cutoff f d n=0 m=0
   local glog="$HARNESS/logs/alerts-groom.log"
   mkdir -p "$HARNESS/logs" 2>/dev/null
   if ! [[ "$days" =~ ^[0-9]+$ ]] || [ "$((10#$days))" -lt 2 ]; then
@@ -48,14 +55,19 @@ groom_alert_flags() {
     echo "$(date -u '+%Y-%m-%d %H:%M:%SZ') flag groom skipped: could not compute the cutoff date" >> "$glog"
     return 0
   fi
-  for f in "$HARNESS"/flags/alerted-*; do
+  for f in "$HARNESS"/flags/alerted-* "$HARNESS"/flags/degraded-* "$HARNESS"/flags/authprobe-inconclusive-* "$HARNESS"/flags/lane-caps-degraded-*; do
     [ -f "$f" ] && [ ! -L "$f" ] || continue
-    d="${f##*-}"
+    case "${f##*/}" in
+      lane-caps-degraded-*) [[ "${f##*-}" =~ ^[0-9]+$ ]] || continue; d="${f%-*}"; d="${d##*-}" ;;
+      *) d="${f##*-}" ;;
+    esac
     [[ "$d" =~ ^[0-9]{8}$ ]] || continue
     [ "$d" -lt "$cutoff" ] || continue
-    rm -f "$f" && n=$((n+1))
+    rm -f "$f" || continue
+    case "${f##*/}" in alerted-*) n=$((n+1)) ;; *) m=$((m+1)) ;; esac
   done
   echo "$(date -u '+%Y-%m-%d %H:%M:%SZ') flag groom: removed $n alerted-* flag(s) dated before $cutoff (retention ${days}d)" >> "$glog"
+  echo "$(date -u '+%Y-%m-%d %H:%M:%SZ') flag groom: removed $m dated box flag(s) (degraded-, authprobe-inconclusive-, lane-caps-degraded-) dated before $cutoff (retention ${days}d)" >> "$glog"
 }
 groom_alert_flags
 # <<< alert-flag groom
