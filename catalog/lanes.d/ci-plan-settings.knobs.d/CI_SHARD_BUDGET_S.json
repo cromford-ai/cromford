@@ -1,0 +1,12 @@
+{
+  "env": "CI_SHARD_BUDGET_S",
+  "read_in": "bin/ci-plan-settings.sh",
+  "type": "int",
+  "default": 480,
+  "min": 60,
+  "max": 3600,
+  "unit": "seconds",
+  "zero_means": null,
+  "required": true,
+  "note": "BH-6876: the per-shard budget in seconds of suite time (no job setup). bin/ci-plan-settings.sh projects it into the repo variable CI_SHARD_BUDGET_S, and bin/ci-plan.sh uses the fewest shards whose slowest one is within it, by the weights of bin/ci-durations.sh fetch. A suite longer than the budget is said as `over budget` on the plan's sizing line. A whole number in 60..3600; anything else is refused (warn alert ci-plan-settings-sizing:<slug>). Lower = more shards and more setup minutes. The code fallback with no variable is 480."
+}

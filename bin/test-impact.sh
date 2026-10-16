@@ -49,12 +49,13 @@
 #                        `full: unmapped path (<p>)`. The global helpers
 #                        (tests/lib/scratch.sh) escalate in the batch's rules
 #                        file before this runs.
-#   env TI_WORKFLOW_BASE=<sha> (BH-6688; batch select only): a changed
-#                        .github/workflows/harness-ci.yml whose diff from <sha>
-#                        to HEAD bin/test-impact-workflow.sh calls non-test
-#                        jobs only (rc 1) selects through its map rows instead
-#                        of `full: infra change`. Unset, or any other answer,
-#                        is the infra answer.
+#                        A top-level .github/workflows/*.yml or *.yaml path
+#                        is not infra here either (BH-6876): it selects the
+#                        suites that read it (its map rows) plus the always
+#                        set, and one no suite reads selects the always set.
+#                        A nested workflow path is still infra. Outside a
+#                        batch select every .github/workflows/ path is
+#                        `full: infra change`.
 #
 # ── THE MAP IS GENERATED AND NEVER COMMITTED (BH-1175's rule, applied) ───────
 # BH-1175 took docs/verification-map/README.md out of git because a file derived
@@ -1357,15 +1358,6 @@ ti_emit_full() {
   printf 'impact: %d of %d suites (%s)\n' "$total" "$total" "$1" >&3
 }
 
-# ti_workflow_nontest — rc 0 when TI_WORKFLOW_BASE is set and
-# bin/test-impact-workflow.sh says the workflow diff from it to HEAD touches
-# non-test jobs only (its rc 1). Any other answer is rc 1: the infra answer.
-ti_workflow_nontest() {
-  [ -n "${TI_WORKFLOW_BASE:-}" ] && [ -f "$ROOT/bin/test-impact-workflow.sh" ] || return 1
-  bash "$ROOT/bin/test-impact-workflow.sh" "$TI_WORKFLOW_BASE" HEAD --root "$ROOT" > /dev/null 2>&1
-  [ $? = 1 ]
-}
-
 # ti_select <map> <changed-file> — print the suites, and the reason on fd 3.
 ti_select_from() {
   local map="$1" changed="$2" reason="" full="" p
@@ -1386,8 +1378,9 @@ ti_select_from() {
   cp "$changed" "$work" 2>/dev/null || : > "$work"
   while IFS= read -r p; do
     [ -n "$p" ] || continue
-    if [ "${TI_BATCH_SELECT:-}" = 1 ] && [ "$p" = .github/workflows/harness-ci.yml ] \
-       && ti_workflow_nontest && ti_specific "$map" "$p"; then
+    # A BATCH (BH-6876): a workflow file selects its readers through its map
+    # rows in ti_why_rows; the nightly corpus is the backstop.
+    if [ "${TI_BATCH_SELECT:-}" = 1 ] && [[ $p =~ ^\.github/workflows/[^/]+\.ya?ml$ ]]; then
       continue
     fi
     if grep -qE "$infra_re" <<<"$p"; then

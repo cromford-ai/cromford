@@ -17,7 +17,9 @@
 #   C5  a tests/lib/ helper (not scratch.sh) is bounded
 #   C6  an unmapped bin/lib/ file is `*` with its reason in <files>.full, and
 #       _bim_compute logs BATCH_IMPACT_FULL and BATCH_IMPACT_REACH
-#   C7  the docker runner, the workflow, and a list with the runner are `*`
+#   C7  the docker runner, a nested workflow path, and a list with the runner
+#       are `*`; a top-level workflow file reaches its readers since BH-6876
+#       (the batch select runs them, not the corpus)
 #
 # Run from anywhere: HARNESS_TEST_SANDBOX=1 bash tests/impact-map-infra-paths.bh-6688-test.sh
 set -uo pipefail
@@ -124,8 +126,11 @@ grep -q '^bisect several ' "$S/decision" 2>/dev/null && ok \
 # C7 — the negatives: these stay `*`.
 reach C7a bin/run-tests-in-docker.sh
 [ "$RC" = 0 ] && [ "$R" = '*' ] && ok || bad "C7 bin/run-tests-in-docker.sh stays * (rc $RC): $(head -2 <<<"$R")"
-reach C7b .github/workflows/harness-ci.yml
-[ "$RC" = 0 ] && [ "$R" = '*' ] && ok || bad "C7 harness-ci.yml stays * without a git range (rc $RC): $(head -2 <<<"$R")"
+reach C7b .github/workflows/sub/x.yml
+[ "$RC" = 0 ] && [ "$R" = '*' ] && ok || bad "C7 a nested workflow path stays * (rc $RC): $(head -2 <<<"$R")"
+reach C7b2 .github/workflows/harness-ci.yml
+{ [ "$RC" = 0 ] && [ "$R" != '*' ] && grep -qxF tests/ci-test-tiers-workflow.bh-5653-test.sh <<<"$R"; } && ok \
+  || bad "C7 harness-ci.yml reaches its readers since BH-6876 (rc $RC): $(head -2 <<<"$R")"
 reach C7c catalog/pr-self-check.tsv bin/run-tests-in-docker.sh
 [ "$RC" = 0 ] && [ "$R" = '*' ] && ok || bad "C7 a bounded path plus the runner is * (rc $RC): $(head -2 <<<"$R")"
 grep -qF 'bin/run-tests-in-docker.sh' "$F.full" 2>/dev/null && ok || bad "C7 the sidecar names the runner: $(cat "$F.full" 2>/dev/null)"

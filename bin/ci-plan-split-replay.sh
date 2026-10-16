@@ -24,13 +24,16 @@
 #        (checking...head), because BH-6490 escalates on the own diff only; when
 #        that one selects, planned_on is `own` and the count is a LOWER bound
 #        (the real plan also selects the inherited paths). Without a git range
-#        the BH-6371 add-only rules diff and the BH-6688 non-test workflow diff
-#        cannot be proved, so those paths escalate here: the note says
-#        `upper bound`. The map is THIS checkout's (`approx: current map`).
-#        est: the minutes of the slowest shard when the planned list is split
-#        over n shards by bin/lib/suite-runner.sh suite_shard_plan with the
-#        weights `bin/ci-durations.sh fetch` returns (suite time only, no job
-#        setup). A fetch that fell back (`# source: seed …` or `none`) is
+#        the BH-6371 add-only rules diff cannot be proved, so that path
+#        escalates here: the note says `upper bound`. A workflow path needs no
+#        git range (BH-6876: it selects its readers). The map is THIS
+#        checkout's (`approx: current map`).
+#        n: with a real fetch (below), the planner gets the fetched weights as
+#        CI_PLAN_DURATIONS_FILE and sizes n by time (BH-6876); else the count
+#        rule. est: the minutes of the slowest shard when the planned list is
+#        split over n shards by bin/lib/suite-runner.sh suite_shard_plan with
+#        the weights `bin/ci-durations.sh fetch` returns (suite time only, no
+#        job setup). A fetch that fell back (`# source: seed …` or `none`) is
 #        est `-`: only an api, cache or artifact answer is a fetch.
 #   VERDICT (failed runs only). The culprits are the `--- tests/<x> rc=<n>`
 #        lines (n != 0) of the failed shard jobs' logs, and the failed steps of
@@ -67,11 +70,26 @@
 # <N> (unreadable <u>)`, one `row <pattern> fires <k>` per escalate row of
 # catalog/ci-batch-escalate.tsv that fired, `other full reason <r> fires <k>`,
 # `median wall (min): old <x> over <k>, new est <y> over <j>`, `verdicts:`,
-# `durations:` and `selection step:`.
+# `durations:`, `weights source: <api|cache|artifact|seed|none>` (line 1 of
+# the fetched file), `corpus: <n> suites at <sha12>` (tests/*.sh +
+# tests/mc/*.sh in HEAD's tree), `speed: median <r>x over <k> re-measured
+# suites; <c> of <n> shared rows carry the seed value (now vs seed <sha12>)`
+# (the fetched seconds over the seed's, the file's last committed copy, for
+# each suite in both whose row is not the seed row itself: a row with the
+# seed's seconds AND run is carried forward by merge, is 1.00x by
+# construction, and counts only in <c>) and `speed-top20: median <r>x over
+# <t> re-measured` (the same over the 20 heaviest seed rows); `speed: - (0 of
+# <n> shared rows re-measured; ...)` when every shared row is carried, and
+# each `- (<why>)` when the fetch IS the seed or no seed is in the history
+# (BH-6876),
+# the 20 heaviest fetched suites as `slowest: <rank> <suite>
+# <seconds>s` (seconds desc, then name; `slowest: - (no durations)` without a
+# real fetch), `over budget: <k> suite(s) over <b>s` (b = CI_SHARD_BUDGET_S,
+# default 480) and `selection step:`.
 #
 # Env passed through to the planner: CI_QUARANTINE, CI_SUITES_PER_SHARD,
-# CI_MAX_SHARDS (set them to the repo variables for the real shard count; the
-# planner's defaults otherwise). Seams: REPLAY_GH, REPLAY_PLAN, REPLAY_IMPACT,
+# CI_MAX_SHARDS, CI_SHARD_BUDGET_S (set them to the repo variables for the
+# real shard count; the planner's defaults otherwise). Seams: REPLAY_GH, REPLAY_PLAN, REPLAY_IMPACT,
 # REPLAY_DURATIONS. rc 0 on a complete read (a draft read failure is an
 # `unreadable` row), rc 2 when the draft list cannot be read, the map cannot be
 # built or an argument is wrong.
@@ -93,7 +111,7 @@ while [ $# -gt 0 ]; do
     --last) [ $# -ge 2 ] || { echo "split-replay: --last needs a number" >&2; exit 2; }; LAST="$2"; shift ;;
     --repo) [ $# -ge 2 ] || { echo "split-replay: --repo needs owner/repo" >&2; exit 2; }; REPO="$2"; shift ;;
     --out)  [ $# -ge 2 ] || { echo "split-replay: --out needs a path" >&2; exit 2; }; OUTF="$2"; shift ;;
-    -h|--help) sed -n '2,77p' "$0"; exit 0 ;;
+    -h|--help) sed -n '2,95p' "$0"; exit 0 ;;
     *) echo "split-replay: unknown argument $1" >&2; exit 2 ;;
   esac
   shift
@@ -131,6 +149,10 @@ CI_DURATIONS_GH="$GH" CI_REPO="$REPO" CI_WORKFLOW="Harness CI" CI_DURATIONS_CACH
 DUR_SRC=$(sed -n '1s/^# source: //p' "$TMP/dur.tsv" 2>/dev/null)
 DUR_OK=0
 case "$DUR_SRC" in api*|cache*|artifact*) DUR_OK=1 ;; *) DUR_SRC="${DUR_SRC:-unreadable} (not fetched, est is -)" ;; esac
+# BH-6876: the planner sizes n by these weights only when they are a real fetch.
+PLAN_DUR=""; [ "$DUR_OK" = 0 ] || PLAN_DUR="$TMP/dur.tsv"
+BUDGET_S="${CI_SHARD_BUDGET_S:-480}"
+case "$BUDGET_S" in ''|*[!0-9]*|0) BUDGET_S=480 ;; esac
 
 # compare <base> <head> <out> — the compare's paths; sets CMP_WHY and rc 1 when
 # it cannot be read or answers GitHub's 300-file cap.
@@ -152,6 +174,7 @@ plan() {
       CI_EVENT=pull_request TI_PR_HEAD_REF="$HREF" TI_BASE="$BASE" TI_PR_TITLE="$TITLE" TI_PR_LABELS="$LABELS" \
       CI_PR_BODY="$BODY" CI_PLAN_GH="$GH" CI_REPO="$REPO" CI_PLAN_CHANGED_FILE="$1" \
       CI_PLAN_TIER_FILE="$ROOT/catalog/test-tiers.tsv" CI_PLAN_IMPACT="$TMP/impact.sh" GITHUB_OUTPUT="$go" \
+      CI_PLAN_DURATIONS_FILE="$PLAN_DUR" \
       bash "$PLAN" --out "$TMP/list.$2" > "$TMP/plan.$2.log" 2>&1 || rc=$?
   [ "$rc" = 0 ] || { P_WHY="the planner failed rc=$rc: $(grep -v '^::' "$TMP/plan.$2.log" | tail -1 | head -c 200)"; return 1; }
   P_MODE=$(sed -n 's/^mode=//p' "$go" | tail -1); P_COUNT=$(sed -n 's/^count=//p' "$go" | tail -1)
@@ -240,7 +263,7 @@ while IFS= read -r d; do
         fi
       fi
       ne=$(est "$TMP/list.$tag" "$nn")
-      case "$nesc" in "selection input: .github/workflows/harness-ci.yml"|"selection input: catalog/ci-batch-escalate.tsv")
+      case "$nesc" in "selection input: catalog/ci-batch-escalate.tsv")
         note="${note:+$note; }upper bound: ${nesc#selection input: } narrowing needs a git range" ;; esac
     fi
   fi
@@ -308,7 +331,78 @@ done | LC_ALL=C sort | uniq -c | awk '{ c = $1; sub(/^ *[0-9]+ /, ""); print $0 
 [ -z "$OUTF" ] || cp "$TMP/rows" "$OUTF" || { echo "split-replay: cannot write $OUTF" >&2; exit 2; }
 cat "$TMP/rows"
 awk -F'\t' 'NR > 1' "$TMP/rows" > "$TMP/data"
-awk -F'\t' -v durs="$DUR_SRC" -v fires="$TMP/fires" '
+# The 20 heaviest fetched suites and the count over the shard budget (BH-6876).
+if [ "$DUR_OK" = 1 ]; then
+  awk -F'\t' '!/^[[:space:]]*#/ && $2 ~ /^[0-9]+(\.[0-9]+)?$/ { print $1 "\t" $2 }' "$TMP/dur.tsv" \
+    | LC_ALL=C sort -t"$(printf '\t')" -k2,2nr -k1,1 > "$TMP/dur.sorted"
+  awk -F'\t' 'NR <= 20 { print "slowest: " NR " " $1 " " $2 "s" }' "$TMP/dur.sorted" > "$TMP/slow"
+  awk -F'\t' -v b="$BUDGET_S" '$2 + 0 > b + 0 { k++ } END { printf "over budget: %d suite(s) over %ss\n", k, b }' "$TMP/dur.sorted" >> "$TMP/slow"
+else
+  printf 'slowest: - (no durations)\nover budget: - (no durations)\n' > "$TMP/slow"
+fi
+# What the slowdown is made of (BH-6876, comment 6197071504 item 3): where the
+# weights came from, the corpus at HEAD, and the fetched seconds over the
+# seed's (the file's last committed copy, found as bin/ci-durations.sh
+# seed_sha finds it) for every suite in both. Local git only, no GitHub call.
+WSRC=$(sed -n '1s/^# source: \([a-z]*\).*/\1/p' "$TMP/dur.tsv" 2>/dev/null)
+case "$WSRC" in api|cache|artifact|seed) ;; *) WSRC=none ;; esac
+{ echo "weights source: $WSRC"
+  if head=$(git -C "$ROOT" rev-parse HEAD 2>/dev/null); then
+    printf 'corpus: %s suites at %s\n' "$(git -C "$ROOT" ls-tree --name-only HEAD tests/ tests/mc/ 2>/dev/null \
+      | grep -cE '^tests/(mc/)?[^/]+\.sh$')" "${head:0:12}"
+  else
+    echo "corpus: - (no git checkout)"
+  fi
+  why=""
+  case "$WSRC" in seed) why="weights are the seed" ;; none) why="no fetched weights" ;; esac
+  ssha=""
+  [ -n "$why" ] || ssha=$(git -C "$ROOT" log -1 --format=%H --diff-filter=D -- catalog/ci-suite-durations.tsv 2>/dev/null)
+  [ -n "$why" ] || [ -n "$ssha" ] || why="no seed"
+  [ -n "$why" ] || git -C "$ROOT" show "$ssha^:catalog/ci-suite-durations.tsv" > "$TMP/seed.tsv" 2>/dev/null || why="the seed cannot be read"
+  if [ -n "$why" ]; then
+    printf 'speed: - (%s)\nspeed-top20: - (%s)\n' "$why" "$why"
+  else
+    awk -F'\t' -v sha="${ssha:0:12}" '
+      function median(a, k,   i, j, x) {
+        for (i = 2; i <= k; i++) { x = a[i]; for (j = i - 1; j >= 1 && a[j] > x; j--) a[j + 1] = a[j]; a[j + 1] = x }
+        return (k % 2) ? a[(k + 1) / 2] : (a[k / 2] + a[k / 2 + 1]) / 2
+      }
+      /^[[:space:]]*#/ || $2 !~ /^[0-9]+(\.[0-9]+)?$/ { next }
+      FNR == NR { if ($2 + 0 > 0) { seed[$1] = $2 + 0; srun[$1] = $3; order[++ns] = $1 }; next }
+      { now[$1] = $2 + 0; nrun[$1] = $3 }
+      END {
+        # Only a re-measured row says anything about speed. ci-durations.sh
+        # merge keeps the row of an unmeasured suite byte for byte, so a row
+        # with the seconds AND the run of the seed row is the seed itself
+        # (1.00x by construction). It is counted apart, never in the median.
+        for (i = 1; i <= ns; i++) {
+          s = order[i]; if (!(s in now)) continue
+          shared++
+          if (now[s] == seed[s] && nrun[s] == srun[s]) { carried++; continue }
+          redo[s] = 1; all[++k] = now[s] / seed[s]
+        }
+        # The 20 heaviest seed rows, by a selection over the seed (seconds
+        # desc, then name), so the top20 set does not depend on file order.
+        for (r = 1; r <= 20; r++) {
+          best = ""
+          for (i = 1; i <= ns; i++) { s = order[i]; if (s in used) continue
+            if (best == "" || seed[s] > seed[best] || (seed[s] == seed[best] && s < best)) best = s }
+          if (best == "") break
+          used[best] = 1
+          if (best in redo) top[++t] = now[best] / seed[best]
+        }
+        if (!shared) { print "speed: - (no suite in both the fetch and the seed " sha ")"; print "speed-top20: - (no suite in both)"; exit }
+        if (!k) {
+          printf "speed: - (0 of %d shared rows re-measured; all carry the seed value)\n", shared
+        } else {
+          printf "speed: median %.2fx over %d re-measured suites; %d of %d shared rows carry the seed value (now vs seed %s)\n", median(all, k), k, carried + 0, shared, sha
+        }
+        if (t) printf "speed-top20: median %.2fx over %d re-measured\n", median(top, t), t
+        else print "speed-top20: - (none of the 20 heaviest seed suites re-measured)"
+      }' "$TMP/seed.tsv" "$TMP/dur.tsv"
+  fi
+} > "$TMP/diag"
+awk -F'\t' -v durs="$DUR_SRC" -v fires="$TMP/fires" -v slow="$TMP/slow" -v diag="$TMP/diag" '
   function median(a, k,   i, j, x) {
     if (!k) return "-"
     for (i = 2; i <= k; i++) { x = a[i]; for (j = i - 1; j >= 1 && a[j] > x; j--) a[j + 1] = a[j]; a[j + 1] = x }
@@ -328,6 +422,8 @@ awk -F'\t' -v durs="$DUR_SRC" -v fires="$TMP/fires" '
     printf "verdicts: caught-batch %d, caught-pr %d, moved-nightly %d, missed %d, not-replayed %d, no-culprit %d (failed %d)\n",
       v["caught-batch"], v["caught-pr"], v["moved-nightly"], v["missed"], v["not-replayed"], v["no-culprit"], failed
     printf "durations: %s\n", durs
+    while ((getline line < diag) > 0) print line
+    while ((getline line < slow) > 0) print line
     print "selection step: approx: current map; est is suite time on the slowest shard, no job setup"
   }' "$TMP/data"
 exit 0

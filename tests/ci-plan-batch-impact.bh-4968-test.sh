@@ -23,7 +23,9 @@
 #          `allow` row overrides, an unknown kind is skipped, no TSV fails closed
 #   1      a console-ui screen: batch-selected, small, always set included
 #   2      a bin/ script: batch-selected, its mapped suite included
-#   3      the workflow and a runner lib: full, `selection input: <path>`
+#   3      a .github/ action and a runner lib: full, `selection input: <path>`
+#          (a top-level workflow file selects its readers since BH-6876:
+#          tests/ci-plan-workflow-narrow.bh-6876-test.sh)
 #   4      a path the map does not know: full, `unmapped: <path>`
 #   4b     a brand-new bin/ script: batch-selected (whole-bin scanners reach it)
 #   5      selection of a union == union of selections
@@ -46,7 +48,7 @@ TAB=$'\t'
 
 # ── E1-E4. cbe_reason, the rules lib on its own.
 cbe() { ( . "$LIB" || exit 9; cbe_reason "$1" ); }
-for p in bin/lib/suite-runner.sh .github/workflows/harness-ci.yml bin/ci-plan.sh bin/test-impact.sh \
+for p in bin/lib/suite-runner.sh .github/actions/x/action.yml bin/ci-plan.sh bin/test-impact.sh \
          bin/test-impact-gate.sh bin/test-tiers.sh tests/lib/scratch.sh .mergify.yml catalog/test-tiers.tsv \
          catalog/ci-batch-escalate.tsv; do
   r=$(cbe "$p"); rc=$?
@@ -122,8 +124,8 @@ bplan "$B2"
   || bad "2: $B2 must be batch-selected and carry its mapped suite '$S2' (mode=$(out mode) count=$(out count) total=$(out total)) [$OUT]"
 
 # ── 3. the harness's own plumbing escalates, and says which path did it.
-escalates 3a "selection input: .github/workflows/harness-ci.yml" .github/workflows/harness-ci.yml
-has "escalation: selection input: .github/workflows/harness-ci.yml" "$SUM" && ok || bad "3a: the step summary must name the escalation: [$SUM]"
+escalates 3a "selection input: .github/actions/x/action.yml" .github/actions/x/action.yml
+has "escalation: selection input: .github/actions/x/action.yml" "$SUM" && ok || bad "3a: the step summary must name the escalation: [$SUM]"
 [ "$(out count)" = "$(out total)" ] && ok || bad "3a: an escalated batch runs the corpus (count=$(out count) total=$(out total))"
 escalates 3b "selection input: bin/lib/docker-host.sh" bin/lib/docker-host.sh
 [ "$(out count)" = "$(out total)" ] && ok || bad "3b: an escalated batch runs the corpus (count=$(out count) total=$(out total))"
@@ -258,8 +260,8 @@ GO=$(cat "$T/go" 2>/dev/null)
 has "::notice" "$OUT" && bad "11: an ordinary PR prints no ci-plan notice [$OUT]" || ok
 [ ! -s "$T/sum" ] && ok || bad "11: an ordinary PR writes no step summary: $(cat "$T/sum")"
 [ "$(cut -d' ' -f1 "$T/sink" | sort -u)" = ci-select ] && ok || bad "11: an ordinary PR only calls ci-select: $(cat "$T/sink")"
-[ "$(printf '%s\n' "$GO" | sed 's/=.*//' | tr '\n' ' ')" = "mode count total n shards corpus summary quarantine escalation own_base spa worker " ] && ok \
-  || bad "11: an ordinary PR's outputs are the old keys plus escalation, own_base (BH-6490), spa and worker (BH-4969): $(printf '%s\n' "$GO" | sed 's/=.*//' | tr '\n' ' ')"
+[ "$(printf '%s\n' "$GO" | sed 's/=.*//' | tr '\n' ' ')" = "mode count total n shards corpus summary quarantine escalation own_base spa worker sizing shard_budget_s max_shards " ] && ok \
+  || bad "11: an ordinary PR's outputs are the old keys plus escalation, own_base (BH-6490), spa and worker (BH-4969), sizing, shard_budget_s and max_shards (BH-6876): $(printf '%s\n' "$GO" | sed 's/=.*//' | tr '\n' ' ')"
 
 echo "ci-plan-batch-impact.bh-4968-test.sh: $PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ] || exit 1

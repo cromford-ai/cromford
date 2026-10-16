@@ -23,6 +23,13 @@
 # carries its row, so deleting an escalate row cannot un-gate a job. Every
 # non-batch-selected run, and an escalated batch, runs both jobs whole.
 #
+# A TOP-LEVEL WORKFLOW FILE (BH-6876) is an allow row: a batch that edits
+# .github/workflows/<x>.yml or <x>.yaml runs the suites that read that file
+# plus the always set (bin/test-impact.sh, TI_BATCH_SELECT=1), and the nightly
+# corpus is the backstop. Every other .github/ path still escalates. An allow
+# row beats a CI_FULL_TRIGGERS `+` row too: to escalate workflow edits again,
+# remove the two allow rows by PR.
+#
 # These are the paths the selection itself runs on: the workflow, the planner,
 # the selector and tier step, the libs and catalogs those three source and read,
 # the runners, and the suites' shared helpers. A batch that touches one of them
@@ -60,6 +67,10 @@
 #
 # The allow rows exempt docs: a *.md never escalates on its own.
 .github/	escalate	the workflow decides what runs and on which runner
+.github/workflows/*.yml	allow	a workflow edit selects the suites that read it plus the always set; the nightly corpus runs the rest (BH-6876)
+.github/workflows/*.yaml	allow	a workflow edit selects the suites that read it plus the always set; the nightly corpus runs the rest (BH-6876)
+.github/workflows/harness-ci.yml	spa	the workflow defines the console-ui job, and a workflow edit no longer escalates (BH-6876)
+.github/workflows/harness-ci.yml	worker	the workflow defines the worker-jobs job, and a workflow edit no longer escalates (BH-6876)
 bin/ci-plan.sh	escalate	the planner itself
 bin/test-impact*.sh	escalate	the selector and its builder gate
 bin/test-tiers.sh	escalate	the tier step that runs after the selection

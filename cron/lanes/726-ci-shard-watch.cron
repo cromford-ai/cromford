@@ -1,0 +1,8 @@
+# @hub-lanes
+
+# ── CI SHARD WATCH (BH-6876) ────────────────────────────────────────────────
+# bin/ci-shard-watch.sh — one critical page when a Harness CI test shard is
+# still running CI_SHARD_ALERT_MIN minutes (default 35) after it started; the
+# job times out at 45. Every 5 min, at most 1 + CI_SHARD_WATCH_MAX_RUNS GitHub
+# reads, skipped while the bucket is low. Kill: bin/harness-ctl.sh off ci-shard-watch.
+*/5 * * * * /root/harness/bin/hub-lease.sh check && /root/harness/bin/ci-shard-watch.sh >/dev/null 2>&1

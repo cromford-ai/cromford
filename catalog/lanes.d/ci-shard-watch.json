@@ -1,0 +1,51 @@
+{
+  "id": "ci-shard-watch",
+  "name": "CI shard watch",
+  "scope": "hub",
+  "script": "bin/ci-shard-watch.sh",
+  "cadence": "*/5 * * * *",
+  "boxes": [
+    "hub"
+  ],
+  "switch": {
+    "kind": "flag",
+    "name": "lane-off-ci-shard-watch",
+    "aliases": []
+  },
+  "wired": true,
+  "knobs": [
+    {
+      "env": "CI_SHARD_ALERT_MIN",
+      "type": "int",
+      "default": 35,
+      "min": 5,
+      "max": 44,
+      "required": true,
+      "zero_means": null,
+      "note": "BH-6876: a Harness CI test shard job (\"Tests, traced (shard ...\") still in progress this many minutes after it started is ONE critical page (ci-shard-slow:<repo>). The job's timeout is 45 minutes, so the line sits below it. A value that is not a positive integer falls back to 35."
+    },
+    {
+      "env": "CI_SHARD_WATCH_MAX_RUNS",
+      "type": "int",
+      "default": 10,
+      "min": 1,
+      "max": 50,
+      "zero_means": null,
+      "note": "BH-6876: at most this many in-progress harness-ci.yml runs have their jobs read per tick, oldest first. The rest are deferred, and a tick with a deferred run never resolves the page. GitHub reads per tick: 1 + this."
+    },
+    {
+      "env": "CI_SHARD_WATCH_REPO",
+      "type": "string",
+      "default": "example-org/cromford",
+      "zero_means": null,
+      "note": "BH-6876: the repo whose in-progress Harness CI (harness-ci.yml) runs are watched. NOT settable from the control plane: it is an identity the lane reads GitHub as, so only env/global.env on the box moves it.",
+      "settable": false
+    }
+  ],
+  "stats": {
+    "cost_stage": null,
+    "cost_project_filter": null,
+    "lanes_row": false,
+    "log": "logs/ci-shard-watch.log"
+  }
+}

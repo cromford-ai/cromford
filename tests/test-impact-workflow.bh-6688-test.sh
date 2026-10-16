@@ -15,10 +15,14 @@
 #   W4  a plan step env line -> rc 0
 #   W5  an `on:` line -> rc 0, top-level
 #   W6  a new job after ci-timings -> rc 0; lint renamed to tests-shard -> rc 0
-#   W7  a batch select with TI_WORKFLOW_BASE on the W1 commit is bounded
+#   W7  a batch select of the W1 commit is bounded; since BH-6876 a batch
+#       select of the W3 (tests-shard) commit is bounded too: a workflow file
+#       selects its readers (tests/ci-plan-workflow-narrow.bh-6876-test.sh)
 #   W8  bin/ci-plan.sh as a merge-queue batch: the W1 commit is batch-selected
-#       and says why; the W3 commit escalates on the workflow
-#   W9  the W1 commit without TI_WORKFLOW_BASE is still `full: infra change`
+#       and says the jobs; the W3 commit is batch-selected and says the
+#       workflow selects its readers (BH-6876; it escalated before)
+#   W9  the ordinary PR select (no TI_BATCH_SELECT) of the W1 commit is still
+#       `full: infra change`
 #   W10 the file added on the range -> rc 2; W11 an unknown base -> rc 2;
 #   W12 an empty diff -> rc 2
 #   W13 a stacked batch: the lint-only workflow commit is the lower batch
@@ -115,16 +119,18 @@ gsel() {
   git -C "$G" checkout -q "$h"
   OUT=$(env "$@" TI_BATCH_SELECT=1 bash "$G/bin/test-impact.sh" select --changed "$T/changed" --root "$G" 2>&1); RC=$?
 }
-gsel "$GLINT" TI_WORKFLOW_BASE="$GBASE"
+gsel "$GLINT"
 IMP=$(grep '^impact:' <<<"$OUT" | tail -1)
 [ "$RC" = 0 ] && [ -n "$IMP" ] && ! has "full:" "$IMP" && ok || bad "W7 a lint-only workflow commit is bounded (rc $RC): $IMP"
 grep -qxF tests/ci-apt-update.bh-2128-test.sh <<<"$OUT" && ok || bad "W7 the list holds tests/ci-apt-update.bh-2128-test.sh: $IMP"
-gsel "$GLINT"
+git -C "$G" checkout -q "$GLINT"
+OUT=$(env -u TI_BATCH_SELECT bash "$G/bin/test-impact.sh" select --changed "$T/changed" --root "$G" 2>&1); RC=$?
 IMP=$(grep '^impact:' <<<"$OUT" | tail -1)
-[ "$RC" = 0 ] && has "full: infra change ($WF)" "$IMP" && ok || bad "W9 without TI_WORKFLOW_BASE it is the infra answer (rc $RC): $IMP"
-gsel "$GSHARD" TI_WORKFLOW_BASE="$GBASE"
+[ "$RC" = 0 ] && has "full: infra change ($WF)" "$IMP" && ok || bad "W9 the ordinary PR select is the infra answer (rc $RC): $IMP"
+gsel "$GSHARD"
 IMP=$(grep '^impact:' <<<"$OUT" | tail -1)
-[ "$RC" = 0 ] && has "full: infra change ($WF)" "$IMP" && ok || bad "W7 a tests-shard commit is the infra answer (rc $RC): $IMP"
+[ "$RC" = 0 ] && [ -n "$IMP" ] && ! has "full:" "$IMP" && ok || bad "W7 a tests-shard commit selects its readers since BH-6876 (rc $RC): $IMP"
+grep -qxF tests/ci-apt-update.bh-2128-test.sh <<<"$OUT" && ok || bad "W7 the tests-shard list holds the readers of $WF: $IMP"
 
 # W8 — the planner, as the merge-queue batch's plan job runs it.
 cat > "$T/gh" <<'EOF'
@@ -145,8 +151,9 @@ gplan "$GLINT"
 [ "$RC" = 0 ] && [ "$(out mode)" = batch-selected ] && ok || bad "W8 a lint-only batch is batch-selected (rc $RC, mode $(out mode), escalation $(out escalation)): $(tail -3 <<<"$POUT")"
 has "workflow: non-test jobs only (lint)" "$(out summary)" && ok || bad "W8 the reason names the non-test jobs: $(out summary)"
 gplan "$GSHARD"
-[ "$RC" = 0 ] && [ "$(out mode)" = full ] && [ "$(out escalation)" = "selection input: $WF" ] && ok \
-  || bad "W8 a tests-shard batch escalates on the workflow row (rc $RC, mode $(out mode)): $(out escalation)"
+[ "$RC" = 0 ] && [ "$(out mode)" = batch-selected ] && [ "$(out escalation)" = - ] && ok \
+  || bad "W8 a tests-shard batch selects the workflow's readers since BH-6876 (rc $RC, mode $(out mode)): $(out escalation)"
+has "workflow: $WF selects its readers (BH-6876)" "$(out summary)" && ok || bad "W8 the reason names the workflow rule: $(out summary)"
 
 # W13 — a stacked batch whose workflow change is inherited.
 git -C "$G" checkout -q "$GLINT"; mkdir -p "$G/docs/notes"

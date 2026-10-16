@@ -13,7 +13,8 @@
 #   A2  that batch has no day-boundary guard (the real catalog/test-tiers.tsv
 #       puts it in the nightly tier); the fixture-hygiene suite it reaches is in
 #       the batch (a leak check, not a nightly row)
-#   A3  a harness-ci.yml change plans full; the `full` label plans full
+#   A3  a .github/ action change plans full (a top-level workflow file selects
+#       its readers since BH-6876); the `full` label plans full
 #   A3b a non-global tests/lib/ helper change plans reach + always, not full
 #   A4  every row of the real catalog/ci-batch-regression.d/ names an existing
 #       suite and at least one existing path
@@ -166,10 +167,10 @@ inlist tests/reg-night-test.sh && ok "A5 a nightly-tier regression suite still r
 inlist tests/reg-quar-test.sh && bad "A5 a quarantined regression suite was added" || ok "A5 quarantined reg-quar-test not added"
 has 'reg-quar-test.sh (bin/widget.sh) not added: quarantined' "$ERR" && ok "A5 the quarantine skip is said" || bad "A5 stderr [$ERR]"
 
-# ── A3. a workflow change and the full label.
-bplan .github/workflows/harness-ci.yml
-{ [ "$(out mode)" = full ] && [ "$(out escalation)" = "selection input: .github/workflows/harness-ci.yml" ]; } \
-  && ok "A3 a harness-ci.yml change plans full" || bad "A3 mode=$(out mode) escalation=$(out escalation) [$OUT]"
+# ── A3. a CI plumbing change and the full label.
+bplan .github/actions/x/action.yml
+{ [ "$(out mode)" = full ] && [ "$(out escalation)" = "selection input: .github/actions/x/action.yml" ]; } \
+  && ok "A3 a .github/ action change plans full" || bad "A3 mode=$(out mode) escalation=$(out escalation) [$OUT]"
 bplan bin/widget.sh -- TI_PR_LABELS=full
 { [ "$(out mode)" = full ] && [ "$(out escalation)" = "the 'full' label" ]; } && ok "A3 the full label plans full" || bad "A3 label: mode=$(out mode) escalation=$(out escalation)"
 

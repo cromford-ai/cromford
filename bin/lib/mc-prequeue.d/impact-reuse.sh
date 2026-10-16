@@ -23,6 +23,8 @@
 #   - the PR's files come from mc_pr_files;
 #   - each list goes through bin/test-impact.sh select --why as a batch select
 #     (TI_BATCH_SELECT=1, the rules bin/lib/mc-batch-impact.sh uses);
+#   - a .github/workflows/ path on either side is `full` (BH-6876: the batch
+#     select narrows it to its readers, the reuse does not);
 #   - either side `full`, a shared file or a shared suite (`always` rows and a
 #     regression `*` row excluded: every diff reaches them): dispatch;
 #   - disjoint: the merge test. Clean: the candidate's line is written as the
@@ -76,6 +78,13 @@ pq_ir_reach() {
   local files="$1" map="$2" root="$3" rows rc=0
   [ -s "$files" ] || return 1
   rm -f "$files.full"
+  # A .github/workflows/ path is full here (BH-6876). A batch select narrows a
+  # workflow edit to its readers, but a green verdict from an older workflow
+  # says nothing about the new one, so a reuse never steps over one.
+  rows=$(grep -m1 -E '^\.github/workflows/' "$files" 2>/dev/null) && {
+    printf 'full: infra change (%s)\n' "$rows" > "$files.full" 2>/dev/null || :
+    echo '*'; return 0
+  }
   rows=$(TI_BATCH_SELECT=1 bash "$root/bin/test-impact.sh" select --why --changed "$files" --map "$map" --root "$root" 2>/dev/null) || rc=$?
   [ "$rc" = 0 ] && [ -n "$rows" ] || return 1
   if awk -F'\t' '$2 == "full" { f = 1 } END { exit !f }' <<<"$rows"; then

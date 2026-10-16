@@ -60,14 +60,17 @@
 #                             between TI_BASE and HEAD, or an empty own diff is
 #                             today's answer, said on a `ci-plan: own diff: off
 #                             (<why>)` line, never inside a full reason.
-#                             BH-6688: a .github/workflows/harness-ci.yml
-#                             diff that bin/test-impact-workflow.sh calls
-#                             non-test jobs only (lint, determinism,
-#                             prompt-evals, ci-timings) does not escalate and
-#                             selects through the map (TI_WORKFLOW_BASE); the
-#                             reason says `workflow: non-test jobs only
-#                             (<jobs>)`. Off with CI_PLAN_CHANGED_FILE (no
-#                             git range). With CI_PLAN_MEMBER_REACH=1 (the plan
+#                             BH-6876: a top-level .github/workflows/*.yml
+#                             or *.yaml path does not escalate (an allow row)
+#                             and selects the suites that read it plus the
+#                             always set; the reason says `workflow: <path>
+#                             selects its readers (BH-6876)`, or, for a
+#                             harness-ci.yml diff that
+#                             bin/test-impact-workflow.sh calls non-test jobs
+#                             only (BH-6688; needs a git range, so off with
+#                             CI_PLAN_CHANGED_FILE), `workflow: non-test jobs
+#                             only (<jobs>)`. Any other .github/ path still
+#                             escalates. With CI_PLAN_MEMBER_REACH=1 (the plan
 #                             job; never a shard) the plan also prints
 #                             `ci-plan: member reach: full <k> of <n> members
 #                             (#<n> <path>; …)`, each member's own files
@@ -136,11 +139,24 @@
 # job publishes the normalised list as the `quarantine` output and every shard
 # re-plans from THAT, so the two always agree on --expect-n.
 #
-# SIZING. n = ceil(suites / CI_SUITES_PER_SHARD), clamped to 1..CI_MAX_SHARDS.
-# Each shard pays its setup once, so a 40-suite selection is one job, not eight
-# jobs of five suites. Both knobs are repo variables (a data switch, like
-# CI_RUNNER); a value that is not a positive integer falls back to the default
-# and says so, never to zero shards.
+# SIZING BY MEASURED TIME (BH-6876). With CI_PLAN_DURATIONS_FILE (the plan
+# job's `bin/ci-durations.sh fetch` file, the one every shard splits by)
+# readable, holding a `<suite>\t<seconds>` row, and a first line of `# source:
+# api`, `cache` or `artifact run <id>` (a real fetch; a `seed <sha>` or `none`
+# fallback keeps the count rule, said as `weights are the seed <sha12>` or
+# `weights have no source`), n is suite_shard_size in
+# bin/lib/suite-runner.sh: the fewest shards whose slowest one is within
+# CI_SHARD_BUDGET_S seconds (default 480), by the same LPT the shards split
+# with, clamped to CI_MAX_SHARDS and to the suite count. A suite longer than
+# the budget cannot be split: the line then says `over budget`, and a cap that
+# stops it says `cap reached`. Without the file (the nightly, a caller that
+# passes none), the old rule: n = ceil(suites / CI_SUITES_PER_SHARD), clamped
+# to 1..CI_MAX_SHARDS. Either way one `ci-plan: sizing: time (<source>), ...` or
+# `ci-plan: sizing: count, ...` line says which rule ran and why. The knobs are
+# repo variables, projected from the ci-plan-settings rows by
+# bin/ci-plan-settings.sh (CI_MAX_SHARDS, CI_SHARD_BUDGET_S); a value that is
+# not a positive integer falls back to the default and says so, never to zero
+# shards.
 #
 # SUITE REUSE (BH-5354.2). After the tier step, a merge-queue batch (unless its
 # escalation is the `full` label, on the draft or a member, `unmapped:` or
@@ -180,7 +196,9 @@
 # the corpus, `-` when it does not and on every non-batch path), own_base (the
 # stacked batch's own-diff base, BH-6490; `-` for none and on every non-batch
 # path), full_triggers (a batch only: the normalised CI_FULL_TRIGGERS, `-` for
-# none, BH-6838), spa and
+# none, BH-6838), sizing (the sizing line without `ci-plan: sizing: `),
+# shard_budget_s and max_shards (the knob values this plan used, which every
+# shard re-plans with, BH-6876), spa and
 # worker (BH-4969: 0 only on a batch-selected batch none of whose paths
 # cbe_affects that job, so the console-ui / worker-jobs job runs just its
 # "not affected by this batch" step; 1 on every other path), reused (suites
@@ -209,7 +227,8 @@
 # plan job's `own_base` output, BH-6490: a shard has no body; - is none, empty
 # or unset reads the body). BH-5795: CI_BASE_REF
 # (github.base_ref) and CI_DISPATCH_SCOPE (the dispatch input `scope`); the plan
-# job and every shard pass both, so they plan the same list. Test seams:
+# job and every shard pass both, so they plan the same list. BH-6876:
+# CI_PLAN_DURATIONS_FILE (the shard weights; see SIZING). Test seams:
 # CI_PLAN_MAIN_REF (main's ref, default origin/main), CI_PLAN_IMPACT (the
 # test-impact script), CI_PLAN_CHANGED_FILE (the changed paths, instead of
 # `git diff`), CI_PLAN_TIERS (the tier script), CI_PLAN_TIER_FILE (the tier
@@ -228,7 +247,7 @@ while [ $# -gt 0 ]; do
     --expect-n) [ $# -ge 2 ] || { echo "ci-plan: --expect-n needs a number" >&2; exit 2; }; EXPECT="$2"; shift ;;
     --tier)     case "${2:-}" in nightly|nightly-full) TIER="$2" ;;
                   *) echo "ci-plan: --tier takes 'nightly' or 'nightly-full'" >&2; exit 2 ;; esac; shift ;;
-    -h|--help)  sed -n '2,206p' "$0"; exit 0 ;;
+    -h|--help)  sed -n '2,236p' "$0"; exit 0 ;;
     *) echo "ci-plan: unknown argument $1" >&2; exit 2 ;;
   esac
   shift
@@ -244,6 +263,7 @@ knob() { # knob <name> <default> — a positive integer, or the default, said ou
 }
 PER=$(knob CI_SUITES_PER_SHARD 120)
 MAX=$(knob CI_MAX_SHARDS 8)
+BUDGET=$(knob CI_SHARD_BUDGET_S 480)
 
 EV="${CI_EVENT:-}"
 TMP=$(mktemp -d "${TMPDIR:-/tmp}/ci-plan.XXXXXX") || { echo "ci-plan: no temp dir" >&2; exit 2; }
@@ -374,6 +394,15 @@ wf_nontest() {
   WFNOTE="$l"
 }
 
+# wf_note <path> — a top-level workflow file that did not escalate (the allow
+# row, BH-6876) selects its readers; the first one is named in WFNOTE, unless
+# wf_nontest already said why.
+wf_note() {
+  [ -z "$WFNOTE" ] || return 0
+  [[ $1 =~ ^\.github/workflows/[^/]+\.ya?ml$ ]] || return 0
+  WFNOTE="workflow: $1 selects its readers (BH-6876)"
+}
+
 # member_reach — REPORT ONLY (BH-6688): RLINE_REACH says how many of the
 # draft's #<n> refs (member_full's set and cap) reach the whole corpus on their
 # own files, selected as a batch select against one map. Any failed read is
@@ -456,6 +485,7 @@ batch_select() {
       # BH-6688: a workflow diff in non-test jobs only selects through the map.
       [ "$p" = .github/workflows/harness-ci.yml ] && wf_nontest "$EBASE" && continue
       if r=$(cbe_reason "$p"); then ESCALATION="$r"; break; fi
+      wf_note "$p"
     done < "$OWNCH"
     [ "$ESCALATION" != - ] || grep -q . "$CH" || ESCALATION="the batch diff is empty"
     # The inherited paths never escalate. The first one that would have is
@@ -471,7 +501,7 @@ batch_select() {
           CBE_ADDED=$(printf '%s\n%s\n' "$CBE_ADDED" "$r" | grep . | LC_ALL=C sort -u); continue
         fi
         [ "$p" = .github/workflows/harness-ci.yml ] && wf_nontest "$TI_BASE" && continue
-        [ -n "$INHERITED" ] || ! cbe_reason "$p" > /dev/null || INHERITED="$p"
+        if cbe_reason "$p" > /dev/null; then [ -n "$INHERITED" ] || INHERITED="$p"; else wf_note "$p"; fi
       done < "$TMP/inherited"
     fi
   fi
@@ -487,13 +517,8 @@ batch_select() {
   # from, which a <base>..<head> select sets itself and --changed does not.
   # TI_BATCH_SELECT (BH-6059): catalog/ is not infra here, and a bin/lib/ or
   # catalog/ path the map has no specific row for is `unmapped path (<p>)`.
-  # TI_WORKFLOW_BASE (BH-6688): the base the workflow classifier reads, the
-  # same one each escalation loop used: the whole diff ($CH, the inherited
-  # loop) reads $TI_BASE, the own diff ($OWNCH, the own loop) reads $EBASE.
-  # In an unstacked batch the two are the same. None without a git range.
-  local wfb="" wfo=""
-  [ -n "${CI_PLAN_CHANGED_FILE:-}" ] || { wfb="${TI_BASE:-}"; wfo="${EBASE:-$TI_BASE}"; }
-  TI_WORKFLOW_BASE="$wfb" TI_NAMED_BASE="$TI_BASE" TI_BATCH_SELECT=1 "$IMPACT" select --changed "$CH" --out "$LIST" 2>"$WHY" \
+  # A top-level workflow file selects its readers there (BH-6876).
+  TI_NAMED_BASE="$TI_BASE" TI_BATCH_SELECT=1 "$IMPACT" select --changed "$CH" --out "$LIST" 2>"$WHY" \
     || { echo "ci-plan: bin/test-impact.sh select failed: $(cat "$WHY")" >&2; exit 2; }
   r=$(impact_reason "$WHY") || exit 2
   # BH-6490: a full answer on an INHERITED path is judged again on the own
@@ -505,12 +530,12 @@ batch_select() {
   esac
   if [ -n "$p" ] && [ "$OWN_BASE" != - ] && ! grep -qxF -- "$p" "$OWNCH"; then
     [ -n "$INHERITED" ] || INHERITED="$p"
-    TI_WORKFLOW_BASE="$wfo" TI_NAMED_BASE="$OWN_BASE" TI_BATCH_SELECT=1 "$IMPACT" select --changed "$OWNCH" --out "$LIST" 2>"$WHY" \
+    TI_NAMED_BASE="$OWN_BASE" TI_BATCH_SELECT=1 "$IMPACT" select --changed "$OWNCH" --out "$LIST" 2>"$WHY" \
       || { echo "ci-plan: bin/test-impact.sh select failed: $(cat "$WHY")" >&2; exit 2; }
     r=$(impact_reason "$WHY") || exit 2
     case "$r" in
       "full: "*) ;;
-      *) TI_WORKFLOW_BASE="$wfb" TI_NAMED_BASE="$TI_BASE" TI_BATCH_SELECT=1 "$IMPACT" select --changed "$CH" --map-only --out "$TMP/inh.list" 2>"$WHY" \
+      *) TI_NAMED_BASE="$TI_BASE" TI_BATCH_SELECT=1 "$IMPACT" select --changed "$CH" --map-only --out "$TMP/inh.list" 2>"$WHY" \
            || { echo "ci-plan: bin/test-impact.sh select failed: $(cat "$WHY")" >&2; exit 2; }
          r2=$(impact_reason "$WHY") || exit 2
          case "$r2" in
@@ -804,9 +829,42 @@ TOTAL=$(sed -n 's/^impact: [0-9]* of \([0-9]*\) suites.*/\1/p' "$WHY" | tail -1)
 # is a full run whatever the event called it.
 [ "$MODE" = selected ] && [ "$COUNT" -ge "$TOTAL" ] && MODE=full
 
-N=$(( (COUNT + PER - 1) / PER ))
-[ "$N" -ge 1 ] || N=1
-[ "$N" -le "$MAX" ] || N=$MAX
+# size_by_time — rc 0 with N and SIZING from the measured durations (see
+# SIZING in the header); rc 1 with SZ_WHY when the count rule must answer.
+size_by_time() {
+  local f="${CI_PLAN_DURATIONS_FILE:-}" row est _total big src
+  [ -n "$f" ] || { SZ_WHY="no durations file"; return 1; }
+  { [ -f "$f" ] && [ -r "$f" ]; } || { SZ_WHY="durations file unreadable"; return 1; }
+  awk -F'\t' '!/^[[:space:]]*#/ && $2 ~ /^[0-9]+(\.[0-9]+)?$/ { f = 1; exit } END { exit !f }' "$f" \
+    || { SZ_WHY="no data rows"; return 1; }
+  # Only a real fetch sizes by time: the seed is the last committed copy, and
+  # suites added since it have no row (comment 6197071504 item 3).
+  src=$(sed -n '1s/^# source: //p' "$f")
+  case "$src" in
+    api|cache) ;;
+    "artifact run "[0-9]*) src=artifact ;;
+    "seed "*) src="${src#seed }"; SZ_WHY="weights are the seed ${src:0:12}"; return 1 ;;
+    *) SZ_WHY="weights have no source"; return 1 ;;
+  esac
+  # shellcheck source=lib/suite-runner.sh
+  { . "$SELF_DIR/lib/suite-runner.sh" && command -v suite_shard_size; } > /dev/null 2>&1 \
+    || { SZ_WHY="cannot load suite-runner"; return 1; }
+  mapfile -t SZ_LIST < <(grep . "$LIST")
+  row=$(SUITE_DURATIONS_FILE="$f" suite_shard_size "$((BUDGET * 1000))" "$MAX" "${SZ_LIST[@]}") && [ -n "$row" ] \
+    || { SZ_WHY="suite_shard_size failed"; return 1; }
+  IFS=$'\t' read -r N est _total big <<<"$row"
+  SIZING="time ($src), $N shard(s), slowest est $(( (est + 500) / 1000 ))s of budget ${BUDGET}s, cap $MAX"
+  [ "$big" -le "$((BUDGET * 1000))" ] || SIZING="$SIZING; over budget (biggest suite $(( (big + 500) / 1000 ))s)"
+  # The cap stopped it: the slowest shard is over max(budget, biggest suite).
+  [ "$N" -lt "$MAX" ] || [ "$est" -le "$((BUDGET * 1000))" ] || [ "$est" -le "$big" ] || SIZING="$SIZING; cap reached"
+}
+SZ_WHY=""; SIZING=""
+if ! size_by_time; then
+  N=$(( (COUNT + PER - 1) / PER ))
+  [ "$N" -ge 1 ] || N=1
+  [ "$N" -le "$MAX" ] || N=$MAX
+  SIZING="count, ceil($COUNT/$PER) cap $MAX ($SZ_WHY)"
+fi
 SHARDS=$(awk -v n="$N" 'BEGIN { s = "["; for (i = 0; i < n; i++) s = s (i ? "," : "") i; print s "]" }')
 
 case "$REUSE" in
@@ -829,6 +887,7 @@ SUMMARY="impact: $COUNT of $TOTAL suites ($REASON) — $N shard(s), mode=$MODE"
 # REASON (bin/ci-batch-ledger.sh reads the escalation out of that).
 [ -z "$OWN_NOTE" ] || echo "ci-plan: $OWN_NOTE"
 [ -z "$RLINE_REACH" ] || echo "ci-plan: $RLINE_REACH"
+echo "ci-plan: sizing: $SIZING"
 echo "$SUMMARY"
 # On the run page, not only in the plan log: what the batch ran and why.
 if [ "$BATCH" = 1 ] && { [ "${GITHUB_ACTIONS:-}" = true ] || [ -n "${GITHUB_STEP_SUMMARY:-}" ]; }; then
@@ -836,6 +895,7 @@ if [ "$BATCH" = 1 ] && { [ "${GITHUB_ACTIONS:-}" = true ] || [ -n "${GITHUB_STEP
   [ -z "$OWN_NOTE" ] || echo "::notice title=ci-plan own diff::$OWN_NOTE"
   [ -z "${GITHUB_STEP_SUMMARY:-}" ] || printf '%s\nescalation: %s\nown base: %s%s\nspa: %s worker: %s\n' "$SUMMARY" "$ESCALATION" "$OWN_BASE" "${OWN_NOTE:+ ($OWN_NOTE)}" "$SPA" "$WORKER" >> "$GITHUB_STEP_SUMMARY" 2>/dev/null || true
   [ -z "${GITHUB_STEP_SUMMARY:-}" ] || [ -z "$RLINE_REACH" ] || printf '%s\n' "$RLINE_REACH" >> "$GITHUB_STEP_SUMMARY" 2>/dev/null || true
+  [ -z "${GITHUB_STEP_SUMMARY:-}" ] || printf 'sizing: %s\n' "$SIZING" >> "$GITHUB_STEP_SUMMARY" 2>/dev/null || true
 fi
 
 if [ -n "$EXPECT" ] && [ "$EXPECT" != "$N" ]; then
@@ -851,6 +911,7 @@ if [ -n "${GITHUB_OUTPUT:-}" ]; then
     echo "shards=$SHARDS"; echo "corpus=1"; echo "summary=$SUMMARY"; echo "quarantine=$QLIST"
     echo "escalation=$ESCALATION"; echo "own_base=$OWN_BASE"; echo "spa=$SPA"; echo "worker=$WORKER"
     [ "$BATCH" = 0 ] || echo "full_triggers=$FTRIG"
+    echo "sizing=$SIZING"; echo "shard_budget_s=$BUDGET"; echo "max_shards=$MAX"
     [ "$REUSE_KEYS" = 0 ] || { echo "reused=$REUSED_N"; echo "saved_s=$SAVED"; echo "reuse=$REUSE"; }
   } >> "$GITHUB_OUTPUT"
 fi

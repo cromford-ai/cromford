@@ -2,7 +2,9 @@
 # bin/ci-plan-settings.sh [owner/repo] [--dry-run] — hourly projection of the
 # settings row CI_FULL_TRIGGERS into the repo Actions variable of the same name
 # (BH-6838). bin/ci-plan.sh reads the variable as the full-trigger delta over
-# catalog/ci-batch-escalate.tsv (grammar: bin/lib/ci-batch-escalate.sh).
+# catalog/ci-batch-escalate.tsv (grammar: bin/lib/ci-batch-escalate.sh). It
+# projects the shard sizing rows CI_MAX_SHARDS and CI_SHARD_BUDGET_S the same
+# way (BH-6876), which bin/ci-plan.sh reads as its cap and per-shard budget.
 #
 # One tick:
 #   1 value       CI_FULL_TRIGGERS from the settings row (lane_env_apply), cut
@@ -16,16 +18,25 @@
 #   3 alert       no admin token, a refused value or a failed call = one warn
 #                 alert ci-plan-settings-projection:<slug>; CI keeps the old
 #                 variable. A good tick resolves it.
-#   4 one tick line in logs/ci-plan-settings.log.
+#   4 sizing      BH-6876. Per name, CI_MAX_SHARDS (1..64) then
+#                 CI_SHARD_BUDGET_S (60..3600), the registry's ranges: an
+#                 empty env is `unset` (no call); a value that is not a whole
+#                 number in range is `refused` (no call); else GET, and `same`,
+#                 or POST (404) / PATCH (differs) and `set`; a failed call is
+#                 `failed`. A refused or failed name is one warn alert
+#                 ci-plan-settings-sizing:<slug>; both configured and
+#                 same/set resolves it; anything else sends no alert call.
+#   5 one tick line in logs/ci-plan-settings.log, ending in
+#                 ` sizing=CI_MAX_SHARDS:<r>,CI_SHARD_BUDGET_S:<r>`.
 #
-# --dry-run: prints `would: <POST|PATCH> CI_FULL_TRIGGERS=<value>` and writes
+# --dry-run: prints `would: <POST|PATCH> <NAME>=<value>` and writes
 # nothing (no variable, alert or log line other than the tick line). Exit 0 on
 # every path. Knobs: catalog/lanes.d/ci-plan-settings.json.
 set -uo pipefail
 H="${HARNESS:-/root/harness}"
 . "${HARNESS:-/root/harness}/bin/lib/env-path.sh" 2>/dev/null || . "$(dirname "${BASH_SOURCE[0]}")/lib/env-path.sh" 2>/dev/null || harness_env_dir() { printf '%s\n' "${1:-${HARNESS:-/root/harness}}/env"; }; HENV=$(harness_env_dir "$H")
 
-case "${1:-}" in -h|--help) sed -n '2,24p' "$0"; exit 0 ;; esac
+case "${1:-}" in -h|--help) sed -n '2,34p' "$0"; exit 0 ;; esac
 # >>> lane gate (BH-1165): flags/lane-off-ci-plan-settings or all-off exits 0;
 # the settings rows land in the env the knob read below uses. Both fail OPEN.
 # shellcheck disable=SC1091
@@ -54,7 +65,7 @@ flock -n 9 || exit 0
 
 LOG="$H/logs/ci-plan-settings.log"
 ID="ci-plan-settings-projection:$SLUG"
-RAW="${CI_FULL_TRIGGERS:-}"; WANT="?"; PROJ=failed; why=""; note=""
+RAW="${CI_FULL_TRIGGERS:-}"; WANT="?"; PROJ=failed; why=""; note=""; SIZ=""
 
 _cps_alert() {   # _cps_alert <lane-alert opts…> <text>
   if [ "$DRY" = 1 ]; then echo "would: alert ${*:1:$#-1}: ${!#}"; return 0; fi
@@ -63,7 +74,7 @@ _cps_alert() {   # _cps_alert <lane-alert opts…> <text>
 _cps_tick() {
   printf '%s ci-plan-settings %s: value=%s projection=%s%s%s\n' \
     "$(date -u '+%Y-%m-%d %H:%M:%SZ')" "$SLUG" "$WANT" "$PROJ" "${why:+ ($why)}${note:+ [$note]}" \
-    "$([ "$DRY" = 1 ] && echo ' [dry-run]')" | tee -a "$LOG"
+    "$([ "$DRY" = 1 ] && echo ' [dry-run]')${SIZ:+ sizing=$SIZ}" | tee -a "$LOG"
 }
 trap _cps_tick EXIT
 
@@ -80,9 +91,9 @@ else
 fi
 
 # ── 2. the projection ────────────────────────────────────────────────────────
+ADM="${GH_ADMIN_TOKEN:-}"
+[ -n "$ADM" ] || ADM=$(sed -n 's/^\(export \)\{0,1\}GH_ADMIN_TOKEN=//p' "$HENV/github-admin.env" 2>/dev/null | tr -d "\"'" | head -n 1)
 if [ "$PROJ" != refused ] && [ "$WANT" != "?" ]; then
-  ADM="${GH_ADMIN_TOKEN:-}"
-  [ -n "$ADM" ] || ADM=$(sed -n 's/^\(export \)\{0,1\}GH_ADMIN_TOKEN=//p' "$HENV/github-admin.env" 2>/dev/null | tr -d "\"'" | head -n 1)
   # shellcheck source=bin/lib/gh-rest.sh
   if [ -z "$ADM" ]; then why="no admin token"
   elif ! . "$H/bin/lib/gh-rest.sh" 2>/dev/null || ! command -v gh_rest_var >/dev/null 2>&1; then
@@ -98,6 +109,43 @@ if [ "$PROJ" != refused ] && [ "$WANT" != "?" ]; then
       else why="variable $m HTTP ${GH_REST_STATUS:-000}"; fi
     else why="variable read HTTP ${GH_REST_STATUS:-000}"; fi
   fi
+fi
+
+# ── 2b. the sizing knobs (BH-6876) ──────────────────────────────────────────
+# _cps_size <name> <value> — project one value; sets R to same|set|would-<M>|failed
+# and appends the reason of a failure to SWHY.
+_cps_size() {
+  local nm="$1" v="$2" rc=0 cur m p a=()
+  R=failed
+  [ -n "$ADM" ] || { SWHY="$SWHY${SWHY:+; }no admin token"; return; }
+  # shellcheck source=bin/lib/gh-rest.sh
+  { . "$H/bin/lib/gh-rest.sh" && command -v gh_rest_var; } > /dev/null 2>&1 \
+    || { SWHY="$SWHY${SWHY:+; }cannot load bin/lib/gh-rest.sh"; return; }
+  GH_ETAG=0 GH_TOKEN="$ADM" gh_rest_var cur GET "repos/$SLUG/actions/variables/$nm" || rc=$?
+  if [ "$rc" = 0 ] && [ "$(printf '%s' "$cur" | jq -r '.value // empty' 2>/dev/null)" = "$v" ]; then R=same; return; fi
+  [ "$rc" = 0 ] || [ "$rc" = 44 ] || { SWHY="$SWHY${SWHY:+; }$nm read HTTP ${GH_REST_STATUS:-000}"; return; }
+  if [ "$rc" = 44 ]; then m=POST; p="repos/$SLUG/actions/variables"; a=(-f "name=$nm"); else m=PATCH; p="repos/$SLUG/actions/variables/$nm"; fi
+  if [ "$DRY" = 1 ]; then echo "would: $m $nm=$v"; R="would-$m"; return; fi
+  if GH_ETAG=0 GH_TOKEN="$ADM" gh_rest "$m" "$p" ${a[@]+"${a[@]}"} -f "value=$v" > /dev/null; then R=set
+  else SWHY="$SWHY${SWHY:+; }$nm $m HTTP ${GH_REST_STATUS:-000}"; fi
+}
+SID="ci-plan-settings-sizing:$SLUG"; SWHY=""; SGOOD=0
+for spec in CI_MAX_SHARDS:1:64 CI_SHARD_BUDGET_S:60:3600; do
+  IFS=: read -r nm lo hi <<<"$spec"; v="${!nm:-}"
+  if [ -z "$v" ]; then R=unset
+  elif ! [[ $v =~ ^[0-9]{1,6}$ ]] || [ "$((10#$v))" -lt "$lo" ] || [ "$((10#$v))" -gt "$hi" ]; then
+    R=refused; SWHY="$SWHY${SWHY:+; }$nm='${v:0:40}' is not a whole number in $lo..$hi"
+  else
+    _cps_size "$nm" "$((10#$v))"
+    case "$R" in same|set|would-*) SGOOD=$((SGOOD + 1)) ;; esac
+  fi
+  SIZ="$SIZ${SIZ:+,}$nm:$R"
+done
+if [ -n "$SWHY" ]; then
+  _cps_alert --id "$SID" --severity warn \
+    "ci-plan-settings $SLUG: shard sizing not projected ($SWHY); CI keeps the old variables, retry next tick"
+elif [ "$SGOOD" = 2 ]; then
+  _cps_alert --resolve --id "$SID" "ci-plan-settings $SLUG: shard sizing projected again"
 fi
 
 # ── 3. the alert ─────────────────────────────────────────────────────────────

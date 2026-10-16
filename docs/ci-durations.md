@@ -54,7 +54,7 @@ A suite with no row in any source weighs the median of the file. A missing row n
 - A suite not measured keeps its row byte for byte. A batch runs its impact set only, so most rows carry forward.
 - A suite with no file under `--root` is dropped.
 
-Method of the seed values (the old file header): seconds were the median over three green merge-queue batch runs, measured per suite as the gap between consecutive `--- <test> rc=N Ns` lines on one shard, never less than the suite's own reported seconds. `--timings` now measures the same thing directly, tracer overhead included, because that is what the shard pays.
+Method of the seed values (the old file header): seconds were the median over three green merge-queue batch runs, measured per suite as the gap between consecutive `--- <test> rc=N Ns` lines on one shard, never less than the suite's own reported seconds. `--timings` now measures the same thing directly, tracer overhead included, because that is what the shard pays. Until BH-6876 the row stopped at the test's exit and missed the trace scan that follows it (8.2 of 26.0 min on one shard of run 38795563393); the row is now written after the scan.
 
 ## Use it locally
 

@@ -12,6 +12,9 @@
 #                                 print shard i of n (duration-balanced)
 #   suite_shard_plan <n> <suite...>
 #                                 print "shard<TAB>weight_ms<TAB>suite" for all
+#   suite_shard_size <budget_ms> <max_n> <suite...>
+#                                 print "n<TAB>est_ms<TAB>total_ms<TAB>biggest_ms":
+#                                 how many shards keep the slowest one in budget
 #
 # THE SHARD SPLIT LIVES HERE AND NOWHERE ELSE (BH-1192). CI runs the corpus as
 # four parallel shards (`decisions-shard`, `harness-safety-shard`) and a laptop
@@ -136,6 +139,37 @@ suite_shard_plan() {
       for (s = 1; s < n; s++) if (load[s] + 0 < load[best] + 0) best = s
       load[best] += $1
       print best "\t" $1 "\t" $2 }'
+}
+
+# suite_shard_size <budget_ms> <max_n> <suite...> — the shard COUNT, by measured
+# time (BH-6876): "<n>\t<est_ms>\t<total_ms>\t<biggest_ms>", where est_ms is the
+# load of the slowest shard of suite_shard_plan n. The count and the split use
+# the same LPT and the same durations file, so n is the split the shards run.
+#
+# n is the smallest count from ceil(total / budget) up whose slowest shard is
+# within max(budget, biggest suite): one suite longer than the budget cannot be
+# split, so its own time is the floor. n never passes max_n (the cap) or the
+# number of suites (no empty shard); at that bound n is said with its load,
+# over budget or not, and the caller says so. No suite prints nothing, rc 0. A
+# budget or cap that is not a positive integer is rc 2.
+suite_shard_size() {
+  local budget="${1-}" max="${2-}" total biggest target n hi load
+  shift 2 2>/dev/null || return 2
+  case "$budget" in ''|*[!0-9]*|0) echo "suite-runner: shard budget must be a positive whole number of ms, got '$budget'" >&2; return 2 ;; esac
+  case "$max" in ''|*[!0-9]*|0) echo "suite-runner: shard cap must be a positive whole number, got '$max'" >&2; return 2 ;; esac
+  [ "$#" -gt 0 ] || return 0
+  read -r total biggest < <(suite_shard_plan 1 "$@" \
+    | awk -F'\t' '{ t += $2; if ($2 > b) b = $2 } END { printf "%d %d\n", t, b }')
+  target=$budget; [ "$biggest" -le "$target" ] || target=$biggest
+  hi=$#; [ "$max" -ge "$hi" ] || hi=$max
+  n=$(( (total + budget - 1) / budget )); [ "$n" -ge 1 ] || n=1; [ "$n" -le "$hi" ] || n=$hi
+  while :; do
+    load=$(suite_shard_plan "$n" "$@" \
+      | awk -F'\t' '{ s[$1] += $2 } END { m = 0; for (k in s) if (s[k] > m) m = s[k]; printf "%d\n", m }')
+    [ "$load" -gt "$target" ] && [ "$n" -lt "$hi" ] || break
+    n=$((n + 1))
+  done
+  printf '%s\t%s\t%s\t%s\n' "$n" "$load" "$total" "$biggest"
 }
 
 suite_runner_known() {

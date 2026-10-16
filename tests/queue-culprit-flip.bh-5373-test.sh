@@ -217,9 +217,10 @@ O11=$(gate 11 "$E2"); O12=$(gate 12 "$E2"); O13=$(gate 13 "$E2")
 [ "${O11%%|*}" = 1 ] && [ "${O12%%|*}" = 1 ] && ! grep -q "only this PR" "$G/s/posted" && ok \
   || bad "N2 the two candidates wait on the solo verdict, no culprit comment: $O11 / $O12"
 grep -q "draft=#20 bisect several 11,12" "$G/s/log" && ok || bad "N2 the several line: $(grep BATCH_IMPACT "$G/s/log")"
-# N3 — a full row: #12 and #13 touch the CI workflow, so they reach every
-# suite. All three are candidates and nobody is ejected on the map.
-g_n3() { g_setup "worker/jobs/src/x.js" ".github/workflows/harness-ci.yml" ".github/workflows/harness-ci.yml"; : > "$G/s/bs-out"; }
+# N3 — a full row: #12 and #13 touch the docker test runner, so they reach
+# every suite (a top-level workflow file reaches its readers since BH-6876).
+# All three are candidates and nobody is ejected on the map.
+g_n3() { g_setup "worker/jobs/src/x.js" "bin/run-tests-in-docker.sh" "bin/run-tests-in-docker.sh"; : > "$G/s/bs-out"; }
 g_n3; run_all "11 12 13" "$E2" > /dev/null
 grep -q "draft=#20 bisect several 11,12,13" "$G/s/log" && ! grep -q "only this PR" "$G/s/posted" && ok \
   || bad "N3 a full row makes every member a candidate: $(grep BATCH_IMPACT "$G/s/log")"

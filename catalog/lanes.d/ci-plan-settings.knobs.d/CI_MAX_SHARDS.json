@@ -1,0 +1,12 @@
+{
+  "env": "CI_MAX_SHARDS",
+  "read_in": "bin/ci-plan-settings.sh",
+  "type": "int",
+  "default": 12,
+  "min": 1,
+  "max": 64,
+  "unit": "shards",
+  "zero_means": null,
+  "required": true,
+  "note": "BH-6876: the most shard jobs one Harness CI run fans out to. bin/ci-plan-settings.sh projects it into the repo variable CI_MAX_SHARDS, which bin/ci-plan.sh reads as the cap on its time sizing (and on the count rule). A whole number in 1..64; anything else is refused (warn alert ci-plan-settings-sizing:<slug>, the old variable stays). Cost: each shard is one more job, so more shards add job setup minutes (checkout, node, apt), not suite minutes. 12 is the value the operator approved as a repo variable on 2026-10-15 15:05Z (BH-6876 comment 6197071504). The code fallback with no variable is 8."
+}

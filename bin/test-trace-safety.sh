@@ -112,7 +112,9 @@
 #   `pure=pass|fail`, `trace=clean|dirty`. It is written ONLY when the scan
 #   completed, so a missing file means "did not run" and both fan-ins go red.
 #   --timings <file> (BH-5518) writes one `<suite>\t<seconds>\t<rc>` row per
-#   suite: the path from tests/ on, the wall time to 0.1 s, the exit code. It
+#   suite: the path from tests/ on, the wall time to 0.1 s of the test AND its
+#   trace scan (BH-6876: the scan is shard time the weights must carry; the
+#   `---` line keeps the test's own seconds), the exit code. It
 #   starts empty on every run. bin/ci-durations.sh merge folds a batch's rows
 #   into the shard weights (docs/ci-durations.md).
 #
@@ -218,7 +220,7 @@ while [ $# -gt 0 ]; do
     --shard)   [ $# -ge 2 ] || die "--shard needs a spec like 0/4"
                SHARD="$2"; shift ;;
     --shard=*) SHARD="${1#--shard=}" ;;
-    -h|--help) sed -n '2,160p' "$0"; exit 0 ;;
+    -h|--help) sed -n '2,/^# THIS SCRIPT DELETES ONLY ITS OWN/p' "$0"; exit 0 ;;
     -*)        die "unknown flag $1" ;;
     *)         [ -z "$ROOT" ] || die "only one root may be given (got '$ROOT' and '$1')"
                ROOT="$1" ;;
@@ -727,10 +729,7 @@ for TEST_PATH in "${TESTS[@]}"; do
              GH_TOKEN="$CANARY" GITHUB_TOKEN="$CANARY" BASH_ENV="$WORK/trace-env.sh" \
              timeout "$TEST_TIMEOUT" bash "$TEST_PATH" ) </dev/null >"$ERRF" 2>&1
     RC=$?
-    E1=$EPOCHREALTIME
     echo "--- ${TEST_PATH#"$ROOT"/} rc=$RC $((SECONDS - T0))s"
-    [ -z "$TIMINGS" ] || awk -v s="${TEST_PATH#"$ROOT"/}" -v a="${E0/,/.}" -v b="${E1/,/.}" -v rc="$RC" \
-      'BEGIN { printf "%s\t%.1f\t%s\n", s, b - a, rc }' >> "$TIMINGS"
     [ "$RC" -eq 0 ] || print_redacted "$ERRF"
   else
     ( cd "$ROOT" && exec 199>"$TRACE" \
@@ -797,6 +796,16 @@ for TEST_PATH in "${TESTS[@]}"; do
   fi
 
   [ -z "$EXIT_LINE" ] || echo "$EXIT_LINE"
+  # The timings row is written HERE, after the trace scan, not when the test
+  # exits (BH-6876). The scan is shard time too: on run 38795563393 shard 9 it
+  # was 8.2 of 26.0 min (one suite's scan alone 117 s), so weights that
+  # stopped at the test's exit sized shards ~1.4x too small.
+  if [ "$GATE" = 1 ] && [ -n "$TIMINGS" ]; then
+    E1=$EPOCHREALTIME
+    awk -v s="${TEST_PATH#"$ROOT"/}" -v a="${E0/,/.}" -v b="${E1/,/.}" -v rc="$RC" \
+      'BEGIN { printf "%s\t%.1f\t%s\n", s, b - a, rc }' >> "$TIMINGS"
+  fi
+
   if [ "$HITS_HERE" -gt 0 ]; then
     KEEP_WORK=1
   elif [ "${TRACE_SAFETY_KEEP:-}" != 1 ]; then

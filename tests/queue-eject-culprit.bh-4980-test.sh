@@ -96,7 +96,9 @@ if [ -r "$BIM_LIB" ]; then
     printf 'bin/lib/brand-new.sh\n' > "$U/fnew"
     out=$(bim_reach "$U/fnew" "$MAP"); rc=$?
     [ "$rc" = 0 ] && [ "$out" = '*' ] && pok || pbad "U2 an unplaceable file reaches * (rc $rc): $out"
-    printf '.github/workflows/harness-ci.yml\n' > "$U/finfra"
+    # (a runner, not a workflow: a top-level workflow file reaches its readers
+    # since BH-6876)
+    printf 'bin/run-tests-in-docker.sh\n' > "$U/finfra"
     out=$(bim_reach "$U/finfra" "$MAP")
     [ "$out" = '*' ] && pok || pbad "U2 an infra file reaches *: $out"
     # U3 — an empty or absent list is unknown, never "reaches nothing".

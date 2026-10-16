@@ -13,7 +13,8 @@
 # with the real rules file; a stub selector logs every call.
 #
 #   O1  A (.mergify.yml) escalates; B (bin/foo.sh) stacked on A is batch-selected
-#   O2  an own CI path (.github/workflows/x.yml) still escalates
+#   O2  an own CI path (.github/actions/x/action.yml) still escalates (a
+#       top-level workflow file selects its readers since BH-6876)
 #   O3  an inherited test-impact full answer is re-judged on the own diff; the
 #       list is the own select plus the full diff's --map-only select
 #   O4  a-g: no body, two shas, an unrelated sha, a base not below the sha, the
@@ -124,11 +125,11 @@ o1b
 grep -qx tests/mergify-test.sh "$T/list" 2>/dev/null && ok || bad "O1: the selection must still read the full diff (tests/mergify-test.sh missing)"
 has "selected: 2 changed path(s)" "$(out summary)" && ok || bad "O1: the selection must be over both paths: '$(out summary)'"
 
-# ── O2. B2's own diff adds a workflow: it escalates on its own path.
-git -C "$G" checkout -q --detach "$A"; mkdir -p "$G/.github/workflows"; echo 'on: push' > "$G/.github/workflows/x.yml"; gcommit B2
+# ── O2. B2's own diff adds a CI action: it escalates on its own path.
+git -C "$G" checkout -q --detach "$A"; mkdir -p "$G/.github/actions/x"; echo 'runs: {}' > "$G/.github/actions/x/action.yml"; gcommit B2
 B2=$(git -C "$G" rev-parse HEAD)
 gplan "$B2" CI_PR_BODY="$(body "$A")"
-{ [ "$(out mode)" = full ] && [ "$(out escalation)" = "selection input: .github/workflows/x.yml" ]; } && ok \
+{ [ "$(out mode)" = full ] && [ "$(out escalation)" = "selection input: .github/actions/x/action.yml" ]; } && ok \
   || bad "O2: an own CI path must escalate on that path ($(st)) [$OUT]"
 
 # ── O3. A3 touches bin/test-impact.sh (an escalate row AND test-impact infra).
@@ -263,7 +264,7 @@ draft() { # draft <n> <base> <head> <checking> <title>
 files() { jq -nc '{files: [$ARGS.positional[] | {filename: .}]}' --args "$@"; }
 files .mergify.yml bin/a.sh > "$FX/cmp-$S1-$H1.json"
 files .mergify.yml bin/b.sh > "$FX/cmp-$S2-$H2.json"; files bin/b.sh > "$FX/cmp-$C2-$H2.json"
-files .mergify.yml bin/b.sh .github/workflows/y.yml > "$FX/cmp-$S3-$H3.json"; files .github/workflows/y.yml > "$FX/cmp-$C3-$H3.json"
+files .mergify.yml bin/b.sh .github/actions/y/action.yml > "$FX/cmp-$S3-$H3.json"; files .github/actions/y/action.yml > "$FX/cmp-$C3-$H3.json"
 for i in 1 2 3; do
   h=$(eval echo "\$H$i")
   jq -nc --argjson id "$i" '{workflow_runs: [{id: $id, name: "Harness CI", event: "pull_request"}]}' > "$FX/runs-$h.json"
@@ -306,8 +307,8 @@ col() { row "$1" | cut -f"$2"; }
 [ "$RRC" = 0 ] && ok || bad "R1: the replay must be rc 0 (rc=$RRC) [$ROUT]"
 [ "$(col 901 6)" = own ] && ok || bad "R1: draft 901 (not stacked, own .mergify.yml) must be 'own': '$(row 901)'"
 [ "$(col 902 6)" = "inherited→selected" ] && ok || bad "R1: draft 902 (stacked, inherited only) must be 'inherited→selected': '$(row 902)'"
-[ "$(col 903 6)" = "inherited→full" ] && ok || bad "R1: draft 903 (stacked, old trigger inherited, own .github/workflows/y.yml) must be 'inherited→full': '$(row 903)'"
-[ "$(col 903 7)" = "selection input: .github/workflows/y.yml" ] && ok || bad "R1: draft 903's new reason must name its own path: '$(row 903)'"
+[ "$(col 903 6)" = "inherited→full" ] && ok || bad "R1: draft 903 (stacked, old trigger inherited, own .github/actions/y/action.yml) must be 'inherited→full': '$(row 903)'"
+[ "$(col 903 7)" = "selection input: .github/actions/y/action.yml" ] && ok || bad "R1: draft 903's new reason must name its own path: '$(row 903)'"
 [ "$(col 902 3)" = "${C2:0:8}" ] && [ "$(col 901 3)" = - ] && ok || bad "R1: own8 must be the checking base when stacked, '-' when not: '$(row 901)' '$(row 902)'"
 [ -z "$(row 900)" ] && ok || bad "R1: a non-Mergify PR is not a batch: '$(row 900)'"
 has "inherited-trigger full: 2 -> 1" "$ROUT" && ok || bad "R2: the summary must say 'inherited-trigger full: 2 -> 1' [$ROUT]"

@@ -12,6 +12,8 @@
 #
 #   CD-1  bin/test-trace-safety.sh --gate --timings F: one row per suite,
 #         `tests/<name>\t<n.n>\t<rc>`, a failing suite carries its rc
+#   CD-1b the row is written after the trace scan, so it carries the scan's
+#         time (BH-6876); the `---` line keeps the test's own seconds
 #   CD-2  fetch: one green batch run + its ci-durations-next zip -> --out is
 #         `# source: artifact run <id>` + the zip member, rc 0
 #   CD-3  fetch never picks a red batch, a `full` PR, a push, another
@@ -114,6 +116,21 @@ HARNESS_TEST_SANDBOX=1 "$TRACER" --gate --timings "$TF" "$T/fx" > /dev/null 2>&1
 [ "$(grep -c . "$TF")" = 2 ] && ok "CD-1 a re-run does not append" || bad "CD-1 re-run left $(grep -c . "$TF") rows"
 HARNESS_TEST_SANDBOX=1 "$TRACER" --timings "$TF" "$T/fx" > /dev/null 2>&1; rc=$?
 [ "$rc" = 2 ] && ok "CD-1 --timings without --gate is refused" || bad "CD-1 --timings without --gate rc=$rc"
+
+echo "CD-1b: the timing row carries the trace scan (BH-6876)"
+# The suite runs in ~0 s and traces one rm. The scan resolves that target with
+# realpath, and the realpath on PATH here sleeps 2 s first, so a row written at
+# the test's exit reads ~0.0 and a row written after the scan reads >= 2.0.
+mkdir -p "$T/fx1b/tests" "$T/cd1b/bin"
+printf '#!/bin/bash\nrm -f "$TMPDIR/cd1b-none"\nexit 0\n' > "$T/fx1b/tests/scan-test.sh"
+printf '#!/bin/bash\nsleep 2\nexec /usr/bin/env -i PATH=/usr/bin:/bin realpath "$@"\n' > "$T/cd1b/bin/realpath"
+chmod +x "$T/cd1b/bin/realpath"
+TF="$T/cd1b/shard-0.tsv"
+PATH="$T/cd1b/bin:$PATH" TMPDIR="$T/cd1b" HARNESS_TEST_SANDBOX=1 "$TRACER" --gate --timings "$TF" "$T/fx1b" > "$T/cd1b/out" 2>&1
+grep -qE '^--- tests/scan-test\.sh rc=0 [01]s$' "$T/cd1b/out" && ok "CD-1b the --- line is the test's own seconds" \
+  || bad "CD-1b --- line: $(grep -- '^---' "$T/cd1b/out")"
+awk -F'\t' '$1 == "tests/scan-test.sh" && $2 + 0 >= 2.0 { f = 1 } END { exit !f }' "$TF" 2>/dev/null \
+  && ok "CD-1b the row includes the scan (>= 2.0 s)" || bad "CD-1b row: $(cat "$TF" 2>&1) out: $(tail -5 "$T/cd1b/out")"
 
 echo "CD-2: fetch reads the newest green batch's artifact"
 printf '# composed\ntests/a-test.sh\t3.0\t101\t3.0\n' > "$T/m101.tsv"
@@ -235,10 +252,15 @@ has() { case "$1" in *"$2"*) ok "CD-7 $3" ;; *) bad "CD-7 $3: no '$2'" ;; esac; 
 PLAN=$(job_block plan); SHARDJ=$(job_block tests-shard); DEC=$(job_block decisions); LINT=$(job_block lint)
 S=$(step_of "$PLAN" 'bin/ci-durations.sh fetch')
 has "$S" 'bin/ci-durations.sh fetch --out "$RUNNER_TEMP/ci-durations/ci-durations.tsv"' "plan fetches the file once"
-has "$S" "if: steps.plan.outputs.corpus == '1'" "plan fetches only on a corpus run"
+# BH-6876: the plan sizes the shard count by these weights, so the fetch runs
+# before bin/ci-plan.sh on every plan run; only the upload waits for a corpus.
+case "$S" in *"if:"*) bad "CD-7 the plan's fetch must run on every plan run (no if:)" ;; *) [ -n "$S" ] && ok "CD-7 plan fetches on every plan run" || bad "CD-7 no plan fetch step" ;; esac
+[ -n "$S" ] && [ "$(printf '%s\n' "$PLAN" | grep -nF 'bin/ci-durations.sh fetch' | head -1 | cut -d: -f1)" -lt "$(printf '%s\n' "$PLAN" | grep -nF 'run: bin/ci-plan.sh' | head -1 | cut -d: -f1)" ] \
+  && ok "CD-7 plan fetches before bin/ci-plan.sh" || bad "CD-7 the plan's fetch must come before bin/ci-plan.sh"
 has "$S" 'GH_TOKEN: ${{ github.token }}' "plan fetch reads with the job token"
 S=$(step_of "$PLAN" 'name: ci-durations')
 has "$S" 'actions/upload-artifact@v4' "plan uploads ci-durations"
+has "$S" "if: steps.plan.outputs.corpus == '1'" "plan uploads only on a corpus run"
 S=$(step_of "$SHARDJ" 'name: ci-durations')
 has "$S" 'actions/download-artifact@v4' "tests-shard downloads ci-durations"
 case "$S" in *continue-on-error*) bad "CD-7 the shard download must not continue on error" ;; *) [ -n "$S" ] && ok "CD-7 the shard download is hard" || bad "CD-7 no shard download step" ;; esac

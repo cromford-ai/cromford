@@ -9,9 +9,9 @@
 # changes are a lint step: the corpus proves nothing about them. This script
 # reads the diff line by line and names the job each changed line is in, on
 # the side it is in (a removed line on <base>'s file, an added line on
-# <head>'s). bin/ci-plan.sh (the batch) and bin/test-impact.sh (a batch select
-# with TI_WORKFLOW_BASE) select through the map on rc 1, and keep the corpus on
-# any other answer.
+# <head>'s). Since BH-6876 a batch selects a workflow file's readers on any
+# answer (an allow row in catalog/ci-batch-escalate.tsv); bin/ci-plan.sh still
+# asks this script, and on rc 1 its reason names the non-test jobs.
 #
 #   rc 1  every changed line is in a NON-TEST job below, or is a column-0 `#`
 #         comment: `workflow: non-test jobs only (<jobs>)`
