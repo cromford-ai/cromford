@@ -365,7 +365,9 @@ br_fix_cap() {
   # The BR_-prefixed spellings are the documented knobs; the bare ones are what
   # this script assigns them to at startup, and are read first so a caller that
   # sourced only these functions still sees the knob.
-  if [ "$(br_shape "$st")" = small ]; then base="${MAX_FIXROUNDS_SMALL:-${BR_MAX_FIXROUNDS_SMALL:-2}}"
+  # BR_CONFLICT_FIX_ROUNDS (BH-6964) is the small shape's knob; the older
+  # BR_MAX_FIXROUNDS_SMALL is its fallback when it is unset.
+  if [ "$(br_shape "$st")" = small ]; then base="${MAX_FIXROUNDS_SMALL:-${BR_CONFLICT_FIX_ROUNDS:-${BR_MAX_FIXROUNDS_SMALL:-2}}}"
   else base="${MAX_FIXROUNDS:-${BR_MAX_FIXROUNDS:-1}}"; fi
   case "$base" in ''|*[!0-9]*) base=1 ;; esac
   echo $(( base + $(br_num "$st" fixround_bonus) ))

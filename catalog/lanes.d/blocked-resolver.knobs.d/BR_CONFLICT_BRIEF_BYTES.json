@@ -1,0 +1,10 @@
+{
+  "env": "BR_CONFLICT_BRIEF_BYTES",
+  "type": "int",
+  "default": 6000,
+  "min": 0,
+  "max": 50000,
+  "unit": "bytes",
+  "zero_means": "off",
+  "note": "BH-6964: bytes of the merged-in side's diff of the conflicted files, and bytes of the PR's plan.md, that a conflict fix round's brief carries (each). 0 omits both sections."
+}

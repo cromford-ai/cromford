@@ -1,0 +1,10 @@
+{
+  "env": "BR_CONFLICT_FIX_ROUNDS",
+  "type": "int",
+  "default": 2,
+  "min": 0,
+  "max": 10,
+  "unit": "rounds",
+  "zero_means": null,
+  "note": "BH-6964: agent fix rounds a SMALL measured conflict (at most RESOLVER_SMALL_CONFLICT_LINES lines) gets on its existing branch before rebuild-fresh. Wins over BR_MAX_FIXROUNDS_SMALL when set. A large or unmeasured conflict keeps BR_MAX_FIXROUNDS. The contested bonus rides on top."
+}

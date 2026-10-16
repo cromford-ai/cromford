@@ -230,7 +230,7 @@
       "max": 10,
       "unit": "rounds",
       "zero_means": null,
-      "note": "Fix-agent rounds per ticket on the SMALL shape (a measured conflict of at most RESOLVER_SMALL_CONFLICT_LINES lines). The contested bonus round rides on top of this."
+      "note": "Fix-agent rounds per ticket on the SMALL shape (a measured conflict of at most RESOLVER_SMALL_CONFLICT_LINES lines). The fallback when BR_CONFLICT_FIX_ROUNDS is unset. The contested bonus round rides on top of this."
     },
     {
       "env": "BR_MAX_REBUILDS_SMALL",

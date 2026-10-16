@@ -168,6 +168,11 @@
 #   BR_REVIEW_FIX_ROUNDS      2       fix rounds per TICKET for a review verdict
 #                                     before br_abandon is the terminal
 #                                     (every other reason keeps BR_MAX_FIXROUNDS)
+#   BR_CONFLICT_FIX_ROUNDS    2       fix rounds per TICKET for a SMALL measured
+#                                     conflict before rebuild-fresh (BH-6964);
+#                                     unset, BR_MAX_FIXROUNDS_SMALL is the cap
+#   BR_CONFLICT_BRIEF_BYTES   6000    bytes of the merged-in side's diff and of
+#                                     the plan in a conflict round's brief (0 off)
 #   BR_REVIEW_LOOKBACK_SECS   172800  how far back a PR must have been updated
 #                                     for its reviews to be read at all (48h)
 #   BR_SUPERSEDE_SETTLE_SECS  (registry, required) the window after a new head
@@ -687,7 +692,7 @@ case "$MAX_REGEN" in ''|*[!0-9]*) MAX_REGEN=1 ;; esac
 # worth three rebuilds; everything unmeasured keeps the large shape above.
 # CONTESTED_PR_SCAN_MAX bounds what one hold creation may read: one PR list plus
 # at most that many cached file lists.
-MAX_FIXROUNDS_SMALL="${BR_MAX_FIXROUNDS_SMALL:-2}"
+MAX_FIXROUNDS_SMALL="${BR_CONFLICT_FIX_ROUNDS:-${BR_MAX_FIXROUNDS_SMALL:-2}}"
 MAX_REBUILDS_SMALL="${BR_MAX_REBUILDS_SMALL:-1}"
 SMALL_CONFLICT_LINES="${RESOLVER_SMALL_CONFLICT_LINES:-300}"
 CONTESTED_SCAN_MAX="${CONTESTED_PR_SCAN_MAX:-40}"
@@ -2444,7 +2449,7 @@ br_prepass() {
         case "$rconf" in
           ''|-|0|*[!0-9]*) cap="${MAX_FIXROUNDS:-${BR_MAX_FIXROUNDS:-1}}" ;;
           *) if [ "$rconf" -le "${SMALL_CONFLICT_LINES:-300}" ]
-             then cap="${MAX_FIXROUNDS_SMALL:-${BR_MAX_FIXROUNDS_SMALL:-2}}"
+             then cap="${MAX_FIXROUNDS_SMALL:-${BR_CONFLICT_FIX_ROUNDS:-${BR_MAX_FIXROUNDS_SMALL:-2}}}"
              else cap="${MAX_FIXROUNDS:-${BR_MAX_FIXROUNDS:-1}}"; fi ;;
         esac
         case "$cap" in ''|*[!0-9]*) cap=1 ;; esac
@@ -5717,6 +5722,7 @@ br_fix_round() {
   local hot=0 slots=0 reserve=0 running=0 directive="" drc=0
   local frcl_w="" frcl_dir=""
   local mref=main pbase=""
+  local cok="" cfail="" clines cbytes cbase cdiff cplan cplan_show cpaths=()
   ck=$(br_cap_key "$p" "$rkey" "$tkey")
   st=$(br_load "$p" "$ck"); n=$(br_num "$st" fixrounds)
   n=$(br_cap_rows "$p" "$rkey" "$reason" "$n" "$url" fixround fixrounds)
@@ -5976,6 +5982,13 @@ br_fix_round() {
     # and the paths are this ticket's memory of what it keeps fighting over.
     br_conflict_note "$p" "$ck" "$(mc_num_of_url "$url")" "$head" "$conflicts"
     br_note_conflict_lines "$p" "$ck" "$(mc_conflict_lines "$wt")"
+    # EVERY SPENT ROUND ON A CONFLICTED MERGE SAYS HOW IT WENT (BH-6964), on the
+    # fix-round row it already writes: `ok` only on the pushed exit, `failed`
+    # on the four other spent exits. The size is the record's MAX measure; an
+    # absent one is `unknown`, never 0 (a measured 0 stays 0).
+    clines=$(br_load "$p" "$ck" | jq -r '.conflict_lines // empty' 2>/dev/null)
+    case "$clines" in ''|*[!0-9]*) clines=unknown ;; esac
+    cok=" · fix-round-conflict ok lines=$clines"; cfail=" · fix-round-conflict failed lines=$clines"
   fi
   # ---- the brief -----------------------------------------------------------
   brief=""
@@ -5991,6 +6004,46 @@ br_fix_round() {
     else
       brief="$brief"$'\n\n'"THE MERGE OF origin/$mref (the parent PR's branch this stacked PR is based on) IS IN PROGRESS IN YOUR WORKTREE AND THESE PATHS ARE CONFLICTED. Resolve every one of them, keeping BOTH sides' intent (the parent's new commits are the base this PR builds on; this branch's change is what the ticket asked for), \`git add\` each file and commit the merge. Do NOT merge origin/main. Conflicted paths:"$'\n'"$conflicts"$'\n'"$markers"
     fi
+    # >>> br conflict brief (BH-6964)
+    # THE MARKERS SHOW TWO LINES THAT DISAGREE, NOT WHAT EITHER SIDE WAS FOR. So
+    # the brief adds the rule (prompts/fix-round.d/conflict.md), the merged-in
+    # side's diff of the conflicted paths since the merge base, and the plan
+    # this PR was built from. Each part is bounded by BR_CONFLICT_BRIEF_BYTES
+    # (0 omits the diff and the plan), and a part that cannot be read says so
+    # in one line: no empty heading, no invented path.
+    if [ -r "$H/prompts/fix-round.d/conflict.md" ]; then
+      brief="$brief"$'\n\n'"$(cat "$H/prompts/fix-round.d/conflict.md")"
+    else
+      say "$p/$rkey [$reason]: $H/prompts/fix-round.d/conflict.md is not readable — the brief carries the one-line rule instead"
+      brief="$brief"$'\n\n'"Resolve the conflict only. Make no other change."
+    fi
+    cbytes="${BR_CONFLICT_BRIEF_BYTES:-6000}"
+    case "$cbytes" in ''|*[!0-9]*) cbytes=6000 ;; esac
+    if [ "$cbytes" -gt 0 ]; then
+      mapfile -t cpaths < <(head -5 <<<"$conflicts")
+      cdiff=""
+      if cbase=$(git -C "$wt" merge-base HEAD MERGE_HEAD 2>/dev/null) && [ -n "$cbase" ]; then
+        # Captured whole, then cut: a `head -c` on the pipe would SIGPIPE git.
+        cdiff=$(git -C "$wt" diff "$cbase" MERGE_HEAD -- "${cpaths[@]}" 2>/dev/null) || cdiff=""
+        [ -n "$cdiff" ] && cdiff=$(head -c "$cbytes" <<<"$cdiff")
+        [ -n "$cdiff" ] || cdiff="(the merged-in side changed none of these paths since the merge base)"
+      else
+        cdiff="(no merge base: the main-side diff is not available)"
+      fi
+      brief="$brief"$'\n\n'"THE MERGED-IN SIDE'S DIFF SINCE THE MERGE BASE (origin/$mref, conflicted files only):"$'\n'"$cdiff"
+      cplan=""; cplan_show=""
+      if [ -n "$tkey" ] && [ "$tkey" != - ] && [ -r "$wt/.harness/specs/$tkey/plan.md" ]; then
+        cplan="$wt/.harness/specs/$tkey/plan.md"; cplan_show=".harness/specs/$tkey/plan.md"
+      elif [ -n "$rec" ] && [ "$rec" != - ] && [ -r "$rec/plan.md" ]; then
+        cplan="$rec/plan.md"; cplan_show="$rec/plan.md"
+      fi
+      if [ -n "$cplan" ]; then
+        brief="$brief"$'\n\n'"THE PLAN THIS PR WAS BUILT FROM: $cplan_show"$'\n'"$(head -c "$cbytes" "$cplan" 2>/dev/null)"
+      else
+        brief="$brief"$'\n\n'"THE PLAN THIS PR WAS BUILT FROM: not found (no .harness/specs/${tkey:--}/plan.md and no build record)"
+      fi
+    fi
+    # <<< br conflict brief
   fi
   if [ "$(br_ladder_class "$reason")" = ci-red ]; then
     cilog=$(br_ci_log "$slug" "$head" "$(mc_num_of_url "$url" 2>/dev/null)")
@@ -6219,7 +6272,7 @@ $live$brief"
     fi
   fi
   if [ "$rc" != 0 ] || [ "$vrc" != 0 ] || [ "$(git -C "$wt" rev-parse HEAD)" = "$lease" ]; then
-    br_record "$p" "$ck" fix-round "$reason" "agent rc=$rc, verify rc=$vrc — no verified commit" fixrounds "$url" "${head:--}"
+    br_record "$p" "$ck" fix-round "$reason" "agent rc=$rc, verify rc=$vrc — no verified commit$cfail" fixrounds "$url" "${head:--}"
     # A FAILED ROUND WITH ROUNDS REMAINING ENDS THE TICK. The cap is re-read
     # because this round just measured the conflict, and the checkpoint branch
     # is KEPT: the next round starts from whatever this one got done rather
@@ -6272,7 +6325,8 @@ $live$brief"
           | sort -u | gs_classify); gsrc=$?
     if [ "$gsrc" = 1 ] && [ "$gsv" = GUARD_SILENCED ]; then
       say "$p/$rkey [$reason]: fix round is GUARD_SILENCED (edited only guard rules/allow-lists/fixtures) — not pushed"
-      br_record "$p" "$ck" fix-round "$reason" "guard-silenced — not pushed" fixrounds "$url" "${head:--}"
+      # ${cfail:-}, not $cfail: section 5 sources this block alone under set -u.
+      br_record "$p" "$ck" fix-round "$reason" "guard-silenced — not pushed${cfail:-}" fixrounds "$url" "${head:--}"
       br_wt_drop "the round was guard-silenced"
       git -C "$REPOS/$p" branch -D "brfix/$ck" >/dev/null 2>&1
       mc_git_auth_clear 2>/dev/null
@@ -6341,7 +6395,7 @@ $(head -c 4000 "$unaddr")" >/dev/null 2>&1 || true
     fi
     if [ "$noop_hit" = 0 ]; then
       say "$p/$rkey [$reason]: fix-round-noop — the round changed none of the files the lead's findings name ($(printf '%s' "$noop_named" | tr '\n' ' ' | head -c 200)) and listed nothing it could not address — NOT pushed"
-      br_record "$p" "$ck" fix-round-noop "$reason" "changed no file the lead's findings name and listed nothing unaddressed — not pushed (own files: $(printf '%s' "$noop_own" | tr '\n' ' ' | head -c 200))" fixrounds "$url" "${head:--}"
+      br_record "$p" "$ck" fix-round-noop "$reason" "changed no file the lead's findings name and listed nothing unaddressed — not pushed (own files: $(printf '%s' "$noop_own" | tr '\n' ' ' | head -c 200))$cfail" fixrounds "$url" "${head:--}"
       br_push_field "$p" "$ck" noop_heads "${head:-$lease}" \
         || say "$p/$rkey [$reason]: could NOT record ${head:0:8} in noop_heads — the next tick may run this head again"
       br_event resolver_fix_noop "$p" "$ck" "$reason" "fix round on ${head:0:8} answered none of the lead's findings — not pushed"
@@ -6396,7 +6450,7 @@ $(head -c 4000 "$unaddr")" >/dev/null 2>&1 || true
   fi
   if [ "$prc" = 0 ]; then
     say "$p/$rkey [$reason]: FIX ROUND pushed $(git -C "$wt" rev-parse --short HEAD) to $br — $br_next_judge"
-    br_record "$p" "$ck" fix-round "$reason" "pushed $(git -C "$wt" rev-parse --short HEAD) to $br, typecheck+unit green" fixrounds "$url" "${head:--}"
+    br_record "$p" "$ck" fix-round "$reason" "pushed $(git -C "$wt" rev-parse --short HEAD) to $br, typecheck+unit green$cok" fixrounds "$url" "${head:--}"
     # THE PUSH IS REMEMBERED FOR THE SUPERSEDE GUARD (BH-1642): the rebuild rung
     # may not close this PR inside the settle window after it, nor while a lead
     # verdict stands on the head it pushed over (#1448).
@@ -6412,7 +6466,7 @@ $(head -c 4000 "$unaddr")" >/dev/null 2>&1 || true
       br_pr_comment "$url" "Fix round by \`bin/blocked-resolver.sh\` ($reason): merged \`origin/main\`, worked the brief the harness had for this park (posted findings, the conflict, and the failing job's log, whichever existed), and verified with the repo's own typecheck + unit suite before pushing. Next: $br_next_judge; no person is holding this PR." >/dev/null 2>&1 || true
     fi
   else
-    br_record "$p" "$ck" fix-round "$reason" "push rejected under the lease" fixrounds "$url" "${head:--}"
+    br_record "$p" "$ck" fix-round "$reason" "push rejected under the lease$cfail" fixrounds "$url" "${head:--}"
     # Same split as the no-verified-commit exit above: a review park's head is
     # already marked spent, so it goes to its terminal rather than waiting for a
     # round that would never be offered.
