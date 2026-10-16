@@ -177,6 +177,8 @@ export const api = {
     q.set('limit', String(limit));
     return get('/api/coord/block-findings?' + q.toString());
   },
+  // The weekly lesson digest: BLOCK rate overall and per category, the lessons (BH-5808).
+  lessonsDigest: (days = 7) => get('/api/coord/lessons/digest?days=' + encodeURIComponent(days)),
   // BH-2647: one row per credential (OAuth / GH App) with its live leases; read-only.
   tokenHealth: () => get('/api/coord/account-leases/health'),
   // Calls per distinct input by lane (BH-2537), and the individual cost rows

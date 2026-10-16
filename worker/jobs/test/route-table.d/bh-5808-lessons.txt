@@ -1,0 +1,8 @@
+# LESSONS (BH-5808, BH-5794.3): bin/lesson-measure.sh records each merged
+# lesson, judges it weekly, escalates or retires it, and sends the digest.
+POST /api/lessons
+POST /api/lessons/measure
+GET /api/lessons/pending
+POST /api/lessons/mark
+POST /api/lessons/retention
+GET /api/lessons/digest

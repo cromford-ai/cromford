@@ -1,0 +1,13 @@
+# @hub-lanes
+
+# ── LESSON-MEASURE LANE (BH-5808, BH-5794.3) ───────────────────────────────
+# Daily at 07:23 (after lesson-propose at 06:41) it records each merged lesson
+# of the lesson_proposal ledger in the `lessons` table, files ONE stronger-stage
+# ai-build issue per not-working lesson, and opens ONE PR that removes a §10
+# plan lesson a later check supersedes. Once per ISO week (ledger kind
+# lesson_measure) it judges each lesson (BLOCK rate per 100 reviewed PRs, 14
+# days before and after), runs the retention dry run, and sends the digest
+# through bin/archie-tg-send.sh. No model call; it never merges. flock -n dedupes.
+# Off: LESSON_MEASURE_ENABLED=0, flags/lane-off-lesson-measure, or
+# bin/harness-ctl.sh off lesson-measure.
+23 7 * * * /root/harness/bin/hub-lease.sh check && /root/harness/bin/lesson-measure.sh >/dev/null 2>&1

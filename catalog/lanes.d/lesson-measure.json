@@ -1,0 +1,44 @@
+{
+  "id": "lesson-measure",
+  "name": "Lesson measure (judge, escalate and retire lessons; weekly digest)",
+  "scope": "hub",
+  "script": "bin/lesson-measure.sh",
+  "cadence": "23 7 * * *",
+  "boxes": [
+    "hub"
+  ],
+  "switch": {
+    "kind": "flag",
+    "name": "lane-off-lesson-measure",
+    "aliases": []
+  },
+  "wired": true,
+  "knobs": [
+    {
+      "env": "LESSON_MEASURE_ENABLED",
+      "type": "int",
+      "default": 1,
+      "min": 0,
+      "max": 1,
+      "zero_means": "off",
+      "note": "BH-5808: 0 stops the lane before any request. Read by bin/lesson-measure.sh as ${LESSON_MEASURE_ENABLED:-1}; any value other than 0 or 1 is one warn line in logs/lesson-measure.log and the default.",
+      "settable": true
+    },
+    {
+      "env": "LESSON_MEASURE_MAX_PER_TICK",
+      "type": "int",
+      "default": 3,
+      "min": 1,
+      "max": 20,
+      "zero_means": null,
+      "note": "BH-5808: GitHub writes one tick may make: escalation issues and removal PRs together. Read by bin/lesson-measure.sh as ${LESSON_MEASURE_MAX_PER_TICK:-3}; outside 1..20 is one warn line and the default.",
+      "settable": true
+    }
+  ],
+  "stats": {
+    "cost_stage": null,
+    "cost_project_filter": null,
+    "lanes_row": false,
+    "log": "logs/lesson-measure.log"
+  }
+}
