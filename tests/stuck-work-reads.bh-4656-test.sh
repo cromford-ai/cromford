@@ -217,10 +217,11 @@ run pr STUCK_WORK_NOW=$((NOW+60)); reread W2b
 prime
 printf 'pr 5 0\n* * 1\n' > "$T/wake"
 run pr STUCK_WORK_NOW=$((NOW+60)); reread W2c
-prime STUCK_WORK_CI_TTL_S=300
-run pr STUCK_WORK_CI_TTL_S=300 STUCK_WORK_NOW=$((NOW+299))
+# STUCK_WORK_CI_QUIET_TTL_S=0: a quiet feed no longer stretches the TTL (BH-6976).
+prime STUCK_WORK_CI_TTL_S=300 STUCK_WORK_CI_QUIET_TTL_S=0
+run pr STUCK_WORK_CI_TTL_S=300 STUCK_WORK_CI_QUIET_TTL_S=0 STUCK_WORK_NOW=$((NOW+299))
 [ "$(calls 'commits/.*/status')" = 0 ] && ok || bad "W2d a line 299s old under TTL 300 was re-read"
-run pr STUCK_WORK_CI_TTL_S=300 STUCK_WORK_NOW=$((NOW+301)); reread W2d
+run pr STUCK_WORK_CI_TTL_S=300 STUCK_WORK_CI_QUIET_TTL_S=0 STUCK_WORK_NOW=$((NOW+301)); reread W2d
 [ "$(cut -f3 "$CI")" = $((NOW+301)) ] && ok || bad "W2d the line's epoch did not advance: $(cat "$CI")"
 prime STUCK_WORK_CI_TTL_S=0
 run pr STUCK_WORK_CI_TTL_S=0 STUCK_WORK_NOW=$((NOW+1)); reread W2e

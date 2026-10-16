@@ -1,0 +1,47 @@
+{
+  "libs": [
+    {
+      "id": "wake-backstop",
+      "file": "bin/lib/wake-backstop.sh",
+      "note": "BH-6976 (BH-6545.3): the shared read-now-or-skip decision for a poller whose full poll became a backstop. wb_due reads wakes through prs_wake_seen (the read-only wake mirror of bin/lib/pr-snapshot-wakes.sh, never an ack) and answers read now on any wake for a key, on the backstop, or when the feed cannot tell. Callers: bin/orphan-reconcile.sh (per-issue thread and blocker reads) and bin/decompose-parent-close.sh --cooled (the GitHub-board pass). Resolved once per process with lib_env_apply wake-backstop in a subshell; docs/notes/2026-10-16-BH-6976-wake-backstops.md.",
+      "knobs": [
+        {
+          "env": "WAKE_BACKSTOP",
+          "type": "int",
+          "default": 1,
+          "min": 0,
+          "max": 1,
+          "unit": null,
+          "zero_means": "off",
+          "required": false,
+          "read_in": "bin/lib/wake-backstop.sh",
+          "note": "The kill switch. 0 = off: every converted lane polls as before BH-6976. wb_due answers read now (reason off) on every call, so orphan-reconcile reads every thread and blocker and decompose-parent-close keeps its plain cooldown. Read as ${WAKE_BACKSTOP:-1}."
+        },
+        {
+          "env": "ORPHAN_WAKE_BACKSTOP_S",
+          "type": "int",
+          "default": 1800,
+          "min": 0,
+          "max": 7200,
+          "unit": "seconds",
+          "zero_means": "off",
+          "required": false,
+          "read_in": "bin/orphan-reconcile.sh",
+          "note": "0 = off: every thread and blocker is read on every run. The longest a cached per-issue thread or blocker read (state/orphan-reconcile/<owner_repo>/) is reused when no issue or pr wake arrived for the issue and (thread) its updatedAt did not move. 1-1799 reads as 1800, the ticket's floor. Read as ${ORPHAN_WAKE_BACKSTOP_S:-1800}."
+        },
+        {
+          "env": "PARENT_CLOSE_BACKSTOP_S",
+          "type": "int",
+          "default": 1800,
+          "min": 0,
+          "max": 7200,
+          "unit": "seconds",
+          "zero_means": "off",
+          "required": false,
+          "read_in": "bin/decompose-parent-close.sh",
+          "note": "0 = off: the 600 s PARENT_CLOSE_COOLDOWN_S alone paces the pass. How old the last --cooled GitHub-board pass may be before it runs with no wake. Between the cooldown and this, the pass runs only on an issue wake for a key in state/parent-close-<project>.keys (open children and their parents) or a retry line. 1-1799 reads as 1800. In-app boards are not gated. Read as ${PARENT_CLOSE_BACKSTOP_S:-1800}."
+        }
+      ]
+    }
+  ]
+}

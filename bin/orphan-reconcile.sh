@@ -367,6 +367,10 @@ jq -c '[ .[] | {number, title, headRefName: (.head.ref // ""), body} ]' \
 # is a set of tickets whose owners we cannot name. Enqueue nothing and say why.
 # shellcheck source=/dev/null
 [ -r "$HARNESS/bin/jobs-client.sh" ] && . "$HARNESS/bin/jobs-client.sh"
+# The wake backstop (BH-6976): pass 1 below reuses a per-issue read when no
+# wake says it changed. OPTIONAL: without it every read happens, as before.
+# shellcheck source=bin/lib/wake-backstop.sh
+[ -r "$HARNESS/bin/lib/wake-backstop.sh" ] && . "$HARNESS/bin/lib/wake-backstop.sh" 2>/dev/null
 if ! command -v queue_list >/dev/null 2>&1 || ! command -v _jobs_req >/dev/null 2>&1; then
   log "reconcile: no jobs client — cannot name any ticket's owner, enqueued nothing"
   exit 0
@@ -921,6 +925,16 @@ classify() { # classify <needs|decide> <outfile>
 # stopped answering costs this lane a quiet tick, never a wrong launch.
 classify needs "$TD/needs.tsv" || true
 CAPPED=""
+# THE WAKE BACKSTOP (BH-6976). A thread or blocker read is kept in
+# state/orphan-reconcile/<owner>_<repo>/<kind>-N.{json,meta} and reused instead
+# of a GitHub read only while wb_cache_get says so: no issue or pr wake for N
+# since it was written, younger than ORPHAN_WAKE_BACKSTOP_S, and (thread) the
+# open list's updatedAt for N unchanged. A hit is not a read, so the caps above
+# are unchanged. Only an rc 0 read is cached.
+WB_ON=0; command -v wb_cache_get >/dev/null 2>&1 && WB_ON=1
+WB_DIR="$HARNESS/state/orphan-reconcile/${REPO//\//_}"
+WB_OBS=1800; [ "$WB_ON" = 1 ] && WB_OBS=$(wb_knob ORPHAN_WAKE_BACKSTOP_S)
+C_HITS=0; C_READS=0
 while IFS=$'\t' read -r KIND NUM; do
   case "$NUM" in ''|*[!0-9]*) continue ;; esac
   # `capped` is not a read — it is pass 1 naming a thread it did not ask for
@@ -931,11 +945,23 @@ while IFS=$'\t' read -r KIND NUM; do
     blocker|thread) ;;
     *) continue ;;
   esac
-  RC=0
+  CU=-
+  if [ "$WB_ON" = 1 ]; then
+    [ "$KIND" = thread ] && CU=$(jq -r --argjson n "$NUM" 'first(.[] | select(.number == $n)) | .updatedAt // empty' "$TD/open.json" 2>/dev/null)
+    if wb_cache_get "$WB_DIR/$KIND-$NUM" "$REPO" issue,pr "$NUM" "$WB_OBS" "$CU" \
+       && cp "$WB_DIR/$KIND-$NUM.json" "$TD/extra/$KIND-$NUM.json" 2>/dev/null; then
+      C_HITS=$((C_HITS + 1))
+      continue
+    fi
+  fi
+  RC=0; CT=$(date +%s); C_READS=$((C_READS + 1))
   if [ "$KIND" = thread ]; then
     gh_rest_issue_comments "$REPO" "$NUM" 200 > "$TD/extra/thread-$NUM.json" || RC=$?
   else
     gh_rest GET "repos/$REPO/issues/$NUM" > "$TD/extra/blocker-$NUM.json" || RC=$?
+  fi
+  if [ "$RC" = 0 ] && [ "$WB_ON" = 1 ] && [ -n "$CU" ]; then
+    wb_cache_put "$WB_DIR/$KIND-$NUM" "$CU"$'\t'"$CT" < "$TD/extra/$KIND-$NUM.json" || true
   fi
   if [ "$RC" != 0 ]; then
     rm -f "$TD/extra/$KIND-$NUM.json"
@@ -948,6 +974,7 @@ while IFS=$'\t' read -r KIND NUM; do
     fi
   fi
 done < "$TD/needs.tsv"
+[ "$WB_ON" = 1 ] && wb_gc "$WB_DIR"
 if [ -n "$CAPPED" ]; then
   log "reconcile: ORPHAN_THREAD_FETCH_MAX=$THREAD_FETCH_MAX bound — $CAPPED parked unverifiable:thread"
 fi
@@ -1183,7 +1210,7 @@ if [ "$STRANDED_MODE" = 1 ]; then
   command -v gh_auth_reset >/dev/null 2>&1 && gh_auth_reset
   exit 0
 fi
-log "reconcile: open=$OPEN_N owned=$OWNED_N orphans=$ORPHAN_N enqueued=${ENQ:--} skipped=${SKIP:--} stranded=$STRANDED_N"
+log "reconcile: open=$OPEN_N owned=$OWNED_N orphans=$ORPHAN_N enqueued=${ENQ:--} skipped=${SKIP:--} cache=$C_HITS/$C_READS stranded=$STRANDED_N"
 
 # ---- the other half of the rule: every open PR has an owner too -------------
 # Owner class (b) above reads an OPEN PR as proof that a ticket is owned, which

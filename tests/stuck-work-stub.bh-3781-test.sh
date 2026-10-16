@@ -99,7 +99,8 @@ rm -f "$H/flags/all-off"
 got=$(jq -c '.lanes[]|select(.id=="stuck-work")|[.scope,.boxes,.switch.name,.script,.cadence,([.knobs[].env]|sort),([.knobs[]|select(.env=="STUCK_WORK_NOW")|.settable])]' "$H/catalog/lanes.json" 2>&1)
 # TEST-CHANGE BH-4656: BH-4660 registers STUCK_WORK_CI_TTL_S and STUCK_WORK_THREAD_FULL_S.
 # TEST-CHANGE (BH-5943): STUCK_WORK_DISPATCH_SPREAD_S and STUCK_WORK_PROJECTS are new registered knobs.
-want='["hub",["hub"],"lane-off-stuck-work","bin/stuck-work.sh","*/5 * * * *",["HARNESS_TEST_SANDBOX","STUCK_WORK_CI_TTL_S","STUCK_WORK_DISPATCH_SPREAD_S","STUCK_WORK_ENABLED","STUCK_WORK_FIXTURE","STUCK_WORK_MAX_ITEMS","STUCK_WORK_NOW","STUCK_WORK_PROJECTS","STUCK_WORK_REPAGE_FACTOR","STUCK_WORK_REPO","STUCK_WORK_SLA_BLOCKED_MIN","STUCK_WORK_SLA_BUILD_STAGES","STUCK_WORK_SLA_DEQUEUED_MIN","STUCK_WORK_SLA_HUMAN_MIN","STUCK_WORK_SLA_LEAD_REVIEW_MIN","STUCK_WORK_SLA_QUEUED_MIN","STUCK_WORK_SLA_READY_MIN","STUCK_WORK_SLA_UNLAUNCHED_MIN","STUCK_WORK_THREAD_FULL_S"],[false]]'
+# TEST-CHANGE (BH-6976): STUCK_WORK_CI_QUIET_TTL_S is a new registered knob (the quiet-feed CI cache limit).
+want='["hub",["hub"],"lane-off-stuck-work","bin/stuck-work.sh","*/5 * * * *",["HARNESS_TEST_SANDBOX","STUCK_WORK_CI_QUIET_TTL_S","STUCK_WORK_CI_TTL_S","STUCK_WORK_DISPATCH_SPREAD_S","STUCK_WORK_ENABLED","STUCK_WORK_FIXTURE","STUCK_WORK_MAX_ITEMS","STUCK_WORK_NOW","STUCK_WORK_PROJECTS","STUCK_WORK_REPAGE_FACTOR","STUCK_WORK_REPO","STUCK_WORK_SLA_BLOCKED_MIN","STUCK_WORK_SLA_BUILD_STAGES","STUCK_WORK_SLA_DEQUEUED_MIN","STUCK_WORK_SLA_HUMAN_MIN","STUCK_WORK_SLA_LEAD_REVIEW_MIN","STUCK_WORK_SLA_QUEUED_MIN","STUCK_WORK_SLA_READY_MIN","STUCK_WORK_SLA_UNLAUNCHED_MIN","STUCK_WORK_THREAD_FULL_S"],[false]]'
 [ "$got" = "$want" ] && ok || bad "S5 registry entry is $got, wanted $want"
 HARNESS_TEST_SANDBOX=1 "$DIR/bin/render-cron.sh" hub > "$T/hub.cron" 2> "$T/hub.err"; rc=$?
 [ "$rc" = 0 ] && ok || bad "S5 bin/render-cron.sh hub exited $rc: $(cat "$T/hub.err")"

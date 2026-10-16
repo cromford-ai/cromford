@@ -1,0 +1,11 @@
+{
+  "env": "STUCK_WORK_CI_QUIET_TTL_S",
+  "type": "int",
+  "default": 1800,
+  "min": 0,
+  "max": 7200,
+  "unit": "seconds",
+  "zero_means": "off",
+  "read_in": "bin/lib/stuck-work/facts-pr.sh",
+  "note": "BH-6976: 0 = off: STUCK_WORK_CI_TTL_S alone decides, as before BH-6976. How long a PR's cached CI line is reused when the wake feed is healthy and answered no `checks <head>` and no `pr <n>` wake since the line was written (prs_wake_seen rc 1 for both). The limit is then max(STUCK_WORK_CI_TTL_S, this). An rc 2 (the feed cannot tell) keeps STUCK_WORK_CI_TTL_S. 1-1799 reads as 1800, a non-digit as 1800. Read by _swf_ci_hit as ${STUCK_WORK_CI_QUIET_TTL_S:-1800}."
+}

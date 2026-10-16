@@ -105,6 +105,31 @@ if [ "$COOLED" = 1 ] && [ "$COOL" -gt 0 ]; then
   [ -r "$MARK" ] && LAST=$(tr -dc '0-9' < "$MARK" 2>/dev/null)
   case "$LAST" in ''|*[!0-9]*) LAST=0 ;; esac
   [ $(( $(date +%s) - LAST )) -ge "$COOL" ] || exit 0
+  # THE WAKE BACKSTOP (BH-6976). Past the cooldown, a GitHub board's pass runs
+  # only on an issue wake for a key in the keys file (the open children and
+  # their parents of the last pass, or a `retry` line), or once the last pass is
+  # PARENT_CLOSE_BACKSTOP_S old; bin/lib/wake-backstop.sh has the rule. A
+  # quiet exit leaves MARK alone. In-app boards (no repo) keep the cooldown.
+  PC_WREPO="${GH_ISSUES_REPO:-}"
+  if [ -z "$PC_WREPO" ]; then
+    # shellcheck source=bin/lib/dep-verify-lib.sh
+    [ -r "$SELF/lib/dep-verify-lib.sh" ] && . "$SELF/lib/dep-verify-lib.sh" 2>/dev/null
+    command -v dep_repo_for >/dev/null 2>&1 && PC_WREPO=$(dep_repo_for "$HARNESS" "$PROJECT" 2>/dev/null || true)
+  fi
+  if [ -n "$PC_WREPO" ]; then
+    # jobs-client.sh EXITS the shell that sources it without its modules.
+    # shellcheck source=bin/jobs-client.sh
+    [ -r "$HARNESS/bin/jobs-client.sh" ] && [ -r "$HARNESS/bin/lib/jobs/req.sh" ] && . "$HARNESS/bin/jobs-client.sh" 2>/dev/null
+    # shellcheck source=bin/lib/wake-backstop.sh
+    [ -r "$SELF/lib/wake-backstop.sh" ] && . "$SELF/lib/wake-backstop.sh" 2>/dev/null
+    if command -v wb_due >/dev/null 2>&1; then
+      WB_RC=0
+      WB_WHY=$(wb_due "$PC_WREPO" issue "$HARNESS/state/parent-close-$PROJECT.keys" "$LAST" "$COOL" \
+                 "$(wb_knob PARENT_CLOSE_BACKSTOP_S)") || WB_RC=$?
+      [ "$WB_RC" = 0 ] || exit 0
+      case "$WB_WHY" in wake:*|backstop) PC_LOG "parent-close: pass on $WB_WHY" ;; esac
+    fi
+  fi
   mkdir -p "$HARNESS/state" 2>/dev/null || true
   date +%s > "$MARK" 2>/dev/null || true
 fi
@@ -470,6 +495,19 @@ for i in sorted(issues, key=lambda x: int(x.get("number", 0))):
             declared[parent] = max(declared.get(parent, 0), int(om.group(1)))
 
 
+# BH-6976: the keys an issue wake must name for the next --cooled pass to run
+# before its backstop: every OPEN child and the parent it names.
+if tmp:
+    try:
+        with open(os.path.join(tmp, "keys"), "w") as f:
+            for parent in sorted(children):
+                opened = [k for k in sorted(set(children[parent])) if state.get(k) == "OPEN"]
+                if opened:
+                    f.write("".join("%d\n" % k for k in opened + [parent]))
+    except Exception:
+        pass
+
+
 def _gh_json(args):
     """One `gh` read, parsed; None on ANY failure. Not read is not merged."""
     try:
@@ -783,7 +821,17 @@ for f in "$TMP"/close-*.md; do
     mkdir -p "$HARNESS/logs" 2>/dev/null || true
     echo "$(STAMP) [$PROJECT] PARENT_CLOSE_FAILED #$N — every child is closed but the close did not land" \
       >> "$HARNESS/logs/$PROJECT.log" 2>/dev/null || true
+    PC_FAILED=1
   fi
 done
+# The keys file the next --cooled pass's wake gate reads (BH-6976). A failed
+# close adds `retry`, so it is tried again after the cooldown, as before.
+KF="$HARNESS/state/parent-close-$PROJECT.keys"
+if [ "$DRY" != 1 ] && [ -f "$TMP/keys" ]; then
+  [ "${PC_FAILED:-0}" = 1 ] && echo retry >> "$TMP/keys"
+  mkdir -p "$HARNESS/state" 2>/dev/null || true
+  cp "$TMP/keys" "$KF.tmp.$$" 2>/dev/null && mv -f "$KF.tmp.$$" "$KF" 2>/dev/null
+  rm -f "$KF.tmp.$$" 2>/dev/null
+fi
 command -v gh_auth_reset >/dev/null 2>&1 && gh_auth_reset
 exit 0

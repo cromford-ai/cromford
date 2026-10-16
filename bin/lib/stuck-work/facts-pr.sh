@@ -85,24 +85,35 @@ _swf_count() { [ -n "${SWF_COUNT_FILE:-}" ] && printf '%s %s\n' "$1" "$2" >> "$S
 #   its head and updated_at equal these (neither empty or `-`), no `checks <head>`
 #   or `pr <n>` wake arrived since it was written (no prs_wake_seen: the TTL
 #   decides), and it is younger than STUCK_WORK_CI_TTL_S (900; 0 never hits).
+#   BH-6976: when the feed answers rc 1 for BOTH (healthy, no wake), the age
+#   limit is max(TTL, STUCK_WORK_CI_QUIET_TTL_S) (1800; 0 = off; 1-1799 read as
+#   1800). An rc 2 on either keeps the TTL.
 _swf_ci_hit() {
   local f="$1" repo="$2" n="$3" head="$4" upd="$5" now="$6" ttl="${STUCK_WORK_CI_TTL_S:-900}" h u e a b c wrc age
+  local quiet="${STUCK_WORK_CI_QUIET_TTL_S:-1800}" lim q1=0
   [[ "$ttl" =~ ^[0-9]+$ ]] || ttl=900
   [ "$((10#$ttl))" -gt 0 ] || return 1
+  [[ "$quiet" =~ ^[0-9]+$ ]] || quiet=1800
+  quiet=$((10#$quiet)); [ "$quiet" -gt 0 ] && [ "$quiet" -lt 1800 ] && quiet=1800
   case "$head" in ''|-) return 1 ;; esac
   case "$upd" in ''|-) return 1 ;; esac
   [ -r "$f" ] && [ "$(awk -F'\t' 'END { print NR ":" NF }' "$f")" = 1:6 ] || return 1
   IFS=$'\t' read -r h u e a b c < "$f" || return 1
   [ "$h" = "$head" ] && [ "$u" = "$upd" ] && [[ "$e" =~ ^[0-9]+$ ]] || return 1
   for wrc in "$a" "$b" "$c"; do case "$wrc" in ''|'?') return 1 ;; esac; done
-  age=$((now - 10#$e))
-  [ "$age" -ge 0 ] && [ "$age" -lt "$((10#$ttl))" ] || return 1
+  age=$((now - 10#$e)); lim=$((10#$ttl))
+  [ "$quiet" -gt "$lim" ] && lim="$quiet"
+  [ "$age" -ge 0 ] && [ "$age" -lt "$lim" ] || return 1
   if _swf_fn prs_wake_seen; then
     wrc=0; prs_wake_seen "$repo" checks "$head" "$e" || wrc=$?
     [ "$wrc" = 0 ] && return 1
+    [ "$wrc" = 1 ] && q1=1
     wrc=0; prs_wake_seen "$repo" pr "$n" "$e" || wrc=$?
     [ "$wrc" = 0 ] && return 1
+    [ "$wrc" = 1 ] || q1=0
   fi
+  # Past the TTL only a feed that said "no wake" twice keeps the line.
+  [ "$age" -lt "$((10#$ttl))" ] || [ "$q1" = 1 ] || return 1
   printf '%s\t%s\t%s\n' "$a" "$b" "$c"
 }
 
