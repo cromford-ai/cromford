@@ -13,7 +13,8 @@
 #   else empty). Always returns 0: the outcome lives in the vars.
 #
 # THE ROW IS UNTRUSTED INPUT. Every check runs in here, not in the caller:
-# the project must be an exact fleet.conf project, the payload must parse, a
+# the project must be an exact fleet.conf project (or `hub` for fetch_log and
+# run_script), the payload must parse, a
 # slug is [A-Za-z0-9_-]+ or refused (never stripped into a different slug),
 # fetch_* paths go through the scripts' own --path whitelists, and empty map or
 # chat text is refused before any script runs. The command id reaches a script
@@ -40,7 +41,7 @@ bcx_run() {
   local h="${HARNESS:-/root/harness}" which key pproj out rc f slug b64 text origin
   BCX_OK=0; BCX_RESULT=""; BCX_BODY=""
 
-  if ! { [ "$type" = fetch_log ] && [ "$project" = hub ]; } \
+  if ! { { [ "$type" = fetch_log ] || [ "$type" = run_script ]; } && [ "$project" = hub ]; } \
      && ! "$h/bin/fleet-conf.sh" --projects 2>/dev/null | grep -qxF -- "$project"; then
     BCX_RESULT="refused: '$project' is not a fleet.conf project"; return 0
   fi
@@ -133,6 +134,14 @@ bcx_run() {
       else
         BCX_RESULT="product-cmd failed: $(head -c 300 <<<"$out")"
       fi ;;
+
+    run_script)
+      # bin/cmd-run-script.sh does every check (allowlist, argv-only args) and
+      # bounds the script at 300 s; 330 here covers its own work around it.
+      out=$(timeout 330 "$h/bin/cmd-run-script.sh" "$project" "$payload" "$id" 7>&- 9>&- 2>/dev/null); rc=$?
+      [ "$rc" = 0 ] && BCX_OK=1
+      BCX_RESULT="$out"
+      [ -n "$BCX_RESULT" ] || BCX_RESULT=$(jq -nc --arg r "cmd-run-script.sh gave no result (rc $rc)" '{result:"failed",reason:$r}') ;;
 
     *)
       BCX_RESULT="refused: $type does not run on a box" ;;

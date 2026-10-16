@@ -42,6 +42,7 @@ resolve() { # resolve <which> <project> -> path on stdout, rc 1 if refused
     pipeline)  echo "$HARNESS/logs/pipeline-health.log" ;;
     cost)      echo "$HARNESS/logs/cost.csv" ;;
     decisions) echo "$HARNESS/logs/decisions.log" ;;
+    run_script) echo "$HARNESS/logs/run-script.log" ;;
     triage)
       [ "$project" = hub ] && return 1
       echo "$HARNESS/logs/$project.log" ;;

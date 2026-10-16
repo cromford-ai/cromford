@@ -1,0 +1,10 @@
+{
+  "about": "BH-6737: the scripts the console's run_script command may run, by exact bin/ file name. bin/cmd-run-script.sh refuses any other name and refuses everything when this file is missing or does not parse. Adding a script is a reviewed PR: list only scripts that are safe to run with operator-chosen args and that print no secrets.",
+  "scripts": [
+    "fly-idle-check.sh",
+    "fly-machine-state.sh",
+    "box-self-report.sh",
+    "pool-cap.sh",
+    "healthcheck.sh"
+  ]
+}

@@ -791,6 +791,45 @@ for CMD in "${CMDS[@]:-}"; do
         [ -n "$RESULT" ] || RESULT="comment not posted (no result, rc $ICRC)"
       else RESULT="comment not posted (lib not loaded)"; fi ;;
     # <<< comment_issue handler
+    # >>> fleet control handler (tests/poll-commands-fleet-control.bh-6737-test.sh runs this block)
+    # BH-6737. The Fly pool (fly-pool.sh, flags/fly-pool-*, state/fly/, fly.env)
+    # exists only on the hub, so these run here for every project and are never
+    # forwarded. Each bin/cmd-<x>.sh prints one JSON line. rc 3 is a refusal
+    # (outcome=refused, BH-932); any other non-zero rc is a retryable failure.
+    dispatch_issue|machine_ctl|pool_cap)
+      case "$TYPE" in
+        dispatch_issue) FCS=cmd-dispatch-issue.sh; FCT=60 ;;
+        machine_ctl)    FCS=cmd-machine-ctl.sh;    FCT=150 ;;
+        *)              FCS=cmd-pool-cap.sh;       FCT=30 ;;
+      esac
+      RESULT=$(timeout "$FCT" "$HARNESS/bin/$FCS" "$PROJECT" "$PAYLOAD" "$ID" 7>&- 2>/dev/null); FCRC=$?
+      case "$FCRC" in
+        0) OK=true ;;
+        3) OUTCOME=refused ;;
+        124) RESULT=$(jq -nc --arg r "timed out after ${FCT}s" '{result:"failed",reason:$r}') ;;
+      esac
+      [ -n "$RESULT" ] || RESULT=$(jq -nc --arg r "$FCS gave no result (rc $FCRC)" '{result:"failed",reason:$r}') ;;
+    # <<< fleet control handler
+    # >>> run_script handler (tests/poll-commands-fleet-control.bh-6737-test.sh runs this block)
+    # BH-6737. Row project `hub` runs here; a fleet project runs on the box that
+    # owns it (bcx_run here, or a box_console_commands row for a far box), the
+    # run_triage shape. bin/cmd-run-script.sh runs only allowlisted scripts.
+    run_script)
+      jq -e . >/dev/null 2>&1 <<<"$PAYLOAD" || PAYLOAD='{}'
+      BOX=local; [ "$PROJECT" = hub ] || BOX=$("$HARNESS/bin/box-for.sh" "$PROJECT" 2>/dev/null || true)
+      if [ -z "$BOX" ]; then RESULT="unknown project $PROJECT"
+      elif [ "$BOX" = local ]; then
+        if ! command -v bcx_run >/dev/null 2>&1; then RESULT="local run failed (box-cmd-exec not loaded)"
+        else
+          bcx_run run_script "$PROJECT" "$PAYLOAD" "$ID"; [ "$BCX_OK" = 1 ] && OK=true; RESULT="$BCX_RESULT"
+          [ "$(jq -r '.result? // ""' <<<"$RESULT" 2>/dev/null)" = refused ] && OUTCOME=refused
+        fi
+      elif ! command -v box_ccmd_forward >/dev/null 2>&1 || ! command -v cron_box_id_for >/dev/null 2>&1; then
+        RESULT="forward to $BOX failed (box-console-commands client not loaded)"
+      elif JOBS_HTTP=""; box_ccmd_forward "$ID" "$(cron_box_id_for "$BOX")" run_script "$PROJECT" "$PAYLOAD" >/dev/null; then
+        OK=true; RESULT="queued for $BOX (box command $ID)"
+      else RESULT="forward to $BOX failed (jobs worker ${JOBS_HTTP:-unreachable})"; fi ;;
+    # <<< run_script handler
     *) RESULT="unknown command type $TYPE" ;;
   esac
     # >>> command ack (tests/poll-commands-refusal-ack.bh-932-test.sh runs this block)

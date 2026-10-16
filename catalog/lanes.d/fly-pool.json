@@ -39,7 +39,7 @@
       "max": 500,
       "unit": "machines",
       "zero_means": "unlimited",
-      "note": "Fleet-wide ceiling on live pool machines, trimming every per-project answer including unlimited. 0 is no brake. The PER-PROJECT ceiling is not a settings row: it is a number inside flags/fly-pool-<project> (which is also the pool's enable switch) or a reviewed line in fly/pool-caps.conf.",
+      "note": "Fleet-wide ceiling on live pool machines, trimming every per-project answer including unlimited. 0 is no brake. The PER-PROJECT ceiling, first hit wins: a number inside flags/fly-pool-<project> (the file is also the pool's enable switch), the settings row lane.fly-pool.<project>.pool_cap (knob POOL_CAP, BH-6737), then a reviewed line in fly/pool-caps.conf.",
       "read_in": "bin/pool-cap.sh"
     },
     {

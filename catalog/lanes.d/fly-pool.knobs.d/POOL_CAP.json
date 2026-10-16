@@ -1,0 +1,12 @@
+{
+  "env": "POOL_CAP",
+  "type": "int",
+  "default": null,
+  "min": 0,
+  "max": 999,
+  "unit": "machines",
+  "zero_means": "unlimited",
+  "required": false,
+  "note": "BH-6737. Per-project Fly pool cap as a settings row `lane.fly-pool.<project>.pool_cap`, written by the console pool_cap command (bin/cmd-pool-cap.sh). A number inside flags/fly-pool-<project> still wins; fly/pool-caps.conf comes after it. 0 = no per-project ceiling. POOL_AUTOSCALE=0 ignores it, and so does ROUTING_ROWS set to anything but on (no worker read). Unset (no row) leaves the cap to the flag file and the conf.",
+  "read_in": "bin/pool-cap.sh"
+}

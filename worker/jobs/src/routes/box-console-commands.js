@@ -38,6 +38,7 @@ const STALE_LIST_MAX = 500;
 const TYPES = new Set([
   "run_triage", "fetch_log", "fetch_artifact", "chat", "update_company_map",
   "chat_proposal", "post_proposal", "kill_proposal", "revise_proposal",
+  "run_script",
 ]);
 const ID_RE = /^[^\x00-\x1f\x7f/]{1,128}$/;
 const BOX_ERR = "box is required and must match [A-Za-z0-9._-]{1,64}";

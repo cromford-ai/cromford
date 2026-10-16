@@ -129,12 +129,21 @@ job_is_hot() {
   [ "$HOTFIX_ON" = 1 ] || return 1
   grep -q '"hotfix": *true' "${1:-/dev/null}" 2>/dev/null
 }
-# Hotfix files first, order preserved within each half — so the emergency takes
-# the machine the tick can afford, and a reused machine takes the emergency job.
+# job_is_now <job.json> — an operator dispatched this key from the console
+# (bin/cmd-dispatch-issue.sh writes state/dispatch-now/<p>/<KEY>).
+job_is_now() {
+  local k
+  k=$(basename "${1:-}" .json)
+  [ -n "$k" ] && [ -e "$HARNESS/state/dispatch-now/$P/$k" ]
+}
+# Hotfix files first, then dispatched keys, then the rest, order preserved
+# within each group — so the emergency takes the machine the tick can afford,
+# a reused machine takes the emergency job, and a dispatch goes next.
 hotfix_first() {
   local f
   for f in "$@"; do job_is_hot "$f" && printf '%s\n' "$f"; done
-  for f in "$@"; do job_is_hot "$f" || printf '%s\n' "$f"; done
+  for f in "$@"; do job_is_hot "$f" || ! job_is_now "$f" || printf '%s\n' "$f"; done
+  for f in "$@"; do job_is_hot "$f" || job_is_now "$f" || printf '%s\n' "$f"; done
 }
 # Start the flyctl agent BEFORE the lock: an agent auto-spawned by `machine
 # exec` inside the locked section inherits fd 8 and holds the lock forever
