@@ -147,6 +147,17 @@ digest cannot measure the fleet's output at all. It still writes its files (all
 needed. Without that line, an unmeasurable fleet and a quiet day look the same
 (`docs/LESSONS.md`, "stopping is an alert, not a whisper").
 
+**GitHub REST budget — `bin/gh-budget-report.sh`** (BH-6974), which reads the
+fleet's `gh_ledger` table through `GET /api/metrics/gh-ledger?group=` (this
+box's `state/gh-rest-ledger/` files when the worker does not answer). The
+digest runs it once with its own merge count (`--merged`), so the dora route is
+still read once. One line before `sources:`: `github REST: <calls> calls,
+<charged> charged, <n>/merged PR; top pollers: <lane> <class> <charged> | …`
+(5 pollers). The payload key `gh_budget` carries the same numbers, and its
+`status` is `ok`, `off` (knob) or `error` (the report failed: one
+`dora-digest.log` line, the text says `github REST: n/a (error)`, no page).
+The full report is `state/gh-budget/<date>.json`.
+
 ## Config
 
 Every threshold is a config value. Environment first, then
@@ -166,6 +177,7 @@ config cannot become a second entry point into the lane.
 | `DORA_OUT_DIR` | `$HARNESS/state/dora` | where both outputs land. |
 | `DORA_BUILDS_DIR` | `$HARNESS/builds` | where `builds/<dir>/pipeline.log` is read for box test minutes. An absent directory is `n/a`, never 0. |
 | `QUOTA_DIR` | `$HARNESS/state/quota` | the same variable `bin/quota-status.sh` reads. |
+| `DORA_GH_BUDGET` | `1` | any other value skips `bin/gh-budget-report.sh` and the `github REST:` line. |
 
 Kill switch: `flags/dora-digest-off`.
 

@@ -64,7 +64,7 @@
    "window": "caller day",
    "class": "wide",
    "status": "pending",
-   "slice": "C1 of #6779"
+   "slice": "C1 of #7035"
   },
   {
    "file": "src/routes/cost.js",
@@ -74,7 +74,7 @@
    "window": "caller day",
    "class": "wide",
    "status": "pending",
-   "slice": "C1 of #6779"
+   "slice": "C1 of #7035"
   },
   {
    "file": "src/routes/cost.js",
@@ -84,7 +84,7 @@
    "window": "caller since/until",
    "class": "wide",
    "status": "pending",
-   "slice": "C1 of #6779 (ported in #6777)"
+   "slice": "C1 of #7035 (ported in #6777)"
   },
   {
    "file": "src/routes/cost.js",
@@ -94,7 +94,7 @@
    "window": "caller since/until",
    "class": "wide",
    "status": "pending",
-   "slice": "C1 of #6779"
+   "slice": "C1 of #7035"
   },
   {
    "file": "src/routes/cost.js",
@@ -104,7 +104,7 @@
    "window": "caller since/until",
    "class": "wide",
    "status": "pending",
-   "slice": "C1 of #6779"
+   "slice": "C1 of #7035"
   },
   {
    "file": "src/routes/cost.js",
@@ -114,97 +114,88 @@
    "window": "caller since/until",
    "class": "wide",
    "status": "pending",
-   "slice": "C1 of #6779"
+   "slice": "C1 of #7035"
   },
   {
    "file": "src/routes/lane-spend.js",
-   "line_hint": 107,
+   "line_hint": 115,
    "match": "AS calls FROM cost_rows",
    "table": "cost_rows",
    "window": "caller day (default today)",
    "class": "wide",
-   "status": "pending",
-   "slice": "C1 of #6779"
+   "status": "ported"
   },
   {
    "file": "src/lib/daily-digest/core-sections.js",
-   "line_hint": 35,
+   "line_hint": 41,
    "match": "FROM stage_events WHERE created_at>=?1 AND created_at<?2 GROUP BY actor",
    "table": "stage_events",
    "window": "caller day",
    "class": "wide",
-   "status": "pending",
-   "slice": "C1 of #6779"
+   "status": "ported"
   },
   {
    "file": "src/lib/daily-digest/core-sections.js",
-   "line_hint": 92,
+   "line_hint": 120,
    "match": "SUM(cost_usd) AS usd\n       FROM cost_rows WHERE ts>=?1 AND ts<?2",
    "table": "cost_rows",
    "window": "caller day",
    "class": "wide",
-   "status": "pending",
-   "slice": "C1 of #6779"
+   "status": "ported"
   },
   {
    "file": "src/lib/daily-digest/core-sections.js",
-   "line_hint": 102,
+   "line_hint": 130,
    "match": "MAX(job_id) AS job_id FROM cost_rows",
    "table": "cost_rows",
    "window": "caller day",
    "class": "wide",
-   "status": "pending",
-   "slice": "C1 of #6779"
+   "status": "ported"
   },
   {
    "file": "src/lib/daily-digest/core-sections.js",
-   "line_hint": 141,
+   "line_hint": 177,
    "match": "SELECT COUNT(*) AS n FROM stage_events s",
    "table": "stage_events",
    "window": "caller day",
    "class": "wide",
-   "status": "pending",
-   "slice": "C1 of #6779"
+   "status": "ported"
   },
   {
    "file": "src/lib/daily-digest/core-sections.js",
-   "line_hint": 148,
+   "line_hint": 188,
    "match": "FROM stage_events s LEFT JOIN jobs j",
    "table": "stage_events",
    "window": "caller day",
    "class": "wide",
-   "status": "pending",
-   "slice": "C1 of #6779"
+   "status": "ported"
   },
   {
    "file": "src/routes/model-routes.js",
-   "line_hint": 153,
+   "line_hint": 168,
    "match": "FROM cost_rows c\n        WHERE c.ts >= ?1",
    "table": "cost_rows",
    "window": "caller since",
    "class": "wide",
-   "status": "pending",
-   "slice": "C1 of #6779"
+   "status": "ported"
   },
   {
    "file": "src/lib/outcome-gap.js",
-   "line_hint": 76,
+   "line_hint": 78,
    "match": "FROM cost_rows c\n WHERE c.ts >= ?1 AND c.ts < ?2",
    "table": "cost_rows",
    "window": "lookback <= 180 d",
    "class": "wide",
-   "status": "pending",
-   "slice": "C1 of #6779"
+   "status": "ported"
   },
   {
    "file": "src/lib/outcome-gap.js",
-   "line_hint": 94,
+   "line_hint": 96,
    "match": "SELECT COUNT(*) AS n FROM cost_rows",
    "table": "cost_rows",
    "window": "lookback <= 180 d",
    "class": "wide",
-   "status": "pending",
-   "slice": "C1 of #6779"
+   "status": "ported"
   },
   {
    "file": "src/routes/usage.js",

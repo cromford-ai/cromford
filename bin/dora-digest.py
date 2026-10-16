@@ -50,6 +50,10 @@ OUT_TXT = ENV["DORA_OUT_TXT"]
 # needing jq to re-read the payload it just wrote. The paging path is the last
 # place to make conditional on a tool being installed.
 SENTINEL = ENV.get("DORA_SENTINEL") or ""
+# bin/gh-budget-report.sh --json, run by the shell (BH-6974); the status is
+# ok | off | error, and absent when the shell passed none.
+GH_BUDGET_FILE = ENV.get("DORA_GH_BUDGET_FILE") or ""
+GH_BUDGET_STATUS = ENV.get("DORA_GH_BUDGET_STATUS") or "absent"
 
 NOTES = []
 
@@ -805,6 +809,20 @@ accounts = sorted(
      for k, v in cost_acct.items()),
     key=lambda a: -a["cost_usd"]) if FC_OK else []
 
+# ── who spends the GitHub REST budget (BH-6974) ─────────────────────────────
+gh_budget = {"status": GH_BUDGET_STATUS}
+if GH_BUDGET_STATUS == "ok":
+    try:
+        with open(GH_BUDGET_FILE) as fh:
+            ghb = json.load(fh)
+        gh_budget = {
+            "status": "ok", "source": ghb.get("source"), "file": ghb.get("state_file"),
+            "window": ghb.get("window"), "totals": ghb.get("totals"), "merged": ghb.get("merged"),
+            "per_merged_pr": ghb.get("per_merged_pr"), "top": (ghb.get("top") or [])[:5],
+        }
+    except (OSError, ValueError, AttributeError):
+        gh_budget = {"status": "error"}
+
 payload = {
     "generated_at": UNTIL,
     "window": {"arg": WINDOW, "hours": HOURS, "ledger_days": DAYS,
@@ -822,6 +840,7 @@ payload = {
     "quota": quota,
     "cash_overage": overage,
     "notes": NOTES,
+    "gh_budget": gh_budget,
 }
 
 with open(OUT_JSON, "w") as fh:
@@ -911,6 +930,16 @@ src.append("cost-per-pr.csv %s" % (("%d PRs matched" % CPP["matched_window_prs"]
                                    if CPP["status"] == "ok" else CPP["status"]))
 src.append("builds/ %s" % (("%d lines in window" % BT["lines_in_window"])
                            if BT_OK else BT["status"]))
+if gh_budget["status"] == "ok":
+    t = gh_budget.get("totals") or {}
+    pp = (gh_budget.get("per_merged_pr") or {}).get("counted")
+    L.append("github REST: %s calls, %s charged, %s/merged PR; top pollers: %s"
+             % (t.get("rest_calls", "n/a"), t.get("rest_counted", "n/a"),
+                ("%g" % pp) if isinstance(pp, (int, float)) else "n/a",
+                " | ".join("%s %s %s" % (p.get("lane"), p.get("path_class"), p.get("counted"))
+                           for p in gh_budget.get("top") or []) or "none"))
+elif gh_budget["status"] != "off":
+    L.append("github REST: n/a (%s)" % gh_budget["status"])
 L.append("sources: " + ", ".join(src))
 for n in NOTES[:4]:
     L.append("note: " + n)

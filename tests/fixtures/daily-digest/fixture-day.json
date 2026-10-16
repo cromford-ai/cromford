@@ -25,7 +25,8 @@
         { "project": "project-5", "ticket": "TK-1712", "usd": 3.1, "job_id": 9102 }
       ],
       "truncated": false
-    }
+    },
+    "archive": "unbound"
   },
   "autonomy": {
     "ok": true,
@@ -53,7 +54,8 @@
         "route_rule_changes": 0, "flaky_quarantine_changes": 0, "alert_actions": 1, "stage_events": 0,
         "pauses": 1, "verdicts": 0, "ticket_hold": 0
       }
-    }
+    },
+    "archive": "unbound"
   },
   "tripwires": {
     "ok": true,

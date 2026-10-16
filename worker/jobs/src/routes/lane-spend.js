@@ -20,6 +20,9 @@
 //              0|off|false, anything else no row). A per-box switch row or a
 //              flags/ file is not visible here.
 //
+// A past `day` reads the archive store too (lib/archive-read.js, BH-7035);
+// the default day (today) never does. The answer's `archive` says which.
+//
 // A lane is listed when it has a current p99 row, a ceiling row in any state
 // but none, or spend today. It never edits a ceiling: the settings routes stay
 // the one writer.
@@ -27,6 +30,7 @@
 import { json, d1Guarded } from "../lib/http.js";
 import { ensureColumns, LANES_REGISTRY, REGISTRY_SEED_ACTOR } from "../lib/core.js";
 import { settingsRows } from "../lib/settings-cache.js";
+import { archiveReach, readHistory, mergeGroups, worstState } from "../lib/archive-read.js";
 
 const DETAIL_RE = /^p99=([0-9.]+) days=(\d+) mult=([0-9.]+) alert=([0-9.]+)$/;
 const CEILING_KEY_RE = /^spend\.ceiling\.([a-z0-9_.-]{1,42})\.day_usd$/;
@@ -35,6 +39,7 @@ const LANE_ID_RE = /^[A-Za-z0-9._-]{1,128}$/;
 const CHUNK = 90;
 
 const cents = (v) => (v === null ? null : Math.round(v * 100) / 100);
+const byLane = (a, b) => (a.lane_id < b.lane_id ? -1 : a.lane_id > b.lane_id ? 1 : 0);
 const dashed = (d) => (d ? `${d.slice(0, 4)}-${d.slice(4, 6)}-${d.slice(6, 8)}` : null);
 
 function ceilingOf(row) {
@@ -75,6 +80,8 @@ export const routes = [
       return d1Guarded("lane-spend", async () => {
         await ensureColumns(env, "cost_rows");
 
+        // The archive check does not wait on the ledger and settings reads.
+        const reachP = archiveReach(env, { table: "cost_rows", since, now: t });
         // The current p99 table: the newest status day not after `day`.
         const led = await env.DB.prepare("SELECT key, status, detail FROM ledgers WHERE kind='spend_p99'").all();
         const ledRows = (led.results || []).filter((r) => /^\d{8}$/.test(String(r.status)) && r.status <= dayC);
@@ -99,20 +106,27 @@ export const routes = [
 
         const registered = new Set((LANES_REGISTRY.lanes || []).map((l) => l.id));
         const ids = [...new Set([...registered, ...p99.keys(), ...ceilings.keys()])].filter((id) => LANE_ID_RE.test(id));
+        const reach = await reachP;
         const stmts = [];
         for (let i = 0; i < ids.length; i += CHUNK) {
           const part = ids.slice(i, i + CHUNK);
           const marks = part.map((_, j) => `?${j + 3}`).join(",");
           // sql-ident-ok: marks is a ?N placeholder list built from the chunk index
-          stmts.push(env.DB.prepare(
-            "SELECT lane_id, SUM(COALESCE(cost_usd,0)) AS usd, COUNT(*) AS calls FROM cost_rows" +
-            ` WHERE lane_id IN (${marks}) AND ts >= ?1 AND ts < ?2 GROUP BY lane_id`
-          ).bind(since, until, ...part).all());
+          const sql = "SELECT lane_id, SUM(COALESCE(cost_usd,0)) AS usd, COUNT(*) AS calls FROM cost_rows" +
+            ` WHERE lane_id IN (${marks}) AND ts >= ?1 AND ts < ?2 GROUP BY lane_id`;
+          stmts.push(readHistory(env, { table: "cost_rows", since, now: t, hot: { sql, binds: [since, until, ...part] }, reach }));
         }
         const spend = new Map();
+        const states = [];
         for (const res of await Promise.all(stmts)) {
-          for (const r of res.results || []) spend.set(r.lane_id, { usd: Number(r.usd || 0), calls: Number(r.calls || 0) });
+          states.push(res.state);
+          const { rows } = mergeGroups(res.hot.results || [], res.archive ? res.archive.results || [] : null, {
+            by: ["lane_id"], spec: { usd: "sum", calls: "sum" }, pickBy: "lane_id", compare: byLane, limit: Infinity,
+          });
+          for (const r of rows) spend.set(r.lane_id, { usd: Number(r.usd || 0), calls: Number(r.calls || 0) });
         }
+        // No chunk ran: nothing was read, so "read" is never claimed.
+        const archive = states.length ? worstState(states) : reach === "reach" ? "not-needed" : reach;
 
         const lanes = [];
         for (const id of ids) {
@@ -147,6 +161,7 @@ export const routes = [
           ceiling_switch_fleet: switchOf(byKey.get("switch.spend-ceiling-off")),
           skipped_rows: skipped,
           lanes,
+          archive,
           as_of: t,
         });
       });

@@ -16,7 +16,8 @@
     "calls": 0,
     "unpriced_calls": 0,
     "usd_per_merged_pr": null,
-    "top_tickets": { "rows": [], "truncated": false }
+    "top_tickets": { "rows": [], "truncated": false },
+    "archive": "unbound"
   },
   "autonomy": {
     "ok": true,
@@ -30,7 +31,8 @@
         "route_rule_changes": 0, "flaky_quarantine_changes": 0, "alert_actions": 0, "stage_events": 0,
         "pauses": 0, "verdicts": 0, "ticket_hold": 0
       }
-    }
+    },
+    "archive": "unbound"
   },
   "tripwires": { "ok": true, "n": 0, "rows": [], "truncated": false },
   "self_heals": { "ok": true, "n": 0, "by_source": {}, "rows": [], "truncated": false },

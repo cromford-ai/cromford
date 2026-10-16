@@ -39,7 +39,7 @@ export const routes = [
         return json(400, { error: `human takes at most ${HUMAN_MAX} names of at most ${HUMAN_LEN} chars` });
       }
 
-      const opts = { limit: n.limit, loopMin: n.loop_min, trip: n.trip, humanActors, sigKey: sigKeyOf(env) };
+      const opts = { limit: n.limit, loopMin: n.loop_min, trip: n.trip, humanActors, sigKey: sigKeyOf(env), env, now: t };
       const db = env.DB;
       const core = await guardSections(SECTION_KEYS.core, () => readCoreSections(db, win, opts));
       const state = await guardSections(SECTION_KEYS.state, () => readStateSections(db, win, opts));

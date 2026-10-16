@@ -1,0 +1,33 @@
+{
+ "ticket": "BH-7035",
+ "note": "The archive-only statements BH-7035 slice C0 added to the readers it ported: the same read without a JOIN or NOT EXISTS on a hot-only table (jobs, model_routes, job_artifacts, ledgers). Read by test/archive-readers.bh-6779.test.js R1.",
+ "readers": [
+  {
+   "file": "src/lib/daily-digest/core-sections.js",
+   "line_hint": 194,
+   "match": "s.created_at AS at\n       FROM stage_events s\n",
+   "table": "stage_events",
+   "window": "caller day",
+   "class": "wide",
+   "status": "ported"
+  },
+  {
+   "file": "src/routes/model-routes.js",
+   "line_hint": 179,
+   "match": "AS runners\n         FROM cost_rows c\n        WHERE c.ts >= ?1 AND c.stage IS NOT NULL AND c.stage <> ''${project ? \" AND c.project = ?3\" : \"\"}\n        GROUP BY",
+   "table": "cost_rows",
+   "window": "caller since",
+   "class": "wide",
+   "status": "ported"
+  },
+  {
+   "file": "src/lib/outcome-gap.js",
+   "line_hint": 112,
+   "match": "stageIn(3, nStages)})\n GROUP BY c.project, c.ticket\n ORDER BY project, ticket",
+   "table": "cost_rows",
+   "window": "lookback <= 180 d",
+   "class": "wide",
+   "status": "ported"
+  }
+ ]
+}

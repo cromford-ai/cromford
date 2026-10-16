@@ -80,6 +80,8 @@
 #   DORA_OUT_DIR=$H/state/dora
 #   DORA_BUILDS_DIR=$H/builds  where builds/<dir>/pipeline.log is read for the
 #                              STAGE-TIMING suite lines behind box test minutes
+#   DORA_GH_BUDGET=1         0 (any value but 1) = skip bin/gh-budget-report.sh
+#                            and the `github REST:` line
 #   QUOTA_DIR=$H/state/quota
 # Kill switch: settings row switch.dora-digest-off.<box> or switch.dora-digest-off
 # (1 = off), read by lane_switch (bin/lib/lane-switch.sh); flags/dora-digest-off
@@ -237,6 +239,34 @@ if [ -x "$BIN/fleet-conf.sh" ]; then
   done < <("$BIN/fleet-conf.sh" --projects 2>/dev/null)
 fi
 
+# >>> gh budget (BH-6974)
+# Who spends the GitHub REST budget: bin/gh-budget-report.sh, run once, its
+# JSON on stdout. The merge count it divides by is the one this digest already
+# read, so the worker answers the dora route once. A report that fails is
+# "github REST: n/a (error)" and one log line, never a crash and never a page.
+GH_BUDGET="${DORA_GH_BUDGET:-1}"
+GHB_FILE=""; GHB_STATUS=off
+if [ "$GH_BUDGET" = 1 ]; then
+  M=""
+  [ -n "$DORA_JSON" ] && M=$(jq -r '.totals.merged // empty' "$DORA_JSON" 2>/dev/null)
+  case "$M" in *[!0-9]*) M="" ;; esac
+  GHB_ARGS=(--window "$WINDOW" --json)
+  [ -n "$M" ] && GHB_ARGS+=(--merged "$M")
+  [ "$LEDGER" = 1 ] || GHB_ARGS+=(--local)
+  if command -v timeout >/dev/null 2>&1; then
+    timeout 60 "$BIN/gh-budget-report.sh" "${GHB_ARGS[@]}" > "$WORK/gh-budget.json" 2>/dev/null; GHB_RC=$?
+  else
+    "$BIN/gh-budget-report.sh" "${GHB_ARGS[@]}" > "$WORK/gh-budget.json" 2>/dev/null; GHB_RC=$?
+  fi
+  if [ "$GHB_RC" = 0 ] && jq -e '.totals' "$WORK/gh-budget.json" >/dev/null 2>&1; then
+    GHB_FILE="$WORK/gh-budget.json"; GHB_STATUS=ok
+  else
+    GHB_STATUS=error
+    say "gh budget report failed rc=$GHB_RC (bin/gh-budget-report.sh ${GHB_ARGS[*]}) — the digest says github REST: n/a"
+  fi
+fi
+# <<< gh budget
+
 DATE_TAG=$(date -u +%F)
 case "$WINDOW" in 24h) OUT_JSON="$OUTDIR/$DATE_TAG.json" ;; *) OUT_JSON="$OUTDIR/$DATE_TAG-$WINDOW.json" ;; esac
 OUT_TXT="$OUTDIR/latest.txt"
@@ -249,6 +279,7 @@ DORA_BUILDS_DIR="${DORA_BUILDS_DIR:-$H/builds}" \
 DORA_QUOTA_DIR="$QUOTA_DIR" DORA_LOGS_DIR="$H/logs" DORA_WARN_PCT="$WARN_PCT" \
 DORA_MAX_ROWS="$MAX_ROWS" DORA_OUT_JSON="$OUT_JSON" DORA_OUT_TXT="$OUT_TXT" \
 DORA_SENTINEL="$WORK/unmeasurable" \
+DORA_GH_BUDGET_FILE="$GHB_FILE" DORA_GH_BUDGET_STATUS="$GHB_STATUS" \
   python3 "$BIN/dora-digest.py"
 RC=$?
 if [ "$RC" -ne 0 ]; then

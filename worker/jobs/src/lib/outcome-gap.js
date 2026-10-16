@@ -1,5 +1,6 @@
 // outcome-gap — BH-4017 (BH-3987.3): the pure half of GET
-// /api/metrics/outcome-gap. Param validation, the two SQL literals, the fold.
+// /api/metrics/outcome-gap. Param validation, the SQL literals, the merge of
+// the two stores (BH-7035), the fold.
 // No clock: the route passes its `t` in.
 //
 // A (project, ticket) is in the gap when its priced spend in the given stages
@@ -9,6 +10,7 @@
 // lib/daily-digest/core-sections.js). Note: docs/notes/2026-10-03-BH-3987-outcome-gap.md.
 
 import { dayWindow, capList } from "./daily-digest/shape.js";
+import { mergeGroups } from "./archive-read.js";
 
 // Read limits, not business parameters: the lane passes its knob values in.
 export const GROUP_MAX = 5000;
@@ -93,6 +95,55 @@ HAVING SUM(c.cost_usd) > ?3
 export function unpricedSql(nStages) {
   return `SELECT COUNT(*) AS n FROM cost_rows
  WHERE ts >= ?1 AND ts < ?2 AND cost_usd IS NULL AND stage IN (${stageIn(3, nStages)})`;
+}
+
+// The archive half (BH-7035). A ticket's sum can span the hot store and the
+// archive, so HAVING cannot run per store. When the archive is in reach, the
+// groups run on both stores with no HAVING and no merge check (jobs,
+// job_artifacts and ledgers are hot only), are merged, and then
+// passesHaving and gapUnmergedSql apply the same two conditions.
+// ?1 from, ?2 to, ?3.. the stages, then the row cap.
+export function gapGroupsSql(nStages) {
+  return `SELECT c.project AS project, c.ticket AS ticket, SUM(c.cost_usd) AS usd,
+       SUM(c.cost_usd IS NULL) AS unpriced_calls,
+       MIN(CASE WHEN c.cost_usd IS NOT NULL THEN c.ts END) AS first_ts, MAX(c.job_id) AS last_job_id
+  FROM cost_rows c
+ WHERE c.ts >= ?1 AND c.ts < ?2 AND c.project IS NOT NULL AND c.ticket IS NOT NULL
+   AND c.stage IN (${stageIn(3, nStages)})
+ GROUP BY c.project, c.ticket
+ ORDER BY project, ticket
+ LIMIT ?${3 + nStages}`;
+}
+
+// gapSql's HAVING on one merged group. SQL's NULL > x is not true, so a NULL
+// sum or a NULL first_ts never passes.
+export function passesHaving(row, { minUsd, grace }) {
+  return row.usd !== null && row.usd !== undefined && row.usd > minUsd
+    && row.first_ts !== null && row.first_ts !== undefined && row.first_ts < grace;
+}
+
+// Pure. The gapGroupsSql rows of both stores as one group per (project,
+// ticket), kept only when the merged group passes gapSql's HAVING. archRows
+// null (no archive answer) runs the HAVING on hotRows alone.
+export function mergeGapGroups(hotRows, archRows, { minUsd, grace }) {
+  return mergeGroups(hotRows, archRows, {
+    by: ["project", "ticket"],
+    spec: { usd: "sum", unpriced_calls: "sum", first_ts: "min", last_job_id: "max" },
+    pickBy: "last_job_id", compare: () => 0, limit: Infinity,
+  }).rows.filter((r) => passesHaving(r, { minUsd, grace }));
+}
+
+// gapSql's NOT EXISTS over a list of candidates. ?1 a JSON array of
+// [project, ticket] pairs, ?2 to. Returns the pairs with no harness PR merged
+// before `to`.
+export function gapUnmergedSql() {
+  return `SELECT json_extract(v.value,'$[0]') AS project, json_extract(v.value,'$[1]') AS ticket
+  FROM json_each(?1) v
+ WHERE NOT EXISTS (SELECT 1 FROM jobs j
+                     JOIN job_artifacts a ON a.job_id = j.id AND a.artifact_kind = 'pr_url'
+                     JOIN ledgers l ON l.kind = 'merge' AND l.status = 'merged' AND l.key = a.artifact_ref
+                    WHERE j.project = json_extract(v.value,'$[0]') AND j.ticket_id = json_extract(v.value,'$[1]')
+                      AND l.created_at < ?2)`;
 }
 
 const byUsdThen = (key) => (a, b) => b.usd - a.usd || (a[key] < b[key] ? -1 : a[key] > b[key] ? 1 : 0);

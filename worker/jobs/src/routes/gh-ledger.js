@@ -27,6 +27,43 @@ export const GH_LEDGER_RETENTION_DAYS_DEFAULT = 14;
 
 const HOUR_RE = /^\d{4}-\d{2}-\d{2}T\d{2}$/;
 
+// BH-6974: the `group=` reads bin/gh-budget-report.sh prints "who spends the
+// GitHub budget" from. A grouped read counts REST rows only: a row is GraphQL
+// when GitHub's X-RateLimit-Resource said so, or when its path class is the
+// graphql endpoint (a legacy line carries resource "-" and "/graphql").
+export const GH_LEDGER_REST_SQL = "resource <> 'graphql' AND ltrim(path_class, '/') <> 'graphql'";
+// The part of a path class after `repos/` (with or without the leading `/`),
+// or NULL. substr, not LIKE: LIKE is case-blind and `REPOS/` is no repo path.
+export const GH_LEDGER_REPO_REST_SQL =
+  "CASE WHEN substr(path_class, 1, 6) = 'repos/' THEN substr(path_class, 7) " +
+  "WHEN substr(path_class, 1, 7) = '/repos/' THEN substr(path_class, 8) END";
+// `rest` -> "<owner>/<repo>": everything up to its second `/`. An owner with no
+// repo segment (`repos/Org`, `repos/Org/`) and a non-repo path are "(no repo)".
+export const GH_LEDGER_REPO_SQL =
+  "CASE WHEN rest IS NULL OR instr(rest, '/') <= 1 " +
+  "OR substr(rest, instr(rest, '/') + 1) = '' " +
+  "OR substr(rest, instr(rest, '/') + 1, 1) = '/' THEN '(no repo)' " +
+  "WHEN instr(substr(rest, instr(rest, '/') + 1), '/') = 0 THEN rest " +
+  "ELSE substr(rest, 1, instr(rest, '/') + instr(substr(rest, instr(rest, '/') + 1), '/') - 1) END";
+// group name -> the statement over a WHERE text and a LIMIT bind. Every piece
+// interpolated here is a constant of this file; every value is a bind.
+export const GH_LEDGER_GROUPS = Object.freeze({
+  "lane-hour": (w, lim) =>
+    `SELECT hour, lane, SUM(calls) AS calls, SUM(counted) AS counted
+       FROM gh_ledger WHERE ${w} AND ${GH_LEDGER_REST_SQL}
+      GROUP BY hour, lane ORDER BY hour, lane LIMIT ${lim}`,
+  "lane-class": (w, lim) =>
+    `SELECT lane, path_class, SUM(calls) AS calls, SUM(counted) AS counted
+       FROM gh_ledger WHERE ${w} AND ${GH_LEDGER_REST_SQL}
+      GROUP BY lane, path_class ORDER BY counted DESC, calls DESC, lane, path_class LIMIT ${lim}`,
+  "repo": (w, lim) =>
+    `SELECT ${GH_LEDGER_REPO_SQL} AS repo, SUM(calls) AS calls, SUM(counted) AS counted
+       FROM (SELECT calls, counted, ${GH_LEDGER_REPO_REST_SQL} AS rest
+               FROM gh_ledger WHERE ${w} AND ${GH_LEDGER_REST_SQL})
+      GROUP BY repo ORDER BY counted DESC, calls DESC, repo LIMIT ${lim}`,
+});
+const GH_LEDGER_GROUP_ERROR = `group must be one of ${Object.keys(GH_LEDGER_GROUPS).join(", ")}`;
+
 // "YYYY-MM-DDTHH" moved back by whole days. Hours are compared as strings in
 // SQL, which is correct only because every one of them has exactly this shape.
 function hourMinusDays(hour, days) {
@@ -71,6 +108,43 @@ function aggregateRow(r) {
     limit_max: intOrNull(r.limit_max),
     reset_max: intOrNull(r.reset_max),
   };
+}
+
+// BH-6974: one grouped read plus its exact totals. The rows keep the read cap
+// and say `truncated`; the totals are one more statement over the same window
+// with no cap, so a capped answer never shrinks the sums the report divides.
+// Two reads, not one batch: D1's batch is for writes in this file, and the two
+// statements share every bind of the same window.
+async function groupedRead(env, t, group, where, binds, since, until) {
+  const w = where.join(" AND ");
+  const lim = `?${binds.length + 1}`;
+  // sql-ident-ok: w holds literal column = ?N clauses, the group SQL is a constant of this file
+  const [res, tot] = await Promise.all([
+    env.DB.prepare(GH_LEDGER_GROUPS[group](w, lim)).bind(...binds, GH_LEDGER_READ_LIMIT + 1).all(),
+    // sql-ident-ok: GH_LEDGER_REST_SQL is a module string const, w holds literal column = ?N clauses
+    env.DB.prepare(
+      `SELECT SUM(CASE WHEN ${GH_LEDGER_REST_SQL} THEN calls ELSE 0 END) AS rest_calls,
+              SUM(CASE WHEN ${GH_LEDGER_REST_SQL} THEN counted ELSE 0 END) AS rest_counted,
+              SUM(CASE WHEN ${GH_LEDGER_REST_SQL} THEN 0 ELSE calls END) AS graphql_calls,
+              SUM(CASE WHEN ${GH_LEDGER_REST_SQL} THEN 0 ELSE counted END) AS graphql_counted
+         FROM gh_ledger WHERE ${w}`
+    ).bind(...binds).first(),
+  ]);
+  const rows = res.results || [];
+  const truncated = rows.length > GH_LEDGER_READ_LIMIT;
+  // SUM over no row is NULL; an empty window is a real zero here, because the
+  // read itself answered.
+  const n = (v) => Number(v) || 0;
+  return json(200, {
+    group,
+    rows: truncated ? rows.slice(0, GH_LEDGER_READ_LIMIT) : rows,
+    truncated,
+    totals: {
+      rest_calls: n(tot && tot.rest_calls), rest_counted: n(tot && tot.rest_counted),
+      graphql_calls: n(tot && tot.graphql_calls), graphql_counted: n(tot && tot.graphql_counted),
+    },
+    since, until: until || null, as_of: t,
+  });
 }
 
 export const routes = [
@@ -138,14 +212,19 @@ export const routes = [
     async ({ env, url, t }) => {
       const since = url.searchParams.get("since") || "";
       const until = url.searchParams.get("until") || "";
+      const group = url.searchParams.get("group");
       if (!HOUR_RE.test(since)) return json(400, { error: "since=YYYY-MM-DDTHH is required" });
       if (until && !HOUR_RE.test(until)) return json(400, { error: "until must be YYYY-MM-DDTHH" });
+      if (group !== null && !Object.hasOwn(GH_LEDGER_GROUPS, group)) {
+        return json(400, { error: GH_LEDGER_GROUP_ERROR });
+      }
       await ensureTable(env, "gh_ledger");
       const where = ["hour >= ?1"];
       const binds = [since];
       if (until) { binds.push(until); where.push(`hour <= ?${binds.length}`); }
       const box = str(url.searchParams.get("box"), 128);
       if (box) { binds.push(box); where.push(`box = ?${binds.length}`); }
+      if (group !== null) return groupedRead(env, t, group, where, binds, since, until);
       binds.push(GH_LEDGER_READ_LIMIT + 1);
       // sql-ident-ok: where holds literal column = ?N clauses, every value a bind
       const res = await env.DB.prepare(

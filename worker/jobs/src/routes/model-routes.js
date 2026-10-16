@@ -16,6 +16,7 @@ import {
   MODEL_ROUTE_PROJECT_RE, MODEL_ROUTE_ROLE_RE, MODEL_ROUTE_RUNNERS,
   ensureTable, knownModelIds, modelRouteGaps, modelRouteRoles, modelRouteScopeVersion, resolveModelLadder,
 } from "../lib/core.js";
+import { readHistory, mergeGroups } from "../lib/archive-read.js";
 
 const MAX_LADDER = 8; // a bound, not a measured ceiling — nothing today runs anywhere near it
 // A stage.* role (BH-1766) is a runner and its fallback: agent-call reads
@@ -144,12 +145,25 @@ const MAX_UNROUTED = 500;
 // RUNNER_<STAGE> from env, else claude. One row per (stage, project) pair,
 // folded here into one entry per stage. A failed ledger read is reported as
 // that, never as an empty list: the routes read it rides on still answers.
-async function unroutedStages(env, since, project) {
+// BH-7035: a `since` the archive can reach reads it too (lib/archive-read.js).
+// model_routes is hot only, so the archive groups without the route check
+// and one hot statement applies the same check to its (stage, project) pairs.
+const UNROUTED_KEEP_SQL =
+  `SELECT json_extract(v.value,'$[0]') AS stage, json_extract(v.value,'$[1]') AS project
+     FROM json_each(?1) v
+    WHERE NOT EXISTS (SELECT 1 FROM model_routes m
+                       WHERE m.role = 'stage.' || json_extract(v.value,'$[0]') AND m.position = 0
+                         AND (m.project IS NULL OR m.project = json_extract(v.value,'$[1]')))`;
+const pairKey = (r) => JSON.stringify([r.stage, r.project ?? null]);
+const nullFirst = (x, y) => (x === y ? 0 : x === null ? -1 : y === null ? 1 : x < y ? -1 : 1);
+
+async function unroutedStages(env, since, project, now) {
   let rows;
+  let archTruncated = false;
+  let archiveState;
   try {
     // sql-ident-ok: the project clause is a literal picked by project, which binds as ?3
-    const r = await env.DB.prepare(
-      `SELECT lower(c.stage) AS stage, c.project AS project, count(*) AS calls,
+    const hotSql = `SELECT lower(c.stage) AS stage, c.project AS project, count(*) AS calls,
               max(c.ts) AS last_seen, group_concat(DISTINCT c.runner) AS runners
          FROM cost_rows c
         WHERE c.ts >= ?1 AND c.stage IS NOT NULL AND c.stage <> ''${project ? " AND c.project = ?3" : ""}
@@ -158,13 +172,38 @@ async function unroutedStages(env, since, project) {
                              AND (m.project IS NULL OR m.project = c.project))
         GROUP BY lower(c.stage), c.project
         ORDER BY lower(c.stage), c.project
-        LIMIT ?2`
-    ).bind(...(project ? [since, MAX_UNROUTED + 1, project] : [since, MAX_UNROUTED + 1])).all();
-    rows = r.results || [];
+        LIMIT ?2`;
+    // sql-ident-ok: the project clause is a literal picked by project, which binds as ?3
+    const archSql = `SELECT lower(c.stage) AS stage, c.project AS project, count(*) AS calls,
+              max(c.ts) AS last_seen, group_concat(DISTINCT c.runner) AS runners
+         FROM cost_rows c
+        WHERE c.ts >= ?1 AND c.stage IS NOT NULL AND c.stage <> ''${project ? " AND c.project = ?3" : ""}
+        GROUP BY lower(c.stage), c.project
+        ORDER BY lower(c.stage), c.project
+        LIMIT ?2`;
+    const binds = project ? [since, MAX_UNROUTED + 1, project] : [since, MAX_UNROUTED + 1];
+    const r = await readHistory(env, { table: "cost_rows", since, now, hot: { sql: hotSql, binds }, archive: { sql: archSql, binds } });
+    archiveState = r.state;
+    rows = r.hot.results || [];
+    if (r.archive) {
+      let arch = r.archive.results || [];
+      // The archive side at its cap may lack a pair (D12), filtered or not.
+      archTruncated = arch.length > MAX_UNROUTED;
+      if (arch.length) {
+        const keep = await env.DB.prepare(UNROUTED_KEEP_SQL).bind(JSON.stringify(arch.map((x) => [x.stage, x.project ?? null]))).all();
+        const kept = new Set((keep.results || []).map(pairKey));
+        arch = arch.filter((x) => kept.has(pairKey(x)));
+      }
+      rows = mergeGroups(rows, arch, {
+        by: ["stage", "project"], spec: { calls: "sum", last_seen: "max", runners: "union" }, pickBy: "last_seen",
+        compare: (a, b) => nullFirst(a.stage, b.stage) || nullFirst(a.project ?? null, b.project ?? null),
+        limit: MAX_UNROUTED + 1,
+      }).rows;
+    }
   } catch (e) {
     return { unrouted_stages: null, unrouted_since: since, unrouted_error: `could not read cost_rows: ${e && e.message ? e.message : e}` };
   }
-  const truncated = rows.length > MAX_UNROUTED;
+  const truncated = rows.length > MAX_UNROUTED || archTruncated;
   const byStage = new Map();
   for (const row of rows.slice(0, MAX_UNROUTED)) {
     let e = byStage.get(row.stage);
@@ -179,7 +218,7 @@ async function unroutedStages(env, since, project) {
     for (const rn of String(row.runners || "").split(",")) if (rn && !e.runners.includes(rn)) e.runners.push(rn);
   }
   for (const e of byStage.values()) e.runners.sort();
-  return { unrouted_stages: [...byStage.values()], unrouted_since: since, unrouted_truncated: truncated };
+  return { unrouted_stages: [...byStage.values()], unrouted_since: since, unrouted_truncated: truncated, unrouted_archive: archiveState };
 }
 
 export const routes = [
@@ -225,7 +264,7 @@ export const routes = [
           out.push({ role, ladder: withProv, source, gapped: gapped.has(`${own}\u0000${role}`) });
         }
         const res = { project, roles: out, gaps, runners: MODEL_ROUTE_RUNNERS, as_of: t };
-        if (since !== null) Object.assign(res, await unroutedStages(env, since, project));
+        if (since !== null) Object.assign(res, await unroutedStages(env, since, project, t));
         return json(200, res);
       });
     },

@@ -379,7 +379,9 @@ test('R1d: a ported row\'s file imports lib/archive-read.js; only that lib touch
   assert.ok(ported.length >= 3, 'this slice ports three files');
   for (const f of ported) {
     const s = readFileSync(join(WORKER, f), 'utf8');
-    const m = /from\s+["']((?:\.\.\/lib|\.)\/archive-read\.js)["']/.exec(s);
+    // TEST-CHANGE (BH-7035): a ported file may sit one level under src/lib/
+    // (lib/daily-digest/core-sections.js imports "../archive-read.js").
+    const m = /from\s+["']((?:\.\.\/lib|\.\.|\.)\/archive-read\.js)["']/.exec(s);
     assert.ok(m !== null, `${f} does not import archive-read.js`);
   }
   // TEST-CHANGE: a lib under src/lib/ whose file name contains "archive" may

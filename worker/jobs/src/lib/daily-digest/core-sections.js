@@ -5,7 +5,13 @@
 // for that section and never a zero in another. Every window is
 // `col >= win.from AND col < win.to`. Every list is fetched limit+1 and capped
 // with capList, and its n is a separate COUNT(*), never the capped length.
+//
+// cost_rows and stage_events reads also read the archive store when the
+// caller passes opts.env and the day can reach it (lib/archive-read.js,
+// BH-7035). spend and autonomy each say which in `archive`. With no
+// opts.env every read is hot only, and `archive` is "unbound".
 import { capList } from "./shape.js";
+import { archiveReach, readHistory, mergeAggregate, mergeGroups, mergeRows, worstState } from "../archive-read.js";
 import { isHumanActor, filingToMerge } from "./core-pure.js";
 import { humanProven } from "../../routes/verdicts.js";
 
@@ -41,6 +47,28 @@ const BATCH_BASIS =
 
 const all = async (db, sql, ...binds) => (await db.prepare(sql).bind(...binds).all()).results || [];
 const count = async (db, sql, ...binds) => Number((await db.prepare(sql).bind(...binds).first("n")) ?? 0);
+
+// The archive context: one reach check per table, started once and shared by
+// every read of that table. null when the caller passed no env.
+function archiveCtx(db, win, opts) {
+  if (!opts || !opts.env) return null;
+  const env = { ...opts.env, DB: db };
+  const at = (table) => archiveReach(env, { table, since: win.from, now: opts.now });
+  return { env, now: opts.now, reach: Promise.all([at("cost_rows"), at("stage_events")]).then(([c, s]) => ({ cost_rows: c, stage_events: s })) };
+}
+
+// One read of a history table: through readHistory when there is a context,
+// else the hot read alone, in readHistory's return shape.
+// archSql: the archive's statement when it differs from the hot one (same binds).
+async function hist(db, ctx, win, table, sql, binds, method = "all", archSql = sql) {
+  if (!ctx) return { hot: await db.prepare(sql).bind(...binds)[method](), archive: null, state: "unbound" };
+  const reach = (await ctx.reach)[table];
+  return readHistory(ctx.env, {
+    table, since: win.from, now: ctx.now, hot: { sql, binds }, archive: { sql: archSql, binds }, method, reach,
+  });
+}
+const rowsOf = (r) => (r ? r.results || [] : null);
+const cmp = (x, y) => (x === y ? 0 : x === null ? -1 : y === null ? 1 : x < y ? -1 : 1);
 
 async function section(fn) {
   try {
@@ -86,11 +114,11 @@ async function readThroughput(db, win) {
   return { ok: true, merged: merges.length, ...filingToMerge(merges, artifacts, jobs) };
 }
 
-async function readSpend(db, win) {
-  const tot = await db.prepare(
+async function readSpend(db, win, ctx) {
+  const t = await hist(db, ctx, win, "cost_rows",
     `SELECT COUNT(*) AS calls, SUM(cost_usd IS NULL) AS unpriced_calls, SUM(cost_usd) AS usd
-       FROM cost_rows WHERE ts>=?1 AND ts<?2`
-  ).bind(win.from, win.to).first();
+       FROM cost_rows WHERE ts>=?1 AND ts<?2`, [win.from, win.to], "first");
+  const tot = mergeAggregate(t.hot, t.archive, { calls: "sum", unpriced_calls: "sum", usd: "sum" });
   const calls = Number(tot?.calls ?? 0);
   const unpriced = Number(tot?.unpriced_calls ?? 0);
   // 0 on a day with no calls; null when every call is unpriced (unknown, not free).
@@ -98,11 +126,18 @@ async function readSpend(db, win) {
   // Its own count, so spend never leans on throughput's read succeeding.
   const merged = await count(db, `SELECT COUNT(*) AS n FROM ledgers WHERE kind='merge' AND status='merged' AND created_at>=?1 AND created_at<?2`,
     win.from, win.to);
-  const top = await all(db,
+  const tp = await hist(db, ctx, win, "cost_rows",
     `SELECT project, ticket, SUM(cost_usd) AS usd, MAX(job_id) AS job_id FROM cost_rows
       WHERE ts>=?1 AND ts<?2 AND ticket IS NOT NULL AND cost_usd IS NOT NULL
       GROUP BY project, ticket ORDER BY usd DESC, project, ticket LIMIT ?3`,
-    win.from, win.to, TOP_TICKETS + 1);
+    [win.from, win.to, TOP_TICKETS + 1]);
+  // Each side is capped at TOP_TICKETS + 1, so a side at its cap leaves at
+  // least that many merged rows and capList marks the list truncated.
+  const top = mergeGroups(rowsOf(tp.hot), rowsOf(tp.archive), {
+    by: ["project", "ticket"], spec: { usd: "sum", job_id: "max" }, pickBy: "job_id",
+    compare: (a, b) => b.usd - a.usd || cmp(a.project, b.project) || cmp(a.ticket, b.ticket),
+    limit: TOP_TICKETS + 1,
+  }).rows;
   return {
     ok: true,
     usd,
@@ -110,10 +145,11 @@ async function readSpend(db, win) {
     unpriced_calls: unpriced,
     usd_per_merged_pr: merged === 0 || usd === null ? null : usd / merged,
     top_tickets: capList(top, TOP_TICKETS),
+    archive: worstState([t.state, tp.state]),
   };
 }
 
-async function readAutonomy(db, win, opts) {
+async function readAutonomy(db, win, opts, ctx) {
   const lim = opts.limit + 1;
   const w = [win.from, win.to];
 
@@ -137,19 +173,44 @@ async function readAutonomy(db, win, opts) {
         ORDER BY updated_at DESC, key LIMIT ?3`, ...w, lim),
   ].sort((a, b) => (a.at < b.at ? 1 : a.at > b.at ? -1 : 0));
 
-  const reqN = await count(db,
+  const rq = await hist(db, ctx, win, "stage_events",
     `SELECT COUNT(*) AS n FROM stage_events s
       WHERE s.verdict IN ('REQUEUED','RELEASED','DROPPED') AND s.actor IS NOT NULL
         AND TRIM(s.actor)<>'' AND LOWER(TRIM(s.actor))<>'jobs-watchdog'
-        AND s.created_at>=?1 AND s.created_at<?2`, ...w);
-  const reqRows = await all(db,
-    `SELECT j.project AS project, COALESCE(j.ticket_id, s.job_id) AS key, s.verdict AS verdict,
+        AND s.created_at>=?1 AND s.created_at<?2`, w, "first");
+  const reqN = Number(rq.hot?.n ?? 0) + Number(rq.archive?.n ?? 0);
+  // jobs is hot only: the archive reads the events alone, and one hot read
+  // fills project and key for the archive's rows. id is read to merge on and
+  // dropped before the rows leave the section.
+  const rr = await hist(db, ctx, win, "stage_events",
+    `SELECT s.id AS id, j.project AS project, COALESCE(j.ticket_id, s.job_id) AS key, s.verdict AS verdict,
             s.actor AS actor, s.created_at AS at
        FROM stage_events s LEFT JOIN jobs j ON j.id=s.job_id
       WHERE s.verdict IN ('REQUEUED','RELEASED','DROPPED') AND s.actor IS NOT NULL
         AND TRIM(s.actor)<>'' AND LOWER(TRIM(s.actor))<>'jobs-watchdog'
         AND s.created_at>=?1 AND s.created_at<?2
-      ORDER BY s.created_at DESC, s.id DESC LIMIT ?3`, ...w, lim);
+      ORDER BY s.created_at DESC, s.id DESC LIMIT ?3`, [...w, lim], "all",
+    `SELECT s.id AS id, s.job_id AS job_id, s.verdict AS verdict, s.actor AS actor, s.created_at AS at
+       FROM stage_events s
+      WHERE s.verdict IN ('REQUEUED','RELEASED','DROPPED') AND s.actor IS NOT NULL
+        AND TRIM(s.actor)<>'' AND LOWER(TRIM(s.actor))<>'jobs-watchdog'
+        AND s.created_at>=?1 AND s.created_at<?2
+      ORDER BY s.created_at DESC, s.id DESC LIMIT ?3`);
+  let archReq = rowsOf(rr.archive);
+  if (archReq && archReq.length) {
+    const jobs = new Map((await all(db,
+      `SELECT id, project, ticket_id FROM jobs WHERE id IN (SELECT value FROM json_each(?1))`,
+      JSON.stringify([...new Set(archReq.map((r) => r.job_id))]))).map((j) => [j.id, j]));
+    archReq = archReq.map((r) => {
+      const j = jobs.get(r.job_id);
+      return { id: r.id, project: j ? j.project : null, key: (j && j.ticket_id) ?? r.job_id, verdict: r.verdict, actor: r.actor, at: r.at };
+    });
+  }
+  const reqRows = mergeRows(rowsOf(rr.hot), archReq, {
+    key: (r) => r.id,
+    compare: (a, b) => (a.at < b.at ? 1 : a.at > b.at ? -1 : b.id - a.id),
+    limit: lim,
+  }).map(({ id, ...r }) => r);
 
   // The nested CASE keeps a malformed detail from throwing and a string "3"
   // from comparing as TEXT above every integer.
@@ -175,8 +236,18 @@ async function readAutonomy(db, win, opts) {
     `SELECT COUNT(*) AS n FROM ledgers WHERE kind='abandoned' AND created_at>=?1 AND created_at<?2`, ...w);
 
   const by_table = {};
+  const actorStates = [];
   for (const [table, sql] of ACTOR_TABLES) {
-    const rows = await all(db, sql, ...w);
+    let rows;
+    if (table === "stage_events") {
+      const r = await hist(db, ctx, win, table, sql, w);
+      actorStates.push(r.state);
+      rows = mergeGroups(rowsOf(r.hot), rowsOf(r.archive), {
+        by: ["actor"], spec: { c: "sum" }, pickBy: "actor", compare: (a, b) => cmp(a.actor, b.actor), limit: Infinity,
+      }).rows;
+    } else {
+      rows = await all(db, sql, ...w);
+    }
     by_table[table] = rows.reduce((n, r) => n + (isHumanActor(r.actor, opts.humanActors) ? Number(r.c) : 0), 0);
   }
   // BH-3905: only a proven human row counts: a human-token row whose human_sig
@@ -193,6 +264,7 @@ async function readAutonomy(db, win, opts) {
     manual_requeues: { n: reqN, ...capList(reqRows, opts.limit) },
     rebuild_loops: { n: loopN, abandoned, ...capList(loopRows, opts.limit) },
     human_interventions: { n: Object.values(by_table).reduce((a, b) => a + b, 0), by_table },
+    archive: worstState([rq.state, rr.state, ...actorStates]),
   };
 }
 
@@ -225,10 +297,13 @@ async function provenHumanVerdicts(db, w, sigKey) {
   return n;
 }
 
+// opts.env and opts.now are optional: given, the history reads can reach the
+// archive; the reach checks start here and run while throughput reads.
 export async function readCoreSections(db, win, opts) {
+  const ctx = archiveCtx(db, win, opts);
   return {
     throughput: await section(() => readThroughput(db, win)),
-    spend: await section(() => readSpend(db, win)),
-    autonomy: await section(() => readAutonomy(db, win, opts)),
+    spend: await section(() => readSpend(db, win, ctx)),
+    autonomy: await section(() => readAutonomy(db, win, opts, ctx)),
   };
 }
