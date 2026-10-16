@@ -1,0 +1,1 @@
+{"number":7301,"state":"closed","title":"Fix the catch suite","body":"The suite ci-test-value-catch.bh-6618-test.sh failed on main.","merged_at":"2026-10-14T10:00:00Z","head":{"ref":"fx","sha":"5151515151515151515151515151515151515151"},"base":{"ref":"main","sha":"b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0"}}

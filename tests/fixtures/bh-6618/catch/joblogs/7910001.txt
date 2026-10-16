@@ -1,0 +1,4 @@
+2026-10-14T08:00:00.0000000Z ##[group]Run tests
+2026-10-14T08:00:02.0000000Z --- tests/ci-test-value-catch.bh-6618-test.sh rc=1 5s
+2026-10-14T08:00:02.0000001Z FAIL: catch fixture assertion
+2026-10-14T08:00:03.0000000Z ##[error]Process completed with exit code 1.

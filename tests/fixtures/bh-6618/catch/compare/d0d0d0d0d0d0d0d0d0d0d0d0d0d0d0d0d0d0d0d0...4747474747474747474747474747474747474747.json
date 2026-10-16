@@ -1,0 +1,1 @@
+{"status":"ahead","ahead_by":1,"behind_by":0,"total_commits":1,"commits":[{"sha":"c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0","commit":{"message":"Merge pull request #7308 from example-org/ticket/fx-7308\n\nfixture merge"}}],"files":[{"filename":"bin/fx-reach.sh","status":"modified"}]}

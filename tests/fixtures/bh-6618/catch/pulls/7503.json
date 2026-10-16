@@ -1,0 +1,1 @@
+{"number":7503,"state":"closed","title":"Fix the reach bug","body":"ci-test-value-catch.bh-6618-test.sh went red on main.","merged_at":"2026-10-14T10:00:00Z","head":{"ref":"fx","sha":"d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4"},"base":{"ref":"main","sha":"b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0"}}

@@ -1,0 +1,1 @@
+{"status":"ahead","ahead_by":1,"behind_by":0,"total_commits":1,"commits":[],"files":[{"filename":"tests/x.sh","status":"modified"},{"filename":"bin/y.sh","status":"modified"},{"filename":"lib/main-only.sh","status":"modified"}]}

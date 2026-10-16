@@ -1,0 +1,1 @@
+{"status":"ahead","ahead_by":2,"behind_by":0,"total_commits":2,"commits":[{"sha":"c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0","commit":{"message":"Fix a typo"}},{"sha":"c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1","commit":{"message":"Merge pull request #7301 from example-org/ticket/fx-7301\n\nfixture merge"}}],"files":[{"filename":"tests/x-fixture.sh","status":"modified"}]}

@@ -1,0 +1,6 @@
+tests/ci-test-value-catch.bh-6618-test.sh	tests/ci-test-value-catch.bh-6618-test.sh
+tests/ci-test-value-catch.bh-6618-test.sh	bin/fx-reach.sh
+tests/ci-test-value-catch.bh-6618-test.sh	bin/lib/fx-dir/
+tests/ci-test-value.bh-6618-test.sh	bin/fx-other.sh
+tests/ci-test-value.bh-6618-test.sh	*
+tests/ci-test-value-infra-flake.bh-6618-test.sh	*
