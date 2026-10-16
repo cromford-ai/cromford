@@ -67,6 +67,21 @@
 # failure). The page's "Still running the OLD harness:" list names only what is
 # really on the old harness: a retrying pool and a cold-warm pool are not in it.
 #
+# POST-COPY TIMEOUT (BH-7122). The hub step runs bin/harness-sync.sh under
+# `timeout $HUB_SYNC_TIMEOUT_S`. harness-sync writes state/harness-sync-phase
+# (`copied`, `step=<name>` or `done`, then the sha the copy put live) after its
+# code copy and at each step after it. An rc 124 whose stamp proves the copy
+# for NEW (that sha, or one that descends from it) keeps hub=ok: the run line
+# says `hub=ok(post-copy timeout: <step>)`, the record carries hub_post_copy
+# and hub_pending (state/harness-sync-pending/), and the alert is the warn beat
+# with the step and the pending deploy steps named. Anything else (no stamp,
+# an older or unknown sha, a garbage line, any other rc) is the old fail and
+# the CRITICAL page. The cut steps re-run on the next harness-sync.
+#
+#   HUB_SYNC_TIMEOUT_S       settings row lane.fleet-propagate.hub_sync_timeout_s,
+#                            default 300. 0 or not a number logs one line and
+#                            uses 300.
+#
 #   --check   print what WOULD propagate and exit. Writes nothing, ssh's
 #             nothing, bakes nothing (a fetch of the checkout is all it does).
 #   --force   propagate even when no fleet path changed.
@@ -430,6 +445,7 @@ LAST=$STATE_LAST
 # --- 2b. guard the checkout before any "nothing new" short-circuit -----------
 HUB=ok
 HUB_REASON=""
+HUB_PC=""; HUB_PC_PHASE=""; HUB_PC_SHA=""; HUB_SHOW=""; HUB_PC_NOTE=""; HUB_PENDING=""   # POST-COPY TIMEOUT (BH-7122)
 if [ "$MODE" != check ]; then
   # `branch --show-current` prints EMPTY with rc 0 on a detached HEAD, so the
   # `||` fallback never runs there; map empty to HEAD (the same datum
@@ -829,6 +845,33 @@ pool_first_fail() { # pool_first_fail <pool-P.out> — the first line that says 
 }
 # <<< pool-first-fail
 
+# >>> post-copy timeout (BH-7122) — see POST-COPY TIMEOUT in the header.
+# fp_hub_post_copy <new-sha> — rc 0 only when state/harness-sync-phase proves
+# the hub's code copy for <new-sha>: phase copied, step=<name> or done, and a
+# stamp sha that is <new-sha> or descends from it. Sets HUB_PC (the step label,
+# `step=` stripped), HUB_PC_PHASE and HUB_PC_SHA. No stamp, a garbage line, an
+# older sha or a sha this checkout does not know: rc 1 (fail closed).
+fp_hub_post_copy() {
+  local ph="" sha="" _ts=""
+  read -r ph sha _ts < "$H/state/harness-sync-phase" 2>/dev/null || return 1
+  [[ "$ph" =~ ^(copied|done|step=[a-z0-9-]+)$ ]] || return 1
+  [[ "$sha" =~ ^[0-9a-f]{40}$ ]] || return 1
+  if [ "$sha" != "$1" ]; then
+    git -C "$CHECKOUT" cat-file -e "$sha^{commit}" 2>/dev/null || return 1
+    git -C "$CHECKOUT" merge-base --is-ancestor "$1" "$sha" 2>/dev/null || return 1
+  fi
+  HUB_PC="${ph#step=}"; HUB_PC_PHASE="$ph"; HUB_PC_SHA="$sha"
+  return 0
+}
+# fp_hub_pending — the hub's pending deploy steps (state/harness-sync-pending/,
+# written by bin/lib/harness-sync-step.sh), one name per line.
+fp_hub_pending() {
+  local f
+  for f in "$H/state/harness-sync-pending"/*; do [ -f "$f" ] && printf '%s\n' "${f##*/}"; done
+  return 0
+}
+# <<< post-copy timeout
+
 # a. the hub, first and alone (see ORDER in the header).
 if [ "$HUB" = ok ] && ! timeout 120 git -C "$CHECKOUT" pull --ff-only -q origin main >"$WORK/hub.out" 2>&1; then
   HUB=fail
@@ -840,11 +883,25 @@ if [ "$HUB" = ok ] && ! timeout 120 git -C "$CHECKOUT" pull --ff-only -q origin 
   echo "$(STAMP) hub: git pull --ff-only FAILED ($HUB_REASON)" >> "$LOG"
 elif [ "$HUB" = ok ]; then
   SYNC_RC=0
-  HARNESS="$H" timeout 300 "$H/bin/harness-sync.sh" >>"$WORK/hub.out" 2>&1 || SYNC_RC=$?
+  HUB_SYNC_TO="${HUB_SYNC_TIMEOUT_S:-300}"
+  case "$HUB_SYNC_TO" in
+    0|*[!0-9]*) echo "$(STAMP) HUB_SYNC_TIMEOUT_S=${HUB_SYNC_TO:0:40} is not a number of seconds — using 300" >> "$LOG"; HUB_SYNC_TO=300 ;;
+  esac
+  HARNESS="$H" timeout "$HUB_SYNC_TO" "$H/bin/harness-sync.sh" >>"$WORK/hub.out" 2>&1 || SYNC_RC=$?
   # harness-sync's exit codes are a classification, not noise. 30 = diverged or
   # locally dirty, which it REFUSES to force-reset: a human owns that reconcile,
-  # so it is a FAIL and never a retry. 20 = unknown, also a fail.
-  [ "$SYNC_RC" = 0 ] || { HUB="fail(harness-sync rc=$SYNC_RC)"; HUB_REASON="harness-sync rc=$SYNC_RC"; echo "$(STAMP) hub: harness-sync rc=$SYNC_RC" >> "$LOG"; }
+  # so it is a FAIL and never a retry. 20 = unknown, also a fail. 124 = our
+  # timeout: ok when the phase stamp proves the code copy for NEW (BH-7122).
+  if [ "$SYNC_RC" = 124 ] && fp_hub_post_copy "$NEW"; then
+    HUB_SHOW="ok(post-copy timeout: $HUB_PC)"
+    echo "$(STAMP) hub: harness-sync rc=124 after the code copy (phase $HUB_PC_PHASE ${HUB_PC_SHA:0:7}), step $HUB_PC — counted ok" >> "$LOG"
+  elif [ "$SYNC_RC" != 0 ]; then
+    HUB="fail(harness-sync rc=$SYNC_RC)"; HUB_REASON="harness-sync rc=$SYNC_RC"; echo "$(STAMP) hub: harness-sync rc=$SYNC_RC" >> "$LOG"
+  fi
+fi
+HUB_PENDING=$(fp_hub_pending)
+if [ -n "$HUB_PC" ]; then
+  HUB_PC_NOTE=" The hub sync timed out after the code copy, in step $HUB_PC; live bin/ is at ${HUB_PC_SHA:0:7}. Pending deploy steps: $(printf '%s' "${HUB_PENDING:-none}" | tr '\n' ' ' | sed 's/ /, /g'). They re-run on the next harness-sync (next fleet-path merge or 05:17Z update-runners)."
 fi
 
 # b. boxes, in parallel. ssh -n inside the loop: without it the first ssh eats
@@ -972,8 +1029,8 @@ exec 5>"$STATE_LOCK"
 flock -w 30 5 || echo "$(STAMP) state lock busy for 30s — writing the sync record anyway" >> "$LOG"
 jq -n --arg s "$NEW" --arg a "$STARTED" --arg b "$(STAMP)" --arg hub "$HUB" --arg cron "$CRON" --arg hub_reason "$HUB_REASON" \
       --argjson boxes "$BOXES_JSON" --argjson pools "$DEFER_JSON" --argjson paths "$PATHS_JSON" \
-      --argjson drain "$DRAIN_JSON" --arg bake "$BAKE" \
-  '{last_sha:$s,started_at:$a,finished_at:$b,hub:$hub,hub_reason:$hub_reason,cron:$cron,drain:$drain,boxes:$boxes,pools:$pools,changed_paths:$paths,bake:$bake}' \
+      --argjson drain "$DRAIN_JSON" --arg bake "$BAKE" --arg hub_pc "$HUB_PC" --arg hub_pending "$HUB_PENDING" \
+  '{last_sha:$s,started_at:$a,finished_at:$b,hub:$hub,hub_reason:$hub_reason,cron:$cron,drain:$drain,boxes:$boxes,pools:$pools,changed_paths:$paths,bake:$bake,hub_post_copy:$hub_pc,hub_pending:($hub_pending|split("\n")|map(select(length>0)))}' \
   > "$STATE.tmp" && mv "$STATE.tmp" "$STATE"
 exec 5>&-
 
@@ -982,7 +1039,7 @@ exec 5>&-
 exec 9>&-
 POOL_N_PENDING=$(printf '%s\n' $POOLS | grep -c . || true)
 if [ "$BAKE" = pending ] && [ "$POOL_N_PENDING" -gt 0 ]; then
-  echo "$(STAMP) ${LAST:0:7}..${NEW:0:7} hub=$HUB boxes=$BOX_OK/$BOX_N images=pending($POOL_N_PENDING) cron=$CRON paths=$(printf '%s' "$MATCHED" | tr '\n' ',' | head -c 200)" >> "$LOG"
+  echo "$(STAMP) ${LAST:0:7}..${NEW:0:7} hub=${HUB_SHOW:-$HUB} boxes=$BOX_OK/$BOX_N images=pending($POOL_N_PENDING) cron=$CRON paths=$(printf '%s' "$MATCHED" | tr '\n' ',' | head -c 200)" >> "$LOG"
 fi
 
 # c. pool images, in two lanes. fly-image-build.sh needs no serialization for
@@ -1317,7 +1374,7 @@ BUSY_NOTE=""
 [ "$BUSY_N" -gt 0 ] && BUSY_NOTE=" ($BUSY_N busy)"
 IMAGES="$POOL_OK/$POOL_N$DEB_NOTE$BUSY_NOTE"
 [ "$BAKE" = deferred ] && IMAGES="deferred($DEFER_N)"
-echo "$(STAMP) ${LAST:0:7}..${NEW:0:7} hub=$HUB boxes=$BOX_OK/$BOX_N images=$IMAGES$NOIMG_NOTE$FAIL_NOTE cron=$CRON paths=$(printf '%s' "$MATCHED" | tr '\n' ',' | head -c 200)" >> "$LOG"
+echo "$(STAMP) ${LAST:0:7}..${NEW:0:7} hub=${HUB_SHOW:-$HUB} boxes=$BOX_OK/$BOX_N images=$IMAGES$NOIMG_NOTE$FAIL_NOTE cron=$CRON paths=$(printf '%s' "$MATCHED" | tr '\n' ',' | head -c 200)" >> "$LOG"
 
 # --- 6. exactly one alert, and never a silent partial success ----------------
 DEB_ALERT=""
@@ -1364,13 +1421,15 @@ OLD_LIST="$OLD_LIST$BOX_BAD$PAGE_POOLS"
 # it goes to the warn digest, once, so a hang that recurs every night is seen.
 OK_SEV=(--log-only)
 [ -n "$COLD_NOTE" ] && OK_SEV=(--severity warn)
+# BH-7122: a hub sync cut after its code copy is the warn beat, never a page.
+[ -n "$HUB_PC" ] && OK_SEV=(--severity warn)
 # A success is a NOTICE (BH-2337): --log-only keeps its ALERTS.log line and
 # opens no alert row. Anything short of N/N boxes, or any FAILED part, stays an
 # alert — the explicit count check is the belt for a box that neither synced
 # nor recorded a failure. BH-3680: a pool whose retry is queued is not a page.
 if [ -n "$CRIT" ]; then
   "$H/bin/lane-alert.sh" --critical fleet-propagate \
-    "propagating ${NEW:0:7} to the fleet FAILED in part — hub=$HUB${HUB_REASON:+ ($HUB_REASON)}, $BOX_OK/$BOX_N boxes synced${BOX_BAD:+, failed:$BOX_BAD}, $POOL_OK/$POOL_N pool images rebaked$DEB_ALERT${PAGE_LABEL:+, failed:$PAGE_LABEL}${RETRY_LABEL:+, retrying:$RETRY_LABEL}$KNOWN_NOTE, crontab $CRON$FAIL_DETAIL$COLD_ALERT$OK_RETRY.${OLD_LIST:+ Still running the OLD harness:$OLD_LIST.}${RETRY_LABEL:+ Retrying (still on the previous image until the retry lands):$RETRY_LABEL.} See $LOG and $STATE."
+    "propagating ${NEW:0:7} to the fleet FAILED in part — hub=$HUB${HUB_REASON:+ ($HUB_REASON)}, $BOX_OK/$BOX_N boxes synced${BOX_BAD:+, failed:$BOX_BAD}, $POOL_OK/$POOL_N pool images rebaked$DEB_ALERT${PAGE_LABEL:+, failed:$PAGE_LABEL}${RETRY_LABEL:+, retrying:$RETRY_LABEL}$KNOWN_NOTE, crontab $CRON$FAIL_DETAIL$COLD_ALERT$OK_RETRY.${OLD_LIST:+ Still running the OLD harness:$OLD_LIST.}${RETRY_LABEL:+ Retrying (still on the previous image until the retry lands):$RETRY_LABEL.}$HUB_PC_NOTE See $LOG and $STATE."
 elif [ -n "$RETRY_POOLS" ]; then
   # The warn digest: once per run, and deliberately NOT the page's prefix, which
   # the fleet-propagate-partial alert-verify row matches.
@@ -1380,14 +1439,14 @@ elif [ -n "$RETRY_POOLS" ]; then
     W_HEAD="propagated ${NEW:0:7} with pool bakes retrying: $BOX_OK/$BOX_N boxes synced, $POOL_OK/$POOL_N pool images rebaked$DEB_ALERT, retrying:$RETRY_LABEL$KNOWN_NOTE, hub ok, crontab $CRON"
   fi
   "$H/bin/lane-alert.sh" --severity warn fleet-propagate \
-    "$W_HEAD$FAIL_DETAIL$COLD_ALERT$OK_RETRY. The retrying pools keep their previous image until the retry lands; this pages only if the retries run out."
+    "$W_HEAD$FAIL_DETAIL$COLD_ALERT$OK_RETRY. The retrying pools keep their previous image until the retry lands; this pages only if the retries run out.$HUB_PC_NOTE"
 elif [ "$DRAIN_MODE" = 1 ]; then
   # 0/0 boxes on a drain is the design, not a failure: the boxes already hold
   # this sha and only the pools debounced earlier are baked here.
   "$H/bin/lane-alert.sh" "${OK_SEV[@]}" fleet-propagate \
-    "drained the pool images debounced earlier at ${NEW:0:7}: $POOL_OK/$POOL_N rebaked ($DRAIN)$DEB_ALERT$KNOWN_NOTE, hub ok. No box needed syncing$COLD_ALERT$OK_RETRY."
+    "drained the pool images debounced earlier at ${NEW:0:7}: $POOL_OK/$POOL_N rebaked ($DRAIN)$DEB_ALERT$KNOWN_NOTE, hub ok. No box needed syncing$COLD_ALERT$OK_RETRY.$HUB_PC_NOTE"
 else
   "$H/bin/lane-alert.sh" "${OK_SEV[@]}" fleet-propagate \
-    "propagated ${NEW:0:7} to the fleet: $BOX_OK/$BOX_N boxes synced, $POOL_OK/$POOL_N pool images rebaked$NOIMG_NOTE$DEB_ALERT$KNOWN_NOTE, hub ok, crontab $CRON$COLD_ALERT$OK_RETRY."
+    "propagated ${NEW:0:7} to the fleet: $BOX_OK/$BOX_N boxes synced, $POOL_OK/$POOL_N pool images rebaked$NOIMG_NOTE$DEB_ALERT$KNOWN_NOTE, hub ok, crontab $CRON$COLD_ALERT$OK_RETRY.$HUB_PC_NOTE"
 fi
 exit 0

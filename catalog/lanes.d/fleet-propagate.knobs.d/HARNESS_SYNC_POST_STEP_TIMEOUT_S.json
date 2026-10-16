@@ -1,0 +1,11 @@
+{
+  "env": "HARNESS_SYNC_POST_STEP_TIMEOUT_S",
+  "type": "int",
+  "default": 240,
+  "min": 30,
+  "max": 3600,
+  "zero_means": null,
+  "read_in": "bin/lib/harness-sync-step.sh",
+  "note": "BH-7122: seconds one FOREGROUND post-copy step of bin/harness-sync.sh may run (catalog-sync, agent-rules, skills, pool-halt, worker-phase, cost-caps, codegraph); a cut step writes `step=<name> rc=124` to update-runners.log and the next steps still run. Read by bin/lib/harness-sync-step.sh (sourced by bin/harness-sync.sh) as ${HARNESS_SYNC_POST_STEP_TIMEOUT_S:-} (then this same settings row read directly, once per run, for callers that are not this lane), falling back to 240. Empty is 240; 0 or a non-numeric value logs one line and uses 240. The ticket named lane.harness-sync.post_step_timeout_s, but no lane harness-sync exists, so the knob lives on fleet-propagate with the other harness-sync knobs. The detached steps (model-prices, docs-sync, console-pages) keep their own timeouts.",
+  "settable": true
+}

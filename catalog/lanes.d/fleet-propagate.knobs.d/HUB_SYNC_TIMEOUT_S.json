@@ -1,0 +1,11 @@
+{
+  "env": "HUB_SYNC_TIMEOUT_S",
+  "type": "int",
+  "default": 300,
+  "min": 60,
+  "max": 3600,
+  "zero_means": null,
+  "read_in": "bin/fleet-propagate.sh",
+  "note": "BH-7122: seconds the hub step of bin/fleet-propagate.sh gives the whole bin/harness-sync.sh (`timeout $HUB_SYNC_TIMEOUT_S`). Read as ${HUB_SYNC_TIMEOUT_S:-300}; 0 or a non-numeric value logs one line and uses 300. An rc 124 after the code copy (state/harness-sync-phase proves it for the new sha) is hub=ok(post-copy timeout: <step>) and a warn beat, not a CRITICAL page.",
+  "settable": true
+}

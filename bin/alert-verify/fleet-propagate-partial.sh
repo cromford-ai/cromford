@@ -6,9 +6,10 @@
 # bin/fleet-propagate.sh's `propagating <sha7> to the fleet FAILED in part` page.
 # Reads ONLY the last 20 KB of logs/fleet-propagate.log. Cleared when the LAST
 # run line there for that sha (`<old>..<sha7> hub=… boxes=K/K …`) is clean:
-# hub=ok, K/K boxes with K > 0, no failed= and no failed crontab. That run came
-# after the partial one or is the only one left in the window. A partial last
-# line, or no line for the sha at all, still reproduces. No log is doubt.
+# hub=ok (or hub=ok(post-copy timeout: <step>), BH-7122), K/K boxes with
+# K > 0, no failed= and no failed crontab. That run came after the partial one
+# or is the only one left in the window. A partial last line, or no line for
+# the sha at all, still reproduces. No log is doubt.
 set -uo pipefail
 HARNESS="${HARNESS:-/root/harness}"
 LIB="$HARNESS/bin/lib"
@@ -20,7 +21,8 @@ SHA=${SHA:0:7}
 LOG="$AV_HARNESS/logs/fleet-propagate.log"
 [ -r "$LOG" ] || exit 75
 LAST=$(tail -c 20000 "$LOG" | { grep -F -- "..$SHA " || true; } | tail -n 1) || exit 75
-[[ "$LAST" =~ \ hub=ok\ boxes=([0-9]+)/([0-9]+)\  ]] || exit 1
-[ "${BASH_REMATCH[1]}" = "${BASH_REMATCH[2]}" ] && [ "${BASH_REMATCH[1]}" -gt 0 ] || exit 1
+RE=' hub=ok(\(post-copy timeout: [a-z0-9=-]+\))? boxes=([0-9]+)/([0-9]+) '
+[[ "$LAST" =~ $RE ]] || exit 1
+[ "${BASH_REMATCH[2]}" = "${BASH_REMATCH[3]}" ] && [ "${BASH_REMATCH[2]}" -gt 0 ] || exit 1
 grep -qE ' failed=| cron=(render-failed|install-failed|refused-)' <<<"$LAST" && exit 1
 echo "fleet-propagate-partial: ${LAST}"

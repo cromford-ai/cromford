@@ -31,6 +31,10 @@
 #                state/harness-sync-last-refused with `pull-failed`)
 #            30  REFUSED — the checkout is on a side branch, diverged, or
 #                locally modified; stamps the refusal and writes an ALERTS line
+#           After the code copy it writes state/harness-sync-phase (`copied`,
+#           `step=<name>`, `done`), and each step after the copy runs under its
+#           own timeout with one `step=` line in update-runners.log; a cut step
+#           never changes the exit code (BH-7122, bin/lib/harness-sync-step.sh).
 #
 # rsync writes temp-file+rename, so a running pipeline keeps its open inode and
 # never sees a half-written script (the "never edit bin/*.sh in place" rule).
@@ -244,6 +248,16 @@ fi
 # relative to itself, so the package must be live before its reader (BH-5561).
 [ -d "$CHECKOUT/agent-core" ] && rsync -a --delete "$CHECKOUT/agent-core/" "$HARNESS/agent-core/" 2>>"$LOG"
 rsync -a "$CHECKOUT/bin/" "$HARNESS/bin/" 2>>"$LOG"
+# >>> post-copy steps lib (BH-7122)
+# The phase stamp, the per-step timeout and the pending deploy markers
+# (bin/lib/harness-sync-step.sh has the formats). Sourced right after bin/ is
+# live, so the sync that brings the lib also uses it. Without the lib each step
+# runs exactly as it did before: no stamp, no step timeout, no marker.
+# shellcheck source=bin/lib/harness-sync-step.sh
+. "$HARNESS/bin/lib/harness-sync-step.sh" 2>/dev/null \
+  || . "$(dirname "${BASH_SOURCE[0]}")/lib/harness-sync-step.sh" 2>/dev/null \
+  || { hs_step() { shift 2; "$@"; }; hs_phase() { :; }; hs_pending_queue() { :; }; }
+# <<< post-copy steps lib
 rsync -a "$CHECKOUT/prompts/" "$HARNESS/prompts/" 2>>"$LOG"
 # fly/ too: bin/fly-image-build.sh bakes fly/Dockerfile + fly/entrypoint.sh from
 # the LIVE install (its own ../fly), so a fly/ change that only lands in the
@@ -284,6 +298,21 @@ rsync -a "$CHECKOUT/fly/" "$HARNESS/fly/" 2>>"$LOG"
 [ -f "$CHECKOUT/vercel.conf" ] && { cp "$CHECKOUT/vercel.conf" "$HARNESS/vercel.conf.tmp" && mv "$HARNESS/vercel.conf.tmp" "$HARNESS/vercel.conf"; }
 chmod +x "$HARNESS"/bin/*.sh 2>/dev/null
 chmod +x "$HARNESS"/checks/*/check.sh "$HARNESS"/guardrails/*/check.sh 2>/dev/null
+# >>> the code copy is live (BH-7122)
+# Everything above is the copy: catalog/, agent-core/, bin/, prompts/, fly/,
+# checks/, guardrails/, config/, fleet.conf and vercel.conf. `copied` says so
+# for this sha, and fleet-propagate reads it after an outer kill: a kill from
+# here on is a post-copy timeout, not "OLD harness". Every step below runs
+# under hs_step (its own timeout, one step line) or the detached runner
+# bin/harness-sync-step.sh. Each deploy step this run will launch gets its
+# pending marker now, on the same conditions as its launch below.
+HS_SHA=$(git -C "$CHECKOUT" rev-parse HEAD 2>/dev/null)
+hs_phase copied
+[ -f "$HENV/cloudflare.env" ] && [ -d "$CHECKOUT/worker" ] && hs_pending_queue worker-phase
+[ -x "$HARNESS/bin/harness-sync-step.sh" ] && [ -x "$HARNESS/bin/model-prices-deploy-sync.sh" ] && hs_pending_queue model-prices
+[ -f "$HENV/cloudflare.env" ] && [ -x "$HARNESS/bin/cost-caps-seed-sync.sh" ] && hs_pending_queue cost-caps
+[ -f "$HENV/cloudflare.env" ] && [ -x "$HARNESS/bin/harness-sync-step.sh" ] && [ -x "$HARNESS/bin/console-pages-deploy.sh" ] && hs_pending_queue console-pages
+# <<< the code copy is live
 # The budget catalog is DB-served too (db-jobs phase 2): push the manifest into
 # harness-jobs whenever its tree sha moves — sha-gated like the worker deploys
 # below, so a routine deploy is not a PUT per tick. Fail-open: a missed sync
@@ -291,6 +320,8 @@ chmod +x "$HARNESS"/checks/*/check.sh "$HARNESS"/guardrails/*/check.sh 2>/dev/nu
 # it never blocks or delays the deploy itself.
 # The manifest's sources are catalog/context-budgets.d/ since BH-6487; the old
 # path stays in the pathspec for a checkout from before the split.
+hs_catalog_step() {
+local CSHA CSTATE CPRC rc=0
 CSHA=$(git -C "$CHECKOUT" rev-list -1 HEAD -- catalog/context-budgets.d catalog/context-budgets.json 2>/dev/null)
 CSTATE="$HARNESS/state/catalog-synced"
 # A STAMP EQUAL TO THE SHA SAYS "PUSHED ONCE", NOT "STILL THERE" (BH-1042, audit
@@ -316,28 +347,45 @@ if [ -n "$CSHA" ] && [ "$(cat "$CSTATE" 2>/dev/null)" != "$CSHA" ] \
   if "$HARNESS/bin/jobs-client.sh" catalog-sync "$CHECKOUT/catalog/context-budgets.json" >/dev/null 2>&1; then
     echo "$CSHA" > "$CSTATE"
     echo "$(STAMP) budget catalog synced to harness-jobs at ${CSHA:0:7}" >> "$LOG"
+  else
+    rc=1
   fi
 fi
-# Machine rules are repo-managed; re-render them from the checkout we just moved.
-[ -x "$HARNESS/bin/sync-agent-rules.sh" ] && {
-  "$HARNESS/bin/sync-agent-rules.sh" apply >/dev/null 2>&1
-  "$HARNESS/bin/sync-agent-rules.sh" install >/dev/null 2>&1
+return "$rc"
 }
+hs_step catalog-sync plain hs_catalog_step
+# Machine rules are repo-managed; re-render them from the checkout we just moved.
+hs_agent_rules_step() {
+  local rc=0
+  "$HARNESS/bin/sync-agent-rules.sh" apply >/dev/null 2>&1 || rc=$?
+  "$HARNESS/bin/sync-agent-rules.sh" install >/dev/null 2>&1 || rc=$?
+  return "$rc"
+}
+[ -x "$HARNESS/bin/sync-agent-rules.sh" ] && hs_step agent-rules plain hs_agent_rules_step
 # Skills are repo-managed too (SDLC item 6): the repeated procedures a session
 # loads ON DEMAND live in skills/ and deploy to ~/.claude/skills the same way
 # rules do. Additive and non-fatal: a box without the script, or a skills/ that
-# fails to copy, keeps every other part of the deploy.
-[ -x "$HARNESS/bin/sync-skills.sh" ] && "$HARNESS/bin/sync-skills.sh" >/dev/null 2>&1
+# fails to copy, keeps every other part of the deploy. The step's rc is the
+# main sync-skills run; the orchestrator line below stays exactly as written
+# (tests/archie-skill-replays.bh-4064-test.sh R13 runs it alone).
+hs_skills_step() {
+local rc=0
+if [ -x "$HARNESS/bin/sync-skills.sh" ]; then "$HARNESS/bin/sync-skills.sh" >/dev/null 2>&1 || rc=$?; fi
 # >>> orchestrator skills (BH-4064)
 # Archie's skills (orchestrator/skills/) go to the hub orchestrator's project
 # skills, which its turns discover because bin/orchestrate.sh cd's into
 # /root/orchestrator. Only where that dir exists (the hub); replays stay here.
 [ -x "$HARNESS/bin/sync-skills.sh" ] && [ -d "${ORCHESTRATOR_DIR:-/root/orchestrator}" ] && HARNESS_CHECKOUT="$CHECKOUT" HARNESS_LOG_DIR="$HARNESS/logs" SKILLS_SUBDIR=orchestrator/skills CLAUDE_SKILLS_DIR="${ORCHESTRATOR_DIR:-/root/orchestrator}/.claude/skills" "$HARNESS/bin/sync-skills.sh" >/dev/null 2>&1
 # <<< orchestrator skills
+return "$rc"
+}
+hs_step skills plain hs_skills_step
 # New code voids pool-halt verdicts — they were issued against the old harness.
 # Exception: a halt with a companion .keep file survives deploys — an operator
 # judged that spawns must stay down until a named condition is verified
 # (2026-08-25 TK-1174/1175: machines booted with empty /root/.claude/CLAUDE.md).
+hs_pool_halt_step() {
+local _hf _hp _hrc _hb
 for _hf in "$HARNESS"/flags/pool-halt-*; do
   [ -e "$_hf" ] || continue
   case "$_hf" in *.keep) continue;; esac
@@ -361,6 +409,9 @@ for _hf in "$HARNESS"/flags/pool-halt-*; do
     esac
   fi
 done
+return 0
+}
+hs_step pool-halt plain hs_pool_halt_step
 # --- Cloudflare workers are REPO-MANAGED too (watchdog stale-deploy, 2026-08-26)
 # A worker/ commit without a `wrangler deploy` leaves the LIVE worker on old
 # code — the watchdog paged for 38h about a box the repo had already removed
@@ -870,7 +921,10 @@ deploy_workers() {
 # from a `git archive` snapshot of it (snapshot_tree, #1548 review C1).
 flock -u 8 2>/dev/null; exec 8>&-
 WPENDING="$HARNESS/state/harness-sync-workers-pending"
-if [ -f "$CFENV" ] && [ -d "$CHECKOUT/worker" ]; then
+# hs_worker_phase — the worker phase as one post-copy deploy step (BH-7122):
+# hs_step runs it under the post-step timeout, and a cut or failed phase keeps
+# state/harness-sync-pending/worker-phase. The body is unchanged.
+hs_worker_phase() {
   # The schema splitter, sourced HERE and not at the top of the file: the rsync
   # above has already put this checkout's bin/lib into $HARNESS, so the run that
   # FIRST brings this library onto a box also applies with it, instead of
@@ -889,6 +943,14 @@ if [ -f "$CFENV" ] && [ -d "$CHECKOUT/worker" ]; then
   exec 7>&-
   [ -e "$WPENDING" ] \
     && echo "$(STAMP) harness sync: worker phase busy in another harness-sync (a D1 schema apply) — bin/ prompts/ catalog/ are live, the workers of this run are left to it via state/harness-sync-workers-pending" >> "$LOG"
+  # A worker step that is still failing has its state/worker-<stage>-failing-<w>
+  # (deploy_fail_note). Then the phase is not done, and its marker stays.
+  local _wf
+  for _wf in "$HARNESS"/state/worker-*-failing-*; do [ -e "$_wf" ] && return 1; done
+  return 0
+}
+if [ -f "$CFENV" ] && [ -d "$CHECKOUT/worker" ]; then
+  hs_step worker-phase deploy hs_worker_phase
 fi
 # <<< worker phase
 # Last, after every rsync: "stamped success without deploying" must be
@@ -913,9 +975,13 @@ stamp_state harness-sync-last-success
 # CALLER's are not, and fleet-propagate runs this under its flock on fd 9 —
 # an inherited fd 9 would keep that lock held for the hook's whole lifetime
 # and every fleet-propagate run meanwhile would `exit 0` silently.
+# BH-7122: bin/harness-sync-step.sh, when it is there, goes in front of the
+# timeout: it writes the step line, keeps the pending marker on a failure and
+# does not launch while the hook's own lock is held (rc=busy).
 if [ -x "$HARNESS/bin/model-prices-deploy-sync.sh" ]; then
   _mp_pre=; command -v setsid >/dev/null 2>&1 && _mp_pre=setsid
-  ( HARNESS="$HARNESS" HARNESS_CHECKOUT="$CHECKOUT" $_mp_pre timeout 600 \
+  _mp_run=(); [ -x "$HARNESS/bin/harness-sync-step.sh" ] && _mp_run=("$HARNESS/bin/harness-sync-step.sh" --step model-prices --kind deploy --lock "$HARNESS/locks/model-prices-deploy-sync.lock" --sha "${HS_SHA:-}" --)
+  ( HARNESS="$HARNESS" HARNESS_CHECKOUT="$CHECKOUT" $_mp_pre ${_mp_run[@]+"${_mp_run[@]}"} timeout 600 \
       "$HARNESS/bin/model-prices-deploy-sync.sh" </dev/null \
       >>"$HARNESS/logs/model-prices-deploy-sync.log" 2>&1 9>&- 8>&- 7>&- 6>&- & ) || true
 fi
@@ -937,7 +1003,8 @@ fi
 if [ -x "$HARNESS/bin/docs-sync.sh" ]; then
   _ds_pre=; command -v setsid >/dev/null 2>&1 && _ds_pre=setsid
   _ds_to="${DOCS_SYNC_TIMEOUT_S:-1800}"; case "$_ds_to" in ''|0|*[!0-9]*) _ds_to=1800 ;; esac
-  ( HARNESS="$HARNESS" HARNESS_CHECKOUT="$CHECKOUT" $_ds_pre timeout -k 30 "$_ds_to" \
+  _ds_run=(); [ -x "$HARNESS/bin/harness-sync-step.sh" ] && _ds_run=("$HARNESS/bin/harness-sync-step.sh" --step docs-sync --kind plain --lock "$HARNESS/locks/docs-sync.lock" --sha "${HS_SHA:-}" --)
+  ( HARNESS="$HARNESS" HARNESS_CHECKOUT="$CHECKOUT" $_ds_pre ${_ds_run[@]+"${_ds_run[@]}"} timeout -k 30 "$_ds_to" \
       "$HARNESS/bin/docs-sync.sh" </dev/null \
       >>"$HARNESS/logs/docs-sync.log" 2>&1 9>&- 8>&- 7>&- 6>&- & ) || true
 fi
@@ -950,7 +1017,8 @@ fi
 # bytes, so a sync that touched neither sends nothing; after the stamp, capped
 # at 60 s, never vetoes a deploy. Failure is one ALERTS line per catalog content.
 if [ -f "$CFENV" ] && [ -x "$HARNESS/bin/cost-caps-seed-sync.sh" ]; then
-  HARNESS="$HARNESS" "$HARNESS/bin/cost-caps-seed-sync.sh" </dev/null >/dev/null 2>&1 9>&- 8>&- 7>&- 6>&- || true
+  hs_cost_caps_step() { HARNESS="$HARNESS" "$HARNESS/bin/cost-caps-seed-sync.sh" </dev/null >/dev/null 2>&1 9>&- 8>&- 7>&- 6>&-; }
+  hs_step cost-caps deploy hs_cost_caps_step || true
 fi
 # <<< cost caps seed on deploy
 # >>> console pages deploy (BH-3554)
@@ -964,7 +1032,8 @@ fi
 if [ -f "$CFENV" ] && [ -x "$HARNESS/bin/console-pages-deploy.sh" ]; then
   _cp_pre=; command -v setsid >/dev/null 2>&1 && _cp_pre=setsid
   _cp_to="${CONSOLE_PAGES_DEPLOY_TIMEOUT_S:-1500}"; case "$_cp_to" in ''|*[!0-9]*) _cp_to=1500 ;; esac
-  ( HARNESS="$HARNESS" HARNESS_CHECKOUT="$CHECKOUT" HARNESS_ENV_DIR="$HENV" $_cp_pre timeout -k 30 "$_cp_to" \
+  _cp_run=(); [ -x "$HARNESS/bin/harness-sync-step.sh" ] && _cp_run=("$HARNESS/bin/harness-sync-step.sh" --step console-pages --kind deploy --lock "$HARNESS/locks/console-pages-deploy.lock" --sha "${HS_SHA:-}" --)
+  ( HARNESS="$HARNESS" HARNESS_CHECKOUT="$CHECKOUT" HARNESS_ENV_DIR="$HENV" $_cp_pre ${_cp_run[@]+"${_cp_run[@]}"} timeout -k 30 "$_cp_to" \
       "$HARNESS/bin/console-pages-deploy.sh" </dev/null \
       >>"$HARNESS/logs/console-pages-deploy.log" 2>&1 9>&- 8>&- 7>&- 6>&- & ) || true
 fi
@@ -973,9 +1042,11 @@ fi
 # After the stamp and outside the deploy lock, so a slow or broken index can
 # never delay, veto or fail a deploy. Silent: stdout stays one status line. The
 # availability note lands in state/codegraph-harness-checkout.
+hs_codegraph_step() { HARNESS="$HARNESS" HARNESS_CHECKOUT="$CHECKOUT" "$HARNESS/bin/codegraph-harness-index.sh" >/dev/null 2>&1; }
 [ -x "$HARNESS/bin/codegraph-harness-index.sh" ] \
-  && HARNESS="$HARNESS" HARNESS_CHECKOUT="$CHECKOUT" "$HARNESS/bin/codegraph-harness-index.sh" >/dev/null 2>&1 || true
+  && hs_step codegraph plain hs_codegraph_step || true
 # <<< harness checkout code graph
+hs_phase done
 if [ "$BEFORE" = "$AFTER" ]; then
   echo "deployed $AFTER (checkout already current, live files reconciled)"
 else
