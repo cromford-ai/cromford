@@ -30,16 +30,27 @@
 #     sr_plan on the worktree's HEAD, then `git mv` each pair, rewrite the old
 #     basenames to the new ones (fixed strings) in every tracked text file
 #     `git grep` finds outside worker/*/schema.d/ (a fragment's bytes never
-#     change), and commit ONE commit "restamp schema fragments (no SQL change)"
-#     with a `Restamped: <old> -> <new>` body line per pair. Prints the new sha.
+#     change), rewrite each .harness/specs/<KEY>/plan.md the PR added or changed
+#     since the merge-base with the rewrite-plan rule (_sr_py_replace: a 12-digit
+#     or `<placeholder>` stamp before the fragment's suffix in its dir becomes
+#     the new name, BH-7120), and commit ONE commit "restamp schema fragments
+#     (no SQL change)" with a `Restamped: <old> -> <new>` body line per pair.
+#     Prints the new sha.
 #     rc 0 committed | 1 nothing to do | 2 failed (the caller drops the worktree).
 #   sr_commit_only <git-dir> <commit>
 #     rc 0 only when <commit> has one parent and its tree diff is, with -M100%:
 #     at least one R100 rename inside one worker/<w>/schema.d/ between two stamp
 #     names with the same `-<key>-<name>.sql` suffix and the same mode, plus M
 #     lines outside schema.d whose parent blob, with every old->new basename of
-#     those renames replaced, is byte-equal to the child blob. Anything else
+#     those renames replaced, is byte-equal to the child blob; for an M line at
+#     .harness/specs/<KEY>/plan.md the replacement is equal-plan (the basenames
+#     plus sr_apply's placeholder rule, BH-7120). Anything else
 #     (A, D, T, C, R<100, a mode change, a binary, a git failure) is rc 1.
+#   sr_text_rewrite <plan-lines> <file>
+#     rewrite every old basename of <plan-lines> (sr_plan's `old<TAB>new`) to
+#     its new one in <file>, in place (the merge conductor's PR body copy,
+#     bin/lib/mc-prequeue.d/restamp.sh). rc 0 changed | 1 unchanged | 2 no plan,
+#     no writable file, or the rewrite failed.
 #   restamp_same <git-dir> <main-ref> <reviewed> <head>
 #     prints `restamp`, rc 0, when <reviewed> is an ancestor of <head> and every
 #     commit in `head ^reviewed ^main` is a clean main merge (_ps_clean_merge,
@@ -55,6 +66,7 @@
 # The rules pack's stamp form (rp_schema_fragment_name), the same regex.
 SR_STAMP_RE='^(20[2-9][0-9])(0[1-9]|1[0-2])(0[1-9]|[12][0-9]|3[01])([01][0-9]|2[0-3])[0-5][0-9]-[a-z]+-[0-9]+-[a-z0-9][a-z0-9_-]*\.sql$'
 SR_DIR_RE='^worker/[^/]+/schema\.d$'
+SR_PLAN_RE='^\.harness/specs/[^/]+/plan\.md$'
 SR_SUBJECT='restamp schema fragments (no SQL change)'
 _sr_dir="${BASH_SOURCE[0]%/*}"
 
@@ -138,46 +150,74 @@ sr_plan() {
 #   mode rewrite: replace every old basename with its new one in each file, one
 #   pass, fixed strings. mode equal: rc 0 when replace(<file1>) == <file2> and
 #   neither has a NUL byte. The pairs file is `old<TAB>new` basenames.
+#   Modes rewrite-plan / equal-plan (a .harness/specs/<KEY>/plan.md, BH-7120):
+#   the pairs file is `<dir><TAB>old<TAB>new`, and after the basename rule
+#   `<dir>/` + STAMPISH + `<suffix>` becomes `<dir>/<new>`, where <suffix> is
+#   the `-<key>-<name>.sql` tail of old and STAMPISH is exactly 12 digits or
+#   one angle-bracket placeholder with no `/`, `<`, `>` or space inside
+#   (`<UTC-minute>`, `<stamp>`). A suffix two pairs share gets no such rule.
 _sr_py_replace() {
   python3 -I -c '
 import re, sys
 mode, pairs, files = sys.argv[1], sys.argv[2], sys.argv[3:]
-m = {}
+plan = mode.endswith("-plan")
+m, tails = {}, []
 for ln in open(pairs, encoding="utf-8"):
     ln = ln.rstrip("\n")
     if ln:
-        o, n = ln.split("\t")
+        f = ln.split("\t")
+        if plan:
+            d, o, n = f
+            tails.append((d.encode(), o[12:].encode(), n.encode()))
+        else:
+            o, n = f
         m[o.encode()] = n.encode()
 if not m:
     sys.exit(1)
 rx = re.compile(b"|".join(re.escape(k) for k in sorted(m, key=len, reverse=True)))
-sub = lambda b: rx.sub(lambda x: m[x.group(0)], b)
-if mode == "rewrite":
+seen = [t[0] + b"/" + t[1] for t in tails]
+pl = [(re.compile(rb"(?<![A-Za-z0-9_./-])" + re.escape(d + b"/") + rb"(?:[0-9]{12}|<[^<>\s/]+>)" + re.escape(sx) + rb"(?![A-Za-z0-9_-])"), d + b"/" + n)
+      for d, sx, n in tails if seen.count(d + b"/" + sx) == 1]
+def sub(b):
+    b = rx.sub(lambda x: m[x.group(0)], b)
+    for prx, rep in pl:
+        b = prx.sub(lambda x: rep, b)
+    return b
+if mode in ("rewrite", "rewrite-plan"):
     for f in files:
         with open(f, "rb") as fh:
             b = fh.read()
+        if plan and b"\0" in b:
+            continue
         nb = sub(b)
         if nb != b:
             with open(f, "wb") as fh:
                 fh.write(nb)
     sys.exit(0)
+if mode not in ("equal", "equal-plan"):
+    sys.exit(2)
 a, b = (open(f, "rb").read() for f in files[:2])
 sys.exit(0 if b"\0" not in a and b"\0" not in b and sub(a) == b else 1)
 ' "$@"
 }
 
 sr_apply() {
-  local wt="${1:-}" main="${2:-}" plan rc=0 old new pf files f body="" old_head
+  local wt="${1:-}" main="${2:-}" plan rc=0 old new pf pf3 files f body="" old_head mb plans
   [ -n "$wt" ] && [ -n "$main" ] || return 2
   plan=$(sr_plan "$wt" "$main" HEAD) || rc=$?
   [ "$rc" = 0 ] || return 2
   [ -n "$plan" ] || return 1
   old_head=$(_sr_sha "$wt" HEAD) || return 2
+  mb=$(git -C "$wt" merge-base "$main" HEAD 2>/dev/null) || return 2
+  plans=$(git -C "$wt" diff --no-renames --name-only --diff-filter=AM "$mb" HEAD -- .harness/specs 2>/dev/null) || return 2
+  plans=$(grep -E "$SR_PLAN_RE" <<<"$plans" || true)
   pf=$(mktemp "${TMPDIR:-/tmp}/sr-pairs.XXXXXX") || return 2
+  pf3="$pf.dir"
   while IFS=$'\t' read -r old new; do
     [ -n "$old" ] || continue
-    git -C "$wt" mv -- "$old" "$new" >/dev/null 2>&1 || { _sr_say "git mv $old $new failed"; rm -f "$pf"; return 2; }
+    git -C "$wt" mv -- "$old" "$new" >/dev/null 2>&1 || { _sr_say "git mv $old $new failed"; rm -f "$pf" "$pf3"; return 2; }
     printf '%s\t%s\n' "${old##*/}" "${new##*/}" >> "$pf"
+    printf '%s\t%s\t%s\n' "${old%/*}" "${old##*/}" "${new##*/}" >> "$pf3"
     body+="Restamped: ${old##*/} -> ${new##*/}"$'\n'
   done <<<"$plan"
   files=$(cut -f1 "$pf" | while IFS= read -r old; do
@@ -186,10 +226,16 @@ sr_apply() {
   if [ -n "$files" ]; then
     local -a abs=()
     while IFS= read -r f; do abs+=("$wt/$f"); done <<<"$files"
-    _sr_py_replace rewrite "$pf" "${abs[@]}" || { _sr_say "the reference rewrite failed"; rm -f "$pf"; return 2; }
-    while IFS= read -r f; do git -C "$wt" add -- "$f" >/dev/null 2>&1 || { rm -f "$pf"; return 2; }; done <<<"$files"
+    _sr_py_replace rewrite "$pf" "${abs[@]}" || { _sr_say "the reference rewrite failed"; rm -f "$pf" "$pf3"; return 2; }
+    while IFS= read -r f; do git -C "$wt" add -- "$f" >/dev/null 2>&1 || { rm -f "$pf" "$pf3"; return 2; }; done <<<"$files"
   fi
-  rm -f "$pf"
+  # The PR's own plan.md may name the fragment by a placeholder (BH-7120).
+  while IFS= read -r f; do
+    [ -n "$f" ] && [ -f "$wt/$f" ] || continue
+    _sr_py_replace rewrite-plan "$pf3" "$wt/$f" || { _sr_say "the plan rewrite of $f failed"; rm -f "$pf" "$pf3"; return 2; }
+    git -C "$wt" add -- "$f" >/dev/null 2>&1 || { rm -f "$pf" "$pf3"; return 2; }
+  done <<<"$plans"
+  rm -f "$pf" "$pf3"
   git -C "$wt" -c "user.name=${MC_GIT_NAME:-${HARNESS_MERGE_GIT_NAME:-box}}" \
       -c "user.email=${MC_GIT_EMAIL:-${HARNESS_GIT_EMAIL:-box@users.noreply.github.com}}" \
       -c commit.gpgsign=false commit -q --no-verify -m "$SR_SUBJECT" -m "${body%$'\n'}" >/dev/null 2>&1 \
@@ -210,7 +256,7 @@ sr_commit_only() {
   td=$(mktemp -d "${TMPDIR:-/tmp}/sr-only.XXXXXX") || return 1
   raw="$td/raw"
   git -C "$g" diff-tree -r -z --raw -M100% --no-commit-id "$p1" "$c" > "$raw" 2>/dev/null || { rm -rf "$td"; return 1; }
-  : > "$td/pairs"
+  : > "$td/pairs"; : > "$td/pairs3"
   while IFS= read -r -d '' meta; do
     read -r om nm ob nb st <<<"${meta#:}"
     IFS= read -r -d '' path || { rc=1; break; }
@@ -221,23 +267,38 @@ sr_commit_only() {
           && [[ ${path##*/} =~ $SR_STAMP_RE ]] && [[ ${path2##*/} =~ $SR_STAMP_RE ]] \
           && [ "${path##*/}" != "${path2##*/}" ] && [ "$(basename "$path" | cut -c13-)" = "$(basename "$path2" | cut -c13-)" ] \
           || { rc=1; break; }
-        printf '%s\t%s\n' "${path##*/}" "${path2##*/}" >> "$td/pairs"; ren=$((ren + 1)) ;;
+        printf '%s\t%s\n' "${path##*/}" "${path2##*/}" >> "$td/pairs"
+        printf '%s\t%s\t%s\n' "${path%/*}" "${path##*/}" "${path2##*/}" >> "$td/pairs3"; ren=$((ren + 1)) ;;
       M)
         [ "$om" = "$nm" ] && [[ ! ${path%/*} =~ $SR_DIR_RE ]] && [ "${om:0:3}" = 100 ] || { rc=1; break; }
-        mods+=("$ob $nb") ;;
+        if [[ $path =~ $SR_PLAN_RE ]]; then mods+=("$ob $nb equal-plan pairs3"); else mods+=("$ob $nb equal pairs"); fi ;;
       *) rc=1; break ;;
     esac
   done < "$raw"
   if [ "$rc" = 0 ] && [ "$ren" -gt 0 ]; then
     for meta in "${mods[@]}"; do
-      read -r ob nb <<<"$meta"
+      read -r ob nb om nm <<<"$meta"
       git -C "$g" cat-file blob "$ob" > "$td/a" 2>/dev/null && git -C "$g" cat-file blob "$nb" > "$td/b" 2>/dev/null \
-        && _sr_py_replace equal "$td/pairs" "$td/a" "$td/b" || { rc=1; break; }
+        && _sr_py_replace "$om" "$td/$nm" "$td/a" "$td/b" || { rc=1; break; }
     done
   else
     rc=1
   fi
   rm -rf "$td"
+  return "$rc"
+}
+
+sr_text_rewrite() {
+  local plan="${1:-}" f="${2:-}" pf old new rc
+  [ -n "$plan" ] && [ -f "$f" ] && [ -w "$f" ] || return 2
+  pf=$(mktemp "${TMPDIR:-/tmp}/sr-text.XXXXXX") || return 2
+  while IFS=$'\t' read -r old new; do
+    [ -n "$old" ] && [ -n "$new" ] && printf '%s\t%s\n' "${old##*/}" "${new##*/}" >> "$pf"
+  done <<<"$plan"
+  cp -- "$f" "$pf.before" 2>/dev/null || { rm -f "$pf"; return 2; }
+  if ! _sr_py_replace rewrite "$pf" "$f"; then rm -f "$pf" "$pf.before"; return 2; fi
+  rc=1; cmp -s -- "$f" "$pf.before" || rc=0
+  rm -f "$pf" "$pf.before"
   return "$rc"
 }
 

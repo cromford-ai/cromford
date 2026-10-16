@@ -30,6 +30,13 @@
 #   <key> SCHEMA_RESTAMP <pushed|held|refused> head=<h12> new=<n12|-> main=<m12>
 #     renames=<n> reason=<text>
 #
+# The PR body (BH-7120). After a confirmed push, _pq_rs_body reads the PR body
+# once (gh_rest GET) and rewrites the old fragment basenames to the new ones
+# with sr_text_rewrite, so a `## Files outside the plan` reason line names the
+# new path. It PATCHes (gh_rest) only when the text changed. The answer stays
+# `pushed <sha> <n>` in every outcome, with no alert and no retry:
+#   <key> SCHEMA_RESTAMP body <patched|unchanged|failed> pr=<num> reason=<text>
+#
 # P, BR and KEY are the READY arm's variables (bin/merge-conductor.sh), read the
 # way pq_knob reads P.
 
@@ -76,7 +83,7 @@ _pq_rs_fail() {
 #   _PQ_RS (the answer) and _PQ_RS_TOP. Never pushes on a stale read.
 _pq_rs_run() {
   local slug="$1" head="$2" main="$3" repo="$MC_FUNNEL_WT" plan rc=0 wt new n prc=0 remote_sha err why
-  _PQ_RS=""; _PQ_RS_TOP=""
+  _PQ_RS=""; _PQ_RS_TOP=""; _PQ_RS_PAIRS=""
   if ! git -C "$repo" -c credential.helper= fetch -q origin main "$head" >/dev/null 2>&1; then
     _PQ_RS="transient the fetch of main and ${head:0:12} failed"; return 0
   fi
@@ -87,6 +94,7 @@ _pq_rs_run() {
   why=$(head -n 1 "$err" 2>/dev/null); rm -f "$err"
   _PQ_RS_TOP=$(sr_top "$repo" "$main")
   [ "$rc" = 0 ] && [ -z "$plan" ] && { _PQ_RS=none; return 0; }
+  _PQ_RS_PAIRS="$plan"
   # A terminal answer for this (PR, head, main's newest) was already given.
   if mc_attempt_has "restampfail ${KEY:-$slug} $head ${_PQ_RS_TOP:--}" 2>/dev/null; then _PQ_RS=said; return 0; fi
   [ "$rc" = 0 ] || { _PQ_RS="refused-0 sr_plan refused: ${why:-rc $rc}"; return 0; }
@@ -123,6 +131,33 @@ _pq_rs_run() {
   return 0
 }
 
+# _pq_rs_body <slug> <num> <key> — the old fragment names in the PR body become
+#   the new ones (_PQ_RS_PAIRS): one gh_rest GET and, only when the text
+#   changed, one gh_rest PATCH. Prints nothing; one log line; rc 0 always.
+_pq_rs_body() {
+  local slug="$1" num="$2" key="$3" f rc=0
+  [ -n "${_PQ_RS_PAIRS:-}" ] && [[ "$num" =~ ^[0-9]+$ ]] || return 0
+  declare -F gh_rest >/dev/null || { mc_log "$key SCHEMA_RESTAMP body failed pr=$num reason=gh_rest is not loaded"; return 0; }
+  f=$(mktemp "${TMPDIR:-/tmp}/pq-restamp-body.XXXXXX") || { mc_log "$key SCHEMA_RESTAMP body failed pr=$num reason=no temp file"; return 0; }
+  # Two steps, never a pipe: with no pipefail a failed GET into jq reads as an empty body.
+  if ! gh_rest GET "repos/$slug/pulls/$num" > "$f.json" 2>/dev/null || ! jq -j '.body // ""' "$f.json" > "$f" 2>/dev/null; then
+    mc_log "$key SCHEMA_RESTAMP body failed pr=$num reason=the body read failed"
+  else
+    sr_text_rewrite "$_PQ_RS_PAIRS" "$f" || rc=$?
+    case "$rc" in
+      0) if gh_rest PATCH "repos/$slug/pulls/$num" -F "body=@$f" >/dev/null 2>&1; then
+           mc_log "$key SCHEMA_RESTAMP body patched pr=$num reason=the old fragment name(s) now name the restamped path"
+         else
+           mc_log "$key SCHEMA_RESTAMP body failed pr=$num reason=the body patch failed"
+         fi ;;
+      1) mc_log "$key SCHEMA_RESTAMP body unchanged pr=$num reason=the body names no old fragment" ;;
+      *) mc_log "$key SCHEMA_RESTAMP body failed pr=$num reason=sr_text_rewrite rc $rc" ;;
+    esac
+  fi
+  rm -f "$f" "$f.json"
+  return 0
+}
+
 pq_restamp() {
   local slug="${1:-}" num="${2:-}" head="${3:-}" main="${4:-}" key rc=0 why new n
   key="${KEY:-$slug#$num}"
@@ -148,6 +183,7 @@ pq_restamp() {
     pushed\ *)
       read -r _ new n <<<"$_PQ_RS"
       _pq_rs_line "$key" pushed "$head" "$new" "$main" "$n" "renamed $n stale schema fragment(s) past main's newest ${_PQ_RS_TOP:--}"
+      _pq_rs_body "$slug" "$num" "$key" >/dev/null 2>&1
       printf 'pushed %s %s\n' "$new" "$n" ;;
     transient\ *) _pq_rs_held "$key" "$head" "$main" "${_PQ_RS#transient }" ;;
     refused-*|heldterm-*)
