@@ -1,0 +1,32 @@
+{
+  "id": "hotspot-split-ticket",
+  "name": "Hotspot split tickets",
+  "scope": "hub",
+  "script": "bin/hotspot-split-ticket.sh",
+  "cadence": "53 4 * * 1",
+  "boxes": [
+    "hub"
+  ],
+  "switch": {
+    "kind": "flag",
+    "name": "lane-off-hotspot-split-ticket",
+    "aliases": []
+  },
+  "wired": true,
+  "knobs": [
+    {
+      "env": "HOTSPOT_SPLIT_NOW",
+      "type": "string",
+      "default": "",
+      "zero_means": null,
+      "note": "Test seam: epoch seconds bin/hotspot-split-ticket.sh uses as now for the max-age check. Empty means the real clock. NOT settable from the control plane.",
+      "settable": false
+    }
+  ],
+  "stats": {
+    "cost_stage": null,
+    "cost_project_filter": null,
+    "lanes_row": false,
+    "log": "logs/hotspot-split-ticket.log"
+  }
+}

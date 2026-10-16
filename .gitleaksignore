@@ -44,6 +44,8 @@ tests/gh-app-ratchet-owner.bh-1984-test.sh:generic-api-key:122
 tests/gh-app-ratchet-owner.bh-1984-test.sh:generic-api-key:135
 tests/gh-default-auth-lanes-test.sh:generic-api-key:272
 tests/gh-token-live-test.sh:generic-api-key:26
+tests/hotspot-split-ticket.bh-6739-test.sh:curl-auth-header:158
+tests/hotspot-split-ticket.bh-6739-test.sh:curl-auth-header:327
 tests/lead-report-transcript.bh-5915-test.sh:generic-api-key:38
 tests/lead-report-transcript.bh-5915-test.sh:generic-api-key:114
 tests/lead-reviews-lib.bh-1948-test.sh:generic-api-key:101

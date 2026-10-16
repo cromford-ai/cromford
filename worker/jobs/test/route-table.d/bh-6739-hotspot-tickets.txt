@@ -1,0 +1,4 @@
+# HOTSPOT TICKETS (BH-6739, BH-6543.2): the split tickets bin/hotspot-split-ticket.sh
+# filed, one row per (repo, path). A key-named fragment, after every numbered one.
+GET /api/hotspot-tickets
+PUT /api/hotspot-tickets

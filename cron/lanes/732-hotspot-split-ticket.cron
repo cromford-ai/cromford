@@ -1,0 +1,12 @@
+# @hub-lanes
+
+# ── HOTSPOT-SPLIT-TICKET LANE (BH-6739, BH-6543.2) ───────────────────────────
+# Weekly, Monday 04:53Z, after the Sunday conflict-hotspots measure. Reads the
+# stored conflict-hotspots measurement (GET /api/conflict-hotspots, top 10, as
+# PUT by the box that owns the checkout) and files ONE ai-build "Split <path>"
+# issue for each file at or over
+# the settings row hotspots.split_threshold (10) that is not in
+# catalog/list-files.tsv and has no hotspot_tickets row. One summary line in
+# logs/hotspot-split-ticket.log.
+# Off: flags/lane-off-hotspot-split-ticket (bin/harness-ctl.sh off hotspot-split-ticket).
+53 4 * * 1 /root/harness/bin/hub-lease.sh check && /root/harness/bin/hotspot-split-ticket.sh >> /root/harness/logs/hotspot-split-ticket-cron.log 2>&1
