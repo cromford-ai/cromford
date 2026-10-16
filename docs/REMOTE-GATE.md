@@ -281,6 +281,15 @@ for a run that could not happen (the wrapper said 2), runs under `/srv/tmp/runs`
 (a tmpfs once the prep has mounted it), host-side cleanup, and the git context
 above, which the wrapper never sent.
 
+From a Mac session, use `bin/gate.sh` (BH-6736). `bin/gate.sh <dir> [suites…]`
+calls this gate with the same arguments and returns its exit code. On rc 125 it
+prints the exact `bin/gate.sh --local …` command and does not fall back by
+itself. `--local` runs the tree's `bin/run-tests-in-docker.sh` under a slot
+lock in `$TMPDIR/bh-gate-slots`, at most `GATE_LOCAL_SLOTS` (default 2) at once
+on one machine. `--impacted` computes the suites from the diff against the
+merge-base with `origin/main`. `skills/harness/SKILL.md` ("Run the gate from
+the Mac") is the session-facing text.
+
 ## The lane
 
 `bin/testhost-tick.sh` is the lane `testhost-tick`, hub cron `*/5`, registered in

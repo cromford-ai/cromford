@@ -242,3 +242,26 @@ in place, 1 = issue failed but the old cert is still valid, 125 = no valid cert.
 
 Costs land per-PR (comment on the PR + nightly rollup on the hub). Alerts and
 chat go to Telegram and Slack through the console; don't build a second channel.
+
+## Run the gate from the Mac
+
+The only sanctioned way to run a tree's test gate from a Mac session is
+`~/cromford/bin/gate.sh <dir> [suites…]`. An inline docker run of the
+cromford test image in a session is a finding. On 2026-10-14, 7 local
+test containers ran at once on one Mac, and the load went to 167.
+
+- `bin/gate.sh <dir> tests/a.sh tests/b.sh` runs the suites on the shared Fly
+  test host (`bin/remote-gate.sh`). This is the default.
+- `bin/gate.sh <dir> -- <command…>` runs one command on the test host.
+- `bin/gate.sh --impacted [--base <ref>] <dir>` computes the suites. It diffs
+  `<dir>` against the merge-base with `origin/main` (committed, uncommitted and
+  untracked files) and asks `bin/test-impact.sh` which suites that diff reaches.
+- `bin/gate.sh --local <dir> [suites…]` runs the tree's own
+  `bin/run-tests-in-docker.sh` on this Mac. Use it only when you ask for it.
+  At most `GATE_LOCAL_SLOTS` (default 2, range 1..6) local gates run at once.
+  The next one prints one line and waits for a slot. Ctrl-C ends the wait.
+
+Exit codes: 0-124 = the number of failing suites. 125 = the run could not
+happen and nothing passed. On 125 from the remote host, the gate prints the
+exact `bin/gate.sh --local …` command to run instead. It never runs local on
+its own. 2 = a wrong command line, nothing ran. 130/143 = interrupted.

@@ -1,0 +1,23 @@
+{
+  "libs": [
+    {
+      "id": "gate",
+      "file": "bin/gate.sh",
+      "note": "BH-6736: the Mac gate entrypoint. Remote (bin/remote-gate.sh) by default; --local runs bin/run-tests-in-docker.sh under a slot lock in $TMPDIR/bh-gate-slots. Operator CLI, no cron line, no switch: a switched-off gate must never exit 0. tests/gate-entrypoint.bh-6736-test.sh drives it.",
+      "knobs": [
+        {
+          "env": "GATE_LOCAL_SLOTS",
+          "type": "int",
+          "default": 2,
+          "min": 1,
+          "max": 6,
+          "unit": "gates",
+          "zero_means": null,
+          "required": false,
+          "settable": false,
+          "note": "How many bin/gate.sh --local runs may hold a local Docker slot at once on one machine; the next one waits. Read by bin/gate.sh as ${GATE_LOCAL_SLOTS:-2}; a value outside 1..6 is exit 2. Not settable from the control plane: it is a per-machine env value on a Mac, which reads no settings row."
+        }
+      ]
+    }
+  ]
+}
