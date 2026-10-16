@@ -399,6 +399,12 @@ export const api = {
   staffRoster: () => get(coordPath('/api/staff/roster')),
   staffFindings: (agent) => get(coordPath(`/api/staff/findings?agent=${encodeURIComponent(agent)}`)),
   staffFinding: (id) => get(coordPath(`/api/staff/finding?id=${encodeURIComponent(id)}`)),
+  // BH-6824: the agent page's AUTONOMY panel. The read is the worker's
+  // GET /api/staff/autonomy; the two writes go through the coord proxy, which
+  // stamps the actor and refuses a blank reason (coord-writes.d/6824-*).
+  staffAutonomy: (agent) => get(coordPath(`/api/staff/autonomy?agent=${encodeURIComponent(agent)}`)),
+  staffSetAutonomy: (body) => post(coordPath('/api/staff/agents/autonomy'), body),
+  staffSetDelegation: (body) => post(coordPath('/api/staff/classes/delegation'), body),
   // BH-6822: the agent page's timeline (one page, `before` the cursor of the
   // last row shown) and one tick with its cost rows.
   staffActivity: (agent, { before, limit } = {}) => {

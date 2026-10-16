@@ -1,0 +1,7 @@
+# STAFF AUTONOMY (BH-6824, Staff in Mission Control 3/4): the agent page's
+# AUTONOMY panel read. The level, cap and status, each staff class with its
+# state, and the newest staff_autonomy_changes rows. The two write routes stay
+# in 732-staff. Numbered, not ticket-keyed, for the reason 775-staff-outcomes
+# gives (a key-named fragment sorts after the bh-5788 zz-probe sentinels); 786
+# leaves room after 775. Its exact path matches no earlier route.
+GET /api/staff/autonomy

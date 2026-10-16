@@ -24,6 +24,7 @@ import {
   rosterRows, findingRows, killFlagName, killSetBody, killClearQuery, killState, displayName, na,
   KILL_ALL, ARCHIE, ARCHIE_KILL_FLAG
 } from '../lib/staff.js';
+import { AgentAutonomy } from './staff/agent-autonomy.js';
 import { activityRows, mergePages, heartbeatText, tickHref } from '../lib/staff-activity.js';
 import { AgentChat } from './staff/agent-chat.js';
 import { AgentLearning } from './staff/agent-learning.js';
@@ -258,7 +259,8 @@ export function StaffAgentScreen({ agent }) {
     }
   };
   return html`<${AgentDetailView} agent=${agent} roster=${roster} findings=${findings} activity=${activity}
-    older=${older} onOlder=${onOlder} olderBusy=${olderBusy} olderError=${olderError}/>`;
+    older=${older} onOlder=${onOlder} olderBusy=${olderBusy} olderError=${olderError}
+    autonomySlot=${html`<${AgentAutonomy} agent=${agent}/>`}/>`;
 }
 
 const age = (iso) => (iso
@@ -372,7 +374,7 @@ export function AgentDetailView({ agent, roster, findings, activity, older = nul
         <dt key="t-beat">LAST HEARTBEAT</dt><dd key="d-beat">${lastBeat(activity)}</dd>
       </dl>
       <${AgentChat} agent=${name} row=${row || null}/>
-      ${autonomySlot}
+      ${autonomySlot ? html`<${Section} title="AUTONOMY">${autonomySlot}<//>` : null}
       <${Section} title="ACTIVITY" note="ticks, findings, outcomes and decisions, newest first">
         <${ActivityBody} activity=${activity} older=${older} onOlder=${onOlder} olderBusy=${olderBusy} olderError=${olderError}/>
       <//>

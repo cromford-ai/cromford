@@ -14,12 +14,23 @@
 // only when its rank is at or below the cap's rank (the table CHECK backs it).
 //
 // A staff class moves to delegated only through POST /api/staff/classes/delegation.
-// agent-core decide('autonomy', <the lower of the agent cap and the class cap>,
-// {name, never}) must answer allow: a protected class (never_delegable, or a
-// name archie-autonomy.js's isProtectedSlug matches) is 409 never_delegable,
-// and a cap below autonomy on either side is 409 capped. Then the streak must
-// reach the settings row staff.delegate_after (default 5, named in the answer
-// when the row is absent or junk).
+// A protected class (never_delegable, or a name archie-autonomy.js's
+// isProtectedSlug matches) is 409 never_delegable for BOTH decisions: it is
+// never changed. For delegate, agent-core decide('autonomy', <the lower of the
+// agent cap and the class cap>, {name}) must answer allow, so a cap below
+// autonomy on either side is 409 capped. Then the streak must reach the
+// settings row staff.delegate_after (default 5, named in the answer when the
+// row is absent or junk). ask_first on a class already ask_first changes
+// nothing (200 existing) and keeps its streak.
+//
+// THE AUDIT (BH-6824). Both write routes take an optional `reason` (a string,
+// 1-500 characters after trim; anything else is 400 reason). A real change
+// writes one staff_autonomy_changes row (agent, kind, class, from, to, actor,
+// reason, time) in the SAME D1 batch as the state UPDATE, as an
+// INSERT ... SELECT ... WHERE changes() = 1: a no-op, a refusal or a racing
+// write writes no row, and a state change never lands without its row. A 200
+// that wrote a row carries its id as change_id. GET /api/staff/autonomy
+// (staff-autonomy.js) reads the rows back.
 //
 // These routes read the staff_* tables (and the one settings row), never
 // archie_classes, and Archie's routes never read staff_classes, so a class in
@@ -35,8 +46,9 @@ const CLASS_RE = /^[a-z][a-z0-9-]{1,40}$/;
 // The documented fallback when settings row staff.delegate_after is absent or junk.
 const DELEGATE_AFTER_DEFAULT = 5;
 
-// THE agent identity: trimmed and lowercased here and nowhere else.
-const agentOf = (v) => {
+// THE agent identity: trimmed and lowercased here and nowhere else
+// (staff-autonomy.js imports it).
+export const agentOf = (v) => {
   if (typeof v !== "string") return null;
   const a = v.trim().toLowerCase();
   return AGENT_RE.test(a) ? a : null;
@@ -46,6 +58,15 @@ const classOf = (v) => {
   if (typeof v !== "string") return null;
   const c = v.trim().toLowerCase();
   return CLASS_RE.test(c) ? c : null;
+};
+// Absent is null; a trimmed string of 1-500 characters is the reason; anything
+// else is refused (undefined, never coerced).
+const REASON_MAX = 500;
+const reasonOf = (v) => {
+  if (v === undefined || v === null) return null;
+  if (typeof v !== "string") return undefined;
+  const r = v.trim();
+  return r.length >= 1 && r.length <= REASON_MAX ? r : undefined;
 };
 const actorOf = (v) => {
   const a = typeof v === "string" ? v.trim() : "";
@@ -64,6 +85,14 @@ const readLanes = async (env, name) => {
 };
 const readClass = (env, a, c) =>
   env.DB.prepare(`SELECT * FROM staff_classes WHERE agent=?1 AND class=?2`).bind(a, c).first();
+// One audit row, written only when the statement just before it in the batch
+// changed a row.
+const auditStmt = (env, { agent, kind, cls, from, to, actor, reason, t }) => env.DB.prepare(
+  `INSERT INTO staff_autonomy_changes (agent, kind, class, from_value, to_value, actor, reason, created_at)
+   SELECT ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8 WHERE changes() = 1`
+).bind(agent, kind, cls, from, to, actor, reason, t);
+const changesOf = (r) => Number((r && r.meta && r.meta.changes) || 0);
+const changeId = (r) => (changesOf(r) === 1 ? Number(r.meta.last_row_id) : undefined);
 const charterOf = (row, lanes) => ({
   name: row.name, role: row.role, accountable: row.accountable, autonomy: row.autonomy,
   cap: row.cap, status: row.status, soul: row.soul_path, lanes,
@@ -78,7 +107,7 @@ const isAgentActor = async (env, actor) => {
   if (a === "archie") return true;
   return !!(await env.DB.prepare(`SELECT 1 AS x FROM staff_agents WHERE name=?1`).bind(a).first());
 };
-const delegateAfter = async (env) => {
+export const delegateAfter = async (env) => {
   const row = await env.DB.prepare(`SELECT value FROM settings WHERE key='staff.delegate_after'`).first();
   const v = row && typeof row.value === "string" ? row.value.trim() : "";
   if (/^\d{1,4}$/.test(v) && Number(v) >= 1 && Number(v) <= 1000) return { min: Number(v), source: "settings" };
@@ -133,6 +162,8 @@ export const routes = [
       if (typeof b.autonomy !== "string" || rank(b.autonomy) < 0) return bad("autonomy");
       const actor = actorOf(b.actor);
       if (actor === null) return bad("actor");
+      const reason = reasonOf(b.reason);
+      if (reason === undefined) return bad("reason");
 
       return d1Guarded("staff_agents", async () => {
         const row = await readAgent(env, name);
@@ -143,18 +174,27 @@ export const routes = [
           return json(200, { ok: true, existing: true, agent: charterOf(row, await readLanes(env, name)) });
         }
         // The cap gate: the rank comparison sits in the WHERE, so the read
-        // and the write cannot disagree. The table CHECK backs it.
-        // sql-ident-ok: RANK_SQL is a module helper called only with the literals ?2 and cap
-        const res = await env.DB.prepare(
-          `UPDATE staff_agents SET autonomy = ?2, updated_at = ?3, note = ?4
-            WHERE name = ?1 AND ${RANK_SQL("?2")} <= ${RANK_SQL("cap")}`
-        ).bind(name, b.autonomy, t, `autonomy ${b.autonomy} by ${actor}`).run();
+        // and the write cannot disagree. The table CHECK backs it. The level
+        // read above is in the WHERE too, so the audit's `from` is the level
+        // the UPDATE really moved from.
+        const [res, aud] = await env.DB.batch([
+          // sql-ident-ok: RANK_SQL is a module helper called only with the literals ?2 and cap
+          env.DB.prepare(
+            `UPDATE staff_agents SET autonomy = ?2, updated_at = ?3, note = ?4
+              WHERE name = ?1 AND autonomy = ?5 AND ${RANK_SQL("?2")} <= ${RANK_SQL("cap")}`
+          ).bind(name, b.autonomy, t, `autonomy ${b.autonomy} by ${actor}`, row.autonomy),
+          auditStmt(env, { agent: name, kind: "autonomy", cls: null, from: row.autonomy, to: b.autonomy, actor, reason, t }),
+        ]);
         const after = await readAgent(env, name);
-        if (Number((res.meta && res.meta.changes) || 0) !== 1) {
+        if (changesOf(res) !== 1) {
           // Above the cap (or a racing cap change won): the level did not move.
-          return json(409, { error: "above_cap", autonomy: b.autonomy, cap: after ? after.cap : null });
+          if (!after || rank(b.autonomy) > rank(after.cap)) {
+            return json(409, { error: "above_cap", autonomy: b.autonomy, cap: after ? after.cap : null });
+          }
+          // A racing write moved the level between the read and the UPDATE.
+          return json(409, { error: "changed_underneath", agent: charterOf(after, await readLanes(env, name)) });
         }
-        return json(200, { ok: true, agent: charterOf(after, await readLanes(env, name)) });
+        return json(200, { ok: true, change_id: changeId(aud), agent: charterOf(after, await readLanes(env, name)) });
       });
     },
   ],
@@ -171,44 +211,57 @@ export const routes = [
       if (b.decision !== "delegate" && b.decision !== "ask_first") return bad("decision");
       const actor = actorOf(b.actor);
       if (actor === null) return bad("actor");
+      const reason = reasonOf(b.reason);
+      if (reason === undefined) return bad("reason");
 
       return d1Guarded("staff_classes", async () => {
         const agent = await readAgent(env, name);
         if (!agent) return NOT_FOUND();
         const row = await readClass(env, name, c);
         if (!row) return json(404, { error: `class ${c} not found` });
+        // A protected class is never changed, in either direction.
+        if (row.never_delegable === 1 || isProtectedSlug(c)) {
+          return json(409, { error: "never_delegable", agent_cap: agent.cap, class_cap: row.cap, class_state: classState(row) });
+        }
+        const audit = (from, to) => auditStmt(env, { agent: name, kind: "delegation", cls: c, from, to, actor, reason, t });
         if (b.decision === "ask_first") {
-          await env.DB.prepare(
-            `UPDATE staff_classes SET state = 'ask_first', streak = 0, updated_at = ?3, note = ?4,
-                    reverted_at = CASE WHEN state = 'delegated' THEN ?3 ELSE reverted_at END
-              WHERE agent = ?1 AND class = ?2`
-          ).bind(name, c, t, `ask first by ${actor}`).run();
-          return json(200, { ok: true, class_state: classState(await readClass(env, name, c)) });
+          if (row.state === "ask_first") return json(200, { ok: true, existing: true, class_state: classState(row) });
+          const [, aud] = await env.DB.batch([
+            env.DB.prepare(
+              `UPDATE staff_classes SET state = 'ask_first', streak = 0, updated_at = ?3, note = ?4, reverted_at = ?3
+                WHERE agent = ?1 AND class = ?2 AND state = 'delegated'`
+            ).bind(name, c, t, `ask first by ${actor}`),
+            audit("delegated", "ask_first"),
+          ]);
+          const after = await readClass(env, name, c);
+          // 0 changes: a racing write already put it back; the read-back says so.
+          const id = changeId(aud);
+          return json(200, { ok: true, ...(id === undefined ? { existing: true } : { change_id: id }), class_state: classState(after) });
         }
         if (await isAgentActor(env, actor)) return json(403, { error: "self_delegation" });
         if (agent.status !== "active") return json(409, { error: "agent_not_active", status: agent.status });
         const effectiveCap = LEVELS[Math.min(rank(agent.cap), rank(row.cap))];
-        const never = row.never_delegable === 1 || isProtectedSlug(c) ? [c] : [];
-        if (decide("autonomy", effectiveCap, { name: c, never }) !== "allow") {
-          return json(409, {
-            error: never.length ? "never_delegable" : "capped",
-            agent_cap: agent.cap, class_cap: row.cap, class_state: classState(row),
-          });
+        if (decide("autonomy", effectiveCap, { name: c, never: [] }) !== "allow") {
+          return json(409, { error: "capped", agent_cap: agent.cap, class_cap: row.cap, class_state: classState(row) });
         }
         if (row.state === "delegated") return json(200, { ok: true, existing: true, class_state: classState(row) });
         const { min, source } = await delegateAfter(env);
-        const res = await env.DB.prepare(
-          `UPDATE staff_classes SET state = 'delegated', delegated_at = ?3, updated_at = ?3, note = ?5
-            WHERE agent = ?1 AND class = ?2 AND state = 'ask_first' AND never_delegable = 0
-              AND cap = 'autonomy' AND streak >= ?4
-              AND EXISTS (SELECT 1 FROM staff_agents a WHERE a.name = ?1 AND a.cap = 'autonomy' AND a.status = 'active')`
-        ).bind(name, c, t, min, `delegated by ${actor}`).run();
+        const [res, aud] = await env.DB.batch([
+          env.DB.prepare(
+            `UPDATE staff_classes SET state = 'delegated', delegated_at = ?3, updated_at = ?3, note = ?5
+              WHERE agent = ?1 AND class = ?2 AND state = 'ask_first' AND never_delegable = 0
+                AND cap = 'autonomy' AND streak >= ?4
+                AND EXISTS (SELECT 1 FROM staff_agents a WHERE a.name = ?1 AND a.cap = 'autonomy' AND a.status = 'active')`
+          ).bind(name, c, t, min, `delegated by ${actor}`),
+          audit("ask_first", "delegated"),
+        ]);
         const after = await readClass(env, name, c);
         const out = { min_streak: min, min_streak_source: source, class_state: classState(after) };
-        if (Number((res.meta && res.meta.changes) || 0) !== 1 && after.state !== "delegated") {
+        if (changesOf(res) !== 1 && after.state !== "delegated") {
           return json(409, { error: "not_earned", streak: Number(after.streak), ...out });
         }
-        return json(200, { ok: true, ...out });
+        const id = changeId(aud);
+        return json(200, { ok: true, ...(id === undefined ? { existing: true } : { change_id: id }), ...out });
       });
     },
   ],

@@ -81,6 +81,10 @@ git -C "$R" merge -q a -m m >/dev/null 2>&1; mrc=$?
 # ── S2: two fragments merge clean ────────────────────────────────────────────
 R="$T/s2"; git init -q -b main "$R"; cu_copy "$R/console-ui" || bad "S2 copy"
 git -C "$R" add -A; git -C "$R" commit -qm base
+# The real fragments compose first (steer, then whatever later tickets added);
+# the two fixtures must follow them, in name order.
+base=$(paths_of "$R/console-ui/tests/lib/coord-writes.node.js" FRAGMENT_WRITES 2>&1 | tr '\n' ' ')
+[ "${base#POST steer }" != "$base" ] && ok || bad "S2 the real fragments must start with steer: '$base'"
 git -C "$R" checkout -q -b a; frag "$R/console-ui/functions/_lib/coord-writes.d/9001-fixture-a.js" POST fixture-a
 git -C "$R" add -A; git -C "$R" commit -qm a
 git -C "$R" checkout -q main; git -C "$R" checkout -q -b b; frag "$R/console-ui/functions/_lib/coord-writes.d/9002-fixture-b.js" POST fixture-b
@@ -88,7 +92,7 @@ git -C "$R" add -A; git -C "$R" commit -qm b
 git -C "$R" merge -q a -m m >/dev/null 2>&1; mrc=$?
 [ "$mrc" = 0 ] && [ -z "$(git -C "$R" diff --name-only --diff-filter=U)" ] && ok || bad "S2 two fragments must merge clean (rc=$mrc)"
 got=$(paths_of "$R/console-ui/tests/lib/coord-writes.node.js" FRAGMENT_WRITES 2>&1 | tr '\n' ' ')
-[ "$got" = "POST steer POST fixture-a POST fixture-b " ] && ok || bad "S2 loader order: '$got'"
+[ "$got" = "${base}POST fixture-a POST fixture-b " ] && ok || bad "S2 loader order: '$got'"
 
 # ── S3: the generator ────────────────────────────────────────────────────────
 S="$T/s3"; cu_copy "$S" || bad "S3 copy"
@@ -124,10 +128,11 @@ ls "$S/functions/_lib/"*.tmp >/dev/null 2>&1 && bad "S4 a failed render left a .
 rm -f "$S/functions/_lib/coord-writes.d/steer.js"
 
 # ── S5: the round trip ───────────────────────────────────────────────────────
+base5=$(paths_of "$S/tests/lib/coord-writes.node.js" FRAGMENT_WRITES 2>&1 | tr '\n' ' ')
 frag "$S/functions/_lib/coord-writes.d/9001-fixture-a.js" PUT fixture-a
 ( cd "$S" && node scripts/coord-writes-build.mjs ) >/dev/null 2>&1 || bad "S5 render"
 g=$(paths_of "$OUTG" FRAGMENT_WRITES 2>&1); l=$(paths_of "$S/tests/lib/coord-writes.node.js" FRAGMENT_WRITES 2>&1)
-[ "$g" = "$l" ] && [ "$(printf '%s\n' "$g" | tr '\n' ' ')" = "POST steer PUT fixture-a " ] && ok || bad "S5 gen '$g' vs loader '$l'"
+[ "$g" = "$l" ] && [ "$(printf '%s\n' "$g" | tr '\n' ' ')" = "${base5}PUT fixture-a " ] && [ "${base5#POST steer }" != "$base5" ] && ok || bad "S5 gen '$g' vs loader '$l'"
 
 # ── S6: the in-file table does not grow ──────────────────────────────────────
 rows=$(awk '/^const WRITES = \[/{w=1; s=1; next} w && /^\];/{w=0} w && /^[[:space:]]*\{ method:/{n++} END{if (!s) print "none"; else print n+0}' "$PROXY")

@@ -144,6 +144,14 @@ export const RULES = [
     ids: "SELECT id FROM staff_suppressions WHERE status = 'active' AND expires_at < ?1 ORDER BY expires_at LIMIT ?2",
     del: "DELETE FROM staff_suppressions WHERE id IN (SELECT value FROM json_each(?1))",
   },
+  // Staff autonomy and delegation changes: governance history made by a human,
+  // tens of rows a year. The agent page reads the newest 20, so three years
+  // keep every change anyone asks about. retention.dry_run applies.
+  {
+    rule: "staff_autonomy_changes.age", table: "staff_autonomy_changes", key: "retention.staff_autonomy_changes.days", def: 1095,
+    ids: "SELECT id FROM staff_autonomy_changes WHERE created_at < ?1 ORDER BY created_at LIMIT ?2",
+    del: "DELETE FROM staff_autonomy_changes WHERE id IN (SELECT value FROM json_each(?1))",
+  },
   // BH-6822: one row per staff heartbeat tick, the agent page's timeline. It is
   // heartbeat history, not money (cost stays in cost_rows), so 90 days is enough.
   {
