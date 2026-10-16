@@ -843,6 +843,82 @@ payload = {
     "gh_budget": gh_budget,
 }
 
+# >>> conflicts block (BH-6965)
+# The conflict ladder's own numbers, per row and for the fleet: DIRTY events,
+# rebuilds per 100 merges, fix-round-conflict ok/failed, DIRTY-to-clean minutes
+# and repair wakes. The parsing is bin/dora_conflicts.py; this section only
+# places its blocks and makes the alert decision on the TRAILING 24 h, whatever
+# the window is, so a `--window 7d` run still answers the alert's question.
+try:
+    import dora_conflicts  # noqa: E402  (bin/ is on sys.path: it is this script's dir)
+except ImportError:
+    # A box (or a fixture) without bin/dora_conflicts.py still writes the
+    # digest: every conflicts figure is null with the reason, and no alert.
+    dora_conflicts = None
+from datetime import datetime as _dt, timedelta as _td  # noqa: E402
+
+
+def _cf_missing(*_args):
+    why = "n/a (bin/dora_conflicts.py is not installed)"
+    keys = ("dirty_events", "merges", "rebuilds", "rebuilds_per_100",
+            "fix_round_conflict", "dirty_to_clean_min", "repair_wakes")
+
+    def blk():
+        b = dict.fromkeys(keys)
+        b["unavailable"] = {k: why for k in keys if k not in ("merges", "rebuilds")}
+        return b
+    fl = blk()
+    fl["source"] = {}
+    return {"projects": {}, "fleet": fl, "sources": {}, "empty": blk()}
+
+
+_cf_compute = dora_conflicts.compute if dora_conflicts else _cf_missing
+_cf_over = dora_conflicts.over_threshold if dora_conflicts else (lambda _p, _t: [])
+
+CF_ROP_LOG = ENV.get("DORA_ROP_LOG") or ""
+CF_BR_STATE = ENV.get("DORA_BR_STATE") or ""
+CF_ALERT_FILE = ENV.get("DORA_CONFLICTS_ALERT_FILE") or ""
+try:
+    CF_THRESHOLD = int(ENV.get("DORA_CONFLICTS_ALERT_PER_100") or 40)
+except ValueError:
+    CF_THRESHOLD = 40
+CF_THRESHOLD_SRC = ENV.get("DORA_CONFLICTS_ALERT_SRC") or "default"
+CF_ARGS = (MC_LOG, BR_LOG, CF_BR_STATE, CF_ROP_LOG, REPO_PROJ)
+cf = _cf_compute(SINCE, UNTIL, *CF_ARGS)
+CF_SINCE_24 = (_dt.strptime(UNTIL, "%Y-%m-%dT%H:%M:%SZ") - _td(hours=24)).strftime("%Y-%m-%dT%H:%M:%SZ")
+cf24 = cf if HOURS == 24 else _cf_compute(CF_SINCE_24, UNTIL, *CF_ARGS)
+for r in rows:
+    r["conflicts"] = cf["projects"].get(r["project"]) or dict(cf["empty"])
+cf_over = _cf_over(cf24["projects"], CF_THRESHOLD)
+cf_line = None
+if cf_over:
+    cf_line = ("[dora-conflicts] REBUILDS OVER %d PER 100 MERGES in the trailing 24h: %s. "
+               "Source: %s 'REBUILD FRESH' events over %s merges. Needs: a look at the "
+               "conflict ladder of %s (repair-on-push, the fix-round-conflict rung). "
+               "Threshold: settings row conflicts.rebuild_alert_per_100 (%d, %s)."
+               % (CF_THRESHOLD,
+                  ", ".join("%s %d rebuilds / %d merges (%.1f per 100)" % o for o in cf_over),
+                  BR_LOG, MC_LOG, ", ".join(o[0] for o in cf_over),
+                  CF_THRESHOLD, CF_THRESHOLD_SRC))
+fleet["conflicts"] = dict(cf["fleet"])
+fleet["conflicts"].update(
+    alert_threshold=CF_THRESHOLD, alert_threshold_source=CF_THRESHOLD_SRC,
+    alert={"window": "trailing 24h", "since": CF_SINCE_24, "until": UNTIL,
+           "rule": "per project: rebuilds * 100 / merges strictly over the threshold; "
+                   "no merges is n/a, never over",
+           "over": [{"project": o[0], "rebuilds": o[1], "merges": o[2], "rebuilds_per_100": o[3]}
+                    for o in cf_over],
+           "trailing_24h": {p: {"rebuilds": b["rebuilds"], "merges": b["merges"],
+                                "rebuilds_per_100": b["rebuilds_per_100"]}
+                            for p, b in sorted(cf24["projects"].items())
+                            if b["rebuilds"] or b["merges"]},
+           "line": cf_line})
+payload["sources"].update(cf["sources"])
+if cf_line and CF_ALERT_FILE:
+    with open(CF_ALERT_FILE, "w") as fh:
+        fh.write(cf_line + "\n")
+# <<< conflicts block
+
 with open(OUT_JSON, "w") as fh:
     json.dump(payload, fh, indent=1, sort_keys=False)
     fh.write("\n")
@@ -887,6 +963,44 @@ for r in rows[:MAX_ROWS]:
                 mins_pp(r["box_test"])))
 if len(rows) > MAX_ROWS:
     L.append("(%d more repo(s) in the json)" % (len(rows) - MAX_ROWS))
+
+# >>> conflicts lines (BH-6965)
+def cf_text(b):
+    parts = ["dirty %s" % ("n/a" if b["dirty_events"] is None else b["dirty_events"])]
+    if b["rebuilds_per_100"] is not None:
+        parts.append("rebuilds %.1f/100 merges (%d of %d)"
+                     % (b["rebuilds_per_100"], b["rebuilds"], b["merges"]))
+    elif b["rebuilds"] is not None and b["merges"] is not None:
+        parts.append("rebuilds n/a (%d, no merges)" % b["rebuilds"])
+    else:
+        parts.append("rebuilds n/a")
+    fx = b["fix_round_conflict"]
+    parts.append("fix-round-conflict n/a" if fx is None
+                 else "fix-round-conflict ok %d failed %d" % (fx["ok"], fx["failed"]))
+    d = b["dirty_to_clean_min"]
+    if d is None:
+        parts.append("dirty->clean n/a")
+    elif d["n"]:
+        parts.append("dirty->clean p50 %.1fm p90 %.1fm (n=%d, %d open)"
+                     % (d["p50"], d["p90"], d["n"], d["open"]))
+    else:
+        parts.append("dirty->clean n/a (n=0, %d open)" % d["open"])
+    parts.append("repair wakes %s" % ("n/a" if b["repair_wakes"] is None else b["repair_wakes"]))
+    return ", ".join(parts)
+
+
+def cf_active(b):
+    d = b["dirty_to_clean_min"] or {}
+    fx = b["fix_round_conflict"] or {}
+    return bool(b["dirty_events"] or b["rebuilds"] or fx.get("ok") or fx.get("failed")
+                or d.get("n") or d.get("open") or b["repair_wakes"])
+
+
+L.append("conflicts (fleet): " + cf_text(fleet["conflicts"]))
+for r in rows[:MAX_ROWS]:
+    if cf_active(r["conflicts"]):
+        L.append("conflicts %s: %s" % (r["project"], cf_text(r["conflicts"])))
+# <<< conflicts lines
 
 top = [a for a in accounts if a["cost_usd"] > 0][:4]
 if top:

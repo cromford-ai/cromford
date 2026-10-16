@@ -158,6 +158,40 @@ still read once. One line before `sources:`: `github REST: <calls> calls,
 `dora-digest.log` line, the text says `github REST: n/a (error)`, no page).
 The full report is `state/gh-budget/<date>.json`.
 
+## Conflicts block (BH-6965)
+
+`repos[].conflicts` and `fleet.conflicts` in `state/dora/<date>.json`, parsed by
+`bin/dora_conflicts.py` from four files. Each figure is `null` with
+`unavailable.<figure> = "n/a (source X absent)"` when its file is absent.
+`fleet.conflicts.source` names the source of each figure.
+
+| figure | source | how to re-derive it by hand |
+| --- | --- | --- |
+| `dirty_events` | `logs/merge-conductor.log` | count the in-window lines `<slug>#<n> <prev> -> NEEDS_REBASE`. These are EVENTS: a PR that goes DIRTY twice counts 2. `conflict.dirty_prs` stays the DISTINCT count. |
+| `rebuilds`, `merges`, `rebuilds_per_100` | `logs/blocked-resolver.log`, `logs/merge-conductor.log` | `REBUILD FRESH` park lines x 100 / DISTINCT `MERGED <slug>#<n> by` PRs, 1 place. The same numerator and denominator as `rebuild.rate`. No merges in the window: `null`, text `n/a`. |
+| `fix_round_conflict` `{ok, failed}` | `state/blocked-resolver/<project>/<key>.json` | `attempts[]` whose `at` is in the window and whose `detail` carries ` · fix-round-conflict ok` or ` · fix-round-conflict failed` (the BH-6964 writer). A record file older than the window start is skipped unread (`sources.resolver_records.files_skipped_stale`). |
+| `dirty_to_clean_min` `{p50, p90, n, open}` | `logs/merge-conductor.log`, `logs/repair-on-push.log` | One episode per PR. It opens at a `-> NEEDS_REBASE` transition or a `REPAIR pr=<n> ... action=rebase reason=conflict` line. It closes at the first later transition whose new state is not `NEEDS_REBASE` and whose `merge=` is `CLEAN`, `UNSTABLE`, `BLOCKED`, `HAS_HOOKS` or `BEHIND`, at `MERGED <slug>#<n> by`, or at `REPAIR pr=<n> ... action=rebase reason=pushed`. Only episodes that open and close in the window are in `n`; one still open at the end counts in `open`. Nearest rank: `sorted[ceil(p*n)-1]`, minutes. |
+| `repair_wakes` | `logs/repair-on-push.log` | DISTINCT `wake=<id>` on `REPAIR` and `wake=<id> repo=<slug> range=` lines, minus wakes whose last in-window line is `wake=<id> left for next tick`. A project gets a wake through its repo slug (lowercased) in fleet.conf; an unowned repo counts in the fleet total only. |
+
+Text: one `conflicts (fleet): dirty <n>, rebuilds <r>/100 merges (<rebuilds> of
+<merges>), fix-round-conflict ok <n> failed <n>, dirty->clean p50 <m>m p90 <m>m
+(n=<n>, <n> open), repair wakes <n>` line, then one `conflicts <project>: ...`
+line for each shown repo row with conflict activity.
+
+**The alert.** When a project's rebuilds per 100 merges over the TRAILING 24 h
+(always 24 h, whatever `--window` is) is strictly over the threshold, the digest
+appends ONE `[dora-conflicts]` line to `logs/ALERTS.log` through
+`bin/alert-line.sh --id dora-conflicts` (one console row, also on a
+`--no-send` run). The line names every
+project over the threshold. It is written at most once a UTC day
+(`flags/alerted-dora-conflicts-<YYYYMMDD>`). Equal is not over, and a project
+with no merges is never over. The threshold is the settings row
+`conflicts.rebuild_alert_per_100`, then `DORA_CONFLICTS_REBUILD_ALERT_PER_100`,
+then 40. The row is read only when a settings client is loaded (the ledger read
+loads `bin/jobs-client.sh`). `fleet.conflicts.alert_threshold`,
+`alert_threshold_source` (`row`, `env` or `default`) and `alert` (the trailing
+24 h figures, the projects over and the exact line) record the decision.
+
 ## Config
 
 Every threshold is a config value. Environment first, then
@@ -178,6 +212,7 @@ config cannot become a second entry point into the lane.
 | `DORA_BUILDS_DIR` | `$HARNESS/builds` | where `builds/<dir>/pipeline.log` is read for box test minutes. An absent directory is `n/a`, never 0. |
 | `QUOTA_DIR` | `$HARNESS/state/quota` | the same variable `bin/quota-status.sh` reads. |
 | `DORA_GH_BUDGET` | `1` | any other value skips `bin/gh-budget-report.sh` and the `github REST:` line. |
+| `DORA_CONFLICTS_REBUILD_ALERT_PER_100` | `40` | the conflicts alert threshold, read after the settings row `conflicts.rebuild_alert_per_100` (BH-6965). |
 
 Kill switch: `flags/dora-digest-off`.
 

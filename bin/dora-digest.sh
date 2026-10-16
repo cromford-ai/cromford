@@ -56,6 +56,10 @@
 #                       bin/quota-status.sh renders the same files interactively).
 #   cash overage        logs/extra-usage-<account>.csv, last row plus the delta
 #                       across the window.
+#   conflicts block     bin/dora_conflicts.py (BH-6965): the conductor log, the
+#                       resolver log, state/blocked-resolver/<p>/<key>.json
+#                       attempts (fix-round-conflict ok|failed) and
+#                       logs/repair-on-push.log (REPAIR and wake lines).
 #
 # OUTPUT:
 #   1. state/dora/<date>.json          (state/dora/<date>-<window>.json when the
@@ -82,6 +86,11 @@
 #                              STAGE-TIMING suite lines behind box test minutes
 #   DORA_GH_BUDGET=1         0 (any value but 1) = skip bin/gh-budget-report.sh
 #                            and the `github REST:` line
+#   DORA_CONFLICTS_REBUILD_ALERT_PER_100=40  the conflicts alert threshold, read
+#                            AFTER the settings row conflicts.rebuild_alert_per_100
+#                            (BH-6965): rebuilds per 100 merges over the trailing
+#                            24 h strictly over it writes one [dora-conflicts]
+#                            ALERTS line a UTC day
 #   QUOTA_DIR=$H/state/quota
 # Kill switch: settings row switch.dora-digest-off.<box> or switch.dora-digest-off
 # (1 = off), read by lane_switch (bin/lib/lane-switch.sh); flags/dora-digest-off
@@ -267,6 +276,28 @@ if [ "$GH_BUDGET" = 1 ]; then
 fi
 # <<< gh budget
 
+# >>> conflicts alert (BH-6965)
+# The rebuild-rate threshold for the conflicts alert: the settings row
+# conflicts.rebuild_alert_per_100, then env DORA_CONFLICTS_REBUILD_ALERT_PER_100
+# (also the conf row conf.dora-digest.dora_conflicts_rebuild_alert_per_100),
+# then 40 — ph_knob's order (bin/lib/pr-health.sh). The row is read only when a
+# settings client is loaded (the ledger read above loads bin/jobs-client.sh).
+# CF_SRC says which one decided: row | env | default.
+# shellcheck source=lib/pr-health.sh
+. "$BIN/lib/pr-health.sh" 2>/dev/null || true
+CF_ENV="${DORA_CONFLICTS_REBUILD_ALERT_PER_100:-}"
+if command -v ph_knob >/dev/null 2>&1; then
+  ph_knob conflicts.rebuild_alert_per_100 DORA_CONFLICTS_REBUILD_ALERT_PER_100 40 > "$WORK/cf-threshold" 2>>"$LOG"
+  CF_TH=$(cat "$WORK/cf-threshold" 2>/dev/null)
+  [ "${PH_KNOB_SRC:-}" = row ] && CF_SRC=row || CF_SRC=""
+else
+  CF_TH=""; CF_SRC=""
+fi
+if [ -z "$CF_SRC" ]; then
+  case "$CF_ENV" in ''|*[!0-9]*) CF_TH=40; CF_SRC=default ;; *) CF_TH="$CF_ENV"; CF_SRC=env ;; esac
+fi
+# <<< conflicts alert
+
 DATE_TAG=$(date -u +%F)
 case "$WINDOW" in 24h) OUT_JSON="$OUTDIR/$DATE_TAG.json" ;; *) OUT_JSON="$OUTDIR/$DATE_TAG-$WINDOW.json" ;; esac
 OUT_TXT="$OUTDIR/latest.txt"
@@ -279,6 +310,9 @@ DORA_BUILDS_DIR="${DORA_BUILDS_DIR:-$H/builds}" \
 DORA_QUOTA_DIR="$QUOTA_DIR" DORA_LOGS_DIR="$H/logs" DORA_WARN_PCT="$WARN_PCT" \
 DORA_MAX_ROWS="$MAX_ROWS" DORA_OUT_JSON="$OUT_JSON" DORA_OUT_TXT="$OUT_TXT" \
 DORA_SENTINEL="$WORK/unmeasurable" \
+DORA_ROP_LOG="$H/logs/repair-on-push.log" DORA_BR_STATE="$H/state/blocked-resolver" \
+DORA_CONFLICTS_ALERT_PER_100="$CF_TH" DORA_CONFLICTS_ALERT_SRC="$CF_SRC" \
+DORA_CONFLICTS_ALERT_FILE="$WORK/conflicts-alert" \
 DORA_GH_BUDGET_FILE="$GHB_FILE" DORA_GH_BUDGET_STATUS="$GHB_STATUS" \
   python3 "$BIN/dora-digest.py"
 RC=$?
@@ -300,6 +334,26 @@ if [ -f "$WORK/unmeasurable" ]; then
     echo "$(STAMP) [dora-digest] MERGES UNMEASURABLE for the $WINDOW window: the harness-jobs /api/metrics/dora route and $H/logs/merge-conductor.log were both unreadable, so today's digest reports n/a where the fleet's output belongs. Needs: HARNESS_SECRET in env/global.env + the worker reachable, or the conductor log back on this box." >> "$ALERTS"
   fi
 fi
+
+# >>> conflicts alert line (BH-6965)
+# One line a UTC day when a project's rebuilds per 100 merges over the trailing
+# 24 h is over the threshold. The digest writes the text (every project over,
+# in one line); bin/alert-line.sh writes it (the alerts row now, then
+# ALERTS.log on every path). The day flag goes through bin/lib/flags.sh
+# (flag_has / flag_set; the file flags/alerted-dora-conflicts-<YYYYMMDD> on
+# every path), set before the line, as the alert above orders it. The read is
+# --cached (the local file): no worker request on a day the flag is already
+# set, so a worker outage adds no ALERTS line of its own here.
+if [ -s "$WORK/conflicts-alert" ]; then
+  # shellcheck source=lib/flags.sh
+  . "$BIN/lib/flags.sh" 2>/dev/null || true
+  CFLAG="alerted-dora-conflicts-$(date -u +%Y%m%d)"
+  if ! flag_has --cached "$CFLAG" 2>/dev/null; then
+    flag_set "$CFLAG" on "dora-digest: conflicts alert sent" >/dev/null 2>&1
+    HARNESS="$H" "$BIN/alert-line.sh" --id dora-conflicts "$(head -1 "$WORK/conflicts-alert")" >/dev/null 2>&1 || true
+  fi
+fi
+# <<< conflicts alert line
 
 TEXT=$(head -c "$TEXT_MAX" "$OUT_TXT" 2>/dev/null)
 [ "$PRINT" = 1 ] && printf '%s\n' "$TEXT"

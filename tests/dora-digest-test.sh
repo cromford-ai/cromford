@@ -63,6 +63,10 @@ TODAY=$(date -u +%F)
 
 mkdir -p "$T/bin" "$T/logs" "$T/env" "$T/flags" "$T/state/cost" "$T/state/quota" "$T/calls"
 export HARNESS="$T"
+# TEST-CHANGE BH-6965: the alpha fixture (2 rebuilds / 4 merges) is over the
+# conflicts alert's default of 40 per 100. That alert and its beat are pinned in
+# tests/dora-conflicts-block.bh-6965-test.sh; its day flag keeps them out of here.
+touch "$T/flags/alerted-dora-conflicts-$(date -u +%Y%m%d)"
 
 # The registry the digest maps repos to projects with. Pinned to a fixture so the
 # test answers the same on the hub (where /root/harness/fleet.conf exists) and in
