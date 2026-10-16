@@ -18,12 +18,16 @@ import { configHref } from '../lib/config.js';
 import {
   flagRowsAll, flagProject, isBoxScope, setBody, clearQuery, setFormState, clearFormState, FLEET_SCOPE
 } from '../lib/flags.js';
+import { boxSwitchRows } from '../lib/box-switches.js';
 
 const loadFlags = () => api.coordFlagsAll();
+const loadSettings = () => api.settings();
 const errText = (e) => (e && e.message ? e.message : String(e));
 
 export function FlagsScreen() {
   const flags = useApi(loadFlags, [], { intervalMs: 60000 });
+  // Started in the same mount as the flags read, so the two run in parallel.
+  const switches = useApi(loadSettings, [], { intervalMs: 60000 });
   const fleet = useFleet();
   const projects = fleetProjects(fleet && fleet.data && fleet.data.projects);
   const [filter, setFilter] = useState('');
@@ -82,7 +86,7 @@ export function FlagsScreen() {
       onConfirm=${onConfirm}
       onCancel=${() => { if (!inFlight.current) setEdit(null); }}/>` : null;
 
-  return html`<${FlagsView} flags=${flags} projects=${projects} filter=${filter} showCleared=${showCleared}
+  return html`<${FlagsView} flags=${flags} switches=${switches} projects=${projects} filter=${filter} showCleared=${showCleared}
     onFilter=${setFilter} onShowCleared=${setShowCleared} onSet=${() => open('set')} onClear=${(r) => open('clear', r)}
     busy=${pending} note=${note} dialog=${dialog}/>`;
 }
@@ -173,6 +177,33 @@ export function flagColumns({ projects, onClear, busy }) {
   ];
 }
 
+export function boxSwitchColumns() {
+  return [
+    { key: 'box', label: 'BOX', cell: (r) => html`<${Link} to="/machines">${r.box}<//>` },
+    { key: 'name', label: 'SWITCH', cell: (r) => html`<${Link} to=${configHref('setting', r.key)} class="cell-name">${r.name}<//>` },
+    { key: 'value', label: 'VALUE', cell: (r) => wrap(r.value) },
+    { key: 'set_by', label: 'SET BY', cell: (r) => dash(r.set_by) },
+    { key: 'set_at', label: 'SET AT', cell: (r) => age(r.set_at) }
+  ];
+}
+
+// The BOX SWITCHES body. `switches` is the settings read; null means the page
+// was rendered without it, so there is no section.
+function boxSwitchBody(switches, filter) {
+  const data = switches.data;
+  const rows = boxSwitchRows(data);
+  const f = String(filter || '').trim().toLowerCase();
+  if (switches.loading && !data) return html`<${Skeleton} rows=${2} height=${20}/>`;
+  if (rows === null) {
+    return html`<${ErrorBox} error=${switches.error || new Error('the settings read returned no list')} onRetry=${switches.reload}/>`;
+  }
+  const shown = f ? rows.filter((r) => [r.name, r.box, r.set_by].some((v) => String(v ?? '').toLowerCase().includes(f))) : rows;
+  return html`
+    ${switches.error ? html`<${ErrorBox} error=${switches.error} onRetry=${switches.reload}/>` : null}
+    <${SortableTable} wide columns=${boxSwitchColumns()} rows=${shown} rowKey=${(r) => r.key} defaultSort="box"
+      empty=${html`<${Empty} title=${f ? `no box switch matches '${String(filter).trim()}'` : 'no box switch is on'}/>`}/>`;
+}
+
 const LEGEND = [
   { term: 'SCOPE', text: 'fleet applies everywhere; a box name applies on that box only' },
   { term: 'STATE', text: 'ON means the flag is set; cleared means it was turned off and kept for history' },
@@ -180,7 +211,7 @@ const LEGEND = [
   { term: 'PROJECT', text: 'the project a paused or automerge flag is about' }
 ];
 
-export function FlagsView({ flags, projects = [], filter = '', showCleared = false, onFilter, onShowCleared, onSet, onClear, busy = false, note = null, dialog = null }) {
+export function FlagsView({ flags, switches = null, projects = [], filter = '', showCleared = false, onFilter, onShowCleared, onSet, onClear, busy = false, note = null, dialog = null }) {
   const data = flags && flags.data;
   const res = flagRowsAll(data, { filter, showCleared });
   const f = String(filter || '').trim();
@@ -223,5 +254,9 @@ export function FlagsView({ flags, projects = [], filter = '', showCleared = fal
         ${body}
         <${Legend} items=${LEGEND}/>
       <//>
+      ${switches ? html`
+        <${Section} title="BOX SWITCHES" note="the switch.<name>.<box> settings rows that are on; a box reads its own row first">
+          ${boxSwitchBody(switches, filter)}
+        <//>` : null}
     </div>`;
 }
