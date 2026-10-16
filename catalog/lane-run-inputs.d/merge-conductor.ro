@@ -1,0 +1,56 @@
+# catalog/lane-run-inputs.d/merge-conductor.ro — what one
+# `bin/merge-conductor-pr.sh $p <owner/repo>#<n> <head40>` run (MC_ONLY_PR,
+# MC_ON_MACHINE=1) reads and never writes back. The snapshot is
+# merge-conductor.rw plus these lines. The file:line after each entry is where
+# the run reads it. tests/lane-run-inputs-mc-manifest.bh-6889-test.sh traces a
+# run (T1a) and checks that the snapshot alone gives the hub's outcome (T1c).
+# An entry the fixture does not reach says so.
+#
+# NOT IN THE SNAPSHOT. Repo-tracked files the machine pulls with main
+# (config/*, catalog/*, bin/*: catalog/lead-protected-paths.seed.tsv is read,
+# bin/lib/lead-authority.sh). Secrets: env/* (env/global.env is read). Caches
+# the machine fills from the jobs worker itself: state/settings-cache.json,
+# state/flags-cache/*, state/box-name, state/gh-*, state/lead-authority/*.
+# The re-review, rebase and deploy-verify job dirs (state/merge-conductor/
+# rereview|rebase|deploy-verify): a machine run defers each spawn before it
+# reads a job file (bin/lib/mc/rebase.sh:3079, :3393, :3509), and the trace
+# shows no read. state/batch-resolve/*: a keyed tick never reaches the batch
+# spawn (bin/merge-conductor.sh:3295, MC_ONLY_KEYS). state/merge-sweep-done.txt:
+# only conductor_settle reads it (bin/lib/mc/settle.sh:560 via :778), and a
+# machine run defers the settle first (:756).
+#
+# The record files read only:
+#   RESULT                  mc_record_for globs builds/*-*/RESULT, bin/lib/mc/classify.sh:488
+#   review.md               bin/lib/mc/classify.sh:545
+#   headbound-outcome       bin/lib/mc/classify.sh:547 (not reached by the fixture)
+#   pipeline.log            bin/lib/mc/classify.sh:572
+#   ticket-meta.json        bin/lib/mc/train.sh:636 (not reached by the fixture)
+#   planned-files.txt       bin/lib/mc/train.sh:704 (not reached by the fixture)
+#   iron-law-accepted-*     bin/merge-conductor.sh:1606 (not reached by the fixture)
+# A token name of its own: a second <record file> would replace the .rw one.
+@token <read file> RESULT review.md headbound-outcome pipeline.log ticket-meta.json planned-files.txt iron-law-accepted-*
+# This project's records only; the hub's glob also opens other projects' RESULT.
+builds/$p-<KEY>-*/<read file>
+builds/pool-$p-<KEY>-*/<read file>
+builds/fly-$p-<KEY>-*/<read file>
+# bin/lib/mc/train.sh:700-701 (not reached by the fixture)
+plans/$p-<KEY>/planned-files.txt
+# bin/merge-conductor.sh:342, bin/lib/mc/classify.sh:993 (merge-conductor-actions),
+# bin/lib/main-red-gate.sh:86,129 (MAIN_RED_FREEZE flags/main-red-$p), pause flags
+flags/*
+# bin/merge-conductor.sh:130, bin/merge-conductor-pr.sh:41,59
+fleet.conf
+# bin/lib/pause.sh:67 (the pauses cache; not reached by the fixture)
+state/pauses.json
+# bin/lib/mc/locks.sh:828 (not reached by the fixture)
+state/claude-auth-down.txt
+# bin/lib/mc/log.sh:93 (not reached by the fixture)
+state/blocked-resolver/.saturated
+# bin/merge-conductor.sh:2657 (bin/lib/mc/locks.sh:316 writes it on a full tick
+# only; not reached by the fixture)
+state/merge-conductor/tick-$p.json
+# bin/merge-conductor.sh:734, bin/lib/mc/queue.sh:26,38-40 (bin/batch-resolve.sh
+# writes it; not reached by the fixture)
+state/merge-conductor/batch-hold/$repokey_*
+# bin/merge-conductor.sh:756, bin/lib/mc/rebase.sh:168-169 (not reached by the fixture)
+state/contested/$p/*

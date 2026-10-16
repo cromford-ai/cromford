@@ -56,7 +56,10 @@
 #
 # Manifest format: one entry a line; blank and `#` lines are skipped. A path
 # line is `<glob>[ <comment>]` and lri_paths prints it whole, with $p replaced
-# by the project. In a glob `*` is any run of non-`/` characters, `**` (the
+# by the project and $repokey by the project's fleet.conf repo with every
+# character outside [A-Za-z0-9._-] folded to `_`, case kept (the mc_safe_name
+# fold; a project with no repo is a parse error, _lri_repokey). In a glob `*`
+# is any run of non-`/` characters, `**` (the
 # whole LAST segment only) is one or more segments, <KEY> is a ticket key,
 # <KEY>-* is a ticket key alone or followed by `-` and more, and <name> is a
 # set from `@token`. The directives are not printed:
@@ -248,7 +251,7 @@ _lri_glob() {
 # on the first malformed line.
 _lri_compile() {
   local lane="$1" p="$2" pe mode f n line where name g e words=() paths=() lines="" row="" rowlock="" rowat=""
-  local rows="" slug=""
+  local rows="" slug="" repokey=""
   local -A tok=() lit=() lp=() rp=()
   local pr_rw="" pr_ro="" re_rw="" re_ro="" dr_rw="" dr_ro="" wk_rw="" wk_ro=""
   local re_glob='^(([<][^>]*[>]|[^[:space:]<])+)([[:space:]].*)?$'
@@ -309,6 +312,11 @@ _lri_compile() {
   for e in "${paths[@]}"; do
     IFS=$'\t' read -r mode where line <<<"$e"
     line="${line//\$p/$p}"
+    case "$line" in
+      *"\$repokey"*)
+        [ -n "$repokey" ] || repokey=$(_lri_repokey "$p") || { _lri_bad "$where" "\$repokey: no repo for $p in fleet.conf"; return 1; }
+        line="${line//\$repokey/$repokey}" ;;
+    esac
     [[ $line =~ $re_glob ]] || { _lri_bad "$where" "no glob before the first space"; return 1; }
     _lri_glob "${BASH_REMATCH[1]}" || { _lri_bad "$where" "$LRI_WHY"; return 1; }
     [ -z "$LRI_GL" ] || lit[$mode:$LRI_GL]=1
@@ -353,6 +361,19 @@ _lri_slug() {
   case "$r" in ''|-) return 1 ;; esac
   r="${r,,}"
   printf '%s' "${r//./\\.}"
+}
+
+# _lri_repokey <project> — the project's repo from fleet.conf (bin/fleet-conf.sh
+# beside this lib) with every character outside [A-Za-z0-9._-] folded to `_`,
+# case kept: the conductor's marker-name fold (mc_safe_name, mc_handoff_id).
+# rc 1 when the repo is empty or `-`.
+_lri_repokey() {
+  local s="${BASH_SOURCE[0]}" r
+  case "$s" in */*) s="${s%/*}" ;; *) s=. ;; esac
+  r=$(bash "$s/../fleet-conf.sh" "$1" repo 2>/dev/null) || r=""
+  r=$(printf '%s' "$r" | tr -d '[:space:]')
+  case "$r" in ''|-) return 1 ;; esac
+  printf '%s' "${r//[^A-Za-z0-9._-]/_}"
 }
 
 # _lri_rows <project> — LRI_ROWS, the lane's @rows (path TAB ERE a line),

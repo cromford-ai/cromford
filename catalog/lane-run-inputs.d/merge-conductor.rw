@@ -1,0 +1,85 @@
+# catalog/lane-run-inputs.d/merge-conductor.rw — the files one
+# `bin/merge-conductor-pr.sh $p <owner/repo>#<n> <head40>` run (MC_ONLY_PR,
+# MC_ON_MACHINE=1) writes. A write-back may carry these only. The ro snapshot
+# is these plus merge-conductor.ro. tests/lane-run-inputs-mc-manifest.bh-6889-test.sh
+# traces a run (T1b). An entry the fixture does not reach says so.
+#
+# The conductor keeps no per-project directory. Its per-PR markers sit in
+# shared dirs, named by the fleet.conf repo with every character outside
+# [A-Za-z0-9._-] folded to `_` (mc_safe_name, bin/lib/mc/locks.sh:52;
+# mc_handoff_id, bin/lib/mc/classify.sh:1651). $repokey is that fold, so
+# `<dir>/$repokey_*` is this project's markers and no other repo's: the
+# character after the repo is `_`, never `-`.
+#
+# NOT CARRIED. A project run also writes these. The fleet-wide ones block a
+# later flip of merge-conductor to Fly, and the flip ticket must solve them:
+#   logs/ALERTS.log (lane-alert.sh appends: mc_alert, bin/lib/mc/log.sh:285-290;
+#     bin/alert-line.sh lines go through /api/alert-lines, #6889)
+#   state/lead-authority/human-needed-* (bin/lib/lead-authority.sh:308; a
+#     lane-alert.sh send's dedupe marker, the same gap)
+#   state/merge-conductor/attempts.txt (appends, bin/lib/mc/log.sh:53)
+#   state/merge-conductor/rereviews-YYYYMMDD.txt (CAPFILE,
+#     bin/merge-conductor.sh:408; a machine run never spends it)
+#   state/merge-conductor/lane-epoch (bin/lib/mc/locks.sh:986, fleet-wide)
+#   state/merge-conductor/hold-reminder-at (bin/lib/mc/log.sh:661, fleet-wide)
+#   state/merge-conductor/diffs/* (bin/lib/mc/rebase.sh:2725 names a diff
+#     <repo>-<n>.diff with no owner, so no glob keeps it to this project)
+#   state/stack-follow/* (bin/lib/mc/rebase.sh:1591: `#` cannot be in a
+#     member name; the .pushed marker is read in the tick that wrote it,
+#     bin/merge-conductor.sh:1081)
+# Per-tick and machine-local, never carried: state/merge-conductor/tick/*,
+# state/merge-conductor-pr/*, state/pr-snapshot/*, state/fanin/*,
+# state/lane-gate/*, state/heartbeat/*, state/heartbeat-done/*,
+# state/gh-* (gh-budget, gh-etag, gh-rest-ledger, gh-policy-cache),
+# state/flags-cache/*, state/lead-authority/globs-*.cache, every *.lock,
+# locks/*, tmp/*, env/*, and logs/* other than the lane log.
+# logs/merge-conductor.log rides back as the lane log (.lri/log-append).
+#
+# The record files a run writes, under the three record globs below:
+#   reviewed-sha   hb_approve_bind bin/lib/mc/classify.sh:2825,
+#                  rebind_no_overlap bin/lib/mc/rebase.sh:4099
+#   rebind.log     rebind_no_overlap bin/lib/mc/rebase.sh:4100
+# (issue-commented, bin/lib/mc/classify.sh:472, is written by the settle only,
+# which a machine run defers, bin/lib/mc/settle.sh:756; not carried.)
+@token <record file> reviewed-sha rebind.log
+builds/$p-<KEY>-*/<record file>
+builds/pool-$p-<KEY>-*/<record file>
+builds/fly-$p-<KEY>-*/<record file>
+# mc_row_put bin/lib/mc/settle.sh:66-73; read by bin/merge-conductor-pr.sh:90.
+# Column 1 is <owner/repo>#<n> in fleet.conf case (bin/merge-conductor.sh:565);
+# the lib matches the ERE case-insensitively (grep -iE).
+state/merge-conductor/pr-state.tsv
+@rows state/merge-conductor/pr-state.tsv ^$slug#
+# The per-PR markers. The file:line is where the name is made.
+# bin/lib/mc/classify.sh:1527, bin/lib/mc/log.sh:478 (not reached by the fixture)
+state/merge-conductor/stuck/$repokey_*
+# bin/lib/mc/locks.sh:1318
+state/merge-conductor/read-memo/$repokey_*
+# bin/lib/mc/locks.sh:1576 (not reached by the fixture)
+state/merge-conductor/unverifiable/$repokey_*
+# bin/lib/mc/classify.sh:1374
+state/merge-conductor/ready-why/$repokey_*
+# bin/lib/mc/rebase.sh:4626 (not reached by the fixture)
+state/merge-conductor/head-lag/$repokey_*
+# bin/lib/mc/classify.sh:1055 (not reached by the fixture)
+state/merge-conductor/prov-detail/$repokey_*
+# bin/lib/mc/classify.sh:318 (not reached by the fixture)
+state/merge-conductor/merge-verdict/$repokey_*
+# bin/lib/mc/settle.sh:465 (not reached by the fixture)
+state/merge-conductor/patch-id/$repokey_*
+# bin/lib/mc/rebase.sh:4004 (not reached by the fixture)
+state/merge-conductor/pr-files/$repokey_*
+# bin/lib/mc/settle.sh:882 (not reached by the fixture)
+state/merge-conductor/vs-owed/$repokey_*
+# bin/lib/mc/classify.sh:1652 (not reached by the fixture)
+state/merge-conductor/handoff/$repokey_*
+# bin/lib/mc/classify.sh:1653 (not reached by the fixture)
+state/merge-conductor/handoff-released/$repokey_*
+# bin/lib/mc/classify.sh:1798 (not reached by the fixture)
+state/merge-conductor/handoff-human/$repokey_*
+# bin/lib/mc/rebase.sh:321 (not reached by the fixture)
+state/merge-conductor/conflict-size/$repokey_*
+# pq_key bin/lib/mc-prequeue.sh:52, pq_cache_put :59-66 (the fixture reads it)
+state/merge-conductor/prequeue/$repokey_*
+# closed_watch_dir bin/lib/mc/settle.sh:629-636: one dir per repo
+state/merge-conductor/closed-watch/$repokey/*

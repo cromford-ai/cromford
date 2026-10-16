@@ -1,0 +1,7 @@
+# ALERT LINES (BH-6889, BH-6881.5): alert lines a lane-run machine raised, for
+# the hub to replay into logs/ALERTS.log. Written by bin/lib/alert-line-remote.sh
+# (alr_post), read and marked by alr_apply (bin/lane-snapshot-publish.sh).
+# Bearer-gated.
+POST /api/alert-lines
+GET /api/alert-lines
+POST /api/alert-lines/applied

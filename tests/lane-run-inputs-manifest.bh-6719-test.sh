@@ -236,10 +236,13 @@ L "$X6" lri_member_ok demo state/x/demo/f - rw bad && bad "M6a lri_member_ok acc
 unset LRI_MANIFEST_DIR
 
 N6=0
+# A manifest may name the project's fleet.conf repo (@rows ^$slug#, $repokey:
+# BH-6884, BH-6889), so demo gets a fixture repo here, never the box's own.
+printf 'demo o/demo - - 2 box-a 192.0.2.1\n' > "$T/m6b-fleet.conf"
 for f in "$MANI"/*.rw "$MANI"/*.ro; do
   [ -f "$f" ] || continue
   lane=$(basename "$f"); lane="${lane%.*}"; N6=$((N6 + 1))
-  OUT=$(L "$T/none" lri_paths "$lane" demo ro 2>&1); rc=$?
+  OUT=$(FLEET_CONF="$T/m6b-fleet.conf" L "$T/none" lri_paths "$lane" demo ro 2>&1); rc=$?
   [ "$rc" = 0 ] && [ -n "$OUT" ] && ok "M6b $(basename "$f") parses" || bad "M6b $(basename "$f") rc=$rc: $OUT"
 done
 [ "$N6" -ge 4 ] && ok "M6b $N6 committed manifest files checked" || bad "M6b only $N6 manifest files found in $MANI"

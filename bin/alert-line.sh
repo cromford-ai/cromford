@@ -16,6 +16,10 @@
 # Line = "<ALERT_LINE_STAMP or date -u '+%F %TZ'> <text>", no prefix; embedded
 # newlines become spaces so the beat, the marker and the file hold one line.
 # Markers older than alert_cfg ALERT_LINE_MARKER_TTL_S (default 86400) are GC'd.
+# With LANE_RUN_ID set (a lane-run machine, BH-6889) the line is first posted
+# to the jobs API (bin/lib/alert-line-remote.sh alr_post) and, on success, none
+# of a-c runs here: the hub's bin/lane-snapshot-publish.sh replays it. A failed
+# post falls through to a-c.
 H=${HARNESS:-/root/harness}
 # BH-1138: the akey mint imports bin/alert_family.py; no __pycache__ beside it.
 export PYTHONDONTWRITEBYTECODE=1
@@ -31,6 +35,7 @@ done
 TEXT=$(printf '%s' "$*" | tr '\n' ' ')
 [ -n "$TEXT" ] || exit 0
 LINE="${ALERT_LINE_STAMP:-$(date -u '+%F %TZ')} $TEXT"
+[ -n "${LANE_RUN_ID:-}" ] && ALR_STAMP="${LINE%" $TEXT"}" && . "$H/bin/lib/alert-line-remote.sh" 2>/dev/null && alr_post "$LINE" "$SEV" "$AID" "$PROJ" && exit 0
 MKD="$H/state/alert-line-sent"
 
 # shellcheck source=bin/lib/alert-state.sh
