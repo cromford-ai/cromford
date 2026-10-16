@@ -76,13 +76,12 @@
   },
   {
    "file": "src/routes/cost.js",
-   "line_hint": 522,
+   "line_hint": 521,
    "match": "`SELECT * FROM cost_rows${where.length",
    "table": "cost_rows",
    "window": "caller since/until",
    "class": "wide",
-   "status": "pending",
-   "slice": "#6777 (BH-6774 C0)"
+   "status": "ported"
   },
   {
    "file": "src/routes/cost.js",

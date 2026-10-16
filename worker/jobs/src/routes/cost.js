@@ -14,7 +14,7 @@ import {
   ANCHOR_DEFAULT_MAX_FACTOR, ANCHOR_OFF_FLAG, parseAccountMap, anchorWindow,
   meterAccounts, anchorSpanCandidates, computeAnchored,
 } from "../lib/core.js";
-import { readHistory, mergeAggregate, mergeGroups, worstState } from "../lib/archive-read.js";
+import { readHistory, mergeAggregate, mergeGroups, mergeRows, worstState } from "../lib/archive-read.js";
 
 // ── Price versions (BH-5652) ────────────────────────────────────────────
 // Every statement below is a constant string with bound parameters only. Each
@@ -518,11 +518,18 @@ export const routes = [
       const until = str(url.searchParams.get("until"), 64);
       if (until) { binds.push(until); where.push(`ts<=?${binds.length}`); }
       // sql-ident-ok: where uses column names from a literal list, values bound; lim is a clamped Number
-      const rows = await env.DB.prepare(
-        `SELECT * FROM cost_rows${where.length ? " WHERE " + where.join(" AND ") : ""}
-         ORDER BY ts DESC LIMIT ${lim}`
-      ).bind(...binds).all();
-      return json(200, { cost_rows: rows.results || [], as_of: t });
+      const sql = `SELECT * FROM cost_rows${where.length ? " WHERE " + where.join(" AND ") : ""}
+         ORDER BY ts DESC LIMIT ${lim}`;
+      // BH-7059: the same SQL on the archive too when the window can reach it
+      // (no since, or since older than 1 day). The hot copy of a (box,
+      // row_hash) wins; archived_at is dropped so a row keeps the hot shape.
+      const r = await readHistory(env, { table: "cost_rows", since: since || undefined, now: t, hot: { sql, binds } });
+      const cost_rows = mergeRows(
+        r.hot.results || [],
+        r.archive && (r.archive.results || []).map(({ archived_at, ...rest }) => rest),
+        { key: (x) => `${x.box}\u0000${x.row_hash}`, compare: (a, b) => (a.ts < b.ts ? 1 : a.ts > b.ts ? -1 : 0), limit: lim },
+      );
+      return json(200, { cost_rows, archive: r.state, as_of: t });
     },
   ],
 

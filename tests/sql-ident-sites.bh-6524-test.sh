@@ -28,8 +28,9 @@ NOSITE="lane-spend"
 #   BH-7035 C0 (519270d0d) moved the lane-spend.js site into readHistory (-1),
 #   BH-7059 (ad46e35d1) moved 2 cost.js sites the same way (-2),
 #   BH-6974 (118b9babb) added 1 gh-ledger.js site (+1). 64 - 1 - 2 + 1 = 62.
+#   BH-7059 / BH-7035.1 (PR #7095) moved 1 more cost.js site into readHistory (-1) = 61.
 # A PR that removes a site on purpose lowers this number and says why.
-MIN_SITES=62
+MIN_SITES=61
 
 [ -x "$LINT" ] || { echo "FAIL bin/sql-ident-lint.sh is missing"; exit 1; }
 
