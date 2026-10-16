@@ -1,0 +1,11 @@
+{
+  "env": "MC_LANDING_PQ_AGE_MIN",
+  "read_in": "bin/lib/mc/landing.sh",
+  "type": "int",
+  "default": 60,
+  "min": 1,
+  "max": 1440,
+  "unit": "min",
+  "zero_means": null,
+  "note": "BH-6744: the oldest a green or no-selection pre-queue verdict on the head may be (minutes since it was dispatched) for landing_eligible to answer ok; older is reason prequeue-stale. A value that is not an integer, or under 1, reads as 60. Per-project row: lane.merge-conductor.<project>.mc_landing_pq_age_min."
+}

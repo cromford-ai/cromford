@@ -233,6 +233,10 @@ command -v rp_post >/dev/null 2>&1 || rp_post() {
 # autoenqueue.sh's gates and send, and does nothing without them.
 # shellcheck source=bin/lib/mc/external-enqueue.sh
 [ -r "$H/bin/lib/mc/external-enqueue.sh" ] && . "$H/bin/lib/mc/external-enqueue.sh"
+# The landing contract's shadow decisions (BH-6744), same optional rule: a tree
+# without it ticks exactly as before, and its default mode `queue` reads nothing.
+# shellcheck source=bin/lib/mc/landing.sh
+[ -r "$H/bin/lib/mc/landing.sh" ] && . "$H/bin/lib/mc/landing.sh"
 # The per-PR workers on lane-run machines (BH-6495), same optional rule: a
 # tree without it starts every worker on this box, as before.
 # shellcheck source=bin/lib/mc/fly-workers.sh
@@ -2571,6 +2575,10 @@ pr_worker() {
              [ "$N" -ge 1 ] && { mc_transition "$KEY" BLOCKED_HUMAN "queue-enqueue-failed-twice: ${ERR:-?}" "$HEAD" "$REVIEWED" "$URL" "$VERDICT" "$MSTATE" "$REC" >/dev/null
                mc_log "$KEY BLOCKED_AGENT queue-enqueue-failed-twice: the $PROVIDER merge queue refused a READY PR twice (${ERR:-no reason given}) — handed to bin/blocked-resolver.sh (fresh rebuild against current main): $URL"; } ;;
         esac
+        # BH-6744: record what the landing contract WOULD do with this head.
+        # After the enqueue, so it can never delay or change it; rc 0 always.
+        # Mode queue (the default) returns before its step mark, read or line.
+        command -v landing_shadow >/dev/null 2>&1 && landing_shadow "$P" "$SLUG" "$NUM" "$HEAD" "$KEY" "${RAWLBL:-}"
       elif mc_step merge; ERR=$(mc_merge_locked "$P" mc_merge "$URL" "$HEAD"); RC=$?; [ "$RC" = 0 ]; then
         mc_count_inc "$P" merges >/dev/null
         mc_step settle

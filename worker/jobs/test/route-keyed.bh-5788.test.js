@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
-import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -113,8 +113,16 @@ test('K4 + K5 a key-named family renders, loads the same under node, and answers
     const sigs = (rows) => rows.map(([m, matcher]) => `${m} ${matcherSignature(matcher)}`);
     assert.deepEqual(rendered.FAMILIES, loaded.FAMILIES);
     assert.deepEqual(sigs(rendered.ROUTES), sigs(loaded.ROUTES));
-    assert.equal(rendered.FAMILIES.at(-1), 'zz-probe');
-    assert.equal(sigs(rendered.ROUTES).at(-1), 'GET /api/zz-probe');
+    // Key-named fragments sort after every numbered one and among themselves by
+    // file name, so the probe is last only until a later key exists in the tree.
+    const names = readdirSync(join(w.jobs, 'test', 'route-table.d'));
+    assert.deepEqual(rendered.FAMILIES, gatedFamilies(names));
+    const i = rendered.FAMILIES.indexOf('zz-probe');
+    const numbered = parseFragments(names).filter((f) => f.num !== null && rendered.FAMILIES.includes(f.family)).length;
+    assert.ok(i >= numbered, `zz-probe at ${i} sorts after the ${numbered} numbered families`);
+    let at = 0;
+    for (const f of rendered.FAMILIES.slice(0, i)) at += (await import(pathToFileURL(join(w.jobs, 'src', 'routes', `${f}.js`)).href)).routes.length;
+    assert.equal(sigs(rendered.ROUTES)[at], 'GET /api/zz-probe');
 
     const mod = await import(pathToFileURL(join(w.jobs, 'src', 'index.js')).href);
     const res = await mod.default.fetch(

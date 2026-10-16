@@ -201,7 +201,13 @@ test('N8 WORKERD ROUND TRIP: the rendered routes.gen.js equals the node loader, 
     assert.ok(rendered.ROUTES.length > 0, 'the rendered module holds no routes');
     assert.deepEqual(rendered.FAMILIES, loaded.FAMILIES);
     assert.deepEqual(sigs(rendered.ROUTES), sigs(loaded.ROUTES));
-    if (a === n6Root) assert.equal(rendered.FAMILIES.at(-1), 'zz-probe');
+    // 999 is the last NUMBERED place; key-named fragments (BH-5788) sort after it.
+    if (a === n6Root) {
+      const numbered = parseFragments(readdirSync(join(a.jobs, 'test', 'route-table.d')))
+        .filter((f) => f.num !== null && !OPEN_FAMILIES.has(f.family)).map((f) => f.family);
+      assert.equal(numbered.at(-1), 'zz-probe');
+      assert.equal(rendered.FAMILIES[numbered.length - 1], 'zz-probe');
+    }
     const before = statSync(gen).mtimeMs;
     await new Promise((r) => setTimeout(r, 20));
     execFileSync(process.execPath, [join(a.jobs, 'scripts', 'routes-build.mjs')]);

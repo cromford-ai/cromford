@@ -1,0 +1,3 @@
+# BH-6744: the landing shadow decisions record (wave 1 of #6541), key-named (BH-5788).
+POST /api/landing-decisions
+GET /api/landing-decisions

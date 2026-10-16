@@ -43,16 +43,19 @@ if ! command -v node >/dev/null 2>&1; then
 fi
 
 # The number of gated fragments: every fragment minus the 4 open families.
-nfrag=$(ls "$FRAGS" | grep -cE '^[0-9]{3}-[a-z0-9-]+\.txt$')
+# A fragment is <NNN>-<family>.txt or, since BH-5788, <ticket-key>-<family>.txt.
+nfrag=$(ls "$FRAGS" | grep -cE '^([0-9]{3}-[a-z0-9-]+|[a-z]+-[0-9]+([.-][0-9]+)?-[a-z][a-z0-9-]*)\.txt$')
 want=$((nfrag - 4))
 
 echo "S1: --print"
 out=$(node "$GEN" --print); rc=$?
 [ "$rc" = 0 ] && ok "S1 rc 0" || bad "S1 rc $rc"
-got=$(printf '%s\n' "$out" | grep -c '^import { routes as f[0-9]\{3\} } from "\./routes/')
+got=$(printf '%s\n' "$out" | grep -cE '^import \{ routes as f([0-9]{3}|_[a-z0-9_]+) \} from "\./routes/')
 [ "$got" = "$want" ] && ok "S1 $got imports = $nfrag fragments - 4 open" || bad "S1 $got imports, want $want"
-spreads=$(printf '%s\n' "$out" | sed -n 's/^  \.\.\.f\([0-9]*\),$/\1/p' | paste -sd,)
-nums=$(ls "$FRAGS" | cut -c1-3 | grep -vxE '000|001|002|005' | paste -sd,)
+# A numbered fragment spreads as f<NNN>; a keyed one as f_<key>_<family>, after every numbered one.
+spreads=$(printf '%s\n' "$out" | sed -n 's/^  \.\.\.f\([0-9]\{3\}\|_[a-z0-9_]*\),$/\1/p' | paste -sd,)
+nums=$(ls "$FRAGS" | sed -E 's/^([0-9]{3})-.*/\1/; t; s/\.txt$//; s/[.-]/_/g; s/^/_/' \
+  | grep -vxE '000|001|002|005' | paste -sd,)
 [ -n "$spreads" ] && [ "$spreads" = "$nums" ] && ok "S1 spreads follow fragment order" || bad "S1 spread order: $spreads vs $nums"
 
 echo "S2: --out twice"

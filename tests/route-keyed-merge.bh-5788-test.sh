@@ -57,8 +57,13 @@ git -C "$R" merge -q --no-edit y >"$T/my.out" 2>&1 && ok || bad "M1 merge y conf
 ( cd "$J" && node scripts/routes-build.mjs --print ) >"$T/gen.js" 2>"$T/gen.err"; RC=$?
 [ "$RC" = 0 ] && ok || bad "M1 routes-build.mjs --print rc $RC: $(cat "$T/gen.err")"
 FAM=$(sed -n 's/^export const FAMILIES = \[\(.*\)\];$/\1/p' "$T/gen.js")
-[ "${FAM##*, }" = '"zz-b"' ] && ok || bad "M1 zz-b must be the last family: [$FAM]"
-[ "$(sed 's/, "zz-b"$//' <<<"$FAM" | sed 's/.*, //')" = '"zz-a"' ] && ok || bad "M1 zz-a must come just before zz-b: [$FAM]"
+# Key-named fragments sort after every numbered one and among themselves by
+# file name, so the tail of FAMILIES is exactly the tree's key-named families.
+KEYED=$(cd "$J/test/route-table.d" && ls | LC_ALL=C sort | grep -E '^[a-z]+-[0-9]+([.-][0-9]+)?-[a-z]' | sed -E 's/^[a-z]+-[0-9]+([.-][0-9]+)?-//; s/\.txt$//')
+NK=$(grep -c . <<<"$KEYED")
+TAIL=$(tr -d ' "' <<<"$FAM" | tr ',' '\n' | tail -n "$NK")
+[ "$TAIL" = "$KEYED" ] && ok || bad "M1 the key-named families must close FAMILIES in file-name order ($(tr '\n' ' ' <<<"$KEYED")): [$FAM]"
+[ "$(grep -A1 -x zz-a <<<"$TAIL" | tail -1)" = zz-b ] && ok || bad "M1 zz-a must come just before zz-b: [$FAM]"
 grep -qx 'import { routes as f_bh_1_zz_a } from "./routes/zz-a.js";' "$T/gen.js" && ok \
   || bad "M1 the render must import zz-a as f_bh_1_zz_a"
 

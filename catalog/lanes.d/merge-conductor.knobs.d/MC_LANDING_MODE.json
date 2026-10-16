@@ -1,0 +1,8 @@
+{
+  "env": "MC_LANDING_MODE",
+  "read_in": "bin/lib/mc/landing.sh",
+  "type": "string",
+  "default": "queue",
+  "zero_means": null,
+  "note": "BH-6744 (wave 1 of #6541): the landing mode. queue (default, the kill): the conductor reads and records nothing new. shadow: for each READY PR it enqueues, once per head, one LANDING would=direct|queue reason=<token> line and one landing_decisions row (GET /api/landing-decisions). optimistic: recorded exactly like shadow in wave 1; no merge path changes. Any other value reads as queue. Per-project row: lane.merge-conductor.<project>.mc_landing_mode."
+}
