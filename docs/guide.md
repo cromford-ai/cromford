@@ -1,15 +1,7 @@
 # The Cromford guide
 
-## What Cromford is
-
-Cromford watches your boards. When a ticket comes in, it reads the whole
-thread and decides whether the ticket is ready to build. A ready ticket gets a
-written plan, a build on its own branch, and a review by a separate session.
-The result is a pull request. Merges go through Cromford's own gates, never
-straight from a build.
-
-You run it on your own accounts: GitHub, Cloudflare, Fly or a VM you already
-have, and a key for at least one model vendor.
+The user guide pages live in `docs/guide/`. This page lists the install
+pages in reading order.
 
 ## Read it in this order
 
