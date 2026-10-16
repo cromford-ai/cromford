@@ -52,7 +52,10 @@ FD=docs/PR-OWNERSHIP.d
 # TEST-CHANGE (BH-6929): the duplicate-close guard landed as a new fragment
 # (§12, 12-duplicate-guard.md) next to BH-6815's §11, so the pin moved to the
 # render of all three texts and the fragment count is 13.
-BASE_SHA=b9ea07b6f6cd0732
+# TEST-CHANGE (BH-6717): the §3 close-duplicate row now states the time rule
+# (merged AFTER this PR was opened, spared-later=), so the pin moved from
+# b9ea07b6f6cd0732 to the render of that text.
+BASE_SHA=dff2bd0a16ddf62b
 STEP='lane renders generate and their sources validate'
 
 PASS=0; FAIL=0

@@ -52,9 +52,14 @@
 #
 # WHAT IT DOES WITH AN ORPHAN, at most PR_OWNER_MAX_ACTIONS per repo per run:
 #
-#   close-duplicate  another PR for the SAME ticket key is already MERGED. The
-#                    work shipped; this branch is a leftover. Closed with a
-#                    comment naming the PR that shipped it.
+#   close-duplicate  another PR for the SAME ticket key MERGED AFTER this PR was
+#                    opened. The work shipped; this branch is a leftover.
+#                    Closed with a comment naming the newest such merge. A PR
+#                    opened after every merge of its key is a later part of the
+#                    ticket, not a leftover (BH-6717): it falls through to the
+#                    arms below and the summary lists it as `spared-later=`.
+#                    An unreadable createdAt proves no order, so it closes
+#                    nothing.
 #                    Only through po_done_close_guard (bin/lib/pr-owner/
 #                    shipped.sh): held, armed, recent or not on main stays open.
 #   stale-conflict   the head has been CONFLICTING for more than
@@ -512,7 +517,7 @@ while read -r PROJECT SLUG; do
   PO_STALE_S="$((STALE_DAYS * 86400))" PO_MC_TERMINAL="$MC_TERMINAL" \
   PO_GRACE_S="$((GRACE_MIN * 60))" PO_MC_OK="$PO_MC_OK" PO_MC_WHY="${PO_MC_WHY:-}" \
   python3 - "$OPENF" "$MERGEDF" "$TD/jobs.json" "$TD/queue.tsv" "$TD/mc.tsv" \
-    "$STATEF" "$TD/new-state.json" > "$TD/verdicts.tsv" <<'PYEOF' 2>/dev/null
+    "$STATEF" "$TD/new-state.json" "$TD/spared-later.txt" > "$TD/verdicts.tsv" <<'PYEOF' 2>/dev/null
 import json, os, re, sys
 from datetime import datetime, timezone
 
@@ -587,14 +592,12 @@ def key_of(head, title):
     return "%s-%s" % (m.group(1).upper(), m.group(2))
 
 # ---- the merged keys: proof that a ticket already shipped -------------------
-merged_by_key = {}
-merged_all = {}   # every merged PR per key, for the superseded hook (BH-3936)
+merged_all = {}   # every merged PR per key: close-duplicate and the superseded hook (BH-3936)
 for p in merged:
     if not isinstance(p, dict) or "number" not in p:
         continue
     k = key_of(p.get("headRefName"), p.get("title"))
     if k != "-":
-        merged_by_key.setdefault(k, p)
         merged_all.setdefault(k, []).append(p)
 
 # ---- the ticket prefixes this repo's own harness PRs use (BH-3936) ----------
@@ -682,7 +685,7 @@ for p in prs:
     if b:
         stacked_on.setdefault(b, []).append(str(p.get("number")))
 
-rows, out = [], {}
+rows, out, spared = [], {}, []
 for p in sorted(prs, key=lambda x: int(x.get("number", 0) or 0)):
     if not isinstance(p, dict) or "number" not in p:
         continue
@@ -732,9 +735,19 @@ for p in sorted(prs, key=lambda x: int(x.get("number", 0) or 0)):
     if mergeable == "CONFLICTING":
         dirty_since = int(pv.get("dirty_since") or 0) or ts(p.get("updatedAt")) or NOW
 
+    created = ts(p.get("createdAt"))
     if state == "ORPHAN":
-        dup = merged_by_key.get(key) if key != "-" else None
-        if dup and int(dup.get("number", 0)) != n:
+        # ALREADY SHIPPED means merged AFTER this PR was opened (BH-6717), the
+        # same rule as MERGED_DUP below. #6328 (ticket/bh-6173-r2) was opened 1h46m
+        # after #6195 merged BH-6173; it is a later part, not a leftover. The
+        # newest such merge is the one named, whatever order gh listed them in.
+        keyed = [m for m in merged_all.get(key, [])
+                 if int(m.get("number", 0) or 0) != n] if key != "-" else []
+        after = [m for m in keyed if created and ts(m.get("mergedAt")) > created]
+        dup = max(after, key=lambda m: ts(m.get("mergedAt"))) if after else None
+        if keyed and created and not after:
+            spared.append(n)
+        if dup:
             reason = "superseded: %s already merged in #%s" % (key, dup.get("number"))
             action = "close-duplicate:%s" % dup.get("number")
         elif dirty_since and (NOW - dirty_since) >= STALE_S:
@@ -781,7 +794,6 @@ for p in sorted(prs, key=lambda x: int(x.get("number", 0) or 0)):
     # reopened ticket's rebuild (same key, nothing mints a fresh one), and a
     # live job is somebody building it right now; neither is a leftover. An
     # unreadable createdAt proves nothing came first, so it closes nothing.
-    created = ts(p.get("createdAt"))
     later = [m for m in merged_all.get(ekey, [])
              if int(m.get("number", 0) or 0) != n and created and ts(m.get("mergedAt")) > created] \
         if ekey != "-" and ekey.upper() not in live_keys else []
@@ -816,6 +828,10 @@ with open(sys.argv[7], "w") as f:
     json.dump({"repo": SLUG, "project": PROJECT,
                "generated_at": datetime.fromtimestamp(NOW, timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
                "prs": out}, f, indent=1, sort_keys=True)
+# Always written, empty when nothing was spared, so no earlier repo's list
+# carries into this repo's summary.
+with open(sys.argv[8], "w") as f:
+    f.write("".join("%d\n" % x for x in spared))
 print("\n".join("\t".join(r) for r in rows))
 PYEOF
   PY_RC=$?
@@ -973,7 +989,10 @@ _bin/pr-owner-sweep.sh_" \
   done < "$TD/verdicts.tsv"
 
   DRYNOTE=""; [ "$DRY" = 1 ] && DRYNOTE=" (DRY RUN — nothing was written)"
-  say "$SLUG: open=$N_OPEN owned=$N_OWNED external=$N_EXT parked=$N_PARK orphans=$N_ORPH conductor-unread=$N_UNREAD conductor=$MC_SRC closed=${CLOSED:--} stale=${STALE:--} handed-back=${HANDED:--} held=${HELD:--}$DRYNOTE"
+  # spared-later: orphans a merge of their key did NOT close, because every
+  # such merge came before the PR was opened (BH-6717).
+  SPARED=$(sed 's/^/#/' "$TD/spared-later.txt" 2>/dev/null | paste -sd, -)
+  say "$SLUG: open=$N_OPEN owned=$N_OWNED external=$N_EXT parked=$N_PARK orphans=$N_ORPH conductor-unread=$N_UNREAD conductor=$MC_SRC closed=${CLOSED:--} stale=${STALE:--} handed-back=${HANDED:--} held=${HELD:--} spared-later=${SPARED:--}$DRYNOTE"
   po_health_flush "$PROJECT" "$SLUG" </dev/null || true
   T_REPOS=$((T_REPOS+1)); T_OPEN=$((T_OPEN+N_OPEN)); T_OWNED=$((T_OWNED+R_OWNED)); T_EXT=$((T_EXT+N_EXT))
   T_ENR=$((T_ENR+R_ENR)); T_OWNERLESS=$((T_OWNERLESS+R_OWNERLESS)); T_SUP=$((T_SUP+R_SUP)); T_STALE=$((T_STALE+R_STALE))
