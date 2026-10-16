@@ -45,7 +45,11 @@ FD=docs/PR-OWNERSHIP.d
 # TEST-CHANGE (BH-6814, #6846): the stacked-PR guard and the close-path ticket
 # HOLD (§10, rule 3 and the to_merge_hold paragraph) landed in the fragments,
 # so the pin moved from 28fd59dcde365903 to the render of that text.
-BASE_SHA=5e31bf4f72404d51
+# TEST-CHANGE (BH-6815): the done-ticket close guard landed as a new section,
+# docs/PR-OWNERSHIP.d/11-done-close-guard.md, so the pin moved from
+# 5e31bf4f72404d51 (main after #6846) to the render of both texts and the
+# fragment count is 12.
+BASE_SHA=275bfb50c596fe8d
 STEP='lane renders generate and their sources validate'
 
 PASS=0; FAIL=0
@@ -84,7 +88,7 @@ cmp -s "$T/d1.out" "$DIR/$DOC" && ok || bad "D1: the render does not cmp equal t
 # D2 the fragments themselves
 # ============================================================================
 mapfile -t NAMES < <(cd "$DIR/$FD" 2>/dev/null && LC_ALL=C ls -1)
-eq "D2 fragment count" "${#NAMES[@]}" 11
+eq "D2 fragment count" "${#NAMES[@]}" 12
 for n in "${NAMES[@]}"; do
   f="$DIR/$FD/$n"
   [[ "$n" =~ ^[0-9]{2}-[a-z0-9-]+\.md$ ]] && ok || bad "D2: $n is not NN-<slug>.md"
@@ -107,7 +111,10 @@ out=$("$RDS" --root "$R" --check); rc=$?
 eq "R1 clean --check rc" "$rc" 0
 eq "R1 clean --check stdout" "$out" ""
 
-printf 'an added hooks line\n' >> "$R/$FD/10-hooks.md"
+# TEST-CHANGE (BH-6815): the line goes into the fragment that sorts LAST, so
+# it is still the written doc's last line now that 10-hooks.md is not last.
+LASTF=$(cd "$R/$FD" && LC_ALL=C ls -1 | tail -n 1)
+printf 'an added hooks line\n' >> "$R/$FD/$LASTF"
 out=$("$RDS" --root "$R" --check); rc=$?
 eq "R1 edited fragment --check rc" "$rc" 1
 eq "R1 edited fragment first line" "$(head -1 <<<"$out")" "DRIFT $DOC"

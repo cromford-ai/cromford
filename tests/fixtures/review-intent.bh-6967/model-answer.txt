@@ -1,0 +1,4 @@
+Findings
+- [BLOCK] bin/unplanned.sh:1: outside the planned files. The plan's Files to touch names only bin/a.sh, and no Files outside the plan line names this path.
+
+VERDICT: BLOCK

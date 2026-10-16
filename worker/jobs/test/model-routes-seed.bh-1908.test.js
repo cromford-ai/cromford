@@ -153,6 +153,11 @@ const SEEDED_AS_COPY = {
 const SEEDED_AS_GROK_COPY = {
   'archie-research.xsearch': 'grok.default',
 };
+// TEST-CHANGE (BH-6967): review-intent, the intent review's route, is a two-rung
+// copy: rung 0 is triage.light's claude rung 0, rung 1 is lead.review's rung 0.
+const SEEDED_AS_LADDER_COPY = {
+  'review-intent': ['triage.light', 'lead.review'],
+};
 
 test('1: a fresh DB seeds every hub role at its live ladder (bar the alert.triage carve-out)', () => {
   const db = openDb();
@@ -173,11 +178,20 @@ test('1: a fresh DB seeds every hub role at its live ladder (bar the alert.triag
     assert.ok(rung0, `${from} has a grok rung 0 to copy`);
     assert.deepEqual(ladder(db, role), [rung0], `seed ladder for ${role} (copy of ${from} rung 0)`);
   }
+  for (const [role, from] of Object.entries(SEEDED_AS_LADDER_COPY)) {
+    const want = from.map((src, i) => {
+      const rung0 = ladder(db, src).find((r) => r.startsWith('0:'));
+      assert.ok(rung0, `${src} has a rung 0 to copy`);
+      return `${i}:${rung0.slice(2)}`;
+    });
+    assert.deepEqual(ladder(db, role), want, `seed ladder for ${role} (copy of ${from.join(', ')} rung 0)`);
+  }
   // Every non-stage hub role the seed writes is in the live snapshot, so no
   // seeded role escapes the comparison above.
   const seeded = db.prepare("SELECT DISTINCT role FROM model_routes WHERE project IS NULL AND role NOT LIKE 'stage.%'")
     .all().map((r) => r.role).sort();
-  assert.deepEqual(seeded, [...Object.keys(LIVE), ...Object.keys(SEEDED_SINCE), ...Object.keys(SEEDED_AS_COPY), ...Object.keys(SEEDED_AS_GROK_COPY)].sort());
+  assert.deepEqual(seeded, [...Object.keys(LIVE), ...Object.keys(SEEDED_SINCE), ...Object.keys(SEEDED_AS_COPY), ...Object.keys(SEEDED_AS_GROK_COPY),
+    ...Object.keys(SEEDED_AS_LADDER_COPY)].sort());
   db.close();
 });
 

@@ -14,6 +14,7 @@
 // bin/lib/model-watch.sh.
 import { d1Guarded, json } from "../lib/http.js";
 import { ensureTable } from "../lib/core.js";
+import { readHistory, mergeAggregate } from "../lib/archive-read.js";
 
 // The table's own CHECK set. Compared exactly: "New" is not "new".
 const STATUSES = ["new", "suggested", "adopted", "ignored"];
@@ -110,21 +111,27 @@ async function setState({ env, body, t }) {
   });
 }
 
-async function usage({ env, url }) {
+const USAGE_SQL = `SELECT COUNT(*) AS rows, COALESCE(SUM(input_toks),0) AS input_toks, COALESCE(SUM(output_toks),0) AS output_toks,
+         COALESCE(SUM(cache_read),0) AS cache_read, COALESCE(SUM(cache_write),0) AS cache_write
+       FROM cost_rows WHERE model=?1 AND ts>=?2`;
+const USAGE_SPEC = { rows: "sum", input_toks: "sum", output_toks: "sum", cache_read: "sum", cache_write: "sum" };
+
+async function usage({ env, url, t }) {
   const model = str(url.searchParams.get("model")), since = str(url.searchParams.get("since"));
   if (!model) return json(400, { error: "model required" });
   if (!since) return json(400, { error: "since required" });
   // One aggregate, never paged (D12). `rows` is what tells "no rows" from "no spend".
+  // A since older than the hot store sums the archive too (BH-6779).
   return d1Guarded("cost_rows", async () => {
-    const r = await env.DB.prepare(
-      `SELECT COUNT(*) AS rows, COALESCE(SUM(input_toks),0) AS input_toks, COALESCE(SUM(output_toks),0) AS output_toks,
-         COALESCE(SUM(cache_read),0) AS cache_read, COALESCE(SUM(cache_write),0) AS cache_write
-       FROM cost_rows WHERE model=?1 AND ts>=?2`,
-    ).bind(model, since).first();
+    const h = await readHistory(env, {
+      table: "cost_rows", since, now: t, method: "first", hot: { sql: USAGE_SQL, binds: [model, since] },
+    });
+    const r = mergeAggregate(h.hot, h.archive, USAGE_SPEC);
     return json(200, {
       model, since,
       rows: Number(r.rows), input_toks: Number(r.input_toks), output_toks: Number(r.output_toks),
       cache_read: Number(r.cache_read), cache_write: Number(r.cache_write),
+      archive: h.state,
     });
   });
 }

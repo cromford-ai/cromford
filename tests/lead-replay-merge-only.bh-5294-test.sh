@@ -216,7 +216,9 @@ hasw() { summ | grep -qw -- "$1"; }
 # ── R1: only main merged in, builder APPROVE still on G: the lead MERGE is replayed ──
 reset "$HM" "$G" MERGE; tick
 [ "$RC" -eq 0 ] && ok || bad "R1 rc=$RC out=$(cat "$T/out")"
-WANT="post example-org/demo-os 41 $HM MERGE --source lead --reviewer box:box-hub --note lead-replay:$G12 how:main-merge"
+# TEST-CHANGE (BH-6967): the replay post also names the replayed row's review
+# mode; that row has none, so it was a full review.
+WANT="post example-org/demo-os 41 $HM MERGE --source lead --reviewer box:box-hub --note lead-replay:$G12 how:main-merge --review-mode full"
 [ "$(cat "$T/log/post" 2>/dev/null)" = "$WANT" ] && ok || bad "R1 lead-verdict argv: '$(cat "$T/log/post" 2>/dev/null)' want '$WANT'"
 [ "$(reqs)" = 0 ] && ok || bad "R1 a lead review was requested on a main-merge head: $(reqbody)"
 [ "$(agents)" = 0 ] && ok || bad "R1 an agent was called $(agents) time(s)"

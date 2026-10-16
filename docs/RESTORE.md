@@ -84,6 +84,48 @@ state and never paged: the "not configured" line above already says that once a
 day, and a second hourly page per box would only teach people to mute the
 channel.
 
+**Measuring the backup's CPU on the hub (BH-6173).** The backup runs on the
+hub. #6173 asked to move it off the hub with the per-project lanes of #6047.
+On 2026-10-11 #6047 changed: per-project lanes now run on Fly lane-run
+machines. A Fly machine cannot read the hub's local disk, and that disk is what
+this lane archives. The warm standby (`bin/state-restore.sh --standby`) also
+pulls the hub's objects every 15 minutes. So the lane runs on the hub at idle
+priority, and a measurement decides if that is enough. If the measurement
+fails, a new ticket moves the work to another box.
+
+`bin/lane-cpu-sample.sh` takes the measurement. It reads `/proc` every 5
+seconds for a whole cycle, adds the ticks up, and prints the CPU share of each
+lane. A process counts
+under its nearest `bin/<name>.sh` ancestor, so the lane's `tar` and `zstd`
+count as `state-backup`. A process that exits inside the window still counts:
+its ticks reach its parent's reaped-children time, and the tool counts that for
+the lane of the child that exited. It writes nothing but two temp files, and it
+removes them.
+
+The acceptance asks for "under 2% across one 15-minute cycle". The backup runs
+at minutes 5, 20, 35 and 50, so one window from minute 4 to minute 19 holds
+exactly one full run and the quiet time after it.
+
+1. On the hub, at minute 4 of an hour, run:
+   `bin/lane-cpu-sample.sh --seconds 900 --interval 5`
+2. Copy the lane table and the last line
+   (`state-backup share=<p>% PASS|FAIL (limit 2%)`), with the start time, to
+   #6173.
+3. If the line says `PASS` (share under 2%), close ask 4 of #6173 as not
+   needed.
+4. If the line says `FAIL` (exit 1, share 2% or more), file a ticket to move
+   `state-backup` off the hub, with the table.
+
+The defaults are `--lane state-backup --max-pct 2`; a printed share equal to
+the limit is FAIL.
+
+Each tick counts once: when a child exits, the part of its life an earlier
+interval already counted comes off. The share can be low by at most one
+interval per run: a run that starts and ends inside one 5-second interval
+counts for the process that reaps it (cron, "other"). The tool's own CPU counts
+as "lane-cpu-sample", about 1% on the hub. Exit 2 means no CPU ticks were seen,
+so there is no share.
+
 ---
 
 ## Setup

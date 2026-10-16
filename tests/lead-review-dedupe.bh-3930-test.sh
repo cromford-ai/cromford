@@ -315,7 +315,9 @@ postn() { [ -f "$T/log/post" ] && wc -l < "$T/log/post" | tr -d ' ' || echo 0; }
 # ── D4: a carried-over approval on an unchanged patch replays the lead MERGE ──
 reset2 "$HM"; tick2
 [ "$RC" -eq 0 ] && ok || bad "D4 rc=$RC out=$(cat "$T/out")"
-WANT="post example-org/demo-os 41 $HM MERGE --source lead --reviewer box:box-hub --note lead-replay:$PH12 how:main-merge"
+# TEST-CHANGE (BH-6967): the replay post also names the replayed row's review
+# mode; that row has none, so it was a full review.
+WANT="post example-org/demo-os 41 $HM MERGE --source lead --reviewer box:box-hub --note lead-replay:$PH12 how:main-merge --review-mode full"
 [ "$(cat "$T/log/post" 2>/dev/null)" = "$WANT" ] && ok || bad "D4 lead-verdict argv: '$(cat "$T/log/post" 2>/dev/null)' want '$WANT'"
 [ "$(qposts)" = 0 ] && ok || bad "D4 a lead review was requested on an unchanged patch: $(grep 'POST /api/lead-reviews' "$T/log/qworker")"
 hasw replayed=1 && hasw requested=0 && ok || bad "D4 summary: $(summ)"

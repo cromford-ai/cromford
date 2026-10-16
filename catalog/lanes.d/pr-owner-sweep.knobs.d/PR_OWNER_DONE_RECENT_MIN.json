@@ -1,0 +1,11 @@
+{
+  "env": "PR_OWNER_DONE_RECENT_MIN",
+  "type": "int",
+  "default": 120,
+  "min": 0,
+  "max": null,
+  "unit": "min",
+  "zero_means": "off",
+  "required": false,
+  "note": "BH-6815. A done-ticket close (superseded rule 1 or 2, or the close-duplicate arm) skips a PR whose updatedAt is less than this many minutes before the sweep's clock, and holds it `#n:recent`. Read by bin/pr-owner-sweep.sh as ${PR_OWNER_DONE_RECENT_MIN:-}, default 120; the guard is po_done_close_guard in bin/lib/pr-owner/shipped.sh. 0 = this check off; the label, armed and shipped checks still run."
+}

@@ -252,7 +252,9 @@ hasw delta=1 && hasw full=0 && ok || bad "P1 (enqueue) summary: $(summ)"
 
 # ── P4 (enqueue): only main merged in, builder APPROVE on G: the MERGE is replayed ──
 reset "$H4" "$G" MERGE; tick
-WANT="post example-org/demo-os 41 $H4 MERGE --source lead --reviewer box:box-hub --note lead-replay:$G12 how:main-merge"
+# TEST-CHANGE (BH-6967): the replay post also names the replayed row's review
+# mode; that row has none, so it was a full review.
+WANT="post example-org/demo-os 41 $H4 MERGE --source lead --reviewer box:box-hub --note lead-replay:$G12 how:main-merge --review-mode full"
 [ "$(cat "$T/log/post" 2>/dev/null)" = "$WANT" ] && ok || bad "P4 (enqueue) lead-verdict argv: '$(cat "$T/log/post" 2>/dev/null)' log: $(cat "$QLOG")"
 [ "$(reqs)" = 0 ] && ok || bad "P4 (enqueue) a review was requested: $(reqbody)"
 

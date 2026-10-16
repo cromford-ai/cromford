@@ -31,8 +31,11 @@
 # main a reused non-red verdict's main may be (mc-prequeue.d/dispatch.sh).
 # MC_PREQUEUE_TRACE (BH-6335) 1 asks the gate to run its suites under the trace
 # (mc-prequeue.d/learned.sh).
+# MC_PREQUEUE_IMPACT_REUSE (BH-6924) 1 reuses an older main's green verdict when
+# the main move misses the PR's impact set; MC_PREQUEUE_IMPACT_MAX_S bounds the
+# age of that verdict (mc-prequeue.d/impact-reuse.sh).
 
-PQ_KNOB_DEFAULTS="MC_PREQUEUE_GATE=1 MC_PREQUEUE_FRESH_S=1800 MC_PREQUEUE_DEADLINE_S=2400 MC_PREQUEUE_REUSE=1 MC_BATCH_SOLO=1 MC_BATCH_SOLO_MAX_MEMBERS=13 MC_PREQUEUE_FRESH_COMMITS=3 MC_PREQUEUE_TRACE=1"
+PQ_KNOB_DEFAULTS="MC_PREQUEUE_GATE=1 MC_PREQUEUE_FRESH_S=1800 MC_PREQUEUE_DEADLINE_S=2400 MC_PREQUEUE_REUSE=1 MC_BATCH_SOLO=1 MC_BATCH_SOLO_MAX_MEMBERS=13 MC_PREQUEUE_FRESH_COMMITS=3 MC_PREQUEUE_TRACE=1 MC_PREQUEUE_IMPACT_REUSE=1 MC_PREQUEUE_IMPACT_MAX_S=21600"
 
 # pq_knob <NAME> — a merge-conductor lane knob for this project, a non-negative
 #   integer, else its default from PQ_KNOB_DEFAULTS (the _bej_knob pattern).

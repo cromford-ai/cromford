@@ -85,3 +85,4 @@ worker/jobs/test/main-red-state.bh-4156.test.js:generic-api-key:20
 worker/jobs/test/route-keyed.bh-5788.test.js:generic-api-key:122
 worker/jobs/test/route-registry.bh-4607.test.js:generic-api-key:156
 worker/jobs/test/routes/cost.test.js:generic-api-key:136
+worker/jobs/test/ticket-edges.bh-6977.test.js:generic-api-key:18

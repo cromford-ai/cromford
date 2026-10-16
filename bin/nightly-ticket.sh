@@ -49,7 +49,13 @@
 # NT_STRICT_RESULT, NT_PLAN_N (the shard count the plan published),
 # NT_GIT_DIR (the checkout for the commit subjects; default the cwd),
 # NT_SERVER_URL (default https://github.com), NT_GH (the gh binary; the test
-# seam), GH_TOKEN (the workflow's own token — issues: write, nothing else).
+# seam), GH_TOKEN (the workflow's own token — issues: write, nothing else),
+# NT_APP_TOKEN (the harness App installation token, cromford[bot]).
+# The create call and its label call run as NT_APP_TOKEN when it is set, so the
+# `labeled ai-build` actor is one the trigger-actor gate accepts
+# (bin/lib/trigger-actor.sh); the workflow token's actor, github-actions[bot],
+# is refused there. Reads and comments keep GH_TOKEN. With NT_APP_TOKEN empty
+# the create runs as GH_TOKEN, as before, and stderr says so once.
 # NT_MAX_NEW is a workflow env with this code default: settings rows are not
 # readable inside a GitHub workflow.
 # A new issue is opened labelled `ai-build` (BH-3411); a comment on an open one
@@ -153,15 +159,29 @@ search() {
 # rc 1 no issue; rc 3 issue opened (number printed) but not labelled.
 create() {
   local resp num
-  resp=$("$GH" api -X POST "repos/$REPO/issues" -f "title=$1" -F "body=@$2" -f 'labels[]=ai-build' \
+  resp=$(wgh api -X POST "repos/$REPO/issues" -f "title=$1" -F "body=@$2" -f 'labels[]=ai-build' \
            --jq '"\(.number) \([.labels[]?.name] | index("ai-build") != null)"') || return 1
   num="${resp%% *}"
   case "$num" in ''|*[!0-9]*) return 1 ;; esac
   printf '%s\n' "$num"
   if [ "${resp##* }" != true ]; then
-    "$GH" api -X POST "repos/$REPO/issues/$num/labels" -f 'labels[]=ai-build' >/dev/null || return 3
+    wgh api -X POST "repos/$REPO/issues/$num/labels" -f 'labels[]=ai-build' >/dev/null || return 3
   fi
   return 0
+}
+
+# wgh <gh args> — the two writes that set the label actor: as the App when
+# NT_APP_TOKEN is set. Without it, the workflow token, and one warning per run
+# (a marker file, because create runs in a command substitution). A refused App
+# call is not retried as the workflow token: that is the label the gate refuses.
+wgh() {
+  if [ -n "${NT_APP_TOKEN:-}" ]; then GH_TOKEN="$NT_APP_TOKEN" "$GH" "$@"; return; fi
+  if [ ! -e "$WORK/app-token-warned" ]; then
+    : > "$WORK/app-token-warned"
+    echo "nightly-ticket: NT_APP_TOKEN not set; filing as the workflow token, and the trigger-actor gate refuses that label" >&2
+    [ "${GITHUB_ACTIONS:-}" = true ] && echo "::warning::nightly-ticket: NT_APP_TOKEN not set; the ai-build label is added by github-actions[bot], which the trigger-actor gate refuses" >&2
+  fi
+  "$GH" "$@"
 }
 
 # ── one issue per failing suite ─────────────────────────────────────────────

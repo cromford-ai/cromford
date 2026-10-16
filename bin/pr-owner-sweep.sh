@@ -55,6 +55,8 @@
 #   close-duplicate  another PR for the SAME ticket key is already MERGED. The
 #                    work shipped; this branch is a leftover. Closed with a
 #                    comment naming the PR that shipped it.
+#                    Only through po_done_close_guard (bin/lib/pr-owner/
+#                    shipped.sh): held, armed, recent or not on main stays open.
 #   stale-conflict   the head has been CONFLICTING for more than
 #                    PR_OWNER_STALE_DAYS. One comment, the `stale-conflict`
 #                    label, and the label is the memory: a PR that already
@@ -157,6 +159,8 @@ command -v lane_env_apply    >/dev/null 2>&1 && lane_env_apply    pr-owner-sweep
 . "$(dirname "$0")/lib/pr-owner/health.sh" || exit 1
 # shellcheck source=lib/pr-owner/mc-read.sh
 . "$(dirname "$0")/lib/pr-owner/mc-read.sh" || exit 1
+# shellcheck source=lib/pr-owner/shipped.sh
+. "$(dirname "$0")/lib/pr-owner/shipped.sh" || exit 1
 
 command -v jq      >/dev/null 2>&1 || exit 0
 command -v python3 >/dev/null 2>&1 || exit 0
@@ -170,6 +174,10 @@ GRACE_MIN=$(num_or "${PR_OWNER_GRACE_MIN:-}" 30)     # a PR that JUST moved belo
 MAX_ACTIONS=$(num_or "${PR_OWNER_MAX_ACTIONS:-}" 5)  # writes per repo per run
 PR_LIMIT=$(num_or "${PR_OWNER_PR_LIMIT:-}" 200)      # gh pr list --limit
 DRY=$(num_or "${PR_OWNER_DRY_RUN:-}" 0)
+# The done-ticket close guard (bin/lib/pr-owner/shipped.sh) reads these three.
+PO_DONE_RECENT_MIN=$(num_or "${PR_OWNER_DONE_RECENT_MIN:-}" 120)    # 0 = no recency check
+PO_SHIPPED_MAX_FILES=$(num_or "${PR_OWNER_SHIPPED_MAX_FILES:-}" 60)  # more files = unknown, kept
+PO_DONE_SKIP_LABELS="${PR_OWNER_DONE_SKIP_LABELS:-hold merge-queue queue-solo fix-main-red}"
 # THE ROWS ARE THE RECORD (BH-5003). 1 = a state-file entry with no open D1 row
 # is dropped; 0 = the file + fresh-rows merge this lane ran before. Anything
 # else is the default, said once in the log rather than silently.
@@ -909,6 +917,8 @@ PYEOF
     case "$ACTION" in
       close-duplicate:*)
         DUP="${ACTION#close-duplicate:}"
+        # Read-only, so it runs in a dry run too; a skip writes nothing and spends no action.
+        PO_OPENF="$OPENF" po_done_close_guard "close-duplicate:#$DUP" </dev/null || continue
         N_ACT=$((N_ACT+1))
         if ! po_comment "$NUM" \
 "Closing this one: **$KEY already shipped in #$DUP**, so this branch is a leftover from an earlier attempt at the same ticket.

@@ -224,6 +224,26 @@
 #            sign-off, the priority or the request. jev_risk.max_per_tick (3)
 #            asks a tick; a head over it gets one `not asked` line and is not
 #            asked later.
+#   intent   (BH-6967) at the end of `risk`: a head it classified low (or
+#            withheld), medium or high ends its scope_notes with
+#            `review-tier:<low|medium|high> review-mode:<full|intent>`. intent
+#            only for a medium head, with no `lead-delta:` note, while the
+#            settings row risk_tier.medium_mode reads intent (trimmed, any case,
+#            read once a tick; no row, an unreadable row or another value is
+#            full, and a bad value is one log line a tick). bin/lead-review.sh
+#            reviews that head with prompts/lead-review.d/intent.md on route
+#            review-intent, and bin/lead-review-land.sh writes both tokens onto
+#            the verdict row. Both read the tokens only as the LAST group of
+#            the notes, and request() rewrites `review-tier:`/`review-mode:` in
+#            every earlier part (paths, subjects, comment text) to `=`. The
+#            reviewer also reads risk_tier.medium_mode again and needs intent.
+#            The first ask stores its tokens in
+#            state/lead-review-enqueue/review-tier-<slug>-<n>-<sha12> (7 days);
+#            a re-confirm sends only what that file holds, so its notes never
+#            change. An unclassified head gets no tokens. The risk-tier sign-off
+#            posts --review-tier low --review-mode risk-tier; a replay posts the
+#            mode of the row it replays (full when that row has none). The
+#            summary counts review_intent=.
 #   self     (BH-5798) a head not yet in the ledger runs bin/pr-self-check.sh's
 #            psc_check (bin/lib/pr-self-check.sh, rules catalog/pr-self-check.tsv)
 #            over the PR body, on the hub clone under REPOS_ROOT after one fetch
@@ -444,6 +464,23 @@ cqg_gate_on() {
   fi
   [ "$CQG_ON" = 1 ]
 }
+# rv_medium_mode — sets RVMODE to intent or full from risk_tier.medium_mode
+#   (BH-6967, header `intent`). In THIS shell, never in $(...): the row is read
+#   once a tick.
+RVMODE=""
+rv_medium_mode() {
+  local v rc=0
+  [ -n "$RVMODE" ] && return 0
+  v=$(setting_get risk_tier.medium_mode 2>/dev/null) || rc=$?
+  v=$(printf '%s' "$v" | tr -d '[:space:]' | tr '[:upper:]' '[:lower:]')
+  RVMODE=full
+  case "$rc:$v" in
+    0:intent) RVMODE=intent ;;
+    0:full|2:*) ;;
+    0:*) log "risk_tier.medium_mode reads '$v', not full or intent; a medium head gets the full review this tick" ;;
+    *) log "risk_tier.medium_mode unreadable (rc $rc); a medium head gets the full review this tick" ;;
+  esac
+}
 command -v prs_pr_get >/dev/null 2>&1 || prs_pr_get() {
   [ -n "${PRS_COUNT_FILE:-}" ] && printf 'MISS %s\n' "$2" >> "$PRS_COUNT_FILE"
   gh_rest GET "repos/$1/pulls/$2" > "$6"; }
@@ -528,6 +565,8 @@ find "$STATE" -maxdepth 1 -name 'traced-*' -mtime +7 -delete 2>/dev/null
 find "$STATE" -maxdepth 1 -name 'alerted-*' -mtime +7 -delete 2>/dev/null
 # The self-check's per-head hold files (BH-5798) age out the same way.
 find "$STATE" -maxdepth 1 -name 'selfcheck-*' -mtime +7 -delete 2>/dev/null
+# The per-head review tokens (BH-6967) age out the same way.
+find "$STATE" -maxdepth 1 -name 'review-tier-*' -mtime +7 -delete 2>/dev/null
 # The silence check's per-head note files (BH-5797) age out the same way.
 find "$STATE/silence" -maxdepth 1 \( -name 'note-*' -o -name 'scanned-*' \) -mtime +7 -delete 2>/dev/null
 
@@ -540,7 +579,7 @@ export PRS_COUNT_FILE="$WORK/prs-count"
 
 SELFCHK=0; RBASE=0; TRACED=0; TBOUND=0; TDISP=0; NOCI=0; REPOS=0; PRS=0; REQUESTED=0; REPLAYED=0; RDELTA=0; RFULL=0; EXISTING=0; DEFERRED=0; NOAPP=0; VERD=0; SELF=0; SILENCE=0; TRIPPED=0; UNREAD=0; ASKED=0; RUNG=0
 RLOW=0; RSIGNED=0; RSHADOW=0; RMED=0; RHIGH=0; RLEADN=0; RWAIT=0; GRACE=""
-JASKED=0; JEV=0
+JASKED=0; JEV=0; RINTENT=0
 FAILRESET=0; FAILX=0; RECLAIMED=0; SKDRAFT=0; REQ_STATUS=""; REQ_ID=""
 
 # mode_row <replay|delta|full> <slug> <n> <head> <detail> — one modes.tsv row (BH-5294).
@@ -680,15 +719,25 @@ inbuild_job_on_head() {
 #   rides in scope_notes, where bin/lead-review.sh reads it; the prior ref names
 #   the lead row it builds on.
 request() {
-  local slug="$1" n="$2" head="$3" rec="$4" prio="${5:-0}" dnote="${6:-}" dprior="${7:-}" body resp rc err id safe lrc=3 notes authors
+  local slug="$1" n="$2" head="$3" rec="$4" prio="${5:-0}" dnote="${6:-}" dprior="${7:-}" body resp rc err id safe lrc=3 notes authors rvt rvf rvl
   notes="auto: ${REQFOR:-builder APPROVE} on ${head:0:12}"
   [ -n "$dnote" ] && notes="$notes; $dnote"
   [ -n "${PSCNOTE:-}" ] && notes="$notes; $PSCNOTE"
   [ -n "${TNOTE:-}" ] && notes="$notes; $TNOTE"
   [ -n "${SDNOTE:-}" ] && notes="$notes; $SDNOTE"
+  # BH-6967 (header, `intent`): the tier and mode tokens end the notes. A first
+  # ask sends this head's RVTOK; a re-confirm sends only what the first ask stored.
+  # The note parts before them carry text a PR author or a commenter controls
+  # (diff paths, commit subjects, a HUMAN-STEP-DONE body), so the same words
+  # there are rewritten: the readers trust only the last group.
+  notes="${notes//review-tier:/review-tier=}"; notes="${notes//review-mode:/review-mode=}"
+  rvf="$STATE/review-tier-$(printf '%s' "${slug//\//_}" | tr -cd 'A-Za-z0-9._-')-$n-${head:0:12}"
+  if [ "$rec" = 1 ]; then rvt=$(cat "$rvf" 2>/dev/null); else rvt="${RVTOK:-}"; fi
   # The worker caps scope_notes at 4000 chars (worker/jobs/src/routes/lead-reviews.js);
   # over it, the lead-prev file lists become their counts (BH-6391).
-  command -v lpv_fit >/dev/null 2>&1 && notes=$(lpv_fit "$notes" 4000)
+  rvl=4000; [ -n "$rvt" ] && rvl=$((4000 - ${#rvt} - 2))
+  command -v lpv_fit >/dev/null 2>&1 && notes=$(lpv_fit "$notes" "$rvl")
+  [ -n "$rvt" ] && notes="$notes; $rvt"
   if ! authors=$(head_authors_json "$slug" "$n" "$(jq -r '.head.ref // empty' "$WORK/pr" 2>/dev/null)" "$PROJECT"); then
     log "$slug#$n @${head:0:12}: no head authorship ($authors); requested without head_authors"
     authors=""
@@ -718,6 +767,11 @@ request() {
   fi
   REQUESTED=$((REQUESTED + 1))
   printf '%s\t%s\t%s\t%s\t%s\n' "$(date +%s)" "$slug" "$n" "$head" "$id" >> "$LEDGER"
+  if [ -n "$rvt" ]; then
+    [ "$rec" = 1 ] || printf '%s' "$rvt" > "$rvf" 2>/dev/null \
+      || log "$slug#$n @${head:0:12}: could not store the review tokens in $rvf; a re-confirm may be refused 409"
+    case "$rvt" in *review-mode:intent*) RINTENT=$((RINTENT + 1)); log "$slug#$n @${head:0:12}: intent review requested ($rvt)" ;; esac
+  fi
   [ "$RUNMODE" = pr ] && log "$slug#$n @${head:0:12}: immediate lead review request ($id), trigger=$LRE_TRIG"
   # Delta only when the note carries `lead-delta:` (bin/lead-review.sh enters
   # delta mode on exactly that). A note that is only `possible duplicate of …`
@@ -1128,7 +1182,7 @@ for SLUG in $AUTO_REPOS; do
     # answered its NEEDS-HUMAN step (BH-6696). One on an EARLIER head does not
     # stand: it is unapproved, like an APPROVE on an earlier head (BH-6696,
     # second case). An unreadable ledger (rc 1) is skipped too.
-    V=""; RSHA=""; REQFOR=""; JRC=0; TNOTE=""; SDONE=0; SDNOTE=""
+    V=""; RSHA=""; REQFOR=""; JRC=0; TNOTE=""; SDONE=0; SDNOTE=""; RVTOK=""
     JV=$(job_verdict "$URL" 2>/dev/null) || JRC=$?
     [ "$JRC" = 0 ] && IFS=$'\t' read -r V _ _ _ _ RSHA <<<"$JV"
     RSHA=$(printf '%s' "$RSHA" | tr 'A-F' 'a-f')
@@ -1205,7 +1259,7 @@ for SLUG in $AUTO_REPOS; do
     # BH-6696: a head the builder refused (SDONE=1) is never replayed or
     # delta-reviewed: it gets a full lead review.
     if [ "$SDONE" = 0 ] && { [ "$REBOUND" = 1 ] || [ "$APPROVED" = 0 ] || [ "$LD" = 1 ]; }; then
-      PH=""; PW=""; PID=""; WHY=""
+      PH=""; PW=""; PID=""; PM=""; WHY=""
       # A truncated history cannot prove which lead row is newest: unreadable.
       if ! JOBS_ALERT=0 _jobs_req GET "/api/verdicts?repo=$SLUG&pr=$N" > "$WORK/vd" 2>/dev/null \
          || ! jq -e '(.rows | type) == "array" and .truncated != true' "$WORK/vd" >/dev/null 2>&1; then
@@ -1228,10 +1282,10 @@ for SLUG in $AUTO_REPOS; do
             and (((.note // "") | split(" ") | any(startswith("lead-replay:"))) | not))]
           | max_by(.id) // empty | "\(.head_sha | ascii_downcase)\t\(.verdict)"' "$WORK/vd" 2>/dev/null)
         [[ "$LPVH" =~ ^[0-9a-f]{40}$ ]] || { LPVH=""; LPVW=""; }
-        IFS=$'\t' read -r PH PW PID < <(jq -r --arg h "$HEAD" '[.rows[] | select(.source == "lead"
+        IFS=$'\t' read -r PH PW PID PM < <(jq -r --arg h "$HEAD" '[.rows[] | select(.source == "lead"
             and ((.head_sha // "") | ascii_downcase) != $h
             and ((.verdict // "") | IN("MERGE", "MERGE-WITH-NOTES", "BLOCK")))]
-          | max_by(.id) // empty | "\(.head_sha | ascii_downcase)\t\(.verdict)\t\(.id)"' "$WORK/vd" 2>/dev/null)
+          | max_by(.id) // empty | "\(.head_sha | ascii_downcase)\t\(.verdict)\t\(.id)\t\(.review_mode // "")"' "$WORK/vd" 2>/dev/null)
         [[ "$PH" =~ ^[0-9a-f]{40}$ ]] || PH=""
         # BH-5294: a BLOCK never leaves its own head but through BH-3930's rebound replay.
         [ "$PW" = BLOCK ] && [ "$REBOUND" != 1 ] && PH=""
@@ -1271,8 +1325,10 @@ for SLUG in $AUTO_REPOS; do
                && CQH=$(cqg_replay_hold "$SLUG" "$N" "$HEAD" "$PS_REPO" origin/main "$CQG_HREPO"); then
               WHY="no lead $PW replay from ${PH:0:12} ($CQH); requesting a lead review"
             else
+            # BH-6967: the replayed row's own mode; a row with none was a full review.
+            case "$PM" in full|intent) ;; *) PM=full ;; esac
             PRC=0; OUT=$("$H/bin/lead-verdict.sh" post "$SLUG" "$N" "$HEAD" "$PW" --source lead --reviewer "box:$BOX" \
-              --note "lead-replay:${PH:0:12} how:$HOW" 2>&1) || PRC=$?
+              --note "lead-replay:${PH:0:12} how:$HOW" --review-mode "$PM" 2>&1) || PRC=$?
             case "$PRC" in
               0|4|5)
                 REPLAYED=$((REPLAYED + 1)); mode_row replay "$SLUG" "$N" "$HEAD" "from=${PH:0:12} how=$HOW"
@@ -1471,7 +1527,7 @@ for SLUG in $AUTO_REPOS; do
         log "$SLUG#$N @$H12: risk tier low, but the diff adds silence markers for the lead to judge; no risk-tier sign-off, the lead review is requested"
       elif [ "$TIER" = low ] && [ "$RMODE" = enforce ]; then
         PRC=0; OUT=$("$H/bin/lead-verdict.sh" post "$SLUG" "$N" "$HEAD" MERGE --source risk-tier --reviewer "$RREV" \
-          --note "low risk: $WHY" 2>&1) || PRC=$?
+          --note "low risk: $WHY" --review-tier low --review-mode risk-tier 2>&1) || PRC=$?
         case "$PRC" in
           0) RSIGNED=$((RSIGNED + 1)); skip_line risk-signed "$SLUG#$N @$H12: signed off by risk-tier (low risk: $WHY); no lead review requested"; continue ;;
           4) RSIGNED=$((RSIGNED + 1)); printf 'low risk: %s' "$WHY" > "$STATE/risk-pub-$SAFE-$N-$H12"
@@ -1516,6 +1572,17 @@ for SLUG in $AUTO_REPOS; do
         fi
       fi
       # <<< in-build grace
+      # BH-6967 (header, `intent`): the tier and mode tokens of this head's request.
+      case "$TIER" in
+        low|withheld) RVTOK="review-tier:low review-mode:full" ;;
+        high) RVTOK="review-tier:high review-mode:full" ;;
+        medium)
+          RVTOK="review-tier:medium review-mode:full"
+          case "$DNOTE" in
+            *lead-delta:*) ;;
+            *) rv_medium_mode; [ "$RVMODE" = intent ] && RVTOK="review-tier:medium review-mode:intent" ;;
+          esac ;;
+      esac
     fi
     # <<< risk tier
     # >>> self check (BH-5798): header, `self`. Bounded: never a hold for ever.
@@ -1642,5 +1709,5 @@ if [ "$RUNMODE" = tick ]; then
     && mv -f "$SKIPLAST.tmp" "$SKIPLAST" 2>/dev/null
 fi
 TRIGW=""; [ "$RUNMODE" = pr ] && TRIGW=" trigger_items=$LRE_N"
-log "$RUNMODE repos=$REPOS prs=$PRS requested=$REQUESTED replayed=$REPLAYED delta=$RDELTA full=$RFULL ${TCOUNT:-today_replay=? today_delta=? today_full=?} existing=$EXISTING deferred=$DEFERRED skipped_no_approve=$NOAPP skipped_ci=$NOCI skipped_verdict=$VERD skipped_self=$SELF skipped_silence=$SILENCE tripped=$TRIPPED unreadable=$UNREAD failed_reset=$FAILRESET failed_alerted=$FAILX reclaimed=$RECLAIMED skipped_draft=$SKDRAFT risk_low=$RLOW risk_signed=$RSIGNED risk_shadow=$RSHADOW risk_medium=$RMED risk_high=$RHIGH risk_lead=$RLEADN risk_inbuild_wait=$RWAIT jev_shadow=$JEV skips=$SKIPS skips_logged=$SKIPLOGGED skipped_traced=$TRACED traced_dispatched=$TDISP traced_bound=$TBOUND skipped_selfcheck=$SELFCHK skipped_rebase=$RBASE$TRIGW rung=$RUNG"
+log "$RUNMODE repos=$REPOS prs=$PRS requested=$REQUESTED replayed=$REPLAYED delta=$RDELTA full=$RFULL ${TCOUNT:-today_replay=? today_delta=? today_full=?} existing=$EXISTING deferred=$DEFERRED skipped_no_approve=$NOAPP skipped_ci=$NOCI skipped_verdict=$VERD skipped_self=$SELF skipped_silence=$SILENCE tripped=$TRIPPED unreadable=$UNREAD failed_reset=$FAILRESET failed_alerted=$FAILX reclaimed=$RECLAIMED skipped_draft=$SKDRAFT risk_low=$RLOW risk_signed=$RSIGNED risk_shadow=$RSHADOW risk_medium=$RMED risk_high=$RHIGH risk_lead=$RLEADN risk_inbuild_wait=$RWAIT review_intent=$RINTENT jev_shadow=$JEV skips=$SKIPS skips_logged=$SKIPLOGGED skipped_traced=$TRACED traced_dispatched=$TDISP traced_bound=$TBOUND skipped_selfcheck=$SELFCHK skipped_rebase=$RBASE$TRIGW rung=$RUNG"
 exit 0

@@ -82,6 +82,9 @@ esac
 
 BOX=$(printf '%s' "${JOBS_BOX:-$(local_box_name)}" | tr -cd 'A-Za-z0-9._-'); BOX="${BOX:-unknown}"
 K=$(printf '%s' "${KEY:-}" | tr -cd 'A-Za-z0-9._-'); K="${K:-build}"
+# BH-6967: $WHY names diff paths; the review tier and mode words in it are
+# rewritten, so a path never reads as the tokens bin/lead-review.sh trusts.
+WHY="${WHY//review-tier:/review-tier=}"; WHY="${WHY//review-mode:/review-mode=}"
 BODY=$(jq -nc --arg r "$SLUG" --argjson p "$PRN" --arg h "$SHA" --arg by "inbuild:$BOX:$K" \
   --arg n "inbuild: builder APPROVE on ${SHA:0:12}, risk tier medium ($WHY)" \
   '{repo:$r, pr:$p, head_sha:$h, requested_by:$by, scope_notes:($n | .[0:4000])}')

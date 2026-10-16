@@ -44,6 +44,13 @@
 #   --why prints `<count>\t<suite>` rows instead, for EVERY suite in the window
 #   (no MIN, no TOP cut), in the same order: the reasons behind the list.
 #   Any read problem: rc 0 and no output, so the hook adds nothing.
+#   SEEDS (BH-6924): catalog/prequeue-learned-seed.d/*.txt under the root, one
+#   tests/*.sh path a line, `#` comments. A line that is not that shape, or
+#   (when the root has tests/) not a suite there, is dropped (one stderr line
+#   counts them). The seeds come first in the
+#   list, sorted, and MIN and TOP never cut them; the counted suites follow,
+#   without a seed twice. --why prints `seed\t<suite>` rows before the count
+#   rows. Seeds print with no run records at all.
 #   --harness <dir> names the root (default $HARNESS, else /root/harness).
 #
 # RECORD FORMAT, one file per run, $H/state/prequeue-learned/runs/<run_id>:
@@ -64,7 +71,7 @@
 # log and one jobs page).
 # Kill switch: bin/harness-ctl.sh off prequeue-learned (flags/lane-off-prequeue-learned)
 # stops --refresh. --list still reads what is on disk.
-# Tests: tests/prequeue-learned.bh-6335-test.sh
+# Tests: tests/prequeue-learned.bh-6335-test.sh, tests/prequeue-learned-seed.bh-6924-test.sh
 set -uo pipefail
 MODE=""; WHY=""; HAR=""
 usage() { echo "usage: prequeue-learned.sh --refresh | --list [--why] [--harness <dir>]" >&2; exit 2; }
@@ -74,7 +81,7 @@ while [ $# -gt 0 ]; do
     --list) MODE=list ;;
     --why) WHY=1 ;;
     --harness) [ $# -ge 2 ] || usage; HAR="$2"; shift ;;
-    -h|--help) sed -n '2,70p' "$0"; exit 0 ;;
+    -h|--help) sed -n '2,73p' "$0"; exit 0 ;;
     *) usage ;;
   esac
   shift
@@ -89,6 +96,7 @@ RUNS_DIR="$H/state/prequeue-learned/runs"
 KEEP_DAYS=30
 HEAD_RE='^run [0-9]+ created [0-9]+ attempt [0-9]+( unreadable)?$'
 SUITE_RE='^tests/(mc/)?[A-Za-z0-9._-]+\.sh$'
+SEED_DIR="$H/catalog/prequeue-learned-seed.d"
 
 # knob <ENV> <default> — a positive integer: lane_knob (row, env, registry
 # default) when the lane gate is loaded, else the env, else the default.
@@ -100,13 +108,33 @@ knob() {
   printf '%s' "$v"
 }
 
-# list_main — the --list reader. Nothing here leaves this box.
-list_main() {
-  local min days top cut files=() f out
-  min=$(knob PREQUEUE_LEARNED_MIN 20)
-  days=$(knob PREQUEUE_LEARNED_DAYS 7)
-  top=$(knob PREQUEUE_LEARNED_TOP 10)
-  cut=$(( NOW - days * 86400 ))
+# seed_rows — the committed seed suites (BH-6924), one per line, sorted and
+#   unique: every catalog/prequeue-learned-seed.d/*.txt line that is not blank
+#   or a `#` comment and matches SUITE_RE. When $H has a tests/ dir (a
+#   checkout), the suite must also be a file there. A deployed harness has no
+#   tests/, so there the gate's own checkout decides (test-impact-gate.sh
+#   --also drops a suite it does not have, with one line). Any other line is
+#   dropped, and one stderr line counts the dropped lines.
+seed_rows() {
+  local f l nbad=0 seeds=()
+  [ -d "$SEED_DIR" ] || return 0
+  for f in "$SEED_DIR"/*.txt; do
+    [ -f "$f" ] || continue
+    while IFS= read -r l || [ -n "$l" ]; do
+      l="${l%%#*}"; l="${l#"${l%%[![:space:]]*}"}"; l="${l%"${l##*[![:space:]]}"}"
+      [ -n "$l" ] || continue
+      if [[ "$l" =~ $SUITE_RE ]] && { [ ! -d "$H/tests" ] || [ -f "$H/$l" ]; }; then seeds+=("$l"); else nbad=$(( nbad + 1 )); fi
+    done < "$f"
+  done
+  [ "$nbad" -gt 0 ] && echo "prequeue-learned: dropped $nbad seed line(s) in $SEED_DIR (not a tests/*.sh suite in $H)" >&2
+  [ ${#seeds[@]} -gt 0 ] && printf '%s\n' "${seeds[@]}" | LC_ALL=C sort -u
+  return 0
+}
+
+# count_rows — `<count>\t<suite>` for every suite in the window's records,
+#   sorted by count descending, then name. Nothing when there are none.
+count_rows() {
+  local cut="$1" files=() f out nbad
   [ -d "$RUNS_DIR" ] || return 0
   for f in "$RUNS_DIR"/[0-9]*; do
     case "$f" in *.strikes|*.tmp) continue ;; esac
@@ -125,18 +153,32 @@ list_main() {
     use && $0 ~ sre && !($0 in seen) { seen[$0] = 1; c[$0]++ }
     END { for (s in c) printf "%d\t%s\n", c[s], s; printf "#bad\t%d\n", bad + 0 }
   ' "${files[@]}" 2>/dev/null) || return 0
-  local nbad
   nbad=$(printf '%s\n' "$out" | awk -F'\t' '$1 == "#bad" {print $2}')
   [ "${nbad:-0}" -gt 0 ] 2>/dev/null \
     && echo "prequeue-learned: skipped $nbad record(s) with a bad head line in $RUNS_DIR" >&2
-  out=$(printf '%s\n' "$out" | grep -v '^#bad' | grep -v '^$' | sort -t "$(printf '\t')" -k1,1nr -k2,2)
-  [ -n "$out" ] || return 0
+  printf '%s\n' "$out" | grep -v '^#bad' | grep -v '^$' | sort -t "$(printf '\t')" -k1,1nr -k2,2
+  return 0
+}
+
+# list_main — the --list reader. Nothing here leaves this box.
+list_main() {
+  local min days top cut seeds out
+  min=$(knob PREQUEUE_LEARNED_MIN 20)
+  days=$(knob PREQUEUE_LEARNED_DAYS 7)
+  top=$(knob PREQUEUE_LEARNED_TOP 10)
+  cut=$(( NOW - days * 86400 ))
+  seeds=$(seed_rows)
+  out=$(count_rows "$cut")
   if [ -n "$WHY" ]; then
-    printf '%s\n' "$out"
-  else
-    out=$(printf '%s\n' "$out" | awk -F'\t' -v m="$min" '$1 + 0 >= m {print $2}' | head -n "$top" | paste -sd, -)
+    [ -n "$seeds" ] && printf '%s\n' "$seeds" | awk '{ print "seed\t" $0 }'
     [ -n "$out" ] && printf '%s\n' "$out"
+    return 0
   fi
+  out=$(printf '%s\n' "$out" | awk -F'\t' -v m="$min" 'NF == 2 && $1 + 0 >= m {print $2}' | head -n "$top")
+  # The seeds first, then the counted suites that are not seeds.
+  out=$( { printf '%s\n' "$seeds"; printf '%s\n' "$out" | grep -vxF -f <(printf '%s\n' "$seeds") ; } \
+    | grep -v '^$' | paste -sd, -)
+  [ -n "$out" ] && printf '%s\n' "$out"
   return 0
 }
 

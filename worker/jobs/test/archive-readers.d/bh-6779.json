@@ -1,0 +1,386 @@
+{
+ "ticket": "BH-6779",
+ "note": "One object per FROM/JOIN of cost_rows, stage_events or stage_events_daily in worker/jobs/src (retention.js and lib/archive*.js excluded). Read by test/archive-readers.bh-6779.test.js R1. A later ticket adds its own file here.",
+ "readers": [
+  {
+   "file": "src/routes/cost-breakdown.js",
+   "line_hint": 83,
+   "match": "cost_usd, rc, duration_s",
+   "table": "cost_rows",
+   "window": "caller since/until",
+   "class": "wide",
+   "status": "ported"
+  },
+  {
+   "file": "src/routes/cost-breakdown.js",
+   "line_hint": 87,
+   "match": "MAX(ts) AS last_ts${group.includes(\"ticket\")",
+   "table": "cost_rows",
+   "window": "caller since/until",
+   "class": "wide",
+   "status": "ported"
+  },
+  {
+   "file": "src/routes/cost-breakdown.js",
+   "line_hint": 90,
+   "match": "`SELECT ${AGG_COLS.join(\", \")} FROM cost_rows WHERE",
+   "table": "cost_rows",
+   "window": "caller since/until",
+   "class": "wide",
+   "status": "ported"
+  },
+  {
+   "file": "src/routes/model-watch.js",
+   "line_hint": 121,
+   "match": "FROM cost_rows WHERE model=?1 AND ts>=?2",
+   "table": "cost_rows",
+   "window": "caller since",
+   "class": "wide",
+   "status": "ported"
+  },
+  {
+   "file": "src/routes/job-detail.js",
+   "line_hint": 112,
+   "match": "SELECT * FROM stage_events WHERE job_id=?1",
+   "table": "stage_events",
+   "window": "key (job)",
+   "class": "wide",
+   "status": "ported"
+  },
+  {
+   "file": "src/routes/job-detail.js",
+   "line_hint": 74,
+   "match": "FROM stage_events WHERE job_id=?1 AND id > ?2",
+   "table": "stage_events",
+   "window": "key (job), cursor",
+   "class": "poll",
+   "status": "hot-only"
+  },
+  {
+   "file": "src/routes/cost.js",
+   "line_hint": 335,
+   "match": "FROM cost_rows WHERE ts>=?1 AND ts<?2\n            GROUP BY box, auth_account",
+   "table": "cost_rows",
+   "window": "caller day",
+   "class": "wide",
+   "status": "pending",
+   "slice": "C1 of #6779"
+  },
+  {
+   "file": "src/routes/cost.js",
+   "line_hint": 365,
+   "match": "SUM(COALESCE(cost_usd,0)) AS usd FROM cost_rows\n          WHERE auth_account=?1",
+   "table": "cost_rows",
+   "window": "caller day",
+   "class": "wide",
+   "status": "pending",
+   "slice": "C1 of #6779"
+  },
+  {
+   "file": "src/routes/cost.js",
+   "line_hint": 490,
+   "match": "`SELECT * FROM cost_rows${where.length",
+   "table": "cost_rows",
+   "window": "caller since/until",
+   "class": "wide",
+   "status": "pending",
+   "slice": "C1 of #6779 (ported in #6777)"
+  },
+  {
+   "file": "src/routes/cost.js",
+   "line_hint": 544,
+   "match": "FROM cost_rows WHERE stage=?4 AND ts>=?1",
+   "table": "cost_rows",
+   "window": "caller since/until",
+   "class": "wide",
+   "status": "pending",
+   "slice": "C1 of #6779"
+  },
+  {
+   "file": "src/routes/cost.js",
+   "line_hint": 546,
+   "match": "FROM cost_rows WHERE lane_id=?3 AND ts>=?1",
+   "table": "cost_rows",
+   "window": "caller since/until",
+   "class": "wide",
+   "status": "pending",
+   "slice": "C1 of #6779"
+  },
+  {
+   "file": "src/routes/cost.js",
+   "line_hint": 571,
+   "match": "FROM cost_rows WHERE ${where.join(\" AND \")}",
+   "table": "cost_rows",
+   "window": "caller since/until",
+   "class": "wide",
+   "status": "pending",
+   "slice": "C1 of #6779"
+  },
+  {
+   "file": "src/routes/lane-spend.js",
+   "line_hint": 107,
+   "match": "AS calls FROM cost_rows",
+   "table": "cost_rows",
+   "window": "caller day (default today)",
+   "class": "wide",
+   "status": "pending",
+   "slice": "C1 of #6779"
+  },
+  {
+   "file": "src/lib/daily-digest/core-sections.js",
+   "line_hint": 35,
+   "match": "FROM stage_events WHERE created_at>=?1 AND created_at<?2 GROUP BY actor",
+   "table": "stage_events",
+   "window": "caller day",
+   "class": "wide",
+   "status": "pending",
+   "slice": "C1 of #6779"
+  },
+  {
+   "file": "src/lib/daily-digest/core-sections.js",
+   "line_hint": 92,
+   "match": "SUM(cost_usd) AS usd\n       FROM cost_rows WHERE ts>=?1 AND ts<?2",
+   "table": "cost_rows",
+   "window": "caller day",
+   "class": "wide",
+   "status": "pending",
+   "slice": "C1 of #6779"
+  },
+  {
+   "file": "src/lib/daily-digest/core-sections.js",
+   "line_hint": 102,
+   "match": "MAX(job_id) AS job_id FROM cost_rows",
+   "table": "cost_rows",
+   "window": "caller day",
+   "class": "wide",
+   "status": "pending",
+   "slice": "C1 of #6779"
+  },
+  {
+   "file": "src/lib/daily-digest/core-sections.js",
+   "line_hint": 141,
+   "match": "SELECT COUNT(*) AS n FROM stage_events s",
+   "table": "stage_events",
+   "window": "caller day",
+   "class": "wide",
+   "status": "pending",
+   "slice": "C1 of #6779"
+  },
+  {
+   "file": "src/lib/daily-digest/core-sections.js",
+   "line_hint": 148,
+   "match": "FROM stage_events s LEFT JOIN jobs j",
+   "table": "stage_events",
+   "window": "caller day",
+   "class": "wide",
+   "status": "pending",
+   "slice": "C1 of #6779"
+  },
+  {
+   "file": "src/routes/model-routes.js",
+   "line_hint": 153,
+   "match": "FROM cost_rows c\n        WHERE c.ts >= ?1",
+   "table": "cost_rows",
+   "window": "caller since",
+   "class": "wide",
+   "status": "pending",
+   "slice": "C1 of #6779"
+  },
+  {
+   "file": "src/lib/outcome-gap.js",
+   "line_hint": 76,
+   "match": "FROM cost_rows c\n WHERE c.ts >= ?1 AND c.ts < ?2",
+   "table": "cost_rows",
+   "window": "lookback <= 180 d",
+   "class": "wide",
+   "status": "pending",
+   "slice": "C1 of #6779"
+  },
+  {
+   "file": "src/lib/outcome-gap.js",
+   "line_hint": 94,
+   "match": "SELECT COUNT(*) AS n FROM cost_rows",
+   "table": "cost_rows",
+   "window": "lookback <= 180 d",
+   "class": "wide",
+   "status": "pending",
+   "slice": "C1 of #6779"
+  },
+  {
+   "file": "src/routes/usage.js",
+   "line_hint": 177,
+   "match": "MIN(ts) AS first_ts, MAX(ts) AS last_ts\n             FROM cost_rows",
+   "table": "cost_rows",
+   "window": "7 d (SPANS)",
+   "class": "narrow",
+   "status": "hot-only",
+   "window_days": 7
+  },
+  {
+   "file": "src/routes/usage.js",
+   "line_hint": 182,
+   "match": "project, ${aggregates}\n             FROM cost_rows",
+   "table": "cost_rows",
+   "window": "7 d (SPANS)",
+   "class": "narrow",
+   "status": "hot-only",
+   "window_days": 7
+  },
+  {
+   "file": "src/routes/usage.js",
+   "line_hint": 199,
+   "match": "AS unpriced FROM cost_rows",
+   "table": "cost_rows",
+   "window": "7 d (SPANS)",
+   "class": "narrow",
+   "status": "hot-only",
+   "window_days": 7
+  },
+  {
+   "file": "src/routes/preplans.js",
+   "line_hint": 29,
+   "match": "COUNT(DISTINCT e.job_id) AS n\n  FROM stage_events e",
+   "table": "stage_events",
+   "window": "30 d",
+   "class": "narrow",
+   "status": "hot-only",
+   "window_days": 30
+  },
+  {
+   "file": "src/routes/preplans.js",
+   "line_hint": 34,
+   "match": "e.created_at AS created_at\n  FROM stage_events e",
+   "table": "stage_events",
+   "window": "30 d",
+   "class": "narrow",
+   "status": "hot-only",
+   "window_days": 30
+  },
+  {
+   "file": "src/routes/lanes.js",
+   "line_hint": 118,
+   "match": "FROM cost_rows WHERE ts >= ?2 GROUP BY stage, project",
+   "table": "cost_rows",
+   "window": "7 d",
+   "class": "poll",
+   "status": "hot-only",
+   "window_days": 7
+  },
+  {
+   "file": "src/routes/lanes.js",
+   "line_hint": 124,
+   "match": "cost_usd, run_id FROM cost_rows",
+   "table": "cost_rows",
+   "window": "7 d",
+   "class": "poll",
+   "status": "hot-only",
+   "window_days": 7
+  },
+  {
+   "file": "src/routes/triage-waste.js",
+   "line_hint": 32,
+   "match": "FROM cost_rows WHERE stage = 'triage'",
+   "table": "cost_rows",
+   "window": "60 d",
+   "class": "narrow",
+   "status": "hot-only",
+   "window_days": 60
+  },
+  {
+   "file": "src/routes/progress.js",
+   "line_hint": 148,
+   "match": "FROM cost_rows\n            WHERE ts >= ?1 AND COALESCE(cost_usd, 0) > 0",
+   "table": "cost_rows",
+   "window": "30 d (lookback_h 720)",
+   "class": "poll",
+   "status": "hot-only",
+   "window_days": 30
+  },
+  {
+   "file": "src/routes/llm-sites.js",
+   "line_hint": 42,
+   "match": "FROM cost_rows WHERE ts >= ?1\nGROUP BY stage, lane_id",
+   "table": "cost_rows",
+   "window": "7 d",
+   "class": "narrow",
+   "status": "hot-only",
+   "window_days": 7
+  },
+  {
+   "file": "src/routes/llm-site-rows.js",
+   "line_hint": 35,
+   "match": "` FROM cost_rows WHERE ${where} ORDER BY ts DESC, box, line_no DESC",
+   "table": "cost_rows",
+   "window": "7 d",
+   "class": "narrow",
+   "status": "hot-only",
+   "window_days": 7
+  },
+  {
+   "file": "src/routes/lane-runs-metrics.js",
+   "line_hint": 226,
+   "match": "SUM(cost_usd) AS usd FROM cost_rows\n            WHERE box LIKE ?1",
+   "table": "cost_rows",
+   "window": "168 h",
+   "class": "narrow",
+   "status": "hot-only",
+   "window_days": 7
+  },
+  {
+   "file": "src/lib/lane-dedup.js",
+   "line_hint": 99,
+   "match": "SUM(cost_usd) AS usd\n       FROM cost_rows WHERE ${window}\n      GROUP BY NULLIF(lane_id,'')`",
+   "table": "cost_rows",
+   "window": "30 d",
+   "class": "narrow",
+   "status": "hot-only",
+   "window_days": 30
+  },
+  {
+   "file": "src/lib/lane-dedup.js",
+   "line_hint": 106,
+   "match": "FROM cost_rows WHERE ${window} AND COALESCE(guard_fp,'')<>''",
+   "table": "cost_rows",
+   "window": "30 d",
+   "class": "narrow",
+   "status": "hot-only",
+   "window_days": 30
+  },
+  {
+   "file": "src/routes/cost-live.js",
+   "line_hint": 40,
+   "match": "EXISTS (SELECT 1 FROM cost_rows c WHERE c.session_id = l.session_id)",
+   "table": "cost_rows",
+   "window": "key (session), live rows pruned at 14 d",
+   "class": "poll",
+   "status": "hot-only"
+  },
+  {
+   "file": "src/routes/job-retry.js",
+   "line_hint": 163,
+   "match": "SELECT COUNT(*) AS n FROM stage_events WHERE job_id=?1 AND verdict=?2",
+   "table": "stage_events",
+   "window": "key (job)",
+   "class": "action",
+   "status": "hot-only"
+  },
+  {
+   "file": "src/routes/job-abandon.js",
+   "line_hint": 54,
+   "match": "SELECT 1 FROM stage_events WHERE job_id=?1 AND verdict='ABANDONED'",
+   "table": "stage_events",
+   "window": "key (job)",
+   "class": "action",
+   "status": "hot-only"
+  },
+  {
+   "file": "src/lib/core.js",
+   "line_hint": 885,
+   "match": "SELECT stage, verdict FROM stage_events WHERE job_id=?1",
+   "table": "stage_events",
+   "window": "key (job)",
+   "class": "action",
+   "status": "hot-only"
+  }
+ ]
+}

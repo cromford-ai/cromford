@@ -1,0 +1,11 @@
+{
+  "env": "MC_PREQUEUE_IMPACT_REUSE",
+  "type": "int",
+  "default": 1,
+  "min": 0,
+  "max": 1,
+  "unit": null,
+  "zero_means": "off",
+  "read_in": "bin/lib/mc-prequeue.sh",
+  "note": "BH-6924: 1 = when no fresh verdict counts, a green or no-selection verdict for this head on an older main is reused for the current main if the main move and the PR reach no common file or suite under the batch impact rules and the head still merges clean (bin/lib/mc-prequeue.d/impact-reuse.sh). Harness repo only. 0 = the gate is dispatched again, as before BH-6924. MC_PREQUEUE_REUSE=0 also turns it off. Per project: lane.merge-conductor.<project>.mc_prequeue_impact_reuse."
+}

@@ -1,0 +1,11 @@
+{
+  "env": "MC_PREQUEUE_IMPACT_MAX_S",
+  "type": "int",
+  "default": 21600,
+  "min": 0,
+  "max": 604800,
+  "unit": "seconds",
+  "zero_means": "off",
+  "read_in": "bin/lib/mc-prequeue.sh",
+  "note": "BH-6924: a verdict is reused by impact set only while its run was dispatched less than this many seconds ago. A reused entry keeps the dispatch time of the run it came from, so a chain of reuses is bounded by the first run. 0 = impact reuse never finds a candidate (off). Per project: lane.merge-conductor.<project>.mc_prequeue_impact_max_s."
+}

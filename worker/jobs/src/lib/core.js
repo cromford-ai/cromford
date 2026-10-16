@@ -1007,7 +1007,11 @@ export const ADDED_COLUMNS = {
   outcome_metrics: [["repairs", "INTEGER"]],
   // BH-3831: which credential wrote the verdict row (secret | lead-token | human-token).
   // BH-3846: the worker's HMAC over a human-token row.
-  verdicts: [["auth", "TEXT"], ["human_sig", "TEXT"]],
+  // BH-6967: the head's risk tier (low|medium|high) and the review that wrote the
+  // row (full|intent|risk-tier), on a table created before them (a fresh one has
+  // them in its CREATE). NULL = not said (a row before BH-6967, or a writer
+  // outside the lead review path).
+  verdicts: [["auth", "TEXT"], ["human_sig", "TEXT"], ["review_tier", "TEXT"], ["review_mode", "TEXT"]],
   // 2026-09-14, cost fixes 1/2/7: row provenance (which transcript priced this
   // row, and whether it was priced from one at all) plus the attribution tags.
   // 2026-09-20, BH-1032: `note` was the one CSV column the mirror never carried
@@ -1451,7 +1455,9 @@ export const CREATED_TABLE_OVERRIDES = {
        note TEXT,
        created_at TEXT NOT NULL,
        auth TEXT,
-       human_sig TEXT
+       human_sig TEXT,
+       review_tier TEXT,
+       review_mode TEXT
      )`,
     "CREATE INDEX IF NOT EXISTS idx_verdicts_pr_head ON verdicts(repo, pr, head_sha, id)",
     "CREATE TRIGGER IF NOT EXISTS verdicts_no_update BEFORE UPDATE ON verdicts BEGIN SELECT RAISE(ABORT, 'verdicts is append-only'); END",

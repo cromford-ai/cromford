@@ -541,6 +541,27 @@ Final output line: exactly 'DECOMPOSE_SPEC_READY' or 'DECOMPOSE_FAILED: <reason>
     LOG "DECOMPOSE_LINT could-not-run rc=$DL_RC"
   fi
   dcp_publish "$SPEC" || true
+  # >>> ticket edges (BH-6977)
+  # One ticket_edges row per blocker each filed child's body declares, with the
+  # child's Owns: paths as planned_files. Issues lane only, never in a dry run.
+  # The bodies stay as filed. Fail-open: no stdout, rc unchanged.
+  if [ "$LANE" = issues ] && [ "$DRY" != 1 ]; then
+    # shellcheck source=bin/lib/ticket-edges.sh
+    [ -r "$(dirname "$0")/lib/ticket-edges.sh" ] && . "$(dirname "$0")/lib/ticket-edges.sh" 2>/dev/null
+    if command -v te_put_edges >/dev/null 2>&1 && [ -s "$BUILD/children.txt" ]; then
+      TE_OWNS=$(mktemp "${TMPDIR:-/tmp}/te-owns.XXXXXX" 2>/dev/null) || TE_OWNS=""
+      TE_N=0
+      while IFS= read -r TE_ID || [ -n "$TE_ID" ]; do
+        TE_N=$((TE_N + 1))
+        TE_CHILD="${TE_ID##*-}"; TE_F="$BUILD/children/child-$TE_N.md"
+        [ -n "$TE_OWNS" ] && [ -r "$TE_F" ] || continue
+        sed -n 's/^Owns:[[:space:]]*//p' "$TE_F" | tr ',' '\n' | sed 's/^[[:space:]]*//; s/[[:space:]]*$//' > "$TE_OWNS"
+        te_put_edges "$PROJECT" "$TE_CHILD" decompose "$TE_F" "$TE_OWNS" >/dev/null 2>&1 || true
+      done < "$BUILD/children.txt"
+      [ -n "$TE_OWNS" ] && rm -f "$TE_OWNS"
+    fi
+  fi
+  # <<< ticket edges
   # The issues lane's children are open ai-build issues, which
   # bin/orphan-reconcile.sh enqueues; only the board lane enqueues here.
   [ "$LANE" = board ] && dcp_enqueue_children

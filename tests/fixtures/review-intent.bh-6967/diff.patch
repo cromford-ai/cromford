@@ -1,0 +1,16 @@
+diff --git a/bin/a.sh b/bin/a.sh
+index af7c9ad..c2d8c0c 100644
+--- a/bin/a.sh
++++ b/bin/a.sh
+@@ -1,2 +1,2 @@
+ #!/bin/bash
+-echo "hello"
++echo "hello ${1:-}"
+diff --git a/bin/unplanned.sh b/bin/unplanned.sh
+index e6d82cc..9995c51 100644
+--- a/bin/unplanned.sh
++++ b/bin/unplanned.sh
+@@ -1,2 +1,2 @@
+ #!/bin/bash
+-echo "unplanned"
++echo "unplanned, changed by the fixture"

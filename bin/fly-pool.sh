@@ -119,6 +119,11 @@ HOTFIX_ON=1
 # shellcheck source=bin/lib/needs-human.sh
 . "$HARNESS/bin/lib/needs-human.sh" 2>/dev/null \
   || . "$(dirname "${BASH_SOURCE[0]}")/lib/needs-human.sh" 2>/dev/null || true
+# BH-6957: pool_actor_gate, the trigger-actor check before a spawn. A tree
+# without the lib spawns as before and the builder's gate decides.
+# shellcheck source=bin/lib/pool-actor-gate.sh
+. "$HARNESS/bin/lib/pool-actor-gate.sh" 2>/dev/null \
+  || . "$(dirname "${BASH_SOURCE[0]}")/lib/pool-actor-gate.sh" 2>/dev/null || true
 command -v hotfix_lane_on >/dev/null 2>&1 && HOTFIX_ON=$(hotfix_lane_on "$HARNESS")
 job_is_hot() {
   [ "$HOTFIX_ON" = 1 ] || return 1
@@ -1899,6 +1904,10 @@ pool_spawn_decision() {
   # box, which is a page that stops arriving rather than a page sent once.
   _psd_sentinel="$(pool_terminal_path "$KEY")"
   rm -f "${_psd_sentinel%.terminal}.defer-to-human"
+  # 5. Who added the label (BH-6957): the builder's own trigger-actor gate,
+  # asked before a machine is spent. After the cap on purpose: a capped or held
+  # row costs no events read. bin/lib/pool-actor-gate.sh owns the answer.
+  if command -v pool_actor_gate >/dev/null 2>&1; then pool_actor_gate "$JF" "$KEY" "$TICKET" || return 1; fi
   return 0
 }
 # <<< pool terminal / spawn cap / hold gate

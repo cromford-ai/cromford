@@ -121,6 +121,7 @@
 #   bin/lead-verdict.sh post <owner/repo> <pr> <head-sha> <MERGE|MERGE-WITH-NOTES|BLOCK>
 #                            [--source lead|human|box|risk-tier] [--model <id>] [--reviewer <name>]
 #                            [--report-url <https-url>] [--note "<one line>"]
+#                            [--review-tier low|medium|high] [--review-mode full|intent|risk-tier]
 #   bin/lead-verdict.sh show <owner/repo> <pr> [<head-sha>]
 #   bin/lead-verdict.sh request <owner/repo> <pr> <head-sha> [--notes <text>] [--prior <ref>]
 #                               [--priority <1..1000>]   nudge (request) a lead review of that head
@@ -322,7 +323,7 @@ lv_dismiss_stale() {
 
 lv_post() {
   [ $# -ge 4 ] || usage
-  local repo="$1" pr="$2" sha verdict="$4" source=lead model="" reviewer="" url="" note="" body resp state desc
+  local repo="$1" pr="$2" sha verdict="$4" source=lead model="" reviewer="" url="" note="" body resp state desc rtier="" rmode=""
   sha=$(printf '%s' "$3" | tr 'A-F' 'a-f'); shift 4
   lv_key_ok "$repo" "$pr"
   [[ "$sha" =~ ^[0-9a-f]{40}$ ]] || die "head-sha must be the full 40-hex sha the review read, got '$sha'"
@@ -332,6 +333,14 @@ lv_post() {
     case "$1" in
       --source) source="$2" ;; --model) model="$2" ;; --reviewer) reviewer="$2" ;;
       --report-url) url="$2" ;; --note) note="$2" ;;
+      # BH-6967: the head's risk tier and the review that wrote the row. Checked
+      # here so a bad value never reaches the worker (it refuses it 400 too).
+      --review-tier)
+        case "$2" in low|medium|high) rtier="$2" ;;
+          *) echo "lead-verdict: review-tier must be low, medium or high, got '$2'" >&2; exit 2 ;; esac ;;
+      --review-mode)
+        case "$2" in full|intent|risk-tier) rmode="$2" ;;
+          *) echo "lead-verdict: review-mode must be full, intent or risk-tier, got '$2'" >&2; exit 2 ;; esac ;;
       *) usage ;;
     esac
     shift 2
@@ -368,8 +377,10 @@ lv_post() {
     exit 5
   fi
   body=$(jq -nc --arg r "$repo" --argjson p "$pr" --arg h "$sha" --arg v "$verdict" --arg s "$source" \
-    --arg m "$model" --arg rv "$reviewer" --arg u "$url" --arg n "$note" \
+    --arg m "$model" --arg rv "$reviewer" --arg u "$url" --arg n "$note" --arg rt "$rtier" --arg rm "$rmode" \
     '{repo:$r,pr:$p,head_sha:$h,verdict:$v,source:$s}
+     + (if $rt == "" then {} else {review_tier:$rt} end)
+     + (if $rm == "" then {} else {review_mode:$rm} end)
      + (if $m == "" then {} else {reviewer_model:$m} end)
      + (if $rv == "" then {} else {reviewer:$rv} end)
      + (if $u == "" then {} else {report_url:$u} end)
@@ -458,7 +469,10 @@ lv_request() {
   while [ $# -gt 0 ]; do
     [ $# -ge 2 ] || usage
     case "$1" in
-      --notes) notes="$2" ;; --prior) prior="$2" ;;
+      # BH-6967: only bin/lead-review-enqueue.sh writes the review tier and mode
+      # tokens; a hand request's text never sets them.
+      --notes) notes="${2//review-tier:/review-tier=}"; notes="${notes//review-mode:/review-mode=}" ;;
+      --prior) prior="$2" ;;
       --priority)
         [[ "$2" =~ ^[0-9]+$ ]] && [ "${#2}" -le 4 ] && [ "$((10#$2))" -ge 1 ] && [ "$((10#$2))" -le 1000 ] \
           || { echo "lead-verdict: --priority must be an integer 1..1000, got '$2'" >&2; usage; }

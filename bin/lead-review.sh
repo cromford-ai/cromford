@@ -218,7 +218,19 @@
 #                           None, another sha, a failed read, the lib or the
 #                           prompt missing = the full-review prompt, logged. Each
 #                           agent call's cost row carries AGENT_CALL_ROW_NOTE
-#                           lead-mode=build-on|full|delta.
+#                           lead-mode=build-on|full|delta|intent.
+#   intent review (BH-6967) not in delta mode (no `lead-delta:`), scope_notes
+#                           ENDING with `; review-tier:medium review-mode:intent`
+#                           (set by bin/lead-review-enqueue.sh while the row
+#                           risk_tier.medium_mode reads intent), and that row
+#                           still reading intent at review time: the prompt is
+#                           prompts/lead-review.md + prompts/lead-review.d/
+#                           intent.md, with no checklist and no builder review,
+#                           on the model of route review-intent. The report says
+#                           `- review mode: intent (risk tier medium, route
+#                           review-intent)` and `- checklist: none (intent
+#                           review)`. No route, or no intent.md, is the full
+#                           review on lead.review, logged.
 #   report state/lead-reviews/<key>.md -> artifact (ref = that path, detail =
 #   {body,path,verdict[,truncated]}, lr_detail; a truncated detail first pushes
 #   the whole report to the job's transcripts as source lead_report through
@@ -901,7 +913,7 @@ review_one() {
   local RP_STATE="" RP_TAIL="" rp_rc rp_ci harness_repo dmode="" dprev="" dline="" dreport lb tn tslug tdone thread_note total half lfp lstage lnote
   local capr="" capo capf ctitle clabels
   local resets mreset since f what fields="" bfp bchg rsn bmode="" bline="" ldp_rc="" dbytes ldp_why nprod ldp_mode ldp_find
-  local lpv=0 lpk="" lprc
+  local lpv=0 lpk="" lprc imode="" imodel ire ckl imm
   # BH-5873: the mode the gates chose (full|delta|replay). Nothing reads it yet;
   # child 2 of #5870 (delta and replay) does.
   # shellcheck disable=SC2034
@@ -1391,6 +1403,25 @@ review_one() {
   git -C "$WT" diff "origin/$base...$sha" > "$WT.diff" 2>&1 || echo "(the diff could not be read)" >> "$WT.diff"
   fi
   # <<< delta mode
+  # >>> intent review (BH-6967, header). A misconfiguration (no route, no prompt
+  # file) is the full review: it never lowers the depth of a review. The tokens
+  # count only as the LAST group of the notes, where bin/lead-review-enqueue.sh
+  # puts them (it rewrites the same words anywhere else), and only while the
+  # protected row risk_tier.medium_mode reads intent HERE too: a forged note
+  # cannot go around the row. The setting and route reads are network reads,
+  # so fd 7 and 8 are closed for them.
+  imode=""
+  ire='(^|; )review-tier:medium review-mode:intent$'
+  if [ -z "$dprev" ] && [[ "$dsn" =~ $ire ]]; then
+    imm=$(setting_get risk_tier.medium_mode 2>/dev/null 7>&- 8>&-) || imm=""
+    imm=$(printf '%s' "$imm" | tr -d '[:space:]' | tr '[:upper:]' '[:lower:]')
+    if [ "$imm" != intent ]; then log "$key: full review (risk_tier.medium_mode reads '${imm:-no value}', not intent)"
+    elif [ ! -r "$H/prompts/lead-review.d/intent.md" ]; then log "$key: full review (prompts/lead-review.d/intent.md missing)"
+    elif ! imodel=$(model_for review-intent "$project" 2>/dev/null 7>&- 8>&-) || [ -z "$imodel" ]; then log "$key: full review (no review-intent route)"
+    else imode=intent; model="$imodel"; log "$key: intent review (risk tier medium, route review-intent), model $model"
+    fi
+  fi
+  # <<< intent review
   # >>> re-review (BH-6391): a `lead-prev:<G>` group in scope_notes (set by
   # bin/lead-review-enqueue.sh) adds a `## Re-review` prompt section: G, its
   # word, the own commits and files and the main files since G, and G's report
@@ -1482,7 +1513,7 @@ review_one() {
   fi
   # The builder review of this exact head (BH-5355, header). A network read,
   # so fd 7 is closed; every miss is a full review, logged.
-  if [ "$dmode" = delta ]; then :
+  if [ "$dmode" = delta ] || [ "$imode" = intent ]; then :
   elif [ "$BUILDS_ON" != on ]; then log "$key: full review (LEAD_REVIEW_BUILDS_ON_BUILDER=$BUILDS_ON)"
   elif ! command -v br_fetch >/dev/null 2>&1; then log "$key: full review (bin/lib/builder-review.sh not loaded)"
   elif [ ! -r "$H/prompts/lead-review-builds-on.md" ]; then log "$key: full review (prompts/lead-review-builds-on.md missing)"
@@ -1494,10 +1525,14 @@ review_one() {
   pf="$WT.prompt"
   { cat "$H/prompts/lead-review.md"
     printf '\n'
+    if [ "$imode" = intent ]; then
+      cat "$H/prompts/lead-review.d/intent.md"
+    else
     cat "$H/prompts/lead-review-checklist.md"
     if [ "$bmode" = build-on ]; then
       printf '\n'
       cat "$H/prompts/lead-review-builds-on.md"
+    fi
     fi
     printf '\n## PR\n%s\n\n%s\n\n## Ticket thread\n' "$title" "$body"
     cat "$WT.thread"
@@ -1545,7 +1580,7 @@ review_one() {
     lstage=lead-head
   fi
   # BH-5355: the cost row says which prompt this was, so the ledger splits by mode.
-  lnote="lead-mode=${dmode:-${bmode:-full}}"
+  lnote="lead-mode=${dmode:-${imode:-${bmode:-full}}}"
   AGENT_CALL_GUARD_STAGE="$lstage" AGENT_CALL_FP="$lfp" AGENT_CALL_ROW_NOTE="$lnote" \
   AGENT_CALL_PR="${repo:+https://github.com/$repo/pull/$pr}" AGENT_CALL_ROLE=lead.review "$H/bin/agent-call.sh" lead-review "$project" "$model" "$left" "$out" "@$pf" >/dev/null 2>&1; rc=$?
   if [ "$rc" -lt 74 ] || [ "$rc" -gt 79 ]; then
@@ -1612,11 +1647,14 @@ review_one() {
       && { verdict=BLOCK; capr=$(sed -n 2p <<<"$capo"); log "$key: outcome cap: $capr"; }
     while IFS= read -r ll; do [ -n "$ll" ] && log "$key: $ll"; done < "$WT.capnote"
   fi
-  { printf '%s# Lead review %s (%s#%s at %s)\n\n- verdict: %s\n- %s\n- rules pack: %s\n- reviewer model: %s\n- checklist: v%s\n- pr body: %s\n' \
-      "$RVLINE" "$key" "$repo" "$pr" "$sha" "$verdict" "$suite_line" "$RP_STATE" "$model" "$CK_VER" "$bfp"
+  # The report names the checklist it read; an intent review read none.
+  ckl="v$CK_VER"; [ "$imode" = intent ] && ckl="none (intent review)"
+  { printf '%s# Lead review %s (%s#%s at %s)\n\n- verdict: %s\n- %s\n- rules pack: %s\n- reviewer model: %s\n- checklist: %s\n- pr body: %s\n' \
+      "$RVLINE" "$key" "$repo" "$pr" "$sha" "$verdict" "$suite_line" "$RP_STATE" "$model" "$ckl" "$bfp"
     [ -n "$capr" ] && printf -- '- outcome cap: %s\n' "$capr"
     [ "$dmode" = delta ] && printf -- '- review mode: delta from %s\n' "$dprev"
     [ "$bmode" = build-on ] && printf -- '- review mode: %s\n' "$bline"
+    [ "$imode" = intent ] && printf -- '- review mode: intent (risk tier medium, route review-intent)\n'
     [ -n "$lpk" ] && printf -- '- re-review: from %s (%s); %s BLOCK finding(s) on lines unchanged since then kept as NOTE\n' "${LPV_PREV:0:12}" "$LPV_WORD" "$lpk"
     [ "$ldp_rc" = 0 ] && printf -- '- diff read in parts: %s of %s files; not read: %s; digest: %s files\n' \
       "$LDP_READ_FILES" "$LDP_TOTAL_FILES" "$(ldp_unread_line)" "$LDP_DIGEST_FILES"

@@ -97,6 +97,10 @@ command -v dep_verify_on >/dev/null 2>&1 || SAY UNKNOWN "bin/lib/dep-verify-lib.
 # missing lib rather than falling through to a GraphQL call.
 # shellcheck source=bin/lib/gh-rest.sh
 [ -r "$HERE/lib/gh-rest.sh" ] && . "$HERE/lib/gh-rest.sh" 2>/dev/null
+# BH-6977: a definite verdict is also sent as a ticket_edges row. Fail-open,
+# prints nothing; absent, RECORD sends nothing.
+# shellcheck source=bin/lib/ticket-edges.sh
+[ -r "$HERE/lib/ticket-edges.sh" ] && . "$HERE/lib/ticket-edges.sh" 2>/dev/null
 
 [ "$(dep_verify_on "$HARNESS")" = 1 ] || SAY UNKNOWN "dep-verify is off (DEP_VERIFY=0 or flags/dep-verify-off)"
 DRY=$(dep_verify_dry "$HARNESS")
@@ -270,6 +274,7 @@ RECORD() {
   if [ "$DRY" != 1 ] && [ -n "$FP" ] && [ "$1" != UNKNOWN ]; then
     mkdir -p "$(dep_cache_dir "$HARNESS" "$PROJECT")" 2>/dev/null \
       && printf 'fp=%s\n%s %s\n' "$FP" "$1" "$2" > "$CACHE" 2>/dev/null
+    command -v te_put_verdict >/dev/null 2>&1 && te_put_verdict "$PROJECT" "$CHILD" "$BLOCKER" "$1" >/dev/null 2>&1
   fi
   # Every terminal path after the arm lands here — this function is the script's end.
   command -v gh_auth_reset >/dev/null 2>&1 && gh_auth_reset

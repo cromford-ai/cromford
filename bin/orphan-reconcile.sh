@@ -1139,9 +1139,12 @@ while IFS=$'\t' read -r KEY NUM VERDICT WHY; do
   # the same two). On 2026-10-10 those dirs held back 34 cromford orphans
   # as awaiting-closeout on every tick. Neither shape is a result to post, and
   # this ticket is ownerless, so neither holds the relaunch.
+  # A RELAYED dir is the hub's custody copy (BH-6956): the owning box's results
+  # sweep writes COMMENTED on its own copy, so pipeline-health skips it too.
   UNSWEPT=0
   for D in "$HARNESS/builds/$PROJECT-$KEY-"*/ "$HARNESS/builds/pool-$PROJECT-$KEY-"*/; do
     [ -f "$D/RESULT" ] && [ ! -f "$D/COMMENTED" ] || continue
+    [ -f "$D/RELAYED" ] && continue   # custody moved to the owning box's copy
     [ -f "$D/DEFERRED" ] && continue
     case "$(head -n 1 "$D/RESULT" 2>/dev/null)" in QUEUED_FLY*|BUILD_DEFERRED*) continue ;; esac
     UNSWEPT=1; break

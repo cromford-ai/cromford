@@ -229,6 +229,61 @@ ta_gh_trigger() {
   return 0
 }
 
+# THE RE-ARM (BH-6957): an explicit human comment newer than an ignored label
+# lets the build start, so the pool's pre-spawn check (bin/lib/pool-actor-gate.sh)
+# and the builder answer the same. The vocabulary is the twin of POOL_REARM_RE /
+# POOL_REARM_NEG_RE in bin/fly-pool.sh: SHORT, EXPLICIT, CAPITALISED, and a
+# negation or condition in front of the word is not an instruction. Lower case
+# is harness prose and never re-arms, so _ta_post's comment must never carry
+# one of these words in capitals (a PAT-posted copy would re-arm itself).
+PROJECT_2_REARM_RE='(?<![A-Za-z])(RETRY|REBUILD|RESUME|UNHOLD)(?![A-Za-z])'
+PROJECT_2_REARM_NEG_RE='(?i:(?<![A-Za-z])(not|never|don\x27?t|do\s+not|until|unless|before|once|if|when)(\W+\w+){0,3}\W+(retry|rebuild|resum|unhold))'
+
+# _ta_rearm_at <slug> <num> <since> <out> — the issue comments created after
+# <since> (the ignored label's created_at) whose author is not a Bot and whose
+# body is a re-arm, newest first, as `id<TAB>login<TAB>type<TAB>app_slug`.
+# Who may re-arm is ta_decide's answer on the author, asked by ta_gate.
+#   rc 0 read (empty <out> = none), rc 2 not read (PROJECT_2_REARM_NOTE says why).
+# Read in the identity-arming subshell shape of ta_gh_trigger, one try a page.
+_ta_rearm_at() {
+  local slug="$1" n="$2" since="$3" out="$4" pg=1 rc cnt pf hits
+  : > "$out"; PROJECT_2_REARM_NOTE=""
+  [ -n "$since" ] || { PROJECT_2_REARM_NOTE="the label event has no created_at"; return 2; }
+  command -v gh_rest >/dev/null 2>&1 || { PROJECT_2_REARM_NOTE="gh-rest lib missing"; return 2; }
+  pf="$out.page"; hits="$out.hits"; : > "$hits"
+  while [ "$pg" -le "$PROJECT_2_EVENT_PAGES" ]; do
+    rc=0
+    ( command -v gh_auth_for >/dev/null 2>&1 && gh_auth_for "$slug" >/dev/null 2>&1
+      r=0; gh_rest GET "repos/$slug/issues/$n/comments?per_page=100&since=$since&page=$pg" > "$pf" 2>/dev/null || r=$?
+      printf '%s' "${GH_REST_REASON:-}" > "$pf.reason"; exit "$r" ) || rc=$?
+    if [ "$rc" != 0 ]; then
+      PROJECT_2_REARM_NOTE="comments page $pg rc=$rc $(cat "$pf.reason" 2>/dev/null)"
+      rm -f "$pf" "$pf.reason" "$hits"; return 2
+    fi
+    cnt=$(jq -e 'if type == "array" then length else error("not a list") end' "$pf" 2>/dev/null) \
+      || { PROJECT_2_REARM_NOTE="comments page $pg is not a JSON list"; rm -f "$pf" "$pf.reason" "$hits"; return 2; }
+    jq -c --arg since "$since" --arg re "$PROJECT_2_REARM_RE" --arg neg "$PROJECT_2_REARM_NEG_RE" '
+      ($since | fromdateiso8601) as $s
+      | .[] | select(type == "object")
+      | select(((.created_at // "") | (try fromdateiso8601 catch 0)) > $s)
+      | select((((.user // {}).type // "") | tostring | ascii_downcase) != "bot")
+      | select(((.body // "") | tostring) | test($re))
+      | select((((.body // "") | tostring) | test($neg)) | not)' "$pf" >> "$hits" 2>/dev/null \
+      || { PROJECT_2_REARM_NOTE="comments page $pg unparseable"; rm -f "$pf" "$pf.reason" "$hits"; return 2; }
+    [ "$cnt" -ge 100 ] || break
+    pg=$((pg+1))
+  done
+  rm -f "$pf" "$pf.reason"
+  if [ "$pg" -gt "$PROJECT_2_EVENT_PAGES" ]; then
+    PROJECT_2_REARM_NOTE="comments cap: $PROJECT_2_EVENT_PAGES full pages read"; rm -f "$hits"; return 2
+  fi
+  jq -rs 'sort_by([((.created_at // "1970-01-01T00:00:00Z") | fromdateiso8601), (.id // 0)]) | reverse | .[]
+          | [(.id|tostring), ((.user // {}).login // ""), ((.user // {}).type // ""), (.performed_via_github_app.slug // "")] | @tsv' \
+    "$hits" > "$out" 2>/dev/null || { PROJECT_2_REARM_NOTE="comments unparseable"; rm -f "$hits"; return 2; }
+  rm -f "$hits"
+  return 0
+}
+
 # ta_board_trigger <raw-ticket-json> <out> — the newest status_change of an
 # in-app ticket as `id<TAB>userId<TAB>name`, or an empty <out>. Ordered by
 # createdAt (or created_at / at); entries without a time keep array order.
@@ -323,7 +378,8 @@ _ta_allowed() {
 #   rc 0 build (PROJECT_2_LINE = `allow <why> actor=<a> event=<id>`), rc 1 ignored
 #   (commented once, recorded), rc 2 unverifiable (PROJECT_2_LINE says why).
 ta_gate() {
-  local p="$1" k="$2" t="${3:-}" b="$4" r bp n slug f dec why id actor typ app uid name self prod tok rc src where
+  local p="$1" k="$2" t="${3:-}" b="$4" r bp n slug f dec why id actor typ app lat uid name self prod tok rc src where
+  local cid clogin ctyp capp rearm_note=""
   PROJECT_2_LINE=""; PROJECT_2_NOTE=""; PROJECT_2_READ_NOTE=""; PROJECT_2_COMMENTED=0
   _ta_deps || { PROJECT_2_LINE="no harness root"; return 2; }
   r=$(_ta_root)
@@ -352,9 +408,28 @@ ta_gate() {
       *) PROJECT_2_LINE="events read: ${PROJECT_2_NOTE:-failed}"; return 2 ;;
     esac
     if [ ! -s "$f" ]; then PROJECT_2_LINE="allow no-trigger (no labeled ai-build event on $slug#$n)"; return 0; fi
-    IFS=$'\t' read -r id actor typ app _ < "$f"
+    # A tab is an IFS whitespace character, so `read` would fold an empty
+    # app_slug and shift created_at into it: split on \037 instead.
+    IFS=$'\037' read -r id actor typ app lat < <(tr '\t' '\037' < "$f")
     dec=$(ta_decide "$p" gh "$actor" "" "$typ" "$app" "")
     src=gh; where="$slug"; t="$n"
+    # An ignored label stands unless a newer explicit re-arm comment comes from
+    # someone ta_decide allows as a person (never `self`: the harness cannot
+    # re-arm itself). A comments read that fails keeps the ignore.
+    case "$dec" in
+      ignore*)
+        if _ta_rearm_at "$slug" "$n" "$lat" "$f.rearm"; then
+          while IFS=$'\037' read -r cid clogin ctyp capp; do
+            [ -n "$cid" ] || continue
+            case "$(ta_decide "$p" gh "$clogin" "" "$ctyp" "$capp" "")" in
+              "allow listed"|"allow human-default") id="comment-$cid"; actor="$clogin"; dec="allow rearm"; break ;;
+            esac
+          done < <(tr '\t' '\037' < "$f.rearm")
+        else
+          rearm_note="re-arm read: $PROJECT_2_REARM_NOTE"
+        fi
+        rm -f "$f.rearm" ;;
+    esac
   elif [ -n "$bp" ]; then
     if [ "$PROJECT_2_ROW" != armed ]; then PROJECT_2_LINE="allow unarmed (no trigger.actors.$p row, in-app board not read)"; return 0; fi
     prod=$("$r/bin/fleet-conf.sh" "$p" prod 2>/dev/null) || prod=""
@@ -390,5 +465,6 @@ ta_gate() {
   else
     PROJECT_2_LINE="ignored $why actor=$actor event=$id — no new comment (${PROJECT_2_NOTE:-same episode, already commented}), recorded in ledger trigger-actor \"$p $k\""
   fi
+  [ -z "$rearm_note" ] || PROJECT_2_LINE="$PROJECT_2_LINE ($rearm_note)"
   return 1
 }

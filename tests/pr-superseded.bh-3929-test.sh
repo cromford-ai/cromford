@@ -84,6 +84,13 @@ if [ "$1 $2 $3" = "api -i -X" ]; then
       [ "${CLOSE_FAIL:-}" = "$n" ] && { resp 500 '{"message":"boom"}'; exit 1; }
       printf 'CLOSE %s\n' "$n" >> "$HARNESS/writes.log"; touch "$F/closed-$n"
       resp 200 '{"state":"closed"}' ;;
+    # TEST-CHANGE (BH-6815): a rule 1/2 close now also reads the PR's file list
+    # and main's sha (po_done_close_guard). An empty list = nothing left to ship.
+    "GET repos/"*/pulls/*/files*)
+      n="${P%/files*}"; n="${n##*/}"
+      resp 200 "$(cat "$F/files-$n.json" 2>/dev/null || echo '[]')" ;;
+    "GET repos/"*/commits/HEAD)
+      resp 200 '{"sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}' ;;
     "GET repos/"*/pulls/*)
       n="${P##*/}"
       if [ -f "$F/closed-$n" ]; then resp 200 '{"state":"closed","merged_at":null}'
@@ -228,10 +235,13 @@ grep -q '^COMMENT 140 @collaborator-1 Closing this one: TK-102 already shipped i
   || bad "P2 the comment starts @author and names #116: $(W)"
 ! grep -q '—' "$H/writes.log" && ok || bad "P2 no em dash in the comment"
 
-# ---------- P3 rule 2 on an issues board, conductor READY ---------------------
+# ---------- P3 rule 2 on an issues board, conductor WAIT_CI -------------------
 setup "$BH"
 opens "$(pr 300 'BH-50: the thing' ticket/bh-50 operator)"
-mcrow 300 READY
+# TEST-CHANGE (BH-6815): a READY row is merge-armed, and the done-ticket close
+# guard keeps an armed PR open (pinned in tests/pr-owner-done-guard.bh-6815-test.sh
+# D2). The rule 2 close this case pins runs on a WAIT_CI row.
+mcrow 300 WAIT_CI
 issue 50 200 '{"number":50,"state":"closed","state_reason":"completed"}'
 run
 closed 300 && ok || bad "P3 closed on a done ticket: $(W)"

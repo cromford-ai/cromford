@@ -88,6 +88,12 @@ case "$*" in
     printf '%s :: %s\n' "$*" "$( [ -n "$bf" ] && tr '\n' ' ' < "$bf")" >> "$HARNESS/gh-writes.log"
     case "$*" in *"-X PATCH"*) touch "$HARNESS/closed-$(sed -nE 's#.*/pulls/([0-9]+).*#\1#p' <<<"$*")" ;; esac
     printf 'HTTP/1.1 200 OK\r\n\r\n{}\n' ;;
+  # TEST-CHANGE: BH-6815 — the close-duplicate arm reads the PR's file list and
+  # main's sha first (po_done_close_guard); an empty list = nothing left to ship.
+  *"api -i -X GET repos/"*"/pulls/"*"/files"*)
+    printf 'HTTP/1.1 200 OK\r\n\r\n[]\n' ;;
+  *"api -i -X GET repos/"*"/commits/HEAD"*)
+    printf 'HTTP/1.1 200 OK\r\n\r\n{"sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}\n' ;;
   *"api -i -X GET repos/"*"/pulls/"*)
     n=$(sed -nE 's#.*/pulls/([0-9]+).*#\1#p' <<<"$*")
     if [ -f "$HARNESS/closed-$n" ]; then printf 'HTTP/1.1 200 OK\r\n\r\n{"state":"closed","merged_at":null}\n'

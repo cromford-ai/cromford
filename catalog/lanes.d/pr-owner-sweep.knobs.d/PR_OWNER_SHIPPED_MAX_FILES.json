@@ -1,0 +1,11 @@
+{
+  "env": "PR_OWNER_SHIPPED_MAX_FILES",
+  "type": "int",
+  "default": 60,
+  "min": 1,
+  "max": 99,
+  "unit": "files",
+  "zero_means": null,
+  "required": false,
+  "note": "BH-6815. Most changed files a done-ticket close compares with main, one contents read each (po_shipped, bin/lib/pr-owner/shipped.sh). A PR with more files, or with 100 (one REST page, so maybe more), is `shipped-unknown` and stays open. Read by bin/pr-owner-sweep.sh as ${PR_OWNER_SHIPPED_MAX_FILES:-}, default 60."
+}

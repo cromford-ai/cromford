@@ -1,0 +1,7 @@
+# TICKET EDGES (BH-6977, BH-6547.1): dependency edges and HOLD/RESUME comments
+# as rows. Written by bin/lib/ticket-edges.sh; nothing dispatches on them yet.
+# Bearer-gated.
+POST /api/ticket-edges
+GET /api/ticket-edges
+POST /api/ticket-holds
+GET /api/ticket-holds

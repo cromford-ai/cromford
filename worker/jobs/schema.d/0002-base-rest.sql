@@ -2097,7 +2097,9 @@ CREATE TABLE IF NOT EXISTS verdicts (
   note TEXT,                       -- one line of findings for the refusal comment
   created_at TEXT NOT NULL,
   auth TEXT,                       -- secret | lead-token | human-token: the credential that wrote the row (BH-3831); NULL = before BH-3831
-  human_sig TEXT                   -- HMAC-SHA256 the worker signs a human-token row with (HUMAN_VERDICT_SIG_KEY, BH-3846); NULL = unsigned
+  human_sig TEXT,                  -- HMAC-SHA256 the worker signs a human-token row with (HUMAN_VERDICT_SIG_KEY, BH-3846); NULL = unsigned
+  review_tier TEXT,                -- low | medium | high: the risk tier of the head (BH-6967); NULL = not said
+  review_mode TEXT                 -- full | intent | risk-tier: the review that wrote the row (BH-6967); NULL = not said
 );
 CREATE INDEX IF NOT EXISTS idx_verdicts_pr_head ON verdicts(repo, pr, head_sha, id);
 -- The two append-only triggers (BEFORE UPDATE / BEFORE DELETE -> RAISE(ABORT))

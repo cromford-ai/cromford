@@ -4,12 +4,21 @@
 // src/index.js by BH-1195. Every handler body below is the chain's body
 // VERBATIM — same SQL, same validation, same status codes, same response keys —
 // so this file changed where the code lives and nothing about what it answers.
+// The detail route has since gained the archive read below (lib/archive-read.js).
 // src/index.js holds the ordered table that decides which of these runs.
 
 import { json } from "../lib/http.js";
 import {
   decorateJob, JOBS_SELECT, TRANSCRIPT_INDEX_COLS,
 } from "../lib/core.js";
+import { readHistory, mergeRows } from "../lib/archive-read.js";
+
+// A job can be any age, so its events can be in the archive (BH-6779). The
+// archive read is bounded below by the job's created_at: the archive indexes
+// stage_events on created_at only, so the bound makes it an index range.
+// `+id` there keeps the order but stops SQLite from walking the whole table
+// by rowid to satisfy ORDER BY id (no ANALYZE on D1).
+const EVENTS_HEAD = "SELECT * FROM stage_events WHERE job_id=?1";
 
 export const routes = [
   // ── Heartbeats (phase 3) ───────────────────────────────────────────────
@@ -108,9 +117,16 @@ export const routes = [
       const id = decodeURIComponent(detailMatch[1]);
       const row = await env.DB.prepare(`${JOBS_SELECT} WHERE j.id=?1`).bind(id).first();
       if (!row) return json(404, { error: "no such job" });
-      const events = await env.DB.prepare(
-        "SELECT * FROM stage_events WHERE job_id=?1 ORDER BY id ASC LIMIT 500"
-      ).bind(id).all();
+      const ev = await readHistory(env, {
+        table: "stage_events", since: row.created_at, now: t,
+        hot: { sql: EVENTS_HEAD + " ORDER BY id ASC LIMIT 500", binds: [id] },
+        archive: { sql: EVENTS_HEAD + " AND created_at >= ?2 ORDER BY +id ASC LIMIT 500", binds: [id, row.created_at] },
+      });
+      // archived_at is the archive's own column, not part of an event.
+      const archived = ev.archive && (ev.archive.results || []).map(({ archived_at, ...e }) => e);
+      const events = mergeRows(ev.hot.results || [], archived, {
+        key: (e) => e.id, compare: (a, b) => a.id - b.id, limit: 500,
+      });
       const ledgers = await env.DB.prepare(
         "SELECT * FROM ledgers WHERE job_id=?1 ORDER BY updated_at DESC LIMIT 100"
       ).bind(id).all();
@@ -136,8 +152,9 @@ export const routes = [
         phases: phases.results || [],
         artifacts: artifacts.results || [],
         transcripts: transcripts.results || [],
-        events: events.results || [],
+        events,
         ledgers: ledgers.results || [],
+        archive: ev.state,
         as_of: t,
       });
     },

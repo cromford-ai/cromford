@@ -1,0 +1,1 @@
+{"name":"ticket-edges-off","readers":["bin/lib/ticket-edges.sh"],"box_scoped":true,"what":"stops every te_put_* in bin/lib/ticket-edges.sh, so run-preplan, run-decompose, dep-verify and the ticket-holds wake class send no ticket_edges or ticket_holds row"}

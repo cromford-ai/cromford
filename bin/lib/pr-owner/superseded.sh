@@ -30,6 +30,8 @@
 #                  another open PR is stacked on (PO_STACKED: their base is
 #                  this PR's head branch), held as `#n:stacked` (BH-6814):
 #                  the close would strand them on a branch that never merges.
+#   Rules 1 and 2 close only through po_done_close_guard (shipped.sh): a PR
+#   that is held, armed, recently active or not yet on main stays open.
 #   Each close is one comment then one close over REST, counted against
 #   MAX_ACTIONS, held as `#n:cap` past it, logged only under DRY=1. A PR this
 #   hook closed before (pr_superseded row `closed`) that is open again was
@@ -51,6 +53,17 @@ _po_ss_rest() {
   # shellcheck source=bin/lib/gh-rest.sh
   [ -r "${BASH_SOURCE[0]%/*}/../gh-rest.sh" ] && . "${BASH_SOURCE[0]%/*}/../gh-rest.sh"
   command -v gh_rest_comment >/dev/null 2>&1
+}
+
+# The done-ticket close guard (shipped.sh), loaded on first use like the REST
+# helpers. A box without it cannot prove the change shipped: no rule 1/2 close.
+_po_ss_shipped_lib() {
+  command -v po_done_close_guard >/dev/null 2>&1 && return 0
+  # shellcheck source=bin/lib/pr-owner/shipped.sh
+  [ -r "${BASH_SOURCE[0]%/*}/shipped.sh" ] && . "${BASH_SOURCE[0]%/*}/shipped.sh"
+  command -v po_done_close_guard >/dev/null 2>&1 && return 0
+  _po_ss_say "$PO_SLUG#$PO_NUM: bin/lib/pr-owner/shipped.sh is not loadable — no done-ticket close"
+  HELD="${HELD:+$HELD,}#$PO_NUM:guard-missing"; return 1
 }
 
 _ph_ts_cache_put() { [ -n "${TD:-}" ] && [ -d "$TD" ] && printf '%s\t%s\t%s\n' "$1" "$2" "$3" >> "$TD/po-ticket-status.tsv"; return 0; }
@@ -196,6 +209,11 @@ _po_ss_close() {
   if _po_ss_held; then
     HELD="${HELD:+$HELD,}#$PO_NUM:hold"; return 2
   fi
+  case "$by" in
+    merged-*|ticket-*)
+      _po_ss_shipped_lib || return 2
+      po_done_close_guard "$by" || return 2 ;;
+  esac
   if [ "${DRY:-0}" = 1 ]; then
     _po_ss_say "DRY-RUN would: superseded close #$PO_NUM ($by)"
     N_ACT=$(( ${N_ACT:-0} + 1 )); return 0

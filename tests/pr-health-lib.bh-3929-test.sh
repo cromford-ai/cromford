@@ -249,6 +249,10 @@ case "$*" in
   # TEST-CHANGE: BH-3933 — a REST write answers with a status line (bin/lib/gh-rest.sh
   # judges it), and the close's re-read of the PR answers closed.
   *"api -i -X P"*) printf '%s\n' "$*" >> "$HARNESS/gh-writes.log"; printf 'HTTP/1.1 200 OK\r\n\r\n{}\n' ;;
+  # TEST-CHANGE: BH-6815 — the close-duplicate arm reads the PR's file list and
+  # main's sha first (po_done_close_guard); an empty list = nothing left to ship.
+  *"api -i -X GET repos/"*"/pulls/"*"/files"*) printf 'HTTP/1.1 200 OK\r\n\r\n[]\n' ;;
+  *"api -i -X GET repos/"*"/commits/HEAD"*) printf 'HTTP/1.1 200 OK\r\n\r\n{"sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}\n' ;;
   *"api -i -X GET repos/"*"/pulls/"*) printf 'HTTP/1.1 200 OK\r\n\r\n{"state":"closed","merged_at":null}\n' ;;
   *) exit 1 ;;
 esac

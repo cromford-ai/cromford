@@ -206,6 +206,9 @@ test('W3b PUT /state: a reason alone records a partial approval, status untouche
   assert.equal((await res.json()).row.probe, JSON.stringify(probe));
 });
 
+// The usage fields, each by name (D56): a new response key is not a break.
+const sameFields = (got, want) => { for (const [k, v] of Object.entries(want)) assert.deepEqual(got[k], v, k); };
+
 test('W4 /usage sums exactly over 2,500 seeded cost_rows; no match is rows:0; params required', async (t) => {
   const raw = await openDb(t);
   if (!raw) return;
@@ -228,11 +231,11 @@ test('W4 /usage sums exactly over 2,500 seeded cost_rows; no match is rows:0; pa
 
   let res = await call(DB, 'GET', `/api/model-watch/usage?model=m-1&since=2026-09-01T00:00:00Z`);
   assert.equal(res.status, 200);
-  assert.deepEqual(await res.json(), { model: 'm-1', since, rows: 2500, ...want });
+  sameFields(await res.json(), { model: 'm-1', since, rows: 2500, ...want, archive: 'unbound' });
 
   res = await call(DB, 'GET', `/api/model-watch/usage?model=nope&since=2026-09-01T00:00:00Z`);
-  assert.deepEqual(await res.json(),
-    { model: 'nope', since, rows: 0, input_toks: 0, output_toks: 0, cache_read: 0, cache_write: 0 });
+  sameFields(await res.json(),
+    { model: 'nope', since, rows: 0, input_toks: 0, output_toks: 0, cache_read: 0, cache_write: 0, archive: 'unbound' });
 
   res = await call(DB, 'GET', `/api/model-watch/usage?model=m-zero&since=2026-09-01T00:00:00Z`);
   const z = await res.json();

@@ -1,0 +1,8 @@
+{
+  "env": "PR_OWNER_DONE_SKIP_LABELS",
+  "type": "string",
+  "default": "hold merge-queue queue-solo fix-main-red",
+  "zero_means": null,
+  "required": false,
+  "note": "BH-6815. Space-separated PR labels that keep a PR open against a done-ticket close (superseded rule 1 or 2, or the close-duplicate arm), compared case-insensitively, held `#n:label`. Read by bin/pr-owner-sweep.sh as ${PR_OWNER_DONE_SKIP_LABELS:-}; empty is the default list."
+}

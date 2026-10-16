@@ -37,6 +37,11 @@
 # `PREQUEUE reuse ... -> stale-commits behind=<n|unreadable> k=<K>` line, and
 # with no other candidate the head is dispatched again and held. A red parks at
 # any distance, as before.
+#
+# BEFORE A NEW RUN (BH-6924). On a miss that no fresh rule answered, a run any
+# worker dispatched for this exact key is adopted (mc-prequeue.d/adopt.sh), and
+# then, past the sibling hold, an older main's green may be reused by impact
+# set (mc-prequeue.d/impact-reuse.sh). Only then the veto and the dispatch.
 
 PQ_WF=prequeue-gate.yml
 PQ_VERDICT_RE='^(green|red|no-selection|conflict|could-not-run) main=([0-9a-f]{40}) head=([0-9a-f]{40}) suites=([^ ]*)( why=[^ ]+)?$'
@@ -348,9 +353,20 @@ pq_resolve() {
     [ "$st" = red ] && [ -n "$rest" ] && { PQ_SUITES="$rest"; PQ_MAIN="$bm"; PQ_PATH="$pre$bm"; echo red; return 0; }
     echo proceed; return 0
   fi
+  # BH-6924: a run another worker dispatched for this exact key is read, not
+  # paid for again (mc-prequeue.d/adopt.sh).
+  declare -F pq_adopt_run >/dev/null && pq_adopt_run "$slug" "$num" "$url" "$head" "$main" "$path" && { echo "$_pq_word"; return 0; }
   if [ -n "$sib" ]; then
     PQ_WHY="prequeue run for main ${sib:0:12} still running; its verdict is read on a later tick"; echo hold; return 0
   fi
+  # BH-6924: an older main's green counts when the main move misses this PR's
+  # impact set and the head still merges (mc-prequeue.d/impact-reuse.sh).
+  _pq_ir=none
+  declare -F pq_impact_reuse >/dev/null && pq_impact_reuse "$slug" "$num" "$url" "$head" "$main" "$pre"
+  case "$_pq_ir" in
+    reuse) echo proceed; return 0 ;;
+    rebase) echo rebase; return 0 ;;
+  esac
   # A run the conductor could never act on this tick is not paid for. Nothing
   # is written, so the first tick without the refusal dispatches as usual.
   if [ "$reuse" != 0 ] && veto=$(pq_dispatch_veto "$slug" "$num" "$url" "$head"); then

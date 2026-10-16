@@ -362,6 +362,15 @@ if [ -s "$PLANDIR/plan.md" ]; then
     esac
   fi
   # <<< consumable record
+  # >>> ticket edges (BH-6977)
+  # One ticket_edges row per blocker the plan declares (Blocked-by, Needs,
+  # DEPENDS). The text lines stay where they are. Fail-open: no stdout, rc 0.
+  # shellcheck source=bin/lib/ticket-edges.sh
+  [ -r "$HARNESS/bin/lib/ticket-edges.sh" ] && . "$HARNESS/bin/lib/ticket-edges.sh" 2>/dev/null
+  if command -v te_put_edges >/dev/null 2>&1; then
+    te_put_edges "$PROJECT" "$TICKET" planner "$PLANDIR/plan.md" "$PLANDIR/planned-files.txt" >/dev/null 2>&1 || true
+  fi
+  # <<< ticket edges
   echo "$(STAMP) [$PROJECT/$KEY] pre-plan done" >> "$LOG"
 elif command -v preplan_billed >/dev/null 2>&1 && ! preplan_billed "$HARNESS" "${AC_RC:-0}" "$PP_ROWS0"; then
   # >>> preplan not-billed exit

@@ -1,0 +1,5 @@
+# BH-6924: the suites the BH-6838 replay found failing in merge-queue batches
+# #6830 and #6829 that the batch selection missed
+# (docs/notes/2026-10-15-BH-6838-ci-nightly-split.md).
+tests/route-keyed-merge.bh-5788-test.sh
+tests/worker-routes-render.bh-4607-test.sh
