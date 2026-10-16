@@ -33,7 +33,7 @@ for L in "$SCRIPT_REL" bin/jobs-client.sh bin/lane-alert.sh; do
   ( cd "$DIR" && scratch_install_closure "$L" "$H" ) >/dev/null 2>&1 || bad "setup: could not install $L"
 done
 chmod +x "$H/bin/"*.sh 2>/dev/null
-for f in "$DIR/bin/d1-retention.sh" "$DIR/worker/jobs/src/routes/retention.js" "$SRV" \
+for f in "$DIR/bin/d1-retention.sh" "$DIR/worker/jobs/src/routes/retention.js" "$DIR/worker/jobs/src/lib/archive-daily.js" "$SRV" \
          "$DIR/catalog/lanes.d/d1-retention.json" "$DIR/cron/lanes/731-d1-retention.cron"; do
   [ -s "$f" ] && ok "source exists: ${f#"$DIR"/}" || bad "missing source ${f#"$DIR"/}"
 done
@@ -72,6 +72,10 @@ sql "INSERT INTO wakes (repo, kind, key, event, minute, at) SELECT 'o/r','pr', '
 # does not edit this suite. An unreadable count fails D1 and D2.
 NRULES=$(node --input-type=module -e "const m = await import('$DIR/worker/jobs/src/routes/retention.js'); console.log(m.RULES.length)" 2>/dev/null)
 [[ $NRULES =~ ^[1-9][0-9]*$ ]] || { bad "setup: could not count RULES in retention.js (got '$NRULES')"; NRULES=x; }
+# TEST-CHANGE (BH-7109): an off rule writes no audit row, and stage_events_daily.archive
+# ships off (def 0), so D2 counts audit rows against the rules that are on by default.
+NRULES_ON=$(node --input-type=module -e "const m = await import('$DIR/worker/jobs/src/routes/retention.js'); console.log(m.RULES.filter((r) => r.def > 0).length)" 2>/dev/null)
+[[ $NRULES_ON =~ ^[1-9][0-9]*$ ]] || { bad "setup: could not count on-by-default RULES (got '$NRULES_ON')"; NRULES_ON=x; }
 
 # --- D1: dry run -------------------------------------------------------------
 RESET; run
@@ -88,7 +92,7 @@ grep -q ' wakes.age dry=0 counted=5 removed=5 backlog=0$' "$H/logs/d1-retention.
   || bad "D2 log: $(cat "$H/logs/d1-retention.log")"
 grep -qE " run ret-[^ ]+ dry=0 rules=$NRULES removed=5 errors=0\$" <<<"$(lastlog)" && ok "D2 run line sums the rules" || bad "D2 run line: $(lastlog)"
 [ "$(get "SELECT COUNT(*) n FROM wakes" | jq -r '.[0].n')" = 1 ] && ok "D2 the recent wake stays" || bad "D2 wakes left: $(get 'SELECT key FROM wakes')"
-[ "$(get "SELECT COUNT(*) n FROM retention_runs WHERE dry_run=0" | jq -r '.[0].n')" = "$NRULES" ] && ok "D2 one audit row per rule" \
+[ "$(get "SELECT COUNT(*) n FROM retention_runs WHERE dry_run=0" | jq -r '.[0].n')" = "$NRULES_ON" ] && ok "D2 one audit row per rule that is on" \
   || bad "D2 audit rows: $(get 'SELECT rule, dry_run FROM retention_runs')"
 
 # --- D3: not configured ------------------------------------------------------

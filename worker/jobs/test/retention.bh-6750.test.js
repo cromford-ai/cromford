@@ -132,7 +132,12 @@ test('R5 dry run (the seeded default) counts and writes the audit rows, and remo
   assert.equal(byRule['wakes.age'].removed, 0);
   assert.equal(byRule['wakes.age'].dry_run, 1);
   assert.equal(byRule['job_heartbeats.closed'].counted, 1);
-  assert.equal(audit.length, r.body.rules.length, 'one audit row per rule per run');
+  // TEST-CHANGE (BH-7109): an off rule writes no audit row (runRule's `if (out.off) continue`), and
+  // stage_events_daily.archive ships off by default, so the count is the rules that are not off.
+  const on = r.body.rules.filter((x) => !x.off);
+  assert.ok(on.length < r.body.rules.length, 'at least one rule is off by default');
+  assert.equal(audit.length, on.length, 'one audit row per rule that is not off');
+  assert.ok(!audit.some((x) => r.body.rules.find((y) => y.rule === x.rule).off), 'an off rule writes no audit row');
 });
 
 test('R6 budget: a backlog over retention.max_rows drains over runs, each within budget', async (t) => {

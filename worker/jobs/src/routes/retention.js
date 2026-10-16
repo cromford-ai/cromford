@@ -15,13 +15,16 @@
 //   large backlog drains over several hourly runs instead of in one burst.
 //
 // NEVER DELETED HERE: cost_rows and ledgers (money and history). There is no
-//   rule for them. Archiving them is a later slice.
+//   rule for them. Archiving them is a later slice. stage_events_daily rows
+//   leave hot only with a verified copy in the archive D1 (BH-7109,
+//   lib/archive-daily.js), and that rule is off by default.
 //
 // Every setting is a settings row (worker/jobs/schema.d/*-bh-6750-*.sql). A
 // value that is not an integer in range falls back to the code default below;
 // a window of 0 turns that rule off.
 import { d1Guarded, json } from "../lib/http.js";
 import { settingsRows } from "../lib/settings-cache.js";
+import { ARCHIVE_NOT_BOUND, archiveDailyBound, moveDailyBatch } from "../lib/archive-daily.js";
 
 const DAY_MS = 86400e3;
 
@@ -29,7 +32,10 @@ const DAY_MS = 86400e3;
 // takes (?1 a JSON array of ids). `rollup` (optional) takes the same JSON ids
 // and runs in the same D1 batch as the delete, before it. `pre` (optional) is
 // a list of child deletes that take the same JSON ids and run in that batch
-// before the delete, so a parent never goes without its children.
+// before the delete, so a parent never goes without its children. `move`
+// (optional, BH-7109) takes (env, JSON ids, now) and returns the rows the
+// archive verified as [{id, n}]; the delete then takes that JSON list instead
+// of the ids, and deletes a row only while its hot n still matches.
 export const RULES = [
   {
     rule: "wakes.age", table: "wakes", key: "retention.wakes.days", def: 30,
@@ -66,6 +72,27 @@ export const RULES = [
               GROUP BY 1, 2, 3, 4
              ON CONFLICT (day, stage, verdict, actor) DO UPDATE SET n = n + excluded.n`,
     del: "DELETE FROM stage_events WHERE id IN (SELECT value FROM json_each(?1))",
+  },
+  // BH-7109: a daily rollup row moves to the archive D1 when its whole day is
+  // older than the cutoff date (substr keeps the PK index on `day`) AND older
+  // than the oldest event still in stage_events. Off by default (def 0);
+  // nothing is deleted while the archive binding is absent.
+  // WHY THE EVENT GATE. Every stage_events insert stamps created_at with the
+  // server time, so a day older than the oldest hot event can never get
+  // another rollup. A day that still has events (a running job, or a backlog
+  // that drains over runs) is not moved: a later rollup for an archived day
+  // would make a new hot row whose n can equal the archived n, and the
+  // count-back would then delete it as "already copied". MIN(created_at) is
+  // one uncorrelated read on idx_events_created.
+  {
+    rule: "stage_events_daily.archive", table: "stage_events_daily", key: "retention.stage_events_daily.archive_days", def: 0,
+    ids: `SELECT rowid AS id FROM stage_events_daily
+           WHERE day < MIN(substr(?1, 1, 10), COALESCE((SELECT substr(MIN(created_at), 1, 10) FROM stage_events), '9999-12-31'))
+           ORDER BY day LIMIT ?2`,
+    move: moveDailyBatch,
+    del: `DELETE FROM stage_events_daily WHERE rowid IN
+           (SELECT d.rowid FROM json_each(?1) j JOIN stage_events_daily d
+             ON d.rowid = json_extract(j.value, '$.id') AND d.n = json_extract(j.value, '$.n'))`,
   },
   {
     rule: "lane_ticks.stale", table: "lane_ticks", key: "retention.lane_ticks.days", def: 30,
@@ -204,6 +231,7 @@ async function runRule(env, r, o) {
   const days = intSetting(o.byKey, r.key, r.def, 0, 3650);
   if (days === 0) { out.off = true; return { out, started }; }
   out.cutoff = iso(o.nowMs - days * DAY_MS);
+  if (r.move && !archiveDailyBound(env)) { out.error = ARCHIVE_NOT_BOUND; return { out, started }; }
   try {
     if (o.dryRun) {
       // sql-ident-ok: r.ids is literal subquery text from the RULES module const
@@ -217,13 +245,30 @@ async function runRule(env, r, o) {
       const want = Math.min(o.batch, o.maxRows - out.removed);
       const ids = ((await env.DB.prepare(r.ids).bind(out.cutoff, want).all()).results || []).map((x) => x.id);
       if (ids.length === 0) break;
-      const arr = JSON.stringify(ids);
+      let arr = JSON.stringify(ids);
+      let ok = null;
+      if (r.move) {
+        // A throw (a failed copy) goes to the catch below: nothing is deleted.
+        ok = await r.move(env, arr, iso(Date.now()));
+        arr = JSON.stringify(ok);
+      }
       const stmts = [];
       if (r.rollup) stmts.push(env.DB.prepare(r.rollup).bind(arr));
       for (const sql of r.pre || []) stmts.push(env.DB.prepare(sql).bind(arr));
       stmts.push(env.DB.prepare(r.del).bind(arr));
-      await env.DB.batch(stmts);
-      out.removed += ids.length;
+      const res = ok && ok.length === 0 ? null : await env.DB.batch(stmts);
+      if (ok) {
+        // A row the archive does not hold with the same n, or whose hot n grew
+        // after the copy, is not deleted; the rule stops for this run.
+        const gone = res ? Number(res[res.length - 1].meta.changes) : 0;
+        out.removed += gone;
+        if (gone < ids.length) {
+          out.error = `archive copy not verified for ${ids.length - gone} of ${ids.length} rows; those rows stay`;
+          break;
+        }
+      } else {
+        out.removed += ids.length;
+      }
       if (r.rollup) out.rolled_up += ids.length;
       if (ids.length < want) break;
     }
