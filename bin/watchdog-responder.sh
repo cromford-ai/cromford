@@ -529,7 +529,7 @@ _key_evidence() {
       if [ -z "$RAW" ]; then
         printf 'EVIDENCE MISSING for %s:%s — thread: board-fetch returned nothing for ticket %s\n' "$P" "$K" "$ID" >> "$HDR"
       else
-        printf 'EVIDENCE MISSING for %s:%s — thread: %s\n' "$P" "$K" "$(printf '%s' "$RAW" | head -1)" >> "$HDR"
+        printf 'EVIDENCE MISSING for %s:%s — thread: %s\n' "$P" "$K" "$(head -1 <<<"$RAW")" >> "$HDR"
       fi
       _pr_lines "$P" "$K" >> "$HDR"
       return 0 ;;
@@ -717,7 +717,7 @@ $(printf '%s\n' "${CLINES[@]}")"
     fi
     # Backstop: one comment can be larger than the whole share.
     if [ "$(_blen "$BLOCK")" -gt "$SHARE" ]; then
-      BLOCK="$(printf '%s' "$BLOCK" | head -c "$SHARE")
+      BLOCK="$(head -c "$SHARE" < <(printf '%s' "$BLOCK"))
 -- [capped: truncated to fit RESPONDER_EVIDENCE_CAP_BYTES]"
     fi
     PF_BLOCKS="$PF_BLOCKS$BLOCK
@@ -834,7 +834,7 @@ else
     if [[ "$LINE" =~ ^[[:space:]]*DECISION:[[:space:]]+([^[:space:]]+):([^[:space:]]+)[[:space:]]+::[[:space:]]+([A-Za-z]+)[[:space:]]+::[[:space:]]+(none|act)[[:space:]]+::[[:space:]]*(.*)$ ]]; then
       DITEM="${BASH_REMATCH[1]}:${BASH_REMATCH[2]}"
       DCLS="${BASH_REMATCH[3]}"; DACT="${BASH_REMATCH[4]}"; DWHY="${BASH_REMATCH[5]:0:200}"
-      if printf '%s\n' "$OFFERED_LIST" | grep -qxF -- "$DITEM"; then
+      if grep -qxF -- "$DITEM" <<<"$OFFERED_LIST"; then
         VALID=$((VALID+1))
         [ "$DACT" = act ] && NACT=$((NACT+1))
         # Playbook step 4, for the part bash actually knows: the no-tools call
@@ -871,7 +871,7 @@ DECISION: $DITEM :: $DCLS :: $DACT :: $DWHY"
     # the exact state that renders it.
     DEC_BLOCK=""; TAIL_ACT="$FIXED_TAIL_ACT_OPEN"
     if [ "$VALID" -gt 0 ] && [ -n "$DEC_TEXT" ]; then
-      DEC_BLOCK="DECISIONS FROM THE FIXED-EVIDENCE PASS (act only on the ones marked act):$(printf '%s' "$DEC_TEXT" | head -c "$((DEC_RESERVE - 200))")
+      DEC_BLOCK="DECISIONS FROM THE FIXED-EVIDENCE PASS (act only on the ones marked act):$(head -c "$((DEC_RESERVE - 200))" < <(printf '%s' "$DEC_TEXT"))
 
 "
       TAIL_ACT="$FIXED_TAIL_ACT"

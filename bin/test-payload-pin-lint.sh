@@ -158,7 +158,7 @@ NFILES=$(grep -c . "$TMP/files")
 cut -f1 "$TMP/lines" | sort -u > "$TMP/judged"
 while IFS= read -r F; do
   [ -n "$F" ] || continue
-  if printf '%s\n' "$F" | grep -qE "$CNAME" \
+  if grep -qE "$CNAME" <<<"$F" \
      || { [ -f "$ROOT/$F" ] && head -n "$HEADER_LINES" "$ROOT/$F" | grep -qE "$CHEAD"; }; then
     printf '%s\n' "$F" >> "$TMP/contract"
   fi

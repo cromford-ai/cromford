@@ -15,7 +15,7 @@
 
 import { json } from "../lib/http.js";
 import {
-  ageSeconds, ensureTable, intOrNull, isoPlusSeconds, laneName, leaseWon,
+  ageSeconds, ensureColumns, ensureTable, intOrNull, isoPlusSeconds, laneName, leaseWon,
   str, strictInt,
 } from "../lib/core.js";
 
@@ -29,6 +29,8 @@ const ALERT_FAMILY_RE = /^[0-9a-f]{12}$/;
 // A claimant is `<lane>@<box>`, which laneName() rejects on the `@`, so the
 // lanes that write claimed_by get their own class — same characters plus `@`.
 export const ALERT_ACTOR_RE = /^[A-Za-z0-9._@-]{1,96}$/;
+// BH-6971: a component name from catalog/components.tsv, or `unowned`.
+export const ALERT_COMPONENT_RE = /^[a-z][a-z0-9-]{0,63}$/;
 const ALERT_SEVERITIES = ["info", "warn", "critical"];
 const ALERT_STATES = ["new", "quarantined", "triaged", "parked", "resolved"];
 // No edge LEADS to `resolved`, and none leads out of it: a row is resolved
@@ -114,6 +116,10 @@ function alertWhere(opts, t, knobs) {
   }
   if (opts.family) where.push(`family=${hole(String(opts.family))}`);
   if (opts.box) where.push(`box=${hole(String(opts.box))}`);
+  // BH-6971: only GET /api/alerts sets these two; claim and flush never do.
+  // idx_alerts_component (component, last_seen) serves both.
+  if (opts.component) where.push(`component=${hole(String(opts.component))}`);
+  if (opts.unstamped) where.push("component IS NULL");
   // Age is the INCIDENT's age (first_seen), the column idx_alerts_state was
   // built for: taking it from last_seen would let a chatty incident postpone
   // its own escalation forever.
@@ -414,8 +420,20 @@ export const routes = [
     "GET", ["/api/alerts", "/api/alerts/families"],
     async ({ env, url, path, t }) => {
         await ensureTable(env, "alerts");
+        await ensureColumns(env, "alerts");
         const q = url.searchParams;
         const families = path === "/api/alerts/families";
+        // BH-6971: the component filter. A name that cannot be a component is a
+        // 400, never an empty list; `unstamped=1` is the rows with none yet.
+        const component = q.get("component");
+        const unstampedRaw = q.get("unstamped");
+        if (component !== null && !ALERT_COMPONENT_RE.test(component)) {
+          return json(400, { error: "component must match ^[a-z][a-z0-9-]{0,63}$" });
+        }
+        if (unstampedRaw !== null && unstampedRaw !== "1") return json(400, { error: "unstamped must be 1" });
+        if (component !== null && unstampedRaw !== null) {
+          return json(400, { error: "component and unstamped are exclusive" });
+        }
         const prefix = families ? String(q.get("lane") || "") : String(q.get("claimed_by_prefix") || "");
         // A prefix-less family count answers a question nobody asked.
         if (families && !prefix) return json(400, { error: "lane is required" });
@@ -432,6 +450,8 @@ export const routes = [
           since_s: secs(q.get("since_s") ?? q.get("since")),
           claimed_by_prefix: prefix.slice(0, 96),
           claimed_since_s: secs(q.get("claimed_since_s")),
+          component: component || "",
+          unstamped: unstampedRaw === "1",
         }, t, knobs);
 
         if (families || q.get("group") === "family") {

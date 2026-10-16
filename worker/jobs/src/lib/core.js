@@ -1125,6 +1125,11 @@ export const ADDED_COLUMNS = {
   // than the plan. Nullable, never backfilled: a NULL row predates the column.
   // routes/preplans.js calls ensureColumns before the POST and the GET.
   preplans: [["thread_at", "TEXT"]],
+  // BH-6971 (BH-6546.1): the component that owns the alert (catalog/components.tsv,
+  // or `unowned`). Nullable, never backfilled by the worker: bin/alerts-groom.sh
+  // stamps it through POST /api/alerts/component. GET /api/alerts and that
+  // route call ensureColumns before naming it.
+  alerts: [["component", "TEXT"]],
   // BH-5779: stale_reclaims counts how often POST /api/lead-reviews/reclaim-stale took this row back.
   lead_review_requests: [["priority", "INTEGER"], ["reset_count", "INTEGER"], ["reset_at", "TEXT"],
                          ["heartbeat_at", "TEXT"], ["participant", "TEXT"], ["head_authors", "TEXT"],
@@ -1142,6 +1147,9 @@ export const ADDED_COLUMNS = {
 export const ADDED_INDEXES = {
   cost_rows: ["CREATE INDEX IF NOT EXISTS idx_cost_rows_lane_ts ON cost_rows(lane_id, ts)",
               "CREATE INDEX IF NOT EXISTS idx_cost_rows_stage_ts ON cost_rows(stage, ts)"],
+  // BH-6971: serves GET /api/alerts?component=<c> and ?unstamped=1 (both
+  // ORDER BY last_seen DESC), the groom's read of open rows with no component.
+  alerts: ["CREATE INDEX IF NOT EXISTS idx_alerts_component ON alerts(component, last_seen)"],
 };
 export const addedColumnsReady = new WeakMap();
 export async function ensureColumns(env, table) {

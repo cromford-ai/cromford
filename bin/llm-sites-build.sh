@@ -113,7 +113,7 @@ compose_catalog() {
     case "$name" in
       _head.json) continue ;;
     esac
-    if ! printf '%s\n' "$name" | grep -qE '^[0-9]{4}-[a-z0-9][a-z0-9._-]*\.json$'; then
+    if ! grep -qE '^[0-9]{4}-[a-z0-9][a-z0-9._-]*\.json$' <<<"$name"; then
       echo "$SELF: catalog/llm-sites.d/$name is not a fragment name (NNNN-<id>.json, lower case) — rename it or move it out" >&2
       return 2
     fi

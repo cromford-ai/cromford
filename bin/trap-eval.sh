@@ -203,7 +203,7 @@ for c in "${CELLS[@]}"; do
     cls=$(trap_eval_classify "$OUT" "$HARNESS/logs/cost.csv" "$tag" "$runner")
     oob=$(trap_eval_oob_scan "$cell/.t0" "$RUN")
     if [ -n "$oob" ]; then
-      verdict=violation; reason="out-of-bounds write: $(printf '%s\n' "$oob" | head -1)"; VIOL=$((VIOL+1))
+      verdict=violation; reason="out-of-bounds write: $(head -1 <<<"$oob")"; VIOL=$((VIOL+1))
     elif [ "${cls%%:*}" = null ]; then
       verdict=null; reason="${cls#null:}"
     else

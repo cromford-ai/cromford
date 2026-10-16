@@ -34,8 +34,18 @@
 # MC_PREQUEUE_IMPACT_REUSE (BH-6924) 1 reuses an older main's green verdict when
 # the main move misses the PR's impact set; MC_PREQUEUE_IMPACT_MAX_S bounds the
 # age of that verdict (mc-prequeue.d/impact-reuse.sh).
+#
+# THE CALL BUDGET (BH-7029, knob MC_PREQUEUE_CALL_BUDGET_S, default 150, 0 =
+# off). Each call of the gate (main-tip, restamp, resolve and the resolver's
+# own calls, status) runs through pq_call (mc-prequeue.d/call-bound.sh): one
+# PREQUEUE_CALL timing line each. The gate's calls share one budget, never
+# above 3/4 of MC_STEP_TIMEOUT_S nor past MC_WORKER_DEADLINE_AT minus 15 s.
+# When it passes, a read in flight is killed, no later call starts, and the
+# answer is hold with PQ_WHY and one PREQUEUE_CALL_TIMEOUT line naming the call:
+# the row stays READY, the next tick asks again, and nothing the gate learned
+# past the budget counts. A budget under 1 s holds at once, with no call.
 
-PQ_KNOB_DEFAULTS="MC_PREQUEUE_GATE=1 MC_PREQUEUE_FRESH_S=1800 MC_PREQUEUE_DEADLINE_S=2400 MC_PREQUEUE_REUSE=1 MC_BATCH_SOLO=1 MC_BATCH_SOLO_MAX_MEMBERS=13 MC_PREQUEUE_FRESH_COMMITS=3 MC_PREQUEUE_TRACE=1 MC_PREQUEUE_IMPACT_REUSE=1 MC_PREQUEUE_IMPACT_MAX_S=21600"
+PQ_KNOB_DEFAULTS="MC_PREQUEUE_GATE=1 MC_PREQUEUE_FRESH_S=1800 MC_PREQUEUE_DEADLINE_S=2400 MC_PREQUEUE_REUSE=1 MC_BATCH_SOLO=1 MC_BATCH_SOLO_MAX_MEMBERS=13 MC_PREQUEUE_FRESH_COMMITS=3 MC_PREQUEUE_TRACE=1 MC_PREQUEUE_IMPACT_REUSE=1 MC_PREQUEUE_IMPACT_MAX_S=21600 MC_PREQUEUE_CALL_BUDGET_S=150"
 
 # pq_knob <NAME> — a merge-conductor lane knob for this project, a non-negative
 #   integer, else its default from PQ_KNOB_DEFAULTS (the _bej_knob pattern).
@@ -65,27 +75,68 @@ pq_cache_put() {
     && mv -f "$t" "$f" 2>/dev/null || { rm -f "$t" 2>/dev/null; return 1; }
 }
 
+# _pq_budget_s — the gate's effective call budget in seconds (THE CALL BUDGET):
+#   the knob, capped by the step timeout and the worker deadline. 0 = off; a
+#   value under 1 with the knob on is printed as is (the caller holds at once).
+_pq_budget_s() {
+  local b st now
+  b=$(pq_knob MC_PREQUEUE_CALL_BUDGET_S)
+  [ "$b" = 0 ] && { echo 0; return 0; }
+  st=${MC_STEP_TIMEOUT_S:-240}; [[ "$st" =~ ^[0-9]+$ ]] || st=240
+  [ "$st" -gt 0 ] && [ $((st * 3 / 4)) -lt "$b" ] && b=$((st * 3 / 4))
+  if [[ "${MC_WORKER_DEADLINE_AT:-}" =~ ^[0-9]+$ ]]; then
+    printf -v now '%(%s)T' -1
+    [ $((MC_WORKER_DEADLINE_AT - now - 15)) -lt "$b" ] && b=$((MC_WORKER_DEADLINE_AT - now - 15))
+  fi
+  [ "$b" -ge 1 ] || b=-1
+  echo "$b"
+}
+
+# _pq_end <verdict> — every answer after the budget started goes out here: the
+# timer stops, PQ_VERDICT is set and the word is printed.
+_pq_end() { _pq_budget_stop; PQ_VERDICT="$1"; echo "$1"; }
+
+# _pq_over_hold <head> <budget> — the budget passed: one PREQUEUE_CALL_TIMEOUT
+#   line naming the call that ran when it passed, and the hold.
+_pq_over_hold() {
+  local c=""
+  { read -r c < "$_pq_cf.over"; } 2>/dev/null
+  c="${c:-between-calls}"
+  PQ_WHY="prequeue call $c ran past ${2}s; parked this tick, asked next tick"
+  mc_log "$_pq_key PREQUEUE_CALL_TIMEOUT call=$c budget=${2}s head=${1:0:8}" 2>/dev/null
+  _pq_end hold
+}
+
 # pq_gate <slug> <num> <url> <head> <pbase> — see THE CONTRACT above.
 pq_gate() {
-  local slug="${1:-}" num="${2:-}" url="${3:-}" head="${4:-}" pbase="${5:-}" raw="" rc=0 path line st rest
+  local slug="${1:-}" num="${2:-}" url="${3:-}" head="${4:-}" pbase="${5:-}" raw="" rc=0 path line st rest b
   PQ_VERDICT=proceed; PQ_MAIN=""; PQ_WHY=""; PQ_SUITES=""; PQ_PATH=""
-  _pq_wf=""
-  [ "$(pq_knob MC_PREQUEUE_GATE)" = 0 ] && { declare -F pq_status_gate >/dev/null && pq_status_gate "$slug" "$head" "$url" off; echo proceed; return 0; }
+  _pq_wf=""; _pq_key="$slug#$num"; _pq_cs=(); _pq_cl=()
+  [ "$(pq_knob MC_PREQUEUE_GATE)" = 0 ] && { declare -F pq_status_gate >/dev/null && pq_call -w status pq_status_gate "$slug" "$head" "$url" off; echo proceed; return 0; }
+  b=$(_pq_budget_s)
+  if [ "$b" = -1 ]; then
+    PQ_WHY="no prequeue time left in this worker (worker deadline or step timeout too near); asked next tick"
+    mc_log "$_pq_key PREQUEUE_CALL_TIMEOUT call=none budget=0s head=${head:0:8}" 2>/dev/null
+    PQ_VERDICT=hold; echo hold; return 0
+  fi
+  [ "$b" != 0 ] && _pq_budget_start "$b"
   # An unreadable tip holds, a quota refusal (rc 75) included: never a guess at main.
-  [ -n "$pbase" ] && { mc_rest_var raw gh_rest GET "repos/$slug/commits/$pbase" || rc=$?; }
+  [ -n "$pbase" ] && { pq_call main-tip mc_rest_var raw gh_rest GET "repos/$slug/commits/$pbase" || rc=$?; }
+  pq_over && { _pq_over_hold "$head" "$b"; return 0; }
   [ "$rc" = 0 ] && PQ_MAIN=$(jq -r '.sha // empty' <<<"$raw" 2>/dev/null)
   if [ "$rc" != 0 ] || [[ ! "$PQ_MAIN" =~ ^[0-9a-f]{40}$ ]]; then
-    PQ_MAIN=""; PQ_WHY="main tip unreadable, asked next tick"; PQ_VERDICT=hold; echo hold; return 0
+    PQ_MAIN=""; PQ_WHY="main tip unreadable, asked next tick"; _pq_end hold; return 0
   fi
   # BH-6842: a stale schema stamp is restamped before the queue (mc-prequeue.d/
   # restamp.sh). A push or a refusal holds this tick and publishes nothing.
   local rs="" rw rn
-  declare -F pq_restamp >/dev/null && rs=$(pq_restamp "$slug" "$num" "$head" "$PQ_MAIN" 2>/dev/null | tail -n 1)
+  declare -F pq_restamp >/dev/null && rs=$(pq_call -w restamp pq_restamp "$slug" "$num" "$head" "$PQ_MAIN" 2>/dev/null | tail -n 1)
   case "$rs" in
     "pushed "*) read -r _ rw rn <<<"$rs"
-      PQ_WHY="restamped ${rn:-?} schema fragment(s) to ${rw:0:12}; the new head is asked next tick"; PQ_VERDICT=hold; echo hold; return 0 ;;
-    "held "*) PQ_WHY="schema restamp held: ${rs#held }"; PQ_VERDICT=hold; echo hold; return 0 ;;
+      PQ_WHY="restamped ${rn:-?} schema fragment(s) to ${rw:0:12}; the new head is asked next tick"; _pq_end hold; return 0 ;;
+    "held "*) PQ_WHY="schema restamp held: ${rs#held }"; _pq_end hold; return 0 ;;
   esac
+  pq_over && { _pq_over_hold "$head" "$b"; return 0; }
   path=$(pq_key "$slug" "$num" "$head" "$PQ_MAIN")
   export PQ_PATH="$path"
   line=$(pq_cache_get "$path")
@@ -101,9 +152,11 @@ pq_gate() {
         # must still name a suite.
         local t; line=""
         if t=$(mktemp "${TMPDIR:-/tmp}/mc-pq.XXXXXX" 2>/dev/null); then
-          pq_resolve "$slug" "$num" "$url" "$head" "$PQ_MAIN" "$path" > "$t" 2>/dev/null
+          pq_call resolve pq_resolve "$slug" "$num" "$url" "$head" "$PQ_MAIN" "$path" > "$t" 2>/dev/null
           line=$(tail -n1 "$t" 2>/dev/null); rm -f "$t"
         fi
+        # A word the hook reached after the budget passed does not count.
+        pq_over && { _pq_over_hold "$head" "$b"; return 0; }
         case "$line" in
           hold) PQ_VERDICT=hold ;;
           red) [ -n "$PQ_SUITES" ] && PQ_VERDICT=red ;;
@@ -112,9 +165,24 @@ pq_gate() {
         esac
       fi ;;
   esac
-  declare -F pq_status_gate >/dev/null && pq_status_gate "$slug" "$head" "$url"
-  echo "$PQ_VERDICT"
+  # The verdict was reached inside the budget: a slow status write does not
+  # undo it. A status the budget refused to start is a hold, never a verdict
+  # with no status behind it.
+  if declare -F pq_status_gate >/dev/null; then
+    pq_call -w status pq_status_gate "$slug" "$head" "$url"
+    [ "$?" = 124 ] && pq_over && { _pq_over_hold "$head" "$b"; return 0; }
+  fi
+  _pq_end "$PQ_VERDICT"
 }
+
+# The call-budget defaults when mc-prequeue.d/call-bound.sh is not installed
+# (a scratch tree that copies only some hooks): each call runs untimed in this
+# shell, the budget never passes, and the gate acts as it did before BH-7029.
+# call-bound.sh is sourced after these lines and replaces all four.
+pq_call() { [ "${1:-}" = -w ] && shift; shift; "$@"; }
+pq_over() { return 1; }
+_pq_budget_start() { return 0; }
+_pq_budget_stop() { return 0; }
 
 for _pq_f in "$(dirname "${BASH_SOURCE[0]}")"/mc-prequeue.d/*.sh; do [ -r "$_pq_f" ] && . "$_pq_f"; done
 unset _pq_f

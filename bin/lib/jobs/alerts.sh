@@ -108,8 +108,9 @@ alert_flush_claim() {
 }
 
 # alerts_list [--state s] [--family f] [--box b] [--older-than s] [--since s] [--limit n]
+#             [--component c | --unstamped]   (BH-6971: rows of one component, or rows with none)
 alerts_list() {
-  local state="" family="" box="" older_than="" since="" limit="" q="" resp
+  local state="" family="" box="" older_than="" since="" limit="" component="" unstamped="" q="" resp
   while [ $# -gt 0 ]; do
     case "$1" in
       --state)      state="${2:-}"; shift 2 ;;
@@ -118,6 +119,8 @@ alerts_list() {
       --older-than) older_than="${2:-}"; shift 2 ;;
       --since)      since="${2:-}"; shift 2 ;;
       --limit)      limit="${2:-}"; shift 2 ;;
+      --component)  component="${2:-}"; shift 2 ;;
+      --unstamped)  unstamped=1; shift ;;
       *) return 1 ;;
     esac
   done
@@ -127,7 +130,33 @@ alerts_list() {
   [ -n "$older_than" ] && q="${q:+$q&}older_than=$older_than"
   [ -n "$since" ]      && q="${q:+$q&}since=$since"
   [ -n "$limit" ]      && q="${q:+$q&}limit=$limit"
+  [ -n "$component" ]  && q="${q:+$q&}component=$component"
+  [ -n "$unstamped" ]  && q="${q:+$q&}unstamped=1"
   _alerts_list_resp GET "/api/alerts${q:+?$q}"
+}
+
+# alert_components_stamp — BH-6971: stdin `<id>\t<component>` lines (the
+# output of bin/component-of.sh --batch), POST /api/alerts/component in chunks
+# of at most 200 (the route refuses more). Prints the sum of the worker's
+# `stamped` counts: rows that CHANGED, never the number sent. No input line is
+# rc 0 and prints 0 with no request. A failed chunk stops the loop: the rc
+# passes through verbatim (a 200 that is not {stamped:<n>} is rc 1) and the
+# count printed is what the chunks BEFORE it stamped, so a caller never logs
+# rows as unstamped that a first chunk already changed.
+alert_components_stamp() {
+  local all chunk body resp rc n total=0 i=0 len
+  all=$(jq -Rsc 'split("\n") | map(select(. != "") | split("\t") | {id: .[0], component: .[1]})' 2>/dev/null) || return 1
+  len=$(jq -r 'length' <<<"$all" 2>/dev/null) || return 1
+  while [ "$i" -lt "$len" ]; do
+    chunk=$(jq -c --argjson i "$i" '.[$i:$i+200]' <<<"$all" 2>/dev/null) || return 1
+    body=$(jq -nc --argjson s "$chunk" '{stamps:$s}' 2>/dev/null) || return 1
+    resp=$(_jobs_req POST /api/alerts/component "$body"); rc=$?
+    [ "$rc" -eq 0 ] || { printf '%s\n' "$total"; return "$rc"; }
+    n=$(printf '%s' "$resp" | jq -er '.stamped | select(type == "number")' 2>/dev/null) \
+      || { printf '%s\n' "$total"; return 1; }
+    total=$((total + n)); i=$((i + 200))
+  done
+  printf '%s\n' "$total"
 }
 
 # alert_families <lane> <claimed_since_s> [state] — TSV: family last_claimed_at n.

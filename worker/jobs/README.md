@@ -1001,8 +1001,9 @@ Table `alerts`:
 - `state TEXT NOT NULL DEFAULT 'new'` — `new | quarantined | triaged | parked | resolved`.
 - `claimed_by TEXT` — `<lane>@<box>`, `NULL` = unclaimed.
 - `claimed_at TEXT`, `notified_at TEXT` (last send anywhere, `NULL` = never).
+- `component TEXT` (BH-6971) — the component that owns the alert, from `catalog/components.tsv` through `bin/component-of.sh`, or `unowned`. `NULL` = not stamped yet. An ADDED column (`ADDED_COLUMNS.alerts` in `src/lib/core.js`), never backfilled by the worker; `bin/alerts-groom.sh` stamps it.
 
-Indexes: `idx_alerts_state (state, claimed_at, first_seen)`, `idx_alerts_family (family, last_seen)`.
+Indexes: `idx_alerts_state (state, claimed_at, first_seen)`, `idx_alerts_family (family, last_seen)`, and `idx_alerts_component (component, last_seen)` (BH-6971, `ADDED_INDEXES.alerts`, created right after the column; it serves `component=` and `unstamped=1` below).
 
 Allowed state edges (PATCH `/api/alerts/state` rejects everything else with `409`):
 - `new -> quarantined`
@@ -1026,7 +1027,8 @@ Settings rows (read by the worker with the code fallback next to the read):
 | `POST /api/alerts/resolve` `{ids:[...]}` | 200 `{resolved:int}` — rows that MOVED; an unknown or already-resolved id counts 0 and is not an error. No actor is recorded (the table has no column for one). |
 | `POST /api/alerts/claim` `{lane, box?, state, min_age_s?, limit?, ids?}` | 200 `{alerts:[...], truncated:bool, as_of}`. `claimed_by` is `<lane>@<box>` when `box` is sent (`/^[A-Za-z0-9._-]{1,64}$/`, else 400) and the bare `lane` when it is not — send the box, or `GET /api/alerts/families?lane=` can never match the claim. `limit` defaults to 50 and clamps to 200; oldest first (`first_seen ASC`); `ids` at most 99. |
 | `POST /api/alerts/flush` `{box?}` | 200 `{alerts:[...], truncated:bool, as_of}` — at most 200, oldest first. |
-| `GET /api/alerts?state=&family=&box=&older_than=&since=&limit=` | 200 `{alerts:[...], truncated:bool, as_of}`. `limit` defaults to 200 and clamps to 500; most recently seen first (`last_seen DESC, id ASC`). |
+| `GET /api/alerts?state=&family=&box=&older_than=&since=&limit=&component=&unstamped=` | 200 `{alerts:[...], truncated:bool, as_of}`. `limit` defaults to 200 and clamps to 500; most recently seen first (`last_seen DESC, id ASC`). BH-6971: `component=<name>` (`/^[a-z][a-z0-9-]{0,63}$/`, else 400) returns only that component's rows; `unstamped=1` returns only rows with no component (any other value is 400); both together is 400. `group=family` and `/api/alerts/families` take the same filter. |
+| `POST /api/alerts/component` `{stamps:[{id, component}]}` | BH-6971. 200 `{stamped:int, as_of}`: `stamped` is the rows that CHANGED. 1..200 stamps, else 400 (refused, never sliced); an id twice is 400. Writes `component` only `WHERE id=? AND component IS NULL`, so a set component is never overwritten and no other column is touched. |
 | `GET /api/alerts/families?lane=&claimed_since_s=` | 200 `{families:[{family,last_claimed_at,n}], as_of}`. |
 
 ### Client (`bin/jobs-client.sh`)
@@ -1036,7 +1038,8 @@ Settings rows (read by the worker with the code fallback next to the read):
 - `alert-resolve <id>...` — one request, prints the worker's `resolved` count. `0` is a real answer, never an error.
 - `alert-claim <lane> <state> [min_age_s] [limit] [id...]` — sends `box: $JOBS_BOX`, so a bare `<lane>` is claimed as `<lane>@<box>`; a `<lane>` that already carries an `@` is sent as-is (the worker composes only what it is given, so sending both would double the box).
 - `alert-flush [box]`
-- `alerts [--state s] [--family f] [--box b] [--older-than s] [--since s] [--limit n]`
+- `alerts [--state s] [--family f] [--box b] [--older-than s] [--since s] [--limit n] [--component c | --unstamped]`
+- `alert_components_stamp` (sourced function, BH-6971) — stdin `<id>\t<component>` lines (`bin/component-of.sh --batch` output); POSTs `/api/alerts/component` in chunks of 200 and prints the sum of the worker's `stamped` counts. A failed chunk returns its rc and prints what the chunks before it stamped.
 - `alert-families <lane> <claimed_since_s>`
 
 List outputs one TSV row per alert: `id family box project state count first_seen last_seen claimed_by claimed_at notified_at severity line`, with `line` LAST. A final line `#truncated` is printed when the worker says `truncated:true`. `box` defaults to `$JOBS_BOX`. `actor` has NO default: `alert-state` sends it only when the caller passes one, and `alert-resolve` never sends one — a sibling that wants attribution passes `<lane>@$JOBS_BOX` itself.

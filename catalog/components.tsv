@@ -1,0 +1,37 @@
+# catalog/components.tsv — BH-6971 (BH-6546.1): every alert belongs to a component.
+#
+# One data row: component<TAB>regex<TAB>lane ids<TAB>log paths<TAB>owner doc. Exactly
+# five tab-separated fields; write `-` for an empty one. A component may have
+# more than one row (one regex per row). bin/component-of.sh matches the regex
+# (POSIX ERE, bash [[ =~ ]]) against the alert line after a leading timestamp is
+# removed, rows in FILE ORDER, and the first match wins. No match is `unowned`.
+# A bad row stops the resolver (rc 2) with the line; `bin/component-of.sh --check`
+# also checks that each lane id is catalog/lanes.d/<id>.json and the doc exists.
+#
+# A lane that writes through bin/lane-alert.sh shows as `[orchestrator/<lane>]`;
+# its fallback path and most scripts write a bare `[<lane>]`. Both are matched.
+#
+# merge-conductor: bin/lib/mc/log.sh:289 `[merge-conductor] $text` (lane-alert.sh merge-conductor on the main path).
+merge-conductor	^\[(orchestrator/)?merge-conductor\]	merge-conductor	logs/merge-conductor.log	docs/MERGE-CONDUCTOR.md
+# blocked-resolver: bin/blocked-resolver.sh:2534 `[blocked-resolver] STARVED …`, sent through lane-alert.sh blocked-resolver.
+blocked-resolver	^\[(orchestrator/)?blocked-resolver\]	blocked-resolver	logs/blocked-resolver.log	-
+# pool-builders: bin/fly-pool.sh:3008 `[fly-pool] …`, bin/fly-pool-tick.sh:93 `[pool/<project>] …` and :220 `[fly-onboard] …`, bin/fly-dispatch.sh:97 `[fly-dispatch/<x>] …`.
+pool-builders	^\[(orchestrator/)?(fly-pool|fly-pool-tick|fly-dispatch|fly-onboard|pool)(/[^]]*)?\]	fly-pool,fly-pool-tick,fly-dispatch	logs/fly-pool.log,logs/fly-dispatch.log	docs/FLY-BUILDER-TRIAL.md
+# triage: bin/alert-triage.sh:1394 `[alert-triage] DEFERRAL BACKLOG …`; bin/sentry-triage.sh:72 lane-alert.sh sentry-triage.
+triage	^\[(orchestrator/)?(alert-triage|run-triage|sentry-triage)\]	alert-triage,run-triage,sentry-triage	logs/alert-triage.log,logs/triage.log,logs/sentry-triage.log	docs/TRIAGE-STATE.md
+# triage, second row: bin/run-triage.sh `[<project>] TRIAGE STAGE MISSING: …`.
+triage	^(\[[^]]+\] )?TRIAGE STAGE MISSING	run-triage	logs/triage.log	docs/TRIAGE-STATE.md
+# deploy-train: bin/deploy-train.sh:144 `[<project>] DEPLOY HOLD: …` and :401 `[<project>] DEPLOY TRAIN: …`; the beat line at :403 has no project tag.
+deploy-train	^(\[(orchestrator/)?deploy-train\]|(\[[^]]+\] )?DEPLOY (TRAIN|HOLD):)	deploy-train	logs/deploy-train.log	-
+# main-red-bisect: bin/main-red-bisect.sh:123 lane-alert.sh main-red-bisect.
+main-red-bisect	^\[(orchestrator/)?main-red-bisect\]	main-red-bisect	logs/main-red-bisect.log	-
+# jobs-worker: bin/jobs-watchdog.sh `[jobs-watchdog] LEDGER RECONCILED …`; bin/lib/jobs/req.sh:94 `[jobs-client] harness-jobs unreachable …`.
+jobs-worker	^\[(orchestrator/)?(jobs-watchdog|jobs-client)\]	jobs-watchdog	logs/jobs-watchdog.log	worker/jobs/README.md
+# console: bin/console-preview-deploy.sh:234 lane-alert.sh console-preview-deploy `[console-preview] …`.
+console	^\[(orchestrator/)?(console-preview-deploy|console-preview)\]	console-preview-deploy	logs/console-preview-deploy.log	console-ui/README.md
+# cost: bin/cost-rollup.sh:2343 `[cost-rollup] NEW UNPRICED PAIR(S): …`; bin/cost-reconcile.sh:403 `[cost-reconcile] …`; bin/cost-local-brake.sh:159 `[cost-local-brake] …`; `[cost-parity]` and `[cost-rows-read]` tags in cost-reconcile.sh and pipeline-health.sh.
+cost	^\[(orchestrator/)?(cost-rollup|cost-reconcile|cost-local-brake|cost-parity|cost-rows-read)\]	cost-rollup,cost-reconcile,cost-local-brake	logs/cost-rollup.log,logs/cost-reconcile.log,logs/cost-local-brake.log	docs/COST.md
+# hub-health: bin/hub-lease.sh:338 `[hub-lease] …`; bin/pipeline-health.sh:299 `[pipeline-health] …`.
+hub-health	^\[(orchestrator/)?(hub-probe|hub-lease|healthcheck|pipeline-health)\]	hub-probe,healthcheck,pipeline-health	logs/hub-probe.log,logs/healthcheck.log,logs/pipeline-health.log	-
+# hub-health, second row: bin/hub-probe.sh:240 `hub-probe: store-failed=…`; bin/healthcheck.sh:160 `[<project>] HEALTHCHECK: …`.
+hub-health	^(hub-probe: |(\[[^]]+\] )?HEALTHCHECK: )	hub-probe,healthcheck	logs/hub-probe.log,logs/healthcheck.log	-

@@ -46,7 +46,7 @@ APP_HOSTS=$(awk '!/^#/ && NF>=3 && $3 ~ /^https/ {sub("https://","",$3); print $
 URLS=$(grep -oE 'https://[A-Za-z0-9._~:/?#@!$&()*+,;=%-]+' "$FILE" | sed -E 's/[).,;>"'"'"']+$//' | sort -u)
 TEXT=$(sed -E 's/<[^>]+>/ /g' "$FILE")
 CLAIMS_LIVE=0
-echo "$TEXT" | grep -qiE '\b(live|shipped|deployed|fixed)\b' && CLAIMS_LIVE=1
+grep -qiE '\b(live|shipped|deployed|fixed)\b' <<<"$TEXT" && CLAIMS_LIVE=1
 
 FAILS=0
 if [ -z "$URLS" ]; then
@@ -69,7 +69,7 @@ for U in $URLS; do
     2*|3*) echo "PASS $CODE $U" ;;
     401|403) echo "AUTH-GATED $CODE $U (probe unauthenticated; link presumed live behind sign-in)" ;;
     404)
-      if echo "$APP_HOSTS" | grep -qxF "$HOST"; then
+      if grep -qxF "$HOST" <<<"$APP_HOSTS"; then
         echo "AUTH-GATED 404 $U (fleet app domain — these apps fail CLOSED: token-gated routes answer 404 to anonymous probes, so this does not prove absence)"
       else
         echo "FAIL 404 $U"; FAILS=$((FAILS+1))

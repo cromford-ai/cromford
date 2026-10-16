@@ -114,7 +114,7 @@ git log --oneline ticket/x | wc -l
 grep -q 'the commit' <<<"$(git log --oneline ticket/x)" && ok || bad "gone"
 git merge-base --is-ancestor "$SHA" ticket/x && ok || bad "gone"
 cat "$F" | grep -q 'the commit' && ok || bad "gone"
-echo git-ish | grep -q 'the commit' && ok || bad "gone"
+echo git-ish | grep -q 'the commit' && ok || bad "gone"   # determinism: ok race-sigpipe-echo seven bytes, written before grep reads
 # git log --oneline ticket/x | grep -q 'the commit'   is a comment, not a race
 git log --oneline ticket/x |
   grep -c 'the commit'

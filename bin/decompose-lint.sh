@@ -71,8 +71,8 @@ _overlap() {
 _linked() {
   local suf
   suf=$(printf '%s' "$2" | sed -nE 's/^.*[^0-9]([0-9]+)$/\1/p')
-  printf '%s\n' "$1" | grep -qxF -- "$2" && return 0
-  [ -n "$suf" ] && printf '%s\n' "$1" | grep -qxF -- "$suf" && return 0
+  grep -qxF -- "$2" <<<"$1" && return 0
+  [ -n "$suf" ] && grep -qxF -- "$suf" <<<"$1" && return 0
   return 1
 }
 

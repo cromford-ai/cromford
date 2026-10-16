@@ -405,22 +405,31 @@ fanin_end() {
 # alerts end ` | calls: <call_trace_summary>`, and both Sentry extras carry it
 # as `calls` (not the title). It prints only measured counts and seconds; `none` when the
 # worker traced no call or left no file. The file goes with the mark.
+#
+# THE CALL IN FLIGHT (BH-7029). The mark's 8th and 9th fields are the prequeue
+# call that ran at the kill (pq_call, bin/lib/mc-prequeue.d/call-bound.sh) and
+# its seconds. A mark with no call in flight keeps 7 fields and reads as call
+# `none`. With a call, the STEP_TIMEOUT line and alert carry
+# ` | call: <path> (<n>s)` before ` | calls:`, and the tags add `call`; with
+# none, the line is as before. The Sentry extra always has call and call_s.
+# <mark>.call goes with the mark.
 mc_fanin_outcome() {
-  local num head draft mstate st key mark d stage step step_s earlier mkind sto f ts nh kind text ds mt sa calls hmax hn
+  local num head draft mstate st key mark d stage step step_s earlier mkind sto f ts nh kind text ds mt sa calls hmax hn call call_s cseg
   IFS=$'\t' read -r num _ head _ draft mstate _ <<<"${2:-}"
   if [ "$draft" = true ]; then echo skipped:draft; return 0; fi
   if [ "$mstate" = UNVERIFIABLE ]; then echo skipped:unverifiable; return 0; fi
   key="${SLUG:-}#$num"
   mark=$(_mc_deadline_mark "$key")
   if [ -n "$mark" ] && [ -f "$mark" ]; then
-    IFS=$'\t' read -r d stage step step_s earlier mkind sto < "$mark" 2>/dev/null
+    IFS=$'\t' read -r d stage step step_s earlier mkind sto call call_s < "$mark" 2>/dev/null
+    call=${call:-none}; [ "$call" = none ] && call_s=""
     # The killer writes the mark just before the TERM, so mtime - d is the start.
     ds=""; sa=""; [[ "${d:-}" =~ ^[0-9]+$ ]] && ds=$d
     mt=$(stat -c %Y "$mark" 2>/dev/null)
     [ -n "$ds" ] && [[ "$mt" =~ ^[0-9]+$ ]] && sa=$(date -u -d "@$((mt - ds))" '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null)
     calls=none
     command -v call_trace_summary >/dev/null 2>&1 && calls=$(call_trace_summary "$mark.calls")
-    rm -f "$mark" "$mark.calls" 2>/dev/null
+    rm -f "$mark" "$mark.calls" "$mark.call" 2>/dev/null
     [ -n "${FANIN_STAGE_FILE:-}" ] && rm -f "$FANIN_STAGE_FILE.auth" 2>/dev/null
     step=${step:-unknown}
     if [ "$mkind" = step-timeout ]; then
@@ -438,15 +447,17 @@ mc_fanin_outcome() {
       if ! mc_attempt_has "steptimeout $key $head $step" 2>/dev/null; then
         mc_attempt_put "steptimeout $key $head $step" 2>/dev/null
         st=$(mc_row_field "$key" 2 2>/dev/null)
-        text="step=$step after ${step_s:-?}s on ${head:0:8} (step timeout ${sto:-?}s, worker deadline ${d:-?}s): worker stopped; row left ${st:-no row}, the next tick works it again | calls: ${calls:-none}"
+        cseg=""; [ "$call" = none ] || cseg=" | call: $call (${call_s:-?}s)"
+        text="step=$step after ${step_s:-?}s on ${head:0:8} (step timeout ${sto:-?}s, worker deadline ${d:-?}s): worker stopped; row left ${st:-no row}, the next tick works it again$cseg | calls: ${calls:-none}"
         mc_log "$key STEP_TIMEOUT $text" 2>/dev/null
         _mc_fanin_alert "STEP_TIMEOUT $key: $text"
         command -v sentry_report >/dev/null 2>&1 && sentry_report warning merge-conductor conductor-step-timeout \
           "STEP_TIMEOUT: step $step passed ${sto:-?}s on ${head:0:8}" \
           "$(jq -nc --arg p "${P:-}" --arg k "$key" --arg h "$head" --arg st "$step" --arg t "${sto:-}" --arg s "${stage:-unknown}" \
-               --arg c "${calls:-none}" '{project:$p,pr:$k,head:$h,step:$st,step_timeout_s:$t,stage:$s,calls:$c,tags:{step:$st}}' 2>/dev/null)" \
-          "$(jq -nc --arg s "$step" --arg n "$num" --arg k "$key" \
-               '{step:$s,pr:$n,worker_key:$k} | with_entries(select(.value != ""))' 2>/dev/null)" >/dev/null 2>&1
+               --arg c "${calls:-none}" --arg cl "$call" --arg cs "${call_s:-}" \
+               '{project:$p,pr:$k,head:$h,step:$st,step_timeout_s:$t,stage:$s,calls:$c,call:$cl,call_s:$cs,tags:{step:$st}}' 2>/dev/null)" \
+          "$(jq -nc --arg s "$step" --arg n "$num" --arg k "$key" --arg c "${call#none}" \
+               '{step:$s,pr:$n,worker_key:$k,call:$c} | with_entries(select(.value != ""))' 2>/dev/null)" >/dev/null 2>&1
       fi
       echo killed:step-timeout; return 0
     fi
@@ -765,7 +776,13 @@ _mc_kill_tree() {
 # timeout that is not under the deadline never fires: the deadline names the
 # step. A step past MC_STEP_SLOW_S (default 60, 0 = off) logs one
 # `<key> STEP_SLOW step=<name> running=<n>s` while it runs. The mark is
-# `<d>\t<stage>\t<step>\t<step_s>\t<earlier>\t<kind>\t<step timeout>`.
+# `<d>\t<stage>\t<step>\t<step_s>\t<earlier>\t<kind>\t<step timeout>[\t<call>\t<call_s>]`.
+#
+# BH-7029. The worker also gets MC_CALL_FILE=<mark>.call (a local like the
+# others): the prequeue call in flight (pq_call). The watchdog reads it just
+# before it writes the mark: field 8 is the call's path and field 9 its
+# seconds, written only when a call runs (any other mark keeps 7 fields). The
+# file goes with the mark, or with a normal return.
 #
 # BH-6462. The worker also gets its call trace (HARNESS_CALL_TRACE_FILE=
 # <mark>.calls, a local like the others). A normal return removes it; a kill
@@ -774,7 +791,8 @@ _mc_kill_tree() {
 mc_worker_bounded() {
   local d cap mark w k rc stage dir t0 step step_s earlier key res
   local st slow poll floor lw mw pw start now left ts sn run eff kind seen s
-  local MC_STEP_FILE="" GH_REST_AUTH_FAIL_FILE="" MC_WORKER_DEADLINE_AT="" HARNESS_CALL_TRACE_FILE=""
+  local MC_STEP_FILE="" GH_REST_AUTH_FAIL_FILE="" MC_WORKER_DEADLINE_AT="" HARNESS_CALL_TRACE_FILE="" MC_CALL_FILE=""
+  local ct cp
   d=${MC_WORKER_DEADLINE_S:-180}; [[ "$d" =~ ^[0-9]+$ ]] || d=180
   cap=${MC_WORKER_DEADLINE_CAP_S:-}
   if [[ "$cap" =~ ^[0-9]+$ ]] && [ "$cap" -gt 0 ] && { [ "$d" = 0 ] || [ "$d" -gt "$cap" ]; }; then d=$cap; fi
@@ -789,14 +807,14 @@ mc_worker_bounded() {
   dir="${mark%/*}"; mkdir -p "$dir" 2>/dev/null
   # A tick killed whole leaves its workers' trails: nothing came back to remove
   # them. A day is far past any tick, so a live worker's files are never hit.
-  find "$dir" -maxdepth 1 -type f \( -name '*.steps' -o -name '*.auth' -o -name '*.calls' \) -mmin +1440 -delete 2>/dev/null
-  MC_STEP_FILE="$mark.steps"; GH_REST_AUTH_FAIL_FILE="$mark.auth"; HARNESS_CALL_TRACE_FILE="$mark.calls"
-  rm -f "$MC_STEP_FILE" "$GH_REST_AUTH_FAIL_FILE" "$HARNESS_CALL_TRACE_FILE" 2>/dev/null
+  find "$dir" -maxdepth 1 -type f \( -name '*.steps' -o -name '*.auth' -o -name '*.calls' -o -name '*.call' -o -name '*.call.over' \) -mmin +1440 -delete 2>/dev/null
+  MC_STEP_FILE="$mark.steps"; GH_REST_AUTH_FAIL_FILE="$mark.auth"; HARNESS_CALL_TRACE_FILE="$mark.calls"; MC_CALL_FILE="$mark.call"
+  rm -f "$MC_STEP_FILE" "$GH_REST_AUTH_FAIL_FILE" "$HARNESS_CALL_TRACE_FILE" "$MC_CALL_FILE" 2>/dev/null
   printf '%(%s)T\tstart\n' -1 > "$MC_STEP_FILE" 2>/dev/null
   if [ "$d" = 0 ]; then
     ( pr_worker "$@" ); rc=$?
     mc_step_close "$key" "rc:$rc"
-    rm -f "$MC_STEP_FILE" "$GH_REST_AUTH_FAIL_FILE" "$HARNESS_CALL_TRACE_FILE" 2>/dev/null
+    rm -f "$MC_STEP_FILE" "$GH_REST_AUTH_FAIL_FILE" "$HARNESS_CALL_TRACE_FILE" "$MC_CALL_FILE" "$MC_CALL_FILE.over" 2>/dev/null
     return "$rc"
   fi
   st=${MC_STEP_TIMEOUT_S:-240}; [[ "$st" =~ ^[0-9]+$ ]] || st=240
@@ -846,7 +864,13 @@ mc_worker_bounded() {
     # is written empty: the reader splits on tabs, and IFS joins empty fields.
     IFS=$'\t' read -r step step_s earlier <<<"$(_mc_steps_summary "$MC_STEP_FILE" "$(date +%s)" "$d")"
     stage="${stage//$'\t'/ }"
-    printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$d" "${stage:-${step:-start}}" "${step:-start}" "${step_s:-$d}" "${earlier:-none}" "$kind" "$eff" > "$mark" 2>/dev/null
+    # The prequeue call in flight (BH-7029), read before the mark: fields 8
+    # and 9 only when a call runs, so every other mark keeps its 7 fields.
+    ct=""; cp=""; { IFS=$'\t' read -r ct cp _ < "$MC_CALL_FILE"; } 2>/dev/null
+    [[ "$ct" =~ ^[0-9]+$ ]] && [ -n "$cp" ] || cp=""
+    printf -v now '%(%s)T' -1
+    printf '%s\t%s\t%s\t%s\t%s\t%s\t%s%s\n' "$d" "${stage:-${step:-start}}" "${step:-start}" "${step_s:-$d}" "${earlier:-none}" "$kind" "$eff" \
+      "${cp:+$'\t'$cp$'\t'$((now - ct))}" > "$mark" 2>/dev/null
     _mc_kill_tree TERM "$w"; sleep 5; _mc_kill_tree KILL "$w"
   ) & k=$!
   wait "$w"; rc=$?
@@ -854,8 +878,8 @@ mc_worker_bounded() {
   res="rc:$rc"
   [ -f "$mark" ] && { IFS=$'\t' read -r _ _ _ _ _ res _ < "$mark"; res=${res:-deadline}; } 2>/dev/null
   mc_step_close "$key" "$res"
-  rm -f "$MC_STEP_FILE" "$GH_REST_AUTH_FAIL_FILE" 2>/dev/null
-  # A kill wrote the mark: its trace stays for mc_fanin_outcome.
-  [ -f "$mark" ] || rm -f "$HARNESS_CALL_TRACE_FILE" 2>/dev/null
+  rm -f "$MC_STEP_FILE" "$GH_REST_AUTH_FAIL_FILE" "$MC_CALL_FILE.over" 2>/dev/null
+  # A kill wrote the mark: its trace and call file stay for mc_fanin_outcome.
+  [ -f "$mark" ] || rm -f "$HARNESS_CALL_TRACE_FILE" "$MC_CALL_FILE" 2>/dev/null
   return "$rc"
 }

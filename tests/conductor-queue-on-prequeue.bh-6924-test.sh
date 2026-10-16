@@ -217,7 +217,9 @@ reset "$HNEW"; seed "$HNEW" green; tick
 [ "$(ndisp)" = 0 ] && ok || bad "Q1: no dispatch (got $(cat "$T/dispatch.txt"))"
 # The stub's queue never acknowledges (MC_MERGIFY_WAIT_S=0, mc_enqueue rc 3),
 # so the row stays READY; the ask mark is what keeps it to one request.
-grep -q "PREQUEUE" "$MCLOG" 2>/dev/null && bad "Q1: a cache hit asks nothing (log $(pqlog))" || ok
+# BH-7029: the gate's PREQUEUE_CALL timing lines are not asks; any other PREQUEUE line is.
+Q1_ASKS=$(grep "PREQUEUE" "$MCLOG" 2>/dev/null | grep -v " PREQUEUE_CALL call=")
+[ -n "$Q1_ASKS" ] && bad "Q1: a cache hit asks nothing (log $(pqlog))" || ok
 : > "$T/c-enq.txt"; tick
 [ "$(enq)" = 0 ] && ok || bad "Q1 second tick: not enqueued again (argv $(cat "$T/c-enq.txt"))"
 [ "$(ndisp)" = 0 ] && ok || bad "Q1 second tick: no dispatch"

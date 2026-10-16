@@ -61,11 +61,11 @@ CANDS=$(awk -F'\t' -v md="$MIN_DAYS" -v m="$MULT" '
   }' "$BASE")
 while IFS=$'\t' read -r LANE VAL P99 DAYS; do
   [ -n "$LANE" ] || continue
-  if ! printf '%s\n' "$IDS" | grep -qxF "$LANE"; then
-    printf '%s' "$LANE" | grep -qE '^stage-[a-z0-9_-]+$' || continue
+  if ! grep -qxF "$LANE" <<<"$IDS"; then
+    grep -qE '^stage-[a-z0-9_-]+$' <<<"$LANE" || continue
   fi
   KEY="spend.ceiling.$LANE.day_usd"
-  printf '%s' "$KEY" | grep -qE '^[a-z0-9_.-]{1,64}$' || continue
+  grep -qE '^[a-z0-9_.-]{1,64}$' <<<"$KEY" || continue
   if ! RESP=$(_jobs_req GET "/api/settings/$KEY" 2>/dev/null); then
     echo "error $LANE settings-read"; RC=1; continue
   fi

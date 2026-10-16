@@ -307,7 +307,7 @@ lw_run() {
     case "$rc" in 126|127) reason=command-missing ;; *) reason=exit-nonzero ;; esac
     eline=$(grep -m 1 -v '^[[:space:]]*$' "$err" 2>/dev/null | tr -d '\r')
     prof="${prof:-PROF lane-run} rc=$rc reason=$reason err=$eline"
-    prof=$(printf '%s' "$prof" | head -c 512)
+    prof=$(head -c 512 < <(printf '%s' "$prof"))
     [ "$reason" = command-missing ] && lw_alert_missing "$lane" "$project" "$rc" "${eline:-${args[0]} exited $rc}"
   fi
   rm -f "$out" "$err"

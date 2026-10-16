@@ -1382,7 +1382,7 @@ ti_select_from() {
        && ti_workflow_nontest && ti_specific "$map" "$p"; then
       continue
     fi
-    if printf '%s\n' "$p" | grep -qE "$infra_re"; then
+    if grep -qE "$infra_re" <<<"$p"; then
       full="full: infra change ($p)"; break
     fi
     # A BATCH (BH-6059): bin/lib/ and catalog/ are no longer escalated whole, so

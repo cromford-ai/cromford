@@ -829,7 +829,7 @@ lane_runs_here() {
   # cannot be read as a match under `set -o pipefail`.
   lines=$(crontab -l 2>/dev/null) || return 1
   [ -n "$lines" ] || return 1
-  printf '%s\n' "$lines" | grep -qE "/bin/${script}(\.sh)? +${project}( |\$)"
+  grep -qE "/bin/${script}(\.sh)? +${project}( |\$)" <<<"$lines"
 }
 
 # remote_launch <label> <project> <script> [args…] — run a lane for <project>

@@ -726,7 +726,7 @@ if [ "$MODE" = "--thread" ]; then
 fi
 if [ "$MODE" = "--signal" ]; then
   SIG=$(signal_digest "${3:-}" 2>/dev/null) || exit 1
-  printf '%s' "$SIG" | grep -qxE '[0-9a-f]{16}' || exit 1
+  grep -qxE '[0-9a-f]{16}' <<<"$SIG" || exit 1
   printf '%s\n' "$SIG"
   exit 0
 fi

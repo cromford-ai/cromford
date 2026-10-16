@@ -1,0 +1,9 @@
+-- BH-6971 (BH-6546.1): alerts.component (the component that owns the alert,
+-- from catalog/components.tsv, or `unowned`) is an ADDED column. The live
+-- alerts table exists, so its CREATE (in 0002-base-rest.sql) can never widen
+-- it; src/lib/core.js ADDED_COLUMNS.alerts is the ALTER that reaches it, and a
+-- fresh database gets it the same way on the first request. Its index,
+-- idx_alerts_component (component, last_seen), is in ADDED_INDEXES.alerts and
+-- not here: an index on an added column in this file fails "no such column"
+-- before the deploy and wedges every later deploy (#2473). No statement here
+-- on purpose.

@@ -568,7 +568,7 @@ main_base() {
     [ -n "$MB" ]; return
   fi
   if [ -z "$f" ] || [ ! -r "$f" ] || ! mb=$(sed -n 's/^main_base=//p' "$f" | tail -1) \
-     || ! printf '%s\n' "$mb" | grep -qxE -- '-|[0-9a-f]{40}'; then
+     || ! grep -qxE -- '-|[0-9a-f]{40}' <<<"$mb"; then
     echo "ci-plan: this shard has no main merge-base from the plan job (${f:-CI_PLAN_MAIN_BASE_FILE unset}): a stacked PR's shard must not recompute it, because main can move between the plan job and the shards (BH-6801)" >&2
     exit 1
   fi
@@ -726,8 +726,8 @@ if [ "$MODE" = batch-selected ] && [ -r "${CH:-}" ] \
     [ "$SPA$WORKER" != 11 ] || break
   done < "$CH"
   # An added spa (worker) row names paths that job now builds from (BH-6371).
-  printf '%s\n' "$CBE_ADDED" | grep -qx spa && SPA=1
-  printf '%s\n' "$CBE_ADDED" | grep -qx worker && WORKER=1
+  grep -qx spa <<<"$CBE_ADDED" && SPA=1
+  grep -qx worker <<<"$CBE_ADDED" && WORKER=1
 fi
 
 # reuse_eligible — rc 0 when this corpus may ask the ledger (see SUITE REUSE in

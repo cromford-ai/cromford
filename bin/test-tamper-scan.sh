@@ -230,7 +230,7 @@ if [ -n "$CONTRACT_BRANCHES" ]; then
 fi
 in_set() { # in_set <path> <newline-set>
   [ -n "$2" ] || return 1
-  printf '%s' "$2" | grep -qxF -- "$1"
+  grep -qxF -- "$1" < <(printf '%s' "$2")
 }
 
 # The module a test file depends on, as a set of normalised specifiers. This is
@@ -553,7 +553,7 @@ if [ -n "$DEL_NAMES" ]; then
   # The names, so an adjudication can say WHICH cases it is ruling on instead
   # of quoting a number back at the reader.
   echo "DELETED_CASES:"
-  printf '%s' "$DEL_NAMES" | head -40
+  head -40 < <(printf '%s' "$DEL_NAMES")
   DEL_EXTRA=$(( $(printf '%s' "$DEL_NAMES" | grep -c '') - 40 ))
   [ "$DEL_EXTRA" -gt 0 ] && echo "  … and $DEL_EXTRA more"
 fi

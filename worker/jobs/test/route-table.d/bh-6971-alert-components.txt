@@ -1,0 +1,2 @@
+# BH-6971 (BH-6546.1): the component stamp on an alerts row, written by bin/alerts-groom.sh.
+POST /api/alerts/component

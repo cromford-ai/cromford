@@ -133,7 +133,7 @@ elif ! [[ "$TIMEOUT_S" =~ ^[0-9]+$ ]] || [ "$TIMEOUT_S" -lt 1 ]; then
 else
   OUT=$(timeout "$TIMEOUT_S" "$H/bin/state-restore.sh" "$OF" latest \
     --dest "$SCRATCH/tree" --live "$SCRATCH/empty-live" 2>&1); RC=$?
-  WHY=$(printf '%s\n' "$OUT" | grep -m1 -E 'REFUSED|not configured|no backups?' | cut -c1-200)
+  WHY=$(grep -m1 -E 'REFUSED|not configured|no backups?' <<<"$OUT" | cut -c1-200)
   if [ "$RC" = 124 ]; then
     DETAIL="state-restore timed out after ${TIMEOUT_S}s"
   elif [ "$RC" != 0 ]; then
@@ -141,7 +141,7 @@ else
   elif ! STAMP=$(drill_pulled_stamp "$OUT" "$OF"); then
     STAMP=""; DETAIL="no 'pulled $OF/<ts>.tar.zst' line in state-restore output${WHY:+: $WHY}"
   elif ! SHA=$(printf '%s\n' "$OUT" | sed -nE 's/^sha256 ok ([0-9a-f]{64})$/\1/p' | head -1) || [ -z "$SHA" ]; then
-    SHA=""; DETAIL="sha256 not verified: $(printf '%s\n' "$OUT" | grep -m1 '^sha256' | cut -c1-200)"
+    SHA=""; DETAIL="sha256 not verified: $(grep -m1 '^sha256' <<<"$OUT" | cut -c1-200)"
   elif [ -z "$(find "$SCRATCH/tree/$OF/$STAMP/tree" -mindepth 1 -maxdepth 1 -print -quit 2>/dev/null)" ]; then
     DETAIL="extracted tree $OF/$STAMP/tree is missing or empty"
   else

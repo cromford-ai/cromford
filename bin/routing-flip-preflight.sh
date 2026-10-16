@@ -79,7 +79,7 @@ fi
 _jobs_req GET /api/routing > "$RF"; RC=$?
 RESP=$(cat "$RF")
 if [ "$RC" -ne 0 ] || ! printf '%s' "$RESP" | jq -e '.routing | type == "array"' >/dev/null 2>&1; then
-  fail "4 live probe: GET ${JOBS_URL}/api/routing rc=$RC http=${JOBS_HTTP:-none} $(printf '%s' "${JOBS_BODY:-}" | head -c 120)"
+  fail "4 live probe: GET ${JOBS_URL}/api/routing rc=$RC http=${JOBS_HTTP:-none} $(head -c 120 < <(printf '%s' "${JOBS_BODY:-}"))"
 else
   N=$(printf '%s' "$RESP" | jq '.routing | length')
   pass "4 live probe: GET ${JOBS_URL}/api/routing http=${JOBS_HTTP} rows=$N as_of=$(printf '%s' "$RESP" | jq -r '.as_of // "-"')"

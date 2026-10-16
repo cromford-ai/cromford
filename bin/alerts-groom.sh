@@ -92,6 +92,56 @@ ALERTS_DB=0
 declare -F alerts_db_on >/dev/null 2>&1 && alerts_db_on && ALERTS_DB=1
 ROW_IDS=()
 # <<< alerts db resolve
+# >>> component stamp (BH-6971)
+# Every open alerts row gets the component that owns it: catalog/components.tsv
+# through bin/component-of.sh, or `unowned`. The read is `component IS NULL`, so
+# a stamped row is never read again, which is why `unowned` is stamped too.
+# ALERTS_GROOM_COMPONENT_MAX rows a tick (lane knob, 0 = off). It labels and
+# never acts, and it never exits: one log line, then the console half runs.
+groom_component_stamp() {
+  local max="${ALERTS_GROOM_COMPONENT_MAX:-200}" rows rc trunc="" pairs map errf read stamped unowned
+  [ "$ALERTS_DB" = 1 ] || return 0
+  if ! [[ "$max" =~ ^[0-9]+$ ]]; then
+    echo "$(STAMP) component stamp skipped: ALERTS_GROOM_COMPONENT_MAX=$max is not a whole number" >> "$LOG"
+    return 0
+  fi
+  max=$((10#$max))
+  [ "$max" -ge 1 ] || return 0
+  if [ ! -x "$HARNESS/bin/component-of.sh" ]; then
+    echo "$(STAMP) component stamp skipped: bin/component-of.sh is not on this box" >> "$LOG"
+    return 0
+  fi
+  rows=$(alerts_list --state '!resolved' --unstamped --limit "$max"); rc=$?
+  if [ "$rc" -ne 0 ]; then
+    echo "$(STAMP) component stamp: rc=$rc (list), stamped 0" >> "$LOG"
+    return 0
+  fi
+  grep -qx '#truncated' <<<"$rows" && trunc=" truncated"
+  # id is field 1 and the line is field 13 on (an embedded tab becomes a space).
+  pairs=$(grep -vx '#truncated' <<<"$rows" | awk -F'\t' 'NF >= 13 { l = $13; for (i = 14; i <= NF; i++) l = l " " $i; print $1 "\t" l }')
+  read=$(grep -c . <<<"$pairs")
+  if [ "$read" -eq 0 ]; then
+    echo "$(STAMP) component stamp: read 0 stamped 0 unowned 0$trunc" >> "$LOG"
+    return 0
+  fi
+  errf=$(mktemp) || return 0
+  map=$("$HARNESS/bin/component-of.sh" --batch <<<"$pairs" 2>"$errf"); rc=$?
+  if [ "$rc" -ne 0 ]; then
+    echo "$(STAMP) component stamp: catalog invalid: $(head -1 "$errf")" >> "$LOG"
+    rm -f "$errf"
+    return 0
+  fi
+  rm -f "$errf"
+  unowned=$(awk -F'\t' '$2 == "unowned"' <<<"$map" | grep -c .)
+  stamped=$(alert_components_stamp <<<"$map"); rc=$?
+  if [ "$rc" -ne 0 ]; then
+    echo "$(STAMP) component stamp: rc=$rc (stamp), stamped ${stamped:-0}" >> "$LOG"
+    return 0
+  fi
+  echo "$(STAMP) component stamp: read $read stamped $stamped unowned $unowned$trunc" >> "$LOG"
+}
+groom_component_stamp
+# <<< component stamp
 # BH-2526: rules 2-4 read the coordination DB (lanes rows, job_artifacts, and
 # stage_events) instead of ssh-ing to the box that owns the project. Absent lib =
 # the helpers are undefined and those rules hold every remote row.

@@ -42,6 +42,13 @@
 # worker dispatched for this exact key is adopted (mc-prequeue.d/adopt.sh), and
 # then, past the sibling hold, an older main's green may be reused by impact
 # set (mc-prequeue.d/impact-reuse.sh). Only then the veto and the dispatch.
+#
+# THE CALLS (BH-7029). Each read and write here runs through pq_call
+# (mc-prequeue.d/call-bound.sh) as resolve/<name>: wf-probe, settle, compare,
+# merge-test, adopt, impact-reuse, veto, and dispatch (a write). Once the
+# gate's call budget passed (pq_over), a settle that read nothing holds before
+# the deadline rule, and nothing is dispatched: a read the budget killed never
+# becomes a could-not-run record or an alert.
 
 PQ_WF=prequeue-gate.yml
 PQ_VERDICT_RE='^(green|red|no-selection|conflict|could-not-run) main=([0-9a-f]{40}) head=([0-9a-f]{40}) suites=([^ ]*)( why=[^ ]+)?$'
@@ -156,6 +163,8 @@ pq_settle() {
   local slug="$1" num="$2" url="$3" head="$4" main="$5" path="$6" at="$7" line="" v id su why
   _pq_word=hold
   line=$(pq_read_run "$slug" "$(pq_run_title "$num" "$head" "$main")" "$path")
+  # BH-7029: a read the call budget killed is no answer and no deadline: hold.
+  pq_over && return 0
   case "$at" in ''|*[!0-9]*) at=0 ;; esac
   if [ -z "$line" ]; then
     [ $(( $(date +%s) - at )) -lt "$(pq_knob MC_PREQUEUE_DEADLINE_S)" ] && return 0
@@ -270,7 +279,7 @@ pq_fresh_ok() {
   declare -p _pq_fok >/dev/null 2>&1 || local -A _pq_fok=()
   [ -n "${_pq_fok[$4]+x}" ] && return "${_pq_fok[$4]}"
   k=$(pq_knob MC_PREQUEUE_FRESH_COMMITS)
-  if pq_main_behind "$1" "$4" "$5" >/dev/null && [ "$_pq_bn" -le "$k" ]; then _pq_fok[$4]=0; return 0; fi
+  if pq_call compare pq_main_behind "$1" "$4" "$5" >/dev/null && [ "$_pq_bn" -le "$k" ]; then _pq_fok[$4]=0; return 0; fi
   b="$_pq_bn"
   pq_reuse_log "$2" "$3" "$4" "$5" "$6" "$7" "stale-commits behind=${b:-unreadable} k=$k"
   _pq_fok[$4]=1
@@ -290,20 +299,21 @@ pq_resolve() {
   local -A _pq_behind=() _pq_fok=()
   [ -n "${MC_H:-}" ] && [ -n "${MC_STATE_DIR:-}" ] || { echo proceed; return 0; }
   pq_prune
-  pq_wf_present "$slug"
+  pq_call wf-probe pq_wf_present "$slug"
+  pq_over && { echo hold; return 0; }
   case "$_pq_wf" in
     no) echo proceed; return 0 ;;
     unknown) mc_log "$slug#$num prequeue: the $PQ_WF probe was unreadable, enqueued without the gate this tick"; echo proceed; return 0 ;;
   esac
   read -r st at _ <<<"$(pq_cache_get "$path")"
-  if [ "$st" = pending ]; then pq_settle "$slug" "$num" "$url" "$head" "$main" "$path" "$at"; echo "$_pq_word"; return 0; fi
+  if [ "$st" = pending ]; then pq_call settle pq_settle "$slug" "$num" "$url" "$head" "$main" "$path" "$at"; echo "$_pq_word"; return 0; fi
   # A miss. Settle this head's other pending entries first, then act on its
   # newest completed one inside FRESH_S, before paying for a new run.
   pre="${path%_*}_"
   for f in "$pre"*; do
     m="${f#"$pre"}"; [[ "$m" =~ ^[0-9a-f]{40}$ ]] && [ "$f" != "$path" ] || continue
     read -r st at _ <<<"$(pq_cache_get "$f")"
-    [ "$st" = pending ] && pq_settle "$slug" "$num" "$url" "$head" "$m" "$f" "$at"
+    [ "$st" = pending ] && pq_call settle pq_settle "$slug" "$num" "$url" "$head" "$m" "$f" "$at"
   done
   PQ_MAIN="$keep_main"; PQ_SUITES="$keep_suites"
   now=$(date +%s); fresh=$(pq_knob MC_PREQUEUE_FRESH_S); reuse=$(pq_knob MC_PREQUEUE_REUSE)
@@ -338,7 +348,7 @@ pq_resolve() {
       # PQ_PATH is the entry the red was read from (BH-5438): sidecars go next to it.
       PQ_SUITES="$rest"; PQ_MAIN="$rbm"; PQ_PATH="$pre$rbm"; echo red; return 0
     fi
-    mt=$(pq_merge_test "$slug" "$num" "$head"); mrc=$?
+    mt=$(pq_call merge-test pq_merge_test "$slug" "$num" "$head"); mrc=$?
     case "$mrc" in
       0) pq_reuse_log "$num" "$head" "$rbm" "$main" "$rage" "$st" proceed; echo proceed; return 0 ;;
       1) PQ_WHY="head ${head:0:8} conflicts with main ${main:0:12}: ${mt:-paths not named}"
@@ -355,26 +365,30 @@ pq_resolve() {
   fi
   # BH-6924: a run another worker dispatched for this exact key is read, not
   # paid for again (mc-prequeue.d/adopt.sh).
-  declare -F pq_adopt_run >/dev/null && pq_adopt_run "$slug" "$num" "$url" "$head" "$main" "$path" && { echo "$_pq_word"; return 0; }
+  declare -F pq_adopt_run >/dev/null && pq_call adopt pq_adopt_run "$slug" "$num" "$url" "$head" "$main" "$path" && { echo "$_pq_word"; return 0; }
   if [ -n "$sib" ]; then
     PQ_WHY="prequeue run for main ${sib:0:12} still running; its verdict is read on a later tick"; echo hold; return 0
   fi
   # BH-6924: an older main's green counts when the main move misses this PR's
   # impact set and the head still merges (mc-prequeue.d/impact-reuse.sh).
   _pq_ir=none
-  declare -F pq_impact_reuse >/dev/null && pq_impact_reuse "$slug" "$num" "$url" "$head" "$main" "$pre"
+  declare -F pq_impact_reuse >/dev/null && pq_call impact-reuse pq_impact_reuse "$slug" "$num" "$url" "$head" "$main" "$pre"
   case "$_pq_ir" in
     reuse) echo proceed; return 0 ;;
     rebase) echo rebase; return 0 ;;
   esac
   # A run the conductor could never act on this tick is not paid for. Nothing
   # is written, so the first tick without the refusal dispatches as usual.
-  if [ "$reuse" != 0 ] && veto=$(pq_dispatch_veto "$slug" "$num" "$url" "$head"); then
+  if [ "$reuse" != 0 ] && veto=$(pq_call veto pq_dispatch_veto "$slug" "$num" "$url" "$head"); then
     mc_log "PREQUEUE skip-dispatch #$num head=${head:0:12} current-main=${main:0:12} reason=$veto"
     PQ_WHY="prequeue not dispatched: $veto"; echo defer; return 0
   fi
-  pq_dispatch "$slug" "$num" "$head" "$main"
+  # BH-7029: past the call budget nothing is dispatched (a refused dispatch is
+  # not a could-not-run): the gate holds and the next tick asks again.
+  pq_over && { PQ_WHY="prequeue call budget passed before the dispatch"; echo hold; return 0; }
+  pq_call -w dispatch pq_dispatch "$slug" "$num" "$head" "$main"
   case "$?" in
+    124) PQ_WHY="prequeue call budget passed before the dispatch"; echo hold ;;
     0) PQ_WHY="$PQ_WF dispatched for main ${main:0:12}; its verdict is read on a later tick"; echo hold ;;
     3) PQ_WHY="prequeue dispatch for ${head:0:8} is in another worker's hands"; echo hold ;;
     1) pq_alert "$slug" "$num" "$url" "$head" "$main" dispatch-refused; echo proceed ;;

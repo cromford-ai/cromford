@@ -64,7 +64,7 @@ DEFECT=$(jq -r '
   end' "$CATALOG" 2>/dev/null)
 JQ_RC=$?
 if [ "$JQ_RC" -ne 0 ]; then say "catalog $CATALOG is not valid JSON"; exit 2; fi
-if [ -n "$DEFECT" ]; then say "catalog $CATALOG: $(printf '%s' "$DEFECT" | head -1)"; exit 2; fi
+if [ -n "$DEFECT" ]; then say "catalog $CATALOG: $(head -1 <<<"$DEFECT")"; exit 2; fi
 ROWS=$(jq -r '.paths[] | select(.class == "rows") | "\(.path)\t\(.authority // "")"' "$CATALOG") \
   || { say "catalog $CATALOG could not be read"; exit 2; }
 

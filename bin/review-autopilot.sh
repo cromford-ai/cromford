@@ -318,11 +318,11 @@ ap_box_row() {
 ap_skip_only_block() {
   local r ci="${2:-}" base="${3:-main}" names n hit=0
   [ "$base" = main ] || return 1
-  printf '%s' "$ci" | grep -qE '=SKIPPED' || return 1
-  printf '%s' "$ci" | grep -qE '=(FAILURE|CANCELLED|TIMED_OUT|ERROR|ACTION_REQUIRED|STARTUP_FAILURE)' && return 1
+  grep -qE '=SKIPPED' <<<"$ci" || return 1
+  grep -qE '=(FAILURE|CANCELLED|TIMED_OUT|ERROR|ACTION_REQUIRED|STARTUP_FAILURE)' <<<"$ci" && return 1
   # A [BLOCK] finding in the body is a blocking reason the VERDICT line may not
   # repeat: never rewrite over it.
-  printf '%s\n' "$1" | grep -qF '[BLOCK]' && return 1
+  grep -qF '[BLOCK]' <<<"$1" && return 1
   r=$(printf '%s\n' "$1" | grep -E '^[[:space:]*_>]*VERDICT:' | tail -1 \
     | sed -E 's/^[^:]*:[[:space:]*_]*BLOCK[[:space:]*_]*//; s/^[[:space:]]*[—-]+[[:space:]]*//' | tr '[:upper:]' '[:lower:]')
   [ -n "$r" ] || return 1
@@ -337,11 +337,11 @@ ap_skip_only_block() {
     [ -n "$n" ] || continue
     case "$r" in *"$n"*) r="${r//"$n"/<job>}"; hit=1 ;; esac
   done <<<"$names"
-  printf '%s' "$r" | grep -qE '[,;+&]| and | but | plus ' && return 1
+  grep -qE '[,;+&]| and | but | plus ' <<<"$r" && return 1
   # 3: the subject is the skipped CI jobs, by name or by a whole CI-job term.
-  [ "$hit" = 1 ] || printf '%s' "$r" | grep -qE '\b(test (jobs?|shards?|suites?)|ci (test )?jobs?|shards?)\b' || return 1
+  [ "$hit" = 1 ] || grep -qE '\b(test (jobs?|shards?|suites?)|ci (test )?jobs?|shards?)\b' <<<"$r" || return 1
   # 4: and they did not run.
-  printf '%s' "$r" | grep -qE '\b(skipped|ran none|never ran|did not run|no (ci )?(test )?(jobs?|shards?|suites?) (ran|have run|has run))\b'
+  grep -qE '\b(skipped|ran none|never ran|did not run|no (ci )?(test )?(jobs?|shards?|suites?) (ran|have run|has run))\b' <<<"$r"
 }
 # ap_skip_downgrade <review> <base> — the review with its final VERDICT line
 # replaced by MERGE-WITH-NOTES and one note above it that says why.
@@ -888,7 +888,7 @@ $SLUG#$NUM -> ${KVERDICT:-UNPARSED}" ;;
           # unreadable guard is not permission to spend — but now it says so
           # once per tick, with the path an operator deletes.
           AP_WHERE="key $KEY"; [ "$AP_ROWS" = 1 ] && AP_WHERE="row review_autopilot $RK"
-          echo "$(STAMP) [$P] #$NUM @$HEAD12 $AP_WHERE has unreadable state ('$(printf '%s' "$KSTATE" | head -c 80 | tr -d '\n')') — not reviewing and not posting for this head until it is fixed or removed" >> "$LOG"
+          echo "$(STAMP) [$P] #$NUM @$HEAD12 $AP_WHERE has unreadable state ('$(head -c 80 < <(printf '%s' "$KSTATE") | tr -d '\n')') — not reviewing and not posting for this head until it is fixed or removed" >> "$LOG"
           continue ;;
       esac
     fi

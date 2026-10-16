@@ -1,0 +1,11 @@
+{
+  "env": "MC_PREQUEUE_CALL_BUDGET_S",
+  "type": "int",
+  "default": 150,
+  "min": 0,
+  "max": 1500,
+  "unit": "seconds",
+  "zero_means": "off",
+  "read_in": "bin/lib/mc-prequeue.sh",
+  "note": "BH-7029: the time pq_gate may spend on its calls (the main tip read, restamp, the resolver's reads and dispatch) for one PR. When it passes during a read, that read is killed, no later call starts and the gate answers hold: the row stays READY and is asked again next tick, with one PREQUEUE_CALL_TIMEOUT line naming the call. A write in flight runs to its end. The value used is never above 3/4 of MC_STEP_TIMEOUT_S nor past the worker deadline minus 15 s. 0 = no bound (the behaviour before BH-7029). Per project: lane.merge-conductor.<project>.mc_prequeue_call_budget_s."
+}

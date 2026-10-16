@@ -79,7 +79,7 @@ nh_sd_human_only() {
   hit=""
   while IFS= read -r line; do
     [ -n "$line" ] || continue
-    printf '%s\n' "$line" | grep -qE '^(NEEDS_HUMAN|DATA_LANE):' && continue
+    grep -qE '^(NEEDS_HUMAN|DATA_LANE):' <<<"$line" && continue
     if _nh_sd_signal "$line" "$paths"; then sig=1; [ -n "$hit" ] || hit="$line"; fi
   done <<<"$lines"
   [ "$sig" = 1 ] || { printf 'none\n'; return 1; }

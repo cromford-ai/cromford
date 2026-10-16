@@ -1,0 +1,10 @@
+{
+  "env": "ALERTS_GROOM_COMPONENT_MAX",
+  "type": "int",
+  "default": 200,
+  "min": 0,
+  "max": 500,
+  "unit": "rows",
+  "zero_means": "off",
+  "note": "BH-6971: open alerts rows with no component that bin/alerts-groom.sh reads and stamps per tick (GET /api/alerts?unstamped=1&limit=, then POST /api/alerts/component in chunks of at most 200). Code fallback ${ALERTS_GROOM_COMPONENT_MAX:-200}. 0 turns the step off; a value that is not a whole number skips the step with one log line, never clamps. Runs only with flags/alerts-db set."
+}

@@ -178,7 +178,8 @@ grep -q "SCHEMA_RESTAMP refused head=${HEADSHA:0:12} .*reason=the push answered 
 seed 202610142106-bh-2-b.sql; scratch_rm "$CL"
 mc_funnel_repo() { echo funnel >> "$T/funnel"; return 1; }
 gate
-[ "$WORD" = proceed ] && [ ! -e "$T/funnel" ] && [ ! -s "$LOG" ] && ok || bad "P9 no clone must proceed with no funnel call and no line, got '$WORD' ($(cat "$LOG"))"
+# BH-7029: every gate call writes a PREQUEUE_CALL timing line; "no line" is no other line.
+[ "$WORD" = proceed ] && [ ! -e "$T/funnel" ] && ! grep -qv ' PREQUEUE_CALL call=' "$LOG" 2>/dev/null && ok || bad "P9 no clone must proceed with no funnel call and no line, got '$WORD' ($(cat "$LOG"))"
 seed 202610142106-bh-2-b.sql
 nostamp=$(git -C "$CL" commit-tree "$(git -C "$CL" mktree </dev/null)" -m empty)
 git -C "$CL" update-ref refs/remotes/origin/main "$nostamp"
@@ -200,9 +201,9 @@ gate
 [ "$WORD" = hold ] && [ "$(ohead)" != "$HEADSHA" ] && ok || bad "P10 after RESUME the next tick must restamp"
 
 # ── M1: pq_gate without the restamp call proceeds on a stale head ──
-sed 's/^\( *\)declare -F pq_restamp >\/dev\/null && rs=\$(pq_restamp /\1false \&\& rs=$(pq_restamp /' "$DIR/bin/lib/mc-prequeue.sh" > "$T/mut-pq.sh"
+sed 's/^\( *\)declare -F pq_restamp >\/dev\/null && rs=\$(pq_call -w restamp pq_restamp /\1false \&\& rs=$(pq_call -w restamp pq_restamp /' "$DIR/bin/lib/mc-prequeue.sh" > "$T/mut-pq.sh"
 if cmp -s "$T/mut-pq.sh" "$DIR/bin/lib/mc-prequeue.sh"; then
-  bad "M1 the mutation anchor 'declare -F pq_restamp >/dev/null && rs=\$(pq_restamp ' is missing from bin/lib/mc-prequeue.sh"
+  bad "M1 the mutation anchor 'declare -F pq_restamp >/dev/null && rs=\$(pq_call -w restamp pq_restamp ' is missing from bin/lib/mc-prequeue.sh"
 else
   (
     # shellcheck source=/dev/null

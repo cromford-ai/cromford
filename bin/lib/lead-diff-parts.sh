@@ -77,7 +77,7 @@ ldp_unread_line() {
   local n
   n=$(printf '%s' "$LDP_UNREAD" | grep -c .)
   [ "$n" -gt 0 ] || { printf 'none'; return 0; }
-  printf '%s\n' "$LDP_UNREAD" | head -n 20 | paste -sd, - | sed 's/,/, /g' | tr -d '\n'
+  head -n 20 <<<"$LDP_UNREAD" | paste -sd, - | sed 's/,/, /g' | tr -d '\n'
   [ "$n" -gt 20 ] && printf ', +%s more' "$((n - 20))"
   return 0
 }

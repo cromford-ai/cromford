@@ -239,7 +239,7 @@ fi
 # scripts/migrations/2026-07-17-x.sql alone" sentence must not hand the builder
 # the whole directory.
 MIG_PLANNED=0
-printf '%s\n' "$PLAN_KEPT" | grep -qE "^(scripts/migrations|$MIG_ERE)/" && MIG_PLANNED=1
+grep -qE "^(scripts/migrations|$MIG_ERE)/" <<<"$PLAN_KEPT" && MIG_PLANNED=1
 
 # A temp file, never an artifact in the build dir — the build dir is copied into
 # the record and this is a derived intermediate, not evidence.

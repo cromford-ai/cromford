@@ -232,7 +232,7 @@ inapp_families() { # <project> <prefix>
     kids=$(jq -r --arg pid "$pid" '.[] | select((.id|tostring)==$pid) | .children[] | (.key // (.id|tostring))' "$TMP/all.json")
     : > "$f"
     for k in $dk $kids; do
-      printf '%s\n' "$kids" | grep -qxF "$k" || continue
+      grep -qxF "$k" <<<"$kids" || continue
       grep -q "^$k$TAB" "$f" && continue
       # waiting: client, needs_clarification, or a child the list did not carry.
       jq -r --arg k "$k" --arg pid "$pid" '
@@ -403,7 +403,7 @@ run_project() { # <project> <decisions already spent this tick>
     # The family this happened on is deferred too, so acted+skipped+deferred
     # still adds up to the due families.
     if [ "$rc" = 1 ]; then wu=1; def=$((def + 1)); continue; fi
-    case "$(printf '%s' "$word" | head -1)" in
+    case "$(head -1 <<<"$word")" in
       acted) acted=$((acted + 1)) ;;
       *) skipped=$((skipped + 1)) ;;
     esac

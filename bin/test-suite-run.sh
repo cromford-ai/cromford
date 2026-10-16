@@ -169,8 +169,8 @@ for t in "${SUITES[@]}"; do
   # and a SUITE ERROR. A here-string has no writer to kill.
   grep -Eq "$SUMMARY_RE" <<<"$OUT" && continue
 
-  LINE=$(printf '%s\n' "$OUT" | grep -Em1 "$ERROR_RE")
-  [ -n "$LINE" ] || LINE=$(printf '%s\n' "$OUT" | grep -Em1 '[^[:space:]]')
+  LINE=$(grep -Em1 "$ERROR_RE" <<<"$OUT")
+  [ -n "$LINE" ] || LINE=$(grep -Em1 '[^[:space:]]' <<<"$OUT")
   [ -n "$LINE" ] || LINE="exited $RC with no output"
   NERR=$((NERR+1))
   ERRORS="${ERRORS}${t}: ${LINE}"$'\n'

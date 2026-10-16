@@ -66,7 +66,7 @@ command -v _jobs_req >/dev/null 2>&1 \
 RESP=$(_jobs_req GET /api/settings) && [ -n "$RESP" ] \
   && KEYS=$(printf '%s' "$RESP" | jq -r '.settings | if type == "array" then .[].key else error("no settings array") end' 2>/dev/null) \
   || { echo "switch-migrate: GET /api/settings unreadable (http=${JOBS_HTTP:-none}), nothing written" >&2; exit 75; }
-has_key() { printf '%s\n' "$KEYS" | grep -qxF "$1"; }
+has_key() { grep -qxF "$1" <<<"$KEYS"; }
 # bare_reader <name> — the first code line in bin/ or fly/ that reads
 # flags/<name> as a bare file test (the switch-ratchet pattern), as <file:line>.
 bare_reader() {

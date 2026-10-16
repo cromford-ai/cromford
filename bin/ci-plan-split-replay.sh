@@ -171,7 +171,7 @@ est() {
 
 # lint_verdict <job> <step>
 lint_verdict() {
-  if printf '%s/%s\n' "$1" "$2" | grep -qiE -- "$NIGHTLY_LINT_RE"; then echo moved-nightly
+  if grep -qiE -- "$NIGHTLY_LINT_RE" <<<"$1/$2"; then echo moved-nightly
   elif awk -v s="$2" '{ l = $0; if (sub(/^[ \t]*- name:[ \t]*/, "", l)) { sub(/[ \t]+$/, "", l); if (l == s) f = 1 } }
          END { exit !f }' "$ROOT/.github/workflows/harness-ci.yml" 2>/dev/null; then echo caught-pr
   else echo missed; fi

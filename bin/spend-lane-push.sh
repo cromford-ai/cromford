@@ -42,7 +42,7 @@ while [ $# -gt 0 ]; do
   shift 2
 done
 [ -n "$BASE" ] && [ -n "$REG" ] && isnum "$MULT" || usage
-printf '%s' "$DAY" | grep -qE '^[0-9]{8}$' || usage
+grep -qE '^[0-9]{8}$' <<<"$DAY" || usage
 
 [ -r "$BASE" ] || { echo "spend-lane-push: cannot read --baseline '$BASE'" >&2; exit 1; }
 command -v jq >/dev/null 2>&1 || { echo "spend-lane-push: jq missing" >&2; exit 1; }
@@ -60,8 +60,8 @@ CANDS=$(awk -F'\t' -v m="$MULT" '
   $1 == "lane" && $3 + 0 > 0 { printf "%s\t%.2f\t%s\t%s\n", $2, m * $3, $3, $4 }' "$BASE")
 while IFS=$'\t' read -r LANE ALERT P99 DAYS; do
   [ -n "$LANE" ] || continue
-  if ! printf '%s\n' "$IDS" | grep -qxF "$LANE"; then
-    printf '%s' "$LANE" | grep -qE '^stage-[a-z0-9_-]+$' || continue
+  if ! grep -qxF "$LANE" <<<"$IDS"; then
+    grep -qE '^stage-[a-z0-9_-]+$' <<<"$LANE" || continue
   fi
   if [ "$DRY" = 1 ]; then
     echo "would-push $LANE alert=$ALERT p99=$P99 days=$DAYS"; continue

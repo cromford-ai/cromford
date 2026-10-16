@@ -192,7 +192,7 @@ _th_fail_cause() {
   fi
   line=$(printf '%s\n' "$1" | sed -n '/[^[:space:]]/{p;q;}' \
     | sed -E 's/FlyV1 [^ ]*/[redacted]/g; s/fm[0-9]_[A-Za-z0-9_-]*/[redacted]/g' | cut -c1-120)
-  if printf '%s' "$1" | grep -qiE 'unauthori|not authenticated|401|access token'; then
+  if grep -qiE 'unauthori|not authenticated|401|access token' <<<"$1"; then
     TH_CAUSE="auth failure: $line"
   else
     TH_CAUSE="$2: $line"
