@@ -21,10 +21,12 @@ const repoOf = (b) => {
 async function readRepo(env, repo, drafts) {
   const ph = drafts.map((_, i) => `?${i + 2}`).join(",");
   const [checks, medians] = await Promise.all([
+    // sql-ident-ok: ph and the LIMIT are ?N placeholder text
     env.DB.prepare(
       `SELECT draft_pr, name, job_class, status, started_at FROM merge_queue_checks
         WHERE repo = ?1 AND draft_pr IN (${ph}) LIMIT ?${drafts.length + 2}`
     ).bind(repo, ...drafts, CHECK_CAP + 1).all(),
+    // sql-ident-ok: ph is ?N placeholder text
     env.DB.prepare(
       `SELECT name, job_class, median_s FROM merge_queue_check_medians
         WHERE repo = ?1 AND job_class IN (

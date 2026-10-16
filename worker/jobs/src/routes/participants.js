@@ -147,6 +147,7 @@ function decision(verb, from, to, stamp) {
       }
       const set = verb === "approve" ? `status=?1, ${stamp}_by=?2, ${stamp}_at=?3, granted_roles=?5`
                                      : `status=?1, ${stamp}_by=?2, ${stamp}_at=?3`;
+      // sql-ident-ok: stamp and from are literals from the three decision() calls at the end of this file
       const stmt = env.DB.prepare(`UPDATE participant_machines SET ${set} WHERE id=?4 AND status='${from}'`);
       const res = await (verb === "approve" ? stmt.bind(to, actor.v, t, id, granted) : stmt.bind(to, actor.v, t, id)).run();
       const now = await getRow(env, id);
@@ -254,6 +255,7 @@ export const routes = [
       const row = await getRow(env, decodeURIComponent(m[1]));
       if (!row) return json(404, { error: "no such participant" });
       await reviewTables(env);
+      // sql-ident-ok: DETAIL_MAX is a code constant
       const { results } = await env.DB.prepare(
         `SELECT l.id, l.repo, l.pr, l.head_sha, l.status, l.verdict, l.heartbeat_at, l.updated_at, p.project
          FROM lead_review_requests l LEFT JOIN projects p ON p.repo = l.repo

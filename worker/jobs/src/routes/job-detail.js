@@ -115,6 +115,7 @@ export const routes = [
     "GET", /^\/api\/jobs\/([^/]+)$/,
     async ({ env, t, body, m: detailMatch }) => {
       const id = decodeURIComponent(detailMatch[1]);
+      // sql-ident-ok: JOBS_SELECT is a constant from lib/core.js
       const row = await env.DB.prepare(`${JOBS_SELECT} WHERE j.id=?1`).bind(id).first();
       if (!row) return json(404, { error: "no such job" });
       const ev = await readHistory(env, {
@@ -143,6 +144,7 @@ export const routes = [
       // every 20s by an open drill-down, and a job with four attempts would
       // otherwise push ~600KB across an ocean twice a minute to render a
       // heading nobody expanded. The console fetches one body on click.
+      // sql-ident-ok: TRANSCRIPT_INDEX_COLS is a constant from lib/core.js
       const transcripts = await env.DB.prepare(
         `SELECT ${TRANSCRIPT_INDEX_COLS} FROM job_transcripts WHERE job_id=?1
           ORDER BY phase_id ASC, attempt ASC LIMIT 100`

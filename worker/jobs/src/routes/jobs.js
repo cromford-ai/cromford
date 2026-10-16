@@ -26,8 +26,10 @@ export const routes = [
         const v = url.searchParams.get(col);
         if (v) { binds.push(v); where.push(`j.${col}=?${binds.length}`); }
       }
+      // A positive integer: `limit=-1` used to build `LIMIT -1`, which is no limit at all.
+      const limit = Math.min(Math.max(Math.floor(Number(url.searchParams.get("limit"))) || 100, 1), 500);
       const sql = `${JOBS_SELECT}${where.length ? " WHERE " + where.join(" AND ") : ""}`
-        + ` ORDER BY j.created_at DESC LIMIT ${Math.min(Number(url.searchParams.get("limit")) || 100, 500)}`;
+        + ` ORDER BY j.created_at DESC LIMIT ${limit}`;
       const rows = await env.DB.prepare(sql).bind(...binds).all();
       let jobs = (rows.results || []).map((r) => decorateJob(r, t));
       // ?stale_min=N — what the watchdog asks for: open rows whose last sign of
@@ -287,6 +289,7 @@ export const routes = [
       if (sets.length === 0) return json(400, { error: "nothing to update" });
       binds.push(t); sets.push(`updated_at=?${binds.length}`);
       binds.push(id);
+      // sql-ident-ok: sets are literal col=? strings from the set() calls in this handler
       const r = await env.DB.prepare(`UPDATE jobs SET ${sets.join(", ")} WHERE id=?${binds.length}`)
         .bind(...binds).run();
       if (r.meta.changes === 0) return json(404, { error: "no such job" });

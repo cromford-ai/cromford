@@ -90,6 +90,7 @@ const LEAD_REVIEW_DEADLINE_S = 3600;
 // counts null as stale: unknown evidence never steals a row. A job id with no
 // jobs row is not live.
 async function jobLive(env, job_id, t) {
+  // sql-ident-ok: JOBS_SELECT is a constant from lib/core.js
   const raw = await env.DB.prepare(`${JOBS_SELECT} WHERE j.id=?1`).bind(job_id).first();
   if (!raw) return false;
   const job = decorateJob(raw, t);

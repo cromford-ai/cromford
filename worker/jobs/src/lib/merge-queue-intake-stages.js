@@ -68,6 +68,7 @@ async function stored(db, ctx) {
 // True when a stored check of the draft is not completed or has failed.
 async function checksOpenOrFailed(db, ctx) {
   const ph = FAILED_CONCLUSIONS.map((_, i) => `?${i + 3}`).join(",");
+  // sql-ident-ok: ph is ?N placeholder text
   const r = await db.prepare(
     `SELECT 1 AS x FROM merge_queue_checks WHERE repo = ?1 AND draft_pr = ?2
        AND (status IS NOT 'completed' OR conclusion IN (${ph})) LIMIT 1`
@@ -79,6 +80,7 @@ const open = (row) => row.finished_at === null || row.finished_at === undefined;
 
 async function bisectStmt(db, ctx, members) {
   const ph = FAILED_CONCLUSIONS.map((_, i) => `?${i + 3}`).join(",");
+  // sql-ident-ok: ph is ?N placeholder text; CANDIDATES is a code constant
   const res = await db.prepare(
     `SELECT draft_pr, members_json, bisect_step, bisect_steps FROM merge_queue_batches b
       WHERE lower(b.repo) = lower(?1) AND b.draft_pr <> ?2

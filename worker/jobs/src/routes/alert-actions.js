@@ -46,6 +46,7 @@ async function postAction({ env, t, body }) {
   await ensureTable(env, "alert_actions");
   const row = await env.DB.prepare("SELECT * FROM alerts WHERE id=?1").bind(id).first();
 
+  // sql-ident-ok: AUDIT_COLS is a module constant
   const audit = (outcome, before, after, until = null) => env.DB.prepare(
     `INSERT INTO alert_actions (${AUDIT_COLS}) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9)`
   ).bind(id, action, actor, note, before, after, until, outcome, t);
@@ -72,11 +73,13 @@ async function postAction({ env, t, body }) {
   // row without its state change (or the reverse) cannot exist.
   const pair = (cas, binds, afterSql, set, setBinds, until = null) => {
     const n = binds.length;
+    // sql-ident-ok: AUDIT_COLS is a constant; cas and afterSql are literals from the pair() calls below
     const ins = env.DB.prepare(
       `INSERT INTO alert_actions (${AUDIT_COLS})
        SELECT ?${n + 1}, ?${n + 2}, ?${n + 3}, ?${n + 4}, state, ${afterSql}, ?${n + 5}, 'ok', ?${n + 6}
        FROM alerts WHERE ${cas}`
     ).bind(...binds, id, action, actor, note, until, t);
+    // sql-ident-ok: set and cas are literals from the pair() calls below
     const upd = env.DB.prepare(`UPDATE alerts SET ${set} WHERE ${cas}`).bind(...binds, ...setBinds);
     return env.DB.batch([ins, upd]);
   };

@@ -111,6 +111,7 @@ function batchOpenStmt(db, { repo, draft, pr, at }) {
 // as it is, so a redelivered or late close cannot rewrite it.
 function batchCloseStmt(db, { repo, draft, pr, at }) {
   const ph = FAILED_CONCLUSIONS.map((_, i) => `?${i + 9}`).join(",");
+  // sql-ident-ok: ph is ?N placeholder text
   return db.prepare(
     `INSERT INTO merge_queue_batches (repo, draft_pr, members_json, base_sha, started_at, finished_at, outcome, updated_at)
      VALUES (?1, ?2, ?3, ?4, ?5, ?6,

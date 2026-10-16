@@ -21,6 +21,7 @@ export function medianStatements(db, checkRow) {
   const cls = r.job_class || jobClass(r.name);
   const at = r.updated_at || r.finished_at;
   if (!at) return [];
+  // sql-ident-ok: MEDIAN_WINDOW_DEFAULT is a code constant
   return [db.prepare(
     `INSERT INTO merge_queue_check_medians (repo, name, job_class, median_s, samples, updated_at)
      SELECT ?1, ?2, ?3, CAST(ROUND(AVG(d)) AS INTEGER), MAX(c), ?4 FROM (

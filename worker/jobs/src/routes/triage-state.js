@@ -73,6 +73,7 @@ function upsertStmt(env, t, { project, key, set }) {
   if (cols.includes("last_decision")) cols.push("last_decision_at");
   const vals = set.map(([, v]) => v);
   if (set.some(([c]) => c === "last_decision")) vals.push(t);
+  // sql-ident-ok: cols are keys of the FIELDS constant; values are ?N text
   return env.DB.prepare(
     `INSERT INTO triage_state (project, ticket_key, updated_at, ${cols.join(", ")}) `
     + `VALUES (?1, ?2, ?3, ${cols.map((_, i) => `?${i + 4}`).join(", ")}) `
@@ -110,6 +111,7 @@ export const routes = [
       const due = url.searchParams.get("due") === "1";
       await ensureTable(env, "triage_state");
       const where = due ? "project=?1 AND next_recheck_at IS NOT NULL AND next_recheck_at<=?2" : "project=?1";
+      // sql-ident-ok: where is one of two literals; limit passes a digits regex and a range check
       const stmt = env.DB.prepare(`SELECT * FROM triage_state WHERE ${where} ORDER BY ticket_key ASC LIMIT ${limit + 1}`);
       const rows = ((due ? await stmt.bind(project, t).all() : await stmt.bind(project).all()).results) || [];
       const truncated = rows.length > limit;

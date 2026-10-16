@@ -13,6 +13,7 @@ import SCHEMA_SQL from "#schema-sql";
 import { createdTablesFrom } from "./created-tables.js";
 import { activeFleetFlags } from "./harness-flags.js";
 import { rawDb } from "./d1-retry.js";
+import { sqlIdent } from "./sql-ident.js";
 
 export const OPEN_STATUS = "running";
 
@@ -698,6 +699,7 @@ export async function checkRules(env, job) {
     if (rule.kind !== "*") { sql += " AND j.kind=?"; binds.push(rule.kind); }
     // D1 binds positionally with ?1..?n; the strings above use bare ? which the
     // driver numbers in order, so appending is safe.
+    // sql-ident-ok: scopePeers returns literal SQL text; the scope values are ? binds
     const rows = await env.DB.prepare(`${sql} ORDER BY j.created_at ASC`).bind(...binds).all();
     const peers = rows.results || [];
     const max = Number(rule.max_concurrent);
@@ -927,6 +929,8 @@ export function str(v, max) {
 export async function appendLines(env, table, body, t, columns, bindFn) {
   const project = str(body.project, 128);
   const rows = Array.isArray(body.rows) ? body.rows : null;
+  sqlIdent(table);
+  columns.forEach((c) => sqlIdent(c));
   if (!project || rows === null) return { status: 400, body: { error: "project and rows[] are required" } };
   if (rows.length > 200) return { status: 413, body: { error: "at most 200 rows per request" } };
   const stmts = [];
@@ -944,6 +948,7 @@ export async function appendLines(env, table, body, t, columns, bindFn) {
     }
     const binds = bindFn(project, r, stamp, line, t);
     const placeholders = binds.map((_, i) => `?${i + 1}`).join(",");
+    // sql-ident-ok: table and columns passed sqlIdent above; placeholders are ?N text
     stmts.push(env.DB.prepare(
       `INSERT OR IGNORE INTO ${table} (${columns.join(",")}) VALUES (${placeholders})`
     ).bind(...binds));
@@ -964,12 +969,14 @@ export async function appendLines(env, table, body, t, columns, bindFn) {
 // the tiebreak two pages of the same restore can interleave or drop a row.
 // lim+1 rows are fetched so `truncated` is measured, not guessed.
 export async function listLines(env, table, url, t) {
+  sqlIdent(table);
   const since = str(url.searchParams.get("since"), 32);
   if (!since) return json(400, { error: "since required" });
   const project = str(url.searchParams.get("project"), 128);
   const lim = Math.min(Math.max(Number(url.searchParams.get("limit")) || 200, 1), 5000);
   const where = project ? ["project=?1", "stamp>=?2"] : ["stamp>=?1"];
   const binds = project ? [project, since] : [since];
+  // sql-ident-ok: table passed sqlIdent; where is two literals; lim is a clamped number
   const rows = await env.DB.prepare(
     `SELECT * FROM ${table} WHERE ${where.join(" AND ")} ORDER BY stamp ASC, id ASC LIMIT ${lim + 1}`
   ).bind(...binds).all();
@@ -1138,18 +1145,21 @@ export const ADDED_INDEXES = {
 };
 export const addedColumnsReady = new WeakMap();
 export async function ensureColumns(env, table) {
+  sqlIdent(table);
   const db = env.DB;
   // Keyed on the raw binding, not the BH-6690 retry proxy index.js puts on env.DB.
   let per = addedColumnsReady.get(rawDb(db));
   if (!per) { per = new Map(); addedColumnsReady.set(rawDb(db), per); }
   if (per.has(table)) return per.get(table);
   const p = (async () => {
+    // sql-ident-ok: table passed sqlIdent at the top of ensureColumns
     const info = await db.prepare(`PRAGMA table_info(${table})`).all();
     const have = new Set((info.results || []).map((r) => r.name));
     for (const [col, type] of ADDED_COLUMNS[table] || []) {
       if (have.has(col)) continue;
       try {
-        await db.prepare(`ALTER TABLE ${table} ADD COLUMN ${col} ${type}`).run();
+        // sql-ident-ok: table and col pass sqlIdent; type is a literal type phrase from ADDED_COLUMNS
+        await db.prepare(`ALTER TABLE ${table} ADD COLUMN ${sqlIdent(col)} ${type}`).run();
       } catch (e) {
         if (!/duplicate column/i.test(String(e && e.message || e))) throw e;
       }

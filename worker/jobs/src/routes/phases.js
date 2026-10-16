@@ -176,6 +176,7 @@ export const routes = [
       else if (body.note !== undefined && body.note !== null) set("note=?", String(body.note).slice(0, 512));
       if (sets.length === 0) return json(400, { error: "nothing to update" });
       binds.push(pid);
+      // sql-ident-ok: sets are literal col=? strings from the set() calls in this handler
       const r = await env.DB.prepare(`UPDATE job_phases SET ${sets.join(", ")} WHERE id=?${binds.length}`)
         .bind(...binds).run();
       if (r.meta.changes === 0) return json(404, { error: "no such phase" });

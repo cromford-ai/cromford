@@ -27,6 +27,7 @@ async function applyBatchStages(env, payload) {
   const batches = payload.batches;
   const drafts = [...new Set(batches.map((b) => b.draft))];
   const ph = drafts.map((_, i) => `?${i + 1}`).join(",");
+  // sql-ident-ok: ph is ?N placeholder text
   const meta = await env.DB.prepare(
     `SELECT repo, draft_pr, bisect_parent, bisect_step, bisect_steps FROM merge_queue_batches WHERE draft_pr IN (${ph})`
   ).bind(...drafts).all();
@@ -36,6 +37,7 @@ async function applyBatchStages(env, payload) {
     bisect.set(`${r.repo}#${r.draft_pr}`, { step: r.bisect_step, steps: r.bisect_steps, parent: r.bisect_parent });
   }
   const fph = FAILED_CONCLUSIONS.map((_, i) => `?${drafts.length + i + 1}`).join(",");
+  // sql-ident-ok: ph, fph and the LIMIT are ?N placeholder text
   const fr = await env.DB.prepare(
     `SELECT repo, draft_pr, name, url FROM merge_queue_checks
       WHERE draft_pr IN (${ph}) AND conclusion IN (${fph}) ORDER BY finished_at, name LIMIT ?${drafts.length + FAILED_CONCLUSIONS.length + 1}`
@@ -65,6 +67,7 @@ async function applyPrs(env, payload, repo) {
   let where = `e.state = 'queue' AND e.at >= ?1`;
   if (repo) { binds.push(repo); where += ` AND lower(e.repo) = lower(?2)`; }
   binds.push(PRS_CAP + 1);
+  // sql-ident-ok: where holds literal predicates with ?N binds; the LIMIT is ?N text
   const res = await env.DB.prepare(
     `SELECT e.repo, e.number, e.reason, e.since, e.at, o.key, o.project
        FROM pr_state_events e LEFT JOIN pr_owners o ON o.repo = e.repo AND o.number = e.number

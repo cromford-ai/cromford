@@ -32,6 +32,7 @@ const bad = (error) => json(400, { error });
 
 // Reads one list with LIMIT+1, so a cut list says it was cut (D12).
 async function bounded(env, sql, binds, limit) {
+  // sql-ident-ok: sql is a literal from each bounded() call; limit is a LIMITS constant
   const r = await env.DB.prepare(`${sql} LIMIT ${limit + 1}`).bind(...binds).all();
   const rows = r.results || [];
   return { rows: rows.slice(0, limit), truncated: rows.length > limit };
@@ -142,6 +143,7 @@ export const routes = [
         : "ON CONFLICT(project, ticket_key) DO UPDATE SET branch = excluded.branch, head_sha = excluded.head_sha, "
           + "reason = excluded.reason, created_at = excluded.created_at, box = excluded.box, "
           + "cleared_at = NULL, cleared_why = NULL, updated_at = excluded.updated_at";
+      // sql-ident-ok: tail is one of two literal ON CONFLICT clauses
       const r = await env.DB.prepare(
         "INSERT INTO pool_terminals (project, ticket_key, branch, head_sha, reason, created_at, box, cleared_at, cleared_why, updated_at) "
         + `VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, NULL, NULL, ?8) ${tail}`
@@ -212,6 +214,7 @@ export const routes = [
         : "ON CONFLICT(project, kind, ticket_key) DO UPDATE SET ticket_id = excluded.ticket_id, "
           + "until_at = excluded.until_at, why = excluded.why, last_seen = excluded.last_seen, "
           + "box = excluded.box, updated_at = excluded.updated_at";
+      // sql-ident-ok: tail is one of two literal ON CONFLICT clauses
       const r = await env.DB.prepare(
         "INSERT INTO pool_holds (project, kind, ticket_key, ticket_id, until_at, why, first_seen, last_seen, box, updated_at) "
         + `VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10) ${tail}`

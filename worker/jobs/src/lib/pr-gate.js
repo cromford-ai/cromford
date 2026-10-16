@@ -34,6 +34,7 @@ export async function recordGateEvent(env, t, ev) {
   for (const f of GATE_FIELDS) {
     if (ev[f] !== undefined && ev[f] !== null) { cols.push(f); vals.push(ev[f]); }
   }
+  // sql-ident-ok: cols are literals plus names from the GATE_FIELDS constant; values are ?N text
   const res = await env.DB.prepare(
     `INSERT INTO pr_state_events (${cols.join(", ")}) VALUES (${cols.map((_, i) => `?${i + 1}`).join(",")})
      ON CONFLICT DO NOTHING`
@@ -50,6 +51,7 @@ const latest = (f) =>
 // reconcile re-send of the same approve does not make the PR look newer.
 export async function gateFacts(env, { repo }) {
   await ready(env);
+  // sql-ident-ok: latest() reads names from the GATE_FIELDS constant
   const rows = await env.DB.prepare(
     `SELECT f.*, (SELECT MIN(e.at) FROM pr_state_events e WHERE e.repo=f.repo AND e.number=f.number
                     AND e.state='gate' AND e.builder_approved_sha=f.builder_approved_sha) AS approved_at

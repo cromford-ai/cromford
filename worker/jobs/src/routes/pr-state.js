@@ -186,6 +186,7 @@ export const routes = [
       const limit = limitOf(url);
       if (limit === null) return json(400, LIMIT_NOT_AN_INT);
       binds.push(limit);
+      // sql-ident-ok: where holds literal predicates with ?N binds; the LIMIT is ?N text
       const rows = await env.DB.prepare(
         "SELECT * FROM pr_state_events"
         + (where.length ? ` WHERE ${where.join(" AND ")}` : "")
@@ -219,6 +220,7 @@ export const routes = [
       const limit = limitOf(url);
       if (limit === null) return json(400, LIMIT_NOT_AN_INT);
       binds.push(limit);
+      // sql-ident-ok: where holds literal predicates with ?N binds; the LIMIT is ?N text
       const rows = await env.DB.prepare(
         `SELECT * FROM (SELECT e.* FROM pr_state_events e WHERE e.id =
            (SELECT MAX(id) FROM pr_state_events WHERE repo=e.repo AND number=e.number AND state NOT IN ('gate','queue')))`
@@ -317,8 +319,10 @@ export const routes = [
       const where = ["repo=?1", "number=?2"], binds = [repo, strictInt(number)];
       if (kind) { binds.push(kind); where.push(`kind=?${binds.length}`); }
       const clause = ` WHERE ${where.join(" AND ")}`;
+      // sql-ident-ok: clause holds literal predicates with ?N binds
       const n = await env.DB.prepare(`SELECT COUNT(*) AS n FROM pr_attempts${clause}`)
         .bind(...binds).first();
+      // sql-ident-ok: clause holds literal predicates with ?N binds
       const rows = await env.DB.prepare(
         `SELECT * FROM pr_attempts${clause} ORDER BY at DESC, rowid DESC LIMIT 1000`
       ).bind(...binds).all();

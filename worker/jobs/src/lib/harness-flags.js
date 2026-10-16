@@ -124,12 +124,14 @@ export async function readFleetFlag(env, name) {
 // Each statement reads limit+1 rows, so `truncated` is exact.
 export async function fleetFlagRows(env, { scope = "fleet", prefix = "", onlyOn = 0, limit = 500 } = {}) {
   await ensureTable(env, "harness_flags");
+  // sql-ident-ok: portedSql builds literal text from the PORTED_ALTS code list; limit is a code constant from each caller
   const ported = await env.DB.prepare(
     `SELECT * FROM harness_flags
       WHERE (?1 IS NULL OR scope=?1) AND substr(name, 1, length(?2))=?2 AND (?3=0 OR cleared_at IS NULL)
         AND ${portedSql("name")}
       ORDER BY name ASC, scope ASC LIMIT ${limit + 1}`
   ).bind(scope, prefix, onlyOn).all();
+  // sql-ident-ok: portedSql builds literal text from the PORTED_ALTS code list; limit is a code constant from each caller
   const legacy = scope !== null && scope !== "fleet" ? { results: [] } : await env.DB.prepare(
     `SELECT * FROM pause_flags p
       WHERE substr(name, 1, length(?1))=?1 AND (?2=0 OR active=1)
@@ -155,6 +157,7 @@ export async function activeFleetFlags(env, names) {
   const out = [];
   if (ported.length) {
     await ensureTable(env, "harness_flags");
+    // sql-ident-ok: marks() is ?N placeholder text
     const rows = await env.DB.prepare(
       `SELECT name, set_by AS actor, reason, set_at AS updated_at FROM harness_flags
         WHERE scope='fleet' AND cleared_at IS NULL AND name IN (${marks(ported, 1)})`
@@ -168,6 +171,7 @@ export async function activeFleetFlags(env, names) {
     ? ` AND NOT (name IN (${marks(ported, names.length + 1)})
         AND EXISTS (SELECT 1 FROM harness_flags h WHERE h.scope='fleet' AND h.name=pause_flags.name))`
     : "";
+  // sql-ident-ok: marks() is ?N placeholder text; twin is a literal clause with marks()
   const rows = await env.DB.prepare(
     `SELECT name, actor, reason, updated_at FROM pause_flags WHERE active=1 AND name IN (${marks(names, 1)})${twin}`
   ).bind(...names, ...ported).all();

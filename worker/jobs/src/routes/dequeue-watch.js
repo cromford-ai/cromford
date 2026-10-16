@@ -171,6 +171,7 @@ async function listRows(env, table, url, names, order) {
   if (f.error) return json(400, { error: f.error });
   return d1Guarded(table, async () => {
     await ensureTable(env, table);
+    // sql-ident-ok: table and order are literals from the two listRows calls; f.where joins literal filter names with ?N binds
     const r = await env.DB.prepare(`SELECT * FROM ${table} ${f.where} ORDER BY ${order} LIMIT ?${f.binds.length + 1}`)
       .bind(...f.binds, f.lim + 1).all();
     const rows = r.results || [];
@@ -211,6 +212,7 @@ export const routes = [
            ON CONFLICT(repo, pr, head, run_id) DO NOTHING`
         ).bind(repo, pr, head, run_id, project, e.dequeued_at ?? null, e.run_url ?? null, e.comment_id ?? null,
           e.batch_size ?? null, e.members ?? null, e.draft ?? null, t).run();
+        // sql-ident-ok: EVENT_WHERE is a module constant
         const row = await env.DB.prepare(`SELECT * FROM dequeue_events WHERE ${EVENT_WHERE}`)
           .bind(repo, pr, head, run_id).first();
         return json(200, { recorded: true, first: r.meta.changes === 1, row });
@@ -246,9 +248,11 @@ export const routes = [
       const set = fields.map((f, i) => `${f}=?${i + 5}`).join(", ");
       return d1Guarded("dequeue_events", async () => {
         await ensureTable(env, "dequeue_events");
+        // sql-ident-ok: set takes names from the EVENT_STATE constant with ?N binds; EVENT_WHERE is a constant
         const r = await env.DB.prepare(`UPDATE dequeue_events SET ${set}, updated_at=?${fields.length + 5} WHERE ${EVENT_WHERE}`)
           .bind(repo, pr, head, run_id, ...vals, t).run();
         if (r.meta.changes === 0) return json(404, { error: "no such event" });
+        // sql-ident-ok: EVENT_WHERE is a module constant
         const row = await env.DB.prepare(`SELECT * FROM dequeue_events WHERE ${EVENT_WHERE}`)
           .bind(repo, pr, head, run_id).first();
         return json(200, { row, fail_lines_truncated: truncated });
@@ -278,6 +282,7 @@ export const routes = [
            VALUES (?1, ?2, ?3, ?4, ?5, 'claimed', ?6, ?7, ?7)
            ON CONFLICT(repo, pr, head, class) DO NOTHING`
         ).bind(repo, pr, head, cls, action, project, t).run();
+        // sql-ident-ok: ACTION_WHERE is a module constant
         const row = await env.DB.prepare(`SELECT * FROM dequeue_actions WHERE ${ACTION_WHERE}`)
           .bind(repo, pr, head, cls).first();
         return json(200, { claimed: r.meta.changes === 1, row });
@@ -302,9 +307,11 @@ export const routes = [
       const set = fields.map((f, i) => `${f}=?${i + 5}`).join(", ");
       return d1Guarded("dequeue_actions", async () => {
         await ensureTable(env, "dequeue_actions");
+        // sql-ident-ok: set takes names from the ACTION_SET constant with ?N binds; ACTION_WHERE is a constant
         const r = await env.DB.prepare(`UPDATE dequeue_actions SET ${set}, updated_at=?${fields.length + 5} WHERE ${ACTION_WHERE}`)
           .bind(repo, pr, head, cls, ...fields.map((f) => v.vals[f]), t).run();
         if (r.meta.changes === 0) return json(404, { error: "no such action" });
+        // sql-ident-ok: ACTION_WHERE is a module constant
         const row = await env.DB.prepare(`SELECT * FROM dequeue_actions WHERE ${ACTION_WHERE}`)
           .bind(repo, pr, head, cls).first();
         return json(200, { row });

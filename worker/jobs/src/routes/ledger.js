@@ -38,7 +38,8 @@ export const routes = [
         }
         return json(200, { ledger: row });
       }
-      const lim = Math.min(Number(url.searchParams.get("limit")) || 200, 1000);
+      // A positive integer: `limit=-1` used to build `LIMIT -1`, which is no limit at all.
+      const lim = Math.min(Math.max(Math.floor(Number(url.searchParams.get("limit"))) || 200, 1), 1000);
       const before = str(url.searchParams.get("before"), 32);
       // BH-2450: updated_at has 1-second resolution, so `before` alone skips
       // every row sharing the page's last second. `before` + `before_key` (the
@@ -57,6 +58,7 @@ export const routes = [
       } else if (before) {
         binds.push(before); where.push(`updated_at<?${binds.length}`);
       }
+      // sql-ident-ok: where holds literal predicates with ?N binds; lim is a clamped integer
       const rows = await env.DB.prepare(
         `SELECT * FROM ledgers WHERE ${where.join(" AND ")} ORDER BY updated_at DESC, key DESC LIMIT ${lim}`
       ).bind(...binds).all();
@@ -122,6 +124,7 @@ export const routes = [
       // ?1..?7 are fixed; the terminal list binds from ?8 on (≤ 15 binds total).
       const term = terminal.map((_, i) => `?${8 + i}`);
       const notTerminal = term.length ? `ledgers.status NOT IN (${term.join(",")}) AND ` : "";
+      // sql-ident-ok: notTerminal is a literal with ?N placeholder text from term; every value is a ?N bind
       const r = await env.DB.prepare(
         `INSERT INTO ledgers (kind, key, status, actor, detail, created_at, updated_at)
          VALUES (?1,?2,?3,?4,?5,?6,?6)

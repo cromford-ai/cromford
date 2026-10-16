@@ -83,6 +83,7 @@ const BAD_PROBE = "probe must match [a-z][a-z0-9-]{0,31}";
 
 // 404 when the id is unknown, else 409 with the status the row is actually in.
 async function lostCas(env, id) {
+  // sql-ident-ok: TABLE is a module constant
   const status = await env.DB.prepare(`SELECT status FROM ${TABLE} WHERE id=?1`).bind(id).first("status");
   if (status === null) return json(404, { error: `no hub_probe_requests row ${id}` });
   return json(409, { error: `row ${id} is ${status}, not claimed`, status });
@@ -103,11 +104,13 @@ export const routes = [
       const argsJson = canonical(b.args);
       if (argsJson.length > HP_ARGS_MAX) return json(400, { error: `args must be at most ${HP_ARGS_MAX} characters as JSON` });
       const hash = await sha256Hex(argsJson);
+      // sql-ident-ok: TABLE is a module constant
       const res = await env.DB.prepare(
         `INSERT INTO ${TABLE} (project, ticket_key, probe, args_json, args_hash, requested_by, requested_at) `
         + "VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7) "
         + "ON CONFLICT(project, ticket_key, probe, args_hash) DO NOTHING"
       ).bind(project, ticket, probe, argsJson, hash, str(b.requested_by, 64), t).run();
+      // sql-ident-ok: TABLE is a module constant
       const row = await env.DB.prepare(
         `SELECT * FROM ${TABLE} WHERE project=?1 AND ticket_key=?2 AND probe=?3 AND args_hash=?4`
       ).bind(project, ticket, probe, hash).first();
@@ -126,6 +129,7 @@ export const routes = [
       if (!Number.isInteger(n) || n < 1 || n > HP_CLAIM_MAX) {
         return json(400, { error: `n must be an integer from 1 to ${HP_CLAIM_MAX}` });
       }
+      // sql-ident-ok: TABLE is a module constant
       const rows = (await env.DB.prepare(
         `UPDATE ${TABLE} SET status='claimed', claimed_by=?1, claimed_at=?2 `
         + `WHERE status='pending' AND id IN (SELECT id FROM ${TABLE} WHERE status='pending' ORDER BY requested_at, id LIMIT ?3) `
@@ -150,6 +154,7 @@ export const routes = [
       let res;
       if (outcome === "pending") {
         if (!note) return json(400, { error: "a pending result needs a note" });
+        // sql-ident-ok: TABLE is a module constant
         res = await env.DB.prepare(
           `UPDATE ${TABLE} SET status='pending', claimed_by=NULL, claimed_at=NULL, note=?1 WHERE id=?2 AND status='claimed'`
         ).bind(note, id).run();
@@ -157,6 +162,7 @@ export const routes = [
         const hs = b.http_status ?? null;
         if (hs !== null && !Number.isInteger(hs)) return json(400, { error: "http_status must be an integer or null" });
         const output = utf8Cut(b.output === undefined || b.output === null ? "" : String(b.output), HP_OUTPUT_MAX_BYTES);
+        // sql-ident-ok: TABLE is a module constant
         res = await env.DB.prepare(
           `UPDATE ${TABLE} SET status=?1, http_status=?2, output=?3, finished_at=?4, note=COALESCE(?5, note) `
           + "WHERE id=?6 AND status='claimed'"
@@ -173,10 +179,12 @@ export const routes = [
       const b = body && typeof body === "object" ? body : {};
       const id = idOf(b.id);
       if (!id) return json(400, { error: "id must be a positive integer" });
+      // sql-ident-ok: TABLE is a module constant
       const res = await env.DB.prepare(
         `UPDATE ${TABLE} SET commented_at=?1 WHERE id=?2 AND commented_at IS NULL`
       ).bind(t, id).run();
       if (res.meta.changes !== 1) {
+        // sql-ident-ok: TABLE is a module constant
         const seen = await env.DB.prepare(`SELECT id FROM ${TABLE} WHERE id=?1`).bind(id).first("id");
         if (seen === null) return json(404, { error: `no hub_probe_requests row ${id}` });
       }
@@ -192,6 +200,7 @@ export const routes = [
       if (!project) return json(400, { error: BAD_PROJECT });
       const ticket = ticketOf(q.get("ticket"));
       if (!ticket) return json(400, { error: "ticket must match [A-Za-z0-9._-]{1,64}" });
+      // sql-ident-ok: TABLE is a module constant
       const rows = (await env.DB.prepare(
         `SELECT * FROM ${TABLE} WHERE project=?1 AND ticket_key=?2 ORDER BY requested_at, id LIMIT ?3`
       ).bind(project, ticket, HP_LIST_MAX + 1).all()).results || [];

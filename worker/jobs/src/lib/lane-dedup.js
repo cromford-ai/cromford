@@ -88,6 +88,7 @@ export async function laneDedupResponse(env, url) {
   await ensureColumns(env, "cost_rows");
   const since = new Date(Date.now() - days * 86400 * 1000).toISOString().replace(/\.\d{3}Z$/, "Z");
   const window = "ts>=?1 AND COALESCE(row_source,'')<>'refused'";
+  // sql-ident-ok: window is a literal predicate
   const lanes = await env.DB.prepare(
     `SELECT NULLIF(lane_id,'') AS lane, COUNT(*) AS calls,
             COUNT(DISTINCT NULLIF(guard_fp,'')) AS distinct_fp,
@@ -99,6 +100,7 @@ export async function laneDedupResponse(env, url) {
        FROM cost_rows WHERE ${window}
       GROUP BY NULLIF(lane_id,'')`
   ).bind(since).all();
+  // sql-ident-ok: window is a literal predicate; FP_CAP is a code constant
   const fps = await env.DB.prepare(
     `SELECT NULLIF(lane_id,'') AS lane, guard_fp AS fp, COUNT(*) AS calls,
             MAX(NULLIF(ticket,'')) AS ticket, MAX(NULLIF(pr,'')) AS pr,

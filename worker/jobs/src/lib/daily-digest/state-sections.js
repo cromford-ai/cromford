@@ -25,6 +25,7 @@
 import { capList } from "./shape.js";
 import { nowIso } from "../http.js";
 import { readFleetFlag } from "../harness-flags.js";
+import { sqlIdent } from "../sql-ident.js";
 
 const SNAPSHOT_STALE_MS = 30 * 60 * 1000;
 
@@ -102,7 +103,8 @@ export async function readStateSections(db, win, opts) {
   const now = nowIso();
 
   const tripwires = sect(async () => {
-    const sql = (where, col) => db.prepare(
+    // sql-ident-ok: col passes sqlIdent; where is a literal predicate from the three calls below
+    const sql = (where, col) => sqlIdent(col) && db.prepare(
       `SELECT kind, key, ${col} AS at FROM ledgers WHERE ${where} AND ${col} >= ? AND ${col} < ?`);
     const got = [
       ...(await rowsOf(sql("kind='build-tripwire'", "created_at").bind(from, to))),
@@ -122,6 +124,7 @@ export async function readStateSections(db, win, opts) {
   const holds = sect(async () => {
     const held = await rowsOf(db.prepare(
       `SELECT key, updated_at FROM ledgers WHERE kind='ticket_hold' AND status='held'`));
+    // sql-ident-ok: PR_STATE_NO_GATE is a module constant subquery
     const prs = await rowsOf(db.prepare(
       `SELECT repo, number, since FROM ${PR_STATE_NO_GATE} WHERE state='BLOCKED_HUMAN'`));
     const waiting = await rowsOf(db.prepare(
@@ -143,6 +146,7 @@ export async function readStateSections(db, win, opts) {
   });
 
   const human_verdict_prs = sect(async () => {
+    // sql-ident-ok: PR_STATE_NO_GATE is a module constant subquery
     const got = await rowsOf(db.prepare(
       `SELECT repo, number, COALESCE(NULLIF(reason,''), state) AS reason, since FROM ${PR_STATE_NO_GATE}
         WHERE state IN ('BLOCKED_HUMAN','NEEDS_HUMAN_VERDICT') ORDER BY since, repo, number`));

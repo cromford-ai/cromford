@@ -74,6 +74,7 @@ export const routes = [
     "GET", "/api/alert-family-scripts",
     async ({ env, t }) => d1Guarded("alert_family_scripts", async () => {
       await ensureTable(env, "alert_family_scripts");
+      // sql-ident-ok: COLS is a module constant
       const r = await env.DB.prepare(`SELECT ${COLS} FROM alert_family_scripts ORDER BY priority ASC, id ASC`).all();
       return json(200, { rows: r.results || [], as_of: t });
     }),
@@ -87,12 +88,14 @@ export const routes = [
       if (v.error) return json(400, { error: v.error });
       return d1Guarded("alert_family_scripts", async () => {
         await ensureTable(env, "alert_family_scripts");
+        // sql-ident-ok: COLS is a module constant
         await env.DB.prepare(
           `INSERT INTO alert_family_scripts (${COLS}) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
            ON CONFLICT(id) DO UPDATE SET match_kind=excluded.match_kind, match=excluded.match, verify=excluded.verify,
              on_clear=excluded.on_clear, on_repro=excluded.on_repro, enabled=excluded.enabled, priority=excluded.priority,
              note=excluded.note, actor=excluded.actor, updated_at=excluded.updated_at`
         ).bind(...v.row, t).run();
+        // sql-ident-ok: COLS is a module constant
         const row = await env.DB.prepare(`SELECT ${COLS} FROM alert_family_scripts WHERE id=?1`).bind(id).first();
         return json(200, { row, as_of: t });
       });
