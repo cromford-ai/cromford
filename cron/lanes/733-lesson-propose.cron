@@ -1,0 +1,12 @@
+# @hub-lanes
+
+# ── LESSON-PROPOSE LANE (BH-5807, BH-5794.2) ───────────────────────────────
+# Daily at 06:41 it reads the repeat BLOCK causes of the last 14 days
+# (GET /api/lesson-propose/triggers), and for each category with 3 or more
+# BLOCK verdicts drafts ONE fix: a plan-contract lesson or a build-discipline
+# rule as a PR, or a check or a harness bug as an ai-build issue. The ledger
+# (kind lesson_proposal) is read and claimed BEFORE the one model call
+# (model_routes role lesson.propose); it never merges. flock -n dedupes.
+# Off: LESSON_PROPOSE_ENABLED=0, flags/lane-off-lesson-propose, or
+# bin/harness-ctl.sh off lesson-propose.
+41 6 * * * /root/harness/bin/hub-lease.sh check && /root/harness/bin/lesson-propose.sh >/dev/null 2>&1

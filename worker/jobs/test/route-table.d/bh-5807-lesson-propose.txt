@@ -1,0 +1,4 @@
+# LESSON PROPOSE (BH-5807, BH-5794.2): the daily lane reads the repeat-cause
+# triggers and adds a category row for a cluster of `other` findings.
+GET /api/lesson-propose/triggers
+POST /api/lesson-propose/categories

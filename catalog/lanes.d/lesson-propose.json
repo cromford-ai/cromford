@@ -1,0 +1,87 @@
+{
+  "id": "lesson-propose",
+  "name": "Lesson propose (one fix per repeat BLOCK cause)",
+  "scope": "hub",
+  "script": "bin/lesson-propose.sh",
+  "cadence": "41 6 * * *",
+  "boxes": [
+    "hub"
+  ],
+  "switch": {
+    "kind": "flag",
+    "name": "lane-off-lesson-propose",
+    "aliases": []
+  },
+  "wired": true,
+  "knobs": [
+    {
+      "env": "LESSON_PROPOSE_ENABLED",
+      "type": "int",
+      "default": 1,
+      "min": 0,
+      "max": 1,
+      "zero_means": "off",
+      "note": "BH-5807: 0 stops the lane before any request. Read by bin/lesson-propose.sh as ${LESSON_PROPOSE_ENABLED:-1}; any value other than 0 or 1 is one warn line in logs/lesson-propose.log and the default.",
+      "settable": true
+    },
+    {
+      "env": "LESSON_PROPOSE_MAX_PER_TICK",
+      "type": "int",
+      "default": 3,
+      "min": 1,
+      "max": 20,
+      "zero_means": null,
+      "note": "BH-5807: triggers one tick may work on (a model call, a stored-draft delivery or a harness bug), and new category rows one tick may add. Read by bin/lesson-propose.sh as ${LESSON_PROPOSE_MAX_PER_TICK:-3}; outside 1..20 is one warn line and the default.",
+      "settable": true
+    },
+    {
+      "env": "LESSON_PROPOSE_TIMEOUT_S",
+      "type": "int",
+      "default": 300,
+      "min": 60,
+      "max": 1200,
+      "unit": "s",
+      "zero_means": null,
+      "note": "BH-5807: seconds one drafting call may run (bin/agent-call.sh timeout). Read by bin/lesson-propose.sh as ${LESSON_PROPOSE_TIMEOUT_S:-300}; outside 60..1200 is one warn line and the default.",
+      "settable": true
+    },
+    {
+      "env": "LLM_LANE_ENABLED",
+      "type": "int",
+      "default": 1,
+      "min": 0,
+      "max": 1,
+      "zero_means": "off",
+      "read_in": "bin/lib/llm-gate.sh",
+      "note": "0 makes this lane call no model at all. bin/lib/llm-gate.sh refuses BEFORE the vendor call and writes a zero-cost row_source=refused row, so the stop is visible in the ledger rather than being a lane that went quiet.",
+      "settable": true
+    },
+    {
+      "env": "LLM_RUNNER_ALLOWED",
+      "type": "string",
+      "default": "",
+      "zero_means": null,
+      "read_in": "bin/lib/llm-gate.sh",
+      "note": "Comma/space list of the ONLY ladder rungs this lane may reach. Empty is every rung, i.e. today's ladder unchanged. A rung outside the list is refused before the call.",
+      "settable": true
+    },
+    {
+      "env": "LLM_USD_CAP_DAY",
+      "type": "float",
+      "default": 0,
+      "min": 0,
+      "max": 10000,
+      "unit": "usd",
+      "zero_means": "unlimited",
+      "read_in": "bin/lib/llm-gate.sh",
+      "note": "Dollars this lane may spend in the current UTC day, summed from D1 cost_rows through GET /api/metrics/llm-spend, never from the box's own logs/cost.csv.",
+      "settable": true
+    }
+  ],
+  "stats": {
+    "cost_stage": "lesson-propose",
+    "cost_project_filter": null,
+    "lanes_row": false,
+    "log": "logs/lesson-propose.log"
+  }
+}

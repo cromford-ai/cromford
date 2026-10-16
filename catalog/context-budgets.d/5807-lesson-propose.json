@@ -1,0 +1,51 @@
+[
+    {
+      "lane": "lesson-propose",
+      "stage": "lesson-propose",
+      "project": "fleet",
+      "runner": null,
+      "job": "Daily hub lane (bin/lesson-propose.sh, BH-5807): one no-tools call per repeat BLOCK cause that drafts ONE fix (a plan lesson, a builder rule or a check) from the category's findings and the evidence PRs' diffs.",
+      "target_tokens": 15000,
+      "ceiling_tokens": 40000,
+      "composition": [
+        {
+          "component": "instructions + answer contract",
+          "source": "inline heredoc in bin/lesson-propose.sh",
+          "cap": "static",
+          "purpose": "the earliest-stage rule and the one-line JSON answer"
+        },
+        {
+          "component": "category",
+          "source": "GET /api/lesson-propose/triggers (one block_categories row and its counts)",
+          "cap": "one row",
+          "purpose": "the cause the fix is for"
+        },
+        {
+          "component": "current lessons and rules",
+          "source": "prompts/plan-contract.md section 10 bullets and prompts/build-discipline.md D<n> titles, read from main",
+          "cap": "the bullets and the titles only, not the files",
+          "purpose": "so the draft does not repeat a rule that exists"
+        },
+        {
+          "component": "evidence",
+          "source": "the trigger's findings (block_findings rows)",
+          "cap": "at most 20 findings, each text cut to 600 characters by the worker",
+          "purpose": "THE SCOPED DELTA: what the BLOCKs said"
+        },
+        {
+          "component": "diffs",
+          "source": "GET repos/<repo>/pulls/<n>/files of up to 5 evidence PRs",
+          "cap": "5 PRs, each cut to 3,000 bytes by head -c 3000",
+          "purpose": "what the blocked code looked like"
+        }
+      ],
+      "bounds": [
+        "[lane:evidence_cap] 20 findings x 600 characters (worker MAX_EVIDENCE) plus 5 diffs x 3,000 bytes (VERIFIED: bin/lesson-propose.sh lp_prompt, worker/jobs/src/routes/lesson-propose.js triggerOf)",
+        "[lane:no_tools] the call runs with AGENT_CALL_NO_TOOLS=1, so the session cannot read files or the web and grow past its prompt (VERIFIED: bin/lesson-propose.sh call site)",
+        "[harness:prompt_guard] prompt_guard 720KB (VERIFIED \u2014 bounds the assembled prompt only, NOT session growth)"
+      ],
+      "measured_before": null,
+      "measured_before_note": "never measured: the stage is new in BH-5807.",
+      "_unmeasured": "no lesson-propose call has run yet: the stage is new in BH-5807. 40,000 is 12,000 characters of findings plus 15,000 bytes of diffs (about 7,000 tokens) plus the current lessons and rules, with room. No context_kill_tokens: BH-2538 arms no lane without measured rows."
+    }
+]

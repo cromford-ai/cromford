@@ -9,7 +9,7 @@
 #   M1  branch X adds zz-a under bh-1, branch Y adds zz-b under bh-2: both merge
 #       into main with no conflict, neither diff touches a file the other does,
 #       src/index.js is untouched, and the real scripts/routes-build.mjs
-#       --print lists zz-a then zz-b last in FAMILIES
+#       --print lists FAMILIES in fragment-name order, zz-a directly before zz-b
 # Fixture repos only, fixed commit dates. Run from anywhere:
 #   HARNESS_TEST_SANDBOX=1 bash tests/route-keyed-merge.bh-5788-test.sh
 set -uo pipefail
@@ -64,6 +64,13 @@ NK=$(grep -c . <<<"$KEYED")
 TAIL=$(tr -d ' "' <<<"$FAM" | tr ',' '\n' | tail -n "$NK")
 [ "$TAIL" = "$KEYED" ] && ok || bad "M1 the key-named families must close FAMILIES in file-name order ($(tr '\n' ' ' <<<"$KEYED")): [$FAM]"
 [ "$(grep -A1 -x zz-a <<<"$TAIL" | tail -1)" = zz-b ] && ok || bad "M1 zz-a must come just before zz-b: [$FAM]"
+# BH-5807: the whole order too, against the fragment names (the open families
+# are not in FAMILIES), so a family out of place anywhere is red, not only in the tail.
+OPEN=$(cd "$J" && node --input-type=module -e 'import { OPEN_FAMILIES } from "./src/lib/route-families.js"; console.log([...OPEN_FAMILIES].join("\n"))')
+WANT=$(cd "$J/test/route-table.d" && LC_ALL=C ls -1 -- *.txt | LC_ALL=C sort \
+  | sed -E 's/^([0-9]{3}-|[a-z]+-[0-9]+([.-][0-9]+)?-)//; s/\.txt$//' | grep -vxF -f <(printf '%s\n' "$OPEN") \
+  | sed 's/.*/"&"/' | paste -sd, - | sed 's/,/, /g')
+[ -n "$WANT" ] && [ "$FAM" = "$WANT" ] && ok || bad "M1 FAMILIES must follow fragment-name order: want [$WANT] got [$FAM]"
 grep -qx 'import { routes as f_bh_1_zz_a } from "./routes/zz-a.js";' "$T/gen.js" && ok \
   || bad "M1 the render must import zz-a as f_bh_1_zz_a"
 

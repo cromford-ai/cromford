@@ -146,6 +146,9 @@ const SEEDED_AS_COPY = {
   // TEST-CHANGE (BH-5806): lesson.classify, the BLOCK classifier's cheap route,
   // copies review.trivial's rung 0 the same way.
   'lesson.classify': 'review.trivial',
+  // TEST-CHANGE (BH-5807): lesson.propose, the lesson-propose drafting route,
+  // copies rule.miner's claude rung 0 the same way lookback.cluster does.
+  'lesson.propose': 'rule.miner',
 };
 // TEST-CHANGE (BH-4065): archie-research.xsearch copies grok.default's GROK
 // rung 0 (Archie's direct xAI X search runs on the grok runner), so it is

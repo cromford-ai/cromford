@@ -1,0 +1,20 @@
+[
+    {
+        "id": "lesson-propose",
+        "script": "bin/lesson-propose.sh",
+        "marker": "AGENT_CALL_LANE=lesson-propose AGENT_CALL_ROLE=lesson.propose",
+        "kind": "agent-call",
+        "lane": "lesson-propose",
+        "stage": "lesson-propose",
+        "project": "fleet",
+        "runners": [
+            "ladder"
+        ],
+        "through_agent_call": true,
+        "priced": "yes",
+        "gated": "agent-call",
+        "dedup": "ledgers kind=lesson_proposal key=<category>: read before the call (open, merged inside lesson_propose.cooldown_days, empty or closed on the same evidence, failed at lesson_propose.max_attempts all skip; the same evidence is the same fingerprint or no verdict id outside the row's seen list), the open issues and PRs searched for the lesson marker, then job_ledger_claim drafting BEFORE the call; AGENT_CALL_FP is the sorted-verdict-id fingerprint (BH-5807)",
+        "deterministic_candidate": null,
+        "note": "BH-5807: hub cron, daily at 06:41; at most LESSON_PROPOSE_MAX_PER_TICK calls a tick, one per repeat BLOCK cause, model from the lesson.propose route, no tools. An infra category gets a harness bug built with no call."
+    }
+]

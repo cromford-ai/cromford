@@ -26,3 +26,4 @@ bin/flaky-quarantine.sh	POSTs a NEW ref for its own quarantine branch; it never 
 bin/lib/gh-pr-merge.sh	DELETEs the head ref of a PR it has just merged; it writes no content to a branch.
 bin/lib/gh-shim/pr-write.sh	The `gh pr merge --delete-branch` shim: DELETEs the head ref after the merge; it writes no content to a branch.
 bin/lib/mrb-act.sh	Pushes a main-red-revert/pr-<N>-<sha12> branch it cut itself for a revert PR.
+bin/lesson-propose.sh	POSTs a NEW ref for its own `harness/lesson-<category>-<fp8>` branch, which no ticket owns, and writes its one file over the contents API. A 422 (the branch exists) only reads the ref back; it never moves it.
