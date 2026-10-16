@@ -21,8 +21,12 @@
 #      `sent` is a quiet exit. Otherwise the state/daily-digest/sent-<D> stamp,
 #      the row's mirror, means it was sent and the ledger missed it: no send,
 #      the summary ends ` dup`, and on a reachable ledger the `sent` row is
-#      written again. 3 failed sends (attempts-<D>, per box) end the day quietly;
-#   7. GET the route for D. Non-2xx, not a JSON object, or another .day: one
+#      written again. 3 failed sends (attempts-<D>, per box) end the day quietly.
+#      DAILY_DIGEST_READ_MAX reads of the route (reads-<D>, per box, BH-6727)
+#      end the day with one warn `daily-digest-reads:<D>` and no summary line;
+#   7. reads-<D> +1, then GET the route for D (so a read-failed, render-failed,
+#      claim-failed or claimed-elsewhere tick counts against the cap).
+#      Non-2xx, not a JSON object, or another .day: one
 #      warn `daily-digest-read:<D>` a day, summary ` read-failed`, exit;
 #   7b. GET /api/metrics/outcome-gap (BH-4017) and merge it as .outcome_gap; a
 #      404 leaves it out with one note, any other failure is {ok:false}, never
@@ -168,6 +172,15 @@ fi
 att=$(cat "$SD/attempts-$D" 2>/dev/null); [[ $att =~ ^[0-9]+$ ]] || att=0
 [ "$att" -ge 3 ] && exit 0
 # <<< dedupe
+# read-cap (BH-6727): every tick that gets past here reads the route. A day
+# that never sends stops after READ_MAX reads (reads-<D>, per box), not at 23:45Z.
+READ_MAX=$(knob_int DAILY_DIGEST_READ_MAX "${DAILY_DIGEST_READ_MAX:-8}" 8 1 96)
+rd=$(cat "$SD/reads-$D" 2>/dev/null); [[ $rd =~ ^[0-9]+$ ]] || rd=0
+rd=$((10#$rd))
+if [ "$rd" -ge "$READ_MAX" ]; then
+  alert_once reads "daily-digest: read the digest for $D $rd times with no send (DAILY_DIGEST_READ_MAX=$READ_MAX). No more reads today; see logs/daily-digest.log."
+  exit 0
+fi
 
 MAX_ITEMS=$(knob_int DAILY_DIGEST_MAX_ITEMS "${DAILY_DIGEST_MAX_ITEMS:-5}" 5 1 20)
 TEXT_MAX=$(knob_int DAILY_DIGEST_TEXT_MAX_CHARS "${DAILY_DIGEST_TEXT_MAX_CHARS:-3500}" 3500 500 3800)
@@ -200,6 +213,8 @@ fi
 TMP=$(mktemp -d "${TMPDIR:-/tmp}/daily-digest.XXXXXX") || exit 1
 trap 'rm -rf "$TMP"' EXIT
 
+{ printf '%s\n' "$((rd + 1))" > "$SD/reads-$D"; } 2>/dev/null \
+  || note "warn: could not write state/daily-digest/reads-$D; the read goes ahead"
 body=$(_jobs_req GET "/api/metrics/daily-digest?day=$D&loop_min=$LOOP_MIN&trip=$TRIP&human=$HUMAN_ENC&limit=20"); rrc=$?
 if [ "$rrc" != 0 ] || ! jq -e --arg d "$D" 'type == "object" and .day == $d' <<<"$body" >/dev/null 2>&1; then
   alert_once read "daily-digest: could not read the digest for $D (GET /api/metrics/daily-digest rc=$rrc http=${JOBS_HTTP:-none}). Nothing sent; the lane retries every 15 minutes."

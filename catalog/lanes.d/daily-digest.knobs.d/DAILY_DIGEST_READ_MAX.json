@@ -1,0 +1,11 @@
+{
+  "env": "DAILY_DIGEST_READ_MAX",
+  "read_in": "bin/daily-digest.sh",
+  "type": "int",
+  "default": 8,
+  "min": 1,
+  "max": 96,
+  "zero_means": null,
+  "note": "BH-6727: reads of GET /api/metrics/daily-digest a day may take with no send (state/daily-digest/reads-<D>, per box). At the cap the lane sends no request for the rest of the day and writes one warn daily-digest-reads:<D>. 8 is 2 hours of 15-minute ticks. Read by bin/daily-digest.sh as ${DAILY_DIGEST_READ_MAX:-8}; outside 1..96 is one warn line and the default.",
+  "settable": true
+}
