@@ -5,13 +5,17 @@
 # (after), and how many findings no group holds (lost). Read-only: no GitHub
 # call, no write.
 #
-# usage: group-findings-replay.sh [--days N] [--builds DIR]
+# usage: group-findings-replay.sh [--days N] [--builds DIR] [--console DIR]
 #
 #   --days N      runs whose qa-prod-shots/**/observed.json changed in the last
 #                 N days (default 7)
 #   --builds DIR  the build dirs to read (default $HARNESS/builds)
+#   --console DIR the console post-merge QA runs to read, <sha40>/observed.json
+#                 as bin/console-postmerge-qa.sh writes them, on board
+#                 cromford (default $HARNESS/state/console-postmerge-qa)
 #
-# One line per board, then a total:
+# One console line, one line per board, then a total:
+#   console: runs=<n> dir=<DIR>            (" (absent)" when DIR does not exist)
 #   board=<b> findings=<F> before=<F> after=<G> cut=<pct>% lost=<L>
 #   total: builds=<n> skipped=<s> findings=<F> before=<F> after=<G> cut=<pct>% lost=<L>
 # `after` counts each screen or flow once across the window: a later run on
@@ -22,17 +26,19 @@
 set -uo pipefail
 H="${HARNESS:-/root/harness}"
 SELF="$(cd "$(dirname "$0")" && pwd)"
-DAYS=7; BUILDS="$H/builds"
+DAYS=7; BUILDS="$H/builds"; CONSOLE="$H/state/console-postmerge-qa"
 usage() { sed -n 's/^# usage: /usage: /p' "$0" | head -1; }
 while [ $# -gt 0 ]; do
   case "$1" in
     --days)   DAYS="${2:-}"; shift 2 || { usage >&2; exit 2; } ;;
     --builds) BUILDS="${2:-}"; shift 2 || { usage >&2; exit 2; } ;;
+    --console) CONSOLE="${2:-}"; shift 2 || { usage >&2; exit 2; } ;;
     -h|--help) usage; exit 0 ;;
     *) usage >&2; exit 2 ;;
   esac
 done
 case "$DAYS" in ''|*[!0-9]*) echo "group-findings-replay: --days wants a whole number" >&2; usage >&2; exit 2 ;; esac
+[ -n "$CONSOLE" ] || { echo "group-findings-replay: --console wants a dir" >&2; usage >&2; exit 2; }
 [ -d "$BUILDS" ] || { echo "group-findings-replay: no build dir $BUILDS" >&2; exit 2; }
 # shellcheck source=bin/lib/group-findings.sh
 . "$SELF/lib/group-findings.sh" || { echo "group-findings-replay: cannot load bin/lib/group-findings.sh" >&2; exit 2; }
@@ -57,6 +63,23 @@ for b in "$BUILDS"/*/; do
   done < <(find "$b/qa-prod-shots" -name observed.json -type f -print0 2>/dev/null)
   [ "$used" = 1 ] && NB=$((NB+1))
 done
+
+# The console post-merge QA lane (BH-6902 C1) files through gf_run on board
+# cromford; one run dir per merge sha. dist-<sha> build dirs are skipped.
+NC=0; CNOTE=""
+if [ -d "$CONSOLE" ]; then
+  for c in "$CONSOLE"/*/; do
+    c="${c%/}"; [[ "$(basename "$c")" =~ ^[0-9a-f]{40}$ ]] || continue
+    f="$c/observed.json"
+    m=$(stat -c %Y "$f" 2>/dev/null) || continue
+    [ "$m" -ge "$CUTOFF" ] || continue
+    if gf_from_observed cromford "$f" >> "$TMP/all.jsonl" 2>/dev/null; then NC=$((NC+1))
+    else SKIPPED=$((SKIPPED+1)); echo "skipped $f (not a readable observed.json)"; fi
+  done
+else
+  CNOTE=" (absent)"
+fi
+echo "console: runs=$NC dir=$CONSOLE$CNOTE"
 
 # The same key normaliser gf_run uses (D17). A finding with no key is in no
 # group, which is what `lost` counts.

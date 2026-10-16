@@ -392,7 +392,7 @@ gf_from_observed project-3 "$T/broken.json" > /dev/null 2>"$T/conv.err"; CRC=$?
 [ "$CRC" != 0 ] && ok || bad "C1: an unreadable observed.json must not read as zero findings"
 
 # --- P1: the prompt sentence ----------------------------------------------------------------
-want="bin/lib/rb/plan.sh:1 bin/lib/rb/execute.sh:1 bin/lib/rb/review.sh:2 bin/run-preplan.sh:1 bin/review-prs.sh:1"
+want="bin/lib/rb/plan.sh:1 bin/lib/rb/execute.sh:1 bin/lib/rb/review.sh:3 bin/lib/rb/result.sh:1 bin/lib/rb/pr.sh:1 bin/run-preplan.sh:1 bin/review-prs.sh:1"
 for w in $want; do
   f="${w%%:*}"; n="${w##*:}"
   got=$(grep -c 'FOLLOW-UPS ARE GROUPED' "$DIR/$f")

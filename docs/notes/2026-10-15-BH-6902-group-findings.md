@@ -15,7 +15,9 @@ Doc: OPERATING
   QA `observed.json` files and prints issues before (one per finding) and after
   (one per screen or flow), and `lost`.
 - The rule is the fleet topic `rules/topics/12-qa-findings.md`. The PLAN, EXECUTE
-  and REVIEW prompts carry one sentence: `FOLLOW-UPS ARE GROUPED: ...`.
+  and REVIEW prompts carry one sentence: `FOLLOW-UPS ARE GROUPED: ...`. C2 adds
+  it to the delta review scope, the moved-head re-review (`HB_PROMPT`) and the
+  preview QA prompt (`QA_PROMPT_FOR`).
 
 ## Input format (one JSON object per line)
 
@@ -111,7 +113,7 @@ arguments.
 | bin/lib/archie-fm-improve/tickets.sh | Yes | One per cause fingerprint, comments on recurrence | None |
 | bin/post-proposal.sh | Yes | Proposals, not findings | None |
 | bin/preplan-candidates.sh | No (reads issues) | n/a | None |
-| PLAN / EXECUTE / REVIEW prompts | n/a | n/a | One sentence each (rb/plan.sh, rb/execute.sh, rb/review.sh x2, run-preplan.sh, review-prs.sh) |
+| PLAN / EXECUTE / REVIEW prompts | n/a | n/a | One sentence each, nine sites (rb/plan.sh, rb/execute.sh, rb/review.sh x3 with the delta review scope (C2), rb/result.sh HB_PROMPT (C2), rb/pr.sh QA_PROMPT_FOR (C2), run-preplan.sh, review-prs.sh) |
 
 ## Not in this slice
 
@@ -119,6 +121,11 @@ arguments.
   not findings. `bin/console-qa-run.mjs` now writes each screen of
   observed.json as judged (the gap 503s only in `gaps`). Tested by
   `tests/console-postmerge-qa-group.bh-6902-test.sh`.
-- C2 (a run, not code): turn the knob on for cromford, then on the hub run
-  `bin/group-findings-replay.sh --days 7` over the real build dirs and post the
-  numbers on #6902. This builder box has no post-merge QA build history.
+- C2 (code): the replay also reads the console post-merge QA runs in
+  `state/console-postmerge-qa/<sha40>/observed.json` (`--console DIR`, board
+  cromford) and prints `console: runs=<n> dir=<DIR>`. Tested by
+  `tests/group-findings-console-replay.bh-6902-test.sh`.
+- Still owed (a run, not code): turn the knob on for cromford, then on the
+  hub run `bin/group-findings-replay.sh --days 7` over the real build dirs and
+  console runs and post the numbers on #6902. This builder box has no post-merge
+  QA history.
