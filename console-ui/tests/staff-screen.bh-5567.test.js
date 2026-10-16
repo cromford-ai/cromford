@@ -213,7 +213,8 @@ test('V6: the Archie row has no kill button and links to lane-off-archie; staff 
   assert.equal((out.match(/>KILL…<\/button>/g) || []).length, 6, 'six staff rows are off');
   assert.equal((out.match(/>RESUME…<\/button>/g) || []).length, 1, 'clerk is on');
   assert.match(out, />STOP ALL STAFF…<\/button>/);
-  assert.match(out, /a set flag stops nothing today/);
+  // TEST-CHANGE (BH-6822): the ticket removes the stale "stops nothing today" text; the heartbeat now reads staff-kill-* flags.
+  assert.match(out, /reads these flags at the start of every tick/);
   const odd = { ...ROSTER, agents: [...ROSTER.agents, { ...ROSTER.agents[1], name: 'all' }] };
   const oddOut = rosterView({ roster: ok(odd) });
   assert.equal((oddOut.match(/>KILL…<\/button>/g) || []).length, 6, 'a roster row named all gets no button');

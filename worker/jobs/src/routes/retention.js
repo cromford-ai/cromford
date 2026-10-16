@@ -144,6 +144,13 @@ export const RULES = [
     ids: "SELECT id FROM staff_suppressions WHERE status = 'active' AND expires_at < ?1 ORDER BY expires_at LIMIT ?2",
     del: "DELETE FROM staff_suppressions WHERE id IN (SELECT value FROM json_each(?1))",
   },
+  // BH-6822: one row per staff heartbeat tick, the agent page's timeline. It is
+  // heartbeat history, not money (cost stays in cost_rows), so 90 days is enough.
+  {
+    rule: "staff_ticks.age", table: "staff_ticks", key: "retention.staff_ticks.days", def: 90,
+    ids: "SELECT id FROM staff_ticks WHERE started_at < ?1 ORDER BY started_at LIMIT ?2",
+    del: "DELETE FROM staff_ticks WHERE id IN (SELECT value FROM json_each(?1))",
+  },
   // BH-6977: an edge's `at` moves on every write; a hold's `at` is its comment's time.
   {
     rule: "ticket_edges.age", table: "ticket_edges", key: "retention.ticket_edges.days", def: 365,

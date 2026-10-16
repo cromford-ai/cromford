@@ -1,0 +1,7 @@
+# STAFF ACTIVITY (BH-6822): the staff agent detail page. The tick writer
+# bin/staff.sh posts to, one agent's merged activity timeline, and one tick
+# with its cost rows, appended after staff-outcomes at the END of the table.
+# No earlier route matches these paths.
+POST /api/staff/ticks
+GET re:/^\/api\/staff\/agent\/([^/]+)\/activity$/
+GET /api/staff/tick

@@ -399,6 +399,14 @@ export const api = {
   staffRoster: () => get(coordPath('/api/staff/roster')),
   staffFindings: (agent) => get(coordPath(`/api/staff/findings?agent=${encodeURIComponent(agent)}`)),
   staffFinding: (id) => get(coordPath(`/api/staff/finding?id=${encodeURIComponent(id)}`)),
+  // BH-6822: the agent page's timeline (one page, `before` the cursor of the
+  // last row shown) and one tick with its cost rows.
+  staffActivity: (agent, { before, limit } = {}) => {
+    const q = new URLSearchParams(Object.entries({ before, limit })
+      .filter(([, v]) => v !== undefined && v !== null && v !== '')).toString();
+    return get(coordPath(`/api/staff/agent/${encodeURIComponent(agent)}/activity${q ? `?${q}` : ''}`));
+  },
+  staffTick: (id) => get(coordPath(`/api/staff/tick?id=${encodeURIComponent(id)}`)),
   // Hub recovery (BH-1909). The worker routes are BH-1942 contract stubs that
   // answer 501 until #1943/#1944 land. The coord proxy forwards the GETs; its
   // write allowlist does not include the two POSTs yet, so they answer 405 there

@@ -1,0 +1,24 @@
+{
+ "ticket": "BH-6822",
+ "note": "The two cost_rows reads of the staff agent page (src/routes/staff-activity.js). Both are key reads by the run_id of a staff tick (the timeline page and one tick), so they stay on the hot store. Read by test/archive-readers.bh-6779.test.js R1.",
+ "readers": [
+  {
+   "file": "src/routes/staff-activity.js",
+   "line_hint": 251,
+   "match": "FROM cost_rows WHERE run_id IN (SELECT value FROM json_each(?1)) GROUP BY run_id",
+   "table": "cost_rows",
+   "window": "key (run_id of each tick on one timeline page)",
+   "class": "poll",
+   "status": "hot-only"
+  },
+  {
+   "file": "src/routes/staff-activity.js",
+   "line_hint": 307,
+   "match": "SELECT ts, stage, model, rc, duration_s, cost_usd, session_id FROM cost_rows",
+   "table": "cost_rows",
+   "window": "key (run_id of one tick)",
+   "class": "poll",
+   "status": "hot-only"
+  }
+ ]
+}

@@ -114,7 +114,8 @@ test('S4 every id read and delete of the staff rules uses an index', async (t) =
   const { db } = o;
   const { RULES } = await import('../src/routes/retention.js');
   const staff = RULES.filter((r) => r.table.startsWith('staff_'));
-  assert.equal(staff.length, 6);
+  // TEST-CHANGE (BH-6822): staff_ticks.age is the seventh staff_* rule.
+  assert.equal(staff.length, 7);
   for (const r of staff) {
     for (const sql of [r.ids, ...(r.pre || []), r.del]) {
       const lines = db.prepare(`EXPLAIN QUERY PLAN ${sql}`).all(...(sql === r.ids ? [ago(30), 10] : ['[1]'])).map((x) => x.detail);

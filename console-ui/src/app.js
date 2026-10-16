@@ -44,7 +44,7 @@ import { LlmSiteScreen } from './screens/LlmSite.js';
 import { ConfigScreen } from './screens/Config.js';
 import { ConfigDetailScreen } from './screens/ConfigDetail.js';
 import { FlagsScreen } from './screens/Flags.js';
-import { StaffScreen, StaffAgentScreen, StaffFindingScreen } from './screens/Staff.js';
+import { StaffScreen, StaffAgentScreen, StaffFindingScreen, StaffTickScreen } from './screens/Staff.js';
 import { ControlsScreen } from './screens/Controls.js';
 import { MergeQueueScreen } from './screens/MergeQueue.js';
 import { LeadReviewsScreen } from './screens/LeadReviews.js';
@@ -92,11 +92,13 @@ export const ROUTES = [
   ['/lane-runs/machine/:machine', LaneRunListScreen],
   ['/lane-runs/run/:id', LaneRunScreen],
   ['/hub', HubScreen],
-  // The staff roster (BH-5567). /staff/finding/:id has three segments and
-  // /staff/:agent two, so matchRoute never confuses them.
+  // The staff roster (BH-5567). /staff/finding/:id and /staff/tick/:id
+  // (BH-6822) have three segments and /staff/:agent two, so matchRoute never
+  // confuses them.
   ['/staff', StaffScreen],
   ['/staff/:agent', StaffAgentScreen],
   ['/staff/finding/:id', StaffFindingScreen],
+  ['/staff/tick/:id', StaffTickScreen],
   ['/ci', CiHealthScreen],
   ['/utilization', UtilizationScreen],
   ['/settings', SettingsScreen],

@@ -11,10 +11,12 @@
 # TICK, in this order:
 #   1. <agent> must match ^[a-z][a-z0-9-]{1,39}$ (else rc 2). The tick runs
 #      under timeout 600 (D21).
-#   2. KILL, before any read: flags/staff-off-all, then flags/staff-off-<agent>
-#      (flag_active: the pause_flags row decides, the file when there is no
-#      row). Set = one `killed by <flag>` line in logs/staff.log, exit 0. No
-#      roster read, collector, claim, model call or gh call comes before this.
+#   2. KILL, before any read: staff-off-all, staff-kill-all, then
+#      staff-off-<agent>, staff-kill-<agent> (flag_active: the pause_flags row
+#      decides, the file when there is no row). The console's /staff kill
+#      switch writes the staff-kill-* rows. Set = one `killed by <flag>` line
+#      in logs/staff.log, exit 0. No roster read, collector, claim, model call
+#      or gh call comes before this.
 #   3. lane_gate_or_exit / lane_env_apply staff; STAFF_ENABLED=0 exits; flock -n
 #      locks/staff-<agent>.lock (held = skip, never wait).
 #   4. GET /api/staff/agent?name=<agent>. Unreadable or not active: exit 0.
@@ -63,8 +65,16 @@
 #  12. The outcome goes to state/staff/<agent>/acted/<fp>.json first, then to
 #      POST /api/staff/findings/record.
 #  13. One summary line in logs/staff.log per tick that had work.
+#  14. RECORD: every tick that got the lock posts one row at exit (EXIT trap)
+#      to POST /api/staff/ticks: its phase (roster, soul, collect, claim,
+#      model, act, done: where it stopped), the collector's rc and seconds,
+#      agent-call's rc and the counts. agent-call runs with
+#      COST_RUN_ID=staff-tick:<tick_key>, so its cost row carries that run_id.
+#      A failed post is one line in logs/staff-ticks.log, never staff.log,
+#      and never changes the exit code. A killed tick records nothing.
 #
-# OFF: STAFF_ENABLED=0, flags/staff-off-all, flags/staff-off-<agent>.
+# OFF: STAFF_ENABLED=0, staff-off-all, staff-kill-all, staff-off-<agent>,
+# staff-kill-<agent>.
 # Registry: catalog/lanes.d/staff.json. Cron: cron/lanes/729-staff.cron.
 # Note: docs/notes/2026-10-10-BH-5561-staff-heartbeat.md.
 set -uo pipefail
@@ -111,6 +121,7 @@ log() { printf '%s agent=%s %s\n' "$(nowiso)" "${AGENT:-all}" "$*" >> "$LOG"; }
 
 # ═════ KILL: the first thing either mode does ════════════════════════════════
 if flag_active staff-off-all; then log "killed by staff-off-all"; exit 0; fi
+if flag_active staff-kill-all; then log "killed by staff-kill-all"; exit 0; fi
 
 if [ "$MODE" = tick-all ]; then
   roster=$(_jobs_req GET /api/staff/agents) || { log "roster unreadable (GET /api/staff/agents); nothing ran"; exit 0; }
@@ -124,6 +135,7 @@ if [ "$MODE" = tick-all ]; then
 fi
 
 if flag_active "staff-off-$AGENT"; then log "killed by staff-off-$AGENT"; exit 0; fi
+if flag_active "staff-kill-$AGENT"; then log "killed by staff-kill-$AGENT"; exit 0; fi
 
 # ═════ gate, knobs, lock ═════════════════════════════════════════════════════
 command -v lane_gate_or_exit >/dev/null 2>&1 && lane_gate_or_exit staff
@@ -158,7 +170,28 @@ flock -n 9 || exit 0
 STATE="$H/state/staff/$AGENT"
 mkdir -p "$STATE/acted" "$STATE/attempts" "$STATE/held" || { log "cannot create $STATE; nothing claimed"; exit 0; }
 TMPD=$(mktemp -d "${TMPDIR:-/tmp}/staff.XXXXXX") || { log "mktemp failed; nothing claimed"; exit 0; }
-trap 'rm -rf "$TMPD"' EXIT
+TICK_START=$(nowiso)
+TICK_KEY="$AGENT-$(date -u +%Y%m%dt%H%M%Sz)-$$"
+PHASE=roster
+# tick_record: the tick's one row (step 14). Every counter is ${X:-0}, so an
+# exit before the counters exist still posts a valid body.
+tick_record() {
+  local run=null rrc=0
+  [ "${CALLS:-0}" -gt 0 ] && run="\"staff-tick:$TICK_KEY\""
+  jq -n --arg k "$TICK_KEY" --arg a "$AGENT" --arg s "$TICK_START" --arg e "$(nowiso)" --arg p "$PHASE" \
+    --argjson crc "${COLLECT_RC:-null}" --argjson cs "${COLLECT_S:-null}" --argjson mrc "${MODEL_RC:-null}" \
+    --argjson col "${COLLECTED:-0}" --argjson nw "${NEWN:-0}" --argjson df "${DEFERRED:-0}" --argjson mc "${CALLS:-0}" \
+    --argjson dg "${DIGESTED:-0}" --argjson fi "${FILED:-0}" --argjson rf "${REFUSED:-0}" --argjson un "${UNSUPPORTED:-0}" \
+    --argjson fa "${FAILED:-0}" --argjson he "${HELD:-0}" --argjson run "$run" '
+    {tick_key: $k, agent: $a, started_at: $s, ended_at: $e, phase: $p, collector_rc: $crc, collector_s: $cs,
+     model_rc: $mrc, collected: $col, new_items: $nw, deferred: $df, model_calls: $mc, digested: $dg, filed: $fi,
+     refused: $rf, unsupported: $un, failed: $fa, held: $he, cost_run_id: $run}' > "$TMPD/tick.json" 2>/dev/null || rrc=$?
+  [ "$rrc" = 0 ] && { _jobs_req_file POST /api/staff/ticks "$TMPD/tick.json" >/dev/null 2>&1 || rrc=$?; }
+  [ "$rrc" = 0 ] || printf '%s agent=%s tick %s record failed rc=%s\n' "$(nowiso)" "$AGENT" "$TICK_KEY" "$rrc" \
+    >> "$H/logs/staff-ticks.log" 2>/dev/null
+  return 0
+}
+trap 'tick_record; rm -rf "$TMPD"' EXIT
 
 # ═════ roster row and soul ═══════════════════════════════════════════════════
 row=$(_jobs_req GET "/api/staff/agent?name=$AGENT"); rc=$?
@@ -173,6 +206,7 @@ CAP=$(jq -r '.agent.cap // ""' <<<"$row" 2>/dev/null)
 SOUL=$(jq -r '.agent.soul // ""' <<<"$row" 2>/dev/null)
 [ "$STATUS" = active ] || exit 0
 
+PHASE=soul
 command -v node >/dev/null 2>&1 || { log "node is not installed; the soul cannot be read; nothing ran"; exit 0; }
 soul_fail() {
   log "soul $SOUL failed the agent-core parser: $1; nothing ran"
@@ -189,10 +223,13 @@ SJ=$(node "$SELF/staff-core.mjs" soul "$H/$SOUL" 2>/dev/null) || soul_fail "staf
 NEVER=$(jq -c '.never' <<<"$SJ")
 
 # ═════ collect ═══════════════════════════════════════════════════════════════
+PHASE=collect
 COL="$H/bin/staff/$AGENT-collect.sh"
 [ -x "$COL" ] || exit 0
 crc=0
+COLLECT_T0=$(date +%s)
 timeout "$COLLECT_T" "$COL" > "$TMPD/raw" 2>/dev/null || crc=$?
+COLLECT_RC=$crc; COLLECT_S=$(( $(date +%s) - COLLECT_T0 ))
 if [ "$crc" != 0 ]; then log "collector rc=$crc; nothing claimed"; exit 0; fi
 # One classified line per input line: ok, staff (a staff:* label) or bad.
 grep -v '^[[:space:]]*$' "$TMPD/raw" | jq -cR '
@@ -210,6 +247,7 @@ DEFERRED=0
 [ "$STAFFN" -gt 0 ] && log "dropped $STAFFN staff-filed item(s) before the claim"
 
 # ═════ claim ═════════════════════════════════════════════════════════════════
+PHASE=claim
 COLLECTED=0; NEWN=0; PENDN=0; REPLAYED=0; CALLS=0
 DIGESTED=0; FILED=0; REFUSED=0; UNSUPPORTED=0; FAILED=0; HELD=0
 # A tick that claimed nothing of its own writes no line.
@@ -343,9 +381,11 @@ while IFS= read -r it; do
 done < "$TMPD/new"
 
 TODO=$(grep -c . "$TMPD/todo")
-[ "$TODO" -gt 0 ] || { summary; exit 0; }
+# Nothing left for the model is a normal end.
+[ "$TODO" -gt 0 ] || { PHASE=done; summary; exit 0; }
 
 # ═════ one model turn ════════════════════════════════════════════════════════
+PHASE=model
 # One literal stage for every agent (stage-route-seed, lane-stage-ratchet): the
 # agent rides as STAFF_AGENT and in AGENT_CALL_FP, never in the stage name.
 STAGE=staff-tick
@@ -365,9 +405,9 @@ pf="$TMPD/prompt.md"; raw="$TMPD/answer"
 callfp=$(jq -r .fingerprint "$TMPD/todo" | sort | sha256sum | cut -c1-64)
 # agent-call's _budget_for reads AGENT_CALL_BUDGET_USD_<STAGE>: STAFF_TICK.
 env AGENT_CALL_LANE=staff STAFF_AGENT="$AGENT" AGENT_CALL_FP="staff:$AGENT:$callfp" AGENT_CALL_BUDGET_USD_STAFF_TICK="$USD" \
-  "$H/bin/agent-call.sh" staff-tick fleet "$model" 300 "$raw" "@$pf" >/dev/null 2>&1
+  COST_RUN_ID="staff-tick:$TICK_KEY" "$H/bin/agent-call.sh" staff-tick fleet "$model" 300 "$raw" "@$pf" >/dev/null 2>&1
 rc=$?
-CALLS=1
+CALLS=1; MODEL_RC=$rc
 if [ "$rc" != 0 ]; then
   log "agent-call rc=$rc; $TODO item(s) stay claimed and retry up to $MAX_ATT attempts"
   summary; exit 0
@@ -398,6 +438,7 @@ jq -sc --arg l "$LEVEL" --arg c "$CAP" --argjson n "$NEVER" \
   || { log "staff-core.mjs decide failed; $TODO item(s) stay claimed"; summary; exit 0; }
 
 # ═════ act ═══════════════════════════════════════════════════════════════════
+PHASE=act
 while IFS= read -r r; do
   fp=$(jq -r .fingerprint <<<"$r")
   v=$(jq -c --arg f "$fp" '[.items[] | select(.fingerprint == $f)][0] // {}' "$TMPD/verdicts")
@@ -422,5 +463,6 @@ while IFS= read -r r; do
     finish "$fp" unsupported "$class" "$ftitle"; UNSUPPORTED=$((UNSUPPORTED+1))
   fi
 done < "$TMPD/rows"
+PHASE=done
 summary
 exit 0

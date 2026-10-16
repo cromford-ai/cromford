@@ -50,6 +50,21 @@ const labelsOf = (raw) => {
   return { source_labels: raw, labels_invalid: true };
 };
 
+// The newest staff_ticks.started_at per agent (BH-6822): one index seek per
+// agent, run together, never a GROUP BY over the table. null when the read
+// fails (the table predates nothing here): the roster still answers, with
+// sources.last_tick "unread".
+async function lastTicks(env, names) {
+  if (!names.length) return new Map();
+  try {
+    const stmt = `SELECT started_at FROM staff_ticks WHERE agent=?1 ORDER BY started_at DESC, id DESC LIMIT 1`;
+    const rows = await Promise.all(names.map((n) => env.DB.prepare(stmt).bind(n).first()));
+    return new Map(names.map((n, i) => [n, (rows[i] && rows[i].started_at) || null]));
+  } catch {
+    return null;
+  }
+}
+
 export const routes = [
   // ── GET /api/staff/roster — Archie plus the staff, with open findings ──────
   [
@@ -91,7 +106,9 @@ export const routes = [
           autonomy: a.autonomy, cap: a.cap, status: a.status,
         })),
       ].map((a) => ({ ...a, open_findings: open.get(a.name) || 0, precision: null, spend_usd: null }));
-      return json(200, { agents: rows, sources: SOURCES, as_of: t });
+      const lastTick = await lastTicks(env, agents.filter((a) => a.name !== ARCHIE).map((a) => a.name));
+      for (const r of rows) r.last_tick_at = (lastTick && lastTick.get(r.name)) || null;
+      return json(200, { agents: rows, sources: lastTick ? SOURCES : { ...SOURCES, last_tick: "unread" }, as_of: t });
     },
   ],
 
