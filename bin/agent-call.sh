@@ -89,6 +89,8 @@
 # the path above, unchanged.
 # Optional env AGENT_SYSTEM_APPEND: extra system prompt (claude --append-system-prompt;
 # prepended to the prompt text for codex/gemini, which have no equivalent flag).
+# A stage listed on a prompts/iron-laws.d/*.md `stages:` line gets that file's
+# law text added after any caller value (BH-6557, bin/lib/stage-iron-laws.sh).
 set -uo pipefail
 # THE LANE NAME IS THIS CALL'S, NEVER A CHILD'S (BH-2303). A lane script exports
 # AGENT_CALL_LANE; kept exported, it would reach every vendor CLI this script
@@ -121,6 +123,21 @@ rm -f "$OUT.class" 2>/dev/null
 # grepping this file — and a guard whose only proof is a grep is the shape of
 # guard this repo keeps finding inert. Default is unchanged.
 HARNESS="${HARNESS:-/root/harness}"
+# THE STAGE IRON LAWS (BH-6557). The law sets in prompts/iron-laws.d/ ride the
+# system append of every stage their `stages:` line names, for every runner.
+# PROMPT, and so PROMPT_SHA, is not touched. The added text is THIS call's: it
+# is un-exported, so a nested agent-call.sh does not inherit it. A stage with
+# no law set keeps the caller's value and its export state unchanged.
+# shellcheck source=/dev/null
+if   [ -r "$(dirname "$0")/lib/stage-iron-laws.sh" ]; then . "$(dirname "$0")/lib/stage-iron-laws.sh"
+elif [ -r "$HARNESS/bin/lib/stage-iron-laws.sh" ];    then . "$HARNESS/bin/lib/stage-iron-laws.sh"; fi
+if command -v sil_text >/dev/null 2>&1; then
+  _SIL=$(sil_text "$STAGE" "$HARNESS/prompts/iron-laws.d")
+  if [ -n "$_SIL" ]; then
+    AGENT_SYSTEM_APPEND="${AGENT_SYSTEM_APPEND:+$AGENT_SYSTEM_APPEND$'\n\n'}$_SIL"
+    export -n AGENT_SYSTEM_APPEND
+  fi
+fi
 # Catalog path (2026-08-27, TK-109 lesson): hub/boxes read the repo checkout;
 # fly builders have NO checkout — fly-sync tars catalog/ into $HARNESS. Without
 # this sibling fallback every builder stage fell through to the hardcoded tier
