@@ -407,6 +407,14 @@ lv_post() {
   case "$verdict" in BLOCK) state=failure ;; *) state=success ;; esac
   case "$url" in https://*) ;; *) url="https://github.com/$repo/pull/$pr" ;; esac
   [ "$source" = risk-tier ] || desc="$verdict by $reviewer (verdict #$(printf '%s' "$resp" | jq -r '.verdict.id // "?"'))"
+  # BH-7118: a replayed word says which reviewed head it was carried from.
+  if [ "$source" != risk-tier ]; then
+    local tk; local -a tks=()
+    read -r -a tks <<<"$note"
+    for tk in ${tks[@]+"${tks[@]}"}; do
+      [[ "$tk" =~ ^lead-replay:([0-9a-f]{7,40})$ ]] && { desc="$desc, carried from ${BASH_REMATCH[1]}"; break; }
+    done
+  fi
   # BH-5352: the prefix follows the row the worker wrote, never this client's mode.
   desc=$(vs_lead_desc "$(printf '%s' "$resp" | jq -c '.verdict' 2>/dev/null)" "$desc")
   if vs_publish "$repo" "$sha" "$state" "$desc" "$url"; then

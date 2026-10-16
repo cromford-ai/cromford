@@ -64,7 +64,8 @@
 #                   repo's protected list could not be read.
 # ld_classify <git-dir> <main-ref> <G> <H> <slug> [<lead word on G>]
 #                   prints ONE line, always rc 0:
-#                     replay <how>                      (how: patch_same's answer)
+#                     replay <how>                      (how: patch_same's answer, or
+#                                                       restamp from restamp_same, BH-7118)
 #                     delta <lines> <max> <files>[ protected:<p1>[,<p2>..]]
 #                     full <reason>    reason: knob-unresolved knob-off no-commit
 #                                      diff-unavailable protected:<path>
@@ -179,6 +180,12 @@ ld_classify() {
   ns=$(git -C "$g" -c core.quotepath=off diff --no-renames --numstat "$tree" "$hs" 2>/dev/null) \
     || { echo "full diff-unavailable"; return 0; }
   own=$(printf '%s\n' "$ns" | awk -F'\t' 'NF >= 3 {print $3}')
+  # BH-7118: a schema.d restamp (renames and reference rewrites only, alone or
+  # with clean main merges) is a replay, though its renamed fragment is protected.
+  command -v restamp_same >/dev/null 2>&1 || { [ -r "$_LD_LIB/schema-restamp.sh" ] && . "$_LD_LIB/schema-restamp.sh"; }
+  if command -v restamp_same >/dev/null 2>&1 && how=$(restamp_same "$g" "$main" "$gs" "$hs"); then
+    echo "replay $how"; return 0
+  fi
   # Every protected path of the own delta, in git's order; ld_protected names one at a time.
   while IFS= read -r p; do
     [ -n "$p" ] || continue
