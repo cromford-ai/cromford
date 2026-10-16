@@ -15,7 +15,7 @@
 #                  after its key merged is a rebuild of a reopened ticket, not
 #                  a leftover. An ORPHAN keyed by branch/title is left to the
 #                  sweep's own close-duplicate arm, which does that exact
-#                  close. The only rule that closes a PARKED PR, and the only
+#                  close. Never a PR po_dup_guard keeps (BH-6929). The only rule that closes a PARKED PR, and the only
 #                  one tried when the conductor's rows are unread
 #                  (PO_MC_OK != 1) or the PR is UNREAD.
 #     2 ticket     ph_ticket_status says done or rejected. Unreadable or
@@ -30,6 +30,8 @@
 #                  another open PR is stacked on (PO_STACKED: their base is
 #                  this PR's head branch), held as `#n:stacked` (BH-6814):
 #                  the close would strand them on a branch that never merges.
+#                  Never a PR po_dup_guard keeps (BH-6929): a slice, a stack,
+#                  an armed, approved or reopened PR.
 #   Rules 1 and 2 close only through po_done_close_guard (shipped.sh): a PR
 #   that is held, armed, recently active or not yet on main stays open.
 #   Each close is one comment then one close over REST, counted against
@@ -146,6 +148,20 @@ _ph_ts_board() { # <root> <project> <KEY> <prefix>
   printf '%s\n' "$st"
 }
 
+# _po_ss_dg — po_dup_guard (bin/lib/pr-owner/dup-guard.sh), loaded on first
+# use. rc 0 = keep the PR; a guard that cannot load keeps it too (fail closed).
+_po_ss_dg() {
+  if ! command -v po_dup_guard >/dev/null 2>&1; then
+    # shellcheck source=bin/lib/pr-owner/dup-guard.sh
+    [ -r "${BASH_SOURCE[0]%/*}/dup-guard.sh" ] && . "${BASH_SOURCE[0]%/*}/dup-guard.sh"
+    if ! command -v po_dup_guard >/dev/null 2>&1; then
+      _po_ss_say "${PO_SLUG}#$PO_NUM: duplicate close refused — bin/lib/pr-owner/dup-guard.sh is not loadable"
+      HELD="${HELD:+$HELD,}#$PO_NUM:guard-unread"; return 0
+    fi
+  fi
+  po_dup_guard
+}
+
 # _po_ss_held — rc 0 the PR or its ticket is held (one line already said why),
 # rc 1 clear. bin/lib/ticket-ownership.sh's to_merge_hold, loaded in a subshell
 # like the conductor lib; a box without it, or a hold it cannot read, holds.
@@ -253,6 +269,7 @@ po_superseded() {
   # 1. The key already merged in another PR.
   if [ "$dup" != - ] && [ "$dup" != "$PO_NUM" ]; then
     [ "$cls" = ORPHAN ] && [ "${PO_KEY:--}" != - ] && return 2   # the close-duplicate arm's
+    _po_ss_dg && return 2
     _po_ss_close "merged-#$dup" "Closing this one: $ek already shipped in #$dup, so this branch is a leftover. If something here didn't make it in, reopen it and say so."
     return
   fi
@@ -293,6 +310,7 @@ po_superseded() {
     fi
     local by="newer-#$keep"
     [ "$keep" -lt "$PO_NUM" ] 2>/dev/null && by="ready-#$keep"
+    _po_ss_dg && return 2
     _po_ss_close "$by" "Closing this one: #$keep is the PR for $ek that we're landing, so this one is a duplicate. If it has something #$keep doesn't, reopen it and say so."
     return
   fi

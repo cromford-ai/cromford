@@ -151,6 +151,8 @@ command -v lane_env_apply    >/dev/null 2>&1 && lane_env_apply    pr-owner-sweep
 . "$(dirname "$0")/lib/pr-health.sh" || exit 1
 # shellcheck source=lib/pr-owner/superseded.sh
 . "$(dirname "$0")/lib/pr-owner/superseded.sh" || exit 1
+# shellcheck source=lib/pr-owner/dup-guard.sh
+. "$(dirname "$0")/lib/pr-owner/dup-guard.sh" || exit 1
 # shellcheck source=lib/pr-owner/enroll.sh
 . "$(dirname "$0")/lib/pr-owner/enroll.sh" || exit 1
 # shellcheck source=lib/pr-owner/stale.sh
@@ -174,6 +176,9 @@ GRACE_MIN=$(num_or "${PR_OWNER_GRACE_MIN:-}" 30)     # a PR that JUST moved belo
 MAX_ACTIONS=$(num_or "${PR_OWNER_MAX_ACTIONS:-}" 5)  # writes per repo per run
 PR_LIMIT=$(num_or "${PR_OWNER_PR_LIMIT:-}" 200)      # gh pr list --limit
 DRY=$(num_or "${PR_OWNER_DRY_RUN:-}" 0)
+# The checkouts po_dup_guard asks `git merge-base --is-ancestor` (BH-6929);
+# a repo with no checkout here is compared over REST.
+PR_OWNER_REPO_ROOT="${PR_OWNER_REPO_ROOT:-/root/repos}"
 # The done-ticket close guard (bin/lib/pr-owner/shipped.sh) reads these three.
 PO_DONE_RECENT_MIN=$(num_or "${PR_OWNER_DONE_RECENT_MIN:-}" 120)    # 0 = no recency check
 PO_SHIPPED_MAX_FILES=$(num_or "${PR_OWNER_SHIPPED_MAX_FILES:-}" 60)  # more files = unknown, kept
@@ -388,7 +393,7 @@ while read -r PROJECT SLUG; do
   command -v gh_auth_for >/dev/null 2>&1 && gh_auth_for "$SLUG" || true
   OPENF="$TD/open.json"; MERGEDF="$TD/merged.json"
   if ! gh pr list -R "$SLUG" --state open --limit "$PR_LIMIT" \
-       --json number,title,headRefName,headRefOid,baseRefName,author,labels,body,mergeable,updatedAt,createdAt,url,isDraft \
+       --json number,title,headRefName,headRefOid,baseRefName,author,labels,body,mergeable,updatedAt,createdAt,url,isDraft,latestReviews \
        > "$OPENF" 2>/dev/null || [ ! -s "$OPENF" ]; then
     command -v gh_repo_list_failed >/dev/null 2>&1 &&
       gh_repo_list_failed pr-owner-sweep "$SLUG" "no open PR was classified this run"
@@ -917,6 +922,7 @@ PYEOF
     case "$ACTION" in
       close-duplicate:*)
         DUP="${ACTION#close-duplicate:}"
+        if po_dup_guard </dev/null 2>>"$LOG"; then continue; fi
         # Read-only, so it runs in a dry run too; a skip writes nothing and spends no action.
         PO_OPENF="$OPENF" po_done_close_guard "close-duplicate:#$DUP" </dev/null || continue
         N_ACT=$((N_ACT+1))
@@ -990,9 +996,12 @@ _bin/pr-owner-sweep.sh_" \
   # ONE ALERT PER REPO, and only when this run actually did something. A sweep
   # that pages on every quiet tick is a sweep nobody reads — "every PR has an
   # owner" is the normal, silent shape.
+  # A duplicate close makes it critical (BH-6929): Telegram now, not the digest.
+  DUPCLOSED=$(po_dup_closed); ASEV=()
+  [ -n "$DUPCLOSED" ] && ASEV=(--severity critical --id "pr-owner-dup-close:$SLUG:$DUPCLOSED")
   if [ -n "$CLOSED$STALE$HANDED" ] && [ -x "$H/bin/lane-alert.sh" ]; then
-    "$H/bin/lane-alert.sh" "pr-owner-sweep/$SLUG" \
-      "$SLUG had $N_ORPH open PR(s) with no owner state.${CLOSED:+ Closed (shipped elsewhere or superseded): $CLOSED.}${STALE:+ Labelled stale-conflict (head conflicting past ${STALE_DAYS}d, one comment each): $STALE.}${HANDED:+ Key handed back to the box: $HANDED.}${HELD:+ Held back: $HELD.} Owner states are in state/pr-owners/${SLUG//\//_}.json; the rule is docs/PR-OWNERSHIP.md." \
+    "$H/bin/lane-alert.sh" ${ASEV[@]+"${ASEV[@]}"} "pr-owner-sweep/$SLUG" \
+      "$SLUG had $N_ORPH open PR(s) with no owner state.${DUPCLOSED:+ Closed as duplicate: $DUPCLOSED. Each PR got a comment that says to reopen it if it has something the other PR does not, and a reopen stops the sweep for that PR.}${CLOSED:+ Closed (shipped elsewhere or superseded): $CLOSED.}${STALE:+ Labelled stale-conflict (head conflicting past ${STALE_DAYS}d, one comment each): $STALE.}${HANDED:+ Key handed back to the box: $HANDED.}${HELD:+ Held back: $HELD.} Owner states are in state/pr-owners/${SLUG//\//_}.json; the rule is docs/PR-OWNERSHIP.md." \
       >/dev/null 2>&1 || true
   fi
   command -v gh_auth_reset >/dev/null 2>&1 && gh_auth_reset

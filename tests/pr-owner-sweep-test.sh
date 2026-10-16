@@ -75,7 +75,8 @@ esac
 case "$*" in
   *"pr list"*"--state open"*)
     [ "${GH_OPEN_FAIL:-}" = 1 ] && { echo "gh: HTTP 401" >&2; exit 1; }
-    cat "$HARNESS/fixture/open.json" ;;
+    # TEST-CHANGE: BH-6929 — po_dup_guard runs before every duplicate close: the open list carries latestReviews as gh writes it when asked, and the guard's reads (issue events, PR comments, compare) answer clean.
+    jq 'map(.latestReviews //= [])' "$HARNESS/fixture/open.json" ;;
   *"pr list"*"--state merged"*) cat "$HARNESS/fixture/merged.json" ;;
   *"pr comment"*|*"pr close"*|*"pr edit"*)
     printf '%s\n' "$*" >> "$HARNESS/gh-writes.log" ;;
@@ -88,6 +89,8 @@ case "$*" in
     printf '%s :: %s\n' "$*" "$( [ -n "$bf" ] && tr '\n' ' ' < "$bf")" >> "$HARNESS/gh-writes.log"
     case "$*" in *"-X PATCH"*) touch "$HARNESS/closed-$(sed -nE 's#.*/pulls/([0-9]+).*#\1#p' <<<"$*")" ;; esac
     printf 'HTTP/1.1 200 OK\r\n\r\n{}\n' ;;
+  *"api -i -X GET repos/"*"/issues/"*"/events"*|*"api -i -X GET repos/"*"/issues/"*"/comments"*) printf 'HTTP/1.1 200 OK\r\n\r\n[]\n' ;;
+  *"api -i -X GET repos/"*"/compare/"*) printf 'HTTP/1.1 200 OK\r\n\r\n{"status":"diverged"}\n' ;;
   # TEST-CHANGE: BH-6815 — the close-duplicate arm reads the PR's file list and
   # main's sha first (po_done_close_guard); an empty list = nothing left to ship.
   *"api -i -X GET repos/"*"/pulls/"*"/files"*)

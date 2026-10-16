@@ -49,7 +49,10 @@ FD=docs/PR-OWNERSHIP.d
 # docs/PR-OWNERSHIP.d/11-done-close-guard.md, so the pin moved from
 # 5e31bf4f72404d51 (main after #6846) to the render of both texts and the
 # fragment count is 12.
-BASE_SHA=275bfb50c596fe8d
+# TEST-CHANGE (BH-6929): the duplicate-close guard landed as a new fragment
+# (§12, 12-duplicate-guard.md) next to BH-6815's §11, so the pin moved to the
+# render of all three texts and the fragment count is 13.
+BASE_SHA=b9ea07b6f6cd0732
 STEP='lane renders generate and their sources validate'
 
 PASS=0; FAIL=0
@@ -88,7 +91,7 @@ cmp -s "$T/d1.out" "$DIR/$DOC" && ok || bad "D1: the render does not cmp equal t
 # D2 the fragments themselves
 # ============================================================================
 mapfile -t NAMES < <(cd "$DIR/$FD" 2>/dev/null && LC_ALL=C ls -1)
-eq "D2 fragment count" "${#NAMES[@]}" 12
+eq "D2 fragment count" "${#NAMES[@]}" 13
 for n in "${NAMES[@]}"; do
   f="$DIR/$FD/$n"
   [[ "$n" =~ ^[0-9]{2}-[a-z0-9-]+\.md$ ]] && ok || bad "D2: $n is not NN-<slug>.md"

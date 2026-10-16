@@ -110,6 +110,11 @@ case "$M $P" in
     n="${P##*/}"
     printf 'CLOSE %s\n' "$n" >> "$R/writes.log"; touch "$F/closed-$n"
     resp 200 '{"state":"closed"}' ;;
+  # TEST-CHANGE (BH-6929 merge): the close-duplicate arm and rules 1 and 3 run
+  # po_dup_guard too, which reads latestReviews (pr() sets []) and compares the
+  # heads of same-key PRs. Diverged heads are not a stack, so the guard clears.
+  "GET repos/"*/compare/*)
+    resp 200 '{"status":"diverged","ahead_by":1,"behind_by":1}' ;;
   "GET repos/"*/pulls/*)
     n="${P##*/}"
     if [ -f "$F/pr-$n.json" ]; then resp 200 "$(cat "$F/pr-$n.json")"
@@ -148,7 +153,7 @@ H1=$(SHA b 1); M1=$(SHA c 1); H2=$(SHA b 2); M2=$(SHA c 2)
 pr() {
   jq -nc --argjson n "$1" --arg t "$2" --arg b "$3" --arg a "$4" --arg l "${5:-}" --arg u "${6:-$OLD}" --arg old "$OLD" --arg slug "$SLUG" \
     '{number:$n,title:$t,headRefName:$b,headRefOid:("\($n)"+("0"*39))[0:40],author:{login:$a},
-      labels:(if $l == "" then [] else [{name:$l}] end),body:"",mergeable:"MERGEABLE",
+      labels:(if $l == "" then [] else [{name:$l}] end),body:"",mergeable:"MERGEABLE",latestReviews:[],
       updatedAt:$u,createdAt:$old,url:"https://github.com/\($slug)/pull/\($n)",isDraft:false}'
 }
 merged() { jq -nc --argjson n "$1" --arg t "$2" --arg b "$3" --arg m "$(ISO $D)" '{number:$n,title:$t,headRefName:$b,url:"x",mergedAt:$m,author:{login:"operator"}}'; }

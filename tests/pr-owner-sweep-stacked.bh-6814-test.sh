@@ -55,13 +55,16 @@ case "$1 $2" in
 esac
 case "$*" in
   # Only the fields the sweep asks for: a list read without baseRefName stacks nothing.
-  *"pr list"*"--state open"*"baseRefName"*) cat "$F/open.json"; exit 0 ;;
+  # TEST-CHANGE: BH-6929 — po_dup_guard runs before every duplicate close: the open list carries latestReviews as gh writes it when asked, and the guard's reads (issue events, PR comments, compare) answer clean.
+  *"pr list"*"--state open"*"baseRefName"*) jq 'map(.latestReviews //= [])' "$F/open.json"; exit 0 ;;
   *"pr list"*"--state open"*)   jq -c 'map(del(.baseRefName))' "$F/open.json"; exit 0 ;;
   *"pr list"*"--state merged"*) cat "$F/merged.json"; exit 0 ;;
 esac
 if [ "$1 $2 $3" = "api -i -X" ]; then
   M="$4"; P="$5"; shift 5
   case "$M $P" in
+    "GET repos/"*/issues/*/events*) resp 200 '[]' ;;
+    "GET repos/"*/compare/*) resp 200 '{"status":"diverged"}' ;;
     "GET repos/"*/issues/*/comments*)
       n="${P%/comments*}"; n="${n##*/}"
       resp 200 "$(cat "$F/prthread-$n.json" 2>/dev/null || echo '[]')" ;;
@@ -104,6 +107,8 @@ esac
 SH
 chmod +x "$T/fakebin/gh" "$T/fakebin/curl"
 export PATH="$T/fakebin:$PATH"
+# TEST-CHANGE: BH-6929 — po_dup_guard's git ancestor check reads no box checkout: none here, so it compares over REST.
+export PR_OWNER_REPO_ROOT="$T/no-checkouts"
 export BOX_NAME=box-hub HUB_BOX_NAME=box-hub
 
 D=86400
