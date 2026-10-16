@@ -20,6 +20,13 @@
 #                  claimed jobs-queue row naming the machine (both);
 #   testhost       `bin/testhost-tick.sh idle <mid>`, the same two witnesses the
 #                  test host's own idle stop uses;
+#   lane-run       idle_s from GET /api/lane-fleet/machines (the lane_machines
+#                  record bin/lane-fleet.sh keeps); busy or in_flight there is
+#                  busy. The settings row lane_fleet.warm_floor (default 1; a
+#                  value above 100 is 1, as in bin/lane-fleet.sh) names how many
+#                  started machines stay up: the least idle ones, busy first, are
+#                  `floor` (shown EXEMPT) and never stopped. A backstop:
+#                  bin/lane-fleet.sh stops them first, at lane_fleet.idle_stop_s;
 #   exempt         never stopped, listed (an app meant to stay up, with a reason).
 # A `started` machine idle MORE than the settings row fly.idle_stop_after_s
 # (default 900; a per-app row fly.idle_stop_after_s.<app> wins) is stopped with
@@ -31,7 +38,9 @@
 #
 # FAILURE IS NEVER IDLE. A witness we cannot read (the queue, state/fly-pool,
 # state/fly), a machine with no parseable timestamp, a testhost answer that is
-# not a number: the machine is `unknown`, not stopped, and counted in
+# not a number, a lane-fleet answer that is unreadable or `incomplete`, a
+# lane_fleet.warm_floor row that is unreadable, a lane-run machine with no
+# lane_machines row: the machine is `unknown`, not stopped, and counted in
 # state/fly-idle-reaper/fail/<app>__<mid>. At fly.idle_fail_alert_after (3)
 # passes in a row, fly-idle-fail-<app> (warn). An app with no signal is never
 # stopped; after fly.idle_nosignal_alert_s (3600) with a started machine,
@@ -48,6 +57,8 @@
 # One line per pass in logs/fly-idle-reaper.log:
 #   pass apps=N read=R failed=F partial=0|1 started=S busy=B idle=I over=O
 #   stopping=X stop_failed=Y unknown=U nosignal=Z exempt=E threshold=T(src) nostop=0|1
+#   floor=K
+# `floor` counts lane-run machines kept for lane_fleet.warm_floor.
 # `stopping` is a stop flyctl accepted, not a stop observed; the next pass sees
 # the machine gone from `started`.
 #
@@ -56,7 +67,7 @@
 #
 # Usage: bin/fly-idle-reaper.sh [--help]
 set -uo pipefail
-case "${1:-}" in -h|--help) sed -n '2,57p' "$0"; exit 0 ;; esac
+case "${1:-}" in -h|--help) sed -n '2,68p' "$0"; exit 0 ;; esac
 H="${HARNESS:-/root/harness}"
 . "${HARNESS:-/root/harness}/bin/lib/env-path.sh" 2>/dev/null || . "$(dirname "${BASH_SOURCE[0]}")/lib/env-path.sh" 2>/dev/null || harness_env_dir() { printf '%s\n' "${1:-${HARNESS:-/root/harness}}/env"; }; HENV=$(harness_env_dir "$H")
 
@@ -177,16 +188,16 @@ REG_OK=1
 if ! jq -e '
     (.apps | type == "object") and (.prefixes | type == "object")
     and ([.apps[], .prefixes[]] | all(
-          (.source | IN("pool","builder","testhost","exempt"))
+          (.source | IN("pool","builder","testhost","lane-run","exempt"))
           and (if .source == "exempt" then ((.reason // "") | length > 0) else true end)))
   ' "$REG" >/dev/null 2>&1; then
   REG_OK=0; NOSTOP=1
   say "catalog/fly-idle-signals.json does not validate — no stops this pass"
-  cond_fire fly-idle-reaper-registry "fly-idle-reaper: catalog/fly-idle-signals.json is missing or does not validate (apps/prefixes objects, source pool|builder|testhost|exempt, a reason on exempt). No machine is stopped until it does."
+  cond_fire fly-idle-reaper-registry "fly-idle-reaper: catalog/fly-idle-signals.json is missing or does not validate (apps/prefixes objects, source pool|builder|testhost|lane-run|exempt, a reason on exempt). No machine is stopped until it does."
 else
   cond_clear fly-idle-reaper-registry "catalog/fly-idle-signals.json validates again."
 fi
-signal_for() { # signal_for <app> -> pool|builder|testhost|exempt, or nothing
+signal_for() { # signal_for <app> -> pool|builder|testhost|lane-run|exempt, or nothing
   [ "$REG_OK" = 1 ] || return 0
   jq -r --arg a "$1" '
     if .apps[$a] then .apps[$a].source
@@ -249,18 +260,44 @@ for f in "$H"/state/fly/*.json; do
 done
 held_pool() { local f; for f in "$H"/state/fly-pool/*/"$1".json; do [ -e "$f" ] && return 0; done; grep -qxF -- "$1" "$WORK/claimed.txt"; }
 held_builder() { grep -qxF -- "$1" "$WORK/disp.txt" || grep -qxF -- "$1" "$WORK/claimed.txt"; }
+# The lane-run record and lane_fleet.warm_floor: read at the first started
+# machine of a lane-run app, once per pass. A good read needs a machines array
+# and incomplete != true (a row past the page is a row we did not see).
+LRREAD=0; LROK=0; LRFLOOR=1
+lr_read() {
+  local why=""
+  LRREAD=1
+  if ! command -v _jobs_req >/dev/null 2>&1; then why="no jobs client"
+  elif ! JOBS_ALERT=0 _jobs_req GET /api/lane-fleet/machines > "$WORK/lr.json" 2>/dev/null; then why="request failed"
+  elif ! jq -e '.machines | type == "array"' "$WORK/lr.json" >/dev/null 2>&1; then why="no machines array"
+  elif ! jq -e '.incomplete != true' "$WORK/lr.json" >/dev/null 2>&1; then why="incomplete: more rows than one page"
+  elif ! int_setting LRFLOOR lane_fleet.warm_floor 1; then why="settings row lane_fleet.warm_floor unreadable"
+  fi
+  if [ -n "$why" ]; then
+    say "lane-run: /api/lane-fleet/machines unreadable ($why) — lane-run machines are unknown this pass"
+    return 1
+  fi
+  # The range bin/lane-fleet.sh applies (lf_int warm_floor 1 0 100).
+  [ "${#LRFLOOR}" -le 6 ] && [ "$LRFLOOR" -le 100 ] 2>/dev/null || LRFLOOR=1
+  LRFLOOR=$((10#$LRFLOOR))
+  LROK=1
+}
 
 # ── 7-8. per app, per started machine ────────────────────────────────────────
 APPS=0; READ=0; FAILED=0
-STARTED=0; BUSY=0; IDLE=0; OVER=0; STOPPING=0; STOPFAIL=0; UNKNOWN=0; NOSIG=0; EXEMPT=0
+STARTED=0; BUSY=0; IDLE=0; OVER=0; STOPPING=0; STOPFAIL=0; UNKNOWN=0; NOSIG=0; EXEMPT=0; FLOOR_KEPT=0
 STOPS=0
 : > "$WORK/rows.jsonl"; : > "$WORK/seen.txt"; : > "$WORK/apps-read.txt"; : > "$WORK/apps-started.txt"; : > "$WORK/failing.txt"
 
-# fail_note <app> <mid> <why> — one more failed read or stop for this machine
-fail_note() {
-  local n; n=$(count_up "$SDIR/fail/$1__$2")
+# fail_count <app> <mid> <why> — one more failed read or stop for this machine;
+# FAIL_N is the new streak. fail_note also logs it.
+fail_count() {
+  FAIL_N=$(count_up "$SDIR/fail/$1__$2")
   UNKNOWN_WHY="$3"
-  say "$1/$2: $3 (fail $n in a row)"
+}
+fail_note() {
+  fail_count "$@"
+  say "$1/$2: $3 (fail $FAIL_N in a row)"
 }
 
 while IFS= read -r app; do
@@ -291,6 +328,18 @@ while IFS= read -r app; do
         (try (.updated_at | sub("\\.[0-9]+"; "") | fromdateiso8601) catch empty)] | max) as $ts
     | [(.id // ""), ($g.cpu_kind // ""), ($g.cpus // "" | tostring), ($g.memory_mb // "" | tostring),
        (if $ts == null then "-" else ($ts | tostring) end)] | @tsv' "$WORK/m.json" > "$WORK/started.tsv" 2>/dev/null
+  # lane-run keep set: the LRFLOOR record rows of this pass's started machines
+  # with the lowest rank (busy or in_flight = 0, else idle_s), ties by id.
+  : > "$WORK/lr-keep.txt"
+  if [ "$sig" = lane-run ] && [ -s "$WORK/started.tsv" ]; then
+    [ "$LRREAD" = 1 ] || lr_read
+    [ "$LROK" = 1 ] && cut -f1 "$WORK/started.tsv" \
+      | jq -r --argjson n "$LRFLOOR" --rawfile ids /dev/stdin '
+        ($ids | split("\n")) as $ids
+        | [.machines[] | select(.machine_id as $m | $ids | index([$m]))]
+        | map(. + {rank: (if (.busy == true or .in_flight == true) then 0 else (.idle_s // 0) end)})
+        | sort_by(.rank, .machine_id) | .[:$n][] | .machine_id' "$WORK/lr.json" > "$WORK/lr-keep.txt" 2>/dev/null
+  fi
   while IFS=$'\t' read -r mid kind cpus mem ts; do
     [ -n "$mid" ] || continue
     STARTED=$((STARTED + 1)); echo "$app" >> "$WORK/apps-started.txt"
@@ -311,6 +360,23 @@ while IFS= read -r app; do
       if [ "$trc" != 0 ] || [[ ! "$idle" =~ ^[0-9]+$ ]]; then
         state=unknown; idle=""; fail_note "$app" "$mid" "testhost-tick.sh idle answered rc $trc '${idle:0:20}'"
       elif [ "$idle" = 0 ]; then state=busy
+      fi
+    elif [ "$sig" = lane-run ]; then
+      if [ "$LROK" != 1 ]; then
+        # lr_read logged the reason once for the pass; count, do not log per machine.
+        state=unknown; fail_count "$app" "$mid" "the lane-fleet answer is unreadable"
+      elif ! lrow=$(jq -er --arg m "$mid" 'first(.machines[] | select(.machine_id == $m))
+                     | [(.busy == true), (.in_flight == true), (.idle_s // "" | tostring)] | @tsv' "$WORK/lr.json" 2>/dev/null); then
+        state=unknown; fail_note "$app" "$mid" "no lane_machines row (bin/lane-fleet.sh has not adopted it)"
+      else
+        IFS=$'\t' read -r lbusy lflight lidle <<< "$lrow"
+        if [ "$lbusy" = true ] || [ "$lflight" = true ]; then state=busy; idle=0
+        elif [[ ! "$lidle" =~ ^[0-9]+$ ]]; then
+          state=unknown; fail_note "$app" "$mid" "lane_machines idle_s '${lidle:0:20}' is not a non-negative integer"
+        else
+          idle="$lidle"
+          grep -qxF -- "$mid" "$WORK/lr-keep.txt" && state=floor
+        fi
       fi
     else # pool, builder
       if [ "$QOK" = 0 ] || { [ "$sig" = pool ] && [ "$POOLOK" = 0 ]; } || { [ "$sig" = builder ] && [ "$DISPOK" = 0 ]; }; then
@@ -339,7 +405,7 @@ while IFS= read -r app; do
                      usd_per_hour: (if $usd == "" then null else ($usd | tonumber) end),
                      status: "requested", box: (if $box == "" then null else $box end), stopped_at: $at}]}' \
             > "$SDIR/outbox/$sid.json"
-          say "$app/$mid: stopped after ${idle}s idle (limit ${athresh}s, ${size:-size unknown}, \$${usdh:-?}/h)"
+          say "$app/$mid: stopped after ${idle}s idle (limit ${athresh}s, ${size:-size unknown}, \$${usdh:-?}/h, source $sig)"
           if post_row "$SDIR/outbox/$sid.json"; then rm -f "$SDIR/outbox/$sid.json"
           else say "$app/$mid: the stop row did not post — kept in outbox/$sid.json for the next pass"; fi
         else
@@ -351,15 +417,18 @@ while IFS= read -r app; do
     case "$state" in
       busy) BUSY=$((BUSY + 1)) ;; idle) IDLE=$((IDLE + 1)) ;; over) OVER=$((OVER + 1)) ;;
       unknown) UNKNOWN=$((UNKNOWN + 1)) ;; nosignal) NOSIG=$((NOSIG + 1)) ;; exempt) EXEMPT=$((EXEMPT + 1)) ;;
+      floor) FLOOR_KEPT=$((FLOOR_KEPT + 1)) ;;
     esac
     # A known answer (and a stop flyctl took) ends this machine's fail streak.
     if [ -n "$UNKNOWN_WHY" ]; then echo "$app" >> "$WORK/failing.txt"; else rm -f "$SDIR/fail/${app}__$mid"; fi
     # The worker takes hex machine ids only; one bad row would refuse the whole
     # snapshot. The machine is still counted unknown and logged above.
     case "$mid" in *[!0-9a-f]*) continue ;; esac
-    th_json="$athresh"; case "$state" in nosignal|exempt) th_json=null ;; esac
+    # A floor machine is kept on purpose: the worker and the panel call that exempt.
+    th_json="$athresh"; st_json="$state"
+    case "$state" in nosignal|exempt) th_json=null ;; floor) th_json=null; st_json=exempt ;; esac
     jq -nc --arg app "$app" --arg mid "$mid" --arg size "$size" --arg src "${sig:-none}" --arg idle "$idle" \
-      --arg st "$state" --argjson th "$th_json" --arg usd "$usdh" '
+      --arg st "$st_json" --argjson th "$th_json" --arg usd "$usdh" '
       {app: $app, machine_id: $mid, size: (if $size == "" then null else $size end), source: $src,
        idle_s: (if $idle == "" then null else ($idle | tonumber) end), idle_state: $st, threshold_s: $th,
        usd_per_hour: (if $usd == "" then null else ($usd | tonumber) end)}' >> "$WORK/rows.jsonl"
@@ -435,5 +504,5 @@ else
 fi
 
 # ── 11. one line ─────────────────────────────────────────────────────────────
-say "pass apps=$APPS read=$READ failed=$FAILED partial=$PARTIAL started=$STARTED busy=$BUSY idle=$IDLE over=$OVER stopping=$STOPPING stop_failed=$STOPFAIL unknown=$UNKNOWN nosignal=$NOSIG exempt=$EXEMPT threshold=$THRESH($TSRC) nostop=$NOSTOP"
+say "pass apps=$APPS read=$READ failed=$FAILED partial=$PARTIAL started=$STARTED busy=$BUSY idle=$IDLE over=$OVER stopping=$STOPPING stop_failed=$STOPFAIL unknown=$UNKNOWN nosignal=$NOSIG exempt=$EXEMPT threshold=$THRESH($TSRC) nostop=$NOSTOP floor=$FLOOR_KEPT"
 exit 0

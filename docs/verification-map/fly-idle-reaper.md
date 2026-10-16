@@ -11,6 +11,7 @@ prefix that matches from the start.
 | `pool` (`pool-*`) | now minus the newest `events[].timestamp` / `updated_at` | a `state/fly-pool/*/<mid>.json` tracking file, or a claimed queue row naming the machine |
 | `builder` (`builder-*`) | the same clock | `state/fly/<p>.json` naming the machine with `<p>-active.json` beside it, or a claimed queue row |
 | `testhost` (`bh-testhost-example-org`) | `bin/testhost-tick.sh idle <mid>` prints the seconds | it prints `0` |
+| `lane-run` (`lane-run`, BH-6714) | `idle_s` from `GET /api/lane-fleet/machines`; the `lane_fleet.warm_floor` least idle started machines (busy first) are kept as `floor` (snapshot `exempt`) | `busy` or `in_flight` in that answer |
 | `exempt` (`bh-ci-runners-example-org`) | never stopped | — |
 
 A `started` machine idle MORE than `fly.idle_stop_after_s` (900; a row
@@ -29,6 +30,7 @@ performance-16x test hosts.
 | what | how |
 |---|---|
 | the suite (flyctl stub on PATH, jobs-client stub, R1-R19) | `HARNESS_TEST_SANDBOX=1 bash tests/fly-idle-reaper.bh-6061-test.sh` |
+| the lane-run source (L1-L14) | `HARNESS_TEST_SANDBOX=1 bash tests/fly-idle-reaper-lane-run.bh-6714-test.sh` |
 | the worker routes | `cd worker/jobs && node --test test/fly-idle.bh-6061.test.js` |
 | the panel | `cd console-ui && node --test tests/fly-idle.bh-6061.test.js` |
 | on the hub, once | `/root/harness/bin/fly-idle-reaper.sh; grep 'pass apps=' /root/harness/logs/fly-idle-reaper.log \| tail -1` |
@@ -37,11 +39,13 @@ performance-16x test hosts.
 
 The pass line reads `pass apps= read= failed= partial= started= busy= idle=
 over= stopping= stop_failed= unknown= nosignal= exempt= threshold=T(src)
-nostop=`. One pass over every app is `failed=0 partial=0`.
+nostop= floor=`. `floor` counts lane-run machines kept for the warm floor. One pass over every app is `failed=0 partial=0`.
 
 **Settings rows** (seeded by `worker/jobs/schema.d/0023-bh-6061-fly-idle.sql`):
 `fly.idle_stop_after_s` (900), `fly.idle_nosignal_alert_s` (3600),
-`fly.idle_fail_alert_after` (3), `fly.idle_max_stops_per_pass` (10). Off:
+`fly.idle_fail_alert_after` (3), `fly.idle_max_stops_per_pass` (10). The
+lane-run source also reads `lane_fleet.warm_floor` (1, seeded by
+`worker/jobs/schema.d/0022-bh-6047-lane-fleet.sql`; above 100 is 1). Off:
 `flags/lane-off-fly-idle-reaper` or `bin/harness-ctl.sh off fly-idle-reaper`.
 
 **What usually lies:**
@@ -60,7 +64,9 @@ nostop=`. One pass over every app is `failed=0 partial=0`.
 - **Never destroy.** `machine stop` is the only write to Fly. The suite fails
   on any `destroy` call (R16).
 - **Failure is never idle.** An unreadable queue, no `state/fly-pool`, no
-  `state/fly`, no timestamp, or a testhost answer that is not a number: the
+  `state/fly`, no timestamp, a testhost answer that is not a number, a
+  lane-fleet answer that fails or says `incomplete`, an unreadable
+  `lane_fleet.warm_floor`, or a lane-run machine with no `lane_machines` row: the
   machine is `unknown` and not stopped. 3 passes in a row raise
   `fly-idle-fail-<app>` (warn).
 - **No signal, no stop.** An app with no registry match is never stopped and
