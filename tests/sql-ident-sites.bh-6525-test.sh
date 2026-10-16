@@ -2,7 +2,7 @@
 # tests/sql-ident-sites.bh-6525-test.sh — the route files that sort after
 # lanes.js (BH-6525, BH-6514.4), plus retention.js, carry a sql-ident marker on
 # every run-time `prepare(` site and no baseline fragment. S1 --print over the
-# 30 files is rc 0 with 48+ rows, every one `marked`. S2 each marker holds a
+# 30 files is rc 0 with 47+ rows, every one `marked`. S2 each marker holds a
 # reason with a word of 3+ letters. S3 none of the 30 files has a fragment.
 # S4 the lint over the whole checkout is rc 0, 0 over.
 set -uo pipefail
@@ -20,6 +20,12 @@ queue-batch-minutes queue-risk reconcile-owner retention risk-tiers route-rules
 split-watchdog staff-screen staff steer suite-results suite-reuse-saved transcripts
 usage utilization verdicts wakes"
 
+# The S1 floor is the real site count. BH-7035 C0 (519270d0d) moved one
+# model-routes.js site, the unrouted-stages read, into a `hotSql` string passed
+# to readHistory (lib/archive-read.js), so 48 became 47. A PR that removes a
+# site on purpose lowers this number and says why.
+MIN_SITES=47
+
 [ -x "$LINT" ] || { echo "FAIL bin/sql-ident-lint.sh is missing"; exit 1; }
 
 # ── S1 every site in the 30 files is marked ─────────────────────────────────
@@ -31,8 +37,8 @@ rows=$(grep -c . <<<"$ROWS")
 marked=$(grep -c $'\tmarked\t' <<<"$ROWS")
 if [ "$RC" != 0 ]; then
   bad "S1 --print rc $RC, want 0" "$(printf '%s\n' "$OUT" | grep -v $'\tmarked\t' | tail -n 60)"
-elif [ "$rows" -lt 48 ]; then
-  bad "S1 only $rows sites, want 48+" "$OUT"
+elif [ "$rows" -lt "$MIN_SITES" ]; then
+  bad "S1 only $rows sites, want $MIN_SITES+" "$OUT"
 elif [ "$marked" != "$rows" ]; then
   bad "S1 $((rows - marked)) unmarked" "$(grep $'\tunmarked\t' <<<"$ROWS")"
 else

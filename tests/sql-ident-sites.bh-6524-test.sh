@@ -1,8 +1,9 @@
 #!/bin/bash
 # tests/sql-ident-sites.bh-6524-test.sh — the route files of slice `a` (BH-6524,
 # BH-6514.3) carry a sql-ident marker on every run-time `prepare(` site and no
-# baseline fragment. S1 every --print row for the 26 files is `marked`, 64+
-# rows. S2 none of the 26 fragments exists. S3 the lint on this checkout is rc 0.
+# baseline fragment. S1 every --print row for the 26 files is `marked`, MIN_SITES+
+# rows, and each file outside NOSITE has a row. S2 none of the 26 fragments
+# exists. S3 the lint on this checkout is rc 0.
 # S4 call-guard.js with one marker stripped, and no fragment, is rc 1.
 set -uo pipefail
 . "$(dirname "$0")/lib/scratch.sh" || exit 1
@@ -18,6 +19,17 @@ NAMES="alerts archie-actions archie-autonomy archie-research block-findings call
 ci-batches ci-durations cli-versions closeout-aged conflict-hotspots context-packs
 cooldowns cost-live cost deploy-queue-actions file-claims fly-idle gh-ledger
 initiatives job-abandon lane-fleet lane-runs-metrics lane-snapshots lane-spend lanes"
+# Files in NAMES with no run-time `prepare(` site on purpose. S1 skips only the
+# "has a row" check for them; every other check still covers them.
+#   lane-spend: BH-7035 C0 (519270d0d) moved its one site, the cost_rows read,
+#   into a `sql` string passed to readHistory (lib/archive-read.js).
+NOSITE="lane-spend"
+# The S1 floor is the real site count on main. Since this suite was written:
+#   BH-7035 C0 (519270d0d) moved the lane-spend.js site into readHistory (-1),
+#   BH-7059 (ad46e35d1) moved 2 cost.js sites the same way (-2),
+#   BH-6974 (118b9babb) added 1 gh-ledger.js site (+1). 64 - 1 - 2 + 1 = 62.
+# A PR that removes a site on purpose lowers this number and says why.
+MIN_SITES=62
 
 [ -x "$LINT" ] || { echo "FAIL bin/sql-ident-lint.sh is missing"; exit 1; }
 
@@ -30,10 +42,11 @@ if [ "$RC" = 2 ]; then
 else
   rows=$(printf '%s\n' "$OUT" | grep -c $'^worker/jobs/src/routes/[a-z-]*\\.js:[0-9]*\t')
   marked=$(printf '%s\n' "$OUT" | grep -c $'^worker/jobs/src/routes/[a-z-]*\\.js:[0-9]*\tmarked\t')
-  [ "$rows" -ge 64 ] && ok "S1 $rows sites in the 26 files" || bad "S1 only $rows sites, want 64+" "$OUT"
+  [ "$rows" -ge "$MIN_SITES" ] && ok "S1 $rows sites in the 26 files" || bad "S1 only $rows sites, want $MIN_SITES+" "$OUT"
   [ "$marked" = "$rows" ] && ok "S1 every site is marked" \
     || bad "S1 $((rows - marked)) unmarked" "$(printf '%s\n' "$OUT" | grep $'\tunmarked\t')"
   for n in $NAMES; do
+    case " $NOSITE " in *" $n "*) continue ;; esac
     grep -q "^worker/jobs/src/routes/$n\\.js:[0-9]*"$'\t' <<<"$OUT" || bad "S1 no site row for $n.js"
   done
 fi
