@@ -26,6 +26,8 @@
 // environment` line (before QA COVERAGE), and the screen's record loses one
 // 503 "Failed to load resource" console error per gap response. Every other
 // console error, failed request, HTTP status or scroll still fails.
+// observed.json lists each screen as judged: its gap 503s are dropped and
+// listed under `gaps`. bin/console-postmerge-qa.sh files findings from it.
 //
 // The structure is the pool's bin/console-screen-drive.mjs (#5951), moved onto
 // the token flow and the 1440/390 widths.
@@ -191,8 +193,9 @@ async function main() {
         const seen = (await Promise.all(cur)).filter(Boolean);
         cur = null;
         for (const g of seen) if (!gaps.has(g.key)) gaps.set(g.key, previewGapLine(g));
-        screens.push(rec);
-        const f = consoleFailures(dropGapErrors(rec, seen.length));
+        const judged = dropGapErrors(rec, seen.length);
+        screens.push(judged);
+        const f = consoleFailures(judged);
         failures.push(...f);
         console.log(`SCREEN ${path} ${viewport.name} ${f.length ? "fail" : "ok"}`);
       }

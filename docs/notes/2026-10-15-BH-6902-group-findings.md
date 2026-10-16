@@ -102,7 +102,7 @@ arguments.
 | Lane | Files issues today? | Per finding? | Action |
 |---|---|---|---|
 | bin/postmerge-qa.sh | No (qa-prod.md, findings.log, PR comment, ALERTS) | n/a | Calls gf_run on FAIL (this slice) |
-| bin/console-postmerge-qa.sh | No | n/a | Child slice C1 (same wiring) |
+| bin/console-postmerge-qa.sh | No (qa.md, PR comment, warn alert) | n/a | Wired (C1): a FAIL calls gf_run with board cromford; gap 503s are not findings |
 | bin/nightly-ticket.sh, bin/ci-nightly-full.sh | Yes | No: one marker issue per red, an open one gets a comment | None |
 | bin/flaky-tier.sh | Yes | One per quarantined suite, bound to its quarantine row (`fix #T`) | None: the suite is the flow |
 | bin/outcome-check.sh | Yes | One per PR, marker dedup | None |
@@ -115,7 +115,10 @@ arguments.
 
 ## Not in this slice
 
-- C1: `bin/console-postmerge-qa.sh` calls the helper.
+- C1: Wired (C1): a FAIL calls gf_run with board cromford; gap 503s are
+  not findings. `bin/console-qa-run.mjs` now writes each screen of
+  observed.json as judged (the gap 503s only in `gaps`). Tested by
+  `tests/console-postmerge-qa-group.bh-6902-test.sh`.
 - C2 (a run, not code): turn the knob on for cromford, then on the hub run
   `bin/group-findings-replay.sh --days 7` over the real build dirs and post the
   numbers on #6902. This builder box has no post-merge QA build history.

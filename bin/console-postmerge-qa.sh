@@ -40,6 +40,17 @@
 # that starts `QA: PASS` or `QA: FAIL`: bin/lib/console-qa-gate.sh reads those
 # lines on open PRs.
 #
+# GROUPED FINDINGS (BH-6902). A FAIL, after the comment and before the alert,
+# turns the driver's observed.json into findings (gf_from_observed) and hands
+# them to gf_run of bin/lib/group-findings.sh under the board cromford: one
+# issue per screen on HARNESS_REPO, or a comment on the open issue of that
+# screen. Off until the settings row lib.group-findings.cromford.
+# group_findings is 1; off, the ledger rows say `off` and nothing is filed. The
+# ledger (qa-findings.jsonl, findings-ledger.jsonl, group-findings.md) lives in
+# state/console-postmerge-qa/<sha>/ and follows its 14-day prune. Fail-open: it
+# never changes the verdict, the comment or the exit; a failed or deferred
+# filing, or an unreadable observed.json, is appended to the FAIL alert.
+#
 # Secrets: the Cloudflare token and HARNESS_SECRET live only in subshell envs,
 # the QA token only in the driver's env; all three are scrubbed from the log,
 # qa.md and the comment. Every stop is exit 0.
@@ -178,8 +189,18 @@ report() {
       ALERT_MSG="console post-merge QA PASS at $C7" alert --resolve --id console-postmerge-qa
       ALERT_MSG="console post-merge QA PASS at $C7" alert --resolve --id console-postmerge-qa-notcovered ;;
     FAIL)
+      local gfl="" gfrc=0 orc=0
+      # shellcheck source=bin/lib/group-findings.sh
+      if [ -n "$SLUG" ] && { . "$H/bin/lib/group-findings.sh" 2>/dev/null || . "$(dirname "${BASH_SOURCE[0]}")/lib/group-findings.sh" 2>/dev/null; }; then
+        gf_from_observed cromford "$OUT/observed.json" > "$OUT/qa-findings.jsonl" 2>/dev/null || orc=$?
+        GF_RUN_ID="console-postmerge-qa-$C7" gf_run "$OUT/qa-findings.jsonl" "$OUT" "$SLUG" >/dev/null 2>&1 || gfrc=$?
+        gfl=$(tail -n 1 "$OUT/group-findings.md" 2>/dev/null)
+        [ "$orc" = 0 ] || gfl="observed.json unreadable (rc=$orc), nothing grouped; ${gfl:-group-findings: no summary written}"
+        log "${gfl:-group-findings: no summary written} (rc=$gfrc)"
+        case "$orc:$gfrc" in 0:0) gfl="" ;; esac
+      fi
       first=$(grep -m1 '^FAIL: ' "$OUT/qa.md" 2>/dev/null | cut -c7-200)
-      ALERT_MSG="[$(hostname)] console post-merge QA FAIL at $C7: ${first:-see the report} — state/console-postmerge-qa/$CSHA/qa.md" \
+      ALERT_MSG="[$(hostname)] console post-merge QA FAIL at $C7: ${first:-see the report} — state/console-postmerge-qa/$CSHA/qa.md${gfl:+ ${gfl}}" \
         alert --severity warn --id console-postmerge-qa
       ALERT_MSG="console post-merge QA observed $C7" alert --resolve --id console-postmerge-qa-notcovered ;;
     *)
