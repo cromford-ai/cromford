@@ -100,6 +100,7 @@ the command is byte-identical to the pre-fast-path tick.
 | Wake kind | What runs | Where | Guard before it runs |
 |---|---|---|---|
 | `pr`, `checks` | `bin/merge-conductor.sh` | the hub (it is fleet-wide) | `cooled pr fleet`, one launch per batch |
+| `pr`, `checks` | `bin/merge-conductor-wake.sh` (its own `* * * * *` cron, not launched by the wake loop): one keyed conductor tick (`MC_ONLY_PR`) per woken harness PR | the hub | its wake cursor (`wake_cursors` box `merge-conductor-wake`), the `kw_conductor` dedupe, `MC_WAKE_BUDGET` |
 | `push` (main) | `bin/deploy-train.sh <project>` | the hub | `cooled push <project>` |
 | `push` (main) | `bin/repair-on-push.sh` (its own `* * * * *` cron, not launched by the wake loop): `mc_rebase` on each open harness PR whose files intersect the push | the hub | its wake cursor (`wake_cursors` box `repair-on-push`), the conductor PR lock, `REPAIR_PUSH_BUDGET` |
 | `push` (main) | `bin/launch-fastpath.sh <project> <keys>` first, then `bin/run-triage.sh <project>` for the declined keys | the box `fleet.conf` names | `cooled triage <project>`, **and** `bin/unblocked-children.sh` must name a released child |

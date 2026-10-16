@@ -1,0 +1,94 @@
+{
+  "id": "merge-conductor-wake",
+  "name": "Merge conductor wake consumer",
+  "scope": "hub",
+  "factory_stop": "merge",
+  "script": "bin/merge-conductor-wake.sh",
+  "cadence": "* * * * *",
+  "boxes": [
+    "hub"
+  ],
+  "switch": {
+    "kind": "flag",
+    "name": "lane-off-merge-conductor-wake",
+    "aliases": []
+  },
+  "wired": true,
+  "knobs": [
+    {
+      "env": "MC_WAKE_BUDGET",
+      "type": "int",
+      "default": 10,
+      "min": 0,
+      "max": 50,
+      "unit": "keyed ticks",
+      "zero_means": "off",
+      "read_in": "bin/merge-conductor-wake.sh",
+      "note": "BH-6975: keyed conductor ticks (MC_ONLY_PR) started per tick across the fleet. 0 = no keyed tick; every pr/checks wake is `hold budget` and stays above the cursor. A wake the budget does not reach stays above the cursor for the next minute.",
+      "settable": true
+    },
+    {
+      "env": "MC_WAKE_WAKES",
+      "type": "int",
+      "default": 100,
+      "min": 1,
+      "max": 500,
+      "unit": "wakes",
+      "zero_means": null,
+      "read_in": "bin/merge-conductor-wake.sh",
+      "note": "BH-6975: wakes read per tick (GET /api/wakes?since=<cursor>&limit=), every kind; only pr and checks rows are acted on.",
+      "settable": true
+    },
+    {
+      "env": "MC_WAKE_MIN_S",
+      "type": "int",
+      "default": 30,
+      "min": 0,
+      "max": 300,
+      "unit": "seconds",
+      "zero_means": null,
+      "read_in": "bin/merge-conductor-wake.sh",
+      "note": "BH-6975: the kw_conductor dedupe window for this lane's launches only (MC_KEYED_WAKE_MIN_S on its call). A launch inside it is carried to the next tick, not dropped.",
+      "settable": true
+    },
+    {
+      "env": "MC_WAKE_MAX_AGE_S",
+      "type": "int",
+      "default": 900,
+      "min": 60,
+      "max": 86400,
+      "unit": "seconds",
+      "zero_means": null,
+      "read_in": "bin/merge-conductor-wake.sh",
+      "note": "BH-6975: a wake or carry line older than this is skipped `stale`; the 5-minute backstop and the full tick own it.",
+      "settable": true
+    },
+    {
+      "env": "MC_WAKE_SHA_LOOKUPS",
+      "type": "int",
+      "default": 5,
+      "min": 0,
+      "max": 50,
+      "unit": "GitHub reads",
+      "zero_means": "off",
+      "read_in": "bin/merge-conductor-wake.sh",
+      "note": "BH-6975: GET commits/<sha>/pulls reads per tick (wck_sha_prs) for a checks sha with no open pr-state.tsv row. 0 = no lookup: such a sha is `skip sha-unplaced` and the backstop covers it.",
+      "settable": true
+    },
+    {
+      "env": "MC_WAKE_NOW",
+      "type": "string",
+      "default": "",
+      "zero_means": null,
+      "read_in": "bin/merge-conductor-wake.sh",
+      "note": "BH-6975: TEST SEAM for the lane's clock (epoch seconds), used by tests/mc-wake-consumer.bh-6975-test.sh to pin latency_s and the stale rule. No static default: the script reads ${MC_WAKE_NOW:-$(date -u +%s)}. NOT settable from the control plane.",
+      "settable": false
+    }
+  ],
+  "stats": {
+    "cost_stage": null,
+    "cost_project_filter": null,
+    "lanes_row": false,
+    "log": "logs/merge-conductor-wake-cron.log"
+  }
+}

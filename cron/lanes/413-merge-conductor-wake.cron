@@ -1,0 +1,7 @@
+# @hub-lanes
+# Merge conductor wake consumer (BH-6975): every minute, read the pr and checks
+# wakes above this lane's own cursor and start ONE keyed conductor tick
+# (MC_ONLY_PR) per woken harness PR, at most MC_WAKE_BUDGET a minute, so a PR or
+# check event is acted on within a minute. The 5-minute backstop (411) and the
+# 30-minute full tick (410) stay. Off: bin/harness-ctl.sh off merge-conductor-wake.
+* * * * * /root/harness/bin/hub-lease.sh check && /root/harness/bin/merge-conductor-wake.sh >> /root/harness/logs/merge-conductor-wake-cron.log 2>&1

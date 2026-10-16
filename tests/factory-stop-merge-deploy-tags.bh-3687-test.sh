@@ -6,8 +6,10 @@
 # real catalog/lanes.d, through a lane that sources the real
 # bin/lib/lane-gate.sh (which sources the real bin/lib/factory-stop.sh):
 #   T1 the `merge` set is exactly batch-resolve merge-conductor
-#      merge-conductor-backstop merge-queue rebase-train repair-on-push (BH-6963:
-#      it pushes rebases to PR branches, as rebase-train does), and the `deploy` set
+#      merge-conductor-backstop merge-conductor-wake merge-queue rebase-train
+#      repair-on-push (BH-6963: it pushes rebases to PR branches, as rebase-train
+#      does; BH-6975: merge-conductor-wake starts keyed conductor ticks, as the
+#      backstop does), and the `deploy` set
 #      is exactly apply-migrations deploy-train fleet-propagate
 #      migration-autopilot (the launch set belongs to its own slice);
 #   T2 switch ON: each of the ten exits 0 before its sentinel, logs
@@ -27,7 +29,7 @@ ok()  { PASS=$((PASS+1)); }
 bad() { FAIL=$((FAIL+1)); echo "FAIL: $1"; }
 eq()  { if [ "$2" = "$3" ]; then ok; else bad "$1: expected '$3', got '$2'"; fi; }
 
-MERGE_SET="batch-resolve merge-conductor merge-conductor-backstop merge-queue rebase-train repair-on-push"
+MERGE_SET="batch-resolve merge-conductor merge-conductor-backstop merge-conductor-wake merge-queue rebase-train repair-on-push"
 DEPLOY_SET="apply-migrations deploy-train fleet-propagate migration-autopilot"
 NOW=1758300000
 mkdir -p "$T/h/bin/lib" "$T/h/flags" "$T/h/state" "$T/h/logs" "$T/h/catalog" "$T/src/catalog"
