@@ -1,0 +1,11 @@
+{
+  "env": "RESCUE_DATA_LANE_WAIT_ALERT_H",
+  "type": "int",
+  "default": 24,
+  "min": 0,
+  "max": 168,
+  "unit": "hours",
+  "zero_means": "off",
+  "required": true,
+  "note": "BH-6467: hours a data-lane-pending draft PR waits for its migration apply (no HUMAN-STEP-DONE yet) before review-rescue writes ONE ALERTS line for it (.dlp-wait-alerted per record). The same window applies after HUMAN-STEP-DONE: a prod probe that still answers missing or unknown that long after the done comment writes ONE ALERTS line (.dlp-probe-alerted per record); a refused MIGRATION_TOKEN alerts at once. 0 turns both window alerts off."
+}

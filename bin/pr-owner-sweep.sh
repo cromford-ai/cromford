@@ -674,6 +674,8 @@ def park_of(labels, body):
         return ("park: %s (no expiry date)" % m.group(1).strip()[:80], 0)
     if "parked" in labels:
         return ("park: `parked` label (no expiry date)", 0)
+    if "data-lane-pending" in labels:
+        return ("park: data-lane-pending (waits on a migration apply, review-rescue owns it)", 0)
     return None
 
 # STACKED (BH-6814): the open PRs based on each branch. A PR another open PR is
@@ -760,10 +762,11 @@ for p in sorted(prs, key=lambda x: int(x.get("number", 0) or 0)):
 
     since = pv.get("since") if pv.get("state") == state and pv.get("since") else \
         datetime.fromtimestamp(NOW, timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-    # `draft` is RECORDED and never branched on. No lane in this harness opens a
-    # draft PR (nothing in bin/ passes --draft), so a draft here is a human's
-    # hand-made branch, and the question this lane asks — who owns it — has the
-    # same answer either way. An operator reading the state file wants to know.
+    # `draft` is RECORDED and never branched on. The one lane that opens a
+    # draft (bin/lib/data-lane-pending.sh) labels it data-lane-pending, which
+    # park_of reads; any other draft is a human's hand-made branch, and the
+    # question this lane asks — who owns it — has the same answer either way.
+    # An operator reading the state file wants to know.
     out[sn] = {"number": n, "state": state, "since": since, "reason": reason,
                "key": key, "url": p.get("url") or "", "author": author,
                "draft": bool(p.get("isDraft"))}

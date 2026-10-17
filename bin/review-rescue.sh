@@ -168,6 +168,9 @@ for _P in "$(dirname "$0")/lib/gh-rest.sh" "$H/bin/lib/gh-rest.sh"; do
   # shellcheck source=bin/lib/gh-rest.sh
   [ -r "$_P" ] && { . "$_P"; break; }
 done
+# BH-6467: the data-lane draft's probe and finish. Missing, shape D is BH-6536's.
+# shellcheck source=bin/lib/data-lane-pending.sh
+. "$(dirname "${BASH_SOURCE[0]}")/lib/data-lane-pending.sh" 2>/dev/null || . "$H/bin/lib/data-lane-pending.sh" 2>/dev/null || true
 # One reset for both halves (#469): the identity tag and the App token, plus the
 # PAT probe's own restore for the boxes that have no App configured.
 rescue_reset() {
@@ -188,6 +191,9 @@ case "$RESCUE_HUMAN_STEP" in ''|*[!01]*) RESCUE_HUMAN_STEP=1 ;; esac
 RESCUE_HUMAN_STEP_PER_TICK="${RESCUE_HUMAN_STEP_PER_TICK:-}"
 case "$RESCUE_HUMAN_STEP_PER_TICK" in ''|*[!0-9]*|0) RESCUE_HUMAN_STEP_PER_TICK=5 ;; esac
 export RESCUE_HUMAN_STEP
+# BH-6467: hours a data-lane draft waits on its apply before one ALERTS line.
+RESCUE_DATA_LANE_WAIT_ALERT_H="${RESCUE_DATA_LANE_WAIT_ALERT_H:-}"
+case "$RESCUE_DATA_LANE_WAIT_ALERT_H" in ''|*[!0-9]*) RESCUE_DATA_LANE_WAIT_ALERT_H=24 ;; esac
 # How many candidates may be in flight at once. A rescue is mostly waiting — on
 # gh, on a git fetch, on a Fable review — so the cap is about the account and the
 # box, not about ordering: they do not touch each other's keys (the per-key flock
@@ -307,6 +313,7 @@ rescue_one() {
   local BN CORE PROJECT KEY REST SLUG ATT FIRST TAMPER WT MB RC V T RMODEL
   local PRNUM BRANCH PRURL RESCAN RESCAN_NOTE TITLE BODY REUSED PRE PRBF TJOB
   local SD_ACT="" SD_EV="" SD_WHO="" SD_AT="" SD_SECTION="" REV_SHA="" POSTRC=1
+  local DLP_PATH="" DLP_NOTE="" DLP_FIN="" DLP_OUT DLP_RC DLP_LINE DLP_ALERT="" DLP_SAY=1
   [ "${2:-}" = human-step ] && SD=1
   BN=$(basename "$CAND")
   FIRST=$(head -1 "$CAND/RESULT" 2>/dev/null)
@@ -412,6 +419,10 @@ rescue_one() {
           say "$BN: review blocked only on a human step (${SD_ACT:-see review.md}); no person's HUMAN-STEP-DONE: on #$ISSUE after $SD_SINCE — waiting, no attempt spent"
           : > "$CAND/.human-step-waiting-said"
         fi
+        # BH-6467: a data-lane draft that waits past its window pages once.
+        if command -v dlp_wait_line >/dev/null 2>&1 && DLP_LINE=$(dlp_wait_line "$CAND" "$KEY" "$RESCUE_DATA_LANE_WAIT_ALERT_H"); then
+          : > "$CAND/.dlp-wait-alerted"; alert "$DLP_LINE"
+        fi
         rescue_reset; return 0 ;;
       *)
         say "$BN: human-step thread unreadable — no attempt spent"
@@ -419,10 +430,47 @@ rescue_one() {
     esac
     SD_WHO=$(sed -n 's/^author: \(@[^ ]*\) at .*/\1/p' <<<"$SD_EV" | head -1)
     SD_AT=$(sed -n 's/^author: @[^ ]* at //p' <<<"$SD_EV" | head -1)
-    nh_sd_stage_put "$PROJECT" "$ISSUE" "$KEY" human-step-done "$SD_WHO posted HUMAN-STEP-DONE at $SD_AT; re-reviewing the built branch"
+    # >>> data-lane probe (BH-6467)
+    # A data-lane-only BLOCK re-reviews only after the done comment names the
+    # file and the app's migration ledger holds it at the PR's checksum. A no
+    # or an unknown spends no attempt; the record is offered again next tick.
+    if command -v dlp_only >/dev/null 2>&1 && DLP_PATH=$(dlp_only "$CAND/review.md" 2>/dev/null); then
+      if ! dlp_names_file "$SD_EV" "$DLP_PATH"; then
+        nh_sd_stage_put "$PROJECT" "$ISSUE" "$KEY" human-step-waiting "HUMAN-STEP-DONE does not name $DLP_PATH; apply it, then post HUMAN-STEP-DONE: $DLP_PATH"
+        say "$BN: $SD_WHO's HUMAN-STEP-DONE does not name $DLP_PATH — waiting, no probe, no attempt spent"
+        rescue_reset; return 0
+      fi
+      case "$(git -C "$REPOS/$PROJECT" remote get-url origin 2>/dev/null)" in https://*) mc_git_auth "$SLUG" >/dev/null 2>&1 || true ;; esac
+      DLP_RC=0
+      DLP_OUT=$(dlp_probe "$PROJECT" "$REPOS/$PROJECT" "$(dlp_marker_head "$CAND")" "$DLP_PATH") || DLP_RC=$?
+      DLP_LINE=$(sed -n 2p <<<"$DLP_OUT")
+      # A probe that keeps failing pages once (B1); its say line is said once
+      # per answer, not every tick.
+      if [ "$DLP_RC" = 1 ] || [ "$DLP_RC" = 75 ]; then
+        if DLP_ALERT=$(dlp_probe_alert_line "$CAND" "$PROJECT" "$KEY" "$DLP_RC" "$DLP_LINE" "$SD_AT" "$RESCUE_DATA_LANE_WAIT_ALERT_H"); then
+          : > "$CAND/.dlp-probe-alerted"; alert "$DLP_ALERT"
+        fi
+        DLP_SAY=1; [ "$(cat "$CAND/.dlp-probe-said" 2>/dev/null)" = "$DLP_RC $DLP_LINE" ] && DLP_SAY=0
+        printf '%s\n' "$DLP_RC $DLP_LINE" > "$CAND/.dlp-probe-said"
+      fi
+      case "$DLP_RC" in
+        0) DLP_NOTE="prod probe confirmed: $DLP_LINE" ;;
+        3) DLP_NOTE="prod probe not configured ($DLP_LINE); this re-review runs on the person's word" ;;
+        1) dlp_missing_comment "$SLUG" "$ISSUE" "$SD_THREAD" "$(sed -n '1s/^comment: //p' <<<"$SD_EV")" "$DLP_LINE" \
+             || say "$BN: the probe-missing comment on #$ISSUE did not post — retried next tick"
+           nh_sd_stage_put "$PROJECT" "$ISSUE" "$KEY" human-step-waiting "probe: $DLP_LINE"
+           [ "$DLP_SAY" = 1 ] && say "$BN: HUMAN-STEP-DONE by $SD_WHO, but $DLP_LINE — no re-review, no attempt spent"
+           mc_git_auth_clear; rescue_reset; return 0 ;;
+        *) [ "$DLP_SAY" = 1 ] && say "$BN: the prod probe for $DLP_PATH could not answer (${DLP_LINE:-no detail}) — no attempt spent, asked again next tick"
+           mc_git_auth_clear; rescue_reset; return 0 ;;
+      esac
+    fi
+    # <<< data-lane probe
+    nh_sd_stage_put "$PROJECT" "$ISSUE" "$KEY" human-step-done "$SD_WHO posted HUMAN-STEP-DONE at $SD_AT; re-reviewing the built branch${DLP_NOTE:+; $DLP_NOTE}"
     say "$BN: $SD_WHO posted HUMAN-STEP-DONE at $SD_AT — re-reviewing the built branch"
     SD_SECTION=$(printf '\n\n## Human step evidence\n\nFrom %s:\n\n%s' "$(sed -n '1s/^comment: //p' <<<"$SD_EV")" \
       "$(sed '1d; s/^/> /; s/^> $/>/' <<<"$SD_EV")")
+    [ -n "$DLP_NOTE" ] && SD_SECTION="$SD_SECTION"$'\n\n'"$DLP_NOTE"
   fi
   # <<< human-step evidence
   # THE REVIEWER'S MODEL IS A ROUTE (BH-1510.1): REVIEW_MODEL in env, else this
@@ -628,7 +676,7 @@ rescue_one() {
     # reads this one. The header names the head the review runs on.
     REV_SHA=$(git -C "$WT" rev-parse HEAD 2>/dev/null)
     printf '\n=== human-step re-review %s %s ===\n' "${REV_SHA:0:8}" "$(STAMP)" >> "$CAND/review.md"
-    PROMPT="Adversarially review the diff of origin/main...HEAD in this repo for ticket $KEY (branch $BRANCH${PRNUM:+, PR #$PRNUM}), against the plan at $CAND/plan.md if present and the iron laws in ~/.claude/CLAUDE.md. Rules: /root/harness/prompts/build-discipline.md — cite rule ids (D1-D27) in findings. The original review BLOCKed only on this human step: ${SD_ACT:-see $CAND/review.md}. A person ran it; their evidence is below. Do not re-block on that finding. Judge the rest of the diff as a full adversarial review: correctness, edge cases, test honesty (do new tests fail if the feature breaks?), the touched-file UI iron laws, and security basics (authz on changed routes, injection, secrets). APPEND your complete review to $CAND/review.md below the line '=== human-step re-review ${REV_SHA:0:8}' (already written); do not edit the rounds above it. Second-to-last line exactly 'TIER: 1' or 'TIER: 2'. Last line exactly VERDICT: APPROVE or VERDICT: BLOCK."$'\n\n'"The person's evidence:"$'\n'"$SD_EV"
+    PROMPT="Adversarially review the diff of origin/main...HEAD in this repo for ticket $KEY (branch $BRANCH${PRNUM:+, PR #$PRNUM}), against the plan at $CAND/plan.md if present and the iron laws in ~/.claude/CLAUDE.md. Rules: /root/harness/prompts/build-discipline.md — cite rule ids (D1-D27) in findings. The original review BLOCKed only on this human step: ${SD_ACT:-see $CAND/review.md}. A person ran it; their evidence is below. Do not re-block on that finding. Judge the rest of the diff as a full adversarial review: correctness, edge cases, test honesty (do new tests fail if the feature breaks?), the touched-file UI iron laws, and security basics (authz on changed routes, injection, secrets). APPEND your complete review to $CAND/review.md below the line '=== human-step re-review ${REV_SHA:0:8}' (already written); do not edit the rounds above it. Second-to-last line exactly 'TIER: 1' or 'TIER: 2'. Last line exactly VERDICT: APPROVE or VERDICT: BLOCK."$'\n\n'"The person's evidence:"$'\n'"$SD_EV"${DLP_NOTE:+$'\n\n'"$DLP_NOTE"}
     PRE=$(cksum < "$CAND/review.md" 2>/dev/null)
     ( cd "$WT" && AGENT_CALL_ROLE=rescue.review timeout -k 60 2400 "$H/bin/agent-call.sh" review "$PROJECT" "$RMODEL" 2100 "$CAND/rescue-review-run.txt" "$PROMPT" ) >>"$CLOG" 2>&1
     [ "$PRE" != "$(cksum < "$CAND/review.md" 2>/dev/null)" ] && rm -f "$CAND/.findings-general"
@@ -638,6 +686,13 @@ rescue_one() {
     # A BLOCK is posted on the PR now, while this repo's token is still the
     # one in use: the resolver's review source reads it as a fix round.
     [ "$V" = "VERDICT: BLOCK" ] && { rescue_post_block "$CAND" "$SLUG" "${PRURL##*/}" "$REV_SHA"; POSTRC=$?; }
+    # BH-6467: a parsed APPROVE, or a BLOCK posted for the fix round, takes the
+    # data-lane draft out of draft and drops its label, with this repo's token.
+    if [ -e "$CAND/data-lane-pending" ] && command -v dlp_finish >/dev/null 2>&1 \
+       && { [ "$V" = "VERDICT: APPROVE" ] || { [ "$V" = "VERDICT: BLOCK" ] && [ "$POSTRC" = 0 ]; }; }; then
+      DLP_FIN=0; dlp_finish "$SLUG" "$PRURL" || DLP_FIN=1
+      [ "$DLP_FIN" = 0 ] || alert "$BN: data-lane draft $PRURL is still a draft or still labelled data-lane-pending after the re-review — run: gh pr ready $PRURL; gh api -X DELETE repos/$SLUG/issues/${PRURL##*/}/labels/data-lane-pending"
+    fi
   else
     PROMPT="Adversarially review the diff of origin/main...HEAD in this repo for ticket $KEY (branch $BRANCH${PRNUM:+, PR #$PRNUM}), against the plan at $CAND/plan.md if present and the iron laws in ~/.claude/CLAUDE.md. Rules: /root/harness/prompts/build-discipline.md — cite rule ids (D1-D27) in findings. A prior review round DIED MID-RUN leaving a draft in $CAND/review.md — supersede it: REWRITE $CAND/review.md as the complete review. Judge correctness, edge cases, test honesty (do new tests fail if the feature breaks?), the touched-file UI iron laws, and security basics (authz on changed routes, injection, secrets).${RESCAN_NOTE} Second-to-last line exactly 'TIER: 1' or 'TIER: 2'. Last line exactly VERDICT: APPROVE or VERDICT: BLOCK."
     PRE=$(cksum < "$CAND/review.md" 2>/dev/null)
@@ -683,7 +738,11 @@ rescue_one() {
       elif [ "$SD" = 1 ]; then rescue_result_rewrite "RESCUED: human-step re-review $(STAMP) after HUMAN-STEP-DONE by $SD_WHO"
       else rescue_result_rewrite "RESCUED: review re-run $(STAMP) after died-mid-review orphan"; fi
       touch "$CAND/.review-rescued"
-      [ "$SD" = 1 ] && nh_sd_stage_put "$PROJECT" "$ISSUE" "$KEY" rereview-approve "re-review APPROVE; PR ${PRURL} opened for the merge lanes"
+      case "$SD:$DLP_FIN" in
+        1:0) nh_sd_stage_put "$PROJECT" "$ISSUE" "$KEY" rereview-approve "re-review APPROVE; draft PR ${PRURL} marked ready and its data-lane-pending label removed, for the merge lanes" ;;
+        1:1) nh_sd_stage_put "$PROJECT" "$ISSUE" "$KEY" rereview-approve "re-review APPROVE; PR ${PRURL} is still a draft or still labelled data-lane-pending (see ALERTS)" ;;
+        1:*) nh_sd_stage_put "$PROJECT" "$ISSUE" "$KEY" rereview-approve "re-review APPROVE; PR ${PRURL} opened for the merge lanes" ;;
+      esac
       # A self-heal, not a page (BH-4724): info plus a self_heal ledger row, the
       # text the alert wrapper would build. No lib on this box -> the raw info line.
       local SH_MSG="[review-rescue] [$PROJECT/$KEY] $BN: rescued review = APPROVE ($T) — ${PRURL:-branch $BRANCH} now flows through the normal merge lanes."

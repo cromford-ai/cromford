@@ -371,6 +371,9 @@ command -v ui_wrap >/dev/null 2>&1 || { [ -r "$H/bin/lib/untrusted-input.sh" ] &
 # br_data_lane_route call site asks `command -v dl_candidate` and runs today's code.
 # shellcheck source=bin/lib/data-lane.sh
 [ -r "$H/bin/lib/data-lane.sh" ] && . "$H/bin/lib/data-lane.sh"
+# BH-6467: a data-lane-only BLOCK whose draft PR waits on the apply (dlp_pending).
+# shellcheck source=bin/lib/data-lane-pending.sh
+[ -r "$H/bin/lib/data-lane-pending.sh" ] && . "$H/bin/lib/data-lane-pending.sh"
 # WHO HAS SPOKEN ON THIS HEAD, AND DOES ITS TICKET SAY STOP (BH-1642). The
 # rebuild rung's supersede guard (br_supersede_guard) asks both before it closes
 # a PR: bin/lib/verdicts.sh, the ONE reader of the verdicts table (the
@@ -8058,6 +8061,17 @@ br_one() {
   case "$action:$reason" in
     data-lane-release:*) ;;
     *:rescue-giving-up|*:rebuild-review-blocked)
+      # BH-6467: its draft PR owns the ticket; bin/review-rescue.sh re-reviews
+      # that head after the apply. No rung, no rebuild. Only when a draft exists
+      # (the data-lane-pending marker) or shape D serves the record (a GitHub
+      # issues board, board_prefix "-"): an in-app board record has neither, and
+      # holding it would strand it with no draft, no rescue and no rebuild.
+      if command -v dlp_pending >/dev/null 2>&1 && [ -d "$rec" ] \
+         && { [ -f "$rec/data-lane-pending" ] || [ "$("$H/bin/fleet-conf.sh" "$p" board_prefix 2>/dev/null)" = "-" ]; } \
+         && dlp_pending "$rec" "$p"; then
+        [ -e "$rec/.dlp-hold-said" ] || { say "$p/$rkey [$reason]: data-lane-pending: waits on the migration apply; bin/review-rescue.sh re-reviews the draft of ${rec##*/}, no rebuild"; : > "$rec/.dlp-hold-said"; }
+        br_quiet data-lane-pending; br_reset_token; return 3
+      fi
       br_needs_human_park "$p" "$rkey" "$reason" "$url" "$rec" "$tkey" "$ck" "$st"
       case "$?" in
         3) br_quiet needs-human; br_reset_token; return 3 ;;

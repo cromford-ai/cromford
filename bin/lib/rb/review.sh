@@ -116,6 +116,8 @@ fi
 [ -r "$HARNESS/bin/lib/review-level.sh" ] && . "$HARNESS/bin/lib/review-level.sh" 2>/dev/null || true
 # BH-4923: the DATA_LANE: field (dl_prompt_field_note) — same fail-open shape.
 [ -r "$HARNESS/bin/lib/data-lane.sh" ] && . "$HARNESS/bin/lib/data-lane.sh" 2>/dev/null || true
+# BH-6467: a data-lane-only BLOCK opens a draft PR (dlp_block_draft) — same fail-open shape.
+[ -r "$HARNESS/bin/lib/data-lane-pending.sh" ] && . "$HARNESS/bin/lib/data-lane-pending.sh" 2>/dev/null || true
 NH_ISSUE=""; NH_SLUG=""
 if [ "$("$HARNESS/bin/fleet-conf.sh" "$PROJECT" board_prefix 2>/dev/null)" = "-" ]; then
   NH_ISSUE=$(sed -nE 's/^[A-Za-z]+-([0-9]+)$/\1/p' <<<"$KEY")
@@ -666,6 +668,14 @@ LENS_CALL() { # LENS_CALL <lens>
   fi
 }
 LENS_HEAD_MATCHES() { [ "$(cat "$BUILD/review-head" 2>/dev/null)" = "$(git rev-parse HEAD)" ]; }
+# DLP_DRAFT_AT_BLOCK — BH-6467: the review lens refused. When every other lens
+# approved, bin/lib/data-lane-pending.sh opens the draft. Never exits.
+DLP_DRAFT_AT_BLOCK() {
+  command -v dlp_at_block >/dev/null 2>&1 || return 0
+  local _l
+  for _l in $LENSES; do [ "$_l" = review ] || LENS_APPROVED "$_l" || return 0; done
+  dlp_at_block "$PROJECT" "${NH_SLUG:-}" "$BRANCH" "$BASE" "$KEY" "${NH_ISSUE:-}" "$BUILD" "$ALERTS"
+}
 # The terminal a refusing lens exits on. WRITTEN OUT AS LITERALS rather than
 # composed from a variable: tests/run-build-graph-test.sh reads the terminals
 # this script can write straight out of its own RESULT calls, and a terminal
@@ -737,6 +747,9 @@ LENS_REFUSE() { # LENS_REFUSE <lens> — never returns, except the go-live pass
               # neither can suppress or change the terminal word.
               { NH_SUFFIX="$(nh_on_block "$PROJECT" "${NH_ISSUE:-}" "$BUILD/review.md" "$BUILD" 2>/dev/null || true)"
                 nh_trip_on_block "$PROJECT" "${NH_ISSUE:-}" "$BUILD/review.md" "$(basename "$BUILD")" 2>/dev/null || true
+                # BH-6467: a data-lane-only BLOCK keeps its branch as a draft PR,
+                # which owns the ticket until the migration is applied.
+                DLP_DRAFT_AT_BLOCK 2>/dev/null || true
                 RESULT "REVIEW_BLOCKED $(LENS_ART review)${NH_SUFFIX}"; } ;;
     security) RESULT "SECURITY_BLOCKED $(LENS_ART security)" ;;
     refute)   RESULT "REFUTE_BLOCKED $(LENS_ART refute)" ;;
