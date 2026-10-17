@@ -1,0 +1,88 @@
+# catalog/test-impact-always-prepush.txt — the always-suites the pre-push gate
+# (bin/prepush-gate.sh) runs on the builder: its fast-lints set and its
+# rules-pack suite components (BH-7289, wave 3 of #7033).
+#
+# WHY. A merge-queue batch re-ran every always-suite, also the ones the gate
+# had just run green on each member's head. bin/ci-plan.sh now drops a suite
+# of this list from a batch when EVERY member's PR body carries a
+# `prepush-gate-record v1` block (bin/lib/prepush-record.sh) whose head is the
+# member's head and that names the suite. The drop is this list ∩ every
+# member's record, minus the quarantine; the regression list adds a suite back.
+# One member with no record, a moved head, the `full` label or unreadable
+# members, and the batch runs this list. The knob is the settings row
+# CI_ALWAYS_PREPUSH_SKIP of the ci-plan-settings lane (default 1, 0 = off).
+#
+# The suites STAY in catalog/test-impact-always.txt and in the derived always
+# set: that set feeds the gate's own list (bin/fast-lints.sh --list), so a line
+# moved out of it would leave the gate too.
+#
+# Regenerate (the durations are bin/ci-durations.sh fetch's file):
+#   . bin/lib/prepush-record.sh
+#   FAST_LINTS_DURATIONS=<durations.tsv> ppr_list_build .
+# One suite path per line, LC_ALL=C sorted. tests/always-set-prepush.bh-7289-test.sh
+# checks that each line is an always-suite the gate runs.
+tests/account-lease-cas-test.sh
+tests/arch-audit-conflict.bh-5270-test.sh
+tests/br-split-layout-test.sh
+tests/checks-suite-test.sh
+tests/ci-local.bh-6897-test.sh
+tests/ci-shard-split-test.sh
+tests/config-literal-lint.sh
+tests/day-boundary-guard.bh-6052-test.sh
+tests/discipline-dupes.bh-5788-test.sh
+tests/env-path-test.sh
+tests/fixround-lead-reviews.bh-2200-test.sh
+tests/fixround-unaddressed-report.bh-2276-test.sh
+tests/fixture-hygiene.bh-5789-test.sh
+tests/generated-not-tracked.bh-5518-test.sh
+tests/gh-app-ratchet-test.sh
+tests/gh-rest-etag-test.sh
+tests/gh-rest-etag.bh-1322-test.sh
+tests/gh-rest-lib-test.sh
+tests/gh-rest-list-lib-test.sh
+tests/gh-rest-no-subshell-lint.sh
+tests/gh-rest-quota-test.sh
+tests/gh-rest-quota.bh-1509-test.sh
+tests/gh-shim-token-prefix.bh-789-test.sh
+tests/hold-push-guard.bh-2504-test.sh
+tests/index-on-create-table.bh-6730-test.sh
+tests/jobs-client-modules.bh-1194-test.sh
+tests/lead-review-rules-pack.bh-3546-test.sh
+tests/llm-call-ratchet-test.sh
+tests/llm-lane-bind.bh-2580-test.sh
+tests/mc/schema-drop-safe.bh-6005-3-test.sh
+tests/model-literal-lint.sh
+tests/no-changelog-headers.bh-5235-test.sh
+tests/pr-scoped-test-lint.bh-5684-test.sh
+tests/prepush-gate.bh-7187-test.sh
+tests/prequeue-gate-learned-suites.bh-6335-test.sh
+tests/prequeue-invariants-real.bh-5429-test.sh
+tests/prequeue-invariants.bh-5591-test.sh
+tests/project-loop-lint.bh-5945-test.sh
+tests/pycache-untracked.bh-1138-test.sh
+tests/rb-modules-source-test.sh
+tests/rb-prepr-rules-pack.bh-3513-test.sh
+tests/readiness-report-test.sh
+tests/regenerated-path-conflicts.bh-1162-test.sh
+tests/regenerated-schema-conflicts.bh-6000-test.sh
+tests/registry-parity.bh-5651-test.sh
+tests/remote-gate-test.sh
+tests/remote-gate.bh-1597-test.sh
+tests/rollup-crash-loud-test.sh
+tests/rules-pack-contract.bh-3509-test.sh
+tests/schema-compose-tests.bh-6005-1-test.sh
+tests/schema-fragment-lint.bh-5788-test.sh
+tests/schema-fragment-name.bh-5788-test.sh
+tests/spec-artifact-test.sh
+tests/state-restore-standby.bh-401-test.sh
+tests/switch-convert-pipeline.bh-2435-test.sh
+tests/telegram-topics-sync-test.sh
+tests/test-impact-gate.bh-1524-test.sh
+tests/tests-scratch-only-check-test.sh
+tests/tests-trace-safety-test.sh
+tests/tier-wording-lint.bh-4582-test.sh
+tests/triage-state-pr-record.bh-3417-test.sh
+tests/untriaged-lib.bh-2752-test.sh
+tests/watchdog-url-tree.bh-2091-test.sh
+tests/worker-node-catalog-compose.bh-6452-test.sh
+tests/worker-node-lanes-build.bh-6540-test.sh

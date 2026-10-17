@@ -122,6 +122,24 @@
 # add, and the reason says `+<k> regression`. A read that fails is one
 # `ci-plan: regression: off (<why>)` stderr line and the list stays as it is.
 #
+# THE PREPUSH DROP (BH-7289). After the tier step and before the regression
+# union, a batch drops the suites of catalog/test-impact-always-prepush.txt
+# (the always-suites bin/prepush-gate.sh runs on the builder) that EVERY
+# member's PR body names in a `prepush-gate-record v1` block whose head is
+# that member's head (bin/lib/prepush-record.sh, ppr_read). The members are
+# member_full's replies, kept per ref, so this makes no gh call. The drop is
+# the list ∩ every record ∩ this run's list, minus the quarantine. It is off,
+# and the list stays whole, when CI_ALWAYS_PREPUSH_SKIP is not 1 (unset is 1;
+# projected from the ci-plan-settings row), the members were not all read
+# (member_full did not answer "none full"), a member has no matching record,
+# or the drop would leave nothing to run. One `ci-plan: prepush: dropped <k> of
+# <m> listed suites (<n> members, …)` or `ci-plan: prepush: off (<why>)` line;
+# the reason gains `; prepush -<k>` and a batch writes the output `prepush`
+# (<k> or off). The plan job writes CI_PLAN_PREPUSH_FILE (`prepush=on|off`,
+# then one dropped suite per line; a failed write is rc 2). A shard
+# (--expect-n) subtracts exactly that file and reads no member; a set but
+# unreadable file is rc 1. Seam: CI_PLAN_PREPUSH_LIST (the list file).
+#
 # THE FULL-TRIGGER DELTA (BH-6838). CI_FULL_TRIGGERS (the repo variable,
 # projected from the ci-plan-settings row by bin/ci-plan-settings.sh) adds
 # (`+<pattern>`) or removes (`-<pattern>`) escalate rows of
@@ -196,7 +214,9 @@
 # the corpus, `-` when it does not and on every non-batch path), own_base (the
 # stacked batch's own-diff base, BH-6490; `-` for none and on every non-batch
 # path), full_triggers (a batch only: the normalised CI_FULL_TRIGGERS, `-` for
-# none, BH-6838), sizing (the sizing line without `ci-plan: sizing: `),
+# none, BH-6838), prepush (a batch only: the dropped count or off, BH-7289;
+# absent on a shard with no CI_PLAN_PREPUSH_FILE), sizing (the sizing line
+# without `ci-plan: sizing: `),
 # shard_budget_s and max_shards (the knob values this plan used, which every
 # shard re-plans with, BH-6876), spa and
 # worker (BH-4969: 0 only on a batch-selected batch none of whose paths
@@ -247,7 +267,7 @@ while [ $# -gt 0 ]; do
     --expect-n) [ $# -ge 2 ] || { echo "ci-plan: --expect-n needs a number" >&2; exit 2; }; EXPECT="$2"; shift ;;
     --tier)     case "${2:-}" in nightly|nightly-full) TIER="$2" ;;
                   *) echo "ci-plan: --tier takes 'nightly' or 'nightly-full'" >&2; exit 2 ;; esac; shift ;;
-    -h|--help)  sed -n '2,236p' "$0"; exit 0 ;;
+    -h|--help)  sed -n '2,256p' "$0"; exit 0 ;;
     *) echo "ci-plan: unknown argument $1" >&2; exit 2 ;;
   esac
   shift
@@ -330,10 +350,13 @@ queue_tested() {
 # draft) with the job's own token. FAILS CLOSED: no repo, no gh, no refs, more
 # than MF_MAX refs, a failed read or a reply that is not a PR with a labels
 # array is `member labels unreadable`, never "no label". rc 1: all read, none full.
-MF_MAX=40
+# Each reply is kept as $TMP/member.<n>.json and rc 1 sets MF_OK=1 and MF_REFS
+# (the refs it read), for the
+# prepush drop (BH-7289), which then makes no gh call of its own.
+MF_MAX=40; MF_OK=0; MF_REFS=""
 member_full() {
   local gh="${CI_PLAN_GH:-gh}" repo="${CI_REPO:-}" refs n j labels
-  MF_WHY=""
+  MF_WHY=""; MF_OK=0
   [ -n "$repo" ] || { MF_WHY="member labels unreadable (no repository to ask)"; return 0; }
   command -v "$gh" >/dev/null 2>&1 || { MF_WHY="member labels unreadable (gh is not on this runner)"; return 0; }
   refs=$(printf '%s\n%s\n' "${TI_PR_TITLE:-}" "${CI_PR_BODY:-}" | grep -oE '#[0-9]+' | tr -d '#' | sort -un)
@@ -346,7 +369,9 @@ member_full() {
     labels=$(jq -r 'if (.labels | type) == "array" then .labels[] | (.name // empty) else error("no labels") end' <<<"$j" 2>/dev/null) \
       || { MF_WHY="member labels unreadable (#$n did not parse)"; return 0; }
     grep -qxF full <<<"$labels" && { MF_WHY="the 'full' label on #$n"; return 0; }
+    printf '%s\n' "$j" > "$TMP/member.$n.json" 2>/dev/null || rm -f "$TMP/member.$n.json"
   done
+  MF_OK=1; MF_REFS="$refs"
   return 1
 }
 
@@ -719,6 +744,76 @@ elif [ "$TIER" = nightly ]; then
   cp "$TMP/tiered" "$LIST"
 fi
 
+# THE PREPUSH DROP (BH-7289), after the tier step and before the regression
+# union, so a regression row still adds its suite back. See the header.
+# prepush_skip — sets PP_LINE (`dropped …` or `off (<why>)`) and PP_OUT (the
+# output key: <k> or off), and removes the dropped suites from $LIST. A batch
+# only. The plan job decides; a shard (--expect-n) subtracts the plan job's
+# CI_PLAN_PREPUSH_FILE and nothing else.
+PP_LINE=""; PP_OUT=""; PP_K=0
+prepush_skip() {
+  local f="${CI_PLAN_PREPUSH_FILE:-}" list="${CI_PLAN_PREPUSH_LIST:-$ROOT/catalog/test-impact-always-prepush.txt}"
+  local knob="${CI_ALWAYS_PREPUSH_SKIP:-1}" n before sha why="" first
+  [ "$BATCH" = 1 ] || return 0
+  : > "$TMP/pp.drop"
+  if [ -n "$EXPECT" ]; then
+    [ -n "$f" ] || return 0
+    first=$(head -n 1 "$f" 2>/dev/null)
+    case "$first" in prepush=on|prepush=off) ;;
+      *) echo "ci-plan: this shard cannot read the plan job's prepush drop $f (BH-7289): a shard must subtract exactly what the plan job dropped" >&2; exit 1 ;;
+    esac
+    tail -n +2 "$f" | grep . > "$TMP/pp.drop"
+    if [ "$first" = prepush=off ]; then PP_LINE="off (the plan job dropped nothing)"; PP_OUT=off; return 0; fi
+  else
+    if [ "$knob" != 1 ]; then why="CI_ALWAYS_PREPUSH_SKIP=${knob:0:20}"
+    elif [ "$MF_OK" != 1 ]; then why="members not read"
+    else
+      case "$ESCALATION" in *"'full' label"*|"member labels unreadable"*) why="escalation: $ESCALATION" ;; esac
+    fi
+    if [ -z "$why" ] && ! { [ -r "$list" ] && grep -Ev '^[[:space:]]*(#|$)' "$list" | LC_ALL=C sort -u > "$TMP/pp.set" && [ -s "$TMP/pp.set" ]; }; then
+      why="the prepush list cannot be read"
+    fi
+    if [ -z "$why" ]; then
+      . "$SELF_DIR/lib/prepush-record.sh" 2>/dev/null && command -v ppr_read >/dev/null 2>&1 || why="cannot load bin/lib/prepush-record.sh"
+    fi
+    if [ -z "$why" ]; then
+      for n in $MF_REFS; do
+        sha=$(jq -r '.head.sha // empty' "$TMP/member.$n.json" 2>/dev/null)
+        jq -r '.body // empty' "$TMP/member.$n.json" > "$TMP/pp.body" 2>/dev/null || : > "$TMP/pp.body"
+        if ! ppr_read "$TMP/pp.body" "$sha" > "$TMP/pp.member" 2>/dev/null; then
+          why="#$n has no green record on ${sha:0:8}"; [ -n "$sha" ] || why="#$n has no head sha"; break
+        fi
+        LC_ALL=C awk 'NR == FNR { m[$0] = 1; next } ($0 in m)' "$TMP/pp.member" "$TMP/pp.set" > "$TMP/pp.next" && mv "$TMP/pp.next" "$TMP/pp.set"
+      done
+      [ -n "$why" ] || [ -n "$MF_REFS" ] || why="members not read"
+    fi
+    if [ -z "$why" ]; then
+      # Only what this list holds, never a quarantined suite.
+      LC_ALL=C awk -v qf="$QUAR" -v lf="$LIST" 'FILENAME == qf { q[$0] = 1; next } FILENAME == lf { l[$0] = 1; next }
+        ($0 in l) && !($0 in q)' "$QUAR" "$LIST" "$TMP/pp.set" > "$TMP/pp.drop"
+      [ -s "$TMP/pp.drop" ] || why="no listed suite of this run is in every member's record"
+    fi
+    if [ -z "$why" ] && ! LC_ALL=C awk 'NR == FNR { d[$0] = 1; next } !($0 in d)' "$TMP/pp.drop" "$LIST" | grep -q .; then
+      why="would run nothing"
+    fi
+    if [ -n "$why" ]; then
+      : > "$TMP/pp.drop"; PP_LINE="off ($why)"; PP_OUT=off
+      if [ -n "$f" ]; then printf 'prepush=off\n' > "$f" 2>/dev/null || { echo "ci-plan: cannot write the prepush drop $f" >&2; exit 2; }; fi
+      return 0
+    fi
+    if [ -n "$f" ]; then { echo prepush=on; cat "$TMP/pp.drop"; } > "$f" 2>/dev/null || { echo "ci-plan: cannot write the prepush drop $f" >&2; exit 2; }; fi
+  fi
+  before=$(grep -c . "$LIST")
+  LC_ALL=C awk 'NR == FNR { d[$0] = 1; next } !($0 in d)' "$TMP/pp.drop" "$LIST" > "$TMP/pp.list" && cp "$TMP/pp.list" "$LIST" \
+    || { echo "ci-plan: cannot apply the prepush drop" >&2; exit 2; }
+  PP_K=$((before - $(grep -c . "$LIST")))
+  PP_OUT=$PP_K; REASON="$REASON; prepush -$PP_K"
+  if [ -n "$EXPECT" ]; then PP_LINE="dropped $PP_K suites (the plan job's drop)"
+  else PP_LINE="dropped $PP_K of $(grep -Ev '^[[:space:]]*(#|$)' "$list" | LC_ALL=C sort -u | grep -c .) listed suites ($(grep -c . <<<"$MF_REFS") members, all with a green record on their head)"; fi
+}
+prepush_skip
+[ -z "$PP_LINE" ] || echo "ci-plan: prepush: $PP_LINE"
+
 # THE REGRESSION UNION (BH-6838), after the tier step: a regression suite with
 # a nightly row still runs in the batch. See the header.
 if [ "$TIER" = batch ]; then
@@ -911,6 +1006,7 @@ if [ -n "${GITHUB_OUTPUT:-}" ]; then
     echo "shards=$SHARDS"; echo "corpus=1"; echo "summary=$SUMMARY"; echo "quarantine=$QLIST"
     echo "escalation=$ESCALATION"; echo "own_base=$OWN_BASE"; echo "spa=$SPA"; echo "worker=$WORKER"
     [ "$BATCH" = 0 ] || echo "full_triggers=$FTRIG"
+    [ "$BATCH" = 0 ] || [ -z "$PP_OUT" ] || echo "prepush=$PP_OUT"
     echo "sizing=$SIZING"; echo "shard_budget_s=$BUDGET"; echo "max_shards=$MAX"
     [ "$REUSE_KEYS" = 0 ] || { echo "reused=$REUSED_N"; echo "saved_s=$SAVED"; echo "reuse=$REUSE"; }
   } >> "$GITHUB_OUTPUT"

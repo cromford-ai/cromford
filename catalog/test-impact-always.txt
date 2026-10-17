@@ -17,6 +17,11 @@
 # say what it missed, so the next person can fix the detector instead of
 # growing the list.
 #
+# A merge-queue batch drops the suites of catalog/test-impact-always-prepush.txt
+# when every member carries a green pre-push gate record on its head (BH-7289).
+# This file still feeds the gate's own list (bin/fast-lints.sh --list), so those
+# suites keep their lines here.
+#
 # BH-1485 (review C2): tests/gh-rest-no-subshell-lint.sh walks bin/ inside a
 # Python heredoc (os.walk), so none of the four text signals above see it —
 # the walk is data to bin/test-impact.sh's own grep, not a `git ls-files` /

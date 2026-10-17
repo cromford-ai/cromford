@@ -87,6 +87,8 @@ bin/lib/train-shape.sh	escalate	sourced by bin/test-impact.sh: what a merge trai
 bin/lib/suite-runner.sh	escalate	sourced by bin/test-suite-run.sh and the runners: how a suite runs
 bin/suite-reuse.sh	escalate	the suite ledger plan/record (BH-5366): which suites a batch reuses instead of running
 bin/lib/suite-fingerprint.sh	escalate	the suite input fingerprint (BH-5366): a change here moves every fingerprint
+bin/lib/prepush-record.sh	escalate	the pre-push gate record reader bin/ci-plan.sh sources (BH-7289): which always-suites a batch drops
+catalog/test-impact-always-prepush.txt	escalate	the always-suites a batch may drop for a green pre-push gate record (BH-7289)
 bin/test-suite-run.sh	escalate	the suite runner the shards call
 bin/test-trace-safety.sh	escalate	the trace-safety runner the workflow calls
 bin/run-tests-in-docker.sh	escalate	the docker runner; decides what tree a green ran on

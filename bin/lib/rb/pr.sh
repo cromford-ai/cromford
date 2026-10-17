@@ -816,6 +816,15 @@ if [ -x bin/prepush-gate.sh ] && [ "$_PPG_MODE" != off ]; then
   if [ -n "$_PPG_CNR" ]; then
     PREPR_SECTION="${PREPR_SECTION:-}"$'\n## Pre-push gate: could-not-run\n\n'"These components were could-not-run on the build box: $_PPG_CNR. They are not green. CI decides them."$'\n'
   fi
+  # BH-7289: the record of the suites the gate ran green on THIS head (no commit
+  # comes between here and the push). A merge-queue batch drops them only when
+  # every member's record matches its head (bin/ci-plan.sh, THE PREPUSH DROP).
+  # No lib, no readable HEAD or no green suite writes nothing: the batch runs them.
+  if [ -r bin/lib/prepush-record.sh ] && . bin/lib/prepush-record.sh 2>/dev/null && command -v ppr_write >/dev/null 2>&1 \
+     && _ppg_head=$(git rev-parse HEAD 2>/dev/null) && _PPG_REC=$(ppr_write "$_PPG" "$_ppg_head" . 2>/dev/null); then
+    PREPR_SECTION="${PREPR_SECTION:-}${_PPG_REC}"$'\n'
+    echo "$(STAMP) [$PROJECT/$KEY] PREPUSH-GATE record head=${_ppg_head:0:12} suites=$(grep -c '^prepush-ran: ' <<<"$_PPG_REC")" >> "$BUILD/pipeline.log"
+  fi
 fi
 # <<< prepush gate
 # >>> pr push

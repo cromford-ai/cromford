@@ -26,8 +26,13 @@
 #                 `failed`. A refused or failed name is one warn alert
 #                 ci-plan-settings-sizing:<slug>; both configured and
 #                 same/set resolves it; anything else sends no alert call.
+#   4b prepush    BH-7289. CI_ALWAYS_PREPUSH_SKIP (0..1), which bin/ci-plan.sh
+#                 reads as the switch of the batch's prepush drop (unset = 1).
+#                 Same rules as one sizing name: `unset` (no call), `refused`,
+#                 `same`, `set`, `failed`. A refused or failed value is one warn
+#                 alert ci-plan-settings-prepush:<slug>; same/set resolves it.
 #   5 one tick line in logs/ci-plan-settings.log, ending in
-#                 ` sizing=CI_MAX_SHARDS:<r>,CI_SHARD_BUDGET_S:<r>`.
+#                 ` prepush=<r> sizing=CI_MAX_SHARDS:<r>,CI_SHARD_BUDGET_S:<r>`.
 #
 # --dry-run: prints `would: <POST|PATCH> <NAME>=<value>` and writes
 # nothing (no variable, alert or log line other than the tick line). Exit 0 on
@@ -36,7 +41,7 @@ set -uo pipefail
 H="${HARNESS:-/root/harness}"
 . "${HARNESS:-/root/harness}/bin/lib/env-path.sh" 2>/dev/null || . "$(dirname "${BASH_SOURCE[0]}")/lib/env-path.sh" 2>/dev/null || harness_env_dir() { printf '%s\n' "${1:-${HARNESS:-/root/harness}}/env"; }; HENV=$(harness_env_dir "$H")
 
-case "${1:-}" in -h|--help) sed -n '2,34p' "$0"; exit 0 ;; esac
+case "${1:-}" in -h|--help) sed -n '2,39p' "$0"; exit 0 ;; esac
 # >>> lane gate (BH-1165): flags/lane-off-ci-plan-settings or all-off exits 0;
 # the settings rows land in the env the knob read below uses. Both fail OPEN.
 # shellcheck disable=SC1091
@@ -65,7 +70,7 @@ flock -n 9 || exit 0
 
 LOG="$H/logs/ci-plan-settings.log"
 ID="ci-plan-settings-projection:$SLUG"
-RAW="${CI_FULL_TRIGGERS:-}"; WANT="?"; PROJ=failed; why=""; note=""; SIZ=""
+RAW="${CI_FULL_TRIGGERS:-}"; WANT="?"; PROJ=failed; why=""; note=""; SIZ=""; PPR=""
 
 _cps_alert() {   # _cps_alert <lane-alert opts…> <text>
   if [ "$DRY" = 1 ]; then echo "would: alert ${*:1:$#-1}: ${!#}"; return 0; fi
@@ -74,7 +79,7 @@ _cps_alert() {   # _cps_alert <lane-alert opts…> <text>
 _cps_tick() {
   printf '%s ci-plan-settings %s: value=%s projection=%s%s%s\n' \
     "$(date -u '+%Y-%m-%d %H:%M:%SZ')" "$SLUG" "$WANT" "$PROJ" "${why:+ ($why)}${note:+ [$note]}" \
-    "$([ "$DRY" = 1 ] && echo ' [dry-run]')${SIZ:+ sizing=$SIZ}" | tee -a "$LOG"
+    "$([ "$DRY" = 1 ] && echo ' [dry-run]')${PPR:+ prepush=$PPR}${SIZ:+ sizing=$SIZ}" | tee -a "$LOG"
 }
 trap _cps_tick EXIT
 
@@ -146,6 +151,22 @@ if [ -n "$SWHY" ]; then
     "ci-plan-settings $SLUG: shard sizing not projected ($SWHY); CI keeps the old variables, retry next tick"
 elif [ "$SGOOD" = 2 ]; then
   _cps_alert --resolve --id "$SID" "ci-plan-settings $SLUG: shard sizing projected again"
+fi
+
+# ── 2c. the prepush switch (BH-7289) ────────────────────────────────────────
+PID="ci-plan-settings-prepush:$SLUG"; SWHY=""; v="${CI_ALWAYS_PREPUSH_SKIP:-}"
+if [ -z "$v" ]; then PPR=unset
+elif ! [[ $v =~ ^[01]$ ]]; then
+  PPR=refused; SWHY="CI_ALWAYS_PREPUSH_SKIP='${v:0:40}' is not 0 or 1"
+else
+  _cps_size CI_ALWAYS_PREPUSH_SKIP "$v"; PPR="$R"
+fi
+if [ -n "$SWHY" ]; then
+  _cps_alert --id "$PID" --severity warn \
+    "ci-plan-settings $SLUG: CI_ALWAYS_PREPUSH_SKIP not projected ($SWHY); CI keeps the old variable, retry next tick"
+else
+  case "$PPR" in same|set|would-*)
+    _cps_alert --resolve --id "$PID" "ci-plan-settings $SLUG: CI_ALWAYS_PREPUSH_SKIP projected again" ;; esac
 fi
 
 # ── 3. the alert ─────────────────────────────────────────────────────────────

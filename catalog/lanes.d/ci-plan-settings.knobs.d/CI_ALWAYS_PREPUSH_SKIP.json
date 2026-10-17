@@ -1,0 +1,12 @@
+{
+  "env": "CI_ALWAYS_PREPUSH_SKIP",
+  "read_in": "bin/ci-plan-settings.sh",
+  "type": "int",
+  "default": 1,
+  "min": 0,
+  "max": 1,
+  "unit": "switch",
+  "zero_means": "off",
+  "required": true,
+  "note": "BH-7289 (the master #7033 row ci.cromford.always_prepush_skip): 1 = a merge-queue batch drops the always-suites of catalog/test-impact-always-prepush.txt that every member's pre-push gate record ran green on its head; 0 = off, the rollback. bin/ci-plan-settings.sh projects it into the repo variable CI_ALWAYS_PREPUSH_SKIP, which bin/ci-plan.sh reads (unset = 1). 0 or 1 only; anything else is refused (warn alert ci-plan-settings-prepush:<slug>, the old variable stays)."
+}
