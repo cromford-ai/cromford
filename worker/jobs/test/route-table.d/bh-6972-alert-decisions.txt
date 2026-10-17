@@ -1,0 +1,3 @@
+# BH-6972 (BH-6546.2): the component-watch decision record, key-named (BH-5788).
+POST /api/alerts/decisions
+GET /api/alerts/decisions

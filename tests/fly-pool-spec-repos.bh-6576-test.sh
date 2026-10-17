@@ -12,7 +12,8 @@
 #        S3 knob + SPEC_REPOS: one deduped list; a missing ticket-sourced repo
 #           pages with the ticket text, once per day.
 #        S4 SPEC_REPOS naming only the project: no read mint.
-#        S6 a failed read push is said and the spawn goes ahead.
+#        S6 the block pushes nothing (BH-7215; the failed read push is
+#           driven in tests/fly-pool-warmup.bh-7215-test.sh L3).
 #   S5 the REAL machine-json jq line from spawn_one: spec_repos rides on it
 #      only when set, and spec_repos_machine_has reads it back.
 #   R1 the REAL next_job_or_destroy: a machine with spec_repos is destroyed,
@@ -102,7 +103,9 @@ grep -qx -- '--extra-read example-org/project-6 --min-life 3300 example-org/proj
   || bad "S2: one --extra-read call for the spec repo, got: $(cat "$T/token.calls")"
 grep -qx 'GH_EXTRA_READ_REPOS=example-org/project-6' "$T/b/global.env" && ok || bad "S2: GH_EXTRA_READ_REPOS must name the spec repo, got: $(grep GH_EXTRA "$T/b/global.env")"
 grep -qx 'GH_EXTRA_READ_TOKEN=tok-fixture-read' "$T/b/global.env" && ok || bad "S2: GH_EXTRA_READ_TOKEN must ship"
-grep -qx 'mach1 /run/harness-env/gh-token-read' "$T/mput.calls" && ok || bad "S2: the read token must be pushed, got: $(cat "$T/mput.calls")"
+# BH-7215: the block runs before the launch; the push phase sends the file.
+[ "$(cat "$T/b/gh-token-read" 2>/dev/null)" = tok-fixture-read ] && ! grep -q 'gh-token-read' "$T/mput.calls" && ok \
+  || bad "S2: the read token must be left in \$TMP/gh-token-read for the push phase, got: $(cat "$T/mput.calls")"
 grep -qx 'GH_TOKEN=tok-fixture-project' "$T/b/global.env" && ok || bad "S2: GH_TOKEN must stay the project token"
 grep -q 'read-only token for the extra repos of example-org/proj-repo (example-org/project-6; left out: none)' "$T/pool.log" && ok || bad "S2: the shipped line must be said, got: $(cat "$T/pool.log")"
 grep -q 'tok-fixture-read' "$T/pool.log" "$T/swap.err" && bad "S2: the read token value reached the log" || ok
@@ -127,10 +130,11 @@ run_swap EXTRA_READ_REPOS= SPEC_REPOS=example-org/PROJ-repo XMINT=tok-fixture-re
 grep -q -- '--extra-read' "$T/token.calls" && bad "S4: the project slug alone must make no --extra-read call, got: $(cat "$T/token.calls")" || ok
 grep -q '^GH_EXTRA_READ_' "$T/b/global.env" && bad "S4: no GH_EXTRA_READ_* line for the project slug" || ok
 
-# S6: a failed read push is said; the spawn goes ahead.
+# S6: the read push left the block (BH-7215). A failed push is said and the
+# spawn goes ahead: driven in tests/fly-pool-warmup.bh-7215-test.sh L3.
 run_swap EXTRA_READ_REPOS= SPEC_REPOS=example-org/project-6 XMINT=tok-fixture-read MPUT_FAILS=1
-[ "$SRC" = 0 ] && ok || bad "S6: a failed read push must not stop the spawn, got '$SRC'"
-grep -q 'gh-token-read push FAILED' "$T/pool.log" && ok || bad "S6: the failed push must be said, got: $(cat "$T/pool.log")"
+[ "$SRC" = 0 ] && ok || bad "S6: the swap block must answer 0, got '$SRC'"
+grep -q 'gh-token-read' "$T/mput.calls" && bad "S6: the swap block must not push gh-token-read, got: $(cat "$T/mput.calls")" || ok
 
 # ── S5: the machine json line from spawn_one ────────────────────────────────
 JQLINE=$(sed -n '/^spawn_one() {/,/^}/p' "$DIR/bin/fly-pool.sh" | sed -n '/^ *jq -nc --arg m "\$MID"/,/> "\$POOL\/\$MID.json"$/p')

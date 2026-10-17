@@ -1,0 +1,1 @@
+{"decisions":[{"id":"cw-fixture-a1","verdict":"ticket","title":"Queue label goes missing on retry","reason":"The label drops on every retry."},{"id":"cw-fixture-a3","verdict":"ticket","title":"STACKED_WAIT never clears after the parent merges","reason":"A code defect in the conductor."}]}

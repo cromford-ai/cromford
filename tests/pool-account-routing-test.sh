@@ -293,8 +293,12 @@ grep -qE 'sk-ant|FIXTURE' <<<"$OUT" && bad "9: the answer line printed a token: 
 # =============================================================================
 F="$DIR/bin/fly-pool.sh"
 grep -q 'bin/lib/pool-account.sh' "$F" && ok || bad "10: fly-pool.sh does not source the library"
-grep -q 'pool_account_lease "$P" "$KEY" "$TMP/global.env" "$MID"' "$F" \
+# BH-7215: the lease runs before `fly machine run` under a pre-launch id, and
+# pool_account_rebind moves it to the machine id after the launch.
+grep -q 'pool_account_lease "$P" "$KEY" "$TMP/global.env" "$LEASE_ID"' "$F" \
   && ok || bad "10: fly-pool.sh does not lease an account for the bundle it is about to push"
+awk '/pool_account_lease "\$P"/{l=NR} /"\$FLY" machine run/{r=NR} /pool_account_rebind "\$LEASE_ID" "\$MID"/{b=NR} END{exit !(l && r && b && l < r && r < b)}' "$F" \
+  && ok || bad "10: the lease must come before machine run, and pool_account_rebind \$LEASE_ID \$MID after it"
 # the lease must happen BEFORE the bundle leaves the hub
 awk '/pool_account_lease "\$P"/{l=NR} /mput "\$MID" "\$TMP\/global.env"/{p=NR} END{exit !(l && p && l < p)}' "$F" \
   && ok || bad "10: the lease does not run before the bundle is pushed"

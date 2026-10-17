@@ -250,13 +250,15 @@ run 303
 starts() { case "$1" in "$2"*) return 0 ;; *) return 1 ;; esac; }
 starts "$(reason 303)" "open PR #9303" && ok || bad "H4: fixture check, #303 must decline on the open PR, got '$(reason 303)'"
 [ "$(nalerts)" = 0 ] && ok || bad "H4: a non-HOLD decline must write no alert, got $(nalerts)"
-# hotfix held by a comment but declined EARLIER (condition 11, no spec body):
-# the HOLD did not decide this decline, so no alert
+# hotfix held by a comment but declined EARLIER (condition 9, the issue is
+# closed): the HOLD did not decide this decline, so no alert. TEST-CHANGE
+# (BH-7117): this fixture used condition 11 (no spec body), and BH-7117 exempts
+# a hotfix from condition 11, so a hotfix can no longer decline there.
 reset
 mkissue 305 "$LAB_HF" "$(thread "HOLD: wait")"
-jq '.body = "just a sentence"' "$H/fixture/issue-305.json" > "$T/i305" && mv "$T/i305" "$H/fixture/issue-305.json"
+jq '.state = "closed"' "$H/fixture/issue-305.json" > "$T/i305" && mv "$T/i305" "$H/fixture/issue-305.json"
 run 305
-[ "$(reason 305)" = "body lacks ## Scope / ## Acceptance tests" ] && ok || bad "H4: fixture check, #305 must decline on its body, got '$(reason 305)'"
+[ "$(reason 305)" = "issue not open" ] && ok || bad "H4: fixture check, #305 must decline as not open, got '$(reason 305)'"
 [ "$(nalerts)" = 0 ] && ok || bad "H4: a decline the HOLD did not decide must write no alert, got $(nalerts)"
 # hotfix launched: no alert
 reset

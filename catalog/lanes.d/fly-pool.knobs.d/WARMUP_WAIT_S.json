@@ -1,0 +1,12 @@
+{
+  "env": "WARMUP_WAIT_S",
+  "type": "int",
+  "default": 1800,
+  "min": 60,
+  "max": 7200,
+  "unit": "seconds",
+  "zero_means": null,
+  "required": false,
+  "read_in": "bin/fly-pool.sh",
+  "note": "BH-7215. How long a new pool machine waits for the hub to push its env and job.json before it exits 0 and autostops. spawn_one passes it as `-e WARMUP_WAIT_S=<n>` on `fly machine run`, and fly/builder-runner.sh reads it. Per-project row `lane.fly-pool.<project>.warmup_wait_s`. The old fixed 600 s lost project-6-os spawns whose hub setup took about 12 minutes (#7174). An idle performance-8x for 20 more minutes costs about $0.15; a lost spawn costs a full tick, about 30 minutes."
+}

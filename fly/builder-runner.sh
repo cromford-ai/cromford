@@ -2,7 +2,8 @@
 # fly/builder-runner.sh — the one process a builder machine runs (Phase 1).
 #
 # Job contract (per plan "Phase 1 > fly/builder-runner.sh"):
-#   1. Wait up to 10 min for the hub to push env + a job file. No job => exit 0
+#   1. Wait up to WARMUP_WAIT_S (default 30 min, BH-7215) for the hub to push
+#      env + a job file. No job => exit 0
 #      (machine autostops; covers a spurious start).
 #   2. First-boot warm-up if the repo is missing: clone, install deps
 #      (pnpm store on the volume), codegraph init + telemetry off.
@@ -14,8 +15,10 @@
 #      machine autostops (restart policy `no`).
 #
 # Open-detail decisions (simplest robust option, per task brief):
-#   - IDLE_TIMEOUT and WARMUP wait are constants here; a builder is single-job,
-#     single-project, so no config surface is warranted for Phase 1.
+#   - IDLE_TIMEOUT is a constant here; a builder is single-job, single-project,
+#     so no config surface is warranted for Phase 1. The WARMUP wait is not
+#     (BH-7215): the hub passes WARMUP_WAIT_S on `fly machine run`, from the knob
+#     lane.fly-pool.<project>.warmup_wait_s.
 #   - Job file is /run/harness/job.json {ticket_id,key,attempt}, with an
 #     optional rebase:{kind,slug,url,pr,branch,head,base} member (BH-486) that
 #     makes the job a POOL REBASE and not a build at all — see run_rebase_job.
@@ -41,7 +44,10 @@ HEARTBEAT="$JOBDIR/heartbeat"
 PROJECT="${PROJECT:?PROJECT must be set by entrypoint}"
 REPO="/data/repos/$PROJECT"
 IDLE_TIMEOUT=600          # 10 min with no pushed job -> autostop
-WARMUP_WAIT=600           # first-job wait budget
+# BH-7215: the hub passes WARMUP_WAIT_S (lane knob lane.fly-pool.<p>.warmup_wait_s).
+# A fixed 600 s lost spawns whose hub setup took longer (#7174).
+WARMUP_WAIT="${WARMUP_WAIT_S:-1800}"
+case "$WARMUP_WAIT" in ''|*[!0-9]*|0) WARMUP_WAIT=1800 ;; esac
 POLL=5
 
 STAMP() { date -u '+%Y-%m-%d %H:%M:%SZ'; }
@@ -347,6 +353,7 @@ live_git_credentials() {
 }
 
 # --- 1. wait for the first pushed job ----------------------------------------
+# >>> warmup wait (BH-7215)
 log "waiting up to ${WARMUP_WAIT}s for hub to push env + job"
 waited=0
 while [ ! -f "$JOB" ]; do
@@ -357,6 +364,7 @@ while [ ! -f "$JOB" ]; do
   fi
   sleep "$POLL"; waited=$((waited + POLL))
 done
+# <<< warmup wait
 
 # Started here and not before: the hub pushes the env bundle and job.json
 # together, and a pusher that runs before global.env lands has no

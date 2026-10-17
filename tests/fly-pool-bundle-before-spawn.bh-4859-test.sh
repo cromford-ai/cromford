@@ -319,8 +319,9 @@ cmp -s "$SP" "$T/spawns.before" && ok || bad "B4: a machine that never got its j
 
 # ══ B5: no GitHub credential for the machine (lead review lr-4895) ══════════
 # App tokens are armed (env/github-app.env + an executable bin/gh-token.sh),
-# the mint answers nothing and the bundle carries no PAT: fly-pool.sh destroys
-# the machine. No build ran on it, so the cap entry must go too (ticket item 2).
+# the mint answers nothing and the bundle carries no PAT: fly-pool.sh refuses
+# the spawn before it buys a machine (BH-7215). The cap entry must go too
+# (ticket item 2).
 reset_case
 queue_file
 printf '%s\n' "$((NOW-3000))" > "$SP"; cp "$SP" "$T/spawns.before"
@@ -329,7 +330,10 @@ printf '#!/bin/bash\nexit 1\n' > "$H/bin/gh-token.sh"; chmod +x "$H/bin/gh-token
 run_pool
 grep -q 'no App token for .* and the bundle carries no PAT' "$H/logs/fly-pool.log" && ok \
   || bad "B5 precondition: the no-credential exit was not reached: $(log)"
-grep -q 'machine destroy 1234567890abcd' "$T/fly.txt" && ok || bad "B5: the machine with no credential must be destroyed"
+# BH-7215: the credential swap runs before `fly machine run`, so no machine is
+# bought and none is destroyed.
+[ "$(machine_runs)" = 0 ] && ok || bad "B5: no credential must buy no machine, got $(machine_runs) machine run(s)"
+grep -q 'machine destroy' "$T/fly.txt" && bad "B5: no machine was bought, yet destroy was called" || ok
 cmp -s "$SP" "$T/spawns.before" && ok \
   || bad "B5: a machine destroyed for no GitHub credential must not count against the cap: [$(tr '\n' ' ' < "$SP")]"
 [ -f "$QF" ] && ok || bad "B5: the queue file must be kept"

@@ -42,6 +42,11 @@
 #                                passthrough whenever the answer is uncertain
 #   hot_sop <text>           -> the one SOP sentence, only when something in
 #                                <text> was actually marked
+#   triage_hot_intake        -> BH-7117: offer the open hotfix issues to
+#                                bin/launch-fastpath.sh, first in every pass;
+#                                always rc 0, silent on stdout
+#   triage_hot_full_note     -> BH-7117: the one full-sweep prompt sentence,
+#                                only when a hotfix is open
 # The root is HARNESS, then H. With neither set nothing is sourced, and the
 # triage_hot_* functions take their "uncertain" path (BH-2650).
 _THL_R="${HARNESS:-${H:-}}"
@@ -145,4 +150,61 @@ hot_sop() {
   case "${1:-}" in
     *'[HOTFIX] '*) printf 'Lines marked [HOTFIX] are launched before any other line.' ;;
   esac
+}
+
+# triage_hot_intake — THE HOTFIX IS TAKEN FIRST, ON EVERY PASS (BH-7117). #7066
+# (ai-build + hotfix, main red) had no build for 58 minutes: the wake's fastpath
+# declined its incident body, the reconciler waits out a grace and launches in
+# board order, and a SKIP or a held tick never reaches a session. So the first
+# statement of rt_gate offers every open hotfix issue to bin/launch-fastpath.sh,
+# oldest first, with no model call. Fastpath keeps every other guard (HOLD,
+# blockers, an open PR, a live ledger row, a build lock, a prior build, pause,
+# dispatch mode), so this can launch a hotfix once and never twice.
+# Called from the PARENT shell: the read is triage_hot_load's memo, and the
+# scope marking later in the tick reuses it.
+# Off when: the lane is off, the switch hotfix-intake-off is on, fastpath is not
+# executable, or no hotfix is open (no log line then). A live builds pause
+# withholds the offer with one log line (#368: a pause is not overridden).
+triage_hot_intake() {
+  local h="${HARNESS:-${H:-}}" nums out rc=0 why
+  [ -n "$h" ] && [ -n "${PROJECT:-}" ] || return 0
+  command -v hotfix_lane_on >/dev/null 2>&1 || return 0
+  [ "$(hotfix_lane_on "$h")" = 1 ] || return 0
+  command -v lane_switch >/dev/null 2>&1 && HARNESS="$h" lane_switch hotfix-intake-off file && return 0
+  [ -x "$h/bin/launch-fastpath.sh" ] || return 0
+  triage_hot_load
+  [ -n "$TRIAGE_HOT" ] || return 0
+  # shellcheck disable=SC2086  # the set is space-delimited numbers, one per word
+  nums=$(printf '%s\n' $TRIAGE_HOT | grep -E '^[0-9]+$' | sort -n | tr '\n' ' ')
+  nums="${nums% }"
+  [ -n "$nums" ] || return 0
+  if command -v pause_active >/dev/null 2>&1 && pause_active "$PROJECT" builds; then
+    why=$(command -v pause_why >/dev/null 2>&1 && pause_why "$PROJECT" builds)
+    _thl_log "HOTFIX-INTAKE withheld #${nums// /,#}: builds pause${why:+ ($why)}"
+    return 0
+  fi
+  # fd 8 and 9 are the tick's locks: a build fastpath spawns must not hold them.
+  # shellcheck disable=SC2086
+  out=$("$h/bin/launch-fastpath.sh" "$PROJECT" $nums 8>&- 9>&- 2>/dev/null) || rc=$?
+  out=$(printf '%s\n' "$out" | grep -E '^[A-Za-z0-9_-]+$' | tr '\n' ' ')
+  out="${out% }"
+  [ -n "$out" ] || { [ "$rc" = 0 ] && out=none || out="rc $rc"; }
+  _thl_log "HOTFIX-INTAKE offered #${nums// /,#}; declined ${out// /,}"
+  return 0
+}
+_thl_log() {
+  [ -n "${LOG:-}" ] || return 0
+  printf '%s [%s] %s\n' "${STAMP:-$(date -u '+%Y-%m-%d %H:%M:%SZ')}" "$PROJECT" "$1" >> "$LOG" 2>/dev/null
+}
+# triage_hot_full_note — the full-sweep prompt sentence (BH-7117). A full tick
+# (a forced run_triage, the daily sweep) has no slice to mark, so the session
+# enumerates the board in its own order. This puts the hotfix first. No hotfix:
+# nothing, so the prompt stays byte-identical.
+triage_hot_full_note() {
+  local nums
+  [ -n "$TRIAGE_HOT" ] || return 0
+  # shellcheck disable=SC2086
+  nums=$(printf '%s\n' $TRIAGE_HOT | grep -E '^[0-9]+$' | sort -n | sed 's/^/#/' | tr '\n' ' ')
+  [ -n "$nums" ] || return 0
+  printf 'HOTFIX FIRST: open hotfix issues %s. Handle these before any other ticket this tick; a hotfix the harness did not launch is waiting on your decision.' "${nums% }"
 }

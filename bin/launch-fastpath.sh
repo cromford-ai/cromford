@@ -16,6 +16,8 @@
 #            key with no hotfix label and not on the allow-list is declined
 #            on stdout with no per-key line; ONE line per run names them:
 #              DISPATCH-MODE hotfix-only: <k> key(s) wait (<KEYS>); allow-list: <n,n|none>
+#   hotfix   an issue with the hotfix label skips condition 11 (the spec
+#            headings): a hotfix body is an incident note (BH-7117).
 #   kill     flags/fastpath-off on the box declines everything.
 #   stack    FASTPATH_STACK_BASE=<branch> FASTPATH_STACK_PARENT=<n>
 #            [FASTPATH_STACK_PARENT_PR=<url>], exactly one key (BH-3684,
@@ -492,7 +494,10 @@ if "ai-build" not in names:
 # ---- 11. the body is a spec, not a sentence ---------------------------------
 # h2 or h3 HEADINGS, both of them, case-sensitive. "the Scope is broad" in prose
 # is a description of a ticket, not a ticket.
-if not (re.search(r"^#{2,3}[ \t]*Scope\b", body, re.M)
+# A hotfix is exempt (BH-7117): its body is an incident note (#7066), and a
+# person put the label on. FP_HOTFIX is bash's hotfix_labels_json_has answer.
+if os.environ.get("FP_HOTFIX") != "1" and not (
+        re.search(r"^#{2,3}[ \t]*Scope\b", body, re.M)
         and re.search(r"^#{2,3}[ \t]*Acceptance tests\b", body, re.M)):
     decline("body lacks ## Scope / ## Acceptance tests")
 
@@ -710,7 +715,7 @@ classify() { # classify <needs|decide>   — reads the loop's $n/$KEY/$IJ/$BODYF
   FP_PFX="$PFX" FP_N="$n" FP_KEY="$KEY" FP_HARNESS="$HARNESS" \
   FP_PROJECT="$project" FP_BODY="$BODYF" FP_FETCH_MAX="$BLOCKER_FETCH_MAX" \
   FP_MODE="$1" FP_EXTRA="$TD/extra" FP_STACK_PARENT="$FP_SP" FP_HOLD="$FP_HOLD" \
-  python3 "$TD/fastpath.py" "$IJ" "$TD/prs.json" "$TD/jobs.json" \
+  FP_HOTFIX="$FP_HOTFIX" python3 "$TD/fastpath.py" "$IJ" "$TD/prs.json" "$TD/jobs.json" \
           "$TD/queue.tsv" "$STATES" 2>/dev/null
 }
 
@@ -880,6 +885,10 @@ for key in "${KEYS[@]}"; do
     FP_HOLD=$(hold_classify "$TD/issue-$n.raw.json" "$CJ" 2>/dev/null)
     [ -n "$FP_HOLD" ] || FP_HOLD="unreadable	hold_classify printed nothing"
   fi
+  # Condition 11's hotfix exemption (BH-7117). The lane off or no lib: 0.
+  FP_HOTFIX=0
+  command -v hotfix_labels_json_has >/dev/null 2>&1 \
+    && hotfix_labels_json_has "$(cat "$TD/issue-$n.raw.json" 2>/dev/null)" "$HARNESS" && FP_HOTFIX=1
 
   # ---- 13's reads: the blockers, named by the classifier and read by bash ---
   # Only for a body that actually carries a Blocked-by line — the same grep that

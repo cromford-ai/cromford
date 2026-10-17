@@ -11,12 +11,14 @@
 #
 # PINNED (the REAL swap block, lifted from bin/fly-pool.sh by its markers):
 #   1 empty knob: no --extra-read call, no GH_EXTRA_READ_* line, no read mput.
-#   2 knob set: both lines in global.env, the read mput, the project token
+#   2 knob set: both lines in global.env, the read token left in
+#     $TMP/gh-token-read for the push phase (BH-7215), the project token
 #     untouched, and the token value never in the say output.
 #   3 a missing repo on stderr: said, and ONE ALERTS call per project/repo/day.
 #   4 no read token: the machine still ships with the project token.
 #   5 the project mint answered the PAT (no expiry): no --extra-read call.
-#   6 a read mput that fails is said, and the spawn goes ahead.
+#   6 the block pushes nothing (BH-7215; the failed-push case is in
+#     tests/fly-pool-warmup.bh-7215-test.sh L3).
 #   7 gh_token_live_sync_env (the rotation's global.env rewrite) keeps the
 #     GH_EXTRA_READ_TOKEN line.
 #   8 a space-separated knob (the documented form) ships as one comma list,
@@ -97,8 +99,11 @@ grep -qx -- '--extra-read example-org/OtherRepo,example-org/ThirdRepo --min-life
   || bad "2: global.env must carry exactly one GH_EXTRA_READ_TOKEN=<read token>, got: $(grep GH_EXTRA "$T/b/global.env")"
 grep -qx 'GH_EXTRA_READ_REPOS=example-org/OtherRepo,example-org/ThirdRepo' "$T/b/global.env" && ok || bad "2: global.env must carry GH_EXTRA_READ_REPOS=<knob>"
 grep -qx 'GH_TOKEN=tok-fixture-project' "$T/b/global.env" && ok || bad "2: GH_TOKEN must stay the project token"
-grep -qx 'mach1 /run/harness-env/gh-token-read' "$T/mput.calls" && ok || bad "2: the read token must be pushed to /run/harness-env/gh-token-read, got: $(cat "$T/mput.calls")"
-[ "$(cat "$T/mput-gh-token-read" 2>/dev/null)" = tok-fixture-read ] && ok || bad "2: the pushed file must hold the read token"
+# BH-7215: the swap runs before the launch, so it pushes nothing; it leaves the
+# read token in $TMP/gh-token-read for spawn_one's push phase
+# (tests/fly-pool-warmup.bh-7215-test.sh L3 drives that push).
+[ ! -s "$T/mput.calls" ] && ok || bad "2: the swap block must push nothing (it runs before the launch), got: $(cat "$T/mput.calls")"
+[ "$(cat "$T/b/gh-token-read" 2>/dev/null)" = tok-fixture-read ] && ok || bad "2: \$TMP/gh-token-read must hold the read token for the push phase"
 [ "$(cat "$T/b/gh-token" 2>/dev/null)" = tok-fixture-project ] && ok || bad "2: \$TMP/gh-token must stay the project token"
 grep -q 'read-only token for the extra repos of example-org/proj-repo (example-org/OtherRepo,example-org/ThirdRepo; left out: none)' "$T/pool.log" && ok || bad "2: the log must name the shipped repos and none left out, got: $(cat "$T/pool.log")"
 grep -q 'tok-fixture-read' "$T/pool.log" "$T/swap.err" && bad "2: the read token value reached the log" || ok
@@ -128,10 +133,13 @@ grep -q 'no read-only token' "$T/pool.log" && ok || bad "4: the log must say the
 run_swap EXTRA_READ_REPOS="example-org/OtherRepo" XMINT=tok-fixture-read MEXPIRY=
 grep -q -- '--extra-read' "$T/token.calls" && bad "5: no expiry means no App mint, so no --extra-read call" || ok
 
-# ── 6. a failed read mput is said, the spawn goes ahead ─────────────────────
+# ── 6. the read push left the block (BH-7215) ───────────────────────────────
+# A failed read push is said and the spawn goes ahead: that push is now in
+# spawn_one's push phase, driven in tests/fly-pool-warmup.bh-7215-test.sh L3.
+# Here: with a push that would fail, the block still answers 0 and pushes nothing.
 run_swap EXTRA_READ_REPOS="example-org/OtherRepo" XMINT=tok-fixture-read MPUT_FAILS=1
-[ "$SRC" = 0 ] && ok || bad "6: a failed read push must not stop the spawn, got '$SRC'"
-grep -q 'gh-token-read push FAILED' "$T/pool.log" && ok || bad "6: the failed push must be said, got: $(cat "$T/pool.log")"
+[ "$SRC" = 0 ] && ok || bad "6: the swap block must answer 0, got '$SRC'"
+grep -q 'gh-token-read' "$T/mput.calls" && bad "6: the swap block must not push gh-token-read, got: $(cat "$T/mput.calls")" || ok
 
 # ── 7. the rotation's global.env rewrite keeps the read line ────────────────
 mkdir -p "$T/menv"

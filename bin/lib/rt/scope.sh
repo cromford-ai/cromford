@@ -510,6 +510,14 @@ $PROMPT_TEXT"
     fi
     ;;
 esac
+# BH-7117: a full-sweep tick leads with the open hotfixes. Loaded here, in the
+# parent shell, so the note's subshell reads the tick's one memoised answer.
+if [ "${SCOPE_N:-}" = full ] && command -v triage_hot_full_note >/dev/null 2>&1; then
+  triage_hot_load; HOT_NOTE=$(triage_hot_full_note)
+  [ -z "$HOT_NOTE" ] || PROMPT_TEXT="$HOT_NOTE
+
+$PROMPT_TEXT"
+fi
 # BH-3949: one `triage-park: N parked (KEYS)` line per tick and the stale
 # alert-once markers pruned (bin/lib/triage-park.sh). The last step of the scope
 # stage, so it runs before rt_shards, which exits the tick when it dispatches;

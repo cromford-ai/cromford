@@ -1,0 +1,6 @@
+[
+  {"id":"cw-fixture-a1","family":"aaaaaaaaaaa1","box":"hub","project":"","line":"[merge-conductor] queue label missing on PR 101; retried","severity":"warn","first_seen":"2026-10-14T08:00:00Z","last_seen":"2026-10-14T11:00:00Z","count":3,"state":"new","component":"merge-conductor"},
+  {"id":"cw-fixture-a2","family":"aaaaaaaaaaa2","box":"hub","project":"","line":"[merge-conductor] github answered 502 on the merge call","severity":"warn","first_seen":"2026-10-14T09:00:00Z","last_seen":"2026-10-14T11:10:00Z","count":5,"state":"triaged","component":"merge-conductor"},
+  {"id":"cw-fixture-a3","family":"aaaaaaaaaaa3","box":"hub","project":"","line":"[merge-conductor] STACKED_WAIT never clears for a merged parent","severity":"critical","first_seen":"2026-10-13T09:00:00Z","last_seen":"2026-10-14T11:20:00Z","count":9,"state":"new","component":"merge-conductor"},
+  {"id":"cw-fixture-a4","family":"aaaaaaaaaaa4","box":"hub","project":"","line":"[merge-conductor] the batch PR lost its required check","severity":"critical","first_seen":"2026-10-14T10:00:00Z","last_seen":"2026-10-14T11:30:00Z","count":2,"state":"quarantined","component":"merge-conductor"}
+]

@@ -139,7 +139,10 @@ run_swap "$T/out-a1" ghs_poolfixture
 run_eb none c --pool
 run_swap "$T/out-c" ""
 [ "$SRC" = 1 ] && ok || bad "C: the swap block must return 1 when no credential is left, got '$SRC'"
-[ "$(grep -c 'no GitHub credential' "$T/destroy.calls")" = 1 ] && ok || bad "C: destroy_machine once with 'no GitHub credential', got: $(cat "$T/destroy.calls")"
+# BH-7215: the swap runs before `fly machine run`, so there is no machine to
+# destroy: the exit spawns nothing and says so.
+[ ! -s "$T/destroy.calls" ] && ok || bad "C: the swap runs before the launch, so nothing may be destroyed, got: $(cat "$T/destroy.calls")"
+grep -q 'no machine spawned, job stays queued' "$T/pool.log" && ok || bad "C: the log must say no machine spawned, got: $(cat "$T/pool.log")"
 [ "$(grep -c 'no GitHub credential' "$T/unclaim.calls")" = 1 ] && ok || bad "C: pool_unclaim once with 'no GitHub credential', got: $(cat "$T/unclaim.calls")"
 grep -q 'carries no PAT' "$T/pool.log" && ok || bad "C: the log must say the bundle carries no PAT, got: $(cat "$T/pool.log")"
 [ "$(cat "$T/unrecord.calls")" = "BH-1 1700000000" ] && ok \

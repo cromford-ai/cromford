@@ -1,0 +1,20 @@
+[
+    {
+        "id": "component-watch",
+        "script": "bin/component-watch.sh",
+        "marker": "AGENT_CALL_ROLE=component-watch",
+        "kind": "agent-call",
+        "lane": "component-watch",
+        "stage": "component-watch",
+        "project": "fleet",
+        "runners": [
+            "ladder"
+        ],
+        "through_agent_call": true,
+        "priced": "yes",
+        "gated": "agent-call",
+        "dedup": "ledgers kind=component_watch key=<component>: read before the call; the same alert set (fp over sorted id and last_seen) after a done run, or after max_attempts failed calls, is UNCHANGED with no call; the newest alert_decisions row of each alert removes settled alerts (a park until ahead, a ticket or escalate with no new sighting) and deferred tickets from the prompt; AGENT_CALL_FP is component-watch:<component>:<fp> (BH-6972)",
+        "deterministic_candidate": null,
+        "note": "BH-6972: hub cron, every 15 minutes; at most one call per component per tick, model from the component-watch route, no tools, --max-budget-usd from settings row component_watch.budget_usd (0 = no run)."
+    }
+]

@@ -39,6 +39,8 @@ The merge half of the same label is a separate entry:
 | the resolver's fix-round slots, the hotfix reserve and the cooperative yield (BH-646) | `bash tests/resolver-hotfix-slot-test.sh` |
 | the triage tick's `[HOTFIX] ` prefix and hotfix-first sort of the READY-QUEUE and launchable-board slices, and the four ways it renders today's prompt instead (BH-645) | `bash tests/triage-hotfix-order-test.sh` |
 | the same prefix and sort on the TICK SCOPE slice, and the label reaching the REST query `@uri`-encoded so a space or an `&` in `HOTFIX_LABEL` cannot degrade the tick to FIFO or widen the filter (BH-1349) | `bash tests/triage-hotfix-label.bh-1349-test.sh` |
+| the triage hotfix intake: the first step of every pass (a SKIP or held tick included) offers the open hotfix issues to `bin/launch-fastpath.sh` oldest first, a builds pause withholds it, `hotfix-intake-off` turns it off, and the full-sweep prompt leads with `HOTFIX FIRST:` (BH-7117) | `bash tests/hotfix-intake.bh-7117-test.sh` |
+| fastpath condition 11 (the spec headings) waived for an issue with the hotfix label only, every other condition unchanged, and the intake launching through the real fastpath (BH-7117) | `bash tests/launch-fastpath-hotfix-spec.bh-7117-test.sh` |
 | hotfix-first in the worker's unkeyed `POST /api/queue/claim`, against real SQLite (BH-645) | `cd worker/jobs && node --test test/queue-priority.test.js` |
 
 **Preconditions:** the `hotfix` label does **not** exist in
@@ -89,6 +91,13 @@ issue is simply an ordinary ticket.
   what it has always been and the sentence is absent. The marker is stripped
   again before the shard dispatcher reads a line, so `locks/triage-key-*.lock`
   and the key canonicalisation see exactly the text they see today.
+
+- `logs/<project>.log` — the triage hotfix intake (BH-7117): one
+  `HOTFIX-INTAKE offered #<n>[,#<n>]; declined <keys|none|rc N>` line per pass
+  with an open hotfix, or `HOTFIX-INTAKE withheld #<n>: builds pause (...)`
+  under a live builds pause. Fastpath writes its own `FASTPATH` /
+  `FASTPATH-DECLINED` line per key next to it. No line when no hotfix is open.
+  Probe: `grep -E 'HOTFIX-INTAKE|FASTPATH' logs/<project>.log | tail`.
 
 **The resolver half (BH-646).** `bin/blocked-resolver.sh` ranks every candidate
 row by the build record's own `ticket-meta.json` (no GitHub call) and sorts on

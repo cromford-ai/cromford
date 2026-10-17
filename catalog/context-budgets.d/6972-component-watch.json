@@ -1,0 +1,46 @@
+[
+    {
+      "lane": "component-watch",
+      "stage": "component-watch",
+      "project": "fleet",
+      "runner": null,
+      "job": "Hub lane every 15 minutes (bin/component-watch.sh, BH-6972): one no-tools call per component whose open alert set changed, that decides each open alert (resolve, park, ticket or escalate) from the alert lines, the lane state and the tail of the component's logs.",
+      "target_tokens": 12000,
+      "ceiling_tokens": 30000,
+      "composition": [
+        {
+          "component": "instructions + answer contract",
+          "source": "inline heredoc in bin/component-watch.sh cw_prompt",
+          "cap": "static",
+          "purpose": "the four verdicts and the one-line JSON answer"
+        },
+        {
+          "component": "alerts",
+          "source": "GET /api/alerts?component=<c>&state=!resolved, minus the alerts whose newest alert_decisions row settles them",
+          "cap": "at most COMPONENT_WATCH_ALERTS_MAX (50) alerts, each line cut to 500 characters",
+          "purpose": "THE SCOPED DELTA: the alerts that need a decision"
+        },
+        {
+          "component": "lane state",
+          "source": "lane_paused <lane id> and the age of logs/<lane id>.log for each lane id of the component's catalog rows",
+          "cap": "one line per lane id",
+          "purpose": "is the lane running"
+        },
+        {
+          "component": "log tails",
+          "source": "the log paths of the component's catalog rows",
+          "cap": "the last COMPONENT_WATCH_LOG_LINES (40) lines of each, each cut to 300 characters",
+          "purpose": "what the lane said recently"
+        }
+      ],
+      "bounds": [
+        "[lane:prompt_bytes] the prompt is cut at COMPONENT_WATCH_PROMPT_BYTES (40,000 bytes) with a [truncated] marker (VERIFIED: bin/component-watch.sh cw_prompt)",
+        "[lane:no_tools] the call runs with AGENT_CALL_NO_TOOLS=1, so the session cannot read files or the web and grow past its prompt (VERIFIED: bin/component-watch.sh call site)",
+        "[lane:dedup] no call when the alert set (ids and last_seen) is the one the last run left, or every alert is settled (VERIFIED: bin/component-watch.sh run_one)",
+        "[harness:prompt_guard] prompt_guard 720KB (VERIFIED — bounds the assembled prompt only, NOT session growth)"
+      ],
+      "measured_before": null,
+      "measured_before_note": "never measured: the stage is new in BH-6972.",
+      "_unmeasured": "no component-watch call has run yet: the stage is new in BH-6972. 30,000 tokens is the 40,000-byte prompt cut (about 10,000 tokens) plus the answer and the runner overhead, with room. No context_kill_tokens: BH-2538 arms no lane without measured rows."
+    }
+]

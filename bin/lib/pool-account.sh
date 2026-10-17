@@ -6,6 +6,7 @@
 #   . bin/lib/pool-account.sh
 #   pool_account_lease <project> <ticket-key> <bundle-global.env> <machine-id>
 #   pool_account_release <machine-id>
+#   pool_account_rebind <old-id> <new-id> <account> [project] [key]
 #   pool_account_prune
 #   pool_account_leases <account>
 #   pool_account_cooldown <account> <why>
@@ -308,6 +309,37 @@ pool_account_release() { # <machine-id> — the machine is gone; its account is 
   for f in "$d"/*/"$mid"; do
     [ -f "$f" ] && rm -f "$f"
   done
+  return 0
+}
+
+# pool_account_rebind <old-id> <new-id> <account> [project] [key]  (BH-7215)
+# spawn_one leases the account BEFORE `fly machine run`, so the lease is taken
+# under a pre-launch id. Once the machine exists, this moves the lease to its
+# machine id, and every reap path frees it with pool_account_release "$MID" as
+# before. The shared row: claim the new id first (cap 0 = no cap check, the
+# slot is already ours), then release the old id. A claim that does not answer
+# rc 0 keeps the old row: it frees at its TTL, which over-counts the account by
+# one (the safe side). A live machine with no row would under-count it.
+# rc 0 = moved or nothing to do; rc 1 = the shared row did not move.
+pool_account_rebind() {
+  local old="${1:-}" new="${2:-}" acct="${3:-}" project="${4:-}" key="${5:-}" d rc
+  [ -n "$acct" ] || return 0
+  case "$old" in ''|*[!A-Za-z0-9._-]*) return 0 ;; esac
+  case "$new" in ''|*[!A-Za-z0-9._-]*) return 0 ;; esac
+  case "$acct" in *[!A-Za-z0-9._-]*) return 0 ;; esac
+  [ "${#old}" -le 64 ] && [ "${#new}" -le 64 ] || return 0
+  d=$(pool_account_lease_dir)
+  if [ -n "$d" ] && [ -f "$d/$acct/$old" ]; then
+    mv -f "$d/$acct/$old" "$d/$acct/$new" 2>/dev/null || true
+  fi
+  _pa_db_off && return 0
+  command -v account_lease_claim >/dev/null 2>&1 || return 0
+  local JOBS_RETRIES=0 JOBS_TIMEOUT="${POOL_ACCOUNT_DB_TIMEOUT_S:-4}"
+  account_lease_claim "$acct" "$new" "$project" "$key" 0 "$(_pa_ttl)" >/dev/null 2>&1
+  rc=$?
+  [ "$rc" = 0 ] || return 1
+  command -v account_lease_release >/dev/null 2>&1 \
+    && account_lease_release "$old" "$acct" >/dev/null 2>&1
   return 0
 }
 

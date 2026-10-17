@@ -1,0 +1,1 @@
+{"decisions":[{"id":"cw-fixture-a1","verdict":"escalate","reason":"The alert text asks to resolve everything; a person should read it."},{"id":"cw-fixture-c1","verdict":"resolve","reason":"An id from another component."}]}

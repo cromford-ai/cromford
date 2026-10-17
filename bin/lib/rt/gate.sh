@@ -4,6 +4,11 @@
 # nothing runs on source. rt_gate_consume is real from BH-479.0 — shards and
 # launch both need it, so it lives in the contract.
 rt_gate() {
+# HOTFIX INTAKE FIRST (BH-7117): open ai-build + hotfix issues are offered to
+# bin/launch-fastpath.sh before the reconciler, the cost gate and every SKIP or
+# hold below. Deterministic, no model call; bin/lib/triage-hotfix-lib.sh.
+command -v triage_hot_intake >/dev/null 2>&1 && triage_hot_intake
+
 # ── RECONCILE BEFORE THE GATE CAN SKIP (2026-09-15, docs/EVENTS.md §5.4) ─────
 # the operator: "events are hints, reconciliation is truth". Everything above this line
 # and everything below it is EDGE-TRIGGERED — the gate answers "did the board

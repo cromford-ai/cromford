@@ -1,0 +1,12 @@
+{
+  "env": "POOL_WARMUP_ALERT_PCT",
+  "type": "int",
+  "default": 80,
+  "min": 0,
+  "max": 100,
+  "unit": "percent",
+  "zero_means": "off",
+  "required": false,
+  "read_in": "bin/fly-pool.sh",
+  "note": "BH-7215. pool_warmup_note writes one ALERTS line per project per UTC day when a spawn's launch→first push seconds are over this share of WARMUP_WAIT_S (flags/alerted-pool-warmup-<p>-<YYYYmmdd>). Every spawn logs the seconds in logs/fly-pool.log. Settings row `lane.fly-pool.pool_warmup_alert_pct`. 0 = off."
+}

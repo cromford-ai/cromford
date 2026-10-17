@@ -4230,6 +4230,37 @@ pool_bundle_reason() {
 }
 # <<< bundle reason
 
+# >>> warmup note (BH-7215)
+# pool_warmup_note <mid> <key> <launch-epoch> <push-epoch> <wait-s>
+# One log line per spawn: the seconds from `fly machine run` to the first env
+# push, against the machine's warmup wait. Over POOL_WARMUP_ALERT_PCT (lane knob,
+# default 80, 0 = off) of the wait, ONE ALERTS line per project per UTC day: a
+# slower hub setup would lose the spawn (#7174). Spawns run in parallel
+# subshells; only the first writer of the day flag alerts.
+# The day flag goes through bin/lib/flags.sh (flag_has --cached /
+# flag_set, the file flags/alerted-pool-warmup-<P>-<YYYYMMDD>); bin/alerts-groom.sh
+# prunes old alerted-* days. The alert carries --id pool-warmup-<P>, so two
+# parallel spawns that both pass flag_has open one alerts row, not two.
+pool_warmup_note() {
+  local mid="${1:-}" key="${2:-}" t0="${3:-0}" t1="${4:-0}" w="${5:-0}" sp pct flag
+  case "$t0" in ''|*[!0-9]*) t0=0 ;; esac
+  case "$t1" in ''|*[!0-9]*) t1=0 ;; esac
+  case "$w" in ''|*[!0-9]*) w=0 ;; esac
+  sp=$(( t1 - t0 )); [ "$sp" -ge 0 ] || sp=0
+  say "$mid: launch→first push ${sp}s (warmup wait ${w}s)"
+  pct="${POOL_WARMUP_ALERT_PCT:-80}"; case "$pct" in ''|*[!0-9]*) pct=80 ;; esac
+  [ "$pct" -gt 0 ] && [ "$w" -gt 0 ] || return 0
+  [ $(( sp * 100 )) -gt $(( w * pct )) ] || return 0
+  # shellcheck source=bin/lib/flags.sh
+  command -v flag_set >/dev/null 2>&1 || . "$HARNESS/bin/lib/flags.sh" 2>/dev/null || return 0
+  flag="alerted-pool-warmup-$P-$(date -u +%Y%m%d)"
+  flag_has --cached "$flag" 2>/dev/null && return 0
+  flag_set "$flag" on "fly-pool: warmup alert sent" >/dev/null 2>&1
+  HARNESS="$HARNESS" "$HARNESS/bin/alert-line.sh" --id "pool-warmup-$P" "[pool/$P] $key: launch→first push ${sp}s on $mid is over ${pct}% of the ${w}s warmup wait (WARMUP_WAIT_S). A slower hub setup loses the spawn: the machine exits before its job. Raise lane.fly-pool.$P.warmup_wait_s or find the slow setup step in logs/fly-pool.log." >/dev/null 2>&1 || true
+  return 0
+}
+# <<< warmup note
+
 spawn_one() { # spawn_one <job-file> <key> <ticket-id> <attempt> <deferrals> <deaths> [stack-base]
   local JF="$1" KEY="$2" TICKET="$3" ATT="$4" SDEF="$5" SDTH="$6" SSB="${7:-}"
   # Every spawn that reaches a machine counts against the per-key cap (BH-1075)
@@ -4301,47 +4332,14 @@ spawn_one() { # spawn_one <job-file> <key> <ticket-id> <attempt> <deferrals> <de
   # every hotfix the pool ever spawned — and the machine json is where the reap
   # reads the flag back to put it on the deferral and death requeues.
   job_is_hot "$JF" && SHF=true
-  # Parse the id off the "Machine ID:" line ONLY — the first bare 14-hex run in
-  # the output is the image's sha256 digest when IMAGE carries one, and treating
-  # that as the id orphans the real machine (2026-08-12, pool-project-3).
-  MID=$(timeout 180 "$FLY" machine run "$IMAGE" -a "$APP" --detach --vm-size performance-8x --vm-memory 16384 \
-        -e PROJECT="$P" -e POOL_MODE=1 -e HARNESS_CHECKOUT=/data/harness 2>/dev/null | grep -i 'machine id' | grep -oE "[0-9a-f]{14}" | head -1)
-  # EVERY EXIT FROM HERE DOWN HANDS THE ROW BACK (see pool_unclaim): the claim is
-  # already won, and under the flag a claim nobody releases is a key stranded in
-  # flight for the stale-claim sweep's six hours.
-  [ -n "$MID" ] || { say "machine run FAILED for $KEY — job stays queued"
-                     rm -rf "$TMP"; pool_spawn_cap_unrecord "$KEY" "$SPAWNCAPTS"
-                     pool_unclaim "$KEY" "fly machine run produced no machine for $KEY"; return 1; }
-  # BH-5001: the claim above was won before the machine existed; name it now,
-  # so "is this key building, and where" is answerable from the row on any hub.
-  # Fail-open: the build goes ahead, and the reap and parity lanes own the rest.
-  if [ "${ROWS_ONLY:-0}" = 1 ] && command -v psr_claim_machine >/dev/null 2>&1; then
-    psr_claim_machine "$P" "$KEY" "$MID" || say "$KEY: the claimed row could not be stamped with machine $MID (http=${JOBS_HTTP:-none}) — the build goes ahead"
-  fi
-  sleep 20   # boot + entrypoint
-  # Volume-less pool machines never receive the dispatcher's harness sync, so
-  # without this push /data/harness/bin/run-build.sh does not exist and the
-  # runner dies No-such-file after a clean clone+install (TK-143, 2026-08-13).
-  # Include catalog/ as in fly-sync-harness.sh: transcript pricing needs the
-  # model price table on this fresh rootfs or every measured call costs $0.
-  TB=$(mktemp /tmp/poolsync-XXXX.tgz)
-  # shellcheck source=bin/lib/harness-tarball.sh
-  . "$HARNESS/bin/lib/harness-tarball.sh" \
-    || say "bin/lib/harness-tarball.sh missing under $HARNESS — $KEY ships no harness tree"
-  harness_tarball "$TB" /root/harness-checkout bin prompts rules catalog fleet.conf fly
-  [ $? = 2 ] && say "no git HEAD in /root/harness-checkout — $KEY ships with no HARNESS_COMMIT stamp, so its box reports no harness commit"
-  SYNC_OK=1
-  timeout 120 "$FLY" ssh sftp put -a "$APP" --machine "$MID" "$TB" /run/harness/.hsync.tgz >/dev/null 2>&1 || SYNC_OK=0
-  if [ "$SYNC_OK" = 1 ]; then
-    mexec "$MID" "mkdir -p /data/harness && tar xzf /run/harness/.hsync.tgz -C /data/harness && mkdir -p /data/harness/logs /data/harness/state /data/harness/locks /data/harness/builds && rm -f /run/harness/.hsync.tgz" >/dev/null || SYNC_OK=0
-  fi
-  rm -f "$TB"
-  if [ "$SYNC_OK" != 1 ]; then
-    say "harness sync FAILED to $MID for $KEY — destroying, job stays queued"
-    destroy_machine "$MID" "harness sync failed for $KEY"; rm -rf "$TMP"
-    pool_spawn_cap_unrecord "$KEY" "$SPAWNCAPTS"
-    pool_unclaim "$KEY" "harness sync to $MID failed"; return 1
-  fi
+  # SETUP BEFORE LAUNCH (BH-7215). A new machine waits WARMUP_WAIT_S for its
+  # job and then exits. The steps below (spec repos, App token mint, account
+  # lease, OpenRouter check, label overlay, harness tarball) need no machine, so
+  # they run BEFORE `fly machine run`: on project-6-os they took about 12
+  # minutes, and the machine had exited when the first push came (#7174). Only
+  # the steps that need the machine (row stamp, lease rebind, tarball copy,
+  # pushes) run after the launch. Every exit before the launch removes $TMP.
+  local SETUP_T LEASE_ID=""; SETUP_T=$(date +%s)
   # SPEC REPOS (BH-6576): the repos this ticket's body names on a `Spec-repo:`
   # line. The swap block below adds them to the read-only token; the machine
   # json records them, so next_job_or_destroy never hands this machine on.
@@ -4379,6 +4377,10 @@ spawn_one() { # spawn_one <job-file> <key> <ticket-id> <attempt> <deferrals> <de
   # (fly-envbundle.sh lets it through only when armed, i.e. only into this block).
   # If the mint then answers nothing too, the builder would have no GitHub
   # credential and fail at push 40+ minutes later, so the spawn is refused now.
+  # BEFORE THE LAUNCH (BH-7215): this block runs before `fly machine run`, so
+  # it names the KEY (there is no machine id yet), it pushes nothing, and its
+  # refusals buy no machine. The read-only token file it writes is pushed in
+  # the push phase below.
   # >>> pool gh credential swap
   if command -v gh_auth_armed >/dev/null 2>&1 && gh_auth_armed && [ -x "$HARNESS/bin/gh-token.sh" ]; then
     PSLUG=$(sed -n 's/^REPO_SLUG=//p' "$TMP/$P.env" 2>/dev/null | head -n 1)
@@ -4410,7 +4412,7 @@ spawn_one() { # spawn_one <job-file> <key> <ticket-id> <attempt> <deferrals> <de
         # from a local file rather than a second API call. Empty when the answer was
         # the PAT, and an empty expiry is what tells rotate_gh_token to stay out.
         MEXP=$(pool_gh_token --min-life "$POOL_GH_TOKEN_MIN_LIFE" --expires-at "$PSLUG" 2>/dev/null) || MEXP=""
-        say "$MID gets a repo-scoped App token for $PSLUG from the $MAPP App (expires ${MEXP:-?}) instead of the fleet PAT"
+        say "$KEY gets a repo-scoped App token for $PSLUG from the $MAPP App (expires ${MEXP:-?}) instead of the fleet PAT"
         # EXTRA READ REPOS (BH-5910). The token above sees one repo. When
         # lane.fly-pool.<project>.extra_read_repos names more, a SECOND token reads
         # them (contents+metadata read); fly/gh-credential.sh answers it for those
@@ -4431,7 +4433,7 @@ spawn_one() { # spawn_one <job-file> <key> <ticket-id> <attempt> <deferrals> <de
             XREPO=$(printf '%s' "$XLINE" | sed -n 's/.*EXTRA_READ_REPO_MISSING \([^ ]*\).*/\1/p')
             [ -n "$XREPO" ] || continue
             XMISS="$XMISS $XREPO"
-            say "$MID: ${XLINE#gh-token: } — not readable on this machine"
+            say "$KEY: ${XLINE#gh-token: } — not readable on this machine"
             # ALERTS first, then the flag; one per project per repo per UTC day (D21).
             find "$HARNESS/flags" -maxdepth 1 -name 'alerted-extra-read-missing-*' -mmin +2880 -delete 2>/dev/null
             XFLAG="$HARNESS/flags/alerted-extra-read-missing-$P-$(printf '%s' "$XREPO" | tr -c 'A-Za-z0-9._-' '-')-$(date -u +%Y%m%d)"
@@ -4470,20 +4472,17 @@ spawn_one() { # spawn_one <job-file> <key> <ticket-id> <attempt> <deferrals> <de
               printf '%s\n' "$XTOK" > "$TMP/gh-token-read" )
             if [ -s "$TMP/global.env.new" ] && grep -q '^GH_TOKEN=' "$TMP/global.env.new"; then
               mv "$TMP/global.env.new" "$TMP/global.env"
-              if mput "$MID" "$TMP/gh-token-read" /run/harness-env/gh-token-read; then
-                say "$MID gets a read-only token for the extra repos of $PSLUG ($XLIST; left out:${XMISS:- none})"
-              else
-                say "$MID: gh-token-read push FAILED — git answers the project token for the extra repos"
-              fi
+              # The file stays in $TMP: the push phase after the launch sends
+              # it (BH-7215), and `rm -rf "$TMP"` removes it on every exit.
+              say "$KEY gets a read-only token for the extra repos of $PSLUG ($XLIST; left out:${XMISS:- none})"
             else
-              rm -f "$TMP/global.env.new"
-              say "$MID: read-only token bundle write failed — no extra repos on this machine"
+              rm -f "$TMP/global.env.new" "$TMP/gh-token-read"
+              say "$KEY: read-only token bundle write failed — no extra repos on this machine"
             fi
-            rm -f "$TMP/gh-token-read"
           else
             grep -v '^GH_EXTRA_READ_TOKEN=' "$TMP/global.env" 2>/dev/null | grep -v '^GH_EXTRA_READ_REPOS=' > "$TMP/global.env.x" \
               && mv "$TMP/global.env.x" "$TMP/global.env" && chmod 600 "$TMP/global.env" 2>/dev/null
-            say "$MID: no read-only token for $XREAD_SRC — the machine ships with the $PSLUG token only"
+            say "$KEY: no read-only token for $XREAD_SRC — the machine ships with the $PSLUG token only"
           fi
           XTOK=""; XMISS=""; XLIST=""; XWORDS=()
         fi
@@ -4491,25 +4490,26 @@ spawn_one() { # spawn_one <job-file> <key> <ticket-id> <attempt> <deferrals> <de
       else
         rm -f "$TMP/global.env.new" "$TMP/gh-token"
         if ! grep -q '^GH_TOKEN=' "$TMP/global.env" 2>/dev/null; then
-          say "$MID: token swap produced an empty bundle and the bundle carries no PAT — destroying, job stays queued"
-          MTOK=""; destroy_machine "$MID" "no GitHub credential for $KEY"; rm -rf "$TMP"
-          # No build reached this machine, so it does not count against the cap
+          say "$KEY: token swap produced an empty bundle and the bundle carries no PAT — no machine spawned, job stays queued"
+          MTOK=""; rm -rf "$TMP"
+          # This runs before the launch (BH-7215), so no machine exists to
+          # destroy. Nothing was built, so it does not count against the cap
           # (BH-4859). ${SPAWNCAPTS:-}: this block is lifted by its markers into
           # tests/fly-envbundle-pool-nopat.bh-4798-test.sh under set -u, and an
           # empty ts is already a no-op in pool_spawn_cap_unrecord.
           pool_spawn_cap_unrecord "$KEY" "${SPAWNCAPTS:-}"
           pool_unclaim "$KEY" "no GitHub credential for $KEY"; return 1
         fi
-        say "$MID token swap produced an empty bundle — shipping the PAT"
+        say "$KEY token swap produced an empty bundle — shipping the PAT"
       fi
     elif ! grep -q '^GH_TOKEN=' "$TMP/global.env" 2>/dev/null; then
-      say "$MID: no App token for ${PSLUG:-unknown repo} and the bundle carries no PAT — destroying, job stays queued"
-      destroy_machine "$MID" "no GitHub credential for $KEY"; rm -rf "$TMP"
-      # No build reached this machine, so it does not count against the cap (BH-4859).
+      say "$KEY: no App token for ${PSLUG:-unknown repo} and the bundle carries no PAT — no machine spawned, job stays queued"
+      rm -rf "$TMP"
+      # Before the launch (BH-7215): no machine to destroy, no cap slot spent (BH-4859).
       pool_spawn_cap_unrecord "$KEY" "${SPAWNCAPTS:-}"
       pool_unclaim "$KEY" "no GitHub credential for $KEY"; return 1
     else
-      say "$MID: no App token for ${PSLUG:-unknown repo} — shipping the PAT"
+      say "$KEY: no App token for ${PSLUG:-unknown repo} — shipping the PAT"
     fi
     MTOK=""
   fi
@@ -4525,9 +4525,15 @@ spawn_one() { # spawn_one <job-file> <key> <ticket-id> <attempt> <deferrals> <de
   #
   # It cannot refuse a launch: unarmed, saturated or broken, it answers `default`
   # and the bundle ships exactly the bytes it ships today.
+  # BEFORE THE LAUNCH (BH-7215): there is no machine id yet, so the lease is
+  # taken under a pre-launch id and pool_account_rebind moves it to the machine
+  # id right after `fly machine run`. Every reap path then frees it by machine
+  # id, as before.
   MACCT=""
+  LEASE_ID="pre-$(printf '%s' "$KEY" | tr -c 'A-Za-z0-9._-' '-')-$(date +%s)-$BASHPID"
+  LEASE_ID="${LEASE_ID:0:64}"
   if command -v pool_account_lease >/dev/null 2>&1; then
-    PALINE=$(pool_account_lease "$P" "$KEY" "$TMP/global.env" "$MID" 2>/dev/null)
+    PALINE=$(pool_account_lease "$P" "$KEY" "$TMP/global.env" "$LEASE_ID" 2>/dev/null)
     PANAME=""; PAREASON=""; PALEASES=""; PAFIVE=""
     for KV in $PALINE; do
       case "$KV" in
@@ -4539,7 +4545,7 @@ spawn_one() { # spawn_one <job-file> <key> <ticket-id> <attempt> <deferrals> <de
     done
     if [ -n "$PANAME" ] && [ "$PANAME" != default ]; then
       MACCT="$PANAME"
-      say "$MID gets account $MACCT (5h ${PAFIVE:-?}%, leases ${PALEASES:-?}) instead of the default token"
+      say "$KEY gets account $MACCT (5h ${PAFIVE:-?}%, leases ${PALEASES:-?}) instead of the default token"
       # NO OPENROUTER WHILE CLAUDE OAUTH WORKS (the operator, 2026-09-24). A machine
       # carries ONE leased token and no account routing, so when that account
       # runs out, agent-call's "exhausted-only" reading is true ON THE MACHINE —
@@ -4554,10 +4560,10 @@ spawn_one() { # spawn_one <job-file> <key> <ticket-id> <attempt> <deferrals> <de
       if command -v pool_account_others_ok >/dev/null 2>&1 && pool_account_others_ok "$MACCT"; then
         { grep -v '^OPENROUTER_FALLBACK=' "$TMP/global.env" 2>/dev/null; printf 'OPENROUTER_FALLBACK=off\n'; } > "$TMP/global.env.or" \
           && mv "$TMP/global.env.or" "$TMP/global.env" && chmod 600 "$TMP/global.env" 2>/dev/null
-        say "$MID: another claude account can serve, so OpenRouter is off on this machine (OPENROUTER_FALLBACK=off)"
+        say "$KEY: another claude account can serve, so OpenRouter is off on this machine (OPENROUTER_FALLBACK=off)"
       fi
     else
-      say "$MID ships the default project-6 token (${PAREASON:-no answer})"
+      say "$KEY ships the default project-6 token (${PAREASON:-no answer})"
     fi
   fi
   # THE DEFAULT TOKEN STILL NEEDS A LABEL (2026-09-16). The lease path writes
@@ -4574,8 +4580,71 @@ spawn_one() { # spawn_one <job-file> <key> <ticket-id> <attempt> <deferrals> <de
   if [ ! -s "$TMP/auth-accounts.local.json" ] && [ -s "$HARNESS/state/auth-accounts.local.json" ]; then
     cp "$HARNESS/state/auth-accounts.local.json" "$TMP/auth-accounts.local.json" 2>/dev/null || true
   fi
+  # Volume-less pool machines never receive the dispatcher's harness sync, so
+  # without this push /data/harness/bin/run-build.sh does not exist and the
+  # runner dies No-such-file after a clean clone+install (TK-143, 2026-08-13).
+  # Include catalog/ as in fly-sync-harness.sh: transcript pricing needs the
+  # model price table on this fresh rootfs or every measured call costs $0.
+  # Built here, before the launch (BH-7215): it is local work, and the machine
+  # should not wait for it.
+  TB=$(mktemp /tmp/poolsync-XXXX.tgz)
+  # shellcheck source=bin/lib/harness-tarball.sh
+  . "$HARNESS/bin/lib/harness-tarball.sh" \
+    || say "bin/lib/harness-tarball.sh missing under $HARNESS — $KEY ships no harness tree"
+  harness_tarball "$TB" /root/harness-checkout bin prompts rules catalog fleet.conf fly
+  [ $? = 2 ] && say "no git HEAD in /root/harness-checkout — $KEY ships with no HARNESS_COMMIT stamp, so its box reports no harness commit"
+  # BH-7215: the machine waits WARMUP_WAIT_S for its job (lane knob
+  # lane.fly-pool.<project>.warmup_wait_s), then exits 0.
+  local WW="${WARMUP_WAIT_S:-1800}"; case "$WW" in ''|*[!0-9]*|0) WW=1800 ;; esac
+  say "$KEY: setup before launch took $(( $(date +%s) - SETUP_T ))s"
+  # Parse the id off the "Machine ID:" line ONLY — the first bare 14-hex run in
+  # the output is the image's sha256 digest when IMAGE carries one, and treating
+  # that as the id orphans the real machine (2026-08-12, pool-project-3).
+  MID=$(timeout 180 "$FLY" machine run "$IMAGE" -a "$APP" --detach --vm-size performance-8x --vm-memory 16384 \
+        -e PROJECT="$P" -e POOL_MODE=1 -e HARNESS_CHECKOUT=/data/harness -e WARMUP_WAIT_S="$WW" 2>/dev/null | grep -i 'machine id' | grep -oE "[0-9a-f]{14}" | head -1)
+  # EVERY EXIT FROM HERE DOWN HANDS THE ROW BACK (see pool_unclaim): the claim is
+  # already won, and under the flag a claim nobody releases is a key stranded in
+  # flight for the stale-claim sweep's six hours.
+  [ -n "$MID" ] || { say "machine run FAILED for $KEY — job stays queued"
+                     rm -rf "$TMP"; rm -f "$TB"
+                     command -v pool_account_release >/dev/null 2>&1 && pool_account_release "$LEASE_ID"
+                     pool_spawn_cap_unrecord "$KEY" "$SPAWNCAPTS"
+                     pool_unclaim "$KEY" "fly machine run produced no machine for $KEY"; return 1; }
+  local LAUNCH_T; LAUNCH_T=$(date +%s)
+  # BH-5001: the claim above was won before the machine existed; name it now,
+  # so "is this key building, and where" is answerable from the row on any hub.
+  # Fail-open: the build goes ahead, and the reap and parity lanes own the rest.
+  if [ "${ROWS_ONLY:-0}" = 1 ] && command -v psr_claim_machine >/dev/null 2>&1; then
+    psr_claim_machine "$P" "$KEY" "$MID" || say "$KEY: the claimed row could not be stamped with machine $MID (http=${JOBS_HTTP:-none}) — the build goes ahead"
+  fi
+  if [ -n "$MACCT" ] && command -v pool_account_rebind >/dev/null 2>&1; then
+    pool_account_rebind "$LEASE_ID" "$MID" "$MACCT" "$P" "$KEY" \
+      || say "$MID: the account lease could not move from $LEASE_ID to the machine id — the pre-launch row frees at its TTL"
+  fi
+  sleep 20   # boot + entrypoint
+  # The tarball was built before the launch (BH-7215); only the copy is here.
+  SYNC_OK=1
+  timeout 120 "$FLY" ssh sftp put -a "$APP" --machine "$MID" "$TB" /run/harness/.hsync.tgz >/dev/null 2>&1 || SYNC_OK=0
+  if [ "$SYNC_OK" = 1 ]; then
+    mexec "$MID" "mkdir -p /data/harness && tar xzf /run/harness/.hsync.tgz -C /data/harness && mkdir -p /data/harness/logs /data/harness/state /data/harness/locks /data/harness/builds && rm -f /run/harness/.hsync.tgz" >/dev/null || SYNC_OK=0
+  fi
+  rm -f "$TB"
+  if [ "$SYNC_OK" != 1 ]; then
+    say "harness sync FAILED to $MID for $KEY — destroying, job stays queued"
+    destroy_machine "$MID" "harness sync failed for $KEY"; rm -rf "$TMP"
+    # The lease was taken before the launch (BH-7215), so this exit frees it too.
+    command -v pool_account_release >/dev/null 2>&1 && pool_account_release "$MID"
+    pool_spawn_cap_unrecord "$KEY" "$SPAWNCAPTS"
+    pool_unclaim "$KEY" "harness sync to $MID failed"; return 1
+  fi
   OK=1
+  if [ -s "$TMP/gh-token-read" ]; then
+    mput "$MID" "$TMP/gh-token-read" /run/harness-env/gh-token-read \
+      || say "$MID: gh-token-read push FAILED — git answers the project token for the extra repos"
+  fi
   mput "$MID" "$TMP/global.env" /run/harness-env/global.env || OK=0
+  # BH-7215: launch→first push seconds, on pass and fail.
+  pool_warmup_note "$MID" "$KEY" "$LAUNCH_T" "$(date +%s)" "$WW"
   mput "$MID" "$TMP/$P.env" "/run/harness-env/$P.env" || OK=0
   # A failed overlay push costs ATTRIBUTION, never the build: the machine then
   # writes its cost rows under an unlabelled fingerprint.

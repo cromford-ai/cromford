@@ -1,0 +1,13 @@
+# @hub-lanes
+
+# ── COMPONENT-WATCH LANE (BH-6972, BH-6546.2) ──────────────────────────────
+# Every 15 minutes the dispatch starts one detached run per component in
+# catalog/components.tsv. A run reads the component's newest 50 open alerts,
+# skips with UNCHANGED when the set (ids and last_seen) did not move, and makes
+# at most ONE model call (model_routes role component-watch, --max-budget-usd
+# from component_watch.budget_usd). It applies resolve, park, escalate (a note)
+# or files an ai-build issue (component_watch.max_tickets a run), and writes
+# one alert_decisions row and one log line per decision. flock -n dedupes.
+# Off: flags/lane-off-component-watch, bin/harness-ctl.sh off component-watch,
+# or one component: bin/harness-ctl.sh off component-watch --project <component>.
+*/15 * * * * /root/harness/bin/hub-lease.sh check && /root/harness/bin/component-watch.sh >/dev/null 2>&1

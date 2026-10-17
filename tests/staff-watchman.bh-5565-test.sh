@@ -171,6 +171,11 @@ timeout() {
   [ -f "$FXT/advance" ] && SECONDS=$((SECONDS + $(cat "$FXT/advance")))
   return "$rc"
 }
+# A head start on the tick budget: $FXT/slack seconds of real time the
+# collector may use before its first scan (start-up, git, jq) without moving
+# the budget's arithmetic. A loaded CI runner spends a whole second there, and
+# a 10 s budget with no slack then starts no scan at all (batch #7242).
+[ -f "$FXT/slack" ] && SECONDS=$((-$(cat "$FXT/slack")))
 SH
 
 REG="$H/catalog/staff-rotations.d"
@@ -617,14 +622,15 @@ eq "W17 tips are the ref tips" "$(cat "$WMS/scan/p1.tips" 2>/dev/null)" "$(tip p
 [ -e "$WMS/first/p1.jsonl" ] && bad "W17: the held first scan stayed" || ok
 eq "W17 chunk log" "$(grep -c 'scanned p1 chunk of 2 of 5 commits' "$H/logs/staff.log" 2>/dev/null)" 1
 no_secret W17
-# The tick budget: STAFF_COLLECT_TIMEOUT_S=30 leaves 10 s for scans. A 6 s chunk
-# leaves 4 s, so the tick stops; the first scan is held (no line, no beat) and
+# The tick budget: STAFF_COLLECT_TIMEOUT_S=30 leaves 10 s for scans. The 5 s
+# slack covers the real start-up time; the scan still gets exactly 10 s (FULL).
+# A 6 s chunk then leaves at most 4 s, so the tick stops; the first scan is held (no line, no beat) and
 # the project is due again at once. The next tick finishes it.
 reset; fleet p1; mkrepo p1 "$LEAKV"; C1=$(tip p1); commits p1 4
 report p1 "[$(leakrow "$C1" .env 1)]"
-echo 6 > "$FXT/advance"
+echo 6 > "$FXT/advance"; echo 5 > "$FXT/slack"
 wm WM_SCAN_CHUNK_COMMITS=2 STAFF_COLLECT_TIMEOUT_S=30
-rm -f "$FXT/advance"
+rm -f "$FXT/advance" "$FXT/slack"
 eq "W17 budget rc" "$RC" 0
 eq "W17 budget gitleaks runs" "$(glruns)" 1
 eq "W17 budget scan timeout" "$(cat "$FXT/timeout.log")" 10

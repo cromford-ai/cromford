@@ -1,0 +1,1 @@
+{"name":"hotfix-intake-off","readers":["bin/lib/triage-hotfix-lib.sh"],"box_scoped":true,"what":"turns off the triage hotfix intake (BH-7117): the first step of each triage pass stops offering open hotfix issues to bin/launch-fastpath.sh; the rest of the hotfix lane stays on"}
