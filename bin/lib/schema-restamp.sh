@@ -5,10 +5,11 @@
 # an argument).
 #
 # WHY. The rules pack's schema-fragment-name check (rp_schema_fragment_name,
-# bin/lib/rules-pack-checks.sh) wants a new stamp-form fragment
+# bin/lib/rules-pack-checks.sh) wanted a new stamp-form fragment
 # worker/<w>/schema.d/<yyyymmddhhmm>-<key>-<name>.sql to sort AFTER every stamp
-# fragment of that worker at the base. A stamp taken at build time goes stale
-# whenever another schema PR merges first: #6785 paid two fix rounds and two
+# fragment of that worker at the base (since BH-7229 it is a finding only when
+# the fragment uses a table a later fragment creates). A stamp taken at build
+# time goes stale whenever another schema PR merges first: #6785 paid two fix rounds and two
 # lead reviews on 2026-10-15 for renames that changed no SQL. The merge
 # conductor now renames the fragment just before it queues the PR
 # (bin/lib/mc-prequeue.d/restamp.sh), and the lead carry accepts that commit.
@@ -57,8 +58,10 @@
 #     bin/lib/patch-same.sh) or sr_commit_only, with at least one restamp. rc 1
 #     otherwise. Conservative like patch_same: it never says "close enough".
 #   sr_stamp_order_line <line>
-#     rc 0 when the line is the rules pack's stamp-order finding, and only that
-#     one: the NNNN-taken and malformed-name lines of the same check are not.
+#     rc 0 when the line is the rules pack's stamp-order finding against a base
+#     fragment (`... at the base creates and which sorts after this fragment`,
+#     BH-7229), and only that one: the in-this-diff order line and the
+#     NNNN-taken and malformed-name lines of the same check are not.
 #   sr_stamp_split <in> <real-out> <note-out>
 #     every non-blank line of <in> to <note-out> when sr_stamp_order_line, else
 #     to <real-out> (the rev_env_split shape). rc 1 when <in> is unreadable.
@@ -323,7 +326,7 @@ restamp_same() {
 }
 
 sr_stamp_order_line() {
-  [[ "${1:-}" == *"schema-fragment-name: the stamp must be later than every fragment at the base"* ]]
+  [[ "${1:-}" == *"schema-fragment-name: uses table "*" at the base creates and which sorts after this fragment"* ]]
 }
 
 sr_stamp_split() {

@@ -12,7 +12,8 @@
 #      that names the base fragment (tracked, untracked, any worker)
 #   N2 a name in neither form is a finding
 #   N3 a stamp equal to or earlier than the newest stamp-key fragment of the
-#      same worker at the base is a finding that names that fragment
+#      same worker at the base is clean when it uses none of its tables, and a
+#      finding that names that fragment when it does (BH-7229)
 #   N4 a stamp that is not a real UTC minute (month 13, day 32, hour 24, ...)
 #      is a finding
 #   N5 an added NNNN fragment on a free number (or renumbered to one) is clean
@@ -140,16 +141,21 @@ fixture h; git -C "$R" rm -q "$SD/0001-bh-1-b.sql"; lint
 OUT=$(rp_schema_fragment_name "$R" "" 2>/dev/null); RC=$?
 [ "$RC" = 125 ] && ok || bad "N6 no base must be rc 125, got $RC"
 
-# ── N3 / N6 the stamp is later than every fragment at the base ────────────────────
-LATE='schema-fragment-name: the stamp must be later than every fragment at the base, so this one sorts after any table it may use (take the current UTC minute); newest at the base:'
+# ── N3 / N6 order follows dependency, not stamp age (BH-7229) ────────────────────
+# TEST-CHANGE (BH-7229): N3 pinned "an earlier or equal stamp is a finding".
+# The ticket makes a stamp that is only older than the base's newest clean; the
+# finding is now a USE of a table a later-sorting fragment creates.
+LATE="schema-fragment-name: uses table probe_n, which $SD/202610121200-bh-1-newest.sql at the base creates and which sorts after this fragment; take a stamp later than 202610121200 (bin/prepush-gate.sh --restamp)"
 fixture6() { fixture "$1"; add "$SD/202610121200-bh-1-newest.sql"; add "worker/other/schema.d/202610130000-bh-3-cloud.sql"
              git -C "$R" add -A; git -C "$R" commit -qm stamped; BASE=$(git -C "$R" rev-parse HEAD); }
+use() { printf '%s\n' 'INSERT INTO probe_n (id) VALUES (1);' > "$R/$1"; }
 fixture6 n6a; add "$SD/202610121100-bh-2-older.sql"; git -C "$R" add -A; lint
-[ "$RC" = 1 ] && [ "$OUT" = "$SD/202610121100-bh-2-older.sql: $LATE $SD/202610121200-bh-1-newest.sql" ] && ok \
-  || bad "N3 an earlier stamp: rc $RC out [$OUT]"
+[ "$RC" = 0 ] && [ -z "$OUT" ] && ok || bad "N3 an earlier stamp with no dependency must be clean: rc $RC out [$OUT]"
 fixture6 n6b; add "$SD/202610121200-bh-2-same.sql"; git -C "$R" add -A; lint
-[ "$RC" = 1 ] && [ "$OUT" = "$SD/202610121200-bh-2-same.sql: $LATE $SD/202610121200-bh-1-newest.sql" ] && ok \
-  || bad "N3 an equal stamp: rc $RC out [$OUT]"
+[ "$RC" = 0 ] && [ -z "$OUT" ] && ok || bad "N3 an equal stamp with no dependency must be clean: rc $RC out [$OUT]"
+fixture6 n6d; use "$SD/202610121100-bh-2-older.sql"; git -C "$R" add -A; lint
+[ "$RC" = 1 ] && [ "$OUT" = "$SD/202610121100-bh-2-older.sql: $LATE" ] && ok \
+  || bad "N3 an earlier stamp that uses the later table: rc $RC out [$OUT]"
 fixture6 n6c; add "$SD/202610121201-bh-2-later.sql"; git -C "$R" add -A; lint
 [ "$RC" = 0 ] && [ -z "$OUT" ] && ok || bad "N6 a later stamp (worker/other's later one does not count) must be clean: rc $RC out [$OUT]"
 

@@ -60,7 +60,10 @@ seed() {
   commit base
   g checkout -qb pr
   local f
-  for f in "$@"; do printf -- '-- %s\nCREATE TABLE t_%s (id INTEGER);\n' "$f" "${#f}" > "$R/$SD/$f"; done
+  # TEST-CHANGE (BH-7229): each PR fragment also uses table a, which main's
+  # later 202610150259-bh-1-a creates. A stale stamp alone is clean now; the
+  # use is what keeps S1 and T1's rules-pack line red before the restamp.
+  for f in "$@"; do printf -- '-- %s\nCREATE TABLE t_%s (id INTEGER);\nINSERT INTO a (id) VALUES (1);\n' "$f" "${#f}" > "$R/$SD/$f"; done
   printf '#!/bin/bash\n# reads %s\ncat worker/jobs/schema.d/%s\n' "$1" "$1" > "$R/tests/x.bh-2-test.sh"
   printf '# note\n\nThe fragment `%s` makes the table.\n' "$1" > "$R/docs/n.md"
   commit pr

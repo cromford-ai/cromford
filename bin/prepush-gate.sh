@@ -30,8 +30,9 @@
 # last line is the verdict: GREEN, RED or COULD-NOT-RUN. <out>/summary.tsv has
 # `<id>\t<state>\t<rc>\t<seconds>\t<names>` per component (names = the rules
 # pack ids behind a red, else the component id), <out>/<id>.out and .err the
-# raw output. When a finding is the stale-stamp one (schema-fragment-name: the
-# stamp must be later than every fragment at the base), the exact `git mv`
+# raw output. When a finding is the base stamp-order one (schema-fragment-name:
+# uses table <t>, which <L> at the base creates and which sorts after this
+# fragment, BH-7229), the exact `git mv`
 # lines for the current UTC minute are printed, and `--restamp` applies them
 # as ONE commit through bin/lib/schema-restamp.sh (sr_apply).
 #
@@ -143,7 +144,7 @@ show_findings() {
 # restamp_hint — the exact git mv lines when the stamp-order finding is red.
 restamp_hint() {
   local lib="$HERE/lib/schema-restamp.sh" plan old new
-  grep -qF 'schema-fragment-name: the stamp must be later than every fragment at the base' "$OUT/rules-pack.out" 2>/dev/null || return 0
+  grep -qF 'at the base creates and which sorts after this fragment' "$OUT/rules-pack.out" 2>/dev/null || return 0
   echo "    fix: bin/prepush-gate.sh --restamp (one commit, no SQL change), or by hand:"
   [ -r "$lib" ] && . "$lib" 2>/dev/null && plan=$(sr_plan "$TREE" "$BASE" HEAD 2>/dev/null)
   while IFS=$'\t' read -r old new; do

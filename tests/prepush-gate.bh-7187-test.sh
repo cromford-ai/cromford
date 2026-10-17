@@ -85,7 +85,16 @@ gate() { # gate <out> [args...] — the real gate on the fixture with the seam t
 
 # --- G1: four defects, RED, four named findings ---------------------------------
 L='bin/''lib'
-printf 'CREATE TABLE IF NOT EXISTS stale_t7187 (id INTEGER);\n-- no-index: stale_t7187 fixture\n' > "$R/worker/jobs/schema.d/202001010000-bh-7187-stale.sql"
+# TEST-CHANGE (BH-7229): a stale stamp alone is clean now, so the fixture
+# fragment also uses a table that the newest base fragment with a CREATE TABLE
+# makes. That use before the CREATE is the real order bug, still red here.
+USED=""
+for f in $(ls "$R/worker/jobs/schema.d" | grep -E '^[0-9]{12}-' | LC_ALL=C sort -r); do
+  USED=$(grep -oiE 'create[[:space:]]+table[[:space:]]+(if[[:space:]]+not[[:space:]]+exists[[:space:]]+)?[a-z_][a-z0-9_]*' "$R/worker/jobs/schema.d/$f" | head -n 1 | awk '{print tolower($NF)}')
+  [ -n "$USED" ] && break
+done
+[ -n "$USED" ] && ok || bad "G1 setup: no stamp fragment with a CREATE TABLE in the fixture"
+printf 'CREATE TABLE IF NOT EXISTS stale_t7187 (id INTEGER);\n-- no-index: stale_t7187 fixture\nCREATE INDEX IF NOT EXISTS stale_t7187_use ON %s(id);\n' "$USED" > "$R/worker/jobs/schema.d/202001010000-bh-7187-stale.sql"
 printf '#!/bin/bash\nfor f in a.sh; do cp "$DIR/%s/$f" "$T/%s/"; done\n' "$L" "$L" > "$R/tests/zz-copy-7187-test.sh"
 printf '#!/bin/bash\ngrep foo "$F" %s grep -q bar\n' '|' > "$R/tests/zz-grepq-7187-test.sh"
 printf '#!/bin/bash\n: new lib script\n' > "$R/$L/zz-unnamed-7187.sh"

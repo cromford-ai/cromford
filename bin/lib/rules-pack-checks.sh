@@ -46,10 +46,16 @@
 #   here and catalog/pr-self-check.tsv's body-schema-stamp row notes it, so the
 #   PRs already open with an NNNN fragment are not turned red. Any other name is
 #   a finding.
-#   The stamp must also be LATER than every stamp-key fragment of the same
-#   worker at the base: a fragment may use a table an earlier one made, so
-#   order must follow dependency, and a stamp older than the base's newest would
-#   sort before it. Existing NNNN fragments are never judged. `<path>: ...`.
+#   A new stamp-form fragment must not USE a table or view that a fragment of
+#   the same worker sorting AFTER it creates (BH-7229): the composed schema.sql
+#   would run the use before the CREATE. A use is the name after FROM, JOIN, ON,
+#   INTO, UPDATE, TABLE, REFERENCES or EXISTS, case-insensitive, `--` comments
+#   and quote marks removed; a name the fragment creates itself is not a use.
+#   The later fragments are the judged tree's plus the base's. A stamp that is
+#   only older than the base's newest is clean: main moving is not a bug. The
+#   finding says "at the base creates" (bin/prepush-gate.sh --restamp fixes it)
+#   or "in this diff creates" (reorder the PR's own fragments). Existing NNNN
+#   fragments are never judged. `<path>: ...`.
 #
 # rp_discipline_dupes <tree>
 #   `- **D<n> ` rule openers in prompts/build-discipline.md whose number an
@@ -181,8 +187,17 @@ rp_index_on_create_table() {
   [ "$n" -eq 0 ]
 }
 
+# _rp_sql_norm — stdin SQL, lower case, `--` comments and quote marks removed.
+_rp_sql_norm() { sed -e 's/--.*$//' -e 's/["`[]//g' -e 's/]//g' | tr '[:upper:]' '[:lower:]'; }
+
+# _rp_sql_creates — the tables and views a normalized fragment creates, one per line.
+_rp_sql_creates() {
+  grep -oE 'create[[:space:]]+((temp|temporary|virtual)[[:space:]]+)?(table|view)[[:space:]]+(if[[:space:]]+not[[:space:]]+exists[[:space:]]+)?[a-z_][a-z0-9_.]*' \
+    | sed -E 's/.*[[:space:]]//; s/.*\.//' | LC_ALL=C sort -u
+}
+
 rp_schema_fragment_name() {
-  local f b n=0 re top tt
+  local f b n=0 re top txt mine after l lp at lt t
   re='^(20[2-9][0-9])(0[1-9]|1[0-2])(0[1-9]|[12][0-9]|3[01])([01][0-9]|2[0-3])[0-5][0-9]-[a-z]+-[0-9]+-[a-z0-9][a-z0-9_-]*\.sql$'
   [ -n "${2:-}" ] || return 125
   git -C "$1" rev-parse -q --verify "$2^{commit}" >/dev/null 2>&1 || return 125
@@ -205,15 +220,34 @@ rp_schema_fragment_name() {
       echo "$f: schema-fragment-name: a new fragment is named <yyyymmddhhmm>-<ticket-key>-<name>.sql (the UTC minute you create it, then the key), never a picked number"
       n=$((n+1)); continue
     fi
-    # The newest stamp-key fragment of this worker at the base. Names sort by
-    # stamp first, so the last one under LC_ALL=C is the newest.
-    top=$(git -C "$1" ls-tree --name-only "$2" -- "${f%/*}/" 2>/dev/null \
-          | while IFS= read -r t; do [[ ${t##*/} =~ $re ]] && printf '%s\n' "$t"; done | LC_ALL=C sort | tail -n 1)
-    tt=${top##*/}
-    if [ -n "$top" ] && ! [[ ${b:0:12} > ${tt:0:12} ]]; then
-      echo "$f: schema-fragment-name: the stamp must be later than every fragment at the base, so this one sorts after any table it may use (take the current UTC minute); newest at the base: $top"
-      n=$((n+1))
-    fi
+    # BH-7229: order is judged by dependency, not by stamp age. A stamp that
+    # went stale only because main moved is clean; a use of a table that a
+    # later-sorting fragment of the same worker creates is the real bug.
+    [ -f "$1/$f" ] && [ -r "$1/$f" ] || continue
+    txt=$(_rp_sql_norm < "$1/$f")
+    mine=$(_rp_sql_creates <<<"$txt")
+    after=""
+    while IFS= read -r l; do
+      [ -n "$l" ] || continue
+      if [ -z "$after" ]; then [ "$l" = "$b" ] && after=1; continue; fi
+      lp="${f%/*}/$l"; at=""
+      git -C "$1" cat-file -e "$2:$lp" 2>/dev/null && at=1
+      if [ -f "$1/$lp" ] && [ -r "$1/$lp" ]; then lt=$(_rp_sql_norm < "$1/$lp")
+      elif [ -n "$at" ]; then lt=$(git -C "$1" show "$2:$lp" 2>/dev/null | _rp_sql_norm)
+      else continue; fi
+      while IFS= read -r t; do
+        [ -n "$t" ] || continue
+        grep -qxF -- "$t" <<<"$mine" && continue
+        grep -qzE "(^|[^a-z0-9_])(from|join|on|into|update|table|references|exists)[[:space:]]+$t([^a-z0-9_]|\$)" <<<"$txt" || continue
+        if [ -n "$at" ]; then
+          echo "$f: schema-fragment-name: uses table $t, which $lp at the base creates and which sorts after this fragment; take a stamp later than ${l:0:12} (bin/prepush-gate.sh --restamp)"
+        else
+          echo "$f: schema-fragment-name: uses table $t, which $lp in this diff creates and which sorts after this fragment; give $lp an earlier stamp than this fragment"
+        fi
+        n=$((n+1)); break
+      done < <(_rp_sql_creates <<<"$lt")
+    done < <({ git -C "$1" ls-tree --name-only "$2" -- "${f%/*}/" 2>/dev/null | sed 's|.*/||'
+               find "$1/${f%/*}" -maxdepth 1 -name '*.sql' 2>/dev/null | sed 's|.*/||'; } | grep '\.sql$' | LC_ALL=C sort -u)
   done < <({ git -C "$1" diff --no-renames --name-only --diff-filter=A "$2" -- 'worker/*/schema.d/*' 2>/dev/null
              git -C "$1" ls-files --others --exclude-standard -- 'worker/*/schema.d/*' 2>/dev/null; } | LC_ALL=C sort -u)
   [ "$n" -eq 0 ]

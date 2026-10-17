@@ -47,9 +47,12 @@ F="$T/fx"
 # fx <pr-fragment...> — base: 0000-base + 202610150259-bh-1-a; the tree adds each
 fx() {
   scratch_rm "$F" 2>/dev/null; mkdir -p "$F/worker/jobs/schema.d"; git -C "$F" init -q -b main
-  echo x > "$F/worker/jobs/schema.d/0000-base.sql"; echo y > "$F/worker/jobs/schema.d/202610150259-bh-1-a.sql"
+  # TEST-CHANGE (BH-7229): the base fragment creates table a and each PR
+  # fragment uses it. A stale stamp alone is clean now; the use of a later base
+  # table is the stamp-order line this suite needs.
+  echo x > "$F/worker/jobs/schema.d/0000-base.sql"; echo 'CREATE TABLE a (id INTEGER);' > "$F/worker/jobs/schema.d/202610150259-bh-1-a.sql"
   git -C "$F" add -A; git -C "$F" commit -qm base
-  local f; for f in "$@"; do echo z > "$F/worker/jobs/schema.d/$f"; done
+  local f; for f in "$@"; do echo 'INSERT INTO a VALUES (1);' > "$F/worker/jobs/schema.d/$f"; done
   git -C "$F" add -A; git -C "$F" commit -qm pr
   rp_schema_fragment_name "$F" HEAD~1 | sed 's/^/schema-fragment-name: /'
 }
@@ -58,7 +61,7 @@ STAMP2=$(fx 202610142106-bh-2-b.sql 202610142107-bh-2-c.sql)
 TAKEN=$(fx 0000-bh-2-b.sql)
 MAL=$(fx 1-bh-2-b.sql)
 INDEX='index-on-create-table: worker/jobs/schema.d/202610142106-bh-2-b.sql: CREATE TABLE b has no CREATE INDEX in this diff'
-[ "$(grep -c 'the stamp must be later' <<<"$STAMP1")" = 1 ] && [ "$(grep -c 'the stamp must be later' <<<"$STAMP2")" = 2 ] \
+[ "$(grep -c 'at the base creates and which sorts after this fragment' <<<"$STAMP1")" = 1 ] && [ "$(grep -c 'at the base creates and which sorts after this fragment' <<<"$STAMP2")" = 2 ] \
   && grep -q 'is already taken' <<<"$TAKEN" && grep -q 'never a picked number' <<<"$MAL" \
   && ok || bad "setup: the real rules-pack lines are not the expected shapes: [$STAMP1] [$STAMP2] [$TAKEN] [$MAL]"
 
@@ -157,7 +160,7 @@ note_case() {
   [ "$(agents)" = 1 ] && ok || bad "$name the review must reach the model once, agent count $(agents) (log: $(tail -n 5 "$LLOG" 2>/dev/null))"
   rp_section | grep -q 'stamp order' && ok || bad "$name the prompt's ## Rules pack must name the stamp order: $(rp_section)"
   rp_section | grep -qF 'the merge conductor restamps' && ok || bad "$name the prompt must say the merge path restamps: $(rp_section)"
-  rp_section | grep -qF 'the stamp must be later than every fragment at the base' && ok || bad "$name the prompt must carry the stamp line itself"
+  rp_section | grep -qF 'at the base creates and which sorts after this fragment' && ok || bad "$name the prompt must carry the stamp line itself"
   jq -e '.outcome == "done" and .verdict == "MERGE-WITH-NOTES"' <<<"$(result)" >/dev/null 2>&1 && ok || bad "$name result: $(result)"
 }
 # block_case <name> <line...> — a rules-pack BLOCK, no model
@@ -182,7 +185,7 @@ block_case L5 "$STAMP1" "$INDEX"
 grep -qxF -- "- [BLOCK] $INDEX" "$REPORT" 2>/dev/null && ok || bad "L5 the index line must be the BLOCK: $(grep -F '[' "$REPORT" 2>/dev/null)"
 grep -qxF -- "- [NOTE] stamp order, the merge path restamps: $STAMP1" "$REPORT" 2>/dev/null && ok || bad "L5 the stamp line must be a NOTE: $(grep -F '[' "$REPORT" 2>/dev/null)"
 blocks=$(grep -F -- '- [BLOCK]' "$REPORT" 2>/dev/null)
-grep -qF 'the stamp must be later' <<<"$blocks" && bad "L5 the stamp line was reported as a BLOCK" || ok
+grep -qF 'at the base creates and which sorts after' <<<"$blocks" && bad "L5 the stamp line was reported as a BLOCK" || ok
 
 # ── M1: without the split call the stamp line is a BLOCK again ──
 sed 's/^\( *\)command -v sr_stamp_split >\/dev\/null 2>&1 && sr_stamp_split /\1false \&\& sr_stamp_split /' "$SRC/bin/lead-review.sh" > "$T/mut.sh"
