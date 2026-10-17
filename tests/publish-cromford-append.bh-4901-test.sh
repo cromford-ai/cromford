@@ -17,7 +17,7 @@
 #   A2  a second publish adds exactly one fast-forward commit
 #   A3  an unchanged tree adds no commit
 #   A4  no force anywhere: the remote refuses non-fast-forwards, and the script has no force push
-#   A5  the message is "Cromford <date> (upstream <sha12>)", and both guards ran on it
+#   A5  the subject is "Cromford <date> (upstream <sha12>)", the body the notes, and both guards ran on it
 #   A6  an empty remote gets one root commit
 #   A7  an unreadable remote refuses a real publish; --dry-run goes on
 #   A8  --force on an unchanged tree adds one commit with the same tree, with --summary
@@ -116,9 +116,12 @@ grep -q "pushed ${H1:0:12} on ${S:0:12} to cromford-ai/cromford main (fast-forwa
 
 # A5 the message, and the guards on it
 MSG=$(git -C "$PUB" log -1 --format=%B main)
-if grep -qxE "Cromford [0-9]{4}\.[0-9]{2}\.[0-9]{2} \(upstream ${UP1:0:12}\)" <<<"$MSG" \
-   && [ "$(grep -c . <<<"$MSG")" = 1 ]; then ok
-else bad "A5 the pushed message is not 'Cromford <date> (upstream ${UP1:0:12})': $MSG"; fi
+# BH-7185: the body carries release notes. The seed's subject names no upstream
+# sha, so the notes are the one fallback bullet.
+if grep -qxE "Cromford [0-9]{4}\.[0-9]{2}\.[0-9]{2} \(upstream ${UP1:0:12}\)" <<<"$(sed -n 1p <<<"$MSG")" \
+   && [ -z "$(sed -n 2p <<<"$MSG")" ] \
+   && [ "$(sed -n '3,$p' <<<"$MSG")" = "- release notes unavailable for this build" ]; then ok
+else bad "A5 the pushed message is not 'Cromford <date> (upstream ${UP1:0:12})', a blank line and the fallback bullet: $MSG"; fi
 grep -qE '^leakcheck .*/msg$' "$T/guard.calls" && grep -qE '^gitleaks-gate .*/msg$' "$T/guard.calls" && ok \
   || bad "A5 leakcheck and gitleaks-gate must each run on the message dir: $(tr '\n' '|' < "$T/guard.calls")"
 [ "$(grep -c '^leakcheck ' "$T/guard.calls")" = 2 ] && [ "$(grep -c '^gitleaks-gate ' "$T/guard.calls")" = 2 ] && ok \
