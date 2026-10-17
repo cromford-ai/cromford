@@ -69,7 +69,9 @@ jq -e '.evidence | length > 0' "$O1" >/dev/null 2>&1 && jq -e '.evidence[] | .id
   || bad "S1: every evidence row has id and status"
 jq -e '(.snapshot_hash | test("^[0-9a-f]{64}$")) and .generated_at == "2026-10-14T12:00:00Z"' "$O1" >/dev/null 2>&1 && ok \
   || bad "S1: snapshot_hash is sha256 hex and generated_at is the pinned clock: $(jq -c '{snapshot_hash,generated_at}' "$O1" 2>/dev/null)"
-[ "$(jq -c '[.evidence[].id]' "$O1" 2>/dev/null)" = '["alerts.30d","alerts.7d"]' ] && ok \
+# TEST-CHANGE BH-7259: the real registry now holds more adapters, so the order is checked over every row and the id set over the alerts rows.
+jq -e '[.evidence[] | [.id, .source]] as $r | $r == ($r | sort)' "$O1" >/dev/null 2>&1 \
+  && [ "$(jq -c '[.evidence[] | select(.source == "alerts") | .id]' "$O1" 2>/dev/null)" = '["alerts.30d","alerts.7d"]' ] && ok \
   || bad "S1: the rows are sorted by id (got $(jq -c '[.evidence[].id]' "$O1" 2>/dev/null))"
 jq -e '.evidence[] | select(.id == "alerts.7d") | .source == "alerts" and .metric == "alert_lines" and .window == "7d" and .link == "logs/ALERTS.log" and .status == "ok"' "$O1" >/dev/null 2>&1 && ok \
   || bad "S1: the alerts.7d row carries source/metric/window/link/status"
@@ -77,7 +79,7 @@ jq -e '.evidence[] | select(.id == "alerts.7d") | .source == "alerts" and .metri
 # A4 — no ALERTS.log: not-configured, value null (never a zero).
 HN="$T/hn"; mkdir -p "$HN/logs"
 pms "$HN" proj "$T/a4.json"; RC=$?
-[ "$RC" = 0 ] && [ "$(jq -c '[.evidence[] | [.id, .status, .value]]' "$T/a4.json" 2>/dev/null)" = '[["alerts.30d","not-configured",null],["alerts.7d","not-configured",null]]' ] && ok \
+[ "$RC" = 0 ] && [ "$(jq -c '[.evidence[] | select(.source == "alerts") | [.id, .status, .value]]' "$T/a4.json" 2>/dev/null)" = '[["alerts.30d","not-configured",null],["alerts.7d","not-configured",null]]' ] && ok \
   || bad "A4: no ALERTS.log gives 2 not-configured rows with value null (rc=$RC): $(cat "$T/a4.json" 2>/dev/null)"
 
 # ════════════════════════════════════════════════════════════════════════════
@@ -114,8 +116,8 @@ pms "$HA" proj "$T/s2.json" PM_SIGNALS_DIR="$REG"; RC=$?
   || bad "S2: common-*.sh then <project>.sh are loaded, other projects are not (rc=$RC): $(jq -c '[.evidence[].id]' "$T/s2.json" 2>/dev/null)"
 [ "$(jq -r '.evidence[] | select(.id == "zz.one") | .project' "$T/s2.json" 2>/dev/null)" = proj ] && ok \
   || bad "S2: the adapter function gets the project as \$1"
-[ "$(cd "$DIR/bin/pm-signals.d" && ls)" = common-alerts.sh ] && ok \
-  || bad "S2: the real registry holds common-alerts.sh only: $(cd "$DIR/bin/pm-signals.d" 2>/dev/null && ls | tr '\n' ' ')"
+[ -f "$DIR/bin/pm-signals.d/common-alerts.sh" ] && ok \
+  || bad "S2: the real registry holds common-alerts.sh: $(cd "$DIR/bin/pm-signals.d" 2>/dev/null && ls | tr '\n' ' ')"
 
 # S3 — an adapter that exits 1: one error row, the others kept, rc 0.
 REG3="$T/reg3"; mkdir -p "$REG3"; cp "$ADAPTER" "$REG3/common-alerts.sh"
