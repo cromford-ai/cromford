@@ -108,6 +108,14 @@ export const RULES = [
            (SELECT d.rowid FROM json_each(?1) j JOIN stage_events_daily d
              ON d.rowid = json_extract(j.value, '$.id') AND d.n = json_extract(j.value, '$.n'))`,
   },
+  // BH-7164: an hourly cost bucket is a cache of cost_rows, which keeps every
+  // row, so a removed bucket loses nothing. GET /api/progress/stamps reads at
+  // most 30 days of buckets; the window must stay above that.
+  {
+    rule: "cost_project_hourly.age", table: "cost_project_hourly", key: "retention.cost_project_hourly.days", def: 400,
+    ids: "SELECT rowid AS id FROM cost_project_hourly WHERE hour < substr(?1, 1, 13) ORDER BY hour LIMIT ?2",
+    del: "DELETE FROM cost_project_hourly WHERE rowid IN (SELECT value FROM json_each(?1))",
+  },
   {
     // BH-6774: cost rows older than the window MOVE to the archive store. The
     // id is the rowid (the key is (box, row_hash)); the read is the ts index.

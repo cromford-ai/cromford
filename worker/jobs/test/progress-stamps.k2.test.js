@@ -36,7 +36,8 @@ function sqliteDB(db) {
     });
     return { ...bindAndRun([]), bind: (...binds) => bindAndRun(binds) };
   };
-  return { prepare };
+  // TEST-CHANGE (BH-7164): the cost section folds cost_rows in one D1 batch.
+  return { prepare, batch: async (stmts) => Promise.all(stmts.map((st) => st.run())) };
 }
 
 async function openDb(t) {
@@ -133,16 +134,23 @@ test('spend: priced rows only, per stage over the short window and per project o
   assert.deepEqual(r.body.long_min, [1440, 10080]);
 });
 
-test('the cost section reads cost_rows ONCE (the three windows are one scan)', async (t) => {
+// TEST-CHANGE (BH-7164): the section no longer reads cost_rows in one scan of
+// the widest window. It folds the rows above a rowid watermark into hourly
+// buckets and reads at most two ts-bounded raw ranges (the current hour, the
+// window edges). Every cost_rows statement must be bounded, and the summary
+// path (not the legacy fallback) must be the one that ran.
+test('the cost section reads cost_rows only in bounded ranges (a rowid fold and ts ranges)', async (t) => {
   const db = await openDb(t); if (!db) return;
   const seen = [];
   const inner = sqliteDB(db);
-  const spy = { prepare: (sql) => { if (/FROM cost_rows/.test(sql)) seen.push(sql); return inner.prepare(sql); } };
+  const spy = { prepare: (sql) => { if (/FROM cost_rows/.test(sql)) seen.push(sql); return inner.prepare(sql); }, batch: inner.batch };
   const res = await worker.fetch(
     new Request('https://jobs.test/api/progress/stamps?long_min=1440,10080', { headers: { authorization: `Bearer ${SECRET}` } }),
     { DB: spy, HARNESS_SECRET: SECRET });
   assert.equal(res.status, 200);
-  assert.equal(seen.length, 1, seen.join('\n---\n'));
+  for (const s of seen) assert.ok(/rowid >|ts >= \?1|MAX\(rowid\)/.test(s), `an unbounded cost_rows read:\n${s}`);
+  assert.ok(seen.some((s) => /rowid >/.test(s)), 'the fold ran');
+  assert.ok(!seen.some((s) => /FROM cost_rows\s+WHERE ts >= \?1 AND COALESCE\(cost_usd, 0\) > 0\s+GROUP BY project, stage/.test(s)), 'the legacy whole-window read did not run');
 });
 
 test('pending: queued build rows and queued merge rows, per project', async (t) => {

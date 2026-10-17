@@ -10,9 +10,10 @@
 // the watchdog, which judges it on its own cron (worker/watchdog/src/progress.js)
 // and pages Telegram directly.
 //
-// READ-ONLY, and every number is a row the fleet already writes: jobs,
-// verdict_history, ledgers/merge_queue/merge_trains, cost_rows, build_queue,
-// lane_ticks. No GitHub call, no new table.
+// Every number is a row the fleet already writes: jobs, verdict_history,
+// ledgers/merge_queue/merge_trains, cost_rows, build_queue, lane_ticks. No
+// GitHub call. The only writes are the cost section's own cache of cost_rows
+// (cost_project_hourly and its watermark, lib/cost-hourly.js).
 //
 // EACH SECTION IS ITS OWN try/catch. A table a database has not been given yet
 // (or a D1 hiccup) makes THAT section unknown — named in `errors`, its fields
@@ -22,6 +23,7 @@
 
 import { json } from "../lib/http.js";
 import { doraRepo } from "../lib/core.js";
+import { readCost } from "../lib/cost-hourly.js";
 
 const clampInt = (v, lo, hi, dflt) => {
   const n = Number(v);
@@ -59,7 +61,7 @@ export const routes = [
       const lookbackH = Math.max(lookbackHReq, Math.ceil(Math.max(0, ...longMins) / 60));
       const lookback = iso(nowMs - lookbackH * 3600000);
       const shortCut = iso(nowMs - spendMin * 60000);
-      // ONE cost_rows scan covers every window: from the widest cut back.
+      // The widest cut: the legacy cost read scans from here back.
       const scanMin = Math.max(spendMin, lookbackH * 60, ...longMins);
       const scanCut = iso(nowMs - scanMin * 60000);
 
@@ -135,27 +137,23 @@ export const routes = [
         for (const r of [...mq, ...mt]) if (r.project) P(r.project).stamps.merge = newer(P(r.project).stamps.merge, r.at);
       });
 
-      // Spend: PRICED rows only (an unpriced row is a run, not spend). One
-      // scan, every window a CASE over it, so three windows cost one read.
+      // Spend: PRICED rows only (an unpriced row is a run, not spend). The
+      // windows are read from hourly buckets plus the raw partial hours at
+      // their edges (lib/cost-hourly.js, BH-7164), not from every row.
       await section("cost", async () => {
-        const binds = [scanCut, shortCut, lookback, ...longMins.map((w) => iso(nowMs - w * 60000))];
-        const longCols = longMins.map((_, i) =>
-          `SUM(CASE WHEN ts >= ?${i + 4} THEN cost_usd ELSE 0 END) AS l${i}`).join(", ");
-        const rows = await all(
-          `SELECT project, stage,
-                  SUM(CASE WHEN ts >= ?2 THEN cost_usd ELSE 0 END) AS short_usd,
-                  MAX(CASE WHEN ts >= ?3 THEN ts END) AS last_ts${longCols ? `, ${longCols}` : ""}
-             FROM cost_rows
-            WHERE ts >= ?1 AND COALESCE(cost_usd, 0) > 0
-            GROUP BY project, stage`, ...binds);
+        const c = await readCost(env, {
+          nowMs, scanCut, shortCut, lookback, longCuts: longMins.map((w) => iso(nowMs - w * 60000)),
+        });
         const round = (n) => Math.round(Number(n || 0) * 100) / 100;
-        for (const r of rows) {
-          if (!r.project) continue;
-          const p = P(r.project);
-          if (Number(r.short_usd) > 0) p.spend[r.stage || "unknown"] = round((p.spend[r.stage || "unknown"] || 0) + Number(r.short_usd));
-          longMins.forEach((w, i) => { p.spend_long[w] = round(p.spend_long[w] + Number(r[`l${i}`] || 0)); });
-          if (r.last_ts) p.stamps.cost = newer(p.stamps.cost, r.last_ts);
+        for (const r of c.short) {
+          const p = P(r.project), st = r.stage || "unknown";
+          p.spend[st] = round((p.spend[st] || 0) + r.usd);
         }
+        for (const [proj, sums] of c.long) {
+          const p = P(proj);
+          longMins.forEach((w, i) => { p.spend_long[w] = round(p.spend_long[w] + sums[i]); });
+        }
+        for (const [proj, ts] of c.last) P(proj).stamps.cost = newer(P(proj).stamps.cost, ts);
       });
       if (errors.includes("cost")) for (const p of Object.values(projects)) { p.spend = null; p.spend_long = null; }
 

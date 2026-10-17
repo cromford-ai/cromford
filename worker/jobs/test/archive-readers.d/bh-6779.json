@@ -272,16 +272,6 @@
    "window_days": 60
   },
   {
-   "file": "src/routes/progress.js",
-   "line_hint": 148,
-   "match": "FROM cost_rows\n            WHERE ts >= ?1 AND COALESCE(cost_usd, 0) > 0",
-   "table": "cost_rows",
-   "window": "30 d (lookback_h 720)",
-   "class": "poll",
-   "status": "hot-only",
-   "window_days": 30
-  },
-  {
    "file": "src/routes/llm-sites.js",
    "line_hint": 42,
    "match": "FROM cost_rows WHERE ts >= ?1\nGROUP BY stage, lane_id",

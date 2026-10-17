@@ -1,0 +1,54 @@
+{
+ "ticket": "BH-7164",
+ "note": "The cost_rows reads of GET /api/progress/stamps after BH-7164 moved them from src/routes/progress.js into src/lib/cost-hourly.js (the hourly-bucket fold, the bounded raw reads and the legacy fallback). All poll reads of the hot store: the buckets keep the summed history, so a row archived after its fold is still counted. Read by test/archive-readers.bh-6779.test.js R1.",
+ "readers": [
+  {
+   "file": "src/lib/cost-hourly.js",
+   "line_hint": 28,
+   "match": "COALESCE(MAX(rowid), 0) FROM cost_rows",
+   "table": "cost_rows",
+   "window": "MAX(rowid), the fold's O(1) high-water read",
+   "class": "poll",
+   "status": "hot-only"
+  },
+  {
+   "file": "src/lib/cost-hourly.js",
+   "line_hint": 39,
+   "match": "SELECT project, ts, cost_usd FROM cost_rows",
+   "table": "cost_rows",
+   "window": "rows above the cost_fold_mark watermark (rowid range), folded into cost_project_hourly",
+   "class": "poll",
+   "status": "hot-only"
+  },
+  {
+   "file": "src/lib/cost-hourly.js",
+   "line_hint": 83,
+   "match": "SELECT project, stage, ts, cost_usd FROM cost_rows WHERE ts >= ?1",
+   "table": "cost_rows",
+   "window": "the short cut or the current hour, whichever is older (spend_min <= 1440)",
+   "class": "poll",
+   "status": "hot-only",
+   "window_days": 1
+  },
+  {
+   "file": "src/lib/cost-hourly.js",
+   "line_hint": 99,
+   "match": "MAX(ts) AS max_ts FROM cost_rows",
+   "table": "cost_rows",
+   "window": "the partial first hour of each window, inside the lookback (lookback_h 720)",
+   "class": "poll",
+   "status": "hot-only",
+   "window_days": 30
+  },
+  {
+   "file": "src/lib/cost-hourly.js",
+   "line_hint": 167,
+   "match": "FROM cost_rows\n      WHERE ts >= ?1 AND COALESCE(cost_usd, 0) > 0",
+   "table": "cost_rows",
+   "window": "legacy fallback: 30 d (lookback_h 720)",
+   "class": "poll",
+   "status": "hot-only",
+   "window_days": 30
+  }
+ ]
+}
