@@ -111,8 +111,11 @@ grep -q '\[ "$LAUNCHED" -lt "$BUDGET" \] || break' "$FP" \
   && ok || bad "the loop must stop at the budget — the live cap is the only limit, and it is a real limit"
 grep -q 'TICK_KEYS' "$FP" \
   && ok || bad "parallel spawns need an in-tick key dedupe: the sibling's pool json does not exist yet"
-# The per-project tick lock stays, and stays non-blocking.
-grep -q 'exec 8>"$HARNESS/locks/fly-pool-$P.lock"; flock -n 8 || exit 0' "$FP" \
+# The per-project tick lock stays, and stays non-blocking. BH-7139 moved it to
+# the top of the script with an `already running` line, so the open and the
+# non-blocking take are two lines now; both must be there.
+grep -q '^exec 8>"$HARNESS/locks/fly-pool-$P.lock"$' "$FP" \
+  && grep -q '^if ! flock -n 8; then$' "$FP" \
   && ok || bad "the per-project tick lock must stay, as NON-blocking tick dedupe"
 # The regions a sibling branch owns must not have been touched here.
 grep -q 'A DEFERRAL IS NOT A RESULT' "$FP" \

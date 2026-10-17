@@ -1,0 +1,11 @@
+{
+  "env": "MC_KEYED_MAX_PARALLEL",
+  "type": "int",
+  "default": 4,
+  "min": 0,
+  "max": 64,
+  "unit": "keyed ticks",
+  "zero_means": "off",
+  "note": "BH-7139: keyed conductor ticks (MC_ONLY_PR) that run at once on the hub. kw_conductor queues one entry per PR (state/merge-conductor/keyed-queue, a second wake folds in) and bin/mc-keyed-pool.sh runs the queue through this many slots. A wake that finds every slot busy waits in the queue; it is never dropped. 0 = the pool is off: every queued entry starts at once, as before BH-7139. Settings row: lane.merge-conductor.mc_keyed_max_parallel.",
+  "read_in": "bin/mc-keyed-pool.sh"
+}

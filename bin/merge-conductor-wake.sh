@@ -37,6 +37,10 @@
 # `at` kept) and is paid first on the next tick. A wake or carry line older than
 # MC_WAKE_MAX_AGE_S is skipped `stale`: the backstop and the full tick own it.
 #
+# BH-7139: every minute this lane also starts one bin/mc-keyed-pool.sh drain
+# (the keyed-tick queue backstop) and runs mc_tick_clock_check (one alert for a
+# cron full tick older than 2 x MC_FULL_TICK_PERIOD_S).
+#
 # Knobs (catalog/lanes.d/merge-conductor-wake.json, settings rows
 # lane.merge-conductor-wake.<env>): MC_WAKE_BUDGET (10), MC_WAKE_WAKES (100),
 # MC_WAKE_MIN_S (30), MC_WAKE_MAX_AGE_S (900), MC_WAKE_SHA_LOOKUPS (5). Off:
@@ -92,6 +96,23 @@ NWAKES=$(knob MC_WAKE_WAKES 100)
 MIN_S=$(knob MC_WAKE_MIN_S 30)
 MAX_AGE=$(knob MC_WAKE_MAX_AGE_S 900)
 LOOKUPS=$(knob MC_WAKE_SHA_LOOKUPS 5)
+
+# THE KEYED POOL BACKSTOP (BH-7139): a keyed tick waits in
+# state/merge-conductor/keyed-queue while every MC_KEYED_MAX_PARALLEL slot is
+# busy. A slot holder drains it when its tick ends; this one detached drain a
+# minute is the backstop, so a queued entry never waits on a lost drain.
+if [ -x "$HARNESS/bin/mc-keyed-pool.sh" ]; then
+  ( MC_H="$HARNESS" setsid "$HARNESS/bin/mc-keyed-pool.sh" drain </dev/null >/dev/null 2>&1 9>&- 8>&- 7>&- 6>&- 5>&- 4>&- & ) 2>/dev/null
+fi
+# THE FULL-TICK CLOCK (BH-7139): one alert when a live cron full tick is older
+# than 2 x MC_FULL_TICK_PERIOD_S (lane.merge-conductor.mc_full_tick_period_s).
+# shellcheck source=bin/lib/mc-tick-clock.sh
+if [ -r "$HARNESS/bin/lib/mc-tick-clock.sh" ] && . "$HARNESS/bin/lib/mc-tick-clock.sh"; then
+  FTP=1800
+  command -v lane_knob >/dev/null 2>&1 && FTP=$(lane_knob merge-conductor MC_FULL_TICK_PERIOD_S)
+  case "$FTP" in ''|*[!0-9]*) FTP=1800 ;; esac
+  mc_tick_clock_check "$HARNESS" "$FTP" | while IFS= read -r L; do say "$L"; done
+fi
 
 # shellcheck source=bin/lib/keyed-wake.sh
 [ -r "$HARNESS/bin/lib/keyed-wake.sh" ] && . "$HARNESS/bin/lib/keyed-wake.sh"

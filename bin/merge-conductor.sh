@@ -335,6 +335,13 @@ mc_keyed_tick_parse
 # THE FULL-TICK WINDOW (BH-5521): MC_FULL_TICK_BUDGET_S -> MC_WORKERS_DONE_BY.
 # The window is mc_full_tick_window, in bin/lib/mc/tick-scope.sh (BH-6518).
 mc_full_tick_window
+# THE FULL-TICK CLOCK (BH-7139): a full tick stamps its start and logs
+# FULL_TICK wall_s= at its end; bin/merge-conductor-wake.sh alerts once on a
+# full tick older than 2 cron periods. Optional: a tree without the lib ticks
+# as before.
+# shellcheck source=bin/lib/mc-tick-clock.sh
+[ -r "$H/bin/lib/mc-tick-clock.sh" ] && . "$H/bin/lib/mc-tick-clock.sh"
+command -v mc_tick_clock_start >/dev/null 2>&1 && mc_tick_clock_start
 # NO GLOBAL LOCK (2026-09-14), AND SINCE 2026-09-15 NO PROJECT LOCK EITHER. The
 # parallelism boundary and the single-instance guard are now the per-PR lock
 # pr_worker takes (mc_pr_lock): two overlapping ticks can never handle the same
@@ -3512,5 +3519,6 @@ command -v gh_rest_etag_report >/dev/null 2>&1 && gh_rest_etag_report merge-cond
 # reader keys on, and the once-every-MC_HOLD_REMINDER_S PAUSED reminder. After
 # the fan-out, because the counters it sums are written by the workers.
 command -v mc_hold_tick_end >/dev/null 2>&1 && mc_hold_tick_end
+command -v mc_tick_clock_end >/dev/null 2>&1 && mc_tick_clock_end
 hb_done merge-conductor
 exit 0

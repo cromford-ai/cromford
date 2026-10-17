@@ -1,0 +1,11 @@
+{
+  "env": "MC_FULL_TICK_PERIOD_S",
+  "type": "int",
+  "default": 1800,
+  "min": 60,
+  "max": 86400,
+  "unit": "seconds",
+  "zero_means": null,
+  "note": "BH-7139: the cron period of the conductor's full tick (cron/lanes/410-merge-conductor.cron, */30). bin/merge-conductor-wake.sh writes one alert (bin/alert-line.sh --id mc-full-tick-slow) when a live full tick is older than 2 x this. Alerts only: nothing is stopped. Settings row: lane.merge-conductor.mc_full_tick_period_s.",
+  "read_in": "bin/merge-conductor-wake.sh"
+}

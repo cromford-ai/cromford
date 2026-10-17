@@ -21,7 +21,9 @@
 # stamped BEFORE the launch so two callers racing on one PR launch once.
 # MC_KEYED_WAKE=0 turns it off and every caller behaves exactly as before.
 # Knobs: catalog/lanes.d/merge-conductor.json (MC_KEYED_WAKE,
-# MC_KEYED_WAKE_MIN_S). Tests: tests/merge-flow-lane-d-test.sh.
+# MC_KEYED_WAKE_MIN_S); MC_KEYED_MAX_PARALLEL (BH-7139, the pool, read by
+# bin/mc-keyed-pool.sh). Tests: tests/merge-flow-lane-d-test.sh,
+# tests/hub-overload-queue.bh-7139-test.sh.
 
 _kw_home() { printf '%s' "${MC_H:-${HARNESS:-/root/harness}}"; }
 
@@ -67,9 +69,48 @@ kw_conductor() {
   # MC_PR_LOCK_WAIT_S is set from KW_PR_LOCK_WAIT_S on every launch, empty
   # unless the caller holds this PR's lock itself (mc_ready_rekick): then the
   # run waits for it instead of skipping (mc_pr_lock_take).
+  # THE POOL (BH-7139): with bin/mc-keyed-pool.sh on this box the run is
+  # QUEUED (one entry per PR, a second wake folds into it) and a detached drain
+  # starts it as soon as one of MC_KEYED_MAX_PARALLEL slots is free. A tree
+  # without the pool script (mid-sync, a scratch fixture) launches at once, as
+  # before.
+  if [ -x "$h/bin/mc-keyed-pool.sh" ] && _kw_enqueue "$h" "$slug" "$num" "${KW_FANIN_SOLO:-}" "${KW_PR_LOCK_WAIT_S-}" "$why"; then
+    ( MC_H="$h" setsid "$h/bin/mc-keyed-pool.sh" drain </dev/null >/dev/null 2>&1 9>&- 8>&- 7>&- 6>&- 5>&- 4>&- & ) 2>/dev/null
+    if command -v mc_log >/dev/null 2>&1; then
+      mc_log "$slug#$num KEYED_WAKE: conductor queued for this PR now${why:+ ($why)} — it runs when a keyed slot is free; the cron tick stays the backstop"
+    fi
+    return 0
+  fi
   ( MC_ONLY_PR="$slug#$num" WAKE_LAUNCH=1 MC_FANIN_SOLO_RUN="${KW_FANIN_SOLO:-}" MC_PR_LOCK_WAIT_S="${KW_PR_LOCK_WAIT_S-}" MC_WORKERS_DONE_BY= MC_WINDOW_DEFER_FILE= setsid "$script" </dev/null >/dev/null 2>&1 9>&- 8>&- 7>&- 6>&- & ) 2>/dev/null
   if command -v mc_log >/dev/null 2>&1; then
     mc_log "$slug#$num KEYED_WAKE: conductor launched for this PR now${why:+ ($why)} — the cron tick stays the backstop"
   fi
   return 0
+}
+
+# _kw_enqueue <home> <slug> <num> <solo> <lock-wait-s> <why> — write or fold
+# the PR's queue entry (bin/mc-keyed-pool.sh header). A folded entry keeps its
+# place (the first enqueue time), stays solo when either wake was solo, and
+# keeps the longer lock wait. rc 1 when the queue cannot be written (the
+# caller then launches at once).
+_kw_enqueue() {
+  local h="$1" slug="$2" num="$3" solo="${4:-}" wait="${5:-}" why="${6:-}" q f tmp at osolo owait line
+  q="$h/state/merge-conductor/keyed-queue"
+  mkdir -p "$q" 2>/dev/null || return 1
+  f="$q/${slug//\//+}#$num"   # `+` is never in a slug, so two repos never share a name
+  why=$(printf '%s' "$why" | tr '\t\n' '  ')
+  (
+    exec 4>>"$q/.lock" || exit 1
+    flock -w 10 4 || exit 1
+    at=$(date +%s)
+    if line=$(head -1 "$f" 2>/dev/null) && [ -n "$line" ]; then
+      IFS=$'\t' read -r at _ _ osolo owait _ <<<"$line"
+      case "$at" in ''|*[!0-9]*) at=$(date +%s) ;; esac
+      [ "$osolo" = 1 ] && solo=1
+      case "$owait" in ''|-|*[!0-9]*) ;; *) case "$wait" in ''|*[!0-9]*) wait=$owait ;; *) [ "$owait" -gt "$wait" ] && wait=$owait ;; esac ;; esac
+    fi
+    tmp=$(mktemp "$q/.tmp.XXXXXX") || exit 1
+    printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$at" "$slug" "$num" "${solo:--}" "${wait:--}" "${why:--}" > "$tmp" \
+      && mv -f "$tmp" "$f" || { rm -f "$tmp"; exit 1; }
+  )
 }

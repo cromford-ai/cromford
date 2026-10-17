@@ -35,6 +35,18 @@ HARNESS="${HARNESS:-/root/harness}"
 . "${HARNESS:-/root/harness}/bin/lib/env-path.sh" 2>/dev/null || . "$(dirname "${BASH_SOURCE[0]}")/lib/env-path.sh" 2>/dev/null || harness_env_dir() { printf '%s\n' "${1:-${HARNESS:-/root/harness}}/env"; }; HENV=$(harness_env_dir "$HARNESS")
 FLAG="$HARNESS/flags/fly-pool-$P"
 [ -f "$FLAG" ] || exit 0
+# ONE RUN PER PROJECT, DECIDED FIRST (BH-7139). The per-project lock is taken
+# before any other work: before pool-cap.sh, the env load, the lane gate, the
+# token resolve and `fly agent start`. On 2026-10-16 the hub ran up to 7
+# fly-pool.sh per project at once, each paying that start-up under load 170+
+# before it found the lock held. A second start now exits rc 0 at once with one
+# line; the running tick already covers this project.
+mkdir -p "$HARNESS/locks" "$HARNESS/logs" 2>/dev/null
+exec 8>"$HARNESS/locks/fly-pool-$P.lock"
+if ! flock -n 8; then
+  echo "$(date -u '+%Y-%m-%d %H:%M:%SZ') [pool/$P] already running (locks/fly-pool-$P.lock held) — this start exits, the running tick covers $P" >> "$HARNESS/logs/fly-pool.log"
+  exit 0
+fi
 # The cap: a number in the flag file, else fly/pool-caps.conf, else UNLIMITED —
 # bin/pool-cap.sh is the one reader (2026-09-12), and since 2026-09-14 it prints
 # 0 for "no ceiling" (the SPAWN section below turns that into queue depth). The
@@ -165,11 +177,12 @@ hotfix_first() {
   for f in "$@"; do job_is_hot "$f" || ! job_is_now "$f" || printf '%s\n' "$f"; done
   for f in "$@"; do job_is_hot "$f" || job_is_now "$f" || printf '%s\n' "$f"; done
 }
-# Start the flyctl agent BEFORE the lock: an agent auto-spawned by `machine
+# Start the flyctl agent with fd 8 CLOSED: an agent auto-spawned by `machine
 # exec` inside the locked section inherits fd 8 and holds the lock forever
-# (2026-09-12: project-5 pool dark 66 min). bin/fly-lock-guard.sh is the backstop.
-"$FLY" agent start >/dev/null 2>&1 || true
-exec 8>"$HARNESS/locks/fly-pool-$P.lock"; flock -n 8 || exit 0
+# (2026-09-12: project-5 pool dark 66 min). It used to start before the lock;
+# since BH-7139 the lock is taken at the top, so the agent gets `8>&-`.
+# bin/fly-lock-guard.sh is the backstop.
+"$FLY" agent start >/dev/null 2>&1 8>&- || true
 # 2026-09-11 (project-4 TK-1566/1571/1576/1584 sat ~50m): bash `exec 8>` does not
 # set FD_CLOEXEC. flyctl's agent inherited fd 8, held the pool lock after this
 # tick exited, and the next tick `flock -n 8 || exit 0` skipped — RESULT sat
