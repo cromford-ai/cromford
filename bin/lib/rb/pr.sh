@@ -748,6 +748,65 @@ echo "$(STAMP) [$PROJECT/$KEY] PR (tier $TIER)" >> "$BUILD/pipeline.log"
 # ahead with the wip commits — never fatal, docs/CHECKPOINTS.md.
 CKPT_SQUASH_WIP || CKPT_SQUASH_REFUSED pr
 # <<< pre-pr squash
+# >>> prepush gate
+# BH-7187 (HOTFIX TOC lever 1): every deterministic ratchet runs HERE, on the
+# head that is about to be pushed, so a lint that used to fire only in the merge
+# queue (9 of 10 rounds lost on 2026-10-16, about 35 min each) stops the push
+# on the box. A checkout without an executable bin/prepush-gate.sh is not
+# gated (every other project). The gate's rc is not read: its summary.tsv is,
+# row by row. RED gets one fix round on the box, then, still red, stops the push (exit 6, REVIEW_BLOCKED, the text
+# names each component and its findings). COULD-NOT-RUN never stops it and
+# never reads as green: it is logged and goes into the PR body.
+# A stale schema-fragment stamp (a rebase moved main) is restamped once
+# (bin/prepush-gate.sh --restamp, one commit, no SQL change) and the gate runs
+# again, so that finding never costs a fix round.
+# THE OFF SWITCH IS A SETTINGS ROW: prepush.gate_mode.<project>, then
+# prepush.gate_mode = block (default) | warn (run, log, note in the PR, never
+# stop the push) | off (do not run). A row that cannot be read, or holds any
+# other value, is block: the gate fails closed (worker/jobs/schema.d seed).
+_PPG_MODE=block
+if command -v setting_get >/dev/null 2>&1; then
+  _PPG_V=$(setting_get "prepush.gate_mode.$PROJECT" 2>/dev/null) || _PPG_V=$(setting_get prepush.gate_mode 2>/dev/null) || _PPG_V=block
+  case "$(printf '%s' "$_PPG_V" | tr 'A-Z' 'a-z' | tr -d '[:space:]')" in warn) _PPG_MODE=warn ;; off) _PPG_MODE=off ;; esac
+fi
+echo "$(STAMP) [$PROJECT/$KEY] PREPUSH-GATE mode=$_PPG_MODE" >> "$BUILD/pipeline.log"
+if [ -x bin/prepush-gate.sh ] && [ "$_PPG_MODE" != off ]; then
+  _PPG="$BUILD/prepush-gate"
+  _ppg_run() { bin/prepush-gate.sh --base "$BASE" --out "$_PPG" > "$BUILD/prepush-gate.txt" 2>&1; }
+  _ppg_ids() { awk -F'\t' -v s="$1" '$2 == s { printf "%s%s%s", (n++ ? ", " : ""), $1, ($5 != $1 && s == "red" ? " [" $5 "]" : "") }' "$_PPG/summary.tsv" 2>/dev/null; }
+  _ppg_run
+  if grep -q 'schema-fragment-name' "$_PPG/summary.tsv" 2>/dev/null && bin/prepush-gate.sh --restamp --base "$BASE" >> "$BUILD/prepush-gate.txt" 2>&1; then
+    echo "$(STAMP) [$PROJECT/$KEY] PREPUSH-GATE restamped the schema fragments, running the gate again" >> "$BUILD/pipeline.log"
+    _ppg_run
+  fi
+  _PPG_RED=$(_ppg_ids red)
+  # ONE fix round on the box before a red stops the push (the rules-pack prepr
+  # pattern, BH-3513): the findings go to the fix model, then the gate runs again.
+  # Only in block mode, and only where the builder's CC runner exists.
+  if [ -n "$_PPG_RED" ] && [ "$_PPG_MODE" = block ] && command -v CC >/dev/null 2>&1; then
+    echo "$(STAMP) [$PROJECT/$KEY] PREPUSH-GATE red=[${_PPG_RED}] -> one fix round" >> "$BUILD/pipeline.log"
+    CC fix "${FIX_MODEL:-}" 1800 "$BUILD/prepush-fix-run.txt" "The pre-push gate is red on branch ${BRANCH:-HEAD} in: $_PPG_RED. The findings are in $BUILD/prepush-gate.txt (and per component in $_PPG/). Fix every red finding in the repo. Never weaken, skip or delete a test to get green. A stale schema fragment stamp is fixed with 'bin/prepush-gate.sh --restamp --base $BASE'. Run 'bin/prepush-gate.sh --base $BASE' to check your work. Commit your work. Do NOT push." || true
+    _ppg_run
+    _PPG_RED=$(_ppg_ids red)
+  fi
+  _PPG_CNR=$(_ppg_ids could-not-run)
+  [ -s "$_PPG/summary.tsv" ] || _PPG_CNR="the gate itself (no summary.tsv; see prepush-gate.txt)"
+  echo "$(STAMP) [$PROJECT/$KEY] PREPUSH-GATE red=[${_PPG_RED}] could-not-run=[${_PPG_CNR}]" >> "$BUILD/pipeline.log"
+  if [ -n "$_PPG_RED" ] && [ "$_PPG_MODE" = warn ]; then
+    PREPR_SECTION="${PREPR_SECTION:-}"$'\n## Pre-push gate: red (mode warn)\n\n'"The pre-push gate was red in: $_PPG_RED. prepush.gate_mode is warn, so the push went on. See prepush-gate.txt in the build dir."$'\n'
+  elif [ -n "$_PPG_RED" ]; then
+    { echo "The pre-push gate is red in: $_PPG_RED"; grep -v '^prepush-gate: .* green ' "$BUILD/prepush-gate.txt" | sed -n '1,60p'; } > "$BUILD/prepush-gate-block.txt"
+    [ -x "$HARNESS/bin/alert-line.sh" ] && "$HARNESS/bin/alert-line.sh" --project "$PROJECT" \
+      "[$PROJECT/$KEY] BLOCKED: the pre-push gate is red in $_PPG_RED on this build's own diff (prepush-gate) (pr)"
+    escalate_block "prepush-gate" "The pre-push gate is red in $_PPG_RED, so the push was refused. Findings: $(grep -c . "$BUILD/prepush-gate-block.txt") line(s) in prepush-gate-block.txt."
+    RESULT "REVIEW_BLOCKED prepush-gate: red in $_PPG_RED; see $BUILD/prepush-gate-block.txt"
+    exit 6
+  fi
+  if [ -n "$_PPG_CNR" ]; then
+    PREPR_SECTION="${PREPR_SECTION:-}"$'\n## Pre-push gate: could-not-run\n\n'"These components were could-not-run on the build box: $_PPG_CNR. They are not green. CI decides them."$'\n'
+  fi
+fi
+# <<< prepush gate
 # >>> pr push
 # The rejected line names the head this build made: the pool reap compares it
 # with the remote branch, and a push that did land gets its PR from the hub.

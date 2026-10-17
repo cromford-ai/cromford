@@ -18,6 +18,16 @@
 # the lead's Mac and the hub. It travels to curl in a 0600 header file, never
 # on argv (ps shows argv) and never printed, and that file is removed on exit.
 #
+# FROM OPERATOR'S MAC (BH-7188): keychain item cromford/HARNESS_SECRET. No hub
+# and no SSH are needed. bin/jobs-client.sh reads HARNESS_SECRET in this order:
+# env, env/global.env, the keychain item above
+#   (`security add-generic-password -U -s cromford -a HARNESS_SECRET -w`),
+# then a 0600 file named by HARNESS_SECRET_FILE. The worker URL comes from env,
+# env/global.env, the keychain item cromford/JOBS_URL, then the built-in
+# default (https://harness-jobs.<HARNESS_WORKERS_SUBDOMAIN>.workers.dev). The
+# lead token and the human token already sit in ~/.config/cromford/. A secret
+# read from the keychain or the file is never exported, never on argv, never printed.
+#
 # THE PARTICIPANT TOKEN (BH-5352). With no readable lead token file, a
 # --source lead post sends the token in HARNESS_PARTICIPANT_TOKEN_FILE (no
 # default; an approved participant machine's own token) as x-participant-token,

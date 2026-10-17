@@ -37,6 +37,38 @@ if [ -z "${HARNESS_SECRET:-}" ] && [ -r "$_JC_ENV/global.env" ]; then
   [ -z "${JOBS_URL+set}" ] && grep -q '^JOBS_URL=' "$_JC_ENV/global.env" && JOBS_URL="$_JC_URL"
   unset _JC_URL
 fi
+# BH-7188 (TOC lever 5a): OFF THE HUB. A lead/human verdict posts from any
+# trusted machine, not only the box that owns env/global.env. With no secret from
+# the environment or global.env, read it from the macOS keychain item
+# `cromford` / HARNESS_SECRET, then from a file named by HARNESS_SECRET_FILE
+# (refused unless mode 0600). The worker URL has the same keychain home, account
+# JOBS_URL, and only when JOBS_URL is UNSET (an empty value stays "no worker").
+# A secret found here is NOT exported and rides to curl in a 0600 header file
+# (JOBS_AUTH_VIA_FILE=1, bin/lib/jobs/req.sh), never on argv. The hub path above
+# is unchanged byte for byte.
+# Inline on purpose: this shim defines no functions (jobs-client-modules, BH-1194).
+if [ -z "${HARNESS_SECRET:-}" ]; then
+  _JC_S=""
+  if command -v security >/dev/null 2>&1; then
+    _JC_S=$(security find-generic-password -s cromford -a HARNESS_SECRET -w 2>/dev/null) || _JC_S=""
+  fi
+  if [ -z "$_JC_S" ] && [ -n "${HARNESS_SECRET_FILE:-}" ] && [ -r "$HARNESS_SECRET_FILE" ]; then
+    _JC_M=$(stat -c %a "$HARNESS_SECRET_FILE" 2>/dev/null || stat -f %Lp "$HARNESS_SECRET_FILE" 2>/dev/null)
+    if [ "$_JC_M" = 600 ]; then _JC_S=$(head -1 "$HARNESS_SECRET_FILE" | tr -d ' \r\n'); fi
+    unset _JC_M
+  fi
+  if [ -n "$_JC_S" ]; then
+    HARNESS_SECRET="$_JC_S"; JOBS_AUTH_VIA_FILE=1
+  else
+    unset HARNESS_SECRET
+  fi
+  unset _JC_S
+fi
+if [ -z "${JOBS_URL+set}" ] && command -v security >/dev/null 2>&1; then
+  _JC_URL=$(security find-generic-password -s cromford -a JOBS_URL -w 2>/dev/null) || _JC_URL=""
+  if [ -n "$_JC_URL" ]; then JOBS_URL="$_JC_URL"; fi
+  unset _JC_URL
+fi
 # >>> jobs modules
 # BH-1194: the client is a SHIM over bin/lib/jobs/. Everything below the
 # bootstrap above lives in one of the nine modules named on the literal line

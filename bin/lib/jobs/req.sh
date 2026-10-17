@@ -145,14 +145,25 @@ JOBS_BODY=""
 # _jobs_curl <method> <path> <body> <body-arg> — one HTTP attempt; prints the
 # payload, a newline and the status code. Both _jobs_req retry loops call it.
 _jobs_curl() {
+  local auth="authorization: Bearer $HARNESS_SECRET" hf="" rc
+  # BH-7188: a secret read off the hub (keychain, file) never goes on argv: curl
+  # reads the header from a 0600 file. No file, no request (never fall back to argv).
+  if [ -n "${JOBS_AUTH_VIA_FILE:-}" ]; then
+    hf=$(umask 077; mktemp "${TMPDIR:-/tmp}/jobs-auth.XXXXXX" 2>/dev/null) || return 1
+    printf 'authorization: Bearer %s\n' "$HARNESS_SECRET" > "$hf" || { rm -f "$hf"; return 1; }
+    auth="@$hf"
+  fi
   if [ -n "$3" ]; then
     curl -sS -m "$JOBS_TIMEOUT" --connect-timeout 3 -w $'\n%{http_code}' \
-      -X "$1" -H "authorization: Bearer $HARNESS_SECRET" \
+      -X "$1" -H "$auth" \
       -H "content-type: application/json" --data-binary "$4" "$JOBS_URL$2" 2>/dev/null
   else
     curl -sS -m "$JOBS_TIMEOUT" --connect-timeout 3 -w $'\n%{http_code}' \
-      -X "$1" -H "authorization: Bearer $HARNESS_SECRET" "$JOBS_URL$2" 2>/dev/null
+      -X "$1" -H "$auth" "$JOBS_URL$2" 2>/dev/null
   fi
+  rc=$?
+  [ -z "$hf" ] || rm -f "$hf"
+  return "$rc"
 }
 _jobs_req() { # _jobs_req <method> <path> [json-body]
   local method="$1" path="$2" body="${3:-}" out rc
@@ -221,10 +232,17 @@ _jobs_req_file() {
   [ -n "${HARNESS_SECRET:-}" ] || { _jobs_log "HARNESS_SECRET unset"; return 1; }
   [ -n "${JOBS_URL:-}" ] || { _jobs_not_configured; return 1; }
   [ -s "$file" ] || { _jobs_log "$method $path empty body file"; return 1; }
+  local auth="authorization: Bearer $HARNESS_SECRET" hf=""
+  if [ -n "${JOBS_AUTH_VIA_FILE:-}" ]; then # BH-7188: see _jobs_curl
+    hf=$(umask 077; mktemp "${TMPDIR:-/tmp}/jobs-auth.XXXXXX" 2>/dev/null) || { _jobs_log "$method $path mktemp failed"; return 1; }
+    printf 'authorization: Bearer %s\n' "$HARNESS_SECRET" > "$hf" || { rm -f "$hf"; return 1; }
+    auth="@$hf"
+  fi
   out=$(curl -sS -m "$JOBS_TIMEOUT" --connect-timeout 3 -w $'\n%{http_code}' \
-    -X "$method" -H "authorization: Bearer $HARNESS_SECRET" \
+    -X "$method" -H "$auth" \
     -H "content-type: application/json" --data-binary "@$file" "$JOBS_URL$path" 2>/dev/null)
   rc=$?
+  [ -z "$hf" ] || rm -f "$hf"
   if [ "$rc" -ne 0 ]; then _jobs_log "$method $path transport rc=$rc"; return 1; fi
   JOBS_HTTP="${out##*$'\n'}"
   local payload="${out%$'\n'*}"
