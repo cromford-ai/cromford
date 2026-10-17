@@ -1,0 +1,7 @@
+# catalog/ci-local-skip.d/bh-6897.tsv — CI lint steps bin/ci-local.sh does not run (BH-6897).
+# <job name>TAB<step name>TAB<reason>. Read by bin/ci-local-plan.py; the step lists as `skip` with the reason.
+Syntax + shellcheck + config integrity	CI_RUNNER names a known fleet	checks the CI_RUNNER repo variable, not code; a local run has no repo variables
+Syntax + shellcheck + config integrity	merge-from-main push — what can reuse the last green	reads the GitHub push event and the previous run; a local run has neither
+Syntax + shellcheck + config integrity	triage-gate decides RUN/SKIP shapes correctly	writes fixed /tmp/h and /tmp/tg.sh paths; two runs on one box would collide
+Syntax + shellcheck + config integrity	merge-sweep refuses without record evidence	writes fixed /tmp/h2, /tmp/fakebin and /tmp/gh-was-called paths; two runs on one box would collide
+Syntax + shellcheck + config integrity	fast always-lints (BH-3860)	its suites are always-suites the builder gate (bin/test-impact-gate.sh) runs; its rules pack is ci-local's own pack run; a box has no CI durations (no token, no JOBS_URL), so the stale seed puts every unmeasured suite in it and the step alone outran the 900 s budget on a pool builder (551 s, 2026-10-15)

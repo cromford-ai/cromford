@@ -337,6 +337,9 @@ command -v verdict_prime >/dev/null 2>&1 && verdict_prime || true
 # PR caps the verdict at BLOCK). Without it every verdict stands as the agent gave it.
 # shellcheck source=bin/lib/lead-outcome-cap.sh
 . "$H/bin/lib/lead-outcome-cap.sh" 2>/dev/null || log "bin/lib/lead-outcome-cap.sh missing; no outcome cap this tick"
+# BH-6897, optional: CI's lint job steps on the reviewed head (bin/ci-local.sh).
+# shellcheck source=bin/lib/ci-local-verify.sh
+. "$H/bin/lib/ci-local-verify.sh" 2>/dev/null || log "bin/lib/ci-local-verify.sh missing; no ci-local run this tick"
 # BH-7123: the review level cap. A [BLOCK] that names no ALWAYS-BLOCK class
 # (catalog/review-always-block.tsv) is a NOTE; a report with no BLOCK left is
 # MERGE-WITH-NOTES. Missing lib = the model's verdict stands, as before.
@@ -730,7 +733,7 @@ lr_file_predates() {
 review_one() {
   local r="$1" id repo pr sha project key model job rc pr_json live state base title body left res n st rw rprev rhow rby rsrc
   local suite_cmd suite_line suite_rc ci_ok pf out verdict report empty rmodel ad akind hdr
-  local RP_STATE="" RP_TAIL="" rp_rc rp_ci harness_repo dmode="" dprev="" dline="" dreport lb tn tslug tdone thread_note total half lfp lstage lnote
+  local RP_STATE="" RP_TAIL="" CL_STATE="" CL_TAIL="" rp_rc rp_ci harness_repo dmode="" dprev="" dline="" dreport lb tn tslug tdone thread_note total half lfp lstage lnote
   local capr="" capo capf ctitle clabels
   local resets mreset since f what fields="" bfp bchg rsn bmode="" bline="" ldp_rc="" dbytes ldp_why nprod ldp_mode ldp_find
   local lpv=0 lpk="" lprc imode="" imodel ire ckl imm rlcap="" rlgl=0 rlgo
@@ -1090,6 +1093,35 @@ review_one() {
     esac
   fi
   LR_RING_RP="$RP_STATE"
+  # >>> ci-local (BH-6897)
+  # CI's lint job steps on the reviewed head: the box's trusted bin/ci-local.sh
+  # over the PR's own workflow, the pack already ran above. Skipped when CI's
+  # lint job is green on this exact sha (the same steps, already run). A
+  # quarter of what is left of the deadline. Red is a BLOCK with no agent call.
+  if [ -z "$harness_repo" ] || [ "${repo,,}" != "${harness_repo,,}" ]; then CL_STATE="not applicable to $repo"
+  elif ! command -v cl_run >/dev/null 2>&1; then CL_STATE="off (bin/lib/ci-local-verify.sh not on this box)"
+  elif ! cl_on; then CL_STATE=off
+  # HOST_SUITE=always runs everything here and reads no check runs, as the pack.
+  elif [ "${HOST_SUITE:-}" != always ] && lr_ci_jobs_green "$repo" "$sha" "$WT.checks" "Syntax + shellcheck + config integrity"; then
+    CL_STATE="skipped (CI lint job green on ${sha:0:12})"
+  else
+    left=$((DEADLINE - SECONDS)); [ "$left" -lt 240 ] && left=240
+    CL_STATE=$(CL_BUDGET_CAP=$((left / 4)) cl_run "$H/bin/ci-local.sh" "$WT" "origin/$base" "$WT.cl" --skip-rules-pack 7>&- 8>&-)
+    case "$CL_STATE" in
+      red)
+        { printf '%s# Lead review %s (%s#%s at %s)\n\n- verdict: BLOCK\n- rules pack: %s\n- ci-local: red\n- reviewer model: ci-local\n- pr body: %s\n\nFindings\n' \
+            "$RVLINE" "$key" "$repo" "$pr" "$sha" "$RP_STATE" "$bfp"
+          cl_findings "$WT.cl" | awk 'NF {print "- [BLOCK] " $0}'
+          printf '\nVERDICT: BLOCK\n'; } > "$report.tmp.$$" && mv -f "$report.tmp.$$" "$report" \
+          || { log "could not write $report"; job_update "$job" status=failed; return; }
+        log "ci-local red for $key; BLOCK with no agent call"
+        finish_done "$id" "$job" "$sha" BLOCK "$report" ci-local "ci-local: red" "$key"; return  # ci-local BLOCK: no agent call
+        ;;
+      clean|skipped|off) ;;
+      *) CL_STATE="could not run"; CL_TAIL=$(tail -n 20 "$WT.cl.stdout" 2>/dev/null) ;;
+    esac
+  fi
+  # <<< ci-local
   # The ticket thread (BH-3546): the first `Closes #<n>` naming this repo, else
   # the first `Refs #<n>` line naming it. Both reads to files (GH_REST_STATUS
   # lives in this shell), both whole, or no thread.
@@ -1382,6 +1414,8 @@ review_one() {
     [ -s "$WT.rereview" ] && { printf '\n## Re-review\n'; cat "$WT.rereview"; }
     printf '\n## Host suite\n%s\n' "$suite_line"
     tail -n 80 "$WT.suite"
+    printf '\n## CI local\n%s\n' "$CL_STATE"
+    [ -n "$CL_TAIL" ] && printf 'output tail:\n%s\n' "$CL_TAIL"
     printf '\n## Live probes\n'
     cat "$WT.probes"
     printf '\n## Conflict hotspots\n'
@@ -1525,8 +1559,8 @@ review_one() {
   # summary when the cap ran (a BLOCK answer). It sits ABOVE `- pr body:`, which
   # readers treat as the last header line before the agent's text
   # (tests/lead-review-inconclusive-block.bh-6381-test.sh L2).
-  { printf '%s# Lead review %s (%s#%s at %s)\n\n- verdict: %s\n- %s\n- rules pack: %s\n- reviewer model: %s\n- checklist: %s\n- review level (BH-7123): mode %s%s\n- pr body: %s\n' \
-      "$RVLINE" "$key" "$repo" "$pr" "$sha" "$verdict" "$suite_line" "$RP_STATE" "$model" "$ckl" "$(rl_mode "$project" 2>/dev/null || echo unknown)" "${rlk:+; $rlk}" "$bfp"
+  { printf '%s# Lead review %s (%s#%s at %s)\n\n- verdict: %s\n- %s\n- rules pack: %s\n- reviewer model: %s\n- checklist: %s\n- review level (BH-7123): mode %s%s\n- ci-local: %s\n- pr body: %s\n' \
+      "$RVLINE" "$key" "$repo" "$pr" "$sha" "$verdict" "$suite_line" "$RP_STATE" "$model" "$ckl" "$(rl_mode "$project" 2>/dev/null || echo unknown)" "${rlk:+; $rlk}" "${CL_STATE:-not run}" "$bfp"
     [ -n "$capr" ] && printf -- '- outcome cap: %s\n' "$capr"
     # BH-7123 wave B: a cap-reached (notes-only) re-review says so under the header.
     [ -n "$rlcap" ] && printf -- '- review level (BH-7123): cap-reached notes-only re-review (%s): the fix-round cap is spent; every finding without an ALWAYS-BLOCK class is a NOTE\n' "$rlcap"

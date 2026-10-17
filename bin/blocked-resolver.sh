@@ -456,6 +456,9 @@ command -v is_hub_box >/dev/null 2>&1 || is_hub_box() { [ "${1:-}" = local ]; }
 # landed it runs every fix round exactly as before.
 # shellcheck source=bin/lib/fixround-closure-lint.sh
 [ -r "$H/bin/lib/fixround-closure-lint.sh" ] && . "$H/bin/lib/fixround-closure-lint.sh"
+# The fix-round CI lint run (BH-6897), guarded the same way.
+# shellcheck source=bin/lib/ci-local-verify.sh
+[ -r "$H/bin/lib/ci-local-verify.sh" ] && . "$H/bin/lib/ci-local-verify.sh"
 # shellcheck source=bin/lib/br-pool-terminals.sh
 [ -r "$H/bin/lib/br-pool-terminals.sh" ] && . "$H/bin/lib/br-pool-terminals.sh"
 
@@ -6188,6 +6191,12 @@ br_fix_round() {
     fi
   fi
   # <<< br closure-lint brief
+  # >>> br ci-local brief (BH-6897)
+  # The previous round's CI lint findings, when that round was refused on them.
+  if [ -s "$ST/$p/$ck.ci-local/findings.txt" ]; then
+    brief="$brief"$'\n\n'"THE CI LINT STEPS WERE RED ON THE LAST ROUND (bin/ci-local.sh, the steps of CI's lint job and the rules pack). The harness re-runs them after you and will not push while they are red. Reproduce one step with \`bin/ci-local.sh --step '<step>'\`. Fix the code each line names; never edit .github/workflows/harness-ci.yml, bin/ci-local.sh or catalog/ci-local-skip.d/:"$'\n'"$(head -40 "$ST/$p/$ck.ci-local/findings.txt")"
+  fi
+  # <<< br ci-local brief
   prompt="FIX ROUND on an open pull request. Branch $br of $slug ($url) is parked with the harness on: $reason. Your job is to make that park false, and nothing else. Apply ONLY what the brief below asks for — no refactors, no adjacent cleanups, no new features: every line you change must trace to it. Where an item in the brief is wrong, say so in the commit message with your reasoning rather than silently ignoring it. Never answer a finding, a conflict or a red test by weakening, skipping or deleting a test. When you are done, run the repo's own typecheck and unit suite yourself and make them pass; the harness re-runs both after you and will refuse to push if they are red or if any conflicted path is left unresolved. Commit with a message naming what you addressed.$xprline
 $live$brief"
   # THE LEDGER ROW, immediately before the spend. Written first so a crash
@@ -6267,8 +6276,18 @@ $live$brief"
       esac
     else echo "CLOSURE_LINT_EXIT: skipped (bin/lib/fixround-closure-lint.sh not on this box)"; fi
     # <<< br closure-lint verify
+    # >>> br ci-local verify (BH-6897)
+    # The worktree's own bin/ci-local.sh: CI's lint job steps and the rules
+    # pack. Red refuses the push like a red unit run; could-not-run, skipped
+    # (no bin/ci-local.sh: every product repo) and off refuse nothing.
+    if command -v cl_verify_lines >/dev/null 2>&1; then
+      mkdir -p "$ST/$p" 2>/dev/null
+      cl_verify_lines "$wt" "origin/${mref:-main}" "$ST/$p/$ck.ci-local"
+    else echo "== ci-local =="; echo "CI_LOCAL_EXIT: skipped (bin/lib/ci-local-verify.sh not on this box)"; fi
+    # <<< br ci-local verify
   } > "$out" 2>&1
   grep -qE '^(TYPECHECK|UNIT|CLOSURE_LINT)_EXIT: [1-9]' "$out" && vrc=1
+  grep -q '^CI_LOCAL_EXIT: 1' "$out" && { vrc=1; say "$p/$rkey [$reason]: the CI lint steps are red on the round's head ($(grep -c '^CI-LOCAL ' "$out") finding line(s), see $out) — not pushed"; }
   grep -q '^CLOSURE_LINT_EXIT: 1' "$out" && say "$p/$rkey [$reason]: the scratch-closure lint is red on the round's head ($(frcl_findings "$frcl_dir" | grep -c .) finding line(s), see $out) — not pushed"
   # A HALF-RESOLVED MERGE IS NEVER PUSHED. An agent that answered the conflict by
   # staging one file and committing another would otherwise send markers to main.

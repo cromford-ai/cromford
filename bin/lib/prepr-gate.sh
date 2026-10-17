@@ -50,6 +50,18 @@
 #   rules path, or when a pack that was red could not re-run after the turn.
 #   The late pass keeps the first pass's value when its own pack could not run.
 #
+# THE CI LINT JOB (BH-6897). After the pack, prepr_scan runs the tree's own
+#   bin/ci-local.sh --skip-rules-pack through cl_run (bin/lib/ci-local-verify.sh):
+#   the steps of CI's lint and determinism jobs, read from the workflow. Each
+#   line of its findings.txt is an in-diff finding `CI-LOCAL <job> / <step>: …`
+#   (ci-local already set aside the steps that are red on the base too) and
+#   shares the one fix turn. Still present after the turn, or the turn edited
+#   ci-local's own rules, or a red ci-local could not re-run: PREPR_LINT_STATE
+#   is red, so rules_pack_block stops the build like a fast-lint line. A
+#   could-not-run, skipped (no bin/ci-local.sh) or off (CI_LOCAL_GATE=0) run
+#   changes nothing. PREPR_SCAN_CILOCAL holds the word; `cilocal=` in
+#   prepr.txt and a separate `PREPR <label>ci-local=` log line record it.
+#
 # rules_pack_block <where>
 #   Called at `# >>> rules pack block` in bin/lib/rb/execute.sh (after the push,
 #   before the reviewer) and bin/lib/rb/pr.sh (after the late pass, before PR
@@ -74,6 +86,13 @@
 #   in $BUILD/ticket-meta.json's body or $BUILD/plan.md, any GitHub closing
 #   keyword immediately before `#N` becomes `Part of #N`. No parent, or no
 #   ticket-meta.json: the text passes through byte for byte. No model.
+
+_PREPR_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=bin/lib/ci-local-verify.sh
+[ -r "$_PREPR_LIB_DIR/ci-local-verify.sh" ] && . "$_PREPR_LIB_DIR/ci-local-verify.sh"
+
+# The paths that define the CI-LOCAL findings: a fix turn must not edit them.
+_PREPR_CL_RULES='^(bin/ci-local\.sh|bin/ci-local-plan\.py|bin/lib/ci-local-verify\.sh|catalog/ci-local-skip\.d/.*|\.github/workflows/harness-ci\.yml)$'
 
 # _prepr_log <build> <line>
 _prepr_log() {
@@ -132,11 +151,13 @@ prepr_scan() {
   local wt="$1" base="$2" out="$3" wta crc drc conf changed line loc path n_in=0 n_pre=0 n_gate=0 rpo prc budget
   # Until the pack step judges, it has not: an early return 2 is could-not-run.
   PREPR_SCAN_PACK=could-not-run
+  PREPR_SCAN_CILOCAL=could-not-run
   mkdir -p "$out" || return 2
   : > "$out/prepr-findings.txt"; : > "$out/prepr-preexisting.txt"
   if [ ! -x "$wt/bin/checks-run.sh" ] || [ ! -x "$wt/bin/test-determinism-lint.sh" ]; then
     echo "prepr: skipped (repo ships no pre-PR gates)" > "$out/prepr-scan.txt"
     PREPR_SCAN_PACK=skipped
+    PREPR_SCAN_CILOCAL=skipped
     return 3
   fi
   wta=$(cd "$wt" && pwd) || return 2
@@ -184,6 +205,26 @@ prepr_scan() {
       done < "$rpo/preexisting.txt"
     fi
   fi
+  # >>> ci-local (BH-6897)
+  # CI's lint job, from the tree's own workflow. The pack already ran above.
+  : > "$out/ci-local-findings.txt"
+  if command -v cl_run >/dev/null 2>&1; then
+    PREPR_SCAN_CILOCAL=$(cl_run "$wta/bin/ci-local.sh" "$wta" "$base" "$out/ci-local" --skip-rules-pack)
+  else
+    PREPR_SCAN_CILOCAL=off
+  fi
+  echo "ci-local: ${PREPR_SCAN_CILOCAL:-could-not-run}" >> "$out/prepr-scan.txt"
+  case "$PREPR_SCAN_CILOCAL" in
+    red) grep '^CI-LOCAL ' "$out/ci-local/findings.txt" > "$out/ci-local-findings.txt" ;;
+    could-not-run) echo "ci-local: could not run: $(tail -n 1 "$out/ci-local.stdout" 2>/dev/null)" >> "$out/prepr-scan.txt" ;;
+  esac
+  if [ -s "$out/ci-local/preexisting.txt" ]; then
+    while IFS= read -r line; do
+      [ -n "$line" ] || continue
+      printf '%s\n' "$line" >> "$out/prepr-preexisting.txt"; n_pre=$((n_pre + 1))
+    done < "$out/ci-local/preexisting.txt"
+  fi
+  # <<< ci-local
   # CHECK-HIT <slug> <path>:<line> <reason>, and the determinism lint's FAIL
   # section only (<path>:<n>: <rule>: ...), never its warnings.
   {
@@ -191,27 +232,30 @@ prepr_scan() {
     awk '/^── determinism findings \(fail\)/{f=1;next} /^──/{f=0} f && /^[^[:space:]][^:]*:[0-9]+: [^:]+:/' "$out/determinism.txt"
     cat "$out/orphans-findings.txt" 2>/dev/null
     [ "$PREPR_SCAN_PACK" = red ] && sed 's/^/RULES-PACK /' "$out/rules-pack-findings.txt"
+    cat "$out/ci-local-findings.txt"
   } > "$out/prepr-all.txt"
   while IFS= read -r line; do
     case "$line" in
       "CHECK-HIT "*) loc=$(awk '{print $3}' <<<"$line") ;;
-      "RULES-PACK "*) loc="" ;;
+      "RULES-PACK "*|"CI-LOCAL "*) loc="" ;;
       *) loc="$line" ;;
     esac
-    [ "${line#RULES-PACK }" != "$line" ] || n_gate=$((n_gate + 1))
+    case "$line" in "RULES-PACK "*|"CI-LOCAL "*) ;; *) n_gate=$((n_gate + 1)) ;; esac
     path=$(_prepr_path "$wta" "${loc%%:*}")
     # An ORPHAN is new against the base by construction, so it is this build's
     # even when the file it names is not in the diff (a suite edit can orphan
     # an untouched script). A RULES-PACK line is too: the pack judged the diff.
-    if [ "${line#ORPHAN }" != "$line" ] || [ "${line#RULES-PACK }" != "$line" ] || grep -qxF -- "$path" <<<"$changed"; then
+    # So is a CI-LOCAL line: ci-local set aside every step red on the base.
+    if [ "${line#ORPHAN }" != "$line" ] || [ "${line#RULES-PACK }" != "$line" ] \
+       || [ "${line#CI-LOCAL }" != "$line" ] || grep -qxF -- "$path" <<<"$changed"; then
       printf '%s\n' "$line" >> "$out/prepr-findings.txt"; n_in=$((n_in + 1))
     else
       printf '%s\n' "$line" >> "$out/prepr-preexisting.txt"; n_pre=$((n_pre + 1))
     fi
   done < "$out/prepr-all.txt"
   # A gate that said "found something" but left nothing this parser can read
-  # is a parse that failed, not a clean tree. Pack lines do not count here: a
-  # pack finding must not hide a determinism lint nobody could parse.
+  # is a parse that failed, not a clean tree. Pack and ci-local lines do not
+  # count here: they must not hide a determinism lint nobody could parse.
   if { [ "$crc" = 1 ] || [ "$drc" = 1 ]; } && [ "$n_gate" -eq 0 ]; then
     echo "prepr: could not run (a gate reported findings this scan could not parse)" >> "$out/prepr-scan.txt"
     return 2
@@ -319,11 +363,12 @@ prepr_gate_late() {
 # `PREPR <label>state=`, and records the judged head in <build>/prepr-head.
 _prepr_run() {
   local wt="$1" base="$2" build="$3" out="$4" turns="$5" label="$6" spent="$7" rc pre dirty rules n n_pre tools reasons="" calls=0 ccrc
-  local pack_first_red=0 pack_rules="" pack_why="" srcs
+  local pack_first_red=0 pack_rules="" pack_why="" srcs cl_first_red=0 cl_rules="" cl_why=""
   PREPR_STATE=""; PREPR_NOTE=""; PREPR_SECTION=""; PREPR_PACK_STATE=""; PREPR_PACK_OUT="$out"
   prepr_scan "$wt" "$base" "$out"; rc=$?
   cp "$out/prepr-findings.txt" "$out/prepr-findings.first.txt" 2>/dev/null
   grep -q '^RULES-PACK ' "$out/prepr-findings.txt" 2>/dev/null && pack_first_red=1
+  grep -q '^CI-LOCAL ' "$out/prepr-findings.txt" 2>/dev/null && cl_first_red=1
   case "$rc" in
     0) PREPR_STATE=clean ;;
     2) PREPR_STATE=could-not-run ;;
@@ -347,6 +392,11 @@ _prepr_run() {
       pack_bullet="
 - A \`RULES-PACK <id>: …\` line is a repo ratchet from \`bin/rules-pack.sh\` (run it with \`--only <id>\` to reproduce). Fix the code it names. Never edit a ratchet's baseline or the pack itself."
     fi
+    if [ "$cl_first_red" = 1 ]; then
+      srcs="${srcs% and *}, ${srcs##* and } and \`bin/ci-local.sh\`"
+      pack_bullet="${pack_bullet}
+- A \`CI-LOCAL <job> / <step>: …\` line is a step of the CI lint job, run by \`bin/ci-local.sh --step '<step>'\` (its log is step-<n>.log under the build record's ci-local/). Fix the code it names. Never edit the workflow, \`bin/ci-local.sh\`, \`bin/ci-local-plan.py\` or \`catalog/ci-local-skip.d/\`."
+    fi
     brief="The pre-PR gate found the problems below in files this build changed. They are the output of ${srcs}, the same commands cromford CI runs, and CI will fail this PR on them.
 
 Fix each one in the code on branch ${BRANCH:-the current branch}, then commit. Do not push.
@@ -363,6 +413,9 @@ $(cat "$out/prepr-findings.txt")"
     [ "$ccrc" = 0 ] || _prepr_log "$build" "PREPR ${label}fix turn exited $ccrc — the re-scan decides"
     dirty=$(git -C "$wt" status --porcelain --untracked-files=no 2>/dev/null)
     rules=$(git -C "$wt" diff --name-only "$pre"..HEAD 2>/dev/null | grep -E '^(checks/|guardrails/|catalog/determinism-lint\.conf$|bin/test-impact\.sh$)|^(bin/rules-pack\.sh|bin/lib/rules-pack-[a-z-]+\.sh|catalog/rules-pack\.tsv|catalog/date-bomb-lint\.conf|bin/test-date-bomb-lint\.sh|tests/alert-writers-ratchet-baseline/|tests/switch-ratchet\.d/|tests/fixtures/root-fallback-baseline/)')
+    cl_rules=$(grep -E "$_PREPR_CL_RULES" <<<"$(git -C "$wt" diff --name-only "$pre"..HEAD 2>/dev/null)")
+    [ -n "$cl_rules" ] && rules="${rules:+$rules
+}$cl_rules"
     pack_rules=$(grep -E '^(bin/rules-pack\.sh|bin/lib/rules-pack-[a-z-]+\.sh|catalog/rules-pack\.tsv|catalog/date-bomb-lint\.conf|bin/test-date-bomb-lint\.sh|tests/alert-writers-ratchet-baseline/|tests/switch-ratchet\.d/|tests/fixtures/root-fallback-baseline/)' <<<"$rules")
     prepr_scan "$wt" "$base" "$out"; rc=$?
     [ -n "$dirty" ] && reasons="${reasons}- The fix turn left uncommitted changes, which are not in this PR.
@@ -379,9 +432,10 @@ $(cat "$out/prepr-findings.txt")"
     PREPR_NOTE=" | prepr=red"
     tools=""
     grep -q '^CHECK-HIT ' "$out/prepr-findings.txt" 2>/dev/null && tools="\`bin/checks-run.sh --tree .\`"
-    grep -Ev '^(CHECK-HIT|ORPHAN|RULES-PACK) ' "$out/prepr-findings.txt" 2>/dev/null | grep -q . && tools="${tools:+$tools and }\`bin/test-determinism-lint.sh\`"
+    grep -Ev '^(CHECK-HIT|ORPHAN|RULES-PACK|CI-LOCAL) ' "$out/prepr-findings.txt" 2>/dev/null | grep -q . && tools="${tools:+$tools and }\`bin/test-determinism-lint.sh\`"
     grep -q '^ORPHAN ' "$out/prepr-findings.txt" 2>/dev/null && tools="${tools:+$tools and }\`bin/test-impact.sh orphans --check\`"
     grep -q '^RULES-PACK ' "$out/prepr-findings.txt" 2>/dev/null && tools="${tools:+$tools and }\`bin/rules-pack.sh\`"
+    grep -q '^CI-LOCAL ' "$out/prepr-findings.txt" 2>/dev/null && tools="${tools:+$tools and }\`bin/ci-local.sh\`"
     PREPR_SECTION=$'\n## Pre-PR gate: unresolved\n\n'
     if [ "$n" -gt 0 ]; then
       if [ "$calls" = 1 ]; then
@@ -423,17 +477,26 @@ $(cat "$out/prepr-findings.txt")"
   # Only after a fix turn: PREPR_STATE=off (the fix-turn knob at 0, no turn) is
   # detection only, as the knob documents (lead review lr-5811).
   PREPR_LINT_OUT="$out"
-  case "$PREPR_STATE" in
-    red)
-      if grep -Ev '^(CHECK-HIT|RULES-PACK) ' "$out/prepr-findings.txt" 2>/dev/null | grep -q .; then
-        PREPR_LINT_STATE=red
-        grep -Ev '^(CHECK-HIT|RULES-PACK) ' "$out/prepr-findings.txt" > "$out/fast-lints-remaining.txt"
-        _prepr_log "$build" "PREPR ${label}fast lints red: $(grep -c . "$out/fast-lints-remaining.txt") determinism or orphan finding(s) in this diff"
-      fi ;;
-  esac
-  printf 'state=%s\nfindings=%s\npreexisting=%s\nturns=%s\nfix_calls=%s\npack=%s\n' \
-    "$PREPR_STATE" "$n" "$n_pre" "$turns" "$calls" "$PREPR_PACK_STATE" > "$out/prepr.txt"
+  # A CI-LOCAL line counts here too (BH-6897), and so does a ci-local that was
+  # red and went green only through an edit to its own rules, or could not
+  # re-run after the turn: an unverified fix is not a fix.
+  if [ "$cl_first_red" = 1 ] && ! grep -q '^CI-LOCAL ' "$out/prepr-findings.txt" 2>/dev/null; then
+    if [ -n "$cl_rules" ]; then cl_why="the fix turn edited ci-local's own rules: $(tr '\n' ' ' <<<"$cl_rules")"
+    elif [ "${PREPR_SCAN_CILOCAL:-}" != clean ]; then cl_why="ci-local could not re-run after the fix turn (${PREPR_SCAN_CILOCAL:-none})"; fi
+  fi
+  # cl_why does not depend on PREPR_STATE: a ci-local that could not re-run
+  # leaves prepr_scan at rc 0 (PREPR_STATE=fixed), and the head is still
+  # unchecked. Same as the pack's pack_why above (lead review lr-7005).
+  if { [ "$PREPR_STATE" = red ] && grep -Ev '^(CHECK-HIT|RULES-PACK) ' "$out/prepr-findings.txt" 2>/dev/null | grep -q .; } || [ -n "$cl_why" ]; then
+    PREPR_LINT_STATE=red
+    grep -Ev '^(CHECK-HIT|RULES-PACK) ' "$out/prepr-findings.txt" > "$out/fast-lints-remaining.txt" 2>/dev/null
+    [ -n "$cl_why" ] && { grep '^CI-LOCAL ' "$out/prepr-findings.first.txt"; echo "(still red: $cl_why)"; } >> "$out/fast-lints-remaining.txt"
+    _prepr_log "$build" "PREPR ${label}fast lints red: $(grep -c . "$out/fast-lints-remaining.txt") determinism, orphan or ci-local finding(s) in this diff"
+  fi
+  printf 'state=%s\nfindings=%s\npreexisting=%s\nturns=%s\nfix_calls=%s\npack=%s\ncilocal=%s\n' \
+    "$PREPR_STATE" "$n" "$n_pre" "$turns" "$calls" "$PREPR_PACK_STATE" "${PREPR_SCAN_CILOCAL:-could-not-run}" > "$out/prepr.txt"
   _prepr_log "$build" "PREPR ${label}state=$PREPR_STATE findings=$n preexisting=$n_pre turns=$turns fix_calls=$calls pack=$PREPR_PACK_STATE"
+  _prepr_log "$build" "PREPR ${label}ci-local=${PREPR_SCAN_CILOCAL:-could-not-run} red=$(grep -c '^CI-LOCAL ' "$out/prepr-findings.txt" 2>/dev/null)"
   # A scan that could not run judged nothing, so it records no head: the late
   # pass must not read it as already covered.
   [ "$PREPR_STATE" = could-not-run ] || git -C "$wt" rev-parse HEAD > "$build/prepr-head" 2>/dev/null

@@ -1,0 +1,32 @@
+{
+  "libs": [
+    {
+      "id": "ci-local",
+      "file": "bin/lib/ci-local-verify.sh",
+      "note": "BH-6897: bin/ci-local.sh runs the CI lint job's steps (\"Syntax + shellcheck + config integrity\", \"Test determinism lint\") and the rules pack on a tree. The build's pre-PR gate (bin/lib/prepr-gate.sh), bin/blocked-resolver.sh fix rounds and bin/lead-review.sh call it through this lib. tests/ci-local-gates.bh-6897-test.sh drives it.",
+      "knobs": [
+        {
+          "env": "CI_LOCAL_GATE",
+          "type": "int",
+          "default": 1,
+          "min": 0,
+          "max": 1,
+          "unit": "flag",
+          "zero_means": "off",
+          "required": false,
+          "note": "1 = the pre-PR gate, the resolver fix round and the lead review run bin/ci-local.sh, and a red step is a fix (pre-PR), a refused push (resolver) or a BLOCK (lead). 0 = off: no caller runs it and each records `off`. Any other answer is this default. Read by bin/lib/ci-local-verify.sh with no literal."
+        },
+        {
+          "env": "CI_LOCAL_BUDGET_S",
+          "type": "int",
+          "default": 900,
+          "min": 60,
+          "max": 3600,
+          "unit": "seconds",
+          "required": false,
+          "note": "Wall-clock seconds for one whole bin/ci-local.sh run. A step that runs past it is COULD-NOT-RUN, never red. 900 covers a cold shellcheck of the whole tree on a shared vCPU (BH-1200)."
+        }
+      ]
+    }
+  ]
+}
