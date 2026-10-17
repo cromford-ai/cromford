@@ -62,6 +62,23 @@ command -v lane_env_apply    >/dev/null 2>&1 && lane_env_apply    run-product "$
 command -v prow_put >/dev/null 2>&1 || { prow_put() { return 1; }; prow_restore() { return 1; }; }
 # <<< proposal rows
 
+# >>> PM agent seams (BH-7244): product_run_cap_check <stage> (owner BH-7244.5)
+# and pm_ideas_land <project> <cycle_dir> (owner BH-7244.3). A missing file is
+# fail-open: the cap never fires and nothing is landed, which is today.
+# shellcheck source=bin/lib/product-run-cap.sh
+[ -r "$HARNESS/bin/lib/product-run-cap.sh" ] && . "$HARNESS/bin/lib/product-run-cap.sh"
+command -v product_run_cap_check >/dev/null 2>&1 || product_run_cap_check() { return 0; }
+# shellcheck source=bin/lib/pm-ideas-land.sh
+[ -r "$HARNESS/bin/lib/pm-ideas-land.sh" ] && . "$HARNESS/bin/lib/pm-ideas-land.sh"
+command -v pm_ideas_land >/dev/null 2>&1 || pm_ideas_land() { return 0; }
+DATA_EVIDENCE=0
+cap_stop() { # cap_stop <stage> — a non-zero cap check ends the cycle with rc 0
+  product_run_cap_check "$1" && return 0
+  echo "$(STAMP) [$PROJECT] product rc=0 :: run cap reached after $1, cycle ended data_evidence=$DATA_EVIDENCE" >> "$LOG"
+  exit 0
+}
+# <<< PM agent seams
+
 # >>> gh default auth
 # THE PROJECT'S OWN GITHUB IDENTITY (BH-470, #424). This lane makes no `gh` call
 # itself — the Claude sessions it launches for each stage do, and they inherit
@@ -163,6 +180,21 @@ $(cat "$MAP")"
     beat_company_map
   fi
 fi
+cap_stop map
+
+# ---------- PM data signals (BH-7244): read-only evidence for SIGNALS ----------
+# CYCLE_DIR is per day: on a failure the else branch removes an earlier
+# same-day file, so a stale file is never cited.
+DATA_SIGNALS_FILE="$CYCLE_DIR/data-signals.json"
+DATA_RT=""
+if [ -x "$HARNESS/bin/pm-signals.sh" ] && "$HARNESS/bin/pm-signals.sh" "$PROJECT" "$DATA_SIGNALS_FILE" 2>"$CYCLE_DIR/pm-signals.err" \
+   && jq -e '.evidence | type == "array"' "$DATA_SIGNALS_FILE" >/dev/null 2>&1; then
+  DATA_RT=$'\n'"DATA_SIGNALS=$DATA_SIGNALS_FILE   (read-only product data evidence; cite evidence_id)"
+  DATA_EVIDENCE=$(jq '[.evidence[] | select(.status == "ok")] | length' "$DATA_SIGNALS_FILE")
+else
+  echo "$(STAMP) [$PROJECT] product: pm-signals failed or missing, SIGNALS runs without data evidence" >> "$LOG"
+  rm -f "$DATA_SIGNALS_FILE"
+fi
 
 # ---------- Phase 1: SIGNALS ----------
 SIGNALS="$CYCLE_DIR/signals.json"
@@ -171,11 +203,12 @@ V1_FALLBACK=false
   "$(compose signals.md "RUNTIME CONTEXT
 SIGNALS_OUT=$SIGNALS   (write signals HERE)
 MAP=$MAP
-REPO=$REPO")"
+REPO=$REPO$DATA_RT")"
 if ! jq -e '.signals | length > 0' "$SIGNALS" >/dev/null 2>&1; then
   echo "$(STAMP) [$PROJECT] product: SIGNALS failed — falling back to single-session ideation" >> "$ALERTS"
   V1_FALLBACK=true
 fi
+cap_stop signals
 
 # ---------- Phase 2: IDEATE (fan-out per department) ----------
 DEPTS=""
@@ -213,6 +246,7 @@ for DEPT in $DEPTS; do
   ideate_dept "$DEPT" &
 done
 wait
+cap_stop ideate
 
 DEPT_FILES=$(ls "$CYCLE_DIR"/ideas-*.json 2>/dev/null || true)
 if [ -z "$DEPT_FILES" ]; then
@@ -239,6 +273,8 @@ LEDGER=$LEDGER")"
     jq -s '{ideas: map(.ideas) | add}' $DEPT_FILES > "$IDEAS"
   fi
 fi
+pm_ideas_land "$PROJECT" "$CYCLE_DIR" || true
+cap_stop synth
 
 # ---------- SELECT (deterministic): DERISK -> UNCLOG -> SCALE, then score ----------
 SELECTED="$CYCLE_DIR/selected.json"
@@ -278,7 +314,7 @@ jq -c '.rest[]' "$SELECTED" | while IFS= read -r CAND; do
 done
 
 if [ "$N_SEL" -eq 0 ]; then
-  echo "$(STAMP) [$PROJECT] product rc=0 :: ideated $(jq '.ideas|length' "$IDEAS"), none above threshold" >> "$LOG"
+  echo "$(STAMP) [$PROJECT] product rc=0 :: ideated $(jq '.ideas|length' "$IDEAS"), none above threshold data_evidence=$DATA_EVIDENCE" >> "$LOG"
   exit 0
 fi
 
@@ -317,7 +353,7 @@ done
 # ---------- run beat ----------
 RUN_START_ISO="$(date -u -d @$RUN_START_EPOCH '+%Y-%m-%dT%H:%M:%SZ')"
 COST_USD=$(awk -F, -v p="$PROJECT" -v t0="$RUN_START_ISO" 'BEGIN{s=0} $1>=t0 && $3==p && ($4=="map"||$4=="signals"||$4=="ideate"||$4=="synth"||$4=="prd"||$4=="mockup") {s+=$13} END{printf "%.2f", s}' "$HARNESS/logs/cost.csv" 2>/dev/null)
-SUMMARY="product v2: depts=$(wc -w <<<"$DEPTS") signals=$(jq '.signals|length' "$SIGNALS" 2>/dev/null || echo 0) ideated=$(jq '.ideas|length' "$IDEAS") selected=$N_SEL gated=$GATED cost~\$${COST_USD:-?}"
+SUMMARY="product v2: depts=$(wc -w <<<"$DEPTS") signals=$(jq '.signals|length' "$SIGNALS" 2>/dev/null || echo 0) data_evidence=$DATA_EVIDENCE ideated=$(jq '.ideas|length' "$IDEAS") selected=$N_SEL gated=$GATED cost~\$${COST_USD:-?}"
 echo "$(STAMP) [$PROJECT] product rc=0 :: $SUMMARY" >> "$LOG"
 "$HARNESS/bin/beat.sh" "$(jq -nc --arg rkey "run:$PROJECT:product:$RUN_START_EPOCH" --arg p "$PROJECT" \
   --arg s "$SUMMARY" --arg st "$RUN_START_ISO" --arg fin "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" \

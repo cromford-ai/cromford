@@ -149,6 +149,9 @@ const SEEDED_AS_COPY = {
   // TEST-CHANGE (BH-5807): lesson.propose, the lesson-propose drafting route,
   // copies rule.miner's claude rung 0 the same way lookback.cluster does.
   'lesson.propose': 'rule.miner',
+  // TEST-CHANGE (BH-7258): product.pm, the PM agent's route (BH-7244), copies
+  // product.prd's rung 0 the same way.
+  'product.pm': 'product.prd',
   // TEST-CHANGE (BH-6972): component-watch, the per-component alert watcher's
   // route, copies review.trivial's rung 0 (Haiku class) the same way.
   'component-watch': 'review.trivial',
