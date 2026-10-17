@@ -94,8 +94,8 @@ lead_carry() {
   if [ -z "$project" ] || [ ! -d "$repo/.git" ]; then
     _lc_held "$key" "$head" - "$ph" "$pw" "$pid" - - - "no clone for $slug at $repo"; return 1
   fi
-  if ! patch_same_fetch "$repo" "$ph" "$head"; then
-    _lc_held "$key" "$head" - "$ph" "$pw" "$pid" - - - "fetch of ${ph:0:12}/${head:0:12} failed"; return 1
+  if ! patch_same_fetch "$repo" "$ph" "$head" "$num"; then
+    _lc_held "$key" "$head" - "$ph" "$pw" "$pid" - - - "fetch of ${ph:0:12}/${head:0:12} failed ($PS_FETCH_ERR)"; return 1
   fi
   pold=$(_ps_patch_id "$repo" origin/main "$ph") || pold="-"
   pnew=$(_ps_patch_id "$repo" origin/main "$head") || pnew="-"

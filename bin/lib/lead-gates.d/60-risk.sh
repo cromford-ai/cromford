@@ -225,7 +225,10 @@ lg_gate_risk() {
   rt_rules_low "$tier" "$why" && { rrev="risk-tier:rules-text:$box"; rtxt=1; }
   # BH-5630, BH-6696: no reviewer approved this head; only a lead-authored
   # rules-text low (its CI and the render check are green) is signed anyway.
-  if [ "${LGB_KEY:-}" = "$slug#$n@$head" ] && { [ "${LGB_APPROVED:-1}" = 0 ] || [ "${LGB_STEPDONE:-0}" = 1 ]; } \
+  # BH-7043: a head gate 10 carried a builder APPROVE to counts as one no
+  # reviewer approved, as in the enqueue.
+  if [ "${LGB_KEY:-}" = "$slug#$n@$head" ] \
+     && { [ "${LGB_APPROVED:-1}" = 0 ] || [ "${LGB_STEPDONE:-0}" = 1 ] || [ "${LGB_CARRIED:-0}" = 1 ]; } \
      && { [ "$rtxt" = 0 ] || [ "$_LGR_RLAUTH" != 1 ]; }; then
     _lgt_log "$slug#$n @$h12: risk tier low, but no reviewer approved this head (${LGB_REQFOR:-unapproved}); no risk-tier sign-off, the lead review starts"
     return 0

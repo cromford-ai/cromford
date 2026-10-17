@@ -37,6 +37,24 @@
 #            tier never signs off such a head, except a lead-authored low
 #            rules-text head (BH-5325, below). The scope note says
 #            `auto: CI green on <sha12>`.
+#   carry    (BH-7043, bin/lib/builder-carry.sh) a builder APPROVE on an
+#            earlier head A, with no reapproved@<head>, is CARRIED to <head>
+#            when bc_carry proves <head> carries A's patch (patch_same:
+#            identical, main-merge or patch-id; the answer is cached in
+#            builder-carry.tsv, 7 days). Then the head is approved and goes on
+#            to the verdict read and the replay below. The carry stands only
+#            when the history read below succeeds and the newest lead word on
+#            another head is not a BLOCK; else the head is unapproved again, as
+#            before. A carry that stands writes one modes.tsv `builder-replay`
+#            row per head (`from=<A12> how=<how>`), counts builder_replayed=,
+#            and logs `builder APPROVE carried from <A12> (how:<how>)`. A head
+#            it still requests carries the scope note `auto: builder APPROVE
+#            carried from <A12> (how:<how>) on <sha12>`, and the risk tier never
+#            signs it off. bc_carry posts no verdict row and writes no
+#            head-bound artifact. A fetch that fails (bc_carry rc 2, or the
+#            replay's own fetch) counts fetch_failed= once per PR, and the log
+#            line names the redacted git error (PS_FETCH_ERR). Any other rc 2
+#            or a refusal leaves the head as before.
 #   stepdone (BH-6696, bin/lib/lead-step-done.sh) a builder REQUEST_CHANGES or
 #            BLOCK bound to the head is answered when the PR's author is
 #            confirmed not a lead (rt_lead_skip), and lsd_check finds, on the
@@ -386,6 +404,9 @@ LCW=0; . "$H/bin/lib/lead-chain-wake.sh" 2>/dev/null && LCW=1
 # The same-patch test for the lead replay (BH-3930). Missing, nothing is
 # replayed and every rebound head is requested as before.
 . "$H/bin/lib/patch-same.sh" 2>/dev/null || true
+# A builder APPROVE on an earlier head carried to a head with the same patch
+# (BH-7043, header `carry`). Missing, that head is unapproved as before.
+. "$H/bin/lib/builder-carry.sh" 2>/dev/null || true
 # Replay without the builder, and delta mode (BH-5294). Missing, BH-3930 alone.
 LD=0; . "$H/bin/lib/lead-delta.sh" 2>/dev/null && command -v ld_classify >/dev/null 2>&1 && LD=1
 # The re-review token (BH-6391, header `prev`). Missing, no request carries it.
@@ -535,7 +556,9 @@ RISK="$STATE/risk.tsv"
 # reclassifies; the 8th column is on protected and over-max rows); modes.tsv
 # is one row per decision that saved or spent a lead review, <epoch>\t<UTC day>
 # \t<replay|delta|full>\t<slug>\t<n>\t<head>\t<detail>, kept 30 days: the
-# per-day count the tick summary's today_* fields read.
+# per-day count the tick summary's today_* fields read. BH-7043 adds the mode
+# builder-replay (a carried builder APPROVE, detail from=<A12> how=<how>), one
+# row per head, which the today_* fields do not count.
 DELTA="$STATE/delta.tsv"
 MODES="$STATE/modes.tsv"
 # The `failed` rung's own budget (header): the resets this lane made, per head.
@@ -551,6 +574,8 @@ if [ "$RUNMODE" = tick ]; then
   for f in "$MODES" "$FRETRY"; do
     awk -F'\t' -v c=$((NOW - 2592000)) '$1 ~ /^[0-9]+$/ && $1 >= c' "$f" > "$f.tmp" 2>/dev/null && mv -f "$f.tmp" "$f"
   done
+  # builder-carry.tsv (BH-7043): the same 7 days as delta.tsv.
+  command -v bc_prune >/dev/null 2>&1 && bc_prune "$STATE"
 fi
 # The reset budget per head. Not a whole number = the registry default, said once a tick.
 RETRYMAX="${LEAD_REVIEW_FAILED_RETRY_MAX:-2}"
@@ -577,14 +602,21 @@ trap 'rm -rf "$WORK"' EXIT
 command -v prs_gc >/dev/null 2>&1 && prs_gc
 export PRS_COUNT_FILE="$WORK/prs-count"
 
-SELFCHK=0; RBASE=0; TRACED=0; TBOUND=0; TDISP=0; NOCI=0; REPOS=0; PRS=0; REQUESTED=0; REPLAYED=0; RDELTA=0; RFULL=0; EXISTING=0; DEFERRED=0; NOAPP=0; VERD=0; SELF=0; SILENCE=0; TRIPPED=0; UNREAD=0; ASKED=0; RUNG=0
+SELFCHK=0; RBASE=0; TRACED=0; TBOUND=0; TDISP=0; NOCI=0; REPOS=0; PRS=0; REQUESTED=0; REPLAYED=0; BREPLAYED=0; PSFETCHF=0; PSFF_KEY=""; RDELTA=0; RFULL=0; EXISTING=0; DEFERRED=0; NOAPP=0; VERD=0; SELF=0; SILENCE=0; TRIPPED=0; UNREAD=0; ASKED=0; RUNG=0
 RLOW=0; RSIGNED=0; RSHADOW=0; RMED=0; RHIGH=0; RLEADN=0; RWAIT=0; GRACE=""
 JASKED=0; JEV=0; RINTENT=0
 FAILRESET=0; FAILX=0; RECLAIMED=0; SKDRAFT=0; REQ_STATUS=""; REQ_ID=""
 
-# mode_row <replay|delta|full> <slug> <n> <head> <detail> — one modes.tsv row (BH-5294).
+# mode_row <replay|delta|full|builder-replay> <slug> <n> <head> <detail> — one modes.tsv row
+# (BH-5294; builder-replay is BH-7043, and the today_* counts do not read it).
 mode_row() {
   printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$(date +%s)" "$(date -u +%Y%m%d)" "$1" "$2" "$3" "$4" "$5" >> "$MODES" 2>/dev/null || true
+}
+
+# fetch_failed_once — count fetch_failed= (BH-7043) at most once per PR a tick.
+fetch_failed_once() {
+  [ "$PSFF_KEY" = "$SLUG#$N" ] && return 0
+  PSFF_KEY="$SLUG#$N"; PSFETCHF=$((PSFETCHF + 1))
 }
 
 # skip_line <class> <message> — the one log line of a PR this tick does not
@@ -1182,7 +1214,7 @@ for SLUG in $AUTO_REPOS; do
     # answered its NEEDS-HUMAN step (BH-6696). One on an EARLIER head does not
     # stand: it is unapproved, like an APPROVE on an earlier head (BH-6696,
     # second case). An unreadable ledger (rc 1) is skipped too.
-    V=""; RSHA=""; REQFOR=""; JRC=0; TNOTE=""; SDONE=0; SDNOTE=""; RVTOK=""
+    V=""; RSHA=""; REQFOR=""; JRC=0; TNOTE=""; SDONE=0; SDNOTE=""; RVTOK=""; BCARRY=0; BCHOW=""
     JV=$(job_verdict "$URL" 2>/dev/null) || JRC=$?
     [ "$JRC" = 0 ] && IFS=$'\t' read -r V _ _ _ _ RSHA <<<"$JV"
     RSHA=$(printf '%s' "$RSHA" | tr 'A-F' 'a-f')
@@ -1217,7 +1249,17 @@ for SLUG in $AUTO_REPOS; do
       fi
     elif [ "$RSHA" != "$HEAD" ]; then
       HB=$(job_verdict_headbound "$URL" 2>/dev/null | tr 'A-F' 'a-f')
+      BCRC=3
+      if [ "$HB" != "reapproved@$HEAD" ] && [[ "$RSHA" =~ ^[0-9a-f]{40}$ ]] && command -v bc_carry >/dev/null 2>&1; then
+        # BH-7043 (header, `carry`): the APPROVE on an earlier head with the same patch.
+        BCRC=0; bc_carry "${REPOS_ROOT:-/root/repos}/$PROJECT" "$SLUG" "$N" "$RSHA" "$HEAD" "$STATE" || BCRC=$?
+        if [ "$BCRC" = 2 ]; then
+          case "$BC_WHY" in "fetch of "*) fetch_failed_once ;; esac
+          log "$SLUG#$N @$H12: builder APPROVE on ${RSHA:0:12} not carried: $BC_WHY"
+        fi
+      fi
       if [ "$HB" = "reapproved@$HEAD" ]; then REBOUND=1
+      elif [ "$BCRC" = 0 ]; then BCARRY=1; BCHOW=$BC_HOW
       elif [ "$LD" = 1 ] && [[ "$RSHA" =~ ^[0-9a-f]{40}$ ]]; then APPROVED=0
       elif [ "$REQB" = 1 ]; then NOAPP=$((NOAPP + 1))
         skip_line no-approve "$SLUG#$N @$H12: the builder's APPROVE is on ${RSHA:0:12}, not this head, and LEAD_REVIEW_REQUIRE_BUILDER_APPROVE=1"; continue
@@ -1258,7 +1300,7 @@ for SLUG in $AUTO_REPOS; do
     DMODE=""; DNOTE=""; DPRIOR=""; DUPNOTE=""; LPVH=""; LPVW=""; LPVNOTE=""
     # BH-6696: a head the builder refused (SDONE=1) is never replayed or
     # delta-reviewed: it gets a full lead review.
-    if [ "$SDONE" = 0 ] && { [ "$REBOUND" = 1 ] || [ "$APPROVED" = 0 ] || [ "$LD" = 1 ]; }; then
+    if [ "$SDONE" = 0 ] && { [ "$REBOUND" = 1 ] || [ "$APPROVED" = 0 ] || [ "$LD" = 1 ] || [ "$BCARRY" = 1 ]; }; then
       PH=""; PW=""; PID=""; PM=""; WHY=""
       # A truncated history cannot prove which lead row is newest: unreadable.
       if ! JOBS_ALERT=0 _jobs_req GET "/api/verdicts?repo=$SLUG&pr=$N" > "$WORK/vd" 2>/dev/null \
@@ -1271,7 +1313,7 @@ for SLUG in $AUTO_REPOS; do
         REPLAYED=$((REPLAYED + 1))
         skip_line replayed "$SLUG#$N @$H12: lead word already replayed onto this head; no post, no review requested"
         continue
-      elif [ "$APPROVED" = 0 ] && jq -e --arg h "$HEAD" 'any(.rows[]; ((.head_sha // "") | ascii_downcase) == $h
+      elif { [ "$APPROVED" = 0 ] || [ "$BCARRY" = 1 ]; } && jq -e --arg h "$HEAD" 'any(.rows[]; ((.head_sha // "") | ascii_downcase) == $h
              and ((.source // "") | IN("lead", "human", "risk-tier")))' "$WORK/vd" >/dev/null 2>&1; then
         VERD=$((VERD + 1)); skip_line verdict "$SLUG#$N @$H12: a lead/human/risk-tier row stands on this head (verdict history)"; continue
       else
@@ -1290,6 +1332,24 @@ for SLUG in $AUTO_REPOS; do
         # BH-5294: a BLOCK never leaves its own head but through BH-3930's rebound replay.
         [ "$PW" = BLOCK ] && [ "$REBOUND" != 1 ] && PH=""
       fi
+      # BH-7043: a carried APPROVE never stands on an unread history or over a
+      # lead BLOCK; the head is unapproved, as before the carry.
+      if [ "$BCARRY" = 1 ]; then
+        BCNO=""
+        case "$WHY" in "verdicts read failed"*) BCNO="the verdict history is unreadable" ;; esac
+        [ -z "$BCNO" ] && [ "$PW" = BLOCK ] && BCNO="the newest lead verdict on another head is a BLOCK"
+        if [ -n "$BCNO" ]; then
+          APPROVED=0; BCARRY=0
+          log "$SLUG#$N @$H12: builder APPROVE on ${RSHA:0:12} not carried: $BCNO"
+        else
+          if ! awk -F'\t' -v s="$SLUG" -v n="$N" -v h="$HEAD" '$3 == "builder-replay" && $4 == s && $5 == n && $6 == h {f=1} END {exit !f}' "$MODES" 2>/dev/null; then
+            mode_row builder-replay "$SLUG" "$N" "$HEAD" "from=${RSHA:0:12} how=$BCHOW"
+            BREPLAYED=$((BREPLAYED + 1))
+            log "$SLUG#$N @$H12: builder APPROVE carried from ${RSHA:0:12} (how:$BCHOW)"
+          fi
+          REQFOR="builder APPROVE carried from ${RSHA:0:12} (how:$BCHOW)"
+        fi
+      fi
       if [ -n "$PH" ]; then
         PS_REPO="${REPOS_ROOT:-/root/repos}/$PROJECT"
         HOW=""; CLS=""
@@ -1302,7 +1362,8 @@ for SLUG in $AUTO_REPOS; do
         if [ -n "$CLS" ]; then :
         elif ! command -v patch_same >/dev/null 2>&1; then WHY="bin/lib/patch-same.sh not loaded; requesting as before"
         elif [ ! -d "$PS_REPO/.git" ]; then WHY="no checkout at $PS_REPO; requesting as before"
-        elif ! patch_same_fetch "$PS_REPO" "$PH" "$HEAD"; then WHY="fetch of ${PH:0:12}/$H12 failed; requesting as before"
+        elif ! patch_same_fetch "$PS_REPO" "$PH" "$HEAD" "$N"; then
+          fetch_failed_once; WHY="fetch of ${PH:0:12}/$H12 failed ($PS_FETCH_ERR); requesting as before"
         elif [ "$LD" = 1 ]; then
           CLS=$(ld_classify "$PS_REPO" origin/main "$PH" "$HEAD" "$SLUG" "$PW")
           log "$SLUG#$N @$H12: since ${PH:0:12}: $CLS"
@@ -1647,7 +1708,7 @@ for SLUG in $AUTO_REPOS; do
       PS_REPO="${REPOS_ROOT:-/root/repos}/$PROJECT"
       if [ -d "$PS_REPO/.git" ]; then
         if ! git -C "$PS_REPO" cat-file -e "$LPVH^{commit}" 2>/dev/null || ! git -C "$PS_REPO" cat-file -e "$HEAD^{commit}" 2>/dev/null; then
-          command -v patch_same_fetch >/dev/null 2>&1 && patch_same_fetch "$PS_REPO" "$LPVH" "$HEAD"
+          command -v patch_same_fetch >/dev/null 2>&1 && patch_same_fetch "$PS_REPO" "$LPVH" "$HEAD" "$N"
         fi
         LPVNOTE=$(lpv_note "$PS_REPO" origin/main "$LPVH" "$LPVW" "$HEAD" "$N")
         DNOTE="${DNOTE:+$DNOTE; }$LPVNOTE"
@@ -1709,5 +1770,5 @@ if [ "$RUNMODE" = tick ]; then
     && mv -f "$SKIPLAST.tmp" "$SKIPLAST" 2>/dev/null
 fi
 TRIGW=""; [ "$RUNMODE" = pr ] && TRIGW=" trigger_items=$LRE_N"
-log "$RUNMODE repos=$REPOS prs=$PRS requested=$REQUESTED replayed=$REPLAYED delta=$RDELTA full=$RFULL ${TCOUNT:-today_replay=? today_delta=? today_full=?} existing=$EXISTING deferred=$DEFERRED skipped_no_approve=$NOAPP skipped_ci=$NOCI skipped_verdict=$VERD skipped_self=$SELF skipped_silence=$SILENCE tripped=$TRIPPED unreadable=$UNREAD failed_reset=$FAILRESET failed_alerted=$FAILX reclaimed=$RECLAIMED skipped_draft=$SKDRAFT risk_low=$RLOW risk_signed=$RSIGNED risk_shadow=$RSHADOW risk_medium=$RMED risk_high=$RHIGH risk_lead=$RLEADN risk_inbuild_wait=$RWAIT review_intent=$RINTENT jev_shadow=$JEV skips=$SKIPS skips_logged=$SKIPLOGGED skipped_traced=$TRACED traced_dispatched=$TDISP traced_bound=$TBOUND skipped_selfcheck=$SELFCHK skipped_rebase=$RBASE$TRIGW rung=$RUNG"
+log "$RUNMODE repos=$REPOS prs=$PRS requested=$REQUESTED replayed=$REPLAYED builder_replayed=$BREPLAYED fetch_failed=$PSFETCHF delta=$RDELTA full=$RFULL ${TCOUNT:-today_replay=? today_delta=? today_full=?} existing=$EXISTING deferred=$DEFERRED skipped_no_approve=$NOAPP skipped_ci=$NOCI skipped_verdict=$VERD skipped_self=$SELF skipped_silence=$SILENCE tripped=$TRIPPED unreadable=$UNREAD failed_reset=$FAILRESET failed_alerted=$FAILX reclaimed=$RECLAIMED skipped_draft=$SKDRAFT risk_low=$RLOW risk_signed=$RSIGNED risk_shadow=$RSHADOW risk_medium=$RMED risk_high=$RHIGH risk_lead=$RLEADN risk_inbuild_wait=$RWAIT review_intent=$RINTENT jev_shadow=$JEV skips=$SKIPS skips_logged=$SKIPLOGGED skipped_traced=$TRACED traced_dispatched=$TDISP traced_bound=$TBOUND skipped_selfcheck=$SELFCHK skipped_rebase=$RBASE$TRIGW rung=$RUNG"
 exit 0

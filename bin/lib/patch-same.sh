@@ -31,10 +31,22 @@
 #   pairs a 644 -> 755 mode change and a file -> symlink swap as `=`. The two
 #   rungs above cover a main merge and a byte-exact rebase, which is #2310's goal.
 #
-#   patch_same_fetch <git-dir> <reviewed> <head>
+#   patch_same_fetch <git-dir> <reviewed> <head> [<pr-number>]
 #     `git fetch origin main <head>` (and <reviewed> when the remote still has
-#     it), so that origin/main and both commits exist locally. rc 1 when the
-#     fetch fails, and then patch_same must not be asked.
+#     it), so that origin/main and both commits exist locally. rc 1 when <head>
+#     is still missing after every try, and then patch_same must not be asked.
+#     BH-7043: one failed combined fetch is not the end. It then fetches
+#     <head> alone, then main alone (best-effort: a concurrent fetch can hold
+#     the origin/main ref lock), then, with a numeric <pr-number>, the PR ref
+#     +refs/pull/<n>/head:refs/remotes/origin/pr/<n>. Success is <head>
+#     resolving to a commit, never a fetch rc alone. <reviewed> is fetched
+#     only when it does not resolve (by sha, then the PR ref), still
+#     best-effort. A head this process already fetched into <git-dir> is not
+#     fetched again (_PS_FETCHED). On rc 1, PS_FETCH_ERR holds the first git
+#     error line, `://user:pass@` redacted, cut to 160 bytes; on rc 0 it is
+#     empty. PS_FETCH_MAIN is 1 when origin/main was fetched for <git-dir> in
+#     this process, else 0: a "patch changed" answer over a stale origin/main
+#     is not settled.
 #
 # CONSERVATIVE BY CONSTRUCTION. Every answer needs positive evidence: a real
 # 40-hex sha from rev-parse, a merge-tree that reported NO conflict, a non-empty
@@ -108,13 +120,47 @@ patch_same() {
   return 1
 }
 
-patch_same_fetch() { # <git-dir> <reviewed> <head>
-  local g="$1" rev="${2:-}" head="${3:-}"
-  [ -d "$g/.git" ] || [ -f "$g/HEAD" ] || return 1
-  [ -n "$head" ] || return 1
-  git -C "$g" fetch -q origin main "$head" >/dev/null 2>&1 || return 1
+declare -gA _PS_FETCHED=() _PS_MAIN_FETCHED=()
+PS_FETCH_ERR=""; PS_FETCH_MAIN=0; _PS_ERR=""
+
+# _ps_redact — stdin to stdout: the first line, credentials in a URL masked, 160 bytes.
+_ps_redact() { head -n 1 | sed -E 's#://[^/@ ]+@#://***@#g' | head -c 160; }
+
+# _ps_fetch <git-dir> <fetch args...> — one quiet `git fetch origin`; the first
+#   failure's stderr is kept in _PS_ERR for PS_FETCH_ERR.
+_ps_fetch() {
+  local g="$1" e; shift
+  e=$(git -C "$g" fetch -q origin "$@" 2>&1 >/dev/null) && return 0
+  [ -n "$_PS_ERR" ] || _PS_ERR="${e:-git fetch origin $* failed with no message}"
+  return 1
+}
+
+patch_same_fetch() { # <git-dir> <reviewed> <head> [<pr-number>]
+  local g="$1" rev="${2:-}" head="${3:-}" pr="${4:-}" prref
+  PS_FETCH_ERR=""; PS_FETCH_MAIN=0; _PS_ERR=""
+  [ -d "$g/.git" ] || [ -f "$g/HEAD" ] || { PS_FETCH_ERR="no git dir at $g"; return 1; }
+  [ -n "$head" ] || { PS_FETCH_ERR="no head sha"; return 1; }
+  [[ "$pr" =~ ^[0-9]+$ ]] && prref="+refs/pull/$pr/head:refs/remotes/origin/pr/$pr" || prref=""
+  if [ -z "${_PS_FETCHED[$g|$head]:-}" ] || ! _ps_sha "$g" "$head" >/dev/null; then
+    if _ps_fetch "$g" main "$head"; then _PS_MAIN_FETCHED[$g]=1
+    else
+      _ps_fetch "$g" "$head"
+      _ps_fetch "$g" main && _PS_MAIN_FETCHED[$g]=1
+      if [ -n "$prref" ] && ! _ps_sha "$g" "$head" >/dev/null; then _ps_fetch "$g" "$prref"; fi
+    fi
+    if ! _ps_sha "$g" "$head" >/dev/null; then
+      PS_FETCH_ERR=$(printf '%s\n' "${_PS_ERR:-$head is not a commit after the fetch}" | _ps_redact)
+      [ -n "${_PS_MAIN_FETCHED[$g]:-}" ] && PS_FETCH_MAIN=1
+      return 1
+    fi
+    _PS_FETCHED[$g|$head]=1
+  fi
   # The reviewed sha may be gone from the remote (a force-push). In the main-merge
   # case it is an ancestor of <head> and arrived with it, so this is best-effort.
-  [ -n "$rev" ] && git -C "$g" fetch -q origin "$rev" >/dev/null 2>&1
+  if [ -n "$rev" ] && ! _ps_sha "$g" "$rev" >/dev/null; then
+    _ps_fetch "$g" "$rev" || { [ -n "$prref" ] && _ps_fetch "$g" "$prref"; }
+  fi
+  [ -n "${_PS_MAIN_FETCHED[$g]:-}" ] && PS_FETCH_MAIN=1
+  _PS_ERR=""
   return 0
 }

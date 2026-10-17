@@ -283,7 +283,7 @@ lw_replay() {
   # the enqueue's BH-3930 rebound replay (bin/lead-review-enqueue.sh, BH-5294).
   # A main-merge after a BLOCK, or a person's request, is a fresh review.
   [ "$pw" != BLOCK ] || { LW_REPLAY_WHY="the newest lead verdict (${ph:0:12}) is a BLOCK; only a MERGE is replayed"; return 1; }
-  patch_same_fetch "$clone" "$ph" "$sha" || { LW_REPLAY_WHY="fetch of ${ph:0:12}/${sha:0:12} failed"; return 1; }
+  patch_same_fetch "$clone" "$ph" "$sha" "$pr" || { LW_REPLAY_WHY="fetch of ${ph:0:12}/${sha:0:12} failed ($PS_FETCH_ERR)"; return 1; }
   cls=$(ld_classify "$clone" origin/main "$ph" "$sha" "$slug" "$pw")
   case "$cls" in
     "replay "*) how="${cls#replay }"; LW_REPLAY_WORD="$pw"; LW_REPLAY_PREV="$ph"; LW_REPLAY_HOW="${how// /}"; return 0 ;;

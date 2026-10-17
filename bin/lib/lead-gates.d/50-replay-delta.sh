@@ -4,12 +4,18 @@
 # BH-5582, BH-5909, BH-6391, BH-6967), ported from
 # bin/lead-review-enqueue.sh (BH-5878): the lead's word on an earlier head G is kept when this head
 # carries the same patch.
-#   It runs when gate 10 left the head unapproved or rebound, or when
-#   bin/lib/lead-delta.sh is loaded (the enqueue's condition). Gate 10's
+#   It runs when gate 10 left the head unapproved, rebound or
+#   carried, or when bin/lib/lead-delta.sh is loaded (the enqueue's condition). Gate 10's
 #   LGB_* globals for this (slug, PR, head) say which; without them the head
 #   counts as approved and not rebound. A head gate 10 passed on a person's
 #   HUMAN-STEP-DONE answer (LGB_STEPDONE=1, BH-6696) is never replayed or
 #   delta-reviewed: rc 0 at once, a full review.
+#   BH-7043: a head gate 10 CARRIED a builder APPROVE to (LGB_CARRIED=1) is
+#   unapproved again when the history is unreadable or the newest lead word on
+#   another head is a BLOCK: gate 10's CI rule then decides (_lgb_ci_green:
+#   green = rc 0, a full review; not green = rc 11, held), as for any
+#   unapproved head. A carried head is also skipped like an unapproved one when a
+#   lead, human or risk-tier row is on it.
 #   GET /api/verdicts?repo=&pr= (the whole history):
 #     unreadable or truncated            rc 0, a full review (the enqueue fell
 #                                        through to its request here too).
@@ -99,23 +105,41 @@ lg_tick_replay_delta() {
   return 0
 }
 
+# _lgr_uncarry <slug> <n> <head> <why> — BH-7043: the carried APPROVE does not
+#   stand; gate 10's rule for an unapproved head decides (rc 0 or 11). Gate
+#   10's globals say so too (LGB_APPROVED=0, LGB_CARRIED=0, LGB_REQFOR as gate
+#   10's CI rule sets it), so gate 60 never signs the head off as approved.
+_lgr_uncarry() {
+  local slug="$1" n="$2" head="$3"
+  LGB_APPROVED=0; LGB_CARRIED=0; LGB_REBOUND=0; LGB_REQFOR=""
+  _lgt_log "$slug#$n @${head:0:12}: builder APPROVE on ${LGB_RSHA:0:12} not carried: $4"
+  if command -v _lgb_ci_green >/dev/null 2>&1 && _lgb_ci_green "$slug" "$n" "$head"; then
+    LGB_REQFOR="CI green"; return 0
+  fi
+  _lgt_log "$slug#$n @${head:0:12}: no builder APPROVE on this head and CI not known green (${_LGB_WHY:-gate 10 not loaded}); held"
+  return 11
+}
+
 lg_gate_replay_delta() {
-  local slug="$1" n="$2" head h12="${3:0:12}" root="${HARNESS:-${H:-}}" approved=1 rebound=0 ld=0 st vd d
+  local slug="$1" n="$2" head h12="${3:0:12}" root="${HARNESS:-${H:-}}" approved=1 rebound=0 carried=0 ld=0 st vd d
   local ph="" pw="" pid="" pm="" project repo cls="" how prc out tok box cqh hrepo
   head=$(printf '%s' "$3" | tr 'A-F' 'a-f')
   [ -n "$_LGR_TICKED" ] || lg_tick_replay_delta "$slug"
   LGD_KEY="$slug#$n@$head"; LGD_NOTE=""; _LGD_PVH=""; _LGD_PVW=""
   if [ "${LGB_KEY:-}" = "$slug#$n@$head" ]; then
-    approved="${LGB_APPROVED:-1}"; rebound="${LGB_REBOUND:-0}"
+    approved="${LGB_APPROVED:-1}"; rebound="${LGB_REBOUND:-0}"; carried="${LGB_CARRIED:-0}"
     [ "${LGB_STEPDONE:-0}" = 1 ] && return 0
   fi
   command -v ld_classify >/dev/null 2>&1 && ld=1
-  [ "$rebound" = 1 ] || [ "$approved" = 0 ] || [ "$ld" = 1 ] || return 0
+  [ "$rebound" = 1 ] || [ "$approved" = 0 ] || [ "$ld" = 1 ] || [ "$carried" = 1 ] || return 0
   d=$(lgs_dir 2>/dev/null) || { _lgt_log "$slug#$n @$h12: no scratch dir; no replay, full review"; return 0; }
   vd="$d/vd-$n"
   # A truncated history cannot prove which lead row is newest: unreadable.
   if ! JOBS_ALERT=0 _jobs_req GET "/api/verdicts?repo=$slug&pr=$n" > "$vd" 2>/dev/null \
      || ! jq -e '(.rows | type) == "array" and .truncated != true' "$vd" >/dev/null 2>&1; then
+    if [ "$carried" = 1 ]; then
+      _lgr_uncarry "$slug" "$n" "$head" "the verdict history is unreadable" || return $?
+    fi
     _lgt_log "$slug#$n @$h12: verdicts read failed; full review"; return 0
   fi
   if jq -e --arg h "$head" 'any(.rows[]; .source == "lead" and ((.head_sha // "") | ascii_downcase) == $h
@@ -123,7 +147,7 @@ lg_gate_replay_delta() {
     _lgt_log "$slug#$n @$h12: lead word already replayed onto this head; no post, no review"
     return 12
   fi
-  if [ "$approved" = 0 ] && jq -e --arg h "$head" 'any(.rows[]; ((.head_sha // "") | ascii_downcase) == $h
+  if { [ "$approved" = 0 ] || [ "$carried" = 1 ]; } && jq -e --arg h "$head" 'any(.rows[]; ((.head_sha // "") | ascii_downcase) == $h
        and ((.source // "") | IN("lead", "human", "risk-tier")))' "$vd" >/dev/null 2>&1; then
     _lgr_skip "$slug" "$n" "$head" verdict "a lead, human or risk-tier verdict is on this head"; return 10
   fi
@@ -132,6 +156,9 @@ lg_gate_replay_delta() {
       and ((.verdict // "") | IN("MERGE", "MERGE-WITH-NOTES", "BLOCK"))
       and (((.note // "") | contains("lead-replay:")) | not))]
     | max_by(.id) // empty | "\(.head_sha | ascii_downcase)\t\(.verdict)\t\(.id)\t\(.review_mode // "")"' "$vd" 2>/dev/null)
+  if [ "$carried" = 1 ] && [ "$pw" = BLOCK ]; then
+    _lgr_uncarry "$slug" "$n" "$head" "the newest lead verdict on another head is a BLOCK"; return $?
+  fi
   [[ "$ph" =~ ^[0-9a-f]{40}$ ]] || return 0
   # BH-6391: the re-review source is the same row (a replay row has no review behind it).
   _LGD_PVH="$ph"; _LGD_PVW="$pw"
@@ -150,7 +177,7 @@ lg_gate_replay_delta() {
   if [ -n "$cls" ]; then :
   elif ! command -v patch_same >/dev/null 2>&1; then _lgt_log "$slug#$n @$h12: bin/lib/patch-same.sh not loaded; full review"; return 0
   elif [ -z "$project" ] || [ ! -d "$repo/.git" ]; then _lgt_log "$slug#$n @$h12: no checkout at $repo; full review"; return 0
-  elif ! patch_same_fetch "$repo" "$ph" "$head"; then _lgt_log "$slug#$n @$h12: fetch of ${ph:0:12}/$h12 failed; full review"; return 0
+  elif ! patch_same_fetch "$repo" "$ph" "$head" "$n"; then _lgt_log "$slug#$n @$h12: fetch of ${ph:0:12}/$h12 failed (${PS_FETCH_ERR:-no git error text}); full review"; return 0
   elif [ "$ld" = 1 ]; then
     cls=$(ld_classify "$repo" origin/main "$ph" "$head" "$slug" "$pw")
     # Only answers git settled are cached; a knob or read that failed is asked again.

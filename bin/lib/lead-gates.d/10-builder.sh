@@ -24,6 +24,19 @@
 #   APPROVE bound to this head             rc 0, approved.
 #   APPROVE on an earlier head, and the
 #     head-bound gate says reapproved@head rc 0, approved and rebound.
+#   APPROVE on an earlier head A, and
+#     bc_carry proves this head carries
+#     A's patch (BH-7043)                 rc 0, approved and carried (LGB_CARRIED=1),
+#                                         one `builder APPROVE carried from <A12>
+#                                         (how:<how>)` line. bin/lib/builder-carry.sh,
+#                                         the enqueue's builder-carry.tsv cache; the
+#                                         clone is fleet.conf's (gate 50's rule).
+#                                         LGB_REQFOR names the carry, as the
+#                                         enqueue's REQFOR does. Gate 50 takes
+#                                         the carry back on an unread history
+#                                         or a lead BLOCK; gate 60 signs a
+#                                         carried head off only as a lead
+#                                         rules-text low (no reviewer approved it).
 #   no builder row (rc 2), or APPROVE on
 #     an earlier head                     unapproved: with
 #       LEAD_REVIEW_REQUIRE_BUILDER_APPROVE=1, rc 10 [skip no-approve]; else rc 0
@@ -39,7 +52,7 @@
 # The author comes from the PR body gate 55 reads once (lgs_pr_body) and the
 # lead_pr_authors row (to_is_lead): unreadable = not confirmed, so no answer
 # counts. Gate 50 reads LGB_KEY (<slug>#<n>@<head>), LGB_APPROVED, LGB_REBOUND,
-# LGB_RSHA and LGB_STEPDONE; gate 60 reads LGB_REQFOR.
+# LGB_RSHA, LGB_STEPDONE and LGB_CARRIED; gate 60 reads LGB_REQFOR.
 # Sourced by bin/lib/lead-gates.sh, never run.
 
 # shellcheck source=bin/lib/lead-step-done.sh
@@ -49,8 +62,25 @@ command -v to_is_lead >/dev/null 2>&1 || . "${BASH_SOURCE[0]%/*}/../ticket-owner
 
 declare -g _LGB_REQB=""
 declare -gA _lgb_base=() _lgb_base_rc=()
-declare -g LGB_APPROVED=0 LGB_REBOUND=0 LGB_RSHA=""
+declare -g LGB_APPROVED=0 LGB_REBOUND=0 LGB_RSHA="" LGB_CARRIED=0
 declare -g LGB_KEY="" LGB_STEPDONE=0 LGB_SDNOTE="" LGB_REQFOR=""
+declare -g _LGB_DIR="${BASH_SOURCE[0]%/*}"
+
+# _lgb_carry <slug> <n> <approved-sha> <head> — rc 0 when bc_carry
+#   (bin/lib/builder-carry.sh, BH-7043) carries the APPROVE to <head>.
+_lgb_carry() {
+  local slug="$1" n="$2" a="$3" head="$4" root="${HARNESS:-${H:-}}" fc project rc=0
+  [ -n "$root" ] || return 1
+  command -v patch_same >/dev/null 2>&1 || { [ -r "$_LGB_DIR/../patch-same.sh" ] && . "$_LGB_DIR/../patch-same.sh"; }
+  command -v bc_carry >/dev/null 2>&1 || { [ -r "$_LGB_DIR/../builder-carry.sh" ] && . "$_LGB_DIR/../builder-carry.sh"; }
+  command -v bc_carry >/dev/null 2>&1 || return 1
+  fc="${FLEET_CONF:-$root/fleet.conf}"
+  project=$(awk -v r="$slug" '$1 !~ /^#/ && $2 == r {print $1; exit}' "$fc" 2>/dev/null)
+  [ -n "$project" ] || return 1
+  bc_carry "${REPOS_ROOT:-/root/repos}/$project" "$slug" "$n" "$a" "$head" "$root/state/lead-review-enqueue" || rc=$?
+  [ "$rc" = 2 ] && _lgt_log "$slug#$n @${head:0:12}: builder APPROVE on ${a:0:12} not carried: $BC_WHY"
+  return "$rc"
+}
 
 # _lgb_skip <slug> <n> <head> <class> <text> — lgs_skip_once (05-skip-ledger.sh);
 #   without it the `[skip <class>]` line is logged on every tick.
@@ -122,7 +152,7 @@ lg_gate_builder() {
   head=$(printf '%s' "$3" | tr 'A-F' 'a-f')
   url="https://github.com/$slug/pull/$n"
   [ -n "$_LGB_REQB" ] || lg_tick_builder "$slug"
-  LGB_KEY=""; LGB_APPROVED=0; LGB_REBOUND=0; LGB_RSHA=""; LGB_STEPDONE=0; LGB_SDNOTE=""; LGB_REQFOR=""
+  LGB_KEY=""; LGB_APPROVED=0; LGB_REBOUND=0; LGB_RSHA=""; LGB_CARRIED=0; LGB_STEPDONE=0; LGB_SDNOTE=""; LGB_REQFOR=""
   jv=$(job_verdict "$url" 2>/dev/null) || jrc=$?
   case "$jrc" in
     0) IFS=$'\t' read -r v _ _ _ _ rsha <<<"$jv"; rsha=$(printf '%s' "$rsha" | tr 'A-F' 'a-f') ;;
@@ -156,6 +186,12 @@ lg_gate_builder() {
     if [ "$rsha" = "$head" ]; then LGB_APPROVED=1; return 0; fi
     hb=$(job_verdict_headbound "$url" 2>/dev/null | tr 'A-F' 'a-f')
     if [ "$hb" = "reapproved@$head" ]; then LGB_APPROVED=1; LGB_REBOUND=1; return 0; fi
+    if [[ "$rsha" =~ ^[0-9a-f]{40}$ ]] && _lgb_carry "$slug" "$n" "$rsha" "$head"; then
+      LGB_APPROVED=1; LGB_REBOUND=0; LGB_CARRIED=1
+      LGB_REQFOR="builder APPROVE carried from ${rsha:0:12} (how:$BC_HOW)"
+      _lgt_log "$slug#$n @$h12: builder APPROVE carried from ${rsha:0:12} (how:$BC_HOW)"
+      return 0
+    fi
   fi
   # Unapproved: no builder row, an APPROVE on an earlier head, or a refusal of one.
   if [ "$_LGB_REQB" = 1 ]; then
