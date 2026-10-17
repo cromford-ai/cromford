@@ -292,14 +292,14 @@ export const api = {
   // email}), answered by the coord Pages function itself, not the worker.
   whoami: () => get('/api/coord/whoami'),
   // The fleet's alert table (2026-09-19), same worker, same proxy and the same
-  // session as the lanes read above. `state`, `family` and `box` are the
+  // session as the lanes read above. `state`, `family`, `box` and `component` are the
   // worker's own filters — the screen never filters rows it already has, or the
   // count it shows would describe a different set than the one it asked for.
   // `limit` is a RENDERING bound, not a data one: the worker answers
   // `truncated: true` when it bit, and the section says so.
   alerts: (opts = {}) => {
     const q = new URLSearchParams();
-    for (const k of ['state', 'family', 'box']) if (opts[k]) q.set(k, String(opts[k]));
+    for (const k of ['state', 'family', 'box', 'component']) if (opts[k]) q.set(k, String(opts[k]));
     if (opts.limit) q.set('limit', String(opts.limit));
     const qs = q.toString();
     return get(`/api/coord/alerts${qs ? `?${qs}` : ''}`);
@@ -320,6 +320,18 @@ export const api = {
     q.set('id', String(id));
     if (limit) q.set('limit', String(limit));
     return get(`/api/coord/alerts/actions?${q}`);
+  },
+  // What bin/component-watch.sh decided on open alerts (BH-6972), by ONE of
+  // `alert_id` or `component`. The worker refuses zero or two keys with a 400;
+  // the check here makes that a refusal in the browser, before a request.
+  // `limit` rides only when given; the worker owns the default and the clamp.
+  alertDecisions: async (opts = {}) => {
+    const keys = ['alert_id', 'component'].filter((k) => opts[k]);
+    if (keys.length !== 1) throw new Error('alertDecisions takes exactly one of alert_id or component');
+    const q = new URLSearchParams();
+    q.set(keys[0], String(opts[keys[0]]));
+    if (opts.limit) q.set('limit', String(opts.limit));
+    return get(`/api/coord/alerts/decisions?${q}`);
   },
   // DORA, through the same coord proxy (it forwards any GET, so no new Pages
   // Function). The metrics are computed IN THE WORKER on purpose: the payload

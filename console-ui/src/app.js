@@ -20,6 +20,7 @@ import { KanbanScreen } from './screens/Kanban.js';
 import { PRScreen } from './screens/PR.js';
 import { ChatScreen } from './screens/Chat.js';
 import { AlertsScreen } from './screens/Alerts.js';
+import { ComponentsScreen, AlertDecisionsScreen } from './screens/Components.js';
 import { CostsScreen } from './screens/Costs.js';
 import { JobsScreen } from './screens/Jobs.js';
 import { JobScreen } from './screens/Job.js';
@@ -70,6 +71,8 @@ export const ROUTES = [
   ['/lead-reviews', LeadReviewsScreen],
   ['/chat', ChatScreen],
   ['/alerts', AlertsScreen],
+  ['/alerts/decisions/:id', AlertDecisionsScreen],
+  ['/components', ComponentsScreen],
   ['/costs', CostsScreen],
   ['/outcomes', OutcomesScreen],
   ['/dora', DORAScreen],
@@ -127,7 +130,7 @@ export const NAV = [
   { to: '/now', label: 'NOW', icon: IconNow, match: (p) => p === '/now' || p === '/history' || p === '/history/commands' },
   { to: '/kanban', label: 'KANBAN', icon: IconKanban, match: (p) => p === '/kanban' || p === '/merge-queue' || p === '/lead-reviews' || p.startsWith('/pr/') },
   { to: '/chat', label: 'CHAT', icon: IconChat, match: (p) => p === '/chat' },
-  { to: '/alerts', label: 'ALERTS', icon: IconAlerts, match: (p) => p === '/alerts', badge: true },
+  { to: '/alerts', label: 'ALERTS', icon: IconAlerts, match: (p) => p === '/alerts' || p === '/components' || p.startsWith('/alerts/decisions/'), badge: true },
   // NEEDS is the superset ALERTS is one quarter of: alerts, dead-lettered
   // commands, parked builds and ideas at the gate. Both stay, because the
   // resolve action lives on ALERTS and only there.

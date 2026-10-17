@@ -13,8 +13,9 @@ import {
   FLEET_ROWS_LIMIT, FLEET_ROWS_DEFAULT_STATE,
   alertRowActions, shapeAlertActions, actionOutcomeText
 } from '../lib/alertrows.js';
+import { decisionsHref } from '../lib/components.js';
 
-const FILTER_KEYS = ['family', 'box', 'state'];
+const FILTER_KEYS = ['family', 'box', 'state', 'component'];
 const withoutFilter = (filters, drop) =>
   Object.fromEntries(FILTER_KEYS.filter((k) => k !== drop).map((k) => [k, filters[k]]));
 
@@ -147,7 +148,15 @@ export function NoteDialogBody({ setBlocked, onText }) {
 // `nowMs` is the one clock read the screen handed the shaper, so NOTIFIED and
 // the ages beside it are measured from the same instant.
 export function FleetRowsSection({ loading, error, onRetry, shaped, filters, actions, nowMs = Date.now() }) {
-  const fleetCols = fleetColumns(nowMs);
+  // Under a component filter (the Components screen's drill-down, BH-6973)
+  // each row also links to what component-watch decided on it. Without that
+  // filter the columns are the ones this table always had.
+  const fleetCols = filters && filters.component
+    ? [...fleetColumns(nowMs), {
+      key: 'decisions', label: 'DECISIONS', sort: null,
+      cell: (r) => html`<${Link} to=${decisionsHref(r.id)} class="btn btn--sm">DECISIONS<//>`
+    }]
+    : fleetColumns(nowMs);
   const columns = actions
     ? [
       {
@@ -280,14 +289,16 @@ export function AlertsScreen() {
   const filterFamily = useSearchParam('family');
   const filterBox = useSearchParam('box');
   const filterState = useSearchParam('state');
+  const filterComponent = useSearchParam('component');
   const fleetRows = useApi(
     () => api.alerts({
       state: filterState || FLEET_ROWS_DEFAULT_STATE,
       family: filterFamily,
       box: filterBox,
+      component: filterComponent,
       limit: FLEET_ROWS_LIMIT
     }),
-    [filterFamily, filterBox, filterState],
+    [filterFamily, filterBox, filterState, filterComponent],
     { intervalMs: 30000 }
   );
 
@@ -384,6 +395,7 @@ export function AlertsScreen() {
         line2=${all.data ? `${resolved24h.length} resolved in the last 24 hours.${unreadable.length ? ` ${unreadable.length} projects not read.` : ''}` : ''}/>
       <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
         <${Link} to="/" class="crumb">← FLEET<//>
+        <${Link} to="/components" class="crumb">COMPONENTS →<//>
         ${filterProject ? html`
           <span class="pill">
             ${filterProject}
@@ -437,7 +449,7 @@ export function AlertsScreen() {
 
       <${FleetRowsSection} loading=${fleetRows.loading} error=${fleetRows.error}
         onRetry=${fleetRows.reload} shaped=${shapedFleet} nowMs=${nowMs}
-        filters=${{ family: filterFamily, box: filterBox, state: filterState }}
+        filters=${{ family: filterFamily, box: filterBox, state: filterState, component: filterComponent }}
         actions=${{
           onAction, pending: pendingRow, openId,
           onToggleHistory: (id) => setOpenId((o) => (o === id ? null : id)),

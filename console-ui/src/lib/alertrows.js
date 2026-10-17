@@ -85,7 +85,7 @@ export function alertSortValue(row, key) {
 // hands back the filters that remain. Nothing here leaves /alerts.
 export function filterHref(filters = {}) {
   const q = new URLSearchParams();
-  for (const k of ['family', 'box', 'state']) {
+  for (const k of ['family', 'box', 'state', 'component']) {
     const v = filters[k];
     if (typeof v === 'string' && v !== '') q.set(k, v);
   }
