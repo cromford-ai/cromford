@@ -357,20 +357,26 @@ grep -q 'is closed' "$H/logs/review-rescue.log" 2>/dev/null && bad "a board proj
 grep -q 'project=project-3 key=TK-131' "$H/logs/review-rescue.log" 2>/dev/null && ok || bad "the board project's dir must still be parsed and attempted"
 printf 'project-5 example-org/project-5 - - 2 box-ts\n' > "$H/fleet.conf"
 
-# ── 11. main is merged into the branch before the PR is opened ───────────────
-# A branch pushed days ago is behind main, and a PR opened on that head buys a
-# review of a diff nobody will merge: the merge lanes have to rebase it, the
-# rebase moves the head, and the head no longer matches the reviewed sha — so the
-# PR parks. Fresh main goes in FIRST, in this candidate's own worktree, and the
-# merge is pushed before the PR exists.
+# ── 11. a clean branch gets NO main merge before the PR is opened ─────────────
+# BH-7042 changed this premise. A clean merge of main makes a new head that
+# loses its verdict and restarts CI, and the merge queue already tests every PR
+# on current main. So the lane asks bin/lib/main-merge-need.sh first: a branch
+# that is clean against main opens its PR on the pushed head as it stands, and
+# the log says the merge was skipped. Section 12 (a conflict) is unchanged.
+# TK-554: section 5 leaves it unrescued, so no earlier section merged main into it.
 reset_h
-D=$(mkbuild pool-project-5-TK-551-202609131444 200 "$TAMPER_RESULT")
+( cd "$DIR" && scratch_install_closure bin/lib/main-merge-need.sh "$H" ) >/dev/null || bad "11: could not install bin/lib/main-merge-need.sh"
+B554=$(git -C "$T/repos/project-5" rev-parse "origin/ticket/TK-554" 2>/dev/null)
+D=$(mkbuild pool-project-5-TK-554-202609131442 200 "$TAMPER_RESULT")
 run
 [ -s "$T/pr-creates.txt" ] && ok || bad "a pushed branch with no PR must still get one"
 git -C "$T/repos/project-5" fetch -q origin 2>/dev/null
-git -C "$T/repos/project-5" merge-base --is-ancestor origin/main "origin/ticket/TK-551" 2>/dev/null \
-  && ok || bad "origin/main must be an ancestor of the branch the PR was opened on — the merge was not pushed"
-[ -f "$D/.conflicts-with-main" ] && bad "a clean merge must not leave a conflict marker" || ok
+git -C "$T/repos/project-5" merge-base --is-ancestor origin/main "origin/ticket/TK-554" 2>/dev/null \
+  && bad "11: origin/main was merged into a branch that is clean against main" || ok
+eq "11: the branch head did not move" "$(git -C "$T/repos/project-5" rev-parse "origin/ticket/TK-554" 2>/dev/null)" "$B554"
+grep -q 'main merge skipped: clean against main' "$H/logs/review-rescue.log" 2>/dev/null && ok \
+  || bad "11: the log must say the main merge was skipped (log: $(tail -3 "$H/logs/review-rescue.log" 2>/dev/null))"
+[ -f "$D/.conflicts-with-main" ] && bad "a clean branch must not leave a conflict marker" || ok
 
 # ── 12. a branch that conflicts with main gets NO PR ────────────────────────
 # Resolving a conflict is the resolver lane's job, not this one's. This lane stops

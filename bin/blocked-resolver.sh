@@ -428,6 +428,10 @@ else echo "blocked-resolver: bin/lib/rebuild-ledger.sh missing — cannot read t
 # shellcheck source=bin/lib/gh-rest.sh
 if [ -r "$H/bin/lib/gh-rest.sh" ]; then . "$H/bin/lib/gh-rest.sh"
 else echo "blocked-resolver: bin/lib/gh-rest.sh missing — cannot read PR state" >&2; exit 1; fi
+# MAIN ONLY ON A CONFLICT (BH-7042): the mechanical rung's "does this PR need a
+# merge of main?" gate. Absent, br_mechanical merges as before.
+# shellcheck source=bin/lib/br-main-merge.sh
+[ -r "$H/bin/lib/br-main-merge.sh" ] && . "$H/bin/lib/br-main-merge.sh"
 # The review poster (BH-641) and the guard-silencing classifier. Both degrade on
 # a box mid-sync that carries this script with the old bin/lib: rp_post falls
 # back to the pre-BH-641 comment, and an absent gs_classify classifies nothing
@@ -4175,9 +4179,18 @@ br_mechanical() {
   # mc_rebase answers rc 5 for a pushed parent merge (no approval rebind).
   mbase=$(br_pr_field "$url" .base.ref 'base branch' 2>/dev/null) || mbase=""
   case "$mbase" in ''|main) mbase=main ;; esac
+  # MAIN ONLY ON A CONFLICT (BH-7042): bin/lib/br-main-merge.sh. rc 0 =
+  # the gate answered this park (queued, or a conflict park that is gone);
+  # rc 1 = merge as before; rc 3 = clean, so the "nothing to merge" arm runs.
+  rc=1; [ "$mbase" = main ] && command -v br_main_merge_gate >/dev/null 2>&1 \
+    && { br_main_merge_gate "$p" "$ck" "$rkey" "$reason" "$slug" "$br" "$head" "$url"; rc=$?; }
+  [ "$rc" = 0 ] && return 0
+  if [ "$rc" = 3 ]; then out=$head; rc=0
+  else
   br_event resolver_rung "$p" "$ck" "$reason" "rung 1 mechanical: merging origin/$mbase into $br at ${head:0:8}"
   if [ "$mbase" = main ]; then out=$(mc_rebase "$slug" "$p" "$br" "$head" "$url"); rc=$?
   else out=$(mc_rebase "$slug" "$p" "$br" "$head" "$url" "$mbase"); rc=$?; fi
+  fi
   # The setup alert is cleared the moment the rung actually RAN, exactly as the
   # fix round clears it: a LATER box problem on this park is a new fact and pages
   # again. rc 4 is the setup arm below and must NOT clear it, or a permanently
@@ -6200,7 +6213,7 @@ br_fix_round() {
     brief="$brief"$'\n\n'"THE CI LINT STEPS WERE RED ON THE LAST ROUND (bin/ci-local.sh, the steps of CI's lint job and the rules pack). The harness re-runs them after you and will not push while they are red. Reproduce one step with \`bin/ci-local.sh --step '<step>'\`. Fix the code each line names; never edit .github/workflows/harness-ci.yml, bin/ci-local.sh or catalog/ci-local-skip.d/:"$'\n'"$(head -40 "$ST/$p/$ck.ci-local/findings.txt")"
   fi
   # <<< br ci-local brief
-  prompt="FIX ROUND on an open pull request. Branch $br of $slug ($url) is parked with the harness on: $reason. Your job is to make that park false, and nothing else. Apply ONLY what the brief below asks for — no refactors, no adjacent cleanups, no new features: every line you change must trace to it. Where an item in the brief is wrong, say so in the commit message with your reasoning rather than silently ignoring it. Never answer a finding, a conflict or a red test by weakening, skipping or deleting a test. When you are done, run the repo's own typecheck and unit suite yourself and make them pass; the harness re-runs both after you and will refuse to push if they are red or if any conflicted path is left unresolved. Commit with a message naming what you addressed.$xprline
+  prompt="FIX ROUND on an open pull request. Branch $br of $slug ($url) is parked with the harness on: $reason. Your job is to make that park false, and nothing else. Apply ONLY what the brief below asks for — no refactors, no adjacent cleanups, no new features: every line you change must trace to it. Where an item in the brief is wrong, say so in the commit message with your reasoning rather than silently ignoring it. Never answer a finding, a conflict or a red test by weakening, skipping or deleting a test. When you are done, run the repo's own typecheck and unit suite yourself and make them pass; the harness re-runs both after you and will refuse to push if they are red or if any conflicted path is left unresolved. Commit with a message naming what you addressed. The harness has already merged what it needs; do not merge origin/main again unless this branch still conflicts with main: the merge queue tests every PR on current main, and a clean merge only makes a new head that loses its review and restarts CI.$xprline
 $live$brief"
   # THE LEDGER ROW, immediately before the spend. Written first so a crash
   # mid-call leaves a row the next tick prunes as a dead pid — never a round

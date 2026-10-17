@@ -1,0 +1,10 @@
+{
+  "env": "MAIN_MERGE_GATE",
+  "type": "int",
+  "default": 1,
+  "min": 0,
+  "max": 1,
+  "zero_means": "off",
+  "read_in": "bin/lib/main-merge-need.sh",
+  "note": "BH-7042: 1 = merge origin/main into a PR branch only when it conflicts, has a stale schema.d stamp, or the check cannot tell (bin/lib/main-merge-need.sh); a clean or queued PR is not merged into. 0 = merge main every time, as before. Read by the resolver's mechanical rung, bin/review-rescue.sh and bin/lander.sh."
+}

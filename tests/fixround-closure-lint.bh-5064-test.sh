@@ -241,9 +241,17 @@ VERIFY | grep -q '^CLOSURE_LINT_EXIT: skipped' && ok "F4: CLOSURE_LINT_EXIT: ski
 git -C "$ORIGIN" update-ref refs/heads/ticket/ts-f4 "$before"
 RESET ticket/ts-f4 none
 FIXHERE "$H/bin/blocked-resolver.main.sh"
-[ -s "$T/prompt.txt" ] && cmp -s "$T/prompt-head.txt" "$T/prompt.txt" \
+# TEST-CHANGE (BH-7042): BH-7042 adds ONE sentence to the fix-round prompt on
+# purpose (do not merge origin/main unless the branch conflicts). The byte
+# comparison below removes exactly that sentence from BOTH sides and compares
+# the rest, so any other drift still fails. It holds before and after BH-7042
+# is on main. tests/main-merge-need.bh-7042-test.sh asserts the sentence itself.
+BH7042_SENTENCE=' The harness has already merged what it needs; do not merge origin/main again unless this branch still conflicts with main: the merge queue tests every PR on current main, and a clean merge only makes a new head that loses its review and restarts CI.'
+bh7042_strip() { local s; s=$(cat "$1" 2>/dev/null; printf x); s=${s%x}; printf '%s' "${s//"$BH7042_SENTENCE"/}" > "$2"; }
+bh7042_strip "$T/prompt-head.txt" "$T/prompt-head.cmp"; bh7042_strip "$T/prompt.txt" "$T/prompt-main.cmp"
+[ -s "$T/prompt.txt" ] && cmp -s "$T/prompt-head.cmp" "$T/prompt-main.cmp" \
   && ok "F4: the prompt is byte-identical to origin/main's" \
-  || bad "F4: the prompt differs from origin/main's ($(diff "$T/prompt.txt" "$T/prompt-head.txt" 2>&1 | head -5))"
+  || bad "F4: the prompt differs from origin/main's ($(diff "$T/prompt-main.cmp" "$T/prompt-head.cmp" 2>&1 | head -5))"
 
 # ---- F5 ----------------------------------------------------------------------
 RESET ticket/ts-f5 none; before=$(osha ticket/ts-f5)

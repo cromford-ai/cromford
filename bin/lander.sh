@@ -90,6 +90,20 @@ cleanup() { (cd "$REPO_DIR" && git worktree remove -f "$WT" >/dev/null 2>&1); rm
 trap cleanup EXIT
 
 (cd "$REPO_DIR" && git fetch -q origin main "$BR" && git worktree add -f "$WT" "origin/$BR" >/dev/null 2>&1) || exit 1
+# MAIN ONLY ON A CONFLICT (BH-7042). A clean merge of main makes a new head
+# that loses its verdict and restarts CI, and the merge queue already tests on
+# current main. A clean or queued PR is not merged into and buys no session.
+# rc 0/2 (conflict, stale schema stamp, cannot tell, no lib): merge as before.
+# shellcheck source=bin/lib/main-merge-need.sh
+{ command -v pr_needs_main_merge >/dev/null 2>&1 || . "$HARNESS/bin/lib/main-merge-need.sh" 2>/dev/null \
+    || . "$(dirname "${BASH_SOURCE[0]}")/lib/main-merge-need.sh" 2>/dev/null; } || true
+if command -v pr_needs_main_merge >/dev/null 2>&1; then
+  MMN_WHY=$(pr_needs_main_merge "$SLUG" "$NUM" "$REPO_DIR" "$HEAD" origin/main)
+  if [ "$?" = 1 ]; then
+    echo "$(STAMP) [$PROJECT] #$NUM lander: main merge skipped: $(pr_main_merge_why "$MMN_WHY") at ${HEAD:0:8} — not resolved here" >> "$LOG"
+    exit 1
+  fi
+fi
 # The head this round starts from: the push below leases on it (BH-2504), so a
 # lead commit that lands while the session resolves makes the push fail
 # instead of being force-overwritten.

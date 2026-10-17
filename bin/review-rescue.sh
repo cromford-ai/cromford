@@ -572,13 +572,16 @@ rescue_one() {
   # a branch rather than a PR — a terminal every close-out handler in the fleet
   # reads and none of them can act on. A branch with no PR gets a PR first.
   if [ -z "${PRURL:-}" ]; then
-    # FRESH MAIN FIRST (2026-09-13). These branches were pushed hours or days ago
-    # and nothing has moved them since. A PR opened on a stale head is reviewed
-    # against a diff nobody will merge — the merge lanes then have to rebase it,
-    # and the reviewed sha stops matching the head, which parks the PR. So main is
-    # merged INTO the branch here, in this candidate's own worktree, and the merge
-    # is pushed before the PR exists. `--no-edit` because a rescue has nothing to
-    # say in a merge message.
+    # MAIN ONLY ON A CONFLICT (BH-7042). This lane used to merge origin/main
+    # into every branch before it opened the PR ("FRESH MAIN FIRST",
+    # 2026-09-13). A clean merge buys nothing: the merge queue tests every PR on
+    # current main, and a later clean main merge keeps the approval (the
+    # carry/patch-same rebind). So pr_needs_main_merge (bin/lib/main-merge-need.sh)
+    # is asked first. On "clean" the PR opens on the pushed head as it stands.
+    # On a conflict, a stale schema.d stamp or "cannot tell" (rc 0/2, and a lib
+    # that cannot be sourced), main is merged here as before, in this
+    # candidate's own worktree, and the merge is pushed before the PR exists.
+    # `--no-edit` because a rescue has nothing to say in a merge message.
     #
     # A CONFLICT IS NOT THIS LANE'S JOB. It opens no PR at all and leaves the
     # candidate where the resolver lane finds it — opening a conflicted PR would
@@ -589,31 +592,41 @@ rescue_one() {
     # fails "Please tell me who you are" and the next lines used to stamp
     # .conflicts-with-main for that too — every clean rescue looked conflicted
     # (Harness CI on this PR, 2026-09-13, 14 false fails).
-    if ! git -C "$WT" -c user.name="$HARNESS_MERGE_GIT_NAME" -c user.email="$HARNESS_GIT_EMAIL" merge --no-edit origin/main >>"$CLOG" 2>&1; then
-      CONFLICTED=$(git -C "$WT" status --porcelain 2>/dev/null | grep -cE '^(UU|AA|DD|AU|UA)')
-      git -C "$WT" merge --abort 2>/dev/null
-      if [ "${CONFLICTED:-0}" -gt 0 ]; then
-        : > "$CAND/.conflicts-with-main"
-        say "$BN: conflicts with main on $BRANCH — no PR opened, left for the resolver"
-        [ "$SD" = 1 ] && nh_sd_stage_put "$PROJECT" "$ISSUE" "$KEY" handed-to-resolver \
-          "human step done, but $BRANCH conflicts with main; bin/blocked-resolver.sh owns it"
-      else
-        say "$BN: merge origin/main failed without conflicts (see $CLOG) — left un-rescued this tick"
-      fi
-      git -C "$REPOS/$PROJECT" worktree remove --force "$WT" 2>/dev/null
-      mc_git_auth_clear
-      rescue_reset
-      return 0
+    MMN_WHY=unknown; MMN_RC=2
+    if { command -v pr_needs_main_merge >/dev/null 2>&1 || . "$(dirname "${BASH_SOURCE[0]}")/lib/main-merge-need.sh" 2>/dev/null || . "$H/bin/lib/main-merge-need.sh" 2>/dev/null; } \
+       && command -v pr_needs_main_merge >/dev/null 2>&1; then
+      MMN_WHY=$(pr_needs_main_merge "$SLUG" - "$WT" HEAD origin/main); MMN_RC=$?
     fi
-    rm -f "$CAND/.conflicts-with-main"
-    # The ticket's hold is re-read at the push and the branch must still be at
-    # the head this rescue found (BH-2504, bin/lib/hold-push.sh).
-    if ! { command -v hold_push >/dev/null 2>&1 || . "$(dirname "${BASH_SOURCE[0]}")/lib/hold-push.sh" 2>/dev/null || . "$H/bin/lib/hold-push.sh" 2>/dev/null; } \
-       || ! HOLD_PUSH_LOG="$CLOG" hold_push "$PROJECT" - "$WT" origin HEAD "$BRANCH" "${RESCUE_LEASE:-x}" >>"$CLOG" 2>&1; then
-      # The merge is local-only, so the PR would show the stale diff. Worth
-      # opening anyway — a PR that exists can be rebased by the merge lanes, a
-      # branch with no PR is invisible to all of them — but it says so.
-      say "$BN: could not push the main merge to $BRANCH (see $CLOG) — opening the PR on the pushed head as it stands"
+    if [ "$MMN_RC" = 1 ]; then
+      say "$BN: main merge skipped: $(pr_main_merge_why "$MMN_WHY") — the PR opens on the pushed head of $BRANCH"
+      rm -f "$CAND/.conflicts-with-main"
+    else
+      if ! git -C "$WT" -c user.name="$HARNESS_MERGE_GIT_NAME" -c user.email="$HARNESS_GIT_EMAIL" merge --no-edit origin/main >>"$CLOG" 2>&1; then
+        CONFLICTED=$(git -C "$WT" status --porcelain 2>/dev/null | grep -cE '^(UU|AA|DD|AU|UA)')
+        git -C "$WT" merge --abort 2>/dev/null
+        if [ "${CONFLICTED:-0}" -gt 0 ]; then
+          : > "$CAND/.conflicts-with-main"
+          say "$BN: conflicts with main on $BRANCH — no PR opened, left for the resolver"
+          [ "$SD" = 1 ] && nh_sd_stage_put "$PROJECT" "$ISSUE" "$KEY" handed-to-resolver \
+            "human step done, but $BRANCH conflicts with main; bin/blocked-resolver.sh owns it"
+        else
+          say "$BN: merge origin/main failed without conflicts (see $CLOG) — left un-rescued this tick"
+        fi
+        git -C "$REPOS/$PROJECT" worktree remove --force "$WT" 2>/dev/null
+        mc_git_auth_clear
+        rescue_reset
+        return 0
+      fi
+      rm -f "$CAND/.conflicts-with-main"
+      # The ticket's hold is re-read at the push and the branch must still be at
+      # the head this rescue found (BH-2504, bin/lib/hold-push.sh).
+      if ! { command -v hold_push >/dev/null 2>&1 || . "$(dirname "${BASH_SOURCE[0]}")/lib/hold-push.sh" 2>/dev/null || . "$H/bin/lib/hold-push.sh" 2>/dev/null; } \
+         || ! HOLD_PUSH_LOG="$CLOG" hold_push "$PROJECT" - "$WT" origin HEAD "$BRANCH" "${RESCUE_LEASE:-x}" >>"$CLOG" 2>&1; then
+        # The merge is local-only, so the PR would show the stale diff. Worth
+        # opening anyway — a PR that exists can be rebased by the merge lanes, a
+        # branch with no PR is invisible to all of them — but it says so.
+        say "$BN: could not push the main merge to $BRANCH (see $CLOG) — opening the PR on the pushed head as it stands"
+      fi
     fi
     TITLE=$(git -C "$REPOS/$PROJECT" log -1 --format=%s "origin/$BRANCH" 2>/dev/null)
     TITLE=${TITLE:0:80}
