@@ -1,12 +1,13 @@
 #!/bin/bash
 # shellcheck shell=bash
 # bin/lib/lead-gates.d/15-lead-lane-commit.sh — BH-5873 (BH-5870.0): gate 12 of
-# bin/lead-review-enqueue.sh, ported to the worklist. The lead lane never
-# verdicts its own work: a head whose compare holds a non-merge commit with a
-# line starting `Lead-Lane:` is skipped (rc 10), with one lane-alert warn per
-# (PR, head). The classifier is the enqueue's rt_compare jq, the alert id, lane,
-# text and marker are the enqueue's alert_once ones, so a marker either side
-# wrote stops the other side's warn on the same box.
+# bin/lead-review-enqueue.sh, ported to the worklist. The lead lane never verdicts
+# its own work: a head whose compare holds a non-merge commit with a line
+# starting `Lead-Lane:` is skipped (rc 10), with one lane-alert warn per
+# (PR, head), on the lead-review lane. The classifier is the enqueue's
+# rt_compare jq; the alert id (lead-self-<slug_>-<n>-<sha12>), text and marker
+# (state/lead-review-enqueue/alerted-<id>) are the enqueue's, so a head the
+# enqueue alerted on is not alerted again.
 # The compare base is the PR's own base (one GET repos/<slug>/pulls/<n> read for
 # .base.ref), as gate 12 compares against baseRefName: a stacked PR's compare
 # then lists only its own commits, not its parent branch's.
@@ -43,7 +44,7 @@ lg_gate_lead_lane_commit() {
   id="lead-self-$safe-$n-$h12"; mark="$root/state/lead-review-enqueue/alerted-$id"
   [ -e "$mark" ] && return 10
   text="$slug#$n @$h12 carries a Lead-Lane: commit, so the lead lane will not verdict its own work. To ask anyway: bin/lead-verdict.sh request $slug $n $head --notes \"...\""
-  if "$root/bin/lane-alert.sh" --severity warn --id "$id" lead-review-enqueue "$text" >/dev/null 2>&1; then
+  if "$root/bin/lane-alert.sh" --severity warn --id "$id" lead-review "$text" >/dev/null 2>&1; then
     mkdir -p "${mark%/*}" 2>/dev/null; : > "$mark" 2>/dev/null || _lgt_log "alerted $id but could not write its marker; this may alert again"
     _lgt_log "[skip lead-lane] $slug#$n @$h12 carries a Lead-Lane: commit; not reviewed"
   else

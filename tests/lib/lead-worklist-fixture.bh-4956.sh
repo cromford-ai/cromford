@@ -325,7 +325,8 @@ EOF
 }
 
 # The suites that source this fixture test the worklist, so it is on
-# (LEAD_REVIEW_WORKLIST=1); the lane default is 0 (worklist W7 pins it).
+# (LEAD_REVIEW_WORKLIST=1); the lane default is 1 too since BH-5878
+# (worklist W7c and tests/lead-worklist-default-on.bh-5878-test.sh pin it).
 
 # lwf_needs <owner/repo> <pr>... — the needs-review rows for a repo, in route order, on $SHA
 lwf_needs() { local slug="$1"; shift; lwf_needs_at "$slug" "$SHA" "$@"; }

@@ -1260,8 +1260,8 @@ PR_BODY_FOR "$EVIDENCE_SECTION" > "$BUILD/pr-body.md"
 # BH-5790 / BH-6393: THE BODY CARRIES WHAT THE LEAD REVIEW WOULD BLOCK ON, and
 # the builder checks it before the hub does. Every row of
 # catalog/pr-self-check.tsv runs on the final head and body (no --only: the
-# same rules self_check_hold in bin/lead-review-enqueue.sh runs after the PR is
-# open), at most 2 times:
+# same rules the worklist's self-check gate, bin/lib/lead-gates.d/75-self-check.sh,
+# runs after the PR is open), at most 2 times:
 #   - a plan-files refusal gets one reason line per unplanned file under
 #     `## Files outside the plan`, from psc_plan_missing, with no model turn;
 #   - a body-* refusal (Why, an acceptance section or gate table, the probe the
@@ -1301,9 +1301,9 @@ _pr_self_check_prepush() { # <body-file> <open|edit>
   fi
   # The self-check's kill switch is the fix round's too (lead review
   # lr-5846): PR_SELF_CHECK=0 buys no FIX_MODEL turn. Env first, then the
-  # lead-review-enqueue lane registry; unread = on, like the enqueue.
+  # lead-review lane registry; unread = on, like the self-check gate.
   k="${PR_SELF_CHECK:-}"
-  [ -n "$k" ] || { command -v lane_knob >/dev/null 2>&1 && k=$(lane_knob lead-review-enqueue PR_SELF_CHECK "${PROJECT:-}" 2>/dev/null); }
+  [ -n "$k" ] || { command -v lane_knob >/dev/null 2>&1 && k=$(lane_knob lead-review PR_SELF_CHECK "${PROJECT:-}" 2>/dev/null); }
   if [ "$k" = 0 ]; then
     echo "$(STAMP) [${PROJECT:-?}/${KEY:-?}] pr body: the self-check is off (PR_SELF_CHECK=0); no fix round" >> "$BUILD/pipeline.log"
     return 0

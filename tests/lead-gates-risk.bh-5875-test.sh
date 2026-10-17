@@ -28,7 +28,7 @@
 #   R14  jev_risk.max_per_tick=1, two new heads: one ask, one `not asked` line.
 #   R15  a compare with no files list: `unclassified` in risk.tsv, a job.
 #   R16  lead_pr_authors unreadable: not classified, a job.
-#   R17  a stored lead-route silence note (gate 30 gone): held, no post.
+#   R17  a stored lead-route silence note (gate 30 gone): reviewed, no post.
 #   M1   60-risk.sh removed: the R1 head gets a job and no post (D1).
 # Run from anywhere: HARNESS_TEST_SANDBOX=1 bash tests/lead-gates-risk.bh-5875-test.sh
 set -uo pipefail
@@ -75,7 +75,8 @@ enq_tick() {
 one enforce 101 "$HA" "$LOWF"
 lwf_tick
 [ "$(lgf_signed 101)" = 1 ] && ok || bad "R1 sign-offs=$(lgf_signed 101): $(cat "$L")"
-grep -q "^post example-org/cromford 101 $HA MERGE --source risk-tier --reviewer risk-tier:box-demo --note low risk: docs, screens or new tests only, 3 lines$" "$T/log/lv" \
+# TEST-CHANGE BH-5878: the sign-off carries the BH-6967 tier and mode, as the enqueue's did.
+grep -q "^post example-org/cromford 101 $HA MERGE --source risk-tier --reviewer risk-tier:box-demo --note low risk: docs, screens or new tests only, 3 lines --review-tier low --review-mode risk-tier$" "$T/log/lv" \
   && ok || bad "R1 lead-verdict argv: $(cat "$T/log/lv" 2>/dev/null)"
 [ "$(lgf_jobs 101)" = 0 ] && ok || bad "R1 a lead_review job"
 [[ "$(summ)" == *" skipped=1 "* && "$(summ)" == *" started=0 "* ]] && ok || bad "R1 summary: $(summ)"
@@ -237,14 +238,16 @@ lwf_tick
 [ "$(lgf_lv)" = 0 ] && ok || bad "R16 a lead-verdict call"
 grep -q "#101 @$A12: risk tier skipped (lead_pr_authors row unreadable)" "$L" && ok || bad "R16 line: $(cat "$L")"
 
-# ── R17: a stored lead-route note, gate 30 gone: held, not signed ──
+# ── R17: a stored lead-route note, gate 30 gone: reviewed, not signed ──
+# TEST-CHANGE BH-5878: no enqueue request carries the note any more, so the
+# head is not held for one: the review starts (the note rides in its notes).
 mv "$GD/30-silence.sh" "$T/30.off"
 one enforce 101 "$HA" "$LOWF"
 mkdir -p "$H/state/lead-review-enqueue/silence"
 echo "silence markers for the lead to judge (BH-5797): x" > "$H/state/lead-review-enqueue/silence/note-example-org_cromford-101-$A12"
 lwf_tick
 [ "$(lgf_lv)" = 0 ] && ok || bad "R17 a lead-verdict call with a lead note"
-[[ "$(summ)" == *" held=1"* ]] && ok || bad "R17 summary: $(summ)"
+[ "$(lgf_jobs 101)" = 1 ] && ok || bad "R17 no job: $(summ)"
 mv "$T/30.off" "$GD/30-silence.sh"
 
 # ── M1: no risk gate: the R1 head is reviewed, not signed ──

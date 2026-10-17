@@ -236,7 +236,7 @@ lwf_tick
 [ "$(lwf_cnt '\[skip lead-lane\]' "$L")" = 1 ] && ok || bad "L1 skip lines=$(lwf_cnt '\[skip lead-lane\]' "$L")"
 grep -q "\[skip lead-lane\] example-org/demo-os#102 @$S2 carries a Lead-Lane: commit; not reviewed" "$L" && ok || bad "L1 skip line: $(grep 'skip lead-lane' "$L")"
 [ "$(lwf_cnt . "$T/log/lane-alert")" = 1 ] && ok || bad "L1 lane-alert calls=$(lwf_cnt . "$T/log/lane-alert")"
-[ "$(cat "$T/log/lane-alert" 2>/dev/null)" = "--severity warn --id lead-self-example-org_demo-os-102-$S2 lead-review-enqueue $ALERT_TEXT" ] && ok \
+[ "$(cat "$T/log/lane-alert" 2>/dev/null)" = "--severity warn --id lead-self-example-org_demo-os-102-$S2 lead-review $ALERT_TEXT" ] && ok \
   || bad "L1 alert argv: $(cat "$T/log/lane-alert" 2>/dev/null)"
 [ -e "$MARK" ] && ok || bad "L1 no alert marker at the enqueue's path"
 [[ "$(summ)" == *" skipped=1 "* && "$(summ)" == *" held=0"* ]] && ok || bad "L1 summary: $(summ)"

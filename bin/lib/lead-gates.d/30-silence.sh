@@ -1,16 +1,16 @@
 #!/bin/bash
 # shellcheck shell=bash
-# bin/lib/lead-gates.d/30-silence.sh — gate 9 of bin/lead-review-enqueue.sh
-# (the silence check, BH-5797), ported to the worklist. It runs BEFORE
-# 60-risk.sh, so a low-tier sign-off never skips it. ss_gate
-# (bin/lib/silence-scan.sh) judges the head's compare:
+# bin/lib/lead-gates.d/30-silence.sh — gate 9, the silence check (BH-5797),
+# ported from bin/lead-review-enqueue.sh (BH-5878). It runs BEFORE 60-risk.sh,
+# so a low-tier sign-off never skips it. ss_gate (bin/lib/silence-scan.sh)
+# judges the head's compare:
 #   human route  a public-leak allow-list line: the needs-human label and one
 #                comment (ss_gate's, once per fingerprint), then rc 10 and one
 #                `[skip silence]` line. No review.
-#   lead route   any other allow-list line or marker: rc 11. The lead must see
-#                the markers, and a worklist start carries no request notes, so
-#                the head waits for the enqueue's request, whose notes carry
-#                them (ss_note).
+#   lead route   any other allow-list line or marker: rc 0. The markers ride in
+#                the review's scope notes (field silence_note, ss_note), for the
+#                lead to judge, as the enqueue's request notes carried them.
+#                Gate 60 signs no such head off.
 # State is the enqueue's own, at the same paths: state/lead-review-enqueue/
 # silence/ (the ss_gate row, the note, the scanned-<repo_>-<n>-<sha12> marker
 # that stops a second scan). No check, rc 0: LEAD_REVIEW_SILENCE_CHECK=0, no
@@ -50,9 +50,15 @@ lg_gate_silence() {
     esac
   fi
   note=$(ss_note "$sd" "$slug" "$n" "$head")
-  if [ -n "$note" ]; then
-    _lgt_log "$slug#$n @$h12: silence markers for the lead to judge; held for the enqueue's request, which carries them in its notes"
-    return 11
-  fi
+  [ -n "$note" ] && _lgt_log "$slug#$n @$h12: silence markers for the lead to judge; they ride in the review notes"
+  return 0
+}
+
+# lg_field_silence_note — the lead-route markers of this head (ss_note), if any.
+lg_field_silence_note() {
+  local root="${HARNESS:-${H:-}}"
+  command -v ss_note >/dev/null 2>&1 && [ -n "$root" ] || return 0
+  [ "${LEAD_REVIEW_SILENCE_CHECK:-}" = 0 ] && return 0
+  ss_note "$root/state/lead-review-enqueue/silence" "$1" "$2" "$(printf '%s' "$3" | tr 'A-F' 'a-f')"
   return 0
 }

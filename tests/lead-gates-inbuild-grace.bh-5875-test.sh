@@ -14,6 +14,7 @@
 #   I6  the head is in the enqueue's requested.tsv: a job.
 #   I7  medium under shadow: the gate holds nothing.
 #   I8  a builder APPROVE bound to this head: held (not a rebound).
+# Every head has a running build job bound to it (BH-5740, gate 70's rule).
 #   M1  70-inbuild-grace.sh removed: the I1 head gets a job (D1).
 # Run from anywhere: HARNESS_TEST_SANDBOX=1 bash tests/lead-gates-inbuild-grace.bh-5875-test.sh
 set -uo pipefail
@@ -38,7 +39,12 @@ WAITF="$ST/inbuild-wait-example-org_cromford-104-$M12"
 MEDF='[["bin/lib/thing.sh","modified",40,10,"@@ -1 +1 @@\n+x=1"]]'
 LOWF='[["tests/x.bh-1-test.sh","added",3,0,"@@ -0,0 +1,3 @@\n+#!/bin/bash\n+echo ok\n+exit 0"]]'
 summ() { lwf_summary; }
-med() { lgf_reset "${1:-enforce}"; lgf_needs "104:$HM"; lgf_cmp "$HM" "${2:-$MEDF}"; }
+# TEST-CHANGE BH-5878: gate 70 now holds only while a build job runs the
+# in-build review on the head (BH-5740, ported from the retired enqueue), so
+# each head here has its build job running, bound to it.
+bjob() { jq -nc --arg s "$HM" '{verdict:"APPROVE", reviewed_sha:$s, job_id:"job-fixture-build",
+  job:{id:"job-fixture-build", kind:"build", status:"running"}}' > "$FX/jv.json"; }
+med() { lgf_reset "${1:-enforce}"; lgf_needs "104:$HM"; lgf_cmp "$HM" "${2:-$MEDF}"; bjob; }
 
 # ── I1: first sight: held, marker written ──
 med
@@ -49,7 +55,9 @@ lwf_tick
 grep -q "#104 @$M12: awaiting the in-build lead-grade review (" "$L" && ok || bad "I1 line: $(cat "$L")"
 
 # ── I2: the grace spent: reviewed ──
-med; mkdir -p "$ST"; : > "$WAITF"; touch -d '2020-01-01 00:00:00' "$WAITF"
+# TEST-CHANGE BH-5878: 2 hours old, not 2020: the gates now sweep these
+# markers after 7 days (99-state-sweep.sh, the enqueue's retention).
+med; mkdir -p "$ST"; : > "$WAITF"; touch -d '2 hours ago' "$WAITF"
 printf 600 > "$FX/settings/risk_tier.inbuild_grace_s"
 lwf_tick
 [ "$(lgf_jobs 104)" = 1 ] && ok || bad "I2 no job after the grace: $(cat "$L")"
@@ -90,7 +98,7 @@ lwf_tick
 
 # ── I8: the builder APPROVE is on this head: held ──
 med
-jq -nc --arg s "$HM" '{verdict:"APPROVE", reviewed_sha:$s, job_id:"job-fixture-1"}' > "$FX/jv.json"
+bjob
 lwf_tick
 [ "$(lgf_jobs 104)" = 0 ] && ok || bad "I8 a job for a head-bound APPROVE"
 [[ "$(summ)" == *" held=1"* ]] && ok || bad "I8 summary: $(summ)"

@@ -26,6 +26,16 @@
 #   lg_job_fields <slug> <pr> <head>  one JSON object, key <name> = the
 #       function's stdout as a string (empty stdout = no key). rc 1 when a field
 #       function fails or the gates did not load.
+#   lg_scope_notes <head> <fields-json>  the scope_notes of the worklist start
+#       (BH-5878), from lg_job_fields' object, in the order the enqueue
+#       writes them: `auto: <reqfor, else builder APPROVE> on <sha12>`, then the
+#       fields delta_note, dup_note, prev_note, silence_note, self_check_notes,
+#       traced_note, stepdone_note and probe_note that are set, joined by "; ".
+#       `review-tier:`/`review-mode:` in those groups become `=` (the readers
+#       trust only the last group). The text before the tokens fits 4000 chars
+#       less the tokens (lpv_fit first, then a cut), and a review_tokens field
+#       that matches `review-tier:<low|medium|high> review-mode:<full|intent>`
+#       ends the notes. Always rc 0.
 # Logs go to the caller's `log` when it has one, else stderr.
 
 _LGT_LOADED="" _LGT_GATES=() _LGT_TICKS=() _LGT_POSTS=() _LGT_FIELDS=()
@@ -110,4 +120,22 @@ lg_job_fields() {
     out=$(jq -c --arg k "${fn#lg_field_}" --arg v "$v" '. + {($k): $v}' <<<"$out") || return 1
   done
   printf '%s\n' "$out"
+}
+
+lg_scope_notes() {
+  local f="${2:-}" notes k v tok max
+  [ -n "$f" ] || f='{}'
+  v=$(jq -r '.reqfor // empty' <<<"$f" 2>/dev/null)
+  notes="auto: ${v:-builder APPROVE} on ${1:0:12}"
+  for k in delta_note dup_note prev_note silence_note self_check_notes traced_note stepdone_note probe_note; do
+    v=$(jq -r --arg k "$k" '.[$k] // empty' <<<"$f" 2>/dev/null)
+    [ -n "$v" ] && notes="$notes; $v"
+  done
+  notes="${notes//review-tier:/review-tier=}"; notes="${notes//review-mode:/review-mode=}"
+  tok=$(jq -r '.review_tokens // empty' <<<"$f" 2>/dev/null)
+  [[ "$tok" =~ ^review-tier:(low|medium|high)\ review-mode:(full|intent)$ ]] || tok=""
+  max=4000; [ -n "$tok" ] && max=$((4000 - ${#tok} - 2))
+  command -v lpv_fit >/dev/null 2>&1 && notes=$(lpv_fit "$notes" "$max")
+  [ "${#notes}" -le "$max" ] || notes="${notes:0:$max}"
+  printf '%s' "$notes${tok:+; $tok}"
 }

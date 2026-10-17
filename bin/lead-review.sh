@@ -7,8 +7,8 @@
 # item as soon as a slot is free, until LEAD_REVIEW_DEADLINE_S closes STARTS.
 # There is no per-tick start cap.
 #
-# THE WORKLIST (BH-4956), first, when LEAD_REVIEW_WORKLIST=1 (default 0: the
-# enqueue stays the gate until #5870, see the AUTO_REPOS block). For each
+# THE WORKLIST (BH-4956), first, when LEAD_REVIEW_WORKLIST=1 (the default
+# since BH-5878; see the AUTO_REPOS block). For each
 # LEAD_REVIEW_AUTO_REPOS repo (the
 # lead-review-land knob, read in a subshell) this box owns, pr_needs_review
 # (GET /api/pr-state/needs-review, bin/lib/lead-worklist.sh lw_items) lists the
@@ -736,7 +736,7 @@ review_one() {
   local RP_STATE="" RP_TAIL="" CL_STATE="" CL_TAIL="" rp_rc rp_ci harness_repo dmode="" dprev="" dline="" dreport lb tn tslug tdone thread_note total half lfp lstage lnote
   local capr="" capo capf ctitle clabels
   local resets mreset since f what fields="" bfp bchg rsn bmode="" bline="" ldp_rc="" dbytes ldp_why nprod ldp_mode ldp_find
-  local lpv=0 lpk="" lprc imode="" imodel ire ckl imm rlcap="" rlgl=0 rlgo
+  local lpv=0 lpk="" lprc imode="" imodel ire ckl imm wlnotes="" rlcap="" rlgl=0 rlgo
   # BH-5873: the mode the gates chose (full|delta|replay). Nothing reads it yet;
   # child 2 of #5870 (delta and replay) does.
   # shellcheck disable=SC2034
@@ -752,9 +752,11 @@ review_one() {
   R=skipped
   model=$(model_for lead.review "$project" 2>/dev/null) && [ -n "$model" ] \
     || { log "no model route for lead.review; request $id left requested"; return; }
-  # A worklist item's job carries the gates' fields (lg_job_fields); none = no meta.
+  # A worklist item's job carries the gates' fields (lg_job_fields); none = no
+  # meta. The same fields are its scope_notes on /start (BH-5878, lg_scope_notes).
   if [ -z "$id" ]; then
     fields=$(lg_job_fields "$repo" "$pr" "$sha") || { log "skip $key: gate fields unreadable"; R=skipped; return; }
+    wlnotes=$(lg_scope_notes "$sha" "$fields")
     [ "$fields" = '{}' ] && fields=""
   fi
   job=$(job_open "$project" "$key" lead_review review lead-review "$fields"); rc=$?
@@ -790,10 +792,12 @@ review_one() {
   R=failed
   if [ -z "$id" ]; then
     # A worklist item: /start creates or takes its request row (lr_start rc contract).
-    res=$(lr_start "$repo" "$pr" "$sha" "$job" "$JOBS_BOX" 2>/dev/null); rc=$?
+    res=$(lr_start "$repo" "$pr" "$sha" "$job" "$JOBS_BOX" "$wlnotes" 2>/dev/null); rc=$?
     case "$rc" in
       0) r=$(jq -c '.request // empty' <<<"$res" 2>/dev/null); id=$(jq -r '.id // empty' <<<"$r" 2>/dev/null)
          [ -n "$id" ] || { log "start of $key answered no request id; job failed"; job_update "$job" status=failed; return; }
+         # A row made before its notes existed reads this start's notes.
+         [ -n "$(jq -r '.scope_notes // empty' <<<"$r" 2>/dev/null)" ] || r=$(jq -c --arg n "$wlnotes" '.scope_notes = $n' <<<"$r")
          lg_post "$repo" "$pr" "$sha" ;;
       3) st=$(jq -r '.request.status // empty' <<<"$res" 2>/dev/null)
          job_update "$job" status=done
@@ -1632,14 +1636,12 @@ declare -A PROJ BOX OWNED_REPO
 # The worklist (BH-4956, header), first. LEAD_REVIEW_AUTO_REPOS is
 # lead-review-land's knob, read in a subshell so that lane's other knobs stay
 # out of this one. Unset or empty = no worklist: the request rows alone.
-# LEAD_REVIEW_WORKLIST (default 0) must be 1 too. bin/lead-review-enqueue.sh is
-# still the gate in front of the lead review (#4956 option (b)): its holds (the
-# PR self-check, the silence check, the rebase and traced holds, the risk-tier
-# sign-off, the in-build grace) write no gate fact, so a worklist item would
-# start a review the enqueue is holding. Turn it on once #5870 ports those
-# gates; until then the request rows the enqueue writes are the only input.
+# LEAD_REVIEW_WORKLIST (default 1, BH-5878) must be 1 too. The enqueue's holds
+# run as the gates of bin/lib/lead-gates.d/ before each worklist start (#5870).
+# bin/lead-review-enqueue.sh still writes request rows; a head it requested is
+# reviewed once (lr_start rc 3, gate 20). A row =0 turns the worklist off.
 AUTO_REPOS=""
-case "${LEAD_REVIEW_WORKLIST:-0}" in
+case "${LEAD_REVIEW_WORKLIST:-1}" in
   1) AUTO_REPOS=$(command -v lane_env_apply >/dev/null 2>&1 && lane_env_apply lead-review-land >/dev/null 2>&1
        [ -n "${LEAD_REVIEW_AUTO_REPOS+x}" ] && printf '%s' "$LEAD_REVIEW_AUTO_REPOS") ;;
   0) ;;

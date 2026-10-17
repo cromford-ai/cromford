@@ -100,7 +100,7 @@ grep -q 'nudge not recorded' "$T/w6.err" && ok || bad "W6b stderr: $(cat "$T/w6.
 [ "$(lwf_cnt '^POST /api/wakes/lane .*"kind":"lead-review"' "$T/log/worker")" = 1 ] && ok || bad "W6b the doorbell still rings"
 sed -n '/^# usage:/,/^#         --source human verdict/p' "$H/bin/lead-verdict.sh" | grep 'request' | grep -qi nudge && ok || bad "W6 usage does not say nudge"
 
-# ── W7: LEAD_REVIEW_WORKLIST=0 (the lane default): the enqueue stays the gate ──
+# ── W7: LEAD_REVIEW_WORKLIST=0 (a settings row; the default is 1 since BH-5878) ──
 # #4956 option (b): bin/lead-review-enqueue.sh's holds write no gate fact, so
 # with the worklist off a needs-review item the enqueue did not request is NOT
 # started; only the request rows are reviewed.
@@ -119,7 +119,7 @@ grep -q "LEAD_REVIEW_WORKLIST='yes' is not 0 or 1" "$L" && ok || bad "W7b no log
 lwf_reset
 lwf_needs example-org/demo-os 101
 ( unset LEAD_REVIEW_WORKLIST; LEAD_REVIEW_AUTO_REPOS="example-org/demo-os" lwf_tick )
-[ "$(needs_reads)" = 0 ] && ok || bad "W7c unset LEAD_REVIEW_WORKLIST (the default 0) must read no worklist"
+[ "$(needs_reads)" = 1 ] && ok || bad "W7c unset LEAD_REVIEW_WORKLIST (the default 1, BH-5878) must read the worklist once (reads=$(needs_reads))"
 
 echo "lead-review-worklist.bh-4956: $PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ]

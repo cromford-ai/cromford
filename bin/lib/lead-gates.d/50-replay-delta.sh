@@ -1,12 +1,15 @@
 #!/bin/bash
 # shellcheck shell=bash
-# bin/lib/lead-gates.d/50-replay-delta.sh — gate 3 of bin/lead-review-enqueue.sh
-# (BH-3930, BH-5294, BH-5582), ported to the worklist: the lead's word on an
-# earlier head G is kept when this head carries the same patch.
+# bin/lib/lead-gates.d/50-replay-delta.sh — gate 3 (BH-3930, BH-5294,
+# BH-5582, BH-5909, BH-6391, BH-6967), ported from
+# bin/lead-review-enqueue.sh (BH-5878): the lead's word on an earlier head G is kept when this head
+# carries the same patch.
 #   It runs when gate 10 left the head unapproved or rebound, or when
 #   bin/lib/lead-delta.sh is loaded (the enqueue's condition). Gate 10's
 #   LGB_* globals for this (slug, PR, head) say which; without them the head
-#   counts as approved and not rebound.
+#   counts as approved and not rebound. A head gate 10 passed on a person's
+#   HUMAN-STEP-DONE answer (LGB_STEPDONE=1, BH-6696) is never replayed or
+#   delta-reviewed: rc 0 at once, a full review.
 #   GET /api/verdicts?repo=&pr= (the whole history):
 #     unreadable or truncated            rc 0, a full review (the enqueue fell
 #                                        through to its request here too).
@@ -16,22 +19,55 @@
 #       risk-tier row on this head       rc 10 [skip verdict].
 #   G is the newest lead MERGE, MERGE-WITH-NOTES or BLOCK row on another head
 #   whose note is not itself a `lead-replay:` (bin/lib/lead-worklist.sh
-#   lw_replay's rule). A BLOCK is a source only for a rebound head.
+#   lw_replay's rule). A BLOCK is a source only for a rebound head. The same
+#   history names the re-review source (BH-6391): field prev_note is
+#   lpv_note's `lead-prev:<G> word:<W> ...` group (bin/lib/lead-prev.sh), on
+#   the clone under REPOS_ROOT, with a fetch only when it lacks G or the head.
 #   The class: a cached delta.tsv row, else patch_same_fetch, then ld_classify
 #   (or patch_same alone without bin/lib/lead-delta.sh).
-#     replay <how>   bin/lead-verdict.sh post <G's word> --source lead --note
-#                    "lead-replay:<G12> how:<how>". Exit 0, 4 or 5: one
-#                    modes.tsv `replay` row and rc 12. Any other exit: rc 11.
-#                    With no readable lead token file on this box it posts
-#                    nothing and returns 0: review_one's own lw_replay then
-#                    replays a MERGE through /result.
-#     delta ...      (G's word not BLOCK) LG_MODE=delta and rc 0. It writes no
-#                    modes.tsv `delta` row: review_one does not read LG_MODE
-#                    yet, so the review that runs is a full one.
+#     replay <how>   BH-5909: a MERGE (or MERGE-WITH-NOTES) onto a head of the
+#                    harness repo (fleet.conf's cromford row) that changes
+#                    console-ui/src/ with no QA: PASS naming it is not replayed
+#                    while the row lane.lead-review.lead_review_console_qa_gate
+#                    reads 1 (unreadable = 1): cqg_replay_hold, one log line,
+#                    rc 0, a full review. Else bin/lead-verdict.sh post <G's
+#                    word> --source lead --note "lead-replay:<G12> how:<how>"
+#                    --review-mode <G's review_mode, full when none> (BH-6967).
+#                    Exit 0, 4 or 5: one modes.tsv `replay` row and rc 12. Any
+#                    other exit: rc 11. With no readable lead token file on
+#                    this box it posts nothing and returns 0: review_one's own
+#                    lw_replay then replays a MERGE through /result.
+#     delta ...      (G's word not BLOCK) LG_MODE=delta and rc 0; field
+#                    delta_note is `lead-delta:<G> lines:<l>/<max> files:<f>
+#                    [protected:<p>,..]`, the scope note review_one reads to
+#                    review the delta.
 #     full ..., no G, or any read or lib failure   rc 0.
+# LGD_KEY (<slug>#<n>@<head>) and LGD_NOTE (the delta note) are set on every
+# call, for gate 60's intent rule.
 # State: state/lead-review-enqueue/delta.tsv and modes.tsv, the enqueue's own
 # files, columns and keys (pruned 7 and 30 days, once per process).
 # Sourced by bin/lib/lead-gates.sh, never run.
+
+# shellcheck source=bin/lib/console-qa-gate.sh
+command -v cqg_replay_hold >/dev/null 2>&1 || . "${BASH_SOURCE[0]%/*}/../console-qa-gate.sh" 2>/dev/null || true
+
+declare -g LGD_KEY="" LGD_NOTE="" _LGD_PVH="" _LGD_PVW="" _LGD_CQG=""
+
+# _lgd_cqg_on — the row lane.lead-review.lead_review_console_qa_gate, read once
+#   per process: 1 = on; no row = off; an unreadable row = on (a replay is held
+#   and the head gets a review), the enqueue's cqg_gate_on.
+_lgd_cqg_on() {
+  local v rc=0
+  if [ -z "$_LGD_CQG" ]; then
+    v=$(setting_get lane.lead-review.lead_review_console_qa_gate 2>/dev/null) || rc=$?
+    case "$rc" in
+      0) _LGD_CQG=0; [ "$(printf '%s' "$v" | tr -d '[:space:]')" = 1 ] && _LGD_CQG=1 ;;
+      2) _LGD_CQG=0 ;;
+      *) _LGD_CQG=1 ;;
+    esac
+  fi
+  [ "$_LGD_CQG" = 1 ]
+}
 
 declare -g _LGR_TICKED="" _LGR_LDMAX="" _LGR_LDPMAX=""
 
@@ -65,10 +101,14 @@ lg_tick_replay_delta() {
 
 lg_gate_replay_delta() {
   local slug="$1" n="$2" head h12="${3:0:12}" root="${HARNESS:-${H:-}}" approved=1 rebound=0 ld=0 st vd d
-  local ph="" pw="" pid="" project repo cls="" how prc out tok box
+  local ph="" pw="" pid="" pm="" project repo cls="" how prc out tok box cqh hrepo
   head=$(printf '%s' "$3" | tr 'A-F' 'a-f')
   [ -n "$_LGR_TICKED" ] || lg_tick_replay_delta "$slug"
-  if [ "${LGB_KEY:-}" = "$slug#$n@$head" ]; then approved="${LGB_APPROVED:-1}"; rebound="${LGB_REBOUND:-0}"; fi
+  LGD_KEY="$slug#$n@$head"; LGD_NOTE=""; _LGD_PVH=""; _LGD_PVW=""
+  if [ "${LGB_KEY:-}" = "$slug#$n@$head" ]; then
+    approved="${LGB_APPROVED:-1}"; rebound="${LGB_REBOUND:-0}"
+    [ "${LGB_STEPDONE:-0}" = 1 ] && return 0
+  fi
   command -v ld_classify >/dev/null 2>&1 && ld=1
   [ "$rebound" = 1 ] || [ "$approved" = 0 ] || [ "$ld" = 1 ] || return 0
   d=$(lgs_dir 2>/dev/null) || { _lgt_log "$slug#$n @$h12: no scratch dir; no replay, full review"; return 0; }
@@ -87,12 +127,14 @@ lg_gate_replay_delta() {
        and ((.source // "") | IN("lead", "human", "risk-tier")))' "$vd" >/dev/null 2>&1; then
     _lgr_skip "$slug" "$n" "$head" verdict "a lead, human or risk-tier verdict is on this head"; return 10
   fi
-  IFS=$'\t' read -r ph pw pid < <(jq -r --arg h "$head" '[.rows[] | select(.source == "lead"
+  IFS=$'\t' read -r ph pw pid pm < <(jq -r --arg h "$head" '[.rows[] | select(.source == "lead"
       and ((.head_sha // "") | ascii_downcase) != $h
       and ((.verdict // "") | IN("MERGE", "MERGE-WITH-NOTES", "BLOCK"))
       and (((.note // "") | contains("lead-replay:")) | not))]
-    | max_by(.id) // empty | "\(.head_sha | ascii_downcase)\t\(.verdict)\t\(.id)"' "$vd" 2>/dev/null)
+    | max_by(.id) // empty | "\(.head_sha | ascii_downcase)\t\(.verdict)\t\(.id)\t\(.review_mode // "")"' "$vd" 2>/dev/null)
   [[ "$ph" =~ ^[0-9a-f]{40}$ ]] || return 0
+  # BH-6391: the re-review source is the same row (a replay row has no review behind it).
+  _LGD_PVH="$ph"; _LGD_PVW="$pw"
   # BH-5294: a BLOCK never leaves its own head but through BH-3930's rebound replay.
   [ "$pw" = BLOCK ] && [ "$rebound" != 1 ] && return 0
   st=$(_lgr_state) || { _lgt_log "$slug#$n @$h12: no harness root; no replay, full review"; return 0; }
@@ -124,6 +166,15 @@ lg_gate_replay_delta() {
   case "$cls" in
     "replay "*)
       how=${cls#replay }
+      # BH-5909: a replayed MERGE would skip the console QA gate.
+      hrepo=$(awk '$1 == "cromford" {print $2; exit}' "${FLEET_CONF:-$root/fleet.conf}" 2>/dev/null)
+      if [ "$pw" != BLOCK ] && [ -n "$hrepo" ] && command -v cqg_replay_hold >/dev/null 2>&1 && _lgd_cqg_on \
+         && cqh=$(cqg_replay_hold "$slug" "$n" "$head" "$repo" origin/main "$hrepo"); then
+        _lgt_log "$slug#$n @$h12: no lead $pw replay from ${ph:0:12} ($cqh); full review"
+        return 0
+      fi
+      # BH-6967: the replayed row's own mode; a row with none was a full review.
+      case "$pm" in full|intent) ;; *) pm=full ;; esac
       tok="${LEAD_VERDICT_TOKEN_FILE:-${HOME:-}/.config/cromford/lead-verdict-token}"
       if [ ! -r "$tok" ]; then
         _lgt_log "$slug#$n @$h12: since ${ph:0:12}: $cls; no lead token on this box, so review_one's own replay decides"
@@ -131,7 +182,7 @@ lg_gate_replay_delta() {
       fi
       box="${JOBS_BOX:-}"; [ -n "$box" ] || box=$(local_box_name 2>/dev/null)
       prc=0; out=$("$root/bin/lead-verdict.sh" post "$slug" "$n" "$head" "$pw" --source lead --reviewer "box:${box:-unknown}" \
-        --note "lead-replay:${ph:0:12} how:$how" 2>&1) || prc=$?
+        --note "lead-replay:${ph:0:12} how:$how" --review-mode "$pm" 2>&1) || prc=$?
       case "$prc" in
         0|4|5)
           printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$(date +%s)" "$(date -u +%Y%m%d)" replay "$slug" "$n" "$head" \
@@ -143,10 +194,39 @@ lg_gate_replay_delta() {
       return 11 ;;
     "delta "*)
       if [ "$pw" != BLOCK ]; then
-        LG_MODE=delta
+        local dl dm df dp=""
+        read -r _ dl dm df dp <<<"$cls"
+        LG_MODE=delta; LGD_NOTE="lead-delta:$ph lines:$dl/$dm files:$df${dp:+ $dp}"
         _lgt_log "$slug#$n @$h12: since ${ph:0:12}: $cls; LG_MODE=delta (lead $pw, verdict row #$pid)"
       fi ;;
     *) _lgt_log "$slug#$n @$h12: since ${ph:0:12}: ${cls}; a full lead review" ;;
   esac
+  return 0
+}
+
+# The fields of this head's job and scope notes (BH-5878).
+lg_field_delta_note() {
+  [ "$LGD_KEY" = "$1#$2@$(printf '%s' "$3" | tr 'A-F' 'a-f')" ] && printf '%s' "$LGD_NOTE"
+  return 0
+}
+# lg_field_prev_note — the re-review group (lpv_note), computed here, after
+#   every gate passed, so no held head pays the git work.
+lg_field_prev_note() {
+  local slug="$1" n="$2" head root="${HARNESS:-${H:-}}" project repo note c
+  head=$(printf '%s' "$3" | tr 'A-F' 'a-f')
+  [ "$LGD_KEY" = "$slug#$n@$head" ] && [ -n "$_LGD_PVH" ] && command -v lpv_note >/dev/null 2>&1 || return 0
+  project=$(awk -v r="$slug" '$1 !~ /^#/ && $2 == r {print $1; exit}' "${FLEET_CONF:-$root/fleet.conf}" 2>/dev/null)
+  repo="${REPOS_ROOT:-/root/repos}/$project"
+  if [ -z "$project" ] || [ ! -d "$repo/.git" ]; then
+    _lgt_log "$slug#$n @${head:0:12}: re-review of ${_LGD_PVH:0:12} ($_LGD_PVW): no checkout at $repo; no lead-prev note"
+    return 0
+  fi
+  if ! git -C "$repo" cat-file -e "$_LGD_PVH^{commit}" 2>/dev/null || ! git -C "$repo" cat-file -e "$head^{commit}" 2>/dev/null; then
+    command -v patch_same_fetch >/dev/null 2>&1 && patch_same_fetch "$repo" "$_LGD_PVH" "$head" >/dev/null 2>&1
+  fi
+  note=$(lpv_note "$repo" origin/main "$_LGD_PVH" "$_LGD_PVW" "$head" "$n")
+  c=${note#* own-commits:}
+  _lgt_log "$slug#$n @${head:0:12}: re-review of ${_LGD_PVH:0:12} ($_LGD_PVW): own-commits:${c%% *}"
+  printf '%s' "$note"
   return 0
 }

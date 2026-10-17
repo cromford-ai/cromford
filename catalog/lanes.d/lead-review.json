@@ -35,11 +35,11 @@
     {
       "env": "LEAD_REVIEW_WORKLIST",
       "type": "int",
-      "default": 0,
+      "default": 1,
       "min": 0,
       "max": 1,
       "zero_means": "off",
-      "note": "BH-4956: 1 makes the tick read the needs-review worklist (GET /api/pr-state/needs-review) for the LEAD_REVIEW_AUTO_REPOS repos before the request rows. 0 (the default): the request rows bin/lead-review-enqueue.sh writes are the only input, so the enqueue's holds (self-check, silence, rebase, traced, risk tier, in-build grace) stay the gate in front of the review (#4956 option (b)). Turn it on once #5870 ports those gates. Read by bin/lead-review.sh as ${LEAD_REVIEW_WORKLIST:-0}; any other value is one log line and no worklist.",
+      "note": "BH-4956, BH-5878: 1 (the default) makes the tick read the needs-review worklist (GET /api/pr-state/needs-review) for the LEAD_REVIEW_AUTO_REPOS repos before the request rows; the gates in bin/lib/lead-gates.d/ (self-check, silence, rebase, traced, risk tier, in-build grace, live probes) run before each worklist start. 0: the request rows are the only input. bin/lead-review-enqueue.sh still writes request rows next to it; a head it requested is reviewed once (lr_start rc 3 and gate 20). Read by bin/lead-review.sh as ${LEAD_REVIEW_WORKLIST:-1}; any other value is one log line and no worklist.",
       "settable": true
     },
     {

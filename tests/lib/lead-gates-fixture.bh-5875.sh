@@ -7,8 +7,10 @@
 #     LEAD_REVIEW_AUTO_REPOS, with a clone at $T/repos/cromford;
 #   - the real catalog/silence-markers.tsv (the lead protected paths are the
 #     lead_protected_paths rows lwf_setup already serves, BH-4148);
-#   - a curl in front of the fixture's: GET /api/verdict?pr= answers $FX/jv.json
-#     ({} = no builder row; jv.fail = 500), POST /api/risk-tiers answers 201.
+#   - a curl in front of the fixture's: GET /api/verdict?pr= answers $FX/jv.json,
+#     else (jv.approve, which lgf_reset writes) a builder APPROVE bound to the
+#     PR's head ($FX/head.<n>), else {} (no builder row); jv.fail = 500.
+#     POST /api/risk-tiers answers 201.
 #     Both are logged to $T/log/worker like the fixture's own requests;
 #   - a gh in front of the fixture's: POST issues/<n>/labels (labelfail = 500;
 #     adds the label to $FX/labels.<n>), POST issues/<n>/comments
@@ -52,6 +54,9 @@ case "\$m \$p" in
     lg
     if [ -e "$FX/jv.fail" ]; then printf '{"error":"fixture outage"}\n500'
     elif [ -r "$FX/jv.json" ]; then printf '%s\n200' "\$(cat "$FX/jv.json")"
+    elif [ -e "$FX/jv.approve" ]; then
+      n=\$(printf '%s' "\$p" | sed -n 's/.*pull%2F\([0-9]*\).*/\1/p')
+      printf '{"verdict":"APPROVE","reviewed_sha":"%s","job_id":"job-fixture-1"}\n200' "\$(cat "$FX/head.\$n" 2>/dev/null)"
     else printf '{}\n200'; fi
     exit 0 ;;
 esac
@@ -118,6 +123,10 @@ lgf_reset() {
     *) printf '%s' "${1:-enforce}" > "$FX/settings/risk_tier.mode.example-org.cromford" ;;
   esac
   printf 'lead-bot' > "$FX/settings/lead_pr_authors"
+  # TEST-CHANGE BH-5878: gate 60 signs off only a head a builder approved (the
+  # enqueue's BH-5630 rule, now the gate's), so every head here carries a
+  # builder APPROVE unless a suite writes jv.json or removes jv.approve.
+  : > "$FX/jv.approve"
 }
 
 # lgf_needs <pr>:<head>... — the cromford worklist, in that order

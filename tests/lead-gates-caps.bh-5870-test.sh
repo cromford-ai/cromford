@@ -14,7 +14,7 @@
 #   C2  LEAD_REVIEW_ENQUEUE_MAX_PER_TICK=2, three PRs in one tick: 2 jobs,
 #       held=1, one `[skip deferred]` line; the next tick starts the third.
 #   C3  a registry that declares the per-tick knob required with no default,
-#       and an empty env: no job, held= every item, one line naming the knob.
+#       and an empty env: the tick exits 75 (the lane fails closed), no job.
 #   C4  LEAD_REVIEW_MAX_PER_PR_DAY empty, or 0, and the per-tick knob empty:
 #       each holds, no job.
 #   C5  started.tsv lines dated yesterday do not count.
@@ -90,14 +90,16 @@ LEAD_REVIEW_ENQUEUE_MAX_PER_TICK=2 lwf_tick
 [ "$(lgf_jobs 103)" = 1 ] && ok || bad "C2 the next tick did not start 103: $(tail -5 "$L")"
 
 # ── C3: a registry outage (required knob, no default, empty env) holds every head ──
+# TEST-CHANGE BH-5878: the knob is the lead-review lane's own now (it was the
+# enqueue lane's), so the dispatcher's own lane_env_apply fails closed first:
+# the whole tick exits 75 and starts nothing, before any gate runs.
 lg6_reset
 lgf_needs "101:$(hd 101)" "102:$(hd 102)"
-jq -nc '{lanes:[{id:"lead-review-enqueue", knobs:[{env:"LEAD_REVIEW_ENQUEUE_MAX_PER_TICK", required:true}]}], libs:[]}' > "$T/lanes-c3.json"
+jq -nc '{lanes:[{id:"lead-review", knobs:[{env:"LEAD_REVIEW_ENQUEUE_MAX_PER_TICK", required:true}]}], libs:[]}' > "$T/lanes-c3.json"
 LANE_REGISTRY="$T/lanes-c3.json" LEAD_REVIEW_ENQUEUE_MAX_PER_TICK= lwf_tick
 [ "$(lgf_jobs 101)$(lgf_jobs 102)" = 00 ] && ok || bad "C3 a job on a registry outage: $(cat "$L")"
-[[ "$(summ)" == *" held=2 "* ]] && ok || bad "C3 summary: $(summ)"
-[ "$(lwf_cnt "LEAD_REVIEW_ENQUEUE_MAX_PER_TICK='' unreadable (rc 75); every worklist head is held" "$L")" = 1 ] && ok \
-  || bad "C3 the knob line: $(cat "$L")"
+[ "$RC" = 75 ] && ok || bad "C3 the tick exited $RC (want 75, the lane failing closed): $(cat "$T/out")"
+[ "$(lwf_agents)" = 0 ] && ok || bad "C3 agent calls=$(lwf_agents)"
 
 # ── C4: an empty or 0 knob is a hold, never "no cap" ──
 lg6_reset

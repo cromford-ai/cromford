@@ -1,19 +1,18 @@
 #!/bin/bash
 # shellcheck shell=bash
-# bin/lib/lead-gates-knobs.sh — the enqueue lane's knobs for the worklist gates
-# (bin/lib/lead-gates.d/75..97). Sourced by those gate files, never run.
+# bin/lib/lead-gates-knobs.sh — the lead-review lane's knobs for the worklist
+# gates (bin/lib/lead-gates.d/57..97). They moved from the
+# lead-review-enqueue lane (BH-5878). Sourced by those gate files, never run.
 #
-#   lgk_load   reads the knobs ONCE per process: `lane_env_apply
-#       lead-review-enqueue` runs in a subshell (the pattern of 10-builder.sh),
-#       so that lane's knobs never leak into the dispatcher's own env. LGK_RC is
-#       the subshell's rc (75 = the registry declares a required knob with no
-#       row, no env and no default). Without lane_env_apply the values come from
-#       the current env and LGK_RC is 0. Always rc 0; the readers judge LGK_RC.
+#   lgk_load   reads the knobs ONCE per process: `lane_env_apply lead-review`
+#       runs in a subshell (the pattern of 10-builder.sh). LGK_RC is the
+#       subshell's rc (75 = the registry declares a required knob with no row,
+#       no env and no default). Without lane_env_apply the values come from the
+#       current env and LGK_RC is 0. Always rc 0; the readers judge LGK_RC.
 #
-# Each knob, its enqueue default and its reader. Every reader applies the
-# enqueue's own default and validation, so the two lanes never read one row two
-# ways:
-#   LGK_MAXT      LEAD_REVIEW_ENQUEUE_MAX_PER_TICK   required, no default here:
+# Each knob, its default and its reader. Every reader applies the default and
+# validation the enqueue used, so one row is never read two ways:
+#   LGK_MAXT      LEAD_REVIEW_ENQUEUE_MAX_PER_TICK   required (registry 15), none here:
 #                 empty or not a positive integer = hold        90-caps.sh
 #   LGK_RETRYMAX  LEAD_REVIEW_FAILED_RETRY_MAX       2           95-retry-reclaim.sh
 #   LGK_PSC       PR_SELF_CHECK                      1 (0 = off) 75, 78
@@ -40,7 +39,7 @@ lgk_load() {
   [ -n "$_LGK_DONE" ] && return 0
   _LGK_DONE=1
   if command -v lane_env_apply >/dev/null 2>&1; then
-    out=$(lane_env_apply lead-review-enqueue >/dev/null 2>&1; _lgk_print) || rc=$?
+    out=$(lane_env_apply lead-review >/dev/null 2>&1; _lgk_print) || rc=$?
   else
     out=$(_lgk_print)
   fi

@@ -22,7 +22,8 @@
 #         ancestor of H)                                   -> not replay
 #   bin/lib/lead-gates.d/50-replay-delta.sh lg_gate_replay_delta (gate 50)
 #     E1  on L1: rc 12, one post of G's MERGE onto H with note
-#         `lead-replay:<G12> how:restamp`, one modes.tsv replay row; a second
+#         `lead-replay:<G12> how:restamp` and `--review-mode full` (G has no
+#         review_mode), one modes.tsv replay row; a second
 #         call posts nothing more
 #     E2  on L2: rc 0, no post
 #   bin/lead-verdict.sh post (the status description)
@@ -183,7 +184,10 @@ seed; H=$(restamp); clone "$H"
 egate "$G"
 gate "$G" "$H"; rc=$?
 [ "$rc" = 12 ] && ok || bad "E1 gate 50 on a restamp-only head: want rc 12, got $rc (log: $(cat "$T/log/gate"))"
-want="post $SLUG 31 $H MERGE --source lead --reviewer box:testbox --note lead-replay:$G12 how:restamp"
+# TEST-CHANGE (BH-5878): gate 50 now carries the replayed review's mode,
+# --review-mode <G's review_mode, full when none> (BH-6967), the same flag the
+# retired enqueue lane's replay posted. Row #7 has no review_mode, so: full.
+want="post $SLUG 31 $H MERGE --source lead --reviewer box:testbox --note lead-replay:$G12 how:restamp --review-mode full"
 [ "$(cat "$POSTS")" = "$want" ] && ok || bad "E1 post argv: want '$want', got '$(cat "$POSTS")'"
 [ "$(grep -c $'\treplay\t'"$SLUG"$'\t31\t'"$H"$'\tfrom='"$G12"' how=restamp$' "$Q/state/lead-review-enqueue/modes.tsv" 2>/dev/null)" = 1 ] \
   && ok || bad "E1 want one modes.tsv replay row with how=restamp, got: $(cat "$Q/state/lead-review-enqueue/modes.tsv" 2>/dev/null)"

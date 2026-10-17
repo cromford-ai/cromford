@@ -11,8 +11,9 @@
 #   S2b the label removed by a person: the next tick starts the review.
 #   S3  the comment POST fails: held=1, no skip line, no job, no state row.
 #   S4  a lead-route marker (determinism, with its reason) on a low head under
-#       enforce: held, no job, no sign-off, the note is stored. S4b: the same
-#       marker with the risk tier off: held by gate 30 alone.
+#       enforce: a job (its meta carries silence_note), no sign-off, the note is
+#       stored (BH-5878: no longer held for the enqueue). S4b: the same
+#       marker with the risk tier off: a job too.
 #   S5  bin/lib/silence-scan.sh absent: the review starts (no check).
 #   S6  a scanned-* marker the enqueue wrote: gate 30 reads no compare.
 #   S7  no default-branch read (the base is the PR's own) with gates 15, 30
@@ -84,20 +85,22 @@ lwf_tick
 [[ "$(summ)" == *" held=1"* && "$(summ)" == *" skipped=0 "* ]] && ok || bad "S3 summary: $(summ)"
 [ -e "$SD/example-org_cromford-101" ] && bad "S3 a state row after a failed comment" || ok
 
-# ── S4: a lead-route marker on a low head under enforce: held, not signed ──
+# ── S4: a lead-route marker on a low head under enforce: reviewed, not signed ──
+# TEST-CHANGE BH-5878: with the enqueue retired, a lead-route head is no longer
+# held for the enqueue's request: the review starts and the markers ride in its
+# scope notes (field silence_note). Gate 60 still signs no such head off.
 lgf_reset enforce; lgf_needs "101:$HA"; cmp_line "$HA" "now=1 $DTM"
 lwf_tick
-[ "$(lgf_jobs 101)" = 0 ] && ok || bad "S4 a lead_review job for 101"
+[ "$(lgf_jobs 101)" = 1 ] && ok || bad "S4 no lead_review job for 101: $(cat "$L")"
 [ "$(lgf_lv)" = 0 ] && ok || bad "S4 a lead-verdict call: $(cat "$T/log/lv")"
-[[ "$(summ)" == *" held=1"* ]] && ok || bad "S4 summary: $(summ)"
-grep -q "example-org/cromford#101 @$A12: silence markers for the lead to judge; held" "$L" && ok || bad "S4 hold line: $(cat "$L")"
+grep -q "example-org/cromford#101 @$A12: silence markers for the lead to judge; they ride in the review notes" "$L" && ok || bad "S4 note line: $(cat "$L")"
 grep -q 'a determinism lint marker' "$SD/note-example-org_cromford-101-$A12" 2>/dev/null && ok || bad "S4 the lead note: $(cat "$SD"/note-* 2>/dev/null)"
+grep '^POST /api/jobs .*"ticket_id":"lr-101-' "$T/log/worker" | grep -q 'silence_note' && ok || bad "S4 the job meta carries no silence_note: $(grep '^POST /api/jobs ' "$T/log/worker")"
 [ "$(labels)" = 0 ] && ok || bad "S4 a label POST for a lead-route marker"
-# S4b: the same marker with the risk tier off: gate 30 alone holds it
+# S4b: the same marker with the risk tier off: reviewed too
 lgf_reset none; lgf_needs "101:$HA"; cmp_line "$HA" "now=1 $DTM"
 lwf_tick
-[ "$(lgf_jobs 101)" = 0 ] && ok || bad "S4b a lead_review job for a lead-marker head with the risk tier off"
-[[ "$(summ)" == *" held=1"* ]] && ok || bad "S4b summary: $(summ)"
+[ "$(lgf_jobs 101)" = 1 ] && ok || bad "S4b no lead_review job for a lead-marker head with the risk tier off"
 
 # ── S5: no silence lib: the review starts ──
 mv "$H/bin/lib/silence-scan.sh" "$T/ss.off"

@@ -107,12 +107,15 @@ lr_post() { # lr_post <path> <json> — the box bearer, plus the participant tok
   return 1
 }
 
-lr_start() { # lr_start <repo> <pr> <sha> <job_id> <box> — a row it creates says
-  # requested_by lead-review-worklist, so bin/lead-review.sh can tell it from a
-  # person's request (a person's row is never replayed, BH-4956).
+lr_start() { # lr_start <repo> <pr> <sha> <job_id> <box> [scope_notes] — a row it
+  # creates says requested_by lead-review-worklist, so bin/lead-review.sh can
+  # tell it from a person's request (a person's row is never replayed, BH-4956).
+  # A non-empty <scope_notes> (BH-5878: the gates' notes, lg_scope_notes) is
+  # stored on a row /start creates; a row that exists keeps its own notes.
   local body
-  body=$(jq -nc --arg r "${1:-}" --arg p "${2:-}" --arg s "${3:-}" --arg j "${4:-}" --arg b "${5:-}" \
-    '{repo:$r, pr:($p|tonumber? // $p), head_sha:$s, job_id:$j, box:$b, requested_by:"lead-review-worklist"}') || return 1
+  body=$(jq -nc --arg r "${1:-}" --arg p "${2:-}" --arg s "${3:-}" --arg j "${4:-}" --arg b "${5:-}" --arg n "${6:-}" \
+    '{repo:$r, pr:($p|tonumber? // $p), head_sha:$s, job_id:$j, box:$b, requested_by:"lead-review-worklist"}
+     + (if $n == "" then {} else {scope_notes:$n} end)') || return 1
   # Cleared here: lr_post can return before _jobs_req runs, and a stale 409
   # from an earlier call in this shell must not be read as this one's answer.
   JOBS_HTTP=""; JOBS_BODY=""
