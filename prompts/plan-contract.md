@@ -217,6 +217,7 @@ there is planned and built like any other ticket.
   makes it a report, not a gate. Money and safety caps stay gates.
 - A plan whose files overlap a live sibling's plan says so and sequences behind
   it, instead of racing it to main.
+- A plan outside `bin/` and `worker/` that adds or changes a decision rule (a classifier, gate, regex, glob, match or filter) also carries the §13 Decision rule case table, with its near misses, case sources and PLAN_BLOCKED rule. §13 is the one definition; this bullet only widens its scope, and `bin/plan-gate.sh` checks it only for `bin/` and `worker/` plans. (lesson-propose: logic-decision-rule-wrong)
 - docs/OPERATING.md has the reasons and the knobs.
 
 ## 11. Conflict discipline and `## Shared files` (BH-5269)
@@ -244,6 +245,16 @@ becomes an acceptance test.
 
 - **Decision rule:** for each decision rule, a table of 2 or more cases on
   each side, including the edge case (14 BLOCKs: a rule matched the wrong cases).
+  The table includes the near misses for that rule: negated text ("NOT in
+  C1"), partial or substring matches, other output formats and tool versions
+  (npm "npm error" vs "npm err!", a bare HOLD line), data past the first page,
+  state that children inherit, cases an earlier filter already removed
+  (in-flight, other board types), and success lines that print next to
+  errors. Take each case from production logs, live data or the real tool.
+  When no live source can be read, use a fixture or the vendor docs and mark
+  the case `source: assumed`. A case whose side is unknown stops the plan as
+  PLAN_BLOCKED; a missing source does not. A test asserts every case (one
+  table-driven test is enough).
 - **Exit paths:** for each exit path, the state it leaves and the budget or
   counter it touches (9: a failure path left a stuck state or burned a budget).
 - **Writer/reader round-trip:** for each new format, every writer and every

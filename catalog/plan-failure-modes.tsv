@@ -7,7 +7,7 @@
 # kind heading: one checklist entry. The ERE is matched against the start of a
 # bullet or heading line inside `## Failure modes`, lower-cased.
 scope	bin-worker	(^|[^A-Za-z0-9_.@/-]|/root/harness/|[$]HARNESS/|[$][{]HARNESS[}]/)(bin|worker)/[A-Za-z0-9_.@-][A-Za-z0-9_.@/-]*	a path under bin/ or worker/	the plan changes code in bin/ or worker/
-heading	decision	^decision[- ]rules?	Decision rule	for each decision rule, a table of 2 or more cases on each side, including the edge case
+heading	decision	^decision[- ]rules?	Decision rule	for each decision rule, a table of 2 or more cases on each side, including the edge case and the near misses (negation, partial match, other formats and versions, data past page 1, inherited state, cases an earlier filter removed, success lines next to errors), each from a live source or marked source: assumed, and a test that asserts every case
 heading	exits	^exit[- ]paths?	Exit paths	for each exit path, the state it leaves and the budget or counter it touches
 heading	roundtrip	^(writer ?/ ?reader|round[- ]trip)	Writer/reader round-trip	for each new format, every writer and every reader, and a test that round-trips it
 heading	blast	^(alert|freeze)	Alert or freeze blast radius	for each new alert or freeze, its worst-case count on the first tick and its scope

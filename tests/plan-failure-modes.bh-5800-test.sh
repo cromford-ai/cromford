@@ -156,6 +156,17 @@ grep -q 'agent-call.sh" preplan .*' "$DIR/bin/run-preplan.sh" && awk '/^  "\$\{P
 PC=$(awk '/^## 13\. /{f=1; print; next} f && /^## /{exit} f' "$DIR/prompts/plan-contract.md")
 [ -n "$PC" ] && ok || bad "P2 prompts/plan-contract.md has no §13"
 for w in "decision rule" "exit path" "round-trip" "blast radius" "default" "status"; do grep -qi "$w" <<<"$PC" && ok || bad "P2 §13 does not name '$w'"; done
+# P3 (PR #7069 lead review): §13 is the ONE definition of the decision-rule
+# case table. It names the near misses, the assumed-source escape and the
+# PLAN_BLOCKED rule; the catalog question the planner sees names them too;
+# and §10 does not restate the near-miss list (a second copy drifts).
+for w in "near misses" "negated text" "past the first page" "source: assumed" "PLAN_BLOCKED" "asserts every case"; do
+  grep -qi "$w" <<<"$PC" && ok || bad "P3 §13 does not name '$w'"
+done
+DQ=$(awk -F '\t' '$1 == "heading" && $2 == "decision" {print $5}' "$DIR/catalog/plan-failure-modes.tsv")
+for w in "near misses" "source: assumed" "asserts every case"; do grep -qi "$w" <<<"$DQ" && ok || bad "P3 the catalog decision question does not name '$w'"; done
+S10=$(awk '/^## 10\. /{f=1; next} f && /^## /{exit} f' "$DIR/prompts/plan-contract.md")
+[ -n "$S10" ] && ! grep -qi 'negated text' <<<"$S10" && ok || bad "P3 §10 restates the §13 near-miss list"
 awk '/Failure modes/ && /diff/ {f = 1} END {exit !f}' "$DIR/prompts/lead-review-checklist.md" && ok \
   || bad "L1 the lead review checklist does not check the plan's Failure modes against the diff"
 
