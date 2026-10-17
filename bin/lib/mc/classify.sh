@@ -400,6 +400,9 @@ mc_rest_pages() {
 mc_close_shipped() {
   local slug="${1:-}" num="${2:-}" body="${3:-}" rec="${4:-}" pr="${5:-}" w g kids src
   [ -n "$slug" ] && [ -n "$num" ] || { printf 'close-failed\n'; return 1; }
+  # A held project lease that was lost writes nothing (BH-6887); the caller
+  # retries close-failed on the next tick.
+  mc_lease_fence_ok || { printf 'close-failed\n'; return 1; }
   # BH-2477: with the PR url, ask issue_close_guard whether this merge DELIVERED
   # the issue before anything is written. A slice gets the "Slice delivered"
   # comment (paid once through the same marker), then loses `ai-build`, and stays
@@ -3232,14 +3235,35 @@ headbound_review() {
         mc_log "$key job still running, not buying a review — the build's own pipeline owns this PR ($run)"
         return 0
       fi
-      if [ "${REREVIEW_CAP:-0}" -gt 0 ] && [ "$(grep -c "^$proj " "$CAPFILE")" -ge "$REREVIEW_CAP" ]; then
-        mc_log "$key re-review deferred — $proj hit the operator-set daily cap ($REREVIEW_CAP)"; return 0; fi
+      # THE DAILY CAP IS A D1 COUNTER (BH-6887), so the hub and a lane-run
+      # machine spend one budget. One unit is TAKEN before the spawn and given
+      # back below when no review was bought. D1 not answering: the hub counts
+      # its box file (CAPFILE) as before, and a machine defers.
+      local capday="" crc
+      if [ "${REREVIEW_CAP:-0}" -gt 0 ]; then
+        capday=$(mc_day_budget_take "$proj" rereview "$REREVIEW_CAP"); crc=$?
+        case "$crc" in
+          0) ;;
+          3) mc_log "$key re-review deferred — $proj hit the operator-set daily cap ($REREVIEW_CAP)"; return 0 ;;
+          *) capday=""
+             if [ "${MC_ON_MACHINE:-}" = 1 ]; then
+               mc_log "$key re-review deferred — the daily cap counter could not be read"; return 0
+             fi
+             if [ "$(grep -c "^$proj " "$CAPFILE")" -ge "$REREVIEW_CAP" ]; then
+               mc_log "$key re-review deferred — $proj hit the operator-set daily cap ($REREVIEW_CAP)"; return 0; fi ;;
+        esac
+      fi
       # Taken before the spawn, handed back when the spawn was refused at the
       # fleet-wide parallel cap (rc 3) or failed: a review nobody bought must
       # not cost the project one.
-      mc_tick_budget_take "$proj" rereview "$REREVIEW_BUDGET" || { budget_spent "$proj" rereview "$key"; return 0; }
+      mc_tick_budget_take "$proj" rereview "$REREVIEW_BUDGET" || {
+        [ -n "$capday" ] && mc_day_budget_give "$proj" rereview "$capday"
+        budget_spent "$proj" rereview "$key"; return 0; }
       mc_rereview_spawn "$slug" "$num" "$proj" "$url" "$reviewed" "$head" "$rec"; rc=$?
-      [ "$rc" = 0 ] || mc_tick_budget_give "$proj" rereview
+      if [ "$rc" != 0 ]; then
+        mc_tick_budget_give "$proj" rereview
+        [ -n "$capday" ] && mc_day_budget_give "$proj" rereview "$capday"
+      fi
       case "$rc" in
         0) mc_count_inc "$proj" rereviews >/dev/null; echo "$proj $key $head" >> "$CAPFILE"
            mc_log "$key REREVIEW_SPAWNED — detached head-bound re-review of ${head:0:8} (job $jobf)"

@@ -1,0 +1,10 @@
+# tests/mc/expected-map.d/BH-6887.tsv — BH-6887: the merge lock's project lease
+# and the D1 daily budget client (locks, beside mc_merge_locked and the per-tick
+# budgets they extend); origin=lib because they are new module functions.
+locks	mc_lease_holder	lib
+locks	_mc_lease_lib	lib
+locks	_mc_lease_acquire	lib
+locks	mc_lease_fence_ok	lib
+locks	_mc_merge_leased	lib
+locks	mc_day_budget_take	lib
+locks	mc_day_budget_give	lib

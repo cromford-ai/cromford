@@ -1,0 +1,5 @@
+# MC BUDGET (BH-6887, BH-6881.3): a daily counter per (project, day, kind) for
+# the merge conductor's metered spends. take spends one unit with one
+# `spent < limit` UPDATE; give hands one back. Bearer-gated.
+POST /api/mc-budget/take
+POST /api/mc-budget/give

@@ -65,14 +65,103 @@ mc_pr_lock_take() {
   case "$w" in ''|*[!0-9]*|0) flock -n 9 ;; *) flock -w "$w" 9 ;; esac
 }
 
+# --- The project lease (BH-6887, BH-6881.3) ----------------------------------
+# The merge lock is also a D1 project lease (lane merge-conductor, one per
+# project, bin/lib/project-lease.sh): a box flock cannot serialise the hub
+# against a lane-run machine. The holder that took it exports
+#   MC_LEASE_FENCE    the fence token it holds
+#   MC_LEASE_PROJECT  the project the fence is for
+#   MC_LEASE_HOLDER   its holder id
+# to the command it runs, and each landing writer (mc_merge, mc_enqueue,
+# conductor_settle, mc_close_shipped) calls mc_lease_fence_ok before its
+# GitHub write. An outer owner (a per-project runner) may export the three
+# itself; mc_merge_locked then takes no lease and releases none.
+# Contract: docs/notes/2026-10-17-BH-6887-mc-lease-budget.md.
+MC_LEASE_LANE=merge-conductor
+
+# mc_lease_holder — this process's holder id: hub-<hostname> on the hub (one id
+#   for every hub worker, which the hub flock already serialises), the
+#   FLY_MACHINE_ID (else machine-<hostname>) on a lane-run machine. Reduced to
+#   [A-Za-z0-9._-], 64 characters at most.
+mc_lease_holder() {
+  local h
+  if [ "${MC_ON_MACHINE:-}" = 1 ]; then h="${FLY_MACHINE_ID:-machine-$(hostname 2>/dev/null)}"
+  else h="hub-$(hostname 2>/dev/null)"; fi
+  h="${h//[^A-Za-z0-9._-]/_}"
+  printf '%s' "${h:0:64}"
+}
+
+# _mc_lease_lib — source the jobs client and the project-lease client when the
+#   caller has not. rc 0 always; a caller checks for the function it needs.
+_mc_lease_lib() {
+  # shellcheck source=/dev/null
+  declare -F _jobs_req >/dev/null || { [ -r "$MC_H/bin/jobs-client.sh" ] && . "$MC_H/bin/jobs-client.sh"; }
+  # shellcheck source=/dev/null
+  declare -F pjl_acquire >/dev/null || { [ -r "$MC_H/bin/lib/project-lease.sh" ] && . "$MC_H/bin/lib/project-lease.sh"; }
+  return 0
+}
+
+# _mc_lease_acquire <project> — pjl_acquire's rc and its fence on stdout; rc 1
+#   when there is no lease client.
+_mc_lease_acquire() {
+  declare -F pjl_acquire >/dev/null || return 1
+  pjl_acquire "$MC_LEASE_LANE" "$1" "$(mc_lease_holder)"
+}
+
+# mc_lease_fence_ok — the fence check before a landing write. rc 0 = write.
+#   With no MC_LEASE_FENCE held it does nothing. Else it renews the fence:
+#   200 is rc 0; 409 `lost` is rc 99 ("nothing written, try next tick"); a
+#   renew that could not be answered is rc 99 on a machine (it has no other
+#   serialisation) and rc 0 on the hub (its flock still holds, and a D1
+#   outage must not stop every landing). Prints nothing on stdout: callers
+#   capture the writer's stdout.
+mc_lease_fence_ok() {
+  [ -n "${MC_LEASE_FENCE:-}" ] || return 0
+  local p="${MC_LEASE_PROJECT:-}" h="${MC_LEASE_HOLDER:-}" rc=1
+  [ -n "$h" ] || h=$(mc_lease_holder)
+  _mc_lease_lib >/dev/null 2>&1
+  if declare -F pjl_renew >/dev/null; then
+    pjl_renew "$MC_LEASE_LANE" "$p" "$h" "$MC_LEASE_FENCE" >/dev/null 2>&1; rc=$?
+  fi
+  case "$rc" in
+    0) return 0 ;;
+    3) mc_log "$p project lease lost (fence $MC_LEASE_FENCE) — write stopped, next tick"; return 99 ;;
+  esac
+  if [ "${MC_ON_MACHINE:-}" = 1 ]; then
+    mc_log "$p project lease renew unavailable on a lane-run machine — write stopped, next tick"; return 99
+  fi
+  mc_log "$p project lease renew unavailable — hub flock only"
+  return 0
+}
+
 # mc_merge_locked <project> <command...> — run ONE merge-class call under the
-#   project's merge lock (locks/merge-conductor-<project>-merge.lock, fd 8) and
-#   release it the moment the call returns. rc is the command's own, except
-#   99 = the lock could not be had within MC_MERGE_LOCK_WAIT seconds, which
-#   every caller treats as "nothing was written, try next tick" and never as a
-#   merge failure. Inside a conductor worker the wait is also capped at the
-#   worker's deadline less 15 s (mc_lock_wait_left, bin/lib/fanin.sh), and with
-#   less than that left it is 99 at once, before the lock file is opened.
+#   project's merge lock and release it the moment the call returns. rc is the
+#   command's own, except 99 = the lock could not be had, which every caller
+#   treats as "nothing was written, try next tick" and never as a merge
+#   failure.
+#
+#   THE LOCK IS TWO THINGS (BH-6887):
+#     on the hub         the box flock (locks/merge-conductor-<project>-merge.lock,
+#                        fd 8), within MC_MERGE_LOCK_WAIT seconds, and then the
+#                        project lease. A lease held by another holder is 99.
+#                        A lease that could not be answered (no jobs client, a
+#                        D1 outage) runs the call under the flock only, as
+#                        before the lease existed.
+#     on a lane-run      (MC_ON_MACHINE=1) the project lease instead of the
+#     machine            flock: this box's flock cannot serialise against the
+#                        hub or another machine. A lease held elsewhere, or
+#                        not answered, is 99. A direct merge (mc_merge) or a
+#                        queue enqueue (mc_enqueue) runs only under a lease an
+#                        outer owner holds (MC_LEASE_FENCE set); without one
+#                        it writes its word (merge|enqueue) to
+#                        MC_PR_DEFERRED_FILE and is 99, so the hub lands it.
+#   A lease it took is exported to the command (MC_LEASE_FENCE/_PROJECT/
+#   _HOLDER, as locals, so nothing leaks past the call) and released after.
+#   With MC_LEASE_FENCE already set by an outer owner it takes no lease and
+#   releases none; the writers renew that fence.
+#   Inside a conductor worker the flock wait is also capped at the worker's
+#   deadline less 15 s (mc_lock_wait_left, bin/lib/fanin.sh), and with less
+#   than that left it is 99 at once, before the lock file is opened.
 #
 #   WHY IT IS A FUNCTION AROUND ONE CALL AND NOT A SECTION. fd 8 is opened and
 #   closed inside it, and every caller invokes it as `$(mc_merge_locked ...)`,
@@ -87,24 +176,57 @@ mc_pr_lock_take() {
 #   call plus mc_merge's settle sleep, never a clone, a review or a deploy.
 mc_merge_locked() {
   local proj="$1"; shift
-  local rc w="${MC_MERGE_LOCK_WAIT:-120}"
-  # ON A LANE-RUN MACHINE (MC_ON_MACHINE=1) nothing lands: this box's flock
-  # cannot serialise against the hub or another machine, and the machine has
-  # no build record to check the verdict against. pr_worker defers a READY PR
-  # before it gets here (deferred=land); this is the second guard. 99 is the
-  # "nothing was written, try next tick" answer for a direct merge
-  # (deferred=merge) and for a queue enqueue (deferred=enqueue).
+  local rc w="${MC_MERGE_LOCK_WAIT:-120}" fence="" lrc=0
   if [ "${MC_ON_MACHINE:-}" = 1 ]; then
+    if [ -n "${MC_LEASE_FENCE:-}" ]; then
+      local -x MC_LEASE_PROJECT="$proj" MC_LEASE_HOLDER="${MC_LEASE_HOLDER:-$(mc_lease_holder)}"
+      "$@"; return $?
+    fi
+    # A landing call with no lease owner around it lands nothing here (BH-6495):
+    # pr_worker defers a READY PR on a machine (deferred=land), and this is the
+    # second guard until a per-project runner holds the lease for the tick.
     case "${1:-}" in
       mc_merge)   [ -n "${MC_PR_DEFERRED_FILE:-}" ] && echo merge >> "$MC_PR_DEFERRED_FILE"; return 99 ;;
       mc_enqueue) [ -n "${MC_PR_DEFERRED_FILE:-}" ] && echo enqueue >> "$MC_PR_DEFERRED_FILE"; return 99 ;;
     esac
+    _mc_lease_lib >/dev/null 2>&1
+    fence=$(_mc_lease_acquire "$proj"); lrc=$?
+    [ "$lrc" = 0 ] && { _mc_merge_leased "$proj" "$fence" "$@"; return $?; }
+    if [ "$lrc" = 3 ]; then mc_log "$proj merge lease held by another holder — next tick"
+    else mc_log "$proj merge lease unavailable on a lane-run machine — next tick"; fi
+    return 99
   fi
   if command -v mc_lock_wait_left >/dev/null 2>&1; then w=$(mc_lock_wait_left "$w") || return 99; fi
   exec 8>>"$(mc_merge_lock "$proj")" || return 99
   flock -w "$w" 8 || { exec 8>&-; return 99; }
-  "$@"; rc=$?
+  if [ -n "${MC_LEASE_FENCE:-}" ]; then
+    local -x MC_LEASE_PROJECT="$proj"
+    "$@"; rc=$?
+  else
+    _mc_lease_lib >/dev/null 2>&1
+    fence=$(_mc_lease_acquire "$proj"); lrc=$?
+    case "$lrc" in
+      0) _mc_merge_leased "$proj" "$fence" "$@"; rc=$? ;;
+      3) flock -u 8; exec 8>&-
+         mc_log "$proj merge lease held by another holder — next tick"
+         return 99 ;;
+      *) [ -n "${JOBS_URL:-}" ] && mc_log "$proj merge lease unavailable — hub flock only"
+         "$@"; rc=$? ;;
+    esac
+  fi
   flock -u 8; exec 8>&-
+  return "$rc"
+}
+
+# _mc_merge_leased <project> <fence> <command...> — run the command with the
+#   lease it was given exported, then release that lease (rc ignored: a lease
+#   not released expires at its TTL, project_lease.ttl_s).
+_mc_merge_leased() {
+  local proj="$1" fence="$2" rc; shift 2
+  local -x MC_LEASE_FENCE="$fence" MC_LEASE_PROJECT="$proj" MC_LEASE_HOLDER
+  MC_LEASE_HOLDER=$(mc_lease_holder)
+  "$@"; rc=$?
+  pjl_release "$MC_LEASE_LANE" "$proj" "$MC_LEASE_HOLDER" "$fence" >/dev/null 2>&1
   return "$rc"
 }
 
@@ -271,6 +393,41 @@ mc_tick_budget_give() {
     [ "$n" -gt 0 ] && _mc_count_set "$f" "budget-$2" "$((n-1))"
   ) 9>>"$f" 2>/dev/null
   return 0
+}
+# mc_day_budget_take <project> <kind> <limit> — spend one unit of the D1
+#   daily counter mc_budget (POST /api/mc-budget/take, BH-6887). The read and
+#   the spend are ONE statement in the worker, so two boxes can never both take
+#   the last unit. rc 0 = granted, and it prints the worker's UTC day for the
+#   give; rc 3 = the day's limit is spent; rc 1 = anything else (no jobs
+#   client, a transport failure, a non-200, an answer without a boolean
+#   `granted` or a day). An outage is never rc 3.
+mc_day_budget_take() {
+  local out g day
+  [ -n "${1:-}" ] && [ -n "${2:-}" ] && [[ ${3:-} =~ ^[1-9][0-9]*$ ]] || return 1
+  _mc_lease_lib >/dev/null 2>&1
+  declare -F _jobs_req >/dev/null || return 1
+  out=$(_jobs_req POST /api/mc-budget/take \
+    "$(jq -nc --arg p "$1" --arg k "$2" --argjson l "$3" '{project:$p,kind:$k,limit:$l}')") || return 1
+  g=$(jq -r 'if .granted == true then "yes" elif .granted == false then "no" else "" end' <<<"$out" 2>/dev/null)
+  day=$(jq -r '.day // empty' <<<"$out" 2>/dev/null)
+  [[ $day =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]] || return 1
+  case "$g" in
+    yes) printf '%s\n' "$day" ;;
+    no)  return 3 ;;
+    *)   return 1 ;;
+  esac
+}
+# mc_day_budget_give <project> <kind> <day> — hand one unit of that day back,
+#   for the spend that then did not happen. rc 0 = given, rc 1 otherwise. A
+#   give that fails leaves the counter one high, which spends less.
+mc_day_budget_give() {
+  local out
+  [ -n "${1:-}" ] && [ -n "${2:-}" ] && [[ ${3:-} =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]] || return 1
+  _mc_lease_lib >/dev/null 2>&1
+  declare -F _jobs_req >/dev/null || return 1
+  out=$(_jobs_req POST /api/mc-budget/give \
+    "$(jq -nc --arg p "$1" --arg k "$2" --arg d "$3" '{project:$p,kind:$k,day:$d}')") || return 1
+  [ "$(jq -r '.given == true' <<<"$out" 2>/dev/null)" = true ]
 }
 # mc_tick_budget_left <project> <kind> <limit> — the CHEAP read the arms use as a
 #   guard before doing any work at all. It is not a claim: the claim is the take.

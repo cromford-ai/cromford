@@ -1018,6 +1018,9 @@ mc_dequeue_surface() {
 # the one that fails.
 mc_merge() {
   local url="$1" head="$2" err rc out slug num sn pst=""
+  # The fence check (BH-6887): a held project lease that was lost stops the
+  # merge before the GitHub call. No lease held = no check.
+  mc_lease_fence_ok || { printf 'project lease lost — nothing merged'; return 99; }
   if command -v gh_pr_merge_rest >/dev/null 2>&1; then
     out=$(gh_pr_merge_rest "$(mc_slug_of_url "$url")" "${url##*/}" "$head" \
             "$MC_H/logs/merge-conductor-gh.err" "$MC_LOG" "mc_merge ${url##*/}"); rc=$?
@@ -1077,6 +1080,7 @@ mc_enqueue() {
     [ -n "${MC_PR_DEFERRED_FILE:-}" ] && echo enqueue >> "$MC_PR_DEFERRED_FILE"
     printf 'on a lane-run machine — not enqueued here; the hub enqueues it'; return 99
   fi
+  mc_lease_fence_ok || { printf 'project lease lost — nothing enqueued'; return 99; }
   slug=$(mc_slug_of_url "$url")
   case "$(mc_queue_provider "$slug")" in
     mergify) mc_enqueue_mergify "$slug" "$url" "$head" ;;
