@@ -37,6 +37,11 @@
 # Verdict, one line, on stdout AND in logs/fly-pool-rollout.log:
 #   FLY_ONBOARD <p> OK|ALREADY|FAILED: <flags/fly-pool-p>=… <flags/builder-fly-p>=… free-slots="…"
 # Exit: 0 OK/ALREADY, 1 FAILED, 2 usage/unknown project, 3 refused (not the hub).
+#
+# CONSOLE SECRET (BH-7196). On OK and ALREADY it also runs
+# bin/console-fly-secrets.sh --project <p>, which puts FLY_API_TOKEN_<P> on the
+# console worker. A failure there writes ONE "[fly-onboard] <p>: console secret"
+# ALERTS line and changes neither the verdict nor the exit code.
 set -uo pipefail
 H="${HARNESS:-/root/harness}"
 LOG="$H/logs/fly-pool-rollout.log"
@@ -117,6 +122,24 @@ verdict() { # verdict <OK|ALREADY|FAILED>
   say "FLY_ONBOARD $P $1: $POOLF=$ps $BFLAG=$bs free-slots=\"$("$H/bin/free-slots.sh" "$P" 2>/dev/null)\""
 }
 
+# The console worker reads FLY_API_TOKEN_<P> to list pool-<p>. The routing flags
+# are already on disk, so this step can only cost an ALERTS line, never a route
+# or an onboarding retry. Always returns 0.
+console_secret() {
+  local tv rc err
+  tv="FLY_API_TOKEN_$(printf %s "$P" | tr '[:lower:].-' '[:upper:]__')"
+  if [ ! -x "$H/bin/console-fly-secrets.sh" ]; then
+    err="bin/console-fly-secrets.sh missing"; rc=127
+  else
+    err=$(HARNESS="$H" "$H/bin/console-fly-secrets.sh" --project "$P" 2>&1 >/dev/null); rc=$?
+    if [ "$rc" = 0 ]; then say "console: $tv put on the console worker"; return 0; fi
+  fi
+  err=$(printf '%s' "$err" | tr '\n' ' ')
+  HARNESS="$H" "$H/bin/alert-line.sh" "[fly-onboard] $P: console secret $tv NOT put (rc $rc): $err — onboarding still succeeded; the console machines view cannot see pool-$P until bin/console-fly-secrets.sh --apply runs on the hub"
+  say "console: $tv NOT put (rc $rc): $err"
+  return 0
+}
+
 # A project enrolled by a routing row (BH-1373) reads ALREADY below instead of
 # spending a smoke machine: with the routing_rows knob on this derives the four
 # files from the row. Knob off, no client, or any failure: the files as they are.
@@ -130,6 +153,7 @@ verdict() { # verdict <OK|ALREADY|FAILED>
 if [ -f "$POOLF" ] && [ -f "$BFLAG" ]; then
   say "already fly-routed — nothing to spawn"
   [ -s "$APPF" ] || say "WARNING: flags/fly-pool-app-$P missing — the pool is reap-only until it names pool-$P"
+  console_secret
   verdict ALREADY
   exit 0
 fi
@@ -158,6 +182,7 @@ NEW=$(tail -n "+$((LN0 + 1))" "$LOG" 2>/dev/null | grep -F "[$P]")
 
 # ── 8. verdict ───────────────────────────────────────────────────────────────
 if [ -f "$POOLF" ] && [ -f "$BFLAG" ]; then
+  console_secret
   verdict OK
   exit 0
 fi
