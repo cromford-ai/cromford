@@ -1140,6 +1140,12 @@ export const ADDED_COLUMNS = {
   lead_review_requests: [["priority", "INTEGER"], ["reset_count", "INTEGER"], ["reset_at", "TEXT"],
                          ["heartbeat_at", "TEXT"], ["participant", "TEXT"], ["head_authors", "TEXT"],
                          ["stale_reclaims", "INTEGER"]],
+  // BH-6745 (wave 2 of #6541): the result of a direct landing on its decision
+  // row (merged | 405 | 409 | 422 | error | budget | lock). Nullable, never
+  // backfilled: NULL is a decision with no direct attempt. Set by PUT
+  // /api/landing-decisions/outcome (routes/landing-outcome.js); both
+  // landing_decisions families call ensureColumns in their guard.
+  landing_decisions: [["outcome", "TEXT"], ["outcome_at", "TEXT"]],
 };
 // BH-2489: indexes that name an ADDED column, created by ensureColumns right
 // after the ALTER loop, so they exist exactly when their column does. They can

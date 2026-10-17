@@ -1,0 +1,2 @@
+# BH-6745: the outcome of a direct landing on its decision row (wave 2 of #6541), key-named (BH-5788).
+PUT /api/landing-decisions/outcome

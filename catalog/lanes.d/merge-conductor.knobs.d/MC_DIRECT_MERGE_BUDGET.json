@@ -1,0 +1,11 @@
+{
+  "env": "MC_DIRECT_MERGE_BUDGET",
+  "read_in": "bin/lib/mc/landing.sh",
+  "type": "int",
+  "default": 6,
+  "min": 0,
+  "max": 50,
+  "unit": "merges",
+  "zero_means": "off",
+  "note": "BH-6745 (wave 2 of #6541): the direct merges one project may make per conductor tick in MC_LANDING_MODE=optimistic. An eligible READY PR over it stays READY (reason budget) and is tried again next tick. 0 = direct merging off: every PR enqueues as before. MC_MERGE_BUDGET still caps all landings per tick, so direct <= min(MC_MERGE_BUDGET, this). Not an integer reads as 6. Per-project row: lane.merge-conductor.<project>.mc_direct_merge_budget."
+}

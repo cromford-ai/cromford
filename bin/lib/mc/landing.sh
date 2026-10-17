@@ -4,10 +4,13 @@
 # its shadow decisions. Sourced by bin/merge-conductor.sh, never run. Not a
 # `# module:` file: an optional lib, like external-enqueue.sh.
 #
-# Wave 1 DECIDES NOTHING. The conductor merges or enqueues exactly as before.
-# With mode `queue` (the default) landing_shadow returns before any read. In
-# `shadow` (and in `optimistic`, which wave 1 records the same way) it writes
-# one LANDING line and one landing_decisions row per (PR, head, mode).
+# Modes `queue` and `shadow` DECIDE NOTHING. The conductor merges or enqueues
+# exactly as before. With mode `queue` (the default) landing_shadow returns
+# before any read. In `shadow` it writes one LANDING line and one
+# landing_decisions row per (PR, head, mode).
+# Mode `optimistic` (BH-6745, wave 2) CHANGES THE MERGE PATH on a Mergify repo:
+# the READY arm calls landing_direct before the enqueue, and an eligible PR is
+# merged directly (mc_merge, bound to the head) with no queue label.
 #
 # landing_mode <project>
 #   queue | shadow | optimistic, always rc 0. Knob MC_LANDING_MODE through
@@ -45,6 +48,37 @@
 #   `<key> LANDING would=<direct|queue> reason=<token> mode=<mode> head=<sha12>`
 #   line, then POST /api/landing-decisions. A failed POST is one
 #   `<key> LANDING_ROW_FAILED http=<code>` line and is not retried.
+# landing_direct_on <project> <provider>
+#   rc 0 when the READY arm must try landing_direct: mode optimistic, provider
+#   mergify, and not a lane-run machine (MC_ON_MACHINE=1). Else rc 1. No read.
+# landing_direct_budget <project>
+#   Knob MC_DIRECT_MERGE_BUDGET, the direct merges per project per tick. Not an
+#   integer: 6. 0 = direct merging off (every PR enqueues as before).
+# landing_direct <project> <repo> <pr> <head> <key> <labels-csv> <url>
+#   BH-6745. Prints one outcome token (line 1) and returns:
+#     rc 1 queue   do not merge directly; the caller enqueues as before. A
+#                  lane-run machine; a `landingfail <key> <head>` from an earlier
+#                  tick (one `<key> LANDING_DIRECT fallback=queue` line, no
+#                  read); budget 0; the ${MC_MERGIFY_LABEL:-merge-queue} label;
+#                  or landing_eligible refused.
+#     rc 2 budget  eligible, but this tick's direct budget is spent.
+#     rc 3 lock    mc_merge_locked answered 99; the direct unit goes back.
+#     rc 0 merged  mc_merge returned 0; line 2 is the merge sha (may be empty).
+#     rc 4 <code>  mc_merge refused: 405 | 409 | 422 | error (from its
+#                  `HTTP refusal (rc 3|4|5)` prefix). `landingfail <key> <head>
+#                  <code>` goes on the attempts ledger, so the next tick enqueues.
+#   The decision is recorded first (the same line, row and mark as
+#   landing_shadow, so a landing_shadow call after a fall-through adds nothing).
+#   `landingdirect <key> <head>` is written under the merge lock, just before
+#   the merge PUT. Every rc but 1 PUTs the token as the row's outcome
+#   (PUT /api/landing-decisions/outcome) and logs one
+#   `<key> LANDING_DIRECT outcome=<token> head=<sha12>` line.
+#   The caller runs it in `$( )` and marks the step itself: mc_step can `exit`
+#   (BH-6346, a 401), and in a subshell that exit would read as rc 0.
+# landing_direct_path <key> <head>
+#   rc 0 when `landingdirect <key> <head>` is on the attempts ledger and no
+#   `landingfail <key> <head>` is: the head was landed directly. mc_settle_merged
+#   writes the ledger merge detail `merge-conductor path=direct` on rc 0.
 #
 # LANDING_NOW (epoch seconds) is the clock seam for the tests.
 # gh-rest: no-graphql
@@ -167,14 +201,15 @@ landing_eligible() {
   return 0
 }
 
-landing_shadow() {
-  local p="${1:-}" repo="${2:-}" pr="${3:-}" head="${4:-}" key="${5:-}" lbl="${6:-}" mode mark would body
-  mode=$(landing_mode "$p")
-  [ "$mode" = queue ] && return 0
-  command -v mc_step >/dev/null 2>&1 && mc_step landing-shadow
+# _landing_record <project> <repo> <pr> <head> <key> <labels-csv> <mode>
+#   rc 2 when this (key, head, mode) is already on the attempts ledger (no read,
+#   no line, no row). Else it writes the mark, asks landing_eligible, logs the
+#   LANDING line and POSTs the row: rc 0 would=direct, rc 1 would=queue.
+_landing_record() {
+  local p="${1:-}" repo="${2:-}" pr="${3:-}" head="${4:-}" key="${5:-}" lbl="${6:-}" mode="${7:-}" mark would body
   mark="landing $key $head $mode"
   if command -v mc_attempt_has >/dev/null 2>&1; then
-    mc_attempt_has "$mark" && return 0
+    mc_attempt_has "$mark" && return 2
     mc_attempt_put "$mark"
   fi
   LANDING_REASON=""
@@ -185,10 +220,109 @@ landing_shadow() {
   body=$(jq -nc --arg r "$repo" --argjson n "$pr" --arg h "$head" --arg m "$mode" --arg w "$would" --arg x "$LANDING_REASON" \
     '{repo:$r, number:$n, head:$h, mode:$m, would:$w, reason:$x}' 2>/dev/null)
   if [ -z "$body" ] || ! command -v _jobs_req >/dev/null 2>&1; then
-    _landing_log "$key LANDING_ROW_FAILED http=none"; return 0
+    _landing_log "$key LANDING_ROW_FAILED http=none"
+  else
+    JOBS_HTTP=""
+    JOBS_ALERT=0 _jobs_req POST /api/landing-decisions "$body" >/dev/null 2>&1 \
+      || _landing_log "$key LANDING_ROW_FAILED http=${JOBS_HTTP:-none}"
+  fi
+  [ "$would" = direct ]
+}
+
+landing_shadow() {
+  local p="${1:-}" mode
+  mode=$(landing_mode "$p")
+  [ "$mode" = queue ] && return 0
+  command -v mc_step >/dev/null 2>&1 && mc_step landing-shadow
+  _landing_record "${1:-}" "${2:-}" "${3:-}" "${4:-}" "${5:-}" "${6:-}" "$mode"
+  return 0
+}
+
+landing_direct_on() {
+  [ "${MC_ON_MACHINE:-}" = 1 ] && return 1
+  [ "${2:-}" = mergify ] || return 1
+  [ "$(landing_mode "${1:-}")" = optimistic ]
+}
+
+landing_direct_budget() {
+  local v
+  v=$(_landing_knob MC_DIRECT_MERGE_BUDGET "${1:-}" | tr -d '[:space:]')
+  case "$v" in ''|*[!0-9]*) v=6 ;; esac
+  printf '%s\n' "$((10#$v))"
+}
+
+# _landing_count <kind> <key> <head> — the attempts lines of that kind for the head.
+_landing_count() {
+  if command -v mc_attempt_count >/dev/null 2>&1; then mc_attempt_count "$1" "$2" "$3"
+  else awk -v k="$1" -v key="$2" -v h="$3" '$1==k && $2==key && $3==h {c++} END {print c+0}' "${MC_ATTEMPTS:-/nonexistent}" 2>/dev/null || echo 0; fi
+}
+
+landing_direct_path() {
+  [ -n "${1:-}" ] && [ -n "${2:-}" ] || return 1
+  [ "$(_landing_count landingdirect "$1" "$2")" -gt 0 ] 2>/dev/null || return 1
+  [ "$(_landing_count landingfail "$1" "$2")" = 0 ]
+}
+
+# _landing_outcome_put <repo> <pr> <head> <mode> <outcome> <key> — the row's
+# outcome. A record: a failure is one LANDING_ROW_FAILED line, rc 0 always.
+_landing_outcome_put() {
+  local body
+  body=$(jq -nc --arg r "$1" --argjson n "$2" --arg h "$3" --arg m "$4" --arg o "$5" \
+    '{repo:$r, number:$n, head:$h, mode:$m, outcome:$o}' 2>/dev/null)
+  if [ -z "$body" ] || ! command -v _jobs_req >/dev/null 2>&1; then
+    _landing_log "$6 LANDING_ROW_FAILED http=none"; return 0
   fi
   JOBS_HTTP=""
-  JOBS_ALERT=0 _jobs_req POST /api/landing-decisions "$body" >/dev/null 2>&1 \
-    || _landing_log "$key LANDING_ROW_FAILED http=${JOBS_HTTP:-none}"
+  JOBS_ALERT=0 _jobs_req PUT /api/landing-decisions/outcome "$body" >/dev/null 2>&1 \
+    || _landing_log "$6 LANDING_ROW_FAILED http=${JOBS_HTTP:-none}"
   return 0
+}
+
+# _landing_merge <key> <url> <head> — run under mc_merge_locked: the intent
+# mark, then the merge PUT. The mark is written only once the lock is held, so
+# a lock refusal leaves no `landingdirect` line behind.
+_landing_merge() {
+  if command -v mc_attempt_has >/dev/null 2>&1; then
+    mc_attempt_has "landingdirect $1 $3" || mc_attempt_put "landingdirect $1 $3"
+  fi
+  mc_merge "$2" "$3"
+}
+
+landing_direct() {
+  local p="${1:-}" repo="${2:-}" pr="${3:-}" head="${4:-}" key="${5:-}" lbl="${6:-}" url="${7:-}"
+  local mode=optimistic budget out rc tok
+  [ "${MC_ON_MACHINE:-}" = 1 ] && { printf 'queue\n'; return 1; }
+  if [ "$(_landing_count landingfail "$key" "$head")" != 0 ]; then
+    _landing_log "$key LANDING_DIRECT fallback=queue head=${head:0:12}"
+    printf 'queue\n'; return 1
+  fi
+  budget=$(landing_direct_budget "$p")
+  [ "$budget" -gt 0 ] || { printf 'queue\n'; return 1; }
+  case ",$lbl," in *",${MC_MERGIFY_LABEL:-merge-queue},"*) printf 'queue\n'; return 1 ;; esac
+  rc=0; _landing_record "$p" "$repo" "$pr" "$head" "$key" "$lbl" "$mode" || rc=$?
+  if [ "$rc" = 2 ]; then
+    rc=0; LANDING_REASON=""; landing_eligible "$repo" "$pr" "$head" "$p" "$lbl" >/dev/null 2>&1 || rc=1
+  fi
+  [ "$rc" = 0 ] || { printf 'queue\n'; return 1; }
+  if ! mc_tick_budget_take "$p" direct "$budget"; then
+    tok=budget; rc=2
+  else
+    rc=0; out=$(mc_merge_locked "$p" _landing_merge "$key" "$url" "$head") || rc=$?
+    case "$rc" in
+      0)  tok=merged ;;
+      99) mc_tick_budget_give "$p" direct; tok=lock; rc=3 ;;
+      *)  case "$out" in
+            "HTTP refusal (rc 3)"*) tok=405 ;;
+            "HTTP refusal (rc 4)"*) tok=409 ;;
+            "HTTP refusal (rc 5)"*) tok=422 ;;
+            *) tok=error ;;
+          esac
+          mc_attempt_put_n landingfail "$key" "$head" "$tok"; rc=4 ;;
+    esac
+  fi
+  _landing_outcome_put "$repo" "$pr" "$head" "$mode" "$tok" "$key"
+  _landing_log "$key LANDING_DIRECT outcome=$tok head=${head:0:12}"
+  printf '%s\n' "$tok"
+  [ "$rc" = 0 ] && printf '%s\n' "$out"
+  return "$rc"
 }

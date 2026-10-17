@@ -7,8 +7,10 @@
 // optimistic) mode only. This row is a RECORD: nothing reads it to decide a
 // merge, so the bearer alone writes it. A decision for a key is made once, so
 // the same key again is 200 existing:true and the stored row is untouched.
+// BH-6745: GET also returns outcome/outcome_at, which PUT
+// /api/landing-decisions/outcome (routes/landing-outcome.js) sets.
 import { d1Guarded, json } from "../lib/http.js";
-import { ensureTable } from "../lib/core.js";
+import { ensureTable, ensureColumns } from "../lib/core.js";
 import { REPO_RE, prOf, shaOf } from "./verdicts.js";
 
 export const LD_MODES = ["queue", "shadow", "optimistic"];
@@ -21,6 +23,7 @@ const LIST_MAX = 200;
 const guarded = (fn) => (ctx) =>
   d1Guarded("landing_decisions", async () => {
     await ensureTable(ctx.env, "landing_decisions");
+    await ensureColumns(ctx.env, "landing_decisions");   // BH-6745: outcome, outcome_at
     return fn(ctx);
   });
 
@@ -69,7 +72,7 @@ export const routes = [
         if (!(limit >= 1 && limit <= LIST_MAX)) return json(400, { error: `limit must be an integer 1..${LIST_MAX}` });
       }
       const rows = (await env.DB.prepare(
-        "SELECT id, repo, number, head, mode, would, reason, at FROM landing_decisions" +
+        "SELECT id, repo, number, head, mode, would, reason, at, outcome, outcome_at FROM landing_decisions" +
         " WHERE repo = ?1 AND (?2 IS NULL OR number = ?2)" +
         " ORDER BY id DESC LIMIT ?3"
       ).bind(repo, number, limit + 1).all()).results || [];

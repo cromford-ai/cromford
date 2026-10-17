@@ -553,9 +553,12 @@ mc_patch_same() {
 #   timestamped file to the deploy queue — two settles would depart two trains.
 #   That one is guarded by an MC_ATTEMPTS line, the shape mc_attempted uses.
 mc_settle_merged() { # … <head> [merge-sha]
-  local key="$1" url="$2" project="$3" slug="$4" br="$5" rec="$6" job="$7" head="${8:-}" msha issue first=1 note="" w=""
+  local key="$1" url="$2" project="$3" slug="$4" br="$5" rec="$6" job="$7" head="${8:-}" msha issue first=1 note="" w="" lw="merge-conductor"
   [ -n "$head" ] && note=", reviewed head $head"
-  type job_ledger_put >/dev/null 2>&1 && job_ledger_put merge "$url" merged "merge-conductor" >/dev/null 2>&1 || true
+  # BH-6745: a direct landing (optimistic mode) says so, so DORA can split
+  # direct from queued merges; every other landing keeps `merge-conductor`.
+  command -v landing_direct_path >/dev/null 2>&1 && landing_direct_path "$key" "$head" && lw="merge-conductor path=direct"
+  type job_ledger_put >/dev/null 2>&1 && job_ledger_put merge "$url" merged "$lw" >/dev/null 2>&1 || true
   mkdir -p "$MC_H/state" 2>/dev/null
   grep -qxF "$url" "$MC_H/state/merge-sweep-done.txt" 2>/dev/null || echo "$url" >> "$MC_H/state/merge-sweep-done.txt"
   # When mc_merge landed this PR over REST the caller has GitHub's own merge

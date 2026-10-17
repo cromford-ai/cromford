@@ -2534,6 +2534,35 @@ pr_worker() {
         # (cromford PRs 30-175 min approved, CLEAN and unqueued). Nothing
         # after it merges: a silent queue (rc 3) is HELD (BH-2199), so no gate
         # read before the poll can go stale into a merge.
+        # OPTIMISTIC LANDING (BH-6745, wave 2 of #6541). With MC_LANDING_MODE
+        # optimistic on a Mergify repo, a PR that landing_eligible accepts is
+        # merged here, bound to its head and under the project merge lock, with
+        # no queue label, inside its own per-tick budget MC_DIRECT_MERGE_BUDGET.
+        # rc 1 is "not direct": the enqueue below runs exactly as before. A
+        # refused merge (405/409/422) is no strike: the queue takes the PR on
+        # the next tick (landing_direct's landingfail mark). Modes queue and
+        # shadow never get here. The step is marked HERE, not in the $( ):
+        # mc_step exits on a 401, and a subshell's exit 0 is not a merge, so
+        # only rc 0 WITH the `merged` token settles; anything else enqueues.
+        if [ "$PROVIDER" = mergify ] && command -v landing_direct_on >/dev/null 2>&1 && landing_direct_on "$P" "$PROVIDER"; then
+          mc_step landing-direct
+          LDOUT=$(landing_direct "$P" "$SLUG" "$NUM" "$HEAD" "$KEY" "${RAWLBL:-}" "$URL"); LDRC=$?
+          case "$LDRC:$(head -1 <<<"$LDOUT")" in
+            0:merged) mc_count_inc "$P" merges >/dev/null
+               mc_step settle
+               conductor_settle "$KEY" "$URL" "$P" "$SLUG" "$BR" "$REC" "$JOB" "$HEAD" "$REVIEWED" "$VERDICT" "$MSTATE" "by:conductor (direct landing)" "$(sed -n 2p <<<"$LDOUT")"
+               return 0 ;;
+            2:*) mc_tick_budget_give "$P" merge
+               mc_ready_why "$KEY" "$HEAD" budget "direct merge deferred — $P has spent this tick's direct-merge budget" logged
+               return 0 ;;
+            3:*) mc_tick_budget_give "$P" merge
+               mc_ready_why "$KEY" "$HEAD" merge-lock "not merged directly this tick: another PR of $P held the project merge lock for ${MC_MERGE_LOCK_WAIT:-120}s — the next tick tries again" logged
+               return 0 ;;
+            4:*) mc_tick_budget_give "$P" merge
+               mc_ready_why "$KEY" "$HEAD" direct-failed "direct merge refused ($(head -1 <<<"$LDOUT")); the queue takes it on the next tick" logged
+               return 0 ;;
+          esac
+        fi
         if [ "$PROVIDER" = mergify ]; then
           ERR=$(mc_enqueue "$URL" "$HEAD"); RC=$?
         else
