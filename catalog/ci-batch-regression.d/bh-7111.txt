@@ -1,0 +1,12 @@
+# catalog/ci-batch-regression.d/bh-7111.txt — the suites that read the
+# content of catalog/lead-protected-paths.seed.tsv (BH-7111). Format:
+# catalog/ci-batch-regression.d/README.md.
+#
+# #7096 (and stacked #7097): PR #7067 edited the seed file;
+# tests/lead-authority-db.bh-4148-test.sh failed F. The Mac gate and builder
+# verify selected it as `source` and left it to CI by the cap. The other two
+# rows read and assert on the same seed (bh-4140 S1 sends its rows, bh-5870 P1
+# asserts its globs through _la_seed_floor).
+tests/lead-authority-db.bh-4148-test.sh	catalog/lead-protected-paths.seed.tsv
+tests/lead-protected-paths-seed.bh-4140-test.sh	catalog/lead-protected-paths.seed.tsv
+tests/lead-gates-loader.bh-5870-test.sh	catalog/lead-protected-paths.seed.tsv

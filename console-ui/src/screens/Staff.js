@@ -258,11 +258,14 @@ export function StaffAgentScreen({ agent }) {
       if (v === version.current) { inFlight.current = false; setOlderBusy(false); }
     }
   };
+  // The autonomy route answers 404 for archie by design: Archie is not a staff
+  // agent, and its autonomy is the archie-autonomy family. So do not ask (BH-7156).
   // A write on this page (a promotion decide, BH-6825) re-reads the roster,
   // so the facts list (AUTONOMY) shows the level the write left.
+  const isArchie = String(agent || '').trim().toLowerCase() === ARCHIE;
   return html`<${AgentDetailView} agent=${agent} roster=${roster} findings=${findings} activity=${activity}
     older=${older} onOlder=${onOlder} olderBusy=${olderBusy} olderError=${olderError}
-    autonomySlot=${html`<${AgentAutonomy} agent=${agent}/>`}
+    autonomySlot=${isArchie ? null : html`<${AgentAutonomy} agent=${agent}/>`}
     onAgentChanged=${roster.reload}/>`;
 }
 
@@ -345,6 +348,8 @@ function lastBeat(activity) {
   return html`<${Link} to=${tickHref(lt.id)}>${age(lt.started_at)}<//>${lt.phase !== 'done' ? html` <span class="na">stopped at ${lt.phase}</span>` : null}`;
 }
 
+const NoView = () => null;
+
 // The agent detail page. autonomySlot is the AUTONOMY section the screen
 // passes in (BH-6824); without it the spot is empty.
 export function AgentDetailView({ agent, roster, findings, activity, older = null, onOlder = null, olderBusy = false, olderError = null, autonomySlot = null, onAgentChanged = null }) {
@@ -366,6 +371,9 @@ export function AgentDetailView({ agent, roster, findings, activity, older = nul
 
   const facts = row ? [['ROLE', row.role], ['ACCOUNTABLE', row.accountable], ['AUTONOMY', row.autonomy], ['CAP', row.cap], ['STATUS', row.status]] : [];
   const name = String(agent || '').trim().toLowerCase();
+  // BH-7156: Archie is not a staff agent, so it has no learning view (the
+  // learning read answers 404 for an agent with no staff_agents row).
+  const Learning = name === ARCHIE ? NoView : AgentLearning;
   return html`
     <div class="page">
       <${PageHeadline} chip="Staff"
@@ -382,7 +390,7 @@ export function AgentDetailView({ agent, roster, findings, activity, older = nul
         <${ActivityBody} activity=${activity} older=${older} onOlder=${onOlder} olderBusy=${olderBusy} olderError=${olderError}/>
       <//>
       <${Section} title="OPEN FINDINGS">${body}<//>
-      <${AgentLearning} agent=${name} row=${row || null} onChanged=${onAgentChanged}/>
+      <${Learning} agent=${name} row=${row || null} onChanged=${onAgentChanged}/>
     </div>`;
 }
 // BH-5567's name for the same view; its tests and imports stay valid.

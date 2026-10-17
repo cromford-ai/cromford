@@ -20,6 +20,11 @@ import {
   chatBody, threadRows, noteState, tickHref, mergeMessages, chatAgent, STAFF_CHAT_TEXT_MAX
 } from '../../lib/staff-chat.js';
 
+// BH-7156 (item 2 of comment 6222427159): the stop state on this pane comes
+// only from pause_flags rows (routes/staff-chat.js). bin/staff.sh flag_active
+// also stops the tick on a flag file that has no row, so the pane says so.
+export const STOP_SOURCE_NOTE = 'stop state from pause_flags rows only: a stop flag file on the box with no row still stops the tick, and this pane does not show it.';
+
 // The agent ticks on a */15 cadence, so a 30 s poll shows a reply well inside
 // one tick without loading the worker.
 const POLL_MS = 30000;
@@ -199,6 +204,8 @@ export function AgentChatView({
           <div class="banner" role="status">
             <span>agent stopped${data.stopped_by ? ` (${data.stopped_by})` : ''}: a message is kept and read when it resumes</span>
           </div>` : null}
+        ${stopped ? null : html`
+          <span role="note" style="font-size:12px;color:var(--faint);overflow-wrap:anywhere">${STOP_SOURCE_NOTE}</span>`}
         ${body}
         <div style="display:flex;flex-direction:column;gap:6px;max-width:100%;min-width:0">
           <textarea class="chat__input" rows="3" aria-label=${`message to ${agent}`}
