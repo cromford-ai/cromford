@@ -341,7 +341,8 @@ to=$(js o8 '[.components[]|select(.rc == 124)|.id]|join(",")')
 # TEST-CHANGE (BH-6730): 24 with index-on-create-table.
 # TEST-CHANGE (BH-6293): 25 with split-host-growth.
 # TEST-CHANGE (BH-5945): 26 with project-loop (a new hub lane uses the runner).
-[ "$(js o8 '.components|length')" = 26 ] && ok || bad "R8 $(js o8 '.components|length') components (want 26)"
+# TEST-CHANGE (BH-7276): 27 with agent-call-no-tools (the AGENT_CALL_NO_TOOLS delta lint).
+[ "$(js o8 '.components|length')" = 27 ] && ok || bad "R8 $(js o8 '.components|length') components (want 27)"
 cnr=$(js o8 '.could_not_run - ["date-bomb"] | join(",")')
 [ -z "$cnr" ] && ok || bad "R8 could_not_run beyond date-bomb: $cnr"
 [ "$(js o8 '.components[]|select(.id=="route-fragments").state')" = green ] && ok \

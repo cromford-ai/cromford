@@ -32,6 +32,7 @@ date-bomb	delta	cmd	bin/test-date-bomb-lint.sh --base <fork> .	-	no hard-coded d
 scratch-closure	delta	suite	tests/scratch-closure-lint.bh-4552-test.sh	-	a new or edited suite hand-copies bin/lib files instead of scratch_install_closure
 fast-lints-data	tree	suite	tests/fast-lints-data.bh-3860-test.sh	-	the fast-lints data: the always set and well-formed durations rows (BH-5797)
 marker-reason	delta	cmd	bin/marker-reason-lint.sh --base <fork> .	-	an added lint-silencing marker carries its reason on the same line (BH-5797)
+agent-call-no-tools	delta	cmd	bin/agent-call-no-tools-lint.sh --base <fork> .	-	an added bin/agent-call.sh call sets AGENT_CALL_NO_TOOLS=1 or carries a # agent-call-tools: <reason> marker (auth-bypass, BH-7276)
 split-host-growth	delta	cmd	bin/split-host-growth-lint.sh --base <fork> .	-	a split host script (a "# split-host:" marker) grew more than its limit in this diff; new code goes in its module dir (BH-6293)
 project-loop	delta	cmd	bin/project-loop-lint.sh --base <fork> .	jq	a new hub lane that loops over projects dispatches through bin/lib/project-lanes.sh (BH-5945)
 fixture-hygiene	delta	cmd	bin/fixture-hygiene.sh check --tree . --base <fork>	-	a new test line carries a tailnet or RFC1918 address, or a SECRET/TOKEN= literal without fixture (BH-5789)
