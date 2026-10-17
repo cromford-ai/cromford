@@ -1,0 +1,12 @@
+{
+  "env": "POOL_STALL_ALERT_S",
+  "type": "int",
+  "default": 1800,
+  "min": 0,
+  "max": 86400,
+  "unit": "seconds",
+  "zero_means": "off",
+  "required": false,
+  "read_in": "bin/lib/pool-stall.sh",
+  "note": "BH-7107: how long a project's pool may have queued work, no free slot and no machine building (or no Fly token at all) before one ALERTS line names the stall and its cause. One line per project per hour (flags/alerted-pool-stall-<p>-<YYYYmmddHH>). The first stalled tick is kept in state/pool-stall/<p>.json. 0 = off."
+}

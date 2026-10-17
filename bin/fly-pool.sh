@@ -74,9 +74,17 @@ command -v lane_gate_or_exit >/dev/null 2>&1 && lane_gate_or_exit fly-pool "$P"
 command -v lane_env_apply    >/dev/null 2>&1 && lane_env_apply    fly-pool "$P"
 
 TV="FLY_API_TOKEN_$(echo "$P" | tr '[:lower:].-' '[:upper:]__')"
-export FLY_ACCESS_TOKEN="${!TV:-}"
+# BH-7107: the project token, else the hub's org FLY_API_TOKEN, never an
+# inherited FLY_ACCESS_TOKEN (bin/lib/fly-token.sh). Without the lib, the
+# project token alone, as before.
+# shellcheck source=bin/lib/fly-token.sh
+. "$HARNESS/bin/lib/fly-token.sh" 2>/dev/null \
+  || . "$(dirname "${BASH_SOURCE[0]}")/lib/fly-token.sh" 2>/dev/null || true
+if command -v fly_token_resolve >/dev/null 2>&1; then fly_token_resolve "$P"
+else FLY_TOKEN_VAL="${!TV:-}"; FLY_TOKEN_SRC=""; [ -n "$FLY_TOKEN_VAL" ] && FLY_TOKEN_SRC="$TV"; fi
+export FLY_ACCESS_TOKEN="$FLY_TOKEN_VAL"
 APP=$(jq -r '.app // ""' "$HARNESS/state/fly/$P.json" 2>/dev/null)
-[ -n "$APP" ] && [ -n "$FLY_ACCESS_TOKEN" ] || exit 0
+[ -n "$APP" ] || exit 0
 FLY=$(command -v fly || command -v flyctl)
 LOG="$HARNESS/logs/fly-pool.log"
 # shellcheck source=bin/lib/preplan-lib.sh
@@ -85,6 +93,18 @@ LOG="$HARNESS/logs/fly-pool.log"
 [ -r "$HARNESS/bin/lib/test-home-lib.sh" ] && . "$HARNESS/bin/lib/test-home-lib.sh" 2>/dev/null
 STAMP() { date -u '+%Y-%m-%d %H:%M:%SZ'; }
 say() { echo "$(STAMP) [pool/$P] $*" >> "$LOG"; }
+# BH-7107: the stall alert and the in-flight HOLD cancel. A tree without the
+# lib has neither, and a tick with no token exits silently, as before.
+# shellcheck source=bin/lib/pool-stall.sh
+. "$HARNESS/bin/lib/pool-stall.sh" 2>/dev/null \
+  || . "$(dirname "${BASH_SOURCE[0]}")/lib/pool-stall.sh" 2>/dev/null || true
+[ "$FLY_TOKEN_SRC" = FLY_API_TOKEN ] && say "using the org FLY_API_TOKEN: $TV is not set"
+if [ -z "$FLY_ACCESS_TOKEN" ]; then
+  command -v pool_stall_no_token >/dev/null 2>&1 && pool_stall_no_token "$TV" \
+    "$(ls "$HARNESS/state/build-queue/$P"/*.json 2>/dev/null | grep -cv '\.failed\.json$')" \
+    "$(ls "$HARNESS/state/fly-pool/$P"/*.json 2>/dev/null | grep -c .)"
+  exit 0
+fi
 # --- the hotfix lane's two questions in this file (#368) ---------------------
 # `hotfix:true` rides the queue file from bin/run-build.sh's enqueue and the
 # hub's materialise, so the pool never has to ask GitHub anything: it reads the
@@ -3814,6 +3834,9 @@ for MF in "$POOL"/*.json; do
     HB=$(mexec "$MID" 'now=$(date +%s); h=$(stat -c %Y /run/harness/heartbeat 2>/dev/null || echo 0); echo $((now-h))' | tr -dc '0-9')
     [ -n "$HB" ] && [ "$HB" -gt 900 ] && DEAD=1
   fi
+  # BH-7107: a HOLD or a closed issue cancels this live build once the verdict
+  # has stood POOL_INFLIGHT_HOLD_GRACE_S, and releases its slot.
+  if [ "$DEAD" = 0 ] && command -v pool_inflight_hold_step >/dev/null 2>&1 && pool_inflight_hold_step; then continue; fi
   if [ "$DEAD" = 0 ]; then
     # A live machine may be most of the way through its token's hour — replace it
     # before the push that would otherwise be rejected, not after.
@@ -4127,6 +4150,8 @@ else
   # is how "the pool is keeping up" stops being a guess (the operator, 2026-09-14).
   say "pool $P: queued=$QUEUED running=$LIVE spawning=$BUDGET cap=$CAPTXT$HOT_TXT"
 fi
+# BH-7107: queued work, no slot and nothing building for POOL_STALL_ALERT_S pages once an hour, with its cause.
+command -v pool_stall_tick >/dev/null 2>&1 && pool_stall_tick
 # BH-6536: a ticket held in the review column by a human step says why it is not queued.
 command -v nh_sd_stage_lines >/dev/null 2>&1 && while IFS=$'\t' read -r SK _ SST _ SRE; do
   [ -e "$QDIR/$SK.json" ] || say "pool $P: $SK not queued :: $SST: $SRE"

@@ -1,0 +1,11 @@
+{
+  "env": "POOL_INFLIGHT_HOLD_GRACE_S",
+  "type": "int",
+  "default": 600,
+  "min": 0,
+  "max": 86400,
+  "unit": "seconds",
+  "required": false,
+  "read_in": "bin/lib/pool-stall.sh",
+  "note": "BH-7107: how long a HOLD or closed verdict must stand on a live build before the pool destroys the machine and releases the slot. It protects a build that closes its own issue on merge: its RESULT lands inside the window and the reap takes it first. A closed issue parks the row as failed; any other HOLD requeues it with deaths and deferrals unchanged. 0 = cancel on the first held read."
+}

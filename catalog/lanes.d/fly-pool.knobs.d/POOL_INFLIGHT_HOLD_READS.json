@@ -1,0 +1,12 @@
+{
+  "env": "POOL_INFLIGHT_HOLD_READS",
+  "type": "int",
+  "default": 4,
+  "min": 0,
+  "max": 50,
+  "unit": "reads",
+  "zero_means": "off",
+  "required": false,
+  "read_in": "bin/lib/pool-stall.sh",
+  "note": "BH-7107: how many full HOLD reads (issue + thread) the reap makes per tick for LIVE machines, so a HOLD comment or a closed issue cancels the in-flight build and releases its slot. Only a GitHub-issue ticket whose open-listing key changed, or that left the open ai-build listing, is read; a cached held verdict costs no read. Reads past the cap are deferred to the next tick and logged. 0 = off: no in-flight hold read, as before."
+}
