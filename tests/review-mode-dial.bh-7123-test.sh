@@ -149,6 +149,16 @@ has "D6 show <p> keeps that project" "$OUT" "project-6-os"
 hasnt "D6 show <p> drops the others" "$OUT" "project-5"
 FAKE_SETTINGS_DOWN=1 run show
 [ "$RC" = 1 ] && ok || bad "D6 show with settings down must be rc 1, got $RC"
+# D6b (BH-7123 follow-up): a review.* row the capture does not list, and the
+# wave B row review.golive_gates_merge, both render; the fallback used to run
+# with `.` bound to the key string and die with `Cannot index string with "key"`
+# the first time `show` met the real snapshot on the hub.
+reset; jq -nc '{"review.mode": "levels", "review.golive_gates_merge": "0", "review.x_unknown": "1"}' > "$T/settings.json"
+run show
+[ "$RC" = 0 ] && ok || bad "D6b show rc=$RC with an unlisted review.* row: $ERR"
+has "D6b show lists the go-live row" "$OUT" "review.golive_gates_merge"
+has "D6b show lists the unlisted row" "$OUT" "review.x_unknown"
+case "$ERR" in *jq*) bad "D6b jq complained: $ERR" ;; *) ok ;; esac
 
 # ── E1: expiry flips past rows, leaves the future one, announces each ────────
 PAST=$(iso_at $((NOW - 600))); FUTURE=$(iso_at $((NOW + 7200)))

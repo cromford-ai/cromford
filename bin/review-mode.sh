@@ -74,7 +74,7 @@ if [ "$1" = show ]; then
   # knob, project, value, expiry — the until rows are folded onto their mode row.
   printf '%s' "$RESP" | jq -r --arg f "$FILTER" '
     (.settings // []) | map(select(.key | startswith("review.")))
-    | map(. + {m: (.key | capture("^review\\.(?<knob>mode_until|mode|perf_block_ms|perf_block_stmt_pct|fix_rounds_max|followup_min_level|followup_chain|core_flows)(\\.(?<p>.+))?$")? // {knob: (.key | sub("^review\\."; "")), p: null})})
+    | map(. + {m: ((.key | capture("^review\\.(?<knob>mode_until|mode|perf_block_ms|perf_block_stmt_pct|fix_rounds_max|followup_min_level|followup_chain|golive_gates_merge|core_flows)(\\.(?<p>.+))?$")?) // {knob: (.key | sub("^review\\."; "")), p: null})})
     | map(. + {p: (.m.p // "fleet"), knob: .m.knob})
     | (map(select(.knob == "mode_until")) | map({key: .p, value: .value}) | from_entries) as $until
     | map(select(.knob != "mode_until"))
