@@ -402,6 +402,27 @@ honestly which of the two happened.
 
 ---
 
+## 3.1 No bisect on the default queue (BH-5373, 2026-10-17)
+
+`config/mergify/repos/cromford.conf` sets `batch_failure_attempts=0`, so the rendered
+`default` queue carries `batch_max_failure_resolution_attempts: 0`. Mergify no longer splits a
+red batch. It dequeues every member, and the merge conductor decides. The catalog default of
+`MC_BATCH_IMPACT` is 2 (enforce): when exactly one member reaches the failing suite, the
+conductor ejects that PR with a comment and re-queues the others. When none or several reach
+it, or the failing check is unmapped, the BH-4550 solo re-run decides as before. The `hotfix`
+and `solo` queues have `batch_size: 1` and do not get the key.
+
+Rollback, no deploy for the first step:
+
+1. Set the settings row `lane.merge-conductor.cromford.mc_batch_impact=1` (shadow).
+2. Delete the `batch_failure_attempts=0` line and re-render `.mergify.yml` in one PR.
+
+If a settings row `lane.merge-conductor.cromford.mc_batch_impact` already holds 1, it
+beats the catalog default and the conductor stays in shadow. Delete that row or set it to 2.
+
+Parallel lanes (section 6) are still off. `queue_mode=serial` stays until `MERGIFY_CI_KEY`
+is set on the hub.
+
 ## 4. Rollback
 
 Any one of these returns the repo to the synchronous path. No flag to flip, no fleet-wide

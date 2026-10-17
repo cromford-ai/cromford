@@ -829,13 +829,13 @@
     {
       "env": "MC_BATCH_IMPACT",
       "type": "int",
-      "default": 1,
+      "default": 2,
       "min": 0,
       "max": 2,
       "unit": "mode",
       "zero_means": "off",
       "read_in": "bin/lib/mc-batch-impact.sh",
-      "note": "BH-4980: when a Mergify batch fails and Mergify named nobody, map the failing test back through bin/test-impact.sh's map to the members that reach it. 0 off; 1 shadow (the default): log one BATCH_IMPACT_* line per PR head and decide nothing; 2 enforce: exactly one member reaches it -> that PR is ejected with a comment naming the test and the others are re-queued without the solo re-run; none or several -> the solo re-run (MC_BATCH_SOLO) decides as before. Any other value reads as 0 with one log line. The flip to 2 ships with batch_failure_attempts=0 in config/mergify/repos/cromford.conf, in one PR carrying real shadow lines (docs/notes/2026-10-07-BH-4980-eject-culprit.md). Per project: lane.merge-conductor.<project>.mc_batch_impact."
+      "note": "BH-4980: when a Mergify batch fails and Mergify named nobody, map the failing test back through bin/test-impact.sh's map to the members that reach it. 0 off; 1 shadow: log one BATCH_IMPACT_* line per PR head and decide nothing; 2 enforce (the default since BH-5373, the operator 2026-10-17): exactly one member reaches it -> that PR is ejected with a comment naming the test and the others are re-queued without the solo re-run; none or several -> the solo re-run (MC_BATCH_SOLO) decides as before. Any other value reads as 0 with one log line. The flip to 2 shipped with batch_failure_attempts=0 in config/mergify/repos/cromford.conf (docs/notes/2026-10-17-BH-5373-culprit-flip-on.md). Rollback with no deploy: the settings row lane.merge-conductor.<project>.mc_batch_impact=1. Per project: lane.merge-conductor.<project>.mc_batch_impact."
     },
     {
       "env": "MC_BATCH_IMPACT_CHECK_PATHS",

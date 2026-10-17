@@ -133,8 +133,8 @@ queue_rules:
       - check-success = "Jobs worker — routes + schema"
       - check-success = "Prompt replay evals (prompts/** only)"
     merge_method: merge
-    # 8 (the operator, 2026-09-24): the pool now builds ~12 PRs at a time; batches of 8
-    # Mergify splits a red batch to find the culprit.
+    # 4 (the operator, 2026-10-08; was 8 from 2026-09-24). A red batch is not split
+    # (batch_max_failure_resolution_attempts below).
     batch_size: 4
     batch_max_wait_time: 3 min
     # A retry hides a real failure and costs a full corpus run: 0 (2026-09-24).
@@ -142,6 +142,10 @@ queue_rules:
     # The plan job + a shard (bounded at 45 min) + the fan-ins; explicit so a
     # slow run is not dequeued by an `auto` timeout.
     checks_timeout: 60 min
+    # 0 (the operator, 2026-10-17, BH-5373): Mergify does not bisect a red batch. The
+    # merge conductor's impact map ejects the one PR that reaches the failing
+    # suite and re-queues the rest (bin/lib/mc-batch-eject.sh).
+    batch_max_failure_resolution_attempts: 0
 
 # Interrupts running batches, so it fires for a main-red fix only (BH-2121).
 priority_rules:

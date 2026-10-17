@@ -1,24 +1,28 @@
 #!/bin/bash
 # tests/queue-culprit-flip.bh-5373-test.sh — BH-5373 (BH-5356.1): THE CULPRIT
-# FLIP, held back (lead review 2026-10-14, the operator's replay 6167883368). BH-4980
-# shipped the impact map dark. This ticket keeps it dark on the default path:
-# MC_BATCH_IMPACT stays 1 (shadow) in the catalog, and the default Mergify
-# queue still bisects (no batch_max_failure_resolution_attempts key). It ships
-# the two lib fixes the replay proved (bin/lib/flaky.sh, bin/lib/mc-batch-impact.sh).
-# Enforce (2) is still reachable by an env value or a settings row, and the
-# cases below that test enforce pass MC_BATCH_IMPACT=2 explicitly.
+# FLIP. BH-4980 shipped the impact map dark; #6620 shipped the two lib fixes
+# the operator's replay (6167883368) proved (bin/lib/flaky.sh, bin/lib/mc-batch-impact.sh)
+# and kept it dark. The r2 flip (the operator, 2026-10-17, 6229144964) turns it on:
+# MC_BATCH_IMPACT is 2 (enforce) in the catalog, and the default Mergify queue
+# no longer bisects (batch_failure_attempts=0 renders
+# batch_max_failure_resolution_attempts: 0 under default only). queue_mode
+# stays serial until MERGIFY_CI_KEY exists. Shadow (1) is still reachable by an
+# env value or a settings row (K1), which is also the rollback.
 #
 #   T1     no MC_BATCH_IMPACT in the env: the real lane_knob reads this tree's
-#          catalog, the mode is 1, the decision is only logged, and the gate
-#          decides exactly as mode 0
+#          catalog, the mode is 2, the one PR that reaches the failing suite
+#          is ejected with one comment, the others are re-queued, and the
+#          solo re-run never runs
 #   T1e    MC_BATCH_IMPACT=2: the gate ejects the one PR that reaches the
 #          failing suite, re-queues the others and never runs the solo re-run
 #   T2     an unmapped check: every member asks the solo re-run, as mode 0
-#   T3     bisect stays on: the conf sets no batch_failure_attempts and the
-#          committed .mergify.yml has no batch_max_failure_resolution_attempts
+#   T3     bisect is off on default only: the conf sets batch_failure_attempts=0
+#          and queue_mode=serial, the committed .mergify.yml has exactly one
+#          batch_max_failure_resolution_attempts: 0, under default, none under
+#          hotfix or solo, no parallel mode; the catalog default is 2
 #   U1-U2  an `unknown` map answer (log-unreadable, not-paths) under the
-#          shipped defaults: the PR Mergify's bisect names keeps the culprit
-#          path and is not re-queued, exactly as mode 0
+#          shipped default (2): a PR Mergify named keeps the culprit path, is
+#          not re-queued, and the map is not asked for it, exactly as mode 0
 #   N1-N5  the negatives: always-suite, two members, a full row, Mergify's own
 #          pick, the main-red freeze. None of them ejects on the map.
 #   K1-K2  the switches with no deploy: an env value and a per-project settings row
@@ -152,15 +156,30 @@ same_as_off() { # same_as_off <case> <prs> <setup-fn> <env…>
 nbs() { grep -c . "$G/s/bs-calls" 2>/dev/null | tr -d ' '; }
 
 # ============================================================================
-# T1 — the catalog default is shadow: the map logs, the gate decides as mode 0.
+# T1 — the catalog default is enforce (BH-5373 r2): no env value, no settings
+# row. #11 alone touches worker/, the suite that failed.
 # ============================================================================
 g_t1() { g_setup "worker/jobs/src/x.js" "docs/a.md" "bin/lib/mc/x.sh"; }
-g_t1; : > "$G/s/modes"; gate 11 >/dev/null
-[ "$(sort -u "$G/s/modes")" = "mode=1" ] && ok || bad "T1 bim_mode is 1 with no env value (catalog default): $(cat "$G/s/modes")"
-grep -q "BATCH_IMPACT_EJECT $SLUG#11 $H11 — draft=#20 eject 11 $WSUITE mode=1" "$G/s/log" && ok \
-  || bad "T1 shadow logs the decision it did not take: $(grep BATCH_IMPACT "$G/s/log")"
-grep -q "only this PR reaches it" "$G/s/posted" && bad "T1 shadow posts no culprit comment: $(cat "$G/s/posted")" || ok
-same_as_off "T1 the catalog default" "11 12 13" g_t1
+g_t1; : > "$G/s/modes"
+OUT=$(gate 11)
+[ "$(sort -u "$G/s/modes")" = "mode=2" ] && ok || bad "T1 bim_mode is 2 with no env value (catalog default): $(cat "$G/s/modes")"
+[ "${OUT%%|*}" = 1 ] && ok || bad "T1 #11 is not re-queued (rc 1): $OUT $(tail -3 "$G/err")"
+[ "$(cut -d'|' -f2 <<<"$OUT")" = "queue-ejected — $WSUITE failed in draft #20 and only this PR reaches it (impact map)" ] && ok \
+  || bad "T1 #11 FR_WHY names the test: $OUT"
+[ "$(grep -c '^<<PR 11>>' "$G/s/posted")" = 1 ] && grep -q "only this one" "$G/s/posted" && ok \
+  || bad "T1 exactly one culprit comment on #11: $(cat "$G/s/posted")"
+grep -q "BATCH_IMPACT_EJECT $SLUG#11 $H11 — draft=#20 eject 11 $WSUITE mode=2" "$G/s/log" && ok \
+  || bad "T1 the enforce line: $(grep BATCH_IMPACT "$G/s/log")"
+for n in 12 13; do
+  OUT=$(gate "$n")
+  [ "${OUT%%|*}" = 0 ] && ok || bad "T1 #$n is re-queued (rc 0): $OUT"
+  [ "$(cut -d'|' -f3 <<<"$OUT")" = "re-queued: draft #20 failed \`$WSUITE\`, and the impact map says only #11 reaches it. This head's own checks are green." ] && ok \
+    || bad "T1 #$n FR_LINE names #11: $OUT"
+done
+grep -q "^<<PR 1[23]>>" "$G/s/posted" && bad "T1 nothing is posted on a bystander: $(cat "$G/s/posted")" || ok
+[ ! -s "$G/s/bs-calls" ] && ok || bad "T1 no solo re-run (bs_batch) for any member: $(cat "$G/s/bs-calls")"
+gate 11 >/dev/null
+[ "$(grep -c '^<<PR 11>>' "$G/s/posted")" = 1 ] && ok || bad "T1 a second tick posts no second comment"
 
 # ============================================================================
 # T1e — enforce, set by the env. #11 alone touches worker/, the suite that failed.
@@ -241,42 +260,51 @@ same_as_off N5 "11 12 13" g_t1 MAIN_RED=1 "$E2"
 # K1 — an env value wins over the catalog default: 1 is shadow, as mode 0 decides.
 same_as_off "K1 MC_BATCH_IMPACT=1 in the env is shadow" "11 12 13" g_t1 MC_BATCH_IMPACT=1
 grep -q "eject 11 $WSUITE mode=1" "$G/s/log" && ok || bad "K1 shadow still logs the decision: $(grep BATCH_IMPACT "$G/s/log")"
-# K2 — the per-project settings row lane.merge-conductor.bh.mc_batch_impact=2
-# turns enforce on with no deploy (the later flip, once #6688 lands).
-settings '{"lane.merge-conductor.bh.mc_batch_impact": "2"}'
+# K2 — the per-project settings row lane.merge-conductor.bh.mc_batch_impact=1
+# is the rollback with no deploy: shadow over the enforce default.
+settings '{"lane.merge-conductor.bh.mc_batch_impact": "1"}'
 g_t1; : > "$G/s/modes"; OUT=$(gate 11)
-[ "$(sort -u "$G/s/modes")" = "mode=2" ] && [ "${OUT%%|*}" = 1 ] && grep -q "only this one" "$G/s/posted" && ok \
-  || bad "K2 the per-project row turns the eject on: $(cat "$G/s/modes") / $OUT"
+[ "$(sort -u "$G/s/modes")" = "mode=1" ] && ! grep -q "only this one" "$G/s/posted" && ok \
+  || bad "K2 the per-project row turns the eject off: $(cat "$G/s/modes") / $OUT"
+same_as_off "K2 the per-project row =1" "11 12 13" g_t1
 settings '{}'
 
 # ============================================================================
-# T3 — bisect stays on: no key in the conf, none in the committed render.
+# T3 — bisect is off on the default queue, and only there; serial stays.
 # ============================================================================
 MT="$DIR/bin/mergify-template.sh"
 CONF="$DIR/config/mergify/repos/cromford.conf"
 # compare, not cmp: the committed file carries hand comments the render does not.
 OUT=$(bash "$MT" compare "$CONF" "$DIR/.mergify.yml" 2>&1); RC=$?
 [ "$RC" = 0 ] && ok || bad "T3 the committed conf matches the committed .mergify.yml (rc $RC): $(head -5 <<<"$OUT")"
-grep -q '^batch_failure_attempts=' "$CONF" && bad "T3 cromford.conf sets no batch_failure_attempts (Mergify bisects)" || ok
-grep -q '^[[:space:]]*batch_max_failure_resolution_attempts:' "$DIR/.mergify.yml" \
-  && bad "T3 .mergify.yml has no batch_max_failure_resolution_attempts key: $(grep -n batch_max_failure "$DIR/.mergify.yml")" || ok
+[ "$(grep -c '^batch_failure_attempts=0$' "$CONF")" = 1 ] && ok || bad "T3 cromford.conf sets batch_failure_attempts=0 once"
+[ "$(grep -c '^queue_mode=serial$' "$CONF")" = 1 ] && ok || bad "T3 cromford.conf keeps queue_mode=serial (no MERGIFY_CI_KEY)"
+# Anchored: the header comment names `merge_queue.mode: parallel` in prose.
+grep -q '^[[:space:]]*mode: parallel' "$DIR/.mergify.yml" && bad "T3 .mergify.yml has no parallel mode" || ok
+# Per queue: the key under default only (awk over the queue_rules entries).
+per_queue() { awk '/^queue_rules:/{q=1;next} q && /^[^ #]/{q=0} q && /^  - name: /{n=$3}
+  q && /^[[:space:]]+batch_max_failure_resolution_attempts:/{print n" "$2}' "$DIR/.mergify.yml"; }
+[ "$(per_queue)" = "default 0" ] && ok \
+  || bad "T3 one batch_max_failure_resolution_attempts: 0, under default only: $(per_queue | tr '\n' ';')"
+[ "$(grep -c '^[[:space:]]*batch_max_failure_resolution_attempts:' "$DIR/.mergify.yml")" = 1 ] && ok \
+  || bad "T3 the key appears once in .mergify.yml: $(grep -n batch_max_failure "$DIR/.mergify.yml")"
 bash "$MT" --check >/dev/null 2>&1; RC=$?
 [ "$RC" = 0 ] && ok || bad "T3 bin/mergify-template.sh --check (rc $RC)"
 # The catalog the knob reads is the one lanes-build renders.
-[ "$(jq -r '.. | objects | select(.env? == "MC_BATCH_IMPACT") | .default' "$DIR/catalog/lanes.d/merge-conductor.json")" = 1 ] && ok \
-  || bad "T3 catalog/lanes.d/merge-conductor.json MC_BATCH_IMPACT default is 1"
+[ "$(jq -r '.. | objects | select(.env? == "MC_BATCH_IMPACT") | .default' "$DIR/catalog/lanes.d/merge-conductor.json")" = 2 ] && ok \
+  || bad "T3 catalog/lanes.d/merge-conductor.json MC_BATCH_IMPACT default is 2"
 
 # ============================================================================
-# U — an `unknown` map answer under the shipped defaults. the operator's replay found
-# 6 of 16 red drafts here (log-unreadable 4, a non-suite name 2). With bisect
-# on, Mergify's bisect names the culprit in its dequeue comment: that PR keeps
-# the culprit path and is not re-queued, and the gate decides as mode 0.
+# U — an `unknown` map answer under the shipped default (2). the operator's replay
+# found 6 of 16 red drafts here (log-unreadable 4, a non-suite name 2). A PR
+# Mergify names in its dequeue comment keeps the culprit path, is not
+# re-queued, and the map is not asked for it: the gate decides as mode 0.
 # ============================================================================
 g_u() { g_t1; echo "skip $UKIND" > "$G/s/facts"; dequeue_comment "$H12" 20 "$PCHECK" 1 > "$G/s/comments/12"; }
 for u in "U1 log-unreadable" "U2 not-paths"; do
   set -- $u; UKIND="$2"
   g_u; : > "$G/s/modes"; O12=$(gate 12)
-  [ "$(sort -u "$G/s/modes")" = "mode=1" ] && ok || bad "$1 the shipped default is shadow: $(cat "$G/s/modes")"
+  [ "$(sort -u "$G/s/modes")" = "mode=2" ] && ok || bad "$1 the shipped default is enforce: $(cat "$G/s/modes")"
   [ "${O12%%|*}" != 0 ] && ok || bad "$1 the PR Mergify's bisect named is not re-queued: $O12"
   grep -q "BATCH_IMPACT_[A-Z]* $SLUG#12 " "$G/s/log" && bad "$1 the map is not asked for the named PR: $(grep BATCH_IMPACT "$G/s/log")" || ok
   same_as_off "$1" "11 12 13" g_u

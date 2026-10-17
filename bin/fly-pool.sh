@@ -1599,8 +1599,13 @@ pool_after_churned() {
 # queued/claimed), or an open PR is on its branch, on a `-r<N>` re-run branch, or
 # titled `<KEY>:` (BH-6671). rc 1 when it is done. rc 2 when a PR read did not
 # answer: the row waits, it is not released on silence.
+# A key this tick already handed to spawn_one is in flight too (TICK_KEYS):
+# spawn_one runs in the background and moves the queue file away BEFORE it
+# writes the pool json, so for that moment neither file names the key, and a
+# later row in the same tick that waits on it would read it as done.
 pool_after_open() {
   local other="$1" st
+  case "${TICK_KEYS:-}" in *" $other "*) return 0 ;; esac
   grep -lsE "\"key\": *\"$other\"" "$POOL"/*.json >/dev/null 2>&1 && return 0
   [ -e "$QDIR/$other.json" ] && return 0
   if command -v queue_status >/dev/null 2>&1; then
@@ -2013,13 +2018,47 @@ QROW() { # QROW done|failed|requeue <key> <reason> [attempt] [meta] [ticket-id]
   return 0
 }
 
+# >>> mput error note (BH-7174)
+# A failed push used to log "FAILED" with no reason: mexec sent flyctl's stderr
+# to /dev/null. mexec still does that for every caller but mput (many read its
+# stdout as data, so stderr must never join it); mput alone sets _mexec_err to
+# a temp file and, on a non-zero rc, writes ONE line per machine with flyctl's
+# last stderr line. Lowercase on purpose: it is a per-call local, not a knob.
 mexec() { # mexec <machine-id> <cmd>
-  timeout 90 "$FLY" ssh console -a "$APP" --machine "$1" -C "/bin/sh -c $(printf '%q' "$2")" 2>/dev/null
+  timeout 90 "$FLY" ssh console -a "$APP" --machine "$1" -C "/bin/sh -c $(printf '%q' "$2")" 2>"${_mexec_err:-/dev/null}"
 }
 mput() { # mput <machine-id> <local-file> <remote-path>  (base64 through console)
-  local B64; B64=$(base64 -w0 "$2")
+  local B64 rc _mexec_err; B64=$(base64 -w0 "$2")
+  _mexec_err=$(mktemp "${TMPDIR:-/tmp}/mput-err.XXXXXX" 2>/dev/null) || _mexec_err=""
   mexec "$1" "mkdir -p $(dirname "$3") && echo $B64 | base64 -d > $3 && chmod 600 $3" >/dev/null
+  rc=$?
+  [ "$rc" = 0 ] || mput_fail_note "$1" "$3" "$rc" "$_mexec_err"
+  [ -n "$_mexec_err" ] && rm -f "$_mexec_err"
+  return "$rc"
 }
+# mput_fail_note <mid> <remote-path> <rc> <errfile> -> one `push of <path>
+# FAILED rc=<n>: <text>` line, the first time a machine fails a push. The marker
+# $POOL/.<mid>.puterr goes with the machine's other state. The command line
+# carries the base64 of the env bundle, so if flyctl echoes it, every run of 40+
+# base64 characters is withheld, and a credential shape withholds the text.
+mput_fail_note() {
+  local why
+  ( set -C; : > "$POOL/.$1.puterr" ) 2>/dev/null || return 0
+  if [ -z "${4:-}" ] || [ ! -r "$4" ]; then
+    why="(stderr not captured)"
+  else
+    why=$(grep -v '^[[:space:]]*$' "$4" | tail -n 1 | tr -d '\000-\037' \
+          | sed -E 's#[A-Za-z0-9+/=]{40,}#<base64 withheld>#g' | cut -c1-240)
+    [ -n "$why" ] || why="(flyctl printed nothing)"
+    if grep -Eq 'gh[pousr]_[A-Za-z0-9]{20,}|github_pat_|sk-ant-|sk-or-|=[A-Za-z0-9_./+-]{32,}' <<<"$why"; then
+      why="reason withheld: flyctl output looked like a credential"
+    fi
+  fi
+  [ "$3" = 124 ] && why="$why (timeout 90s)"
+  say "$1: push of $2 FAILED rc=$3: $why"
+  return 0
+}
+# <<< mput error note
 
 # >>> machine destroy (BH-660)
 # EVERY DESTROY ANSWERS FOR ITSELF (BH-660). Until now all six destroy sites in
@@ -2890,7 +2929,7 @@ next_job_or_destroy() { # hand this machine the next queued job, or destroy it
     # The file goes whatever the destroy answered: a reaped RESULT must still
     # close its row and free its account. The machine is not lost — the sweep
     # re-lists the app every tick and destroys it once it stops.
-    rm -f "$MF" "$POOL/.$MID.snapmt"
+    rm -f "$MF" "$POOL/.$MID.snapmt" "$POOL/.$MID.puterr"
     # >>> machines rows (BH-1035)
     # Close the registry row using the actual destroy outcome. `command -v` for
     # the same reason the destroy above has it: the two suites that source THIS
@@ -3913,7 +3952,7 @@ for MF in "$POOL"/*.json; do
     destroy_machine "$MID" "$DKIND for $KEY (state=${MSTATE:-gone})"
     # Same rule as next_job_or_destroy: the row is closed and the job requeued
     # whatever the destroy answered, and the sweep is what recovers the machine.
-    rm -f "$MF" "$POOL/.$MID.snapmt"
+    rm -f "$MF" "$POOL/.$MID.snapmt" "$POOL/.$MID.puterr"
     # >>> machines rows (BH-1035)
     # Close the registry row using the actual destroy outcome.
     machines_row_close "$MID"
@@ -4719,6 +4758,7 @@ spawn_one() { # spawn_one <job-file> <key> <ticket-id> <attempt> <deferrals> <de
   else
     say "env/job push FAILED to $MID — destroying, job stays queued"
     destroy_machine "$MID" "env/job push failed for $KEY"
+    rm -f "$POOL/.$MID.puterr"
     # The lease was taken before the push; a machine that never got its job must
     # not keep an account busy until the TTL.
     command -v pool_account_release >/dev/null 2>&1 && pool_account_release "$MID"

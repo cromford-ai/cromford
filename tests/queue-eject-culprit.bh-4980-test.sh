@@ -358,7 +358,11 @@ grep -qE 'BATCH_IMPACT_(EJECT|SEVERAL|NONE|UNKNOWN)' "$G/s/log" && bad "K1 an in
 # ============================================================================
 MT="$DIR/bin/mergify-template.sh"
 # M1 — 0 renders under default only.
-{ cat "$DIR/config/mergify/repos/cromford.conf"; echo "batch_failure_attempts=0"; } > "$T/m1.conf"
+# TEST-CHANGE (BH-5373): the real conf now sets batch_failure_attempts=0, and a
+# second copy of a key is refused as a duplicate. M1 and M3 strip the conf's own
+# line and append theirs, so they still ask the same question of the renderer.
+grep -v '^batch_failure_attempts=' "$DIR/config/mergify/repos/cromford.conf" > "$T/m-base.conf"
+{ cat "$T/m-base.conf"; echo "batch_failure_attempts=0"; } > "$T/m1.conf"
 bash "$MT" render "$T/m1.conf" > "$T/m1.yml" 2>"$T/m1.err"; RC=$?
 Y=$(python3 -c 'import json,sys,yaml; print(json.dumps(yaml.safe_load(open(sys.argv[1]))))' "$T/m1.yml" 2>/dev/null \
     || ruby -ryaml -rjson -e 'puts JSON.generate(YAML.load_file(ARGV[0]))' "$T/m1.yml" 2>/dev/null)
@@ -397,7 +401,7 @@ fi
 bash "$MT" compare "$DIR/config/mergify/repos/cromford.conf" "$DIR/.mergify.yml" >/dev/null 2>&1; RC=$?
 [ "$RC" = 0 ] && ok || bad "M2 cromford.conf still matches the committed .mergify.yml (rc $RC)"
 # M3 — 9 is refused, naming the line.
-{ cat "$DIR/config/mergify/repos/cromford.conf"; echo "batch_failure_attempts=9"; } > "$T/m3.conf"
+{ cat "$T/m-base.conf"; echo "batch_failure_attempts=9"; } > "$T/m3.conf"
 N=$(grep -c '' "$T/m3.conf")
 ERR=$(bash "$MT" render "$T/m3.conf" 2>&1 >/dev/null); RC=$?
 [ "$RC" = 2 ] && grep -q "m3.conf:$N: batch_failure_attempts 9 is outside 0..8" <<<"$ERR" && ok || bad "M3 9 is rc 2 naming line $N (rc $RC): $ERR"

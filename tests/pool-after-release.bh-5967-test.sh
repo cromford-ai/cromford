@@ -27,6 +27,8 @@
 #       the third release, and its next stand-down at or over
 #       JOBS_QUEUE_DEFER_MAX PARKS (the cap acts, with one alert)
 #   C5  three release cycles on the same blocker give ONE AFTER LOOP line
+#   C6  C2 with the BH-1016 spawn caught between its queue-file move and its
+#       pool-json write: BH-900 still waits (BH-1016 is in flight this tick)
 #
 # Driven through bin/fly-pool.sh against a scratch HARNESS, a fake flyctl, a
 # fake gh and a recording jobs client.
@@ -292,6 +294,39 @@ for _c in 1 2 3; do
 done
 [ "$(grep -c 'AFTER LOOP' "$T/alerts-c5.log")" = 1 ] && ok \
   || bad "C5: THE BUG: three release cycles on BH-890 must give ONE AFTER LOOP line, got $(grep -c 'AFTER LOOP' "$T/alerts-c5.log")"
+
+# ── C6: a key spawned this tick is in flight before its pool json exists ──
+# spawn_one runs in the background: it moves the queue file away, then writes
+# the pool json. The flake in merge batch #7221 (C2, 3 of 24 runs under load)
+# was a later row's gate reading BH-1016 in that gap as "done". A fake jq pins
+# the gap open: the read of BH-900's key waits until BH-1016's queue file is
+# gone, and the pool-json write waits until BH-900's gate has said its line.
+# Bounded polls, no fixed sleep.
+REALJQ=$(command -v jq)
+cat > "$T/fakebin/jq" <<FJQ
+#!/bin/bash
+case "\$*" in
+  *spawned_at*)
+    for _i in \$(seq 1 100); do
+      grep -qE '(skipping|RELEASED) BH-900' "$H/logs/fly-pool.log" 2>/dev/null && break
+      /bin/sleep 0.05
+    done ;;
+  *'.key // ""'*BH-900.json*)
+    for _i in \$(seq 1 100); do
+      [ -e "$H/state/build-queue/project-5/BH-1016.json" ] || break
+      /bin/sleep 0.05
+    done ;;
+esac
+exec "$REALJQ" "\$@"
+FJQ
+chmod +x "$T/fakebin/jq"
+reset_state; write_fly_stub ""
+qwaitk BH-1016 1016 BH-890; qwaitk BH-890 890 BH-900; qwaitk BH-900 900 BH-1016
+run_pool
+rm -f "$T/fakebin/jq"
+grep -q 'RELEASED BH-1016: .*mutual' "$H/logs/fly-pool.log" && ok || bad "C6: BH-1016 is released from the 3-cycle: $(grep RELEASED "$H/logs/fly-pool.log")"
+grep -q 'RELEASED BH-900' "$H/logs/fly-pool.log" && bad "C6: THE BUG: BH-1016 was spawned this tick, so BH-900 must keep waiting: $(grep 'RELEASED BH-900' "$H/logs/fly-pool.log")" || ok
+grep -q 'skipping BH-900: waits for BH-1016' "$H/logs/fly-pool.log" && ok || bad "C6: BH-900 is held this tick: $(grep BH-900 "$H/logs/fly-pool.log" | tail -2)"
 
 echo "pool-after-release.bh-5967: $PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ]
