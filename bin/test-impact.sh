@@ -1458,6 +1458,9 @@ ti_select_from() {
 
   LC_ALL=C sort -u -o "$work" "$work"
   ti_why_rows "$map" "$work" | LC_ALL=C sort -u > "$TI_TMP/why"
+  # BH-7288: a bin/lib/ .sh change keeps only the sourcers that reach a changed
+  # function (the lib's header has the rules); a failure leaves the rows as is.
+  { . "$SELF_DIR/lib/test-impact-fn-reach.sh" && fnr_apply "$map" "$changed" "$TI_TMP/why"; } || echo "fn-reach: fallback (lib failed)" >&2
   local n; n=$(cut -f1 "$TI_TMP/why" | LC_ALL=C sort -u | grep -c .)
   # A selection of nothing is never a green run of nothing. The always-run set
   # is non-empty in this repo, so an empty answer means the map or the diff is
