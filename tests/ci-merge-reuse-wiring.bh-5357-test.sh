@@ -10,7 +10,8 @@
 #       steps.reuse.outputs.run_<id> != '0', and no step names an id the
 #       catalog lacks.
 #   W3  the always steps carry no steps.reuse condition.
-#   W4  jobs.lint.permissions is exactly contents: read + actions: read.
+#   W4  jobs.lint.permissions is exactly contents: read + actions: read, plus
+#       packages: read for the CI image pull (BH-7255).
 # Run from anywhere: HARNESS_TEST_SANDBOX=1 bash tests/ci-merge-reuse-wiring.bh-5357-test.sh
 set -uo pipefail
 . "$(dirname "$0")/lib/scratch.sh" || exit 1
@@ -94,7 +95,7 @@ for n in always:
 
 # W4
 perm = lint.get("permissions")
-ok() if perm == {"contents": "read", "actions": "read"} else bad("W4: jobs.lint.permissions is %r" % perm)
+ok() if perm == {"contents": "read", "actions": "read", "packages": "read"} else bad("W4: jobs.lint.permissions is %r" % perm)
 
 print("ci-merge-reuse-wiring (BH-5357): %d passed, %d failed" % (P, F))
 sys.exit(1 if F else 0)

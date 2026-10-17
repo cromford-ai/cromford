@@ -121,6 +121,9 @@ for j, b in jobs.items():
     cond = str((b or {}).get("if", ""))
     if j in ("lint", "determinism"):
         ok() if not cond else bad(f"S5: {j} is a fast check and must run on every event: {cond!r}")
+    elif j == "ci-image":
+        # BH-7255: lint needs it, so it runs on every event like lint does.
+        ok() if not cond else bad(f"S5: ci-image is needed by the fast check lint and must run on every event: {cond!r}")
     elif not cond:
         bad(f"S5: {j} has no if: — it would run everywhere")
     else:

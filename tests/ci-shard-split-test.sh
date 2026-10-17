@@ -343,7 +343,7 @@ case "$NAME" in "Pure-logic gate fixtures"|"Tests cannot touch a real harness") 
 grep -q '^        shard: \${{ fromJSON(needs.plan.outputs.shards) }}$' <<<"$SB" && ok \
   || bad "D: tests-shard's matrix must be 'shard: \${{ fromJSON(needs.plan.outputs.shards) }}'"
 case "$SB" in *"fail-fast: false"*) ok ;; *) bad "D: tests-shard must set fail-fast: false, or one red shard hides the rest" ;; esac
-grep -q '^    needs: \[plan\]$' <<<"$SB" && ok || bad "D: tests-shard must need the plan job"
+grep -qE '^    needs: \[plan(, ci-image)?\]$' <<<"$SB" && ok || bad "D: tests-shard must need the plan job (and, since BH-7255, ci-image for its container)"
 grep -q "SHARD: \${{ matrix.shard }}" <<<"$SB" && ok || bad "D: the suite step must take SHARD from matrix.shard, not a typed number"
 grep -q "PLAN_N: \${{ needs.plan.outputs.n }}" <<<"$SB" && ok || bad "D: the suite step must take PLAN_N from the plan"
 CMD=$(printf '%s\n' "$SB" | grep -v '^[[:space:]]*#' | awk '/bin\/test-trace-safety\.sh --gate/ { on = 1 } on { print } on && !/\\$/ { exit }' | tr -s ' \n' ' ')

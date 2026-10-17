@@ -1,0 +1,94 @@
+{
+  "id": "lane-cpu-rank",
+  "name": "Hub lane CPU rank",
+  "scope": "hub",
+  "script": "bin/lane-cpu-rank.sh",
+  "cadence": "5 14 * * *",
+  "boxes": [
+    "hub"
+  ],
+  "switch": {
+    "kind": "flag",
+    "name": "lane-off-lane-cpu-rank",
+    "aliases": []
+  },
+  "wired": true,
+  "knobs": [
+    {
+      "env": "LANE_CPU_RANK_SECONDS",
+      "type": "int",
+      "default": 3600,
+      "min": 60,
+      "max": 7200,
+      "unit": "seconds",
+      "zero_means": null,
+      "note": "BH-7252: the length of the one bin/lane-cpu-sample.sh --cpu-s window the table is measured over. Code fallback ${LANE_CPU_RANK_SECONDS:-3600}; not a whole number in 60..7200 uses 3600."
+    },
+    {
+      "env": "LANE_CPU_RANK_INTERVAL_S",
+      "type": "int",
+      "default": 5,
+      "min": 1,
+      "max": 60,
+      "unit": "seconds",
+      "zero_means": null,
+      "note": "BH-7252: seconds between /proc snapshots in the window. A run that starts and ends inside one interval under cron counts as other, so a short interval bounds what is missed. Code fallback ${LANE_CPU_RANK_INTERVAL_S:-5}; out of 1..60 uses 5."
+    },
+    {
+      "env": "LANE_CPU_RANK_TOP",
+      "type": "int",
+      "default": 15,
+      "min": 1,
+      "max": 50,
+      "unit": "lanes",
+      "zero_means": null,
+      "note": "BH-7252: lane rows in the posted table; the lanes past it are summed in one line. Code fallback ${LANE_CPU_RANK_TOP:-15}; out of 1..50 uses 15."
+    },
+    {
+      "env": "HARNESS_TEST_SANDBOX",
+      "type": "string",
+      "default": "",
+      "unit": null,
+      "zero_means": null,
+      "read_in": "bin/lane-cpu-rank.sh",
+      "note": "Test seam gate: bin/lane-cpu-rank.sh reads LANE_CPU_RANK_GH_LIB, LANE_CPU_RANK_SAMPLER and LANE_CPU_RANK_LOADAVG only when this is 1. Never set on a box. NOT settable from the control plane.",
+      "settable": false
+    },
+    {
+      "env": "LANE_CPU_RANK_GH_LIB",
+      "type": "string",
+      "default": "",
+      "unit": null,
+      "zero_means": null,
+      "read_in": "bin/lane-cpu-rank.sh",
+      "note": "BH-7252 test seam: a file that defines the GitHub functions. Read only under HARNESS_TEST_SANDBOX=1; without it a sandbox run is not-configured. NOT settable from the control plane.",
+      "settable": false
+    },
+    {
+      "env": "LANE_CPU_RANK_SAMPLER",
+      "type": "string",
+      "default": "",
+      "unit": null,
+      "zero_means": null,
+      "read_in": "bin/lane-cpu-rank.sh",
+      "note": "BH-7252 test seam: a command run instead of bin/lane-cpu-sample.sh. Read only under HARNESS_TEST_SANDBOX=1. NOT settable from the control plane.",
+      "settable": false
+    },
+    {
+      "env": "LANE_CPU_RANK_LOADAVG",
+      "type": "string",
+      "default": "",
+      "unit": null,
+      "zero_means": null,
+      "read_in": "bin/lane-cpu-rank.sh",
+      "note": "BH-7252 test seam: a file read instead of /proc/loadavg. Read only under HARNESS_TEST_SANDBOX=1. NOT settable from the control plane.",
+      "settable": false
+    }
+  ],
+  "stats": {
+    "cost_stage": null,
+    "cost_project_filter": null,
+    "lanes_row": false,
+    "log": "logs/lane-cpu-rank.log"
+  }
+}

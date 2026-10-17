@@ -180,7 +180,7 @@ ROOT="$(cd "$ROOT" && pwd)"
 # either documentation (inert, see ti_inert) or unknown reach, and unknown reach
 # means the whole corpus — so adding a new source directory to the repo without
 # adding it here costs a full CI run, never a missed suite.
-TI_PREFIX='bin|worker|console-ui|mcp|agent-core|locks-worker|cron|catalog|env-templates|guardrails|checks|prompts|fly|config|rules|skills|orchestrator|tasks|tests|docs|\.github|\.harness|fleet\.conf|vercel\.conf|\.gitattributes|\.gitignore|\.mergify\.yml'
+TI_PREFIX='bin|worker|console-ui|mcp|agent-core|locks-worker|cron|catalog|env-templates|guardrails|checks|prompts|fly|ci-images|config|rules|skills|orchestrator|tasks|tests|docs|\.github|\.harness|fleet\.conf|vercel\.conf|\.gitattributes|\.gitignore|\.mergify\.yml'
 # The names this repo's suites give the checkout root. See the header.
 TI_ROOTVAR='DIR|ROOT|REPO|HERE|D'
 # The same list with the dots written as a class instead of a backslash escape.
@@ -195,7 +195,7 @@ TI_ROOTVAR='DIR|ROOT|REPO|HERE|D'
 # `fleet.conf` at RSTART 27 instead of `@ROOT@/fleet.conf` at 20. The extractor
 # then dropped it as a scratch path, so 36 suites silently lost their
 # fleet.conf row on every fleet box while the map still looked healthy.
-TI_PREFIX_AWK='bin|worker|console-ui|mcp|agent-core|locks-worker|cron|catalog|env-templates|guardrails|checks|prompts|fly|config|rules|skills|orchestrator|tasks|tests|docs|[A-Za-z0-9_-]+[.](md|conf)|[.]github|[.]harness|[.]gitattributes|[.]gitignore|[.]mergify[.]yml'
+TI_PREFIX_AWK='bin|worker|console-ui|mcp|agent-core|locks-worker|cron|catalog|env-templates|guardrails|checks|prompts|fly|ci-images|config|rules|skills|orchestrator|tasks|tests|docs|[A-Za-z0-9_-]+[.](md|conf)|[.]github|[.]harness|[.]gitattributes|[.]gitignore|[.]mergify[.]yml'
 
 # ── HOW A SUITE NAMES THE CHECKOUT ──────────────────────────────────────────
 # Five spellings, all of them in this corpus, and the first version of this
@@ -753,7 +753,7 @@ TI_TREEDIR_PY_AWK='
 }
 '
 ti_treedir_rows() {
-  local dirs='bin|worker|console-ui|mcp|agent-core|locks-worker|cron|catalog|env-templates|guardrails|checks|prompts|fly|config|rules|skills|orchestrator|tasks|docs'
+  local dirs='bin|worker|console-ui|mcp|agent-core|locks-worker|cron|catalog|env-templates|guardrails|checks|prompts|fly|ci-images|config|rules|skills|orchestrator|tasks|docs'
   local _s _files=() _walk=() s p
   while IFS= read -r _s; do [ -n "$_s" ] && _files+=("$_s"); done < <(ti_suites)
   [ "${#_files[@]}" -gt 0 ] || return 0

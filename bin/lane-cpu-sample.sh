@@ -1,7 +1,7 @@
 #!/bin/bash
 # bin/lane-cpu-sample.sh — CPU share per lane over a short window (BH-6173).
 #
-#   bin/lane-cpu-sample.sh [--seconds N] [--interval I] [--proc-root DIR] [--lane NAME] [--max-pct P]
+#   bin/lane-cpu-sample.sh [--seconds N] [--interval I] [--proc-root DIR] [--lane NAME] [--max-pct P] [--cpu-s]
 #   bin/lane-cpu-sample.sh --snapshot [--proc-root DIR]
 #   bin/lane-cpu-sample.sh --diff A B [C ...] [--lane NAME] [--max-pct P]
 #
@@ -38,6 +38,14 @@
 # alone. PASS means the printed share is under P; equal is FAIL. A lane not in
 # the sample has share 0.0.
 #
+# --cpu-s (BH-7252, sample mode only): each row gets a third column, the CPU
+# seconds per hour of that lane: ticks * 3600 / (CLK_TCK * --seconds), one
+# decimal, rounded half up: "<share>\t<lane>\t<cpu_s_h>". CLK_TCK is
+# getconf CLK_TCK (100 if that fails); test seam LCS_CLK_TCK (digits only,
+# else ignored). The verdict line does not change. With --snapshot or --diff
+# it is refused (exit 64): the window length is known only in sample mode.
+# Without --cpu-s the output is the 2-column table, byte for byte.
+#
 # Limit: a run that starts AND ends inside one --interval, under a parent that
 # is not a lane (cron), counts as that parent's lane ("other"). A short
 # interval bounds that: at --interval 5 the most it can miss is 5 s per run.
@@ -57,13 +65,13 @@
 set -uo pipefail
 
 usage() {
-  echo "usage: lane-cpu-sample.sh [--seconds N] [--interval I] [--proc-root DIR] [--lane NAME] [--max-pct P] | --snapshot [--proc-root DIR] | --diff A B [C ...] [--lane NAME] [--max-pct P]" >&2
+  echo "usage: lane-cpu-sample.sh [--seconds N] [--interval I] [--proc-root DIR] [--lane NAME] [--max-pct P] [--cpu-s] | --snapshot [--proc-root DIR] | --diff A B [C ...] [--lane NAME] [--max-pct P]" >&2
   [ -n "${1:-}" ] && echo "lane-cpu-sample: $1" >&2
   exit 64
 }
 
 MODE=sample; SECONDS_N=20; INTERVAL_N=""; PROC_ROOT=/proc
-LANE=state-backup; MAXPCT=2; LANE_GIVEN=0; DIFF_FILES=()
+LANE=state-backup; MAXPCT=2; LANE_GIVEN=0; DIFF_FILES=(); CPU_S=0
 while [ $# -gt 0 ]; do
   case "$1" in
     --seconds)   [ $# -ge 2 ] || usage "--seconds needs a value"; SECONDS_N="$2"; shift 2 ;;
@@ -71,6 +79,7 @@ while [ $# -gt 0 ]; do
     --proc-root) [ $# -ge 2 ] || usage "--proc-root needs a value"; PROC_ROOT="$2"; shift 2 ;;
     --lane)      [ $# -ge 2 ] || usage "--lane needs a value"; LANE="$2"; LANE_GIVEN=1; shift 2 ;;
     --max-pct)   [ $# -ge 2 ] || usage "--max-pct needs a value"; MAXPCT="$2"; LANE_GIVEN=1; shift 2 ;;
+    --cpu-s)     CPU_S=1; shift ;;
     --snapshot)  MODE=snapshot; shift ;;
     --diff)      MODE="diff"; shift
                  while [ $# -gt 0 ] && [ "${1#--}" = "$1" ]; do DIFF_FILES+=("$1"); shift; done
@@ -83,6 +92,13 @@ case "$SECONDS_N" in ''|*[!0-9]*|0) usage "--seconds must be a whole number abov
 case "$INTERVAL_N" in ''|*[!0-9]*|0) usage "--interval must be a whole number above 0" ;; esac
 [ -d "$PROC_ROOT" ] || usage "--proc-root $PROC_ROOT is not a directory"
 [ "$MODE" != snapshot ] || [ "$LANE_GIVEN" = 0 ] || usage "--snapshot takes no --lane or --max-pct"
+[ "$MODE" = sample ] || [ "$CPU_S" = 0 ] || usage "--cpu-s works only in sample mode (no --snapshot, no --diff)"
+CLK_TCK=""
+if [ "$CPU_S" = 1 ]; then
+  [[ "${LCS_CLK_TCK:-}" =~ ^[1-9][0-9]*$ ]] && CLK_TCK=$LCS_CLK_TCK
+  [ -n "$CLK_TCK" ] || CLK_TCK=$(getconf CLK_TCK 2>/dev/null)
+  [[ "$CLK_TCK" =~ ^[1-9][0-9]*$ ]] || CLK_TCK=100
+fi
 [[ "$LANE" =~ ^[A-Za-z0-9._-]+$ ]] || usage "bad lane name: $LANE"
 [[ "$MAXPCT" =~ ^[0-9]+(\.[0-9])?$ ]] || usage "--max-pct must be a number with at most one decimal"
 if [ "$MODE" = diff ]; then
@@ -217,9 +233,16 @@ report() {
   done
   # share10: the share in tenths of a percent, rounded half up.
   share10() { echo $(( ($1 * 1000 * 2 + total) / (total * 2) )); }
+  # cpu10: CPU seconds per hour in tenths, rounded half up (--cpu-s).
+  local c10 cden=$(( CLK_TCK * SECONDS_N * 2 ))
   for name in "${order[@]}"; do
     t10=$(share10 "${sum[$name]}")
-    printf '%d.%d\t%s\n' $((t10 / 10)) $((t10 % 10)) "$name"
+    if [ "$CPU_S" = 1 ]; then
+      c10=$(( (${sum[$name]} * 36000 * 2 + CLK_TCK * SECONDS_N) / cden ))
+      printf '%d.%d\t%s\t%d.%d\n' $((t10 / 10)) $((t10 % 10)) "$name" $((c10 / 10)) $((c10 % 10))
+    else
+      printf '%d.%d\t%s\n' $((t10 / 10)) $((t10 % 10)) "$name"
+    fi
   done
   t10=$(share10 "${sum[$LANE]:-0}")
   case "$MAXPCT" in *.*) m10=$(( 10#${MAXPCT%.*} * 10 + 10#${MAXPCT#*.} )) ;; *) m10=$(( 10#$MAXPCT * 10 )) ;; esac

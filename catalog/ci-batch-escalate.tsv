@@ -127,6 +127,12 @@ bin/llm-sites-build.sh	worker	the worker-jobs step that composes the llm-sites c
 catalog/context-budgets.json	worker	worker/jobs/src/routes/llm-sites.js imports it
 catalog/context-budgets.d/	worker	the fragments the worker's imported budget manifest is composed from (BH-6487)
 bin/context-budgets-build.sh	worker	the worker-jobs step that composes the budget manifest the worker imports
+bin/ci-node-modules.sh	spa	the console-ui step that links the image's baked node_modules (BH-7255)
+bin/ci-node-modules.sh	worker	the worker-jobs step that links the image's baked node_modules (BH-7255)
+bin/ci-image.sh	spa	the ci-image job that picks the container console-ui runs in (BH-7255)
+bin/ci-image.sh	worker	the ci-image job that picks the container worker-jobs runs in (BH-7255)
+ci-images/	spa	the image console-ui runs in when CI_IMAGE is on (BH-7255)
+ci-images/	worker	the image worker-jobs runs in when CI_IMAGE is on (BH-7255)
 catalog/model-prices.json	worker	worker/jobs/test/route-rules.p4.test.js reads it
 catalog/readiness-levels.json	worker	worker/jobs/test/settings-conf-value.bh-2411.test.js reads it
 worker/jobs/src/lib/box-command-args.js	spa	console-ui/tests/machines-orgo-actions.bh-5750.test.js imports it (BH-5750)
