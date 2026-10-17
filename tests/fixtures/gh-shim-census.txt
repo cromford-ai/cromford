@@ -70,3 +70,6 @@ issue close 1 -R o/r --comment "done"
 # of verbs the harness is allowed to call.
 !pr checks https://github.com/o/r/pull/1 --required --watch --fail-fast
 !run watch 42 -R o/r --exit-status
+# `gh pr ready` (bin/lib/data-lane-pending.sh, BH-6467) has no REST form: it is the
+# GraphQL markPullRequestReadyForReview mutation, so it passes through by design.
+!pr ready https://github.com/o/r/pull/1
