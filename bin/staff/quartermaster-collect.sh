@@ -23,6 +23,13 @@
 #                    a blank cost_usd. Blank is empty after trim; `0` is a
 #                    value, not a blank. A finding when the count >=
 #                    QM_PARITY_MIN_CALLS.
+#   fly-unsettled    per Fly machine in the last fly idle reaper snapshot
+#                    (GET /api/fly-idle, BH-6877) the reaper could not settle:
+#                    idle_state `unknown` or `nosignal`, or a lane-run machine
+#                    with no claim since boot (no_claim). The title names the
+#                    `bin/fly-idle-reaper.sh act` command to run. A failed read
+#                    is one warn line and no fly finding; the cost checks still
+#                    print.
 #
 # The item holds the check, its keys and the UTC day, and no count: the claim
 # fingerprints the item, so one key makes at most one finding per day. The
@@ -95,10 +102,15 @@ TMP=$(mktemp -d "${TMPDIR:-/tmp}/qm-collect.XXXXXX") || exit 1
 trap 'rm -rf "$TMP"' EXIT
 SINCE=$(date -u -d "@$((NOW_S - W * 3600))" +%Y-%m-%dT%H:%M:%SZ) || exit 1
 cost_rows_fetch "$TMP/rows.csv" "$SINCE" || exit 1
+if ! { command -v _jobs_req >/dev/null 2>&1 && JOBS_ALERT=0 _jobs_req GET /api/fly-idle > "$TMP/fly.json" 2>/dev/null \
+       && jq -e '.machines | type == "array"' "$TMP/fly.json" >/dev/null 2>&1; }; then
+  warn "GET /api/fly-idle is unreadable; no fly-unsettled finding this read"
+  echo '{"machines":[]}' > "$TMP/fly.json"
+fi
 
-python3 - "$TMP/rows.csv" "$NOW_S" "$W" "$MULT" "$MINC" "$PMIN" "$METERED" "${CONSOLE_URL:-}" > "$TMP/out" <<'PY' || exit 1
+python3 - "$TMP/rows.csv" "$NOW_S" "$W" "$MULT" "$MINC" "$PMIN" "$METERED" "${CONSOLE_URL:-}" "$TMP/fly.json" > "$TMP/out" <<'PY' || exit 1
 import csv, json, re, sys, time
-path, now, w, mult, minc, pmin, metered, console = sys.argv[1:9]
+path, now, w, mult, minc, pmin, metered, console, flypath = sys.argv[1:10]
 now, w, mult, minc, pmin = int(now), int(w), int(mult), int(minc), int(pmin)
 metered = {m for m in re.split(r"[ ,]+", metered.lower()) if m}
 day = time.strftime("%Y-%m-%d", time.gmtime(now))
@@ -144,9 +156,29 @@ for (stage, runner), (total, blank) in pgroups.items():
         "title": "Cost capture parity: %s on %s made %d metered calls with a blank cost (%d of %d metered calls) in %dh"
                  % (stage, runner, blank, blank, total, w),
         "class": "cost-parity"}))
+# fly-unsettled: what the reaper could not settle. One finding per machine and day.
+with open(flypath, errors="replace") as fh:
+    fly = json.load(fh)
+furl = (console.rstrip("/") if console else "") + "/machines"
+for m in fly.get("machines") or []:
+    if not isinstance(m, dict):
+        continue
+    app, mid, st = str(m.get("app") or ""), str(m.get("machine_id") or ""), m.get("idle_state")
+    if not re.fullmatch(r"[a-z0-9-]{1,63}", app) or not re.fullmatch(r"[0-9a-f]{6,32}", mid):
+        continue
+    state = st if st in ("unknown", "nosignal") else ("no-claim" if m.get("no_claim") is True else None)
+    if state is None:
+        continue
+    usd = m.get("usd_per_hour")
+    cost = ("$%.3f/h" % usd) if isinstance(usd, (int, float)) else "unpriced"
+    out.append(("fly-unsettled", (app, mid), {
+        "item": {"check": "fly-unsettled", "app": app, "machine_id": mid, "state": state, "day": day},
+        "title": "Fly machine %s/%s is %s (%s, %s): run bin/fly-idle-reaper.sh act probe %s %s, then act stop, destroy or keep"
+                 % (app, mid, state, m.get("size") or "size unknown", cost, app, mid),
+        "class": "fly-unsettled", "kind": "fly_idle", "url": furl}))
 out.sort(key=lambda x: (x[0], x[1]))
 for _, _, o in out:
-    o["source"] = {"kind": "cost_rows", "url": url, "labels": []}
+    o["source"] = {"kind": o.pop("kind", "cost_rows"), "url": o.pop("url", url), "labels": []}
     o["observedAt"] = observed
     print(json.dumps({k: o[k] for k in ("item", "title", "source", "observedAt", "class")}, separators=(",", ":")))
 PY

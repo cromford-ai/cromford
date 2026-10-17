@@ -1101,6 +1101,12 @@ export const ADDED_COLUMNS = {
                ["files_expires_at", "TEXT"], ["overlap_not_before", "TEXT"]],
   // BH-2743: baked / smoke_failed / active / demoted. Nullable, never backfilled.
   fly_images: [["state", "TEXT"]],
+  // BH-6877: the reaper's last work witness time (ISO) and the lane-run
+  // boot-without-claim flag (1/0) per started machine. fly_idle_machines comes
+  // from schema.d/0023 (merged), so only this ALTER reaches it, on a fresh
+  // database too. Nullable, never backfilled: NULL is "not reported". The
+  // routes/fly-idle.js PUT and GET call ensureColumns before naming them.
+  fly_idle_machines: [["last_work_at", "TEXT"], ["no_claim", "INTEGER"]],
   // BH-4953 (BH-4950.0): PR gate facts, carried on `state='gate'` rows and
   // folded per field by lib/pr-gate.js. pr_state_events exists in the live
   // database, so only this ALTER reaches it. Nullable, never backfilled: NULL

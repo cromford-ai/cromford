@@ -1,0 +1,12 @@
+{
+  "_comment": [
+    "catalog/fly-work-procs.json — how bin/fly-idle-reaper.sh reads its ps probe (BH-6877).",
+    "Before it stops a pool, builder or lane-run machine, the reaper runs `flyctl machine exec <mid> 'ps -eo pcpu=,args='`.",
+    "Each entry is a fixed substring of the process command line. A `work` match makes the machine busy. A process that",
+    "matches no `idle` entry and uses at least fly.probe_busy_cpu_pct CPU makes it busy. Only idle-listed or quiet processes",
+    "let the stop go ahead. `work` is checked first. A probe that fails or prints a line that is not '<pcpu> <args>' is unknown,",
+    "never idle. A file that does not validate turns every probe-based stop off for the pass (alert fly-idle-reaper-procs)."
+  ],
+  "work": ["run-build.sh", "wait-preview.sh", "claude", "node", "npm", "bash tests/"],
+  "idle": ["lane-run-worker.sh", "sleep", "fly-pool-runner", "/.fly/init", "/.fly/hallpass", "ps -eo pcpu=,args="]
+}

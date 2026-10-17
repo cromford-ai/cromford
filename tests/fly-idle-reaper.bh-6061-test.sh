@@ -1,6 +1,7 @@
 #!/bin/bash
 # tests/fly-idle-reaper.bh-6061-test.sh — the Fly idle reaper stops what is
-# idle, never what it cannot read, and never destroys (BH-6061).
+# idle, never what it cannot read, and never destroys a machine stopped for
+# less than fly.destroy_after_stopped_s (BH-6061; the destroy step is BH-6877).
 #
 # WHAT THIS PINS. The REAL bin/fly-idle-reaper.sh, installed with its closure
 # into a scratch $HARNESS, against a flyctl stub on PATH (apps and machines from
@@ -15,7 +16,7 @@
 #   R7  a stop writes its row, and the row is the worker test's fixture;
 #   R8  the per-pass stop cap;   R9  a failed stop writes no row;
 #   R10 no state/fly-pool is unknown;   R11 the lane-off flag;   R12 testhost;
-#   R13 the lock;   R14 settings;   R15 exempt;   R16 never destroy;
+#   R13 the lock;   R14 settings;   R15 exempt;   R16 no destroy under 7 d;
 #   R17 the outbox;   R18 the token stays out of logs and rows;
 #   R19 no token / no flyctl / apps list failure.
 #
@@ -86,25 +87,27 @@ case "$1 $2" in
                cat "$FIX/apps.json" ;;
   "machine list") cat "$FIX/m-$4.json" 2>/dev/null || { echo "Error: app not found" >&2; exit 1; } ;;
   "machine stop") exit "$(cat "$FIX/stop-rc" 2>/dev/null || echo 0)" ;;
+  "machine exec") printf '  0.0 /.fly/init\n  0.0 sleep infinity\n' ;;
 esac
 exit 0
 STUB
   chmod +x "$H/bin/lane-alert.sh" "$H/bin/testhost-tick.sh" "$T/fakebin/flyctl"
   scratch_install_closure bin/fly-idle-reaper.sh "$H" >/dev/null || { echo "FAIL: closure install"; exit 1; }
   cp "$(rendered_registry)" "$H/catalog/lanes.json"
-  cp "$DIR/catalog/fly-idle-signals.json" "$DIR/catalog/fly-prices.json" "$H/catalog/"
+  cp "$DIR/catalog/fly-idle-signals.json" "$DIR/catalog/fly-prices.json" "$DIR/catalog/fly-work-procs.json" "$H/catalog/"
 }
 stub_files
 export FIX ALL
 
-# mach <id> <state> <newest-epoch|-> [kind cpus mem] — one machine, flyctl shape
+# mach <id> <state> <newest-epoch|-> [kind cpus mem] — one machine, flyctl shape.
+# The newest event is the start (BH-6877: only start/launch events start idle).
 mach() {
   jq -nc --arg id "$1" --arg st "$2" --arg s "$3" --arg k "${4:-performance}" \
     --argjson c "${5:-16}" --argjson m "${6:-32768}" '
     {id:$id, state:$st, config:{guest:{cpu_kind:$k, cpus:$c, memory_mb:$m}},
      events:(if $s == "-" then [] else
-       [{type:"start", status:"started", timestamp:((($s|tonumber)-60)*1000)},
-        {type:"exit", status:"stopped", timestamp:(($s|tonumber)*1000)}] end)}'
+       [{type:"start", status:"started", timestamp:(($s|tonumber)*1000)},
+        {type:"exit", status:"stopped", timestamp:((($s|tonumber)-60)*1000)}] end)}'
 }
 apps() { printf '%s\n' "$@" | jq -R '{Name: .}' | jq -sc . > "$FIX/apps.json"; }
 machines() { local a="$1"; shift; printf '%s\n' "$@" | jq -sc . > "$FIX/m-$a.json"; }
@@ -170,8 +173,9 @@ stopped $P1 pool-cromford && bad "R3b a machine in a claimed queue row was stopp
 reset; machines builder-project-5 "$(mach $B1 started $((NOW - 5000)))"
 echo "{\"machine_id\":\"$B1\"}" > "$H/state/fly/project-5.json"; echo '{}' > "$H/state/fly/project-5-active.json"; run
 stopped $B1 builder-project-5 && bad "R3c a builder with an active dispatcher record was stopped" || ok
-rm -f "$H/state/fly/project-5-active.json"; run
-stopped $B1 builder-project-5 && ok || bad "R3d a builder whose dispatcher record is not active was not stopped"
+# BH-6877: the busy pass above stamped the last work time, so idle counts from it.
+rm -f "$H/state/fly/project-5-active.json"; run $((NOW + 1000))
+stopped $B1 builder-project-5 && ok || bad "R3d a builder whose dispatcher record is not active (1000 s after the last witness) was not stopped"
 
 # ── R4. the summary line ───────────────────────────────────────────────────
 reset; run

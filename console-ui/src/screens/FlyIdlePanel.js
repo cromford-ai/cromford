@@ -3,7 +3,7 @@ import { api } from '../api.js';
 import { useApi } from '../lib/hooks.js';
 import { SortableTable } from '../ui/SortableTable.js';
 import { Section, Skeleton, Empty, ErrorBox } from '../ui/primitives.js';
-import { flyIdleHeadline, flyIdleRows, flyIdleStops } from '../lib/fly-idle.js';
+import { flyIdleDestroys, flyIdleHeadline, flyIdleRows, flyIdleStops } from '../lib/fly-idle.js';
 
 const STATE_TAG = {
   over: 'tag tag--warn', stopping: 'tag tag--cyan', unknown: 'tag tag--dead', nosignal: 'tag tag--warn',
@@ -19,7 +19,9 @@ const machineCol = { key: 'machine', label: 'MACHINE', sort: (r) => r.machine_id
 
 // The FLY IDLE section of /machines (BH-6061): the last bin/fly-idle-reaper.sh
 // pass's started machines and the stops it requested in the last 24 h.
-// Read-only. Each machine links to its Fly machine page, the only deeper record.
+// BH-6877: a LAST WORK column (sorted on the raw time) and the destroys of the
+// last 24 h. Read-only. Each machine links to its Fly machine page, the only
+// deeper record; a destroyed machine has none, so only its app links.
 export function FlyIdlePanel() {
   const read = useApi(() => api.flyIdle(), [], { intervalMs: 60000 });
   const body = read.data;
@@ -32,6 +34,7 @@ export function FlyIdlePanel() {
   } else {
     const rows = flyIdleRows(body);
     const stops = flyIdleStops(body);
+    const destroys = flyIdleDestroys(body);
     content = html`
       <p class="section__note" style=${`margin:6px 0${body.pass && Number(body.pass.partial) > 0 ? ';color:var(--amber)' : ''}`}>
         ${flyIdleHeadline(body)}</p>
@@ -46,6 +49,7 @@ export function FlyIdlePanel() {
             cell: (r) => html`<span class=${STATE_TAG[r.state] || 'tag'}>${String(r.state || 'unknown').toUpperCase()}</span>`
           },
           { key: 'idle', label: 'IDLE', align: 'right', sort: (r) => r.idle_s, cell: (r) => html`<span>${r.idle}</span>` },
+          { key: 'last_work', label: 'LAST WORK', sort: (r) => r.last_work_at, cell: (r) => html`<span>${r.last_work}</span>` },
           { key: 'limit', label: 'LIMIT', align: 'right', sort: (r) => r.threshold_s, cell: (r) => html`<span>${r.limit}</span>` },
           { key: 'usd', label: '$/H', align: 'right', sort: (r) => r.usd_per_hour, cell: (r) => html`<span>${r.usd}</span>` }
         ]}
@@ -71,7 +75,28 @@ export function FlyIdlePanel() {
         empty=${html`<${Empty} title="no stops in the last 24 h" note="The reaper requested no stop in this window."/>`}/>
       ${stops.truncated
         ? html`<p class="section__note" style="margin:6px 0 0">showing the newest ${stops.rows.length} of ${stops.total}; the $/h sum covers the shown rows</p>`
-        : null}`;
+        : null}
+      ${destroys.available
+        ? html`
+      <h3 class="section__note" style="margin:14px 0 4px">DESTROYED (24 H) · ${destroys.count} destroy${destroys.count === 1 ? '' : 's'}
+        · restart $${destroys.usd_per_hour.toFixed(3)}/h${destroys.unpriced ? ` · ${destroys.unpriced} unpriced` : ''}</h3>
+      <${SortableTable} wide
+        columns=${[
+          { key: 'time', label: 'TIME', sort: (r) => r.destroyed_at, cell: (r) => html`<span>${r.time}</span>` },
+          appCol,
+          { key: 'machine', label: 'MACHINE', sort: (r) => r.machine_id, cell: (r) => html`<span class="mono">${r.machine_id}</span>` },
+          { key: 'size', label: 'SIZE', sort: (r) => r.size, cell: (r) => html`<span>${r.size}</span>` },
+          { key: 'stopped', label: 'STOPPED FOR', align: 'right', sort: (r) => r.stopped_s, cell: (r) => html`<span>${r.stopped}</span>` },
+          { key: 'usd', label: 'RESTART $/H', align: 'right', sort: (r) => r.usd_per_hour, cell: (r) => html`<span>${r.usd}</span>` }
+        ]}
+        rows=${destroys.rows}
+        rowKey=${(r) => r.key}
+        defaultSort="time" defaultDir="desc"
+        empty=${html`<${Empty} title="no destroys in the last 24 h" note="The reaper requested no destroy in this window."/>`}/>
+      ${destroys.truncated
+        ? html`<p class="section__note" style="margin:6px 0 0">showing the newest ${destroys.rows.length} of ${destroys.count}; the restart $/h sum covers the shown rows</p>`
+        : null}`
+        : html`<p class="section__note" style="margin:14px 0 0">destroy list not available: ${destroys.error || 'the worker did not send it'}</p>`}`;
   }
   return html`<${Section} title="FLY IDLE" note="started Fly machines and idle stops, from the fly-idle-reaper lane">${content}<//>`;
 }

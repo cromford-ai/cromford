@@ -3,9 +3,12 @@
 // { pass: null | { pass_at, apps_total, apps_failed, partial, box },
 //   machines: [{ app, machine_id, size, source, idle_s, idle_state, threshold_s, usd_per_hour }],
 //   over_count, stops: [{ stop_id, app, machine_id, size, idle_s, usd_per_hour, status, stopped_at, ... }],
-//   stops_24h, saved_usd_per_hour_24h }.
-// machines is the last reaper pass's snapshot of STARTED machines. A stop row
-// is a stop the reaper requested (flyctl rc 0), not a stop it observed.
+//   stops_24h, saved_usd_per_hour_24h,
+//   destroys: null | [{ destroy_id, app, machine_id, size, stopped_s, usd_per_hour, destroyed_at, ... }],
+//   destroys_24h, destroy_usd_per_hour_24h, destroys_error? }.
+// machines is the last reaper pass's snapshot of STARTED machines; since
+// BH-6877 each row also has last_work_at (ISO or null) and no_claim. A stop or
+// destroy row is one the reaper requested (flyctl rc 0), not one it observed.
 import { clockTime, fmtDuration } from './format.js';
 
 const APP_RE = /^[a-z0-9-]{1,63}$/;
@@ -24,11 +27,28 @@ export function fmtIdle(idleS, state) {
 }
 
 const usdLabel = (v) => (isNum(v) ? `$${v.toFixed(3)}` : 'unpriced');
+const epochOf = (iso) => {
+  if (typeof iso !== 'string') return null;
+  const t = Date.parse(iso);
+  return Number.isNaN(t) ? null : t;
+};
+
+// The last work label: the clock time, and how long before the pass it was.
+// The pass time is the reference (the snapshot is as of that pass), so the
+// label never depends on the viewer's clock. No time is `—`.
+export function lastWorkLabel(lastMs, passAt) {
+  if (lastMs === null) return '—';
+  const clock = clockTime(new Date(lastMs).toISOString());
+  const passMs = epochOf(passAt);
+  return passMs === null ? clock : `${clock} · ${fmtDuration((passMs - lastMs) / 1000)} before the pass`;
+}
 
 export function flyIdleRows(body) {
   const machines = body && Array.isArray(body.machines) ? body.machines : [];
+  const passAt = body && body.pass ? body.pass.pass_at : null;
   return machines.map((m) => {
     const unknown = m.idle_state === 'unknown' || !isNum(m.idle_s);
+    const lastMs = epochOf(m.last_work_at);
     return {
       key: `${m.app}/${m.machine_id}`,
       app: m.app,
@@ -41,6 +61,9 @@ export function flyIdleRows(body) {
       limit: isNum(m.threshold_s) ? fmtDuration(m.threshold_s) : '—',
       usd_per_hour: isNum(m.usd_per_hour) ? m.usd_per_hour : null,
       usd: usdLabel(m.usd_per_hour),
+      last_work_at: lastMs,
+      last_work: lastWorkLabel(lastMs, passAt),
+      no_claim: typeof m.no_claim === 'boolean' ? m.no_claim : null,
       href: flyMachineHref(m.app, m.machine_id),
       appHref: flyAppHref(m.app),
     };
@@ -73,6 +96,39 @@ export function flyIdleStops(body) {
     unpriced: rows.length - priced.length,
     total,
     truncated: total > rows.length,
+  };
+}
+
+// The destroys the GET returned (BH-6877). usd_per_hour sums only priced rows;
+// an unpriced row is counted apart. A destroyed machine has no Fly page, so a
+// row links only its app. rows is null when the body has no destroy list (a
+// worker before BH-6877, or fly_idle_destroys missing): that is "not known",
+// never "none".
+export function flyIdleDestroys(body) {
+  const list = body && Array.isArray(body.destroys) ? body.destroys : null;
+  const rows = (list || []).map((d) => ({
+    key: d.destroy_id || `${d.app}/${d.machine_id}/${d.destroyed_at}`,
+    destroyed_at: d.destroyed_at,
+    time: clockTime(d.destroyed_at),
+    app: d.app,
+    machine_id: d.machine_id,
+    size: d.size || '—',
+    stopped_s: isNum(d.stopped_s) ? d.stopped_s : null,
+    stopped: fmtDuration(d.stopped_s),
+    usd_per_hour: isNum(d.usd_per_hour) ? d.usd_per_hour : null,
+    usd: usdLabel(d.usd_per_hour),
+    appHref: flyAppHref(d.app),
+  }));
+  const priced = rows.filter((r) => r.usd_per_hour !== null);
+  const count = isNum(body && body.destroys_24h) ? body.destroys_24h : rows.length;
+  return {
+    rows,
+    available: list !== null,
+    error: (body && typeof body.destroys_error === 'string' && body.destroys_error) || null,
+    count,
+    usd_per_hour: priced.reduce((n, r) => n + r.usd_per_hour, 0),
+    unpriced: rows.length - priced.length,
+    truncated: count > rows.length,
   };
 }
 

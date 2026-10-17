@@ -70,13 +70,17 @@ case "$1 $2" in
   "apps list") cat "$FIX/apps.json" ;;
   "machine list") cat "$FIX/m-$4.json" 2>/dev/null || { echo "Error: app not found" >&2; exit 1; } ;;
   "machine stop") exit 0 ;;
+  # TEST-CHANGE (BH-6877 merge): the reaper probes a lane-run machine with ps
+  # before it stops it. This stub answers an idle process list.
+  "machine exec") printf '  0.0 /.fly/init\n  0.0 sleep infinity\n' ;;
 esac
 exit 0
 STUB
   chmod +x "$H/bin/lane-alert.sh" "$T/fakebin/flyctl"
   scratch_install_closure bin/fly-idle-reaper.sh "$H" >/dev/null || { echo "FAIL: closure install"; exit 1; }
   cp "$(rendered_registry)" "$H/catalog/lanes.json"
-  cp "$DIR/catalog/fly-idle-signals.json" "$DIR/catalog/fly-prices.json" "$H/catalog/"
+  # TEST-CHANGE (BH-6877 merge): the probe reads catalog/fly-work-procs.json.
+  cp "$DIR/catalog/fly-idle-signals.json" "$DIR/catalog/fly-prices.json" "$DIR/catalog/fly-work-procs.json" "$H/catalog/"
 }
 stub_files
 export FIX ALL

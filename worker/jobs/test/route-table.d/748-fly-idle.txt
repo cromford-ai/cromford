@@ -2,5 +2,7 @@
 # snapshot, and the Mission Control read, appended after staff findings at the
 # END of the table.
 POST /api/fly-idle/stops
+# BH-6877: the destroy ledger, beside the stop ledger.
+POST /api/fly-idle/destroys
 PUT /api/fly-idle/machines
 GET /api/fly-idle

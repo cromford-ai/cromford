@@ -7,7 +7,8 @@
 # the `harness.commit` label bin/lane-fleet.sh logs, and /opt/harness/
 # HARNESS_COMMIT when it is 7-40 hex (else no file, so the first sync runs).
 # No secret and no env file is in the image: the entrypoint writes them from
-# Fly secrets at boot.
+# Fly secrets at boot. procps gives `ps`, which bin/fly-idle-reaper.sh probes
+# with before it stops a machine (BH-6877): an image without it is never stopped.
 #
 # BH-6260 (the operator, 2026-10-17: "definitely let the fly machines have
 # credentials"): the image bakes node, the claude CLI and the codex CLI, so
@@ -25,7 +26,7 @@
 FROM ubuntu:24.04
 RUN apt-get update \
  && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-      bash ca-certificates curl git jq python3 util-linux tini gh openssl xz-utils \
+      bash ca-certificates curl git jq python3 util-linux tini gh openssl xz-utils procps \
  && rm -rf /var/lib/apt/lists/*
 # bake-pin.sh: bake_require / bake_sha256 / bake_verify, the pool image's checks.
 COPY fly/bake-pin.sh /opt/fly-boot/bake-pin.sh

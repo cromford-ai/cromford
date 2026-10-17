@@ -1,11 +1,11 @@
 {
   "_comment": [
-    "catalog/fly-idle-signals.json — which idle signal bin/fly-idle-reaper.sh asks for each Fly app (BH-6061).",
+    "catalog/fly-idle-signals.json — which idle signal bin/fly-idle-reaper.sh asks for each Fly app (BH-6061, BH-6877).",
     "An exact `apps` key wins over any prefix; among prefixes the longest match wins, and it must match from the start.",
     "Sources: pool (state/fly-pool tracking files + claimed queue rows), builder (active dispatcher records + claimed queue rows),",
-    "testhost (bin/testhost-tick.sh idle), lane-run (idle_s from GET /api/lane-fleet/machines; the lane_fleet.warm_floor least idle",
-    "machines are kept), exempt (never stopped; `reason` is required). An app with no match is never stopped",
-    "and alerts after fly.idle_nosignal_alert_s. A new source needs code in the reaper, so this file is in git, not a settings row."
+    "lane-run (GET /api/lane-fleet/machines claims), testhost (bin/testhost-tick.sh idle), metrics (Fly Prometheus CPU and",
+    "net rates), exempt (never stopped; `reason` is required). An app with no match gets `metrics`. A new source needs code",
+    "in the reaper, so this file is in git, not a settings row."
   ],
   "apps": {
     "bh-testhost-example-org": { "source": "testhost" },
@@ -13,10 +13,15 @@
     "bh-ci-runners-example-org": {
       "source": "exempt",
       "reason": "BH-1210 warm minimum: the runner fleet keeps started machines on purpose (docs/CI-RUNNERS.md)"
-    }
+    },
+    "project-12-openfang-joy": { "source": "metrics" },
+    "project-12-openfang-test": { "source": "metrics" },
+    "project-12-e2e-base": { "source": "metrics" },
+    "project-12-joy-lab": { "source": "metrics" }
   },
   "prefixes": {
     "pool-": { "source": "pool" },
-    "builder-": { "source": "builder" }
+    "builder-": { "source": "builder" },
+    "project-12-": { "source": "exempt", "reason": "customer bots stay up; a retired or lab project-12 app gets an exact metrics entry" }
   }
 }

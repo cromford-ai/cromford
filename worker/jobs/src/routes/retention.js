@@ -29,6 +29,11 @@
 //   when retention.stage_events.archive=1; with it 0 they are rolled up and
 //   deleted as in BH-6750.
 //
+// ARCHIVED, NOT LOST: fly_idle_stops and fly_idle_destroys (BH-6877), the Fly
+//   idle reaper's cost audit. Their rules add each removed row to
+//   fly_idle_daily (day, app, action, n, $/h sum) in the same D1 batch,
+//   before the delete. fly_idle_daily has no rule: it keeps forever.
+//
 // Every setting is a settings row (worker/jobs/schema.d/*-bh-6750-*.sql). A
 // value that is not an integer in range falls back to the code default below;
 // a window of 0 turns that rule off.
@@ -215,6 +220,32 @@ export const RULES = [
     rule: "staff_suppressions.expired", table: "staff_suppressions", key: "retention.staff_suppressions.expired_days", def: 180,
     ids: "SELECT id FROM staff_suppressions WHERE status = 'active' AND expires_at < ?1 ORDER BY expires_at LIMIT ?2",
     del: "DELETE FROM staff_suppressions WHERE id IN (SELECT value FROM json_each(?1))",
+  },
+  // BH-6877: the Fly idle reaper's stop and destroy rows. They hold the $/h a
+  // stop saved or a destroy avoided, so each goes into fly_idle_daily first.
+  // The id reads use fly_idle_stops_stopped_at and
+  // fly_idle_destroys_destroyed_at; the deletes use the PRIMARY KEY.
+  {
+    rule: "fly_idle_stops.age", table: "fly_idle_stops", key: "retention.fly_idle_stops.days", def: 400,
+    ids: "SELECT stop_id AS id FROM fly_idle_stops WHERE stopped_at < ?1 ORDER BY stopped_at LIMIT ?2",
+    rollup: `INSERT INTO fly_idle_daily (day, app, action, n, usd_per_hour_sum)
+             SELECT substr(stopped_at, 1, 10), app, 'stop', COUNT(*), SUM(COALESCE(usd_per_hour, 0))
+               FROM fly_idle_stops WHERE stop_id IN (SELECT value FROM json_each(?1))
+              GROUP BY 1, 2
+             ON CONFLICT (day, app, action) DO UPDATE SET n = n + excluded.n,
+               usd_per_hour_sum = usd_per_hour_sum + excluded.usd_per_hour_sum`,
+    del: "DELETE FROM fly_idle_stops WHERE stop_id IN (SELECT value FROM json_each(?1))",
+  },
+  {
+    rule: "fly_idle_destroys.age", table: "fly_idle_destroys", key: "retention.fly_idle_destroys.days", def: 400,
+    ids: "SELECT destroy_id AS id FROM fly_idle_destroys WHERE destroyed_at < ?1 ORDER BY destroyed_at LIMIT ?2",
+    rollup: `INSERT INTO fly_idle_daily (day, app, action, n, usd_per_hour_sum)
+             SELECT substr(destroyed_at, 1, 10), app, 'destroy', COUNT(*), SUM(COALESCE(usd_per_hour, 0))
+               FROM fly_idle_destroys WHERE destroy_id IN (SELECT value FROM json_each(?1))
+              GROUP BY 1, 2
+             ON CONFLICT (day, app, action) DO UPDATE SET n = n + excluded.n,
+               usd_per_hour_sum = usd_per_hour_sum + excluded.usd_per_hour_sum`,
+    del: "DELETE FROM fly_idle_destroys WHERE destroy_id IN (SELECT value FROM json_each(?1))",
   },
   // Staff autonomy and delegation changes: governance history made by a human,
   // tens of rows a year. The agent page reads the newest 20, so three years
