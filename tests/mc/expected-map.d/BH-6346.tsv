@@ -1,0 +1,4 @@
+# tests/mc/expected-map.d/BH-6346.tsv — BH-6346 (r2): the knob reader for the
+# ci-read bound (MC_CI_READ_TIMEOUT_S) in bin/lib/mc/classify.sh; origin=lib
+# because it is a new module function.
+classify	mc_ci_read_timeout_s	lib

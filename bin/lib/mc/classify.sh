@@ -688,15 +688,31 @@ mc_job_running() {
 #   BH-1586: the read is gh_rest (ledgered, ETag — an unchanged run list is a
 #   304), into a variable through mc_rest_var; any non-0 is `unavailable`, as
 #   a failed `gh api` was.
+#
+#   BH-6346: the read is bounded by MC_CI_READ_TIMEOUT_S (mc_ci_read_timeout_s)
+#   through gh_rest's GH_REST_TIMEOUT_S, so a stalled connection is
+#   `unavailable` after the bound instead of holding the ci-read step until
+#   the worker deadline. MC_CI_READ_WHY (global) is `HTTP <status>[ <reason>]`
+#   when the read failed, `parse` when its body did not parse, and empty
+#   otherwise. MC_CI_READ_HELD (global) is 1 when the read was cut at the
+#   bound (WHY ends in ` timeout`) and 0 otherwise; mc_classify reads it. A
+#   caller that needs either runs this
+#   as a plain command, never inside $( ).
 mc_ci_state() {
-  local slug="$1" sha="$2" runs
-  mc_rest_var runs gh_rest GET "repos/$slug/actions/runs?head_sha=$sha&per_page=50" || { echo unavailable; return 0; }
+  local slug="$1" sha="$2" runs GH_REST_TIMEOUT_S
+  MC_CI_READ_WHY=""; MC_CI_READ_HELD=0
+  GH_REST_TIMEOUT_S=$(mc_ci_read_timeout_s); [ "$GH_REST_TIMEOUT_S" -gt 0 ] || GH_REST_TIMEOUT_S=
+  GH_REST_STATUS=; GH_REST_REASON=
+  mc_rest_var runs gh_rest GET "repos/$slug/actions/runs?head_sha=$sha&per_page=50" || {
+    MC_CI_READ_WHY="HTTP ${GH_REST_STATUS:-000}${GH_REST_REASON:+ $GH_REST_REASON}"
+    [ "$MC_CI_READ_WHY" != "${MC_CI_READ_WHY% timeout}" ] && MC_CI_READ_HELD=1
+    echo unavailable; return 0; }
   runs=$(jq -r '[.workflow_runs[]? | {n: ((.name // .workflow_id // "?") | tostring),
                               t: ((.run_started_at // .created_at) // ""),
                               a: (.run_attempt // 1),
                               s: (.status // ""), c: (.conclusion // "")}]
         | group_by(.n) | map(sort_by(.t, .a) | last)
-        | .[] | "\(.s)|\(.c)"' <<<"$runs" 2>/dev/null) || { echo unavailable; return 0; }
+        | .[] | "\(.s)|\(.c)"' <<<"$runs" 2>/dev/null) || { MC_CI_READ_WHY="parse"; echo unavailable; return 0; }
   [ -n "$runs" ] || { echo none; return 0; }
   runs=$(grep -vE '^completed\|(cancelled|timed_out|skipped|neutral)$' <<<"$runs")
   # Every surviving workflow was cancelled or skipped: no failure, but no proof
@@ -706,6 +722,10 @@ mc_ci_state() {
   grep -qE '^completed\|failure$' <<<"$runs" && { echo red; return 0; }
   echo green
 }
+
+# mc_ci_read_timeout_s -> the wall time (s) each actions/runs read may take
+#   (BH-6346). MC_CI_READ_TIMEOUT_S, default 30, 0 = off, not a number = 30.
+mc_ci_read_timeout_s() { local s="${MC_CI_READ_TIMEOUT_S:-30}"; [[ "$s" =~ ^[0-9]+$ ]] || s=30; printf '%s\n' "$((10#$s))"; }
 
 # mc_ci_flake_runs <owner/repo> <sha> -> "<run-id>|<workflow name>[|<head_sha>]" per LATEST
 #   run of a workflow on this sha that ended cancelled or timed_out; nothing
@@ -724,7 +744,9 @@ mc_ci_state() {
 #   was superseded by a success on a later attempt — latest wins, so it is not
 #   a flake and nothing is re-run.
 mc_ci_flake_runs() {
-  local slug="$1" sha="$2" runs
+  local slug="$1" sha="$2" runs GH_REST_TIMEOUT_S
+  # BH-6346: the same bound as mc_ci_state; a cut read is "no flake evidence".
+  GH_REST_TIMEOUT_S=$(mc_ci_read_timeout_s); [ "$GH_REST_TIMEOUT_S" -gt 0 ] || GH_REST_TIMEOUT_S=
   mc_rest_var runs gh_rest GET "repos/$slug/actions/runs?head_sha=$sha&per_page=50" || return 0
   runs=$(jq -r '[.workflow_runs[]? | {i: ((.id // "") | tostring),
                               n: ((.name // .workflow_id // "?") | tostring),
@@ -2237,6 +2259,15 @@ mc_classify() {
         [ "${MC_CI_TIMEOUT_FIRING:-0}" = 1 ] && { printf 'WAIT_CI\tchecks timeout budget — "%s" dies at its %s-min limit (CI_TIMEOUT_BUDGET; no rerun)' "${MC_CI_TIMEOUT_CHECK:-}" "${MC_CI_TIMEOUT_T:-}"; return; }
         printf 'WAIT_CI\tchecks flake (cancelled/timed_out latest run — not a verdict; rung %s)' "${MC_FLAKE_RUNG:-0}"; return; fi
       printf 'WAIT_CI\tchecks %s' "$ci"; return ;;
+    # A CI READ CUT AT ITS BOUND IS NOT A CI ANSWER (BH-6346). MC_CI_READ_HELD
+    # is a NAMED variable for the reason MC_CI_FLAKE is: the caller sets it to 1
+    # only when this tick's actions/runs read passed MC_CI_READ_TIMEOUT_S. On a
+    # repo with no required checks, CLEAN says nothing about CI, so falling to
+    # the READY arm below would merge on CI nobody read. The row waits; the
+    # next tick reads again. Any other `unavailable` keeps its old path.
+    unavailable)
+      if [ "${MC_CI_READ_HELD:-0}" = 1 ]; then
+        printf 'WAIT_CI\tchecks unread — the actions/runs read passed its bound this tick; the next tick reads again'; return; fi ;;
     # THE RED LADDER (2026-09-15, project-5 #1045). `checks red once` used to be
     # the whole answer for a red head and it had no next transition — the
     # red-ci-twice park counted reds on DIFFERENT heads (removed by BH-1671), so a

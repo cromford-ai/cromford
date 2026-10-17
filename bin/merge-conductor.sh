@@ -851,10 +851,24 @@ pr_worker() {
   # construction. A hit feeds the same `$CI` variable every arm below reads,
   # so the classifier's inputs are the same words a fresh read would give.
   MC_MEMO_FP=$(read_memo_fp "$KEY" "$HEAD")
+  # BH-6346: MC_CI_READ_HELD=1 tells mc_classify this tick's CI read was cut
+  # at its bound, so the row stays WAIT_CI and is never READY on an unread CI.
+  MC_CI_READ_HELD=0
   if CIMEMO=$(read_memo_get ci "$KEY" "$HEAD" "$UPDATED" "$MC_MEMO_FP"); then
     CI="$CIMEMO"; mc_count_inc "$P" cimemo >/dev/null
   else
-    CI=$(mc_ci_state "$SLUG" "$HEAD")
+    # BH-6346: a plain command into a tick file, never $( ), so mc_ci_state's
+    # MC_CI_READ_HELD reaches this worker. A read cut by MC_CI_READ_TIMEOUT_S is
+    # `unavailable`, as any failed read, plus one CI_READ_HELD line per
+    # (PR, head): no alert, no Sentry, no memo, the next tick reads again.
+    CIF="$MC_TICK_DIR/ci-state.$BASHPID"; mkdir -p "$MC_TICK_DIR" 2>/dev/null
+    mc_ci_state "$SLUG" "$HEAD" > "$CIF" 2>/dev/null || true
+    CI=$(cat "$CIF" 2>/dev/null); rm -f "$CIF"; [ -n "$CI" ] || CI=unavailable
+    [ "$CI" = unavailable ] || MC_CI_READ_HELD=0
+    if [ "$MC_CI_READ_HELD" = 1 ] && ! mc_attempt_has "cireadheld $KEY $HEAD"; then
+      mc_attempt_put "cireadheld $KEY $HEAD"
+      mc_log "$KEY CI_READ_HELD reason=read-timeout on ${HEAD:0:8} (bound $(mc_ci_read_timeout_s)s): the actions/runs read passed its bound; the row stays WAIT_CI this tick, no alert, the next tick reads again"
+    fi
     case "$CI" in green|red) read_memo_put ci "$KEY" "$HEAD" "$UPDATED" "$MC_MEMO_FP" "$CI" ;; esac
   fi
   # The strike ledger: one `red <key> <head>` per DIFFERENT head of this PR
