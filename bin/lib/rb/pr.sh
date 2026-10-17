@@ -774,6 +774,17 @@ if [ -x bin/prepush-gate.sh ] && [ "$_PPG_MODE" != off ]; then
   _PPG="$BUILD/prepush-gate"
   _ppg_run() { bin/prepush-gate.sh --base "$BASE" --out "$_PPG" > "$BUILD/prepush-gate.txt" 2>&1; }
   _ppg_ids() { awk -F'\t' -v s="$1" '$2 == s { printf "%s%s%s", (n++ ? ", " : ""), $1, ($5 != $1 && s == "red" ? " [" $5 "]" : "") }' "$_PPG/summary.tsv" 2>/dev/null; }
+  # BH-7210: catalog/ci-suite-durations.tsv is git-ignored (BH-5518), so a fresh
+  # checkout has none, fast-lints finds an empty fast set and is could-not-run.
+  # CI fetches it in its plan job; the builder fetches it here, bounded. A failed
+  # or slow fetch changes nothing: fast-lints stays could-not-run, the push goes on.
+  # PREPUSH_DURATIONS_FETCH_S is CI plumbing (env, code default 60), not a business knob.
+  if [ ! -e catalog/ci-suite-durations.tsv ] && [ -x bin/ci-durations.sh ]; then
+    _ppg_s=${PREPUSH_DURATIONS_FETCH_S:-60}; case "$_ppg_s" in ''|*[!0-9]*) _ppg_s=60 ;; esac
+    _ppg_tmo=(); if command -v timeout >/dev/null 2>&1; then _ppg_tmo=(timeout "$_ppg_s"); elif command -v gtimeout >/dev/null 2>&1; then _ppg_tmo=(gtimeout "$_ppg_s"); fi
+    ${_ppg_tmo[@]+"${_ppg_tmo[@]}"} bin/ci-durations.sh fetch --out catalog/ci-suite-durations.tsv > "$BUILD/ci-durations-fetch.txt" 2>&1; _ppg_frc=$?
+    echo "$(STAMP) [$PROJECT/$KEY] PREPUSH-GATE durations fetch rc=$_ppg_frc file=$([ -s catalog/ci-suite-durations.tsv ] && echo present || echo absent)" >> "$BUILD/pipeline.log"
+  fi
   _ppg_run
   if grep -q 'schema-fragment-name' "$_PPG/summary.tsv" 2>/dev/null && bin/prepush-gate.sh --restamp --base "$BASE" >> "$BUILD/prepush-gate.txt" 2>&1; then
     echo "$(STAMP) [$PROJECT/$KEY] PREPUSH-GATE restamped the schema fragments, running the gate again" >> "$BUILD/pipeline.log"
