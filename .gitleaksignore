@@ -62,6 +62,7 @@ tests/merge-pr-release.bh-4917-test.sh:generic-api-key:59
 tests/nightly-ticket-split.bh-6838-test.sh:generic-api-key:262
 tests/no-client-identifiers-test.sh:aws-access-token:51
 tests/openrouter-audit.bh-4001-test.sh:generic-api-key:21
+tests/plan-blocked-notice.bh-7116-test.sh:generic-api-key:39
 tests/plan-contract-seams.bh-6384-test.sh:generic-api-key:161
 tests/prebuild-repro-self-comment.bh-2133-test.sh:generic-api-key:43
 tests/prebuild-repro-skip.bh-2040-test.sh:generic-api-key:31

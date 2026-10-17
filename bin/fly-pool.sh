@@ -191,6 +191,9 @@ command -v dm_read >/dev/null 2>&1 && dm_read "$P"
 # shellcheck source=bin/lib/fly-cost-row.sh
 . "$HARNESS/bin/lib/fly-cost-row.sh" 2>/dev/null \
   || . "$(dirname "${BASH_SOURCE[0]}")/lib/fly-cost-row.sh" 2>/dev/null || true
+# BH-7116: pb_hub_copy, the reap's plan.md copy when the machine is gone.
+# shellcheck source=bin/lib/plan-blocked.sh
+. "$HARNESS/bin/lib/plan-blocked.sh" 2>/dev/null || true
 command -v routing_sync_all >/dev/null 2>&1 && { routing_sync_all >/dev/null 2>&1 || true; }
 if command -v routing_pool_app >/dev/null 2>&1; then
   POOL_APP=$(routing_pool_app "$P" 2>/dev/null) || POOL_APP=""
@@ -3126,6 +3129,8 @@ for MF in "$POOL"/*.json; do
       [ -s "$LOCAL/RESULT" ] || echo "$RES" > "$LOCAL/RESULT"
     fi
     RLINE=$(head -1 "$LOCAL/RESULT")
+    # BH-7116: a row-sourced PLAN_BLOCKED gets plan.md from the ledger.
+    command -v pb_hub_copy >/dev/null 2>&1 && { PBH=$(pb_hub_copy "$HARNESS" "$P" "$LOCAL" 2>/dev/null); [ -z "$PBH" ] || say "$KEY: $PBH"; }
     # DID THE ACCOUNT REFUSE? (2026-09-14; re-read 2026-09-23) A pool machine
     # cannot cool its own account down: bin/agent-call.sh's cooldown is fenced on
     # ACCOUNT_ROUTING + ACCT_NAME, and neither rides the bundle. So the hub

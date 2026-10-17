@@ -134,6 +134,12 @@ set -uo pipefail
 # instead of a fourth row. On 2026-10-10 the triage-tick reconcile found 34
 # orphans every tick and launched none: each was held back as
 # awaiting-closeout by a QUEUED_FLY routing stub nothing ever closes.
+# The fourth difference (BH-7116): a ticket whose queue row says its last build
+# ended PLAN_BLOCKED, with no human comment created or edited since, is skipped
+# as `<KEY>:plan-blocked` (bin/lib/plan-blocked.sh pb_stranded_skip). It is not
+# counted toward NEEDS_HUMAN: the builder's notice on the ticket is the ask.
+# STRANDED_SKIP_PLAN_BLOCKED=0 (the lane row) re-offers it as before. On
+# 2026-10-16 the watch re-offered eight such tickets 2-6 times each.
 EXPLAIN=0; STRANDED_MODE=0; PROJECT=""
 for _arg in "$@"; do
   case "$_arg" in
@@ -206,6 +212,11 @@ if [ "$STRANDED_MODE" = 1 ]; then
   case "$REOFFER_MAX" in ''|*[!0-9]*) REOFFER_MAX=3 ;; esac
   REOFFER_WIN_H="${STRANDED_REOFFER_WINDOW_H:-24}"
   case "$REOFFER_WIN_H" in ''|*[!0-9]*) REOFFER_WIN_H=24 ;; esac
+  SKIP_PB="${STRANDED_SKIP_PLAN_BLOCKED:-1}"
+  case "$SKIP_PB" in
+    0|1) ;;
+    *) log "stranded-watch: STRANDED_SKIP_PLAN_BLOCKED='$SKIP_PB' is not 0 or 1; read as 1"; SKIP_PB=1 ;;
+  esac
 fi
 
 command -v jq >/dev/null 2>&1 || exit 0
@@ -271,6 +282,10 @@ PFX=$(preplan_key_prefix "$HARNESS" "$PROJECT" 2>/dev/null) || exit 0
 [ -r "$HARNESS/bin/lib/hold.sh" ] && . "$HARNESS/bin/lib/hold.sh" 2>/dev/null
 # shellcheck source=bin/lib/closeout-overdue.sh
 [ -r "$HARNESS/bin/lib/closeout-overdue.sh" ] && . "$HARNESS/bin/lib/closeout-overdue.sh" 2>/dev/null
+# The stranded watch's PLAN_BLOCKED skip (BH-7116). Optional: without it the
+# watch re-offers exactly as before.
+# shellcheck source=bin/lib/plan-blocked.sh
+[ -r "$HARNESS/bin/lib/plan-blocked.sh" ] && . "$HARNESS/bin/lib/plan-blocked.sh" 2>/dev/null
 
 # Whichever token can SEE this repo (the hub's default PAT 404s on
 # example-org/project-5, and an empty issue list there reads exactly like a board
@@ -1181,6 +1196,18 @@ while IFS=$'\t' read -r KEY NUM VERDICT WHY; do
     command -v closeout_overdue_note >/dev/null 2>&1 && closeout_overdue_note "$HARNESS" "$PROJECT" "$KEY"
     SKIP="${SKIP:+$SKIP,}$KEY:awaiting-closeout"
     continue
+  fi
+  # GUARD RAIL, stranded watch only (BH-7116): the last build ended PLAN_BLOCKED
+  # and nobody has answered since. A re-offer only blocks it again. Unknown
+  # (rc 2: the queue or the thread could not be read) re-offers, as before.
+  if [ "$STRANDED_MODE" = 1 ] && [ "${SKIP_PB:-1}" = 1 ] && command -v pb_stranded_skip >/dev/null 2>&1; then
+    PB_CNT=$(jq -r --argjson n "$NUM" 'first(.[] | select(.number == $n)) | .commentCount // 0' "$TD/open.json" 2>/dev/null)
+    PB_TH=""; [ -f "$TD/extra/thread-$NUM.json" ] && PB_TH="$TD/extra/thread-$NUM.json"
+    if PB_AT=$(pb_stranded_skip "$PROJECT" "$KEY" "$PB_TH" "${PB_CNT:-0}"); then
+      SKIP="${SKIP:+$SKIP,}$KEY:plan-blocked"
+      log "stranded: $KEY (issue #$NUM) skip :: last build ended PLAN_BLOCKED at $PB_AT and no human comment since"
+      continue
+    fi
   fi
   if [ -n "$MAX_RUN" ] && [ "$N_ENQ" -ge "$MAX_RUN" ]; then
     SKIP="${SKIP:+$SKIP,}$KEY:cap"

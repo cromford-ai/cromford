@@ -1474,6 +1474,25 @@ _job_finish() { # EXIT hook: close the claim with the verdict the RESULT file ca
       >> "$BUILD/pipeline.log" 2>/dev/null || true
   fi
 # <<< blocking artifact body
+# >>> plan-blocked notice
+  # THE BUILDER SAYS WHY ON THE TICKET (BH-7116). bin/board-closeout.sh words
+  # only a PR, so a pool PLAN_BLOCKED reached no ticket: plan.md died with the
+  # machine and the stranded watch re-offered the ticket first. A builder with
+  # the direct path armed (the two conditions rb_close_out step 3 uses) posts
+  # the plan's blocked section once and marks RESULT line 1, BEFORE the result
+  # row below reads that line. Everything else keeps today's path. It never
+  # changes this trap's outcome.
+  if [ -n "${BUILDER_EXEC:-}" ] && [ "${BUILDER_DIRECT_ON:-0}" = 1 ]; then
+    case "$r" in
+      PLAN_BLOCKED|"PLAN_BLOCKED "*|PLAN_BLOCKED$'\n'*)
+        # shellcheck source=bin/lib/plan-blocked.sh
+        if [ -r "$HARNESS/bin/lib/plan-blocked.sh" ] && . "$HARNESS/bin/lib/plan-blocked.sh" 2>/dev/null \
+           && command -v pb_notice >/dev/null 2>&1; then
+          pb_notice "$HARNESS" "$PROJECT" "${TICKET:-}" "$KEY" "$BUILD" >> "$BUILD/pipeline.log" 2>&1 || true
+        fi ;;
+    esac
+  fi
+# <<< plan-blocked notice
   # THE RESULT AS A ROW (2026-09-10). A build that runs on an ephemeral fly
   # machine has always handed its RESULT back by scp into the owning box's
   # state/remote-results/ — a push that needs the machine to hold a path INTO

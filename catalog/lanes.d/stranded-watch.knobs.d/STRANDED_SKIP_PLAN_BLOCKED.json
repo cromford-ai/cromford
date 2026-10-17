@@ -1,0 +1,11 @@
+{
+  "env": "STRANDED_SKIP_PLAN_BLOCKED",
+  "read_in": "bin/orphan-reconcile.sh",
+  "type": "int",
+  "default": 1,
+  "min": 0,
+  "max": 1,
+  "unit": null,
+  "zero_means": "off",
+  "note": "BH-7116: 1 skips a ticket whose queue row says its last build ended PLAN_BLOCKED and that has no human comment created or edited since that row's updated_at (bin/lib/plan-blocked.sh pb_stranded_skip); the run summary names it `<KEY>:plan-blocked`, and it is not counted toward NEEDS_HUMAN. 0 re-offers it as before. A value that is not 0 or 1 is read as 1 with one log line."
+}
