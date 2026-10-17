@@ -28,7 +28,8 @@
 #         prepr_scan, cl_verify_lines and the lead BLOCK with the same step name
 #   M1    mutants: the ci-local block cut from prepr_scan fails P1; the
 #         CI_LOCAL_EXIT grep cut from the resolver fails R1; the lead block's
-#         red arm cut fails LR1
+#         red arm cut fails LR1; M4 cl_run without --budget fails LR1's
+#         budget check (BH-7213: LR1 takes 880-900, LR1s runs it 2 s late)
 # Run from anywhere: tests/ci-local-gates.bh-6897-test.sh   (exit 0 = all pass)
 set -uo pipefail
 . "$(dirname "$0")/lib/scratch.sh" || exit 1
@@ -391,6 +392,7 @@ lrfn() {
   { printf '%s\n' 'review() {' '  local H="$1" WT="$C/wt" repo="${LR_REPO:-example-org/cromford}" harness_repo=example-org/cromford'
     printf '%s\n' '  local sha=0123456789abcdef0123 base=main key=BH-9 pr=9 id=1 job=j1 report="$C/report.md" RVLINE="" bfp=fp'
     printf '%s\n' '  local RP_STATE=clean CL_STATE="" CL_TAIL="" left DEADLINE=$((SECONDS + 3600))'
+    [ -z "${LR_PRE:-}" ] || printf '%s\n' "$LR_PRE"
     cat "$1"
     printf '%s\n' '  echo "AGENT_REACHED CL_STATE=$CL_STATE"' '}'; } > "$2"
 }
@@ -406,7 +408,16 @@ lr() {
     finish_done() { printf "%s|" "$@" > "$C/finish"; }
     lr_ci_jobs_green() { printf "%s\n" "$*" >> "$C/cigreen"; [ "$CIGREEN" = 1 ]; }
     . "$2" || exit 9
-    review "$1"' "$LIB" "${LR_H:-$LH}" "${LR_FN:-$T/lr-fn.sh}" > "$T/$c/out" 2>&1
+    review "$1"' "${LR_LIB:-$LIB}" "${LR_H:-$LH}" "${LR_FN:-$T/lr-fn.sh}" > "$T/$c/out" 2>&1
+}
+# lr_budget_in <argv-file> — the first --budget N in a recorded argv is a
+# number from 880 to 900 (BH-7213). The lead review caps the budget at a
+# quarter of what is left of its deadline, so a slow second makes it 899.
+lr_budget_in() {
+  local n
+  n=$(sed -n '/--budget /{s/.*--budget \([^ ]*\).*/\1/p;q;}' "$1" 2>/dev/null)
+  case "$n" in ''|*[!0-9]*) return 1 ;; esac
+  [ "$n" -ge 880 ] && [ "$n" -le 900 ]
 }
 export C
 C="$T/lr1"; ctl lr1 1 1 "$FINDING"; lr lr1 0
@@ -416,7 +427,22 @@ grep -qx -- '- ci-local: red' "$T/lr1/report.md" 2>/dev/null && grep -qx -- '- r
   || bad "LR1: report [$(cat "$T/lr1/report.md" 2>/dev/null)] $(cat "$T/lr1/out")"
 case "$(cat "$T/lr1/finish" 2>/dev/null)" in "1|j1|0123456789abcdef0123|BLOCK|$T/lr1/report.md|ci-local|ci-local: red|BH-9|") ok ;;
   *) bad "LR1: finish_done args '$(cat "$T/lr1/finish" 2>/dev/null)'" ;; esac
-grep -q -- '--budget 900 --skip-rules-pack' "$T/lr1/ctl/argv" && ok || bad "LR1: argv '$(cat "$T/lr1/ctl/argv" 2>/dev/null)'"
+lr_budget_in "$T/lr1/ctl/argv" && grep -q -- ' --skip-rules-pack' "$T/lr1/ctl/argv" && ok || bad "LR1: argv '$(cat "$T/lr1/ctl/argv" 2>/dev/null)'"
+# LR1s: two seconds pass between DEADLINE and the ci-local call (BH-7213),
+# by moving bash's SECONDS on, not by a wall-clock sleep: the budget is 899
+# or 898, LR1's check still passes, the red arm still blocks.
+LR_PRE='  SECONDS=$((SECONDS + 2))' lrfn "$T/lr-block.sh" "$T/lr-fn.slow.sh"
+C="$T/lr1s"; ctl lr1s 1 1 "$FINDING"; LR_FN="$T/lr-fn.slow.sh" lr lr1s 0
+lr_budget_in "$T/lr1s/ctl/argv" && ! grep -q -- '--budget 900 ' "$T/lr1s/ctl/argv" && ok \
+  || bad "LR1s: a slow run's budget is not in 880-899: argv '$(cat "$T/lr1s/ctl/argv" 2>/dev/null)'"
+! grep -q AGENT_REACHED "$T/lr1s/out" && grep -qx 'VERDICT: BLOCK' "$T/lr1s/report.md" 2>/dev/null && ok \
+  || bad "LR1s: a slow red run did not block: [$(cat "$T/lr1s/report.md" 2>/dev/null)] $(cat "$T/lr1s/out")"
+# lr_budget_in decision table.
+mkdir -p "$T/lrb"
+for v in 900 899 880 879 901 abc; do printf -- '--tree x --budget %s --skip-rules-pack\n' "$v" > "$T/lrb/$v"; done
+printf -- '--tree x --skip-rules-pack\n' > "$T/lrb/none"
+for v in 900 899 880; do lr_budget_in "$T/lrb/$v" && ok || bad "lr_budget_in: --budget $v failed"; done
+for v in 879 901 abc none missing; do lr_budget_in "$T/lrb/$v" && bad "lr_budget_in: $v passed" || ok; done
 grep -q "Syntax + shellcheck + config integrity" "$T/lr1/cigreen" && ok || bad "LR2: lr_ci_jobs_green was not asked about the lint job"
 C="$T/lr2"; ctl lr2 1 1 "$FINDING"; lr lr2 1
 grep -q '^AGENT_REACHED CL_STATE=skipped (CI lint job green on 0123456789ab)$' "$T/lr2/out" && [ "$(ncalls lr2)" = 0 ] && ok \
@@ -466,6 +492,12 @@ cmp -s "$T/lr-block.sh" "$T/lr-block.mut.sh" && bad "M1: the lead mutation chang
 lrfn "$T/lr-block.mut.sh" "$T/lr-fn.mut.sh"
 C="$T/m3"; ctl m3 1 1 "$FINDING"; LR_FN="$T/lr-fn.mut.sh" lr m3 0
 grep -q AGENT_REACHED "$T/m3/out" && ok || bad "M1: LR1 still passes with the red arm cut"
+# M4: cl_run without --budget: LR1's budget check fails (BH-7213).
+sed 's/ --budget "\$budget"//' "$LIB" > "$T/cl-verify.nobudget.sh"
+cmp -s "$LIB" "$T/cl-verify.nobudget.sh" && bad "M4: the budget mutation changed nothing" || ok
+C="$T/m4"; ctl m4 1 1 "$FINDING"; LR_LIB="$T/cl-verify.nobudget.sh" lr m4 0
+[ "$(ncalls m4)" = 1 ] && ! lr_budget_in "$T/m4/ctl/argv" && ok \
+  || bad "M4: LR1's budget check passes with no --budget: calls $(ncalls m4) argv '$(cat "$T/m4/ctl/argv" 2>/dev/null)'"
 
 echo "ci-local-gates.bh-6897: $PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ]
