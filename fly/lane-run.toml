@@ -10,8 +10,19 @@
 #   flyctl apps create lane-run
 #   flyctl secrets set HARNESS_SECRET=... JOBS_URL=... GH_APP_ID=... \
 #     GH_APP_PRIVATE_KEY=... GH_APP_INSTALLATION_<OWNER>=... -a lane-run --stage
+#   # BH-6260: the agent CLI credentials, the same ones the pool build machines
+#   # get (the hub's CLAUDE_CODE_OAUTH_TOKEN from env/global.env, the file text
+#   # of /root/.codex/auth.json and /root/.codex/config.toml):
+#   flyctl secrets set CLAUDE_CODE_OAUTH_TOKEN=... CODEX_AUTH_JSON=... \
+#     CODEX_CONFIG_TOML=... -a lane-run --stage
+#   JC=bin/jobs-client.sh
 #   flyctl deploy . -c fly/lane-run.toml --build-only --push --image-label latest \
-#     --build-arg HARNESS_COMMIT=$(git rev-parse HEAD)
+#     --build-arg HARNESS_COMMIT=$(git rev-parse HEAD) \
+#     --build-arg NODE_VERSION=$($JC setting-get bake.node.version) \
+#     --build-arg CLAUDE_CODE_VERSION=$($JC setting-get cli.claude_code.version) \
+#     --build-arg CODEX_VERSION=$($JC setting-get cli.codex.version)
+#   The build FATALs when a version arg is empty (fly/bake-pin.sh and the
+#   cli-pin-verify block): never "latest".
 # The deploy pushes registry.fly.io/lane-run:latest, the image the settings row
 # lane_fleet.image names. GH_APP_PRIVATE_KEY is the PEM text; the entrypoint
 # writes it to a mode-600 file at boot. No key is in the image. A machine

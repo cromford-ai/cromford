@@ -27,6 +27,12 @@
 #       prints `published <sha12> <bytes>` or `unchanged <sha12> <bytes>`.
 #       rc 3 = over lane_snapshot.max_bytes (prints `oversize <bytes>`),
 #       rc 1 = any other failure. The previous generation stays on a failure.
+#       Each file over lane_snapshot.file_max and each record dir older than
+#       lane_snapshot.builds_days that the snapshot leaves out is logged ONE
+#       time, when the skip starts, to logs/lane-snapshot-publish.log
+#       (`<stamp> lane-snapshot-publish: skip <p> <relpath> (<why>)`). The
+#       open skips are kept in state/lane-run-inputs/<lane>/<p>/skipped.tsv,
+#       so a skip that ends and comes back is logged again.
 #   lri_fetch <lane> <project> <dir>                             (machine)
 #       overlays the snapshot and every pending write-back onto the root and
 #       prints `inputs: snapshot <sha12> + <k> write-backs, age <s>s`.
@@ -86,13 +92,14 @@
 #                            case-insensitive (`grep -iE`, _lri_rows_lines).
 # A record dir member (type d) is allowed for the parent dir of a glob whose
 # parent segment holds <KEY>. A file under a glob whose last segment has a
-# wildcard or a token is capped at LRI_FILE_MAX bytes. The manifest dir is
+# wildcard or a token is capped at _lri_file_max bytes. The manifest dir is
 # $LRI_MANIFEST_DIR, else <root>/catalog/lane-run-inputs.d, else the catalog
 # beside this lib. Each (lane, project) is parsed once per process.
 #
 # The settings rows lane_snapshot.max_age_s (1200), lane_snapshot.max_bytes
-# (33554432) and lane_snapshot.builds_days (30) are the knobs; the numbers in
-# brackets are the code fallbacks. The root is ${HARNESS:-${H:-}}. Defines
+# (33554432), lane_snapshot.builds_days (30) and lane_snapshot.file_max
+# (262144, at most LRI_PART_BYTES) are the knobs; the numbers in brackets are
+# the code fallbacks. The root is ${HARNESS:-${H:-}}. Defines
 # functions only. Nothing runs on source.
 
 LRI_PART_BYTES=1000000
@@ -131,6 +138,16 @@ _lri_setting() {
   v=$(setting_get "$1" 2>/dev/null) || v=""
   v=$(printf '%s' "$v" | tr -d '[:space:]')
   case "$v" in ''|*[!0-9]*|0) v="$2" ;; esac
+  printf '%s' "$v"
+}
+
+# _lri_file_max — lane_snapshot.file_max when it is 1..LRI_PART_BYTES, else
+# LRI_FILE_MAX. A write-back is one body of at most LRI_B64_MAX, so a larger
+# per-file cap would make write-backs fail.
+_lri_file_max() {
+  local v
+  v=$(_lri_setting lane_snapshot.file_max "$LRI_FILE_MAX")
+  [ "$v" -le "$LRI_PART_BYTES" ] 2>/dev/null || v="$LRI_FILE_MAX"
   printf '%s' "$v"
 }
 
@@ -474,21 +491,33 @@ lri_member_ok() {
   [ -n "$re" ] && [[ $rel =~ $re ]]
 }
 
-# _lri_list <project> ro|rw <days> — the allow-listed paths under the root, one
-# per line, type letter TAB relpath, sorted. The lane is $LRI_LANE, else
-# LRI_LANE_DEFAULT. Record dirs older than <days> stay out (0 = no window); a
-# capped glob's file over LRI_FILE_MAX bytes stays out. An @lines path is not
-# listed: lri_publish adds its filtered copy. rc 1 on a malformed manifest.
+# _lri_list <project> ro|rw <days> [skip-file] — the allow-listed paths under
+# the root, one per line, type letter TAB relpath, sorted. The lane is
+# $LRI_LANE, else LRI_LANE_DEFAULT. Record dirs older than <days> stay out
+# (0 = no window); a capped glob's file over _lri_file_max bytes stays out. An
+# @lines path is not listed: lri_publish adds its filtered copy. With
+# [skip-file] (an absolute path), each member left out that way is appended
+# to it: `dir TAB <relpath> TAB <days>` or `file TAB <relpath> TAB <bytes> TAB
+# <cap>`. rc 1 on a malformed manifest.
 _lri_list() {
-  local p="$1" mode="$2" days="$3" root walk age=()
+  local p="$1" mode="$2" days="$3" skips="${4:-}" root walk fmax age=()
   _lri_load "${LRI_LANE:-$LRI_LANE_DEFAULT}" "$p" || return 1
   walk="${_LRI_M[$LRI_K|walk.$mode]:-}"
   root=$(_lri_root)
+  fmax=$(_lri_file_max)
   [ "$days" -gt 0 ] 2>/dev/null && age=(-mtime "-$days")
   (
     cd "$root" 2>/dev/null || exit 0
+    # over <find args> — the allow-listed files over the cap, into the skip file.
+    over() {
+      [ -n "$skips" ] || return 0
+      find "$@" -type f -size +"$fmax"c -printf '%p\t%s\n' 2>/dev/null | while IFS=$'\t' read -r rel f; do
+        rel="${rel#./}"
+        lri_member_ok "$p" "$rel" - "$mode" && printf 'file\t%s\t%s\t%s\n' "$rel" "$f" "$fmax" >> "$skips"
+      done
+    }
     while IFS=$'\t' read -r kind cap pre depth dre; do
-      sz=(); [ "$cap" = 1 ] && sz=(-size "-$((LRI_FILE_MAX + 1))c")
+      sz=(); [ "$cap" = 1 ] && sz=(-size "-$((fmax + 1))c")
       dp=(); [ "${depth:-0}" -gt 0 ] && dp=(-maxdepth "$depth")
       case "$kind" in
         exact) [ -f "$pre" ] && [ ! -L "$pre" ] && printf -- '-\t%s\n' "$pre" ;;
@@ -496,18 +525,47 @@ _lri_list() {
           find "$pre" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | while IFS= read -r d; do
             d="${d#./}"
             [[ $d =~ $dre ]] || continue
-            [ "${#age[@]}" = 0 ] || [ -n "$(find "$d" -maxdepth 0 "${age[@]}" 2>/dev/null)" ] || continue
+            if [ "${#age[@]}" != 0 ] && [ -z "$(find "$d" -maxdepth 0 "${age[@]}" 2>/dev/null)" ]; then
+              [ -z "$skips" ] || printf 'dir\t%s\t%s\n' "$d" "$days" >> "$skips"
+              continue
+            fi
             printf 'd\t%s\n' "$d"
             find "$d" -mindepth 1 -maxdepth 1 -type f ${sz[@]+"${sz[@]}"} 2>/dev/null | sed 's#^#-\t#'
+            [ "$cap" = 1 ] && over "$d" -mindepth 1 -maxdepth 1
           done ;;
         find)
-          [ -d "$pre" ] && find "$pre" -mindepth 1 ${dp[@]+"${dp[@]}"} -type f ${sz[@]+"${sz[@]}"} 2>/dev/null \
-            | sed -e 's#^\./##' -e 's#^#-\t#' ;;
+          [ -d "$pre" ] || continue
+          find "$pre" -mindepth 1 ${dp[@]+"${dp[@]}"} -type f ${sz[@]+"${sz[@]}"} 2>/dev/null \
+            | sed -e 's#^\./##' -e 's#^#-\t#'
+          [ "$cap" = 1 ] && over "$pre" -mindepth 1 ${dp[@]+"${dp[@]}"} ;;
       esac
     done <<<"$walk"
   ) | while IFS=$'\t' read -r d rel; do
     lri_member_ok "$p" "$rel" "$d" "$mode" && printf '%s\t%s\n' "$d" "$rel"
   done | LC_ALL=C sort -t$'\t' -k2,2 -u
+}
+
+# _lri_skips_log <lane> <project> <skip-file> — one stamped line in
+# logs/lane-snapshot-publish.log per skip that is not in
+# state/lane-run-inputs/<lane>/<p>/skipped.tsv, then that file becomes this
+# list's `kind TAB relpath` keys. Nothing goes to stdout or stderr: the
+# publisher reads lri_publish's stdout. A failed write costs a repeat of the
+# lines on the next publish, never the publish.
+_lri_skips_log() {
+  local lane="$1" p="$2" skips="$3" root st ts
+  root=$(_lri_root); st=$(_lri_state "$lane" "$p")
+  mkdir -p "$st" "$root/logs" 2>/dev/null || return 0
+  [ -f "$skips" ] || : > "$skips"
+  ts=$(date -u '+%Y-%m-%d %H:%M:%SZ')
+  LC_ALL=C sort -t$'\t' -k1,2 -u "$skips" | awk -F'\t' -v old="$st/skipped.tsv" -v p="$p" -v ts="$ts" '
+    BEGIN { while ((getline l < old) > 0) seen[l] = 1 }
+    ($1 FS $2) in seen { next }
+    $1 == "file" { printf "%s lane-snapshot-publish: skip %s %s (%s bytes > lane_snapshot.file_max=%s)\n", ts, p, $2, $3, $4 }
+    $1 == "dir"  { printf "%s lane-snapshot-publish: skip %s %s (record dir older than lane_snapshot.builds_days=%s)\n", ts, p, $2, $3 }
+  ' >> "$root/logs/lane-snapshot-publish.log" 2>/dev/null
+  cut -f1,2 "$skips" | LC_ALL=C sort -u > "$st/skipped.tsv.tmp" 2>/dev/null \
+    && mv -f "$st/skipped.tsv.tmp" "$st/skipped.tsv" 2>/dev/null
+  return 0
 }
 
 # _lri_members <archive> — prints `<type> TAB <name>` per member, or rc 1 when
@@ -610,7 +668,8 @@ lri_publish() {
   # shellcheck disable=SC2064
   trap "rm -rf '$tmp'; exec $lk>&-; trap - RETURN" RETURN
   flock -w 10 "$lk" || return 1
-  list=$(_lri_list "$p" ro "$days") || return 1
+  list=$(_lri_list "$p" ro "$days" "$tmp/skips") || return 1
+  _lri_skips_log "$lane" "$p" "$tmp/skips"
   printf '%s\n' "$list" | awk -F'\t' 'NF == 2 {print $2}' > "$tmp/list.files"
   # An @lines path rides as its matching lines only, with a fixed mtime, so a
   # busy log does not change the snapshot's sha.
@@ -823,8 +882,8 @@ lri_checkpoint() {
 }
 
 _lri_checkpoint_locked() {
-  local lane="$1" p="$2" root st tmp now base cur rel t off size machine changed=0
-  root=$(_lri_root); st=$(_lri_state "$lane" "$p")
+  local lane="$1" p="$2" root st tmp now base cur rel t off size machine fmax fsz changed=0
+  root=$(_lri_root); st=$(_lri_state "$lane" "$p"); fmax=$(_lri_file_max)
   _lri_row "$p" || return 1
   _lri_rows "$p" || return 1
   tmp=$(mktemp -d "${TMPDIR:-/tmp}/lri-ckpt.XXXXXX") || return 1
@@ -860,6 +919,18 @@ _lri_checkpoint_locked() {
   while IFS=$'\t' read -r rel base; do
     [ -n "$LRI_ROW" ] && [ "$rel" = "$LRI_ROW" ] && continue
     awk -F'\t' -v r="$rel" '$1 == r {f = 1} END {exit !f}' "$tmp/now" && continue
+    # A regular file still on this machine and over lane_snapshot.file_max is
+    # not a deletion, only out of the list: the cap can differ from the read at
+    # fetch time, or the run grew the file. The hub copy stays; the line in the
+    # run log names the file and goes to the hub with the log bytes. A path
+    # that is gone, a symlink or a directory now is a deletion.
+    fsz=$(stat -c %s "$root/$rel" 2>/dev/null || echo 0)
+    if [ -f "$root/$rel" ] && [ ! -L "$root/$rel" ] && [ "$fsz" -gt "$fmax" ] 2>/dev/null; then
+      mkdir -p "$root/logs" 2>/dev/null
+      printf '%s %s: checkpoint: %s/%s %s (%s bytes) is over lane_snapshot.file_max=%s; not in the write-back, the hub copy stays\n' \
+        "$(date -u '+%Y-%m-%d %H:%M:%SZ')" "$lane" "$lane" "$p" "$rel" "$fsz" "$fmax" >> "$root/logs/$lane.log" 2>/dev/null
+      continue
+    fi
     printf '%s\t%s\n' "$rel" "$base" >> "$tmp/x/.lri/base.tsv"
     printf '%s\n' "$rel" >> "$tmp/x/.lri/deletions"; changed=1
   done < "$tmp/base"

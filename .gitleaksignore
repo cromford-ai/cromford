@@ -48,6 +48,8 @@ tests/gh-token-live-test.sh:generic-api-key:26
 tests/hotspot-split-ticket.bh-6739-test.sh:curl-auth-header:158
 tests/hotspot-split-ticket.bh-6739-test.sh:curl-auth-header:327
 tests/jobs-client-secret-sources.bh-7188-test.sh:generic-api-key:12
+tests/lane-run-agent-clis.bh-6260-test.sh:generic-api-key:90
+tests/lane-run-agent-clis.bh-6260-test.sh:generic-api-key:115
 tests/lead-report-transcript.bh-5915-test.sh:generic-api-key:38
 tests/lead-report-transcript.bh-5915-test.sh:generic-api-key:114
 tests/lead-reviews-lib.bh-1948-test.sh:generic-api-key:101

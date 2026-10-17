@@ -405,14 +405,13 @@ RUNGS "$REF/logs/blocked-resolver.log" > "$T/rungs-ref"
   && ok "O9 the reference run took 3 rungs and enqueued 3 rebuilds" || bad "O9 reference rungs: $(cat "$T/rungs-ref"); $(tail -5 "$REF/logs/blocked-resolver.log" 2>&1)"
 
 # ============================================================================
-echo "O1: schema.sql leaves blocked-resolver on the hub; an operator row places it on fly"
+echo "O1: with no placement row blocked-resolver stays on the hub; the row places it on fly"
 export HARNESS="$HUB" FLEET_CONF="$HUB/fleet.conf"
-# No machine runs lane-run-worker.sh until BH-6125 and BH-6126 land, so this
-# change must not seed the flip (review finding 1, the BH-1000 class).
-! grep -q "^ *('lane_placement.blocked-resolver'" "$DIR/worker/jobs/schema.sql" \
-  && ok "O1 schema.sql seeds no lane_placement.blocked-resolver row" || bad "O1 schema.sql seeds the flip"
+# BH-6260 seeds the flip (schema.d/0025); tests/blocked-resolver-flip.bh-6260-test.sh
+# pins that. The row is removed here to model the state before the flip.
+unsetting lane_placement.blocked-resolver
 D=$( . "$HUB/bin/lib/lane-placement.sh"; lp_decide blocked-resolver; printf '%s' "$LP_PLACE")
-[ "$D" = hub ] && ok "O1 lp_decide blocked-resolver from schema.sql alone: hub" || bad "O1 lp_decide from schema.sql: $D"
+[ "$D" = hub ] && ok "O1 lp_decide blocked-resolver with no placement row: hub" || bad "O1 lp_decide with no row: $D"
 PO=$("$HUB/bin/lane-snapshot-publish.sh")
 case "$PO" in *"0 published, 0 unchanged"*"blocked-resolver placed hub"*) ok "O1 the publisher publishes nothing before the flip" ;; *) bad "O1 publisher before the flip: $PO" ;; esac
 setting lane_placement.blocked-resolver fly

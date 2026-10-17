@@ -24,7 +24,9 @@
 //   * GET  …/<lane>/<project>/writebacks  the hub's unapplied list.
 //   * GET  …/<lane>/<project>/writebacks/<id>  one write-back.
 //   * POST …/<lane>/<project>/writebacks/ack  {through, rejected?} stamps the
-//     rows, then prunes this (lane, project)'s rows stamped over 7 days ago.
+//     rows, then prunes this (lane, project)'s rows stamped longer ago than
+//     the settings row lane_snapshot.prune_after_s (3600..7776000 s; the code
+//     default is 7 days).
 //
 // Every list is capped by the settings row lane_snapshot.max_pending and says
 // `truncated` when it hit the cap, so a reader never takes a short list for
@@ -43,8 +45,11 @@ const B64_MAX_CHARS = 1400000;
 const PART_N_MAX = 255;
 const PARTS_MAX = 256;
 const REJECTED_MAX = 1000;
-const PRUNE_AFTER_S = 604800;
-// The settings row and its documented code fallback.
+// The settings rows and their documented code fallbacks.
+const PRUNE_AFTER_KEY = "lane_snapshot.prune_after_s";
+const PRUNE_AFTER_DEFAULT_S = 604800;
+const PRUNE_AFTER_MIN = 3600;
+const PRUNE_AFTER_MAX = 7776000;
 const MAX_PENDING_KEY = "lane_snapshot.max_pending";
 const MAX_PENDING_DEFAULT = 500;
 const MAX_PENDING_MIN = 1;
@@ -90,6 +95,13 @@ async function maxPending(env) {
   const s = r ? String(r.value).trim() : "";
   const n = /^\d+$/.test(s) ? Number(s) : NaN;
   return n >= MAX_PENDING_MIN && n <= MAX_PENDING_MAX ? n : MAX_PENDING_DEFAULT;
+}
+
+async function pruneAfterS(env) {
+  const r = await env.DB.prepare("SELECT value FROM settings WHERE key=?1").bind(PRUNE_AFTER_KEY).first();
+  const s = r ? String(r.value).trim() : "";
+  const n = /^\d+$/.test(s) ? Number(s) : NaN;
+  return n >= PRUNE_AFTER_MIN && n <= PRUNE_AFTER_MAX ? n : PRUNE_AFTER_DEFAULT_S;
 }
 
 export const routes = [
@@ -272,7 +284,7 @@ export const routes = [
       // sql-ident-ok: WB_OPEN is a module const clause with ?N binds
       const a = await env.DB.prepare(`UPDATE lane_snapshot_writebacks SET applied_at=?4 WHERE ${WB_OPEN}`)
         .bind(g.lane, g.project, through, t).run();
-      const cut = isoPlusSeconds(t, -PRUNE_AFTER_S);
+      const cut = isoPlusSeconds(t, -(await pruneAfterS(env)));
       const p = await env.DB.prepare(
         "DELETE FROM lane_snapshot_writebacks WHERE lane=?1 AND project=?2 AND (applied_at < ?3 OR rejected_at < ?3)"
       ).bind(g.lane, g.project, cut).run();

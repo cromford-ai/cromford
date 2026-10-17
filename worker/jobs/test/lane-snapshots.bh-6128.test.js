@@ -41,7 +41,7 @@ test('BH-6128 lane snapshots and write-backs', async (t) => {
   if (probe === null) { t.skip('node:sqlite unavailable in this runtime'); return; }
   const fresh = async () => openDb();
 
-  await t.test('S1 schema.sql has the three tables and the four seeds, no flip, and applies twice', async () => {
+  await t.test('S1 schema.sql has the three tables and the four seeds, the BH-6260 flip, and applies twice', async () => {
     const { db } = await fresh();
     const cols = (tb) => db.prepare(`PRAGMA table_info(${tb})`).all().map((c) => c.name);
     for (const c of ['lane', 'project', 'sha', 'parts', 'bytes', 'applied_through', 'published_at']) {
@@ -58,12 +58,12 @@ test('BH-6128 lane snapshots and write-backs', async (t) => {
     assert.equal(val('lane_snapshot.max_bytes'), '33554432');
     assert.equal(val('lane_snapshot.builds_days'), '30');
     assert.equal(val('lane_snapshot.max_pending'), '500');
-    // The flip waits for BH-6125/BH-6126: no machine claims lane_runs rows yet.
-    assert.equal(val('lane_placement.blocked-resolver'), undefined);
+    // BH-6260 seeds the flip (schema.d/0025) now that BH-6125/BH-6126 claim lane_runs rows.
+    assert.equal(val('lane_placement.blocked-resolver'), 'fly');
     db.prepare("UPDATE settings SET value = '99' WHERE key = 'lane_snapshot.max_age_s'").run();
     db.exec(SCHEMA);
     assert.equal(val('lane_snapshot.max_age_s'), '99', 'a re-apply keeps an operator value');
-    assert.equal(val('lane_placement.blocked-resolver'), undefined);
+    assert.equal(val('lane_placement.blocked-resolver'), 'fly');
   });
 
   await t.test('V1 no bearer is 401; a bad lane or project is 400; a part over the cap is 413', async () => {

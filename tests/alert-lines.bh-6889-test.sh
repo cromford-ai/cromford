@@ -73,6 +73,11 @@ if [ -z "$PORT" ]; then
 fi
 export JOBS_URL="http://127.0.0.1:$PORT"
 trap 'kill "$SPID" 2>/dev/null' EXIT
+# BH-6260 seeds lane_placement.blocked-resolver=fly. This suite is about the
+# alert lines only, so the hub fixture keeps blocked-resolver on the hub: the
+# publisher then has no snapshot to build, as before the flip.
+curl -sS -X PUT -d '{"key":"lane_placement.blocked-resolver","value":"hub"}' "$JOBS_URL/__setting" > /dev/null \
+  || { echo "setup: could not set lane_placement.blocked-resolver"; exit 1; }
 
 STAMP='2026-10-16 02:00:00Z'
 rows() { curl -sS "$JOBS_URL/__rows"; }
