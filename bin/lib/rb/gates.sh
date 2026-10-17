@@ -271,8 +271,18 @@ HARNESS_SUITE_RUN() {
 # GITLEAKS_REQUIRED=1 (BH-5789) rides on both: on a box with no gitleaks the leak
 # suite is red, never a skip, so a fixture leak is found here and not in the queue.
 HARNESS_IMPACT_GATE_RUN() {
-  local outfile="$1" phase="$2" base="${SCOPE_BASE:-$BASE}" rc t0 stage prc pst="" pel p0 budget rpo skip=() fm
+  local outfile="$1" phase="$2" base="${SCOPE_BASE:-$BASE}" rc t0 stage prc pst="" pel p0 budget rpo skip=() fm hh
   echo "HARNESS_SUITE: impact gate — bin/test-impact-gate.sh --base $base" > "$BUILD/$outfile"
+  # BH-6968: the head this run tests, read back by bin/evidence-summary.sh into
+  # the PR body's builder-gate marker. A tree with changes is no head at all;
+  # outside a git work tree there is no head, and no line.
+  if [ "$(git rev-parse --is-inside-work-tree 2>/dev/null)" = true ]; then
+    if [ -z "$(git status --porcelain 2>/dev/null)" ] && hh=$(git rev-parse HEAD 2>/dev/null); then
+      echo "HARNESS_HEAD: $hh" >> "$BUILD/$outfile"
+    else
+      echo "HARNESS_HEAD: dirty" >> "$BUILD/$outfile"
+    fi
+  fi
   echo "$(STAMP) [$PROJECT/$KEY] HARNESS-VERIFY $phase (bin/test-impact-gate.sh --base $base)" >> "$BUILD/pipeline.log"
   if [ -x bin/rules-pack.sh ]; then
     budget=60; command -v rules_pack_budget >/dev/null 2>&1 && budget=$(rules_pack_budget)

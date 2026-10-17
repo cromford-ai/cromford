@@ -40,6 +40,23 @@
 #      `rules-text:` prefix) and goes on to rules 3 and 4. rt_rules_low is the
 #      one test for "a rules-text low". rules/settings.json is a lead protected
 #      path (rule 1), and rules/RTK.md is no rules text, so neither is ever low.
+#   2c. EVIDENCE (BH-6968), only while risk_tier.low_score_max > 0 (0, the
+#      fallback, = the lane is off): a diff no rule above made low, with no
+#      edit to an existing test, helper or fixture, no rules-text shape (2b owns
+#      those), and changed lines under the low limit, is low when ALL of these
+#      hold. rt_evidence_load reads them; rule 1 already sent every protected
+#      path to high, so this is never a way around the protected globs:
+#        RT_EVIDENCE_SCORE     the queue-risk score (bin/lib/queue-risk.sh,
+#                              qr_score) is under risk_tier.low_score_max
+#        RT_EVIDENCE_SUITES    the builder gate ran at least
+#                              risk_tier.low_min_suites suites green on THIS head
+#                              (the PR body's builder-gate marker)
+#        RT_EVIDENCE_PREQUEUE  `green`: the prequeue-verdict status is success
+#                              and says `green on main ...`
+#                                                          -> low, `evidence: ...`
+#      A miss adds `no evidence low: <the first input that failed>` to the
+#      reasons and goes on to rules 3 and 4. No RT_EVIDENCE_* set (a caller that
+#      never loaded them) is never an evidence low.
 #   3. changed lines > high_lines, or files > high_files    -> high
 #   4. otherwise                                             -> medium
 # UNREADABLE IS NEVER LOW. A rules row the worker could not answer (rc 1), or a
@@ -52,7 +69,8 @@
 #   risk_tier.sensitive_globs  RT_SENSITIVE_GLOBS_DEFAULT (auth, secrets, env, billing, cost caps)
 #   risk_tier.low_globs        RT_LOW_GLOBS_DEFAULT (only narrows the wave-1 low set)
 #   risk_tier.high_lines 600, risk_tier.high_files 25, risk_tier.low_lines 300,
-#   risk_tier.rules_low_lines 80
+#   risk_tier.rules_low_lines 80,
+#   risk_tier.low_score_max 0 (rule 2c off), risk_tier.low_min_suites 12
 # Globs are space-separated and match like _la_match: `**` reads as `*`, and a
 # bash `*` already crosses `/`. The worker signs every risk_tier.* write; the
 # signature records who wrote a row, it does not gate the write, which is why
@@ -68,10 +86,13 @@
 #   this tick, and <why> says so (empty otherwise). Always rc 0.
 # rt_rules_load
 #   fills RT_HIGH_GLOBS RT_SENSITIVE_GLOBS RT_LOW_GLOBS RT_HIGH_LINES
-#   RT_HIGH_FILES RT_LOW_LINES RT_RULES_LOW_LINES, and RT_RULES_UNREADABLE=1 when any read failed
+#   RT_HIGH_FILES RT_LOW_LINES RT_RULES_LOW_LINES RT_LOW_SCORE_MAX
+#   RT_LOW_MIN_SUITES (read only while RT_LOW_SCORE_MAX > 0), and
+#   RT_RULES_UNREADABLE=1 when any read failed
 #   (that key keeps its fallback), RT_RULES_SIG (a checksum of the rules as
-#   loaded: a cached tier is only reused under the same one) and
-#   RT_RULES_LOADED=1. rt_classify calls it unless the caller already did (the
+#   loaded: a cached tier is only reused under the same one; the two rule 2c
+#   rows are in it only while the lane is on, so a lane that stays off keeps
+#   every cached tier) and RT_RULES_LOADED=1. rt_classify calls it unless the caller already did (the
 #   lane loads once per repo per tick).
 # rt_inbuild_grace
 #   BH-5023: prints the seconds the hub enqueue holds a medium head under
@@ -86,8 +107,29 @@
 #   The caller runs the head render check only when this answers rc 0.
 # rt_rules_low <tier> <reasons>
 #   rc 0 when the tier is low or withheld and the reasons start `rules-text:`.
+# rt_evidence_load <owner/repo> <n> <head> <compare-json-file> <pr-json-file>
+#   Rule 2c's inputs, in this order, stopping at the first that fails (its
+#   reason in RT_EVIDENCE_WHY, the later inputs left empty):
+#     1. the PR body (.body of <pr-json-file>, no network) carries exactly one
+#        distinct `<!-- builder-gate: head=<sha> green=<n> -->` marker
+#        (bin/evidence-summary.sh) and its head is <head>: RT_EVIDENCE_SUITES=<n>
+#     2. one gh_rest GET repos/<slug>/commits/<head>/status: the
+#        prequeue-verdict entry is `success` with a description that starts
+#        `green on main ` (bin/lib/mc-prequeue.d/status.sh). `gate off`,
+#        `no-selection`, `could-not-run`, `no red pre-queue verdict` and the
+#        other success answers ran no green suites: RT_EVIDENCE_PREQUEUE=green
+#     3. qr_score over the compare's file names, lines and file count, in a
+#        subshell whose mc_attempt_count reads pr_attempt_count (the conductor's
+#        pr_attempts rows). An outage there, a queue_risk row that could not be
+#        read, or no score: unreadable. Else RT_EVIDENCE_SCORE=<score>
+#   The queue_risk rows are read once per rt_rules_load. Always rc 0.
+# rt_low_rule <tier> <reasons>
+#   prints which rule made a head low, for risk.tsv column 8: `evidence` (low
+#   or withheld, reasons start `evidence:`), `path` (any other low or withheld,
+#   a rules-text low included), else `-`.
 # rt_classify <compare-json-file> <owner/repo>
-#   Reads RT_RULES_RENDER (rule 2b; unset = not proved, never low).
+#   Reads RT_RULES_RENDER (rule 2b; unset = not proved, never low) and
+#   RT_EVIDENCE_* (rule 2c; unset = no evidence, never an evidence low).
 #   rc 0, prints `<low|medium|high>\t<reasons>\t<lines>\t<files>`.
 #   rc 2, prints nothing: the compare carries no readable files[] (the caller
 #   classifies nothing and falls through to today's path).
@@ -112,6 +154,9 @@ RT_LOW_LINES_DEFAULT=300
 RT_RULES_LOW_LINES_DEFAULT=80
 RT_RULES_GUARDRAILS=rules/topics/01-iron-guardrails.md
 RT_INBUILD_GRACE_S_DEFAULT=3600
+RT_LOW_SCORE_MAX_DEFAULT=0
+RT_LOW_MIN_SUITES_DEFAULT=12
+RT_PQ_CONTEXT=prequeue-verdict
 
 # la_globs lives in the lead-authority lib; without it rule 1's catalog half is unreadable.
 # shellcheck source=bin/lib/lead-authority.sh
@@ -179,8 +224,19 @@ rt_rules_load() {
   _rt_setting risk_tier.high_files "$RT_HIGH_FILES_DEFAULT" int > "$f"; RT_HIGH_FILES=$(cat "$f")
   _rt_setting risk_tier.low_lines "$RT_LOW_LINES_DEFAULT" int > "$f"; RT_LOW_LINES=$(cat "$f")
   _rt_setting risk_tier.rules_low_lines "$RT_RULES_LOW_LINES_DEFAULT" int > "$f"; RT_RULES_LOW_LINES=$(cat "$f")
+  _rt_setting risk_tier.low_score_max "$RT_LOW_SCORE_MAX_DEFAULT" int > "$f"; RT_LOW_SCORE_MAX=$((10#$(cat "$f")))
+  RT_LOW_MIN_SUITES="$RT_LOW_MIN_SUITES_DEFAULT"
+  if [ "$RT_LOW_SCORE_MAX" -gt 0 ]; then
+    _rt_setting risk_tier.low_min_suites "$RT_LOW_MIN_SUITES_DEFAULT" int > "$f"; RT_LOW_MIN_SUITES=$((10#$(cat "$f")))
+  fi
   [ "$f" = /dev/null ] || rm -f "$f"
-  RT_RULES_SIG=$(printf '%s\n' "$RT_HIGH_GLOBS" "$RT_SENSITIVE_GLOBS" "$RT_LOW_GLOBS" "$RT_HIGH_LINES" "$RT_HIGH_FILES" "$RT_LOW_LINES" "$RT_RULES_LOW_LINES" "${RT_RULES_UNREADABLE:-}" | cksum | cut -d' ' -f1)
+  # The queue_risk rows rule 2c scores with are read again after a rules load.
+  _RT_QR_LOADED=""
+  if [ "$RT_LOW_SCORE_MAX" -gt 0 ]; then
+    RT_RULES_SIG=$(printf '%s\n' "$RT_HIGH_GLOBS" "$RT_SENSITIVE_GLOBS" "$RT_LOW_GLOBS" "$RT_HIGH_LINES" "$RT_HIGH_FILES" "$RT_LOW_LINES" "$RT_RULES_LOW_LINES" "${RT_RULES_UNREADABLE:-}" "evidence $RT_LOW_SCORE_MAX $RT_LOW_MIN_SUITES" | cksum | cut -d' ' -f1)
+  else
+    RT_RULES_SIG=$(printf '%s\n' "$RT_HIGH_GLOBS" "$RT_SENSITIVE_GLOBS" "$RT_LOW_GLOBS" "$RT_HIGH_LINES" "$RT_HIGH_FILES" "$RT_LOW_LINES" "$RT_RULES_LOW_LINES" "${RT_RULES_UNREADABLE:-}" | cksum | cut -d' ' -f1)
+  fi
   RT_RULES_LOADED=1
   return 0
 }
@@ -271,6 +327,91 @@ _rt_rules_lane() {
   printf 'low'
 }
 
+rt_low_rule() {
+  case "${1:-}" in low|withheld) ;; *) printf -- '-'; return 0 ;; esac
+  case "${2:-}" in evidence:*) printf evidence ;; *) printf path ;; esac
+}
+
+# _rt_score_shim <flag-file> — defines mc_attempt_count over pr_attempt_count
+# (the same pr_attempts rows the conductor reads). For the subshell qr_score
+# runs in only: an outage, or no pr_attempt_count at all, touches <flag-file>.
+_rt_score_shim() {
+  _RT_SHIM_FLAG="$1"
+  mc_attempt_count() {
+    local key="${2:-}" n rc=0
+    command -v pr_attempt_count >/dev/null 2>&1 || { : > "$_RT_SHIM_FLAG"; echo 0; return 0; }
+    n=$(pr_attempt_count "${key%#*}" "${key##*#}" "${1:-}" 2>/dev/null) || rc=$?
+    case "$rc" in 0|2) ;; *) : > "$_RT_SHIM_FLAG"; n=0 ;; esac
+    echo "${n:-0}"
+  }
+}
+
+rt_evidence_load() {
+  local slug="${1:-}" n="${2:-}" head cmp="${4:-}" prf="${5:-}" m k st sf files lines nf flag out sc reasons
+  RT_EVIDENCE_SCORE=""; RT_EVIDENCE_SUITES=""; RT_EVIDENCE_PREQUEUE=""; RT_EVIDENCE_WHY=""
+  head=$(printf '%s' "${3:-}" | tr '[:upper:]' '[:lower:]')
+  [[ "$head" =~ ^[0-9a-f]{40}$ ]] || { RT_EVIDENCE_WHY="head '${head:0:40}' is not a sha"; return 0; }
+  # 1. The builder gate's count, bound to this head.
+  m=$(jq -r '.body // "" | strings' "$prf" 2>/dev/null \
+    | grep -oE '<!-- builder-gate: head=[0-9A-Fa-f]{40} green=[0-9]+ -->' | tr '[:upper:]' '[:lower:]' | sort -u)
+  k=$(printf '%s' "$m" | grep -c .)
+  if [ "$k" -gt 1 ]; then RT_EVIDENCE_WHY="$k different builder-gate markers in the PR body"; return 0; fi
+  if [ "$k" != 1 ] || [ "$(printf '%s' "$m" | sed -E 's/.*head=([0-9a-f]{40}).*/\1/')" != "$head" ]; then
+    RT_EVIDENCE_WHY="no builder-gate marker for this head"; return 0
+  fi
+  RT_EVIDENCE_SUITES=$((10#$(printf '%s' "$m" | sed -E 's/.*green=([0-9]+).*/\1/')))
+  # 2. The prequeue-verdict status on this head.
+  if ! command -v gh_rest >/dev/null 2>&1; then RT_EVIDENCE_WHY="prequeue-verdict not green (no GitHub reader)"; return 0; fi
+  # A plain call into a file, never inside $( ): GH_REST_STATUS lives in this shell.
+  sf=$(mktemp "${TMPDIR:-/tmp}/risk-tier.XXXXXX") || { RT_EVIDENCE_WHY="prequeue-verdict not green (mktemp)"; return 0; }
+  GH_REST_STATUS=""
+  if ! gh_rest GET "repos/$slug/commits/$head/status" > "$sf" 2>/dev/null; then
+    rm -f "$sf"; RT_EVIDENCE_WHY="prequeue-verdict not green (status unreadable, HTTP ${GH_REST_STATUS:-000})"; return 0
+  fi
+  st=$(jq -r --arg c "$RT_PQ_CONTEXT" '[.statuses[]? | select(.context == $c)] | first // empty
+    | if .state == "success" and ((.description // "") | startswith("green on main ")) then "green" else "\(.state)" end' \
+    "$sf" 2>/dev/null)
+  rm -f "$sf"
+  if [ "$st" != green ]; then RT_EVIDENCE_WHY="prequeue-verdict not green (${st:-absent})"; return 0; fi
+  RT_EVIDENCE_PREQUEUE=green
+  # 3. The queue-risk score, the conductor's attempt history included.
+  # shellcheck source=bin/lib/queue-risk.sh
+  command -v qr_score >/dev/null 2>&1 || { [ -r "${BASH_SOURCE[0]%/*}/queue-risk.sh" ] && . "${BASH_SOURCE[0]%/*}/queue-risk.sh"; }
+  if ! command -v qr_score >/dev/null 2>&1; then RT_EVIDENCE_WHY="queue-risk score unreadable (no bin/lib/queue-risk.sh)"; return 0; fi
+  [ "${_RT_QR_LOADED:-}" = 1 ] || { qr_rules_load; _RT_QR_LOADED=1; }
+  files=$(mktemp "${TMPDIR:-/tmp}/risk-tier.XXXXXX") || { RT_EVIDENCE_WHY="queue-risk score unreadable (mktemp)"; return 0; }
+  flag="$files.down"
+  jq -r '.files[] | .filename, (.previous_filename // empty)' "$cmp" 2>/dev/null | awk 'NF && !seen[$0]++' > "$files"
+  lines=$(jq '[.files[] | ((.additions // 0) + (.deletions // 0))] | add // 0' "$cmp" 2>/dev/null)
+  nf=$(jq '.files | length' "$cmp" 2>/dev/null)
+  # The rows were read above, once: the subshell does not read them again.
+  out=$(_rt_score_shim "$flag"; qr_rules_load() { :; }; qr_score "$files" "$lines" "$nf" "$slug" "$n")
+  IFS=$'\t' read -r sc _ _ reasons <<<"$out"
+  if [ -e "$flag" ]; then RT_EVIDENCE_WHY="queue-risk score unreadable (attempt history unreadable)"
+  else
+    case ",$reasons," in
+      *,rows-unreadable,*|*,files-unavailable,*|*,history-unread,*) RT_EVIDENCE_WHY="queue-risk score unreadable ($reasons)" ;;
+      *) case "$sc" in ''|*[!0-9]*) RT_EVIDENCE_WHY="queue-risk score unreadable (score '${sc:0:20}')" ;; *) RT_EVIDENCE_SCORE="$sc" ;; esac ;;
+    esac
+  fi
+  rm -f "$files" "$flag"
+  return 0
+}
+
+# _rt_evidence_lane <lines> — rule 2c: prints `evidence: ...` when every input
+# holds, else `no evidence low: <the first that does not>`.
+_rt_evidence_lane() {
+  local lines="$1" s="${RT_EVIDENCE_SCORE:-}" k="${RT_EVIDENCE_SUITES:-}" max="$RT_LOW_SCORE_MAX" min="${RT_LOW_MIN_SUITES:-$RT_LOW_MIN_SUITES_DEFAULT}"
+  if [ -n "${RT_EVIDENCE_WHY:-}" ]; then printf 'no evidence low: %s' "$RT_EVIDENCE_WHY"; return 0; fi
+  if [ -z "$s$k${RT_EVIDENCE_PREQUEUE:-}" ]; then printf 'no evidence low: no evidence read for this head'; return 0; fi
+  case "$k" in ''|*[!0-9]*) printf 'no evidence low: no builder-gate count for this head'; return 0 ;; esac
+  if [ "$k" -lt "$min" ]; then printf 'no evidence low: %s suites green on head, under %s' "$k" "$min"; return 0; fi
+  if [ "${RT_EVIDENCE_PREQUEUE:-}" != green ]; then printf 'no evidence low: prequeue-verdict not green'; return 0; fi
+  case "$s" in ''|*[!0-9]*) printf 'no evidence low: queue-risk score unreadable'; return 0 ;; esac
+  if [ "$s" -ge "$max" ]; then printf 'no evidence low: queue-risk score %s, not under %s' "$s" "$max"; return 0; fi
+  printf 'evidence: score %s under %s, %s suites green on head, prequeue-verdict green, %s lines' "$s" "$max" "$k" "$lines"
+}
+
 rt_classify() {
   local cmp="$1" slug="$2" nfiles lines paths names la la_ok=1 hits p add notlow="" nnot=0 nweak=0 weak="" tier reasons lowmax
   jq -e '(.files | type) == "array"' "$cmp" >/dev/null 2>&1 || return 2
@@ -319,6 +460,13 @@ rt_classify() {
     # Rule 2b.
     reasons=$(_rt_rules_lane "$cmp" "$lines")
     [ "$reasons" = low ] && { tier=low; reasons="rules-text: $lines lines, render check passed"; }
+  elif [ "${RT_LOW_SCORE_MAX:-0}" -gt 0 ] && [ "$lines" -lt "$lowmax" ]; then
+    # Rule 2c.
+    reasons=$(_rt_evidence_lane "$lines")
+    case "$reasons" in
+      evidence:*) tier=low ;;
+      *) reasons="$nnot path(s) outside the low globs, e.g. $notlow; $reasons" ;;
+    esac
   fi
   # Rules 3 and 4.
   if [ -z "$tier" ]; then

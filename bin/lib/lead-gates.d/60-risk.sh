@@ -5,11 +5,15 @@
 # bin/lead-review-enqueue.sh (BH-5878). These worklist facts hold:
 #   - Only when rt_mode (bin/lib/risk-tier.sh) says shadow or enforce for the
 #     repo. Off = rc 0, and no PR read.
+#   - Rule 2c (BH-6968): while risk_tier.low_score_max > 0, rt_evidence_load
+#     reads the head's evidence (the PR body, its prequeue-verdict status, the
+#     queue-risk score) before rt_classify, as the enqueue does.
 #   - The PR read (pulls/<n>, for .user.login) and the compare read failing =
 #     rc 11. The compare is lgc_compare's (bin/lib/lead-gates-compare.sh): the
 #     repo's default branch, the base gate 15 reads.
 #   - The tier cache, the risk-pub and the withheld lines are the enqueue's
-#     state/lead-review-enqueue/risk.tsv and risk-pub-* (same format), so a
+#     state/lead-review-enqueue/risk.tsv and risk-pub-* (same format, column 8
+#     rt_low_rule's path|evidence|-, BH-6968), so a
 #     head classified once is not classified again; gate 20 (20-standing.sh)
 #     publishes a risk-pub marker again.
 #   - low + enforce: bin/lead-verdict.sh post <head> MERGE --source risk-tier
@@ -173,6 +177,9 @@ lg_gate_risk() {
       RT_RULES_RENDER=""
       rt_rules_shape "$LGC_FILE" && command -v rrh_check >/dev/null 2>&1 \
         && RT_RULES_RENDER=$(rrh_check "${REPOS_ROOT:-/root/repos}/$project" "$head" "$root/bin/render-rules.sh")
+      # BH-6968: rule 2c's inputs, only while its lane is on; never carried to the next head.
+      RT_EVIDENCE_SCORE=""; RT_EVIDENCE_SUITES=""; RT_EVIDENCE_PREQUEUE=""; RT_EVIDENCE_WHY=""
+      [ "${RT_LOW_SCORE_MAX:-0}" -gt 0 ] && rt_evidence_load "$slug" "$n" "$head" "$LGC_FILE" "$prf"
       IFS=$'\t' read -r tier why rlines rfiles < <(rt_classify "$LGC_FILE" "$slug")
       case "$tier" in low|medium|high) newc=1 ;; *) tier=""; why="compare files unreadable" ;; esac
     else
@@ -204,7 +211,7 @@ lg_gate_risk() {
        + (if ($f|test("^[0-9]+$")) then {files:($f|tonumber)} else {} end)')
     JOBS_ALERT=0 _jobs_req POST /api/risk-tiers "$body" >/dev/null 2>&1 \
       || _lgt_log "$slug#$n @$h12: POST /api/risk-tiers failed (http ${JOBS_HTTP:-none}); the console has no row for this head"
-    printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$(date +%s)" "$slug" "$n" "$head" "$tier" "$why" "${RT_RULES_SIG:-}" >> "$risk"
+    printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$(date +%s)" "$slug" "$n" "$head" "$tier" "$why" "${RT_RULES_SIG:-}" "$(rt_low_rule "$tier" "$why")" >> "$risk"
     _lgt_log "$slug#$n @$h12: risk tier $tier ($why), mode $mode"
     [ "$tier" = low ] && [ "$mode" = shadow ] && _lgt_log "$slug#$n @$h12: risk-tier WOULD sign off (low risk: $why); shadow, so the lead review runs as before"
     # The JEV shadow (BH-5024): one log line, never a change to the tier or rc.
@@ -246,7 +253,7 @@ lg_gate_risk() {
        _lgt_log "$slug#$n @$h12: signed off by risk-tier (low risk: $why), its status not published (rc 4); gate 20 publishes it on a later tick"
        return 12 ;;
     3) _lgt_log "$slug#$n @$h12: head moved before the risk-tier sign-off; held"; return 11 ;;
-    5) printf '%s\t%s\t%s\t%s\twithheld\t%s\t%s\n' "$(date +%s)" "$slug" "$n" "$head" "$why" "${RT_RULES_SIG:-}" >> "$risk"
+    5) printf '%s\t%s\t%s\t%s\twithheld\t%s\t%s\t%s\n' "$(date +%s)" "$slug" "$n" "$head" "$why" "${RT_RULES_SIG:-}" "$(rt_low_rule withheld "$why")" >> "$risk"
        LG_RISK_TIER=withheld; _lgrt_tokens "$slug" "$n" "$head" withheld "$st"
        _lgt_log "$slug#$n @$h12: risk-tier sign-off withheld (post rc 5: $(printf '%s' "$out" | tr '\n' ' ' | head -c 200)); the lead review runs"
        return 0 ;;

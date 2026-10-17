@@ -41,6 +41,10 @@
 #   harness-suite.txt   the repo suite the HARNESS ran (HARNESS_EXIT line)
 #   harness-suite-fix.txt   the same suite re-run after the merged lens fix round
 #   harness-suite-head.txt  the same suite re-run on a moved head (item 1)
+#                       The newest of the three that carries `HARNESS_EXIT: 0`,
+#                       a 40-hex `HARNESS_HEAD:` and the gate's `ran X of N
+#                       ... passed` line adds one `<!-- builder-gate: head=<sha>
+#                       green=<X> -->` line after the table (BH-6968)
 #   intent-gate.txt     INTENT_VERDICT + the declared INTENT line
 #   qa.md, qa-shots/    the preview QA verdict, its counts, its files on disk
 #   red.txt, validate.txt   the test evidence the review stage reads
@@ -655,6 +659,19 @@ else
   printf '| %s | %s — no demotion recorded |\n' "$TIER_LABEL" "$TIER"
 fi
 [ -n "$RESULT_TERM" ] && printf '| RESULT | `%s` |\n' "$RESULT_TERM"
+# The builder gate's head-bound count (BH-6968), for rule 2c of
+# bin/lib/risk-tier.sh: only from the newest suite file, only when that run
+# exited 0 on a clean head and printed its `ran X of N` line. X counts only the
+# suites run on this head; ledger reuses are not in it.
+for BG_F in harness-suite-head.txt harness-suite-fix.txt harness-suite.txt; do
+  [ -s "$BUILD/$BG_F" ] && break
+done
+BG_HEAD=$(grep -a '^HARNESS_HEAD:' "$BUILD/$BG_F" 2>/dev/null | tail -1 | sed 's/^HARNESS_HEAD:[[:space:]]*//')
+BG_N=$(grep -a '^impact-gate: ran [0-9]* of [0-9]* selected suites via [^ ]*: passed' "$BUILD/$BG_F" 2>/dev/null | tail -1 | sed 's/^impact-gate: ran \([0-9]*\) .*/\1/')
+if [[ "$BG_HEAD" =~ ^[0-9a-f]{40}$ ]] && [ -n "$BG_N" ] \
+   && [ "$(grep -a '^HARNESS_EXIT:' "$BUILD/$BG_F" 2>/dev/null | tail -1 | sed 's/^HARNESS_EXIT:[[:space:]]*//')" = 0 ]; then
+  printf '\n<!-- builder-gate: head=%s green=%s -->\n' "$(clean 40 "$BG_HEAD")" "$(clean 10 "$BG_N")"
+fi
 
 # --- QA flows per persona -----------------------------------------------------
 # The two persona lanes print the same row shape into different files: the

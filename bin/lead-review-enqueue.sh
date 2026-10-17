@@ -185,7 +185,9 @@
 #            tier (it is requested as before, never low). Otherwise rt_classify
 #            answers low|medium|high, a new head is recorded (POST
 #            /api/risk-tiers, then one line in risk.tsv: <epoch>\t<slug>\t<n>
-#            \t<head>\t<tier>\t<reasons>\t<rules sig>, kept 7 days; a failed
+#            \t<head>\t<tier>\t<reasons>\t<rules sig>\t<path|evidence|->,
+#            column 8 the rule that made the head low (rt_low_rule, BH-6968;
+#            a line written before it has 7 columns), kept 7 days; a failed
 #            POST still writes the line, and logs the missing row), and a head already in
 #            risk.tsv under the SAME rules sig (RT_RULES_SIG: a rules row that
 #            changed reclassifies every head) reuses its last line with no
@@ -1509,6 +1511,11 @@ for SLUG in $AUTO_REPOS; do
           RT_RULES_RENDER=""
           rt_rules_shape "$WORK/cmp-$N" && command -v rrh_check >/dev/null 2>&1 \
             && RT_RULES_RENDER=$(rrh_check "${REPOS_ROOT:-/root/repos}/$PROJECT" "$HEAD" "$H/bin/render-rules.sh")
+          # BH-6968: rule 2c's inputs, only while its lane is on; never carried to the next head.
+          RT_EVIDENCE_SCORE=""; RT_EVIDENCE_SUITES=""; RT_EVIDENCE_PREQUEUE=""; RT_EVIDENCE_WHY=""
+          # RT_LOW_SCORE_MAX is the risk_tier.low_score_max settings row, set by
+          # rt_rules_load above (this branch runs only after it); not an env knob.
+          [ "$RT_LOW_SCORE_MAX" -gt 0 ] && rt_evidence_load "$SLUG" "$N" "$HEAD" "$WORK/cmp-$N" "$WORK/pr"
           IFS=$'\t' read -r TIER WHY RLINES RFILES < <(rt_classify "$WORK/cmp-$N" "$SLUG")
           case "$TIER" in low|medium|high) NEWC=1 ;; *) TIER=""; WHY="compare files unreadable" ;; esac
         else
@@ -1555,7 +1562,7 @@ for SLUG in $AUTO_REPOS; do
         # row for this head, never a compare read every tick.
         JOBS_ALERT=0 _jobs_req POST /api/risk-tiers "$RBODY" >/dev/null 2>&1 \
           || log "$SLUG#$N @$H12: POST /api/risk-tiers failed (http ${JOBS_HTTP:-none}); the console has no row for this head"
-        printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$(date +%s)" "$SLUG" "$N" "$HEAD" "$TIER" "$WHY" "${RT_RULES_SIG:-}" >> "$RISK"
+        printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$(date +%s)" "$SLUG" "$N" "$HEAD" "$TIER" "$WHY" "${RT_RULES_SIG:-}" "$(rt_low_rule "$TIER" "$WHY")" >> "$RISK"
         log "$SLUG#$N @$H12: risk tier $TIER ($WHY), mode $RMODE"
         [ "$TIER" = low ] && [ "$RMODE" = shadow ] && log "$SLUG#$N @$H12: risk-tier WOULD sign off (low risk: $WHY); shadow, so the lead review is requested as before"
         # >>> jev shadow (BH-5024): its answer is a log line and a counter. It
@@ -1595,7 +1602,7 @@ for SLUG in $AUTO_REPOS; do
              skip_line risk-signed "$SLUG#$N @$H12: risk-tier MERGE recorded but its status not published (rc 4); the next tick publishes it"; continue ;;
           3) skip_line head-moved "$SLUG#$N @$H12: head moved before the risk-tier sign-off; the next tick classifies the new head"; continue ;;
           5) PRIO=1
-             printf '%s\t%s\t%s\t%s\twithheld\t%s\t%s\n' "$(date +%s)" "$SLUG" "$N" "$HEAD" "$WHY" "${RT_RULES_SIG:-}" >> "$RISK" ;;
+             printf '%s\t%s\t%s\t%s\twithheld\t%s\t%s\t%s\n' "$(date +%s)" "$SLUG" "$N" "$HEAD" "$WHY" "${RT_RULES_SIG:-}" "$(rt_low_rule withheld "$WHY")" >> "$RISK" ;;
         esac
         log "$SLUG#$N @$H12: risk-tier sign-off not recorded (post rc $PRC: $(printf '%s' "$OUT" | tr '\n' ' ' | head -c 200)); requesting as before"
       fi
