@@ -277,3 +277,12 @@ PLAN_MALFORMED). The lead review checks each answer against the diff.
 - The filer writes `Owns: <path>, <path>` into each child body from the spec's `owns` field, after the footer. `bin/decompose-lint.sh` logs `DECOMPOSE_LINT owns-overlap <path> <A> <B>` to the split's `pipeline.log` when two children own the same path and the later one has no hard link to the earlier one. It is a warning, not a gate.
 - `bin/hub-module-warn.sh` logs `HUB_MODULE <file> <n> tickets (<keys>)` to `logs/<project>.log` once a day per project, when 3 or more pre-planned tickets of the project plan an edit to one file that exists at HEAD. It is a signal to split the module, not a gate.
 - The Verify list rule (a file the build only runs is not a planned path) is BH-6299, in `bin/planned-files.sh`.
+
+## 16. Perf/cost tickets prove the outcome (BH-6372)
+- A ticket is perf/cost when `bin/lib/perf-ticket.sh` (`pt_classify`) says so. The rules are data in `catalog/perf-ticket.tsv`: a label, a title or body phrase, or a `Target metric:` line in the body.
+- The plan carries a `## Target metric` section with one line `Target metric: <metric-id> from <current number> to <target number> [<unit>]`. The id is lower-case `a-z0-9-`. The two numbers differ.
+- The `## Acceptance tests` section has ONE item for an outcome replay over the last `OUTCOME_REPLAY_N` real inputs (default 50, knob in `catalog/lanes.d/_lib.perf-ticket.json`). The item reports the metric and the top miss reasons.
+- The same item names a hit rate for every fallback or escalation path the change adds or keeps.
+- The plan says that the PR body reports the result in an `## Outcome replay` section. That section starts with the same `Target metric:` line and a `measured: <number>` line.
+- `bin/lib/perf-plan-rule.sh` puts this rule into the plan prompt (`pt_plan_rule`). The plan stage passes `PLAN_GATE_PERF=1` to `bin/plan-gate.sh` for a perf ticket. A plan with a `## Target metric` heading is checked too.
+- `bin/plan-gate.sh` refuses a perf plan with a gap: one `UNTRACED: outcome replay — <gap>` line per gap and `PLAN_OUTCOME_REPLAY: missing`. Then the same repair pass runs, then PLAN_MALFORMED. `PLAN_GATE_ENFORCE=0` makes it a warning, like every plan-gate refusal.

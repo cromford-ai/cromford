@@ -61,11 +61,17 @@
 # gives a reason. This is a REPORT: it never changes the exit code. Unset, the
 # output is exactly the trace report.
 #
+# OUTCOME REPLAY (prompts/plan-contract.md §16). PLAN_GATE_PERF=1 says the
+# ticket is perf/cost; then, or when the plan has a `## Target metric` heading,
+# the plan needs a target line and an outcome-replay acceptance item.
+#
 # prints: PLAN_TASKS / PLAN_UNTRACED / PLAN_TRACE_LINES (the file-wide floor),
 #         one "UNTRACED: <label> — <what is missing>" line per offender,
 #         with PLAN_GATE_HOTSPOTS: PLAN_SHARED_NAMED, one "SHARED_UNLISTED:
 #         <path>" / "SHARED_NOREASON: <path>" line per offender and
-#         PLAN_SHARED: ok | unlisted | unread, and last
+#         PLAN_SHARED: ok | unlisted | unread, PLAN_OUTCOME_REPLAY: ok |
+#         missing | n/a with one "UNTRACED: outcome replay — <gap>" line per
+#         gap, and last
 #         PLAN_TRACE: ok | untraced | unavailable
 #
 # exit 0  every task block carries both lines
@@ -211,6 +217,17 @@ printf '%s\n' "$REPORT" | grep -v '^PLAN_RC_HINT'
 PFM_LIB="$(cd "$(dirname "$0")" && pwd)/lib/plan-failure-modes.sh"
 if [ -r "$PFM_LIB" ] && . "$PFM_LIB"; then
   pfm_check "$PLAN" "${PLAN_FAILURE_MODES_CATALOG:-$(cd "$(dirname "$0")/.." && pwd)/catalog/plan-failure-modes.tsv}"
+  [ $? = 2 ] && [ "$RC" = 0 ] && RC=2
+fi
+
+# ---- the outcome replay (prompts/plan-contract.md §16) ------------------------
+# A perf/cost plan (PLAN_GATE_PERF=1 from the plan stage, or a `## Target
+# metric` heading in the plan) states its target and an outcome-replay
+# acceptance item; bin/lib/perf-plan-rule.sh decides. A gap refuses the plan
+# (rc 2, the same repair pass). No lib on this box: no check.
+PPR_LIB="$(cd "$(dirname "$0")" && pwd)/lib/perf-plan-rule.sh"
+if [ -r "$PPR_LIB" ] && . "$PPR_LIB" && command -v pt_plan_check >/dev/null 2>&1; then
+  pt_plan_check "$PLAN"
   [ $? = 2 ] && [ "$RC" = 0 ] && RC=2
 fi
 

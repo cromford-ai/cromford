@@ -1,0 +1,21 @@
+{
+  "libs": [
+    {
+      "id": "perf-ticket",
+      "file": "bin/lib/perf-plan-rule.sh",
+      "note": "BH-6372.1. A perf/cost ticket's plan states a target metric and an outcome-replay acceptance test (prompts/plan-contract.md §16). pt_plan_rule puts the rule into the plan prompt, and bin/plan-gate.sh refuses a perf plan without them.",
+      "knobs": [
+        {
+          "env": "OUTCOME_REPLAY_N",
+          "type": "int",
+          "default": 50,
+          "min": 5,
+          "max": 500,
+          "zero_means": null,
+          "required": false,
+          "note": "How many recent real inputs a perf/cost plan's outcome-replay acceptance test replays. Read by pt_replay_n through lib_env_apply perf-ticket, then env, then 50."
+        }
+      ]
+    }
+  ]
+}
