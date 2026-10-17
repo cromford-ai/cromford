@@ -106,7 +106,7 @@ run() { # run [flags...] — KNOB / BAKE_FAIL come from the caller's environment
 nssh()   { grep -c . "$T/ssh.calls"  2>/dev/null | head -1; }
 nbake()  { grep -c . "$T/bake.calls" 2>/dev/null | head -1; }
 nalert() { grep -c . "$T/alerts"     2>/dev/null | head -1; }
-nlog()   { grep -c . "$H/logs/fleet-propagate.log" 2>/dev/null | head -1; }
+nlog()   { grep -v ' box [^ ]*: ' "$H/logs/fleet-propagate.log" 2>/dev/null | grep -c . | head -1; }  # BH-7189: the per-box lines are not part of this suite's count
 jsonq()  { jq -r "$1" "$H/state/fleet-propagate.json" 2>/dev/null; }
 stamp()  { mkdir -p "$FLY"; echo "$1" > "$FLY/alpha-os.baked-at"; }   # stamp <epoch-or-text>
 marker() { cat "$FLY/alpha-os.image-dirty" 2>/dev/null; }

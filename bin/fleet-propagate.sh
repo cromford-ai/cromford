@@ -20,6 +20,9 @@
 # the hub's own rsync has finished bakes the OLD code — the failure that rebuilt
 # #244 twice from a stale /root/harness/fly (see the fly/ rsync note in
 # bin/harness-sync.sh). The boxes do not need the hub: each pulls from origin.
+# BH-7189: so the box fan-out STARTS BEFORE the hub sync and the tick waits for
+# both. Only the bakes follow the hub. The log has one `box <name>: before->after
+# rc=N` line per box.
 #
 # SYNC BEFORE BAKE (BH-6201). The lane lock (locks/fleet-propagate.lock, fd 9)
 # covers the sync step only, and it is closed before the first bake, so a slow
@@ -872,7 +875,37 @@ fp_hub_pending() {
 }
 # <<< post-copy timeout
 
-# a. the hub, first and alone (see ORDER in the header).
+# b. boxes, in parallel, STARTED BEFORE the hub sync and waited for after it
+# (BH-7189). A box pulls from origin and does not need the hub, so it must not
+# wait for the hub's harness-sync, which ends at its timeout on most ticks (a
+# merge reached the boxes 17 minutes late on 2026-10-16). The bake still follows
+# the hub; only this fan-out moved. ssh -n inside the loop: without it the first
+# ssh eats the loop's stdin and the rest of the boxes are silently skipped. Each
+# result carries the box sha before and after the run.
+BOX_PIDS=()
+fp_box_fanout() { # fp_box_fanout — one background job per box, one box-<B>.result file each
+  local B
+  for B in $BOXES; do
+    (
+      IP=$("$H/bin/fleet-conf.sh" --tailnet-ip-of-box "$B" 2>/dev/null)
+      if [ -z "$IP" ]; then
+        # Fail CLOSED: an empty target is `root@`, which hangs rather than errors.
+        echo "rc=255 sha=- before=- note=no-address" > "$WORK/box-$B.result"; exit 0
+      fi
+      RC=0
+      OUT=$(timeout 660 ssh -n -o BatchMode=yes -o ConnectTimeout=15 "root@$IP" \
+        'echo "before=$(git -C /root/harness-checkout rev-parse HEAD 2>/dev/null)"; timeout 600 /root/harness/bin/update-runners.sh >/dev/null 2>&1; RC=$?; git -C /root/harness-checkout rev-parse HEAD 2>/dev/null; exit $RC' \
+        2>"$WORK/box-$B.err") || RC=$?
+      BEFORE=$(sed -n 's/^before=//p' <<<"$OUT" | head -n 1)
+      SHA=$(grep -v '^before=' <<<"$OUT" | tail -n 1)
+      echo "rc=$RC sha=${SHA:--} before=${BEFORE:--}" > "$WORK/box-$B.result"
+    ) &
+    BOX_PIDS+=("$!")
+  done
+}
+fp_box_fanout
+
+# a. the hub (see ORDER in the header; the boxes above run beside it).
 if [ "$HUB" = ok ] && ! timeout 120 git -C "$CHECKOUT" pull --ff-only -q origin main >"$WORK/hub.out" 2>&1; then
   HUB=fail
   CUR_BRANCH=$(git -C "$CHECKOUT" branch --show-current 2>/dev/null || git -C "$CHECKOUT" rev-parse --abbrev-ref HEAD 2>/dev/null)
@@ -904,24 +937,7 @@ if [ -n "$HUB_PC" ]; then
   HUB_PC_NOTE=" The hub sync timed out after the code copy, in step $HUB_PC; live bin/ is at ${HUB_PC_SHA:0:7}. Pending deploy steps: $(printf '%s' "${HUB_PENDING:-none}" | tr '\n' ' ' | sed 's/ /, /g'). They re-run on the next harness-sync (next fleet-path merge or 05:17Z update-runners)."
 fi
 
-# b. boxes, in parallel. ssh -n inside the loop: without it the first ssh eats
-# the loop's stdin and the rest of the boxes are silently skipped.
-BOX_PIDS=()
-for B in $BOXES; do
-  (
-    IP=$("$H/bin/fleet-conf.sh" --tailnet-ip-of-box "$B" 2>/dev/null)
-    if [ -z "$IP" ]; then
-      # Fail CLOSED: an empty target is `root@`, which hangs rather than errors.
-      echo "rc=255 sha=- note=no-address" > "$WORK/box-$B.result"; exit 0
-    fi
-    RC=0
-    SHA=$(timeout 660 ssh -n -o BatchMode=yes -o ConnectTimeout=15 "root@$IP" \
-      'timeout 600 /root/harness/bin/update-runners.sh >/dev/null 2>&1; RC=$?; git -C /root/harness-checkout rev-parse HEAD 2>/dev/null; exit $RC' \
-      2>"$WORK/box-$B.err") || RC=$?
-    echo "rc=$RC sha=${SHA:--}" > "$WORK/box-$B.result"
-  ) &
-  BOX_PIDS+=("$!")
-done
+# b. boxes: the fan-out started above, before the hub sync (BH-7189). Wait for it.
 # The boxes only: no bake has started yet, and none ever holds this wait.
 [ "${#BOX_PIDS[@]}" -gt 0 ] && wait "${BOX_PIDS[@]}"
 
@@ -974,12 +990,26 @@ else
 fi
 
 # --- 5. the sync record ------------------------------------------------------
+# fp_box_log_line <box> <rc> <after> <before> <note> — one log line per box
+# (BH-7189): name, before->after sha, rc. A box that cannot be reached carries
+# its note (no-address) or its rc; rc 0 on a sha that does not hold NEW is
+# `behind` (a sha the checkout does not know is `unverified`). Log only: the
+# alert and the counts are unchanged.
+fp_box_log_line() {
+  local b="$1" rc="$2" after="$3" before="${4:--}" note="${5:-}" mark=""
+  if [ "$rc" = 0 ] && [ "$after" != - ]; then
+    if ! git -C "$CHECKOUT" cat-file -e "$after^{commit}" 2>/dev/null; then mark=" unverified"
+    elif ! git -C "$CHECKOUT" merge-base --is-ancestor "$NEW" "$after" 2>/dev/null; then mark=" behind"; fi
+  fi
+  echo "$(STAMP) box $b: ${before:0:7}->${after:0:7} rc=$rc${note:+ $note}$mark" >> "$LOG"
+}
 BOX_ROWS=""; BOX_OK=0; BOX_BAD=""
 for F in "$WORK"/box-*.result; do
   [ -e "$F" ] || continue
   B=$(basename "$F" .result); B="${B#box-}"
   RC=$(sed -n 's/.*rc=\([^ ]*\).*/\1/p' "$F"); SHA=$(sed -n 's/.*sha=\([^ ]*\).*/\1/p' "$F")
   BOX_ROWS="$BOX_ROWS$B"$'\t'"${RC:-255}"$'\t'"${SHA:--}"$'\n'
+  fp_box_log_line "$B" "${RC:-255}" "${SHA:--}" "$(sed -n 's/.*before=\([^ ]*\).*/\1/p' "$F")" "$(sed -n 's/.*note=\([^ ]*\).*/\1/p' "$F")"
   if [ "${RC:-255}" = 0 ]; then BOX_OK=$((BOX_OK+1)); else BOX_BAD="$BOX_BAD $B(rc=${RC:-255})"; fi
 done
 # box-shas.tsv (BH-6201): what the box-lag check reads. This tick's boxes
