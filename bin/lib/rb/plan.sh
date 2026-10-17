@@ -34,7 +34,7 @@
 #   PP_RESUMED PP_WHY PTG_DETAIL PTG_IDS PTG_OUT PTG_RC PTG_SINCE PTG_SRC REROUTE_EXEC_NOTE SG_BODY SG_CHILD SG_CHILD_SRC SG_DECL SG_ENFORCE SG_LIMITS SG_MAXF SG_MAXL
 #   SG_OUT SG_RC SG_SPLIT SG_SRC SG_SWITCH_SRC SG_TIER SG_TITLE SG_TLOG SG_UNDECL_WHY SG_VERDICT SG_WHY TH_N TH_REC
 #   TH_RN VMAP_ORIENT
-#   PC_BASE PC_HITS PC_N PC_NH PC_RC PC_RESOLVED PC_SLUG PC_SUMMARY PC_UNRES PC_VERDICT UI_PLAN_NOTE
+#   PC_BASE PC_HITS PC_N PC_NH PC_RC PC_RESOLVED PC_SLUG PC_SUMMARY PC_UNRES PC_VERDICT STN_NOTE UI_PLAN_NOTE
 # shellcheck shell=bash
 
 rb_plan() {
@@ -704,6 +704,15 @@ command -v pc_plan_note >/dev/null 2>&1 && UI_PLAN_NOTE="${UI_PLAN_NOTE:-}$(pc_p
 SWN_NOTE=""; command -v sw_plan_note >/dev/null 2>&1 && SWN_NOTE=$(sw_plan_note "$BUILD")
 [ -n "$SWN_NOTE" ] && UI_PLAN_NOTE="${UI_PLAN_NOTE:-}$SWN_NOTE "
 # <<< stack section note (BH-6389)
+# >>> spec trace note (BH-6485)
+# A ticket body with `Spec:` or `Reference:` lines tells the planner the
+# `## Spec trace` rule (prompts/plan-contract.md §17) through UI_PLAN_NOTE, so
+# the prompt line does not change. No such lines, or no lib: nothing is added.
+# shellcheck source=bin/lib/spec-trace.sh
+[ -r "$HARNESS/bin/lib/spec-trace.sh" ] && . "$HARNESS/bin/lib/spec-trace.sh" 2>/dev/null
+STN_NOTE=""; command -v st_plan_note >/dev/null 2>&1 && STN_NOTE=$(st_plan_note "$BUILD/ticket-meta.json")
+[ -n "$STN_NOTE" ] && UI_PLAN_NOTE="${UI_PLAN_NOTE:-}$STN_NOTE"
+# <<< spec trace note (BH-6485)
 # >>> replan check (BH-3955)
 # A SPLIT CHILD WHOSE BLOCKERS HAVE MERGED GETS ONE CHEAP LOOK BEFORE ITS PLAN.
 # bin/replan-check.sh decides eligibility itself (a `<KEY>.<n>` child, n >= 1,
@@ -1325,7 +1334,7 @@ fi
 # PLAN_GATE_HOTSPOTS: the hotlist the render above wrote (absent = unread).
 # The gate reports a hotspot the plan names outside `## Shared files`; it never
 # changes PG_RC (plan-contract §11).
-PG_RUN() { PLAN_GATE_PERF="${PLAN_GATE_PERF:-0}" PLAN_GATE_HOTSPOTS="$BUILD/hotspots.txt" "$HARNESS/bin/plan-gate.sh" "$BUILD/plan.md" > "$BUILD/plan-gate.txt" 2>&1; }
+PG_RUN() { PLAN_GATE_PERF="${PLAN_GATE_PERF:-0}" PLAN_GATE_HOTSPOTS="$BUILD/hotspots.txt" PLAN_GATE_TICKET="$BUILD/ticket-meta.json" "$HARNESS/bin/plan-gate.sh" "$BUILD/plan.md" > "$BUILD/plan-gate.txt" 2>&1; }
 PG_RUN; PG_RC=$?
 if [ "$PG_RC" = 2 ]; then
   # ONE repair pass, exactly as before — the plan's substance is usually fine
@@ -1335,7 +1344,7 @@ if [ "$PG_RC" = 2 ]; then
   case "${PLAN_GATE_MAX_LIST:-}" in ''|*[!0-9]*) PG_MAX=8 ;; *) PG_MAX=$PLAN_GATE_MAX_LIST ;; esac
   PG_LIST=$(sed -n 's/^  UNTRACED: //p' "$BUILD/plan-gate.txt" | head -n "$PG_MAX" | tr '\n' ';' | sed 's/;$//')
   echo "$(STAMP) [$PROJECT/$KEY] plan gate: untraced tasks — one repair pass ($PG_LIST)" >> "$BUILD/pipeline.log"
-  CC plan "$PLAN_MODEL" 600 "$BUILD/plan-repair-run.txt" "Repair the plan at $BUILD/plan.md IN PLACE (rewrite the file; change nothing about its scope, approach or size line). EVERY task must carry BOTH lines, each on its own line: 'VALIDATE: <the exact command or observable check that proves this task is done>' and 'SATISFIES: <the ticket acceptance criterion it delivers>'. These task blocks are missing one of them right now: $PG_LIST. If a task satisfies nothing the ticket asked for, delete it. Keep the '## Acceptance tests' and '## QA screens' sections, the final SIZE line and any 'SLICE:' line exactly as they are.$(command -v pfm_repair_note >/dev/null 2>&1 && pfm_repair_note "$BUILD/plan-gate.txt")$(command -v pt_repair_note >/dev/null 2>&1 && pt_repair_note "$BUILD/plan-gate.txt")"
+  CC plan "$PLAN_MODEL" 600 "$BUILD/plan-repair-run.txt" "Repair the plan at $BUILD/plan.md IN PLACE (rewrite the file; change nothing about its scope, approach or size line). EVERY task must carry BOTH lines, each on its own line: 'VALIDATE: <the exact command or observable check that proves this task is done>' and 'SATISFIES: <the ticket acceptance criterion it delivers>'. These task blocks are missing one of them right now: $PG_LIST. If a task satisfies nothing the ticket asked for, delete it. Keep the '## Acceptance tests' and '## QA screens' sections, the final SIZE line and any 'SLICE:' line exactly as they are.$(command -v pfm_repair_note >/dev/null 2>&1 && pfm_repair_note "$BUILD/plan-gate.txt")$(command -v pt_repair_note >/dev/null 2>&1 && pt_repair_note "$BUILD/plan-gate.txt")$(command -v st_repair_note >/dev/null 2>&1 && st_repair_note "$BUILD/plan-gate.txt")"
   PG_RUN; PG_RC=$?
   [ "$PG_RC" = 2 ] || echo "$(STAMP) [$PROJECT/$KEY] plan gate: repaired, every task now carries both lines" >> "$BUILD/pipeline.log"
 fi
@@ -1411,6 +1420,8 @@ PM_TERMINAL() { # PM_TERMINAL <why> <artifact> <what-the-planner-cannot-do>
 if [ "$PG_RC" = 2 ] && [ "$PG_ENFORCE" = 1 ]; then
   PG_WHY="$PG_UNTRACED of $PG_TASKS task(s) still untraced after one repair pass"
   [ "$PG_TASKS" = 0 ] && PG_WHY="the plan carries no VALIDATE/SATISFIES lines at all, after one repair pass"
+  grep -q '^PLAN_SPEC_TRACE: missing$' "$BUILD/plan-gate.txt" 2>/dev/null \
+    && PG_WHY="${PG_WHY}; the spec trace is still missing ($(grep -c '^  UNTRACED: spec trace' "$BUILD/plan-gate.txt") gap(s))"
   PM_TERMINAL "$PG_WHY" "$BUILD/plan-gate.txt" "produce a traced plan"
 fi
 [ "$PG_RC" = 2 ] && echo "$(STAMP) [$PROJECT/$KEY] plan gate: $PG_UNTRACED untraced task(s) — PLAN_GATE_ENFORCE=0, executor gets an untraced plan" >> "$BUILD/pipeline.log"

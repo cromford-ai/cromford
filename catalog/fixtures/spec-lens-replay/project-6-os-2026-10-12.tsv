@@ -1,0 +1,13 @@
+# The replay manifest for bin/spec-lens-replay.sh (BH-6485): the project-6-os
+# cut-line merges of 2026-10-12/13 (git log --first-parent of example-org/project-6
+# main), each mapped to the PRD section of
+# the designer's prototype PRD (handoff/prd-doc/, 2026-10-05) it should have named, with the
+# Cut: values from docs/plan/MVP_PLAN_2026-10-08.html.
+# Columns (tab-separated): pr, merge-sha, spec-values (`;`-separated, `-` =
+# unmapped), cut-values (`;`-separated, `-` = none), note.
+# NO ROWS YET. The build box that wrote this file could not read
+# example-org/project-6 (HTTP 403 through its proxy), and a row is only written
+# from the real log and the real PRD files, never from memory. Fill the rows on a
+# box that can read the repo, then run the replay as
+# docs/notes/2026-10-15-BH-6485-spec-trace.md says.
+pr	merge-sha	spec-values	cut-values	note

@@ -1341,7 +1341,7 @@ _pr_self_check_prepush() { # <body-file> <open|edit>
   fi
   while :; do
     try=$((try + 1))
-    out=$(env -u PR_SELF_CHECK_ONLY "$psc" check --repo . --base "$b" --head HEAD --body "$body" --ticket "$tk" ${KEY:+--key "$KEY"} 2>/dev/null); rc=$?
+    out=$(env -u PR_SELF_CHECK_ONLY PSC_PHASE="$phase" "$psc" check --repo . --base "$b" --head HEAD --body "$body" --ticket "$tk" ${KEY:+--key "$KEY"} 2>/dev/null); rc=$?
     if [ "$rc" != 0 ] && [ "$rc" != 1 ]; then
       echo "$(STAMP) [$PROJECT/$KEY] pr self-check: could not run ($phase): $(head -1 <<<"$out" | cut -c1-200)" >> "$BUILD/pipeline.log"
       echo "$phase tries=$try verdict=could-not-run rules=-" >> "$rec"
@@ -1526,8 +1526,14 @@ QA_PROMPT_FOR() { printf 'QA stage. A Vercel PREVIEW deployment of branch %s is 
 # reads `auth`, the prompt as before. The tier-1 gate in result.sh keys the
 # demotion on the same registry, never on what the QA session writes.
 . "$HARNESS/bin/lib/preview-qa-mode.sh" 2>/dev/null || preview_qa_mode() { echo auth; }
+# shellcheck source=bin/lib/spec-trace.sh
+[ -r "$HARNESS/bin/lib/spec-trace.sh" ] && . "$HARNESS/bin/lib/spec-trace.sh" 2>/dev/null
 QA_PROMPT_MODE() {
   QA_PROMPT_FOR "$1"
+  # BH-6485: a ticket with `Reference:` lines gets the light/dark x 1440/390
+  # reference shots asked for by name. No such lines: nothing is printed.
+  command -v st_qa_note >/dev/null 2>&1 && [ -n "$(st_parse reference "$BUILD/ticket-meta.json" 2>/dev/null)" ] \
+    && printf ' %s' "$(st_qa_note "$BUILD/ticket-meta.json")"
   [ "$(preview_qa_mode "$PROJECT")" = signed-out ] || return 0
   printf ' %s' "SIGNED-OUT PREVIEW: this project's previews have no sign-in (no Clerk key on the Vercel preview). Do NOT attempt a Clerk sign-in even if QA_* env vars are set. Drive / and every \"## QA screens\" route signed out. A route that lands on /sign-in is recorded 'not covered (auth-walled on preview)': not a defect and not a counted screen. Count only screens that rendered signed out. Write a line \"QA AUTH: signed-out\" above the MAP ENTRIES line."
 }
@@ -1555,6 +1561,15 @@ if [ -n "$PR_URL" ] && grep -qiE '\.(tsx|jsx|css)$|(^|/)app/|(^|/)components/|(^
       fi
       tail -1 "$BUILD/qa.md" 2>/dev/null | grep -q 'QA: PASS' || { TIER=2; echo "QA still failing after fix round — demoted to tier 2." >> "$BUILD/qa.md"; }
     fi
+    # >>> reference shots (BH-6485)
+    # The shots preview QA saved under qa-shots/ref/ go to a side branch, and
+    # $BUILD/reference-shots.md (the PR body's "## Reference screenshots") is
+    # written from what was pushed. Only for a ticket with `Reference:` lines;
+    # it never moves the PR head and never ends the build.
+    if command -v st_parse >/dev/null 2>&1 && [ -n "$(st_parse reference "$BUILD/ticket-meta.json" 2>/dev/null)" ]; then
+      "$HARNESS/bin/reference-shots.sh" publish "$BUILD" . "${PCF_SLUG:-$SLUG}" "$KEY" "$(git merge-base "$BASE" HEAD 2>/dev/null || git rev-parse "$BASE" 2>/dev/null)" >/dev/null 2>&1 || true
+    fi
+    # <<< reference shots (BH-6485)
     gh pr comment "$PR_URL" --body "$(printf 'Preview QA (%s):\n%s' "$QA_MODEL" "$(tail -c 900 "$BUILD/qa.md" 2>/dev/null)")" 2>>"$BUILD/gh-stderr.log" || true   # gh-guard-allow: a write, not a decision read
   else
 # >>> preview-qa skip reason (BH-3438): the fail-open line names why, from the

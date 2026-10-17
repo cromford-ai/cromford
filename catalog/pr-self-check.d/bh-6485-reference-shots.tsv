@@ -1,0 +1,5 @@
+# BH-6485: a ticket body with `Reference:` lines on a UI diff needs the PR body's
+# "## Reference screenshots" table (bin/reference-shots.sh writes it after
+# preview QA): a preview image and a reference image under that heading.
+# Columns as catalog/pr-self-check.tsv. Trigger spec-ref: bin/lib/pr-self-check.sh.
+body-reference-shots	refuse	spec-ref	a "Reference screenshots" section with preview and reference images (light/dark, 1440/390)	under=reference screenshots>>!\[preview\]\(&under=reference screenshots>>!\[reference\]\(

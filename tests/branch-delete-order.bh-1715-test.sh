@@ -69,7 +69,8 @@ bin/lib/gh-shim/pr-write.sh|gshim_prw_delete_branch|-X DELETE|the shim delete; l
 bin/lib/gh-shim/pr-write.sh|gshim_cmd_pr_close|--delete-branch:b:delbranch|the flag parser; the flag routes to gshim_prw_delete_branch
 bin/lib/gh-shim/pr-write.sh|gshim_cmd_pr_merge|--delete-branch:b:delbranch|the flag parser; the flag routes to gshim_prw_delete_branch
 bin/batch-resolve.sh|delete_train_branch|push .*--delete|a dead TRAIN branch: trains and their members target main, no PR is ever based on one
-bin/batch-resolve.sh|reconcile_creating|push .*--delete|an orphan TRAIN branch no PR was ever opened for'
+bin/batch-resolve.sh|reconcile_creating|push .*--delete|an orphan TRAIN branch no PR was ever opened for
+bin/reference-shots.sh|prune|push .*--delete|an orphan harness-shots/<key>-<yyyymmdd> SCREENSHOT branch (BH-6485): one parentless commit of QA images, no PR is ever opened from or based on one, and prune deletes only refs under refs/heads/harness-shots/'
 # sites <file> — "<file>|<function>|<line>" for every code line with a verb.
 sites() {
   awk -v f="${1#"$DIR"/}" -v re="$VERBS" '

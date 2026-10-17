@@ -69,9 +69,11 @@
 #         one "UNTRACED: <label> — <what is missing>" line per offender,
 #         with PLAN_GATE_HOTSPOTS: PLAN_SHARED_NAMED, one "SHARED_UNLISTED:
 #         <path>" / "SHARED_NOREASON: <path>" line per offender and
-#         PLAN_SHARED: ok | unlisted | unread, PLAN_OUTCOME_REPLAY: ok |
-#         missing | n/a with one "UNTRACED: outcome replay — <gap>" line per
-#         gap, and last
+#         PLAN_SHARED: ok | unlisted | unread, with PLAN_GATE_TICKET: one
+#         "UNTRACED: spec trace — <section>: <why>" line per gap and
+#         PLAN_SPEC_TRACE: ok | missing | n/a | unread, PLAN_OUTCOME_REPLAY:
+#         ok | missing | n/a with one "UNTRACED: outcome replay — <gap>"
+#         line per gap, and last
 #         PLAN_TRACE: ok | untraced | unavailable
 #
 # exit 0  every task block carries both lines
@@ -168,7 +170,7 @@ REPORT=$(awk -v maxlist="$MAXLIST" '
       # ...plus "## Verification checklist", which the plan prompt asks for by
       # name and which is a list of commands, not of tasks: every line in it
       # carries a check and none of them delivers a client criterion.
-      if (tolower(strip(line)) ~ /^(system invariants|requirements coverage|acceptance tests|qa screens|verification|shared files|spec changes from comments)/) {
+      if (tolower(strip(line)) ~ /^(system invariants|requirements coverage|acceptance tests|qa screens|verification|shared files|spec changes from comments|spec trace)/) {
         flush(); skiplvl = lvl; next
       }
       start(line, istask(line)); headtask = task; if (task) tasklvl = lvl
@@ -217,6 +219,18 @@ printf '%s\n' "$REPORT" | grep -v '^PLAN_RC_HINT'
 PFM_LIB="$(cd "$(dirname "$0")" && pwd)/lib/plan-failure-modes.sh"
 if [ -r "$PFM_LIB" ] && . "$PFM_LIB"; then
   pfm_check "$PLAN" "${PLAN_FAILURE_MODES_CATALOG:-$(cd "$(dirname "$0")/.." && pwd)/catalog/plan-failure-modes.tsv}"
+  [ $? = 2 ] && [ "$RC" = 0 ] && RC=2
+fi
+
+# ---- the spec trace (BH-6485, prompts/plan-contract.md §17) -------------------
+# PLAN_GATE_TICKET=<ticket-meta.json> (bin/lib/rb/plan.sh PG_RUN sets it): a
+# ticket whose body names `Spec:` sections or `Reference:` screens needs one
+# `## Spec trace` line per section and each Reference under `## QA screens`.
+# A gap refuses the plan (rc 2, the same repair pass). Unset: no check, and the
+# output is what it was. No lib on this box: no check.
+ST_LIB="$(cd "$(dirname "$0")" && pwd)/lib/spec-trace.sh"
+if [ -n "${PLAN_GATE_TICKET:-}" ] && [ -r "$ST_LIB" ] && . "$ST_LIB"; then
+  st_plan_check "$PLAN" "$PLAN_GATE_TICKET"
   [ $? = 2 ] && [ "$RC" = 0 ] && RC=2
 fi
 

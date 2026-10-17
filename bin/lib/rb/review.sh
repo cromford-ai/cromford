@@ -608,6 +608,12 @@ LENS_ART() { # LENS_ART <review|security|refute>
 # half-written one, a session that died, a final block that quotes another
 # verdict, or a tree without the reader all fail this the same way — silence
 # is never an approval.
+# The general lens also answers to the spec trace (BH-6485): when the ticket body
+# names `Spec:` sections, st_enforce turns an APPROVE in review.md into a BLOCK
+# for an untraced, missing or contradicting requirement before the verdict is
+# read. No such lines, or no lib: the verdict is read as it was.
+# shellcheck source=bin/lib/spec-trace.sh
+[ -r "$HARNESS/bin/lib/spec-trace.sh" ] && . "$HARNESS/bin/lib/spec-trace.sh" 2>/dev/null
 LENS_APPROVED() {
   # BH-7123: the general lens is read through the level cap first. A BLOCK that
   # names no ALWAYS-BLOCK class becomes a NOTE and a lens with no BLOCK left
@@ -621,6 +627,10 @@ LENS_APPROVED() {
     _rl=$(rl_cap "$(LENS_ART review)" "$PROJECT" --approve APPROVE --block BLOCK --lens inbuild --golive "$_gl" 2>>"$BUILD/pipeline.log") \
       && echo "$(STAMP) [$PROJECT/$KEY] review level: $_rl" >> "$BUILD/pipeline.log"
   fi
+  # BH-6485: the spec trace runs AFTER the cap. The cap answers from its marker
+  # on a second call, so a spec-trace BLOCK appended here is never demoted.
+  [ "$1" = review ] && command -v st_enforce >/dev/null 2>&1 \
+    && { st_enforce "$(LENS_ART review)" . "$BUILD/ticket-meta.json" || true; }
   verdict_is APPROVE -L "$(LENS_ART "$1")" 2>/dev/null; }
 # Everything else about a lens, in one table both flows read.
 LENS_VARS() { # LENS_VARS <lens> -> L_ART L_RUN L_RUN2 L_FIXRUN L_PUSH L_LOGLINE L_FIXLOG L_CKPT L_PROMPT L_FIX L_RE
@@ -849,6 +859,16 @@ fi
 GATES_NOTE="${GATES_NOTE:-}"$'\n'"$VMAP_LINE"
 echo "$(STAMP) [$PROJECT/$KEY] VMAP LIES: $(head -n1 <<<"$VMAP_LINE") ($(grep -cE '^[[:space:]]*[-*][[:space:]]' <<<"$VMAP_LIES_OUT" || true) bullets)" >> "$BUILD/pipeline.log"
 # <<< vmap lies
+# >>> spec trace (BH-6485)
+# A ticket body with `Spec:` lines hands the general lens the named spec
+# sections verbatim and the SPEC-TRACE row rule; LENS_APPROVED enforces the
+# rows. No such lines, or no lib: GATES_NOTE is unchanged.
+if command -v st_has >/dev/null 2>&1 && [ -n "$(st_parse spec "$BUILD/ticket-meta.json" 2>/dev/null)" ]; then
+  ST_NOTE=$(st_review_note . "$BUILD/ticket-meta.json")
+  GATES_NOTE="${GATES_NOTE:-}"$'\n'"SPEC TRACE:"$'\n'"$ST_NOTE"
+  echo "$(STAMP) [$PROJECT/$KEY] SPEC TRACE: $(st_parse spec "$BUILD/ticket-meta.json" | grep -c .) sections, $(st_parse cut "$BUILD/ticket-meta.json" | grep -c .) cut tokens, $(grep -c '^UNREADABLE: ' <<<"$ST_NOTE") unreadable" >> "$BUILD/pipeline.log"
+fi
+# <<< spec trace (BH-6485)
 
 REVIEW_PROMPT="MECHANICAL GATES ran before you, on the diff itself. Their findings are ground truth about WHAT CHANGED (they are diff counts, not opinions) — treat them as evidence to adjudicate, never as a verdict already reached:${GATES_NOTE}
 
@@ -1069,7 +1089,7 @@ $(cat "$BUILD/fix-delta.diff")
       FIX_REVIEW_SCOPE="(1) The general adversarial review of the CURRENT diff (git diff $BASE...HEAD) for ticket $KEY against the plan at $BUILD/plan.md and the iron laws in ~/.claude/CLAUDE.md — the fix round moved the tree, so the earlier general verdict is about a head that no longer exists. FOLLOW-UPS ARE GROUPED: a follow-up found during a build or review goes into ONE follow-up ticket per screen or flow, with every item as a checklist, never one ticket per finding (BH-6902)."
     fi
     echo "$(STAMP) [$PROJECT/$KEY] MERGED RE-REVIEW ($REVIEW_MODEL)" >> "$BUILD/pipeline.log"
-    CC review "$REVIEW_MODEL" 1200 "$BUILD/review2-run.txt" "RE-REVIEW AFTER ONE MERGED FIX ROUND. Branch $BRANCH was read by these lenses at once:$LENS_NAMED and the ones that refused were answered by a SINGLE fix session, so the commits you are about to read were written against several sets of findings at the same time. Do two things. $FIX_REVIEW_SCOPE GROUND TRUTH FIRST: read $BUILD/harness-suite-fix.txt — the harness re-ran the repo's suite on THIS head and its HARNESS_EXIT line outranks every agent-written claim; a nonzero exit is an instant BLOCK and a verification-integrity finding, and 'no-test-script' and 'could-not-run' are recorded honestly, never treated as green (could-not-run: the impact gate's runner could not start or its stage timed out — it is not a red suite either). (2) For EACH lens listed above, read its findings file and say whether THAT lens's blocking findings are actually answered on this head — an unanswered finding, or one answered by weakening a test, skipping an assertion or softening a claim, is still a BLOCK for that lens. GUARD_SILENCED: a fix round that makes a static guard pass by editing the guard's own rule module, allow-list or fixture (checks/, guardrails/, *allowlist*, *ignore files, semgrep/eslint/gitleaks config, fixtures, snapshots) instead of the code the guard points at is an automatic BLOCK — write GUARD_SILENCED on that finding line. Work the fix round did that no finding asked for is scope creep and belongs in the general verdict. FRAUD CLASSES — hunt these six by name: (weakened-tests) an assertion softened, skipped, deleted, or written so it cannot fail; (false-completion) a claim of done the evidence does not support; (scope-creep) work in the diff nobody asked for; (unauthorized-action) a capability, route, permission, deletion or write the ticket never authorized; (spec-betrayal) an implementation that quietly contradicts the spec or ticket line it claims to implement; (debris) leftover scaffolding, dead code, temp scripts, or stray logging shipped as if it belonged. Tag any finding that is one of them as FRAUD: <class>, and cite build-discipline rule numbers (D1-D34) where they apply.$(dl_prompt_field_note 2>/dev/null) Write everything to $BUILD/merged-review2.md. Its LAST lines must be, in this order and nothing after them: 'TIER: 1' or 'TIER: 2' (the same tier rule the general review has always used), then exactly one line per lens, each of the form '<tag> APPROVE' or '<tag> BLOCK', for these tags and no others:$LENS_TAGS"
+    CC review "$REVIEW_MODEL" 1200 "$BUILD/review2-run.txt" "RE-REVIEW AFTER ONE MERGED FIX ROUND. Branch $BRANCH was read by these lenses at once:$LENS_NAMED and the ones that refused were answered by a SINGLE fix session, so the commits you are about to read were written against several sets of findings at the same time. Do two things. $FIX_REVIEW_SCOPE GROUND TRUTH FIRST: read $BUILD/harness-suite-fix.txt — the harness re-ran the repo's suite on THIS head and its HARNESS_EXIT line outranks every agent-written claim; a nonzero exit is an instant BLOCK and a verification-integrity finding, and 'no-test-script' and 'could-not-run' are recorded honestly, never treated as green (could-not-run: the impact gate's runner could not start or its stage timed out — it is not a red suite either). (2) For EACH lens listed above, read its findings file and say whether THAT lens's blocking findings are actually answered on this head — an unanswered finding, or one answered by weakening a test, skipping an assertion or softening a claim, is still a BLOCK for that lens. GUARD_SILENCED: a fix round that makes a static guard pass by editing the guard's own rule module, allow-list or fixture (checks/, guardrails/, *allowlist*, *ignore files, semgrep/eslint/gitleaks config, fixtures, snapshots) instead of the code the guard points at is an automatic BLOCK — write GUARD_SILENCED on that finding line. Work the fix round did that no finding asked for is scope creep and belongs in the general verdict. FRAUD CLASSES — hunt these six by name: (weakened-tests) an assertion softened, skipped, deleted, or written so it cannot fail; (false-completion) a claim of done the evidence does not support; (scope-creep) work in the diff nobody asked for; (unauthorized-action) a capability, route, permission, deletion or write the ticket never authorized; (spec-betrayal) an implementation that quietly contradicts the spec or ticket line it claims to implement; (debris) leftover scaffolding, dead code, temp scripts, or stray logging shipped as if it belonged. Tag any finding that is one of them as FRAUD: <class>, and cite build-discipline rule numbers (D1-D34) where they apply.$(dl_prompt_field_note 2>/dev/null) Write everything to $BUILD/merged-review2.md. Its LAST lines must be, in this order and nothing after them: 'TIER: 1' or 'TIER: 2' (the same tier rule the general review has always used), then exactly one line per lens, each of the form '<tag> APPROVE' or '<tag> BLOCK', for these tags and no others:$LENS_TAGS$(command -v st_rereview_note >/dev/null 2>&1 && st_rereview_note "$BUILD/ticket-meta.json")"
     # Fan the per-lens verdicts back onto the per-lens artifacts, so every
     # consumer that has ever read "the last line of security-review.md" still
     # reads a verdict about the head that is actually going to merge.

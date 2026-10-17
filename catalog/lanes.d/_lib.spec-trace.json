@@ -1,0 +1,73 @@
+{
+  "libs": [
+    {
+      "id": "spec-trace",
+      "file": "bin/lib/spec-trace.sh",
+      "note": "BH-6485. A ticket body names `Spec: <path>#<section>`, `Reference: <path>` and `Cut: <token>` lines; the plan gate, the general review lens, preview QA and the PR self-check check the slice against them. Resolved by st_conf through lib_env_apply in a subshell, then the env, then the ST_DEFAULT_* values in bin/lib/spec-trace.sh, which equal the defaults here (tests/plan-spec-trace.bh-6485-test.sh K1). bin/reference-shots.sh reads the REFERENCE_SHOTS_* knobs through the same st_conf.",
+      "knobs": [
+        {
+          "env": "SPEC_TRACE_ENFORCE",
+          "type": "int",
+          "default": 1,
+          "min": 0,
+          "max": 1,
+          "zero_means": "log only",
+          "required": true,
+          "note": "1: a plan with an untraced named section or an unlisted Reference is refused (rc 2, the plan gate's repair pass, then PLAN_MALFORMED), and a general-lens APPROVE with an untraced section or an uncut missing/contradicts row becomes a BLOCK. 0: both write a log line only. Applies only to tickets whose body carries Spec:/Reference: lines."
+        },
+        {
+          "env": "SPEC_TRACE_SECTION_MAX_BYTES",
+          "type": "int",
+          "default": 12000,
+          "min": 1000,
+          "max": 200000,
+          "unit": "bytes",
+          "zero_means": null,
+          "required": true,
+          "note": "Byte cap on one spec section the review note carries verbatim. A longer section is cut and the note says `[truncated at N bytes]`."
+        },
+        {
+          "env": "SPEC_TRACE_TOTAL_MAX_BYTES",
+          "type": "int",
+          "default": 40000,
+          "min": 4000,
+          "max": 400000,
+          "unit": "bytes",
+          "zero_means": null,
+          "required": true,
+          "note": "Byte cap on all the spec sections in one review note. A section past it is named `NOT INCLUDED` with its path, so the reviewer reads the file."
+        },
+        {
+          "env": "REFERENCE_SHOTS_KEEP_DAYS",
+          "type": "int",
+          "default": 30,
+          "min": 1,
+          "max": 365,
+          "unit": "days",
+          "zero_means": null,
+          "required": true,
+          "note": "Retention of the `harness-shots/<key>-<yyyymmdd>` side branches bin/reference-shots.sh pushes. A branch whose date is older than this is a prune candidate."
+        },
+        {
+          "env": "REFERENCE_SHOTS_PRUNE",
+          "type": "string",
+          "default": "dry",
+          "zero_means": null,
+          "required": true,
+          "note": "dry | on | off. dry (default) logs the prune candidates and deletes none; on deletes up to REFERENCE_SHOTS_PRUNE_MAX per run; off does nothing. One audit line per run in logs/reference-shots.log."
+        },
+        {
+          "env": "REFERENCE_SHOTS_PRUNE_MAX",
+          "type": "int",
+          "default": 20,
+          "min": 0,
+          "max": 200,
+          "unit": "branches",
+          "zero_means": "delete none",
+          "required": true,
+          "note": "How many expired harness-shots/* branches one prune run deletes when REFERENCE_SHOTS_PRUNE=on."
+        }
+      ]
+    }
+  ]
+}

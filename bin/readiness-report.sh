@@ -385,12 +385,57 @@ if [ -z "$BOARD" ] && [ "$GH_OFF" = 0 ] && [ -n "$SLUG" ] && command -v gh >/dev
   gh label list -R "$SLUG" --json name --jq '.[].name' 2>/dev/null | grep -qx 'ai-build' \
     && BOARD="the ai-build label exists on $SLUG"
 fi
+# The spec-trace read (BH-6485) goes out on the same token, before the reset.
+SPEC_DIRS=""
+for D in design spec; do [ -d "$REPO/$D" ] && SPEC_DIRS="${SPEC_DIRS:+$SPEC_DIRS, }$D/"; done
+SPEC_READ=""
+if [ -n "$SPEC_DIRS" ] && [ "$GH_OFF" = 0 ] && [ -n "$SLUG" ] && command -v gh >/dev/null 2>&1; then
+  if gh api "repos/$SLUG/issues?state=open&labels=ai-build&per_page=100" > "$TMPD/spec-issues.json" 2>"$TMPD/gh-spec.err" \
+     && jq -e 'type == "array"' "$TMPD/spec-issues.json" >/dev/null 2>&1; then SPEC_READ=ok
+  else SPEC_READ=failed; fi
+fi
 # Last gh read of the run — put the sourcing shell's own GH_TOKEN back.
 command -v gh_auth_reset >/dev/null 2>&1 && gh_auth_reset || true
 if [ -n "$BOARD" ]; then
   add board.source board pass "$BOARD"
 else
   add board.source board fail "no /api/board route and no ai-build label metadata — the watcher has no intake"
+fi
+
+# ── spec trace (BH-6485) ────────────────────────────────────────────────────
+# REPORT ONLY: no level names spec.trace, so .level never moves on it. A repo
+# with a design/ or spec/ folder whose open ai-build tickets carry no `Spec:`
+# line (bin/lib/spec-trace.sh's grammar) builds slices nobody checks against
+# the spec. One read of the first 100 open ai-build issues; PRs are dropped.
+if [ -z "$SPEC_DIRS" ]; then
+  add spec.trace spec na "no design/ or spec/ folder at the repo root"
+elif [ "$GH_OFF" = 1 ]; then
+  add spec.trace spec skipped "READINESS_GH=0 — GitHub was not asked"
+elif ! command -v gh >/dev/null 2>&1; then
+  add spec.trace spec unknown "gh is not on PATH — the open ai-build issues were not read"
+elif [ -z "$SLUG" ]; then
+  add spec.trace spec unknown "no github.com origin remote — nothing to ask about"
+elif [ "$SPEC_READ" != ok ]; then
+  add spec.trace spec unknown "gh could not read the open ai-build issues of $SLUG"
+elif ! [ -r "$SELF_DIR/lib/spec-trace.sh" ] || ! . "$SELF_DIR/lib/spec-trace.sh" 2>/dev/null; then
+  add spec.trace spec unknown "bin/lib/spec-trace.sh is not beside this script — the issues were not graded"
+else
+  SPEC_ALL=0 SPEC_NO=0 SPEC_LIST=""
+  while IFS=$'\t' read -r SN SB; do
+    [ -n "$SN" ] || continue
+    SPEC_ALL=$((SPEC_ALL + 1))
+    if [ -z "$(printf '%s' "$SB" | base64 -d 2>/dev/null | st_parse spec)" ]; then
+      SPEC_NO=$((SPEC_NO + 1))
+      [ "$SPEC_NO" -le 10 ] && SPEC_LIST="$SPEC_LIST #$SN"
+    fi
+  done < <(jq -r '.[] | select(has("pull_request") | not) | "\(.number)\t\(.body // "" | @base64)"' "$TMPD/spec-issues.json" 2>/dev/null)
+  SPEC_PAGE=""; [ "$(jq 'length' "$TMPD/spec-issues.json" 2>/dev/null)" = 100 ] && SPEC_PAGE=" (first 100 read)"
+  if [ "$SPEC_NO" = 0 ]; then
+    add spec.trace spec pass "$SPEC_DIRS present; $SPEC_ALL open ai-build issue(s), every one carries a Spec: line$SPEC_PAGE"
+  else
+    [ "$SPEC_NO" -gt 10 ] && SPEC_LIST="$SPEC_LIST …"
+    add spec.trace spec fail "WARN: $SPEC_NO of $SPEC_ALL open ai-build issues carry no Spec: line:$SPEC_LIST ($SPEC_DIRS present)$SPEC_PAGE"
+  fi
 fi
 
 # ── migrations ──────────────────────────────────────────────────────────────

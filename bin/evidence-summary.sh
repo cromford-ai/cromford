@@ -710,4 +710,10 @@ $FLOW_ROWS
 EOF
 fi
 printf '\nDigest: `%s`\n' "$DIGEST"
+# BH-6485: bin/reference-shots.sh writes this section (preview next to
+# reference, or Missing / Could not publish with no images). It is the
+# harness's own output, never agent text, so it is printed verbatim.
+if [ -f "$BUILD/reference-shots.md" ] && [ -r "$BUILD/reference-shots.md" ]; then
+  printf '\n'; cat "$BUILD/reference-shots.md"
+fi
 exit 0

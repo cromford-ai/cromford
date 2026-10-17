@@ -44,6 +44,10 @@
 #                   and the parent is classified with no hop of its own. All
 #                   three inputs empty, a classifier that cannot decide or a
 #                   failed read = a NOTE, never a refusal.
+#                   Trigger `spec-ref` (BH-6485): the ticket text has
+#                   `Reference:` lines and a diff file is a UI path
+#                   (st_ui_ref_applies, bin/lib/spec-trace.sh). $PSC_PHASE=open,
+#                   no ticket text or no lib = a NOTE.
 #                   Match `under=<heading-ERE>>><line-ERE>`: a line under a
 #                   matching heading (any level) matches the line ERE. `&`
 #                   ANDs terms inside one `;` alternative; an unknown term kind
@@ -94,6 +98,10 @@ _psc_lib_dir() { (cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd); }
 # is a NOTE, never a refusal.
 # shellcheck source=bin/lib/perf-ticket.sh
 . "$(dirname "${BASH_SOURCE[0]}")/perf-ticket.sh" 2>/dev/null || :
+# st_ui_ref_applies, the spec-trace trigger (BH-6485). Missing = the spec-ref
+# trigger is a NOTE, never a refusal.
+# shellcheck source=bin/lib/spec-trace.sh
+. "$(dirname "${BASH_SOURCE[0]}")/spec-trace.sh" 2>/dev/null || :
 
 # _psc_rows — the catalog rows, comments stripped:
 #   id<TAB>mode<TAB>param<TAB>match<TAB>what   (an empty field reads `-`)
@@ -169,7 +177,7 @@ _psc_perf() {
 #   rc 0 the rule applies, 1 it does not, 3 it cannot tell (a ticket= or perf
 #   trigger with no answer and nothing else fired; _PSC_UNK_WHY says why). The
 #   triggers are the catalog header's: always, added=, touched=, knob,
-#   ticket=, and perf (BH-6380, _psc_perf).
+#   ticket=, perf (BH-6380, _psc_perf) and spec-ref (BH-6485).
 _psc_body_fires() {
   local repo="$1" base="$2" head="$3" files="$5" tk="$6" t trig=() unk=0 added kd why=""
   _PSC_UNK_WHY=""
@@ -188,6 +196,14 @@ _psc_body_fires() {
       ticket=*)
         if [ -z "$tk" ] || [ ! -s "$tk" ]; then unk=1; why="${why:-no ticket text}"
         else _psc_section "$tk" 'done[- ]when|acceptance' | grep -qiE -- "${t#ticket=}" && return 0; fi ;;
+      spec-ref)
+        # BH-6485: the ticket body has `Reference:` lines and the diff touches
+        # UI. The shots exist only after preview QA, so the open phase
+        # ($PSC_PHASE=open) is a note; the edit phase and the enqueue refuse.
+        if [ "${PSC_PHASE:-}" = open ]; then unk=1; why="${why:-reference shots are taken after preview QA}"
+        elif [ -z "$tk" ] || [ ! -s "$tk" ]; then unk=1; why="${why:-no ticket text}"
+        elif ! declare -F st_ui_ref_applies >/dev/null; then unk=1; why="${why:-the spec-trace lib is missing}"
+        elif st_ui_ref_applies "$tk" "$files"; then return 0; fi ;;
       perf)
         _psc_perf "$tk"
         case $? in

@@ -44,6 +44,7 @@ build, so a probe that did not run says so and the level is computed without it.
 | `ci.required_check` | ci | Report-only (no level reads it). `pass` when the protection rule has `required_status_checks`, or `gh api repos/<slug>/rules/branches/<default>` lists a `required_status_checks` rule. `fail` with `OWED: required status check` when both reads answer and neither requires a check. A read that fails is `unknown` |
 | `preview.config` | preview | `vercel.json`, `.vercel/project.json`, `wrangler.toml`, `netlify.toml`, or a documented `preview … https://…` line in README/CLAUDE/AGENTS |
 | `board.source` | board | an `/api/board` route dir, or `ai-build` in `.github/labels.*` or an issue template, or (when `gh` answers) the live `ai-build` label |
+| `spec.trace` | spec | Report-only (no level reads it), BH-6485. `na` with no `design/` or `spec/` folder at the repo root. Otherwise one read of `repos/<slug>/issues?state=open&labels=ai-build&per_page=100` (PRs dropped): `pass` when every open ai-build issue body carries a `Spec:` line (bin/lib/spec-trace.sh), `fail` with `WARN: <n> of <m> open ai-build issues carry no Spec: line: #…` (at most 10 numbers, `(first 100 read)` on a full page). A read that fails is `unknown` |
 | `migrations.appliable` | migrations | a migrations dir whose `scripts/migrations/*.sql` pass `bin/check-migration-appliable.sh`. No migrations dir at all is `na`; a dir holding only shapes the linter cannot read (`prisma/migrations`, `supabase/migrations`) is `unknown`, never `pass` |
 | `context.agents` | context | `AGENTS.md` or `CLAUDE.md`, non-empty |
 | `context.arch` | context | `AGENT_ARCHITECTURE.md`, non-empty |
@@ -138,7 +139,7 @@ never be read as this repo's.
 | knob | default | what it does |
 |---|---|---|
 | `READINESS_TEST_TIMEOUT` | `600` | seconds the repo's suite may take. Over it: `tests.green fail`, detail `timed out after Ns` |
-| `READINESS_GH` | unset (on) | `0` asks GitHub nothing; `ci.branch_protection` and `ci.required_check` read `skipped` |
+| `READINESS_GH` | unset (on) | `0` asks GitHub nothing; `ci.branch_protection`, `ci.required_check` and `spec.trace` read `skipped` |
 | `READINESS_LEVELS` | unset | a level table, **used as given** — an unreadable path is rc 2, never a fallback |
 
 Level tables resolve in the order every other catalog knob uses:
