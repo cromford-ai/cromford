@@ -56,6 +56,13 @@
 #                        A nested workflow path is still infra. Outside a
 #                        batch select every .github/workflows/ path is
 #                        `full: infra change`.
+#   a PLAIN select (no TI_BATCH_SELECT, BH-7027): catalog/ is not infra
+#                        either. A catalog/ path selects through its specific
+#                        map rows, a *.md there through those rows only. It is
+#                        `full: infra change (<p>)` when the batch's rules file
+#                        escalates it, when it has no specific row, or when the
+#                        rules lib cannot be sourced. tests/lib/ and
+#                        .github/workflows/ stay infra here.
 #
 # ── THE MAP IS GENERATED AND NEVER COMMITTED (BH-1175's rule, applied) ───────
 # BH-1175 took docs/verification-map/README.md out of git because a file derived
@@ -949,11 +956,13 @@ ti_inert() {
 # that file (tests/ci-batch-escalate-narrow.bh-6059-test.sh G1). ^tests/lib/ is
 # out of the core list too (BH-6371): the global helpers have escalate rows in
 # that file, and every other helper selects through ti_testlib_closure. The full
-# list, which the PR select and the builder gate read, is unchanged. ti_inputs
-# reads the core list and decides tests/lib/ and catalog/ path by path
-# (ti_inputs_infra, BH-6406).
+# list, which the PR select and the builder gate read, adds ^tests/lib/ back.
+# It has no ^catalog/ (BH-7027): a plain select sends a catalog/ path through
+# ti_pr_catalog, which keeps the infra answer only for an escalated or unmapped
+# path. ti_inputs reads the core list and decides tests/lib/ and catalog/ path
+# by path (ti_inputs_infra, BH-6406).
 ti_infra_core_re='^bin/suite-reuse\.sh$|^bin/lib/suite-fingerprint\.sh$|^bin/lib/suite-runner\.sh$|^bin/lib/docker-host\.sh$|^bin/test-impact\.sh$|^bin/test-suite-run\.sh$|^bin/test-trace-safety\.sh$|^bin/run-tests-in-docker\.sh$|^\.github/workflows/'
-ti_infra_re="$ti_infra_core_re|^tests/lib/|^catalog/"
+ti_infra_re="$ti_infra_core_re|^tests/lib/"
 # The whole-tree scanner rows: almost every bin/ or catalog/ path is "covered"
 # through them, so they say nothing about one path (BH-6059).
 ti_root_rows=' bin/ bin/lib/ catalog/ '
@@ -976,6 +985,26 @@ ti_specific() {
     $2 ~ /\/$/ && index(p, $2) == 1 { found = 1; exit }
     END { exit(found ? 0 : 1) }
   ' "$1"
+}
+
+# ti_pr_catalog <map> <path> — does a catalog/ path narrow in a PLAIN select
+# (BH-7027)? rc 0 when the batch's rules file does not escalate it and the map
+# has a specific row for it; rc 1 (infra) otherwise. The rules lib is sourced
+# once per run. A lib that cannot be sourced is rc 1 for every path, and an
+# unreadable rules file escalates in cbe_reason, so both fail closed.
+ti_cbe_state=""
+ti_pr_catalog() {
+  if [ -z "$ti_cbe_state" ]; then
+    ti_cbe_state=bad
+    # shellcheck source=lib/ci-batch-escalate.sh
+    if [ -r "$ROOT/bin/lib/ci-batch-escalate.sh" ] && . "$ROOT/bin/lib/ci-batch-escalate.sh" 2>/dev/null \
+       && command -v cbe_reason > /dev/null; then
+      ti_cbe_state=ok
+    fi
+  fi
+  [ "$ti_cbe_state" = ok ] || return 1
+  cbe_reason "$2" > /dev/null && return 1
+  ti_specific "$1" "$2"
 }
 
 # ti_testlib_closure <path> — THE HELPER CLOSURE (BH-6371): <path>, plus every
@@ -1400,6 +1429,14 @@ ti_select_from() {
           ti_testlib_closure "$p" > "$TI_TMP/closure"
           ti_testlib_mapped "$map" "$TI_TMP/closure" || { full="full: unmapped path ($p)"; break; }
           cat "$TI_TMP/closure" >> "$work" ;;
+      esac
+    fi
+    # A PLAIN select (BH-7027): a catalog/ path selects the batch way, but an
+    # escalated or unmapped one keeps the infra answer and its words.
+    if [ "${TI_BATCH_SELECT:-}" != 1 ]; then
+      case "$p" in
+        catalog/*.md) printf '%s\n' "$p" >> "$TI_TMP/narrow"; continue ;;
+        catalog/*) ti_pr_catalog "$map" "$p" || { full="full: infra change ($p)"; break; } ;;
       esac
     fi
     # COVERED BEFORE INERT, on purpose. docs/ is inert as a rule, but a handful

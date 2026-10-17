@@ -891,10 +891,11 @@ run_tick HARNESS_REPO=example-org/mgfy-os
 not_requeued N1-noreason
 case "$(reason_of "$K31")" in *"could not be read this tick"*) ok ;; *) bad "N1-noreason: no reason line is unreadable (got '$(reason_of "$K31")')" ;; esac
 [ ! -s "$T/flake-puts.txt" ] && ok || bad "N1-noreason: no ledger row (got: $(cat "$T/flake-puts.txt"))"
-# N1-contract — the REAL bin/test-impact.sh: a catalog/ path reads as the
-#   corpus, a mapped lib path as a selection.
+# N1-contract — the REAL bin/test-impact.sh: a selector catalog and a test
+#   helper read as the corpus; a mapped lib path and a mapped catalog/ path
+#   (BH-7027) as a selection.
 if [ -x "$DIR/bin/test-impact.sh" ]; then
-  for c in 'catalog/lanes.d/merge-conductor.json corpus' 'tests/lib/scratch.sh corpus' 'bin/lib/mc-foreign-red.sh selected'; do
+  for c in 'catalog/test-tiers.tsv corpus' 'catalog/lanes.d/merge-conductor.json selected' 'tests/lib/scratch.sh corpus' 'bin/lib/mc-foreign-red.sh selected'; do
     printf '%s\n' "${c% *}" > "$T/ti-changed"
     "$DIR/bin/test-impact.sh" select --why --map-only --changed "$T/ti-changed" --root "$DIR" >/dev/null 2>"$T/ti-reason" 3>&2
     got=$( . "$T/h/bin/lib/mc-foreign-red.sh" 2>/dev/null; _fr_impact_scope "$T/ti-reason" 2>/dev/null) || got="rc$?"
