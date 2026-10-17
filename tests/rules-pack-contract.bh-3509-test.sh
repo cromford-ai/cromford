@@ -46,8 +46,9 @@ run() {
 # discipline-dupes (three builtins).
 # TEST-CHANGE (BH-6730): and index-on-create-table (a delta builtin).
 # TEST-CHANGE (BH-6293): and split-host-growth (a split host's growth limit).
+# TEST-CHANGE (BH-5945): and project-loop (a new hub lane uses the per-project runner).
 # The list still pins every id exactly.
-WANT="agent-push alert-writers changelog-headers checks-tree date-bomb determinism discipline-dupes fast-lints-data fixture-hygiene grep-q index-on-create-table jobs-client-modules lanes-knob-delta lib-root marker-reason model-id-delta model-literal route-fragments schema-fragment schema-fragment-name scratch-closure split-host-growth switch test-sources tier-wording"
+WANT="agent-push alert-writers changelog-headers checks-tree date-bomb determinism discipline-dupes fast-lints-data fixture-hygiene grep-q index-on-create-table jobs-client-modules lanes-knob-delta lib-root marker-reason model-id-delta model-literal project-loop route-fragments schema-fragment schema-fragment-name scratch-closure split-host-growth switch test-sources tier-wording"
 run bash "$RP" --list
 LIST_IDS=$(printf '%s\n' "$OUT" | awk 'NF {print $1}' | sort | tr '\n' ' ' | sed 's/ $//')
 CAT_IDS=$( [ -r "$CAT" ] && grep -v '^#' "$CAT" | awk -F'\t' 'NF {print $1}' | sort | tr '\n' ' ' | sed 's/ $//')
@@ -60,7 +61,8 @@ if [ -r "$CAT" ]; then
   rows=$(grep -v '^#' "$CAT" | grep -c .)
   # TEST-CHANGE (BH-5788): three new rows, 20 -> 23.
   # TEST-CHANGE (BH-6293): split-host-growth, 24 -> 25.
-  [ "$rows" -eq 25 ] && ok || bad "R0b catalog has $rows rows (want 25)"
+  # TEST-CHANGE (BH-5945): project-loop, 25 -> 26.
+  [ "$rows" -eq 26 ] && ok || bad "R0b catalog has $rows rows (want 26)"
   badnf=$(grep -v '^#' "$CAT" | grep . | awk -F'\t' 'NF!=6 {print $1}')
   [ -z "$badnf" ] && ok || bad "R0b rows without exactly 6 TAB fields: $badnf"
   badval=$(grep -v '^#' "$CAT" | grep . | awk -F'\t' '

@@ -3,7 +3,7 @@
   "name": "Review PRs (LLM)",
   "scope": "project",
   "script": "bin/review-prs.sh",
-  "cadence": "7,37 * * * *",
+  "cadence": "*/30 * * * *",
   "boxes": [
     "project-4",
     "project-6",

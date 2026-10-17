@@ -90,7 +90,20 @@ cron_managed_scripts() {
   printf 'run-triage|run-product|healthcheck|apply-migrations|merge-queue|deploy-train|review-prs\n'
 }
 
-# cron_project_block <project> <offset> <prod-url> <repo-root>
+# cron_stagger_min <base> <period> <used> -> the first minute in [0,period),
+# counting up from base mod period, that is not in the space list <used>.
+# After <period> tries every minute is taken, and it prints base: a shared
+# minute, never a hang.
+cron_stagger_min() {
+  local base="${1:?base}" period="${2:?period}" used=" ${3-} " i m
+  for ((i = 0; i < period; i++)); do
+    m=$(( (base + i) % period ))
+    case "$used" in *" $m "*) ;; *) printf '%s\n' "$m"; return 0 ;; esac
+  done
+  printf '%s\n' "$(( base % period ))"
+}
+
+# cron_project_block <project> <offset> <prod-url> <repo-root> [<mq-min> <rp-min>]
 #
 # The seven lanes a watched project runs, extracted verbatim from what
 # bootstrap-machine.sh used to generate inline. Two are CONDITIONAL, and both
@@ -117,8 +130,19 @@ cron_managed_scripts() {
 #                     project it cannot resolve writes ONE ALERTS line and
 #                     exits 1 — this lane is no longer silent on anything.
 #   run-triage        the lane itself; every watched project has one
+#
+# merge-queue and review-prs start at a per-project minute, not one fixed
+# minute for every project: on box-small all four projects fired
+# merge-queue at :06 and review-prs at :07 together. <mq-min> (0-19, then +20
+# and +40) and <rp-min> (0-29, then +30) are what bin/render-crontab.sh probed
+# so two projects on one box never share one. Absent or not a number, they
+# come from the offset: (6 + offset) % 20 and (7 + offset) % 30, so offset 0
+# keeps the old 6,26,46 and 7,37.
 cron_project_block() {
   local P="${1:?project}" OFF="${2:?offset}" PROD="${3-}" ROOT="${4:?repo root}"
+  local MQ="${5-}" RP="${6-}"
+  case "$MQ" in ''|*[!0-9]*) MQ=$(( (6 + OFF) % 20 )) ;; *) MQ=$(( 10#$MQ % 20 )) ;; esac
+  case "$RP" in ''|*[!0-9]*) RP=$(( (7 + OFF) % 30 )) ;; *) RP=$(( 10#$RP % 30 )) ;; esac
   printf '# BEGIN fleet-managed project=%s\n' "$P"
   printf '%s,%s,%s,%s,%s,%s * * * * /root/harness/bin/run-triage.sh %s\n' \
     "$OFF" "$((OFF+10))" "$((OFF+20))" "$((OFF+30))" "$((OFF+40))" "$((OFF+50))" "$P"
@@ -133,9 +157,10 @@ cron_project_block() {
   # carried. merge-queue keeps its own log, so this only catches stray stderr
   # that would otherwise go to cron mail nobody reads; deploy-train is silent on
   # success and its failures beat, so its output is noise.
-  printf '6,26,46 * * * * /root/harness/bin/merge-queue.sh %s >> /root/harness/logs/merge-queue.log 2>&1\n' "$P"
+  printf '%s,%s,%s * * * * /root/harness/bin/merge-queue.sh %s >> /root/harness/logs/merge-queue.log 2>&1\n' \
+    "$MQ" "$((MQ+20))" "$((MQ+40))" "$P"
   printf '4,19,34,49 * * * * /root/harness/bin/deploy-train.sh %s >/dev/null 2>&1\n' "$P"
-  printf '7,37 * * * * /root/harness/bin/review-prs.sh %s\n' "$P"
+  printf '%s,%s * * * * /root/harness/bin/review-prs.sh %s\n' "$RP" "$((RP+30))" "$P"
   printf '# END fleet-managed project=%s\n' "$P"
 }
 

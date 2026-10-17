@@ -840,8 +840,8 @@ project count. Only **reads on a cadence** are listed; write calls (`gh pr comme
 |---|---|---|---|
 | `merge-conductor.sh` | `GET /repos/{r}/pulls` (open + closed), `gh pr view` per PR, `gh issue view` | `*/5`, fleet-wide | **yes** — `pull_request`, `check_suite`, `status`; already wake-driven |
 | `merge-sweep.sh` | `GET /repos/{r}/pulls`, `GET /repos/{r}/actions/runs?head_sha=`, `gh pr diff` | `6,16,26,36,46,56`, fleet-wide | **yes** — `pull_request` + `check_suite`/`workflow_run` |
-| `merge-queue.sh` | `gh pr view --json state,mergeable,headRefOid,mergeCommit` | `6,26,46`, per project | **yes** — `pull_request`, `status` |
-| `review-prs.sh` | `GET /repos/{r}/pulls` (open), `gh pr diff`, `GET /repos/{r}/commits` (paginated) | `7,37`, per project | **yes** — `pull_request` `opened`/`synchronize` |
+| `merge-queue.sh` | `gh pr view --json state,mergeable,headRefOid,mergeCommit` | every 20 min at a per-project minute (`bin/lib/cron-lines.sh`), per project | **yes** — `pull_request`, `status` |
+| `review-prs.sh` | `GET /repos/{r}/pulls` (open), `gh pr diff`, `GET /repos/{r}/commits` (paginated) | every 30 min at a per-project minute (`bin/lib/cron-lines.sh`), per project | **yes** — `pull_request` `opened`/`synchronize` |
 | `review-autopilot.sh` | `gh pr list --author`, `gh pr view --json mergeable,mergeStateStatus,statusCheckRollup` | `17 * * * *` | **yes** — `pull_request` + `check_suite` |
 | `review-rescue.sh` | `gh pr list --state open --search`, `gh issue view --json state` | `7,37` | **yes** — `pull_request` `closed`, `issues` |
 | `reconcile-prs.sh` | `gh pr view --json state,mergeCommit` | `*/10` | **yes** — `pull_request` `closed` |

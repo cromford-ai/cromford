@@ -1624,7 +1624,13 @@ fi
 # rerun (BH-5317): the holder relaunches one tick when it unlocks.
 STATE="$H/state/lead-review"; mkdir -p "$H/locks" "$STATE"
 exec 7>"$H/locks/lead-review-tick.lock"
-flock -n 7 || { : > "$STATE/rerun-owed"; log "tick skipped: the previous tick still holds locks/lead-review-tick.lock (a review is running) (rerun owed)"; exit 0; }
+# BH-5945: the holder stamps when it took the lock, so a skipped tick logs how
+# long the holder has held it, and lr_unlock logs how long this tick held it.
+if ! flock -n 7; then
+  : > "$STATE/rerun-owed"; since=$(head -c 20 "$STATE/tick-lock.since" 2>/dev/null); since=${since//[!0-9]/}
+  log "tick skipped: the previous tick still holds locks/lead-review-tick.lock (a review is running) held $([ -n "$since" ] && echo "$(( $(date +%s) - 10#$since ))" || echo '?')s (rerun owed)"; exit 0
+fi
+LR_LOCK_T0=$SECONDS; date +%s > "$STATE/tick-lock.since" 2>/dev/null
 mkdir -p "$H/tmp"
 lw_pr_day_prune
 ME=$(local_box_name)
@@ -1840,7 +1846,10 @@ lr_rerun() {
 # lr_unlock — release the tick lock: flock -u releases the open file
 # description, so a process this tick left behind holding fd 7 does not pin it.
 LR_LOCKED=1
-lr_unlock() { [ "$LR_LOCKED" = 1 ] || return 1; LR_LOCKED=0; flock -u 7 2>/dev/null; exec 7>&-; return 0; }
+lr_unlock() {
+  [ "$LR_LOCKED" = 1 ] || return 1; LR_LOCKED=0; flock -u 7 2>/dev/null; exec 7>&-
+  log "tick lock held $((SECONDS - LR_LOCK_T0))s started=$RPOOL_STARTED"; return 0
+}
 RPOOL_TMP_PREFIX=lr RPOOL_LIVE_DIR="$STATE/pool"
 # The pool reads LEAD_REVIEW_RATE_BACKOFF_S under the LEAD_REVIEW prefix (bin/lib/review-pool.sh).
 rpool_init lead-review LEAD_REVIEW "$CONC" "$QF.pool" log

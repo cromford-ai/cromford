@@ -252,11 +252,16 @@ fi
 # ---- the generated blocks ---------------------------------------------------
 BLOCKS="$TMP/blocks"; : > "$BLOCKS"
 ALT=""
+# merge-queue and review-prs minutes already taken on this box, in fleet.conf
+# order: a later project whose derived minute is taken moves to the next free one.
+MQ_USED=""; RP_USED=""
 for P in $PROJECTS; do
   OFF=$("$HERE/fleet-conf.sh" "$P" offset)
   PROD=$("$HERE/fleet-conf.sh" "$P" prod)
   case "$OFF" in ''|*[!0-9]*) echo "render-crontab.sh: $P has a non-numeric cron offset '$OFF'" >&2; exit 1 ;; esac
-  cron_project_block "$P" "$OFF" "$PROD" "$ROOT" >> "$BLOCKS"
+  MQ=$(cron_stagger_min "$(( (6 + 10#$OFF) % 20 ))" 20 "$MQ_USED"); MQ_USED="$MQ_USED $MQ"
+  RP=$(cron_stagger_min "$(( (7 + 10#$OFF) % 30 ))" 30 "$RP_USED"); RP_USED="$RP_USED $RP"
+  cron_project_block "$P" "$OFF" "$PROD" "$ROOT" "$MQ" "$RP" >> "$BLOCKS"
   # Project names are [a-z0-9-] by convention; escape anyway so a name can never
   # become a regex.
   ALT="$ALT|$(printf '%s' "$P" | sed 's/[][\\.*^$(){}?+|/]/\\&/g')"

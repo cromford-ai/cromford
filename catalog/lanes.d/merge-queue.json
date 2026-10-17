@@ -4,7 +4,7 @@
   "scope": "project",
   "factory_stop": "merge",
   "script": "bin/merge-queue.sh",
-  "cadence": "6,26,46 * * * *",
+  "cadence": "*/20 * * * *",
   "boxes": [
     "project-4",
     "project-6",
