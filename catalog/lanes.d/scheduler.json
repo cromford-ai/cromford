@@ -1,0 +1,34 @@
+{
+  "id": "scheduler",
+  "name": "Scheduler (shadow)",
+  "scope": "hub",
+  "script": "bin/scheduler.sh",
+  "cadence": "*/5 * * * *",
+  "boxes": [
+    "hub"
+  ],
+  "switch": {
+    "kind": "flag",
+    "name": "lane-off-scheduler",
+    "aliases": []
+  },
+  "wired": true,
+  "knobs": [
+    {
+      "env": "SCHED_NOW",
+      "type": "string",
+      "default": "",
+      "unit": null,
+      "zero_means": null,
+      "read_in": "bin/scheduler.sh",
+      "note": "BH-6978 test seam: epoch seconds used instead of the clock (the tick time and its window). Only all-digit values are used. NOT settable from the control plane.",
+      "settable": false
+    }
+  ],
+  "stats": {
+    "cost_stage": null,
+    "cost_project_filter": null,
+    "lanes_row": false,
+    "log": "logs/scheduler.log"
+  }
+}

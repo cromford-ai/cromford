@@ -249,6 +249,14 @@ dd_render() {
        else empty end),
       (if (.factory_manager.ok? == true) and ((.factory_manager.data_lane.total? | type) == "number") and (.factory_manager.data_lane.total > 0)
        then "Factory manager, data lane: applied \(.factory_manager.data_lane.applied | num) migrations ahead of merge, \(.factory_manager.data_lane.escalated | num) escalated \($c)/"
-       else empty end)
+       else empty end),
+
+      # Scheduler shadow (BH-6978): only when the lane merged .scheduler_shadow
+      (if has("scheduler_shadow") then (.scheduler_shadow | if .ok != true then failed("Scheduler shadow"; "/")
+       elif (.projects | length) == 0 then "Scheduler shadow: no ticks on \(.day // $d.day | s). \($c)/"
+       else .projects[] | "Scheduler shadow, \(.project | s): \(if .rate == null then "no compared verdicts"
+           else "\(.rate * 1000 | round / 10)% agree" end) (\(.agreed | num) of \(.compared | num) compared, \(.idle | num) idle, \(.ticks | num) ticks).\(
+           if (.top | length) == 0 then "" else " Top disagreements: \([.top[:5][] | "\(.reason_class | s) \(.n | num)"] | join(", "))." end) \($c)/"
+       end) else empty end)
   ' "$json"
 }

@@ -6,6 +6,7 @@
 #   GET /api/metrics/daily-digest   (worker/jobs/src/routes/daily-digest.js)
 #   GET /api/metrics/outcome-gap    (worker/jobs/src/routes/outcome-gap.js, BH-4017)
 #   GET /api/archie/actions         (worker/jobs/src/routes/archie-actions.js, BH-4583)
+#   GET /api/scheduler/agreement    (worker/jobs/src/routes/scheduler.js, BH-6978)
 #   dd_summary / dd_render          (bin/lib/daily-digest-{summary,render}.sh)
 #
 # THE RUN, in this order. Steps 1-4 happen before any request of its own.
@@ -35,6 +36,8 @@
 #      lane's action ledger) merged as .factory_manager, the same way: a 404
 #      leaves it out with one note, any other failure is {ok:false}. A day
 #      with any action is not empty;
+#   7d. GET /api/scheduler/agreement?day=<D> (BH-6978) merged as
+#      .scheduler_shadow, the same way. It never makes the day not empty;
 #   8. write state/daily-digest/<D>.json; dd_summary rc 0 hands its file to
 #      dd_render, anything else hands `-`. dd_render non-zero or blank: one
 #      warn `daily-digest-render:<D>` a day, summary ` render-failed`, exit
@@ -248,6 +251,21 @@ else
   fi
   merged=$(jq -c --slurpfile f "$TMP/fm.json" '.factory_manager = $f[0] | if ($f[0].total // 0) > 0 then .empty = false else . end' <<<"$body") && body=$merged
 fi
+# >>> scheduler shadow (BH-6978)
+# The scheduler's shadow agreement on D, merged as .scheduler_shadow. Same
+# contract as the two blocks above: 404 = the route is not deployed yet, left
+# out with one note; any other failure is {ok:false}. A quiet shadow day never
+# makes the day not empty.
+_jobs_req GET "/api/scheduler/agreement?day=$D" > "$TMP/sched.json"; scrc=$?
+if [ "$scrc" = 2 ] && [ "${JOBS_HTTP:-}" = 404 ]; then
+  note "scheduler-shadow: GET /api/scheduler/agreement answered 404 (not deployed yet); the line is left out of $D"
+else
+  if [ "$scrc" != 0 ] || ! jq -e 'type == "object" and .ok == true and (.projects | type) == "array"' "$TMP/sched.json" >/dev/null 2>&1; then
+    jq -nc --arg e "read failed (http=${JOBS_HTTP:-none})" '{ok: false, error: $e}' > "$TMP/sched.json"
+  fi
+  merged=$(jq -c --slurpfile s "$TMP/sched.json" '.scheduler_shadow = $s[0]' <<<"$body") && body=$merged
+fi
+# <<< scheduler shadow (BH-6978)
 [ "$(jq -r '.empty == true' <<<"$body")" = true ] && EMPTY=1
 if ! { printf '%s\n' "$body" > "$SD/.$D.json.tmp" && mv -f "$SD/.$D.json.tmp" "$SD/$D.json"; }; then
   alert_once render "daily-digest: could not write state/daily-digest/$D.json. Nothing sent."

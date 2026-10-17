@@ -1,0 +1,11 @@
+# @hub-lanes
+
+# ── SCHEDULER LANE, SHADOW (BH-6978, wave 2 of #6547) ───────────────────────
+# Every 5 min. For each project in the settings row scheduler.projects it
+# computes the ready set of the open ai-build tickets (hard edges, holds, file
+# claims, WIP cap), one reason per ticket that is not ready, and compares it
+# with what triage, sibling-serial, overlap-schedule and STACKED_WAIT did in
+# the same window. One sched_ticks row per tick, one sched_diffs row per
+# disagreement. It dispatches nothing. Lines in logs/scheduler.log.
+# Off: flags/lane-off-scheduler (bin/harness-ctl.sh off scheduler).
+*/5 * * * * /root/harness/bin/hub-lease.sh check && /root/harness/bin/scheduler.sh --all >> /root/harness/logs/scheduler-cron.log 2>&1
