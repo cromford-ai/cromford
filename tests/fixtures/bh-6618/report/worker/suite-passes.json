@@ -1,0 +1,121 @@
+{
+ "repo": "example-org/cromford",
+ "since": "2026-09-15",
+ "suites": [
+  {
+   "suite": "tests/false-one.bh-6618-fixture.sh",
+   "passes": 2,
+   "fails": 1
+  },
+  {
+   "suite": "tests/false-only.bh-6618-fixture.sh",
+   "passes": 5,
+   "fails": 2
+  },
+  {
+   "suite": "tests/p01.bh-6618-fixture.sh",
+   "passes": 1,
+   "fails": 0
+  },
+  {
+   "suite": "tests/p02.bh-6618-fixture.sh",
+   "passes": 2,
+   "fails": 0
+  },
+  {
+   "suite": "tests/p03.bh-6618-fixture.sh",
+   "passes": 3,
+   "fails": 0
+  },
+  {
+   "suite": "tests/p04.bh-6618-fixture.sh",
+   "passes": 4,
+   "fails": 0
+  },
+  {
+   "suite": "tests/p05.bh-6618-fixture.sh",
+   "passes": 5,
+   "fails": 0
+  },
+  {
+   "suite": "tests/p06.bh-6618-fixture.sh",
+   "passes": 6,
+   "fails": 0
+  },
+  {
+   "suite": "tests/p07.bh-6618-fixture.sh",
+   "passes": 7,
+   "fails": 0
+  },
+  {
+   "suite": "tests/p08.bh-6618-fixture.sh",
+   "passes": 8,
+   "fails": 0
+  },
+  {
+   "suite": "tests/p09.bh-6618-fixture.sh",
+   "passes": 9,
+   "fails": 0
+  },
+  {
+   "suite": "tests/p10.bh-6618-fixture.sh",
+   "passes": 10,
+   "fails": 0
+  },
+  {
+   "suite": "tests/p11.bh-6618-fixture.sh",
+   "passes": 11,
+   "fails": 0
+  },
+  {
+   "suite": "tests/p12.bh-6618-fixture.sh",
+   "passes": 12,
+   "fails": 0
+  },
+  {
+   "suite": "tests/p13.bh-6618-fixture.sh",
+   "passes": 13,
+   "fails": 0
+  },
+  {
+   "suite": "tests/p14.bh-6618-fixture.sh",
+   "passes": 14,
+   "fails": 0
+  },
+  {
+   "suite": "tests/p15.bh-6618-fixture.sh",
+   "passes": 15,
+   "fails": 0
+  },
+  {
+   "suite": "tests/p16.bh-6618-fixture.sh",
+   "passes": 16,
+   "fails": 0
+  },
+  {
+   "suite": "tests/p17.bh-6618-fixture.sh",
+   "passes": 17,
+   "fails": 0
+  },
+  {
+   "suite": "tests/p18.bh-6618-fixture.sh",
+   "passes": 18,
+   "fails": 0
+  },
+  {
+   "suite": "tests/real-main.bh-6618-fixture.sh",
+   "passes": 9,
+   "fails": 1
+  },
+  {
+   "suite": "tests/real-pr.bh-6618-fixture.sh",
+   "passes": 45,
+   "fails": 5
+  },
+  {
+   "suite": "tests/renamed.bh-6618-fixture.sh",
+   "passes": 0,
+   "fails": 0
+  }
+ ]
+}

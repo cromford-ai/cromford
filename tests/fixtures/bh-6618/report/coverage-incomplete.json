@@ -1,0 +1,17 @@
+{
+  "window": {
+    "from": "2026-09-15",
+    "to": "2026-10-14",
+    "days": 30
+  },
+  "repo": "example-org/cromford",
+  "generated_at": "2026-10-14T12:00:00Z",
+  "runs_listed": 40,
+  "red_runs": 5,
+  "red_runs_read": 3,
+  "unread": 2,
+  "gh_reads": 12,
+  "incomplete": true,
+  "days_unlisted": 0,
+  "stop": "max-reads"
+}

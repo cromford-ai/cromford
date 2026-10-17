@@ -1,0 +1,138 @@
+{
+ "rows": [
+  {
+   "suite": "tests/false-one.bh-6618-fixture.sh",
+   "seconds": 300,
+   "source_run": 9300101,
+   "samples": 3,
+   "updated_at": "2026-10-13T00:00:00Z"
+  },
+  {
+   "suite": "tests/false-only.bh-6618-fixture.sh",
+   "seconds": 42,
+   "source_run": 9300100,
+   "samples": 3,
+   "updated_at": "2026-10-13T00:00:00Z"
+  },
+  {
+   "suite": "tests/p01.bh-6618-fixture.sh",
+   "seconds": 10,
+   "source_run": 9300001,
+   "samples": 3,
+   "updated_at": "2026-10-13T00:00:00Z"
+  },
+  {
+   "suite": "tests/p02.bh-6618-fixture.sh",
+   "seconds": 20,
+   "source_run": 9300002,
+   "samples": 3,
+   "updated_at": "2026-10-13T00:00:00Z"
+  },
+  {
+   "suite": "tests/p03.bh-6618-fixture.sh",
+   "seconds": 30,
+   "source_run": 9300003,
+   "samples": 3,
+   "updated_at": "2026-10-13T00:00:00Z"
+  },
+  {
+   "suite": "tests/p04.bh-6618-fixture.sh",
+   "seconds": 40,
+   "source_run": 9300004,
+   "samples": 3,
+   "updated_at": "2026-10-13T00:00:00Z"
+  },
+  {
+   "suite": "tests/p05.bh-6618-fixture.sh",
+   "seconds": 50,
+   "source_run": 9300005,
+   "samples": 3,
+   "updated_at": "2026-10-13T00:00:00Z"
+  },
+  {
+   "suite": "tests/p06.bh-6618-fixture.sh",
+   "seconds": 60,
+   "source_run": 9300006,
+   "samples": 3,
+   "updated_at": "2026-10-13T00:00:00Z"
+  },
+  {
+   "suite": "tests/p07.bh-6618-fixture.sh",
+   "seconds": 70,
+   "source_run": 9300007,
+   "samples": 3,
+   "updated_at": "2026-10-13T00:00:00Z"
+  },
+  {
+   "suite": "tests/p08.bh-6618-fixture.sh",
+   "seconds": 80,
+   "source_run": 9300008,
+   "samples": 3,
+   "updated_at": "2026-10-13T00:00:00Z"
+  },
+  {
+   "suite": "tests/p09.bh-6618-fixture.sh",
+   "seconds": 90,
+   "source_run": 9300009,
+   "samples": 3,
+   "updated_at": "2026-10-13T00:00:00Z"
+  },
+  {
+   "suite": "tests/p10.bh-6618-fixture.sh",
+   "seconds": 100,
+   "source_run": 9300010,
+   "samples": 3,
+   "updated_at": "2026-10-13T00:00:00Z"
+  },
+  {
+   "suite": "tests/p11.bh-6618-fixture.sh",
+   "seconds": 110,
+   "source_run": 9300011,
+   "samples": 3,
+   "updated_at": "2026-10-13T00:00:00Z"
+  },
+  {
+   "suite": "tests/p12.bh-6618-fixture.sh",
+   "seconds": 120,
+   "source_run": 9300012,
+   "samples": 3,
+   "updated_at": "2026-10-13T00:00:00Z"
+  },
+  {
+   "suite": "tests/p13.bh-6618-fixture.sh",
+   "seconds": 130,
+   "source_run": 9300013,
+   "samples": 3,
+   "updated_at": "2026-10-13T00:00:00Z"
+  },
+  {
+   "suite": "tests/p14.bh-6618-fixture.sh",
+   "seconds": 140,
+   "source_run": 9300014,
+   "samples": 3,
+   "updated_at": "2026-10-13T00:00:00Z"
+  },
+  {
+   "suite": "tests/p15.bh-6618-fixture.sh",
+   "seconds": 150,
+   "source_run": 9300015,
+   "samples": 3,
+   "updated_at": "2026-10-13T00:00:00Z"
+  },
+  {
+   "suite": "tests/p16.bh-6618-fixture.sh",
+   "seconds": 160,
+   "source_run": 9300016,
+   "samples": 3,
+   "updated_at": "2026-10-13T00:00:00Z"
+  },
+  {
+   "suite": "tests/real-pr.bh-6618-fixture.sh",
+   "seconds": 100,
+   "source_run": 9300102,
+   "samples": 3,
+   "updated_at": "2026-10-13T00:00:00Z"
+  }
+ ],
+ "count": 19
+}

@@ -1,0 +1,19 @@
+{
+ "flakes": [
+  {
+   "repo": "example-org/cromford",
+   "workflow": "harness-ci",
+   "test": "tests/false-only.bh-6618-fixture.sh",
+   "head": "bbbbbbb2bbbbbbb2bbbbbbb2bbbbbbb2bbbbbbb2",
+   "day": "2026-10-05"
+  },
+  {
+   "repo": "example-org/cromford",
+   "workflow": "harness-ci",
+   "test": "tests/p03.bh-6618-fixture.sh",
+   "head": "bbbbbbb3bbbbbbb3bbbbbbb3bbbbbbb3bbbbbbb3",
+   "day": "2026-10-09"
+  }
+ ],
+ "as_of": "2026-10-14T12:00:00Z"
+}

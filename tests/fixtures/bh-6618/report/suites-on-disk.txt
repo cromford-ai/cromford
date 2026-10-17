@@ -1,0 +1,8 @@
+tests/clash-a.bh-6618-fixture.sh
+tests/clash_a.bh-6618-fixture.sh
+tests/false-one.bh-6618-fixture.sh
+tests/mc/disk-only.bh-6618-fixture.sh
+tests/never-ran.bh-6618-fixture.sh
+tests/p01.bh-6618-fixture.sh
+tests/unknown-only.bh-6618-fixture.sh
+worker/jobs/test/disk-only.bh-6618-fixture.test.js
