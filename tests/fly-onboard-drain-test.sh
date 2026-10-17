@@ -50,7 +50,9 @@ hub() { # hub <dir> — a scratch harness root with the drain's neighbours in it
     > "$HB/bin/fly-onboard.sh"
   chmod +x "$HB/bin"/*.sh
   : > "$HB/env/global.env"
-  cp "$DIR/fly/onboard-queue.conf" "$HB/fly/"
+  # Header only: real project lines in the committed file are routing
+  # decisions, not fixture rows, and must not be drained by this test.
+  grep -E '^[[:space:]]*(#|$)' "$DIR/fly/onboard-queue.conf" > "$HB/fly/onboard-queue.conf"
   ARGV="$HB/logs/onboard-argv.log"
 }
 queue() { printf '%s\n' "$@" >> "$HB/fly/onboard-queue.conf"; }

@@ -70,7 +70,10 @@ mkrepo() { # mkrepo <dir> — a scratch checkout the real loader can run inside
      "$DIR/bin/render-crontab.sh" "$R/bin/"
   cp "$DIR/bin/lib/cron-lines.sh" "$R/bin/lib/"
   cp "$DIR/prompts/TEMPLATE-GH.md" "$R/prompts/"
-  cp "$DIR/fly/onboard-queue.conf" "$R/fly/"
+  # Header only: the committed file may carry real project lines (routing
+  # decisions), and they must not leak into this fixture's line counts.
+  grep -E '^[[:space:]]*(#|$)' "$DIR/fly/onboard-queue.conf" > "$R/fly/onboard-queue.conf"
+  cp "$R/fly/onboard-queue.conf" "$R/queue-baseline.conf"
   cat > "$R/fleet.conf" <<'CONF'
 # project      repo                       prod                                 pfx off box                     tailnet_ip
 alpha          example-org/alpha            -                                    -   1  box-small     10.0.0.13
@@ -117,8 +120,8 @@ grep -q 'already carries gamma — skipping' <<<"$OUT" \
 B="$T/b"; mkrepo "$B"
 load "$B" example-org/gamma --no-bootstrap
 [ "$RC" = 0 ] && ok || bad "the default path must exit 0 (got $RC): $OUT"
-cmp -s "$B/fly/onboard-queue.conf" "$DIR/fly/onboard-queue.conf" \
-  && ok || bad "without --fly the queue file must be byte-identical to the committed one"
+cmp -s "$B/fly/onboard-queue.conf" "$B/queue-baseline.conf" \
+  && ok || bad "without --fly the queue file must be byte-identical to the fixture copy"
 grep -q 'fly onboarding' <<<"$(printf '%s\n' "$OUT")" \
   && bad "without --fly the loader must not mention onboarding at all: $OUT" || ok
 grep -E '^add .*fly/onboard-queue.conf' "$B/git.log" >/dev/null \
@@ -130,7 +133,7 @@ grep -E '^commit ' "$B/git.log" >/dev/null \
 C="$T/c"; mkrepo "$C"
 load "$C" example-org/gamma --fly --bogus --no-bootstrap
 [ "$RC" = 2 ] && ok || bad "an unknown flag must still exit 2 (got $RC): $OUT"
-cmp -s "$C/fly/onboard-queue.conf" "$DIR/fly/onboard-queue.conf" \
+cmp -s "$C/fly/onboard-queue.conf" "$C/queue-baseline.conf" \
   && ok || bad "a refused invocation must queue nothing"
 
 echo "load-project-fly-flag: $PASS pass, $FAIL fail"
