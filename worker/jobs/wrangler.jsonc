@@ -21,6 +21,14 @@
   "preview_urls": false,
   "d1_databases": [
     { "binding": "DB", "database_name": "harness-jobs", "database_id": "00000000-0000-0000-0000-000000000000" }
+    // BH-6774: the archive store (src/lib/archive.js). Commented out until the
+    // database exists: a binding with no real database_id fails every deploy,
+    // and harness-sync deploys this worker on every sync. With it absent the
+    // worker moves nothing to the archive and deletes nothing an archive rule
+    // owns. Operator steps (once): `npx wrangler d1 create harness-archive`
+    // (from worker/jobs), paste its database_id below, uncomment the line
+    // (and the comma above it), deploy. The worker creates the archive tables.
+    // ,{ "binding": "ARCHIVE", "database_name": "harness-archive", "database_id": "<id from wrangler d1 create harness-archive>" }
   ],
   // BH-5781: seconds an isolate reuses its settings snapshot (0..60, 0 = off).
   // The `settings_cache_ttl_s` settings row overrides it. See src/lib/settings-cache.js.

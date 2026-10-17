@@ -9,6 +9,7 @@
 import { json } from "../lib/http.js";
 import { laneDedupResponse } from "../lib/lane-dedup.js";
 import { readFleetFlag } from "../lib/harness-flags.js";
+import { archiveBound, archivedCostHashes } from "../lib/archive.js";
 import {
   numOrNull, intOrNull, str, ensureColumns, ensureTable, ANCHOR_DEFAULT_ACCOUNT_MAP,
   ANCHOR_DEFAULT_MAX_FACTOR, ANCHOR_OFF_FLAG, parseAccountMap, anchorWindow,
@@ -432,11 +433,36 @@ export const routes = [
       if (rows.length > 2000) return json(400, { error: "at most 2000 rows per request" });
       // Before the first write that needs them, exactly like pr_costs.auth_account.
       await ensureColumns(env, "cost_rows");
+      // BH-6774: a row already moved to the archive store must not land in the
+      // hot store again (a resend after a cursor reset). Only a row older than a
+      // day can be archived, so a push of recent rows never reads the archive;
+      // older ones are looked up in one read. An archive that cannot be read
+      // refuses the push (503): the client resends after a failure, and a
+      // guess here would double-count.
+      let archived = new Set();
+      if (archiveBound(env)) {
+        const dayAgo = new Date(Date.parse(t) - 86400e3).toISOString().replace(/\.\d{3}Z$/, "Z");
+        const old = rows.filter((r) => typeof r.ts === "string" && r.ts < dayAgo && str(r.row_hash, 64))
+          .map((r) => ({ row_hash: str(r.row_hash, 64), ts: r.ts }));
+        if (old.length) {
+          try {
+            archived = await archivedCostHashes(env, box, old);
+          } catch (e) {
+            const why = String((e && e.message) || e).slice(0, 200);
+            // One line in the worker log per refused push; the box alerts on its
+            // third failed push in a row (bin/lib/jobs/cost.sh holds the cursor).
+            console.log(`ALERT cost-rows: archive unreadable, push from ${box} refused (503): ${why}`);
+            return json(503, { error: `archive unreadable: ${why}` });
+          }
+        }
+      }
+      let skippedArchived = 0;
       const stmts = [];
       for (const r of rows) {
         const hash = str(r.row_hash, 64);
         const lineNo = intOrNull(r.line_no);
         if (!hash || lineNo === null) continue;
+        if (archived.has(hash)) { skippedArchived++; continue; }
         stmts.push(env.DB.prepare(
           `INSERT INTO cost_rows (box, row_hash, line_no, ts, host, project, stage, runner, model,
                                   rc, duration_s, input_toks, output_toks, cache_read, cache_write,
@@ -477,6 +503,11 @@ export const routes = [
                // body only; the mirror never sends it, so the fill above adds it).
                str(r.participant, 64)));
       }
+      // A chunk whose rows are all archived already is a success: the client
+      // moves its cursor past it. Only a chunk with no valid row is a 400.
+      if (!stmts.length && skippedArchived > 0) {
+        return json(200, { accepted: 0, inserted: 0, skipped_archived: skippedArchived, as_of: t });
+      }
       if (!stmts.length) return json(400, { error: "no row carried row_hash and line_no" });
       const results = await env.DB.batch(stmts);
       // `inserted` is what D1 reports as changed: a new row, or (BH-3220) a
@@ -487,7 +518,7 @@ export const routes = [
       // accepted minus inserted as the dup count.
       const inserted = (Array.isArray(results) ? results : [])
         .reduce((a, x) => a + ((x && x.meta && Number(x.meta.changes)) || 0), 0);
-      return json(200, { accepted: stmts.length, inserted, as_of: t });
+      return json(200, { accepted: stmts.length, inserted, skipped_archived: skippedArchived, as_of: t });
     },
   ],
 

@@ -10,7 +10,8 @@
 //   R3 stage_events: old events of closed jobs are summed into
 //      stage_events_daily, then removed; the sums equal the removed rows;
 //      events of a running job stay
-//   R4 cost_rows and ledgers are never touched
+//   R4 cost_rows and ledgers are never touched (with the defaults: the
+//      BH-6774 cost_rows.archive rule is off)
 //   R5 dry run (the seeded default): every count is written to retention_runs,
 //      no row is removed
 //   R6 budget: a backlog bigger than retention.max_rows drains across runs,
@@ -113,7 +114,11 @@ test('R4 cost_rows and ledgers are never touched', async (t) => {
   assert.equal(r.status, 200);
   assert.equal(count(db, 'SELECT COUNT(*) n FROM cost_rows'), 1);
   assert.equal(count(db, 'SELECT COUNT(*) n FROM ledgers'), 1);
-  assert.ok(!r.body.rules.some((x) => /cost_rows|ledgers/.test(x.table)), 'no rule names cost_rows or ledgers');
+  // TEST-CHANGE (BH-6774): cost_rows now has a rule, cost_rows.archive, that MOVES
+  // rows to the archive store and is off by default; ledgers still have none.
+  assert.ok(!r.body.rules.some((x) => x.table === 'ledgers'), 'no rule names ledgers');
+  assert.ok(r.body.rules.filter((x) => x.table === 'cost_rows').every((x) => x.off === true),
+    'the only cost_rows rule (cost_rows.archive) is off by default');
 });
 
 test('R5 dry run (the seeded default) counts and writes the audit rows, and removes nothing', async (t) => {

@@ -14,10 +14,20 @@
 //   run removes at most max_rows per rule in statements of `batch` rows, so a
 //   large backlog drains over several hourly runs instead of in one burst.
 //
-// NEVER DELETED HERE: cost_rows and ledgers (money and history). There is no
-//   rule for them. Archiving them is a later slice. stage_events_daily rows
-//   leave hot only with a verified copy in the archive D1 (BH-7109,
-//   lib/archive-daily.js), and that rule is off by default.
+// NEVER DELETED HERE: ledgers (claim keys as well as history: an archived row
+//   would read as "not done"; BH-6774 C2 moves kinds one by one). cost_rows are
+//   never deleted either: the cost_rows.archive rule MOVES them to the archive
+//   store (BH-6774), off by default (retention.cost_rows.archive_days = 0).
+//   stage_events_daily rows leave hot only with a verified copy in the archive
+//   D1 (BH-7109, lib/archive-daily.js), and that rule is off by default.
+//
+// COPY BEFORE DELETE (BH-6774). A rule with `archive` copies each batch to
+//   the archive D1 (src/lib/archive.js), counts it back, and only then runs the
+//   delete. A failed or short copy deletes nothing and records the error. With
+//   the archive binding absent, such a rule deletes nothing and its audit row says
+//   "archive not bound" (a dry run still counts). stage_events archive only
+//   when retention.stage_events.archive=1; with it 0 they are rolled up and
+//   deleted as in BH-6750.
 //
 // Every setting is a settings row (worker/jobs/schema.d/*-bh-6750-*.sql). A
 // value that is not an integer in range falls back to the code default below;
@@ -25,8 +35,10 @@
 import { d1Guarded, json } from "../lib/http.js";
 import { settingsRows } from "../lib/settings-cache.js";
 import { ARCHIVE_NOT_BOUND, archiveDailyBound, moveDailyBatch } from "../lib/archive-daily.js";
+import { archiveBound, archiveCopy, ensureArchiveTable } from "../lib/archive.js";
 
 const DAY_MS = 86400e3;
+export const COST_ARCHIVE_FLOOR_DAYS = 60;
 
 // rule: the id read takes (?1 cutoff, ?2 limit) and returns `id`; the delete
 // takes (?1 a JSON array of ids). `rollup` (optional) takes the same JSON ids
@@ -63,6 +75,8 @@ export const RULES = [
   },
   {
     rule: "stage_events.closed", table: "stage_events", key: "retention.stage_events.days", def: 90,
+    archive: "stage_events", archiveFlag: "retention.stage_events.archive",
+    sel: "SELECT * FROM stage_events WHERE id IN (SELECT value FROM json_each(?1))",
     ids: `SELECT e.id AS id FROM stage_events e LEFT JOIN jobs j ON j.id = e.job_id
            WHERE e.created_at < ?1 AND (j.id IS NULL OR j.status <> 'running')
            ORDER BY e.created_at LIMIT ?2`,
@@ -93,6 +107,19 @@ export const RULES = [
     del: `DELETE FROM stage_events_daily WHERE rowid IN
            (SELECT d.rowid FROM json_each(?1) j JOIN stage_events_daily d
              ON d.rowid = json_extract(j.value, '$.id') AND d.n = json_extract(j.value, '$.n'))`,
+  },
+  {
+    // BH-6774: cost rows older than the window MOVE to the archive store. The
+    // id is the rowid (the key is (box, row_hash)); the read is the ts index.
+    rule: "cost_rows.archive", table: "cost_rows", key: "retention.cost_rows.archive_days", def: 0,
+    // The floor is the widest window of a hot-only cost_rows reader
+    // (test/archive-readers.d/*.json: triage-waste.js, 60 d). Every wide reader
+    // reads the archive too (lib/archive-read.js). A window below 60 runs as 60.
+    floorDays: COST_ARCHIVE_FLOOR_DAYS,
+    archive: "cost_rows",
+    ids: "SELECT rowid AS id FROM cost_rows WHERE ts < ?1 ORDER BY ts LIMIT ?2",
+    sel: "SELECT * FROM cost_rows WHERE rowid IN (SELECT value FROM json_each(?1))",
+    del: "DELETE FROM cost_rows WHERE rowid IN (SELECT value FROM json_each(?1))",
   },
   {
     rule: "lane_ticks.stale", table: "lane_ticks", key: "retention.lane_ticks.days", def: 30,
@@ -228,9 +255,19 @@ const iso = (ms) => new Date(ms).toISOString().replace(/\.\d{3}Z$/, "Z");
 async function runRule(env, r, o) {
   const started = iso(Date.now());
   const out = { rule: r.rule, table: r.table, cutoff: null, counted: 0, removed: 0, rolled_up: 0, backlog: false, off: false, error: null };
-  const days = intSetting(o.byKey, r.key, r.def, 0, 3650);
-  if (days === 0) { out.off = true; return { out, started }; }
+  const set = intSetting(o.byKey, r.key, r.def, 0, 3650);
+  if (set === 0) { out.off = true; return { out, started }; }
+  // floorDays: a window below it is raised to it, so no hot-only reader loses
+  // rows inside its own window (BH-6774).
+  const days = Math.max(set, r.floorDays || 0);
   out.cutoff = iso(o.nowMs - days * DAY_MS);
+  const archiving = !!r.archive && (!r.archiveFlag || intSetting(o.byKey, r.archiveFlag, 0, 0, 1) === 1);
+  // An unbound archive rule moves nothing. A dry run still counts, so the
+  // operator sees the estimate before the binding exists (BH-6774).
+  if (archiving && !archiveBound(env)) {
+    out.error = ARCHIVE_NOT_BOUND;
+    if (!o.dryRun) return { out, started };
+  }
   if (r.move && !archiveDailyBound(env)) { out.error = ARCHIVE_NOT_BOUND; return { out, started }; }
   try {
     if (o.dryRun) {
@@ -241,12 +278,22 @@ async function runRule(env, r, o) {
       out.backlog = n > 0;
       return { out, started };
     }
+    let tableReady = false;
     while (out.removed < o.maxRows) {
       const want = Math.min(o.batch, o.maxRows - out.removed);
       const ids = ((await env.DB.prepare(r.ids).bind(out.cutoff, want).all()).results || []).map((x) => x.id);
       if (ids.length === 0) break;
       let arr = JSON.stringify(ids);
       let ok = null;
+      if (archiving) {
+        // Once per run, on the first batch: two PRAGMA reads, not two per batch.
+        if (!tableReady) { await ensureArchiveTable(env, r.archive); tableReady = true; }
+        const rows = (await env.DB.prepare(r.sel).bind(arr).all()).results || [];
+        if (!(await archiveCopy(env, r.archive, rows, iso(Date.now())))) {
+          out.error = `archive copy not verified (${rows.length} rows); nothing deleted`;
+          break;
+        }
+      }
       if (r.move) {
         // A throw (a failed copy) goes to the catch below: nothing is deleted.
         ok = await r.move(env, arr, iso(Date.now()));
