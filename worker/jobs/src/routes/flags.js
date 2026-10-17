@@ -17,8 +17,9 @@
 // too. The routes widen an old table with ensureColumns before they read or
 // write it. A ported name's value is the harness_flags column (BH-4153).
 
-import { d1Guarded, json } from "../lib/http.js";
+import { d1Guarded, d1OverloadGuarded, json } from "../lib/http.js";
 import { ensureColumns, ensureTable } from "../lib/core.js";
+import { isD1Overloaded } from "../lib/d1-retry.js";
 import { CONFIG_KINDS, configChangeStmts, listConfigChanges } from "../lib/config-changes.js";
 import {
   FLAG_NAME_RE, VALUE_MAX, isPortedFlag, validScope, projectPauseRow,
@@ -72,7 +73,18 @@ async function writePorted(env, t, { scope, name, active, value, actor, reason, 
     }),
     ...configChangeStmts(env, CONFIG_KINDS.FLAG, name, was, after, fields, actor, reason, t),
   ]);
-  return json(200, { flag: await readPortedFlag(env, scope, name) });
+  // BH-6805: the batch has committed. An overload on the read-back must not be
+  // the retryable 503 (req.sh would re-send the write, a second audit row or a
+  // false 409). It is a 200 that says the write landed and has no row to show.
+  let flag;
+  try {
+    flag = await readPortedFlag(env, scope, name);
+  } catch (e) {
+    if (!isD1Overloaded(e)) throw e;
+    console.warn(`d1-overload: harness_flags read-back ${name} after a committed write, answered 200 written:true after ${e.d1Attempts ?? "?"} attempt(s)`);
+    return json(200, { flag: null, written: true });
+  }
+  return json(200, { flag });
 }
 
 export const routes = [
@@ -116,8 +128,12 @@ export const routes = [
       if (isPortedFlag(name)) {
         const scope = validScope(url.searchParams.get("scope"));
         if (scope === null) return json(400, { error: "valid scope required" });
-        await ensureTable(env, "harness_flags");
-        flag = await readPortedFlag(env, scope, name);
+        const got = await d1OverloadGuarded("harness_flags", async () => {
+          await ensureTable(env, "harness_flags");
+          return { flag: await readPortedFlag(env, scope, name) };
+        }, `GET ${name}`);
+        if (got instanceof Response) return got;
+        flag = got.flag;
       } else {
         await ensureColumns(env, "pause_flags");
         flag = projectPauseRow(await env.DB.prepare("SELECT * FROM pause_flags WHERE name=?1").bind(name).first());
@@ -160,14 +176,16 @@ export const routes = [
       const scope = validScope(body.scope);
       if (scope === null) return json(400, { error: "valid scope required" });
       const value = body.value === undefined || body.value === null ? null : String(body.value).slice(0, VALUE_MAX);
-      await ensureTable(env, "harness_flags");
-      await ensureTable(env, "config_changes");
-      const was = await readPortedFlag(env, scope, name);
-      if (typeof body.expected_set_at === "string") {
-        const cur = was ? (was.cleared_at ?? was.set_at) : "";
-        if (cur !== body.expected_set_at) return json(409, { error: "flag moved", flag: was });
-      }
-      return writePorted(env, t, { scope, name, active, value, actor, reason, was });
+      return d1OverloadGuarded("harness_flags", async () => {
+        await ensureTable(env, "harness_flags");
+        await ensureTable(env, "config_changes");
+        const was = await readPortedFlag(env, scope, name);
+        if (typeof body.expected_set_at === "string") {
+          const cur = was ? (was.cleared_at ?? was.set_at) : "";
+          if (cur !== body.expected_set_at) return json(409, { error: "flag moved", flag: was });
+        }
+        return writePorted(env, t, { scope, name, active, value, actor, reason, was });
+      }, `PUT ${name}`);
     },
   ],
 
@@ -189,14 +207,16 @@ export const routes = [
       }
       const scope = validScope(url.searchParams.get("scope"));
       if (scope === null) return json(400, { error: "valid scope required" });
-      await ensureTable(env, "harness_flags");
-      await ensureTable(env, "config_changes");
-      const was = await readPortedFlag(env, scope, name);
-      if (!was) return json(404, { error: "not found" });
-      if (was.cleared_at != null) return json(200, { flag: was });
-      return writePorted(env, t, {
-        scope, name, active: 0, value: was.value, actor, reason: reasonIn ?? was.reason, was,
-      });
+      return d1OverloadGuarded("harness_flags", async () => {
+        await ensureTable(env, "harness_flags");
+        await ensureTable(env, "config_changes");
+        const was = await readPortedFlag(env, scope, name);
+        if (!was) return json(404, { error: "not found" });
+        if (was.cleared_at != null) return json(200, { flag: was });
+        return writePorted(env, t, {
+          scope, name, active: 0, value: was.value, actor, reason: reasonIn ?? was.reason, was,
+        });
+      }, `DELETE ${name}`);
     },
   ],
 

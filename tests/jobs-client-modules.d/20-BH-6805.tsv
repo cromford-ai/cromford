@@ -1,0 +1,2 @@
+# tests/jobs-client-modules.d/20-BH-6805.tsv — the flag_set read-back helper in bin/lib/jobs/flags.sh (BH-6805): a 200 that says written:true with no row is a landed write.
+flags	_flag_written

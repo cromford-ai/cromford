@@ -6,6 +6,8 @@
 // Nothing here changed shape: the same header is read, the same comparison is
 // made, the same body is serialised with the same content-type.
 
+import { isD1Overloaded } from "./d1-retry.js";
+
 export function nowIso() { return new Date().toISOString().replace(/\.\d{3}Z$/, "Z"); }
 
 export function json(status, body) {
@@ -42,6 +44,24 @@ export async function d1Guarded(table, fn) {
     const detail = String((e && e.message) || e).slice(0, 200);
     if (/no such table/i.test(detail)) return json(503, { error: `${table} schema not applied`, detail });
     return json(503, { error: `${table} unavailable`, detail });
+  }
+}
+
+// ── A D1 overload is a 503, everything else still throws (BH-6805) ───────────
+// withD1Retry (BH-6690) rethrows an overload after its last attempt. On a route
+// whose "no row" answer means "off" to a box, that give-up must not become a
+// default: it is a 503 whose body says "overloaded", the answer
+// bin/lib/jobs/req.sh retries once and flag_fetch serves from its last-good
+// cache. NARROWER than d1Guarded on purpose (D10): only isD1Overloaded is
+// answered here, and every other error is rethrown as the same object, so
+// withSentry still reports a real bug.
+export async function d1OverloadGuarded(table, fn, label = "") {
+  try {
+    return await fn();
+  } catch (e) {
+    if (!isD1Overloaded(e)) throw e;
+    console.warn(`d1-overload: ${table}${label ? " " + label : ""} answered 503 after ${e.d1Attempts ?? "?"} attempt(s)`);
+    return json(503, { error: `${table} unavailable`, detail: String(e.message).slice(0, 200), retryable: true, d1_attempts: e.d1Attempts ?? null });
   }
 }
 

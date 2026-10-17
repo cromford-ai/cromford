@@ -383,6 +383,11 @@ _flag_cache_write() { # _flag_cache_write <scope> <name> <on true|false> <src> <
     > "$f.tmp.$$" 2>/dev/null && mv "$f.tmp.$$" "$f"
 }
 
+# _flag_written (stdin: the worker's answer) — rc 0 when a 200 says the write
+# committed but the read-back had no row: writePorted's {flag:null, written:true}
+# under a D1 overload (BH-6805). A landed write, never re-sent.
+_flag_written() { jq -e '(.written == true) and (.flag == null)' >/dev/null 2>&1; }
+
 # _flag_norm <name> <scope>  (stdin: the worker's answer) -> {name,scope,value,set_at,cleared_at}
 # for .flag, or nothing. A legacy pause_flags row (no set_at) is projected the
 # way the worker projects one; anything else is unreadable.
@@ -554,6 +559,12 @@ flag_set() { # flag_set [--scope S] [--hold-local] <name> [on|off|<value>] [reas
       rm -f "$(_flag_dir)/$name" 2>/dev/null
       return 0
     fi
+    if _flag_written <<<"$resp"; then
+      _flag_cache_write "$scope" "$name" true db "$(_flag_now)"
+      rm -f "$(_flag_dir)/$name" 2>/dev/null
+      JOBS_ALERT=0 _jobs_log "flag $name: written, read-back overloaded — cached without a row"
+      return 0
+    fi
     JOBS_ALERT=0 _jobs_log "flag $name: PUT answered without an active row — not written"
   fi
   [ "$hold" = 1 ] && _flag_cache_write "$scope" "$name" true local "$(_flag_now)"
@@ -600,6 +611,12 @@ flag_clear() { # flag_clear [--scope S] <name> [reason]
     if [ -n "$row" ] && [ "$(jq -r '.cleared_at' <<<"$row")" != null ]; then
       _flag_cache_write "$scope" "$name" false db "$(_flag_now)" "$row"
       rm -f "$(_flag_dir)/$name" 2>/dev/null
+      return 0
+    fi
+    if _flag_written <<<"$resp"; then
+      _flag_cache_write "$scope" "$name" false db "$(_flag_now)"
+      rm -f "$(_flag_dir)/$name" 2>/dev/null
+      JOBS_ALERT=0 _jobs_log "flag $name: written, read-back overloaded — cached without a row"
       return 0
     fi
     JOBS_ALERT=0 _jobs_log "flag $name: DELETE answered without a cleared row — not cleared"
@@ -750,6 +767,11 @@ _flag_import_one() {
     row=$(printf '%s' "$resp" | _flag_norm "$name" "$scope")
     if [ -n "$row" ] && [ "$(jq -r .cleared_at <<<"$row")" = null ]; then
       _flag_cache_write "$scope" "$name" true db "$(_flag_now)" "$row"; rm -f "$f"
+      echo "imported $name $scope"; return 0
+    fi
+    if _flag_written <<<"$resp"; then
+      _flag_cache_write "$scope" "$name" true db "$(_flag_now)"; rm -f "$f"
+      JOBS_ALERT=0 _jobs_log "flag $name: written, read-back overloaded — cached without a row"
       echo "imported $name $scope"; return 0
     fi
     echo "failed $name not-read-back"; return 1
