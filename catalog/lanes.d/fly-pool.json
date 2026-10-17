@@ -70,7 +70,7 @@
       "max": 100,
       "unit": "jobs",
       "zero_means": "off",
-      "note": "Queued jobs one tick will consider."
+      "note": "Stand-downs one build may take before its queue row is closed failed and handed to bin/blocked-resolver.sh for a fresh rebuild (BH-7190 corrects this note: it is not a count of queued jobs a tick reads). Per-project row: lane.fly-pool.<project>.jobs_queue_defer_max. A stand-down on a named blocker (After:) never counts."
     },
     {
       "env": "DEFER_AFTER_LOOP_ALERT",
@@ -223,7 +223,7 @@
       "max": 100,
       "unit": "spawns",
       "zero_means": null,
-      "note": "Machine spawns one build key may buy inside the window. The settings row pool_spawn_cap_per_key wins over this env."
+      "note": "Machine spawns one build key may buy inside the window. First hit wins: the per-project row lane.fly-pool.<project>.pool_spawn_cap_per_key (BH-7190), the fleet-wide row pool_spawn_cap_per_key, then this env."
     },
     {
       "env": "POOL_SPAWN_CAP_WINDOW_S",

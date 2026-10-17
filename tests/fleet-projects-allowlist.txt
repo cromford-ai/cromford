@@ -65,3 +65,4 @@ alerts-medic.sh          the SRE medic PROMPT spells out each board's per-app tr
 # ── a DELIBERATE, LOUD fail-open list ────────────────────────────────────────
 reopen-metrics.sh        project list is fleet-conf.sh; the four names are the documented fail-open for an unreadable registry (snapshot() must carry their board prefixes, which nothing else can supply) and are pinned by tests/reopen-fleetconf-test.sh
 lander.sh                the lander's fix-agent set is the four original in-app-board projects by design (BH-4080 review): fleet.conf's board column also holds project-8 and project-9, and widening a paid fix lane is its own ticket
+pool-never-wait-seed.sh  BH-7190: seeds the "never wait" rows for exactly the two projects the operator named (project-6-os, cromford); not a fleet enumeration.

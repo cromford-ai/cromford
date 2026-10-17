@@ -1,0 +1,12 @@
+{
+  "env": "POOL_MACHINE_HOURS_DAILY",
+  "type": "float",
+  "default": 0,
+  "min": 0,
+  "max": 100000,
+  "unit": "machine-hours",
+  "zero_means": "off",
+  "required": false,
+  "read_in": "bin/pool-budget.sh",
+  "note": "BH-7190. Per-project daily machine-hour budget for the Fly pool, as the settings row `lane.fly-pool.<project>.pool_machine_hours_daily`. bin/pool-budget.sh (run by fly-pool-tick) sums the project's machine running time inside the current UTC day and ALERTS at POOL_BUDGET_ALERT_PCT and again at 100%. It never stops a machine, holds a queue row or changes a cap: the pool has no slot cap, and this budget bounds it by money. One machine-hour costs about $0.45 (performance-8x, 16 GB, catalog/fly-prices.json). 0 or no row = no budget for that project."
+}

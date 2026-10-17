@@ -1058,10 +1058,26 @@ pool_newest_rearm_at() {
   printf '%s\n' "$ts"
 }
 
+# BH-7190: this project's own cap row, `lane.fly-pool.<project>.pool_spawn_cap_per_key`
+# (the lane-knob key form, bin/lib/lane-gate.sh _lg_setting_key). It wins over the
+# fleet-wide row, so one project can run "never wait" while the rest keep the
+# fleet value. Prints digits, or nothing for no row, a junk value or an illegal key.
+pool_spawn_cap_project_row() {
+  local k v
+  k=$(printf 'lane.fly-pool.%s.pool_spawn_cap_per_key' "${P:-}" | tr '[:upper:]' '[:lower:]')
+  case "$k" in *[!a-z0-9_.-]*) return 0 ;; esac
+  [ "${#k}" -le 64 ] || return 0
+  v=$("$HARNESS/bin/jobs-client.sh" setting-get "$k" 2>/dev/null) || v=""
+  v=$(printf '%s' "$v" | tr -d '[:space:]')
+  case "$v" in ''|*[!0-9]*) return 0 ;; esac
+  printf '%s\n' "$v"
+}
+
 # Load cap/window for this tick. Defaults: 2 / 86400.
 pool_spawn_cap_load() {
   local v w
-  v=$("$HARNESS/bin/jobs-client.sh" setting-get pool_spawn_cap_per_key 2>/dev/null) || v=""
+  v=$(pool_spawn_cap_project_row)
+  [ -n "$v" ] || v=$("$HARNESS/bin/jobs-client.sh" setting-get pool_spawn_cap_per_key 2>/dev/null) || v=""
   case "$v" in ''|*[!0-9]*) v="${POOL_SPAWN_CAP_PER_KEY:-}" ;; esac
   case "$v" in ''|*[!0-9]*) v=2 ;; esac
   w=$("$HARNESS/bin/jobs-client.sh" setting-get pool_spawn_cap_window_s 2>/dev/null) || w=""

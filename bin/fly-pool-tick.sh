@@ -231,4 +231,10 @@ if [ -r "$Q" ]; then
   fi
 fi
 # <<< fly-onboard-drain
+# >>> pool machine-hour budget (BH-7190)
+# One pass over every pool project: log the day's machine-hours and ALERT at the
+# budget row's percent. Alert only, it changes no cap and stops no machine, and it
+# is bounded by its own timeout so a slow settings read cannot hold the tick.
+[ -x "$H/bin/pool-budget.sh" ] && HARNESS="$H" timeout 120 "$H/bin/pool-budget.sh" >/dev/null 2>&1 || true
+# <<< pool machine-hour budget
 exit 0

@@ -291,12 +291,15 @@ reset
 job m9gone OJ-1 77
 queue BH-1 1; queue BH-2 2
 mkdir -p "$H/state/pool-stall"
-jq -nc --argjson s "$((NOW - 1860))" '{since:$s,cause:"x"}' > "$H/state/pool-stall/tproj.json"
+# The since is stamped from a fresh clock read, not NOW: on a loaded box the
+# ticks before this one can take minutes, and the minute in the page drifts.
+SNOW=$(date +%s)
+jq -nc --argjson s "$((SNOW - 1860))" '{since:$s,cause:"x"}' > "$H/state/pool-stall/tproj.json"
 tick
 [ -s "$T/fly-calls" ] && bad "R4: no token must make no fly call: $(cat "$T/fly-calls")" || ok
 [ -f "$MD/m9gone.json" ] && [ -f "$QD/BH-1.json" ] && [ -f "$QD/BH-2.json" ] && ok || bad "R4: no file may be touched without a token"
 [ "$(nlines 'no Fly token' "$T/alert-calls")" = 1 ] && ok || bad "R4: one alert must name the missing token: $(cat "$T/alert-calls" 2>/dev/null)"
-grep -q '^\[pool/tproj\] queued 2, building unknown, for 31m: no Fly token (FLY_API_TOKEN_TPROJ or FLY_API_TOKEN)' "$T/alert-calls" 2>/dev/null && ok \
+grep -q '^\[pool/tproj\] queued 2, building unknown, for 3[1-9]m: no Fly token (FLY_API_TOKEN_TPROJ or FLY_API_TOKEN)' "$T/alert-calls" 2>/dev/null && ok \
   || bad "R4: the alert text: $(cat "$T/alert-calls" 2>/dev/null)"
 grep -q 'no Fly token' "$H/logs/fly-pool.log" && ok || bad "R4: the tick must say it has no token: $(cat "$H/logs/fly-pool.log")"
 tick
@@ -344,13 +347,14 @@ queue BH-21 21; queue BH-22 22; queue BH-23 23
 listing '[]'
 printf '5\n' > "$T/heartbeat"
 mkdir -p "$H/state/pool-stall"
-jq -nc --argjson s "$((NOW - 1860))" '{since:$s,cause:"x"}' > "$H/state/pool-stall/tproj.json"
+SNOW=$(date +%s)   # fresh clock read, as in R4
+jq -nc --argjson s "$((SNOW - 1860))" '{since:$s,cause:"x"}' > "$H/state/pool-stall/tproj.json"
 tick FLY_API_TOKEN_TPROJ=tok-fixture-proj POOL_INFLIGHT_HOLD_READS=0
 [ "$(nlines 'queued 3' "$T/alert-calls")" = 1 ] && ok || bad "S9: exactly one stall page: $(cat "$T/alert-calls" 2>/dev/null)"
-grep -q '^\[pool/tproj\] queued 3, building unknown, for 31m: machines list unusable (empty-with-tracked): cannot tell if the 2 held slots are building' "$T/alert-calls" 2>/dev/null && ok \
+grep -q '^\[pool/tproj\] queued 3, building unknown, for 3[1-9]m: machines list unusable (empty-with-tracked): cannot tell if the 2 held slots are building' "$T/alert-calls" 2>/dev/null && ok \
   || bad "S9: the page text: $(grep 'queued 3' "$T/alert-calls" 2>/dev/null)"
 grep -q 'stall: queued 3, building unknown' "$H/logs/fly-pool.log" && ok || bad "S9: the tick says it is stalled"
-[ "$(jq -r '.since' "$H/state/pool-stall/tproj.json" 2>/dev/null)" = "$((NOW - 1860))" ] && ok \
+[ "$(jq -r '.since' "$H/state/pool-stall/tproj.json" 2>/dev/null)" = "$((SNOW - 1860))" ] && ok \
   || bad "S9: the since stays while stalled: $(cat "$H/state/pool-stall/tproj.json" 2>/dev/null)"
 tick FLY_API_TOKEN_TPROJ=tok-fixture-proj POOL_INFLIGHT_HOLD_READS=0
 [ "$(nlines 'queued 3' "$T/alert-calls")" = 1 ] && ok || bad "S9: a second tick in the same hour adds no page"

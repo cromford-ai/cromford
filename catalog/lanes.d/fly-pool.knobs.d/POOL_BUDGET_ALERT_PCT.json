@@ -1,0 +1,12 @@
+{
+  "env": "POOL_BUDGET_ALERT_PCT",
+  "type": "int",
+  "default": 80,
+  "min": 1,
+  "max": 100,
+  "unit": "percent",
+  "zero_means": null,
+  "required": false,
+  "read_in": "bin/pool-budget.sh",
+  "note": "BH-7190. The share of a project's POOL_MACHINE_HOURS_DAILY at which bin/pool-budget.sh writes its first alert of the UTC day. A second alert follows at 100%. Settings row `lane.fly-pool.pool_budget_alert_pct`."
+}
