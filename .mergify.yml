@@ -77,6 +77,35 @@ queue_rules:
     batch_max_wait_time: 0 s
     max_checks_retries: 0
     checks_timeout: 60 min
+  - name: flake-fix
+    # THE FLAKE-FIX LANE (BH-7279): default's conditions plus `queue-flake-fix`,
+    # which the merge conductor adds before merge-queue when a PR changes a suite
+    # on the batch-fail list and touches only test and doc paths
+    # (bin/lib/queue-flake-fix.sh). Listed after hotfix, so the fix that saves
+    # the other batches goes first after a hotfix. No priority rule: it never
+    # interrupts running checks.
+    queue_conditions:
+      - base = main
+      - label = queue-flake-fix
+      - "#changes-requested-reviews-by=0"
+      - check-success = "Syntax + shellcheck + config integrity"
+      - check-success = "Test determinism lint"
+      - check-success = "Prompt replay evals (prompts/** only)"
+      - check-success = "lead-verdict"
+    merge_conditions:
+      - "#changes-requested-reviews-by=0"
+      - check-success = "Syntax + shellcheck + config integrity"
+      - check-success = "Test determinism lint"
+      - check-success = "Pure-logic gate fixtures"
+      - check-success = "Tests cannot touch a real harness"
+      - check-success = "Mission Control SPA — unit tests + build"
+      - check-success = "Jobs worker — routes + schema"
+      - check-success = "Prompt replay evals (prompts/** only)"
+    merge_method: merge
+    batch_size: 1
+    batch_max_wait_time: 0 s
+    max_checks_retries: 0
+    checks_timeout: 60 min
   - name: solo
     # THE SOLO LANE (BH-5430): default's conditions plus `queue-solo`, which the
     # merge conductor adds before merge-queue when a PR's break-risk score
@@ -164,6 +193,16 @@ pull_request_rules:
     actions:
       queue:
         name: hotfix
+  - name: queue on the flake-fix label
+    conditions:
+      - base = main
+      - label = merge-queue
+      - label = queue-flake-fix
+      # A fix-main-red PR takes the hotfix rule.
+      - -label = fix-main-red
+    actions:
+      queue:
+        name: flake-fix
   - name: queue on the harness label
     conditions:
       - base = main
@@ -171,6 +210,8 @@ pull_request_rules:
       - -label = fix-main-red
       # ... and a solo-routed PR matches the rule below instead (BH-5430).
       - -label = queue-solo
+      # ... and a flake-fix PR matches the flake-fix rule above (BH-7279).
+      - -label = queue-flake-fix
     actions:
       queue:
         name: default
@@ -181,6 +222,8 @@ pull_request_rules:
       - label = queue-solo
       # A fix-main-red PR takes the hotfix rule even when it scores high.
       - -label = fix-main-red
+      # A flake-fix PR takes the flake-fix rule even when it scores high.
+      - -label = queue-flake-fix
     actions:
       queue:
         name: solo

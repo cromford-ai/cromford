@@ -43,7 +43,9 @@ usage_rc "--check with an arg" --check a
 # switch; tests/queue-eject-culprit.bh-4980-test.sh M1-M3 pins it).
 # solo_label joined it on 2026-10-08 (BH-5430, the size-1 solo queue;
 # tests/mergify-solo-queue.bh-5430-test.sh pins it).
-known="slug check queue_check status_check merge_method batch_size batch_max_wait_time checks_timeout max_parallel_checks max_checks_retries base override queue_mode scope_default_capacity batch_failure_attempts solo_label"
+# flake_fix_label joined it on 2026-10-17 (BH-7279, the size-1 flake-fix queue;
+# tests/mergify-flake-fix-queue.bh-7279-test.sh pins it).
+known="slug check queue_check status_check merge_method batch_size batch_max_wait_time checks_timeout max_parallel_checks max_checks_retries base override queue_mode scope_default_capacity batch_failure_attempts solo_label flake_fix_label"
 conf_ok() {  # conf_ok <file> -> prints problems, one per line
   awk -v known="$known" '
     BEGIN { n = split(known, k, " "); for (i = 1; i <= n; i++) K[k[i]] = 1 }

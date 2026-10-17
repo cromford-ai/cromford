@@ -413,16 +413,23 @@ Rolling the image restarts a machine, which ends every run on it. So build once,
 then move one machine at a time when its busy probe says idle:
 
 ```sh
+. bin/lib/gitleaks-pin.sh   # sets GITLEAKS_PIN_VERSION and GITLEAKS_PIN_SHA256 (BH-7317)
 flyctl deploy -c fly/testhost/fly.toml -a bh-testhost-example-org --build-only --push \
   --image-label testhost-1617 \
   --build-arg NODE_VERSION=<the bake.node.version row> \
   --build-arg CODEGRAPH_VERSION=1.5.0 --build-arg SEMGREP_VERSION=1.176.1 \
-  --build-arg ACTIONLINT_VERSION=1.7.7
+  --build-arg ACTIONLINT_VERSION=1.7.7 \
+  --build-arg GITLEAKS_VERSION="$GITLEAKS_PIN_VERSION" --build-arg GITLEAKS_SHA256="$GITLEAKS_PIN_SHA256"
 # per machine, when `bin/testhost-tick.sh busy` (pinned to it) reads idle:
 flyctl machine update <machine-id> -a bh-testhost-example-org \
   --image registry.fly.io/bh-testhost-example-org:testhost-1617 \
   --env REMOTE_GATE_TMPFS_SIZE=<the lib.remote-gate.remote_gate_tmpfs_size row, 20g by default> --yes
 ```
+
+The gitleaks pin is not repeated here: the block sources it from
+`bin/lib/gitleaks-pin.sh`, and the layer refuses a tarball with another sha256
+or a binary that reports another version (BH-7317). A gitleaks pin bump in
+`bin/lib/gitleaks-pin.sh` needs a test host rebuild and roll with the lines above.
 
 `NODE_VERSION` is the `bake.node.version` settings row (BH-1617): `bin/bake-seed.sh`
 on the hub prints it on its `bake.node.version=<v>` line. It is the same row

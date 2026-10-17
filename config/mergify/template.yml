@@ -24,6 +24,7 @@ queue_rules:
     batch_max_wait_time: 0 s
     max_checks_retries: 0
     checks_timeout: @@CHECKS_TIMEOUT@@
+  @@FLAKE_QUEUE_BLOCK@@
   @@SOLO_QUEUE_BLOCK@@
   - name: default
     # The PR's own CI must be green before it may enter the queue ...
@@ -65,6 +66,7 @@ pull_request_rules:
     actions:
       queue:
         name: hotfix
+  @@FLAKE_PR_RULE_BLOCK@@
   - name: queue on the harness label
     conditions:
       - base=@@BASE@@
@@ -72,6 +74,7 @@ pull_request_rules:
       # Everything else: without this a fix-main-red PR matches both rules.
       - -label=fix-main-red
       @@SOLO_EXCLUDE@@
+      @@FLAKE_EXCLUDE@@
     actions:
       queue:
         name: default

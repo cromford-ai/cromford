@@ -1,0 +1,1 @@
+Exempt by BH-7279 (2026-10-17), proposed by that build for its PR review. The same shape as lib/queue-risk.sh: the queue-flake-fix label POST/DELETE run inside mc_enqueue_mergify on the identity the conductor already armed per project, right before its own merge-queue label write. Full reason: the gh-identity line at the top of bin/lib/queue-flake-fix.sh.

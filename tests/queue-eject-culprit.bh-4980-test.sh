@@ -388,8 +388,9 @@ if git -C "$DIR" rev-parse --verify -q origin/main >/dev/null; then
     # TEST-CHANGE (BH-5430): solo_label joins the list, and the new renderer
     # renders the SAME stripped copy. M2 asks "without the key, the render is
     # byte-identical to main"; a key a later PR adds (the solo queue) is the
-    # render's job to change, so both sides leave it out.
-    grep -vE '^(queue_mode|scope_default_capacity|solo_label)=' "$DIR/config/mergify/repos/$c.conf" > "$T/old-$c.conf"
+    # render's job to change, so both sides leave it out. BH-7279's
+    # flake_fix_label (the flake-fix queue) is the same case.
+    grep -vE '^(queue_mode|scope_default_capacity|solo_label|flake_fix_label)=' "$DIR/config/mergify/repos/$c.conf" > "$T/old-$c.conf"
     bash "$OLD/bin/mergify-template.sh" render "$T/old-$c.conf" > "$T/old-$c.yml" 2>/dev/null
     bash "$MT" render "$T/old-$c.conf" > "$T/new-$c.yml"
     [ -s "$T/old-$c.yml" ] && cmp -s "$T/old-$c.yml" "$T/new-$c.yml" && ok \

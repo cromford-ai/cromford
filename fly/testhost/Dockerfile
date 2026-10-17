@@ -10,7 +10,9 @@
 # (python3-yaml, BH-1741: the mergify-template suites parse YAML), node (the
 # nodejs.org tarball at the bake.node.version row, the node 22 CI runs; Debian's
 # apt nodejs is a node 20 without node:sqlite, BH-1617), codegraph, semgrep and
-# actionlint; util-linux brings findmnt, flock and mount.
+# actionlint, and gitleaks; util-linux brings findmnt, flock and mount. The
+# gitleaks pin is bin/lib/gitleaks-pin.sh's, passed as two build args (BH-7317),
+# so a gate with GITLEAKS_REQUIRED=1 runs here.
 #
 # NO VERSION LITERAL LIVES HERE, the rule fly/Dockerfile follows (BH-1528): each
 # pin is an ARG with no default, and the build refuses to run without it.
@@ -36,6 +38,22 @@ RUN npm install -g "@colbymchenry/codegraph@${CODEGRAPH_VERSION}" \
  && python3 -m pip install --quiet --break-system-packages "semgrep==${SEMGREP_VERSION}" \
  && curl -fsSL "https://github.com/rhysd/actionlint/releases/download/v${ACTIONLINT_VERSION}/actionlint_${ACTIONLINT_VERSION}_linux_amd64.tar.gz" \
     | tar -xz -C /usr/local/bin actionlint
+# >>> testhost-gitleaks
+ARG GITLEAKS_VERSION
+ARG GITLEAKS_SHA256
+RUN set -eu; \
+    test -n "${GITLEAKS_VERSION:-}" && test -n "${GITLEAKS_SHA256:-}" \
+      || { echo "FATAL: pass --build-arg GITLEAKS_VERSION and GITLEAKS_SHA256 from bin/lib/gitleaks-pin.sh (docs/REMOTE-GATE.md)" >&2; exit 1; }; \
+    curl -fsSL -o /tmp/gitleaks.tar.gz \
+      "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"; \
+    echo "${GITLEAKS_SHA256}  /tmp/gitleaks.tar.gz" | sha256sum -c -; \
+    tar -xzf /tmp/gitleaks.tar.gz -C /tmp gitleaks; \
+    install -m 755 /tmp/gitleaks /usr/local/bin/gitleaks; \
+    rm -f /tmp/gitleaks.tar.gz /tmp/gitleaks; \
+    got=$(/usr/local/bin/gitleaks version 2>&1 | grep -oE '[0-9]+(\.[0-9]+)+' | head -1 || true); \
+    [ "$got" = "$GITLEAKS_VERSION" ] \
+      || { echo "FATAL: gitleaks reports ${got:-nothing}, expected $GITLEAKS_VERSION" >&2; exit 1; }
+# <<< testhost-gitleaks
 COPY entrypoint.sh /usr/local/bin/testhost-entrypoint.sh
 RUN chmod 755 /usr/local/bin/testhost-entrypoint.sh && mkdir -p /srv/runs /srv/tmp
 CMD ["/usr/local/bin/testhost-entrypoint.sh"]

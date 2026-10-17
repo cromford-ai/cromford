@@ -48,8 +48,8 @@ else bad "C2 .mergify.yml max_parallel_checks (got $(jq -c '.merge_queue' "$T/ym
 "$BIN" compare "$CONF" "$YML" > "$T/cmp.out" 2>&1; rc=$?
 [ "$rc" = 0 ] && ok || bad "C3 compare rc $rc (want 0): $(head -c 400 "$T/cmp.out")"
 
-# C4: the queue rule names did not change.
-jq -e '[.queue_rules[].name] == ["hotfix","solo","default"]' "$T/yml.json" >/dev/null \
+# C4: the queue rule names did not change (BH-7279 added flake-fix after hotfix).
+jq -e '[.queue_rules[].name] == ["hotfix","flake-fix","solo","default"]' "$T/yml.json" >/dev/null \
   && ok || bad "C4 queue rule names (got $(jq -c '[.queue_rules[].name]' "$T/yml.json" 2>/dev/null))"
 
 # C5: the conf at the old value (8) and the real conf render the same rules, and

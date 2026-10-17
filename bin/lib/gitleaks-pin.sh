@@ -18,6 +18,10 @@
 # against the release's own checksums.txt. Fetching it at run time from the same
 # place as the binary would prove nothing (#2104).
 #
+# fly/testhost/Dockerfile is not a copy: it takes the pin as build args from
+# this file through docs/REMOTE-GATE.md's deploy block (BH-7317), so a bump
+# also needs a test host rebuild.
+#
 # They are assigned, not defaulted, so no environment variable can move the pin.
 GITLEAKS_PIN_VERSION=8.30.1
 GITLEAKS_PIN_SHA256=551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb

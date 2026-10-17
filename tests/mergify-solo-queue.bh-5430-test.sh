@@ -85,7 +85,8 @@ if git -C "$DIR" rev-parse --verify -q origin/main >/dev/null; then
   OLD="$T/old"; mkdir -p "$OLD/bin" "$OLD/config/mergify"
   git -C "$DIR" show origin/main:bin/mergify-template.sh > "$OLD/bin/mergify-template.sh"
   git -C "$DIR" show origin/main:config/mergify/template.yml > "$OLD/config/mergify/template.yml"
-  grep -v '^solo_label=' "$BH" > "$T/bh-nosolo.conf"
+  # flake_fix_label= (BH-7279) is another queue's key; both sides leave it out.
+  grep -v -e '^solo_label=' -e '^flake_fix_label=' "$BH" > "$T/bh-nosolo.conf"
   bash "$OLD/bin/mergify-template.sh" render "$T/bh-nosolo.conf" > "$T/old-bh.yml" 2>"$T/old.err"
   tojson "$T/old-bh.yml" > "$T/old-bh.json" 2>/dev/null || : > "$T/old-bh.json"
   for sel in '.queue_rules[] | select(.name == "hotfix")' '.pull_request_rules[] | select(.actions.queue.name == "hotfix")' '.priority_rules'; do

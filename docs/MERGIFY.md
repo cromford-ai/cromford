@@ -629,3 +629,53 @@ first label POST creates it with GitHub's default colour.
 
 **Rollback.** `queue_risk.mode=off`. Then delete `solo_label=` from the conf and re-render
 `.mergify.yml`.
+
+## 8. Flake-fix lane (BH-7279)
+
+**Status: shipped in enforce.** `config/mergify/repos/cromford.conf` carries
+`flake_fix_label=queue-flake-fix`, so `.mergify.yml` has a `flake-fix` queue (after `hotfix`,
+before `solo` and `default`, `batch_size: 1`, `0 s`, no retries, default's conditions plus
+`label = queue-flake-fix`) and a rule that routes `merge-queue` + `queue-flake-fix` (and not
+`fix-main-red`) to it. The default and solo rules exclude `queue-flake-fix`, so a PR matches one
+rule. There is no priority rule for `flake-fix`: Mergify serves it by queue order, and it never
+interrupts running checks. `bin/mergify-template.sh --check` fails a render that lists
+`flake-fix` before `hotfix`, or after `solo` or `default`.
+
+**Why.** On 2026-10-17 the fix for a suite that kept failing merge-queue batches (#7194,
+`tests/staff-watchman.bh-5565-test.sh`) waited in `default` behind the batches that suite failed.
+The PR that fixes a batch-fail suite is the PR that saves the other batches.
+
+**The rule** (`bin/lib/queue-flake-fix.sh`, called from `mc_enqueue_mergify` before the
+queue-risk block and the `merge-queue` label, so every enqueue path decides again on the current
+head). A PR routes `flake-fix` when both hold:
+
+1. a changed file is exactly a suite on the batch-fail list: `bin/prequeue-learned.sh --list
+   --why`, the committed seeds (`catalog/prequeue-learned-seed.d/`) and the suites counted from
+   failed batch runs in its window, at count >= `flake_fix.min_fails`;
+2. every changed file matches a glob of `flake_fix.scope_globs`.
+
+Every other PR routes `default`. A file list or batch-fail list that cannot be read routes
+`default`. A `fix-main-red` PR keeps the hotfix queue and a merge train is skipped: neither gets
+a label write. The `hotfix` build label (BH-2121) is not read here.
+
+| row | default | what it does |
+|---|---|---|
+| `flake_fix.mode` | `enforce` (no row, outage) | `off`: nothing, not even the PR read. `shadow`: the log line with `(would route <r>)`, no label write. `enforce`: `flake-fix` adds `queue-flake-fix` before `merge-queue`; `default` on a PR still carrying it removes it. Anything else is `off`, with one log line. |
+| `flake_fix.min_fails` | `1` | a counted suite is on the list at this many failed batches; seeds are never cut |
+| `flake_fix.scope_globs` | `tests/* worker/jobs/test/* console-ui/tests/* docs/* .harness/specs/*` | the fix scope; a bash `*` crosses `/` |
+
+The rows and the list are read once per conductor tick. Each decision writes one line to
+`logs/merge-conductor.log`:
+`QFLAKE <slug>#<n>@<head12> suite=<suite|-> queue=<flake-fix|default|hotfix> mode=<m> reason=<in-scope|no-batch-fail-suite|out-of-scope:<file>|files-unavailable|list-empty|pr-unreadable|fix-main-red|train>`.
+A failed label POST adds `QFLAKE <slug>#<n>: label queue-flake-fix could not be added (...) — it
+queues in default`.
+
+**A fix that also changes code** routes `default` (#7194 itself changed five `bin/` and
+`catalog/` files). To let such fixes through, widen `flake_fix.scope_globs`; the code does not
+change.
+
+**Operator step.** `gh label create queue-flake-fix -R example-org/cromford` once. Until then
+the first label POST creates it with GitHub's default colour.
+
+**Rollback.** `flake_fix.mode=off`. Then delete `flake_fix_label=` from the conf and re-render
+`.mergify.yml`.

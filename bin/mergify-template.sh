@@ -64,7 +64,7 @@ TEMPLATE = os.path.join(ROOT, "config/mergify/template.yml")
 DEFAULTS = {"merge_method": "squash", "batch_size": "4", "batch_max_wait_time": "3 min",
             "checks_timeout": "45 min", "max_parallel_checks": "3", "max_checks_retries": "0",
             "base": "main", "queue_mode": "serial", "scope_default_capacity": "1"}
-KNOWN = set(DEFAULTS) | {"slug", "check", "queue_check", "status_check", "default_status_check", "override", "batch_failure_attempts", "solo_label"}
+KNOWN = set(DEFAULTS) | {"slug", "check", "queue_check", "status_check", "default_status_check", "override", "batch_failure_attempts", "solo_label", "flake_fix_label"}
 # batch_failure_attempts (BH-4980): optional, no default. Set, it renders
 # `batch_max_failure_resolution_attempts: <n>` on the default queue only (the
 # hotfix queue's batch is 1, so there is nothing to split). 0 stops Mergify
@@ -79,6 +79,15 @@ KNOWN = set(DEFAULTS) | {"slug", "check", "queue_check", "status_check", "defaul
 # never interrupts running checks. A conf without the key renders byte-for-byte
 # as before. The harness's own labels are refused: merge-queue would put every
 # PR in solo, fix-main-red is the hotfix lane's.
+# flake_fix_label (BH-7279, no default): the label that routes a PR into a
+# `flake-fix` queue of batch_size 1, listed after hotfix and before solo and
+# default, so Mergify serves it first after a hotfix. The merge conductor adds
+# it before merge-queue when a PR changes a suite on the batch-fail list and
+# touches only the fix scope (bin/lib/queue-flake-fix.sh). No priority rule:
+# it never interrupts running checks. The solo and default rules exclude it, so
+# a PR matches one rule. A conf without the key renders byte-for-byte as
+# before. Refused: the harness's own labels (merge-queue, fix-main-red, the
+# pool's hotfix build label) and the solo_label value.
 # queue_mode (BH-4979): serial|parallel. parallel renders `merge_queue.mode:
 # parallel` and manual scopes, which the merge conductor uploads per commit
 # (bin/lib/queue-partition.sh); serial renders neither, so a conf without the
@@ -154,6 +163,10 @@ def check_value(key, val):  # -> the problem, or None
         return "solo_label %r is not a lowercase label of 1-50 [a-z0-9-] characters" % val
     elif key == "solo_label" and val in ("merge-queue", "fix-main-red"):
         return "solo_label %r is a label the harness already uses for another queue" % val
+    elif key == "flake_fix_label" and not re.fullmatch(r"[a-z0-9][a-z0-9-]{0,49}", val):
+        return "flake_fix_label %r is not a lowercase label of 1-50 [a-z0-9-] characters" % val
+    elif key == "flake_fix_label" and val in ("merge-queue", "fix-main-red", "hotfix"):
+        return "flake_fix_label %r is a label the harness already uses for another purpose" % val
     elif key in PATTERNS and not re.fullmatch(PATTERNS[key], val):
         return "%s %r is malformed" % (key, val)
     return None
@@ -216,6 +229,9 @@ def parse(path):
     dboth = [x for x in dschecks if x in checks or x in qchecks or x in schecks]
     if dboth:
         raise Bad("%s: default_status_check %r is also a check=, queue_check= or status_check= line" % (path, dboth[0]))
+    if "flake_fix_label" in vals and vals["flake_fix_label"] == vals.get("solo_label"):
+        raise Bad("%s:%d: flake_fix_label %r equals solo_label — a PR would match two queue rules" % (
+            path, seen["flake_fix_label"], vals["flake_fix_label"]))
     conf = dict(DEFAULTS, **vals)
     if int(conf["scope_default_capacity"]) > int(conf["max_parallel_checks"]):
         raise Bad("%s:%d: scope_default_capacity %s > max_parallel_checks %s" % (
@@ -239,6 +255,7 @@ def render(path):
         raise Bad("%s: cannot read: %s" % (TEMPLATE, e))
     par = c["queue_mode"] == "parallel"
     solo = c.get("solo_label")
+    flake = c.get("flake_fix_label")
     cond = lambda lst: ["    - " + json.dumps("check-success=" + x, ensure_ascii=False) for x in lst]
     blocks = {"QUEUE_MODE_BLOCK": ["mode: parallel"] if par else [],
               # BH-5430: default's conditions plus the label, alone in its batch.
@@ -252,16 +269,31 @@ def render(path):
               "SOLO_PR_RULE_BLOCK": ["- name: queue on the solo label", "  conditions:", "    - base=" + c["base"],
                                      "    - label=" + LABEL, "    - label=" + solo,
                                      "    # A fix-main-red PR takes the hotfix rule even when it scores high.",
-                                     "    - -label=fix-main-red",
-                                     "  actions:", "    queue:", "      name: solo"] if solo else [],
+                                     "    - -label=fix-main-red"]
+                                    + (["    - -label=" + flake] if flake else [])
+                                    + ["  actions:", "    queue:", "      name: solo"] if solo else [],
               "SOLO_EXCLUDE": ["- -label=" + solo] if solo else [],
+              # BH-7279: default's conditions plus the label, alone in its batch.
+              "FLAKE_QUEUE_BLOCK": ["- name: flake-fix",
+                                    "  # A batch-fail suite fix (bin/lib/queue-flake-fix.sh) goes first after a hotfix (BH-7279).",
+                                    "  queue_conditions:", "    - base=" + c["base"], "    - label=" + flake,
+                                    '    - "#changes-requested-reviews-by=0"'] + cond(c["queue_checks"])
+                                   + ["  merge_conditions:", '    - "#changes-requested-reviews-by=0"'] + cond(c["checks"])
+                                   + ["  merge_method: " + c["merge_method"], "  batch_size: 1", "  batch_max_wait_time: 0 s",
+                                      "  max_checks_retries: 0", "  checks_timeout: " + c["checks_timeout"]] if flake else [],
+              "FLAKE_PR_RULE_BLOCK": ["- name: queue on the flake-fix label", "  conditions:", "    - base=" + c["base"],
+                                      "    - label=" + LABEL, "    - label=" + flake,
+                                      "    # A fix-main-red PR takes the hotfix rule.",
+                                      "    - -label=fix-main-red",
+                                      "  actions:", "    queue:", "      name: flake-fix"] if flake else [],
+              "FLAKE_EXCLUDE": ["- -label=" + flake] if flake else [],
               "SCOPES_BLOCK": ["scopes:", "  source:", "    manual: {}",
                                "  default_capacity: %d" % int(c["scope_default_capacity"])] if par else [],
               "BATCH_FAILURE_BLOCK": ["batch_max_failure_resolution_attempts: %d" % int(c["batch_failure_attempts"])]
                                      if "batch_failure_attempts" in c else []}
     out = []
     for n, line in enumerate(tpl, 1):
-        m = re.fullmatch(r"(\s*)@@(QUEUE_MODE_BLOCK|SCOPES_BLOCK|BATCH_FAILURE_BLOCK|SOLO_QUEUE_BLOCK|SOLO_PR_RULE_BLOCK|SOLO_EXCLUDE)@@", line)
+        m = re.fullmatch(r"(\s*)@@(QUEUE_MODE_BLOCK|SCOPES_BLOCK|BATCH_FAILURE_BLOCK|SOLO_QUEUE_BLOCK|SOLO_PR_RULE_BLOCK|SOLO_EXCLUDE|FLAKE_QUEUE_BLOCK|FLAKE_PR_RULE_BLOCK|FLAKE_EXCLUDE)@@", line)
         if m:
             out += [m.group(1) + x for x in blocks[m.group(2)]]
             continue
@@ -365,6 +397,13 @@ def check():
             print("FAIL: %s: queue_rules must list hotfix before default (got %s)" % (name, names))
             fails += 1
             continue
+        if "flake-fix" in names:
+            ff = names.index("flake-fix")
+            if not ("hotfix" in names and "default" in names and names.index("hotfix") < ff < names.index("default")
+                    and ("solo" not in names or ff < names.index("solo"))):
+                print("FAIL: %s: queue_rules must list hotfix, flake-fix, then solo/default (got %s)" % (name, names))
+                fails += 1
+                continue
         if name == "cromford.conf":
             root = os.path.join(ROOT, ".mergify.yml")
             if not os.path.exists(root):

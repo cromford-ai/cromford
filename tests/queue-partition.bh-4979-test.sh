@@ -421,11 +421,13 @@ if git -C "$DIR" rev-parse --verify -q origin/main >/dev/null; then
     # the serial byte-identity is checked on the conf without it, on BOTH sides.
     # Main's renderer accepts solo_label since BH-5430 merged; rendering main's
     # side from the full conf compared a solo queue against none (main red).
-    grep -v '^solo_label=' "$DIR/config/mergify/repos/$c.conf" > "$T/new-$c.conf"
+    # flake_fix_label= (BH-7279) adds the flake-fix queue the same way, so it
+    # is left out on both sides too.
+    grep -vE '^(solo_label|flake_fix_label)=' "$DIR/config/mergify/repos/$c.conf" > "$T/new-$c.conf"
     bash "$OLD/bin/mergify-template.sh" render "$T/new-$c.conf" > "$T/old-$c.yml" 2>/dev/null
     if [ "$c" = cromford ] && ! [ -s "$T/old-$c.yml" ]; then
       # main's renderer refuses the new keys; render a copy without them
-      grep -vE '^(queue_mode|scope_default_capacity|solo_label)=' "$DIR/config/mergify/repos/$c.conf" > "$T/bh-nokeys.conf"
+      grep -vE '^(queue_mode|scope_default_capacity|solo_label|flake_fix_label)=' "$DIR/config/mergify/repos/$c.conf" > "$T/bh-nokeys.conf"
       bash "$OLD/bin/mergify-template.sh" render "$T/bh-nokeys.conf" > "$T/old-$c.yml"
     fi
     bash "$MT" render "$T/new-$c.conf" > "$T/new-$c.yml"

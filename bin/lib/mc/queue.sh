@@ -1284,6 +1284,16 @@ mc_enqueue_mergify() {
     qpout=$(qp_enqueue_step "$slug" "$(mc_num_of_url "$url")" "$head") || { printf '%s%s' "$vsnote" "$qpout"; return 3; }
   fi
   # <<< queue partition scopes (BH-4979)
+  # >>> queue flake-fix (BH-7279)
+  # A PR that fixes a batch-fail suite and touches only the fix scope
+  # (bin/lib/queue-flake-fix.sh): logged as a QFLAKE line; in enforce mode it
+  # gets the flake-fix label BEFORE merge-queue. rc 0 always — it never holds a PR.
+  command -v qff_enqueue_step >/dev/null 2>&1 \
+    || { [ -r "${BASH_SOURCE[0]%/*}/../queue-flake-fix.sh" ] && . "${BASH_SOURCE[0]%/*}/../queue-flake-fix.sh"; }
+  if command -v qff_enqueue_step >/dev/null 2>&1; then
+    qff_enqueue_step "$slug" "$(mc_num_of_url "$url")" "$head" || true
+  fi
+  # <<< queue flake-fix (BH-7279)
   # >>> queue risk (BH-5430)
   # The PR's break-risk score (bin/lib/queue-risk.sh): logged as a QRISK line
   # and recorded on every enqueue, so a requeue re-scores under the current

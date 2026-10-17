@@ -60,6 +60,8 @@ OUT=$(HARNESS_TEST_SANDBOX=1 "$MT" --check 2>&1); RC=$?
 [ "$RC" -eq 0 ] && ok || bad "M4: --check must be green: $OUT"
 # BH-5430 added the solo queue (solo_label=); it takes the same queue gate.
 QNS="hotfix default"; grep -q '^  - name: solo$' "$DIR/.mergify.yml" && QNS="hotfix solo default"
+# BH-7279 added the flake-fix queue (flake_fix_label=); it takes the same gate.
+grep -q '^  - name: flake-fix$' "$DIR/.mergify.yml" && QNS="flake-fix $QNS"
 for QN in $QNS; do
   q "$DIR/.mergify.yml" "$QN" queue_conditions | grep -x lead-verdict >/dev/null && ok || bad "M4: .mergify.yml $QN.queue_conditions must require lead-verdict"
   grep -qx lead-verdict <<<"$(q "$DIR/.mergify.yml" "$QN" merge_conditions)" && bad "M4: .mergify.yml $QN.merge_conditions must not require lead-verdict" || ok
