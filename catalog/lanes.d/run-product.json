@@ -3,12 +3,16 @@
   "name": "Product agent",
   "scope": "project",
   "script": "bin/run-product.sh",
-  "cadence": "2 9 * * 1; 4 9 * * 1; 6 9 * * 1; 8 9 * * 1",
+  "cadence": "1 9 * * 1; 2 9 * * 1; 4 9 * * 1; 5 9 * * 1; 6 9 * * 1; 8 9 * * 1; 9 9 * * 1",
   "boxes": [
     "project-4",
+    "project-6-os",
     "project-1",
     "project-3",
-    "project-2"
+    "project-9",
+    "small",
+    "project-2",
+    "project-5"
   ],
   "switch": {
     "kind": "flag",

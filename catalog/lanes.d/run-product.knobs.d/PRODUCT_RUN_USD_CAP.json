@@ -1,0 +1,11 @@
+{
+  "env": "PRODUCT_RUN_USD_CAP",
+  "type": "float",
+  "default": 0,
+  "min": 0,
+  "max": 10000,
+  "unit": "usd",
+  "zero_means": "unlimited",
+  "read_in": "bin/lib/product-run-cap.sh",
+  "note": "Dollars one weekly product cycle may spend, summed from this box's logs/cost.csv over this project's product-stage rows since the run start. After MAP, SIGNALS, IDEATE and SYNTH, a sum at or over the cap writes one log line and one ALERTS line and ends the cycle with rc 0 (BH-7262). An invalid value is unlimited."
+}

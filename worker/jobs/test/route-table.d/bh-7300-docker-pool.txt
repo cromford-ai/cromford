@@ -1,0 +1,9 @@
+# DOCKER POOL (BH-7300, slice C0): the claim lease of a pull-mode Docker host.
+# claim takes one queued target='fly' row by key for a named box under the
+# max-concurrent and kill rows; heartbeat extends the lease; release hands the
+# row back or ends the lease done; sweep requeues rows whose lease expired.
+# Bearer-gated.
+POST /api/docker-pool/claim
+POST /api/docker-pool/heartbeat
+POST /api/docker-pool/release
+POST /api/docker-pool/sweep

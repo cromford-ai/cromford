@@ -91,6 +91,7 @@ worker/jobs/test/alert-decisions.bh-6972.test.js:generic-api-key:20
 worker/jobs/test/alert-lines-resolved.bh-6892.test.js:generic-api-key:12
 worker/jobs/test/alert-lines.bh-6889.test.js:generic-api-key:18
 worker/jobs/test/conductor-state.bh-4156.test.js:generic-api-key:16
+worker/jobs/test/docker-pool.bh-7300.test.js:generic-api-key:17
 worker/jobs/test/landing-decisions.bh-6744.test.js:generic-api-key:18
 worker/jobs/test/landing-outcome.bh-6745.test.js:generic-api-key:16
 worker/jobs/test/main-red-state-indexes.bh-4156.test.js:generic-api-key:17

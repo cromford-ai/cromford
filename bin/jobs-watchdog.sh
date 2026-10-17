@@ -691,6 +691,25 @@ if command -v queue_stale >/dev/null 2>&1; then
   done < <(queue_stale "$QUEUE_CLAIM_MIN" 2>/dev/null)
 fi
 
+# --- A DOCKER-POOL HOST THAT STOPPED BEATING (BH-7300) ----------------------
+# A local Docker host holds its claim through a lease (docker_pool.lease_s,
+# 300 s). The sweep puts each row whose lease expired back on the queue, so a
+# dead host frees its ticket at this */5 tick, not after the 6-hour release
+# above. One ALERTS line per row actually requeued. No lib, no pass: silent.
+# shellcheck source=bin/lib/docker-pool.sh
+if [ -r "$H/bin/lib/docker-pool.sh" ] && . "$H/bin/lib/docker-pool.sh" 2>/dev/null; then
+  if DP_OUT=$(docker_pool_sweep 2>/dev/null); then
+    IFS="$(printf '\t')" read -r DP_N DP_RQ _DP_BL <<<"$(head -n 1 <<<"$DP_OUT")"
+    while IFS="$(printf '\t')" read -r DP_P DP_K DP_BOX DP_R; do
+      [ "${DP_R:-0}" = 1 ] || continue
+      HARNESS="$H" "$H/bin/alert-line.sh" --project "$DP_P" "[jobs-watchdog] DOCKER POOL LEASE EXPIRED: $DP_P/$DP_K on $DP_BOX; the row is back on the queue. No build was started." >/dev/null 2>&1 || true
+    done < <(tail -n +2 <<<"$DP_OUT")
+    echo "$(STAMP) docker-pool: ${DP_N:-0} lease(s) expired, ${DP_RQ:-0} row(s) requeued" >> "$LOG"
+  else
+    echo "$(STAMP) docker-pool: sweep failed (worker unusable); no lease was swept this tick" >> "$LOG"
+  fi
+fi
+
 # --- A DEFERRAL FILED AS A FINISHED BUILD (2026-09-11) -----------------------
 # The sweep above catches a row stuck CLAIMED. This one catches its mirror
 # image: a row closed `done` for a build that never ran. bin/run-build.sh writes
