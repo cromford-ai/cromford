@@ -25,3 +25,5 @@ REPORT:
 - a secret value in a log, a commit or a comment
 - a new public endpoint with no auth check
 - a dependency with a published advisory
+- a secret in the git history of a fleet repo
+- a credential past its rotation due date

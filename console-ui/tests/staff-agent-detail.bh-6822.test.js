@@ -191,9 +191,10 @@ test('C5: the seams render in their fixed spots, each with the agent', () => {
   assert.ok(at('CHAT-MARKER') < at('AUTONOMY-MARKER'), 'autonomy after chat');
   assert.ok(at('AUTONOMY-MARKER') < at('>ACTIVITY</span>'), 'autonomy before the timeline');
   assert.ok(at('>OPEN FINDINGS</span>') < at('LEARNING-MARKER'), 'learning after the findings');
-  // The seams themselves render nothing until their slices land.
+  // The seams themselves render nothing until their slices land. The
+  // learning seam is filled by BH-6825 (staff-learning.bh-6825.test.js
+  // covers what it renders), so only the chat seam is still empty here.
   assert.equal(render(h(AgentChat, { agent: 'watchman' })), '');
-  assert.equal(render(h(AgentLearning, { agent: 'watchman' })), '');
 });
 
 test('C6: /staff/tick/:id maps to StaffTickScreen; the view shows the tick and its sessions', () => {

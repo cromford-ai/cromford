@@ -96,6 +96,8 @@ for b in curl gh; do
   chmod +x "$T/fakebin/$b"
 done
 mkdir -p "$H/bin/staff"
+# A symlink into the checkout once the real collector exists (BH-5565): remove it first.
+rm -f "$H/bin/staff/watchman-collect.sh"
 cat > "$H/bin/staff/watchman-collect.sh" <<'SH'
 #!/bin/bash
 touch "$FXT/collected"

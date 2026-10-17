@@ -282,7 +282,7 @@ if [ ! -x "$COL" ]; then
 else
 crc=0
 COLLECT_T0=$(date +%s)
-timeout "$COLLECT_T" "$COL" > "$TMPD/raw" 2>/dev/null || crc=$?
+STAFF_COLLECT_TIMEOUT_S="$COLLECT_T" timeout "$COLLECT_T" "$COL" > "$TMPD/raw" 2>/dev/null || crc=$?
 COLLECT_RC=$crc; COLLECT_S=$(( $(date +%s) - COLLECT_T0 ))
 if [ "$crc" != 0 ]; then log "collector rc=$crc; nothing claimed"; [ "$NOTES_N" -gt 0 ] || exit 0; : > "$TMPD/raw"; fi
 fi

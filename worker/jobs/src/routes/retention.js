@@ -165,14 +165,18 @@ export const RULES = [
     del: "DELETE FROM staff_outcomes WHERE id IN (SELECT value FROM json_each(?1))",
   },
   // A pending promotion is never removed; a decided one is kept for its window.
+  // BH-6825: a human decision row (staff_promotion_decisions) lives and dies
+  // with its promotion, so each rule deletes it first, in the same batch.
   {
     rule: "staff_promotions.void", table: "staff_promotions", key: "retention.staff_promotions.void_days", def: 30,
     ids: "SELECT id FROM staff_promotions WHERE status = 'void' AND decided_at < ?1 ORDER BY decided_at LIMIT ?2",
+    pre: ["DELETE FROM staff_promotion_decisions WHERE promotion_id IN (SELECT value FROM json_each(?1))"],
     del: "DELETE FROM staff_promotions WHERE id IN (SELECT value FROM json_each(?1))",
   },
   {
     rule: "staff_promotions.applied", table: "staff_promotions", key: "retention.staff_promotions.applied_days", def: 180,
     ids: "SELECT id FROM staff_promotions WHERE status = 'applied' AND decided_at < ?1 ORDER BY decided_at LIMIT ?2",
+    pre: ["DELETE FROM staff_promotion_decisions WHERE promotion_id IN (SELECT value FROM json_each(?1))"],
     del: "DELETE FROM staff_promotions WHERE id IN (SELECT value FROM json_each(?1))",
   },
   // A finished finding is the claim dedup for its fingerprint, so it stays a

@@ -1,0 +1,10 @@
+# STAFF LEARNING (BH-6825, Staff in Mission Control 4/4): the agent page's
+# learning view. Precision and noise of one agent over two windows with the
+# pending promotion and its evidence, the outcome rows behind one count (cursor
+# paged), and a human approve or void of a pending promotion with a reason.
+# Numbered, not key-named: a key-named fragment sorts after the bh-5788 zz-probe
+# that test/route-keyed.bh-5788.test.js needs last. 776 and 786 are taken by
+# open staff PRs.
+GET /api/staff/learning
+GET /api/staff/learning/outcomes
+POST /api/staff/promotions/decide

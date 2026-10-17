@@ -258,9 +258,12 @@ export function StaffAgentScreen({ agent }) {
       if (v === version.current) { inFlight.current = false; setOlderBusy(false); }
     }
   };
+  // A write on this page (a promotion decide, BH-6825) re-reads the roster,
+  // so the facts list (AUTONOMY) shows the level the write left.
   return html`<${AgentDetailView} agent=${agent} roster=${roster} findings=${findings} activity=${activity}
     older=${older} onOlder=${onOlder} olderBusy=${olderBusy} olderError=${olderError}
-    autonomySlot=${html`<${AgentAutonomy} agent=${agent}/>`}/>`;
+    autonomySlot=${html`<${AgentAutonomy} agent=${agent}/>`}
+    onAgentChanged=${roster.reload}/>`;
 }
 
 const age = (iso) => (iso
@@ -344,7 +347,7 @@ function lastBeat(activity) {
 
 // The agent detail page. autonomySlot is the AUTONOMY section the screen
 // passes in (BH-6824); without it the spot is empty.
-export function AgentDetailView({ agent, roster, findings, activity, older = null, onOlder = null, olderBusy = false, olderError = null, autonomySlot = null }) {
+export function AgentDetailView({ agent, roster, findings, activity, older = null, onOlder = null, olderBusy = false, olderError = null, autonomySlot = null, onAgentChanged = null }) {
   const rr = rosterRows(roster && roster.data);
   const row = rr && rr.rows.find((a) => a.name === String(agent || '').trim().toLowerCase());
   const res = findingRows(findings && findings.data);
@@ -379,7 +382,7 @@ export function AgentDetailView({ agent, roster, findings, activity, older = nul
         <${ActivityBody} activity=${activity} older=${older} onOlder=${onOlder} olderBusy=${olderBusy} olderError=${olderError}/>
       <//>
       <${Section} title="OPEN FINDINGS">${body}<//>
-      <${AgentLearning} agent=${name} row=${row || null}/>
+      <${AgentLearning} agent=${name} row=${row || null} onChanged=${onAgentChanged}/>
     </div>`;
 }
 // BH-5567's name for the same view; its tests and imports stay valid.

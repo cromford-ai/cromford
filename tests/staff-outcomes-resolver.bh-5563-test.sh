@@ -288,6 +288,8 @@ cp -r "$DIR/catalog/lanes.d" "$C/catalog/"
 cp -r "$DIR/prompts/staff" "$C/prompts/"
 : > "$C/env/global.env"
 mkdir -p "$C/bin/staff"
+# A symlink into the checkout once the real collector exists (BH-5565): remove it first.
+rm -f "$C/bin/staff/watchman-collect.sh"
 printf '#!/bin/bash\ncat "%s/items.jsonl"\n' "$CFX" > "$C/bin/staff/watchman-collect.sh"; chmod +x "$C/bin/staff/watchman-collect.sh"
 { jq -cn '{item: {id: "c1"}, title: "Fixture c1", class: "Cost Row", source: {kind: "fixture", url: "https://example.com/fx/c1", labels: []}, observedAt: "2026-10-14T00:00:00Z"}'
   jq -cn '{item: {id: "c2"}, title: "Fixture c2", source: {kind: "spend-alert", url: "https://example.com/fx/c2", labels: []}, observedAt: "2026-10-14T00:00:00Z"}'

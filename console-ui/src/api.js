@@ -394,6 +394,16 @@ export const api = {
       body: JSON.stringify(body)
     }),
   clearCoordFlag: (q) => request(`/api/coord/flags?${q}`, { method: 'DELETE' }),
+  // BH-6825: the LEARNING panel on /staff/:agent. One agent's windows and
+  // proposal, the outcome rows behind one count (empty params dropped), and
+  // the human approve or void of a pending promotion (the proxy stamps actor).
+  staffLearning: (agent) => get(coordPath(`/api/staff/learning?agent=${encodeURIComponent(agent)}`)),
+  staffLearningOutcomes: (agent, { days, outcome, before, limit } = {}) => {
+    const q = new URLSearchParams(Object.entries({ agent, days, outcome, before, limit })
+      .filter(([, v]) => v !== undefined && v !== null && v !== '')).toString();
+    return get(coordPath(`/api/staff/learning/outcomes?${q}`));
+  },
+  staffDecidePromotion: (body) => post(coordPath('/api/staff/promotions/decide'), body),
   // BH-5567: the /staff screen's reads. Its kill switch writes through the two
   // flag calls above.
   staffRoster: () => get(coordPath('/api/staff/roster')),

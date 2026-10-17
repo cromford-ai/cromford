@@ -56,13 +56,16 @@ test('BH-5559 staff charter and autonomy', async (t) => {
       assert.ok(r.role.length > 0, r.name);
     }
     // BH-5564: quartermaster owns the 7 cost lanes; BH-5566: dispatcher owns the
-    // 11 health lanes; no other agent has a lane yet.
-    assert.equal(db.prepare("SELECT count(*) AS n FROM staff_lanes WHERE agent NOT IN ('quartermaster', 'dispatcher')").get().n, 0);
+    // 11 health lanes; BH-5565: watchman owns the 4 security lanes; no other
+    // agent has a lane yet.
+    assert.equal(db.prepare("SELECT count(*) AS n FROM staff_lanes WHERE agent NOT IN ('quartermaster', 'dispatcher', 'watchman')").get().n, 0);
     assert.deepEqual(db.prepare("SELECT lane FROM staff_lanes WHERE agent = 'quartermaster' ORDER BY lane").all().map((r) => r.lane),
       ['cap-loss-detector', 'ci-minutes-watch', 'cost-local-brake', 'cost-reconcile', 'extra-usage-track', 'orchestrator-burn', 'vendor-spend-pull']);
     assert.deepEqual(db.prepare("SELECT lane FROM staff_lanes WHERE agent = 'dispatcher' ORDER BY lane").all().map((r) => r.lane),
       ['fleet-slo', 'healthcheck', 'heartbeat-reaper', 'hub-probe', 'jobs-watchdog', 'lane-run-wait-alert', 'pipeline-health',
         'served-sha-watch', 'watchdog-ping', 'watchdog-poll', 'watchdog-responder']);
+    assert.deepEqual(db.prepare("SELECT lane FROM staff_lanes WHERE agent = 'watchman' ORDER BY lane").all().map((r) => r.lane),
+      ['audit-tail', 'claude-auth-check', 'gh-pat-charge-alert', 'security-scan']);
     assert.equal(db.prepare('SELECT count(*) AS n FROM staff_classes').get().n, 0);
     assert.equal(db.prepare('SELECT count(*) AS n FROM staff_decisions').get().n, 0);
     assert.equal(db.prepare("SELECT value FROM settings WHERE key='staff.delegate_after'").get().value, '5');
@@ -92,12 +95,14 @@ test('BH-5559 staff charter and autonomy', async (t) => {
     const w = r.body.agents.find((a) => a.name === 'watchman');
     assert.deepEqual(w, {
       name: 'watchman', role: 'security', accountable: 'operator@example.com', autonomy: 'automation',
-      cap: 'augmentation', status: 'active', soul: 'prompts/staff/watchman-soul.md', lanes: [],
+      cap: 'augmentation', status: 'active', soul: 'prompts/staff/watchman-soul.md',
+      lanes: ['audit-tail', 'claude-auth-check', 'gh-pat-charge-alert', 'security-scan'],
     });
     db.prepare("INSERT INTO staff_lanes (agent, lane, created_at) VALUES ('watchman','secret-scan','t')").run();
     db.prepare("INSERT INTO staff_lanes (agent, lane, created_at) VALUES ('watchman','dep-audit','t')").run();
     const r2 = await roster(DB);
-    assert.deepEqual(r2.body.agents.find((a) => a.name === 'watchman').lanes, ['dep-audit', 'secret-scan']);
+    assert.deepEqual(r2.body.agents.find((a) => a.name === 'watchman').lanes,
+      ['audit-tail', 'claude-auth-check', 'dep-audit', 'gh-pat-charge-alert', 'secret-scan', 'security-scan']);
     assert.deepEqual(r2.body.agents.find((a) => a.name === 'clerk').lanes, []);
   });
 
