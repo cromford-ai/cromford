@@ -453,6 +453,11 @@ psc_plan_missing() {
   return 0
 }
 
+# psc_gating_check, the body-live-probes-gating rule (BH-7074). Missing = the
+# rule is a NOTE, never a refusal.
+# shellcheck source=bin/lib/pr-self-check-gating.sh
+. "$(dirname "${BASH_SOURCE[0]}")/pr-self-check-gating.sh" 2>/dev/null || :
+
 psc_check() {
   local repo="${1:-}" base="${2:-}" head="${3:-}" body="${4:-}" ticket="${5:-${PSC_TICKET_FILE:-}}"
   local rows id mode param match what rc=0 files s full later f nm missing frc ek
@@ -595,6 +600,17 @@ psc_check() {
         done < "$lf"
         rm -f "$lf"
         if [ "$n" -gt 10 ]; then _psc_say "$mode" "$id" "and $((n - 10)) more"; fi ;;
+      body-live-probes-gating)
+        # BH-7074: a gating diff (a lane_placement.* / *.require_* settings
+        # seed in worker/jobs/schema.d/, a new && precondition on a cron lane,
+        # a read of a catalog/live-probes.tsv route in bin/) must carry a
+        # fenced live-probes block with probe lines and a KILL KNOB: line.
+        # bin/lib/pr-self-check-gating.sh has the rule.
+        if command -v psc_gating_check >/dev/null 2>&1; then
+          psc_gating_check "$repo" "$base" "$head" "$body" "$mode" "$id" || rc=1
+        else
+          echo "NOTE $id: bin/lib/pr-self-check-gating.sh not loaded, so gating diffs are not checked"
+        fi ;;
       body-*)
         # BH-5790: a PR-body section the lead review would BLOCK on. When it
         # applies (param) the body must show it (match); both are catalog data.

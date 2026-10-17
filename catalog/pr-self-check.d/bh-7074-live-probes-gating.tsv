@@ -1,0 +1,9 @@
+# catalog/pr-self-check.d/bh-7074-live-probes-gating.tsv — BH-7074: a gating
+# diff must carry a fenced ```live-probes block with probe lines (catalog
+# probe names, or `probe: hub-request bin/<script>.sh <args>`) and a
+# `KILL KNOB:` line inside it. bin/lib/pr-self-check-gating.sh decides what is
+# gating (a lane_placement.* or *.require_* settings seed in
+# worker/jobs/schema.d/, a new && precondition on a cron lane, an added read of
+# a catalog/live-probes.tsv route in bin/). param and match are unused (-).
+# Set the mode to note or off to turn the refusal off.
+body-live-probes-gating	refuse	-	a fenced live-probes block (probe ids or probe: hub-request) and a KILL KNOB: line for a gating diff	-
