@@ -11,7 +11,8 @@
 # later lane adds one module file and edits no list). The module contract is
 # in bin/lib/lane-move/pipeline-health.sh. Each lane has a state file
 # state/lane-move/<lane>; line 1 is one of
-#   waiting <n> <why> | held <ts> <why> | flipped <epoch> load5=<x> [found] |
+#   waiting <n> <why> | held <ts> <why> |
+#   flipped <epoch> load5=<x> [found | found-late <row epoch>] |
 #   verified <ts> | rolled-back <ts> <why> | killed <ts> <actor> | gave-up <ts> <why>
 # and line 2, after a verdict, is `post-attempts <n>`, `posted <ts> [found]`
 # or `posted gave-up`. held, gave-up and a verdict with `posted` are terminal:
@@ -19,9 +20,13 @@
 #
 # Before the flip, in order (the first gate that fails stops the run):
 #   g1  GET /api/settings/lane_placement.<lane>. `fly` (any actor): an
-#       operator flipped it: state `flipped <updated_at> ... found`. `hub` by
-#       actor `seed`: go on. Any other value or actor: `held` (an operator
-#       chose; never overwritten). No row or no answer: `waiting`.
+#       operator flipped it: state `flipped <updated_at> ... found`. A row
+#       first seen AFTER_FROM (1200) s or more after its updated_at is late:
+#       `flipped <now> ... found-late <updated_at>`, so the after window starts
+#       when lane-move first sees it; the before window stays the hour before
+#       <updated_at> (BH-7252 C2). `hub` by actor `seed`: go on. Any other
+#       value or actor: `held` (an operator chose; never overwritten). No row
+#       or no answer: `waiting`.
 #   g2  a lane_placement.<lane>.hub_only row: `held`.
 #   g3  GET /api/lane-runs/stats: the lane-run fleet has done work (sum of
 #       done > 0), else `waiting no-fleet`.
@@ -37,8 +42,9 @@
 # The check, at flip + LANE_MOVE_VERIFY_AFTER_S or later, over the after
 # window [flip+1200, flip+4800):
 #   - the row is not `fly` any more: `killed <ts> <actor>` (the kill row);
-#   - else PASS when, for each project of before.tsv, after >= before - 1 and
-#     at least one lane_runs row of exactly that project finished `done` in
+#   - else PASS when before.tsv has at least one project (else the reason
+#     `no runs in the before window`); for each of its projects, after >=
+#     before - 1 and at least one lane_runs row of exactly that project finished `done` in
 #     the window; failed + died rows <= lane_move.<lane>.fail_max (default 0);
 #     the window has at least one publisher line for the lane, with 0
 #     conflicts and 0 failed. PASS: `verified`. FAIL: setting_set
@@ -207,6 +213,13 @@ lm_preflip() {
     [[ "$fe" =~ ^[0-9]+$ ]] && [ "$fe" -le "$NOW" ] || fe=$NOW
     before_counts "$fe"
     cp "$TMP/before" "$before.tmp" && mv -f "$before.tmp" "$before"
+    # A row seen AFTER_FROM s or more after it was set: its after window has
+    # begun or closed, so the after window starts now (BH-7252 C2).
+    if [ $((NOW - fe)) -ge "$AFTER_FROM" ]; then
+      state "flipped $NOW load5=$(load5) found-late $fe"
+      out "$lane" found "row fly by ${ROW_ACTOR:-unknown} at ${ROW_AT:-unknown}; late by $((NOW - fe))s, after window from $(iso_of "$NOW")"
+      return
+    fi
     state "flipped $fe load5=$(load5) found"
     out "$lane" found "row fly by ${ROW_ACTOR:-unknown} at ${ROW_AT:-unknown}"
     return
@@ -244,7 +257,7 @@ lm_preflip() {
 
 lm_verify() {
   local fe l5f l5n wf wt p b a resp okn fln ddn trunc v fmax pub plines pconf prej pfail
-  local tot=0 reasons=() verdict why rows="" notes=""
+  local tot=0 nb=0 reasons=() verdict why rows="" notes="" re flip
   read -r _ fe l5f _ <<<"$l1"
   l5f=${l5f#load5=}
   [[ "$fe" =~ ^[0-9]+$ ]] || { out "$lane" flipped "bad state line"; return; }
@@ -258,6 +271,7 @@ lm_verify() {
   fmax=$(knob "$v" 0 0 100000)
   while IFS=$'\t' read -r p b; do
     [[ "$p" =~ ^[A-Za-z0-9._-]+$ && "$b" =~ ^[0-9]+$ ]] || continue
+    nb=$((nb + 1))
     a=$(awk -F '\t' -v p="$p" '$1 == p { print $2 }' "$TMP/after")
     a=${a:-0}
     resp=$(_jobs_req GET "/api/lane-runs/by-prefix?lane=$lane&project_prefix=$p&limit=50") \
@@ -280,6 +294,7 @@ lm_verify() {
     [ "$b" -lt 1 ] || [ "$okn" -ge 1 ] || reasons+=("$p: no done lane-run row in the window")
     rows+="| $p | $b | $a | $okn | $fln | $ddn |"$'\n'
   done < "$before"
+  [ "$nb" -ge 1 ] || reasons+=("no runs in the before window")
   [ "$tot" -le "$fmax" ] || reasons+=("failed + died $tot > fail_max $fmax")
   pub=$("lm_publisher_lane_$s")
   read -r plines pconf prej pfail < <(grep -F "; $pub placed " "$PUBLOG" 2>/dev/null | awk -v f="$(ts_of "$wf")" -v t="$(ts_of "$wt")" '
@@ -301,7 +316,16 @@ lm_verify() {
     echo "Verdict: $verdict"
     [ "$verdict" != FAIL ] || echo "Reasons: $why."
     echo
-    echo "Flip: $(iso_of "$fe")$(case "$l1" in *" found") echo " (an operator set the row)" ;; esac). Before window: $(iso_of $((fe - BEFORE_S))) to $(iso_of "$fe"). After window: $(iso_of "$wf") to $(iso_of "$wt") (UTC)."
+    # found-late: the before window ends at the row time, the after window
+    # starts from the time lane-move first saw the row (fe).
+    re=${l1##* found-late }
+    if [ "$re" != "$l1" ] && [[ "$re" =~ ^[0-9]+$ ]]; then
+      flip="$(iso_of "$re") (an operator set the row; lane-move first saw it at $(iso_of "$fe"), so the after window starts there)"
+    else
+      re=$fe
+      flip="$(iso_of "$fe")$(case "$l1" in *" found") echo " (an operator set the row)" ;; esac)"
+    fi
+    echo "Flip: $flip. Before window: $(iso_of $((re - BEFORE_S))) to $(iso_of "$re"). After window: $(iso_of "$wf") to $(iso_of "$wt") (UTC)."
     echo
     echo "| project | before runs | after runs | lane-run ok | failed | died |"
     echo "|---|---|---|---|---|---|"
