@@ -1,0 +1,8 @@
+# @hub-lanes
+
+# ── FLEET VERSION CHECK (BH-7191) ───────────────────────────────────────────
+# Every 10 min: compare the harness sha each box reports (box_status) with
+# first-parent origin/main, and write one ALERTS line per box that lags main by
+# more than harness_version.max_lag_min. Alert only, exit 0. Off: the
+# lane-off-fleet-version-check switch or bin/harness-ctl.sh off fleet-version-check.
+*/10 * * * * /root/harness/bin/hub-lease.sh check && /root/harness/bin/fleet-version-check.sh >> /root/harness/logs/fleet-version-check-cron.log 2>&1

@@ -342,7 +342,7 @@ export function fakeDB(state) {
       const cols = state.buildQueueCols || [
         'project', 'ticket_key', 'ticket_id', 'status', 'target', 'attempt',
         'requested_by', 'claimed_by', 'claimed_at', 'enqueued_at', 'finished_at',
-        'reason', 'meta', 'updated_at', 'machine'];
+        'reason', 'meta', 'updated_at', 'machine', 'harness_commit'];
       return { rows: cols.map((name) => ({ name })) };
     }
     if (/FROM cost_rows/.test(sql)) return { rows: state.costRows || [] };

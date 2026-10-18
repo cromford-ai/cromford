@@ -1,0 +1,55 @@
+{
+  "id": "fleet-version-check",
+  "name": "Fleet version check",
+  "scope": "hub",
+  "script": "bin/fleet-version-check.sh",
+  "cadence": "*/10 * * * *",
+  "boxes": [
+    "hub"
+  ],
+  "switch": {
+    "kind": "flag",
+    "name": "lane-off-fleet-version-check",
+    "aliases": []
+  },
+  "wired": true,
+  "knobs": [
+    {
+      "env": "HARNESS_VERSION_MAX_LAG_MIN",
+      "type": "int",
+      "default": 30,
+      "min": 0,
+      "unit": "minutes",
+      "zero_means": null,
+      "read_in": "bin/fleet-version-check.sh",
+      "note": "BH-7191: a box whose reported harness sha lags first-parent origin/main by more than this many minutes gets one ALERTS line (fleet-version:lag:<box>). The live value is the settings row harness_version.max_lag_min (seeded 30); this env value is an override for one box or a test, so it is not settable here. Not a whole number: one WARN log line and 30.",
+      "settable": false
+    },
+    {
+      "env": "HARNESS_VERSION_MAX_BEAT_GAP_MIN",
+      "type": "int",
+      "default": 30,
+      "min": 0,
+      "unit": "minutes",
+      "zero_means": null,
+      "read_in": "bin/fleet-version-check.sh",
+      "note": "BH-7191: the heartbeat gap the beat rule (BH-7191.2, fleet-version-rules.d/30-beat.sh) alerts over; no reader rule yet. The live value is the settings row harness_version.max_beat_gap_min (seeded 30); this env value is an override for one box or a test, so it is not settable here.",
+      "settable": false
+    },
+    {
+      "env": "HARNESS_CHECKOUT",
+      "type": "string",
+      "default": "/root/harness-checkout",
+      "zero_means": null,
+      "read_in": "bin/fleet-version-check.sh",
+      "note": "BH-7191: the hub checkout bin/fleet-version-check.sh fetches and reads first-parent origin/main from (also read by pipeline-health section 8). A path and a test seam; NOT settable from the control plane \u2014 only env/global.env on the box moves it.",
+      "settable": false
+    }
+  ],
+  "stats": {
+    "cost_stage": null,
+    "cost_project_filter": null,
+    "lanes_row": false,
+    "log": "logs/fleet-version-check.log"
+  }
+}

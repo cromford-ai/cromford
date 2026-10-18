@@ -1060,7 +1060,11 @@ export const ADDED_COLUMNS = {
                ["harness_reported_at", "TEXT"],
                // BH-2532.0: the hash of the rules the box renders, and WHEN it
                // said so. Written by the self-report sibling; nullable, no backfill.
-               ["rules_hash", "TEXT"], ["rules_reported_at", "TEXT"]],
+               ["rules_hash", "TEXT"], ["rules_reported_at", "TEXT"],
+               // BH-7191 (BH-7302): sync and lag facts for the fleet version
+               // check. Nullable, never backfilled; no reader in this slice.
+               ["harness_synced_at", "TEXT"], ["sync_timer", "INTEGER"],
+               ["harness_lag_min", "INTEGER"], ["lag_checked_at", "TEXT"]],
   // BH-1270, parallel trains: which of the tick's disjoint groups this train
   // was. The CREATE above carries it for a fresh database and this ALTER is
   // what reaches the live one — merge_trains shipped with BH-1269 and
@@ -1075,7 +1079,9 @@ export const ADDED_COLUMNS = {
   // schema.sql can never widen it and only this ALTER reaches it. Nullable and
   // never backfilled: every row claimed before this column stays legal and
   // reads exactly as it does today.
-  build_queue: [["machine", "TEXT"]],
+  build_queue: [["machine", "TEXT"],
+                // BH-7191 (BH-7302): the harness sha a build ran. Nullable, never backfilled; no reader in this slice.
+                ["harness_commit", "TEXT"]],
   // BH-1613: the per-model price source. 'vendor-direct' means the daily
   // refresh keeps the committed catalog row (the vendor's own rate and cliff)
   // instead of OpenRouter's resale list; NULL means OpenRouter, today's
@@ -1146,6 +1152,12 @@ export const ADDED_COLUMNS = {
   // /api/landing-decisions/outcome (routes/landing-outcome.js); both
   // landing_decisions families call ensureColumns in their guard.
   landing_decisions: [["outcome", "TEXT"], ["outcome_at", "TEXT"]],
+  // BH-7191 (BH-7302): a box's role (build|review|gate|standby|hub|gate-only|retired).
+  // Nullable, never backfilled; no reader in this slice.
+  registry_boxes: [["role", "TEXT"]],
+  // BH-7191 (BH-7302): the harness sha a job ran. Nullable, never backfilled; no reader in this slice.
+  lane_runs: [["harness_commit", "TEXT"]],
+  lane_machines: [["harness_commit", "TEXT"]],
 };
 // BH-2489: indexes that name an ADDED column, created by ensureColumns right
 // after the ALTER loop, so they exist exactly when their column does. They can
@@ -1162,6 +1174,9 @@ export const ADDED_INDEXES = {
   // BH-6971: serves GET /api/alerts?component=<c> and ?unstamped=1 (both
   // ORDER BY last_seen DESC), the groom's read of open rows with no component.
   alerts: ["CREATE INDEX IF NOT EXISTS idx_alerts_component ON alerts(component, last_seen)"],
+  // BH-7191 (BH-7302): serves the newest tick per box (WHERE box=? ORDER BY
+  // last_tick_at DESC LIMIT 1), the heartbeat read of the fleet version check.
+  lane_ticks: ["CREATE INDEX IF NOT EXISTS idx_lane_ticks_box ON lane_ticks(box, last_tick_at)"],
 };
 export const addedColumnsReady = new WeakMap();
 export async function ensureColumns(env, table) {

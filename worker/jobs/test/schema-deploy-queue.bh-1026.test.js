@@ -153,8 +153,9 @@ test('build_queue.machine is nullable, defaultless and never backfilled', () => 
   assert.equal(m.notnull, 0, 'machine is nullable: every row that predates it stays legal');
   assert.equal(m.dflt_value, null, 'machine has no default — absent is absent, never a placeholder');
   // The CREATE reaches only a fresh database; ADDED_COLUMNS is what reaches the
-  // live one, and the two must name the same column.
-  assert.deepEqual(ADDED_COLUMNS.build_queue, [['machine', 'TEXT']],
+  // live one, and the two must name the same column. BH-7302 appends
+  // harness_commit, which only ADDED_COLUMNS carries.
+  assert.deepEqual(ADDED_COLUMNS.build_queue, [['machine', 'TEXT'], ['harness_commit', 'TEXT']],
     'ADDED_COLUMNS.build_queue must stay in sync with the CREATE');
   db.close();
 });
@@ -192,10 +193,13 @@ test('ensureColumns reaches a build_queue that predates machine, once', async ()
   assert.ok(cols(db, 'build_queue').some((c) => c.name === 'machine'),
     'ensureColumns must ALTER the column into an existing table');
   const alters = seen.filter((s) => /ALTER TABLE/i.test(s));
-  assert.equal(alters.length, 1, `exactly one ALTER, got ${alters.length}: ${alters.join(' | ')}`);
+  // BH-7302: one ALTER per ADDED column, machine and harness_commit.
+  assert.equal(alters.length, 2, `exactly two ALTERs, got ${alters.length}: ${alters.join(' | ')}`);
+  assert.ok(alters.some((s) => /ADD COLUMN machine TEXT/.test(s)), alters.join(' | '));
+  assert.ok(alters.some((s) => /ADD COLUMN harness_commit TEXT/.test(s)), alters.join(' | '));
 
   await ensureColumns(env, 'build_queue');
-  assert.equal(seen.filter((s) => /ALTER TABLE/i.test(s)).length, 1,
+  assert.equal(seen.filter((s) => /ALTER TABLE/i.test(s)).length, 2,
     'memoised per DB handle: a second call must not re-ALTER');
   assert.equal(seen.filter((s) => /PRAGMA table_info/i.test(s)).length, 1,
     'memoised per DB handle: a second call must not re-PRAGMA');
@@ -261,6 +265,8 @@ test('a claim that names a machine stores it, returns it, and GET /api/queue sho
 // claim that sent none answers `machine: null`. That is an added key, it is
 // additive (every caller reads named fields), and this list is where it is
 // admitted instead of being hidden behind a self-referential deepEqual.
+// BH-7302 admits `harness_commit` the same way: the enqueue's ensureColumns adds
+// it, so the `SELECT *` row carries it as null.
 const CLAIM_KEYS_ON_MAIN = [
   'attempt', 'claimed_at', 'claimed_by', 'enqueued_at', 'finished_at', 'meta',
   'project', 'reason', 'requested_by', 'status', 'target', 'ticket_id',
@@ -296,8 +302,8 @@ test('a claim with NO machine is byte for byte today: no PRAGMA, no ALTER, same 
 
   // The response shape: the keys it had before, PLUS the one this column adds.
   assert.deepEqual(Object.keys(claim.body.queued).sort(),
-    [...CLAIM_KEYS_ON_MAIN, 'machine'].sort(),
-    'the claim response is the row: every key it had, and machine — nothing else');
+    [...CLAIM_KEYS_ON_MAIN, 'machine', 'harness_commit'].sort(),
+    'the claim response is the row: every key it had, machine and harness_commit — nothing else');
   assert.deepEqual(Object.keys(claim.body).sort(), ['as_of', 'claimed', 'queued'],
     'the claim body keys are unchanged');
   assert.equal(claim.body.queued.machine, null);

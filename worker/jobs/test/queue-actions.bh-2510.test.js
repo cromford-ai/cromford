@@ -24,6 +24,7 @@ function fakeDB(state) {
   state.queue = state.queue || [];
   state.events = state.events || [];
   if (state.hasMachine === undefined) state.hasMachine = true;
+  if (state.hasHarnessCommit === undefined) state.hasHarnessCommit = state.hasMachine;
   const calls = [];
   const batches = [];
   const norm = (sql) => sql.replace(/\s+/g, ' ').trim();
@@ -34,9 +35,11 @@ function fakeDB(state) {
     calls.push({ sql: s, binds: b });
     if (/^PRAGMA table_info\(build_queue\)$/.test(s)) {
       const cols = ['project', 'ticket_key', 'status', 'claimed_by', 'claimed_at', 'reason', 'updated_at'];
-      return { rows: (state.hasMachine ? [...cols, 'machine'] : cols).map((name) => ({ name })) };
+      return { rows: [...cols, ...(state.hasMachine ? ['machine'] : []), ...(state.hasHarnessCommit ? ['harness_commit'] : [])].map((name) => ({ name })) };
     }
     if (/^ALTER TABLE build_queue ADD COLUMN machine TEXT$/.test(s)) { state.hasMachine = true; return { changes: 0 }; }
+    // BH-7302: ensureColumns also adds harness_commit; the fake reports it after.
+    if (/^ALTER TABLE build_queue ADD COLUMN harness_commit TEXT$/.test(s)) { state.hasHarnessCommit = true; return { changes: 0 }; }
     if (/^SELECT \* FROM build_queue WHERE project=\?1 AND ticket_key=\?2$/.test(s)) {
       const r = row(b[0], b[1]);
       return { rows: r ? [{ ...r }] : [] };
