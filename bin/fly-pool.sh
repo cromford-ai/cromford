@@ -32,7 +32,6 @@ P="${1:?project}"
 # found no flag, and exited 0 — so "no ssh happened" was true because nothing
 # happened at all. Cron sets it nowhere, so production is the path it always had.
 HARNESS="${HARNESS:-/root/harness}"
-. "${HARNESS:-/root/harness}/bin/lib/env-path.sh" 2>/dev/null || . "$(dirname "${BASH_SOURCE[0]}")/lib/env-path.sh" 2>/dev/null || harness_env_dir() { printf '%s\n' "${1:-${HARNESS:-/root/harness}}/env"; }; HENV=$(harness_env_dir "$HARNESS")
 FLAG="$HARNESS/flags/fly-pool-$P"
 [ -f "$FLAG" ] || exit 0
 # ONE RUN PER PROJECT, DECIDED FIRST (BH-7139). The per-project lock is taken
@@ -40,13 +39,16 @@ FLAG="$HARNESS/flags/fly-pool-$P"
 # token resolve and `fly agent start`. On 2026-10-16 the hub ran up to 7
 # fly-pool.sh per project at once, each paying that start-up under load 170+
 # before it found the lock held. A second start now exits rc 0 at once with one
-# line; the running tick already covers this project.
-mkdir -p "$HARNESS/locks" "$HARNESS/logs" 2>/dev/null
+# line; the running tick already covers this project. Nothing is sourced above
+# this point and mkdir runs only when a dir is missing (BH-7251), so a held-lock
+# start costs bash, flock and the log line.
+[ -d "$HARNESS/locks" ] && [ -d "$HARNESS/logs" ] || mkdir -p "$HARNESS/locks" "$HARNESS/logs" 2>/dev/null
 exec 8>"$HARNESS/locks/fly-pool-$P.lock"
 if ! flock -n 8; then
   echo "$(date -u '+%Y-%m-%d %H:%M:%SZ') [pool/$P] already running (locks/fly-pool-$P.lock held) — this start exits, the running tick covers $P" >> "$HARNESS/logs/fly-pool.log"
   exit 0
 fi
+. "${HARNESS:-/root/harness}/bin/lib/env-path.sh" 2>/dev/null || . "$(dirname "${BASH_SOURCE[0]}")/lib/env-path.sh" 2>/dev/null || harness_env_dir() { printf '%s\n' "${1:-${HARNESS:-/root/harness}}/env"; }; HENV=$(harness_env_dir "$HARNESS")
 # The cap: a number in the flag file, else fly/pool-caps.conf, else UNLIMITED —
 # bin/pool-cap.sh is the one reader (2026-09-12), and since 2026-09-14 it prints
 # 0 for "no ceiling" (the SPAWN section below turns that into queue depth). The

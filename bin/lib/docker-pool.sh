@@ -12,6 +12,13 @@
 #   docker_pool_sweep
 #       rc 0 prints `<expired> <requeued> <backlog 0|1>` (TSV), then one TSV
 #       line per expired lease: project key box requeued(1|0)
+#   docker_pool_results_reap [limit]
+#       (BH-7348) the hub reads the unread result rows the docker hosts posted
+#       (POST /api/docker-pool/results/reap) and the worker stamps them read.
+#       rc 0 prints `<n> <backlog 0|1>` (TSV), then one TSV line per row:
+#       project key box result_word cost_rows unpriced_rows cost_verified
+#       auth_account pr_url cost_box. An empty field prints `-`. rc 1 = the
+#       worker is unusable (any answer but a 200 with a `reaped` array).
 #
 # rc 9 = the worker refused: off, killed, full, lost, not_pool, or a heartbeat
 # or release that lost its lease. The reason goes to stderr. rc 2 = nothing
@@ -84,4 +91,20 @@ docker_pool_sweep() {
   jq -e '(.expired | type) == "array" and (.requeued | type) == "number"' <<<"$out" >/dev/null 2>&1 || return 1
   jq -r '([(.expired | length), .requeued, (if .backlog then 1 else 0 end)] | @tsv),
          (.expired[] | [.project, .key, .box, (if .requeued then 1 else 0 end)] | @tsv)' <<<"$out"
+}
+
+docker_pool_results_reap() {
+  local body='{}' out rc
+  if [ -n "${1:-}" ]; then
+    [[ $1 =~ ^[0-9]+$ ]] || return 1
+    body=$(jq -nc --argjson l "$1" '{limit:$l}') || return 1
+  fi
+  out=$(_dp_call results/reap "$body" 2>/dev/null); rc=$?
+  [ "$rc" = 0 ] || return 1
+  jq -e '(.reaped | type) == "array"' <<<"$out" >/dev/null 2>&1 || return 1
+  jq -r 'def f: if . == null or . == "" then "-" else tostring end;
+         ([(.reaped | length), (if .backlog == 1 or .backlog == true then 1 else 0 end)] | @tsv),
+         (.reaped[] | [(.project | f), (.key | f), (.box | f), ((.result // "") | split(" ")[0] | f),
+                       (.cost_rows | f), (.unpriced_rows | f), (.cost_verified | f), (.auth_account | f),
+                       (.pr_url | f), (.cost_box | f)] | @tsv)' <<<"$out"
 }

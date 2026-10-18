@@ -37,6 +37,18 @@
 # do with content, so a box that rolled back a branch would keep serving the
 # registry it rendered before.
 #
+# THE FAST PATH IS CTIME, AND THE HASH STAYS THE RULE (BH-7251). The hash read
+# all of catalog/lanes.d (2.1 MB, 298 files) on every call: about 23 ms per lane
+# start on the hub. A call now first asks `find -cnewer <stamp>` whether any
+# input's CHANGE time is later than the stamp. No mtime can fake that: `cp -a`,
+# `rsync -t`, `touch -d` and tar set an old mtime, but every one of them sets
+# ctime to now, and a directory's ctime moves on every add, delete and rename.
+# Nothing newer: the render is served, with no digest. Something newer: the hash
+# decides, as before, and a hash that still matches (a same-content checkout, a
+# chmod) re-stamps without a compose. The stamp's mtime is the time the hash
+# STARTED minus 2 s (_lr_stamp_put), so an input changed while the hash or the
+# compose ran is always newer than the stamp.
+#
 # THE STAMP LIVES OUTSIDE THE REPO, under ${TMPDIR:-/tmp}, keyed by a digest of
 # the render's absolute path. It used to sit beside the render at
 # catalog/.lanes.json.stamp, and that is a file this library writes into a tree
@@ -55,6 +67,15 @@
 # file — never a half-written one. Two renders racing produce identical bytes by
 # construction (that is what `--check` pins), so whichever lands last is right.
 #
+# ONE COMPOSER PER CHANGE (BH-7251). A compose takes about 3 s on the hub, and
+# every lane that started in those 3 s used to compose its own copy (16
+# lanes-build.sh at once on 2026-10-17). A compose now holds `flock -n` on
+# lock-<key> beside the stamp. A caller that finds it held serves the existing
+# render (the old-or-new guarantee above) and composes nothing; with no render
+# to serve it waits up to 60 s for the holder, then re-checks. The lock is a
+# dedupe, never a queue, and it is closed before this returns. No flock, or a
+# refused stamp directory: no lock, and every caller composes as before.
+#
 # READ-ONLY TREES. If catalog/ cannot be written (a read-only mount, a checkout
 # owned by another user) the render goes to ${TMPDIR:-/tmp} under a name that
 # carries the source hash, and that path is what is printed. A reader that
@@ -66,6 +87,43 @@
 # Sourced only, never executed: no `set -e`, no `exit`, nothing runs at source
 # time. Callers run under `set -euo pipefail`, so no pipeline in here may fail on
 # a happy path.
+
+# _lr_build <root> <to> [lockfd] — run the renderer into <to>, with the herd
+# lock's fd closed in the child. The fd is a number _lr_lock_open chose; eval
+# because bash 3.2 (the lead-post closure, BH-3565) has no {fd} redirection.
+_lr_build() {
+  local fd="${3:-}"
+  case "$fd" in *[!0-9]*) fd="" ;; esac
+  if [ -n "$fd" ]; then
+    eval '"$1/bin/lanes-build.sh" --root "$1" --to "$2" >/dev/null 2>&1 '"$fd"'>&-'
+  else
+    "$1/bin/lanes-build.sh" --root "$1" --to "$2" >/dev/null 2>&1
+  fi
+}
+
+# _lr_lock_open <path> — open <path> for writing on a free fd from 190 up and
+# set _LR_FD to it; rc 1 (and _LR_FD empty) when none opens. bash 3.2 has no
+# `exec {fd}>`, so the number is picked here: /dev/fd/<n> exists while <n> is
+# open (bash answers that test with fstat), and a caller's own low fds are
+# never touched. The group's 2>/dev/null is not made permanent.
+_lr_lock_open() {
+  local n=190
+  _LR_FD=""
+  while [ "$n" -lt 250 ]; do
+    if [ ! -e "/dev/fd/$n" ]; then
+      { eval "exec $n>\"\$1\""; } 2>/dev/null || return 1
+      _LR_FD=$n; return 0
+    fi
+    n=$((n + 1))
+  done
+  return 1
+}
+
+# _lr_lock_close <fd> — close a fd _lr_lock_open opened.
+_lr_lock_close() {
+  case "${1:-}" in ''|*[!0-9]*) return 0 ;; esac
+  eval "exec $1>&-"
+}
 
 # _lr_root — the repo root this library was sourced from.
 _lr_root() {
@@ -118,7 +176,7 @@ _lr_hash() {
 _lr_stamp() {
   local key dir
   key=$(printf '%s' "$1" | cksum 2>/dev/null | tr -dc '0-9')
-  dir="${TMPDIR:-/tmp}/harness-lanes-$(id -u 2>/dev/null || echo 0)"
+  dir="${TMPDIR:-/tmp}/harness-lanes-${EUID:-0}"
   # Plain `mkdir`, not `mkdir -p`: -p is exactly the flag that says "fine" to
   # somebody else's directory, which is the case being closed here. The checks
   # on the next line are what decide, so losing the create race — somebody
@@ -128,24 +186,62 @@ _lr_stamp() {
   printf '%s/stamp-%s' "$dir" "${key:-0}"
 }
 
+# _lr_stamp_put <stamp> <hash> <t0> — write the stamp whole (temp file + mv) with
+# its mtime at t0 - 2 s, t0 being when the hash started. The fast path in
+# lanes_json_path serves the render while no input is newer than that mtime, so
+# an input that changed after t0 - 2 s always gets the hash. A touch that cannot
+# set the mtime writes no stamp: the next call re-hashes, never a fast path on
+# a stamp that is too new.
+_lr_stamp_put() {
+  local stamp="$1" want="$2" t0="$3" tmp
+  tmp="$stamp.$$.tmp"
+  printf '%s\n' "$want" > "$tmp" 2>/dev/null \
+    && touch -d "@$(( t0 - 2 ))" "$tmp" 2>/dev/null \
+    && mv -f "$tmp" "$stamp" 2>/dev/null && return 0
+  rm -f "$tmp" 2>/dev/null
+  return 1
+}
+
+# _lr_fresh <src> <renderer> <stamp> — rc 0 when no input changed after the
+# stamp was written: one `find`, no read of the sources. Any doubt (no stamp,
+# no find, a find error such as a missing renderer) is rc 1, and the hash
+# decides.
+_lr_fresh() {
+  local newer
+  [ -n "$3" ] && [ -s "$3" ] || return 1
+  command -v find >/dev/null 2>&1 || return 1
+  newer=$(find "$1" "$2" -cnewer "$3" -print -quit 2>/dev/null) || return 1
+  [ -z "$newer" ]
+}
+
 # lanes_stamp_write <root> — record that <root>'s render is current. Exported so
 # bin/lanes-build.sh --write/--to can converge with the loader: without it, a
 # checkout harness-sync has just composed is re-composed by the next reader.
 lanes_stamp_write() {
-  local root="${1:-}" want stamp
+  local root="${1:-}" want stamp t0
   [ -n "$root" ] && [ -d "$root/catalog/lanes.d" ] || return 1
   [ -s "$root/catalog/lanes.json" ] || return 1
+  t0=$(date '+%s')
   want=$(_lr_hash "$root/catalog/lanes.d" "$root/bin/lanes-build.sh")
   [ -n "$want" ] || return 1
   # A refused stamp directory is rc 1, never a write somewhere else: the caller
   # loses one convergence and the next reader re-renders.
   stamp=$(_lr_stamp "$root/catalog/lanes.json") || return 1
-  printf '%s\n' "$want" > "$stamp" 2>/dev/null || return 1
+  _lr_stamp_put "$stamp" "$want" "$t0"
+}
+
+# _lr_current <out> <stamp> <want> — rc 0 when the render exists and the stamp
+# holds <want>.
+_lr_current() {
+  local have=""
+  [ -s "$1" ] && [ -n "$2" ] && [ -r "$2" ] || return 1
+  IFS= read -r have < "$2" 2>/dev/null || :
+  [ "$have" = "$3" ]
 }
 
 # lanes_json_path [<root>]
 lanes_json_path() {
-  local root="${1:-}" src out stamp want have tmp
+  local root="${1:-}" src out stamp want tmp t0 lockfd="" rc
   # The explicit override wins and is never validated: a suite pointing at a
   # fixture, and bin/agent-call.sh's builder path, both rely on being handed
   # back exactly what they set.
@@ -167,20 +263,59 @@ lanes_json_path() {
     return 1
   fi
 
+  # The fast path: no input changed since the stamp. One fork, no digest.
+  if [ -s "$out" ] && _lr_fresh "$src" "$root/bin/lanes-build.sh" "$stamp"; then
+    printf '%s' "$out"; return 0
+  fi
+
+  t0=$(date '+%s')
   want=$(_lr_hash "$src" "$root/bin/lanes-build.sh")
   [ -n "$want" ] || { echo "lanes-registry: could not digest $src" >&2; return 1; }
-  if [ -s "$out" ] && [ -n "$stamp" ] && [ -r "$stamp" ]; then
-    have=$(cat "$stamp" 2>/dev/null)
-    [ "$have" = "$want" ] && { printf '%s' "$out"; return 0; }
+  # Same content (a checkout of identical bytes, a touch, a chmod): re-stamp, so
+  # the next call takes the fast path again, and compose nothing.
+  if _lr_current "$out" "$stamp" "$want"; then
+    _lr_stamp_put "$stamp" "$want" "$t0" || :
+    printf '%s' "$out"; return 0
   fi
+
+  # The herd lock. Held by a sibling: serve the existing render rather than
+  # compose a second copy; with none, wait for the holder, then re-check.
+  if [ -n "$stamp" ] && command -v flock >/dev/null 2>&1 \
+     && _lr_lock_open "$(dirname "$stamp")/lock-${stamp##*/stamp-}"; then
+    lockfd=$_LR_FD
+    if ! flock -n "$lockfd" 2>/dev/null; then
+      if [ -s "$out" ]; then
+        _lr_lock_close "$lockfd"
+        printf '%s' "$out"; return 0
+      fi
+      flock -w 60 "$lockfd" 2>/dev/null || :
+    fi
+    # A sibling may have just composed these exact sources.
+    if _lr_current "$out" "$stamp" "$want"; then
+      _lr_lock_close "$lockfd"
+      printf '%s' "$out"; return 0
+    fi
+  else
+    lockfd=""
+  fi
+  _lr_compose "$root" "$src" "$out" "$stamp" "$want" "$t0" "$lockfd"; rc=$?
+  [ -z "$lockfd" ] || _lr_lock_close "$lockfd"
+  return "$rc"
+}
+
+# _lr_compose <root> <src> <out> <stamp> <want> <t0> [lockfd] — the render, and
+# the fallback tiers when catalog/ cannot be written. The lock fd is closed for
+# the renderer, so nothing it starts can hold the herd lock.
+_lr_compose() {
+  local root="$1" src="$2" out="$3" stamp="$4" want="$5" t0="$6" lockfd="${7:-}" tmp
 
   # Stale or absent: render. `--to` keeps the composition and the placement in
   # one script — this library never learns the registry's shape.
   if tmp=$(mktemp "$root/catalog/.lanes.json.XXXXXX" 2>/dev/null); then
-    if "$root/bin/lanes-build.sh" --root "$root" --to "$tmp" >/dev/null 2>&1 && [ -s "$tmp" ]; then
+    if _lr_build "$root" "$tmp" "$lockfd" && [ -s "$tmp" ]; then
       # `|| :` because a refused stamp is a HAPPY path here — the render landed,
       # there is simply nowhere to record it — and callers run under `set -e`.
-      mv -f "$tmp" "$out" 2>/dev/null && [ -n "$stamp" ] && printf '%s\n' "$want" > "$stamp" 2>/dev/null || :
+      mv -f "$tmp" "$out" 2>/dev/null && [ -n "$stamp" ] && _lr_stamp_put "$stamp" "$want" "$t0" || :
       [ -s "$out" ] && { printf '%s' "$out"; return 0; }
     fi
     rm -f "$tmp" 2>/dev/null
@@ -200,7 +335,7 @@ lanes_json_path() {
     fallback="$(dirname "$stamp")/render-$key.json"
     [ -s "$fallback" ] && { printf '%s' "$fallback"; return 0; }
     if tmp=$(mktemp "${TMPDIR:-/tmp}/harness-lanes.XXXXXX" 2>/dev/null) \
-       && "$root/bin/lanes-build.sh" --root "$root" --to "$tmp" >/dev/null 2>&1 && [ -s "$tmp" ]; then
+       && _lr_build "$root" "$tmp" "$lockfd" && [ -s "$tmp" ]; then
       mv -f "$tmp" "$fallback" 2>/dev/null && { printf '%s' "$fallback"; return 0; }
     fi
     rm -f "${tmp:-}" 2>/dev/null

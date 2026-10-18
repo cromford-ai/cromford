@@ -139,7 +139,14 @@ eq "M4 alert_state_enabled loads the rows, later \$(alert_cfg) reuse them" \
 M4ALL=$(jqn); : > "$T/jq.log"
 as 'alert_state_enabled' >/dev/null
 eq "M4 three alert_cfg calls add no jq over the cache to the gate's own" "$M4ALL" "$(jqn)"
-eq "M4 the gate's own: one for the rows, three for the switch row" "$(jqn)" "4"
+# TEST-CHANGE (BH-7251): the gate's switch row (the refresh's age check, the box
+# row, the fleet row) was three jq over the cache; lane-gate.sh's settings memo
+# (_lg_sc_load) now parses the cache ONCE per file content and answers all
+# three from memory. That reduction is the ticket's goal (plan part 2:
+# "_lg_settings_refresh, _lg_setting_lookup … no longer call jq"), so the
+# count drops from 1 + 3 to 1 + 1. The memo's jq still names the cache, so this
+# shim still counts it.
+eq "M4 the gate's own: one for the rows, one for the switch row's settings memo" "$(jqn)" "2"
 : > "$H/flags/alerts-db"; : > "$T/jq.log"
 eq "M4 alerts_db_on preloads too" \
   "$(as 'alerts_db_on; for n in 1 2 3; do x=$(alert_cfg ALERT_REMINDER_S 1); done; echo "$x"')" "77"

@@ -53,7 +53,8 @@ test('K1 the schema seeds the four settings rows and the four lease indexes', as
   assert.equal(val('retention.docker_pool_leases.days'), '30');
   const ix = db.prepare("SELECT name, \"unique\" AS u, partial FROM pragma_index_list('docker_pool_leases')").all();
   const names = ix.map((r) => r.name).sort();
-  assert.deepEqual(names, ['idx_docker_pool_leases_box', 'idx_docker_pool_leases_due', 'idx_docker_pool_leases_ended', 'uq_docker_pool_leases_live']);
+  // idx_docker_pool_leases_key is BH-7348's (the result route's lease read).
+  assert.deepEqual(names, ['idx_docker_pool_leases_box', 'idx_docker_pool_leases_due', 'idx_docker_pool_leases_ended', 'idx_docker_pool_leases_key', 'uq_docker_pool_leases_live']);
   const live = ix.find((r) => r.name === 'uq_docker_pool_leases_live');
   assert.equal(live.u, 1); assert.equal(live.partial, 1);
 });

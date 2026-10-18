@@ -710,6 +710,27 @@ if [ -r "$H/bin/lib/docker-pool.sh" ] && . "$H/bin/lib/docker-pool.sh" 2>/dev/nu
   fi
 fi
 
+# --- DOCKER-POOL RESULT ROWS (BH-7348) ----------------------------------------
+# A docker host reaps its own build after the container exits and posts one
+# result row. The hub reads them here, at most 50 per tick (the next tick reads
+# the rest). One log line per row. One ALERTS line per row whose cost rows are
+# unpriced or not verified in the DB. A read that fails writes one log line.
+if declare -F docker_pool_results_reap >/dev/null 2>&1; then
+  if DPR_OUT=$(docker_pool_results_reap 2>/dev/null); then
+    IFS="$(printf '\t')" read -r DPR_N DPR_BL <<<"$(head -n 1 <<<"$DPR_OUT")"
+    while IFS="$(printf '\t')" read -r DPR_P DPR_K DPR_BOX DPR_W DPR_C DPR_U DPR_V DPR_A _DPR_PR DPR_CB; do
+      [ -n "$DPR_K" ] || continue
+      echo "$(STAMP) docker-pool result: $DPR_P/$DPR_K on $DPR_BOX: $DPR_W, $DPR_C cost row(s), $DPR_U unpriced, verified=$DPR_V, account $DPR_A" >> "$LOG"
+      if [ "${DPR_C:-0}" -gt 0 ] 2>/dev/null && { [ "${DPR_U:-0}" -gt 0 ] 2>/dev/null || [ "$DPR_V" != 1 ]; }; then
+        HARNESS="$H" "$H/bin/alert-line.sh" --project "$DPR_P" "[jobs-watchdog] DOCKER POOL COST ROWS: $DPR_P/$DPR_K on $DPR_BOX: $DPR_U of $DPR_C row(s) unpriced, verified=$DPR_V. The cost rows are in cost_rows under $DPR_CB; check the model price table on that host." >/dev/null 2>&1 || true
+      fi
+    done < <(tail -n +2 <<<"$DPR_OUT")
+    echo "$(STAMP) docker-pool results: ${DPR_N:-0} result(s) read$([ "${DPR_BL:-0}" = 1 ] && echo ', more are waiting for the next tick')" >> "$LOG"
+  else
+    echo "$(STAMP) docker-pool results: reap failed (worker unusable); no result was read this tick" >> "$LOG"
+  fi
+fi
+
 # --- A DEFERRAL FILED AS A FINISHED BUILD (2026-09-11) -----------------------
 # The sweep above catches a row stuck CLAIMED. This one catches its mirror
 # image: a row closed `done` for a build that never ran. bin/run-build.sh writes

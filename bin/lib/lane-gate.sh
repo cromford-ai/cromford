@@ -94,6 +94,8 @@ _lg_kpfx() { if [ "$(_lg_kind)" = libs ]; then printf lib; else printf lane; fi;
 # The actor POST /api/settings/seed-registry writes (worker/jobs core.js
 # REGISTRY_SEED_ACTOR). A row it owns is a mirror of the registry default.
 _LG_SEED_ACTOR=registry-seed
+# The clock is `date`: the printf %(…)T builtin is bash >= 4.2, and this file
+# runs under macOS bash 3.2 in the lead-post closure (BH-3565).
 _lg_now() { if [ -n "${LANE_GATE_NOW:-}" ]; then printf '%s' "$LANE_GATE_NOW"; else date -u '+%s'; fi; }
 _lg_iso() { date -u '+%Y-%m-%dT%H:%M:%SZ'; }
 
@@ -775,6 +777,183 @@ lane_gate_or_exit() {
 
 # --- knobs -------------------------------------------------------------------
 
+# THE KNOB MEMO (BH-7251). A lane start used to run about 8 jq per knob (25
+# for merge-conductor's lane_env_apply on the hub). Two memos, held in process
+# memory, replace them:
+#   registry  the knobs of one (registry, scope, id): ONE jq per triple, for
+#             the life of the process — the same guarantee _LG_REG_CACHE
+#             gives: a tick reads the registry it started with.
+#   settings  the settings cache's operator values and every key: ONE jq per
+#             distinct file CONTENT. Each read compares the raw text with the
+#             text it parsed (the read builtin, no fork), so a refresh that
+#             rewrites the file is seen at once.
+# A command substitution inherits both, so `v=$(lane_knob …)` after
+# lane_env_apply runs no jq at all. The records are NUL-separated, so a value
+# with a space, a backslash, a `|` or a tab comes back byte for byte.
+#
+# BASH 3.2 (BH-3565). This file is in the lead-post closure, which runs under
+# macOS /bin/bash 3.2: no associative arrays. Each memo entry is a plain shell
+# variable whose NAME encodes its key, read back with ${!name}:
+#   _LG_KM_T_<t>, _LG_KM_E_<t>   triple <t>'s "<reg>|<kind>|<id>" and its env list
+#   _LG_KM_<t>_<field>_<ENV>     one knob field (sa sk rq ad default min max zero_means)
+#   _LG_SK_<key>, _LG_SV_<key>   a settings key exists / its operator value
+# A settings key is encoded `_`→`__`, `.`→`_d`, `-`→`_m` (prefix-free, so two
+# keys never share a name). A key or ENV with any other character is not
+# memoised; its read takes the one jq it took before BH-7251.
+_LG_ALNUM=abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789
+_LG_UPPER=ABCDEFGHIJKLMNOPQRSTUVWXYZ
+_LG_LOWER=abcdefghijklmnopqrstuvwxyz
+: "${_LG_KM_TN:=0}" "${_LG_SC_NAMES=}" "${_LG_SK_N:=0}"
+: "${_LG_SC_FILE=}" "${_LG_SC_RAW=}" "${_LG_SC_LOADED=0}" "${_LG_SFETCHED=0}"
+
+# _lg_km_triple <reg> <kind> <id> — _LG_MI = the triple's slot; rc 1 when it
+# was never loaded. A process loads a handful of triples, so a scan is enough.
+_lg_km_triple() {
+  local b="$1|$2|$3" i=0 n
+  while [ "$i" -lt "$_LG_KM_TN" ]; do
+    n=_LG_KM_T_$i
+    [ "${!n-}" = "$b" ] && { _LG_MI=$i; return 0; }
+    i=$((i + 1))
+  done
+  return 1
+}
+
+# _lg_km_get <reg> <kind> <id> <ENV> <field> — _LG_MV = that field, "" when the
+# triple or the knob has none (what an unset key of the old array answered).
+# rc 2 when <ENV> is not a shell name, so the caller asks jq instead.
+_lg_km_get() {
+  local n
+  _LG_MV=""
+  case "$4" in ''|*[!${_LG_ALNUM}_]*) return 2 ;; esac
+  _lg_km_triple "$1" "$2" "$3" || return 0
+  n="_LG_KM_${_LG_MI}_$5_$4"
+  _LG_MV=${!n-}
+  return 0
+}
+
+# _lg_km_load <reg> <lanes|libs> <id> — fill the registry memo for one entry.
+# Fields per knob: sa (settable for _lg_env_apply: false only when
+# .settable==false), sk (lane_knob_settable's reading: .settable as a string,
+# "true" when absent), rq, ad (the default _lg_env_apply exports), and
+# default/min/max/zero_means (each `// empty`, as _lg_knob_meta answered).
+# _LG_KM_E_<t> is the ordered env list. The first record for an env wins,
+# which is what `head -1` picked before.
+_lg_km_load() {
+  local reg="${1:-}" kind="${2:-lanes}" id="${3:-}" t e sa sk rq ad df mn mx zm envs="" p n
+  _lg_km_triple "$reg" "$kind" "$id" && return 0
+  [ -r "$reg" ] || return 0
+  t=$_LG_KM_TN
+  while IFS= read -r -d '' e && IFS= read -r -d '' sa && IFS= read -r -d '' sk \
+     && IFS= read -r -d '' rq && IFS= read -r -d '' ad && IFS= read -r -d '' df \
+     && IFS= read -r -d '' mn && IFS= read -r -d '' mx && IFS= read -r -d '' zm; do
+    case "$e" in
+      ''|*[!${_LG_ALNUM}_]*)
+        # Not a shell name: listed once, never memoised (see _lg_km_get).
+        case $'\n'"$envs" in *$'\n'"$e"$'\n'*) continue ;; esac ;;
+      *)
+        p="_LG_KM_${t}_"
+        n="${p}sa_$e"
+        [ -n "${!n+x}" ] && continue
+        printf -v "${p}sa_$e" '%s' "$sa"; printf -v "${p}sk_$e" '%s' "$sk"
+        printf -v "${p}rq_$e" '%s' "$rq"; printf -v "${p}ad_$e" '%s' "$ad"
+        printf -v "${p}default_$e" '%s' "$df"; printf -v "${p}min_$e" '%s' "$mn"
+        printf -v "${p}max_$e" '%s' "$mx"; printf -v "${p}zero_means_$e" '%s' "$zm" ;;
+    esac
+    envs="$envs$e"$'\n'
+  done < <(jq -j --arg k "$kind" --arg i "$id" '
+    def s: if . == null then "" elif type == "string" then . else tojson end;
+    .[$k][]? | select(.id==$i) | .knobs[]? | select(.env)
+    | ((.env|tostring),
+       (if .settable==false then "false" else "true" end),
+       (if has("settable") then (.settable|tostring) else "true" end),
+       (if .required==true then "true" else "false" end),
+       (if .default==null then "" else (.default|tostring) end),
+       ((.default // null)|s), ((.min // null)|s), ((.max // null)|s),
+       ((.zero_means // null)|s))
+    | . + "\u0000"' "$reg" 2>/dev/null)
+  printf -v "_LG_KM_T_$t" '%s' "$reg|$kind|$id"
+  printf -v "_LG_KM_E_$t" '%s' "$envs"
+  _LG_KM_TN=$((t + 1))
+  return 0
+}
+
+# _lg_sc_name <key> — _LG_ENC = the settings key's variable suffix; rc 1 when
+# the key has a character outside [A-Za-z0-9_.-] (such a key is not memoised).
+_lg_sc_name() {
+  local e
+  case "$1" in ''|*[!${_LG_ALNUM}_.-]*) return 1 ;; esac
+  e=${1//_/__}; e=${e//./_d}; e=${e//-/_m}
+  _LG_ENC=$e
+}
+
+# _lg_sc_reset — forget every memoised settings key.
+_lg_sc_reset() {
+  # shellcheck disable=SC2086 # a list of variable names, split on purpose
+  [ -z "$_LG_SC_NAMES" ] || unset $_LG_SC_NAMES
+  _LG_SC_NAMES=""; _LG_SK_N=0; _LG_SFETCHED=0
+}
+
+# _lg_sc_load — fill the settings memo and _LG_SFETCHED from the settings
+# cache. rc 1 (and an empty memo) when there is no readable cache. A corrupt
+# file loads as fetched 0 with no values, which is what each jq answered
+# before. _LG_SK_N counts every non-empty key, memoised or not.
+_lg_sc_load() {
+  local h f raw="" fa tot k hv v names=""
+  h="${HARNESS:-${H:-}}"; f=""
+  [ -n "$h" ] && f="$h/state/settings-cache.json"
+  if [ -z "$f" ] || [ ! -r "$f" ]; then
+    _lg_sc_reset; _LG_SC_LOADED=0; _LG_SC_FILE=""; _LG_SC_RAW=""
+    return 1
+  fi
+  IFS= read -r -d '' raw < "$f" || :
+  [ "$_LG_SC_LOADED" = 1 ] && [ "$f" = "$_LG_SC_FILE" ] && [ "$raw" = "$_LG_SC_RAW" ] && return 0
+  _lg_sc_reset; fa=0; tot=0
+  {
+    IFS= read -r -d '' fa || fa=0
+    IFS= read -r -d '' tot || tot=0
+    while IFS= read -r -d '' k && IFS= read -r -d '' hv && IFS= read -r -d '' v; do
+      _lg_sc_name "$k" || continue
+      printf -v "_LG_SK_$_LG_ENC" 1; names="$names _LG_SK_$_LG_ENC"
+      [ "$hv" = 1 ] || continue
+      printf -v "_LG_SV_$_LG_ENC" '%s' "$v"; names="$names _LG_SV_$_LG_ENC"
+    done
+  # --arg src names the file the text came from, so a jq-counting shim that
+  # looks for the cache's path counts this read (tests/conf-rows M4/M5).
+  } < <(jq -j --arg src "$f" '
+    ((.fetched_at // 0) | tostring) + "\u0000",
+    ((.values // {}) | (try to_entries catch []) | map(select(.key != "")) | length | tostring) + "\u0000",
+    ((.values // {}) | (try to_entries catch [])[]
+     | .key + "\u0000"
+       + (if .value != null and .value != false then "1" else "0" end) + "\u0000"
+       + (.value | if . == null or . == false then "" elif type == "string" then . else tojson end)
+       + "\u0000")' <<<"$raw" 2>/dev/null)
+  case "$fa" in ''|*[!0-9]*) fa=0 ;; esac
+  case "$tot" in ''|*[!0-9]*) tot=0 ;; esac
+  _LG_SC_NAMES=$names; _LG_SK_N=$tot
+  _LG_SFETCHED=$fa; _LG_SC_FILE=$f; _LG_SC_RAW=$raw; _LG_SC_LOADED=1
+  return 0
+}
+
+# _lg_sc_has <key> — rc 0 when the loaded settings cache has <key> in
+# `.values` (any value). A key the memo cannot hold asks jq, as before.
+_lg_sc_has() {
+  local n
+  if _lg_sc_name "$1"; then n="_LG_SK_$_LG_ENC"; [ -n "${!n+x}" ]; return; fi
+  [ -n "$_LG_SC_FILE" ] || return 1
+  jq -e --arg k "$1" '(.values // {}) | (try has($k) catch false)' "$_LG_SC_FILE" >/dev/null 2>&1
+}
+
+# _lg_lower <WORD> — _LG_LOW = <WORD> with A-Z lowered; no fork, no ${x,,}.
+_lg_lower() {
+  local s="$1" o="" c t
+  while [ -n "$s" ]; do
+    c=${s%"${s#?}"}; s=${s#?}
+    case "$_LG_UPPER" in *"$c"*) t=${_LG_UPPER%%"$c"*}; c=${_LG_LOWER:${#t}:1} ;; esac
+    o="$o$c"
+  done
+  _LG_LOW=$o
+}
+
 # _lg_settings_file / _lg_settings_refresh — ONE GET /api/settings per tick into
 # state/settings-cache.json. Fail-open: a refresh that does not answer leaves
 # whatever is there (however old), and a cache that was never written leaves
@@ -798,9 +977,8 @@ _lg_settings_refresh() {
   # No root, nowhere to cache the answer: no GET, knobs fall to env then default.
   [ -n "$(_lg_h)" ] || return 0
   f=$(_lg_settings_file)
-  if [ -r "$f" ]; then
-    fetched=$(jq -r '.fetched_at // 0' "$f" 2>/dev/null)
-    case "$fetched" in ''|*[!0-9]*) fetched=0 ;; esac
+  if _lg_sc_load; then
+    fetched=$_LG_SFETCHED
     age=$(( $(_lg_now) - fetched ))
     [ "$age" -ge 0 ] && [ "$age" -lt "$LANE_GATE_CACHE_S" ] && return 0
   fi
@@ -837,18 +1015,27 @@ _lg_settings_refresh() {
 # tick or one just before it), `stale` when it is older (the refresh did not
 # answer, so this is the last good answer), `none` when this box has none.
 _lg_settings_state() {
-  local f fetched age
-  f=$(_lg_settings_file)
-  [ -r "$f" ] || { printf none; return 0; }
-  fetched=$(jq -r '.fetched_at // 0' "$f" 2>/dev/null)
-  case "$fetched" in ''|*[!0-9]*) fetched=0 ;; esac
+  local fetched age
+  _lg_sc_load || { printf none; return 0; }
+  fetched=$_LG_SFETCHED
   age=$(( $(_lg_now) - fetched ))
   if [ "$age" -ge 0 ] && [ "$age" -lt "$LANE_GATE_CACHE_S" ]; then printf fresh; else printf stale; fi
 }
 
 # _lg_knob_meta <reg> <id> <ENV> <field> — one field of the registry knob entry.
+# default/min/max/zero_means come from the memo (_lg_km_load); any other field
+# is still one jq.
 _lg_knob_meta() {
-  jq -r --arg k "$(_lg_kind)" --arg i "$2" --arg e "$3" --arg f "$4" \
+  local kind="${_LG_KIND:-lanes}"
+  case "${4:-}" in
+    default|min|max|zero_means)
+      _lg_km_load "$1" "$kind" "$2"
+      if _lg_km_get "$1" "$kind" "$2" "$3" "$4"; then
+        [ -z "$_LG_MV" ] || printf '%s\n' "$_LG_MV"
+        return 0
+      fi ;;
+  esac
+  jq -r --arg k "$kind" --arg i "$2" --arg e "$3" --arg f "$4" \
     '.[$k][]? | select(.id==$i) | .knobs[]? | select(.env==$e) | .[$f] // empty' \
     "$1" 2>/dev/null
 }
@@ -883,10 +1070,15 @@ _lg_knob_meta() {
 # x — so a `settable: false` knob would come back as "no opinion" and read as
 # settable, which is the one answer this function may never give by accident.
 lane_knob_settable() {
-  local reg v
+  local reg kind="${_LG_KIND:-lanes}" v
   reg=$(_lg_registry)
   [ -r "$reg" ] || return 0
-  v=$(jq -r --arg k "$(_lg_kind)" --arg i "${1:-}" --arg e "${2:-}" \
+  _lg_km_load "$reg" "$kind" "${1:-}"
+  if _lg_km_get "$reg" "$kind" "${1:-}" "${2:-}" sk; then
+    [ "${_LG_MV:-true}" != false ]; return
+  fi
+  # An ENV that is not a shell name is not memoised: one jq, as before BH-7251.
+  v=$(jq -r --arg k "$kind" --arg i "${1:-}" --arg e "${2:-}" \
     '.[$k][]?|select(.id==$i)|.knobs[]?|select(.env==$e)
      |(if has("settable") then (.settable|tostring) else "true" end)' "$reg" 2>/dev/null | head -1)
   [ "$v" != false ]
@@ -918,10 +1110,19 @@ _lg_setting_key() {
 }
 
 _lg_setting_lookup() { # _lg_setting_lookup <key> — prints the value, rc 0 if found
-  local f v
-  f=$(_lg_settings_file)
-  [ -r "$f" ] || return 1
-  v=$(jq -r --arg k "$1" '.values[$k] // empty' "$f" 2>/dev/null) || return 1
+  local v n
+  [ -n "${1:-}" ] || return 1
+  _lg_sc_load || return 1
+  if _lg_sc_name "$1"; then
+    n="_LG_SV_$_LG_ENC"
+    [ -n "${!n+x}" ] || return 1
+    v=${!n}
+  else
+    # A key the memo cannot hold: one jq, as before BH-7251.
+    v=$(jq -r --arg k "$1" '.values[$k] // empty' "$_LG_SC_FILE" 2>/dev/null) || return 1
+  fi
+  # The jq read went through $(…), which drops trailing newlines; so does this.
+  while [ "${v%$'\n'}" != "$v" ]; do v=${v%$'\n'}; done
   [ -n "$v" ] || return 1
   printf '%s' "$v"
 }
@@ -992,6 +1193,8 @@ lane_knob() {
   [ -n "$id" ] && [ -n "$env" ] || return 0
   reg=$(_lg_registry)
   _lg_settings_refresh
+  # Load the registry memo HERE, so the $(…) reads below inherit it.
+  _lg_km_load "$reg" "${_LG_KIND:-lanes}" "$id"
   val=""; src=""
   # A NON-SETTABLE KNOB NEVER READS A ROW (BH-1165 review). The name is
   # registered so section 7 can see it and `show` can print it, but it is a
@@ -1142,7 +1345,7 @@ _lg_alert_once() {
 # about which knobs exist, and 78 lanes must not stop on a render failure.
 _lg_env_apply() {
   local _LG_KIND="${1:-lanes}"
-  local id="${2:-}" p="${3:-}" reg rows e st rq def low key v hit state
+  local id="${2:-}" p="${3:-}" reg e st rq def low key v hit state b pfx envs
   local cached="" defaulted="" missing=""
   [ -n "$id" ] || return 0
   reg=$(_lg_registry)
@@ -1150,18 +1353,26 @@ _lg_env_apply() {
   command -v jq >/dev/null 2>&1 || return 0
   _lg_settings_refresh
   state=$(_lg_settings_state)
-  # The OPERATOR rows this scope could care about, fetched once. Seeded rows
-  # are not in `.values`, so a table the seed filled costs a lane nothing.
-  rows=$(jq -r --arg pre "$(_lg_kpfx).$id." \
-    '(.values // {}) | to_entries[]? | select(.key | startswith($pre)) | .key' \
-    "$(_lg_settings_file)" 2>/dev/null)
-  while IFS=$'\t' read -r e st rq def; do
+  # Both memos are loaded HERE, in the lane's own shell, so every lane_knob
+  # below and every knob read the lane makes after this runs no jq.
+  _lg_sc_load || :
+  _lg_km_load "$reg" "$_LG_KIND" "$id"
+  envs=""
+  if _lg_km_triple "$reg" "$_LG_KIND" "$id"; then b="_LG_KM_E_$_LG_MI"; envs=${!b-}; fi
+  if [ "$_LG_KIND" = libs ]; then pfx=lib; else pfx=lane; fi
+  # The OPERATOR rows: any key in `.values` counts, even one with an empty
+  # value. Seeded rows are not in `.values`, so a table the seed filled costs a
+  # lane nothing.
+  while IFS= read -r e; do
     case "$e" in ''|*[!A-Z0-9_]*|[0-9]*) continue ;; esac
-    if [ "$st" = true ] && [ -n "$rows" ]; then
-      low=$(printf '%s' "$e" | tr '[:upper:]' '[:lower:]'); hit=""
-      for key in ${p:+"$(_lg_kpfx).$id.$p.$low" "$(_lg_kpfx).$id.$p.$low.unlimited"} \
-                 "$(_lg_kpfx).$id.$low" "$(_lg_kpfx).$id.$low.unlimited"; do
-        grep -qxF -- "$key" <<<"$rows" && { hit=1; break; }
+    _lg_km_get "$reg" "$_LG_KIND" "$id" "$e" sa; st=$_LG_MV
+    _lg_km_get "$reg" "$_LG_KIND" "$id" "$e" rq; rq=$_LG_MV
+    _lg_km_get "$reg" "$_LG_KIND" "$id" "$e" ad; def=$_LG_MV
+    if [ "$st" = true ] && [ "$_LG_SK_N" -gt 0 ]; then
+      _lg_lower "$e"; low=$_LG_LOW; hit=""
+      for key in ${p:+"$pfx.$id.$p.$low" "$pfx.$id.$p.$low.unlimited"} \
+                 "$pfx.$id.$low" "$pfx.$id.$low.unlimited"; do
+        _lg_sc_has "$key" && { hit=1; break; }
       done
       if [ -n "$hit" ]; then
         # lane_knob does the resolving, the clamping and the logging, so one
@@ -1176,11 +1387,7 @@ _lg_env_apply() {
     [ -n "${!e:-}" ] && continue
     if [ -n "$def" ]; then export "$e=$def"; defaulted="$defaulted $e"
     else missing="$missing $e"; fi
-  done < <(jq -r --arg k "$_LG_KIND" --arg i "$id" \
-    '.[$k][]?|select(.id==$i)|.knobs[]?|select(.env)
-     |[.env, (if .settable==false then "false" else "true" end),
-       (if .required==true then "true" else "false" end),
-       (if .default==null then "" else (.default|tostring) end)]|@tsv' "$reg" 2>/dev/null)
+  done <<<"$envs"
   if [ -n "$cached" ]; then
     _lg_log_throttled "cache-$_LG_KIND-$id${p:+-$p}" \
       "[lane-gate] $id${p:+/$p}: worker unreachable — settings served from the box cache ($(_lg_settings_file)):$cached"

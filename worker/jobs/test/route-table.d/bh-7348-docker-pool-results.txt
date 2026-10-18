@@ -1,0 +1,6 @@
+# DOCKER POOL RESULTS (BH-7348, BH-7300 slice C2): the result rows of a
+# pull-mode Docker host. result records one summary row per finished claim,
+# bound to the box's newest lease; results/reap hands the unread rows to the
+# hub and stamps them, at most 50 per call. Bearer-gated.
+POST /api/docker-pool/result
+POST /api/docker-pool/results/reap
