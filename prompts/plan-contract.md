@@ -218,6 +218,7 @@ there is planned and built like any other ticket.
 - A plan whose files overlap a live sibling's plan says so and sequences behind
   it, instead of racing it to main.
 - A plan outside `bin/` and `worker/` that adds or changes a decision rule (a classifier, gate, regex, glob, match or filter) also carries the §13 Decision rule case table, with its near misses, case sources and PLAN_BLOCKED rule. §13 is the one definition; this bullet only widens its scope, and `bin/plan-gate.sh` checks it only for `bin/` and `worker/` plans. (lesson-propose: logic-decision-rule-wrong)
+- A plan that adds a state that can wait or count must include a table of exits. Such a state can be a queued row, a park, a hold, a marker file, an attempt counter, a lock or a temp directory. The table has one row for each state. Each row names the code that ends that state on success, on a hard failure, on a transient failure, on SIGTERM, and when the head moves or the PR closes. It also names the deadline that ends the state if nothing else does, and the alert that fires at that deadline. Do not count a transient failure against an attempt cap. A transient failure is a rate limit, rc 75, a timeout or a box fault. If no code ends a state on some path, the plan must say so and give the reason. (lesson-propose: logic-stuck-state-or-burned-budget)
 - docs/OPERATING.md has the reasons and the knobs.
 
 ## 11. Conflict discipline and `## Shared files` (BH-5269)
