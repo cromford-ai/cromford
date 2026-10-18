@@ -25,6 +25,13 @@
 #
 # POOL_PUSH_LANDED_OPEN=0 turns all of it off: every rejection is terminal.
 #
+# A PR the hub opened gets what the machine's PR stage would have given it:
+# ppr_after_reap (called once after the reap's pool_result beat) loads
+# bin/lib/ppr-review.sh, which sends the pr_created build beat, asks for a lead
+# review of the PR head and runs the migration-number check. When plan.md was
+# not relayed, ppr_plan_from_branch reads .harness/specs/<KEY>/plan.md from the
+# branch before the PR body is written.
+#
 # It reads the reap loop's globals (P KEY TICKET LOCAL RLINE PDIR QDIR POOL_SLUG
 # POOL_SLUG_TOK ATT DEFC DTHS SBASE MHF) and calls its functions (pool_rest_read,
 # branch_head_rest, pool_key_branch, QROW, say, STAMP). The harness root is
@@ -32,6 +39,7 @@
 # the answer is the terminal.
 
 PPR_KEY=""; PPR_CMP=""; PPR_STATUS=""; PPR_BUILT=""; PPR_REMOTE=""; PPR_BR=""; PPR_SECOND=0
+PPR_PR_URL=""; PPR_PR_KEY=""; PPR_PR_BASE=""
 
 # ppr_rejected_line <rline> — rc 0 when the line is a push-rejected deferral.
 ppr_rejected_line() {
@@ -74,6 +82,7 @@ ppr_compare() {
 ppr_decide() {
   local b ans
   PPR_KEY="$KEY"; PPR_CMP=unknown; PPR_STATUS=""; PPR_BUILT=""; PPR_REMOTE=""; PPR_SECOND=0
+  PPR_PR_URL=""; PPR_PR_KEY=""; PPR_PR_BASE=""
   b="${RLINE#BUILD_DEFERRED push of }"; b="${b%% *}"
   case "$b" in ''|*[!A-Za-z0-9._/-]*) b=$(pool_key_branch "$KEY") ;; esac
   PPR_BR="$b"
@@ -115,6 +124,30 @@ ppr_title() {
   printf '%s: %s' "$KEY" "$t"
 }
 
+# ppr_plan_from_branch — when no plan.md was relayed, read
+# .harness/specs/<KEY>/plan.md from the branch into $LOCAL/plan.md, and name
+# the source in $LOCAL/plan-source. Any answer but a 200 writes nothing.
+ppr_plan_from_branch() {
+  local out code tmp sp=".harness/specs/$KEY/plan.md"
+  [ -s "$LOCAL/plan.md" ] && return 0
+  out=$(pool_rest_read "repos/$POOL_SLUG/contents/$sp?ref=$PPR_BR" "${POOL_SLUG_TOK:-}")
+  code=$(head -n 1 <<<"$out")
+  if [ "$code" != 200 ]; then
+    say "push-rejected $KEY: no plan.md was relayed and $sp on $PPR_BR answered HTTP ${code:-none} — the PR body says so"
+    return 0
+  fi
+  tmp="$LOCAL/plan.md.ppr"
+  if tail -n +2 <<<"$out" | jq -r '.content // empty' 2>/dev/null | base64 -d > "$tmp" 2>/dev/null && [ -s "$tmp" ]; then
+    mv -f "$tmp" "$LOCAL/plan.md"
+    printf 'branch:%s@%s\n' "$sp" "$PPR_BR" > "$LOCAL/plan-source"
+    say "push-rejected $KEY: plan.md read from $sp on $PPR_BR"
+  else
+    rm -f "$tmp"
+    say "push-rejected $KEY: $sp on $PPR_BR did not decode — the PR body says plan.md was not relayed"
+  fi
+  return 0
+}
+
 # ppr_body <file> [title] — the PR body: the plan's why, the relayed evidence,
 # and what the hub did. pr.sh's body render runs on the machine and did not run
 # there. Line 1 names the ticket and line 2 is `Closes #<ticket>` on an issues
@@ -151,6 +184,7 @@ ppr_body() {
 # rc 0: the PR is open and RLINE/RESULT now say PR_CREATED <url>. rc 1: nothing
 # changed (not a push rejection, not landed, held, or the open failed).
 ppr_reap_landed() {
+  PPR_PR_URL=""; PPR_PR_KEY=""; PPR_PR_BASE=""
   ppr_rejected_line "${RLINE:-}" || return 1
   [ "${POOL_PUSH_LANDED_OPEN:-1}" = 0 ] && return 1
   ppr_decide
@@ -174,6 +208,7 @@ ppr_reap_landed() {
     return 1
   fi
   title=$(ppr_title)
+  ppr_plan_from_branch
   bf="$LOCAL/pr-body.md"
   ppr_body "$bf" "$title"
   if command -v pr_trailers_apply >/dev/null 2>&1 || ppr_lib pr-trailers.sh; then
@@ -191,7 +226,25 @@ ppr_reap_landed() {
     cat "$LOCAL/RESULT"; } > "$LOCAL/RESULT.ppr" && mv -f "$LOCAL/RESULT.ppr" "$LOCAL/RESULT"
   RLINE=$(head -n 1 "$LOCAL/RESULT")
   rm -f "$PDIR/$KEY.push-diverged"
+  PPR_PR_URL="$url"; PPR_PR_KEY="$KEY"; PPR_PR_BASE="$base"
   say "push-rejected $KEY: landed at $PPR_BUILT -> PR $url"
+  return 0
+}
+
+# ppr_after_reap — called once per reaped RESULT, after the pool_result beat.
+# Only a PR ppr_reap_landed opened on this reap gets the hand-off
+# (bin/lib/ppr-review.sh). Always rc 0.
+ppr_after_reap() {
+  [ -n "${PPR_PR_URL:-}" ] && [ "${PPR_PR_KEY:-}" = "$KEY" ] || return 0
+  local h="${HARNESS:-${H:-}}"
+  if ! command -v ppr_review_handoff >/dev/null 2>&1 && ! ppr_lib ppr-review.sh; then
+    say "push-rejected $KEY: bin/lib/ppr-review.sh is missing — $PPR_PR_URL gets no build row and no review request"
+    [ -n "$h" ] && env HARNESS="$h" "$h/bin/alert-line.sh" "[pool/$P] $KEY: the hub opened $PPR_PR_URL after a push-rejected deferral, but bin/lib/ppr-review.sh is missing, so the PR has no build row and no review request. Ask by hand: bin/lead-verdict.sh request"
+    PPR_PR_URL=""; PPR_PR_KEY=""
+    return 0
+  fi
+  ppr_review_handoff || true
+  PPR_PR_URL=""; PPR_PR_KEY=""
   return 0
 }
 

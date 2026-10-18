@@ -3709,6 +3709,7 @@ for MF in "$POOL"/*.json; do
     say "reaped $KEY from $MID: $(head -c 80 "$LOCAL/RESULT")"
     beat_json=$(jq -nc --arg p "$P" --arg k "$KEY" --arg r "$(head -c 120 "$LOCAL/RESULT")" '{kind:"build",project:$p,ticket_key:$k,stage:"pool_result",detail:$r}')
     "$HARNESS/bin/beat.sh" "$beat_json" >/dev/null 2>&1 || true
+    command -v ppr_after_reap >/dev/null 2>&1 && { ppr_after_reap || true; }
     mkdir -p "$HARNESS/state/remote-results/$P"
     # machine_build_dir IS THE CROSS-PATH IDENTITY (BH-1041) — the dir the
     # MACHINE built in, which is also what this build's ledger row is named
