@@ -23,6 +23,26 @@
 #                       Prints the added kinds, one per line, sorted and
 #                       unique. Anything else is rc 1, an empty or missing
 #                       file and a header line it does not know included.
+#   cbe_infra <path>    rc 0 when an infra row matches and no allow row does
+#                       (BH-7287): the batch runs the path's self and reads
+#                       suites plus catalog/ci-infra-canary.txt, not the
+#                       corpus. Silent. Reads the committed rules with no
+#                       CI_FULL_TRIGGERS delta (the delta adds and removes
+#                       escalate rows only). An unreadable rules file is rc 1
+#                       here, because cbe_reason escalates every path on it
+#                       and the callers ask cbe_reason first.
+#   cbe_deletes_row <diff-file>
+#                       rc 1 only when the `git diff -U0` output in
+#                       <diff-file> (of the rules file) deletes no row
+#                       (BH-7287): it is readable and non-empty, every line is
+#                       one cbe_add_only understands, every added line is
+#                       blank, a # comment, or `pattern<TAB>kind<TAB>why` with
+#                       a non-empty pattern and a known kind, no added allow
+#                       row is new (an allow row removes an escalation), and
+#                       every removed row's `pattern<TAB>kind` key is added
+#                       back. So a kind change is a delete, and a why edit, a
+#                       comment edit or a moved row is not. Everything else is
+#                       rc 0: treat it as a delete.
 #   cbe_delta_norm <delta>
 #                       the full-trigger delta (BH-6838), normalised: the kept
 #                       tokens, first place kept, space-joined, or `-` for
@@ -42,7 +62,8 @@
 # cbe_reason reads the rules with the delta applied.
 #
 # The rules are catalog/ci-batch-escalate.tsv (see its header), or
-# CI_BATCH_ESCALATE_TSV. FAILS CLOSED: a rules file that cannot be read, or one
+# CI_BATCH_ESCALATE_TSV. The kinds are escalate, infra (BH-7287), allow, spa
+# and worker; cbe_reason reads escalate and allow only. FAILS CLOSED: a rules file that cannot be read, or one
 # with no escalate row, answers `selection input: catalog/ci-batch-escalate.tsv
 # unreadable` for every path, because an empty rule set must never mean
 # "nothing escalates".
@@ -160,4 +181,43 @@ cbe_add_only() {
     END { exit((bad || rows == 0) ? 1 : 0) }
   ' "$1") || return 1
   printf '%s\n' "$kinds" | LC_ALL=C sort -u
+}
+
+cbe_infra() {
+  local p="$1" tsv="${CI_BATCH_ESCALATE_TSV:-$_CBE_DIR/../../catalog/ci-batch-escalate.tsv}"
+  local pat kind _why inf=0
+  [ -r "$tsv" ] || return 1
+  while IFS=$'\t' read -r pat kind _why; do
+    case "$pat" in ''|'#'*) continue ;; esac
+    case "$kind" in
+      infra) _cbe_match "$p" "$pat" && inf=1 ;;
+      allow) _cbe_match "$p" "$pat" && return 1 ;;
+    esac
+  done < "$tsv"
+  [ "$inf" = 1 ]
+}
+
+cbe_deletes_row() {
+  [ -s "${1:-}" ] && [ -r "$1" ] || return 0
+  LC_ALL=C awk '
+    /^diff --git / { hunk = 0; next }
+    !hunk && (/^index / || /^--- / || /^\+\+\+ /) { next }
+    /^@@ / { hunk = 1; next }
+    !hunk { bad = 1; exit }
+    /^\\ / { next }
+    /^ / { next }
+    /^[-+]/ { sign = substr($0, 1, 1); l = substr($0, 2); changed++
+              if (l ~ /^[ \t]*$/ || l ~ /^#/) next
+              n = split(l, f, "\t")
+              if (sign == "-") { if (n >= 2) del[f[1] "\t" f[2]] = 1; else bad = 1; next }
+              if (n < 3 || f[1] == "" || (f[2] != "escalate" && f[2] != "infra" && f[2] != "spa" && f[2] != "worker" && f[2] != "allow")) { bad = 1; exit }
+              add[f[1] "\t" f[2]] = 1; next }
+    { bad = 1; exit }
+    END {
+      if (bad || changed == 0) exit 0
+      for (k in add) if (k ~ /\tallow$/ && !(k in del)) exit 0
+      for (k in del) if (!(k in add)) exit 0
+      exit 1
+    }
+  ' "$1"
 }

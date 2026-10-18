@@ -6,9 +6,9 @@
 # Columns (tab separated): pattern, kind, why
 #   pattern  ending in / : a prefix (bin/lib/ matches everything under bin/lib)
 #            anything else: a bash glob matched against the whole path
-#   kind     escalate | allow. An allow row exempts a path an escalate row
-#            would catch. Rows of any other kind belong to another reader and
-#            are skipped here.
+#   kind     escalate | infra | allow. An allow row exempts a path an escalate
+#            or infra row would catch. Rows of any other kind belong to another
+#            reader and are skipped here.
 #   why      one line, for the reviewer of this file
 #
 # KINDS spa AND worker (BH-4969) are read by cbe_affects, not cbe_reason (which
@@ -30,12 +30,23 @@
 # row beats a CI_FULL_TRIGGERS `+` row too: to escalate workflow edits again,
 # remove the two allow rows by PR.
 #
-# These are the paths the selection itself runs on: the workflow, the planner,
-# the selector and tier step, the libs and catalogs those three source and read,
-# the runners, and the suites' shared helpers. A batch that touches one of them
-# cannot trust a selection that the change may have altered, so it proves
-# everything. The file fails closed: unreadable, or no escalate row, escalates
-# every batch.
+# THE ESCALATE ROWS are what still runs the whole corpus: a .github/ path that
+# is not a top-level workflow, .mergify.yml, and this file when its diff
+# deletes a row (see below). The file fails closed: unreadable, or no escalate
+# row, escalates every batch.
+#
+# INFRA ROWS (BH-7287, BH-7033.1) are the paths the selection itself runs on:
+# the planner, the selector and tier step, the libs and catalogs those three
+# source and read, the runners, and tests/lib/scratch.sh. A batch that touches
+# one used to prove everything (2,487 suites). It now runs, mode=infra:
+#   1. the self and reads suites of each infra path (bin/test-impact.sh select
+#      --why --map-only), the suites that test that file;
+#   2. the fixed canary list catalog/ci-infra-canary.txt, 40 suites over each
+#      runner path (scratch sandbox, docker runner, suite runner, tiers, reuse
+#      ledger); a list that cannot be read or checked runs the corpus;
+#   3. the normal selection of the batch's other paths, always set included.
+# An escalate row beats an infra row, so CI_FULL_TRIGGERS=+<path> forces one
+# back to the corpus with no PR. The nightly corpus is the backstop.
 #
 # BH-6059 replaced the blanket `bin/lib/` and `catalog/` rows with the files
 # below: 19 of 21 sampled batches ran the whole corpus through them, a README
@@ -54,16 +65,20 @@
 # under tests/lib/ selects every suite that sources or imports it, directly or
 # through another helper (bin/test-impact.sh's helper closure, again only under
 # TI_BATCH_SELECT=1), and one that no suite reaches is `unmapped path <p>`. An
-# escalate row under tests/lib/ is the list of GLOBAL helpers: one whose change
+# infra row under tests/lib/ is the list of GLOBAL helpers: one whose change
 # is a change to about every suite, so its impact set is the corpus anyway.
 #
-# AN ADD-ONLY DIFF TO THIS FILE (BH-6371) does not escalate. bin/ci-plan.sh
-# reads the batch's own `git diff -U0` of this file through cbe_add_only, and
-# selects through the map when every changed line is an added line, at least
-# one is a row, and every added row is `pattern<TAB>kind<TAB>why` with kind
-# escalate, spa or worker. An added spa (worker) row turns that job on. A
-# removed or changed line, an added allow row, a malformed row, a comment-only
-# diff, an empty diff or one that cannot be read still escalates.
+# A DIFF TO THIS FILE has three outcomes. bin/ci-plan.sh reads the batch's own
+# `git diff -U0` of it.
+#   AN ADD-ONLY DIFF (BH-6371, cbe_add_only) selects through the map: every
+#   changed line is an added line, at least one is a row, and every added row
+#   is `pattern<TAB>kind<TAB>why` with kind escalate, spa or worker. An added
+#   spa (worker) row turns that job on.
+#   A DELETE (BH-7287, cbe_deletes_row) escalates: a removed row whose
+#   `pattern<TAB>kind` is not added back (a kind change included), an added
+#   allow row, a malformed row, an empty diff or one that cannot be read.
+#   ANY OTHER DIFF (a why edit, a comment edit, a moved row, an added infra
+#   row) is an infra path: its own suites plus the canaries.
 #
 # The allow rows exempt docs: a *.md never escalates on its own.
 .github/	escalate	the workflow decides what runs and on which runner
@@ -71,30 +86,30 @@
 .github/workflows/*.yaml	allow	a workflow edit selects the suites that read it plus the always set; the nightly corpus runs the rest (BH-6876)
 .github/workflows/harness-ci.yml	spa	the workflow defines the console-ui job, and a workflow edit no longer escalates (BH-6876)
 .github/workflows/harness-ci.yml	worker	the workflow defines the worker-jobs job, and a workflow edit no longer escalates (BH-6876)
-bin/ci-plan.sh	escalate	the planner itself
-bin/test-impact*.sh	escalate	the selector and its builder gate
-bin/test-tiers.sh	escalate	the tier step that runs after the selection
-tests/lib/scratch.sh	escalate	the sandbox guard every suite sources (2109 of 2147); a change to it is a change to every suite
+bin/ci-plan.sh	infra	the planner itself
+bin/test-impact*.sh	infra	the selector and its builder gate
+bin/test-tiers.sh	infra	the tier step that runs after the selection
+tests/lib/scratch.sh	infra	the sandbox guard every suite sources (2109 of 2147); its own suites and the canaries test a change to it (BH-7287)
 .mergify.yml	escalate	the merge queue's own conditions
-catalog/ci-batch-escalate.tsv	escalate	this file; bin/ci-plan.sh reads it through bin/lib/ci-batch-escalate.sh, and no other row covers it; an add-only diff selects instead (BH-6371)
-bin/lib/ci-batch-escalate.sh	escalate	the rules reader bin/ci-plan.sh sources
-catalog/test-tiers.tsv	escalate	the tiers bin/ci-plan.sh and bin/test-tiers.sh read
-bin/lib/test-protected.sh	escalate	sourced by bin/test-tiers.sh: which suites the tier step may never drop
-catalog/test-quarantine-protected.txt	escalate	read by bin/test-tiers.sh and bin/lib/test-protected.sh
-catalog/nightly-strict.txt	escalate	read by bin/lib/test-protected.sh: a suite listed here is never dropped
-catalog/test-impact-always.txt	escalate	the always set bin/test-impact.sh adds to every selection
-bin/lib/train-shape.sh	escalate	sourced by bin/test-impact.sh: what a merge train looks like
-bin/lib/suite-runner.sh	escalate	sourced by bin/test-suite-run.sh and the runners: how a suite runs
-bin/suite-reuse.sh	escalate	the suite ledger plan/record (BH-5366): which suites a batch reuses instead of running
-bin/lib/suite-fingerprint.sh	escalate	the suite input fingerprint (BH-5366): a change here moves every fingerprint
-bin/lib/prepush-record.sh	escalate	the pre-push gate record reader bin/ci-plan.sh sources (BH-7289): which always-suites a batch drops
-catalog/test-impact-always-prepush.txt	escalate	the always-suites a batch may drop for a green pre-push gate record (BH-7289)
-bin/test-suite-run.sh	escalate	the suite runner the shards call
-bin/test-trace-safety.sh	escalate	the trace-safety runner the workflow calls
-bin/run-tests-in-docker.sh	escalate	the docker runner; decides what tree a green ran on
-bin/lib/docker-host.sh	escalate	sourced by bin/run-tests-in-docker.sh: which daemon a green ran on
-bin/lib/env-path.sh	escalate	sourced by bin/lib/docker-host.sh
-bin/lib/test-image-node.sh	escalate	sourced by bin/run-tests-in-docker.sh: the node version the tests run on
+catalog/ci-batch-escalate.tsv	escalate	this file; bin/ci-plan.sh reads it through bin/lib/ci-batch-escalate.sh, and no other row covers it; an add-only diff selects instead (BH-6371), and a diff that deletes no row is infra (BH-7287)
+bin/lib/ci-batch-escalate.sh	infra	the rules reader bin/ci-plan.sh sources
+catalog/test-tiers.tsv	infra	the tiers bin/ci-plan.sh and bin/test-tiers.sh read
+bin/lib/test-protected.sh	infra	sourced by bin/test-tiers.sh: which suites the tier step may never drop
+catalog/test-quarantine-protected.txt	infra	read by bin/test-tiers.sh and bin/lib/test-protected.sh
+catalog/nightly-strict.txt	infra	read by bin/lib/test-protected.sh: a suite listed here is never dropped
+catalog/test-impact-always.txt	infra	the always set bin/test-impact.sh adds to every selection
+bin/lib/train-shape.sh	infra	sourced by bin/test-impact.sh: what a merge train looks like
+bin/lib/suite-runner.sh	infra	sourced by bin/test-suite-run.sh and the runners: how a suite runs
+bin/suite-reuse.sh	infra	the suite ledger plan/record (BH-5366): which suites a batch reuses instead of running
+bin/lib/suite-fingerprint.sh	infra	the suite input fingerprint (BH-5366): a change here moves every fingerprint
+bin/lib/prepush-record.sh	infra	the pre-push gate record reader bin/ci-plan.sh sources (BH-7289): which always-suites a batch drops
+catalog/test-impact-always-prepush.txt	infra	the always-suites a batch may drop for a green pre-push gate record (BH-7289)
+bin/test-suite-run.sh	infra	the suite runner the shards call
+bin/test-trace-safety.sh	infra	the trace-safety runner the workflow calls
+bin/run-tests-in-docker.sh	infra	the docker runner; decides what tree a green ran on
+bin/lib/docker-host.sh	infra	sourced by bin/run-tests-in-docker.sh: which daemon a green ran on
+bin/lib/env-path.sh	infra	sourced by bin/lib/docker-host.sh
+bin/lib/test-image-node.sh	infra	sourced by bin/run-tests-in-docker.sh: the node version the tests run on
 bin/lib/*.md	allow	a doc never escalates on its own (BH-6059)
 catalog/*.md	allow	a doc never escalates on its own (BH-6059)
 catalog/lanes.d/	spa	the lane sources the rendered registry is built from
@@ -139,4 +154,4 @@ catalog/model-prices.json	worker	worker/jobs/test/route-rules.p4.test.js reads i
 catalog/readiness-levels.json	worker	worker/jobs/test/settings-conf-value.bh-2411.test.js reads it
 worker/jobs/src/lib/box-command-args.js	spa	console-ui/tests/machines-orgo-actions.bh-5750.test.js imports it (BH-5750)
 console-ui/src/lib/box-commands.js	worker	worker/jobs/test/box-command-types-drift.bh-5750.test.js imports it (BH-5750)
-catalog/ci-batch-regression.d/	escalate	the regression list bin/ci-plan.sh and bin/test-impact.sh read (BH-6838)
+catalog/ci-batch-regression.d/	infra	the regression list bin/ci-plan.sh and bin/test-impact.sh read (BH-6838)

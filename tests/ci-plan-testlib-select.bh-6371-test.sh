@@ -18,7 +18,7 @@
 #   T1b  tests/lib/rb-all.sh: carries fixture-harness.sh's consumers (closure)
 #   T1c  tests/lib/ci-durations-worker.bh-5653.mjs: its importers are selected
 #   T2   a helper no suite reaches: full, `unmapped path <p>`
-#   T2b  tests/lib/scratch.sh: full, `selection input: tests/lib/scratch.sh`
+#   T2b  tests/lib/scratch.sh: mode=infra through its infra row (BH-7287)
 #   T2c  tests/lib/README.md: not full
 #   N-PR the same helper outside a batch: still `infra change (<p>)`
 #   U1-U8 cbe_add_only over real diffs
@@ -114,9 +114,11 @@ escalates T2 "unmapped path tests/lib/zz-bh6371-orphan.sh" tests/lib/zz-bh6371-o
 has "full: unmapped path tests/lib/zz-bh6371-orphan.sh" "$(out summary)" && ok || bad "T2: the summary must carry the reason: '$(out summary)'"
 escalates "T2 order" "unmapped path tests/lib/zz-bh6371-orphan.sh" tests/lib/gh-shim-stub.sh tests/lib/zz-bh6371-orphan.sh
 
-# ── T2b. the global helper escalates through its catalog row.
-escalates T2b "selection input: tests/lib/scratch.sh" tests/lib/scratch.sh
-grep -qx $'tests/lib/scratch.sh\tescalate\t.*' "$TSV" && ok || bad "T2b: the tsv must carry the tests/lib/scratch.sh escalate row"
+# ── T2b. the global helper plans mode=infra through its catalog row (BH-7287).
+bplan tests/lib/scratch.sh
+{ [ "$RC" = 0 ] && [ "$(out mode)" = infra ] && [ "$(out escalation)" = - ] && [ "$(out count)" -lt "$(out total)" ]; } && ok \
+  || bad "T2b: tests/lib/scratch.sh must be mode=infra (rc=$RC mode=$(out mode) escalation='$(out escalation)') [$OUT]"
+grep -qx $'tests/lib/scratch.sh\tinfra\t.*' "$TSV" && ok || bad "T2b: the tsv must carry the tests/lib/scratch.sh infra row"
 grep -qx $'tests/lib/\tescalate\t.*' "$TSV" && bad "T2b: the tsv still has the blanket tests/lib/ escalate row" || ok
 
 # ── T2c. a doc under tests/lib/ never goes full.

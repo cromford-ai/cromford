@@ -1,0 +1,68 @@
+# catalog/ci-infra-canary.txt — the canary suites a merge-queue batch runs when
+# it touches an INFRA path of catalog/ci-batch-escalate.tsv (BH-7287,
+# BH-7033.1). bin/ci-plan.sh adds them to the infra path's own self and reads
+# suites and to the normal selection of the batch's other paths, mode=infra.
+#
+# A FIXED LIST, NOT A FRAGMENT LIST: 40 suites chosen to cover each runner
+# path, one group per path. tests/ci-batch-escalate-select.bh-7287-test.sh G2
+# pins the count at 40, and checks that each suite exists and has no nightly
+# or guard row in catalog/test-tiers.tsv (the tier step must never drop one).
+# To swap a canary, replace its line in a PR.
+#
+# Format: one tests/...sh path per line, `#` comments and blank lines allowed.
+# No glob, no `..`. bin/ci-plan.sh (infra_canaries) FAILS CLOSED: a list it
+# cannot read, an empty list, or a line that is not a present suite runs the
+# whole corpus, `infra canary list unreadable (<why>)`. Seam:
+# CI_INFRA_CANARY_FILE.
+
+# scratch sandbox (tests/lib/scratch.sh and its closure installer)
+tests/scratch-lib-test.sh
+tests/scratch-install-closure.bh-4552-test.sh
+tests/scratch-closure-lint.bh-4552-test.sh
+tests/scratch-immutable-cleanup.bh-5007-test.sh
+tests/scratch-closure-pr.bh-4869-test.sh
+tests/scratch-closure-sweep.bh-5235-test.sh
+tests/scratch-closure-lint-grace.bh-4632-test.sh
+
+# docker runner (bin/run-tests-in-docker.sh, bin/lib/docker-host.sh, bin/lib/env-path.sh)
+tests/run-tests-in-docker.bh-1128-test.sh
+tests/run-tests-in-docker.bh-1193-test.sh
+tests/run-tests-in-docker-harness-test.sh
+tests/run-tests-in-docker-image.bh-5583-test.sh
+tests/run-tests-in-docker-node-test.sh
+tests/docker-image-ratchet-test.sh
+tests/env-path-test.sh
+tests/env-path-fly-test.sh
+
+# suite runner and trace safety (bin/test-suite-run.sh, bin/lib/suite-runner.sh, bin/test-trace-safety.sh, bin/ci-plan.sh)
+tests/test-suite-run-test.sh
+tests/tests-trace-safety-test.sh
+tests/trace-safety-gate-test.sh
+tests/test-trace-safety-escaped.bh-5266-test.sh
+tests/test-trace-safety-shapes.bh-5541-test.sh
+tests/trace-safety-sigpipe.bh-5544-test.sh
+tests/ci-plan-time-sizing.bh-6876-test.sh
+tests/ci-plan-test.sh
+
+# tiers (bin/test-tiers.sh, catalog/test-tiers.tsv)
+tests/test-tiers-test.sh
+tests/test-tiers-quarantine.bh-3686-test.sh
+tests/ci-test-tiers-db.bh-5653-test.sh
+tests/ci-test-tiers-fallback.bh-5653-test.sh
+tests/ci-test-tiers-workflow.bh-5653-test.sh
+tests/ci-plan-nightly-split.bh-6838-test.sh
+
+# reuse ledger (bin/suite-reuse.sh, bin/lib/suite-fingerprint.sh)
+tests/suite-reuse.bh-5366-test.sh
+tests/suite-reuse-saved.bh-5369-test.sh
+tests/suite-fingerprint.bh-5366-test.sh
+tests/suite-fingerprint-v2.bh-6406-test.sh
+tests/ci-plan-reuse.bh-5368-test.sh
+tests/ci-plan-reuse-full.bh-6406-test.sh
+
+# selector and planner (bin/test-impact.sh, bin/ci-plan.sh)
+tests/test-impact-test.sh
+tests/test-impact-why.bh-1524-test.sh
+tests/test-impact-inputs.bh-5366-test.sh
+tests/test-impact.bh-1253-test.sh
+tests/ci-plan-batch-impact.bh-4968-test.sh

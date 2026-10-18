@@ -22,7 +22,7 @@
 #       the suites that scan the whole .github/workflows/ directory, nothing else
 #   N4  .github/actions/x/action.yml, .github/CODEOWNERS and the nested
 #       .github/workflows/sub/x.yml still escalate
-#   N5  a workflow and bin/ci-plan.sh: full, `selection input: bin/ci-plan.sh`
+#   N5  a workflow and bin/ci-plan.sh: mode=infra on bin/ci-plan.sh (BH-7287)
 #   N6  the ordinary PR select (no TI_BATCH_SELECT) on a workflow path is still
 #       `full: infra change (<path>)`
 #   N7  CI_FULL_TRIGGERS='+.github/workflows/' adds an escalate row, and the
@@ -114,10 +114,10 @@ for p in .github/actions/x/action.yml .github/CODEOWNERS .github/workflows/sub/x
     || bad "N4: $p must escalate as 'selection input: $p' (rc=$RC mode=$(out mode) escalation='$(out escalation)')"
 done
 
-# ── N5. a workflow beside a self row: the self row escalates.
+# ── N5. a workflow beside the planner: the planner is an infra row (BH-7287).
 bplan "$WF1" bin/ci-plan.sh
-{ [ "$(out mode)" = full ] && [ "$(out escalation)" = "selection input: bin/ci-plan.sh" ]; } && ok \
-  || bad "N5: a workflow and bin/ci-plan.sh must be full on bin/ci-plan.sh (mode=$(out mode) escalation='$(out escalation)')"
+{ [ "$(out mode)" = infra ] && [ "$(out escalation)" = - ] && case "$(out summary)" in *"infra: 1 path(s) (bin/ci-plan.sh)"*) true ;; *) false ;; esac; } && ok \
+  || bad "N5: a workflow and bin/ci-plan.sh must be mode=infra on bin/ci-plan.sh (mode=$(out mode) escalation='$(out escalation)' summary='$(out summary)')"
 
 # ── N6. the ordinary PR select keeps the infra answer.
 printf '%s\n' "$WF1" > "$T/changed"

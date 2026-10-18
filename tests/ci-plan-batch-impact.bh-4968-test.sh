@@ -19,18 +19,22 @@
 # 8-11; the map is built once and handed to test-impact through a two-line
 # wrapper, so the selection logic is the production one and the run is seconds.
 #
-#   E1-E4  cbe_reason: every escalate row answers, other paths do not, an
+#   E1-E4  cbe_reason: every escalate row answers, an infra row (BH-7287)
+#          answers cbe_infra instead, other paths do not, an
 #          `allow` row overrides, an unknown kind is skipped, no TSV fails closed
 #   1      a console-ui screen: batch-selected, small, always set included
 #   2      a bin/ script: batch-selected, its mapped suite included
-#   3      a .github/ action and a runner lib: full, `selection input: <path>`
+#   3      a .github/ action: full, `selection input: <path>`; a runner lib:
+#          mode=infra (BH-7287)
 #          (a top-level workflow file selects its readers since BH-6876:
 #          tests/ci-plan-workflow-narrow.bh-6876-test.sh)
 #   4      a path the map does not know: full, `unmapped: <path>`
 #   4b     a brand-new bin/ script: batch-selected (whole-bin scanners reach it)
 #   5      selection of a union == union of selections
 #   6      the `full` label and an empty TI_BASE escalate
-#   7      every adversarial negative escalates; docs alone still runs the always set
+#   7      no adversarial negative is batch-selected: the rules file and
+#          .mergify.yml escalate, the selection inputs plan mode=infra
+#          (BH-7287); docs alone still runs the always set
 #   8      a failed or reasonless select is rc 2, never a plan
 #   9      the run-page notice and the step summary
 #   10     a select of every suite is full
@@ -48,11 +52,16 @@ TAB=$'\t'
 
 # ── E1-E4. cbe_reason, the rules lib on its own.
 cbe() { ( . "$LIB" || exit 9; cbe_reason "$1" ); }
-for p in bin/lib/suite-runner.sh .github/actions/x/action.yml bin/ci-plan.sh bin/test-impact.sh \
-         bin/test-impact-gate.sh bin/test-tiers.sh tests/lib/scratch.sh .mergify.yml catalog/test-tiers.tsv \
-         catalog/ci-batch-escalate.tsv; do
+cbi() { ( . "$LIB" || exit 9; command -v cbe_infra > /dev/null || exit 9; cbe_infra "$1" ); }
+for p in .github/actions/x/action.yml .mergify.yml catalog/ci-batch-escalate.tsv; do
   r=$(cbe "$p"); rc=$?
   { [ "$rc" = 0 ] && [ "$r" = "selection input: $p" ]; } && ok || bad "E1: $p must escalate as 'selection input: $p' (rc=$rc, got '$r')"
+done
+# BH-7287: the selection inputs are infra rows, not escalate rows.
+for p in bin/lib/suite-runner.sh bin/ci-plan.sh bin/test-impact.sh bin/test-impact-gate.sh bin/test-tiers.sh \
+         tests/lib/scratch.sh catalog/test-tiers.tsv; do
+  r=$(cbe "$p"); rc=$?
+  { [ "$rc" = 1 ] && [ -z "$r" ] && cbi "$p"; } && ok || bad "E1: $p must be an infra row, not an escalate row (rc=$rc, got '$r')"
 done
 for p in bin/merge-sweep.sh docs/x.md console-ui/src/screens/Jobs.js; do
   r=$(cbe "$p"); rc=$?
@@ -98,6 +107,13 @@ bplan() {
 }
 out() { printf '%s\n' "$GO" | sed -n "s/^$1=//p" | tail -1; }
 superset_always() { [ -z "$(LC_ALL=C comm -23 <(LC_ALL=C sort -u "$T/always") <(LC_ALL=C sort -u "$T/list" 2>/dev/null))" ]; }
+infra() { # infra <tag> <paths...> — mode=infra (BH-7287), escalation=-, under the corpus, always set carried
+  local tag="$1"; shift
+  bplan "$@"
+  { [ "$RC" = 0 ] && [ "$(out mode)" = infra ] && [ "$(out escalation)" = - ] && [ "$(out count)" -lt "$(out total)" ] \
+      && superset_always; } && ok \
+    || bad "$tag: $* must be mode=infra (rc=$RC mode=$(out mode) escalation='$(out escalation)' count=$(out count) total=$(out total)) [$OUT]"
+}
 escalates() { # escalates <tag> <expected escalation> <paths...>
   local tag="$1" want="$2"; shift 2
   bplan "$@"
@@ -127,8 +143,8 @@ bplan "$B2"
 escalates 3a "selection input: .github/actions/x/action.yml" .github/actions/x/action.yml
 has "escalation: selection input: .github/actions/x/action.yml" "$SUM" && ok || bad "3a: the step summary must name the escalation: [$SUM]"
 [ "$(out count)" = "$(out total)" ] && ok || bad "3a: an escalated batch runs the corpus (count=$(out count) total=$(out total))"
-escalates 3b "selection input: bin/lib/docker-host.sh" bin/lib/docker-host.sh
-[ "$(out count)" = "$(out total)" ] && ok || bad "3b: an escalated batch runs the corpus (count=$(out count) total=$(out total))"
+# BH-7287: a runner lib is an infra path: its own suites and the canaries, not the corpus.
+infra 3b bin/lib/docker-host.sh
 
 # ── 4. a path the map does not know is unmapped.
 escalates 4 "unmapped: zz-unmapped-bh4964/x.sh" zz-unmapped-bh4964/x.sh
@@ -165,9 +181,13 @@ escalates 6a "the 'full' label" console-ui/src/screens/Jobs.js -- "TI_PR_LABELS=
 escalates 6b "no batch base" console-ui/src/screens/Jobs.js -- TI_BASE=
 
 # ── 7. adversarial negatives: none of these may come back batch-selected.
-for p in bin/lib/suite-runner.sh bin/ci-plan.sh bin/test-impact-gate.sh bin/test-impact.sh bin/test-tiers.sh \
-         tests/lib/scratch.sh catalog/test-tiers.tsv catalog/ci-batch-escalate.tsv .mergify.yml; do
+for p in catalog/ci-batch-escalate.tsv .mergify.yml; do
   escalates "7 $p" "selection input: $p" "$p"
+done
+# BH-7287: the selection inputs plan mode=infra, never batch-selected and never the corpus.
+for p in bin/lib/suite-runner.sh bin/ci-plan.sh bin/test-impact-gate.sh bin/test-impact.sh bin/test-tiers.sh \
+         tests/lib/scratch.sh catalog/test-tiers.tsv; do
+  infra "7 $p" "$p"
 done
 # the old path of a rename is unknown to the map, so it is unmapped (BH-6059)
 escalates "7 rename" "unmapped path bin/lib/zz-moved.sh" bin/lib/zz-moved.sh bin/zz-moved.sh
@@ -181,13 +201,13 @@ bplan docs/x.md
   || bad "7 docs: docs alone still runs the always set, never nothing (rc=$RC mode=$(out mode)) [$OUT]"
 
 # 7 rename, through ci-plan's own git diff in a real repo: --no-renames lists
-# the OLD path, so moving an escalating file away still escalates. Since
-# BH-6059 bin/lib/ is not escalated whole, so the moved file is one with its own
-# row (bin/lib/test-image-node.sh, a stand-in here; ci-plan does not source it).
-RR="$T/rr"; mkdir -p "$RR/bin/lib" "$RR/catalog"
+# the OLD path, so moving an escalating file away still escalates. The moved
+# file is one with its own escalate row: .github/actions/zz/action.yml (since
+# BH-7287 a bin/lib/ selection input is an infra row, not an escalate row).
+RR="$T/rr"; mkdir -p "$RR/bin/lib" "$RR/catalog" "$RR/.github/actions/zz"
 scratch_install_closure bin/ci-plan.sh "$RR" > /dev/null || bad "7 rename: cannot install ci-plan's closure"
 cp "$DIR/catalog/ci-batch-escalate.tsv" "$RR/catalog/" 2>/dev/null
-printf '#!/bin/bash\necho moved\n' > "$RR/bin/lib/test-image-node.sh"
+printf 'name: zz\n' > "$RR/.github/actions/zz/action.yml"
 cat > "$T/fake-rr.sh" <<'FAKE'
 #!/bin/bash
 OUT=""; CMD=""
@@ -201,13 +221,13 @@ chmod +x "$T/fake-rr.sh"
 rgit() { git -C "$RR" -c user.email=t@example.com -c user.name=t "$@"; }
 rgit init -q; rgit add -A; rgit commit -qm base
 RBASE=$(git -C "$RR" rev-parse HEAD)
-rgit mv bin/lib/test-image-node.sh bin/zz-moved.sh; rgit commit -qm rename
+rgit mv .github/actions/zz/action.yml bin/zz-moved.yml; rgit commit -qm rename
 rm -f "$T/go"
 OUT=$(cd "$RR" && env -u GITHUB_ACTIONS -u CI_PLAN_CHANGED_FILE CI_EVENT=pull_request TI_PR_HEAD_REF=mergify/merge-queue/rn \
         TI_BASE="$RBASE" TI_PR_LABELS= CI_PLAN_ESCALATION=- CI_PLAN_IMPACT="$T/fake-rr.sh" GITHUB_OUTPUT="$T/go" GITHUB_STEP_SUMMARY="$T/sum-rr" \
         bin/ci-plan.sh --out "$T/rr-list" 2>&1); RC=$?
 GO=$(cat "$T/go" 2>/dev/null)
-{ [ "$RC" = 0 ] && [ "$(out mode)" = full ] && [ "$(out escalation)" = "selection input: bin/lib/test-image-node.sh" ]; } && ok \
+{ [ "$RC" = 0 ] && [ "$(out mode)" = full ] && [ "$(out escalation)" = "selection input: .github/actions/zz/action.yml" ]; } && ok \
   || bad "7 rename (git): moving an escalating file away must escalate on its old path (rc=$RC mode=$(out mode) escalation='$(out escalation)') [$OUT]"
 
 # ── 8-11. a fake selector, for the shapes the real one does not produce on demand.

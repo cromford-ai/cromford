@@ -24,7 +24,8 @@
 #       empty corpus is rc 2
 #   D1  CI_FULL_TRIGGERS unset, empty and `-` plan byte-identical output
 #   D2  `+bin/foo.sh` escalates; `-.mergify.yml` selects
-#   D3  `-bin/ci-plan.sh` is refused and the batch stays full; `+a..b` is ignored
+#   D3  `-bin/ci-plan.sh` is refused (a self row); bin/ci-plan.sh is an infra
+#       row since BH-7287, so the batch plans mode=infra; `+a..b` is ignored
 #   D3b `-tests/lib/scratch.sh` and `-bin/lib/suite-runner.sh` are refused
 #   D4  full_triggers is in GITHUB_OUTPUT; a shard given it agrees on --expect-n
 #   W1-W5  the two workflows (see the W block)
@@ -231,8 +232,9 @@ bplan .mergify.yml -- 'CI_FULL_TRIGGERS=-.mergify.yml'
 { [ "$(out mode)" = batch-selected ] && inlist tests/mergify-test.sh; } && ok "D2 -.mergify.yml selects" || bad "D2 - : mode=$(out mode) escalation=$(out escalation) [$OUT]"
 
 # ── D3. a self row cannot be removed; `..` is ignored.
-bplan bin/ci-plan.sh -- 'CI_FULL_TRIGGERS=-bin/ci-plan.sh +a..b +bin/foo.sh'
-{ [ "$(out mode)" = full ] && [ "$(out escalation)" = "selection input: bin/ci-plan.sh" ]; } && ok "D3 -bin/ci-plan.sh is refused, the batch stays full" || bad "D3 mode=$(out mode) escalation=$(out escalation)"
+printf 'tests/foo-test.sh\n' > "$T/canary.txt"
+bplan bin/ci-plan.sh -- 'CI_FULL_TRIGGERS=-bin/ci-plan.sh +a..b +bin/foo.sh' CI_INFRA_CANARY_FILE="$T/canary.txt"
+{ [ "$(out mode)" = infra ] && [ "$(out escalation)" = - ] && inlist tests/foo-test.sh; } && ok "D3 -bin/ci-plan.sh is refused, the infra row stands (BH-7287)" || bad "D3 mode=$(out mode) escalation=$(out escalation) [$ERR]"
 [ "$(out full_triggers)" = "+bin/foo.sh" ] && ok "D3 full_triggers keeps only +bin/foo.sh" || bad "D3 full_triggers=[$(out full_triggers)]"
 { has 'token -bin/ci-plan.sh refused (a self row)' "$ERR" && has 'token +a..b ignored (..)' "$ERR"; } && ok "D3 each dropped token is said" || bad "D3 stderr [$ERR]"
 # D3b: the two runner rows are self rows too (lead review note 2).

@@ -98,8 +98,11 @@ bplan "$T/rules.tsv" docs/x.md;                            want "B6 docs" batch-
 [ "$(out count)" = 3 ] && ok || bad "B6: count=3, got '$(out count)'"
 bplan "$T/rules.tsv" docs/x.md console-ui/old.js bin/old.js; want "B6 rename out of console-ui (both paths)" batch-selected 1 0
 bplan "$T/rules.tsv" docs/x.md worker/jobs/a.js console-ui/b.js; want "B6 both" batch-selected 1 1
-bplan "$REAL_TSV" bin/lib/suite-runner.sh;                 want "B7 real TSV escalates a selection input" full 1 1
-[ "$(out escalation)" = "selection input: bin/lib/suite-runner.sh" ] && ok || bad "B7: escalation '$(out escalation)'"
+# BH-7287: a selection input is an infra row; spa and worker stay on in infra mode.
+printf 'tests/ci-plan-test.sh\n' > "$T/canary.txt"
+bplan "$REAL_TSV" bin/lib/suite-runner.sh -- CI_INFRA_CANARY_FILE="$T/canary.txt"; want "B7 real TSV plans infra" infra 1 1
+[ "$(out escalation)" = - ] && ok || bad "B7: escalation '$(out escalation)'"
+grep -qxF tests/ci-plan-test.sh "$T/list" && ok || bad "B7: the infra list must carry the canary"
 # BH-6059: bin/lib/ is no longer escalated whole, so an ordinary bin/lib/ path
 # stays batch-selected and its worker row still gates the worker job.
 bplan "$REAL_TSV" bin/lib/jobs/cost.sh;                    want "B7b real TSV bin/lib/jobs" batch-selected 0 1

@@ -17,14 +17,16 @@
 #   N1  bin/lib/deferral-after.sh: batch-selected, carries its mapped suites
 #   D1  bin/lib/br/opt/README.md: batch-selected, no suite through a root row
 #   D2  a *.md under bin/lib/ or catalog/: the allow row beats an escalate row
-#   N2  each derived selection input escalates as `selection input: <p>`
+#   N2  each derived selection input is an infra row (BH-7287): a batch plans
+#       mode=infra; the rules file itself still escalates
 #   N4  catalog/lanes.d/<x>.json: batch-selected, spa and worker still run
 #   N3  a new bin/lib/ or catalog/ file: full, `unmapped path <p>`
 #   N5  a new top-level bin/ script: not unmapped (the bin/ scanners reach it)
 #   N6  select WITHOUT TI_BATCH_SELECT is unchanged (PR CI and the builder gate)
 #   N6b an unreadable rules file still escalates every batch
 #   N7  the real tsv has no bin/lib/ or catalog/ escalate row
-#   G1  every literal path in test-impact's infra list has an escalate row
+#   G1  every literal path in test-impact's infra list has an escalate or
+#       infra row
 set -uo pipefail
 . "$(dirname "$0")/lib/scratch.sh" || exit 1
 DIR=$(cd "$(dirname "$0")/.." && pwd)
@@ -36,14 +38,14 @@ ok()  { PASS=$((PASS+1)); }
 bad() { FAIL=$((FAIL+1)); echo "FAIL: $1"; }
 has() { case "$2" in *"$1"*) return 0 ;; esac; return 1; }
 cbe() { ( . "$LIB" || exit 9; cbe_reason "$1" ); }
+cbi() { ( . "$LIB" || exit 9; command -v cbe_infra > /dev/null || exit 9; cbe_infra "$1" ); }
 
 # The derived selection inputs: what the planner, the selector, the tier step
 # and the runners source or read when CI decides what a batch runs.
 INPUTS=(bin/lib/suite-runner.sh bin/lib/docker-host.sh bin/lib/env-path.sh bin/lib/ci-batch-escalate.sh
         bin/lib/test-protected.sh bin/lib/train-shape.sh bin/lib/test-image-node.sh bin/test-suite-run.sh
         bin/test-trace-safety.sh bin/run-tests-in-docker.sh catalog/test-tiers.tsv
-        catalog/test-quarantine-protected.txt catalog/test-impact-always.txt catalog/nightly-strict.txt
-        catalog/ci-batch-escalate.tsv)
+        catalog/test-quarantine-protected.txt catalog/test-impact-always.txt catalog/nightly-strict.txt)
 
 # ── N7. the blanket rows are gone.
 grep -qx $'bin/lib/\tescalate\t.*' "$TSV" && bad "N7: the tsv still has a bin/lib/ escalate row" || ok
@@ -55,7 +57,8 @@ INFRA=$(sed -n "s/^ti_infra_core_re='\(.*\)'$/\1/p" "$DIR/bin/test-impact.sh")
 for alt in $(printf '%s' "$INFRA" | tr '|' '\n'); do
   p=$(printf '%s' "$alt" | sed 's/^\^//; s/\$$//; s/\\//g')
   case "$p" in */) p="${p}x" ;; esac
-  r=$(cbe "$p"); [ "$r" = "selection input: $p" ] && ok || bad "G1: infra path $p has no escalate row (got '$r')"
+  # BH-7287: an escalate row or an infra row; either keeps the path out of a plain selection.
+  r=$(cbe "$p"); { [ "$r" = "selection input: $p" ] || cbi "$p"; } && ok || bad "G1: infra path $p has no escalate or infra row (got '$r')"
 done
 
 # ── D2. a doc never escalates on its own, even under an escalate prefix.
@@ -68,14 +71,19 @@ done
 r=$(CI_BATCH_ESCALATE_TSV="$T/rules.tsv" cbe bin/lib/x.sh)
 [ "$r" = "selection input: bin/lib/x.sh" ] && ok || bad "D2: the allow rows exempt docs only (got '$r')"
 
-# ── N2 (unit). every derived input escalates; ordinary bin/lib and catalog files do not.
+# ── N2 (unit). every derived input is an infra row (BH-7287); the rules file
+# itself escalates; ordinary bin/lib and catalog files are neither.
 for p in "${INPUTS[@]}"; do
-  r=$(cbe "$p"); rc=$?
-  { [ "$rc" = 0 ] && [ "$r" = "selection input: $p" ]; } && ok || bad "N2: $p must escalate (rc=$rc, got '$r')"
+  cbi "$p"; rc=$?
+  [ "$rc" = 0 ] && ok || bad "N2: $p must be an infra row (cbe_infra rc=$rc)"
 done
+r=$(cbe catalog/ci-batch-escalate.tsv); rc=$?
+{ [ "$rc" = 0 ] && [ "$r" = "selection input: catalog/ci-batch-escalate.tsv" ]; } && ok \
+  || bad "N2: catalog/ci-batch-escalate.tsv must escalate (rc=$rc, got '$r')"
 for p in bin/lib/deferral-after.sh bin/lib/archie-fm-watch/common.sh catalog/lanes.d/lesson-classify.json bin/lib/br/opt/README.md; do
   r=$(cbe "$p"); rc=$?
   { [ "$rc" = 1 ] && [ -z "$r" ]; } && ok || bad "N2: $p must not escalate through the rules (rc=$rc, got '$r')"
+  cbi "$p" && bad "N2: $p must not be an infra row" || ok
 done
 
 # ── The real selector, with the map built once.
@@ -143,9 +151,11 @@ grep -qxF tests/blocked-resolver-opt-hooks.bh-1468-test.sh "$T/list" && ok \
 selected N4 catalog/lanes.d/lesson-classify.json
 { [ "$(out spa)" = 1 ] && [ "$(out worker)" = 1 ]; } && ok || bad "N4: spa and worker must run (spa=$(out spa) worker=$(out worker))"
 
-# ── N2 (batch). the selection inputs escalate end to end.
+# ── N2 (batch). the selection inputs plan mode=infra end to end (BH-7287).
 for p in bin/lib/suite-runner.sh bin/lib/test-protected.sh catalog/test-tiers.tsv catalog/test-impact-always.txt; do
-  escalates "N2 $p" "selection input: $p" "$p"
+  bplan "$p"
+  { [ "$RC" = 0 ] && [ "$(out mode)" = infra ] && [ "$(out escalation)" = - ] && [ "$(out count)" -lt "$(out total)" ]; } && ok \
+    || bad "N2 $p: must be mode=infra (rc=$RC mode=$(out mode) escalation='$(out escalation)' count=$(out count) total=$(out total)) [$OUT]"
 done
 
 # ── N3. a bin/lib/ or catalog/ path the map cannot resolve fails closed, with its reason.

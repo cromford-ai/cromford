@@ -47,8 +47,9 @@
 #                        (ti_testlib_closure), and a closure with no map row
 #                        that names one of its files is
 #                        `full: unmapped path (<p>)`. The global helpers
-#                        (tests/lib/scratch.sh) escalate in the batch's rules
-#                        file before this runs.
+#                        (tests/lib/scratch.sh) are infra rows in the batch's
+#                        rules file (BH-7287): bin/ci-plan.sh takes them out
+#                        of this select and adds their self and reads suites.
 #                        A top-level .github/workflows/*.yml or *.yaml path
 #                        is not infra here either (BH-6876): it selects the
 #                        suites that read it (its map rows) plus the always
@@ -950,12 +951,13 @@ ti_inert() {
 # it decides WHERE a green ran — which daemon, and whether the container got the
 # tree or an empty /repo.
 # A batch select (TI_BATCH_SELECT=1, BH-6059) uses the core list without
-# ^catalog/: bin/ci-plan.sh has already escalated on the catalogs the selection
-# reads (catalog/ci-batch-escalate.tsv), and every other catalog/ path selects
-# through the map or is unmapped. Every literal path here has an escalate row in
-# that file (tests/ci-batch-escalate-narrow.bh-6059-test.sh G1). ^tests/lib/ is
-# out of the core list too (BH-6371): the global helpers have escalate rows in
-# that file, and every other helper selects through ti_testlib_closure. The full
+# ^catalog/: bin/ci-plan.sh has already judged the catalogs the selection
+# reads (catalog/ci-batch-escalate.tsv: escalate or infra rows, BH-7287), and
+# every other catalog/ path selects through the map or is unmapped. Every
+# literal path here has an escalate or infra row in that file
+# (tests/ci-batch-escalate-narrow.bh-6059-test.sh G1). ^tests/lib/ is out of the
+# core list too (BH-6371): the global helpers have infra rows in that file, and
+# every other helper selects through ti_testlib_closure. The full
 # list, which the PR select and the builder gate read, adds ^tests/lib/ back.
 # It has no ^catalog/ (BH-7027): a plain select sends a catalog/ path through
 # ti_pr_catalog, which keeps the infra answer only for an escalated or unmapped
@@ -988,8 +990,8 @@ ti_specific() {
 }
 
 # ti_pr_catalog <map> <path> — does a catalog/ path narrow in a PLAIN select
-# (BH-7027)? rc 0 when the batch's rules file does not escalate it and the map
-# has a specific row for it; rc 1 (infra) otherwise. The rules lib is sourced
+# (BH-7027)? rc 0 when the batch's rules file has no escalate or infra row for
+# it (BH-7287) and the map has a specific row for it; rc 1 (infra) otherwise. The rules lib is sourced
 # once per run. A lib that cannot be sourced is rc 1 for every path, and an
 # unreadable rules file escalates in cbe_reason, so both fail closed.
 ti_cbe_state=""
@@ -1003,7 +1005,8 @@ ti_pr_catalog() {
     fi
   fi
   [ "$ti_cbe_state" = ok ] || return 1
-  cbe_reason "$2" > /dev/null && return 1
+  # An infra row (BH-7287) keeps the infra answer too, as its escalate row did.
+  { cbe_reason "$2" > /dev/null || cbe_infra "$2"; } && return 1
   ti_specific "$1" "$2"
 }
 
@@ -1336,14 +1339,16 @@ ti_inputs() {
 #   3. a catalog/ path, not *.md, with no specific map row (ti_specific: an
 #      exact or directory row that is not a whole-tree root row);
 #   4. any other tests/lib/ or catalog/ path, not *.md, that the TREE's own
-#      catalog/ci-batch-escalate.tsv escalates (cbe_reason; the global
-#      helpers). CI_BATCH_ESCALATE_TSV is never read: the fingerprint is a
-#      function of the tree.
+#      catalog/ci-batch-escalate.tsv escalates or calls infra (cbe_reason or
+#      cbe_infra, BH-7287; the global helpers). CI_BATCH_ESCALATE_TSV is
+#      never read: the fingerprint is a function of the tree.
 # A rules lib that cannot be sourced is every tests/lib/ and catalog/ path
 # (the v1 set); an unreadable rules file is the same, because cbe_reason then
 # escalates every path. This is the set a batch select (TI_BATCH_SELECT=1)
-# would call `unmapped path` or that its rules escalate, so a path moves a
-# suite's fingerprint exactly when that select would run the suite.
+# would call `unmapped path` or that its rules escalate or call infra, so a
+# path moves a suite's fingerprint at least whenever that select would run the
+# suite. An infra row (BH-7287) runs fewer suites than it moves, on purpose:
+# the @infra set is the same as when those rows escalated.
 ti_inputs_infra() {
   local map="$1" helpers="$2" files="$3" cand="$TI_TMP/infra.cand" p
   { grep -E "$ti_infra_core_re" "$files" || :; } > "$TI_TMP/infra.core"
@@ -1372,7 +1377,7 @@ ti_inputs_infra() {
       # shellcheck source=lib/ci-batch-escalate.sh
       . "$ROOT/bin/lib/ci-batch-escalate.sh" || exit 2
       export CI_BATCH_ESCALATE_TSV="$ROOT/catalog/ci-batch-escalate.tsv"
-      while IFS= read -r p; do cbe_reason "$p" > /dev/null && printf '%s\n' "$p"; done
+      while IFS= read -r p; do { cbe_reason "$p" > /dev/null || cbe_infra "$p"; } && printf '%s\n' "$p"; done
       exit 0 ) || { echo "test-impact: the escalation rules scan failed" >&2; exit 2; }
   } | LC_ALL=C sort -u
   [ "${PIPESTATUS[0]}" = 0 ] || return 2

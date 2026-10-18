@@ -31,10 +31,12 @@
 #                             and body name (BH-4969; a read that fails is
 #                             `member labels unreadable`, never "no label"),
 #                             a diff that cannot be read or is
-#                             empty, a path catalog/ci-batch-escalate.tsv names
+#                             empty, a path an escalate row of
+#                             catalog/ci-batch-escalate.tsv names
 #                             (bin/lib/ci-batch-escalate.sh; unreadable rules
-#                             escalate; BH-6059: the files the selection reads,
-#                             not all of bin/lib/ and catalog/), test-impact's
+#                             escalate; since BH-7287 only .github/ outside a
+#                             top-level workflow, .mergify.yml and a rules
+#                             diff that deletes a row), test-impact's
 #                             own full answer (unknown reach -> `unmapped: <p>`,
 #                             infra -> `selection input: <p>`, a bin/lib/,
 #                             catalog/ or tests/lib/ path with no specific map
@@ -60,6 +62,26 @@
 #                             between TI_BASE and HEAD, or an empty own diff is
 #                             today's answer, said on a `ci-plan: own diff: off
 #                             (<why>)` line, never inside a full reason.
+#                             BH-7287: a path an INFRA row names (the
+#                             planner, the selector, the tier step, the
+#                             runners, their libs and catalogs,
+#                             tests/lib/scratch.sh; BH-6059 derived them), or
+#                             a rules diff that deletes no row
+#                             (cbe_deletes_row), is mode=infra: the select
+#                             above runs on the OTHER paths, and the list adds
+#                             each infra path's self and reads suites
+#                             (`select --why --map-only`) and the canaries of
+#                             catalog/ci-infra-canary.txt (CI_INFRA_CANARY_FILE).
+#                             The reason says `infra: <k> path(s) (<first>):
+#                             <s> self/reads + <c> canaries (BH-7033.1)`, then
+#                             the other paths' reason when there are any. An
+#                             escalate row beats an infra row (CI_FULL_TRIGGERS
+#                             `+<p>` too), a full answer on the other paths is
+#                             full, and a canary list that cannot be read, is
+#                             empty, or has a line that is not a present
+#                             tests/<name>.sh path escalates as `infra canary
+#                             list unreadable (<why>)`. Only the OWN diff is
+#                             judged (BH-6490). spa and worker stay 1.
 #                             BH-6876: a top-level .github/workflows/*.yml
 #                             or *.yaml path does not escalate (an allow row)
 #                             and selects the suites that read it plus the
@@ -206,7 +228,7 @@
 # dispatch the error names the changed bin/, worker/ and tests/ paths (BH-5795).
 #
 # OUTPUTS. The list goes to --out (default stdout). When GITHUB_OUTPUT is set,
-# these are appended to it: mode (queue-tested|selected|batch-selected|full),
+# these are appended to it: mode (queue-tested|selected|batch-selected|infra|full),
 # count, total, n, shards (a JSON array 0..n-1 for the matrix),
 # corpus (1 when the corpus runs at all), summary (one line for the fan-ins),
 # quarantine (the normalised CI_QUARANTINE, space-joined, or `-` for none;
@@ -253,7 +275,8 @@
 # test-impact script), CI_PLAN_CHANGED_FILE (the changed paths, instead of
 # `git diff`), CI_PLAN_TIERS (the tier script), CI_PLAN_TIER_FILE (the tier
 # file), CI_PLAN_PROTECTED (the quarantine-protected list) and
-# CI_BATCH_ESCALATE_TSV (the batch escalation rules, read by the lib).
+# CI_BATCH_ESCALATE_TSV (the batch escalation rules, read by the lib) and
+# CI_INFRA_CANARY_FILE (the infra canary list, BH-7287).
 set -uo pipefail
 SELF_DIR="$(cd "$(dirname "$0")" && pwd)"
 ROOT="$(cd "$SELF_DIR/.." && pwd)"
@@ -267,7 +290,7 @@ while [ $# -gt 0 ]; do
     --expect-n) [ $# -ge 2 ] || { echo "ci-plan: --expect-n needs a number" >&2; exit 2; }; EXPECT="$2"; shift ;;
     --tier)     case "${2:-}" in nightly|nightly-full) TIER="$2" ;;
                   *) echo "ci-plan: --tier takes 'nightly' or 'nightly-full'" >&2; exit 2 ;; esac; shift ;;
-    -h|--help)  sed -n '2,256p' "$0"; exit 0 ;;
+    -h|--help)  sed -n '2,279p' "$0"; exit 0 ;;
     *) echo "ci-plan: unknown argument $1" >&2; exit 2 ;;
   esac
   shift
@@ -460,6 +483,28 @@ member_reach() {
   RLINE_REACH="member reach: full $k of $m members${why:+ ($why)}"
 }
 
+# infra_canaries — the canary suites of an infra batch (BH-7287) into
+# $TMP/canaries, from CI_INFRA_CANARY_FILE or catalog/ci-infra-canary.txt.
+# rc 1 with IC_WHY when the file cannot be read, lists no suite, or has a line
+# that is not a present tests/<name>.sh path with no glob and no `..`.
+infra_canaries() {
+  local f="${CI_INFRA_CANARY_FILE:-$ROOT/catalog/ci-infra-canary.txt}" l
+  : > "$TMP/canaries"
+  { [ -f "$f" ] && [ -r "$f" ]; } || { IC_WHY="cannot read ${f#"$ROOT"/}"; return 1; }
+  while IFS= read -r l || [ -n "$l" ]; do
+    [[ $l =~ ^[[:space:]]*(#|$) ]] && continue
+    case "$l" in
+      *..*|*[*?[]*|*[[:space:]]*) IC_WHY="a glob, a .. or a space: $l"; return 1 ;;
+      tests/*.sh) ;;
+      *) IC_WHY="not a tests/<name>.sh path: $l"; return 1 ;;
+    esac
+    [ -f "$ROOT/$l" ] || { IC_WHY="no such suite: $l"; return 1; }
+    printf '%s\n' "$l" >> "$TMP/canaries"
+  done < "$f"
+  grep -q . "$TMP/canaries" || { IC_WHY="no suite listed"; return 1; }
+  LC_ALL=C sort -u -o "$TMP/canaries" "$TMP/canaries"
+}
+
 # batch_select — a merge-queue batch runs the IMPACT SET of its combined diff
 # (BH-4968). Builds $CH once (the tier step reuses it), then either escalates to
 # the corpus with a reason (ESCALATION) or runs `select --changed`. Every failure
@@ -496,20 +541,26 @@ batch_select() {
     own_base
     OWNCH="$TMP/ownchanged"
     if [ "$OWN_BASE" != - ]; then cp "$TMP/own" "$OWNCH"; EBASE="$OWN_BASE"; else cp "$CH" "$OWNCH"; EBASE="$TI_BASE"; fi
+    : > "$TMP/infra.paths"
     while IFS= read -r p; do
       [ -n "$p" ] || continue
       # BH-6371: a diff to the rules file that only adds escalate, spa or
-      # worker rows selects through the map. Proven on the batch's own diff;
-      # a diff that fails, or anything but add-only, escalates as before.
+      # worker rows selects through the map. BH-7287: one that deletes no row
+      # is an infra path. Proven on the batch's own diff; a diff that fails,
+      # or a delete, escalates as before.
       if [ "$p" = catalog/ci-batch-escalate.tsv ] \
-         && git -C "$ROOT" diff --no-renames -U0 "$EBASE" HEAD -- catalog/ci-batch-escalate.tsv > "$TMP/cbe.diff" 2>/dev/null \
-         && CBE_ADDED=$(cbe_add_only "$TMP/cbe.diff"); then
-        ADDNOTE="escalation rows added only ($(printf '%s\n' "$CBE_ADDED" | paste -sd, -))"
-        continue
+         && git -C "$ROOT" diff --no-renames -U0 "$EBASE" HEAD -- catalog/ci-batch-escalate.tsv > "$TMP/cbe.diff" 2>/dev/null; then
+        if CBE_ADDED=$(cbe_add_only "$TMP/cbe.diff"); then
+          ADDNOTE="escalation rows added only ($(printf '%s\n' "$CBE_ADDED" | paste -sd, -))"
+          continue
+        fi
+        if ! cbe_deletes_row "$TMP/cbe.diff"; then printf '%s\n' "$p" >> "$TMP/infra.paths"; continue; fi
       fi
       # BH-6688: a workflow diff in non-test jobs only selects through the map.
       [ "$p" = .github/workflows/harness-ci.yml ] && wf_nontest "$EBASE" && continue
+      # An escalate row beats an infra row (BH-7287), CI_FULL_TRIGGERS included.
       if r=$(cbe_reason "$p"); then ESCALATION="$r"; break; fi
+      if cbe_infra "$p"; then printf '%s\n' "$p" >> "$TMP/infra.paths"; continue; fi
       wf_note "$p"
     done < "$OWNCH"
     [ "$ESCALATION" != - ] || grep -q . "$CH" || ESCALATION="the batch diff is empty"
@@ -529,6 +580,11 @@ batch_select() {
         if cbe_reason "$p" > /dev/null; then [ -n "$INHERITED" ] || INHERITED="$p"; else wf_note "$p"; fi
       done < "$TMP/inherited"
     fi
+    # BH-7287: an infra batch needs a canary list it can trust; one it cannot
+    # read or check runs the corpus, never a smaller list.
+    if [ "$ESCALATION" = - ] && [ -s "$TMP/infra.paths" ] && ! infra_canaries; then
+      ESCALATION="infra canary list unreadable ($IC_WHY)"
+    fi
   fi
 
   if [ "$ESCALATION" != - ]; then
@@ -538,12 +594,22 @@ batch_select() {
     REASON="full: $ESCALATION"
     return 0
   fi
+  # BH-7287: the infra paths select on their own below; the select here, the
+  # BH-6490 re-judge and its --map-only union read the batch's OTHER paths.
+  # $CH stays whole for the tier step, the regression union and spa/worker.
+  local sel_ch="$CH" sel_own="${OWNCH:-$CH}" ireason=""
+  if [ -s "$TMP/infra.paths" ]; then
+    LC_ALL=C sort -u -o "$TMP/infra.paths" "$TMP/infra.paths"
+    awk 'NR == FNR { i[$0] = 1; next } !($0 in i)' "$TMP/infra.paths" "$CH" > "$TMP/rest"
+    awk 'NR == FNR { i[$0] = 1; next } !($0 in i)' "$TMP/infra.paths" "$OWNCH" > "$TMP/ownrest"
+    sel_ch="$TMP/rest"; sel_own="$TMP/ownrest"
+  fi
   # TI_NAMED_BASE: the base test-impact reads deleted and renamed functions
   # from, which a <base>..<head> select sets itself and --changed does not.
   # TI_BATCH_SELECT (BH-6059): catalog/ is not infra here, and a bin/lib/ or
   # catalog/ path the map has no specific row for is `unmapped path (<p>)`.
   # A top-level workflow file selects its readers there (BH-6876).
-  TI_NAMED_BASE="$TI_BASE" TI_BATCH_SELECT=1 "$IMPACT" select --changed "$CH" --out "$LIST" 2>"$WHY" \
+  TI_NAMED_BASE="$TI_BASE" TI_BATCH_SELECT=1 "$IMPACT" select --changed "$sel_ch" --out "$LIST" 2>"$WHY" \
     || { echo "ci-plan: bin/test-impact.sh select failed: $(cat "$WHY")" >&2; exit 2; }
   r=$(impact_reason "$WHY") || exit 2
   # BH-6490: a full answer on an INHERITED path is judged again on the own
@@ -553,14 +619,14 @@ batch_select() {
     "full: unknown reach ("*")"|"full: unmapped path ("*")"|"full: infra change ("*")") p="${r#full: * (}"; p="${p%)}" ;;
     *) p="" ;;
   esac
-  if [ -n "$p" ] && [ "$OWN_BASE" != - ] && ! grep -qxF -- "$p" "$OWNCH"; then
+  if [ -n "$p" ] && [ "$OWN_BASE" != - ] && ! grep -qxF -- "$p" "$sel_own"; then
     [ -n "$INHERITED" ] || INHERITED="$p"
-    TI_NAMED_BASE="$OWN_BASE" TI_BATCH_SELECT=1 "$IMPACT" select --changed "$OWNCH" --out "$LIST" 2>"$WHY" \
+    TI_NAMED_BASE="$OWN_BASE" TI_BATCH_SELECT=1 "$IMPACT" select --changed "$sel_own" --out "$LIST" 2>"$WHY" \
       || { echo "ci-plan: bin/test-impact.sh select failed: $(cat "$WHY")" >&2; exit 2; }
     r=$(impact_reason "$WHY") || exit 2
     case "$r" in
       "full: "*) ;;
-      *) TI_NAMED_BASE="$TI_BASE" TI_BATCH_SELECT=1 "$IMPACT" select --changed "$CH" --map-only --out "$TMP/inh.list" 2>"$WHY" \
+      *) TI_NAMED_BASE="$TI_BASE" TI_BATCH_SELECT=1 "$IMPACT" select --changed "$sel_ch" --map-only --out "$TMP/inh.list" 2>"$WHY" \
            || { echo "ci-plan: bin/test-impact.sh select failed: $(cat "$WHY")" >&2; exit 2; }
          r2=$(impact_reason "$WHY") || exit 2
          case "$r2" in
@@ -577,13 +643,26 @@ batch_select() {
     "full: "*)                   ESCALATION="${r#full: }" ;;
     *) MODE=batch-selected ;;
   esac
+  # BH-7287: the infra paths add their self and reads suites (the suites that
+  # test that file) and the canaries to the other paths' selection.
+  if [ "$MODE" = batch-selected ] && [ -s "$TMP/infra.paths" ]; then
+    TI_NAMED_BASE="$EBASE" TI_BATCH_SELECT=1 "$IMPACT" select --why --map-only --changed "$TMP/infra.paths" --out "$TMP/infra.why" 2>"$TMP/infra.err" \
+      || { echo "ci-plan: bin/test-impact.sh select failed: $(cat "$TMP/infra.err")" >&2; exit 2; }
+    awk -F'\t' '$2 == "self" || $2 == "reads" { print $1 }' "$TMP/infra.why" | LC_ALL=C sort -u > "$TMP/infra.sr"
+    LC_ALL=C sort -u "$LIST" "$TMP/infra.sr" "$TMP/canaries" | grep . > "$TMP/union" && cp "$TMP/union" "$LIST" \
+      || { echo "ci-plan: cannot build the infra list" >&2; exit 2; }
+    MODE=infra
+    ireason="infra: $(grep -c . "$TMP/infra.paths") path(s) ($(head -1 "$TMP/infra.paths")): $(grep -c . "$TMP/infra.sr") self/reads + $(grep -c . "$TMP/canaries") canaries (BH-7033.1)"
+    grep -q . "$TMP/rest" && ireason="$ireason; $r"
+    r="$ireason"
+  fi
   # A selection of every suite is a full run, judged before the tier step.
   sel=$(grep -c . "$LIST" 2>/dev/null); tot=$(sed -n 's/^impact: [0-9]* of \([0-9]*\) suites.*/\1/p' "$WHY" | tail -1)
-  if [ "$MODE" = batch-selected ] && [ -n "$tot" ] && [ "${sel:-0}" -ge "$tot" ]; then
+  if { [ "$MODE" = batch-selected ] || [ "$MODE" = infra ]; } && [ -n "$tot" ] && [ "${sel:-0}" -ge "$tot" ]; then
     MODE=full; ESCALATION="the selection is every suite"
   fi
   if [ "$ESCALATION" != - ]; then REASON="full: $ESCALATION"; else REASON="$r${ADDNOTE:+; $ADDNOTE}${WFNOTE:+; $WFNOTE}"; fi
-  if [ "$MODE" = batch-selected ] && [ -n "$INHERITED" ]; then
+  if { [ "$MODE" = batch-selected ] || [ "$MODE" = infra ]; } && [ -n "$INHERITED" ]; then
     REASON="$REASON; own diff: $(grep -c . "$OWNCH") of $(grep -c . "$CH") paths, base ${OWN_BASE:0:8}; inherited: $INHERITED"
   fi
 }
