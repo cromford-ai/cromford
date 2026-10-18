@@ -31,6 +31,7 @@
 #   VERDICT_RSHA VERDICT_WORD VERIFY_LINE WHAT_BASE WHAT_LIST WHAT_MB WHY_EXCERPT WP_RC WP_WHY _ASSUM _SPECC
 #   _CL_ISSUE
 #   CALLERS_SECTION CK_BASE CK_RC CK_SUM RB_BUILT_SHA
+#   MNR_OUT MNR_RC MNR_SECTION PREPR_SECTION _MNR_L
 # shellcheck shell=bash
 
 rb_pr() {
@@ -379,6 +380,35 @@ elif [ -n "$RB_MAIN" ] && [ -z "$RB_MB" ]; then
   echo "$(STAMP) [$PROJECT/$KEY] merge-base of origin/$BASE and HEAD is unresolvable (main=$RB_MAIN_S) — rebase skipped, not claiming main moved" >> "$BUILD/pipeline.log"
 fi
 # <<< rebase verify
+# >>> migration renumber (BH-7365)
+# A repo that numbers migrations by hand (migration_renumber.dir.<project>)
+# gets a branch-added migration whose number main already took moved above
+# main's highest, with its references, in ONE commit (bin/lib/migration-renumber.sh).
+# So a PR is never OPENED on a number main took. The commit lands above
+# review-head, and the head-bound gate re-reviews it. It never stops the build
+# and never calls RESULT: a pipeline.log line per move and a PR-body section.
+# A stacked build is skipped: its base is the parent branch, not main.
+MNR_SECTION=""
+if [ -z "${STACK_ON:-}" ]; then
+  # shellcheck source=bin/lib/migration-renumber.sh
+  command -v mnr_fix >/dev/null 2>&1 || { [ -r "$HARNESS/bin/lib/migration-renumber.sh" ] && . "$HARNESS/bin/lib/migration-renumber.sh" 2>/dev/null; }
+  if command -v mnr_fix >/dev/null 2>&1; then
+    MNR_RC=0; MNR_OUT=$(mnr_fix . "origin/$BASE" "$PROJECT" 2>>"$BUILD/pipeline.log") || MNR_RC=$?
+    case "$MNR_RC" in
+      0) if [ -n "$MNR_OUT" ]; then
+           while IFS= read -r _MNR_L; do
+             echo "$(STAMP) [$PROJECT/$KEY] migration renumbered: $_MNR_L" >> "$BUILD/pipeline.log"
+           done <<<"$MNR_OUT"
+           MNR_SECTION=$'\n## Migration numbers (BH-7365)\n\n'"$(sed 's/^/- /' <<<"$MNR_OUT")"$'\n'
+         fi ;;
+      1) echo "$(STAMP) [$PROJECT/$KEY] migration number collision not renumbered: $(tr '\n' ' ' <<<"$MNR_OUT")" >> "$BUILD/pipeline.log"
+         MNR_SECTION=$'\n## Migration numbers (BH-7365): not renumbered\n\n'"$(sed 's/^/- /' <<<"$MNR_OUT")"$'\n'"CI and the merge conductor decide this PR's migration number."$'\n' ;;
+      *) echo "$(STAMP) [$PROJECT/$KEY] ${MNR_OUT:-migration renumber could not run} — going on unchanged" >> "$BUILD/pipeline.log" ;;
+    esac
+    PREPR_SECTION="${PREPR_SECTION:-}${MNR_SECTION}"
+  fi
+fi
+# <<< migration renumber (BH-7365)
 # >>> caller check (BH-5791)
 # After #4332 merged main, bin/data-lane-apply.sh still read the old pause
 # file. So, after the rebase or merge of main above (the final tree), list

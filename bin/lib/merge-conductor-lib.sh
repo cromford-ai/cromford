@@ -42,6 +42,7 @@ command -v pdg_hold >/dev/null 2>&1 || { [ -r "${BASH_SOURCE[0]%/*}/pr-dep-gate.
 command -v main_red_hold >/dev/null 2>&1 || { [ -r "${BASH_SOURCE[0]%/*}/main-red-gate.sh" ] && . "${BASH_SOURCE[0]%/*}/main-red-gate.sh"; }
 command -v verdict_parse >/dev/null 2>&1 || { [ -r "${BASH_SOURCE[0]%/*}/verdict-parse.sh" ] && . "${BASH_SOURCE[0]%/*}/verdict-parse.sh"; }
 command -v mc_queue_batch_only >/dev/null 2>&1 || { [ -r "${BASH_SOURCE[0]%/*}/queue-batch-only.sh" ] && . "${BASH_SOURCE[0]%/*}/queue-batch-only.sh"; }
+command -v mnr_fix >/dev/null 2>&1 || { [ -r "${BASH_SOURCE[0]%/*}/migration-renumber.sh" ] && . "${BASH_SOURCE[0]%/*}/migration-renumber.sh"; }
 . "$MC_LIB_DIR/load.sh" || { echo "merge-conductor-lib: the mc modules did not load from $MC_LIB_DIR" >&2; exit 1; }
 [ -r "$MC_LIB_DIR/block-ci.sh" ] && . "$MC_LIB_DIR/block-ci.sh"
 [ -r "$MC_LIB_DIR/spawn-remote.sh" ] && . "$MC_LIB_DIR/spawn-remote.sh"

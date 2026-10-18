@@ -1322,6 +1322,24 @@ mc_rebase() {
     ln -s "$repo/node_modules" "$wt/node_modules" 2>/dev/null || true
   fi
   mc_regen_generated "$wt" "origin/$base" "$url rebase"
+  # BH-7365: a migration number main already took is renumbered here, over the
+  # merged tree and before the gates, so the unit gate and CI read the new
+  # number. Its `Union-resolved:` trailers take the rc 5 path below (no
+  # rebind). A decline is the "gate red, not pushed" answer; could-not-run
+  # goes on unchanged and CI decides. Stacked parent merges are not renumbered.
+  if [ "$base" = main ] && command -v mnr_fix >/dev/null 2>&1; then
+    local mnr mnrc=0 mnl
+    # stderr is a knob warning, never a move: it is logged on its own line.
+    mnr=$(mnr_fix "$wt" "origin/$base" "$project" 2>"$wt.mnr-err") || mnrc=$?
+    while IFS= read -r mnl; do [ -n "$mnl" ] && mc_log "$url rebase: $mnl"; done < "$wt.mnr-err" 2>/dev/null
+    rm -f "$wt.mnr-err"
+    case "$mnrc" in
+      0) while IFS= read -r mnl; do [ -n "$mnl" ] && mc_log "$url rebase: migration renumbered — $mnl"; done <<<"$mnr" ;;
+      1) while IFS= read -r mnl; do [ -n "$mnl" ] && mc_log "$url rebase: migration number collision not fixed — $mnl"; done <<<"$mnr"
+         mc_rebase_cleanup "$repo" "$wt" "$cloned"; return 2 ;;
+      *) mc_log "$url rebase: ${mnr:-migration renumber could not run} — going on unchanged" ;;
+    esac
+  fi
   # Gates the hub can run: typecheck + unit when node_modules is at hand (the
   # hub clones); otherwise CI is the gate and the PR goes WAIT_CI honestly.
   if [ -d "$repo/node_modules" ]; then

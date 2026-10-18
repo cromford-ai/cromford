@@ -35,7 +35,7 @@
 #
 #   REBASED <new-sha>
 #   CONFLICT <path> [<path>...]
-#   GATE_RED typecheck|unit
+#   GATE_RED typecheck|unit|migration-number: <message>
 #   REBASE_LEASE_REJECTED <why>
 #   REBASE_SETUP_FAILED <why>
 #
@@ -87,6 +87,9 @@
 #      declared paths land as ONE extra commit when the output differs; a
 #      failing generator is logged and changes nothing. Guarded by `type`, so a
 #      machine carrying a pre-BH-969 conductor lib skips it silently.
+#   6c. renumber a branch-added migration whose number main took (BH-7365,
+#      bin/lib/migration-renumber.sh): one commit whose trailers join UNION:.
+#      A collision it cannot renumber is GATE_RED migration-number: <message>.
 #   7. gates, ONLY when <repo>/node_modules exists — warm-up installs with
 #      `npm install || true`, so calling a missing install GATE_RED would tell
 #      the hub the BRANCH is bad. Same condition as the hub twin mc_rebase.
@@ -225,6 +228,24 @@ _rebase_job_body() {
   fi
   if type mc_regen_generated >/dev/null 2>&1; then
     mc_regen_generated "$wt" "origin/$base" "pool rebase $br" || true
+  fi
+
+  # --- 6c. renumber a migration number main already took (BH-7365) ----------
+  # The pool twin of mc_rebase's call, `type`-guarded the same way. A decline is
+  # GATE_RED (nothing pushed); could-not-run goes on and CI decides. The
+  # commit's `Union-resolved:` trailers join UNION:, so the hub withholds the
+  # approval rebind exactly as for a union-resolved merge.
+  if [ "$base" = main ] && type mnr_fix >/dev/null 2>&1; then
+    local mnr mnrc=0 mnu
+    mnr=$(mnr_fix "$wt" "origin/$base" "${PROJECT:-}" 2>/dev/null) || mnrc=$?
+    if [ "$mnrc" = 1 ]; then
+      _rj_line="GATE_RED migration-number: $(printf '%s' "$mnr" | tr '\n' ' ' | sed 's/  */ /g; s/ *$//')"
+      return 1
+    fi
+    if [ "$mnrc" = 0 ] && [ -n "$mnr" ]; then
+      mnu=$(git -C "$wt" log -1 --format=%B HEAD 2>/dev/null | sed -n 's/^Union-resolved: //p' | tr '\n' ';' | sed 's/;$//')
+      [ -n "$mnu" ] && _rj_union="${_rj_union:+$_rj_union;}$mnu"
+    fi
   fi
 
   # --- 7. the gates, only with deps at hand ----------------------------------
