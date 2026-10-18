@@ -1,0 +1,11 @@
+{
+  "env": "POOL_ORPHAN_ROW_RELEASE_MAX",
+  "type": "int",
+  "default": 20,
+  "min": 1,
+  "max": 200,
+  "unit": "rows",
+  "required": false,
+  "read_in": "bin/lib/pool-orphan-rows.sh",
+  "note": "BH-7382: the most claimed rows one pool tick releases per project. The rest wait for the next tick, with one say line that names the count."
+}

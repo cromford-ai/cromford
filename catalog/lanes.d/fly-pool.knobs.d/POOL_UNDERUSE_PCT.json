@@ -1,0 +1,12 @@
+{
+  "env": "POOL_UNDERUSE_PCT",
+  "type": "int",
+  "default": 50,
+  "min": 0,
+  "max": 100,
+  "unit": "percent",
+  "zero_means": "off",
+  "required": false,
+  "read_in": "bin/lib/pool-underuse.sh",
+  "note": "BH-7382: the under-use alert fires when the machines building are FEWER than this percent of capacity (the cap, or building + queued when there is no cap). 0 = off: it never fires."
+}

@@ -110,6 +110,14 @@ say() { echo "$(STAMP) [pool/$P] $*" >> "$LOG"; }
 # shellcheck source=bin/lib/pool-stall.sh
 . "$HARNESS/bin/lib/pool-stall.sh" 2>/dev/null \
   || . "$(dirname "${BASH_SOURCE[0]}")/lib/pool-stall.sh" 2>/dev/null || true
+# BH-7382: the under-use alert (queued work, free slots, few building).
+# shellcheck source=bin/lib/pool-underuse.sh
+. "$HARNESS/bin/lib/pool-underuse.sh" 2>/dev/null \
+  || . "$(dirname "${BASH_SOURCE[0]}")/lib/pool-underuse.sh" 2>/dev/null || true
+# BH-7382: release a claimed fly row that no hub file and no live machine owns.
+# shellcheck source=bin/lib/pool-orphan-rows.sh
+. "$HARNESS/bin/lib/pool-orphan-rows.sh" 2>/dev/null \
+  || . "$(dirname "${BASH_SOURCE[0]}")/lib/pool-orphan-rows.sh" 2>/dev/null || true
 [ "$FLY_TOKEN_SRC" = FLY_API_TOKEN ] && say "using the org FLY_API_TOKEN: $TV is not set"
 if [ -z "$FLY_ACCESS_TOKEN" ]; then
   command -v pool_stall_no_token >/dev/null 2>&1 && pool_stall_no_token "$TV" \
@@ -4127,6 +4135,9 @@ if [ -n "${POOL_APP:-}" ]; then
       _OJ=$(printf '%s; ' "${ORPH[@]}")
       HARNESS="$HARNESS" "$HARNESS/bin/alert-line.sh" "[pool/$P] ${#ORPH[@]} jobs still tracked on machines Fly no longer returns after the reap — the dead path did not close them: ${_OJ%; }"
     fi
+    # BH-7382: a claimed fly row of this hub with no queue file, no job file and
+    # no live machine goes back to queued after POOL_ORPHAN_ROW_RELEASE_S.
+    command -v pool_orphan_rows_step >/dev/null 2>&1 && pool_orphan_rows_step
     jq -nc --arg at "$(STAMP)" --argjson listed "$NLISTED" --argjson ttl "$TTL_S" \
       --argjson capped "$CAPPED" --argjson stopped "$SW_STOPPED" --argjson unaged "$SW_UNAGED" \
       --argjson destroyed "$SW_DESTROYED" --argjson df "$SW_FAILED" --argjson oj "$SW_ORPHANS" \
@@ -4220,6 +4231,8 @@ else
 fi
 # BH-7107: queued work, no slot and nothing building for POOL_STALL_ALERT_S pages once an hour, with its cause.
 command -v pool_stall_tick >/dev/null 2>&1 && pool_stall_tick
+# BH-7382: queued > POOL_UNDERUSE_QUEUE_MIN and building < POOL_UNDERUSE_PCT of capacity for POOL_UNDERUSE_ALERT_S pages once an hour.
+command -v pool_underuse_tick >/dev/null 2>&1 && pool_underuse_tick
 # BH-6536: a ticket held in the review column by a human step says why it is not queued.
 command -v nh_sd_stage_lines >/dev/null 2>&1 && while IFS=$'\t' read -r SK _ SST _ SRE; do
   [ -e "$QDIR/$SK.json" ] || say "pool $P: $SK not queued :: $SST: $SRE"

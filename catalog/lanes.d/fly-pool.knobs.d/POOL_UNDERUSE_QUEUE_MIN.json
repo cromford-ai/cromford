@@ -1,0 +1,11 @@
+{
+  "env": "POOL_UNDERUSE_QUEUE_MIN",
+  "type": "int",
+  "default": 5,
+  "min": 0,
+  "max": 100000,
+  "unit": "jobs",
+  "required": false,
+  "read_in": "bin/lib/pool-underuse.sh",
+  "note": "BH-7382: the under-use alert needs MORE than this many queued jobs (state/build-queue/<p>, minus the .failed.json parks)."
+}

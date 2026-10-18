@@ -26,9 +26,16 @@
 #           re-render the machine rules. One status line on stdout. Exit codes:
 #             0  deployed
 #            20  no checkout, another harness-sync holds the lock, freshness
-#                UNKNOWN, or the ff-only pull failed after a clean freshness
-#                check (that last one stamps
-#                state/harness-sync-last-refused with `pull-failed`)
+#                UNKNOWN, or the fast-forward failed after a clean freshness
+#                check and could not heal (that last one prints
+#                `pull-failed: <git stderr>`, stamps
+#                state/harness-sync-last-refused with `pull-failed` and writes
+#                one ALERTS line per hour)
+#           The fast-forward is `git merge --ff-only origin/<branch>`, with no
+#           network: freshness() has just fetched that ref. If it fails on a
+#           tree with no tracked change and HEAD is an ancestor, the step
+#           moves untracked files the target tracks to
+#           state/harness-sync-displaced/<stamp>/ and resets to the ref.
 #            30  REFUSED — the checkout is on a side branch, diverged, or
 #                locally modified; stamps the refusal and writes an ALERTS line
 #           After the code copy it writes state/harness-sync-phase (`copied`,
@@ -196,14 +203,66 @@ esac
 
 BEFORE=$(git -C "$CHECKOUT" rev-parse --short HEAD 2>/dev/null)
 if [ "$RC" = "10" ]; then
-  git -C "$CHECKOUT" pull --ff-only --quiet 2>>"$LOG" || {
-    echo "$(STAMP) harness sync: git pull failed after a clean freshness check" >> "$LOG"
-    # Not transient: the freshness check already said fast-forwardable, so a
-    # pull that still fails is the checkout needing a human — same condition the
-    # rc 30 branch records, and the stall check should see it as a refusal.
-    stamp_state harness-sync-last-refused "pull-failed"
-    echo "pull-failed"; exit 20
-  }
+  # Merge the ref freshness() fetched under harness-fetch.lock: a second fetch
+  # here would contend on the same ref locks with no lock held.
+  if ! ERR=$(git -C "$CHECKOUT" merge --ff-only --quiet "origin/$BRANCH" 2>&1); then
+    ERR1=$(printf '%s\n' "$ERR" | sed -n '/./{p;q}' | cut -c1-300)
+    HEALED=0
+    # Self-heal (a held ref lock, an untracked file in the way). A reset is
+    # safe only when no tracked file has a change and HEAD is an ancestor, so
+    # it can lose no commit and no edit. Untracked files the target tracks
+    # would be overwritten, so they are moved aside first. Lock files are
+    # never deleted: the reset either works or the step alerts.
+    if [ -z "$(git -C "$CHECKOUT" status --porcelain --untracked-files=no 2>/dev/null)" ] \
+       && git -C "$CHECKOUT" merge-base --is-ancestor HEAD "origin/$BRANCH" 2>/dev/null; then
+      DISP_ROOT="$HARNESS/state/harness-sync-displaced"
+      DISP="$DISP_ROOT/$(date -u -d "@${HARNESS_SYNC_NOW:-$(date +%s)}" +%Y%m%dT%H%M%SZ)"
+      DISP_OK=1
+      while IFS= read -r f; do
+        [ -n "$f" ] || continue
+        mkdir -p "$DISP/$(dirname "$f")" && mv -f "$CHECKOUT/$f" "$DISP/$f" || DISP_OK=0
+      done < <(comm -12 <(git -C "$CHECKOUT" ls-files --others 2>/dev/null | sort -u) \
+                        <(git -C "$CHECKOUT" ls-tree -r --name-only "origin/$BRANCH" 2>/dev/null | sort -u))
+      # Keep the 5 newest stamp dirs.
+      find "$DISP_ROOT" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | sort -r | tail -n +6 \
+        | while IFS= read -r d; do case "$d" in "$HARNESS/state/harness-sync-displaced/"?*) echo "$(STAMP) harness sync: pruned displaced dir $d" >> "$LOG"; rm -rf -- "$d" ;; esac; done
+      if [ "$DISP_OK" = 1 ]; then
+        RERR=$(git -C "$CHECKOUT" reset --hard --quiet "origin/$BRANCH" 2>&1) || ERR="$ERR"$'\n'"$RERR"
+        # Logged as healed only when HEAD really is the ref.
+        if [ "$(git -C "$CHECKOUT" rev-parse HEAD 2>/dev/null)" = "$(git -C "$CHECKOUT" rev-parse "origin/$BRANCH" 2>/dev/null)" ]; then
+          HEALED=1
+          echo "$(STAMP) harness sync: ff failed ($ERR1) — reset to origin/$BRANCH on a clean tree" >> "$LOG"
+        fi
+      fi
+    fi
+    if [ "$HEALED" = 0 ]; then
+      printf '%s\n' "$ERR" >> "$LOG"
+      echo "$(STAMP) harness sync: git fast-forward failed after a clean freshness check" >> "$LOG"
+      # Not transient: the freshness check already said fast-forwardable, so a
+      # fast-forward that still fails is the checkout needing a human — same
+      # condition the rc 30 branch records, and the stall check should see it
+      # as a refusal.
+      stamp_state harness-sync-last-refused "pull-failed"
+      MOD=$(git -C "$CHECKOUT" status --porcelain --untracked-files=no 2>/dev/null | awk '{print $NF}' | paste -sd, -)
+      if [ -n "$MOD" ]; then TREE="tracked files modified: $MOD"; else TREE="tree clean"; fi
+      # One ALERTS line per hour: the context gate runs this before every
+      # build. The flag is set before the send, so a crash never pages twice.
+      AF="alerted-harness-sync-ff-$(date -u -d "@${HARNESS_SYNC_NOW:-$(date +%s)}" +h%H-%Y%m%d)"
+      if ( . "$HARNESS/bin/lib/flags.sh" 2>/dev/null || . "$(dirname "${BASH_SOURCE[0]}")/lib/flags.sh" 2>/dev/null || exit 2
+           flag_has --cached "$AF" >/dev/null 2>&1 && exit 1
+           flag_set "$AF" on "harness-sync: ff alert sent" >/dev/null 2>&1; exit 0 ); then
+        SEND=1
+      else
+        # rc 2: no flags lib, so no hourly dedup. The context gate runs this
+        # before every build, so send nothing rather than page per build; the
+        # log line and the refused stamp above still record the failure.
+        [ $? = 2 ] && echo "$(STAMP) harness sync: ff alert not sent (bin/lib/flags.sh did not load)" >> "$LOG"
+        SEND=0
+      fi
+      [ "$SEND" = 1 ] && HARNESS="$HARNESS" "$HARNESS/bin/alert-line.sh" "harness sync: cannot fast-forward $BEFORE->origin/$BRANCH: $ERR1 — $TREE"
+      echo "pull-failed: $ERR1"; exit 20
+    fi
+  fi
 fi
 AFTER=$(git -C "$CHECKOUT" rev-parse --short HEAD 2>/dev/null)
 

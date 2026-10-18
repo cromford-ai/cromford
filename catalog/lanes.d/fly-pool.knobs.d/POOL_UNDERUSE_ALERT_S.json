@@ -1,0 +1,12 @@
+{
+  "env": "POOL_UNDERUSE_ALERT_S",
+  "type": "int",
+  "default": 900,
+  "min": 0,
+  "max": 86400,
+  "unit": "seconds",
+  "zero_means": "off",
+  "required": false,
+  "read_in": "bin/lib/pool-underuse.sh",
+  "note": "BH-7382: how long a project's pool may have more than POOL_UNDERUSE_QUEUE_MIN jobs queued while fewer than POOL_UNDERUSE_PCT percent of its capacity (the cap, or building + queued when there is no cap) is building, before one ALERTS line names the counts. One line per project per hour (flags/alerted-pool-underuse-<p>-h<HH>-<YYYYmmdd>). The first under-used tick is kept in state/pool-underuse/<p>.json. 0 = off."
+}

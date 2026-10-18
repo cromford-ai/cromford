@@ -1,0 +1,12 @@
+{
+  "env": "POOL_ORPHAN_ROW_RELEASE_S",
+  "type": "int",
+  "default": 900,
+  "min": 0,
+  "max": 21600,
+  "unit": "seconds",
+  "zero_means": "off",
+  "required": false,
+  "read_in": "bin/lib/pool-orphan-rows.sh",
+  "note": "BH-7382: how long a claimed fly build_queue row of this hub may have no state/build-queue file, no pool job file, no active-key file and no live machine before the pool tick releases it (row back to queued, claimant cleared, one orphan-row-release line in fly-pool.log). bin/jobs-watchdog.sh stays the backstop at JOBS_QUEUE_CLAIM_MIN. 0 = off."
+}
