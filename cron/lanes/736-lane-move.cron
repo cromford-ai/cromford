@@ -1,0 +1,10 @@
+# @hub-lanes
+
+# ── LANE-MOVE LANE (BH-7252 C1, part of #7252) ──────────────────────────────
+# Every 10 min. For each module bin/lib/lane-move/<lane>.sh: proof gates, then
+# lane_placement.<lane>=fly; 90 min after the flip, the hour after against the
+# hour before; a failed check writes the kill row (hub) and alerts once. The
+# report is posted ONCE on issue lane_move.<lane>.issue (default 7252). A
+# finished lane costs one state-file read.
+# Off: flags/lane-off-lane-move (bin/harness-ctl.sh off lane-move).
+6,16,26,36,46,56 * * * * /root/harness/bin/hub-lease.sh check && /root/harness/bin/lane-move.sh >> /root/harness/logs/lane-move-cron.log 2>&1

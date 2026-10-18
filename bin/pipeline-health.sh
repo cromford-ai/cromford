@@ -249,6 +249,8 @@ NOW=$(date +%s)
 PH_DEDUP_KEEP_S=0
 if [ -n "${LANE_RUN_ID:-}" ] && [ "$PH_MODE" = project ]; then
   DEDUP="$H/state/pipeline-health/$PH_PROJECT/alerted.json"
+  # gh_repo_invisible_alert keeps its once-a-day flag here, not in flags/.
+  export GHRT_FLAG_DIR="$H/state/pipeline-health/$PH_PROJECT"
   DEDUP_LOCK="$H/locks/ph-alerted-$PH_PROJECT.lock"
   PH_DEDUP_KEEP_S=691200
   if [ ! -s "$DEDUP" ]; then

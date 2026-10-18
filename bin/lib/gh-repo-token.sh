@@ -288,14 +288,55 @@ gh_repo_tried_words() { # gh_repo_tried_words <owner/repo>
   printf 'tried the App installation token: %s; the default PAT: %s; the admin PAT: %s' \
     "$app" "$([ "$pat" = default ] && printf 'CAN see it' || printf 'blind')" "$adm"
 }
+# One alert per (lane, repo, UTC day), deduped by a flag. The hub flag goes
+# through bin/lib/flags.sh (flag_has --cached / flag_set, the file
+# flags/alerted-repo-invisible-<lane>-<repo>-<YYYYMMDD>); bin/alerts-groom.sh
+# prunes old alerted-* days. On a lane-run machine (LANE_RUN_ID set) flags/
+# never rides back to the hub, so the flag goes under GHRT_FLAG_DIR when the
+# caller sets it to a dir its write-back carries, and flags there older than
+# yesterday are pruned by the date in the name. A machine makes no beat.sh
+# call: alert-line.sh posts the line to the jobs API and the hub's replay
+# notes it.
+# _ghrt_flag has|set <name> — bin/lib/flags.sh in a subshell, so the client's
+# set -u and env loading never reach the caller. rc 2 when the lib is missing:
+# the caller then alerts without the dedup (a repeat, never a lost alert).
+_ghrt_flag() {
+  ( # shellcheck source=bin/lib/flags.sh
+    HARNESS="$_GHRT_H"; . "$(dirname "${BASH_SOURCE[0]}")/flags.sh" 2>/dev/null || exit 2
+    # shellcheck disable=SC2034 # read by _flag_dir in bin/lib/jobs/flags.sh
+    JOBS_HARNESS="$_GHRT_H"
+    case "$1" in
+      has) flag_has --cached "$2" 2>/dev/null ;;
+      set) flag_set "$2" on "gh-repo-token: repo-invisible alert sent" >/dev/null 2>&1 ;;
+      *) exit 2 ;;
+    esac )
+}
 gh_repo_invisible_alert() { # gh_repo_invisible_alert <lane> <owner/repo> <what was skipped>
-  local lane="$1" slug="$2" what="$3" flag line
-  flag="$_GHRT_H/flags/alerted-repo-invisible-$lane-${slug//\//_}-$(date -u +%Y%m%d)"
-  [ -f "$flag" ] && return 0
-  mkdir -p "$_GHRT_H/flags" "$_GHRT_H/logs" 2>/dev/null
-  touch "$flag"
+  local lane="$1" slug="$2" what="$3" name line mdir="" day old f d
+  day=$(date -u +%Y%m%d)
+  [ "${HARNESS_TEST_SANDBOX:-}" = 1 ] && [[ "${GHRT_TODAY:-}" =~ ^[0-9]{8}$ ]] && day=$GHRT_TODAY
+  name="alerted-repo-invisible-$lane-${slug//\//_}-$day"
+  if [ -n "${LANE_RUN_ID:-}" ] && [ -n "${GHRT_FLAG_DIR:-}" ]; then
+    mdir=$GHRT_FLAG_DIR
+    old=$(date -u -d "$day -1 day" +%Y%m%d 2>/dev/null)
+    if [ -n "$old" ]; then
+      for f in "$mdir"/alerted-repo-invisible-*; do
+        [ -f "$f" ] || continue
+        d=${f##*-}
+        [[ "$d" =~ ^[0-9]{8}$ ]] && [ "$d" -lt "$old" ] && rm -f "$f"
+      done
+    fi
+    [ -f "$mdir/$name" ] && return 0
+    mkdir -p "$mdir" 2>/dev/null
+    touch "$mdir/$name"
+  else
+    _ghrt_flag has "$name" && return 0
+    _ghrt_flag set "$name"
+  fi
+  mkdir -p "$_GHRT_H/logs" 2>/dev/null
   line="repo $slug is INVISIBLE to the default gh token ($(_ghrt_admin_words "$slug")) — $what. This is the 2026-09-12 project-5 shape: an empty PR list that nobody logged. Tried: $(gh_repo_tried_words "$slug")."
   HARNESS="$_GHRT_H" "$_GHRT_AL" "[$lane] $line"
+  [ -n "${LANE_RUN_ID:-}" ] && return 0
   "$_GHRT_H/bin/beat.sh" "$(jq -nc --arg akey "repoinvisible:$lane:$slug" --arg l "[$lane] $line" \
     '{kind:"fleet_alert",project:"fleet",akey:$akey,line:$l}')" >/dev/null 2>&1 || true
 }

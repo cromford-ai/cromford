@@ -31,6 +31,13 @@ NOW=$(date -u +%s); OLD=$((NOW - 10800))
 
 cp "$DIR/bin/lib/gh-repo-token.sh" "$DIR/bin/lib/gh-budget.sh" "$T/bin/lib/"
 cp "$DIR/bin/alert-line.sh" "$T/bin/"  # TEST-CHANGE: BH-2365 — converted writers call bin/alert-line.sh
+# gh_repo_invisible_alert keeps its day flag through bin/lib/flags.sh (BH-7252):
+# install that lib and the jobs client it loads.
+( cd "$DIR" && scratch_install_closure bin/lib/flags.sh "$T" && scratch_install_closure bin/jobs-client.sh "$T" ) >/dev/null \
+  || bad "setup: could not install bin/lib/flags.sh + bin/jobs-client.sh"
+# This scratch has no worker: JOBS_ALERT=0 keeps the client's own "harness-jobs
+# unreachable" line out of the ALERTS.log this suite counts.
+export JOBS_ALERT=0
 echo 'GH_ADMIN_TOKEN=admintok' > "$T/env/github-admin.env"
 printf '#!/bin/bash\nprintf "%%s\\n" "$1" >> "$BEAT_SINK"\n' > "$T/bin/beat.sh"; chmod +x "$T/bin/beat.sh"
 

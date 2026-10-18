@@ -7,3 +7,10 @@
 # resolver's dispatch at 4,14,... Lease (BH-1000): a box that does not hold it
 # runs nothing. Off: flags/lane-off-lane-snapshot-publish.
 2,12,22,32,42,52 * * * * /root/harness/bin/hub-lease.sh check && /root/harness/bin/lane-snapshot-publish.sh >> /root/harness/logs/lane-snapshot-publish-cron.log 2>&1
+
+# The same publisher for the pipeline-health project runs (BH-7252 C1): it
+# applies their write-backs always, and publishes their snapshots once
+# lane_placement.pipeline-health is fly. 8,18,...: two minutes before the
+# pipeline-health dispatch at 0,10,... One line per moved lane, in this file:
+# a fragment is named by its registry id, and the lane is lane-snapshot-publish.
+8,18,28,38,48,58 * * * * /root/harness/bin/hub-lease.sh check && /root/harness/bin/lane-snapshot-publish.sh --lane pipeline-health >> /root/harness/logs/lane-snapshot-publish-cron.log 2>&1

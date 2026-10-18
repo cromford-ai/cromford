@@ -18,6 +18,10 @@ cp "$DIR/bin/lib/gh-repo-token.sh" "$T/bin/lib/"
 cp "$DIR/bin/alert-line.sh" "$T/bin/"  # TEST-CHANGE: BH-2365 — converted writers call bin/alert-line.sh
 echo 'GH_ADMIN_TOKEN=admintok' > "$T/env/github-admin.env"
 cp "$DIR/bin/lib/gh-budget.sh" "$T/bin/lib/"
+# gh_repo_invisible_alert keeps its day flag through bin/lib/flags.sh (BH-7252):
+# install that lib and the jobs client it loads.
+( cd "$DIR" && scratch_install_closure bin/lib/flags.sh "$T" && scratch_install_closure bin/jobs-client.sh "$T" ) >/dev/null \
+  || bad "setup: could not install bin/lib/flags.sh + bin/jobs-client.sh"
 printf '#!/bin/bash\nprintf "%%s\\n" "$1" >> "$BEAT_SINK"\n' > "$T/bin/beat.sh"; chmod +x "$T/bin/beat.sh"
 # gh shim: o/seen is visible to any token, o/adminonly only to the admin token, o/blind to none.
 cat > "$T/fakebin/gh" <<'SH'
