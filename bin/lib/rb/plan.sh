@@ -689,6 +689,16 @@ else
   exit 3
 fi
 # <<< untrusted input gate (BH-4491)
+# >>> pr-body-requires note (BH-7378)
+# The planner lists each section or literal the PR body must carry in a
+# fenced ```pr-body-requires block, and the pre-review self-check NOTEs each
+# one the live body lacks. It rides in front of PLAN ONLY through
+# UI_PLAN_NOTE, so the prompt line itself does not change. No lib on the box:
+# the variable stays as it was.
+# shellcheck source=bin/lib/pr-body-requires.sh
+[ -r "$HARNESS/bin/lib/pr-body-requires.sh" ] && . "$HARNESS/bin/lib/pr-body-requires.sh" 2>/dev/null
+command -v pbr_plan_rule >/dev/null 2>&1 && UI_PLAN_NOTE="${UI_PLAN_NOTE:-}$(pbr_plan_rule) "
+# <<< pr-body-requires note (BH-7378)
 # >>> changed symbols note (BH-5791)
 # The planner lists the symbols it changes, so the design collisions block
 # below can check them against main and the open PRs. It rides in front of

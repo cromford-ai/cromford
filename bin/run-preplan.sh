@@ -281,6 +281,16 @@ if command -v cp_fetch >/dev/null 2>&1; then
   fi
 fi
 # <<< context pack delta
+# >>> pr-body-requires note (BH-7378)
+# The planner lists each section or literal the PR body must carry in a
+# fenced ```pr-body-requires block, and the pre-review self-check NOTEs each
+# one the live body lacks. A pre-plan the build adopts needs the block too.
+# It appends to PP_PREAMBLE, so the prompt line below does not change. No
+# lib: unchanged.
+# shellcheck source=bin/lib/pr-body-requires.sh
+[ -r "$HARNESS/bin/lib/pr-body-requires.sh" ] && . "$HARNESS/bin/lib/pr-body-requires.sh" 2>/dev/null
+command -v pbr_plan_rule >/dev/null 2>&1 && PP_PREAMBLE="${PP_PREAMBLE:-}$(pbr_plan_rule) "
+# <<< pr-body-requires note (BH-7378)
 # >>> changed symbols note (BH-5791)
 # A pre-plan lists the symbols it changes too, because the build checks an
 # adopted pre-plan for design collisions (bin/lib/rb/plan.sh). It appends to

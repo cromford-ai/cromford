@@ -69,6 +69,12 @@
 #                   `Ticket <KEY> —`, or the one .harness/specs/<KEY>/plan.md
 #                   the PR changes. `.N` slices of one ticket share a root. No
 #                   key: a note. No such test in the diff: silent.
+#   body-plan-requires (BH-7378) each item of the fenced ```pr-body-requires
+#                   block of a .harness/specs/*/plan.md the PR changes that the
+#                   body lacks (fixed-string match) is one `NOTE body-plan-
+#                   requires: the body is missing <item> (required by <source>)`
+#                   line, 10 at most. A NOTE in every mode but off; it never
+#                   sets rc 1. bin/lib/pr-body-requires.sh has the rule.
 #   foreign-commits (BH-6394, D66 enforced) a PR carries only its own ticket's
 #                   commits. Each first-parent, non-merge commit in base..head
 #                   whose subject LEADS with a key (`BH-1: ...`, `fix(BH-1): ...`)
@@ -473,6 +479,10 @@ psc_plan_missing() {
 # rule is a NOTE, never a refusal.
 # shellcheck source=bin/lib/pr-self-check-gating.sh
 . "$(dirname "${BASH_SOURCE[0]}")/pr-self-check-gating.sh" 2>/dev/null || :
+# psc_requires_check, the body-plan-requires rule (BH-7378). Missing = one
+# NOTE that the items are not checked.
+# shellcheck source=bin/lib/pr-body-requires.sh
+. "$(dirname "${BASH_SOURCE[0]}")/pr-body-requires.sh" 2>/dev/null || :
 
 psc_check() {
   local repo="${1:-}" base="${2:-}" head="${3:-}" body="${4:-}" ticket="${5:-${PSC_TICKET_FILE:-}}"
@@ -626,6 +636,15 @@ psc_check() {
           psc_gating_check "$repo" "$base" "$head" "$body" "$mode" "$id" || rc=1
         else
           echo "NOTE $id: bin/lib/pr-self-check-gating.sh not loaded, so gating diffs are not checked"
+        fi ;;
+      body-plan-requires)
+        # BH-7378: each item of the plan's ```pr-body-requires block that the
+        # body lacks is one NOTE. Every mode but off reads as note, and rc is
+        # never touched: the rule never refuses and never changes the verdict.
+        if command -v psc_requires_check >/dev/null 2>&1; then
+          psc_requires_check "$repo" "$base" "$head" "$body" "$id" "$files" || :
+        else
+          echo "NOTE $id: bin/lib/pr-body-requires.sh not loaded, so required body items are not checked"
         fi ;;
       body-*)
         # BH-5790: a PR-body section the lead review would BLOCK on. When it
