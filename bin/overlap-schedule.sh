@@ -104,6 +104,16 @@ while [ $# -gt 0 ]; do
   esac
 done
 
+# BH-6979: with scheduler.mode=enforce and a usable ready set, the scheduler
+# owns the launch order, so a triage shard's --key verdict is not sent: no
+# line. The shard reads the ready set in its SOP (bin/lib/rt/scope.sh). Not
+# enforced, or a set that is not usable: today's verdict.
+if [ "$MODE" = key ] && [ -r "$HERE/lib/sched-gate.sh" ]; then
+  # shellcheck source=bin/lib/sched-gate.sh
+  . "$HERE/lib/sched-gate.sh" 2>/dev/null
+  command -v sched_enforced >/dev/null 2>&1 && sched_enforced "$PROJECT" && sched_ready_load "$PROJECT" && exit 0
+fi
+
 # shellcheck source=bin/lib/preplan-lib.sh
 [ -r "$HERE/lib/preplan-lib.sh" ] && . "$HERE/lib/preplan-lib.sh" 2>/dev/null
 command -v overlap_schedule >/dev/null 2>&1 || exit 0   # no lib, no switch, no opinion

@@ -1,10 +1,15 @@
 #!/bin/bash
 # bin/scheduler.sh [<project>|--all] — BH-6978 (wave 2 of #6547): the
-# scheduler computes the ready set in SHADOW. Hub only, every 5 min
+# scheduler computes the ready set. Hub only, every 5 min
 # (cron/lanes/733-scheduler.cron, behind bin/hub-lease.sh check). No LLM call,
-# no paid call. It DISPATCHES NOTHING: no code path here reaches
+# no paid call. It DISPATCHES NOTHING itself: no code path here reaches
 # bin/run-build.sh, bin/fly-dispatch.sh, the ready queue, the pool queue or
-# POST /api/jobs. Wave 3 (#6979) adds dispatch.
+# POST /api/jobs. BH-6979 (wave 3): every tick posts the whole set (one
+# verdict per candidate, in flight included), and with scheduler.mode=enforce
+# the pool and run-build read it through bin/lib/sched-gate.sh
+# (GET /api/scheduler/ready) and dispatch only from it. In enforce the tick
+# also reads bin/sibling-serial.sh for its data (step 3b), because
+# sibling-serial no longer decides in the pool.
 #
 # One run, per project:
 #   1. Reads, in parallel: the open `ai-build` issues (GitHub REST, at most 3
@@ -23,13 +28,20 @@
 #      read of the issue (closed -> closed-done). At most
 #      scheduler.parent_reads_max (20) such reads per tick; past it -> unknown.
 #      A branch is never read.
+#   3b. Enforce only: bin/sibling-serial.sh parts <p> once, then one
+#      `SIBLING_STACK=0 sibling-serial.sh check <p> <KEY>` per judged candidate
+#      that is a part, ascending, at most scheduler.sibling_checks_max (20).
+#      rc 3 `SIBLING_SERIAL <KEY> waits for <PFX>-<s> ...` -> <D>/sibling
+#      `<n>\t<s>`; a part past the cap -> `<n>\t-` (unknown, sibling check cap).
 #   4. sched_decide, sched_lanes_did, sched_compare (bin/lib/scheduler.sh).
 #   5. logs/scheduler.log: one `SCHED ticket=<KEY> ready=yes|no|unknown
 #      reason=<r>` line per judged candidate and one summary line
-#      `SCHED-TICK project=<p> mode=shadow at=<AT> candidates= ready=
+#      `SCHED-TICK project=<p> mode=<shadow|enforce> at=<AT> candidates= ready=
 #      not_ready= unknown= in_flight= compared= agreed= idle= diffs=
 #      post=ok|failed:<http> partial=<names|->`.
-#   6. ONE POST /api/scheduler/diffs (idempotent on project+at). AT is the
+#   6. ONE POST /api/scheduler/diffs (idempotent on project+at), with
+#      `verdicts`: every judged candidate (yes|no|unknown, its reason) and
+#      every in-flight one (in-flight, `in flight`). AT is the
 #      tick time cut to the minute. state/scheduler/<p>.last is written only
 #      after a 2xx with ok:true, so a failed tick's window is read again.
 #
@@ -44,10 +56,11 @@
 # no POST; a lane input unreadable (decisions, stack-wait, pool-log, overlap)
 # -> the verdicts are written and the POST carries compared=0 and no diffs.
 #
-# Settings rows: scheduler.mode (shadow; off; any other value runs shadow and
-# says `mode=<v> not built in this wave`), scheduler.projects (cromford,
-# the --all list), scheduler.parent_reads_max (20). Those values are the code
-# defaults when a row is missing.
+# Settings rows: scheduler.mode (shadow; enforce; off; any other value runs
+# shadow and says `mode=<v> not a mode`), scheduler.projects (cromford,
+# the --all list, and the projects enforce applies to),
+# scheduler.parent_reads_max (20), scheduler.sibling_checks_max (20). Those
+# values are the code defaults when a row is missing.
 #
 # Test seam (catalog/lanes.d/scheduler.json, not settable): SCHED_NOW (epoch
 # seconds used instead of the clock; only all-digit values are used).
@@ -98,11 +111,13 @@ setting() { local v; v=$(setting_get "$1" 2>/dev/null | tr -d '[:space:]') && [ 
 
 MODE=$(setting scheduler.mode shadow)
 case "$MODE" in
-  shadow|off) ;;
-  *) line "SCHED mode=$MODE not built in this wave; running shadow"; MODE=shadow ;;
+  shadow|off|enforce) ;;
+  *) line "SCHED mode=$MODE not a mode; running shadow"; MODE=shadow ;;
 esac
 READS_MAX=$(setting scheduler.parent_reads_max 20)
 [[ $READS_MAX =~ ^[0-9]+$ ]] || READS_MAX=20
+SIB_MAX=$(setting scheduler.sibling_checks_max 20)
+[[ $SIB_MAX =~ ^[0-9]+$ ]] || SIB_MAX=20
 
 if [ "${1:-}" = --all ]; then PROJECTS=$(setting_get scheduler.projects 2>/dev/null) || PROJECTS=cromford
 else PROJECTS="${1:-}"; fi
@@ -245,6 +260,29 @@ tick() {
     printf '%s\t%s\n' "$k" "$st" >> "$D/parents"
   done
 
+  # ── enforce: sibling-serial's data (it no longer decides in the pool) ───
+  # A failed or timed-out `parts` or `check` is `?` (unknown / sibling check
+  # failed), never yes: no part map is not "not a part" (BH-6979 review).
+  if [ "$MODE" = enforce ] && [ -x "$H/bin/sibling-serial.sh" ]; then
+    : > "$D/sibling"
+    if ! timeout 60 "$H/bin/sibling-serial.sh" parts "$p" > "$D/parts" 2>/dev/null; then
+      grep -vxFf "$D/in_flight" "$D/candidates" | sort -n -u | awk '{print $0 "\t?"}' > "$D/sibling"
+      : > "$D/parts"
+    fi
+    local sc=0 sout src
+    while IFS= read -r n; do
+      awk -F'\t' -v k="$PFX-$n" '$1 == k {f = 1} END {exit !f}' "$D/parts" || continue
+      if [ "$sc" -ge "$SIB_MAX" ]; then printf '%s\t-\n' "$n" >> "$D/sibling"; continue; fi
+      sc=$((sc + 1))
+      sout=$(SIBLING_STACK=0 timeout 30 "$H/bin/sibling-serial.sh" check "$p" "$PFX-$n" 2>/dev/null); src=$?
+      if [ "$src" = 3 ] && [[ $sout =~ ^SIBLING_SERIAL\ $PFX-$n\ waits\ for\ $PFX-([1-9][0-9]*) ]]; then
+        printf '%s\t%s\n' "$n" "${BASH_REMATCH[1]}" >> "$D/sibling"
+      elif [ "$src" != 0 ]; then
+        printf '%s\t?\n' "$n" >> "$D/sibling"
+      fi
+    done < <(grep -vxFf "$D/in_flight" "$D/candidates" | sort -n -u)
+  fi
+
   # ── decide, read what the lanes did, compare ─────────────────────────────
   sched_decide "$D" > "$D/decide.tsv"
   sched_lanes_did "$D" "$PFX" "$p" > "$D/lanes.tsv"
@@ -268,11 +306,15 @@ tick() {
   nd=$(wc -l < "$D/diffs.tsv")
   [ "$nd" -gt 200 ] && cut=" (cut to 200)"
 
+  # Every verdict, so a reader can tell a complete set (count = candidates).
+  { cut -f1-3 "$D/decide.tsv"; awk 'NF {print $1 "\tin-flight\tin flight"}' "$D/in_flight"; } | head -1000 \
+    | jq -R -s -c 'split("\n") | map(select(length > 0) | split("\t")
+        | {ticket: .[0], ready: .[1], reason: ((.[2] // "") | .[0:200])})' > "$D/verdicts.json"
   head -200 "$D/diffs.tsv" | jq -R -s -c 'split("\n") | map(select(length > 0) | split("\t")
       | {ticket: .[0], scheduler_says: .[1], lanes_did: .[2], reason: .[3], reason_class: .[4]})' > "$D/diffs.json"
-  jq -nc --arg p "$p" --arg at "$AT" --arg partial "$partial" --slurpfile d "$D/diffs.json" \
+  jq -nc --arg p "$p" --arg at "$AT" --arg m "$MODE" --arg partial "$partial" --slurpfile d "$D/diffs.json" --slurpfile v "$D/verdicts.json" \
     --argjson c "{\"candidates\":$cand,\"ready\":$ready,\"not_ready\":$notr,\"unknown\":$unk,\"in_flight\":$infl,\"compared\":$compared,\"agreed\":$agreed,\"idle\":$idle}" \
-    '{project: $p, at: $at, mode: "shadow", counts: $c, diffs: $d[0]} + (if $partial == "" then {} else {partial: $partial} end)' > "$D/body.json"
+    '{project: $p, at: $at, mode: $m, counts: $c, diffs: $d[0], verdicts: $v[0]} + (if $partial == "" then {} else {partial: $partial} end)' > "$D/body.json"
   local post prc=0
   # Into a file, never a $( ): JOBS_HTTP must stay in this shell.
   _jobs_req POST /api/scheduler/diffs "$(cat "$D/body.json")" > "$D/post.out" 2>/dev/null || prc=$?

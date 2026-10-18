@@ -245,8 +245,26 @@ rt_scope() {
 # through triage_shard_key, which would fail on a `WAVE 1:` line and abandon the
 # split — the whole tick would collapse back to one serial session because a
 # scheduling hint looked like a ticket line.
+#
+# BH-6979: with the settings row scheduler.mode=enforce the scheduler's ready
+# set replaces this section (bin/lib/sched-gate.sh sched_scope_section), and
+# overlap-schedule is not asked: it no longer decides. When the set is not
+# usable, or in any other mode, the section is byte-for-byte today's.
+# A triage shard gets the same section through SHARD_SOP (set by the driver
+# before rt_scope, read by rt_shards), because bin/lib/rt/shards.sh stays
+# unedited (BH-3418 B1). bin/overlap-schedule.sh --key answers nothing in
+# enforce with a usable set, so the shard has no overlap verdict.
 OVERLAP_SEC=""
-if [ -x "$HARNESS/bin/overlap-schedule.sh" ]; then
+# shellcheck source=bin/lib/sched-gate.sh
+command -v sched_scope_section >/dev/null 2>&1 || . "$HARNESS/bin/lib/sched-gate.sh" 2>/dev/null
+if command -v sched_scope_section >/dev/null 2>&1 && sched_scope_section "$PROJECT" >/dev/null && [ -n "${SCHED_TEXT:-}" ]; then
+  OVERLAP_SEC=$SCHED_TEXT
+  SHARD_SOP="${SHARD_SOP:-}
+
+$SCHED_TEXT
+A triage shard owns one ticket: find it under READY or WAITING above and act on that ticket only. The other keys belong to other sessions."
+  echo "$STAMP [$PROJECT] scheduler: OVERLAP SCHEDULE replaced by the ready set (scheduler.mode=enforce, tick $SCHED_AT)" >> "$LOG"
+elif [ -x "$HARNESS/bin/overlap-schedule.sh" ]; then
   # The scheduler's stderr (its OVERLAP_UNJUDGED lines) belongs in the project
   # log, but EVERY line in that file carries `$STAMP [$PROJECT] ` and the
   # pipeline-health greps read that shape — appending raw stderr straight to

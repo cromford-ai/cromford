@@ -192,6 +192,82 @@ loads `bin/jobs-client.sh`). `fleet.conflicts.alert_threshold`,
 `alert_threshold_source` (`row`, `env` or `default`) and `alert` (the trailing
 24 h figures, the projects over and the exact line) record the decision.
 
+## Review block (BH-6969)
+
+`fleet.review` in `state/dora/<date>.json`: PRs by review tier and mode, verdict
+flips, reverts and main-red culprits by tier, and review $ per PR by tier. The
+fleet only, not per repo. `bin/dora-digest.sh` reads
+`GET /api/metrics/review-tiers?days=<max(window days, 7)>` on the harness-jobs
+worker (`worker/jobs/src/routes/review-tiers.js`), and `bin/dora_review.py`
+counts the rows. The route answers four lists, each with a LIMIT and a
+`capped.<list>` flag:
+
+| list | rows | read |
+| --- | --- | --- |
+| `merges` | `{pr_url, merged_at}` | `ledgers` kind `merge`, status `merged`, `updated_at` since the window start (`merged_at` is `updated_at`: the ledger PUT keeps `created_at` from the first write, which is the park time for a PR parked before it merged) |
+| `verdicts` | `{id, repo, pr, head_sha, verdict, source, review_tier, review_mode, created_at}` | `verdicts` with source `lead` or `risk-tier`, `created_at` since the window start minus 14 days (the verdict that decided a merged PR can be older than the window) |
+| `reverts` | `{repo, pr, outcome, created_at}` | `outcome_metrics` outcome `reverted`, `created_at` since the window start |
+| `culprits` | `{key, status, pr, updated_at}` | `ledgers` kind `main_red_attrib` (`detail.pr`), `updated_at` since the window start |
+
+The rules, to re-derive a figure by hand:
+
+* **Cohort of a verdict row.** `review_mode` or `source` = `risk-tier`: `low`.
+  Else `review_mode` = `intent`: `intent`. Else `review_mode` = `full`: `full`.
+  Else `source` = `lead` with no mode: `full` (before BH-6967 every lead review
+  was full). Anything else is `untiered` and is never in the alert.
+* **Group** (`groups` keys): `<review_tier or untiered>/<risk-tier|intent|full>`,
+  `untiered` for a row with no cohort, and `no-verdict` for a merged PR with no
+  verdict at or before its merge.
+* **reviewed**: PRs with a verdict row in the window, under the newest such row.
+  **merged**: PRs merged in the window, under the newest row (by `id`) with
+  `created_at` at or before the merge.
+* **flips**: two consecutive rows (by `id`) on the same repo, PR and head (head
+  lower-cased) where one is `BLOCK` and the other `MERGE` or `MERGE-WITH-NOTES`.
+  Counted in the window of the later row, under its group.
+* **reverts**: a PR merged in the window with an `outcome_metrics` row of
+  exactly `reverted` (not `reopened`, not `merged_then_red`). A bare PR number
+  is read as `https://github.com/<repo>/pull/<n>`.
+* **main_red_culprits**: a `main_red_attrib` row updated in the window whose key
+  is `<owner>/<repo>@<40 hex>` and whose `pr` is a positive integer, any status,
+  under the group of that PR.
+* **cost** `{priced, unpriced, review_usd_per_pr, total_usd_per_pr}`: merged PRs
+  joined to `state/cost/cost-per-pr.csv` on `pr_url`. `review_usd` is the sum
+  of the `stage_breakdown` entries whose stage matches
+  `DORA_REVIEW_COST_STAGE_RE` (case-insensitive search, default `review`);
+  `total_usd` is `cost_usd`. A PR with no csv row is unpriced, never $0. Lead
+  review spend that `bin/cost-rollup.sh` does not bind to a PR is not in the csv,
+  so it is not in this figure.
+* **revert_7d** `{low, intent, full}`: `reverted / merged` over the PRs merged in
+  the trailing 7 days (always 7 days, whatever `--window` is), by the verdict
+  that decided each PR. No merges: `rate` is `null`.
+
+`status` is `ok`, `off` (`DORA_LEDGER=0`, or no worker client), or `error` (the
+read failed or answered no `verdicts` array, `bin/dora_review.py` is not
+installed, or the module raised). On `off` and `error` every figure is `null`,
+`unavailable` says why, and the text is one `review: off (...)` or
+`review: n/a (...)` line. A capped list is named in `incomplete`.
+
+Text: one `review <group>: reviewed <n>, merged <n>, flips <n>, reverts <n>,
+culprits <n>, review $<x>/PR of $<y>/PR (<n> priced)` line per group, then
+`review 7d reverts: low <r>/<m> (<p>%), intent ..., full ...; margin <m> (<src>)`.
+
+**The alert.** When the low or intent cohort's 7-day revert rate minus the full
+cohort's is strictly more than the margin (exact fractions; a cohort with no
+merges is never over; a cohort, or a full cohort, with fewer 7-day merges than
+the minimum sample is not compared), the digest appends ONE `[dora-review-tiers]` line to
+`logs/ALERTS.log` through `bin/alert-line.sh --id dora-review-tiers`. The line
+names every cohort over and the counts behind each rate. It is written at most
+once a UTC day (`flags/alerted-dora-review-tiers-<YYYYMMDD>`, set before the
+line). It is withheld when the merges, verdicts or reverts list is capped, and
+the text says so. The margin is the settings row `review.tier_revert_margin`
+(seeded `0.02`), then `DORA_REVIEW_TIER_REVERT_MARGIN`, then `0.02`; a value that
+is not a decimal 0..1 is ignored with one `dora-digest.log` line. The minimum
+sample is the settings row `review.tier_revert_min_n` (seeded `5`), then
+`DORA_REVIEW_TIER_REVERT_MIN_N`, then `5`; `fleet.review.min_n` and
+`min_n_source` record it.
+`fleet.review.margin`, `margin_source` (`row`, `env` or `default`) and `alert`
+(`over`, `withheld`, the exact `line`) record the decision.
+
 ## Config
 
 Every threshold is a config value. Environment first, then
@@ -213,6 +289,9 @@ config cannot become a second entry point into the lane.
 | `QUOTA_DIR` | `$HARNESS/state/quota` | the same variable `bin/quota-status.sh` reads. |
 | `DORA_GH_BUDGET` | `1` | any other value skips `bin/gh-budget-report.sh` and the `github REST:` line. |
 | `DORA_CONFLICTS_REBUILD_ALERT_PER_100` | `40` | the conflicts alert threshold, read after the settings row `conflicts.rebuild_alert_per_100` (BH-6965). |
+| `DORA_REVIEW_TIER_REVERT_MARGIN` | `0.02` | the review-tiers alert margin, a decimal 0..1, read after the settings row `review.tier_revert_margin` (BH-6969). |
+| `DORA_REVIEW_TIER_REVERT_MIN_N` | `5` | the fewest 7-day merges a cohort (and the full cohort) needs before the review-tiers alert compares it, read after the settings row `review.tier_revert_min_n` (BH-6969). |
+| `DORA_REVIEW_COST_STAGE_RE` | `review` | the `stage_breakdown` stages counted as review cost in the review block. |
 
 Kill switch: `flags/dora-digest-off`.
 

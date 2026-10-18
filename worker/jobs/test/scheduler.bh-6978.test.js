@@ -79,7 +79,7 @@ test('W2 one bad field is a 400 and writes no row', async (t) => {
   for (const [why, b] of [
     ['no project', tick({ project: '' })], ['bad project', tick({ project: 'a b' })],
     ['at not ISO', tick({ at: '2026-10-15 10:05' })], ['at in the future', tick({ at: future })],
-    ['mode', tick({ mode: 'enforce' })], ['no counts', tick({ counts: null })],
+    ['mode bogus (enforce is a mode since BH-6979)', tick({ mode: 'bogus' })], ['no counts', tick({ counts: null })],
     ['a count of -1', tick({ counts: counts({ ready: -1 }) })], ['a count not an integer', tick({ counts: counts({ idle: 1.5 }) })],
     ['a count over 100000', tick({ counts: counts({ candidates: 100001 }) })], ['a count missing', tick({ counts: { ...counts(), agreed: undefined } })],
     ['diffs not an array', tick({ diffs: 'x' })], ['201 diffs', tick({ diffs: many })],

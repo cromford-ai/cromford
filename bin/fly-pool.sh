@@ -222,6 +222,11 @@ DM_MODE=normal; DM_HELD=""
 . "$HARNESS/bin/lib/dispatch-mode.sh" 2>/dev/null \
   || . "$(dirname "${BASH_SOURCE[0]}")/lib/dispatch-mode.sh" 2>/dev/null || true
 command -v dm_read >/dev/null 2>&1 && dm_read "$P"
+# BH-6979: the scheduler's ready set (pool_spawn_decision gate 0c). Read only
+# when the settings row scheduler.mode=enforce; a tree without the lib, or any
+# other mode, is today's sibling-serial gate.
+# shellcheck source=bin/lib/sched-gate.sh
+. "$HARNESS/bin/lib/sched-gate.sh" 2>/dev/null || true
 # The pool-result row (BH-2643): the reap reads a stopped machine's result from
 # it. A tree without the lib reads nothing, and the reap is what it always was.
 # shellcheck source=bin/lib/pool-result-row.sh
@@ -1753,7 +1758,7 @@ pool_sibling_stack() {
 }
 
 pool_spawn_decision() {
-  local JF="${1:-}" KEY="${2:-}" TICKET="${3:-}" v _pr_rc _psd_sentinel _psd_ss _psd_ssrc _psd_t0 _psd_sb
+  local JF="${1:-}" KEY="${2:-}" TICKET="${3:-}" v _pr_rc _psd_sentinel _psd_ss _psd_ssrc _psd_t0 _psd_sb _psd_sgrc
   # 0. A REBASE ROW IS NOT A TICKET, AND ALL FOUR GATES BELOW READ IT AS ONE
   # (review round 1, BLOCK-1). bin/merge-conductor.sh enqueues its pool rebases
   # as `RB-<pr>-<head8>` rows whose ticket_id is the PR NUMBER
@@ -1802,7 +1807,21 @@ pool_spawn_decision() {
   # blocker) on a row with no stack_base yet is requeued ONCE with that
   # stack_base instead (C1): the next tick builds it on the BH-1174 STACK path,
   # and check skips the PR the row stacks on (SIBLING_STACK_BASE).
-  if [ -x "$HARNESS/bin/sibling-serial.sh" ]; then
+  # BH-6979: with scheduler.mode=enforce the scheduler's ready set decides
+  # first (bin/lib/sched-gate.sh). A wait (verdict no or unknown, or not in the
+  # set) holds the row like a SIBLING_SERIAL wait: no machine, no QROW write,
+  # no deferral count. A ready verdict spawns without asking sibling-serial:
+  # the scheduler already read its data. Any pass (not enforced, in flight, an
+  # unusable set) falls through to today's sibling-serial check.
+  _psd_sgrc=2
+  if command -v sched_gate >/dev/null 2>&1; then
+    sched_gate "$P" "$KEY" >/dev/null 2>>"$LOG"; _psd_sgrc=$?
+  fi
+  if [ "$_psd_sgrc" = 3 ]; then
+    say "$SCHED_LINE — no machine spawned; re-checked next tick"; return 1
+  elif [ "$_psd_sgrc" = 0 ]; then
+    say "$SCHED_LINE — sibling-serial not consulted (scheduler.mode=enforce)"
+  elif [ -x "$HARNESS/bin/sibling-serial.sh" ]; then
     _psd_sb=$(jq -r '.stack_base // ""' "$JF" 2>/dev/null); case "$_psd_sb" in *[!A-Za-z0-9._/-]*) _psd_sb="" ;; esac
     _psd_ss=$(HARNESS="$HARNESS" SIBLING_QDIR="$QDIR" SIBLING_STACK_BASE="$_psd_sb" "$HARNESS/bin/sibling-serial.sh" check "$P" "$KEY" 2>>"$LOG"); _psd_ssrc=$?
     if [ "$_psd_ssrc" = 3 ] && [ -n "$_psd_ss" ]; then

@@ -1,6 +1,6 @@
 {
   "id": "scheduler",
-  "name": "Scheduler (shadow)",
+  "name": "Scheduler",
   "scope": "hub",
   "script": "bin/scheduler.sh",
   "cadence": "*/5 * * * *",
@@ -21,7 +21,7 @@
       "unit": null,
       "zero_means": null,
       "read_in": "bin/scheduler.sh",
-      "note": "BH-6978 test seam: epoch seconds used instead of the clock (the tick time and its window). Only all-digit values are used. NOT settable from the control plane.",
+      "note": "BH-6978 test seam: epoch seconds used instead of the clock (the tick time and its window; BH-6979: also the age check of the ready set in bin/lib/sched-gate.sh). Only all-digit values are used. NOT settable from the control plane.",
       "settable": false
     }
   ],

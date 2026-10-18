@@ -223,7 +223,10 @@ eq "24h run exits 0" "$?" "0"
 [ -s "$J24" ] && ok || bad "state/dora/<date>.json must exist (stderr: $(cat "$T/stderr"))"
 [ -s "$TXT" ]  && ok || bad "state/dora/latest.txt must exist"
 eq "the ledger was consulted" "$(grep -c 'metrics/dora' "$T/calls/jobs" 2>/dev/null)" "1"
-eq "the ledger read is a GET on days=1" "$(cat "$T/calls/jobs")" "GET /api/metrics/dora?days=1"
+# TEST-CHANGE BH-6969: the digest now makes two worker reads, the dora route and
+# the review-tiers route (at least 7 days); the list still pins every request.
+eq "the worker reads are a GET on dora days=1, then review-tiers days=7" "$(cat "$T/calls/jobs")" "GET /api/metrics/dora?days=1
+GET /api/metrics/review-tiers?days=7"
 eq "ledger source status" "$(q '.sources.ledger_dora.status')" "ok"
 eq "conductor log status" "$(q '.sources.conductor_log.status')" "ok"
 eq "resolver log status" "$(q '.sources.resolver_log.status')" "ok"

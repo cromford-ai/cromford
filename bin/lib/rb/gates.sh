@@ -754,6 +754,44 @@ if [ "${BUILDER_EXEC:-}" != 1 ] && [ -z "${RESUME_BUILD:-}" ]; then
 fi
 # <<< dispatch mode gate
 
+# >>> scheduler enforce gate (BH-6979)
+# With the settings row scheduler.mode=enforce, a ticket of a project in
+# scheduler.projects starts only from the scheduler's ready set
+# (bin/lib/sched-gate.sh reads GET /api/scheduler/ready, the newest
+# bin/scheduler.sh tick). Every triage launcher reaches this line through
+# bin/run-build.sh. It sits after the dispatch-mode gate and before the budget
+# gate and the Fly enqueue, so a waiting ticket takes no claim, no slot and no
+# queue row. rc 3 (verdict no or unknown, or not in the set): BUILD_DEFERRED,
+# the next tick re-offers the ticket. rc 0: admitted. rc 2: today's path (not
+# enforced, in flight, a non-ticket key, or the set is unreadable, stale or
+# incomplete; the lib writes the one fallback ALERTS line). Not asked, like the
+# dispatch-mode gate: a resume and a pool machine. No lib: today's path.
+# Rollback: the row back to shadow.
+# SCHED_ADMITTED: 1 when this gate admitted the key (rc 0), 0 when it ran and
+# did not, empty when it did not run; the stacked-child arm below reads it.
+SCHED_ADMITTED=""
+if [ "${BUILDER_EXEC:-}" != 1 ] && [ -z "${RESUME_BUILD:-}" ]; then
+  # shellcheck source=bin/lib/sched-gate.sh
+  command -v sched_gate >/dev/null 2>&1 || . "$HARNESS/bin/lib/sched-gate.sh" 2>/dev/null
+  if command -v sched_gate >/dev/null 2>&1; then
+    SG_RC=0; sched_gate "$PROJECT" "$KEY" >/dev/null 2>&1 || SG_RC=$?
+    [ "$SG_RC" = 0 ] && SCHED_ADMITTED=1 || SCHED_ADMITTED=0
+    if [ "$SG_RC" = 3 ]; then
+      SG_LINE="scheduler: $KEY waits — $SCHED_REASON (tick $SCHED_AT)"
+      echo "$(STAMP) [$PROJECT/$KEY] $SG_LINE" >> "$BUILD/pipeline.log"
+      mkdir -p "$HARNESS/logs" 2>/dev/null
+      echo "$(STAMP) [$PROJECT/$KEY] $SG_LINE" >> "$HARNESS/logs/${PROJECT}.log" 2>/dev/null || true
+      RESULT "BUILD_DEFERRED $SG_LINE"
+      exit 3
+    elif [ "$SG_RC" = 0 ]; then
+      echo "$(STAMP) [$PROJECT/$KEY] scheduler: $KEY admitted from the ready set (tick $SCHED_AT)" >> "$BUILD/pipeline.log"
+    elif [ "$SCHED_LINE" != "SCHED_PASS $KEY not enforced" ]; then
+      echo "$(STAMP) [$PROJECT/$KEY] scheduler: $SCHED_LINE — today's gates decide" >> "$BUILD/pipeline.log"
+    fi
+  fi
+fi
+# <<< scheduler enforce gate
+
 # >>> budget launch gate (BH-4489)
 # A project at its day budget cap (settings budget.project.<p>.day_usd, then
 # budget.project._default.day_usd), or at the stage-day cap of ANY stage a
@@ -1752,6 +1790,16 @@ STACK_ON=""; STACK_NOTE=""
 if [ -n "${STACK_BASE:-}" ]; then
   if [ "${STACKED_BUILDS:-1}" = 0 ] || [ -f "$HARNESS/flags/stacked-builds-off" ]; then
     echo "$(STAMP) [$PROJECT/$KEY] STACK_BASE=$STACK_BASE ignored — stacked builds are switched off; building on $BASE" >> "$BUILD/pipeline.log"
+  # BH-6979: in scheduler.mode=enforce a ticket ADMITTED from the ready set
+  # (sched_gate rc 0: no open hard parent) builds on the real base: no
+  # stack-wait read, deferral or cap. Only an admit: a gate fallback (rc 2: in
+  # flight, a non-ticket key, an unusable set) or a wait keeps today's arm.
+  # The gate block above records its answer in SCHED_ADMITTED; when it did not
+  # run (a pool machine, a resume) this asks sched_gate once.
+  elif [ "${SCHED_ADMITTED:-}" = 1 ] || { [ -z "${SCHED_ADMITTED:-}" ] \
+       && { command -v sched_gate >/dev/null 2>&1 || . "$HARNESS/bin/lib/sched-gate.sh" 2>/dev/null; } \
+       && command -v sched_gate >/dev/null 2>&1 && sched_gate "$PROJECT" "$KEY" >/dev/null 2>&1; }; then
+    echo "$(STAMP) [$PROJECT/$KEY] STACK_BASE=$STACK_BASE ignored — scheduler.mode=enforce owns build order; building on $BASE" >> "$BUILD/pipeline.log"
   else
     # A branch name reaches this from a triage session's shell line, so it is
     # validated as a ref before it is ever interpolated into a git command.

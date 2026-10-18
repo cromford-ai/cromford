@@ -919,6 +919,61 @@ if cf_line and CF_ALERT_FILE:
         fh.write(cf_line + "\n")
 # <<< conflicts block
 
+# >>> review block (BH-6969)
+# PRs by review tier and mode, verdict flips, reverts and main-red culprits by
+# tier, review $ per PR by tier, and the 7-day revert rate per cohort (low,
+# intent, full). The counting is bin/dora_review.py; this section places the
+# block, and writes the alert text when a cohort is over the margin and no
+# read the rate depends on was capped. A failure here is status error, never
+# a digest crash.
+try:
+    import dora_review  # noqa: E402  (bin/ is on sys.path: it is this script's dir)
+except ImportError:
+    dora_review = None
+RV_STATUS = ENV.get("DORA_REVIEW_STATUS") or "off"
+RV_WHY = ENV.get("DORA_REVIEW_WHY") or ""
+RV_MARGIN = ENV.get("DORA_REVIEW_MARGIN") or "0.02"
+RV_MARGIN_SRC = ENV.get("DORA_REVIEW_MARGIN_SRC") or "default"
+RV_MIN_N = ENV.get("DORA_REVIEW_MIN_N") or ""
+RV_MIN_N = int(RV_MIN_N) if RV_MIN_N.isdigit() else 5
+RV_MIN_N_SRC = ENV.get("DORA_REVIEW_MIN_N_SRC") or "default"
+RV_ALERT_FILE = ENV.get("DORA_REVIEW_ALERT_FILE") or ""
+RV_SINCE_7D = (_dt.strptime(UNTIL, "%Y-%m-%dT%H:%M:%SZ") - _td(days=7)).strftime("%Y-%m-%dT%H:%M:%SZ")
+review = {"status": RV_STATUS, "margin": RV_MARGIN, "margin_source": RV_MARGIN_SRC,
+          "min_n": RV_MIN_N, "min_n_source": RV_MIN_N_SRC,
+          "window": {"since": SINCE, "until": UNTIL}, "revert_7d_window": {"since": RV_SINCE_7D,
+                                                                         "until": UNTIL},
+          "groups": None, "revert_7d": None, "incomplete": None, "unavailable": None,
+          "alert": {"rule": "per cohort (low, intent): reverted/merged over the trailing 7d, by the "
+                            "verdict that decided each PR, minus the full cohort's, strictly over "
+                            "the margin; a cohort (or the full cohort) with fewer than min_n "
+                            "merges is not compared",
+                    "over": [], "withheld": None, "line": None}}
+if RV_STATUS == "ok" and dora_review is None:
+    review.update(status="error", unavailable="n/a (bin/dora_review.py is not installed)")
+elif RV_STATUS == "ok":
+    try:
+        with open(ENV.get("DORA_REVIEW_FILE") or "") as fh:
+            rv_body = json.load(fh)
+        rv = dora_review.compute(rv_body, SINCE, UNTIL, RV_SINCE_7D,
+                                 os.path.join(COST_DIR, "cost-per-pr.csv") if COST_DIR else "",
+                                 ENV.get("DORA_REVIEW_COST_STAGE_RE") or "review")
+        rv_over = [] if rv["alert_withheld"] else dora_review.over_margin(rv["revert_7d"], RV_MARGIN, RV_MIN_N)
+        rv_line = dora_review.alert_line(rv_over, RV_MARGIN, RV_MARGIN_SRC)
+        review.update(groups=rv["groups"], revert_7d=rv["revert_7d"], incomplete=rv["incomplete"],
+                      rows=rv["rows"], sources=rv["sources"])
+        review["alert"].update(over=rv_over, withheld=rv["alert_withheld"], line=rv_line)
+        if rv_line and RV_ALERT_FILE:
+            with open(RV_ALERT_FILE, "w") as fh:
+                fh.write(rv_line + "\n")
+    except Exception as exc:  # noqa: BLE001 — the block must never take the digest down
+        review.update(status="error", groups=None, revert_7d=None,
+                      unavailable="n/a (the review block failed: %s)" % type(exc).__name__)
+else:
+    review["unavailable"] = "n/a (%s)" % (RV_WHY or RV_STATUS)
+fleet["review"] = review
+# <<< review block
+
 with open(OUT_JSON, "w") as fh:
     json.dump(payload, fh, indent=1, sort_keys=False)
     fh.write("\n")
@@ -1001,6 +1056,43 @@ for r in rows[:MAX_ROWS]:
     if cf_active(r["conflicts"]):
         L.append("conflicts %s: %s" % (r["project"], cf_text(r["conflicts"])))
 # <<< conflicts lines
+
+# >>> review lines (BH-6969)
+def rv_text(k, b):
+    c = b["cost"]
+    if c["priced"]:
+        cost = "review %s/PR of %s/PR (%d priced)" % (usd(c["review_usd_per_pr"]),
+                                                     usd(c["total_usd_per_pr"]), c["priced"])
+    else:
+        cost = "cost n/a"
+    return ("review %s: reviewed %d, merged %d, flips %d, reverts %d, culprits %d, %s"
+            % (k, b["reviewed"], b["merged"], b["flips"], b["reverts"], b["main_red_culprits"], cost))
+
+
+def rv_rate(b):
+    if not b["merged"]:
+        return "n/a (0 merged)"
+    return "%d/%d (%s)" % (b["reverted"], b["merged"], rate(b["rate"]))
+
+
+if review["status"] == "ok":
+    if not review["groups"]:
+        L.append("review (fleet): no reviewed or merged PR in this window")
+    for k in sorted(review["groups"]):
+        L.append(rv_text(k, review["groups"][k]))
+    r7 = review["revert_7d"]
+    L.append("review 7d reverts: %s; margin %s (%s)%s"
+             % (", ".join("%s %s" % (c, rv_rate(r7[c])) for c in ("low", "intent", "full")),
+                review["margin"], review["margin_source"],
+                "; INCOMPLETE (%s read capped), alert withheld" % "/".join(review["incomplete"])
+                if review["alert"]["withheld"] else
+                ("; INCOMPLETE (%s read capped)" % "/".join(review["incomplete"])
+                 if review["incomplete"] else "")))
+elif review["status"] == "off":
+    L.append("review: off (%s)" % (RV_WHY or "not configured"))
+else:
+    L.append("review: " + review["unavailable"])
+# <<< review lines
 
 top = [a for a in accounts if a["cost_usd"] > 0][:4]
 if top:

@@ -1,0 +1,2 @@
+# BH-6969: the window reads behind the DORA digest's review block (merges, verdicts, reverts, main-red culprits), key-named (BH-5788).
+GET /api/metrics/review-tiers

@@ -305,6 +305,11 @@ export const RULES = [
     ids: "SELECT id FROM sched_ticks WHERE at < ?1 ORDER BY at LIMIT ?2",
     del: "DELETE FROM sched_ticks WHERE id IN (SELECT value FROM json_each(?1))",
   },
+  {
+    rule: "sched_ready.age", table: "sched_ready", key: "retention.sched_ready.days", def: 3,
+    ids: "SELECT id FROM sched_ready WHERE at < ?1 ORDER BY at LIMIT ?2",
+    del: "DELETE FROM sched_ready WHERE id IN (SELECT value FROM json_each(?1))",
+  },
   // BH-7300: an ended docker-pool lease is coordination state with no money in
   // it; the build history stays in build_queue and the jobs ledger. An active
   // lease (ended_at NULL) is never a candidate.

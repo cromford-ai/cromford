@@ -15,7 +15,7 @@
 #   S2     a parent whose branch exists but whose PR merged -> the child is
 #          ready, and no branch or ref path is read (the #6537 case)
 #   S3     a hold row -> not ready; a newer resume row -> ready
-#   S4     shadow (and enforce) dispatch nothing
+#   S4     shadow and enforce: the lane itself dispatches nothing
 #   S5     a disagreement writes one sched_diffs row; the same tick again
 #          writes nothing new
 #   X1-X6  exit paths: the switch, mode off, an unreadable input, a lane input
@@ -253,8 +253,10 @@ for M in shadow enforce; do
     && [ -z "$(find "$H/state" -path '*fly-pool*' -type f 2>/dev/null)" ] \
     && ok "S4 mode=$M: no dispatch call, no job write, no pool queue file" || bad "S4 $M: dispatch=$(cat "$T/dispatch.log") srv=$(grep -E 'jobs' "$T/srv.log")"
 done
-grep -q 'mode=enforce not built in this wave' "$H/logs/scheduler.log" && grep -q 'SCHED-TICK project=proj mode=shadow ' "$H/logs/scheduler.log" \
-  && ok "S4 enforce says it is not built and runs shadow" || bad "S4 enforce: $(cat "$H/logs/scheduler.log")"
+# BH-6979 built enforce: the lane runs it and still dispatches nothing itself
+# (the pool and run-build read its set; tests/scheduler-enforce.bh-6979-test.sh).
+grep -q 'SCHED-TICK project=proj mode=enforce ' "$H/logs/scheduler.log" && ! grep -q 'not built in this wave' "$H/logs/scheduler.log" \
+  && ok "S4 enforce runs as enforce" || bad "S4 enforce: $(cat "$H/logs/scheduler.log")"
 
 echo "S5: a disagreement writes one diff row"
 s5() {

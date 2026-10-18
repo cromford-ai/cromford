@@ -1,6 +1,8 @@
-# SCHEDULER (BH-6978, BH-6547.2): the shadow scheduler's hold read, its
-# per-tick diff record and the daily agreement read. Written by
-# bin/scheduler.sh; nothing dispatches on them. Bearer-gated.
+# SCHEDULER (BH-6978, BH-6547.2; BH-6979, BH-6547.3): the scheduler's hold
+# read, its per-tick diff and verdict record, the daily agreement read and the
+# ready set. Written by bin/scheduler.sh; in scheduler.mode=enforce
+# bin/lib/sched-gate.sh reads the ready set. Bearer-gated.
 GET /api/scheduler/holds
 POST /api/scheduler/diffs
+GET /api/scheduler/ready
 GET /api/scheduler/agreement

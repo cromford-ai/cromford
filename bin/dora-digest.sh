@@ -91,6 +91,17 @@
 #                            (BH-6965): rebuilds per 100 merges over the trailing
 #                            24 h strictly over it writes one [dora-conflicts]
 #                            ALERTS line a UTC day
+#   DORA_REVIEW_TIER_REVERT_MARGIN=0.02  the review-tiers alert margin, read AFTER
+#                            the settings row review.tier_revert_margin (BH-6969):
+#                            a decimal 0..1; the low or intent tier's 7-day
+#                            revert rate more than this over the full tier's
+#                            writes one [dora-review-tiers] ALERTS line a UTC day
+#   DORA_REVIEW_TIER_REVERT_MIN_N=5  the fewest 7-day merges a cohort (and the
+#                            full cohort) needs before the review-tiers alert
+#                            compares it, read AFTER the settings row
+#                            review.tier_revert_min_n (BH-6969)
+#   DORA_REVIEW_COST_STAGE_RE=review  the cost-per-pr.csv stage_breakdown stages
+#                            counted as review cost (case-insensitive search)
 #   QUOTA_DIR=$H/state/quota
 # Kill switch: settings row switch.dora-digest-off.<box> or switch.dora-digest-off
 # (1 = off), read by lane_switch (bin/lib/lane-switch.sh); flags/dora-digest-off
@@ -238,6 +249,43 @@ if [ "$LEDGER" = 1 ] && [ -r "$H/bin/jobs-client.sh" ]; then
   fi
 fi
 
+# >>> review tiers read (BH-6969)
+# The review block's rows: GET /api/metrics/review-tiers over at least 7 days
+# (the alert reads the trailing 7 days whatever the window is). A body without
+# a verdicts array is refused: the block then says n/a and nothing pages.
+# REVIEW_STATUS: ok | error (the read failed) | off (DORA_LEDGER=0, no client).
+REVIEW_FILE=""; REVIEW_STATUS=off; REVIEW_WHY="DORA_LEDGER=0"
+if [ "$LEDGER" = 1 ]; then
+  RDAYS=$DAYS; [ "$RDAYS" -lt 7 ] && RDAYS=7
+  if command -v _jobs_req >/dev/null 2>&1; then
+    if _jobs_req GET "/api/metrics/review-tiers?days=$RDAYS" > "$WORK/review-tiers.json" 2>/dev/null \
+       && jq -e '.verdicts | type == "array"' "$WORK/review-tiers.json" >/dev/null 2>&1; then
+      REVIEW_FILE="$WORK/review-tiers.json"; REVIEW_STATUS=ok; REVIEW_WHY=""
+    else
+      REVIEW_STATUS=error; REVIEW_WHY="/api/metrics/review-tiers?days=$RDAYS failed, http=${JOBS_HTTP:-none}"
+      say "review tiers read failed ($REVIEW_WHY) — the review block says n/a"
+    fi
+  else
+    REVIEW_WHY="no worker client (bin/jobs-client.sh)"
+  fi
+fi
+# The margin: the settings row, then env (also the conf row
+# conf.dora-digest.dora_review_tier_revert_margin), then 0.02. A decimal 0..1
+# only; anything else is ignored with one log line. ph_knob takes integers only.
+rv_margin_ok() { [[ "${1:-}" =~ ^(0(\.[0-9]+)?|1(\.0+)?)$ ]]; }
+RV_MARGIN=""; RV_MARGIN_SRC=""
+if command -v setting_get >/dev/null 2>&1; then
+  RV_V=$(setting_get review.tier_revert_margin 2>/dev/null); RV_RC=$?
+  if [ "$RV_RC" = 0 ] && rv_margin_ok "$RV_V"; then RV_MARGIN="$RV_V"; RV_MARGIN_SRC=row
+  elif [ "$RV_RC" = 0 ]; then say "settings row review.tier_revert_margin='$RV_V' is not a decimal 0..1 — ignored"; fi
+fi
+if [ -z "$RV_MARGIN_SRC" ] && [ -n "${DORA_REVIEW_TIER_REVERT_MARGIN:-}" ]; then
+  if rv_margin_ok "$DORA_REVIEW_TIER_REVERT_MARGIN"; then RV_MARGIN="$DORA_REVIEW_TIER_REVERT_MARGIN"; RV_MARGIN_SRC=env
+  else say "DORA_REVIEW_TIER_REVERT_MARGIN='$DORA_REVIEW_TIER_REVERT_MARGIN' is not a decimal 0..1 — ignored"; fi
+fi
+[ -n "$RV_MARGIN_SRC" ] || { RV_MARGIN=0.02; RV_MARGIN_SRC=default; }
+# <<< review tiers read
+
 # ---- project -> repo, from the one registry that records it ------------------
 : > "$WORK/repos.tsv"
 if [ -x "$BIN/fleet-conf.sh" ]; then
@@ -298,6 +346,23 @@ if [ -z "$CF_SRC" ]; then
 fi
 # <<< conflicts alert
 
+# >>> review tiers min sample (BH-6969)
+# The fewest 7-day merges a cohort needs before the review-tiers alert compares
+# it: the settings row review.tier_revert_min_n, then env
+# DORA_REVIEW_TIER_REVERT_MIN_N, then 5 — ph_knob's order, as the conflicts
+# threshold above. RV_MIN_N_SRC: row | env | default.
+RV_MIN_N_ENV="${DORA_REVIEW_TIER_REVERT_MIN_N:-}"
+RV_MIN_N=""; RV_MIN_N_SRC=""
+if command -v ph_knob >/dev/null 2>&1; then
+  ph_knob review.tier_revert_min_n DORA_REVIEW_TIER_REVERT_MIN_N 5 > "$WORK/rv-min-n" 2>>"$LOG"
+  RV_MIN_N=$(cat "$WORK/rv-min-n" 2>/dev/null)
+  [ "${PH_KNOB_SRC:-}" = row ] && RV_MIN_N_SRC=row
+fi
+if [ -z "$RV_MIN_N_SRC" ]; then
+  case "$RV_MIN_N_ENV" in ''|*[!0-9]*) RV_MIN_N=5; RV_MIN_N_SRC=default ;; *) RV_MIN_N="$RV_MIN_N_ENV"; RV_MIN_N_SRC="env" ;; esac
+fi
+# <<< review tiers min sample
+
 DATE_TAG=$(date -u +%F)
 case "$WINDOW" in 24h) OUT_JSON="$OUTDIR/$DATE_TAG.json" ;; *) OUT_JSON="$OUTDIR/$DATE_TAG-$WINDOW.json" ;; esac
 OUT_TXT="$OUTDIR/latest.txt"
@@ -314,6 +379,10 @@ DORA_ROP_LOG="$H/logs/repair-on-push.log" DORA_BR_STATE="$H/state/blocked-resolv
 DORA_CONFLICTS_ALERT_PER_100="$CF_TH" DORA_CONFLICTS_ALERT_SRC="$CF_SRC" \
 DORA_CONFLICTS_ALERT_FILE="$WORK/conflicts-alert" \
 DORA_GH_BUDGET_FILE="$GHB_FILE" DORA_GH_BUDGET_STATUS="$GHB_STATUS" \
+DORA_REVIEW_FILE="$REVIEW_FILE" DORA_REVIEW_STATUS="$REVIEW_STATUS" DORA_REVIEW_WHY="$REVIEW_WHY" \
+DORA_REVIEW_MARGIN="$RV_MARGIN" DORA_REVIEW_MARGIN_SRC="$RV_MARGIN_SRC" \
+DORA_REVIEW_MIN_N="$RV_MIN_N" DORA_REVIEW_MIN_N_SRC="$RV_MIN_N_SRC" \
+DORA_REVIEW_ALERT_FILE="$WORK/review-alert" DORA_REVIEW_COST_STAGE_RE="${DORA_REVIEW_COST_STAGE_RE:-review}" \
   python3 "$BIN/dora-digest.py"
 RC=$?
 if [ "$RC" -ne 0 ]; then
@@ -354,6 +423,22 @@ if [ -s "$WORK/conflicts-alert" ]; then
   fi
 fi
 # <<< conflicts alert line
+
+# >>> review tiers alert line (BH-6969)
+# One line a UTC day when the low or intent tier's 7-day revert rate is more
+# than the margin over the full tier's (one line names every cohort over). The
+# BH-6965 shape: the day flag alerted-dora-review-tiers-<YYYYMMDD> is set first,
+# then bin/alert-line.sh writes the line.
+if [ -s "$WORK/review-alert" ]; then
+  # shellcheck source=lib/flags.sh
+  . "$BIN/lib/flags.sh" 2>/dev/null || true
+  RFLAG="alerted-dora-review-tiers-$(date -u +%Y%m%d)"
+  if ! flag_has --cached "$RFLAG" 2>/dev/null; then
+    flag_set "$RFLAG" on "dora-digest: review tiers alert sent" >/dev/null 2>&1
+    HARNESS="$H" "$BIN/alert-line.sh" --id dora-review-tiers "$(head -1 "$WORK/review-alert")" >/dev/null 2>&1 || true
+  fi
+fi
+# <<< review tiers alert line
 
 TEXT=$(head -c "$TEXT_MAX" "$OUT_TXT" 2>/dev/null)
 [ "$PRINT" = 1 ] && printf '%s\n' "$TEXT"

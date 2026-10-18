@@ -17,6 +17,11 @@
 #     planned/<n>     the candidate's planned files
 #     claims/<KEY>    fclaim_list_dir output (running claims)
 #     cap             an integer, or `unlimited`
+#     sibling         optional (BH-6979, enforce only): <n>\t<s> when
+#                     bin/sibling-serial.sh says part <n> waits for sibling #<s>,
+#                     <n>\t- when the tick's check cap left <n> unchecked,
+#                     <n>\t? when `parts` or `check` failed or timed out.
+#                     Absent: the output is byte-identical to wave 2.
 #   Rule per candidate, ascending issue number, FIRST HIT WINS:
 #     1. a hard edge to an `open` parent  -> no      parent #<p> open
 #        a hard edge to an `unknown` (or unlisted) parent
@@ -25,6 +30,9 @@
 #     2. the latest hold row is `hold`    -> no      hold by <by>
 #     3. a planned path equal to a path another ticket's running claim holds
 #                                         -> no      files claimed by #<m>
+#     3b. <D>/sibling names the candidate    -> no      files claimed by #<s>
+#         (`-`, the check cap)               -> unknown sibling check cap
+#         (`?`, parts/check failed)          -> unknown sibling check failed
 #     4. otherwise ready; past the first <cap> ready tickets -> no  wip cap
 #   Prints `<n>\t<yes|no|unknown>\t<reason>` (reason empty on yes).
 #
@@ -93,6 +101,16 @@ sched_decide() {
         fi
       done
       [ -n "$m" ] && { st=no; reason="files claimed by #$m"; }
+    fi
+    # 3b. a sibling part sibling-serial says this part waits for (BH-6979).
+    if [ "$st" = yes ] && [ -s "$d/sibling" ]; then
+      m=$(awk -F'\t' -v c="$n" '$1 == c {print $2; exit}' "$d/sibling")
+      case "$m" in
+        "") ;;
+        -) st=unknown; reason="sibling check cap" ;;
+        "?") st=unknown; reason="sibling check failed" ;;
+        *) st=no; reason="files claimed by #$m" ;;
+      esac
     fi
     # 4. the WIP cap, in ascending issue order.
     if [ "$st" = yes ]; then
