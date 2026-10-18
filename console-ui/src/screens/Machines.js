@@ -16,6 +16,7 @@ import { COMMAND_LABELS, flyAppFor, flyDestroyText, flyStopText, requestBoxComma
 import { QUOTE_POLL, detailView, failTag } from '../lib/box-op-detail.js';
 import { orgoBoxIds, orgoStateFor, orgoAccounts, shapeOrgoComputers, specsText, specsSortKey, flyOnPool } from '../lib/orgo-state.js';
 import { FlyPoolControls, LaunchBoxSection, runLaunch, runResize, runRetire } from '../ui/BoxOpForms.js';
+import { readBoxesVersion, versionBoxRows, shortSha, lagView, timeView } from '../lib/boxes-version-api.js';
 
 // BH-5750: the three box ops whose dialogs are more than a reason form.
 const OWN_FLOWS = { orgo_resize_quote: runResize, orgo_retire: runRetire, orgo_launch_quote: runLaunch };
@@ -38,6 +39,8 @@ export function MachinesScreen({ quotePoll } = {}) {
   const cmds = useApi(() => api.boxCommands(boxFilter || undefined).then((p) => shapeBoxCommands(p)), [boxFilter], { intervalMs: 30000 });
   const orgoRead = useApi(readOrgo, [], { intervalMs: 60000 });
   const orgo = orgoRead.data || (orgoRead.error ? { error: orgoRead.error.message || String(orgoRead.error) } : null);
+  // BH-7191.4: the SHA/LAG/LAST SYNC/LAST BEAT feeds, started with api.machines().
+  const ver = useApi(readBoxesVersion, [], { intervalMs: 30000 });
   const [dialog, confirm] = useConfirm();
   const [banner, setBanner] = useState(null);
   const reloadCmds = cmds.reload;
@@ -63,7 +66,8 @@ export function MachinesScreen({ quotePoll } = {}) {
 
   // BH-4993: the boxes' health in words, the Fleet headline's own rule.
   const mh = fleetHeadline({ boxes: m.data ? boxes : null });
-  const boxRows = Object.keys(boxes).map((name) => ({ name, ping: boxes[name], min: minutesFromPingText(boxes[name]) }));
+  const boxRows = versionBoxRows(
+    Object.keys(boxes).map((name) => ({ name, ping: boxes[name], min: minutesFromPingText(boxes[name]) })), ver.data);
 
   return html`
     <div class="page">
@@ -90,7 +94,7 @@ export function MachinesScreen({ quotePoll } = {}) {
             ? `watchdog unreachable — ${data.watchdog_error}`
             : 'liveness from the watchdog worker, which survives the hub going down'}>
           ${boxRows.length
-            ? html`<${BoxesTable} rows=${boxRows} onAction=${boxOp} orgo=${orgo}/>`
+            ? html`<${BoxesTable} rows=${boxRows} onAction=${boxOp} orgo=${orgo} ver=${ver}/>`
             : html`<${Empty} title="no box pings"
                 note=${data.watchdog_error
                   ? `The watchdog did not answer (${data.watchdog_error}), so box liveness is unknown — not necessarily bad.`
@@ -100,7 +104,7 @@ export function MachinesScreen({ quotePoll } = {}) {
         <${LaunchBoxSection} accounts=${orgoAccounts(orgo)} onAction=${boxOp} />
 
         ${flyProjectProps(data).map((p) => html`
-          <${FlyProject} key=${p.project} ...${p} onAction=${boxOp} />`)}
+          <${FlyProject} key=${p.project} ...${p} onAction=${boxOp} ver=${ver} />`)}
 
         ${flyErrors.length ? html`
           <${Section} title="FLY NOT ENUMERATED">
@@ -128,6 +132,22 @@ export function MachinesScreen({ quotePoll } = {}) {
 
 const ACTIONS_STYLE = 'display:flex;flex-wrap:wrap;gap:6px;white-space:nowrap';
 
+// BH-7191.4: the version feeds of a readBoxesVersion useApi result. Each of
+// status/fly is null while the read is loading, { ok:false } when it failed.
+function verState(ver) {
+  if (!ver) return { status: null, fly: null, maxLagMin: undefined, loading: false };
+  if (ver.data) return { status: ver.data.status, fly: ver.data.fly, maxLagMin: ver.data.maxLagMin, loading: false };
+  if (ver.error) return { status: { ok: false, byName: {} }, fly: { ok: false, byMachine: {} }, maxLagMin: undefined, loading: false };
+  return { status: null, fly: null, maxLagMin: undefined, loading: true };
+}
+const statusField = (vs, r, k) => (vs.status && vs.status.ok && r.status ? r.status[k] ?? null : null);
+// '…' while loading, 'unavailable' for a failed feed (or no feed), else value().
+function verCell(vs, value) {
+  if (vs.loading) return '…';
+  if (!vs.status || !vs.status.ok) return 'unavailable';
+  return value ? value() : '-';
+}
+
 // The watchdog's STATE words, with the numbers healthFromAge (lib/format.js)
 // uses to pick them. The legibility test pins these against healthFromAge, so
 // a threshold change there goes red here instead of leaving this lying.
@@ -144,11 +164,19 @@ export const BOX_STATE_LEGEND = [
 // { unavailable } / { error } / null while loading) behind ORGO STATE and
 // SPECS. Each row's Orgo box id comes from its name (orgoBoxIds); the hub and
 // a row with no id get no Orgo buttons.
-export function BoxesTable({ rows: rawRows, onAction, orgo = null }) {
-  const ids = orgoBoxIds(rawRows.map((r) => r.name));
+// BH-7191.4: `ver` is the readBoxesVersion useApi result (optional) behind
+// SHA, LAG, LAST SYNC and LAST BEAT. A registryOnly row (a registry box the
+// watchdog has no record of) has no Orgo id: the ids come from the watchdog
+// names only, so a registry name with another prefix cannot move them.
+export function BoxesTable({ rows: rawRows, onAction, orgo = null, ver = null }) {
+  const ids = orgoBoxIds(rawRows.filter((r) => !r.registryOnly).map((r) => r.name));
   const accounts = orgoAccounts(orgo);
   const now = Date.now();
-  const boxRows = rawRows.map((r) => ({ ...r, orgoId: ids[r.name], orgoState: orgoStateFor(r.name, orgo, now) }));
+  const vs = verState(ver);
+  const boxRows = rawRows.map((r) => ({
+    ...r, orgoId: r.registryOnly ? null : ids[r.name], orgoState: orgoStateFor(r.name, orgo, now),
+    lag: vs.status ? lagView(r.status, { ok: vs.status.ok, now, maxLagMin: vs.maxLagMin }) : null
+  }));
   const orgoIds = boxRows.map((r) => r.orgoId).filter((id) => id && id !== 'hub');
   return html`
             <${SortableTable}
@@ -186,6 +214,22 @@ export function BoxesTable({ rows: rawRows, onAction, orgo = null }) {
                     cell: (r) => html`<span>${specsText(r.orgoState.computer) || '—'}</span>`
                   },
                   {
+                    key: 'sha', label: 'SHA', sort: (r) => statusField(vs, r, 'harness_commit'),
+                    cell: (r) => html`<code>${verCell(vs, () => shortSha(statusField(vs, r, 'harness_commit')))}</code>`
+                  },
+                  {
+                    key: 'lag', label: 'LAG', sort: (r) => (r.lag ? r.lag.sort : null),
+                    cell: (r) => html`<span style=${r.lag && r.lag.tone === 'warn' ? 'color:var(--amber)' : ''}>${r.lag ? r.lag.text : verCell(vs)}</span>`
+                  },
+                  {
+                    key: 'sync', label: 'LAST SYNC', sort: (r) => minutesSince(statusField(vs, r, 'harness_synced_at')),
+                    cell: (r) => html`<span>${verCell(vs, () => timeView(statusField(vs, r, 'harness_synced_at')))}</span>`
+                  },
+                  {
+                    key: 'beat', label: 'LAST BEAT', sort: (r) => minutesSince(statusField(vs, r, 'last_beat_at')),
+                    cell: (r) => html`<span>${verCell(vs, () => timeView(statusField(vs, r, 'last_beat_at')))}</span>`
+                  },
+                  {
                     key: 'actions', label: 'ACTIONS', sort: null,
                     cell: (r) => html`<${BoxActions} box=${r.name} orgoId=${r.orgoId} onAction=${onAction}
                       account=${r.orgoState.computer ? r.orgoState.computer.account : null} accounts=${accounts}
@@ -194,6 +238,7 @@ export function BoxesTable({ rows: rawRows, onAction, orgo = null }) {
                 ]}
                 rows=${boxRows}
                 rowKey=${(r) => r.name}
+                wide
                 defaultSort="ping" defaultDir="desc" />
     <${Legend} items=${BOX_STATE_LEGEND}/>`;
 }
@@ -304,8 +349,18 @@ function DetailCell({ detail }) {
     </span>`;
 }
 
-export function FlyProject({ project, fly, flyErrors, onAction }) {
+export function FlyProject({ project, fly, flyErrors, onAction, ver = null }) {
   const reason = flyUnreadableReason(fly, flyErrors, project);
+  const vs = verState(ver);
+  // BH-7191.4: the dash feed's harness_commit when it carries one, else the
+  // lane-fleet row's (GET /api/coord/lane-fleet/machines), else '-'.
+  const flySha = (r) => r.harness_commit || (vs.fly && vs.fly.ok && vs.fly.byMachine[r.id] ? vs.fly.byMachine[r.id].harness_commit || null : null);
+  const flyShaText = (r) => {
+    const s = flySha(r);
+    if (s) return shortSha(s);
+    if (vs.loading) return '…';
+    return vs.fly && !vs.fly.ok ? 'unavailable' : '-';
+  };
   const machines = flyMachines(fly, reason) || [];
   const orphans = flyOrphans(fly, reason);
   return html`
@@ -324,6 +379,7 @@ export function FlyProject({ project, fly, flyErrors, onAction }) {
                 cell: (r) => html`<span class=${r.state === 'started' ? 'num--ok' : 'na'}>${r.state || '—'}</span>`
               },
               { key: 'region', label: 'REGION', sort: (r) => r.region, cell: (r) => html`<span>${r.region || '—'}</span>` },
+              { key: 'sha', label: 'SHA', sort: flySha, cell: (r) => html`<code>${flyShaText(r)}</code>` },
               {
                 key: 'job', label: 'BUILDING', sort: (r) => (r.job ? r.job.key : null),
                 cell: (r) => r.job

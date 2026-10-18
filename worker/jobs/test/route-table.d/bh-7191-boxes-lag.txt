@@ -1,0 +1,3 @@
+# BOXES LAG (BH-7191.4): fvc_sink stores the harness version lag per box for the
+# console Machines view. Update only.
+POST /api/boxes/lag
