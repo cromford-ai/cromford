@@ -160,7 +160,7 @@ eq "S2 every line parses back to word, box and kind" \
 STOPR="$T/stop/bin/lib/fleet-version-rules.d"
 printf 'FVC_RULES+=(fvc_rule_stop)\nfvc_rule_stop() { echo "SKIP $FVC_BOX role=$FVC_ROLE"; return 2; }\n' > "$STOPR/15-stop.sh"
 eq "S3 a rule that returns 2 stops the later rules for that box" \
-  "$(printf 'b30\tgate-only\t%s\t%s\t40\t\t\t\n' "$C0" "$R" | FVC_RULES_DIR="$STOPR" dec)" "SKIP b30 role=gate-only"
+  "$(printf 'b30\tbuild\t%s\t%s\t40\t\t\t\n' "$C0" "$R" | FVC_RULES_DIR="$STOPR" dec)" "SKIP b30 role=build"
 
 echo "E: the lane"
 PIDS=()

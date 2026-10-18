@@ -65,7 +65,12 @@ GOT_R=$(jq '[.projects[] | select(.status == "retired")] | length' "$T/a.json" 2
 [ "$GOT_R" = "$WANT_R" ] && ok || bad "S1 retired projects: payload $GOT_R, fleet.conf $WANT_R"
 . "$DIR/bin/lib/lanes-registry.sh"
 LJ=$(lanes_json_path "$DIR")
-WANT_L=$(jq '[.lanes[] | .id as $l | (.boxes // [])[] | [$l, .]] | unique | length' "$LJ")
+# watchdog-ping and harness-sync-timer take their rows from the box roles
+# (BH-7303): one row per --boxes-with-roles box that is not gate-only or retired.
+WANT_RB=$(env FLEET_CONF="$DIR/fleet.conf" REGISTRY_SOURCE=file "$DIR/bin/fleet-conf.sh" --boxes-with-roles \
+  | awk -F'\t' '$3 != "gate-only" && $3 != "retired"' | wc -l | tr -d ' ')
+WANT_L=$(jq --argjson rb "$WANT_RB" '[.lanes[] | select(.id != "watchdog-ping" and .id != "harness-sync-timer")
+  | .id as $l | (.boxes // [])[] | [$l, .]] | unique | length + 2 * $rb' "$LJ")
 GOT_L=$(jq '.lane_boxes | length' "$T/a.json" 2>/dev/null)
 [ "$GOT_L" = "$WANT_L" ] && [ "$WANT_L" -gt 100 ] && ok || bad "S1 lane rows: payload $GOT_L, lane registry $WANT_L"
 [ "$(jq -r '.boxes[] | select(.box == "box-hub") | .cost_box' "$T/a.json" 2>/dev/null)" = hub ] \

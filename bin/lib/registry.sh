@@ -28,9 +28,12 @@
 #
 # The registry stores a tailnet IP per BOX. Every box with one also renders as
 # `# @box <box> <ip>` (BH-5650), so bin/fleet-conf.sh answers the IP of a box
-# that has no project yet (bin/registry.sh add-box). A fleet.conf row with no IP on a
-# box whose other row has one answers that IP here; today's fleet.conf has no
-# such row, and bin/registry-seed.sh refuses two different IPs for one box.
+# that has no project yet (bin/registry.sh add-box). A box with a role renders
+# as `# @boxrole <box> <box_id> <role>` (bin/fleet-conf.sh --boxes-with-roles);
+# a null role renders nothing and the reader applies its default.
+# A fleet.conf row with no IP on a box whose other row has one answers that IP
+# here; today's fleet.conf has no such row, and bin/registry-seed.sh refuses two
+# different IPs for one box.
 #
 # State: ${HARNESS}/state/registry/{registry.json,fleet.conf,version,outage}.
 # The root is ${HARNESS:-${H:-}} and nothing else (D43): empty means rc 1.
@@ -75,6 +78,7 @@ _rg_render() {
       (.boxes | sort_by(.box)[] | select(.standby_hub_name != null and .standby_hub_id != null)
         | "# @standby \(.box) \(.standby_hub_name) \(.standby_hub_id)"),
       (.boxes | sort_by(.box)[] | select(.tailnet_ip != null) | "# @box \(.box) \(.tailnet_ip)"),
+      (.boxes | sort_by(.box)[] | select((.role // null) != null) | "# @boxrole \(.box) \(.box_id) \(.role)"),
       (.projects | sort_by(.position, .project)[] | select(.status == "retired")
         | "# @retired \(.project) \(.box // "-")"),
       (.projects | sort_by(.position, .project)[] | select((.status // "active") == "active")

@@ -14,7 +14,7 @@ import {
 } from "./registry.js";
 
 const PROJECT_FIELDS = ["repo", "prod", "board_prefix", "cron_offset", "box", "position", "status"];
-const BOX_PATCH_FIELDS = ["tailnet_ip", "cost_box", "standby_hub_name", "standby_hub_id"];
+const BOX_PATCH_FIELDS = ["tailnet_ip", "cost_box", "standby_hub_name", "standby_hub_id", "role"];
 
 // A segment of the path, URL-decoded and checked; null = refuse it.
 function seg(raw, re) {
@@ -116,6 +116,7 @@ export const routes = [
         box: b.box, box_id: b.box_id, tailnet_ip: b.tailnet_ip ?? null,
         cost_box: b.cost_box === undefined ? b.box_id ?? null : b.cost_box,
         standby_hub_name: b.standby_hub_name ?? null, standby_hub_id: b.standby_hub_id ?? null,
+        role: b.role ?? null,
       };
       // `like` is read from the registry BEFORE this write: the copy is of an
       // existing box, never of the row this request adds.

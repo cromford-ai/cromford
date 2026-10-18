@@ -208,6 +208,14 @@ else
   for f in "$CRON_DIR"/*.cron; do
     sed -e 's/[[:space:]]#[[:space:]].*$//' -e '/^[[:space:]]*#/d' "$f" > "$T/cron/$(basename "$f")"
   done
+  # A `# @boxrole` box with no cron/boxes/<id>.d (BH-7303) is not in the fleet
+  # render, and still runs the lanes that name it: render it on its own.
+  while IFS=$'\t' read -r _ RID _; do
+    [ -n "$RID" ] && [ ! -e "$T/cron/$RID.cron" ] || continue
+    "$DIR/bin/render-cron.sh" --root "$DIR" "$RID" 2>/dev/null \
+      | sed -e 's/[[:space:]]#[[:space:]].*$//' -e '/^[[:space:]]*#/d' > "$T/cron/$RID.cron" \
+      || bad "2 bin/render-cron.sh $RID (a @boxrole box) refused"
+  done < <(FLEET_CONF="$DIR/fleet.conf" REGISTRY_SOURCE=file "$DIR/bin/fleet-conf.sh" --boxes-with-roles)
   CRON_SCRIPTS=$(grep -hoE '/root/(harness|orchestrator)/bin/[a-z0-9-]+\.sh' "$T"/cron/*.cron \
     | sed -E 's#.*/([a-z0-9-]+)\.sh#\1#' | grep -vxE 'hub-lease|fleet-conf' | sort -u)
   [ -n "$CRON_SCRIPTS" ] && ok || bad "2 the rendered fleet runs no harness script — the cron scan read nothing"

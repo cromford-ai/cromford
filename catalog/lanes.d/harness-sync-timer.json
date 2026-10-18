@@ -1,0 +1,53 @@
+{
+  "id": "harness-sync-timer",
+  "name": "Harness sync timer",
+  "scope": "box",
+  "script": "bin/harness-sync-timer.sh",
+  "cadence": "*/5 * * * *",
+  "boxes": [
+    "project-4",
+    "hub",
+    "hub2",
+    "project-6",
+    "project-6-os",
+    "project-1",
+    "project-3",
+    "review2",
+    "project-9",
+    "small",
+    "project-2",
+    "project-5"
+  ],
+  "switch": {
+    "kind": "flag",
+    "name": "lane-off-harness-sync-timer",
+    "aliases": []
+  },
+  "wired": true,
+  "knobs": [
+    {
+      "env": "HARNESS_SYNC_PERIOD_MIN",
+      "type": "int",
+      "default": 15,
+      "min": 5,
+      "max": 240,
+      "zero_means": null,
+      "settable": true,
+      "note": "BH-7303. Read by bin/harness-sync-timer.sh as ${HARNESS_SYNC_PERIOD_MIN:-15}: minutes since the last good sync (state/harness-sync-last-success) and since the timer's last attempt before it runs bin/harness-sync.sh deploy again. Settings row lane.harness-sync-timer.harness_sync_period_min. Below 5 reads as 5, above 240 as 240, a value that is not a whole number as 15."
+    },
+    {
+      "env": "HARNESS_SYNC_TIMER_NOW",
+      "type": "string",
+      "default": "",
+      "zero_means": null,
+      "note": "Test seam: epoch seconds bin/harness-sync-timer.sh uses as now (stamp ages and the attempt stamp mtime). Empty = the clock. NOT settable from the control plane; never set it in cron.",
+      "settable": false
+    }
+  ],
+  "stats": {
+    "cost_stage": null,
+    "cost_project_filter": null,
+    "lanes_row": false,
+    "log": "logs/harness-sync-timer.log"
+  }
+}

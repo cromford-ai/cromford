@@ -7,9 +7,15 @@
 #       Print the registry version, then one line per box:
 #       <box> <box_id> <ip|-> projects=<p,p|-> lanes=<n>. Read-only.
 #   registry.sh add-box <name> --ip <tailnet-ip> --like <box-id> [--id <box-id>]
+#                       [--role <role>]
 #       Add a box with the lane memberships and the exact account rows of an
 #       existing box. --id defaults to the cron box id of <name>
 #       (box-x -> x). A retry of the same add changes nothing.
+#       --role sets the box role (no --role = null, the readers' default).
+#   registry.sh set-box-role <box> <role>
+#       Set a box's role: build review gate standby hub gate-only retired. The
+#       route refuses any other value (400). A gate-only or retired box is
+#       skipped by the version check and gets no watchdog ping row.
 #   registry.sh move-project <project> --box <box>
 #       Put a project on another box. Its cron offset stays.
 #   registry.sh drain-box <box>
@@ -39,7 +45,7 @@ die() { echo "registry: $*" >&2; exit 2; }
 
 VERB="${1:-}"; [ -n "$VERB" ] || usage
 shift
-ACTOR=""; IP=""; LIKE=""; ID=""; TOBOX=""; REPO=""; PROD=""; OFFSET=""; PREFIX="-"; NAME=""
+ACTOR=""; IP=""; LIKE=""; ID=""; TOBOX=""; REPO=""; PROD=""; OFFSET=""; PREFIX="-"; NAME=""; ROLE=""; ARG2=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --actor) ACTOR="${2:?--actor needs a name}"; shift 2 ;;
@@ -51,9 +57,14 @@ while [ $# -gt 0 ]; do
     --prod) PROD="${2:?--prod needs a url or -}"; shift 2 ;;
     --offset) OFFSET="${2:?--offset needs 0-9}"; shift 2 ;;
     --prefix) PREFIX="${2:?--prefix needs a path or -}"; shift 2 ;;
+    --role) ROLE="${2:?--role needs a role}"; shift 2 ;;
     -h|--help) usage ;;
     -*) die "unknown option $1" ;;
-    *) [ -z "$NAME" ] || die "one name only (got $NAME and $1)"; NAME="$1"; shift ;;
+    *)
+      if [ -z "$NAME" ]; then NAME="$1"
+      elif [ "$VERB" = set-box-role ] && [ -z "$ARG2" ]; then ARG2="$1"
+      else die "one name only (got $NAME and $1)"; fi
+      shift ;;
   esac
 done
 
@@ -80,8 +91,13 @@ case "$VERB" in
       ID=$(cron_box_id_for "$NAME")
     fi
     METHOD=POST; RPATH=/api/registry/boxes
-    BODY=$(jq -cn --arg box "$NAME" --arg id "$ID" --arg ip "$IP" --arg like "$LIKE" --arg actor "$ACTOR" \
-      '{box: $box, box_id: $id, tailnet_ip: $ip, like: $like, actor: $actor}') ;;
+    BODY=$(jq -cn --arg box "$NAME" --arg id "$ID" --arg ip "$IP" --arg like "$LIKE" --arg actor "$ACTOR" --arg role "$ROLE" \
+      '{box: $box, box_id: $id, tailnet_ip: $ip, like: $like, actor: $actor} + (if $role == "" then {} else {role: $role} end)') ;;
+  set-box-role)
+    [ -n "$NAME" ] || die "set-box-role needs a box"
+    [ -n "$ARG2" ] || die "set-box-role needs a role (build, review, gate, standby, hub, gate-only, retired)"
+    METHOD=PATCH; RPATH="/api/registry/boxes/$(uri "$NAME")"
+    BODY=$(jq -cn --arg role "$ARG2" --arg actor "$ACTOR" '{role: $role, actor: $actor}') ;;
   move-project)
     [ -n "$NAME" ] || die "move-project needs a project"
     [ -n "$TOBOX" ] || die "move-project needs --box <box>"
@@ -103,7 +119,7 @@ case "$VERB" in
       '{project: $p, repo: $repo, prod: $prod, board_prefix: $pre,
         cron_offset: ($off | if test("^[0-9]+$") then tonumber else . end), box: $box, actor: $actor}') ;;
   -h|--help|help) usage ;;
-  *) die "unknown verb $VERB (show, add-box, move-project, drain-box, add-project)" ;;
+  *) die "unknown verb $VERB (show, add-box, set-box-role, move-project, drain-box, add-project)" ;;
 esac
 
 # shellcheck source=bin/lib/deployment.sh

@@ -7,16 +7,56 @@ it belongs to, and re-render.
 
 ## MERGE-CONDUCTOR
 
+- 2026-10-18 — [A colliding migration number is renumbered at rebase time (BH-7365)](2026-10-18-BH-7365-migration-renumber.md)
+- 2026-10-17 — [A merge-queue batch drops the always-suites the pre-push gate already ran (BH-7289)](2026-10-17-BH-7289-always-set-prepush.md)
+- 2026-10-17 — [A batch-fail suite fix goes first in the merge queue (BH-7279)](2026-10-17-BH-7279-flake-fix-queue.md)
+- 2026-10-17 — [The pre-push gate runs every deterministic ratchet before the push (BH-7187)](2026-10-17-BH-7187-prepush-gate.md)
+- 2026-10-17 — [Merge origin/main into a PR branch only on a real conflict (BH-7042)](2026-10-17-BH-7042-main-merge-only-on-conflict.md)
+- 2026-10-17 — [The risk tier can call a head low by evidence, not only by path (BH-6968)](2026-10-17-BH-6968-evidence-low.md)
+- 2026-10-17 — [Merge lock to the project lease, re-review cap to D1 (BH-6887, BH-6881.3)](2026-10-17-BH-6887-mc-lease-budget.md)
+- 2026-10-17 — [Hub project-loop ratchet, cron staggers, lead-review lock measure (BH-5945)](2026-10-17-BH-5945-ratchet-and-staggers.md)
+- 2026-10-17 — [BH-5373 r2: culprit ejection on, bisect off (2026-10-17)](2026-10-17-BH-5373-culprit-flip-on.md)
+- 2026-10-16 — [BH-7121: a check run with completed_at and a green conclusion is completed](2026-10-16-BH-7121-check-run-completed-at.md)
+- 2026-10-16 — [The schema restamp also renames the fragment in plan.md and the PR body (BH-7120)](2026-10-16-BH-7120-restamp-plan-and-body.md)
+- 2026-10-16 — [A conflict round gets a brief that can resolve it (BH-6964)](2026-10-16-BH-6964-conflict-fix-brief.md)
+- 2026-10-16 — [Direct merge in optimistic landing mode (BH-6745, wave 2 of #6541)](2026-10-16-BH-6745-optimistic-landing.md)
+- 2026-10-16 — [The ci-read actions/runs read has a time bound (BH-6346)](2026-10-16-BH-6346-ci-read-bound.md)
+- 2026-10-15 — [Lane-run machines: name the head-read error, check fleet repos at start, refuse unreadable repos at claim (BH-6942)](2026-10-15-BH-6942-lane-run-repo-check.md)
+- 2026-10-15 — [Pre-queue verdicts: reuse by impact set, adopt a run from any worker, seed the batch-fail suites (BH-6924)](2026-10-15-BH-6924-prequeue-impact-reuse.md)
+- 2026-10-15 — [A machine's conductor rebase as a queued pool job (BH-6888 C0, BH-6881.4)](2026-10-15-BH-6888-conductor-remote-spawn.md)
+- 2026-10-15 — [Project lease with a fence token (BH-6883, BH-6881.1)](2026-10-15-BH-6883-project-lease.md)
+- 2026-10-15 — [The conductor restamps stale schema fragments at queue time (BH-6842)](2026-10-15-BH-6842-schema-restamp.md)
+- 2026-10-15 — [Lane-run machines run current code; a non-zero run is `failed` (BH-6817)](2026-10-15-BH-6817-lane-run-fresh-code.md)
+- 2026-10-15 — [The head-lag branch-tip read has a time bound (BH-6810)](2026-10-15-BH-6810-head-lag-read-bound.md)
+- 2026-10-15 — [The project-3 pre-merge gate refuses a head whose Vercel preview failed (BH-6501)](2026-10-15-BH-6501-project-3-preview-gate.md)
+- 2026-10-15 — [A data-lane-only review BLOCK keeps its branch as a draft PR (BH-6467)](2026-10-15-BH-6467-data-lane-draft-rereview.md)
+- 2026-10-14 — [The rebase train runs the caller check before it rebinds the approval (BH-6718)](2026-10-14-BH-6718-rebase-train-caller-check.md)
+- 2026-10-14 — [Culprit reach uses the batch select; a non-test workflow edit selects (BH-6688)](2026-10-14-BH-6688-infra-path-reach.md)
+- 2026-10-14 — [A slow read in the head-lag span is held, not paged (BH-6670)](2026-10-14-BH-6670-step-held.md)
+- 2026-10-14 — [A lead|human post sends client level 4, and an old lib is named (BH-6617)](2026-10-14-BH-6617-client-level-4.md)
+- 2026-10-14 — [A step-timeout kill reports the call trace (BH-6603)](2026-10-14-BH-6603-step-timeout-calls.md)
+- 2026-10-14 — [The conductor's flags/MODE block lives in bin/lib/mc/tick-scope.sh (BH-6518)](2026-10-14-BH-6518-conductor-tick-mode-cut.md)
+- 2026-10-14 — [The conductor's full-tick window lives in bin/lib/mc/tick-scope.sh (BH-6518)](2026-10-14-BH-6518-conductor-full-tick-window-cut.md)
+- 2026-10-14 — [Merge-conductor per-PR workers on lane-run machines (BH-6495, BH-6047.5)](2026-10-14-BH-6495-conductor-fly.md)
+- 2026-10-14 — [Merge-conductor state: one attempt read per repo per tick, and the fresh-hub drill (BH-4156)](2026-10-14-BH-4156-mc-batch-read-drill.md)
+- 2026-10-13 — [A MERGE verdict dismisses the bot BLOCK review on the same head (BH-6548)](2026-10-13-BH-6548-same-head-dismiss.md)
 - 2026-10-13 — [The stack-wait gate reads the parent PR state, not the parent branch (BH-6537)](2026-10-13-BH-6537-parent-pr-state.md)
+- 2026-10-13 — [A human step done on a REVIEW_BLOCKED ticket re-reviews the built branch (BH-6536)](2026-10-13-BH-6536-human-step-rereview.md)
+- 2026-10-13 — [The conductor's keyed-tick parse lives in bin/lib/mc/tick-scope.sh (BH-6518)](2026-10-13-BH-6518-conductor-tick-scope-cut.md)
 - 2026-10-13 — [Main-red: re-check flagged repos every 5 minutes (BH-6502)](2026-10-13-BH-6502-main-red-recheck.md)
 - 2026-10-13 — [A conductor worker traces its calls, and the head-lag refs read happens once per tick (BH-6462)](2026-10-13-BH-6462-head-lag-cost.md)
 - 2026-10-13 — [The autoenqueue ledger read retries on a 2 s / 5 s / 10 s ladder and names its cause (BH-6433)](2026-10-13-BH-6433-ledger-read-backoff.md)
 - 2026-10-13 — [Box merge queue re-checks CI, reviewed sha and park state before every merge (BH-6428)](2026-10-13-BH-6428-merge-queue-red-guard.md)
 - 2026-10-13 — [A child slice builds on an open parent only with a disjoint Stack section (BH-6389)](2026-10-13-BH-6389-stack-wait.md)
+- 2026-10-13 — [BH-6374 C1: sibling parts by board key, pool stacking, squash-base merge, replay](2026-10-13-BH-6374-sibling-parts-c1.md)
+- 2026-10-13 — [A conductor worker step has its own timeout and logs STEP lines (BH-6351)](2026-10-13-BH-6351-step-timeout.md)
 - 2026-10-13 — [The WORKER_DEADLINE Sentry event names the step and carries pr, worker_key and deadline_secs (BH-6347)](2026-10-13-BH-6347-deadline-tags.md)
 - 2026-10-13 — [A conductor worker names its step at a deadline kill, stops at a 401, and caps its lock waits (BH-6346)](2026-10-13-BH-6346-conductor-worker-steps.md)
 - 2026-10-13 — [A batch that failed only on a no-verdict shard re-queues its PR once (BH-6336)](2026-10-13-BH-6336-no-verdict-retry.md)
+- 2026-10-13 — [The conductor carries a lead MERGE across a clean main merge (BH-6291)](2026-10-13-BH-6291-lead-carry.md)
 - 2026-10-13 — [The shipped console gets a browser QA run after each Pages deploy (BH-5909, slice 3)](2026-10-13-BH-5909-console-postmerge-qa.md)
+- 2026-10-13 — [2026-10-13 — BH-5373: the impact map's two fixes (the culprit flip waits)](2026-10-13-BH-5373-culprit-flip.md)
+- 2026-10-13 — [Lead protected paths are read from the DB rows; the TSV is only a seed now (BH-4148, slice 4 of BH-4140)](2026-10-13-BH-4148-lead-protected-paths-db.md)
 - 2026-10-12 — [Pre-queue gate: learned suites, the trace, and fresh against main (BH-6335)](2026-10-12-BH-6335-prequeue-learned-trace-fresh.md)
 - 2026-10-12 — [Silent stalls alert or self-clear: dead HOLDs, finished tickets kept open, hard Blocked-by on a stale parent (BH-6308)](2026-10-12-BH-6308-silent-stalls.md)
 - 2026-10-12 — [Every queue ejection records its cause, and a requeue waits for a pre-queue run (BH-6161)](2026-10-12-BH-6161-eject-cause-requeue-gate.md)
@@ -215,6 +255,9 @@ it belongs to, and re-render.
 
 ## BUILD-CONCURRENCY
 
+- 2026-10-16 — [The pool never waits on a number we chose, and a machine-hour budget bounds the spend (BH-7190)](2026-10-16-BH-7190-pool-never-wait.md)
+- 2026-10-14 — [A plan that shares a hot file with any open ticket PR is held (BH-6292)](2026-10-14-BH-6292-inflight-hotfile-hold.md)
+- 2026-10-13 — [Six project loops on the per-project runner (BH-5944)](2026-10-13-BH-5944-project-loops-runner.md)
 - 2026-10-11 — [Splits stop building long serial PR chains (BH-5520)](2026-10-11-BH-5520-split-chains.md)
 - 2026-10-07 — [The plan-time overlap gate counts a hotspot a plan names only lightly (BH-5268)](2026-10-07-BH-5268-plan-overlap-hotspots.md)
 - 2026-10-07 — [Pool machine reuse (BH-5025: slices BH-5025.0, .1, .2)](2026-10-07-BH-5046-pool-machine-reuse.md)
@@ -240,6 +283,8 @@ it belongs to, and re-render.
 
 ## RUN-BUILD-GRAPH
 
+- 2026-10-17 — [BH-6379 (BH-6372.1): the plan stage asks perf tickets for a target and a replay](2026-10-17-BH-6379-perf-plan-gate.md)
+- 2026-10-14 — [The rebase train runs the caller check before it rebinds the approval (BH-6718)](2026-10-14-BH-6718-rebase-train-caller-check.md)
 - 2026-10-13 — [The builder runs pr-self-check before it opens or edits the PR (BH-6393)](2026-10-13-BH-6393-builder-self-check-prepush.md)
 - 2026-10-12 — [A running pool build yields at its next write point under HOLD (BH-6091)](2026-10-12-BH-6091-pool-hold-yield.md)
 - 2026-10-10 — [Pool builds can read a second repo; a plan that cannot stops at PLAN (BH-5910)](2026-10-10-BH-5910-extra-read-repos.md)
@@ -293,6 +338,15 @@ it belongs to, and re-render.
 
 ## OPERATOR-SETUP
 
+- 2026-10-17 — [fly-onboard puts the project's Fly token on the console worker (BH-7196)](2026-10-17-BH-7196-console-fly-secrets.md)
+- 2026-10-17 — [Cromford release commits carry bullet release notes (BH-7185)](2026-10-17-BH-7185-cromford-release-notes.md)
+- 2026-10-16 — [The pool reclaims orphan slots, names a stall, and cancels held in-flight builds (BH-7107)](2026-10-16-BH-7107-pool-orphan-reclaim.md)
+- 2026-10-16 — [Staff learning view on the agent page (BH-6825, Staff in Mission Control 4/4)](2026-10-16-BH-6825-staff-learning-view.md)
+- 2026-10-15 — [The Fly idle reaper reads work, probes, and destroys (BH-6877)](2026-10-15-BH-6877-fly-usage-witness.md)
+- 2026-10-15 — [Archie as Overlooker of the staff agents (BH-5562, wave 5 of #5556)](2026-10-15-BH-5562-archie-overlooker.md)
+- 2026-10-14 — [Daily digest: a per-day cap on route reads (BH-6727, the sixth row source)](2026-10-14-BH-6727-digest-read-cap.md)
+- 2026-10-14 — [A ticket can name a spec repo its pool build may read (BH-6576)](2026-10-14-BH-6576-spec-repos.md)
+- 2026-10-14 — [Staff learning loop: outcomes, precision, proposals, demotion (BH-5563, wave 6 of #5556)](2026-10-14-BH-5563-staff-learning.md)
 - 2026-10-13 — [CREATED_TABLES derives from worker/jobs/schema.d (BH-4987, slice C5)](2026-10-13-BH-4987-created-tables-derived.md)
 - 2026-10-12 — [Onboarding checks browser-QA wiring, and a daily lane alerts until it is wired (BH-6254)](2026-10-12-BH-6254-qa-wiring.md)
 - 2026-10-12 — [BH-5239: the Cloud control plane moved to example-org/cromford-web](2026-10-12-BH-5239-cloud-moved.md)
@@ -373,6 +427,16 @@ it belongs to, and re-render.
 
 ## EVENTS
 
+- 2026-10-17 — [Hub project-loop ratchet, cron staggers, lead-review lock measure (BH-5945)](2026-10-17-BH-5945-ratchet-and-staggers.md)
+- 2026-10-16 — [A PLAN_BLOCKED build says why, and the stranded watch waits for an answer (BH-7116)](2026-10-16-BH-7116-plan-blocked-notice.md)
+- 2026-10-15 — [Repair on push: a push to main wakes repair on the PRs it touches (BH-6963, wave 1 of #6542)](2026-10-15-BH-6963-repair-on-push.md)
+- 2026-10-15 — [Wakes reads: claim cursor, claim indexes, summary table, dead cursors (BH-6799)](2026-10-15-BH-6799-wakes-read-cuts.md)
+- 2026-10-15 — [The prod smoke probe is a browser page load on a per-project path (BH-6786)](2026-10-15-BH-6786-smoke-headers.md)
+- 2026-10-15 — [Watchman: the security lanes, a history secret scan and a rotation register (BH-5565, wave 8 of #5556)](2026-10-15-BH-5565-watchman.md)
+- 2026-10-15 — [Archie as Overlooker of the staff agents (BH-5562, wave 5 of #5556)](2026-10-15-BH-5562-archie-overlooker.md)
+- 2026-10-14 — [Dispatcher: the health lanes, a dead-feed watch and a post-deploy output check (BH-5566, wave 9 of #5556)](2026-10-14-BH-5566-dispatcher.md)
+- 2026-10-14 — [Quartermaster: the cost lanes and two cost checks (BH-5564, wave 7 of #5556)](2026-10-14-BH-5564-quartermaster.md)
+- 2026-10-14 — [Staff learning loop: outcomes, precision, proposals, demotion (BH-5563, wave 6 of #5556)](2026-10-14-BH-5563-staff-learning.md)
 - 2026-10-11 — [worker/jobs/schema.sql leaves git (BH-6005.4, #6011)](2026-10-11-BH-6005-schema-sql-untracked.md)
 - 2026-10-11 — [Step in: notes reach the running build, the ticket and the hold (BH-5839)](2026-10-11-BH-5839-steer-notes.md)
 - 2026-10-11 — [The merge conductor reacts to PR events; the full tick is an hourly sweep (BH-5521)](2026-10-11-BH-5521-conductor-event-driven.md)
@@ -444,6 +508,9 @@ it belongs to, and re-render.
 
 ## ADDING-A-BOX
 
+- 2026-10-18 — [Box roles in the registry, a sync timer on every box, the watchdog list from the registry (BH-7303)](2026-10-18-BH-7303-registry-roles-sync-timer.md)
+- 2026-10-14 — [The orchestrator handles box and project requests from chat (BH-5751)](2026-10-14-BH-5751-box-requests.md)
+- 2026-10-10 — [2026-10-10 BH-5750: Mission Control box controls](2026-10-10-BH-5750-box-controls.md)
 - 2026-10-10 — [Restart, stop, resize and retire an Orgo box (BH-5749)](2026-10-10-BH-5749-box-ops-orgo.md)
 - 2026-10-09 — [One command launches an Orgo box (BH-5748)](2026-10-09-BH-5748-box-launch.md)
 - 2026-10-09 — [One command registers a box in every box list (BH-5747)](2026-10-09-BH-5747-box-register.md)
@@ -468,6 +535,9 @@ it belongs to, and re-render.
 
 ## ALERTS-GROOMING-SPEC
 
+- 2026-10-16 — [One watcher per component decides its alerts (BH-6972, wave 2 of #6546)](2026-10-16-BH-6972-component-watch.md)
+- 2026-10-16 — [alerts-groom removes the dated box flag families (BH-5934, slice C0)](2026-10-16-BH-5934-groom-dated-box-flags.md)
+- 2026-10-15 — [Every alert belongs to a component (BH-6971)](2026-10-15-BH-6971-alert-components.md)
 - 2026-10-11 — [The three LLM alert lanes run per project (BH-5942)](2026-10-11-BH-5942-llm-lanes-per-project.md)
 - 2026-10-04 — [BH-4055: PR events close merge-path alerts in the same drain](2026-10-04-BH-4055-pr-events-close-merge-alerts.md)
 - 2026-10-03 — [Groom closes pipeline-health rows whose condition cleared (BH-4056)](2026-10-03-BH-4056-ph-absent-groom.md)
@@ -477,6 +547,11 @@ it belongs to, and re-render.
 
 ## ALERTS-STATE-MACHINE
 
+- 2026-10-16 — [One watcher per component decides its alerts (BH-6972, wave 2 of #6546)](2026-10-16-BH-6972-component-watch.md)
+- 2026-10-16 — [pipeline-health project runs off the hub: the fleet-wide writes (BH-6892, BH-6881.10)](2026-10-16-BH-6892-pipeline-health-offhub.md)
+- 2026-10-16 — [Merge-conductor lane manifest and alert lines through the jobs API (BH-6889, BH-6881.5)](2026-10-16-BH-6889-mc-manifest-alert-lines.md)
+- 2026-10-15 — [Watchman: the security lanes, a history secret scan and a rotation register (BH-5565, wave 8 of #5556)](2026-10-15-BH-5565-watchman.md)
+- 2026-10-14 — [Dispatcher: the health lanes, a dead-feed watch and a post-deploy output check (BH-5566, wave 9 of #5556)](2026-10-14-BH-5566-dispatcher.md)
 - 2026-10-11 — [pipeline-health runs one process per project (BH-5941)](2026-10-11-BH-5941-pipeline-health-per-project.md)
 - 2026-10-07 — [Direction is not a take-over, and a resolver hand-off acts, says why not, or pages (BH-5125)](2026-10-07-BH-5125-direction-handoff.md)
 - 2026-10-06 — [2026-10-06 — BH-4938: opt-in auto-deploy of main HEAD (child 3 of #4916)](2026-10-06-BH-4938-served-sha-autodeploy.md)
@@ -522,6 +597,7 @@ it belongs to, and re-render.
 
 ## BOARD-API-CONTRACT
 
+- 2026-10-14 — [A ticket can name a spec repo its pool build may read (BH-6576)](2026-10-14-BH-6576-spec-repos.md)
 - 2026-10-05 — [Ticket text is data, not instructions (BH-4491)](2026-10-05-BH-4491-untrusted-input.md)
 - 2026-10-04 — [Only a listed human or the harness itself makes a ticket buildable (BH-4490)](2026-10-04-BH-4490-trigger-actor-gate.md)
 - 2026-10-04 — [Tracker contract: one verb set, two adapters, the adapter chosen by a settings row (BH-4075)](2026-10-04-BH-4075-tracker-contract.md)
@@ -533,6 +609,10 @@ it belongs to, and re-render.
 - 2026-09-24 — [Every board caller resolves its token the same way, and a prisma repo's suite gets its client first](2026-09-24-BH-1955-token-callers.md)
 - 2026-09-23 — [The in-app board lane of the child filer exists: `bin/lib/fc-board.sh`](2026-09-23-BH-983-board-lane-filer.md)
 - 2026-09-18 — [In-app ticket dependencies: the read side, and why a board webhook is not the fast path](2026-09-18-BH-815-inapp-dependencies-read-side.md)
+
+## BOX-SETUP
+
+- 2026-10-14 — [2026-10-14 — BH-6742: flyctl and gh stay current; security updates are provisioned](2026-10-14-BH-6742-runner-tools-current.md)
 
 ## BR-OPT
 
@@ -550,6 +630,7 @@ it belongs to, and re-render.
 
 ## CALL-GUARD
 
+- 2026-10-14 — [The build tripwire alerts and never stops a build (BH-6705)](2026-10-14-BH-6705-tripwire-alert-only.md)
 - 2026-10-08 — [review-prs re-reviews a blocked external PR's new head on GitHub (BH-5396)](2026-10-08-BH-5396-review-prs-stale-cr.md)
 - 2026-10-03 — [A reused review APPROVE carries its provenance (BH-4134)](2026-10-03-BH-4134-reuse-provenance.md)
 - 2026-10-03 — [A ticket the call-guard keeps refusing is parked, and an open PR skips the paid session (BH-3949, part 2 of BH-3943)](2026-10-03-BH-3949-triage-park.md)
@@ -569,8 +650,22 @@ it belongs to, and re-render.
 
 - 2026-09-22 — [BH-1319: the checkpoint adopt path unshallows, both squash refusals return 1, and the callers record them](2026-09-22-BH-1319-squash-unshallow-rc-twin.md)
 
+## CI-IMAGES
+
+- 2026-10-17 — [A shared CI base image, ghcr.io/example-org/ci-base (BH-7254)](2026-10-17-BH-7254-ci-base-image.md)
+
 ## CI-RUNNERS
 
+- 2026-10-17 — [harness-ci can run its four install-heavy jobs in a prebuilt image; the switch is off (BH-7255, slice C0)](2026-10-17-BH-7255-ci-image.md)
+- 2026-10-15 — [Suite ledger across gates: prequeue reads and writes it, and the runner image is in the key (BH-6925)](2026-10-15-BH-6925-suite-ledger-cross-gate.md)
+- 2026-10-15 — [Builds, fix rounds and the lead review run CI's lint job locally (BH-6897)](2026-10-15-BH-6897-ci-local.md)
+- 2026-10-15 — [CI shard count by measured time; a workflow edit selects its readers; a 35-minute shard page (BH-6876)](2026-10-15-BH-6876-ci-shard-sizing.md)
+- 2026-10-14 — [CI test value report: the extra sources and the report (BH-6640, BH-6618.4)](2026-10-14-BH-6618.4-report.md)
+- 2026-10-14 — [CI test value report: the model fallback (BH-6639, BH-6618.3)](2026-10-14-BH-6618.3-model-fallback.md)
+- 2026-10-14 — [CI test value report: the catch, test defect and order rules (BH-6638, BH-6618.2)](2026-10-14-BH-6618.2-catch-rules.md)
+- 2026-10-14 — [CI test value report: the infra and flake rules (BH-6637, BH-6618.1)](2026-10-14-BH-6618.1-infra-flake-rules.md)
+- 2026-10-14 — [CI test value report: the tracer CLI (BH-6636, BH-6618.0)](2026-10-14-BH-6618-ci-test-value-report.md)
+- 2026-10-14 — [Workflow checkouts keep no credential (BH-6522)](2026-10-14-BH-6522-checkout-credentials.md)
 - 2026-10-13 — [Suite fingerprint v2: a helper is an input of its consumers, and the nightly run never reuses (BH-6406, slice C1 of BH-6371)](2026-10-13-BH-6406-fingerprint-v2.md)
 - 2026-10-13 — [The trap-target guard is retired; its stale references are fixed (BH-5541)](2026-10-13-BH-5541-trap-target-guard-retired.md)
 - 2026-10-08 — [A merge-from-main PR push reuses the last green for the lint job's tree checks (BH-5357)](2026-10-08-BH-5357-pr-ci-merge-reuse.md)
@@ -608,11 +703,17 @@ it belongs to, and re-render.
 
 ## CONFLICT_HOTSPOTS
 
+- 2026-10-15 — [Hotspot split tickets (BH-6739, BH-6543.2)](2026-10-15-BH-6739-hotspot-split-ticket.md)
 - 2026-10-11 — [Conflict hotspots: one count per merge, no mergify or stale refs (BH-5236)](2026-10-11-BH-5236-conflict-hotspots-dedupe.md)
 - 2026-10-07 — [Every project's conflict hotspots, measured weekly and stored as rows](2026-10-07-BH-5267-conflict-hotspots-fleet.md)
 
 ## CONSOLE
 
+- 2026-10-17 — [Mission Control shows components, their open alerts and the watcher's decisions (BH-6973)](2026-10-17-BH-6973-components-screen.md)
+- 2026-10-15 — [Staff autonomy and delegation controls, with an audit (BH-6824, Staff in Mission Control 3/4)](2026-10-15-BH-6824-staff-autonomy-controls.md)
+- 2026-10-15 — [Talk to a staff agent (BH-6823, slice 2/4 of Staff in Mission Control)](2026-10-15-BH-6823-staff-chat.md)
+- 2026-10-15 — [Staff agent detail page (BH-6822, slice 1/4 of Staff in Mission Control)](2026-10-15-BH-6822-staff-agent-detail.md)
+- 2026-10-14 — [A new coord write route is a fragment file, not a row in WRITES (BH-6487)](2026-10-14-BH-6487-coord-write-fragments.md)
 - 2026-10-10 — [Mission Control catches a failed screen and reports it to Sentry (BH-5619)](2026-10-10-BH-5619-console-error-boundary.md)
 - 2026-10-10 — [Staff screen (BH-5567, wave 10 of #5556)](2026-10-10-BH-5567-staff-screen.md)
 - 2026-10-08 — [Mission Control participants screen (BH-5353, BH-5348.4)](2026-10-08-BH-5353-participants-screen.md)
@@ -624,6 +725,7 @@ it belongs to, and re-render.
 
 ## CONTEXT-COMPOSITION
 
+- 2026-10-15 — [Stage iron laws: one law-set directory, added by agent-call.sh (BH-6557)](2026-10-15-BH-6557-stage-iron-laws.md)
 - 2026-10-10 — [Staff heartbeat: one generic tick for every staff agent (BH-5561, wave 4 of #5556)](2026-10-10-BH-5561-staff-heartbeat.md)
 - 2026-09-25 — [Context kill as a runaway backstop: sized from p99, unmeasured lanes unarmed, repeat kills escalated](2026-09-25-BH-2538-context-kill-backstop.md)
 - 2026-09-25 — [The context kill is armed on the build, preplan, lead-review, post-merge QA and product lanes](2026-09-25-BH-2309-context-kill-lanes.md)
@@ -631,6 +733,10 @@ it belongs to, and re-render.
 
 ## COST
 
+- 2026-10-17 — [BH-7262: product stage on for seven projects, and a per-run USD cap](2026-10-17-BH-7262-product-fleet-enable.md)
+- 2026-10-15 — [The Fly idle reaper reads work, probes, and destroys (BH-6877)](2026-10-15-BH-6877-fly-usage-witness.md)
+- 2026-10-14 — [The build tripwire alerts and never stops a build (BH-6705)](2026-10-14-BH-6705-tripwire-alert-only.md)
+- 2026-10-14 — [Quartermaster: the cost lanes and two cost checks (BH-5564, wave 7 of #5556)](2026-10-14-BH-5564-quartermaster.md)
 - 2026-10-12 — [BH-6175: failed calls write a priced $0 row; unpriced calls alert per lane (slice C5 of BH-5526)](2026-10-12-BH-6175-unpriced-calls.md)
 - 2026-10-12 — [BH-6174: Mission Control shows each lane's spend today against its alert line and its ceiling (BH-5526 slice C4)](2026-10-12-BH-6174-lane-spend.md)
 - 2026-10-11 — [Fly idle stops get a cost row, and Mission Control shows the idle machines (BH-6061)](2026-10-11-BH-6061-fly-idle-rows.md)
@@ -695,7 +801,20 @@ it belongs to, and re-render.
 
 ## DB-COORDINATION-SPEC
 
+- 2026-10-17 — [Docker-pool claim lease (BH-7300, slice C0)](2026-10-17-BH-7300-docker-pool-lease.md)
+- 2026-10-16 — [The scheduler computes the ready set in shadow (BH-6978, BH-6547.2)](2026-10-16-BH-6978-scheduler-shadow.md)
+- 2026-10-16 — [Measure and retire lessons (BH-5808, wave 3 of #5794)](2026-10-16-BH-5808-lesson-measure.md)
+- 2026-10-15 — [Ticket edges and holds are rows (BH-6977, BH-6547.1)](2026-10-15-BH-6977-ticket-edges.md)
+- 2026-10-15 — [Every alert belongs to a component (BH-6971)](2026-10-15-BH-6971-alert-components.md)
+- 2026-10-15 — [Staff autonomy and delegation controls, with an audit (BH-6824, Staff in Mission Control 3/4)](2026-10-15-BH-6824-staff-autonomy-controls.md)
+- 2026-10-15 — [Talk to a staff agent (BH-6823, slice 2/4 of Staff in Mission Control)](2026-10-15-BH-6823-staff-chat.md)
+- 2026-10-15 — [Staff agent detail page (BH-6822, slice 1/4 of Staff in Mission Control)](2026-10-15-BH-6822-staff-agent-detail.md)
+- 2026-10-15 — [Propose fixes for repeat causes (BH-5807, wave 2 of #5794)](2026-10-15-BH-5807-lesson-propose.md)
+- 2026-10-14 — [Review autopilot: the record is ledger rows when no-twin-ledgers is up (BH-4156 C1)](2026-10-14-BH-4156-review-autopilot-rows.md)
+- 2026-10-14 — [Merge-conductor state: one attempt read per repo per tick, and the fresh-hub drill (BH-4156)](2026-10-14-BH-4156-mc-batch-read-drill.md)
+- 2026-10-14 — [The main-red lanes keep their records as rows (BH-4156, child C2)](2026-10-14-BH-4156-main-red-state-tables.md)
 - 2026-10-13 — [CREATED_TABLES derives from worker/jobs/schema.d (BH-4987, slice C5)](2026-10-13-BH-4987-created-tables-derived.md)
+- 2026-10-13 — [The pause_flags mirror is retired, and a lint freezes new flags/ writes (BH-4154, slice C0)](2026-10-13-BH-4154-mirror-retired.md)
 - 2026-10-12 — [flag_on reads a ported routing name from its row (BH-5960)](2026-10-12-BH-5960-routing-rows-flag-on.md)
 - 2026-10-11 — [Step in: notes reach the running build, the ticket and the hold (BH-5839)](2026-10-11-BH-5839-steer-notes.md)
 - 2026-10-10 — [A project's migration SQL can live outside scripts/migrations (BH-5963)](2026-10-10-BH-5963-migrations-glob.md)
@@ -793,6 +912,7 @@ it belongs to, and re-render.
 
 ## DORA
 
+- 2026-10-15 — [Who spends the GitHub REST budget (BH-6974, wave 1 of 3 of #6545)](2026-10-15-BH-6974-gh-budget-report.md)
 - 2026-10-12 — [Rework rollup: completeness is per repo and week (BH-6165)](2026-10-12-BH-6165-rework-week-complete.md)
 - 2026-10-03 — [`reworked`, a fourth outcome in bin/outcome-metrics.sh (BH-3956)](2026-10-03-BH-3956-rework-outcome.md)
 
@@ -806,6 +926,11 @@ it belongs to, and re-render.
 
 ## FLAKY-TESTS
 
+- 2026-10-14 — [CI test value report: the extra sources and the report (BH-6640, BH-6618.4)](2026-10-14-BH-6618.4-report.md)
+- 2026-10-14 — [CI test value report: the model fallback (BH-6639, BH-6618.3)](2026-10-14-BH-6618.3-model-fallback.md)
+- 2026-10-14 — [CI test value report: the catch, test defect and order rules (BH-6638, BH-6618.2)](2026-10-14-BH-6618.2-catch-rules.md)
+- 2026-10-14 — [CI test value report: the infra and flake rules (BH-6637, BH-6618.1)](2026-10-14-BH-6618.1-infra-flake-rules.md)
+- 2026-10-14 — [CI test value report: the tracer CLI (BH-6636, BH-6618.0)](2026-10-14-BH-6618-ci-test-value-report.md)
 - 2026-10-11 — [The local test image runs gawk as awk; the tag moves to trixie.5 (BH-5583)](2026-10-11-BH-5583-test-image-gawk.md)
 - 2026-10-09 — [The flaky-tier lane can release a quarantine row again (BH-4321)](2026-10-09-BH-4321-flaky-tier-release-wiring.md)
 - 2026-10-05 — [BH-4585 (BH-4574.3): Archie's rebase-repair playbook](2026-10-05-BH-4585-archie-fm-playbooks.md)
@@ -818,6 +943,8 @@ it belongs to, and re-render.
 
 ## FLY-BUILDER-TRIAL
 
+- 2026-10-16 — [The pool reclaims orphan slots, names a stall, and cancels held in-flight builds (BH-7107)](2026-10-16-BH-7107-pool-orphan-reclaim.md)
+- 2026-10-15 — [Nightly filer labels as the App; the pool checks the label actor before a spawn (BH-6957)](2026-10-15-BH-6957-nightly-filer-actor.md)
 - 2026-10-07 — [A reused pool machine never hands a held build slot to the next build (BH-5021)](2026-10-07-BH-5021-pool-slot-clean.md)
 - 2026-10-07 — [BH-5006: pool close-out custody sweep, and a terminal skip that says why](2026-10-07-BH-5006-pool-custody.md)
 - 2026-10-07 — [The Fly pool's spawn caps, terminals and holds as rows](2026-10-07-BH-5001-pool-state-db.md)
@@ -830,8 +957,15 @@ it belongs to, and re-render.
 
 - 2026-09-19 — [BH-1058 — fly-pool-tick.sh onboard-drain resolves retry policy from retry_policies](2026-09-19-BH-1058-onboard-retry-policy.md)
 
+## FLY-POOL
+
+- 2026-10-17 — [Pool machines no longer exit before the hub pushes their job (BH-7215)](2026-10-17-BH-7215-pool-warmup.md)
+- 2026-10-16 — [The pool never waits on a number we chose, and a machine-hour budget bounds the spend (BH-7190)](2026-10-16-BH-7190-pool-never-wait.md)
+
 ## FLY-POOL-RESPAWN-CAP
 
+- 2026-10-15 — [A pool "push rejected" is compared with the remote before it is terminal (BH-6821)](2026-10-15-BH-6821-pool-push-rejected-landed.md)
+- 2026-10-13 — [The pool caches each issue's HOLD verdict, so a held ticket costs no thread read (BH-6549)](2026-10-13-BH-6549-pool-hold-cache.md)
 - 2026-10-11 — [Overlap deferrals stop using up the per-key pool spawn cap (BH-5912)](2026-10-11-BH-5912-overlap-defer-uncounted.md)
 - 2026-10-06 — [The pool bundles before it spawns, and the spawn cap is a timed retry (BH-4859)](2026-10-06-BH-4859-bundle-before-spawn.md)
 - 2026-09-26 — [A stopped pool machine's result comes from a row, and the pause names its source (BH-2643)](2026-09-26-BH-2643-pool-result-row.md)
@@ -839,6 +973,7 @@ it belongs to, and re-render.
 
 ## GH-REST
 
+- 2026-10-13 — [The pool caches each issue's HOLD verdict, so a held ticket costs no thread read (BH-6549)](2026-10-13-BH-6549-pool-hold-cache.md)
 - 2026-10-06 — [BH-4798: a box with no plain PAT no longer stops the pool at the env bundle](2026-10-06-BH-4798-pool-bundle-no-pat.md)
 - 2026-10-05 — [BH-4659 (BH-4656.1): the conductor and batch-resolve read the PR snapshot; branch tips from one refs read](2026-10-05-BH-4659-pr-snapshot-lanes.md)
 - 2026-10-05 — [BH-4658 (BH-4656 part 1): the PR snapshot, and lead-review-enqueue reads heads through it](2026-10-05-BH-4656-pr-snapshot.md)
@@ -851,6 +986,14 @@ it belongs to, and re-render.
 
 ## HARNESS-COORDINATION
 
+- 2026-10-17 — [Merge lock to the project lease, re-review cap to D1 (BH-6887, BH-6881.3)](2026-10-17-BH-6887-mc-lease-budget.md)
+- 2026-10-16 — [The scheduler computes the ready set in shadow (BH-6978, BH-6547.2)](2026-10-16-BH-6978-scheduler-shadow.md)
+- 2026-10-16 — [pipeline-health project runs off the hub: the fleet-wide writes (BH-6892, BH-6881.10)](2026-10-16-BH-6892-pipeline-health-offhub.md)
+- 2026-10-16 — [Merge-conductor lane manifest and alert lines through the jobs API (BH-6889, BH-6881.5)](2026-10-16-BH-6889-mc-manifest-alert-lines.md)
+- 2026-10-15 — [Ticket edges and holds are rows (BH-6977, BH-6547.1)](2026-10-15-BH-6977-ticket-edges.md)
+- 2026-10-15 — [Project lease with a fence token (BH-6883, BH-6881.1)](2026-10-15-BH-6883-project-lease.md)
+- 2026-10-14 — [The orchestrator handles box and project requests from chat (BH-5751)](2026-10-14-BH-5751-box-requests.md)
+- 2026-10-10 — [2026-10-10 BH-5750: Mission Control box controls](2026-10-10-BH-5750-box-controls.md)
 - 2026-10-03 — [fetch_artifact reads the pool build's remote dir, and a far box's answer reaches the beat (BH-3945)](2026-10-03-BH-3945-fetch-artifact-pool-dir-and-box-beat.md)
 - 2026-09-26 — [An operator's ABANDON survives a worker outage on the box that saw it (BH-2505)](2026-09-26-BH-2505-abandon-cache.md)
 - 2026-09-26 — [The main-red detector publishes the detail row and honours an operator clear (BH-2373)](2026-09-26-BH-2373-detector-main-red-row-and-clear.md)
@@ -890,10 +1033,13 @@ it belongs to, and re-render.
 
 ## LEAD-REVIEW
 
+- 2026-10-17 — [The self-check refuses a gating PR with no fenced live-probes block (BH-7074)](2026-10-17-BH-7074-live-probes-gating.md)
+- 2026-10-16 — [A builder APPROVE carries to a merge-only head, and the replay fetch retries (BH-7043)](2026-10-16-BH-7043-builder-carry.md)
 - 2026-10-13 — [A PR carries only its own ticket's commits (BH-6394)](2026-10-13-BH-6394-foreign-commits.md)
 - 2026-10-13 — [A test belongs to its ticket: the self-check enforces D51 (BH-6392)](2026-10-13-BH-6392-test-ownership.md)
 - 2026-10-13 — [BH-6391: a lead re-review reads the delta, and keeps old findings stable](2026-10-13-BH-6391-rereview-delta-scope.md)
 - 2026-10-13 — [2026-10-13 BH-6372.3: the lead review caps INCONCLUSIVE evidence on perf PRs at BLOCK](2026-10-13-BH-6372-lead-review-cap.md)
+- 2026-10-13 — [Hold, retry and spend gates on the lead review worklist (BH-5876, child 4 of #5870)](2026-10-13-BH-5876-lead-gates-holds-caps.md)
 - 2026-10-12 — [pr-self-check ends a body section at a same-or-higher heading (BH-6191)](2026-10-12-BH-6191-psc-section-level.md)
 - 2026-10-12 — [The lead review keeps the review, not the postscript (BH-6090)](2026-10-12-BH-6090-lead-review-postscript.md)
 - 2026-10-11 — [Silence, risk tier and in-build grace gates on the lead review worklist (BH-5875, child 3 of #5870)](2026-10-11-BH-5875-lead-gates-silence-risk.md)
@@ -930,6 +1076,7 @@ it belongs to, and re-render.
 
 ## MCP
 
+- 2026-10-14 — [Console command kinds for fleet control (BH-6737)](2026-10-14-BH-6737-fleet-control-commands.md)
 - 2026-10-09 — [Console and MCP comment_issue / hold_ticket reach the hub (BH-5820)](2026-10-09-BH-5820-board-commands.md)
 - 2026-10-09 — [The MCP server reads the merge queue: merge_queue, pr_stage, backlog (BH-5671)](2026-10-09-BH-5671-mcp-merge-queue-tools.md)
 - 2026-10-08 — [The local MCP server logs in with the console secret (BH-5226)](2026-10-08-BH-5226-mcp-cookie-login.md)
@@ -942,10 +1089,19 @@ it belongs to, and re-render.
 
 ## MERGIFY
 
+- 2026-10-17 — [A batch-fail suite fix goes first in the merge queue (BH-7279)](2026-10-17-BH-7279-flake-fix-queue.md)
+- 2026-10-17 — [Merge origin/main into a PR branch only on a real conflict (BH-7042)](2026-10-17-BH-7042-main-merge-only-on-conflict.md)
+- 2026-10-17 — [BH-5373 r2: culprit ejection on, bisect off (2026-10-17)](2026-10-17-BH-5373-culprit-flip-on.md)
+- 2026-10-16 — [Direct merge in optimistic landing mode (BH-6745, wave 2 of #6541)](2026-10-16-BH-6745-optimistic-landing.md)
+- 2026-10-15 — [Suite ledger across gates: prequeue reads and writes it, and the runner image is in the key (BH-6925)](2026-10-15-BH-6925-suite-ledger-cross-gate.md)
+- 2026-10-15 — [2026-10-15 — BH-6801: a stacked PR's shards take the plan job's main merge-base](2026-10-15-BH-6801-shard-pinned-main-base.md)
+- 2026-10-14 — [Culprit reach uses the batch select; a non-test workflow edit selects (BH-6688)](2026-10-14-BH-6688-infra-path-reach.md)
+- 2026-10-14 — [A lead|human post sends client level 4, and an old lib is named (BH-6617)](2026-10-14-BH-6617-client-level-4.md)
 - 2026-10-13 — [A stacked merge-queue batch escalates only on its own diff (BH-6490)](2026-10-13-BH-6490-own-diff-escalation.md)
 - 2026-10-13 — [Suite fingerprint v2: a helper is an input of its consumers, and the nightly run never reuses (BH-6406, slice C1 of BH-6371)](2026-10-13-BH-6406-fingerprint-v2.md)
 - 2026-10-13 — [A tests/lib helper or an add-only rules diff selects in a merge-queue batch (BH-6371, slice C0)](2026-10-13-BH-6371-testlib-batch-select.md)
 - 2026-10-13 — [A batch that failed only on a no-verdict shard re-queues its PR once (BH-6336)](2026-10-13-BH-6336-no-verdict-retry.md)
+- 2026-10-13 — [2026-10-13 — BH-5373: the impact map's two fixes (the culprit flip waits)](2026-10-13-BH-5373-culprit-flip.md)
 - 2026-10-12 — [Mergify builds 3 speculative batches at once, not 8 (BH-6337)](2026-10-12-BH-6337-mergify-parallel-checks-three.md)
 - 2026-10-12 — [Every queue ejection records its cause, and a requeue waits for a pre-queue run (BH-6161)](2026-10-12-BH-6161-eject-cause-requeue-gate.md)
 - 2026-10-10 — [Merge-queue reconciler lane (BH-5670)](2026-10-10-BH-5670-merge-queue-reconcile.md)
@@ -986,6 +1142,8 @@ it belongs to, and re-render.
 
 ## MIRROR-NOTES
 
+- 2026-10-15 — [The registry guard maps repo slugs by exact rows (BH-6797)](2026-10-15-BH-6797-registry-repo-rows.md)
+- 2026-10-13 — [The Cromford seed filters move into the publisher, and a registry guard (BH-6494)](2026-10-13-BH-6494-cromford-filters.md)
 - 2026-10-13 — [The publisher maps project-6's box short-name (BH-6469)](2026-10-13-BH-6469-box6-mirror-name.md)
 - 2026-10-07 — [The share publisher drops `.harness/`, the build records (BH-5055)](2026-10-07-BH-5055-share-drops-harness-dir.md)
 - 2026-10-05 — [The public copy, cromford-ai/cromford, is built and armed by a secret (BH-4083)](2026-10-05-BH-4083-public-release.md)
@@ -1023,6 +1181,8 @@ it belongs to, and re-render.
 
 ## MODULE-MAP
 
+- 2026-10-16 — [bin/lead-review.sh split into bin/lib/lead-review/ modules, with a growth lint (BH-6293)](2026-10-16-BH-6293-lead-review-split.md)
+- 2026-10-13 — [The resolver's build-record discovery sources live only in bin/lib/br/discovery.sh (BH-6517)](2026-10-13-BH-6517-br-discovery-cut.md)
 - 2026-10-13 — [The resolver's ticket-key family lives only in bin/lib/br/keys.sh (BH-6461)](2026-10-13-BH-6461-br-keys-cut.md)
 - 2026-10-13 — [The sweep's terminal-cache helpers live only in bin/lib/ms/terminal.sh (BH-5242)](2026-10-13-BH-5242-ms-terminal-cut.md)
 - 2026-10-13 — [The resolver's record layer lives only in bin/lib/br/record.sh (BH-5241)](2026-10-13-BH-5241-br-record-cut.md)
@@ -1030,6 +1190,27 @@ it belongs to, and re-render.
 
 ## OPERATING
 
+- 2026-10-18 — [Box roles in the registry, a sync timer on every box, the watchdog list from the registry (BH-7303)](2026-10-18-BH-7303-registry-roles-sync-timer.md)
+- 2026-10-17 — [BH-7191 (BH-7302): fleet version check, the tracer](2026-10-17-BH-7191-fleet-version-check.md)
+- 2026-10-16 — [A PLAN_BLOCKED build says why, and the stranded watch waits for an answer (BH-7116)](2026-10-16-BH-7116-plan-blocked-notice.md)
+- 2026-10-16 — [stage_events_daily archive rule (BH-7109, Scope 4 + R5 of BH-6779)](2026-10-16-BH-7109-stage-events-daily-archive.md)
+- 2026-10-16 — [D1 overload retry waits longer and names the query (BH-6813)](2026-10-16-BH-6813-d1-overload-retry-longer.md)
+- 2026-10-15 — [An intent review for a medium-risk head (BH-6967)](2026-10-15-BH-6967-intent-review.md)
+- 2026-10-15 — [Repair on push: a push to main wakes repair on the PRs it touches (BH-6963, wave 1 of #6542)](2026-10-15-BH-6963-repair-on-push.md)
+- 2026-10-15 — [Nightly filer labels as the App; the pool checks the label actor before a spawn (BH-6957)](2026-10-15-BH-6957-nightly-filer-actor.md)
+- 2026-10-15 — [Hub load baseline, posted once after 24 h (BH-6939, rest of #6882)](2026-10-15-BH-6939-hub-load-baseline.md)
+- 2026-10-15 — [QA findings: collect first, one issue per screen or flow (BH-6902, slice C0)](2026-10-15-BH-6902-group-findings.md)
+- 2026-10-15 — [Builds, fix rounds and the lead review run CI's lint job locally (BH-6897)](2026-10-15-BH-6897-ci-local.md)
+- 2026-10-15 — [Hub load sampler lane (BH-6882, part of #6881)](2026-10-15-BH-6882-hub-load-sample.md)
+- 2026-10-15 — [Ledger archive read fallback (BH-6863, slice C0 of BH-6780)](2026-10-15-BH-6863-ledger-archive-read.md)
+- 2026-10-15 — [Ported-flag routes answer a D1 overload with a 503 (BH-6805)](2026-10-15-BH-6805-flags-overload-503.md)
+- 2026-10-15 — [Hotspot split tickets (BH-6739, BH-6543.2)](2026-10-15-BH-6739-hotspot-split-ticket.md)
+- 2026-10-15 — [A data-lane-only review BLOCK keeps its branch as a draft PR (BH-6467)](2026-10-15-BH-6467-data-lane-draft-rereview.md)
+- 2026-10-14 — [Scheduled D1 retention (BH-6750, slice 2 of BH-6727)](2026-10-14-BH-6750-d1-retention.md)
+- 2026-10-14 — [Sibling parts get a file list: project roots, list source, cause per wait (BH-6715)](2026-10-14-BH-6715-planned-file-roots.md)
+- 2026-10-14 — [A HUMAN-STEP-DONE answer to the builder's REQUEST_CHANGES requests the lead review (BH-6696)](2026-10-14-BH-6696-human-step-done-lead-review.md)
+- 2026-10-13 — [A human step done on a REVIEW_BLOCKED ticket re-reviews the built branch (BH-6536)](2026-10-13-BH-6536-human-step-rereview.md)
+- 2026-10-13 — [The SQL identifier ratchet and `sqlIdent` (BH-6514, slice BH-6521)](2026-10-13-BH-6514-sql-ident-lint.md)
 - 2026-10-13 — [Main-red: re-check flagged repos every 5 minutes (BH-6502)](2026-10-13-BH-6502-main-red-recheck.md)
 - 2026-10-13 — [Main-red pass: flagged repos first, and no silent skip (BH-6352)](2026-10-13-BH-6352-main-red-pass-order.md)
 - 2026-10-13 — [Dispatch mode per project: normal, hotfix-only with an allow-list, paused (BH-6350)](2026-10-13-BH-6350-dispatch-mode.md)
@@ -1066,12 +1247,15 @@ it belongs to, and re-render.
 
 ## PLAN-CONTRACT
 
+- 2026-10-15 — [Spec trace: plans and reviews check a slice against the spec it came from (BH-6485)](2026-10-15-BH-6485-spec-trace.md)
 - 2026-10-13 — [Seam file per sibling, `Owns:` lines, owns-overlap lint, HUB_MODULE (BH-6384)](2026-10-13-BH-6384-seam-files.md)
 - 2026-10-10 — [Design collisions at PLAN, and the caller list after the main merge (BH-5791)](2026-10-10-BH-5791-design-collisions.md)
 - 2026-10-08 — [Conflict discipline in the builder prompts, the hotspot list in the primer, and the Shared-files report (BH-5269)](2026-10-08-BH-5269-conflict-discipline-prompts.md)
 
 ## PR-OWNERSHIP
 
+- 2026-10-16 — [BH-6717: close-duplicate counts only a merge after the PR was opened](2026-10-16-BH-6717-close-duplicate-later-part.md)
+- 2026-10-15 — [The duplicate-close guard (BH-6929)](2026-10-15-BH-6929-dup-guard.md)
 - 2026-10-07 — [pr-owner-sweep stops trusting a stale local conductor file (BH-5124)](2026-10-07-BH-5124-pr-owner-conductor-read.md)
 - 2026-10-05 — [BH-4668: the fix round on an external PR (BH-4664.1)](2026-10-05-BH-4668-external-pr-fix-round.md)
 - 2026-10-05 — [BH-4664: external PRs in the blocked-resolver (BH-4667 is the tracer)](2026-10-05-BH-4664-external-pr-fix-rounds.md)
@@ -1085,7 +1269,19 @@ it belongs to, and re-render.
 
 ## PROJECT-LANES
 
+- 2026-10-15 — [Lane-run machines: name the head-read error, check fleet repos at start, refuse unreadable repos at claim (BH-6942)](2026-10-15-BH-6942-lane-run-repo-check.md)
+- 2026-10-15 — [pr-url-reconcile runs per project, with a manifest pair (BH-6894)](2026-10-15-BH-6894-pr-url-reconcile-per-project.md)
+- 2026-10-15 — [review-rescue runs per project (BH-6893, BH-6881.11)](2026-10-15-BH-6893-review-rescue-per-project.md)
+- 2026-10-15 — [Lane runs: one batch enqueue per tick (BH-6886, BH-6881.8)](2026-10-15-BH-6886-lane-runs-batch.md)
+- 2026-10-15 — [Lane-run fleet: several starts per tick, and claims that prefer warm clones (BH-6885)](2026-10-15-BH-6885-lane-fleet-multistart.md)
+- 2026-10-15 — [Lane-run machines run current code; a non-zero run is `failed` (BH-6817)](2026-10-15-BH-6817-lane-run-fresh-code.md)
+- 2026-10-14 — [The rest of #5938's lanes stay on the hub for now (BH-6721, BH-6047.8, C8)](2026-10-14-BH-6721-lanes-offhub.md)
+- 2026-10-14 — [The LLM alert lanes have input manifests (BH-6720, BH-6047.7)](2026-10-14-BH-6720-llm-alert-lanes-offhub.md)
+- 2026-10-14 — [Lane-run inputs are per-lane manifests (BH-6719, BH-6047.6)](2026-10-14-BH-6719-lane-run-inputs-manifests.md)
+- 2026-10-14 — [Merge-conductor per-PR workers on lane-run machines (BH-6495, BH-6047.5)](2026-10-14-BH-6495-conductor-fly.md)
+- 2026-10-14 — [blocked-resolver is placed on Fly (BH-6260)](2026-10-14-BH-6260-blocked-resolver-flip.md)
 - 2026-10-12 — [blocked-resolver runs on Fly lane machines (BH-6128, BH-6047 part 5 of 5)](2026-10-12-BH-6128-blocked-resolver-offhub.md)
+- 2026-10-12 — [Lane-run metrics on Mission Control and the queue-wait alert (BH-6127, BH-6047 part 4 of 5)](2026-10-12-BH-6127-lane-run-metrics.md)
 - 2026-10-12 — [Lane-run Fly fleet: the autoscaler (BH-6126, BH-6047 part 3 of 5)](2026-10-12-BH-6126-lane-fleet.md)
 - 2026-10-12 — [Lane runs: the lease heartbeat and the death count (BH-6125, BH-6047 part 2 of 5)](2026-10-12-BH-6125-lane-run-lease.md)
 - 2026-10-12 — [Lane runs on Fly: the queue contract (BH-6124, BH-6047 part 1 of 5)](2026-10-12-BH-6124-lane-runs.md)
@@ -1101,6 +1297,7 @@ it belongs to, and re-render.
 
 ## READINESS
 
+- 2026-10-15 — [Spec trace: plans and reviews check a slice against the spec it came from (BH-6485)](2026-10-15-BH-6485-spec-trace.md)
 - 2026-10-13 — [Box merge queue re-checks CI, reviewed sha and park state before every merge (BH-6428)](2026-10-13-BH-6428-merge-queue-red-guard.md)
 - 2026-10-03 — [Onboarding study pass: `bin/onboard-study.sh` (BH-4074, slice C0)](2026-10-03-BH-4074-onboard-study-pass.md)
 
@@ -1143,6 +1340,10 @@ it belongs to, and re-render.
 
 - 2026-09-25 — [P4: plan-driven model routing, recorded in shadow](2026-09-25-P4-route-rules-shadow.md)
 
+## RUNNER-CLIS
+
+- 2026-10-14 — [2026-10-14 — BH-6742: flyctl and gh stay current; security updates are provisioned](2026-10-14-BH-6742-runner-tools-current.md)
+
 ## SCALE-PLAN-2
 
 - 2026-10-09 — [One command launches an Orgo box (BH-5748)](2026-10-09-BH-5748-box-launch.md)
@@ -1150,6 +1351,7 @@ it belongs to, and re-render.
 ## SCHEDULER
 
 - 2026-10-13 — [BH-6374: sibling parts of one split ticket run one at a time when they share a file](2026-10-13-BH-6374-sibling-serial.md)
+- 2026-10-13 — [BH-6374 C1: sibling parts by board key, pool stacking, squash-base merge, replay](2026-10-13-BH-6374-sibling-parts-c1.md)
 - 2026-10-12 — [Overlap schedule: read-mostly paths are not collisions (BH-6299)](2026-10-12-BH-6299-read-mostly-paths.md)
 - 2026-10-08 — [BH-4988: sequence rollout siblings on any shared file, seams in the .0 contract](2026-10-08-BH-4988-sibling-sequencing.md)
 - 2026-10-07 — [The plan-time overlap gate counts a hotspot a plan names only lightly (BH-5268)](2026-10-07-BH-5268-plan-overlap-hotspots.md)
@@ -1164,6 +1366,9 @@ it belongs to, and re-render.
 
 ## SELF-HOST
 
+- 2026-10-17 — [Cromford release commits carry bullet release notes (BH-7185)](2026-10-17-BH-7185-cromford-release-notes.md)
+- 2026-10-15 — [The registry guard maps repo slugs by exact rows (BH-6797)](2026-10-15-BH-6797-registry-repo-rows.md)
+- 2026-10-13 — [The Cromford seed filters move into the publisher, and a registry guard (BH-6494)](2026-10-13-BH-6494-cromford-filters.md)
 - 2026-10-09 — [The self-host installer runs under macOS bash 3.2 (BH-5732)](2026-10-09-BH-5732-selfhost-install-bash32.md)
 - 2026-10-07 — [Operating lessons, defaults and builder rules written down (BH-5289)](2026-10-07-BH-5289-operating-lessons.md)
 - 2026-10-07 — [The share publisher drops `.harness/`, the build records (BH-5055)](2026-10-07-BH-5055-share-drops-harness-dir.md)
@@ -1176,6 +1381,9 @@ it belongs to, and re-render.
 
 ## TEST-DETERMINISM
 
+- 2026-10-15 — [CI blocks on factory checks and reached suites; the corpus and hygiene lints run nightly (BH-6838)](2026-10-15-BH-6838-ci-nightly-split.md)
+- 2026-10-13 — [race-wall-bound: a test asserts the order of events, not elapsed seconds](2026-10-13-BH-6508-race-wall-bound.md)
+- 2026-10-12 — [2026-10-12 — BH-6109: race-sigpipe-echo, a printf/echo pipe into grep -q or head](2026-10-12-BH-6109-sigpipe-echo-rule.md)
 - 2026-10-11 — [Suites that read a UTC day stamp wait out 00:00Z (BH-6052)](2026-10-11-BH-6052-day-boundary-guard.md)
 - 2026-10-08 — [The share suites read one mirror build per tree (BH-5543)](2026-10-08-BH-5543-share-mirror-cache.md)
 - 2026-09-24 — [date-empty-stamp: a null quota poll reads stale, not fresh since midnight](2026-09-24-BH-1898-date-empty-stamp-account-pick.md)
@@ -1192,6 +1400,13 @@ it belongs to, and re-render.
 
 ## TESTING
 
+- 2026-10-17 — [A new bin/agent-call.sh call must turn tools off or say why (BH-7276)](2026-10-17-BH-7276-agent-call-no-tools-lint.md)
+- 2026-10-17 — [Hub project-loop ratchet, cron staggers, lead-review lock measure (BH-5945)](2026-10-17-BH-5945-ratchet-and-staggers.md)
+- 2026-10-16 — [bin/lead-review.sh split into bin/lib/lead-review/ modules, with a growth lint (BH-6293)](2026-10-16-BH-6293-lead-review-split.md)
+- 2026-10-14 — [Tests get no GitHub credential, and build files carry no token shape (BH-6672)](2026-10-14-BH-6672-test-credential-isolation.md)
+- 2026-10-13 — [The SQL identifier ratchet and `sqlIdent` (BH-6514, slice BH-6521)](2026-10-13-BH-6514-sql-ident-lint.md)
+- 2026-10-13 — [Learned impact edges expire after N clean passes (BH-6460, slice C3 of BH-6390)](2026-10-13-BH-6460-impact-edge-expiry.md)
+- 2026-10-13 — [The builder gate runs the whole-repo suites on HEAD merged with fresh main, and ranks a learned edge above closure (BH-6459, slice C2 of BH-6390)](2026-10-13-BH-6459-gate-fresh-main.md)
 - 2026-10-13 — [A hub lane opens the learned-edge PR (BH-6458, slice C1 of BH-6390)](2026-10-13-BH-6458-impact-learn-lane.md)
 - 2026-10-13 — [A merge-queue failure can add the impact-map edge it missed (BH-6390, slice C0)](2026-10-13-BH-6390-impact-learned-edges.md)
 - 2026-10-11 — [Three flaky tests made deterministic (BH-5544)](2026-10-11-BH-5544-flaky-tests-deterministic.md)
@@ -1228,10 +1443,17 @@ it belongs to, and re-render.
 
 ## VERIFICATION-MAP
 
+- 2026-10-16 — [BH-7117: the triage pass takes hotfix tickets first](2026-10-16-BH-7117-hotfix-intake-first.md)
+- 2026-10-15 — [The verdict routes answer 503 when the D1 retry gives up (BH-6807)](2026-10-15-BH-6807-verdict-overload-503.md)
+- 2026-10-14 — [harness-jobs retries a D1 overload (BH-6690)](2026-10-14-BH-6690-d1-overload-retry.md)
+- 2026-10-14 — [The worker deploy snapshot carries agent-core/ (BH-6687)](2026-10-14-BH-6687-worker-snapshot-agent-core.md)
+- 2026-10-14 — [BH-5788: key-named fragments, and three lints for shared append points](2026-10-14-BH-5788-fragment-append-points.md)
+- 2026-10-14 — [The main-red lanes keep their records as rows (BH-4156, child C2)](2026-10-14-BH-4156-main-red-state-tables.md)
 - 2026-10-13 — [Main-red: re-check flagged repos every 5 minutes (BH-6502)](2026-10-13-BH-6502-main-red-recheck.md)
 - 2026-10-13 — [Main-red pass: flagged repos first, and no silent skip (BH-6352)](2026-10-13-BH-6352-main-red-pass-order.md)
 - 2026-10-13 — [Dispatch mode per project: normal, hotfix-only with an allow-list, paused (BH-6350)](2026-10-13-BH-6350-dispatch-mode.md)
 - 2026-10-12 — [A comment holds only on its first line, and every lane reads it one way (BH-6297)](2026-10-12-BH-6297-hold-first-line.md)
+- 2026-10-12 — [Lane-run metrics on Mission Control and the queue-wait alert (BH-6127, BH-6047 part 4 of 5)](2026-10-12-BH-6127-lane-run-metrics.md)
 - 2026-10-09 — [BH-5781: D1 overload relief](2026-10-09-BH-5781-d1-overload.md)
 - 2026-10-05 — [BH-4662 (BH-4656 part 5): a sliced plan never closes its parent, and "children own the rest" only when a child exists](2026-10-05-BH-4662-slice-closeout-children.md)
 - 2026-10-05 — [BH-4660 (BH-4656 part 3): stuck-work reads CI and comment threads only on change](2026-10-05-BH-4660-stuck-work-reads.md)
@@ -1253,6 +1475,10 @@ it belongs to, and re-render.
 
 - 2026-09-24 — [The worker route-table fixture is one fragment per route family](2026-09-24-LANE-E-route-table-fragments.md)
 
+## [docs/verification-map/BH-6975.md](../verification-map/BH-6975.md)
+
+- 2026-10-16 — [BH-6975: the merge conductor acts on PR and check wakes within a minute](2026-10-16-BH-6975-mc-wake.md)
+
 ## `docs/AUTH.md`
 
 - 2026-09-22 — [BH-1424: route close-out issue reads through the App token over REST](2026-09-22-BH-1424-issue-reads-app-token.md)
@@ -1271,8 +1497,13 @@ it belongs to, and re-render.
 
 ## bin/console-preview-deploy.sh
 
+- 2026-10-15 — [Console preview: the lane strips preview bindings, and QA reports a binding gap (BH-6923)](2026-10-15-BH-6923-console-preview-bindings.md)
 - 2026-10-13 — [Console preview: nothing a build starts outlives it (BH-6073)](2026-10-13-BH-6073-console-preview-build-iso.md)
 - 2026-10-12 — [Console preview: the streak head and its retry (BH-6270)](2026-10-12-BH-6270-console-preview-streak-retry.md)
+
+## bin/console-qa-run.mjs
+
+- 2026-10-15 — [Console preview: the lane strips preview bindings, and QA reports a binding gap (BH-6923)](2026-10-15-BH-6923-console-preview-bindings.md)
 
 ## bin/lib/br/opt/README.md
 
@@ -1301,7 +1532,13 @@ it belongs to, and re-render.
 
 ## ci-durations
 
+- 2026-10-15 — [CI shard count by measured time; a workflow edit selects its readers; a 35-minute shard page (BH-6876)](2026-10-15-BH-6876-ci-shard-sizing.md)
 - 2026-10-09 — [CI suite durations go to a jobs worker table (BH-5653)](2026-10-09-BH-5653-ci-durations-db.md)
+
+## ci-test-tiers
+
+- 2026-10-15 — [CI shard count by measured time; a workflow edit selects its readers; a 35-minute shard page (BH-6876)](2026-10-15-BH-6876-ci-shard-sizing.md)
+- 2026-10-15 — [CI blocks on factory checks and reached suites; the corpus and hygiene lints run nightly (BH-6838)](2026-10-15-BH-6838-ci-nightly-split.md)
 
 ## config-inventory
 
@@ -1316,6 +1553,8 @@ it belongs to, and re-render.
 
 ## console-ui/README.md
 
+- 2026-10-17 — [Mission Control shows components, their open alerts and the watcher's decisions (BH-6973)](2026-10-17-BH-6973-components-screen.md)
+- 2026-10-14 — [A new coord write route is a fragment file, not a row in WRITES (BH-6487)](2026-10-14-BH-6487-coord-write-fragments.md)
 - 2026-10-10 — [Mission Control catches a failed screen and reports it to Sentry (BH-5619)](2026-10-10-BH-5619-console-error-boundary.md)
 
 ## deploy-queue-rows
@@ -1332,9 +1571,21 @@ it belongs to, and re-render.
 
 - 2026-10-04 — [BH-4440: box housekeeping for session ledgers and /tmp, and a disk alert that says where the space went](2026-10-04-BH-4440-box-housekeeping.md)
 
+## docs/CONTEXT-COMPOSITION.md
+
+- 2026-10-14 — [BH-6487: catalog/context-budgets.json is composed from catalog/context-budgets.d/](2026-10-14-BH-6487-context-budgets-fragments.md)
+
 ## docs/OPERATING.md
 
 - 2026-10-13 — [BH-4987: a new lane knob is its own file, catalog/lanes.d/<owner>.knobs.d/<ENV>.json](2026-10-13-BH-4987-lane-knob-fragments.md)
+
+## docs/OUTSIDE-DEADMAN.md
+
+- 2026-10-16 — [BH-7164: three harness-jobs read shapes under 5,000 rows a call](2026-10-16-BH-7164-d1-read-shapes.md)
+
+## docs/REVIEW_SEVERITY_AUDIT_2026-10-16.html
+
+- 2026-10-16 — [BH-7123 wave B: the cowboy dial, no follow-up chains, the ratchet floor](2026-10-16-BH-7123-wave-b-cowboy-dial.md)
 
 ## docs/verification-map/entries/BH-5064.md
 
@@ -1378,6 +1629,7 @@ it belongs to, and re-render.
 
 ## fleet-pauses
 
+- 2026-10-13 — [The pause_flags mirror is retired, and a lint freezes new flags/ writes (BH-4154, slice C0)](2026-10-13-BH-4154-mirror-retired.md)
 - 2026-10-03 — [Flags in the DB: paused-*, automerge-disabled* and lanedown-* are rows (BH-4153)](2026-10-03-BH-4153-flags-in-db.md)
 - 2026-09-30 — [Factory stop: the CLI, the Fleet button, the poll-commands handler](2026-09-30-BH-3687-factory-stop.md)
 - 2026-09-26 — [Fleet-scope PAUSE from Mission Control, and every pause says why, who and when](2026-09-26-BH-2509-fleet-pause.md)
@@ -1401,6 +1653,10 @@ it belongs to, and re-render.
 ## gh-pr-list-rest
 
 - 2026-09-20 — [2026-09-20 — BH-782: launch gates read REST; an UNKNOWN answer skips the tick](2026-09-20-BH-782-launch-gates-rest.md)
+
+## gh-quota
+
+- 2026-10-15 — [Who spends the GitHub REST budget (BH-6974, wave 1 of 3 of #6545)](2026-10-15-BH-6974-gh-budget-report.md)
 
 ## gh-rest
 
@@ -1501,6 +1757,17 @@ it belongs to, and re-render.
 
 ## none
 
+- 2026-10-16 — [BH-7122: a hub sync killed after the code copy is not "OLD harness"](2026-10-16-BH-7122-hub-sync-post-copy-timeout.md)
+- 2026-10-16 — [BH-7119: one helper writes the worker catalogs for a suite](2026-10-16-BH-7119-worker-catalogs-helper.md)
+- 2026-10-16 — [BH-7118: the lead-review enqueue carries a verdict across a schema restamp](2026-10-16-BH-7118-lead-carry-restamp-enqueue.md)
+- 2026-10-16 — [BH-7059 slice C1: GET /api/metrics/cost-rows reads the archive](2026-10-16-BH-7059-cost-rows-reader.md)
+- 2026-10-16 — [BH-7059 slice C0: the routes/cost.js history readers read the archive](2026-10-16-BH-7059-cost-readers.md)
+- 2026-10-16 — [BH-6523 site record: the 66 marked SQL sites, the 2 real findings, the fractional-limit reads](2026-10-16-BH-7058-sql-ident-site-record.md)
+- 2026-10-16 — [BH-7035 slice C0: the remaining wide history readers read the archive](2026-10-16-BH-7035-archive-readers-c0.md)
+- 2026-10-16 — [BH-7027: a PR select narrows catalog/ paths through their reader rows](2026-10-16-BH-7027-pr-catalog-select.md)
+- 2026-10-16 — [BH-6976 (BH-6545.3): three pollers read wakes, their full poll is a backstop](2026-10-16-BH-6976-wake-backstops.md)
+- 2026-10-16 — [BH-5934: box switches on /flags, and the long dated latch pin](2026-10-16-BH-5934-box-switches-and-long-latches.md)
+- 2026-10-15 — [History readers read the archive store too (BH-6779, slice C0)](2026-10-15-BH-6779-archive-readers.md)
 - 2026-10-02 — [Fast always-lints: the before number, why, and the after number we still owe (BH-3860, BH-3865)](2026-10-02-BH-3860-fast-always-lints.md)
 
 ## none (no contract doc changes; `bin/nightly-ticket.sh`'s header carries the label behaviour)
@@ -1577,6 +1844,10 @@ it belongs to, and re-render.
 - 2026-10-04 — [Jira Cloud adapter on the tracker contract, behind a sandbox guard (BH-4076)](2026-10-04-BH-4076-jira-adapter.md)
 - 2026-10-04 — [Tracker contract: one verb set, two adapters, the adapter chosen by a settings row (BH-4075)](2026-10-04-BH-4075-tracker-contract.md)
 
+## skills/console-deploy/SKILL.md
+
+- 2026-10-15 — [Console preview: the lane strips preview bindings, and QA reports a binding gap (BH-6923)](2026-10-15-BH-6923-console-preview-bindings.md)
+
 ## spending-caps
 
 - 2026-10-09 — [The self-host installer runs under macOS bash 3.2 (BH-5732)](2026-10-09-BH-5732-selfhost-install-bash32.md)
@@ -1621,6 +1892,7 @@ it belongs to, and re-render.
 
 ## verification-map
 
+- 2026-10-13 — [The pause_flags mirror is retired, and a lint freezes new flags/ writes (BH-4154, slice C0)](2026-10-13-BH-4154-mirror-retired.md)
 - 2026-10-09 — [No tracked file is git-ignored or says "do not commit" (BH-5518, slice C2)](2026-10-09-BH-5518-generated-not-tracked.md)
 - 2026-10-04 — [Review rescue finds REVIEW_BLOCKED builds whose pool box was reaped (BH-4437)](2026-10-04-BH-4437-review-rescue-reaped-box.md)
 - 2026-10-04 — [The cost rollup's checkpoints live in the DB (BH-4158)](2026-10-04-BH-4158-cost-checkpoints-db.md)
@@ -1652,6 +1924,11 @@ it belongs to, and re-render.
 
 ## untagged
 
+- 2026-10-17 — [BH-7252 C0: hub lane CPU rank (CPU seconds per hour per lane)](2026-10-17-BH-7252-lane-cpu-rank.md)
+- 2026-10-17 — [BH-7229: the stale-stamp rule judges dependency, not stamp age](2026-10-17-BH-7229-stamp-order.md)
+- 2026-10-16 — [BH-7029: each prequeue call is named, timed and bounded](2026-10-16-BH-7029-prequeue-call-bound.md)
+- 2026-10-16 — [2026-10-16 — BH-6657: race-sigpipe-echo scans bin/](2026-10-16-BH-6657-sigpipe-echo-bin-scope.md)
+- 2026-10-15 — [Pool supervisor off the hub: measured inventory and plan (BH-6896, part of #6881)](2026-10-15-BH-6896-fly-pool-offhub.md)
 - 2026-10-09 — [BH-5793: an environment failure never writes a BLOCK](2026-10-09-BH-5793-env-failures-never-block.md)
 - 2026-10-09 — [BH-4991: the ticket page (2026-10-09)](2026-10-09-BH-4991-ticket-detail.md)
 - 2026-10-09 — [BH-4883: flags worker route + D1 table only (split from #4332)](2026-10-09-BH-4883-flags-route-split.md)

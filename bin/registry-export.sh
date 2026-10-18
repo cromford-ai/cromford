@@ -12,8 +12,11 @@
 #       space apart. A row the registry no longer has is dropped. Registry rows
 #       with no template line are appended in bin/lib/registry.sh _rg_render
 #       order (standby, @box, retired, then active by position, project); an
-#       appended `# @box` only for a box no active row names. With no template
-#       the output is _rg_render's minus its GENERATED header line.
+#       appended `# @box` only for a box no active row names. A template
+#       `# @boxrole` line prints verbatim, like any comment: it is not refreshed
+#       from the registry's roles (db-mode readers read the registry render).
+#       With no template the output is _rg_render's minus its GENERATED header
+#       line, `# @boxrole` lines included.
 #   --cost-accounts --template <file>
 #       Print the template JSON with accounts[a].login.box, accounts[a].boxes
 #       .cost_rows/.jobs and .box_aliases taken from the registry. An array
@@ -249,7 +252,7 @@ case "$MODE" in
     cp "$REG" "$W/registry.json" || fail "cannot copy registry.json"
     jq '{actor: "registry-restore",
          projects: [.projects[] | {project, repo, prod, board_prefix, cron_offset, box, position, status}],
-         boxes: [.boxes[] | {box, box_id, tailnet_ip, cost_box, standby_hub_name, standby_hub_id}],
+         boxes: [.boxes[] | {box, box_id, tailnet_ip, cost_box, standby_hub_name, standby_hub_id, role}],
          lane_boxes: [.lane_boxes[] | {lane, box_id}],
          box_accounts: [.box_accounts[] | {account, kind, box}]}' "$REG" > "$W/import.json" || fail "cannot write import.json"
     CO="${CHECKOUT:-/root/harness-checkout}"

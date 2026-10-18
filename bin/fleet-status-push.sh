@@ -827,8 +827,17 @@ if [ -r "$CITF" ] && CROWS=$(jq -Rsc --argjson now "$NOW" 'split("\n") | map(spl
 fi
 case "$CIT_TOTAL" in ''|*[!0-9]*) CIT_TOTAL=0 ;; esac
 
+# EXPECTED PINGS (BH-7303): the registry's boxes whose role is not gate-only or
+# retired (bin/fleet-conf.sh --boxes-with-roles). The watchdog pages on these
+# instead of its boxes.json. A failed read or an empty set is null and the field
+# is left out, so the watchdog falls back to boxes.json and never goes silent.
+EXP=$("$H/bin/fleet-conf.sh" --boxes-with-roles 2>/dev/null \
+  | jq -Rsc 'split("\n") | map(select(length > 0) | split("\t")) | map(select(.[2] != "gate-only" and .[2] != "retired") | .[0]) | unique') \
+  || EXP=null
+case "$EXP" in '['*'"'*']') ;; *) EXP=null ;; esac
+
 SNAP=$(jq -nc --argjson pr "$PROJECTS" --argjson al "${ALERTS24:-0}" --argjson dep "$DEPLOY" --argjson pf "$PAUSED" --argjson so "$STALE" \
-  --argjson fly "$FLY" --arg ts "$(date -u '+%Y-%m-%d %H:%M:%SZ')" \
+  --argjson fly "$FLY" --argjson exp "$EXP" --arg ts "$(date -u '+%Y-%m-%d %H:%M:%SZ')" \
   --argjson quota "$QUOTA" --arg qerr "$QERR" --argjson ld "$LANES_DOWN" --argjson ldd "$LANES_DOWN_DETAIL" \
   --argjson dl "$DEFER_LINES" --argjson df "$DEFER_FAMS" --argjson rules "$RULES" --argjson ceil "$CEIL" \
   --argjson rrp "$RRP" --argjson hub "$HUB" --argjson bk "$BACKUPS" --arg bsm "$BSTALE" \
@@ -841,6 +850,7 @@ SNAP=$(jq -nc --argjson pr "$PROJECTS" --argjson al "${ALERTS24:-0}" --argjson d
     rules:$rules, ceilings:$ceil, remote_results_pending:$rrp, hub:$hub, backups:$bk,
     gh_rest_quota:$ghr, standby:$sb, harness_heads:$hh,
     hub_harness_head:(if $hubhh == "" then null else $hubhh end), ci_timeout_budget:$cit}
+   + (if $exp == null then {} else {expected_boxes:$exp} end)
    + (if $citn > 20 then {ci_timeout_budget_truncated:$citn} else {} end)
    + (if $bsm == "" then {} else {backup_stale_min:($bsm|tonumber)} end)
    + (if $qerr == "" then {} else {quota_error:$qerr} end)

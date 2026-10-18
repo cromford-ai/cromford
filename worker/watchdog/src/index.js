@@ -35,6 +35,13 @@ import {
 // from a name the list does not know alerts (see /api/ping below).
 // box-project-10-1 is PARKED (box stopped 2026-08-25 by the operator).
 // Re-add it to boxes.json AND restore the ping line in cron/project-10.cron together.
+//
+// The set of boxes that must ping comes from the registry first: the hub's
+// fleet-status snapshot (bin/fleet-status-push.sh) carries `expected_boxes`,
+// the registry boxes whose role is not gate-only or retired. boxes.json is the
+// fallback when that list is absent, empty, not a list of valid names, or the
+// snapshot cannot be read. So the set is never empty, and a broken snapshot
+// falls back to today's list instead of silencing every page.
 import BOXES from "./boxes.json" with { type: "json" };
 const HUB = "box-hub";
 const PING_STALE_MIN = 15;
@@ -44,6 +51,24 @@ const REALERT_MIN = 60;
 
 const now = () => Date.now();
 const min = (ms) => Math.round(ms / 60000);
+
+// The ping route's own name rule (/api/ping/<name>).
+const PING_NAME_RE = /^[a-z0-9-]+$/;
+
+// expected_boxes from KV status:fleet ({ts, body}, body = the pushed JSON
+// text), filtered to valid names; BOXES when nothing valid is left.
+async function expectedBoxes(env) {
+  try {
+    const raw = await env.KV.get("status:fleet");
+    if (!raw) return BOXES;
+    const list = JSON.parse(JSON.parse(raw).body)?.expected_boxes;
+    if (!Array.isArray(list)) return BOXES;
+    const names = [...new Set(list.filter((b) => typeof b === "string" && PING_NAME_RE.test(b)))];
+    return names.length ? names : BOXES;
+  } catch {
+    return BOXES;
+  }
+}
 
 function authed(url, env) {
   return url.searchParams.get("s") === env.HARNESS_SECRET;
@@ -128,13 +153,13 @@ export default {
       let metrics = null;
       if (req.method === "POST") { try { metrics = await req.json(); } catch {} }
       await env.KV.put(`ping:${m[1]}`, JSON.stringify({ ts: now(), metrics }));
-      // A name boxes.json does not know is never walked by `scheduled`, so its
+      // A name outside the expected set is never walked by `scheduled`, so its
       // silence could never page. Say so (damped hourly) instead of storing it
       // and moving on. Still stored and still "ok": the ping script is
       // fail-quiet, so a 4xx would change nothing on the box.
-      if (!BOXES.includes(m[1])) {
+      if (!(await expectedBoxes(env)).includes(m[1])) {
         await maybeAlert(env, `unknown:${m[1]}`,
-          `🚨 WATCHDOG: ping from unknown box ${m[1]} — it is not in worker/watchdog/src/boxes.json, so its silence would never page. Add it there (and its cron ping line) or stop its ping.`);
+          `🚨 WATCHDOG: ping from unknown box ${m[1]} — it is not in the registry's expected_boxes or worker/watchdog/src/boxes.json, so its silence would never page. Add it to the registry (and its cron ping line) or stop its ping.`);
       }
       return new Response("ok");
     }
@@ -153,7 +178,7 @@ export default {
       if (!authed(url, env)) return new Response("no", { status: 403 });
       const raw = await env.KV.get("status:fleet");
       const pings = {};
-      for (const b of BOXES) {
+      for (const b of await expectedBoxes(env)) {
         const v = await env.KV.get(`ping:${b}`);
         pings[b] = v ? `${min(now() - JSON.parse(v).ts)}m ago` : "never";
       }
@@ -273,7 +298,7 @@ export default {
 
   async scheduled(_ev, env) {
     // 1. Per-box liveness.
-    for (const b of BOXES) {
+    for (const b of await expectedBoxes(env)) {
       const v = await env.KV.get(`ping:${b}`);
       if (!v) continue; // never pinged: not armed for this box yet
       const age = now() - JSON.parse(v).ts;

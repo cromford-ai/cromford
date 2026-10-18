@@ -7,6 +7,12 @@
 #                               and 7, `# @standby`)
 #   the lane registry        -> lane_boxes, one row per (lane, .boxes[] entry);
 #                               read through lanes_json_path, the ONE loader
+#   bin/fleet-conf.sh --boxes-with-roles
+#                            -> boxes (each row's role, `# @boxrole` boxes and
+#                               their box_id) and the lane_boxes of
+#                               watchdog-ping and harness-sync-timer: one row
+#                               per box whose role is not gate-only or retired,
+#                               in place of those two lanes' .boxes
 #   catalog/cost-accounts.json -> boxes (box_aliases keys, cost_box) and
 #                               box_accounts (login.box, boxes.cost_rows[],
 #                               boxes.jobs[]; globs such as pool-* verbatim)
@@ -97,18 +103,28 @@ if [ -z "$FROM" ]; then
   CLASH=$(awk -F'\t' '$1 == "I" { if (($2 in ip) && ip[$2] != $3) print $2 " has two IPs: " ip[$2] " and " $3; ip[$2] = $3 }' "$TMP/facts")
   [ -z "$CLASH" ] || die "fleet.conf: box $CLASH"
 
+  # Every box's role (bin/fleet-conf.sh --boxes-with-roles): `@boxrole` lines,
+  # then the defaults hub / standby / build / retired.
+  FLEET_CONF="$CONF" "$HERE/fleet-conf.sh" --boxes-with-roles > "$TMP/roles" 2>"$TMP/roles.err" \
+    || die "fleet-conf.sh --boxes-with-roles failed: $(head -c 200 "$TMP/roles.err")"
+
   # cron_box_id_for per hostname, computed here because the rule lives in bash.
+  # A box on a role line takes that line's box_id (an `@boxrole` box has its own).
   {
-    awk -F'\t' '($1 == "P" && $7 != "-") { print $7 } ($1 == "R" && $3 != "-") { print $3 } $1 == "S" { print $2 }' "$TMP/facts"
-    jq -r '(.box_aliases // {}) | keys[]' "$COST"
-  } | LC_ALL=C sort -u | while read -r B; do
-    [ -n "$B" ] && printf '%s\t%s\n' "$B" "$(cron_box_id_for "$B")"
-  done > "$TMP/box-ids"
+    cut -f1,2 "$TMP/roles"
+    {
+      awk -F'\t' '($1 == "P" && $7 != "-") { print $7 } ($1 == "R" && $3 != "-") { print $3 } $1 == "S" { print $2 }' "$TMP/facts"
+      jq -r '(.box_aliases // {}) | keys[]' "$COST"
+    } | LC_ALL=C sort -u | while read -r B; do
+      [ -n "$B" ] && printf '%s\t%s\n' "$B" "$(cron_box_id_for "$B")"
+    done
+  } | awk -F'\t' '!seen[$1]++' | LC_ALL=C sort > "$TMP/box-ids"
 
   jq -n -S \
     --arg actor "$ACTOR" \
     --rawfile facts "$TMP/facts" \
     --rawfile ids "$TMP/box-ids" \
+    --rawfile roles "$TMP/roles" \
     --slurpfile cost "$COST" \
     --slurpfile lanes "$LANES" '
     def rows($k): $facts | split("\n") | map(select(length > 0) | split("\t")) | map(select(.[0] == $k));
@@ -116,6 +132,10 @@ if [ -z "$FROM" ]; then
     (rows("I") | map({key: .[1], value: .[2]}) | from_entries) as $ip
     | (rows("S") | map({key: .[1], value: {n: .[2], i: .[3]}}) | from_entries) as $sb
     | ($cost[0].box_aliases // {}) as $al
+    | ($roles | split("\n") | map(select(length > 0) | split("\t"))) as $rl
+    | ($rl | map({key: .[0], value: .[2]}) | from_entries) as $role
+    | ["watchdog-ping", "harness-sync-timer"] as $byrole
+    | [$rl[] | select(.[2] != "gate-only" and .[2] != "retired") | .[1]] as $live
     | (rows("P") | map({project: .[1], repo: .[2], prod: .[3], board_prefix: .[4],
           cron_offset: (.[5] | tonumber), box: (.[6] | dash), position: (.[7] | tonumber), status: "active"})) as $act
     | {
@@ -124,8 +144,9 @@ if [ -z "$FROM" ]; then
           cron_offset: 0, box: (.value[2] | dash), position: (($act | length) + .key), status: "retired"}))),
         boxes: ($ids | split("\n") | map(select(length > 0) | split("\t"))
           | map({box: .[0], box_id: .[1], tailnet_ip: $ip[.[0]], cost_box: $al[.[0]],
-                 standby_hub_name: $sb[.[0]].n, standby_hub_id: $sb[.[0]].i})),
-        lane_boxes: ([$lanes[0].lanes[] | .id as $l | (.boxes // [])[] | {lane: $l, box_id: .}] | unique | sort_by(.lane, .box_id)),
+                 standby_hub_name: $sb[.[0]].n, standby_hub_id: $sb[.[0]].i, role: $role[.[0]]})),
+        lane_boxes: (([$lanes[0].lanes[] | .id as $l | select(any($byrole[]; . == $l) | not) | (.boxes // [])[] | {lane: $l, box_id: .}]
+          + [$byrole[] as $l | $live[] | {lane: $l, box_id: .}]) | unique | sort_by(.lane, .box_id)),
         box_accounts: ([$cost[0].accounts // {} | to_entries[] | .key as $a | .value
           | (if (.login.box // null) != null then {account: $a, kind: "login", box: .login.box} else empty end),
             ((.boxes.cost_rows // [])[] | {account: $a, kind: "cost_rows", box: .}),

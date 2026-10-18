@@ -8,8 +8,10 @@
 #
 # THE BOX UNIVERSE
 #   required U = bin/fleet-conf.sh --box-ids, plus hub
-#   allowed    = U, plus the box ids of the `# @retired <project> <box>` lines.
-#                A retired box may still be listed; it is never required.
+#   allowed    = U, plus the box ids of the `# @retired <project> <box>` lines
+#                and of the `# @boxrole <box> <box_id> <role>` lines (a box with
+#                no project row, such as a review or gate box). Those may be
+#                listed; they are never required.
 #   HOST(id)   = cron_watchdog_name_for (bin/lib/cron-lines.sh), the one inverse
 #                of cron_box_id_for. Neither mapping is spelled again here.
 #
@@ -53,7 +55,8 @@ jq -e 'type == "array"' "$WD" >/dev/null 2>&1 || die "cannot parse $WD"
 U=$( { "$BIN/fleet-conf.sh" --box-ids || exit 1; echo hub; } | sort -u) || die "fleet-conf.sh --box-ids failed"
 RET_HOSTS=$("$BIN/fleet-conf.sh" --retired | awk '$2 != "-" {print $2}' | sort -u)
 RET_IDS=$(while read -r H; do [ -n "$H" ] && cron_box_id_for "$H"; done <<< "$RET_HOSTS" | sort -u)
-ALLOWED=$(printf '%s\n%s\n' "$U" "$RET_IDS" | grep . | sort -u)
+ROLE_IDS=$("$BIN/fleet-conf.sh" --boxes-with-roles | cut -f2 | sort -u) || die "fleet-conf.sh --boxes-with-roles failed"
+ALLOWED=$(printf '%s\n%s\n%s\n' "$U" "$RET_IDS" "$ROLE_IDS" | grep . | sort -u)
 declare -A HOST
 for ID in $U; do
   HOST[$ID]=$(cron_watchdog_name_for "$ID") || die "the registry names no host for box $ID"

@@ -58,6 +58,9 @@ cron_box_id_for() {
 # fleet.conf row points at the hub, and cron_box_id_for already writes down
 # box-hub as the hub's ping name.
 #
+# A box with no project row answers from its `# @boxrole` line
+# (bin/fleet-conf.sh --boxes-with-roles), the one place that pairs its id and name.
+#
 # A box the registry cannot name prints NOTHING and returns 1. Every caller MUST
 # refuse on that rather than fall back to a plausible name — bin/render-cron.sh
 # does, by refusing the whole render with an empty stdout.
@@ -74,7 +77,11 @@ cron_watchdog_name_for() {
     printf '%s\n' "$B"
     return 0
   done < <("$LIB_HERE/fleet-conf.sh" --projects 2>/dev/null)
-  return 1
+  # A box with no project row is named by its `# @boxrole <box> <box_id>
+  # <role>` line, which writes the pair down (BH-7303).
+  B=$("$LIB_HERE/fleet-conf.sh" --boxes-with-roles 2>/dev/null | awk -F'\t' -v id="$ID" '$2 == id { print $1; exit }')
+  [ -n "$B" ] || return 1
+  printf '%s\n' "$B"
 }
 
 # cron_managed_scripts -> the bin/ scripts whose per-project lines this library

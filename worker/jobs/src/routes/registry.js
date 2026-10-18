@@ -24,6 +24,7 @@
 // character: these rows are written back into positional files split on
 // whitespace, and a trimmed value hides what the sender actually sent.
 
+import { ensureColumns } from "../lib/core.js";
 import { d1Guarded, json } from "../lib/http.js";
 import { sqlIdent } from "../lib/sql-ident.js";
 
@@ -36,6 +37,9 @@ const IPV4_RE = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/;
 export const ACTOR_RE = /^[A-Za-z0-9._-]{1,64}$/;
 const KINDS = ["login", "cost_rows", "jobs"];
 const STATUSES = ["active", "retired"];
+// A box's role. Null is no role: the readers (fleet-conf.sh, the seed) apply
+// their own defaults, and GET leaves the key out.
+export const ROLES = ["build", "review", "gate", "standby", "hub", "gate-only", "retired"];
 const MAX_ROWS = 5000;
 const MAX_BINDS = 100; // D1 refuses a statement with more bound values.
 
@@ -50,7 +54,7 @@ export const TABLES = {
   },
   boxes: {
     table: "registry_boxes", entity: "box",
-    cols: ["box", "box_id", "tailnet_ip", "cost_box", "standby_hub_name", "standby_hub_id"],
+    cols: ["box", "box_id", "tailnet_ip", "cost_box", "standby_hub_name", "standby_hub_id", "role"],
     pk: ["box"], order: "box",
   },
   lane_boxes: {
@@ -140,6 +144,9 @@ export function validateRegistry(body) {
       const m = IPV4_RE.exec(row.tailnet_ip);
       if (!m || m.slice(1).some((o) => Number(o) > 255)) return { error: `${at}.tailnet_ip must be a dotted IPv4 address` };
     }
+    const role = b.role === undefined ? null : b.role;
+    if (role !== null && !ROLES.includes(role)) return { error: `${at}.role must be one of ${ROLES.join(", ")}` };
+    row.role = role;
     out.boxes.push(row);
   }
 
@@ -213,7 +220,13 @@ export async function readMeta(env) {
 }
 
 // Every table, LIMIT MAX_ROWS+1 so an oversize table is seen, never cut.
+// registry_boxes.role is an ADDED column (core.js ADDED_COLUMNS): add it before
+// the SELECT names it. A missing table makes the ALTER throw, and d1Guarded
+// answers 503 as before. Every name is checked first, so a bad one throws
+// before ensureColumns prepares its PRAGMA.
 export async function readAll(env) {
+  for (const spec of Object.values(TABLES)) [spec.table, ...spec.cols].forEach((n) => sqlIdent(n));
+  await ensureColumns(env, "registry_boxes");
   const out = {};
   for (const [name, spec] of Object.entries(TABLES)) {
     // sql-ident-ok: TABLES const (table, cols, order); MAX_ROWS + 1 is a number const
@@ -313,7 +326,9 @@ export const routes = [
       const all = await readAll(env);
       const known = await readKnownLanes(env);
       if (tooLarge(all) || known.length > MAX_ROWS) return json(507, { error: "registry too large" });
-      return json(200, { version: meta.version, updated_at: meta.updated_at, ...all, known_lanes: known, as_of: t });
+      // A null role is no `role` key, so a reader that predates roles sees its old row.
+      const boxes = all.boxes.map(({ role, ...b }) => (role === null || role === undefined ? b : { ...b, role }));
+      return json(200, { version: meta.version, updated_at: meta.updated_at, ...all, boxes, known_lanes: known, as_of: t });
     }),
   ],
 

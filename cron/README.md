@@ -31,7 +31,7 @@ bin/render-cron.sh --out-dir DIR  # write the whole fleet somewhere that is not 
 | add a lane to some boxes | `catalog/lanes.d/<id>.json` (`.boxes`) **and** `cron/lanes/<NNN>-<id>.cron` |
 | change a lane's schedule or redirect | that lane's `cron/lanes/` fragment |
 | give one box a different line for a lane | a `# @box <id>` section in that fragment |
-| add a box to the watchdog ping | a `fleet.conf` row for a project on that box **and** the box's id in `catalog/lanes.d/watchdog-ping.json` `.boxes` — never the fragment, which is one `@WATCHDOG@` line |
+| add a box to the watchdog ping | a `fleet.conf` row for a project on that box (or a `# @boxrole <box> <box_id> <role>` line for a box with no project) **and** the box's id in `catalog/lanes.d/watchdog-ping.json` `.boxes` — never the fragment, which is one `@WATCHDOG@` line |
 | put a hub lane behind the hub lease | `# @hub-lanes` in that fragment (or `# @ungated <why>` if it must run on every box — one of the two is required, and `<why>` is required with it: a bare `# @ungated` refuses the render) |
 | add a line only one box runs | `cron/boxes/<box>.d/<NNN>-<slug>.cron` |
 | move a lane's position on one box | `cron/boxes/<box>.order` |

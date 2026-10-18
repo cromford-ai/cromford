@@ -96,7 +96,10 @@ wd_expect() {
   awk -v b="$1" '!/^[[:space:]]*(#|$)/ && NF>=6 {
       v=$6; id=v; sub(/^box-/,"",id); sub(/-[0-9]+$/,"",id)
       if (id == b) { print v; exit }
-    }' "$DIR/fleet.conf"
+    }
+    # A box with no project row: its `# @boxrole <box> <box_id> <role>` line.
+    $1 == "#" && $2 == "@boxrole" && NF >= 5 && $4 == b && r == "" { r = $3 }
+    END { if (r != "") print r }' "$DIR/fleet.conf" | head -1
 }
 
 # --- W1. every box in the lane pings under the name fleet.conf gives it ------

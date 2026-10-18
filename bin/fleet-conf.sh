@@ -42,6 +42,16 @@
 #         directive wins; rc 1 and no output when the box is no standby.
 # fleet-conf.sh --retired                  — every `# @retired <project> [box]`
 #         directive as `<project> <box|->`; nothing (rc 0) when none.
+# fleet-conf.sh --boxes-with-roles         — every box the file knows, one TSV line
+#         `<box>\t<box_id>\t<role>`, sorted by box (LC_ALL=C). First match wins:
+#         a `# @boxrole <box> <box_id> <role>` line (role one of build review
+#         gate standby hub gate-only retired; any other line is skipped with a
+#         stderr note), then the hub (HUB_BOX_NAME, else HARNESS_HUB_BOX) as
+#         `hub`, a `# @standby` box as `standby`, an active row's box as
+#         `build` (`local` is the hub), a `# @retired <project> <box>` box as
+#         `retired`. The box_id is cron_box_id_for of the box, except on an
+#         `@boxrole` line. A `# @box <box> <ip>` line is not a role line.
+#         Readers: bin/registry-seed.sh and bin/fleet-status-push.sh.
 #
 # Looks for fleet.conf next to the harness (repo checkout or /root/harness).
 # REGISTRY_SOURCE=db (BH-5649; default file until wave 3 of BH-5633) reads the
@@ -94,6 +104,34 @@ if [ "$ARG1" = "--box-ids" ]; then
     [ -n "${B:-}" ] && [ "$B" != "-" ] || B=$("$HERE/box-for.sh" "$P" 2>/dev/null) || continue
     cron_box_id_for "$B"
   done < <(awk '!/^[[:space:]]*(#|$)/ {print $1, $6}' "$CONF") | sort -u
+  exit 0
+fi
+if [ "$ARG1" = "--boxes-with-roles" ]; then
+  export FLEET_CONF="$CONF"
+  # shellcheck source=bin/lib/cron-lines.sh
+  . "$HERE/lib/cron-lines.sh" || exit 1
+  HUB="${HUB_BOX_NAME:-$HARNESS_HUB_BOX}"
+  # One fact per line, `<precedence> <box> <box_id> <role>`; the lowest wins.
+  {
+    awk '$1 == "#" && $2 == "@boxrole" {
+           if (NF < 5) { print "fleet-conf: skipped a @boxrole line with " NF - 2 " fields (want <box> <box_id> <role>): " $0 > "/dev/stderr"; next }
+           if ($5 !~ /^(build|review|gate|standby|hub|gate-only|retired)$/) { print "fleet-conf: skipped a @boxrole line with unknown role " $5 > "/dev/stderr"; next }
+           if ($4 !~ /^[a-z][a-z0-9]*$/) { print "fleet-conf: skipped a @boxrole line with bad box_id " $4 > "/dev/stderr"; next }
+           print 0, $3, $4, $5 }' "$CONF"
+    [ -z "$HUB" ] || echo "1 $HUB hub hub"
+    while read -r B; do
+      [ -n "$B" ] && echo "2 $B $(cron_box_id_for "$B") standby"
+    done < <(awk '$1 == "#" && $2 == "@standby" && NF >= 5 {print $3}' "$CONF")
+    while read -r P B; do
+      [ -n "$P" ] || continue
+      [ -n "${B:-}" ] && [ "$B" != "-" ] || B=$("$HERE/box-for.sh" "$P" 2>/dev/null) || continue
+      [ "$B" != local ] || B="$HUB"
+      [ -n "$B" ] && echo "3 $B $(cron_box_id_for "$B") build"
+    done < <(awk '!/^[[:space:]]*(#|$)/ {print $1, $6}' "$CONF")
+    while read -r B; do
+      [ -n "$B" ] && echo "4 $B $(cron_box_id_for "$B") retired"
+    done < <(awk '$1 == "#" && $2 == "@retired" && NF >= 4 {print $4}' "$CONF")
+  } | LC_ALL=C sort -k2,2 -k1,1n | awk -v OFS='\t' '!seen[$2]++ {print $2, $3, $4}'
   exit 0
 fi
 if [ "$ARG1" = "--tailnet-ip" ]; then
