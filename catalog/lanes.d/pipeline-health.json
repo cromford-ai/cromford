@@ -245,14 +245,6 @@
       "note": "Read by bin/pipeline-health.sh as ${RESTORE_DRILL_STALE_DAYS:-8}: days without a passing restore drill (counted from the first run when none has passed) before restoredrillstale pages. A value that is not a positive whole number is logged and 8 is used. BH-400.3."
     },
     {
-      "env": "HARNESS_HEAD_GRACE_S",
-      "type": "int",
-      "default": 5400,
-      "min": 3900,
-      "zero_means": null,
-      "note": "BH-2529: section 8 (fleet checkout freshness) judges each remote box's harness HEAD, read from box_status, against the newest first-parent origin/main commit older than this many seconds, and ignores a report older than it (logged as unknown, not paged). Must exceed the hourly lane-gate HEAD report (3600 s) plus fleet-propagate's ~5 min, or a box that synced correctly pages until its next report."
-    },
-    {
       "env": "HARNESS_CHECKOUT",
       "type": "string",
       "default": "/root/harness-checkout",

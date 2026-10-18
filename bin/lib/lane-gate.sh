@@ -366,23 +366,25 @@ _lg_post() {
 # paused lane is still alive, and a page that could not tell "stopped" from
 # "dead" is the thing phase A shipped without.
 #
-# THE BOX'S HARNESS COMMIT RIDES ALONG, HOURLY (BH-1511.1 review, I2): the
-# checkout HEAD bin/harness-sync.sh deploys from, which the worker stores in
-# box_status. It is the proof `harness-ctl seed-registry` demands that this box
-# runs a lane-gate that knows the registry-seed actor — a box on the old file
-# never sends it. Once an hour per box (a stamp under state/lane-gate/), so the
-# per-tick post stays the size it was; the stamp moves only when the worker
-# took the post.
+# THE BOX'S HARNESS COMMIT RIDES ALONG, ON CHANGE, ELSE HOURLY (BH-1511.1
+# review, I2; BH-7304): the checkout HEAD bin/harness-sync.sh deploys from,
+# which the worker stores in box_status. It is the proof `harness-ctl
+# seed-registry` demands that this box runs a lane-gate that knows the
+# registry-seed actor — a box on the old file never sends it — and the sha
+# bin/fleet-version-check.sh judges against main. The stamp under
+# state/lane-gate/ is `<epoch> <sha>`: a tick sends when the sha differs from
+# the stamped one (so a sync is reported on the next tick, not up to an hour
+# later), when the stamp is an hour old, or when there is no usable stamp (an
+# old epoch-only stamp reads as "sha unknown"). Every other tick posts what it
+# posted before. The stamp moves only when the worker took the post.
+#
+# A send tick also carries two sync facts for the version check:
+# harness_synced_at (the time of the last `done` line in
+# state/harness-sync-phase) and sync_timer (1 when the crontab runs
+# bin/harness-sync-timer.sh, else 0; left out on a box that has no such script).
 _lg_harness_commit() {
-  local h stampf last now sha="" co
+  local h stampf last="" ssha="" now sha="" co
   h=$(_lg_h); now=$(_lg_now)
-  if [ -n "$h" ]; then
-    stampf="$h/state/lane-gate/.harness-commit-sent"
-    # The braces own the redirect: `tr < missing 2>/dev/null` leaks the `<`
-    # error, because the redirect fails before 2>/dev/null applies (review N2).
-    last=$( { tr -dc '0-9' < "$stampf"; } 2>/dev/null )
-    if [ -n "$last" ] && [ "$(( now - last ))" -ge 0 ] && [ "$(( now - last ))" -lt 3600 ]; then return 1; fi
-  fi
   # The checkout sits beside the root (BH-2649); with neither, there is no sha.
   co="${HARNESS_CHECKOUT:-}"
   if [ -z "$co" ]; then [ -n "$h" ] || return 1; co="$h/../harness-checkout"; fi
@@ -395,7 +397,39 @@ _lg_harness_commit() {
        sha=${sha%$'\r'}; [ "${#sha}" -ge 7 ] && [ "${#sha}" -le 40 ] || return 1
   fi
   case "$sha" in ''|*[!0-9a-f]*) return 1 ;; esac
+  if [ -n "$h" ]; then
+    stampf="$h/state/lane-gate/.harness-commit-sent"
+    # The braces own the redirect: `read < missing 2>/dev/null` leaks the `<`
+    # error, because the redirect fails before 2>/dev/null applies (review N2).
+    { read -r last ssha < "$stampf"; } 2>/dev/null
+    ssha=${ssha%$'\r'}
+    case "$last" in ''|*[!0-9]*) last="" ;; esac
+    if [ -n "$last" ] && [ -n "$ssha" ] && [ "$ssha" = "$sha" ] \
+       && [ "$(( now - last ))" -ge 0 ] && [ "$(( now - last ))" -lt 3600 ]; then return 1; fi
+  fi
   printf '%s' "$sha"
+}
+
+# _lg_sync_facts — the JSON object of sync facts a send tick adds, `{}` when it
+# knows none. Read only on send ticks: one read, one test and one crontab -l.
+_lg_sync_facts() {
+  local h phase psha pat="" timer=""
+  h=$(_lg_h)
+  if [ -n "$h" ]; then
+    # One line `<phase> <sha40> <iso>` (bin/lib/harness-sync-step.sh). Only a
+    # `done` line is a finished sync; `copied` or `step=<name>` sends nothing,
+    # and the worker keeps the last value it has.
+    { read -r phase psha pat < "$h/state/harness-sync-phase"; } 2>/dev/null
+    [ "${phase:-}" = done ] && [[ "$pat" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$ ]] || pat=""
+    # No bin/harness-sync-timer.sh: this box cannot have the timer yet, so
+    # the fact is not reported rather than reported as 0.
+    if [ -f "$h/bin/harness-sync-timer.sh" ] && command -v crontab >/dev/null 2>&1; then
+      if crontab -l 2>/dev/null | grep -v '^[[:space:]]*#' | grep -q 'harness-sync-timer'; then timer=1; else timer=0; fi
+    fi
+  fi
+  jq -nc --arg s "$pat" --arg t "$timer" \
+    '(if $s == "" then {} else {harness_synced_at:$s} end) + (if $t == "" then {} else {sync_timer:($t | tonumber)} end)' 2>/dev/null \
+    || printf '{}'
 }
 
 # _lg_git_head <checkout> — HEAD's sha read from the FILES, never by running
@@ -419,15 +453,17 @@ _lg_git_head() {
   [ -n "$sha" ] && printf '%s' "$sha"
 }
 _lg_liveness() {
-  local body sha=""
+  local body sha="" facts='{}'
   command -v jq >/dev/null 2>&1 || return 0
   sha=$(_lg_harness_commit) || sha=""
+  [ -z "$sha" ] || facts=$(_lg_sync_facts)
+  [ -n "$facts" ] || facts='{}'
   body=$(jq -nc --arg l "${1:-}" --arg p "${2:-}" --arg b "$(_lg_box)" \
-                --arg o "${3:-}" --arg w "${4:-}" --arg c "$sha" \
-    '{lane:$l,project:$p,box:$b,outcome:$o,why:$w} + (if $c == "" then {} else {harness_commit:$c} end)' 2>/dev/null) || return 0
+                --arg o "${3:-}" --arg w "${4:-}" --arg c "$sha" --argjson f "$facts" \
+    '{lane:$l,project:$p,box:$b,outcome:$o,why:$w} + (if $c == "" then {} else {harness_commit:$c} + $f end)' 2>/dev/null) || return 0
   if _lg_post /api/lanes/liveness "$body" && [ -n "$sha" ] && [ -n "$(_lg_h)" ]; then
     mkdir -p "$(_lg_h)/state/lane-gate" 2>/dev/null
-    printf '%s\n' "$(_lg_now)" > "$(_lg_h)/state/lane-gate/.harness-commit-sent" 2>/dev/null
+    printf '%s %s\n' "$(_lg_now)" "$sha" > "$(_lg_h)/state/lane-gate/.harness-commit-sent" 2>/dev/null
   fi
   return 0
 }

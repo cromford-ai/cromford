@@ -8,7 +8,12 @@
 // POST /api/boxes/self-report (BH-2626) was written here directly, not moved.
 
 import { json } from "../lib/http.js";
-import { ensureColumns, laneName, str } from "../lib/core.js";
+import { ensureColumns, ensureTable, laneName, str } from "../lib/core.js";
+
+// The newest lane tick per box (BH-7304): ONE aggregate over lane_ticks,
+// served by idx_lane_ticks_box (box, last_tick_at), merged into the roster in
+// JS. Never a per-row subquery on box_status.
+export const LAST_BEAT_SQL = `SELECT box, MAX(last_tick_at) AS last_beat_at FROM lane_ticks GROUP BY box`;
 
 export const routes = [
   // The fleet's current CLI state, one row per box (bounded by fleet size).
@@ -20,9 +25,21 @@ export const routes = [
       // as the write, or the hub's first sync — which may well run before any
       // box's first push — would see a row shape with no backup half and write
       // nothing for a fleet that is backing up perfectly.
-      await ensureColumns(env, "box_status");
-      const rows = await env.DB.prepare(`SELECT * FROM box_status ORDER BY box`).all();
-      return json(200, { boxes: rows.results || [], as_of: t });
+      //
+      // last_beat_at (BH-7304) is the box's newest lane tick, any lane, or
+      // null when it has none. The roster stays box_status: a box that ticks
+      // with no box_status row is not added.
+      await Promise.all([
+        ensureColumns(env, "box_status"),
+        ensureTable(env, "lane_ticks").then(() => ensureColumns(env, "lane_ticks")),
+      ]);
+      const [rows, beats] = await Promise.all([
+        env.DB.prepare(`SELECT * FROM box_status ORDER BY box`).all(),
+        env.DB.prepare(LAST_BEAT_SQL).all(),
+      ]);
+      const beat = new Map((beats.results || []).map((r) => [r.box, r.last_beat_at]));
+      const boxes = (rows.results || []).map((r) => ({ ...r, last_beat_at: beat.get(r.box) ?? null }));
+      return json(200, { boxes, as_of: t });
     },
   ],
 

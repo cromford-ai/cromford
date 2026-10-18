@@ -12,13 +12,8 @@
 # alert() records to a file. G2 runs the real bin/fleet-propagate.sh.
 #
 # CASES
-#   P1 box behind main only on docs/ and tests/, past grace -> no driftfail,
-#      one "behind <sha> on non-fleet paths only" log line
-#   P2 box behind a commit touching bin/ -> driftfail, existing wording
-#   P3 box on a sha origin never had -> driftfail, no non-fleet line
-#   P4 P1's history with bin/lib/fleet-paths.sh missing -> driftfail (fail-open
-#      to today's page)
-#   P5 every word of FLEET_PATHS, alone in a commit, makes a box behind it drift
+#   P0 (BH-7304) a remote box behind a bin/ change, or on an unknown sha:
+#      no driftfail and no log line (bin/fleet-version-check.sh owns it)
 #   G1 the FLEET_PATHS assignment and its literal live in bin/lib/fleet-paths.sh only
 #   G2 the lib defines the list; bin/fleet-propagate.sh without it exits 1 in
 #      --check and deploy mode, says fleet-paths.sh missing, records no last_sha
@@ -85,46 +80,17 @@ drive_fresh() {
 drift() { grep "|driftfail:project-4:" "$T/alerts.txt" 2>/dev/null; }
 nonfleet() { grep -c 'on non-fleet paths only' "$F/logs/pipeline-health.log" 2>/dev/null; }
 
-# P1 docs/tests-only behind, past grace
+# P0 (BH-7304, BH-7191.2): section 8 no longer judges a remote box, so a box
+# behind main on a bin/ change, past grace, gives no driftfail: line and no
+# log line. bin/fleet-version-check.sh owns it, and its fvc_main_log reads
+# the same FLEET_PATHS (tests/fleet-version-check.bh-7191-test.sh L1).
+gcf 17940 B2 bin/a.sh docs/x.md
 heads "$A"; drive_fresh
-[ -z "$(drift)" ] && ok || bad "P1: a box behind only on docs/tests must not page driftfail (alerts: $(cat "$T/alerts.txt"))"
-[ "$(nonfleet)" = 1 ] && grep -q "box-project-4-1 at $A: behind $B on non-fleet paths only" "$F/logs/pipeline-health.log" && ok \
-  || bad "P1: want exactly one 'box-project-4-1 at $A: behind $B on non-fleet paths only' line (log: $(cat "$F/logs/pipeline-health.log"))"
-
-# P4 the same, with the lib missing from the install: today's page
-mv "$F/bin/lib/fleet-paths.sh" "$T/fleet-paths.sh.away" 2>/dev/null
-drive_fresh
-[ -n "$(drift)" ] && [ "$(nonfleet)" = 0 ] && ok \
-  || bad "P4: with no bin/lib/fleet-paths.sh the check must page as before (alerts: $(cat "$T/alerts.txt"); log: $(cat "$F/logs/pipeline-health.log"))"
-mv "$T/fleet-paths.sh.away" "$F/bin/lib/fleet-paths.sh" 2>/dev/null
-
-# P2 a fleet path behind, past grace (bin/a.sh plus a doc)
-gcf 17940 B2 bin/a.sh docs/x.md; B2=$(short)
-heads "$A"; drive_fresh
-D=$(drift)
-[ "$(grep -c . <<<"$D")" = 1 ] && grep -q "^5400|driftfail:project-4:$B2|" <<<"$D" && ok \
-  || bad "P2: a box behind a bin/ change must page once, key driftfail:project-4:$B2 (alerts: $(cat "$T/alerts.txt"))"
-grep -q "box-project-4-1 reports harness at $A" <<<"$D" && grep -q "lacks origin/main $B2" <<<"$D" \
-  && grep -q 'fleet-propagate did not land there' <<<"$D" && ok || bad "P2: the alert keeps its wording (got: $D)"
-[ "$(nonfleet)" = 0 ] && ok || bad "P2: a fleet-path range must not log non-fleet paths only"
-
-# P3 a sha origin never had
+[ -z "$(drift)" ] && ok || bad "P0: a remote box behind a bin/ change must give no driftfail (alerts: $(cat "$T/alerts.txt"))"
+[ ! -s "$F/logs/pipeline-health.log" ] && ok || bad "P0: a remote box must give no log line (log: $(cat "$F/logs/pipeline-health.log"))"
 heads deadbeefcafe; drive_fresh
-[ -n "$(drift)" ] && [ "$(nonfleet)" = 0 ] && ok \
-  || bad "P3: an unknown sha must page and not log non-fleet (alerts: $(cat "$T/alerts.txt"); log: $(cat "$F/logs/pipeline-health.log"))"
-
-# P5 every fleet path counts, each alone in a commit past grace, box one behind
-FP=$( unset FLEET_PATHS; . "$DIR/bin/lib/fleet-paths.sh" 2>/dev/null; echo "${FLEET_PATHS:-}" )
-[ -n "$FP" ] && ok || bad "P5: bin/lib/fleet-paths.sh must define FLEET_PATHS"
-i=0
-for p in $FP; do
-  i=$((i+1)); PREV=$(short)
-  gcf $(( 17000 - i * 10 )) "P5-$i" "$p"; CUR=$(short)
-  heads "$PREV"; drive_fresh
-  grep -q "^5400|driftfail:project-4:$CUR|" "$T/alerts.txt" 2>/dev/null && [ "$(nonfleet)" = 0 ] && ok \
-    || bad "P5: a commit touching only '$p' must page a box behind it (alerts: $(cat "$T/alerts.txt"); log: $(cat "$F/logs/pipeline-health.log"))"
-done
-[ "$i" -ge 14 ] && ok || bad "P5: expected every fleet path to be looped (got $i)"
+[ -z "$(drift)" ] && [ ! -s "$F/logs/pipeline-health.log" ] && ok \
+  || bad "P0: a remote box on an unknown sha gives no driftfail and no log line (alerts: $(cat "$T/alerts.txt"))"
 [ ! -e "$T/calls.sync" ] && ok || bad "fixture: the hub is current, harness-sync must not run"
 
 # G1 a single source

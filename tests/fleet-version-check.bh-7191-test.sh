@@ -2,7 +2,7 @@
 # tests/fleet-version-check.bh-7191-test.sh — BH-7191 (tracer BH-7302): the hub
 # lane bin/fleet-version-check.sh, its pure half bin/lib/fleet-version-decide.sh,
 # the lag rule bin/lib/fleet-version-rules.d/20-lag.sh, the empty seams
-# (10-role.sh, 30-beat.sh, 40-nosync.sh, bin/lib/fleet-version-sink.sh) and the
+# (10-role.sh, bin/lib/fleet-version-sink.sh) and the
 # settings seed worker/jobs/schema.d/202610171941-bh-7191-harness-version-settings.sql.
 #
 # The lane runs over real curl against the REAL jobs worker
@@ -104,7 +104,10 @@ eq "L5 as_of between M40 and M31: lag from M40" "$(fvc_lag_min "$C0" "$ML" $((NO
 
 echo "D: fvc_decide"
 R=$((NOW - 60))
-row() { printf '%s\tbuild\t%s\t%s\t%s\t\t\t\n' "$@"; }
+# A fresh beat and sync_timer 1 (BH-7304): the beat and nosync rules stay quiet,
+# so every row here answers for the lag rule alone.
+BEAT=$(date -u -d "@$NOW" +%Y-%m-%dT%H:%M:%SZ)
+row() { printf '%s\tbuild\t%s\t%s\t%s\t%s\t1\t\n' "$1" "$2" "$3" "$4" "$BEAT"; }
 dec() { FVC_MAX_LAG_MIN="${MAXL:-30}" fvc_decide; }
 eq "D1 lag 40 alerts" "$(row b1 "$C0" "$R" 40 | dec)" "ALERT b1 lag lag=40m sha=${C0:0:8}"
 eq "D2 lag 30 is OK" "$(row b2 "$M31" "$R" 30 | dec)" "OK b2 lag=30m"
@@ -143,7 +146,7 @@ done
 fvc_decide </dev/null >/dev/null
 eq "S1 FVC_RULES order" "${FVC_RULES[*]}" "fvc_rule_role fvc_rule_lag fvc_rule_beat fvc_rule_nosync"
 for s in 10-role:fvc_rule_role 30-beat:fvc_rule_beat 40-nosync:fvc_rule_nosync; do
-  o=$( FVC_RULES=(); . "$H/bin/lib/fleet-version-rules.d/${s%%:*}.sh"; FVC_BOX=x "${s##*:}"; echo "rc=$?" )
+  o=$( FVC_RULES=(); . "$H/bin/lib/fleet-version-rules.d/${s%%:*}.sh"; FVC_BOX=x FVC_BEAT="$BEAT" FVC_SYNC_TIMER=1 "${s##*:}"; echo "rc=$?" )
   eq "S1 ${s##*:} alone prints nothing, rc 0" "$o" "rc=0"
 done
 o=$( . "$H/bin/lib/fleet-version-sink.sh"; echo "ALERT x lag lag=40m" | fvc_sink; echo "rc=$?" )
@@ -151,7 +154,7 @@ eq "S1 fvc_sink prints nothing, rc 0" "$o" "rc=0"
 STUB="$T/stub"; mkdir -p "$STUB"
 for c in git curl; do printf '#!/bin/sh\necho "%s called" >> "%s/called"\nexit 99\n' "$c" "$T" > "$STUB/$c"; chmod +x "$STUB/$c"; done
 rm -f "$T/called"
-OUT=$(printf 'b20\tbuild\t%s\t%s\t40\t\t\t\nb21\t\t%s\t%s\t0\t\t\t\nb22\tbuild\t\t\t\t\t\t\n' "$C0" "$R" "$MDOC" "$R" | PATH="$STUB:$PATH" dec)
+OUT=$(printf 'b20\tbuild\t%s\t%s\t40\t%s\t1\t\nb21\t\t%s\t%s\t0\t%s\t1\t\nb22\tbuild\t\t\t\t%s\t1\t\n' "$C0" "$R" "$BEAT" "$MDOC" "$R" "$BEAT" "$BEAT" | PATH="$STUB:$PATH" dec)
 eq "S2 decide makes no git or curl call" "$(cat "$T/called" 2>/dev/null)" ""
 eq "S2 every line parses back to word, box and kind" \
   "$(awk '{ print $1, $2, ($1 == "OK" ? "-" : $3) }' <<<"$OUT" | tr '\n' ';')" "ALERT b20 lag;OK b21 -;ALERT b22 nosha;"
@@ -178,6 +181,8 @@ fresh() {
   PORT=$(head -1 "$T/w$n.port")
   [ -n "$PORT" ] || { echo "SKIP: the fixture worker did not start ($(head -3 "$T/w$n.err"))"; exit 0; }
   export JOBS_URL="http://127.0.0.1:$PORT"
+  # One read through the worker, so box_status has sync_timer and lane_ticks exists.
+  curl -sS -o /dev/null -H "authorization: Bearer $HARNESS_SECRET" "$JOBS_URL/api/boxes"
   : > "$H/logs/ALERTS.log"; : > "$H/logs/fleet-version-check.log"
   scratch_rm "$H/state/fleet-version-check"; scratch_rm "$H/flags"; mkdir -p "$H/flags"
 }
@@ -187,9 +192,13 @@ reg() {
   sql "INSERT INTO registry_boxes (box, box_id, updated_at) VALUES (?,?,'2026-10-14T00:00:00Z')" "$1" "$2" \
     | jq -e '.rows' >/dev/null 2>&1 || bad "setup: registry_boxes row $1 not written"
 }
+# sync_timer 1 and a lane tick at NOW (BH-7304): the beat and nosync rules
+# stay quiet for every seeded box, so the E cases answer for the lag rule.
 status() {
-  sql "INSERT INTO box_status (box, harness_commit, harness_reported_at, updated_at) VALUES (?,?,?,?) ON CONFLICT(box) DO UPDATE SET harness_commit=excluded.harness_commit, harness_reported_at=excluded.harness_reported_at" "$1" "$2" "$3" "$3" \
+  sql "INSERT INTO box_status (box, harness_commit, harness_reported_at, sync_timer, updated_at) VALUES (?,?,?,1,?) ON CONFLICT(box) DO UPDATE SET harness_commit=excluded.harness_commit, harness_reported_at=excluded.harness_reported_at, sync_timer=1" "$1" "$2" "$3" "$3" \
     | jq -e '.rows' >/dev/null 2>&1 || bad "setup: box_status row $1 not written"
+  sql "INSERT INTO lane_ticks (lane, project, box, last_outcome, last_tick_at, updated_at) VALUES ('merge-conductor','-',?,'ran',?,?) ON CONFLICT(lane, project, box) DO UPDATE SET last_tick_at=excluded.last_tick_at" "$1" "$(iso "$NOW")" "$(iso "$NOW")" \
+    | jq -e '.rows' >/dev/null 2>&1 || bad "setup: lane_ticks row $1 not written"
 }
 tick() { "$H/bin/fleet-version-check.sh" > "$T/tick.out" 2>&1; echo $?; }
 alerts() { grep -c . "$H/logs/ALERTS.log" 2>/dev/null || true; }

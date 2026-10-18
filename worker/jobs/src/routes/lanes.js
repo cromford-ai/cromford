@@ -711,20 +711,35 @@ export const routes = [
          ON CONFLICT(lane, project, box) DO UPDATE SET
            last_tick_at=?5, last_outcome=?4, why=?6, updated_at=?5`
       ).bind(lane, project, box, outcome, t, str(body.why, 200) || null).run();
-      // WHICH HARNESS COMMIT THIS BOX RUNS (BH-1511.1 review, I2). Sent at most
-      // hourly by bin/lib/lane-gate.sh — the contract version, so a box that
-      // reports one is by construction running a lane-gate that knows the
-      // registry-seed actor. `harness-ctl seed-registry` refuses unless every
-      // box has reported recently. Only a hex sha is stored; anything else is
-      // ignored and the tick still lands.
-      const sha = typeof body.harness_commit === "string" ? body.harness_commit.trim() : "";
-      if (/^[0-9a-f]{7,40}$/.test(sha)) {
+      // WHICH HARNESS COMMIT THIS BOX RUNS (BH-1511.1 review, I2). Sent on a
+      // change, else hourly, by bin/lib/lane-gate.sh — the contract version,
+      // so a box that reports one is by construction running a lane-gate that
+      // knows the registry-seed actor. `harness-ctl seed-registry` refuses
+      // unless every box has reported recently, so harness_reported_at moves
+      // only with a valid sha. Only a hex sha is stored.
+      //
+      // THE SYNC FACTS RIDE THE SAME POST (BH-7304): harness_synced_at (ISO,
+      // seconds, Z) and sync_timer (0 or 1). Each is stored only in that shape,
+      // and a missing or malformed one keeps the stored value. Anything else
+      // is ignored and the tick still lands.
+      const raw = typeof body.harness_commit === "string" ? body.harness_commit.trim() : "";
+      const sha = /^[0-9a-f]{7,40}$/.test(raw) ? raw : null;
+      const synced = typeof body.harness_synced_at === "string"
+        && /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ$/.test(body.harness_synced_at) ? body.harness_synced_at : null;
+      const st = body.sync_timer;
+      const timer = st === 0 || st === "0" ? 0 : st === 1 || st === "1" ? 1 : null;
+      if (sha !== null || synced !== null || timer !== null) {
         await ensureColumns(env, "box_status");
         await env.DB.prepare(
-          `INSERT INTO box_status (box, harness_commit, harness_reported_at, actor, updated_at)
-           VALUES (?1,?2,?3,'lane-gate',?3)
-           ON CONFLICT(box) DO UPDATE SET harness_commit=?2, harness_reported_at=?3, updated_at=?3`
-        ).bind(box, sha, t).run();
+          `INSERT INTO box_status (box, harness_commit, harness_reported_at, harness_synced_at, sync_timer, actor, updated_at)
+           VALUES (?1,?2,CASE WHEN ?2 IS NULL THEN NULL ELSE ?3 END,?4,?5,'lane-gate',?3)
+           ON CONFLICT(box) DO UPDATE SET
+             harness_commit=CASE WHEN ?2 IS NULL THEN box_status.harness_commit ELSE ?2 END,
+             harness_reported_at=CASE WHEN ?2 IS NULL THEN box_status.harness_reported_at ELSE ?3 END,
+             harness_synced_at=COALESCE(?4, box_status.harness_synced_at),
+             sync_timer=COALESCE(?5, box_status.sync_timer),
+             updated_at=?3`
+        ).bind(box, sha, t, synced, timer).run();
       }
       return json(200, { tick: { lane, project, box, outcome, at: t } });
     

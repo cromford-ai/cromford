@@ -21,18 +21,13 @@
 #   A3 zero-merge breaker, no client: the page says the hold row was NOT written
 #   A4 flag_set present and answering: costhalt page, stamp written, no ssh
 #   B0 box_heads: TSV of reporting boxes only; rc 1 when the worker cannot answer
-#   B1 fresh report at origin tip -> no alert
-#   B2 fresh report lacking a first-parent main commit older than the grace
-#      -> one driftfail alert with the box_status wording
-#   B3 the same sha, but reported longer ago than the grace -> logged, no alert
-#   B4 main merged a branch whose commits are hours old, minutes ago; the box is
-#      on the pre-merge sha -> no alert (first-parent)
-#   B5 no row / box_heads fails / box_heads not defined -> logged, no alert
+#   B1-B8 (BH-7304) the inputs that used to alert or log for a REMOTE box
+#      (behind main, a stale report, no row, box_heads failing, an orchestrator
+#      sync, a box-id row): no driftfail: line and no log line, because
+#      bin/fleet-version-check.sh owns remote boxes now
 #   B6 no case in section 8 ever calls ssh
-#   B7 flags/orchestrator-sync-in-progress fresh + drifted box -> suppressed
-#   B8 box_status names the box differently from fleet.conf (box id "project-3",
-#      hostname "box-project-3-1" without the generation suffix): it is still
-#      judged, and where two rows answer for one box the newest report wins
+#   H1 the hub's own checkout behind origin: harness-sync.sh deploy runs once;
+#      a heal that does not move HEAD gives one driftfail:local alert
 #
 # Run: HARNESS_TEST_SANDBOX=1 bash tests/pipeline-health-box-head.bh-2529-test.sh
 set -uo pipefail
@@ -178,7 +173,7 @@ heads() { # heads <project-4 sha> <project-4 seconds-ago> [<project-3 sha> <proj
 : > "$T/calls.ssh"   # the cost block's own ceiling sweep above is not section 8
 drive_fresh() { # drive_fresh [rows|fail|undef]
   : > "$T/alerts.txt"; : > "$F/logs/pipeline-health.log"
-  ( export H="$F" HARNESS="$F" NOW FLEET_CONF="$F/fleet.conf" HARNESS_CHECKOUT="$G/co" \
+  ( export H="$F" HARNESS="$F" NOW FLEET_CONF="$F/fleet.conf" HARNESS_CHECKOUT="${FRESH_CO:-$G/co}" \
            PATH="$T/fakebin:$PATH" BH_MODE="${1:-rows}"
     bash -c 'STAMP() { date -u "+%Y-%m-%d %H:%M:%SZ"; }
              alert() { printf "%s|%s|%s\n" "$1" "$2" "$3" >> "$T/alerts.txt"; }
@@ -191,76 +186,66 @@ drive_fresh() { # drive_fresh [rows|fail|undef]
 drift() { grep "|driftfail:$1:" "$T/alerts.txt" 2>/dev/null; }
 logged() { grep -q "$1" "$F/logs/pipeline-health.log" 2>/dev/null; }
 
+# BH-7304 (BH-7191.2): remote boxes are judged by bin/fleet-version-check.sh,
+# so section 8 gives a remote box no driftfail: line and no log line, whatever
+# its report says. Every B input below is the one that used to alert or log.
+remote_silent() { # remote_silent <case>
+  if grep -q '|driftfail:' "$T/alerts.txt" 2>/dev/null; then
+    bad "$1: a remote box must give no driftfail: line (alerts: $(cat "$T/alerts.txt"))"
+  else ok; fi
+  if logged 'harness HEAD unknown' || logged 'non-fleet paths only'; then
+    bad "$1: a remote box must give no log line ($(cat "$F/logs/pipeline-health.log"))"
+  else ok; fi
+}
+
 # B1 both boxes at origin tip
-heads "$M" 300 "$M" 300; drive_fresh
-[ ! -s "$T/alerts.txt" ] && ok || bad "B1: boxes at origin tip must not alert ($(cat "$T/alerts.txt"))"
+heads "$M" 300 "$M" 300; drive_fresh; remote_silent B1
 
-# B2 project-4 on C0, reported 5 min ago: lacks C1 (5h old) -> one alert
-heads "$C0" 300 "$M" 300; drive_fresh
-A=$(drift project-4)
-[ "$(printf '%s' "$A" | grep -c .)" = 1 ] && ok || bad "B2: a fresh report lacking an old main commit must alert once (alerts: $(cat "$T/alerts.txt"))"
-grep -q "^5400|driftfail:project-4:$M|" <<<"$A" && ok || bad "B2: key driftfail:project-4:<origin>, ttl 5400 (got: $A)"
-grep -q "box-project-4-1 reports harness at $C0" <<<"$A" && grep -q "lacks origin/main $C1" <<<"$A" \
-  && grep -q 'fleet-propagate did not land there' <<<"$A" && ok || bad "B2: the alert must name the reported sha and the missing main commit (got: $A)"
-[ -z "$(drift project-3)" ] && ok || bad "B2: the current box must not alert"
+# B2 project-4 on C0, reported 5 min ago: lacks C1 (5h old). This used to alert once.
+heads "$C0" 300 "$M" 300; drive_fresh; remote_silent B2
 
-# B3 the same sha, reported 3h ago (older than the grace) -> log only
-heads "$C0" 10800 "$M" 300; drive_fresh
-[ -z "$(drift project-4)" ] && ok || bad "B3: a stale report must not alert ($(cat "$T/alerts.txt"))"
-logged 'box-project-4-1 harness HEAD unknown' && ok || bad "B3: a stale report must log 'harness HEAD unknown' ($(cat "$F/logs/pipeline-health.log"))"
+# B3 the same sha, reported 3h ago. This used to log 'harness HEAD unknown'.
+heads "$C0" 10800 "$M" 300; drive_fresh; remote_silent B3
 
-# B4 project-4 on C1 (the pre-merge sha) 5 min ago; the merged branch commit is 3h
-# old but it is not on main's first-parent line older than the grace
-heads "$C1" 300 "$M" 300; drive_fresh
-[ -z "$(drift project-4)" ] && ok || bad "B4: a pre-merge sha must not alert after a merge of an old branch ($(cat "$T/alerts.txt"))"
+# B4 project-4 on C1 (the pre-merge sha) 5 min ago
+heads "$C1" 300 "$M" 300; drive_fresh; remote_silent B4
 
-# B4b the grace is a knob: a 10h grace makes C0 the reference, so C0 is fine
+# B4b the old grace knob changes nothing now
 heads "$C0" 300 "$M" 300
-( export HARNESS_HEAD_GRACE_S=36000; drive_fresh )
-[ -z "$(drift project-4)" ] && ok || bad "B4b: HARNESS_HEAD_GRACE_S must move the reference commit ($(cat "$T/alerts.txt"))"
+( export HARNESS_HEAD_GRACE_S=36000; drive_fresh ); remote_silent B4b
 
 # B5 no row for project-4; box_heads failing; box_heads not defined
-heads "" 0 "$M" 300; drive_fresh
-[ ! -s "$T/alerts.txt" ] && logged 'box-project-4-1 harness HEAD unknown' && ok \
-  || bad "B5: a box with no row must log, not alert (alerts: $(cat "$T/alerts.txt"); log: $(cat "$F/logs/pipeline-health.log"))"
-drive_fresh fail
-[ ! -s "$T/alerts.txt" ] && logged 'box-project-3-2 harness HEAD unknown' && ok \
-  || bad "B5: box_heads failing must log, not alert"
-drive_fresh undef
-[ ! -s "$T/alerts.txt" ] && logged 'box-project-4-1 harness HEAD unknown' && ok \
-  || bad "B5: no jobs client must log, not alert"
+heads "" 0 "$M" 300; drive_fresh; remote_silent "B5 no row"
+drive_fresh fail; remote_silent "B5 box_heads fails"
+drive_fresh undef; remote_silent "B5 no jobs client"
 
-# B5b a row with a commit but no report time: `date -d ""` is today's midnight,
-# a time nobody reported, so it must read as unknown rather than be judged
-printf 'box-project-4-1\t%s\t\n' "$C0" > "$T/heads.tsv"; drive_fresh
-[ -z "$(drift project-4)" ] && logged "box-project-4-1 harness HEAD unknown: report time '' unreadable" && ok \
-  || bad "B5b: an empty report time must log unreadable, not be judged (alerts: $(cat "$T/alerts.txt"); log: $(cat "$F/logs/pipeline-health.log"))"
+# B5b a row with a commit but no report time
+printf 'box-project-4-1\t%s\t\n' "$C0" > "$T/heads.tsv"; drive_fresh; remote_silent B5b
 
-# B7 orchestrator sync in progress: drift is logged as suppressed
-heads "$C0" 300 "$M" 300; touch "$F/flags/orchestrator-sync-in-progress"; drive_fresh
-[ -z "$(drift project-4)" ] && logged 'driftfail:project-4 suppressed' && ok \
-  || bad "B7: a fresh orchestrator-sync flag must suppress the page and log it ($(cat "$T/alerts.txt"))"
+# B7 orchestrator sync in progress and a box behind: no suppressed line either
+heads "$C0" 300 "$M" 300; touch "$F/flags/orchestrator-sync-in-progress"; drive_fresh; remote_silent B7
+logged 'driftfail:project-4 suppressed' && bad "B7: a remote box must give no suppressed line" || ok
 rm -f "$F/flags/orchestrator-sync-in-progress"
 
-# B8 box_status names the box its own way. project-3 reports as the box id "project-3"
-# (behind) -> judged and alerted under fleet.conf's name, not "unknown"
+# B8 box_status names the box its own way (box id "project-3", behind)
 printf 'box-project-4-1\t%s\t%s\nproject-3\t%s\t%s\n' "$M" "$(iso 300)" "$C0" "$(iso 300)" > "$T/heads.tsv"; drive_fresh
-[ -n "$(drift project-3)" ] && ! logged 'box-project-3-2 harness HEAD unknown' && ok \
-  || bad "B8: a row named by the box id must be matched to fleet.conf's box-project-3-2 (alerts: $(cat "$T/alerts.txt"); log: $(cat "$F/logs/pipeline-health.log"))"
-# the hostname without the generation suffix, current -> matched, no alert, not unknown
-printf 'box-project-4-1\t%s\t%s\nbox-project-3-1\t%s\t%s\n' "$M" "$(iso 300)" "$M" "$(iso 300)" > "$T/heads.tsv"; drive_fresh
-[ ! -s "$T/alerts.txt" ] && ! logged 'box-project-3-2 harness HEAD unknown' && ok \
-  || bad "B8: box-project-3-1 must be matched to box-project-3-2 (alerts: $(cat "$T/alerts.txt"); log: $(cat "$F/logs/pipeline-health.log"))"
-# two rows for one box: an old one under the fleet name (behind, but its report
-# is stale) and a fresh one under the hostname (current) -> the fresh one wins
-printf 'box-project-4-1\t%s\t%s\nbox-project-3-2\t%s\t%s\nbox-project-3-1\t%s\t%s\n' \
-  "$M" "$(iso 300)" "$C0" "$(iso 20000)" "$M" "$(iso 300)" > "$T/heads.tsv"; drive_fresh
-[ ! -s "$T/alerts.txt" ] && ! logged 'box-project-3-2 harness HEAD unknown' && ok \
-  || bad "B8: the newest of two rows for one box must win (alerts: $(cat "$T/alerts.txt"); log: $(cat "$F/logs/pipeline-health.log"))"
+remote_silent B8
 
 # B6 — across every section-8 run above
 [ ! -s "$T/calls.ssh" ] && ok || bad "B6: section 8 must never ssh (calls.ssh: $(cat "$T/calls.ssh"))"
 [ ! -e "$T/calls.sync" ] && ok || bad "fixture: the hub is current, harness-sync must not run"
+
+# H1 the hub's own checkout one commit behind origin: section 8 still runs
+# the auto-heal (harness-sync.sh deploy, once). The stub does not move HEAD, so
+# the heal fails and one driftfail:local alert names origin.
+git clone -q -b main "$G/origin.git" "$G/co-behind" 2>/dev/null
+git -C "$G/co-behind" reset -q --hard HEAD^
+rm -f "$T/calls.sync"
+FRESH_CO="$G/co-behind" drive_fresh
+[ "$(cat "$T/calls.sync" 2>/dev/null)" = deploy ] && ok || bad "H1: a hub behind origin must run harness-sync.sh deploy once (calls: $(cat "$T/calls.sync" 2>/dev/null))"
+[ "$(grep -c '|driftfail:' "$T/alerts.txt")" = 1 ] && grep -q "^5400|driftfail:local:$M|local checkout STILL at " "$T/alerts.txt" && ok \
+  || bad "H1: a failed heal must give one driftfail:local alert (alerts: $(cat "$T/alerts.txt"))"
+! grep -q 'auto-healed' "$F/logs/agent-rules.log" 2>/dev/null && ok || bad "H1: a heal that did not move HEAD must not log auto-healed"
 
 echo "pipeline-health-box-head: $PASS passed, $FAIL failed"
 [ "$FAIL" = 0 ]

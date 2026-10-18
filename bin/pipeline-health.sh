@@ -2493,22 +2493,8 @@ fi
 # progress: the page is suppressed (logged only).
 # The mtime TTL means a forgotten flag cannot silence real drift for good.
 #
-# REMOTE HEADS COME FROM box_status (BH-2529), never from an ssh hop: every box
-# posts its own checkout HEAD hourly through bin/lib/lane-gate.sh's liveness
-# tick, and box_heads reads them all in one call. So a remote box is judged
-# against the newest first-parent origin/main commit OLDER than
-# HARNESS_HEAD_GRACE_S (more than the hourly report plus fleet-propagate's
-# ~5 min), not the tip: a box that synced correctly would otherwise page on
-# every merge until its next report. --first-parent so a branch merged a minute
-# ago, whose own commits are hours old, is never taken for an old main commit.
-# A box with no row, a report older than the grace, or no answer at all is
-# logged as unknown and not paged — the ssh check was silent on an unreachable
-# box too. Remote re-sync belongs to bin/fleet-propagate.sh and
-# update-runners.sh; only the hub's own checkout is auto-healed here.
-# A remote box that lacks HREF is then diffed against it over FLEET_PATHS
-# (bin/lib/fleet-paths.sh, BH-5247): when no path fleet-propagate ships differs,
-# fleet-propagate skipped that range on purpose and the box is current (logged
-# "on non-fleet paths only"). A docs/tests merge used to page every box.
+# Remote boxes are judged by bin/fleet-version-check.sh (BH-7191); only the
+# hub's own checkout is auto-healed here.
 # >>> fleet checkout freshness (tests/pipeline-health-box-head.bh-2529-test.sh runs this block)
 OSYNC_FRESH=0
 if [ -f "$H/flags/orchestrator-sync-in-progress" ]; then
@@ -2518,92 +2504,22 @@ fi
 HCO="${HARNESS_CHECKOUT:-/root/harness-checkout}"
 git -C "$HCO" fetch origin main -q 2>/dev/null
 ORIGIN=$(git -C "$HCO" rev-parse --short origin/main 2>/dev/null)
-HGRACE="${HARNESS_HEAD_GRACE_S:-5400}"
-case "$HGRACE" in ''|*[!0-9]*) HGRACE=5400 ;; esac
-HREF=$(git -C "$HCO" rev-list -1 --first-parent --before="@$(( NOW - HGRACE ))" origin/main 2>/dev/null)
-HREF_S=$(git -C "$HCO" rev-parse --short "$HREF" 2>/dev/null)
-if ! command -v box_heads >/dev/null 2>&1; then HEADS_ERR="no jobs client"; HEADS=""
-elif HEADS=$(box_heads 2>/dev/null); then HEADS_ERR=""
-else HEADS_ERR="GET /api/boxes failed"; HEADS=""
-fi
-# box_status names a box by what the box calls ITSELF (_lg_box: JOBS_BOX, else
-# the hostname), fleet.conf by its box column, and the two differ (a generation
-# suffix, box-project-3-1 vs box-project-3-2; a box id, project-3). Both
-# sides are compared as the cron box id (bin/lib/cron-lines.sh, the ONE
-# definition of that relationship), and where two rows answer for one box the
-# newest report wins. Without the library the names must match exactly.
-declare -F cron_box_id_for >/dev/null 2>&1 || . "$H/bin/lib/cron-lines.sh" 2>/dev/null
-# The paths fleet-propagate ships (BH-5247). Without the lib the list is empty
-# and every box behind HREF pages, as it did before.
-# shellcheck source=bin/lib/fleet-paths.sh
-unset FLEET_PATHS; . "$H/bin/lib/fleet-paths.sh" 2>/dev/null
-hb_id() { if declare -F cron_box_id_for >/dev/null 2>&1; then cron_box_id_for "$1"; else printf '%s\n' "$1"; fi; }
-HEADS_ID=""
-while IFS=$'\t' read -r HB HS HA; do
-  [ -n "$HB" ] || continue
-  HEADS_ID="$HEADS_ID$(hb_id "$HB")"$'\t'"$HS"$'\t'"$HA"$'\n'
-done <<<"$HEADS"
-HEADS_ID=$(printf '%s' "$HEADS_ID" | sort -t$'\t' -k3,3r)
-# Label:project pairs — the label is the cron basename a parity test asserts on,
-# the box is looked up (bin/box-for.sh, fleet.conf column 6). "." is the hub.
-for BOXLINE in "local:." "project-1:project-1" "project-2:project-2" "project-4:project-4" "project-3:project-3" "project-5:project-5" "project-6:project-6" "small:project-8"; do
-  BOX="${BOXLINE%%:*}"; BP="${BOXLINE##*:}"
-  if [ "$BP" = "." ]; then
-    HEAD=$(git -C "$HCO" rev-parse --short HEAD 2>/dev/null)
-    [ -n "$HEAD" ] && [ -n "$ORIGIN" ] && [ "$HEAD" != "$ORIGIN" ] || continue
-    # AUTO-HEAL (2026-08-15, the operator: "is it fixing these?"): drift's remedy is the
-    # idempotent deploy the alert used to name. ff-only pull cannot lose work;
-    # diverged/dirty checkouts refuse inside harness-sync and fall through to
-    # the alert. Only a FAILED heal reaches Telegram.
-    "$H/bin/harness-sync.sh" deploy >/dev/null 2>&1
-    HEAD=$(git -C "$HCO" rev-parse --short HEAD 2>/dev/null)
-    if [ "$HEAD" = "$ORIGIN" ]; then
-      echo "$(STAMP) [pipeline-health] $BOX drift auto-healed -> $ORIGIN" >> "$H/logs/agent-rules.log"
-    elif [ "$OSYNC_FRESH" = 1 ]; then
-      echo "$(STAMP) driftfail:$BOX suppressed — orchestrator sync in progress (${HEAD:-unreadable} vs $ORIGIN)" >> "$H/logs/pipeline-health.log"
-    else
-      alert 5400 "driftfail:$BOX:$ORIGIN" "$BOX checkout STILL at ${HEAD:-unreadable} after an auto-heal attempt (origin $ORIGIN) — diverged or dirty; needs a look"
-    fi
-    continue
-  fi
-  # A project not in fleet.conf has no box to ask about; "local" is the hub,
-  # already checked above.
-  BNAME=$("$H/bin/box-for.sh" "$BP" 2>/dev/null) || continue
-  [ -n "$BNAME" ] && [ "$BNAME" != local ] || continue
-  [ -n "$HREF" ] || continue
-  RSHA=""; RAT=""
-  if [ -z "$HEADS_ERR" ]; then
-    IFS=$'\t' read -r _ RSHA RAT <<<"$(awk -F'\t' -v b="$(hb_id "$BNAME")" '$1 == b { print; exit }' <<<"$HEADS_ID")"
-  fi
-  # `date -d ""` is today's midnight, not an error: an empty stamp is no stamp.
-  RTS=""; [ -n "$RAT" ] && { RTS=$(date -u -d "$RAT" +%s 2>/dev/null) || RTS=""; }
-  WHY=""
-  if [ -n "$HEADS_ERR" ]; then WHY="$HEADS_ERR"
-  elif [ -z "$RSHA" ]; then WHY="no box_status row"
-  elif [ -z "$RTS" ]; then WHY="report time '${RAT}' unreadable"
-  elif [ $(( NOW - RTS )) -gt "$HGRACE" ]; then WHY="last report $RAT is older than ${HGRACE}s"
-  fi
-  if [ -n "$WHY" ]; then
-    echo "$(STAMP) $BNAME harness HEAD unknown: $WHY" >> "$H/logs/pipeline-health.log"
-    continue
-  fi
-  # An unknown sha (a local branch, a commit origin never had) does not
-  # contain the reference, so it counts as drift.
-  git -C "$HCO" merge-base --is-ancestor "$HREF" "$RSHA" 2>/dev/null && continue
-  # A box behind HREF only on paths fleet-propagate never ships (BH-5247) is
-  # current: fleet-propagate skipped that range on purpose. rc 0 only — a sha
-  # the checkout does not have makes the diff rc 128, which stays drift.
-  # shellcheck disable=SC2086  # FLEET_PATHS is a word list of pathspecs
-  if [ -n "${FLEET_PATHS:-}" ] && git -C "$HCO" diff --quiet "$RSHA" "$HREF" -- $FLEET_PATHS 2>/dev/null; then
-    echo "$(STAMP) $BNAME at ${RSHA:0:8}: behind $HREF_S on non-fleet paths only" >> "$H/logs/pipeline-health.log"
-    continue
-  fi
-  if [ "$OSYNC_FRESH" = 1 ]; then
-    echo "$(STAMP) driftfail:$BOX suppressed — orchestrator sync in progress ($BNAME at $RSHA vs $ORIGIN)" >> "$H/logs/pipeline-health.log"
+HEAD=$(git -C "$HCO" rev-parse --short HEAD 2>/dev/null)
+if [ -n "$HEAD" ] && [ -n "$ORIGIN" ] && [ "$HEAD" != "$ORIGIN" ]; then
+  # AUTO-HEAL (2026-08-15, the operator: "is it fixing these?"): drift's remedy is the
+  # idempotent deploy the alert used to name. ff-only pull cannot lose work;
+  # diverged/dirty checkouts refuse inside harness-sync and fall through to
+  # the alert. Only a FAILED heal reaches Telegram.
+  "$H/bin/harness-sync.sh" deploy >/dev/null 2>&1
+  HEAD=$(git -C "$HCO" rev-parse --short HEAD 2>/dev/null)
+  if [ "$HEAD" = "$ORIGIN" ]; then
+    echo "$(STAMP) [pipeline-health] local drift auto-healed -> $ORIGIN" >> "$H/logs/agent-rules.log"
+  elif [ "$OSYNC_FRESH" = 1 ]; then
+    echo "$(STAMP) driftfail:local suppressed — orchestrator sync in progress (${HEAD:-unreadable} vs $ORIGIN)" >> "$H/logs/pipeline-health.log"
   else
-    alert 5400 "driftfail:$BOX:$ORIGIN" "$BNAME reports harness at ${RSHA:0:8} (as of $RAT), which lacks origin/main $HREF_S merged over ${HGRACE}s ago — fleet-propagate did not land there; needs a look"
+    alert 5400 "driftfail:local:$ORIGIN" "local checkout STILL at ${HEAD:-unreadable} after an auto-heal attempt (origin $ORIGIN) — diverged or dirty; needs a look"
   fi
-done
+fi
 # <<< fleet checkout freshness
 
 # ── 8c. Mission Control behind main: Pages serves an old console ─────────────

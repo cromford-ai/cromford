@@ -53,7 +53,6 @@ board-invariants.sh      project list comes from fleet-conf.sh; the residual KEY
 # ── label→project maps whose LABEL is an on-disk key (the address is now
 # ── fleet.conf's tailnet_ip; what remains here is the label, not the IP) ─────
 cost-rollup.sh           label→project map; the labels are state/cost/ dir names and cron basenames a parity test asserts on
-pipeline-health.sh       label→project maps; the labels are cron basenames a parity test asserts on
 
 # ── prose written for a model to read, not a list the code loops over ────────
 alerts-medic.sh          the SRE medic PROMPT spells out each board's per-app triage endpoint path
