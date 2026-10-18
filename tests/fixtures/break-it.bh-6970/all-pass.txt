@@ -1,0 +1,5 @@
+{"framework":"shell","imports":[],"cases":[
+ {"name":"greets by name","body":"[ \"$(bash \"$ROOT/bin/greet.sh\" ada)\" = \"hello ada\" ]"},
+ {"name":"prints one line","body":"[ \"$(bash \"$ROOT/bin/greet.sh\" ada | wc -l)\" -eq 1 ]"},
+ {"name":"exits 0 with a name","body":"bash \"$ROOT/bin/greet.sh\" x >/dev/null"}
+]}

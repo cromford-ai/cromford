@@ -362,6 +362,8 @@ LG_OK=0; . "$H/bin/lib/lead-gates.sh" 2>/dev/null && LG_OK=1
 # rest), or answered "split required". Without it an oversize diff is answered
 # "split required" with no model call: no reviewer reads a cut diff.
 . "$H/bin/lib/lead-diff-parts.sh" 2>/dev/null || log "bin/lib/lead-diff-parts.sh missing; an oversize diff is answered split required this tick"
+# BH-6970: the break-it verifier (bi_review), after the model verdict. Off without it.
+. "$H/bin/lib/break-it.sh" 2>/dev/null || log "bin/lib/break-it.sh missing; no break-it run this tick"
 # BH-5909: the console QA gate. With LEAD_REVIEW_CONSOLE_QA_GATE=1 a harness PR
 # that changes console-ui/src/ and has no QA: PASS comment naming its head is a
 # BLOCK with no model call (bin/lib/console-qa-gate.sh). Default 0: it goes on
@@ -736,7 +738,7 @@ review_one() {
   local RP_STATE="" RP_TAIL="" CL_STATE="" CL_TAIL="" rp_rc rp_ci harness_repo dmode="" dprev="" dline="" dreport lb tn tslug tdone thread_note total half lfp lstage lnote
   local capr="" capo capf ctitle clabels
   local resets mreset since f what fields="" bfp bchg rsn bmode="" bline="" ldp_rc="" dbytes ldp_why nprod ldp_mode ldp_find
-  local lpv=0 lpk="" lprc imode="" imodel ire ckl imm wlnotes="" rlcap="" rlgl=0 rlgo
+  local lpv=0 lpk="" lprc imode="" imodel ire ckl imm wlnotes="" rlcap="" rlgl=0 rlgo bires="" bimode=off birw=0 biline=""
   # BH-5873: the mode the gates chose (full|delta|replay). Nothing reads it yet;
   # child 2 of #5870 (delta and replay) does.
   # shellcheck disable=SC2034
@@ -1510,6 +1512,16 @@ review_one() {
       *) lpk="" ;;
     esac
   fi
+  # >>> break-it (BH-6970): bin/lib/break-it.sh. Runs on a medium or high tier
+  # token (the last notes group) while break_it.mode reads shadow or enforce.
+  # enforce + failed:<k> adds a [BLOCK wrong-data] finding to $out (birw=1).
+  bires=""; bimode=off; birw=0; printf '%s\n' "$body" > "$WT.bibody"
+  command -v bi_review >/dev/null 2>&1 && read -r bires bimode birw < <(bi_review "$repo" "$pr" "$sha" "$project" "$WT" \
+    "$base" "$dsn" "$title" "$out" "$((DEADLINE - SECONDS))" "$WT.issue" "$WT.bibody")
+  bires="${bires:-skipped:nolib}"; log "$key: break-it: $bires (mode ${bimode:-off})"
+  [ "$birw" = 1 ] && verdict=$(lr_verdict "$out")
+  case "$bires" in skipped:*) ;; *) biline="- break-it (BH-6970): $bires (mode $bimode)"$'\n' ;; esac
+  # <<< break-it
   # BH-7123: the review level cap, after the re-review downgrade and before the
   # outcome cap (a perf ticket's INCONCLUSIVE claim still caps at BLOCK below).
   # Fail closed like lpv_downgrade: a rewrite whose verdict no longer reads
@@ -1563,8 +1575,8 @@ review_one() {
   # summary when the cap ran (a BLOCK answer). It sits ABOVE `- pr body:`, which
   # readers treat as the last header line before the agent's text
   # (tests/lead-review-inconclusive-block.bh-6381-test.sh L2).
-  { printf '%s# Lead review %s (%s#%s at %s)\n\n- verdict: %s\n- %s\n- rules pack: %s\n- reviewer model: %s\n- checklist: %s\n- review level (BH-7123): mode %s%s\n- ci-local: %s\n- pr body: %s\n' \
-      "$RVLINE" "$key" "$repo" "$pr" "$sha" "$verdict" "$suite_line" "$RP_STATE" "$model" "$ckl" "$(rl_mode "$project" 2>/dev/null || echo unknown)" "${rlk:+; $rlk}" "${CL_STATE:-not run}" "$bfp"
+  { printf '%s# Lead review %s (%s#%s at %s)\n\n- verdict: %s\n- %s\n- rules pack: %s\n- reviewer model: %s\n- checklist: %s\n- review level (BH-7123): mode %s%s\n- ci-local: %s\n%s- pr body: %s\n' \
+      "$RVLINE" "$key" "$repo" "$pr" "$sha" "$verdict" "$suite_line" "$RP_STATE" "$model" "$ckl" "$(rl_mode "$project" 2>/dev/null || echo unknown)" "${rlk:+; $rlk}" "${CL_STATE:-not run}" "$biline" "$bfp"
     [ -n "$capr" ] && printf -- '- outcome cap: %s\n' "$capr"
     # BH-7123 wave B: a cap-reached (notes-only) re-review says so under the header.
     [ -n "$rlcap" ] && printf -- '- review level (BH-7123): cap-reached notes-only re-review (%s): the fix-round cap is spent; every finding without an ALWAYS-BLOCK class is a NOTE\n' "$rlcap"
@@ -1581,6 +1593,8 @@ review_one() {
   # BH-7123 wave B: the go-live count rides on the result row's detail, so
   # bin/lead-review-land.sh reads the report only for a MERGE that noted one.
   LR_DONE_DETAIL=""; [ "${rlgl:-0}" -gt 0 ] 2>/dev/null && LR_DONE_DETAIL="golive:$rlgl"
+  # BH-6970: and the break-it result, which bin/lead-review-land.sh posts as --break-it.
+  case "$bires" in clean|could-not-run|failed:*) LR_DONE_DETAIL="${LR_DONE_DETAIL:+$LR_DONE_DETAIL }break-it:$bires" ;; esac
   finish_done "$id" "$job" "$sha" "$verdict" "$report" "$model" "$suite_line" "$key"
   LR_DONE_DETAIL=""
 }

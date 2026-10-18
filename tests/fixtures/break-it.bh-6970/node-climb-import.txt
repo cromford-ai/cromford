@@ -1,0 +1,3 @@
+{"framework":"node","imports":["import x from '../src/../../../outside.js';"],"cases":[
+ {"name":"climbs out","body":"assert.ok(x);"}
+]}

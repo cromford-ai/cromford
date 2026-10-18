@@ -1,0 +1,9 @@
+Here are the cases.
+
+```json
+{"framework":"shell","imports":[],"cases":[
+ {"name":"greets by name","body":"[ \"$(bash \"$ROOT/bin/greet.sh\" ada)\" = \"hello ada\" ]"},
+ {"name":"no name says hello world","body":"out=$(bash \"$ROOT/bin/greet.sh\")\necho \"got: $out\"\n[ \"$out\" = \"hello world\" ]"},
+ {"name":"exits 0 with a name","body":"bash \"$ROOT/bin/greet.sh\" x >/dev/null"}
+]}
+```

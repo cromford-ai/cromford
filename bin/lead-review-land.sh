@@ -756,6 +756,10 @@ while IFS= read -r ROW; do
         RVSN=$(jq -r '.scope_notes // ""' <<<"$ROW" 2>/dev/null)
         RVRE='(^|; )review-tier:(low|medium|high) review-mode:(full|intent)$'
         [[ "$RVSN" =~ $RVRE ]] && ARGS+=(--review-tier "${BASH_REMATCH[2]}" --review-mode "${BASH_REMATCH[3]}")
+        # BH-6970: the reviewer's break-it result rides in the result detail next to
+        # golive:N (bin/lead-review.sh). A word outside the set is no flag.
+        BIRE='(^|[ ;])break-it:(clean|could-not-run|failed:[1-9][0-9]{0,2})([ ;]|$)'
+        [[ "$DETAIL" =~ $BIRE ]] && ARGS+=(--break-it "${BASH_REMATCH[2]}")
         case "$REF" in
           -) ;;
           https://*) ARGS+=(--report-url "$REF") ;;

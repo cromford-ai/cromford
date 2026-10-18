@@ -1018,7 +1018,7 @@ export const ADDED_COLUMNS = {
   // row (full|intent|risk-tier), on a table created before them (a fresh one has
   // them in its CREATE). NULL = not said (a row before BH-6967, or a writer
   // outside the lead review path).
-  verdicts: [["auth", "TEXT"], ["human_sig", "TEXT"], ["review_tier", "TEXT"], ["review_mode", "TEXT"]],
+  verdicts: [["auth", "TEXT"], ["human_sig", "TEXT"], ["review_tier", "TEXT"], ["review_mode", "TEXT"], ["break_it", "TEXT"]],
   // 2026-09-14, cost fixes 1/2/7: row provenance (which transcript priced this
   // row, and whether it was priced from one at all) plus the attribution tags.
   // 2026-09-20, BH-1032: `note` was the one CSV column the mirror never carried
@@ -1502,7 +1502,8 @@ export const CREATED_TABLE_OVERRIDES = {
        auth TEXT,
        human_sig TEXT,
        review_tier TEXT,
-       review_mode TEXT
+       review_mode TEXT,
+       break_it TEXT
      )`,
     "CREATE INDEX IF NOT EXISTS idx_verdicts_pr_head ON verdicts(repo, pr, head_sha, id)",
     // BH-5808: the lessons window reads (schema.d/202610161105-bh-5808-lessons.sql).

@@ -132,6 +132,7 @@
 #                            [--source lead|human|box|risk-tier] [--model <id>] [--reviewer <name>]
 #                            [--report-url <https-url>] [--note "<one line>"]
 #                            [--review-tier low|medium|high] [--review-mode full|intent|risk-tier]
+#                            [--break-it clean|failed:<k>|could-not-run]
 #   bin/lead-verdict.sh show <owner/repo> <pr> [<head-sha>]
 #   bin/lead-verdict.sh request <owner/repo> <pr> <head-sha> [--notes <text>] [--prior <ref>]
 #                               [--priority <1..1000>]   nudge (request) a lead review of that head
@@ -333,7 +334,7 @@ lv_dismiss_stale() {
 
 lv_post() {
   [ $# -ge 4 ] || usage
-  local repo="$1" pr="$2" sha verdict="$4" source=lead model="" reviewer="" url="" note="" body resp state desc rtier="" rmode=""
+  local repo="$1" pr="$2" sha verdict="$4" source=lead model="" reviewer="" url="" note="" body resp state desc rtier="" rmode="" bi=""
   sha=$(printf '%s' "$3" | tr 'A-F' 'a-f'); shift 4
   lv_key_ok "$repo" "$pr"
   [[ "$sha" =~ ^[0-9a-f]{40}$ ]] || die "head-sha must be the full 40-hex sha the review read, got '$sha'"
@@ -351,6 +352,10 @@ lv_post() {
       --review-mode)
         case "$2" in full|intent|risk-tier) rmode="$2" ;;
           *) echo "lead-verdict: review-mode must be full, intent or risk-tier, got '$2'" >&2; exit 2 ;; esac ;;
+      # BH-6970: the break-it verifier's result on this head (k = failing cases, 1..999).
+      --break-it)
+        case "$2" in clean|could-not-run|failed:[1-9]|failed:[1-9][0-9]|failed:[1-9][0-9][0-9]) bi="$2" ;;
+          *) echo "lead-verdict: break-it must be clean, failed:<k> (k 1..999) or could-not-run, got '$2'" >&2; exit 2 ;; esac ;;
       *) usage ;;
     esac
     shift 2
@@ -387,10 +392,11 @@ lv_post() {
     exit 5
   fi
   body=$(jq -nc --arg r "$repo" --argjson p "$pr" --arg h "$sha" --arg v "$verdict" --arg s "$source" \
-    --arg m "$model" --arg rv "$reviewer" --arg u "$url" --arg n "$note" --arg rt "$rtier" --arg rm "$rmode" \
+    --arg m "$model" --arg rv "$reviewer" --arg u "$url" --arg n "$note" --arg rt "$rtier" --arg rm "$rmode" --arg bi "$bi" \
     '{repo:$r,pr:$p,head_sha:$h,verdict:$v,source:$s}
      + (if $rt == "" then {} else {review_tier:$rt} end)
      + (if $rm == "" then {} else {review_mode:$rm} end)
+     + (if $bi == "" then {} else {break_it:$bi} end)
      + (if $m == "" then {} else {reviewer_model:$m} end)
      + (if $rv == "" then {} else {reviewer:$rv} end)
      + (if $u == "" then {} else {report_url:$u} end)

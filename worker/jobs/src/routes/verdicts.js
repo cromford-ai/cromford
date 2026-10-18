@@ -45,6 +45,8 @@ export const VERDICT_SOURCES = ["lead", "human", "box", "risk-tier"];
 // BH-6967: the risk tier of the head a row judges, and the review that wrote it.
 export const REVIEW_TIERS = ["low", "medium", "high"];
 export const REVIEW_MODES = ["full", "intent", "risk-tier"];
+// BH-6970: the break-it verifier's result. k is the count of failing cases, 1..999.
+export const BREAK_IT_RE = /^(clean|could-not-run|failed:[1-9][0-9]{0,2})$/;
 // The sources whose newest row on a head STANDS: STANDING_SOURCES, in
 // lib/verdict-sources.js, the one list the PR gate's event writer reads too.
 // A box row is history only. BH-5022: a risk-tier row stands too, because
@@ -104,6 +106,11 @@ export function validateVerdict(body) {
     if (!words.includes(v)) return { err: `${key} must be one of ${words.join(", ")}` };
     out[key] = v;
   }
+  // BH-6970: the break-it verifier's result word, verbatim or refused by name.
+  if (body.break_it === undefined || body.break_it === null) out.break_it = null;
+  else if (typeof body.break_it !== "string" || !BREAK_IT_RE.test(body.break_it)) {
+    return { err: "break_it must be clean, failed:<k> (k 1..999) or could-not-run" };
+  } else out.break_it = body.break_it;
   return { row: out };
 }
 
@@ -416,10 +423,10 @@ export const routes = [
         }
         const res = await env.DB.prepare(
           `INSERT INTO verdicts (repo, pr, head_sha, verdict, source, reviewer_model, reviewer,
-                                 report_url, note, created_at, auth, human_sig, review_tier, review_mode)
-           VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14)`
+                                 report_url, note, created_at, auth, human_sig, review_tier, review_mode, break_it)
+           VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15)`
         ).bind(r.repo, r.pr, r.head_sha, r.verdict, r.source, r.reviewer_model, r.reviewer,
-               r.report_url, r.note, t, auth, humanSig, r.review_tier, r.review_mode).run();
+               r.report_url, r.note, t, auth, humanSig, r.review_tier, r.review_mode, r.break_it).run();
         const row = await env.DB.prepare("SELECT * FROM verdicts WHERE id=?1")
           .bind(res.meta.last_row_id).first();
         if (r.source === "human" && auth !== "human-token") {

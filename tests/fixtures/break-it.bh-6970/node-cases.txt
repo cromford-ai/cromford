@@ -1,0 +1,4 @@
+{"framework":"node","imports":["import { add } from '../src/add.js';"],"cases":[
+ {"name":"adds two numbers","body":"assert.equal(add(2, 3), 5);"},
+ {"name":"adds a string and a number as numbers","body":"assert.equal(add('2', 3), 5);"}
+]}

@@ -166,6 +166,9 @@ const SEEDED_AS_GROK_COPY = {
 // copy: rung 0 is triage.light's claude rung 0, rung 1 is lead.review's rung 0.
 const SEEDED_AS_LADDER_COPY = {
   'review-intent': ['triage.light', 'lead.review'],
+  // TEST-CHANGE (BH-6970): review-break-it, the break-it verifier's route, is the
+  // same two-rung copy.
+  'review-break-it': ['triage.light', 'lead.review'],
 };
 
 test('1: a fresh DB seeds every hub role at its live ladder (bar the alert.triage carve-out)', () => {

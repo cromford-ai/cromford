@@ -1,0 +1,5 @@
+{"framework":"shell","imports":[],"cases":[
+ {"name":"greets by name","body":"[ \"$(bash \"$ROOT/bin/greet.sh\" ada)\" = \"hello ada\" ]"},
+ {"name":"exits 0 with a name","body":"bash \"$ROOT/bin/greet.sh\" x >/dev/null"},
+ {"name":"stops the run","body":"kill -TERM $$"}
+]}

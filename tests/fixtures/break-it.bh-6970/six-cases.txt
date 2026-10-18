@@ -1,0 +1,8 @@
+{"framework":"shell","imports":[],"cases":[
+ {"name":"case one","body":"[ -f \"$ROOT/bin/greet.sh\" ]"},
+ {"name":"case two","body":"[ -f \"$ROOT/bin/greet.sh\" ]"},
+ {"name":"case three","body":"[ -f \"$ROOT/bin/greet.sh\" ]"},
+ {"name":"case four","body":"[ -f \"$ROOT/bin/greet.sh\" ]"},
+ {"name":"case five","body":"[ -f \"$ROOT/bin/greet.sh\" ]"},
+ {"name":"case six","body":"[ -f \"$ROOT/bin/greet.sh\" ]"}
+]}

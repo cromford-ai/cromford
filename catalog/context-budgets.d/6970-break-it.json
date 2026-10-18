@@ -1,0 +1,47 @@
+[
+    {
+      "lane": "break-it",
+      "stage": "break-it",
+      "project": "$project",
+      "runner": null,
+      "job": "Inside a lead review (bin/lib/break-it.sh bi_run, BH-6970): one no-tools call that writes at most break_it.max_tests test cases that try to break the patch of a medium- or high-tier head, in the repo's own framework.",
+      "target_tokens": 40000,
+      "ceiling_tokens": 80000,
+      "composition": [
+        {
+          "component": "instructions + answer contract",
+          "source": "prompts/lead-review.d/break-it.md",
+          "cap": "static",
+          "purpose": "what a break-it case is and the one-object JSON answer"
+        },
+        {
+          "component": "limits",
+          "source": "inline in bi_run: the framework, break_it.max_tests and the test file path",
+          "cap": "three lines",
+          "purpose": "which framework runs and how many cases are kept"
+        },
+        {
+          "component": "acceptance tests",
+          "source": "the Acceptance tests section of the ticket body (else of the PR body)",
+          "cap": "8,192 bytes",
+          "purpose": "the behaviors the change claims"
+        },
+        {
+          "component": "diff",
+          "source": "git diff origin/<base>...<head> in the review worktree",
+          "cap": "settings row break_it.max_diff_bytes (fallback 200,000 bytes) with a cut marker",
+          "purpose": "THE SCOPED DELTA: the patch the cases try to break"
+        }
+      ],
+      "bounds": [
+        "[lane:diff_bytes] the diff is cut at break_it.max_diff_bytes (VERIFIED: bin/lib/break-it.sh bi_run)",
+        "[lane:accept_bytes] the acceptance tests are cut at 8,192 bytes (VERIFIED: bin/lib/break-it.sh bi_run)",
+        "[lane:no_tools] the call runs with AGENT_CALL_NO_TOOLS=1, so the session cannot read files and grow past its prompt (VERIFIED: bin/lib/break-it.sh call site)",
+        "[lane:dedup] no call when the replay file of the head exists, and the lead-head call guard refuses a repeat fp (VERIFIED: bin/lib/break-it.sh bi_run)",
+        "[harness:prompt_guard] prompt_guard 720KB (VERIFIED — bounds the assembled prompt only, NOT session growth)"
+      ],
+      "measured_before": null,
+      "measured_before_note": "never measured: the stage is new in BH-6970.",
+      "_unmeasured": "no break-it call has run yet: the stage is new in BH-6970. 80,000 tokens is the 200,000-byte diff cut (about 50,000 tokens) plus the prompt, the acceptance tests and the answer, with room. No context_kill_tokens: BH-2538 arms no lane without measured rows."
+    }
+]

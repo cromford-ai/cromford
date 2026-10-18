@@ -1,0 +1,20 @@
+[
+    {
+        "id": "break-it",
+        "script": "bin/lib/break-it.sh",
+        "marker": "AGENT_CALL_ROLE=review-break-it \"$root/bin/agent-call.sh\" break-it",
+        "kind": "agent-call",
+        "lane": "lead-review",
+        "stage": "break-it",
+        "project": "$project",
+        "runners": [
+            "ladder"
+        ],
+        "through_agent_call": true,
+        "priced": "yes",
+        "gated": "agent-call",
+        "dedup": "the box replay file state/break-it/<slug>-<pr>-<sha>.result is read before the call and written after every paid call (an unusable billed answer is could-not-run, terminal); the call guard on stage lead-head K=1 with AGENT_CALL_FP lead:<slug>#<pr>@<sha>~breakit refuses a repeat head on any box before anything is bought (BH-6970)",
+        "deterministic_candidate": null,
+        "note": "BH-6970: bin/lead-review.sh review_one calls bi_review after the lead verdict is readable, only for a review-tier:medium|high head while break_it.mode reads shadow or enforce. One no-tools call on route review-break-it, --max-budget-usd from settings row break_it.budget_usd (fallback 1.50). The answer is at most break_it.max_tests test cases, written to one file and run at the PR head."
+    }
+]
