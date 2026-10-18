@@ -1,0 +1,131 @@
+{
+  "libs": [
+    {
+      "id": "docker-pool-host",
+      "file": "bin/lib/docker-pool-host.sh",
+      "note": "BH-7347 (slice C1 of #7300): the docker-pool host runner bin/docker-pool-runner.sh, which claims one queued row through the docker-pool lease and runs the builder image in local Docker. Resolved at call time with lib_env_apply docker-pool-host (dph_knob). The gate knobs are the C0 settings rows docker_pool.max_concurrent and docker_pool.kill. docs/notes/2026-10-18-BH-7347-docker-pool-runner.md.",
+      "knobs": [
+        {
+          "env": "DOCKER_POOL_IMAGE",
+          "type": "string",
+          "default": "",
+          "zero_means": null,
+          "required": false,
+          "note": "The builder image ref the runner starts. Empty = the fly_images row of the project (fir_digest), else state/fly/<project>.image. A value outside [A-Za-z0-9._/:@-] is empty. Not settable: an image is code the host runs with the env bundle mounted.",
+          "settable": false
+        },
+        {
+          "env": "DOCKER_POOL_PLATFORM",
+          "type": "string",
+          "default": "linux/amd64",
+          "zero_means": null,
+          "required": false,
+          "note": "docker run --platform. The builder image is amd64 only, so a Mac runs it under Rosetta. A value outside [A-Za-z0-9/_-] is linux/amd64."
+        },
+        {
+          "env": "DOCKER_POOL_CPUS",
+          "type": "int",
+          "default": 8,
+          "min": 1,
+          "max": 64,
+          "unit": "CPUs",
+          "zero_means": null,
+          "required": false,
+          "note": "docker run --cpus of one build (Fly performance-8x parity)."
+        },
+        {
+          "env": "DOCKER_POOL_MEMORY",
+          "type": "string",
+          "default": "16g",
+          "zero_means": null,
+          "required": false,
+          "note": "docker run --memory of one build, a number with an optional b/k/m/g suffix; anything else is 16g."
+        },
+        {
+          "env": "DOCKER_POOL_ROOT",
+          "type": "string",
+          "default": "",
+          "zero_means": null,
+          "required": false,
+          "note": "The host directory of the work dirs <root>/<project>/<key>-<tag>. Empty = $HARNESS/state/docker-pool. Not settable: dph_retention deletes under it.",
+          "settable": false
+        },
+        {
+          "env": "DOCKER_POOL_CHECKOUT",
+          "type": "string",
+          "default": "",
+          "zero_means": null,
+          "required": false,
+          "note": "The harness checkout the runner tars into the container's /data/harness (bin prompts rules catalog fleet.conf fly). Empty = the repo root of bin/docker-pool-runner.sh. Not settable: a path whose code the container runs.",
+          "settable": false
+        },
+        {
+          "env": "DOCKER_POOL_BEAT_S",
+          "type": "int",
+          "default": 60,
+          "min": 10,
+          "max": 600,
+          "unit": "seconds",
+          "zero_means": null,
+          "required": false,
+          "note": "One docker-pool heartbeat per this many seconds, cut to a third of the lease left at the claim. A settings row is clamped to 10..600; an env value is used as it stands."
+        },
+        {
+          "env": "DOCKER_POOL_FENCE_S",
+          "type": "int",
+          "default": 30,
+          "min": 5,
+          "max": 300,
+          "unit": "seconds",
+          "zero_means": null,
+          "required": false,
+          "note": "When heartbeats fail, the runner stops the container at the last lease_until minus this, so the hub sweep never requeues a row a live container still builds."
+        },
+        {
+          "env": "DOCKER_POOL_STOP_S",
+          "type": "int",
+          "default": 60,
+          "min": 5,
+          "max": 600,
+          "unit": "seconds",
+          "zero_means": null,
+          "required": false,
+          "note": "docker stop -t: the time builder-runner's TERM trap has to flush its cost rows."
+        },
+        {
+          "env": "DOCKER_POOL_MAX_BUILD_S",
+          "type": "int",
+          "default": 21600,
+          "min": 600,
+          "max": 86400,
+          "unit": "seconds",
+          "zero_means": null,
+          "required": false,
+          "note": "Wall cap of one build; past it the container is stopped and the row released (queued with no RESULT). 21600 = the hub's 360-minute claim window."
+        },
+        {
+          "env": "DOCKER_POOL_SMOKE_S",
+          "type": "int",
+          "default": 900,
+          "min": 60,
+          "max": 3600,
+          "unit": "seconds",
+          "zero_means": null,
+          "required": false,
+          "note": "How long the smoke verb waits for the container's RESULT."
+        },
+        {
+          "env": "DOCKER_POOL_KEEP_DAYS",
+          "type": "int",
+          "default": 7,
+          "min": 1,
+          "max": 90,
+          "unit": "days",
+          "zero_means": null,
+          "required": false,
+          "note": "Work dirs older than this are deleted at each runner start (dph_retention). They hold no money row: C2's result row is the record."
+        }
+      ]
+    }
+  ]
+}
