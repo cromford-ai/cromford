@@ -30,7 +30,7 @@ cat > "$T/h/bin/agent-call.sh" <<'EOS'
 #!/bin/bash
 pr=$(basename "$5" .md)
 printf '%s %s %s %s\n' "$1" "$2" "$3" "$pr" >> "$CALLS"
-printf '%s' "$6" > "$PROMPTS/$pr.txt"
+case "$6" in @/*) cat "${6#@}" ;; *) printf '%s' "$6" ;; esac > "$PROMPTS/$pr.txt"
 printf '%s %s\n' "$pr" "${AGENT_CALL_NO_TOOLS:-unset}" >> "$CALLS.notools"
 rc=$(cat "$STUBS/$pr.rc" 2>/dev/null || echo 0)
 [ "$rc" = 0 ] && cp "$STUBS/$pr" "$5"

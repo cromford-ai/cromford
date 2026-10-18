@@ -5,9 +5,100 @@
 # Cut: values from docs/plan/MVP_PLAN_2026-10-08.html.
 # Columns (tab-separated): pr, merge-sha, spec-values (`;`-separated, `-` =
 # unmapped), cut-values (`;`-separated, `-` = none), note.
-# NO ROWS YET. The build box that wrote this file could not read
-# example-org/project-6 (HTTP 403 through its proxy), and a row is only written
-# from the real log and the real PRD files, never from memory. Fill the rows on a
-# box that can read the repo, then run the replay as
-# docs/notes/2026-10-15-BH-6485-spec-trace.md says.
+# Source (BH-7233, read 2026-10-18 from a full clone at HEAD 7a29863f):
+#   git log --first-parent --reverse --since=2026-10-12T00:00:00 \
+#     --until=2026-10-14T00:00:00 --format='%H%x09%s' main   (box TZ UTC)
+# 86 rows: 72 mapped, 14 unmapped (main-red fixes, CI, ops, docs, deps).
+# A spec value is the PRD section the PR delivers, picked from its title and
+# `git show --stat`; at most 3 per row. Every value resolves at <merge-sha>^1.
+# Cut values are all `-`: the MVP plan's cut items (billing and credits, BYOK,
+# the scan game, permissions per department) are no section a row delivers.
+# The note is the MK key and a short neutral label, not the PR title.
+# spec-root: design/*-prototype-2026-10-05/handoff
 pr	merge-sha	spec-values	cut-values	note
+90	be7109634870b22c989c3979794fb6e341fa8b79	-	-	TK-89 e2e link fix on main
+100	d9437f0acba6e1001f2982298d5f2729d3828d58	prd-doc/11-4-19-to-4-25-dashboards-builder-tasks-integrations-global.md#4.21;prd-doc/05-j40-to-j59-home-dashboards-account.md#J56	-	TK-95 page with a bound stat card
+101	57daf2cce7ed479839d115ec8fb4d1515a46d7f4	prd-doc/07-4-1-to-4-4-account-setup-scanning-new-dashboard.md#4.4;prd-doc/11-4-19-to-4-25-dashboards-builder-tasks-integrations-global.md#4.21	-	TK-96 pages list and new page modal
+103	efa4f5c78fb187a6dd4b2b19915b0855ecc6b464	prd-doc/09-4-7-to-4-12-agents-library-builder-approvals.md#4.8;prd-doc/04-j20-to-j39-agents-tryouts-approvals.md#J23	-	TK-48 adopt a library agent
+104	072e1e6b51f25ffcb5c06d0d67a04846e33fb0fb	prd-doc/09-4-7-to-4-12-agents-library-builder-approvals.md#4.10	-	TK-91 run the follow-up agent
+106	4dbcd54f15f09784a1714e111bc9966a6cd5f554	prd-doc/09-4-7-to-4-12-agents-library-builder-approvals.md#4.10	-	TK-92 model drafts and run now
+107	c19a59ac3f6321c7964ffe784892f52deb830ba4	prd-doc/11-4-19-to-4-25-dashboards-builder-tasks-integrations-global.md#4.21;prd-doc/05-j40-to-j59-home-dashboards-account.md#J43	-	TK-97 designer add move resize bind
+110	70e717f2e8b1384312e949c126815d60c37526b9	prd-doc/05-j40-to-j59-home-dashboards-account.md#J56;prd-doc/11-4-19-to-4-25-dashboards-builder-tasks-integrations-global.md#4.21	-	TK-98 publish a page to the menu
+111	a4c8e6e50eaf999802510f6c3f97f73daca758ee	prd-doc/11-4-19-to-4-25-dashboards-builder-tasks-integrations-global.md#4.21	-	TK-99 page versions and restore
+113	aa7025f275141884caeff5ef092fbdac9e623723	prd-doc/11-4-19-to-4-25-dashboards-builder-tasks-integrations-global.md#4.21	-	TK-55 designer chart blocks
+112	236c1c9099494a14ff9fefed06be79e0be24eba8	prd-doc/11-4-19-to-4-25-dashboards-builder-tasks-integrations-global.md#4.21	-	TK-59 designer block library rest
+114	b0cc96b1d9d990e7487f11704e1e478576022c6a	prd-doc/03-j01-to-j19-setup-scan-report.md#J02;prd-doc/07-4-1-to-4-4-account-setup-scanning-new-dashboard.md#4.2	-	TK-65 start with no scan
+125	c9b6f727ecee24d200ab06d76c3467e93c5727e4	prd-doc/11-4-19-to-4-25-dashboards-builder-tasks-integrations-global.md#4.21	-	TK-119 people and teams blocks
+126	aca6de48e341be3b36ad8ceadc0caf2f0655f1b0	prd-doc/11-4-19-to-4-25-dashboards-builder-tasks-integrations-global.md#4.21	-	TK-116 bar chart blocks
+127	fab744b5c04d1517bc0757cb642449b6c4a07833	prd-doc/11-4-19-to-4-25-dashboards-builder-tasks-integrations-global.md#4.21	-	TK-120 sales and customers blocks
+128	311781786510181773a9fc15581223e5101610d0	prd-doc/11-4-19-to-4-25-dashboards-builder-tasks-integrations-global.md#4.21	-	TK-123 data input and structure blocks
+129	090130f39dd8683a4c29b9e9f6b2a9d6ec68897b	prd-doc/11-4-19-to-4-25-dashboards-builder-tasks-integrations-global.md#4.21	-	TK-122 operations and projects blocks
+132	75161e3ae5f6ef76b5ffe49d973524de5da3bfc4	prd-doc/11-4-19-to-4-25-dashboards-builder-tasks-integrations-global.md#4.21	-	TK-121 finance blocks
+134	fee07c3e2989b895d7b1546f2bd56726c059aef3	prd-doc/11-4-19-to-4-25-dashboards-builder-tasks-integrations-global.md#4.21	-	TK-117 series chart blocks
+131	131a03d7a384ab29f5d2283167ed5dd1b96e14b3	prd-doc/11-4-19-to-4-25-dashboards-builder-tasks-integrations-global.md#4.21	-	TK-118 time and planning blocks
+130	12dfa8510398a61c5e9a1b5eaaef93aacc2d700d	prd-doc/07-4-1-to-4-4-account-setup-scanning-new-dashboard.md#4.2;prd-doc/03-j01-to-j19-setup-scan-report.md#J02	-	TK-115 department templates
+149	7766f9d79f1655b9f394652e3cbbb97fd41c0a3f	-	-	TK-147 e2e fix on main
+148	6d0fbb761d0f39fe9d3de02c7a0963f5826d2672	prd-doc/11-4-19-to-4-25-dashboards-builder-tasks-integrations-global.md#4.21	-	TK-144 Lite and Pro company tier
+150	e43496aeeeeaaa22b8e65f1f4f2c3025900b2904	prd-doc/11-4-19-to-4-25-dashboards-builder-tasks-integrations-global.md#4.21	-	TK-124 advanced visuals blocks
+151	f07d636bbdba4e6c2d6d7e9498ce94ed77a169a3	prd-doc/09-4-7-to-4-12-agents-library-builder-approvals.md#4.11;prd-doc/04-j20-to-j39-agents-tryouts-approvals.md#J22	-	TK-94 approve reject send with kill switch
+157	43fd1d57a60f274187b08ae5facb267cffcaccdf	prd-doc/09-4-7-to-4-12-agents-library-builder-approvals.md#4.12;prd-doc/04-j20-to-j39-agents-tryouts-approvals.md#J29	-	TK-136 agent workspace contract
+160	3cdd70d35b932a18e2aacbf735150729524b37ed	-	-	TK-159 flaky test gate fix
+161	c19a5bb43157b469d651b551df5c5d2b0cab2701	prd-doc/04-j20-to-j39-agents-tryouts-approvals.md#J29;prd-doc/11-4-19-to-4-25-dashboards-builder-tasks-integrations-global.md#4.19	-	TK-137 workspace board on home
+168	83df9406329e86a48f87f556c9fa1bcd08702eab	prd-doc/04-j20-to-j39-agents-tryouts-approvals.md#J28;prd-doc/09-4-7-to-4-12-agents-library-builder-approvals.md#4.12	-	TK-152 run a workflow once
+162	97c8d1d178785715ff8282e5fe8f414096c1c1bc	prd-doc/11-4-19-to-4-25-dashboards-builder-tasks-integrations-global.md#4.23;prd-doc/05-j40-to-j59-home-dashboards-account.md#J51	-	TK-66 mail connector on data layer
+174	b34ed4d40d33a307d24fab38ba9ff37c96fdec21	prd-doc/04-j20-to-j39-agents-tryouts-approvals.md#J29;prd-doc/11-4-19-to-4-25-dashboards-builder-tasks-integrations-global.md#4.20;prd-doc/09-4-7-to-4-12-agents-library-builder-approvals.md#4.7	-	TK-141 workspace board on department pages
+179	e08a12607aa6a6da28ab6d1ffcdb9c708dca1ff9	prd-doc/11-4-19-to-4-25-dashboards-builder-tasks-integrations-global.md#4.19	-	TK-169 home hero contract
+187	d282d2ee93da66799cda3ca2d8c0142e817ceab1	prd-doc/11-4-19-to-4-25-dashboards-builder-tasks-integrations-global.md#4.21;prd-doc/11-4-19-to-4-25-dashboards-builder-tasks-integrations-global.md#4.23	-	TK-176 mailbox data block
+190	2f2a956427f4d3f0bfda49e4fd43dd561b41af93	prd-doc/09-4-7-to-4-12-agents-library-builder-approvals.md#4.11;prd-doc/04-j20-to-j39-agents-tryouts-approvals.md#J22	-	TK-163 review modal tracer
+192	547879e4591a4ec9405d21bfd709e03a1b580814	prd-doc/11-4-19-to-4-25-dashboards-builder-tasks-integrations-global.md#4.23;prd-doc/05-j40-to-j59-home-dashboards-account.md#J51	-	TK-175 connect mail from settings
+197	658055b11fafb3237420605aa1d471dfeeabea15	-	-	TK-178 sync worker deploy
+194	23ba4c420cf5cfc4c007a2346653a4634651954d	prd-doc/09-4-7-to-4-12-agents-library-builder-approvals.md#4.10	-	TK-177 agents on synced mail
+191	b75b5a8991dde2942f6fd4b426b6434ec3265636	prd-doc/11-4-19-to-4-25-dashboards-builder-tasks-integrations-global.md#4.19;prd-doc/05-j40-to-j59-home-dashboards-account.md#J41	-	TK-171 business overview tiles
+198	75fa83b909d739cd7fa4fde9d1f718254da4401a	prd-doc/09-4-7-to-4-12-agents-library-builder-approvals.md#4.10	-	TK-50 priced cost rows and spend tab
+199	b6afa809e6eb139e24cec8f6c5ab05abce1b4778	prd-doc/04-j20-to-j39-agents-tryouts-approvals.md#J28;prd-doc/09-4-7-to-4-12-agents-library-builder-approvals.md#4.12	-	TK-153 browse and run workflows
+201	a8ef18cc7affbb89acb9b78872a5c764f896205b	prd-doc/11-4-19-to-4-25-dashboards-builder-tasks-integrations-global.md#4.22	-	TK-183 meeting notes runner contract
+200	9db504f14c248ccb7a72a2287bc7f8a953778f4a	prd-doc/11-4-19-to-4-25-dashboards-builder-tasks-integrations-global.md#4.23;prd-doc/11-4-19-to-4-25-dashboards-builder-tasks-integrations-global.md#4.22	-	TK-67 calendar connector on data layer
+203	5a079a5e872f15e4496225e4d3666673b9321688	-	-	repo build rules doc
+202	4470243ef49db8908be0fe0176b625e43b7b0c36	prd-doc/11-4-19-to-4-25-dashboards-builder-tasks-integrations-global.md#4.19	-	TK-170 sample bar names missing tools
+196	54f4d89053a5b55233cbfd8145078c312cafe4f7	prd-doc/09-4-7-to-4-12-agents-library-builder-approvals.md#4.11	-	TK-167 autonomy chip and output bodies
+205	6575a9a82fd09578c747fc66d7bb945cf5ce20bb	prd-doc/11-4-19-to-4-25-dashboards-builder-tasks-integrations-global.md#4.19;prd-doc/05-j40-to-j59-home-dashboards-account.md#J41	-	TK-173 KPI deep dive modal
+204	84bceafbba6cd74f9a2a628fe2a46051a1f29535	prd-doc/09-4-7-to-4-12-agents-library-builder-approvals.md#4.10	-	TK-51 monthly cap per agent
+208	7cc6876dbc1e89f75952412f82372944935a5eb4	prd-doc/04-j20-to-j39-agents-tryouts-approvals.md#J28;prd-doc/09-4-7-to-4-12-agents-library-builder-approvals.md#4.12	-	TK-154 describe review save a workflow
+206	4d99cfdfdc43afdf2a51691aabb9691d07ba68a8	prd-doc/11-4-19-to-4-25-dashboards-builder-tasks-integrations-global.md#4.19;prd-doc/05-j40-to-j59-home-dashboards-account.md#J41	-	TK-172 business overview date range
+207	58d23073c9b0864ad65362c243adde28e5368b3d	prd-doc/09-4-7-to-4-12-agents-library-builder-approvals.md#4.11;prd-doc/04-j20-to-j39-agents-tryouts-approvals.md#J28	-	TK-156 waiting on you queue
+212	317f001628ebd11da49863975c3c342fdb5571a9	prd-doc/09-4-7-to-4-12-agents-library-builder-approvals.md#4.11;prd-doc/04-j20-to-j39-agents-tryouts-approvals.md#J22	-	TK-164 dismiss with reason and undo
+210	c2155f2404d69221c4d90b84c931d81c186125f9	prd-doc/11-4-19-to-4-25-dashboards-builder-tasks-integrations-global.md#4.22;prd-doc/09-4-7-to-4-12-agents-library-builder-approvals.md#4.12	-	TK-184 meeting report into workspace
+214	8afdc4e99286b0fe19cc3092e07f16151ab8e053	prd-doc/05-j40-to-j59-home-dashboards-account.md#J57;prd-doc/11-4-19-to-4-25-dashboards-builder-tasks-integrations-global.md#4.19	-	TK-143 add widget to home
+209	4a7f5d1666d53f5ce8fe2ad1c204d4f5487da8c3	prd-doc/11-4-19-to-4-25-dashboards-builder-tasks-integrations-global.md#4.22	-	TK-185 follow-up email draft
+215	5c7fe3a88c981662880979d0d89db39bf451babd	prd-doc/09-4-7-to-4-12-agents-library-builder-approvals.md#4.11;prd-doc/04-j20-to-j39-agents-tryouts-approvals.md#J22	-	TK-165 edit then approve with edits
+216	ad1c44e1dac701395a4fc14ae0296865ac36bb14	prd-doc/09-4-7-to-4-12-agents-library-builder-approvals.md#4.11;prd-doc/04-j20-to-j39-agents-tryouts-approvals.md#J22	-	TK-166 reject with feedback and redraft
+217	ab2a105019bd7f2c1b01b843a403e869ed765c51	prd-doc/11-4-19-to-4-25-dashboards-builder-tasks-integrations-global.md#4.22	-	TK-186 meetings list and record screens
+223	6d7977a5784f47c0003d61c0a58683921df4f9d9	prd-doc/09-4-7-to-4-12-agents-library-builder-approvals.md#4.12;prd-doc/04-j20-to-j39-agents-tryouts-approvals.md#J29	-	TK-139 workspace level pages
+228	25dc81748d81c462491374700c67fd9ac04f74f1	-	-	TK-227 e2e race fix on main
+218	280d3e82cf8a3cf035e34242504e9bd39c0e7018	-	-	database grants under parallel apply
+225	e8955e2234089a6ace3a92ac864c038fa994ea39	prd-doc/09-4-7-to-4-12-agents-library-builder-approvals.md#4.11	-	TK-219 item view contract
+226	fa76b7fb5ec5b8e1d2e17433c2728baddf0e954b	prd-doc/04-j20-to-j39-agents-tryouts-approvals.md#J26;prd-doc/09-4-7-to-4-12-agents-library-builder-approvals.md#4.10	-	TK-52 agent on off and autonomy
+236	02368a46dd7184a6ee3850faeda88e281d450be5	-	-	TK-230 auth proxy rate limits
+135	4a1cbf04a1d6f34579371b5997f018d03c8ae0cf	-	-	vendored prototype files
+213	2a10835eba3bf30ebab3dd83cbd60c22311482eb	prd-doc/04-j20-to-j39-agents-tryouts-approvals.md#J28;prd-doc/09-4-7-to-4-12-agents-library-builder-approvals.md#4.12	-	TK-155 workflow go live and pause
+242	1ae4eeb4c166fffa20cdf547588c43208134d6c3	prd-doc/09-4-7-to-4-12-agents-library-builder-approvals.md#4.11	-	TK-221 exceptions handed back
+243	5f004272113715a5381e5aaa56c8a51219c7f795	prd-doc/09-4-7-to-4-12-agents-library-builder-approvals.md#4.11	-	TK-220 read view and follow-up
+251	a2064889c4e93d12fba343360324e109361c8ad4	-	-	TK-234 runbook and security review
+252	94413268490d4b756348bbcfc6aa024776dc57d5	prd-doc/09-4-7-to-4-12-agents-library-builder-approvals.md#4.11	-	TK-222 receipts with undo
+253	ff28f619daf66fde4a48b9e1ade8474c24f43a53	prd-doc/10-4-13-to-4-18-shell-home-tour-brain-settings-credits.md#4.13	-	TK-244 app shell contract
+271	b4f3a3b8d2ce704d16f0518c1606af6d23b071a4	prd-doc/09-4-7-to-4-12-agents-library-builder-approvals.md#4.10;prd-doc/09-4-7-to-4-12-agents-library-builder-approvals.md#4.8	-	TK-258 one autonomy level vocabulary
+272	d26b0202c9d0923773be24d0534006fa5fd19f16	prd-doc/11-4-19-to-4-25-dashboards-builder-tasks-integrations-global.md#4.20;prd-doc/11-4-19-to-4-25-dashboards-builder-tasks-integrations-global.md#4.19	-	TK-257 sample bar buttons work
+274	3b82486c1a2a5382a51a684b981316a6c6dff10f	prd-doc/04-j20-to-j39-agents-tryouts-approvals.md#J29;prd-doc/09-4-7-to-4-12-agents-library-builder-approvals.md#4.12	-	TK-261 workflow tasks in drafts column
+278	cc2bb90dcafe71bd0f88e28f80a4b482ebc2c721	-	-	TK-270 CI design guard fix
+279	b707138f9383f6fbcf282af54b7da1258d18570e	prd-doc/09-4-7-to-4-12-agents-library-builder-approvals.md#4.11	-	TK-254 reject and edit buttons
+276	2fe70743b7899391926687fbeb0de597c261e498	prd-doc/11-4-19-to-4-25-dashboards-builder-tasks-integrations-global.md#4.19	-	TK-247 new tokens and home hero
+280	80e854588715a526d3768f0d600f2f44a520bd63	-	-	TK-277 dev build import fix
+282	32466aea0b0a559e15077215a13decdf69b148d4	prd-doc/09-4-7-to-4-12-agents-library-builder-approvals.md#4.10	-	TK-256 agents run on schedule
+275	c1fded88a93a028d45fdffe5c3869938628776a5	prd-doc/04-j20-to-j39-agents-tryouts-approvals.md#J21;prd-doc/03-j01-to-j19-setup-scan-report.md#J02	-	TK-255 new agents start off
+283	83f844b40c5fb9b2ca5840f719b7d4df2184f234	-	-	TK-231 error capture table
+287	22e634ca610b1897883d12d40c8296f4244e3ce7	prd-doc/09-4-7-to-4-12-agents-library-builder-approvals.md#4.10	-	TK-281 monthly agent cadence
+286	340a6f08c174822d6c4a69cb098d18401e088577	prd-doc/09-4-7-to-4-12-agents-library-builder-approvals.md#4.7	-	TK-259 hours saved for on agents
+285	160eadbc913d72e244abfdb62349170d78b30075	prd-doc/10-4-13-to-4-18-shell-home-tour-brain-settings-credits.md#4.13	-	TK-246 top bar
+288	a2fe81c37b6d2fb1a05c2475adb8f49092335999	prd-doc/05-j40-to-j59-home-dashboards-account.md#J40;prd-doc/11-4-19-to-4-25-dashboards-builder-tasks-integrations-global.md#4.19	-	TK-260 land on home after launch
+284	efc2db53d9e6e0229eaf42bfd9e07e934ea8ee0a	prd-doc/10-4-13-to-4-18-shell-home-tour-brain-settings-credits.md#4.13	-	TK-245 dashboard sidebar
+289	fd0206adf870ff949eb4ba8c7603f66703dbf94a	-	-	TK-232 operator alerts

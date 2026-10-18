@@ -10,6 +10,14 @@
 # cut-values are `;`-separated (`docs/prd.md#J01;docs/prd.md#J02`), `-` = none.
 # A row with spec-values `-` is UNMAPPED: counted, never replayed.
 #
+# THE SPEC ROOT (BH-7233). One optional line `# spec-root: <glob>` names the
+# folder the spec paths are relative to, so a row says `prd-doc/a.md#J01` and
+# the manifest never carries the folder's real name. The glob is matched once
+# against the folders of the clone's HEAD tree and must match exactly one. 0 or
+# 2+ matches, 2+ directive lines, or a `..` or `/` value is an error: with
+# --run it exits 2 before any call; without --run it warns once and goes on
+# with no root. With no directive line the paths are repo paths, as before.
+#
 # FOR EACH MAPPED ROW the script writes a scratch ticket (`Spec:` and `Cut:`
 # lines), copies each spec file from <merge-sha>^1 into a scratch tree, renders
 # st_review_note (bin/lib/spec-trace.sh) there, and adds the diff
@@ -18,11 +26,12 @@
 #
 # WITHOUT --run nothing is spent: it prints each prompt's byte size and the row
 # counts. WITH --run it calls `bin/agent-call.sh review <project> <model> 1200
-# <out>/<pr>.md <prompt>` for at most --max rows (default 10). The model comes
+# <out>/<pr>.md @<prompt-file>` for at most --max rows (default 10). The model comes
 # from bin/lib/review-model.sh, never a literal. Then st_judge reads the rows.
 #
 # DEDUP BEFORE SPEND. <out-dir>/ledger.tsv is keyed on sha256(merge-sha, spec
-# values, cut values, REPLAY_NOTE_VERSION), checked BEFORE each call. A row is
+# values, cut values, REPLAY_NOTE_VERSION, and the spec root when the manifest
+# sets one), checked BEFORE each call. A row is
 # written only after agent-call rc 0 and an output file: `done`, or `empty`
 # when the output has no SPEC-TRACE row (billed, terminal, never re-called).
 # rc 74-79 is "not called, not billed": no row, the PR is named as skipped. Any
@@ -84,6 +93,29 @@ mkdir -p "$OUT" || exit 2
 LED="$OUT/ledger.tsv"
 [ -f "$LED" ] || printf '# fp\tpr\tstatus\tmodel_verdict\tgate\tcut_exempt\tdelivered\tpartial\tmissing\tcontradicts\tcut\treasons\n' > "$LED"
 
+ROOT="" TAB=$'\t'
+ROOT_GLOB=$(sed -nE 's/^# spec-root:[[:space:]]+([^[:space:]]+)[[:space:]]*$/\1/p' "$MANIFEST")
+if [ -n "$ROOT_GLOB" ]; then
+  why=""
+  if [ "$(printf '%s\n' "$ROOT_GLOB" | grep -c .)" -gt 1 ]; then
+    why="$(printf '%s\n' "$ROOT_GLOB" | grep -c .) directive lines"; ROOT_GLOB=$(printf '%s' "$ROOT_GLOB" | tr '\n' ' ')
+  else
+    case "$ROOT_GLOB" in /*|*..*) why="an absolute or .. path" ;; esac
+  fi
+  if [ -z "$why" ]; then
+    n=0
+    while IFS= read -r d; do
+      # shellcheck disable=SC2053 # the glob is meant to match
+      [[ $d == $ROOT_GLOB ]] && { n=$((n + 1)); ROOT="$d"; }
+    done < <(git -C "$CLONE" ls-tree -d -r --name-only HEAD 2>/dev/null)
+    [ "$n" = 1 ] || { why="$n folders match"; ROOT=""; }
+  fi
+  if [ -n "$why" ]; then
+    [ "$RUN" = 1 ] && { echo "spec-lens-replay.sh: spec-root $ROOT_GLOB: $why — nothing was called" >&2; exit 2; }
+    echo "spec-lens-replay.sh: spec-root $ROOT_GLOB: $why — dry run, continuing with no root" >&2
+  fi
+fi
+
 MODEL=""
 if [ "$RUN" = 1 ]; then
   # shellcheck source=bin/lib/review-model.sh
@@ -92,7 +124,7 @@ if [ "$RUN" = 1 ]; then
   [ -n "$MODEL" ] || { echo "spec-lens-replay.sh: no review model route for $PROJ — nothing was called"; exit 0; }
 fi
 
-SCR=$(mktemp -d "${TMPDIR:-/tmp}/spec-lens-replay.XXXXXX") || exit 2
+SCR=$(mktemp -d "${TMPDIR:-/tmp}/spec-lens-replay.XXXXXX") && SCR=$(cd "$SCR" && pwd) || exit 2
 trap 'rm -rf "$SCR"' EXIT
 rows=0 unmapped=0 calls=0 hits=0 skipped="" failed="" bytes=0
 while IFS=$'\t' read -r pr sha specs cuts note; do
@@ -100,7 +132,7 @@ while IFS=$'\t' read -r pr sha specs cuts note; do
   rows=$((rows + 1))
   if [ -z "${specs:-}" ] || [ "$specs" = - ]; then unmapped=$((unmapped + 1)); continue; fi
   [ "${cuts:-}" = - ] && cuts=""
-  fp=$(printf '%s\t%s\t%s\t%s' "$sha" "$specs" "${cuts:-}" "$REPLAY_NOTE_VERSION" | sha256sum | awk '{print $1}')
+  fp=$(printf '%s\t%s\t%s\t%s%s' "$sha" "$specs" "${cuts:-}" "$REPLAY_NOTE_VERSION" "${ROOT:+$TAB$ROOT}" | sha256sum | awk '{print $1}')
   if grep -q "^$fp	" "$LED" 2>/dev/null; then hits=$((hits + 1)); continue; fi
   W="$SCR/$pr"; rm -rf "$W"; mkdir -p "$W/repo"
   printf 'Replay of #%s (%s)\n\nSpec: %s\n' "$pr" "${note:-}" "${specs//;/, }" > "$W/ticket.md"
@@ -109,7 +141,7 @@ while IFS=$'\t' read -r pr sha specs cuts note; do
     p="${v%%#*}"
     case "$p" in /*|*..*) continue ;; esac
     mkdir -p "$W/repo/$(dirname "$p")"
-    git -C "$CLONE" show "${sha}^1:$p" > "$W/repo/$p" 2>/dev/null || rm -f "$W/repo/$p"
+    git -C "$CLONE" show "${sha}^1:${ROOT:+$ROOT/}$p" > "$W/repo/$p" 2>/dev/null || rm -f "$W/repo/$p"
   done < <(st_parse spec "$W/ticket.md")
   NOTE=$(st_review_note "$W/repo" "$W/ticket.md")
   # Written whole first, then cut: a short-circuiting reader on a git pipe
@@ -129,7 +161,10 @@ $DIFF"
   # The prompt carries a merged PR's diff (untrusted text) and the answer is
   # text only, so the call runs with no tools (BH-7276). A runner that cannot
   # honour that refuses with rc 78, which the case below counts as skipped.
-  AGENT_CALL_NO_TOOLS=1 "$SELF_DIR/agent-call.sh" review "$PROJ" "$MODEL" 1200 "$OUT/$pr.md" "$PROMPT" </dev/null >/dev/null 2>&1; rc=$?
+  # The prompt goes as @<file>: a diff of a big PR puts it over the kernel's
+  # 128 KiB cap on one argument, and exec then fails with rc 126 (BH-7233).
+  printf '%s' "$PROMPT" > "$W/prompt"
+  AGENT_CALL_NO_TOOLS=1 "$SELF_DIR/agent-call.sh" review "$PROJ" "$MODEL" 1200 "$OUT/$pr.md" "@$W/prompt" </dev/null >/dev/null 2>&1; rc=$?
   case "$rc" in
     0) ;;
     7[4-9]) skipped="$skipped #$pr(rc $rc)"; continue ;;
