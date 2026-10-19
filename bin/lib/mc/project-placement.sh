@@ -61,6 +61,11 @@
 #   mc_proj_hub_mark <project>
 #       writes this subshell's pid ($BASHPID) to <project>.hubtick. The gate
 #       calls it, under its lock, before it answers a hub fallback.
+#   mc_proj_hub_unmark <project>
+#       removes <project>.hubtick when this subshell wrote it, under
+#       <project>.lock (BH-7462), so it never removes the mark of a later
+#       tick. When the lock is not taken in 10 s the mark is left; it ends
+#       with its pid.
 #
 # Files under state/merge-conductor/project-fly/ (hub only):
 #   <project>.owed      one line: a wake came while the row was live. The next
@@ -73,9 +78,14 @@
 #                       next read cannot be answered).
 #   <project>.failed-n  consecutive machine-failed take-backs; at
 #                       mc_project_fly.failed_alert_n (3) one held ALERTS line.
+#   <project>.nocap-n   consecutive no-capacity cycles (a stale row withdrawn
+#                       unclaimed and taken back) with the fallback hub; at
+#                       mc_project_fly.nocap_alert_n (3) one held ALERTS line
+#                       (BH-7462). A row a machine claimed resets it.
 #   <project>.hubtick   `<pid> <start stamp> <epoch>` of the hub tick that runs
 #                       <project> as a fallback (mc_proj_hub_mark), removed
-#                       when it ends (mc_proj_hub_unmark). While that pid
+#                       when it ends (mc_proj_hub_unmark, under
+#                       <project>.lock). While that pid
 #                       lives with that start stamp and the mark is younger
 #                       than mc_project_fly.hubtick_max_s, no
 #                       new row is enqueued: a machine and the hub never start
@@ -86,13 +96,14 @@
 MC_PROJ_LANE=merge-conductor
 # Code fallbacks of the settings rows mc_project_fly.alert_s,
 # mc_project_fly.publish_min_s, mc_project_fly.failed_alert_n,
-# mc_project_fly.hubtick_max_s and mc_project_fly.nocap_backoff_s
-# (_mc_proj_int).
+# mc_project_fly.hubtick_max_s, mc_project_fly.nocap_backoff_s and
+# mc_project_fly.nocap_alert_n (_mc_proj_int).
 MC_PROJ_ALERT_S=3600
 MC_PROJ_PUBLISH_MIN_S=120
 MC_PROJ_FAILED_ALERT_N=3
 MC_PROJ_HUBTICK_MAX_S=3600
 MC_PROJ_NOCAP_BACKOFF_S=600
+MC_PROJ_NOCAP_ALERT_N=3
 
 _mc_proj_root() { printf '%s' "${HARNESS:-${H:-}}"; }
 _mc_proj_dir() { printf '%s/state/merge-conductor/project-fly' "$(_mc_proj_root)"; }
@@ -323,13 +334,25 @@ mc_proj_hub_mark() {
 }
 
 # mc_proj_hub_unmark <project> — remove <project>.hubtick when this subshell
-# wrote it. The driver calls it when tick_project of the project returns.
+# wrote it. The driver calls it when tick_project of the project returns,
+# after the gate closed its lock fd. The read and the remove run under
+# <project>.lock (BH-7462): a later tick writes its mark under the same lock,
+# so this unmark never removes it. rc 0 on every path.
 mc_proj_hub_unmark() {
-  local f pid
-  f="$(_mc_proj_dir)/${1:-}.hubtick"
+  local p="${1:-}" d f pid fd
+  d=$(_mc_proj_dir); f="$d/$p.hubtick"
   [ -f "$f" ] || return 0
-  { read -r pid _ < "$f"; } 2>/dev/null || return 0
-  [ "$pid" = "${BASHPID:-$$}" ] && rm -f "$f"
+  if ! { exec {fd}>>"$d/$p.lock"; } 2>/dev/null; then
+    _mc_proj_log "$p project-fly: hub mark of $p left in place (lock not opened) — it ends with its pid"
+    return 0
+  fi
+  if ! flock -w 10 "$fd"; then
+    exec {fd}>&-
+    _mc_proj_log "$p project-fly: hub mark of $p left in place — another hub tick is deciding for $p; the mark ends with its pid"
+    return 0
+  fi
+  { read -r pid _ < "$f"; } 2>/dev/null && [ "$pid" = "${BASHPID:-$$}" ] && rm -f "$f"
+  exec {fd}>&-
   return 0
 }
 
@@ -391,8 +414,18 @@ _mc_proj_failed_count() {
   printf '%s' "$n"
 }
 
+# _mc_proj_nocap_count <project> <inc|reset> — the consecutive no-capacity
+# cycles (BH-7462); prints the count.
+_mc_proj_nocap_count() {
+  local f n; f="$(_mc_proj_dir)/$1.nocap-n"
+  n=$(head -n 1 "$f" 2>/dev/null); [[ $n =~ ^[0-9]+$ ]] || n=0
+  if [ "$2" = inc ]; then n=$((n + 1)); else n=0; fi
+  _mc_proj_put "$f" "$n"
+  printf '%s' "$n"
+}
+
 mc_proj_gate() {
-  local p="${1:-}" st="${2:-600}" d rows kind id det taken rc fd frc nf wrc
+  local p="${1:-}" st="${2:-600}" d rows kind id det taken rc fd frc nf nc wrc
   d=$(_mc_proj_dir)
   mc_proj_fly "$p"; frc=$?
   case "$frc" in
@@ -425,6 +458,7 @@ mc_proj_gate() {
   taken=$(head -n 1 "$d/$p.taken" 2>/dev/null)
   case "$kind" in
     live)
+      [ "$det" = claimed ] && _mc_proj_nocap_count "$p" reset >/dev/null
       _mc_proj_put "$d/$p.owed" "owed $(date -u +%s)"
       _mc_proj_log "$p project-fly: row $id is $det — owed, no hub work for $p this tick"; rc=0 ;;
     stale)
@@ -453,6 +487,14 @@ mc_proj_gate() {
           _mc_proj_put "$d/$p.taken" "$id"; _mc_proj_put "$d/$p.nocap-at" "$(date -u +%s)"
         fi
         _mc_proj_fallback "$p" no-capacity "row $id unclaimed: $det" 1; rc=$?
+        # One no-capacity cycle per ended row, with the fallback hub (the
+        # off path already alerts on each stale row).
+        if [ "$wrc" = 0 ] && [ "${MC_PROJ_OFF:-0}" = 0 ]; then
+          nc=$(_mc_proj_nocap_count "$p" inc)
+          if [ "$nc" -ge "$(_mc_proj_int mc_project_fly.nocap_alert_n "$MC_PROJ_NOCAP_ALERT_N")" ]; then
+            mc_proj_alert "$p" "$nc no-capacity cycles in a row: no lane-run machine claimed a merge-conductor row of $p within ${st}s (row $id); the hub runs $p only in the backoff windows. Check the lane-run machine count and logs/lane-run-worker.log."
+          fi
+        fi
         # Fallback off and an ended row: the machines get a new row.
         [ "${MC_PROJ_OFF:-0}" = 1 ] && [ "$wrc" = 0 ] && { _mc_proj_enqueue "$p" || true; }
       fi ;;
@@ -461,6 +503,8 @@ mc_proj_gate() {
         _mc_proj_enqueue "$p" || { _mc_proj_fallback "$p" enqueue-failed "http ${JOBS_HTTP:-none}" 1; }; rc=$?
       else
         _mc_proj_put "$d/$p.taken" "$id"
+        # A machine claimed this row: the no-capacity streak ends.
+        _mc_proj_nocap_count "$p" reset >/dev/null
         if [ "$kind" = failed ]; then
           kind="machine-failed"; nf=$(_mc_proj_failed_count "$p" inc)
           if [ "$nf" -ge "$(_mc_proj_int mc_project_fly.failed_alert_n "$MC_PROJ_FAILED_ALERT_N")" ]; then
@@ -474,7 +518,7 @@ mc_proj_gate() {
         [ "${MC_PROJ_OFF:-0}" = 1 ] && { _mc_proj_enqueue "$p" || true; }
       fi ;;
     none|done)
-      [ "$kind" = "done" ] && _mc_proj_failed_count "$p" reset >/dev/null
+      [ "$kind" = "done" ] && { _mc_proj_failed_count "$p" reset >/dev/null; _mc_proj_nocap_count "$p" reset >/dev/null; }
       _mc_proj_enqueue "$p" || { _mc_proj_fallback "$p" enqueue-failed "http ${JOBS_HTTP:-none}" 1; }; rc=$? ;;
     *)
       _mc_proj_fallback "$p" enqueue-failed "lane_runs read: $det" 1; rc=$? ;;
