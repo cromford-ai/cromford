@@ -53,6 +53,7 @@ export function KanbanScreen() {
         <${Link} to="/" class="crumb">← FLEET<//>
         <${Link} to="/merge-queue" class="btn btn--sm">MERGE QUEUE<//>
         <${Link} to="/lead-reviews" class="btn btn--sm">LEAD REVIEWS<//>
+        <${Link} to="/build-order" class="btn btn--sm">BUILD ORDER<//>
         <div class="tabs">
           <button class=${tab === 'pipeline' ? 'tab tab--on' : 'tab'} onClick=${() => setTab('pipeline')}>PIPELINE</button>
           <button class=${tab === 'boards' ? 'tab tab--on' : 'tab'} onClick=${() => setTab('boards')}>BOARDS</button>

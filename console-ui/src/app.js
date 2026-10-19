@@ -17,6 +17,7 @@ import { ProjectScreen } from './screens/Project.js';
 import { RunScreen } from './screens/Run.js';
 import { BuildScreen } from './screens/Build.js';
 import { KanbanScreen } from './screens/Kanban.js';
+import { BuildOrderScreen } from './screens/BuildOrder.js';
 import { PRScreen } from './screens/PR.js';
 import { ChatScreen } from './screens/Chat.js';
 import { AlertsScreen } from './screens/Alerts.js';
@@ -66,6 +67,7 @@ export const ROUTES = [
   ['/runs/:id', RunScreen],
   ['/builds/:id', BuildScreen],
   ['/kanban', KanbanScreen],
+  ['/build-order', BuildOrderScreen],
   ['/pr/:project/:number', PRScreen],
   ['/merge-queue', MergeQueueScreen],
   ['/lead-reviews', LeadReviewsScreen],
@@ -128,7 +130,7 @@ export const NAV = [
   // machines ARE. HISTORY is its drill-down and rides the same tab rather than
   // taking a tenth slot in a bottom nav that has to stay one row on a phone.
   { to: '/now', label: 'NOW', icon: IconNow, match: (p) => p === '/now' || p === '/history' || p === '/history/commands' },
-  { to: '/kanban', label: 'KANBAN', icon: IconKanban, match: (p) => p === '/kanban' || p === '/merge-queue' || p === '/lead-reviews' || p.startsWith('/pr/') },
+  { to: '/kanban', label: 'KANBAN', icon: IconKanban, match: (p) => p === '/kanban' || p === '/build-order' || p === '/merge-queue' || p === '/lead-reviews' || p.startsWith('/pr/') },
   { to: '/chat', label: 'CHAT', icon: IconChat, match: (p) => p === '/chat' },
   { to: '/alerts', label: 'ALERTS', icon: IconAlerts, match: (p) => p === '/alerts' || p === '/components' || p.startsWith('/alerts/decisions/'), badge: true },
   // NEEDS is the superset ALERTS is one quarter of: alerts, dead-lettered

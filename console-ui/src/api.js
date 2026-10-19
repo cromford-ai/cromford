@@ -117,6 +117,10 @@ export const api = {
     const s = q.toString();
     return get(`/api/dash/kanban/pipeline${s ? `?${s}` : ''}`);
   },
+  // BH-6980: the newest scheduler tick's verdicts (worker/jobs/src/routes/scheduler.js).
+  schedulerReady: (p) => get('/api/coord/scheduler/ready?project=' + encodeURIComponent(p)),
+  // BH-6980: a project's dependency edges, LIMIT 500 (worker/jobs/src/routes/ticket-edges.js).
+  ticketEdges: (p) => get('/api/coord/ticket-edges?project=' + encodeURIComponent(p)),
   // The hub's own ticket snapshot: ONE call carrying every OS board, instead of
   // four live calls out to the client board APIs. It is a snapshot, so its
   // generated_at_epoch (SECONDS) is rendered alongside it.
