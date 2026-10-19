@@ -19,6 +19,30 @@
 //   200 {idea, replay:true}; anything else is 409 with the stored idea. Else
 //   ONE batch inserts the idea and its `created` event, and 201 {idea} is sent
 //   only when the batch reports the idea row written.
+//
+// POST /api/roadmap/ideas/move {id, project, to_lane, expected_version, reason?, actor}
+// POST /api/roadmap/ideas/edit {id, project, title?, note?, link?, source?, expected_version, actor}
+//   Compare-and-swap on `version`. Every field is checked first: a bad one is
+//   400 {error, field} and nothing is read. ONE batch of 3 statements, each
+//   bound to id AND project: the event (it reads the old row, so it runs
+//   first), the update, and the row. The event and the update carry the same
+//   condition, so both apply or neither does, and a D1 batch is one
+//   transaction. 200 {idea} when the update wrote the row. No row in this
+//   project is 404 (another project's id lands here). A move to the lane the
+//   idea already holds, at the current version, is 200 {idea, unchanged:true}
+//   with no event. Any other miss is 409 {error:"stale version", idea}.
+//   A move to `discarded` stamps discarded_at; a move out of it clears it.
+//   An edit keeps the old values of the changed fields in the event's
+//   detail: {"before":{...}}. idem_key is not editable.
+//
+// GET /api/roadmap/ideas/:id?project=
+//   ONE batch of 2: the row and its newest 50 events. 404 when the row is not
+//   in this project. 200 {idea, events, as_of}.
+//
+// GET /api/roadmap/summary
+//   ONE batch of 2: every project, and the idea counts per project and lane.
+//   200 {projects:[{project, counts:{ideas,next,discarded}, total}], as_of}.
+//   A project with no ideas is listed with zero counts.
 import { d1Guarded, json } from "../lib/http.js";
 import { ensureTable, laneName } from "../lib/core.js";
 import { settingsRows } from "../lib/settings-cache.js";
@@ -47,6 +71,29 @@ export const LIST_LANE_SQL = `SELECT ${COLS} FROM roadmap_ideas WHERE project = 
 export const COUNTS_SQL = "SELECT lane, COUNT(*) AS n FROM roadmap_ideas WHERE project = ?1 GROUP BY lane";
 // sql-ident-ok: COLS is a module constant
 export const IDEM_SQL = `SELECT ${COLS} FROM roadmap_ideas WHERE project = ?1 AND idem_key = ?2`;
+
+// sql-ident-ok: COLS is a module constant
+export const IDEA_ROW_SQL = `SELECT ${COLS} FROM roadmap_ideas WHERE id = ?1 AND project = ?2`;
+// The move event runs BEFORE the update under the same condition, so it reads
+// the old lane and exists only when the move applies.
+// Binds: ?1 id, ?2 project, ?3 expected_version, ?4 to_lane, ?5 actor, ?6 reason, ?7 t.
+export const MOVE_EVENT_SQL = `INSERT INTO roadmap_idea_events (idea_id, project, kind, from_lane, to_lane, actor, reason, at)
+  SELECT id, project, 'moved', lane, ?4, ?5, ?6, ?7 FROM roadmap_ideas
+  WHERE id = ?1 AND project = ?2 AND version = ?3 AND lane <> ?4`;
+// Binds: ?1 id, ?2 project, ?3 expected_version, ?4 to_lane, ?5 t.
+export const MOVE_UPDATE_SQL = `UPDATE roadmap_ideas
+  SET lane = ?4, version = version + 1, updated_at = ?5,
+      discarded_at = CASE WHEN ?4 = 'discarded' THEN ?5 ELSE NULL END
+  WHERE id = ?1 AND project = ?2 AND version = ?3 AND lane <> ?4`;
+export const EVENTS_SQL = `SELECT id, kind, from_lane, to_lane, actor, reason, detail, at FROM roadmap_idea_events
+  WHERE idea_id = ?1 AND project = ?2 ORDER BY at DESC, id DESC LIMIT 50`;
+export const SUMMARY_PROJECTS_SQL = "SELECT project FROM projects ORDER BY project";
+export const SUMMARY_COUNTS_SQL = "SELECT project, lane, COUNT(*) AS n FROM roadmap_ideas GROUP BY project, lane";
+// The fields an edit can change, in this order. The SET clause and the event
+// detail are built only from this list.
+const EDIT_FIELDS = ["title", "note", "link", "source"];
+const ID_MAX = 80;
+const REASON_MAX = 500;
 
 // ensureRoadmapTables(env) — create the five roadmap tables and their indexes
 // when missing. The statements come from schema.d through CREATED_TABLES, and
@@ -117,6 +164,32 @@ function idemAnswer(stored, v) {
     : json(409, { error: "idem_key reused with a different payload", idea: stored });
 }
 
+const laneCounts = () => Object.fromEntries(IDEA_LANES.map((l) => [l, 0]));
+
+// The fields every CAS write shares: id, project, expected_version, actor.
+// -> { w } or { error, field }. expected_version is an integer >= 1; a
+// string of digits is accepted, because a proxy can forward one.
+function casFields(raw) {
+  const b = raw && typeof raw === "object" && !Array.isArray(raw) ? raw : {};
+  const bad = (field, error) => ({ error: `${field} ${error}`, field });
+  if (typeof b.id !== "string" || b.id.length < 1 || b.id.length > ID_MAX) return bad("id", `must be a string of 1..${ID_MAX} characters`);
+  const project = typeof b.project === "string" ? laneName(b.project) : "";
+  if (!project) return bad("project", "must match ^[A-Za-z0-9._-]{1,64}$");
+  const ev = b.expected_version;
+  const version = typeof ev === "number" ? ev : (typeof ev === "string" && /^\d{1,9}$/.test(ev) ? Number(ev) : NaN);
+  if (!Number.isInteger(version) || version < 1) return bad("expected_version", "must be an integer of 1 or more");
+  const actor = typeof b.actor === "string" ? b.actor.trim() : "";
+  if (actor.length < 1 || actor.length > ACTOR_MAX) return bad("actor", `must be 1..${ACTOR_MAX} characters`);
+  return { w: { id: b.id, project, version, actor } };
+}
+
+// The answer to a CAS batch whose update wrote no row.
+function casMiss(row, sameLane) {
+  if (!row) return json(404, { error: "idea not found" });
+  if (sameLane) return json(200, { idea: row, unchanged: true });
+  return json(409, { error: "stale version", idea: row });
+}
+
 export const routes = [
   [
     "GET", "/api/roadmap/ideas",
@@ -184,6 +257,104 @@ export const routes = [
       const won = i.idem_key === null ? null : await env.DB.prepare(IDEM_SQL).bind(i.project, i.idem_key).first();
       if (won) return idemAnswer(won, i);
       return json(503, { error: "roadmap_ideas insert was not applied" });
+    }),
+  ],
+  [
+    "POST", "/api/roadmap/ideas/move",
+    ({ env, t, body }) => d1Guarded("roadmap_ideas", async () => {
+      const c = casFields(body);
+      if (c.error) return json(400, { error: c.error, field: c.field });
+      const { id, project, version, actor } = c.w;
+      const to = body.to_lane;
+      if (!IDEA_LANES.includes(to)) return json(400, { error: `to_lane must be one of ${IDEA_LANES.join("|")}`, field: "to_lane" });
+      const reason = body.reason === undefined || body.reason === null || body.reason === "" ? null : body.reason;
+      if (reason !== null && (typeof reason !== "string" || reason.length > REASON_MAX)) {
+        return json(400, { error: `reason must be a string of at most ${REASON_MAX} characters`, field: "reason" });
+      }
+      await ensureRoadmapTables(env);
+      const [, upd, sel] = await env.DB.batch([
+        env.DB.prepare(MOVE_EVENT_SQL).bind(id, project, version, to, actor, reason, t),
+        env.DB.prepare(MOVE_UPDATE_SQL).bind(id, project, version, to, t),
+        env.DB.prepare(IDEA_ROW_SQL).bind(id, project),
+      ]);
+      const row = (sel.results || [])[0] || null;
+      if (Number(upd.meta.changes) === 1) return json(200, { idea: row });
+      return casMiss(row, row && row.version === version && row.lane === to);
+    }),
+  ],
+
+  [
+    "POST", "/api/roadmap/ideas/edit",
+    ({ env, t, body }) => d1Guarded("roadmap_ideas", async () => {
+      const c = casFields(body);
+      if (c.error) return json(400, { error: c.error, field: c.field });
+      const { id, project, version, actor } = c.w;
+      const picked = Object.fromEntries(EDIT_FIELDS.filter((k) => body[k] !== undefined).map((k) => [k, body[k]]));
+      const v = validateIdea(picked, { partial: true });
+      if (v.error) return json(400, { error: v.error, field: v.field });
+      const fields = EDIT_FIELDS.filter((k) => k in v.idea);
+      if (!fields.length) return json(400, { error: "title, note, link or source: at least one is required", field: "title" });
+      await ensureRoadmapTables(env);
+      // sql-ident-ok: column names from the EDIT_FIELDS module constant
+      const before = fields.map((k) => `'${k}', ${k}`).join(", ");
+      // sql-ident-ok: column names from the EDIT_FIELDS module constant
+      const set = fields.map((k, i) => `${k} = ?${i + 5}`).join(", ");
+      const [, upd, sel] = await env.DB.batch([
+        // sql-ident-ok: `before` is built from EDIT_FIELDS only
+        env.DB.prepare(
+          `INSERT INTO roadmap_idea_events (idea_id, project, kind, actor, detail, at)
+           SELECT id, project, 'edited', ?4, json_object('before', json_object(${before})), ?5
+           FROM roadmap_ideas WHERE id = ?1 AND project = ?2 AND version = ?3`
+        ).bind(id, project, version, actor, t),
+        // sql-ident-ok: `set` is built from EDIT_FIELDS only
+        env.DB.prepare(
+          `UPDATE roadmap_ideas SET ${set}, version = version + 1, updated_at = ?4
+           WHERE id = ?1 AND project = ?2 AND version = ?3`
+        ).bind(id, project, version, t, ...fields.map((k) => v.idea[k])),
+        env.DB.prepare(IDEA_ROW_SQL).bind(id, project),
+      ]);
+      const row = (sel.results || [])[0] || null;
+      if (Number(upd.meta.changes) === 1) return json(200, { idea: row });
+      return casMiss(row, false);
+    }),
+  ],
+
+  [
+    "GET", "/api/roadmap/summary",
+    ({ env, t }) => d1Guarded("roadmap_ideas", async () => {
+      await ensureRoadmapTables(env);
+      const [projRes, countRes] = await env.DB.batch([
+        env.DB.prepare(SUMMARY_PROJECTS_SQL),
+        env.DB.prepare(SUMMARY_COUNTS_SQL),
+      ]);
+      const byProject = new Map((projRes.results || []).map((r) => [r.project, laneCounts()]));
+      for (const r of countRes.results || []) {
+        const counts = byProject.get(r.project);
+        if (counts && IDEA_LANES.includes(r.lane)) counts[r.lane] = Number(r.n);
+      }
+      const projects = [...byProject].map(([project, counts]) => ({
+        project, counts, total: IDEA_LANES.reduce((n, l) => n + counts[l], 0),
+      }));
+      return json(200, { projects, as_of: t });
+    }),
+  ],
+
+  [
+    "GET", /^\/api\/roadmap\/ideas\/([^/]+)$/,
+    ({ env, url, t, m }) => d1Guarded("roadmap_ideas", async () => {
+      const project = laneName(url.searchParams.get("project"));
+      if (!project) return json(400, { error: "project is required and must match ^[A-Za-z0-9._-]{1,64}$", field: "project" });
+      let id;
+      try { id = decodeURIComponent(m[1]); } catch { id = ""; }
+      if (id.length < 1 || id.length > ID_MAX) return json(400, { error: `id must be 1..${ID_MAX} characters`, field: "id" });
+      await ensureRoadmapTables(env);
+      const [rowRes, evRes] = await env.DB.batch([
+        env.DB.prepare(IDEA_ROW_SQL).bind(id, project),
+        env.DB.prepare(EVENTS_SQL).bind(id, project),
+      ]);
+      const idea = (rowRes.results || [])[0];
+      if (!idea) return json(404, { error: "idea not found" });
+      return json(200, { idea, events: evRes.results || [], as_of: t });
     }),
   ],
 ];

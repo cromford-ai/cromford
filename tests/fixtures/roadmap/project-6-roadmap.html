@@ -1,0 +1,73 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>project-6 Roadmap</title><style>
+/* Trimmed from example-org/project-6 docs/ROADMAP.html for tests/roadmap-import.bh-7243-test.sh (BH-7264). */
+body{margin:0;font:15px/1.55 sans-serif}
+.tw{overflow-x:auto}
+table{border-collapse:collapse;width:100%}
+th,td{text-align:left;padding:8px 10px;vertical-align:top}
+</style></head><body>
+<main>
+<h1>project-6 product roadmap</h1>
+<h2 id="tldr">TL;DR</h2>
+<ul class="tldr">
+<li>project-6 launches on 2026-10-17 at Business Mastery.</li>
+</ul>
+
+<h2 id="now">Now: launch week (hotfix)</h2>
+<p>These items ship in launch week. They carry the <code>hotfix</code> label or block the launch.</p>
+<h3>The designer&#x27;s walkthrough fixes (Loom, approved as hotfixes)</h3>
+<div class="tw"><table class="sortable" id="t81576"><thead><tr><th>Issue</th><th>Item</th><th>Status</th><th>Label</th><th>Size</th><th>Notes</th></tr></thead><tbody>
+<tr><td><a href="https://github.com/example-org/project-6/issues/1039">#1039</a></td><td>N1: main navigation and landing: exact left menu, project-5 replaces Plan, first-run routing and tour, Agents top tabs</td><td><span class="st s-build">building</span></td><td><span class="pill p-hotfix">hotfix</span></td><td>—</td><td>PR A on the Mac. Held from the pool.</td></tr>
+<tr><td><a href="https://github.com/example-org/project-6/issues/1020">#1020</a></td><td>Setup flow: Review your selections, Scanning screen, departments, connect pop-up</td><td><span class="st s-queued">queued</span></td><td><span class="pill p-hotfix">hotfix</span></td><td>—</td><td>From the same walkthrough.</td></tr>
+</tbody></table></div>
+<h3>Billing BL-1 to BL-4</h3>
+<div class="tw"><table class="sortable" id="t75903"><thead><tr><th>Issue</th><th>Item</th><th>Status</th><th>Label</th><th>Size</th><th>Notes</th></tr></thead><tbody>
+<tr><td><a href="https://github.com/example-org/project-6/issues/1009">#1009</a></td><td>BL-1: credits core: plans, monthly grant, metering from cost_ledger, spend gate, certifyRun</td><td><span class="st s-pr">PR open</span></td><td><span class="pill p-hotfix">hotfix</span></td><td>1 session</td><td><a href="https://github.com/example-org/project-6/pull/1029">PR #1029</a>. Migration 0133 staged. Per-company index only.</td></tr>
+</tbody></table></div>
+
+<h2 id="next">Next: 2-4 weeks</h2>
+<p>These items follow launch. The remaining PRD partials are listed after the tables.</p>
+<h3>Keys, files and integrations</h3>
+<div class="tw"><table class="sortable" id="t431"><thead><tr><th>Issue</th><th>Item</th><th>Status</th><th>Label</th><th>Size</th><th>Notes</th></tr></thead><tbody>
+<tr><td><a href="https://github.com/example-org/project-6/issues/1017">#1017</a></td><td>BYOK: customer&#x27;s own Anthropic / OpenAI / Grok keys, no silent fallback, alert instead</td><td><span class="st s-queued">queued</span></td><td><span class="pill p-ai-build">ai-build</span></td><td>—</td><td>Port of project-5 W80b/c.</td></tr>
+</tbody></table></div>
+<h3>Blocks and builder</h3>
+<div class="tw"><table class="sortable" id="t23916"><thead><tr><th>Issue</th><th>Item</th><th>Status</th><th>Label</th><th>Size</th><th>Notes</th></tr></thead><tbody>
+<tr><td><a href="https://github.com/example-org/project-6/issues/1035">#1035</a></td><td>Objects, views, bound blocks, templates, workflow triggers, agent tools</td><td><span class="st s-queued">queued</span></td><td><span class="pill p-ai-build">ai-build</span></td><td>12 waves</td><td>Spec in <a href="https://github.com/example-org/project-6/pull/1037">PR #1037</a>.</td></tr>
+<tr><td>#1027</td><td>Company Brain placement</td><td><span class="st s-queued">queued</span></td><td><span class="pill p-ai-build">ai-build</span></td><td>—</td><td>Brain page shipped in #983.</td></tr>
+</tbody></table></div>
+
+<h2 id="later">Later: a month or more</h2>
+<h3>Dedicated tenancy for the $2K and $5K plans</h3>
+<div class="tw"><table class="sortable" id="t54092"><thead><tr><th>Issue</th><th>Item</th><th>Status</th><th>Label</th><th>Size</th><th>Notes</th></tr></thead><tbody>
+<tr><td>epic</td><td>Dedicated-database tenancy (epic; number not yet filed)</td><td><span class="st s-queued">planned</span></td><td><span class="pill p-after-launch">after-launch</span></td><td>—</td><td>Plan: <code>docs/plan/DEDICATED_TENANCY_PLAN_2026-10-17.html</code> on branch <code>docs/dedicated-tenancy-plan</code>.</td></tr>
+<tr><td><a href="https://github.com/example-org/project-6/issues/1045">#1045</a></td><td>Platform runtime: many client OSes on one instance (10 primitives)</td><td><span class="st s-queued">queued</span></td><td><span class="pill p-none">none</span></td><td>~10 sessions + importers</td><td>About one session per primitive; 2-3 per importer.</td></tr>
+</tbody></table></div>
+<h3>MCP server for Pro+</h3>
+<div class="tw"><table class="sortable" id="t10557"><thead><tr><th>Issue</th><th>Item</th><th>Status</th><th>Label</th><th>Size</th><th>Notes</th></tr></thead><tbody>
+<tr><td><a href="https://github.com/example-org/project-6/issues/761">#761</a></td><td>MCP server so Pro+ users connect their own AI clients</td><td><span class="st s-queued">queued</span></td><td><span class="pill p-none">none</span></td><td>—</td><td>Reuse the project-4 OS MCP server.</td></tr>
+</tbody></table></div>
+
+<h2 id="shipped">Shipped: merged PRs since 2026-10-15</h2>
+<p>253 PRs merged from 2026-10-15 00:00 UTC to this update. Newest first. Click a header to sort.</p>
+<div class="tw ship"><table class="sortable"><thead><tr><th>Merged (UTC)</th><th>PR</th><th>Title</th><th>Branch</th></tr></thead><tbody>
+<tr><td>2026-10-17 04:18</td><td><a href="https://github.com/example-org/project-6/pull/1042">#1042</a></td><td>ci: run CI on MonkCI runners (CI_RUNNER repo variable)</td><td><code>ci/monkci-runners</code></td></tr>
+<tr><td>2026-10-17 04:17</td><td><a href="https://github.com/example-org/project-6/pull/1043">#1043</a></td><td>Mergify merge queue for project-6 (batches of 8)</td><td><code>ci/mergify-queue</code></td></tr>
+<tr><td>2026-10-17 04:09</td><td><a href="https://github.com/example-org/project-6/pull/1001">#1001</a></td><td>TK-999: Connections shows every project-5 connection; Use all; connect and disconnect</td><td><code>ticket/TK-999-mac</code></td></tr>
+</tbody></table></div>
+
+<h2 id="decisions">Decisions log</h2>
+<p>the operator's standing decisions in this period. Dates are UTC. Sources are tickets, PRs and the orchestrator log.</p>
+<div class="tw"><table class="sortable"><thead><tr><th>Date</th><th>Decision</th><th>Source</th></tr></thead><tbody><tr><td>2026-10-17</td><td>Reuse project-5&#x27;s Composio connectors. Never rebuild a connector.</td><td>#999 / <a href="https://github.com/example-org/project-6/pull/1001">PR #1001</a></td></tr><tr><td>2026-10-16</td><td>Each department keeps its own side menu. This overrides the designer&#x27;s note.</td><td>#951 / <a href="https://github.com/example-org/project-6/pull/954">PR #954</a></td></tr></tbody></table></div>
+
+<h2 id="open">Open decisions for the operator</h2>
+<div class="tw"><table class="sortable"><thead><tr><th>Topic</th><th>Question</th><th>Where</th></tr></thead><tbody><tr><td>Agent library layout</td><td>The designer&#x27;s design shows a card grid. the operator&#x27;s browse rule says a table. Pick one for #1024.</td><td><a href="https://github.com/example-org/project-6/issues/1024">#1024</a></td></tr><tr><td>H-4 block remove</td><td>Today: Remove asks first, has Undo, admin only (#908, #923). PRD: remove at once. Ratify, or ask the designer to update the PRD.</td><td>PRD re-score PM</td></tr></tbody></table></div>
+
+<h2 id="risks">Risks and watch items</h2>
+<ul class="risks"><li>Migration numbers collide between parallel PRs. Five collisions on 2026-10-16/17 (0128-0134). #996 and #1036 close this.</li><li>A PR merged without its migrations (#998). Prod drift is checked by hand until #1036 ships.</li></ul>
+
+<h2 id="sources">Sources</h2>
+<div class="grid">
+<div class="card"><b>Plans</b><br><code>docs/plan/MVP_PLAN_2026-10-08.html</code><br><code>~/project-6/docs/PROJECT_6_OS_EVENT_MVP_PLAN_2026-10-08.html</code><br><code>~/project-6/docs/PROJECT_6_APP_BUILD_PLAN_2026-10-05.html</code><br><code>docs/plan/DEDICATED_TENANCY_PLAN_2026-10-17.html</code> (branch <code>docs/dedicated-tenancy-plan</code>)</div>
+</div>
+</main></body></html>

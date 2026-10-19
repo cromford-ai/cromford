@@ -71,7 +71,7 @@ test('C3 an extra field is dropped; other verbs and sub-paths are 405 and forwar
     const fwd = JSON.parse(f.seen[0].body);
     assert.equal('version' in fwd, false);
     assert.equal('lane' in fwd, false);
-    for (const [rest, method] of [['roadmap/ideas', 'PUT'], ['roadmap/ideas/move', 'POST'], ['roadmap/ideas', 'DELETE']]) {
+    for (const [rest, method] of [['roadmap/ideas', 'PUT'], ['roadmap/ideas/delete', 'POST'], ['roadmap/ideas', 'DELETE']]) {
       const res = await call(rest, method, JSON.stringify(IDEA));
       assert.equal(res.status, 405, `${method} ${rest}`);
     }

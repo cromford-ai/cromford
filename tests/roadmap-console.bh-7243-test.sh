@@ -49,7 +49,7 @@ for (const n of ['RoadmapIndexScreen', 'RoadmapScreen', 'RoadmapIdeaScreen', 'Ro
 const list = render(h(S.RoadmapScreen, { project: 'p' }));
 window.location.search = '?view=board';
 const board = render(h(S.RoadmapScreen, { project: 'p' }));
-say('list by default', /BH-7243\.1/.test(list) && /Not built yet/.test(list));
+say('list by default', /data-testid=\"roadmap-add\"/.test(list) && !/Not built yet/.test(list) && !/BH-7243\.2/.test(list));
 say('board on ?view=board', /BH-7243\.2/.test(board) && /Not built yet/.test(board));
 " 2>&1)
   while IFS= read -r line; do
@@ -66,8 +66,13 @@ for r in "\['/roadmap', RoadmapIndexScreen\]" "\['/roadmap/:project', RoadmapScr
          "\['/roadmap/:project/idea/:id', RoadmapIdeaScreen\]" "\['/roadmap/:project/wave/:id', RoadmapWaveScreen\]"; do
   grep -q "$r" "$APP" && ok || bad "app.js must route $r"
 done
-[ "$(grep -cvE '^(#|$)' "$ROUTE_FRAG")" = 2 ] && ok || bad "the route fragment must list exactly 2 routes"
+[ "$(grep -cvE '^(#|$)' "$ROUTE_FRAG")" = 6 ] && ok || bad "the route fragment must list exactly 6 routes"
 grep -qx 'GET /api/roadmap/ideas' "$ROUTE_FRAG" && grep -qx 'POST /api/roadmap/ideas' "$ROUTE_FRAG" && ok || bad "route fragment rows"
+# BH-7243.1 (BH-7264): move, edit, summary and the idea detail.
+for r in 'POST /api/roadmap/ideas/move' 'POST /api/roadmap/ideas/edit' 'GET /api/roadmap/summary' \
+         'GET re:/^\/api\/roadmap\/ideas\/([^/]+)$/'; do
+  grep -qxF "$r" "$ROUTE_FRAG" && ok || bad "route fragment row $r"
+done
 
 # --- 4: the node suites, driven ----------------------------------------------
 if NOUT=$(cd "$DIR/worker/jobs" && node --test test/routes/roadmap-ideas.bh-7243.test.js test/roadmap-retention.bh-7243.test.js test/roadmap-explain.bh-7243.test.js 2>&1); then ok
