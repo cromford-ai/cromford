@@ -6,6 +6,8 @@
 # running bin/lane-run-worker.sh claims and runs it). The answer is a settings
 # row, so an operator moves a lane without a deploy:
 #
+#   lane_placement.<lane>.<project> fly | hub   (one project of a lane, BH-6890;
+#                                   read only when the caller names a project)
 #   lane_placement.<lane>           fly | hub   (the exact lane name)
 #   lane_placement.default          fly | hub   (seeded hub)
 #   lane_placement.<lane>.hub_only  free text: the lane reads something that is
@@ -16,9 +18,14 @@
 # settings key is hub, and LP_WHY names which. Hub is today's behaviour, so
 # every failure here falls back to it.
 #
-#   lp_decide <lane>             sets LP_PLACE (fly|hub) and LP_WHY; at most 3
+#   lp_decide <lane> [project]   sets LP_PLACE (fly|hub) and LP_WHY; at most 4
 #                                settings reads
-#   lp_placement <lane>          prints fly|hub, sets LP_PLACE and LP_WHY
+#   lp_placement <lane> [project]
+#                                prints fly|hub, sets LP_PLACE and LP_WHY. With a
+#                                project, its row wins when it exists; no row
+#                                reads the lane row, then the default row. The
+#                                project `hub_only` is never a project row (that
+#                                key is the lane's hub_only text).
 #   lp_hub_only_reason <lane>    prints the hub_only text (rc 0), or rc 1
 #   lp_rel_cmd <cmd>             prints bin/<rest> for a <cmd> under
 #                                $root/bin/, else rc 1
@@ -69,14 +76,21 @@ _lp_client() {
 }
 
 lp_placement() {
-  local lane="${1:-}" key raw v rc
+  local lane="${1:-}" proj="${2:-}" key raw v rc=2
   LP_PLACE=hub
   if ! _lp_client; then LP_WHY="no jobs client"; printf 'hub'; return 0; fi
   key="lane_placement.$lane"
   if [ -z "$lane" ] || ! _setting_key_ok "$key.hub_only"; then
     LP_WHY="lane name not a settings key"; printf 'hub'; return 0
   fi
-  raw=$(setting_get "$key"); rc=$?
+  # The project row first (BH-6890). A project name that is not a legal key
+  # part reads as "no project row", never as a failure.
+  if [ -n "$proj" ] && [ "$proj" != hub_only ] && _setting_key_ok "$key.$proj"; then
+    key="$key.$proj"
+    raw=$(setting_get "$key"); rc=$?
+    [ "$rc" = 2 ] && key="lane_placement.$lane"
+  fi
+  [ "$rc" = 2 ] && { raw=$(setting_get "$key"); rc=$?; }
   if [ "$rc" = 2 ]; then
     key="lane_placement.default"
     raw=$(setting_get "$key"); rc=$?
@@ -106,7 +120,7 @@ lp_hub_only_reason() {
 
 lp_decide() {
   local lane="${1:-}" reason
-  lp_placement "$lane" >/dev/null
+  lp_placement "$lane" "${2:-}" >/dev/null
   if [ "$LP_PLACE" = fly ] && reason=$(lp_hub_only_reason "$lane"); then
     LP_PLACE=hub; LP_WHY="hub_only: $reason"
   fi

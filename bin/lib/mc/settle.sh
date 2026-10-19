@@ -759,8 +759,12 @@ conductor_settle() {
   # caller reaches this there; if one does, it writes nothing. The issue
   # close, the deployreq row, the stack follow and the deploy-verify are the
   # hub's, and the hub's QUEUED pass settles this PR on its next tick.
+  # A lease-held project run (BH-6890) defers it too: the deploy queue file,
+  # the deploy-verify lane, the stack follow and the deployreq dedupe line are
+  # hub files. It records the landing for its PROF line (MC_LANDED_FILE).
   if [ "${MC_ON_MACHINE:-}" = 1 ]; then
     [ -n "${MC_PR_DEFERRED_FILE:-}" ] && echo settle >> "$MC_PR_DEFERRED_FILE"
+    [ -n "${MC_LANDED_FILE:-}" ] && printf 'merged %s\n' "$key" >> "$MC_LANDED_FILE"
     mc_log "$key MERGED but seen on a lane-run machine — not settled here; the hub settles it (deferred=settle)"
     return 0
   fi

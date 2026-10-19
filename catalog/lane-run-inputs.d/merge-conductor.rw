@@ -11,13 +11,13 @@
 # `<dir>/$repokey_*` is this project's markers and no other repo's: the
 # character after the repo is `_`, never `-`.
 #
-# NOT CARRIED. A project run also writes these. The fleet-wide ones block a
-# later flip of merge-conductor to Fly, and the flip ticket must solve them:
-#   logs/ALERTS.log (lane-alert.sh appends: mc_alert, bin/lib/mc/log.sh:285-290;
-#     bin/alert-line.sh lines go through /api/alert-lines, #6889)
+# NOT CARRIED. A project run also writes these. BH-6890 (the flip) answers
+# each in docs/notes/2026-10-19-BH-6890-conductor-per-project.md:
+#   logs/ALERTS.log (lane-alert.sh and bin/alert-line.sh lines go through
+#     /api/alert-lines on a machine since BH-6890 and #6889; the hub replays
+#     them)
 #   state/lead-authority/human-needed-* (bin/lib/lead-authority.sh:308; a
 #     lane-alert.sh send's dedupe marker, the same gap)
-#   state/merge-conductor/attempts.txt (appends, bin/lib/mc/log.sh:53)
 #   state/merge-conductor/rereviews-YYYYMMDD.txt (CAPFILE,
 #     bin/merge-conductor.sh:408; a machine run never spends it)
 #   state/merge-conductor/lane-epoch (bin/lib/mc/locks.sh:986, fleet-wide)
@@ -50,6 +50,17 @@ builds/fly-$p-<KEY>-*/<record file>
 # the lib matches the ERE case-insensitively (grep -iE).
 state/merge-conductor/pr-state.tsv
 @rows state/merge-conductor/pr-state.tsv ^$slug#
+# MC_ATTEMPTS bin/lib/mc/log.sh:53: `<kind> <owner/repo>#<n> <sha>` lines, the
+# per-(PR, head) dedupe and the RED strike count, and the repo's own lines
+# (`identityalert <owner/repo> ...`, `citimeout <owner/repo> ...`). BH-6890: a
+# project run on a machine needs this repo's lines; the hub's lines of other
+# repos stay put. Writers append under attempts.txt.lock (_mc_attempt_append).
+state/merge-conductor/attempts.txt
+@rows state/merge-conductor/attempts.txt ^[^ ]+ $slug(#[0-9]+)?( |$)
+# mc_land_file bin/lib/mc/locks.sh:1280: the project's land watermark (the base
+# sha whose land fan-out completed). Without it every project run fans out
+# again (BH-6890).
+state/merge-conductor/land/$p
 # The per-PR markers. The file:line is where the name is made.
 # bin/lib/mc/classify.sh:1527, bin/lib/mc/log.sh:478 (not reached by the fixture)
 state/merge-conductor/stuck/$repokey_*

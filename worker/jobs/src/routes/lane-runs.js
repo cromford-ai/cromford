@@ -148,6 +148,10 @@ export const REFUSED_SQL = `UPDATE lane_runs SET status='died', finished_at=?1, 
                                    WHERE substr(project || '.', 1, length(g.value)) = g.value))
                ORDER BY enqueued_at, id LIMIT ${REFUSED_END_MAX})
     AND status='queued'`;
+// BH-6890: end ONE queued row by id (the primary key). Binds: ?1 id,
+// ?2 now, ?3 prof_line.
+export const WITHDRAW_SQL = `UPDATE lane_runs SET status='died', finished_at=?2, prof_line=?3
+  WHERE id=?1 AND status='queued'`;
 // One fleet's claimable rows per lane (BH-7434): queued, or claimed with an
 // expired lease (as CLAIM_SQL's LIVE), counted as `queued`. Binds: ?1 lane or
 // NULL ?2 only JSON array or NULL ?3 group skip JSON array or NULL ?4 the
@@ -394,6 +398,26 @@ export const routes = [
         return json(409, { error: "not released", reason: "not_claimed", id, status: row.status });
       }
       return json(409, { error: "not released", reason: "not_claimer", id, status: row.status });
+    }),
+  ],
+
+  [
+    // BH-6890: the hub takes a stale queued row back. It ends the row in the
+    // same step, so no machine claims it while the hub works the project.
+    // Only a `queued` row: died, rc NULL, prof_line `withdrawn by=<by> <why>`
+    // (the hub reads it as no-capacity, mc_proj_newest). 409 not_queued for
+    // any other status; 404 for no row.
+    "POST", /^\/api\/lane-runs\/(\d+)\/withdraw$/,
+    ({ env, t, body, m }) => d1Guarded("lane_runs", async () => {
+      const id = Number(m[1]);
+      const by = laneName(body.by);
+      if (!by) return json(400, { error: `by is required and ${NAME_ERR}` });
+      const why = (str(body.why, 200) || "").replace(/[^A-Za-z0-9._:=>-]/g, "").slice(0, 80) || "hub-takeback";
+      const r = await env.DB.prepare(WITHDRAW_SQL).bind(id, t, `withdrawn by=${by} ${why}`).run();
+      if (leaseWon(r)) return json(200, { id, status: "died", as_of: t });
+      const row = await env.DB.prepare("SELECT status FROM lane_runs WHERE id=?1").bind(id).first();
+      if (!row) return json(404, { error: "no such lane run", id });
+      return json(409, { error: "not withdrawn", reason: "not_queued", id, status: row.status });
     }),
   ],
 

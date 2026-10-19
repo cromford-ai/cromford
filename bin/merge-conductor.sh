@@ -2510,7 +2510,14 @@ pr_worker() {
       # nobody. An enqueue and a direct merge are both landings, so both wait
       # for the hub, which runs this PR itself on its next tick (deferred=land).
       # Before the budget take, so a deferred PR spends no merge budget.
-      if [ "${MC_ON_MACHINE:-}" = 1 ]; then
+      # A LEASE-HELD PROJECT RUN ENQUEUES (BH-6890): bin/merge-conductor-project.sh
+      # holds the project lease for the whole tick (MC_LEASED_RUN=1 with
+      # MC_LEASE_FENCE), and every landing writer renews that fence first. Only
+      # on a repo with a queue: its landing settles through the QUEUED pass,
+      # which the hub runs when the machine defers the settle. A direct merge
+      # (no queue, or landing_direct) settles in the same tick, and a settle
+      # needs hub files, so it still waits for the hub (deferred=land).
+      if [ "${MC_ON_MACHINE:-}" = 1 ] && ! { [ "${MC_LEASED_RUN:-}" = 1 ] && [ -n "${MC_LEASE_FENCE:-}" ] && [ "$QUEUE" = 1 ]; }; then
         [ -n "${MC_PR_DEFERRED_FILE:-}" ] && echo land >> "$MC_PR_DEFERRED_FILE"
         mc_log "$KEY READY at ${HEAD:0:8} on a lane-run machine — not landed here; the hub lands it on its next tick (deferred=land)"
         mc_ready_why "$KEY" "$HEAD" machine-deferred "READY on a lane-run machine; the hub lands it on its next tick" logged
@@ -2587,6 +2594,7 @@ pr_worker() {
              command -v ae_mark >/dev/null 2>&1 && ae_mark "$P" asked "$KEY" "$HEAD"   # BH-1668 F2: no second ask
              mc_attempt_clear crdequeue "$KEY" "$HEAD" 2>/dev/null   # BH-2275: re-queued after a cleared CR
              mc_log "$KEY enqueued in the $PROVIDER merge queue at ${HEAD:0:8} — the conductor settles it when the queue merges it"
+             [ -n "${MC_LANDED_FILE:-}" ] && printf 'queued %s\n' "$KEY" >> "$MC_LANDED_FILE"
              mc_transition "$KEY" QUEUED "enqueued at ${HEAD:0:8}" "$HEAD" "$REVIEWED" "$URL" "$VERDICT" "$MSTATE" "$REC" >/dev/null ;;
           2) mc_count_inc "$P" merges >/dev/null
              command -v ae_mark >/dev/null 2>&1 && ae_mark "$P" asked "$KEY" "$HEAD"
@@ -2701,6 +2709,25 @@ tick_project() {
     return 0
   fi
   # <<< project hold
+  # >>> project on a machine (BH-6890)
+  # lane_placement.merge-conductor.<project> = fly: the whole project runs on
+  # a lane-run machine (bin/lib/mc/project-placement.sh). rc 0 = a row is
+  # enqueued or live, or the fallback is off: no PR work here. rc 2 = the hub
+  # takes a finished row back (failed or deferred) and runs the whole project
+  # once: a full tick runs on, a keyed tick starts a full tick of this one
+  # project under the BH-5463 full-tick lock (mc_proj_takeback_full). rc 1 =
+  # today's tick. A machine is never gated; MC_PROJ_GATE=0 (set once below
+  # from the settings cache) skips the gate when no project is placed fly.
+  if [ "${MC_PROJ_GATE:-1}" != 0 ] && command -v mc_fly_project_gate >/dev/null 2>&1; then
+    mc_fly_project_gate "$P"
+    case $? in
+      0) return 0 ;;
+      2) if [ -n "$MC_ONLY_KEYS" ] && command -v mc_proj_takeback_full >/dev/null 2>&1; then
+           mc_proj_takeback_full "$P"; return 0
+         fi ;;
+    esac
+  fi
+  # <<< project on a machine
   local T0; T0=$(mc_now)
   # ---- the per-project cadence hold (BH-1486) -------------------------------
   # The cron fires every five minutes for the whole fleet; this is how ONE
@@ -2830,7 +2857,10 @@ tick_project() {
   # the repo, not only MC_ONLY_PR's, and a settle is a landing: the issue close,
   # the deployreq ledger row and the deploy-verify the machine cannot spawn.
   # The hub runs this pass on every tick, so it owns each settle and ejection.
-  if [ "$QUEUE" = 1 ] && [ "${MC_ON_MACHINE:-}" != 1 ]; then
+  # A lease-held project run (BH-6890) runs it: it is the only conductor of
+  # the repo for the tick. Its settle still defers (deferred=settle), and the
+  # hub's next tick of the project settles it.
+  if [ "$QUEUE" = 1 ] && { [ "${MC_ON_MACHINE:-}" != 1 ] || { [ "${MC_LEASED_RUN:-}" = 1 ] && [ -n "${MC_LEASE_FENCE:-}" ]; }; }; then
     mapfile -t QROWS < <(awk -F'\t' -v p="$SLUG#" '$2=="QUEUED" && index($1,p)==1' "$MC_ROWS" 2>/dev/null)
     for QROW in "${QROWS[@]:-}"; do
       [ -n "$QROW" ] || continue
@@ -3270,8 +3300,15 @@ tick_project() {
     MC_FLY_COUNT_FILE="$MC_TICK_DIR/fly-count.$(mc_safe_name "$P").$BASHPID"
     : > "$MC_FLY_COUNT_FILE" 2>/dev/null || MC_FLY_COUNT_FILE=""
   fi
+  local _stopped=0
   for ROW in "${ROWS[@]}"; do
     [ -n "$ROW" ] || continue
+    # THE PR BOUNDARY (BH-6890): a project run that was told to stop (TERM, or
+    # a lost project lease) starts no further worker; the running ones finish.
+    if [ -n "${MC_STOP_FILE:-}" ] && [ -e "$MC_STOP_FILE" ]; then
+      [ "$_stopped" = 1 ] || mc_log "$SLUG stop asked ($MC_STOP_FILE) — no further PR worker starts this tick"
+      _stopped=1; fanin_account "$SLUG#${ROW%%$'\t'*}" deferred:stop; continue
+    fi
     # THE WINDOW (BH-4842). Under the backstop's timeout, a worker starts only
     # if it can finish before it; the rest wait for the next fire.
     if ! _wcap=$(mc_window_cap); then
@@ -3320,11 +3357,15 @@ tick_project() {
   # MC_AUTOENQUEUE_CAP.
   # Both steps post `@mergifyio queue`, which is a landing, so a lane-run
   # machine (MC_ON_MACHINE=1) runs neither (BH-6495). The hub runs them.
-  [ "${MC_ON_MACHINE:-}" != 1 ] && command -v ae_project >/dev/null 2>&1 && ae_project "$P" "$SLUG" "$PROVIDER" "$PBASE" "${ROWS[@]}"
+  # A lease-held project run (BH-6890) runs both, unless it was told to stop.
+  local _land_ok=1
+  [ "${MC_ON_MACHINE:-}" = 1 ] && ! { [ "${MC_LEASED_RUN:-}" = 1 ] && [ -n "${MC_LEASE_FENCE:-}" ]; } && _land_ok=0
+  [ -n "${MC_STOP_FILE:-}" ] && [ -e "$MC_STOP_FILE" ] && _land_ok=0
+  [ "$_land_ok" = 1 ] && command -v ae_project >/dev/null 2>&1 && ae_project "$P" "$SLUG" "$PROVIDER" "$PBASE" "${ROWS[@]}"
   # The same step for the open PRs of NON-harness authors (BH-4580), which the
   # list above never carries: one REST page, review-prs' APPROVE on the head, the
   # iron-law scan in the READY mark's place, the same cap (bin/lib/mc/external-enqueue.sh).
-  [ "${MC_ON_MACHINE:-}" != 1 ] && command -v xe_project >/dev/null 2>&1 && xe_project "$P" "$SLUG" "$PROVIDER" "$PBASE"
+  [ "$_land_ok" = 1 ] && command -v xe_project >/dev/null 2>&1 && xe_project "$P" "$SLUG" "$PROVIDER" "$PBASE"
 
   # ---- what the land fan-out actually reached (BH-870) -----------------------
   # The handled sha is recorded HERE, after every worker has answered, and only
@@ -3363,7 +3404,9 @@ tick_project() {
   # to run the lane, because settling that train is work only the lane does and
   # this conductor is its only invoker.
   BATCHABLE=$(mc_count_get "$P" batchable)
-  if [ -z "$MC_ONLY_KEYS" ] && [ "$ACTIONS" = 1 ] && [ -x "$H/bin/batch-resolve.sh" ] && mc_batch_should_spawn "$P" "${BATCHABLE:-0}"; then
+  # Never on a lane-run machine (BH-6890): the lane is detached, clones and
+  # runs for minutes, and the machine stops when its run ends.
+  if [ -z "$MC_ONLY_KEYS" ] && [ "${MC_ON_MACHINE:-}" != 1 ] && [ "$ACTIONS" = 1 ] && [ -x "$H/bin/batch-resolve.sh" ] && mc_batch_should_spawn "$P" "${BATCHABLE:-0}"; then
     setsid nohup env PATH="$MC_RR_PATH" HARNESS="$H" bash -c \
       '"$1/bin/batch-resolve.sh" "$2"' _ "$H" "$P" >/dev/null 2>&1 9>&- 8>&- 7>&- &
     if mc_batch_train_open "$P"; then
@@ -3436,7 +3479,12 @@ tick_project() {
 # locks/main-red-detector.lock itself, and taking that one here would make every
 # invocation skip. A detector that fails, or is absent (every conductor fixture
 # copies the script into a scratch bin/ without it), never touches the tick.
-if [ -z "$MC_ONLY_KEYS" ] && [ "${MC_MAIN_RED_DETECT:-1}" != 0 ] && [ -x "$H/bin/main-red-detector.sh" ]; then
+# ONE PROJECT (BH-6890): bin/merge-conductor-project.sh runs a full tick of
+# MC_ONLY_PROJECT only, on a lane-run machine. The fleet sweeps (this detector,
+# the held-page flush, the *_gc housekeeping) stay the hub's.
+MC_FLEET_SWEEPS=1
+{ [ -n "$MC_ONLY_KEYS" ] || [ -n "${MC_ONLY_PROJECT:-}" ]; } && MC_FLEET_SWEEPS=0
+if [ "$MC_FLEET_SWEEPS" = 1 ] && [ "${MC_MAIN_RED_DETECT:-1}" != 0 ] && [ -x "$H/bin/main-red-detector.sh" ]; then
   ( flock -n 9 || { mc_log "main-red detector: another tick holds the lock — skipped (dedupe, never a queue)"; exit 0; }
     mc_log "main-red detector: reading every repo's main before the project ticks"
     "$H/bin/main-red-detector.sh" >> "$H/logs/main-red-detector.log" 2>&1 || true
@@ -3467,15 +3515,22 @@ trap 'rm -f "$GH_ETAG_COUNT_FILE"' EXIT
 # It still LOADS the cache (BH-1840), so a woken PR's held row is paged by the cron
 # tick's capped flush with its held-since text, not directly by its own pager. The
 # `declare -f` guard keeps a box whose older lib ignores the flag off a full flush.
-if [ -z "$MC_ONLY_KEYS" ]; then
+if [ "$MC_FLEET_SWEEPS" = 1 ]; then
   command -v mc_hold_tick_begin >/dev/null 2>&1 && mc_hold_tick_begin
 elif declare -f mc_hold_tick_begin 2>/dev/null | grep -q -- '--load-only'; then
   mc_hold_tick_begin --load-only
 fi
 
+# THE PROJECT GATE, ONCE (BH-6890). One read of the box settings cache: when
+# no merge-conductor placement row is fly, no tick_project below reads a
+# placement row (MC_PROJ_GATE=0). A machine is never gated.
+MC_PROJ_GATE=1
+if [ "${MC_ON_MACHINE:-}" = 1 ] || [ "${MC_PROJ_TAKEBACK:-}" = 1 ]; then MC_PROJ_GATE=0
+elif command -v mc_fly_project_none >/dev/null 2>&1 && mc_fly_project_none; then MC_PROJ_GATE=0; fi
 PIDS=()
 for P in $("$H/bin/fleet-conf.sh" --projects 2>/dev/null); do
   if [ -n "$MC_ONLY_KEYS" ]; then mc_only_slug "$("$H/bin/fleet-conf.sh" "$P" repo 2>/dev/null)" || continue; fi
+  [ -n "${MC_ONLY_PROJECT:-}" ] && [ "$P" != "$MC_ONLY_PROJECT" ] && continue
   # BH-1295: the ETag counters live in a FILE now (mc_pr_view's return value
   # is its whole point, so its callers are all `$( )`, and no shell variable
   # survives that) — GH_ETAG_COUNT_FILE names which one. tick_project
@@ -3507,6 +3562,8 @@ for P in $("$H/bin/fleet-conf.sh" --projects 2>/dev/null); do
     # <<< full-tick lock
     ( exec 5>&-
       tick_project "$P"
+      # BH-6890: the hub mark of a take-back tick ends with the tick.
+      command -v mc_proj_hub_unmark >/dev/null 2>&1 && mc_proj_hub_unmark "$P"
       if [ -n "$SLUG" ] && [ "$SLUG" != - ] && [ -f "$PRS_COUNT_FILE" ]; then
         mc_log "$SLUG PR-SNAPSHOT hit=$(grep -c '^HIT ' "$PRS_COUNT_FILE") miss=$(grep -c '^MISS ' "$PRS_COUNT_FILE")"
       fi
@@ -3515,7 +3572,7 @@ for P in $("$H/bin/fleet-conf.sh" --projects 2>/dev/null); do
 done
 [ "${#PIDS[@]}" -gt 0 ] && wait "${PIDS[@]}"
 # The *_gc housekeeping and mc_dv_reap are fleet sweeps: the cron tick's alone.
-if [ -n "$MC_ONLY_KEYS" ]; then
+if [ "$MC_FLEET_SWEEPS" != 1 ]; then
   command -v gh_rest_etag_report >/dev/null 2>&1 && gh_rest_etag_report merge-conductor
   hb_done merge-conductor; exit 0
 fi

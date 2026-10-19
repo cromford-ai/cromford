@@ -492,6 +492,41 @@ lri_member_ok() {
   [ -n "$re" ] && [[ $rel =~ $re ]]
 }
 
+# _lri_member_filter <p> ro|rw [sfx] [nf] — lri_member_ok for a whole listing
+# in ONE awk and ONE grep pass (BH-7437 part 1b). stdin is `type TAB relpath`
+# lines (type - or d) with nf fields in all: nf 2, or nf 3 with sfx = TAB and an
+# ERE for the third field. It prints the lines lri_member_ok accepts, in input
+# order, and is always rc 0: no match is not a failure. The same rules, in the
+# same order: the project name, the mode, the lane's manifest; a relpath that
+# is empty, absolute, has an empty segment or a trailing `/`, holds a character
+# outside [A-Za-z0-9._@+=,/-], or has a `.` or `..` segment is out (awk); the
+# rest must match the lane's file ERE (type -) or record-dir ERE (type d) as the
+# whole relpath (grep, LC_ALL=C: the set above is ASCII). The hub held about
+# 25,000 files for 2,500 young dirs, and the bash `while read` loop that called
+# lri_member_ok per file did not finish in 900 s at load5 100.
+_lri_member_filter() {
+  local p="${1:-}" mode="${2:-ro}" sfx="${3:-}" nf="${4:-2}" tab=$'\t' re dre body pats=()
+  _lri_name_ok "$p" || { cat >/dev/null; return 0; }
+  case "$mode" in ro|rw) ;; *) cat >/dev/null; return 0 ;; esac
+  _lri_load "${LRI_LANE:-$LRI_LANE_DEFAULT}" "$p" || { cat >/dev/null; return 0; }
+  re="${_LRI_M[$LRI_K|re.$mode]:-}"; dre="${_LRI_M[$LRI_K|dre.$mode]:-}"
+  # `^(ERE)$` becomes `^<type><TAB>(ERE)<sfx>$`: a checked relpath holds no TAB.
+  if [ -n "$re" ];  then body="${re#^}";  pats+=(-e "^-$tab${body%\$}$sfx\$"); fi
+  # The record-dir ERE is `^(^A$|^B$)$`: each glob keeps its own anchors, which
+  # cannot follow a type prefix. `^(A|B)$` matches the same relpaths.
+  if [ -n "$dre" ]; then
+    body="${dre#^(}"; body="${body%)\$}"; body="${body//\$|^/|}"; body="${body#^}"; body="${body%\$}"
+    pats+=(-e "^d$tab($body)$sfx\$")
+  fi
+  [ "${#pats[@]}" -gt 0 ] || { cat >/dev/null; return 0; }
+  LC_ALL=C awk -F'\t' -v nf="$nf" '
+    NF != nf { next }
+    { r = $2 }
+    r == "" || r ~ "^/" || r ~ "//" || r ~ "/$" || r !~ "^[A-Za-z0-9._@+=,/-]+$" { next }
+    { n = split(r, s, "/"); for (i = 1; i <= n; i++) if (s[i] == "." || s[i] == "..") next; print }
+  ' | { LC_ALL=C grep -aE "${pats[@]}" || :; }
+}
+
 # _lri_name_stamp <dir> — rc 0 when the record dir's name ends in the build
 # time the hub writes into it; LRI_STAMP is that time as YYYYMMDDHHMMSS UTC.
 # The shapes: <p>-<KEY>-<YYYYMMDDHHMM> (bin/run-build.sh),
@@ -579,10 +614,9 @@ _lri_list_walk() {
     # over <find args> — the allow-listed files over the cap, into the skip file.
     over() {
       [ -n "$skips" ] || return 0
-      find "$@" -type f -size +"$fmax"c -printf '%p\t%s\n' 2>/dev/null | while IFS=$'\t' read -r rel f; do
-        rel="${rel#./}"
-        lri_member_ok "$p" "$rel" - "$mode" && printf 'file\t%s\t%s\t%s\n' "$rel" "$f" "$fmax" >> "$skips"
-      done
+      find "$@" -type f -size +"$fmax"c -printf '-\t%p\t%s\n' 2>/dev/null | sed 's#^-\t\./#-\t#' \
+        | _lri_member_filter "$p" "$mode" $'\t[0-9]+' 3 \
+        | awk -F'\t' -v fmax="$fmax" '{ printf "file\t%s\t%s\t%s\n", $2, $3, fmax }' >> "$skips"
     }
     while IFS=$'\t' read -r kind cap pre depth dre; do
       sz=(); [ "$cap" = 1 ] && sz=(-size "-$((fmax + 1))c")
@@ -601,7 +635,7 @@ _lri_list_walk() {
               continue
             fi
             printf 'd\t%s\n' "$d"
-            find "$d" -mindepth 1 -maxdepth 1 -type f ${sz[@]+"${sz[@]}"} 2>/dev/null | sed 's#^#-\t#'
+            find "$d" -mindepth 1 -maxdepth 1 -type f ${sz[@]+"${sz[@]}"} -printf '-\t%p\n' 2>/dev/null
             [ "$cap" = 1 ] && over "$d" -mindepth 1 -maxdepth 1
           done ;;
         find)
@@ -611,9 +645,7 @@ _lri_list_walk() {
           [ "$cap" = 1 ] && over "$pre" -mindepth 1 ${dp[@]+"${dp[@]}"} ;;
       esac
     done <<<"$walk"
-  ) | while IFS=$'\t' read -r d rel; do
-    lri_member_ok "$p" "$rel" "$d" "$mode" && printf '%s\t%s\n' "$d" "$rel"
-  done | LC_ALL=C sort -t$'\t' -k2,2 -u
+  ) | _lri_member_filter "$p" "$mode" | LC_ALL=C sort -t$'\t' -k2,2 -u
 }
 
 # _lri_skips_log <lane> <project> <skip-file> — one stamped line in

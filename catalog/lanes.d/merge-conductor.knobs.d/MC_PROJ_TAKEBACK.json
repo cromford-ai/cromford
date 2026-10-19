@@ -1,0 +1,8 @@
+{
+  "env": "MC_PROJ_TAKEBACK",
+  "type": "string",
+  "default": "",
+  "zero_means": null,
+  "note": "Not a knob: set to 1 by mc_proj_takeback_full (bin/merge-conductor.sh) for the one full hub tick of a project that takes a lane-run machine's finished row back (BH-6890). The gate (mc_fly_project_gate) steps aside for that run. Unset everywhere else. NOT settable from the control plane.",
+  "settable": false
+}

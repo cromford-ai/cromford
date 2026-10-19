@@ -54,6 +54,20 @@
 #       local worker as today, after one `fallback=<word>` line. Reads
 #       LAND_FIRE; counts into MC_FLY_N_ENQ, MC_FLY_N_SKIP and MC_FLY_N_FB,
 #       and appends enq|skip|fb to MC_FLY_COUNT_FILE when it is set.
+#   mc_fly_project_gate <project>
+#       BH-6890: the per-project branch, which runs before the per-PR branch,
+#       first in tick_project. With lane_placement.merge-conductor.<project>
+#       = fly the whole project runs on a lane-run machine
+#       (bin/lib/mc/project-placement.sh, mc_proj_gate; the stale bound is
+#       MC_FLY_QUEUE_STALE_S). rc 0 = handled: the hub tick does nothing more
+#       for this project. rc 1 = run today's hub tick (not placed fly, or a
+#       hub fallback). rc 2 = a hub fallback for a finished row: run the whole
+#       project on the hub this tick. A run on a machine (MC_ON_MACHINE=1) is
+#       never gated: rc 1, and neither is the take-back's own full tick
+#       (MC_PROJ_TAKEBACK=1).
+#   mc_fly_project_none
+#       rc 0 when the fresh box settings cache places no merge-conductor
+#       project on fly: the hub tick reads no placement row per project.
 #   mc_fly_launch <project> <slug> <list-row>
 #       one row, for a `&` in the launch loop: mc_fly_arm, and when it answers
 #       rc 1 the local worker (fanin_run_sub … mc_worker_bounded), as today.
@@ -239,6 +253,34 @@ _mc_fly_count() {
   [ -n "${MC_FLY_COUNT_FILE:-}" ] || return 0
   printf '%s\n' "$1" >> "$MC_FLY_COUNT_FILE" 2>/dev/null
   return 0
+}
+
+# _mc_fly_pp — source bin/lib/mc/project-placement.sh once; rc 1 when absent.
+_mc_fly_pp() {
+  local root
+  command -v mc_proj_gate >/dev/null 2>&1 && return 0
+  root=$(_mc_fly_root)
+  [ -n "$root" ] && [ -r "$root/bin/lib/mc/project-placement.sh" ] || return 1
+  # shellcheck source=bin/lib/mc/project-placement.sh
+  . "$root/bin/lib/mc/project-placement.sh"
+}
+
+# mc_fly_project_none — rc 0 when the fresh settings cache places no project
+# of merge-conductor on fly (mc_proj_none_fly): the hub tick skips the gate.
+mc_fly_project_none() {
+  _mc_fly_pp || return 1
+  mc_proj_none_fly
+}
+
+mc_fly_project_gate() {
+  local p="${1:-}" st
+  [ "${MC_ON_MACHINE:-}" = 1 ] && return 1
+  # The take-back's own full tick (mc_proj_takeback_full): the hub runs it.
+  [ "${MC_PROJ_TAKEBACK:-}" = 1 ] && return 1
+  _mc_fly_pp || return 1
+  st="${MC_FLY_QUEUE_STALE_S:-600}"
+  [[ $st =~ ^[0-9]+$ ]] || st=600
+  mc_proj_gate "$p" "$st"
 }
 
 mc_fly_launch() {

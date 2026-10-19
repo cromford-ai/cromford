@@ -1,0 +1,8 @@
+{
+  "env": "MC_ONLY_PROJECT",
+  "type": "string",
+  "default": "",
+  "zero_means": null,
+  "note": "Not a knob: set by bin/merge-conductor-project.sh to the one project a lane-run machine conducts (BH-6890). bin/merge-conductor.sh then ticks that project only and skips the fleet sweeps (main-red detector, held-page flush, *_gc housekeeping), which stay the hub's. Empty = every project, as before. NOT settable from the control plane.",
+  "settable": false
+}

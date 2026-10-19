@@ -1,0 +1,11 @@
+{
+  "env": "MC_PROJECT_RENEW_S",
+  "type": "int",
+  "default": 60,
+  "min": 1,
+  "max": 600,
+  "unit": "seconds",
+  "zero_means": null,
+  "read_in": "bin/merge-conductor-project.sh",
+  "note": "BH-6890: how often a lease-held project run on a lane-run machine renews the merge-conductor project lease while the conductor runs. Keep it under a third of project_lease.ttl_s (seed 180). A renew answered `lost` stops the run at the next PR boundary."
+}

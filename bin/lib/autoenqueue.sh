@@ -593,6 +593,14 @@ _ae_send() {
     if [ -n "$had" ]; then export GH_TOKEN="$tok"; else unset GH_TOKEN; fi
     _ae_log "$key the posting row could not be written (worker and file both refused) — nothing sent"; return 1
   fi
+  # THE FENCE, LAST, BEFORE THE POST (BH-6890). `@mergifyio queue` is a
+  # landing. A lease-held project run on a lane-run machine renews its project
+  # lease here, and a lost fence sends nothing; the `posting` row the next
+  # tick's recover read resolves. With no lease held this is no request.
+  if command -v mc_lease_fence_ok >/dev/null 2>&1 && ! mc_lease_fence_ok; then
+    if [ -n "$had" ]; then export GH_TOKEN="$tok"; else unset GH_TOKEN; fi
+    _ae_log "$key not posted: the project lease was lost — nothing sent"; return 1
+  fi
   t=$(mktemp "${TMPDIR:-/tmp}/ae.XXXXXX") || { if [ -n "$had" ]; then export GH_TOKEN="$tok"; else unset GH_TOKEN; fi; return 1; }
   rc=0; gh_rest POST "repos/$AE_SLUG/issues/$num/comments" -f "body=$AE_BODY" > "$t" || rc=$?
   if [ -n "$had" ]; then export GH_TOKEN="$tok"; else unset GH_TOKEN; fi

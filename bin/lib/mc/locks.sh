@@ -125,7 +125,10 @@ mc_lease_fence_ok() {
   fi
   case "$rc" in
     0) return 0 ;;
-    3) mc_log "$p project lease lost (fence $MC_LEASE_FENCE) — write stopped, next tick"; return 99 ;;
+    3) mc_log "$p project lease lost (fence $MC_LEASE_FENCE) — write stopped, next tick"
+       # A lease-held project run (BH-6890) stops at the next PR boundary.
+       [ -n "${MC_STOP_FILE:-}" ] && : > "$MC_STOP_FILE" 2>/dev/null
+       return 99 ;;
   esac
   if [ "${MC_ON_MACHINE:-}" = 1 ]; then
     mc_log "$p project lease renew unavailable on a lane-run machine — write stopped, next tick"; return 99
@@ -587,7 +590,14 @@ mc_attempt_pr_key() {
 # (mc_attempt_put_n's ` #<n>` counter suffix).
 mc_attempt_put() {
   mc_attempt_row_put "${2:-$1}"
-  echo "$1" >> "$MC_ATTEMPTS"
+  # Under $MC_ATTEMPTS.lock (BH-6890): the hub's apply of a lane-run machine's
+  # write-back rewrites this repo's lines of the file under that lock
+  # (_lri_rows_apply, bin/lib/lane-run-inputs.sh), and mc_attempt_clear takes
+  # it too, so an append outside it could land in the old file and be lost by
+  # the rename. In a subshell, so the caller's fd 9 (a PR lock) is untouched.
+  # A lock not had in 10 s still appends: the line beats a stall.
+  ( flock -w 10 9 2>/dev/null; echo "$1" >> "$MC_ATTEMPTS" ) 9>>"$MC_ATTEMPTS.lock" 2>/dev/null \
+    || echo "$1" >> "$MC_ATTEMPTS"
 }
 
 # mc_attempt_row_put <line> — the ROW half of mc_attempt_put, on its own, for a
@@ -782,7 +792,9 @@ mc_attempt_has() {
     pr_attempt_has "$repo" "$num" "$kind" "$sha" >/dev/null 2>&1; rc=$?
   fi
   case "$rc" in
-    0) grep -qxF "$1" "$MC_ATTEMPTS" 2>/dev/null || echo "$1" >> "$MC_ATTEMPTS"
+    0) grep -qxF "$1" "$MC_ATTEMPTS" 2>/dev/null \
+         || { ( flock -w 10 9 2>/dev/null; echo "$1" >> "$MC_ATTEMPTS" ) 9>>"$MC_ATTEMPTS.lock" 2>/dev/null \
+              || echo "$1" >> "$MC_ATTEMPTS"; }   # under the lock, as mc_attempt_put (BH-6890)
        return 0 ;;
     2) if grep -qxF "$1" "$MC_ATTEMPTS" 2>/dev/null; then
          pr_attempt_put "$repo" "$num" "$kind" "$sha" >/dev/null 2>&1 \

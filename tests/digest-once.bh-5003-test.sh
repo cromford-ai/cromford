@@ -113,7 +113,14 @@ case "$m $path" in
     if [ -f "$FXT/ledger.down" ]; then code=503; out='{"error":"down"}'; printf '%s\n%s' "$out" "$code"; exit 0; fi
     k=$(printf '%s' "$path" | sed -n 's/.*[?&]kind=\([^&]*\).*/\1/p')
     v=$(printf '%s' "$path" | sed -n 's/.*[?&]key=\([^&]*\).*/\1/p')
+    # Snapshot first, then the barrier: neither hub can see the other's send.
+    row=$(jq -c --arg i "$k/$v" '.[$i] // empty' "$FXT/ledger.json")
     if [ "$k" = daily_digest ] && [ -f "$FXT/barrier" ]; then
+      # TEST-CHANGE (BH-7465, r2): the row is read BEFORE this wait (above).
+      # Read after it, a hub that the scheduler held back past the release
+      # read the row the first hub had already marked `sent`, and C7 saw one
+      # send. The snapshot is taken before either hub can send, so the order
+      # no longer depends on timing.
       # TEST-CHANGE (BH-7465): the cap was 5 s (50 polls). On a loaded Linux
       # runner one hub reached this read after the cap; the first hub had
       # already sent, so the late hub read `sent` and C7 ("knob 0 sends
@@ -126,7 +133,6 @@ case "$m $path" in
         sleep 0.1
       done
     fi
-    row=$(jq -c --arg i "$k/$v" '.[$i] // empty' "$FXT/ledger.json")
     if [ -n "$row" ]; then out=$(jq -nc --argjson r "$row" '{ledger: $r}'); else code=404; out='{"error":"not found"}'; fi ;;
   "PUT /api/ledger")
     exec 8>"$FXT/ledger.lock"; flock 8
@@ -246,9 +252,15 @@ check "C6c ledger down: one note line, not claim-failed ($(summ a))" \
   '[ "$(grep -c "ledger claim failed with the ledger down" "$HA/logs/daily-digest.notes.log")" = 1 ] && [[ "$(summ a)" != *" claim-failed" ]]'
 
 # ── C7: DAILY_DIGEST_CLAIM=0 is the rollback: main's behaviour, two sends ────
+dump_c7() { # a C7 failure keeps what both hubs did (BH-7465 diagnostics)
+  local f
+  for f in out.a out.b rc.a rc.b reqlog sends alerts.log; do echo "--- C7 $f"; cat "$T/$f" 2>/dev/null; done
+  for f in "$HA"/logs/daily-digest*.log "$HB"/logs/daily-digest*.log; do [ -e "$f" ] && { echo "--- C7 $f"; cat "$f"; }; done
+}
 reset; both DAILY_DIGEST_CLAIM=0
 check "C7 knob 0: no claim request" '! grep -q "POST /api/ledger/claim" "$T/reqlog"'
 check "C7 knob 0: the race sends twice, as before BH-5003 ($(n_send))" '[ "$(n_send)" = 2 ]'
+[ "$(n_send)" = 2 ] || dump_c7
 reset; tick a DAILY_DIGEST_CLAIM=5
 check "C7 knob 5 is a note and the default (claims)" \
   'grep -q "DAILY_DIGEST_CLAIM=5" "$HA/logs/daily-digest.notes.log" && grep -q "^hub-a POST /api/ledger/claim" "$T/reqlog" && [ "$(n_send)" = 1 ]'

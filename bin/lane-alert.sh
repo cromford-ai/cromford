@@ -75,6 +75,21 @@ mkdir -p "$H/logs" "$H/state" 2>/dev/null
 STAMP() { date -u '+%F %TZ'; }
 BODY="[orchestrator/$L] $T"
 
+# ON A LANE-RUN MACHINE (LANE_RUN_ID set, BH-6890): the machine has no hub
+# ALERTS.log, so the line goes to the jobs API (alr_post,
+# bin/lib/alert-line-remote.sh) and the hub's bin/lane-snapshot-publish.sh
+# replays it into logs/ALERTS.log through bin/alert-line.sh with the same
+# --id and severity. A --resolve or --log-only stays local. A failed post
+# takes the local path below.
+if [ -n "${LANE_RUN_ID:-}" ] && [ -z "$RESOLVE" ] && [ -z "$LOGONLY" ] && [ -r "$BIN/lib/alert-line-remote.sh" ]; then
+  _RSEV="$SEV"; case "$_RSEV" in info|warn|critical) ;; *) _RSEV="" ;; esac
+  ALR_STAMP="$(STAMP)"
+  # shellcheck source=bin/lib/alert-line-remote.sh
+  if . "$BIN/lib/alert-line-remote.sh" 2>/dev/null && alr_post "$ALR_STAMP $BODY" "$_RSEV" "$ID" "${PL_PROJECT:-fleet}"; then
+    exit 0
+  fi
+fi
+
 # shellcheck source=bin/lib/alert-state.sh
 . "$BIN/lib/alert-state.sh" 2>/dev/null || true
 

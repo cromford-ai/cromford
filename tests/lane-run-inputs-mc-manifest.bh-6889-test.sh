@@ -210,7 +210,7 @@ READS() { join -t$'\t' "$1" "$2" | awk -F'\t' '$2 != $4 && $3 == $5 {print $1}';
 WRITES() { { join -t$'\t' "$1" "$2" | awk -F'\t' '$3 != $5 {print $1}'; join -v2 -t$'\t' "$1" "$2" | cut -f1; } | LC_ALL=C sort -u; }
 # The machine-local set: code, secrets, locks, caches, logs and the per-tick
 # state the .rw NOT CARRIED block names. Nothing here rides in either direction.
-LOCAL_ERE='^(bin|catalog|env|locks|tmp|logs)/|^state/(flags-cache|gh-[^/]*|heartbeat|heartbeat-done|lane-gate|lead-authority|merge-conductor-pr|pr-snapshot|fanin|lane-run-inputs|settings-cache\.json|box-name)(/|$)|^state/merge-conductor/(tick/|attempts\.txt$|rereviews-[0-9]{8}\.txt$|lane-epoch$|hold-reminder-at$|diffs/)|\.lock$'
+LOCAL_ERE='^(bin|catalog|env|locks|tmp|logs)/|^state/(flags-cache|gh-[^/]*|heartbeat|heartbeat-done|lane-gate|lead-authority|merge-conductor-pr|pr-snapshot|fanin|lane-run-inputs|settings-cache\.json|box-name)(/|$)|^state/merge-conductor/(tick/|rereviews-[0-9]{8}\.txt$|lane-epoch$|hold-reminder-at$|diffs/)|\.lock$'
 
 # RUN <root> [VAR=value...] — one `merge-conductor-pr.sh mgfy <key> <head>` run,
 # as a lane-run machine starts it. PROF is its PROF line, RRC its exit code.
@@ -249,10 +249,15 @@ RWOUT=$(L "$H0" lri_paths "$LANE" mgfy rw 2>"$T/t2.err"); rc=$?
 [ "$rc" = 0 ] && [ ! -s "$T/t2.err" ] && ok "T2 lri_paths rw rc 0, no lri: line" || bad "T2 rw rc=$rc: $(cat "$T/t2.err")"
 [ -f "$MRO" ] && [ -f "$MRW" ] && ok "T2 both manifest files exist" || bad "T2 missing $MRO or $MRW"
 grep -qxF "$PS" "$MRW" 2>/dev/null && ok "T2 the .rw holds the literal $PS line" || bad "T2 no literal $PS line in the .rw"
-NROWS=$(grep -c '^@rows[[:space:]]' "$MRW" 2>/dev/null)
-ROWSLINE=$(grep '^@rows[[:space:]]' "$MRW" 2>/dev/null)
+# TEST-CHANGE BH-6890: the .rw now has a second @rows line, this repo's lines
+# of state/merge-conductor/attempts.txt, so a project run keeps its dedupe and
+# RED strike count. The pr-state.tsv line is still pinned exactly as before.
+NROWS=$(grep -c "^@rows[[:space:]]\+$PS[[:space:]]" "$MRW" 2>/dev/null)
+ROWSLINE=$(grep "^@rows[[:space:]]\+$PS[[:space:]]" "$MRW" 2>/dev/null)
 [ "$NROWS" = 1 ] && [ "$(awk '{print $2}' <<<"$ROWSLINE")" = "$PS" ] && [[ $(awk '{print $3}' <<<"$ROWSLINE") == *'#' ]] \
-  && ok "T2 exactly one @rows line, on $PS, its ERE ends in # ($ROWSLINE)" || bad "T2 @rows lines=$NROWS: $ROWSLINE"
+  && ok "T2 exactly one @rows line on $PS, its ERE ends in # ($ROWSLINE)" || bad "T2 @rows lines on $PS=$NROWS: $ROWSLINE"
+[ "$(grep -c '^@rows[[:space:]]' "$MRW" 2>/dev/null)" = 2 ] && grep -q '^@rows state/merge-conductor/attempts\.txt ' "$MRW" \
+  && ok "T2 the second @rows line is attempts.txt (BH-6890)" || bad "T2 @rows: $(grep '^@rows' "$MRW" | tr '\n' '|')"
 grep -q '^@row[[:space:]]' "$MRW" "$MRO" 2>/dev/null && bad "T2 an @row line is present" || ok "T2 no @row line"
 
 # ============================================================================

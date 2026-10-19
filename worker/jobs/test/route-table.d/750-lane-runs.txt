@@ -6,5 +6,6 @@ POST /api/lane-runs
 POST /api/lane-runs/claim
 POST re:/^\/api\/lane-runs\/(\d+)\/report$/
 POST re:/^\/api\/lane-runs\/(\d+)\/release$/
+POST re:/^\/api\/lane-runs\/(\d+)\/withdraw$/
 GET /api/lane-runs/by-prefix
 GET /api/lane-runs/stats

@@ -1,0 +1,8 @@
+{
+  "env": "MC_LANDED_FILE",
+  "type": "string",
+  "default": "",
+  "zero_means": null,
+  "note": "Not a knob: the file bin/merge-conductor-project.sh hands a lease-held project run (BH-6890). bin/merge-conductor.sh appends `queued <owner/repo>#<n>` after an enqueue, and conductor_settle appends `merged <owner/repo>#<n>` when the run sees a landing merged. The entry counts them into its PROF mc-project line. A path, so NOT settable from the control plane.",
+  "settable": false
+}

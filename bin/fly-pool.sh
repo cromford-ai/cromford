@@ -2858,6 +2858,17 @@ next_job_or_destroy() { # hand this machine the next queued job, or destroy it
     NJLIST=$(ls -tr "$QDIR"/*.json 2>/dev/null)
     command -v hotfix_first >/dev/null 2>&1 && NJLIST=$(hotfix_first $NJLIST)
     for NJ in $NJLIST; do
+      # THE TICK BUDGET ENDS THIS SEARCH TOO (hub incident 2026-10-19). Each row
+      # below can cost an issue read (spec_repos_load, 5-20 s) BEFORE the spawn
+      # gate that knows the budget, so 156 queued rows ran a tick 25 minutes past
+      # its 600 s budget with the pool lock held. A spent budget leaves REUSED=0:
+      # the machine is destroyed below exactly as when no row fits, and every row
+      # stays queued. `command -v` because tests/pool-account-routing-test.sh
+      # sources this function alone; POOL_TICK_T0 unset means no budget applies.
+      if [ -n "${POOL_TICK_T0:-}" ] && command -v pool_tick_budget_spent >/dev/null 2>&1 && pool_tick_budget_spent; then
+        say "$MID: tick budget of ${POOL_TICK_BUDGET_S:-600}s spent — the reuse search stops, the machine is destroyed and its rows stay queued"
+        break
+      fi
       case "$NJ" in *.failed.json) continue;; esac
       [ -f "$NJ" ] || continue
       NKEY=$(jq -r '.key // ""' "$NJ"); NTICKET=$(jq -r '.ticket_id // ""' "$NJ"); NATT=$(jq -r '.attempt // 0' "$NJ")
@@ -2909,7 +2920,12 @@ next_job_or_destroy() { # hand this machine the next queued job, or destroy it
       # one tick line names it, so nothing is said here.
       if command -v dm_job_admit >/dev/null 2>&1 && ! dm_job_admit "$NJ"; then continue; fi
       if command -v pool_spawn_decision >/dev/null 2>&1; then
-        pool_spawn_decision "$NJ" "$NKEY" "$NTICKET" || continue
+        if ! pool_spawn_decision "$NJ" "$NKEY" "$NTICKET"; then
+          # BH-7421: the gate answered "budget spent" (it said so once already):
+          # end the search like the main walk does, no more rows are read.
+          [ -n "${_POOL_BUDGET_SAID:-}" ] && break
+          continue
+        fi
         # AND IT COUNTS (review round 2, Important-2). The gate above CHECKS the
         # per-key cap on this path and, until this line, nothing ever RECORDED
         # against it: only spawn_one appended to .spawns. A key whose builds

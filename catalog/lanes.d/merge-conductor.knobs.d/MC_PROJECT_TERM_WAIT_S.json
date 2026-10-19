@@ -1,0 +1,11 @@
+{
+  "env": "MC_PROJECT_TERM_WAIT_S",
+  "type": "int",
+  "default": 12,
+  "min": 1,
+  "max": 24,
+  "unit": "seconds",
+  "zero_means": null,
+  "read_in": "bin/merge-conductor-project.sh",
+  "note": "BH-6890: on TERM, how long a lease-held project run waits for the conductor to finish its running PR workers before it TERMs it, posts the write-back and releases the project lease. Must stay under lane_run.term_grace_s (seed 20), after which bin/lane-run-worker.sh kills the run."
+}

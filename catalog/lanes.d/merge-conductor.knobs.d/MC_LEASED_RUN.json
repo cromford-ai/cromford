@@ -1,0 +1,8 @@
+{
+  "env": "MC_LEASED_RUN",
+  "type": "string",
+  "default": "",
+  "zero_means": null,
+  "note": "Not a knob: set to 1 by bin/merge-conductor-project.sh, which holds the merge-conductor project lease for the whole run and exports MC_LEASE_FENCE (BH-6890). With MC_ON_MACHINE=1, MC_LEASED_RUN=1 and MC_LEASE_FENCE set, bin/merge-conductor.sh enqueues READY PRs into the repo's merge queue, runs the QUEUED settle pass and the tier-2 and external enqueue steps, and bin/lib/mc/queue.sh mc_enqueue writes; each landing writer renews the fence first. A direct merge, a settle, a re-review and a deploy-verify still defer to the hub. Unset everywhere else. NOT settable from the control plane.",
+  "settable": false
+}

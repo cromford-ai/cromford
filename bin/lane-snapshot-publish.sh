@@ -9,7 +9,8 @@
 #   1. applies the write-backs the machines posted (lri_apply_pending), always,
 #      so a lane moved back to the hub never strands a machine's writes;
 #   2. publishes the project's snapshot (lri_publish), only when lp_decide
-#      places the lane on fly;
+#      places the lane on fly for that project (lane_placement.<lane>.<project>
+#      first, BH-6890; then the lane row, then the default);
 #
 # and then, once per tick for every lane (BH-6889):
 #
@@ -33,6 +34,8 @@
 # run. Runs that
 # outlast the period stack, and the machines then refuse the stale snapshots.
 # The log line (not stdout) ends with `; run <s>s`.
+# One run at a time: flock -n locks/lane-snapshot-publish.lock. A second run
+# logs and prints ONE "already running" line and exits 0 (BH-7437 part 1b).
 # The knobs are settings rows (lane_snapshot.*, bin/lib/lane-run-inputs.sh).
 # Off: flags/lane-off-lane-snapshot-publish. The lane is in
 # catalog/lanes.d/lane-snapshot-publish.json; the note is
@@ -50,8 +53,29 @@ START_S=$(date -u +%s)
 # One cron line per published lane (plain = blocked-resolver, and --lane
 # pipeline-health): the lane is the one-run key (BH-7422).
 LANE_RUN_KEY=blocked-resolver; [ "${1:-}" = --lane ] && LANE_RUN_KEY=${2:-}
+# The run lock is per lane too (review of BH-7437 part 1b): the gate unsets
+# LANE_RUN_KEY, so the lock key is kept here. A name that is not path-safe gets
+# one shared key; the name check below then refuses that run.
+LOCK_KEY=$LANE_RUN_KEY; [[ $LOCK_KEY =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]] || LOCK_KEY=invalid
 command -v lane_gate_or_exit >/dev/null 2>&1 && lane_gate_or_exit lane-snapshot-publish
 command -v lane_env_apply    >/dev/null 2>&1 && lane_env_apply    lane-snapshot-publish
+
+# One run at a time PER LANE (BH-7437): runs that outlast the cron period used
+# to stack (7 processes, up to 814 s old, on 2026-10-19). flock -n never waits:
+# a second run of the same lane logs ONE line and exits 0. The two cron lines
+# (blocked-resolver, --lane pipeline-health) take different locks, so a slow run
+# of one lane never turns the other lane's tick away. The lock is held on fd 7
+# until this process exits. No flock command or an unopenable lock file means no
+# lock, not no run. The braces keep the 2>/dev/null to the open: on a bare exec
+# it would silence this script's stderr for the rest of the run.
+mkdir -p "$H/locks" 2>/dev/null
+LOCK_REL="locks/lane-snapshot-publish.$LOCK_KEY.lock"
+if command -v flock >/dev/null 2>&1 && { exec 7>"$H/$LOCK_REL"; } 2>/dev/null && ! flock -n 7; then
+  MSG="lane-snapshot-publish: already running ($LOCK_REL is held); this run exits"
+  echo "$(STAMP) $MSG" >> "$LOG"
+  echo "$MSG"
+  exit 0
+fi
 
 # shellcheck source=bin/jobs-client.sh
 . "$H/bin/jobs-client.sh" || exit 1
@@ -71,6 +95,7 @@ if [ "$#" -gt 0 ]; then PROJECTS=("$@")
 else mapfile -t PROJECTS < <("$H/bin/fleet-conf.sh" --projects 2>/dev/null); fi
 
 lp_decide "$LANE"
+LANE_PLACE="$LP_PLACE"; LANE_WHY="$LP_WHY"; FLYP=()
 PUB=0; UNCH=0; APPLIED=0; CONFL=0; REJ=0; FAILED=0
 WHY=(); OVER=(); CPROJ=(); RPROJ=()
 for p in "${PROJECTS[@]}"; do
@@ -83,7 +108,9 @@ for p in "${PROJECTS[@]}"; do
   [ "${c:-0}" = 0 ] || CPROJ+=("$p")
   [ "${r:-0}" = 0 ] || RPROJ+=("$p")
   if [ "$arc" != 0 ]; then FAILED=$((FAILED + 1)); WHY+=("$p: apply"); continue; fi
+  lp_decide "$LANE" "$p"
   [ "$LP_PLACE" = fly ] || continue
+  [ "$LANE_PLACE" = fly ] || FLYP+=("$p")
   out=$(lri_publish "$LANE" "$p" 2>&1); prc=$?
   case "$prc:$out" in
     0:published*) PUB=$((PUB + 1)) ;;
@@ -95,7 +122,8 @@ done
 
 LINE="lane-snapshot-publish: $PUB published, $UNCH unchanged, $APPLIED write-backs applied, $CONFL conflicts, $REJ rejected, $FAILED failed"
 [ "${#WHY[@]}" = 0 ] || LINE="$LINE (${WHY[*]})"
-LINE="$LINE; $LANE placed $LP_PLACE ($LP_WHY)"
+LINE="$LINE; $LANE placed $LANE_PLACE ($LANE_WHY)"
+[ "${#FLYP[@]}" = 0 ] || LINE="$LINE, fly for ${FLYP[*]} (project rows)"
 ALR=$(alr_apply 2>/dev/null); ALRC=$?
 LINE="$LINE; ${ALR:-alert lines: no answer}"
 RUN_S=$(( $(date -u +%s) - START_S ))

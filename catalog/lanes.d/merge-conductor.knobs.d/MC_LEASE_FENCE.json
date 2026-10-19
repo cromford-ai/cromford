@@ -1,0 +1,8 @@
+{
+  "env": "MC_LEASE_FENCE",
+  "type": "string",
+  "default": "",
+  "zero_means": null,
+  "note": "Not a knob: the merge-conductor project lease fence a run holds (BH-6887 contract; exported by mc_merge_locked to its command, and for a whole run by bin/merge-conductor-project.sh, BH-6890). bin/merge-conductor.sh reads it with MC_LEASED_RUN to let a lease-held project run on a lane-run machine enqueue; every landing writer renews it first (mc_lease_fence_ok). Unset on the hub tick. NOT settable from the control plane.",
+  "settable": false
+}
