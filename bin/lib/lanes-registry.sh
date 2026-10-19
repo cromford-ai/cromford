@@ -175,7 +175,11 @@ _lr_hash() {
 # accepts for a /tmp sweep.
 _lr_stamp() {
   local key dir
-  key=$(printf '%s' "$1" | cksum 2>/dev/null | tr -dc '0-9')
+  # BH-7494 r2: the digits of `cksum`'s "<crc> <len>" by expansion, not a `tr`
+  # fork. The key is the same string as before, so a stamp already on disk is
+  # still found.
+  key=$(printf '%s' "$1" | cksum 2>/dev/null) || key=""
+  key=${key//[!0-9]/}
   dir="${TMPDIR:-/tmp}/harness-lanes-${EUID:-0}"
   # Plain `mkdir`, not `mkdir -p`: -p is exactly the flag that says "fine" to
   # somebody else's directory, which is the case being closed here. The checks

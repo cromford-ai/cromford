@@ -1,0 +1,111 @@
+== lane cost-lane p
+rc=0
+declare -x CK_00="1"
+declare -x CK_03="0"
+declare -x CK_04="12"
+declare -x CK_05="7"
+declare -x CK_07="7"
+declare -x CK_10="x y  z"
+declare -x CK_11="11"
+declare -x CK_12="8"
+declare -x CK_14="14"
+declare -x CK_20="1"
+declare -x CK_21="21"
+declare -x CK_25="1"
+declare -x CK_28="28"
+declare -x CK_35="36"
+declare -x CK_42="42"
+declare -x CK_49="49"
+declare -x CK_56="56"
+declare -x CK_63="63"
+declare -x CK_70="71"
+declare -x CK_TEXT="t|u\\v"
+== lane cost-lane q
+rc=0
+declare -x CK_00="1"
+declare -x CK_03="0"
+declare -x CK_04="12"
+declare -x CK_05="40"
+declare -x CK_07="7"
+declare -x CK_10="x y  z"
+declare -x CK_11="11"
+declare -x CK_14="14"
+declare -x CK_20="1"
+declare -x CK_21="21"
+declare -x CK_25="1"
+declare -x CK_28="28"
+declare -x CK_35="36"
+declare -x CK_42="42"
+declare -x CK_49="49"
+declare -x CK_56="56"
+declare -x CK_63="63"
+declare -x CK_70="71"
+declare -x CK_TEXT="t|u\\v"
+== lane cost-lane
+rc=0
+declare -x CK_00="1"
+declare -x CK_03="0"
+declare -x CK_04="12"
+declare -x CK_05="40"
+declare -x CK_07="7"
+declare -x CK_10="x y  z"
+declare -x CK_11="11"
+declare -x CK_14="14"
+declare -x CK_20="1"
+declare -x CK_21="21"
+declare -x CK_25="1"
+declare -x CK_28="28"
+declare -x CK_35="36"
+declare -x CK_42="42"
+declare -x CK_49="49"
+declare -x CK_56="56"
+declare -x CK_63="63"
+declare -x CK_70="71"
+declare -x CK_TEXT="t|u\\v"
+== lane other-lane p
+rc=0
+== lib cost-lib p
+rc=0
+declare -x CL_A="9"
+declare -x CL_B="rq"
+== lane_knob
+CK_01/=[1] set=0 unl=1
+CK_01/p=[1] set=0 unl=1
+CK_01/q=[1] set=0 unl=1
+CK_03/=[0] set=0 unl=0
+CK_03/p=[0] set=0 unl=0
+CK_03/q=[0] set=0 unl=0
+CK_04/=[12] set=0 unl=1
+CK_04/p=[12] set=0 unl=1
+CK_04/q=[12] set=0 unl=1
+CK_05/=[40] set=0 unl=1
+CK_05/p=[7] set=0 unl=1
+CK_05/q=[40] set=0 unl=1
+CK_09/=[9] set=1 unl=1
+CK_09/p=[9] set=1 unl=1
+CK_09/q=[9] set=1 unl=1
+CK_10/=[x y  z] set=0 unl=1
+CK_10/p=[x y  z] set=0 unl=1
+CK_10/q=[x y  z] set=0 unl=1
+CK_11/=[11] set=0 unl=1
+CK_11/p=[11] set=0 unl=1
+CK_11/q=[11] set=0 unl=1
+CK_12/=[12] set=0 unl=1
+CK_12/p=[8] set=0 unl=1
+CK_12/q=[12] set=0 unl=1
+CK_20/=[1] set=0 unl=1
+CK_20/p=[1] set=0 unl=1
+CK_20/q=[1] set=0 unl=1
+CK_25/=[1] set=0 unl=1
+CK_25/p=[1] set=0 unl=1
+CK_25/q=[1] set=0 unl=1
+CK_70/=[71] set=0 unl=1
+CK_70/p=[71] set=0 unl=1
+CK_70/q=[71] set=0 unl=1
+CK_TEXT/=[t|u\v] set=0 unl=1
+CK_TEXT/p=[t|u\v] set=0 unl=1
+CK_TEXT/q=[t|u\v] set=0 unl=1
+CK_NONE/=[] set=0 unl=1
+CK_NONE/p=[] set=0 unl=1
+CK_NONE/q=[] set=0 unl=1
+zm=[unlimited][off]
