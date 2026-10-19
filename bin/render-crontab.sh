@@ -255,13 +255,42 @@ ALT=""
 # merge-queue and review-prs minutes already taken on this box, in fleet.conf
 # order: a later project whose derived minute is taken moves to the next free one.
 MQ_USED=""; RP_USED=""
+# review-prs interval per project (BH-7513), read once from the settings rows.
+# RP_PLAN holds "<project>=<interval>=<start minute>" for every project.
+# THE 30-MINUTE PROJECTS ARE PLACED FIRST, in fleet.conf order and against the
+# same used list as before, so a project with no row renders byte-identical to
+# what it always did whatever its neighbours run. The 10 and 15 minute ones take
+# the slots that are left; one with no distinct set keeps 30 and logs one line.
+RP_IV=$(cron_review_intervals "${HARNESS:-$ROOT}" $PROJECTS)
+RP_PLAN=""
+rp_kv() { printf '%s\n' $1 | awk -F= -v k="$2" -v f="$3" '$1 == k { print $f; exit }'; }
+for P in $PROJECTS; do
+  IV=$(awk -v p="$P" '$1 == p { print $2; exit }' <<<"$RP_IV")
+  case "$IV" in 10|15) continue ;; esac
+  OFF=$("$HERE/fleet-conf.sh" "$P" offset)
+  case "$OFF" in ''|*[!0-9]*) echo "render-crontab.sh: $P has a non-numeric cron offset '$OFF'" >&2; exit 1 ;; esac
+  RP=$(cron_stagger_min "$(( (7 + 10#$OFF) % 30 ))" 30 "$RP_USED"); RP_USED="$RP_USED $RP"
+  RP_PLAN="$RP_PLAN $P=30=$RP"
+done
+for P in $PROJECTS; do
+  IV=$(awk -v p="$P" '$1 == p { print $2; exit }' <<<"$RP_IV")
+  case "$IV" in 10|15) ;; *) continue ;; esac
+  OFF=$("$HERE/fleet-conf.sh" "$P" offset)
+  case "$OFF" in ''|*[!0-9]*) echo "render-crontab.sh: $P has a non-numeric cron offset '$OFF'" >&2; exit 1 ;; esac
+  if RP=$(cron_review_slot "$IV" "$(( (7 + 10#$OFF) % IV ))" "$RP_USED"); then
+    RP_USED="$RP_USED $(cron_review_residues "$IV" "$RP")"
+  else
+    echo "render-crontab.sh: review-prs interval $IV for $P has no distinct minute set on box $BOX; keeping 30" >&2
+    IV=30; RP=$(cron_stagger_min "$(( (7 + 10#$OFF) % 30 ))" 30 "$RP_USED"); RP_USED="$RP_USED $RP"
+  fi
+  RP_PLAN="$RP_PLAN $P=$IV=$RP"
+done
 for P in $PROJECTS; do
   OFF=$("$HERE/fleet-conf.sh" "$P" offset)
   PROD=$("$HERE/fleet-conf.sh" "$P" prod)
   case "$OFF" in ''|*[!0-9]*) echo "render-crontab.sh: $P has a non-numeric cron offset '$OFF'" >&2; exit 1 ;; esac
   MQ=$(cron_stagger_min "$(( (6 + 10#$OFF) % 20 ))" 20 "$MQ_USED"); MQ_USED="$MQ_USED $MQ"
-  RP=$(cron_stagger_min "$(( (7 + 10#$OFF) % 30 ))" 30 "$RP_USED"); RP_USED="$RP_USED $RP"
-  cron_project_block "$P" "$OFF" "$PROD" "$ROOT" "$MQ" "$RP" >> "$BLOCKS"
+  cron_project_block "$P" "$OFF" "$PROD" "$ROOT" "$MQ" "$(rp_kv "$RP_PLAN" "$P" 3)" "$(rp_kv "$RP_PLAN" "$P" 2)" >> "$BLOCKS"
   # Project names are [a-z0-9-] by convention; escape anyway so a name can never
   # become a regex.
   ALT="$ALT|$(printf '%s' "$P" | sed 's/[][\\.*^$(){}?+|/]/\\&/g')"

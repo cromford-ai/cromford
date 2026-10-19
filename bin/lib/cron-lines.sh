@@ -110,7 +110,63 @@ cron_stagger_min() {
   printf '%s\n' "$(( base % period ))"
 }
 
-# cron_project_block <project> <offset> <prod-url> <repo-root> [<mq-min> <rp-min>]
+# cron_minute_list <start> <interval> -> "start,start+interval,..." under 60.
+cron_minute_list() {
+  local m="${1:?start}" iv="${2:?interval}" out=""
+  while [ "$m" -lt 60 ]; do out="${out:+$out,}$m"; m=$((m + iv)); done
+  printf '%s\n' "$out"
+}
+
+# cron_review_residues <interval> <slot> -> the minutes (mod 30) a review-prs
+# line starting at <slot> fires on. A 30-minute line at r owns {r}; a 10-minute
+# one at m owns {m, m+10, m+20}; a 15-minute one {m, m+15}. Two lines share a
+# minute exactly when their residues meet, so this is the whole collision test.
+cron_review_residues() {
+  local iv="${1:?interval}" m="${2:?slot}" out="" k
+  for ((k = 0; k < 30; k += iv)); do out="$out $(( (m + k) % 30 ))"; done
+  printf '%s\n' "${out# }"
+}
+
+# cron_review_slot <interval> <base> <used> -> the first slot in [0,interval),
+# counting up from base mod interval, whose residues are all absent from the
+# space list <used>. rc 1 and no output when none is free.
+cron_review_slot() {
+  local iv="${1:?interval}" base="${2:?base}" used=" ${3-} " i m r clash
+  for ((i = 0; i < iv; i++)); do
+    m=$(( (base + i) % iv )); clash=0
+    for r in $(cron_review_residues "$iv" "$m"); do
+      case "$used" in *" $r "*) clash=1 ;; esac
+    done
+    [ "$clash" = 0 ] && { printf '%s\n' "$m"; return 0; }
+  done
+  return 1
+}
+
+# cron_review_intervals <harness> <project>... -> one "<project> <minutes>" line
+# per project: the review-prs tick interval, read where the crontab is rendered
+# (BH-7513). The row is settings `lane.review-prs.<project>.review_prs_interval_min`
+# through lane_knob (settings cache, one GET a minute, env, registry default).
+# Only 10, 15 and 30 are accepted; anything else, an unreadable cache or a
+# missing lane-gate answers 30, which is what every project ran before the knob.
+cron_review_intervals() {
+  local H="${1-}" P v here; shift
+  here="$(dirname "${BASH_SOURCE[0]}")"
+  (
+    if [ -n "$H" ] && [ -r "$here/lane-gate.sh" ]; then
+      HARNESS="$H"; export HARNESS
+      # shellcheck source=bin/lib/lane-gate.sh
+      . "$here/lane-gate.sh" >/dev/null 2>&1 || true
+    fi
+    for P in "$@"; do
+      v=""
+      command -v lane_knob >/dev/null 2>&1 && v=$(lane_knob review-prs REVIEW_PRS_INTERVAL_MIN "$P" 2>/dev/null)
+      case "$v" in 10|15|30) ;; *) v=30 ;; esac
+      printf '%s %s\n' "$P" "$v"
+    done
+  ) 2>/dev/null || for P in "$@"; do printf '%s 30\n' "$P"; done
+}
+
+# cron_project_block <project> <offset> <prod-url> <repo-root> [<mq-min> <rp-min> <rp-interval>]
 #
 # The seven lanes a watched project runs, extracted verbatim from what
 # bootstrap-machine.sh used to generate inline. Two are CONDITIONAL, and both
@@ -145,11 +201,16 @@ cron_stagger_min() {
 # so two projects on one box never share one. Absent or not a number, they
 # come from the offset: (6 + offset) % 20 and (7 + offset) % 30, so offset 0
 # keeps the old 6,26,46 and 7,37.
+#
+# <rp-interval> (BH-7513) is 10, 15 or 30 and defaults to 30. At 10 the line is
+# <rp>,<rp+10>,...,<rp+50> with <rp> in 0-9; at 15 it is four minutes. Anything
+# else is read as 30, so an old caller renders exactly what it always did.
 cron_project_block() {
   local P="${1:?project}" OFF="${2:?offset}" PROD="${3-}" ROOT="${4:?repo root}"
-  local MQ="${5-}" RP="${6-}"
+  local MQ="${5-}" RP="${6-}" IV="${7-30}"
+  case "$IV" in 10|15) ;; *) IV=30 ;; esac
   case "$MQ" in ''|*[!0-9]*) MQ=$(( (6 + OFF) % 20 )) ;; *) MQ=$(( 10#$MQ % 20 )) ;; esac
-  case "$RP" in ''|*[!0-9]*) RP=$(( (7 + OFF) % 30 )) ;; *) RP=$(( 10#$RP % 30 )) ;; esac
+  case "$RP" in ''|*[!0-9]*) RP=$(( (7 + OFF) % IV )) ;; *) RP=$(( 10#$RP % IV )) ;; esac
   printf '# BEGIN fleet-managed project=%s\n' "$P"
   printf '%s,%s,%s,%s,%s,%s * * * * /root/harness/bin/run-triage.sh %s\n' \
     "$OFF" "$((OFF+10))" "$((OFF+20))" "$((OFF+30))" "$((OFF+40))" "$((OFF+50))" "$P"
@@ -167,7 +228,7 @@ cron_project_block() {
   printf '%s,%s,%s * * * * /root/harness/bin/merge-queue.sh %s >> /root/harness/logs/merge-queue.log 2>&1\n' \
     "$MQ" "$((MQ+20))" "$((MQ+40))" "$P"
   printf '4,19,34,49 * * * * /root/harness/bin/deploy-train.sh %s >/dev/null 2>&1\n' "$P"
-  printf '%s,%s * * * * /root/harness/bin/review-prs.sh %s\n' "$RP" "$((RP+30))" "$P"
+  printf '%s * * * * /root/harness/bin/review-prs.sh %s\n' "$(cron_minute_list "$RP" "$IV")" "$P"
   printf '# END fleet-managed project=%s\n' "$P"
 }
 

@@ -95,16 +95,28 @@ bash "$B/bin/lanes-build.sh" --root "$B" > "$T/B.json" 2> "$T/Berr"; rc=$?
 [ "$rc" = 0 ] && ok || bad "K2 moved-knob tree must compose: rc=$rc $(cat "$T/Berr")"
 cmp -s "$T/A.json" "$T/B.json" && ok || bad "K2 moving last knobs to fragments must be byte-identical: $(diff "$T/A.json" "$T/B.json" | head -8)"
 
+# The lane K1, K6 and M1 add their fixture fragments to: one with inline knobs
+# and no knobs.d of its own, so a fixture fragment is the last knob it has. A real
+# fragment in the host (BH-7513 gave review-prs REVIEW_PRS_INTERVAL_MIN, which sorts
+# after BH4987_A) would land after the fixtures and break "last"; same cause as
+# BH-6335 and BH-6433. TEST-CHANGE: the host was hard-coded to review-prs.
+HOST=$(for id in review-prs merge-conductor alert-triage \
+         $(cd "$L" && ls *.json | sed -n '/^_lib/!s/\.json$//p' | LC_ALL=C sort); do
+         [ -d "$L/$id.knobs.d" ] && continue
+         jq -e '(.knobs // []) | length > 0' "$L/$id.json" >/dev/null 2>&1 && echo "$id"
+       done | head -1)
+[ -n "$HOST" ] && ok || bad "K1 needs a lane with inline knobs and no knobs.d to host the fixture fragments"
+
 # ── K1: a fragment lands last, and lane_knob reads it ────────────────────────
-mkdir -p "$L/review-prs.knobs.d"
-KNOB BH4987_A 7 > "$L/review-prs.knobs.d/BH4987_A.json"
+mkdir -p "$L/$HOST.knobs.d"
+KNOB BH4987_A 7 > "$L/$HOST.knobs.d/BH4987_A.json"
 build
 [ "$RC" = 0 ] && ok || bad "K1 rc=$RC $(cat "$T/err")"
-[ "$(jq -r '.lanes[]|select(.id=="review-prs")|.knobs[-1].env' "$T/out" 2>/dev/null)" = BH4987_A ] \
-  && ok || bad "K1 BH4987_A must be the last review-prs knob: $(lane_envs review-prs)"
-n_main=$(jq '.lanes[]|select(.id=="review-prs")|.knobs|length' "$T/A.json")
-n_now=$(jq '.lanes[]|select(.id=="review-prs")|.knobs|length' "$T/out")
-[ "$n_now" = $((n_main + 1)) ] && ok || bad "K1 review-prs knobs: want $((n_main + 1)), got $n_now"
+[ "$(jq -r --arg h "$HOST" '.lanes[]|select(.id==$h)|.knobs[-1].env' "$T/out" 2>/dev/null)" = BH4987_A ] \
+  && ok || bad "K1 BH4987_A must be the last $HOST knob: $(lane_envs "$HOST")"
+n_main=$(jq --arg h "$HOST" '.lanes[]|select(.id==$h)|.knobs|length' "$T/A.json")
+n_now=$(jq --arg h "$HOST" '.lanes[]|select(.id==$h)|.knobs|length' "$T/out")
+[ "$n_now" = $((n_main + 1)) ] && ok || bad "K1 $HOST knobs: want $((n_main + 1)), got $n_now"
 cat > "$T/stub.sh" <<'SH'
 _jobs_req() { printf '{"settings":[]}'; }
 SH
@@ -112,8 +124,8 @@ mkdir -p "$R/state" "$R/logs" "$R/flags"
 got=$(env -u LANE_REGISTRY BH4987_A= HARNESS="$R" bash -c '
   set -uo pipefail
   . "$1"; . "$HARNESS/bin/lib/lane-gate.sh"
-  lane_knob review-prs BH4987_A' _ "$T/stub.sh" 2>/dev/null)
-[ "$got" = 7 ] && ok || bad "K1 lane_knob review-prs BH4987_A must read the fragment default 7, got '$got'"
+  lane_knob "$2" BH4987_A' _ "$T/stub.sh" "$HOST" 2>/dev/null)
+[ "$got" = 7 ] && ok || bad "K1 lane_knob $HOST BH4987_A must read the fragment default 7, got '$got'"
 
 # ── K3: a lane with no knobs key ─────────────────────────────────────────────
 # Every real lane carries a knobs key, so this is a fixture lane without one.
@@ -140,15 +152,15 @@ build
 scratch_rm "$L/_lib.$lid_main.knobs.d"
 
 # ── K6: LC_ALL=C order, deterministic ────────────────────────────────────────
-KNOB B_A 1 > "$L/review-prs.knobs.d/B_A.json"
-KNOB BA 1  > "$L/review-prs.knobs.d/BA.json"
-KNOB A_Z 1 > "$L/review-prs.knobs.d/A_Z.json"
+KNOB B_A 1 > "$L/$HOST.knobs.d/B_A.json"
+KNOB BA 1  > "$L/$HOST.knobs.d/BA.json"
+KNOB A_Z 1 > "$L/$HOST.knobs.d/A_Z.json"
 build; cp "$T/out" "$T/k6a.json"
-[ "$(jq -c '.lanes[]|select(.id=="review-prs")|.knobs[-4:]|map(.env)' "$T/out")" = '["A_Z","BA","BH4987_A","B_A"]' ] \
-  && ok || bad "K6 C order: $(jq -c '.lanes[]|select(.id=="review-prs")|.knobs[-4:]|map(.env)' "$T/out")"
+[ "$(jq -c --arg h "$HOST" '.lanes[]|select(.id==$h)|.knobs[-4:]|map(.env)' "$T/out")" = '["A_Z","BA","BH4987_A","B_A"]' ] \
+  && ok || bad "K6 C order: $(jq -c --arg h "$HOST" '.lanes[]|select(.id==$h)|.knobs[-4:]|map(.env)' "$T/out")"
 build
 cmp -s "$T/k6a.json" "$T/out" && ok || bad "K6 two runs must give the same bytes"
-rm -f "$L/review-prs.knobs.d/B_A.json" "$L/review-prs.knobs.d/BA.json" "$L/review-prs.knobs.d/A_Z.json"
+rm -f "$L/$HOST.knobs.d/B_A.json" "$L/$HOST.knobs.d/BA.json" "$L/$HOST.knobs.d/A_Z.json"
 
 # ── K4: refusals ─────────────────────────────────────────────────────────────
 bash "$R/bin/lanes-build.sh" --root "$R" --write > /dev/null 2>&1
@@ -235,16 +247,16 @@ bash "$G/bin/lanes-build.sh" --root "$G" --check > /dev/null 2> "$T/err"; rc=$?
 M="$T/m"; mkdir -p "$M"; cp -R "$R/bin" "$M/"; mkdir -p "$M/catalog"; cp -R "$DIR/catalog/lanes.d" "$M/catalog/"
 gm() { git -C "$M" -c user.email=t@example.com -c user.name=t "$@"; }
 gm init -q -b main && gm add -A && gm commit -qm base
-gm checkout -q -b one && mkdir -p "$M/catalog/lanes.d/review-prs.knobs.d"
-KNOB BH4987_ONE 1 > "$M/catalog/lanes.d/review-prs.knobs.d/BH4987_ONE.json"; gm add -A && gm commit -qm one
-gm checkout -q main && gm checkout -q -b two && mkdir -p "$M/catalog/lanes.d/review-prs.knobs.d"
-KNOB BH4987_TWO 2 > "$M/catalog/lanes.d/review-prs.knobs.d/BH4987_TWO.json"; gm add -A && gm commit -qm two
+gm checkout -q -b one && mkdir -p "$M/catalog/lanes.d/$HOST.knobs.d"
+KNOB BH4987_ONE 1 > "$M/catalog/lanes.d/$HOST.knobs.d/BH4987_ONE.json"; gm add -A && gm commit -qm one
+gm checkout -q main && gm checkout -q -b two && mkdir -p "$M/catalog/lanes.d/$HOST.knobs.d"
+KNOB BH4987_TWO 2 > "$M/catalog/lanes.d/$HOST.knobs.d/BH4987_TWO.json"; gm add -A && gm commit -qm two
 gm merge -q --no-edit one > "$T/merge.log" 2>&1; rc=$?
 [ "$rc" = 0 ] && ok || bad "M1 git merge must exit 0: $(cat "$T/merge.log")"
 [ -z "$(gm diff --name-only --diff-filter=U)" ] && ok || bad "M1 unmerged paths: $(gm diff --name-only --diff-filter=U)"
 bash "$M/bin/lanes-build.sh" --root "$M" > "$T/out" 2>"$T/err"
-[ "$(jq -c '.lanes[]|select(.id=="review-prs")|.knobs[-2:]|map(.env)' "$T/out" 2>/dev/null)" = '["BH4987_ONE","BH4987_TWO"]' ] \
-  && ok || bad "M1 the merged composition must hold both: $(lane_envs review-prs) $(cat "$T/err")"
+[ "$(jq -c --arg h "$HOST" '.lanes[]|select(.id==$h)|.knobs[-2:]|map(.env)' "$T/out" 2>/dev/null)" = '["BH4987_ONE","BH4987_TWO"]' ] \
+  && ok || bad "M1 the merged composition must hold both: $(lane_envs "$HOST") $(cat "$T/err")"
 
 # ── L1..L6: bin/lanes-knob-lint.sh ───────────────────────────────────────────
 LR="$T/lint"; mkdir -p "$LR/bin" "$LR/catalog/lanes.d"
