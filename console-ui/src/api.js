@@ -7,6 +7,10 @@ import { FLAKES_LIMIT } from './lib/ci-health.js';
 import { BATCHES_LIMIT } from './lib/ci-batches.js';
 import { HOLD_LEDGER_KIND, holdKey } from './lib/ticket-hold.js';
 import { QUEUE_LIMIT } from './lib/queue-panel.js';
+import { ideasApi } from './lib/roadmap-api/ideas.js';
+import { boardApi } from './lib/roadmap-api/board.js';
+import { wavesApi } from './lib/roadmap-api/waves.js';
+import { waveFileApi } from './lib/roadmap-api/wave-file.js';
 
 export class AuthError extends Error {
   constructor() {
@@ -749,7 +753,13 @@ export const api = {
       return get(`/api/dash/logs/${id}`);
     }
   },
-  action: (payload) => post('/api/dash/action', payload)
+  action: (payload) => post('/api/dash/action', payload),
+  // BH-7243: the roadmap calls, one factory per child ticket
+  // (src/lib/roadmap-api/), so no child edits this object.
+  ...ideasApi({ get, post, coordPath }),
+  ...boardApi({ get, post, coordPath }),
+  ...wavesApi({ get, post, coordPath }),
+  ...waveFileApi({ get, post, coordPath })
 };
 
 // `project` is mandatory on both fetches and there is no default: an empty or

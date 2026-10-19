@@ -33,6 +33,9 @@
 //   idle reaper's cost audit. Their rules add each removed row to
 //   fly_idle_daily (day, app, action, n, $/h sum) in the same D1 batch,
 //   before the delete. fly_idle_daily has no rule: it keeps forever.
+//   roadmap_ideas (discarded), roadmap_idea_events and roadmap_waves (rejected
+//   or failed) copy to the archive D1 before the delete (BH-7243.0). With the
+//   archive unbound they report "archive not bound" only while a row waits.
 //
 // Every setting is a settings row (worker/jobs/schema.d/*-bh-6750-*.sql). A
 // value that is not an integer in range falls back to the code default below;
@@ -286,6 +289,33 @@ export const RULES = [
     ids: "SELECT rowid AS id FROM hotspot_tickets WHERE filed_at < ?1 ORDER BY filed_at LIMIT ?2",
     del: "DELETE FROM hotspot_tickets WHERE rowid IN (SELECT value FROM json_each(?1))",
   },
+  // BH-7243.0: the roadmap. Each rule copies to the archive before it deletes;
+  // unbound, it deletes nothing and reports "archive not bound" only while a
+  // row waits (quietUnbound).
+  // The idea and wave deletes repeat the state test, so an idea restored or a
+  // wave reopened between the id read and the delete stays. Waves hold
+  // cost_usd (money): archived, never only deleted.
+  {
+    rule: "roadmap_ideas.discarded", table: "roadmap_ideas", key: "retention.roadmap_ideas.discarded_days", def: 180,
+    archive: "roadmap_ideas", quietUnbound: true,
+    ids: "SELECT id FROM roadmap_ideas WHERE lane = 'discarded' AND discarded_at < ?1 ORDER BY discarded_at LIMIT ?2",
+    sel: "SELECT * FROM roadmap_ideas WHERE id IN (SELECT value FROM json_each(?1))",
+    del: "DELETE FROM roadmap_ideas WHERE id IN (SELECT value FROM json_each(?1)) AND lane = 'discarded'",
+  },
+  {
+    rule: "roadmap_idea_events.age", table: "roadmap_idea_events", key: "retention.roadmap_idea_events.days", def: 730,
+    archive: "roadmap_idea_events", quietUnbound: true,
+    ids: "SELECT id FROM roadmap_idea_events WHERE at < ?1 ORDER BY at LIMIT ?2",
+    sel: "SELECT * FROM roadmap_idea_events WHERE id IN (SELECT value FROM json_each(?1))",
+    del: "DELETE FROM roadmap_idea_events WHERE id IN (SELECT value FROM json_each(?1))",
+  },
+  {
+    rule: "roadmap_waves.closed", table: "roadmap_waves", key: "retention.roadmap_waves.days", def: 365,
+    archive: "roadmap_waves", quietUnbound: true,
+    ids: "SELECT id FROM roadmap_waves WHERE status IN ('rejected','failed') AND updated_at < ?1 ORDER BY updated_at LIMIT ?2",
+    sel: "SELECT * FROM roadmap_waves WHERE id IN (SELECT value FROM json_each(?1))",
+    del: "DELETE FROM roadmap_waves WHERE id IN (SELECT value FROM json_each(?1)) AND status IN ('rejected','failed')",
+  },
   // BH-6823: staff chat. A closed operator note goes with its reply past
   // retention.staff_chat.days. A pending, held or taken note never goes.
   {
@@ -328,8 +358,8 @@ export const RULES = [
 ];
 
 // intSetting(byKey, key, def, min, max) — the row's value when it is an integer
-// in [min, max], else def.
-function intSetting(byKey, key, def, min, max) {
+// in [min, max], else def. routes/roadmap-ideas.js reads its list cap with it.
+export function intSetting(byKey, key, def, min, max) {
   const row = byKey.get(key);
   const v = row ? String(row.value).trim() : "";
   if (!/^\d+$/.test(v)) return def;
@@ -350,12 +380,25 @@ async function runRule(env, r, o) {
   const archiving = !!r.archive && (!r.archiveFlag || intSetting(o.byKey, r.archiveFlag, 0, 0, 1) === 1);
   // An unbound archive rule moves nothing. A dry run still counts, so the
   // operator sees the estimate before the binding exists (BH-6774).
-  if (archiving && !archiveBound(env)) {
+  if (archiving && !archiveBound(env) && !r.quietUnbound) {
     out.error = ARCHIVE_NOT_BOUND;
     if (!o.dryRun) return { out, started };
   }
   if (r.move && !archiveDailyBound(env)) { out.error = ARCHIVE_NOT_BOUND; return { out, started }; }
   try {
+    // quietUnbound (BH-7243.0): with the archive unbound, the rule moves
+    // nothing and counts what waits. "archive not bound" is an error only
+    // while a row waits: the rule is on by default, and the lane raises an
+    // alert for each rule error, so empty tables must not raise one each run.
+    if (archiving && !archiveBound(env) && r.quietUnbound) {
+      // sql-ident-ok: r.ids is literal subquery text from the RULES module const
+      const row = await env.DB.prepare(`SELECT COUNT(*) AS n FROM (${r.ids})`).bind(out.cutoff, o.countCap + 1).first();
+      const n = Number(row ? row.n : 0);
+      if (n > 0) out.error = ARCHIVE_NOT_BOUND;
+      if (o.dryRun) out.counted = Math.min(n, o.countCap);
+      out.backlog = n > 0;
+      return { out, started };
+    }
     if (o.dryRun) {
       // sql-ident-ok: r.ids is literal subquery text from the RULES module const
       const row = await env.DB.prepare(`SELECT COUNT(*) AS n FROM (${r.ids})`).bind(out.cutoff, o.countCap + 1).first();

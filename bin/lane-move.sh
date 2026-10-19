@@ -24,7 +24,10 @@
 #       first seen AFTER_FROM (1200) s or more after its updated_at is late:
 #       `flipped <now> ... found-late <updated_at>`, so the after window starts
 #       when lane-move first sees it; the before window stays the hour before
-#       <updated_at> (BH-7252 C2). `hub` by actor `seed`: go on. Any other
+#       <updated_at> (BH-7252 C2). On both, the module counts that hour into
+#       before.tsv; a zero count writes one comment line `# no runs in the
+#       hour before the operator flip`, and the check gives that reason in
+#       words instead of `no runs in the before window` (BH-7522). `hub` by actor `seed`: go on. Any other
 #       value or actor: `held` (an operator chose; never overwritten). No row
 #       or no answer: `waiting`.
 #   g2  a lane_placement.<lane>.hub_only row: `held`.
@@ -105,6 +108,7 @@ WAIT_MAX=$(knob "${LANE_MOVE_WAIT_MAX:-36}" 36 1 1000)
 POST_MAX=6
 BEFORE_S=3600; AFTER_FROM=1200; AFTER_TO=4800; FRESH_S=1800
 ISSUE_DEFAULT=7252
+NOZERO_MARK='# no runs in the hour before the operator flip'
 
 out() { printf '%s lane=%s step=%s why=%s\n' "$STAMP" "$1" "$2" "${3:--}" >> "$LOG"; }
 
@@ -203,6 +207,17 @@ wait_on() {
 # before_counts <flip epoch> — the module's counts for the hour before, to $TMP/before.
 before_counts() { "lm_runs_done_$s" "$(($1 - BEFORE_S))" "$1" > "$TMP/before" 2>/dev/null; }
 
+# before_found <flip epoch> — before.tsv for an operator flip (BH-7522). The
+# counts are the module's, over [epoch-3600, epoch). When they are all zero the
+# file holds one comment line, never 0 bytes, and lm_verify reads it as the
+# reason "the lane had no runs in the hour before the operator flip".
+before_found() {
+  before_counts "$1"
+  awk -F '\t' '$2 ~ /^[0-9]+$/ && $2 > 0 { f = 1 } END { exit !f }' "$TMP/before" 2>/dev/null \
+    || printf '%s\n' "$NOZERO_MARK" > "$TMP/before"
+  cp "$TMP/before" "$before.tmp" && mv -f "$before.tmp" "$before"
+}
+
 lm_preflip() {
   local rc reason stats done_n pub lts thr sum fe l5
   row_read "lane_placement.$lane"; rc=$?
@@ -211,8 +226,7 @@ lm_preflip() {
     # GNU date reads an empty string as today 00:00Z, so an empty updated_at is now.
     fe=""; [ -n "$ROW_AT" ] && fe=$(date -u -d "$ROW_AT" +%s 2>/dev/null)
     [[ "$fe" =~ ^[0-9]+$ ]] && [ "$fe" -le "$NOW" ] || fe=$NOW
-    before_counts "$fe"
-    cp "$TMP/before" "$before.tmp" && mv -f "$before.tmp" "$before"
+    before_found "$fe"
     # A row seen AFTER_FROM s or more after it was set: its after window has
     # begun or closed, so the after window starts now (BH-7252 C2).
     if [ $((NOW - fe)) -ge "$AFTER_FROM" ]; then
@@ -294,7 +308,9 @@ lm_verify() {
     [ "$b" -lt 1 ] || [ "$okn" -ge 1 ] || reasons+=("$p: no done lane-run row in the window")
     rows+="| $p | $b | $a | $okn | $fln | $ddn |"$'\n'
   done < "$before"
-  [ "$nb" -ge 1 ] || reasons+=("no runs in the before window")
+  if [ "$nb" -ge 1 ]; then :
+  elif grep -qxF "$NOZERO_MARK" "$before" 2>/dev/null; then reasons+=("the lane had no runs in the hour before the operator flip")
+  else reasons+=("no runs in the before window"); fi
   [ "$tot" -le "$fmax" ] || reasons+=("failed + died $tot > fail_max $fmax")
   pub=$("lm_publisher_lane_$s")
   read -r plines pconf prej pfail < <(grep -F "; $pub placed " "$PUBLOG" 2>/dev/null | awk -v f="$(ts_of "$wf")" -v t="$(ts_of "$wt")" '

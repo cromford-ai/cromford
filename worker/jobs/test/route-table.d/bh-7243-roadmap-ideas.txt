@@ -1,0 +1,3 @@
+# BH-7243.0 (BH-7263): the roadmap ideas contract and tracer, key-named (BH-5788).
+GET /api/roadmap/ideas
+POST /api/roadmap/ideas

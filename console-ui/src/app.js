@@ -30,6 +30,7 @@ import { IdeasScreen } from './screens/Ideas.js';
 import { OutcomesScreen } from './screens/Outcomes.js';
 import { DORAScreen } from './screens/DORA.js';
 import { IdeaScreen } from './screens/Idea.js';
+import { RoadmapIndexScreen, RoadmapScreen, RoadmapIdeaScreen, RoadmapWaveScreen } from './screens/Roadmap.js';
 import { NowScreen } from './screens/Now.js';
 import { HistoryScreen } from './screens/History.js';
 import { CommandHistoryScreen } from './screens/CommandHistory.js';
@@ -85,6 +86,11 @@ export const ROUTES = [
   ['/t/:ticket', TicketScreen],
   ['/ideas', IdeasScreen],
   ['/ideas/:project/:slug', IdeaScreen],
+  // The per-project roadmap (BH-7243). It sits under the IDEAS tab.
+  ['/roadmap', RoadmapIndexScreen],
+  ['/roadmap/:project', RoadmapScreen],
+  ['/roadmap/:project/idea/:id', RoadmapIdeaScreen],
+  ['/roadmap/:project/wave/:id', RoadmapWaveScreen],
   ['/now', NowScreen],
   ['/history', HistoryScreen],
   ['/history/commands', CommandHistoryScreen],
@@ -156,7 +162,7 @@ export const NAV = [
   { to: '/jobs', label: 'JOBS', icon: IconCosts, match: (p) => p === '/jobs' || p.startsWith('/jobs/') || p.startsWith('/t/') },
   // IDEAS is the product stage's own view: what the weekly generative run
   // proposed, what it drafted, and which of it reached a client board.
-  { to: '/ideas', label: 'IDEAS', icon: IconIdeas, match: (p) => p === '/ideas' || p.startsWith('/ideas/') },
+  { to: '/ideas', label: 'IDEAS', icon: IconIdeas, match: (p) => p === '/ideas' || p.startsWith('/ideas/') || p === '/roadmap' || p.startsWith('/roadmap/') },
   // MODELS is the model-routes table (#1510): which model, which runner and
   // which failover ladder every role resolves, hub default and per project,
   // with the price and the week's spend beside it. Its own tab rather than a

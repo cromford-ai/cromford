@@ -20,6 +20,10 @@
 export const ARCHIVE_TABLES = {
   cost_rows: { key: ["box", "row_hash"], time: "ts" },
   stage_events: { key: ["id"], time: "created_at" },
+  // BH-7243.0: the roadmap retention rules (routes/retention.js).
+  roadmap_ideas: { key: ["id"], time: "updated_at" },
+  roadmap_idea_events: { key: ["id"], time: "at" },
+  roadmap_waves: { key: ["id"], time: "updated_at" },
 };
 
 // One text for every archive rule's "unbound" audit row (lib/archive-daily.js).
