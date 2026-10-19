@@ -25,6 +25,9 @@
 #   5. Write the report to state/lane-cpu-rank/report.md (tmp + mv), then post
 #      it as one comment that ends with the marker. rc 0: state `posted <ts>
 #      <issue>`. The state is written only after the post returns rc 0.
+#      The App token is armed again right before the post (BH-7406): an
+#      installation token lives 1 h and the window is 1 h, so the token armed
+#      for step 2 is dead by now and the post got 401 on the hub every day.
 #   6. A failed read, sample or post: state `attempts <n>`. The 6th failure
 #      writes `gave-up <ts> <reason>` and one bin/lane-alert.sh --log-only line.
 # To measure again (the "after" numbers): set lane_cpu_rank.issue to another
@@ -33,7 +36,11 @@
 # Log line (logs/lane-cpu-rank.log), exit 0 on every path:
 #   <ts> rank=<posted|found|not-configured|read-failed|sample-failed|
 #   post-failed|gave-up|skipped (running)> issue=<n>(row|default) rows=<n>
-#   load5=<start>-><end>
+#   load5=<start>-><end>[ why=<cause>]
+# why= is on a failed run only (BH-7406), one word: http-<status>/<reason>
+# (read-failed, post-failed), sampler-rc-<rc>[:<first stderr line, 120 chars,
+# spaces as _>] (sample-failed), or the first missing piece: HARNESS_REPO |
+# gh_auth_for | gh_rest_issue_comments | gh_rest_comment (not-configured).
 #
 # Test seams, read only under HARNESS_TEST_SANDBOX=1: LANE_CPU_RANK_GH_LIB (a
 # file that defines the GitHub functions; without it a sandbox run is
@@ -59,7 +66,7 @@ LOG="$H/logs/lane-cpu-rank.log"
 REPORT="$DIR_R/report.md"
 MAX_ATTEMPTS=6
 ISSUE=7252; ISSUE_SRC=default
-ROWS=0; L5A=NA; L5B=NA
+ROWS=0; L5A=NA; L5B=NA; WHY=""
 
 # knob <value> <default> <min> <max> — the value when it is a whole number in
 # range, else the default.
@@ -73,8 +80,8 @@ INTERVAL=$(knob "${LANE_CPU_RANK_INTERVAL_S:-5}" 5 1 60)
 TOP=$(knob "${LANE_CPU_RANK_TOP:-15}" 15 1 50)
 
 out() {
-  printf '%s rank=%s issue=%s(%s) rows=%s load5=%s->%s\n' \
-    "$STAMP" "$1" "$ISSUE" "$ISSUE_SRC" "$ROWS" "$L5A" "$L5B" >> "$LOG"
+  printf '%s rank=%s issue=%s(%s) rows=%s load5=%s->%s%s\n' \
+    "$STAMP" "$1" "$ISSUE" "$ISSUE_SRC" "$ROWS" "$L5A" "$L5B" "${WHY:+ why=$WHY}" >> "$LOG"
 }
 
 mkdir -p "$H/logs" "$H/locks" "$DIR_R" 2>/dev/null
@@ -114,8 +121,10 @@ else
   . "$SELF/lib/gh-app-auth.sh" 2>/dev/null || true
 fi
 SLUG="${HARNESS_REPO:-}"
+[ -n "$SLUG" ] || WHY=HARNESS_REPO
 for f in gh_auth_for gh_rest_issue_comments gh_rest_comment; do
-  command -v "$f" >/dev/null 2>&1 || SLUG=""
+  command -v "$f" >/dev/null 2>&1 && continue
+  SLUG=""; [ -n "$WHY" ] || WHY=$f
 done
 [ -n "$SLUG" ] || { out not-configured; exit 0; }
 
@@ -141,6 +150,7 @@ fail() {
 
 if ! gh_rest_issue_comments "$SLUG" "$ISSUE" > "$TMP/comments.json" 2>/dev/null \
    || ! jq -e 'type == "array"' "$TMP/comments.json" >/dev/null 2>&1; then
+  WHY="http-${GH_REST_STATUS:-000}/${GH_REST_REASON:-none}"
   fail read-failed
 fi
 if jq -e --arg m "$MARK" 'any(.[]; (.body // "") | contains($m))' "$TMP/comments.json" >/dev/null 2>&1; then
@@ -168,7 +178,12 @@ W_START=$(date -u +%FT%TZ)
 SRC=$?
 W_END=$(date -u +%FT%TZ)
 loadavg LB; L5B=$LB5
-[ "$SRC" = 0 ] || [ "$SRC" = 1 ] || fail sample-failed
+if [ "$SRC" != 0 ] && [ "$SRC" != 1 ]; then
+  e=$(head -1 "$TMP/sample.err" 2>/dev/null | tr -c 'A-Za-z0-9._:/=-' '_' | cut -c1-120)
+  e=${e%_}
+  WHY="sampler-rc-$SRC${e:+:$e}"
+  fail sample-failed
+fi
 
 # ── 4. the rows ──────────────────────────────────────────────────────────────
 # sample.out rows: <share>\t<lane>\t<cpu_s_h>, largest first; the verdict line
@@ -210,7 +225,11 @@ done < "$TMP/sample.out"
   echo "$MARK"
 } > "$TMP/body.md"
 cp "$TMP/body.md" "$REPORT.tmp" && mv -f "$REPORT.tmp" "$REPORT"
-gh_rest_comment "$SLUG" "$ISSUE" "$TMP/body.md" >/dev/null 2>&1 || fail post-failed
+gh_auth_for "$SLUG" >/dev/null 2>&1 || true
+if ! gh_rest_comment "$SLUG" "$ISSUE" "$TMP/body.md" >/dev/null 2>&1; then
+  WHY="http-${GH_REST_STATUS:-000}/${GH_REST_REASON:-none}"
+  fail post-failed
+fi
 printf 'posted %s %s\n' "$STAMP" "$ISSUE" > "$STATE"
 out posted
 exit 0

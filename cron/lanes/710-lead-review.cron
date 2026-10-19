@@ -1,6 +1,6 @@
 # lead review jobs (BH-1950): every 15 min review the needs-review worklist, then the lead review
 # requests, for repos this box owns; every eligible one starts as a slot frees, until
-# LEAD_REVIEW_DEADLINE_S (BH-4956). A backstop: lead-review-enqueue and a nudge ring this lane
+# LEAD_REVIEW_DEADLINE_S (BH-4956). A backstop: the worklist gates and a nudge ring this lane
 # through the wakes doorbell (BH-4057), and a finished review rings lead-land (BH-5317).
 # Never on the hub. Off via flags/lane-off-lead-review. Log: logs/lead-review.log.
 */15 * * * * /root/harness/bin/lead-review.sh tick >/dev/null 2>&1

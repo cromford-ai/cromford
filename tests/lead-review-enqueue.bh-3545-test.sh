@@ -306,12 +306,15 @@ happy; echo '{"message":"nope"}' > "$T/prs.json"; tick
 LJ="$DIR/catalog/lanes.d/lead-review-enqueue.json"
 K=$(jq -c '[.knobs[] | select(.env=="LEAD_REVIEW_ENQUEUE_MAX_PER_TICK" or .env=="LEAD_REVIEW_MAX_PER_PR_DAY") | [.env,.type,.default,.min,.max,.required]]' "$LJ" 2>/dev/null)
 [ "$K" = '[["LEAD_REVIEW_ENQUEUE_MAX_PER_TICK","int",5,1,50,true],["LEAD_REVIEW_MAX_PER_PR_DAY","int",4,1,50,true]]' ] && ok || bad "E16 knobs: '$K'"
-[ "$(jq -r '[.scope,.script,.cadence,(.boxes|join(",")),.switch.name,.wired]|join("|")' "$LJ" 2>/dev/null)" = 'hub|bin/lead-review-enqueue.sh|*/15 * * * *|hub|lane-off-lead-review-enqueue|true' ] \
+[ "$(jq -r '[.scope,.script,.cadence,(.boxes|join(",")),.switch.name,.wired]|join("|")' "$LJ" 2>/dev/null)" = 'hub|bin/lead-review-enqueue.sh|*/15 * * * *||lane-off-lead-review-enqueue|true' ] \
   && ok || bad "E16 lane fields: $(jq -c . "$LJ" 2>/dev/null | head -c 300)"
 REG=$(rendered_registry)
 [ "$(jq -r '.lanes[] | select(.id=="lead-review-enqueue") | .script' "$REG" 2>/dev/null)" = bin/lead-review-enqueue.sh ] && ok || bad "E16 the rendered registry has no lead-review-enqueue lane"
 HUBC=$(rendered_cron hub)
-grep -qF '*/15 * * * * /root/harness/bin/hub-lease.sh check && /root/harness/bin/lead-review-enqueue.sh tick' "$HUBC" && ok || bad "E16 the hub cron does not run the lane behind hub-lease"
+# BH-7235 unwired the lane on purpose: no box (boxes []) and no schedule line,
+# so the hub cron must not run the enqueue at all (TEST-CHANGE, was: runs it behind hub-lease).
+[ -s "$HUBC" ] && ok || bad "E16 the hub cron render is empty"
+hit=$(grep -v '^[[:space:]]*#' "$HUBC" | grep -F 'lead-review-enqueue.sh') && bad "E16 the hub cron still runs the unwired lane: $hit" || ok
 
 echo "lead-review-enqueue.bh-3545: PASS=$PASS FAIL=$FAIL"
 [ "$FAIL" -eq 0 ]

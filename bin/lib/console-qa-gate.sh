@@ -7,12 +7,13 @@
 #   * bin/lead-review.sh: with LEAD_REVIEW_CONSOLE_QA_GATE=1 (default 0) a head
 #     with no PASS gets a BLOCK report (reviewer model console-qa-gate) and no
 #     model call, before the rules pack and before any replay;
-#   * bin/lead-review-enqueue.sh: a standing console-qa-gate BLOCK is lifted
+#   * bin/pr-state-reconcile.sh (hub, every 15 min, since BH-7235; before it
+#     bin/lead-review-enqueue.sh): a standing console-qa-gate BLOCK is lifted
 #     with no push. Once a PASS names that head, the hub resets the lead review
 #     request (POST /api/lead-reviews/<id>/reset), the box reviews the same head
 #     again, and lead-review-land re-lands it (BH-5400: the earlier BLOCK review
-#     is dismissed). The enqueue's own lead replay (BH-3930) is held for a head
-#     with no PASS, so a replayed MERGE cannot skip the gate.
+#     is dismissed). The lead replay (BH-3930, worklist gate 50) is held for a
+#     head with no PASS, so a replayed MERGE cannot skip the gate.
 #
 # WHY. #5838 and #5885 said "QA at 375px in a browser was not run"; the lead
 # recorded that as a note and both merged. A note is not a gate.
@@ -114,7 +115,7 @@ cqg_report() {
   printf '%s# Lead review %s (%s#%s at %s)\n\n- verdict: BLOCK\n- console qa: %s\n- reviewer model: %s\n\nFindings\n' \
     "$rv" "$key" "$repo" "$pr" "$head" "$v" "$CQG_MODEL"
   printf -- '- [BLOCK console-qa] This PR changes console-ui/src/, and no `QA: PASS` comment names head %s. %s\n' "$head" "$why"
-  printf -- '- [NOTE] What clears it: one PR comment, by a writer or the harness App, with the line `QA: PASS for head %s`, a line `QA COVERAGE: screens=<n> flows=<f> shots=<m>` with n and m of 1 or more, and no `QA: FAIL` line. bin/console-preview-deploy.sh posts one for each head when that lane is on. The next lead-review-enqueue tick after that comment resets this review, and the lead reviews the same head again. No push is needed.\n' "$head"
+  printf -- '- [NOTE] What clears it: one PR comment, by a writer or the harness App, with the line `QA: PASS for head %s`, a line `QA COVERAGE: screens=<n> flows=<f> shots=<m>` with n and m of 1 or more, and no `QA: FAIL` line. bin/console-preview-deploy.sh posts one for each head when that lane is on. The next pr-state-reconcile sweep on the hub after that comment resets this review, and the lead reviews the same head again. No push is needed.\n' "$head"
   printf '\nVERDICT: BLOCK\n'
 }
 

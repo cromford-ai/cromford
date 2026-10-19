@@ -1,8 +1,10 @@
 #!/bin/bash
 # bin/lib/live-probes.sh — BH-5801: the live-probe lane. Sourced; defines
-# functions only. Run from bin/lead-review-enqueue.sh (its `live probes` block)
-# after the CI and rebase gates, right before a lead review is requested, so the
-# review reads the evidence.
+# functions only. Run from bin/pr-state-reconcile.sh (its `live probes` block,
+# since BH-7235) on the hub, for a head with a builder APPROVE and green CI and
+# no lead verdict yet, so the review reads the evidence. The lead review
+# worklist gate bin/lib/lead-gates.d/72-probe-hold.sh holds a head that
+# declares a catalog probe until that comment is posted.
 #
 # WHY. 11 lead BLOCKs asked for a live probe (BH-1000) that the PR body did not
 # carry: a hub-lease check, /api/flags, the protected-paths route, the npm
@@ -43,8 +45,8 @@ _lp_log() { local r; r=$(_lp_root); [ -n "$r" ] || return 0; echo "$(date -u '+%
 
 # _lp_notdone <slug> <n> <head> <try> <why> — a try that did not finish: logged
 # every time, and on the last allowed try (LIVE_PROBES_TRIES) said once more as
-# the try that ends the head, with an ALERTS line when the enqueue's alert_once
-# is loaded. The head then gets no evidence until someone looks.
+# the try that ends the head, with an ALERTS line when the caller's alert_once
+# (bin/pr-state-reconcile.sh) is loaded. The head then gets no evidence until someone looks.
 _lp_notdone() {
   local cap="${LIVE_PROBES_TRIES:-3}"
   if [ "$4" -ge "$cap" ]; then
@@ -243,7 +245,7 @@ lp_run_for_head() {
   mark="$dir/$(printf '%s' "$slug" | tr '/' '_')-$n-${head:0:12}"
   [ -e "$mark.done" ] && return 0
   # ONE TICK'S PROBE TIME IS BOUNDED (LIVE_PROBES_TICK_BUDGET_S, default 240).
-  # Probes run inside the enqueue tick, under its flock -n: 5 probes x 60 s on
+  # Probes run inside the reconcile sweep, under its flock -n: 5 probes x 60 s on
   # each of several PRs would make the next tick skip. Past the budget a head
   # is left for the next tick, with no try counted.
   : "${_LP_TICK_T0:=$(date +%s)}"

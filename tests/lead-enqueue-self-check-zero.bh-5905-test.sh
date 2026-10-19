@@ -14,7 +14,7 @@
 #       `self-check:`
 #   Z3  the default wait (unset): the comment still says "After 30 minutes"
 #
-# The rig is tests/lead-enqueue-self-check.bh-5798-test.sh's, copied: the
+# The rig was the BH-5798 self-check suite's (deleted in BH-7235), copied: the
 # script runs WHOLE against a scratch harness, with curl and gh stubs.
 # Run from anywhere: HARNESS_TEST_SANDBOX=1 bash tests/lead-enqueue-self-check-zero.bh-5905-test.sh
 set -uo pipefail

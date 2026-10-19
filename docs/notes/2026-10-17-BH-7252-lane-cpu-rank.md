@@ -63,9 +63,41 @@ Lanes not shown: <n> (<n.n> CPU s/h).
 2. Wait for the next 14:05Z run, or run `bin/lane-cpu-rank.sh` on the hub.
 3. Compare load5 and the moved lanes' rows with the before table.
 
+## BH-7406: why the table did not post
+
+Two daily hub runs (2026-10-17T14:05Z, 2026-10-18T14:05Z) posted no table on
+#7252. The cause is the token order in `bin/lane-cpu-rank.sh`:
+
+1. Step 2 arms the App token once (`gh_auth_for`), before the comment read.
+   `bin/gh-token.sh` serves a cached installation token until 5 min before it
+   expires, so that token has 5 to 60 min left.
+2. The sampler then runs for 3600 s.
+3. The post used the same `GH_TOKEN`. It had expired, so the POST got 401. The
+   run wrote `attempts <n>` and logged `rank=post-failed` with no cause.
+
+The fix (BH-7406 C0):
+
+- The script calls `gh_auth_for` again right before the post, so the post runs
+  on a token with at least 5 min left.
+- A failed run ends its log line with ` why=<cause>`: `http-<status>/<reason>`
+  for read-failed and post-failed, `sampler-rc-<rc>[:<stderr line>]` for
+  sample-failed, the first missing piece for not-configured.
+- The settings row `lane_cpu_rank.issue` is seeded 7406
+  (`worker/jobs/schema.d/202610182044-bh-7406-lane-cpu-rank-issue.sql`,
+  `INSERT OR IGNORE`). #7252 is closed and #7406 carries the rest. A new
+  `state-7406` file starts at 0 attempts. The marker is now
+  `<!-- lane-cpu-rank:7406 -->`.
+
+## Before numbers (hub load5)
+
+- 52.42 at 2026-10-17T09:30:45Z.
+- 57.69 at 2026-10-18T16:06Z (#issuecomment-6252072531).
+- Target: under 24. The after number comes from a later slice of #7406.
+
 ## Rule for C1
 
-1. Read the newest comment on #7252 that holds `<!-- lane-cpu-rank:7252 -->`.
+1. Read the newest comment on #7406 that holds `<!-- lane-cpu-rank:7406 -->`
+   (the marker of the `lane_cpu_rank.issue` row).
 2. Take the top row whose reason is `not classified` and whose placement is
    not `fly`.
 3. Read that lane's script. If it reads hub-only state (local repos, flag
@@ -77,5 +109,5 @@ Lanes not shown: <n> (<n.n> CPU s/h).
 ## Live probe (hub)
 
 - `tail -3 /root/harness/logs/lane-cpu-rank.log` shows `rank=posted
-  issue=7252(default)` after 15:05Z on the first day after deploy.
-- #7252 has one comment with `<!-- lane-cpu-rank:7252 -->`.
+  issue=7406(row)` after 15:05Z on the first day after deploy (BH-7406).
+- #7406 has one comment with `<!-- lane-cpu-rank:7406 -->`.

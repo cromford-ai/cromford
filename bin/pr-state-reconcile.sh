@@ -31,9 +31,27 @@
 # same field on the same head from colliding with the first on the dedupe key.
 # PR_STATE_RECONCILE_MAX_PER_SWEEP caps the corrections a sweep writes; the
 # rest are deferred, and the next sweep sees the same difference.
+# Then two hub jobs that bin/lead-review-enqueue.sh ran before BH-7235 (nothing
+# starts the enqueue now), each fail-open (its rc is ignored; a missing lib is
+# one log line a sweep), on the facts this sweep judged for the live head. The
+# cap does not apply to them:
+#   live probes   (BH-5801) not draft, not held, builder APPROVE and CI green on
+#                 the head, no lead verdict on it: lp_run_for_head
+#                 (bin/lib/live-probes.sh), once per head by its own marker.
+#   console qa    (BH-5909) a lead verdict on the head, in fleet.conf's
+#                 cromford repo: cqg_clear_block (bin/lib/console-qa-gate.sh)
+#                 resets a console-qa-gate BLOCK once a QA: PASS names the head.
+#                 Its marker stays in state/lead-review-enqueue/, so a head
+#                 the enqueue reset is not reset again.
+# Marker retention, once in 24 h (stamp state/pr-state-reconcile/marker-sweep.stamp):
+# state/pr-state-reconcile/alerted-*, state/live-probes/* and
+# state/lead-review-enqueue/qa-reset-* older than PR_STATE_RECONCILE_MARKER_KEEP_DAYS
+# (a required registry knob, default 14; 0 = off) are deleted. The first sweep
+# on a box (no stamp) is a dry run that only counts them. One `marker-sweep:`
+# line a run. A value that is not a whole number deletes nothing.
 # Unreadable is never written as a fact. A failed write is failed, not corrected.
 # Hub only. Kill switch: flags/lane-off-pr-state-reconcile.
-# Log: logs/pr-state-reconcile.log, one line per correction and one
+# Log: logs/pr-state-reconcile.log, one line per correction, one per reset, and one
 # `checked= corrected= skipped= deferred= failed= repos=` summary a sweep.
 set -uo pipefail
 H="${HARNESS:-/root/harness}"
@@ -68,6 +86,13 @@ done
 { . "$H/bin/jobs-client.sh"; . "$H/bin/lib/verdicts.sh"; . "$H/bin/lib/hold.sh"
   . "$H/bin/lib/gh-rest.sh"; . "$H/bin/lib/gh-pr-list.sh"; . "$H/bin/lib/gh-budget.sh"
   . "$H/bin/lib/pr-snapshot.sh"; . "$H/bin/lib/fixround-preflight.sh"; }
+# The two hub jobs (header). Missing = that block is skipped, one log line a
+# sweep (below).
+# shellcheck source=bin/lib/live-probes.sh
+LP=0; . "$H/bin/lib/live-probes.sh" 2>/dev/null && LP=1
+# shellcheck source=bin/lib/console-qa-gate.sh
+CQG=0; . "$H/bin/lib/lead-reviews.sh" 2>/dev/null && . "$H/bin/lib/console-qa-gate.sh" 2>/dev/null && CQG=1
+CQG_HREPO=$(awk '$1 == "cromford" {print $2; exit}' "${FLEET_CONF:-$H/fleet.conf}" 2>/dev/null)
 
 # A required registry knob: no literal here. Empty or not a positive integer
 # means the registry was not read, and that is never "go".
@@ -87,8 +112,38 @@ trap 'rm -rf "$WORK"' EXIT
 command -v prs_gc >/dev/null 2>&1 && prs_gc
 
 STAMP=$(date -u +%s)
+[ "$LP" = 1 ] || log "bin/lib/live-probes.sh missing; no live probes this sweep"
+[ "$CQG" = 1 ] || log "bin/lib/console-qa-gate.sh or bin/lib/lead-reviews.sh missing; no console QA reset this sweep"
 REPOS=0; CHECKED=0; CORRECTED=0; SKIPPED=0; DEFERRED=0; FAILED=0
 s12() { case "$1" in ????????????*) printf '%s' "${1:0:12}" ;; '') printf 'null' ;; *) printf '%s' "$1" ;; esac; }
+
+# alert_once <id> <severity> <text> — one lane-alert per id, deduped by
+#   state/pr-state-reconcile/alerted-<id>, written only after the call returned
+#   0. bin/lib/live-probes.sh calls it when a head runs out of post tries.
+alert_once() {
+  local id="$1" sev="$2" text="$3" mark
+  mark="$STATE/alerted-$(printf '%s' "$id" | tr -c 'A-Za-z0-9._-' '_')"
+  [ -e "$mark" ] && return 0
+  "$H/bin/lane-alert.sh" --severity "$sev" --id "$id" pr-state-reconcile "$text" >/dev/null 2>&1 || return 1
+  : > "$mark"
+}
+
+# marker_sweep — the marker retention of the header. Always rc 0.
+marker_sweep() {
+  local keep="${PR_STATE_RECONCILE_MARKER_KEEP_DAYS:-}" stamp="$STATE/marker-sweep.stamp" mode=deleted n=0 f
+  case "$keep" in ''|*[!0-9]*) log "PR_STATE_RECONCILE_MARKER_KEEP_DAYS='$keep' is not a whole number; no marker sweep"; return 0 ;; esac
+  [ "$keep" = 0 ] && return 0
+  if [ ! -e "$stamp" ]; then mode=dry-run
+  elif [ -n "$(find "$stamp" -mmin -1440 2>/dev/null)" ]; then return 0; fi
+  while IFS= read -r -d '' f; do
+    if [ "$mode" = dry-run ]; then n=$((n + 1)); else rm -f -- "$f" 2>/dev/null && n=$((n + 1)); fi
+  done < <(find "$STATE" -maxdepth 1 -type f -name 'alerted-*' -mmin +$((keep * 1440)) -print0 2>/dev/null
+           find "$H/state/live-probes" -maxdepth 1 -type f -mmin +$((keep * 1440)) -print0 2>/dev/null
+           find "$H/state/lead-review-enqueue" -maxdepth 1 -type f -name 'qa-reset-*' -mmin +$((keep * 1440)) -print0 2>/dev/null)
+  : > "$stamp"
+  log "marker-sweep: $mode files=$n keep=${keep}d"
+}
+marker_sweep
 
 # fix <field> <db> <live> <field=value>... — one correcting event, under the cap.
 # Uses SLUG, N and HEAD from the loop.
@@ -132,7 +187,15 @@ for SLUG in $AUTO_REPOS; do
     LDRAFT=0; [ "$DRAFT" = true ] && LDRAFT=1
     [ "$LDRAFT" != "${D_DRAFT:-0}" ] && fix draft "${D_DRAFT:-}" "$LDRAFT" "draft=$LDRAFT"
     [ "${D_CLOSED:-0}" = 1 ] && fix closed 1 0 closed=0
-    # A builder APPROVE bound to the head (lead-review-enqueue's rule).
+    # The facts this sweep judged for the live head, for the two jobs after
+    # CI: 1 = true on HEAD, 0 = not, or not judged. Held starts at 1, so an
+    # unread thread never runs a probe.
+    E_APP=0; E_LEAD=0; E_CI=0; E_HELD=1
+    [ "${D_APP:-}" = "$HEAD" ] && E_APP=1
+    [ "${D_LEAD:-}" = "$HEAD" ] && E_LEAD=1
+    [ "${D_CI:-}" = "$HEAD" ] && E_CI=1
+    # A builder APPROVE bound to the head (the builder gate's rule,
+    # bin/lib/lead-gates.d/10-builder.sh).
     if [ "${D_APP:-}" != "$HEAD" ]; then
       JRC=0; JV=$(job_verdict "$URL" 2>/dev/null) || JRC=$?
       case "$JRC" in
@@ -140,9 +203,9 @@ for SLUG in $AUTO_REPOS; do
           IFS=$'\t' read -r V _ _ _ _ RSHA <<<"$JV"
           RSHA=$(printf '%s' "$RSHA" | tr 'A-F' 'a-f')
           if [ "$V" = APPROVE ]; then
-            if [ "$RSHA" = "$HEAD" ]; then fix builder_approved_sha "${D_APP:-}" "$HEAD" "builder_approved_sha=$HEAD"
+            if [ "$RSHA" = "$HEAD" ]; then E_APP=1; fix builder_approved_sha "${D_APP:-}" "$HEAD" "builder_approved_sha=$HEAD"
             elif HB=$(job_verdict_headbound "$URL" 2>/dev/null); then
-              [ "$(printf '%s' "$HB" | tr 'A-F' 'a-f')" = "reapproved@$HEAD" ] && fix builder_approved_sha "${D_APP:-}" "$HEAD" "builder_approved_sha=$HEAD"
+              [ "$(printf '%s' "$HB" | tr 'A-F' 'a-f')" = "reapproved@$HEAD" ] && { E_APP=1; fix builder_approved_sha "${D_APP:-}" "$HEAD" "builder_approved_sha=$HEAD"; }
             else
               log "$SLUG $N: the builder verdict's headbound is unreadable; builder_approved_sha not judged"; SKIPPED=$((SKIPPED + 1))
             fi
@@ -154,25 +217,42 @@ for SLUG in $AUTO_REPOS; do
     if [ "${D_LEAD:-}" != "$HEAD" ]; then
       VRC=0; VL=$(vd_standing "$SLUG" "$N" "$HEAD" 2>/dev/null) || VRC=$?
       case "$VRC" in
-        0) fix lead_verdict "${D_LEAD:-}" "$HEAD" "lead_verdict_sha=$HEAD" "lead_verdict_word=$(cut -f1 <<<"$VL")" ;;
+        0) E_LEAD=1; fix lead_verdict "${D_LEAD:-}" "$HEAD" "lead_verdict_sha=$HEAD" "lead_verdict_word=$(cut -f1 <<<"$VL")" ;;
         1) ;;
         *) log "$SLUG $N: the standing verdict is unreadable; lead_verdict not judged"; SKIPPED=$((SKIPPED + 1)) ;;
       esac
     fi
     HRC=0; hold_check_thread "$SLUG" "$N" >/dev/null 2>&1 || HRC=$?
     case "$HRC" in
-      0|1) LHELD=$((HRC == 1 ? 1 : 0)); [ "$LHELD" != "${D_HELD:-0}" ] && fix held "${D_HELD:-}" "$LHELD" "held=$LHELD" ;;
+      0|1) LHELD=$((HRC == 1 ? 1 : 0)); E_HELD=$LHELD; [ "$LHELD" != "${D_HELD:-0}" ] && fix held "${D_HELD:-}" "$LHELD" "held=$LHELD" ;;
       *) log "$SLUG $N: the PR thread is unreadable; held not judged"; SKIPPED=$((SKIPPED + 1)) ;;
     esac
     # CI last: two GETs, and only when the db is not already green on the head.
     if [ "${D_CI:-}" != "$HEAD" ]; then
       CI=$(frp_ci "$SLUG" "$HEAD" | jq -r '.state // "unreadable"' 2>/dev/null)
       case "$CI" in
-        green) fix ci_green_sha "${D_CI:-}" "$HEAD" "ci_green_sha=$HEAD" ;;
+        green) E_CI=1; fix ci_green_sha "${D_CI:-}" "$HEAD" "ci_green_sha=$HEAD" ;;
         pending|red|none) ;;
         *) log "$SLUG $N: CI on $(s12 "$HEAD") is unreadable; ci_green_sha not judged"; SKIPPED=$((SKIPPED + 1)) ;;
       esac
     fi
+    # >>> live probes (BH-5801): the PR's declared catalog probes, run once per
+    # head and posted to the PR. This sweep is not ordered against the box's
+    # lead review: the worklist gate bin/lib/lead-gates.d/72-probe-hold.sh
+    # holds the review of a head that declares a catalog probe until this
+    # comment is on the PR (bounded by LEAD_REVIEW_PROBE_WAIT_MAX_MIN). Fail-open.
+    if [ "$LP" = 1 ] && [ "$LDRAFT" = 0 ] && [ "$E_HELD" = 0 ] && [ "$E_APP" = 1 ] && [ "$E_CI" = 1 ] && [ "$E_LEAD" = 0 ]; then
+      lp_run_for_head "$SLUG" "$N" "$HEAD" "$WORK/pr" || true
+    fi
+    # <<< live probes
+    # >>> console qa clear (BH-5909): a console-qa-gate BLOCK on this head is
+    # reviewed again, with no push, once a QA: PASS comment names the head.
+    if [ "$CQG" = 1 ] && [ "$E_LEAD" = 1 ] && [ -n "$CQG_HREPO" ] && [ "${SLUG,,}" = "${CQG_HREPO,,}" ]; then
+      mkdir -p "$H/state/lead-review-enqueue" 2>/dev/null
+      CQL=$(cqg_clear_block "$SLUG" "$N" "$HEAD" "$H/state/lead-review-enqueue") || true
+      [ -n "$CQL" ] && log "$SLUG $N @$(s12 "$HEAD"): $CQL"
+    fi
+    # <<< console qa clear
   done < <(jq -r '.[] | [(.number|tostring), (.url // ""), (.isDraft|tostring), (.baseRefName // "main"),
       ((.headRefOid // "") | if . == "" then "-" else . end), ((.updatedAt // "") | if . == "" then "-" else . end)] | @tsv' "$WORK/list")
 

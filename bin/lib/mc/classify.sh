@@ -730,6 +730,11 @@ mc_ci_state() {
 #   (BH-6346). MC_CI_READ_TIMEOUT_S, default 30, 0 = off, not a number = 30.
 mc_ci_read_timeout_s() { local s="${MC_CI_READ_TIMEOUT_S:-30}"; [[ "$s" =~ ^[0-9]+$ ]] || s=30; printf '%s\n' "$((10#$s))"; }
 
+# mc_probe_read_timeout_s -> the wall time (s) the lock-probe step's PR body
+#   read may take (pr_body_read). MC_PR_PROBE_READ_TIMEOUT_S, default 20,
+#   0 = off, not a number = 20.
+mc_probe_read_timeout_s() { local s="${MC_PR_PROBE_READ_TIMEOUT_S:-20}"; [[ "$s" =~ ^[0-9]+$ ]] || s=20; printf '%s\n' "$((10#$s))"; }
+
 # mc_ci_flake_runs <owner/repo> <sha> -> "<run-id>|<workflow name>[|<head_sha>]" per LATEST
 #   run of a workflow on this sha that ended cancelled or timed_out; nothing
 #   when there is none.
@@ -2739,12 +2744,51 @@ mc_rr_noci_why() {
 # pr_body_read <pr-url> <flag-file> — the PR body, and a file left behind when
 # GitHub would not give it. mc_is_harness_pr runs this down a pipe, so a
 # variable is not a way to carry the rc back out; the file is (BH-784).
+# The read is bounded by MC_PR_PROBE_READ_TIMEOUT_S (mc_probe_read_timeout_s),
+# capped by the worker time left (mc_lock_wait_left). A read the bound cut, or
+# one not sent because under 1 s was left, writes `timeout<TAB><elapsed
+# s><TAB><bound s>` into the flag file and calls mc_probe_timeout_note; any
+# other unread leaves the flag file empty. rc 75 either way.
 pr_body_read() {
-  local out rc
+  local out rc b=0 t0 t1 GH_REST_TIMEOUT_S=
+  declare -F mc_probe_read_timeout_s >/dev/null && b=$(mc_probe_read_timeout_s)
+  if [ "${b:-0}" -gt 0 ]; then
+    if declare -F mc_lock_wait_left >/dev/null && ! b=$(mc_lock_wait_left "$b"); then
+      printf 'timeout\t0\t0\n' > "$2"
+      declare -F mc_probe_timeout_note >/dev/null && mc_probe_timeout_note 0 0
+      return 75
+    fi
+    GH_REST_TIMEOUT_S=$b
+  fi
+  printf -v t0 '%(%s)T' -1
   out=$(mc_pr_view "$1" .body); rc=$?
-  [ "$rc" = 0 ] || : > "$2"
+  if [ "$rc" != 0 ]; then
+    printf -v t1 '%(%s)T' -1
+    if [ -n "$GH_REST_TIMEOUT_S" ] && [ $((t1 - t0)) -ge "$GH_REST_TIMEOUT_S" ]; then
+      printf 'timeout\t%s\t%s\n' "$((t1 - t0))" "$GH_REST_TIMEOUT_S" > "$2"
+      declare -F mc_probe_timeout_note >/dev/null && mc_probe_timeout_note "$((t1 - t0))" "$GH_REST_TIMEOUT_S"
+    else
+      : > "$2"
+    fi
+  fi
   printf '%s' "$out"
   return "$rc"
+}
+
+# mc_probe_timeout_note <elapsed s> <bound s> — pr_body_read's cut read, in the
+# worker of $KEY on $HEAD: mark the worker locked for fan-in, then ONE
+# LOCK_PROBE_TIMEOUT line, then a probe-timeout ready-why note on a READY row
+# (the same handling a held PR lock gets). Bound 0 = the read was not sent.
+# No alert, no Sentry. Always rc 0.
+mc_probe_timeout_note() {
+  local e="${1:-0}" b="${2:-0}" bs why
+  why="the PR body read did not answer; treated as locked, the next tick probes it again"
+  bs="bound=${b}s"; [ "$b" = 0 ] && bs="bound=0s (no worker time left)"
+  declare -F mc_fanin_mark_locked >/dev/null && mc_fanin_mark_locked
+  declare -F mc_log >/dev/null && mc_log "${KEY:-?} LOCK_PROBE_TIMEOUT step=lock-probe call=pr-body-read elapsed=${e}s $bs: $why"
+  [ -n "${KEY:-}" ] && [ -n "${HEAD:-}" ] && declare -F mc_row_field >/dev/null \
+    && [ "$(mc_row_field "$KEY" 2 2>/dev/null)" = READY ] && mc_ready_why "$KEY" "$HEAD" probe-timeout "$why" logged
+  return 0
 }
 
 # ticket_open — moved verbatim from bin/merge-conductor.sh (BH-477 / BH-685); same name, same body.

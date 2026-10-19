@@ -414,7 +414,7 @@ fanin_end() {
 # none, the line is as before. The Sentry extra always has call and call_s.
 # <mark>.call goes with the mark.
 mc_fanin_outcome() {
-  local num head draft mstate st key mark d stage step step_s earlier mkind sto f ts nh kind text ds mt sa calls hmax hn call call_s cseg
+  local num head draft mstate st key mark d stage step step_s earlier mkind sto f ts nh kind text ds mt sa calls hmax hn call call_s cseg lk
   IFS=$'\t' read -r num _ head _ draft mstate _ <<<"${2:-}"
   if [ "$draft" = true ]; then echo skipped:draft; return 0; fi
   if [ "$mstate" = UNVERIFIABLE ]; then echo skipped:unverifiable; return 0; fi
@@ -468,13 +468,15 @@ mc_fanin_outcome() {
       _mc_fanin_alert "WORKER_DEADLINE $key: $text"
       # BH-5617. fanin_run_sub reads this function's stdout as the outcome
       # word, so the reporter's output is discarded here as well.
+      # A kill in step lock-probe names the PR lock path (BH-7322).
+      lk=""; [ "$step" = lock-probe ] && [ -n "${P:-}" ] && declare -F mc_pr_lock >/dev/null && lk=$(mc_pr_lock "$P" "$num")
       command -v sentry_report >/dev/null 2>&1 && sentry_report warning merge-conductor conductor-worker-deadline \
-        "WORKER_DEADLINE: worker killed after ${ds:-?}s on ${head:0:8} in step $step" \
+        "WORKER_DEADLINE: worker killed after ${ds:-?}s on ${head:0:8} in step $step${lk:+ (lock $lk)}" \
         "$(jq -nc --arg p "${P:-}" --arg k "$key" --arg h "$head" --arg s "${stage:-unknown}" --arg d "${d:-}" \
              --arg st "$step" --arg ss "${step_s:-}" --arg e "${earlier:-}" --arg sa "${sa:-}" \
-             --arg dc "${MC_WORKER_DEADLINE_S:-180}" --arg cap "${MC_WORKER_DEADLINE_CAP_S:-}" --arg c "${calls:-none}" \
+             --arg dc "${MC_WORKER_DEADLINE_S:-180}" --arg cap "${MC_WORKER_DEADLINE_CAP_S:-}" --arg c "${calls:-none}" --arg lk "$lk" \
              '{project:$p,pr:$k,head:$h,stage:$s,deadline_s:$d,step:$st,step_s:$ss,earlier:$e,
-               started_at:$sa,deadline_cfg_s:$dc,deadline_cap_s:$cap,calls:$c}' 2>/dev/null)" \
+               started_at:$sa,deadline_cfg_s:$dc,deadline_cap_s:$cap,calls:$c,lock:$lk}' 2>/dev/null)" \
         "$(jq -nc --arg s "$step" --arg n "$num" --arg k "$key" --arg d "$ds" \
              '{step:$s,pr:$n,worker_key:$k,deadline_secs:$d} | with_entries(select(.value != ""))' 2>/dev/null)" >/dev/null 2>&1
     fi

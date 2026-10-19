@@ -1,11 +1,8 @@
 # @hub-lanes
 
-# ── LEAD REVIEW AUTO-REQUEST (BH-3545) ──────────────────────────────────────
-# bin/lead-review-enqueue.sh tick — every 15 min, ask for ONE lead review per
-# PR head a builder APPROVE'd in LEAD_REVIEW_AUTO_REPOS, when no lead/human
-# verdict stands on that head and no commit carries a Lead-Lane: trailer. The
-# review runs on the owning box (bin/lead-review.sh); this lane makes no agent
-# call and no SSH. A new request rings lead-review on the owning box through
-# the wakes doorbell (BH-4057). Off via flags/lane-off-lead-review-enqueue. Log:
-# logs/lead-review-enqueue.log.
-*/15 * * * * /root/harness/bin/hub-lease.sh check && /root/harness/bin/lead-review-enqueue.sh tick >/dev/null 2>&1
+# ── LEAD REVIEW AUTO-REQUEST (BH-3545): NO SCHEDULE ─────────────────────────
+# Nothing runs bin/lead-review-enqueue.sh since BH-7235. The worklist
+# (710-lead-review.cron) is the one input of the lead review.
+# This file stays because the D1 registry row lane_boxes lead-review-enqueue/hub
+# makes bin/render-cron.sh refuse a registry lane with no cron/lanes fragment.
+# C2 (BH-7236) deletes this file together with catalog/lanes.d/lead-review-enqueue.json.

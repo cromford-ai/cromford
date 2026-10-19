@@ -1,0 +1,11 @@
+{
+  "env": "MC_PR_PROBE_READ_TIMEOUT_S",
+  "type": "int",
+  "default": 20,
+  "min": 0,
+  "max": 120,
+  "unit": "seconds",
+  "zero_means": "off",
+  "note": "Wall time the lock-probe step's PR body read (pr_body_read, the harness-PR probe) may take before it is cut (BH-7322), capped by the worker time left before MC_WORKER_DEADLINE_AT minus 15 s. A cut read, or one not sent because under 1 s was left, writes one LOCK_PROBE_TIMEOUT line with the key and the elapsed seconds and is treated as locked (fan-in skipped:locked, a probe-timeout note on a READY row); no alert, no Sentry event. The next tick probes it again. Not a number reads as 20. Settings row: lane.merge-conductor.mc_pr_probe_read_timeout_s.",
+  "read_in": "bin/lib/mc/classify.sh"
+}

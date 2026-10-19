@@ -4,9 +4,7 @@
   "scope": "hub",
   "script": "bin/lead-review-enqueue.sh",
   "cadence": "*/15 * * * *",
-  "boxes": [
-    "hub"
-  ],
+  "boxes": [],
   "switch": {
     "kind": "flag",
     "name": "lane-off-lead-review-enqueue",
@@ -142,7 +140,7 @@
       "unit": null,
       "zero_means": "off",
       "required": false,
-      "note": "BH-5581: protects the time from a head push to its lead re-review (median 16.8 min delta, 19.7 min full before this, n=57). On the hub, a pr synchronize/reopened/ready_for_review or check_suite.completed wake starts bin/lead-review-enqueue.sh pr for that PR, and a head with a prior lead verdict on an earlier head is requested at once. Each firing costs one detached enqueue run on the hub: one open-PR list read per named repo, the PR body and verdict history reads, and at most one lead review request for a head the tick would request anyway. 0 = off: the */15 tick requests as before."
+      "note": "BH-5581: protects the time from a head push to its lead re-review (median 16.8 min delta, 19.7 min full before this, n=57). Since BH-7235 nothing starts the pr mode: bin/wake-loop.sh no longer launches it, so this knob is read only by a hand run of bin/lead-review-enqueue.sh pr. Before that, on the hub, a pr synchronize/reopened/ready_for_review or check_suite.completed wake started bin/lead-review-enqueue.sh pr for that PR, and a head with a prior lead verdict on an earlier head is requested at once. Each firing costs one detached enqueue run on the hub: one open-PR list read per named repo, the PR body and verdict history reads, and at most one lead review request for a head the tick would request anyway. 0 = off: the */15 tick requests as before."
     }
   ],
   "stats": {

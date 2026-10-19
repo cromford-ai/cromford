@@ -3,7 +3,7 @@
 # ── LANE-CPU-RANK LANE (BH-7252 C0, part of #7252) ──────────────────────────
 # Daily at 14:05Z. One bin/lane-cpu-sample.sh --cpu-s window (1 h, 5 s
 # interval), then the lanes ranked by CPU seconds per hour, with placement and
-# hub-only reason, posted ONCE to issue lane_cpu_rank.issue (default 7252).
+# hub-only reason, posted ONCE to issue lane_cpu_rank.issue (seeded 7406, code default 7252).
 # After the post (state/lane-cpu-rank/state-<issue> = posted, or the marker
 # comment exists) a run exits at once with no sampling.
 # Off: flags/lane-off-lane-cpu-rank (bin/harness-ctl.sh off lane-cpu-rank).

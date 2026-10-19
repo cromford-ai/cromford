@@ -13,7 +13,7 @@
 #       requested at once with "self-check notes: ..." in the scope notes, no
 #       comment, and the re-confirm sends the same notes
 #
-# The rig is tests/lead-enqueue-self-check.bh-5798-test.sh's: the script runs
+# The rig was the BH-5798 self-check suite's (deleted in BH-7235): the script runs
 # WHOLE against a scratch harness, a real git origin and hub clone, and stubs
 # for curl (the jobs worker) and gh (REST, now also the linked issue).
 # Run from anywhere: HARNESS_TEST_SANDBOX=1 bash tests/lead-enqueue-body-lint.bh-5790-test.sh

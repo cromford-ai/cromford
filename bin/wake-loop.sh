@@ -155,8 +155,6 @@ command -v lane_gate_or_exit >/dev/null 2>&1 && lane_gate_or_exit wake-loop
 # BH-2435: fastpath-off is a settings row before it is a file (lane-switch.sh).
 . "${HARNESS:-/root/harness}/bin/lib/lane-switch.sh" 2>/dev/null || true
 command -v lane_switch >/dev/null 2>&1 || lane_switch() { [ -f "${HARNESS:-/root/harness}/flags/$1" ]; }
-# BH-5581: a re-pushed head's lead review is asked at once (hub only). Fail-open.
-. "${HARNESS:-/root/harness}/bin/lib/lead-reenqueue.sh" 2>/dev/null || true
 command -v lane_env_apply    >/dev/null 2>&1 && lane_env_apply    wake-loop
 export HARNESS="$H"
 SELF="$(cd "$(dirname "$0")" && pwd)"
@@ -1072,7 +1070,6 @@ drain() {
            continue ;;
       esac
     fi
-    [ "$IS_HUB" = 1 ] && command -v lre_wake_row >/dev/null 2>&1 && lre_wake_row "$kind" "$event" "$repo" "$key"
     case "$kind" in
       # Only the hub runs the conductor. Off the hub a pr/checks row still
       # reaches the wake classes below (pr-ci -> review-prs for this box).
@@ -1256,7 +1253,6 @@ drain() {
       [ "$want_lead_land" = 1 ] && ( exec 9>&-; launch "lead-land" "$SELF/lead-review-land.sh" )
     fi
   fi
-  [ "$IS_HUB" = 1 ] && command -v lre_wake_launch >/dev/null 2>&1 && lre_wake_launch
 
   # ── THE TRIAGE LAUNCH (the operator, 2026-09-14) ──────────────────────────────────
   # AFTER the three loops above and never inside them: those launches are cheap

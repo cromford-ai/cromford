@@ -1,0 +1,5 @@
+# tests/mc/expected-map.d/BH-7322.tsv — BH-7322: the lock-probe body read bound
+# (classify, beside mc_ci_read_timeout_s and pr_body_read); origin=lib because
+# both are new module functions.
+classify	mc_probe_read_timeout_s	lib
+classify	mc_probe_timeout_note	lib
