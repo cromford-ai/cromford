@@ -50,7 +50,9 @@ HARNESS="${HARNESS:-/root/harness}"
 # Registry: catalog/lanes.json. Operator: bin/harness-ctl.sh off migration-autopilot.
 # shellcheck disable=SC1091
 . "${HARNESS:-/root/harness}/bin/lib/lane-gate.sh" 2>/dev/null || true
-command -v lane_gate_or_exit >/dev/null 2>&1 && lane_gate_or_exit migration-autopilot
+# The project is the claim key (BH-7422): one run per project, so a wake
+# class's launch for one project never turns another project's run away.
+command -v lane_gate_or_exit >/dev/null 2>&1 && lane_gate_or_exit migration-autopilot "$PROJECT"
 command -v lane_env_apply    >/dev/null 2>&1 && lane_env_apply    migration-autopilot
 BIN="$(cd "$(dirname "$0")" && pwd)"
 LOG="$HARNESS/logs/$PROJECT.log"

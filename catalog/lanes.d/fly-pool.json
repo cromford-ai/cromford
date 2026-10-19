@@ -2,6 +2,7 @@
   "id": "fly-pool",
   "name": "Fly runner pool (per project)",
   "scope": "project",
+  "single_run": false,
   "script": "bin/fly-pool.sh",
   "cadence": "*/10 * * * * (via bin/fly-pool-tick.sh)",
   "boxes": [

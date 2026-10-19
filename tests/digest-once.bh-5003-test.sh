@@ -13,8 +13,8 @@
 # or not terminal and (another status, or the same one older than stale_s).
 # Row ages are epoch seconds on the fake worker's clock. $T/claim.code forces
 # 404 (route not deployed) or 503 on the claim alone. When $T/barrier exists,
-# the dedupe GET for daily_digest waits until both hubs have made it (5 s cap),
-# so both read "not sent" before either claims: the lease-handover race.
+# the dedupe GET for daily_digest waits until both hubs have made it (60 s cap),
+# so both read "not sent" before either claims or sends: the lease-handover race.
 # bin/archie-tg-send.sh appends "<box> <akey>" to $T/sends and exits
 # $T/send.rc.<box> (0 when absent). dd_render is a fixed text (fixture seam).
 #
@@ -114,8 +114,14 @@ case "$m $path" in
     k=$(printf '%s' "$path" | sed -n 's/.*[?&]kind=\([^&]*\).*/\1/p')
     v=$(printf '%s' "$path" | sed -n 's/.*[?&]key=\([^&]*\).*/\1/p')
     if [ "$k" = daily_digest ] && [ -f "$FXT/barrier" ]; then
+      # TEST-CHANGE (BH-7465): the cap was 5 s (50 polls). On a loaded Linux
+      # runner one hub reached this read after the cap; the first hub had
+      # already sent, so the late hub read `sent` and C7 ("knob 0 sends
+      # twice") saw one send. The barrier holds the first hub's read until
+      # the second hub has made its own, so neither can record a send before
+      # both checked. 60 s is a hang guard only, never the order.
       touch "$FXT/read.$JOBS_BOX"
-      for _ in $(seq 1 50); do
+      for _ in $(seq 1 600); do
         [ -f "$FXT/read.hub-a" ] && [ -f "$FXT/read.hub-b" ] && break
         sleep 0.1
       done

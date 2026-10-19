@@ -2,6 +2,7 @@
   "id": "prebuild-repro",
   "name": "Pre-build bug reproduction (per build)",
   "scope": "project",
+  "single_run": false,
   "script": "bin/prebuild-repro.sh",
   "cadence": "per build (via bin/run-build.sh)",
   "boxes": [

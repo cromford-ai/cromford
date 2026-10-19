@@ -45,7 +45,11 @@ H="${HARNESS:-/root/harness}"
 # Registry: catalog/lanes.json. Operator: bin/harness-ctl.sh off flaky-detect.
 # shellcheck disable=SC1091
 . "${HARNESS:-/root/harness}/bin/lib/lane-gate.sh" 2>/dev/null || true
-command -v lane_gate_or_exit >/dev/null 2>&1 && lane_gate_or_exit flaky-detect
+# The project is the claim key (BH-7422): the 05:40 loop and a wake class's
+# per-project launch of another project must not turn each other away. A slug
+# (owner/repo) or a flag is not a key; that run gates lane-wide as before.
+case "${1:-}" in ''|-*|*/*) _FD_GP="" ;; *) _FD_GP="$1" ;; esac
+command -v lane_gate_or_exit >/dev/null 2>&1 && lane_gate_or_exit flaky-detect "${_FD_GP:-}"
 command -v lane_env_apply    >/dev/null 2>&1 && lane_env_apply    flaky-detect
 export HARNESS="$H"
 [ -f "$H/fleet.conf" ] && export FLEET_CONF="${FLEET_CONF:-$H/fleet.conf}"

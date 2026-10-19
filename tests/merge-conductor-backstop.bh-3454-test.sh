@@ -35,7 +35,11 @@ row() { printf '%s\t%s\t%s\t%s\t%s\t-\t-\t%s/%s\n' "$1" "$2" "$3" "$4" "$5" "$U"
 # TEST-CHANGE (BH-6000): the backstop now starts one DETACHED run per
 # candidate and returns at once, so bs waits (bounded) for the recorder runs to
 # land before the assertions read rec.txt. Nothing asserted below is weaker.
-bs() { : > "$T/rec.txt"; : > "$T/r-gh.txt"; ( cd "$T" && env PATH="$T/rbin:$PATH" HARNESS="$R" "$@" \
+# TEST-CHANGE (BH-7376): the backstop now starts at most MC_BACKSTOP_MAX_RUNNING
+# (default 6) runs at once. This suite pins BH-6000's one run per candidate in
+# one fire, so it sets the cap to 0 (none); tests/merge-conductor-keyed-timeout-test.sh
+# K13 pins the cap itself.
+bs() { : > "$T/rec.txt"; : > "$T/r-gh.txt"; ( cd "$T" && env PATH="$T/rbin:$PATH" HARNESS="$R" MC_BACKSTOP_MAX_RUNNING=0 "$@" \
   bash "$R/bin/merge-conductor-backstop.sh" > "$T/bs.out" 2>&1 ); echo $? > "$T/bs.rc"
   local want n=0; want=$(sed -n 's/.*: \([0-9]*\) detached keyed conductor run(s) started.*/\1/p' "$T/bs.out" | tail -1)
   while [ "$(grep -c . "$T/rec.txt" 2>/dev/null || echo 0)" -lt "${want:-0}" ] && [ "$n" -lt 40 ]; do sleep 0.25; n=$((n + 1)); done; }

@@ -50,6 +50,9 @@ set -a +u; . "$HENV/global.env" 2>/dev/null; set +a -u
 # Registry: catalog/lanes.json. Operator: bin/harness-ctl.sh off cost-reconcile.
 # shellcheck disable=SC1091
 . "${HARNESS:-/root/harness}/bin/lib/lane-gate.sh" 2>/dev/null || true
+# Two cron lines, --window 1h hourly and --window 24h daily, meet at 04:50:
+# the window is the one-run key (BH-7422), so neither turns the other away.
+case " $* " in *" --window "*) LANE_RUN_KEY=${*#*--window }; LANE_RUN_KEY=w${LANE_RUN_KEY%% *} ;; *) LANE_RUN_KEY=w${RECONCILE_WINDOW:-24h} ;; esac
 command -v lane_gate_or_exit >/dev/null 2>&1 && lane_gate_or_exit cost-reconcile
 command -v lane_env_apply    >/dev/null 2>&1 && lane_env_apply    cost-reconcile
 # BH-2433: the kill switch below is read through lane_switch, so a settings

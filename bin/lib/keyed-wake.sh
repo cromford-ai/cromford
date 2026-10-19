@@ -69,6 +69,8 @@ kw_conductor() {
   # MC_PR_LOCK_WAIT_S is set from KW_PR_LOCK_WAIT_S on every launch, empty
   # unless the caller holds this PR's lock itself (mc_ready_rekick): then the
   # run waits for it instead of skipping (mc_pr_lock_take).
+  # MC_KEYED_READY_FLOOR=1 (BH-7376): no `timeout` runs over this launch, so a
+  # READY row's worker may take the whole READY arm (mc_keyed_deadline_floor).
   # THE POOL (BH-7139): with bin/mc-keyed-pool.sh on this box the run is
   # QUEUED (one entry per PR, a second wake folds into it) and a detached drain
   # starts it as soon as one of MC_KEYED_MAX_PARALLEL slots is free. A tree
@@ -81,7 +83,7 @@ kw_conductor() {
     fi
     return 0
   fi
-  ( MC_ONLY_PR="$slug#$num" WAKE_LAUNCH=1 MC_FANIN_SOLO_RUN="${KW_FANIN_SOLO:-}" MC_PR_LOCK_WAIT_S="${KW_PR_LOCK_WAIT_S-}" MC_WORKERS_DONE_BY= MC_WINDOW_DEFER_FILE= setsid "$script" </dev/null >/dev/null 2>&1 9>&- 8>&- 7>&- 6>&- & ) 2>/dev/null
+  ( MC_ONLY_PR="$slug#$num" WAKE_LAUNCH=1 MC_KEYED_READY_FLOOR=1 MC_FANIN_SOLO_RUN="${KW_FANIN_SOLO:-}" MC_PR_LOCK_WAIT_S="${KW_PR_LOCK_WAIT_S-}" MC_WORKERS_DONE_BY= MC_WINDOW_DEFER_FILE= setsid "$script" </dev/null >/dev/null 2>&1 9>&- 8>&- 7>&- 6>&- & ) 2>/dev/null
   if command -v mc_log >/dev/null 2>&1; then
     mc_log "$slug#$num KEYED_WAKE: conductor launched for this PR now${why:+ ($why)} — the cron tick stays the backstop"
   fi

@@ -11,6 +11,9 @@
 # actually calls.
 #
 # THE GATE, in order (lane_gate_or_exit):
+#   0. one scheduled run per (lane, project) (BH-7422): a cron tick that finds
+#      another live run of the same lane and project exits 0 at once — see
+#      `single run` below. Helper calls never claim.
 #   1. all-off              — the master switch.
 #   2. lane-off-<id>        — this lane, everywhere.
 #   3. lane-off-<id>-<proj> — this lane on one project (project scope).
@@ -719,12 +722,205 @@ lane_start_offset() {
   printf '%s' "$off"
 }
 
+# >>> single run (BH-7422)
+# ONE SCHEDULED RUN PER (LANE, PROJECT). Hub lanes stacked: cron started a
+# lane again before the last run of the same lane and project ended, and on an
+# overloaded hub each extra copy made every copy slower (2026-10-19: load
+# 160-185 on 4 cores). The gate is the one call every lane makes, so the guard
+# is here and nowhere else.
+#
+# ONLY THE SCHEDULED TICK IS GUARDED. A gated script is also called as a helper
+# (harden-state --release under a caller's lock, cost-rows-push --box from a
+# pool reap, lead-review one <id> in a build, a wake class's per-project kick).
+# A helper call that exits 0 and does nothing is a silent loss, so a run claims
+# ONLY when it is a tick:
+#   LANE_SINGLE_RUN=0       never (a caller or a mode says "helper");
+#   LANE_SINGLE_RUN=1       always (a launcher says "this is the schedule");
+#   else LANE_GATE_RUN set  never: another gated run is above this process
+#                           (the gate exports it on every run it lets through);
+#   else                    a tick iff cron is an ancestor (LANE_TICK_PARENTS,
+#                           default "cron crond", walked through /proc at most
+#                           8 levels). An operator's shell, a build and a box
+#                           with no /proc never claim. That is fail open.
+# The gate unsets LANE_SINGLE_RUN once it has read it, so the word never
+# reaches the run's own children.
+#
+# THE CLAIM IS A PID FILE, NOT A HELD FD. state/lane-runs/<id>/<project|->/<pid>
+# holds the run's process start stamp. A later run counts the files whose
+# process is still the same process (pid alive, not a zombie, same start stamp)
+# and deletes the rest. The run's own exit is the release. An fd held for the
+# life of the run would go to every child the lane starts (bash cannot set
+# FD_CLOEXEC), and a detached daemon would hold the lane shut (fly-pool,
+# 2026-09-12). flock on fd 211 only makes the count-and-write step atomic; fd
+# 211 is closed before the gate returns. Busy for 5 s: count unlocked.
+#
+# THE KEY. The gate's project argument, else PL_PROJECT when the run is a
+# project-lane-run child of this lane (BH-5913), else none (`-`). A script on
+# two cron lines with no project (two modes: cost-reconcile --window 1h and
+# 24h, jobs-watchdog and --resume) sets LANE_RUN_KEY=<mode> before the gate,
+# so one mode's tick never turns the other away. It is a key only: it does not
+# reach the off-switches or the liveness row the way a project would. A mode
+# outside [A-Za-z0-9._-] does not claim (fail open). The gate unsets it.
+#
+# THE SWITCHES, most specific first: settings row lane.<id>.<project>.single_run,
+# then lane.<id>.single_run (0|false|off|no, any case = off; anything else =
+# on), then the manifest field `"single_run": false` (catalog/lanes.d/<id>.json,
+# for a lane that fans out on purpose), then ON. They are read only when
+# another run is live, so an uncontended start reads nothing. On a stale cache
+# that read is one settings GET.
+#
+# HELD: exit 0 at once with one `skipped (running)` line, no ALERTS line, no
+# liveness post, no D1 read. MEASURE: a claimed run that passes the off-switches
+# writes one `ran … live=<n>` line. Both go to logs/lane-runs-cron.log, which
+# disk-clean stage 10 bounds (*-cron.log).
+
+# _lg_pid_start <pid> — _LG_PS = the process start stamp, "" when it is gone
+# or a zombie. /proc/<pid>/stat field 22 (no fork); `ps -o lstart=` elsewhere.
+_lg_pid_start() {
+  local line rest IFS=' '
+  _LG_PS=""
+  if [ -d /proc/self ]; then
+    { read -r line < "/proc/$1/stat"; } 2>/dev/null || return 0
+    rest=${line##*) }
+    # shellcheck disable=SC2086 # split on purpose: numbers and a state letter
+    set -- $rest
+    [ "${1:-}" = Z ] && return 0
+    _LG_PS=${20:-}
+  elif kill -0 "$1" 2>/dev/null; then
+    _LG_PS=$(ps -o lstart= -p "$1" 2>/dev/null)
+    [ -n "$_LG_PS" ] || _LG_PS=alive
+  fi
+}
+
+# _lg_tick_parent — rc 0 when a process named in LANE_TICK_PARENTS is an
+# ancestor of this one. /proc only; no /proc answers "no" (fail open).
+_lg_tick_parent() {
+  local pid=$PPID i=0 line comm rest IFS=' '
+  [ -d /proc/self ] || return 1
+  while [ "$i" -lt 8 ] && [ "${pid:-0}" -gt 1 ] 2>/dev/null; do
+    { read -r line < "/proc/$pid/stat"; } 2>/dev/null || return 1
+    comm=${line#*(}; comm=${comm%)*}
+    case " ${LANE_TICK_PARENTS:-cron crond} " in *" $comm "*) return 0 ;; esac
+    rest=${line##*) }
+    # shellcheck disable=SC2086
+    set -- $rest
+    pid=${2:-0}; i=$((i + 1))
+  done
+  return 1
+}
+
+# _lg_is_tick — rc 0 when this run claims (see ONLY THE SCHEDULED TICK above).
+_lg_is_tick() {
+  case "${LANE_SINGLE_RUN:-}" in
+    0) return 1 ;;
+    1) return 0 ;;
+  esac
+  [ -z "${LANE_GATE_RUN:-}" ] || return 1
+  _lg_tick_parent
+}
+
+# _lg_run_log <line> — one line in logs/lane-runs-cron.log.
+_lg_run_log() {
+  printf '%s [lane-run] %s\n' "$(_lg_iso)" "$1" >> "$(_lg_h)/logs/lane-runs-cron.log" 2>/dev/null
+  return 0
+}
+
+# _lg_single_off <id> <project> — rc 0 when the guard is OFF for this run;
+# _LG_SR_WHY says which switch answered.
+_lg_single_off() {
+  local id="$1" p="$2" key v
+  _lg_settings_refresh
+  for key in "$(_lg_setting_key "$id" single_run "$p")" "$(_lg_setting_key "$id" single_run)"; do
+    [ -n "$key" ] || continue
+    v=$(_lg_setting_lookup "$key") || continue
+    _LG_SR_WHY="settings $key=$v"
+    _lg_lower "$v"
+    case "$_LG_LOW" in 0|false|off|no) return 0 ;; *) return 1 ;; esac
+  done
+  v=$(jq -r --arg i "$id" '[.lanes[]? | select(.id==$i) | .single_run | tostring][0] // empty' \
+        "$(_lg_registry)" 2>/dev/null)
+  _LG_SR_WHY="catalog/lanes.d/$id.json single_run:false"
+  [ "$v" = false ]
+}
+
+# _lg_run_count <dir> — _LG_LIVE = live runs in <dir> other than this one,
+# _LG_HOLDER = one of their pids. Files of exited runs, and names that are not
+# a pid, are deleted. These are claim files under state/lane-runs/, never
+# flags/; the loop variable is `cf` so tests/no-flag-files does not read a
+# delete here as a flags/ write (it tracks `f`, a flags/ path elsewhere here).
+_lg_run_count() {
+  local cf pid st
+  _LG_LIVE=0; _LG_HOLDER=""
+  for cf in "$1"/*; do
+    [ -f "$cf" ] || continue
+    pid=${cf##*/}
+    case "$pid" in ''|*[!0-9]*) rm -f "$cf"; continue ;; esac
+    [ "$pid" = "$$" ] && continue
+    st=""; { IFS= read -r st < "$cf"; } 2>/dev/null
+    _lg_pid_start "$pid"
+    if [ -n "$_LG_PS" ] && [ "$_LG_PS" = "$st" ]; then
+      _LG_LIVE=$((_LG_LIVE + 1)); _LG_HOLDER=$pid
+    else
+      rm -f "$cf"
+    fi
+  done
+}
+
+# _lg_single_run <id> [project] — rc 3 when another live run holds this
+# (lane, project) and the guard is on; rc 0 otherwise. _LG_SR_LINE is the
+# measure line the gate writes once the run is past the off-switches ("" when
+# this run did not claim).
+_lg_single_run() {
+  local id="$1" p="${2:-}" h d k rk lk=0 note=""
+  _LG_SR_LINE=""
+  _lg_is_tick || return 0
+  h=$(_lg_h); [ -n "$h" ] || return 0
+  [ -z "$p" ] && [ "${PL_LANE:-}" = "$id" ] && p="${PL_PROJECT:-}"
+  [ "$p" = "-" ] && p=""
+  case "$id" in ''|.*|*[!a-z0-9._-]*) return 0 ;; esac
+  case "$p" in .*|*[!A-Za-z0-9._-]*) return 0 ;; esac
+  rk="${LANE_RUN_KEY:-}"
+  case "$rk" in .*|*[!A-Za-z0-9._-]*) return 0 ;; esac
+  k="$id/${p:--}${rk:++$rk}"
+  d="$h/state/lane-runs/$k"
+  [ -d "$d" ] || mkdir -p "$d" 2>/dev/null || return 0
+  [ -d "$h/locks/lane-run" ] || mkdir -p "$h/locks/lane-run" 2>/dev/null
+  [ -d "$h/logs" ] || mkdir -p "$h/logs" 2>/dev/null
+  if command -v flock >/dev/null 2>&1 \
+     && { exec 211>"$h/locks/lane-run/$id.${p:--}${rk:++$rk}.lock"; } 2>/dev/null; then
+    if flock -w "${LANE_RUN_LOCK_WAIT_S:-5}" 211 2>/dev/null; then lk=1
+    else exec 211>&-; note=" (counted unlocked: claim lock busy ${LANE_RUN_LOCK_WAIT_S:-5} s)"; fi
+  fi
+  _lg_run_count "$d"
+  if [ "$_LG_LIVE" -gt 0 ]; then
+    [ "$lk" = 1 ] && exec 211>&-; lk=0
+    if ! _lg_single_off "$id" "$p"; then
+      _lg_run_log "$k skipped (running) pid=$$ holder=$_LG_HOLDER live=$_LG_LIVE"
+      return 3
+    fi
+    note="$note (guard off: $_LG_SR_WHY)"
+  fi
+  _lg_pid_start "$$"
+  printf '%s\n' "$_LG_PS" > "$d/$$" 2>/dev/null
+  [ "$lk" = 1 ] && exec 211>&-
+  _LG_SR_LINE="$k ran pid=$$ live=$((_LG_LIVE + 1))$note"
+  return 0
+}
+# <<< single run
+
 # lane_gate_or_exit <id> [project] — the whole gate. Returns 0 when the lane may
 # run; EXITS 0 when it may not. Either way this tick is now a row on the page.
 lane_gate_or_exit() {
   local id="${1:-}" p="${2:-}" h stampd n tag
   [ "${LANE_GATE_DISABLE:-0}" = 1 ] && return 0
   [ -n "$id" ] || return 0
+  # One run per (lane, project) first (BH-7422): a held run leaves before the
+  # start offset, the D1 reads and the liveness post.
+  _lg_single_run "$id" "$p" || exit 0
+  # Every run let through marks its process tree, so a gated script it calls
+  # is a helper call and never claims; the tick word stops here too.
+  export LANE_GATE_RUN="$id/${p:--}"
+  unset LANE_SINGLE_RUN LANE_RUN_KEY
   n=$(lane_start_offset "$id")
   if [ "$n" -gt 0 ] 2>/dev/null; then
     _lg_log_throttled "$id-start-offset" "[lane-gate] $id start offset ${n}s on box $(_lg_start_box) (quarter-hour spread)"
@@ -749,6 +945,7 @@ lane_gate_or_exit() {
       # Every name this tick READ and found clear: if this box ever reported a
       # file behind one of them, the page is told it is gone.
       for n in $LANE_GATE_CHECKED; do _lg_flag_seen "$n" "$id" "$p" 0; done
+      [ -z "${_LG_SR_LINE:-}" ] || _lg_run_log "$_LG_SR_LINE"
       _lg_liveness "$id" "$p" ran
       return 0
     fi

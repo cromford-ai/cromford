@@ -267,8 +267,11 @@ CLOG="$T/h/logs/merge-conductor.log"; : > "$CLOG"
 LDIR="$T/h/state/fanin/merge-conductor"
 K13='example-org/demo-os#13'
 # ctick [VAR=value...] — one real tick in its own session.
+# TEST-CHANGE (BH-7376): a keyed run (the solo run here) raises its PR worker
+# to MC_KEYED_READY_ARM_S (default 490 s). K7's 2 s deadline stands in for the
+# real one, so the knob is pinned to 1 (no floor in effect).
 ctick() {
-  ( cd "$T" && setsid -w env PATH="$T/fakebin:$PATH" HARNESS="$T/h" HARNESS_SECRET=x MC_PR_PARALLEL=1 \
+  ( cd "$T" && setsid -w env PATH="$T/fakebin:$PATH" HARNESS="$T/h" MC_KEYED_READY_ARM_S=1 HARNESS_SECRET=x MC_PR_PARALLEL=1 \
       MC_KEYED_WAKE_MIN_S=0 "$@" bash "$T/h/bin/merge-conductor.sh" >/dev/null 2>"$T/tick.err" ) 2>/dev/null || true
 }
 pid_dead() { local s; kill -0 "$1" 2>/dev/null || return 0
@@ -440,7 +443,15 @@ printf 'example-org/x-os#1\tREADY\t%s\taaa\taaa\t-\t-\thttps://github.com/exampl
 # TEST-CHANGE (BH-6000): the backstop starts one DETACHED run per candidate and
 # returns at once, so bs waits (bounded) until every run it started has
 # written its line. The assertions on the timeout knob are unchanged.
-bs() { : > "$T/to.txt"; ( cd "$T" && env PATH="$T/rbin:$PATH" HARNESS="$R" "$@" bash "$R/bin/merge-conductor-backstop.sh" > "$T/bs.out" 2>&1 )
+# TEST-CHANGE (BH-7376): the backstop's timeout is never under
+# MC_KEYED_READY_ARM_S + 45 s (the READY arm must fit; default 490 -> 535).
+# bs pins that knob to 60 (floor 105), so these rows are read exactly as
+# before; tests/merge-conductor-keyed-timeout-test.sh pins the floor itself:
+# its K2 covers the real default (a row of 290 s or the 240 s default becomes
+# 535 s), so the default-timeout case below is the knob rule, not the hub value.
+# bs also sets MC_BACKSTOP_MAX_RUNNING=0 (BH-7376 count cap off): K8 and K11
+# pin BH-6000's one run per candidate; keyed-timeout K13 pins the cap.
+bs() { : > "$T/to.txt"; ( cd "$T" && env PATH="$T/rbin:$PATH" HARNESS="$R" MC_KEYED_READY_ARM_S=60 MC_BACKSTOP_MAX_RUNNING=0 "$@" bash "$R/bin/merge-conductor-backstop.sh" > "$T/bs.out" 2>&1 )
   local want n=0; want=$(sed -n 's/.*: \([0-9]*\) detached keyed conductor run(s) started.*/\1/p' "$T/bs.out" | tail -1)
   while [ "$(grep -c . "$T/to.txt" 2>/dev/null || echo 0)" -lt "${want:-0}" ] && [ "$n" -lt 40 ]; do sleep 0.25; n=$((n + 1)); done; sleep 0.3; }
 bs;                             [ "$(cat "$T/to.txt")" = 240 ] && ok || bad "K5: default timeout 240 (got: $(cat "$T/to.txt"))"

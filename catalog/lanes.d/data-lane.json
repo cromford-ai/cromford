@@ -2,6 +2,7 @@
   "id": "data-lane",
   "name": "Data lane (pre-merge migration apply)",
   "scope": "hub",
+  "single_run": false,
   "script": "bin/data-lane-apply.sh",
   "cadence": "on demand (via bin/archie-fm.sh, the archie-fm */10 tick, which runs bin/data-lane-apply.sh <project> <pr> <build-dir> once per candidate PR head, BH-4927; no cron line of its own)",
   "boxes": [

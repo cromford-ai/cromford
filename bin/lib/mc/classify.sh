@@ -3520,7 +3520,10 @@ mc_ready_rekick() {
   # pr_worker, which keeps fd 9 until it exits, so the keyed run would lose
   # the `flock -n` race and skip, and this once-per-head re-kick would be gone.
   # The run waits for the lock instead, up to this worker's own deadline (the
-  # longest the launcher can still hold it).
+  # longest the launcher can still hold it). BH-7376: the wait stays
+  # MC_WORKER_DEADLINE_S, never the READY floor: a launcher on the floor runs
+  # the READY arm itself, and waiting its 490 s would double a pool slot to
+  # 980 s. A launcher past this wait means the re-kick skips, recorded once.
   local kwait="${MC_WORKER_DEADLINE_S:-180}"; case "$kwait" in ''|*[!0-9]*|0) kwait=180 ;; esac
   if command -v kw_conductor >/dev/null 2>&1 && KW_PR_LOCK_WAIT_S="$kwait" kw_conductor "$slug" "$num" "READY past its TTL on ${head:0:8}"; then
     mc_log "$key stuck in READY past its TTL — re-kicked once: a keyed conductor run for ${head:0:8} started now (it runs the READY arm with every gate and enqueues): $url"

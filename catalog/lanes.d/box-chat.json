@@ -2,6 +2,7 @@
   "id": "box-chat",
   "name": "Mission Control chat pane (per box)",
   "scope": "project",
+  "single_run": false,
   "script": "bin/box-chat.sh",
   "cadence": "on demand (via a Mission Control chat hand-off from bin/poll-commands.sh; no cron line)",
   "boxes": [

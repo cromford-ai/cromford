@@ -744,6 +744,56 @@ _mc_kill_tree() {
   return 0
 }
 
+# _mc_floor_row <num> — rc 0 when the keyed READY-arm floor applies to PR
+# <num> of SLUG (BH-7376): MC_WORKER_DEADLINE_MIN_S is set (an opted-in keyed
+# run, mc_keyed_deadline_floor) AND the PR's pr-state.tsv row is READY. A
+# WAIT_CI or HEAD_MOVED row keeps the tick's deadline: only a merge needs the
+# whole READY arm, and the hub has no CPU to spare (load 60-70 on 4 cores).
+_mc_floor_row() {
+  [[ "${MC_WORKER_DEADLINE_MIN_S:-}" =~ ^[0-9]+$ ]] && [ -n "${1:-}" ] && [ -n "${SLUG:-}" ] || return 1
+  [ "$(awk -F'\t' -v k="${SLUG,,}#$1" 'tolower($1) == k { print $2; exit }' "${MC_ROWS:-/dev/null}" 2>/dev/null)" = READY ]
+}
+
+# mc_worker_deadline_s [num] — the PR worker's deadline in seconds, before any
+# PR lock wait (BH-7376): MC_WORKER_DEADLINE_S (default 180, 0 = none, not a
+# number = 180), raised to MC_WORKER_DEADLINE_MIN_S when the floor applies to
+# PR <num> (_mc_floor_row), then never above MC_WORKER_DEADLINE_CAP_S when
+# that is set. 0 stays 0. mc_worker_bounded applies the same rule inline (a
+# test extracts it alone); tests/merge-conductor-keyed-timeout-test.sh K12
+# proves the two agree.
+mc_worker_deadline_s() {
+  local d cap
+  d=${MC_WORKER_DEADLINE_S:-180}; [[ "$d" =~ ^[0-9]+$ ]] || d=180
+  _mc_floor_row "${1:-}" && [ "$d" != 0 ] && [ "$d" -lt "$MC_WORKER_DEADLINE_MIN_S" ] && d=$MC_WORKER_DEADLINE_MIN_S
+  cap=${MC_WORKER_DEADLINE_CAP_S:-}
+  if [[ "$cap" =~ ^[0-9]+$ ]] && [ "$cap" -gt 0 ] && { [ "$d" = 0 ] || [ "$d" -gt "$cap" ]; }; then d=$cap; fi
+  printf '%s\n' "$d"
+}
+
+# mc_step_timeout_s <step> [num] — the step timeout the watchdog uses for
+# <step> of PR <num> (BH-6351, BH-7376): MC_STEP_TIMEOUT_S (default 240, 0 =
+# off); enqueue and merge never under max(MC_MERGE_LOCK_WAIT,
+# MC_MERGIFY_WAIT_S) + 10; lock-probe plus MC_PR_LOCK_WAIT_S; prequeue never
+# under MC_WORKER_DEADLINE_MIN_S when the READY floor applies (hub: resolve up
+# to 211 s, restamp 178 s, so 240 s killed prequeue inside a 490 s deadline).
+mc_step_timeout_s() {
+  local eff lw mw fl pw
+  eff=${MC_STEP_TIMEOUT_S:-240}; [[ "$eff" =~ ^[0-9]+$ ]] || eff=240
+  [ "$eff" -gt 0 ] || { echo 0; return 0; }
+  case "${1:-}" in
+    enqueue|merge)
+      lw=${MC_MERGE_LOCK_WAIT:-120}; [[ "$lw" =~ ^[0-9]+$ ]] || lw=120
+      mw=${MC_MERGIFY_WAIT_S:-90}; [[ "$mw" =~ ^[0-9]+$ ]] || mw=90
+      fl=$(( (lw > mw ? lw : mw) + 10 )); [ "$eff" -lt "$fl" ] && eff=$fl ;;
+    lock-probe)
+      pw=0; [[ "${MC_PR_LOCK_WAIT_S:-}" =~ ^[0-9]+$ ]] && pw=$MC_PR_LOCK_WAIT_S
+      eff=$((eff + pw)) ;;
+    prequeue)
+      _mc_floor_row "${2:-}" && [ "$eff" -lt "$MC_WORKER_DEADLINE_MIN_S" ] && eff=$MC_WORKER_DEADLINE_MIN_S ;;
+  esac
+  echo "$eff"
+}
+
 # mc_worker_bounded <row> — pr_worker under a deadline (BH-4918). The backstop
 # runs the keyed conductor under `timeout`, which signals its whole process
 # group, and every worker of the tick is in it: one worker stuck on a slow read
@@ -789,11 +839,16 @@ _mc_kill_tree() {
 # leaves it beside the mark for mc_fanin_outcome. With no log line for the PR,
 # the mark's stage is the step, so a known step never reads `unknown`.
 mc_worker_bounded() {
-  local d cap mark w k rc stage dir t0 step step_s earlier key res
-  local st slow poll floor lw mw pw start now left ts sn run eff kind seen s
+  local d cap mark w k rc stage dir t0 step step_s earlier key res pn
+  local st slow poll start now left ts sn run eff kind seen s
   local MC_STEP_FILE="" GH_REST_AUTH_FAIL_FILE="" MC_WORKER_DEADLINE_AT="" HARNESS_CALL_TRACE_FILE="" MC_CALL_FILE=""
   local ct cp
+  # The same rule as mc_worker_deadline_s, inline: a test extracts this
+  # function alone (tests/ready-rekick.bh-6000-test.sh RK12).
+  pn="${1%%$'\t'*}"
   d=${MC_WORKER_DEADLINE_S:-180}; [[ "$d" =~ ^[0-9]+$ ]] || d=180
+  declare -F _mc_floor_row >/dev/null && _mc_floor_row "$pn" \
+    && [ "$d" != 0 ] && [ "$d" -lt "$MC_WORKER_DEADLINE_MIN_S" ] && d=$MC_WORKER_DEADLINE_MIN_S
   cap=${MC_WORKER_DEADLINE_CAP_S:-}
   if [[ "$cap" =~ ^[0-9]+$ ]] && [ "$cap" -gt 0 ] && { [ "$d" = 0 ] || [ "$d" -gt "$cap" ]; }; then d=$cap; fi
   # A run that WAITS for its PR lock (MC_PR_LOCK_WAIT_S, the READY re-kick,
@@ -820,13 +875,8 @@ mc_worker_bounded() {
   st=${MC_STEP_TIMEOUT_S:-240}; [[ "$st" =~ ^[0-9]+$ ]] || st=240
   slow=${MC_STEP_SLOW_S:-60}; [[ "$slow" =~ ^[0-9]+$ ]] || slow=60
   poll=${MC_STEP_POLL_S:-5}; [[ "$poll" =~ ^[0-9]+$ ]] && [ "$poll" -ge 1 ] || poll=5
-  lw=${MC_MERGE_LOCK_WAIT:-120}; [[ "$lw" =~ ^[0-9]+$ ]] || lw=120
-  mw=${MC_MERGIFY_WAIT_S:-90}; [[ "$mw" =~ ^[0-9]+$ ]] || mw=90
-  floor=$(( (lw > mw ? lw : mw) + 10 ))
-  # lock-probe takes the PR lock. A run that waits for it on purpose (the READY
-  # re-kick, MC_PR_LOCK_WAIT_S) gets that wait on top of its step timeout, as
-  # the deadline does above: the wait is not a stall.
-  pw=0; [[ "${MC_PR_LOCK_WAIT_S:-}" =~ ^[0-9]+$ ]] && pw=$MC_PR_LOCK_WAIT_S
+  # Each step's own timeout (the enqueue/merge floor, the lock-probe wait, the
+  # READY prequeue floor) is mc_step_timeout_s, read on every poll below.
   MC_WORKER_DEADLINE_AT=$(( $(date +%s) + d ))
   pr_worker "$@" & w=$!
   (
@@ -840,11 +890,8 @@ mc_worker_bounded() {
       IFS=$'\t' read -r ts sn _ <<<"$(mc_step_read "$MC_STEP_FILE")"
       if [ -n "$ts" ]; then
         run=$(( now - ts ))
-        eff=$st
-        case "$sn" in
-          enqueue|merge) [ "$eff" -gt 0 ] && [ "$eff" -lt "$floor" ] && eff=$floor ;;
-          lock-probe) [ "$eff" -gt 0 ] && eff=$((eff + pw)) ;;
-        esac
+        # One rule for every step's timeout (BH-7376): mc_step_timeout_s.
+        eff=$(mc_step_timeout_s "$sn" "$pn")
         if [ "$eff" -gt 0 ] && [ "$eff" -lt "$d" ] && [ "$run" -ge "$eff" ]; then kind=step-timeout; break; fi
         if [ "$slow" -gt 0 ] && [ "$run" -ge "$slow" ] && [ "$seen" != "$ts $sn" ]; then
           seen="$ts $sn"

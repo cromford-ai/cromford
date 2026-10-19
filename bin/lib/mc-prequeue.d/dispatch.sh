@@ -197,7 +197,9 @@ pq_prune() {
 }
 
 # pq_merge_test <slug> <num> <head> — rc 0 the head merges clean into main,
-#   1 it conflicts (stdout: the paths), 2 this tick cannot tell (stdout: why).
+#   1 it conflicts (stdout: the paths), 2 this tick cannot tell (stdout: why),
+#   3 the project's git lock was busy (stdout: why; BH-7376): the caller holds
+#   and asks next run, and never pays for a dispatch a reuse would cover.
 #   mc_merge_tree fetches origin/main in this call, so the main it tests is the
 #   one pq_gate read or a newer one, never an older one.
 pq_merge_test() {
@@ -210,7 +212,7 @@ pq_merge_test() {
   case "$rc" in
     0) return 0 ;;
     1) printf '%s' "$out"; return 1 ;;
-    99) printf 'the git lock for %s was busy' "$P"; return 2 ;;
+    99) printf 'the git lock for %s was busy' "$P"; return 3 ;;
     *) printf '%s' "${out:-mc_merge_tree rc $rc}"; return 2 ;;
   esac
 }
@@ -353,6 +355,10 @@ pq_resolve() {
       0) pq_reuse_log "$num" "$head" "$rbm" "$main" "$rage" "$st" proceed; echo proceed; return 0 ;;
       1) PQ_WHY="head ${head:0:8} conflicts with main ${main:0:12}: ${mt:-paths not named}"
          pq_reuse_log "$num" "$head" "$rbm" "$main" "$rage" "$st" rebase; echo rebase; return 0 ;;
+      # BH-7376: a busy lock is no answer YET. Falling through could dispatch a
+      # metered run this reuse covers: hold, and the next run asks again.
+      3) PQ_WHY="prequeue reuse merge test not run: ${mt:-the git lock was busy}; asked next run"
+         pq_reuse_log "$num" "$head" "$rbm" "$main" "$rage" "$st" "hold ($mt)"; echo hold; return 0 ;;
     esac
     # No answer: the dispatch-time rule below decides, as it did before.
     pq_reuse_log "$num" "$head" "$rbm" "$main" "$rage" "$st" "merge-test-unanswered ($mt)"
@@ -376,6 +382,7 @@ pq_resolve() {
   case "$_pq_ir" in
     reuse) echo proceed; return 0 ;;
     rebase) echo rebase; return 0 ;;
+    busy) echo hold; return 0 ;;   # BH-7376: a busy git lock never dispatches
   esac
   # A run the conductor could never act on this tick is not paid for. Nothing
   # is written, so the first tick without the refusal dispatches as usual.

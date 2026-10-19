@@ -43,6 +43,10 @@ ENV_DIR=$(harness_env_dir "$HARNESS")
 # Registry: catalog/lanes.json. Operator: bin/harness-ctl.sh off harden-state.
 # shellcheck disable=SC1091
 . "${HARNESS:-/root/harness}/bin/lib/lane-gate.sh" 2>/dev/null || true
+# Only the no-argument arm-all run is the */10 tick (BH-7422). --status,
+# --release and --rearm are helper calls, often made while the caller holds
+# locks/harden-state.lock, so they never take the one-run claim.
+case "${1:-}" in '') ;; *) LANE_SINGLE_RUN=0 ;; esac
 command -v lane_gate_or_exit >/dev/null 2>&1 && lane_gate_or_exit harden-state
 command -v lane_env_apply    >/dev/null 2>&1 && lane_env_apply    harden-state
 

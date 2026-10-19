@@ -2,6 +2,7 @@
   "id": "lead-review",
   "name": "Lead review jobs",
   "scope": "box",
+  "single_run": false,
   "script": "bin/lead-review.sh",
   "cadence": "*/15 * * * *",
   "boxes": [

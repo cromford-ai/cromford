@@ -253,6 +253,10 @@ command -v rp_post >/dev/null 2>&1 || rp_post() {
 # without it ticks exactly as before.
 # shellcheck source=bin/lib/mc-batch-minutes.sh
 [ -r "$H/bin/lib/mc-batch-minutes.sh" ] && . "$H/bin/lib/mc-batch-minutes.sh"
+# The `full` label runs one batch (BH-7290): taken off after a completed batch.
+# A tree without it ticks exactly as before.
+# shellcheck source=bin/lib/mc-full-label-expiry.sh
+[ -r "$H/bin/lib/mc-full-label-expiry.sh" ] && . "$H/bin/lib/mc-full-label-expiry.sh"
 # The foreign-red attribution for the BH-636 re-entry arm (BH-3776). A tree
 # without it gates re-entry on the raw merge state alone, as before.
 # shellcheck source=bin/lib/mc-foreign-red.sh
@@ -335,6 +339,10 @@ mc_keyed_tick_parse
 # THE FULL-TICK WINDOW (BH-5521): MC_FULL_TICK_BUDGET_S -> MC_WORKERS_DONE_BY.
 # The window is mc_full_tick_window, in bin/lib/mc/tick-scope.sh (BH-6518).
 mc_full_tick_window
+# THE KEYED READY-ARM FLOOR (BH-7376): when the launcher opted in
+# (MC_KEYED_READY_FLOOR=1), a READY row's PR worker gets at least
+# MC_KEYED_READY_ARM_S, so one READY PR can go through prequeue AND enqueue.
+command -v mc_keyed_deadline_floor >/dev/null 2>&1 && mc_keyed_deadline_floor
 # THE FULL-TICK CLOCK (BH-7139): a full tick stamps its start and logs
 # FULL_TICK wall_s= at its end; bin/merge-conductor-wake.sh alerts once on a
 # full tick older than 2 cron periods. Optional: a tree without the lib ticks
@@ -3028,6 +3036,8 @@ tick_project() {
     fi
     # BH-5374: the minutes each finished draft spent, after bres_tick logged its resets.
     command -v bmin_tick >/dev/null 2>&1 && { bmin_tick "$SLUG" || mc_log "$SLUG QUEUE_MINUTES_UNREAD rc=$? — batch minutes not recorded this tick"; }
+    # BH-7290: the `full` label comes off each open member after one completed batch.
+    command -v fle_tick >/dev/null 2>&1 && { fle_tick "$SLUG" "$MERGES" || mc_log "$SLUG FULL_LABEL_EXPIRY_UNREAD rc=$? — the full label was not checked this tick"; }
   fi
 
   # ---- open PRs ---------------------------------------------------------------
@@ -3168,10 +3178,13 @@ tick_project() {
         PLAINROWS+=("$ROW")
       fi
     done
-    if [ "${#HOTNUMS[@]}" -gt 0 ]; then
-      [ "$QUEUE" = 1 ] && hotfix_pending_write "$P" "${HOTNUMS[@]}"
-      ROWS=("${HOTROWS[@]}" "${PLAINROWS[@]:-}")
-    fi
+    [ "${#HOTNUMS[@]}" -gt 0 ] && [ "$QUEUE" = 1 ] && hotfix_pending_write "$P" "${HOTNUMS[@]}"
+    # READY ROWS COME NEXT (BH-7376): after the hotfix rows, every READY row
+    # gets the worker window before any WAIT_CI or HEAD_MOVED row, so the
+    # full tick's window never runs out on re-reads while a merge waits.
+    command -v mc_ready_first >/dev/null 2>&1 && [ "${#PLAINROWS[@]}" -gt 0 ] \
+      && mapfile -t PLAINROWS < <(mc_ready_first "$SLUG" "${PLAINROWS[@]}")
+    ROWS=("${HOTROWS[@]}" "${PLAINROWS[@]:-}")
   fi
   # ---- one worker per PR (2026-09-15) ---------------------------------------
   # The list is walked here and the WORK is done in pr_worker, one background

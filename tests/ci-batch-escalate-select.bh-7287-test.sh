@@ -21,7 +21,7 @@
 #   S3  a non-workflow .github/ path: full; a top-level workflow: not full
 #   S4  every infra row of the tsv: mode=infra
 #   S5  CI_FULL_TRIGGERS=+tests/lib/scratch.sh: full (escalate beats infra)
-#   S6  an infra path plus an unmapped path: full, `unmapped: <p>`
+#   S6  an infra path plus an unmapped path, union off (BH-7290): full, `unmapped: <p>`
 #   S7  an infra path plus an ordinary path: infra, the other path's suites kept
 #   S8  a shard re-plan (--expect-n) of S1 agrees
 #   C1-C5 a canary list that is missing, names a missing suite, has a glob,
@@ -185,7 +185,7 @@ done
 escalates S5 "selection input: tests/lib/scratch.sh" tests/lib/scratch.sh -- CI_FULL_TRIGGERS=+tests/lib/scratch.sh
 
 # ── S6. a full answer on the other paths still wins.
-escalates S6 "unmapped: zz-unmapped-bh7287/x.sh" tests/lib/scratch.sh zz-unmapped-bh7287/x.sh
+escalates S6 "unmapped: zz-unmapped-bh7287/x.sh" tests/lib/scratch.sh zz-unmapped-bh7287/x.sh -- CI_PLAN_MEMBER_UNION=0
 
 # ── S7. the other paths' selection is kept.
 infra_ok S7 tests/lib/scratch.sh bin/merge-sweep.sh

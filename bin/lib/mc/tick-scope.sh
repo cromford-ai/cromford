@@ -19,6 +19,15 @@
 #   caller window it sets MC_WORKERS_DONE_BY and MC_WINDOW_NEXT (globals, no
 #   `local`, never exported). Needs mc_log.
 #
+# mc_keyed_deadline_floor (BH-7376)
+#   On a keyed tick whose launcher set MC_KEYED_READY_FLOOR=1, sets
+#   MC_WORKER_DEADLINE_MIN_S to MC_KEYED_READY_ARM_S (global, not exported)
+#   unless the caller set it, so a READY row's worker can run the whole READY
+#   arm. Runs after mc_keyed_tick_parse.
+#
+# mc_ready_first <slug> <row>... (BH-7376)
+#   The open-list rows with the READY rows (MC_ROWS) first, one a line.
+#
 # mc_tick_mode
 #   Reads the four fleet flags through flag_on (defined by the driver, which
 #   BH-685 keeps there, so this runs after flag_on is defined) and the fleet
@@ -78,6 +87,60 @@ if [ -z "$MC_ONLY_KEYS" ] && ! [[ "${MC_WORKERS_DONE_BY:-}" =~ ^[0-9]+$ ]]; then
 fi
 }
 # <<< full-tick window (BH-5521)
+# >>> keyed READY-arm floor (BH-7376)
+# A keyed run is how one READY PR gets merged: the backstop fire, the wake lane
+# and the READY re-kick past its TTL all start one. Its PR worker must have time
+# for the whole READY arm (dep-gate, ticket-hold, prequeue, state-guard,
+# enqueue). On the hub (2026-10-17/18) prequeue alone took up to 265 s on
+# cromford and 290 s on project-5, and enqueue 90 s, while the worker
+# deadline was 180 s: #7361 was killed in prequeue on every run for 316 min.
+# MC_KEYED_READY_ARM_S (lane merge-conductor, default 490 s: prequeue p95 ~290 s
+# + the enqueue step floor 130 s + 70 s for the other steps) is the floor of a
+# keyed run's worker deadline (MC_WORKER_DEADLINE_MIN_S) and of its prequeue
+# step's timeout, read by mc_worker_deadline_s and mc_step_timeout_s.
+# OPT-IN (BH-7376 review): only a launcher that sets MC_KEYED_READY_FLOOR=1
+# gets it. Those are the backstop (its timeout and cap are sized from the same
+# knob), the keyed pool and kw_conductor's direct launch (no `timeout` over
+# them). pr-owner-sweep and the archie queue kick run keyed under `timeout 240`
+# with no cap: a 490 s worker there would outlive the timeout, which then kills
+# the whole group (BH-4918). The floor applies only to a READY row
+# (_mc_floor_row). A full tick is unchanged. Plain assignments, never exported:
+# a run this one starts opts in, or not, on its own.
+mc_keyed_ready_arm_s() {
+  local v="${MC_KEYED_READY_ARM_S:-490}"
+  [[ "$v" =~ ^[0-9]+$ ]] && [ "$v" -gt 0 ] || v=490
+  printf '%s\n' "$v"
+}
+mc_keyed_deadline_floor() {
+  local opt="${MC_KEYED_READY_FLOOR:-}"
+  export -n MC_KEYED_READY_FLOOR 2>/dev/null
+  [ "$opt" = 1 ] && [ -n "${MC_ONLY_KEYS:-}" ] || return 0
+  [[ "${MC_WORKER_DEADLINE_MIN_S:-}" =~ ^[0-9]+$ ]] && return 0
+  MC_WORKER_DEADLINE_MIN_S=$(mc_keyed_ready_arm_s)
+  export -n MC_WORKER_DEADLINE_MIN_S 2>/dev/null
+  return 0
+}
+# <<< keyed READY-arm floor (BH-7376)
+# >>> READY first (BH-7376)
+# mc_ready_first <slug> <row>... — prints the open-list rows, one a line, with
+# every row whose pr-state.tsv state is READY first, then the rest, each group
+# in its list order. The full tick's worker window (MC_FULL_TICK_BUDGET_S) ran
+# out before it reached READY rows (137-151 WINDOW_DEFERRED lines an hour on
+# 2026-10-17): a merge must never wait behind WAIT_CI and HEAD_MOVED re-reads.
+# One read of MC_ROWS; no file or no READY row keeps the order as it is.
+mc_ready_first() {
+  local slug="$1" ready r; shift
+  local -a first=() rest=()
+  ready=" $(awk -F'\t' -v p="${slug,,}#" 'index(tolower($1), p) == 1 && $2 == "READY" { print substr($1, length(p) + 1) }' \
+    "${MC_ROWS:-/dev/null}" 2>/dev/null | tr '\n' ' ')"
+  for r in "$@"; do
+    [ -n "$r" ] || continue
+    if [[ "$ready" == *" ${r%%$'\t'*} "* ]]; then first+=("$r"); else rest+=("$r"); fi
+  done
+  [ "${#first[@]}" -eq 0 ] || printf '%s\n' "${first[@]}"
+  [ "${#rest[@]}" -eq 0 ] || printf '%s\n' "${rest[@]}"
+}
+# <<< READY first (BH-7376)
 # >>> tick mode (BH-1201, BH-1672)
 mc_tick_mode() {
 KILL=0;    flag_on automerge-disabled && KILL=1

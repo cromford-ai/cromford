@@ -2,6 +2,7 @@
   "id": "blocked-resolver",
   "name": "Blocked resolver (LLM)",
   "scope": "hub",
+  "single_run": false,
   "per_project_hold": true,
   "script": "bin/blocked-resolver.sh",
   "cadence": "4,14,24,34,44,54 * * * *",

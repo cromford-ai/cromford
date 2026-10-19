@@ -99,7 +99,8 @@
 # The settings rows lane_snapshot.max_age_s (1200), lane_snapshot.max_bytes
 # (33554432), lane_snapshot.builds_days (30) and lane_snapshot.file_max
 # (262144, at most LRI_PART_BYTES) are the knobs; the numbers in brackets are
-# the code fallbacks. The root is ${HARNESS:-${H:-}}. Defines
+# the code fallbacks. _lri_setting reads a row of 0 as missing, so none of
+# them can be set to 0. The root is ${HARNESS:-${H:-}}. Defines
 # functions only. Nothing runs on source.
 
 LRI_PART_BYTES=1000000
@@ -491,6 +492,44 @@ lri_member_ok() {
   [ -n "$re" ] && [[ $rel =~ $re ]]
 }
 
+# _lri_name_stamp <dir> — rc 0 when the record dir's name ends in the build
+# time the hub writes into it; LRI_STAMP is that time as YYYYMMDDHHMMSS UTC.
+# The shapes: <p>-<KEY>-<YYYYMMDDHHMM> (bin/run-build.sh),
+# pool-<p>-<KEY>-<YYYYMMDDHHMM> (bin/fly-pool.sh), fly-<p>-<KEY>-<14 digits>
+# (bin/fly-results-ingest.sh), <p>-<KEY>-remote<14 digits>[-<n>]
+# (bin/lib/rt/staging.sh RR_DEST), and any -<word>-<stamp> such as -r2- or
+# -rerun-. A 12-digit stamp gets second 00. The stamp follows a lower-case
+# letter or a digit (POSIX classes, so the locale cannot widen a range), so a
+# ticket number (`-BH-<digits>`) is never read as a time. Anything else (-old,
+# a short or impossible date) is rc 1: the caller reads the mtime. No fork.
+_lri_name_stamp() {
+  local re='[[:lower:][:digit:]](-|-remote)(20[0-9][0-9](0[1-9]|1[0-2])(0[1-9]|[12][0-9]|3[01])([01][0-9]|2[0-3])[0-5][0-9])([0-5][0-9])?(-[0-9]{1,2})?$'
+  LRI_STAMP=""
+  [[ ${1##*/} =~ $re ]] || return 1
+  LRI_STAMP="${BASH_REMATCH[2]}${BASH_REMATCH[6]:-00}"
+}
+
+# _lri_dir_old <dir> <cut> <ref> [find age args] — rc 0 when a record dir is
+# out of the window. <cut> is the window's start as YYYYMMDDHHMMSS UTC and
+# <ref> a file whose mtime is that start (either empty = not available). A
+# name inside the window is in with no stat. Any other dir is in when its
+# mtime is newer than <ref>: the bash -nt test, one stat and no fork. With no
+# <ref>, `find -mtime` decides, as before BH-7437. With no age args nothing
+# is old.
+_lri_dir_old() {
+  local d="$1" cut="$2" ref="$3"
+  shift 3
+  [ "$#" -gt 0 ] || return 1
+  if [ -n "$cut" ] && _lri_name_stamp "$d"; then
+    [[ $LRI_STAMP < $cut ]] || return 1
+  fi
+  if [ -n "$ref" ]; then
+    [[ $d -nt $ref ]] && return 1
+    return 0
+  fi
+  [ -z "$(find "$d" -maxdepth 0 "$@" 2>/dev/null)" ]
+}
+
 # _lri_list <project> ro|rw <days> [skip-file] — the allow-listed paths under
 # the root, one per line, type letter TAB relpath, sorted. The lane is
 # $LRI_LANE, else LRI_LANE_DEFAULT. Record dirs older than <days> stay out
@@ -499,13 +538,42 @@ lri_member_ok() {
 # [skip-file] (an absolute path), each member left out that way is appended
 # to it: `dir TAB <relpath> TAB <days>` or `file TAB <relpath> TAB <bytes> TAB
 # <cap>`. rc 1 on a malformed manifest.
+#
+# A record dir's age costs no fork (BH-7437): the hub held 9,579 record dirs
+# and a `find <dir> -maxdepth 0 -mtime` fork per dir made one publisher run
+# take 30-60 min. A name whose build time (_lri_name_stamp) is inside the
+# window is in, with no stat: the dir was made then, so its mtime is no older.
+# Every other dir is decided by its mtime as before, through the bash -nt test
+# against ONE reference file touched to the window's start. So a dir written
+# long after its build (a late marker or COMMENTED) stays in, as before.
 _lri_list() {
-  local p="$1" mode="$2" days="$3" skips="${4:-}" root walk fmax age=()
+  local p="$1" mode="$2" days="$3" skips="${4:-}" root walk fmax age=() cut="" ref="" now rc
   _lri_load "${LRI_LANE:-$LRI_LANE_DEFAULT}" "$p" || return 1
   walk="${_LRI_M[$LRI_K|walk.$mode]:-}"
   root=$(_lri_root)
   fmax=$(_lri_file_max)
-  [ "$days" -gt 0 ] 2>/dev/null && age=(-mtime "-$days")
+  if [ "$days" -gt 0 ] 2>/dev/null; then
+    age=(-mtime "-$days")
+    now=$(date -u +%s)
+    cut=$(date -u -d "@$((now - days * 86400))" +%Y%m%d%H%M%S 2>/dev/null) || cut=""
+    # The reference file; when it cannot be made, find decides (no -nt).
+    ref=$(mktemp "${TMPDIR:-/tmp}/lri-age.XXXXXX" 2>/dev/null) || ref=""
+    if [ -n "$ref" ] && ! touch -d "@$((now - days * 86400))" "$ref" 2>/dev/null; then
+      rm -f "$ref"; ref=""
+    fi
+  fi
+  _lri_list_walk "$p" "$mode" "$days" "$skips" "$root" "$walk" "$fmax" "$cut" "$ref" ${age[@]+"${age[@]}"}
+  rc=$?
+  [ -z "$ref" ] || rm -f "$ref"
+  return "$rc"
+}
+
+# _lri_list_walk <p> <mode> <days> <skips> <root> <walk> <fmax> <cut> <ref>
+# [find age args] — the walk _lri_list describes; its output and rc.
+_lri_list_walk() {
+  local p="$1" mode="$2" days="$3" skips="$4" root="$5" walk="$6" fmax="$7" cut="$8" ref="$9"
+  shift 9
+  local age=("$@")
   (
     cd "$root" 2>/dev/null || exit 0
     # over <find args> — the allow-listed files over the cap, into the skip file.
@@ -522,10 +590,13 @@ _lri_list() {
       case "$kind" in
         exact) [ -f "$pre" ] && [ ! -L "$pre" ] && printf -- '-\t%s\n' "$pre" ;;
         rec)
-          find "$pre" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | while IFS= read -r d; do
-            d="${d#./}"
+          # One grep over the listing first: builds/ holds every project's
+          # dirs, and a bash test per name per glob is the slow part there.
+          # No match is not a failure (the caller may run under pipefail).
+          find "$pre" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | sed 's#^\./##' \
+            | { LC_ALL=C grep -aE -- "$dre" || :; } | while IFS= read -r d; do
             [[ $d =~ $dre ]] || continue
-            if [ "${#age[@]}" != 0 ] && [ -z "$(find "$d" -maxdepth 0 "${age[@]}" 2>/dev/null)" ]; then
+            if _lri_dir_old "$d" "$cut" "$ref" ${age[@]+"${age[@]}"}; then
               [ -z "$skips" ] || printf 'dir\t%s\t%s\n' "$d" "$days" >> "$skips"
               continue
             fi

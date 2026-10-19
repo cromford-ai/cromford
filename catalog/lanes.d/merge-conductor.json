@@ -2,6 +2,7 @@
   "id": "merge-conductor",
   "name": "Merge conductor",
   "scope": "hub",
+  "single_run": false,
   "factory_stop": "merge",
   "per_project_hold": true,
   "script": "bin/merge-conductor.sh",

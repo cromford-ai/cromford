@@ -791,6 +791,9 @@ digest() {
   fi
 }
 
+# The 06:40 scan and the 07:10 digest are two modes: the mode is the one-run
+# key (BH-7422), so a long scan never turns the digest away.
+LANE_RUN_KEY=${1:-scan}
 command -v lane_gate_or_exit >/dev/null 2>&1 && lane_gate_or_exit archie-research
 command -v lane_env_apply >/dev/null 2>&1 && lane_env_apply archie-research
 case "${ARCHIE_RESEARCH_ENABLED:-1}" in

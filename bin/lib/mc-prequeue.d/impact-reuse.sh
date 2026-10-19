@@ -30,10 +30,12 @@
 #   - disjoint: the merge test. Clean: the candidate's line is written as the
 #     entry for (head, current main), with a `.reuse` sidecar
 #     `reused-from main=<vm> run=<id> commits=<n> files=<k> reason=impact-disjoint`,
-#     and the answer is reuse. Conflict: rebase. No answer: dispatch.
+#     and the answer is reuse. Conflict: rebase. A busy git lock: busy, and
+#     pq_resolve holds (BH-7376: never a dispatch the reuse may cover). Any
+#     other no-answer: dispatch.
 # Any read, map or select that fails answers dispatch, never reuse. One
 # `PREQUEUE reuse ... -> impact-<word> (<why>)` line per decision on a
-# candidate. The word is in _pq_ir: reuse, rebase, dispatch or none.
+# candidate. The word is in _pq_ir: reuse, rebase, busy, dispatch or none.
 #
 #   pq_ir_root                     the checkout the map is built in, or rc 1
 #   pq_ir_map <root>               the map path, built once per tick and root sha
@@ -153,6 +155,8 @@ pq_impact_reuse() {
     1) _pq_ir=rebase; PQ_WHY="head ${head:0:8} conflicts with main ${main:0:12}: ${mt:-paths not named}"
        _pq_ir_log "disjoint, conflict"; return 0 ;;
     0) ;;
+    3) _pq_ir=busy; PQ_WHY="prequeue impact-reuse merge test not run: ${mt:-the git lock was busy}; asked next run"
+       _pq_ir_log "merge-test-busy: $mt"; return 0 ;;
     *) _pq_ir_log "merge-test-unanswered: $mt"; return 0 ;;
   esac
   # Write before answer, under the pq_dispatch lock and only into an empty

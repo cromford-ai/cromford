@@ -1,0 +1,11 @@
+{
+  "env": "MC_KEYED_READY_ARM_S",
+  "type": "int",
+  "default": 490,
+  "min": 1,
+  "max": 1500,
+  "unit": "seconds",
+  "zero_means": null,
+  "read_in": "bin/lib/mc/tick-scope.sh",
+  "note": "BH-7376: the time one keyed conductor run needs for the whole READY arm (dep-gate, ticket-hold, prequeue, state-guard, enqueue). Default 490 s = prequeue p95 measured on the hub 2026-10-17/18 (~290 s; cromford avg 103 s max 265 s, project-5 avg 148 s max 290 s) + the enqueue step floor (130 s) + 70 s for the other steps. Opt-in per launcher (MC_KEYED_READY_FLOOR=1: the backstop, bin/mc-keyed-pool.sh, kw_conductor) and READY rows only: such a row's PR worker gets at least this (MC_WORKER_DEADLINE_MIN_S) and its prequeue step's timeout is never under it. bin/merge-conductor-backstop.sh never runs a keyed run under a timeout below this + 45 s, whatever lane.merge-conductor-backstop.mc_backstop_timeout_s says. Raise it when STEP_END step=prequeue p95 grows. Settings row: lane.merge-conductor.mc_keyed_ready_arm_s."
+}

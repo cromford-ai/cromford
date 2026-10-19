@@ -44,8 +44,17 @@
 # answer is hold with PQ_WHY and one PREQUEUE_CALL_TIMEOUT line naming the call:
 # the row stays READY, the next tick asks again, and nothing the gate learned
 # past the budget counts. A budget under 1 s holds at once, with no call.
+#
+# THE GIT LOCK WAIT (BH-7376, knob MC_PREQUEUE_GIT_LOCK_WAIT_S, default 5). The
+# gate never sits on the project's git lock: pq_restamp (a write, so the call
+# budget never cuts it) and pq_merge_test waited MC_GIT_LOCK_WAIT (180 s) for a
+# lock rebase workers hold, and a keyed READY run's prequeue step took up to
+# 265 s (hub, 2026-10-17/18) until `timeout` killed the run before enqueue.
+# A busy lock is a hold (restamp) or no answer (merge test), and the next run
+# asks again. A dispatch never waits for its run: pq_dispatch writes `pending`
+# for (PR, head, main) and the gate holds; a later run reads the verdict.
 
-PQ_KNOB_DEFAULTS="MC_PREQUEUE_GATE=1 MC_PREQUEUE_FRESH_S=1800 MC_PREQUEUE_DEADLINE_S=2400 MC_PREQUEUE_REUSE=1 MC_BATCH_SOLO=1 MC_BATCH_SOLO_MAX_MEMBERS=13 MC_PREQUEUE_FRESH_COMMITS=3 MC_PREQUEUE_TRACE=1 MC_PREQUEUE_IMPACT_REUSE=1 MC_PREQUEUE_IMPACT_MAX_S=21600 MC_PREQUEUE_CALL_BUDGET_S=150"
+PQ_KNOB_DEFAULTS="MC_PREQUEUE_GATE=1 MC_PREQUEUE_FRESH_S=1800 MC_PREQUEUE_DEADLINE_S=2400 MC_PREQUEUE_REUSE=1 MC_BATCH_SOLO=1 MC_BATCH_SOLO_MAX_MEMBERS=13 MC_PREQUEUE_FRESH_COMMITS=3 MC_PREQUEUE_TRACE=1 MC_PREQUEUE_IMPACT_REUSE=1 MC_PREQUEUE_IMPACT_MAX_S=21600 MC_PREQUEUE_CALL_BUDGET_S=150 MC_PREQUEUE_GIT_LOCK_WAIT_S=5"
 
 # pq_knob <NAME> — a merge-conductor lane knob for this project, a non-negative
 #   integer, else its default from PQ_KNOB_DEFAULTS (the _bej_knob pattern).
@@ -110,6 +119,11 @@ _pq_over_hold() {
 # pq_gate <slug> <num> <url> <head> <pbase> — see THE CONTRACT above.
 pq_gate() {
   local slug="${1:-}" num="${2:-}" url="${3:-}" head="${4:-}" pbase="${5:-}" raw="" rc=0 path line st rest b
+  # THE GIT LOCK WAIT (BH-7376): every mc_git_locked call under this gate
+  # (pq_restamp, pq_merge_test) waits at most this long for the project's git
+  # lock; a busy lock answers hold or no-answer, as it always did. Local, so it
+  # ends with the gate.
+  local MC_GIT_LOCK_WAIT; MC_GIT_LOCK_WAIT=$(pq_knob MC_PREQUEUE_GIT_LOCK_WAIT_S)
   PQ_VERDICT=proceed; PQ_MAIN=""; PQ_WHY=""; PQ_SUITES=""; PQ_PATH=""
   _pq_wf=""; _pq_key="$slug#$num"; _pq_cs=(); _pq_cl=()
   [ "$(pq_knob MC_PREQUEUE_GATE)" = 0 ] && { declare -F pq_status_gate >/dev/null && pq_call -w status pq_status_gate "$slug" "$head" "$url" off; echo proceed; return 0; }

@@ -99,6 +99,22 @@
 #                             selected as a batch select, or `member reach:
 #                             unreadable (<why>)`. REPORT ONLY: it changes no
 #                             output, list or rc.
+#                             BH-7290 (BH-7033.4): an `unmapped:` or
+#                             `unmapped path` answer does not make the batch
+#                             full. bin/lib/ci-member-reach.sh plans the UNION
+#                             of the members' selections: each unmapped path
+#                             adds the suites under its directory plus the
+#                             infra canaries (catalog/ci-infra-canary.txt, or
+#                             CI_INFRA_CANARY_FILE), and the rest of the diff
+#                             selects as usual. mode=batch-selected, reason
+#                             `member union (BH-7033.4): <k> unmapped path(s)
+#                             (<p>): <d> directory + <c> canaries; <rest>`.
+#                             No canary list, a bad canary line, a map that
+#                             fails, more than 20 unmapped paths or another
+#                             full answer keeps the corpus, said on a
+#                             `ci-plan: member union: off (<why>)` line. An
+#                             escalate row still makes the batch full.
+#                             Rollback: CI_PLAN_MEMBER_UNION=0.
 #   pull_request              bin/test-impact.sh ci-select, exactly as before
 #                             (a train, the `full` label, an infra path or an
 #                             unknown reach still selects the whole corpus).
@@ -290,7 +306,7 @@ while [ $# -gt 0 ]; do
     --expect-n) [ $# -ge 2 ] || { echo "ci-plan: --expect-n needs a number" >&2; exit 2; }; EXPECT="$2"; shift ;;
     --tier)     case "${2:-}" in nightly|nightly-full) TIER="$2" ;;
                   *) echo "ci-plan: --tier takes 'nightly' or 'nightly-full'" >&2; exit 2 ;; esac; shift ;;
-    -h|--help)  sed -n '2,279p' "$0"; exit 0 ;;
+    -h|--help)  sed -n '2,295p' "$0"; exit 0 ;;
     *) echo "ci-plan: unknown argument $1" >&2; exit 2 ;;
   esac
   shift
@@ -328,6 +344,8 @@ FTRIG=-
 if . "$SELF_DIR/lib/ci-batch-escalate.sh" 2>/dev/null && command -v cbe_delta_norm >/dev/null 2>&1; then
   FTRIG=$(cbe_delta_norm "${CI_FULL_TRIGGERS:-}")
 fi
+# The member union (BH-7290). A lib that cannot be read leaves the batch full.
+. "$SELF_DIR/lib/ci-member-reach.sh" 2>/dev/null || true
 
 # queue_tested — rc 0 when this push's tree needs no corpus (see the header).
 # Reads GitHub through $CI_PLAN_GH (default gh, authenticated with the job's
@@ -510,7 +528,7 @@ infra_canaries() {
 # the corpus with a reason (ESCALATION) or runs `select --changed`. Every failure
 # is rc 2 here, never a smaller run.
 batch_select() {
-  local diff_esc="" p r sel tot
+  local diff_esc="" p r sel tot rc
   CH="$TMP/changed"
   if [ -n "${CI_PLAN_CHANGED_FILE:-}" ]; then
     cp "$CI_PLAN_CHANGED_FILE" "$CH" 2>/dev/null || { : > "$CH"; diff_esc="the changed list could not be read"; }
@@ -642,6 +660,21 @@ batch_select() {
     "full: infra change ("*")")  p="${r#full: infra change (}"; ESCALATION="selection input: ${p%)}" ;;
     "full: "*)                   ESCALATION="${r#full: }" ;;
     *) MODE=batch-selected ;;
+  esac
+  # BH-7290 (BH-7033.4): an unmapped path does not send the whole batch to the
+  # corpus. The batch plans the union of its members' selections: that path's
+  # directory suites plus the infra canaries, and the rest of the diff as usual.
+  # It reads $sel_ch, the diff without the BH-7287 infra paths, so an infra
+  # path is not judged twice; the infra block below adds those paths after it.
+  case "$ESCALATION" in "unmapped: "*|"unmapped path "*)
+    if command -v cmr_union >/dev/null 2>&1; then
+      rc=0; TI_NAMED_BASE="$TI_BASE" cmr_union "$IMPACT" "$sel_ch" "$TMP/union.list" "$TMP" || rc=$?
+      case "$rc" in
+        0) cp "$TMP/union.list" "$LIST"; MODE=batch-selected; ESCALATION=-; r="$CMR_REASON" ;;
+        2) echo "ci-plan: member union: select failed: $(cat "$TMP/cmr.why" 2>/dev/null)" >&2; exit 2 ;;
+        *) echo "ci-plan: member union: off ($CMR_WHY)" >&2 ;;
+      esac
+    fi ;;
   esac
   # BH-7287: the infra paths add their self and reads suites (the suites that
   # test that file) and the canaries to the other paths' selection.

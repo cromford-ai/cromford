@@ -57,6 +57,9 @@ H="${HARNESS:-/root/harness}"
 # >>> lane gate (BH-1165)
 # shellcheck disable=SC1091
 . "${HARNESS:-/root/harness}/bin/lib/lane-gate.sh" 2>/dev/null || true
+# :17 dispatch and :41 collect are two modes: the mode is the one-run key
+# (BH-7422).
+LANE_RUN_KEY=${1:-none}
 command -v lane_gate_or_exit >/dev/null 2>&1 && lane_gate_or_exit ci-nightly-full
 if [ -f "$HENV/global.env" ]; then set -a; # shellcheck disable=SC1091
   . "$HENV/global.env"; set +a; fi

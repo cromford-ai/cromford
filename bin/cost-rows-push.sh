@@ -171,6 +171,10 @@ set -a +u; . "$HENV/global.env" 2>/dev/null; set +a -u
 # Registry: catalog/lanes.json. Operator: bin/harness-ctl.sh off cost-rows-push.
 # shellcheck disable=SC1091
 . "${HARNESS:-/root/harness}/bin/lib/lane-gate.sh" 2>/dev/null || true
+# Only the cron mode is the tick (BH-7422). --box/--csv (a pool reap push) and
+# --verify are helper calls and never take the one-run claim: a skipped reap
+# push would lose that machine's cost rows.
+[ "$MODE" = cron ] || LANE_SINGLE_RUN=0
 command -v lane_gate_or_exit >/dev/null 2>&1 && lane_gate_or_exit cost-rows-push
 command -v lane_env_apply    >/dev/null 2>&1 && lane_env_apply    cost-rows-push
 [ -n "$_CRP" ] && COST_ROWS_PUSH="$_CRP"

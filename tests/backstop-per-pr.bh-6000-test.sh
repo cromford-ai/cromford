@@ -50,9 +50,13 @@ for i in $(seq 1 30); do
   printf '%s#%s\t%s\t%s\t%s\t%s\t-\t-\thttps://github.com/%s/pull/%s\n' "$repo" "$i" "$st" "$((NOW - i))" "$H1" "$H1" "$repo" "$i" \
     >> "$R/state/merge-conductor/pr-state.tsv"
 done
+# TEST-CHANGE (BH-7376): the backstop now starts at most MC_BACKSTOP_MAX_RUNNING
+# (default 6) runs at once. This suite pins BH-6000's one run per candidate in
+# one fire, so it sets the cap to 0 (none); tests/merge-conductor-keyed-timeout-test.sh
+# K13 pins the cap itself.
 fire() { # fire [VAR=val...] — one backstop fire; its output -> $T/bs.out, seconds -> $T/bs.secs
   local t0 t1; t0=$(date +%s)
-  ( cd "$T" && env PATH="$T/rbin:$PATH" HARNESS="$R" "$@" bash "$R/bin/merge-conductor-backstop.sh" > "$T/bs.out" 2>&1 )
+  ( cd "$T" && env PATH="$T/rbin:$PATH" HARNESS="$R" MC_BACKSTOP_MAX_RUNNING=0 "$@" bash "$R/bin/merge-conductor-backstop.sh" > "$T/bs.out" 2>&1 )
   t1=$(date +%s); echo $((t1 - t0)) > "$T/bs.secs"
 }
 starts() { grep -h '^key=' "$T"/rec/* 2>/dev/null | grep -c .; }

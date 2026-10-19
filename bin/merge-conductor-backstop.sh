@@ -8,8 +8,10 @@
 # = one log line and exit 0, with no GitHub call and no conductor run.
 # Otherwise EVERY candidate gets its own detached keyed conductor run,
 # `MC_ONLY_PR=<key>`, under its own `timeout MC_BACKSTOP_TIMEOUT_S` (default
-# 240) and its own per-key flock (locks/mc-backstop-<key>.lock), with its PR
-# worker capped below that timeout (MC_WORKER_DEADLINE_CAP_S, BH-4918). That
+# 240, never under MC_KEYED_READY_ARM_S + 45 s, BH-7376) and its own per-key
+# flock (locks/mc-backstop-<key>.lock), with its PR worker capped 45 s below
+# that timeout (MC_WORKER_DEADLINE_CAP_S, BH-4918); the keyed run itself raises
+# its worker to MC_KEYED_READY_ARM_S (mc_keyed_deadline_floor). That
 # run skips the fleet sweeps, the main-red detector and mc_tick_metrics (the
 # cadence hold is not reset), and runs ae_project over its row, so a green row
 # goes READY and is enqueued in the same run.
@@ -24,6 +26,10 @@
 # a key is never started twice and never dropped. MC_BACKSTOP_MAX_KEYS is
 # deprecated: read, named in the log when set, and otherwise ignored. The
 # carry file (state/merge-conductor/backstop-carry) is no longer written.
+# A COUNT CAP AGAIN (BH-7376): runs now last up to MC_KEYED_READY_ARM_S + 45 s,
+# past the cron period, so MC_BACKSTOP_MAX_RUNNING (default 6, 0 = none)
+# bounds the runs alive at once, earlier fires' included. READY keys start
+# first; a key past the cap is named and offered again by the next fire.
 #
 # WHAT IT COSTS: nothing on an idle fleet. Per candidate, one conductor
 # process (its own project-level reads: one ETag-cached open-PR list) plus the
@@ -68,15 +74,29 @@ ROWS="$H/state/merge-conductor/pr-state.tsv"
 CAP="${MC_BACKSTOP_MAX_KEYS:-6}"
 TO="${MC_BACKSTOP_TIMEOUT_S:-240}"
 [[ "$TO" =~ ^[0-9]+$ ]] && [ "$TO" -gt 0 ] || TO=240
-# key state since head reviewed alerted reason url — the harness's own repo
-# first, then the oldest `since`. The order is only the launch order now: every
-# candidate is launched this fire.
+# THE TIMEOUT FITS THE READY ARM (BH-7376). A keyed run for one READY PR runs
+# dep-gate, ticket-hold, prequeue, state-guard and enqueue; prequeue alone took
+# up to 265-290 s on the hub (2026-10-17/18) and the row of 290 s killed #7361
+# in prequeue on every fire. The floor is the merge-conductor knob
+# MC_KEYED_READY_ARM_S (row > env > 490) + 45 s for the run's fan-in. A row
+# above the floor wins. Read here because this lane's lane_env_apply exports
+# only its own knobs.
+ARM=""
+command -v lane_knob >/dev/null 2>&1 && ARM=$(lane_knob merge-conductor MC_KEYED_READY_ARM_S 2>/dev/null)
+[[ "$ARM" =~ ^[0-9]+$ ]] && [ "$ARM" -gt 0 ] || ARM="${MC_KEYED_READY_ARM_S:-490}"
+[[ "$ARM" =~ ^[0-9]+$ ]] && [ "$ARM" -gt 0 ] || ARM=490
+TOROW="$TO"
+[ "$TO" -ge $((ARM + 45)) ] || TO=$((ARM + 45))
+# key state since head reviewed alerted reason url — READY rows first (a merge
+# never waits behind a CI re-read, BH-7376), then the harness's own repo, then
+# the oldest `since`. Under MC_BACKSTOP_MAX_RUNNING the order decides which
+# keys start this fire.
 CANDS=$(awk -F'\t' -v own="${HARNESS_REPO:-}" '
   BEGIN { own = tolower(own) }
   ($2=="WAIT_CI"||$2=="READY") && $4!="" && $4!="-" && $4==$5 && $1 ~ /^[^#[:space:]]+#[0-9]+$/ {
   s=$3; if (s !~ /^[0-9]+$/) s=0; r = $1; sub(/#.*/, "", r)
-  print (own != "" && tolower(r) == own ? 0 : 1) "\t" s "\t" $1 }' "$ROWS" 2>/dev/null \
-  | sort -t$'\t' -k1,1n -k2,2n -k3,3 | cut -f3 | awk 'NF && !seen[$0]++')
+  print ($2 == "READY" ? 0 : 1) "\t" (own != "" && tolower(r) == own ? 0 : 1) "\t" s "\t" $1 }' "$ROWS" 2>/dev/null \
+  | sort -t$'\t' -k1,1n -k2,2n -k3,3n -k4,4 | cut -f4 | awk 'NF && !seen[$0]++')
 N=$(grep -c . <<<"$CANDS")
 [ "$N" -gt 0 ] || { say "0 candidates — nothing to do"; exit 0; }
 case "$CAP" in 6|0|'') ;; *) say "MC_BACKSTOP_MAX_KEYS=$CAP is deprecated and has no effect (BH-6000): every candidate gets its own run" ;; esac
@@ -84,6 +104,7 @@ case "$CAP" in 6|0|'') ;; *) say "MC_BACKSTOP_MAX_KEYS=$CAP is deprecated and ha
 # is capped at TO - 45 (never under 30), so a slow PR is killed alone and the
 # run still has time for its own fan-in and enqueue.
 WD=$((TO - 45)); [ "$WD" -ge 30 ] || WD=30
+[ "$TO" = "$TOROW" ] || say "MC_BACKSTOP_TIMEOUT_S=${TOROW}s is under the READY arm (MC_KEYED_READY_ARM_S=${ARM}s + 45s): timeout raised to ${TO}s"
 say "keyed conductor run: worker deadline capped at ${WD}s under timeout ${TO}s (each run)"
 LOCKS="$H/locks"; mkdir -p "$LOCKS" 2>/dev/null
 # ONE DETACHED RUN PER CANDIDATE (BH-6000). Before this, one keyed run took at
@@ -91,14 +112,29 @@ LOCKS="$H/locks"; mkdir -p "$LOCKS" 2>/dev/null
 # fit logged WINDOW_DEFERRED on every fire (#4546, #5704, #5727, #5990, #5999,
 # 2026-10-11), and the rest waited for later fires. Now every candidate starts
 # its own `MC_ONLY_PR=<key> merge-conductor.sh` under its own `timeout` and its
-# own per-key flock, detached (setsid), in this fire. There is no cap and no
-# shared window. A key whose run from an earlier fire still holds its lock is
+# own per-key flock, detached (setsid), in this fire. There is no shared
+# window; the count cap (below, BH-7376) is the only bound. A key whose run
+# from an earlier fire still holds its lock is
 # left alone (one line), never started twice and never dropped: the next fire
 # offers it again. Same shape as bin/lib/project-lanes.sh (BH-5913), per PR.
 # The conductor run takes the PR's own lock inside (mc_pr_lock) as before.
-launched=0
+# THE COUNT CAP (BH-7376 review). Each run may now live MC_KEYED_READY_ARM_S
+# + 45 s (535 s), past the */5 cron period, and the hub ran at load 60-70 on 4
+# cores. MC_BACKSTOP_MAX_RUNNING (default 6, 0 = no cap) bounds how many
+# backstop runs live at once: the runs of earlier fires (a held per-key lock)
+# count, and a key past the cap is left for the next fire, never dropped.
+MAXR="${MC_BACKSTOP_MAX_RUNNING:-6}"; [[ "$MAXR" =~ ^[0-9]+$ ]] || MAXR=6
+running=0
+if [ "$MAXR" -gt 0 ]; then
+  for _lk in "$LOCKS"/mc-backstop-*.lock; do
+    [ -e "$_lk" ] || continue
+    ( exec 7>>"$_lk" && flock -n 7 ) 2>/dev/null || running=$((running + 1))
+  done
+fi
+launched=0; capped=0
 while IFS= read -r KEY; do
   [ -n "$KEY" ] || continue
+  if [ "$MAXR" -gt 0 ] && [ $((running + launched)) -ge "$MAXR" ]; then capped=$((capped + 1)); continue; fi
   LK="$LOCKS/mc-backstop-${KEY//[^A-Za-z0-9._-]/_}.lock"
   # The lock is taken here, in the foreground, so a busy key is known and
   # logged before the next one; the detached child inherits it on fd 9 and
@@ -112,7 +148,7 @@ while IFS= read -r KEY; do
   fi
   # Each run reports its own end on this lane's log, the line the old single
   # run wrote once per fire: `rc=<n>`, or `hit timeout` when `timeout` killed it.
-  ( MC_ONLY_PR="$KEY" WAKE_LAUNCH=1 MC_WORKER_DEADLINE_CAP_S="$WD" \
+  ( MC_ONLY_PR="$KEY" WAKE_LAUNCH=1 MC_KEYED_READY_FLOOR=1 MC_WORKER_DEADLINE_CAP_S="$WD" \
       setsid timeout "$TO" "$H/bin/merge-conductor.sh" </dev/null >/dev/null 2>&1 9>&-
     rc=$?
     if [ "$rc" = 124 ]; then say "$KEY: keyed conductor run hit timeout $TO — killed"
@@ -122,4 +158,5 @@ while IFS= read -r KEY; do
   launched=$((launched + 1))
 done <<<"$CANDS"
 say "$N candidate(s): $launched detached keyed conductor run(s) started, one per PR (timeout ${TO}s, worker cap ${WD}s each)"
+[ "$capped" = 0 ] || say "MC_BACKSTOP_MAX_RUNNING=$MAXR reached ($running already running): $capped left for the next fire"
 exit 0

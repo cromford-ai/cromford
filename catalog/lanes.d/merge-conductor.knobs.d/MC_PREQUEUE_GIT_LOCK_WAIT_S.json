@@ -1,0 +1,11 @@
+{
+  "env": "MC_PREQUEUE_GIT_LOCK_WAIT_S",
+  "type": "int",
+  "default": 5,
+  "min": 0,
+  "max": 180,
+  "unit": "seconds",
+  "zero_means": null,
+  "read_in": "bin/lib/mc-prequeue.sh",
+  "note": "BH-7376: the longest the pre-queue gate (pq_gate) waits for the project's git lock, for pq_restamp and pq_merge_test. It replaces MC_GIT_LOCK_WAIT (180 s) inside the gate only. A busy lock holds the row READY (restamp) or leaves the reuse rule unanswered (merge test), and the next run asks again: a keyed READY run is never held open by a rebase worker's lock (on the hub, 2026-10-17/18, prequeue took up to 265 s and `timeout` killed the run before enqueue). Per project: lane.merge-conductor.<project>.mc_prequeue_git_lock_wait_s. 0 asks once with no wait: a busy lock is answered at once."
+}

@@ -86,13 +86,15 @@ run_entry() {
   [ "$why" = - ] && why=""
   # The same environment kw_conductor always gave a keyed tick: every lock fd
   # closed (fd 5 is this drain's slot), the backstop's window cleared.
+  # MC_KEYED_READY_FLOOR=1 (BH-7376): no `timeout` runs over a pool run, so a
+  # READY row's worker may take the whole READY arm (mc_keyed_deadline_floor).
   if [ "$2" = fg ]; then
     say "run $slug#$num slot=$SLOT waited_s=$waited queued=$(queued)${why:+ ($why)}"
-    MC_ONLY_PR="$slug#$num" WAKE_LAUNCH=1 MC_FANIN_SOLO_RUN="$solo" MC_PR_LOCK_WAIT_S="$wait" \
+    MC_ONLY_PR="$slug#$num" WAKE_LAUNCH=1 MC_KEYED_READY_FLOOR=1 MC_FANIN_SOLO_RUN="$solo" MC_PR_LOCK_WAIT_S="$wait" \
       MC_WORKERS_DONE_BY='' MC_WINDOW_DEFER_FILE='' "$SCRIPT" </dev/null >/dev/null 2>&1 9>&- 8>&- 7>&- 6>&- 5>&- 4>&-
   else
     say "run $slug#$num pool=off waited_s=$waited${why:+ ($why)}"
-    ( MC_ONLY_PR="$slug#$num" WAKE_LAUNCH=1 MC_FANIN_SOLO_RUN="$solo" MC_PR_LOCK_WAIT_S="$wait" \
+    ( MC_ONLY_PR="$slug#$num" WAKE_LAUNCH=1 MC_KEYED_READY_FLOOR=1 MC_FANIN_SOLO_RUN="$solo" MC_PR_LOCK_WAIT_S="$wait" \
       MC_WORKERS_DONE_BY='' MC_WINDOW_DEFER_FILE='' setsid "$SCRIPT" </dev/null >/dev/null 2>&1 9>&- 8>&- 7>&- 6>&- 5>&- 4>&- & ) 2>/dev/null
   fi
 }

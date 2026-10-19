@@ -2,6 +2,7 @@
   "id": "merge-conductor-backstop",
   "name": "Merge conductor keyed backstop",
   "scope": "hub",
+  "single_run": false,
   "factory_stop": "merge",
   "script": "bin/merge-conductor-backstop.sh",
   "cadence": "*/5 * * * *",
@@ -30,10 +31,10 @@
       "type": "int",
       "default": 240,
       "min": 60,
-      "max": 290,
+      "max": 1500,
       "unit": "seconds",
       "zero_means": null,
-      "note": "timeout on EACH per-PR keyed conductor run (BH-6000: one run per candidate). Each run's PR worker is capped at this minus 45 s, never under 30 s (BH-4918), so the run keeps time for its own fan-in and enqueue. A non-number falls back to 240. Row: lane.merge-conductor-backstop.mc_backstop_timeout_s"
+      "note": "timeout on EACH per-PR keyed conductor run (BH-6000: one run per candidate). Never under lane.merge-conductor.mc_keyed_ready_arm_s + 45 s (BH-7376: the READY arm, prequeue included, must fit; a lower row is raised and named in the backstop log). Each run's PR worker is capped at this minus 45 s, never under 30 s (BH-4918), so the run keeps time for its own fan-in and enqueue. Above 300 s a run outlives the */5 cron period and crosses later fires: its per-key lock keeps the key from a second run, and MC_BACKSTOP_MAX_RUNNING bounds how many live at once. A non-number falls back to 240. Row: lane.merge-conductor-backstop.mc_backstop_timeout_s"
     }
   ],
   "stats": {

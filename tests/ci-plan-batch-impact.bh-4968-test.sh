@@ -147,7 +147,8 @@ has "escalation: selection input: .github/actions/x/action.yml" "$SUM" && ok || 
 infra 3b bin/lib/docker-host.sh
 
 # ── 4. a path the map does not know is unmapped.
-escalates 4 "unmapped: zz-unmapped-bh4964/x.sh" zz-unmapped-bh4964/x.sh
+# With the member union off (BH-7290): tests/ci-member-reach-union.bh-7290-test.sh pins it on.
+escalates 4 "unmapped: zz-unmapped-bh4964/x.sh" zz-unmapped-bh4964/x.sh -- CI_PLAN_MEMBER_UNION=0
 
 # ── 4b. a brand-new bin/ script in a real tree: the whole-bin scanners reach it.
 S4="$T/s4"; mkdir -p "$S4"
@@ -190,7 +191,7 @@ for p in bin/lib/suite-runner.sh bin/ci-plan.sh bin/test-impact-gate.sh bin/test
   infra "7 $p" "$p"
 done
 # the old path of a rename is unknown to the map, so it is unmapped (BH-6059)
-escalates "7 rename" "unmapped path bin/lib/zz-moved.sh" bin/lib/zz-moved.sh bin/zz-moved.sh
+escalates "7 rename" "unmapped path bin/lib/zz-moved.sh" bin/lib/zz-moved.sh bin/zz-moved.sh -- CI_PLAN_MEMBER_UNION=0
 escalates "7 empty list" "the batch diff is empty"
 escalates "7 missing rules" "selection input: catalog/ci-batch-escalate.tsv unreadable" console-ui/src/screens/Jobs.js -- CI_BATCH_ESCALATE_TSV="$T/no-such.tsv"
 bplan console-ui/src/screens/Jobs.js -- TI_BASE=0000000000000000000000000000000000000000 CI_PLAN_CHANGED_FILE=

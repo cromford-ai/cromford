@@ -1,0 +1,11 @@
+{
+  "env": "MC_BACKSTOP_MAX_RUNNING",
+  "type": "int",
+  "default": 6,
+  "min": 0,
+  "max": 64,
+  "unit": "runs",
+  "zero_means": "unlimited",
+  "read_in": "bin/merge-conductor-backstop.sh",
+  "note": "BH-7376: the most backstop keyed conductor runs alive at once, the runs of earlier fires included (a held per-key lock counts). Runs now last up to MC_KEYED_READY_ARM_S + 45 s, past the */5 cron period, and the hub ran at load 60-70 on 4 cores. READY candidates start first; a key past the cap is named in the log and offered again by the next fire, never dropped. 0 = no cap (BH-6000's behaviour). Row: lane.merge-conductor-backstop.mc_backstop_max_running"
+}

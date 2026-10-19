@@ -50,6 +50,9 @@ H="${HARNESS:-/root/harness}"
 # Registry: catalog/lanes.json. Operator: bin/harness-ctl.sh off jobs-watchdog.
 # shellcheck disable=SC1091
 . "${HARNESS:-/root/harness}/bin/lib/lane-gate.sh" 2>/dev/null || true
+# The plain */5 tick and the 24,54 --resume tick are two modes: the mode is
+# the one-run key (BH-7422).
+LANE_RUN_KEY=${1:-tick}; LANE_RUN_KEY=${LANE_RUN_KEY#--}
 command -v lane_gate_or_exit >/dev/null 2>&1 && lane_gate_or_exit jobs-watchdog
 command -v lane_env_apply    >/dev/null 2>&1 && lane_env_apply    jobs-watchdog
 STAMP() { date -u '+%Y-%m-%d %H:%M:%SZ'; }

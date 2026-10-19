@@ -110,9 +110,10 @@ selected T1c "$H"
 [ -z "$(missing "$T/t1c.exact")" ] && ok || bad "T1c: importers of $H are missing: $(missing "$T/t1c.exact" | head -3)"
 
 # ── T2. a helper no suite reaches fails closed, with its reason.
-escalates T2 "unmapped path tests/lib/zz-bh6371-orphan.sh" tests/lib/zz-bh6371-orphan.sh
+# With the member union off (BH-7290): tests/ci-member-reach-union.bh-7290-test.sh pins it on.
+escalates T2 "unmapped path tests/lib/zz-bh6371-orphan.sh" tests/lib/zz-bh6371-orphan.sh -- CI_PLAN_MEMBER_UNION=0
 has "full: unmapped path tests/lib/zz-bh6371-orphan.sh" "$(out summary)" && ok || bad "T2: the summary must carry the reason: '$(out summary)'"
-escalates "T2 order" "unmapped path tests/lib/zz-bh6371-orphan.sh" tests/lib/gh-shim-stub.sh tests/lib/zz-bh6371-orphan.sh
+escalates "T2 order" "unmapped path tests/lib/zz-bh6371-orphan.sh" tests/lib/gh-shim-stub.sh tests/lib/zz-bh6371-orphan.sh -- CI_PLAN_MEMBER_UNION=0
 
 # ── T2b. the global helper plans mode=infra through its catalog row (BH-7287).
 bplan tests/lib/scratch.sh

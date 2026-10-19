@@ -159,11 +159,12 @@ for p in bin/lib/suite-runner.sh bin/lib/test-protected.sh catalog/test-tiers.ts
 done
 
 # ── N3. a bin/lib/ or catalog/ path the map cannot resolve fails closed, with its reason.
-escalates N3 "unmapped path bin/lib/new-thing.sh" bin/lib/new-thing.sh
+# With the member union off (BH-7290): tests/ci-member-reach-union.bh-7290-test.sh pins it on.
+escalates N3 "unmapped path bin/lib/new-thing.sh" bin/lib/new-thing.sh -- CI_PLAN_MEMBER_UNION=0
 has "full: unmapped path bin/lib/new-thing.sh" "$(out summary)" && ok || bad "N3: the summary must carry the reason: '$(out summary)'"
 has "escalation: unmapped path bin/lib/new-thing.sh" "$SUM" && ok || bad "N3: the step summary must carry the escalation [$SUM]"
-escalates "N3 catalog" "unmapped path catalog/zz-new-bh6059.json" catalog/zz-new-bh6059.json
-escalates "N3 order" "unmapped path bin/lib/new-thing.sh" bin/lib/deferral-after.sh bin/lib/new-thing.sh
+escalates "N3 catalog" "unmapped path catalog/zz-new-bh6059.json" catalog/zz-new-bh6059.json -- CI_PLAN_MEMBER_UNION=0
+escalates "N3 order" "unmapped path bin/lib/new-thing.sh" bin/lib/deferral-after.sh bin/lib/new-thing.sh -- CI_PLAN_MEMBER_UNION=0
 # a new doc never escalates, even with no row at all
 selected "N3 doc" bin/lib/zz-new-bh6059.md
 

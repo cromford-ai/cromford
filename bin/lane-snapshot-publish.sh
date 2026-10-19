@@ -26,6 +26,13 @@
 # lane-snapshot-oversize, lane-snapshot-conflict, lane-snapshot-rejected, and
 # lane-snapshot-alert-lines (step 3 failed; resolved on the next good tick).
 # A step 3 failure does not change the exit code.
+# A run longer than its cron period (settings row lane_snapshot.run_alert_s,
+# code fallback 600 s = the 10-min cadence; 0 reads as missing) pages
+# lane-snapshot-slow-<lane> once per episode; the next run for that lane inside
+# the period resolves it (BH-7437). The id is per lane: each lane has its own
+# run. Runs that
+# outlast the period stack, and the machines then refuse the stale snapshots.
+# The log line (not stdout) ends with `; run <s>s`.
 # The knobs are settings rows (lane_snapshot.*, bin/lib/lane-run-inputs.sh).
 # Off: flags/lane-off-lane-snapshot-publish. The lane is in
 # catalog/lanes.d/lane-snapshot-publish.json; the note is
@@ -36,9 +43,13 @@ export HARNESS="$H"
 LOG="$H/logs/lane-snapshot-publish.log"
 mkdir -p "$H/logs" 2>/dev/null
 STAMP() { date -u '+%Y-%m-%d %H:%M:%SZ'; }
+START_S=$(date -u +%s)
 
 # shellcheck disable=SC1091
 . "$H/bin/lib/lane-gate.sh" 2>/dev/null || true
+# One cron line per published lane (plain = blocked-resolver, and --lane
+# pipeline-health): the lane is the one-run key (BH-7422).
+LANE_RUN_KEY=blocked-resolver; [ "${1:-}" = --lane ] && LANE_RUN_KEY=${2:-}
 command -v lane_gate_or_exit >/dev/null 2>&1 && lane_gate_or_exit lane-snapshot-publish
 command -v lane_env_apply    >/dev/null 2>&1 && lane_env_apply    lane-snapshot-publish
 
@@ -87,8 +98,12 @@ LINE="lane-snapshot-publish: $PUB published, $UNCH unchanged, $APPLIED write-bac
 LINE="$LINE; $LANE placed $LP_PLACE ($LP_WHY)"
 ALR=$(alr_apply 2>/dev/null); ALRC=$?
 LINE="$LINE; ${ALR:-alert lines: no answer}"
-echo "$(STAMP) $LINE" >> "$LOG"
+RUN_S=$(( $(date -u +%s) - START_S ))
+echo "$(STAMP) $LINE; run ${RUN_S}s" >> "$LOG"
 echo "$LINE"
+# The cron period, from the settings row; a missing or non-number row is 600.
+SLOW_S=$(setting_get lane_snapshot.run_alert_s 2>/dev/null | tr -d '[:space:]' || :)
+case "$SLOW_S" in ''|*[!0-9]*|0) SLOW_S=600 ;; esac
 
 ALERT="$H/bin/lane-alert.sh"
 if [ -x "$ALERT" ]; then
@@ -100,6 +115,12 @@ if [ -x "$ALERT" ]; then
     "$CONFL write-back file(s) kept the hub's copy because the hub changed it after the machine's snapshot: ${CPROJ[*]}." >/dev/null 2>&1
   [ "$REJ" = 0 ] || "$ALERT" --severity warn --id lane-snapshot-rejected lane-snapshot-publish \
     "$REJ write-back(s) rejected (sha mismatch or a member outside the allow-list): ${RPROJ[*]}." >/dev/null 2>&1
+  if [ "$RUN_S" -gt "$SLOW_S" ]; then
+    "$ALERT" --severity warn --id "lane-snapshot-slow-$LANE" lane-snapshot-publish \
+      "lane-snapshot-publish took ${RUN_S}s, longer than its cron period (lane_snapshot.run_alert_s=${SLOW_S}s), for ${#PROJECTS[@]} project(s). Runs stack and the $LANE snapshots go stale; a machine refuses a snapshot older than lane_snapshot.max_age_s (rc 66)." >/dev/null 2>&1
+  else
+    "$ALERT" --resolve --id "lane-snapshot-slow-$LANE" lane-snapshot-publish "lane-snapshot-publish runs inside its cron period again: ${RUN_S}s <= ${SLOW_S}s" >/dev/null 2>&1
+  fi
   if [ "$ALRC" = 0 ]; then
     "$ALERT" --resolve --id lane-snapshot-alert-lines lane-snapshot-publish "alert lines from lane-run machines replay again: ${ALR:-}" >/dev/null 2>&1
   else
