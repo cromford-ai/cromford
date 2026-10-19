@@ -21,6 +21,9 @@
 #   M-d    scratch: fly fragment + pl_dispatch call + both manifests: O1/O2 green
 #   M-e    scratch: a hub row for a dispatch-ready dequeue-watch: O3 green;
 #          a second row for it with another value: O3 red
+#   M-f    scratch: a lane_placement.review-autopilot.hub_only row on a lane
+#          that is not dispatch-ready: O3 green; a lane_placement.review-autopilot
+#          row (value hub) or a '.hub_onlyx' key on it: O3 red
 #
 # Run from anywhere: tests/lanes-offhub.bh-6721-test.sh (exit 0 = pass)
 set -uo pipefail
@@ -100,7 +103,10 @@ check_o3() {
         echo "    $l: stays, but a schema fragment sets lane_placement.$l to a value other than hub"; rc=1
       fi
     elif cat "$r"/worker/jobs/schema.d/*.sql 2>/dev/null \
+        | sed -E "s/'lane_placement\.$(re_lane "$l")\.hub_only'//g" \
         | grep -qE "lane_placement\.$(re_lane "$l")([^[:alnum:]_-]|$)"; then
+      # BH-7427: the exact quoted '.hub_only' key is a reason row, not a
+      # placement (M-c), so it is removed before the grep.
       echo "    $l: stays, but a schema fragment names lane_placement.$l"; rc=1
     fi
     c=$(grep -cE "^- \`$(re_lane "$l")\`: stays on the hub: .*[^[:space:]]" "$n")
@@ -195,6 +201,16 @@ printf "INSERT OR IGNORE INTO settings (key, value, description, actor, updated_
 O=$(check_o3 "$S") && bad "M-e: O3 green with a non-hub row" \
   || { grep -q 'dequeue-watch: stays, but a schema fragment sets lane_placement.dequeue-watch to a value other than hub' <<<"$O" \
        && ok "M-e: O3 red on a non-hub row" || bad "M-e: O3 red for another reason: $O"; }
+
+echo "M-f: a hub_only reason row for a lane that is not dispatch-ready"
+mk mf; fly_row "$S" lane_placement.review-autopilot.hub_only 'fixture reason'
+O=$(check_o3 "$S") && ok "M-f: O3 green for a review-autopilot .hub_only row" || bad "M-f: O3 red: $O"
+for K in lane_placement.review-autopilot lane_placement.review-autopilot.hub_onlyx; do
+  fly_row "$S" "$K" hub
+  O=$(check_o3 "$S") && bad "M-f: O3 green with a $K row" \
+    || { grep -q 'review-autopilot: stays, but a schema fragment names lane_placement.review-autopilot' <<<"$O" \
+         && ok "M-f: O3 red on a $K row" || bad "M-f: O3 red for another reason: $O"; }
+done
 
 echo "PASS=$PASS FAIL=$FAIL"
 [ "$FAIL" = 0 ]
