@@ -464,6 +464,35 @@ lane_read() {
   jq -r '.machines[] | [(.machine_id // ""), (.state // ""), (.started_at // ""), (.busy == true | tostring),
     (.in_flight == true | tostring), (.idle_s // "-" | tostring)] | @tsv' "$WORK/lane.json" > "$WORK/lane.tsv" 2>/dev/null
 }
+# The group warm floors (BH-7498), read once, at the first lane-run-<group> app.
+# GRPOK: "" not read, 1 read, 0 unreadable (every group keeps the global floor).
+GRPOK=""
+groups_read() {
+  [ -n "$GRPOK" ] && return 0
+  GRPOK=0
+  if ! command -v _jobs_req >/dev/null 2>&1; then
+    say "lane-run groups: no jobs client — group apps keep the global floor"
+  elif ! JOBS_ALERT=0 _jobs_req GET /api/lane-fleet/groups > "$WORK/groups.json" 2>/dev/null \
+    || ! jq -e '.groups | type == "array"' "$WORK/groups.json" >/dev/null 2>&1; then
+    say "lane-run groups: /api/lane-fleet/groups unreadable — group apps keep the global floor"
+  else GRPOK=1
+  fi
+  return 0
+}
+# app_floor <app> -> AFLOOR: the group's warm_floor (0..100) for a lane-run-<group>
+# app; the global FLOOR for the default app, an unknown app or an unreadable route.
+app_floor() {
+  local g
+  AFLOOR="$FLOOR"
+  case "$1" in lane-run-*) ;; *) return 0 ;; esac
+  groups_read
+  [ "$GRPOK" = 1 ] || return 0
+  g=$(jq -r --arg a "$1" '[.groups[] | select(.app == $a) | .warm_floor][0] // empty | tostring' "$WORK/groups.json" 2>/dev/null)
+  if [[ "$g" =~ ^[0-9]{1,3}$ ]] && [ "$((10#$g))" -le 100 ]; then AFLOOR=$((10#$g))
+  elif [ -n "$g" ]; then say "$1: group warm_floor '$g' is not 0..100 — the global floor applies"
+  fi
+  return 0
+}
 # ── 4c. act: one action on one machine, then exit ────────────────────────────
 # act_beat <action> <app> <mid> <size> <usd> <detail> — a failed beat is one log line.
 act_beat() {
@@ -672,9 +701,10 @@ while IFS= read -r app; do
   [ "$sig" = lane-run ] && LR_APP_READ=1
   if [ "$sig" = lane-run ] && [ -s "$WORK/started.tsv" ]; then
     lane_read
-    [ "$LROK" = 1 ] && [ "$FLOOR" -gt 0 ] && cut -f1 "$WORK/started.tsv" | while IFS= read -r m; do
+    AFLOOR="$FLOOR"; [ "$LROK" = 1 ] && app_floor "$app"
+    [ "$LROK" = 1 ] && [ "$AFLOOR" -gt 0 ] && cut -f1 "$WORK/started.tsv" | while IFS= read -r m; do
       awk -F'\t' -v m="$m" '$1 == m { i = ($4 == "true" || $5 == "true") ? 0 : $6; if (i !~ /^[0-9]+$/) i = 0; print i "\t" m; exit }' "$WORK/lane.tsv"
-    done | sort -k1,1n -k2,2 | head -n "$FLOOR" | cut -f2 > "$WORK/floor.txt"
+    done | sort -k1,1n -k2,2 | head -n "$AFLOOR" | cut -f2 > "$WORK/floor.txt"
   fi
   aorg="$ORG"; [ -n "$aorg" ] || aorg=$(awk -F'\t' -v a="$app" '$1 == a { print $2; exit }' "$WORK/app-org.tsv")
   while IFS=$'\t' read -r mid kind cpus mem ts img; do
