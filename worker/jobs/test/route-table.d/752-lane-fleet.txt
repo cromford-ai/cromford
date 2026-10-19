@@ -1,5 +1,6 @@
 # LANE FLEET (BH-6126, BH-6047 part 3 of 5): the lane-run Fly fleet routes,
-# in the slot 750-lane-runs.txt reserved for them.
+# in the slot 750-lane-runs.txt reserved for them. BH-7434 adds the groups read.
+GET /api/lane-fleet/groups
 GET /api/lane-fleet/machines
 POST /api/lane-fleet/machines
 POST /api/lane-fleet/cost

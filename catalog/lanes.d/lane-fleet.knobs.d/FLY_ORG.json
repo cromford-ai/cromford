@@ -1,0 +1,8 @@
+{
+  "env": "FLY_ORG",
+  "type": "string",
+  "default": "",
+  "zero_means": null,
+  "note": "BH-7434: the Fly org slug bin/lane-fleet.sh creates a fleet-group app in (`flyctl apps create lane-run-<x> --org $FLY_ORG`) when a lane_fleet.group.<name> row names an app Fly does not know. Read as ${FLY_ORG:-} from env/fly.env. Empty: no app is created and one ALERTS line per UTC day names it; the group's projects wait, then fall back to lane-run. An identity, so only env/fly.env on the hub moves it. NOT settable from the control plane.",
+  "settable": false
+}

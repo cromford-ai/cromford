@@ -21,7 +21,14 @@
 #                first; none = no prefer key. skip_prefixes = `<project>.`
 #                each from the skip file when it is not empty, so a
 #                merge-conductor-pr row of such a repo stays queued for the
-#                hub. 204 = the queue is empty:
+#                hub. BH-7434: on a machine of a fleet group (LANE_RUN_GROUP=
+#                <name>, set by bin/lane-fleet.sh) the claim also carries
+#                only_prefixes = `<project>.` for each project of the settings
+#                row lane_fleet.group.<name>, so it takes only the group's rows;
+#                with no valid row it sends NO claim (one log line per
+#                process), sleeps, and after LW_NOGROUP_POLLS such polls in a
+#                row exits 0, so a `--restart no` group machine stops instead
+#                of idling unpriced once its group row is gone (#7447 F1). 204 = the queue is empty:
 #                sleep lane_run.poll_s (1..300, fallback 15), or with --once
 #                exit 0. A transport failure logs one line; --once exits 1.
 #   2. check     lane and project are path-safe names and args[0] is a path
@@ -112,6 +119,32 @@ lw_log() {
   if [ -n "${LANE_RUN_NOW:-}" ]; then ts=$(date -u -d "@$LANE_RUN_NOW" '+%F %TZ' 2>/dev/null); else ts=$(date -u '+%F %TZ'); fi
   echo "$ts [lane-run-worker] $MACHINE: $*" >> "$WLOG"
 }
+
+# lw_only_json — BH-7434: the only_prefixes of this machine's fleet group
+# (LANE_RUN_GROUP), a JSON array of `<project>.`. Nothing printed and rc 1 when
+# the name or its lane_fleet.group.<name> row is missing (setting_get rc 2) or
+# not valid; rc 3 when the settings read failed (setting_get rc 1: an outage),
+# which is NOT a missing row (#7447 R1).
+# The checks are the worker's (lib/lane-fleet-groups.js parseGroup) except the
+# cross-row ones: an object, app lane-run-<x>, max_machines 1..1000, and 1..64
+# projects that are all valid names.
+lw_only_json() {
+  local g="${LANE_RUN_GROUP:-}" v
+  [[ "$g" =~ ^[a-z0-9][a-z0-9-]{0,29}$ ]] || return 1
+  local rc
+  v=$(setting_get "lane_fleet.group.$g" 2>/dev/null); rc=$?
+  [ "$rc" = 2 ] && return 1
+  [ "$rc" = 0 ] || return 3
+  jq -ce 'select(type == "object"
+      and ((.app | type) == "string") and (.app | test("^lane-run-[a-z0-9][a-z0-9-]{0,39}$"))
+      and ((.max_machines | type) == "number") and .max_machines == (.max_machines | floor)
+      and .max_machines >= 1 and .max_machines <= 1000
+      and ((.projects | type) == "array") and (.projects | length) >= 1 and (.projects | length) <= 64
+      and (.projects | all(type == "string" and test("^[A-Za-z0-9._-]{1,64}$"))))
+    | [.projects[] | . + "."]' <<<"$v" 2>/dev/null
+}
+# Polls with no valid group row before a group machine exits (#7447 F1).
+LW_NOGROUP_POLLS=3
 
 lw_poll_s() {
   local v
@@ -344,9 +377,34 @@ while :; do
   # The skip file is read only while the check is on: a file left by an
   # earlier process with the check on must not filter claims once it is off.
   LW_SKIP='[]'; lrr_enabled && LW_SKIP=$(lrr_skip_json); [ -n "$LW_SKIP" ] || LW_SKIP='[]'
+  LW_ONLY='[]'
+  LW_ORC=0; [ -n "${LANE_RUN_GROUP:-}" ] && { LW_ONLY=$(lw_only_json); LW_ORC=$?; }
+  if [ "$LW_ORC" = 3 ]; then
+    # A settings outage is not a deleted row: no claim, no count, no exit.
+    [ -n "${LW_OUTAGE_LOGGED:-}" ] || lw_log "LANE_RUN_GROUP=$LANE_RUN_GROUP: settings unreadable; no claim until they answer"
+    LW_OUTAGE_LOGGED=1
+    [ "$ONCE" = 1 ] && exit 1
+    sleep "$(lw_poll_s)" & wait "$!"; continue
+  fi
+  LW_OUTAGE_LOGGED=""
+  if [ "$LW_ORC" != 0 ]; then
+    # A group machine without its row claims nothing: a wrong claim would run
+    # another fleet's project on this machine's size.
+    [ -n "${LW_NOGROUP_LOGGED:-}" ] || lw_log "LANE_RUN_GROUP=$LANE_RUN_GROUP has no valid lane_fleet.group.$LANE_RUN_GROUP row; no claim"
+    LW_NOGROUP_LOGGED=1; LW_NOGROUP_N=$(( ${LW_NOGROUP_N:-0} + 1 ))
+    [ "$ONCE" = 1 ] && exit 0
+    if [ "$LW_NOGROUP_N" -ge "$LW_NOGROUP_POLLS" ]; then
+      lw_log "LANE_RUN_GROUP=$LANE_RUN_GROUP: no valid group row for $LW_NOGROUP_N polls; exiting so the machine stops"
+      exit 0
+    fi
+    sleep "$(lw_poll_s)" & wait "$!"; continue
+  fi
+  LW_NOGROUP_N=0
   _jobs_req POST /api/lane-runs/claim "$(jq -nc --arg m "$MACHINE" --argjson p "$(lw_prefer)" --argjson s "$LW_SKIP" \
+    --argjson o "$LW_ONLY" \
     '{machine:$m} + (if ($p | length) > 0 then {prefer:$p} else {} end)
-     + (if $s == [] then {} else {skip_prefixes:$s} end)')" > "$RESP"; crc=$?
+     + (if $s == [] then {} else {skip_prefixes:$s} end)
+     + (if $o == [] then {} else {only_prefixes:$o} end)')" > "$RESP"; crc=$?
   if [ "$crc" != 0 ]; then
     lw_log "claim failed (rc $crc, http ${JOBS_HTTP:-none})"
     [ "$ONCE" = 1 ] && exit 1

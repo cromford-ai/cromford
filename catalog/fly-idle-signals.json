@@ -5,7 +5,8 @@
     "Sources: pool (state/fly-pool tracking files + claimed queue rows), builder (active dispatcher records + claimed queue rows),",
     "lane-run (GET /api/lane-fleet/machines claims), testhost (bin/testhost-tick.sh idle), metrics (Fly Prometheus CPU and",
     "net rates), exempt (never stopped; `reason` is required). An app with no match gets `metrics`. A new source needs code",
-    "in the reaper, so this file is in git, not a settings row."
+    "in the reaper, so this file is in git, not a settings row.",
+    "BH-7434: `lane-run-` covers the fleet-group apps bin/lane-fleet.sh runs (lane_fleet.group.<name> rows, app lane-run-<x>)."
   ],
   "apps": {
     "bh-testhost-example-org": { "source": "testhost" },
@@ -21,6 +22,7 @@
   },
   "prefixes": {
     "pool-": { "source": "pool" },
+    "lane-run-": { "source": "lane-run" },
     "builder-": { "source": "builder" },
     "project-12-": { "source": "exempt", "reason": "customer bots stay up; a retired or lab project-12 app gets an exact metrics entry" }
   }

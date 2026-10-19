@@ -82,6 +82,36 @@
 #                action=<start <mid>[,<mid>...] <reason>|stop <mid> idle=<s>|none <reason>>
 #                cost=<written>/<already> work=<s>s desired=<n>
 #
+# FLEET GROUPS (BH-7434). A settings row lane_fleet.group.<name> = JSON
+# {app, vm_size, vm_memory, max_machines, warm_floor, projects:[...]} is one
+# more fleet: its own Fly app (lane-run-<x>) and size, for its own projects.
+# The jobs worker validates the rows (GET /api/lane-fleet/groups; a 404 from
+# an older worker = no group). No valid row = ONE pass exactly as above. With
+# groups, the tick runs one pass for the default fleet (app lane-run, the
+# projects of no group) and one per group, each in its own subshell, so a
+# failed read or an exit in one pass never touches another:
+#   - stats read GET /api/lane-runs/stats?run_p50=1&fleet=<default|name> (that
+#     fleet's queued rows only; the default fleet also counts a grouped row
+#     that waited past lane_run.group_fallback_s), machine rows GET
+#     /api/lane-fleet/machines?app=<app>, and every row it writes says its app;
+#   - a group's vm_size, vm_memory, max_machines and warm_floor replace the
+#     lane_fleet.* rows (absent = the row), its machines get
+#     -e LANE_RUN_GROUP=<name> (bin/lane-run-worker.sh claims with
+#     only_prefixes), its log lines say [lane-fleet:<name>], its alert flags
+#     are its own, its token is FLY_API_TOKEN_<APP> else FLY_API_TOKEN;
+#   - before its Fly reads, a group pass checks its app once: an app Fly does
+#     not know is created (`apps create <app> --org $FLY_ORG`, from
+#     env/fly.env; no FLY_ORG = no create, one ALERTS line per UTC day), and an
+#     app without the HARNESS_SECRET and JOBS_URL secrets starts nothing, with
+#     one ALERTS line per UTC day naming the operator command. A ready app is
+#     remembered in state/lane-fleet/group-<name>/app-ready;
+#   - fallback: a group whose oldest queued run waited longer than
+#     lane_run.group_fallback_s (the worker's answer, 0 = never) writes one
+#     ALERTS line per UTC day; the worker then lets the default fleet claim
+#     those rows, so a project never stalls because its fleet is gone.
+# The idle reaper covers the group apps through the `lane-run-` prefix in
+# catalog/fly-idle-signals.json.
+#
 # Exit 0 on every path but a usage error (2). Seams for tests: LANE_FLEET_NOW
 # (epoch), LANE_FLEET_FLY (the flyctl binary; empty uses fly_bin from
 # bin/lib/fly-bin.sh: PATH, then $FLYCTL_INSTALL/bin, $HOME/.fly/bin,
@@ -145,7 +175,9 @@ mkdir -p "$H/logs" "$H/locks" "$H/flags" "$H/state/lane-fleet" 2>/dev/null
 LOG="$H/logs/lane-fleet.log"
 NOW="${LANE_FLEET_NOW:-$(date -u +%s)}"
 DAY=$(date -u -d "@$NOW" +%Y%m%d)
-lf_log() { echo "$(date -u -d "@$NOW" '+%F %TZ') [lane-fleet] $*" >> "$LOG"; }
+# LF_TAG is `:<group>` inside a group pass, empty otherwise (BH-7434).
+LF_TAG=""; LF_KPFX=""
+lf_log() { echo "$(date -u -d "@$NOW" '+%F %TZ') [lane-fleet$LF_TAG] $*" >> "$LOG"; }
 # lf_epoch <iso> — epoch seconds; rc 1 and nothing printed on an empty or bad stamp.
 lf_epoch() { [ -n "${1:-}" ] || return 1; date -u -d "$1" +%s 2>/dev/null; }
 
@@ -172,11 +204,12 @@ flock -n 9 || { lf_log "lock held; another tick is running"; exit 0; }
 lf_alert() {
   local b="$DAY"
   [ "${3:-}" = hour ] && b=$(date -u -d "@$NOW" +%Y%m%d%H)
-  local f="$H/flags/alerted-lane-fleet-$1-$b"
+  local k="$LF_KPFX$1"
+  local f="$H/flags/alerted-lane-fleet-$k-$b"
   [ -f "$f" ] && return 0
-  [ "${3:-}" = hour ] && find "$H/flags" -maxdepth 1 -type f -name "alerted-lane-fleet-$1-*" ! -name "*-$b" -delete 2>/dev/null
+  [ "${3:-}" = hour ] && find "$H/flags" -maxdepth 1 -type f -name "alerted-lane-fleet-$k-*" ! -name "*-$b" -delete 2>/dev/null
   touch "$f" 2>/dev/null
-  HARNESS="$H" "$H/bin/alert-line.sh" "[lane-fleet] $2"
+  HARNESS="$H" "$H/bin/alert-line.sh" "[lane-fleet$LF_TAG] $2"
 }
 
 # lf_int <key> <fallback> <min> <max> — the lw_poll_s shape.
@@ -194,6 +227,79 @@ lf_str() {
   printf '%s' "$v"
 }
 
+FLY="${LANE_FLEET_FLY:-$(fly_bin 2>/dev/null || true)}"
+[ -n "$FLY" ] || { lf_log "flyctl not found (PATH, \$HOME/.fly/bin, \${FLY_BIN_DIR:-/root/.fly/bin}); nothing done"; lf_alert fly-missing "flyctl not found on $(hostname 2>/dev/null) (PATH, \$HOME/.fly/bin, \${FLY_BIN_DIR:-/root/.fly/bin}); the lane-run fleet starts and stops no machine" hour; exit 0; }
+
+# shellcheck source=bin/lib/env-path.sh
+. "$H/bin/lib/env-path.sh" 2>/dev/null || harness_env_dir() { printf '%s\n' "${1:-$H}/env"; }
+HENV=$(harness_env_dir "$H")
+# shellcheck disable=SC1091
+set -a; . "$HENV/fly.env" 2>/dev/null; set +a
+
+# lf_group_json <name> — the group's object from the groups answer.
+lf_group_json() { jq -c --arg n "$1" '.groups[] | select(.name == $n)' "$GROUPS_F" 2>/dev/null | head -1; }
+# lf_gint <field> <current> <min> <max> — a group field in range, else current.
+lf_gint() {
+  local v
+  v=$(jq -r --arg k "$1" '.[$k] // empty' <<<"$GJ" 2>/dev/null)
+  [[ "$v" =~ ^[0-9]{1,6}$ ]] && [ "$v" -ge "$3" ] && [ "$v" -le "$4" ] && { printf '%s' "$((10#$v))"; return; }
+  printf '%s' "$2"
+}
+
+# lf_app_ready — a group app exists and has its secrets (BH-7434). Creates an
+# app Fly does not know, in $FLY_ORG. rc 1 = start nothing this pass.
+lf_app_ready() {
+  local out names
+  [ -f "$W_DIR/app-ready" ] && return 0
+  if ! out=$(timeout 60 "$FLY" secrets list -a "$LF_APP" --json 2>&1); then
+    if ! grep -qiE 'could not find app|app not found' <<<"$out"; then
+      lf_log "secrets list $LF_APP failed: $(printf '%s' "$out" | tr '\n' ' ' | cut -c1-200); no start, no stop"
+      lf_alert app-read "flyctl secrets list -a $LF_APP failed ($(printf '%s' "$out" | tr '\n' ' ' | cut -c1-160)); group $LF_GROUP starts and stops no machine until it answers"
+      return 1
+    fi
+    if [ -z "${FLY_ORG:-}" ]; then
+      lf_log "app $LF_APP does not exist and FLY_ORG is not set in $HENV/fly.env; not created"
+      lf_alert app-org "Fly app $LF_APP of group $LF_GROUP does not exist, and FLY_ORG is not set in $HENV/fly.env, so it is not created; the group's projects wait, then fall back to lane-run"
+      return 1
+    fi
+    if ! out=$(timeout 120 "$FLY" apps create "$LF_APP" --org "$FLY_ORG" 2>&1); then
+      lf_log "apps create $LF_APP failed: $(printf '%s' "$out" | tr '\n' ' ' | cut -c1-200)"
+      lf_alert app-create "flyctl apps create $LF_APP --org $FLY_ORG failed ($(printf '%s' "$out" | tr '\n' ' ' | cut -c1-160)); the next tick retries"
+      return 1
+    fi
+    lf_log "created Fly app $LF_APP in $FLY_ORG for group $LF_GROUP"
+    out='[]'
+  fi
+  names=$(jq -r '[.[]? | (.Name // .name // empty)] | join(" ")' <<<"$out" 2>/dev/null)
+  if [[ " $names " == *" HARNESS_SECRET "* ]] && [[ " $names " == *" JOBS_URL "* ]]; then
+    touch "$W_DIR/app-ready"; return 0
+  fi
+  lf_log "app $LF_APP has no HARNESS_SECRET or JOBS_URL secret; no start"
+  lf_alert app-secrets "Fly app $LF_APP has no HARNESS_SECRET or JOBS_URL secret, so group $LF_GROUP starts no machine. Set the lane-run secrets (fly/lane-run.toml): flyctl secrets set HARNESS_SECRET=... JOBS_URL=... GH_APP_ID=... GH_APP_PRIVATE_KEY=... GH_APP_INSTALLATION_<OWNER>=... CLAUDE_CODE_OAUTH_TOKEN=... CODEX_AUTH_JSON=... CODEX_CONFIG_TOML=... -a $LF_APP --stage"
+  return 1
+}
+
+# lf_pass [default|<group>] — one fleet's tick, steps 2-10. Empty = the only
+# fleet (no group row): every read, write and log line exactly as before
+# BH-7434. Always run in a subshell: its `exit 0` ends only this pass.
+lf_pass() {
+# Every pass reads and writes only its own app's rows (review F1 of #7447): a
+# single pass that read every row would mark a running group machine destroyed
+# once its group row is gone. Rows from before BH-7434 carry app lane-run.
+LF_GROUP="${1:-}"; GJ=""; LF_APP=lane-run; LF_SQ=""; LF_MQ="?app=lane-run"; LF_RAPP=lane-run; LF_GENV=()
+W_DIR="$H/state/lane-fleet"
+if [ -n "$LF_GROUP" ]; then
+  LF_SQ="&fleet=$LF_GROUP"
+fi
+if [ -n "$LF_GROUP" ] && [ "$LF_GROUP" != default ]; then
+  GJ=$(lf_group_json "$LF_GROUP")
+  LF_APP=$(jq -r '.app // empty' <<<"$GJ")
+  [[ "$LF_APP" =~ ^lane-run-[a-z0-9][a-z0-9-]{0,39}$ ]] || { lf_log "group $LF_GROUP has no valid app; skipped"; exit 0; }
+  LF_MQ="?app=$LF_APP"; LF_RAPP="$LF_APP"; LF_TAG=":$LF_GROUP"; LF_KPFX="group-$LF_GROUP-"
+  LF_GENV=(-e "LANE_RUN_GROUP=$LF_GROUP")
+  W_DIR="$H/state/lane-fleet/group-$LF_GROUP"
+fi
+mkdir -p "$W_DIR" 2>/dev/null
 FLOOR=$(lf_int warm_floor 1 0 100)
 UPWAIT=$(lf_int scale_up_wait_s 60 0 86400)
 IDLE=$(lf_int idle_stop_s 600 60 86400)
@@ -204,13 +310,15 @@ TARGET=$(lf_int target_drain_s 60 10 3600)
 MAXSTARTS=$(lf_int max_starts_per_tick 5 1 50)
 MEM=$(lf_int vm_memory_mb 2048 256 65536)
 SIZE=$(lf_str vm_size shared-cpu-2x '^[a-z0-9-]{1,40}$')
+if [ -n "$GJ" ]; then
+  FLOOR=$(lf_gint warm_floor "$FLOOR" 0 100); MAX=$(lf_gint max_machines "$MAX" 0 1000)
+  MEM=$(lf_gint vm_memory "$MEM" 256 65536)
+  v=$(jq -r '.vm_size // empty' <<<"$GJ"); [[ "$v" =~ ^[a-z0-9-]{1,40}$ ]] && SIZE="$v"
+fi
 # Pinned to the app's own repository: Fly gives every machine in lane-run the
 # app secrets (the GitHub App key among them), so a settings row must never
 # choose an image from another registry.
 IMAGE=$(lf_str image registry.fly.io/lane-run:latest '^registry\.fly\.io/lane-run[:@][A-Za-z0-9._:-]{1,128}$')
-
-FLY="${LANE_FLEET_FLY:-$(fly_bin 2>/dev/null || true)}"
-[ -n "$FLY" ] || { lf_log "flyctl not found (PATH, \$HOME/.fly/bin, \${FLY_BIN_DIR:-/root/.fly/bin}); nothing done"; lf_alert fly-missing "flyctl not found on $(hostname 2>/dev/null) (PATH, \$HOME/.fly/bin, \${FLY_BIN_DIR:-/root/.fly/bin}); the lane-run fleet starts and stops no machine" hour; exit 0; }
 
 # ---- the Fly token (BH-6741) -----------------------------------------------
 # env/fly.env, loaded the way bin/fly-pool.sh loads it. The lane-run app's own
@@ -218,28 +326,23 @@ FLY="${LANE_FLEET_FLY:-$(fly_bin 2>/dev/null || true)}"
 # falls back to the interactive login in ~/.fly/config.yml, which expires (the
 # hub tick of 2026-10-14 17:52Z: "your flyctl session has expired"). So with no
 # token there is no Fly call at all, and one ALERTS line per UTC hour.
-# shellcheck source=bin/lib/env-path.sh
-. "$H/bin/lib/env-path.sh" 2>/dev/null || harness_env_dir() { printf '%s\n' "${1:-$H}/env"; }
-HENV=$(harness_env_dir "$H")
-# shellcheck disable=SC1091
-set -a; . "$HENV/fly.env" 2>/dev/null; set +a
 # The app token's name follows bin/fly-pool.sh's rule: FLY_API_TOKEN_<APP>,
-# here FLY_API_TOKEN_LANE_RUN. A credential, so it is not a registry knob.
+# here FLY_API_TOKEN_LANE_RUN (a group app: FLY_API_TOKEN_LANE_RUN_<X>). A
+# credential, so it is not a registry knob.
 TV="FLY_API_TOKEN_$(echo "$LF_APP" | tr '[:lower:].-' '[:upper:]__')"
 FLY_ACCESS_TOKEN="${!TV:-${FLY_API_TOKEN:-}}"
 if [ -z "$FLY_ACCESS_TOKEN" ]; then
-  lf_log "Fly token missing for $LF_APP (no FLY_API_TOKEN_LANE_RUN or FLY_API_TOKEN in $HENV/fly.env); no Fly call, no start, no stop"
-  lf_alert fly-token-missing "Fly token missing for $LF_APP: $HENV/fly.env has no FLY_API_TOKEN_LANE_RUN or FLY_API_TOKEN; the lane-run fleet starts and stops no machine" hour
+  lf_log "Fly token missing for $LF_APP (no $TV or FLY_API_TOKEN in $HENV/fly.env); no Fly call, no start, no stop"
+  lf_alert fly-token-missing "Fly token missing for $LF_APP: $HENV/fly.env has no $TV or FLY_API_TOKEN; the lane-run fleet starts and stops no machine" hour
   exit 0
 fi
 export FLY_ACCESS_TOKEN FLY_API_TOKEN="$FLY_ACCESS_TOKEN"
 
-W_DIR="$H/state/lane-fleet"
 STATS="$W_DIR/stats.json"; LIST="$W_DIR/fly-list.json"; ROWS="$W_DIR/machines.json"
 
 # ---- read (any failure: no action) ------------------------------------------
 lf_read_fail() { lf_log "tick read failed: $1 ($2); no start, no stop"; lf_alert "$1" "$1 read failed ($2); no machine is started or stopped until it answers"; exit 0; }
-_jobs_req GET "/api/lane-runs/stats?run_p50=1" > "$STATS" || lf_read_fail stats "http ${JOBS_HTTP:-none}"
+_jobs_req GET "/api/lane-runs/stats?run_p50=1$LF_SQ" > "$STATS" || lf_read_fail stats "http ${JOBS_HTTP:-none}"
 jq -e '.lanes | type == "array"' "$STATS" >/dev/null 2>&1 || lf_read_fail stats "no lanes array"
 W=$(jq -r '[.lanes[].oldest_queued_wait_s | select(type == "number")] | max // "none" | tostring' "$STATS")
 case "$W" in none) ;; *[!0-9]*|'') lf_read_fail stats "bad wait '$W'" ;; esac
@@ -248,27 +351,39 @@ case "$W" in none) ;; *[!0-9]*|'') lf_read_fail stats "bad wait '$W'" ;; esac
 WORK=$(jq -r '[.lanes[] | select((.run_p50_s | type) == "number" and (.queued | type) == "number")
   | .queued * .run_p50_s] | add // 0 | floor | tostring' "$STATS")
 case "$WORK" in *[!0-9]*|'') lf_read_fail stats "bad work '$WORK'" ;; esac
+if [ -n "$GJ" ]; then
+  # Fallback (BH-7434): past group_fallback_s the worker lets lane-run claim
+  # this group's rows; say so once per UTC day.
+  FB=$(jq -r '.group_fallback_s // 0' "$GROUPS_F" 2>/dev/null); [[ "$FB" =~ ^[0-9]+$ ]] || FB=0
+  if [ "$FB" -gt 0 ] && [ "$W" != none ] && [ "$W" -gt "$FB" ]; then
+    lf_log "fallback: a queued run waited ${W}s > lane_run.group_fallback_s ${FB}s; lane-run may claim this group's rows"
+    lf_alert fallback "group $LF_GROUP: a queued run waited ${W}s, over lane_run.group_fallback_s ${FB}s; the default lane-run fleet claims its rows until $LF_APP takes them again (fleet down, at max_machines, or failing starts)"
+  fi
+  lf_app_ready || { lf_log "tick fleet=$LF_GROUP app=$LF_APP not ready; no start, no stop"; exit 0; }
+fi
 if ! timeout 30 "$FLY" machine list -a "$LF_APP" --json > "$LIST" 2> "$LIST.err"; then
   FERR=$(tr '\n' ' ' < "$LIST.err" | cut -c1-200)
   # An auth answer is the token, not Fly: name the cause (BH-6741).
   if grep -qiE 'unauthori[sz]ed|not authorized|session has expired|\b401\b|(invalid|expired|bad) (access )?token|token (is )?(invalid|expired|not valid)' <<<"$FERR"; then
     lf_log "tick read failed: Fly token rejected for $LF_APP ($FERR); no start, no stop"
-    lf_alert fly-token-rejected "Fly token rejected for $LF_APP ($FERR); renew FLY_API_TOKEN_LANE_RUN or FLY_API_TOKEN in $HENV/fly.env; no machine is started or stopped until it works" hour
+    lf_alert fly-token-rejected "Fly token rejected for $LF_APP ($FERR); renew $TV or FLY_API_TOKEN in $HENV/fly.env; no machine is started or stopped until it works" hour
     exit 0
   fi
   lf_read_fail fly-list "$FERR"
 fi
 jq -e 'type == "array"' "$LIST" >/dev/null 2>&1 || lf_read_fail fly-list "not a JSON array"
-command -v lfi_log_images >/dev/null 2>&1 && lfi_log_images "$LIST" "$H/state/lane-fleet/images.tsv" lf_log
-_jobs_req GET /api/lane-fleet/machines > "$ROWS" || lf_read_fail machines "http ${JOBS_HTTP:-none}"
+command -v lfi_log_images >/dev/null 2>&1 && lfi_log_images "$LIST" "$W_DIR/images.tsv" lf_log
+_jobs_req GET "/api/lane-fleet/machines$LF_MQ" > "$ROWS" || lf_read_fail machines "http ${JOBS_HTTP:-none}"
 jq -e '.machines | type == "array"' "$ROWS" >/dev/null 2>&1 || lf_read_fail machines "no machines array"
 
 # lf_record <mid> <state> [started_at|stopped_at] [cpu_kind cpus memory_mb] [failed]
 #   the third field is started_at for starting|started, stopped_at otherwise.
 lf_record() {
   local b
-  b=$(jq -nc --arg m "$1" --arg s "$2" --arg at "${3:-}" --arg k "${4:-}" --arg c "${5:-}" --arg mb "${6:-}" --arg f "${7:-}" '
+  b=$(jq -nc --arg m "$1" --arg s "$2" --arg at "${3:-}" --arg k "${4:-}" --arg c "${5:-}" --arg mb "${6:-}" --arg f "${7:-}" \
+        --arg app "$LF_RAPP" '
     {machine_id:$m, state:$s, box:"lane-fleet"}
+    + (if $app == "" then {} else {app:$app} end)
     + (if $at == "" then {} elif ($s == "starting" or $s == "started") then {started_at:$at} else {stopped_at:$at} end)
     + (if $f == "failed" then {failed:true} else {} end)
     + (if $k == "" then {} else {cpu_kind:$k} end)
@@ -446,7 +561,7 @@ if [ "$DEC" = start ]; then
       fi
     else
       out=$(timeout 180 "$FLY" machine run "$IMAGE" --app "$LF_APP" --detach --restart no \
-              --vm-size "$SIZE" --vm-memory "$MEM" -e LANE_RUN=1 2>&1)
+              --vm-size "$SIZE" --vm-memory "$MEM" -e LANE_RUN=1 ${LF_GENV[@]+"${LF_GENV[@]}"} 2>&1)
       # The id comes off the "Machine ID:" line ONLY (fly-pool.sh: the first bare
       # hex run can be the image digest).
       mid=$(printf '%s\n' "$out" | sed -n 's/.*[Mm]achine ID:[[:space:]]*\([0-9a-z]\{8,32\}\).*/\1/p' | head -1)
@@ -491,4 +606,46 @@ done < <(jq -r --argjson fl "$FAILED_IDS" '.[] | select(. as $i | $fl | index($i
 
 MAXS=$MAX; [ "$MAX" = 0 ] && MAXS=none
 lf_log "tick wait=$W live=$LIVE inflight=$INFLIGHT floor=$FLOOR max=$MAXS action=$ACTION cost=$COST_W/$COST_A work=${WORK}s desired=$(( (WORK + TARGET - 1) / TARGET ))"
+exit 0
+}
+
+# ---- the fleets (BH-7434) ---------------------------------------------------
+# GET /api/lane-fleet/groups: 404 (a worker without the route) = no group; any
+# other failure = no pass at all this tick (a pass without the split would
+# reconcile a group's machines as gone). The groups answer is part of the
+# tick's stats read, so it alerts under the same `stats` kind and day flag.
+GROUPS_F="$H/state/lane-fleet/groups.json"
+if ! _jobs_req GET /api/lane-fleet/groups > "$GROUPS_F"; then
+  if [ "${JOBS_HTTP:-}" = 404 ]; then echo '{"groups":[]}' > "$GROUPS_F"
+  else
+    lf_log "tick read failed: stats (groups http ${JOBS_HTTP:-none}); no start, no stop"
+    lf_alert stats "stats read failed (groups http ${JOBS_HTTP:-none}); no machine is started or stopped until it answers"
+    exit 0
+  fi
+fi
+jq -e '.groups | type == "array"' "$GROUPS_F" >/dev/null 2>&1 || {
+  lf_log "tick read failed: stats (groups: no groups array); no start, no stop"
+  lf_alert stats "stats read failed (groups: no groups array); no machine is started or stopped until it answers"; exit 0; }
+LF_GROUPS=()
+while IFS= read -r g; do [ -n "$g" ] && LF_GROUPS+=("$g"); done \
+  < <(jq -r '.groups[].name | select(test("^[a-z0-9][a-z0-9-]{0,29}$"))' "$GROUPS_F")
+# Orphaned group machines (review F1 of #7447): a starting/started row whose
+# app is neither lane-run nor a current group's app (its group row was deleted
+# or went invalid). No pass reads it, so nothing scales, stops or costs it:
+# one ALERTS line per UTC day naming each. A failed read skips the check.
+if _jobs_req GET /api/lane-fleet/machines > "$H/state/lane-fleet/all-machines.json"; then
+  ORPH=$(jq -r --slurpfile g "$GROUPS_F" '(["lane-run"] + [$g[0].groups[]?.app]) as $k
+    | [.machines[]? | (.app // "lane-run") as $a | select($k | index($a) | not) | "\($a)/\(.machine_id)"] | join(" ")' \
+    "$H/state/lane-fleet/all-machines.json" 2>/dev/null)
+  if [ -n "$ORPH" ]; then
+    lf_log "orphaned group machines (no lane_fleet.group row names their app): $ORPH"
+    lf_alert orphan "machines of a fleet group whose lane_fleet.group row is gone or invalid are still started and are not scaled, stopped or costed: $ORPH. Restore the row, or stop each with flyctl machine stop <id> -a <app> (the rows reconcile once the app is a group again)"
+  fi
+fi
+if [ "${#LF_GROUPS[@]}" = 0 ]; then
+  ( lf_pass )
+  exit 0
+fi
+( lf_pass default )
+for g in "${LF_GROUPS[@]}"; do ( lf_pass "$g" ); done
 exit 0

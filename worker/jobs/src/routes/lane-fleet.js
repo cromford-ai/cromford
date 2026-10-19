@@ -23,11 +23,22 @@
 //        COST_MINUTES_MAX rows per call; `incomplete` says the rest waits for
 //        the next call, which resumes from lane_machines.costed_until.
 //
+//   GET  /api/lane-fleet/groups    the valid lane_fleet.group.* rows (BH-7434,
+//        lib/lane-fleet-groups.js), sorted by name, the invalid ones with
+//        their error, and lane_run.group_fallback_s. bin/lane-fleet.sh runs one
+//        scale pass per group against the group's own app.
+//
+// Fleet groups (BH-7434): a row's `app` column names its Fly app (POST takes
+// an optional `app`, default lane-run), and GET /api/lane-fleet/machines?app=
+// answers only that app's rows and its last_failed_at, so one group's failed
+// start does not hold another fleet's starts. No `app` = every row, as before.
+//
 // Every handler runs inside d1Guarded, so a worker whose D1 lacks the table
 // answers 503 "lane_machines schema not applied" rather than a 500.
 
 import { d1Guarded, json } from "../lib/http.js";
 import { ensureColumns, leaseWon, str } from "../lib/core.js";
+import { readGroups } from "../lib/lane-fleet-groups.js";
 
 // The Fly machine id shape (routes/box-commands.js MACHINE_RE).
 const MACHINE_RE = /^[0-9a-z]{8,32}$/;
@@ -44,6 +55,8 @@ const GRACE_DEFAULT_S = 180;
 const GRACE_MIN_S = 30;
 const GRACE_MAX_S = 3600;
 const IDLE_LANE = "lane-fleet";
+// A Fly app name: the default `lane-run` or a group's lane-run-<x>.
+const APP_RE = /^[a-z0-9][a-z0-9-]{0,62}$/;
 
 const iso = (ms) => new Date(ms).toISOString().replace(/\.\d{3}Z$/, "Z");
 const floorMinute = (ms) => Math.floor(ms / 60000) * 60000;
@@ -72,11 +85,11 @@ function kindField(body) {
 }
 
 // Busy = a live claim; claimed = a claim since this start; last = the latest activity.
-const MACHINES_SQL = `SELECT m.machine_id, m.state, m.started_at, m.cpu_kind, m.cpus, m.memory_mb, m.costed_until,
+const MACHINES_SQL = `SELECT m.machine_id, m.app, m.state, m.started_at, m.cpu_kind, m.cpus, m.memory_mb, m.costed_until,
     EXISTS (SELECT 1 FROM lane_runs r WHERE r.claimed_by=m.machine_id AND r.status='claimed' AND r.lease_until >= ?1) AS busy,
     EXISTS (SELECT 1 FROM lane_runs r WHERE r.claimed_by=m.machine_id AND r.claimed_at >= m.started_at) AS claimed,
     (SELECT MAX(COALESCE(r.finished_at, r.heartbeat_at, r.claimed_at)) FROM lane_runs r WHERE r.claimed_by=m.machine_id) AS last_at
-  FROM lane_machines m WHERE m.state IN ('starting','started')
+  FROM lane_machines m WHERE m.state IN ('starting','started') AND (?2 IS NULL OR m.app = ?2)
   ORDER BY m.started_at, m.machine_id LIMIT ${LIST_MAX + 1}`;
 
 const PROMOTE_SQL = `UPDATE lane_machines SET state='started', updated_at=?1
@@ -99,11 +112,21 @@ function laneFor(runs, startMs, endMs) {
 
 export const routes = [
   [
+    "GET", "/api/lane-fleet/groups",
+    ({ env, t }) => d1Guarded("settings", async () => {
+      const { groups, invalid, fallback_s } = await readGroups(env);
+      return json(200, { groups, invalid, group_fallback_s: fallback_s, as_of: t });
+    }),
+  ],
+
+  [
     "GET", "/api/lane-fleet/machines",
-    ({ env, t }) => d1Guarded("lane_machines", async () => {
+    ({ env, t, url }) => d1Guarded("lane_machines", async () => {
+      const app = url.searchParams.get("app");
+      if (app !== null && !APP_RE.test(app)) return json(400, { error: "app must match [a-z0-9][a-z0-9-]{0,62}" });
       const grace = await graceSeconds(env);
       await env.DB.prepare(PROMOTE_SQL).bind(t).run();
-      const rows = (await env.DB.prepare(MACHINES_SQL).bind(t).all()).results || [];
+      const rows = (await env.DB.prepare(MACHINES_SQL).bind(t, app).all()).results || [];
       const now = Date.parse(t);
       const machines = rows.slice(0, LIST_MAX).map((r) => {
         const busy = Number(r.busy) === 1;
@@ -111,6 +134,7 @@ export const routes = [
         const last = r.last_at ? Math.max(started, Date.parse(r.last_at)) : started;
         return {
           machine_id: r.machine_id,
+          app: r.app,
           state: r.state,
           started_at: r.started_at,
           cpu_kind: r.cpu_kind, cpus: r.cpus, memory_mb: r.memory_mb,
@@ -120,7 +144,8 @@ export const routes = [
           idle_s: busy ? 0 : Math.max(0, Math.floor((now - last) / 1000)),
         };
       });
-      const f = await env.DB.prepare("SELECT MAX(failed_at) AS at FROM lane_machines").first();
+      const f = await env.DB.prepare("SELECT MAX(failed_at) AS at FROM lane_machines WHERE ?1 IS NULL OR app = ?1")
+        .bind(app).first();
       return json(200, {
         machines, start_grace_s: grace, last_failed_at: (f && f.at) || null, incomplete: rows.length > LIST_MAX, as_of: t,
       });
@@ -160,11 +185,15 @@ export const routes = [
       }
       if (body.failed === true && live) return json(400, { error: "failed is only for state stopped|destroyed" });
       const failedAt = body.failed === true ? t : null;
+      if (body.app !== undefined && body.app !== null && (typeof body.app !== "string" || !APP_RE.test(body.app))) {
+        return json(400, { error: "app must match [a-z0-9][a-z0-9-]{0,62}" });
+      }
+      const app = body.app || "lane-run";
       const actor = str(body.box, 64) || "lane-fleet";
       const ins = await env.DB.prepare(
-        `INSERT OR IGNORE INTO lane_machines (machine_id, state, cpu_kind, cpus, memory_mb, started_at, stopped_at, updated_at, actor, failed_at)
-         VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10)`
-      ).bind(mid, state, kind.v, cpus.v, mem.v, startedAt, live ? null : stoppedAt, t, actor, failedAt).run();
+        `INSERT OR IGNORE INTO lane_machines (machine_id, state, cpu_kind, cpus, memory_mb, started_at, stopped_at, updated_at, actor, failed_at, app)
+         VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11)`
+      ).bind(mid, state, kind.v, cpus.v, mem.v, startedAt, live ? null : stoppedAt, t, actor, failedAt, app).run();
       if (leaseWon(ins)) return json(201, { machine_id: mid, state, started_at: startedAt, as_of: t });
       if (live) {
         await env.DB.prepare(

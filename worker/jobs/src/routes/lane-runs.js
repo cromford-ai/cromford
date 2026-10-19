@@ -50,11 +50,25 @@
 // 600, 0 = never): status `died`, rc NULL, prof_line `withdrawn
 // refused-at-claim ...`. The hub reads that row as no-capacity, not as a
 // machine failure (mc_fly_stale_for). No other claim and no other row changes.
+//
+// Fleet groups (BH-7434, lib/lane-fleet-groups.js). A machine of a group
+// sends `only_prefixes` (same shape as skip_prefixes): it claims only a row
+// whose `project || '.'` starts with one of them, so `project-6-os.` names
+// project-6-os and its merge-conductor rows, and never project-6-os-x. A
+// claim WITHOUT only_prefixes is the default fleet's: it never takes a row of
+// a project in a valid lane_fleet.group.* row, except a live row (queued, or
+// claimed with an expired lease: its group machine died) enqueued longer than
+// lane_run.group_fallback_s ago (seed 900, 0 = never), so a project never
+// stalls when its own fleet is gone. The group skip is NOT
+// skip_prefixes: it never withdraws a row. GET /api/lane-runs/stats?fleet=
+// <group|default> answers the same split, counting queued rows only, through
+// idx_lane_runs_claim (bin/lane-fleet.sh sizes each fleet with it).
 
 import { d1Guarded, json } from "../lib/http.js";
 import { isoPlusSeconds, laneName, leaseWon, percentile, str } from "../lib/core.js";
 import { sweepDead } from "./lane-runs-lease.js";
 import { failReason, runStatus } from "../lib/lane-run-status.js";
+import { prefixesOf, readGroups } from "../lib/lane-fleet-groups.js";
 
 const ARGS_MAX = 64;
 const ARG_BYTES_MAX = 4096;
@@ -88,7 +102,9 @@ const CMD_RE = /^bin\/[A-Za-z0-9._/-]+$/;
 const LIVE = "(status='queued' OR (status='claimed' AND lease_until < ?2))";
 // Binds: ?1 machine ?2 now ?3 lease_until ?4 lanes JSON array or NULL
 // ?5 prefer JSON array or NULL ?6 the prefer cutoff (now - prefer_max_wait_s)
-// or NULL ?7 skip_prefixes JSON array or NULL. The subquery spells LIVE as a
+// or NULL ?7 skip_prefixes JSON array or NULL ?8 only_prefixes JSON array or
+// NULL ?9 the group skip JSON array or NULL ?10 the fallback cutoff (now -
+// lane_run.group_fallback_s) or NULL (BH-7434). The subquery spells LIVE as a
 // status IN list and names the index: with table statistics (ANALYZE, 20,000
 // rows) SQLite planned a SCAN of lane_runs for the OR form of LIVE, and for
 // the IN form without INDEXED BY. The skip prefix test is substr, not LIKE:
@@ -100,6 +116,11 @@ export const CLAIM_SQL = `UPDATE lane_runs SET status='claimed', claimed_by=?1, 
             AND (?4 IS NULL OR lane IN (SELECT value FROM json_each(?4)))
             AND (?7 IS NULL OR NOT EXISTS (SELECT 1 FROM json_each(?7) AS s
                                            WHERE substr(project, 1, length(s.value)) = s.value))
+            AND (?8 IS NULL OR EXISTS (SELECT 1 FROM json_each(?8) AS o
+                                       WHERE substr(project || '.', 1, length(o.value)) = o.value))
+            AND (?9 IS NULL OR enqueued_at < ?10
+                 OR NOT EXISTS (SELECT 1 FROM json_each(?9) AS g
+                                WHERE substr(project || '.', 1, length(g.value)) = g.value))
             ORDER BY CASE WHEN ?5 IS NULL THEN 0
                           WHEN enqueued_at < ?6 THEN 0
                           WHEN project IN (SELECT value FROM json_each(?5)) THEN 1
@@ -108,9 +129,10 @@ export const CLAIM_SQL = `UPDATE lane_runs SET status='claimed', claimed_by=?1, 
   RETURNING id, lane, project, args_json, attempts, lease_until`;
 // Ends the refused rows that waited too long (BH-6942, lead review of #6960).
 // Binds: ?1 now ?2 the cutoff (now - lane_run.refused_max_wait_s) ?3 lanes JSON
-// array or NULL ?4 skip_prefixes JSON array (never NULL here) ?5 prof_line.
-// The same skip and lanes filters as CLAIM_SQL, so a claim ends only rows it
-// would refuse itself. `enqueued_at <= ?2` reads "waited ?2 or more", the
+// array or NULL ?4 skip_prefixes JSON array (never NULL here) ?5 prof_line
+// ?6 only_prefixes ?7 group skip ?8 fallback cutoff (BH-7434, as CLAIM_SQL ?8-?10).
+// The same skip, lanes and fleet filters as CLAIM_SQL, so a claim ends only
+// rows it would refuse itself: never a row of another fleet's project. `enqueued_at <= ?2` reads "waited ?2 or more", the
 // hub's own rule (mc_fly_stale_for). idx_lane_runs_claim (status,
 // enqueued_at) serves the range.
 export const REFUSED_SQL = `UPDATE lane_runs SET status='died', finished_at=?1, prof_line=?5
@@ -119,13 +141,63 @@ export const REFUSED_SQL = `UPDATE lane_runs SET status='died', finished_at=?1, 
                AND (?3 IS NULL OR lane IN (SELECT value FROM json_each(?3)))
                AND EXISTS (SELECT 1 FROM json_each(?4) AS s
                            WHERE substr(project, 1, length(s.value)) = s.value)
+               AND (?6 IS NULL OR EXISTS (SELECT 1 FROM json_each(?6) AS o
+                                          WHERE substr(project || '.', 1, length(o.value)) = o.value))
+               AND (?7 IS NULL OR enqueued_at < ?8
+                    OR NOT EXISTS (SELECT 1 FROM json_each(?7) AS g
+                                   WHERE substr(project || '.', 1, length(g.value)) = g.value))
                ORDER BY enqueued_at, id LIMIT ${REFUSED_END_MAX})
     AND status='queued'`;
+// One fleet's claimable rows per lane (BH-7434): queued, or claimed with an
+// expired lease (as CLAIM_SQL's LIVE), counted as `queued`. Binds: ?1 lane or
+// NULL ?2 only JSON array or NULL ?3 group skip JSON array or NULL ?4 the
+// fallback cutoff or NULL ?5 now. The same project tests as CLAIM_SQL, through
+// idx_lane_runs_claim (status, enqueued_at): the full-table GROUP BY of the
+// plain stats is not run once per fleet per minute.
+export const FLEET_STATS_SQL = `SELECT lane, COUNT(*) AS queued, MIN(enqueued_at) AS oldest_queued
+  FROM lane_runs INDEXED BY idx_lane_runs_claim
+  WHERE status IN ('queued','claimed') AND (status='queued' OR lease_until < ?5) AND (?1 IS NULL OR lane=?1)
+    AND (?2 IS NULL OR EXISTS (SELECT 1 FROM json_each(?2) AS o
+                               WHERE substr(project || '.', 1, length(o.value)) = o.value))
+    AND (?3 IS NULL OR enqueued_at < ?4
+         OR NOT EXISTS (SELECT 1 FROM json_each(?3) AS g
+                        WHERE substr(project || '.', 1, length(g.value)) = g.value))
+  GROUP BY lane ORDER BY lane LIMIT 500`;
 // One lane's newest done rows, for the run p50. Binds: ?1 lane.
 export const RUN_SAMPLE_SQL = `SELECT claimed_at, finished_at FROM lane_runs
   WHERE lane=?1 AND status='done' ORDER BY id DESC LIMIT ${RUN_SAMPLE_N}`;
 
 const bytes = (s) => new TextEncoder().encode(s).length;
+const FLEET_RE = /^[a-z0-9][a-z0-9-]{0,29}$/;
+
+// prefixList <value> <field> -> { v: JSON array string or null } or { err }.
+// The skip_prefixes shape: at most SKIP_PREFIXES_MAX strings of SKIP_PREFIX_RE.
+function prefixList(v, field) {
+  if (v === undefined || v === null) return { v: null };
+  if (!Array.isArray(v) || v.length > SKIP_PREFIXES_MAX
+      || !v.every((x) => typeof x === "string" && SKIP_PREFIX_RE.test(x))) {
+    return { err: `${field} must be an array of at most ${SKIP_PREFIXES_MAX} strings of [A-Za-z0-9._-]{1,65}` };
+  }
+  return { v: v.length > 0 ? JSON.stringify(v) : null };
+}
+
+// fleetBinds <env> <t> <fleet name|null> -> { only, gskip, cutoff } (JSON
+// strings or null) or { err } for a fleet that is not `default` or a valid group.
+// fleet null = the default fleet of a claim with no only_prefixes.
+async function fleetBinds(env, t, fleet) {
+  const { groups, fallback_s: fb } = await readGroups(env);
+  if (fleet !== null && fleet !== "default") {
+    const g = groups.find((x) => x.name === fleet);
+    if (!g) return { err: `fleet ${fleet} is not default or a valid lane_fleet.group.* row` };
+    return { only: JSON.stringify(prefixesOf(g.projects)), gskip: null, cutoff: null };
+  }
+  if (groups.length === 0) return { only: null, gskip: null, cutoff: null };
+  return {
+    only: null,
+    gskip: JSON.stringify(prefixesOf(groups.flatMap((g) => g.projects))),
+    cutoff: fb > 0 ? isoPlusSeconds(t, -fb) : null,
+  };
+}
 
 // The longest prefix of s that fits in max UTF-8 bytes, cut on a character.
 function utf8Slice(s, max) {
@@ -188,6 +260,23 @@ function runSeconds(r) {
 
 const NAME_ERR = "must match [A-Za-z0-9._-]{1,64}";
 
+// addRunP50 <env> <lanes> -> truncated. The run p50 of each queued lane, at
+// most RUN_P50_LANES_MAX lanes (the most queued first); a lane past the cap
+// answers null and the answer says truncated.
+async function addRunP50(env, lanes) {
+  const queuedLanes = lanes.filter((l) => l.queued > 0)
+    .sort((a, b) => b.queued - a.queued || (a.lane < b.lane ? -1 : a.lane > b.lane ? 1 : 0));
+  const sampled = new Set(queuedLanes.slice(0, RUN_P50_LANES_MAX).map((l) => l.lane));
+  for (const l of queuedLanes) {
+    if (!sampled.has(l.lane)) { l.run_p50_s = null; l.run_p50_n = null; continue; }
+    const rs = (await env.DB.prepare(RUN_SAMPLE_SQL).bind(l.lane).all()).results || [];
+    const xs = rs.map(runSeconds).filter((x) => x !== null).sort((a, b) => a - b);
+    l.run_p50_s = percentile(xs, 50);
+    l.run_p50_n = xs.length;
+  }
+  return queuedLanes.length > sampled.size;
+}
+
 export const routes = [
   [
     "POST", "/api/lane-runs",
@@ -235,25 +324,24 @@ export const routes = [
         if (s === 0) prefer = null;
         else cutoff = isoPlusSeconds(t, -s);
       }
-      let skip = null;
-      if (body.skip_prefixes !== undefined && body.skip_prefixes !== null) {
-        const s = body.skip_prefixes;
-        if (!Array.isArray(s) || s.length > SKIP_PREFIXES_MAX
-            || !s.every((x) => typeof x === "string" && SKIP_PREFIX_RE.test(x))) {
-          return json(400, { error: `skip_prefixes must be an array of at most ${SKIP_PREFIXES_MAX} strings of [A-Za-z0-9._-]{1,65}` });
-        }
-        if (s.length > 0) skip = JSON.stringify(s);
-      }
+      const sk = prefixList(body.skip_prefixes, "skip_prefixes");
+      if (sk.err) return json(400, { error: sk.err });
+      const skip = sk.v;
+      const on = prefixList(body.only_prefixes, "only_prefixes");
+      if (on.err) return json(400, { error: on.err });
+      // A group machine names its projects; any other claim is the default fleet's.
+      const fb = on.v !== null ? { only: on.v, gskip: null, cutoff: null } : await fleetBinds(env, t, null);
       await sweepDead(env, t);
       if (skip !== null) {
         const w = await refusedMaxWaitSeconds(env);
         if (w > 0) {
           await env.DB.prepare(REFUSED_SQL).bind(t, isoPlusSeconds(t, -w), lanes, skip,
-            `withdrawn refused-at-claim machine=${machine} waited>=${w}s`).run();
+            `withdrawn refused-at-claim machine=${machine} waited>=${w}s`, fb.only, fb.gskip, fb.cutoff).run();
         }
       }
       const lease = isoPlusSeconds(t, await leaseSeconds(env));
-      const row = await env.DB.prepare(CLAIM_SQL).bind(machine, t, lease, lanes, prefer, cutoff, skip).first();
+      const row = await env.DB.prepare(CLAIM_SQL).bind(machine, t, lease, lanes, prefer, cutoff, skip,
+        fb.only, fb.gskip, fb.cutoff).first();
       if (!row) return new Response(null, { status: 204 });
       return json(200, {
         id: Number(row.id), lane: row.lane, project: row.project, args: JSON.parse(row.args_json),
@@ -357,6 +445,22 @@ export const routes = [
       if (raw !== null && raw !== "" && !lane) return json(400, { error: `lane ${NAME_ERR}` });
       const p50 = url.searchParams.get("run_p50");
       if (p50 !== null && p50 !== "1") return json(400, { error: "run_p50 must be 1 when present" });
+      const fleet = url.searchParams.get("fleet");
+      if (fleet !== null) {
+        if (!FLEET_RE.test(fleet)) return json(400, { error: "fleet must be default or a group name [a-z0-9][a-z0-9-]{0,29}" });
+        const fb = await fleetBinds(env, t, fleet);
+        if (fb.err) return json(400, { error: fb.err });
+        const fr = (await env.DB.prepare(FLEET_STATS_SQL).bind(lane || null, fb.only, fb.gskip, fb.cutoff, t).all()).results || [];
+        const now = Date.parse(t);
+        const lanes = fr.map((r) => ({
+          lane: r.lane, queued: Number(r.queued), claimed: null, done: null, died: null,
+          oldest_queued_wait_s: Math.max(0, Math.floor((now - Date.parse(r.oldest_queued)) / 1000)),
+          live_claimers: null,
+        }));
+        if (p50 === null) return json(200, { lanes, fleet, as_of: t });
+        const truncated = await addRunP50(env, lanes);
+        return json(200, { lanes, fleet, run_p50_truncated: truncated, as_of: t });
+      }
       const rows = (await env.DB.prepare(
         `SELECT lane,
            SUM(status='queued') AS queued, SUM(status='claimed') AS claimed,
@@ -373,20 +477,8 @@ export const routes = [
         live_claimers: Number(r.live_claimers),
       }));
       if (p50 === null) return json(200, { lanes, as_of: t });
-      // The run p50 of each queued lane, at most RUN_P50_LANES_MAX lanes (the
-      // most queued first); a lane past the cap answers null and the answer
-      // says truncated.
-      const queuedLanes = lanes.filter((l) => l.queued > 0)
-        .sort((a, b) => b.queued - a.queued || (a.lane < b.lane ? -1 : a.lane > b.lane ? 1 : 0));
-      const sampled = new Set(queuedLanes.slice(0, RUN_P50_LANES_MAX).map((l) => l.lane));
-      for (const l of queuedLanes) {
-        if (!sampled.has(l.lane)) { l.run_p50_s = null; l.run_p50_n = null; continue; }
-        const rs = (await env.DB.prepare(RUN_SAMPLE_SQL).bind(l.lane).all()).results || [];
-        const xs = rs.map(runSeconds).filter((x) => x !== null).sort((a, b) => a - b);
-        l.run_p50_s = percentile(xs, 50);
-        l.run_p50_n = xs.length;
-      }
-      return json(200, { lanes, run_p50_truncated: queuedLanes.length > sampled.size, as_of: t });
+      const truncated = await addRunP50(env, lanes);
+      return json(200, { lanes, run_p50_truncated: truncated, as_of: t });
     }),
   ],
 ];
