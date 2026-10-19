@@ -1022,6 +1022,86 @@ pool_hold_check() {
   case "$v" in held*) return 1 ;; clear*) return 0 ;; *) return 2 ;; esac
 }
 
+# THE PR GATE READS THE OPEN-PR LIST ONCE PER TICK, NOT ONCE PER ROW (hotfix,
+# 2026-10-19). Under hub load each per-key read took 10-16 s, so 156 queued rows
+# walked about 40 minutes and spawned nothing, and no read hit the 20 s limit
+# that stops the BH-7421 path. pool_pr_bulk_prime fills _POOL_PR_CACHE (and the
+# PR number and url) for every queued key from `pulls?state=open&per_page=100`,
+# so pr_exists_for_key_rest answers from the cache. A key absent from a COMPLETE
+# listing is cached "no PR"; a failed page, a body that is not a list or the page
+# cap on a full page leaves the cache empty and every row reads its own PR as
+# before, so a half-read listing never says "no PR". POOL_PR_BULK=0 turns it off.
+declare -A _PBR_OPEN=()
+_PBR_N=0; _PBR_PAGES=0; _PBR_WHY=""
+# pool_pr_bulk_read — fills _PBR_OPEN[<head ref>]="<number>|<url>" from this
+# repo's own branches (a fork PR on the same branch name is no PR for the pool,
+# as in the per-key read's head=<owner>:<branch>). rc 0 = complete listing,
+# rc 1 = incomplete, with the reason in _PBR_WHY.
+pool_pr_bulk_read() {
+  local owner="${POOL_SLUG%%/*}" page=1 cap=10 _out _code _body _len _rows ref num url acc="[]"
+  local bud="${POOL_PR_BULK_BUDGET_S:-60}" t0; t0=$(date +%s)
+  case "$bud" in ''|*[!0-9]*) bud=60 ;; esac
+  while [ "$page" -le "$cap" ]; do
+    _out=$(pool_rest_read "repos/$POOL_SLUG/pulls?state=open&per_page=100&page=$page" "${POOL_SLUG_TOK:-}")
+    _code=$(head -n 1 <<<"$_out"); _body=$(tail -n +2 <<<"$_out")
+    [ "$_code" = 200 ] || { _PBR_WHY="page $page answered ${_code:-none}"; return 1; }
+    _len=$(jq 'if type == "array" then length else -1 end' 2>/dev/null <<<"$_body")
+    case "$_len" in ''|-1|*[!0-9]*) _PBR_WHY="page $page body is not a list"; return 1 ;; esac
+    _rows=$(jq -r --arg o "$owner" '.[] | select((.head.repo.owner.login // "" | ascii_downcase) == ($o | ascii_downcase)) | [.head.ref, (.number | tostring), (.html_url // "")] | @tsv' 2>/dev/null <<<"$_body") \
+      || { _PBR_WHY="page $page body is not readable"; return 1; }
+    while IFS=$'\t' read -r ref num url; do
+      [ -n "$ref" ] && _PBR_OPEN[$ref]="$num|$url"
+    done <<<"$_rows"
+    # The same pages are the open-PR list pr_open_for_key_any_rest (BH-6671)
+    # reads once per tick: every PR, forks included, as {ref, title}. Handed
+    # over only from a complete listing, so that function reads no second copy
+    # (tests/pool-after-rn-branch.bh-6671-test.sh R8: one list read per tick).
+    acc=$(jq -c --argjson acc "$acc" '$acc + [.[] | {ref: (.head.ref // ""), title: (.title // "")}]' 2>/dev/null <<<"$_body") \
+      || { _PBR_WHY="page $page body is not readable"; return 1; }
+    _PBR_N=$((_PBR_N + _len)); _PBR_PAGES=$page
+    if [ "$_len" -lt 100 ]; then
+      _POOL_OPEN_LIST="$acc"; _POOL_OPEN_LIST_ST=ok
+      return 0
+    fi
+    # A bounded read: each page is cut at POOL_GH_READ_TIMEOUT_S, and the whole
+    # listing at POOL_PR_BULK_BUDGET_S, so a slow hub never spends the tick here.
+    [ $(( $(date +%s) - t0 )) -lt "$bud" ] \
+      || { _PBR_WHY="bulk budget ${bud}s spent after page $page"; return 1; }
+    page=$((page + 1))
+  done
+  _PBR_WHY="page cap $cap reached on a full page"
+  return 1
+}
+
+# pool_pr_bulk_prime — once per tick, before the row walk. One line in the log.
+pool_pr_bulk_prime() {
+  local files=() jf k br e keys=0
+  [ "${POOL_PR_BULK:-1}" = 0 ] && { say "PR bulk read: off (POOL_PR_BULK=0)"; return 0; }
+  for jf in "$QDIR"/*.json; do
+    [ -e "$jf" ] || continue
+    case "$jf" in *.failed.json) ;; *) files+=("$jf") ;; esac
+  done
+  [ "${#files[@]}" -ge 2 ] || { say "PR bulk read: off (fewer than 2 queued rows)"; return 0; }
+  pool_gates_applicable || { say "PR bulk read: off (PR gate not applicable)"; return 0; }
+  pool_pr_bulk_read || { say "PR bulk read: off ($_PBR_WHY)"; return 0; }
+  while read -r k; do
+    [ -n "$k" ] || continue
+    br=$(pool_key_branch "$k"); e="${_PBR_OPEN[$br]:-}"
+    if [ -n "$e" ]; then
+      _POOL_PR_NUM[$k]="${e%%|*}"; _POOL_PR_URL[$k]="${e#*|}"; _POOL_PR_CACHE[$k]=y
+    elif [ "$_PBR_PAGES" = 1 ]; then
+      # "No PR" only from a one-page listing: across pages, a PR that closes
+      # between two page reads shifts the next page by one, so the PR at the
+      # boundary is never seen. A key absent from a longer listing reads its own
+      # PR, as before (review note on the bulk read, 2026-10-19).
+      _POOL_PR_CACHE[$k]=n
+    fi
+    keys=$((keys + 1))
+  done < <(jq -r '.key // empty' "${files[@]}" 2>/dev/null)
+  say "PR bulk read: $_PBR_N open PRs in $_PBR_PAGES pages, cache filled for $keys keys"
+  return 0
+}
+
 # THE HOLD VERDICT ACROSS TICKS (BH-6549). pool_hold_check above reads the
 # issue and its whole thread for every held row on every tick, and its
 # _POOL_HOLD_CACHE dies with the $( ) it runs in. On the loaded hub a thread
@@ -4947,6 +5027,13 @@ QUAR=()
 # phase must not leave the walk no time. The first row is always decided. Rows
 # walk oldest first, so a slow head row can use the budget on every tick; the
 # budget stops the tick, it does not reorder the queue.
+# The bulk read only when a row can spawn this tick: a free budget slot or a
+# hotfix exemption. A full pool makes no PR read, as before the bulk read.
+if [ "$BUDGET" -gt 0 ] 2>/dev/null || [ "${HOTFIX_EXTRA:-0}" -gt 0 ] 2>/dev/null; then
+  pool_pr_bulk_prime
+else
+  say "PR bulk read: off (no free slot and no hotfix this tick)"
+fi
 POOL_TICK_T0=$(date +%s)
 for JF in $(hotfix_first $(ls -tr "$QDIR"/*.json 2>/dev/null)); do
   case "$JF" in *.failed.json) continue;; esac

@@ -1,0 +1,12 @@
+{
+  "env": "POOL_PR_BULK_BUDGET_S",
+  "type": "int",
+  "default": 60,
+  "min": 1,
+  "max": 600,
+  "unit": "s",
+  "zero_means": null,
+  "required": false,
+  "note": "The most seconds the per-tick open-PR bulk read (POOL_PR_BULK) may take across all its pages. Each page is also cut at POOL_GH_READ_TIMEOUT_S. When the budget is spent before the last page, the cache stays empty and every row reads its own PR, and the tick logs `PR bulk read: off (bulk budget ...)`.",
+  "read_in": "bin/fly-pool.sh"
+}

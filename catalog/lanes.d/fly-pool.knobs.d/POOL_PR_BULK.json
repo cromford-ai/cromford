@@ -1,0 +1,11 @@
+{
+  "env": "POOL_PR_BULK",
+  "type": "int",
+  "default": 1,
+  "min": 0,
+  "max": 1,
+  "unit": null,
+  "zero_means": "off",
+  "note": "1 = once per tick per project the pool reads the repo's open PR list in bulk (100 per page, at most 10 pages) and fills the per-key PR cache from it, so a queue of N rows costs one to ten reads and not N. A key absent from a COMPLETE listing is cached as no PR. A failed page read or a cut at the page cap leaves the cache empty and every row reads its own PR as before. 0 = off: every row reads its own PR (the 2026-10-19 hub behaviour: 156 rows at 10-16 s per read walked about 40 minutes). The tick logs `PR bulk read:` once.",
+  "read_in": "bin/fly-pool.sh"
+}
