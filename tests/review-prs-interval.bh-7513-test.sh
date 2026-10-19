@@ -46,6 +46,10 @@ while read -r p; do
   n=$((n+1)); [ "$(gaps "$s")" = "30 " ] || badn=$((badn+1))
 done < <(awk '$1 !~ /^#/ && NF >= 6 && $6 == "box-project-6-os-1" { print $1 }' "$DIR/fleet.conf")
 [ "$n" -ge 1 ] && [ "$badn" = 0 ] && ok || bad "R1 project-6-os default review-prs lines: $n seen, $badn not 30 apart"
+# R1b: a root with no state/ dir (a repo checkout) is not read and gets no files
+R1B="$T/checkout"; mkdir -p "$R1B"
+render "$DIR" project-6-os "$R1B" >/dev/null
+[ -z "$(find "$R1B" -mindepth 1 -print -quit)" ] && ok || bad "R1b the render wrote into a root with no state/: $(find "$R1B" -mindepth 1 | head -5 | tr '\n' ' ')"
 
 # --- R2: project-6-os at 10 on the real registry ----------------------------
 H="$T/h2"; row "$H" project-6-os:10

@@ -148,11 +148,14 @@ cron_review_slot() {
 # through lane_knob (settings cache, one GET a minute, env, registry default).
 # Only 10, 15 and 30 are accepted; anything else, an unreadable cache or a
 # missing lane-gate answers 30, which is what every project ran before the knob.
+# Only a live harness root (one with a state/ dir) is read: a render in a repo
+# checkout (CI, render-cron.sh --check, the share mirror) must not make
+# lane-gate write its cache, logs, flags and .settings-miss into the tree.
 cron_review_intervals() {
   local H="${1-}" P v here; shift
   here="$(dirname "${BASH_SOURCE[0]}")"
   (
-    if [ -n "$H" ] && [ -r "$here/lane-gate.sh" ]; then
+    if [ -n "$H" ] && [ -d "$H/state" ] && [ -r "$here/lane-gate.sh" ]; then
       HARNESS="$H"; export HARNESS
       # shellcheck source=bin/lib/lane-gate.sh
       . "$here/lane-gate.sh" >/dev/null 2>&1 || true
