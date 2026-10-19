@@ -570,6 +570,9 @@ mc_settle_merged() { # … <head> [merge-sha]
   msha=""
   case "${9:-}" in ""|*[!0-9a-f]*) ;; *) msha="$9" ;; esac
   [ -n "$msha" ] || msha=$(mc_pr_view "$url" '.merge_commit_sha // ""' 2>/dev/null)
+  # BH-6746: the ledger's direct mark, mirrored as a commit status CI can read.
+  [ "$lw" = "merge-conductor path=direct" ] && [ -n "$msha" ] && command -v landing_path_publish >/dev/null 2>&1 \
+    && landing_path_publish "$slug" "$msha" "$url" "$key" || true
   [ -n "$job" ] && [ "$job" != "-" ] && [ -n "$msha" ] && type job_artifact_put >/dev/null 2>&1 \
     && job_artifact_put merge_sha "$msha" "$(jq -nc --arg p "$url" '{by:"merge-conductor",pr:$p}')" "$job" >/dev/null 2>&1 || true
   # Issue-driven projects: comment + close the issue the PR was built for

@@ -22,6 +22,20 @@
 #                             anything else (a human push, an admin merge, a
 #                             batch merge that stopped halfway, a read that
 #                             failed) -> the FULL corpus, once, on this tree.
+#                             BH-6746, mode=push-direct: with CI_PLAN_LANDING=1
+#                             (the plan job), a push NOT by mergify[bot] whose
+#                             sha carries the conductor's `landing-path=success`
+#                             `path=direct` status (a direct landing, BH-6745)
+#                             runs the merge's impact set: `select --changed`
+#                             over HEAD^1..HEAD plus `test-impact.sh always`
+#                             (bin/lib/ci-push-direct.sh). The status is polled
+#                             for CI_PLAN_DIRECT_WAIT_S (default 120) every
+#                             CI_PLAN_DIRECT_POLL_S (default 10); no mark, an
+#                             unreadable one, an escalating path, an empty diff
+#                             or test-impact's own full answer is the full
+#                             corpus with the reason. A shard passes the plan
+#                             job's `push_class` as CI_PLAN_PUSH_CLASS and
+#                             reads no status.
 #   pull_request whose head   THE IMPACT SET of the batch's combined diff
 #     is mergify/merge-queue/ (TI_BASE..HEAD), `bin/test-impact.sh select
 #                             --changed` (BH-4968), mode=batch-selected. It
@@ -262,7 +276,9 @@
 # "not affected by this batch" step; 1 on every other path), reused (suites
 # taken from the ledger), saved_s (their recorded seconds) and reuse (`on`,
 # `off: <why>`, or `-` when no lookup was made; corpus=0 writes 0, 0, -),
-# written when CI_PLAN_REUSE=1 or CI_PLAN_REUSED_FILE is set. A
+# written when CI_PLAN_REUSE=1 or CI_PLAN_REUSED_FILE is set, and push_class
+# (BH-6746: queue-tested, push-direct or full on a push; - on any other event,
+# every path). A
 # run that reuses prints its `reuse:` lines, a `::notice title=ci-plan reuse::`
 # and the reuse line in GITHUB_STEP_SUMMARY. A batch also
 # prints a `::notice title=ci-plan::` line and, when GITHUB_STEP_SUMMARY is set,
@@ -306,7 +322,7 @@ while [ $# -gt 0 ]; do
     --expect-n) [ $# -ge 2 ] || { echo "ci-plan: --expect-n needs a number" >&2; exit 2; }; EXPECT="$2"; shift ;;
     --tier)     case "${2:-}" in nightly|nightly-full) TIER="$2" ;;
                   *) echo "ci-plan: --tier takes 'nightly' or 'nightly-full'" >&2; exit 2 ;; esac; shift ;;
-    -h|--help)  sed -n '2,295p' "$0"; exit 0 ;;
+    -h|--help)  sed -n '2,311p' "$0"; exit 0 ;;
     *) echo "ci-plan: unknown argument $1" >&2; exit 2 ;;
   esac
   shift
@@ -761,6 +777,7 @@ pr_select() {
 
 CORPUS=1; ESCALATION=-; BATCH=0; SPA=1; WORKER=1; BASENOTE=""; PRSEL=0; CBE_ADDED=""; ADDNOTE=""
 OWN_BASE=-; OWN_NOTE=""; INHERITED=""; WFNOTE=""; RLINE_REACH=""; MB=""; PINNED=""
+PUSH_CLASS=-
 # The reuse outputs are written only for a caller that takes part in reuse (the
 # plan job sets CI_PLAN_REUSE=1, a shard CI_PLAN_REUSED_FILE); any other caller
 # keeps the output keys it had.
@@ -772,12 +789,27 @@ if [ "$EV" = workflow_dispatch ] && [ "${CI_DISPATCH_SCOPE:-}" = impact ]; then 
 case "$EV" in
   push)
     if queue_tested; then
-      CORPUS=0; MODE=queue-tested; REASON="$QT_WHY"
+      CORPUS=0; MODE=queue-tested; REASON="$QT_WHY"; PUSH_CLASS=queue-tested
     else
-      MODE=full
-      TI_EVENT=push "$IMPACT" ci-select --out "$LIST" 2>"$WHY" \
-        || { echo "ci-plan: bin/test-impact.sh ci-select failed: $(cat "$WHY")" >&2; exit 2; }
-      REASON="full: a push to main that the queue did not test ($QT_WHY)"
+      # BH-6746: a direct-landed merge runs its impact set (push-direct). A
+      # shard takes the plan job's class (CI_PLAN_PUSH_CLASS) and reads nothing.
+      CPD_WHY=""; PCLASS=full
+      if [ -n "${CI_PLAN_PUSH_CLASS:-}" ]; then
+        [ "$CI_PLAN_PUSH_CLASS" != push-direct ] || { PCLASS=push-direct; CPD_WHY="the plan job's push class"; }
+      elif [ "${CI_PLAN_LANDING:-}" = 1 ] && [ "${CI_ACTOR:-}" != "mergify[bot]" ]; then
+        if ! . "$SELF_DIR/lib/ci-push-direct.sh" 2>/dev/null || ! command -v cpd_landed >/dev/null 2>&1; then
+          CPD_WHY="landing mark unreadable (bin/lib/ci-push-direct.sh did not load)"
+        elif cpd_landed; then PCLASS=push-direct; fi
+      fi
+      if [ "$PCLASS" = push-direct ] && { command -v cpd_select >/dev/null 2>&1 || . "$SELF_DIR/lib/ci-push-direct.sh" 2>/dev/null; }; then
+        cpd_select
+        PUSH_CLASS="$MODE"
+      else
+        MODE=full; PUSH_CLASS=full
+        TI_EVENT=push "$IMPACT" ci-select --out "$LIST" 2>"$WHY" \
+          || { echo "ci-plan: bin/test-impact.sh ci-select failed: $(cat "$WHY")" >&2; exit 2; }
+        REASON="full: a push to main that the queue did not test ($QT_WHY${CPD_WHY:+; $CPD_WHY})"
+      fi
     fi ;;
   pull_request)
     case "${TI_PR_HEAD_REF:-}" in
@@ -831,6 +863,7 @@ if [ "$CORPUS" = 0 ]; then
   if [ -n "${GITHUB_OUTPUT:-}" ]; then
     { echo "corpus=0"; echo "mode=$MODE"; echo "count=0"; echo "n=0"; echo "shards=[]"; echo "summary=$SUMMARY"
       echo "quarantine=$QLIST"; echo "escalation=$ESCALATION"; echo "own_base=$OWN_BASE"; echo "spa=$SPA"; echo "worker=$WORKER"
+      echo "push_class=$PUSH_CLASS"
       [ "$REUSE_KEYS" = 0 ] || { echo "reused=0"; echo "saved_s=0"; echo "reuse=-"; }; } >> "$GITHUB_OUTPUT"
   fi
   exit 0
@@ -1117,6 +1150,7 @@ if [ -n "${GITHUB_OUTPUT:-}" ]; then
   { echo "mode=$MODE"; echo "count=$COUNT"; echo "total=$TOTAL"; echo "n=$N"
     echo "shards=$SHARDS"; echo "corpus=1"; echo "summary=$SUMMARY"; echo "quarantine=$QLIST"
     echo "escalation=$ESCALATION"; echo "own_base=$OWN_BASE"; echo "spa=$SPA"; echo "worker=$WORKER"
+    echo "push_class=$PUSH_CLASS"
     [ "$BATCH" = 0 ] || echo "full_triggers=$FTRIG"
     [ "$BATCH" = 0 ] || [ -z "$PP_OUT" ] || echo "prepush=$PP_OUT"
     echo "sizing=$SIZING"; echo "shard_budget_s=$BUDGET"; echo "max_shards=$MAX"

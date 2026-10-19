@@ -281,8 +281,8 @@ GO=$(cat "$T/go" 2>/dev/null)
 has "::notice" "$OUT" && bad "11: an ordinary PR prints no ci-plan notice [$OUT]" || ok
 [ ! -s "$T/sum" ] && ok || bad "11: an ordinary PR writes no step summary: $(cat "$T/sum")"
 [ "$(cut -d' ' -f1 "$T/sink" | sort -u)" = ci-select ] && ok || bad "11: an ordinary PR only calls ci-select: $(cat "$T/sink")"
-[ "$(printf '%s\n' "$GO" | sed 's/=.*//' | tr '\n' ' ')" = "mode count total n shards corpus summary quarantine escalation own_base spa worker sizing shard_budget_s max_shards " ] && ok \
-  || bad "11: an ordinary PR's outputs are the old keys plus escalation, own_base (BH-6490), spa and worker (BH-4969), sizing, shard_budget_s and max_shards (BH-6876): $(printf '%s\n' "$GO" | sed 's/=.*//' | tr '\n' ' ')"
+[ "$(printf '%s\n' "$GO" | sed 's/=.*//' | tr '\n' ' ')" = "mode count total n shards corpus summary quarantine escalation own_base spa worker push_class sizing shard_budget_s max_shards " ] && ok \
+  || bad "11: an ordinary PR's outputs are the old keys plus escalation, own_base (BH-6490), spa and worker (BH-4969), push_class (BH-6746), sizing, shard_budget_s and max_shards (BH-6876): $(printf '%s\n' "$GO" | sed 's/=.*//' | tr '\n' ' ')"
 
 echo "ci-plan-batch-impact.bh-4968-test.sh: $PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ] || exit 1

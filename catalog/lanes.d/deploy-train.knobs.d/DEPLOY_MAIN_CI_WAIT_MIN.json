@@ -1,0 +1,7 @@
+{
+  "env": "DEPLOY_MAIN_CI_WAIT_MIN",
+  "type": "int",
+  "default": 45,
+  "zero_means": null,
+  "note": "Read by bin/lib/deploy-main-ci.sh as ${DEPLOY_MAIN_CI_WAIT_MIN:-45} (BH-6746; the ticket's deploy.main_ci_wait_min): minutes the train waits for a `main-ci` status on origin/main HEAD, counted from the first tick that saw the sha, before it logs MAIN_CI_UNKNOWN. Not a positive integer: 45. Above the ~30 min corpus wall time. Only read with DEPLOY_MAIN_CI_GATE=1."
+}

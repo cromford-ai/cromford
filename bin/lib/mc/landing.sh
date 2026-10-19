@@ -79,6 +79,13 @@
 #   rc 0 when `landingdirect <key> <head>` is on the attempts ledger and no
 #   `landingfail <key> <head>` is: the head was landed directly. mc_settle_merged
 #   writes the ledger merge detail `merge-conductor path=direct` on rc 0.
+# landing_path_publish <slug> <merge-sha> <url> <key>
+#   BH-6746. Mirrors that ledger mark onto GitHub, because a CI runner cannot
+#   read the jobs ledger: the commit status `landing-path=success`, description
+#   `path=direct`, on the merge sha (vs_publish with LEAD_VERDICT_CONTEXT
+#   overridden). bin/ci-plan.sh (bin/lib/ci-push-direct.sh cpd_landed) reads it
+#   and plans the push as push-direct. Always rc 0: a status that is not posted
+#   costs one `<key> LANDING_PATH_OWED <why>` line, and CI runs the full corpus.
 #
 # LANDING_NOW (epoch seconds) is the clock seam for the tests.
 # gh-rest: no-graphql
@@ -261,6 +268,20 @@ landing_direct_path() {
   [ -n "${1:-}" ] && [ -n "${2:-}" ] || return 1
   [ "$(_landing_count landingdirect "$1" "$2")" -gt 0 ] 2>/dev/null || return 1
   [ "$(_landing_count landingfail "$1" "$2")" = 0 ]
+}
+
+landing_path_publish() {
+  local slug="${1:-}" msha="${2:-}" url="${3:-}" key="${4:-}" err
+  if ! command -v vs_publish >/dev/null 2>&1; then
+    _landing_log "$key LANDING_PATH_OWED no-writer (vs_publish is not loaded) — CI runs the full corpus on ${msha:0:8}"
+    return 0
+  fi
+  if err=$(LEAD_VERDICT_CONTEXT=landing-path vs_publish "$slug" "$msha" success "path=direct" "$url" 2>&1 >/dev/null); then
+    _landing_log "$key LANDING_PATH_PUBLISHED landing-path=success path=direct on ${msha:0:8}"
+  else
+    _landing_log "$key LANDING_PATH_OWED $(head -1 <<<"${err:-vs_publish failed}") — CI runs the full corpus on ${msha:0:8}"
+  fi
+  return 0
 }
 
 # _landing_outcome_put <repo> <pr> <head> <mode> <outcome> <key> — the row's

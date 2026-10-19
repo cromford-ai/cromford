@@ -1,0 +1,7 @@
+{
+  "env": "DEPLOY_MAIN_CI_GATE",
+  "type": "int",
+  "default": 0,
+  "zero_means": "off",
+  "note": "Read by bin/deploy-train.sh as ${DEPLOY_MAIN_CI_GATE:-0} (BH-6746): 1 = the train departs only on an origin/main HEAD whose `main-ci` commit status is success (bin/lib/deploy-main-ci.sh); a red sha logs MAIN_CI_RED, a sha with no status waits (MAIN_CI_WAIT) up to DEPLOY_MAIN_CI_WAIT_MIN, then logs MAIN_CI_UNKNOWN and alerts once. 0 = off, today's departure. Turn it on only for a project whose CI posts `main-ci` (cromford's Harness CI does); a product repo whose CI does not would never depart. Per-project row: bin/harness-ctl.sh set deploy-train DEPLOY_MAIN_CI_GATE 1 <project>."
+}

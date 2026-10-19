@@ -185,11 +185,50 @@ if { [ "$DQ_ROWS" = yes ] && [ -z "$ROWS" ]; } \
 fi
 exec 7>"$HARNESS/locks/deploy-train-$PROJECT.lock"; flock -n 7 || exit 0
 
+# >>> main-ci gate (BH-6746)
+# With DEPLOY_MAIN_CI_GATE=1 the departure sha is origin/main HEAD only when its
+# `main-ci` commit status is success (bin/lib/deploy-main-ci.sh). Red, no status
+# yet (MAIN_CI_WAIT, bounded by DEPLOY_MAIN_CI_WAIT_MIN) and past the bound
+# (MAIN_CI_UNKNOWN) depart nothing: one log line and exit 0, before any claim,
+# so the batch is offered again next tick. On green, TARGET is pinned to the
+# gated sha, and a queued sha that is not its ancestor stays queued. Off (the
+# default): this block does nothing.
+TARGET_PIN=""
+if [ "${DEPLOY_MAIN_CI_GATE:-0}" = 1 ]; then
+  # shellcheck source=bin/lib/deploy-main-ci.sh
+  . "$(dirname "${BASH_SOURCE[0]}")/lib/deploy-main-ci.sh" 2>/dev/null && command -v dmc_decide >/dev/null 2>&1 \
+    || { echo "$(STAMP) [$PROJECT] main-ci gate is on but bin/lib/deploy-main-ci.sh did not load — not departing (fail closed)" >> "$LOG"; exit 0; }
+  (cd "$REPO_DIR" && git fetch -q origin 2>/dev/null)
+  GATE_SHA=$(cd "$REPO_DIR" && git rev-parse -q --verify 'origin/main^{commit}' 2>/dev/null) \
+    || { echo "$(STAMP) [$PROJECT] main-ci gate: origin/main could not be read — not departing" >> "$LOG"; exit 0; }
+  # shellcheck source=bin/lib/gh-app-auth.sh
+  [ -r "$HARNESS/bin/lib/gh-app-auth.sh" ] && . "$HARNESS/bin/lib/gh-app-auth.sh"
+  command -v gh_default_auth_for_project >/dev/null 2>&1 && { gh_default_auth_for_project "$PROJECT" || true; }
+  DMC_RC=0; dmc_decide "$PROJECT" "$SLUG" "$GATE_SHA" || DMC_RC=$?
+  echo "$(STAMP) [$PROJECT] $DMC_LINE" >> "$LOG"
+  [ "$DMC_RC" = 0 ] || exit 0
+  TARGET_PIN="$GATE_SHA"
+fi
+# dmc_in_gate <sha> — rc 0 when <sha> ships with the gated TARGET_PIN (always,
+# with the gate off). A sha that is not its ancestor stays queued, said once.
+dmc_in_gate() {
+  [ -n "$TARGET_PIN" ] || return 0
+  (cd "$REPO_DIR" && git merge-base --is-ancestor "$1" "$TARGET_PIN" 2>/dev/null) && return 0
+  echo "$(STAMP) [$PROJECT] ${1:0:8} is not in the gated ${TARGET_PIN:0:8} — left queued" >> "$LOG"
+  return 1
+}
+# <<< main-ci gate
+
 # N is digits only (BSD wc pads with spaces) because it is also handed to jq as
 # a NUMBER below, and " 1" is not one — an unparseable count would cost the
 # whole ledger row rather than the padding.
 BATCH=""
 if [ "$DQ_ROWS" = yes ]; then
+  if [ -n "$TARGET_PIN" ]; then
+    ROWS=$(while IFS= read -r row; do
+      [ -n "$row" ] && dmc_in_gate "$(cut -f2 <<<"$row")" && printf '%s\n' "$row"
+    done <<<"$ROWS")
+  fi
   SHAS=$(cut -f2 <<<"$ROWS"); BDIRS=$(cut -f4 <<<"$ROWS")
   # CLAIM EVERY MEMBER BEFORE THE HOOK. The flock above is per BOX; this is what
   # stops a second box's train from firing a second deploy hook for the same
@@ -224,7 +263,14 @@ if [ "$DQ_ROWS" = yes ]; then
   fi
   N=$(wc -l <<<"$SHAS"); N=$(tr -dc 0-9 <<<"$N"); N="${N:-0}"
 else
-  BATCH=$(ls -tr "$DQ"); N=$(wc -l <<<"$BATCH"); N=$(tr -dc 0-9 <<<"$N"); N="${N:-0}"
+  BATCH=$(ls -tr "$DQ")
+  if [ -n "$TARGET_PIN" ]; then
+    BATCH=$(while IFS= read -r f; do
+      [ -n "$f" ] && dmc_in_gate "$(cut -d' ' -f1 "$DQ/$f")" && printf '%s\n' "$f"
+    done <<<"$BATCH")
+    [ -n "$BATCH" ] || { echo "$(STAMP) [$PROJECT] nothing to depart: no queued merge is in the gated ${TARGET_PIN:0:8}" >> "$LOG"; exit 0; }
+  fi
+  N=$(wc -l <<<"$BATCH"); N=$(tr -dc 0-9 <<<"$N"); N="${N:-0}"
   SHAS=$(while read -r f; do cut -d' ' -f1 "$DQ/$f"; done <<<"$BATCH")
 fi
 echo "$(STAMP) [$PROJECT] train departing: $N merge(s): $(tr '\n' ' ' <<<"$SHAS")" >> "$LOG"
@@ -310,7 +356,7 @@ train_wait() {
 }
 
 (cd "$REPO_DIR" && git fetch -q origin)
-TARGET=$(cd "$REPO_DIR" && git rev-parse origin/main)
+TARGET=${TARGET_PIN:-$(cd "$REPO_DIR" && git rev-parse origin/main)}
 [ -n "${DEPLOY_HOOK_URL:-}" ] && curl -s --max-time 20 -X POST "$DEPLOY_HOOK_URL" >/dev/null 2>&1
 
 DEPLOYED=no
