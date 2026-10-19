@@ -1,0 +1,12 @@
+{
+  "env": "POOL_TICK_HARD_LIMIT_S",
+  "type": "int",
+  "default": 1200,
+  "min": 1,
+  "max": 86400,
+  "unit": "seconds",
+  "zero_means": null,
+  "required": false,
+  "read_in": "bin/fly-pool-tick.sh",
+  "note": "BH-7491. A project tick that has held its lock longer than this writes one log line and one alert per episode. It is an alert only: the tick is never killed. Default 1200 s (2 x POOL_TICK_BUDGET_S at its default). Settings row `lane.fly-pool-tick.pool_tick_hard_limit_s`."
+}

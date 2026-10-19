@@ -93,6 +93,50 @@ retire_builder_record() { # retire_builder_record <project>
   HARNESS="$H" "$H/bin/alert-line.sh" "[pool/$1] builder machine $mid is still in ${app:-its builder app} and nothing uses it — this box never runs a Fly command against a builder-* app (sprawl guard), so destroy it by hand: fly machine destroy $mid -a ${app:-builder-$1} --force (its volume is your call)"
 }
 
+# --- BH-7491: bounded wait and the hard limit on one project tick -------------
+# Both knobs are lane.fly-pool-tick.* settings rows (catalog/lanes.d/
+# fly-pool-tick.knobs.d), put in the environment by lane_env_apply above.
+tick_knob() { # tick_knob <NAME> <default> — digits only, else the default
+  local v; v=$(printf %s "${!1:-}" | tr -dc '0-9'); printf '%s\n' "${v:-$2}"
+}
+tick_wait_bound() {
+  local w t0=$SECONDS; w=$(tick_knob POOL_TICK_WAIT_S 300)
+  if [ "$w" = 0 ]; then wait; return 0; fi
+  # `jobs -pr` lists only RUNNING children; kill -0 would count a finished
+  # child nobody has reaped yet.
+  while [ -n "$(jobs -pr)" ] && [ $((SECONDS - t0)) -lt "$w" ]; do sleep 1; done
+}
+# tick_hang_check <project> — runs before that project's tick starts. The
+# project lock is the truth about "a tick is running": free -> stamp the start
+# of the tick about to run; held -> the stamp says how old the running tick is.
+# Past the hard limit (POOL_TICK_HARD_LIMIT_S; 0 = 2 x POOL_TICK_BUDGET_S, so
+# 1200 s) one log line and one alert per episode (state/fly-pool-tick/<p>.alerted).
+# The tick is never killed.
+tick_hang_check() {
+  local p="$1" lock="$H/locks/fly-pool-$1.lock" d="$H/state/fly-pool-tick"
+  local stamp="$d/$1.since" alerted="$d/$1.alerted" lim b since age
+  mkdir -p "$d" 2>/dev/null
+  if ! command -v flock >/dev/null 2>&1 || [ ! -e "$lock" ] \
+     || ( exec 9>>"$lock"; flock -n 9 ) 2>/dev/null; then
+    date +%s > "$stamp" 2>/dev/null
+    # The episode marker lives beside the stamp, not in flags/: it is this
+    # wrapper's own state, and no switch reads it.
+    rm -f "$alerted"
+    return 0
+  fi
+  lim=$(tick_knob POOL_TICK_HARD_LIMIT_S 1200)
+  if [ "$lim" = 0 ]; then b=$(tick_knob POOL_TICK_BUDGET_S 600); lim=$((b * 2)); fi
+  since=$(tr -dc 0-9 < "$stamp" 2>/dev/null)
+  [ -n "$since" ] || { date +%s > "$stamp" 2>/dev/null; return 0; }
+  age=$(( $(date +%s) - since ))
+  [ "$age" -gt "$lim" ] || return 0
+  [ -e "$alerted" ] && return 0
+  date +%s > "$alerted" 2>/dev/null
+  mkdir -p "$H/logs"
+  echo "$(date -u '+%Y-%m-%d %H:%M:%SZ') [pool/$p] tick has run ${age}s, past the hard limit of ${lim}s (POOL_TICK_HARD_LIMIT_S; 2 x POOL_TICK_BUDGET_S by default): it holds locks/fly-pool-$p.lock and is NOT killed; other projects tick on" >> "$H/logs/fly-pool.log"
+  HARNESS="$H" "$H/bin/alert-line.sh" --id "pool-tick-hung-$p" --project "$p" "[pool/$p] tick has run ${age}s, past the hard limit of ${lim}s: it holds the project lock and is not killed; check logs/fly-pool.log and the tick process on the hub"
+}
+
 # shellcheck source=bin/jobs-client.sh
 [ -r "$H/bin/jobs-client.sh" ] && [ -d "$H/bin/lib/jobs" ] && . "$H/bin/jobs-client.sh" 2>/dev/null
 command -v routing_sync_all >/dev/null 2>&1 && { routing_sync_all >/dev/null 2>&1 || true; }
@@ -107,13 +151,20 @@ for f in "$H"/flags/fly-pool-*; do
     "$H/bin/fly-pool.sh" "$P"
   else
     retire_legacy_cap "$f" "$P"
+    tick_hang_check "$P"
     "$H/bin/fly-pool.sh" "$P" &
   fi
 done
-# The sweep does not outlive its ticks: cron's next run then finds settled pools
-# rather than half-pushed machines, the same contract fly-pool.sh's own `wait`
-# gives its spawns.
-wait
+# BOUNDED WAIT (BH-7491). The sweep used to wait for EVERY tick, so one slow
+# project held this wrapper, the single-run gate (BH-7422) turned each later
+# cron start away, and every project ticked once per round of the slowest one
+# (2026-10-19: project-6-os, 156 queued rows, four tick lines in 5 hours). Now
+# the wrapper waits at most POOL_TICK_WAIT_S for its ticks (default 300, under
+# the 600 s cron cadence; 0 = wait for all, the old contract). A tick still
+# running at the bound is left to finish: it holds its own
+# locks/fly-pool-<p>.lock, so a later wrapper run ticks every OTHER project
+# while that lock turns the slow one away.
+tick_wait_bound
 
 # BH-2522: the files/rows preflight, after every pool above has settled. It
 # backfills machines rows from the pool files while fly_machines_rows is off,

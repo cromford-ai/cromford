@@ -1,0 +1,12 @@
+{
+  "env": "POOL_TICK_WAIT_S",
+  "type": "int",
+  "default": 300,
+  "min": 0,
+  "max": 3600,
+  "unit": "seconds",
+  "zero_means": "unlimited",
+  "required": false,
+  "read_in": "bin/fly-pool-tick.sh",
+  "note": "BH-7491. The most time bin/fly-pool-tick.sh waits for its project ticks before it runs the BH-2522 preflight and exits. A tick still running at the bound keeps its own project lock, so the next cron start ticks the other projects. Keep it under the 600 s cron cadence. Settings row `lane.fly-pool-tick.pool_tick_wait_s`. 0 means no bound: wait for every project tick (the pre-BH-7491 contract)."
+}
