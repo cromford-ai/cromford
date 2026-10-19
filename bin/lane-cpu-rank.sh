@@ -30,6 +30,11 @@
 #      for step 2 is dead by now and the post got 401 on the hub every day.
 #   6. A failed read, sample or post: state `attempts <n>`. The 6th failure
 #      writes `gave-up <ts> <reason>` and one bin/lane-alert.sh --log-only line.
+#   The report states the hub load5 target, the before number and the after
+#   numbers on the line after the Load line (BH-7526): settings rows
+#   lane_cpu_rank.load5_target (code default 24), lane_cpu_rank.load5_before
+#   and lane_cpu_rank.load5_before_at; `Target met: yes` only when load5 at
+#   the start and at the end of the window are both under the target.
 # To measure again (the "after" numbers): set lane_cpu_rank.issue to another
 # issue, or delete state/lane-cpu-rank/state-<issue> AND the old comment.
 #
@@ -90,6 +95,18 @@ LOADED=1; . "$SELF/jobs-client.sh" 2>/dev/null || LOADED=0
 v=""
 [ "$LOADED" = 1 ] && v=$(setting_get lane_cpu_rank.issue 2>/dev/null | tr -d '[:space:]')
 if [[ "$v" =~ ^[1-9][0-9]{0,6}$ ]]; then ISSUE=$v; ISSUE_SRC=row; fi
+# The hub load5 target and the before number (BH-7526). A row that is missing,
+# unreadable or not a number uses the code default: target 24 (the BH-7252
+# acceptance), before `not set`.
+T5=24; T5_SRC="code default"; B5="not set"; B5_AT=""
+v=""; [ "$LOADED" = 1 ] && v=$(setting_get lane_cpu_rank.load5_target 2>/dev/null | tr -d '[:space:]')
+if [[ "$v" =~ ^[0-9]{1,4}(\.[0-9]{1,2})?$ ]] && awk -v t="$v" 'BEGIN { exit !(t + 0 > 0) }'; then
+  T5=$v; T5_SRC="row lane_cpu_rank.load5_target"
+fi
+v=""; [ "$LOADED" = 1 ] && v=$(setting_get lane_cpu_rank.load5_before 2>/dev/null | tr -d '[:space:]')
+[[ "$v" =~ ^[0-9]{1,4}(\.[0-9]{1,2})?$ ]] && B5=$v
+v=""; [ "$LOADED" = 1 ] && v=$(setting_get lane_cpu_rank.load5_before_at 2>/dev/null | tr -d '[:space:]')
+[[ "$v" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9:]{8}Z$ ]] && [ "$B5" != "not set" ] && B5_AT=" at $v"
 # shellcheck source=bin/lib/lane-placement.sh
 . "$SELF/lib/lane-placement.sh" 2>/dev/null || true
 STATE="$DIR_R/state-$ISSUE"
@@ -208,11 +225,17 @@ while IFS=$'\t' read -r share lane cpu; do
 done < "$TMP/sample.out"
 
 # ── 5. the report, then the comment ──────────────────────────────────────────
+# Target met: yes only when both load5 reads are numbers and both are under
+# the target (strict); a read that is NA is unknown, never yes.
+if [ "$LA5" = NA ] || [ "$LB5" = NA ]; then MET=unknown
+elif awk -v a="$LA5" -v b="$LB5" -v t="$T5" 'BEGIN { exit !(a + 0 < t + 0 && b + 0 < t + 0) }'; then MET=yes
+else MET=no; fi
 {
   echo "Hub lane CPU, ranked by CPU seconds per hour (BH-7252 C0)."
   echo
   echo "Window: $W_START to $W_END (UTC). Host: $(hostname 2>/dev/null || echo unknown). Interval: $INTERVAL s."
   echo "Load (load1/load5): start $LA1/$LA5, end $LB1/$LB5."
+  echo "Hub load5 target: under $T5 ($T5_SRC). Before: $B5$B5_AT. After: start $LA5, end $LB5. Target met: $MET."
   echo
   echo "| rank | lane | CPU s/h | share % | placement | hub-only reason |"
   echo "|---|---|---|---|---|---|"
