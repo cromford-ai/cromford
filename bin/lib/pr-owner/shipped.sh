@@ -47,7 +47,7 @@
 #   are kept. No root, or PO_SHIPPED_MEMO=0, means no memo.
 
 _po_sh_root() { printf '%s' "${HARNESS:-${H:-}}"; }
-_po_sh_say() { if command -v say >/dev/null 2>&1; then say "$*"; else echo "$*" >&2; fi; }
+_po_sh_say() { if declare -F say >/dev/null 2>&1; then say "$*"; else echo "$*" >&2; fi; }
 _po_sh_num() { case "${1:-}" in ''|*[!0-9]*) printf '%s' "$2" ;; *) printf '%s' "$1" ;; esac; }
 
 PO_DONE_SKIP_LABELS_DEFAULT="hold merge-queue queue-solo fix-main-red"

@@ -47,7 +47,7 @@
 #   rc 1 (nothing printed) = the board could not be read. Cached per run in $TD.
 
 _po_ss_root() { printf '%s' "${HARNESS:-${H:-}}"; }
-_po_ss_say() { if command -v say >/dev/null 2>&1; then say "$*"; else echo "$*" >&2; fi; }
+_po_ss_say() { if declare -F say >/dev/null 2>&1; then say "$*"; else echo "$*" >&2; fi; }
 
 # The REST helpers, loaded on first use from next to this lib. Never the CLI.
 _po_ss_rest() {

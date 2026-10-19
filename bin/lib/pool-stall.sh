@@ -131,7 +131,7 @@ _ps_knob() {
   local n="${1:-}" d="${2:-}" mx="${3:-}" v
   v="${!n:-$d}"
   if ! _ps_int "$v" || { [ -n "$mx" ] && [ "$v" -gt "$mx" ]; }; then
-    command -v say >/dev/null 2>&1 && say "$n=$v is not a number of 0-$mx — using $d"
+    declare -F say >/dev/null 2>&1 && say "$n=$v is not a number of 0-$mx — using $d"
     v="$d"
   fi
   printf '%s\n' "$v"
@@ -161,7 +161,7 @@ pool_stall_step() {
   tmp="$sf.tmp.$$"
   jq -nc --argjson s "$since" --arg c "$cause" '{since:$s,cause:$c}' > "$tmp" 2>/dev/null && mv -f "$tmp" "$sf" || rm -f "$tmp"
   [ "$st" = stall ] || return 0
-  command -v say >/dev/null 2>&1 && say "stall: queued $q, building $bl, for $((age / 60))m: $cause"
+  declare -F say >/dev/null 2>&1 && say "stall: queued $q, building $bl, for $((age / 60))m: $cause"
   # The hour flag goes through bin/lib/flags.sh (BH-4153; the file
   # flags/<name> on every path). The read is --cached: no worker request.
   af="alerted-pool-stall-$P-$(date -u +h%H-%Y%m%d)"
@@ -184,7 +184,7 @@ pool_stall_no_token() {
   _ps_int "$q" || q=0
   _ps_int "$live" || live=0
   pool_stall_step "$q" 0 0 unknown missing "$(pool_stall_cause missing 0 "" "$live" unknown 0 "$tv")"
-  command -v say >/dev/null 2>&1 && say "no Fly token ($tv or FLY_API_TOKEN) in fly.env: queued $q, $live job files — nothing reaped, swept or spawned this tick"
+  declare -F say >/dev/null 2>&1 && say "no Fly token ($tv or FLY_API_TOKEN) in fly.env: queued $q, $live job files — nothing reaped, swept or spawned this tick"
   return 0
 }
 

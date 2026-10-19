@@ -59,7 +59,7 @@ _por_knob() {
   local n="${1:-}" d="${2:-}" mx="${3:-}" v
   v="${!n:-$d}"
   if ! _por_int "$v" || { [ -n "$mx" ] && [ "$v" -gt "$mx" ]; }; then
-    command -v say >/dev/null 2>&1 && say "$n=$v is not a number of 0-$mx — using $d"
+    declare -F say >/dev/null 2>&1 && say "$n=$v is not a number of 0-$mx — using $d"
     v="$d"
   fi
   printf '%s\n' "$v"
@@ -82,7 +82,7 @@ pool_orphan_rows_step() {
   smin=$((thr / 60)); [ "$smin" -ge 1 ] || smin=1
   resp=$(_jobs_req GET "/api/queue?project=$P&status=claimed&target=fly&stale_min=$smin&limit=500" 2>/dev/null); rc=$?
   if [ "$rc" != 0 ]; then
-    command -v say >/dev/null 2>&1 && say "orphan-rows: queue read failed (rc $rc) — nothing released"
+    declare -F say >/dev/null 2>&1 && say "orphan-rows: queue read failed (rc $rc) — nothing released"
     return 0
   fi
   asof=$(jq -r '.as_of // ""' <<<"$resp" 2>/dev/null)
@@ -122,14 +122,14 @@ pool_orphan_rows_step() {
     queue_release "$P" "$k" "$why" >/dev/null 2>&1; rc=$?
     if [ "$rc" = 0 ]; then
       n=$((n + 1)); released+=("$k")
-      command -v say >/dev/null 2>&1 \
+      declare -F say >/dev/null 2>&1 \
         && say "orphan-row-release $k: claimed by $by ${age}s ago on machine ${mid:-none} ($ms), no hub owner — row back to queued"
     else
       n=$((n + 1))
-      command -v say >/dev/null 2>&1 && say "orphan-row-release $k: release failed (rc $rc) — row stays claimed"
+      declare -F say >/dev/null 2>&1 && say "orphan-row-release $k: release failed (rc $rc) — row stays claimed"
     fi
   done <<<"$rows"
-  if [ "$due" -gt "$max" ] && command -v say >/dev/null 2>&1; then
+  if [ "$due" -gt "$max" ] && declare -F say >/dev/null 2>&1; then
     say "orphan-rows: $((due - max)) over POOL_ORPHAN_ROW_RELEASE_MAX this tick — next tick"
   fi
   if [ "${#released[@]}" -gt 0 ]; then

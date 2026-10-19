@@ -32,7 +32,7 @@
 
 PO_DUP_GUARD_SIBLINGS_MAX=10
 
-_po_dg_say() { if command -v say >/dev/null 2>&1; then say "$*"; else echo "$*" >&2; fi; }
+_po_dg_say() { if declare -F say >/dev/null 2>&1; then say "$*"; else echo "$*" >&2; fi; }
 _po_dg_keep() { # <tag> <detail>
   _po_dg_say "${PO_SLUG}#$PO_NUM: duplicate close refused — $1: $2"
   HELD="${HELD:+$HELD,}#$PO_NUM:$1"

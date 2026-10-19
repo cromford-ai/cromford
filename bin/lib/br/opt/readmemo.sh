@@ -39,7 +39,7 @@ if [ "${BR_READMEMO:-1}" = 0 ] || [ "${BR_READMEMO_MAX_AGE_S:-300}" = 0 ] || [ "
   return 0
 fi
 if ! declare -F gh_rest >/dev/null 2>&1; then
-  command -v say >/dev/null 2>&1 && say "optional module readmemo: gh_rest is not defined on this box — the read memo is off this run"
+  declare -F say >/dev/null 2>&1 && say "optional module readmemo: gh_rest is not defined on this box — the read memo is off this run"
   return 0
 fi
 

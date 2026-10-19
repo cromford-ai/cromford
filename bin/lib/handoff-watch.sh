@@ -79,7 +79,7 @@ bhw__dir() {
 bhw__now() { printf '%s' "${BHW_NOW:-$(date -u +%s)}"; }
 bhw__int() { case "${1:-}" in ''|*[!0-9]*) printf '%s' "${2:-0}" ;; *) printf '%s' "$1" ;; esac; }
 bhw__say() {
-  if command -v say >/dev/null 2>&1; then say "$*"; return 0; fi
+  if declare -F say >/dev/null 2>&1; then say "$*"; return 0; fi
   local root="${HARNESS:-${H:-}}"
   [ -n "$root" ] && mkdir -p "$root/logs" 2>/dev/null \
     && printf '%s %s\n' "$(date -u '+%Y-%m-%d %H:%M:%SZ')" "$*" >> "$root/logs/blocked-resolver.log"

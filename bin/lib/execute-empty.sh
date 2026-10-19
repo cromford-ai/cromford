@@ -267,7 +267,7 @@ ee_stop_check() { # ee_stop_check <project> <key> <ticket>
   # state/ file: state/pool is the pool_state rows' path (catalog/state-paths.json,
   # BH-5001), and a file beside a row is a second spelling that drifts.
   marker="$newest/needs-human.posted"
-  command -v say >/dev/null 2>&1 && say "skipping $key: EXECUTE_EMPTY $n time(s) in ${win}s (cap $max) — not relaunched; a person must look (NEEDS_HUMAN)"
+  declare -F say >/dev/null 2>&1 && say "skipping $key: EXECUTE_EMPTY $n time(s) in ${win}s (cap $max) — not relaunched; a person must look (NEEDS_HUMAN)"
   if [ -e "$marker" ]; then
     # Asked already: has a person answered since? (_ee_lift_epoch)
     local asked lep
@@ -275,7 +275,7 @@ ee_stop_check() { # ee_stop_check <project> <key> <ticket>
     lep=$(_ee_lift_epoch "$p" "$ticket" "$asked")
     [ -n "$lep" ] || return 1
     printf '%s\n' "$lep" > "$newest/needs-human.lifted" 2>/dev/null
-    command -v say >/dev/null 2>&1 && say "$key: the NEEDS_HUMAN ask on ticket ${ticket:-?} was answered — the EXECUTE_EMPTY count is reset and the key may launch"
+    declare -F say >/dev/null 2>&1 && say "$key: the NEEDS_HUMAN ask on ticket ${ticket:-?} was answered — the EXECUTE_EMPTY count is reset and the key may launch"
     return 0
   fi
   reason=$(head -c 300 "$newest/stop-reason.txt" 2>/dev/null | head -1 | _ee_defang)

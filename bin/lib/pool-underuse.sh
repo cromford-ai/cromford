@@ -53,7 +53,7 @@ _pu_knob() {
   local n="${1:-}" d="${2:-}" mx="${3:-}" v
   v="${!n:-$d}"
   if ! _pu_int "$v" || { [ -n "$mx" ] && [ "$v" -gt "$mx" ]; }; then
-    command -v say >/dev/null 2>&1 && say "$n=$v is not a number of 0-$mx — using $d"
+    declare -F say >/dev/null 2>&1 && say "$n=$v is not a number of 0-$mx — using $d"
     v="$d"
   fi
   printf '%s\n' "$v"
@@ -98,14 +98,14 @@ pool_underuse_tick() {
   [ "$vst" = underuse ] || return 0
   if [ "$cap" -gt 0 ]; then capacity="$cap"; captxt="$cap"; else capacity=$((bl + q)); captxt=unlimited; fi
   out="under-used for $((age / 60))m: queued $q, building $bl of capacity $capacity (${pct}% floor); orphans $orph, spawning ${BUDGET:-?}, cap=$captxt"
-  command -v say >/dev/null 2>&1 && say "$out"
+  declare -F say >/dev/null 2>&1 && say "$out"
   af="alerted-pool-underuse-$P-$(date -u +h%H-%Y%m%d)"
   command -v flag_set >/dev/null 2>&1 \
     || . "$(dirname "${BASH_SOURCE[0]}")/flags.sh" 2>/dev/null || true
   # No flags lib: no hourly dedup, so no alert (every tick would page). The
   # say line above still records the under-use.
   if ! command -v flag_has >/dev/null 2>&1; then
-    command -v say >/dev/null 2>&1 && say "pool-underuse: alert not sent (bin/lib/flags.sh did not load)"
+    declare -F say >/dev/null 2>&1 && say "pool-underuse: alert not sent (bin/lib/flags.sh did not load)"
     return 0
   fi
   flag_has --cached "$af" 2>/dev/null && return 0

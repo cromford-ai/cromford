@@ -44,7 +44,7 @@
 
 _PO_STALE_LIB="${BASH_SOURCE[0]%/*}/.."
 
-_po_stale_say() { if command -v say >/dev/null 2>&1; then say "$*"; else printf '%s\n' "$*" >&2; fi; }
+_po_stale_say() { if declare -F say >/dev/null 2>&1; then say "$*"; else printf '%s\n' "$*" >&2; fi; }
 _po_stale_dry() { [ "${DRY:-${PR_OWNER_DRY_RUN:-0}}" = 1 ]; }
 _po_stale_root() { printf '%s' "${HARNESS:-${H:-}}"; }
 _po_epoch() { # _po_epoch <iso8601> -> epoch seconds, rc 1 when unparseable

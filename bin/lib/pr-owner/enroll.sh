@@ -42,7 +42,7 @@
 #
 # Rules: docs/PR-OWNERSHIP.md.
 
-_po_log() { if command -v say >/dev/null 2>&1; then say "$*"; else printf '%s\n' "$*" >&2; fi; }
+_po_log() { if declare -F say >/dev/null 2>&1; then say "$*"; else printf '%s\n' "$*" >&2; fi; }
 
 # The conductor's lib, loaded once per process and only when a PR is eligible:
 # mc_transition, mc_pr_lock, mc_rest_var and mc_ci_state are its, never copied.

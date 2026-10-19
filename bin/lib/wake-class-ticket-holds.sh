@@ -80,7 +80,7 @@ wc_ticket_holds_dispatch() {
     te_put_holds "$p" "$n" "$tmp" >/dev/null 2>&1 || true
   done
   rm -f "$tmp"
-  if [ "$left" -gt 0 ] && command -v say >/dev/null 2>&1; then
+  if [ "$left" -gt 0 ] && declare -F say >/dev/null 2>&1; then
     say "ticket-holds: $left thread(s) left for the next wake (cap ticket_holds.wake_reads_max=$max)"
   fi
   return 0
