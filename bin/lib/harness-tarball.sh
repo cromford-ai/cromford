@@ -8,6 +8,10 @@
 harness_tarball() {
   local out="$1" checkout="$2"; shift 2
   local sha stampdir rc=0
+  # BH-7505: POOL_HARNESS_SRC, when set, is the checkout to tar. A lane-run
+  # machine that runs the pool tick has no /root/harness-checkout; the hub sets
+  # nothing, so its call names the same checkout as before.
+  [ -z "${POOL_HARNESS_SRC:-}" ] || checkout="$POOL_HARNESS_SRC"
   stampdir=$(mktemp -d /tmp/hstamp-XXXX)
   if sha=$(git -C "$checkout" rev-parse HEAD 2>/dev/null) && [ ${#sha} = 40 ]; then
     printf '%s\n' "$sha" > "$stampdir/HARNESS_COMMIT"

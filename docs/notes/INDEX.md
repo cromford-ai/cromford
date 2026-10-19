@@ -7,6 +7,7 @@ it belongs to, and re-render.
 
 ## MERGE-CONDUCTOR
 
+- 2026-10-18 — [Open PRs join the migration-number check; bare self-references move; foreign lock keys are noted (BH-7398)](2026-10-18-BH-7398-migration-renumber-open-prs.md)
 - 2026-10-18 — [A colliding migration number is renumbered at rebase time (BH-7365)](2026-10-18-BH-7365-migration-renumber.md)
 - 2026-10-17 — [A merge-queue batch drops the always-suites the pre-push gate already ran (BH-7289)](2026-10-17-BH-7289-always-set-prepush.md)
 - 2026-10-17 — [A batch-fail suite fix goes first in the merge queue (BH-7279)](2026-10-17-BH-7279-flake-fix-queue.md)
@@ -255,6 +256,7 @@ it belongs to, and re-render.
 
 ## BUILD-CONCURRENCY
 
+- 2026-10-18 — [Docker-pool host runner (BH-7347, slice C1 of #7300)](2026-10-18-BH-7347-docker-pool-runner.md)
 - 2026-10-16 — [The pool never waits on a number we chose, and a machine-hour budget bounds the spend (BH-7190)](2026-10-16-BH-7190-pool-never-wait.md)
 - 2026-10-14 — [A plan that shares a hot file with any open ticket PR is held (BH-6292)](2026-10-14-BH-6292-inflight-hotfile-hold.md)
 - 2026-10-13 — [Six project loops on the per-project runner (BH-5944)](2026-10-13-BH-5944-project-loops-runner.md)
@@ -338,6 +340,7 @@ it belongs to, and re-render.
 
 ## OPERATOR-SETUP
 
+- 2026-10-18 — [The harness sync heals a failed fast-forward, and the pool pages when it is under-used (BH-7382)](2026-10-18-BH-7382-sync-self-heal-pool-underuse.md)
 - 2026-10-17 — [fly-onboard puts the project's Fly token on the console worker (BH-7196)](2026-10-17-BH-7196-console-fly-secrets.md)
 - 2026-10-17 — [Cromford release commits carry bullet release notes (BH-7185)](2026-10-17-BH-7185-cromford-release-notes.md)
 - 2026-10-16 — [The pool reclaims orphan slots, names a stall, and cancels held in-flight builds (BH-7107)](2026-10-16-BH-7107-pool-orphan-reclaim.md)
@@ -943,6 +946,7 @@ it belongs to, and re-render.
 
 ## FLY-BUILDER-TRIAL
 
+- 2026-10-18 — [The harness sync heals a failed fast-forward, and the pool pages when it is under-used (BH-7382)](2026-10-18-BH-7382-sync-self-heal-pool-underuse.md)
 - 2026-10-16 — [The pool reclaims orphan slots, names a stall, and cancels held in-flight builds (BH-7107)](2026-10-16-BH-7107-pool-orphan-reclaim.md)
 - 2026-10-15 — [Nightly filer labels as the App; the pool checks the label actor before a spawn (BH-6957)](2026-10-15-BH-6957-nightly-filer-actor.md)
 - 2026-10-07 — [A reused pool machine never hands a held build slot to the next build (BH-5021)](2026-10-07-BH-5021-pool-slot-clean.md)
@@ -1033,6 +1037,7 @@ it belongs to, and re-render.
 
 ## LEAD-REVIEW
 
+- 2026-10-18 — [The review gets a NOTE for each body item the plan requires and the PR body lacks (BH-7378)](2026-10-18-BH-7378-pr-body-requires.md)
 - 2026-10-17 — [The self-check refuses a gating PR with no fenced live-probes block (BH-7074)](2026-10-17-BH-7074-live-probes-gating.md)
 - 2026-10-16 — [A builder APPROVE carries to a merge-only head, and the replay fetch retries (BH-7043)](2026-10-16-BH-7043-builder-carry.md)
 - 2026-10-13 — [A PR carries only its own ticket's commits (BH-6394)](2026-10-13-BH-6394-foreign-commits.md)
@@ -1089,6 +1094,7 @@ it belongs to, and re-render.
 
 ## MERGIFY
 
+- 2026-10-17 — [A test-infra path in a merge-queue batch runs its own suites and 40 canaries, not the corpus (BH-7287, wave 1 of BH-7033)](2026-10-17-BH-7287-infra-batch-select.md)
 - 2026-10-17 — [A batch-fail suite fix goes first in the merge queue (BH-7279)](2026-10-17-BH-7279-flake-fix-queue.md)
 - 2026-10-17 — [Merge origin/main into a PR branch only on a real conflict (BH-7042)](2026-10-17-BH-7042-main-merge-only-on-conflict.md)
 - 2026-10-17 — [BH-5373 r2: culprit ejection on, bisect off (2026-10-17)](2026-10-17-BH-5373-culprit-flip-on.md)
@@ -1190,7 +1196,10 @@ it belongs to, and re-render.
 
 ## OPERATING
 
+- 2026-10-18 — [BH-7304 (BH-7191.2): sha on change, sync facts, beat and nosync rules](2026-10-18-BH-7304-sha-on-change-beat-nosync.md)
 - 2026-10-18 — [Box roles in the registry, a sync timer on every box, the watchdog list from the registry (BH-7303)](2026-10-18-BH-7303-registry-roles-sync-timer.md)
+- 2026-10-18 — [BH-7252 C2: lane-move judges a late-found flip on a window it can see](2026-10-18-BH-7252-lane-move-late-flip.md)
+- 2026-10-17 — [BH-7252 C1: move the pipeline-health project runs to lane-run](2026-10-17-BH-7252-pipeline-health-move.md)
 - 2026-10-17 — [BH-7191 (BH-7302): fleet version check, the tracer](2026-10-17-BH-7191-fleet-version-check.md)
 - 2026-10-16 — [A PLAN_BLOCKED build says why, and the stranded watch waits for an answer (BH-7116)](2026-10-16-BH-7116-plan-blocked-notice.md)
 - 2026-10-16 — [stage_events_daily archive rule (BH-7109, Scope 4 + R5 of BH-6779)](2026-10-16-BH-7109-stage-events-daily-archive.md)

@@ -60,6 +60,12 @@
 # of the lane's `@row` file) and .lri/log-append (the bytes the run added to
 # logs/<lane>.log).
 #
+# A lane may also have <lane>.wo (BH-7505): paths a write-back may carry and the
+# snapshot never does, in the .rw format (no directives but @token). The pool
+# tick pulls a build's 30 record files back from its machine, and the next run
+# reads none of them, so listing them in .rw would put every record of the last
+# lane_snapshot.builds_days days into every snapshot.
+#
 # Manifest format: one entry a line; blank and `#` lines are skipped. A path
 # line is `<glob>[ <comment>]` and lri_paths prints it whole, with $p replaced
 # by the project and $repokey by the project's fleet.conf repo with every
@@ -194,7 +200,7 @@ _lri_load() {
 # _lri_has [rw] — rc 0 when the lane loaded under LRI_K lists any path (in rw
 # mode: any rw path).
 _lri_has() {
-  [ -n "${_LRI_M[$LRI_K|print.rw]:-}" ] || { [ "${1:-ro}" = ro ] && [ -n "${_LRI_M[$LRI_K|print.ro]:-}" ]; }
+  [ -n "${_LRI_M[$LRI_K|print.rw]:-}" ] || [ -n "${_LRI_M[$LRI_K|print.wo]:-}" ] || { [ "${1:-ro}" = ro ] && [ -n "${_LRI_M[$LRI_K|print.ro]:-}" ]; }
 }
 
 _lri_bad() { _LRI_M[$LRI_K|err]="lri: $1: $2"; }
@@ -271,10 +277,13 @@ _lri_compile() {
   local lane="$1" p="$2" pe mode f n line where name g e words=() paths=() lines="" row="" rowlock="" rowat=""
   local rows="" slug="" repokey=""
   local -A tok=() lit=() lp=() rp=()
-  local pr_rw="" pr_ro="" re_rw="" re_ro="" dr_rw="" dr_ro="" wk_rw="" wk_ro=""
+  local pr_rw="" pr_wo="" pr_ro="" re_rw="" re_ro="" dr_rw="" dr_ro="" wk_rw="" wk_ro="" re_wo="" dr_wo="" wk_wo=""
   local re_glob='^(([<][^>]*[>]|[^[:space:]<])+)([[:space:]].*)?$'
   pe="${p//./\\.}"
-  for mode in rw ro; do
+  # <lane>.wo (BH-7505) lists paths a write-back may carry that the snapshot
+  # never does: build artifacts the run makes and nothing it reads. It sits
+  # between .rw and .ro, so a token a .wo defines is visible to the .ro.
+  for mode in rw wo ro; do
     f="$LRI_MD/$lane.$mode"
     [ -f "$f" ] || continue
     n=0
@@ -338,7 +347,9 @@ _lri_compile() {
     [[ $line =~ $re_glob ]] || { _lri_bad "$where" "no glob before the first space"; return 1; }
     _lri_glob "${BASH_REMATCH[1]}" || { _lri_bad "$where" "$LRI_WHY"; return 1; }
     [ -z "$LRI_GL" ] || lit[$mode:$LRI_GL]=1
-    if [ "$mode" = rw ]; then
+    if [ "$mode" = wo ]; then
+      pr_wo+="$line"$'\n'; re_wo+="${re_wo:+|}$LRI_GE"; dr_wo+="${LRI_GD:+${dr_wo:+|}$LRI_GD}"; wk_wo+="$LRI_GW"$'\n'
+    elif [ "$mode" = rw ]; then
       pr_rw+="$line"$'\n'; re_rw+="${re_rw:+|}$LRI_GE"; dr_rw+="${LRI_GD:+${dr_rw:+|}$LRI_GD}"; wk_rw+="$LRI_GW"$'\n'
     else
       pr_ro+="$line"$'\n'; re_ro+="${re_ro:+|}$LRI_GE"; dr_ro+="${LRI_GD:+${dr_ro:+|}$LRI_GD}"
@@ -358,9 +369,11 @@ _lri_compile() {
     [ -n "${lit[rw:$g]:-}" ] || { _lri_bad "$where" "the @rows path is not a path line of the .rw"; return 1; }
     [ "$g" != "$row" ] || { _lri_bad "$where" "the @rows path is the @row path"; return 1; }
   done <<<"$rows"
-  _LRI_M[$LRI_K|walk.rw]="$wk_rw"; _LRI_M[$LRI_K|walk.ro]="$wk_rw$wk_ro"
-  _LRI_M[$LRI_K|print.rw]="$pr_rw"; _LRI_M[$LRI_K|print.ro]="$pr_ro"
+  # The write-only paths join the write-back's lists and never the snapshot's.
+  _LRI_M[$LRI_K|walk.rw]="$wk_rw$wk_wo"; _LRI_M[$LRI_K|walk.ro]="$wk_rw$wk_ro"
+  _LRI_M[$LRI_K|print.rw]="$pr_rw"; _LRI_M[$LRI_K|print.wo]="$pr_wo"; _LRI_M[$LRI_K|print.ro]="$pr_ro"
   re_ro="$re_rw${re_rw:+${re_ro:+|}}$re_ro"; dr_ro="$dr_rw${dr_rw:+${dr_ro:+|}}$dr_ro"
+  re_rw="$re_rw${re_rw:+${re_wo:+|}}$re_wo"; dr_rw="$dr_rw${dr_rw:+${dr_wo:+|}}$dr_wo"
   _LRI_M[$LRI_K|re.rw]="${re_rw:+^($re_rw)\$}"; _LRI_M[$LRI_K|re.ro]="${re_ro:+^($re_ro)\$}"
   _LRI_M[$LRI_K|dre.rw]="${dr_rw:+^($dr_rw)\$}"; _LRI_M[$LRI_K|dre.ro]="${dr_ro:+^($dr_ro)\$}"
   _LRI_M[$LRI_K|lines]="$(printf '%s' "$lines" | cut -f1,2)"
@@ -469,7 +482,8 @@ lri_paths() {
   local lane="${1:-}" p="${2:-}" mode="${3:-ro}"
   _lri_load "$lane" "$p" || { printf '%s\n' "${_LRI_M[$LRI_K|err]}" >&2; return 1; }
   printf '%s' "${_LRI_M[$LRI_K|print.rw]:-}"
-  [ "$mode" = rw ] && return 0
+  # The write-only paths (BH-7505) are in the write-back's list, never the snapshot's.
+  [ "$mode" != rw ] || { printf '%s' "${_LRI_M[$LRI_K|print.wo]:-}"; return 0; }
   printf '%s' "${_LRI_M[$LRI_K|print.ro]:-}"
 }
 

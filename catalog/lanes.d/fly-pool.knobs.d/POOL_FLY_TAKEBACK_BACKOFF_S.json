@@ -1,0 +1,12 @@
+{
+  "env": "POOL_FLY_TAKEBACK_BACKOFF_S",
+  "type": "int",
+  "default": 600,
+  "min": 0,
+  "max": 86400,
+  "unit": "seconds",
+  "zero_means": null,
+  "required": false,
+  "read_in": "bin/lib/pool-placement.sh",
+  "note": "BH-7505: after the hub takes a project's pool tick back from a machine (a stale row, a failed run, or a run that deferred because the machine lacks flyctl, a Fly token, the harness tree or the env bundle), it enqueues no new row for this many seconds and runs the tick itself, so a machine that cannot work does not cost a row per tick. Only with lane_fallback.fly-pool.<project> at hub. 0 enqueues a new row at the next tick. Settings row `lane.fly-pool.pool_fly_takeback_backoff_s`."
+}

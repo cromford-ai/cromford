@@ -1,0 +1,9 @@
+{
+  "env": "POOL_HARNESS_SRC",
+  "type": "string",
+  "default": "",
+  "zero_means": null,
+  "read_in": "bin/lib/harness-tarball.sh",
+  "note": "Not a knob: the checkout a spawn tars to its build machine (bin/lib/harness-tarball.sh), and the tree bin/fly-pool-project.sh --preflight looks for (bin prompts rules catalog fly). Unset: /root/harness-checkout, the hub's. A lane-run machine that runs the pool tick sets it to the tree its image carries (BH-7505). A path, so NOT settable from the control plane.",
+  "settable": false
+}

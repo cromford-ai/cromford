@@ -1,0 +1,9 @@
+{
+  "env": "POOL_LEASE_HOLDER",
+  "type": "string",
+  "default": "",
+  "zero_means": null,
+  "note": "Not a knob: the holder id of POOL_LEASE_FENCE (BH-7505): the machine id for a machine run, hub-<hostname> for a hub tick. Exported with it. NOT settable from the control plane.",
+  "settable": false,
+  "read_in": "bin/lib/pool-placement.sh"
+}

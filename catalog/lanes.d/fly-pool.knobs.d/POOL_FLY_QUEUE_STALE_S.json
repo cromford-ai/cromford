@@ -1,0 +1,12 @@
+{
+  "env": "POOL_FLY_QUEUE_STALE_S",
+  "type": "int",
+  "default": 300,
+  "min": 0,
+  "max": 86400,
+  "unit": "seconds",
+  "zero_means": null,
+  "required": false,
+  "read_in": "bin/lib/pool-placement.sh",
+  "note": "BH-7505: with lane_placement.fly-pool.<project> = fly, a fly-pool lane_runs row that no lane-run machine has claimed this many seconds after it was enqueued is withdrawn, and the hub runs the project's tick itself (fallback=no-capacity), so a missing or full fleet never stops the pool. 300 is half the 600 s cron cadence. 0 takes back any row still queued at the next tick. A machine that claims the row first runs under the lease, and the hub tick then finds the lease held and does no work. Settings row `lane.fly-pool.pool_fly_queue_stale_s`."
+}

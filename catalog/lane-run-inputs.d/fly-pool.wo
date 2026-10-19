@@ -1,0 +1,12 @@
+# catalog/lane-run-inputs.d/fly-pool.wo — the files a pool run WRITES into a build
+# record and nothing on the next run reads (BH-7505). A write-back may carry
+# them. The snapshot never does: every record of the last lane_snapshot.builds_days
+# days would otherwise ride in every snapshot and push it over lane_snapshot.max_bytes.
+#
+# The reap list is bin/fly-pool.sh:3395-3416 (`for A in plan.md review.md ...`)
+# plus the files it writes beside them: cost.csv's push (push_pool_cost_rows),
+# failovers.log (:3425), the full RESULT (:3430, in fly-pool.rw) and
+# result-source (:3362). A file over lane_snapshot.file_max stays on the machine,
+# and the lane log names it (lri_checkpoint).
+@token <pool record file> plan.md review.md security-review.md security-review-run.txt refute-review.md merged-review2.md harness-suite-fix.txt qa.md e2e.md evidence.md changed-files.txt reviewed-sha headbound-outcome headbound-review.md headbound-review-run.txt harness-suite-head.txt pipeline.log cost.csv validate.txt red.txt green.txt mutation-check.txt context.json gh-stderr.log execute-transcript.md stop-reason.txt ticket-meta.json failovers.log result-source
+builds/pool-$p-<KEY>-*/<pool record file>

@@ -1,0 +1,11 @@
+{
+  "env": "POOL_PROJECT_TERM_WAIT_S",
+  "type": "int",
+  "default": 12,
+  "min": 0,
+  "max": 25,
+  "unit": "seconds",
+  "zero_means": null,
+  "read_in": "bin/fly-pool-project.sh",
+  "note": "BH-7505: on TERM, how long bin/fly-pool-project.sh lets the pool tick end its running spawns before it TERMs and KILLs the tick's process tree. Keep it under lane_run.term_grace_s (seed 20, at most 25), which the worker gives the whole run."
+}

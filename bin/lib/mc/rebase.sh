@@ -1330,7 +1330,7 @@ mc_rebase() {
   if [ "$base" = main ] && command -v mnr_fix >/dev/null 2>&1; then
     local mnr mnrc=0 mnl
     # stderr is a knob warning, never a move: it is logged on its own line.
-    mnr=$(mnr_fix "$wt" "origin/$base" "$project" 2>"$wt.mnr-err") || mnrc=$?
+    mnr=$(mnr_fix "$wt" "origin/$base" "$project" "$br" "${url##*/}" 2>"$wt.mnr-err") || mnrc=$?
     while IFS= read -r mnl; do [ -n "$mnl" ] && mc_log "$url rebase: $mnl"; done < "$wt.mnr-err" 2>/dev/null
     rm -f "$wt.mnr-err"
     case "$mnrc" in

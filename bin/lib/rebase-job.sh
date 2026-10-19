@@ -236,8 +236,8 @@ _rebase_job_body() {
   # commit's `Union-resolved:` trailers join UNION:, so the hub withholds the
   # approval rebind exactly as for a union-resolved merge.
   if [ "$base" = main ] && type mnr_fix >/dev/null 2>&1; then
-    local mnr mnrc=0 mnu
-    mnr=$(mnr_fix "$wt" "origin/$base" "${PROJECT:-}" 2>/dev/null) || mnrc=$?
+    local mnr mnrc=0 mnu mnp="${REBASE_JOB_URL:-}"
+    mnr=$(mnr_fix "$wt" "origin/$base" "${PROJECT:-}" "$br" "${mnp##*/}" 2>/dev/null) || mnrc=$?
     if [ "$mnrc" = 1 ]; then
       _rj_line="GATE_RED migration-number: $(printf '%s' "$mnr" | tr '\n' ' ' | sed 's/  */ /g; s/ *$//')"
       return 1

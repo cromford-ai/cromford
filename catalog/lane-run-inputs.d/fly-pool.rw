@@ -1,0 +1,48 @@
+# catalog/lane-run-inputs.d/fly-pool.rw — the files one `bin/fly-pool-project.sh
+# $p` run (bin/fly-pool.sh $p with POOL_ON_MACHINE=1) reads AND writes (BH-7505).
+# A write-back may carry these only, and the snapshot carries them too. The
+# machine posts a write-back after each spawn (pp_checkpoint) and one more when
+# the run ends, so a lost machine leaves the hub with every spawn record posted
+# before it stopped. The build artifacts a reap pulls home are in
+# fly-pool.wo, not here: nothing reads them on the next run.
+#
+# The file:line after each entry is where bin/fly-pool.sh writes it (the BH-6896
+# inventory, docs/notes/2026-10-15-BH-6896-fly-pool-offhub.md).
+#
+# NOT CARRIED. A pool run also touches these; BH-7505 answers each in
+# docs/notes/2026-10-19-BH-7505-pool-tick-on-fly.md:
+#   logs/ALERTS.log, logs/alerts-state.log (alert-line.sh posts to
+#     /api/alert-lines on a machine, BH-6889; the hub replays them)
+#   state/quota/*, state/lane-gate/*, state/gh-*, state/flags-cache/*,
+#     state/model-routes/*, state/dispatch-mode/*: fleet-wide or machine-local
+#     caches the machine fills from the jobs worker itself
+#   state/sibling-serial/$p/*: the sibling clock stays on the machine that read it
+#   state/pool-tailnet/*: the env-bundle failure counter (the bundle ssh is the
+#     hub's until the pool app secrets carry it; fly-pool-project.sh defers
+#     when the machine cannot reach the owning box)
+#   state/fly-cost/ledger.tsv: the cost rows go to the jobs worker (BH-4019)
+#   locks/*, tmp/*, env/*, and logs/* other than the lane log. logs/fly-pool.log
+#     rides back as the lane log (.lri/log-append).
+#
+# The per-machine record, the orphan-sweep summary and the deploy snapshot mtime
+# (bin/fly-pool.sh:4952 `$POOL/$MID.json`, :3897 `.sweep.json`, :3795 `.snapmt`)
+state/fly-pool/$p/*
+# The spawn cap, terminal, hold, After: and defer markers, and the hold cache
+# (bin/fly-pool.sh:1035-1635, :959). One level of dirs below: hold-cache/<n>.json.
+state/pool/$p/**
+# The queue files (bin/fly-pool.sh:3349, :3869, :4052, :4518, :4638). Under
+# build_queue_rows_only these are the per-tick scratch the rows rebuild; the rows
+# are the jobs worker's.
+state/build-queue/$p/*
+# The parked result (bin/fly-pool.sh:3579, :3587)
+state/remote-results/$p/*
+# The build notes and their relayed copies (bin/fly-pool.sh:2168-2177)
+state/build-notes/$p/*
+# The custody markers on a pool build record: bin/fly-pool.sh:2685-2810 reads
+# them, :3041-3481 writes them. RESULT is the line the reap parks.
+@token <pool marker> RESULT RELAYED RELAY_DEFERRED COMMENTED DEFERRED TERMINAL SUPERSEDED CUSTODY_ALERTED
+builds/pool-$p-<KEY>-*/<pool marker>
+# The once-a-day alert markers (bin/fly-pool.sh:599, :1984, :2873, :3682, :3990)
+flags/alerted-pool-*
+flags/alerted-extra-read-missing-*
+flags/alerted-gh-app-profile-owner-*

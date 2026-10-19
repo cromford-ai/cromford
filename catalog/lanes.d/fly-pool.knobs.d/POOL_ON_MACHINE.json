@@ -1,0 +1,9 @@
+{
+  "env": "POOL_ON_MACHINE",
+  "type": "string",
+  "default": "",
+  "zero_means": null,
+  "note": "Not a knob: set to 1 by bin/fly-pool-project.sh for the pool tick of one project on a lane-run machine (BH-7505). bin/fly-pool.sh reads it as ${POOL_ON_MACHINE:-}: 1 = the placement gate stands aside, a spawn or a destroy renews the project lease first (pp_fence_ok, a renew that cannot be answered stops the spend), and each spawn record is posted to the hub as a write-back (pp_checkpoint). Unset on the hub, which keeps today's behaviour. NOT settable from the control plane.",
+  "settable": false,
+  "read_in": "bin/lib/pool-placement.sh"
+}

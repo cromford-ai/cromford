@@ -12,6 +12,8 @@
 # sent), no jobs client, a transport failure, a 4xx/5xx, a 409 with another
 # error, or a 200 without the field. An outage is never rc 3.
 #
+# PJL_TTL_S (10..900), when set, is sent as ttl_s on acquire and renew (BH-7505:
+# a hub pool tick holds the lease for a long run); unset, the settings row decides.
 # The holder must be unique per process (the machine id). Needs _jobs_req
 # (bin/jobs-client.sh) from the caller. Defines functions only. Nothing runs
 # on source.
@@ -33,10 +35,23 @@ _pjl_call() {
   printf '%s\n' "$v"
 }
 
+# _pjl_ttl — the JSON object to add to a request body: {"ttl_s":<n>} when
+# PJL_TTL_S is a whole number in 10..900 (the route's bounds; BH-7505: a hub
+# tick that holds the lease for a long run asks for a longer one), else {} and
+# the settings row decides.
+_pjl_ttl() {
+  local t="${PJL_TTL_S:-}"
+  if [[ $t =~ ^[0-9]{2,3}$ ]] && [ "$((10#$t))" -ge 10 ] && [ "$((10#$t))" -le 900 ]; then
+    printf '{"ttl_s":%s}' "$((10#$t))"
+  else
+    printf '{}'
+  fi
+}
+
 pjl_acquire() {
   local fence
   [ -n "${1:-}" ] && [ -n "${2:-}" ] && [ -n "${3:-}" ] || return 1
-  fence=$(_pjl_call acquire held fence "$(jq -nc --arg l "$1" --arg p "$2" --arg h "$3" '{lane:$l,project:$p,holder:$h}')") || return $?
+  fence=$(_pjl_call acquire held fence "$(jq -nc --arg l "$1" --arg p "$2" --arg h "$3" --argjson x "$(_pjl_ttl)" '{lane:$l,project:$p,holder:$h} + $x')") || return $?
   [[ $fence =~ ^[1-9][0-9]*$ ]] || return 1
   printf '%s\n' "$fence"
 }
@@ -44,7 +59,7 @@ pjl_acquire() {
 pjl_renew() {
   [ -n "${1:-}" ] && [ -n "${2:-}" ] && [ -n "${3:-}" ] && [[ ${4:-} =~ ^[1-9][0-9]*$ ]] || return 1
   _pjl_call renew lost lease_until \
-    "$(jq -nc --arg l "$1" --arg p "$2" --arg h "$3" --argjson f "$4" '{lane:$l,project:$p,holder:$h,fence:$f}')"
+    "$(jq -nc --arg l "$1" --arg p "$2" --arg h "$3" --argjson f "$4" --argjson x "$(_pjl_ttl)" '{lane:$l,project:$p,holder:$h,fence:$f} + $x')"
 }
 
 pjl_release() {

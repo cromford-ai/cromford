@@ -1,0 +1,34 @@
+# catalog/lane-run-inputs.d/fly-pool.ro — what one `bin/fly-pool-project.sh $p`
+# run (bin/fly-pool.sh $p with POOL_ON_MACHINE=1) reads and never writes back
+# (BH-7505). The snapshot is fly-pool.rw plus these lines. The file:line after
+# each entry is where bin/fly-pool.sh reads it.
+#
+# NOT IN THE SNAPSHOT. Repo-tracked files the machine pulls with main (bin/*,
+# catalog/*): the image bakes them and bin/lib/lane-run-code.sh swaps them in.
+# Secrets: env/* (the Fly token, the GitHub App key and the agent credentials
+# are Fly secrets of the lane-run app, fly/lane-run-entrypoint.sh).
+# state/auth-accounts.local.json: the Claude account routing the hub copies into
+# a spawn's env bundle (bin/fly-pool.sh:4831). It is not carried; a machine
+# spawns on the global account until the routing is a row.
+#
+# The project registry (bin/fly-pool.sh:531, :2416, :2523)
+fleet.conf
+# The pause, hold, halt and dispatch flags and the pool enable switch
+# (bin/fly-pool.sh:36, :60, :100, :167, :184, :4073, :4101)
+flags/*
+# The project's Fly app and image pointer (bin/fly-pool.sh:78, :4118)
+state/fly/$p.json
+state/fly/$p.image
+# Reviewed lines in git that a machine's image does not carry
+# (bin/pool-cap.sh:82, bin/lib/pool-account.sh:141)
+fly/pool-caps.conf
+fly/account-capacity.conf
+# The deploy snapshot lane's record (bin/fly-pool.sh:3789, :4510)
+state/vercel-deploys/$p.json
+# The overlap guard's After: markers (bin/fly-pool.sh:1857, bin/plan-after.sh:81)
+state/overlap-after/$p/*
+# NOT carried: plans/$p-<KEY>/* (push_preplan, bin/fly-pool.sh:2385). One dir
+# per ticket since the project began, so a snapshot of them can pass
+# lane_snapshot.max_bytes. With no plan.md on the machine push_preplan reads the
+# pre-plan from the jobs worker (preplan_fetch), the path it takes on any box
+# that never ran the plan.

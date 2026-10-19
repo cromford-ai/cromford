@@ -1,0 +1,9 @@
+{
+  "env": "POOL_LEASE_PROJECT",
+  "type": "string",
+  "default": "",
+  "zero_means": null,
+  "note": "Not a knob: the project POOL_LEASE_FENCE is for (BH-7505), exported with it. NOT settable from the control plane.",
+  "settable": false,
+  "read_in": "bin/lib/pool-placement.sh"
+}

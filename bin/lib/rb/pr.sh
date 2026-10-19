@@ -393,7 +393,8 @@ if [ -z "${STACK_ON:-}" ]; then
   # shellcheck source=bin/lib/migration-renumber.sh
   command -v mnr_fix >/dev/null 2>&1 || { [ -r "$HARNESS/bin/lib/migration-renumber.sh" ] && . "$HARNESS/bin/lib/migration-renumber.sh" 2>/dev/null; }
   if command -v mnr_fix >/dev/null 2>&1; then
-    MNR_RC=0; MNR_OUT=$(mnr_fix . "origin/$BASE" "$PROJECT" 2>>"$BUILD/pipeline.log") || MNR_RC=$?
+    # No PR yet: every open PR's number counts (migration_renumber.open_prs).
+    MNR_RC=0; MNR_OUT=$(mnr_fix . "origin/$BASE" "$PROJECT" "${BRANCH:-}" 2>>"$BUILD/pipeline.log") || MNR_RC=$?
     case "$MNR_RC" in
       0) if [ -n "$MNR_OUT" ]; then
            while IFS= read -r _MNR_L; do
@@ -405,6 +406,12 @@ if [ -z "${STACK_ON:-}" ]; then
          MNR_SECTION=$'\n## Migration numbers (BH-7365): not renumbered\n\n'"$(sed 's/^/- /' <<<"$MNR_OUT")"$'\n'"CI and the merge conductor decide this PR's migration number."$'\n' ;;
       *) echo "$(STAMP) [$PROJECT/$KEY] ${MNR_OUT:-migration renumber could not run} — going on unchanged" >> "$BUILD/pipeline.log" ;;
     esac
+    # A lock key that is not the file's own is a note in the same section.
+    MNR_LOCKS=$(mnr_lock_notes . "origin/$BASE" "$PROJECT" 2>/dev/null)
+    if [ -n "$MNR_LOCKS" ]; then
+      [ -n "$MNR_SECTION" ] || MNR_SECTION=$'\n## Migration numbers (BH-7365)\n\n'
+      MNR_SECTION+="$(sed 's/^/- /' <<<"$MNR_LOCKS")"$'\n'
+    fi
     PREPR_SECTION="${PREPR_SECTION:-}${MNR_SECTION}"
   fi
 fi

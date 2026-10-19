@@ -1,0 +1,9 @@
+{
+  "env": "POOL_LEASE_FENCE",
+  "type": "string",
+  "default": "",
+  "zero_means": null,
+  "note": "Not a knob: the fly-pool project lease fence a pool tick holds (BH-6883 contract; exported by bin/fly-pool-project.sh for a machine run, and by pp_gate for a hub tick a Fly run could contest, BH-7505). Before a spawn and before a destroy bin/fly-pool.sh renews it (pp_fence_ok): a lost lease is rc 99 and nothing is spent. Unset on a hub tick of a project never placed fly. NOT settable from the control plane.",
+  "settable": false,
+  "read_in": "bin/lib/pool-placement.sh"
+}

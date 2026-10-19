@@ -1,0 +1,12 @@
+{
+  "env": "POOL_FLY_ALERT_S",
+  "type": "int",
+  "default": 3600,
+  "min": 1,
+  "max": 86400,
+  "unit": "seconds",
+  "zero_means": null,
+  "required": false,
+  "read_in": "bin/lib/pool-placement.sh",
+  "note": "BH-7505: at most one ALERTS line (lane-alert id fly-pool-fly-<project>) per project in this many seconds, for a project placed fly whose fallback row is off and whose row is stale, and for three machine runs in a row that failed. Settings row `lane.fly-pool.pool_fly_alert_s`."
+}

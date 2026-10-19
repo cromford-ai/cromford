@@ -117,6 +117,20 @@ LOG="$HARNESS/logs/fly-pool.log"
 [ -r "$HARNESS/bin/lib/test-home-lib.sh" ] && . "$HARNESS/bin/lib/test-home-lib.sh" 2>/dev/null
 STAMP() { date -u '+%Y-%m-%d %H:%M:%SZ'; }
 say() { echo "$(STAMP) [pool/$P] $*" >> "$LOG"; }
+# --- BH-7505: the pool tick of a project placed fly -------------------------
+# With lane_placement.fly-pool.<project> = fly the hub enqueues ONE lane_runs
+# row for bin/fly-pool-project.sh and does no row work here (rc 0 = handled).
+# A fallback, a take-back, a backoff and a rollback return rc 1 with the project
+# lease held, so a Fly run and this tick never run together. On a lane-run
+# machine (POOL_ON_MACHINE=1) the gate stands aside. With no row, or without
+# the lib, this is today's tick: pp_gate costs one jq read on a fresh settings
+# cache. The lease is released by the EXIT traps below (pp_release).
+# shellcheck source=bin/lib/pool-placement.sh
+. "$HARNESS/bin/lib/pool-placement.sh" 2>/dev/null \
+  || . "$(dirname "${BASH_SOURCE[0]}")/lib/pool-placement.sh" 2>/dev/null || true
+if command -v pp_gate >/dev/null 2>&1 && pp_gate "$P"; then exit 0; fi
+# The lease this tick may now hold goes at any exit; both traps below carry it too.
+trap 'command -v pp_release >/dev/null 2>&1 && pp_release; true' EXIT
 # BH-7107: the stall alert and the in-flight HOLD cancel. A tree without the
 # lib has neither, and a tick with no token exits silently, as before.
 # shellcheck source=bin/lib/pool-stall.sh
@@ -216,7 +230,7 @@ chmod +x "$FLY"
 # so BOTH traps in this file can remove it without `set -u` tripping over a
 # tick that never armed the flag.
 RQ=""
-trap 'rm -f -- "$FLY"; [ -n "${RQ:-}" ] && rm -rf -- "$RQ"; true' EXIT
+trap 'rm -f -- "$FLY"; [ -n "${RQ:-}" ] && rm -rf -- "$RQ"; command -v pp_release >/dev/null 2>&1 && pp_release; true' EXIT
 POOL="$HARNESS/state/fly-pool/$P"; PDIR="$HARNESS/state/pool/$P"
 mkdir -p "$POOL" "$PDIR" "$HARNESS/state/build-queue/$P"
 # SPRAWL GUARD (2026-08-12): the pool must run in its OWN Fly app, never the
@@ -2294,6 +2308,13 @@ destroy_machine() { # destroy_machine <machine-id> <why>   rc 0 = gone, 1 = stil
   local MID="${1:-}" WHY="${2:-}" OUT AF
   DESTROY_RC=0; DESTROY_ERR=""; DESTROY_GONE=0
   [ -n "$MID" ] || { DESTROY_RC=2; DESTROY_ERR="no machine id"; return 1; }
+  # BH-7505: a destroy ends somebody's build, so it needs the lease too. No alert:
+  # the run that holds the lease now owns the machine, and the sweep retries.
+  if command -v pp_fence_ok >/dev/null 2>&1 && ! pp_fence_ok; then
+    DESTROY_RC=99; DESTROY_ERR="project lease lost"
+    say "destroy $MID skipped: the project lease is lost ($WHY)"
+    return 1
+  fi
   OUT=$(timeout 60 "$FLY" machine destroy "$MID" -a "$APP" --force 2>&1); DESTROY_RC=$?
   if [ "$DESTROY_RC" = 0 ]; then say "destroyed $MID ($WHY)"; return 0; fi
   case "$OUT" in
@@ -3192,7 +3213,7 @@ if [ -n "${POOL_APP:-}" ]; then
   LISTING=$(mktemp "${TMPDIR:-/tmp}/pool-listing.XXXXXX") || LISTING=""
 fi
 if [ -n "$LISTING" ]; then
-  trap 'rm -f -- "$FLY" "$LISTING" "$LISTING.err" "$LISTING.rows"; [ -n "${RQ:-}" ] && rm -rf -- "$RQ"; true' EXIT
+  trap 'rm -f -- "$FLY" "$LISTING" "$LISTING.err" "$LISTING.rows"; [ -n "${RQ:-}" ] && rm -rf -- "$RQ"; command -v pp_release >/dev/null 2>&1 && pp_release; true' EXIT
   if timeout 30 "$FLY" machines list -a "$APP" --json > "$LISTING" 2>"$LISTING.err"; then
     if jq -e 'type=="array"' "$LISTING" >/dev/null 2>&1; then
       LIST_OK=1
@@ -4544,6 +4565,13 @@ pool_warmup_note() {
 
 spawn_one() { # spawn_one <job-file> <key> <ticket-id> <attempt> <deferrals> <deaths> [stack-base]
   local JF="$1" KEY="$2" TICKET="$3" ATT="$4" SDEF="$5" SDTH="$6" SSB="${7:-}"
+  # BH-7505: a spawn spends a machine, so it runs only under a lease this run
+  # still holds (a lane-run machine's, or a hub tick's that a Fly run could
+  # contest). Before the queue claim: nothing is claimed, so nothing to hand back.
+  if command -v pp_fence_ok >/dev/null 2>&1 && ! pp_fence_ok; then
+    say "$KEY: the project lease is lost — no machine spawned, the job stays queued"
+    return 1
+  fi
   # Every spawn that reaches a machine counts against the per-key cap (BH-1075)
   # — except a REBASE row, which pool_spawn_decision exempts from the cap
   # entirely (its key carries the head it is rebasing, so a repeat is a new key;
@@ -4987,6 +5015,11 @@ spawn_one() { # spawn_one <job-file> <key> <ticket-id> <attempt> <deferrals> <de
     # positional, because tests/no-serialize-test.sh pins this argument list.
     machines_row machine_put "$P" "$APP" "$MID" pool "$KEY" "$TICKET" "${MACCT:-}" "$IMAGE" spawned
     # <<< machines rows
+    # BH-7505: on a lane-run machine the record above exists only on this
+    # machine until a write-back carries it home. Post it NOW, so a machine that
+    # stops after this spawn leaves the hub with a record of the build machine,
+    # not an untracked one. Fail-open: the final write-back retries.
+    command -v pp_checkpoint >/dev/null 2>&1 && pp_checkpoint "$P" "$MID"
     # Bookkeeping: rc 2 (no such queued row) is the common case — the
     # dispatcher already claimed it when it materialised the file. Only on the
     # FLAG-OFF path: under the flag this claim already happened at the top of

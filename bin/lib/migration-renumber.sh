@@ -17,6 +17,8 @@
 #   migration_renumber.dir[.<project>]          MNR_DIR          the migration dir; empty = off
 #   migration_renumber.mode[.<project>]         MNR_MODE         fix (default) | check | off
 #   migration_renumber.lock_prefix[.<project>]  MNR_LOCK_PREFIX  ^[a-z]{1,3}$; empty = no lock keys
+#   migration_renumber.open_prs[.<project>]     MNR_OPEN_PRS     1 = open PRs join TAKEN; else off
+#   migration_renumber.open_prs_max             MNR_OPEN_PRS_MAX open PRs read, 1..1000 (default 200)
 #
 # THE RULE. A migration is a name in <dir>/ (one level) that matches
 # ^[0-9]+_[a-z0-9_]+\.sql$. TAKEN = the numbers of <base-ref>'s migrations.
@@ -25,7 +27,17 @@
 # the number of an earlier BRANCH file, is the first collision. Files before it
 # keep their number (a free number below main's highest is legal). That file
 # and every BRANCH file after it move, in order, to the next numbers above
-# max(main's highest, the highest kept BRANCH number). The digit width stays.
+# max(main's highest, the highest kept BRANCH number, every open PR's number
+# when open_prs is on). The digit width stays.
+#
+# OPEN PRS (BH-7398, open_prs on). The migrations each open PR ADDED (from its
+# merge base with <base-ref>) are TAKEN too, except: the PR whose head is the
+# self branch, a PR of the same ticket (`ticket/<key>(-r<n>)?`), and a file
+# with the same name as one the branch added (a stacked child). With a known
+# self PR only an open PR with a LOWER number makes a number taken: the older
+# PR keeps it and the newer one moves. Before the PR exists every open PR
+# counts. A read that fails (no slug, the list, the fetch) prints one stderr
+# line and the check runs against <base-ref> only.
 #
 # THE REFERENCES. One pass per file, so a chain (0213 -> 0235 while the
 # branch's own 0235 -> 0236) never moves a reference twice:
@@ -35,6 +47,13 @@
 #     `migration:0213`, `<prefix>0213` and the lock key (the integer of the
 #     ASCII bytes of `<prefix>0213`) become the new number's forms. A modified
 #     file keeps them: there the number can name main's own file.
+#   the moved file itself, and every added file that is not a migration and
+#     names the old stem: the bare number `0213` (bounded by a char outside
+#     [A-Za-z0-9_]: RAISE text, a test's '0213: ...') becomes `0235`.
+#
+# LOCK NOTES. mnr_lock_notes reports a branch-added migration whose advisory
+# lock calls take a `<prefix>NNNN` key that is not its own and never its own.
+# Report only: a shared key (project-6's mk0003) is legal.
 #
 # THE COMMIT. One commit, `BH-7365: renumber migration(s) past <base> <sha8>`,
 # with one `Union-resolved: <old> -> <new> (BH-7365, migration renumbered)`
@@ -66,7 +85,7 @@ mnr_conf() {
       echo "migration renumber: migration_renumber.dir '$MNR_C_DIR' is not a relative repo path — off" >&2
       MNR_C_DIR="" ;;
   esac
-  MNR_C_MODE=off; MNR_C_PREFIX=""
+  MNR_C_MODE=off; MNR_C_PREFIX=""; MNR_C_OPEN_ON=0; MNR_C_OPEN_MAX=200
   [ -n "$MNR_C_DIR" ] || return 0
   MNR_C_MODE="${MNR_MODE:-}"
   [ -n "$MNR_C_MODE" ] || MNR_C_MODE=$(_mnr_knob mode "$p")
@@ -81,6 +100,22 @@ mnr_conf() {
   if [ -n "$MNR_C_PREFIX" ] && ! [[ "$MNR_C_PREFIX" =~ ^[a-z]{1,3}$ ]]; then
     echo "migration renumber: migration_renumber.lock_prefix '$MNR_C_PREFIX' is not ^[a-z]{1,3}\$ — lock keys are not rewritten" >&2
     MNR_C_PREFIX=""
+  fi
+  local o="${MNR_OPEN_PRS-}"
+  [ -n "$o" ] || o=$(_mnr_knob open_prs "$p")
+  case "$o" in
+    1) MNR_C_OPEN_ON=1 ;;
+    ''|0) ;;
+    *) echo "migration renumber: migration_renumber.open_prs '$o' is not 0|1 — open PRs are not read" >&2 ;;
+  esac
+  o="${MNR_OPEN_PRS_MAX:-}"
+  [ -n "$o" ] || o=$(_mnr_knob open_prs_max "")
+  if [ -n "$o" ]; then
+    if [[ "$o" =~ ^[0-9]{1,4}$ ]] && [ "$((10#$o))" -ge 1 ] && [ "$((10#$o))" -le 1000 ]; then
+      MNR_C_OPEN_MAX=$((10#$o))
+    else
+      echo "migration renumber: migration_renumber.open_prs_max '$o' is not 1..1000 — read as 200" >&2
+    fi
   fi
   return 0
 }
@@ -111,14 +146,89 @@ _mnr_names() {
   done
 }
 
-# mnr_plan <wt> <base-ref> — after mnr_conf. Prints one row per moved file:
+# _mnr_open_taken <wt> <base-ref> <self-branch> — after mnr_conf. Sets
+# MNR_C_OPEN to one "<number>\t<basename>\t<pr>" row per migration an open PR
+# ADDED (the self branch and PRs of the same ticket left out). Runs in the
+# caller's shell, never in $( ): GH_REST_REASON must reach the case below.
+# rc 0 = read (MNR_C_OPEN may be empty), 2 = not read (MNR_OPEN_WHY). The
+# fetched refs live under refs/mnr-open/<ns>/ and are dropped on every path.
+_mnr_open_taken() {
+  local wt="$1" base="$2" self="$3" url slug lf list rc=0 kl nums n r ns lib
+  local -a specs=()
+  MNR_C_OPEN=""; MNR_OPEN_WHY=""
+  # The configured url, not `git remote get-url` (that applies insteadOf). It
+  # can carry a token: it is parsed here and never printed.
+  url=$(git -C "$wt" config --get remote.origin.url 2>/dev/null) || url=""
+  if [[ "$url" =~ github\.com[:/]([A-Za-z0-9._-]+)/([A-Za-z0-9._-]+)$ ]]; then
+    slug="${BASH_REMATCH[1]}/${BASH_REMATCH[2]%.git}"
+  else
+    MNR_OPEN_WHY="no repo slug"; return 2
+  fi
+  if ! command -v gh_rest_pr_list_all >/dev/null 2>&1; then
+    lib="$(dirname "${BASH_SOURCE[0]}")/gh-rest-list.sh"
+    # shellcheck source=bin/lib/gh-rest-list.sh
+    [ -r "$lib" ] && . "$lib" 2>/dev/null
+  fi
+  command -v gh_rest_pr_list_all >/dev/null 2>&1 || { MNR_OPEN_WHY="no REST lib"; return 2; }
+  lf=$(mktemp "${TMPDIR:-/tmp}/mnr-prs.XXXXXX") || { MNR_OPEN_WHY="no scratch file"; return 2; }
+  gh_rest_pr_list_all "$slug" open "$MNR_C_OPEN_MAX" > "$lf" || rc=$?
+  list=$(cat "$lf"); rm -f "$lf"
+  if [ "$rc" != 0 ]; then
+    case "$rc:${GH_REST_REASON:-}" in
+      75:rate*|75:quota*) MNR_OPEN_WHY="rate limited" ;;
+      44:*) MNR_OPEN_WHY="repo not found" ;;
+      *) MNR_OPEN_WHY="GitHub did not answer (rc $rc${GH_REST_REASON:+, ${GH_REST_REASON}})" ;;
+    esac
+    return 2
+  fi
+  printf '%s' "$list" | jq -e 'type == "array"' >/dev/null 2>&1 || { MNR_OPEN_WHY="the PR list is not an array"; return 2; }
+  # The ticket key of the self branch: ticket/<key>(-r<n>)? (pc_pr_hits' rule).
+  kl=""
+  [[ "$self" =~ ^ticket/([a-z0-9]+-[0-9]+)(-r[0-9]+)?$ ]] && kl="${BASH_REMATCH[1]}"
+  nums=$(printf '%s' "$list" | jq -r --arg self "$self" --arg kl "$kl" '
+    .[] | select(.number != null)
+    | (.head.ref // "") as $h
+    | select($self == "" or $h != $self)
+    | select(($kl != "" and ($h | test("^ticket/" + $kl + "(-r[0-9]+)?$"))) | not)
+    | .number' 2>/dev/null)
+  ns=$(printf '%s' "${self:-build}" | tr -c 'A-Za-z0-9-' '-')"-${BASHPID:-$$}"
+  for n in $nums; do
+    case "$n" in ''|*[!0-9]*) continue ;; esac
+    specs+=("+refs/pull/$n/head:refs/mnr-open/$ns/pr/$n")
+  done
+  [ "${#specs[@]}" -gt 0 ] || return 0
+  if ! timeout 120 git -C "$wt" fetch --quiet --no-tags origin "${specs[@]}" >/dev/null 2>&1; then
+    _mnr_drop_refs "$wt" "$ns"; MNR_OPEN_WHY="fetch failed"; return 2
+  fi
+  local rows="" v b
+  for n in $nums; do
+    r="refs/mnr-open/$ns/pr/$n"
+    git -C "$wt" rev-parse -q --verify "$r" >/dev/null 2>&1 || continue
+    while IFS=$'\t' read -r v b; do
+      [ -n "$b" ] && rows+="$v"$'\t'"$b"$'\t'"$n"$'\n'
+    done < <(git -C "$wt" diff --no-renames --name-only --diff-filter=A "$base...$r" -- "$MNR_C_DIR/" 2>/dev/null | _mnr_names)
+  done
+  _mnr_drop_refs "$wt" "$ns"
+  MNR_C_OPEN="${rows%$'\n'}"
+  return 0
+}
+
+_mnr_drop_refs() { # _mnr_drop_refs <wt> <namespace>
+  local r
+  for r in $(git -C "$1" for-each-ref --format='%(refname)' "refs/mnr-open/$2/" 2>/dev/null); do
+    git -C "$1" update-ref -d "$r" 2>/dev/null
+  done
+}
+
+# mnr_plan <wt> <base-ref> [<self-pr>] — after mnr_conf (and _mnr_open_taken,
+# whose MNR_C_OPEN rows join TAKEN). Prints one row per moved file:
 #   MOVE<TAB><old-name><TAB><new-name><TAB><message>
 #   DECLINE<TAB><old-name><TAB>-<TAB><message>
 # rc 0 = nothing declined (zero rows = no collision), 1 = a decline, 2 = could
 # not run (the base ref does not resolve, or a git read failed).
 mnr_plan() {
-  local wt="$1" base="$2" label="${2#origin/}" bl al n b w f
-  local -A taken=() used=() keep=()
+  local wt="$1" base="$2" label="${2#origin/}" sp="${3:-}" bl al n b w f pr
+  local -A taken=() used=() keep=() openby=() openpr=() bset=() onum=()
   local -a bnum=() bname=()
   git -C "$wt" rev-parse -q --verify "$base^{commit}" >/dev/null 2>&1 || { echo "the base ref $base does not resolve"; return 2; }
   bl=$(git -C "$wt" ls-tree --name-only "$base" -- "$MNR_C_DIR/" 2>/dev/null) || { echo "git ls-tree $base failed"; return 2; }
@@ -136,12 +246,30 @@ mnr_plan() {
     bnum+=("$n"); bname+=("$b")
   done < <(_mnr_names <<<"$al" | sort -t $'\t' -k1,1n -k2,2)
   [ "${#bname[@]}" -gt 0 ] || return 0
+  # Open PRs (BH-7398): a row is skipped when it is this branch's own file.
+  # With a self PR, only a lower PR number takes a number (the older keeps it).
+  # Every open number, taken or not, is held: a move never lands on one.
+  case "$sp" in *[!0-9]*) sp="" ;; esac
+  local openmax=0
+  for b in "${bname[@]}"; do bset[$b]=1; done
+  while IFS=$'\t' read -r n b pr; do
+    [ -n "$n" ] && [ -n "$b" ] && [ -z "${bset[$b]:-}" ] || continue
+    case "$pr" in ''|*[!0-9]*) continue ;; esac
+    n=$((10#$n)); onum[$n]=1
+    [ "$n" -gt "$openmax" ] && openmax=$n
+    [ -z "$sp" ] || [ "$pr" -lt "$sp" ] || continue
+    if [ -z "${openpr[$n]:-}" ] || [ "$pr" -lt "${openpr[$n]}" ]; then
+      openpr[$n]=$pr; openby[$n]="#$pr ($b)"
+    fi
+  done <<<"${MNR_C_OPEN:-}"
   # The first collision; everything before it keeps its number.
   local i first=-1 cur=$basemax v why=()
   for ((i = 0; i < ${#bname[@]}; i++)); do
     v=$((10#${bnum[$i]}))
     if [ -n "${taken[$v]:-}" ]; then
       why[$i]="${bnum[$i]} is taken on $label by ${taken[$v]}"
+    elif [ -n "${openby[$v]:-}" ]; then
+      why[$i]="${bnum[$i]} is taken by open PR ${openby[$v]}"
     elif [ -n "${used[$v]:-}" ]; then
       why[$i]="${bnum[$i]} is used twice in this PR (${used[$v]}, ${bname[$i]})"
     else
@@ -154,7 +282,8 @@ mnr_plan() {
   [ "$first" -ge 0 ] || return 0
   # Numbers the merged tree holds that are not moving: skipped by the cursor.
   local -A held=()
-  for v in "${!taken[@]}" "${!keep[@]}"; do held[$v]=1; done
+  for v in "${!taken[@]}" "${!keep[@]}" "${!onum[@]}"; do held[$v]=1; done
+  [ "$openmax" -gt "$cur" ] && cur=$openmax
   local rc=0 new nn
   for ((i = first; i < ${#bname[@]}; i++)); do
     b="${bname[$i]}"; w=${#bnum[$i]}
@@ -174,49 +303,111 @@ mnr_plan() {
   return "$rc"
 }
 
-# _mnr_rewrite <file> <map> <numbers:0|1> [<self-old> <self-new>] — the one
-# perl pass over one file. <map> lines: S<TAB>old-stem<TAB>new-stem,
-# N<TAB>old-digits<TAB>new-digits, L<TAB>old-int<TAB>new-int.
+# _mnr_rewrite <file> <map> <numbers:0|1> [<self-old> <self-new> <self-lold>
+# <self-lnew> [<bare>]] — the one perl pass over one file. <map> lines:
+# S<TAB>old-stem<TAB>new-stem, N<TAB>old-digits<TAB>new-digits,
+# L<TAB>old-int<TAB>new-int. <bare> is "old=new[,old=new...]": the bare number
+# forms (kind B) this file gets. Every form is one alternation of ONE
+# substitution, so a token is replaced once and never read again (a chain
+# 0213 -> 0235 while 0235 -> 0236 cannot move a reference twice).
 _mnr_rewrite() {
   MNR_MAPF="$2" MNR_NUMS="$3" MNR_PFX="$MNR_C_PREFIX" MNR_SELF_OLD="${4:-}" MNR_SELF_NEW="${5:-}" \
-  MNR_SELF_LOLD="${6:-}" MNR_SELF_LNEW="${7:-}" perl -pi -e '
+  MNR_SELF_LOLD="${6:-}" MNR_SELF_LNEW="${7:-}" MNR_BARE="${8:-}" perl -pi -e '
     BEGIN {
       open(my $fh, "<", $ENV{MNR_MAPF}) or die "map: $!";
       while (<$fh>) { chomp; my ($k, $o, $n) = split /\t/; $M{$k}{$o} = $n; }
       close $fh;
       if ($ENV{MNR_SELF_OLD} ne "") { $M{N}{$ENV{MNR_SELF_OLD}} = $ENV{MNR_SELF_NEW}; }
       if ($ENV{MNR_SELF_LOLD} ne "") { $M{L}{$ENV{MNR_SELF_LOLD}} = $ENV{MNR_SELF_LNEW}; }
-      $sre = join "|", map { quotemeta } sort { length($b) <=> length($a) } keys %{ $M{S} || {} };
+      for (split /,/, $ENV{MNR_BARE}) { my ($o, $n) = split /=/; $M{B}{$o} = $n if $o ne ""; }
+      sub alt { join "|", map { quotemeta } sort { length($b) <=> length($a) || $a cmp $b } keys %{ $_[0] || {} } }
       $p = $ENV{MNR_PFX};
+      my @r; my $a;
+      $a = alt($M{S}); push @r, "(?<![A-Za-z0-9_])(?<S>$a)(?![A-Za-z0-9_])" if $a ne "";
+      if ($ENV{MNR_NUMS}) {
+        $a = alt($M{N});
+        if ($a ne "") {
+          push @r, "migration:(?<N>$a)(?![0-9])";
+          push @r, "(?<![A-Za-z0-9_])\Q$p\E(?<P>$a)(?![0-9])" if $p ne "";
+        }
+        $a = alt($M{L}); push @r, "(?<![0-9])(?<L>$a)(?![0-9])" if $a ne "" && $p ne "";
+      }
+      $a = alt($M{B}); push @r, "(?<![A-Za-z0-9_])(?<B>$a)(?![A-Za-z0-9_])" if $a ne "";
+      $re = @r ? join("|", @r) : "";
     }
-    s/(?<![A-Za-z0-9_])($sre)(?![A-Za-z0-9_])/$M{S}{$1}/g if $sre ne "";
-    if ($ENV{MNR_NUMS}) {
-      s/migration:([0-9]+)(?![0-9])/exists $M{N}{$1} ? "migration:$M{N}{$1}" : $&/ge;
-      s/(?<![A-Za-z0-9_])\Q$p\E([0-9]+)(?![0-9])/exists $M{N}{$1} ? "$p$M{N}{$1}" : $&/ge if $p ne "";
-      s/(?<![0-9])([0-9]{6,})(?![0-9])/exists $M{L}{$1} ? $M{L}{$1} : $&/ge if $p ne "";
-    }
+    s/$re/defined $+{S} ? $M{S}{$+{S}} : defined $+{N} ? "migration:$M{N}{$+{N}}" : defined $+{P} ? "$p$M{N}{$+{P}}" : defined $+{L} ? $M{L}{$+{L}} : $M{B}{$+{B}}/ge if $re ne "";
   ' "$1"
 }
 
-# mnr_check <wt> <base-ref> <project> — the messages only, nothing changed.
+# _mnr_lock_str <int> — the ASCII string whose bytes are <int> (the inverse of
+# mnr_lock_int). rc 1 when a byte is not printable ASCII.
+_mnr_lock_str() {
+  local v="${1:-}" s="" c
+  [[ "$v" =~ ^[1-9][0-9]{0,18}$ ]] || return 1
+  v=$((10#$v))
+  while [ "$v" -gt 0 ]; do
+    c=$((v % 256)); v=$((v / 256))
+    [ "$c" -ge 33 ] && [ "$c" -le 126 ] || return 1
+    s="$(printf "\\$(printf '%03o' "$c")")$s"
+  done
+  printf '%s\n' "$s"
+}
+
+# mnr_lock_notes <wt> <base-ref> <project> — one line per branch-added
+# migration whose pg_advisory_(xact_)lock calls (outside `--` comments) take a
+# <prefix>NNNN key but never the file's own <prefix><its number>. Report only:
+# a shared key is legal (project-6's mk0003), a stale one is not, and no rule
+# can tell them apart. Off when the dir or the prefix is empty. Always rc 0.
+mnr_lock_notes() {
+  local wt="${1:-}" base="${2:-}" n b f own k str foreign
+  mnr_conf "${3:-}" 2>/dev/null
+  [ -n "$MNR_C_DIR" ] && [ "$MNR_C_MODE" != off ] && [ -n "$MNR_C_PREFIX" ] || return 0
+  while IFS=$'\t' read -r n b; do
+    [ -n "$b" ] || continue
+    f="$MNR_C_DIR/$b"
+    [ -f "$wt/$f" ] || continue
+    own=$(mnr_lock_int "$MNR_C_PREFIX$n") || continue
+    foreign=""
+    while IFS= read -r k; do
+      [ -n "$k" ] || continue
+      if [ "$k" = "$own" ]; then foreign=""; break; fi
+      [ -n "$foreign" ] && continue
+      str=$(_mnr_lock_str "$k") || continue
+      [[ "$str" =~ ^${MNR_C_PREFIX}[0-9]+$ ]] && foreign="$str ($k)"
+    done < <(perl -ne 's/--.*//; while (/pg_advisory_(?:xact_)?lock\s*\(\s*([0-9]+)\s*\)/g) { print "$1\n" }' "$wt/$f" 2>/dev/null)
+    [ -n "$foreign" ] && printf '%s takes lock %s, not its own %s (%s): a shared lock is legal, a stale one is not\n' \
+      "$f" "$foreign" "$MNR_C_PREFIX$n" "$own"
+  done < <(git -C "$wt" diff --no-renames --name-only --diff-filter=A "$base" HEAD -- "$MNR_C_DIR/" 2>/dev/null | _mnr_names | sort -t $'\t' -k1,1n -k2,2)
+  return 0
+}
+
+# mnr_check <wt> <base-ref> <project> [<self-branch> [<self-pr>]] — the
+# messages only, nothing changed.
 #   rc 0 = no collision (or off), 1 = a collision (one line per moved file on
 #   stdout), 2 = could not run.
 mnr_check() {
   MNR_MODE=check mnr_fix "$@"
 }
 
-# mnr_fix <wt> <base-ref> <project> — renumber and commit once.
+# mnr_fix <wt> <base-ref> <project> [<self-branch> [<self-pr>]] — renumber and
+# commit once. <self-branch> and <self-pr> (digits; anything else = none) feed
+# the open-PR read when migration_renumber.open_prs is on.
 #   rc 0 = nothing to do (no output), or every move committed (one line per
 #          move on stdout, written after the commit returned 0).
 #   rc 1 = mode check with a collision, or a decline: the lines on stdout,
 #          HEAD and the tree as they were.
 #   rc 2 = could not run (one reason line); the tree is untouched.
 mnr_fix() {
-  local wt="${1:-}" base="${2:-}" project="${3:-}" plan prc pre
-  [ -n "$wt" ] && [ -n "$base" ] || { echo "migration renumber: usage mnr_fix <wt> <base-ref> <project>"; return 2; }
+  local wt="${1:-}" base="${2:-}" project="${3:-}" sb="${4:-}" sp="${5:-}" plan prc pre
+  [ -n "$wt" ] && [ -n "$base" ] || { echo "migration renumber: usage mnr_fix <wt> <base-ref> <project> [<self-branch> [<self-pr>]]"; return 2; }
   mnr_conf "$project"
   [ -n "$MNR_C_DIR" ] && [ "$MNR_C_MODE" != off ] || return 0
-  plan=$(mnr_plan "$wt" "$base"); prc=$?
+  MNR_C_OPEN=""
+  if [ "$MNR_C_OPEN_ON" = 1 ] && [ -n "$(git -C "$wt" diff --no-renames --name-only --diff-filter=A "$base" HEAD -- "$MNR_C_DIR/" 2>/dev/null)" ]; then
+    _mnr_open_taken "$wt" "$base" "$sb" \
+      || echo "migration renumber: open PRs not read ($MNR_OPEN_WHY) — main only" >&2
+  fi
+  plan=$(mnr_plan "$wt" "$base" "$sp"); prc=$?
   [ "$prc" = 2 ] && { echo "migration renumber could not run: $plan"; return 2; }
   [ -n "$plan" ] || return 0
   if [ "$prc" = 1 ] || [ "$MNR_C_MODE" = check ]; then
@@ -240,8 +431,8 @@ mnr_fix() {
 #   rc 0 only when the commit returned 0 and git lists every new path and no
 #   old one. Prints a reason on failure; the caller resets.
 _mnr_apply() {
-  local wt="$1" base="$2" plan="$3" k o n map f mf lo ln
-  local -A newpath=() selfold=() selfnew=() kept=()
+  local wt="$1" base="$2" plan="$3" k o n map f mf lo ln bare
+  local -A newpath=() selfold=() selfnew=() kept=() stemb=()
   map=$(mktemp "${TMPDIR:-/tmp}/mnr-map.XXXXXX") || { echo "mktemp failed"; return 1; }
   local tr=""
   while IFS=$'\t' read -r k o n _; do
@@ -253,6 +444,7 @@ _mnr_apply() {
         && printf 'L\t%s\t%s\n' "$lo" "$ln" >> "$map"
     fi
     newpath["$MNR_C_DIR/$o"]="$MNR_C_DIR/$n"
+    stemb["${o%.sql}"]="${o%%_*}=${n%%_*}"
     selfold["$MNR_C_DIR/$n"]="${o%%_*}"; selfnew["$MNR_C_DIR/$n"]="${n%%_*}"
     tr+="Union-resolved: $MNR_C_DIR/$o -> $MNR_C_DIR/$n (BH-7365, migration renumbered)"$'\n'
   done <<<"$plan"
@@ -278,9 +470,16 @@ _mnr_apply() {
       if [ -n "$MNR_C_PREFIX" ]; then
         lo=$(mnr_lock_int "$MNR_C_PREFIX${selfold[$mf]}") && ln=$(mnr_lock_int "$MNR_C_PREFIX${selfnew[$mf]}") || { lo=""; ln=""; }
       fi
-      _mnr_rewrite "$wt/$mf" "$map" 1 "${selfold[$mf]}" "${selfnew[$mf]}" "$lo" "$ln" || { rm -f "$map"; echo "rewrite of $mf failed"; return 1; }
+      _mnr_rewrite "$wt/$mf" "$map" 1 "${selfold[$mf]}" "${selfnew[$mf]}" "$lo" "$ln" "${selfold[$mf]}=${selfnew[$mf]}" \
+        || { rm -f "$map"; echo "rewrite of $mf failed"; return 1; }
     else
-      _mnr_rewrite "$wt/$mf" "$map" 1 || { rm -f "$map"; echo "rewrite of $mf failed"; return 1; }
+      # The bare number moves only where the file names the moved stem: a
+      # bare 0213 elsewhere can mean main's own 0213.
+      bare=""
+      for o in "${!stemb[@]}"; do
+        grep -Eq "(^|[^A-Za-z0-9_])$o([^A-Za-z0-9_]|\$)" "$wt/$mf" 2>/dev/null && bare+="${bare:+,}${stemb[$o]}"
+      done
+      _mnr_rewrite "$wt/$mf" "$map" 1 "" "" "" "" "$bare" || { rm -f "$map"; echo "rewrite of $mf failed"; return 1; }
     fi
   done <<<"$added"
   while IFS= read -r f; do

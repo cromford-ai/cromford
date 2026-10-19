@@ -1,0 +1,9 @@
+{
+  "env": "POOL_STOP_FILE",
+  "type": "string",
+  "default": "",
+  "zero_means": null,
+  "note": "Not a knob: the file a lease holder hands its pool tick (BH-7505). When it exists pp_fence_ok answers rc 99 with no request and the tick spawns and destroys nothing more. bin/fly-pool-project.sh touches it on TERM, and the renew loops and pp_fence_ok touch it when the project lease is lost. A path, so NOT settable from the control plane.",
+  "settable": false,
+  "read_in": "bin/lib/pool-placement.sh"
+}
