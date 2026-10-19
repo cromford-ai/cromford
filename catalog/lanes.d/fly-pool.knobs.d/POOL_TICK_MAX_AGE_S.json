@@ -1,0 +1,12 @@
+{
+  "env": "POOL_TICK_MAX_AGE_S",
+  "type": "int",
+  "default": 1200,
+  "min": 0,
+  "max": 86400,
+  "unit": "seconds",
+  "zero_means": "off",
+  "required": false,
+  "read_in": "bin/lib/pool-tick-stop.sh",
+  "note": "BH-7475. Wall-clock seconds one project's pool tick may hold locks/fly-pool-<p>.lock, counted from the lock. At the next row boundary of the REAP or SPAWN walk past it, the tick stops, logs one line, writes ONE ALERTS line (id pool-tick-max-age-<p>) that names the project and the age, and exits rc 0, which releases the lock. Settings row `lane.fly-pool.pool_tick_max_age_s`. 0 = off. The same row-boundary check also stops a tick whose own script or a named bin/lib file was replaced (no knob)."
+}

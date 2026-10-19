@@ -48,6 +48,16 @@ if ! flock -n 8; then
   echo "$(date -u '+%Y-%m-%d %H:%M:%SZ') [pool/$P] already running (locks/fly-pool-$P.lock held) — this start exits, the running tick covers $P" >> "$HARNESS/logs/fly-pool.log"
   exit 0
 fi
+# BH-7475: the row-boundary stop rule. The tick holds the lock above for its
+# whole life, so at each row of the REAP and SPAWN walks it stops when its code
+# was replaced or it ran past POOL_TICK_MAX_AGE_S. Missing, the walks run as before.
+# shellcheck source=bin/lib/pool-tick-stop.sh
+. "$HARNESS/bin/lib/pool-tick-stop.sh" 2>/dev/null \
+  || . "$(dirname "${BASH_SOURCE[0]}")/lib/pool-tick-stop.sh" 2>/dev/null || true
+# PTS_STOP is the tick-stop state pts_stop_due sets, not a knob; it starts
+# empty here so the REAP-walk check reads a defined local even without the lib.
+PTS_STOP=""
+command -v pts_init >/dev/null 2>&1 && pts_init
 . "${HARNESS:-/root/harness}/bin/lib/env-path.sh" 2>/dev/null || . "$(dirname "${BASH_SOURCE[0]}")/lib/env-path.sh" 2>/dev/null || harness_env_dir() { printf '%s\n' "${1:-${HARNESS:-/root/harness}}/env"; }; HENV=$(harness_env_dir "$HARNESS")
 # The cap: a number in the flag file, else fly/pool-caps.conf, else UNLIMITED —
 # bin/pool-cap.sh is the one reader (2026-09-12), and since 2026-09-14 it prints
@@ -3250,6 +3260,8 @@ pool_custody_sweep
 REAPED_IDS=" "   # machines this tick's REAP owns; the sweep below never touches one
 for MF in "$POOL"/*.json; do
   [ -f "$MF" ] || continue
+  # BH-7475: a replaced code file or a tick past its max age stops at this row.
+  command -v pts_stop_due >/dev/null 2>&1 && pts_stop_due && break
   MID=$(jq -r '.machine' "$MF"); KEY=$(jq -r '.key' "$MF"); TICKET=$(jq -r '.ticket_id' "$MF")
   # Claimed for the whole tick, not just while the file exists: the reap DELETES
   # the file on every terminal path, and without this the sweep would see the
@@ -4227,6 +4239,9 @@ for MF in "$POOL"/*.json; do
     fi
   fi
 done
+# BH-7475: a stop in the REAP walk ends the tick here. Unvisited machines keep
+# their files for the next tick; the sweep and the spawn walk wait for it too.
+if [ -n "${PTS_STOP:-}" ]; then wait; exit 0; fi
 
 # >>> dead-machine sweep (BH-660)
 # THE SWEEP fly/builder-runner.sh:459-462 has been promising since wave 3 ("a
@@ -5052,6 +5067,8 @@ fi
 POOL_TICK_T0=$(date +%s)
 for JF in $(hotfix_first $(ls -tr "$QDIR"/*.json 2>/dev/null)); do
   case "$JF" in *.failed.json) continue;; esac
+  # BH-7475: the same stop rule at each queued row; the tail below still waits.
+  command -v pts_stop_due >/dev/null 2>&1 && pts_stop_due && break
   # A hotfix spends a FREE BUDGET SLOT first and the exemption only when the
   # pool is genuinely at cap — `LAUNCHED -ge BUDGET` is the whole of that
   # sentence. Taking the exemption while the budget still had room is a machine
