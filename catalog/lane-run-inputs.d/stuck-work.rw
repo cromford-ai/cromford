@@ -1,0 +1,36 @@
+# catalog/lane-run-inputs.d/stuck-work.rw — the hub files one
+# `bin/stuck-work.sh <p>` run writes and may write back from a Fly lane
+# machine (BH-7423). The ro snapshot is these plus stuck-work.ro. Format:
+# docs/notes/2026-10-14-BH-6719-lane-run-inputs-manifests.md.
+#
+# The clock anchors and the ledger mirror are keyed by the sha1 of the item
+# key, so they are not split by project. Each item key belongs to one project,
+# and lane_runs runs one (lane, project) at a time, so two write-backs never
+# change one file. The `stuck_work` jobs ledger, not these files, is the page
+# dedup store (bin/stuck-work.sh step 3: the PUT before the alert).
+#
+# NOT CARRIED. Secrets, locks and machine-local caches: env/*, locks/*,
+# state/gh-*, state/pr-snapshot/*, state/verdicts/*, state/gh-app-default*,
+# state/hold-ambiguous/*, state/settings-cache.json, state/lane-gate/*. Each
+# cache falls back to a live read or a ledger check.
+#   logs/ALERTS.log           not written: with LANE_RUN_ID set, every alert is
+#                             a POST to /api/alert-lines (bin/alert-line.sh:40,
+#                             bin/lane-alert.sh:84) that the publisher replays
+#   logs/stuck-work-profile.log, logs/stuck-work-cron.log  stay on the machine
+# logs/stuck-work.log rides back as the lane log (.lri/log-append). A non-home
+# project's summary goes there too, tagged `project=<p>` (bin/stuck-work.sh).
+#
+# bin/lib/stuck-work/seen.sh:27-30 (sw_first_seen's memo; a lost file restarts
+# the item's age)
+state/stuck-work/seen/*
+# bin/stuck-work.sh:294-302 (led_file, led_keep)
+state/stuck-work/led/*
+# bin/lib/stuck-work/facts-pr.sh:164-168,197 (the CI memo, <owner>_<repo>-<n>)
+state/stuck-work/ci/$repokey-*
+# bin/lib/stuck-work/facts-ticket.sh:183 (the thread memo, .json and .meta)
+state/stuck-work/thread/$repokey-*
+# bin/stuck-work.sh:273,363 (the home project's marks: MARKD=state/stuck-work)
+state/stuck-work/no-token-*
+state/stuck-work/outage-*
+# bin/stuck-work.sh:239-240 (another project's marks: MARKD, PL_STATE_DIR)
+state/stuck-work/$p/*

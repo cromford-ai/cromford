@@ -1,0 +1,15 @@
+# catalog/lane-run-inputs.d/stuck-work.ro — what one `bin/stuck-work.sh <p>`
+# run reads and never writes back (BH-7423). The file:line after each entry is
+# where the run reads it.
+#
+# bin/lib/stuck-work/facts-pr.sh:211-213, bin/lib/mc/classify.sh:1104,1146
+# (FACTS field 15, the resolver's claim; the id is mc_handoff_id of <repo>#<n>)
+state/merge-conductor/resolver-claim/$repokey_*
+# bin/stuck-work.sh:106-116,153,256 (the home project, the project's repo)
+fleet.conf
+# bin/stuck-work.sh:257 (the ticket prefix of a non-home project; the lane
+# image does not bake prompts/)
+prompts/$p.md
+# bin/stuck-work.sh:165,181, bin/lib/lane-gate.sh (the lane gate,
+# flags/stuck-work-off, flags/lane-off-stuck-work)
+flags/*

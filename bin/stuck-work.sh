@@ -66,6 +66,9 @@
 #   <ts> items=N states=<s:n,...> past_sla=N paged=N repaged=N incomplete=0|1
 #   [unpaged=N] [snap=fail]
 # past_sla counts waiting-on-human (digest only, never paged), not excluded.
+# A non-home run on a lane-run machine (LANE_RUN_ID set) writes the line to
+# logs/stuck-work.log as `<ts> project=<p> <text>`: only logs/<lane>.log rides
+# back to the hub, and bin/lib/lane-move/stuck-work.sh counts it (BH-7423).
 #
 # Test seams, honoured only under HARNESS_TEST_SANDBOX=1: STUCK_WORK_FIXTURE (a
 # file of FACTS lines read instead of GitHub, or a directory holding
@@ -169,9 +172,11 @@ if [ "$MODE" = run ] && ! sw_watched "$PROJECT" "$HOME_P"; then exit 0; fi
 command -v lane_gate_or_exit >/dev/null 2>&1 && lane_gate_or_exit stuck-work
 
 mkdir -p "$H/logs" 2>/dev/null
-LOG="$H/logs/stuck-work.log"
-[ "$MODE" = run ] && [ "$PROJECT" != "$HOME_P" ] && LOG="$H/logs/stuck-work-$PROJECT.log"
-summary() { printf '%s%s\n' "$(date -u +%FT%TZ)" "${1:+ $1}" >> "$LOG"; }
+LOG="$H/logs/stuck-work.log"; SUMTAG=""
+if [ "$MODE" = run ] && [ "$PROJECT" != "$HOME_P" ]; then
+  if [ -n "${LANE_RUN_ID:-}" ]; then SUMTAG="project=$PROJECT "; else LOG="$H/logs/stuck-work-$PROJECT.log"; fi
+fi
+summary() { printf '%s%s\n' "$(date -u +%FT%TZ)" "${1:+ $SUMTAG$1}" >> "$LOG"; }
 
 if lane_switch stuck-work-off file; then summary off; exit 0; fi
 [ "${STUCK_WORK_ENABLED:-1}" = 0 ] && { summary disabled; exit 0; }
