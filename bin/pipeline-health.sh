@@ -1881,8 +1881,11 @@ EOF
     # NOTHING was never judged: project-9 ran $643 over 7d with 0 merged and
     # appeared only in the once-a-day "could not evaluate" line above. This is
     # the absolute rule for that shape, per project, in two windows (M7 below
-    # is max(merged_prs_7d, merged_prs_24h): a PR merged today is a merge this
-    # week whatever window the rollup's 7d count used):
+    # is max(merged_prs_7d, merged_prs_24h) when the 7d count is known: a PR
+    # merged today is a merge this week whatever window the rollup's 7d count
+    # used. An unknown 7d count stays unknown (BH-7443: a failed 7d search
+    # plus a 24h 0 is not "0 merged in 7d"): the 7d rule does not judge it,
+    # and the 24h rule pages it but does not hold it):
     #   7d:  delivery spend >= COST_ZM_7D_USD over 7d, M7 < COST_ZM_MIN_MERGES
     #        -> HOLD (cb_halt: the rate halt's spend-hold flag/row, kill
     #        switches, re-arm; new builds only, BH-5526)
@@ -1911,8 +1914,8 @@ EOF
       Z24=$(cb_knob COST_ZM_24H_USD 300 "$ZP"); Z7=$(cb_knob COST_ZM_7D_USD 400 "$ZP")
       ZMIN=$(cb_knob COST_ZM_MIN_MERGES 1 "$ZP")
       M7="$ZN7"
-      if [ "$ZN24" != null ]; then
-        if [ "$M7" = null ] || [ "${ZN24:-0}" -gt "${M7:-0}" ] 2>/dev/null; then M7="$ZN24"; fi
+      if [ "$ZN24" != null ] && [ "$M7" != null ]; then
+        if [ "${ZN24:-0}" -gt "${M7:-0}" ] 2>/dev/null; then M7="$ZN24"; fi
       fi
       ZAT=$(cat "$H/state/costhalt/$ZP" 2>/dev/null || echo 0)
       case "$ZAT" in ''|*[!0-9]*) ZAT=0 ;; esac
@@ -1946,6 +1949,7 @@ EOF
         done)  ZACT="NEW BUILDS HELD at ticket start (flags/$CB_HOLD_PREFIX$ZP). Merges, reviews, migration applies and builds already running continue. ${CB_RESUME_HOW//@P@/$ZP}; the breaker will not hold it again for ${CB_REARM_S}s." ;;
         rearm) ZACT="this breaker already held it within the last ${CB_REARM_S}s (or an operator lifted it since) — not held again." ;;
         fail)  ZACT="the hold row could NOT be written — hold it by hand: flag_set $CB_HOLD_PREFIX$ZP on, or pause it from the console (pause_board)." ;;
+        stop:null) ZACT="NOT paused: its 7d merge count could not be taken (merged_prs_7d null), so it is not held on a guess — check the queue and bin/cost-rollup.sh's merged count before holding it by hand." ;;
         stop:*) ZACT="NOT paused: it has ${M7} merged in 7d, so a quiet 24h looks like a merge STOP (CI, the merge queue, a quiet hour) rather than a runaway — check the queue before holding it by hand." ;;
         *)     ZACT="NOT paused: the autohalt is off (${CB_HALT#off:})." ;;
       esac
