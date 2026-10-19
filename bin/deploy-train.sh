@@ -451,6 +451,53 @@ if [ "$ROLLBACK" != on ]; then
   exit 0
 fi
 echo "$(STAMP) [$PROJECT] train FAILED verify (live=$LIVE target=${TARGET:0:8}) — initiating automatic rollback" >> "$LOG"
+command -v gh_auth_for >/dev/null 2>&1 && gh_auth_for "$SLUG" || true
+# rollback_board <revert PR url> — every reverted merge's ticket gets one
+# comment naming the revert PR and leaves done (BH-4915). The script is once
+# per merge sha by its own marker and ledger row, so a second call for the same
+# PR posts nothing and a refused comment is retried. Never changes the outcome.
+rollback_board() {
+  local rbm="${WT:-$(mktemp -u /tmp/dt-XXXX)}.members"
+  if [ "$DQ_ROWS" = yes ]; then
+    paste <(printf '%s\n' "$SHAS") <(printf '%s\n' "$BDIRS") > "$rbm" 2>/dev/null
+  else
+    while read -r f; do
+      [ -n "$f" ] && awk -v OFS='\t' 'NR==1{print $1, $2}' "$DQ/$f" 2>/dev/null
+    done <<<"$BATCH" > "$rbm"
+  fi
+  [ -x "$HARNESS/bin/deploy-rollback-board.sh" ] \
+    && "$HARNESS/bin/deploy-rollback-board.sh" "$PROJECT" "$1" "$FAIL_REASON" "$rbm" >> "$LOG" 2>&1 || true
+  rm -f "$rbm"
+}
+# >>> one rollback per failed target (BH-7506): bin/lib/deploy-rollback-guard.sh
+# decides open | dup | cap | stale | unknown before any branch is cut. A gate
+# that does not load opens nothing (fail closed): an unbounded opener is the
+# defect it exists for.
+# shellcheck source=bin/lib/deploy-rollback-guard.sh
+if [ -r "$HARNESS/bin/lib/deploy-rollback-guard.sh" ] && . "$HARNESS/bin/lib/deploy-rollback-guard.sh" \
+   && command -v drg_gate >/dev/null 2>&1; then
+  drg_gate; DRG_RC=$?
+  # This script queued each swept PR (below), so it dequeues them the way
+  # bin/merge-queue.sh drops a PR that is no longer OPEN.
+  for n in $DRG_SWEPT; do
+    rm -f "$HARNESS/state/merge-queue/$PROJECT/$n" "$HARNESS/state/merge-queue/$PROJECT/$n.absent"
+    command -v merge_queue_set >/dev/null 2>&1 \
+      && merge_queue_set "$PROJECT" "$n" dropped "dequeued: stale rollback closed by the deploy train" >/dev/null 2>&1 || true
+  done
+  if [ "$DRG_RC" != 0 ]; then
+    [ "$DRG_VERDICT" = dup ] && [ -n "$DRG_URL" ] && rollback_board "$DRG_URL"
+    command -v gh_auth_reset >/dev/null 2>&1 && gh_auth_reset
+    exit 0
+  fi
+else
+  echo "$(STAMP) [$PROJECT] rollback skipped (unknown): bin/lib/deploy-rollback-guard.sh did not load — no revert opened" >> "$LOG"
+  "$HARNESS/bin/beat.sh" "$(jq -nc --arg p "$PROJECT" --arg akey "rollback-unknown:$PROJECT:${TARGET:0:8}" \
+    --arg l "DEPLOY TRAIN: $PROJECT failed to serve ${TARGET:0:8} and the rollback gate did not load — no revert opened." \
+    '{kind:"fleet_alert",project:$p,akey:$akey,line:$l}')" >/dev/null 2>&1
+  command -v gh_auth_reset >/dev/null 2>&1 && gh_auth_reset
+  exit 0
+fi
+# <<< one rollback per failed target
 # Automatic rollback: revert the batch's merge commits via a PR through the
 # merge queue. Never a direct push to main.
 RB=rollback/$(date -u +%Y%m%d%H%M)
@@ -460,11 +507,11 @@ if (cd "$WT" && git checkout -qB "$RB"); then
   OK=yes
   while read -r s; do (cd "$WT" && git revert --no-edit "$s" >/dev/null 2>&1) || OK=partial; done <<<"$(tac <<<"$SHAS")"
 fi
-command -v gh_auth_for >/dev/null 2>&1 && gh_auth_for "$SLUG" || true
 if [ "$OK" = yes ] && (cd "$WT" && git push -q origin "$RB"); then
   PRBODY="Automatic rollback (deploy train, per the operator 2026-07-28): production failed to serve ${TARGET:0:8} after the batch below merged. Reverting to restore last known-good.
 
 Reverted: $(tr '\n' ' ' <<<"$SHAS")
+Rollback-Target: $TARGET
 
 🤖 Generated with [Claude Code](https://claude.com/claude-code)"
   # >>> pr trailers (BH-3987)
@@ -486,6 +533,7 @@ Reverted: $(tr '\n' ' ' <<<"$SHAS")
   # <<< pr trailers
   NUM=$(grep -oE '[0-9]+$' <<<"$PRURL")
   if [ -n "$NUM" ]; then
+    drg_record "$NUM" "$PRURL"
     mkdir -p "$HARNESS/state/merge-queue/$PROJECT"; touch "$HARNESS/state/merge-queue/$PROJECT/$NUM"
     "$HARNESS/bin/merge-queue.sh" "$PROJECT" >/dev/null 2>&1
     # The hook is optional (see the VERSION_URL gate above): a bare
@@ -495,21 +543,9 @@ Reverted: $(tr '\n' ' ' <<<"$SHAS")
       --arg l "DEPLOY TRAIN: $PROJECT failed to serve ${TARGET:0:8} — automatic rollback PR $PRURL enqueued${DEPLOY_HOOK_URL:+ and redeploy fired}. Investigate the batch before re-landing." \
       '{kind:"fleet_alert",project:$p,akey:$akey,line:$l}')" >/dev/null 2>&1
     echo "$(STAMP) [$PROJECT] rollback PR $PRURL enqueued${DEPLOY_HOOK_URL:+ + hook re-fired}" >> "$LOG"
-    # >>> rollback reopens the ticket (BH-4915): every reverted merge's ticket
-    # gets one comment naming this PR and leaves done, once per merge sha, and
-    # a deploy_rollback ledger row flags it in the daily digest. Never changes
-    # the train's outcome.
-    RBM="$WT.members"
-    if [ "$DQ_ROWS" = yes ]; then
-      paste <(printf '%s\n' "$SHAS") <(printf '%s\n' "$BDIRS") > "$RBM" 2>/dev/null
-    else
-      while read -r f; do
-        [ -n "$f" ] && awk -v OFS='\t' 'NR==1{print $1, $2}' "$DQ/$f" 2>/dev/null
-      done <<<"$BATCH" > "$RBM"
-    fi
-    [ -x "$HARNESS/bin/deploy-rollback-board.sh" ] \
-      && "$HARNESS/bin/deploy-rollback-board.sh" "$PROJECT" "$PRURL" "$FAIL_REASON" "$RBM" >> "$LOG" 2>&1 || true
-    rm -f "$RBM"
+    # >>> rollback reopens the ticket (BH-4915): a deploy_rollback ledger row
+    # flags it in the daily digest.
+    rollback_board "$PRURL"
     # <<< rollback reopens the ticket
   fi
 else

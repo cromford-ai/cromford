@@ -65,6 +65,9 @@
 # box missing the file traces nothing, and a kill reads `calls: none`.
 # shellcheck source=bin/lib/call-trace.sh
 [ -r "${BASH_SOURCE[0]%/*}/call-trace.sh" ] && . "${BASH_SOURCE[0]%/*}/call-trace.sh" 2>/dev/null
+# The merge conductor's window-stall alert (fws_note, called by _fanin_report).
+# shellcheck source=bin/lib/fanin-window-stall.sh
+[ -r "${BASH_SOURCE[0]%/*}/fanin-window-stall.sh" ] && . "${BASH_SOURCE[0]%/*}/fanin-window-stall.sh" 2>/dev/null
 
 _fanin_stamp() { date -u '+%Y-%m-%d %H:%M:%SZ'; }
 
@@ -180,6 +183,7 @@ _fanin_report() {
   label="$lane${scope:+ $scope}"
   if [ -z "$note" ]; then
     printf '%s FANIN %s: enumerated %s accounted %s (%s)\n' "$(_fanin_stamp)" "$label" "$en" "$ac" "$tally" >> "$log" 2>/dev/null
+    command -v fws_note >/dev/null 2>&1 && fws_note "$file" "$lane" "$scope" "$en" "$tally"
   fi
   _fanin_streak_update "$file" "$missing"
   [ -n "$missing" ] || [ -n "$double" ] || return 0

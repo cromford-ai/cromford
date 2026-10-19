@@ -487,16 +487,28 @@ machines_row_close() {
 # <<< machines rows
 # The hub half of a pool rebase (BH-486.2). Under REBASE_ON_POOL a machine in
 # this pool does a rebase instead of a build, and the REAP hands its RESULT to
-# mc_pool_rebase_apply. Type-guarded like every other lib here: a half-synced
-# box defines nothing and the reap's own `command -v` miss is what reports it —
-# one ALERTS line and a queue row left claimed — because a missing function must
-# never read as "apply succeeded". No name in the lib or its guarded
-# sub-sources (mc_*/_mc_*, plus the bg_*/pdg_*/rp_* and issue_close_shipped
-# fallbacks) collides with one this file defines (checked 2026-09-18), and its
-# own guarded source of bin/lib/gh-app-auth.sh is idempotent with the one below.
+# mc_pool_rebase_apply (the RB-* stand-down arms call mc_pool_rebase_fail).
+# Type-guarded like every other lib here: a half-synced box defines nothing and
+# the arm's own `command -v` miss is what reports it — one ALERTS line and a
+# queue row left claimed — because a missing function must never read as
+# "apply succeeded". No name in the lib or its guarded sub-sources
+# (mc_*/_mc_*, plus the bg_*/pdg_*/rp_* and issue_close_shipped fallbacks)
+# collides with one this file or its libs define (checked 2026-10-19).
+# LAZY (BH-7428): the lib is ~45 files and 833 functions, 0.27 CPU s and 230
+# forks per tick, and only the three RB-* arms use it. So each of those arms
+# calls fp_mc_lib_load, and an idle or build-only tick never opens the file.
+# The lib `exit 1`s when its mc/ modules do not load; the subshell probe keeps
+# that exit from ending this tick mid-reap, and _FP_MC_LIB_TRIED stops a second
+# probe in the same tick after a failure.
 # shellcheck source=bin/lib/merge-conductor-lib.sh
-command -v mc_pool_rebase_apply >/dev/null 2>&1 \
-  || { [ -r "$HARNESS/bin/lib/merge-conductor-lib.sh" ] && . "$HARNESS/bin/lib/merge-conductor-lib.sh" 2>/dev/null; }
+fp_mc_lib_load() {
+  command -v mc_pool_rebase_apply >/dev/null 2>&1 && return 0
+  [ -z "${_FP_MC_LIB_TRIED:-}" ] || return 1
+  _FP_MC_LIB_TRIED=1
+  [ -r "$HARNESS/bin/lib/merge-conductor-lib.sh" ] || return 1
+  ( . "$HARNESS/bin/lib/merge-conductor-lib.sh" ) >/dev/null 2>&1 </dev/null || return 1
+  . "$HARNESS/bin/lib/merge-conductor-lib.sh" 2>/dev/null
+}
 # A builder's GitHub credential (2026-09-14, the operator: "every throughput ceiling is a
 # bug"). Sourced for gh_auth_armed only — the token itself is minted per machine
 # in spawn_one below, never once for the tick. Unarmed, this defines two functions
@@ -3473,6 +3485,7 @@ for MF in "$POOL"/*.json; do
     case "$RLINE" in
       REBASED*|CONFLICT*|GATE_RED*|REBASE_*)
         RBRC=127
+        fp_mc_lib_load || true
         command -v mc_pool_rebase_apply >/dev/null 2>&1 \
           && { mc_pool_rebase_apply "$P" "$KEY" "$LOCAL/RESULT"; RBRC=$?; }
         # This directory owes no board close-out — there is no ticket to comment
@@ -3660,6 +3673,7 @@ for MF in "$POOL"/*.json; do
           # `command -v` guarded like the apply above — a half-synced box
           # defines neither, and a missing function must never read as done.
           RBREC="no hub rebase job file could be marked failed, so recovery waits for the pool timeout (MC_REBASE_POOL_TIMEOUT_SECS, default 5400s) to fail the job, and then the NEEDS_REBASE TTL (MC_TTL_NEEDS_REBASE, default 1800s) before a fresh rebase can be queued"
+          fp_mc_lib_load || true
           if command -v mc_pool_rebase_fail >/dev/null 2>&1 \
              && mc_pool_rebase_fail "$P" "$KEY" "the pool machine answered BUILD_DEFERRED before the rebase ran"; then
             RBREC="the hub rebase job file for this PR is marked failed, so bin/merge-conductor.sh parks the PR back in NEEDS_REBASE on its next tick; the NEEDS_REBASE TTL (MC_TTL_NEEDS_REBASE, default 1800s) is then what forgets this head's attempt and lets a later tick queue a fresh rebase"
@@ -4182,6 +4196,7 @@ for MF in "$POOL"/*.json; do
     case "$KEY" in
       RB-*)
         RBREC="no hub rebase job file could be marked failed, so recovery waits for the pool timeout (MC_REBASE_POOL_TIMEOUT_SECS, default 5400s) to fail the job, and then the NEEDS_REBASE TTL (MC_TTL_NEEDS_REBASE, default 1800s) before a fresh rebase can be queued"
+        fp_mc_lib_load || true
         if command -v mc_pool_rebase_fail >/dev/null 2>&1 \
            && mc_pool_rebase_fail "$P" "$KEY" "the pool machine died (state=${MSTATE:-gone}) with no RESULT"; then
           RBREC="the hub rebase job file for this PR is marked failed, so bin/merge-conductor.sh parks the PR back in NEEDS_REBASE on its next tick; the NEEDS_REBASE TTL (MC_TTL_NEEDS_REBASE, default 1800s) is then what forgets this head's attempt and lets a later tick queue a fresh rebase"

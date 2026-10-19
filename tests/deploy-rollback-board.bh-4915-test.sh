@@ -9,8 +9,9 @@
 #   1  board project: ONE comment naming the revert PR, the merge PR and the
 #      reason, THEN one move to in_progress; a `deploy_rollback` ledger row
 #      `reopened`; the local marker. The token never reaches a log or a body.
-#   2  the same batch fails again (it stays queued): nothing new is posted,
-#      whether the ledger row (2b) or only the local marker (2c) says so.
+#   2  the same batch fails again (it stays queued): the train opens no second
+#      rollback PR (BH-7506) and nothing new is posted, whether the ledger row
+#      (2b) or only the local marker (2c) says so.
 #   3  GitHub-Issues project: one issue comment, then PATCH state=open.
 #   4  VERIFIED departure: no tracker call, no deploy_rollback row, no marker.
 #   5  DEPLOY_ROLLBACK=off, and a revert that cannot be prepared: no call.
@@ -79,18 +80,28 @@ case "$url" in
   *) echo hook >> "$HARNESS/calls/hook" ;;
 esac
 SH
-# gh: `pr create` opens the revert PR; `api -i` is gh_rest (issue comment, PATCH).
+# gh: `pr create` opens the revert PR and replays it in the open-PR list the
+# rollback gate reads (BH-7506); `api -i` is gh_rest (list, issue comment, PATCH).
 cat > "$T/bin/gh" <<'SH'
 #!/bin/bash
 echo "$*" >> "$HARNESS/calls/gh"
 if [ "${1:-} ${2:-}" = "pr create" ]; then
   n=$(( $(cat "$HARNESS/prnum" 2>/dev/null || echo 900) + 1 )); echo "$n" > "$HARNESS/prnum"
+  head=""; bf=""; prev=""
+  for a in "$@"; do [ "$prev" = -H ] && head="$a"; [ "$prev" = --body-file ] && bf="$a"; prev="$a"; done
+  [ -n "$bf" ] && [ "$bf" != - ] && jq -nc --argjson n "$n" --arg h "$head" --rawfile b "$bf" \
+    --arg c "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" \
+    '{number:$n, html_url:("https://github.com/org/repo/pull/"+($n|tostring)), head:{ref:$h}, body:$b, created_at:$c}' \
+    >> "$HARNESS/open-prs.jsonl"
   echo "https://github.com/org/repo/pull/$n"; exit 0
 fi
 if [ "${1:-} ${2:-}" = "api -i" ]; then
   m="$4"; p="$5"; bf=""
   for a in "$@"; do case "$a" in body=@*) bf="${a#body=@}" ;; esac; done
   case "$m $p" in
+    "GET repos/org/repo/pulls")
+      printf 'HTTP/2 200\r\n\r\n'
+      if [ -s "$HARNESS/open-prs.jsonl" ]; then jq -sc . "$HARNESS/open-prs.jsonl"; else echo '[]'; fi ;;
     "POST repos/org/repo/issues/"*/comments)
       echo "ghcomment" >> "$HARNESS/calls/order"; { echo "PATH $p"; cat "$bf"; echo; } >> "$HARNESS/calls/gh-comment"
       printf 'HTTP/2 201\r\n\r\n{"id":1}\n' ;;
@@ -114,6 +125,13 @@ job_ledger_get() {
   [ -n "$s" ] || return 2
   printf '%s' "$s"
 }
+job_ledger_row() {
+  local r
+  [ -f "$HARNESS/worker-down" ] && return 1
+  r=$(awk -F'\t' -v k="${1:-}" -v key="${2:-}" '$1==k && $2==key {r=$3"\t"$4} END{print r}' "$HARNESS/calls/ledger" 2>/dev/null)
+  [ -n "$r" ] || return 2
+  jq -nc --arg s "${r%%	*}" --arg d "${r#*	}" '{status:$s, detail:$d}'
+}
 deploy_queue_rows_on() { [ -f "$HARNESS/rows-on" ]; }
 deploy_queue_put() { return 0; }
 deploy_queue_list() {
@@ -125,6 +143,8 @@ SH
 cp "$DIR/bin/internal-token-for.sh" "$T/bin/"
 scratch_install_closure bin/deploy-rollback-board.sh "$T" >/dev/null \
   || echo "note: bin/deploy-rollback-board.sh closure not installed"
+scratch_install_closure bin/lib/deploy-rollback-guard.sh "$T" >/dev/null \
+  || echo "note: bin/lib/deploy-rollback-guard.sh closure not installed"
 chmod +x "$T/bin/"*; export PATH="$T/bin:$PATH"
 
 TOKEN=sekret-token-4915
@@ -148,7 +168,7 @@ drop_rollback_branches() { # a re-departure in the same minute pushes the same b
     git -C "$T/origin.git" update-ref -d "$r"; done
 }
 reset() {
-  rm -rf "$T/calls" "$T/state/deploy-rollback" "$T/worker-down" "$T/board-down" "$T/board-nomove" "$T/rows-on" "$T/rows" "$T/prnum"
+  rm -rf "$T/calls" "$T/state/deploy-rollback" "$T/worker-down" "$T/board-down" "$T/board-nomove" "$T/rows-on" "$T/rows" "$T/prnum" "$T/open-prs.jsonl"
   rm -f "$T/state/deploy-queue/p/"* "$T/logs/"*
   mkdir -p "$T/calls"; drop_rollback_branches
   echo /api/board > "$T/prefix"; write_env on
@@ -183,12 +203,13 @@ jq -e --arg s "$TARGET" '.key=="TK-7" and .ticket_id=="7" and .sha==$s and .merg
 [ -f "$MARK" ] && ok || bad "case1: marker $MARK written"
 grep -rqF "$TOKEN" "$T/logs" "$T/calls/board-comment" 2>/dev/null && bad "case1: the token leaked into a log or a body" || ok
 
-# 2. the same batch is still queued and fails again: nothing new.
+# 2. the same batch is still queued and fails again: no second PR, nothing new.
 [ -n "$(ls -A "$T/state/deploy-queue/p")" ] && ok || bad "case2 precondition: the batch stays queued after a rollback"
 drop_rollback_branches
 run
-grep -q "rollback PR https://github.com/org/repo/pull/902 enqueued" "$T/logs/deploy-train.log" 2>/dev/null \
-  && ok || bad "case2 precondition: the second departure opens a second rollback PR"
+grep -q "rollback skipped (dup)" "$T/logs/deploy-train.log" 2>/dev/null \
+  && ok || bad "case2: the second departure on the same target is a dup ($(tail -1 "$T/logs/deploy-train.log" 2>/dev/null))"
+[ "$(cnt "$T/calls/gh" '^pr create')" = 1 ] && ok || bad "case2: the second departure opens no second rollback PR"
 [ "$(cnt "$T/calls/order" '^comment$')" = 1 ] && ok || bad "case2: a re-run posts no second comment"
 [ "$(cnt "$T/calls/order" '^move$')" = 1 ] && ok || bad "case2: a re-run makes no second move"
 [ "$(rbrows | grep -c .)" = 1 ] && ok || bad "case2: no second ledger put ($(rbrows))"
@@ -228,10 +249,12 @@ reset; write_env off; printf '%s' "$OLD" > "$T/live"; enqueue "$TARGET" "$T/buil
 run
 grep -q "DEPLOY_ROLLBACK=off" "$T/logs/deploy-train.log" 2>/dev/null && ok || bad "case5a precondition: alert-only branch"
 [ ! -s "$T/calls/order" ] && [ -z "$(rbrows)" ] && ok || bad "case5a: no tracker call, no row"
-# 5b. the revert cannot be prepared (a sha that is not on main).
+# 5b. a sha that is not on main: the rollback gate cannot read its commit time,
+# so no revert is prepared (BH-7506; before the gate this was "rollback prep failed").
 reset; printf '%s' "$OLD" > "$T/live"; enqueue "$(printf 'd%.0s' {1..40})" "$T/builds/p-TK-7-x"
 run
-grep -q "rollback prep failed" "$T/logs/deploy-train.log" 2>/dev/null && ok || bad "case5b precondition: prep failed"
+grep -q "rollback skipped (unknown): commit time of dddddddd unreadable" "$T/logs/deploy-train.log" 2>/dev/null \
+  && ok || bad "case5b precondition: no revert for an unreadable sha ($(tail -1 "$T/logs/deploy-train.log" 2>/dev/null))"
 [ ! -s "$T/calls/order" ] && [ -z "$(rbrows)" ] && ok || bad "case5b: no tracker call, no row"
 
 # 6. a member with no job.json: flagged, never a tracker call.
