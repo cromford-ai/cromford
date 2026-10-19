@@ -68,6 +68,13 @@ cp "$DIR/bin/lib/block-gate.sh" "$DIR/bin/lib/verdicts.sh" "$T/h/bin/lib/"
 # `gh api -i` prints, so a stub arm that echoes a word says nothing at all.
 cp "$DIR/tests/lib/rest-emit.sh" "$T/fakebin/restpr"; chmod +x "$T/fakebin/restpr"
 mkdir -p "$T/h/bin/lib/mc" && cp "$DIR"/bin/lib/mc/*.sh "$T/h/bin/lib/mc/"
+# BH-7086: MC_DEADEND_RR_DELAY_S=<n> delays every detached re-review job in the
+# SCRATCH copy only, so the drain in reset12 can be proved under a slow runner.
+if [ -n "${MC_DEADEND_RR_DELAY_S:-}" ]; then
+  sed -i "/^mc_rereview_run() {\$/a sleep ${MC_DEADEND_RR_DELAY_S//[!0-9]/}" "$T/h/bin/lib/mc/rebase.sh"
+  grep -q '^sleep [0-9]' <<<"$(grep -A1 '^mc_rereview_run() {$' "$T/h/bin/lib/mc/rebase.sh")" \
+    || { echo "FAIL: MC_DEADEND_RR_DELAY_S set but mc_rereview_run was not found in the scratch copy"; exit 1; }
+fi
 cp "$DIR/bin/merge-conductor.sh" "$DIR/bin/fleet-conf.sh" "$DIR/bin/jobs-client.sh" "$T/h/bin/"
 mkdir -p "$T/h/bin/lib/jobs" && cp "$DIR"/bin/lib/jobs/*.sh "$T/h/bin/lib/jobs/"
 printf 'demo-os example-org/demo-os https://demo.example /api/board 2 box-demo\n' > "$T/h/fleet.conf"
@@ -259,6 +266,21 @@ tick() { run_tick env MC_MERGE_SETTLE=0 MC_REPOS="$T/repos" MC_RR_PATH="$T/fakeb
 state_of() { awk -F'\t' -v k="$KEY" '$1==k {print $2}' "$ROWS"; }
 why_of()   { awk -F'\t' -v k="$KEY" '$1==k {print $7}' "$ROWS"; }
 jobs_n()   { ls "$RRDIR"/*.json 2>/dev/null | wc -l; }
+# rr_drain — stop every detached job this scratch harness spawned (BH-7086).
+# A re-review job rewrites its job file when it ends (mc_rr_write recreates a
+# missing file), so deleting the file under a live job brings it back after
+# reset12. Wait up to RR_DRAIN_S, then TERM its session (setsid: pgid = pid).
+# Only a process whose cmdline names a mc_*_run entry point AND this $T/h is
+# ours: a reused pid or another tree's job is never waited on or killed.
+rr_ours()  { local c; c=$(tr '\0' ' ' < "/proc/$1/cmdline" 2>/dev/null) || return 1
+             grep -qE 'mc_(rereview|rebase|dv)_run' <<<"$c" && grep -qF "$T/h " <<<"$c"; }
+rr_pids()  { { command -v pgrep >/dev/null && pgrep -f 'mc_(rereview|rebase|dv)_run'
+               for f in "$RRDIR"/*.json "$RBDIR"/*.json; do [ -f "$f" ] && jq -r '.pid // 0' "$f" 2>/dev/null; done
+             } | grep -E '^[1-9][0-9]*$' | sort -u | while read -r p; do rr_ours "$p" && echo "$p"; done; }
+rr_drain() { local end=$(( $(date +%s) + ${RR_DRAIN_S:-30} )) p
+  while [ -n "$(rr_pids)" ] && [ "$(date +%s)" -lt "$end" ]; do sleep 0.2; done
+  for p in $(rr_pids); do kill -TERM -- "-$p" 2>/dev/null || kill -TERM "$p" 2>/dev/null; done
+  sleep 0.2; }
 LOGN=0
 logmark()  { LOGN=$(wc -l < "$LOG" 2>/dev/null || echo 0); }
 logsince() { tail -n +$((LOGN+1)) "$LOG" 2>/dev/null; }
@@ -266,6 +288,7 @@ set_pr()   { printf '%s' "$1" > "$T/prhead"; printf '%s' "${2:-CLEAN}" > "$T/mer
 # Wipe everything this PR carries between cases: the row, its attempt records,
 # its job files and its reviewed sha. Nothing here touches another key.
 reset12() {
+  rr_drain   # BH-7086: a live job would recreate the file deleted below
   awk -F'\t' -v k="$KEY" '$1!=k' "$ROWS" > "$T/rows.tmp" 2>/dev/null; mv -f "$T/rows.tmp" "$ROWS"
   grep -vF "$KEY" "$ATT" > "$T/att.tmp" 2>/dev/null; mv -f "$T/att.tmp" "$ATT"
   find "$RRDIR" "$RBDIR" -maxdepth 1 -type f -delete 2>/dev/null
@@ -413,6 +436,7 @@ logmark; tick
 [ "$(state_of)" = HEAD_MOVED ] && ok || bad "an outsider's marker comment must not move the row (got $(state_of))"
 grep -q "^apverdict $KEY $H_GRN\$" "$ATT" && bad "an outsider's marker comment must never be recorded as a consumed verdict" || ok
 [ -f "$(mc_rr_file example-org/demo-os 12 "$H_GRN")" ] && ok || bad "the head must buy its own review, exactly as if the comment were not there"
+rr_drain   # BH-7086: both section-2 jobs end here, before section 3 counts job files
 echo '[]' > "$T/comments/12.json"
 
 # ============================================================================
@@ -615,5 +639,6 @@ tick
 # BH-636 retired this wording and pins its absence; nothing here may bring it back.
 [ "$(grep -c 're-review deferred — CI none' "$LOG")" = 0 ] && ok || bad "the retired 'CI none' deferral must never be logged again (got $(grep -c 're-review deferred — CI none' "$LOG"))"
 
+rr_drain   # BH-7086: leave no detached job behind the scratch tree
 echo "merge-conductor-deadend-test: $PASS passed, $FAIL failed"
 [ "$FAIL" = 0 ]
