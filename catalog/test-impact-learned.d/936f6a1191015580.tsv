@@ -1,0 +1,2 @@
+# hand edge (operator-c5, 2026-10-19): tests/gitleaksignore-baseline-test.sh reads $DIR/.gitleaksignore; the map did not select it (batch #7628 failed test-impact A2 and 1b).
+.gitleaksignore	tests/gitleaksignore-baseline-test.sh	example-org/cromford#7578 batch #7628	2026-10-19
