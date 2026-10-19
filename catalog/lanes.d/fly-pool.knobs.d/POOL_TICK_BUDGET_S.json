@@ -1,0 +1,12 @@
+{
+  "env": "POOL_TICK_BUDGET_S",
+  "type": "int",
+  "default": 600,
+  "min": 0,
+  "max": 86400,
+  "unit": "seconds",
+  "zero_means": "off",
+  "required": false,
+  "read_in": "bin/fly-pool.sh",
+  "note": "BH-7421. Wall-clock seconds one project's pool tick may spend deciding queued rows. When spent, pool_spawn_decision refuses every later row, the row walk stops, spawns already started finish, and the tick exits and releases locks/fly-pool-<p>.lock. Settings row `lane.fly-pool.pool_tick_budget_s`. 0 = off: no tick budget."
+}

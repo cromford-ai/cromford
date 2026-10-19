@@ -1,0 +1,12 @@
+{
+  "env": "POOL_GH_READ_TIMEOUT_S",
+  "type": "int",
+  "default": 20,
+  "min": 0,
+  "max": 300,
+  "unit": "seconds",
+  "zero_means": "off",
+  "required": false,
+  "read_in": "bin/fly-pool.sh",
+  "note": "BH-7421. pool_rest_read cuts one GitHub read of the pool (PR, branch head, hold, repo probe) after this many seconds. A cut read answers with no HTTP code. The first unreadable PR read in a tick stops PR reads for that project for the rest of the tick and raises ONE alert per project per hour (flags/alerted-pool-pr-unreadable-<p>). Settings row `lane.fly-pool.pool_gh_read_timeout_s`. 0 = off: no per-read limit."
+}

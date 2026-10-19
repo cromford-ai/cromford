@@ -595,6 +595,14 @@ POOL_GH_TOKEN_ROTATE_EVERY="${POOL_GH_TOKEN_ROTATE_EVERY:-1800}"
 # the rotation below needs it without a project env bundle to read REPO_SLUG from.
 POOL_SLUG=$("$HARNESS/bin/fleet-conf.sh" "$P" repo 2>/dev/null || true)
 case "$POOL_SLUG" in */*) ;; *) POOL_SLUG="" ;; esac
+# BH-7421: the tick clock and its two knobs, both lane knobs (catalog/lanes.d/
+# fly-pool.knobs.d): POOL_GH_READ_TIMEOUT_S (20) cuts one GitHub read;
+# POOL_TICK_BUDGET_S (600) ends the row walk for this project (0 = off).
+POOL_TICK_T0=$(date +%s)
+case "${POOL_GH_READ_TIMEOUT_S:-}" in ''|*[!0-9]*) POOL_GH_READ_TIMEOUT_S=20 ;; esac
+case "${POOL_TICK_BUDGET_S:-}" in ''|*[!0-9]*) POOL_TICK_BUDGET_S=600 ;; esac
+[ "$POOL_GH_READ_TIMEOUT_S" -le 300 ] || POOL_GH_READ_TIMEOUT_S=300
+[ "$POOL_TICK_BUDGET_S" -le 86400 ] || POOL_TICK_BUDGET_S=86400
 # KILL FLAGS, and they are deliberately two. GH_APP_TOKENS=0 / flags/gh-app-tokens-off
 # (or the `switch.gh-app-tokens-off` settings row) is the existing one and it
 # turns the WHOLE App-token path off — no swap, no rotation, no
@@ -748,8 +756,15 @@ pool_rest_read() { # pool_rest_read <api-path> [token] -> line 1 = HTTP code (em
   local _path="$1" _tok="${2:-}" _raw=""
   # -i puts the status line on STDOUT even on a 4xx, which is the whole point:
   # a 404 and a 403 are both "gh exited 1" without it.
-  if [ -n "$_tok" ]; then _raw=$(GH_TOKEN="$_tok" gh api -i "$_path" 2>/dev/null)
-  else _raw=$(gh api -i "$_path" 2>/dev/null); fi
+  # BH-7421: a read cut at POOL_GH_READ_TIMEOUT_S answers like any other read
+  # that never produced a status line (empty code), never a hung tick.
+  # A cut read prints the word TIMEOUT as line 1 (rc 124, or 137), so a caller can tell "the read was cut" from "the client cannot ask".
+  local _to=() _lim="${POOL_GH_READ_TIMEOUT_S:-20}" _rc=0
+  case "$_lim" in ''|*[!0-9]*) _lim=20 ;; esac
+  if [ "$_lim" -gt 0 ] && command -v timeout >/dev/null 2>&1; then _to=(timeout "$_lim"); fi
+  if [ -n "$_tok" ]; then _raw=$(GH_TOKEN="$_tok" "${_to[@]}" gh api -i "$_path" 2>/dev/null); _rc=$?
+  else _raw=$("${_to[@]}" gh api -i "$_path" 2>/dev/null); _rc=$?; fi
+  if [ "$_rc" = 124 ] || [ "$_rc" = 137 ]; then printf 'TIMEOUT\n'; return 0; fi
   awk 'NR==1 && $0 ~ /^HTTP\// {print $2; next}
        NR==1 {print ""}
        f {print}
@@ -839,6 +854,9 @@ pr_exists_for_key_rest() {
       *) return 2 ;;
     esac
   fi
+  # BH-7421: one unreadable PR read stops PR reads for this project for the rest
+  # of the tick. Each later read would wait out its own timeout.
+  [ "${_POOL_PR_UNREADABLE:-0}" = 1 ] && return 2
   br=$(pool_key_branch "$key")
   local owner="${POOL_SLUG%%/*}"
   _path="repos/$POOL_SLUG/pulls?state=open&head=${owner}:$br&per_page=1"
@@ -846,7 +864,7 @@ pr_exists_for_key_rest() {
   _code=$(head -n 1 <<<"$_out"); _body=$(tail -n +2 <<<"$_out")
   if [ "$_code" = 200 ]; then
     _n=$(jq -r 'length // 0' 2>/dev/null <<<"$_body")
-    case "$_n" in ''|*[!0-9]*) _POOL_PR_CACHE[$key]=u; return 2 ;; esac
+    case "$_n" in ''|*[!0-9]*) _POOL_PR_CACHE[$key]=u; pool_pr_unreadable_note "$key" "200-bad-body"; return 2 ;; esac
     if [ "$_n" -gt 0 ]; then
       # The number and url ride along from the body already fetched: naming the
       # PR in the board comment costs no second read.
@@ -856,7 +874,57 @@ pr_exists_for_key_rest() {
     else _POOL_PR_CACHE[$key]=n; return 1; fi
   fi
   _POOL_PR_CACHE[$key]=u
+  pool_pr_unreadable_note "$key" "${_code:-none}"
   return 2
+}
+
+# pool_pr_unreadable_note <key> <http-code|none> (BH-7421)
+# The first PR read that did not answer 200 in a tick: stop PR reads for the
+# project this tick and raise ONE alert per project per hour. The hour is the
+# mtime of flags/alerted-pool-pr-unreadable-<P> (ALERTS first, then the flag).
+pool_pr_unreadable_note() {
+  local key="${1:-}" code="${2:-none}" flag
+  # "none" covers a timeout, no credential and a network failure alike; a 200
+  # with a broken body (a read cut after the status line) is also no answer.
+  case "$code" in TIMEOUT|200-bad-body) code=none ;; esac
+  _POOL_PR_UNREADABLE=1; _POOL_PR_UNREADABLE_CODE="$code"
+  say "PR read for $key answered '$code' (limit ${POOL_GH_READ_TIMEOUT_S:-20}s): no more PR reads for $P this tick"
+  # One alert per project per UTC hour: the hour is in the flag name, and
+  # bin/alerts-groom.sh prunes old alerted-* flags (bin/lib/flags.sh).
+  command -v flag_set >/dev/null 2>&1 || . "$HARNESS/bin/lib/flags.sh" 2>/dev/null || return 0
+  flag="alerted-pool-pr-unreadable-$P-$(date -u +%Y%m%d%H)"
+  flag_has --cached "$flag" 2>/dev/null && return 0
+  flag_set "$flag" on "fly-pool: PR-unreadable alert sent" >/dev/null 2>&1
+  HARNESS="$HARNESS" "$HARNESS/bin/alert-line.sh" --id "pool-pr-unreadable-$P" "[pool/$P] PR reads are not answering (key $key, answer '$code', limit ${POOL_GH_READ_TIMEOUT_S:-20}s). PR reads for $P stop for the rest of this tick. A new build still spawns; a row with a prior branch or PR waits. Check the hub load and the GitHub token chain." >/dev/null 2>&1 || true
+  return 0
+}
+
+# pool_row_is_new_build <job-file> <key> (BH-7421): rc 0 when local evidence says
+# no build ever ran for the key: attempt 0 (the queue requeues at attempt+1),
+# no deferral or death, no spawn file, no spawn row in the pool-state rows (an
+# unreadable row count is NOT new), no terminal file. A build branch exists only
+# after a build ran.
+pool_row_is_new_build() {
+  local jf="${1:-}" key="${2:-}" a d x f n
+  a=$(jq -r '.attempt // 0' "$jf" 2>/dev/null); d=$(jq -r '.deferrals // 0' "$jf" 2>/dev/null); x=$(jq -r '.deaths // 0' "$jf" 2>/dev/null)
+  [ "${a:-0}" = 0 ] && [ "${d:-0}" = 0 ] && [ "${x:-0}" = 0 ] || return 1
+  f="$(pool_terminal_path "$key")"
+  { [ ! -s "${f%.terminal}.spawns" ] && [ ! -e "$f" ]; } || return 1
+  # With pool_state_rows on, the rows must answer 0 (rc 2 = unknown = not new).
+  # The snapshot covers the spawn-cap window; the .spawns file covers older keys.
+  if command -v psr_on >/dev/null 2>&1 && psr_on; then
+    n=$(psr_spawn_count "$key" 0 2>/dev/null) || return 1
+    [ "${n:-x}" = 0 ] || return 1
+  fi
+  return 0
+}
+
+# pool_tick_budget_spent (BH-7421): rc 0 when this tick has run longer than
+# POOL_TICK_BUDGET_S (default 600, 0 = no budget).
+pool_tick_budget_spent() {
+  local b="${POOL_TICK_BUDGET_S:-600}"
+  case "$b" in ''|*[!0-9]*) b=600 ;; esac
+  [ "$b" -gt 0 ] && [ $(( $(date +%s) - ${POOL_TICK_T0:-$(date +%s)} )) -ge "$b" ]
 }
 
 # pr_open_for_key_any_rest <key> -> rc 0 if an open PR belongs to <key>, 1 if
@@ -1578,6 +1646,8 @@ pool_gates_applicable() {
   fi
   _out=$(pool_rest_read "repos/$POOL_SLUG" "${POOL_SLUG_TOK:-}")
   _code=$(head -n 1 <<<"$_out")
+  # A CUT probe is a slow hub, not "the client cannot ask": the gates apply
+  # (HOLD, open PR, terminal, the per-key cap guard metered spend, BH-7421).
   if [ -z "$_code" ]; then _POOL_GATES_OK=n; return 1; fi
   _POOL_GATES_OK=y
   return 0
@@ -1788,6 +1858,11 @@ pool_spawn_decision() {
   case "$KEY" in
     RB-*) say "$KEY: rebase row — the ticket spawn gates do not apply"; return 0 ;;
   esac
+  if [ "${_POOL_ROWS_DECIDED:-0}" -ge 1 ] && pool_tick_budget_spent; then
+    [ -n "${_POOL_BUDGET_SAID:-}" ] || say "tick budget of ${POOL_TICK_BUDGET_S:-600}s spent for $P: no more rows are decided this tick, the lock is released at the end"
+    _POOL_BUDGET_SAID=1; return 1
+  fi
+  _POOL_ROWS_DECIDED=$(( ${_POOL_ROWS_DECIDED:-0} + 1 ))
   # >>> execute-empty stop (BH-5911)
   # 0b. A key whose execute stage ended EXECUTE_EMPTY POOL_EXECUTE_EMPTY_MAX
   # times (2) in POOL_EXECUTE_EMPTY_WINDOW_S (24 h) is not relaunched: it gets
@@ -1921,8 +1996,14 @@ pool_spawn_decision() {
     rm -f "$JF"
     return 1
   elif [ "$_pr_rc" -eq 2 ]; then
-    say "skipping $KEY: PR check unreadable — will retry"
-    return 1
+    # Only a read that got NO HTTP answer (a timeout, a dead client) is the
+    # load shape. An affirmative 403/429/5xx keeps the row waiting, as before.
+    if [ "${_POOL_PR_UNREADABLE_CODE:-none}" = none ] && pool_row_is_new_build "$JF" "$KEY"; then
+      say "$KEY: PR check unreadable, but this is a new build (attempt 0, no spawn record, no terminal) — no PR read needed, spawning"
+    else
+      say "skipping $KEY: PR check unreadable — will retry"
+      return 1
+    fi
   fi
   # 3. Terminal push-rejected state. Re-arm if the remote head changed or an
   # explicit human re-arm appeared.
@@ -4846,6 +4927,11 @@ TICK_KEYS=" "
 # Malformed entries quarantined this tick: paged ONCE after the loop, however
 # many there are, so a bad producer is one alert and not one per file.
 QUAR=()
+# BH-7421: the budget clock starts at the row walk, not at the lock: a long reap
+# phase must not leave the walk no time. The first row is always decided. Rows
+# walk oldest first, so a slow head row can use the budget on every tick; the
+# budget stops the tick, it does not reorder the queue.
+POOL_TICK_T0=$(date +%s)
 for JF in $(hotfix_first $(ls -tr "$QDIR"/*.json 2>/dev/null)); do
   case "$JF" in *.failed.json) continue;; esac
   # A hotfix spends a FREE BUDGET SLOT first and the exemption only when the
@@ -4898,7 +4984,11 @@ for JF in $(hotfix_first $(ls -tr "$QDIR"/*.json 2>/dev/null)); do
     DM_HELD="${DM_HELD:+$DM_HELD }$KEY"; continue
   fi
   # Spawn-decision gate: HOLD, open PR, terminal state, per-key cap (BH-1075)
-  if ! pool_spawn_decision "$JF" "$KEY" "$TICKET"; then continue; fi
+  if ! pool_spawn_decision "$JF" "$KEY" "$TICKET"; then
+    # BH-7421: a spent tick budget ends the walk, so the lock is released.
+    [ -n "${_POOL_BUDGET_SAID:-}" ] && break
+    continue
+  fi
   # A release in the gate rewrote the file (BH-5967): the machine carries the
   # reset count, not the one read above.
   SDEF=$(jq -r '.deferrals // 0' "$JF" 2>/dev/null); case "$SDEF" in ''|*[!0-9]*) SDEF=0 ;; esac

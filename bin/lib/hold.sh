@@ -435,6 +435,12 @@ hold__arm() {
 #   shares — the one that was exhausted while this was being written. `gh api
 #   repos/…/issues/N` spends the far larger core bucket and carries every field
 #   this needs. Two calls per gated decision, and nothing is written anywhere.
+# hold__gh <args> (BH-7421): gh with the pool's per-read cut when
+# POOL_GH_READ_TIMEOUT_S is a positive number; plain gh otherwise (other callers).
+hold__gh() {
+  case "${POOL_GH_READ_TIMEOUT_S:-}" in ''|0|*[!0-9]*) gh "$@" ;; *)
+    if command -v timeout >/dev/null 2>&1; then timeout "$POOL_GH_READ_TIMEOUT_S" gh "$@"; else gh "$@"; fi ;; esac
+}
 hold_check() {
   local slug="${1:-}" n="${2:-}" ij cj raw errf err rc
   case "$slug" in */*) ;; *) printf 'unreadable\tno owner/repo to read\n'; return 2 ;; esac
@@ -442,14 +448,14 @@ hold_check() {
   command -v jq >/dev/null 2>&1 || { printf 'unreadable\tjq is not on PATH\n'; return 2; }
   hold__arm "$slug"
   errf=$(mktemp 2>/dev/null) || errf=/dev/null
-  ij=$(gh api "repos/$slug/issues/$n" 2>"$errf"); rc=$?
+  ij=$(hold__gh api "repos/$slug/issues/$n" 2>"$errf"); rc=$?
   if [ "$rc" != 0 ] || [ -z "$ij" ]; then
     err=$(head -n 1 "$errf" 2>/dev/null | tr -d '\r')
     [ -n "$err" ] || err="gh api repos/$slug/issues/$n answered an empty body (rc=$rc)"
     [ "$errf" = /dev/null ] || rm -f "$errf"
     printf 'unreadable\t%s\n' "$err"; return 2
   fi
-  raw=$(gh api --paginate "repos/$slug/issues/$n/comments?per_page=100" 2>"$errf"); rc=$?
+  raw=$(hold__gh api --paginate "repos/$slug/issues/$n/comments?per_page=100" 2>"$errf"); rc=$?
   if [ "$rc" != 0 ]; then
     err=$(head -n 1 "$errf" 2>/dev/null | tr -d '\r')
     [ -n "$err" ] || err="gh api repos/$slug/issues/$n/comments answered rc=$rc"
