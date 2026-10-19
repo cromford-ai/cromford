@@ -1094,8 +1094,28 @@ _lg_sc_reset() {
 # cache. rc 1 (and an empty memo) when there is no readable cache. A corrupt
 # file loads as fetched 0 with no values, which is what each jq answered
 # before. _LG_SK_N counts every non-empty key, memoised or not.
+#
+# BH-7494: ONE jq does the whole parse and prints shell assignments, ONE eval
+# runs them as ONE assignment-only command. The loader used to read three NUL fields per key, call
+# _lg_sc_name per key and append to a growing `names` string twice per key:
+# about 12 traced commands per key and quadratic copying, 5.7 s of a 9.3 s
+# `lane_env_apply` on the hub. The jq program holds the same key encoding as
+# _lg_sc_name (_ -> __, . -> _d, - -> _m) and the same key filter, so what
+# lands in the memo is unchanged. The eval is safe: a key reaches the program
+# text only when it matches [A-Za-z0-9_.-]+, and every value goes through @sh.
+_LG_SC_JQ='
+  def enc: gsub("_";"__") | gsub("\\.";"_d") | gsub("-";"_m");
+  ((.values // {}) | (try to_entries catch []) | map(select(.key != ""))) as $all
+  | ($all | map(select((.key | type) == "string" and (.key | test("^[A-Za-z0-9_.-]+$")))
+        | {e: (.key | enc), hv: (.value != null and .value != false),
+           v: (.value | if . == null or . == false then "" elif type == "string" then . else tojson end)})) as $m
+  | ["fa=" + (((.fetched_at // 0) | tostring) | @sh),
+     "tot=" + (($all | length) | tostring),
+     "names=" + ([$m[] | "_LG_SK_" + .e, (if .hv then "_LG_SV_" + .e else empty end)] | join(" ") | @sh),
+     ($m[] | "_LG_SK_" + .e + "=1", (if .hv then "_LG_SV_" + .e + "=" + (.v | @sh) else empty end))]
+    | join(" ")'
 _lg_sc_load() {
-  local h f raw="" fa tot k hv v names=""
+  local h f raw="" fa=0 tot=0 names="" prog
   h="${HARNESS:-${H:-}}"; f=""
   [ -n "$h" ] && f="$h/state/settings-cache.json"
   if [ -z "$f" ] || [ ! -r "$f" ]; then
@@ -1104,26 +1124,18 @@ _lg_sc_load() {
   fi
   IFS= read -r -d '' raw < "$f" || :
   [ "$_LG_SC_LOADED" = 1 ] && [ "$f" = "$_LG_SC_FILE" ] && [ "$raw" = "$_LG_SC_RAW" ] && return 0
-  _lg_sc_reset; fa=0; tot=0
-  {
-    IFS= read -r -d '' fa || fa=0
-    IFS= read -r -d '' tot || tot=0
-    while IFS= read -r -d '' k && IFS= read -r -d '' hv && IFS= read -r -d '' v; do
-      _lg_sc_name "$k" || continue
-      printf -v "_LG_SK_$_LG_ENC" 1; names="$names _LG_SK_$_LG_ENC"
-      [ "$hv" = 1 ] || continue
-      printf -v "_LG_SV_$_LG_ENC" '%s' "$v"; names="$names _LG_SV_$_LG_ENC"
-    done
+  _lg_sc_reset
   # --arg src names the file the text came from, so a jq-counting shim that
   # looks for the cache's path counts this read (tests/conf-rows M4/M5).
-  } < <(jq -j --arg src "$f" '
-    ((.fetched_at // 0) | tostring) + "\u0000",
-    ((.values // {}) | (try to_entries catch []) | map(select(.key != "")) | length | tostring) + "\u0000",
-    ((.values // {}) | (try to_entries catch [])[]
-     | .key + "\u0000"
-       + (if .value != null and .value != false then "1" else "0" end) + "\u0000"
-       + (.value | if . == null or . == false then "" elif type == "string" then . else tojson end)
-       + "\u0000")' <<<"$raw" 2>/dev/null)
+  prog=$(jq -r --arg src "$f" "$_LG_SC_JQ" <<<"$raw" 2>/dev/null) || :
+  # The eval line is DATA (every value went through @sh), not commands, so it
+  # runs untraced: under xtrace its one long line printed every settings value,
+  # and a value that holds the text of a redirect read as a real one to the CI
+  # trace guard ("Tests cannot touch a real harness", conf-rows HIT at this line).
+  local _lg_x=""
+  case $- in *x*) _lg_x=1; { set +x; } 2>/dev/null ;; esac
+  eval "$prog"
+  [ -z "$_lg_x" ] || set -x
   case "$fa" in ''|*[!0-9]*) fa=0 ;; esac
   case "$tot" in ''|*[!0-9]*) tot=0 ;; esac
   _LG_SC_NAMES=$names; _LG_SK_N=$tot
