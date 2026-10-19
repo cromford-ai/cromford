@@ -1,0 +1,11 @@
+{
+  "env": "MC_RED_CHECKS_KEEP_D",
+  "read_in": "bin/lib/mc-stuck-timers.sh",
+  "type": "int",
+  "default": 14,
+  "min": 1,
+  "max": 90,
+  "unit": "days",
+  "zero_means": null,
+  "note": "BH-7241: how long a state/merge-conductor/red-checks/<pr> file (the failing check names of a head that was red after a red head) is kept. mst_prune deletes older files at most once an hour."
+}

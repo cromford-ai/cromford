@@ -1,0 +1,11 @@
+{
+  "env": "MC_STUCK_TIMERS",
+  "read_in": "bin/lib/mc-stuck-timers.sh",
+  "type": "int",
+  "default": 1,
+  "min": 0,
+  "max": 1,
+  "unit": null,
+  "zero_means": "off",
+  "note": "BH-7241: the stuck-PR timers. 1 = a head with no workflow run for MC_CI_NOSTART_MIN minutes gets one workflow_dispatch and one CI_NEVER_STARTED alert; a conflict-unresolvable or rebase-gate-red park and every RED_TWICE start bin/blocked-resolver.sh for that PR in the same tick; red on two consecutive settled heads is RED_TWICE at once with the failing check names. 0 = off: the conductor runs its old paths and writes no timer mark."
+}

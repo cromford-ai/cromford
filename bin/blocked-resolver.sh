@@ -412,6 +412,9 @@ RB_SOURCE=""; RB_WORD=""; RB_CLASS=""; RB_SERVED=""
 # shellcheck source=bin/lib/merge-conductor-lib.sh
 if [ -r "$H/bin/lib/merge-conductor-lib.sh" ]; then . "$H/bin/lib/merge-conductor-lib.sh"; mc_init
 else echo "blocked-resolver: bin/lib/merge-conductor-lib.sh missing — cannot read PR state" >&2; exit 1; fi
+# The fix-round brief's red-checks reader (BH-7241). Optional; MC_FIX_NOW_ON stays unset.
+# shellcheck source=bin/lib/mc-stuck-timers.sh
+[ -r "$H/bin/lib/mc-stuck-timers.sh" ] && . "$H/bin/lib/mc-stuck-timers.sh"
 # THE REBUILD LEDGER (BH-487.0). HARD, like the conductor's lib above and for
 # the same reason: a resolver whose ledger functions are undefined does not
 # refuse, it silently counts rebuilds on the bare `rebuilds` counter again once
@@ -6093,6 +6096,9 @@ br_fix_round() {
     cilog=$(br_ci_log "$slug" "$head" "$(mc_num_of_url "$url" 2>/dev/null)")
     [ -n "$cilog" ] && brief="$brief"$'\n\n'"THE FAILING CI JOBS ON THIS HEAD (tail of each failed job's log):"$'\n'"$cilog"
   fi
+  # >>> red checks brief (BH-7241) — mst_red_brief, bin/lib/mc-stuck-timers.sh
+  command -v mst_red_brief >/dev/null 2>&1 && brief="$brief$(mst_red_brief "$slug#$(mc_num_of_url "$url" 2>/dev/null)" "${head:-}")"
+  # <<< red checks brief
   # >>> eject runs brief (BH-6000)
   # A queue-ejected-twice park: the two failing merge-queue batch runs the
   # conductor handed over (mc_eject_fix_now). They are the evidence; the PR's

@@ -373,6 +373,8 @@ mc_transition() {
     if [ "$new" = BLOCKED_HUMAN ] && mc_handoff_owns "$why"; then
       mc_handoff_record "$key" "$head" "$why" "$url"
     fi
+    # A failed rebase or a RED_TWICE starts the resolver in this tick (BH-7241).
+    [ "${MC_FIX_NOW_ON:-0}" = 1 ] && command -v mst_fix_now_on_park >/dev/null 2>&1 && mst_fix_now_on_park "$key" "$new" "$why" "$head" "$url"
   else
     [ -n "$since" ] || since=$(mc_now)
     local prevwhy; prevwhy=$(cut -f7 <<<"$row")

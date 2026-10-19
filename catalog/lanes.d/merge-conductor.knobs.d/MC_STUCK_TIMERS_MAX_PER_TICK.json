@@ -1,0 +1,11 @@
+{
+  "env": "MC_STUCK_TIMERS_MAX_PER_TICK",
+  "read_in": "bin/lib/mc-stuck-timers.sh",
+  "type": "int",
+  "default": 5,
+  "min": 1,
+  "max": 100,
+  "unit": "actions per project per tick",
+  "zero_means": null,
+  "note": "BH-7241: the most CI-never-started timer actions (a dispatch and its alert) one project takes in one conductor tick. A head over the cap waits for the next tick, with nothing written."
+}

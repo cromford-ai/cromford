@@ -2290,6 +2290,10 @@ mc_classify() {
     # longer on the branch. The strike ledger is still written by the caller.
     # It no longer decides anything: only this head's own ladder parks it.
     red)
+      # RED ON TWO CONSECUTIVE SETTLED HEADS (BH-7241): pr_worker sets
+      # MC_RED_CONSEC ("<prev8> <head8>|<names>") and skips the rerun rung.
+      if [ -n "${MC_RED_CONSEC:-}" ]; then
+        printf 'RED_TWICE\tred-twice: red on consecutive heads %s and %s; failing checks: %s' "${MC_RED_CONSEC%% *}" "$(cut -d'|' -f1 <<<"${MC_RED_CONSEC#* }")" "${MC_RED_CONSEC#*|}"; return; fi
       if [ "${MC_RED_RUNG:-0}" -ge 2 ] 2>/dev/null; then
         printf 'RED_TWICE\tred-twice: still red on %s after its failed jobs were re-run once' "${head:0:8}"; return; fi
       if [ "${MC_RED_RUNG:-0}" = 1 ]; then printf 'WAIT_CI\tchecks red once — failed jobs re-run, waiting on the rerun'; else printf 'WAIT_CI\tchecks red once'; fi

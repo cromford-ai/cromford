@@ -273,6 +273,12 @@ command -v fr_reentry_gate >/dev/null 2>&1 || {
 # (BH-6161). A tree without it ejects and requeues exactly as before.
 # shellcheck source=bin/lib/mc-eject-cause.sh
 [ -r "$H/bin/lib/mc-eject-cause.sh" ] && . "$H/bin/lib/mc-eject-cause.sh"
+# The stuck-PR timers (BH-7241): CI never started, a failed rebase, red on two
+# heads. A tree without it ticks exactly as before. MC_FIX_NOW_ON is NOT
+# exported: only this process launches a resolver from mc_transition.
+# shellcheck source=bin/lib/mc-stuck-timers.sh
+[ -r "$H/bin/lib/mc-stuck-timers.sh" ] && . "$H/bin/lib/mc-stuck-timers.sh"
+MC_FIX_NOW_ON=1
 # The pre-queue isolation gate (BH-4545). A tree without it enqueues a READY
 # head exactly as before.
 # shellcheck source=bin/lib/mc-prequeue.sh
@@ -906,15 +912,24 @@ pr_worker() {
   # 2 red again on the same head — and 2 is RED_TWICE, which the resolver owns.
   # A push resets the ladder by construction: the mark is keyed on the head.
   REDS=0; MC_RED_RUNG=0
+  # RED ON TWO CONSECUTIVE SETTLED HEADS (BH-7241) skips the one-rerun rung:
+  # MC_RED_CONSEC is what mc_classify reads to answer RED_TWICE at once. The
+  # logic is bin/lib/mc-stuck-timers.sh's; without it the variable stays empty.
+  MC_RED_CONSEC=""
+  case "$CI" in green|red) command -v mst_cihead_put >/dev/null 2>&1 && mst_cihead_put "$KEY" "$HEAD" "$CI" ;; esac
   if [ "$CI" = red ]; then
     MC_RED_RUNG=$(mc_red_rung "$KEY" "$HEAD")
-    if [ "$ACTIONS" = 1 ] && [ "$MC_RED_RUNG" = 0 ] && mc_flake_rerun "$SLUG" "$KEY" "$HEAD"; then
+    [ "$ACTIONS" = 1 ] && [ "$MC_RED_RUNG" = 0 ] && command -v mst_red_known >/dev/null 2>&1 && MC_RED_CONSEC=$(mst_red_known "$KEY" "$HEAD")
+    if [ -z "$MC_RED_CONSEC" ] && [ "$ACTIONS" = 1 ] && [ "$MC_RED_RUNG" = 0 ] && mc_flake_rerun "$SLUG" "$KEY" "$HEAD"; then
       MC_RED_RUNG=1
     else
       mc_attempt_has "red $KEY $HEAD" || mc_attempt_put "red $KEY $HEAD"; REDS=$(mc_attempt_count red "$KEY")
-      if [ "$ACTIONS" = 1 ] && [ "$MC_RED_RUNG" = 0 ]; then
-        mc_red_rerun "$SLUG" "$KEY" "$HEAD" || true
-        MC_RED_RUNG=$(mc_red_rung "$KEY" "$HEAD")
+      if [ "$ACTIONS" = 1 ] && [ "$MC_RED_RUNG" = 0 ] && [ -z "$MC_RED_CONSEC" ]; then
+        command -v mst_red_consec >/dev/null 2>&1 && MC_RED_CONSEC=$(mst_red_consec "$SLUG" "$KEY" "$HEAD")
+        if [ -z "$MC_RED_CONSEC" ]; then
+          mc_red_rerun "$SLUG" "$KEY" "$HEAD" || true
+          MC_RED_RUNG=$(mc_red_rung "$KEY" "$HEAD")
+        fi
       fi
     fi
   fi
@@ -1944,6 +1959,11 @@ pr_worker() {
   #               tick's record and the ALERT is the action. The escalate arm
   #               below needs a `cikick` row this never writes, so it stays quiet
   #               too.
+  # CI NEVER STARTED (BH-7241): every state, its own first-seen clock, one
+  # workflow_dispatch and one alert per head. It writes cikick on a dispatch, so
+  # the close/reopen below stays quiet on a head it already re-triggered.
+  command -v mst_ci_nostart >/dev/null 2>&1 && mst_ci_nostart "$P" "$KEY" "$SLUG" "$NUM" "$URL" "$HEAD" \
+    "$CI" "${MC_FLAKE:-}" "$MSTATE" "$MGABLE" "${BASEREF:-}" "$PBASE" "$WHY" "$BR"
   if [ "$STATE" = WAIT_CI ] && [ "$WHY" = "checks none" ] && [ "$MGABLE" = MERGEABLE ] && \
      [ "${MC_IDENTITY_BLOCKED:-0}" != 1 ] && \
      [ "$MSTATE" != DIRTY ] && [ -z "${MC_FLAKE:-}" ] && \
@@ -2793,6 +2813,9 @@ tick_project() {
   # base is something else is a STACKED child (2026-09-14) — see the block in
   # the open pass below and docs/MERGE-CONDUCTOR.md section 3.
   PBASE=$(mc_project_base "$P")
+  # BH-7241: the CI-never-started window, read once per project per tick.
+  MST_NOSTART_MIN=""
+  if command -v mst_nostart_min >/dev/null 2>&1; then MST_NOSTART_MIN=$(mst_nostart_min "$P"); mst_prune; fi
   # ---- did this project's base MOVE since the last completed fan-out? ------
   # (BH-870) One authenticated ls-remote per project per tick, no gh budget.
   # The sha is the trigger and the state file is what makes it fire once: a

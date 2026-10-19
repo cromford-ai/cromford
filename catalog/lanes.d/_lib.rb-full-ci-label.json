@@ -1,0 +1,39 @@
+{
+  "libs": [
+    {
+      "id": "rb-full-ci-label",
+      "file": "bin/lib/rb-full-ci-label.sh",
+      "note": "BH-7241: the builder adds the target repo's full-CI label when it opens a PR that needs the full lane. The `full-ci label` block in bin/lib/rb/pr.sh calls fcl_apply right after the PR is open. It runs the repo's own lane classifier (FULL_CI_LANE_SCRIPT) and adds FULL_CI_LABEL unless the lane is `frontend`; a missing or failed classifier labels (the full lane is the safe side). Read per project through lib_env_apply rb-full-ci-label <project>. Doc: docs/notes/2026-10-17-BH-7241-stuck-pr-timers.md.",
+      "knobs": [
+        {
+          "env": "FULL_CI_LABEL",
+          "type": "string",
+          "default": "",
+          "zero_means": null,
+          "required": false,
+          "note": "The label to add. Empty (the default) = off for that project: no classifier run, no label, no log line. Seeded `full-ci` for project-6-os (lib.rb-full-ci-label.project-6-os.full_ci_label)."
+        },
+        {
+          "env": "FULL_CI_LANE_SCRIPT",
+          "type": "string",
+          "default": "scripts/ci/lane.mjs",
+          "zero_means": null,
+          "required": false,
+          "note": "The lane classifier, relative to the PR's worktree, run as `node <script> --base <merge-base> --head HEAD --github-output <file> --summary /dev/null`; its `lane=` line is the answer. Env only: a path is not a settings row.",
+          "settable": false
+        },
+        {
+          "env": "FULL_CI_LANE_TIMEOUT_S",
+          "type": "int",
+          "default": 60,
+          "min": 1,
+          "max": 600,
+          "unit": "seconds",
+          "zero_means": null,
+          "required": false,
+          "note": "The wall-clock bound on one classifier run. Past it the run counts as failed, and the PR is labelled."
+        }
+      ]
+    }
+  ]
+}

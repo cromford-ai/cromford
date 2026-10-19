@@ -1515,6 +1515,16 @@ if [ -n "$PR_URL" ] && [ "$HF_PR" = 1 ]; then
   fi
   hotfix_announce "$HARNESS" "$PROJECT" "$KEY" pr_open "PR opened $PR_URL" >/dev/null 2>&1 || true
 fi
+# >>> full-ci label (BH-7241)
+# The target repo's full-CI label, when its own lane classifier says the PR
+# needs the full lane (bin/lib/rb-full-ci-label.sh). Off unless the project's
+# FULL_CI_LABEL row is set; a failed write is one pipeline.log line.
+if [ -n "$PR_URL" ]; then
+  # shellcheck source=bin/lib/rb-full-ci-label.sh
+  command -v fcl_apply >/dev/null 2>&1 || { [ -r "$HARNESS/bin/lib/rb-full-ci-label.sh" ] && . "$HARNESS/bin/lib/rb-full-ci-label.sh"; }
+  command -v fcl_apply >/dev/null 2>&1 && fcl_apply "$PROJECT" "$PR_URL" "$PWD" "$BASE" "$BUILD/pipeline.log"
+fi
+# <<< full-ci label
 STAGE_END pr-open "$T_PR"
 # >>> live emit pr
 # THE #745 FINDING, as code: a build whose `gh pr create` failed must never emit

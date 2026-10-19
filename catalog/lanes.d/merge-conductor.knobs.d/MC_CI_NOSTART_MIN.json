@@ -1,0 +1,11 @@
+{
+  "env": "MC_CI_NOSTART_MIN",
+  "read_in": "bin/lib/mc-stuck-timers.sh",
+  "type": "int",
+  "default": 15,
+  "min": 5,
+  "max": 1440,
+  "unit": "min",
+  "zero_means": null,
+  "note": "BH-7241: the minutes a PR head may have no workflow run at all (its own first-seen clock) before the conductor dispatches its CI once and alerts CI_NEVER_STARTED. Read once per project per tick. Not a whole number, or under 1: 15. Per-project row: lane.merge-conductor.<project>.mc_ci_nostart_min."
+}
