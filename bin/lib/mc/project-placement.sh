@@ -32,6 +32,21 @@
 #       `PROF mc-project` line; detail names which), deferred (a clean done
 #       row whose PROF line has deferred=<w> with w not `-`; detail = w),
 #       done (a clean done row). rc 1 when the answer does not parse.
+#   mc_proj_defer_field <keys-file> <slug>
+#       BH-7635, on the machine: the value of the PROF field deferred_prs= from
+#       the run's MC_PR_DEFERRED_KEYS_FILE (lines `<word> <slug>#<n>`, written
+#       by mc_defer_word). Prints `<count>:<word>/<n>,...` (sorted, unique,
+#       only lines of <slug>, case-insensitive), `-` when there are none, and
+#       `overflow` past MC_PROJ_DEFER_FIELD_MAX bytes.
+#   mc_proj_defer_keys <rows-json> <project> <slug> <words>
+#       BH-7635, on the hub: rc 0 prints the PR keys `<slug>#<n>,...` of the
+#       newest row of <project> when its deferred_prs= field names a PR for
+#       every word of <words> (the row's deferred= value), and sets
+#       MC_PROJ_DEFER_ROUTE (`<word> -> hub keyed <keys>; ...`) and
+#       MC_PROJ_DEFER_OUT (what it printed). rc 1 prints
+#       why not (no PR names, overflow, list truncated, bad token <t>,
+#       step <s> not in deferred=, <word> has no PR): the hub keeps the full
+#       tick for that row.
 #   mc_proj_alert <project> <text>
 #       ONE ALERTS line (bin/lane-alert.sh --id mc-project-fly-<project>) per
 #       project per settings row mc_project_fly.alert_s (fallback 3600 s): the
@@ -54,8 +69,12 @@
 #   mc_proj_gate <project> <stale-s>
 #       the hub's decision for one project tick. rc 1 = not placed fly, or a
 #       hub fallback: run today's hub tick. rc 2 = a hub fallback for a
-#       finished row (failed or deferred): run the WHOLE project on the hub
-#       once, keyed or not. rc 0 = handled here: the hub runs nothing more for
+#       finished row (failed, or deferred with no full PR list): run the WHOLE
+#       project on the hub once, keyed or not. rc 4 (BH-7635) = a deferred row
+#       whose PROF line names the PR of every deferred step: run a keyed hub
+#       tick of only those PRs (MC_PROJ_TAKEBACK_KEYS, mc_proj_takeback_keyed),
+#       never a full tick. A deferred row logs one route line that says where
+#       each step went. rc 0 = handled here: the hub runs nothing more for
 #       this project this tick (a row was enqueued or is live, or the fallback
 #       is off). One log line per decision. A placement that cannot be read
 #       (mc_proj_fly rc 3) fails closed for a project last placed fly
@@ -65,6 +84,11 @@
 #   mc_proj_takeback_full <project>
 #       a keyed hub tick's take-back: ONE full tick of <project> under the
 #       BH-5463 full-tick lock (the driver's tick_project calls it on rc 2).
+#   mc_proj_takeback_keyed <project> <keys>
+#       BH-7635: the hub runs a machine's deferred steps as ONE keyed tick of
+#       <keys> (MC_ONLY_PR), in the foreground of the marked tick, with no
+#       full-tick lock (a keyed tick never takes it). tick_project calls it on
+#       rc 4.
 #   mc_proj_hub_mark <project>
 #       writes this subshell's pid ($BASHPID) to <project>.hubtick. The gate
 #       calls it, under its lock, before it answers a hub fallback.
@@ -114,6 +138,9 @@ MC_PROJ_NOCAP_BACKOFF_S=600
 MC_PROJ_NOCAP_ALERT_N=3
 MC_PROJ_PUBLISH_LOCK_WAIT_S=30
 MC_PROJ_SNAPSHOT_MARGIN_S=300
+# BH-7635: the longest deferred_prs= value. bin/lane-run-worker.sh keeps 512
+# bytes of the PROF line, and the rest of an mc-project line is under 140.
+MC_PROJ_DEFER_FIELD_MAX=360
 
 _mc_proj_root() { printf '%s' "${HARNESS:-${H:-}}"; }
 _mc_proj_dir() { printf '%s/state/merge-conductor/project-fly' "$(_mc_proj_root)"; }
@@ -221,6 +248,62 @@ mc_proj_newest() {
             | if $d != "-" then "deferred \($id) \($d)" else "done \($id) -" end
           end
       end' 2>/dev/null
+}
+
+mc_proj_defer_field() {
+  local v n
+  v=$(awk -v s="$(printf '%s' "${2:-}" | tr 'A-Z' 'a-z')" '
+    NF == 2 && $1 ~ /^[a-z]+$/ {
+      k = tolower($2); i = index(k, "#")
+      if (i > 1 && substr(k, 1, i - 1) == s && substr(k, i + 1) ~ /^[0-9]+$/) print $1 "/" substr(k, i + 1)
+    }' "${1:-}" 2>/dev/null | sort -u)
+  [ -n "$v" ] || { printf -; return 0; }
+  n=$(printf '%s\n' "$v" | wc -l | tr -d ' ')
+  v="$n:$(printf '%s\n' "$v" | paste -sd, -)"
+  [ "${#v}" -le "$MC_PROJ_DEFER_FIELD_MAX" ] || v=overflow
+  printf '%s' "$v"
+}
+
+# _mc_proj_dk_no <why> — mc_proj_defer_keys' rc 1 answer: MC_PROJ_DEFER_OUT
+# and stdout carry <why>.
+_mc_proj_dk_no() { MC_PROJ_DEFER_OUT="$1"; printf '%s\n' "$1"; }
+
+mc_proj_defer_keys() {
+  local p="${2:-}" slug="${3:-}" words="${4:-}" v n t w step num keys="" route="" rstep="" rkeys="" cover=","
+  local -a toks wl
+  MC_PROJ_DEFER_ROUTE=""; MC_PROJ_DEFER_OUT=""
+  v=$(printf '%s' "${1:-}" | jq -r --arg p "$p" '
+    (first(.rows[]? | select(.project == $p)) // {}) | (.prof_line // "")
+    | (capture("(^| )deferred_prs=(?<v>[^ ]+)").v // "")' 2>/dev/null)
+  case "$v" in
+    ""|-) _mc_proj_dk_no "no PR names"; return 1 ;;
+    overflow) _mc_proj_dk_no overflow; return 1 ;;
+  esac
+  [[ $v =~ ^([0-9]{1,4}):([^:]+)$ ]] || { _mc_proj_dk_no "bad token $v"; return 1; }
+  n=${BASH_REMATCH[1]}
+  IFS=, read -r -a toks <<<"${BASH_REMATCH[2]}"
+  [ "${#toks[@]}" = "$((10#$n))" ] || { _mc_proj_dk_no "list truncated"; return 1; }
+  for t in "${toks[@]}"; do
+    [[ $t =~ ^([a-z]+)/([0-9]+)$ ]] || { _mc_proj_dk_no "bad token $t"; return 1; }
+    step=${BASH_REMATCH[1]}; num=${BASH_REMATCH[2]}
+    case ",$words," in *",$step,"*) ;; *) _mc_proj_dk_no "step $step not in deferred="; return 1 ;; esac
+    cover="$cover$step,"
+    keys="$keys$slug#$num"$'\n'
+    if [ "$step" != "$rstep" ]; then
+      [ -n "$rstep" ] && route="${route:+$route; }$rstep -> hub keyed $rkeys"
+      rstep=$step; rkeys="$slug#$num"
+    else
+      rkeys="$rkeys,$slug#$num"
+    fi
+  done
+  route="${route:+$route; }$rstep -> hub keyed $rkeys"
+  IFS=, read -r -a wl <<<"$words"
+  for w in "${wl[@]}"; do
+    case "$cover" in *",$w,"*) ;; *) _mc_proj_dk_no "$w has no PR"; return 1 ;; esac
+  done
+  MC_PROJ_DEFER_ROUTE="$route"
+  MC_PROJ_DEFER_OUT=$(printf '%s' "$keys" | sort -t'#' -k2,2n -u | paste -sd, -)
+  printf '%s\n' "$MC_PROJ_DEFER_OUT"
 }
 
 mc_proj_alert() {
@@ -490,7 +573,7 @@ _mc_proj_nocap_count() {
 }
 
 mc_proj_gate() {
-  local p="${1:-}" st="${2:-600}" d rows kind id det taken rc fd frc nf nc wrc
+  local p="${1:-}" st="${2:-600}" d rows kind id det taken rc fd frc nf nc wrc keys slug hubrc
   d=$(_mc_proj_dir)
   mc_proj_fly "$p"; frc=$?
   case "$frc" in
@@ -578,7 +661,23 @@ mc_proj_gate() {
         else
           kind="machine-deferred"; _mc_proj_failed_count "$p" reset >/dev/null
         fi
-        _mc_proj_fallback "$p" "$kind" "row $id: $det" 2; rc=$?
+        # BH-7635: a deferred row that names the PR of every step is a keyed
+        # hub tick of those PRs (rc 4), never a full tick of the project.
+        hubrc=2; MC_PROJ_TAKEBACK_KEYS=""
+        if [ "$kind" = machine-deferred ]; then
+          slug=$("$(_mc_proj_root)/bin/fleet-conf.sh" "$p" repo 2>/dev/null)
+          case "$slug" in
+            */*) mc_proj_defer_keys "$rows" "$p" "$slug" "$det" >/dev/null && { hubrc=4; MC_PROJ_TAKEBACK_KEYS="$MC_PROJ_DEFER_OUT"; }
+                 keys="$MC_PROJ_DEFER_OUT" ;;
+            *) keys="no fleet.conf repo for $p" ;;
+          esac
+        fi
+        _mc_proj_fallback "$p" "$kind" "row $id: $det" "$hubrc"; rc=$?
+        if [ "$rc" = 4 ]; then
+          _mc_proj_log "$p project-fly: deferred row $id: $MC_PROJ_DEFER_ROUTE — no full hub tick"
+        elif [ "$rc" = 2 ] && [ "$kind" = machine-deferred ]; then
+          _mc_proj_log "$p project-fly: deferred row $id: $det -> hub full tick ($keys)"
+        fi
         # Fallback off: the machine tries again with a new row.
         [ "${MC_PROJ_OFF:-0}" = 1 ] && { _mc_proj_enqueue "$p" || true; }
       fi ;;
@@ -615,5 +714,20 @@ mc_proj_takeback_full() {
     rm -f "$(_mc_proj_dir)/$p.taken" 2>/dev/null
     mc_log "TICK $p: a full tick of $p already runs — the take-back waits for the next tick"
   fi
+  return 0
+}
+
+# mc_proj_takeback_keyed <project> <keys> — BH-7635: the gate answered rc 4,
+# so the hub runs ONLY the PRs the machine deferred a step of: one keyed tick
+# (MC_ONLY_PR=<keys>, MC_PROJ_TAKEBACK=1 so the child's gate steps aside) in
+# the foreground, so the hub mark of this tick covers it. No full-tick lock:
+# a keyed tick never takes it, and per-PR locks keep two workers off one PR.
+# A non-zero exit is logged; the next tick decides again. Called from
+# bin/merge-conductor.sh's tick_project, so mc_log and H are the driver's.
+mc_proj_takeback_keyed() {
+  local p="$1" keys="$2" rc
+  mc_log "TICK $p: the hub runs the machine's deferred steps — a keyed tick of $keys (no full tick)"
+  env MC_ONLY_PR="$keys" MC_ONLY_PROJECT="$p" MC_PROJ_TAKEBACK=1 MC_FULL_TICK_SINGLE=0 "$H/bin/merge-conductor.sh" </dev/null; rc=$?
+  [ "$rc" = 0 ] || mc_log "TICK $p: the keyed tick of $keys ended rc $rc — the next tick decides again"
   return 0
 }

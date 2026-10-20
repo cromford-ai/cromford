@@ -765,7 +765,7 @@ conductor_settle() {
   # the deploy-verify lane, the stack follow and the deployreq dedupe line are
   # hub files. It records the landing for its PROF line (MC_LANDED_FILE).
   if [ "${MC_ON_MACHINE:-}" = 1 ]; then
-    [ -n "${MC_PR_DEFERRED_FILE:-}" ] && echo settle >> "$MC_PR_DEFERRED_FILE"
+    mc_defer_word settle "$key"
     [ -n "${MC_LANDED_FILE:-}" ] && printf 'merged %s\n' "$key" >> "$MC_LANDED_FILE"
     mc_log "$key MERGED but seen on a lane-run machine — not settled here; the hub settles it (deferred=settle)"
     return 0
@@ -773,7 +773,7 @@ conductor_settle() {
   # A held project lease that was lost (BH-6887): the same exit, so the QUEUED
   # pass settles it later under a lease of its own.
   if ! mc_lease_fence_ok; then
-    [ -n "${MC_PR_DEFERRED_FILE:-}" ] && echo settle >> "$MC_PR_DEFERRED_FILE"
+    mc_defer_word settle "$key"
     mc_log "$key MERGED but the project lease was lost — not settled here (deferred=settle)"
     return 0
   fi

@@ -202,6 +202,18 @@ mc_init()  { mkdir -p "$MC_STATE_DIR" "$MC_RR_DIR" "$MC_RB_DIR" "$MC_DV_DIR" "$M
 # It stays ONE line: tests/hub-lanes-project-hold.bh-1465-test.sh lifts it by grep.
 mc_log()   { local rc; echo "$(mc_stamp) $*" >> "$MC_LOG"; rc=$?; [ -z "${FANIN_STAGE_FILE:-}" ] || { printf '%s\n' "$*" > "$FANIN_STAGE_FILE"; } 2>/dev/null; return "$rc"; }
 
+# mc_defer_word <word> <key> — BH-7635: a step this lane-run machine leaves to
+# the hub. <word> goes to MC_PR_DEFERRED_FILE as before (the PROF deferred=
+# words). With MC_PR_DEFERRED_KEYS_FILE set (bin/merge-conductor-project.sh)
+# and <key> an owner/repo#number, `<word> <key>` goes to that file too, so the
+# hub runs a keyed tick of those PRs instead of the whole project. rc 0.
+mc_defer_word() {
+  [ -n "${MC_PR_DEFERRED_FILE:-}" ] && echo "$1" >> "$MC_PR_DEFERRED_FILE"
+  [ -n "${MC_PR_DEFERRED_KEYS_FILE:-}" ] && [[ ${2:-} =~ ^[^#[:space:]]+#[0-9]+$ ]] \
+    && printf '%s %s\n' "$1" "$2" >> "$MC_PR_DEFERRED_KEYS_FILE"
+  return 0
+}
+
 # TOKEN ROUTING IS STILL THE CALLER'S JOB; these two are how a caller does it.
 # mc_use_token arms the per-repo App token and NOTHING ELSE: no PAT fallback, no
 # alert, no new skip path. The "which PAT can see this repo" fallback and its

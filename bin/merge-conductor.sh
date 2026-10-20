@@ -119,6 +119,9 @@
 # picks for the repo (project-5 and project-7 need the admin PAT); a repo no token
 # can see is an alert, never an empty loop. No token value ever reaches a log.
 set -uo pipefail
+# BH-7635: the PR keys of a take-back tick, set by mc_proj_gate
+# (bin/lib/mc/project-placement.sh); empty = the whole project.
+MC_PROJ_TAKEBACK_KEYS=""
 # BH-2303: every model call this lane makes names the lane, so its cost rows
 # carry lane_id and its LLM_* knobs (on/off, runners, daily cap) bind it alone.
 export AGENT_CALL_LANE=merge-conductor
@@ -2538,7 +2541,7 @@ pr_worker() {
       # (no queue, or landing_direct) settles in the same tick, and a settle
       # needs hub files, so it still waits for the hub (deferred=land).
       if [ "${MC_ON_MACHINE:-}" = 1 ] && ! { [ "${MC_LEASED_RUN:-}" = 1 ] && [ -n "${MC_LEASE_FENCE:-}" ] && [ "$QUEUE" = 1 ]; }; then
-        [ -n "${MC_PR_DEFERRED_FILE:-}" ] && echo land >> "$MC_PR_DEFERRED_FILE"
+        mc_defer_word land "$KEY"
         mc_log "$KEY READY at ${HEAD:0:8} on a lane-run machine — not landed here; the hub lands it on its next tick (deferred=land)"
         mc_ready_why "$KEY" "$HEAD" machine-deferred "READY on a lane-run machine; the hub lands it on its next tick" logged
         return 0
@@ -2735,8 +2738,11 @@ tick_project() {
   # enqueued or live, or the fallback is off: no PR work here. rc 2 = the hub
   # takes a finished row back (failed or deferred) and runs the whole project
   # once: a full tick runs on, a keyed tick starts a full tick of this one
-  # project under the BH-5463 full-tick lock (mc_proj_takeback_full). rc 1 =
-  # today's tick. A machine is never gated; MC_PROJ_GATE=0 (set once below
+  # project under the BH-5463 full-tick lock (mc_proj_takeback_full). rc 4
+  # (BH-7635) = a deferred row that names its PRs: on a full or a keyed tick,
+  # the hub runs ONE keyed tick of only those PRs (mc_proj_takeback_keyed,
+  # MC_PROJ_TAKEBACK_KEYS) and nothing more for the project. rc 1 = today's
+  # tick. A machine is never gated; MC_PROJ_GATE=0 (set once below
   # from the settings cache) skips the gate when no project is placed fly.
   if [ "${MC_PROJ_GATE:-1}" != 0 ] && command -v mc_fly_project_gate >/dev/null 2>&1; then
     mc_fly_project_gate "$P"
@@ -2744,6 +2750,9 @@ tick_project() {
       0) return 0 ;;
       2) if [ -n "$MC_ONLY_KEYS" ] && command -v mc_proj_takeback_full >/dev/null 2>&1; then
            mc_proj_takeback_full "$P"; return 0
+         fi ;;
+      4) if command -v mc_proj_takeback_keyed >/dev/null 2>&1; then
+           mc_proj_takeback_keyed "$P" "${MC_PROJ_TAKEBACK_KEYS:-}"; return 0
          fi ;;
     esac
   fi

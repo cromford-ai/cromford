@@ -62,7 +62,8 @@
 #       MC_FLY_QUEUE_STALE_S). rc 0 = handled: the hub tick does nothing more
 #       for this project. rc 1 = run today's hub tick (not placed fly, or a
 #       hub fallback). rc 2 = a hub fallback for a finished row: run the whole
-#       project on the hub this tick. A run on a machine (MC_ON_MACHINE=1) is
+#       project on the hub this tick. rc 4 (BH-7635) = a deferred row that
+#       names its PRs: run one keyed hub tick of MC_PROJ_TAKEBACK_KEYS only. A run on a machine (MC_ON_MACHINE=1) is
 #       never gated: rc 1, and neither is the take-back's own full tick
 #       (MC_PROJ_TAKEBACK=1).
 #   mc_fly_project_none

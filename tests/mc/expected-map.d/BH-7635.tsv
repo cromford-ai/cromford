@@ -1,0 +1,3 @@
+# tests/mc/expected-map.d/BH-7635.tsv — BH-7635: mc_defer_word writes the step a
+# lane-run machine leaves to the hub (and its PR key); origin=lib, a new module function.
+log	mc_defer_word	lib

@@ -28,13 +28,18 @@
 #      back     set, and not after a lost lease): the files the run changed
 #               go to the hub as one write-back. A failure exits 75.
 #   5. release  pjl_release, then ONE line
-#               `PROF mc-project state=<S> landed=<n> queued=<n> deferred=<w|-> fence=<f>`.
+#               `PROF mc-project state=<S> landed=<n> queued=<n> deferred=<w|-> fence=<f> deferred_prs=<v>`.
 #               S is MERGED when the run saw one of its landings merged,
 #               QUEUED when it enqueued one, LEASE_LOST when the lease was
 #               lost, STOPPED after a TERM, else TICKED. deferred= names the
 #               steps the machine left to the hub (rebase, rereview, settle,
-#               ...), comma-joined; the hub's next tick of the project runs
-#               them (fallback=machine-deferred).
+#               ...), comma-joined. deferred_prs= (BH-7635) names the PR of
+#               each deferred step, `<count>:<word>/<n>,...` (- for none,
+#               overflow when too long), from MC_PR_DEFERRED_KEYS_FILE
+#               (mc_defer_word, mc_proj_defer_field). When it names a PR for
+#               every word, the hub's next tick runs a keyed tick of only those
+#               PRs; else it runs the whole project once
+#               (fallback=machine-deferred).
 #
 # TERM or INT (a Fly stop; bin/lane-run-worker.sh TERMs the run's process
 # group): the stop file is touched, the conductor gets up to
@@ -73,6 +78,9 @@ set +e
 . "$H/bin/lib/project-lease.sh" || exit 1
 # shellcheck source=bin/lib/lane-run-inputs.sh
 [ -r "$H/bin/lib/lane-run-inputs.sh" ] && . "$H/bin/lib/lane-run-inputs.sh"
+# mc_proj_defer_field (BH-7635). Defines functions only.
+# shellcheck source=bin/lib/mc/project-placement.sh
+. "$H/bin/lib/mc/project-placement.sh" || exit 1
 
 LANE=merge-conductor
 HOLDER="${FLY_MACHINE_ID:-machine-$(hostname 2>/dev/null)}"
@@ -80,7 +88,7 @@ HOLDER="${HOLDER//[^A-Za-z0-9._-]/_}"; HOLDER="${HOLDER:0:64}"
 RENEW_S="${MC_PROJECT_RENEW_S:-60}"; [[ $RENEW_S =~ ^[0-9]+$ ]] && [ "$RENEW_S" -ge 1 ] || RENEW_S=60
 WAIT_S="${MC_PROJECT_TERM_WAIT_S:-12}"; [[ $WAIT_S =~ ^[0-9]+$ ]] || WAIT_S=12
 
-prof() { printf 'PROF mc-project state=%s landed=%s queued=%s deferred=%s fence=%s\n' "$@"; }
+prof() { printf 'PROF mc-project state=%s landed=%s queued=%s deferred=%s fence=%s deferred_prs=%s\n' "$1" "$2" "$3" "$4" "$5" "${6:--}"; }
 mlog() { printf '%s [merge-conductor-project] %s: %s\n' "$(date -u '+%F %TZ')" "$P" "$*" >> "$H/logs/merge-conductor.log" 2>/dev/null; }
 mkdir -p "$H/state/merge-conductor-project" "$H/logs" 2>/dev/null
 
@@ -100,8 +108,8 @@ if [ "$TERMED" = 1 ]; then
 fi
 
 TMP=$(mktemp -d "$H/state/merge-conductor-project/run.XXXXXX") || { pjl_release "$LANE" "$P" "$HOLDER" "$FENCE" >/dev/null 2>&1; exit 1; }
-STOP="$TMP/stop"; LOST="$TMP/lost"; DEF="$TMP/deferred"; LANDED="$TMP/landed"
-: > "$DEF"; : > "$LANDED"
+STOP="$TMP/stop"; LOST="$TMP/lost"; DEF="$TMP/deferred"; DEFK="$TMP/deferred-keys"; LANDED="$TMP/landed"
+: > "$DEF"; : > "$DEFK"; : > "$LANDED"
 
 # renew_loop — renews the lease every RENEW_S seconds; on `lost` it touches
 # the stop file and the lost mark, and ends.
@@ -178,7 +186,7 @@ finish() {
     fi
   fi
   pjl_release "$LANE" "$P" "$HOLDER" "$FENCE" >/dev/null 2>&1 || mlog "lease release not answered — it expires at its TTL"
-  prof "$st" "${n_m:-0}" "${n_q:-0}" "${defw:--}" "$FENCE"
+  prof "$st" "${n_m:-0}" "${n_q:-0}" "${defw:--}" "$FENCE" "$(mc_proj_defer_field "$DEFK" "$REPO")"
   case "$TMP" in "$H/state/merge-conductor-project/run."?*) rm -rf "$TMP" ;; esac
   exit "$rc"
 }
@@ -202,7 +210,7 @@ renew_loop & RPID=$!
 
 CENV=(MC_ONLY_PROJECT="$P" MC_ON_MACHINE=1 MC_LEASED_RUN=1
   MC_LEASE_FENCE="$FENCE" MC_LEASE_PROJECT="$P" MC_LEASE_HOLDER="$HOLDER"
-  MC_STOP_FILE="$STOP" MC_PR_DEFERRED_FILE="$DEF" MC_LANDED_FILE="$LANDED")
+  MC_STOP_FILE="$STOP" MC_PR_DEFERRED_FILE="$DEF" MC_PR_DEFERRED_KEYS_FILE="$DEFK" MC_LANDED_FILE="$LANDED")
 # The TERM-before-CPID window: a TERM between the fork and `CPID=$!` is held
 # (ignored), then replayed once CPID is known.
 trap 'TERMED=1' TERM INT

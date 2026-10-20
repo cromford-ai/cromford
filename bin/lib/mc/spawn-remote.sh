@@ -150,7 +150,7 @@ mc_remote_rebase_row() {
 #   and rc 3.
 _mc_remote_defer() {
   mc_log "$1 remote rebase ${2:--} deferred to the hub ($3)"
-  [ -n "${MC_PR_DEFERRED_FILE:-}" ] && echo rebase >> "$MC_PR_DEFERRED_FILE"
+  mc_defer_word rebase "$1"
   return 3
 }
 

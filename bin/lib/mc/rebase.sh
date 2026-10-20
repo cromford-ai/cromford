@@ -3095,7 +3095,7 @@ mc_rereview_spawn() {
   # the hub. rc 3 is the cap answer every caller reads as "a later tick", and
   # the hub runs this PR itself on its next tick (deferred=rereview).
   if [ "${MC_ON_MACHINE:-}" = 1 ]; then
-    [ -n "${MC_PR_DEFERRED_FILE:-}" ] && echo rereview >> "$MC_PR_DEFERRED_FILE"
+    mc_defer_word rereview "$slug#$num"
     return 3
   fi
   mkdir -p "$MC_RR_DIR" 2>/dev/null || return 1
@@ -3412,7 +3412,7 @@ mc_rebase_spawn() {
     if command -v mc_remote_on >/dev/null 2>&1 && mc_remote_on "$project"; then
       mc_remote_rebase_spawn "$slug" "$num" "$project" "$br" "$head" "$url"; return $?
     fi
-    [ -n "${MC_PR_DEFERRED_FILE:-}" ] && echo rebase >> "$MC_PR_DEFERRED_FILE"
+    mc_defer_word rebase "$slug#$num"
     return 3
   fi
   case "$cap" in ''|*[!0-9]*) cap="${MC_REBASE_PARALLEL:-0}" ;; esac
