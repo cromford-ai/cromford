@@ -13,6 +13,7 @@
     "aliases": []
   },
   "wired": true,
+  "sheds": true,
   "knobs": [
     {
       "env": "STRANDED_WATCH_SPREAD_SECS",

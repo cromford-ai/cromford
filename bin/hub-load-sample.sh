@@ -24,9 +24,15 @@
 #      (latch: state/hub-load/alert-hour).
 #   6b. state/hub-load/verdict, every run (bin/lib/hub-load-shed.sh hls_write):
 #      the p90, max_runnable, state=<over|under|insufficient>, max_age_s
-#      (settings row hub_load.verdict_max_age_s, default 1800) and shed=<1|0>
-#      (settings row hub_load.shed; off, 0 or false give 0). The spawners read
-#      it before they fork and start nothing while it says over (BH-7509).
+#      (settings row hub_load.verdict_max_age_s, else env
+#      HUB_LOAD_VERDICT_MAX_AGE_S, else 1800), shed=<1|0> (settings row
+#      hub_load.shed, else env HUB_LOAD_SHED, else on; off, 0 or false give 0)
+#      and lanes=<ids> lanes_src=<src>, the project lanes that shed: settings
+#      row hub_load.shed_lanes (the seed value `catalog` = no override), else
+#      env HUB_LOAD_SHED_LANES, else every `"sheds": true` lane of the lane
+#      registry, else HLS_SPAWN_LANES. A list with a bad id or more than 64
+#      ids is skipped. The spawners read the file before they fork and start
+#      nothing while it says over (BH-7509).
 #   7. After the summary line: bin/hub-load-baseline.sh, which posts the 24 h
 #      baseline once (its own log, logs/hub-load-baseline.log).
 #
@@ -34,6 +40,7 @@
 #   <ts> runnable= steal= forks_s= samples=<ok>/<want> push=<ok|failed|
 #   not-configured|not-loaded> pruned=<n> alert=<written|latched|under|
 #   insufficient(<n>)> keep_days=<n>(row|default) max_runnable=<n>(row|default)
+#   max_age_s=<n>(row|env|default) shed_lanes=<n>(row|env|catalog|default)
 #   shed=<over|under|insufficient|off>(verdict=<written|failed>)
 #   | <ts> skipped (running)
 #
@@ -42,7 +49,8 @@
 #   HUB_LOAD_PROC_STAT (default /proc/stat), HUB_LOAD_NOW (epoch seconds).
 #
 # OFF: flags/lane-off-hub-load-sample (bin/harness-ctl.sh off hub-load-sample).
-# Doc: docs/notes/2026-10-15-BH-6882-hub-load-sample.md.
+# Doc: docs/notes/2026-10-15-BH-6882-hub-load-sample.md,
+# docs/notes/2026-10-20-BH-7659-hub-load-shed-knobs.md.
 set -uo pipefail
 H="${HARNESS:-/root/harness}"
 SELF="$(cd "$(dirname "$0")" && pwd)"
@@ -71,6 +79,8 @@ LOADED=1; . "$SELF/jobs-client.sh" 2>/dev/null || LOADED=0
 # shellcheck source=bin/lib/hub-load-shed.sh
 . "$H/bin/lib/hub-load-shed.sh" 2>/dev/null || . "$SELF/lib/hub-load-shed.sh" 2>/dev/null \
   || hls_write() { return 1; }
+# shellcheck source=bin/lib/lanes-registry.sh
+. "$H/bin/lib/lanes-registry.sh" 2>/dev/null || . "$SELF/lib/lanes-registry.sh" 2>/dev/null || true
 
 TMP=$(mktemp -d "${TMPDIR:-/tmp}/hls.XXXXXX") || { summary "skipped (mktemp)"; exit 0; }
 trap 'rm -rf "$TMP"' EXIT
@@ -82,23 +92,49 @@ INTERVAL=$(num "${HUB_LOAD_INTERVAL_S:-}" 1)
 WINDOW=$(num "${HUB_LOAD_FORK_WINDOW_S:-}" 10)
 PSTAT="${HUB_LOAD_PROC_STAT:-/proc/stat}"
 
-# knob <var> <key> <default> — a positive-integer settings row, else the
-# default. Sets <var> and <var>_SRC (row|default).
+# knob <var> <key> <default> [env] — a positive-integer settings row, else
+# the env value (when named), else the default. Sets <var> and <var>_SRC
+# (row|env|default).
 knob() {
   local v=""
   [ "$LOADED" = 1 ] && v=$(setting_get "$2" 2>/dev/null | tr -d '[:space:]')
-  if [[ "$v" =~ ^[1-9][0-9]{0,6}$ ]]; then printf -v "$1" '%s' "$v"; printf -v "$1_SRC" row
+  if [[ "$v" =~ ^[1-9][0-9]{0,6}$ ]]; then printf -v "$1" '%s' "$v"; printf -v "$1_SRC" row; return 0; fi
+  [ -n "${4:-}" ] && v=$(printf '%s' "${!4:-}" | tr -d '[:space:]')
+  if [ -n "${4:-}" ] && [[ "$v" =~ ^[1-9][0-9]{0,6}$ ]]; then printf -v "$1" '%s' "$v"; printf -v "$1_SRC" env
   else printf -v "$1" '%s' "$3"; printf -v "$1_SRC" default; fi
 }
 knob KEEP hub_load.keep_days 14
 knob MAXR hub_load.max_runnable 8
-knob VAGE hub_load.verdict_max_age_s 1800
-SHED=1
+knob VAGE hub_load.verdict_max_age_s 1800 HUB_LOAD_VERDICT_MAX_AGE_S
+# The shed switch: the row, else env HUB_LOAD_SHED, else on. off, 0 or false
+# give 0; any other non-empty value gives 1.
+SHED=""
 if [ "$LOADED" = 1 ]; then
-  case "$(setting_get hub_load.shed 2>/dev/null | tr -d '[:space:]' | tr '[:upper:]' '[:lower:]')" in
-    off|0|false) SHED=0 ;;
-  esac
+  SHED=$(setting_get hub_load.shed 2>/dev/null | tr -d '[:space:]' | tr '[:upper:]' '[:lower:]')
 fi
+[ -n "$SHED" ] || SHED=$(printf '%s' "${HUB_LOAD_SHED:-}" | tr -d '[:space:]' | tr '[:upper:]' '[:lower:]')
+case "$SHED" in off|0|false) SHED=0 ;; *) SHED=1 ;; esac
+# The shed lane list: the row, else env HUB_LOAD_SHED_LANES, else the
+# registry's `"sheds": true` lanes, else HLS_SPAWN_LANES. A rung answers only
+# with a valid list (hls_lanes_ok); the row value `catalog` is no override.
+LANES=""; LANES_SRC=default
+lanes_try() { # lanes_try <value> <src> — rc 0 when <value> is a valid list
+  command -v hls_lanes_ok >/dev/null 2>&1 && hls_lanes_ok "$1" || return 1
+  LANES=$1; LANES_SRC=$2
+}
+SLV=""
+[ "$LOADED" = 1 ] && SLV=$(setting_get hub_load.shed_lanes 2>/dev/null | tr '\n' ' ')
+case "$(printf '%s' "$SLV" | tr -d '[:space:]' | tr '[:upper:]' '[:lower:]')" in
+  catalog) SLV="" ;;
+esac
+lanes_try "$SLV" row || lanes_try "${HUB_LOAD_SHED_LANES:-}" env || {
+  SLV=""
+  if command -v lanes_json_path >/dev/null 2>&1 && REG=$(lanes_json_path "$H" 2>/dev/null) && [ -r "$REG" ]; then
+    SLV=$(jq -r '[.lanes[]? | select(.sheds == true) | .id] | join(",")' "$REG" 2>/dev/null)
+  fi
+  lanes_try "$SLV" catalog
+} || lanes_try "${HLS_SPAWN_LANES-}" default || LANES_SRC=default
+read -r -a LANE_IDS <<< "${LANES//,/ }"; NLANES=${#LANE_IDS[@]}
 
 # ── 1. ps samples ────────────────────────────────────────────────────────────
 OK=0
@@ -261,13 +297,18 @@ else
 fi
 
 # ── 6b. the verdict the spawners read (BH-7509) ──────────────────────────────
-if hls_write "$DIR_HL/verdict" "$NOW" "$RUNNABLE" "$P90" "$MAXR" "$VSTATE" "$VAGE" "$SHED"; then
+if [ -n "$LANES" ]; then
+  hls_write "$DIR_HL/verdict" "$NOW" "$RUNNABLE" "$P90" "$MAXR" "$VSTATE" "$VAGE" "$SHED" "$LANES" "$LANES_SRC"
+else
+  hls_write "$DIR_HL/verdict" "$NOW" "$RUNNABLE" "$P90" "$MAXR" "$VSTATE" "$VAGE" "$SHED"
+fi
+if [ "$?" = 0 ]; then
   VWRITE=written
 else
   VWRITE=failed
 fi
 if [ "$SHED" = 1 ]; then VSUM=$VSTATE; else VSUM=off; fi
 
-summary "runnable=$RUNNABLE steal=$ST forks_s=$FORKS samples=$OK/$SAMPLES push=$PUSH pruned=$PRUNED alert=$ALERT keep_days=$KEEP($KEEP_SRC) max_runnable=$MAXR($MAXR_SRC) shed=$VSUM(verdict=$VWRITE)"
+summary "runnable=$RUNNABLE steal=$ST forks_s=$FORKS samples=$OK/$SAMPLES push=$PUSH pruned=$PRUNED alert=$ALERT keep_days=$KEEP($KEEP_SRC) max_runnable=$MAXR($MAXR_SRC) max_age_s=$VAGE($VAGE_SRC) shed_lanes=$NLANES($LANES_SRC) shed=$VSUM(verdict=$VWRITE)"
 [ -x "$SELF/hub-load-baseline.sh" ] && "$SELF/hub-load-baseline.sh" >/dev/null 2>&1
 exit 0

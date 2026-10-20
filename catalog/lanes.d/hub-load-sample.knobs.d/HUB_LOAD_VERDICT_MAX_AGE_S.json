@@ -1,0 +1,13 @@
+{
+  "env": "HUB_LOAD_VERDICT_MAX_AGE_S",
+  "type": "int",
+  "default": 1800,
+  "min": 1,
+  "max": 86400,
+  "unit": "seconds",
+  "zero_means": null,
+  "required": false,
+  "read_in": "bin/hub-load-sample.sh",
+  "settable": false,
+  "note": "BH-7659. Seconds a hub load verdict (state/hub-load/verdict) stays fresh; a reader treats an older verdict as no shed. The sampler reads settings row `hub_load.verdict_max_age_s` first, then this env value, then 1800. Set the row, not this knob: `bin/jobs-client.sh setting-set hub_load.verdict_max_age_s 1800 \"why\"`."
+}

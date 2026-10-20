@@ -1,0 +1,11 @@
+{
+  "env": "HUB_LOAD_SHED_LANES",
+  "type": "string",
+  "default": "",
+  "unit": null,
+  "zero_means": null,
+  "required": false,
+  "read_in": "bin/hub-load-sample.sh",
+  "settable": false,
+  "note": "BH-7659. The project lanes bin/project-lane-run.sh sheds while the hub is over, a comma or space list of lane ids (at most 64). The sampler reads settings row `hub_load.shed_lanes` first (the seed value catalog = no override), then this env value, then every lane with \"sheds\": true in catalog/lanes.d, then HLS_SPAWN_LANES. A list with a bad id is skipped. Set the row, not this knob: `bin/jobs-client.sh setting-set hub_load.shed_lanes \"alert-triage,blocked-resolver\" \"why\"`."
+}

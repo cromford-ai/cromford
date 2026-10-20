@@ -24,6 +24,7 @@
     ]
   },
   "wired": true,
+  "sheds": true,
   "knobs": [
     {
       "env": "BR_PER_TICK",

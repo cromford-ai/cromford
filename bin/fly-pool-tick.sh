@@ -138,15 +138,15 @@ tick_hang_check() {
 }
 
 # --- BH-7509: at most POOL_TICK_MAX_PARALLEL project ticks at once --------------
-# 0 (the default) = nproc. A held locks/fly-pool-<p>.lock is a running tick and
-# counts. Free projects are offered oldest state/fly-pool-tick/<p>.since first
+# Unset (no digits) = nproc; 0 = no cap (zero_means unlimited in the registry,
+# BH-7659). A held locks/fly-pool-<p>.lock is a running tick and counts. Free projects are offered oldest state/fly-pool-tick/<p>.since first
 # (no stamp = oldest), so a cap never starves the same names. A project over
 # the cap gets one line and no stamp; the next cron start offers it again.
 # A held project is still started: its own lock turns it away, and
 # tick_hang_check still sees how long it has run.
 tick_cap() {
-  local c; c=$(tick_knob POOL_TICK_MAX_PARALLEL 0)
-  [ "$c" = 0 ] && c=$(nproc 2>/dev/null | tr -dc 0-9)
+  local c; c=$(tick_knob POOL_TICK_MAX_PARALLEL "")
+  [ -n "$c" ] || c=$(nproc 2>/dev/null | tr -dc 0-9)
   printf '%s\n' "${c:-0}"   # nproc unreadable: 0 = no cap, as before BH-7509
 }
 tick_held() { # tick_held <project> — rc 0 when its tick runs now

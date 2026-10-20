@@ -22,6 +22,7 @@
     ]
   },
   "wired": true,
+  "sheds": true,
   "knobs": [
     {
       "env": "RESPONDER_DRY",

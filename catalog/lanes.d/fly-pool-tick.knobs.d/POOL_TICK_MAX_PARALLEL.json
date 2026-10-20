@@ -1,12 +1,12 @@
 {
   "env": "POOL_TICK_MAX_PARALLEL",
   "type": "int",
-  "default": 0,
+  "default": null,
   "min": 0,
   "max": 256,
   "unit": "project ticks",
-  "zero_means": null,
+  "zero_means": "unlimited",
   "required": false,
   "read_in": "bin/fly-pool-tick.sh",
-  "note": "BH-7509. The most project ticks (bin/fly-pool.sh <project>) bin/fly-pool-tick.sh runs at once on this host. A held locks/fly-pool-<p>.lock counts as a running tick. Free projects are offered oldest state/fly-pool-tick/<p>.since first; a project over the cap gets one max-ticks line in logs/fly-pool.log and waits for the next cron start. 0 means the host's nproc. The sequential sweep (POOL_AUTOSCALE=0) is not capped. Settings row `lane.fly-pool-tick.pool_tick_max_parallel`."
+  "note": "BH-7509, BH-7659. The most project ticks (bin/fly-pool.sh <project>) bin/fly-pool-tick.sh runs at once on this host. A held locks/fly-pool-<p>.lock counts as a running tick. Free projects are offered oldest state/fly-pool-tick/<p>.since first; a project over the cap gets one max-ticks line in logs/fly-pool.log and waits for the next cron start. Unset = the host's nproc (no cap when nproc is unreadable). 0 = no cap. The sequential sweep (POOL_AUTOSCALE=0) is not capped. Settings row `lane.fly-pool-tick.pool_tick_max_parallel`."
 }

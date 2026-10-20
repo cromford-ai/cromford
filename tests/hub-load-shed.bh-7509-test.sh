@@ -18,7 +18,8 @@
 #      still queued, the state-reading half still ran; no file -> it spawns
 #   T  bin/fly-pool-tick.sh: POOL_TICK_MAX_PARALLEL caps the ticks it starts,
 #      oldest stamp first, no stamp for a skipped project, a held lock counts;
-#      0 = nproc; over -> ticks still start, one load-shed note line
+#      unset = nproc, 0 = no cap (BH-7659); over -> ticks still start, one
+#      load-shed note line
 #   P  bin/project-lane-run.sh: over -> a spawning lane starts no run, one
 #      load-shed line, the lock free; a read-only lane runs; the
 #      HUB_LOAD_SHED_LANES override; no file -> one run
@@ -334,9 +335,9 @@ trun POOL_TICK_MAX_PARALLEL=2
 check "T held a + cap 2: one more tick (b), c waits ($(tr '\n' ' ' < "$TH/ticked.txt"))" '[ "$(tr "\n" " " < "$TH/ticked.txt")" = "a b " ] && [ "$(cnt "max-ticks: 2 of 2 running — c waits" "$TLOG")" = 1 ]'
 check "T held a: still offered, refused by its own lock" '[ "$(cnt "\[pool/a\] already running" "$TLOG")" = 1 ]'
 : > "$TH/release"; sleep 0.5
-# 0 = nproc
+# 0 = no cap (BH-7659: zero_means unlimited); unset = nproc
 tsetup; PATH="$T/nproc2:$PATH" trun POOL_TICK_MAX_PARALLEL=0
-check "T cap 0 with nproc 2: 2 ticked ($(tr '\n' ' ' < "$TH/ticked.txt"))" '[ "$(ticked)" = 2 ] && [ "$(cnt "of 2 running — c waits" "$TLOG")" = 1 ]'
+check "T cap 0: no cap, 3 ticked, no max-ticks line ($(tr '\n' ' ' < "$TH/ticked.txt"))" '[ "$(ticked)" = 3 ] && [ "$(cnt max-ticks "$TLOG")" = 0 ]'
 tsetup; PATH="$T/nproc2:$PATH" trun
 check "T no knob = nproc 2: 2 ticked" '[ "$(ticked)" = 2 ]'
 # over: ticks still start (their REAP must run), one note line

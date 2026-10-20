@@ -18,6 +18,7 @@
     ]
   },
   "wired": true,
+  "sheds": true,
   "knobs": [
     {
       "env": "REVIEW_MODEL",

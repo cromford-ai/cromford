@@ -13,6 +13,8 @@
     "aliases": []
   },
   "wired": true,
+  "sheds": false,
+  "sheds_why": "BH-7509: it clears the merge queue, so it keeps running while the hub is over. Its one spend is a dqw_llm_classify call per dequeued PR, not a build or an agent session.",
   "knobs": [
     {
       "env": "DEQUEUE_WATCH",

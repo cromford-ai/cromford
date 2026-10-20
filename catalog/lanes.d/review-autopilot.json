@@ -14,6 +14,7 @@
     "aliases": []
   },
   "wired": true,
+  "sheds": true,
   "knobs": [
     {
       "env": "REVIEW_AUTOPILOT_DAILY_CAP",

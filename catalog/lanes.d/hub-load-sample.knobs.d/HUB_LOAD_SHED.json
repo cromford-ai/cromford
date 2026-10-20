@@ -1,0 +1,11 @@
+{
+  "env": "HUB_LOAD_SHED",
+  "type": "string",
+  "default": "on",
+  "unit": null,
+  "zero_means": null,
+  "required": false,
+  "read_in": "bin/hub-load-sample.sh",
+  "settable": false,
+  "note": "BH-7659. The hub load shed kill switch. off, 0 or false write shed=0 into the verdict and no spawner sheds; any other value is on. The sampler reads settings row `hub_load.shed` first, then this env value, then on. Set the row, not this knob: `bin/jobs-client.sh setting-set hub_load.shed off \"why\"`."
+}
