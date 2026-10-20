@@ -1,0 +1,12 @@
+{
+  "env": "POOL_RECORD_READ",
+  "read_in": "bin/fly-pool.sh",
+  "type": "int",
+  "default": 0,
+  "min": 0,
+  "max": 1,
+  "unit": "flag",
+  "zero_means": "off",
+  "required": false,
+  "note": "BH-7429 (BH-6896 S2): 1 = the pool machine posts its build record (RESULT, the build-dir files, the failovers.log tail) to POST /api/pool/records, and the hub reap reads it there instead of one ssh pull per file (bin/lib/pool-record.sh). The machine reads the same rows itself (fly/builder-runner.sh pool_record_write). A machine with no usable record is still pulled over ssh. Seeded 1 for project-6-os only; 0 = off: the ssh pull, as before."
+}

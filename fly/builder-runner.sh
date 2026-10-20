@@ -519,6 +519,7 @@ run_job() {
   _run_job; local rc=$?
   # Guarded: tests/pool-cost-rows-test.sh lifts this wrapper out on its own.
   command -v pool_result_row_write >/dev/null 2>&1 && pool_result_row_write
+  command -v pool_record_write >/dev/null 2>&1 && pool_record_write
   cost_rows_flush
   return "$rc"
 }
@@ -544,6 +545,32 @@ pool_result_row_write() {
   ( export HARNESS="$HARNESS"
     pool_result_row_put "$PROJECT" "$key" "${FLY_MACHINE_ID:-}" "$RESULT_FILE" $full ) \
     || log "pool-result row for $key not written — the hub reap falls back to ssh"
+  return 0
+}
+
+# --- the build record, off the machine (BH-7429) -------------------------------
+# The full RESULT, the build-dir files the hub relays and the failovers.log
+# tail, in one POST (bin/lib/pool-record.sh), so the hub reap reads them
+# without one `ssh console` per file, even after this machine autostops. Pool
+# machines only, never an RB- rebase, and only where the lane knob
+# POOL_RECORD_READ is 1 for this project. The build dir is the RESULT's
+# BUILD_DIR: line, else the newest one (the hub's own fallback). A failed post
+# is one log line: the hub then pulls over ssh, as before.
+pool_record_write() {
+  [ "${POOL_MODE:-}" = 1 ] || return 0
+  local key bd
+  key=$(jq -r '.key // ""' "$JOB" 2>/dev/null)
+  case "$key" in ''|RB-*) return 0 ;; esac
+  # shellcheck source=bin/lib/pool-record.sh
+  . "$HARNESS/bin/lib/pool-record.sh" 2>/dev/null || return 0
+  command -v pool_record_put >/dev/null 2>&1 || return 0
+  [ "$(HARNESS="$HARNESS" pool_record_enabled "$PROJECT")" = 1 ] || return 0
+  bd=$(sed -n 's/^BUILD_DIR: //p' "$RESULT_FILE" 2>/dev/null | head -1)
+  if [ -n "$bd" ]; then bd="$HARNESS/builds/${bd##*/}"
+  else bd=$(ls -dt "$HARNESS"/builds/* 2>/dev/null | head -1); fi
+  ( export HARNESS="$HARNESS"
+    pool_record_put "$PROJECT" "$key" "${FLY_MACHINE_ID:-}" "$RESULT_FILE" "$bd" "$HARNESS/logs/failovers.log" ) \
+    || log "build record for $key not posted — the hub reap falls back to ssh"
   return 0
 }
 

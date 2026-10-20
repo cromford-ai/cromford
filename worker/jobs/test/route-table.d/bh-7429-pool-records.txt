@@ -1,0 +1,7 @@
+# POOL BUILD RECORDS (BH-7429, BH-6896 S2): a pool machine's build record off
+# the machine. The runner posts RESULT, the build-dir files and the
+# failovers.log tail in one batch; the hub reap reads the record instead of
+# one ssh pull per file, then stamps it. Bearer-gated.
+POST /api/pool/records
+GET /api/pool/records
+POST /api/pool/records/reaped

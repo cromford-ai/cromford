@@ -99,6 +99,8 @@ worker/jobs/test/landing-decisions.bh-6744.test.js:generic-api-key:18
 worker/jobs/test/landing-outcome.bh-6745.test.js:generic-api-key:16
 worker/jobs/test/main-red-state-indexes.bh-4156.test.js:generic-api-key:17
 worker/jobs/test/main-red-state.bh-4156.test.js:generic-api-key:20
+worker/jobs/test/pool-records-roundtrip.bh-7429.test.js:generic-api-key:19
+worker/jobs/test/pool-records.bh-7429.test.js:generic-api-key:16
 worker/jobs/test/review-tiers.bh-6969.test.js:generic-api-key:25
 worker/jobs/test/route-keyed.bh-5788.test.js:generic-api-key:130
 worker/jobs/test/route-registry.bh-4607.test.js:generic-api-key:156

@@ -265,6 +265,11 @@ command -v dm_read >/dev/null 2>&1 && dm_read "$P"
 # shellcheck source=bin/lib/pool-result-row.sh
 . "$HARNESS/bin/lib/pool-result-row.sh" 2>/dev/null \
   || . "$(dirname "${BASH_SOURCE[0]}")/lib/pool-result-row.sh" 2>/dev/null || true
+# The build record (BH-7429): the reap reads it instead of one ssh pull per
+# file (POOL_RECORD_FILES is the same list as the ssh pull's).
+# shellcheck source=bin/lib/pool-record.sh
+. "$HARNESS/bin/lib/pool-record.sh" 2>/dev/null \
+  || . "$(dirname "${BASH_SOURCE[0]}")/lib/pool-record.sh" 2>/dev/null || true
 # The Fly infra cost row (BH-4019): the live-machine reap writes one per job.
 # A tree without the lib writes none, and the reap is what it always was.
 # shellcheck source=bin/lib/fly-cost-row.sh
@@ -3204,6 +3209,15 @@ next_job_or_destroy() { # hand this machine the next queued job, or destroy it
     # building, just something else.
     command -v pool_account_release >/dev/null 2>&1 && pool_account_release "$MID"
   fi
+  # THE STAMP IS THE LAST STEP (BH-7429). A record stamped reaped is a record the
+  # next tick cannot read; stamped earlier, a tick that died before the end left a
+  # finished build with no record and a stopped machine ssh cannot reach, and the
+  # BH-2643 row path requeued it.
+  if [ "${RECSTAMP:-0}" = 1 ]; then
+    RECSTAMP=0
+    pool_record_reaped "$P" "$KEY" "$MID" "${RECINFO%%$'\t'*}" \
+      || say "build record for $KEY not stamped reaped — the unread retention rule deletes it"
+  fi
 }
 
 # >>> pool listing (BH-660)
@@ -3290,6 +3304,12 @@ pool_custody_sweep
   # <<< machines rows
 
 # ---------- REAP ----------
+# BH-7429: read each finished machine's build record from the jobs API before
+# any ssh. Lane knob POOL_RECORD_READ (default 0; project-6-os is seeded 1).
+# lane_knob reads the env value of the same name, so nothing is assigned first.
+POOL_RECORD_READ=$( { command -v lane_knob && command -v pool_record_get; } >/dev/null 2>&1 \
+  && lane_knob fly-pool POOL_RECORD_READ "$P")
+[ "$POOL_RECORD_READ" = 1 ] || POOL_RECORD_READ=0
 REAPED_IDS=" "   # machines this tick's REAP owns; the sweep below never touches one
 for MF in "$POOL"/*.json; do
   [ -f "$MF" ] || continue
@@ -3359,6 +3379,9 @@ for MF in "$POOL"/*.json; do
   # 1 once the reap below has read a token-401 deferral (BH-5025.2). Reset per
   # machine: next_job_or_destroy reads it, and it must never reach the next one.
   TOKFAIL=0
+  # 1 once the record arm below took this machine's result from the build record
+  # (BH-7429): next_job_or_destroy stamps it reaped as its last step.
+  RECSTAMP=0
   # The tick's own listing answers this for every machine at once when it is
   # usable, and a machine ABSENT from it reads as the empty string — exactly what
   # an errored `machine status` yields today, so the dead path below is reached
@@ -3371,7 +3394,23 @@ for MF in "$POOL"/*.json; do
   # /run/harness/RESULT is the runner's CANONICAL result — it exists even when
   # run-build never produced a build dir (BUILD_ERROR/DEFERRED paths). Reading
   # only the build-dir glob made those failures silent (TK-143, 2026-08-13).
-  RES=$(mexec "$MID" "head -1 /run/harness/RESULT 2>/dev/null")
+  # THE RECORD BEFORE THE SSH (BH-7429). The runner posted its build record
+  # (bin/lib/pool-record.sh); when it is this machine's from this run, the
+  # result and every file come from it, and this machine costs no ssh call. A
+  # miss, a record of another machine or run, or an unreadable worker is the
+  # ssh path below, exactly as before. Never for an RB- rebase.
+  RES=""; RES_FROM_RECORD=0; RECSTAGE=""; RECINFO=""
+  if [ "$POOL_RECORD_READ" = 1 ] && [ "${KEY#RB-}" = "$KEY" ] \
+     && RECSTAGE=$(mktemp -d "${TMPDIR:-/tmp}/pool-record.XXXXXX"); then
+    RECINFO=$(pool_record_get "$P" "$KEY" "$MID" "$SPAT" "$RECSTAGE"); RECRC=$?
+    if [ "$RECRC" = 0 ]; then
+      RES=$(head -1 "$RECSTAGE/RESULT"); RES_FROM_RECORD=1
+    else
+      rm -rf "$RECSTAGE"; RECSTAGE=""
+      [ "$RECRC" = 1 ] && say "build record for $KEY unreadable (machine $MID) — the reap reads it over ssh"
+    fi
+  fi
+  [ "$RES_FROM_RECORD" = 1 ] || RES=$(mexec "$MID" "head -1 /run/harness/RESULT 2>/dev/null")
   # GATE (2026-08-30, MEDIC 4467): mexec stdout is not proof of a RESULT — a
   # flyctl ssh-console panic prints "Oops"/goroutine noise on stdout, and this
   # loop then reaped and force-destroyed a machine mid-build. Anything without
@@ -3439,7 +3478,25 @@ for MF in "$POOL"/*.json; do
       if [ -n "$RBROWF" ] && [ -s "$RBROWF" ]; then cp "$RBROWF" "$LOCAL/RESULT"; else echo "$RES" > "$LOCAL/RESULT"; fi
       [ -z "$RBROWF" ] || rm -f "$RBROWF"
       echo "pool-result row" > "$LOCAL/result-source"
+    elif [ "$RES_FROM_RECORD" = 1 ]; then
+      # The same files the ssh arm below fetches, from the record. A file too
+      # big for a D1 row was skipped by the machine: it is fetched over ssh
+      # while the machine is up, and named as absent when it is not.
+      RECSUM=$(pool_record_install "$RECSTAGE" "$LOCAL" "$MID" "$MSTATE" "$RECINFO") \
+        || say "build record for $KEY: a staged file could not be moved into $LOCAL"
+      read -r RECN RECM RECABS <<<"$RECSUM"
+      say "record for $KEY taken from the jobs API (${RECN:-0} files, ${RECM:-0} skipped${RECABS:+; not on the hub: $RECABS})"
+      # The bill, as the ssh arm below does. Written with "|| true" and braces so
+      # the cost-row suite's one-call-above-the-push pin (B3a, B3c) still names
+      # the ssh arm's pair, the first full-form push line in this file.
+      pool_fly_cost_row || true
+      push_pool_cost_rows "$LOCAL" "pool-${P}-${MID}"
+      [ -s "$LOCAL/RESULT" ] || echo "$RES" > "$LOCAL/RESULT"
+      echo "build record" > "$LOCAL/result-source"
+      RECSTAMP=1
     else
+      [ "$POOL_RECORD_READ" = 1 ] && [ "${KEY#RB-}" = "$KEY" ] \
+        && say "no build record for $KEY from $MID — its files are pulled over ssh"
       # THE BUILD'S OWN DIRECTORY, NEVER THE FIRST ONE ON DISK (2026-09-13, project-5
       # TK-493/#520). A reused pool machine holds every build it has run; `ls | head -1`
       # picked the alphabetically-first one, so #520's record carried TK-291's
@@ -3473,6 +3530,9 @@ for MF in "$POOL"/*.json; do
       # suite re-run the re-reviewer is told outranks every claim goes to
       # harness-suite-fix.txt. Without these two, a pool build's fanned-back
       # verdicts would arrive on the hub with their reasoning left on the machine.
+      # This list is pinned equal to POOL_RECORD_FILES (bin/lib/pool-record.sh,
+      # BH-7429) by tests/pool-record-lib.bh-7429-test.sh: the machine's build
+      # record carries the same names, and tests grep this file for them.
       for A in plan.md review.md security-review.md security-review-run.txt refute-review.md \
                merged-review2.md harness-suite-fix.txt \
                qa.md e2e.md evidence.md changed-files.txt \

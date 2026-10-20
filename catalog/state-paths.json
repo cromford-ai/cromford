@@ -16,6 +16,7 @@
     {"path": "box-id",              "class": "box-local", "authority": "this box's identity", "note": ""},
     {"path": "box-name",            "class": "box-local", "authority": "this box's identity", "note": "written by bin/box-name.sh --write"},
     {"path": "scratch",             "class": "box-local", "authority": "scratch space", "note": "bin/disk-clean.sh moves operator scratch here"},
-    {"path": "sibling-serial",      "class": "box-local", "authority": "this box's sibling wait clock (BH-6374)", "note": "state/sibling-serial/<p>/<K>.sibling-since: when this box's pool started holding a sibling part; a failed-over box restarts the clock, which only delays the release"}
+    {"path": "sibling-serial",      "class": "box-local", "authority": "this box's sibling wait clock (BH-6374)", "note": "state/sibling-serial/<p>/<K>.sibling-since: when this box's pool started holding a sibling part; a failed-over box restarts the clock, which only delays the release"},
+    {"path": "remote-results",      "class": "rows",      "authority": "pool_record_files rows (BH-7429) and the pool-result ledger row (BH-2643)", "note": "state/remote-results/<p>/<KEY>.json: the hub's parked relay copy; the machine's build record is in pool_record_files"}
   ]
 }
