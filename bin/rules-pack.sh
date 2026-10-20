@@ -318,7 +318,7 @@ rp_extract() {
   local id="$1" f="$W/run/$1.$2" lines
   case "$id:${KIND[$id]}" in
     determinism:*) lines=$(cat "$f.out" "$f.err" | awk '/^── determinism findings \(fail\)/{f=1;next} /^──/{f=0} f && /^[^[:space:]][^:]*:[0-9]+: [^:]+:/') ;;
-    test-sources:*|date-bomb:*|tier-wording:*|agent-call-no-tools:*|*:builtin) lines=$(grep . "$f.out") ;;
+    test-sources:*|date-bomb:*|tier-wording:*|agent-call-no-tools:*|plan-diff-bind:*|*:builtin) lines=$(grep . "$f.out") ;;
     checks-tree:*) lines=$(cat "$f.out" "$f.err" | grep '^CHECK-HIT ') ;;
     *) lines=$(cat "$f.out" "$f.err" | awk "$EXTRACT_AWK") ;;
   esac

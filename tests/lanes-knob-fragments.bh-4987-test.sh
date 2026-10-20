@@ -8,7 +8,8 @@
 # and bin/lanes-build.sh appends it to the owner's `knobs`.
 #
 # What is proved here, over scratch trees with the real scripts:
-#   K1 a fragment lands at the end of its lane's knobs, and lane_knob (through
+#   K1 a fragment lands after its lane's inline knobs, in C order with the
+#      lane's other fragments, and lane_knob (through
 #      lanes_json_path) answers its default;
 #   K2 moving the LAST inline knob of 3 lanes (ones with no knobs.d yet) and 1
 #      lib into fragments composes byte-identically, and the real tree
@@ -55,6 +56,17 @@ build() { # build [args] -> stdout in $T/out, stderr in $T/err, rc in $RC
 }
 lane_envs() { jq -c --arg id "$1" '.lanes[]|select(.id==$id)|.knobs|map(.env)' "$T/out" 2>/dev/null; }
 lib_envs()  { jq -c --arg id "$1" '.libs[]|select(.id==$id)|.knobs|map(.env)' "$T/out" 2>/dev/null; }
+# want_envs <lanes.d> <id> — the order the composer must give: the lane file's
+# inline knobs, then every <id>.knobs.d fragment in LC_ALL=C name order. The
+# real tree can already hold fragments for a lane (BH-7513 gave review-prs one),
+# so a fixture's place is computed from what is there, never assumed last.
+want_envs() {
+  { jq -r '(.knobs // [])[].env' "$1/$2.json"
+    [ -d "$1/$2.knobs.d" ] && (cd "$1/$2.knobs.d" && ls -- *.json 2>/dev/null | sed 's/\.json$//' | LC_ALL=C sort)
+  } | jq -Rsc 'split("\n")|map(select(length>0))'
+}
+# only_envs <names...> — the composed $HOST knobs filtered to the named ones, in order
+only_envs() { lane_envs "$HOST" | jq -c --args '[.[]|select(. as $e|$ARGS.positional|index($e))]' "$@"; }
 
 # ── K2 first, on the untouched copy: no fragments = today's bytes ────────────
 build
@@ -114,6 +126,11 @@ build
 [ "$RC" = 0 ] && ok || bad "K1 rc=$RC $(cat "$T/err")"
 [ "$(jq -r --arg h "$HOST" '.lanes[]|select(.id==$h)|.knobs[-1].env' "$T/out" 2>/dev/null)" = BH4987_A ] \
   && ok || bad "K1 BH4987_A must be the last $HOST knob: $(lane_envs "$HOST")"
+[ "$(lane_envs "$HOST")" = "$(want_envs "$L" "$HOST")" ] \
+  && ok || bad "K1 $HOST knobs must be the inline knobs then the fragments in C order: want $(want_envs "$L" "$HOST"), got $(lane_envs "$HOST")"
+n_inline=$(jq '(.knobs // [])|length' "$L/$HOST.json")
+[ "$(lane_envs "$HOST" | jq --arg e BH4987_A 'index($e) // -1')" -ge "$n_inline" ] \
+  && ok || bad "K1 BH4987_A must land after every inline $HOST knob: $(lane_envs "$HOST")"
 n_main=$(jq --arg h "$HOST" '.lanes[]|select(.id==$h)|.knobs|length' "$T/A.json")
 n_now=$(jq --arg h "$HOST" '.lanes[]|select(.id==$h)|.knobs|length' "$T/out")
 [ "$n_now" = $((n_main + 1)) ] && ok || bad "K1 $HOST knobs: want $((n_main + 1)), got $n_now"
@@ -158,6 +175,10 @@ KNOB A_Z 1 > "$L/$HOST.knobs.d/A_Z.json"
 build; cp "$T/out" "$T/k6a.json"
 [ "$(jq -c --arg h "$HOST" '.lanes[]|select(.id==$h)|.knobs[-4:]|map(.env)' "$T/out")" = '["A_Z","BA","BH4987_A","B_A"]' ] \
   && ok || bad "K6 C order: $(jq -c --arg h "$HOST" '.lanes[]|select(.id==$h)|.knobs[-4:]|map(.env)' "$T/out")"
+[ "$(only_envs A_Z BA BH4987_A B_A)" = '["A_Z","BA","BH4987_A","B_A"]' ] \
+  && ok || bad "K6 C order: $(only_envs A_Z BA BH4987_A B_A)"
+[ "$(lane_envs "$HOST")" = "$(want_envs "$L" "$HOST")" ] \
+  && ok || bad "K6 the fragments must follow the inline knobs in C order: want $(want_envs "$L" "$HOST"), got $(lane_envs "$HOST")"
 build
 cmp -s "$T/k6a.json" "$T/out" && ok || bad "K6 two runs must give the same bytes"
 rm -f "$L/$HOST.knobs.d/B_A.json" "$L/$HOST.knobs.d/BA.json" "$L/$HOST.knobs.d/A_Z.json"
@@ -257,6 +278,8 @@ gm merge -q --no-edit one > "$T/merge.log" 2>&1; rc=$?
 bash "$M/bin/lanes-build.sh" --root "$M" > "$T/out" 2>"$T/err"
 [ "$(jq -c --arg h "$HOST" '.lanes[]|select(.id==$h)|.knobs[-2:]|map(.env)' "$T/out" 2>/dev/null)" = '["BH4987_ONE","BH4987_TWO"]' ] \
   && ok || bad "M1 the merged composition must hold both: $(lane_envs "$HOST") $(cat "$T/err")"
+[ "$(lane_envs "$HOST")" = "$(want_envs "$M/catalog/lanes.d" "$HOST")" ] \
+  && ok || bad "M1 the merged fragments must follow the inline knobs in C order: want $(want_envs "$M/catalog/lanes.d" "$HOST"), got $(lane_envs "$HOST")"
 
 # ── L1..L6: bin/lanes-knob-lint.sh ───────────────────────────────────────────
 LR="$T/lint"; mkdir -p "$LR/bin" "$LR/catalog/lanes.d"

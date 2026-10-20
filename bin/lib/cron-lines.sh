@@ -151,6 +151,8 @@ cron_review_slot() {
 # Only a live harness root (one with a state/ dir) is read: a render in a repo
 # checkout (CI, render-cron.sh --check, the share mirror) must not make
 # lane-gate write its cache, logs, flags and .settings-miss into the tree.
+# The knob has no min or max on purpose: lane_knob clamps a settings row to the
+# registry bounds before this check, so a bound would turn 0-9 into 10 (BH-7528).
 cron_review_intervals() {
   local H="${1-}" P v here; shift
   here="$(dirname "${BASH_SOURCE[0]}")"

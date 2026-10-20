@@ -7,13 +7,15 @@
 #   R3 two projects at 10 on one box: disjoint minute sets
 #   R4 a project at 10 next to a project at 30: no shared minute, the 30 line unchanged
 #   R5 no distinct set left: the project keeps 30, one log line, the others stay distinct
-#   R6 a refused value (7, abc, 0, 5, 60, empty) renders exactly as no row
+#   R6 on the real composed registry, a refused value (0, 5, 7, 20, abc, 60,
+#      empty) renders exactly as no row: no registry clamp turns 0-9 into 10 (BH-7528)
 #   R7 interval 15: four minutes, 15 apart
-#   R8 the knob file and the seed fragment exist and say what the ticket says
+#   R8 the knob file (no min or max, BH-7528) and the seed fragment say what the ticket says
 # Run: HARNESS_TEST_SANDBOX=1 bash tests/review-prs-interval.bh-7513-test.sh
 set -uo pipefail
 . "$(dirname "$0")/lib/scratch.sh" || exit 1
 DIR=$(cd "$(dirname "$0")/.." && pwd)
+. "$(dirname "$0")/lib/rendered.sh" || exit 1
 PASS=0; FAIL=0
 ok()  { PASS=$((PASS+1)); }
 bad() { FAIL=$((FAIL+1)); echo "FAIL: $1"; }
@@ -91,13 +93,32 @@ if [ "$SIX" = 7 ] && [ "$(wc -w <<<"$TWO")" -eq 1 ]; then ok; else bad "R5 want 
 if [ "$(grep -c 'review-prs interval' "$T/err")" = 1 ]; then ok; else bad "R5 want exactly one log line: $(cat "$T/err")"; fi
 [ "$(dups $PLACED)" = 0 ] && ok || bad "R5 a minute is shared among the placed projects: $PLACED"
 
-# --- R6: refused values -----------------------------------------------------
+# --- R6: refused values, on the real registry -----------------------------
+# The registry is the one bin/lanes-build.sh composes, found the way a box finds
+# it ($HARNESS/catalog/lanes.json, no LANE_REGISTRY). Without it lane_knob never
+# reads the knob's bounds, and a clamp of 0-9 up to 10 is invisible (BH-7528).
 F=$(fixture f6 'pa o/a - - 3 box-demo' 'pb o/b - - 3 box-demo')
-BASELINE=$(render "$F" demo "$T/none")
-for v in 7 abc 0 5 60 ''; do
-  H="$T/h6"; row "$H" "pa:$v"
-  [ "$(render "$F" demo "$H")" = "$BASELINE" ] && ok || bad "R6 value '$v' changed the render"
+REG=$(rendered_registry)
+H6="$T/h6"; mkdir -p "$H6/catalog"; cp "$REG" "$H6/catalog/lanes.json"
+jq -e '[.. | objects | select(.env? == "REVIEW_PRS_INTERVAL_MIN")] | length > 0' "$H6/catalog/lanes.json" >/dev/null \
+  && ok || bad "R6 the registry in $H6/catalog/lanes.json does not declare REVIEW_PRS_INTERVAL_MIN"
+scratch_rm "$H6/state"
+BASELINE=$(render "$F" demo "$H6")
+[ "$(sched "$BASELINE" review-prs pa)" = "10,40" ] && ok || bad "R6 baseline pa is '$(sched "$BASELINE" review-prs pa)' (want 10,40)"
+for v in 0 5 7 20 abc 60 ''; do
+  scratch_rm "$H6/logs"; scratch_rm "$H6/state/lane-gate"; row "$H6" "pa:$v"
+  OUT=$(render "$F" demo "$H6"); RC=$?
+  [ "$RC" -eq 0 ] && [ "$OUT" = "$BASELINE" ] && ok || bad "R6 value '$v' changed the render (rc $RC, pa '$(sched "$OUT" review-prs pa)')"
+  if [ "$v" = 5 ]; then
+    if grep -q 'review-prs.*CLAMPED' "$H6/logs/lane-gate.log" 2>/dev/null; then bad "R6 lane_knob clamped row 5: $(grep CLAMPED "$H6/logs/lane-gate.log")"; else ok; fi
+  fi
 done
+# Near misses on the same registry: the accepted values still pass.
+row "$H6" pa:10; S=$(sched "$(render "$F" demo "$H6")" review-prs pa)
+if [ "$(count "$S")" = 6 ] && [ "$(gaps "$S")" = "10 " ]; then ok; else bad "R6 row 10 on the registry gave '$S'"; fi
+row "$H6" pa:15; S=$(sched "$(render "$F" demo "$H6")" review-prs pa)
+if [ "$(count "$S")" = 4 ] && [ "$(gaps "$S")" = "15 " ]; then ok; else bad "R6 row 15 on the registry gave '$S'"; fi
+row "$H6" pa:30; [ "$(render "$F" demo "$H6")" = "$BASELINE" ] && ok || bad "R6 row 30 on the registry changed the render"
 
 # --- R7: 15 -----------------------------------------------------------------
 H="$T/h7"; row "$H" pa:15
@@ -107,7 +128,8 @@ if [ "$(count "$S")" = 4 ] && [ "$(gaps "$S")" = "15 " ]; then ok; else bad "R7 
 # --- R8: the knob and the seed ----------------------------------------------
 K="$DIR/catalog/lanes.d/review-prs.knobs.d/REVIEW_PRS_INTERVAL_MIN.json"
 if [ -f "$K" ]; then
-  [ "$(jq -r '[.default,.min,.max,(.zero_means|tostring),.unit]|join(" ")' "$K")" = "30 10 30 null minutes" ] && ok || bad "R8 knob fields: $(jq -c . "$K")"
+  [ "$(jq -r '[.default,.unit,(.zero_means|tostring)]|join(" ")' "$K")" = "30 minutes null" ] && ok || bad "R8 knob fields: $(jq -c . "$K")"
+  jq -e '(has("min")|not) and (has("max")|not)' "$K" >/dev/null && ok || bad "R8 the knob carries min/max, so lane_knob clamps a row of 0-9 to 10: $(jq -c '{min,max}' "$K")"
 else bad "R8 $K is missing"; fi
 SEED=$(grep -l "lane.review-prs.project-6-os.review_prs_interval_min" "$DIR"/worker/jobs/schema.d/*.sql 2>/dev/null | head -1)
 if [ -n "$SEED" ]; then
