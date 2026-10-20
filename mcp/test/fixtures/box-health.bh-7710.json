@@ -1,0 +1,34 @@
+{
+  "boxes": [
+    {
+      "box": "watcher-alpha", "box_id": "alpha", "role": null, "tailnet_ip": "192.0.2.11",
+      "ssh": { "rc": 0, "probed_at": "2026-10-20T13:29:00Z", "last_ok_at": "2026-10-20T13:29:00Z" },
+      "lane_ssh_failures": { "count": 0, "window_s": 900, "last_at": null },
+      "last_beat_at": "2026-10-20T13:28:00Z",
+      "vm": { "live": [{ "id": "vm-a1", "status": "running", "seen_at": "2026-10-20T13:27:00Z", "account": "acct-fixture", "api_key": "key-fixture-zz" }], "gone": 0 },
+      "restart": { "box": "hub", "type": "vm_restart", "target": "alpha", "account": "acct-fixture" },
+      "detail": "key-fixture-zz"
+    },
+    {
+      "box": "watcher-bravo", "box_id": "bravo", "role": null, "tailnet_ip": "192.0.2.12",
+      "ssh": { "rc": 255, "probed_at": "2026-10-20T13:29:00Z", "last_ok_at": "2026-10-20T04:21:00Z" },
+      "lane_ssh_failures": { "count": 4, "window_s": 900, "last_at": "2026-10-20T13:20:00Z" },
+      "last_beat_at": "2026-10-20T04:21:00Z",
+      "vm": { "live": [{ "id": "vm-b1", "status": "running", "seen_at": "2026-10-20T13:27:00Z", "account": "acct-fixture" }], "gone": 1 },
+      "restart": { "box": "hub", "type": "vm_restart", "target": "bravo", "account": "acct-fixture" }
+    },
+    {
+      "box": "watcher-hub", "box_id": "hub", "role": "hub", "tailnet_ip": null,
+      "ssh": null,
+      "lane_ssh_failures": null,
+      "last_beat_at": "2026-10-20T13:29:30Z",
+      "vm": { "live": [], "gone": 0 },
+      "restart": null
+    }
+  ],
+  "vm_complete": true,
+  "partial": [],
+  "truncated": false,
+  "as_of": "2026-10-20T13:30:00Z",
+  "secret": "key-fixture-zz"
+}

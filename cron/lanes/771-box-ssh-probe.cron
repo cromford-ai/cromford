@@ -1,0 +1,10 @@
+# @hub-lanes
+
+# ── BOX SSH PROBE LANE (BH-7710) ─────────────────────────────────────────────
+# Every 2 minutes the hub ssh's each registry box with a tailnet IP once
+# (`ssh root@<ip> true` under timeout) and posts one row per box, with the
+# pool's env bundle ssh failures for that IP, to /api/box-ssh. The MCP
+# box_health and box_restart tools read it through GET /api/box-health.
+# A recorder: it writes no ALERTS line for an unreachable box. flock -n dedupes.
+# Off: flags/lane-off-box-ssh-probe, or bin/harness-ctl.sh off box-ssh-probe.
+*/2 * * * * /root/harness/bin/hub-lease.sh check && /root/harness/bin/box-ssh-probe.sh >/dev/null 2>&1

@@ -1,0 +1,7 @@
+{
+  "_comment": "BH-7710: the POST /api/box-ssh body in the shape bin/box-ssh-probe.sh builds it. tests/box-ssh-probe.bh-7710-test.sh checks that the lane's real body has these row keys; worker/jobs/test/box-ssh.bh-7710.test.js posts this body.",
+  "rows": [
+    { "box": "watcher-alpha", "ip": "192.0.2.11", "rc": 0, "lane_fails": 0, "lane_window_s": 900, "lane_last_fail_at": null },
+    { "box": "watcher-bravo", "ip": "192.0.2.12", "rc": 255, "lane_fails": 4, "lane_window_s": 900, "lane_last_fail_at": "2026-10-20T13:20:00Z" }
+  ]
+}

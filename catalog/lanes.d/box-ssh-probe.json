@@ -1,0 +1,61 @@
+{
+  "id": "box-ssh-probe",
+  "name": "Box ssh probe (does the hub reach each box over ssh)",
+  "scope": "hub",
+  "script": "bin/box-ssh-probe.sh",
+  "cadence": "*/2 * * * *",
+  "boxes": [
+    "hub"
+  ],
+  "switch": {
+    "kind": "flag",
+    "name": "lane-off-box-ssh-probe",
+    "aliases": []
+  },
+  "wired": true,
+  "knobs": [
+    {
+      "env": "BOX_SSH_PROBE_TIMEOUT_S",
+      "type": "int",
+      "default": 15,
+      "min": 1,
+      "max": 110,
+      "zero_means": null,
+      "note": "BH-7710: seconds each `ssh root@<ip> true` probe may take before timeout kills it (rc 124). Every box is probed at once, so a tick lasts about this long. Read by bin/box-ssh-probe.sh as ${BOX_SSH_PROBE_TIMEOUT_S:-15}; a value that is not a positive integer is one ALERTS line and no probe.",
+      "settable": true
+    },
+    {
+      "env": "POOL_TAILNET_WINDOW_S",
+      "type": "int",
+      "default": 900,
+      "min": 60,
+      "max": 7200,
+      "unit": "seconds",
+      "zero_means": null,
+      "note": "BH-7710: the window bin/box-ssh-probe.sh counts state/pool-tailnet/<ip>.fails lines in (lane_fails), read as ${POOL_TAILNET_WINDOW_S:-900}. The same name and default as the fly-pool knob that bin/lib/pool-tailnet.sh ptn_note uses (BH-6693); set both rows to the same value. A value that is not a positive integer is 900.",
+      "settable": true
+    },
+    {
+      "env": "BOX_SSH_PROBE_SSH",
+      "type": "string",
+      "default": "ssh -n -o BatchMode=yes -o ConnectTimeout=8 -o StrictHostKeyChecking=accept-new",
+      "zero_means": null,
+      "note": "Read by bin/box-ssh-probe.sh as ${BOX_SSH_PROBE_SSH:-ssh ...}: the ssh command each probe runs before root@<ip> true. Test seam; NOT settable from the control plane.",
+      "settable": false
+    },
+    {
+      "env": "BOX_SSH_PROBE_NOW",
+      "type": "int",
+      "default": 0,
+      "zero_means": null,
+      "note": "Read by bin/box-ssh-probe.sh as ${BOX_SSH_PROBE_NOW:-<date +%s>}: the clock the pool-tailnet window is counted from. Test seam; NOT settable from the control plane.",
+      "settable": false
+    }
+  ],
+  "stats": {
+    "cost_stage": null,
+    "cost_project_filter": null,
+    "lanes_row": false,
+    "log": "logs/box-ssh-probe.log"
+  }
+}

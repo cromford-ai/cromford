@@ -1,0 +1,6 @@
+# BOX SSH STATE (BH-7710): the hub lane bin/box-ssh-probe.sh posts one row per
+# box (does the hub reach it over ssh, and the pool's ssh failures for its IP);
+# GET /api/box-health joins it with the registry, the heartbeats and the VM
+# state for the MCP box_health and box_restart tools. Bearer-gated.
+POST /api/box-ssh
+GET /api/box-health

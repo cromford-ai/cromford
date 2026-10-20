@@ -23,6 +23,8 @@ mcp/test/board-actions.bh-5820.test.mjs:generic-api-key:76
 mcp/test/project-pause.bh-7708.test.mjs:generic-api-key:18
 tests/box-launch.bh-5748-test.sh:generic-api-key:220
 tests/box-launch.bh-5748-test.sh:generic-api-key:400
+tests/box-ssh-probe.bh-7710-test.sh:generic-api-key:79
+tests/box-ssh-probe.bh-7710-test.sh:generic-api-key:94
 tests/ci-durations-missing-row.bh-5653-test.sh:curl-auth-header:68
 tests/ci-local.bh-6897-test.sh:generic-api-key:156
 tests/component-watch.bh-6972-test.sh:generic-api-key:186
@@ -93,6 +95,7 @@ tests/transcript-scrub-test.sh:curl-auth-header:89
 worker/jobs/test/alert-decisions.bh-6972.test.js:generic-api-key:20
 worker/jobs/test/alert-lines-resolved.bh-6892.test.js:generic-api-key:12
 worker/jobs/test/alert-lines.bh-6889.test.js:generic-api-key:18
+worker/jobs/test/box-ssh.bh-7710.test.js:generic-api-key:14
 worker/jobs/test/conductor-state.bh-4156.test.js:generic-api-key:16
 worker/jobs/test/docker-pool-results.bh-7348.test.js:generic-api-key:15
 worker/jobs/test/docker-pool.bh-7300.test.js:generic-api-key:17
