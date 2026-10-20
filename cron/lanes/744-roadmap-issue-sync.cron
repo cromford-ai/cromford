@@ -1,0 +1,11 @@
+# @hub-lanes
+
+# ── ROADMAP-ISSUE-SYNC LANE (BH-7267, BH-7243.4) ───────────────────────────
+# Every 15 minutes it reads the stale roadmap_links (GET
+# /api/roadmap/links/stale, capped by roadmap.issue_sync_batch), reads each
+# linked GitHub issue ONCE, and writes open, closed_completed or closed_other
+# (PUT /api/roadmap/links/state). A rate limit stops the tick. No model call.
+# flock -n dedupes.
+# Off: flags/lane-off-roadmap-issue-sync, or bin/harness-ctl.sh off
+# roadmap-issue-sync.
+*/15 * * * * /root/harness/bin/hub-lease.sh check && /root/harness/bin/roadmap-issue-sync.sh >/dev/null 2>&1

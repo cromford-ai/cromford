@@ -1,0 +1,12 @@
+# @hub-lanes
+
+# ── ROADMAP-FILE LANE (BH-7267, BH-7243.4) ─────────────────────────────────
+# Every 5 minutes it claims an approved roadmap wave (POST
+# /api/roadmap/waves/file-claim) and files each slice of its draft as ONE
+# ai-build GitHub issue. A body marker search runs before each create, so a
+# re-run after a crash reuses the issue. Each issue is linked to the wave's
+# ideas in roadmap_links; the wave becomes filed when every slice has a link.
+# At most ROADMAP_FILE_MAX_PER_TICK (3) waves a tick. No model call; it never
+# merges. flock -n dedupes.
+# Off: flags/lane-off-roadmap-file, or bin/harness-ctl.sh off roadmap-file.
+*/5 * * * * /root/harness/bin/hub-lease.sh check && /root/harness/bin/roadmap-file.sh >/dev/null 2>&1

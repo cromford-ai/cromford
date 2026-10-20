@@ -1,0 +1,11 @@
+# BH-7243.4 (BH-7267): approve, file and sync roadmap wave issues, key-named (BH-5788).
+# GET /api/roadmap/waves/issues sorts before BH-7243.3's bh-7243-roadmap-waves.txt,
+# so it matches before a later GET /api/roadmap/waves/:id row.
+POST /api/roadmap/waves/approve
+POST /api/roadmap/waves/reject
+POST /api/roadmap/waves/file-claim
+POST /api/roadmap/waves/filed
+POST /api/roadmap/waves/file-done
+GET /api/roadmap/waves/issues
+GET /api/roadmap/links/stale
+PUT /api/roadmap/links/state

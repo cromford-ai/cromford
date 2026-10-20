@@ -1,0 +1,34 @@
+{
+  "id": "roadmap-file",
+  "name": "Roadmap file (file an approved wave's slices as ai-build issues)",
+  "scope": "hub",
+  "script": "bin/roadmap-file.sh",
+  "cadence": "*/5 * * * *",
+  "boxes": [
+    "hub"
+  ],
+  "switch": {
+    "kind": "flag",
+    "name": "lane-off-roadmap-file",
+    "aliases": []
+  },
+  "wired": true,
+  "knobs": [
+    {
+      "env": "ROADMAP_FILE_MAX_PER_TICK",
+      "type": "int",
+      "default": 3,
+      "min": 1,
+      "max": 20,
+      "zero_means": null,
+      "note": "BH-7267: approved roadmap waves one tick may claim and file. Read by bin/roadmap-file.sh as ${ROADMAP_FILE_MAX_PER_TICK:-3}; outside 1..20 is one warn line in logs/roadmap-file.log and the default.",
+      "settable": true
+    }
+  ],
+  "stats": {
+    "cost_stage": null,
+    "cost_project_filter": null,
+    "lanes_row": false,
+    "log": "logs/roadmap-file.log"
+  }
+}

@@ -1,0 +1,23 @@
+{
+  "id": "roadmap-issue-sync",
+  "name": "Roadmap issue sync (copy the state of linked GitHub issues into roadmap_links)",
+  "scope": "hub",
+  "script": "bin/roadmap-issue-sync.sh",
+  "cadence": "*/15 * * * *",
+  "boxes": [
+    "hub"
+  ],
+  "switch": {
+    "kind": "flag",
+    "name": "lane-off-roadmap-issue-sync",
+    "aliases": []
+  },
+  "wired": true,
+  "knobs": [],
+  "stats": {
+    "cost_stage": null,
+    "cost_project_filter": null,
+    "lanes_row": false,
+    "log": "logs/roadmap-issue-sync.log"
+  }
+}
