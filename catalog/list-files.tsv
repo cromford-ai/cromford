@@ -3,7 +3,8 @@
 # its entry as a new file under the paired input dir instead.
 #
 # Columns, tab-separated: <path glob>	<input>	<note>
-#   <path glob>  repo-root path; a `*` never crosses a `/`.
+#   <path glob>  repo-root path; a `*` never crosses a `/`. Escape a `[`, `]` or
+#                `*` meant literally with `\` (the `\[\[path\]\]` row below).
 #   <input>      one of three kinds:
 #     <dir>/           fragments: the PR must ADD a file under <dir>/.
 #     rendered <dir>/  committed render: the PR must add or edit a file under <dir>/.
@@ -11,6 +12,7 @@
 #   <note>       free text, shown in the lint output.
 # Lines starting with `#` and blank lines are skipped.
 worker/jobs/src/index.js	worker/jobs/src/routes/	route table entry since BH-4607; one route per file
+console-ui/functions/api/coord/\[\[path\]\].js	console-ui/functions/_lib/coord-writes.d/	coord write route since BH-6487; one route per fragment file
 cron/*.cron	ignored cron/lanes/	rendered by bin/render-crontab.sh
 catalog/lanes.json	ignored catalog/lanes.d/	rendered by bin/lanes-build.sh
 .mergify.yml	rendered config/mergify/	committed render of bin/mergify-template.sh

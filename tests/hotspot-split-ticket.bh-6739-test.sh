@@ -308,7 +308,7 @@ jq -e '.id == "hotspot-split-ticket" and .scope == "hub" and .switch.name == "la
 # ── H6: the stored measurement is the input ──────────────────────────────────
 fresh
 printf '%s\n' bin/gone.sh > "$FX/gone"
-seed "bin/hot.sh	20	9	#11" "bin/gone.sh	18	9	#12" "console-ui/functions/api/coord/[[path]].js	16	9	#13"
+seed "bin/hot.sh	20	9	#11" "bin/gone.sh	18	9	#12" "console-ui/functions/api/dash/[[path]].js	16	9	#13"
 run
 [ "$RC" = 0 ] && ok "H6 rc 0" || bad "H6 rc $RC: $(cat "$T/run.out")"
 grep -qxF 'GET /api/conflict-hotspots?project=cromford&limit=10 200' "$T/w.log" \
@@ -316,9 +316,9 @@ grep -qxF 'GET /api/conflict-hotspots?project=cromford&limit=10 200' "$T/w.log" 
 grep -q 'title=Split bin/hot.sh: 20 conflicts in 30 days' "$CALLS" && ok "H6 bin/hot.sh filed from the stored rows" \
   || bad "H6 creates: $(cat "$CALLS") log: $(cat "$H/logs/hotspot-split-ticket.log")"
 grep -q 'title=Split bin/gone.sh' "$CALLS" && bad "H6 bin/gone.sh was filed" || ok "H6 a 404 contents read is not filed"
-grep -qF "GH GET repos/$SLUG/contents/console-ui/functions/api/coord/%5B%5Bpath%5D%5D.js?ref=main |" "$CALLS" \
+grep -qF "GH GET repos/$SLUG/contents/console-ui/functions/api/dash/%5B%5Bpath%5D%5D.js?ref=main |" "$CALLS" \
   && ok "H6 the [[path]] file is read with the encoded URL" || bad "H6 contents reads: $(grep contents "$CALLS")"
-grep -qF 'title=Split console-ui/functions/api/coord/[[path]].js: 16 conflicts in 30 days' "$CALLS" \
+grep -qF 'title=Split console-ui/functions/api/dash/[[path]].js: 16 conflicts in 30 days' "$CALLS" \
   && ok "H6 the [[path]] file is filed with the raw title" || bad "H6 [[path]] title: $(cat "$CALLS")"
 has "gone=1" && has "filed=2" && has "ref=99fd5865ae56" && has "failed=0" \
   && ok "H6 summary gone=1 filed=2 ref=99fd5865ae56" || bad "H6 summary: $(summary)"
