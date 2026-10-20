@@ -1,0 +1,6 @@
+{
+  "id": "U-never",
+  "class": "spend",
+  "cites": ["G1"],
+  "note": "BH-7728 fixture rule (the spec Rulebook file shape, trimmed)."
+}

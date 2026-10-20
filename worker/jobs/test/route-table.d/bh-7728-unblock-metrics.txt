@@ -1,0 +1,6 @@
+# UNBLOCK METRICS (BH-7728, UNB-6): the Tackler ledger's metrics, console list,
+# override candidates and the override stamp. The table is UNB-0's.
+GET /api/unblock/metrics
+GET /api/unblock/metrics/decisions
+GET /api/unblock/overrides/candidates
+POST /api/unblock/overrides

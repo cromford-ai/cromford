@@ -1,0 +1,1 @@
+{"name":"staff-off-tackler","readers":["bin/unblock-metrics.sh"],"box_scoped":false,"what":"pauses Tackler: the unblock-metrics lane stops before any read, so no override pass, no daily line and no weekly report. bin/archie-overlook.sh sets staff-off-<agent> on a tripwire for a staff roster agent; a person clears it"}

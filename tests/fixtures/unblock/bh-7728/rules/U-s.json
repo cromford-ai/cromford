@@ -1,0 +1,6 @@
+{
+  "id": "U-s",
+  "class": "infra-knob",
+  "cites": ["G1"],
+  "note": "BH-7728 fixture rule (the spec Rulebook file shape, trimmed)."
+}

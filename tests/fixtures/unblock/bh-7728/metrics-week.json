@@ -1,0 +1,96 @@
+{
+  "project": "p-r1-week",
+  "days": 7,
+  "from": "2026-10-13T00:00:00Z",
+  "to": "2026-10-20T00:00:00Z",
+  "daily": [
+    {
+      "day": "2026-10-13",
+      "decisions": 3,
+      "would": 1,
+      "escalations": 1,
+      "overrides": 0,
+      "stall_median_min": 20,
+      "stall_p95_min": 300
+    },
+    {
+      "day": "2026-10-14",
+      "decisions": 3,
+      "would": 1,
+      "escalations": 1,
+      "overrides": 1,
+      "stall_median_min": 50,
+      "stall_p95_min": 400
+    },
+    {
+      "day": "2026-10-15",
+      "decisions": 3,
+      "would": 1,
+      "escalations": 1,
+      "overrides": 0,
+      "stall_median_min": 80,
+      "stall_p95_min": 90
+    },
+    {
+      "day": "2026-10-16",
+      "decisions": 3,
+      "would": 1,
+      "escalations": 1,
+      "overrides": 1,
+      "stall_median_min": 110,
+      "stall_p95_min": 120
+    },
+    {
+      "day": "2026-10-17",
+      "decisions": 3,
+      "would": 1,
+      "escalations": 0,
+      "overrides": 0,
+      "stall_median_min": 140,
+      "stall_p95_min": 150
+    },
+    {
+      "day": "2026-10-18",
+      "decisions": 3,
+      "would": 1,
+      "escalations": 0,
+      "overrides": 0,
+      "stall_median_min": 170,
+      "stall_p95_min": 180
+    },
+    {
+      "day": "2026-10-19",
+      "decisions": 3,
+      "would": 1,
+      "escalations": 0,
+      "overrides": 0,
+      "stall_median_min": 200,
+      "stall_p95_min": 210
+    }
+  ],
+  "totals": {
+    "decisions_per_day": 3,
+    "escalations_per_day": 0.57,
+    "override_rate": 0.0952,
+    "stall_median_min": 120,
+    "stall_p95_min": 300,
+    "stall_unknown": 9
+  },
+  "rules": [
+    {
+      "rule_id": "U1",
+      "acts": 11,
+      "overrides": 2,
+      "would": 7
+    },
+    {
+      "rule_id": "U6",
+      "acts": 10,
+      "overrides": 0,
+      "would": 0
+    }
+  ],
+  "expired_cards": 1,
+  "uncovered": 1,
+  "truncated": false
+}

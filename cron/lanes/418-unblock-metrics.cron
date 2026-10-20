@@ -1,0 +1,12 @@
+# @hub-lanes
+
+# ── UNBLOCK METRICS LANE (BH-7728, UNB-6) ───────────────────────────────────
+# Hourly at :17 bin/unblock-metrics.sh tick reads the Tackler ledger with no
+# model call. It finds a person's reversal of a Tackler act inside 24 h (a
+# verdict, a dequeue or a setting), demotes the rule's staff class to
+# ask_first and stamps the ledger row. Once per UTC day it writes one metrics
+# line per active project to logs/unblock-metrics.log. On Monday (UTC) Archie
+# sends the weekly precision report through his beat gate. flock -n dedupes.
+# Off: UNBLOCK_METRICS_ENABLED=0, flags/lane-off-unblock-metrics,
+# flags/staff-off-tackler, or bin/harness-ctl.sh off unblock-metrics.
+17 * * * * /root/harness/bin/hub-lease.sh check && /root/harness/bin/unblock-metrics.sh tick >/dev/null 2>&1
