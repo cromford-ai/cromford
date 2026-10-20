@@ -502,6 +502,14 @@ echo "$(STAMP) [$PROJECT/$KEY] GATES tamper=$TAMPER_RC repro=$REPRO_RC intent=$I
 # <<< mechanical gates
 STAGE_END gates "$T_GATES"
 
+# >>> suite reach gate (BH-7669, bin/lib/suite-reach-gate.sh)
+if [ -r "$HARNESS/bin/lib/suite-reach-gate.sh" ] && . "$HARNESS/bin/lib/suite-reach-gate.sh"; then
+  command -v suite_reach_block >/dev/null 2>&1 && suite_reach_block execute
+else
+  echo "$(STAMP) [$PROJECT/$KEY] suite-reach: bin/lib/suite-reach-gate.sh missing on $(hostname) — not run" >> "$BUILD/pipeline.log"
+fi
+# <<< suite reach gate
+
 # >>> test home diff (tests/run-build-test-home.bh-580-test.sh drives this block)
 # EXECUTE-TIME BACKSTOP for the per-ticket test-file rule (#580). The plan-time
 # finding above only sees what the planner DECLARED; this one sees what the

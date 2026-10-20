@@ -1,0 +1,12 @@
+{
+  "env": "SUITE_REACH_CAP",
+  "type": "int",
+  "default": 60,
+  "min": 0,
+  "max": 400,
+  "unit": "suites",
+  "zero_means": "off",
+  "required": false,
+  "read_in": "bin/lib/suite-reach-gate.sh",
+  "note": "BH-7669. The most suites bin/suite-reach-check.sh runs per build, in rank order (self, path, implied, glob, basename, comment). Past the cap a suite is a NOT RUN row in $BUILD/suite-reach.md, never dropped. 0 = the check runs no suite and the gate is clean."
+}

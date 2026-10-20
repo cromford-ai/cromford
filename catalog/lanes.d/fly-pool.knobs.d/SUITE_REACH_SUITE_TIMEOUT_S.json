@@ -1,0 +1,12 @@
+{
+  "env": "SUITE_REACH_SUITE_TIMEOUT_S",
+  "type": "int",
+  "default": 300,
+  "min": 30,
+  "max": 900,
+  "unit": "seconds",
+  "zero_means": null,
+  "required": false,
+  "read_in": "bin/lib/suite-reach-gate.sh",
+  "note": "BH-7669. The timeout of one suite run in bin/suite-reach-check.sh. A run that hits it is rc 124: TRANSIENT, never red. 300 s is above the slowest measured suite (224 s, bin/test-impact-gate.sh header)."
+}

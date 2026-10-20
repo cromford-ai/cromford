@@ -1,0 +1,12 @@
+{
+  "env": "SUITE_REACH_BUDGET_S",
+  "type": "int",
+  "default": 600,
+  "min": 60,
+  "max": 1800,
+  "unit": "seconds",
+  "zero_means": null,
+  "required": false,
+  "read_in": "bin/lib/suite-reach-gate.sh",
+  "note": "BH-7669. bin/suite-reach-check.sh starts no new suite after this many seconds; later suites are NOT RUN (budget) rows. A started suite can still run three times (head, base, head again), so the gate's own timeout is budget + 3 x SUITE_REACH_SUITE_TIMEOUT_S + 120 s."
+}
