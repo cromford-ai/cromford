@@ -1,0 +1,498 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PR Unblock Agent (Tackler) plan, 2026-10-20</title>
+<style>
+:root{--bg:#FCFCFC;--ink:#1A1A1A;--acc:#2563EB;--mut:#5B6472;--line:#E5E7EB;--card:#FFFFFF;--soft:#EFF4FF;--warn:#B45309;--warnbg:#FFF7ED;--ok:#047857;--okbg:#ECFDF5;--bad:#B91C1C;--badbg:#FEF2F2}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth}
+body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif}
+nav{position:sticky;top:0;z-index:10;background:rgba(252,252,252,.96);backdrop-filter:blur(6px);border-bottom:1px solid var(--line)}
+nav .in{max-width:1600px;margin:0 auto;padding:10px 20px;display:flex;flex-wrap:wrap;gap:6px 14px;align-items:center}
+nav b{margin-right:8px}
+nav a{color:var(--acc);text-decoration:none;font-size:13.5px;padding:4px 8px;border-radius:6px}
+nav a:hover{background:var(--soft)}
+main{max-width:1600px;margin:0 auto;padding:20px}
+h1{font-size:28px;margin:8px 0 4px}
+h2{font-size:21px;margin:36px 0 12px;padding-top:8px;border-top:2px solid var(--line)}
+h3{font-size:16.5px;margin:20px 0 8px}
+p,li{max-width:960px}
+.sub{color:var(--mut);margin:0 0 14px}
+.grid{display:grid;gap:14px;grid-template-columns:repeat(auto-fit,minmax(280px,1fr))}
+.two{display:grid;gap:14px;grid-template-columns:1fr 1fr}
+.three{display:grid;gap:14px;grid-template-columns:1fr 1fr 1fr}
+.card{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:14px 16px}
+.card h3{margin-top:0}
+.card.acc{border-left:4px solid var(--acc)}
+.card.warn{border-left:4px solid var(--warn);background:var(--warnbg)}
+.card.ok{border-left:4px solid var(--ok);background:var(--okbg)}
+.card.bad{border-left:4px solid var(--bad);background:var(--badbg)}
+.pill{display:inline-block;font-size:12px;font-weight:600;padding:2px 9px;border-radius:999px;background:var(--soft);color:var(--acc);margin:0 4px 4px 0;white-space:nowrap}
+.pill.ok{background:var(--okbg);color:var(--ok)}
+.pill.warn{background:var(--warnbg);color:var(--warn)}
+.pill.bad{background:var(--badbg);color:var(--bad)}
+.pill.mut{background:#F3F4F6;color:var(--mut)}
+.cols2{columns:2;column-gap:28px}
+.cols2 li{break-inside:avoid}
+table{width:100%;border-collapse:collapse;font-size:13.5px;background:var(--card)}
+th,td{border:1px solid var(--line);padding:7px 9px;vertical-align:top;text-align:left}
+th{background:#F5F7FA;cursor:pointer;user-select:none;white-space:nowrap}
+th[aria-sort="ascending"]::after{content:" \25B2";font-size:10px}
+th[aria-sort="descending"]::after{content:" \25BC";font-size:10px}
+.tw{overflow-x:auto;border-radius:8px;border:1px solid var(--line)}
+.tw table{border:0}
+code,pre{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:12.8px}
+code{background:#F3F4F6;padding:1px 5px;border-radius:4px}
+pre{background:#0F172A;color:#E2E8F0;padding:12px 14px;border-radius:8px;overflow-x:auto;line-height:1.45;max-width:100%}
+pre code{background:none;padding:0;color:inherit}
+.kv{display:grid;grid-template-columns:max-content 1fr;gap:4px 14px;font-size:13.5px}
+.kv b{color:var(--mut);font-weight:600}
+.flow{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:8px}
+.flow .st{background:var(--card);border:1px solid var(--line);border-radius:8px;padding:10px;font-size:13px;position:relative}
+.flow .st b{display:block;color:var(--acc);font-size:12px;margin-bottom:4px}
+.small{font-size:13px;color:var(--mut)}
+.tick{color:var(--ok);font-weight:700}
+.cross{color:var(--bad);font-weight:700}
+@media (max-width:900px){.two,.three{grid-template-columns:1fr}.cols2{columns:1}h1{font-size:23px}main{padding:14px}}
+</style>
+</head>
+<body>
+<nav><div class="in">
+<b>Tackler plan</b>
+<a href="#tldr">TL;DR</a><a href="#taxonomy">Decision taxonomy</a><a href="#never">Never-auto</a><a href="#arch">Architecture</a><a href="#ledger">Ledger</a><a href="#card">Escalation card</a><a href="#safety">Safety</a><a href="#rollout">Rollout</a><a href="#tests">Acceptance tests</a><a href="#metrics">Metrics</a><a href="#estimate">Estimate</a><a href="#tickets">Tickets</a><a href="#questions">Questions</a>
+</div></nav>
+<main>
+<h1>PR Unblock Agent: "Tackler"</h1>
+<p class="sub">cromford fleet, plan of 2026-10-20. Author: Mac planning session. Status: for the operator's review. No ticket is filed.</p>
+<p>In a Lancashire mill the tackler was the worker who freed a stopped loom and kept the floor running. This agent does that for the fleet: when a PR, a batch, a build, a box or a lane stalls on a decision, Tackler decides from the operator's written guidelines, acts through the harness, writes one ledger row with the rule it cited, and sends the operator a one-screen card only when no rule covers the case or the action is in a never-auto class.</p>
+
+<h2 id="tldr">TL;DR</h2>
+<div class="two">
+<div class="card acc">
+<h3>The answer is yes</h3>
+<ul>
+<li>On 2026-10-19/20 one Mac session made 36 hand decisions under the operator's standing approval in 43 hours (hub <code>logs/merge-conductor-backstop.log</code>). Each one is derivable from data the harness already holds.</li>
+<li>The stalls had real cost: one BLOCK stayed comment-only for 80 minutes with no fix round (#7556); four innocent PRs sat ejected after batch #7699; the project-6-os box hung 9 hours; a respawn loop cost $77.54 in one day.</li>
+<li>The fleet already has the parts: the staff roster and agent-core (<code>decide(level, cap, action)</code>, never lists, delegation by streak), dequeue-watch, the queue doctor, the blocked-resolver ladder, lead verdict rows, settings rows, and the alert path to Telegram.</li>
+<li>Tackler composes those parts. It adds a rulebook, a decision ledger, an escalation card and one act layer. It does not replace a lane.</li>
+</ul>
+</div>
+<div class="card">
+<h3>Shape in one screen</h3>
+<ul class="cols2">
+<li>Hub lane <code>bin/unblock.sh</code>, cron every 10 minutes, registry row <code>catalog/lanes.d/unblock.json</code>.</li>
+<li>Staff agent <code>tackler</code> in <code>staff_agents</code>; classes in <code>staff_classes</code>; never-auto classes carry <code>never_delegable=1</code>.</li>
+<li>Deterministic collectors and a JSON rulebook decide first. A model call happens only after the ledger row is claimed, and only for judgment the rules name.</li>
+<li>Model routes <code>stage.unblock</code> and <code>unblock.judge</code> are DB rows seeded from <code>model_prices</code> (Fable or Opus per current routing). No model string in code.</li>
+<li>Ledger table <code>unblock_decisions</code>: who, rule cited, evidence, action, outcome, override. Indexed per query. Archived after 180 days.</li>
+<li>Escalation card to the operator's Telegram DM through <code>bin/lane-alert.sh --critical</code>. Answer grammar <code>Tackler &lt;id&gt; &lt;option&gt;</code>. On silence it waits and re-declares once a day.</li>
+<li>Ships dark: <code>UNBLOCK_ACT=0</code> (shadow). The flip to act is a settings row on cromford only. Other projects opt in by row.</li>
+<li>11 AI coding sessions in 7 slices. Slices 1-3 build in parallel.</li>
+</ul>
+</div>
+</div>
+
+<h3>Guideline sources this plan cites</h3>
+<div class="tw"><table id="cites">
+<thead><tr><th>Code</th><th>Source</th><th>What it binds</th></tr></thead>
+<tbody>
+<tr><td>G1</td><td><code>~/.claude/projects/-Users-operator/memory/feedback_cromford_standing_merge_approval.md</code></td><td>Queue a cromford PR without asking when a lead MERGE or MERGE-WITH-NOTES binds the current head, the PR is clean, and no test was silently weakened. Never <code>gh pr merge</code>, never force-push. cromford only unless the operator extends it. Dead-shard ejects: <code>@mergifyio queue</code>.</td></tr>
+<tr><td>G2</td><td><code>feedback_mac_block_needs_verdict_row.md</code></td><td>A BLOCK is three writes: PR comment, REQUEST_CHANGES review on the head, BLOCK verdict row. Re-post on a new head. Dismiss the CHANGES_REQUESTED review when the fix passes.</td></tr>
+<tr><td>G3</td><td><code>feedback_tripwire_not_ticket_budget.md</code></td><td>No per-ticket budgets, no daily count caps. Tripwires alert and never stop a build.</td></tr>
+<tr><td>G4</td><td><code>feedback_deterministic_before_llm.md</code></td><td>Selection, dedup, caps, scheduling, verification and retraction are deterministic. The model gets only judgment.</td></tr>
+<tr><td>G5</td><td><code>feedback_context_composition_contract.md</code>, <code>docs/CONTEXT-COMPOSITION.md</code></td><td>Every lane has a manifest row in <code>catalog/context-budgets.d/</code>; context is composed per job, never accumulated.</td></tr>
+<tr><td>G6</td><td><code>feedback_lane_output_never_own_input.md</code></td><td>A lane never reads its own output. An alert only a human can clear is stated once, parked, and the wait is declared daily.</td></tr>
+<tr><td>G7</td><td><code>~/.claude/CLAUDE.md</code> "GitHub CLI: REST API, never GraphQL"</td><td>All GitHub reads and writes go through <code>gh api</code> REST, bodies through files.</td></tr>
+<tr><td>G8</td><td><code>~/.claude/CLAUDE.md</code> "AI Model Configuration", <code>docs/MODEL-ROUTES.md</code></td><td>Model selection is a DB row resolved at runtime. A hardcoded model id is a bug.</td></tr>
+<tr><td>G9</td><td><code>~/.claude/rules/release-lanes.md</code></td><td>Merges go through the queue. Knobs and flags are DB rows. A rollback is a row flip.</td></tr>
+<tr><td>G10</td><td><code>~/.claude/rules/metered-api-dedup.md</code></td><td>A persisted "already paid" check runs before the billable call. ok/empty/failed, never two outcomes.</td></tr>
+<tr><td>G11</td><td><code>~/cromford/CLAUDE.md</code> "Iron law: indexes and retention"</td><td>Every table ships with its indexes named per query, an EXPLAIN test, and a retention rule. History rows are archived, never deleted.</td></tr>
+<tr><td>G12</td><td><code>docs/MERGE-CONDUCTOR.md</code> section 6 (Eject, Re-entry BH-636), <code>docs/MERGIFY.md</code></td><td>A red batch ejects every member. A green bystander goes back once per (PR, sha). A red head is never re-queued.</td></tr>
+<tr><td>G13</td><td><code>bin/blocked-resolver.sh</code> header</td><td>The ladder is mechanical, then one fix round, then rebuild. A rebuild is never the first answer to a branch problem.</td></tr>
+<tr><td>G14</td><td><code>~/.claude/CLAUDE.md</code> "Product Board / Ticket Triage"</td><td>A product choice inside a ticket belongs to the client or the operator, never to an agent.</td></tr>
+<tr><td>G15</td><td><code>prompts/lead-review-checklist.md</code> line 99; <code>~/.claude/CLAUDE.md</code> "Speed and cost features: the proof is the metric"</td><td>An INCONCLUSIVE evidence row caps the verdict at BLOCK. The fix is evidence, not a rebuild.</td></tr>
+<tr><td>G16</td><td><code>~/.claude/CLAUDE.md</code> "Test integrity (iron rule)"</td><td>Silent test weakening is an instant BLOCK.</td></tr>
+<tr><td>G17</td><td><code>docs/GATES-VS-REPORTS.md</code></td><td>A limit that protects money, the machine or security stays hard. Everything else is a report.</td></tr>
+<tr><td>G18</td><td><code>agent-core/SPEC.md</code>, <code>bin/staff.sh</code></td><td>Kill before read. Claim before spend. <code>decide</code> is a pure function. NEVER lines refuse. One overrule demotes.</td></tr>
+<tr><td>G19</td><td><code>~/.claude/CLAUDE.md</code> "E2E / QA probes never touch client-visible surfaces", "probe the credential before building"</td><td>A live probe that creates resources is a human call.</td></tr>
+<tr><td>G20</td><td><code>~/.claude/rules/metered-api-dedup.md</code> "Billing-mode changes are architecture changes"; metered CI runners (<code>docs/CI-RUNNERS.md</code>)</td><td>Spend caps and metered capacity (CI shards) change who pays. the operator decides.</td></tr>
+<tr><td>G21</td><td><code>tasks/drain-handoff-2026-10-19.md</code>, hub <code>logs/merge-conductor-backstop.log</code> 2026-10-19 19:20Z to 2026-10-20 14:17Z</td><td>The case corpus: what a person decided, with what evidence, and what went to the operator.</td></tr>
+</tbody></table></div>
+
+<h2 id="taxonomy">Decision taxonomy: decide, act, escalate</h2>
+<p>Each row is one rule file in <code>catalog/unblock-rules.d/&lt;id&gt;.json</code>. The collector names the stall. The preconditions are predicates over the stall record and are evaluated with jq, no model. "Judge" marks the one bounded model question a rule may ask before it acts. The class is the <code>staff_classes</code> row the action counts against. The cite is what the ledger row carries.</p>
+<div class="tw"><table id="rules">
+<thead><tr><th>Rule</th><th>Stall the collector sees</th><th>Deterministic preconditions</th><th>Judge (model)</th><th>Decision and action</th><th>Class</th><th>Cites</th><th>Corpus case</th></tr></thead>
+<tbody>
+<tr><td><b>U1</b> batch culprit</td><td>A closed, unmerged <code>mergify/merge-queue/*</code> draft in the last 6 h with a failed check. Source: <code>batch_failure</code> route (#7714).</td><td>Exactly one member PR touches the file the failure line names. That PR has no newer head.</td><td>None.</td><td><b>Act.</b> Comment the finding, REQUEST_CHANGES review bound to the head, BLOCK verdict row, dequeue (<code>post_block</code>, #7713). One decision key per (PR, head).</td><td>review-block</td><td>G2, G12, G7</td><td>#7617 broke batch #7699 (STATE-PATHS-GUARD, remote-results-retention.sh:79).</td></tr>
+<tr><td><b>U2</b> bystander re-queue</td><td>A member PR ejected by a batch another PR broke (U1 found a culprit).</td><td>Own head CI green. A lead or human MERGE / MERGE-WITH-NOTES row on the current head. mergeable_state clean. Not re-queued on this head before (<code>mc_requeued_mark</code>).</td><td>None.</td><td><b>Act.</b> <code>@mergifyio queue</code> through the conductor's requeue path, witness polled. One per (PR, sha).</td><td>queue-requeue</td><td>G1, G12</td><td>#7592 #7666 #7588 #7363 re-queued 2026-10-20 13:49Z.</td></tr>
+<tr><td><b>U3</b> dead-shard re-queue</td><td>Batch failed with only cancelled or timed-out shard jobs; no test failed (the <code>batch_failure</code> dead-shard mark).</td><td>Every member: own CI green on head, standing verdict on head, clean.</td><td>None.</td><td><b>Act.</b> Re-queue every member once per (PR, sha). Name the shard cap ticket (#7620) in the ledger row.</td><td>queue-requeue</td><td>G1, G12</td><td>Batches #7612 #7613 ejected 2026-10-19 21:22Z, shards cancelled at 45 min.</td></tr>
+<tr><td><b>U4</b> standing-approval queue</td><td>An open PR with a lead or human MERGE / MERGE-WITH-NOTES row on the current head, no <code>merge-queue</code> label, not queued, for longer than <code>UNBLOCK_APPROVED_IDLE_MIN</code> (20).</td><td>Project row <code>unblock.standing_approval.&lt;project&gt;=1</code> (seeded 1 for cromford only). Not conflicting. Required checks green or running. No open CHANGES_REQUESTED review.</td><td>Only when the diff touches a test file: <code>unblock.judge</code> reads the test-file diff only and answers LEGIT, WEAKENED or UNSURE. WEAKENED = U1 path (BLOCK). UNSURE = escalate.</td><td><b>Act.</b> Post the human verdict row (MERGE-WITH-NOTES when the lead had notes), add <code>merge-queue</code>, one backstop log line naming "the operator standing approval".</td><td>queue-approve</td><td>G1, G16, G9</td><td>#7609 #7602 #7593 #7578 #7574 #7573 queued 2026-10-19 22:09Z; #7567 2026-10-20 14:17Z.</td></tr>
+<tr><td><b>U5</b> BLOCK findings not on GitHub</td><td>A lead BLOCK row on the current head, and the PR has no REQUEST_CHANGES review and no comment with findings. Report sits on the reviewing box (<code>lead_review_show</code>, #7711).</td><td>Report readable and carries BLOCK lines. No fix round running for this head.</td><td>None.</td><td><b>Act.</b> Post the BLOCK lines as the PR comment and a REQUEST_CHANGES review on the head, so the blocked-resolver's <code>review-changes-requested</code> park starts a fix round.</td><td>review-route</td><td>G2, G13</td><td>#7560 and project-6 #1977 on 2026-10-20; #7556 BLOCK comment-only for 80 min.</td></tr>
+<tr><td><b>U6</b> INCONCLUSIVE evidence cap</td><td>A lead BLOCK whose findings are only the automatic INCONCLUSIVE-evidence cap (no code finding).</td><td>Every BLOCK line matches the cap pattern from <code>bin/lead-review.sh</code> (the BH-6372.3 outcome cap). Evidence rows name the metric.</td><td><code>unblock.judge</code> confirms "cap only, no code finding" from the BLOCK lines (at most 60 lines). UNSURE = escalate.</td><td><b>Act.</b> Fix round on the existing branch with the brief "fill the evidence rows from a replay over real inputs", never a rebuild. Ledger notes the metric named.</td><td>review-route</td><td>G15, G13</td><td>#7560 on 2026-10-20: fill evidence instead of rebuilding.</td></tr>
+<tr><td><b>U7</b> lead review killed mid-run</td><td>A lead review request in status <code>running</code> whose heartbeat is older than the stale limit, or whose box restarted after the request started.</td><td>No newer request for the same head. Attempts for this head below 3.</td><td>None.</td><td><b>Act.</b> <code>lead-verdict.sh reset</code> then <code>request</code> on the same head with the same priority.</td><td>review-rerequest</td><td>G18 (claim, cap), #7711</td><td>A request stuck "running" after a box restart, 2026-10-20.</td></tr>
+<tr><td><b>U8</b> hung Orgo box</td><td><code>box_health</code> (#7710): ssh unreachable for more than <code>UNBLOCK_BOX_HUNG_MIN</code> (30), Orgo state "running", lane env-bundle failures (rc 255) in the last hour above 3.</td><td>Box is Orgo-hosted. No restart by anyone in the last 60 min. No running build claims that box in the last 10 min.</td><td>None.</td><td><b>Act.</b> <code>box_restart</code> through the Orgo API from the hub. Audit row. Watch 10 min; a second failure escalates.</td><td>infra-restart</td><td>#7710, G6 (one restart, then park)</td><td>project-6-os box, env bundle ssh rc 255 for 9 h, 2026-10-20.</td></tr>
+<tr><td><b>U9</b> throughput knob</td><td><code>pool_status</code> (#7709): queued much larger than running and the last tick ended on the parallel cap, the shed verdict, or a respawn loop (same key spawned more than <code>UNBLOCK_RESPAWN_MAX_DAY</code> (6) times with PLAN_BLOCKED).</td><td>The knob is on the DB allowlist row <code>unblock.knob_allowlist</code>. The new value is inside the registry [min,max]. The knob was not set by a person in the last 24 h. A rollback note is composed.</td><td>None.</td><td><b>Act.</b> <code>setting_set</code> (#7712) with note "why, and roll back by setting &lt;old&gt;". One change per knob per day. The row carries actor <code>tackler</code>.</td><td>infra-knob</td><td>G3, G9, G17</td><td><code>pool_tick_max_parallel</code> 4 to 12; <code>hub_load.shed=off</code>; <code>pool_record_read=1</code> (stopped $77.54/day).</td></tr>
+<tr><td><b>U10</b> branch problem</td><td>A conductor park: same-file conflict, merge-main-into-branch needed, or a test-impact orphan failure; or a dequeue-watch <code>hold</code> row of class textual-conflict or semantic-test.</td><td>The resolver's mechanical rung ran and failed, or does not apply. Fix rounds for this (PR, class) below 2.</td><td>None.</td><td><b>Act.</b> One fix round on the existing branch through the blocked-resolver (rung 2), with the conflict or the failing suite as the brief. Never rebuild first.</td><td>fix-round</td><td>G13, G12</td><td>Same-file conflicts and orphan test-impact failures routed to small fixes on 2026-10-19/20.</td></tr>
+<tr><td><b>U11</b> stale change request</td><td>A CHANGES_REQUESTED review by the Mac or by Tackler that is older than a MERGE / MERGE-WITH-NOTES row on a newer head.</td><td>The review's commit_id is not the current head. The newest verdict row on the current head is MERGE*.</td><td>None.</td><td><b>Act.</b> <code>clear_block</code> (#7713): dismiss that review only. Mergify waits on <code>#changes-requested-reviews-by=0</code>.</td><td>review-route</td><td>G2</td><td>#7553 held out of the queue by a standing review, 2026-10-20.</td></tr>
+<tr><td><b>U12</b> uncovered stall</td><td>Any stall no rule matches, or a judge answer UNSURE, or a precondition that reads as unknown (not false).</td><td>The ledger row is claimed first. No open card for the same subject and head.</td><td><code>stage.unblock</code> composes the card: what, options, recommendation, default, deadline. It never chooses.</td><td><b>Escalate.</b> One card to the operator. Park the subject. Re-declare once a day. Never act on silence.</td><td>escalate</td><td>G6, G18</td><td>Everything in the next section.</td></tr>
+</tbody></table></div>
+<p class="small">Unknown is not false. A precondition the lane cannot read (a 5xx, an unreadable report, a missing route) makes the rule not match. The stall then goes to U12, with the unreadable input named on the card. This is the fail-closed half of G4.</p>
+
+<h2 id="never">The never-auto list</h2>
+<p>These are <code>staff_classes</code> rows for agent <code>tackler</code> with <code>never_delegable=1</code> and <code>state='ask_first'</code>. The table's CHECK constraints refuse a write that would delegate one. The soul's NEVER block names them too, but the row is what the code checks (G18).</p>
+<div class="grid">
+<div class="card bad"><h3>Money and metered capacity</h3><ul><li>Any spend cap, LLM daily cap, Fly machine count or budget row.</li><li>CI shard count or shard budget on metered runners (the 12/480 to 24/1200 question after #7644).</li><li>Billing mode of any lane.</li></ul><span class="pill bad">class: spend</span><span class="pill mut">G3, G20</span></div>
+<div class="card bad"><h3>Client production</h3><ul><li>A client's production data, secrets or environment.</li><li>Any SQL write on a production database.</li><li>A migration apply outside the migration-autopilot allowlist.</li></ul><span class="pill bad">class: production</span><span class="pill mut">G19, G9</span></div>
+<div class="card bad"><h3>Resource-creating probes</h3><ul><li>A live Fly probe that creates machines, apps or volumes.</li><li>Any probe against a client-visible surface.</li></ul><span class="pill bad">class: live-probe</span><span class="pill mut">G19</span></div>
+<div class="card bad"><h3>Product and client scope</h3><ul><li>A product choice inside a ticket (#7560 P1 "confirm on nightly runs" is the operator's).</li><li>Pausing or resuming a client project (<code>pause_project</code>, #7708).</li><li>Any write to a client board.</li></ul><span class="pill bad">class: client-board</span><span class="pill mut">G14</span></div>
+<div class="card bad"><h3>Merge and deploy levers</h3><ul><li><code>gh pr merge</code> or any direct merge around the queue.</li><li>Force-push to any branch.</li><li>A deploy, a train dispatch, a revert on main.</li></ul><span class="pill bad">class: merge, deploy</span><span class="pill mut">G1, G9</span></div>
+<div class="card bad"><h3>Its own authority</h3><ul><li>Its autonomy level, any class delegation, any kill flag.</li><li><code>env/global.env</code> or any secret file.</li><li>A rule file in <code>catalog/unblock-rules.d/</code> (a rule change is a PR, reviewed as architecture).</li></ul><span class="pill bad">class: governance</span><span class="pill mut">G18</span></div>
+</div>
+<p>Two more refusals are not classes but code paths: an act-mode action on a project whose <code>unblock.project.&lt;p&gt;.mode</code> row is not <code>act</code>, and any action whose decision key already has a row with outcome <code>done</code> or <code>escalated</code> on the same head.</p>
+
+<h2 id="arch">Architecture</h2>
+<div class="three">
+<div class="card"><h3>Where it runs</h3><div class="kv"><b>Box</b><span>hub (<code>/root/harness</code>), like dequeue-watch and the queue doctor</span><b>Lane id</b><span><code>unblock</code></span><b>Script</b><span><code>bin/unblock.sh tick | tick --project &lt;p&gt; | tick --pr &lt;owner/repo#n&gt;</code></span><b>Cron</b><span><code>cron/lanes/417-unblock.cron</code>, every 10 min, offset 4 from dequeue-watch</span><b>Registry</b><span><code>catalog/lanes.d/unblock.json</code> with knobs; <code>staff_lanes</code> row (tackler, unblock)</span><b>Lock</b><span><code>locks/unblock-&lt;project&gt;.lock</code>, flock -n, never wait</span><b>Timeout</b><span>tick under <code>timeout 540</code></span></div></div>
+<div class="card"><h3>Triggers</h3><ul><li>The cron tick (the only trigger in S1-S3).</li><li><code>--pr</code> entry for a wake from the merge-conductor wake consumer (S4, optional).</li><li>A card answer (<code>bin/unblock-reply.sh</code>) runs the keyed tick for that subject at once.</li></ul></div>
+<div class="card"><h3>Staff roster rows (seeded)</h3><div class="kv"><b>staff_agents</b><span><code>tackler</code>, role unblock, accountable operator@example.com, autonomy <code>automation</code>, cap <code>autonomy</code>, soul <code>prompts/staff/tackler-soul.md</code></span><b>staff_classes</b><span>queue-requeue, queue-approve, review-block, review-route, review-rerequest, fix-round, infra-restart, infra-knob (cap autonomy, ask_first); spend, production, live-probe, client-board, merge, deploy, governance (never_delegable=1)</span><b>reports through</b><span>Archie (the Overlooker): daily digest line, weekly precision report</span></div></div>
+</div>
+
+<h3>One tick, in order</h3>
+<div class="flow">
+<div class="st"><b>0 kill</b><code>staff-kill-tackler</code>, <code>lane-off-unblock</code>, <code>unblock.enabled=0</code>: exit before any read.</div>
+<div class="st"><b>1 gate</b><code>lane_gate_or_exit unblock</code>, <code>lane_env_apply</code>, flock, project mode row.</div>
+<div class="st"><b>2 collect</b>Every <code>bin/lib/unblock/collectors/*.sh</code> prints JSONL stall records. 0 model calls. Own markers are dropped (G6).</div>
+<div class="st"><b>3 rules</b><code>rules.sh</code> loads <code>catalog/unblock-rules.d/*.json</code>, evaluates predicates with jq, picks the first matching rule by priority.</div>
+<div class="st"><b>4 claim</b>POST <code>/api/unblock/decisions/claim</code> with the decision key. Existing row = stop for this subject. Nothing is spent before this row exists (G10).</div>
+<div class="st"><b>5 decide</b><code>agent-core decide(level, cap, action)</code>: allow, ask, refuse. A NEVER match refuses and writes one warn beat.</div>
+<div class="st"><b>6 judge</b>Only when the rule names a judge question: one <code>unblock.judge</code> call, context from the rule's composition, cost on the ledger row.</div>
+<div class="st"><b>7 act / card</b>allow: <code>act.sh</code> (shadow logs WOULD_). ask or U12: <code>card.sh</code> sends the card once. Refuse: digest line.</div>
+<div class="st"><b>8 record</b>POST <code>/api/unblock/decisions/record</code> outcome. One line in <code>logs/unblock.log</code>. Tick row in <code>staff_ticks</code>.</div>
+</div>
+
+<div class="two" style="margin-top:14px">
+<div class="card"><h3>Inputs (collectors, one file per family)</h3>
+<div class="tw"><table id="collectors"><thead><tr><th>Family</th><th>Reads</th><th>Rules fed</th></tr></thead><tbody>
+<tr><td><code>collectors/queue.sh</code></td><td>Closed unmerged batch drafts (6 h window, as the queue doctor reads them); <code>GET /api/coord/batch-failure</code> (#7714); conductor <code>pr-state.tsv</code> rows ejected or BLOCKED_HUMAN; dequeue-watch hold rows; open PRs with a MERGE* verdict row on head and no queue label (<code>GET /api/coord/merge-queue/live</code>, verdict rows via <code>bin/lib/verdicts.sh</code>).</td><td>U1 U2 U3 U4</td></tr>
+<tr><td><code>collectors/review.sh</code></td><td>Lead BLOCK rows on current heads with no REQUEST_CHANGES review (REST <code>pulls/&lt;n&gt;/reviews</code>); <code>lead_review_show</code> (#7711) for the report lines; lead review requests in <code>running</code> with a stale heartbeat; CHANGES_REQUESTED reviews older than a newer MERGE row.</td><td>U5 U6 U7 U11</td></tr>
+<tr><td><code>collectors/infra.sh</code></td><td><code>box_health</code> (#7710); <code>pool_status</code> (#7709) skip reasons and respawn counts; hub load verdict; conductor parks of class conflict-unresolvable and rebase-gate-red older than the resolver's mechanical rung.</td><td>U8 U9 U10</td></tr>
+</tbody></table></div>
+<p class="small">Each collector caps its read (one page of 100 PRs, 40 fail lines, 60 BLOCK lines) and marks a cut list as <code>truncated</code>. A cut list never reads as "nothing stalled".</p>
+</div>
+<div class="card"><h3>Tools it calls (the act layer is the one writer)</h3>
+<div class="tw"><table id="tools"><thead><tr><th>Action</th><th>Existing primitive</th><th>New route (ticket)</th></tr></thead><tbody>
+<tr><td>BLOCK (comment + review + row + dequeue)</td><td><code>bin/lead-verdict.sh post ... BLOCK --source human --reviewer tackler:&lt;key&gt;</code>; <code>gh api .../pulls/&lt;n&gt;/reviews</code>; <code>mc_dequeue_label</code></td><td><code>post_block</code> #7713</td></tr>
+<tr><td>Clear a stale CR</td><td><code>gh api -X PUT .../reviews/&lt;id&gt;/dismissals</code></td><td><code>clear_block</code> #7713</td></tr>
+<tr><td>Re-queue, queue</td><td><code>mc_requeue_mergify</code>, <code>mc_requeued_record</code>, <code>@mergifyio queue</code> via <code>bin/lib/mc/queue.sh</code>; label through REST</td><td>none</td></tr>
+<tr><td>Human verdict row</td><td><code>bin/lead-verdict.sh post ... MERGE|MERGE-WITH-NOTES --source human</code>; backstop log line</td><td>none (see question 1)</td></tr>
+<tr><td>Lead re-request</td><td><code>bin/lead-verdict.sh reset</code>, <code>request</code></td><td><code>lead_review_reset/request</code> #7711</td></tr>
+<tr><td>Fix round</td><td>the blocked-resolver's fix-round entry (<code>bin/lib/br/</code> ladder rung 2) with a brief file</td><td>none</td></tr>
+<tr><td>Box restart</td><td><code>bin/box-ops-orgo.sh</code> from the hub (key stays on the hub)</td><td><code>box_restart</code> #7710</td></tr>
+<tr><td>Knob change</td><td><code>bin/harness-ctl.sh set &lt;lane&gt; &lt;KNOB&gt; &lt;v&gt;</code> / <code>PUT /api/settings</code> with note</td><td><code>setting_set</code> #7712</td></tr>
+<tr><td>Escalate</td><td><code>bin/lane-alert.sh --critical --id unblock-&lt;key&gt;</code>; answer intercept in <code>bin/orchestrate.sh</code></td><td>new <code>bin/unblock-reply.sh</code></td></tr>
+<tr><td>Read-only</td><td><code>gh api</code> REST, <code>bin/jobs-client.sh</code>, <code>bin/lib/verdicts.sh</code></td><td><code>batch_failure</code> #7714, <code>pool_status</code> #7709, <code>box_health</code> #7710, <code>lead_review_show</code> #7711</td></tr>
+</tbody></table></div>
+<p class="small">The MCP tools in #7708-#7714 wrap console routes. Tackler calls the same routes or the same bin scripts from the hub. The Mac operator and the agent then see one truth. <code>pause_project</code> (#7708) is never on Tackler's list.</p>
+</div>
+</div>
+
+<h3>Rulebook file shape</h3>
+<div class="two">
+<div><pre><code>{
+  "id": "U2-bystander-requeue",
+  "priority": 20,
+  "family": "queue",
+  "class": "queue-requeue",
+  "cites": ["G1", "G12"],
+  "match": {
+    "kind": "pr-ejected",
+    "all": [
+      ".culprit != null and .culprit != .pr",
+      ".own_ci == \"green\"",
+      ".verdict_on_head | test(\"^MERGE\")",
+      ".mergeable_state == \"clean\"",
+      ".requeued_on_head == false"
+    ]
+  },
+  "judge": null,
+  "action": { "name": "requeue", "args": { "pr": ".pr", "head": ".head" } },
+  "key": ["repo", "pr", "head", "id"],
+  "note": "A batch goes red for a sibling. A green bystander goes back once per (PR, sha)."
+}</code></pre></div>
+<div class="card"><h3>What the engine guarantees</h3><ul>
+<li>One rule per file. A new rule is a new file. The loader refuses two files with one id (lists are folders).</li>
+<li>A predicate that errors or reads null is <b>unknown</b>, and unknown never matches. The stall goes to U12 with the predicate named.</li>
+<li><code>key</code> builds the decision key: sha256 of the named fields plus the rule id. The same stall on the same head can never buy two actions.</li>
+<li><code>cites</code> must exist in <code>catalog/unblock-rules.d/_cites.json</code>. A rule with no cite fails the lint (a decision with no rule behind it is a guess).</li>
+<li><code>judge</code> names a prompt file under <code>catalog/prompts/</code> and a composition from the manifest. A judge answer is one of a closed set; anything else is UNSURE.</li>
+<li>A rule edit is a PR on this repo. The lane reads the rendered catalog of the harness commit it runs. No rule is ever a settings row.</li>
+</ul></div>
+</div>
+
+<h3>Model selection and context (G5, G8)</h3>
+<div class="two">
+<div class="card"><h3>Routes (DB rows, seeded in the S0 schema fragment)</h3><div class="kv"><b><code>stage.unblock</code></b><span>composes the U12 card. Seeded from <code>model_prices</code> at the same rung the orchestrator's decision stage rides today (Fable or Opus per current routing). The seed copies the row of <code>stage.archie</code>, the same shape as <code>0002-base-rest.sql</code> lines 3267-3275. Operators move it with <code>PUT /api/model-routes</code>.</span><b><code>unblock.judge</code></b><span>bounded judgments (test weakening, cap-only BLOCK). Seeded at the same ladder; the console can lower it later.</span><b>no route</b><span><code>bin/lib/model-route.sh</code> fails closed (rc 75). The row stays claimed with outcome <code>no-route</code> and one alert names the role. No literal fallback exists.</span></div></div>
+<div class="card"><h3>Manifest rows in <code>catalog/context-budgets.d/7720-unblock.json</code></h3>
+<div class="tw"><table><thead><tr><th>Lane</th><th>Target / ceiling</th><th>Composition</th></tr></thead><tbody>
+<tr><td><code>unblock-decide</code> (stage <code>unblock</code>)</td><td>12K / 40K</td><td>soul (static) + SOP <code>catalog/prompts/unblock-decide.md</code> (static) + ONE stall record whole (the scoped delta: at most 40 fail lines, 60 BLOCK lines, 10 verdict rows) + the near-miss rules (at most 5 files) + the last 5 ledger rows for the same subject.</td></tr>
+<tr><td><code>unblock-judge</code> (stage <code>unblock-judge</code>)</td><td>6K / 20K</td><td>SOP <code>catalog/prompts/unblock-judge.md</code> + exactly one of: the test-file diff (at most 400 lines, jq-trimmed at fetch), or the BLOCK lines. Nothing else.</td></tr>
+</tbody></table></div>
+<p class="small"><code>tests/context-budget-manifest-test.sh</code> fails the build until both rows exist. The cost rollup's ceiling check alerts when the measured mean passes the ceiling.</p></div>
+</div>
+
+<h2 id="ledger">The decision ledger</h2>
+<div class="two">
+<div><pre><code>-- worker/jobs/schema.d/202610201500-bh-NNNN-unblock-decisions.sql
+CREATE TABLE IF NOT EXISTS unblock_decisions (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  decision_key TEXT NOT NULL UNIQUE,     -- sha256(key fields + rule id)
+  agent TEXT NOT NULL DEFAULT 'tackler',
+  project TEXT NOT NULL,
+  repo TEXT,                             -- owner/name
+  subject_kind TEXT NOT NULL CHECK (subject_kind IN
+    ('pr','batch','build','box','lane','setting')),
+  subject TEXT NOT NULL,                 -- example-org/cromford#7617, box:project-6-os
+  head TEXT,                             -- sha the decision binds to
+  stall_class TEXT NOT NULL,             -- the collector's kind
+  rule_id TEXT,                          -- NULL only for U12
+  rule_cites TEXT NOT NULL,              -- "G1,G12"
+  evidence TEXT NOT NULL,                -- JSON, redacted, at most 8 KB
+  decision TEXT NOT NULL CHECK (decision IN ('act','escalate','refuse','digest')),
+  action TEXT,                           -- requeue, post_block, setting_set ...
+  action_args TEXT,                      -- JSON, redacted
+  mode TEXT NOT NULL CHECK (mode IN ('shadow','act')),
+  outcome TEXT NOT NULL DEFAULT 'claimed' CHECK (outcome IN
+    ('claimed','would','done','failed','refused','no-route',
+     'escalated','answered','expired')),
+  outcome_detail TEXT,
+  card TEXT,                             -- JSON: what, options, recommendation, default, deadline_at
+  answer TEXT, answered_by TEXT, answered_at TEXT,
+  model_calls INTEGER NOT NULL DEFAULT 0,
+  cost_usd REAL NOT NULL DEFAULT 0,
+  override_by TEXT, override_at TEXT, override_detail TEXT,
+  created_at TEXT NOT NULL, acted_at TEXT, resolved_at TEXT
+);
+-- one index per query (BH-6730):
+--   claim:   ON CONFLICT(decision_key)                 -> the UNIQUE autoindex
+--   per PR:  WHERE subject=?1 ORDER BY id DESC          -> idx_unblock_decisions_subject_id
+--   console: WHERE project=?1 ORDER BY id DESC          -> idx_unblock_decisions_project_id
+--   cards:   WHERE outcome='escalated' AND project=?1   -> idx_unblock_decisions_outcome_project
+--   metrics, retention: WHERE created_at &lt; ?1 ORDER BY created_at
+--                                                       -> idx_unblock_decisions_created
+CREATE INDEX IF NOT EXISTS idx_unblock_decisions_subject_id ON unblock_decisions(subject, id);
+CREATE INDEX IF NOT EXISTS idx_unblock_decisions_project_id ON unblock_decisions(project, id);
+CREATE INDEX IF NOT EXISTS idx_unblock_decisions_outcome_project ON unblock_decisions(outcome, project, id);
+CREATE INDEX IF NOT EXISTS idx_unblock_decisions_created ON unblock_decisions(created_at);
+INSERT OR IGNORE INTO settings (key,value,note,actor,updated_at) VALUES
+  ('retention.unblock_decisions.days','180','Tackler decisions are history of record: archived to the archive store after this many days, never deleted (BH-6774 pattern).','seed','2026-10-20T00:00:00Z'),
+  ('unblock.enabled','1','Master switch for the unblock lane. 0 exits the tick before any read.','seed','2026-10-20T00:00:00Z'),
+  ('unblock.project.cromford.mode','shadow','off | shadow | act. Shadow logs WOULD_ rows. Act is the flip the operator makes after the replay.','seed','2026-10-20T00:00:00Z'),
+  ('unblock.standing_approval.cromford','1','the operator standing approval 2026-10-18 (G1). Extend per project with a new row.','seed','2026-10-20T00:00:00Z'),
+  ('unblock.knob_allowlist','lane.fly-pool-tick.pool_tick_max_parallel,hub_load.shed,lane.fly-pool.*.pool_record_read,lane_placement.*,conductor_remote_spawn.*','Keys U9 may set, inside the registry min/max. Spend and CI shard keys are never here.','seed','2026-10-20T00:00:00Z');</code></pre></div>
+<div class="card"><h3>Ledger rules</h3><ul>
+<li><b>Claim before spend.</b> The row is inserted with outcome <code>claimed</code> before any model call or write. A conflict on <code>decision_key</code> means another tick owns it: stop (G10, G18).</li>
+<li><b>Who.</b> <code>agent</code>, plus <code>actor</code> on every settings row and verdict row it writes (<code>tackler:&lt;key12&gt;</code>). Every GitHub comment and review carries <code>&lt;!-- tackler:&lt;decision_key&gt; --&gt;</code>; the collectors drop anything that carries it (G6).</li>
+<li><b>Rule cited.</b> <code>rule_id</code> and <code>rule_cites</code> are NOT NULL except on a U12 row, where the cite is the parked class.</li>
+<li><b>Evidence.</b> The stall record as judged, capped at 8 KB, redacted by the same scrub <code>mcp/lib/console.mjs</code> uses. No secret value ever lands.</li>
+<li><b>Outcome.</b> Three outcomes for a paid judge call: an answer (ok), an empty answer (billed, terminal, treated as UNSURE), a failure (retry at most 2) (G10).</li>
+<li><b>Override.</b> S6 fills <code>override_*</code> when a person reverses the action inside 24 h: a human verdict row with the opposite verdict on the same head, a dequeue by a person after a Tackler queue, a settings row set back by a non-agent actor. One override demotes the class to ask_first (agent-core).</li>
+<li><b>Retention.</b> Rule <code>unblock_decisions.age</code> in <code>worker/jobs/src/routes/retention.js</code>: rows older than <code>retention.unblock_decisions.days</code> move to the archive store, <code>retention.dry_run</code> applies. Never a delete.</li>
+<li><b>Routes.</b> <code>POST /api/unblock/decisions/claim</code>, <code>POST /api/unblock/decisions/record</code>, <code>GET /api/unblock/decisions?project=&amp;subject=&amp;outcome=</code>, <code>POST /api/unblock/decisions/:id/answer</code>, <code>GET /api/unblock/metrics</code> (S6).</li>
+</ul></div>
+</div>
+
+<h2 id="card">The escalation card</h2>
+<div class="two">
+<div><pre><code>TACKLER CARD u-3f9a2c   cromford #7560   deadline 2026-10-21 09:00Z
+WHAT    Lead BLOCK on 7c1d9e2 has 2 findings. One is a product choice:
+        "P1: confirm the nightly-run behaviour (runs at 02:00Z vs on push)".
+        No rule covers a product choice (G14).
+EVIDENCE lead report lr-7560-7c1d9e2.md lines 12-19; ticket #7560 thread
+        last comment 2026-10-20 06:40Z (builder asks, nobody answered).
+OPTIONS 1  nightly at 02:00Z (the plan's default)
+        2  on every push to main
+        3  both, with a settings row (needs a scope change)
+RECOMMEND 1. The PRD section 4.2 says "nightly". Cost: none. Risk: none.
+DEFAULT if no answer by the deadline: PR stays BLOCKed, no fix round starts.
+        I re-state this card once a day until you answer.
+ANSWER  reply "Tackler u-3f9a2c 1" (or 2, 3, or "hold &lt;note&gt;")</code></pre></div>
+<div class="card"><h3>Card rules</h3><ul>
+<li><b>One screen.</b> At most 900 characters, plain text, no markup. <code>tests/unblock-card</code> asserts the cap and the five fields.</li>
+<li><b>Five fields, always.</b> What, options (2 to 4, numbered), recommendation with one reason, default if no answer, deadline. The default is always the safe state the subject is already in. The agent never acts on silence (the operator: "waits, never guesses").</li>
+<li><b>Delivery.</b> <code>bin/lane-alert.sh --critical --id unblock-&lt;key&gt; --severity critical</code>: the existing alert state machine sends it once to the operator's Telegram DM and suppresses repeats. The daily re-declaration is one <code>REMIND</code> through the same id (G6: declare the wait).</li>
+<li><b>Answer paths.</b> Telegram: <code>bin/orchestrate.sh</code> intercept calls <code>bin/unblock-reply.sh intercept &lt;text&gt;</code> (grammar <code>Tackler &lt;id&gt; &lt;option|hold note&gt;</code>), the same shape as Archie's intercept. Console: <code>POST /api/staff/chat</code> to agent tackler with the same text. Both land in <code>POST /api/unblock/decisions/:id/answer</code>, keyed on the command id, so a re-delivered message counts once.</li>
+<li><b>After an answer.</b> The keyed tick runs at once with the chosen option as a rule override for that subject and head only. The ledger row goes <code>answered</code>; the action it caused is a new row that cites the answer (<code>cites: ["OPERATOR:u-3f9a2c"]</code>).</li>
+<li><b>Expiry.</b> After <code>UNBLOCK_CARD_TTL_H</code> (72) with no answer the row goes <code>expired</code>, the subject stays parked, and the weekly report lists it. Nothing else happens.</li>
+<li><b>Never on a card.</b> A secret value, a client's data, a model string. The scrub runs before the send.</li>
+</ul></div>
+</div>
+
+<h2 id="safety">Safety</h2>
+<div class="grid">
+<div class="card"><h3>Kill switch and modes</h3><ul>
+<li>Settings row <code>unblock.enabled=0</code>, flag <code>lane-off-unblock</code>, <code>staff-kill-tackler</code> (the console's /staff kill button): each one stops the tick before any read.</li>
+<li>Mode per project: <code>unblock.project.&lt;p&gt;.mode = off | shadow | act</code>. Missing row = off. Only cromford is seeded, at <code>shadow</code>.</li>
+<li>Registry knob <code>UNBLOCK_ACT</code> default 0. Shadow mode writes nothing outside the ledger and logs <code>WOULD_&lt;ACTION&gt;</code>, the dequeue-watch pattern (BH-3859). The lane never flips itself.</li>
+<li>Rollback of any act-mode effect is a row: the verdict row is superseded by a newer row, a setting by its noted old value, a queue by a dequeue.</li>
+</ul></div>
+<div class="card"><h3>Budgets and tripwires (G3, G17)</h3><ul>
+<li>Per call: <code>UNBLOCK_LLM_MAX_USD</code> (0.6) through <code>AGENT_CALL_BUDGET_USD</code>. Per day: <code>LLM_USD_CAP_DAY</code> registry default 0 (unlimited), like every LLM lane; the dedup key guards spend.</li>
+<li>Tripwires alert and never stop: actions of one class in a day above 3x the 7-day baseline; the same subject claimed on 3 heads in a day; judge calls above 20 a day; a card re-declared more than 3 times. Each is one <code>lane-alert.sh --severity warn</code> with a stable id.</li>
+<li>Hard limits that stay hard: the per-call dollar budget, 2 model attempts per decision key, the GitHub quota budget (<code>gh-budget</code> skip, as dequeue-watch), one knob change per key per day, one box restart per box per hour.</li>
+</ul></div>
+<div class="card"><h3>Dedup and idempotency (G6, G10)</h3><ul>
+<li>The decision key is the condition's permanent address: no timestamp, no counter.</li>
+<li>Before any GitHub write the act layer re-reads the head and refuses on a moved head (the lead-verdict.sh rule, exit 3).</li>
+<li>Before a comment or review it searches for its own marker on that head; found = <code>done</code>, no second write.</li>
+<li>A requeue goes through <code>mc_requeued_mark</code> and <code>mc_requeued_record</code>, so the conductor and Tackler share one once-per-(PR, sha) memory.</li>
+<li>Collectors drop every item that carries a <code>tackler:</code> marker or a <code>staff:</code> label. Its own ledger is read only for the last 5 rows of the same subject, as context, never as a finding.</li>
+</ul></div>
+<div class="card"><h3>Audit</h3><ul>
+<li>Every decision is one ledger row. Every write names the row in its actor or marker. The Mission Control page (S6) lists rows newest first with the rule cite and the evidence, sortable.</li>
+<li>Every tick posts a <code>staff_ticks</code> row (phase, counts, rc) through the staff activity route, so a silent lane shows as silent.</li>
+<li>The daily digest carries one Tackler line: decisions, acts, cards open, overrides. Archie's weekly report carries precision per class and any promotion to approve.</li>
+<li>Tests run with stubs for gh, the jobs API and agent-call: every test counts calls, and a second tick on the same fixture must make 0 writes.</li>
+</ul></div>
+</div>
+
+<h2 id="rollout">Rollout in vertical slices</h2>
+<p>Each slice ends in a state a person can see: a ledger row, a log line, a card. S1, S2 and S3 share no file and build in parallel after S0. The flip to act mode is a settings row, not a merge.</p>
+<div class="tw"><table id="slices"><thead><tr><th>Slice</th><th>Scope</th><th>Visible end state</th><th>Blocked by</th><th>Sessions</th></tr></thead><tbody>
+<tr><td><b>S0</b> contract</td><td>Schema fragment (table, indexes, seeds, routes <code>stage.unblock</code> and <code>unblock.judge</code>, staff rows), worker routes, retention rule, lane registry and cron, context manifest, soul, rule schema and cites file, <code>bin/unblock.sh</code> skeleton, empty seams for collectors, rules, act, judge, card.</td><td>A tick on the hub exits 0 with "0 collectors, 0 rows". The console's /staff page lists tackler in observe mode. <code>EXPLAIN QUERY PLAN</code> test passes at 50k rows.</td><td>none</td><td>1</td></tr>
+<tr><td><b>S1</b> queue family, shadow</td><td><code>collectors/queue.sh</code>, <code>rules.sh</code> engine, rules U1-U4, fixtures from batch #7699 and the 2026-10-19 ejects.</td><td>Shadow rows <code>would</code> for U1-U4 on cromford. The corpus replay matches the Mac session's decisions 1:1.</td><td>S0, #7714</td><td>2</td></tr>
+<tr><td><b>S2</b> review family, shadow</td><td><code>collectors/review.sh</code>, <code>judge.sh</code>, judge prompt, rules U5 U6 U7 U11, fixtures from #7560, #7556, #7553.</td><td>Shadow rows for the review family, with judge answers recorded and priced.</td><td>S0, #7711, #7713</td><td>2</td></tr>
+<tr><td><b>S3</b> infra family and the card, shadow</td><td><code>collectors/infra.sh</code>, rules U8 U9 U10, U12 card composer, <code>card.sh</code>, <code>bin/unblock-reply.sh</code>, the orchestrate intercept line, decide prompt, the infra schema fragment (allowlist row).</td><td>Shadow rows for infra. A U12 card is composed into the ledger (not sent) and reads under 900 chars. The reply grammar records an answer.</td><td>S0, #7709, #7710, #7712</td><td>2</td></tr>
+<tr><td><b>S4</b> act mode on cromford</td><td><code>act.sh</code> (the one writer), <code>tripwire.sh</code>, refusal paths (never-auto, no opt-in, moved head, marker found), card sending. The flip: <code>unblock.project.cromford.mode=act</code> and <code>UNBLOCK_ACT=1</code>, by the operator, after a zero-mismatch replay report.</td><td>Real actions on cromford with ledger rows <code>done</code>. First card delivered to the operator's DM and answered.</td><td>S1, S2, S3</td><td>1</td></tr>
+<tr><td><b>S5</b> per-project opt-in</td><td><code>scope.sh</code>, per-project mode and standing-approval rows, project-scoped rule predicates, project lock and per-project dispatch (<code>pl_lane_dispatch</code> as dequeue-watch).</td><td>A second project runs in shadow by one row; act by a second row. cromford unchanged.</td><td>S4</td><td>1</td></tr>
+<tr><td><b>S6</b> metrics and overrides</td><td><code>override.sh</code>, <code>bin/unblock-metrics.sh</code>, <code>GET /api/unblock/metrics</code>, the console page, the digest line, the weekly precision report through Archie.</td><td>The four metrics below on the console, daily, with a 7-day trend.</td><td>S4</td><td>2</td></tr>
+</tbody></table></div>
+
+<h2 id="tests">Acceptance tests per slice</h2>
+<p>Every test is red first. Fixtures are JSON stall records built from the corpus in <code>tests/fixtures/unblock/</code>. Stubs replace gh, the jobs API, agent-call and the Orgo client and count every call. Suites run under <code>HARNESS_TEST_SANDBOX=1</code> like the rest of <code>tests/</code>.</p>
+<div class="grid">
+<div class="card"><h3>S0 <code>tests/unblock-contract.bh-NNNN-test.sh</code></h3><ol>
+<li>The schema fragment applies twice with no error (IF NOT EXISTS, INSERT OR IGNORE).</li>
+<li>At 50,000 seeded rows, EXPLAIN QUERY PLAN for the four queries names an index and no SCAN.</li>
+<li>A write that sets <code>never_delegable=1</code> and <code>state='delegated'</code> on a tackler class fails the CHECK.</li>
+<li><code>unblock.enabled=0</code>, <code>lane-off-unblock</code>, <code>staff-kill-tackler</code>: each exits 0 with 0 reads (stub counts).</li>
+<li>A tick with no collectors writes 0 ledger rows and one log line.</li>
+<li>The context manifest test and the lanes knob lint pass with the new rows.</li>
+<li>A role with no model route: outcome <code>no-route</code>, 0 vendor calls, one alert naming the role.</li>
+</ol></div>
+<div class="card"><h3>S1 <code>tests/unblock-queue-rules.bh-NNNN-test.sh</code></h3><ol>
+<li><b>Batch #7699 fixture</b> (members #7617 #7592 #7666 #7588 #7363, log names remote-results-retention.sh:79, only #7617 touches it): U1 matches #7617 with cites G2,G12; U2 matches the other four; shadow rows read WOULD_POST_BLOCK and WOULD_REQUEUE; 0 GitHub writes.</li>
+<li><b>Dead-shard fixture</b> (batches #7612 #7613, shards cancelled at 45 min, no failed test): U3 matches every member; a member with a red own CI is excluded and named.</li>
+<li><b>Standing approval fixture</b> (#7609 lead MWN on head, clean, no test files): U4 matches with cites G1. The same PR on project-6-os (no row): no match, U12 row with "no standing approval row".</li>
+<li>A member whose verdict row binds an older head: no U2 match (unknown is not false).</li>
+<li>A second tick over the same fixtures writes 0 new rows (decision key conflict).</li>
+<li>A stall record carrying <code>&lt;!-- tackler:... --&gt;</code> is dropped by the collector.</li>
+</ol></div>
+<div class="card"><h3>S2 <code>tests/unblock-review-rules.bh-NNNN-test.sh</code></h3><ol>
+<li><b>#7556 fixture</b> (lead BLOCK row, findings only in a report on the box, no REQUEST_CHANGES): U5 matches; the would-action carries the BLOCK lines and the head.</li>
+<li><b>#7560 fixture</b> (BLOCK lines are only the INCONCLUSIVE cap): the judge stub answers CAP_ONLY; U6 matches with a fix-round brief that names the metric; 1 model call recorded with its cost; the second tick makes 0 model calls.</li>
+<li>Judge stub answers UNSURE: U12 row, card composed, 0 actions.</li>
+<li>Judge stub returns empty: outcome recorded as billed and terminal, treated as UNSURE, 0 retries.</li>
+<li><b>Stuck request fixture</b> (status running, heartbeat 40 min old): U7 would reset and re-request once; at attempt 3 it escalates.</li>
+<li><b>#7553 fixture</b> (Mac CHANGES_REQUESTED on an old head, MERGE row on the new head): U11 would dismiss that review id only.</li>
+<li>Standing approval with a test-file diff that deletes an assertion: judge stub WEAKENED; U4 does not match; U1-style BLOCK would-action with cite G16.</li>
+</ol></div>
+<div class="card"><h3>S3 <code>tests/unblock-infra-rules.bh-NNNN-test.sh</code>, <code>tests/unblock-card.bh-NNNN-test.sh</code></h3><ol>
+<li><b>project-6-os fixture</b> (ssh rc 255 for 9 h, Orgo running, 14 env-bundle failures): U8 would restart; the same box with an answer 3 min ago: no match.</li>
+<li><b>Pool fixture</b> (126 queued, 2 running, tick ended on cap 4): U9 would set <code>pool_tick_max_parallel</code> to a value inside [min,max] with a note that names the old value. A key not on the allowlist (CI_MAX_SHARDS): U12, class spend, card composed.</li>
+<li><b>Respawn fixture</b> (one key spawned 9 times with PLAN_BLOCKED): U9 would set <code>pool_record_read=1</code> for that project only.</li>
+<li>Conflict park fixture: U10 would start one fix round; at 2 rounds spent: U12.</li>
+<li>Card: five fields present, at most 900 chars, no secret from a fixture that contains one, deadline = now + TTL.</li>
+<li>Reply grammar: <code>Tackler u-3f9a2c 1</code> records answer 1 once for two deliveries with one command id; <code>Tackler u-xxxx 9</code> (no such option) answers "not an option" and records nothing.</li>
+<li>Expired card: row <code>expired</code>, 0 actions, one REMIND per day through the alert id, never a second FIRE.</li>
+</ol></div>
+<div class="card"><h3>S4 <code>tests/unblock-act.bh-NNNN-test.sh</code></h3><ol>
+<li>With <code>UNBLOCK_ACT=1</code> and mode act, the #7699 fixture produces, in order: comment, REQUEST_CHANGES review bound to the head, BLOCK verdict row, dequeue on #7617; then four requeues. Call counts exact.</li>
+<li>Head moved between claim and act: 0 writes, outcome <code>refused</code> "head moved".</li>
+<li>Marker already on the head: 0 writes, outcome <code>done</code>.</li>
+<li>Mode shadow for the project: 0 writes even with <code>UNBLOCK_ACT=1</code>.</li>
+<li>A never-auto class in a rule file: the loader refuses the file; a U12 of class spend never reaches act.sh.</li>
+<li>Tripwire: 4x the baseline in one day fires one warn alert and the next action still runs (never stops).</li>
+<li>The corpus replay in act mode against stubs produces the same action list the backstop log recorded on 2026-10-19/20; the diff is empty.</li>
+</ol></div>
+<div class="card"><h3>S5 and S6</h3><ol>
+<li>S5: a project with no mode row makes 0 rows; <code>shadow</code> makes would rows; <code>act</code> acts; U4 on a project with no standing-approval row escalates.</li>
+<li>S5: two projects tick in parallel on separate locks; one slow project does not hold the other.</li>
+<li>S6: a human MERGE row on a head Tackler BLOCKed inside 24 h sets <code>override_by</code> and demotes the class to ask_first with a <code>staff_autonomy_changes</code> row.</li>
+<li>S6: metrics over a seeded week: stall hours median, decisions/day, escalations/day, override rate, with the exact expected numbers.</li>
+<li>S6: the console page sorts on every header and links each row to the PR or the box.</li>
+</ol></div>
+</div>
+
+<h2 id="metrics">Metrics with before and after targets</h2>
+<p>Before numbers come from the drain log and the hub logs read on 2026-10-20. Where a number was not recorded, S1 shadow measures it from the ledger before the flip.</p>
+<div class="tw"><table id="metrics-t"><thead><tr><th>Metric</th><th>Definition</th><th>Before (2026-10-19/20)</th><th>Target after act mode on cromford</th><th>Measured by</th></tr></thead><tbody>
+<tr><td>Stall hours</td><td>First stall signal (eject, BLOCK row, stuck request, box unreachable) to the unblock action or the card send, per subject</td><td>#7556: 80 min to a fix-round park, then open 2 days. project-6-os box: 9 h. Four bystanders of #7699: hours (not recorded; shadow measures). #7560: 1 day to a routing.</td><td>Median at most 20 min (2 ticks). p95 at most 60 min. Box: at most 40 min.</td><td><code>unblock_decisions.created_at - evidence.stall_at</code>; S6 metrics route</td></tr>
+<tr><td>Decisions per day</td><td>Ledger rows with decision act and outcome done</td><td>About 20 per day, all by a Mac session by hand (36 standing-approval lines in 43 h)</td><td>At least 15 per day by Tackler on cromford; hand decisions for the covered classes: 0</td><td>Ledger count; backstop log lines by a Mac actor</td></tr>
+<tr><td>Escalations per day</td><td>Cards sent</td><td>About 3 per day went to the operator (6 items in "Waiting on the operator"); 1 of them was not needed (project-6 max_parallel_checks)</td><td>At most 3 per day, every one in a never-auto class or an uncovered case; 0 expired without a daily re-declaration</td><td>Rows with outcome escalated, answered, expired</td></tr>
+<tr><td>Wrong-decision rate</td><td>Overrides by the operator inside 24 h divided by acts</td><td>Not measurable (no ledger)</td><td>Replay before the flip: 0 mismatches against the corpus. After the flip: under 5% per week; one override demotes the class</td><td><code>override_by IS NOT NULL</code> per class and week; <code>staff_autonomy_changes</code></td></tr>
+<tr><td>Lane cost</td><td>cost_rows stages unblock and unblock-judge</td><td>0 (Mac session cost instead: not attributed)</td><td>Under $5 per day; judge calls under 20 per day; a tripwire alert at 3x</td><td><code>GET /api/metrics/llm-spend</code>; the daily digest line</td></tr>
+<tr><td>Coverage</td><td>Stalls with a rule match divided by stalls seen</td><td>n/a</td><td>At least 80% after S3; every U12 in a week is read and either gets a rule file or a never-auto class</td><td>Ledger rule_id NULL ratio; the weekly report</td></tr>
+</tbody></table></div>
+
+<h2 id="estimate">Estimate (AI coding sessions)</h2>
+<div class="grid">
+<div class="card"><h3>By slice</h3><div class="kv"><b>S0</b><span>1 session</span><b>S1</b><span>2 sessions</span><b>S2</b><span>2 sessions</span><b>S3</b><span>2 sessions</span><b>S4</b><span>1 session</span><b>S5</b><span>1 session</span><b>S6</b><span>2 sessions</span><b>Total</b><span>11 sessions; S1-S3 in parallel, so 3 waves of wall clock plus the review rounds</span></div></div>
+<div class="card"><h3>Dependencies outside this plan</h3><ul><li>#7714 (<code>batch_failure</code> route) before S1 acts; S1 can start with a fixture route.</li><li>#7711, #7713 before S2; #7709, #7710, #7712 before S3. Each slice ships its collector against the route's declared shape and a fixture.</li><li>Question 1 (verdict identity) decides whether S4 needs one more worker slice (half a session).</li></ul></div>
+<div class="card"><h3>What is not in scope</h3><ul><li>No change to dequeue-watch, the queue doctor, the blocked-resolver or the conductor. Tackler reads their parks and holds.</li><li>No new Telegram bot, no new channel.</li><li>No per-ticket budget, no daily action cap (G3).</li><li>No conductor WINDOW_DEFERRED fix (13,047 lines on the hub; that is #6000 and #7376).</li></ul></div>
+</div>
+
+<h2 id="tickets">Ticket list (not filed; the operator reviews first)</h2>
+<p>One ai-build ticket per slice. Each lists only the files it creates or edits (one owner per file; the seams are stub files S0 creates and a later slice fills). Verify-only files are not listed. Test names get the BH number at filing.</p>
+<div class="grid">
+<div class="card acc"><h3>UNB-0: Tackler contract: ledger, roster rows, lane skeleton and seams</h3>
+<div class="kv"><b>Files</b><span><code>worker/jobs/schema.d/202610201500-bh-NNNN-unblock-decisions.sql</code> (new); <code>worker/jobs/src/routes/unblock-decisions.js</code> (new; registered the way <code>staff-findings.js</code> is); <code>worker/jobs/src/routes/retention.js</code> (+1 rule, the one shared-file edit); <code>catalog/lanes.d/unblock.json</code> (new); <code>cron/lanes/417-unblock.cron</code> (new); <code>catalog/context-budgets.d/7720-unblock.json</code> (new); <code>prompts/staff/tackler-soul.md</code> (new); <code>catalog/unblock-rules.d/_schema.json</code>, <code>_cites.json</code> (new); <code>bin/unblock.sh</code> (new); seams <code>bin/lib/unblock/{collect,rules,act,judge,card,scope,tripwire}.sh</code> and <code>bin/lib/unblock/collectors/.keep</code> (new, each a module header and a no-op function); <code>bin/lib/unblock/MODULES</code> (generated).</span><b>Blocked-by</b><span>none</span><b>Red-first tests</b><span><code>tests/unblock-contract.bh-NNNN-test.sh</code> cases 1-7 above; plus <code>tests/context-budget-manifest-test.sh</code> and <code>tests/lanes-knob-lint</code> stay green.</span></div></div>
+<div class="card"><h3>UNB-1: queue family in shadow (U1-U4)</h3>
+<div class="kv"><b>Files</b><span><code>bin/lib/unblock/collectors/queue.sh</code> (new); <code>bin/lib/unblock/rules.sh</code> (fills the seam); <code>catalog/unblock-rules.d/U1-batch-culprit.json</code>, <code>U2-bystander-requeue.json</code>, <code>U3-dead-shard-requeue.json</code>, <code>U4-standing-approval.json</code> (new); <code>tests/fixtures/unblock/batch-7699.json</code>, <code>ejects-20261019.json</code>, <code>approved-7609.json</code> (new).</span><b>Blocked-by</b><span>UNB-0; #7714 (route shape; a fixture stands in until it merges)</span><b>Red-first tests</b><span><code>tests/unblock-queue-rules.bh-NNNN-test.sh</code> cases 1-6 above.</span></div></div>
+<div class="card"><h3>UNB-2: review family in shadow (U5, U6, U7, U11) with the judge</h3>
+<div class="kv"><b>Files</b><span><code>bin/lib/unblock/collectors/review.sh</code> (new); <code>bin/lib/unblock/judge.sh</code> (fills the seam); <code>catalog/prompts/unblock-judge.md</code> (new); <code>catalog/unblock-rules.d/U5-block-findings-route.json</code>, <code>U6-inconclusive-cap.json</code>, <code>U7-lead-rerequest.json</code>, <code>U11-stale-cr-dismiss.json</code> (new); <code>tests/fixtures/unblock/block-7556.json</code>, <code>cap-7560.json</code>, <code>stuck-request.json</code>, <code>stale-cr-7553.json</code>, <code>test-weakened.diff</code> (new).</span><b>Blocked-by</b><span>UNB-0; #7711, #7713</span><b>Red-first tests</b><span><code>tests/unblock-review-rules.bh-NNNN-test.sh</code> cases 1-7 above; the judge stub counts calls and returns LEGIT, WEAKENED, CAP_ONLY, UNSURE, or empty.</span></div></div>
+<div class="card"><h3>UNB-3: infra family in shadow (U8-U10) and the escalation card (U12)</h3>
+<div class="kv"><b>Files</b><span><code>bin/lib/unblock/collectors/infra.sh</code> (new); <code>bin/lib/unblock/card.sh</code> (fills the seam); <code>catalog/prompts/unblock-decide.md</code> (new); <code>bin/unblock-reply.sh</code> (new); <code>bin/orchestrate.sh</code> (+1 intercept line after Archie's, the one shared-root edit); <code>worker/jobs/schema.d/202610201530-bh-NNNN-unblock-infra.sql</code> (new: allowlist row, UNBLOCK_BOX_HUNG_MIN and UNBLOCK_RESPAWN_MAX_DAY seeds); <code>catalog/unblock-rules.d/U8-box-restart.json</code>, <code>U9-throughput-knob.json</code>, <code>U10-branch-fix-round.json</code>, <code>U12-escalate.json</code> (new); <code>tests/fixtures/unblock/box-project-6-os.json</code>, <code>pool-project-6.json</code>, <code>respawn-loop.json</code>, <code>conflict-park.json</code> (new).</span><b>Blocked-by</b><span>UNB-0; #7709, #7710, #7712</span><b>Red-first tests</b><span><code>tests/unblock-infra-rules.bh-NNNN-test.sh</code> cases 1-4; <code>tests/unblock-card.bh-NNNN-test.sh</code> cases 5-7 above.</span></div></div>
+<div class="card warn"><h3>UNB-4: act mode on cromford (the one writer, refusals, tripwires)</h3>
+<div class="kv"><b>Files</b><span><code>bin/lib/unblock/act.sh</code> (fills the seam); <code>bin/lib/unblock/tripwire.sh</code> (fills the seam); <code>docs/notes/2026-10-NN-bh-NNNN-unblock-act.md</code> (new: the flip procedure and the rollback rows).</span><b>Blocked-by</b><span>UNB-1, UNB-2, UNB-3</span><b>Red-first tests</b><span><code>tests/unblock-act.bh-NNNN-test.sh</code> cases 1-7 above, with the corpus replay diff empty.</span><b>Flip (not in the ticket)</b><span>the operator or a Mac session sets <code>unblock.project.cromford.mode=act</code> and <code>lane.unblock.unblock_act=1</code> after reading the shadow report. Rollback: set either row back.</span></div></div>
+<div class="card"><h3>UNB-5: per-project opt-in</h3>
+<div class="kv"><b>Files</b><span><code>bin/lib/unblock/scope.sh</code> (fills the seam); <code>worker/jobs/schema.d/202610201600-bh-NNNN-unblock-projects.sql</code> (new: one <code>unblock.project.&lt;p&gt;.mode=off</code> row per fleet project, INSERT OR IGNORE); <code>docs/notes/2026-10-NN-bh-NNNN-unblock-opt-in.md</code> (new).</span><b>Blocked-by</b><span>UNB-4</span><b>Red-first tests</b><span><code>tests/unblock-scope.bh-NNNN-test.sh</code>: S5 cases 1-2 above.</span></div></div>
+<div class="card"><h3>UNB-6: metrics, override detection, console page, weekly report</h3>
+<div class="kv"><b>Files</b><span><code>bin/lib/unblock/override.sh</code> (new); <code>bin/unblock-metrics.sh</code> (new); <code>worker/jobs/src/routes/unblock-metrics.js</code> (new); <code>console/pages/unblock.*</code> (new, through <code>bin/lib/console-pages.sh</code>); <code>bin/staff/tackler-report.sh</code> (new: the weekly lines Archie sends); <code>cron/lanes/418-unblock-metrics.cron</code> (new).</span><b>Blocked-by</b><span>UNB-4</span><b>Red-first tests</b><span><code>tests/unblock-metrics.bh-NNNN-test.sh</code>: S6 cases 3-5 above; the console page passes the sortable-headers check.</span></div></div>
+</div>
+
+<h2 id="questions">Open questions for the operator</h2>
+<ol>
+<li><b>Verdict identity.</b> Today the Mac posts <code>--source human</code> rows under your standing approval, and <code>human_verdict_mode=shadow</code> records a hub post as an UNVERIFIED human verdict. Option A: Tackler posts <code>--source human --reviewer tackler:&lt;key&gt;</code> (works today, the merge lanes act on it). Option B: the worker gets a source <code>agent</code> that the <code>lead-verdict</code> status treats like human only where <code>unblock.project.&lt;p&gt;.mode=act</code>. B is cleaner and costs half a session more.</li>
+<li><b>Box restart (U8).</b> Delegated from day one in act mode, or ask-first until 5 agreements (<code>staff.delegate_after=5</code>)?</li>
+<li><b>Knob allowlist (U9).</b> Proposed: <code>lane.fly-pool-tick.pool_tick_max_parallel</code>, <code>hub_load.shed</code>, <code>lane.fly-pool.*.pool_record_read</code>, <code>lane_placement.*</code>, <code>conductor_remote_spawn.*</code>, always inside the registry min and max. Confirm, add or remove.</li>
+<li><b>Second project.</b> Which project opts in after cromford (project-6-os?), and is a lead MERGE on the current head enough there, or do you want a Mac adversarial review as well before Tackler queues?</li>
+<li><b>Card channel.</b> A critical alert to your DM through the alert path (proposed), or Archie's Telegram topic? One of them must be the card's home so the answer grammar listens in one place.</li>
+</ol>
+<p class="small">Investigation sources: the memory files named in the cites table, <code>~/.claude/CLAUDE.md</code>, <code>~/.claude/rules/*.md</code>, <code>~/cromford/CLAUDE.md</code>, <code>docs/AGENT_STAFF_PLAN_2026-10.html</code>, <code>agent-core/SPEC.md</code>, <code>bin/staff.sh</code>, <code>bin/dequeue-watch.sh</code>, <code>bin/archie-fm-queue.sh</code>, <code>bin/blocked-resolver.sh</code>, <code>bin/lead-verdict.sh</code>, <code>bin/lib/dequeue-watch/act.sh</code>, <code>worker/jobs/schema.d/0010-bh-5559-staff-charter.sql</code>, <code>202610160214-bh-6744-landing-decisions.sql</code>, tickets #7708-#7714, hub logs and settings cache read on 2026-10-20 (read-only).</p>
+</main>
+<script>
+document.querySelectorAll('table').forEach(function(t){
+  var ths=t.querySelectorAll('thead th');
+  ths.forEach(function(th,i){
+    th.addEventListener('click',function(){
+      var tb=t.querySelector('tbody'); if(!tb) return;
+      var rows=Array.prototype.slice.call(tb.querySelectorAll('tr'));
+      var asc=th.getAttribute('aria-sort')!=='ascending';
+      ths.forEach(function(h){h.removeAttribute('aria-sort')});
+      th.setAttribute('aria-sort',asc?'ascending':'descending');
+      rows.sort(function(a,b){
+        var x=(a.children[i]||{}).textContent||'',y=(b.children[i]||{}).textContent||'';
+        var nx=parseFloat(x),ny=parseFloat(y);
+        if(!isNaN(nx)&&!isNaN(ny)) return asc?nx-ny:ny-nx;
+        return asc?x.localeCompare(y):y.localeCompare(x);
+      });
+      rows.forEach(function(r){tb.appendChild(r)});
+    });
+  });
+});
+</script>
+</body>
+</html>
