@@ -2,11 +2,11 @@
   "env": "CI_MAX_SHARDS",
   "read_in": "bin/ci-plan-settings.sh",
   "type": "int",
-  "default": 12,
+  "default": 24,
   "min": 1,
   "max": 64,
   "unit": "shards",
   "zero_means": null,
   "required": true,
-  "note": "BH-6876: the most shard jobs one Harness CI run fans out to. bin/ci-plan-settings.sh projects it into the repo variable CI_MAX_SHARDS, which bin/ci-plan.sh reads as the cap on its time sizing (and on the count rule). A whole number in 1..64; anything else is refused (warn alert ci-plan-settings-sizing:<slug>, the old variable stays). Cost: each shard is one more job, so more shards add job setup minutes (checkout, node, apt), not suite minutes. 12 is the value the operator approved as a repo variable on 2026-10-15 15:05Z (BH-6876 comment 6197071504). The code fallback with no variable is 8."
+  "note": "BH-6876: the most shard jobs one Harness CI run fans out to. bin/ci-plan-settings.sh projects it into the repo variable CI_MAX_SHARDS, which bin/ci-plan.sh reads as the cap on its time sizing (and on the count rule). A whole number in 1..64; anything else is refused (warn alert ci-plan-settings-sizing:<slug>, the old variable stays). Cost: each shard is one more job, so more shards add job setup minutes (checkout, node, apt), not suite minutes. 12 is the value the operator approved as a repo variable on 2026-10-15 15:05Z (BH-6876 comment 6197071504). The code fallback with no variable is 8. BH-7620 (2026-10-19): default 12 -> 24, so the 1200 s budget can bind on a full batch (at most about 24400 s of suite time, 12 x 2036 s, needs about 21 shards). With 12 the planner hit the cap and planned 34 min shards; three batches in parallel then ran shards past the 45 min job cap and Mergify ejected green batches. Cost: each extra shard is one more job setup (about 1-2 min), against 12 x 45 runner minutes for one avoided ejection."
 }

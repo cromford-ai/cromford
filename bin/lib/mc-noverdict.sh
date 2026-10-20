@@ -38,6 +38,9 @@
 #              to bej_reentry_gate's rule. A comment that cannot be read, or
 #              that lists a check that is not an Actions run, is not unread
 #              here: bej_reentry_gate's rule decides at once.
+# The settle pass asks nv_eject_note first (through mc_eject_conflict_note),
+# so a no-verdict ejection is not counted as a strike: a PR with an earlier
+# ejection on an older head still gets its one requeue (BH-7620).
 # A head the arm already re-queued never reaches this gate again (the arm
 # stops on its `requeued` mark first), so the second ejection of a no-verdict
 # head is `queue-ejected-twice` as before. nv_twice_note, asked first by
@@ -156,6 +159,32 @@ nv_batch_word() {
   fi
   NV_WORD="$w"
   mc_attempt_put "nvv $key $head $NV_CID $w ${NV_DRAFT:--} ${NV_RUNS:--} ${NV_SHARDS:--}"
+  return 0
+}
+
+# nv_eject_note <owner/repo> <key> <pr-url> <head> -> rc 0
+#   Asked by mc_eject_conflict_note at the settle pass, BEFORE the strike count
+#   reads the ledger (BH-7620). A batch whose shards hit the job cap and left no
+#   verdict is infra, not a strike. nv_batch_word classifies the ejection and
+#   caches its `nvv` line, the same line nv_gate reads on the next tick (so the
+#   jobs and the log are read once). mc_eject_strikes leaves an `ejected` line
+#   out of the count when the newest `nvv` line of that head says noverdict
+#   and the head has no `reejected` line.
+#     noverdict  log EJECTED_NOVERDICT once per head
+#     real/none  nothing (the ejection counts)
+#     rc 2       log EJECTED_NOVERDICT_UNREAD once per head; the ejection
+#                counts. No `nvunread` line: that counter is nv_gate's.
+#     rc 3       nothing: the readers are not loaded, or nothing here can
+#                classify the dequeue (the ejection counts)
+nv_eject_note() {
+  local slug="$1" key="$2" head="$4" rc=0
+  [ -n "$key" ] && [ -n "$head" ] || return 0
+  nv_batch_word "$slug" "${key##*#}" "$key" "$head" || rc=$?
+  if [ "$rc" = 0 ] && [ "$NV_WORD" = noverdict ]; then
+    _bej_log_once EJECTED_NOVERDICT "$key" "$head" "draft #${NV_DRAFT:-?} run ${NV_RUNS:-?}: shard(s) ${NV_SHARDS//,/, } left no verdict; not a strike, one requeue allowed"
+  elif [ "$rc" = 2 ]; then
+    _bej_log_once EJECTED_NOVERDICT_UNREAD "$key" "$head" "whether its batch left no verdict could not be read at the ejection; it counts as a strike"
+  fi
   return 0
 }
 

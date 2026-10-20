@@ -2,11 +2,11 @@
   "env": "CI_SHARD_BUDGET_S",
   "read_in": "bin/ci-plan-settings.sh",
   "type": "int",
-  "default": 480,
+  "default": 1200,
   "min": 60,
   "max": 3600,
   "unit": "seconds",
   "zero_means": null,
   "required": true,
-  "note": "BH-6876: the per-shard budget in seconds of suite time (no job setup). bin/ci-plan-settings.sh projects it into the repo variable CI_SHARD_BUDGET_S, and bin/ci-plan.sh uses the fewest shards whose slowest one is within it, by the weights of bin/ci-durations.sh fetch. A suite longer than the budget is said as `over budget` on the plan's sizing line. A whole number in 60..3600; anything else is refused (warn alert ci-plan-settings-sizing:<slug>). Lower = more shards and more setup minutes. The code fallback with no variable is 480."
+  "note": "BH-6876: the per-shard budget in seconds of suite time (no job setup). bin/ci-plan-settings.sh projects it into the repo variable CI_SHARD_BUDGET_S, and bin/ci-plan.sh uses the fewest shards whose slowest one is within it, by the weights of bin/ci-durations.sh fetch. A suite longer than the budget is said as `over budget` on the plan's sizing line. A whole number in 60..3600; anything else is refused (warn alert ci-plan-settings-sizing:<slug>). Lower = more shards and more setup minutes. The code fallback with no variable is 480. BH-7620 (2026-10-19): default 480 -> 1200. At 480 the 12-shard cap always bound: run 39320354238 planned `slowest est 2036s of budget 480s, cap 12; cap reached`, and under 3 parallel batches 5 of its shards were cancelled at 45.4 min (the job cap), so they ran at least 1.33x that estimate. 1.33 is a lower bound (the cap cut those shards off). 1200 s (20 min) keeps a shard under the 45 min cap up to a 2.25x slowdown, is under the ticket's 25 min plan ceiling, and is above the biggest suite (968 s)."
 }

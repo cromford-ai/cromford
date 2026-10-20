@@ -21,8 +21,9 @@
 #   P6  --dry-run: `would: POST CI_MAX_SHARDS=12`, no write
 #   P7  no admin token in output or log
 #   P8  the registry default: lane_env_apply ci-plan-settings, with no
-#       operator row and no env, exports CI_MAX_SHARDS=12 (the value the operator
-#       approved, comment 6197071504) and CI_SHARD_BUDGET_S=480
+#       operator row and no env, exports CI_MAX_SHARDS=24 and
+#       CI_SHARD_BUDGET_S=1200 (BH-7620 raised both from 12 and 480: the 12-shard
+#       cap bound, and shards ran past the 45 min job cap under parallel batches)
 #
 # Run from anywhere: HARNESS_TEST_SANDBOX=1 bash tests/ci-plan-settings-sizing.bh-6876-test.sh
 set -uo pipefail
@@ -163,7 +164,7 @@ P8=$(env -u CI_MAX_SHARDS -u CI_SHARD_BUDGET_S -u JOBS_URL -u HARNESS_SECRET -u 
   . "$1/bin/lib/lane-gate.sh" || exit 9
   lane_env_apply ci-plan-settings
   printf "%s %s\n" "${CI_MAX_SHARDS:-unset}" "${CI_SHARD_BUDGET_S:-unset}"' _ "$DIR" 2>/dev/null | tail -1)
-check "P8 lane_env_apply exports CI_MAX_SHARDS=12 CI_SHARD_BUDGET_S=480 with no row: '$P8'" '[ "$P8" = "12 480" ]'
+check "P8 lane_env_apply exports CI_MAX_SHARDS=24 CI_SHARD_BUDGET_S=1200 with no row: '$P8'" '[ "$P8" = "24 1200" ]'
 
 echo "ci-plan-settings-sizing.bh-6876: $PASS passed, $FAIL failed"
 [ "$FAIL" = 0 ]

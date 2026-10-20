@@ -1,0 +1,3 @@
+# tests/mc/expected-map.d/BH-7620.tsv — BH-7620: mc_eject_nv_heads lists the heads a
+# no-verdict (cap-cancel) eject may re-queue once; origin=lib, a new module function.
+queue	mc_eject_nv_heads	lib

@@ -729,16 +729,22 @@ mc_dequeue_conflict() {
 #   The settle pass's ejection, asked WHY: when Mergify's `## Reason` names a
 #   base-branch conflict, mark the (PR, head) `ejectconflict` once and say so.
 #   The mark is what mc_eject_strikes leaves out of the strike count and what
-#   eject_rebase_arm (rebase.sh) spends its one out-of-budget rebase on. Called
-#   before the strike count reads the file. MC_EJECT_REBASE=0: no read, no mark.
+#   eject_rebase_arm (rebase.sh) spends its one out-of-budget rebase on. Any
+#   other ejection is asked nv_eject_note (bin/lib/mc-noverdict.sh, when it is
+#   loaded): a batch that left no shard verdict is cached `nvv … noverdict`,
+#   which mc_eject_strikes also leaves out (BH-7620). Called before the strike
+#   count reads the file. MC_EJECT_REBASE=0: no read, no mark.
 mc_eject_conflict_note() {
   local slug="$1" key="$2" url="$3" head="$4"
   [ "${MC_EJECT_REBASE:-}" != 0 ] || return 0
   [ -n "$key" ] && [ -n "$head" ] || return 0
   mc_attempt_has "ejectconflict $key $head" 2>/dev/null && return 0
-  [ "$(mc_dequeue_conflict "$slug" "$url" "$head")" = base-conflict ] || return 0
-  mc_attempt_put "ejectconflict $key $head"
-  mc_log "EJECTED_CONFLICT $key $head — Mergify's ## Reason names a base-branch conflict; not a strike, one rebase is offered for this head"
+  if [ "$(mc_dequeue_conflict "$slug" "$url" "$head")" = base-conflict ]; then
+    mc_attempt_put "ejectconflict $key $head"
+    mc_log "EJECTED_CONFLICT $key $head — Mergify's ## Reason names a base-branch conflict; not a strike, one rebase is offered for this head"
+    return 0
+  fi
+  declare -F nv_eject_note >/dev/null 2>&1 && nv_eject_note "$slug" "$key" "$url" "$head"
   return 0
 }
 
@@ -843,10 +849,31 @@ mc_eject_culprit_mark() {
   return 0
 }
 
+# mc_eject_nv_heads <key> -> the heads of the PR whose NEWEST `nvv` line says
+#   `noverdict` and that have no `reejected` line, each followed by one space
+#   (BH-7620). Such a head's batch only lost shards (the 45 min job cap, a
+#   runner that died): nv_eject_note cached that verdict at the settle pass.
+#   Read through the attempt verbs; nothing on an unreadable ledger.
+mc_eject_nv_heads() {
+  local t
+  t=$(mktemp "${TMPDIR:-/tmp}/mc-eject.XXXXXX") || return 0
+  mc_attempt_lines "nvv|reejected" "$1" "$t"
+  awk -v k="$1" '
+    $2 != k { next }
+    $1 == "nvv" { nv[$3] = $5; next }
+    $1 == "reejected" { r[$3] = 1 }
+    END { for (h in nv) if (nv[h] == "noverdict" && !(h in r)) printf "%s ", h }' "$t" 2>/dev/null
+  rm -f "$t"
+}
+
 # mc_eject_strikes <key> -> the number of queue ejections that count as strikes
 #   Every `ejected`/`reejected` line for the PR, less those on a head marked
 #   `ejectconflict`: a base-branch conflict is main moving under the PR, and the
-#   rebase answers it (BH-1677). MC_EJECT_REBASE=0 runs the count this replaced,
+#   rebase answers it (BH-1677). Also less an `ejected` line on a head that
+#   mc_eject_nv_heads names: a no-verdict batch is not a strike, so the head
+#   gets its one requeue (BH-7620). A `reejected` line always counts, so a
+#   second ejection after that requeue still makes two (mc_eject_nv_heads is a
+#   third read through the same verbs). MC_EJECT_REBASE=0 runs the count this replaced,
 #   verbatim. An unreadable file counts 0, as the grep did.
 #   Both reads go through the attempt verbs (BH-2360); the awk runs over the
 #   lines mc_attempt_lines copies out, in file order.
@@ -858,10 +885,12 @@ mc_eject_strikes() {
   local t
   t=$(mktemp "${TMPDIR:-/tmp}/mc-eject.XXXXXX") || { echo 0; return 0; }
   mc_attempt_lines "ejected|reejected|ejectconflict" "$1" "$t"
-  awk -v k="$1" '
+  awk -v k="$1" -v nv=" $(mc_eject_nv_heads "$1")" '
     $1 == "ejectconflict" && $2 == k { c[$3] = 1; next }
-    ($1 == "ejected" || $1 == "reejected") && $2 == k { h[NR] = $3 }
-    END { n = 0; for (i in h) if (!(h[i] in c)) n++; print n }' "$t" 2>/dev/null || echo 0
+    ($1 == "ejected" || $1 == "reejected") && $2 == k { h[NR] = $3; w[NR] = $1 }
+    END { n = 0
+          for (i in h) if (!(h[i] in c) && !(w[i] == "ejected" && index(nv, " " h[i] " "))) n++
+          print n }' "$t" 2>/dev/null || echo 0
   rm -f "$t"
 }
 
