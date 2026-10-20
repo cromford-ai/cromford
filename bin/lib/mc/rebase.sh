@@ -3192,6 +3192,11 @@ mc_rr_state() {
   started=$(mc_rr_field "$jf" started_at); case "$started" in ''|-|null) started=0 ;; esac
   age=$(( $(mc_now) - started ))
   [ "$age" -ge "${MC_REREVIEW_TIMEOUT_SECS:-2700}" ] && { printf 'stale'; return 0; }
+  # ON A LANE-RUN MACHINE (BH-7674) a non-terminal job file is the hub's, carried
+  # in the run's snapshot: its pid is a hub pid, so `kill -0` here says nothing.
+  # The file reads as running by age alone, until the timeout above. A stale
+  # verdict here would fail a live hub job and buy a second read of its head.
+  [ "${MC_ON_MACHINE:-}" = 1 ] && { printf 'running'; return 0; }
   pid=$(mc_rr_field "$jf" pid)
   case "$pid" in ''|-|null|0) [ "$age" -lt "${MC_RR_GRACE:-120}" ] && { printf 'running'; return 0; }; printf 'stale'; return 0 ;; esac
   kill -0 "$pid" 2>/dev/null && { printf 'running'; return 0; }
@@ -3223,16 +3228,22 @@ mc_rr_fail() {
 #   spawn a job.
 mc_rereview_spawn() {
   local slug="$1" num="$2" project="$3" url="$4" rev="$5" head="$6" rec="$7"
-  local jf out rc pid rrr=""
+  local jf out rc pid rrr="" remote=0
   # ON A LANE-RUN MACHINE (MC_ON_MACHINE=1, bin/merge-conductor-pr.sh) the
   # detached re-review job would outlive the run and its result file would never reach
-  # the hub. rc 3 is the cap answer every caller reads as "a later tick", and
-  # the hub runs this PR itself on its next tick (deferred=rereview).
+  # the hub. With conductor_remote_spawn off, rc 3 is the cap answer every
+  # caller reads as "a later tick", and the hub runs this PR itself on its next
+  # tick (deferred=rereview). With it on (BH-7674), the checks below run as on
+  # the hub, and then the read is ONE pool row (mc_remote_rereview_spawn):
+  # rc 0 put or in flight, rc 4 on record, rc 3 handed back to the hub.
   if [ "${MC_ON_MACHINE:-}" = 1 ]; then
-    mc_defer_word rereview "$slug#$num"
-    return 3
+    if ! command -v mc_remote_on >/dev/null 2>&1 || ! mc_remote_on "$project"; then
+      mc_defer_word rereview "$slug#$num"
+      return 3
+    fi
+    remote=1
   fi
-  mkdir -p "$MC_RR_DIR" 2>/dev/null || return 1
+  [ "$remote" = 1 ] || mkdir -p "$MC_RR_DIR" 2>/dev/null || return 1
   jf=$(mc_rr_file "$slug" "$num" "$head"); out="${jf%.json}.out"
   # A FINISHED REVIEW IS NOT BOUGHT TWICE (BH-2358). The job file is a box-local
   # cache; lose it and the `rrjob … done` row still says this head was read.
@@ -3254,6 +3265,12 @@ mc_rereview_spawn() {
   # verdict consume) buys its Claude read under ~prov. noverdict wins: a ~prov
   # read that came back with no verdict gets its retry on a fresh key.
   [ -z "$rrr" ] && mc_attempt_has "rbprov $slug#$num $head" 2>/dev/null && rrr=prov
+  # The machine writes no job file: the queue row is the in-flight record, and
+  # the hub reap writes the answer into the hub's job file.
+  if [ "$remote" = 1 ]; then
+    mc_remote_rereview_spawn "$slug" "$num" "$project" "$rev" "$head" "$rrr"
+    return
+  fi
   ( flock 9 2>/dev/null
     [ "${MC_REREVIEW_PARALLEL:-0}" -eq 0 ] || [ "$(mc_rr_running)" -lt "${MC_REREVIEW_PARALLEL:-0}" ] || exit 3
     mc_rr_write "$jf" running 0 "$(mc_now)" 0 - "$head" "$rev" "$out" || exit 1

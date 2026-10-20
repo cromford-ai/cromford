@@ -90,6 +90,14 @@ state/merge-conductor/handoff-released/$repokey_*
 state/merge-conductor/handoff-human/$repokey_*
 # bin/lib/mc/rebase.sh:321 (not reached by the fixture)
 state/merge-conductor/conflict-size/$repokey_*
+# The head-bound re-review job files (BH-7674): mc_rr_file bin/lib/mc/rebase.sh,
+# <owner_repo>_<n>_<head>.json plus its .out. The hub writes them
+# (mc_pool_rereview_apply, the pool reap of an RR-* row). A machine run reads
+# them in headbound_review (bin/lib/mc/classify.sh) and deletes them in its
+# lanefail and failed arms, so the delete rides back under compare-and-set.
+# mc_rr_key folds only `/`, so the name is this repo's for a fleet.conf repo
+# of [A-Za-z0-9._-] and one `/`.
+state/merge-conductor/rereview/$repokey_*
 # pq_key bin/lib/mc-prequeue.sh:52, pq_cache_put :59-66 (the fixture reads it)
 state/merge-conductor/prequeue/$repokey_*
 # closed_watch_dir bin/lib/mc/settle.sh:629-636: one dir per repo

@@ -31,7 +31,7 @@
 #   S16 conductor_remote_retry_max=1
 #   S17 the hub (MC_ON_MACHINE unset): the local job file, no queue request
 #   S18 no pool app: rc 3, no queue request
-#   S19 re-review and deploy-verify still defer on a machine
+#   S19 re-review is an RR pool row (BH-7674); deploy-verify still defers
 #   S20 rebase_consume reads the result through the API, once per head
 #   S21 no file under state/ is written by a machine spawn
 #   S22 a queued/claimed row past MC_REBASE_POOL_TIMEOUT_SECS (or with no
@@ -326,11 +326,16 @@ mv "$T/pool-app.off" "$T/h/flags/fly-pool-app-$PROJ"
 reset
 RC=$( ( MC_ON_MACHINE=1 MC_PR_DEFERRED_FILE="$DEF"
         mc_rereview_spawn "$SLUG" 31 "$PROJ" "$URL" - "$HEAD" "$T/h/builds/none" ) >/dev/null 2>&1; echo $?)
-[ "$RC" = 3 ] && ok || bad "S19 re-review on a machine still rc 3 (got $RC)"
+# BH-7674: with the switch on, the re-review is an RR-* pool row now (its own
+# cases are in tests/mc-remote-rereview.bh-7674-test.sh); deploy-verify still
+# defers.
+[ "$RC" = 0 ] && [ "$(qposts)" = 1 ] && [ "$(jq -r .key <<<"$(qbody)")" = "RR-31-${HEAD:0:8}" ] && ok \
+  || bad "S19 re-review on a machine is one RR pool row (rc $RC, posts $(qposts))"
+: > "$REQ"
 RC=$( ( MC_ON_MACHINE=1 MC_PR_DEFERRED_FILE="$DEF"
         mc_dv_spawn "$PROJ" "$SLUG" "$NEWSHA" "$T/h/builds/none" ) >/dev/null 2>&1; echo $?)
 [ "$RC" = 3 ] && ok || bad "S19 deploy-verify on a machine still rc 3 (got $RC)"
-[ "$(words)" = "rereview dv" ] && [ "$(qreqs)" = 0 ] && ok || bad "S19 words rereview dv and no queue request ('$(words)', reqs $(qreqs))"
+[ "$(words)" = "dv" ] && [ "$(qreqs)" = 0 ] && ok || bad "S19 word dv and no queue request for it ('$(words)', reqs $(qreqs))"
 
 # ── S20: the next tick reads the result through the API ─────────────────────
 state_of()  { awk -F'\t' -v k="$1" '$1==k {print $2}' "$MC_ROWS"; }

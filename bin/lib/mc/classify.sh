@@ -2977,8 +2977,16 @@ hb_block_park() {
 headbound_review() {
   local mode="$1" key="$2" slug="$3" num="$4" proj="$5" url="$6" rec="$7" head="$8"
   local reviewed="$9" verdict="${10}" mstate="${11}" ci="${12}"
-  local jobf jobst rrwhat v outf rc run why n ep apv rr_acct
+  local jobf jobst rrwhat v outf rc run why n ep apv rr_acct rrpool=""
   jobf=$(mc_rr_file "$slug" "$num" "$head"); jobst=$(mc_rr_state "$jobf")
+  # A POOL RE-REVIEW IN FLIGHT (BH-7674). On a lane-run machine the read is an
+  # RR-<pr>-<head8> row and no job file; while the row is queued or claimed
+  # this head reads as running, so a later tick takes no daily cap unit and
+  # puts nothing. A job file that is not `none` always wins over the row.
+  if [ "$jobst" = none ] && [ "${MC_ON_MACHINE:-}" = 1 ] && command -v mc_remote_rereview_inflight >/dev/null 2>&1 \
+     && rrpool=$(mc_remote_rereview_inflight "$proj" "$num" "$head"); then
+    jobst=running
+  fi
   # What to CALL it on the PR. HEAD_MOVED also covers a head with no verdict
   # bound to it at all (2026-09-14), where there is no previous reviewed sha and
   # so nothing to re-review: that reads as a fresh review.
@@ -2989,12 +2997,19 @@ headbound_review() {
       if [ "$mode" = provenance ]; then
         mc_log "$key re-review of ${head:0:8} still running on a provenance hold — nothing waits on it"
       else
-        mc_log "$key REREVIEWING ${head:0:8} — detached job (pid $(mc_rr_field "$jobf" pid)) still running; nothing waits on it"
+        if [ -n "$rrpool" ]; then
+          mc_log "$key REREVIEWING ${head:0:8} — $rrpool; nothing waits on it"
+        else
+          mc_log "$key REREVIEWING ${head:0:8} — detached job (pid $(mc_rr_field "$jobf" pid)) still running; nothing waits on it"
+        fi
         mc_transition "$key" HEAD_MOVED "REREVIEWING ${head:0:8} (detached re-review running)" "$head" "$reviewed" "$url" "$verdict" "$mstate" "$rec" >/dev/null
       fi
       return 0 ;;
     done)
       v=$(mc_rr_field "$jobf" verdict); outf=$(mc_rr_field "$jobf" out_file)
+      # A pool job file reaches a machine in the run's snapshot with the hub's
+      # absolute out_file path; the review text sits beside the job file.
+      [ -f "$outf" ] || outf="${jobf%.json}.out"
       # Consumed ONCE per (PR, head): the verdict is a fact about a head, and a
       # BLOCK that re-posted its findings every five minutes would be the
       # comment spam the one-review-per-head rule exists to stop.

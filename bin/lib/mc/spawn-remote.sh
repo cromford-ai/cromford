@@ -55,6 +55,28 @@
 # rebase_consume clears that mark when the row reads failed, empty, stale or
 # defer (mc_remote_rebase_reopen), and the arm calls the spawn, which owns the
 # retry and the hand-back.
+#
+# THE RE-REVIEW (BH-7674) rides the same way: one
+# RR-<pr>-<head8> row with meta kind=rereview (bin/lib/rereview-job.sh runs it
+# on a pool machine, the hub reap writes the hub job file, mc_rr_file). The
+# reason of the read (``, noverdict, prov) rides in the row meta, so a
+# `~noverdict` read is a re-put of the same key. Its outcome map:
+#   no row                                          none
+#   queued | claimed, enqueued less than MC_REBASE_POOL_TIMEOUT_SECS ago
+#                                                   running
+#   queued | claimed, older (or no enqueued_at)     stale
+#   done + REREVIEWED | REREVIEW_NOVERDICT          ok (the job file has it)
+#   done + REREVIEW_LANE_FAILED | REREVIEW_SETUP_FAILED | REREVIEW_DEFERRED,
+#     or status failed                              failed
+#   done + an empty reason or any other first word  empty
+#   any other status (dropped, ready)               defer
+# `ok` is a result on record (rc 4) only for the SAME reason; under another
+# reason it is a new read and is put. The retry rule and the hand-back are the
+# rebase's, with the word `rereview`. The next Fly tick reads the verdict from
+# the hub job file, which rides in the merge-conductor snapshot
+# (catalog/lane-run-inputs.d/merge-conductor.rw), and headbound_review reads an
+# in-flight row as `running` (mc_remote_rereview_inflight), so a later tick
+# does not take the daily cap again.
 
 MC_REMOTE_RETRY_MAX_DEFAULT=3
 
@@ -199,11 +221,11 @@ mc_remote_rebase_row() {
   esac
 }
 
-# _mc_remote_defer <slug#pr> <dedup> <why> — the hand-back: the `rebase` word
-#   and rc 3.
+# _mc_remote_defer <slug#pr> <dedup> <why> [<word>] — the hand-back: the
+#   <word> (default `rebase`) and rc 3.
 _mc_remote_defer() {
-  mc_log "$1 remote rebase ${2:--} deferred to the hub ($3)"
-  mc_defer_word rebase "$1"
+  mc_log "$1 remote ${4:-rebase} ${2:--} deferred to the hub ($3)"
+  mc_defer_word "${4:-rebase}" "$1"
   return 3
 }
 
@@ -276,5 +298,113 @@ mc_remote_rebase_reopen() {
   mc_attempt_has "rebase $1 $2" 2>/dev/null || return 0
   mc_attempt_clear rebase "$1" "$2"
   mc_log "$1 remote rebase of ${2:0:8} reads $3 (${4:--}) — the spawn decides again: a retry or the hand-back"
+  return 0
+}
+
+# mc_remote_rereview_row <project> <pr> <head> — ONE queue read of
+#   RR-<pr>-<head8>. rc 0, prints `none`, or
+#   `<outcome>\t<attempt>\t<meta-reason|->\t<detail>` per the re-review map in
+#   the header. rc 1 on a transport failure or an unparseable body: a failed
+#   read is never `none`.
+mc_remote_rereview_row() {
+  local p="$1" n="$2" head="$3" key resp line st att age mr reason word
+  key=$(mc_pool_rereview_key "$n" "$head")
+  resp=$(_jobs_req GET "/api/queue?project=$p&key=$key&limit=1") || return 1
+  line=$(printf '%s' "$resp" | jq -r --argjson now "$(mc_now)" 'if (.queue | type) != "array" then error("no queue")
+    else (.queue[0] // null) | if . == null then "none"
+    else [ (.status // ""), ((.attempt // 0) | tostring),
+           ((.enqueued_at // "") | tostring | sub("\\.[0-9]+Z$"; "Z") | (fromdateiso8601? // null)
+             | if . == null then "-" else ($now - .) | tostring end),
+           ((.meta // null) | (if type == "string" then (fromjson? // null) else . end)
+             | (if type != "object" then null elif (.rereview | type) == "object" then .rereview.reason else .reason end)
+             | (if type == "string" and . != "" then gsub("[^a-z]"; "") else "-" end)),
+           ((.reason // "") | (split("\n")[0] // "") | gsub("[\t\r]"; " ")) ] | join("\t") end end' 2>/dev/null) \
+    || return 1
+  [ -n "$line" ] || return 1
+  [ "$line" = none ] && { echo none; return 0; }
+  # The reason is last: it may be empty, and a tab IFS folds an empty middle field.
+  IFS=$'\t' read -r st att age mr reason <<<"$line"
+  case "$att" in ''|*[!0-9]*) att=0 ;; esac
+  [ -n "$mr" ] || mr=-
+  word="${reason%% *}"
+  case "$st" in
+    queued|claimed)
+      case "$age" in ''|*[!0-9-]*|-) printf 'stale\t%s\t%s\t%s no enqueued_at\n' "$att" "$mr" "$st"; return 0 ;; esac
+      if [ "$age" -ge "${MC_REBASE_POOL_TIMEOUT_SECS:-5400}" ]; then
+        printf 'stale\t%s\t%s\t%s %ss\n' "$att" "$mr" "$st" "$age"
+      else
+        printf 'running\t%s\t%s\t%s\n' "$att" "$mr" "$st"
+      fi ;;
+    failed) printf 'failed\t%s\t%s\t%s\n' "$att" "$mr" "${reason:-failed}" ;;
+    done)
+      case "$word" in
+        REREVIEWED|REREVIEW_NOVERDICT) printf 'ok\t%s\t%s\t%s\n' "$att" "$mr" "$reason" ;;
+        REREVIEW_LANE_FAILED|REREVIEW_SETUP_FAILED|REREVIEW_DEFERRED) printf 'failed\t%s\t%s\t%s\n' "$att" "$mr" "$reason" ;;
+        *) printf 'empty\t%s\t%s\t%s\n' "$att" "$mr" "${reason:--}" ;;
+      esac ;;
+    *) printf 'defer\t%s\t%s\t%s\n' "$att" "$mr" "${st:--}" ;;
+  esac
+}
+
+# mc_remote_rereview_inflight <project> <pr> <head> — for headbound_review on a
+#   machine. rc 0, prints `pool row RR-<pr>-<head8> <status>`, when the switch
+#   is on and the row reads `running`. rc 1 otherwise, also on a read failure:
+#   the caller then takes its own path, and the spawn reads the row again.
+mc_remote_rereview_inflight() {
+  local p="$1" n="$2" head="$3" row outc detail
+  mc_remote_on "$p" || return 1
+  row=$(mc_remote_rereview_row "$p" "$n" "$head") || return 1
+  [ "$row" = none ] && return 1
+  IFS=$'\t' read -r outc _ _ detail <<<"$row"
+  [ "$outc" = running ] || return 1
+  printf 'pool row %s %s' "$(mc_pool_rereview_key "$n" "$head")" "$detail"
+}
+
+# mc_remote_rereview_spawn <slug> <pr> <project> <reviewed> <head> <reason>
+#   rc 0  a row was put, or one is already queued/claimed for this head
+#   rc 4  a result is on record for this head and reason; nothing is put
+#   rc 3  deferred to the hub (the `rereview` word is written)
+#   The queue read runs first, every call; at most one put follows it. The url
+#   in the meta is BUILT from the conductor's slug, so the hub apply names the
+#   job file headbound_review reads (mc_rr_file).
+mc_remote_rereview_spawn() {
+  local slug="$1" n="$2" project="$3" rev="$4" head="$5" rrr="${6:-}"
+  local id="$1#$2" dedup key row outc att mr detail max meta r
+  dedup=$(mc_remote_key "$project" "$n" "$head" rereview) \
+    && [[ $head =~ ^[0-9a-f]{40}$ ]] || { _mc_remote_defer "$id" - "no usable key for head '${head:0:12}'" rereview; return; }
+  _mc_remote_client || { _mc_remote_defer "$id" "$dedup" "no jobs client" rereview; return; }
+  key=$(mc_pool_rereview_key "$n" "$head")
+  row=$(mc_remote_rereview_row "$project" "$n" "$head") || { _mc_remote_defer "$id" "$dedup" "queue read failed" rereview; return; }
+  outc=none; att=0; mr=-; detail=""
+  [ "$row" = none ] || IFS=$'\t' read -r outc att mr detail <<<"$row"
+  case "$outc" in
+    none) att=0 ;;
+    running) mc_log "$id remote rereview $dedup in flight ($detail)"; return 0 ;;
+    ok)
+      if [ "$mr" = "${rrr:--}" ]; then
+        mc_log "$id remote rereview $dedup result on record (${detail%% *})"; return 4
+      fi
+      # Another reason is a new read of the same head (the ~noverdict or ~prov
+      # read): the same key is put again.
+      att=$((att + 1)) ;;
+    failed)
+      max=$(_mc_remote_retry_max)
+      [ "$att" -lt "$max" ] || { _mc_remote_defer "$id" "$dedup" "failed $att of $max times: $detail" rereview; return; }
+      att=$((att + 1)) ;;
+    empty) _mc_remote_defer "$id" "$dedup" "empty result: $detail" rereview; return ;;
+    stale) _mc_remote_defer "$id" "$dedup" "row is $detail old, past MC_REBASE_POOL_TIMEOUT_SECS=${MC_REBASE_POOL_TIMEOUT_SECS:-5400}" rereview; return ;;
+    *) _mc_remote_defer "$id" "$dedup" "row is $detail" rereview; return ;;
+  esac
+  # The pool reader (_qrj_rereview) takes 40 hex or `-` and nothing else.
+  [[ $rev =~ ^[0-9a-f]{40}$ ]] || rev=-
+  meta=$(jq -nc --arg s "$slug" --argjson n "$n" --arg rv "$rev" --arg h "$head" --arg rs "$rrr" --arg d "$dedup" \
+    '{kind:"rereview",slug:$s,url:("https://github.com/" + $s + "/pull/" + ($n|tostring)),pr:$n,reviewed:$rv,head:$h,reason:$rs,dedup:$d,by:"machine"}' 2>/dev/null) \
+    || { _mc_remote_defer "$id" "$dedup" "the queue meta could not be built" rereview; return; }
+  r=$(queue_put "$project" "$key" "$n" fly "" "$meta") || { _mc_remote_defer "$id" "$dedup" "queue put failed" rereview; return; }
+  if [ "$r" = duplicate ]; then
+    mc_log "$id remote rereview queued $dedup as $key (attempt $att, duplicate)"
+  else
+    mc_log "$id remote rereview queued $dedup as $key (attempt $att)"
+  fi
   return 0
 }

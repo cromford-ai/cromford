@@ -11,10 +11,11 @@
 # bin/lib/lead-authority.sh). Secrets: env/* (env/global.env is read). Caches
 # the machine fills from the jobs worker itself: state/settings-cache.json,
 # state/flags-cache/*, state/box-name, state/gh-*, state/lead-authority/*.
-# The re-review, rebase and deploy-verify job dirs (state/merge-conductor/
-# rereview|rebase|deploy-verify): a machine run defers each spawn before it
-# reads a job file (bin/lib/mc/rebase.sh:3079, :3393, :3509), and the trace
-# shows no read. state/batch-resolve/*: a keyed tick never reaches the batch
+# The rebase and deploy-verify job dirs (state/merge-conductor/rebase|
+# deploy-verify): a machine run defers each spawn before it reads a job file
+# (bin/lib/mc/rebase.sh:3393, :3509), and the trace shows no read. The
+# re-review job dir is carried by merge-conductor.rw since BH-7674: a machine
+# run puts an RR-* pool row and reads its verdict on the next tick. state/batch-resolve/*: a keyed tick never reaches the batch
 # spawn (bin/merge-conductor.sh:3295, MC_ONLY_KEYS). state/merge-sweep-done.txt:
 # only conductor_settle reads it (bin/lib/mc/settle.sh:560 via :778), and a
 # machine run defers the settle first (:756).
