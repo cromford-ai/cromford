@@ -9,6 +9,7 @@
 #   A3  driven: preplan plan execute fix review qa prodqa carry all three law
 #       titles in ONE --append-system-prompt; triage carries none; lead-review
 #       carries only REVIEW LEVELS (BH-7123 lists it, the 2026-10-13 laws do not)
+#       and SCALABLE TESTS (BH-7563 lists it); all members carry SCALABLE TESTS
 #   A4  driven: a codex runner gets the laws in front of its prompt text
 #   A5  driven: a caller's AGENT_SYSTEM_APPEND comes first; the laws are not
 #       exported to the child; no prompts dir = today's behavior
@@ -32,10 +33,14 @@ LAWS_DIR="$DIR/prompts/iron-laws.d"
 # check reads a bare 64-hex run as a token (tests/jobs-client-usage.bh-5235-test.sh).
 # BH-7123 re-pinned it: the 2026-10-13 fragment's review lines are notes, and
 # the plan stage also carries prompts/iron-laws.d/20261016-review-levels.md.
-TICKET_SHA="434fa0d2ea7b0b5a""fae40d3c64bfec33""e61b3c7214b1cc58""2018615de26e782e"
+# BH-7563 re-pinned it: the plan stage also carries
+# prompts/iron-laws.d/20261019-scalable-tests.md, and the review-levels class
+# list gained `scalable-tests`.
+TICKET_SHA="19c718c591bae292""6990d652be732d80""36c35e66497e5128""66ade9d42e872f8b"
 T1='PERFORMANCE BY DEFAULT'
 T2="BUILDING FROM A DESIGNER'S PROTOTYPE"
 T3='REVIEW LEVELS (iron law, BH-7123'
+T4='SCALABLE TESTS (iron law, BH-7563'
 MEMBERS="preplan plan execute fix review qa prodqa"
 
 # ── A1 ─────────────────────────────────────────────────────────────────────
@@ -46,6 +51,7 @@ got=$(sil_text plan "$LAWS_DIR"; printf x); got="${got%x}"
 case "$got" in *"PERFORMANCE BY DEFAULT (iron law, 2026-10-13)"*) ok ;; *) bad "A1 performance title missing" ;; esac
 case "$got" in *"BUILDING FROM A DESIGNER'S PROTOTYPE (iron law, 2026-10-13)"*) ok ;; *) bad "A1 prototype title missing" ;; esac
 case "$got" in *"$T3"*) ok ;; *) bad "A1 review-levels title missing" ;; esac
+case "$got" in *"$T4"*) ok ;; *) bad "A1 scalable-tests title missing" ;; esac
 case "$got" in *"each one a BLOCK"*|*"REVIEW blocks on"*|*"a visual check gates the merge"*) bad "A1 the plan block still carries a BLOCK-level review line (BH-7123)" ;; *) ok ;; esac
 
 # ── A2 ─────────────────────────────────────────────────────────────────────
@@ -148,6 +154,7 @@ for st in $MEMBERS; do
   append_has "$T1" && ok || bad "A3 $st: '$T1' missing from --append-system-prompt"
   append_has "$T2" && ok || bad "A3 $st: '$T2' missing from --append-system-prompt"
   append_has "$T3" && ok || bad "A3 $st: '$T3' missing from --append-system-prompt"
+  append_has "$T4" && ok || bad "A3 $st: '$T4' missing from --append-system-prompt"
   [ "$(appends)" = 1 ] && ok || bad "A3 $st: want exactly one --append-system-prompt, got $(appends)"
 done
 RC=$(run_call triage)
@@ -155,8 +162,9 @@ RC=$(run_call triage)
 [ "$(appends)" = 0 ] && ok || bad "A3 triage: a non-member stage got --append-system-prompt: $(cat "$T/sink.append.1")"
 RC=$(run_call lead-review)
 [ -s "$T/sink" ] || bad "A3 lead-review: claude never ran (rc=$RC)"
-[ "$(appends)" = 1 ] && ok || bad "A3 lead-review: want exactly one --append-system-prompt (the review-levels law), got $(appends)"
+[ "$(appends)" = 1 ] && ok || bad "A3 lead-review: want exactly one --append-system-prompt (the review-levels and scalable-tests laws), got $(appends)"
 append_has "$T3" && ok || bad "A3 lead-review: '$T3' missing from --append-system-prompt"
+append_has "$T4" && ok || bad "A3 lead-review: '$T4' missing from --append-system-prompt"
 append_has "$T1" && bad "A3 lead-review: '$T1' reached a stage its fragment does not list" || ok
 append_has "$T2" && bad "A3 lead-review: '$T2' reached a stage its fragment does not list" || ok
 
