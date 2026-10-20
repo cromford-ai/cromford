@@ -13,7 +13,7 @@
 #   L3  a tree with no pack, or no scratch-closure row, is skipped
 #   L4  FIXROUND_CLOSURE_LINT=0 is off and runs nothing; unset and 7 are on
 #   L5  the builder's pre-push gate (prepr_scan) refuses L1's branch with the
-#       same file:line line
+#       same file:line line, with ci-local off (CI_LOCAL_GATE=0)
 #   F1  the real bin/blocked-resolver.sh --fix-here: a round whose head is red
 #       on the lint is NOT pushed, and fix-verify.txt says why
 #   F2  the lint's findings are in the round's brief
@@ -107,12 +107,20 @@ on() { env HARNESS="$T/lh" H="$T/lh" "$@" bash -c '. "$0/'"$LIB"'" || exit 9; fr
 [ "$(on FIXROUND_CLOSURE_LINT=0)" = 1 ] && ok "L4: frcl_on rc 1 at 0" || bad "L4: frcl_on is not off at 0"
 
 # L5: the builder pre-push gate on the same branch.
-( cd "$R" && env HARNESS="$T/lh" HARNESS_ROOT_OVERRIDE="$T/no-harness" \
+# TEST-CHANGE (BH-7614): BH-6897 put ci-local (CI's whole lint job, 438 s on an
+# 8 vCPU box and up to its 900 s budget) in prepr_scan, and this case ran it,
+# so the suite hit its 900 s cap. ci-local is not this case's subject:
+# tests/ci-local-gates.bh-6897-test.sh covers it in prepr_scan. L5 turns it off
+# and asserts it is off, so a knob rename fails here instead of going slow.
+( cd "$R" && env HARNESS="$T/lh" HARNESS_ROOT_OVERRIDE="$T/no-harness" CI_LOCAL_GATE=0 \
     bash -c '. bin/lib/prepr-gate.sh || exit 9; prepr_scan "$0" origin/main "$1"' "$R" "$T/pp" ) >/dev/null 2>&1; prc=$?
 [ "$prc" = 1 ] && ok "L5: prepr_scan returns 1 on the hand-copying branch" || bad "L5: prepr_scan rc $prc, want 1 ($(cat "$T/pp/prepr-scan.txt" 2>/dev/null | tr '\n' ' '))"
 grep -q '^RULES-PACK scratch-closure: .*tests/new.bh-2-test.sh:2:' "$T/pp/prepr-findings.txt" 2>/dev/null \
   && ok "L5: prepr-findings.txt carries the RULES-PACK scratch-closure file:line" \
   || bad "L5: no RULES-PACK scratch-closure line in prepr-findings.txt [$(cat "$T/pp/prepr-findings.txt" 2>/dev/null)]"
+grep -qx 'ci-local: off' "$T/pp/prepr-scan.txt" 2>/dev/null \
+  && ok "L5: ci-local is off in this scan (CI_LOCAL_GATE=0)" \
+  || bad "L5: ci-local is not off in prepr-scan.txt [$(cat "$T/pp/prepr-scan.txt" 2>/dev/null | tr '\n' ' ')]"
 
 # ============================================================================
 # F. the real bin/blocked-resolver.sh --fix-here
