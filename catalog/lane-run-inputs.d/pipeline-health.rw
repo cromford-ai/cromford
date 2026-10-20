@@ -26,7 +26,8 @@
 #   /root/repos/$p refs          not read: stale-parent reads GitHub REST
 #                                (`# >>> stale parent`, bin/lib/stale-parent-rest.sh)
 # Secrets, locks and machine-local caches are never carried: env/*, locks/*,
-# state/gh-*, state/gh-budget/*, state/settings-cache.json, state/lane-gate/*.
+# state/gh-*, state/gh-budget/*, state/settings-cache.json, state/lane-gate/*,
+# state/pr-snapshot/*.
 # logs/pipeline-health.log rides back as the lane log (.lri/log-append).
 #
 # closeout-aged.tsv: bin/lib/closeout-terminal.sh:173-252

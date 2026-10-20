@@ -46,7 +46,9 @@ done
 PH_SECTIONS="${PH_SECTIONS:-}"
 # BH-5941: one run mode per process.
 PH_NMODE=0
-for _M in "$PH_DISPATCH" "$PH_PROJECT_SET" "$PH_SECTIONS"; do [ -n "$_M" ] && PH_NMODE=$((PH_NMODE + 1)); done
+for _M in "$PH_DISPATCH" "$PH_PROJECT_SET" "$PH_SECTIONS"; do
+  [ -n "$_M" ] && PH_NMODE=$((PH_NMODE + 1))
+done
 if [ "$PH_NMODE" -gt 1 ]; then
   echo "pipeline-health: --dispatch, --project and --sections are exclusive" >&2
   exit 2
@@ -125,6 +127,42 @@ if [ -r "$H/bin/lib/gh-budget.sh" ]; then # shellcheck source=bin/lib/gh-budget.
 # BH-5941: the per-project runner (pl_dispatch, pl_lock_take, pl_token).
 if [ -r "$H/bin/lib/project-lanes.sh" ]; then # shellcheck source=bin/lib/project-lanes.sh
   . "$H/bin/lib/project-lanes.sh"; fi
+
+# >>> open list (BH-7616)
+# One open-PR list per repo per tick (BH-7397). A cron run reads it through
+# bin/lib/pr-snapshot.sh, the list the conductor, batch-resolve,
+# pr-state-reconcile and stuck-work share, and harness_pr_list follows
+# HPL_SNAPSHOT. A --sections run re-judges a PR a webhook just changed, so it
+# reads live, even when a parent exported HPL_SNAPSHOT.
+for _P in "$(dirname "$0")/lib/pr-snapshot.sh" "$H/bin/lib/pr-snapshot.sh"; do
+  # shellcheck source=bin/lib/pr-snapshot.sh
+  [ -r "$_P" ] && { . "$_P"; break; }
+done
+PH_OPEN_CAP=100
+if [ -z "$PH_SECTIONS" ] && command -v prs_open_list >/dev/null 2>&1 && command -v _prs_on >/dev/null 2>&1 && _prs_on; then
+  export HPL_SNAPSHOT=1; PH_OPEN_CAP=1000
+else
+  unset HPL_SNAPSHOT
+fi
+ph_open_list() { # ph_open_list <slug> — the raw REST open-PR rows on stdout; rc is the read's
+  local f rc=0
+  if [ "${HPL_SNAPSHOT:-}" != 1 ]; then gh api "repos/$1/pulls?state=open&per_page=100"; return; fi
+  f=$(mktemp "${TMPDIR:-/tmp}/ph-open.XXXXXX") || return 75
+  prs_open_list "$1" "$f" || rc=$?
+  [ "$rc" = 0 ] && cat "$f"
+  rm -f "$f"
+  return "$rc"
+}
+ph_open_rows() { # ph_open_rows <slug> <max> — the first <max> open-PR rows, gh_rest_pr_list_all's shape; rc is the read's
+  local f rc=0
+  if [ "${HPL_SNAPSHOT:-}" != 1 ]; then gh_rest_pr_list_all "$1" open "$2"; return; fi
+  f=$(mktemp "${TMPDIR:-/tmp}/ph-open.XXXXXX") || return 75
+  prs_open_list "$1" "$f" || rc=$?
+  [ "$rc" = 0 ] && { jq -c --argjson m "$2" '.[:$m]' "$f" || rc=75; }
+  rm -f "$f"
+  return "$rc"
+}
+# <<< open list
 
 # >>> run mode (BH-5941)
 # all       no arguments: every section, one process (an operator's run)
@@ -886,6 +924,7 @@ if ph_proj; then
 # row queued/claimed for the project; a ledger outage skips the project (a
 # transport failure is not starvation).
 # >>> starved project (tests/pipeline-health-detectors-test.sh runs this block)
+command -v ph_open_rows >/dev/null 2>&1 || ph_open_rows() { gh_rest_pr_list_all "$1" open "$2"; }
 if ! gh_budget_low pipeline-health; then
 for P in $PROJECTS; do
   [ "$("$H/bin/fleet-conf.sh" "$P" board_prefix 2>/dev/null)" = "-" ] || continue
@@ -914,7 +953,7 @@ for P in $PROJECTS; do
   SPF=$(mktemp "${TMPDIR:-/tmp}/health-starved.XXXXXX") || continue
   gh_rest_issue_list "$SSLUG" all ai-build 100 > "$SPF" 2>/dev/null || { rm -f "$SPF"; continue; }
   ISSUES=$(jq -c 'map({number, state: ((.state // "") | ascii_upcase), title, body})' "$SPF" 2>/dev/null) || { rm -f "$SPF"; continue; }
-  if ! gh_rest_pr_list_all "$SSLUG" open 100 > "$SPF" 2>/dev/null \
+  if ! ph_open_rows "$SSLUG" 100 > "$SPF" 2>/dev/null \
      || ! OPENPRS=$(jq -c 'map({number, title, headRefName: .head.ref, body})' "$SPF" 2>/dev/null); then
     rm -f "$SPF"
     command -v gh_repo_list_failed >/dev/null 2>&1 && gh_repo_list_failed pipeline-health "$SSLUG" "$P: starved-project check skipped this tick"
@@ -1130,6 +1169,7 @@ fi
 # at most STALE_PARENT_REST_DIFF_MAX diff reads per project per tick), and no
 # git command runs on $HUB_REPOS.
 # >>> stale parent (BH-5234) (tests/stale-parent-detect.bh-5234-test.sh runs this block)
+command -v ph_open_list >/dev/null 2>&1 || ph_open_list() { gh api "repos/$1/pulls?state=open&per_page=100"; }
 sp_carry() { awk -v p="$1" 'index($0, p) == 1' "$ACTIVE" >> "$FIRED" 2>/dev/null || true; }
 # sp_page <P> <NUM> <base> <url> <rows> — the one page for a PR's stale commits.
 sp_page() {
@@ -1165,14 +1205,14 @@ else
     SLUG=$(awk -v p="$P" '$1==p{print $2}' "$H/fleet.conf")
     case "$SLUG" in */*) ;; *) continue ;; esac
     if command -v gh_repo_use_token >/dev/null 2>&1; then gh_repo_use_token "$SLUG" || { sp_carry "staleparent:$P:"; continue; }; fi
-    SPLIST=$(gh api "repos/$SLUG/pulls?state=open&per_page=100" 2>/dev/null) || { sp_carry "staleparent:$P:"; continue; }
+    SPLIST=$(ph_open_list "$SLUG" 2>/dev/null) || { sp_carry "staleparent:$P:"; continue; }
     SPROWS=$(printf '%s' "$SPLIST" | jq -r 'if type == "array" then . else error("not a list") end
       | (length | tostring), (.[] | select(.base.ref == (.base.repo.default_branch // "main"))
       | [.number, .base.ref, .html_url] | @tsv)' 2>/dev/null) || { sp_carry "staleparent:$P:"; continue; }
     SPLEN=$(head -n 1 <<<"$SPROWS"); SPROWS=$(tail -n +2 <<<"$SPROWS")
     [ -n "$SPROWS" ] || continue
-    if [ "${SPLEN:-0}" -ge 100 ]; then
-      alert 21600 "staleparent:$P:page-cut" "$P: the stale-parent check read a full page of 100 open PRs; PRs past it were not judged this tick"
+    if [ "${SPLEN:-0}" -ge "${PH_OPEN_CAP:-100}" ]; then
+      alert 21600 "staleparent:$P:page-cut" "$P: the stale-parent check read a full page of ${PH_OPEN_CAP:-100} open PRs; PRs past it were not judged this tick"
       sp_carry "staleparent:$P:"
     fi
     if [ "$(grep -c . <<<"$SPROWS")" -gt "$SPMAX" ]; then
@@ -1230,6 +1270,7 @@ fi
 # (stalledblocker:<p>:<child>:<parent>). Read-only. Runs every tick, so both are
 # in RETRACT_NS; a skipped or failed read carries the standing keys.
 # >>> stall alerts (BH-6308) (tests/stall-alerts.bh-6308-test.sh runs this block)
+command -v ph_open_rows >/dev/null 2>&1 || ph_open_rows() { gh_rest_pr_list_all "$1" open "$2"; }
 st_carry() { awk -v p="$1" 'index($0, p) == 1' "$ACTIVE" >> "$FIRED" 2>/dev/null || true; }
 STH=0; STP=0; STMAX=30; STW=12; STPART=""; STF=$(mktemp "${TMPDIR:-/tmp}/ph-stall.XXXXXX") || STF=""
 # shellcheck source=bin/lib/stall-alerts.sh
@@ -1270,7 +1311,7 @@ elif [ "$STH" = 1 ] || [ "$STP" = 1 ]; then
         [ $? = 2 ] && { st_carry "stalehold:$P:$N"; continue; }
         IFS=$'\t' read -r STV STAGE STAT STAU STLN <<<"$STJ"
         [ "$STV" = stale ] || continue
-        [ -n "$STPRS" ] || { gh_rest_pr_list_all "$SLUG" open 200 > "$STF" && STPRS=$(cat "$STF") || STPRS='?'; }
+        [ -n "$STPRS" ] || { ph_open_rows "$SLUG" 200 > "$STF" && STPRS=$(cat "$STF") || STPRS='?'; }
         [ -n "$STPART" ] || STPART=$(_jobs_req GET "/api/participants?status=approved" 2>/dev/null) || STPART='?'
         STO=$(stall_owner_active "$P" "$SLUG" "$N" "$STPFX-$N" "$STLN" "$NOW" "$STPRS" "$STPART") && continue
         STO=$(cut -f2- <<<"$STO")
@@ -1288,7 +1329,7 @@ elif [ "$STH" = 1 ] || [ "$STP" = 1 ]; then
       unset STPJ STPJRC; declare -A STPJ=() STPJRC=(); STPCUT=0
       while IFS=$'\t' read -r CHILD STB64; do
         for PARENT in $(stall_hard_blockers "$(base64 -d <<<"$STB64")"); do
-          [ -n "$STPRS" ] || { gh_rest_pr_list_all "$SLUG" open 200 > "$STF" && STPRS=$(cat "$STF") || STPRS='?'; }
+          [ -n "$STPRS" ] || { ph_open_rows "$SLUG" 200 > "$STF" && STPRS=$(cat "$STF") || STPRS='?'; }
           if [ -z "${STPJRC[$PARENT]+x}" ]; then
             if [ "${#STPJRC[@]}" -ge "$STMAX" ]; then
               STPCUT=1; st_carry "stalledblocker:$P:$CHILD:$PARENT"; continue
@@ -1329,6 +1370,7 @@ fi # PH_ALL
 # $FIRED: the epilogue only RESOLVEs a key a read actually found clean.
 if ph_on leadunqueued; then
 # >>> lead merge unqueued (BH-3778)
+command -v ph_open_list >/dev/null 2>&1 || ph_open_list() { gh api "repos/$1/pulls?state=open&per_page=100"; }
 lu_carry() { printf '+^%s\n' "$1" >> "$FIRED"; }
 if gh_budget_low pipeline-health; then
   lu_carry "leadunqueued:"
@@ -1344,7 +1386,7 @@ else
     if command -v gh_repo_use_token >/dev/null 2>&1; then
       gh_repo_use_token "$SLUG" || { lu_carry "leadunqueued:$SLUG#"; lu_carry "leadunqueued:$SLUG:"; continue; }
     fi
-    LULIST=$(gh api "repos/$SLUG/pulls?state=open&per_page=100" 2>/dev/null) \
+    LULIST=$(ph_open_list "$SLUG" 2>/dev/null) \
       || { lu_carry "leadunqueued:$SLUG#"; lu_carry "leadunqueued:$SLUG:"; continue; }
     LUROWS=$(printf '%s' "$LULIST" | jq -r 'if type == "array" then .[] else error("not a list") end
       | select((.draft // false) | not)
