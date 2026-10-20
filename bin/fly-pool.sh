@@ -207,9 +207,15 @@ job_is_now() {
 # a reused machine takes the emergency job, and a dispatch goes next.
 hotfix_first() {
   local f
+  # Hotfix rows stay first: the SPAWN walk `break`s on the first non-hot row
+  # once the budget is spent, so a hot row after any other row loses its cap
+  # exemption (BH-7382). Then conductor rebase rows (RB-<pr>-<head8>): each
+  # unblocks a merge and is one short machine. Newest by age, they starved
+  # behind 130 older builds in the 600 s tick budget (project-6-os, 2026-10-19).
   for f in "$@"; do job_is_hot "$f" && printf '%s\n' "$f"; done
-  for f in "$@"; do job_is_hot "$f" || ! job_is_now "$f" || printf '%s\n' "$f"; done
-  for f in "$@"; do job_is_hot "$f" || job_is_now "$f" || printf '%s\n' "$f"; done
+  for f in "$@"; do case "${f##*/}" in RB-*) job_is_hot "$f" || printf '%s\n' "$f" ;; esac; done
+  for f in "$@"; do case "${f##*/}" in RB-*) continue ;; esac; job_is_hot "$f" || ! job_is_now "$f" || printf '%s\n' "$f"; done
+  for f in "$@"; do case "${f##*/}" in RB-*) continue ;; esac; job_is_hot "$f" || job_is_now "$f" || printf '%s\n' "$f"; done
 }
 # Start the flyctl agent with fd 8 CLOSED: an agent auto-spawned by `machine
 # exec` inside the locked section inherits fd 8 and holds the lock forever
