@@ -41,9 +41,16 @@
 #       applies the project's pending write-backs and publishes its snapshot
 #       (bin/lib/lane-run-inputs.sh), so the run starts from the hub's files
 #       of now. At most once per mc_project_fly.publish_min_s (fallback 120 s)
-#       per project (stamp <project>.published-at). A failure logs one line; the row is still enqueued, and the
-#       cron publisher (lane-snapshot-publish.sh --lane merge-conductor) is
-#       the backstop.
+#       per project (stamp <project>.published-at). Both lib calls wait up to
+#       mc_project_fly.publish_lock_wait_s (fallback 30 s, at most 600) for
+#       the per-project snapshot lock the cron publisher
+#       (lane-snapshot-publish.sh --lane merge-conductor) also takes. A
+#       failure logs one line with its reason (`rc=<n>, no output` when the
+#       lib printed none). After a failed publish it reads the current
+#       snapshot (_mc_proj_snap_fresh): rc 0 when the cron publisher's
+#       snapshot is fresh enough (no stamp written), rc 1 with
+#       MC_PROJ_PUB_WHY set when it is not, and then no row is enqueued
+#       (BH-7520: run 12126 got a stale snapshot and ended rc 66).
 #   mc_proj_gate <project> <stale-s>
 #       the hub's decision for one project tick. rc 1 = not placed fly, or a
 #       hub fallback: run today's hub tick. rc 2 = a hub fallback for a
@@ -96,14 +103,17 @@
 MC_PROJ_LANE=merge-conductor
 # Code fallbacks of the settings rows mc_project_fly.alert_s,
 # mc_project_fly.publish_min_s, mc_project_fly.failed_alert_n,
-# mc_project_fly.hubtick_max_s, mc_project_fly.nocap_backoff_s and
-# mc_project_fly.nocap_alert_n (_mc_proj_int).
+# mc_project_fly.hubtick_max_s, mc_project_fly.nocap_backoff_s,
+# mc_project_fly.nocap_alert_n, mc_project_fly.publish_lock_wait_s and
+# mc_project_fly.snapshot_margin_s (_mc_proj_int).
 MC_PROJ_ALERT_S=3600
 MC_PROJ_PUBLISH_MIN_S=120
 MC_PROJ_FAILED_ALERT_N=3
 MC_PROJ_HUBTICK_MAX_S=3600
 MC_PROJ_NOCAP_BACKOFF_S=600
 MC_PROJ_NOCAP_ALERT_N=3
+MC_PROJ_PUBLISH_LOCK_WAIT_S=30
+MC_PROJ_SNAPSHOT_MARGIN_S=300
 
 _mc_proj_root() { printf '%s' "${HARNESS:-${H:-}}"; }
 _mc_proj_dir() { printf '%s/state/merge-conductor/project-fly' "$(_mc_proj_root)"; }
@@ -230,8 +240,44 @@ mc_proj_alert() {
   return 0
 }
 
+# _mc_proj_why <rc> <output> — the last non-empty line of a lib call's
+# output, else `rc=<rc>, no output`.
+_mc_proj_why() {
+  local w
+  w=$(printf '%s\n' "$2" | awk 'NF {l = $0} END {print l}')
+  [ -n "$w" ] || w="rc=$1, no output"
+  printf '%s' "$w"
+}
+
+# _mc_proj_snap_fresh <project> — rc 0 and the age when the project's current
+# snapshot is fresh enough for a machine to claim: age_s +
+# mc_project_fly.snapshot_margin_s <= lane_snapshot.max_age_s (the bound
+# lri_fetch refuses past). rc 1 and the reason otherwise: no client, no
+# snapshot, a failed read, an age that is not a whole number, or too old.
+_mc_proj_snap_fresh() {
+  local p="$1" f rc age max margin
+  _mc_proj_client >/dev/null 2>&1 || { printf 'no jobs client'; return 1; }
+  f=$(mktemp "${TMPDIR:-/tmp}/mc-proj-snap.XXXXXX") || { printf 'mktemp failed'; return 1; }
+  # Into a file, not $( ): JOBS_HTTP must survive the call to be named.
+  _jobs_req GET "/api/lane-snapshots/$MC_PROJ_LANE/$p" > "$f" 2>/dev/null; rc=$?
+  age=$(jq -r '.age_s' "$f" 2>/dev/null); rm -f "$f"
+  case "$rc" in
+    0) ;;
+    2) printf 'no snapshot'; return 1 ;;
+    *) printf 'snapshot read failed (http %s)' "${JOBS_HTTP:-none}"; return 1 ;;
+  esac
+  [[ $age =~ ^[0-9]{1,9}$ ]] || { printf 'unreadable age'; return 1; }
+  age=$((10#$age))
+  max=$(_mc_proj_int lane_snapshot.max_age_s 1200)
+  margin=$(_mc_proj_int mc_project_fly.snapshot_margin_s "$MC_PROJ_SNAPSHOT_MARGIN_S")
+  if [ $((age + margin)) -le "$max" ]; then printf '%s' "$age"; return 0; fi
+  printf 'snapshot %ss old, max %ss less margin %ss' "$age" "$max" "$margin"
+  return 1
+}
+
 mc_proj_publish() {
-  local p="$1" root out stamp now last
+  local p="$1" root out stamp now last w rc why fresh
+  MC_PROJ_PUB_WHY=""
   root=$(_mc_proj_root)
   # At most one publish per project per MC_PROJ_PUBLISH_MIN_S: a snapshot is
   # a tar of the project's records, and the hub's CPU is what this lane frees.
@@ -242,11 +288,28 @@ mc_proj_publish() {
     # shellcheck source=bin/lib/lane-run-inputs.sh
     [ -r "$root/bin/lib/lane-run-inputs.sh" ] && . "$root/bin/lib/lane-run-inputs.sh" 2>/dev/null
   fi
-  command -v lri_publish >/dev/null 2>&1 || { _mc_proj_log "$p project-fly: no lane-run-inputs lib — the cron publisher's snapshot is used"; return 1; }
-  out=$(lri_apply_pending "$MC_PROJ_LANE" "$p" 2>&1) || _mc_proj_log "$p project-fly: write-back apply failed ($(printf '%s' "$out" | tail -n 1))"
-  out=$(lri_publish "$MC_PROJ_LANE" "$p" 2>&1) || { _mc_proj_log "$p project-fly: snapshot publish failed ($(printf '%s' "$out" | tail -n 1)) — the cron publisher's snapshot is used"; return 1; }
-  _mc_proj_put "$stamp" "$now"
-  return 0
+  if command -v lri_publish >/dev/null 2>&1; then
+    # The cron publisher holds the same per-project lock across its file
+    # walk and tar: wait for it within the bound (BH-7520).
+    w=$(_mc_proj_int mc_project_fly.publish_lock_wait_s "$MC_PROJ_PUBLISH_LOCK_WAIT_S")
+    [ "$w" -le 600 ] || w="$MC_PROJ_PUBLISH_LOCK_WAIT_S"
+    out=$(LRI_LOCK_WAIT_S="$w" lri_apply_pending "$MC_PROJ_LANE" "$p" 2>&1); rc=$?
+    [ "$rc" = 0 ] || _mc_proj_log "$p project-fly: write-back apply failed ($(_mc_proj_why "$rc" "$out"))"
+    out=$(LRI_LOCK_WAIT_S="$w" lri_publish "$MC_PROJ_LANE" "$p" 2>&1); rc=$?
+    if [ "$rc" = 0 ]; then _mc_proj_put "$stamp" "$now"; return 0; fi
+    why=$(_mc_proj_why "$rc" "$out")
+  else
+    why="no lane-run-inputs lib"
+  fi
+  # The publish failed: a machine row runs on the cron publisher's snapshot,
+  # and only when lri_fetch on the machine will still take it.
+  if fresh=$(_mc_proj_snap_fresh "$p"); then
+    _mc_proj_log "$p project-fly: snapshot publish failed ($why) — the cron publisher's snapshot is used (${fresh}s old)"
+    return 0
+  fi
+  MC_PROJ_PUB_WHY="$fresh"
+  _mc_proj_log "$p project-fly: snapshot publish failed ($why) — no fresh snapshot ($fresh); this tick of $p stays on the hub"
+  return 1
 }
 
 # _mc_proj_apply <project> — the hub takes in what the machines wrote BEFORE
@@ -385,16 +448,18 @@ _mc_proj_nocap_backoff() {
 
 # _mc_proj_enqueue <project> — publish, then one lp_enqueue. rc 0 = a row is
 # queued or live, or a hub fallback tick still runs (owed); rc 1 = not
-# enqueued.
+# enqueued. A failed publish with no fresh snapshot is rc 1 before any
+# lp_enqueue, with MC_PROJ_ENQ_WHY set (BH-7520).
 _mc_proj_enqueue() {
   local p="$1" d rc pid
+  MC_PROJ_ENQ_WHY=""
   d=$(_mc_proj_dir)
   if pid=$(_mc_proj_hub_busy "$p"); then
     _mc_proj_put "$d/$p.owed" "owed $(date -u +%s)"
     _mc_proj_log "$p project-fly: a hub tick of $p still runs (pid $pid) — owed, no row enqueued this tick"
     return 0
   fi
-  mc_proj_publish "$p" || true
+  mc_proj_publish "$p" || { MC_PROJ_ENQ_WHY="no fresh snapshot: $MC_PROJ_PUB_WHY"; return 1; }
   lp_enqueue "$MC_PROJ_LANE" "$p" "$(_mc_proj_root)/bin/merge-conductor-project.sh" "$p"; rc=$?
   case "$rc" in
     0) rm -f "$d/$p.owed"; _mc_proj_log "$p project-fly: enqueued $MC_PROJ_LANE $p — no hub work for $p this tick"; return 0 ;;
@@ -469,7 +534,7 @@ mc_proj_gate() {
         if [ "$(mc_proj_fallback "$p")" = hub ] && _mc_proj_nocap_backoff "$p"; then
           _mc_proj_fallback "$p" no-capacity "row $id withdrawn, backoff ${MC_PROJ_BACKOFF_LEFT}s left" 1; rc=$?
         else
-          _mc_proj_enqueue "$p" || { _mc_proj_fallback "$p" enqueue-failed "http ${JOBS_HTTP:-none}" 1; }; rc=$?
+          _mc_proj_enqueue "$p" || { _mc_proj_fallback "$p" enqueue-failed "${MC_PROJ_ENQ_WHY:-http ${JOBS_HTTP:-none}}" 1; }; rc=$?
         fi
       else
         wrc=2
@@ -500,7 +565,7 @@ mc_proj_gate() {
       fi ;;
     failed|deferred)
       if [ "$id" = "$taken" ]; then
-        _mc_proj_enqueue "$p" || { _mc_proj_fallback "$p" enqueue-failed "http ${JOBS_HTTP:-none}" 1; }; rc=$?
+        _mc_proj_enqueue "$p" || { _mc_proj_fallback "$p" enqueue-failed "${MC_PROJ_ENQ_WHY:-http ${JOBS_HTTP:-none}}" 1; }; rc=$?
       else
         _mc_proj_put "$d/$p.taken" "$id"
         # A machine claimed this row: the no-capacity streak ends.
@@ -519,7 +584,7 @@ mc_proj_gate() {
       fi ;;
     none|done)
       [ "$kind" = "done" ] && { _mc_proj_failed_count "$p" reset >/dev/null; _mc_proj_nocap_count "$p" reset >/dev/null; }
-      _mc_proj_enqueue "$p" || { _mc_proj_fallback "$p" enqueue-failed "http ${JOBS_HTTP:-none}" 1; }; rc=$? ;;
+      _mc_proj_enqueue "$p" || { _mc_proj_fallback "$p" enqueue-failed "${MC_PROJ_ENQ_WHY:-http ${JOBS_HTTP:-none}}" 1; }; rc=$? ;;
     *)
       _mc_proj_fallback "$p" enqueue-failed "lane_runs read: $det" 1; rc=$? ;;
   esac

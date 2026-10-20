@@ -26,7 +26,10 @@
 #   lri_publish <lane> <project>                                 (hub)
 #       prints `published <sha12> <bytes>` or `unchanged <sha12> <bytes>`.
 #       rc 3 = over lane_snapshot.max_bytes (prints `oversize <bytes>`),
-#       rc 1 = any other failure. The previous generation stays on a failure.
+#       rc 1 = any other failure, with one `lri_publish: <reason>` line on
+#       stderr (BH-7520). The previous generation stays on a failure. It
+#       waits LRI_LOCK_WAIT_S (1..600, else 10) for the per-project lock
+#       locks/lane-snapshot-<lane>-<project>.lock, as lri_apply_pending does.
 #       Each file over lane_snapshot.file_max and each record dir older than
 #       lane_snapshot.builds_days that the snapshot leaves out is logged ONE
 #       time, when the skip starts, to logs/lane-snapshot-publish.log
@@ -763,36 +766,50 @@ _lri_get() { _jobs_req GET "$1" > "$2"; }
 # _lri_b64_file <json-file> <out> — decode the .b64 field of an answer.
 _lri_b64_file() { jq -j '.b64 // empty' "$1" 2>/dev/null | base64 -d > "$2" 2>/dev/null && [ -s "$2" ]; }
 
+# _lri_lock_wait — the seconds lri_publish and lri_apply_pending wait for the
+# per-project snapshot lock: LRI_LOCK_WAIT_S when it is a whole number
+# 1..600, else 10 (BH-7520; the hub conductor sets it from a settings row).
+_lri_lock_wait() {
+  local w="${LRI_LOCK_WAIT_S:-}"
+  [[ $w =~ ^[0-9]{1,3}$ ]] && [ "$((10#$w))" -ge 1 ] && [ "$((10#$w))" -le 600 ] || w=10
+  printf '%s' "$((10#$w))"
+}
+
+# _lri_pub_fail <reason> — the one stderr line of a failed lri_publish.
+_lri_pub_fail() { printf 'lri_publish: %s\n' "$1" >&2; }
+
 lri_publish() {
-  local lane="${1:-}" p="${2:-}" root api tmp maxb days list sha bytes cur cur_at through n=0 part rc lk
+  local lane="${1:-}" p="${2:-}" root api tmp maxb days list sha bytes cur cur_at through n=0 part rc lk w lkrel
   local LRI_LANE="$lane" lines rows path ere logs=()
   root=$(_lri_root)
-  [ -n "$root" ] || return 1
+  [ -n "$root" ] || { _lri_pub_fail "no HARNESS root"; return 1; }
   _lri_load "$lane" "$p" || { printf '%s\n' "${_LRI_M[$LRI_K|err]}" >&2; return 1; }
-  _lri_has || return 1
+  _lri_has || { _lri_pub_fail "$lane has no read-only manifest for $p"; return 1; }
   lines="${_LRI_M[$LRI_K|lines]:-}"; rows="${_LRI_M[$LRI_K|rows]:-}"
-  _lri_client || return 1
+  _lri_client || { _lri_pub_fail "no jobs client"; return 1; }
   maxb=$(_lri_setting lane_snapshot.max_bytes 33554432)
   days=$(_lri_setting lane_snapshot.builds_days 30)
   api="/api/lane-snapshots/$lane/$p"
-  tmp=$(mktemp -d "${TMPDIR:-/tmp}/lri-publish.XXXXXX") || return 1
+  tmp=$(mktemp -d "${TMPDIR:-/tmp}/lri-publish.XXXXXX") || { _lri_pub_fail "mktemp failed"; return 1; }
   # shellcheck disable=SC2064
   trap "rm -rf '$tmp'; trap - RETURN" RETURN
   # The apply lock is held from the file list to applied_through, so a hub
   # apply cannot land a write-back the tar lacks but the watermark covers.
   mkdir -p "$root/locks" 2>/dev/null
-  exec {lk}>"$root/locks/lane-snapshot-$lane-$p.lock" || return 1
+  lkrel="locks/lane-snapshot-$lane-$p.lock"
+  exec {lk}>"$root/$lkrel" || { _lri_pub_fail "lock file not opened: $lkrel"; return 1; }
   # shellcheck disable=SC2064
   trap "rm -rf '$tmp'; exec $lk>&-; trap - RETURN" RETURN
-  flock -w 10 "$lk" || return 1
-  list=$(_lri_list "$p" ro "$days" "$tmp/skips") || return 1
+  w=$(_lri_lock_wait)
+  flock -w "$w" "$lk" || { _lri_pub_fail "lock busy: $lkrel held past ${w}s"; return 1; }
+  list=$(_lri_list "$p" ro "$days" "$tmp/skips") || { _lri_pub_fail "file list failed"; return 1; }
   _lri_skips_log "$lane" "$p" "$tmp/skips"
   printf '%s\n' "$list" | awk -F'\t' 'NF == 2 {print $2}' > "$tmp/list.files"
   # An @lines path rides as its matching lines only, with a fixed mtime, so a
   # busy log does not change the snapshot's sha.
   while IFS=$'\t' read -r path ere; do
     [ -n "$path" ] || continue
-    mkdir -p "$tmp/x/$(dirname "$path")" || return 1
+    mkdir -p "$tmp/x/$(dirname "$path")" || { _lri_pub_fail "staging $path failed"; return 1; }
     grep -E -- "$ere" "$root/$path" 2>/dev/null | tail -n 20000 > "$tmp/x/$path"
     touch -d @0 "$tmp/x/$path"
     logs+=("$path")
@@ -802,24 +819,25 @@ lri_publish() {
   while IFS=$'\t' read -r path ere; do
     [ -n "$path" ] || continue
     grep -vxF -- "$path" "$tmp/list.files" > "$tmp/list.next"; mv -f "$tmp/list.next" "$tmp/list.files"
-    mkdir -p "$tmp/x/$(dirname "$path")" || return 1
-    _lri_rows_lines "$ere" "$root/$path" > "$tmp/x/$path" || return 1
+    mkdir -p "$tmp/x/$(dirname "$path")" || { _lri_pub_fail "staging $path failed"; return 1; }
+    _lri_rows_lines "$ere" "$root/$path" > "$tmp/x/$path" || { _lri_pub_fail "staging $path failed"; return 1; }
     touch -d @0 "$tmp/x/$path"
     logs+=("$path")
   done <<<"$rows"
   [ "${#logs[@]}" = 0 ] || logs=(-C "$tmp/x" "${logs[@]}")
   tar --no-recursion --sort=name --owner=0 --group=0 --numeric-owner --format=gnu \
-      -cf "$tmp/snap.tar" -C "$root" -T "$tmp/list.files" ${logs[@]+"${logs[@]}"} 2>/dev/null || return 1
-  gzip -n -c "$tmp/snap.tar" > "$tmp/snap.tgz" || return 1
+      -cf "$tmp/snap.tar" -C "$root" -T "$tmp/list.files" ${logs[@]+"${logs[@]}"} 2>/dev/null || { _lri_pub_fail "tar failed"; return 1; }
+  gzip -n -c "$tmp/snap.tar" > "$tmp/snap.tgz" || { _lri_pub_fail "gzip failed"; return 1; }
   bytes=$(stat -c %s "$tmp/snap.tgz")
   if [ "$bytes" -gt "$maxb" ]; then printf 'oversize %s\n' "$bytes"; return 3; fi
   sha=$(_lri_sha "$tmp/snap.tgz")
   # applied_through is the newest write-back this hub tree already holds: the
   # last applied id, read from the unapplied list's lower edge.
   _lri_get "$api" "$tmp/cur.json"; rc=$?
-  case "$rc" in 0|2) ;; *) return 1 ;; esac
+  case "$rc" in 0|2) ;; *) _lri_pub_fail "current snapshot read failed (http ${JOBS_HTTP:-none})"; return 1 ;; esac
   cur=""; [ "$rc" = 0 ] && cur=$(jq -r '.sha // empty' "$tmp/cur.json" 2>/dev/null)
-  through=$(_lri_through "$lane" "$p" "$(jq -r '.applied_through // 0' "$tmp/cur.json" 2>/dev/null)") || return 1
+  through=$(_lri_through "$lane" "$p" "$(jq -r '.applied_through // 0' "$tmp/cur.json" 2>/dev/null)") \
+    || { _lri_pub_fail "applied_through read failed"; return 1; }
   flock -u "$lk"
   cur_at="unchanged"
   if [ "$cur" != "$sha" ]; then
@@ -827,15 +845,15 @@ lri_publish() {
     split -b "$LRI_PART_BYTES" -d -a 3 "$tmp/snap.tgz" "$tmp/part."
     for part in "$tmp"/part.*; do
       base64 -w0 "$part" > "$part.b64"
-      jq -n --arg s "$sha" --rawfile b "$part.b64" '{sha:$s, b64:$b}' > "$part.json" || return 1
-      _jobs_req_file PUT "$api/parts/$n" "$part.json" > /dev/null || return 1
+      jq -n --arg s "$sha" --rawfile b "$part.b64" '{sha:$s, b64:$b}' > "$part.json" || { _lri_pub_fail "part $n not encoded"; return 1; }
+      _jobs_req_file PUT "$api/parts/$n" "$part.json" > /dev/null || { _lri_pub_fail "part $n upload failed (http ${JOBS_HTTP:-none})"; return 1; }
       n=$((n + 1))
     done
   else
     n=$(jq -r '.parts' "$tmp/cur.json")
   fi
   _jobs_req POST "$api/commit" "$(jq -nc --arg s "$sha" --argjson n "$n" --argjson t "$through" \
-    '{sha:$s, parts:$n, applied_through:$t}')" > /dev/null || return 1
+    '{sha:$s, parts:$n, applied_through:$t}')" > /dev/null || { _lri_pub_fail "commit failed (http ${JOBS_HTTP:-none})"; return 1; }
   printf '%s %s %s\n' "$cur_at" "${sha:0:12}" "$bytes"
 }
 
@@ -1094,7 +1112,7 @@ lri_apply_pending() {
   mkdir -p "$root/locks" "$(_lri_state "$lane" "$p")" 2>/dev/null
   (
     exec 9>"$root/locks/lane-snapshot-$lane-$p.lock" || exit 1
-    flock -w 10 9 || { echo "applied=0 conflicts=0 rejected=0 (lock busy)"; exit 1; }
+    flock -w "$(_lri_lock_wait)" 9 || { echo "applied=0 conflicts=0 rejected=0 (lock busy)"; exit 1; }
     _lri_apply_locked "$lane" "$p"
   )
 }
