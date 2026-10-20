@@ -100,21 +100,21 @@ grep -q '^| tests/wake-loop-shape-test.sh | .* | not run (head green) | 1/0 rc=0
 
 # ── AT2: a deleted worker test behind a package.json test script ────────────
 D2="$T/at2"; newrepo "$D2"
-put "$D2" worker/cloud/package.json '{"name":"cloud","scripts":{"test":"node --test test/"}}'
-put "$D2" worker/cloud/test/a.test.js 'require("node:test");'
+put "$D2" worker/svc/package.json '{"name":"svc","scripts":{"test":"node --test test/"}}'
+put "$D2" worker/svc/test/a.test.js 'require("node:test");'
 suite "$D2" tests/harness-ci-worker-jobs.bh-1137-test.sh 'DIR=$(cd "$(dirname "$0")/.." && pwd)
 for p in "$DIR"/worker/*/package.json; do
   grep -q "\"test\"" "$p" || continue
   if compgen -G "$(dirname "$p")/test/*.test.js" >/dev/null; then P=$((P+1)); else F=$((F+1)); echo "FAIL: $p has a test script and no test/*.test.js"; fi
 done'
 B=$(snap "$D2" base)
-git -C "$D2" rm -q worker/cloud/test/a.test.js; snap "$D2" head >/dev/null
+git -C "$D2" rm -q worker/svc/test/a.test.js; snap "$D2" head >/dev/null
 RC=$(runchk "$T/at2.out" --tree "$D2" --base "$B" --runner local)
 [ "$RC" = 1 ] && ok || bad "AT2: rc $RC, want 1: $(cat "$T/at2.out" "$T/at2.out.err")"
 grep -q '^RED: tests/harness-ci-worker-jobs.bh-1137-test.sh ' "$T/at2.out" && ok || bad "AT2: suite not named RED: $(cat "$T/at2.out")"
 RC=$(runchk "$T/at2.list" --tree "$D2" --base "$B" --runner local --list-only)
 [ "$RC" = 0 ] && ok || bad "AT2: --list-only rc $RC"
-grep -qP '^tests/harness-ci-worker-jobs.bh-1137-test.sh\timplied worker/cloud/package.json ' "$T/at2.list" && ok \
+grep -qP '^tests/harness-ci-worker-jobs.bh-1137-test.sh\timplied worker/svc/package.json ' "$T/at2.list" && ok \
   || bad "AT2: list why: $(cat "$T/at2.list")"
 
 # ── AT3: lead-verdict, with no selector in the repo ─────────────────────────
