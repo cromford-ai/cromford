@@ -22,6 +22,11 @@
 #      yesterday's) is over settings row hub_load.max_runnable (default 8):
 #      one bin/lane-alert.sh --log-only line per UTC hour
 #      (latch: state/hub-load/alert-hour).
+#   6b. state/hub-load/verdict, every run (bin/lib/hub-load-shed.sh hls_write):
+#      the p90, max_runnable, state=<over|under|insufficient>, max_age_s
+#      (settings row hub_load.verdict_max_age_s, default 1800) and shed=<1|0>
+#      (settings row hub_load.shed; off, 0 or false give 0). The spawners read
+#      it before they fork and start nothing while it says over (BH-7509).
 #   7. After the summary line: bin/hub-load-baseline.sh, which posts the 24 h
 #      baseline once (its own log, logs/hub-load-baseline.log).
 #
@@ -29,6 +34,7 @@
 #   <ts> runnable= steal= forks_s= samples=<ok>/<want> push=<ok|failed|
 #   not-configured|not-loaded> pruned=<n> alert=<written|latched|under|
 #   insufficient(<n>)> keep_days=<n>(row|default) max_runnable=<n>(row|default)
+#   shed=<over|under|insufficient|off>(verdict=<written|failed>)
 #   | <ts> skipped (running)
 #
 # Test seams (catalog/lanes.d/hub-load-sample.json, not settable):
@@ -62,6 +68,9 @@ flock -n 8 || { summary "skipped (running)"; exit 0; }
 
 # shellcheck source=bin/jobs-client.sh
 LOADED=1; . "$SELF/jobs-client.sh" 2>/dev/null || LOADED=0
+# shellcheck source=bin/lib/hub-load-shed.sh
+. "$H/bin/lib/hub-load-shed.sh" 2>/dev/null || . "$SELF/lib/hub-load-shed.sh" 2>/dev/null \
+  || hls_write() { return 1; }
 
 TMP=$(mktemp -d "${TMPDIR:-/tmp}/hls.XXXXXX") || { summary "skipped (mktemp)"; exit 0; }
 trap 'rm -rf "$TMP"' EXIT
@@ -83,6 +92,13 @@ knob() {
 }
 knob KEEP hub_load.keep_days 14
 knob MAXR hub_load.max_runnable 8
+knob VAGE hub_load.verdict_max_age_s 1800
+SHED=1
+if [ "$LOADED" = 1 ]; then
+  case "$(setting_get hub_load.shed 2>/dev/null | tr -d '[:space:]' | tr '[:upper:]' '[:lower:]')" in
+    off|0|false) SHED=0 ;;
+  esac
+fi
 
 # ── 1. ps samples ────────────────────────────────────────────────────────────
 OK=0
@@ -218,14 +234,16 @@ VALS=$(cat "$DIR_HL/$YDAY.tsv" "$DIR_HL/$TODAY.tsv" 2>/dev/null \
   | awk -F '\t' '{ for (k = 2; k <= NF; k++) if (index($k, "runnable=") == 1) { v = substr($k, 10); if (v ~ /^[0-9]+(\.[0-9]+)?$/) print v; break } }' \
   | tail -6)
 NV=$(printf '%s' "$VALS" | grep -c .)
+P90=NA
 if [ "$NV" -lt 6 ]; then
-  ALERT="insufficient($NV)"
+  ALERT="insufficient($NV)"; VSTATE=insufficient
 else
   P90=$(printf '%s\n' "$VALS" | LC_ALL=C sort -g | awk '
     { v[NR - 1] = $1 }
     END { p = 0.9 * (NR - 1); lo = int(p); hi = (lo + 1 < NR) ? lo + 1 : lo
           x = v[lo] + (p - lo) * (v[hi] - v[lo]); s = sprintf("%.2f", x); sub(/\.?0+$/, "", s); print s }')
   if awk -v p="$P90" -v m="$MAXR" 'BEGIN { exit !(p > m) }'; then
+    VSTATE=over
     HOUR=$(date -u -d "@$NOW" +%Y-%m-%dT%H)
     if [ "$(cat "$DIR_HL/alert-hour" 2>/dev/null)" = "$HOUR" ]; then
       ALERT=latched
@@ -238,10 +256,18 @@ else
       ALERT=written
     fi
   else
-    ALERT=under
+    ALERT=under; VSTATE=under
   fi
 fi
 
-summary "runnable=$RUNNABLE steal=$ST forks_s=$FORKS samples=$OK/$SAMPLES push=$PUSH pruned=$PRUNED alert=$ALERT keep_days=$KEEP($KEEP_SRC) max_runnable=$MAXR($MAXR_SRC)"
+# ── 6b. the verdict the spawners read (BH-7509) ──────────────────────────────
+if hls_write "$DIR_HL/verdict" "$NOW" "$RUNNABLE" "$P90" "$MAXR" "$VSTATE" "$VAGE" "$SHED"; then
+  VWRITE=written
+else
+  VWRITE=failed
+fi
+if [ "$SHED" = 1 ]; then VSUM=$VSTATE; else VSUM=off; fi
+
+summary "runnable=$RUNNABLE steal=$ST forks_s=$FORKS samples=$OK/$SAMPLES push=$PUSH pruned=$PRUNED alert=$ALERT keep_days=$KEEP($KEEP_SRC) max_runnable=$MAXR($MAXR_SRC) shed=$VSUM(verdict=$VWRITE)"
 [ -x "$SELF/hub-load-baseline.sh" ] && "$SELF/hub-load-baseline.sh" >/dev/null 2>&1
 exit 0

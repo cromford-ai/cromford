@@ -4427,6 +4427,17 @@ if HOLDWHY=$(pool_spawn_held); then
   say "spawn hold: the runner lane failed ($HOLDWHY) — no spawns until $(date -u -d "@$(cut -d' ' -f1 "$(pool_spawn_hold_path)" 2>/dev/null)" '+%H:%MZ' 2>/dev/null || echo 'the hold expires')"
   exit 0
 fi
+# LOAD SHED (BH-7509): while state/hub-load/verdict says the hub is over
+# hub_load.max_runnable, this tick spawns nothing. REAP and the sweep above
+# already ran; the queued job files stay for the next tick. No verdict file
+# (every box but the hub, every Fly machine) or a stale one: no shed.
+# shellcheck source=bin/lib/hub-load-shed.sh
+. "$HARNESS/bin/lib/hub-load-shed.sh" 2>/dev/null || . "$(dirname "${BASH_SOURCE[0]}")/lib/hub-load-shed.sh" 2>/dev/null \
+  || hls_over() { return 1; }
+if hls_over "$HARNESS"; then
+  say "$HLS_LINE — no spawns this tick (reap ran)"
+  exit 0
+fi
 LIVE=$(ls "$POOL" 2>/dev/null | wc -l)
 # --- AUTOSCALE: THE QUEUE SETS THE MACHINE COUNT (the operator, 2026-09-14) -----------
 # "we can launch unlimited builders with fly.io" — so the budget is the DEPTH of

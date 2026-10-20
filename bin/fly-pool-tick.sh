@@ -137,9 +137,58 @@ tick_hang_check() {
   HARNESS="$H" "$H/bin/alert-line.sh" --id "pool-tick-hung-$p" --project "$p" "[pool/$p] tick has run ${age}s, past the hard limit of ${lim}s: it holds the project lock and is not killed; check logs/fly-pool.log and the tick process on the hub"
 }
 
+# --- BH-7509: at most POOL_TICK_MAX_PARALLEL project ticks at once --------------
+# 0 (the default) = nproc. A held locks/fly-pool-<p>.lock is a running tick and
+# counts. Free projects are offered oldest state/fly-pool-tick/<p>.since first
+# (no stamp = oldest), so a cap never starves the same names. A project over
+# the cap gets one line and no stamp; the next cron start offers it again.
+# A held project is still started: its own lock turns it away, and
+# tick_hang_check still sees how long it has run.
+tick_cap() {
+  local c; c=$(tick_knob POOL_TICK_MAX_PARALLEL 0)
+  [ "$c" = 0 ] && c=$(nproc 2>/dev/null | tr -dc 0-9)
+  printf '%s\n' "${c:-0}"   # nproc unreadable: 0 = no cap, as before BH-7509
+}
+tick_held() { # tick_held <project> — rc 0 when its tick runs now
+  local lock="$H/locks/fly-pool-$1.lock"
+  command -v flock >/dev/null 2>&1 && [ -e "$lock" ] && ! ( exec 9>>"$lock"; flock -n 9 ) 2>/dev/null
+}
+tick_start_capped() { # tick_start_capped <project>... — the autoscale start
+  local cap run=0 p s
+  local -a free=()
+  cap=$(tick_cap)
+  for p in "$@"; do
+    if tick_held "$p"; then
+      run=$((run + 1)); tick_hang_check "$p"; "$H/bin/fly-pool.sh" "$p" &
+    else
+      s=$(tr -dc 0-9 2>/dev/null < "$H/state/fly-pool-tick/$p.since"); free+=("${s:-0} $p")
+    fi
+  done
+  [ "${#free[@]}" -gt 0 ] || return 0
+  while read -r s p; do
+    [ -n "$p" ] || continue
+    if [ "$cap" -gt 0 ] && [ "$run" -ge "$cap" ]; then
+      echo "$(date -u '+%Y-%m-%d %H:%M:%SZ') [pool/$p] max-ticks: $run of $cap running — $p waits for the next start (POOL_TICK_MAX_PARALLEL)" >> "$H/logs/fly-pool.log"
+      continue
+    fi
+    run=$((run + 1)); tick_hang_check "$p"; "$H/bin/fly-pool.sh" "$p" &
+  done < <(printf '%s\n' "${free[@]}" | LC_ALL=C sort -k1,1n -k2,2)
+}
+
 # shellcheck source=bin/jobs-client.sh
 [ -r "$H/bin/jobs-client.sh" ] && [ -d "$H/bin/lib/jobs" ] && . "$H/bin/jobs-client.sh" 2>/dev/null
 command -v routing_sync_all >/dev/null 2>&1 && { routing_sync_all >/dev/null 2>&1 || true; }
+# LOAD SHED (BH-7509): while state/hub-load/verdict says over, the ticks still
+# start (each one's REAP finishes builds that already run) and bin/fly-pool.sh
+# skips its own SPAWN half. One note line here per wrapper run.
+# shellcheck source=bin/lib/hub-load-shed.sh
+. "$H/bin/lib/hub-load-shed.sh" 2>/dev/null || . "$(dirname "${BASH_SOURCE[0]}")/lib/hub-load-shed.sh" 2>/dev/null \
+  || hls_over() { return 1; }
+if hls_over "$H"; then
+  mkdir -p "$H/logs" 2>/dev/null
+  echo "$(date -u '+%Y-%m-%d %H:%M:%SZ') [pool] $HLS_LINE — project ticks reap, they spawn nothing" >> "$H/logs/fly-pool.log"
+fi
+TICK_PROJECTS=()
 for f in "$H"/flags/fly-pool-*; do
   [ -f "$f" ] || continue
   case "$f" in *fly-pool-app-*) continue;; esac   # app-name flag, not a project
@@ -151,10 +200,10 @@ for f in "$H"/flags/fly-pool-*; do
     "$H/bin/fly-pool.sh" "$P"
   else
     retire_legacy_cap "$f" "$P"
-    tick_hang_check "$P"
-    "$H/bin/fly-pool.sh" "$P" &
+    TICK_PROJECTS+=("$P")
   fi
 done
+[ "${#TICK_PROJECTS[@]}" -gt 0 ] && tick_start_capped "${TICK_PROJECTS[@]}"
 # BOUNDED WAIT (BH-7491). The sweep used to wait for EVERY tick, so one slow
 # project held this wrapper, the single-run gate (BH-7422) turned each later
 # cron start away, and every project ticked once per round of the slowest one

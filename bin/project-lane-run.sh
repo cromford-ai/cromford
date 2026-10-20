@@ -31,6 +31,18 @@ unset _fd _n
 
 [ "$off" -gt 0 ] && sleep "$off"
 
+# LOAD SHED (BH-7509): while state/hub-load/verdict says the hub is over
+# hub_load.max_runnable, a SPAWNING lane (hls_lane_sheds: one that forks
+# builds or agent sessions) starts no run. No lock is taken and the next
+# dispatch tries again. A lane that only reads state runs as before. No
+# verdict file or a stale one: no shed.
+# shellcheck source=bin/lib/hub-load-shed.sh
+. "$H/bin/lib/hub-load-shed.sh" 2>/dev/null || hls_over() { return 1; }
+if command -v hls_lane_sheds >/dev/null 2>&1 && hls_lane_sheds "$lane" && hls_over "$H"; then
+  echo "$(date -u '+%Y-%m-%d %H:%M:%SZ') $lane: $HLS_LINE — this dispatch starts no run of $p"
+  exit 0
+fi
+
 if ! pl_lock_take "$lane" "$p" 9; then
   echo "$(date -u '+%Y-%m-%d %H:%M:%SZ') $lane: a run of $p is still live (locks/$lane-$p.lock held) — this dispatch starts none"
   exit 0

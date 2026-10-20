@@ -21,6 +21,16 @@
 #           backstop.
 #   status  one line: queued=<n> running=<n> slots=<N>.
 #
+# LOAD SHED (BH-7509). While state/hub-load/verdict says the hub is over
+# hub_load.max_runnable (bin/lib/hub-load-shed.sh hls_over), the pool shrinks
+# to a FLOOR OF ONE slot (slot 0), so merges never stop while the hub is over:
+# a drain logs one `load-shed p90=<n> max=<n> — 1 slot floor, <q> queued`
+# line and takes slot 0 only; slot 0 busy means exit 0, the entries stay
+# queued. A holder of any other slot checks before each next pop and stops
+# between entries. Pool off (N=0) while over: no detached start, the drain
+# runs as N=1. status is unchanged. No verdict file, or a stale one, means no
+# shed.
+#
 # N = MC_KEYED_MAX_PARALLEL (settings row lane.merge-conductor.mc_keyed_max_parallel,
 # code default 4, catalog/lanes.d/merge-conductor.knobs.d). 0 = the pool is
 # off: every queued entry starts detached at once, the behaviour before BH-7139.
@@ -53,6 +63,12 @@ slots() {
   esac
   printf '%s' "$v"
 }
+
+# shellcheck source=bin/lib/hub-load-shed.sh
+. "$H/bin/lib/hub-load-shed.sh" 2>/dev/null || . "$(dirname "$0")/lib/hub-load-shed.sh" 2>/dev/null \
+  || hls_over() { return 1; }
+# shed — rc 0 (with one log line) when the hub is over its load limit.
+shed() { hls_over "$H" || return 1; say "$HLS_LINE — 1 slot floor, $(queued) queued"; }
 
 qlock() { exec 4>>"$Q/.lock" && flock -w 10 4; }
 qunlock() { flock -u 4 2>/dev/null; exec 4>&-; }
@@ -134,19 +150,29 @@ esac
 [ -x "$SCRIPT" ] || { say "bin/merge-conductor.sh not executable — the queue waits"; exit 0; }
 N=$(slots)
 if [ "$N" = 0 ]; then
-  while L=$(pop); do run_entry "$L" bg; done
-  exit 0
+  while [ "$(queued)" -gt 0 ] && ! hls_over "$H" && L=$(pop); do run_entry "$L" bg; done
+  # Over with entries left: the floor slot runs them in the foreground.
+  [ "$(queued)" -gt 0 ] && hls_over "$H" || exit 0
+  N=1
 fi
 SLOT=""
 while :; do
   [ "$(queued)" -gt 0 ] || exit 0
-  if ! take_slot "$N"; then
-    say "full: $(queued) queued, $N of $N slots busy — the queue waits for a free slot"
+  NT=$N
+  if shed; then NT=1; fi
+  if ! take_slot "$NT"; then
+    say "full: $(queued) queued, $NT of $NT slots busy — the queue waits for a free slot"
     exit 0
   fi
-  RAN=0
-  while L=$(pop); do run_entry "$L" fg; RAN=$((RAN + 1)); done
+  RAN=0; SHED=0
+  while :; do
+    # Slot 0 is the floor: it keeps popping while over; any other slot stops.
+    if [ "$SLOT" != 0 ] && shed; then SHED=1; break; fi
+    L=$(pop) || break
+    run_entry "$L" fg; RAN=$((RAN + 1))
+  done
   flock -u 5 2>/dev/null; exec 5>&-
+  [ "$SHED" = 0 ] || exit 0
   # The queue lock did not answer: stop here, the next start drains it.
   [ "$RAN" -gt 0 ] || { say "queue lock busy — $(queued) queued wait for the next drain"; exit 0; }
   # Released: look again, so an entry written while this slot was busy runs.
