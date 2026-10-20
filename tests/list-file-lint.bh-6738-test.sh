@@ -12,7 +12,7 @@
 #   L3  only bin/other.sh changes                 -> rc 0, no output at all
 #   L4  --catalog with a 2-field row and a bad kind -> rc 2, names :3 and :4
 #   L5  harness-ci.yml runs the step in the lint job; no new job
-#   L6  the shipped catalog: 8 rows, all 3 kinds; a no-match run is rc 0
+#   L6  the shipped catalog: 9 rows, all 3 kinds; a no-match run is rc 0
 #   L7  .mergify.yml +3, nothing under config/mergify/ -> rc 1
 #   L8  catalog/lanes.json force-added, plus a lanes.d/ file -> rc 1
 #   L9  .mergify.yml +40 with template.yml modified -> rc 0
@@ -120,8 +120,8 @@ nrend=$(grep -vE '^(#|[[:space:]]*$)' "$CAT" | awk -F'\t' '$2 ~ /^rendered /' | 
 nign=$(grep -vE '^(#|[[:space:]]*$)' "$CAT" | awk -F'\t' '$2 ~ /^ignored /' | wc -l)
 mk l6; echo 'echo bye' >> bin/other.sh; pr
 run --base base --catalog "$CAT"
-[ "$rows" = 8 ] && [ "$nfrag" = 3 ] && [ "$nrend" = 2 ] && [ "$nign" = 3 ] && [ "$RC" = 0 ] && [ -z "$OUT" ] \
-  && ok "L6 shipped catalog: 8 rows, 3 fragments, 2 rendered, 3 ignored; loads clean" \
+[ "$rows" = 9 ] && [ "$nfrag" = 4 ] && [ "$nrend" = 2 ] && [ "$nign" = 3 ] && [ "$RC" = 0 ] && [ -z "$OUT" ] \
+  && ok "L6 shipped catalog: 9 rows, 4 fragments, 2 rendered, 3 ignored; loads clean" \
   || bad "L6 rows=$rows frag=$nfrag rend=$nrend ign=$nign rc=$RC out: $OUT"
 
 # L7

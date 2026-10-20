@@ -34,6 +34,7 @@ example-org/cromford	catalog/switches.d/*-off.json
 example-org/cromford	worker/jobs/src/routes/verdicts.js
 example-org/cromford	bin/lib/mc/**
 example-org/cromford	bin/merge-conductor.sh
+example-org/cromford	bin/merge-conductor.d/**
 example-org/cromford	.github/workflows/**
 example-org/cromford	bin/secret-read-guard.py
 example-org/cromford	bin/secret-read-guard-install.sh

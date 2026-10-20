@@ -16,6 +16,7 @@ console-ui/functions/api/coord/\[\[path\]\].js	console-ui/functions/_lib/coord-w
 cron/*.cron	ignored cron/lanes/	rendered by bin/render-crontab.sh
 catalog/lanes.json	ignored catalog/lanes.d/	rendered by bin/lanes-build.sh
 .mergify.yml	rendered config/mergify/	committed render of bin/mergify-template.sh
+bin/merge-conductor.sh	bin/merge-conductor.d/	new optional lib since BH-7453; one lib per fragment file, sourced in LC_ALL=C order
 docs/MERGE-CONDUCTOR.md	docs/notes/	what changed goes in a dated note (D37)
 docs/PR-OWNERSHIP.md	rendered docs/PR-OWNERSHIP.d/	committed render of bin/render-doc-sections.sh
 worker/jobs/schema.sql	ignored worker/jobs/schema.d/	rendered by bin/schema-build.sh

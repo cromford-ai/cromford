@@ -306,6 +306,18 @@ MC_FIX_NOW_ON=1
 # without it reads the switch as off, so no enrolled external PR is evaluated.
 # shellcheck source=bin/lib/pr-health.sh
 [ -r "$H/bin/lib/pr-health.sh" ] && . "$H/bin/lib/pr-health.sh"
+# >>> merge-conductor.d fragments (BH-7453)
+# A new optional lib is its own file, bin/merge-conductor.d/<key>-<name>.sh,
+# not one more source line above: bin/list-file-lint.sh refuses that. Each
+# regular *.sh there is sourced once, in LC_ALL=C name order, after the in-file
+# libs. A fragment that fails to source is one log line, and the tick goes on.
+mapfile -t _mc_frags < <(set +f; for _f in "$H"/bin/merge-conductor.d/*.sh; do [ -f "$_f" ] && printf '%s\n' "$_f"; done | LC_ALL=C sort)
+for _mc_frag in "${_mc_frags[@]}"; do
+  # shellcheck source=/dev/null
+  . "$_mc_frag" || mc_log "merge-conductor.d: ${_mc_frag##*/} failed to source (rc $?); skipped this tick"
+done
+unset _mc_frags _mc_frag
+# <<< merge-conductor.d fragments (BH-7453)
 # The fan-in assertion (BH-186): every PR a project tick launches a worker for is
 # accounted when the worker returns, and a tick that lost one says so. A tree
 # without the lib ticks exactly as before: no ledger, and the worker runs bare.

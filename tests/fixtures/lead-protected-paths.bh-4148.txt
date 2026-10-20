@@ -29,6 +29,7 @@ catalog/switches.d/*-off.json
 worker/jobs/src/routes/verdicts.js
 bin/lib/mc/**
 bin/merge-conductor.sh
+bin/merge-conductor.d/**
 .github/workflows/**
 bin/secret-read-guard.py
 bin/secret-read-guard-install.sh
