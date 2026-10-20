@@ -1,0 +1,26 @@
+gh POST repos/example-org/cromford/issues/7617/comments
+gh POST repos/example-org/cromford/pulls/7617/reviews
+lead-verdict post example-org/cromford 7617 7617f1c77617f1c77617f1c77617f1c77617f1c7 BLOCK --source agent --reviewer tackler:k7617u1block --note U1
+mc_dequeue_label https://github.com/example-org/cromford/pull/7617
+mc_requeued_record example-org/cromford#7592 7592f1c77592f1c77592f1c77592f1c77592f1c7
+mc_requeue_mergify example-org/cromford https://github.com/example-org/cromford/pull/7592 7592f1c77592f1c77592f1c77592f1c77592f1c7
+mc_requeued_record example-org/cromford#7666 7666f1c77666f1c77666f1c77666f1c77666f1c7
+mc_requeue_mergify example-org/cromford https://github.com/example-org/cromford/pull/7666 7666f1c77666f1c77666f1c77666f1c77666f1c7
+mc_requeued_record example-org/cromford#7588 7588f1c77588f1c77588f1c77588f1c77588f1c7
+mc_requeue_mergify example-org/cromford https://github.com/example-org/cromford/pull/7588 7588f1c77588f1c77588f1c77588f1c77588f1c7
+mc_requeued_record example-org/cromford#7363 7363f1c77363f1c77363f1c77363f1c77363f1c7
+mc_requeue_mergify example-org/cromford https://github.com/example-org/cromford/pull/7363 7363f1c77363f1c77363f1c77363f1c77363f1c7
+lead-verdict post example-org/cromford 7609 7609f1c77609f1c77609f1c77609f1c77609f1c7 MERGE-WITH-NOTES --source agent --reviewer tackler:k7609u4appro --note U4
+mc_enqueue_mergify example-org/cromford https://github.com/example-org/cromford/pull/7609 7609f1c77609f1c77609f1c77609f1c77609f1c7
+lead-verdict post example-org/cromford 7602 7602f1c77602f1c77602f1c77602f1c77602f1c7 MERGE-WITH-NOTES --source agent --reviewer tackler:k7602u4appro --note U4
+mc_enqueue_mergify example-org/cromford https://github.com/example-org/cromford/pull/7602 7602f1c77602f1c77602f1c77602f1c77602f1c7
+lead-verdict post example-org/cromford 7593 7593f1c77593f1c77593f1c77593f1c77593f1c7 MERGE-WITH-NOTES --source agent --reviewer tackler:k7593u4appro --note U4
+mc_enqueue_mergify example-org/cromford https://github.com/example-org/cromford/pull/7593 7593f1c77593f1c77593f1c77593f1c77593f1c7
+lead-verdict post example-org/cromford 7578 7578f1c77578f1c77578f1c77578f1c77578f1c7 MERGE-WITH-NOTES --source agent --reviewer tackler:k7578u4appro --note U4
+mc_enqueue_mergify example-org/cromford https://github.com/example-org/cromford/pull/7578 7578f1c77578f1c77578f1c77578f1c77578f1c7
+lead-verdict post example-org/cromford 7574 7574f1c77574f1c77574f1c77574f1c77574f1c7 MERGE-WITH-NOTES --source agent --reviewer tackler:k7574u4appro --note U4
+mc_enqueue_mergify example-org/cromford https://github.com/example-org/cromford/pull/7574 7574f1c77574f1c77574f1c77574f1c77574f1c7
+lead-verdict post example-org/cromford 7573 7573f1c77573f1c77573f1c77573f1c77573f1c7 MERGE-WITH-NOTES --source agent --reviewer tackler:k7573u4appro --note U4
+mc_enqueue_mergify example-org/cromford https://github.com/example-org/cromford/pull/7573 7573f1c77573f1c77573f1c77573f1c77573f1c7
+lead-verdict post example-org/cromford 7567 7567f1c77567f1c77567f1c77567f1c77567f1c7 MERGE-WITH-NOTES --source agent --reviewer tackler:k7567u4appro --note U4
+mc_enqueue_mergify example-org/cromford https://github.com/example-org/cromford/pull/7567 7567f1c77567f1c77567f1c77567f1c77567f1c7

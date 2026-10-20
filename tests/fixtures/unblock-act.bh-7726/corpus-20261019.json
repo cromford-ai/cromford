@@ -1,0 +1,236 @@
+[
+ {
+  "decision_key": "k7617u1block",
+  "project": "cromford",
+  "repo": "example-org/cromford",
+  "subject_kind": "pr",
+  "subject": "example-org/cromford#7617",
+  "pr": 7617,
+  "head": "7617f1c77617f1c77617f1c77617f1c77617f1c7",
+  "rule_id": "U1",
+  "class": "review-block",
+  "cites": [
+   "fixture cite for #7617"
+  ],
+  "action": {
+   "name": "post_block",
+   "args": {
+    "lines": [
+     "[BLOCK red-build] tests/fixture-a-test.sh fails on this head (fixture line)"
+    ]
+   }
+  }
+ },
+ {
+  "decision_key": "k7592u2requeue",
+  "project": "cromford",
+  "repo": "example-org/cromford",
+  "subject_kind": "pr",
+  "subject": "example-org/cromford#7592",
+  "pr": 7592,
+  "head": "7592f1c77592f1c77592f1c77592f1c77592f1c7",
+  "rule_id": "U2",
+  "class": "queue-requeue",
+  "cites": [
+   "fixture cite for #7592"
+  ],
+  "action": {
+   "name": "requeue",
+   "args": {}
+  }
+ },
+ {
+  "decision_key": "k7666u2requeue",
+  "project": "cromford",
+  "repo": "example-org/cromford",
+  "subject_kind": "pr",
+  "subject": "example-org/cromford#7666",
+  "pr": 7666,
+  "head": "7666f1c77666f1c77666f1c77666f1c77666f1c7",
+  "rule_id": "U2",
+  "class": "queue-requeue",
+  "cites": [
+   "fixture cite for #7666"
+  ],
+  "action": {
+   "name": "requeue",
+   "args": {}
+  }
+ },
+ {
+  "decision_key": "k7588u2requeue",
+  "project": "cromford",
+  "repo": "example-org/cromford",
+  "subject_kind": "pr",
+  "subject": "example-org/cromford#7588",
+  "pr": 7588,
+  "head": "7588f1c77588f1c77588f1c77588f1c77588f1c7",
+  "rule_id": "U2",
+  "class": "queue-requeue",
+  "cites": [
+   "fixture cite for #7588"
+  ],
+  "action": {
+   "name": "requeue",
+   "args": {}
+  }
+ },
+ {
+  "decision_key": "k7363u2requeue",
+  "project": "cromford",
+  "repo": "example-org/cromford",
+  "subject_kind": "pr",
+  "subject": "example-org/cromford#7363",
+  "pr": 7363,
+  "head": "7363f1c77363f1c77363f1c77363f1c77363f1c7",
+  "rule_id": "U2",
+  "class": "queue-requeue",
+  "cites": [
+   "fixture cite for #7363"
+  ],
+  "action": {
+   "name": "requeue",
+   "args": {}
+  }
+ },
+ {
+  "decision_key": "k7609u4approve-fixture",
+  "project": "cromford",
+  "repo": "example-org/cromford",
+  "subject_kind": "pr",
+  "subject": "example-org/cromford#7609",
+  "pr": 7609,
+  "head": "7609f1c77609f1c77609f1c77609f1c77609f1c7",
+  "rule_id": "U4",
+  "class": "queue-approve",
+  "cites": [
+   "fixture cite for #7609"
+  ],
+  "action": {
+   "name": "queue_approve",
+   "args": {
+    "verdict": "MERGE-WITH-NOTES"
+   }
+  }
+ },
+ {
+  "decision_key": "k7602u4approve-fixture",
+  "project": "cromford",
+  "repo": "example-org/cromford",
+  "subject_kind": "pr",
+  "subject": "example-org/cromford#7602",
+  "pr": 7602,
+  "head": "7602f1c77602f1c77602f1c77602f1c77602f1c7",
+  "rule_id": "U4",
+  "class": "queue-approve",
+  "cites": [
+   "fixture cite for #7602"
+  ],
+  "action": {
+   "name": "queue_approve",
+   "args": {
+    "verdict": "MERGE-WITH-NOTES"
+   }
+  }
+ },
+ {
+  "decision_key": "k7593u4approve-fixture",
+  "project": "cromford",
+  "repo": "example-org/cromford",
+  "subject_kind": "pr",
+  "subject": "example-org/cromford#7593",
+  "pr": 7593,
+  "head": "7593f1c77593f1c77593f1c77593f1c77593f1c7",
+  "rule_id": "U4",
+  "class": "queue-approve",
+  "cites": [
+   "fixture cite for #7593"
+  ],
+  "action": {
+   "name": "queue_approve",
+   "args": {
+    "verdict": "MERGE-WITH-NOTES"
+   }
+  }
+ },
+ {
+  "decision_key": "k7578u4approve-fixture",
+  "project": "cromford",
+  "repo": "example-org/cromford",
+  "subject_kind": "pr",
+  "subject": "example-org/cromford#7578",
+  "pr": 7578,
+  "head": "7578f1c77578f1c77578f1c77578f1c77578f1c7",
+  "rule_id": "U4",
+  "class": "queue-approve",
+  "cites": [
+   "fixture cite for #7578"
+  ],
+  "action": {
+   "name": "queue_approve",
+   "args": {
+    "verdict": "MERGE-WITH-NOTES"
+   }
+  }
+ },
+ {
+  "decision_key": "k7574u4approve",
+  "project": "cromford",
+  "repo": "example-org/cromford",
+  "subject_kind": "pr",
+  "subject": "example-org/cromford#7574",
+  "pr": 7574,
+  "head": "7574f1c77574f1c77574f1c77574f1c77574f1c7",
+  "rule_id": "U4",
+  "class": "queue-approve",
+  "cites": [
+   "fixture cite for #7574"
+  ],
+  "action": {
+   "name": "queue_approve",
+   "args": {
+    "verdict": "MERGE-WITH-NOTES"
+   }
+  }
+ },
+ {
+  "decision_key": "k7573u4approve-fixture",
+  "project": "cromford",
+  "repo": "example-org/cromford",
+  "subject_kind": "pr",
+  "subject": "example-org/cromford#7573",
+  "pr": 7573,
+  "head": "7573f1c77573f1c77573f1c77573f1c77573f1c7",
+  "rule_id": "U4",
+  "class": "queue-approve",
+  "cites": [
+   "fixture cite for #7573"
+  ],
+  "action": {
+   "name": "queue_approve",
+   "args": {
+    "verdict": "MERGE-WITH-NOTES"
+   }
+  }
+ },
+ {
+  "decision_key": "k7567u4approve-fixture",
+  "project": "cromford",
+  "repo": "example-org/cromford",
+  "subject_kind": "pr",
+  "subject": "example-org/cromford#7567",
+  "pr": 7567,
+  "head": "7567f1c77567f1c77567f1c77567f1c77567f1c7",
+  "rule_id": "U4",
+  "class": "queue-approve",
+  "cites": [
+   "fixture cite for #7567"
+  ],
+  "action": {
+   "name": "queue_approve",
+   "args": {
+    "verdict": "MERGE-WITH-NOTES"
+   }
+  }
+ }
+]

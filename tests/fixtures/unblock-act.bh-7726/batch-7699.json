@@ -1,0 +1,96 @@
+[
+ {
+  "decision_key": "k7617u1block",
+  "project": "cromford",
+  "repo": "example-org/cromford",
+  "subject_kind": "pr",
+  "subject": "example-org/cromford#7617",
+  "pr": 7617,
+  "head": "7617f1c77617f1c77617f1c77617f1c77617f1c7",
+  "rule_id": "U1",
+  "class": "review-block",
+  "cites": [
+   "fixture cite for #7617"
+  ],
+  "action": {
+   "name": "post_block",
+   "args": {
+    "lines": [
+     "[BLOCK red-build] tests/fixture-a-test.sh fails on this head (fixture line)"
+    ]
+   }
+  }
+ },
+ {
+  "decision_key": "k7592u2requeue",
+  "project": "cromford",
+  "repo": "example-org/cromford",
+  "subject_kind": "pr",
+  "subject": "example-org/cromford#7592",
+  "pr": 7592,
+  "head": "7592f1c77592f1c77592f1c77592f1c77592f1c7",
+  "rule_id": "U2",
+  "class": "queue-requeue",
+  "cites": [
+   "fixture cite for #7592"
+  ],
+  "action": {
+   "name": "requeue",
+   "args": {}
+  }
+ },
+ {
+  "decision_key": "k7666u2requeue",
+  "project": "cromford",
+  "repo": "example-org/cromford",
+  "subject_kind": "pr",
+  "subject": "example-org/cromford#7666",
+  "pr": 7666,
+  "head": "7666f1c77666f1c77666f1c77666f1c77666f1c7",
+  "rule_id": "U2",
+  "class": "queue-requeue",
+  "cites": [
+   "fixture cite for #7666"
+  ],
+  "action": {
+   "name": "requeue",
+   "args": {}
+  }
+ },
+ {
+  "decision_key": "k7588u2requeue",
+  "project": "cromford",
+  "repo": "example-org/cromford",
+  "subject_kind": "pr",
+  "subject": "example-org/cromford#7588",
+  "pr": 7588,
+  "head": "7588f1c77588f1c77588f1c77588f1c77588f1c7",
+  "rule_id": "U2",
+  "class": "queue-requeue",
+  "cites": [
+   "fixture cite for #7588"
+  ],
+  "action": {
+   "name": "requeue",
+   "args": {}
+  }
+ },
+ {
+  "decision_key": "k7363u2requeue",
+  "project": "cromford",
+  "repo": "example-org/cromford",
+  "subject_kind": "pr",
+  "subject": "example-org/cromford#7363",
+  "pr": 7363,
+  "head": "7363f1c77363f1c77363f1c77363f1c77363f1c7",
+  "rule_id": "U2",
+  "class": "queue-requeue",
+  "cites": [
+   "fixture cite for #7363"
+  ],
+  "action": {
+   "name": "requeue",
+   "args": {}
+  }
+ }
+]
