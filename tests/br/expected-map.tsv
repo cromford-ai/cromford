@@ -49,3 +49,6 @@ cap	br_env_for_project	mod
 cap	br_floor_stands	mod
 cap	br_cap_notes	mod
 record	br_review_fix_cap	mod
+headgate	br_head_gate	mod
+headgate	br_head_reset	mod
+headgate	br_close_facts	mod

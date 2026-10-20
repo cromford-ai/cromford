@@ -976,7 +976,7 @@ case "$FIX_LANE_TIMEOUT" in ''|*[!0-9]*) ;; *) [ "$((FIX_LANE_TIMEOUT / 3))" -gt
 # classifier — every park answered `none`, nothing fixed, and a log line that
 # reads exactly like a quiet tick.
 BR_LIB_DIR="$H/bin/lib/br"
-BR_MODULES="discovery keys ladder record cap"
+BR_MODULES="discovery keys ladder record cap headgate"
 for _br_m in $BR_MODULES; do
   # shellcheck source=/dev/null
   if [ -r "$BR_LIB_DIR/$_br_m.sh" ] && . "$BR_LIB_DIR/$_br_m.sh"; then continue; fi
@@ -4706,12 +4706,13 @@ br_rebuild_fresh() {
     return 0
   fi
   if [ "$OBSERVE" = 1 ]; then say "$p/$rkey [$reason]: WOULD rebuild fresh (rebuild $((n+1)) of $lim) — observe mode"; return 0; fi
+  if command -v br_head_gate >/dev/null 2>&1; then br_head_gate "$p" "$ck" "$reason" "$url" || return 0; fi
   # THE CLOSE COMES FIRST, AND IT HAS TO LAND (#783). A rebuild enqueued behind a
   # PR that is still open is two builds of one ticket, so a close GitHub refused
   # defers the whole rung: no event, no superseded marker, no enqueue, no
   # counter. The park is re-offered next tick and tries the same close again.
   crc=0
-  br_close_pr "$url" "Superseded by a fresh build against current main (blocked-resolver: $reason, rebuild $((n+1)) of $lim). This branch is left in place; the rebuild takes the next free name." || crc=$?
+  br_close_pr "$url" "Superseded by a fresh build against current main (blocked-resolver: $reason, rebuild $((n+1)) of $lim). This branch is left in place; the rebuild takes the next free name.$(br_close_facts "$p" "$ck" "$url")" || crc=$?
   if [ "$crc" = 3 ]; then
     br_xpr_parked "$p/$rkey [$reason]: $url is an external author's PR — parked for the author, nothing recorded"
     return 3
@@ -5772,7 +5773,7 @@ br_fix_round() {
   local cok="" cfail="" clines cbytes cbase cdiff cplan cplan_show cpaths=()
   ck=$(br_cap_key "$p" "$rkey" "$tkey")
   st=$(br_load "$p" "$ck"); n=$(br_num "$st" fixrounds)
-  n=$(br_cap_rows "$p" "$rkey" "$reason" "$n" "$url" fixround fixrounds)
+  n=$(br_cap_rows "$p" "$rkey" "$reason" "$n" "$url" fixround fixrounds "$st")
   # THE CAP IS THE TICKET'S, not the file's (BH-579): a small conflict buys two
   # rounds, a contested winner one more. br_one chose this rung from the same
   # br_fix_cap, so the rung chosen and the rung that runs always agree. THE
@@ -7181,6 +7182,7 @@ br_abandon() { # br_abandon <project> <rkey> <reason> <pr-url> <record> <why> <t
       return 4
     fi
   fi
+  if command -v br_head_gate >/dev/null 2>&1; then br_head_gate "$p" "$rkey" "$reason" "$url" || return $?; fi
   if [ "$OBSERVE" = 1 ]; then say "$p/$rkey [$reason]: WOULD abandon ($why) — observe mode"; return 0; fi
   # THE CLOSE COMES BEFORE THE STAMP (#783). A terminal recorded over a PR this
   # lane could not close is the worst of both: the ticket reads ABANDONED, the
@@ -7190,7 +7192,7 @@ br_abandon() { # br_abandon <project> <rkey> <reason> <pr-url> <record> <why> <t
   lines=$(br_load "$p" "$rkey" | jq -r '.attempts[]? | "  - \(.at) \(.action) [\(.reason)]: \(.detail)"' 2>/dev/null)
   crc=0
   br_close_pr "$url" "Abandoned by \`bin/blocked-resolver.sh\` after its ladder was exhausted. What was tried:
-$lines" || crc=$?
+$lines$(br_close_facts "$p" "$rkey" "$url")" || crc=$?
   if [ "$crc" = 3 ]; then
     br_xpr_parked "$p/$rkey [$reason]: $url is an external author's PR — parked for the author, nothing recorded"
     return 3

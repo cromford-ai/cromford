@@ -109,9 +109,18 @@ br_rows_count() {
 #   unchanged head; the file is per ticket cap-key and counts every bump), so
 #   the max equals the file everywhere the file is authoritative and equals the
 #   rows only after a wipe. Prints the count to use; says so when it raised one.
+#   An 8th argument, the record json, subtracts the fix-round baseline a head
+#   reset left for this PR (BH-7660, ladder_reset.base.fixround): the rows
+#   count across every head, so without it the next tick reads the old head's
+#   rounds again and undoes the reset. Floor 0; other kinds are unchanged.
 br_cap_rows() {
-  local p="$1" rkey="$2" reason="$3" n="$4" url="$5" kind="$6" field="$7" r
+  local p="$1" rkey="$2" reason="$3" n="$4" url="$5" kind="$6" field="$7" rec="${8:-}" r b
   r=$(br_rows_count "$url" "$kind")
+  if [ -n "$r" ] && [ "$kind" = fixround ] && [ -n "$rec" ]; then
+    b=$(printf '%s' "$rec" | jq -r --arg u "$url" 'if (.ladder_reset.url // "") == $u then (.ladder_reset.base.fixround // 0) else 0 end' 2>/dev/null)
+    case "$b" in ''|*[!0-9]*) b=0 ;; esac
+    case "$r" in *[!0-9]*) ;; *) if [ "$r" -gt "$b" ]; then r=$(( r - b )); else r=0; fi ;; esac
+  fi
   if [ -n "$r" ] && [ "$r" -gt "$n" ] 2>/dev/null; then
     say "$p/$rkey [$reason]: the record says $n $field but pr_attempts holds $r — a rebuilt hub, the rows count"
     printf '%s' "$r"; return 0
@@ -142,6 +151,19 @@ br_record() {
   cur=$(printf '%s' "$cur" | jq -c --arg a "$act" --arg w "$why" --arg d "$detail" --arg t "$(STAMP)" --arg u "$purl" \
     '.attempts += [{at:$t,action:$a,reason:$w,detail:$d} + (if $u == "" or $u == "-" then {} else {url:$u} end)] | .updated = $t' 2>/dev/null) || return 1
   [ -n "$bump" ] && cur=$(printf '%s' "$cur" | jq -c --arg b "$bump" '.[$b] = ((.[$b] // 0) + 1)' 2>/dev/null)
+  # THE HEAD OF A COUNTED RUNG (BH-7660). The three per-head counters record
+  # the head the rung ran on, for this PR: the caller's head, else the head the
+  # rung last read (br_sup_seen). bin/lib/br/headgate.sh compares it with the
+  # PR's head before any ladder close. An unknown head is stored empty.
+  case "$bump" in
+    mechanicals|regens|fixrounds)
+      cur=$(printf '%s' "$cur" | jq -c --arg h "$(printf '%s' "$phead" | tr 'A-F' 'a-f')" --arg u "$purl" '
+        (if $u == "" or $u == "-" then (.sup_pr // "") else $u end) as $ru
+        | (if ($h | test("^[0-9a-f]{40}$")) then $h
+           elif (.sup_pr // "") == $ru then (.sup_head // "") else "" end) as $rh
+        | .rung_head = $rh | .rung_pr = $ru
+        | if $rh == "" then . else .attempts[-1].head = $rh end' 2>/dev/null) || return 1 ;;
+  esac
   br_save "$p" "$k" "$cur" || return 1
   # A RECORDED RUNG IS RESOLVER ACTIVITY (BH-3630). When the conductor holds a
   # claim for this PR (mc_resolver_claim), its active_at moves, and the
