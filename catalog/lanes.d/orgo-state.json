@@ -13,6 +13,7 @@
     "aliases": []
   },
   "wired": true,
+  "shed": true,
   "knobs": [
     {
       "env": "ORGO_STATE_CALL_TIMEOUT_S",

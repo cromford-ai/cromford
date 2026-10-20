@@ -21,6 +21,9 @@
 #      (BH-2327), <box> being _lg_box. Read only when there is no project.
 #   3c. factory-stop — only for a lane whose manifest carries a `factory_stop`
 #      tag, and only once 1-3b said run (BH-3687, bin/lib/factory-stop.sh).
+#   3d. load shed — only for a lane whose manifest carries `"shed": true`, and
+#      only while the hub load verdict says over (BH-7616, read through
+#      hls_over in bin/lib/hub-load-shed.sh; no verdict file = never shed).
 #   Each of them is read the SAME way: reconcile the D1 `pause_flags` row
 #   into flags/<name> with bin/jobs-client.sh's flag_sync (behind a 60s cache
 #   under state/lane-gate/), then read the file. Never the file first — see
@@ -587,6 +590,40 @@ _lg_lane_fstop() {
   printf '%s' "$v"
 }
 
+# _lg_lane_shed <id> — 1 when the lane's registry `shed` is the boolean true,
+# else 0 (a string, a number, absent, an unreadable registry). Memoised like
+# _lg_lane_fstop.
+_LG_SHED_MEMO=""          # " <id>=<0|1> …", for this process only
+_lg_lane_shed() {
+  local id="${1:-}" v
+  case " $_LG_SHED_MEMO " in *" $id="*)
+    v=${_LG_SHED_MEMO##*" $id="}; printf '%s' "${v%% *}"; return 0 ;;
+  esac
+  v=$(jq -r --arg i "$id" '[.lanes[]? | select(.id==$i) | (.shed == true)][0] // false' \
+        "$(_lg_registry)" 2>/dev/null) || v=""
+  [ "$v" = true ] && v=1 || v=0
+  _LG_SHED_MEMO="$_LG_SHED_MEMO $id=$v"
+  printf '%s' "$v"
+}
+
+# _lg_load_over — rc 0 when the hub load verdict says shed now (HLS_LINE set).
+# No verdict file costs one stat and no source; a missing lib is NOT over,
+# said once.
+_lg_load_over() {
+  local h
+  h=$(_lg_h)
+  [ -n "$h" ] && [ -f "$h/state/hub-load/verdict" ] || return 1
+  if ! declare -F hls_over >/dev/null 2>&1; then
+    # shellcheck source=hub-load-shed.sh
+    if [ ! -r "$(dirname "${BASH_SOURCE[0]}")/hub-load-shed.sh" ] \
+       || ! . "$(dirname "${BASH_SOURCE[0]}")/hub-load-shed.sh"; then
+      _lg_log_throttled load-shed-nolib "load-shed: bin/lib/hub-load-shed.sh missing (half-synced box) — read as NOT over"
+      return 1
+    fi
+  fi
+  hls_over "$h"
+}
+
 # _lg_factory_stopped — factory_stopped from bin/lib/factory-stop.sh, sourced
 # on first use so an untagged lane never loads it. A missing lib (a half-synced
 # bin/) is NOT stopped, said once.
@@ -963,6 +1000,15 @@ lane_gate_or_exit() {
       fi
     fi
     # <<< factory stop
+    # >>> load shed (BH-7616) — a lane tagged "shed": true skips this tick while
+    # the hub load verdict (BH-7509) says over. The verdict file is checked
+    # first, so an untagged lane and a box with no sampler pay one stat.
+    if [ -z "$LANE_PAUSED_WHY" ] && _lg_load_over && [ "$(_lg_lane_shed "$id")" = 1 ]; then
+      LANE_PAUSED_WHY="$HLS_LINE (shed lane)"
+      LANE_PAUSED_FLAG=load-shed
+      LANE_PAUSED_SOURCE=shed
+    fi
+    # <<< load shed
     if [ -z "$LANE_PAUSED_WHY" ]; then
       # Every name this tick READ and found clear: if this box ever reported a
       # file behind one of them, the page is told it is gone.
@@ -987,6 +1033,7 @@ lane_gate_or_exit() {
   case "$LANE_PAUSED_FLAG" in
     *.box.*) n="Settings → $id → BOXES to resume" ;;
     factory-stop) n="set settings switch.factory-stop to 0 (PUT /api/settings) to resume" ;;
+    load-shed) n="runs again when state/hub-load/verdict is not over; settings hub_load.shed=off stops all shedding" ;;
     *)       n="bin/harness-ctl.sh on $id${p:+ $p} to resume" ;;
   esac
   _lg_log_throttled "$id${p:+-$p}" "[lane-gate] $id${p:+/$p} SKIPPED — $LANE_PAUSED_WHY ($n)"
