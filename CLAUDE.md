@@ -38,13 +38,15 @@ SCALABLE TESTS (iron law, BH-7563, 2026-10-19). If a test does not test an exter
 The FIRST fenced block is what `bin/batch-resolve.sh` runs once over a union
 branch (`verify_cmd` takes its first non-comment line and `verify_union` evals it
 in the union worktree). A union only ever changes files this repo declares
-generated or union-mergeable — the two env templates, the ten `cron/<box>.cron`
-and `catalog/lanes.json` (`.gitattributes`) and the paths in the
-`## Generated files` table, which since BH-1175 is read from
-`docs/verification-map/index/tail.md` rather than from the generated index it is
-copied into. Every member already carries its own head-bound APPROVE and green
+generated or union-mergeable — `env-templates/project.env.example`
+(`.gitattributes`) and the paths in the `## Generated files` table, which since
+BH-1175 is read from `docs/verification-map/index/tail.md` rather than from the
+generated index it is copied into. Since BH-1247 most rows of that table (the
+crontab renders, `catalog/lanes.json`, `env-templates/global.env.example`) are
+git-ignored; `rules/CLAUDE.md` and `docs/PR-OWNERSHIP.md` are the committed
+renders that remain. Every member already carries its own head-bound APPROVE and green
 CI, and the train PR runs the full CI below in the merge queue before it lands.
-So the union check is the source validation, the six render drift checks and
+So the union check is the source validation, the six render `--check`s and
 the three suites that pin this lane, not the whole corpus:
 
 ```bash
@@ -59,15 +61,15 @@ through its union merge driver), so there is no committed copy to drift from.
 parses, no two of them produce the same row, every document link resolves, and
 no README is tracked in git.
 
-The other five `--check`s ARE drift checks, and they are in the union command
-because BH-1178 put three more union-mergeable files in reach of it: git's union
-driver concatenates both sides of a hunk, which for a JSON array or a crontab is
-a file nobody wrote. `bin/batch-resolve.sh` regenerates all of them from the
-`## Generated files` table BEFORE this command runs, so a green check means the
-regenerate worked — and a red one stops a train that would otherwise land a
-corrupt `catalog/lanes.json` on every box.
+`bin/lanes-build.sh`, `bin/render-cron.sh` and `bin/render-env-example.sh`
+`--check` are not byte drift checks either since BH-1247 (their renders are
+git-ignored): each validates the committed sources, proves the render is
+deterministic, and refuses a tracked copy of the render (`--check-committed` is
+the old byte comparison). They stay in the union command as the source
+validation for those rows. `bin/batch-resolve.sh` regenerates the table's
+paths BEFORE this command runs, so a green check means the regenerate worked.
 
-`bin/render-rules.sh --check` is the fourth (BH-1336), and its subject is the
+`bin/render-rules.sh --check` IS a drift check (BH-1336), and its subject is the
 first declared path that is still COMMITTED: `rules/CLAUDE.md`, the render five
 box scripts copy verbatim into every `/root/.claude/CLAUDE.md`. A committed
 render is the file a train would otherwise hand merge, so the table declares it
@@ -75,12 +77,12 @@ and this check is what proves the regenerate over the union actually ran — a
 train that landed two siblings' renders glued together would put a file nobody
 wrote on every box.
 
-`bin/render-doc-sections.sh --check` is the fifth (BH-5235.2). Its subject is
+`bin/render-doc-sections.sh --check` is the second drift check (BH-5235.2). Its subject is
 the second committed declared path, `docs/PR-OWNERSHIP.md`, rendered from the
 section files in `docs/PR-OWNERSHIP.d/` so two PRs that each add a section add
 two files instead of conflicting on one.
 
-`bin/schema-build.sh --check` is the sixth (BH-4987, BH-6005). It validates
+`bin/schema-build.sh --check` (BH-4987, BH-6005) validates
 `worker/jobs/schema.d/` and refuses the git-ignored render
 `worker/jobs/schema.sql` back in git: schema.sql is not in git, so add or edit a
 fragment, and every reader (the deploy, CI, the tests) composes its own.
