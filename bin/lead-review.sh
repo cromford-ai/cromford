@@ -344,6 +344,9 @@ command -v verdict_prime >/dev/null 2>&1 && verdict_prime || true
 # (catalog/review-always-block.tsv) is a NOTE; a report with no BLOCK left is
 # MERGE-WITH-NOTES. Missing lib = the model's verdict stands, as before.
 . "$H/bin/lib/review-level.sh" 2>/dev/null || log "bin/lib/review-level.sh missing; no review level cap this tick"
+# BH-7667, optional: the migration index lint (a plain CREATE INDEX on a table
+# in review.large_tables.<project> is a BLOCK with no model call).
+. "$H/bin/lib/migration-index-lint.sh" 2>/dev/null || log "bin/lib/migration-index-lint.sh missing; no migration lint this tick"
 # BH-5294, optional: delta mode. Without it every request is a full review.
 . "$H/bin/lib/lead-delta.sh" 2>/dev/null || true
 # BH-6391, optional: the re-review section and the NOTE pass. Without it a
@@ -1008,6 +1011,41 @@ review_one() {
     esac
   fi
   # <<< console qa gate
+  # >>> migration index lint (BH-7667), before any replay: a plain CREATE INDEX
+  # on a table in review.large_tables.<project> is a BLOCK with no model call
+  # (bin/lib/migration-index-lint.sh). No row = off, and no diff is read. A
+  # diff git cannot read is not counted, and the request waits for the next tick.
+  local milt="" milrc=0 MIL_STATE=""
+  if ! command -v mil_scan >/dev/null 2>&1; then MIL_STATE="off (bin/lib/migration-index-lint.sh not loaded)"
+  else
+    milt=$(mil_tables "$project" 7>&- 8>&-)
+    if [ -z "$milt" ]; then MIL_STATE="off (no review.large_tables row for ${project:-this project})"
+    elif ! git -C "$REPO_DIR" diff --no-color --no-ext-diff --src-prefix=a/ --dst-prefix=b/ "origin/$base...$sha" -- ':(icase)*.sql' \
+         > "$H/tmp/lead-review-$key-$$.mil" 2>/dev/null; then
+      rm -f "$H/tmp/lead-review-$key-$$.mil"
+      log "migration lint for $key unreadable (git diff origin/$base...${sha:0:12} failed); left for the next tick, not counted"
+      lr_left_running "migration lint unreadable"; job_update "$job" status=failed; return
+    else
+      milrc=0; mil_scan "$H/tmp/lead-review-$key-$$.mil" "$milt" "$project" > "$H/tmp/lead-review-$key-$$.milf" || milrc=$?
+      case "$milrc" in
+        0) MIL_STATE=clean ;;
+        1)
+          mkdir -p "$(dirname "$report")"
+          { printf '%s# Lead review %s (%s#%s at %s)\n\n- verdict: BLOCK\n- migration lint: red\n- reviewer model: migration-lint\n- pr body: %s\n\nFindings\n' \
+              "$RVLINE" "$key" "$repo" "$pr" "$sha" "$bfp"
+            grep '[^[:space:]]' "$H/tmp/lead-review-$key-$$.milf"
+            printf '\nVERDICT: BLOCK\n'; } > "$report.tmp.$$" && mv -f "$report.tmp.$$" "$report" \
+            || { rm -f "$H/tmp/lead-review-$key-$$.mil" "$H/tmp/lead-review-$key-$$.milf"; log "could not write $report"; job_update "$job" status=failed; return; }
+          log "$key: migration lint red ($(grep -c '[^[:space:]]' "$H/tmp/lead-review-$key-$$.milf") finding(s)); BLOCK with no agent call"
+          rm -f "$H/tmp/lead-review-$key-$$.mil" "$H/tmp/lead-review-$key-$$.milf"
+          finish_done "$id" "$job" "$sha" BLOCK "$report" migration-lint "migration lint: red" "$key"; return ;;
+        *) MIL_STATE="could not run (rc $milrc)" ;;
+      esac
+    fi
+    rm -f "$H/tmp/lead-review-$key-$$.mil" "$H/tmp/lead-review-$key-$$.milf"
+  fi
+  log "$key: migration lint $MIL_STATE"
+  # <<< migration index lint
   # The patch-same replay (BH-4956, header): the lead's MERGE on an earlier head
   # that carries this same patch is posted on this one, with no model call. A
   # BLOCK is never replayed (lw_replay rc 1), so the head is reviewed. Only the

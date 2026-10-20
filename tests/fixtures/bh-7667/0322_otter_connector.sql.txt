@@ -1,0 +1,58 @@
+-- FIXTURE (BH-7667): a RECONSTRUCTION of project-6 prisma/sql/0322_otter_connector.sql (#1920),
+-- not a verbatim copy: the build box had no GitHub egress. It keeps the
+-- facts the ticket and the plan recorded: one plain CREATE INDEX on event at line 54,
+-- and a commented CONCURRENTLY example earlier in the file. See README.md.
+
+-- Otter connector: connection, sync cursor and raw payload tables.
+
+CREATE TABLE IF NOT EXISTS "otter_connection" (
+  "id" TEXT PRIMARY KEY,
+  "orgId" TEXT NOT NULL,
+  "createdAt" TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS "otter_connection_org_idx" ON "otter_connection" ("orgId");
+
+CREATE TABLE IF NOT EXISTS "otter_transcript" (
+  "id" TEXT PRIMARY KEY,
+  "orgId" TEXT NOT NULL,
+  "createdAt" TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS "otter_transcript_org_idx" ON "otter_transcript" ("orgId");
+
+
+
+
+
+
+-- The event index below must not lock event in prod. Run by hand:
+--   psql "$DATABASE_URL" -c '
+--   CREATE INDEX CONCURRENTLY IF NOT EXISTS event_otter_connection_occurred_idx ON event ("connectionId", "occurredAt");
+--   '
+
+ALTER TABLE "otter_connection" ADD COLUMN IF NOT EXISTS "c32" TEXT;
+ALTER TABLE "otter_connection" ADD COLUMN IF NOT EXISTS "c33" TEXT;
+ALTER TABLE "otter_connection" ADD COLUMN IF NOT EXISTS "c34" TEXT;
+ALTER TABLE "otter_connection" ADD COLUMN IF NOT EXISTS "c35" TEXT;
+ALTER TABLE "otter_connection" ADD COLUMN IF NOT EXISTS "c36" TEXT;
+ALTER TABLE "otter_connection" ADD COLUMN IF NOT EXISTS "c37" TEXT;
+ALTER TABLE "otter_connection" ADD COLUMN IF NOT EXISTS "c38" TEXT;
+ALTER TABLE "otter_connection" ADD COLUMN IF NOT EXISTS "c39" TEXT;
+ALTER TABLE "otter_connection" ADD COLUMN IF NOT EXISTS "c40" TEXT;
+ALTER TABLE "otter_connection" ADD COLUMN IF NOT EXISTS "c41" TEXT;
+ALTER TABLE "otter_connection" ADD COLUMN IF NOT EXISTS "c42" TEXT;
+ALTER TABLE "otter_connection" ADD COLUMN IF NOT EXISTS "c43" TEXT;
+ALTER TABLE "otter_connection" ADD COLUMN IF NOT EXISTS "c44" TEXT;
+ALTER TABLE "otter_connection" ADD COLUMN IF NOT EXISTS "c45" TEXT;
+ALTER TABLE "otter_connection" ADD COLUMN IF NOT EXISTS "c46" TEXT;
+ALTER TABLE "otter_connection" ADD COLUMN IF NOT EXISTS "c47" TEXT;
+ALTER TABLE "otter_connection" ADD COLUMN IF NOT EXISTS "c48" TEXT;
+ALTER TABLE "otter_connection" ADD COLUMN IF NOT EXISTS "c49" TEXT;
+
+-- Otter events land in event with source = 'otter'.
+-- Partial index for the connector's timeline query.
+
+CREATE INDEX IF NOT EXISTS event_otter_connection_occurred_idx
+  ON event ("connectionId", "occurredAt")
+  WHERE source = 'otter';
+
+CREATE INDEX IF NOT EXISTS "otter_connection_created_idx" ON "otter_connection" ("createdAt");

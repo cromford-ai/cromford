@@ -175,6 +175,9 @@ rp_freeze() {
 # BH-7123: review levels. rl_prompt_note rides into the prompt; rl_cap demotes a
 # finding that names no ALWAYS-BLOCK class to a NOTE before the verdict posts.
 . "${HARNESS}/bin/lib/review-level.sh" 2>/dev/null || true
+# BH-7667: the migration index lint (mil_tables, mil_scan, mil_merge). Without
+# it no PR is linted and every review posts as the model and the cap left it.
+. "${HARNESS}/bin/lib/migration-index-lint.sh" 2>/dev/null || true
 # tg_holds (BH-4580): the tier_gate_mode row, read through setting_get above.
 # A tree without the lib merges as before (the bin/lib/rb/pr.sh rule).
 # shellcheck source=bin/lib/tier-gate.sh
@@ -1497,6 +1500,20 @@ rp_one_pr() { for _rp_once in 1; do
 [INLINE DIFF SHOWS THE FIRST 250KB. The COMPLETE diff is saved at $DIFF_FILE — Read the remainder from that file before judging; never verdict on a partial read. If the changes are genuinely separable, you may also note that a split would shrink revert blast radius — as advice, not a blocking demand.]"
   fi
   [ -n "$DIFF" ] || continue
+  # >>> review-prs migration diff lint (BH-7667)
+  # A plain CREATE INDEX on a table in review.large_tables.<project>, read from
+  # this diff: RP_MIL holds the finding lines. No row = no lint. A red lint
+  # refuses the review_bought reuse below and turns the verdict after the cap.
+  RP_MIL=""; RP_MILT=""
+  command -v mil_scan >/dev/null 2>&1 && RP_MILT=$(mil_tables "$PROJECT" 2>>"$LOG")
+  if [ -n "$RP_MILT" ]; then
+    RP_MILRC=0; RP_MIL=$(mil_scan "$DIFF_FILE" "$RP_MILT" "$PROJECT") || RP_MILRC=$?
+    case "$RP_MILRC" in
+      0|1) echo "$(STAMP) [$PROJECT] #$NUM @${SHA:0:7} migration lint: $(grep -c '[^[:space:]]' <<<"$RP_MIL") finding(s)" >> "$LOG" ;;
+      *) RP_MIL=""; echo "$(STAMP) [$PROJECT] #$NUM @${SHA:0:7} migration lint could not run (rc $RP_MILRC)" >> "$LOG" ;;
+    esac
+  fi
+  # <<< review-prs migration diff lint
   RP_PRJ=""; gh_rest_var RP_PRJ GET "repos/$SLUG/pulls/$NUM" 2>/dev/null || RP_PRJ=""
   BODY=$(jq -r '.body // ""' <<<"${RP_PRJ:-null}" 2>/dev/null | head -c 4000)
   # Prior harness review + author replies give the re-review its context.
@@ -1580,6 +1597,7 @@ Style (external teams pay tokens to read this): terse, direct, declarative. No p
   # a `rehydrated` row, with the same one beat per head. A fallback-served
   # APPROVE is not reused at all: this head buys one read under ~prov.
   if [ "${RP_REREQ:-0}" = 0 ] && [ "${RP_ESCALATE:-0}" = 0 ] && [ "${RP_STALECR:-0}" = 0 ] \
+     && [ -z "${RP_MIL:-}" ] \
      && command -v review_bought >/dev/null 2>&1 && review_dedupe_on \
      && review_bought "$SLUG" "$NUM" "$SHA" >/dev/null 2>&1; then
     RP_RB_V=REQUEST_CHANGES; [ "${RB_CLASS:-}" = approve ] && RP_RB_V=APPROVE
@@ -1775,6 +1793,19 @@ Style (external teams pay tokens to read this): terse, direct, declarative. No p
     echo "$(STAMP) [$PROJECT] #$NUM @${SHA:0:7} review level: ${RL_OUT:-not applied} -> verdict ${VERDICT:-unknown}" >> "$LOG"
   fi
   # <<< review-prs level cap
+  # >>> review-prs migration lint (BH-7667; tests/migration-index-lint.bh-7667-test.sh drives this block)
+  # After the cap, so no demoter touches it: the lint lines (RP_MIL, from the
+  # diff above) go into the posted review just before its verdict line, and the
+  # verdict is REQUEST_CHANGES. mil_merge REPLACES the verdict line: two that
+  # disagree read as unknown. An empty VERDICT stays on the no-verdict path.
+  if [ -n "${RP_MIL:-}" ] && [ -n "$VERDICT" ]; then
+    printf '%s\n' "$REVIEW" > "$OUT_FILE.mil"; printf '%s\n' "$RP_MIL" > "$OUT_FILE.milf"
+    RP_MILREV=$(mil_merge "$OUT_FILE.mil" "$OUT_FILE.milf" REQUEST_CHANGES 'APPROVE|REQUEST_CHANGES' 2>/dev/null) && REVIEW="$RP_MILREV"
+    rm -f "$OUT_FILE.mil" "$OUT_FILE.milf"
+    VERDICT=REQUEST_CHANGES
+    echo "$(STAMP) [$PROJECT] #$NUM @${SHA:0:7} migration lint: $(grep -c '[^[:space:]]' <<<"$RP_MIL") finding(s) -> REQUEST_CHANGES" >> "$LOG"
+  fi
+  # <<< review-prs migration lint
   # A cheap-model read (BH-2545 trivial route) is recorded at TIER 2 at most.
   # The tier is a label here: merge_step merges any APPROVE whatever its tier,
   # so what keeps a cheap read from merging is RP_ADVISORY, not this cap.
