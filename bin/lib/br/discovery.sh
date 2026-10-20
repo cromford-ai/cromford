@@ -97,6 +97,8 @@ br_from_builds() {
   # offered twice. An outage (rc 1) or an empty ledger (rc 2) adds nothing and
   # the glob is the whole answer, exactly as before the ledger existed.
   if command -v bor_union >/dev/null 2>&1; then
+    # shellcheck source=bin/lib/build-archive.sh
+    command -v ba_path >/dev/null 2>&1 || . "$H/bin/lib/build-archive.sh" 2>/dev/null || true
     bnow=$(date -u +%s)
     while IFS= read -r bp; do
       [ -n "$bp" ] || continue
@@ -105,6 +107,8 @@ br_from_builds() {
       while IFS=$'\t' read -r _ bdir _ bupd bres _ bjob; do
         [ -n "$bdir" ] && [ "${bjob:--}" != - ] || continue
         bor_local_dir "$bdir" >/dev/null 2>&1 && continue
+        # An archived dir (BH-7437) is a dir: its record is never re-offered.
+        command -v ba_path >/dev/null 2>&1 && ba_path "$H" "$bdir" >/dev/null 2>&1 && continue
         case "$bdir" in "$bp"-*) ;; *) continue ;; esac
         rest="${bdir#"$bp"-}"; key="${rest%-*}"
         [ -n "$key" ] || continue

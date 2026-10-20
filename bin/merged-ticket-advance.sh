@@ -99,6 +99,9 @@ BP=$("$HARNESS/bin/fleet-conf.sh" "$PROJECT" board_prefix 2>/dev/null) || BP=""
 # switch.merged-advance-off[.<box>] settles it before the file does.
 # shellcheck source=bin/lib/lane-switch.sh
 . "$SELF/lib/lane-switch.sh" 2>/dev/null || true
+# The builds/ archive index (BH-7437): _ma_builds lists archived dirs too.
+# shellcheck source=bin/lib/build-archive.sh
+. "$SELF/lib/build-archive.sh" 2>/dev/null || true
 command -v lane_switch >/dev/null 2>&1 || lane_switch() { [ -f "$HARNESS/flags/$1" ]; }   # no lib: the file, as before
 lane_switch merged-advance-off file && exit 0
 
@@ -180,9 +183,15 @@ _ma_esc() { printf '%s' "$1" | sed 's/&/\&amp;/g; s/</\&lt;/g; s/>/\&gt;/g; s/"/
 # never collects CX-12's dirs; ordered by that stamp, never by mtime.
 _ma_builds() {
   local key="$1" d bn rest
-  for d in "$HARNESS/builds/$PROJECT-$key"-*/ "$HARNESS/builds/pool-$PROJECT-$key"-*/; do
+  { for d in "$HARNESS/builds/$PROJECT-$key"-*/ "$HARNESS/builds/pool-$PROJECT-$key"-*/; do
+      printf '%s\n' "$d"
+    done
+    # Dirs bin/builds-retention.sh moved to builds-archive/ (BH-7437).
+    command -v ba_dirs >/dev/null 2>&1 && ba_dirs "$HARNESS" "$PROJECT" "$key" 2>/dev/null
+  } | while IFS= read -r d; do
     [ -d "$d" ] || continue
     bn=$(basename "$d")
+    case "$bn" in fly-*) continue ;; esac
     rest="${bn#*"$PROJECT-$key-"}"
     case "$rest" in [0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]*) ;; *) continue ;; esac
     printf '%s\t%s\n' "${rest:0:12}" "${d%/}"

@@ -183,6 +183,8 @@ REPO=$("$HARNESS/bin/fleet-conf.sh" "$project" repo 2>/dev/null || true)
 # exactly as before (bin/lib/gh-app-auth.sh).
 # shellcheck disable=SC1091
 . "$HARNESS/bin/lib/gh-app-auth.sh" 2>/dev/null || . "$(dirname "${BASH_SOURCE[0]}")/lib/gh-app-auth.sh" 2>/dev/null || true
+# The builds/ archive index (BH-7437): check 17 counts an archived build too.
+. "$HARNESS/bin/lib/build-archive.sh" 2>/dev/null || . "$(dirname "${BASH_SOURCE[0]}")/lib/build-archive.sh" 2>/dev/null || true
 command -v gh_auth_for >/dev/null 2>&1 && { gh_auth_for "$REPO" || true; }
 
 # THE REST CONTRACT every GitHub read below goes through (BH-1163): rc 0 act on
@@ -801,6 +803,10 @@ local_eligible() {            # local_eligible <KEY> [floor]
     [ -d "$d" ] || continue
     LOCAL_WHY="prior build record exists — relaunches are triage's call"; return 1
   done
+  # A record bin/builds-retention.sh moved to builds-archive/ is still one.
+  if command -v ba_has_key >/dev/null 2>&1 && ba_has_key "$HARNESS" "$project" "$K"; then
+    LOCAL_WHY="prior build record exists (archived) — relaunches are triage's call"; return 1
+  fi
 
   # ---- 18. the reconciler got there first ----------------------------------
   # Or, under the lock, a peer run of this script did: it writes this same

@@ -1,0 +1,44 @@
+{
+  "id": "builds-retention",
+  "name": "builds/ retention",
+  "scope": "hub",
+  "script": "bin/builds-retention.sh",
+  "cadence": "27 4 * * *",
+  "boxes": [
+    "hub"
+  ],
+  "switch": {
+    "kind": "flag",
+    "name": "lane-off-builds-retention",
+    "aliases": []
+  },
+  "wired": true,
+  "knobs": [
+    {
+      "env": "BUILDS_RETENTION_NOW",
+      "type": "string",
+      "default": "",
+      "unit": null,
+      "zero_means": null,
+      "read_in": "bin/builds-retention.sh",
+      "note": "BH-7437 test seam: epoch seconds used as the clock (the cut and the log stamps). Only all-digit values are used. NOT settable from the control plane. The window, dry-run mode and per-run cap are settings rows (builds_retention.*), not lane knobs.",
+      "settable": false
+    },
+    {
+      "env": "BUILDS_RETENTION_FORCE_XFS",
+      "type": "string",
+      "default": "0",
+      "unit": null,
+      "zero_means": null,
+      "read_in": "bin/builds-retention.sh",
+      "note": "BH-7437 test seam: 1 acts as if builds/ and builds-archive/ were on two filesystems (one cross-fs alert, no move). NOT settable from the control plane.",
+      "settable": false
+    }
+  ],
+  "stats": {
+    "cost_stage": null,
+    "cost_project_filter": null,
+    "lanes_row": false,
+    "log": "logs/builds-retention.log"
+  }
+}

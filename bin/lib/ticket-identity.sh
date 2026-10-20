@@ -346,6 +346,15 @@ ticket_identity_conflict() {
     # attempt, and a dir with NO RESULT is a dead build — resume-dead-builds.sh's
     # business, not evidence of a live identity. Liveness comes from (c).
   done
+  # ── b2. archived build records (BH-7437) ───────────────────────────────────
+  # bin/builds-retention.sh moves only MERGED groups to builds-archive/, so an
+  # archived key with this board id under another key is the merged case above.
+  # shellcheck source=bin/lib/build-archive.sh
+  command -v ba_merged_other >/dev/null 2>&1 || . "$h/bin/lib/build-archive.sh" 2>/dev/null || true
+  if command -v ba_merged_other >/dev/null 2>&1 && rec=$(ba_merged_other "$h" "$project" "$tid" "$keyn"); then
+    printf '%s\t%s\t%s\n' "${rec%%$'\t'*}" build-record merged
+    return 0
+  fi
 
   # ── c. the jobs ledger: a LIVE build, on any box ──────────────────────────
   # The only place a build running on another machine is visible, and the board

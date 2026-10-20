@@ -113,12 +113,16 @@ starved_ready_check() {
       return 0
     fi
     command -v rq_lines >/dev/null 2>&1 && lines=$(rq_lines "$h" "$p" 2>/dev/null)
+    # shellcheck source=bin/lib/build-archive.sh
+    command -v ba_has_key >/dev/null 2>&1 || . "$_SR_LIB/build-archive.sh" 2>/dev/null || true
     while IFS=$'\t' read -r id key first; do
       [ -n "$id" ] || continue
       grep -qE "^${key}[[:space:]]" <<<"$lines" && continue
       awk -F'\t' -v k="$key" '$2 == k && $4 ~ /^(queued|claimed|ready|held)$/ { f=1 } END { exit !f }' <<<"$qrows" && continue
       compgen -G "$h/builds/$p-$key-*" >/dev/null 2>&1 && continue
       compgen -G "$h/builds/pool-$p-$key-*" >/dev/null 2>&1 && continue
+      # An archived build dir (BH-7437) is a build dir.
+      command -v ba_has_key >/dev/null 2>&1 && ba_has_key "$h" "$p" "$key" && continue
       if [ "$probes" -ge "$cap" ]; then complete=0; break; fi
       probes=$((probes + 1))
       ans=$("$h/bin/triage-gate.sh" "$p" --buildable-strict "$id" 2>/dev/null) || ans=""

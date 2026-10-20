@@ -11,6 +11,8 @@
 #   no build dir or no such artifact yet. The split matters: refused is a
 #   security answer, 2 is "nothing there yet", and the console shows them
 #   differently.
+#   A build that bin/builds-retention.sh moved to builds-archive/ still
+#   resolves: the beat says archived:true and build_dir is the archive path.
 #
 # SECURITY: `which` is a closed set of literals. The KEY is a second untrusted
 # path component (it names the build dir) and reaches both a glob and an ssh
@@ -21,6 +23,9 @@
 set -uo pipefail
 HARNESS="${HARNESS:-/root/harness}"
 CAP=48000   # bytes of tail shipped in one beat
+# The builds/ archive index (BH-7437). Missing, only builds/ is searched.
+# shellcheck source=bin/lib/build-archive.sh
+. "$(dirname "$0")/lib/build-archive.sh" 2>/dev/null || true
 
 artifact_file() { # artifact_file <which> -> basename, rc 1 if refused
   case "$1" in
@@ -57,6 +62,16 @@ build_dir() { # build_dir <project> <key> [file] -> dir, rc 1 refused, rc 2 none
     [ -n "$f" ] && [ -f "$d/$f" ] && { echo "$d"; return 0; }
   done < <(ls -dt "$HARNESS/builds/$p-$k-"* "$HARNESS/builds/pool-$p-$k-"* \
                   "$HARNESS/builds/fly-$p-$k-"* 2>/dev/null)
+  # No live dir holds <file>: an ARCHIVED dir of the key may (BH-7437,
+  # bin/builds-retention.sh). Newest stamp first, the same rule. A live dir
+  # still answers a missing file before the archive does.
+  if command -v ba_dirs >/dev/null 2>&1; then
+    while IFS= read -r d; do
+      [ -n "$d" ] || continue
+      [ -n "$first" ] || first="$d"
+      [ -n "$f" ] && [ -f "$d/$f" ] && { echo "$d"; return 0; }
+    done < <(ba_dirs "$HARNESS" "$p" "$k" 2>/dev/null)
+  fi
   [ -n "$first" ] || return 2
   echo "$first"
 }
@@ -100,6 +115,7 @@ F=""; [ "$RC" -eq 0 ] && [ -f "$DIR/$FILE" ] && F="$DIR/$FILE"
 SIZE=0; MISSING=true
 if [ -n "$F" ]; then MISSING=false; SIZE=$(wc -c < "$F" | tr -dc '0-9'); fi
 TRUNC=false; [ "${SIZE:-0}" -gt "$CAP" ] && TRUNC=true
+ARCH=false; case "${DIR:-}" in "$HARNESS/builds-archive/"*) ARCH=true ;; esac
 
 CONTENT='""'
 [ -n "$F" ] && CONTENT=$(tail -c "$CAP" "$F" 2>/dev/null | jq -Rs . 2>/dev/null)
@@ -107,8 +123,9 @@ CONTENT='""'
 
 jq -nc --arg cid "$CID" --arg p "$PROJECT" --arg k "$KEY" --arg w "$WHICH" \
   --argjson c "$CONTENT" --argjson t "$TRUNC" --argjson m "$MISSING" \
-  --argjson b "${SIZE:-0}" --arg d "${DIR:-}" --arg ts "$(STAMP)" \
+  --argjson b "${SIZE:-0}" --arg d "${DIR:-}" --argjson a "$ARCH" --arg ts "$(STAMP)" \
   '{kind:"artifact_tail",rkey:("artifact:"+$cid),command_id:$cid,project:$p,key:$k,
-    which:$w,content:$c,truncated:$t,missing:$m,bytes:$b,build_dir:$d,ts:$ts}'
-journal "ok ${SIZE:-0}b truncated=$TRUNC missing=$MISSING dir=${DIR:-none}"
+    which:$w,content:$c,truncated:$t,missing:$m,bytes:$b,build_dir:$d,archived:$a,ts:$ts}'
+AJ=""; [ "$ARCH" = true ] && AJ="archived "
+journal "ok ${SIZE:-0}b truncated=$TRUNC missing=$MISSING ${AJ}dir=${DIR:-none}"
 exit 0
