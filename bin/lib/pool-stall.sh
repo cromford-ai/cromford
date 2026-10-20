@@ -90,8 +90,8 @@ pool_inflight_hold_action() {
 # pool_inflight_hold_due <ticket> <key> <list_state> <in_listing 0|1> <listing_key>
 #                        <last_key> <reads_used> <reads_max>
 # -> `read` or `skip<TAB><why>`.
-# Only GitHub-issue tickets (a number) are read; a board cuid and an RB- rebase
-# key are not. reads_max 0 is off. A listing that is not `ok` cannot say what
+# Only GitHub-issue tickets (a number) are read; a board cuid, an RB- rebase
+# key and an RR- re-review key are not. reads_max 0 is off. A listing that is not `ok` cannot say what
 # changed, so nothing is read. The key compared is the listing's
 # `updated_at|comments`, or `absent` when the issue is not in the open ai-build
 # listing (closed, or the label is gone); an unchanged key is not re-read, which
@@ -100,7 +100,7 @@ pool_inflight_hold_action() {
 pool_inflight_hold_due() {
   local t="${1:-}" k="${2:-}" ls="${3:-}" inl="${4:-0}" lk="${5:-}" last="${6:-}" used="${7:-}" max="${8:-}" eff
   case "$t" in ''|*[!0-9]*) printf 'skip\tboard-ticket\n'; return 0 ;; esac
-  case "$k" in RB-*) printf 'skip\trebase\n'; return 0 ;; esac
+  case "$k" in RB-*) printf 'skip\trebase\n'; return 0 ;; RR-*) printf 'skip\trereview\n'; return 0 ;; esac
   { _ps_int "$max" && [ "$max" -gt 0 ]; } || { printf 'skip\toff\n'; return 0; }
   _ps_int "$used" || used=0
   [ "$ls" = ok ] || { printf 'skip\tlisting %s\n' "${ls:-none}"; return 0; }
@@ -228,7 +228,7 @@ pool_inflight_hold_step() {
   fi
   [ "$_PIH_MAX" = 0 ] && return 1
   case "${TICKET:-}" in ''|*[!0-9]*) return 1 ;; esac
-  case "${KEY:-}" in RB-*) return 1 ;; esac
+  case "${KEY:-}" in RB-*|RR-*) return 1 ;; esac
   command -v pool_hold_check >/dev/null 2>&1 && command -v pool_hold_list_prime >/dev/null 2>&1 || return 1
   command -v pool_hold_cache_knobs >/dev/null 2>&1 && pool_hold_cache_knobs
   pool_hold_list_prime

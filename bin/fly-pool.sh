@@ -209,13 +209,14 @@ hotfix_first() {
   local f
   # Hotfix rows stay first: the SPAWN walk `break`s on the first non-hot row
   # once the budget is spent, so a hot row after any other row loses its cap
-  # exemption (BH-7382). Then conductor rebase rows (RB-<pr>-<head8>): each
-  # unblocks a merge and is one short machine. Newest by age, they starved
+  # exemption (BH-7382). Then conductor rebase rows (RB-<pr>-<head8>) and
+  # re-review rows (RR-<pr>-<head8>, BH-7635): each unblocks a merge and is one
+  # short machine. Newest by age, they starved
   # behind 130 older builds in the 600 s tick budget (project-6-os, 2026-10-19).
   for f in "$@"; do job_is_hot "$f" && printf '%s\n' "$f"; done
-  for f in "$@"; do case "${f##*/}" in RB-*) job_is_hot "$f" || printf '%s\n' "$f" ;; esac; done
-  for f in "$@"; do case "${f##*/}" in RB-*) continue ;; esac; job_is_hot "$f" || ! job_is_now "$f" || printf '%s\n' "$f"; done
-  for f in "$@"; do case "${f##*/}" in RB-*) continue ;; esac; job_is_hot "$f" || job_is_now "$f" || printf '%s\n' "$f"; done
+  for f in "$@"; do case "${f##*/}" in RB-*|RR-*) job_is_hot "$f" || printf '%s\n' "$f" ;; esac; done
+  for f in "$@"; do case "${f##*/}" in RB-*|RR-*) continue ;; esac; job_is_hot "$f" || ! job_is_now "$f" || printf '%s\n' "$f"; done
+  for f in "$@"; do case "${f##*/}" in RB-*|RR-*) continue ;; esac; job_is_hot "$f" || job_is_now "$f" || printf '%s\n' "$f"; done
 }
 # Start the flyctl agent with fd 8 CLOSED: an agent auto-spawned by `machine
 # exec` inside the locked section inherits fd 8 and holds the lock forever
@@ -517,7 +518,9 @@ machines_row_close() {
 # <<< machines rows
 # The hub half of a pool rebase (BH-486.2). Under REBASE_ON_POOL a machine in
 # this pool does a rebase instead of a build, and the REAP hands its RESULT to
-# mc_pool_rebase_apply (the RB-* stand-down arms call mc_pool_rebase_fail).
+# mc_pool_rebase_apply (the RB-* stand-down arms call mc_pool_rebase_fail). A
+# pool re-review (RR-*, BH-7635) goes to mc_pool_rereview_apply the same way,
+# and its stand-down arms call mc_pool_rereview_fail.
 # Type-guarded like every other lib here: a half-synced box defines nothing and
 # the arm's own `command -v` miss is what reports it — one ALERTS line and a
 # queue row left claimed — because a missing function must never read as
@@ -525,7 +528,7 @@ machines_row_close() {
 # (mc_*/_mc_*, plus the bg_*/pdg_*/rp_* and issue_close_shipped fallbacks)
 # collides with one this file or its libs define (checked 2026-10-19).
 # LAZY (BH-7428): the lib is ~45 files and 833 functions, 0.27 CPU s and 230
-# forks per tick, and only the three RB-* arms use it. So each of those arms
+# forks per tick, and only the RB-* and RR-* arms use it. So each of those arms
 # calls fp_mc_lib_load, and an idle or build-only tick never opens the file.
 # The lib `exit 1`s when its mc/ modules do not load; the subshell probe keeps
 # that exit from ending this tick mid-reap, and _FP_MC_LIB_TRIED stops a second
@@ -1977,8 +1980,11 @@ pool_spawn_decision() {
   # The reap side already special-cases RB-* for the same reason (the
   # BUILD_DEFERRED arm below). A rebase row spawns exactly as it did before
   # BH-1075; bin/merge-conductor.sh owns that lane's timeout and its retries.
+  # An RR-<pr>-<head8> re-review row (BH-7635) is the same kind of row for the
+  # same reasons: a conductor read of an open PR, never a ticket.
   case "$KEY" in
     RB-*) say "$KEY: rebase row — the ticket spawn gates do not apply"; return 0 ;;
+    RR-*) say "$KEY: re-review row — the ticket spawn gates do not apply"; return 0 ;;
   esac
   if [ "${_POOL_ROWS_DECIDED:-0}" -ge 1 ] && pool_tick_budget_spent; then
     [ -n "${_POOL_BUDGET_SAID:-}" ] || say "tick budget of ${POOL_TICK_BUDGET_S:-600}s spent for $P: no more rows are decided this tick, the lock is released at the end"
@@ -3065,13 +3071,13 @@ next_job_or_destroy() { # hand this machine the next queued job, or destroy it
         # like one (the comment four lines up says so). Recorded HERE, before
         # the mexec that starts it, on spawn_one's own rule: every entry counts
         # regardless of outcome, because a cap that only counts the attempts
-        # that worked cannot bound a loop of attempts that do not. RB-* rows are
-        # exempt from the cap on both paths, so they record nothing here either.
+        # that worked cannot bound a loop of attempts that do not. RB-* and RR-*
+        # rows are exempt from the cap on both paths, so they record nothing here.
         # NHANDOFFTS (BH-1279) carries the recorded line onto $MF below, exactly
         # as SPAWNCAPTS does in spawn_one, so a REFUSED claim on THIS machine's
         # next reap can be un-recorded too.
         NHANDOFFTS=""
-        case "$NKEY" in RB-*) ;; *) command -v pool_spawn_cap_record >/dev/null 2>&1 && NHANDOFFTS=$(pool_spawn_cap_record "$NKEY" "$MID"); esac
+        case "$NKEY" in RB-*|RR-*) ;; *) command -v pool_spawn_cap_record >/dev/null 2>&1 && NHANDOFFTS=$(pool_spawn_cap_record "$NKEY" "$MID"); esac
       fi
       # THE CLAIM COMES BEFORE THE HANDOFF (BH-1026.3), for the same reason it
       # comes before a spawn: this is a BUILD, metered exactly like a spawned one
@@ -3388,7 +3394,7 @@ for MF in "$POOL"/*.json; do
   ROW_RLINE=""; RES_FROM_ROW=0
   if [ -z "$RES" ] && command -v pool_result_row_get >/dev/null 2>&1; then
     case "$KEY" in
-      RB-*) ;;
+      RB-*|RR-*) ;;
       *)
         case "$MSTATE" in
           ""|stopped|destroyed|failed|suspended)
@@ -3508,6 +3514,54 @@ for MF in "$POOL"/*.json; do
           esac ;;
       esac
     fi
+    # >>> pool rereview reap
+    # --- A RE-REVIEW IS NOT A BUILD EITHER (BH-7635) --------------------------
+    # An RR-<pr>-<head8> machine ran the conductor's head-bound re-review
+    # (bin/lib/rereview-job.sh). Its RESULT goes to mc_pool_rereview_apply,
+    # which writes the hub job file headbound_review reads; nothing here posts,
+    # and there is no PR to verify and no board close-out. A REREVIEW word on
+    # any other key, or any other word on an RR key (a stand-down excepted: the
+    # BUILD_DEFERRED arm below owns it), is a RESULT nobody can apply, so the
+    # row is FAILED and the build path never sees it. rc 127 is seeded, as in
+    # the rebase reap, so a box without the lib takes the refusal path.
+    RRK=0; case "$KEY" in RR-*) RRK=1 ;; esac
+    RRW=0; case "$RLINE" in REREVIEWED*|REREVIEW_*) RRW=1 ;; esac
+    if [ "$RRW" = 1 ] || { [ "$RRK" = 1 ] && [[ "$RLINE" != BUILD_DEFERRED* ]]; }; then
+      : > "$LOCAL/COMMENTED"
+      if [ "$RRW" = 1 ] && [ "$RRK" = 1 ]; then
+        RRRC=127
+        fp_mc_lib_load || true
+        command -v mc_pool_rereview_apply >/dev/null 2>&1 \
+          && { mc_pool_rereview_apply "$P" "$KEY" "$LOCAL/RESULT"; RRRC=$?; }
+        if [ "$RRRC" = 0 ]; then
+          QROW done "$KEY" "$(head -1 "$LOCAL/RESULT" | head -c 200)"
+          say "pool rereview RESULT reaped for $KEY from $MID: $(head -1 "$LOCAL/RESULT" | head -c 80) — job file written"
+          "$HARNESS/bin/beat.sh" "$(jq -nc --arg p "$P" --arg k "$KEY" --arg r "$(head -1 "$LOCAL/RESULT" | head -c 120)" '{kind:"build",project:$p,ticket_key:$k,stage:"pool_rereview",detail:$r}')" >/dev/null 2>&1 || true
+        else
+          # Left CLAIMED, as a refused rebase apply is: nothing re-materialises a
+          # claimed row, so the read is not bought twice while someone looks.
+          HARNESS="$HARNESS" "$HARNESS/bin/alert-line.sh" "[pool/$P] $KEY: pool rereview RESULT reaped ($(head -c 80 "$LOCAL/RESULT" | tr '\n' ' ')) but mc_pool_rereview_apply answered rc=$RRRC — the queue row stays CLAIMED, no hub re-review job file was written, and nothing retries this on its own. The RESULT is at $LOCAL/RESULT"
+          say "rereview $KEY: apply refused rc=$RRRC — row left claimed, RESULT at $LOCAL/RESULT"
+        fi
+      else
+        RRREC="no hub job file was marked"
+        fp_mc_lib_load || true
+        case "$KEY" in
+          RR-*) command -v mc_pool_rereview_fail >/dev/null 2>&1 \
+                  && mc_pool_rereview_fail "$P" "$KEY" "the pool machine answered a RESULT that is not a re-review" \
+                  && RRREC="the hub re-review job file is marked lane-failed, so the conductor retries the read with no strike on the PR" ;;
+          RB-*) command -v mc_pool_rebase_fail >/dev/null 2>&1 \
+                  && mc_pool_rebase_fail "$P" "$KEY" "the pool machine answered a re-review RESULT to a rebase job" \
+                  && RRREC="the hub rebase job file is marked failed" ;;
+        esac
+        QROW failed "$KEY" "re-review RESULT and row key do not match; row FAILED, not requeued"
+        HARNESS="$HARNESS" "$HARNESS/bin/alert-line.sh" "[pool/$P] $KEY: the RESULT ($(head -c 80 "$LOCAL/RESULT" | tr '\n' ' ')) and the row key do not match — a re-review word belongs to an RR- row and an RR- row answers only a re-review word. The queue row is FAILED and NOT requeued, and the RESULT is never read as a build; $RRREC. The RESULT is at $LOCAL/RESULT"
+        say "rereview $KEY: RESULT/key mismatch — row failed, RESULT at $LOCAL/RESULT"
+      fi
+      next_job_or_destroy
+      continue
+    fi
+    # <<< pool rereview reap
     # >>> pool rebase reap
     # --- A REBASE IS NOT A BUILD (BH-486.2, #542) -----------------------------
     # Under REBASE_ON_POOL the machine this loop just reaped ran a rebase, not a
@@ -3725,6 +3779,22 @@ for MF in "$POOL"/*.json; do
           QROW failed "$KEY" "rebase machine stood down before the job ran; row FAILED, not requeued"
           HARNESS="$HARNESS" "$HARNESS/bin/alert-line.sh" "[pool/$P] $KEY: rebase machine answered BUILD_DEFERRED ($DWHY) — the queue row is FAILED and NOT requeued, because the requeue rebuilds the queue file without the rebase object and the next machine would run an ordinary BUILD of ticket $TICKET. $RBREC. Evidence: $LOCAL"
           say "rebase $KEY: deferred ($DWHY) — row failed, not requeued"
+          next_job_or_destroy
+          continue ;;
+        RR-*)
+          # A RE-REVIEW ROW STANDS DOWN THE SAME WAY (BH-7635): the requeue would
+          # lose the rereview object too. The hub job file goes lane-failed, not
+          # failed: the machine stood down, which says nothing about the PR.
+          : > "$LOCAL/COMMENTED"
+          RRREC="no hub re-review job file could be marked lane-failed, so the conductor finds no job for this head and decides again on a later tick"
+          fp_mc_lib_load || true
+          if command -v mc_pool_rereview_fail >/dev/null 2>&1 \
+             && mc_pool_rereview_fail "$P" "$KEY" "the pool machine answered BUILD_DEFERRED before the re-review ran"; then
+            RRREC="the hub re-review job file for this head is marked lane-failed, so the conductor retries the read on its next tick with no strike on the PR (MC_RR_LANEFAIL_MAX)"
+          fi
+          QROW failed "$KEY" "re-review machine stood down before the job ran; row FAILED, not requeued"
+          HARNESS="$HARNESS" "$HARNESS/bin/alert-line.sh" "[pool/$P] $KEY: re-review machine answered BUILD_DEFERRED ($DWHY) — the queue row is FAILED and NOT requeued, because the requeue rebuilds the queue file without the rereview object and the next machine would run an ordinary BUILD of ticket $TICKET. $RRREC. Evidence: $LOCAL"
+          say "rereview $KEY: deferred ($DWHY) — row failed, not requeued"
           next_job_or_destroy
           continue ;;
       esac
@@ -4195,7 +4265,7 @@ for MF in "$POOL"/*.json; do
     # below): announcing a requeue that never happens is how a log stops being
     # evidence. Every other key reads byte-for-byte the line it always did.
     DDISP="requeue attempt=$NEXT deaths=$DNEXT"
-    case "$KEY" in RB-*) DDISP="rebase row FAILED, not requeued" ;; esac
+    case "$KEY" in RB-*) DDISP="rebase row FAILED, not requeued" ;; RR-*) DDISP="re-review row FAILED, not requeued" ;; esac
     # A JOB THAT FINISHED IS NOT A DEATH (BH-2643). ROW_RLINE is only set for a
     # not-started machine whose own pool-result row says it ran to `job done`
     # (a deferral or a ROLLOUT answer never gets here — it went through the arm above). Its
@@ -4242,6 +4312,19 @@ for MF in "$POOL"/*.json; do
         fi
         QROW failed "$KEY" "rebase machine $MID died (state=${MSTATE:-gone}); row FAILED, not requeued"
         HARNESS="$HARNESS" "$HARNESS/bin/alert-line.sh" "[pool/$P] $KEY: rebase machine $MID died (state=${MSTATE:-gone}) with no RESULT — the queue row is FAILED and NOT requeued, because a requeue rebuilds the queue file from the machine json, which carries no rebase object, and the next machine would run an ordinary BUILD of ticket $TICKET. $RBREC; nothing here retries."
+        continue ;;
+      RR-*)
+        # A DEAD RE-REVIEW is failed and never requeued, for the reason above;
+        # its hub job file goes lane-failed (BH-7635): a dead machine is our
+        # outage, so the PR loses no strike and the conductor retries the read.
+        RRREC="no hub re-review job file could be marked lane-failed, so the conductor finds no job for this head and decides again on a later tick"
+        fp_mc_lib_load || true
+        if command -v mc_pool_rereview_fail >/dev/null 2>&1 \
+           && mc_pool_rereview_fail "$P" "$KEY" "the pool machine died (state=${MSTATE:-gone}) with no RESULT"; then
+          RRREC="the hub re-review job file for this head is marked lane-failed, so the conductor retries the read on its next tick with no strike on the PR (MC_RR_LANEFAIL_MAX)"
+        fi
+        QROW failed "$KEY" "re-review machine $MID died (state=${MSTATE:-gone}); row FAILED, not requeued"
+        HARNESS="$HARNESS" "$HARNESS/bin/alert-line.sh" "[pool/$P] $KEY: re-review machine $MID died (state=${MSTATE:-gone}) with no RESULT — the queue row is FAILED and NOT requeued, because a requeue rebuilds the queue file from the machine json, which carries no rereview object, and the next machine would run an ordinary BUILD of ticket $TICKET. $RRREC; nothing here retries."
         continue ;;
     esac
     if [ "$DNEXT" -ge 2 ]; then
@@ -4647,7 +4730,7 @@ spawn_one() { # spawn_one <job-file> <key> <ticket-id> <attempt> <deferrals> <de
     pool_unclaim "$KEY" "env bundle failed: $EB_WHY"; return 1
   fi
   local SPAWNCAPTS=""
-  case "$KEY" in RB-*) ;; *) SPAWNCAPTS=$(pool_spawn_cap_record "$KEY") ;; esac
+  case "$KEY" in RB-*|RR-*) ;; *) SPAWNCAPTS=$(pool_spawn_cap_record "$KEY") ;; esac
   local MID TB SYNC_OK OK SNAP_SRC SNAP_MT MEXP="" MINST="" MAPP=hub SHF=false
   # `hotfix` is read off the JOB FILE rather than passed as an argument: the
   # spawn call's argument list is pinned by tests/no-serialize-test.sh (it is the

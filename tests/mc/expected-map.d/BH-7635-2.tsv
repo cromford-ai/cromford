@@ -1,0 +1,5 @@
+# tests/mc/expected-map.d/BH-7635-2.tsv — BH-7635 slice C1: the hub half of a pool
+# re-review row (RR-<num>-<head8>); origin=lib, new module functions.
+rebase	mc_pool_rereview_key	lib
+rebase	mc_pool_rereview_apply	lib
+rebase	mc_pool_rereview_fail	lib

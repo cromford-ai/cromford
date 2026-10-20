@@ -527,14 +527,15 @@ run_job() {
 # autostops and the RESULT goes with it, and a hub reap that arrives late then
 # finds only a `stopped` machine it cannot ssh into, which it used to count as a
 # death. The row is the copy that survives (bin/lib/pool-result-row.sh). Pool
-# machines only; never an RB- rebase (its dead path is its own, BH-542). An
+# machines only; never an RB- rebase or RR- re-review (each dead path is its
+# own, BH-542, BH-7635). An
 # older synced tree without the lib writes nothing, and a failed write is one
 # log line, never a job failure.
 pool_result_row_write() {
   [ "${POOL_MODE:-}" = 1 ] || return 0
   local key
   key=$(jq -r '.key // ""' "$JOB" 2>/dev/null)
-  case "$key" in ''|RB-*) return 0 ;; esac
+  case "$key" in ''|RB-*|RR-*) return 0 ;; esac
   # shellcheck source=bin/lib/pool-result-row.sh
   . "$HARNESS/bin/lib/pool-result-row.sh" 2>/dev/null || return 0
   command -v pool_result_row_put >/dev/null 2>&1 || return 0
@@ -587,6 +588,42 @@ run_rebase_job() { # run_rebase_job <job key>
   log "rebase job done: $(head -1 "$RESULT_FILE" 2>/dev/null)"
   beat "$(jq -nc --arg p "$PROJECT" --arg k "$key" --arg r "$(head -1 "$RESULT_FILE" 2>/dev/null)" --arg u "$url" \
     '{kind:"build",project:$p,ticket_key:$k,stage:"rebase_done",detail:$r,pr_url:$u,host:("builder-"+$p)}')"
+  return "$rc"
+}
+
+# --- a POOL RE-REVIEW job (BH-7635) --------------------------------------------
+# Not a build either: the conductor's head-bound re-review of one PR at one head,
+# as an `RR-<pr>-<head8>` row. (The producer, a lane-run machine that cannot run
+# the re-review detached, is BH-7635 slice C2; no row is queued before it.) bin/lib/rereview-job.sh
+# is the whole body; it writes one REREVIEW* RESULT and nothing to GitHub. A
+# setup failure is REREVIEW_SETUP_FAILED, never BUILD_DEFERRED: nothing re-offers
+# this row, and the hub reap reads the word into a lane-failed job file.
+rereview_setup_result() { # rereview_setup_result <why> <url> <head>
+  printf 'REREVIEW_SETUP_FAILED %s\nPR: %s\nHEAD: %s\n' "$1" "${2:--}" "${3:--}" > "$RESULT_FILE"
+  log "rereview job setup failed: $1"
+}
+
+run_rereview_job() { # run_rereview_job <job key>
+  local key="$1" slug num url rev head reason rc lib="$HARNESS/bin/lib/rereview-job.sh"
+  slug=$(jq -r   '.rereview.slug     // ""'  "$JOB" 2>/dev/null)
+  num=$(jq -r    '.rereview.pr       // ""'  "$JOB" 2>/dev/null)
+  url=$(jq -r    '.rereview.url      // ""'  "$JOB" 2>/dev/null)
+  rev=$(jq -r    '.rereview.reviewed // "-"' "$JOB" 2>/dev/null)
+  head=$(jq -r   '.rereview.head     // ""'  "$JOB" 2>/dev/null)
+  reason=$(jq -r '.rereview.reason   // ""'  "$JOB" 2>/dev/null)
+  log "rereview job key=$key $slug#$num at ${head:0:8} (reason ${reason:-none})"
+  warm_up || { rereview_setup_result "warm-up failed" "$url" "$head"; return 1; }
+  if [ ! -r "$lib" ]; then rereview_setup_result "no rereview lib at $lib" "$url" "$head"; return 1; fi
+  # shellcheck source=bin/lib/rereview-job.sh
+  . "$lib"
+  if ! type rereview_job_run >/dev/null 2>&1; then
+    rereview_setup_result "no rereview lib at $lib" "$url" "$head"; return 1
+  fi
+  rereview_job_run "$slug" "$num" "$PROJECT" "$url" "$rev" "$head" "$reason" "$RESULT_FILE" "$HARNESS"
+  rc=$?
+  log "rereview job done: $(head -1 "$RESULT_FILE" 2>/dev/null)"
+  beat "$(jq -nc --arg p "$PROJECT" --arg k "$key" --arg r "$(head -1 "$RESULT_FILE" 2>/dev/null)" --arg u "$url" \
+    '{kind:"build",project:$p,ticket_key:$k,stage:"rereview_done",detail:$r,pr_url:$u,host:("builder-"+$p)}')"
   return "$rc"
 }
 
@@ -659,6 +696,13 @@ _run_job() {
     run_rebase_job "$key"; rrc=$?
     stop_heartbeat
     return "$rrc"
+  fi
+  # --- pool RE-REVIEW job (BH-7635): a conductor read, never a build ----------
+  if [ "$(jq -r '.rereview.kind // ""' "$JOB" 2>/dev/null)" = rereview ]; then
+    local rrrc
+    run_rereview_job "$key"; rrrc=$?
+    stop_heartbeat
+    return "$rrrc"
   fi
 
   # HOTFIX (#368): the watcher read the label off the issue and put the answer

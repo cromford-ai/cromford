@@ -1163,6 +1163,140 @@ mc_pool_rebase_fail() {
   return 1
 }
 
+# --- Pool re-review rows (BH-7635) --------------------------------------------
+# A lane-run machine cannot run the detached re-review (mc_rereview_spawn), so
+# the re-review rides the pool as an `RR-<num>-<head8>` row with meta
+# kind=rereview, the way a rebase rides it as `RB-*`. The machine body is
+# bin/lib/rereview-job.sh; the two functions below are the HUB half. They write
+# the SAME job file mc_rereview_run writes (mc_rr_file), so headbound_review
+# consumes a pool verdict exactly as it consumes a hub one. Nothing here writes
+# to GitHub: the post, the rebind and the transition stay in headbound_review.
+
+# mc_pool_rereview_key <num> <head> — the queue key: RR-<num>-<head8>.
+mc_pool_rereview_key() { printf 'RR-%s-%s' "$1" "${2:0:8}"; }
+
+# mc_pool_rereview_apply <project> <key> <result-file>
+#   Read the RESULT bin/lib/rereview-job.sh documents and write the hub job file:
+#     REREVIEWED APPROVE|BLOCK          -> done, verdict, out_file = the review text
+#                                          (after the FIRST `--- review ---` line),
+#                                          .out.model / .out.runner from MODEL/RUNNER
+#     REREVIEW_LANE_FAILED|_SETUP_FAILED -> lane-failed, reason = the rest of line 1
+#     REREVIEW_NOVERDICT                -> failed (the no-verdict path, one retry)
+#     REREVIEW_DEFERRED                 -> the job file is removed (the `none` case)
+#   rc 0  written, or a no-op: a `done` file of the same head is never rewritten,
+#         so a second reap of one RESULT changes nothing.
+#   rc 1  nothing written: the key is not RR-<num>-<head8>, the RESULT is empty,
+#         line 1 is not one of the five words (or not APPROVE/BLOCK), a
+#         REREVIEWED has no `--- review ---` body, the PR: line names another PR,
+#         the HEAD: line is not 40 hex starting with the key's head8, or the
+#         write failed. The caller leaves the row claimed and alerts.
+#   THE KEY WINS OVER THE FILE, as in mc_pool_rebase_apply: the RESULT is text
+#   from a machine this box does not hold, and PR:/HEAD: name the job file.
+mc_pool_rereview_apply() {
+  local project="$1" key="$2" rf="$3"
+  local first word arg hdr url head rev model runner num head8 slug jf out now wrc
+  case "$key" in RR-*-*) : ;; *) return 1 ;; esac
+  [ -s "$rf" ] || return 1
+  num="${key#RR-}"; num="${num%%-*}"; head8="${key##*-}"
+  case "$num" in ''|*[!0-9]*) return 1 ;; esac
+  first=$(head -n 1 "$rf" 2>/dev/null)
+  word="${first%% *}"; arg="${first#* }"; [ "$arg" = "$first" ] && arg=""
+  case "$word" in
+    REREVIEWED)
+      case "$arg" in APPROVE|BLOCK) : ;; *) mc_log "$project $key pool re-review: RESULT '$first' carries no verdict word — not applied"; return 1 ;; esac
+      grep -qx -- '--- review ---' "$rf" 2>/dev/null \
+        || { mc_log "$project $key pool re-review: REREVIEWED with no review body — not applied"; return 1; } ;;
+    REREVIEW_LANE_FAILED|REREVIEW_SETUP_FAILED|REREVIEW_NOVERDICT|REREVIEW_DEFERRED) : ;;
+    *) mc_log "$project $key pool re-review: RESULT '${first:-empty}' is not a re-review word — not applied"; return 1 ;;
+  esac
+  # The header lines come from the part BEFORE the body: a review that quotes a
+  # `HEAD:` line must not steer the file name.
+  hdr=$(sed '/^--- review ---$/q' "$rf" 2>/dev/null)
+  url=$(printf '%s\n' "$hdr" | sed -n 's/^PR: //p' | head -1)
+  head=$(printf '%s\n' "$hdr" | sed -n 's/^HEAD: //p' | head -1)
+  rev=$(printf '%s\n' "$hdr" | sed -n 's/^REVIEWED: //p' | head -1)
+  model=$(printf '%s\n' "$hdr" | sed -n 's/^MODEL: //p' | head -1)
+  runner=$(printf '%s\n' "$hdr" | sed -n 's/^RUNNER: //p' | head -1)
+  if [ "${#head}" != 40 ] || [ -n "${head//[0-9a-f]/}" ] || [ "${head:0:8}" != "$head8" ]; then
+    mc_log "$project $key pool re-review: RESULT HEAD '${head:--}' is not the key's head $head8 — not applied"; return 1
+  fi
+  slug=$(mc_slug_of_url "$url")
+  case "$slug" in ''|*[!A-Za-z0-9._/-]*) slug="" ;; esac
+  if [ -z "$slug" ] || [ "$url" != "https://github.com/$slug/pull/$num" ]; then
+    mc_log "$project $key pool re-review: RESULT PR '${url:--}' is not PR $num — not applied"; return 1
+  fi
+  case "$rev" in ''|-) rev=- ;; *) { [ "${#rev}" = 40 ] && [ -z "${rev//[0-9a-f]/}" ]; } || rev=- ;; esac
+  mkdir -p "$MC_RR_DIR" 2>/dev/null || return 1
+  jf=$(mc_rr_file "$slug" "$num" "$head"); out="${jf%.json}.out"; now=$(mc_now)
+  # Under the same lock the detached job and the spawn take. `done` is written
+  # last, after the .out file it points at, as mc_rereview_run orders them.
+  ( flock 9 2>/dev/null
+    [ "$(mc_rr_field "$jf" status)" = done ] && exit 4
+    case "$word" in
+      REREVIEWED)
+        sed '1,/^--- review ---$/d' "$rf" > "$out.tmp" 2>/dev/null && mv -f "$out.tmp" "$out" || exit 1
+        rm -f "$out.model" "$out.runner" "$out.lanefail"
+        case "${model:--}" in -) : ;; *) printf '%s\n' "$model" > "$out.model" ;; esac
+        case "${runner:--}" in -) : ;; *) printf '%s\n' "$runner" > "$out.runner" ;; esac
+        mc_rr_write "$jf" done 0 "$now" "$now" "$arg" "$head" "$rev" "$out" || exit 1 ;;
+      REREVIEW_LANE_FAILED|REREVIEW_SETUP_FAILED)
+        mc_rr_write "$jf" lane-failed 0 "$now" "$now" - "$head" "$rev" "$out" "${arg:-the pool re-review lane failed}" || exit 1 ;;
+      REREVIEW_NOVERDICT)
+        mc_rr_write "$jf" failed 0 "$now" "$now" - "$head" "$rev" "$out" || exit 1 ;;
+      REREVIEW_DEFERRED)
+        rm -f "$jf" "$out.lanefail" ;;
+    esac
+  ) 9>>"$MC_RR_DIR/.lock" 2>/dev/null
+  wrc=$?
+  case "$wrc" in
+    0) mc_log "$project $key pool re-review applied: $first on ${head:0:8} ($slug#$num)"; return 0 ;;
+    4) mc_log "$project $key pool re-review: the job file of ${head:0:8} is already done — '$first' changes nothing"; return 0 ;;
+  esac
+  return 1
+}
+
+# mc_pool_rereview_fail <project> <key> <why> [<meta-json>]
+#   A pool re-review that is NOT coming back: the machine died or stood down
+#   before it wrote a RESULT. The hub job file becomes `lane-failed` with <why>,
+#   never `failed`: a dead machine is our outage, not a fact about the PR, so it
+#   costs no no-verdict strike, and headbound_review retries it within
+#   MC_RR_LANEFAIL_MAX. The slug, head and reviewed sha come from <meta-json>,
+#   or from the key's queue row when it is not given (one GET).
+#     rc 0  the job file was written
+#     rc 1  no usable meta (the key, the PR number or the head8 do not agree), a
+#           `done` file of that head (never rewritten), or the write failed
+mc_pool_rereview_fail() {
+  local project="$1" key="$2" why="${3:-the pool re-review machine produced no RESULT}" m="${4:-}"
+  local num head8 o slug head rev pr jf out now wrc
+  case "$key" in RR-*-*) : ;; *) return 1 ;; esac
+  num="${key#RR-}"; num="${num%%-*}"; head8="${key##*-}"
+  case "$num" in ''|*[!0-9]*) return 1 ;; esac
+  if [ -z "$m" ] && declare -F _jobs_req >/dev/null 2>&1; then
+    m=$(_jobs_req GET "/api/queue?project=$project&key=$key&limit=1" 2>/dev/null \
+          | jq -c '.queue[0].meta // empty | if type == "string" then (try fromjson catch {}) else . end' 2>/dev/null)
+  fi
+  o=$(printf '%s' "$m" | jq -c 'select(type=="object") | if (.rereview|type)=="object" then .rereview else . end' 2>/dev/null)
+  slug=$(printf '%s' "$o" | jq -r '.slug // "" | tostring' 2>/dev/null)
+  head=$(printf '%s' "$o" | jq -r '.head // "" | tostring' 2>/dev/null)
+  rev=$(printf '%s' "$o" | jq -r '.reviewed // "-" | tostring' 2>/dev/null)
+  pr=$(printf '%s' "$o" | jq -r '.pr // "" | tostring' 2>/dev/null)
+  case "$slug" in ''|*[!A-Za-z0-9._/-]*) slug="" ;; esac
+  if [ -z "$slug" ] || [ "$pr" != "$num" ] || [ "${#head}" != 40 ] || [ -n "${head//[0-9a-f]/}" ] || [ "${head:0:8}" != "$head8" ]; then
+    mc_log "$project $key pool re-review: no usable row meta — no hub job file marked lane-failed ($why)"; return 1
+  fi
+  case "$rev" in -) : ;; *) { [ "${#rev}" = 40 ] && [ -z "${rev//[0-9a-f]/}" ]; } || rev=- ;; esac
+  mkdir -p "$MC_RR_DIR" 2>/dev/null || return 1
+  jf=$(mc_rr_file "$slug" "$num" "$head"); out="${jf%.json}.out"; now=$(mc_now)
+  ( flock 9 2>/dev/null
+    [ "$(mc_rr_field "$jf" status)" = done ] && exit 4
+    mc_rr_write "$jf" lane-failed 0 "$now" "$now" - "$head" "$rev" "$out" "$why" || exit 1
+  ) 9>>"$MC_RR_DIR/.lock" 2>/dev/null
+  wrc=$?
+  [ "$wrc" = 0 ] && { mc_log "$project $key pool re-review marked lane-failed on the hub: $why"; return 0; }
+  [ "$wrc" = 4 ] && mc_log "$project $key pool re-review: the job file of ${head:0:8} is already done — not marked"
+  return 1
+}
+
 # mc_rebase <owner/repo> <project> <branch> <head-sha-read> <url> [<base>]
 #   Merge origin/<base> (default main) INTO the branch in a scratch worktree (the reviewed
 #   commits keep their shas), resolve only the rebase train's deterministic

@@ -72,11 +72,11 @@ dph_knob() {
   esac
 }
 
-# dph_key_ok <key> — a plain ticket key. RB-* rows belong to
-# bin/merge-conductor.sh (their rebase meta and timeout), SMOKE is the smoke
+# dph_key_ok <key> — a plain ticket key. RB-* and RR-* rows belong to
+# bin/merge-conductor.sh (their rebase or re-review meta), SMOKE is the smoke
 # verb's own job, and anything outside [A-Za-z0-9._-] never reaches a path.
 dph_key_ok() {
-  case "${1:-}" in ''|RB-*|SMOKE|*[!A-Za-z0-9._-]*) return 1 ;; esac
+  case "${1:-}" in ''|RB-*|RR-*|SMOKE|*[!A-Za-z0-9._-]*) return 1 ;; esac
   return 0
 }
 
@@ -103,7 +103,7 @@ dph_image() {
 dph_preflight() {
   local p="${1:-}" key="${2:-}" resp line
   case "$p" in ''|*[!A-Za-z0-9._-]*) _dph_log "refused: project '$p' is not a project name"; return 1 ;; esac
-  dph_key_ok "$key" || { _dph_log "refused: key '$key' is not a plain ticket key (RB-*, SMOKE and odd characters are refused)"; return 1; }
+  dph_key_ok "$key" || { _dph_log "refused: key '$key' is not a plain ticket key (RB-*, RR-*, SMOKE and odd characters are refused)"; return 1; }
   docker info >/dev/null 2>&1 || { _dph_log "refused: docker info does not answer on this host"; return 1; }
   dph_image "$p" >/dev/null || { _dph_log "refused: no builder image for $p (DOCKER_POOL_IMAGE, the fly_images row, state/fly/$p.image)"; return 1; }
   declare -F _jobs_req >/dev/null || { _dph_log "refused: no jobs client"; return 1; }

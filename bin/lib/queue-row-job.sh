@@ -33,7 +33,7 @@
 queue_row_job_file() {
   local project="${1:-}" dest="${2:-}" key="${3:-}" ticket="${4:-}" attempt="${5:-}" meta="${6:-}"
   local h="${HARNESS:-/root/harness}" tag="${QRJ_TAG:-fly-dispatch/${1:-}}"
-  local ts def sb hf fs rb bad bf bv dth tmp brs cb
+  local ts def sb hf fs rb bad bf bv dth tmp brs cb kd rr=""
   [ -n "$project" ] && [ -n "$dest" ] && [ -n "$key" ] || return 1
   ts=$(date -u '+%Y-%m-%d %H:%M:%SZ')
   case "${ticket:-}" in -) ticket="" ;; esac
@@ -104,7 +104,17 @@ queue_row_job_file() {
   # so a nested row is validated — and refused on a bad field — exactly like a
   # flat one, rather than failing as "slug missing".
   rb=""
-  if [ "$(printf '%s' "${meta:-}" | jq -r 'if type=="object" then (.kind // "") else "" end' 2>/dev/null)" = rebase ]; then
+  kd=$(printf '%s' "${meta:-}" | jq -r 'if type=="object" then (.kind // "") else "" end' 2>/dev/null)
+  # `rereview` (BH-7635): a conductor RE-REVIEW row, `RR-<pr>-<head8>`. The key
+  # and the kind must agree, both ways: rereview meta on any other key, or an
+  # RR- key with no rereview meta (none, or a rebase one), is a pair the pool
+  # would otherwise dispatch as an ordinary build of ticket <pr>.
+  case "$kd:$key" in
+    rereview:RR-*) rr=$(_qrj_rereview "$meta" "$key") || { _qrj_rr_refuse "$project" "$key" "$rr" "$h" "$tag"; return 3; } ;;
+    rereview:*)    _qrj_rr_refuse "$project" "$key" key "$h" "$tag"; return 3 ;;
+    *:RR-*)        _qrj_rr_refuse "$project" "$key" kind "$h" "$tag"; return 3 ;;
+  esac
+  if [ "$kd" = rebase ]; then
     rb=$(printf '%s' "$meta" | jq -c 'select(type=="object") | if (.rebase|type)=="object" then (.rebase + {kind:"rebase"}) else . end' 2>/dev/null)
     bad=""
     # The same charset `stack_base` is held to, on every field that reaches a git
@@ -142,7 +152,7 @@ queue_row_job_file() {
   tmp="$(dirname "$dest")/.$(basename "$dest").db"
   jq -nc --arg t "$ticket" --arg k "$key" --argjson a "$attempt" --argjson d "$def" \
      --arg ts "$ts" --arg sb "${sb:-}" --arg hf "${hf:-false}" --arg rb "${rb:-}" \
-     --arg dx "${dth:-}" --arg fs "${fs:-false}" --arg rbd "${brs:-false}" --arg cb "${cb:-}" \
+     --arg dx "${dth:-}" --arg fs "${fs:-false}" --arg rbd "${brs:-false}" --arg cb "${cb:-}" --arg rr "${rr:-}" \
        '{ticket_id:$t,key:$k,attempt:$a,deferrals:$d,enqueued_at:$ts,source:"db"}
         + (if $sb == "" then {} else {stack_base:$sb} end)
         + (if $cb == "" then {} else {continue_branch:$cb} end)
@@ -150,8 +160,60 @@ queue_row_job_file() {
         + (if $fs == "true" then {fresh_spawn:true} else {} end)
         + (if $rbd == "true" then {rebuild:true} else {} end)
         + (if $rb == "" then {} else {rebase:($rb|fromjson)} end)
+        + (if $rr == "" then {} else {rereview:($rr|fromjson)} end)
         + (if $dx == "" then {} else {deaths:($dx|tonumber)} end)' > "$tmp" \
     && mv "$tmp" "$dest" && return 0
   rm -f "$tmp"
   return 1
+}
+
+# _qrj_rereview <meta> <key> — the normalised `rereview` object (BH-7635), or
+#   rc 1 with the name of the first bad field on stdout. Flat and nested
+#   ({kind:"rereview",rereview:{…}}) metas collapse to one object, and only the
+#   documented fields are carried. `head` is 40 lowercase hex and names the
+#   key's head8; `reviewed` is that or `-`; `pr` is a number and names the key's
+#   number; `reason` is one of the three call-guard keys; `url` is the PR's own
+#   url or empty (then derived), because it reaches the REST read on the machine.
+#   `dedup` is carried and not checked: nothing on the machine reads it, and it
+#   rides jq-encoded only.
+_qrj_rereview() {
+  local m="${1:-}" key="${2:-}" o f v pr head
+  o=$(printf '%s' "$m" | jq -c 'select(type=="object") | if (.rereview|type)=="object" then .rereview else . end
+        | {slug:(.slug // "" | tostring), url:(.url // "" | tostring), pr:(.pr // "" | tostring),
+           reviewed:(.reviewed // "-" | tostring), head:(.head // "" | tostring),
+           reason:(.reason // "" | tostring), dedup:(.dedup // "" | tostring)}' 2>/dev/null)
+  [ -n "$o" ] || { printf 'meta'; return 1; }
+  for f in slug head reviewed pr reason; do
+    v=$(printf '%s' "$o" | jq -r --arg f "$f" '.[$f]' 2>/dev/null)
+    case "$f:$v" in
+      slug:|slug:*[!A-Za-z0-9._/-]*) printf 'slug'; return 1 ;;
+      head:*) case "$v" in ''|*[!0-9a-f]*) printf 'head'; return 1 ;; esac
+              [ "${#v}" = 40 ] || { printf 'head'; return 1; }; head="$v" ;;
+      reviewed:|reviewed:-) ;;
+      reviewed:*) case "$v" in ''|*[!0-9a-f]*) printf 'reviewed'; return 1 ;; esac
+                  [ "${#v}" = 40 ] || { printf 'reviewed'; return 1; } ;;
+      pr:|pr:*[!0-9]*) printf 'pr'; return 1 ;;
+      pr:*) pr="$v" ;;
+      reason:|reason:noverdict|reason:prov) ;;
+      reason:*) printf 'reason'; return 1 ;;
+    esac
+  done
+  [ "$key" = "RR-$pr-${head:0:8}" ] || { printf 'key'; return 1; }
+  v=$(printf '%s' "$o" | jq -r '.url')
+  [ -z "$v" ] || [ "$v" = "https://github.com/$(printf '%s' "$o" | jq -r '.slug')/pull/$pr" ] || { printf 'url'; return 1; }
+  printf '%s' "$o" | jq -c '{kind:"rereview"} + . + {pr:(.pr|tonumber)}
+    | if .url == "" then .url = ("https://github.com/" + .slug + "/pull/" + (.pr|tostring)) else . end
+    | if .reviewed == "" then .reviewed = "-" else . end' 2>/dev/null
+}
+
+# _qrj_rr_refuse <project> <key> <field> <harness> <tag> — the rc 3 path for
+#   a re-review row: closed `failed` (a release would re-offer it every tick),
+#   ONE alert, no queue file, and the one-line `say` text on stdout.
+_qrj_rr_refuse() {
+  local project="$1" key="$2" bad="${3:-meta}" h="$4" tag="$5" msg
+  command -v queue_done >/dev/null 2>&1 \
+    && { queue_done "$project" "$key" failed "rereview meta rejected ($bad)" >/dev/null 2>&1 || true; }
+  msg="[$tag] $key: this row's re-review meta is unusable (field '$bad') — the row is closed FAILED and NO queue file was written, because a re-review row that lost its rereview object is dispatched as an ordinary build. Fix the producer that queued this row."
+  [ -x "$h/bin/alert-line.sh" ] && HARNESS="$h" "$h/bin/alert-line.sh" "$msg"
+  printf '%s: rereview meta rejected (field %s) — row closed failed, no queue file written\n' "$key" "'$bad'"
 }

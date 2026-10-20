@@ -90,7 +90,7 @@ cmd_smoke() {
 cmd_run() {
   local p="${1:-}" key="${2:-}" row img claim rc ckey tid att lu meta base hv
   [ -n "${JOBS_BOX:-}" ] || { echo "docker-pool-runner: JOBS_BOX must name this host's box" >&2; return 1; }
-  dph_key_ok "$key" || { _dph_log "refused: key '$key' is not a plain ticket key (RB-*, SMOKE and odd characters are refused)"; return 1; }
+  dph_key_ok "$key" || { _dph_log "refused: key '$key' is not a plain ticket key (RB-*, RR-*, SMOKE and odd characters are refused)"; return 1; }
   dph_retention
   dph_reap_orphans >/dev/null
   row=$(dph_preflight "$p" "$key"); rc=$?

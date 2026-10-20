@@ -19,5 +19,8 @@
 # ROLLOUT_ covers ROLLOUT_FILED and ROLLOUT_FAILED, the rollout lane's two
 # answers (bin/run-rollout.sh). Without it a refused rollout was a mexec miss
 # while the machine idled and a dead machine after it stopped (BH-4061).
-RESULT_PREFIX_RE='^(PR_|PLAN_|REVIEW_|BUILD_|QUEUED_|EXECUTE_|DECOMPOSE|ROLLOUT_|RESULT_|SECURITY_|REFUTE_|QA_|TAMPER_|SMOKE|REBASED|CONFLICT|GATE_RED|REBASE_)'
+# REREVIEWED and REREVIEW_ are the words of a pool re-review (BH-7635,
+# bin/lib/rereview-job.sh); a bare REREVIEW prefix would pass REREVIEWX too.
+# REVIEW_ stays anchored, so the two never match each other's words.
+RESULT_PREFIX_RE='^(PR_|PLAN_|REVIEW_|BUILD_|QUEUED_|EXECUTE_|DECOMPOSE|ROLLOUT_|RESULT_|SECURITY_|REFUTE_|QA_|TAMPER_|SMOKE|REBASED|CONFLICT|GATE_RED|REBASE_|REREVIEWED|REREVIEW_)'
 head -1 <<<"${1:-}" | grep -qE "$RESULT_PREFIX_RE"
