@@ -43,6 +43,7 @@
 import { resolveIdentity } from '../_lib/access-identity.js';
 import { rekeyHeadMovedRefusal } from '../_lib/merge-pr-rekey.js';
 import { BOARD_FALLBACK_TYPES, boardCommand, enqueueBoardCommand, signedIn } from '../_lib/board-commands.js';
+import { POOL_HOLD_TYPES, poolHoldCommand } from '../_lib/pool-hold-command.js';
 import { readOnlyRefusal } from '../_lib/qa-session.js';
 
 const WORKER = 'https://harness-console.operator.workers.dev';
@@ -132,6 +133,13 @@ export async function onRequest(context) {
       authorization: request.headers.get('authorization') || ''
     });
   }
+  // pool_hold (BH-7708) takes the same fallback with its own validation.
+  if (sent && POOL_HOLD_TYPES.has(sent.type) && upstream.status === 400) {
+    return boardFallback(upstream, { ...sent, actor }, env, {
+      cookie: request.headers.get('cookie') || '',
+      authorization: request.headers.get('authorization') || ''
+    }, poolHoldCommand);
+  }
 
   // Pass everything back verbatim.
   return passThrough(upstream, upstream.body);
@@ -142,13 +150,13 @@ export async function onRequest(context) {
 // The worker's 400 does not prove it authenticated the request, so the
 // credentials (cookie and/or Authorization) must pass the worker's authed probe
 // before anything is validated or written.
-async function boardFallback(upstream, sent, env, creds) {
+async function boardFallback(upstream, sent, env, creds, build = boardCommand) {
   const text = await upstream.text();
   let refusal = null;
   try { refusal = JSON.parse(text); } catch { refusal = null; }
   if (!refusal || refusal.error !== 'unknown action') return passThrough(upstream, text);
   if (!(await signedIn(creds))) return jsonError(403, 'unauthorized');
-  const cmd = await boardCommand(sent);
+  const cmd = await build(sent);
   if (cmd.error) return jsonError(400, cmd.error);
   const q = await enqueueBoardCommand(env && env.CONSOLE_DB, cmd);
   if (q.error === 'no-db') return passThrough(upstream, text);

@@ -39,6 +39,14 @@
 # counts. A read that fails (no slug, the list, the fetch) prints one stderr
 # line and the check runs against <base-ref> only.
 #
+# QUEUED PRS (BH-7671). An open PR IN the merge queue (a label named
+# $MC_MERGIFY_LABEL (default merge-queue), `queued` or `checking`, and no
+# `dequeued` label: mc_queue_state's label rule) lands first, so it takes its
+# numbers whatever its PR number. The self-branch, same-ticket and same-name
+# exclusions still apply. MNR_HEAD=<sha> makes the check read that commit in
+# place of HEAD (the conductor checks a head with no worktree), and
+# MNR_OPEN_QUEUED_ONLY=1 lists and fetches only the queued PRs.
+#
 # THE REFERENCES. One pass per file, so a chain (0213 -> 0235 while the
 # branch's own 0235 -> 0236) never moves a reference twice:
 #   every text file the branch added or modified: the old stem `0213_x`
@@ -147,8 +155,9 @@ _mnr_names() {
 }
 
 # _mnr_open_taken <wt> <base-ref> <self-branch> — after mnr_conf. Sets
-# MNR_C_OPEN to one "<number>\t<basename>\t<pr>" row per migration an open PR
-# ADDED (the self branch and PRs of the same ticket left out). Runs in the
+# MNR_C_OPEN to one "<number>\t<basename>\t<pr>\t<queued 0|1>" row per
+# migration an open PR ADDED (the self branch and PRs of the same ticket left
+# out; with MNR_OPEN_QUEUED_ONLY=1, every PR not queued too). Runs in the
 # caller's shell, never in $( ): GH_REST_REASON must reach the case below.
 # rc 0 = read (MNR_C_OPEN may be empty), 2 = not read (MNR_OPEN_WHY). The
 # fetched refs live under refs/mnr-open/<ns>/ and are dropped on every path.
@@ -185,12 +194,24 @@ _mnr_open_taken() {
   # The ticket key of the self branch: ticket/<key>(-r<n>)? (pc_pr_hits' rule).
   kl=""
   [[ "$self" =~ ^ticket/([a-z0-9]+-[0-9]+)(-r[0-9]+)?$ ]] && kl="${BASH_REMATCH[1]}"
-  nums=$(printf '%s' "$list" | jq -r --arg self "$self" --arg kl "$kl" '
+  local qrows qo=0 ql="${MC_MERGIFY_LABEL:-merge-queue}" q
+  [ "${MNR_OPEN_QUEUED_ONLY:-}" = 1 ] && qo=1
+  qrows=$(printf '%s' "$list" | jq -r --arg self "$self" --arg kl "$kl" --arg ql "$ql" --argjson qo "$qo" '
     .[] | select(.number != null)
     | (.head.ref // "") as $h
     | select($self == "" or $h != $self)
     | select(($kl != "" and ($h | test("^ticket/" + $kl + "(-r[0-9]+)?$"))) | not)
-    | .number' 2>/dev/null)
+    | ([(.labels // [])[] | (.name // "")]) as $l
+    | (if ($l | index("dequeued")) == null and ([$l[] | select(. == $ql or . == "queued" or . == "checking")] | length) > 0
+       then 1 else 0 end) as $q
+    | select($qo == 0 or $q == 1)
+    | "\(.number) \($q)"' 2>/dev/null)
+  local -A qof=()
+  nums=""
+  while read -r n q; do
+    case "$n" in ''|*[!0-9]*) continue ;; esac
+    nums+="$n "; qof[$n]="${q:-0}"
+  done <<<"$qrows"
   ns=$(printf '%s' "${self:-build}" | tr -c 'A-Za-z0-9-' '-')"-${BASHPID:-$$}"
   for n in $nums; do
     case "$n" in ''|*[!0-9]*) continue ;; esac
@@ -205,7 +226,7 @@ _mnr_open_taken() {
     r="refs/mnr-open/$ns/pr/$n"
     git -C "$wt" rev-parse -q --verify "$r" >/dev/null 2>&1 || continue
     while IFS=$'\t' read -r v b; do
-      [ -n "$b" ] && rows+="$v"$'\t'"$b"$'\t'"$n"$'\n'
+      [ -n "$b" ] && rows+="$v"$'\t'"$b"$'\t'"$n"$'\t'"${qof[$n]:-0}"$'\n'
     done < <(git -C "$wt" diff --no-renames --name-only --diff-filter=A "$base...$r" -- "$MNR_C_DIR/" 2>/dev/null | _mnr_names)
   done
   _mnr_drop_refs "$wt" "$ns"
@@ -232,7 +253,8 @@ mnr_plan() {
   local -a bnum=() bname=()
   git -C "$wt" rev-parse -q --verify "$base^{commit}" >/dev/null 2>&1 || { echo "the base ref $base does not resolve"; return 2; }
   bl=$(git -C "$wt" ls-tree --name-only "$base" -- "$MNR_C_DIR/" 2>/dev/null) || { echo "git ls-tree $base failed"; return 2; }
-  al=$(git -C "$wt" diff --no-renames --name-only --diff-filter=A "$base" HEAD -- "$MNR_C_DIR/" 2>/dev/null) || { echo "git diff $base HEAD failed"; return 2; }
+  local hd="${MNR_HEAD:-HEAD}"
+  al=$(git -C "$wt" diff --no-renames --name-only --diff-filter=A "$base" "$hd" -- "$MNR_C_DIR/" 2>/dev/null) || { echo "git diff $base $hd failed"; return 2; }
   [ -n "$al" ] || return 0
   local basemax=0
   while IFS=$'\t' read -r n b; do
@@ -247,19 +269,22 @@ mnr_plan() {
   done < <(_mnr_names <<<"$al" | sort -t $'\t' -k1,1n -k2,2)
   [ "${#bname[@]}" -gt 0 ] || return 0
   # Open PRs (BH-7398): a row is skipped when it is this branch's own file.
-  # With a self PR, only a lower PR number takes a number (the older keeps it).
+  # With a self PR, only a lower PR number takes a number (the older keeps it),
+  # unless the row's PR is queued (BH-7671): it lands first, so it always takes.
   # Every open number, taken or not, is held: a move never lands on one.
   case "$sp" in *[!0-9]*) sp="" ;; esac
   local openmax=0
   for b in "${bname[@]}"; do bset[$b]=1; done
-  while IFS=$'\t' read -r n b pr; do
+  local q
+  while IFS=$'\t' read -r n b pr q; do
     [ -n "$n" ] && [ -n "$b" ] && [ -z "${bset[$b]:-}" ] || continue
     case "$pr" in ''|*[!0-9]*) continue ;; esac
     n=$((10#$n)); onum[$n]=1
     [ "$n" -gt "$openmax" ] && openmax=$n
-    [ -z "$sp" ] || [ "$pr" -lt "$sp" ] || continue
+    [ "$q" = 1 ] || [ -z "$sp" ] || [ "$pr" -lt "$sp" ] || continue
     if [ -z "${openpr[$n]:-}" ] || [ "$pr" -lt "${openpr[$n]}" ]; then
-      openpr[$n]=$pr; openby[$n]="#$pr ($b)"
+      openpr[$n]=$pr
+      if [ "$q" = 1 ]; then openby[$n]="queued PR #$pr ($b)"; else openby[$n]="open PR #$pr ($b)"; fi
     fi
   done <<<"${MNR_C_OPEN:-}"
   # The first collision; everything before it keeps its number.
@@ -269,7 +294,7 @@ mnr_plan() {
     if [ -n "${taken[$v]:-}" ]; then
       why[$i]="${bnum[$i]} is taken on $label by ${taken[$v]}"
     elif [ -n "${openby[$v]:-}" ]; then
-      why[$i]="${bnum[$i]} is taken by open PR ${openby[$v]}"
+      why[$i]="${bnum[$i]} is taken by ${openby[$v]}"
     elif [ -n "${used[$v]:-}" ]; then
       why[$i]="${bnum[$i]} is used twice in this PR (${used[$v]}, ${bname[$i]})"
     else
@@ -402,8 +427,10 @@ mnr_fix() {
   [ -n "$wt" ] && [ -n "$base" ] || { echo "migration renumber: usage mnr_fix <wt> <base-ref> <project> [<self-branch> [<self-pr>]]"; return 2; }
   mnr_conf "$project"
   [ -n "$MNR_C_DIR" ] && [ "$MNR_C_MODE" != off ] || return 0
+  # MNR_HEAD is for a check only: a fix commits on HEAD, so it plans on HEAD.
+  [ "$MNR_C_MODE" = check ] || local MNR_HEAD=HEAD
   MNR_C_OPEN=""
-  if [ "$MNR_C_OPEN_ON" = 1 ] && [ -n "$(git -C "$wt" diff --no-renames --name-only --diff-filter=A "$base" HEAD -- "$MNR_C_DIR/" 2>/dev/null)" ]; then
+  if [ "$MNR_C_OPEN_ON" = 1 ] && [ -n "$(git -C "$wt" diff --no-renames --name-only --diff-filter=A "$base" "${MNR_HEAD:-HEAD}" -- "$MNR_C_DIR/" 2>/dev/null)" ]; then
     _mnr_open_taken "$wt" "$base" "$sb" \
       || echo "migration renumber: open PRs not read ($MNR_OPEN_WHY) — main only" >&2
   fi

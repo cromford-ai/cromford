@@ -796,10 +796,11 @@ for CMD in "${CMDS[@]:-}"; do
     # exists only on the hub, so these run here for every project and are never
     # forwarded. Each bin/cmd-<x>.sh prints one JSON line. rc 3 is a refusal
     # (outcome=refused, BH-932); any other non-zero rc is a retryable failure.
-    dispatch_issue|machine_ctl|pool_cap)
+    dispatch_issue|machine_ctl|pool_cap|pool_hold)
       case "$TYPE" in
         dispatch_issue) FCS=cmd-dispatch-issue.sh; FCT=60 ;;
         machine_ctl)    FCS=cmd-machine-ctl.sh;    FCT=150 ;;
+        pool_hold)      FCS=cmd-pool-hold.sh;      FCT=30 ;;
         *)              FCS=cmd-pool-cap.sh;       FCT=30 ;;
       esac
       RESULT=$(timeout "$FCT" "$HARNESS/bin/$FCS" "$PROJECT" "$PAYLOAD" "$ID" 7>&- 2>/dev/null); FCRC=$?

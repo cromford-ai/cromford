@@ -25,6 +25,10 @@
 # bin/lib/mc-prequeue.d/ that defines pq_resolve <slug> <num> <url> <head>
 # <main> <path>; on a miss or a pending entry the gate asks it. Without one, a
 # miss proceeds, which is the conductor's behaviour before this gate existed.
+# Two hooks run before the cache read and can hold a head: pq_restamp
+# (mc-prequeue.d/restamp.sh, BH-6842) and pq_mignum
+# (mc-prequeue.d/migration-numbers.sh, BH-7671), which renumbers a head's added
+# migration whose number main or a queued PR took, pushes, and holds.
 #
 # THE KNOBS (lane merge-conductor; defaults in PQ_KNOB_DEFAULTS below):
 # MC_PREQUEUE_FRESH_COMMITS (BH-6335) is how many commits behind the current
@@ -149,6 +153,16 @@ pq_gate() {
     "pushed "*) read -r _ rw rn <<<"$rs"
       PQ_WHY="restamped ${rn:-?} schema fragment(s) to ${rw:0:12}; the new head is asked next tick"; _pq_end hold; return 0 ;;
     "held "*) PQ_WHY="schema restamp held: ${rs#held }"; _pq_end hold; return 0 ;;
+  esac
+  # BH-7671: a head whose added migration number main or a queued PR took is
+  # renumbered before the queue (mc-prequeue.d/migration-numbers.sh). A push or
+  # a refusal holds; the pushed head has no approval and is re-reviewed.
+  local mn="" mnw mnn
+  declare -F pq_mignum >/dev/null && pq_mignum_wanted && mn=$(pq_call -w mignum pq_mignum "$slug" "$num" "$url" "$head" "$PQ_MAIN" 2>/dev/null | tail -n 1)
+  case "$mn" in
+    "pushed "*) read -r _ mnw mnn <<<"$mn"
+      PQ_WHY="renumbered ${mnn:-?} migration(s) to ${mnw:0:12}; the new head is re-reviewed before it queues"; _pq_end hold; return 0 ;;
+    "held "*) PQ_WHY="migration number check held: ${mn#held }"; _pq_end hold; return 0 ;;
   esac
   pq_over && { _pq_over_hold "$head" "$b"; return 0; }
   path=$(pq_key "$slug" "$num" "$head" "$PQ_MAIN")

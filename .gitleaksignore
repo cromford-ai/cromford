@@ -20,6 +20,7 @@ fly/warm-env/project-3.env:generic-api-key:13
 locks-worker/tests/minter-test.sh:curl-auth-header:25
 mcp/test/board-actions.bh-5820.test.mjs:generic-api-key:15
 mcp/test/board-actions.bh-5820.test.mjs:generic-api-key:76
+mcp/test/project-pause.bh-7708.test.mjs:generic-api-key:18
 tests/box-launch.bh-5748-test.sh:generic-api-key:220
 tests/box-launch.bh-5748-test.sh:generic-api-key:400
 tests/ci-durations-missing-row.bh-5653-test.sh:curl-auth-header:68

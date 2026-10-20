@@ -38,6 +38,12 @@
 #                          the rows-only path, so its caller gates on ROWS_ONLY.
 #                          rc 0 stamped, rc 3 not (409 another machine, 404 no
 #                          claim, or no answer).
+#   The project spawn-hold FILE, state/pool/<p>/_spawn-hold "<until> <why>",
+#   for a caller that is not bin/fly-pool.sh (the console pool_hold command,
+#   BH-7708). Not gated on the knob: the file is the hold on this hub.
+#     psr_hold_file_put <harness> <p> <until> <why>  rc 0 written, 1 not.
+#     psr_hold_file_rm <harness> <p>  prints yes/no (a file was there); rc 1
+#                          when the file is still there.
 #   psr_fallback_note <p> <what>  ONE `POOL_STATE_FALLBACK <p> <what>` line in
 #                          $LOG per shell, when the knob is on.
 # Requests go out with JOBS_ALERT=0: every one has a documented answer for "no
@@ -191,6 +197,30 @@ psr_hold_clear() {
   _psr_w || return 0
   body=$(jq -nc --arg p "$p" --arg kd "$kind" --arg k "$key" '{project:$p, kind:$kd, key:$k, clear:true}' 2>/dev/null) || return 3
   _psr_send "$p" "hold-clear-$kind ${key:-project}" PATCH /api/pool-state/holds "$body"
+}
+
+_psr_hold_file() { # <harness> <p> -> the path; rc 1 on a bad project name
+  [[ "${2:-}" =~ $_PSR_NAME_RE ]] && [[ "$2" != *..* ]] || return 1
+  [ -n "${1:-}" ] || return 1
+  printf '%s/state/pool/%s/_spawn-hold\n' "$1" "$2"
+}
+
+psr_hold_file_put() {
+  local f
+  f=$(_psr_hold_file "${1:-}" "${2:-}") || return 1
+  [[ "${3:-}" =~ ^[0-9]+$ ]] || return 1
+  mkdir -p "${f%/*}" 2>/dev/null
+  { printf '%s %s\n' "$3" "${4:-}" > "$f.$$" && mv "$f.$$" "$f"; } 2>/dev/null \
+    || { rm -f "$f.$$" 2>/dev/null; return 1; }
+}
+
+psr_hold_file_rm() {
+  local f had=no
+  f=$(_psr_hold_file "${1:-}" "${2:-}") || return 1
+  [ -e "$f" ] && had=yes
+  rm -f "$f" 2>/dev/null
+  printf '%s\n' "$had"
+  [ ! -e "$f" ]
 }
 
 psr_claim_machine() {

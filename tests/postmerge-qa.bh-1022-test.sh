@@ -458,5 +458,35 @@ grep -q 'serving 20[0-9][0-9]-' "$T/logs/postmerge-qa.log" 2>/dev/null \
   && bad "P: the merge timestamp must never be read as the merge sha (log: $(cat "$T/logs/postmerge-qa.log"))" || ok
 [ "$(alerts "$T")" = 0 ] && ok || bad "P: a merged PR with no merge sha must not alert, got $(alerts "$T")"
 
+# ===========================================================================
+# Q1. POOL BUILDS (2026-10-20). A pool build dir is pool-<project>-<KEY>-<stamp>
+#     (bin/fly-pool.sh). It must be collected, keyed on its own basename, and
+#     its ticket key must drop the pool- prefix. Before the fix it was never
+#     collected, so merged-ticket-advance skipped its ticket as no-audit.
+# ===========================================================================
+T=$(new_harness); B=$(seed_build "$T" pool-project-3-TK-9-202610040021)
+run "$T" MERGED_AT="$(ago_h 1)" >/dev/null
+[ "$(drives "$T")" = 1 ] && ok || bad "Q1: a merged, served pool build must be driven once, got $(drives "$T") (log: $(cat "$T/logs/postmerge-qa.log" 2>/dev/null))"
+grep -q "pool-project-3-TK-9-202610040021 deadbeef PASS" "$T/state/postmerge-qa-done.txt" 2>/dev/null \
+  && ok || bad "Q1: the done row must be keyed on the pool dir basename with PASS (done file: $(cat "$T/state/postmerge-qa-done.txt" 2>/dev/null))"
+head -1 "$B/qa-prod.md" 2>/dev/null | grep -qx '# Post-merge production QA — TK-9' \
+  && ok || bad "Q1: the ticket key must strip the pool- prefix (report header: $(head -1 "$B/qa-prod.md" 2>/dev/null))"
+
+# ===========================================================================
+# Q2. Another project's pool dir is not collected
+# ===========================================================================
+T=$(new_harness); seed_build "$T" pool-other-app-TK-9-202610040021 >/dev/null
+run "$T" MERGED_AT="$(ago_h 1)" >/dev/null
+[ "$(drives "$T")" = 0 ] && ok || bad "Q2: another project's pool dir must not be driven, got $(drives "$T")"
+[ ! -s "$T/state/postmerge-qa-done.txt" ] && ok || bad "Q2: another project's pool dir must not get a done row"
+
+# ===========================================================================
+# Q3. A plain build is still driven
+# ===========================================================================
+T=$(new_harness); seed_build "$T" project-3-TK-3-202610040021 >/dev/null
+run "$T" MERGED_AT="$(ago_h 1)" >/dev/null
+grep -q "project-3-TK-3-202610040021 deadbeef PASS" "$T/state/postmerge-qa-done.txt" 2>/dev/null \
+  && ok || bad "Q3: a plain build must still be audited (done file: $(cat "$T/state/postmerge-qa-done.txt" 2>/dev/null))"
+
 echo "postmerge-qa.bh-1022-test: $PASS pass, $FAIL fail"
 [ "$FAIL" = 0 ]

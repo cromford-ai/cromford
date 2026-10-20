@@ -35,6 +35,8 @@
 #
 # ONE LINE PER DECISION -> logs/repair-on-push.log:
 #   REPAIR pr=<n|-> files=<k> action=rebase|skip reason=<r> repo=<slug> wake=<id>[ rc=<rc>]
+# The tick line counts files_get (GitHub PR files reads) and files_memo (answers
+# from this tick's memo: a PR's files are read once per tick, not per wake).
 # A conflict is a log line, not an alert: the conductor classes the PR
 # NEEDS_REBASE and bin/blocked-resolver.sh owns it from there.
 set -uo pipefail
@@ -153,7 +155,7 @@ rc_reason() {
     8) echo tmp-full ;; *) echo "rc-$1" ;; esac
 }
 
-USED=0; NWAKE=0; STOPPED=""; LASTDONE="$CUR"
+USED=0; NWAKE=0; STOPPED=""; LASTDONE="$CUR"; FGET=0; FMEMO=0
 : > "$TMP/done"
 while IFS=$'\t' read -r WID REPO AFTER EVENT; do
   NWAKE=$((NWAKE+1))
@@ -219,10 +221,19 @@ while IFS=$'\t' read -r WID REPO AFTER EVENT; do
         [ -s "$LD/changed-files.txt" ] && LC_ALL=C sort -u "$LD/changed-files.txt" > "$TMP/prfiles"
       fi
       if [ ! -s "$TMP/prfiles" ]; then
-        if ! gh api --paginate "repos/$SLUG/pulls/$N/files" --jq '.[].filename' > "$TMP/prfiles.raw" 2>/dev/null; then
-          line "$N" 0 skip files-unreadable; COMPLETE=0; continue
+        # One files read per (project, PR) per tick, not one per wake. The memo
+        # lives in $TMP, so it dies with the tick, as the PR list does.
+        MEMO="$TMP/prfiles.memo.$P.$N"
+        if [ -e "$MEMO" ]; then
+          cp "$MEMO" "$TMP/prfiles"; FMEMO=$((FMEMO+1))
+        else
+          FGET=$((FGET+1))
+          if ! gh api --paginate "repos/$SLUG/pulls/$N/files" --jq '.[].filename' > "$TMP/prfiles.raw" 2>/dev/null; then
+            line "$N" 0 skip files-unreadable; COMPLETE=0; continue
+          fi
+          LC_ALL=C sort -u "$TMP/prfiles.raw" > "$TMP/prfiles"
+          cp "$TMP/prfiles" "$MEMO"
         fi
-        LC_ALL=C sort -u "$TMP/prfiles.raw" > "$TMP/prfiles"
       fi
       K=$(LC_ALL=C comm -12 "$TMP/prfiles" "$TMP/merged" | grep -c .)
       if [ "$K" -eq 0 ]; then line "$N" 0 skip no-overlap; continue; fi
@@ -263,5 +274,5 @@ done < "$TMP/wakes.tsv"
 if [ -z "$STOPPED" ] && [ "$NREAD" -lt "$NWAKES" ] && [ "$MAX" -gt "$LASTDONE" ]; then
   wake_cursor_put "$LANE" "$MAX" >/dev/null && LASTDONE="$MAX"
 fi
-say "tick wakes=$NWAKE rebased=$USED budget=$BUDGET cursor=$LASTDONE (rebased = mc_rebase calls, not successes)"
+say "tick wakes=$NWAKE rebased=$USED budget=$BUDGET cursor=$LASTDONE files_get=$FGET files_memo=$FMEMO (rebased = mc_rebase calls, not successes)"
 exit 0

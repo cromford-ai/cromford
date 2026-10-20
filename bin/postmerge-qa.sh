@@ -269,7 +269,11 @@ mark_done() { # mark_done <build-key> <merge-sha> <verdict>
 if [ -n "$ONE_BUILD" ]; then
   CANDIDATES="$ONE_BUILD"
 else
-  CANDIDATES=$(find "$H/builds" -maxdepth 1 -type d -name "$P-*" -mmin "-$((LOOKBACK_H * 60))" 2>/dev/null | sort)
+  # A pool build's dir is pool-<project>-<KEY>-<stamp> (bin/fly-pool.sh). Without
+  # it here a pool build never got a verdict row, and bin/merged-ticket-advance.sh
+  # (which reads pool- dirs) skipped its ticket as no-audit forever.
+  CANDIDATES=$(find "$H/builds" -maxdepth 1 -type d \( -name "$P-*" -o -name "pool-$P-*" \) \
+                 -mmin "-$((LOOKBACK_H * 60))" 2>/dev/null | sort)
 fi
 [ -n "$CANDIDATES" ] || exit 0
 
@@ -339,7 +343,7 @@ for BUILD in $CANDIDATES; do
   fi
 
   RAN=$((RAN + 1))
-  KEY=$(sed -E "s/^${P}-//; s/-[0-9]{8,}$//" <<<"$BK")
+  KEY=$(sed -E "s/^(pool-)?${P}-//; s/-[0-9]{8,}$//" <<<"$BK")
   OUT="$BUILD/qa-prod-shots"; mkdir -p "$OUT"
   REPORT="$BUILD/qa-prod.md"
   SCREENS=$(screens_for "$BUILD")

@@ -1,0 +1,11 @@
+{
+  "env": "MC_MIGRATION_RECHECK",
+  "read_in": "bin/lib/mc-prequeue.d/migration-numbers.sh",
+  "type": "int",
+  "default": 1,
+  "min": 0,
+  "max": 1,
+  "unit": null,
+  "zero_means": "off",
+  "note": "BH-7671: 1 = before a READY head is queued, the pre-queue gate checks each migration the head ADDED (migration_renumber.dir, bin/lib/migration-renumber.sh) against current main and every PR in the merge queue. On a collision it renumbers the head (every self-reference, one commit with Union-resolved trailers), pushes, and holds; the new head has no approval and is re-reviewed before it queues. A renumber that cannot run holds the head and sends one warn alert. Off by itself for a project with no migration_renumber.dir row. 0 = off: no check and no hold, as before. Per project: lane.merge-conductor.<project>.mc_migration_recheck."
+}
