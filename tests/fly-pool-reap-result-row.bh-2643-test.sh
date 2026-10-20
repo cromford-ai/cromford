@@ -211,13 +211,15 @@ expect_death() {
   [ "$(jq -r '.deaths' "$Q" 2>/dev/null)" = 1 ] && ok "6: requeued, deaths still 1" || bad "6: not requeued at deaths=1: $(cat "$Q" 2>/dev/null)"
 }
 
-# ── 7: a rebase key never consults the row; its dead path is unchanged ────
+# ── 7: a rebase key reads the row (BH-7656); a non-rebase word in it is a
+# miss, so its dead path is unchanged ─────────────────────────────────────
 {
   reset_state
   machine_json RB-21-abc 0
   ledger_row "$DEFLINE" m1 $((SPAWN_EPOCH+31))
   run_pool
-  [ -s "$T/ledger/reads" ] && bad "7: the row was read for an RB- key" || ok "7: no row read for RB-"
+  grep -q '^pool-result project-5/RB-21-abc$' "$T/ledger/reads" && ok "7: row read for RB-" \
+    || bad "7: the row was not read for an RB- key: $(cat "$T/ledger/reads")"
   grep -q 'rebase machine m1 died (state=stopped)' "$H/logs/ALERTS.log" \
     && ok "7: rebase dead path unchanged" || bad "7: rebase dead ALERT missing: $(cat "$H/logs/ALERTS.log")"
   [ -e "$H/state/build-queue/project-5/RB-21-abc.json" ] && bad "7: rebase requeued" || ok "7: rebase not requeued"

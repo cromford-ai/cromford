@@ -1,0 +1,3 @@
+# tests/mc/expected-map.d/BH-7656.tsv — BH-7656: the pool-machine probe for the RB stale bound;
+# origin=lib, a new module function.
+rebase	_mc_rb_pool_machine	lib

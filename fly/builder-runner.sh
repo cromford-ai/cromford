@@ -11,12 +11,13 @@
 #      BUILDER_EXEC=1 BUILDER_NO_MERGE=1 (no merge, no board writes on a builder).
 #   4. Write RESULT (build's RESULT line + TIER + PR URL + artifact paths); post
 #      a `build` beat so the console shows builder stages live.
-#   5. Loop; 10 min idle with no push => clear /run/harness-env and exit 0 =>
-#      machine autostops (restart policy `no`).
+#   5. Loop; idle with no push for the idle window (default 10 min) => clear
+#      /run/harness-env and exit 0 => machine autostops (restart policy `no`).
 #
 # Open-detail decisions (simplest robust option, per task brief):
-#   - IDLE_TIMEOUT is a constant here; a builder is single-job, single-project,
-#     so no config surface is warranted for Phase 1. The WARMUP wait is not
+#   - The idle window is a settings row (BH-7656, _pool_idle_timeout): env
+#     POOL_IDLE_TIMEOUT_S, else lane.fly-pool.<project>.pool_idle_timeout_s,
+#     else lane.fly-pool.pool_idle_timeout_s, else 600 s. The WARMUP wait
 #     (BH-7215): the hub passes WARMUP_WAIT_S on `fly machine run`, from the knob
 #     lane.fly-pool.<project>.warmup_wait_s.
 #   - Job file is /run/harness/job.json {ticket_id,key,attempt}, with an
@@ -43,7 +44,7 @@ RESULT_FILE="$JOBDIR/RESULT"
 HEARTBEAT="$JOBDIR/heartbeat"
 PROJECT="${PROJECT:?PROJECT must be set by entrypoint}"
 REPO="/data/repos/$PROJECT"
-IDLE_TIMEOUT=600          # 10 min with no pushed job -> autostop
+IDLE_TIMEOUT_DEFAULT=600  # 10 min with no pushed job -> autostop (_pool_idle_timeout)
 # BH-7215: the hub passes WARMUP_WAIT_S (lane knob lane.fly-pool.<p>.warmup_wait_s).
 # A fixed 600 s lost spawns whose hub setup took longer (#7174).
 WARMUP_WAIT="${WARMUP_WAIT_S:-1800}"
@@ -527,20 +528,21 @@ run_job() {
 # autostops and the RESULT goes with it, and a hub reap that arrives late then
 # finds only a `stopped` machine it cannot ssh into, which it used to count as a
 # death. The row is the copy that survives (bin/lib/pool-result-row.sh). Pool
-# machines only; never an RB- rebase or RR- re-review (each dead path is its
-# own, BH-542, BH-7635). An
-# older synced tree without the lib writes nothing, and a failed write is one
-# log line, never a job failure.
+# machines only, and never an RR- re-review (its dead path is its own,
+# BH-7635). An RB- rebase row carries the whole RESULT (`full`, BH-7656): the
+# hub's apply needs its PR:/HEAD:/UNION: lines. An older synced tree without
+# the lib writes nothing, and a failed write is one log line, never a job
+# failure.
 pool_result_row_write() {
   [ "${POOL_MODE:-}" = 1 ] || return 0
-  local key
+  local key full=""
   key=$(jq -r '.key // ""' "$JOB" 2>/dev/null)
-  case "$key" in ''|RB-*|RR-*) return 0 ;; esac
+  case "$key" in ''|RR-*) return 0 ;; RB-*) full=full ;; esac
   # shellcheck source=bin/lib/pool-result-row.sh
   . "$HARNESS/bin/lib/pool-result-row.sh" 2>/dev/null || return 0
   command -v pool_result_row_put >/dev/null 2>&1 || return 0
   ( export HARNESS="$HARNESS"
-    pool_result_row_put "$PROJECT" "$key" "${FLY_MACHINE_ID:-}" "$RESULT_FILE" ) \
+    pool_result_row_put "$PROJECT" "$key" "${FLY_MACHINE_ID:-}" "$RESULT_FILE" $full ) \
     || log "pool-result row for $key not written — the hub reap falls back to ssh"
   return 0
 }
@@ -558,8 +560,10 @@ pool_result_row_write() {
 rebase_setup_result() { # rebase_setup_result <why> <url> <head> <branch> <base>
   local why="$1" url="${2:-}" head="${3:-}" br="${4:-}" base="${5:-}"
   [ -n "$url" ] || url="-"
-  printf 'REBASE_SETUP_FAILED %s\nPR: %s\nHEAD: %s\nBRANCH: %s\nBASE: %s\nGATE: typecheck=skipped unit=skipped\n' \
-    "$why" "$url" "$head" "$br" "$base" > "$RESULT_FILE"
+  local t0="${REBASE_JOB_T0:-}" setup=-
+  case "$t0" in ''|*[!0-9]*) ;; *) setup=$(( $(date -u +%s) - t0 )) ;; esac
+  printf 'REBASE_SETUP_FAILED %s\nPR: %s\nHEAD: %s\nBRANCH: %s\nBASE: %s\nGATE: typecheck=skipped unit=skipped\nTIMINGS: setup=%s merge=- gates=- push=-\n' \
+    "$why" "$url" "$head" "$br" "$base" "$setup" > "$RESULT_FILE"
   log "rebase job setup failed: $why"
 }
 
@@ -572,6 +576,8 @@ run_rebase_job() { # run_rebase_job <job key>
   url=$(jq -r    '.rebase.url    // ""'     "$JOB" 2>/dev/null)
   [ -n "$base" ] || base=main
   log "rebase job key=$key $slug $branch onto $base (leased head ${head:0:8})"
+  # The TIMINGS setup step starts here, so it counts the warm-up.
+  REBASE_JOB_T0=$(date -u +%s); export REBASE_JOB_T0
   # warm_up is what puts the repo (and node_modules, hence the gates) on disk.
   warm_up || { rebase_setup_result "warm-up failed" "$url" "$head" "$branch" "$base"; return 1; }
   if [ ! -r "$lib" ]; then
@@ -840,6 +846,30 @@ _run_job() {
 }
 # <<< run_job
 
+# --- the idle window (BH-7656) ------------------------------------------------
+# _pool_idle_timeout -> the seconds to idle before autostop. Env
+# POOL_IDLE_TIMEOUT_S, else the settings row lane.fly-pool.<project>.
+# pool_idle_timeout_s, else lane.fly-pool.pool_idle_timeout_s, else
+# IDLE_TIMEOUT_DEFAULT. A failed or absent read goes to the next source. A value
+# that is not an integer in [60, 7200] is refused: one log line, and the default.
+_pool_idle_timeout() {
+  local v="${POOL_IDLE_TIMEOUT_S:-}" k jc="$HARNESS/bin/jobs-client.sh"
+  if [ -z "$v" ] && [ -x "$jc" ]; then
+    for k in "lane.fly-pool.$PROJECT.pool_idle_timeout_s" lane.fly-pool.pool_idle_timeout_s; do
+      v=$(timeout 30 "$jc" setting-get "$k" 2>/dev/null) || v=""
+      v=$(printf '%s' "$v" | tr -d '[:space:]')
+      [ -z "$v" ] || break
+    done
+  fi
+  [ -n "$v" ] || { echo "$IDLE_TIMEOUT_DEFAULT"; return 0; }
+  case "$v" in
+    *[!0-9]*) ;;
+    *) if [ "${#v}" -le 5 ] && [ "$v" -ge 60 ] && [ "$v" -le 7200 ]; then echo "$v"; return 0; fi ;;
+  esac
+  log "idle window $v out of range — using $IDLE_TIMEOUT_DEFAULT" >&2
+  echo "$IDLE_TIMEOUT_DEFAULT"
+}
+
 # --- main loop ----------------------------------------------------------------
 while true; do
   run_job || log "run_job returned nonzero (RESULT written)"
@@ -851,10 +881,11 @@ while true; do
   #   - pool reuse (fly-pool.sh REAP, 2026-08-13): clears RESULT and overwrites
   #     job.json with a DIFFERENT key (tmp+mv) — detected by key change even if
   #     the overwrite raced our mtime capture below.
-  # No new job within IDLE_TIMEOUT (10 min) => clear secrets and exit 0. That
-  # stops the machine (tini reaps us as PID 1's child); a stopped pool machine
-  # is then destroyed by fly-pool.sh's dead-machine sweep, so an idle machine
-  # never bills compute past the 10-minute window.
+  # No new job within IDLE_TIMEOUT (_pool_idle_timeout, default 10 min) => clear
+  # secrets and exit 0. That stops the machine (tini reaps us as PID 1's
+  # child); a stopped pool machine is then destroyed by fly-pool.sh's
+  # dead-machine sweep, so an idle machine never bills compute past the window.
+  IDLE_TIMEOUT=$(_pool_idle_timeout)
   log "job cycle complete; idling up to ${IDLE_TIMEOUT}s for next push"
   prev_mtime=$(stat -c %Y "$JOB" 2>/dev/null || echo 0)
   idle=0

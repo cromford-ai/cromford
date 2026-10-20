@@ -117,8 +117,12 @@ mapfile -t A < "$T/argv"
   && ok || bad "runner did not write the row: $(tr '\n' ' ' < "$T/argv")"
 printf '%s' "${A[4]:-}" | jq -e '.machine == "m1" and (.rline | startswith("BUILD_DEFERRED REFUSED pause"))' >/dev/null \
   && ok || bad "runner row detail: ${A[4]:-}"
+# BH-7656: an RB- key writes its row too, with the whole RESULT in detail.result.
 drive_runner RB-21-abc 1
-[ -s "$T/argv" ] && bad "an RB- key wrote a row" || ok
+mapfile -t A < "$T/argv"
+[ "${A[0]:-} ${A[2]:-}" = "ledger-put cromford/RB-21-abc" ] \
+  && printf '%s' "${A[4]:-}" | jq -e '.result | startswith("BUILD_DEFERRED REFUSED pause")' >/dev/null \
+  && ok || bad "an RB- key wrote no row with detail.result: $(tr '\n' ' ' < "$T/argv")"
 drive_runner BH-1 ""
 [ -s "$T/argv" ] && bad "a non-pool builder wrote a row" || ok
 echo 1 > "$T/put-rc"; : > "$T/run/log"

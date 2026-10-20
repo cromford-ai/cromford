@@ -1,0 +1,12 @@
+{
+  "env": "POOL_IDLE_TIMEOUT_S",
+  "type": "int",
+  "default": 600,
+  "min": 60,
+  "max": 7200,
+  "unit": "seconds",
+  "zero_means": null,
+  "required": false,
+  "read_in": "fly/builder-runner.sh",
+  "note": "BH-7656. How long a pool machine idles after a job before it exits 0 and autostops. fly/builder-runner.sh reads it at the start of each idle wait (_pool_idle_timeout): env POOL_IDLE_TIMEOUT_S, then the per-project row `lane.fly-pool.<project>.pool_idle_timeout_s`, then the lane row, then 600. A value that is not an integer in [60, 7200] is refused (one log line, 600). The RESULT survives autostop in the pool-result row (BH-2643; RB- rebase keys since BH-7656), so the window only needs to cover a job push, not the hub reap gap."
+}

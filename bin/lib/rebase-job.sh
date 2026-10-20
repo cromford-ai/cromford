@@ -36,6 +36,10 @@
 #   REBASED <new-sha>
 #   CONFLICT <path> [<path>...]
 #   GATE_RED typecheck|unit|migration-number: <message>
+#            typecheck and unit carry `: <first failing line>` when the gate's
+#            output has a tsc error or a vitest/jest FAIL line (_rj_first_fail,
+#            BH-7656), plus ` [postinstall rc=<n>]` when step 6d failed; with no
+#            such line the word stands alone.
 #   REBASE_LEASE_REJECTED <why>
 #   REBASE_SETUP_FAILED <why>
 #
@@ -49,6 +53,12 @@
 #   UNION: <path> (BH-4641)[;<path> ...]   only when the append-union step
 #          resolved part of this merge (the merge commit's `Union-resolved:`
 #          trailers). mc_pool_rebase_apply then withholds the approval rebind.
+#   TIMINGS: setup=<s> merge=<s> gates=<s> push=<s>   always, last. Seconds per
+#          step: setup is steps 1-5 (from REBASE_JOB_T0 when the runner sets it,
+#          so the warm-up counts; else from the start of rebase_job_run), merge
+#          6-6c, gates 7, push 8. The step that decided the RESULT carries its
+#          time up to that point; a step never reached is `-`. The hub reap logs
+#          it; mc_pool_rebase_apply does not read it.
 #
 # TWO KNOBS, both optional, both with a documented fallback:
 #
@@ -90,11 +100,22 @@
 #   6c. renumber a branch-added migration whose number main took (BH-7365,
 #      bin/lib/migration-renumber.sh): one commit whose trailers join UNION:.
 #      A collision it cannot renumber is GATE_RED migration-number: <message>.
+#   6d. the generate step, inside the same node_modules condition as 7 (BH-7656):
+#      when the MERGED tree's package.json declares a root `postinstall`, run
+#      `npm run postinstall` in the worktree. That is the step `npm install`
+#      runs for a build, and a fresh `git worktree add` never runs it. The
+#      project-6 false red: `postinstall` is `prisma generate`, the client is
+#      written to the git-ignored `src/lib/db/__generated__/prisma`, so the
+#      worktree had no client and tsc was red on every import of it. A failing
+#      postinstall does not stop the job: typecheck decides, and a red typecheck
+#      names it. `pretypecheck` (project-6's registry step) npm runs by itself.
 #   7. gates, ONLY when <repo>/node_modules exists — warm-up installs with
 #      `npm install || true`, so calling a missing install GATE_RED would tell
 #      the hub the BRANCH is bad. Same condition as the hub twin mc_rebase.
 #      typecheck, then <harness>/bin/test-select.sh if it is executable
 #      (recorded as unit=select) else `npm run test:unit`. Red pushes nothing.
+#      Gate output goes to one temp log (removed on every path), and a red gate
+#      names its first failing line from it.
 #   8. push --force-with-lease=<branch>:<head>; refused -> REBASE_LEASE_REJECTED
 #      push, origin untouched. The RESULT is written AFTER the push returns,
 #      from the sha read after it, so a REBASED line without a push cannot
@@ -116,7 +137,18 @@ rebase_job_run() {
   # locals HERE so an early `return` from any step still lands in the cleanup
   # and the single write below.
   local _rj_line="REBASE_SETUP_FAILED unknown" _rj_wt="" _rj_tc=skipped _rj_unit=skipped _rj_union=""
+  # The step clock (_rj_mark): the step in progress and the time it started.
+  local _rj_ts=- _rj_tm=- _rj_tg=- _rj_tp=- _rj_step=_rj_ts _rj_t0="${REBASE_JOB_T0:-}"
+  case "$_rj_t0" in ''|*[!0-9]*) _rj_t0=$(date -u +%s) ;; esac
+  # The gate log (BH-7656): typecheck and unit output, read by _rj_first_fail.
+  # The postinstall output goes beside it in "$_rj_log.pi".
+  local _rj_log _rj_pilog=/dev/null _rj_pi=""
+  if _rj_log=$(mktemp "${TMPDIR:-/tmp}/rebase-log-XXXXXX" 2>/dev/null); then _rj_pilog="$_rj_log.pi"
+  else _rj_log=/dev/null; fi
   _rebase_job_body "$repo" "$slug" "$br" "$head" "$base" "$harness"
+  # The step that decided (a return from the body) carries its time so far.
+  _rj_mark ""
+  [ "$_rj_log" = /dev/null ] || rm -f "$_rj_log" "$_rj_pilog" >/dev/null 2>&1
   if [ -n "$_rj_wt" ]; then
     git -C "$_rj_wt" merge --abort >/dev/null 2>&1
     git -C "$repo" worktree remove --force "$_rj_wt" >/dev/null 2>&1
@@ -126,9 +158,44 @@ rebase_job_run() {
   local url="${REBASE_JOB_URL:-}"
   [ -n "$url" ] || url="https://github.com/$slug/pull/-"
   local ul=""; [ -z "$_rj_union" ] || ul="UNION: $_rj_union"$'\n'
-  printf '%s\nPR: %s\nHEAD: %s\nBRANCH: %s\nBASE: %s\nGATE: typecheck=%s unit=%s\n%s' \
-    "$_rj_line" "$url" "$head" "$br" "$base" "$_rj_tc" "$_rj_unit" "$ul" > "$out" 2>/dev/null
+  printf '%s\nPR: %s\nHEAD: %s\nBRANCH: %s\nBASE: %s\nGATE: typecheck=%s unit=%s\n%sTIMINGS: setup=%s merge=%s gates=%s push=%s\n' \
+    "$_rj_line" "$url" "$head" "$br" "$base" "$_rj_tc" "$_rj_unit" "$ul" \
+    "$_rj_ts" "$_rj_tm" "$_rj_tg" "$_rj_tp" > "$out" 2>/dev/null
   case "$_rj_line" in REBASED\ *) return 0 ;; *) return 1 ;; esac
+}
+
+# _rj_mark <next-step-var> — rebase_job_run's step clock: the step in progress
+#   (_rj_step) gets the seconds since _rj_t0, and <next-step-var> starts now.
+#   "" ends the clock. Reports through rebase_job_run's locals.
+_rj_mark() {
+  local now; now=$(date -u +%s)
+  [ -z "$_rj_step" ] || printf -v "$_rj_step" '%s' "$((now - _rj_t0))"
+  _rj_step="$1"; _rj_t0="$now"
+}
+
+# _rj_first_fail <log> — the first failing line of a gate log, or nothing.
+#   A tsc error (`<path>(<l>,<c>): error TS…` or the pretty `<path>:<l>:<c> -
+#   error TS…`) or a vitest/jest failure (`FAIL <path>`, `× <path>`). ANSI codes
+#   are stripped, tabs and CR become spaces, the ends are trimmed, and the line
+#   is cut at 200 bytes. A warning, an `npm ERR!` line or a script echo line is
+#   no match: the caller then keeps the bare GATE_RED word.
+_rj_first_fail() {
+  [ -s "${1:-}" ] || return 0
+  sed 's/\x1b\[[0-9;]*[A-Za-z]//g' "$1" 2>/dev/null \
+    | LC_ALL=C grep -m1 -E \
+        -e '^.+\([0-9]+,[0-9]+\): error TS[0-9]+' \
+        -e '^.+:[0-9]+:[0-9]+ - error TS[0-9]+' \
+        -e '^[[:space:]]*FAIL[[:space:]]+[^[:space:]]' \
+        -e '^[[:space:]]*× [^[:space:]]' \
+    | tr '\t\r' '  ' | sed 's/^ *//; s/ *$//' | LC_ALL=C cut -b1-200
+}
+
+# _rj_red <gate> — the GATE_RED line for a red <gate>: the first failing line of
+#   the gate log, then the postinstall rc when step 6d failed.
+_rj_red() {
+  local f; f=$(_rj_first_fail "$_rj_log")
+  _rj_line="GATE_RED $1${f:+: $f}"
+  case "$_rj_pi" in ''|0) ;; *) _rj_line="$_rj_line [postinstall rc=$_rj_pi]" ;; esac
 }
 
 # _rebase_job_body <repo> <slug> <branch> <head> <base> <harness>
@@ -197,6 +264,7 @@ _rebase_job_body() {
   actual=$(git -C "$wt" rev-parse HEAD 2>/dev/null)
   [ "$actual" = "$head" ] \
     || { _rj_line="REBASE_LEASE_REJECTED head is $actual"; return 1; }
+  _rj_mark _rj_tm
 
   # --- 6. merge, resolve, commit --------------------------------------------
   if ! git -C "$wt" merge -q --no-edit "origin/$base" >/dev/null 2>&1; then
@@ -248,22 +316,34 @@ _rebase_job_body() {
     fi
   fi
 
+  _rj_mark _rj_tg
+
   # --- 7. the gates, only with deps at hand ----------------------------------
   if [ -d "$repo/node_modules" ]; then
     [ -e "$wt/node_modules" ] || ln -s "$repo/node_modules" "$wt/node_modules" 2>/dev/null
+    # --- 6d. the generate step (BH-7656) -----------------------------------
+    # Read from the MERGED tree, so a branch that adds the script runs it. With
+    # Prisma < 7 the client goes to node_modules/.prisma, which is the linked
+    # $repo/node_modules: one job runs at a time on a pool machine, and a build
+    # re-installs, so that write is accepted.
+    if jq -e '.scripts.postinstall' "$wt/package.json" >/dev/null 2>&1; then
+      ( cd "$wt" && npm run postinstall >"$_rj_pilog" 2>&1 ); _rj_pi=$?
+    fi
     if jq -e '.scripts.typecheck' "$wt/package.json" >/dev/null 2>&1; then
-      ( cd "$wt" && NODE_OPTIONS=--max-old-space-size=12288 npm run typecheck >/dev/null 2>&1 ); _rj_tc=$?
-      [ "$_rj_tc" = 0 ] || { _rj_line="GATE_RED typecheck"; return 1; }
+      ( cd "$wt" && NODE_OPTIONS=--max-old-space-size=12288 npm run typecheck >"$_rj_log" 2>&1 ); _rj_tc=$?
+      [ "$_rj_tc" = 0 ] || { _rj_red typecheck; return 1; }
     fi
     if [ -x "$harness/bin/test-select.sh" ]; then
-      "$harness/bin/test-select.sh" "$wt" "$br" "$base" >/dev/null 2>&1; rc=$?
+      "$harness/bin/test-select.sh" "$wt" "$br" "$base" >"$_rj_log" 2>&1; rc=$?
       _rj_unit=select
-      [ "$rc" = 0 ] || { _rj_line="GATE_RED unit"; return 1; }
+      [ "$rc" = 0 ] || { _rj_red unit; return 1; }
     elif jq -e '.scripts["test:unit"]' "$wt/package.json" >/dev/null 2>&1; then
-      ( cd "$wt" && npm run test:unit >/dev/null 2>&1 ); _rj_unit=$?
-      [ "$_rj_unit" = 0 ] || { _rj_line="GATE_RED unit"; return 1; }
+      ( cd "$wt" && npm run test:unit >"$_rj_log" 2>&1 ); _rj_unit=$?
+      [ "$_rj_unit" = 0 ] || { _rj_red unit; return 1; }
     fi
   fi
+
+  _rj_mark _rj_tp
 
   # --- 8. the one write that leaves this machine -----------------------------
   # The ticket's hold is read HERE, at the push, not when the hub enqueued this

@@ -22,9 +22,13 @@
 # THE OUTCOME MAP, from the row (the pool reap stores the first 200 chars of the
 # RESULT as `reason`):
 #   no row                                          none
-#   queued | claimed, enqueued less than MC_REBASE_POOL_TIMEOUT_SECS ago
-#                                                   running
-#   queued | claimed, older (or no enqueued_at)     stale
+#   queued, enqueued less than MC_REBASE_POOL_TIMEOUT_SECS ago     running
+#   claimed, claimed less than MC_REBASE_POOL_TIMEOUT_SECS ago
+#     (no readable claimed_at: enqueued less than that ago)        running
+#   queued | claimed, older (or no readable time), and the machine
+#     registry has no live machine for the key                     stale
+#   queued | claimed, older, and a live machine for the key        running
+#   queued | claimed, older, and the registry read failed          running
 #   done + REBASED | CONFLICT | GATE_RED | REBASE_LEASE_REJECTED   ok
 #   done + REBASE_SETUP_FAILED, or status failed    failed
 #   done + an empty reason or any other first word  empty
@@ -35,9 +39,16 @@
 # THE TERMINAL HAND-BACK. A terminal failed, an empty, a stale row, a defer
 # status and every read or put failure write `rebase` to MC_PR_DEFERRED_FILE and
 # answer rc 3: the hub runs the PR as it does today. Nothing is written under
-# state/. The stale bound is the hub pool path's own (mc_rb_state, default
-# 5400s from the enqueue): a row the pool never claims, or a claim the reap left
-# open, hands the PR back instead of holding it in flight for ever.
+# state/. The stale bound is the hub pool path's own (MC_REBASE_POOL_TIMEOUT_SECS,
+# default 5400s). A claimed row counts it from the claim (the gate just before
+# the pool starts the machine), so queue wait before the spawn does not count; a
+# queued row counts it from the enqueue. A row the pool never claims, or a claim
+# the reap left open, hands the PR back instead of holding it in flight for
+# ever. Only a row past the bound reads the machine registry (GET /api/machines
+# ?project=&key=&live=1): a live machine for the key holds the row `running`, and
+# a registry read that fails holds it too (a hand-back next to a live machine
+# rebases one head twice, a held tick is read again next tick). A 404 (an older
+# worker) or no live row leaves it stale.
 # THE NEXT TICK DECIDES AGAIN. The NEEDS_REBASE arm writes `rebase <key> <head>`
 # after a spawn answers rc 0 and never calls the spawn again for that head while
 # the mark stands (with pr-state-rows the mark outlives the machine). So
@@ -104,36 +115,78 @@ _mc_remote_retry_max() {
   printf '%s' "$v"
 }
 
-# mc_remote_rebase_row <project> <pr> <head> — ONE queue read.
+# _mc_remote_machine_live <project> <rbkey> — ONE machine-registry read.
+#   rc 0, prints `<machine_id> <state>` of the newest live row for the key.
+#   rc 2 when no live row is there, or the worker has no such route (404).
+#   rc 1 on a transport failure or a body with no machines array. JOBS_ALERT=0:
+#   the caller holds the row and reads again next tick, and the queue read just
+#   before it is the call that alerts a worker outage.
+_mc_remote_machine_live() {
+  local resp rc out
+  resp=$(JOBS_ALERT=0 _jobs_req GET "/api/machines?project=$1&key=$2&live=1"); rc=$?
+  [ "$rc" = 2 ] && return 2
+  [ "$rc" = 0 ] || return 1
+  out=$(printf '%s' "$resp" | jq -r 'if (.machines | type) != "array" then error("no machines")
+    else (.machines[0] // null) | if . == null then "" else "\(.machine_id // "-") \(.state // "-")" end end' 2>/dev/null) \
+    || return 1
+  [ -n "$out" ] || return 2
+  printf '%s\n' "$out"
+}
+
+# mc_remote_rebase_row <project> <pr> <head> — ONE queue read, plus one
+#   machine-registry read only for a queued/claimed row past the stale bound.
 #   rc 0, prints `none`, or `<outcome>\t<attempt>\t<detail>` per the map above.
 #   <detail> is the first line of the reason for done/failed, the status for
-#   running/defer, and `<status> <age>s` for stale. rc 1 on a transport failure
-#   or an unparseable body: a failed read is never `none`.
+#   running/defer (`claimed <age>s ago` when the claim time is read,
+#   `<status> past the bound, machine <id> live (<state>)` or `<status> past the
+#   bound, machine lookup failed` for a held row), and `<status> <age>s` for
+#   stale. rc 1 on a transport failure or an unparseable queue body: a failed
+#   read is never `none`.
 mc_remote_rebase_row() {
-  local p="$1" n="$2" head="$3" key resp line st att reason age word
+  local p="$1" n="$2" head="$3" key resp line st att reason age cage word clock m
   key=$(mc_pool_rebase_key "$n" "$head")
   resp=$(_jobs_req GET "/api/queue?project=$p&key=$key&limit=1") || return 1
-  line=$(printf '%s' "$resp" | jq -r --argjson now "$(mc_now)" 'if (.queue | type) != "array" then error("no queue")
+  line=$(printf '%s' "$resp" | jq -r --argjson now "$(mc_now)" 'def age: (. // "") | tostring | sub("\\.[0-9]+Z$"; "Z") | (fromdateiso8601? // null)
+             | if . == null then "-" else ($now - .) | tostring end;
+    if (.queue | type) != "array" then error("no queue")
     else (.queue[0] // null) | if . == null then "none"
-    else [ (.status // ""), ((.attempt // 0) | tostring),
-           ((.enqueued_at // "") | tostring | sub("\\.[0-9]+Z$"; "Z") | (fromdateiso8601? // null)
-             | if . == null then "-" else ($now - .) | tostring end),
+    else [ (.status // ""), ((.attempt // 0) | tostring), (.enqueued_at | age), (.claimed_at | age),
            ((.reason // "") | (split("\n")[0] // "") | gsub("[\t\r]"; " ")) ] | join("\t") end end' 2>/dev/null) \
     || return 1
   [ -n "$line" ] || return 1
   [ "$line" = none ] && { echo none; return 0; }
   # The reason is last: it may be empty, and a tab IFS folds an empty middle field.
-  IFS=$'\t' read -r st att age reason <<<"$line"
+  IFS=$'\t' read -r st att age cage reason <<<"$line"
   case "$att" in ''|*[!0-9]*) att=0 ;; esac
   word="${reason%% *}"
   case "$st" in
     queued|claimed)
-      # No readable enqueue time is no bound at all, so it reads as stale too.
-      case "$age" in ''|*[!0-9-]*|-) printf 'stale\t%s\t%s no enqueued_at\n' "$att" "$st"; return 0 ;; esac
-      if [ "$age" -ge "${MC_REBASE_POOL_TIMEOUT_SECS:-5400}" ]; then
-        printf 'stale\t%s\t%s %ss\n' "$att" "$st" "$age"
+      # A claimed row counts from the claim; queue wait before it does not count.
+      clock=enqueued
+      if [ "$st" = claimed ]; then
+        case "$cage" in ''|*[!0-9-]*|-) ;; *) age=$cage; clock=claimed ;; esac
+      fi
+      case "$age" in ''|*[!0-9-]*|-) age="" ;; esac
+      if [ -n "$age" ] && [ "$age" -lt "${MC_REBASE_POOL_TIMEOUT_SECS:-5400}" ]; then
+        if [ "$clock" = claimed ]; then
+          printf 'running\t%s\t%s %ss ago\n' "$att" "$st" "$age"
+        else
+          printf 'running\t%s\t%s\n' "$att" "$st"
+        fi
+        return 0
+      fi
+      # Past the bound (or no readable time at all): a live machine still holds it.
+      m=$(_mc_remote_machine_live "$p" "$key")
+      case "$?" in
+        0) printf 'running\t%s\t%s past the bound, machine %s live (%s)\n' "$att" "$st" "${m%% *}" "${m#* }"; return 0 ;;
+        2) ;;
+        *) printf 'running\t%s\t%s past the bound, machine lookup failed\n' "$att" "$st"; return 0 ;;
+      esac
+      # No readable time is no bound at all, so it reads as stale too.
+      if [ -z "$age" ]; then
+        printf 'stale\t%s\t%s no enqueued_at\n' "$att" "$st"
       else
-        printf 'running\t%s\t%s\n' "$att" "$st"
+        printf 'stale\t%s\t%s %ss\n' "$att" "$st" "$age"
       fi ;;
     failed) printf 'failed\t%s\t%s\n' "$att" "${reason:-failed}" ;;
     done)

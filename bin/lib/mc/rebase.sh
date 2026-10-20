@@ -3454,20 +3454,46 @@ mc_rb_write() {
 #   so the pid rule mc_lane_state applies would read every one of them as
 #   `stale` the moment the 120s admission grace ran out. A `pool` file is
 #   therefore `running` on its age alone, until started_at +
-#   MC_REBASE_POOL_TIMEOUT_SECS (default 5400), and `stale` after that: the
-#   conductor's failed/stale arm puts the PR back in NEEDS_REBASE and records a
-#   TIMED_OUT ledger row. mc_lane_state itself is NOT touched — the re-review
+#   MC_REBASE_POOL_TIMEOUT_SECS (default 5400). Past that it is still `running`
+#   while the pool has a machine file for its key (state/fly-pool/*/*.json, which
+#   the reap removes when the machine dies or is reaped), and `stale` after that:
+#   the conductor's failed/stale arm puts the PR back in NEEDS_REBASE and records
+#   a TIMED_OUT ledger row. mc_lane_state itself is NOT touched — the re-review
 #   and deploy-verify lanes are pid jobs and keep the pid rule exactly.
 mc_rb_state() {
-  local st started age
+  local st started age base num head
   st=$(mc_rr_field "$1" status)
   if [ "$st" = pool ]; then
     started=$(mc_rr_field "$1" started_at); case "$started" in ''|-|null) started=0 ;; esac
     age=$(( $(mc_now) - started ))
-    [ "$age" -ge "${MC_REBASE_POOL_TIMEOUT_SECS:-5400}" ] && { printf 'stale'; return 0; }
+    if [ "$age" -ge "${MC_REBASE_POOL_TIMEOUT_SECS:-5400}" ]; then
+      # The file name is mc_rr_key's <owner_repo>_<num>_<head>.
+      base=$(basename "$1" .json); head=$(mc_rr_field "$1" head_sha)
+      case "$head" in ''|-|null) head="${base##*_}" ;; esac
+      base="${base%_*}"; num="${base##*_}"
+      if [[ $num =~ ^[0-9]+$ ]] && _mc_rb_pool_machine "$num" "$head" >/dev/null; then
+        printf 'running'; return 0
+      fi
+      printf 'stale'; return 0
+    fi
     printf 'running'; return 0
   fi
   mc_lane_state "$1" "${MC_REBASE_TIMEOUT_SECS:-1800}"
+}
+
+# _mc_rb_pool_machine <num> <head> — rc 0 and prints the machine id when a pool
+#   machine file under <root>/state/fly-pool/*/ carries the key RB-<num>-<head8>.
+#   An unreadable file is skipped. rc 1 when none does, or with no root.
+_mc_rb_pool_machine() {
+  local key f m root
+  root=$(_mc_root); [ -n "$root" ] || return 1
+  key=$(mc_pool_rebase_key "$1" "$2")
+  for f in "$root"/state/fly-pool/*/*.json; do
+    [ -f "$f" ] || continue
+    m=$(jq -r --arg k "$key" 'select(.key == $k) | .machine // empty' "$f" 2>/dev/null) || continue
+    [ -n "$m" ] && { printf '%s\n' "$m"; return 0; }
+  done
+  return 1
 }
 
 # mc_rb_running -> how many rebase jobs are running right now, fleet-wide.

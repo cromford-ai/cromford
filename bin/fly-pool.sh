@@ -3391,10 +3391,28 @@ for MF in "$POOL"/*.json; do
   # is reaped as the finished job it is (BH-4061). Any other result line cannot be
   # relayed (its artifacts died with the machine), so the dead path requeues it
   # without counting a death. rc 1 (unreadable) is never read as a result.
-  ROW_RLINE=""; RES_FROM_ROW=0
+  # An RB- rebase row carries the whole RESULT (BH-7656): a rebase word in it is
+  # the finished rebase, and the whole text becomes $LOCAL/RESULT for the
+  # rebase arm below. Any other word in an RB- row is a miss, and its dead arm
+  # fails the row as it always did.
+  ROW_RLINE=""; RES_FROM_ROW=0; RBROWF=""
   if [ -z "$RES" ] && command -v pool_result_row_get >/dev/null 2>&1; then
     case "$KEY" in
-      RB-*|RR-*) ;;
+      RB-*)
+        case "$MSTATE" in
+          ""|stopped|destroyed|failed|suspended)
+            RBROWF=$(mktemp)
+            ROW_RLINE=$(pool_result_row_get "$P" "$KEY" "$MID" "$SPAT" "$RBROWF"); ROWRC=$?
+            [ "$ROWRC" = 0 ] || ROW_RLINE=""
+            [ "$ROWRC" = 1 ] && say "pool-result row for $KEY unreadable (machine $MID state=${MSTATE:-gone}) — reaped as it always was"
+            case "${ROW_RLINE%% *}" in
+              REBASED|CONFLICT|GATE_RED|REBASE_LEASE_REJECTED|REBASE_SETUP_FAILED)
+                RES="$ROW_RLINE"; RES_FROM_ROW=1
+                say "result for $KEY taken from the pool-result row (machine $MID state=${MSTATE:-gone}, unreachable)" ;;
+              *) ROW_RLINE=""; rm -f "$RBROWF"; RBROWF="" ;;
+            esac ;;
+        esac ;;
+      RR-*) ;;
       *)
         case "$MSTATE" in
           ""|stopped|destroyed|failed|suspended)
@@ -3416,8 +3434,10 @@ for MF in "$POOL"/*.json; do
   if [ -n "$RES" ]; then
     LOCAL="$HARNESS/builds/pool-$P-$KEY-$(date -u +%Y%m%d%H%M)"; mkdir -p "$LOCAL"
     if [ "$RES_FROM_ROW" = 1 ]; then
-      # Nothing on the machine can be fetched: the RESULT line is the row's.
-      echo "$RES" > "$LOCAL/RESULT"
+      # Nothing on the machine can be fetched: the RESULT is the row's (the
+      # whole text for an RB- row, else its first line).
+      if [ -n "$RBROWF" ] && [ -s "$RBROWF" ]; then cp "$RBROWF" "$LOCAL/RESULT"; else echo "$RES" > "$LOCAL/RESULT"; fi
+      [ -z "$RBROWF" ] || rm -f "$RBROWF"
       echo "pool-result row" > "$LOCAL/result-source"
     else
       # THE BUILD'S OWN DIRECTORY, NEVER THE FIRST ONE ON DISK (2026-09-13, project-5
@@ -3595,7 +3615,8 @@ for MF in "$POOL"/*.json; do
         if [ "$RBRC" = 0 ]; then
           : > "$LOCAL/REBASE"
           QROW done "$KEY" "$(head -c 200 "$LOCAL/RESULT")"
-          say "reaped rebase $KEY from $MID: $(head -c 80 "$LOCAL/RESULT" | tr '\n' ' ')"
+          RBTIM=$(sed -n 's/^TIMINGS: //p' "$LOCAL/RESULT" 2>/dev/null | head -1)
+          say "reaped rebase $KEY from $MID: $(head -c 80 "$LOCAL/RESULT" | tr '\n' ' ')${RBTIM:+ timings: $RBTIM}"
           "$HARNESS/bin/beat.sh" "$(jq -nc --arg p "$P" --arg k "$KEY" --arg r "$(head -c 120 "$LOCAL/RESULT")" '{kind:"build",project:$p,ticket_key:$k,stage:"pool_rebase",detail:$r}')" >/dev/null 2>&1 || true
         else
           # The row is left CLAIMED on purpose: nothing re-materialises a claimed
