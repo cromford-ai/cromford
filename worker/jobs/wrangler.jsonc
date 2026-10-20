@@ -46,4 +46,8 @@
   //     switch without a deploy: the pause_flags row lane-off-sentry-report
   //     with active=1, or `wrangler secret delete HARNESS_SENTRY_DSN`.
   //     Optional plain var HARNESS_SENTRY_MAX_PER_FP_HOUR (default 6).
+  //     Optional plain vars HARNESS_D1_GIVEUP_REPORT_AFTER (default 3) and
+  //     HARNESS_D1_GIVEUP_WINDOW_S (default 900): a verdict route's D1
+  //     overload give-up reports only on every Nth give-up of a streak
+  //     (lib/d1-giveup.js, BH-7541).
 }

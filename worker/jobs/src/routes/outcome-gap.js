@@ -9,7 +9,7 @@
 // A lookback the archive can reach reads it too (lib/archive-read.js,
 // BH-7035); the answer's `archive` says which.
 
-import { json } from "../lib/http.js";
+import { json, overloadGuardedRoute } from "../lib/http.js";
 import {
   parseGapParams, gapSql, unpricedSql, foldGap, GROUP_MAX, gapGroupsSql, gapUnmergedSql, mergeGapGroups,
 } from "../lib/outcome-gap.js";
@@ -52,7 +52,7 @@ async function mergedGap(env, p, t, reach) {
 export const routes = [
   [
     "GET", "/api/metrics/outcome-gap",
-    async ({ env, url, t }) => {
+    overloadGuardedRoute("cost_rows", async ({ env, url, t }) => {
       const p = parseGapParams(url.searchParams, t);
       if (p.error) return json(400, { error: p.error });
       const { win, stages } = p;
@@ -88,6 +88,6 @@ export const routes = [
         truncated: fold.truncated || sideTruncated,
         archive,
       });
-    },
+    }),
   ],
 ];

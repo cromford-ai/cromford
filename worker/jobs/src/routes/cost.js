@@ -6,7 +6,7 @@
 // so this file changed where the code lives and nothing about what it answers.
 // src/index.js holds the ordered table that decides which of these runs.
 
-import { json } from "../lib/http.js";
+import { json, overloadGuardedRoute } from "../lib/http.js";
 import { laneDedupResponse } from "../lib/lane-dedup.js";
 import { readFleetFlag } from "../lib/harness-flags.js";
 import { archiveBound, archivedCostHashes } from "../lib/archive.js";
@@ -306,7 +306,7 @@ export const routes = [
   // instead of quietly renaming raw dollars "anchored".
   [
     "GET", "/api/metrics/cost-anchored",
-    async ({ env, url, t }) => {
+    overloadGuardedRoute("cost_rows", async ({ env, url, t }) => {
       const win = anchorWindow({
         window: url.searchParams.get("window"),
         day: url.searchParams.get("day"),
@@ -408,7 +408,7 @@ export const routes = [
         ...payload, disabled: false, max_factor: maxFactor,
         archive: worstState([rs.state, ...spanReads.map((r) => r.state)]), as_of: t,
       });
-    },
+    }),
   ],
 
   // ── Raw cost rows (2026-09-02) ──────────────────────────────────────────
@@ -526,7 +526,7 @@ export const routes = [
   // account question is answerable from anywhere the bearer is.
   [
     "GET", "/api/metrics/cost-rows",
-    async ({ env, url, t }) => {
+    overloadGuardedRoute("cost_rows", async ({ env, url, t }) => {
       await ensureColumns(env, "cost_rows");
       const lim = Math.min(Math.max(Number(url.searchParams.get("limit")) || 200, 1), 2000);
       const where = [], binds = [];
@@ -561,7 +561,7 @@ export const routes = [
         { key: (x) => `${x.box}\u0000${x.row_hash}`, compare: (a, b) => (a.ts < b.ts ? 1 : a.ts > b.ts ? -1 : 0), limit: lim },
       );
       return json(200, { cost_rows, archive: r.state, as_of: t });
-    },
+    }),
   ],
 
   // ── LLM spend, as ONE aggregate (BH-1141) ───────────────────────────────
@@ -586,7 +586,7 @@ export const routes = [
   // and both are in `calls`; neither moves `usd`.
   [
     "GET", "/api/metrics/llm-spend",
-    async ({ env, url, t }) => {
+    overloadGuardedRoute("cost_rows", async ({ env, url, t }) => {
       await ensureColumns(env, "cost_rows");
       // PER LANE (BH-2303). ?lane=L&stage=S sums the stage's rows stamped
       // lane_id=L, PLUS its rows written before lane_id existed (lane_id IS
@@ -660,7 +660,7 @@ export const routes = [
         settled: Number((row && row.settled) || 0),
         since, until: until || null, archive: h.state, as_of: t,
       });
-    },
+    }),
   ],
 
   // ── Lane dedup (BH-2537) ────────────────────────────────────────────────

@@ -1,7 +1,9 @@
 // BH-6807: when the BH-6690 D1 retry gives up on "D1 DB is overloaded" inside
 // prLedgerJob, the two verdict routes answer 503 {error, retryable:true,
 // d1_attempts} instead of throwing out of the worker. They write one warn line
-// and send one Sentry event. Every other error still rethrows unchanged. The
+// (BH-7541: a single give-up sends no Sentry event; the Nth-give-up event and
+// its d1_attempts tag are pinned in d1-overload-giveup.bh-7541.test.js). Every
+// other error still rethrows unchanged. The
 // 503 + "overloaded" answer is the shape bin/lib/jobs/req.sh (BH-5781)
 // retries. Sentry sends are counted through a stubbed globalThis.fetch, as in
 // d1-retry.bh-6690.test.js; the DSN is a fixture on a reserved TLD.
@@ -116,7 +118,7 @@ test("V5: a ledger miss still answers 404 'no job has recorded this PR'", async 
   assert.equal(s.posts.length, 0);
 });
 
-test("V2: overload on every attempt -> 503 retryable, D1_RETRY_ATTEMPTS attempts, 1 warn, 1 Sentry send, no throw", async (t) => {
+test("V2: overload on every attempt -> 503 retryable, D1_RETRY_ATTEMPTS attempts, 1 warn, no Sentry send (BH-7541), no throw", async (t) => {
   const s = spies(t);
   const db = ledgerDb({ fail: GIVE_UP });
   const ctx = new Ctx();
@@ -130,8 +132,7 @@ test("V2: overload on every attempt -> 503 retryable, D1_RETRY_ATTEMPTS attempts
   assert.equal(db.ledgerCalls, D1_RETRY_ATTEMPTS);
   assert.equal(s.warns.length, 1);
   assert.match(s.warns[0], new RegExp(`GET /api/verdict gave up on D1 overload after ${D1_RETRY_ATTEMPTS} attempt`));
-  assert.equal(s.posts.length, 1, "exactly one envelope reaches Sentry");
-  assert.match(s.posts[0], new RegExp(`"d1_attempts":"${D1_RETRY_ATTEMPTS}"`));
+  assert.equal(s.posts.length, 0, "a single give-up sends no Sentry event (BH-7541)");
 });
 
 test("V3: a non-overload error is tried once and rethrown, no warn", async (t) => {

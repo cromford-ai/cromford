@@ -17,8 +17,54 @@
 //   5. Else run the read on the archive too: "read".
 //   6. Any other archive error at 3 or 5: the hot answer only, "unreadable",
 //      logged. It is never thrown and never turned into an empty answer.
+//
+// Every D1 statement sent from here (hot read, archive read, archive MAX)
+// waits for a slot of historyReadGate (BH-7580): at most
+// HISTORY_READ_CONCURRENCY in flight per binding in one request. A caller
+// that fans readHistory out with Promise.all no longer sends all its reads to
+// an overloaded D1 at once.
+
+import { rawDb } from "./d1-retry.js";
 
 const DAY_MS = 86400e3;
+
+// A code constant on purpose, the same rule as D1_RETRY_ATTEMPTS
+// (d1-retry.js): the bound protects a D1 that is overloaded, so it cannot be
+// read from D1 in the same request.
+export const HISTORY_READ_CONCURRENCY = 4;
+
+// env -> (raw binding -> { active, waiting }). The gate is scoped to the
+// request: index.js builds a new env object per request, so each request has
+// its own gates and they are collected with it. An isolate-wide gate is wrong
+// here: Cloudflare cancels a request whose client disconnects, its holder
+// never reaches `finally`, and the lost slot would block every later request
+// in the isolate. Inside one env the key is rawDb(db), so the retryingDb proxy
+// and the raw binding share one gate, and env.DB and env.ARCHIVE have
+// separate gates.
+const gates = new WeakMap();
+
+// historyReadGate(env, db, fn) — run fn when a slot of db's gate in this
+// request is free, FIFO. The slot is released when fn settles, so a rejected
+// read frees it too. A read that retries an overload holds its slot through
+// the retry sleeps: a request that sees overload sends fewer reads.
+export async function historyReadGate(env, db, fn) {
+  const key = rawDb(db);
+  if (!env || typeof env !== "object" || !key || typeof key !== "object") return fn();
+  let byDb = gates.get(env);
+  if (!byDb) gates.set(env, (byDb = new WeakMap()));
+  let g = byDb.get(key);
+  if (!g) byDb.set(key, (g = { active: 0, waiting: [] }));
+  // A released slot is handed to the next waiter, so `active` counts it.
+  if (g.active < HISTORY_READ_CONCURRENCY) g.active += 1;
+  else await new Promise((r) => g.waiting.push(r));
+  try {
+    return await fn();
+  } finally {
+    const next = g.waiting.shift();
+    if (next) next();
+    else g.active -= 1;
+  }
+}
 
 // table -> the statement that reads its newest archived time. Constants, so
 // no caller text reaches the archive's MAX read.
@@ -27,7 +73,7 @@ const MAX_SQL = Object.freeze({
   stage_events: "SELECT MAX(created_at) AS m FROM stage_events",
 });
 
-const run = (db, { sql, binds = [] }, method) => db.prepare(sql).bind(...binds)[method]();
+const run = (env, db, { sql, binds = [] }, method) => historyReadGate(env, db, () => db.prepare(sql).bind(...binds)[method]());
 const isNoTable = (e) => /no such table/i.test(String(e && e.message));
 
 // archiveReach(env, { table, since, now }) — decision steps 1-4 and the MAX
@@ -46,7 +92,7 @@ export async function archiveReach(env, { table, since, now }) {
 
   let max;
   try {
-    max = await A.prepare(maxSql).first();
+    max = await historyReadGate(env, A, () => A.prepare(maxSql).first());
   } catch (e) {
     if (isNoTable(e)) return "not-needed";
     console.log(`archive-read: ${table} archive MAX unreadable: ${e && e.message}`);
@@ -59,9 +105,10 @@ export async function archiveReach(env, { table, since, now }) {
 }
 
 // Step 5: the read on the archive. An error is "unreadable", logged.
-async function readArchive(A, table, archive, method) {
+async function readArchive(env, table, archive, method) {
+  const A = env.ARCHIVE;
   try {
-    return { state: "read", archive: await run(A, archive, method) };
+    return { state: "read", archive: await run(env, A, archive, method) };
   } catch (e) {
     console.log(`archive-read: ${table} archive read unreadable: ${e && e.message}`);
     return { state: "unreadable", archive: null };
@@ -78,12 +125,12 @@ async function readArchive(A, table, archive, method) {
 export async function readHistory(env, { table, since, now, hot, archive = hot, method = "all", reach }) {
   if (!MAX_SQL[table]) throw new Error(`no archive time column for ${table}`);
   if (reach === undefined) {
-    const [hotAnswer, r] = await Promise.all([run(env.DB, hot, method), archiveReach(env, { table, since, now })]);
+    const [hotAnswer, r] = await Promise.all([run(env, env.DB, hot, method), archiveReach(env, { table, since, now })]);
     if (r !== "reach") return { hot: hotAnswer, archive: null, state: r };
-    return { hot: hotAnswer, ...await readArchive(env.ARCHIVE, table, archive, method) };
+    return { hot: hotAnswer, ...await readArchive(env, table, archive, method) };
   }
-  if (reach !== "reach") return { hot: await run(env.DB, hot, method), archive: null, state: reach };
-  const [hotAnswer, a] = await Promise.all([run(env.DB, hot, method), readArchive(env.ARCHIVE, table, archive, method)]);
+  if (reach !== "reach") return { hot: await run(env, env.DB, hot, method), archive: null, state: reach };
+  const [hotAnswer, a] = await Promise.all([run(env, env.DB, hot, method), readArchive(env, table, archive, method)]);
   return { hot: hotAnswer, ...a };
 }
 

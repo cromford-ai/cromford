@@ -10,7 +10,7 @@
 // name is checked against DIMS, and statements() picks its SQL text from
 // literals in this file; every value, the rows limit included, is a bind.
 
-import { json } from "../lib/http.js";
+import { json, overloadGuardedRoute } from "../lib/http.js";
 import { str, ensureColumns } from "../lib/core.js";
 import { readHistory, mergeRows, mergeAggregate, mergeGroups } from "../lib/archive-read.js";
 
@@ -94,7 +94,7 @@ function statements(q, since, until, group, limit) {
 export const routes = [
   [
     "GET", "/api/metrics/cost-breakdown",
-    async ({ env, url, t }) => {
+    overloadGuardedRoute("cost_rows", async ({ env, url, t }) => {
       const q = url.searchParams;
       const since = str(q.get("since"), 64) || (t.slice(0, 10) + "T00:00:00Z");
       const until = str(q.get("until"), 64) || t;
@@ -164,6 +164,6 @@ export const routes = [
         },
         groups, truncated: merged.truncated, archive, as_of: t,
       });
-    },
+    }),
   ],
 ];

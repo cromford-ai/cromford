@@ -22,8 +22,10 @@
 //   - cap: at most HARNESS_SENTRY_MAX_PER_FP_HOUR events (default 6) per
 //     worker + exception type + message head per UTC hour, per isolate;
 //   - tags lane/box/project/harness_sha (harness_sync's deploy sets
-//     HARNESS_SHA to the snapshot sha, BH-6813), and d1_attempts plus d1_op
-//     on a D1 overload give-up (lib/d1-retry.js), then scrubEvent.
+//     HARNESS_SHA to the snapshot sha, BH-6813), d1_attempts plus d1_op
+//     on a D1 overload give-up (lib/d1-retry.js), d1_giveups plus d1_route
+//     on a verdict route's give-up streak (lib/d1-giveup.js, BH-7541), then
+//     scrubEvent.
 
 let sdk;
 let sdkFailed = false;
@@ -101,6 +103,9 @@ async function gate(event, worker, pauseFlags, hint) {
   const ex = hint && hint.originalException;
   if (ex && typeof ex.d1Attempts === "number") event.tags.d1_attempts = String(ex.d1Attempts);
   if (ex && typeof ex.d1Op === "string") event.tags.d1_op = ex.d1Op;
+  // BH-7541: the verdict routes' give-up streak (lib/d1-giveup.js).
+  if (ex && typeof ex.d1GiveUps === "number") event.tags.d1_giveups = String(ex.d1GiveUps);
+  if (ex && typeof ex.d1Route === "string") event.tags.d1_route = ex.d1Route;
   return scrubEvent(event);
 }
 

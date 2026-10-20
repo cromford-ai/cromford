@@ -65,6 +65,13 @@ export async function d1OverloadGuarded(table, fn, label = "") {
   }
 }
 
+// A route handler wrapped in d1OverloadGuarded (BH-7580): the history routes
+// that call readHistory answered a give-up as a thrown 500 and a Sentry event.
+// The wrap is the whole handler, so no body is re-indented.
+export function overloadGuardedRoute(table, handler) {
+  return (ctx) => d1OverloadGuarded(table, () => handler(ctx));
+}
+
 // One credential, the one every box already holds. No CF token on a box.
 //
 // UNSET IS DENIED, NOT ALLOWED. A worker deployed without HARNESS_SECRET must

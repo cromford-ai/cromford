@@ -10,6 +10,7 @@ import { json } from "../lib/http.js";
 import { ensureTable } from "../lib/core.js";
 import { isD1Overloaded } from "../lib/d1-retry.js";
 import { captureException } from "../lib/sentry.js";
+import { recordGiveUp } from "../lib/d1-giveup.js";
 
 // BH-1024: WHICH JOB IS A PR'S LEDGER IDENTITY.
 //
@@ -61,17 +62,24 @@ export async function prLedgerJob(db, pr) {
 // overloaded" rejection D1_RETRY_ATTEMPTS times and then rethrows it. Out of a route, that
 // rethrow left the worker as a 500 with no body, and bin/lib/jobs/req.sh
 // (BH-5781) retries only a 503 whose body says "overloaded". So a verdict route
-// that gives up answers exactly that: 503 {error, retryable:true, d1_attempts},
-// one warn line, and one Sentry event (captureException keeps the d1_attempts
-// tag). Every other error rethrows unchanged. A 404 is NOT the answer here: a
-// reader takes it as a real ledger miss.
-async function overloadGiveUp(env, route, fn) {
+// that gives up answers exactly that: 503 {error, retryable:true, d1_attempts}
+// and one warn line. Every other error rethrows unchanged. A 404 is NOT the
+// answer here: a reader takes it as a real ledger miss.
+//
+// BH-7541: a single give-up is a transient the caller retries, so it sends no
+// Sentry event. recordGiveUp (lib/d1-giveup.js) upserts the route's streak in
+// one statement, and only every Nth give-up of a streak (default 3) sends one
+// event, tagged d1_giveups and d1_route next to d1_attempts and d1_op.
+async function overloadGiveUp(env, route, t, fn) {
   try {
     return await fn();
   } catch (e) {
     if (!isD1Overloaded(e)) throw e;
-    console.warn(`harness-jobs: ${route} gave up on D1 overload after ${e.d1Attempts ?? "?"} attempt(s): ${e.message}`);
-    await captureException(e, env);
+    const g = await recordGiveUp(env, route, t);
+    console.warn(`harness-jobs: ${route} gave up on D1 overload after ${e.d1Attempts ?? "?"} attempt(s), streak ${g.consecutive}: ${e.message}`);
+    e.d1GiveUps = g.consecutive;
+    e.d1Route = route;
+    if (g.report) await captureException(e, env);
     return json(503, {
       error: String(e.message), retryable: true,
       d1_attempts: typeof e.d1Attempts === "number" ? e.d1Attempts : null,
@@ -89,7 +97,7 @@ export const routes = [
   // scraping, byte for byte.
   [
     "GET", "/api/verdict",
-    async ({ env, url, t }) => overloadGiveUp(env, "GET /api/verdict", async () => {
+    async ({ env, url, t }) => overloadGiveUp(env, "GET /api/verdict", t, async () => {
       const pr = (url.searchParams.get("pr") || "").trim();
       if (!pr) return json(400, { error: "pr required" });
       // BH-1024: prLedgerJob, not the bare newest pr_url — a review-prs
@@ -153,7 +161,7 @@ export const routes = [
   // then blocked" about a PR that was blocked and then approved.
   [
     "GET", "/api/verdict/history",
-    async ({ env, url, t }) => overloadGiveUp(env, "GET /api/verdict/history", async () => {
+    async ({ env, url, t }) => overloadGiveUp(env, "GET /api/verdict/history", t, async () => {
       const pr = (url.searchParams.get("pr") || "").trim();
       if (!pr) return json(400, { error: "pr required" });
       // This route can be the first thing to touch the table after a deploy.

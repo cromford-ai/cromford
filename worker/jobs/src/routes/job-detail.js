@@ -7,7 +7,7 @@
 // The detail route has since gained the archive read below (lib/archive-read.js).
 // src/index.js holds the ordered table that decides which of these runs.
 
-import { json } from "../lib/http.js";
+import { json, overloadGuardedRoute } from "../lib/http.js";
 import {
   decorateJob, JOBS_SELECT, TRANSCRIPT_INDEX_COLS,
 } from "../lib/core.js";
@@ -113,7 +113,7 @@ export const routes = [
   // across an ocean and a three-round-trip detail page is a slow one.
   [
     "GET", /^\/api\/jobs\/([^/]+)$/,
-    async ({ env, t, body, m: detailMatch }) => {
+    overloadGuardedRoute("stage_events", async ({ env, t, body, m: detailMatch }) => {
       const id = decodeURIComponent(detailMatch[1]);
       // sql-ident-ok: JOBS_SELECT is a constant from lib/core.js
       const row = await env.DB.prepare(`${JOBS_SELECT} WHERE j.id=?1`).bind(id).first();
@@ -159,6 +159,6 @@ export const routes = [
         archive: ev.state,
         as_of: t,
       });
-    },
+    }),
   ],
 ];

@@ -2266,10 +2266,70 @@ export async function accountLeaseLive(env, account, t) {
   return Number((r && r.n) || 0);
 }
 
+// ── gh_budget read-through cache (BH-7510) ─────────────────────────────────
+// Every box polls GET /api/gh-budget, and each poll was one D1 read. On an
+// overloaded D1 that load is what keeps it overloaded (Sentry
+// CROMFORD-HARNESS-11). So each isolate keeps the last row per fingerprint for
+// GH_BUDGET_CACHE_TTL_S seconds (default 5, 0 = off). The client already
+// tolerates a row seconds-to-minutes old, and the upsert is monotonic, so a row
+// at most 5 s old does not change a guard decision.
+//
+// The TTL is an env var with a code default, not a settings row: it bounds load
+// on a D1 that may be overloaded, so it cannot be read from D1 in the same
+// request (same rule as D1_RETRY_ATTEMPTS in lib/d1-retry.js). A value that is
+// not an integer in 0..30 is ignored, not clamped, and the default applies.
+//
+// Keyed on the raw binding, like ensureTable. Capped at GH_BUDGET_CACHE_MAX
+// fingerprints, oldest first, so random fingerprints cannot grow the isolate.
+// A D1 throw stores nothing and keeps the old entry: routes/gh-budget.js serves
+// it as a stale row on an overload give-up (ghBudgetCached).
+export const GH_BUDGET_CACHE_TTL_S = 5;
+export const GH_BUDGET_CACHE_MAX = 256;
+const ghBudgetCache = new WeakMap(); // raw binding -> Map fp -> { row, at }
+
+function ghBudgetTtlMs(env) {
+  const v = env && env.GH_BUDGET_CACHE_TTL_S;
+  if (typeof v === "string" && /^\d{1,2}$/.test(v) && Number(v) <= 30) return Number(v) * 1000;
+  return GH_BUDGET_CACHE_TTL_S * 1000;
+}
+
+function ghBudgetEntries(env) {
+  const key = rawDb(env.DB);
+  let m = ghBudgetCache.get(key);
+  if (!m) { m = new Map(); ghBudgetCache.set(key, m); }
+  return m;
+}
+
+// The cached { row, at } for fp when it is at most maxAgeMs old, else null.
+// `row` is a copy; `at` is the epoch ms of the D1 read that produced it.
+export function ghBudgetCached(env, fp, maxAgeMs, nowMs = Date.now()) {
+  const e = ghBudgetEntries(env).get(fp);
+  if (!e || nowMs - e.at > maxAgeMs) return null;
+  return { row: structuredClone(e.row), at: e.at };
+}
+
 // The row the shell client reads, nested the way the file cache it replaces is
 // shaped, so bin/lib/gh-budget.sh can write it straight into that cache.
-export async function ghBudgetRow(env, fp) {
-  const r = await env.DB.prepare("SELECT * FROM gh_budget WHERE fingerprint=?1").bind(fp).first();
+// opts.fresh skips the cache read (a POST's read-back must show its write) and
+// still refreshes the entry. opts.nowMs is the clock seam for a test.
+export async function ghBudgetRow(env, fp, opts = {}) {
+  const now = opts.nowMs ?? Date.now();
+  const ttl = ghBudgetTtlMs(env);
+  const entries = ghBudgetEntries(env);
+  if (!opts.fresh && ttl > 0) {
+    const e = entries.get(fp);
+    if (e && now - e.at < ttl) return structuredClone(e.row);
+  }
+  const row = ghBudgetShape(await env.DB.prepare("SELECT * FROM gh_budget WHERE fingerprint=?1").bind(fp).first());
+  if (ttl > 0) {
+    entries.delete(fp);
+    entries.set(fp, { row: structuredClone(row), at: now });
+    while (entries.size > GH_BUDGET_CACHE_MAX) entries.delete(entries.keys().next().value);
+  }
+  return row;
+}
+
+function ghBudgetShape(r) {
   if (!r) return null;
   return {
     fingerprint: r.fingerprint,
