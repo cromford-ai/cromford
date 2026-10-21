@@ -89,6 +89,10 @@ TH="${HUB_MOVE_TARGET_HARNESS:-/root/harness}"
 # --orchestrator-live default), on the target and on the old hub.
 TORCH="${HUB_MOVE_TARGET_ORCH:-/root/orchestrator}"
 LORCH="${HUB_MOVE_ORCH:-/root/orchestrator}"
+# The git checkout (bin/harness-sync.sh's default). render-cron.sh resolves its
+# ROOT as the parent of its own bin/, and the deployed $HARNESS has no cron/, so
+# the crontab renders from the checkout (BH-7715: "no /root/harness/cron/lanes").
+CHECKOUT="${HARNESS_CHECKOUT:-/root/harness-checkout}"
 TARGET_JSON="$STATE/target.json"
 STEPS="$STATE/steps.tsv"
 SSH_OPTS=(-o BatchMode=yes -o ConnectTimeout=15 -o StrictHostKeyChecking=accept-new)
@@ -199,14 +203,18 @@ t_flag() { local ip="$1"; shift; on_target "$ip" "HARNESS=$TH $TH/bin/jobs-clien
 
 # ==== inventory ================================================================
 cmd_inventory() {
-  local id cron envd f keys n
+  local id cron envd f keys n rc
   id=$(hub_id)
   echo "hub-move inventory: hub=$HARNESS_HUB_BOX box_id=$id harness=$HARNESS"
   echo "| Role | Source on old hub | Live value | How it moves |"
   echo "|---|---|---|---|"
-  cron=$("$BIN/render-cron.sh" "$id" 2>/dev/null)
-  n=$(printf '%s\n' "$cron" | grep -c . )
-  echo "| Cron lanes | bin/render-cron.sh $id | lines=$n commands=$(cron_commands <<<"$cron" | wc -l) gated=$(printf '%s\n' "$cron" | grep -c 'hub-lease.sh check &&') | update-runners.sh on the target (C6) |"
+  rc=0; cron=$("$CHECKOUT/bin/render-cron.sh" "$id" 2>/dev/null) || rc=$?
+  if [ "$rc" -ne 0 ]; then
+    echo "| Cron lanes | $CHECKOUT/bin/render-cron.sh $id | ERROR render-cron.sh rc=$rc | update-runners.sh on the target (C6) |"
+  else
+    n=$(printf '%s\n' "$cron" | grep -c . )
+    echo "| Cron lanes | $CHECKOUT/bin/render-cron.sh $id | lines=$n commands=$(cron_commands <<<"$cron" | wc -l) gated=$(printf '%s\n' "$cron" | grep -c 'hub-lease.sh check &&') | update-runners.sh on the target (C6) |"
+  fi
   echo "| Flags | flags/ | $(ls "$FLAGS" 2>/dev/null | tr '\n' ' ') | state snapshot (C4) |"
   echo "| State | state/ | $(du -sh "$HARNESS/state" 2>/dev/null | cut -f1) | state snapshot (C4) |"
   echo "| Logs | logs/ | $(du -sh "$HARNESS/logs" 2>/dev/null | cut -f1) | state snapshot (C4) |"
@@ -422,7 +430,7 @@ cmd_seed() {
   if [ -f "$HARNESS/fleet.conf" ]; then
     rsync -a -e "ssh ${SSH_OPTS[*]}" "$HARNESS/fleet.conf" "root@$ip:$TH/fleet.conf" || fail "rsync fleet.conf to $ip"
   fi
-  local co="${HARNESS_CHECKOUT:-/root/harness-checkout}"
+  local co="$CHECKOUT"
   if [ -d "$co/.git" ]; then
     rsync -a --exclude node_modules -e "ssh ${SSH_OPTS[*]}" "$co/" "root@$ip:$co/" || fail "rsync checkout to $ip"
   fi
@@ -486,7 +494,7 @@ cmd_tick() {
     # POSTs through urllib, past the shim, so it reads HUB_MOVE_NOWRITE=1 as --dry.
     export FLY_BIN_DIR="$run/shim" HUB_MOVE_NOWRITE=1
   fi
-  cron=$("$BIN/render-cron.sh" "$(hub_id)") || fail "render-cron.sh $(hub_id)"
+  cron=$("$CHECKOUT/bin/render-cron.sh" "$(hub_id)") || fail "render-cron.sh $(hub_id) (from $CHECKOUT)"
 
   local ids=() cmds=()
   if [ "$mode" = nowrite ]; then ids+=("harness-sync-deploy"); cmds+=("$BIN/harness-sync.sh deploy"); fi

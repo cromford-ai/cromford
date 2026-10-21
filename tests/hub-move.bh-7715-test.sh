@@ -10,7 +10,7 @@
 # old hub and target under $T/<case>.
 #
 # Cases: F1-F6 Fly seam, E1-E4 entrypoint, P1-P7 provision and inventory,
-# W1-W21 the shim decision table, D1-D9 seed/tick/dry-run, C1-C12 cutover,
+# W1-W21 the shim decision table, D1-D13 seed/tick/dry-run, C1-C12 cutover,
 # rollback, proof and the no-reference grep, R1 target.json round trip, S1 the
 # test-sandbox path guard, B1 no real vendor binary on the suite's PATH.
 #
@@ -114,7 +114,7 @@ newcase() {
   : > "$VC"; : > "$CALLS"
   export HARNESS="$H" HARNESS_ENV_DIR="$H/env" HUB_MOVE_TARGET_HARNESS="$TGT"
   export HUB_MOVE_TARGET_SECRETS="$C/tsec" HUB_MOVE_TARGET_SSH_DIR="$C/tssh" HUB_MOVE_SSH_DIR="$C/hssh"
-  export HARNESS_CHECKOUT="$C/no-checkout" HUB_MOVE_IMAGE="registry.example/hub:fixture"
+  export HARNESS_CHECKOUT="$C/co" HUB_MOVE_IMAGE="registry.example/hub:fixture"
   export HUB_MOVE_TS_WAIT_S=0 HUB_MOVE_LEASE_WAIT_S=0 HUB_MOVE_DRAIN_TIMEOUT_S=1
   unset BACKUP_AGE_IDENTITY_FILE HUB_MOVE_VOLUME_GB HUB_MOVE_TICK_PARALLEL HUB_MOVE_TICK_TIMEOUT_S FLY_BIN_DIR FLYCTL_INSTALL HUB_MOVE_NOWRITE
   # An empty stand-in for /root/.fly/bin, so a box with a real flyctl there does not refuse each no-write tick.
@@ -139,9 +139,16 @@ printf '%s:%s %s\n' "$side" "$n" "\$*" >> "\$CALLS"
 EOF
     done
     printf '#!/bin/bash\nif [ "$1" = --projects ]; then printf "alpha-os\\nbeta-os\\n"; fi\n' > "$dir/fleet-conf.sh"
-    printf '#!/bin/bash\ncat "%s/cron.txt"\n' "$C" > "$dir/render-cron.sh"
+    # The DEPLOYED bin has no cron/ sibling, so its render-cron.sh fails the
+    # way /root/harness/bin/render-cron.sh does; the checkout's renders (D13).
+    printf '#!/bin/bash\necho "render-cron.sh: no %s/cron/lanes" >&2; exit 1\n' "$C/$side" > "$dir/render-cron.sh"
     chmod +x "$dir"/*.sh
   done
+  # The git checkout (HARNESS_CHECKOUT) that hub-move renders the crontab from.
+  # No .git, so seed does not rsync it.
+  mkdir -p "$C/co/bin" "$C/co/cron/lanes"
+  printf '#!/bin/bash\ncat "%s/cron.txt"\n' "$C" > "$C/co/bin/render-cron.sh"
+  chmod +x "$C/co/bin/render-cron.sh"
   # state-restore on both sides: it writes the snapshot into --live (and
   # --orchestrator-live) the way bin/restore-merge.sh does, KEEP-LIVE (rule 5):
   # a file that already exists is never overwritten. Lead BLOCK #3203 on #7757:
@@ -488,6 +495,32 @@ case "$fbd" in */shim) ok ;; *) bad "D12-fly-bin-dir-shim: got [$fbd]" ;; esac
 check D12-nowrite-env "$hmn" 1
 HARNESS="$TGT" bash "$TGT/bin/hub-move.sh" tick --real >/dev/null 2>&1
 check D12-real-env "$(cat "$C/env")" "none none"
+
+# D13: the deployed tree (/root/harness) has bin/ but no cron/, and its
+# render-cron.sh resolves ROOT as the parent of its own bin, so it fails (seen
+# on the new hub 2026-10-21: "no /root/harness/cron/lanes"). tick and
+# inventory render from the checkout (HARNESS_CHECKOUT) instead.
+newcase d13
+for side in "$H" "$TGT"; do
+  # scratch-closure-allow: the REAL render-cron.sh and its registry loader, so the deployed-tree failure is the real one
+  cp "$REPO/bin/render-cron.sh" "$side/bin/render-cron.sh" && cp "$REPO/bin/lib/lanes-registry.sh" "$side/bin/lib/" || bad "D13: copy render-cron into $side"
+  mkdir -p "$side/catalog"; printf '{"lanes":[]}\n' > "$side/catalog/lanes.json"
+done
+bash "$TGT/bin/render-cron.sh" hub >/dev/null 2>"$C/err"; check D13-deployed-copy-fails "$?" 1
+has D13-deployed-says "$(cat "$C/err")" "no $TGT/cron/lanes"
+printf '* * * * * echo checkout-lane >> %s/ran\n' "$C" > "$C/cron.txt"
+out=$(HARNESS="$TGT" bash "$TGT/bin/hub-move.sh" tick 2>&1); check D13-tick-rc "$?" 0
+hasnt D13-tick-no-fail "$out" "failed: render-cron.sh"
+check D13-tick-ran-checkout-lane "$(cat "$C/ran" 2>/dev/null)" checkout-lane
+has D13-tick-summary "$out" "tick: lanes=2 ok=2 fail=0"
+out=$(hm inventory 2>&1)
+has D13-inventory-row "$out" "| Cron lanes | $C/co/bin/render-cron.sh hub | lines=1 commands=1 gated=0 |"
+# A checkout that cannot render shows an error value, not a silently empty row.
+export HARNESS_CHECKOUT="$C/no-checkout"
+out=$(hm inventory 2>&1)
+has D13-inventory-error "$out" "| Cron lanes | $C/no-checkout/bin/render-cron.sh hub | ERROR render-cron.sh rc="
+hasnt D13-inventory-not-empty "$out" "lines=0 commands=0"
+export HARNESS_CHECKOUT="$C/co"
 
 # ==== I: the hub image has a pinned flyctl outside /root/.fly/bin =============
 DF="$REPO/fly/hub/Dockerfile"
