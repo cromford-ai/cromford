@@ -72,6 +72,16 @@ const LR_OUTCOMES = ["done", "superseded", "failed"];
 const LIST_MAX = 100;
 const PRIORITY_MAX = 1000;
 const AUTHORS_MAX = 16;
+// BH-7711: one PR's requests. Equality on repo and pr (never `?2 IS NULL OR`)
+// is what lets SQLite search the autoindex of the UNIQUE(repo, pr, head_sha)
+// key. The other binds are the list's, unchanged.
+export const LR_LIST_PR_SQL =
+  "SELECT rowid AS lr_rowid, * FROM lead_review_requests" +
+  " WHERE repo = ?2 AND pr = ?7" +
+  " AND (?1 IS NULL OR status IN (SELECT value FROM json_each(?1)))" +
+  " AND (?4 IS NULL OR promoted_verdict_at IS NULL)" +
+  " AND (?5 IS NULL OR created_at > ?5 OR (created_at = ?5 AND rowid > ?6))" +
+  " ORDER BY created_at, rowid LIMIT ?3";
 const NO_LEAD = "needs the lead verdict token (x-lead-verdict-token); HARNESS_SECRET alone may only claim and report";
 
 // BH-4955: a `running` row whose job has shown no sign of life for this long is
@@ -268,6 +278,8 @@ export const routes = [
   // same order, and a truncated page names its last row as `next_after`, so a
   // reader follows the cursor until truncated is false. (created_at, rowid)
   // never changes for a row, so no row is read twice across pages.
+  // pr=<n> (BH-7711) needs repo and lists that one PR's requests through
+  // LR_LIST_PR_SQL, which the UNIQUE(repo, pr, head_sha) autoindex serves.
   [
     "GET", "/api/lead-reviews",
     guarded(async ({ env, url, t }) => {
@@ -277,6 +289,10 @@ export const routes = [
       if (bad !== undefined) return json(400, { error: `status must be a comma list of ${LR_STATUSES.join(", ")}` });
       const repo = (url.searchParams.get("repo") || "").trim();
       if (repo && !REPO_RE.test(repo)) return json(400, { error: "repo must be owner/name" });
+      const rawPr = url.searchParams.get("pr");
+      const pr = rawPr === null ? null : prOf(rawPr);
+      if (rawPr !== null && pr === null) return json(400, { error: "pr must be a positive integer" });
+      if (pr !== null && !repo) return json(400, { error: "pr needs repo" });
       const rawLimit = url.searchParams.get("limit");
       let limit = LIST_MAX;
       if (rawLimit !== null) {
@@ -296,18 +312,21 @@ export const routes = [
         }
         afterAt = at; afterRow = Number(rid);
       }
-      // ONE CONSTANT STATEMENT: nothing is spliced into the SQL text. An absent
+      // ONE CONSTANT STATEMENT per shape (with or without pr): nothing is spliced into the SQL text. An absent
       // filter binds NULL and its clause is true; the status list travels as one
       // JSON array bound to ?1 and is unpacked by json_each.
-      const rows = (await env.DB.prepare(
-        "SELECT rowid AS lr_rowid, * FROM lead_review_requests" +
-        " WHERE (?1 IS NULL OR status IN (SELECT value FROM json_each(?1)))" +
-        " AND (?2 IS NULL OR repo = ?2)" +
-        " AND (?4 IS NULL OR promoted_verdict_at IS NULL)" +
-        " AND (?5 IS NULL OR created_at > ?5 OR (created_at = ?5 AND rowid > ?6))" +
-        " ORDER BY created_at, rowid LIMIT ?3"
-      ).bind(statuses.length ? JSON.stringify(statuses) : null, repo || null, limit + 1, rawPromoted === "0" ? 1 : null,
-             afterAt, afterRow).all()).results || [];
+      const binds = [statuses.length ? JSON.stringify(statuses) : null, repo || null, limit + 1, rawPromoted === "0" ? 1 : null,
+                     afterAt, afterRow];
+      const rows = (await (pr === null
+        ? env.DB.prepare(
+          "SELECT rowid AS lr_rowid, * FROM lead_review_requests" +
+          " WHERE (?1 IS NULL OR status IN (SELECT value FROM json_each(?1)))" +
+          " AND (?2 IS NULL OR repo = ?2)" +
+          " AND (?4 IS NULL OR promoted_verdict_at IS NULL)" +
+          " AND (?5 IS NULL OR created_at > ?5 OR (created_at = ?5 AND rowid > ?6))" +
+          " ORDER BY created_at, rowid LIMIT ?3"
+        ).bind(...binds)
+        : env.DB.prepare(LR_LIST_PR_SQL).bind(...binds, pr)).all()).results || [];
       const page = rows.slice(0, limit);
       const truncated = rows.length > limit;
       const out = { requests: page.map(({ lr_rowid, ...r }) => r), truncated, as_of: t };
@@ -547,9 +566,13 @@ export const routes = [
   ],
 
   // BH-5400: send a finished request back for a re-review. From done, failed or
-  // superseded only, in ONE compare-and-set that clears the result and the
+  // superseded, in ONE compare-and-set that clears the result and the
   // promoted stamp and records the reset. Already requested = 200 unchanged
-  // (a retry); running = 409 (a review is in flight).
+  // (a retry). BH-7711: a running row whose COALESCE(heartbeat_at, updated_at)
+  // is older than staleWindow is reclaimed to requested in ONE compare-and-set
+  // pinned to the job and the beat read here (200 with reclaimed_from and
+  // stale_s); stale_reclaims, the BH-5779 sweep's ladder, is left alone. A
+  // running row with a fresher beat = 409 (a review is in flight).
   [
     "POST", /^\/api\/lead-reviews\/([^/]+)\/reset$/,
     guarded(async ({ req, env, t, m }) => {
@@ -558,6 +581,30 @@ export const routes = [
       const row = await getRow(env, id);
       if (!row) return json(404, { error: "no such lead review request" });
       if (row.status === "requested") return json(200, { request: row, existing: true });
+      if (row.status === "running") {
+        const limit = await staleWindow(env);
+        const beat = row.heartbeat_at ?? row.updated_at;
+        if (!(beat < isoPlusSeconds(t, -limit))) {
+          return json(409, { error: `lead review request is running${row.job_id ? ` (job ${row.job_id})` : ""}, heartbeat ${beat}, stale after ${limit} s; a review in flight is not reset`, request: row });
+        }
+        const why = `stale reset: running with no heartbeat since ${beat} (job ${row.job_id ?? "none"}, box ${row.box ?? "none"}); stale after ${limit} s`.slice(0, 4000);
+        const res = await env.DB.prepare(
+          `UPDATE lead_review_requests
+              SET status='requested', job_id=NULL, box=NULL, participant=NULL, heartbeat_at=NULL, verdict=NULL,
+                  report_ref=NULL, reviewer_model=NULL, promoted_verdict_at=NULL, detail=?1,
+                  reset_count=COALESCE(reset_count, 0) + 1, reset_at=?2, updated_at=?2
+            WHERE id=?3 AND status='running' AND job_id IS ?4 AND COALESCE(heartbeat_at, updated_at) = ?5`
+        ).bind(why, t, id, row.job_id ?? null, beat).run();
+        const now = await getRow(env, id);
+        if (res.meta.changes === 1) {
+          return json(200, {
+            request: now,
+            reclaimed_from: { job_id: row.job_id ?? null, box: row.box ?? null, participant: row.participant ?? null, last_beat: beat },
+            stale_s: limit,
+          });
+        }
+        return json(409, { error: `lead review request is ${now.status}${now.job_id ? ` (job ${now.job_id})` : ""}; it moved while the reset ran`, request: now });
+      }
       const res = await env.DB.prepare(
         `UPDATE lead_review_requests SET status='requested', job_id=NULL, box=NULL, verdict=NULL, report_ref=NULL,
                                          reviewer_model=NULL, detail=NULL, promoted_verdict_at=NULL,

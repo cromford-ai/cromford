@@ -160,9 +160,11 @@ git merge --abort 2>/dev/null
 S="$T/c6"; cu_copy "$S" || bad "C6 copy"
 ( cd "$S" && node scripts/coord-writes-build.mjs ) > "$T/c6.out" 2>&1; rc=$?
 [ "$rc" = 0 ] && [ -f "$S/functions/_lib/coord-writes.gen.js" ] || bad "C6 render rc=$rc $(cat "$T/c6.out")"
+# A function path prints as fn:<length>, the same as routes(): its source can
+# span lines, which would break the row counts and the tail match below.
 fw() { node --input-type=module -e "
 const m = await import(process.argv[1]);
-for (const w of m.FRAGMENT_WRITES) console.log(w.method + ' ' + w.path + ' ' + JSON.stringify(w.body));
+for (const w of m.FRAGMENT_WRITES) console.log(w.method + ' ' + (typeof w.path === 'function' ? 'fn:' + w.path.toString().length : w.path) + ' ' + JSON.stringify(w.body));
 " "$1"; }
 g=$(fw "$S/functions/_lib/coord-writes.gen.js" 2>&1); l=$(fw "$S/tests/lib/coord-writes.node.js" 2>&1)
 [ -n "$g" ] && [ "$g" = "$l" ] && ok "C6 the rendered FRAGMENT_WRITES equals the loader's ($(printf '%s\n' "$g" | wc -l) rows)" \

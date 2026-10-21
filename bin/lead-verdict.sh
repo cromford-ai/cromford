@@ -76,7 +76,9 @@
 # POST /api/lead-reviews/<id>/reset (lead token). The worker clears its result
 # and promoted stamp and records the reset, so bin/lead-review-land.sh lands
 # the re-review's verdict over the earlier one. A request already requested is
-# a 200 no-op; a running one is refused (exit 1, the worker's message printed).
+# a 200 no-op. A running one with a fresh heartbeat is refused (exit 1, the
+# worker's message printed); one whose heartbeat is older than the settings row
+# lead_review_claim_stale_s (fallback 900 s) is reclaimed to `requested` (BH-7711).
 #
 # BASH 3.2 (BH-3565). The lead's Mac runs this under /bin/bash 3.2, where an
 # empty "${arr[@]}" is unbound under set -u: every post died in gh-rest.sh
