@@ -412,7 +412,9 @@ RUN set -eu; . /opt/fly-boot/bake-pin.sh; bake_warm_links /opt/warm
 # the first harness sync populates /data.
 COPY entrypoint.sh /opt/fly-boot/entrypoint.sh
 COPY builder-runner.sh /opt/fly-boot/builder-runner.sh
-RUN chmod +x /opt/fly-boot/entrypoint.sh /opt/fly-boot/builder-runner.sh
+# BH-7430: the pull-path harness fetch (HARNESS_SHA set by bin/fly-pool.sh).
+COPY harness-fetch.sh /opt/fly-boot/harness-fetch.sh
+RUN chmod +x /opt/fly-boot/entrypoint.sh /opt/fly-boot/builder-runner.sh /opt/fly-boot/harness-fetch.sh
 
 # BH-1574: the GitHub-call ledger shim first on PATH for every process in the
 # machine (bin/gh-ledger/ holds ONLY `gh`; it runs /usr/local/bin/gh and writes

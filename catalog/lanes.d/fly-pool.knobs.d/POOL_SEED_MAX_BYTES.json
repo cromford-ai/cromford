@@ -1,0 +1,12 @@
+{
+  "env": "POOL_SEED_MAX_BYTES",
+  "type": "int",
+  "default": 262144,
+  "min": 4096,
+  "max": 1048576,
+  "unit": "bytes",
+  "zero_means": null,
+  "required": false,
+  "read_in": "bin/fly-pool.sh",
+  "note": "BH-7430. The most bytes one pull-path spawn puts in its --file-local seed (job.json, the relays, the deploy snapshot, the model routes, plus 8 KB for the env lines and tokens). Fly stores the seed in the machine config, so a big seed is a big config. Over the cap, that spawn takes the push path and logs `<key>: push path (seed too big: ...)`. Per-project row `lane.fly-pool.<project>.seed_max_bytes`."
+}

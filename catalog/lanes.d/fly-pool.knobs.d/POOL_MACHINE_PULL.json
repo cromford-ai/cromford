@@ -1,0 +1,12 @@
+{
+  "env": "POOL_MACHINE_PULL",
+  "type": "int",
+  "default": 0,
+  "min": 0,
+  "max": 1,
+  "unit": null,
+  "zero_means": "off",
+  "required": false,
+  "read_in": "bin/fly-pool.sh",
+  "note": "BH-7430 (BH-6896 S3). 1 = a spawn ends at ONE `fly machine run`: the machine fetches the pinned harness sha itself (fly/harness-fetch.sh), its static env comes from the pool app's HBUNDLE_* Fly secrets (bin/fly-pool-secrets-sync.sh), and the per-machine env lines, the job and every relay ride as --file-local seed files. No box ssh, no sleep 20, no ssh sftp, no mput. A spawn whose precondition is missing (no HBUNDLE_SYNCED_AT secret, no git HEAD in the harness checkout, no minted App token, no harness read token, a seed over POOL_SEED_MAX_BYTES) takes the push path and logs `<key>: push path (<why>)`. 0 = the push path, byte for byte. Per-project row `lane.fly-pool.<project>.machine_pull`; turn it on only after the secrets sync and an image bake that carries harness-fetch.sh (docs/notes/2026-10-19-BH-7430-pool-secrets-sync.md). Only the exact value 1 (whitespace trimmed) is on."
+}

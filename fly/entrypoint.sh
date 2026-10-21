@@ -156,23 +156,175 @@ export HARNESS_ENV_DIR=/run/harness-env
 # build-slots=1 (single machine = single slot, wip=1 per the plan)
 echo 1 > /data/harness/flags/build-slots
 
-# Prefer the tarball's runner — and WAIT for it. On volume-less pool machines
-# the hub pushes the tarball ~20s after boot; exec-ing the image floor first
-# meant every runner improvement shipped nowhere until an image rebuild (the
-# 2026-08-15 HARNESS_CHECKOUT/TARGET_BRANCH class). Wait up to 120s for the
-# sync to land, then fall back to the image floor — which stays only a floor.
-mkdir -p /data/harness/bin /data/harness/fly
+# >>> seed (BH-7430)
+# THE PULL PATH'S SEED (bin/fly-pool.sh, `machine pull`). Two carriers:
+#   /run/harness-seed/<push path>  --file-local files: the job, the relays, the
+#       model routes, the deploy snapshot. Nothing secret. Fly writes them on
+#       the ROOTFS (not tmpfs) before this script starts; they move to their
+#       push paths below. The rootfs is ephemeral and holds no token.
+#   /run/harness-seed-secret/bundle.b64  ONE --file-secret file: the files that
+#       hold a token (global.override.env, gh-token*, auth-accounts.local.json),
+#       as a base64 tar.gz. A token never goes in the machine config
+#       (`machines list --json` shows --file-local content to anyone with the
+#       app's Fly token), so Fly gives the file from an app secret SEED_*.
+#       Fly writes that file on the rootfs too, so it is unpacked straight into
+#       the tmpfs mounted above ($ENV_DIR/.sealed) and the rootfs copy is
+#       deleted in the same step. The tokens then live in RAM only, as on the
+#       push path. A failed unpack is not fatal here: the harness-pull block
+#       writes the BUILD_DEFERRED row for it.
+# Each file moves to its push path (mode 600), job.json LAST, because the runner
+# starts on it. Then the static env: the pool app's Fly secrets
+# HBUNDLE_G_<VAR> / HBUNDLE_P_<VAR> (bin/fly-pool-secrets-sync.sh) become
+# global.env / <project>.env, and global.override.env (the per-machine lines the
+# hub computed) replaces their keys: `KEY=VAL` drops the base KEY and adds the
+# line, `-KEY` drops the base KEY. No HBUNDLE_* var reaches the runner.
+# No seed and no HBUNDLE_SYNCED_AT (a persistent builder, a push-path machine)
+# changes nothing. BOOT_ROOT is the test seam; production leaves it "".
+BOOT_ROOT="${BOOT_ROOT:-}"
+SEED_DIR="$BOOT_ROOT/run/harness-seed"
+SECRET_B64="$BOOT_ROOT/run/harness-seed-secret/bundle.b64"
+ENV_DIR="$BOOT_ROOT/run/harness-env"
+SEALED_DIR="$ENV_DIR/.sealed"
+SEED_UNSEAL_FAIL=""
+seed_place() { # seed_place <root>: move each seed file under <root> to its push path
+  local root="$1" sf rel
+  while IFS= read -r -d '' sf; do
+    rel="${sf#"$root"}"
+    case "$rel" in
+      /run/harness/job.json) continue ;;
+      *..*) log "seed: skipped $rel (not a push path)"; continue ;;
+      /run/harness/*|/run/harness-env/*|/data/harness/state/*) ;;
+      *) log "seed: skipped $rel (not a push path)"; continue ;;
+    esac
+    mkdir -p "$BOOT_ROOT$(dirname "$rel")" && mv -f "$sf" "$BOOT_ROOT$rel" \
+      && chmod 600 "$BOOT_ROOT$rel" && seed_n=$((seed_n + 1))
+  done < <(find "$root" -type f -print0 2>/dev/null)
+}
+seed_n=0; seed_seen=0
+if [ -f "$SECRET_B64" ]; then
+  seed_seen=1
+  # Fly base64-decodes a --file-secret value before it writes the file, so on a
+  # real machine the file is the raw tar.gz (gzip magic 1f 8b). A base64 file
+  # (an older writer, the suites) still unpacks through base64 -d.
+  if [ "$(head -c 2 "$SECRET_B64" 2>/dev/null | od -An -tx1 | tr -d ' \n')" = 1f8b ]; then
+    unseal() { tar -xzf "$SECRET_B64" -C "$SEALED_DIR" --no-same-owner; }
+  else
+    unseal() { base64 -d < "$SECRET_B64" | tar -xzf - -C "$SEALED_DIR" --no-same-owner; }
+  fi
+  if ( umask 077; mkdir -p "$SEALED_DIR" && unseal ) 2>/dev/null; then
+    seed_place "$SEALED_DIR"
+  else
+    SEED_UNSEAL_FAIL="the token bundle did not unpack"
+    log "seed: the token bundle $SECRET_B64 did not unpack"
+  fi
+  rm -rf "$SEALED_DIR"; rm -f "$SECRET_B64"
+fi
+if [ -d "$SEED_DIR" ]; then
+  seed_seen=1
+  seed_place "$SEED_DIR"
+  if [ -f "$SEED_DIR/run/harness/job.json" ]; then
+    mkdir -p "$BOOT_ROOT/run/harness" && mv -f "$SEED_DIR/run/harness/job.json" "$BOOT_ROOT/run/harness/job.json" \
+      && chmod 600 "$BOOT_ROOT/run/harness/job.json" && seed_n=$((seed_n + 1))
+  fi
+  rm -rf "$SEED_DIR"
+fi
+[ "$seed_seen" = 0 ] || log "seed: placed $seed_n file(s) at their push paths"
+if [ -n "${HBUNDLE_SYNCED_AT:-}" ]; then
+  ( umask 077
+    G="$ENV_DIR/global.env.new"; PE="$ENV_DIR/$PROJECT.env.new"; OV="$ENV_DIR/global.override.env"
+    : > "$G"; : > "$PE"
+    while IFS= read -r v; do
+      case "$v" in
+        HBUNDLE_G_?*) printf '%s=%s\n' "${v#HBUNDLE_G_}" "${!v}" >> "$G" ;;
+        HBUNDLE_P_?*) printf '%s=%s\n' "${v#HBUNDLE_P_}" "${!v}" >> "$PE" ;;
+      esac
+    done < <(compgen -e | sort)
+    if [ -s "$OV" ]; then
+      while IFS= read -r l; do
+        k="${l%%=*}"; k="${k#-}"
+        [[ "$k" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] || continue
+        grep -v "^$k=" "$G" > "$G.x"; mv -f "$G.x" "$G"
+        case "$l" in -*) ;; *) printf '%s\n' "$l" >> "$G" ;; esac
+      done < "$OV"
+    fi
+    mv -f "$G" "$ENV_DIR/global.env" && mv -f "$PE" "$ENV_DIR/$PROJECT.env" )
+  rm -f "$ENV_DIR/global.override.env"
+  log "env: composed global.env and $PROJECT.env from the app secrets (synced $HBUNDLE_SYNCED_AT)"
+fi
+# SEED_<epoch>_<hex> too (lead BLOCK #3155 on #7556): Fly puts every app
+# secret in every machine's env, so each SEED_ is another machine's token
+# bundle. The runner must start with none of them.
+while IFS= read -r v; do
+  case "$v" in HBUNDLE_*|SEED_*) unset "$v" ;; esac
+done < <(compgen -e)
+# <<< seed (BH-7430)
+
+# >>> harness pull (BH-7430)
+# HARNESS_SHA set (the pull path): fetch that exact harness commit now. A failed
+# fetch writes the pool-result row `BUILD_DEFERRED harness-fetch: <why>` (the
+# key of bin/lib/pool-result-row.sh; the hub reap requeues a deferral, never a
+# death) and exits; there is no harness to run, so this is a raw curl.
+# HARNESS_SHA unset (the push path, a persistent builder): prefer the tarball's
+# runner — and WAIT for it. On volume-less pool machines the hub pushes the
+# tarball ~20s after boot; exec-ing the image floor first meant every runner
+# improvement shipped nowhere until an image rebuild (the 2026-08-15
+# HARNESS_CHECKOUT/TARGET_BRANCH class). Wait up to 120s for the sync to land,
+# then fall back to the image floor — which stays only a floor.
+seed_deferred() { # seed_deferred <why> — rc 0 when the row was written
+  local key
+  key=$(jq -r '.key // ""' "$BOOT_ROOT/run/harness/job.json" 2>/dev/null)
+  ( set -a; . "$ENV_DIR/global.env" 2>/dev/null; set +a
+    [ -n "${JOBS_URL:-}" ] && [ -n "${HARNESS_SECRET:-}" ] && [ -n "$key" ] || exit 1
+    detail=$(jq -nc --arg r "BUILD_DEFERRED $1" --arg m "${FLY_MACHINE_ID:-}" --argjson a "$(date -u +%s)" \
+      '{rline:$r,machine:$m,at:$a}') || exit 1
+    body=$(jq -nc --arg v "$PROJECT/$key" --arg a "$HOST" --arg d "$detail" \
+      '{kind:"pool-result",key:$v,status:"result",actor:$a,detail:$d}') || exit 1
+    curl -sS -m 15 -o /dev/null -X PUT -H "Authorization: Bearer $HARNESS_SECRET" \
+      -H 'Content-Type: application/json' --data-binary "$body" "$JOBS_URL/api/ledger" )
+}
+mkdir -p "$BOOT_ROOT/data/harness/bin" "$BOOT_ROOT/data/harness/fly"
+if [ -n "$SEED_UNSEAL_FAIL" ]; then
+  log "FATAL: $SEED_UNSEAL_FAIL — deferring the job and exiting"
+  seed_deferred "seed-unseal: $SEED_UNSEAL_FAIL" || log "the pool-result row was not written — the hub reap finds no RESULT"
+  exit 1
+fi
+if [ -n "${HARNESS_SHA:-}" ]; then
+  if HF_OUT=$("$BOOT_ROOT/opt/fly-boot/harness-fetch.sh" "$HARNESS_SHA" "${HARNESS_SLUG:-}" \
+                "$ENV_DIR/gh-token-harness" "$BOOT_ROOT/data/harness" 2>&1); then
+    log "$HF_OUT"
+  else
+    HF_WHY=$(printf '%s\n' "$HF_OUT" | grep 'FATAL:' | tail -n 1 | sed 's/^.*FATAL: //' | tr -d '\000-\037' | cut -c1-200)
+    log "FATAL: harness fetch failed: ${HF_WHY:-no reason} — deferring the job and exiting"
+    seed_deferred "harness-fetch: ${HF_WHY:-no reason}" || log "the pool-result row was not written — the hub reap finds no RESULT"
+    exit 1
+  fi
+else
 WAITED=0
-while [ ! -x /data/harness/fly/builder-runner.sh ] && [ "$WAITED" -lt 120 ]; do
+while [ ! -x "$BOOT_ROOT/data/harness/fly/builder-runner.sh" ] && [ "$WAITED" -lt 120 ]; do
   sleep 5; WAITED=$((WAITED + 5))
 done
-if [ ! -x /data/harness/fly/builder-runner.sh ]; then
+if [ ! -x "$BOOT_ROOT/data/harness/fly/builder-runner.sh" ]; then
   log "no tarball runner after ${WAITED}s — using image floor"
-  cp /opt/fly-boot/builder-runner.sh /data/harness/fly/builder-runner.sh
-  chmod +x /data/harness/fly/builder-runner.sh
+  cp "$BOOT_ROOT/opt/fly-boot/builder-runner.sh" "$BOOT_ROOT/data/harness/fly/builder-runner.sh"
+  chmod +x "$BOOT_ROOT/data/harness/fly/builder-runner.sh"
 else
   log "tarball runner arrived after ${WAITED}s"
 fi
+fi
+# The row stamp the hub makes on the push path (psr_claim_machine, BH-5001):
+# here the machine names itself once its harness is in place. Fail-open.
+if [ "${POOL_CLAIM_MACHINE:-0}" = 1 ] && [ -s "$BOOT_ROOT/run/harness/job.json" ]; then
+  CK=$(jq -r '.key // ""' "$BOOT_ROOT/run/harness/job.json" 2>/dev/null)
+  if [ -n "$CK" ] && ( set -a; . "$ENV_DIR/global.env" 2>/dev/null; set +a
+       export HARNESS="$BOOT_ROOT/data/harness" HARNESS_ENV_DIR="$ENV_DIR" JOBS_BOX="$HOST"
+       . "$HARNESS/bin/jobs-client.sh" && . "$HARNESS/bin/lib/pool-state-rows.sh" \
+         && psr_claim_machine "$PROJECT" "$CK" "${FLY_MACHINE_ID:-}" ) >/dev/null 2>&1; then
+    log "row $PROJECT/$CK stamped with machine ${FLY_MACHINE_ID:-?}"
+  else
+    log "row $PROJECT/${CK:-?} could not be stamped with machine ${FLY_MACHINE_ID:-?} — the build goes ahead"
+  fi
+fi
+# <<< harness pull (BH-7430)
 RUNNER=/data/harness/fly/builder-runner.sh
 log "volume layout ready; runner=$RUNNER"
 
