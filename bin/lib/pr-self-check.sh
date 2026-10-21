@@ -94,6 +94,10 @@
 #                   names the owner PR: one gh_rest read per key root when the
 #                   caller has gh_rest, else the body's `Stacked on #N`, else the
 #                   branch. No own key and a keyed commit: one note.
+#   plan-validate   (BH-7072) each static VALIDATE check of the plan the PR
+#                   changes passes at the head and in the body, and the body
+#                   has no "not met" line and no missed Target metric, unless an
+#                   operator approved an `owed:` line. bin/lib/pr-self-check-validate.sh.
 #
 # psc_test_change_section <plan> <base> — the PR body bridge (bin/lib/rb/pr.sh
 #   PR_BODY_FOR): `## Test changes` and one `TEST-CHANGE: <path> — <premise>`
@@ -485,6 +489,9 @@ psc_plan_missing() {
 # rule is a NOTE, never a refusal.
 # shellcheck source=bin/lib/pr-self-check-gating.sh
 . "$(dirname "${BASH_SOURCE[0]}")/pr-self-check-gating.sh" 2>/dev/null || :
+# psc_validate_check, the plan-validate rule (BH-7072). Missing = a NOTE.
+# shellcheck source=bin/lib/pr-self-check-validate.sh
+. "$(dirname "${BASH_SOURCE[0]}")/pr-self-check-validate.sh" 2>/dev/null || :
 # psc_requires_check, the body-plan-requires rule (BH-7378). Missing = one
 # NOTE that the items are not checked.
 # shellcheck source=bin/lib/pr-body-requires.sh
@@ -646,6 +653,14 @@ psc_check() {
           psc_gating_check "$repo" "$base" "$head" "$body" "$mode" "$id" || rc=1
         else
           echo "NOTE $id: bin/lib/pr-self-check-gating.sh not loaded, so gating diffs are not checked"
+        fi ;;
+      plan-validate)
+        # BH-7072: the plan's static VALIDATE checks, the body's not-met and
+        # Target metric lines; bin/lib/pr-self-check-validate.sh has the rule.
+        if command -v psc_validate_check >/dev/null 2>&1; then
+          psc_validate_check "$repo" "$base" "$head" "$body" "$mode" "$id" || rc=1
+        else
+          echo "NOTE $id: bin/lib/pr-self-check-validate.sh not loaded, so plan VALIDATE lines are not checked"
         fi ;;
       body-plan-requires)
         # BH-7378: each item of the plan's ```pr-body-requires block that the

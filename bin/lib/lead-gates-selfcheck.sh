@@ -84,6 +84,7 @@ lgsc_run() {
   [ -n "$tn" ] && gh_rest GET "repos/$slug/issues/$tn" 2>/dev/null | jq -r '.body // ""' > "$tf" 2>/dev/null
   tk=$(jq -r '.title // ""' "$bf" 2>/dev/null | sed -nE 's/^([A-Za-z]+-[0-9]+(\.[0-9]+)*):.*/\1/p')
   PR_SELF_CHECK_CATALOG="${PR_SELF_CHECK_CATALOG:-$root/catalog/pr-self-check.tsv}" PSC_PR_KEY="$tk" \
+    PSC_PR_REPO="$slug" PSC_PR_N="$n" PSC_PROJECT="$project" \
     psc_check "$repo" "origin/$base" "$head" "$LGSC_BODY" "$tf" > "$out" 2>/dev/null
   rc=$?
   echo "$rc" > "$out.rc"

@@ -1024,6 +1024,7 @@ self_check_hold() {
   tk=$(jq -r '.title // ""' "$WORK/pr" 2>/dev/null | sed -nE 's/^([A-Za-z]+-[0-9]+(\.[0-9]+)*):.*/\1/p')
   out=$(PR_SELF_CHECK_CATALOG="${PR_SELF_CHECK_CATALOG:-$H/catalog/pr-self-check.tsv}" PSC_PR_KEY="$tk" \
         PSC_TICKET_TITLE="$it" PSC_TICKET_LABELS="$il" PSC_TICKET_REPO="$ir" PSC_TICKET_N="$itn" \
+        PSC_PR_REPO="$1" PSC_PR_N="$2" PSC_PROJECT="$5" \
         psc_check "$repo" "origin/$4" "$3" "$bf" "$tf" 2>/dev/null); rc=$?
   # BH-5790: a `note` body rule (mutation evidence, the D1 callout) holds
   # nothing; its finding rides in the request notes for the lead to judge.

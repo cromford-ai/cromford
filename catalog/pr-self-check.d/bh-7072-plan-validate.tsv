@@ -1,0 +1,9 @@
+# catalog/pr-self-check.d/bh-7072-plan-validate.tsv — BH-7072: run each static
+# VALIDATE check of the PR's .harness/specs/<KEY>/plan.md against the head tree
+# and the PR body (file tests, grep and counts; never a shell), and refuse a
+# body that says "not met" or misses its `Target metric:`. A body line
+# `owed: <task id> <reason>` that an operator (trigger.actors.<project>)
+# approves in a PR comment (`approve owed: <id>`) excuses the task.
+# bin/lib/pr-self-check-validate.sh has the rule. param and match are unused
+# (-). Set the mode to note or off to turn the refusal off.
+plan-validate	refuse	-	a plan task's static VALIDATE check that fails at the head or in the body, a NOT MET line or a missed Target metric, with no operator-approved owed: line	-
