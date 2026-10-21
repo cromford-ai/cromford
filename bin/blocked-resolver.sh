@@ -6738,6 +6738,7 @@ Write your reasoning, then the LAST LINE of your answer must be exactly one word
           # this file name, and both key it on the head they are looking at.
           : > "$rec/iron-law-accepted-$head"
           say "$p/$rkey [iron-law]: ADJUDICATED ACCEPT — wrote $rec/iron-law-accepted-$head; the sweep and conductor unpark this sha"
+          command -v ila_record_say >/dev/null 2>&1 && say "$p/$rkey [iron-law]: $(ila_record_say "$url" "$head" resolver "adjudicated ACCEPT")"  # BH-4157: the same ACCEPT as a DB row
           # AFTER the marker: a ledger failure leaves this head accepted and
           # only costs the next head a re-adjudication, never a false carry.
           if ! command -v ilc_record >/dev/null 2>&1; then

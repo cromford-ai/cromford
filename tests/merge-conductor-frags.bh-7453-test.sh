@@ -9,7 +9,9 @@
 # run it in a clean `bash --norc` with H set to a scratch tree and a stub
 # mc_log. The M and C cases build scratch git repos with the real driver and
 # the real catalog, and run the REAL bin/list-file-lint.sh as a process.
-#   F1 the real fragment dir: no function, no variable, no output added
+#   F1 the real fragment dir: no variable and no output added; the only new
+#      functions are the ones its fragments declare (BH-4157: the first real
+#      fragment, so "no function" became "only its declared functions")
 #   F2 order and selection: LC_ALL=C name order, regular *.sh only, each once
 #   F3 a syntax error and a `return 3`: one log line each (real rc), goes on
 #   F4 no merge-conductor.d/ at all: nothing sourced, no output, no variable
@@ -81,11 +83,18 @@ nopen=$(grep -cxF "$OPEN" "$DRIVER"); nclose=$(grep -cxF "$CLOSE" "$DRIVER")
 mkdir -p "$T/f1/bin"
 [ -d "$FRAGS" ] && cp -R "$FRAGS" "$T/f1/bin/merge-conductor.d"
 run_block "$REAL_BLK" "$T/f1"
+# The functions the real fragments declare (`name() {` at column 0), and the
+# functions the block added: the two sets must be the same.
+f1_want=$( (set +f; cat "$T"/f1/bin/merge-conductor.d/*.sh 2>/dev/null) \
+  | sed -n 's/^\([A-Za-z_][A-Za-z0-9_]*\)() *{.*/\1/p' | LC_ALL=C sort -u | paste -sd' ' -)
+f1_got=$(LC_ALL=C comm -13 "$T/state/before.f" "$T/state/after.f" | awk '{print $NF}' | LC_ALL=C sort -u | paste -sd' ' -)
+f1_lost=$(LC_ALL=C comm -23 "$T/state/before.f" "$T/state/after.f")
 if [ "$nopen" = 1 ] && [ "$nclose" = 1 ] && [ -d "$T/f1/bin/merge-conductor.d" ] \
-   && [ "$RC" = 0 ] && [ "$OUT" = "BLOCK-RC 0" ] \
-   && cmp -s "$T/state/before.f" "$T/state/after.f" && cmp -s "$T/state/before.v" "$T/state/after.v"; then
-  ok "F1 the real fragment dir adds no function, no variable and no output"
-else bad "F1 open=$nopen close=$nclose rc=$RC out: $OUT; vars: $(diff "$T/state/before.v" "$T/state/after.v" | tr '\n' ' ')"; fi
+   && [ "$RC" = 0 ] && [ "$OUT" = "BLOCK-RC 0" ] && [ "$f1_got" = "$f1_want" ] \
+   && [ -z "$f1_lost" ] \
+   && cmp -s "$T/state/before.v" "$T/state/after.v"; then
+  ok "F1 the real fragment dir adds no variable and no output, and only its declared functions (${f1_want:-none})"
+else bad "F1 open=$nopen close=$nclose rc=$RC out: $OUT; funcs want=[$f1_want] got=[$f1_got]; vars: $(diff "$T/state/before.v" "$T/state/after.v" | tr '\n' ' ')"; fi
 
 # F2 — each fragment appends its name to TRACE.
 mk_frags() {

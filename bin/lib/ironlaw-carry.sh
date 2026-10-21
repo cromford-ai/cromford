@@ -185,3 +185,102 @@ ilc_covered() {
   printf '%s' "$shas" | awk 'NF && !seen[$0]++'
   return 0
 }
+
+# ---------------------------------------------------------------------------
+# THE HEAD-BOUND ACCEPT AS A DB ROW (BH-4157). The per-head ACCEPT is also one
+# row in the jobs DB's `ledgers` table, so an operator can write it from the
+# console and a hub needs no marker file:
+#   kind   ironlaw-head-accept
+#   key    <owner/repo lowercased>#<pr>@<head40>
+#   status accepted
+#   detail {"sha":<head>,"source":resolver|family|console,"reason":..,"actor":..}
+# The resolver and the family carry write it next to the marker file; the
+# console writes it through POST /api/ironlaw-accept. bin/merge-conductor.sh
+# and bin/merge-sweep.sh read it when no marker file answered.
+# ---------------------------------------------------------------------------
+
+# ila_key <pr-url> <head> -> the row key; rc 1 when the url does not parse or
+# the head is not 40 lower-case hex.
+ila_key() {
+  local pk head="${2:-}"
+  [[ "$head" =~ ^[0-9a-f]{40}$ ]] || return 1
+  pk=$(ilc_pr_key "${1:-}") || return 1
+  printf '%s@%s' "$pk" "$head"
+}
+
+# ila_accepted <pr-url> <head>
+#   rc 0 accepted: the row's status is `accepted` AND its detail names this head;
+#        prints who accepted it (detail.actor, else detail.source).
+#   rc 1 not accepted: the worker answered "no such row", or the row names
+#        another head.
+#   rc 2 cannot say: an outage, a 2xx with no row, an unparseable detail,
+#        another status, no jobs client, a bad url or head (no request made).
+#   A read error is never "accepted" and never "absent".
+ila_accepted() {
+  local key row rrc st sha by
+  key=$(ila_key "${1:-}" "${2:-}") || return 2
+  command -v job_ledger_row >/dev/null 2>&1 || return 2
+  row=$(job_ledger_row ironlaw-head-accept "$key"); rrc=$?
+  case "$rrc" in
+    0) ;;
+    2) return 1 ;;
+    *) return 2 ;;
+  esac
+  st=$(printf '%s' "$row" | jq -r '.status // empty' 2>/dev/null)
+  [ "$st" = accepted ] || return 2
+  sha=$(printf '%s' "$row" | jq -r '.detail | fromjson | .sha // empty' 2>/dev/null) || return 2
+  [ -n "$sha" ] || return 2
+  [ "$sha" = "$2" ] || return 1
+  by=$(printf '%s' "$row" | jq -r '.detail | fromjson | .actor // .source // empty' 2>/dev/null)
+  printf '%s' "${by:-?}"
+  return 0
+}
+
+# ila_put <pr-url> <head> <source> <reason> — write the row once. One claim
+# statement on the worker, so the first ACCEPT for a head stands and a later
+# write never changes it: `accepted` is in the terminal list, so stale_s never
+# lets a later claim retake the row. stale_s is still sent, at the top of the
+# range POST /api/ledger/claim takes (30..86400; anything else is a 400).
+#   rc 0 written, or already present | rc 1 not written (outage, a claim route
+#   that did not answer its contract, a bad url or head, no jobs client).
+ila_put() {
+  local key src="${3:-}" reason="${4:-}" detail rc
+  key=$(ila_key "${1:-}" "${2:-}") || return 1
+  [ -n "$src" ] || return 1
+  command -v job_ledger_claim >/dev/null 2>&1 || return 1
+  detail=$(jq -nc --arg s "$2" --arg src "$src" --arg r "${reason:0:500}" --arg a "${JOBS_BOX:-}" \
+    '{sha:$s,source:$src,reason:$r} + (if $a == "" then {} else {actor:$a} end)') || return 1
+  job_ledger_claim ironlaw-head-accept "$key" accepted 86400 accepted "$detail" >/dev/null; rc=$?
+  case "$rc" in
+    0|3) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+# ila_record_say <url> <head> <source> <reason> — ila_put, and the one log line
+# a writer prints about it. A failed write never retracts the marker the caller
+# already wrote; it only means a hub with no marker file re-asks.
+ila_record_say() {
+  if ! command -v job_ledger_claim >/dev/null 2>&1; then
+    printf 'DB accept NOT recorded (no jobs client; the file marker stands)'
+  elif ila_put "$@"; then
+    printf 'DB accept recorded (%s)' "$(ila_key "${1:-}" "${2:-}")"
+  else
+    printf 'DB accept NOT recorded (the file marker stands)'
+  fi
+}
+
+# ila_gate <pr-url> <head> -> the conductor and sweep question in one call:
+#   rc 0 accepted, prints "ACCEPTED in the DB by <actor> — not parking"
+#   rc 1 no row for this head (the common case), prints nothing
+#   rc 2 unverifiable, prints "DB accept UNVERIFIABLE on <head8> — parking as before"
+ila_gate() {
+  local by rc
+  by=$(ila_accepted "${1:-}" "${2:-}"); rc=$?
+  case "$rc" in
+    0) printf 'ACCEPTED in the DB by %s — not parking' "$by" ;;
+    1) ;;
+    *) rc=2; printf 'DB accept UNVERIFIABLE on %s — parking as before' "${2:0:8}" ;;
+  esac
+  return "$rc"
+}

@@ -261,6 +261,8 @@ br_opt_family_pre() {
     say "$p/$rkey [$reason]: family $key is ruled but $rec/iron-law-accepted-$head could not be written — nothing carried, the adjudication is offered next tick"
     return 1
   fi
+  # BH-4157: the same ACCEPT as a DB row, after the marker it never retracts.
+  command -v ila_record_say >/dev/null 2>&1 && say "$p/$rkey [$reason]: $(ila_record_say "$url" "$head" family "carried family $key")"
   # THE COMMENT IS LAST OF THE TWO SIDE EFFECTS, and a failure to post never
   # retracts a marker that has already unparked a judged sha.
   if [ -n "$rurl" ]; then

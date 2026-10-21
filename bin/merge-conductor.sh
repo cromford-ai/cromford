@@ -1670,6 +1670,8 @@ pr_worker() {
       mc_log "$KEY iron-law scan found $SCAN hit(s) on ${HEAD:0:8}, ADJUDICATED ACCEPT by the blocked-resolver ($REC/iron-law-accepted-$HEAD) — not parking"
       SCAN=0
     fi
+    # AN ACCEPT IN THE DB IS AN ACCEPT (BH-4157): mc_ila_accept, fragment bh-4157-ironlaw-accept.sh
+    command -v mc_ila_accept >/dev/null 2>&1 && mc_ila_accept
     # THE SAME HITS ON A NEW HEAD ARE STILL ADJUDICATED (BH-4474). An ACCEPT
     # also records each hit's fingerprint (rule, file, the flagged line's
     # content hash) in the jobs ledger, so a push that never touched those lines

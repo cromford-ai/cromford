@@ -664,6 +664,12 @@ export const api = {
     const qs = q.toString();
     return get(`/api/coord/risk-tiers${qs ? `?${qs}` : ''}`);
   },
+  // BH-4157: the conductor's iron-law hold on a PR and its ACCEPT rows
+  // (worker/jobs/src/routes/ironlaw-accept.js); the write goes through the
+  // coord proxy row coord-writes.d/7581-ironlaw-accept.js, which stamps actor.
+  ironLawHold: (repo, pr) =>
+    get(coordPath(`/api/ironlaw-accept?${new URLSearchParams({ repo, pr: String(pr) }).toString()}`)),
+  ironLawAccept: (body) => post(coordPath('/api/ironlaw-accept'), body),
   // BH-5430: the merge-queue break-risk score of each enqueued PR head, newest
   // updated_at first, read-only. The coord proxy forwards the GET as-is.
   queueRisk: ({ repo, pr, route, limit } = {}) => {

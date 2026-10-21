@@ -1,0 +1,6 @@
+# IRON-LAW HEAD ACCEPT (BH-4157 slice C0): the head-bound ACCEPT as a ledger
+# row (kind ironlaw-head-accept). GET reads the conductor's hold for a PR and
+# its ACCEPT rows; POST writes an operator ACCEPT bound to the held head.
+# Bearer-gated.
+GET /api/ironlaw-accept
+POST /api/ironlaw-accept

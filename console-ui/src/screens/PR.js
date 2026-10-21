@@ -14,6 +14,7 @@ import { UsdCell } from '../ui/UsdCell.js';
 import { TimelineDot, Dot } from '../ui/icons.js';
 import { repoFromPrUrl, liveHeadOf, standingShaOf, VerdictsView, requestLeadReview, LeadReviewFailedLine } from '../ui/PRVerdicts.js';
 import { liveHeadTier } from '../lib/risk-tiers.js';
+import { IronLawHold } from '../ui/IronLawHold.js';
 
 // The artifact tabs a PR carries. `context` and `cost` exist in the action
 // vocabulary too but are not part of the review story, so they sit behind MORE.
@@ -272,6 +273,8 @@ export function PRScreen({ project, number }) {
               : html`<${Empty} title="no GitHub repo for this PR"
                   note="Neither the PR payload nor a build row carries a github.com PR url, so there is no repo to read verdicts for." />`}
           <//>
+
+          ${repo ? html`<${IronLawHold} repo=${repo} number=${number} liveHead=${liveHead}/>` : null}
 
           <${Section} title="BUILD ROWS"
             note=${`${builds.length} build row${builds.length === 1 ? '' : 's'} point${builds.length === 1 ? 's' : ''} at this PR`}>

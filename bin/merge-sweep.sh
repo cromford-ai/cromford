@@ -1297,6 +1297,15 @@ while IFS=$'\t' read -r PROJ D BOR_KEY BOR_R BOR_TS; do
     echo "$(STAMP) $PR iron-law scan found $FLAGS hit(s) on $PHEAD, ADJUDICATED ACCEPT by the blocked-resolver ($(basename "$D")/iron-law-accepted-$PHEAD) — not parking" >> "$LOG"
     FLAGS=0
   fi
+  # AN ACCEPT IN THE DB IS AN ACCEPT (BH-4157, the conductor's arm): a row for
+  # this exact head unparks it with no marker file; an unprovable read parks.
+  if [ "${FLAGS:-0}" -gt 0 ] && [ -n "${PHEAD:-}" ] && command -v ila_gate >/dev/null 2>&1; then
+    ILA_OUT=$(ila_gate "$PR" "$PHEAD"); ILA_RC=$?
+    case "$ILA_RC" in
+      0) echo "$(STAMP) $PR iron-law scan found $FLAGS hit(s) on ${PHEAD:0:8}, $ILA_OUT" >> "$LOG"; FLAGS=0 ;;
+      2) echo "$(STAMP) $PR iron-law: $ILA_OUT" >> "$LOG" ;;
+    esac
+  fi
   # THE SAME HITS ON A NEW HEAD ARE STILL ADJUDICATED (BH-4474, the conductor's
   # arm). Every hit's fingerprint must have an ACCEPT row for THIS PR in the
   # jobs ledger; a new or changed hit, or anything unprovable, parks as before.
