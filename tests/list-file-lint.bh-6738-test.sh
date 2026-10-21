@@ -12,7 +12,10 @@
 #   L3  only bin/other.sh changes                 -> rc 0, no output at all
 #   L4  --catalog with a 2-field row and a bad kind -> rc 2, names :3 and :4
 #   L5  harness-ci.yml runs the step in the lint job; no new job
-#   L6  the shipped catalog: 10 rows, all 3 kinds; a no-match run is rc 0
+#   L6  the shipped catalog: counts read from it, every row exactly one kind,
+#       all 3 kinds present, every input dir holds a file, every non-ignored
+#       list file exists; a no-match run is rc 0. L6b: the same check is red
+#       on a copy with a dangling input dir or a missing list file
 #   L7  .mergify.yml +3, nothing under config/mergify/ -> rc 1
 #   L8  catalog/lanes.json force-added, plus a lanes.d/ file -> rc 1
 #   L9  .mergify.yml +40 with template.yml modified -> rc 0
@@ -113,16 +116,59 @@ if grep -qF "$want" <<<"$lintblk" \
   ok "L5 the lint job runs the step with --base origin/\$BASE_REF; no new job"
 else bad "L5 step not in the lint job (jobs naming list: $jobs_named)"; fi
 
-# L6
+# L6 — the counts come from the catalog itself, so a PR that adds a row does
+# not have to bump a pin. What L6 proves about the shipped catalog: every row is
+# exactly one of the 3 kinds, all 3 kinds are in use, every row's input dir
+# holds at least one file in this repo, and every non-ignored row names a list
+# file that exists. A row with a typo in either path fails here.
+# catalog_problems <catalog> — print one line per defect; nothing when clean.
+catalog_problems() {
+  local cat=$1 glob input note dir f found n=0 nfrag=0 nrend=0 nign=0 kind
+  while IFS=$'\t' read -r glob input note; do
+    n=$((n + 1))
+    case "$input" in
+      "rendered "*) kind=rend; dir=${input#rendered } ;;
+      "ignored "*)  kind=ign;  dir=${input#ignored } ;;
+      *" "*|"")     echo "row $n: unknown kind '$input'"; continue ;;
+      *)            kind=frag; dir=$input ;;
+    esac
+    case $kind in frag) nfrag=$((nfrag+1)) ;; rend) nrend=$((nrend+1)) ;; ign) nign=$((nign+1)) ;; esac
+    [ -n "$(find "$REPO/$dir" -type f 2>/dev/null | head -n 1)" ] \
+      || echo "row $n: input dir $dir holds no file"
+    [ "$kind" = ign ] && continue
+    found=0
+    case "$glob" in
+      *'*'*) for f in "$REPO"/$glob; do [ -e "$f" ] && { found=1; break; }; done ;;
+      *)     [ -e "$REPO/${glob//\\/}" ] && found=1 ;;
+    esac
+    [ "$found" = 1 ] || echo "row $n: list file $glob does not exist"
+  done < <(grep -vE '^(#|[[:space:]]*$)' "$cat")
+  [ "$n" -gt 0 ] || echo "no rows"
+  [ $((nfrag + nrend + nign)) = "$n" ] || echo "kinds $nfrag+$nrend+$nign != rows $n"
+  [ "$nfrag" -gt 0 ] && [ "$nrend" -gt 0 ] && [ "$nign" -gt 0 ] \
+    || echo "not all 3 kinds: frag=$nfrag rend=$nrend ign=$nign"
+}
 rows=$(grep -cvE '^(#|[[:space:]]*$)' "$CAT")
-nfrag=$(grep -vE '^(#|[[:space:]]*$)' "$CAT" | awk -F'\t' '$2 !~ / /' | wc -l)
-nrend=$(grep -vE '^(#|[[:space:]]*$)' "$CAT" | awk -F'\t' '$2 ~ /^rendered /' | wc -l)
-nign=$(grep -vE '^(#|[[:space:]]*$)' "$CAT" | awk -F'\t' '$2 ~ /^ignored /' | wc -l)
+nfrag=$(grep -vE '^(#|[[:space:]]*$)' "$CAT" | awk -F'\t' '$2 !~ / /' | wc -l | tr -d ' ')
+nrend=$(grep -vE '^(#|[[:space:]]*$)' "$CAT" | awk -F'\t' '$2 ~ /^rendered /' | wc -l | tr -d ' ')
+nign=$(grep -vE '^(#|[[:space:]]*$)' "$CAT" | awk -F'\t' '$2 ~ /^ignored /' | wc -l | tr -d ' ')
+probs=$(catalog_problems "$CAT")
 mk l6; echo 'echo bye' >> bin/other.sh; pr
 run --base base --catalog "$CAT"
-[ "$rows" = 10 ] && [ "$nfrag" = 5 ] && [ "$nrend" = 2 ] && [ "$nign" = 3 ] && [ "$RC" = 0 ] && [ -z "$OUT" ] \
-  && ok "L6 shipped catalog: 10 rows, 5 fragments, 2 rendered, 3 ignored; loads clean" \
-  || bad "L6 rows=$rows frag=$nfrag rend=$nrend ign=$nign rc=$RC out: $OUT"
+[ -z "$probs" ] && [ "$RC" = 0 ] && [ -z "$OUT" ] \
+  && ok "L6 shipped catalog: $rows rows, $nfrag fragments, $nrend rendered, $nign ignored; every path resolves; loads clean" \
+  || bad "L6 rows=$rows frag=$nfrag rend=$nrend ign=$nign rc=$RC problems: $probs out: $OUT"
+
+# L6b — the L6 check is not vacuous: a copy of the shipped catalog with one
+# dangling input dir, or one missing list file, is red.
+cp "$CAT" "$T/l6b-dir.tsv"; printf 'bin/list-file-lint.sh\tbin/no-such-dir.d/\tl6b\n' >> "$T/l6b-dir.tsv"
+cp "$CAT" "$T/l6b-file.tsv"; printf 'bin/no-such-list.sh\tbin/\tl6b\n' >> "$T/l6b-file.tsv"
+pd=$(catalog_problems "$T/l6b-dir.tsv"); pf=$(catalog_problems "$T/l6b-file.tsv")
+case "$pd" in *"input dir bin/no-such-dir.d/ holds no file"*) d_ok=1 ;; *) d_ok=0 ;; esac
+case "$pf" in *"list file bin/no-such-list.sh does not exist"*) f_ok=1 ;; *) f_ok=0 ;; esac
+[ "$d_ok" = 1 ] && [ "$f_ok" = 1 ] \
+  && ok "L6b the L6 check is red on a dangling input dir and on a missing list file" \
+  || bad "L6b dir: $pd | file: $pf"
 
 # L7
 mk l7; lines 3 extra >> .mergify.yml; pr
