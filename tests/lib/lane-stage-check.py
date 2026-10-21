@@ -6,7 +6,8 @@ per lane with >=1 direct agent-call site in its own script, then, when
 <root>/catalog/llm-sites.json exists, for every `kind: agent-call` site
   SITE <id> stage=<declared> called=<called> project=<declared> called_project=<literal>
 or `SKIP SITE <id> <reason>` when its script has no call the scanner can
-resolve. A `FAIL: ...` line per problem; exit 1 when any FAIL was printed."""
+resolve. A `FAIL: ...` line per problem (one per file whose heredoc is
+still open at end of file); exit 1 when any FAIL was printed."""
 import json, os, re, sys
 
 root, lanes_dir = sys.argv[1], sys.argv[2]
@@ -35,19 +36,69 @@ def strip_comment(line):
     return ''.join(out)
 
 
+def heredoc_start(code):
+    """The HEREDOC match of the first `<<NAME` bash reads as a heredoc start
+    in one comment-stripped line, or None. Text inside '...' and "...", a
+    backslash-escaped character, a `<<<` here-string and `<<` inside
+    `((...))` arithmetic are not heredocs; a `$(...)` inside "..." is code
+    again, so `"$(cmd <<'PY'` is one."""
+    q, subs, i, n = None, [], 0, len(code)
+    while i < n:
+        ch = code[i]
+        if q == "'":
+            if ch == "'":
+                q = None
+        elif ch == '\\':
+            i += 1
+        elif q == '"':
+            if ch == '"':
+                q = None
+            elif code.startswith('$(', i) and not code.startswith('$((', i):
+                subs.append([q, 1])
+                q, i = None, i + 1
+        elif ch in '"\'':
+            q = ch
+        elif code.startswith('((', i) or code.startswith('$((', i):
+            j, depth = i + (2 if ch == '(' else 3), 2
+            while j < n and depth:
+                depth += {'(': 1, ')': -1}.get(code[j], 0)
+                j += 1
+            i = j
+            continue
+        elif ch == '(' and subs:
+            subs[-1][1] += 1
+        elif ch == ')' and subs:
+            subs[-1][1] -= 1
+            if not subs[-1][1]:
+                q = subs.pop()[0]
+        elif code.startswith('<<<', i):
+            i += 3
+            continue
+        elif code.startswith('<<', i):
+            m = HEREDOC.match(code, i)
+            if m:
+                return m
+            i += 2
+            continue
+        i += 1
+    return None
+
+
 def code_lines(text):
-    """(lineno, code) with comments stripped, heredoc bodies dropped and
-    backslash continuations joined onto the line that starts the command."""
-    out, pend, pend_no, term = [], '', 0, None
+    """-> ([(lineno, code)], open) with comments stripped, heredoc bodies
+    dropped and backslash continuations joined onto the line that starts the
+    command. `open` is (lineno, terminator) of a heredoc the file never
+    closes, else None."""
+    out, pend, pend_no, term, term_no = [], '', 0, None, 0
     for no, raw in enumerate(text.splitlines(), 1):
         if term is not None:
             if raw.strip() == term:
                 term = None
             continue
         code = strip_comment(raw)
-        m = HEREDOC.search(code)
+        m = heredoc_start(code)
         if m:
-            term = m.group(2)
+            term, term_no = m.group(2), no
         if not pend:
             pend_no = no
         if code.rstrip().endswith('\\'):
@@ -57,7 +108,7 @@ def code_lines(text):
         pend = ''
     if pend:
         out.append((pend_no, pend))
-    return out
+    return out, ((term_no, term) if term is not None else None)
 
 
 def unquote(w):
@@ -78,10 +129,19 @@ def resolve(word, assigns):
     return None
 
 
+# rel path -> the FAIL line for a heredoc that file never closes. A dict, so
+# a file both passes scan prints its FAIL once.
+UNCLOSED = {}
+
+
 def scan(path):
     """-> (set of stages, [site lines], [problems], set of literal projects)"""
     text = open(path, encoding='utf-8', errors='replace').read()
-    lines = code_lines(text)
+    lines, unclosed = code_lines(text)
+    rel = os.path.relpath(path, root)
+    if unclosed:
+        UNCLOSED[rel] = (f'FAIL: {rel}:{unclosed[0]}: heredoc <<{unclosed[1]} opened here '
+                         'is never closed (end of file reached inside it)')
     assigns = {}
     for _, code in lines:
         for m in re.finditer(r'(?:^|[\s;(])(?:export\s+|local\s+|readonly\s+|declare\s+)?([A-Za-z_][A-Za-z0-9_]*)=("[^"]*"|\'[^\']*\'|[^\s;"\']*)', code):
@@ -94,7 +154,6 @@ def scan(path):
     for n in callvars:
         tok.append(re.compile(r'"?\$\{?' + re.escape(n) + r'\}?"?(?=\s|$)'))
     stages, sites, probs, projects = set(), [], [], set()
-    rel = os.path.relpath(path, root)
     for no, code in lines:
         for rx in tok:
             for m in rx.finditer(code):
@@ -188,6 +247,8 @@ if os.path.isfile(sites_path):
             print(f'FAIL: site {sid}: script {script} does not exist'); fails += 1
             continue
         called, calls, probs, projects = scan(sp)
+        if os.path.relpath(sp, root) in UNCLOSED:
+            continue                    # its FAIL is printed below, not a SKIP
         if probs:
             print(f'SKIP SITE {sid} unresolvable stage argument ({len(probs)} call(s))')
             continue
@@ -204,4 +265,6 @@ if os.path.isfile(sites_path):
         if dproj and '$' not in dproj and projects - {dproj}:
             print(f'FAIL: site {sid} declares project {dproj} but {script} calls agent-call.sh with project [{",".join(sorted(projects))}]')
             fails += 1
+for line in sorted(UNCLOSED.values()):
+    print(line); fails += 1
 sys.exit(1 if fails else 0)

@@ -1,0 +1,8 @@
+# catalog/pr-self-check.d/bh-7815-callers-not-ported.tsv — BH-7815: each place
+# the merge of the base and the head still names a path the PR deletes or
+# renames is one `NOTE callers-not-ported: <file>:<line> still references <old>,
+# ...` line, which the lead review request notes carry.
+# bin/lib/callers-not-ported.sh has the rule. It is a NOTE in every mode:
+# `refuse` is read as `note`, so the rule never refuses and never changes the
+# verdict. Set the mode to off to turn it off. param and match are unused (-).
+callers-not-ported	note	-	each place the merge of the base and the head still names a path the PR deletes or renames (NOTE only, never a refusal; BH-7815)	-

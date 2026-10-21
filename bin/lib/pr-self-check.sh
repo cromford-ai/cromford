@@ -75,6 +75,12 @@
 #                   requires: the body is missing <item> (required by <source>)`
 #                   line, 10 at most. A NOTE in every mode but off; it never
 #                   sets rc 1. bin/lib/pr-body-requires.sh has the rule.
+#   callers-not-ported (BH-7815) each place the merge of the base and the
+#                   head (git merge-tree) still names a path the PR deletes or
+#                   renames is one `NOTE callers-not-ported: <file>:<line> still
+#                   references <old>, ...` line, 20 at most. A NOTE in every mode
+#                   but off; it never sets rc 1. bin/lib/callers-not-ported.sh
+#                   has the rule.
 #   foreign-commits (BH-6394, D66 enforced) a PR carries only its own ticket's
 #                   commits. Each first-parent, non-merge commit in base..head
 #                   whose subject LEADS with a key (`BH-1: ...`, `fix(BH-1): ...`)
@@ -483,6 +489,10 @@ psc_plan_missing() {
 # NOTE that the items are not checked.
 # shellcheck source=bin/lib/pr-body-requires.sh
 . "$(dirname "${BASH_SOURCE[0]}")/pr-body-requires.sh" 2>/dev/null || :
+# psc_cnp_check, the callers-not-ported rule (BH-7815). Missing = one NOTE
+# that deleted paths are not checked.
+# shellcheck source=bin/lib/callers-not-ported.sh
+. "$(dirname "${BASH_SOURCE[0]}")/callers-not-ported.sh" 2>/dev/null || :
 
 psc_check() {
   local repo="${1:-}" base="${2:-}" head="${3:-}" body="${4:-}" ticket="${5:-${PSC_TICKET_FILE:-}}"
@@ -645,6 +655,15 @@ psc_check() {
           psc_requires_check "$repo" "$base" "$head" "$body" "$id" "$files" || :
         else
           echo "NOTE $id: bin/lib/pr-body-requires.sh not loaded, so required body items are not checked"
+        fi ;;
+      callers-not-ported)
+        # BH-7815: each place the merge of the base and the head still names a
+        # path the PR deletes or renames is one NOTE. Every mode but off reads
+        # as note, and rc is never touched.
+        if command -v psc_cnp_check >/dev/null 2>&1; then
+          psc_cnp_check "$repo" "$base" "$head" "$id" || :
+        else
+          echo "NOTE $id: bin/lib/callers-not-ported.sh not loaded, so deleted paths are not checked"
         fi ;;
       body-*)
         # BH-5790: a PR-body section the lead review would BLOCK on. When it

@@ -1,0 +1,17 @@
+# catalog/lane-run-secrets.d/fly-pool.tsv: the secrets a lane-run group app
+# must hold to run the fly-pool lane on its machines. One reader:
+# bin/lane-run-secrets.sh (Doc: docs/notes/2026-10-21-BH-7848-lane-run-secrets.md).
+# Tab-separated, 4 fields: name need hub_source note.
+#   name        one placeholder at most: <PROJECT> (upper case, . and - as _,
+#               the bin/lib/fly-token.sh rule) or <OWNER> (the fleet.conf repo
+#               owner, the same rule).
+#   need        required | optional
+#   hub_source  <envfile>:<VAR> (a variable in a file in the hub env dir) or
+#               file:<envfile> (the text of a file in the hub env dir).
+# Values never go in this file.
+FLY_API_TOKEN_<PROJECT>	required	fly.env:FLY_API_TOKEN_<PROJECT>	the pool app Fly token (bin/lib/fly-token.sh; the org FLY_API_TOKEN is the fallback)
+GH_APP_ID	required	github-app.env:GH_APP_ID	the App id (fly/lane-run-entrypoint.sh writes github-app.env)
+GH_APP_PRIVATE_KEY	required	file:github-app.pem	the App key PEM text; the entrypoint writes it mode 600
+GH_APP_INSTALLATION_<OWNER>	optional	github-app.env:GH_APP_INSTALLATION_<OWNER>	the installation id of the repo owner
+HARNESS_SECRET	required	global.env:HARNESS_SECRET	the lane-fleet ready gate (bin/lane-fleet.sh lf_app_ready)
+JOBS_URL	required	global.env:JOBS_URL	the lane-fleet ready gate (bin/lane-fleet.sh lf_app_ready)

@@ -11,9 +11,9 @@
 # lane's `script`, so the BH-2304 lanes pass never looked at them.
 #
 # WHAT IT SKIPS, said plainly: a site whose script has no call the scanner can
-# resolve (rb-plan passes "$stage"; trap-eval reaches agent-call through a
-# variable path it cannot see; since BH-2562 the canaries lane-probe and
-# claude-auth-check do the same, calling it through "$AC"). S4 pins that exact
+# resolve (rb-plan passes "$stage"; since BH-2562 the canaries lane-probe and
+# claude-auth-check reach agent-call through "$AC", a variable path it cannot
+# see). S4 pins that exact
 # set, so a new skip is loud. oauth-refresh names agent-call.sh literally, so
 # it is checked, not skipped.
 #
@@ -46,7 +46,7 @@ $(printf '%s\n' "$OUT" | grep '^FAIL')"
 grep -qx 'SITE runner-bench stage=bench called=bench project=bench called_project=bench' <<<"$OUT" && ok \
   || bad "S3: runner-bench does not bill bench/bench: $(printf '%s\n' "$OUT" | grep 'runner-bench')"
 SKIPS=$(printf '%s\n' "$OUT" | awk '/^SKIP SITE /{print $3}' | sort | tr '\n' ' ')
-[ "$SKIPS" = "claude-auth-check lane-probe rb-plan trap-eval " ] && ok || bad "S4: skipped sites are [$SKIPS], expected exactly [claude-auth-check lane-probe rb-plan trap-eval]"
+[ "$SKIPS" = "claude-auth-check lane-probe rb-plan " ] && ok || bad "S4: skipped sites are [$SKIPS], expected exactly [claude-auth-check lane-probe rb-plan]"
 N=$(printf '%s\n' "$OUT" | grep -c '^SITE ')
 [ "$N" -ge 20 ] && ok || bad "S4: only $N sites were checked — the sites pass is finding nothing"
 

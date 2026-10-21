@@ -1028,6 +1028,8 @@ self_check_hold() {
   # BH-5790: a `note` body rule (mutation evidence, the D1 callout) holds
   # nothing; its finding rides in the request notes for the lead to judge.
   PSCNOTES=$(printf '%s\n' "$out" | sed -n 's/^NOTE \(body-[a-z0-9-]*: the body is missing .*\)/\1/p')
+  # BH-7815: a path the PR deletes that the merge with the base still names.
+  PSCNOTES=$(printf '%s\n%s\n' "$PSCNOTES" "$(printf '%s\n' "$out" | sed -n 's/^NOTE \(callers-not-ported: .*\)/\1/p')" | sed '/^$/d')
   [ "$rc" = 1 ] || return 1
   PSCOUT=$(printf '%s\n' "$out" | sed -n 's/^REFUSE //p')
   return 0

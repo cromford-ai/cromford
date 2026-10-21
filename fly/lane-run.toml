@@ -25,6 +25,8 @@
 #   ( set -a; . /etc/harness/env/fly.env; \
 #     printf 'FLY_API_TOKEN_project-6_OS=%s\n' "$FLY_API_TOKEN_project-6_OS" ) \
 #     | flyctl secrets import -a lane-run-mk --stage
+#   # BH-7848: the full list for a project: bin/lane-run-secrets.sh fly-pool
+#   # <project> (and --stage-cmd <app> prints the stdin staging command).
 #   JC=bin/jobs-client.sh
 #   flyctl deploy . -c fly/lane-run.toml --build-only --push --image-label latest \
 #     --build-arg HARNESS_COMMIT=$(git rev-parse HEAD) \

@@ -27,6 +27,7 @@
 #   lgsc_refusals <class>  the cached REFUSE lines, `REFUSE ` cut: class body =
 #       the body-* rules, other = the rest, all = every one.
 #   lgsc_notes             the cached NOTE body-* lines (the note rules).
+#                          and the NOTE callers-not-ported lines (BH-7815).
 
 # shellcheck source=bin/lib/pr-self-check.sh
 command -v psc_check >/dev/null 2>&1 || . "${BASH_SOURCE[0]%/*}/pr-self-check.sh" 2>/dev/null || true
@@ -104,6 +105,7 @@ lgsc_refusals() {
 lgsc_notes() {
   [ -r "$LGSC_OUT" ] || return 0
   sed -n 's/^NOTE \(body-[a-z0-9-]*: the body is missing .*\)/\1/p' "$LGSC_OUT"
+  sed -n 's/^NOTE \(callers-not-ported: .*\)/\1/p' "$LGSC_OUT"
 }
 
 lgsc_hold() {

@@ -1004,16 +1004,7 @@ unset _br_m
 # BR_OPT_OFF is the ONE kill switch for every optional rung: a comma list, no
 # spaces, of module names to leave unsourced. Per-behaviour flags are
 # deliberately not offered — an operator turning the seam off at 3am wants one
-# word, not a table.
-# external, extfix, extpark, extrebase are BH-4664's external-PR modules; the
-# siblings that ship the last three may land after this list does, and a name
-# whose file is absent is skipped silently, like every name here.
-# parentprio is BH-5741: a BLOCKed parent with approved stacked children ranks
-# above ordinary rows, and pages once when no fix round starts for it.
-# profile, readmemo and unchanged are BH-5946: the run's `prof:` line, the
-# per-run read memo and the unchanged-row skip.
-# untouched is BH-5913: a project whose oldest park no run has looked at for
-# BR_UNTOUCHED_ALERT_MIN pages once per episode.
+# word, not a table. Per-module notes: bin/lib/br/opt/README.md.
 BR_OPT_MODULES="mechanical family cirepair stale external extfix extpark extrebase parentprio untouched profile readmemo unchanged"
 BR_OPT_OFF="${BR_OPT_OFF:-}"
 for _br_o in $BR_OPT_MODULES; do
@@ -1029,6 +1020,15 @@ for _br_o in $BR_OPT_MODULES; do
     || say "optional module bin/lib/br/opt/$_br_o.sh failed on source — skipped, this tick runs without it"
 done
 unset _br_o _br_of
+# blocked-resolver.d (BH-7450): new optional code is its own file, bin/blocked-resolver.d/<key>-<name>.sh, never one more BR_OPT_MODULES word
+# (bin/list-file-lint.sh refuses that). Sourced once each, LC_ALL=C order, after the modules above, fail-open like them; BR_OPT_OFF names one without .sh.
+mapfile -t _br_frags < <(set +f; for _f in "$H"/bin/blocked-resolver.d/*.sh; do [ -f "$_f" ] && printf '%s\n' "$_f"; done | LC_ALL=C sort)
+for _br_of in "${_br_frags[@]}"; do
+  _br_o=${_br_of##*/}; _br_o=${_br_o%.sh}; case ",$BR_OPT_OFF," in *",$_br_o,"*) continue ;; esac
+  bash -n "$_br_of" 2>/dev/null || { say "fragment bin/blocked-resolver.d/$_br_o.sh does not parse — skipped, this tick runs without it"; continue; }
+  # shellcheck source=/dev/null
+  . "$_br_of" || say "fragment bin/blocked-resolver.d/$_br_o.sh failed on source (rc $?) — skipped, this tick runs without it"
+done; unset _br_frags _br_of _br_o
 
 # THE DISPATCHER STOPS HERE (BH-5913): it needed only the libraries above (the
 # project hold gate among them). Nothing below this line runs in --dispatch.
