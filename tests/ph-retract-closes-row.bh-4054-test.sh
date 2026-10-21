@@ -71,6 +71,13 @@ alert_resolve() {
     echo 1
   else echo 0; fi
 }
+# BH-7802: alert_state_resolve reads through alert_resolve_rows. This miniature
+# answers the shape of a worker with no `rows` key, so count and severity still
+# come from the state file, as they did before.
+alert_resolve_rows() {
+  local n; n=$(alert_resolve "$1") || return 1
+  printf '#norows\nresolved %s\n' "$n"
+}
 EOF
   cat > "$d/fakebin/gh" <<'EOF'
 #!/bin/bash

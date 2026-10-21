@@ -106,7 +106,7 @@ _pp_say() {
 # given) from the env (a lane knob), else the fallback.
 _pp_int() {
   local v="${!1:-}" min="${3:-1}"
-  v=$(printf '%s' "$v" | tr -d '[:space:]')
+  v=${v//[[:space:]]/}
   [[ $v =~ ^[0-9]{1,5}$ ]] && [ "$((10#$v))" -ge "$min" ] && [ "$((10#$v))" -le 86400 ] || v="$2"
   printf '%s' "$((10#$v))"
 }
@@ -224,7 +224,9 @@ _pp_alert() {
 
 pp_publish() {
   local p="$1" root stamp now last out
-  root=$(_pp_root); stamp="$(_pp_dir)/$p.published-at"; now=$(date -u +%s)
+  # Builtins for the clock and the stamp: this runs once per fly project per
+  # tick (BH-7432 counts the forks of that tick).
+  root=$(_pp_root); stamp="$(_pp_dir)/$p.published-at"; printf -v now '%(%s)T' -1
   if ! declare -F lri_publish >/dev/null 2>&1; then
     # shellcheck source=bin/lib/lane-run-inputs.sh
     [ -r "$root/bin/lib/lane-run-inputs.sh" ] && . "$root/bin/lib/lane-run-inputs.sh" 2>/dev/null
@@ -234,7 +236,7 @@ pp_publish() {
   # finished run's write-backs are the hub's state before the next row's
   # snapshot is cut. Only the publish is throttled.
   out=$(lri_apply_pending "$PP_LANE" "$p" 2>&1) || _pp_say "${PP_TAG:-placed fly}: write-back apply failed ($(printf '%s' "$out" | tail -n 1))"
-  last=$(head -n 1 "$stamp" 2>/dev/null)
+  last=""; { IFS= read -r last < "$stamp"; } 2>/dev/null
   [[ $last =~ ^[0-9]+$ ]] && [ $((now - last)) -lt "$(_pp_int POOL_FLY_PUBLISH_MIN_S "$PP_PUBLISH_MIN_S")" ] && return 0
   out=$(lri_publish "$PP_LANE" "$p" 2>&1) || { _pp_say "${PP_TAG:-placed fly}: snapshot publish failed ($(printf '%s' "$out" | tail -n 1))"; return 1; }
   _pp_put "$stamp" "$now"

@@ -84,6 +84,8 @@ tests/openrouter-audit.bh-4001-test.sh:generic-api-key:21
 tests/plan-blocked-notice.bh-7116-test.sh:generic-api-key:39
 tests/plan-blocked-repeat.bh-7719-test.sh:generic-api-key:38
 tests/plan-contract-seams.bh-6384-test.sh:generic-api-key:161
+tests/pool-tick-summary.bh-7709-test.sh:generic-api-key:71
+tests/pool-tick-summary.bh-7709-test.sh:generic-api-key:76
 tests/prebuild-repro-self-comment.bh-2133-test.sh:generic-api-key:43
 tests/prebuild-repro-skip.bh-2040-test.sh:generic-api-key:31
 tests/prebuild-repro-stop.bh-2043-test.sh:generic-api-key:32
@@ -122,6 +124,7 @@ worker/jobs/test/main-red-state-indexes.bh-4156.test.js:generic-api-key:17
 worker/jobs/test/main-red-state.bh-4156.test.js:generic-api-key:20
 worker/jobs/test/pool-records-roundtrip.bh-7429.test.js:generic-api-key:19
 worker/jobs/test/pool-records.bh-7429.test.js:generic-api-key:16
+worker/jobs/test/pool-tick.bh-7709.test.js:generic-api-key:21
 worker/jobs/test/review-tiers.bh-6969.test.js:generic-api-key:25
 worker/jobs/test/route-keyed.bh-5788.test.js:generic-api-key:130
 worker/jobs/test/route-registry.bh-4607.test.js:generic-api-key:156

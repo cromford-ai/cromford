@@ -1,0 +1,7 @@
+# POOL TICK SUMMARY (BH-7709): the hub lane bin/pool-tick-summary.sh posts one
+# row per pool project (the last tick's counts, one decision per key, the stop
+# and today's respawns, read from logs/fly-pool.log); GET /api/pool/status
+# returns one project's row, flat, with its per-key spawn cap, for the MCP
+# pool_status tool and the BH-7725 unblock collector. Bearer-gated.
+POST /api/pool/tick-summary
+GET /api/pool/status

@@ -1,0 +1,12 @@
+{
+  "env": "POOL_TICK_BATCH",
+  "type": "int",
+  "default": 1,
+  "min": 0,
+  "max": 1,
+  "unit": "switch",
+  "zero_means": null,
+  "required": false,
+  "read_in": "bin/lib/pool-tick-batch.sh",
+  "note": "BH-7432. 1 = bin/fly-pool-tick.sh enqueues every fly-placed project in one POST /api/lane-runs/batch per tick and starts bin/fly-pool.sh only for the projects that still need a hub tick (ptb_split). It does nothing while no lane_placement.fly-pool row says fly or box:. 0 = start bin/fly-pool.sh for every project, as before BH-7432. Settings row `lane.fly-pool-tick.pool_tick_batch`."
+}

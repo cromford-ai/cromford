@@ -322,12 +322,17 @@ export const routes = [
         }
         const holes = ids.map((_, j) => `?${j + 1}`).join(",");
         // `resolved` counts the rows that MOVED — an unknown id and an already
-        // resolved one both count zero, and neither is an error.
+        // resolved one both count zero, and neither is an error. `rows` is
+        // those same rows, from the same statement (BH-7802): the box that
+        // resolves is not always the box that opened, so the count and the
+        // severity the RESOLVED line needs come from here, not from its file.
         // sql-ident-ok: holes is a ?N placeholder list built from the ids index
         const r = await env.DB.prepare(
-          `UPDATE alerts SET state='resolved' WHERE state<>'resolved' AND id IN (${holes})`
-        ).bind(...ids).run();
-        return json(200, { resolved: (r.meta && r.meta.changes) || 0, as_of: t });
+          `UPDATE alerts SET state='resolved' WHERE state<>'resolved' AND id IN (${holes})
+           RETURNING id, count, severity, first_seen`
+        ).bind(...ids).all();
+        const rows = (r.results || []).slice().sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+        return json(200, { resolved: rows.length, rows, as_of: t });
     },
   ],
 
@@ -437,6 +442,11 @@ export const routes = [
         const prefix = families ? String(q.get("lane") || "") : String(q.get("claimed_by_prefix") || "");
         // A prefix-less family count answers a question nobody asked.
         if (families && !prefix) return json(400, { error: "lane is required" });
+        // BH-7802: `id` is one row by primary key, in any state — what
+        // alert_state_open and alert_state_age read. An empty id is no filter;
+        // an id the note route could never have written is a 400.
+        const id = families ? "" : (q.get("id") || "");
+        if (id && !ALERT_ID_RE.test(id)) return json(400, { error: "id must match ^[A-Za-z0-9_.-]{1,120}$" });
         const secs = (v) => { const n = intOrNull(v); return n !== null && n > 0 ? n : 0; };
         const knobs = { claim_lease_s: ALERT_CLAIM_LEASE_S };
         const w = alertWhere({
@@ -452,6 +462,7 @@ export const routes = [
           claimed_since_s: secs(q.get("claimed_since_s")),
           component: component || "",
           unstamped: unstampedRaw === "1",
+          ids: id ? [id] : [],
         }, t, knobs);
 
         if (families || q.get("group") === "family") {

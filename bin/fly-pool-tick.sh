@@ -184,6 +184,9 @@ command -v routing_sync_all >/dev/null 2>&1 && { routing_sync_all >/dev/null 2>&
 # shellcheck source=bin/lib/hub-load-shed.sh
 . "$H/bin/lib/hub-load-shed.sh" 2>/dev/null || . "$(dirname "${BASH_SOURCE[0]}")/lib/hub-load-shed.sh" 2>/dev/null \
   || hls_over() { return 1; }
+# BH-7432: the batched enqueue of the fly-placed projects (ptb_split, below).
+# shellcheck source=bin/lib/pool-tick-batch.sh
+. "$H/bin/lib/pool-tick-batch.sh" 2>/dev/null || . "$(dirname "${BASH_SOURCE[0]}")/lib/pool-tick-batch.sh" 2>/dev/null || true
 if hls_over "$H"; then
   mkdir -p "$H/logs" 2>/dev/null
   echo "$(date -u '+%Y-%m-%d %H:%M:%SZ') [pool] $HLS_LINE — project ticks reap, they spawn nothing" >> "$H/logs/fly-pool.log"
@@ -203,7 +206,15 @@ for f in "$H"/flags/fly-pool-*; do
     TICK_PROJECTS+=("$P")
   fi
 done
-[ "${#TICK_PROJECTS[@]}" -gt 0 ] && tick_start_capped "${TICK_PROJECTS[@]}"
+# BATCHED ENQUEUE (BH-7432). ptb_split enqueues every fly-placed project in
+# one POST /api/lane-runs/batch and leaves in PTB_HUB only the projects that
+# still need a hub tick. With no fly row, the knob POOL_TICK_BATCH=0 or no
+# lib, PTB_HUB is every project and this is the start above it replaced.
+if [ "${#TICK_PROJECTS[@]}" -gt 0 ]; then
+  PTB_HUB=("${TICK_PROJECTS[@]}")
+  command -v ptb_split >/dev/null 2>&1 && ptb_split "${TICK_PROJECTS[@]}"
+  [ "${#PTB_HUB[@]}" -gt 0 ] && tick_start_capped "${PTB_HUB[@]}"
+fi
 # BOUNDED WAIT (BH-7491). The sweep used to wait for EVERY tick, so one slow
 # project held this wrapper, the single-run gate (BH-7422) turned each later
 # cron start away, and every project ticked once per round of the slowest one

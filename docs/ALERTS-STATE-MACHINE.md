@@ -43,6 +43,20 @@ State lives in `state/alerts/<id>.json`:
  "count":7,"severity":"critical","resolved_at":null,"line":"…"}
 ```
 
+With `flags/alerts-db` on, the `alerts` row in the jobs worker is the store the
+decision is made on, and this file is a write-through cache and the outage
+fallback (BH-1070 for the writer, BH-7802 for the readers):
+
+| Reader | Reads | When the worker does not answer |
+|---|---|---|
+| `alert_state_note` | `POST /api/alerts/note` decides fire/remind/suppress | the file |
+| `alert_state_resolve` | `alert_resolve_rows`: `POST /api/alerts/resolve` answers `rows` (id, count, severity, first_seen) of the rows it closed | the file; an older worker with no `rows` key (`#norows`) reads count and severity from the file |
+| `alert_state_age` | `alert_row`: `GET /api/alerts?id=<id>`, column `first_seen` | the file |
+| `alert_state_open` (tz-check, disk-guard) | `alert_row`: open is any state but `resolved`; no row is closed | the file (`--file-exists`: any file is open, disk-guard's rule) |
+
+The console's `/alerts` FLEET ROWS shows the same rows. With the flag off, no
+reader makes a request.
+
 `ALERTS.log` stays **append-only and byte-compatible**: the line shape is
 unchanged, and every grep-based reader (`poll-commands.sh`'s cursor,
 `heartbeat-reaper.sh`, the console) keeps working. This layer only ever writes

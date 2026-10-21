@@ -1,0 +1,10 @@
+# @hub-lanes
+
+# ── POOL TICK SUMMARY LANE (BH-7709) ─────────────────────────────────────────
+# Every 2 minutes the hub reads the tail of logs/fly-pool.log once, finds each
+# pool project's last tick, groups its row decisions by skip reason, and posts
+# one row per project to /api/pool/tick-summary. The MCP pool_status tool and
+# the BH-7725 unblock collector read it through GET /api/pool/status.
+# A recorder: it writes no ALERTS line except for a bad knob. flock -n dedupes.
+# Off: flags/lane-off-pool-tick-summary, or bin/harness-ctl.sh off pool-tick-summary.
+*/2 * * * * /root/harness/bin/hub-lease.sh check && /root/harness/bin/pool-tick-summary.sh >/dev/null 2>&1

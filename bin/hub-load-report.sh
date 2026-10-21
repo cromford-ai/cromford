@@ -2,13 +2,14 @@
 # bin/hub-load-report.sh — the hub load baseline, in one fixed format, so a
 # before and an after are measured the same way and can be diffed.
 #
-# usage: bin/hub-load-report.sh [--since <ISO>] [--until <ISO>] [--cap N] [--tick-window S]
+# usage: bin/hub-load-report.sh [--since <ISO>] [--until <ISO>] [--cap N] [--tick-window S] [--acceptance]
 #   --since, --until   UTC, YYYY-MM-DDTHH:MM[:SS]Z. since is in, until is out.
 #                      Default: the last 3600 s.
 #   --cap N            the runnable cap. Default: settings row
 #                      hub_load.max_runnable, else 8.
 #   --tick-window S    the conductor full-tick window. Default:
 #                      MC_FULL_TICK_BUDGET_S, else 1500.
+#   --acceptance       add the acceptance line; rc 0 pass, 1 fail, 3 NA.
 #   -h, --help         this text.
 #
 # Read-only. It writes no file and makes no GitHub call. The one read off the
@@ -28,13 +29,24 @@
 #                            deferred:window, runs with every PR deferred:window;
 #                            WINDOW_DEFERRED lines (mc_window_defer)
 #
-# Output (stdout, rc 0):
+# Output (stdout, rc 0; with --acceptance the rc is the verdict):
 #   hub-load-report since=<ISO> until=<ISO>
 #   load samples=N runnable_p50= runnable_p90= runnable_max= cap=N(row|default|flag) over_cap=yes|no|NA
 #   lane_share <name>=<pct> ...
 #   gh_calls total=N <caller>=n ... [partial(oldest=<ISO>)]
 #   conductor_ticks n= secs_p50= secs_p90= secs_max= tick_window=S over_window=
 #   conductor_fanin runs= deferred_runs= deferred_run_share=% deferred_pr_share=% all_deferred_runs= window_deferred_lines=
+#   acceptance load_p90_le_cap= conductor_ticks_in_window= window_deferred_zero= verdict=
+#                            only with --acceptance. Each value is pass, fail
+#                            or NA. load_p90_le_cap: NA with no samples.
+#                            conductor_ticks_in_window: NA with no log or no
+#                            TICK line, else pass when over_window=0.
+#                            window_deferred_zero: NA with no log or no TICK
+#                            and no FANIN run (a 0 with no activity proves
+#                            nothing), else pass when window_deferred_lines=0
+#                            and deferred_runs=0. verdict: fail if any value
+#                            fails, else NA if any is NA, else pass. rc 0
+#                            pass, 1 fail, 3 NA.
 # A value with no input is NA, never 0. A source that is missing adds
 # "(missing: <path>)" at the end of its line. A bad flag: usage on stderr, rc 2.
 # Doc: docs/notes/2026-10-18-BH-7397-hub-load-report.md.
@@ -50,13 +62,14 @@ iso_epoch() { # iso_epoch <ISO> — epoch seconds, or rc 1
   date -u -d "$1" +%s 2>/dev/null
 }
 
-SINCE=""; UNTIL=""; CAP=""; TW=""
+SINCE=""; UNTIL=""; CAP=""; TW=""; ACC=0
 while [ $# -gt 0 ]; do
   case "$1" in
     --since)       [ $# -ge 2 ] || die "--since needs a value"; SINCE=$(iso_epoch "$2") || die "bad --since: $2"; shift 2 ;;
     --until)       [ $# -ge 2 ] || die "--until needs a value"; UNTIL=$(iso_epoch "$2") || die "bad --until: $2"; shift 2 ;;
     --cap)         [[ "${2:-}" =~ ^[1-9][0-9]{0,6}$ ]] || die "bad --cap: ${2:-}"; CAP=$2; shift 2 ;;
     --tick-window) [[ "${2:-}" =~ ^[1-9][0-9]{0,6}$ ]] || die "bad --tick-window: ${2:-}"; TW=$2; shift 2 ;;
+    --acceptance)  ACC=1; shift ;;
     -h|--help)     usage; exit 0 ;;
     *)             die "unknown argument: $1" ;;
   esac
@@ -146,12 +159,26 @@ else
   printf 'gh_calls total=%s%s%s\n' "$(awk '$1 == "T" { print $2 }' <<<"$GH")" "$TOP" "$PART"
 fi
 
+# acceptance_line <ticks> <windowed> — with --acceptance, print the acceptance
+# line and exit with the verdict (0 pass, 1 fail, 3 NA); without it, exit 0.
+# <ticks> and <windowed> are each pass, fail or NA.
+acceptance_line() {
+  [ "$ACC" = 1 ] || exit 0
+  local load=NA verdict=pass v
+  [ "$P90" != NA ] && { [ "$OVER" = no ] && load=pass || load=fail; }
+  for v in "$load" "$1" "$2"; do
+    if [ "$v" = fail ]; then verdict=fail; elif [ "$v" = NA ] && [ "$verdict" = pass ]; then verdict=NA; fi
+  done
+  printf 'acceptance load_p90_le_cap=%s conductor_ticks_in_window=%s window_deferred_zero=%s verdict=%s\n' "$load" "$1" "$2" "$verdict"
+  case "$verdict" in pass) exit 0 ;; fail) exit 1 ;; *) exit 3 ;; esac
+}
+
 # ── the merge conductor ──────────────────────────────────────────────────────
 MCL="$H/logs/merge-conductor.log"
 if [ ! -r "$MCL" ]; then
   printf 'conductor_ticks n=NA secs_p50=NA secs_p90=NA secs_max=NA tick_window=%s over_window=NA (missing: logs/merge-conductor.log)\n' "$TW"
   printf 'conductor_fanin runs=NA deferred_runs=NA deferred_run_share=NA deferred_pr_share=NA all_deferred_runs=NA window_deferred_lines=NA (missing: logs/merge-conductor.log)\n'
-  exit 0
+  acceptance_line NA NA
 fi
 # One pass over the window's lines: T <secs> per TICK, F <en> <dw> <all> per
 # FANIN merge-conductor run, W per WINDOW_DEFERRED.
@@ -175,4 +202,7 @@ awk "$AWK_Q"'
   $1 == "W" { wl++ }
   END { printf "conductor_fanin runs=%d deferred_runs=%d deferred_run_share=%s deferred_pr_share=%s all_deferred_runs=%d window_deferred_lines=%d\n",
           r, d, pct(d, r), pct(dw, en), all, wl }' <<<"$MC"
-exit 0
+read -r FR FD FW < <(awk '$1 == "F" { r++; if ($3 > 0) d++ } $1 == "W" { wl++ } END { print r + 0, d + 0, wl + 0 }' <<<"$MC")
+ACC_T=NA; [ "$TN" -gt 0 ] && { [ "$TOVER" = 0 ] && ACC_T=pass || ACC_T=fail; }
+ACC_W=NA; [ "$TN" -gt 0 ] || [ "$FR" -gt 0 ] && { [ "$FW" = 0 ] && [ "$FD" = 0 ] && ACC_W=pass || ACC_W=fail; }
+acceptance_line "$ACC_T" "$ACC_W"

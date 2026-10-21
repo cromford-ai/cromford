@@ -27,7 +27,10 @@
 # nothing at all: an unconditional resolve writes a resolve-silent line into
 # logs/alerts-state.log every half hour, which is ~48 a day per box into an
 # append-only ledger with no rotation. An unreadable or unparseable row falls
-# towards calling, which at worst costs that one line.
+# towards calling, which at worst costs that one line. The question is
+# alert_state_open (bin/lib/alert-state.sh): with flags/alerts-db on, the
+# `alerts` row answers first and the file only when the worker does not
+# (BH-7802). Without that lib, the file rule below is the whole answer.
 #
 # THE KNOBS:
 #   TZ_CHECK=0    off. Read from the environment first, and otherwise from the
@@ -60,11 +63,17 @@ tz_check() { # tz_check <harness-root> -> 0 UTC or off, 1 non-UTC (alert fired)
       "this box's timezone is $Z, not UTC. Every log, alert and forensic timestamp it writes is skewed (the hub was CDT on 2026-09-15 and it cost the first forensic pass five hours). Fix: ln -sf /usr/share/zoneinfo/Etc/UTC /etc/localtime && echo Etc/UTC > /etc/timezone (these containers have no systemd; where timedatectl works, timedatectl set-timezone UTC also does)"
     return 1
   fi
-  row="${ALERT_STATE_DIR:-$H/state/alerts}/tz_$BOX.json"
-  [ -s "$row" ] || return 0
-  r=$(jq -r '.resolved_at//0' "$row" 2>/dev/null)
-  case "$r" in ''|*[!0-9]*) r=0 ;; esac
-  [ "$r" -gt 0 ] && return 0
+  # shellcheck disable=SC1090,SC1091
+  command -v alert_state_open >/dev/null 2>&1 || HARNESS="$H" . "$H/bin/lib/alert-state.sh" 2>/dev/null || true
+  if command -v alert_state_open >/dev/null 2>&1; then
+    alert_state_open "tz_$BOX" || return 0
+  else
+    row="${ALERT_STATE_DIR:-$H/state/alerts}/tz_$BOX.json"
+    [ -s "$row" ] || return 0
+    r=$(jq -r '.resolved_at//0' "$row" 2>/dev/null)
+    case "$r" in ''|*[!0-9]*) r=0 ;; esac
+    [ "$r" -gt 0 ] && return 0
+  fi
   "$H/bin/lane-alert.sh" --resolve --id "tz:$BOX" tz-check "timezone is UTC"
   return 0
 }

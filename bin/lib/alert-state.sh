@@ -658,19 +658,32 @@ alert_state_resolve() { # alert_state_resolve <id>
   command -v jq >/dev/null 2>&1 || { echo "silent 0 info"; return 0; }
   d="$(_as_dir)"; f="$d/$id.json"
   if alerts_db_on; then
-    local n rc count sev now
-    n=$(alert_resolve "$id"); rc=$?
+    local out n rc row count sev now
+    out=$(alert_resolve_rows "$id"); rc=$?
     if [ "$rc" -eq 0 ]; then
+      n=$(printf '%s\n' "$out" | sed -n 's/^resolved //p' | tail -n 1)
       case "${n:-}" in ''|*[!0-9]*) as_log "db-miss id=$id rc=parse"; rc=1 ;; esac
     fi
     if [ "$rc" -eq 0 ]; then
       if [ "$n" -ge 1 ]; then
+        # THE ROW IS THE SOURCE (BH-7802): the worker answers the row it
+        # closed, so a resolve from a box with no file still says the count
+        # and the severity the condition opened at. The file answers only
+        # for a worker that sends no rows (#norows), and today's default
+        # (1, critical) only when neither has one.
         count=1; sev=critical
-        if [ -s "$f" ]; then
+        row=$(printf '%s\n' "$out" | awk -F'\t' -v id="$id" '$1 == id { print; exit }')
+        if [ -n "$row" ]; then
+          count=$(printf '%s' "$row" | cut -f2); sev=$(printf '%s' "$row" | cut -f3)
+        elif [ -s "$f" ]; then
           IFS=$'\t' read -r count sev < <(
             jq -r '[(.count//1),(.severity//"critical")]|@tsv' "$f" 2>/dev/null)
-          case "${count:-}" in ''|*[!0-9]*) count=1 ;; esac
-          case "${sev:-}" in info|warn|critical) ;; *) sev=critical ;; esac
+        fi
+        case "${count:-}" in ''|*[!0-9]*) count=1 ;; esac
+        case "${sev:-}" in info|warn|critical) ;; *) sev=critical ;; esac
+        # The file is still stamped closed, so a box that turns the flag off
+        # later reads a closed condition, not an open one.
+        if [ -s "$f" ]; then
           now=$(date -u +%s)
           ( exec 7>"$f.lock" 2>/dev/null || exit 0
             flock -w 5 7 2>/dev/null || exit 0
@@ -699,13 +712,54 @@ alert_state_resolve() { # alert_state_resolve <id>
 
 # alert_state_age <id> — seconds the condition has been open, "" if unknown.
 # Used only to make a resolve line say how long the thing actually lasted.
+# With the row on, first_seen comes from the row (BH-7802): the box that
+# resolves may not be the box that opened. Any other answer reads the file.
 alert_state_age() { # alert_state_age <id>
-  local f; f="$(_as_dir)/$1.json"
-  [ -s "$f" ] || return 0
+  local f row iso first now; f="$(_as_dir)/$1.json"
   command -v jq >/dev/null 2>&1 || return 0
-  local first; first=$(jq -r '.first_seen//0' "$f" 2>/dev/null)
+  if alerts_db_on && row=$(alert_row "$1") && [ -n "$row" ]; then
+    iso=$(printf '%s' "$row" | cut -f7)
+    first=""; [ -n "$iso" ] && first=$(date -u -d "$iso" +%s 2>/dev/null)
+    now=$(date -u +%s)
+    case "$first" in
+      ''|*[!0-9]*) ;;
+      *) [ "$first" -le "$now" ] && { echo $(( now - first )); return 0; } ;;
+    esac
+  fi
+  [ -s "$f" ] || return 0
+  first=$(jq -r '.first_seen//0' "$f" 2>/dev/null)
   case "$first" in ''|*[!0-9]*|0) return 0 ;; esac
   echo $(( $(date -u +%s) - first ))
+}
+
+# alert_state_open <id> [--file-exists] — rc 0 when the condition is open, rc 1
+# when it is closed or unknown. For a caller that resolves only what is open
+# (bin/lib/tz-check.sh, bin/disk-guard.sh), so a healthy box makes no resolve
+# call and writes no resolve-silent line every tick.
+#
+# With the row on and the worker answering, the row decides (BH-7802): open is
+# any state but `resolved`, and no row is closed. Otherwise (flag off, an
+# outage, an answer we cannot read) the file decides: no file is closed, and a
+# file whose resolved_at is missing, null or unparseable is open, because a
+# wrong "open" costs one silent resolve line and a wrong "closed" leaves a page
+# up. --file-exists is disk-guard's older file rule: any file at all is open.
+alert_state_open() { # alert_state_open <id> [--file-exists]
+  local id="${1:-}" mode="${2:-}" f row rc r
+  [ -n "$id" ] || return 1
+  if alerts_db_on; then
+    row=$(alert_row "$id"); rc=$?
+    if [ "$rc" -eq 0 ]; then
+      [ -n "$row" ] || return 1
+      [ "$(printf '%s' "$row" | cut -f5)" != resolved ]; return
+    fi
+    as_log "db-miss id=$id rc=$rc (open check)"
+  fi
+  f="$(_as_dir)/$id.json"
+  if [ "$mode" = --file-exists ]; then [ -e "$f" ]; return; fi
+  [ -s "$f" ] || return 1
+  r=$(jq -r '.resolved_at//0' "$f" 2>/dev/null)
+  case "$r" in ''|*[!0-9]*) r=0 ;; esac
+  [ "$r" -eq 0 ]
 }
 
 # Closed rows are kept for audit, but not forever: this directory is written to

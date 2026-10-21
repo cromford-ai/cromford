@@ -1,0 +1,152 @@
+{
+  "project": "fixture-os",
+  "version": 1,
+  "reported_at": "2026-10-21T08:00:10Z",
+  "as_of": "2026-10-21T08:00:30Z",
+  "tail_lines": 20000,
+  "tick": "ok",
+  "reason": null,
+  "queued": 126,
+  "running": 2,
+  "spawning": 2,
+  "cap": 4,
+  "hotfix": 1,
+  "last_tick": {
+    "at": "2026-10-21T07:55:00Z",
+    "started_at": "2026-10-21T07:50:00Z",
+    "ended_at": "2026-10-21T07:51:52Z",
+    "complete": true,
+    "rows_decided": 26,
+    "rows_spawned": 7,
+    "stop": "max-ticks",
+    "window_stop": "done",
+    "cap": 4,
+    "knob": "POOL_TICK_MAX_PARALLEL",
+    "in_progress_since": null,
+    "max_ticks_waits_1h": 2,
+    "last_max_ticks_at": "2026-10-21T07:55:00Z"
+  },
+  "decisions": [
+    [
+      "FX-101",
+      "waits_for"
+    ],
+    [
+      "FX-102",
+      "waits_for"
+    ],
+    [
+      "FX-103",
+      "waits_for"
+    ],
+    [
+      "FX-104",
+      "waits_for"
+    ],
+    [
+      "FX-105",
+      "waits_for"
+    ],
+    [
+      "FX-106",
+      "waits_for"
+    ],
+    [
+      "FX-107",
+      "waits_for"
+    ],
+    [
+      "FX-108",
+      "waits_for"
+    ],
+    [
+      "FX-109",
+      "waits_for"
+    ],
+    [
+      "FX-110",
+      "waits_for"
+    ],
+    [
+      "FX-111",
+      "waits_for"
+    ],
+    [
+      "FX-112",
+      "waits_for"
+    ],
+    [
+      "FX-113",
+      "waits_for"
+    ],
+    [
+      "FX-201",
+      "hold"
+    ],
+    [
+      "FX-202",
+      "hold"
+    ],
+    [
+      "FX-203",
+      "hold"
+    ],
+    [
+      "FX-301",
+      "spawned"
+    ],
+    [
+      "FX-302",
+      "spawned"
+    ],
+    [
+      "FX-303",
+      "spawned"
+    ],
+    [
+      "FX-304",
+      "spawned"
+    ],
+    [
+      "FX-305",
+      "spawned"
+    ],
+    [
+      "FX-306",
+      "spawned"
+    ],
+    [
+      "FX-307",
+      "spawned"
+    ],
+    [
+      "FX-401",
+      "not_queued"
+    ],
+    [
+      "FX-402",
+      "not_queued"
+    ],
+    [
+      "FX-403",
+      "not_queued"
+    ]
+  ],
+  "decisions_truncated": false,
+  "env_bundle_failures_1h": 2,
+  "respawns": [
+    {
+      "key": "FX-301",
+      "count": 2,
+      "last_result": "PLAN_BLOCKED",
+      "last_at": "2026-10-21T07:50:30Z"
+    }
+  ],
+  "respawns_since": "2026-10-21T06:30:00Z",
+  "respawns_truncated": false,
+  "spawn_cap_per_key": {
+    "value": 2,
+    "window_s": 86400,
+    "source": "default"
+  }
+}

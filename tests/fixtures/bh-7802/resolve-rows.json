@@ -1,0 +1,1 @@
+{"resolved":2,"rows":[{"id":"r1","count":4,"severity":"warn","first_seen":"2026-09-19T11:30:00Z"},{"id":"r2","count":1,"severity":"critical","first_seen":"2026-09-19T11:50:00Z"}],"as_of":"2026-09-19T12:00:00Z"}

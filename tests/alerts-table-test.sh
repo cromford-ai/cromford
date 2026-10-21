@@ -413,6 +413,8 @@ for f in "$T"/req-*.log; do
     case "$P" in
       */api/alerts/note|*/api/alerts/state|*/api/alerts/resolve|*/api/alerts/flush) ;;
       */api/alerts\?state=parked*) ;;
+      # BH-7802: alert_row, the one-row read alert_state_age/_open make.
+      */api/alerts\?id=*\&limit=1) ;;
       *) BAD="$BAD $P" ;;
     esac
   done < <(awk '{print $2}' "$f" 2>/dev/null | grep '/api/alerts')

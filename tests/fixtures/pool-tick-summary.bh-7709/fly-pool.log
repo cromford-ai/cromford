@@ -1,0 +1,49 @@
+2026-10-21 06:30:00Z [pool/fixture-os] max-ticks: 4 of 4 running — fixture-os waits for the next start (POOL_TICK_MAX_PARALLEL)
+2026-10-21 06:50:00Z [pool/fixture-os] pool fixture-os: queued=40 running=2 spawning=2 cap=4
+2026-10-21 06:50:05Z [pool/fixture-os] env bundle FAILED for FX-503: ssh rc 255 — no machine spawned, job stays queued
+2026-10-21 07:30:00Z [pool/fixture-os] max-ticks: 4 of 4 running — fixture-os waits for the next start (POOL_TICK_MAX_PARALLEL)
+2026-10-21 07:40:00Z [pool/fixture-os] pool fixture-os: queued=42 running=2 spawning=2 cap=4
+2026-10-21 07:40:05Z [pool/fixture-os] env bundle FAILED for FX-501: ssh rc 255 — no machine spawned, job stays queued
+2026-10-21 07:40:06Z [pool/fixture-os] env bundle FAILED for FX-504: ssh rc 255 — no machine spawned, job stays queued
+2026-10-21 07:40:07Z [pool/fixture-os] skipping FX-502: HOLD (label hold)
+2026-10-21 07:40:08Z [pool/fixture-os] spawned m-fixture-0 for FX-301 (live=3/4, budget 1 this tick)
+2026-10-21 07:40:30Z [pool/fixture-os] tick budget of 600s spent for fixture-os: no more rows are decided this tick, the lock is released at the end
+2026-10-21 07:49:50Z [pool/fixture-os] m-fixture-8: machine for FX-300 stopped after 41 min
+2026-10-21 07:49:52Z [pool/fixture-os] reaped FX-301 from m-fixture-0: PLAN_BLOCKED the plan gate refused the plan
+2026-10-21 07:49:55Z [pool] hub load over (fixture) — project ticks reap, they spawn nothing
+2026-10-21 07:50:00Z [pool/fixture-os] pool fixture-os: queued=126 running=2 spawning=2 cap=4 hotfix=1
+2026-10-21 07:50:01Z [pool/fixture-os] skipping FX-101: waits for FX-90 (still in flight or its PR is open) — no machine
+2026-10-21 07:50:02Z [pool/fixture-os] skipping FX-102: waits for FX-90 (still in flight or its PR is open) — no machine
+2026-10-21 07:50:03Z [pool/fixture-os] skipping FX-103: waits for FX-90 (still in flight or its PR is open) — no machine
+2026-10-21 07:50:04Z [pool/fixture-os] skipping FX-104: waits for FX-90 (still in flight or its PR is open) — no machine
+2026-10-21 07:50:05Z [pool/fixture-q] skipping FX-901: HOLD (label hold)
+2026-10-21 07:50:06Z [pool/fixture-os] skipping FX-105: waits for FX-91 in a wait cycle; FX-91, the byte-smallest key, goes first — no machine
+2026-10-21 07:50:07Z [pool/fixture-os] skipping FX-106: waits for FX-92, and its PR read did not answer — retried next tick
+2026-10-21 07:50:08Z [pool/fixture-os] skipping FX-107: After: FX-93 — no machine spawned; re-checked next tick
+2026-10-21 07:50:09Z [pool/fixture-os] skipping FX-108: After: FX-93 — no machine spawned; re-checked next tick
+2026-10-21 07:50:10Z [pool/fixture-os] SIBLING_SERIAL FX-109 waits for FX-94 on src/a.ts — no machine spawned; re-checked next tick
+2026-10-21 07:50:11Z [pool/fixture-os] SIBLING_SERIAL FX-110 waits for FX-94 on (no pre-plan list) — no machine spawned; re-checked next tick
+2026-10-21 07:50:12Z [pool/fixture-os] SCHED_WAIT FX-111 reason=not in ready set (tick 2026-10-21T07:49:00Z) — no machine spawned; re-checked next tick
+2026-10-21 07:50:13Z [pool/fixture-os] SCHED_WAIT FX-112 reason=blocked (tick 2026-10-21T07:49:00Z) — no machine spawned; re-checked next tick
+2026-10-21 07:50:14Z [pool/fixture-os] SCHED_WAIT FX-113 reason=not in ready set (tick 2026-10-21T07:49:00Z) — no machine spawned; re-checked next tick
+2026-10-21 07:50:15Z [pool/fixture-os] skipping FX-201: HOLD (label hold)
+2026-10-21 07:50:16Z [pool/fixture-os] skipping FX-202: HOLD (label hold)
+2026-10-21 07:50:17Z [pool/fixture-os] skipping FX-203: HOLD (needs-human)
+2026-10-21 07:50:18Z [pool/fixture-os] SCHED_READY FX-301 (tick 2026-10-21T07:49:00Z) — sibling-serial not consulted (scheduler.mode=enforce)
+2026-10-21 07:50:19Z [pool/fixture-os] SIBLING_SERIAL_RELEASED FX-302 after 30 min behind FX-94
+2026-10-21 07:50:20Z [pool/fixture-os] FX-301 gets account a-fixture (5h 40%, 7d 12%)
+2026-10-21 07:50:21Z [pool/fixture-os] FX-301: setup before launch took 4s
+2026-10-21 07:50:30Z [pool/fixture-os] spawned m-fixture-1 for FX-301 (live=3/4, budget 2 this tick)
+2026-10-21 07:50:40Z [pool/fixture-os] spawned m-fixture-2 for FX-302 (live=4/4, budget 2 this tick)
+2026-10-21 07:50:50Z [pool/fixture-os] spawned m-fixture-3 for FX-303 (live=4/4, budget 2 this tick)
+2026-10-21 07:51:00Z [pool/fixture-os] spawned m-fixture-4 for FX-304 (live=4/4, budget 2 this tick)
+2026-10-21 07:51:10Z [pool/fixture-os] spawned m-fixture-5 for FX-305 (live=4/4, budget 2 this tick)
+2026-10-21 07:51:20Z [pool/fixture-os] m-fixture-9: tick budget of 600s spent — the reuse search stops
+2026-10-21 07:51:30Z [pool/fixture-os] spawned m-fixture-6 for FX-306 (live=4/4, budget 2 this tick)
+2026-10-21 07:51:40Z [pool/fixture-os] spawned m-fixture-7 for FX-307 (live=4/4, budget 2 this tick)
+2026-10-21 07:51:41Z [pool/fixture-q] pool fixture-q: queued=3 running=0 spawning=1 cap=unlimited
+2026-10-21 07:51:42Z [pool/fixture-q] spawned m-fixture-q1 for FX-902 (live=1/unlimited, budget 1 this tick)
+2026-10-21 07:51:50Z [pool/fixture-os] pool fixture-os: FX-401 not queued :: review: lead review pending
+2026-10-21 07:51:51Z [pool/fixture-os] pool fixture-os: FX-402 not queued :: plan: plan blocked
+2026-10-21 07:51:52Z [pool/fixture-os] pool fixture-os: FX-403 not queued :: build: build deferred
+2026-10-21 07:55:00Z [pool/fixture-os] max-ticks: 4 of 4 running — fixture-os waits for the next start (POOL_TICK_MAX_PARALLEL)

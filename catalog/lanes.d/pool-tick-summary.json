@@ -1,0 +1,54 @@
+{
+  "id": "pool-tick-summary",
+  "name": "Pool tick summary (why a pool project's queued rows do not spawn)",
+  "scope": "hub",
+  "script": "bin/pool-tick-summary.sh",
+  "cadence": "*/2 * * * *",
+  "boxes": [
+    "hub"
+  ],
+  "switch": {
+    "kind": "flag",
+    "name": "lane-off-pool-tick-summary",
+    "aliases": []
+  },
+  "wired": true,
+  "knobs": [
+    {
+      "env": "POOL_TICK_SUMMARY_TAIL_LINES",
+      "type": "int",
+      "default": 20000,
+      "min": 1000,
+      "max": 200000,
+      "unit": "lines",
+      "zero_means": null,
+      "note": "BH-7709: how many lines of logs/fly-pool.log bin/pool-tick-summary.sh reads with one tail per run, read as ${POOL_TICK_SUMMARY_TAIL_LINES:-20000}. A tick of 126 rows writes about 300-600 lines, so 20000 covers several ticks of every project. A value outside 1000..200000 is one ALERTS line and no read.",
+      "settable": true
+    },
+    {
+      "env": "POOL_TICK_SUMMARY_QUIET_S",
+      "type": "int",
+      "default": 120,
+      "min": 30,
+      "max": 1800,
+      "unit": "seconds",
+      "zero_means": null,
+      "note": "BH-7709: a project's newest tick counts as ended when its log has no line for this many seconds (or a stop line follows its header), read as ${POOL_TICK_SUMMARY_QUIET_S:-120}. Else the tick before it is reported, with in_progress_since. A value outside 30..1800 is one ALERTS line and no read.",
+      "settable": true
+    },
+    {
+      "env": "POOL_TICK_SUMMARY_NOW",
+      "type": "int",
+      "default": 0,
+      "zero_means": null,
+      "note": "Read by bin/pool-tick-summary.sh as ${POOL_TICK_SUMMARY_NOW:-<date +%s>}: the clock the hour counts and the quiet window are measured from. Test seam; NOT settable from the control plane.",
+      "settable": false
+    }
+  ],
+  "stats": {
+    "cost_stage": null,
+    "cost_project_filter": null,
+    "lanes_row": false,
+    "log": "logs/pool-tick-summary.log"
+  }
+}

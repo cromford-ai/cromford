@@ -75,6 +75,42 @@ alert_resolve() {
   printf '%s\n' "$out"
 }
 
+# alert_resolve_rows <id>... — alert_resolve, plus the rows that moved (BH-7802).
+#   Prints one "<id>\t<count>\t<severity>\t<first_seen>" line per moved row,
+#   then "resolved <n>". A worker that answers no `rows` key (one deployed
+#   before BH-7802) prints "#norows" in their place. rc 1 for a 200 that is not
+#   JSON or has no numeric `resolved`: an answer we cannot read is not a 0.
+alert_resolve_rows() {
+  [ "$#" -gt 0 ] || return 1
+  local ids body resp rc out
+  ids=$(printf '%s\n' "$@" | jq -Rsc 'split("\n") | map(select(. != ""))' 2>/dev/null) || return 1
+  body=$(jq -nc --argjson ids "$ids" '{ids:$ids}' 2>/dev/null) || return 1
+  resp=$(_jobs_req POST /api/alerts/resolve "$body"); rc=$?
+  [ "$rc" -eq 0 ] || return "$rc"
+  out=$(printf '%s' "$resp" | jq -r '
+    if (.resolved | type) != "number" then error("no resolved count") else . end
+    | (if has("rows") then (.rows[] | [.id, (.count // 1), (.severity // ""), (.first_seen // "")] | @tsv)
+       else "#norows" end),
+      "resolved \(.resolved)"' 2>/dev/null) || return 1
+  printf '%s\n' "$out"
+}
+
+# alert_row <id> — the one row of <id> as the 13-column TSV _alerts_list_resp
+#   prints, or nothing (rc 0) when the worker has no such row (BH-7802). rc as
+#   _jobs_req, and rc 1 for an id the worker would refuse, or for an answer
+#   whose row is another id: a worker that does not know ?id= answers its
+#   newest row, and that is not this condition.
+alert_row() {
+  local id="${1:-}" out rc row
+  case "$id" in ''|*[!A-Za-z0-9_.-]*) return 1 ;; esac
+  out=$(_alerts_list_resp GET "/api/alerts?id=$id&limit=1"); rc=$?
+  [ "$rc" -eq 0 ] || return "$rc"
+  row=$(printf '%s\n' "$out" | grep -v '^#' | head -n 1)
+  [ -n "$row" ] || return 0
+  [ "$(printf '%s' "$row" | cut -f1)" = "$id" ] || return 1
+  printf '%s\n' "$row"
+}
+
 # alert_claim <lane> <state> [min_age_s] [limit] [id...]
 alert_claim() {
   local lane="${1:-}" state="${2:-}" min_age_s="${3:-}" limit="${4:-}" body ids

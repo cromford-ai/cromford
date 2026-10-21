@@ -31,6 +31,8 @@ command -v lane_env_apply    >/dev/null 2>&1 && lane_env_apply    disk-guard
 
 # shellcheck source=bin/lib/disk-guard.sh
 . "$HARNESS/bin/lib/disk-guard.sh" 2>/dev/null || . "$(dirname "$0")/lib/disk-guard.sh" 2>/dev/null || exit 0
+# shellcheck source=bin/lib/alert-state.sh
+. "$HARNESS/bin/lib/alert-state.sh" 2>/dev/null || . "$(dirname "$0")/lib/alert-state.sh" 2>/dev/null || true
 
 LOG="$HARNESS/logs/disk-guard.log"
 LA="$HARNESS/bin/lane-alert.sh"
@@ -99,9 +101,12 @@ top_dirs() {
   fi
 }
 
-# resolve <id> <text> — only a condition lane-alert has a state row for, so a
-# healthy box does not write a resolve-silent line every ten minutes.
-resolve() { [ -e "$ADIR/$1.json" ] && "$LA" --resolve --id "$1" disk-guard "$2" >/dev/null 2>&1; return 0; }
+# resolve <id> <text> — only a condition that is open, so a healthy box does
+# not write a resolve-silent line every ten minutes. With flags/alerts-db on the
+# `alerts` row answers (BH-7802); otherwise any state file counts, as before (a
+# resolve on a closed id is silent anyway).
+command -v alert_state_open >/dev/null 2>&1 || alert_state_open() { [ -e "$ADIR/$1.json" ]; }
+resolve() { alert_state_open "$1" --file-exists && "$LA" --resolve --id "$1" disk-guard "$2" >/dev/null 2>&1; return 0; }
 
 if [ "$PCT" -ge "$ALERT" ]; then
   "$LA" --id "disk-high-$HOST" --severity warn disk-guard "$SAY. $NEXT. $(top_dirs)." >/dev/null 2>&1 || true

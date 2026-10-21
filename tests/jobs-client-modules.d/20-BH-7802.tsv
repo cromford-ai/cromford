@@ -1,0 +1,3 @@
+# tests/jobs-client-modules.d/20-BH-7802.tsv — the alert-state readers read the alerts row (BH-7802).
+alerts	alert_resolve_rows
+alerts	alert_row
