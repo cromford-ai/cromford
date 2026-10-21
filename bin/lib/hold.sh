@@ -36,7 +36,7 @@
 # hold:human-fix <at> <line> (BH-5125); the clear tails are no-hold,
 # lifted-by-comment <at>, lifted-by-human-step <at> and
 # hold:go-live <at> <step> (BH-7123 wave B: an open go-live step that gates
-# nothing; hold_is_pause still reads it as a pause for ticket ownership).
+# nothing; BH-7873: hold_is_pause reads it as clear too, so it defers no build).
 #
 # THE WHY NAMES THE LINE THAT DECIDED (BH-1461): `hold:body <line>`,
 # `hold:title <line>`, `hold:comment <at> <line>`. The verdict TOKEN in front is
@@ -192,8 +192,9 @@ HOLD_HUMAN_FIX_RE='(?m)^(Taken by:[ \t]*\S|\[human-fix\])'
 # park the ticket like any other human step and fail the merge gate with it. A
 # marker whose action opens `go-live:` (bin/needs-human-hold.sh, source go-live)
 # classifies CLEAR with the tail `hold:go-live <at> <step>`: bin/fly-pool.sh and
-# bin/blocked-resolver.sh read the first word and proceed, the console and
-# bin/lib/ticket-ownership.sh (hold_is_pause) still see the open step, and a
+# bin/blocked-resolver.sh read the first word and proceed, hold_is_pause answers
+# false (BH-7873), so bin/lib/ticket-ownership.sh and HOLD_STAGE_CHECK build it,
+# the console still shows the open step from the tail, and a
 # person's HUMAN-STEP-DONE / RESUME directly over it lifts it exactly as an
 # ordinary marker. Everything else on the thread decides as if the go-live
 # marker were not there: a person's HOLD, an ABANDON or an unanswered ordinary
@@ -221,7 +222,13 @@ HOLD_AMBIGUOUS_MARK='<!-- harness:hold-ambiguous'
 # `closed` and `label-absent` are neither: they are facts about the issue, not
 # instructions on it, so they answer false to both and every caller keeps
 # deciding them the way it already does.
-hold_is_pause()   { case "${1:-}" in *"	hold:"*)    return 0 ;; esac; return 1; }
+#
+# THE FIRST FIELD DECIDES (BH-7873). A pause is `held` (or `hold`) AND a
+# `hold:` tail. `clear<TAB>hold:go-live <at> <step>` has the tail but is clear:
+# matching only the tail made to_hold_verdict say held, HOLD_STAGE_CHECK defer
+# every build, and bin/fly-pool.sh (first word: clear) spawn a Fly machine per
+# re-offer that deferred at once. TK-1296 deferred 10 times, TK-1292 12 times.
+hold_is_pause()   { case "${1:-}" in held"	hold:"*|hold"	hold:"*) return 0 ;; esac; return 1; }
 hold_is_abandon() { case "${1:-}" in *"	abandon:"*) return 0 ;; esac; return 1; }
 
 # hold__read <file-or-json> — a path when it is one, the string itself otherwise.

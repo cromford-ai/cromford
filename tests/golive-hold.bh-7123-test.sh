@@ -131,7 +131,7 @@ $TAG" "$T2" Bot)")" "H2: the placer's tagged Bot go-live marker reads the same"
   row 1 "held|hold:label hold" "$(ISSUE open 'ai-build,hold')" "$(CMTS "$(CMT "$GL" "$T2")")" "H12: the hold label wins"
   row 1 "held|closed" "$(ISSUE closed)" "$(CMTS "$(CMT "$GL" "$T2")")" "H13: closed wins"
   V=$(hold_classify "$OPEN" "$(CMTS "$(CMT "$GL" "$T2")")")
-  hold_is_pause "$V" && ok || bad "H14: hold_is_pause reads an open go-live step as a pause (bin/lib/ticket-ownership.sh keeps the ticket owned, so no re-launch): '$V'"
+  hold_is_pause "$V" && bad "H14: hold_is_pause must read an open go-live step as clear (BH-7873: a go-live hold defers no build): '$V'" || ok
   hold_is_abandon "$V" && bad "H14: go-live is not an abandon" || ok
   # The regex is exported for the python engine like every other HOLD_*_RE.
   [ -n "${HOLD_GOLIVE_RE:-}" ] && ok || bad "H15: HOLD_GOLIVE_RE is not defined"
