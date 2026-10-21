@@ -124,6 +124,12 @@ for _P in "$(dirname "$0")/lib/triage-gate-ledger.sh" "$HARNESS/bin/lib/triage-g
   # shellcheck source=/dev/null
   [ -r "$_P" ] && { . "$_P"; break; }
 done
+# BH-7803: the remote-results cursor (.since, .handled/<job>.job) with its
+# ledger rows, for section 3b. No lib = the file reads below.
+for _P in "$(dirname "$0")/lib/rr-cursor.sh" "$HARNESS/bin/lib/rr-cursor.sh"; do
+  # shellcheck source=/dev/null
+  [ -r "$_P" ] && { . "$_P"; break; }
+done
 # BH-2350: the builds-of-record reader, for section 3b. No lib, no 3b.
 for _P in "$(dirname "$0")/lib/builds-of-record.sh" "$HARNESS/bin/lib/builds-of-record.sh"; do
   # shellcheck source=/dev/null
@@ -1024,12 +1030,22 @@ done
 # holds the wake, not the board: a held set falls through to 4-6.
 if command -v bor_list >/dev/null 2>&1 && [ -n "${JOBS_BOX:-}" ]; then
   RRD="$HARNESS/state/remote-results/$PROJECT"
-  RSINCE=$(tr -dc '0-9A-Za-z:.-' < "$RRD/.since" 2>/dev/null)
+  # The file first, else the cursor's ledger row (BH-7803), so a rebuilt box
+  # does not wake for work another tick already staged.
+  if command -v rrc_since_get >/dev/null 2>&1; then
+    RSINCE=$(rrc_since_get "$PROJECT")
+  else
+    RSINCE=$(tr -dc '0-9A-Za-z:.-' < "$RRD/.since" 2>/dev/null)
+  fi
   RMSET=""
   while IFS=$'\t' read -r RKEY RBDIR RBOX _U RLINE _PR RJOB; do
     [ -n "$RBDIR" ] && [ "$RBOX" != "$JOBS_BOX" ] || continue
     bor_local_dir "$RBDIR" >/dev/null && continue
-    [ -f "$RRD/.handled/$RJOB.job" ] && continue
+    if command -v rrc_job_handled >/dev/null 2>&1; then
+      rrc_job_handled "$PROJECT" "$RJOB" && continue
+    else
+      [ -f "$RRD/.handled/$RJOB.job" ] && continue
+    fi
     RMSET="$RMSET$RKEY"$'\t'"$RLINE"$'\n'
   done < <(bor_list "$PROJECT" "$RSINCE" 50 2>/dev/null)
   if [ -n "$RMSET" ]; then

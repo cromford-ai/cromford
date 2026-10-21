@@ -81,6 +81,23 @@ RR_BDPATH() { case "${1:-}" in "") return 1 ;; /*) printf '%s' "$1" ;;
 # is this loop exactly as it behaves today.
 # shellcheck source=bin/lib/builder-direct.sh
 [ -r "$HARNESS/bin/lib/builder-direct.sh" ] && . "$HARNESS/bin/lib/builder-direct.sh"
+# THE CURSOR IS ALSO LEDGER ROWS (BH-7803). bin/lib/rr-cursor.sh writes each
+# .handled marker and the .since watermark as a `ledgers` row too, and reads the
+# row when the file is gone, so a rebuilt box stages nothing twice. The files
+# are still written and read first. A tree without the lib gets file-only shims
+# that do exactly what this file did before.
+# shellcheck source=bin/lib/rr-cursor.sh
+if ! { [ -r "$HARNESS/bin/lib/rr-cursor.sh" ] && . "$HARNESS/bin/lib/rr-cursor.sh"; } \
+   && ! { [ -r "$(dirname "${BASH_SOURCE[0]}")/../rr-cursor.sh" ] && . "$(dirname "${BASH_SOURCE[0]}")/../rr-cursor.sh"; }; then
+  echo "$STAMP [$PROJECT] rr-cursor: bin/lib/rr-cursor.sh not found — the cursor is file-only this tick" >> "$LOG"
+  rrc_job_handled() { [ -f "$RRDIR/.handled/$2.job" ]; }
+  rrc_job_mark() { : > "$RRDIR/.handled/$2.job"; }
+  rrc_since_get() { cat "$RRDIR/.since" 2>/dev/null | tr -dc '0-9A-Za-z:.-'; }
+  rrc_since_put() { printf '%s' "$2" > "$RRDIR/.since"; }
+  rrc_json_consume() { case "$3" in
+    empty|badjson) mv -f "$2" "$RRDIR/.handled/$(basename "$2").$3" ;;
+    *) mv -f "$2" "$RRDIR/.handled/$(basename "$2")" ;; esac; }
+fi
 RR_CLOSED_OUT() { # RR_CLOSED_OUT <result-line> <staged-dir>
   command -v bd_closed_out >/dev/null 2>&1 || return 0
   bd_closed_out "${1:-}" || return 0
@@ -176,7 +193,7 @@ if ls "$RRDIR"/*.json >/dev/null 2>&1; then
   mkdir -p "$RRDIR/.handled"
   for RRF in "$RRDIR"/*.json; do
     RRKEY=$(jq -r '.key // ""' "$RRF" 2>/dev/null)
-    [ -n "$RRKEY" ] || { mv -f "$RRF" "$RRDIR/.handled/$(basename "$RRF").badjson"; continue; }
+    [ -n "$RRKEY" ] || { rrc_json_consume "$PROJECT" "$RRF" badjson; continue; }
     # THE RECIPROCAL GUARD (2026-09-10). The ledger loop below skips a key this
     # loop has already staged; without the same test here the two paths race in
     # the other direction. The artifact row lands the moment the build ends and
@@ -255,14 +272,14 @@ if ls "$RRDIR"/*.json >/dev/null 2>&1; then
     fi
     if [ "$RRSTAGED" = 1 ]; then
       RRBP=$(RR_BDPATH "$RRBD0") && [ -d "$RRBP" ] && touch "$RRBP/COMMENTED" 2>/dev/null
-      mv -f "$RRF" "$RRDIR/.handled/$(basename "$RRF")"
+      rrc_json_consume "$PROJECT" "$RRF" duplicate "$RRBDN"
       echo "$STAMP [$PROJECT] relay json for $RRKEY (build ${RRBDN:-?}) is already staged — consumed, not staged twice" >> "$LOG"
       continue
     fi
     RRDEST=$(RR_DEST "$RRKEY")
     mkdir -p "$RRDEST"
     jq -r '.result // ""' "$RRF" > "$RRDEST/RESULT"
-    [ -s "$RRDEST/RESULT" ] || { rmdir "$RRDEST" 2>/dev/null; mv -f "$RRF" "$RRDIR/.handled/$(basename "$RRF").empty"; continue; }
+    [ -s "$RRDEST/RESULT" ] || { rmdir "$RRDEST" 2>/dev/null; rrc_json_consume "$PROJECT" "$RRF" empty "$RRBDN"; continue; }
     jq -r '"TICKET_ID: \(.ticket_id // "")\nSOURCE: remote (\(.source // "fly"))\nINGESTED: \(.ingested_at // "")"' "$RRF" >> "$RRDEST/RESULT"
     # THE PROVENANCE LINE (2026-09-11), and this loop's own re-entry guard.
     # Until now the only identity a staged dir carried was its own NAME, and the
@@ -283,7 +300,7 @@ if ls "$RRDIR"/*.json >/dev/null 2>&1; then
     # The reap's own pool-* dir is handled THROUGH this staged copy — mark it
     # so the un-commented check doesn't double-count one piece of work forever.
     RRBP=$(RR_BDPATH "$RRBD0") && [ -d "$RRBP" ] && touch "$RRBP/COMMENTED" 2>/dev/null
-    mv -f "$RRF" "$RRDIR/.handled/$(basename "$RRF")"
+    rrc_json_consume "$PROJECT" "$RRF" staged "$RRBDN"
     echo "$STAMP [$PROJECT] remote-result $RRKEY staged as $(basename "$RRDEST") for the sweep" >> "$LOG"
   done
 fi
@@ -318,8 +335,9 @@ if command -v job_artifact_feed >/dev/null 2>&1; then
   # fifty comments arrive at once. The watermark is the durable half: ask only
   # for rows newer than the last one seen, so an empty .handled directory
   # replays nothing rather than everything.
-  RRSINCE_FILE="$RRDIR/.since"
-  RRSINCE=$(cat "$RRSINCE_FILE" 2>/dev/null | tr -dc '0-9A-Za-z:.-')
+  # The file first, else the project's rr-since row (BH-7803): a rebuilt box
+  # with no file still asks only for rows newer than the last one staged.
+  RRSINCE=$(rrc_since_get "$PROJECT")
   RRMAX="$RRSINCE"
   # ANY failure in this pass freezes the watermark for the WHOLE pass. Advancing
   # per row is not enough and the reason is worth stating: the feed is ordered
@@ -348,7 +366,7 @@ if command -v job_artifact_feed >/dev/null 2>&1; then
     # never seen again, and the close-out it carried would be lost silently.
     RR_DONE() { case "$RRMAX" in "") RRMAX="$RTS" ;; *) [ "$RTS" \> "$RRMAX" ] && RRMAX="$RTS" ;; esac; }
     [ -n "$MYBOX" ] && [ "$RBOX" = "$MYBOX" ] && { RR_DONE; continue; }
-    [ -f "$RRDIR/.handled/$RJOB.job" ] && { RR_DONE; continue; }
+    rrc_job_handled "$PROJECT" "$RJOB" && { RR_DONE; continue; }
     RKEY=$(printf '%s' "${RDET:-}" | jq -r '.key // ""' 2>/dev/null)
     [ -n "$RKEY" ] || RKEY="$RJOB"
     # KEYED ON THE JOB, NOT THE TICKET (2026-09-11, project-3 TK-139). A dir already
@@ -413,7 +431,7 @@ if command -v job_artifact_feed >/dev/null 2>&1; then
       fi
     fi
     if [ "$RSTAGED" = 1 ]; then
-      : > "$RRDIR/.handled/$RJOB.job"; RR_DONE; continue
+      rrc_job_mark "$PROJECT" "$RJOB" "$RKEY" consumed; RR_DONE; continue
     fi
     RDEST=$(RR_DEST "$RKEY")
     # EVERY WRITE IS CHECKED, and a failed one leaves the row untouched: no
@@ -495,7 +513,7 @@ if command -v job_artifact_feed >/dev/null 2>&1; then
     fi
     RR_CLOSED_OUT "$RREF" "$RDEST"
     RR_NO_CLOSEOUT "$RREF" "$RDEST" "$RKEY"
-    : > "$RRDIR/.handled/$RJOB.job"
+    rrc_job_mark "$PROJECT" "$RJOB" "$RKEY" "$(basename "$RDEST")"
     RR_DONE
     echo "$STAMP [$PROJECT] remote-result $RKEY pulled from the ledger (built on ${RBOX:-?}) staged as $(basename "$RDEST") for the sweep" >> "$LOG"
   done <<RRFEED
@@ -506,7 +524,7 @@ RRFEED
   # leaves the old watermark, the rows are re-read next tick, and the .handled
   # markers stop the duplicates. The two guards cover each other's failure.
   [ "$RRFAILED" = 0 ] && [ -n "$RRMAX" ] && [ "$RRMAX" != "$RRSINCE" ] \
-    && printf '%s' "$RRMAX" > "$RRSINCE_FILE"
+    && rrc_since_put "$PROJECT" "$RRMAX"
   # A ROW THE GATE CAN SEE (2026-09-11, project-3 TK-139). bin/triage-gate.sh's queue
   # brake hashes FILES — READY-QUEUE.log, the queue dir, the build dirs — and
   # holds a 45-minute skip window over them. While results arrived by scp, a
