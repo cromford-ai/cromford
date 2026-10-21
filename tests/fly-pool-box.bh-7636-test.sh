@@ -60,7 +60,9 @@ _jobs_req() {
 }
 EOF
 
-ago() { date -u -d "@$(( $(date -u +%s) - $1 ))" +%FT%TZ; }
+# NOW pins the clock: PB1 sets it once per case, so the row ages and the
+# pp_newest "now" cannot straddle a second boundary (a 401 for a 400).
+ago() { date -u -d "@$(( ${NOW:-$(date -u +%s)} - $1 ))" +%FT%TZ; }
 # row <id> <status> [prof_line] [enqueued age-s] [lease_until age-s|-]
 row() {
   local lu=null
@@ -79,12 +81,13 @@ reset() {
   mkdir -p "$T/settings"; : > "$H/logs/ALERTS.log"; : > "$T/gate.log"
 }
 boxlines() { grep -c "pool-box-$P" "$H/logs/ALERTS.log"; }
-newest() { HARNESS="$H" bash -c ". \"$H/bin/lib/pool-placement.sh\"; pp_newest \"\$(cat \"$T/rows.json\")\" $P $(date -u +%s) 300 $1"; }
+newest() { HARNESS="$H" bash -c ". \"$H/bin/lib/pool-placement.sh\"; pp_newest \"\$(cat \"$T/rows.json\")\" $P ${NOW:-$(date -u +%s)} 300 $1"; }
 
 echo "PB1: box-silent classification"
 reset
 while IFS='|' read -r st enq lu box want; do
   [ -n "$st" ] || continue
+  NOW=$(date -u +%s)
   row 7 "$st" "" "$enq" "$lu"
   got=$(newest "$box")
   [ "$got" = "$want" ] && ok "PB1 $st enqueued ${enq}s ago lease ${lu}s ago box=$box -> $want" || bad "PB1 $st $enq $lu box=$box -> '$got' want '$want'"
@@ -97,6 +100,7 @@ claimed|400|300|1|stale 7 box-silent
 claimed|400|300|0|live 7 claimed
 claimed|400|-|1|live 7 claimed
 EOF
+unset NOW
 
 echo "PB2: placed on the box, the hub enqueues and does no pool work"
 reset; place "box:$BOX"; echo '{"rows":[]}' > "$T/rows.json"; tick

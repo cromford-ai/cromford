@@ -62,8 +62,8 @@ done < "$CASES"
 
 echo "T2: lp_box_parse"
 pb() { bash -c '. "$1/bin/lib/lane-placement.sh" || exit 9; lp_box_parse "$2"' _ "$DIR" "$1"; }
-[ "$(pb 'box:box-project-6-os-1')" = box-project-6-os-1 ] && ok "T2 plain name" || bad "T2 plain: $(pb 'box:box-project-6-os-1')"
-[ "$(pb $'\tBOX:box.MKOS_1 \n')" = box.mkos_1 ] && ok "T2 trim + lowercase, . and _ kept" || bad "T2 trim: $(pb $'\tBOX:box.MKOS_1 \n')"
+[ "$(pb 'box:box-p1')" = box-p1 ] && ok "T2 plain name" || bad "T2 plain: $(pb 'box:box-p1')"
+[ "$(pb $'\tBOX:box.P1_2 \n')" = box.p1_2 ] && ok "T2 trim + lowercase, . and _ kept" || bad "T2 trim: $(pb $'\tBOX:box.P1_2 \n')"
 for v in 'box:' 'box:a/b' 'box:_a' 'fly' 'box' "box:$(printf 'b%.0s' {1..65})"; do
   out=$(pb "$v" 2>&1); rc=$?
   if [ "$rc" = 1 ] && [ -z "$out" ]; then ok "T2 '${v:0:20}' is not a box value (rc 1)"; else bad "T2 '$v' rc $rc out '$out'"; fi
@@ -71,11 +71,11 @@ done
 
 echo "T3: LP_BOX is reset on every read"
 scratch_rm "$T/settings"; mkdir -p "$T/settings"
-printf 'box:project-6-os' > "$T/settings/lane_placement.merge-conductor.p1"
+printf 'box:p1box' > "$T/settings/lane_placement.merge-conductor.p1"
 printf 'fly' > "$T/settings/lane_placement.merge-conductor.p2"
 got=$(bash -c '. "$1/bin/lib/lane-placement.sh"; . "$2"
   lp_decide merge-conductor p1; a="$LP_PLACE:$LP_BOX"; lp_decide merge-conductor p2; printf "%s %s:%s" "$a" "$LP_PLACE" "${LP_BOX:-}"' _ "$DIR" "$T/stubs.sh")
-[ "$got" = "box:project-6-os fly:" ] && ok "T3 box then fly: LP_BOX empty after the fly read" || bad "T3 got '$got'"
+[ "$got" = "box:p1box fly:" ] && ok "T3 box then fly: LP_BOX empty after the fly read" || bad "T3 got '$got'"
 
 echo
 echo "lane-placement-box.bh-7636: $PASS passed, $FAIL failed"
