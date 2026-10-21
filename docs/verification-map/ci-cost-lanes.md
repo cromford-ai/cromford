@@ -124,6 +124,8 @@ resolver briefs the fix round from the batch's failing log (above).
 | what | how |
 |---|---|
 | the plan: queue full, PR selection for the `full` label, sizing, knobs, never-empty, --expect-n | `bash tests/ci-plan-test.sh` |
+| the shard count by recorded duration on the ticket's numbers (BH-6491): 93 suites with five 6-min ones give >= 3 shards of <= 12 min, the logged count fallback, sizing after reuse, the `ci-plan sizing` notice | `bash tests/ci-plan-shard-by-duration.bh-6491-test.sh` |
+| the sizing replay and re-measure over real batches (BH-6491): actual max shard, runner minutes, predicted max, no-ledger count | `bash tests/ci-shard-replay.bh-6491-test.sh` |
 | one traced run, two verdicts, verdict file only on a completed scan | `bash tests/trace-safety-gate-test.sh` |
 | each fan-in judges its own column; missing / short evidence is red for both | `bash tests/ci-verdicts-test.sh` |
 | who runs what, concurrency, Mergify queue vs merge conditions, in-place off | `bash tests/harness-ci-cost-shape-test.sh` |

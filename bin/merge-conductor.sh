@@ -183,13 +183,13 @@ command -v prs_open_list >/dev/null 2>&1 && export HPL_SNAPSHOT=1
 # gh-rest: no-graphql
 . "$H/bin/lib/merge-conductor-lib.sh"
 # >>> tick scope (BH-6518)
-# The keyed-tick parse, the full-tick window and the tick mode live in
-# bin/lib/mc/tick-scope.sh, a driver-only file (no module header, so the lib's
-# other users never load it). A box mid-sync can see this script new and that
-# file missing or old: the tick refuses, before any GitHub read, rather than
-# run a scope it cannot parse.
+# The keyed-tick parse, the full-tick window, the tick mode and the tick
+# prelude live in bin/lib/mc/tick-scope.sh, a driver-only file (no module
+# header, so the lib's other users never load it). A box mid-sync can see
+# this script new and that file missing or old: the tick refuses, before any
+# GitHub read, rather than run a scope it cannot parse.
 # shellcheck source=bin/lib/mc/tick-scope.sh
-if ! . "$H/bin/lib/mc/tick-scope.sh" || ! declare -F mc_keyed_tick_parse >/dev/null || ! declare -F mc_full_tick_window >/dev/null || ! declare -F mc_tick_mode >/dev/null; then
+if ! . "$H/bin/lib/mc/tick-scope.sh" || ! declare -F mc_keyed_tick_parse >/dev/null || ! declare -F mc_full_tick_window >/dev/null || ! declare -F mc_tick_mode >/dev/null || ! declare -F mc_tick_prelude >/dev/null; then
   HARNESS="$H" "$H/bin/alert-line.sh" --id conductor-module-missing "CONDUCTOR MODULE MISSING: bin/lib/mc/tick-scope.sh is missing or unusable on $(hostname) — the box's bin/ is half-synced; no PR was ticked this tick" 2>/dev/null || true
   mc_log "bin/lib/mc/tick-scope.sh is missing or unusable — refusing the tick"
   exit 1
@@ -392,73 +392,11 @@ mc_tick_mode
 # it is judged by its last completed tick, the stamp hb_done writes.
 hb_start merge-conductor 300 1800 "PR merges fleet-wide" "" cron
 
-REBASE_BUDGET="${MC_REBASE_BUDGET:-2}"; REREVIEW_BUDGET="${MC_REREVIEW_BUDGET:-2}"; MERGE_BUDGET="${MC_MERGE_BUDGET:-5}"
-# --- isInMergeQueue: ask gh ONCE whether it accepts the field (2026-09-15) ----
-# mergeStateStatus has no QUEUED value, so isInMergeQueue is the only witness of
-# GitHub's native queue — but this gh's `--json` allowlist REFUSES it in list
-# mode, and the open pass asked for it on every repo on every tick anyway. That
-# is 411 lines of "gh refused --json isInMergeQueue — reading it per PR this
-# tick" in 24 hours, one wasted list call per repo per tick behind each of them,
-# and a per-PR read for every open PR on the repo whether or not the answer
-# could matter.
-#
-# So the refusal is REMEMBERED (state/merge-conductor/gh-no-inqueue) instead of
-# rediscovered: while the marker is fresh the list does not ask for the field at
-# all, and the field is read per PR only for PRs whose merge state is one where
-# being in the queue changes the answer. The marker ages out after
-# MC_INQUEUE_PROBE_TTL_SECS so a gh upgrade is picked up on its own — a
-# capability cache that can never expire is a capability cache that is wrong
-# after the next `npm i -g`.
-#   MC_LIST_INQUEUE   auto (default) | 1 always ask | 0 never ask
-MC_LIST_INQUEUE="${MC_LIST_INQUEUE:-auto}"
-MC_INQUEUE_PROBE_TTL_SECS="${MC_INQUEUE_PROBE_TTL_SECS:-86400}"
-# The merge states in which "is this PR in the queue" changes what the tick does.
-# A PR that is DIRTY, BLOCKED or UNSTABLE is not about to be merged by anything,
-# and GitHub does not hold it in a queue either.
-MC_INQUEUE_STATES="${MC_INQUEUE_STATES:-CLEAN QUEUED}"
-
-# --- MAIN-RED FREEZE (2026-09-15) --------------------------------------------
-# bin/main-red-detector.sh writes flags/main-red-<slug> when the repo's own main
-# is red (the flag body carries the content sha, the workflow and since when).
-# While it is there this conductor merges NOTHING in that repo — because every
-# merge on a red main is a merge whose CI signal is worthless, and because the
-# queue will eject everything behind it anyway — with two exceptions that are
-# the way OUT of a red main:
-#   * a PR carrying the fix label (MC_MAIN_RED_LABEL, default fix-main-red);
-#   * a PR whose whole diff is test files (MC_MAIN_RED_TEST_PATHS), which cannot
-#     be what broke production main and is frequently the quarantine that
-#     unblocks it.
-# The flag is read under both spellings a detector might use — the PROJECT name
-# and the owner-repo slug — because a flag name cannot contain a slash.
-#
-# MC_MAIN_RED_LABEL, MC_MAIN_RED_TEST_PATHS, main_red_flag, main_red_test_path
-# and main_red_exempt now live in bin/lib/main-red-gate.sh (BH-945), sourced by
-# bin/lib/merge-conductor-lib.sh above. They moved because they were PRIVATE to
-# this script, which is how #931 and #942 merged into a red main through box
-# lanes on 2026-09-18 while this conductor logged the freeze every tick. Same
-# names, same behaviour, six more callers. The two call sites below are
-# unchanged and guard on `command -v main_red_flag`.
-# THE DAILY RE-REVIEW CAP IS OFF BY DEFAULT (2026-09-14). It was a spend guard
-# from when one re-review blocked the whole tick; with the review detached the
-# thing worth bounding is how many run AT ONCE (MC_REREVIEW_PARALLEL), not how
-# many a project may buy in a day — and the cap of 6 is what left seven
-# approved project-5 PRs waiting overnight. 0 = unlimited; an operator who sets
-# MC_REREVIEW_DAILY_CAP=<n> still gets exactly the old behaviour.
-REREVIEW_CAP="${MC_REREVIEW_DAILY_CAP:-0}"
-CAPFILE="$MC_STATE_DIR/rereviews-$(date -u +%Y%m%d).txt"; touch "$CAPFILE"
-export MC_REREVIEW_PARALLEL MC_REREVIEW_TIMEOUT_SECS MC_RR_PATH
-# The detached lanes re-source the lib in a fresh shell, so their knobs have to
-# be in the ENVIRONMENT, not just in this process.
-export MC_REBASE_PARALLEL MC_REBASE_TIMEOUT_SECS MC_DETACHED_REBASE
-export MC_DV_TIMEOUT_SECS MC_DETACHED_DEPLOY_VERIFY
-export MC_PR_PARALLEL MC_MERGE_LOCK_WAIT
-# ONE ID FOR THE WHOLE TICK, exported so every PR worker of every project shares
-# it. It keys this tick's spend-budget counters (so they start at zero without a
-# reset) and it is the `tick=` field of the metrics line each project logs.
-# Minted here and never inherited: a tick that reused the last one's id would
-# inherit its spent budgets. Two OVERLAPPING ticks therefore have separate
-# budgets, which is the same thing as saying each tick may spend its own.
-MC_TICK_ID=$(mc_tick_id); export MC_TICK_ID
+# THE TICK PRELUDE: the spend budgets, the isInMergeQueue knobs, the re-review
+# cap file, the knobs the detached lanes inherit and the tick id. They are set
+# by mc_tick_prelude, in bin/lib/mc/tick-scope.sh (BH-6518). It reads
+# MC_STATE_DIR, so the call stays after mc_init.
+mc_tick_prelude
 
 use_token() { # use_token <slug> — rc 1 when no token can see the repo (already alerted)
   # TOKEN RESOLUTION ONLY; every caller and every gh call below is unchanged.

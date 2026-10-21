@@ -44,6 +44,7 @@
   "knobs": [
     {
       "env": "MC_MERGE_BUDGET",
+      "read_in": "bin/lib/mc/tick-scope.sh",
       "type": "int",
       "default": 5,
       "min": 0,
@@ -54,6 +55,7 @@
     },
     {
       "env": "MC_REBASE_BUDGET",
+      "read_in": "bin/lib/mc/tick-scope.sh",
       "type": "int",
       "default": 2,
       "min": 0,
@@ -75,6 +77,7 @@
     },
     {
       "env": "MC_REREVIEW_BUDGET",
+      "read_in": "bin/lib/mc/tick-scope.sh",
       "type": "int",
       "default": 2,
       "min": 0,
@@ -85,6 +88,7 @@
     },
     {
       "env": "MC_REREVIEW_DAILY_CAP",
+      "read_in": "bin/lib/mc/tick-scope.sh",
       "type": "int",
       "default": 0,
       "min": 0,
@@ -272,6 +276,7 @@
     },
     {
       "env": "MC_REBASE_TIMEOUT_SECS",
+      "read_in": "bin/lib/mc/log.sh",
       "type": "int",
       "default": 1800,
       "min": 120,
@@ -282,6 +287,7 @@
     },
     {
       "env": "MC_REREVIEW_TIMEOUT_SECS",
+      "read_in": "bin/lib/mc/log.sh",
       "type": "int",
       "default": 2700,
       "min": 120,

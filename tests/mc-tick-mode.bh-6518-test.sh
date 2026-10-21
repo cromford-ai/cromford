@@ -133,14 +133,16 @@ rc=$(tick)
 [ "$(nlog 'merge flag set')" = 0 ] && ok || bad "D2: a tick with no flags logged a refusal: $(mclog)"
 [ "$(nlog 'PAUSED(merges) fleet')" = 0 ] && ok || bad "D2: a tick with no pause logged a fleet pause: $(mclog)"
 
-# D3: tick-scope.sh defines the parse and the window and not the mode (the C1
-# file). D3 and its mutation are the last driver cases: they replace the
-# installed file and nothing after them needs the real one back.
+# D3: tick-scope.sh defines the parse, the window and the prelude, and not
+# the mode. The prelude stub keeps the C3 guard clause satisfied. D3 and its
+# mutation are the last driver cases: they replace the installed file and
+# nothing after them needs the real one back.
 c1_ts() { cat > "$HD/bin/lib/mc/tick-scope.sh" <<'SH'
 #!/bin/bash
 # shellcheck shell=bash
 mc_keyed_tick_parse() { MC_ONLY_KEYS=""; }
 mc_full_tick_window() { :; }
+mc_tick_prelude() { REBASE_BUDGET=2 REREVIEW_BUDGET=2 MERGE_BUDGET=5 REREVIEW_CAP=0 CAPFILE=/dev/null; MC_TICK_ID=stub; export MC_TICK_ID; }
 SH
 }
 resetd; c1_ts

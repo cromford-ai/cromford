@@ -222,7 +222,9 @@
 # stops it says `cap reached`. Without the file (the nightly, a caller that
 # passes none), the old rule: n = ceil(suites / CI_SUITES_PER_SHARD), clamped
 # to 1..CI_MAX_SHARDS. Either way one `ci-plan: sizing: time (<source>), ...` or
-# `ci-plan: sizing: count, ...` line says which rule ran and why. The knobs are
+# `ci-plan: sizing: count, ...` line says which rule ran and why; a batch also
+# sends it as `::notice title=ci-plan sizing::sizing: <...>` (BH-6491, read by
+# bin/ci-shard-replay.sh). The knobs are
 # repo variables, projected from the ci-plan-settings rows by
 # bin/ci-plan-settings.sh (CI_MAX_SHARDS, CI_SHARD_BUDGET_S); a value that is
 # not a positive integer falls back to the default and says so, never to zero
@@ -322,7 +324,7 @@ while [ $# -gt 0 ]; do
     --expect-n) [ $# -ge 2 ] || { echo "ci-plan: --expect-n needs a number" >&2; exit 2; }; EXPECT="$2"; shift ;;
     --tier)     case "${2:-}" in nightly|nightly-full) TIER="$2" ;;
                   *) echo "ci-plan: --tier takes 'nightly' or 'nightly-full'" >&2; exit 2 ;; esac; shift ;;
-    -h|--help)  sed -n '2,311p' "$0"; exit 0 ;;
+    -h|--help)  sed -n '2,313p' "$0"; exit 0 ;;
     *) echo "ci-plan: unknown argument $1" >&2; exit 2 ;;
   esac
   shift
@@ -1132,6 +1134,9 @@ echo "$SUMMARY"
 # On the run page, not only in the plan log: what the batch ran and why.
 if [ "$BATCH" = 1 ] && { [ "${GITHUB_ACTIONS:-}" = true ] || [ -n "${GITHUB_STEP_SUMMARY:-}" ]; }; then
   echo "::notice title=ci-plan::mode=$MODE count=$COUNT total=$TOTAL n=$N reason=$REASON"
+  # BH-6491: its own title, so readers of title == "ci-plan" never see it;
+  # bin/ci-shard-replay.sh reads the rule, budget and cap a batch planned with.
+  echo "::notice title=ci-plan sizing::sizing: $SIZING"
   [ -z "$OWN_NOTE" ] || echo "::notice title=ci-plan own diff::$OWN_NOTE"
   [ -z "${GITHUB_STEP_SUMMARY:-}" ] || printf '%s\nescalation: %s\nown base: %s%s\nspa: %s worker: %s\n' "$SUMMARY" "$ESCALATION" "$OWN_BASE" "${OWN_NOTE:+ ($OWN_NOTE)}" "$SPA" "$WORKER" >> "$GITHUB_STEP_SUMMARY" 2>/dev/null || true
   [ -z "${GITHUB_STEP_SUMMARY:-}" ] || [ -z "$RLINE_REACH" ] || printf '%s\n' "$RLINE_REACH" >> "$GITHUB_STEP_SUMMARY" 2>/dev/null || true
