@@ -740,11 +740,12 @@ call_guard_reset() {
   _jobs_req DELETE "/api/call-guard?$q"
 }
 
-# call_guard_list [project] [stage] [hours] — the per-fingerprint roll-up, for
-# an operator (`bin/jobs-client.sh call-guard ...`).
+# call_guard_list [project] [stage] [hours] [fp] — the per-fingerprint roll-up, for
+# an operator (`bin/jobs-client.sh call-guard ...`); [fp] (BH-7792) is one key's row.
 call_guard_list() {
   local q="hours=${3:-24}"
   [ -n "${1:-}" ] && q="$q&project=$(jq -rn --arg v "$1" '$v|@uri')"
   [ -n "${2:-}" ] && q="$q&stage=$(jq -rn --arg v "$2" '$v|@uri')"
+  [ -n "${4:-}" ] && q="$q&fp=$(jq -rn --arg v "$4" '$v|@uri')"
   _jobs_req GET "/api/call-guard?$q"
 }

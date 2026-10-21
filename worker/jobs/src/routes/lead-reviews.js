@@ -60,6 +60,13 @@
 //   to it, and /reset treats the row as finished.
 // - jobLive is NOT used: this is a heartbeat deadline, not the /start takeover.
 //
+// BH-7792, a finished paid review is never lost to a rebind:
+// - /result from a job the row is not bound to lands when it is a done verdict
+//   of this head from a lead_review job of this head's key that is running or
+//   done, and the row has no result yet (rebindResult). Anything else is 409.
+// - POST /:id/release {job_id, detail?} (bearer): the holder of a running
+//   claim puts it back to requested, with no reset counted.
+//
 // A missing id is `no such lead review request`, never the worker's own
 // unknown-endpoint body: lr_get reads THAT one as "not deployed" (rc 75).
 import { d1Guarded, json } from "../lib/http.js";
@@ -201,6 +208,34 @@ function optFields(body, spec) {
     v[key] = r.v;
   }
   return { v };
+}
+
+// rebindResult — BH-7792. A done result from a job the row is NOT bound to
+// lands only when ALL of these hold, else null (the caller's 409 stands):
+// - the outcome is done with a verdict (a failed or superseded outcome of a
+//   rebound job buys nothing, so it is still refused);
+// - the head is the row's head, and the row has no result yet (requested or
+//   running): a recorded result is never replaced;
+// - the poster is a jobs row of kind lead_review whose ticket is this head's
+//   key lr-<pr>-<sha12> (job_open's key), with status running or done: a failed
+//   job, a job of another head and an unknown job id stay refused.
+// ONE compare-and-set pinned to the job and the status read here, so a result
+// of the bound job that lands first wins and this one is the 409. The row is
+// bound to the poster's job and box; the 200 names the job it took the row
+// from as `rebound_from`.
+async function rebindResult(env, t, row, job_id, head_sha, outcome, verdict, v) {
+  if (outcome !== "done" || verdict === null) return null;
+  if (row.head_sha !== head_sha || (row.status !== "running" && row.status !== "requested")) return null;
+  const job = await env.DB.prepare("SELECT id, ticket_id, kind, status, box FROM jobs WHERE id=?1").bind(job_id).first();
+  if (!job || job.kind !== "lead_review" || job.ticket_id !== `lr-${row.pr}-${head_sha.slice(0, 12)}`) return null;
+  if (job.status !== OPEN_STATUS && job.status !== "done") return null;
+  const res = await env.DB.prepare(
+    `UPDATE lead_review_requests SET status='done', verdict=?1, report_ref=?2, reviewer_model=?3, detail=?4,
+                                     job_id=?5, box=?6, participant=NULL, updated_at=?7
+      WHERE id=?8 AND status=?9 AND job_id IS ?10`
+  ).bind(verdict, v.report_ref, v.reviewer_model, v.detail, job_id, job.box ?? null, t, row.id, row.status, row.job_id ?? null).run();
+  if (res.meta.changes !== 1) return null;
+  return json(200, { request: await getRow(env, row.id), rebound_from: { job_id: row.job_id ?? null, box: row.box ?? null } });
 }
 
 export const routes = [
@@ -524,6 +559,34 @@ export const routes = [
     }),
   ],
 
+  // BH-7792: the job that holds a running claim gives it back. ONE
+  // compare-and-set pinned to the status and the job: the row goes to
+  // requested with job, box, participant and heartbeat cleared, and `detail`
+  // says why. It is not a reset (reset_count and reset_at are left alone), so
+  // the claim that takes it next counts none either. bin/lead-review.sh calls it
+  // when the call-guard refuses the paid call (rc 74..79, nothing billed), so
+  // the request is free at once for the box that holds the paid report.
+  [
+    "POST", /^\/api\/lead-reviews\/([^/]+)\/release$/,
+    guarded(async ({ env, t, body, m }) => {
+      const id = decodeURIComponent(m[1]);
+      const b = body || {};
+      const job_id = reqStr(b.job_id, 128);
+      if (!job_id) return json(400, { error: "job_id must be a string, 1..128 chars" });
+      const o = optFields(b, [["detail", 4000]]);
+      if (o.err) return json(400, { error: o.err });
+      const res = await env.DB.prepare(
+        `UPDATE lead_review_requests
+            SET status='requested', job_id=NULL, box=NULL, participant=NULL, heartbeat_at=NULL, detail=?1, updated_at=?2
+          WHERE id=?3 AND status='running' AND job_id=?4`
+      ).bind(o.v.detail, t, id, job_id).run();
+      const row = await getRow(env, id);
+      if (!row) return json(404, { error: "no such lead review request" });
+      if (res.meta.changes === 1) return json(200, { request: row, released_by: job_id });
+      return json(409, { error: `lead review request is ${row.status}${row.job_id ? ` (job ${row.job_id})` : ""}; only the job that holds a running claim may release it`, request: row });
+    }),
+  ],
+
   // The outcome and the verdict are refused by name, never mapped: APPROVE is
   // not a verdict word, and a failed review carries no verdict at all.
   [
@@ -547,7 +610,14 @@ export const routes = [
 
       const row = await getRow(env, id);
       if (!row) return json(404, { error: "no such lead review request" });
-      if (row.job_id !== job_id) return json(409, { error: "job_id is not the job this request is bound to", request: row });
+      if (row.job_id !== job_id) {
+        // BH-7792: the request was rebound while this job was still inside its
+        // paid call. A finished review of this head from a live lead-review job
+        // of this head lands, so a paid review is never lost (rebindResult).
+        const rb = await rebindResult(env, t, row, job_id, head_sha, outcome, verdict, o.v);
+        if (rb) return rb;
+        return json(409, { error: "job_id is not the job this request is bound to", request: row });
+      }
       if (row.head_sha !== head_sha) return json(409, { error: "head_sha is not the head this request was made for", request: row });
       if (row.status === "running") {
         const res = await env.DB.prepare(

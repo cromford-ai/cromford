@@ -47,6 +47,30 @@ lr_fail_counted() {
   return 1
 }
 
+# lr_release_claim <id> <job> <key> <why> — BH-7792: a run that will buy nothing
+#   (the call-guard refused, or would refuse, the paid call) stops its claim
+#   heartbeat (the host's LRBEAT), gives the claim back (lr_release: the row is
+#   requested at once, so the box that holds a paid report replays it), writes
+#   the release marker either way (a tick that listed the row as running before
+#   the release takes it over uncounted) and fails the job.
+lr_release_claim() {
+  [ -n "$LRBEAT" ] && job_beat_stop "$LRBEAT"; LRBEAT=""
+  if lr_release "$1" "$2" "$4" >/dev/null 2>&1; then log "$3: claim released (request $1 back to requested)"
+  else log "$3: claim release refused; request left running"; fi
+  lr_left_running "$4"; job_update "$2" status=failed
+}
+
+# lr_guard_spent <project> <fp> — BH-7792 (#7792 comment 6309315490): rc 0 and
+#   `<paid>/<max>` when the lead-head call-guard would refuse a paid call on the
+#   guard key <fp> now, read-only (call_guard_peek, with the lane's call-guard
+#   knobs applied in a subshell). rc 1 = it may go ahead, or nothing is known.
+lr_guard_spent() {
+  [ -n "${1:-}" ] && [ -n "${2:-}" ] || return 1
+  ( command -v lib_env_apply >/dev/null 2>&1 && lib_env_apply call-guard >/dev/null 2>&1
+    command -v call_guard_peek >/dev/null 2>&1 || . "$H/bin/lib/call-guard.sh" 2>/dev/null || exit 1
+    AGENT_CALL_GUARD_STAGE=lead-head AGENT_CALL_FP="$2" call_guard_peek lead-head "$1" )
+}
+
 # BH-5284: an agent call refused for a rate or concurrency limit (a 429,
 # "overloaded", the account's concurrency cap) bought no review. It records no
 # verdict, writes no .empty and posts no result: the job fails and the request

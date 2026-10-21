@@ -19,7 +19,9 @@
 #     POST /api/lead-reviews/<id>/result     200 | result.fail = 500
 #     GET  /api/lead-reviews?status=          rows.json | rows.fail = 500
 #     POST /api/jobs, PATCH /api/jobs/<id>    job_open is a mkdir test-and-set per key;
-#                                             done or failed releases the key
+#                                             done or failed releases the key; with
+#                                             jobs.resume an open key answers its own
+#                                             job (a same-box resume, BH-7792)
 #     GET  /api/jobs?kind=lead_review         jobsrun.json (array) | jobsrun.fail = 500
 #     GET  /api/settings/<key>                settings/<key> | FAIL = 500 | absent = 404
 #     GET  /api/metrics/llm-spend             spend.fail = 500 | spend.seq (one line a
@@ -36,6 +38,8 @@
 #                                             bound to the PR's needs-review head (head.<n>, $SHA)
 #     GET  /api/fix-rounds                    fixrounds.json | {fix_round_jobs:[]}; fixrounds.fail = 500
 #     POST /api/wakes/lane                    200
+#     GET  /api/call-guard?...&fp=            BH-7792: callguard.paid holds N = one row for
+#                                             that fp with paid N; else rows:[]
 #   every request is logged as `<METHOD> <path> <body>` to $T/log/worker.
 #   gh: logs its argv to $T/log/gh; pulls/<n> answers state.<n> (open) and head.<n> ($SHA); ghfail.<n> = 500; ghbad.<n> = 200 with no head sha; ghdown.<n> = transport failure (no status);
 #     ghrl.<n> = 403 "API rate limit exceeded". The body carries mergeable:true,
@@ -52,7 +56,8 @@
 #     GET repos/<o>/<r> answers default_branch $FX/defbranch (main); repofail = 500.
 #     GET repos/<o>/<r>/compare/<base>...<head> answers cmp.<head> (else one clean
 #     non-merge commit); cmpfail.<head> = 500. Gate 15 of lead-review.sh reads it.
-#   bin/agent-call.sh: logs the PR to $T/log/agent-prs and the in-flight count to
+#   bin/agent-call.sh: logs the PR to $T/log/agent-prs, its guard key
+#     (AGENT_CALL_GUARD_STAGE AGENT_CALL_FP) to $T/log/agent-fps, and the in-flight count to
 #     $T/log/conc; with $FX/block it waits for $FX/release.<pr> or release.all,
 #     else sleeps $FX/sleep; agentrc.<pr> = exit with that rc and no answer.
 #   bin/lane-alert.sh: logs its argv to $T/log/lane-alert.
@@ -97,7 +102,7 @@ EOF
   cat > "$H/bin/agent-call.sh" <<EOF
 #!/bin/bash
 pr="\${AGENT_CALL_PR##*/}"
-( flock 9; printf '%s\n' "\$pr" >> "$T/log/agent-prs" ) 9>"$T/agent.lock"
+( flock 9; printf '%s\n' "\$pr" >> "$T/log/agent-prs"; printf '%s %s\n' "\${AGENT_CALL_GUARD_STAGE:-}" "\${AGENT_CALL_FP:-}" >> "$T/log/agent-fps" ) 9>"$T/agent.lock"
 if [ -e "$FX/agentrc.\$pr" ]; then exit "\$(cat "$FX/agentrc.\$pr")"; fi
 ( flock 9; mkdir -p "$T/run"; : > "$T/run/\$pr"; ls "$T/run" | wc -l | tr -d ' ' >> "$T/log/conc" ) 9>"$T/agent.lock"
 if [ -e "$FX/block" ]; then
@@ -175,6 +180,7 @@ case "\$m \$p" in
   "POST /api/jobs")
     k=\$(printf '%s' "\$body" | jq -r '.ticket_id')
     if mkdir "$T/jobs/\$k" 2>/dev/null; then out=\$(jq -nc --arg k "\$k" '{job:{id:("job-" + \$k)}}')
+    elif [ -e "$FX/jobs.resume" ]; then out=\$(jq -nc --arg k "\$k" '{job:{id:("job-" + \$k)}, resumed:true}')
     else code=409; out='{"job":{"id":"job-x","box":"box-other"}}'; fi ;;
   "PATCH /api/jobs/job-"*)
     case "\$(printf '%s' "\$body" | jq -r '.status // empty')" in
@@ -226,6 +232,11 @@ case "\$m \$p" in
       [ -n "\$h" ] || h=\$(cat "$FX/head.\$n" 2>/dev/null || echo "$SHA")
       out=\$(jq -nc --arg h "\$h" '{verdict:"APPROVE", reviewed_sha:\$h, artifacts:[]}')
     fi ;;
+  "GET /api/call-guard?"*)
+    if [ -s "$FX/callguard.paid" ]; then
+      f=\$(printf '%s' "\$p" | sed -n 's/.*[?&]fp=\([^&]*\).*/\1/p'); f=\$(printf '%b' "\${f//%/\\\\x}")
+      out=\$(jq -nc --arg f "\$f" --argjson n "\$(cat "$FX/callguard.paid")" '{rows:[{project:"demo-os", stage:"lead-head", fp:\$f, paid:\$n, refused:0}], hours:24}')
+    else out='{"rows":[],"hours":24}'; fi ;;
   "GET /api/fix-rounds"*)
     if [ -e "$FX/fixrounds.fail" ]; then code=500; out='{"error":"fixture outage"}'
     else out=\$(cat "$FX/fixrounds.json" 2>/dev/null || echo '{"fix_round_jobs":[],"truncated":false}'); fi ;;

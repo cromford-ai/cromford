@@ -9,6 +9,8 @@ GET re:/^\/api\/lead-reviews\/([^/]+)$/
 POST re:/^\/api\/lead-reviews\/([^/]+)\/claim$/
 # BH-5351: the claim heartbeat, between claim and result.
 POST re:/^\/api\/lead-reviews\/([^/]+)\/heartbeat$/
+# BH-7792: the holder gives its claim back, between heartbeat and result.
+POST re:/^\/api\/lead-reviews\/([^/]+)\/release$/
 POST re:/^\/api\/lead-reviews\/([^/]+)\/result$/
 # BH-5400: the reset route, between result and the promoted stamp.
 POST re:/^\/api\/lead-reviews\/([^/]+)\/reset$/

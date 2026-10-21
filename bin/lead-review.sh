@@ -68,7 +68,11 @@
 # a later tick starts more reviews while these run: it counts every live worker
 # on the box (state/lead-review/pool, rpool_box_running) against K and the
 # fleet-wide row. The per-key lock and the job_open claim keep one request to
-# one worker.
+# one worker. BH-7792: a later tick on the SAME box gets the running worker's
+# own job back from job_open (a same-box resume), so a loser of the per-key
+# lock never closes a job the holder wrote to locks/lead-review-<key>.job: it
+# closed it before, /start then read the request's job as not live, and a
+# second box rebound the request while the first was still in its paid call.
 #
 # THE LEAD CHAIN (BH-4057, BH-5317). A worker whose terminal result (done, or
 # outcome=failed) the jobs worker accepted rings lead-land on its way out
@@ -172,7 +176,12 @@
 #                           (Checklist-Version on line 1, `- checklist: v<N>` in
 #                           the report) + PR + ticket thread + scope notes + prior
 #                           verdict + rules pack + suite + diff. rc 74..79 = nothing billed:
-#                           job failed, request left, nothing written. An answer
+#                           job failed, the claim's heartbeat stopped and the claim
+#                           released to requested (lr_release, BH-7792; a refused
+#                           release leaves it running), the release marker written,
+#                           nothing else written. BH-7792: the same release runs
+#                           BEFORE the rules pack when a read-only peek of the
+#                           lead-head guard key says it is spent. An answer
 #                           with no findings block (lr_has_findings) is replaced
 #                           by the last message of its session transcript that
 #                           has findings and a verdict (lr_pick_review, via
@@ -740,7 +749,7 @@ review_one() {
   local suite_cmd suite_line suite_rc ci_ok pf out verdict report empty rmodel ad akind hdr
   local RP_STATE="" RP_TAIL="" CL_STATE="" CL_TAIL="" rp_rc rp_ci harness_repo dmode="" dprev="" dline="" dreport lb tn tslug tdone thread_note total half lfp lstage lnote
   local capr="" capo capf ctitle clabels
-  local resets mreset since f what fields="" bfp bchg rsn bmode="" bline="" ldp_rc="" dbytes ldp_why nprod ldp_mode ldp_find
+  local resets mreset since f what fields="" bfp bchg rsn gpaid bmode="" bline="" ldp_rc="" dbytes ldp_why nprod ldp_mode ldp_find
   local lpv=0 lpk="" lprc imode="" imodel ire ckl imm wlnotes="" rlcap="" rlgl=0 rlgo bires="" bimode=off birw=0 biline=""
   # BH-5873: the mode the gates chose (full|delta|replay). Nothing reads it yet;
   # child 2 of #5870 (delta and replay) does.
@@ -773,9 +782,14 @@ review_one() {
   [ -d "$H/locks" ] || mkdir -p "$H/locks"
   if ! { exec 8>"$H/locks/lead-review-$key.lock" && flock -n 8; }; then
     exec 8>&-; log "skip $key: another worker holds locks/lead-review-$key.lock"
+    # BH-7792: the holder's job is ours too when job_open resumed it on this box.
+    if [ "$(cat "$H/locks/lead-review-$key.job" 2>/dev/null)" = "$job" ]; then
+      log "skip $key: job $job is the lock holder's; left open"; return
+    fi
     job_update "$job" status=done 'meta={"reason":"key held"}'; return
   fi
   LR_KEYFD=8
+  printf '%s\n' "$job" > "$H/locks/lead-review-$key.job" 2>/dev/null || log "$key: holder job not recorded in locks/lead-review-$key.job"
   # The limits a tick applies before a claim (header); `one` has none. The
   # attempts gate is for a worklist item: a request row's own status is its
   # record (the third counted failure posts outcome=failed to it, and a failed
@@ -1067,6 +1081,28 @@ review_one() {
     log "replayed $key: lead $rw from ${rprev:0:12} ($rhow); no agent call"; R=replayed; return
   fi
   [ "$LW_REPLAY_WHY" = "no earlier lead verdict" ] || log "$key: no replay ($LW_REPLAY_WHY)"
+  # BH-3930: the head, as the K=1 guard key lead:<slug>#<n>@<sha> on stage
+  # lead-head, so one head is paid once; the unknown-verdict retry is its own
+  # key (~noverdict). Empty when review-bought.sh is missing = no fp, as before.
+  # BH-5888: when the body changed since the stored review (bchg), the keys are
+  # ~body<D> and ~nvbody<D> (lr_body_reason), so one head and body is paid once.
+  lfp=""; lstage=""
+  if command -v lead_fp >/dev/null 2>&1; then
+    if [ "$bchg" = 1 ] && rsn=$(lr_body_reason "$bfp"); then
+      lfp=$(lead_fp "$repo" "$pr" "$sha" "$rsn")
+      log "body changed since the stored review of $key; guard key $lfp"
+    else
+      lfp=$(lead_fp "$repo" "$pr" "$sha")
+    fi
+    lstage=lead-head
+  fi
+  # BH-7792 (#7792 comment 6309315490): ask the lead-head guard first, read-only.
+  # A head already paid for, not replayed above, would be refused at the agent
+  # call after the rules pack and the host suite: release the claim now instead.
+  if [ -n "$lfp" ] && gpaid=$(lr_guard_spent "$project" "$lfp"); then
+    log "$key: lead-head call-guard paid $gpaid on $lfp; no rules pack, no host suite, no agent call"
+    lr_release_claim "$id" "$job" "$key" "call-guard: lead-head paid $gpaid"; return
+  fi
   if ! git -C "$REPO_DIR" worktree add -q --detach "$WT" "$sha" >/dev/null 2>&1; then
     log "checkout of $sha for $key failed"; lr_fail_counted "$id" "$job" "$sha" checkout; return
   fi
@@ -1479,21 +1515,7 @@ review_one() {
   out="$WT.out"
   left=$((DEADLINE - SECONDS)); [ "$left" -lt 60 ] && left=60
   # BH-2537: both calls name the PR for the cost row. $key is a job key, not a ticket.
-  # BH-3930: and the head, as the K=1 guard key lead:<slug>#<n>@<sha> on stage
-  # lead-head, so one head is paid once; the unknown-verdict retry is its own
-  # key (~noverdict). Empty when review-bought.sh is missing = no fp, as before.
-  # BH-5888: when the body changed since the stored review (bchg), the keys are
-  # ~body<D> and ~nvbody<D> (lr_body_reason), so one head and body is paid once.
-  lfp=""; lstage=""
-  if command -v lead_fp >/dev/null 2>&1; then
-    if [ "$bchg" = 1 ] && rsn=$(lr_body_reason "$bfp"); then
-      lfp=$(lead_fp "$repo" "$pr" "$sha" "$rsn")
-      log "body changed since the stored review of $key; guard key $lfp"
-    else
-      lfp=$(lead_fp "$repo" "$pr" "$sha")
-    fi
-    lstage=lead-head
-  fi
+  # The guard key lfp (lead-head) is set before the rules pack (BH-7792, above).
   # BH-5355: the cost row says which prompt this was, so the ledger splits by mode.
   lnote="lead-mode=${dmode:-${imode:-${bmode:-full}}}"
   AGENT_CALL_GUARD_STAGE="$lstage" AGENT_CALL_FP="$lfp" AGENT_CALL_ROW_NOTE="$lnote" \
@@ -1519,7 +1541,8 @@ review_one() {
   fi
   if [ "$rc" -ge 74 ] && [ "$rc" -le 79 ]; then
     log "agent-call refused $key (rc=$rc, nothing billed); request left for the next tick"
-    lr_left_running "agent-call rc $rc"; job_update "$job" status=failed; return
+    # BH-7792: the claim goes back at once (lr_release_claim).
+    lr_release_claim "$id" "$job" "$key" "agent-call rc $rc: nothing billed"; return
   fi
   if [ "$verdict" = unknown ]; then
     log "no readable review (findings and a verdict) from $model for $key after one retry"

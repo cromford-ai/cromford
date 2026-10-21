@@ -31,6 +31,8 @@
 #                                                    the 200 names `reclaimed_from`. /start refuses the
 #                                                    participant header (403).
 #   POST /api/lead-reviews/:id/heartbeat bearer     {job_id} (BH-5351): only the job holding the running row
+#   POST /api/lead-reviews/:id/release  bearer      {job_id, detail?} (BH-7792): only the job holding the running
+#                                                    row; back to requested, job/box/heartbeat cleared, no reset
 #   POST /api/lead-reviews/:id/result   bearer      {job_id, head_sha, outcome, verdict?, report_ref?, reviewer_model?, detail?}
 #   POST /api/lead-reviews/:id/reset    lead token  {} (BH-5400) done|failed|superseded -> requested, the
 #                                                    result and stamp cleared, reset_count+1, reset_at;
@@ -47,6 +49,7 @@
 #                   | 4 held by a live job | 1 anything else (outage, 400, not deployed,
 #                   a 409 that is not this route's); the body is printed on every answer
 #      lr_heartbeat 0 2xx | 1 anything else (lr_post's)
+#      lr_release   0 2xx | 1 anything else (lr_post's)
 #      lr_beat_start the beater's pid | 1 no id, no job or a bad interval
 #      lr_whoami    0 2xx (the whoami body on stdout) | 1 anything else, `HTTP <code>` on stderr
 # PARTICIPANT MODE (BH-5351): when HARNESS_PARTICIPANT_TOKEN_FILE names a readable,
@@ -168,6 +171,12 @@ lr_whoami() { _lr_req_participant GET /api/participants/whoami; }
 lr_heartbeat() {
   [ -n "${1:-}" ] && [ -n "${2:-}" ] || return 1
   lr_post "/$1/heartbeat" "$(jq -nc --arg j "$2" '{job_id:$j}')"
+}
+
+# lr_release <id> <job> [detail] — give a running claim back (BH-7792).
+lr_release() {
+  [ -n "${1:-}" ] && [ -n "${2:-}" ] || return 1
+  lr_post "/$1/release" "$(jq -nc --arg j "$2" --arg d "${3:-}" '{job_id:$j} + (if $d == "" then {} else {detail:$d} end)')"
 }
 
 # lr_beat_interval — the beat interval in seconds: stale_s/3, never under

@@ -14,7 +14,8 @@
 //   POST /api/call-guard/settle {call_id, outcome: ok|empty|failed|unbilled}
 //     -> 200 {settled}  (false when the row was already settled, was a
 //        refusal, or never existed: the FIRST outcome stands)
-//   GET  /api/call-guard?project=&stage=&hours=
+//   GET  /api/call-guard?project=&stage=&hours=&fp=
+//        (fp=, BH-7792: only that fingerprint's row; read-only, no claim)
 //     -> {rows:[{project,stage,fp,paid,refused,refused_since_reset,reset_at,last_at}]}
 //        `refused` is every refusal in the window. `reset_at` is the `at` of
 //        the key's newest reset audit row in the window (null if none), and
@@ -222,6 +223,10 @@ export const routes = [
       const stage = url.searchParams.get("stage");
       if (project) { binds.push(project); where.push(`project=?${binds.length}`); }
       if (stage) { binds.push(stage); where.push(`stage=?${binds.length}`); }
+      // BH-7792: one fingerprint's roll-up (the lead lane's read before its
+      // rules pack), served by idx_call_guard_key(project, stage, fp, at).
+      const fp = url.searchParams.get("fp");
+      if (fp) { binds.push(fp); where.push(`fp=?${binds.length}`); }
       // `w` is the window; `r` is each key's newest reset in it, by rowid.
       // sql-ident-ok: where holds literal column=?N clauses, every value a bind
       const rows = await env.DB.prepare(

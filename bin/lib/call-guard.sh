@@ -299,6 +299,26 @@ call_guard_precall() {
   return 0
 }
 
+# call_guard_peek <agent-call-stage> <project> — BH-7792: the guard's answer for
+#   the work AGENT_CALL_FP names, WITHOUT a claim (GET /api/call-guard?fp=, no
+#   row written, nothing spent). rc 0 and `<paid>/<max>` on stdout when a call
+#   now would be refused (paid >= max in the window). rc 1 otherwise, and also
+#   when the guard is off for the stage, unconfigured or unreadable: then the
+#   claim at the call decides, as before.
+call_guard_peek() {
+  local st fp max win resp paid
+  st=$(call_guard_stage "${1:-}")
+  call_guard_enabled "$st" || return 1
+  command -v call_guard_list >/dev/null 2>&1 && [ -n "${JOBS_URL:-}" ] || return 1
+  max=$(call_guard_max "$st"); fp=$(call_guard_fp "")
+  win="${CALL_GUARD_WINDOW_S:-86400}"; case "$win" in ''|*[!0-9]*) win=86400 ;; esac
+  resp=$(JOBS_TIMEOUT="${CALL_GUARD_TIMEOUT_S:-5}" call_guard_list "${2:-}" "$st" "$(( (win + 3599) / 3600 ))" "$fp" 2>/dev/null) || return 1
+  paid=$(printf '%s' "$resp" | jq -r --arg f "$fp" '[.rows[]? | select(.fp == $f) | .paid] | add // 0' 2>/dev/null)
+  case "$paid" in ''|*[!0-9]*) return 1 ;; esac
+  [ "$paid" -ge "$max" ] || return 1
+  printf '%s/%s' "$paid" "$max"
+}
+
 # call_guard_rung_ok <runner> — rc 1 when a LOWER rung must not run: the
 # counter was unreadable and this rung costs cash. Every other state is rc 0 —
 # an allowed claim covers the whole call, whichever rung serves it.
