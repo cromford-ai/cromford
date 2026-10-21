@@ -497,6 +497,11 @@ has I1-flyctl-sha "$(cat "$DF")" 'bake_sha256 /tmp/flyctl.tar.gz'
 has I1-flyctl-usr-local "$(cat "$DF")" 'tar -xzf /tmp/flyctl.tar.gz -C /usr/local/bin flyctl'
 hasnt I1-not-fly-home "$(grep -v '^#' "$DF")" 'install.sh'
 has I1-runbook-build-arg "$(cat "$REPO/docs/notes/2026-10-20-BH-7715-hub-move.md")" "--build-arg FLYCTL_VERSION="
+# I2: a pinned pnpm, because bootstrap-machine.sh installs pnpm repos with pnpm
+has I2-pnpm-arg "$(cat "$DF")" "ARG PNPM_VERSION"
+has I2-pnpm-pinned "$(cat "$DF")" 'bake_require PNPM_VERSION'
+has I2-pnpm-verify "$(cat "$DF")" 'bake_verify pnpm "$PNPM_VERSION" pnpm --version'
+has I2-runbook-build-arg "$(cat "$REPO/docs/notes/2026-10-20-BH-7715-hub-move.md")" "--build-arg PNPM_VERSION="
 
 # ==== R1: provision then seed then dry-run off one target.json ===============
 newcase r1; peer_json; export BACKUP_AGE_IDENTITY_FILE="$C/age.key"

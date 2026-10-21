@@ -21,7 +21,7 @@
 #   4. claude CLI present: `claude --version`
 set -euo pipefail
 PROJECT="${1:?usage: bootstrap-machine.sh <project> [--repos-only]}"
-# --repos-only (BH-6043): only the clone, npm install and codegraph of
+# --repos-only (BH-6043): only the clone, the Node install and codegraph of
 # /root/repos/<project> (bm_repos below). No env seeds, no packages, no box id,
 # no crontab. It gives a box that already runs the fleet a checkout of another
 # project, e.g. so the lead-review lane on that box can take cromford
@@ -47,9 +47,23 @@ if [ -z "$REPO_SLUG" ] || [ -z "$OFF" ]; then
   exit 1
 fi
 
+# bm_install — the install for a Node repo, with the manager its lockfile names
+# (BH-7715). npm on a pnpm repo stops on a pnpm-only overrides key
+# (EINVALIDPACKAGENAME, project-1, hub-move dry-run seed 2026-10-21).
+bm_install() {
+  local d="/root/repos/$PROJECT" pm=npm
+  [ -f "$d/package.json" ] || return 0
+  if [ -f "$d/pnpm-lock.yaml" ]; then pm=pnpm; elif [ -f "$d/yarn.lock" ]; then pm=yarn; fi
+  if [ "$pm" = npm ]; then (cd "$d" && npm install --no-audit --no-fund); return; fi
+  command -v "$pm" >/dev/null 2>&1 || corepack enable "$pm" >/dev/null 2>&1 || true
+  command -v "$pm" >/dev/null 2>&1 \
+    || { echo "FATAL: $PROJECT has a $pm lockfile, but $pm is not on PATH and corepack could not enable it" >&2; exit 1; }
+  (cd "$d" && { "$pm" install --frozen-lockfile || "$pm" install; })
+}
+
 # bm_repos — /root/repos/$PROJECT: the full clone (never shallow), the preplan
-# clone, npm install for a Node repo, and the CodeGraph index. Both the full
-# bootstrap and --repos-only run it.
+# clone, the install for a Node repo (bm_install), and the CodeGraph index. Both
+# the full bootstrap and --repos-only run it.
 bm_repos() {
 echo "== repos =="
 [ -d "/root/repos/$PROJECT" ] || gh repo clone "$REPO_SLUG" "/root/repos/$PROJECT"
@@ -66,9 +80,9 @@ fi
 # <<< repo not shallow
 [ -d "/root/repos/.preplan-$PROJECT" ] || git clone -q "/root/repos/$PROJECT" "/root/repos/.preplan-$PROJECT"
 git -C "/root/repos/.preplan-$PROJECT" remote set-url origin "https://github.com/$REPO_SLUG.git"
-# npm install only when the repo is a Node project (small non-Node projects
+# Install only when the repo is a Node project (small non-Node projects
 # load too — the build stage handles its own toolchain per the repo CLAUDE.md).
-[ -f "/root/repos/$PROJECT/package.json" ] && (cd "/root/repos/$PROJECT" && npm install --no-audit --no-fund)
+bm_install
 # Build the repo's CodeGraph index (local, fast; safe to re-run)
 # An `if`, not `&&`: as bm_repos's last command a missing codegraph would make
 # the function return 1, and set -e would end the bootstrap (#6168 review).

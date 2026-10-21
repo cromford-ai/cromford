@@ -5,9 +5,11 @@
 # bin/state-backup.sh / bin/state-restore.sh, the aws CLI they use for the
 # bucket, and flyctl for the pool lanes (fly-pool-tick.sh, fly-pool.sh,
 # fly-dispatch.sh, fly-image-refresh.sh, fly-idle-reaper.sh). The base has no
-# flyctl. Build it from the repo root:
+# flyctl. It also bakes a pinned pnpm, because bin/bootstrap-machine.sh installs
+# pnpm repos (project-1) with pnpm. Build it from the repo root:
 #   docker build -f fly/hub/Dockerfile --build-arg HUB_BASE_IMAGE=<builder image ref> \
-#     --build-arg FLYCTL_VERSION=<x.y.z> -t registry.fly.io/<hub app>:hub-<date> .
+#     --build-arg FLYCTL_VERSION=<x.y.z> --build-arg PNPM_VERSION=<x.y.z> \
+#     -t registry.fly.io/<hub app>:hub-<date> .
 # The runbook is docs/notes/2026-10-20-BH-7715-hub-move.md.
 ARG HUB_BASE_IMAGE
 FROM ${HUB_BASE_IMAGE}
@@ -41,6 +43,17 @@ RUN set -eux; . /opt/fly-boot/bake-pin.sh; bake_require FLYCTL_VERSION "${FLYCTL
     ln -sf flyctl /usr/local/bin/fly; \
     test ! -e /root/.fly/bin/flyctl; \
     bake_verify flyctl "$FLYCTL_VERSION" /usr/local/bin/flyctl version
+
+# pnpm, pinned (BH-7715). The base's `corepack enable` leaves only a shim that
+# downloads pnpm on first use; bootstrap-machine.sh runs pnpm on every pnpm repo
+# it clones (npm stops on project-1's pnpm-only overrides key), so the hub
+# bakes the binary. COREPACK_ENABLE_DOWNLOAD_PROMPT=0: no prompt without a TTY.
+ARG PNPM_VERSION
+ENV COREPACK_ENABLE_DOWNLOAD_PROMPT=0
+RUN set -eux; . /opt/fly-boot/bake-pin.sh; bake_require PNPM_VERSION "${PNPM_VERSION:-}"; \
+    corepack enable pnpm; \
+    corepack install -g "pnpm@${PNPM_VERSION}"; \
+    cd /tmp; bake_verify pnpm "$PNPM_VERSION" pnpm --version
 
 COPY --chmod=755 fly/hub/entrypoint.sh /opt/hub-boot/entrypoint.sh
 ENTRYPOINT ["/usr/bin/tini", "--", "/opt/hub-boot/entrypoint.sh"]
