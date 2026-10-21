@@ -16,6 +16,8 @@
 // an optional `value` (the flag file's content), and a value change is audited
 // too. The routes widen an old table with ensureColumns before they read or
 // write it. A ported name's value is the harness_flags column (BH-4153).
+// Since BH-7819 the legacy PUT and DELETE are inside d1OverloadGuarded too, so a
+// D1 overload give-up is a 503 "pause_flags unavailable", not a thrown 500.
 
 import { d1Guarded, d1OverloadGuarded, json } from "../lib/http.js";
 import { ensureColumns, ensureTable } from "../lib/core.js";
@@ -52,7 +54,15 @@ async function putLegacy(env, t, name, active, actor, reason, value = null) {
     ).bind(name, active, actor, reason, t, value),
     ...configChangeStmts(env, CONFIG_KINDS.FLAG, name, was, { active, value }, fields, actor, reason, t),
   ]);
-  const row = await env.DB.prepare("SELECT * FROM pause_flags WHERE name=?1").bind(name).first();
+  // BH-7819: the batch has committed, as in writePorted (BH-6805).
+  let row;
+  try {
+    row = await env.DB.prepare("SELECT * FROM pause_flags WHERE name=?1").bind(name).first();
+  } catch (e) {
+    if (!isD1Overloaded(e)) throw e;
+    console.warn(`d1-overload: pause_flags read-back ${name} after a committed write, answered 200 written:true after ${e.d1Attempts ?? "?"} attempt(s)`);
+    return json(200, { flag: null, written: true });
+  }
   return json(200, { flag: row });
 }
 
@@ -167,7 +177,7 @@ export const routes = [
           }
           value = body.value || null;
         }
-        return putLegacy(env, t, name, active, actor, reason, value);
+        return d1OverloadGuarded("pause_flags", () => putLegacy(env, t, name, active, actor, reason, value), `PUT ${name}`);
       }
 
       // BH-4153: a ported name. `expected_set_at` (the flags import, edge 7)
@@ -201,9 +211,12 @@ export const routes = [
       const actor = url.searchParams.get("actor") ? String(url.searchParams.get("actor")).slice(0, 128) : null;
       const reasonIn = url.searchParams.get("reason") ? String(url.searchParams.get("reason")).slice(0, 512) : null;
       if (!isPortedFlag(name)) {
-        const had = await env.DB.prepare("SELECT name FROM pause_flags WHERE name=?1").bind(name).first();
-        if (!had) return json(404, { error: "not found" });
-        return putLegacy(env, t, name, 0, actor, reasonIn);
+        // BH-7819: an overload on the pre-read is a 503, never a 404.
+        return d1OverloadGuarded("pause_flags", async () => {
+          const had = await env.DB.prepare("SELECT name FROM pause_flags WHERE name=?1").bind(name).first();
+          if (!had) return json(404, { error: "not found" });
+          return putLegacy(env, t, name, 0, actor, reasonIn);
+        }, `DELETE ${name}`);
       }
       const scope = validScope(url.searchParams.get("scope"));
       if (scope === null) return json(400, { error: "valid scope required" });
