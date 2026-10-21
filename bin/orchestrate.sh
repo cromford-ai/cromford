@@ -333,6 +333,28 @@ if [ -x "$HARNESS/bin/box-request.sh" ]; then
   fi
 fi
 # <<< box request intercept
+# >>> tackler reply intercept (BH-7725; tests/unblock-card.bh-7725-test.sh runs this block)
+# A TACKLER CARD ANSWER NEVER COSTS A TURN. `Tackler u-<6 hex> <n>` and
+# `Tackler u-<6 hex> hold [note]` are parsed by bin/unblock-reply.sh, which
+# checks the owner, records the answer once per command id and prints the
+# reply (rc 0); anything else is rc 1 and the normal turn runs. Fail open, the
+# same shape as the blocks above.
+if [ -x "$HARNESS/bin/unblock-reply.sh" ]; then
+  _ubr_out=$(UNBLOCK_TRANSPORT="${META_TRANSPORT:-}" UNBLOCK_FROM_USER="${META_FROM_USER:-}" UNBLOCK_CMD_ID="${CMD_ID:-}" "$HARNESS/bin/unblock-reply.sh" intercept "$TEXT" 2>/dev/null); _ubr_rc=$?
+  if [ "$_ubr_rc" = 0 ] && [ -n "$_ubr_out" ]; then
+    _ubr_t=$(mktemp -d 2>/dev/null) || _ubr_t=""
+    if [ -n "$_ubr_t" ]; then
+      printf '%s\n' "$_ubr_out" > "$_ubr_t/reply.txt"
+      printf '%s\n' "$TEXT" > "$_ubr_t/msg.txt"
+      "$HARNESS/bin/orc-context.sh" append tackler "$_ubr_t/msg.txt" "$_ubr_t/reply.txt" 2>/dev/null
+      mv -f "$_ubr_t/reply.txt" "$ORC/last-reply.txt"
+      rm -rf -- "$_ubr_t"
+    fi
+    deliver_reply "$_ubr_out"
+    exit 0
+  fi
+fi
+# <<< tackler reply intercept
 # Keep "typing…" alive from pickup until the reply — STARTED BEFORE the turn
 # gate so a message that waits for a slot still shows life (Telegram expires
 # each action after ~5s, hence the loop). It stops when this turn's bash is

@@ -1,0 +1,24 @@
+{
+  "id": "U8",
+  "priority": 80,
+  "family": "infra",
+  "class": "infra-restart",
+  "cites": ["G6"],
+  "match": {
+    "kind": "box-hung",
+    "all": [
+      ".orgo_hosted == true",
+      ".orgo_state == \"running\"",
+      "(.ssh_unreachable_min | type) == \"number\" and (.hung_min_threshold | type) == \"number\" and .ssh_unreachable_min > .hung_min_threshold",
+      "(.envbundle_fail_1h | type) == \"number\" and .envbundle_fail_1h > 3",
+      "(.last_restart_min_ago | type) == \"number\" and .last_restart_min_ago > 60",
+      ".build_claim_10m == false"
+    ]
+  },
+  "judge": null,
+  "action": {"verb": "box_restart", "args": {"box": ".box"}},
+  "after": {"alert": "critical", "watch_min": 10},
+  "delegate_in_act": true,
+  "key": ["subject", "stall_at_hour", "id"],
+  "note": "BH-7725 (UNB-3). An Orgo-hosted box that Orgo reports running but that ssh cannot reach past UNBLOCK_BOX_HUNG_MIN, with env-bundle failures, no restart in the last hour and no build claim in the last 10 minutes. The key holds the hour of the first unreachable reading, so one box gets at most one restart decision per hour. the operator 6294290004 item 2: delegated from day one in act mode, with a ledger row and a critical alert line after the restart. The box_health source is #7710. Unknown is not false: a null field fails its predicate and the stall goes to U12."
+}

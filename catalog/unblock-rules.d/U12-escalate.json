@@ -1,0 +1,21 @@
+{
+  "id": "U12",
+  "priority": 1000,
+  "family": "any",
+  "class": "escalate",
+  "cites": ["G6", "G18"],
+  "match": {
+    "kind": "*",
+    "all": []
+  },
+  "judge": null,
+  "never_auto": {
+    "*SHARD*": "spend",
+    "*_USD*": "spend",
+    "*BUDGET*": "spend",
+    "*LLM*CAP*": "spend"
+  },
+  "action": {"verb": "card", "args": {"subject": ".subject"}},
+  "key": ["subject", "head", "id"],
+  "note": "BH-7725 (UNB-3). The fallback: every stall no other rule takes becomes one escalation card (bin/lib/unblock/card.sh) to the operator through the critical alert DM. never_auto maps a proposal key glob (case-insensitive) to the class the card carries; a spend key is never acted on. One card per subject and head. Nothing runs on silence: an unanswered card expires."
+}

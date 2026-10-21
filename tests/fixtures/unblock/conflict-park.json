@@ -1,0 +1,11 @@
+{
+  "note": "BH-7725 U10 corpus case. Two conductor rows (state/merge-conductor/pr-state.tsv columns: key state since head reviewed alerted reason url) parked BLOCKED_HUMAN conflict-unresolvable. fixrounds is what br_rows_count <url> fixround answers: 0 for #101, 2 for #102.",
+  "pr_state_tsv": [
+    "example-org/alpha#101\tBLOCKED_HUMAN\t1792497600\taaaa1111bbbb2222cccc3333dddd4444eeee5555\taaaa1111bbbb2222cccc3333dddd4444eeee5555\t0\tconflict-unresolvable: both sides edit bin/x.sh\thttps://github.com/example-org/alpha/pull/101",
+    "example-org/alpha#102\tBLOCKED_HUMAN\t1792497600\tffff6666aaaa7777bbbb8888cccc9999dddd0000\tffff6666aaaa7777bbbb8888cccc9999dddd0000\t0\tconflict-unresolvable: both sides edit bin/y.sh\thttps://github.com/example-org/alpha/pull/102"
+  ],
+  "fixrounds": {
+    "https://github.com/example-org/alpha/pull/101": 0,
+    "https://github.com/example-org/alpha/pull/102": 2
+  }
+}

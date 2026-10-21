@@ -1,0 +1,33 @@
+{
+  "note": "BH-7725 U9 respawn case. project-6-os: TK-901 spawned 9 times today, last result PLAN_BLOCKED (a loop). TK-902 spawned 6 times (not over 6). TK-903 spawned 9 times but its last result is PR_CREATED. The pool is not starved (3 queued, 3 running). alpha has no respawns.",
+  "routes": {
+    "/api/pool/status?project=project-6-os": {
+      "project": "project-6-os",
+      "queued": 3,
+      "running": 3,
+      "last_tick": {"at": "2026-10-20T14:55:00Z", "stop": "done", "cap": 4},
+      "respawns": [
+        {"key": "TK-901", "count": 9, "last_result": "PLAN_BLOCKED", "last_at": "2026-10-20T14:40:00Z"},
+        {"key": "TK-902", "count": 6, "last_result": "PLAN_BLOCKED", "last_at": "2026-10-20T14:41:00Z"},
+        {"key": "TK-903", "count": 9, "last_result": "PR_CREATED", "last_at": "2026-10-20T14:42:00Z"}
+      ]
+    },
+    "/api/pool/status?project=alpha": {
+      "project": "alpha",
+      "queued": 0,
+      "running": 0,
+      "last_tick": {"at": "2026-10-20T14:50:00Z", "stop": "done", "cap": 4},
+      "respawns": []
+    },
+    "/api/settings/lane.fly-pool.project-6-os.pool_record_read": {
+      "key": "lane.fly-pool.project-6-os.pool_record_read",
+      "setting": {"key": "lane.fly-pool.project-6-os.pool_record_read", "value": "0", "note": "seeded", "actor": "seed", "updated_at": "2026-10-19T00:00:00Z"},
+      "source": "settings"
+    },
+    "/api/settings/unblock.knob_allowlist": {
+      "key": "unblock.knob_allowlist",
+      "setting": {"key": "unblock.knob_allowlist", "value": "lane.fly-pool-tick.pool_tick_max_parallel,hub_load.shed,lane.fly-pool.*.pool_record_read,lane_placement.*,conductor_remote_spawn.*", "note": "seeded", "actor": "seed", "updated_at": "2026-10-20T00:00:00Z"},
+      "source": "settings"
+    }
+  }
+}

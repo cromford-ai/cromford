@@ -1,0 +1,29 @@
+{
+  "note": "BH-7725 U9 corpus case (2026-10-20). project-6-os: 126 queued, 2 running, last tick stopped at max-ticks with cap 4, the cap row is 4 by seed. alpha: starved behind CI_MAX_SHARDS, a spend knob that is not allowlisted.",
+  "routes": {
+    "/api/pool/status?project=project-6-os": {
+      "project": "project-6-os",
+      "queued": 126,
+      "running": 2,
+      "last_tick": {"at": "2026-10-20T14:55:00Z", "stop": "max-ticks", "cap": 4},
+      "respawns": []
+    },
+    "/api/pool/status?project=alpha": {
+      "project": "alpha",
+      "queued": 40,
+      "running": 1,
+      "last_tick": {"at": "2026-10-20T14:50:00Z", "stop": "cap", "cap": 4, "knob": "CI_MAX_SHARDS"},
+      "respawns": []
+    },
+    "/api/settings/lane.fly-pool-tick.pool_tick_max_parallel": {
+      "key": "lane.fly-pool-tick.pool_tick_max_parallel",
+      "setting": {"key": "lane.fly-pool-tick.pool_tick_max_parallel", "value": "4", "note": "seeded", "actor": "seed", "updated_at": "2026-10-19T00:00:00Z"},
+      "source": "settings"
+    },
+    "/api/settings/unblock.knob_allowlist": {
+      "key": "unblock.knob_allowlist",
+      "setting": {"key": "unblock.knob_allowlist", "value": "lane.fly-pool-tick.pool_tick_max_parallel,hub_load.shed,lane.fly-pool.*.pool_record_read,lane_placement.*,conductor_remote_spawn.*", "note": "seeded", "actor": "seed", "updated_at": "2026-10-20T00:00:00Z"},
+      "source": "settings"
+    }
+  }
+}

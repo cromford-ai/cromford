@@ -1,0 +1,18 @@
+{
+  "id": "U10",
+  "priority": 100,
+  "family": "infra",
+  "class": "fix-round",
+  "cites": ["G13", "G12"],
+  "match": {
+    "kind": "branch-park",
+    "all": [
+      ".mechanical_rung != null",
+      "(.fixrounds | type) == \"number\" and .fixrounds < 2"
+    ]
+  },
+  "judge": null,
+  "action": {"verb": "fix_round", "args": {"pr": ".pr", "head": ".head", "brief": ".park_reason"}},
+  "key": ["repo", "pr", "head", "id"],
+  "note": "BH-7725 (UNB-3). A conductor park for a branch problem (BLOCKED_HUMAN with conflict-unresolvable or rebase-gate-red) gets one agent fix round on that head while the PR has had fewer than 2. Fix rounds unread (null) is unknown, not zero, and goes to U12. In act mode (UNB-4) the round goes through bin/blocked-resolver.sh rung 2, never a second path."
+}

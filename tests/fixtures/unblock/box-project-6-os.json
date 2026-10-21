@@ -1,0 +1,33 @@
+{
+  "note": "BH-7725 U8 corpus case (2026-10-20 incident shape). routes maps a GET path of the declared box_health route to its 200 body. box-project-6-os-1: ssh unreachable 540 min, Orgo running, 14 env-bundle failures, last restart 600 min ago, no build claim. box-alpha: reachable, so no record.",
+  "routes": {
+    "/api/boxes/health": {
+      "as_of": "2026-10-20T15:00:00Z",
+      "boxes": [
+        {
+          "name": "box-project-6-os-1",
+          "project": "project-6-os",
+          "orgo_hosted": true,
+          "orgo_state": "running",
+          "ssh_reachable": false,
+          "ssh_unreachable_min": 540,
+          "ssh_unreachable_since": "2026-10-20T06:00:00Z",
+          "envbundle_fail_1h": 14,
+          "last_restart_min_ago": 600,
+          "build_claim_10m": false
+        },
+        {
+          "name": "box-alpha",
+          "project": "alpha",
+          "orgo_hosted": true,
+          "orgo_state": "running",
+          "ssh_reachable": true,
+          "ssh_unreachable_min": 0,
+          "envbundle_fail_1h": 0,
+          "last_restart_min_ago": 3000,
+          "build_claim_10m": true
+        }
+      ]
+    }
+  }
+}
