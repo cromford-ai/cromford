@@ -1,0 +1,24 @@
+# fly/hub/fly.toml — the record of the hub Fly app's shape (BH-7715).
+# bin/hub-move.sh provision creates the app, the volume and the machine with
+# flyctl (`machine run --restart always --autostop=off`); nothing deploys from
+# this file. The image is built from the repo root with fly/hub/Dockerfile (the
+# runbook, docs/notes/2026-10-20-BH-7715-hub-move.md, has the command). Set
+# `app` to HUB_MOVE_APP before you use this file with flyctl.
+app = "HUB_MOVE_APP"
+primary_region = "iad"
+
+[[vm]]
+  size = "performance-16x"
+  memory = "32gb"
+
+[[mounts]]
+  source = "hub_data"
+  destination = "/data"
+  initial_size = "200gb"
+
+# No [[services]] and no [http_service]: nothing listens on the public network,
+# so Fly has nothing to auto-stop. sshd and every operator path are reached
+# over the tailnet only.
+
+[[restart]]
+  policy = "always"

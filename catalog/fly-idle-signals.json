@@ -19,6 +19,10 @@
       "source": "exempt",
       "reason": "BH-1210 warm minimum: the runner fleet keeps started machines on purpose (docs/CI-RUNNERS.md)"
     },
+    "harness-hub": {
+      "source": "exempt",
+      "reason": "BH-7715: the hub machine runs the fleet's cron lanes and this reaper; it is never idle-stopped"
+    },
     "project-12-openfang-joy": { "source": "metrics" },
     "project-12-openfang-test": { "source": "metrics" },
     "project-12-e2e-base": { "source": "metrics" },

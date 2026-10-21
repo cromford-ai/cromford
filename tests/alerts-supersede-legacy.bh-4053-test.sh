@@ -15,6 +15,8 @@
 #   U3 no explicit row -> nothing resolved by this pass
 #   U4 shape() folds the PR list, stamp, still-firing suffix; family() does not
 #   U5 alert_family missing -> rc 0, one stderr line, other passes still run
+#   U6 no --dry but HUB_MOVE_NOWRITE=1 (the hub-move no-write tick, BH-7715)
+#      -> the same decisions print and the server sees no POST
 #
 # Run from anywhere: tests/alerts-supersede-legacy.bh-4053-test.sh   (exit 0 = all pass)
 set -uo pipefail
@@ -30,7 +32,7 @@ cp "$DIR/bin/alerts-supersede.py" "$DIR/bin/alert_family.py" "$T/bin/"
 printf '#!/bin/bash\necho ts project-3\n' > "$T/bin/fleet-conf.sh"; chmod +x "$T/bin/fleet-conf.sh"
 
 PORT=$(python3 -c 'import socket;s=socket.socket();s.bind(("127.0.0.1",0));print(s.getsockname()[1])')
-( cd "$T/www" && exec python3 -m http.server "$PORT" --bind 127.0.0.1 ) >/dev/null 2>&1 &
+( cd "$T/www" && exec python3 -m http.server "$PORT" --bind 127.0.0.1 ) >/dev/null 2>"$T/srv.log" &
 SRV=$!
 trap 'kill $SRV 2>/dev/null' EXIT
 for _ in $(seq 1 50); do
@@ -98,6 +100,16 @@ OUT=$(run "$T/bin5")
 [ "$(cat "$T/rc.txt")" = 0 ] && ok || bad "U5: rc $(cat "$T/rc.txt"): $(cat "$T/err.txt")"
 [ "$(grep -c . "$T/err.txt")" = 1 ] && ok || bad "U5: want one stderr line: $(cat "$T/err.txt")"
 grep -qx 'resolve A: informational / already declared settled' <<<"$OUT" && ok || bad "U5: the other passes did not run: $OUT"
+
+echo "--- U6: HUB_MOVE_NOWRITE=1 is --dry: decisions print, nothing is posted"
+{ row A alert:auto-aaaa-1111 "$LA" "$TWOHAGO"
+  row C alert:ph-stalepr_ts "$LC" "$TWOHAGO"; } | serve
+: > "$T/srv.log"
+OUT=$( export CONSOLE_URL="http://127.0.0.1:$PORT" HARNESS_SECRET=x HUB_MOVE_NOWRITE=1
+  python3 "$T/bin/alerts-supersede.py" 2>"$T/err.txt" )
+grep -qxF "resolve A: superseded by alert:ph-stalepr_ts ($LEG)" <<<"$OUT" && ok || bad "U6: A not decided: $OUT $(cat "$T/err.txt")"
+grep -q 'GET /api/alerts/open' "$T/srv.log" && ok || bad "U6: the server log saw no read: $(cat "$T/srv.log")"
+! grep -q '"POST ' "$T/srv.log" && ok || bad "U6: posted under HUB_MOVE_NOWRITE=1: $(grep POST "$T/srv.log")"
 
 echo "PASS=$PASS FAIL=$FAIL"
 [ "$FAIL" = 0 ]

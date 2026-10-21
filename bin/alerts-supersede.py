@@ -40,7 +40,9 @@ if _skipped:
 MAX_AGE_H = int(os.environ.get("ALERT_TTL_HOURS", "72"))
 CONSOLE = os.environ["CONSOLE_URL"].rstrip("/")
 SECRET = os.environ["HARNESS_SECRET"]
-DRY = "--dry" in sys.argv
+# HUB_MOVE_NOWRITE=1 is the no-write tick of bin/hub-move.sh (BH-7715): this
+# script POSTs with urllib, which the PATH shim cannot see.
+DRY = "--dry" in sys.argv or os.environ.get("HUB_MOVE_NOWRITE") == "1"
 
 def _fleet_stems():
     r"""Project name stems from fleet.conf, longest first.
