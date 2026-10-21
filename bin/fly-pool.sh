@@ -260,6 +260,14 @@ command -v dm_read >/dev/null 2>&1 && dm_read "$P"
 # other mode, is today's sibling-serial gate.
 # shellcheck source=bin/lib/sched-gate.sh
 . "$HARNESS/bin/lib/sched-gate.sh" 2>/dev/null || true
+# BH-7706: the row walk decides its rows in parallel workers. Missing, the walk
+# decides one row at a time, as before.
+# shellcheck source=bin/lib/pool-decide.sh
+. "$HARNESS/bin/lib/pool-decide.sh" 2>/dev/null \
+  || . "$(dirname "${BASH_SOURCE[0]}")/lib/pool-decide.sh" 2>/dev/null || true
+# The hotfix-reserve check reads the workers' pending-hot count; a tree
+# without the lib has no workers, so the count is 0.
+PDC_PEND_HOT=${PDC_PEND_HOT:-0}
 # The pool-result row (BH-2643): the reap reads a stopped machine's result from
 # it. A tree without the lib reads nothing, and the reap is what it always was.
 # shellcheck source=bin/lib/pool-result-row.sh
@@ -1147,7 +1155,8 @@ pool_pr_bulk_prime() {
       _POOL_PR_CACHE[$k]=n
     fi
     keys=$((keys + 1))
-  done < <(jq -r '.key // empty' "${files[@]}" 2>/dev/null)
+  # Each row's `after` blocker too (BH-7706): pool_after_open asks its PR.
+  done < <(jq -r '.key // empty, .after // empty' "${files[@]}" 2>/dev/null | awk '!s[$0]++')
   say "PR bulk read: $_PBR_N open PRs in $_PBR_PAGES pages, cache filled for $keys keys"
   return 0
 }
@@ -1823,7 +1832,12 @@ pool_after_open() {
   case "${TICK_KEYS:-}" in *" $other "*) return 0 ;; esac
   grep -lsE "\"key\": *\"$other\"" "$POOL"/*.json >/dev/null 2>&1 && return 0
   [ -e "$QDIR/$other.json" ] && return 0
-  if command -v queue_status >/dev/null 2>&1; then
+  # BH-7706: the tick read the queued and claimed rows once (pdc_queue_prime).
+  # From a complete listing a key that is absent is neither; any other listing
+  # leaves the per-key read below.
+  if [ "${_PDC_QOK:-0}" = 1 ]; then
+    case "${_PDC_QSTATE[$other]:-}" in queued|claimed) return 0 ;; esac
+  elif command -v queue_status >/dev/null 2>&1; then
     st=$(queue_status "$P" "$other" 2>/dev/null) || st=""
     case "$st" in queued|claimed) return 0 ;; esac
   fi
@@ -5278,11 +5292,37 @@ if [ "$BUDGET" -gt 0 ] 2>/dev/null || [ "${HOTFIX_EXTRA:-0}" -gt 0 ] 2>/dev/null
 else
   say "PR bulk read: off (no free slot and no hotfix this tick)"
 fi
+# BH-7706: the reads every row shares, once, before the budget clock starts.
+PDC_ON=0; command -v pdc_prime >/dev/null 2>&1 && { pdc_prime; PDC_ON=1; }
+# pool_walk_spawn <hot> <jf> <key> <ticket> <attempt> <deaths> <stack-base> —
+# a row the decision let through: its machine, in the background.
+pool_walk_spawn() {
+  local JF_HOT="$1" JF="$2" KEY="$3" TICKET="$4" ATT="$5" SDTH="$6" SSB="$7" SDEF
+  # A release in the gate rewrote the file (BH-5967): the machine carries the
+  # reset count, not the one read above.
+  SDEF=$(jq -r '.deferrals // 0' "$JF" 2>/dev/null); case "$SDEF" in ''|*[!0-9]*) SDEF=0 ;; esac
+  # SAY THE LINE THIS EXCEEDED. The WIP gate's exemption announces itself in
+  # bin/run-build.sh; the pool's did not, and the tick line above only ever
+  # reported the BUDGET — so a machine past the cap read as a cap that had never
+  # been reached. One line, only when the exemption is actually spent.
+  [ "$JF_HOT" = 1 ] && say "hotfix $KEY: pool at cap $CAPTXT (budget spent) — exceeding it by one machine"
+  pool_mr_bundle
+  spawn_one "$JF" "$KEY" "$TICKET" "$ATT" "$SDEF" "$SDTH" "$SSB" &
+  if [ "$JF_HOT" = 1 ]; then HOT_LAUNCHED=$((HOT_LAUNCHED+1)); else LAUNCHED=$((LAUNCHED+1)); fi
+}
+PDC_SEEN=0; PDC_FIRST=0
 POOL_TICK_T0=$(date +%s)
 for JF in $(hotfix_first $(ls -tr "$QDIR"/*.json 2>/dev/null)); do
   case "$JF" in *.failed.json) continue;; esac
   # BH-7475: the same stop rule at each queued row; the tail below still waits.
-  command -v pts_stop_due >/dev/null 2>&1 && pts_stop_due && break
+  command -v pts_stop_due >/dev/null 2>&1 && pts_stop_due && { PDC_STOP=stop; break; }
+  # BH-7706: a slot is held from the start of a row's decision to its verdict
+  # (PDC_PEND_PLAIN, PDC_PEND_HOT). With every budget slot held, a row first
+  # waits for the pending verdicts, so the rule below reads what a serial walk
+  # would: a skipped row's slot goes to the next row, and a hotfix spends the
+  # exemption only when the budget is really spent. A hotfix never waits for
+  # an exemption: HOTFIX_EXTRA is the count of hotfix rows, so one is free.
+  while [ "$PDC_ON" = 1 ] && [ "$PDC_PEND_PLAIN" -gt 0 ] && [ $((LAUNCHED + PDC_PEND_PLAIN)) -ge "$BUDGET" ]; do pdc_collect || break; done
   # A hotfix spends a FREE BUDGET SLOT first and the exemption only when the
   # pool is genuinely at cap — `LAUNCHED -ge BUDGET` is the whole of that
   # sentence. Taking the exemption while the budget still had room is a machine
@@ -5293,10 +5333,11 @@ for JF in $(hotfix_first $(ls -tr "$QDIR"/*.json 2>/dev/null)); do
   # the budget like any other, so a project that files six emergencies does not
   # get six free machines on top of six more.
   JF_HOT=0
-  if [ "$LAUNCHED" -ge "$BUDGET" ] && [ "$HOT_LAUNCHED" -lt "$HOTFIX_EXTRA" ] && job_is_hot "$JF"; then JF_HOT=1; fi
+  if [ "$LAUNCHED" -ge "$BUDGET" ] && [ $((HOT_LAUNCHED + ${PDC_PEND_HOT:-0})) -lt "$HOTFIX_EXTRA" ] && job_is_hot "$JF"; then JF_HOT=1; fi
   if [ "$JF_HOT" = 0 ]; then
     [ "$LAUNCHED" -lt "$BUDGET" ] || break
   fi
+  PDC_SEEN=$((PDC_SEEN + 1))
   KEY=$(jq -r '.key // ""' "$JF"); TICKET=$(jq -r '.ticket_id // ""' "$JF"); ATT=$(jq -r '.attempt // 0' "$JF")
   SDEF=$(jq -r '.deferrals // 0' "$JF" 2>/dev/null); case "$SDEF" in ''|*[!0-9]*) SDEF=0 ;; esac
   SDTH=$(jq -r '.deaths // 0' "$JF" 2>/dev/null); case "$SDTH" in ''|*[!0-9]*) SDTH=0 ;; esac
@@ -5332,24 +5373,40 @@ for JF in $(hotfix_first $(ls -tr "$QDIR"/*.json 2>/dev/null)); do
   if command -v dm_job_admit >/dev/null 2>&1 && ! dm_job_admit "$JF"; then
     DM_HELD="${DM_HELD:+$DM_HELD }$KEY"; continue
   fi
-  # Spawn-decision gate: HOLD, open PR, terminal state, per-key cap (BH-1075)
+  # Spawn-decision gate: HOLD, open PR, terminal state, per-key cap (BH-1075).
+  # BH-7706: in a background worker (bin/lib/pool-decide.sh). The tick budget
+  # is checked here before each row after the first, as pool_spawn_decision
+  # does in a serial walk; workers already started finish and spawn.
+  if [ "$PDC_ON" = 1 ]; then
+    case "$KEY" in
+      RB-*|RR-*) ;;
+      *) if [ "$PDC_BUDGET_N" -ge 1 ] && pool_tick_budget_spent; then
+           [ -n "${_POOL_BUDGET_SAID:-}" ] || say "tick budget of ${POOL_TICK_BUDGET_S:-600}s spent for $P: no more rows are decided this tick, the lock is released at the end"
+           _POOL_BUDGET_SAID=1; PDC_STOP=budget; PDC_SEEN=$((PDC_SEEN - 1)); break
+         fi ;;
+    esac
+    pdc_start "$JF_HOT" "$JF" "$KEY" "$TICKET" "$ATT" "$SDTH" "$SSB"
+    # The first counted row is decided alone, as the serial walk did: the
+    # budget, the stop rule and its PR-unreadable state apply from row 2 on.
+    if [ "$PDC_BUDGET_N" = 1 ] && [ "$PDC_FIRST" = 0 ]; then PDC_FIRST=1; pdc_drain; fi
+    while [ "${#_PDC_PID[@]}" -ge "$PDC_PAR" ]; do pdc_collect || break; done
+    continue
+  fi
   if ! pool_spawn_decision "$JF" "$KEY" "$TICKET"; then
     # BH-7421: a spent tick budget ends the walk, so the lock is released.
     [ -n "${_POOL_BUDGET_SAID:-}" ] && break
     continue
   fi
-  # A release in the gate rewrote the file (BH-5967): the machine carries the
-  # reset count, not the one read above.
-  SDEF=$(jq -r '.deferrals // 0' "$JF" 2>/dev/null); case "$SDEF" in ''|*[!0-9]*) SDEF=0 ;; esac
-  # SAY THE LINE THIS EXCEEDED. The WIP gate's exemption announces itself in
-  # bin/run-build.sh; the pool's did not, and the tick line above only ever
-  # reported the BUDGET — so a machine past the cap read as a cap that had never
-  # been reached. One line, only when the exemption is actually spent.
-  [ "$JF_HOT" = 1 ] && say "hotfix $KEY: pool at cap $CAPTXT (budget spent) — exceeding it by one machine"
-  pool_mr_bundle
-  spawn_one "$JF" "$KEY" "$TICKET" "$ATT" "$SDEF" "$SDTH" "$SSB" &
-  if [ "$JF_HOT" = 1 ]; then HOT_LAUNCHED=$((HOT_LAUNCHED+1)); else LAUNCHED=$((LAUNCHED+1)); fi
+  pool_walk_spawn "$JF_HOT" "$JF" "$KEY" "$TICKET" "$ATT" "$SDTH" "$SSB"
 done
+# BH-7706: every verdict still out, then one line with what the walk did.
+if [ "$PDC_ON" = 1 ]; then
+  pdc_drain
+  PDC_LEFT=$((PDC_Q - PDC_SEEN)); [ "$PDC_LEFT" -ge 0 ] || PDC_LEFT=0
+  [ "$PDC_LEFT" -gt 0 ] && [ -z "$PDC_STOP" ] && PDC_STOP=cap
+  pdc_walk_line "$PDC_LEFT"
+  pdc_cleanup
+fi
 # One hold-cache line per tick (BH-6549), only when a GitHub-issue row reached
 # the HOLD gate. NOT "pool $P: ..." (tests/pool-autoscale-test.sh reads that).
 [ "$_PHC_GATED" = 1 ] && say "hold cache: hits=$_PHC_HITS misses=$_PHC_MISSES bad=$_PHC_BAD listing=${_POOL_HOLD_LIST:-none} read_s=$_PHC_READ_S ttl_s=$_PHC_TTL"

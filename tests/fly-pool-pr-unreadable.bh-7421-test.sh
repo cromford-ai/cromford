@@ -193,8 +193,12 @@ E=$(( $(date +%s) - S ))
 passthrough_timeout
 
 # ── D: the tick budget ───────────────────────────────────────────────────────
+# TEST-CHANGE (BH-7706): the budget was 3 s. The walk now decides rows in
+# parallel after the first, so with 2 s reads rows 2 and 3 both start at 2 s,
+# inside a 3 s budget. A 1 s budget is spent when row 1's read ends: one row
+# decided, then the stop, in the serial and the parallel walk alike.
 reset_state; queue_n 2001 2008
-run_pool PRMODE=slow POOL_TICK_BUDGET_S=3
+run_pool PRMODE=slow POOL_TICK_BUDGET_S=1
 [ "$(spawned)" -ge 1 ] && [ "$(spawned)" -lt 3 ] && ok || bad "D: the budget must decide one row and stop the walk ($(spawned) of 8 spawned)"
 grep -q 'tick budget' "$H/logs/fly-pool.log" && ok || bad "D: the budget stop must be logged"
 

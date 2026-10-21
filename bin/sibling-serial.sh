@@ -1,6 +1,7 @@
 #!/bin/bash
 # bin/sibling-serial.sh decide <rows> <inflight> <prs> [parts]
 # bin/sibling-serial.sh check <project> <KEY>
+# bin/sibling-serial.sh prime <project>
 # bin/sibling-serial.sh parts <project>
 # bin/sibling-serial.sh replay <rows> <parts> | replay --project <p> [--last N]
 #
@@ -86,6 +87,21 @@
 #   SIBLING_PARTS_LOOKBACK_D=14  days of DECOMPOSED records the parts map reads
 #   lane_switch sibling-serial-off   the same kill switch, as a settings row or flag
 #   SIBLING_SERIAL_NOW           the clock, for tests
+#
+# THE TICK CACHE (BH-7706). A pool tick runs check once per queued row, and the
+# project-wide inputs are the same for every row: the parts map, the active key
+# and the job_claims rows. With env SIBLING_TICK_DIR naming a writable dir,
+# `prime <project>` reads them once into it:
+#   parts         the parts map
+#   active        the active key (one line, empty for none)
+#   fc/ + fc.ok   the job_claims rows; fc.ok only when the read answered
+# active and fc/ are read only when a queued key is a part. check then reads
+# each of them from the dir, and files_of keeps each key's list there:
+#   lists/<K>     the list; lists/<K>.src the FO_SRC it came from
+# Each file is written to a temp name and moved, so a parallel check never reads
+# half a file. A missing file (or no fc.ok) is the live read, as before. No
+# SIBLING_TICK_DIR: prime does nothing and check reads everything live. The
+# rule, the wait clock and every output line do not change.
 #
 # replay simulates the pool over each parent's parts and prints the order the
 # rule gives, without writing anything. It skips n 0 (the contract lands first
@@ -275,8 +291,8 @@ case "$VERB" in
   decide)
     decide "${2:-}" "${3:-}" "${4:-}" "${5:-}"
     exit 0 ;;
-  check|parts|replay) ;;
-  *) echo "usage: sibling-serial.sh decide <rows> <inflight> <prs> [parts] | check <project> <KEY> | parts <project> | replay <rows> <parts> | replay --project <p> [--last N]" >&2; exit 2 ;;
+  check|prime|parts|replay) ;;
+  *) echo "usage: sibling-serial.sh decide <rows> <inflight> <prs> [parts] | check <project> <KEY> | prime <project> | parts <project> | replay <rows> <parts> | replay --project <p> [--last N]" >&2; exit 2 ;;
 esac
 
 HARNESS="${HARNESS:-/root/harness}"
@@ -403,7 +419,7 @@ replay_pure() {
 PROJECT=""; KEY=""; LAST=30
 case "$VERB" in
   check) PROJECT="${2:-}"; KEY="${3:-}"; [ -n "$KEY" ] || exit 0 ;;
-  parts) PROJECT="${2:-}" ;;
+  parts|prime) PROJECT="${2:-}" ;;
   replay)
     if [ "${2:-}" != --project ]; then
       [ -n "${2:-}" ] && [ -n "${3:-}" ] || { echo "usage: sibling-serial.sh replay <rows> <parts> | replay --project <p> [--last N]" >&2; exit 2; }
@@ -436,9 +452,37 @@ LOOKBACK_D=$(num "$(_preplan_env "$HARNESS" SIBLING_PARTS_LOOKBACK_D 14)" 14)
 # FO_SRC is the cause: empty-list (a plan.md exists and no list came of it),
 # index-unreachable (preplan_planned_files rc 2, or not defined), no-plan.
 # With FO_LOG set, one `key<TAB>FO_SRC` line is appended to that file.
+# The tick cache dir (BH-7706), for check and prime only.
+TICKDIR=""
+case "$VERB" in
+  check|prime)
+    [ -n "${SIBLING_TICK_DIR:-}" ] && [ -d "$SIBLING_TICK_DIR" ] && [ -w "$SIBLING_TICK_DIR" ] && TICKDIR="$SIBLING_TICK_DIR" ;;
+esac
+# tick_put <src-file> <name> — copy into the tick dir through a temp name.
+tick_put() {
+  local t
+  t=$(mktemp "$TICKDIR/.put.XXXXXX" 2>/dev/null) || return 1
+  if cat "$1" > "$t" 2>/dev/null && mv -f "$t" "$TICKDIR/$2" 2>/dev/null; then return 0; fi
+  rm -f "$t"; return 1
+}
 FO_SRC=""
 files_of() {
-  local k="$1" dst="$2" p d l rc=2 src="" had_plan=0
+  local k="$1" dst="$2" p d l rc=2 src="" had_plan=0 c=""
+  if [ -n "$TICKDIR" ] && [[ "$k" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$ ]]; then
+    c="lists/$k"
+    src=$(cat "$TICKDIR/$c.src" 2>/dev/null)
+    case "$src" in
+      plans-dir|preplan-index|build-touch|build-planned)
+        if [ -s "$TICKDIR/$c" ] && cat "$TICKDIR/$c" > "$dst" 2>/dev/null; then
+          FO_SRC="$src"; [ -n "${FO_LOG:-}" ] && printf '%s\t%s\n' "$k" "$src" >> "$FO_LOG"
+          return 0
+        fi ;;
+      empty-list|index-unreachable|no-plan)
+        FO_SRC="$src"; [ -n "${FO_LOG:-}" ] && printf '%s\t%s\n' "$k" "$src" >> "$FO_LOG"
+        return 1 ;;
+    esac
+    src=""
+  fi
   p="$HARNESS/plans/$PROJECT-$k"
   if [ -s "$p/planned-files.txt" ]; then cat "$p/planned-files.txt" > "$dst"; src=plans-dir; fi
   [ -s "$p/plan.md" ] && had_plan=1
@@ -462,6 +506,14 @@ files_of() {
   fi
   FO_SRC="$src"
   [ -n "${FO_LOG:-}" ] && printf '%s\t%s\n' "$k" "$src" >> "$FO_LOG"
+  # The list before its source, so a reader that finds the .src finds the list.
+  if [ -n "$c" ] && mkdir -p "$TICKDIR/lists" 2>/dev/null; then
+    case "$src" in
+      plans-dir|preplan-index|build-touch|build-planned)
+        tick_put "$dst" "$c" && printf '%s\n' "$src" | tick_put /dev/stdin "$c.src" ;;
+      *) printf '%s\n' "$src" | tick_put /dev/stdin "$c.src" ;;
+    esac
+  fi
   case "$src" in plans-dir|preplan-index|build-touch|build-planned) return 0 ;; esac
   return 1
 }
@@ -501,6 +553,43 @@ case "$(printf '%s' "$(_preplan_env "$HARNESS" SIBLING_SERIAL 1)" | tr '[:upper:
   0|off|false|no) exit 0 ;;
 esac
 command -v lane_switch >/dev/null 2>&1 && HARNESS="$HARNESS" lane_switch sibling-serial-off && exit 0
+# The jobs client (active key) and the job_claims reader, for check and prime.
+load_clients() {
+  if [ -r "$HERE/jobs-client.sh" ]; then
+    # shellcheck source=/dev/null
+    command -v build_queue_active_key >/dev/null 2>&1 || . "$HERE/jobs-client.sh" 2>/dev/null || :
+  fi
+  # shellcheck source=bin/lib/file-claims.sh
+  [ -r "$HERE/lib/file-claims.sh" ] && . "$HERE/lib/file-claims.sh" 2>/dev/null
+  return 0
+}
+if [ "$VERB" = prime ]; then
+  [ -n "$TICKDIR" ] || exit 0
+  PT=$(mktemp "$TICKDIR/.parts.XXXXXX" 2>/dev/null) || exit 0
+  parts_scan "$HARNESS" "$PROJECT" "$LOOKBACK_D" > "$PT"
+  mv -f "$PT" "$TICKDIR/parts" 2>/dev/null || { rm -f "$PT"; exit 0; }
+  # A key that is not a part never reads the active key or the claims, so a
+  # queue with no part makes neither read.
+  declare -A PM=()
+  while IFS=$'\t' read -r K PP _; do [ -n "$K" ] && PM[$K]="$PP"; done < "$TICKDIR/parts"
+  ANY=0
+  for F in "$HARNESS/state/build-queue/$PROJECT"/*.json ${SIBLING_QDIR:+"$SIBLING_QDIR"/*.json}; do
+    [ -f "$F" ] || continue
+    case "$F" in *.failed.json) continue ;; esac
+    K=$(jq -r '.key // empty' "$F" 2>/dev/null); [ -n "$K" ] || K=$(basename "$F" .json)
+    if [ -n "${PM[$K]:-}" ] || [[ "$K" =~ ^[A-Za-z0-9_-]+-[0-9]+\.[0-9]+$ ]]; then ANY=1; break; fi
+  done
+  [ "$ANY" = 1 ] || exit 0
+  load_clients
+  A=""
+  command -v build_queue_active_key >/dev/null 2>&1 && A=$(build_queue_active_key "$PROJECT" 2>/dev/null | cut -f1 | head -1)
+  printf '%s\n' "$A" | tick_put /dev/stdin active
+  mkdir -p "$TICKDIR/fc" 2>/dev/null
+  if command -v fclaim_list_dir >/dev/null 2>&1 && fclaim_list_dir "$PROJECT" "$TICKDIR/fc" 2>/dev/null; then
+    : > "$TICKDIR/fc.ok"
+  fi
+  exit 0
+fi
 QMAX=$(num "$(_preplan_env "$HARNESS" SIBLING_QUEUED_MAX_MIN 120)" 120)
 WMAX=$(num "$(_preplan_env "$HARNESS" SIBLING_SERIAL_MAX_MIN 360)" 360)
 MAX_AGE=$(num "$(_preplan_env "$HARNESS" OVERLAP_SNAPSHOT_MAX_AGE 600)" 600)
@@ -512,7 +601,8 @@ ROWS="$TMP/rows"; INFLIGHT="$TMP/inflight"; PRS="$TMP/prs"; PARTS="$TMP/parts"
 : > "$ROWS"; : > "$INFLIGHT"; : > "$PRS"; FO_LOG="$TMP/sources"; : > "$FO_LOG"
 # A key that is not a part is never judged: rc 0 before the pool state is read.
 # A part is a key in the parts map, or a dotted <PARENT>.<n> key (the fallback).
-parts_scan "$HARNESS" "$PROJECT" "$LOOKBACK_D" > "$PARTS"
+if [ -n "$TICKDIR" ] && [ -r "$TICKDIR/parts" ]; then cat "$TICKDIR/parts" > "$PARTS"
+else parts_scan "$HARNESS" "$PROJECT" "$LOOKBACK_D" > "$PARTS"; fi
 declare -A PMAP=()
 while IFS=$'\t' read -r K PP _; do [ -n "$K" ] && PMAP[$K]="$PP"; done < "$PARTS"
 PARENT=""
@@ -549,21 +639,28 @@ for F in "$HARNESS/state/fly-pool/$PROJECT"/*.json; do
   [ -f "$F" ] || continue
   add_inflight "$(jq -r '.key // empty' "$F" 2>/dev/null)"
 done
-if [ -r "$HERE/jobs-client.sh" ]; then
-  # shellcheck source=/dev/null
-  command -v build_queue_active_key >/dev/null 2>&1 || . "$HERE/jobs-client.sh" 2>/dev/null || :
-fi
-if command -v build_queue_active_key >/dev/null 2>&1; then
-  A=$(build_queue_active_key "$PROJECT" 2>/dev/null | cut -f1 | head -1)
+# The active key and the claims come from the tick cache when prime wrote them.
+FCD="$TMP/fc"; FC_OK=0
+if [ -n "$TICKDIR" ] && [ -r "$TICKDIR/active" ]; then
+  A=$(head -n 1 "$TICKDIR/active" 2>/dev/null)
   [ -n "$A" ] && add_inflight "$A"
+  [ -e "$TICKDIR/fc.ok" ] && [ -d "$TICKDIR/fc" ] && { FCD="$TICKDIR/fc"; FC_OK=1; }
+  [ "$FC_OK" = 1 ] || load_clients
+else
+  load_clients
+  if command -v build_queue_active_key >/dev/null 2>&1; then
+    A=$(build_queue_active_key "$PROJECT" 2>/dev/null | cut -f1 | head -1)
+    [ -n "$A" ] && add_inflight "$A"
+  fi
 fi
-# shellcheck source=bin/lib/file-claims.sh
-[ -r "$HERE/lib/file-claims.sh" ] && . "$HERE/lib/file-claims.sh" 2>/dev/null
-mkdir -p "$TMP/fc"
 # The job_claims rows are the record (BH-5002). No answer: claims are not
 # judged this tick (fail open, as every missing input here), never a file.
-if command -v fclaim_list_dir >/dev/null 2>&1 && fclaim_list_dir "$PROJECT" "$TMP/fc" 2>/dev/null; then
-  for F in "$TMP/fc"/*; do
+if [ "$FC_OK" = 0 ]; then
+  mkdir -p "$TMP/fc"
+  command -v fclaim_list_dir >/dev/null 2>&1 && fclaim_list_dir "$PROJECT" "$TMP/fc" 2>/dev/null && FC_OK=1
+fi
+if [ "$FC_OK" = 1 ]; then
+  for F in "$FCD"/*; do
     [ -f "$F" ] || continue
     add_inflight "$(basename "$F")" "$F"
   done

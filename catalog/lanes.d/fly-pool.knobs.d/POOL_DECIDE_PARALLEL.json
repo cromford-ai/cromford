@@ -1,0 +1,12 @@
+{
+  "env": "POOL_DECIDE_PARALLEL",
+  "type": "int",
+  "default": 20,
+  "min": 1,
+  "max": 64,
+  "unit": "workers",
+  "zero_means": null,
+  "required": false,
+  "read_in": "bin/lib/pool-decide.sh",
+  "note": "BH-7706. How many queued rows one project's pool tick decides at once (each decision is mostly GitHub reads: the hold thread, the issue events). It never bounds spawns: the pool cap and pool_spawn_cap_per_key do. 1 = the serial walk (the rollback). Settings row `lane.fly-pool.pool_decide_parallel`."
+}
