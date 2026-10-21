@@ -16,7 +16,16 @@
 #                           src:"worklist"}, in route order. rc 2 = a measured
 #                           none (<out> empty). rc 1 = an outage or an answer
 #                           that does not parse: <out> is empty, and the caller
-#                           starts nothing from this repo's list.
+#                           starts nothing from this repo's list. A
+#                           failed read (rc 1, except a no-secret or no-url
+#                           answer) is read ONCE more after LW_ITEMS_RETRY_SLEEP_S
+#                           seconds (default 2; an integer 0..10, else 2). The
+#                           status word and the first 200 bytes of the body
+#                           (JOBS_STATUS_FILE / JOBS_BODY_FILE) go in ONE log line
+#                           on a failure, and in one line when the retry answered.
+#                           Each call appends one line to state/lead-review/
+#                           worklist-reads.tsv: <UTC time> <slug> <ms> <ok|none|
+#                           fail> <reads 1|2> <status word or `parse`>, tab-separated.
 #   lw_concurrency_ok <live>  rc 0 = a start is allowed. The settings row
 #                           lead_review.concurrency is a fleet-wide count. No row,
 #                           or a row that cannot be read or is not a positive
@@ -61,7 +70,8 @@
 #                           state/lead-review/trip-<slug_>-<pr>-<day> written
 #                           only after lane-alert rc 0.
 #   lw_pr_day_prune         keep today's and yesterday's lines; drop trip markers
-#                           older than 2 days.
+#                           older than 2 days; keep LW_READS_KEEP_DAYS days
+#                           (default 7) of worklist-reads.tsv.
 #   lw_replay <slug> <pr> <sha> <clone>  the patch-same replay. Reads the PR's
 #                           verdict rows, takes the newest source=lead MERGE,
 #                           MERGE-WITH-NOTES or BLOCK on another head that is not
@@ -96,19 +106,74 @@ _lw_fresh() {
 declare -gA _LW_SAID=()
 _lw_once() { [ -n "${_LW_SAID[$1]:-}" ] && return 0; _LW_SAID[$1]=1; _lw_log "$2"; }
 
+# _lw_ms <var> — milliseconds since the epoch: EPOCHREALTIME (a decimal point or
+# a comma, by locale), or whole seconds x 1000 on a bash without it.
+_lw_ms() {
+  local r="${EPOCHREALTIME:-}" s f
+  if [ -n "$r" ]; then
+    s=${r%[.,]*}; f=${r#*[.,]}000; f=${f:0:3}
+    printf -v "$1" '%s' "$((s * 1000 + 10#$f))"
+  else
+    printf -v "$1" '%(%s)T000' -1
+  fi
+}
+# _lw_read_once <slug> <out> — one pr_needs_review read. Sets _LW_TSV, _LW_RC,
+# _LW_ST (the _jobs_req status word, `-` when none was written) and _LW_BD (the
+# first 200 bytes of the answer, CR, LF and TAB as spaces).
+_lw_read_once() {
+  local sf="$2.st" bf="$2.bd"
+  _LW_TSV=$(JOBS_STATUS_FILE="$sf" JOBS_BODY_FILE="$bf" pr_needs_review "$1"); _LW_RC=$?
+  _LW_ST=$(head -c 64 "$sf" 2>/dev/null | tr -d '[:space:]'); _LW_ST=${_LW_ST:--}
+  _LW_BD=$(head -c 200 "$bf" 2>/dev/null | tr '\r\n\t' '   ')
+  rm -f "$sf" "$bf"
+}
+# _lw_read_rec <slug> <t0 ms> <outcome> <reads> <status> — one line in
+# state/lead-review/worklist-reads.tsv. No root, or a failed append, is silent:
+# the record never changes the read's answer.
+_lw_read_rec() {
+  local root now ts; root=$(_lw_root); [ -n "$root" ] || return 0
+  _lw_ms now; TZ=UTC0 printf -v ts '%(%FT%TZ)T' -1
+  { mkdir -p "$root/state/lead-review" && printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$ts" "$1" "$((now - $2))" "$3" "$4" "$5" \
+      >> "$root/state/lead-review/worklist-reads.tsv"; } 2>/dev/null
+  return 0
+}
 lw_items() {
-  local slug="${1:-}" out="${2:-}" tsv rc
+  local slug="${1:-}" out="${2:-}" t0 t1 n=1 pause=0 why1="" why2
   [ -n "$slug" ] && [ -n "$out" ] || return 1
   : > "$out" || return 1
-  tsv=$(pr_needs_review "$slug"); rc=$?
-  case "$rc" in 0) ;; 2) return 2 ;; *) return 1 ;; esac
-  printf '%s\n' "$tsv" | jq -Rc --arg r "$slug" 'split("\t")
+  _lw_ms t0
+  _lw_read_once "$slug" "$out"
+  # BH-7789: one retry of a failed read. A config answer (no secret, no URL)
+  # does not change in 2 s, so it is not retried.
+  if [ "$_LW_RC" -eq 1 ] && [ "$_LW_ST" != no-secret ] && [ "$_LW_ST" != no-url ]; then
+    pause="${LW_ITEMS_RETRY_SLEEP_S:-}"
+    case "$pause" in ''|*[!0-9]*) pause=2 ;; esac
+    [ "$((10#$pause))" -le 10 ] && pause=$((10#$pause)) || pause=2
+    why1="$_LW_ST body='$_LW_BD'"
+    sleep "$pause"
+    n=2; _lw_read_once "$slug" "$out"
+  fi
+  _lw_ms t1
+  why2="$_LW_ST body='$_LW_BD'"
+  if [ "$_LW_RC" -ne 0 ] && [ "$_LW_RC" -ne 2 ]; then
+    if [ "$n" = 2 ]; then
+      _lw_log "needs-review for $slug failed after 2 read(s) in $((t1 - t0)) ms (waited $pause s): first $why1; last $why2"
+    else
+      _lw_log "needs-review for $slug failed after 1 read(s) in $((t1 - t0)) ms: last $why2"
+    fi
+    _lw_read_rec "$slug" "$t0" fail "$n" "$_LW_ST"
+    return 1
+  fi
+  [ "$n" = 2 ] && _lw_log "needs-review for $slug: first read failed ($why1); the retry answered in $((t1 - t0)) ms (waited $pause s)"
+  if [ "$_LW_RC" -eq 2 ]; then _lw_read_rec "$slug" "$t0" none "$n" "$_LW_ST"; return 2; fi
+  printf '%s\n' "$_LW_TSV" | jq -Rc --arg r "$slug" 'split("\t")
     | select(length >= 6 and (.[0] | test("^[0-9]+$")) and (.[1] | test("^[0-9a-f]{40}$")))
     | {repo: $r, pr: (.[0] | tonumber), head_sha: .[1], hotfix: (.[3] == "1"), nudged: (.[4] == "1"),
        approved_at: (if .[5] == "-" then "" else .[5] end), src: "worklist"}' > "$out" 2>/dev/null \
-    || { : > "$out"; return 1; }
-  [ "$(wc -l < "$out")" -eq "$(printf '%s\n' "$tsv" | wc -l)" ] \
-    || _lw_log "needs-review for $slug: $(( $(printf '%s\n' "$tsv" | wc -l) - $(wc -l < "$out") )) malformed rows skipped"
+    || { : > "$out"; _lw_read_rec "$slug" "$t0" fail "$n" parse; return 1; }
+  [ "$(wc -l < "$out")" -eq "$(printf '%s\n' "$_LW_TSV" | wc -l)" ] \
+    || _lw_log "needs-review for $slug: $(( $(printf '%s\n' "$_LW_TSV" | wc -l) - $(wc -l < "$out") )) malformed rows skipped"
+  _lw_read_rec "$slug" "$t0" ok "$n" "$_LW_ST"
   return 0
 }
 
@@ -255,10 +320,19 @@ lw_pr_day_trip() {
   return 0
 }
 lw_pr_day_prune() {
-  local f t y now; _lw_started f || return 1
+  local f t y now r keep cut; _lw_started f || return 1
   [ -d "${f%/*}" ] && find "${f%/*}" -maxdepth 1 -name 'trip-*' -mtime +2 -delete 2>/dev/null
+  _lw_now now
+  # BH-7789: worklist-reads.tsv keeps LW_READS_KEEP_DAYS days (default 7).
+  r="${f%/*}/worklist-reads.tsv"
+  if [ -f "$r" ]; then
+    keep="${LW_READS_KEEP_DAYS:-}"
+    case "$keep" in ''|*[!0-9]*|0*) keep=7 ;; esac
+    TZ=UTC0 printf -v cut '%(%F)T' "$((now - keep * 86400))"
+    awk -v c="$cut" 'substr($0, 1, 10) >= c' "$r" > "$r.tmp.$$" 2>/dev/null && mv -f "$r.tmp.$$" "$r"
+  fi
   [ -f "$f" ] || return 0
-  _lw_day t; _lw_now now; TZ=UTC0 printf -v y '%(%F)T' "$((now - 86400))"
+  _lw_day t; TZ=UTC0 printf -v y '%(%F)T' "$((now - 86400))"
   awk -F'\t' -v t="$t" -v y="$y" '$1 == t || $1 == y' "$f" > "$f.tmp.$$" 2>/dev/null && mv -f "$f.tmp.$$" "$f"
 }
 
