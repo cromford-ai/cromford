@@ -225,9 +225,12 @@ watched_case() { # watched_case <label> <list> <project> <want 1|0>
     '[ "$got" = "$want" ] && [ "$(cat "$T/rc")" = 0 ]'
   # A hand run starts with a cold settings cache, so its one allowed request is
   # the TTL-shared GET /api/settings. Nothing else: no flag read, no liveness
-  # POST, no ledger read, no lane-gate stamp (BH-5943 review F1).
-  [ "$want" = 1 ] || check "AT-1e $1: not watched, so no request but the settings read ($(grep -v " GET /api/settings" "$T/reqs" | head -3 | tr '\n' '|'))" \
-    '! grep -qv " GET /api/settings" "$T/reqs" && [ ! -e "$H/state/lane-gate" ] && [ ! -e "$H/logs" ]'
+  # POST, no ledger read, no lane-gate stamp (BH-5943 review F1). That read
+  # also renders state/lane-gate/settings-cache.env from the new cache
+  # (BH-7717). It is the one entry state/lane-gate may hold; any other entry
+  # (a stamp, a .paused, a .settings-miss, a temp file) is still red.
+  [ "$want" = 1 ] || check "AT-1e $1: not watched, so no request but the settings read ($(grep -v " GET /api/settings" "$T/reqs" | head -3 | tr '\n' '|')) and no lane-gate entry but the settings render ($(ls -A "$H/state/lane-gate" 2>/dev/null | grep -vx settings-cache.env | head -3 | tr '\n' '|'))" \
+    '! grep -qv " GET /api/settings" "$T/reqs" && [ -z "$(ls -A "$H/state/lane-gate" 2>/dev/null | grep -vx settings-cache.env)" ] && [ ! -e "$H/logs" ]'
 }
 watched_case "all" all p3 1
 watched_case "a single name" p2 p2 1

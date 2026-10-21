@@ -81,7 +81,9 @@
 #
 # Knobs: LANE_GATE_CACHE_S (60), LANE_GATE_LOG_EVERY_S (3600), LANE_GATE_NOW
 # (epoch, injectable by tests), LANE_GATE_DISABLE=1 (the gate itself off — the
-# escape hatch if this file is ever the thing that is wrong).
+# escape hatch if this file is ever the thing that is wrong), LANE_GATE_SC_ENV=0
+# (BH-7717: never read or write state/lane-gate/settings-cache.env; every load
+# runs jq).
 
 LANE_GATE_CACHE_S="${LANE_GATE_CACHE_S:-60}"
 LANE_GATE_LOG_EVERY_S="${LANE_GATE_LOG_EVERY_S:-3600}"
@@ -1186,8 +1188,55 @@ _LG_SC_JQ='
      "names=" + ([$m[] | "_LG_SK_" + .e, (if .hv then "_LG_SV_" + .e else empty end)] | join(" ") | @sh),
      ($m[] | "_LG_SK_" + .e + "=1", (if .hv then "_LG_SV_" + .e + "=" + (.v | @sh) else empty end))]
     | join(" ")'
+# BH-7717: state/lane-gate/settings-cache.env holds the text that _LG_SC_JQ
+# prints for one cache, so a new process loads the memo with no jq fork. Format:
+#   line 1   `# settings-cache.env v1 <N>`  (N = byte length of the cache)
+#   then     the N cache bytes, then "\n", then the _LG_SC_JQ output,
+#   then     "\n#end-v1"
+# The file is used only when its N bytes equal the cache read now, so a file
+# rendered from other bytes (an older cache, a cut write, another version)
+# falls back to the jq. LANE_GATE_SC_ENV=0 never reads or writes it. It lives
+# in state/lane-gate/, which bk_manifest (bin/state-backup.sh) already prunes,
+# so a render does not make the state backup ship.
+# _lg_sce_read <cache> <raw> — rc 0 and _LG_SCE_PROG set when the env file is
+# bound to <raw>. Builtins only.
+_lg_sce_read() {
+  local LC_ALL=C e c n rest
+  _LG_SCE_PROG=""
+  [ "${LANE_GATE_SC_ENV:-1}" != 0 ] || return 1
+  e="${1%/*}/lane-gate/settings-cache.env"
+  [ -f "$e" ] && [ -r "$e" ] || return 1
+  IFS= read -r -d '' c < "$e" || :
+  n=${c%%$'\n'*}
+  [ "$n" != "$c" ] || return 1
+  n=${n#'# settings-cache.env v1 '}
+  case "$n" in ''|*[!0-9]*) return 1 ;; esac
+  [ "$n" = "${#2}" ] || return 1
+  rest=${c#*$'\n'}
+  [ "${rest:0:$n}" = "$2" ] || return 1
+  rest=${rest:$n}
+  [ "${rest:0:1}" = $'\n' ] || return 1
+  rest=${rest:1}
+  [ "${rest%$'\n#end-v1'}" != "$rest" ] || return 1
+  _LG_SCE_PROG=${rest%$'\n#end-v1'}
+  return 0
+}
+
+# _lg_sce_write <cache> <raw> <prog> — write the env file for <raw> atomically
+# (a temp file in the same dir, then mv). Always rc 0: a failed write leaves
+# readers on the jq path.
+_lg_sce_write() {
+  local LC_ALL=C e tmp
+  e="${1%/*}/lane-gate/settings-cache.env"
+  mkdir -p "${e%/*}" 2>/dev/null || return 0
+  tmp=$(mktemp "${e%/*}/.settings-cache.env.XXXXXX" 2>/dev/null) || return 0
+  if printf '# settings-cache.env v1 %s\n%s\n%s\n#end-v1' "${#2}" "$2" "$3" > "$tmp" 2>/dev/null \
+     && mv -f "$tmp" "$e" 2>/dev/null; then :; else rm -f "$tmp" 2>/dev/null; fi
+  return 0
+}
+
 _lg_sc_load() {
-  local h f raw="" fa=0 tot=0 names="" prog
+  local h f raw="" fa=0 tot=0 names="" prog jrc=0
   h="${HARNESS:-${H:-}}"; f=""
   [ -n "$h" ] && f="$h/state/settings-cache.json"
   if [ -z "$f" ] || [ ! -r "$f" ]; then
@@ -1199,7 +1248,14 @@ _lg_sc_load() {
   _lg_sc_reset
   # --arg src names the file the text came from, so a jq-counting shim that
   # looks for the cache's path counts this read (tests/conf-rows M4/M5).
-  prog=$(jq -r --arg src "$f" "$_LG_SC_JQ" <<<"$raw" 2>/dev/null) || :
+  if _lg_sce_read "$f" "$raw"; then
+    prog=$_LG_SCE_PROG
+  else
+    prog=$(jq -r --arg src "$f" "$_LG_SC_JQ" <<<"$raw" 2>/dev/null) || jrc=$?
+    # Only _lg_settings_refresh sets _LG_SC_RENDER, after it wrote a new cache.
+    [ "$jrc" = 0 ] && [ "${_LG_SC_RENDER:-0}" = 1 ] && [ "${LANE_GATE_SC_ENV:-1}" != 0 ] \
+      && _lg_sce_write "$f" "$raw" "$prog"
+  fi
   # The eval line is DATA (every value went through @sh), not commands, so it
   # runs untraced: under xtrace its one long line printed every settings value,
   # and a value that holds the text of a redirect read as a real one to the CI
@@ -1301,7 +1357,10 @@ _lg_settings_refresh() {
     '{fetched_at:$fa,
       values: (reduce (.settings[]? | select(.actor != $sa)) as $s ({}; .[$s.key] = $s.value)),
       seeded: (reduce (.settings[]? | select(.actor == $sa)) as $s ({}; .[$s.key] = $s.value))}' > "$tmp" 2>/dev/null \
-    && mv "$tmp" "$f" 2>/dev/null || rm -f "$tmp" 2>/dev/null
+    && mv "$tmp" "$f" 2>/dev/null || { rm -f "$tmp" 2>/dev/null; return 0; }
+  # BH-7717: render state/lane-gate/settings-cache.env for the new cache, so
+  # the next process loads the memo with no jq.
+  _LG_SC_RENDER=1 _lg_sc_load >/dev/null 2>&1 || :
   return 0
 }
 

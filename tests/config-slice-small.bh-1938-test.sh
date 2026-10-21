@@ -44,6 +44,18 @@ base_literal() {
   done
   return 1
 }
+# snapshot_history — rc 0 when HEAD's history is a harness snapshot, which is
+# not full history either (BH-7717): rp_snapshot_build (base + head commits by
+# rules-pack@harness) or suite-reach's base (suite-reach@harness). An exported
+# GIT_AUTHOR_EMAIL beats their `git -c user.email`, so the snapshot shape
+# (at most 2 commits, root subject `base`) counts too.
+snapshot_history() {
+  case "$(git -C "$DIR" log --max-parents=0 --format=%ae HEAD 2>/dev/null | tail -1)" in
+    rules-pack@harness|suite-reach@harness) return 0 ;;
+  esac
+  [ "$(git -C "$DIR" rev-list --count HEAD 2>/dev/null || echo 0)" -le 2 ] \
+    && [ "$(git -C "$DIR" log --max-parents=0 --format=%s HEAD 2>/dev/null | tail -1)" = base ]
+}
 # knob <scope> <id> <ENV> — the registry entry, compact JSON, or empty.
 knob() { jq -c --arg s "$1" --arg i "$2" --arg e "$3" '.[$s][]?|select(.id==$i)|.knobs[]?|select(.env==$e)' "$REG" 2>/dev/null; }
 
@@ -60,7 +72,8 @@ for spec in "libs lane-alert LANE_ALERT_DM_CHAT bin/lane-alert.sh 100000000" "la
   if [ -n "$HLIT" ]; then
     [ "$HLIT" = "$LIT" ] && ok || bad "P1: the pinned base literal $LIT for $3 is not the one in git history ($HLIT)"
   elif [ "$(git -C "$DIR" rev-parse --is-shallow-repository 2>/dev/null)" = false ] \
-       && [ "$(git -C "$DIR" rev-list --count HEAD 2>/dev/null || echo 0)" -gt 1 ]; then
+       && [ "$(git -C "$DIR" rev-list --count HEAD 2>/dev/null || echo 0)" -gt 1 ] \
+       && ! snapshot_history; then
     bad "P1: full git history holds no \${$3:-...} in $4"
   fi
   K=$(knob "$1" "$2" "$3")
