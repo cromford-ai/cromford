@@ -34,7 +34,7 @@ ARG FLYCTL_VERSION
 RUN set -eux; . /opt/fly-boot/bake-pin.sh; bake_require FLYCTL_VERSION "${FLYCTL_VERSION:-}"; \
     curl -fsSL -o /tmp/flyctl.tar.gz \
       "https://github.com/superfly/flyctl/releases/download/v${FLYCTL_VERSION}/flyctl_${FLYCTL_VERSION}_Linux_x86_64.tar.gz"; \
-    bake_sha256 /tmp/flyctl.tar.gz "https://github.com/superfly/flyctl/releases/download/v${FLYCTL_VERSION}/checksums.txt" \
+    bake_sha256 /tmp/flyctl.tar.gz "https://github.com/superfly/flyctl/releases/download/v${FLYCTL_VERSION}/flyctl_${FLYCTL_VERSION}_checksums.txt" \
       "flyctl_${FLYCTL_VERSION}_Linux_x86_64.tar.gz"; \
     tar -xzf /tmp/flyctl.tar.gz -C /usr/local/bin flyctl; \
     rm -f /tmp/flyctl.tar.gz; \
