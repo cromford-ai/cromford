@@ -16,7 +16,7 @@
 #   Prints the line saying what clears a hold of that kind and returns 0.
 #   Prints nothing and returns 1 for any other kind. The kinds: ticket-hold,
 #   pr-hold, hold-label, lead, lead-mergify, dep-hold, hotfix, tightened,
-#   provenance, iron-law.
+#   provenance, iron-law, migration.
 #
 # The root comes from MC_H, HARNESS or H only; with none of them set the source
 # returns 1 and defines nothing.
@@ -238,6 +238,7 @@ mc_hold_comment_clears() {
     tightened)    echo "the repo's review-tighten park is lifted" ;;
     provenance)   echo "a claude head-bound re-review of this head" ;;
     iron-law)     echo "the flagged lines removed, or a lead MERGE on this head" ;;
+    migration)    echo "the named migrations applied in production, then the conductor re-checks on its next pass" ;;
     *) return 1 ;;
   esac
 }

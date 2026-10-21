@@ -1669,6 +1669,8 @@ pr_worker() {
   fi
   mc_step classify
   IFS=$'\t' read -r STATE WHY <<<"$(mc_classify "$PSTATE" "$EFF" "$MGABLE" "$HEAD" "$REVIEWED" "$VERDICT" "$PROV" "$CI" "$REDS" "$TIGHT" "$SCAN" "$PREARM" "$PREV" "${HEADBOUND:--}")"
+  # MIGRATION NOT IN PROD IS NOT READY (BH-7785): mc_mig_hold, fragment bh-7785-migration-hold.sh
+  command -v mc_mig_hold >/dev/null 2>&1 && mc_mig_hold
   # ---- the merge-queue re-entry arm (BH-636) ------------------------------
   # A head the merge queue already EJECTED is not READY, whatever the PR's own
   # checks say: the merge_group build tested main+this and went red, and
