@@ -185,8 +185,13 @@ stale_lease() { "$REALCURL" -sS -X POST "$W/__lease" -d "{\"lane\":\"$LANE\",\"p
 # ============================================================================
 echo "H0: control — no placement row, and placement hub: today's hub tick"
 reset
+H0N=$(wc -l < "$T/srv.log" | tr -d ' ')
 htick
 dowork H0
+# BH-7519: the no-row tick takes no lease and reads no lane_runs (the gap of H0).
+tail -n "+$((H0N + 1))" "$T/srv.log" > "$KT/h0-since.txt"
+grep -q 'project-leases' "$KT/h0-since.txt" && bad "H0 no row: the tick touched the project lease: $(head -3 "$KT/h0-since.txt")" || ok "H0 no row: no project lease request"
+grep -q 'lane-runs' "$KT/h0-since.txt" && bad "H0 no row: the tick read lane_runs: $(head -3 "$KT/h0-since.txt")" || ok "H0 no row: no lane_runs request"
 [ "$(rows | jq length)" = 0 ] && ok "H0 no lane_runs row" || bad "H0 rows: $(rows)"
 [ ! -d "$HUB/state/pool-fly" ] && ok "H0 no placement state on the hub" || bad "H0 state: $(ls "$HUB/state/pool-fly")"
 reset; setting lane_placement.$LANE.$P hub
@@ -427,6 +432,163 @@ mkcache "$NOW" "{\"lane_placement.fly-pool.$P\":\"fly\"}"; [ "$(none)" = 1 ] && 
 mkcache "$((NOW - 3600))" '{}'; [ "$(none)" = 1 ] && ok "U1 a stale cache: gate" || bad "U1 stale"
 mkcache "$NOW" '{}'; mkdir -p "$HUB/state/pool-fly"; echo fly > "$HUB/state/pool-fly/$P.placed"; [ "$(none)" = 1 ] && ok "U1 a placed mark: gate" || bad "U1 mark"
 scratch_rm "$HUB/state/pool-fly"; scratch_rm "$HUB/state/settings-cache.json"
+
+# ============================================================================
+# BH-7519: the single-run and write-back fixes of the #7515 review. N1-N8 and
+# the pp_newest cases below are red on the BH-7505 tree.
+# ============================================================================
+SRVN() { wc -l < "$T/srv.log" | tr -d ' '; }
+srv_since() { tail -n "+$(($1 + 1))" "$T/srv.log" > "$KT/srv-since.txt"; }
+answer() { "$REALCURL" -sS -X PUT "$W/__answer" -d "$1" >/dev/null; }
+# X1 left a lease of holder-y valid to 2099: expire it, so a later holder can take the project.
+stale_lease expired 99 2000-01-01T00:00:00Z
+
+echo "N1: the lease request is not answered while the project is placed fly — no hub work (fail closed)"
+reset; setting lane_placement.$LANE.$P fly; setting lane_fallback.$LANE.$P hub
+htick; RID=$(rows | jq -r '[.[] | select(.status == "queued")][0].id // empty')
+[ -n "$RID" ] || bad "N1 setup: no queued row: $(rows)"
+: > "$KT/fly.txt"
+answer '{"path_prefix":"/api/project-leases/acquire","status":503,"body":"{}"}'
+htick POOL_FLY_QUEUE_STALE_S=0
+nowork "N1 (the lease is not answered)"
+grep -q "\[pool/$P\] placed fly: fallback=no-capacity .* the project lease was not answered" "$HLOG" && ok "N1 the log says the lease was not answered" || bad "N1 log: $(hublog)"
+answer '{}'
+: > "$KT/fly.txt"
+htick POOL_FLY_QUEUE_STALE_S=0
+dowork "N1 (the next tick, the lease answers)"
+
+echo "N2: a rollback whose withdraw fails keeps the placed mark; the next tick takes the lease and ends the row"
+reset; setting lane_placement.$LANE.$P fly
+htick; RID=$(rows | jq -r '[.[] | select(.status == "queued")][0].id // empty')
+[ -n "$RID" ] || bad "N2 setup: no queued row: $(rows)"
+setting lane_placement.$LANE.$P hub
+: > "$KT/fly.txt"
+answer "{\"path_prefix\":\"/api/lane-runs/$RID/withdraw\",\"status\":503,\"body\":\"{}\"}"
+htick
+dowork "N2 (the lease is taken, the hub runs)"
+[ -e "$HUB/state/pool-fly/$P.placed" ] && ok "N2 the placed mark stays while the withdraw failed" || bad "N2 the mark was removed: $(hublog)"
+[ "$(rows | jq -r --argjson id "$RID" '.[] | select(.id == $id) | .status')" = queued ] && ok "N2 the row is still queued" || bad "N2 row: $(rows)"
+answer '{}'
+: > "$KT/fly.txt"
+htick
+dowork "N2 (next tick)"
+[ "$(rows | jq -r --argjson id "$RID" '.[] | select(.id == $id) | .status')" = died ] && ok "N2 the next tick withdrew the row" || bad "N2 row after: $(rows)"
+[ ! -e "$HUB/state/pool-fly/$P.placed" ] && ok "N2 and then the mark is removed" || bad "N2 the mark is still there"
+
+echo "N2b: a rollback while a machine holds the row keeps the mark and does no hub work"
+reset; setting lane_placement.$LANE.$P fly
+htick
+: > "$KT/hold"
+( mrun STUB_HOLD="$KT/hold" ) &
+MP=$!
+WAITFOR '[ "$(lease | jq -r .holder 2>/dev/null)" = m1 ]' 100 || bad "N2b setup: the machine never took the lease"
+setting lane_placement.$LANE.$P hub
+: > "$KT/fly.txt"
+htick
+nowork "N2b"
+[ -e "$HUB/state/pool-fly/$P.placed" ] && ok "N2b the placed mark stays while a machine holds the row" || bad "N2b the mark was removed"
+rm -f "$KT/hold"; wait "$MP"
+
+echo "N2c: _pp_row_ended — only a row that is over lets the mark go (a withdraw must answer rc 0)"
+ended() { # ended <withdraw-rc> <kind> <detail> -> "<rc> <withdraw called>"
+  ( env HARNESS="$HUB" WRC="$1" WLOG="$KT/wlog.txt" bash -c '. "$HARNESS/bin/jobs-client.sh" >/dev/null 2>&1; . "$HARNESS/bin/lib/pool-placement.sh"
+      _pp_withdraw() { echo "W $*" >> "$WLOG"; return "$WRC"; }
+      rm -f "$WLOG"; _pp_row_ended mk "$2" 7 "$3"; r=$?; [ -e "$WLOG" ] && echo "$r withdrew" || echo "$r kept" ' _ "$@" ) 2>/dev/null | tail -1
+}
+[ "$(ended 0 stale 400)" = "0 withdrew" ] && ok "N2c stale + withdraw rc 0: over" || bad "N2c stale/0: $(ended 0 stale 400)"
+[ "$(ended 2 stale 400)" = "1 withdrew" ] && ok "N2c stale + withdraw not answered (rc 2): not over" || bad "N2c stale/2: $(ended 2 stale 400)"
+[ "$(ended 3 stale 400)" = "1 withdrew" ] && ok "N2c stale + claimed meanwhile (rc 3): not over" || bad "N2c stale/3: $(ended 3 stale 400)"
+[ "$(ended 0 live queued)" = "0 withdrew" ] && ok "N2c live queued (enqueued_at unreadable) is withdrawn, rc 0: over" || bad "N2c live queued/0: $(ended 0 live queued)"
+[ "$(ended 2 live queued)" = "1 withdrew" ] && ok "N2c live queued, withdraw failed: not over" || bad "N2c live queued/2: $(ended 2 live queued)"
+[ "$(ended 0 live claimed)" = "1 kept" ] && ok "N2c live claimed: not over, no withdraw" || bad "N2c live claimed: $(ended 0 live claimed)"
+[ "$(ended 0 unread -)" = "1 kept" ] && ok "N2c an unreadable row: not over" || bad "N2c unread: $(ended 0 unread -)"
+for k in none done failed deferred withdrawn; do
+  [ "$(ended 2 "$k" -)" = "0 kept" ] && ok "N2c $k: over, no withdraw" || bad "N2c $k: $(ended 2 "$k" -)"
+done
+
+echo "N3: row hub and no placed mark — no lease and no lane_runs read in a real tick (H0 covers the no-row case)"
+reset; setting lane_placement.$LANE.$P hub
+N0=$(SRVN); htick; srv_since "$N0"
+dowork N3
+grep -qE 'project-leases|lane-runs' "$KT/srv-since.txt" && bad "N3 lease or lane_runs request: $(grep -E 'project-leases|lane-runs' "$KT/srv-since.txt" | head -3)" || ok "N3 no lease and no lane_runs request"
+
+echo "N4: the project's own row is found behind 12 newer rows of sibling projects (exact project, not prefix plus limit 10)"
+reset; setting lane_placement.$LANE.$P fly; setting lane_fallback.$LANE.$P hub
+htick; RID=$(rows | jq -r '[.[] | select(.status == "queued")][0].id // empty')
+for i in $(seq 1 12); do
+  "$REALCURL" -sS -X POST "${AUTH[@]}" "$W/api/lane-runs" \
+    -d "{\"lane\":\"$LANE\",\"project\":\"$P-sib$i\",\"args\":[\"bin/fly-pool-project.sh\",\"$P-sib$i\"]}" >/dev/null
+done
+: > "$KT/fly.txt"
+htick POOL_FLY_QUEUE_STALE_S=0
+dowork "N4 (the stale row of $P was seen, withdrawn, the hub ran)"
+[ "$(rows | jq -r --argjson id "$RID" '.[] | select(.id == $id) | .status')" = died ] && ok "N4 the row of $P is withdrawn" || bad "N4 row: $(rows)"
+pn() { ( env HARNESS="$HUB" bash -c '. "$HARNESS/bin/jobs-client.sh" >/dev/null 2>&1; . "$HARNESS/bin/lib/pool-placement.sh"; pp_newest "$@"' _ "$@" ) 2>/dev/null; }
+RJ='{"truncated":false,"rows":[{"id":9,"project":"mk-b","status":"claimed"},{"id":3,"project":"mk","status":"done","rc":0,"prof_line":"PROF fly-pool-project state=TICKED"}]}'
+[ "$(pn "$RJ" mk "$(date -u +%s)" 300)" = "done 3 -" ] && ok "N4 pp_newest picks the row of the exact project" || bad "N4 pp_newest: $(pn "$RJ" mk "$(date -u +%s)" 300)"
+RJ='{"truncated":true,"rows":[{"id":9,"project":"mk-b","status":"claimed"}]}'
+[ "$(pn "$RJ" mk "$(date -u +%s)" 300)" = "unread - -" ] && ok "N4 a full window with no row of the project is unread, not none" || bad "N4 truncated: $(pn "$RJ" mk "$(date -u +%s)" 300)"
+RJ='{"truncated":true,"rows":[{"id":9,"project":"mk-b","status":"claimed"},{"id":4,"project":"mk","status":"queued","enqueued_at":null}]}'
+[ "$(pn "$RJ" mk "$(date -u +%s)" 300)" = "live 4 queued" ] && ok "N4 a full window with a row of the project answers for it (unreadable enqueued_at is live queued)" || bad "N4 live queued: $(pn "$RJ" mk "$(date -u +%s)" 300)"
+
+echo "N6: the leftover stop files of dead ticks are pruned; a live tick's file stays"
+reset; setting lane_placement.$LANE.$P fly; setting lane_fallback.$LANE.$P hub
+htick
+mkdir -p "$HUB/state/pool-fly"
+sleep 0 & DEADPID=$!; wait "$DEADPID" 2>/dev/null
+sleep 60 & LIVEPID=$!
+: > "$HUB/state/pool-fly/$P.stop.$DEADPID"; : > "$HUB/state/pool-fly/$P.stop.$LIVEPID"; : > "$HUB/state/pool-fly/$P.stop.notapid"
+htick POOL_FLY_QUEUE_STALE_S=0
+[ ! -e "$HUB/state/pool-fly/$P.stop.$DEADPID" ] && ok "N6 the stop file of a dead pid is removed" || bad "N6 dead pid file is still there"
+[ -e "$HUB/state/pool-fly/$P.stop.$LIVEPID" ] && ok "N6 the stop file of a live pid stays" || bad "N6 the live pid file was removed"
+[ -e "$HUB/state/pool-fly/$P.stop.notapid" ] && ok "N6 a file that is not <project>.stop.<pid> is left alone" || bad "N6 the other file was removed"
+kill "$LIVEPID" 2>/dev/null; wait "$LIVEPID" 2>/dev/null
+
+echo "N7: the TERM path ends its write-back inside lane_run.term_grace_s"
+reset; setting lane_placement.$LANE.$P fly; setting lane_run.term_grace_s 10
+htick
+RID=$(rows | jq -r '[.[] | select(.status == "queued")][0].id // empty')
+[ -n "$RID" ] || bad "N7 setup: no queued row: $(rows)"
+: > "$KT/hold"
+W0=$(grep -c "POST /api/lane-snapshots/$LANE/$P/writebacks 20" "$T/srv.log")
+( cd "$KT" && exec env "${ENVS[@]}" HARNESS="$MAC" FLY_BIN_DIR="$MFB" FLEET_CONF="$MAC/fleet.conf" FLY_MACHINE_ID=m7 FLY_API_TOKEN_project-6_OS=tok \
+    POOL_HARNESS_SRC="$SRCD" LANE_RUN=1 STUB_HOLD="$KT/hold" bash "$MAC/bin/lane-run-worker.sh" --once --machine m7 ) > "$KT/n7.out" 2>&1 &
+WP=$!
+WAITFOR '[ "$(grep -c . "$KT/ticks.txt")" = 1 ]' 150 || bad "N7 setup: the tick never started: $(cat "$KT/n7.out")"
+TS=$SECONDS
+kill -TERM "$WP"; wait "$WP"; EL=$((SECONDS - TS))
+[ "$(grep -c "POST /api/lane-snapshots/$LANE/$P/writebacks 20" "$T/srv.log")" -gt "$W0" ] && ok "N7 the write-back was posted before the worker's grace ended" || bad "N7 no write-back after the TERM (${EL}s): $(tail -4 "$MAC/logs/fly-pool.log")"
+T_TERM=$(sed -n 's/^\([0-9-]* [0-9:]*Z\) \[pool\/[^]]*\] fly run on m7: TERM.*/\1/p' "$MAC/logs/fly-pool.log" | tail -1)
+T_END=$(sed -n 's/^\([0-9-]* [0-9:]*Z\) \[pool\/[^]]*\] fly run end on m7: state=STOPPED.*/\1/p' "$MAC/logs/fly-pool.log" | tail -1)
+if [ -n "$T_TERM" ] && [ -n "$T_END" ] && [ "$(( $(date -u -d "${T_END%Z}" +%s) - $(date -u -d "${T_TERM%Z}" +%s) ))" -lt 10 ]; then
+  ok "N7 the run logged its end (state=STOPPED) under the 10 s grace after its TERM"
+else bad "N7 no end line inside the grace (TERM '$T_TERM', end '$T_END'): $(tail -5 "$MAC/logs/fly-pool.log")"; fi
+L=$(lease); NOWISO=$(date -u +%FT%TZ)
+[[ "$(jq -r .lease_until <<<"$L")" < "$NOWISO" || "$(jq -r .lease_until <<<"$L")" == "$NOWISO" ]] && ok "N7 the lease is released" || bad "N7 lease: $L"
+rm -f "$KT/hold"; setting lane_run.term_grace_s 20
+
+echo "N8: POOL_PROJECT_RENEW_S reaches the entry through a settings row, capped at a third of the lease TTL"
+cp "$DIR/catalog/lanes.json" "$MAC/catalog/lanes.json"
+reset; setting lane_placement.$LANE.$P fly; setting project_lease.ttl_s 30
+htick
+mrun
+grep -q "fly run start on m1 (row [0-9]*, fence [0-9]*, renew 10s of 30s)" "$MAC/logs/fly-pool.log" && ok "N8 renew 60 s with a 30 s TTL is capped at 10 s" || bad "N8 log: $(grep 'fly run start' "$MAC/logs/fly-pool.log" | tail -2)"
+reset; setting lane_placement.$LANE.$P fly; setting project_lease.ttl_s 180; setting "lane.fly-pool.$P.pool_project_renew_s" 7
+htick
+mrun
+grep -q "fly run start on m1 (row [0-9]*, fence [0-9]*, renew 7s of 180s)" "$MAC/logs/fly-pool.log" && ok "N8 a lane row sets the period (lane_env_apply)" || bad "N8 row: $(grep 'fly run start' "$MAC/logs/fly-pool.log" | tail -2)"
+setting project_lease.ttl_s 180
+
+echo "N9: pp_fence_ok on a machine's tick loads the lease client itself (bin/fly-pool.sh is a child of the entry)"
+reset
+stale_lease holder-x 5 2099-01-01T00:00:00Z
+F9=$( ( env "${ENVS[@]}" HARNESS="$HUB" POOL_ON_MACHINE=1 POOL_LEASE_FENCE=5 POOL_LEASE_PROJECT=$P POOL_LEASE_HOLDER=holder-x \
+         bash -c '. "$HARNESS/bin/jobs-client.sh"; . "$HARNESS/bin/lib/pool-placement.sh"; say() { :; }; pp_fence_ok; echo $?' ) 2>/dev/null | tail -1 )
+[ "$F9" = 0 ] && ok "N9 a live fence renews with no lease client preloaded" || bad "N9 rc=$F9"
+stale_lease holder-y 6 2099-01-01T00:00:00Z
+F9=$( ( env "${ENVS[@]}" HARNESS="$HUB" POOL_ON_MACHINE=1 POOL_LEASE_FENCE=5 POOL_LEASE_PROJECT=$P POOL_LEASE_HOLDER=holder-x \
+         bash -c '. "$HARNESS/bin/jobs-client.sh"; . "$HARNESS/bin/lib/pool-placement.sh"; say() { :; }; pp_fence_ok; echo $?' ) 2>/dev/null | tail -1 )
+[ "$F9" = 99 ] && ok "N9 a lost fence is rc 99" || bad "N9 lost rc=$F9"
 
 echo "fly-pool-placement.bh-7505: $PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ]

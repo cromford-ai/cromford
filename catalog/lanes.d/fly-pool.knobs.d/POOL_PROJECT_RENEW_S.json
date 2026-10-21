@@ -7,5 +7,5 @@
   "unit": "seconds",
   "zero_means": null,
   "read_in": "bin/fly-pool-project.sh",
-  "note": "BH-7505: how often a pool tick on a lane-run machine renews the fly-pool project lease while the tick runs. Keep it under a third of project_lease.ttl_s (seed 180). A renew answered `lost` stops the tick's spend (the stop file)."
+  "note": "BH-7505: how often a pool tick on a lane-run machine renews the fly-pool project lease while the tick runs. The run caps it at a third of project_lease.ttl_s (seed 180, so 60). A renew answered `lost` stops the tick's spend (the stop file)."
 }

@@ -3085,6 +3085,15 @@ next_job_or_destroy() { # hand this machine the next queued job, or destroy it
       # ...and never a job the dispatch mode holds (BH-6350): the spawn loop's
       # one tick line names it, so nothing is said here.
       if command -v dm_job_admit >/dev/null 2>&1 && ! dm_job_admit "$NJ"; then continue; fi
+      # BH-7519: a handoff starts a build, which is a spend, so it needs the
+      # project lease like a spawn does. Before the cap record and the claim:
+      # nothing is taken yet, so a lost lease leaves every row queued, and
+      # REUSED=0 destroys the machine (destroy_machine fences too; the sweep
+      # retries it).
+      if command -v pp_fence_ok >/dev/null 2>&1 && ! pp_fence_ok; then
+        say "$MID: the project lease is lost — no handoff of $NKEY, the rows stay queued"
+        break
+      fi
       if command -v pool_spawn_decision >/dev/null 2>&1; then
         if ! pool_spawn_decision "$NJ" "$NKEY" "$NTICKET"; then
           # BH-7421: the gate answered "budget spent" (it said so once already):
@@ -3212,6 +3221,13 @@ next_job_or_destroy() { # hand this machine the next queued job, or destroy it
       break
     done
   fi
+  # BH-7519: on a lane-run machine the reap's results (the parked
+  # state/remote-results record, the build dir, the closed queue row's files) exist
+  # only here until a write-back carries them home. Post them before the machine
+  # is destroyed or handed on: a machine that stops hard after this point has
+  # already left the result with the hub. No-op on the hub; fail-open (the final
+  # write-back retries).
+  command -v pp_checkpoint >/dev/null 2>&1 && pp_checkpoint "$P" "reap ${KEY:-?}"
   if [ "$REUSED" = 0 ]; then
     # `command -v` because tests/pool-account-routing-test.sh and
     # tests/hotfix-cap-exempt-test.sh source THIS FUNCTION ALONE, with nothing
@@ -4152,6 +4168,10 @@ for MF in "$POOL"/*.json; do
     jq -nc --arg k "$KEY" --arg t "$TICKET" --arg d "$LOCAL" --arg r "$(head -c 200 "$LOCAL/RESULT")" \
       --arg mbd "${MBDIR:-}" \
       '{key:$k,ticket_id:$t,build_dir:$d,result:$r,machine_build_dir:$mbd}' > "$HARNESS/state/remote-results/$P/$KEY.json"
+    # BH-7519: the reap park. On a lane-run machine this record and the build
+    # dir are only here until a write-back carries them home, and the run-end
+    # write-back is not reached by a machine that stops hard. Post it now.
+    command -v pp_checkpoint >/dev/null 2>&1 && pp_checkpoint "$P" "reap park $KEY"
     # ---- relay to the owning box (2026-08-16, TK-124 stranding) --------------
     # Only project-1 triage runs on the hub, so a non-local project's result
     # parked in the hub's state/remote-results strands forever (PR #318 sat a
@@ -5122,6 +5142,20 @@ spawn_one() { # spawn_one <job-file> <key> <ticket-id> <attempt> <deferrals> <de
   # lane.fly-pool.<project>.warmup_wait_s), then exits 0.
   local WW="${WARMUP_WAIT_S:-1800}"; case "$WW" in ''|*[!0-9]*|0) WW=1800 ;; esac
   say "$KEY: setup before launch took $(( $(date +%s) - SETUP_T ))s"
+  # BH-7519: the fence at the top of this function is minutes old (the setup
+  # above took about 12 on project-6-os). Ask again right before the spend. A
+  # lost lease buys no machine and hands the claim back, as a launch with no
+  # machine id does.
+  if command -v pp_fence_ok >/dev/null 2>&1; then
+    pp_fence_ok; local FRC=$?
+    if [ "$FRC" = 99 ]; then
+      say "$KEY: the project lease was lost during setup — no machine spawned, job stays queued"
+      rm -rf "$TMP"; rm -f "$TB"
+      command -v pool_account_release >/dev/null 2>&1 && pool_account_release "$LEASE_ID"
+      pool_spawn_cap_unrecord "$KEY" "$SPAWNCAPTS"
+      pool_unclaim "$KEY" "project lease lost before the launch of $KEY"; return 1
+    fi
+  fi
   # Parse the id off the "Machine ID:" line ONLY — the first bare 14-hex run in
   # the output is the image's sha256 digest when IMAGE carries one, and treating
   # that as the id orphans the real machine (2026-08-12, pool-project-3).

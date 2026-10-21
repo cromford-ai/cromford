@@ -75,6 +75,28 @@ so the hub takes the tick back. Today the lane-run image lacks all of these:
 Until 1 to 4 are met the flip is safe and useless: the machine defers, the hub
 runs the tick.
 
+## Single-run and write-back fixes (BH-7519, from the #7515 review)
+
+- An unanswered lease request is no hub work. `_pp_take` runs only for a project
+  placed fly or with a `.placed` mark, and the hub flock does not stop a machine.
+- A rollback keeps `.placed` until the newest row is over: withdraw rc 0, or
+  none, done, failed, deferred or withdrawn. A claimed row, an unreadable row
+  and a withdraw that gets no answer keep the mark.
+- `pp_fence_ok` runs again just before `fly machine run` (the first check is
+  about 12 minutes older). Rc 99 hands the claim back (`pool_unclaim`). The reuse
+  handoff is fenced too.
+- `pp_checkpoint` runs after the reap park record and before the machine is
+  destroyed or handed on.
+- `pp_fence_ok` loads `bin/lib/project-lease.sh` when it is missing. The tick
+  is a child of the entry script and does not inherit its functions, so every
+  machine fence read "renew unavailable" and stopped the spawn.
+- The TERM path: the tick's wait is cut to `lane_run.term_grace_s` minus 12 s,
+  and the write-back is cut at the grace deadline.
+- `POOL_PROJECT_RENEW_S` is read through `lane_env_apply` and capped at a third
+  of the lease TTL. Stop files of dead hub ticks are pruned. A row lookup asks
+  for the whole 50-row window and picks the exact project; a full window with no
+  row of the project is `unread`, never `none`.
+
 ## Known limits
 
 - A build record file over `lane_snapshot.file_max` (262144) stays on the

@@ -50,8 +50,10 @@
 #       no lane_placement.fly-pool row is fly and no project has a placed mark:
 #       the hub skips the gate with one jq read.
 #   pp_newest <rows-json> <project> <now-epoch> <stale-s> [box 0|1]
-#       one line `<kind> <id> <detail>` for the NEWEST row of <project>. kind:
-#       none, live (queued less than <stale-s> ago, or claimed), stale (queued
+#       one line `<kind> <id> <detail>` for the NEWEST row of <project>, matched
+#       by the exact project name (a prefix read also lists sibling projects,
+#       and the window is _PP_ROWS_LIMIT rows). kind: none, unread (the window
+#       was full and holds no row of <project>: not known), live (queued less than <stale-s> ago, or claimed), stale (queued
 #       <stale-s> or more; detail = its age; with box 1 also claimed with a
 #       lease_until <stale-s> or more in the past, detail box-silent), failed (died, failed, a done rc
 #       that is not 0, or a done row with no `PROF fly-pool-project` line),
@@ -180,12 +182,25 @@ _pp_fallback() {
   printf hub
 }
 
+# _PP_ROWS_LIMIT — the most rows the route lists (worker/jobs/src/routes/lane-runs.js
+# LIST_LIMIT_MAX). A read asks for all of them: the project filter is a prefix
+# range, so the project's own newest row can sit behind sibling projects' rows.
+_PP_ROWS_LIMIT=50
+
+# _pp_rows <project> [live] — the lane_runs rows of the project (prefix read, the
+# whole window). rc and JOBS_HTTP are _jobs_req's.
+_pp_rows() {
+  _jobs_req GET "/api/lane-runs/by-prefix?lane=$PP_LANE&project_prefix=$1${2:+&live=1}&limit=$_PP_ROWS_LIMIT"
+}
+
 pp_newest() {
   local box=0; [ "${5:-0}" = 1 ] && box=1
   printf '%s' "${1:-}" | jq -r --arg p "${2:-}" --argjson now "${3:-0}" --argjson st "${4:-300}" --argjson box "$box" '
-    (.rows | if type == "array" then . else error("no rows") end)
-    | (first(.[] | select(.project == $p)) // null) as $r
-    | if $r == null then "none - -"
+    (.truncated == true) as $trunc
+    | (.rows | if type == "array" then . else error("no rows") end) as $all
+    | (first($all[] | select(.project == $p)) // null) as $r
+    | if $r == null and $trunc then "unread - -"
+      elif $r == null then "none - -"
       else ($r.status // "") as $s | ($r.prof_line // "") as $pl | ($r.id | tostring) as $id
         | if $s == "died" and ($pl | startswith("withdrawn ")) then "withdrawn \($id) -"
           elif $s == "claimed" and $box == 1
@@ -280,11 +295,27 @@ _pp_renew_loop() {
   done
 }
 
+# _pp_prune_stop <project> — remove the stop files of hub ticks that are gone
+# (state/pool-fly/<project>.stop.<pid>, left by a tick that was killed before
+# pp_release). A file whose pid is alive is kept.
+_pp_prune_stop() {
+  local f pid
+  for f in "$(_pp_dir)/$1".stop.*; do
+    [ -e "$f" ] || continue
+    pid="${f##*.}"
+    [[ $pid =~ ^[0-9]+$ ]] || continue
+    [ "${f%.*}" = "$(_pp_dir)/$1.stop" ] || continue
+    kill -0 "$pid" 2>/dev/null || rm -f "$f"
+  done
+  return 0
+}
+
 # _pp_lease_take <project> — rc 0 = held (the fence and the stop file are
 # exported for pp_fence_ok, and a renewer runs), rc 3 = another holder has it,
-# rc 1 = not answered (the hub flock still holds: the tick goes on).
+# rc 1 = not answered (the caller, _pp_take, fails closed).
 _pp_lease_take() {
   local p="$1" h f ttl stop
+  _pp_prune_stop "$p"
   h=$(_pp_holder); ttl=$(_pp_int POOL_FLY_HUB_LEASE_TTL_S "$PP_HUB_LEASE_TTL_S")
   [ "$ttl" -le 900 ] || ttl=900
   export PJL_TTL_S="$ttl"
@@ -313,6 +344,14 @@ pp_fence_ok() {
   [ -n "${POOL_LEASE_FENCE:-}" ] || return 0
   if [ -n "${POOL_STOP_FILE:-}" ] && [ -e "$POOL_STOP_FILE" ]; then return 99; fi
   local p="${POOL_LEASE_PROJECT:-}" h="${POOL_LEASE_HOLDER:-}" rc=1
+  # BH-7519: bin/fly-pool.sh runs as a CHILD of bin/fly-pool-project.sh, so it
+  # does not inherit that script's pjl_* functions, and it never sources the lease
+  # client itself (the hub gate does, through _pp_client, and a machine tick skips
+  # the gate). Without this load every machine fence read `renew unavailable`.
+  if ! declare -F pjl_renew >/dev/null 2>&1 && [ -r "$(_pp_root)/bin/lib/project-lease.sh" ]; then
+    # shellcheck source=bin/lib/project-lease.sh
+    . "$(_pp_root)/bin/lib/project-lease.sh" 2>/dev/null
+  fi
   if declare -F pjl_renew >/dev/null 2>&1; then
     pjl_renew "$PP_LANE" "$p" "$h" "$POOL_LEASE_FENCE" >/dev/null 2>&1; rc=$?
   fi
@@ -343,8 +382,8 @@ pp_checkpoint() {
 
 # _pp_take <project> <word> <detail> — the hub runs this tick. Applies the
 # machines' write-backs first, then takes the project lease. rc 1 = run on the
-# hub; rc 0 = no hub work (a write-back could not be applied, or a Fly run holds
-# the lease).
+# hub; rc 0 = no hub work (a write-back could not be applied, a Fly run holds
+# the lease, or the lease request was not answered).
 _pp_take() {
   local p="$1" w="$2" det="$3"
   if ! _pp_apply "$p"; then
@@ -356,8 +395,12 @@ _pp_take() {
     0) _pp_say "${PP_TAG:-placed fly}: $w ($det) — this tick runs on the hub (${PP_APPLY_WHY:-applied})"; return 1 ;;
     3) _pp_say "a Fly run holds the project lease — $w ($det): no hub work this tick"; return 0 ;;
   esac
-  _pp_say "${PP_TAG:-placed fly}: $w ($det) — the lease was not answered, the hub flock alone holds; this tick runs on the hub"
-  return 1
+  # BH-7519: an unanswered lease is NOT a free project. A Fly run may hold it
+  # right now, and the hub flock does not stop a machine. This function runs
+  # only for a project placed fly or one with a placed mark, so it fails closed
+  # (the same rule as _pp_unknown, #7446): no hub work, the next tick asks again.
+  _pp_say "${PP_TAG:-placed fly}: $w ($det) — the project lease was not answered (http ${JOBS_HTTP:-none}); no hub work this tick"
+  return 0
 }
 
 # _pp_fallback_run <project> <word> <detail> — a hub fallback, or with
@@ -500,7 +543,7 @@ _pp_fly_row() {
   [ -n "${PP_BOX:-}" ] && boxed=1
   _pp_put "$d/$p.placed" "${PP_BOX:+box:}${PP_BOX:-fly}"
   st=$(_pp_int POOL_FLY_QUEUE_STALE_S "$PP_QUEUE_STALE_S" 0)
-  rows=$(_jobs_req GET "/api/lane-runs/by-prefix?lane=$PP_LANE&project_prefix=$p&limit=10") \
+  rows=$(_pp_rows "$p") \
     && read -r kind id det < <(pp_newest "$rows" "$p" "$(date -u +%s)" "$st" "$boxed") \
     && [ -n "$kind" ] || { kind=read-failed; id=-; det="http ${JOBS_HTTP:-none}"; }
   case "$kind" in
@@ -514,18 +557,34 @@ _pp_fly_row() {
   esac
 }
 
+# _pp_row_ended <project> <kind> <id> <detail> — rc 0 when the newest row of the
+# project is over (BH-7519): a queued row is withdrawn first, and only a withdraw
+# answered rc 0 counts. A claimed row, a row that could not be read and a
+# withdraw that was not answered are not over: the placed mark stays.
+_pp_row_ended() {
+  local p="$1" kind="$2" id="$3" det="$4"
+  case "$kind:$det" in
+    stale:*|live:queued) _pp_withdraw "$p" "$id" "rollback" >/dev/null && return 0; return 1 ;;
+    none:*|done:*|failed:*|deferred:*|withdrawn:*) return 0 ;;
+  esac
+  return 1
+}
+
 # _pp_hub <project> — the row says hub. With no placed mark this is today's tick.
 # With a mark the project was fly: a queued row is withdrawn so no machine claims
 # it, and the hub takes the project lease, so a Fly run still in flight is
-# never run beside the hub. The mark goes once the lease is held.
+# never run beside the hub. The mark goes once the lease is held AND the newest
+# row is over (_pp_row_ended); until then every tick takes this path again.
 _pp_hub() {
-  local p="$1" rows kind id det rc
-  [ -e "$(_pp_dir)/$p.placed" ] || return 1
-  rows=$(_jobs_req GET "/api/lane-runs/by-prefix?lane=$PP_LANE&project_prefix=$p&limit=10") \
-    && read -r kind id det < <(pp_newest "$rows" "$p" "$(date -u +%s)" 0) || kind=none
-  [ "$kind" != stale ] || { _pp_withdraw "$p" "$id" "rollback" >/dev/null; true; }
+  local p="$1" rows kind id det rc ended=1 d
+  d=$(_pp_dir)
+  [ -e "$d/$p.placed" ] || return 1
+  if rows=$(_pp_rows "$p") && read -r kind id det < <(pp_newest "$rows" "$p" "$(date -u +%s)" 0) && [ -n "$kind" ]; then
+    _pp_row_ended "$p" "$kind" "$id" "$det"; ended=$?
+  fi
   _pp_take "$p" rollback "placement is hub again"; rc=$?
-  [ "$rc" = 1 ] && [ -n "${POOL_LEASE_FENCE:-}" ] && rm -f "$(_pp_dir)/$p.placed" "$(_pp_dir)/$p.taken" "$(_pp_dir)/$p.takeback-at" "$(_pp_dir)/$p.box-down"
+  [ "$rc" = 1 ] && [ "$ended" = 0 ] && [ -n "${POOL_LEASE_FENCE:-}" ] && rm -f "$d/$p.placed" "$d/$p.taken" "$d/$p.takeback-at" "$d/$p.box-down"
+  [ "$rc" != 1 ] || [ "$ended" = 0 ] || _pp_say "${PP_TAG:-placed fly}: rollback keeps the placed mark — the newest row of $p is not over yet"
   return "$rc"
 }
 
@@ -537,8 +596,8 @@ _pp_unknown() {
   if [ -e "$(_pp_dir)/$p.placed" ]; then
     _pp_say "${PP_TAG:-placed fly}: placement not readable ($LP_WHY) and $p was last placed fly — no hub pool work this tick"; return 0
   fi
-  rows=$(_jobs_req GET "/api/lane-runs/by-prefix?lane=$PP_LANE&project_prefix=$p&live=1&limit=10" 2>/dev/null)
-  if [ "$(printf '%s' "$rows" | jq -r --arg p "$p" '[.rows[]? | select(.project == $p)] | length' 2>/dev/null)" -gt 0 ] 2>/dev/null; then
+  rows=$(_pp_rows "$p" live 2>/dev/null)
+  if [ "$(printf '%s' "$rows" | jq -r --arg p "$p" '([.rows[]? | select(.project == $p)] | length) as $n | if $n == 0 and .truncated == true then 1 else $n end' 2>/dev/null)" -gt 0 ] 2>/dev/null; then
     _pp_say "${PP_TAG:-placed fly}: placement not readable ($LP_WHY) and a $PP_LANE row of $p is live — no hub pool work this tick"; return 0
   fi
   return 1

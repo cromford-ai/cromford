@@ -41,7 +41,8 @@
 #               answers `lost` touches the stop file and the tick spends
 #               nothing more. After each spawn record the tick posts a
 #               write-back (pp_checkpoint). A background loop renews the lease
-#               every POOL_PROJECT_RENEW_S (default 60) seconds and ends with
+#               every POOL_PROJECT_RENEW_S (default 60, at most a third of
+#               the lease TTL; a settings row reaches it through lane_env_apply) seconds and ends with
 #               this script.
 #   5. write    lri_checkpoint fly-pool <project> (when LANE_RUN_ID is set and
 #      back     the lease was not lost): the files the run changed go to the
@@ -59,8 +60,9 @@
 #
 # TERM or INT (a Fly stop; bin/lane-run-worker.sh TERMs the run's process
 # group): the stop file is touched, the tick gets up to POOL_PROJECT_TERM_WAIT_S
-# (default 12, under lane_run.term_grace_s 20) to end its running spawns, then
-# its whole process tree is TERMed and KILLed. The write-back is posted, the
+# (default 12, cut to lane_run.term_grace_s minus 12 s, so 8 s of the seed 20)
+# to end its running spawns, then its whole process tree is TERMed and KILLed.
+# The write-back is cut at the grace deadline (BH-7519). The write-back is posted, the
 # lease released and the run exits 0; the worker then releases the row to
 # `queued` (the BH-6495 hand-off). A spawn killed between `fly machine run` and
 # its record leaves a build machine the hub's orphan release and the machine's
@@ -100,11 +102,40 @@ set +e
 # shellcheck source=bin/lib/fly-token.sh
 . "$H/bin/lib/fly-token.sh" 2>/dev/null || true
 
+# BH-7519: the lane's knob rows (POOL_PROJECT_RENEW_S, POOL_PROJECT_TERM_WAIT_S)
+# reach this script through lane_env_apply, as they reach bin/fly-pool.sh. It
+# exports only a knob that has a row, so with no row nothing changes.
+# shellcheck source=bin/lib/lane-gate.sh
+[ -r "$H/bin/lib/lane-gate.sh" ] && . "$H/bin/lib/lane-gate.sh" 2>/dev/null
+set +e
+command -v lane_env_apply >/dev/null 2>&1 && lane_env_apply fly-pool "$P" >/dev/null 2>&1
+
 LANE=fly-pool
 HOLDER="${FLY_MACHINE_ID:-machine-$(hostname 2>/dev/null)}"
 HOLDER="${HOLDER//[^A-Za-z0-9._-]/_}"; HOLDER="${HOLDER:0:64}"
+# pfp_whole <name> <fallback> <min> <max> — setting <name> as a whole number in
+# min..max, else the fallback (the bounds the worker and the lane-run worker use).
+pfp_whole() {
+  local v
+  v=$(setting_get "$1" 2>/dev/null | tr -d '[:space:]')
+  [[ $v =~ ^[0-9]{1,5}$ ]] && [ "$((10#$v))" -ge "$3" ] && [ "$((10#$v))" -le "$4" ] || v="$2"
+  printf '%s' "$((10#$v))"
+}
+# The lease TTL this run asks for (PJL_TTL_S, else project_lease.ttl_s, seed 180).
+if [[ ${PJL_TTL_S:-} =~ ^[0-9]{2,3}$ ]] && [ "$((10#$PJL_TTL_S))" -ge 10 ] && [ "$((10#$PJL_TTL_S))" -le 900 ]; then TTL_S=$((10#$PJL_TTL_S))
+else TTL_S=$(pfp_whole project_lease.ttl_s 180 10 900); fi
+# The renew period, capped at a third of the TTL: a period at or above it lets the
+# lease lapse between two renews while the tick spends (BH-7519).
 RENEW_S="${POOL_PROJECT_RENEW_S:-60}"; [[ $RENEW_S =~ ^[0-9]+$ ]] && [ "$RENEW_S" -ge 1 ] || RENEW_S=60
+[ "$RENEW_S" -le $((TTL_S / 3)) ] || RENEW_S=$((TTL_S / 3 > 0 ? TTL_S / 3 : 1))
 WAIT_S="${POOL_PROJECT_TERM_WAIT_S:-12}"; [[ $WAIT_S =~ ^[0-9]+$ ]] || WAIT_S=12
+# The TERM budget (BH-7519). The lane-run worker kills the run GRACE_S seconds
+# after its TERM. The run needs TERM_RESERVE_S of that for the reap (up to 6 s
+# of TERM, wait and KILL) and the write-back, so the tick's own wait is whatever
+# is left, and the write-back is cut at the deadline.
+GRACE_S=$(pfp_whole lane_run.term_grace_s 20 1 25)
+TERM_RESERVE_S=12
+[ "$WAIT_S" -le $((GRACE_S - TERM_RESERVE_S)) ] || WAIT_S=$((GRACE_S > TERM_RESERVE_S ? GRACE_S - TERM_RESERVE_S : 0))
 LOG="$H/logs/fly-pool.log"
 
 # pfp_missing <project> — a comma list of what a spawn needs and this machine
@@ -140,7 +171,7 @@ mlog() { printf '%s [pool/%s] %s\n' "$(date -u '+%F %TZ')" "$P" "$*" >> "$LOG" 2
 mkdir -p "$H/state/fly-pool-project" "$H/logs" 2>/dev/null
 
 # A TERM before the tick starts only marks it: each step below checks.
-TERMED=0; FENCE=""; CPID=""; RPID=""; TMP=""; DEFERRED="-"; LOG0=0
+TERMED=0; FENCE=""; CPID=""; RPID=""; TMP=""; DEFERRED="-"; LOG0=0; TERM_DEADLINE=0
 trap 'TERMED=1' TERM INT
 
 FENCE=$(pjl_acquire "$LANE" "$P" "$HOLDER"); arc=$?
@@ -210,6 +241,24 @@ reap() {
   wait "$CPID" 2>/dev/null
 }
 
+# ckpt_run — the final write-back; prints its output, rc as lri_checkpoint's. After
+# a TERM it is cut at TERM_DEADLINE (the lane-run worker kills the run at the
+# term grace), and the cut is rc 1 with the reason as its output (BH-7519).
+ckpt_run() {
+  local f="$TMP/ckpt.out" pid rc
+  ( lri_checkpoint "$LANE" "$P" > "$f" 2>&1 ) & pid=$!
+  if [ "$TERMED" = 1 ] && [ "${TERM_DEADLINE:-0}" -gt 0 ]; then
+    while kill -0 "$pid" 2>/dev/null && [ "$(date -u +%s)" -lt "$TERM_DEADLINE" ]; do sleep 0.2; done
+    if kill -0 "$pid" 2>/dev/null; then
+      pkill -KILL -P "$pid" 2>/dev/null; kill -KILL "$pid" 2>/dev/null; wait "$pid" 2>/dev/null
+      echo "cut at the term grace (${GRACE_S}s)"; return 1
+    fi
+  fi
+  wait "$pid"; rc=$?
+  cat "$f" 2>/dev/null
+  return "$rc"
+}
+
 # finish <rc> <state-or-empty> — steps 5 and 6, once.
 finish() {
   local rc="$1" st="${2:-}" n_s n_r out
@@ -227,7 +276,7 @@ finish() {
   fi
   mlog "fly run end on $HOLDER: state=$st spawned=$n_s reaped=$n_r rc=$rc"
   if [ "$st" != LEASE_LOST ] && [ -n "${LANE_RUN_ID:-}" ] && declare -F lri_checkpoint >/dev/null 2>&1; then
-    if ! out=$(lri_checkpoint "$LANE" "$P" 2>&1); then
+    if ! out=$(ckpt_run); then
       mlog "fly run on $HOLDER: write-back failed ($(printf '%s' "$out" | tail -n 1))"
       [ "$rc" = 0 ] && rc=75
     fi
@@ -242,8 +291,9 @@ on_term() {
   local i=0
   trap '' TERM INT
   TERMED=1
+  TERM_DEADLINE=$(( $(date -u +%s) + GRACE_S - 1 ))
   : > "$STOP"
-  mlog "fly run on $HOLDER: TERM — no new spawn (wait ${WAIT_S}s)"
+  mlog "fly run on $HOLDER: TERM — no new spawn (wait ${WAIT_S}s of the ${GRACE_S}s grace)"
   if [ -n "$CPID" ]; then
     while kill -0 "$CPID" 2>/dev/null && [ "$i" -lt "$WAIT_S" ]; do sleep 1; i=$((i + 1)); done
     reap
@@ -270,7 +320,7 @@ if [ -r "$H/bin/lib/env-path.sh" ]; then
   [ -n "$ENVD" ] && mkdir -p "$ENVD" 2>/dev/null && { [ -e "$ENVD/fly.env" ] || : > "$ENVD/fly.env"; }
 fi
 
-mlog "fly run start on $HOLDER (row ${LANE_RUN_ID:-none}, fence $FENCE)"
+mlog "fly run start on $HOLDER (row ${LANE_RUN_ID:-none}, fence $FENCE, renew ${RENEW_S}s of ${TTL_S}s)"
 renew_loop "$$" 8>&- & RPID=$!
 
 CENV=(POOL_ON_MACHINE=1

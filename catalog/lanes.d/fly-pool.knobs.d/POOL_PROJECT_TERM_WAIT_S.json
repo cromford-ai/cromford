@@ -7,5 +7,5 @@
   "unit": "seconds",
   "zero_means": null,
   "read_in": "bin/fly-pool-project.sh",
-  "note": "BH-7505: on TERM, how long bin/fly-pool-project.sh lets the pool tick end its running spawns before it TERMs and KILLs the tick's process tree. Keep it under lane_run.term_grace_s (seed 20, at most 25), which the worker gives the whole run."
+  "note": "BH-7505: on TERM, how long bin/fly-pool-project.sh lets the pool tick end its running spawns before it TERMs and KILLs the tick's process tree. The run cuts it to lane_run.term_grace_s minus 12 s (seed 20, so 8): the worker gives the whole run that grace for the wait, the reap and the write-back."
 }
