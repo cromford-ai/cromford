@@ -53,6 +53,10 @@ case "$*" in
     st="${GH_POST_STATUS:-201}"
     printf 'HTTP/2.0 %s X\r\nx-stub: 1\r\n\r\n{"id":%s}\n' "$st" "$n"
     case "$st" in 2*) exit 0 ;; *) exit 1 ;; esac ;;
+  *"-X GET repos/"*"/issues/"*"/comments"*)
+    # The thread pb_notice reads before a second notice (BH-7719).
+    printf 'HTTP/2.0 200 X\r\nx-stub: 1\r\n\r\n%s\n' "$(cat "$SRV/thread.json" 2>/dev/null || echo '[]')"
+    exit 0 ;;
 esac
 exit 1
 SH
@@ -206,12 +210,18 @@ OUTL=$( . "$H/bin/lib/builder-direct.sh"; . "$T/rr.sh"; RR_CLOSED_OUT "$RREF" "$
 [ -f "$RDEST/COMMENTED" ] && ok || bad "N7: the staged dir is COMMENTED for a marked line: $RREF"
 case "$OUTL" in "PLAN_BLOCKED cross-repo-read example-org/spec-fixture $RDEST/plan.md | CLOSED-OUT: "*) ok ;; *) bad "N7: the path token is rewritten and the marker kept: $OUTL" ;; esac
 
-# N8: a different reason on a later build is a new comment.
+# N8: a new reason after an answer is a new comment. Since BH-7719 a second
+# notice also waits for a human comment after the first one, so the thread
+# carries one.
 reset_all; seed "PLAN_BLOCKED $B/plan.md" "$PLAN1"
 pb_notice "$H" "$P" 7116 "$K" "$B" >/dev/null 2>&1
+N8AT=$(( $(cat "$H/state/plan-blocked/$P/$K.last" 2>/dev/null || date -u +%s) + 1 ))
+jq -nc --arg c "$(date -u -d "@$N8AT" '+%Y-%m-%dT%H:%M:%SZ')" \
+  '[{user:{type:"User",login:"operator"},created_at:$c,updated_at:$c,body:"the fee is in column B"}]' > "$SRV/thread.json"
 seed "PLAN_BLOCKED $B/plan.md" $'BLOCKED: the fee table moved to another repo.\n'
 pb_notice "$H" "$P" 7116 "$K" "$B" >/dev/null 2>&1
-[ "$(nposts)" = 2 ] && ok || bad "N8: a new reason posts again (posts $(nposts))"
+[ "$(nposts)" = 2 ] && ok || bad "N8: a new reason after an answer posts again (posts $(nposts))"
+rm -f "$SRV/thread.json"
 
 # N9: an in-app board is not this lane's.
 reset_all; seed "PLAN_BLOCKED $B/plan.md" "$PLAN1"

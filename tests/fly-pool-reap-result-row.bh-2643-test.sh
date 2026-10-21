@@ -163,16 +163,21 @@ expect_death() {
   expect_death 3
 }
 
-# ── 4: non-deferral row on a stopped machine — requeued, not a death ──────
+# ── 4: non-deferral row on a stopped machine — the result, not a requeue
+# (BH-7719: it was requeued, and the next machine re-ran the same job) ────
 {
   reset_state
   machine_json BH-2512 0
   ledger_row "PR_CREATED https://github.com/o/r/pull/9" m1 $((SPAWN_EPOCH+300))
-  run_pool
-  grep -q 'machine m1 for BH-2512 stopped (state=stopped) after job done .*not a death' "$LOG" && ok "4: logged stopped after job done" || bad "4: wording missing: $(cat "$LOG")"
-  grep -q 'dead (state=\|dead machine' "$LOG" && bad "4: a finished job was logged as a death" || ok "4: no dead line"
-  [ "$(jq -r '.deaths' "$Q" 2>/dev/null)" = 0 ] && ok "4: requeued with deaths=0" || bad "4: deaths moved: $(cat "$Q" 2>/dev/null)"
-  [ "$(jq -r '.attempt' "$Q" 2>/dev/null)" = 2 ] && ok "4: attempt advanced" || bad "4: attempt: $(cat "$Q" 2>/dev/null)"
+  # The queue row's close, observable for this case: QROW calls queue_done.
+  queue_done() { echo "$3 $2 ${4:-}" >> "$QSINK"; }
+  export -f queue_done; : > "$T/qsink"
+  run_pool QSINK="$T/qsink"
+  unset -f queue_done
+  grep -q 'result for BH-2512 taken from the pool-result row' "$LOG" && ok "4: the row is the result" || bad "4: row source not named: $(cat "$LOG")"
+  grep -q '^done BH-2512 PR_CREATED' "$T/qsink" && ok "4: the row closes done" || bad "4: not closed done: $(cat "$T/qsink")"
+  grep -q 'dead (state=\|dead machine\|after job done' "$LOG" && bad "4: a finished job was logged as a death or requeue" || ok "4: no dead line"
+  [ -e "$Q" ] && bad "4: a finished job was requeued: $(cat "$Q")" || ok "4: not requeued"
 }
 
 # ── 5: stale row, garbage row, unreadable ledger — all still deaths ───────

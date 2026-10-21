@@ -26,7 +26,13 @@
 #      machine without them still boots, and an agent call there has no
 #      credential (bin/agent-call.sh skips codex without auth.json; claude
 #      fails its call), the same as on a box with no account;
-#   5. exports LANE_RUN_CODE_SYNC=1, so the worker pulls main of the harness
+#   5. BH-7516: writes fly.env, mode 600, with every FLY_API_TOKEN and
+#      FLY_API_TOKEN_<P> variable (the tokens bin/lib/fly-token.sh resolves
+#      for a pool tick, bin/fly-pool-project.sh), each value shell-quoted
+#      (%q) so the file sources whole. With none set the file is
+#      empty: bin/fly-pool.sh sources fly.env with no guard. FLY_ACCESS_TOKEN
+#      and the other FLY_* variables Fly sets are never copied;
+#   6. exports LANE_RUN_CODE_SYNC=1, so the worker pulls main of the harness
 #      repo before a claim (bin/lib/lane-run-code.sh), and execs
 #      bin/lane-run-worker.sh --machine "$FLY_MACHINE_ID" (plus
 #      --box "$LANE_RUN_BOX" when LANE_RUN_BOX is set);
@@ -81,6 +87,11 @@ if [ -n "${GH_APP_ID:-}" ] && [ -n "${GH_APP_PRIVATE_KEY:-}" ]; then
     || { echo "lane-run-entrypoint: cannot write $ENVD/github-app.env" >&2; exit 78; }
 fi
 unset GH_APP_PRIVATE_KEY
+# %q: a Fly token is `FlyV1 <macaroons>`, with a space, and fly.env is sourced.
+{
+  for v in $(compgen -e | grep -E '^FLY_API_TOKEN(_[A-Z0-9_]+)?$'); do printf '%s=%q\n' "$v" "${!v}"; done
+} > "$ENVD/fly.env" && chmod 600 "$ENVD/fly.env" \
+  || { echo "lane-run-entrypoint: cannot write $ENVD/fly.env" >&2; exit 78; }
 export HARNESS="$H" LANE_RUN_CODE_SYNC=1
 LRE_BOX=(); [ -z "${LANE_RUN_BOX:-}" ] || LRE_BOX=(--box "$LANE_RUN_BOX")
 [[ ${LANE_RUN_WORKERS:-} =~ ^([2-9]|1[0-6])$ ]] \

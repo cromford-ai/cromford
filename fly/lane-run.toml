@@ -15,14 +15,26 @@
 #   # of /root/.codex/auth.json and /root/.codex/config.toml):
 #   flyctl secrets set CLAUDE_CODE_OAUTH_TOKEN=... CODEX_AUTH_JSON=... \
 #     CODEX_CONFIG_TOML=... -a lane-run --stage
+#   # BH-7516: the Fly token of a pool tick on a machine of a group app
+#   # (bin/fly-pool-project.sh). FLY_API_TOKEN_<PROJECT> wins, else the org
+#   # FLY_API_TOKEN (bin/lib/fly-token.sh). The entrypoint writes it to fly.env.
+#   # Stage it from the hub's env file through stdin, so the value is never in
+#   # argv or on screen (for lane-run-mk, the group of project-6-os). fly.env
+#   # quotes the value (`FlyV1 ...` has a space): source it, and printf (a
+#   # shell builtin, no process argv) writes the bare NAME=value line:
+#   ( set -a; . /etc/harness/env/fly.env; \
+#     printf 'FLY_API_TOKEN_project-6_OS=%s\n' "$FLY_API_TOKEN_project-6_OS" ) \
+#     | flyctl secrets import -a lane-run-mk --stage
 #   JC=bin/jobs-client.sh
 #   flyctl deploy . -c fly/lane-run.toml --build-only --push --image-label latest \
 #     --build-arg HARNESS_COMMIT=$(git rev-parse HEAD) \
 #     --build-arg NODE_VERSION=$($JC setting-get bake.node.version) \
 #     --build-arg CLAUDE_CODE_VERSION=$($JC setting-get cli.claude_code.version) \
-#     --build-arg CODEX_VERSION=$($JC setting-get cli.codex.version)
+#     --build-arg CODEX_VERSION=$($JC setting-get cli.codex.version) \
+#     --build-arg FLYCTL_VERSION=$($JC setting-get bake.flyctl.version)
 #   The build FATALs when a version arg is empty (fly/bake-pin.sh and the
-#   cli-pin-verify block): never "latest".
+#   cli-pin-verify block): never "latest". Set the bake.flyctl.version row
+#   (BH-7516) before the first build that has the bake-flyctl block.
 # The deploy pushes registry.fly.io/lane-run:latest, the image the settings row
 # lane_fleet.image names. GH_APP_PRIVATE_KEY is the PEM text; the entrypoint
 # writes it to a mode-600 file at boot. No key is in the image. A machine

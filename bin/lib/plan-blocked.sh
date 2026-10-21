@@ -88,17 +88,55 @@ _pb_mark() {
     && mv -f "$b/RESULT.pb" "$b/RESULT"
 }
 
+# _pb_last_epoch <harness> <project> <key> — the epoch of the last notice
+# posted on this ticket, or nothing. The `plan-blocked-last` ledger row first
+# (status `cleared` = no marker), the state file when there is no row or the
+# ledger does not answer.
+_pb_last_epoch() {
+  local h="$1" p="$2" key="$3" row rc st det
+  if command -v job_ledger_row >/dev/null 2>&1; then
+    row=$(job_ledger_row commented "plan-blocked-last $p $key" 2>/dev/null </dev/null); rc=$?
+    if [ "$rc" = 0 ]; then
+      st=$(printf '%s' "$row" | jq -r '.status // ""' 2>/dev/null)
+      det=$(printf '%s' "$row" | jq -r '.detail // ""' 2>/dev/null)
+      [ "$st" = cleared ] && return 0
+      if [ "$st" = commented ] && [[ "$det" =~ ^[0-9]+$ ]]; then printf '%s' "$det"; return 0; fi
+    fi
+  fi
+  det=$(head -1 "$h/state/plan-blocked/$p/$key.last" 2>/dev/null)
+  [[ "$det" =~ ^[0-9]+$ ]] && printf '%s' "$det"
+  return 0
+}
+
+# _pb_answers_since <repo> <num> <epoch> — prints how many HUMAN comments on
+# the issue were created or edited after <epoch> (the pb_stranded_skip rule).
+# rc non-zero when the thread could not be read.
+_pb_answers_since() {
+  local repo="$1" num="$2" ep="$3" since def apps
+  since=$(date -u -d "@$ep" '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null) || return 75
+  [ -n "${HARNESS_SELF_JQ_DEF:-}" ] || . "${BASH_SOURCE[0]%/*}/harness-self.sh" 2>/dev/null
+  def="${HARNESS_SELF_JQ_DEF:-def hs_ours(\$apps): false;}"
+  apps='[]'; command -v harness_self_apps_json >/dev/null 2>&1 && apps=$(harness_self_apps_json)
+  _gh_rest_field "repos/$repo/issues/$num/comments?since=$since&per_page=100" "$def"'
+    def ts: (. // "") | tostring | sub("\\.[0-9]+"; "") | (try fromdateiso8601 catch 0);
+    if type != "array" then error("not an array") else . end
+    | [ .[] | select(((.user.type // "") | tostring | ascii_downcase) != "bot" and (hs_ours('"${apps:-[]}"') | not))
+            | select(([(.created_at | ts), (.updated_at | ts)] | max) > '"$ep"') ] | length'
+}
+
 # pb_notice <harness> <project> <ticket> <key> <build-dir>
-#   ONE ticket comment per distinct block reason, posted by the builder from
-#   inside its own run, and the builder-direct marker on RESULT line 1 so the
-#   owning box's sweep does not post a second one (bin/lib/builder-direct.sh).
-#   rc 0 posted, or this exact reason is already on the ticket (marked either way)
+#   ONE ticket comment per distinct block reason, and none at all while the
+#   last one is unanswered (BH-7719), posted by the builder from inside its own
+#   run, and the builder-direct marker on RESULT line 1 so the owning box's
+#   sweep does not post a second one (bin/lib/builder-direct.sh).
+#   rc 0 posted, or this exact reason is already on the ticket, or an earlier
+#        notice has no human answer yet (marked every way)
 #   rc 1 nothing to quote, or the POST failed: no marker, the sweep carries it
 #   rc 4 not this lane's: not PLAN_BLOCKED, already closed out, an in-app board,
 #        or no repo / issue number
 #   Log lines go to stdout; the caller sends them to pipeline.log.
 pb_notice() {
-  local h="${1:-}" p="${2:-}" t="${3:-}" key="${4:-}" b="${5:-}" line bp repo num ex tok mkey mfile bf
+  local h="${1:-}" p="${2:-}" t="${3:-}" key="${4:-}" b="${5:-}" line bp repo num ex tok mkey mfile bf last ans why now
   local _PB_WHO="$p/$key"
   [ -n "$h" ] && [ -n "$p" ] && [ -n "$key" ] && [ -n "$b" ] && [ -s "$b/RESULT" ] || return 4
   line=$(head -1 "$b/RESULT" 2>/dev/null)
@@ -127,12 +165,28 @@ pb_notice() {
     _pb_say "plan-blocked notice not posted: the same block reason ($tok) is already on $repo#$num; RESULT marked"
     return 0
   fi
+  command -v gh_rest_comment >/dev/null 2>&1 || . "${BASH_SOURCE[0]%/*}/gh-rest.sh" 2>/dev/null
+  # ONE NOTICE PER TICKET UNTIL A PERSON ANSWERS (BH-7719). A re-plan words the
+  # same question anew, so the token above differs each time (#7655: 11
+  # comments). After a notice, the next one waits for a human comment created
+  # or edited since. A thread that cannot be read holds it too (BH-2317).
+  last=$(_pb_last_epoch "$h" "$p" "$key")
+  if [ -n "$last" ]; then
+    ans=""
+    command -v _gh_rest_field >/dev/null 2>&1 && { ans=$(HARNESS="$h" _pb_answers_since "$repo" "$num" "$last") || ans=""; }
+    case "$ans" in ''|*[!0-9]*|0)
+      why="nobody has answered it"
+      [ -n "$ans" ] || why="nobody has answered it, as far as we know: the thread could not be read"
+      _pb_mark "$b" "$(bd_note "$repo#$num") (a plan-blocked notice is already on $repo#$num and $why)" || return 1
+      _pb_say "plan-blocked notice not posted: the last notice on $repo#$num (epoch $last) has no human answer (${ans:-thread unreadable}); RESULT marked"
+      return 0 ;;
+    esac
+  fi
   # THE MARK BEFORE THE SEND (BH-2317): a client ticket commented twice is the
   # worse failure, so a POST that fails after this is not retried by this lane.
   HARNESS="$h" cm_put "$mkey" "$tok" "$mfile" || true
   command -v gh_token_live >/dev/null 2>&1 || . "${BASH_SOURCE[0]%/*}/gh-token-live.sh" 2>/dev/null
   command -v gh_token_live >/dev/null 2>&1 && HARNESS="$h" gh_token_live "$repo"
-  command -v gh_rest_comment >/dev/null 2>&1 || . "${BASH_SOURCE[0]%/*}/gh-rest.sh" 2>/dev/null
   command -v gh_rest_comment >/dev/null 2>&1 || { _pb_say "no plan-blocked notice: bin/lib/gh-rest.sh is missing — the sweep carries it"; return 1; }
   bf=$(mktemp "${TMPDIR:-/tmp}/plan-blocked-body.XXXXXX") || { _pb_say "no plan-blocked notice: no temp file for the body"; return 1; }
   {
@@ -146,6 +200,12 @@ pb_notice() {
     return 1
   fi
   rm -f "$bf"
+  # The per-ticket marker AFTER the send: a POST that failed must not hold the
+  # ticket's first notice back.
+  now=$(date -u +%s)
+  command -v job_ledger_put >/dev/null 2>&1 \
+    && job_ledger_put commented "plan-blocked-last $p $key" commented "$now" >/dev/null 2>&1 </dev/null
+  mkdir -p "$h/state/plan-blocked/$p" 2>/dev/null && printf '%s\n' "$now" > "$h/state/plan-blocked/$p/$key.last" 2>/dev/null
   _pb_mark "$b" "$(bd_note "$repo#$num")" || { _pb_say "plan-blocked notice posted on $repo#$num but the RESULT could not be marked"; return 1; }
   _pb_say "plan-blocked notice posted on $repo#$num (reason $tok); RESULT marked"
   return 0

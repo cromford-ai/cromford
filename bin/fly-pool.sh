@@ -2403,22 +2403,34 @@ push_pool_cost_rows() { # push_pool_cost_rows <build-dir> <box>
 # The machine's own seconds for this job, as ONE infra row in the build dir's
 # cost.csv, so the push_pool_cost_rows call right after it carries the row to
 # cost_rows under pool-<p>-<mid>. Start is the job's spawned_at, end is this
-# tick; size comes from the live listing only (unusable listing = unpriced).
+# tick, or the listing's updated_at for a machine that is no longer running;
+# size comes from the live listing only (unusable listing = unpriced).
 # job_id is the build's own, read from its cost.csv by header name, or empty.
 # Once per (mid, key, spawned_at) via state/fly-cost/ledger.tsv. Returns 0.
 pool_fly_cost_row() {
-  local kind="" cpus="" mem="" job="" out rc word
+  local kind="" cpus="" mem="" mst="" mup="" end e s0 job="" out rc word
   command -v fly_cost_row_once >/dev/null 2>&1 || return 0
   if [ -z "${SPAT:-}" ]; then say "fly cost row: skipped:no-spawned-at $MID $KEY"; return 0; fi
   if [ "${LIST_OK:-0}" = 1 ] && [ -s "${LISTING:-}" ]; then
-    read -r kind cpus mem < <(jq -r --arg m "$MID" \
-      '.[]|select(.id==$m)|.config.guest|"\(.cpu_kind // "") \(.cpus // "") \(.memory_mb // "")"' \
+    read -r kind cpus mem mst mup < <(jq -r --arg m "$MID" \
+      '.[]|select(.id==$m)|"\(.config.guest.cpu_kind // "-") \(.config.guest.cpus // "-") \(.config.guest.memory_mb // "-") \(.state // "-") \(.updated_at // "-")"' \
       "$LISTING" 2>/dev/null | head -1)
+    [ "$kind" = - ] && kind=""; [ "$cpus" = - ] && cpus=""; [ "$mem" = - ] && mem=""
   fi
+  # A machine that is no longer running stopped at its listing's updated_at
+  # (BH-7719): bill to then, not to this tick, when that time is after the
+  # spawn and not in the future. Anything else ends now, as before.
+  end=$(date -u +%s)
+  case "${mst:-}" in
+    stopped|suspended|failed|destroyed)
+      e=""; [ -n "${mup:-}" ] && { e=$(date -u -d "${mup:-}" +%s 2>/dev/null) || e=""; }
+      s0=""; [ -n "${SPAT:-}" ] && { s0=$(date -u -d "$SPAT" +%s 2>/dev/null) || s0=""; }
+      [[ "$e" =~ ^[0-9]+$ ]] && [[ "$s0" =~ ^[0-9]+$ ]] && [ "$e" -gt "$s0" ] && [ "$e" -le "$end" ] && end="$e" ;;
+  esac
   [ -s "$LOCAL/cost.csv" ] && job=$(awk -F, 'NR==1{for(i=1;i<=NF;i++) if($i=="job_id") c=i; next}
     c && $c!=""{j=$c} END{print j}' "$LOCAL/cost.csv" 2>/dev/null)
   out=$(fly_cost_row_once "$LOCAL/cost.csv" "$HARNESS/state/fly-cost/ledger.tsv" "$P" "pool-$P-$MID" \
-        "$MID" "$KEY" "$job" "$(basename "$LOCAL")" "$SPAT" "$(date -u +%s)" \
+        "$MID" "$KEY" "$job" "$(basename "$LOCAL")" "$SPAT" "$end" \
         "$kind" "$cpus" "$mem" "$HARNESS/catalog/fly-prices.json"); rc=$?
   case "$rc" in 0) word=written ;; 3) word=already ;; 2) word=skipped:bad-interval ;; *) word="skipped:rc$rc" ;; esac
   say "fly cost row: $word $MID $KEY${out:+ ${out%% *}s \$${out##* }}"
@@ -3439,11 +3451,13 @@ for MF in "$POOL"/*.json; do
   # those parked a ticket that had only ever deferred. The runner also writes
   # its result to a pool-result row (bin/lib/pool-result-row.sh); for a machine
   # that is not started, that row is read here, and only this machine's row
-  # from this run counts. A BUILD_DEFERRED in it goes through the deferral arm
-  # below exactly as an ssh-read one would, and a ROLLOUT_FILED/ROLLOUT_FAILED
-  # is reaped as the finished job it is (BH-4061). Any other result line cannot be
-  # relayed (its artifacts died with the machine), so the dead path requeues it
-  # without counting a death. rc 1 (unreadable) is never read as a result.
+  # from this run counts. Every row pool_result_row_get accepts (rc 0: a
+  # canonical RESULT prefix, this machine, this run) IS the result and takes
+  # the same path below as an ssh-read one (BH-7719): a BUILD_DEFERRED goes
+  # through the deferral arm, a PLAN_BLOCKED is held by its `done` queue row,
+  # a PR_CREATED is verified and relayed. A requeue only re-ran the same plan
+  # into the same answer. rc 1 (unreadable) and rc 2 (no row, a stale row, a
+  # row of another machine) are never read as a result: those are deaths.
   # An RB- rebase row carries the whole RESULT (BH-7656): a rebase word in it is
   # the finished rebase, and the whole text becomes $LOCAL/RESULT for the
   # rebase arm below. Any other word in an RB- row is a miss, and its dead arm
@@ -3472,15 +3486,10 @@ for MF in "$POOL"/*.json; do
             ROW_RLINE=$(pool_result_row_get "$P" "$KEY" "$MID" "$SPAT"); ROWRC=$?
             [ "$ROWRC" = 0 ] || ROW_RLINE=""
             [ "$ROWRC" = 1 ] && say "pool-result row for $KEY unreadable (machine $MID state=${MSTATE:-gone}) — reaped as it always was"
-            # A ROLLOUT answer is the whole verdict too (BH-4061): the lane
-            # filed its waves or refused before the machine stopped, and a
-            # requeue only re-runs the same body into the same answer. So it is
-            # reaped from the row as a finished job, never as a death.
-            case "$ROW_RLINE" in
-              BUILD_DEFERRED*|ROLLOUT_FILED*|ROLLOUT_FAILED*)
-                RES="$ROW_RLINE"; RES_FROM_ROW=1
-                say "result for $KEY taken from the pool-result row (machine $MID state=${MSTATE:-gone}, unreachable)" ;;
-            esac ;;
+            if [ -n "$ROW_RLINE" ]; then
+              RES="$ROW_RLINE"; RES_FROM_ROW=1
+              say "result for $KEY taken from the pool-result row (machine $MID state=${MSTATE:-gone}, unreachable)"
+            fi ;;
         esac ;;
     esac
   fi
@@ -3492,6 +3501,14 @@ for MF in "$POOL"/*.json; do
       if [ -n "$RBROWF" ] && [ -s "$RBROWF" ]; then cp "$RBROWF" "$LOCAL/RESULT"; else echo "$RES" > "$LOCAL/RESULT"; fi
       [ -z "$RBROWF" ] || rm -f "$RBROWF"
       echo "pool-result row" > "$LOCAL/result-source"
+      # The machine's Fly seconds, ended at its stop time (BH-7719). Braced and
+      # "|| true", as the record arm below, so the cost-row suite's pins (B3a,
+      # B3c) still name the ssh arm's pair.
+      pool_fly_cost_row || true
+      push_pool_cost_rows "$LOCAL" "pool-${P}-${MID}"
+      case "$(head -1 "$LOCAL/RESULT")" in
+        PLAN_BLOCKED*) say "held $KEY: PLAN_BLOCKED from the pool-result row — not requeued; the stranded watch re-offers it only after a person answers" ;;
+      esac
     elif [ "$RES_FROM_RECORD" = 1 ]; then
       # The same files the ssh arm below fetches, from the record. A file too
       # big for a D1 row was skipped by the machine: it is fetched over ssh
@@ -4361,20 +4378,24 @@ for MF in "$POOL"/*.json; do
     # evidence. Every other key reads byte-for-byte the line it always did.
     DDISP="requeue attempt=$NEXT deaths=$DNEXT"
     case "$KEY" in RB-*) DDISP="rebase row FAILED, not requeued" ;; RR-*) DDISP="re-review row FAILED, not requeued" ;; esac
-    # A JOB THAT FINISHED IS NOT A DEATH (BH-2643). ROW_RLINE is only set for a
-    # not-started machine whose own pool-result row says it ran to `job done`
-    # (a deferral or a ROLLOUT answer never gets here — it went through the arm above). Its
-    # artifacts died with it, so it is requeued, and the retry adopts an open
-    # PR; the death count stays where it was. The reason names neither
-    # `died N times` nor `deferred N times` (br_from_queue's triggers).
+    # A JOB THAT FINISHED NEVER GETS HERE (BH-2643, BH-7719): a not-started
+    # machine whose own pool-result row carries a result was reaped from that
+    # row above. What reaches this line has no result at all.
     DWORD="died"; DKIND="dead machine"
-    if [ -n "$ROW_RLINE" ]; then
-      DNEXT=$DTHS; DWORD="stopped after job done"; DKIND="machine stopped after job done"
-      say "machine $MID for $KEY stopped (state=${MSTATE:-gone}) after job done (result from the pool-result row: $(head -c 80 <<<"$ROW_RLINE")) — not a death; requeue attempt=$NEXT deaths=$DTHS"
-    else
-      say "machine $MID for $KEY dead (state=${MSTATE:-gone}) attempt=$ATT deaths=$DTHS -> $DDISP"
-    fi
+    say "machine $MID for $KEY dead (state=${MSTATE:-gone}) attempt=$ATT deaths=$DTHS -> $DDISP"
     destroy_machine "$MID" "$DKIND for $KEY (state=${MSTATE:-gone})"
+    # The dead machine's Fly seconds too (BH-7719): nothing else bills them.
+    # A temp dir stands in for the build dir; ledger.tsv keeps it to one row.
+    # Its own name, not $LOCAL: $LOCAL is a $HARNESS build dir everywhere else.
+    if DCOST_DIR=$(mktemp -d "${TMPDIR:-/tmp}/pool-dead-cost.XXXXXX" 2>/dev/null); then
+      LOCAL="$DCOST_DIR"
+      pool_fly_cost_row || true
+      push_pool_cost_rows "$LOCAL" "pool-${P}-${MID}"
+      case "$DCOST_DIR" in */pool-dead-cost.*) rm -rf -- "$DCOST_DIR" ;; esac
+    else
+      say "fly cost row: skipped:no-temp-dir $MID $KEY"
+    fi
+    LOCAL=""
     # Same rule as next_job_or_destroy: the row is closed and the job requeued
     # whatever the destroy answered, and the sweep is what recovers the machine.
     rm -f "$MF" "$POOL/.$MID.snapmt" "$POOL/.$MID.puterr"

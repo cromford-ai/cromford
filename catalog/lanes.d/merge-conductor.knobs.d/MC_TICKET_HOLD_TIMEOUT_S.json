@@ -1,0 +1,12 @@
+{
+  "env": "MC_TICKET_HOLD_TIMEOUT_S",
+  "type": "int",
+  "default": 90,
+  "min": 0,
+  "max": 500,
+  "unit": "seconds",
+  "zero_means": "off",
+  "required": true,
+  "read_in": "bin/lib/ticket-ownership.sh",
+  "note": "BH-7748: the wall time the ticket-hold step's hold check (to_lane_hold: the token mint, the PR thread, the PR, the lead row and the ticket thread) may take for one PR. Past it the check is killed, the PR is held (not merged) this pass and one TICKET_HOLD_TIMEOUT call=ticket-hold/<name> took=<n>s timeout=<t>s rc=124 line goes to the lane log; no alert, no Sentry event. The value used is never past the worker deadline minus 15 s. 0 or not a number = no bound (the behaviour before BH-7748). Required so lane_env_apply exports the default to the conductor; other lanes do not load it and run unbounded. Settings row: lane.merge-conductor.mc_ticket_hold_timeout_s."
+}

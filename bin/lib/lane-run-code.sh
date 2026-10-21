@@ -2,11 +2,13 @@
 # bin/lib/lane-run-code.sh — the code sync of a lane-run machine (BH-6817).
 # Sourced by bin/lane-run-worker.sh, never run.
 #
-# The image of the Fly app lane-run bakes bin/, catalog/ and fleet.conf at
-# build time, and nothing rebuilds it when main changes. So before a claim, at
-# most once every lane_run.code_check_s, the worker fetches main of the harness
-# repo by git and swaps in its bin/, catalog/ and fleet.conf, then re-execs
-# itself. No run is in flight at that point, so the exec loses no row.
+# The image of the Fly app lane-run bakes bin, catalog, fleet.conf, prompts,
+# rules and fly at build time, and nothing rebuilds it when main changes. So
+# before a claim, at most once every lane_run.code_check_s, the worker fetches
+# main of the harness repo by git and swaps in its bin, catalog, fleet.conf,
+# prompts, rules and fly, then re-execs itself. The last three are the tree a
+# pool spawn tars from POOL_HARNESS_SRC (BH-7516), so they follow
+# HARNESS_COMMIT too. No run is in flight at that point, so the exec loses no row.
 #
 #   lrc_enabled
 #       rc 0 only when LANE_RUN_CODE_SYNC=1 (set by fly/lane-run-entrypoint.sh),
@@ -27,14 +29,16 @@
 #       `bin/gh-token.sh --read <repo>`, sent as an http.extraHeader through
 #       GIT_CONFIG_* env, never in the URL, argv or a log. LANE_RUN_CODE_URL
 #       replaces the URL and the token (a test seam).
-#       The stage (git archive of bin catalog fleet.conf) must have
+#       The stage (git archive of bin catalog fleet.conf, plus prompts rules fly
+#       each only when the fetched commit lists it: a path the commit lacks is
+#       not swapped, and a failed archive of a listed one fails the sync) must have
 #       bin/lane-run-worker.sh, bin/project-lane-run.sh and bin/jobs-client.sh,
 #       each passing `bash -n`. catalog/llm-sites.json and
 #       catalog/context-budgets.json are git-ignored renders: the stage's own
 #       composers write them, and any top-level catalog file the stage still
 #       lacks is carried over from the old tree (catalog/lanes.json renders on
-#       demand, bin/lib/lanes-registry.sh). The swap is two renames per path,
-#       bin last; HARNESS_COMMIT is written before the old copy is removed.
+#       demand, bin/lib/lanes-registry.sh). The swap is two renames per path
+#       of _LRC_SWAP, bin last; HARNESS_COMMIT is written before the old copy is removed.
 #
 # The clock is LANE_RUN_NOW (epoch) when set. The root is ${HARNESS:-${H:-}};
 # with no root every function answers rc 1.
@@ -101,8 +105,13 @@ _lrc_commit() {
   [[ $c =~ ^[0-9a-f]{7,40}$ ]] && printf '%s' "${c:0:12}" || printf unknown
 }
 
+# The swap order of lrc_sync and _lrc_restore. bin is last: the running
+# worker's own code moves only after every other path is in place.
+_LRC_SWAP="fleet.conf catalog prompts rules fly bin"
+_LRC_OPTIONAL="prompts rules fly"
+
 lrc_sync() {
-  local root st url repo tok="" head cur stage old p f
+  local root st url repo tok="" head cur stage old p f listed
   root=$(_lrc_root); [ -n "$root" ] || return 1
   st="$root/state/lane-run-code"
   mkdir -p "$st" 2>/dev/null || { printf 'code sync failed: cannot create %s\n' "$st"; return 1; }
@@ -141,6 +150,13 @@ lrc_sync() {
   if ! git -C "$st/repo.git" archive FETCH_HEAD bin catalog fleet.conf 2>/dev/null | tar -x -C "$stage" 2>/dev/null; then
     rm -rf "$stage"; _lrc_fail "$root" "git archive of ${head:0:12} failed"; return 1
   fi
+  listed=" $(git -C "$st/repo.git" ls-tree --name-only FETCH_HEAD 2>/dev/null | tr '\n' ' ') "
+  for p in $_LRC_OPTIONAL; do
+    [[ $listed == *" $p "* ]] || continue
+    if ! git -C "$st/repo.git" archive FETCH_HEAD "$p" 2>/dev/null | tar -x -C "$stage" 2>/dev/null; then
+      rm -rf "$stage"; _lrc_fail "$root" "git archive of $p at ${head:0:12} failed"; return 1
+    fi
+  done
   for f in bin/lane-run-worker.sh bin/project-lane-run.sh bin/jobs-client.sh; do
     if [ ! -f "$stage/$f" ] || ! bash -n "$stage/$f" 2>/dev/null; then
       rm -rf "$stage"; _lrc_fail "$root" "${head:0:12} refused: $f is missing or fails bash -n"; return 1
@@ -156,7 +172,8 @@ lrc_sync() {
 
   old="$st/old-$$"
   rm -rf "$old"; mkdir -p "$old"
-  for p in fleet.conf catalog bin; do
+  for p in $_LRC_SWAP; do
+    [ -e "$stage/$p" ] || continue
     [ -e "$root/$p" ] && { mv "$root/$p" "$old/$p" || { _lrc_restore "$root" "$old"; rm -rf "$stage"; _lrc_fail "$root" "swap of $p failed"; return 1; }; }
     mv "$stage/$p" "$root/$p" || { _lrc_restore "$root" "$old"; rm -rf "$stage"; _lrc_fail "$root" "swap of $p failed"; return 1; }
   done
@@ -169,7 +186,7 @@ lrc_sync() {
 # _lrc_restore <root> <old> — put back every path the swap moved out.
 _lrc_restore() {
   local root="$1" old="$2" p
-  for p in fleet.conf catalog bin; do
+  for p in $_LRC_SWAP; do
     [ -e "$old/$p" ] || continue
     rm -rf "${root:?}/$p"; mv "$old/$p" "$root/$p"
   done

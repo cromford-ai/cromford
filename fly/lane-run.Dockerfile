@@ -1,9 +1,11 @@
 # fly/lane-run.Dockerfile — the image of the Fly app `lane-run` (BH-6126).
 # Built from the repo root: flyctl deploy . -c fly/lane-run.toml --build-only
 # --push --image-label latest --build-arg HARNESS_COMMIT=$(git rev-parse HEAD)
-# plus the three version build args named below (BH-6260).
-# It bakes bin/, catalog/ and fleet.conf; a machine then pulls main of the
-# harness repo before its claims (bin/lib/lane-run-code.sh). HARNESS_COMMIT is
+# plus the three version build args named below (BH-6260) and
+# --build-arg FLYCTL_VERSION=<bake.flyctl.version row> (BH-7516).
+# It bakes bin/, catalog/, fleet.conf, prompts/, rules/ and fly/ (BH-7516:
+# POOL_HARNESS_SRC names that tree for a pool spawn); a machine then pulls main
+# of the harness repo before its claims (bin/lib/lane-run-code.sh). HARNESS_COMMIT is
 # the `harness.commit` label bin/lane-fleet.sh logs, and /opt/harness/
 # HARNESS_COMMIT when it is 7-40 hex (else no file, so the first sync runs).
 # No secret and no env file is in the image: the entrypoint writes them from
@@ -64,6 +66,21 @@ RUN set -eux; \
     claude --version; \
     codex --version
 # <<< cli-pin-verify
+# >>> bake-flyctl
+# BH-7516: flyctl for a pool tick on this machine (bin/fly-pool-project.sh,
+# its fly-binary check). Pinned from the bake.flyctl.version row, no default;
+# /root/.fly/bin is the FLY_BIN_DIR default bin/fly-pool.sh puts on PATH.
+ARG FLYCTL_VERSION
+RUN set -eux; . /opt/fly-boot/bake-pin.sh; bake_require FLYCTL_VERSION "${FLYCTL_VERSION:-}"; \
+    A="flyctl_${FLYCTL_VERSION}_Linux_x86_64.tar.gz"; \
+    U="https://github.com/superfly/flyctl/releases/download/v${FLYCTL_VERSION}"; \
+    curl -fsSL -o "/tmp/$A" "$U/$A"; \
+    bake_sha256 "/tmp/$A" "$U/checksums.txt" "$A"; \
+    mkdir -p /root/.fly/bin; tar -xzf "/tmp/$A" -C /root/.fly/bin flyctl; rm -f "/tmp/$A"; \
+    ln -sf flyctl /root/.fly/bin/fly; \
+    export FLY_NO_UPDATE_CHECK=1; bake_verify flyctl "$FLYCTL_VERSION" /root/.fly/bin/flyctl version
+ENV PATH=/root/.fly/bin:$PATH FLY_NO_UPDATE_CHECK=1
+# <<< bake-flyctl
 # HARNESS_COMMIT is declared below the tool layers: an ARG busts the cache of
 # every RUN after it, and it changes on every commit.
 ARG HARNESS_COMMIT=unknown
@@ -71,8 +88,13 @@ LABEL harness.commit=$HARNESS_COMMIT
 COPY bin /opt/harness/bin
 COPY catalog /opt/harness/catalog
 COPY fleet.conf /opt/harness/fleet.conf
+# BH-7516: the rest of the tree a pool spawn tars (bin/lib/harness-tarball.sh).
+COPY prompts /opt/harness/prompts
+COPY rules /opt/harness/rules
+COPY fly /opt/harness/fly
 COPY fly/lane-run-entrypoint.sh /opt/lane-run/entrypoint.sh
 RUN if printf '%s' "$HARNESS_COMMIT" | grep -qE '^[0-9a-f]{7,40}$'; then \
       printf '%s\n' "$HARNESS_COMMIT" > /opt/harness/HARNESS_COMMIT; fi
 ENV HARNESS=/opt/harness
+ENV POOL_HARNESS_SRC=/opt/harness
 ENTRYPOINT ["/usr/bin/tini", "--", "/opt/lane-run/entrypoint.sh"]

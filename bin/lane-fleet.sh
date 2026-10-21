@@ -300,7 +300,7 @@ lf_app_ready() {
     touch "$W_DIR/app-ready"; return 0
   fi
   lf_log "app $LF_APP has no HARNESS_SECRET or JOBS_URL secret; no start"
-  lf_alert app-secrets "Fly app $LF_APP has no HARNESS_SECRET or JOBS_URL secret, so group $LF_GROUP starts no machine. Set the lane-run secrets (fly/lane-run.toml): flyctl secrets set HARNESS_SECRET=... JOBS_URL=... GH_APP_ID=... GH_APP_PRIVATE_KEY=... GH_APP_INSTALLATION_<OWNER>=... CLAUDE_CODE_OAUTH_TOKEN=... CODEX_AUTH_JSON=... CODEX_CONFIG_TOML=... -a $LF_APP --stage"
+  lf_alert app-secrets "Fly app $LF_APP has no HARNESS_SECRET or JOBS_URL secret, so group $LF_GROUP starts no machine. Set the lane-run secrets (fly/lane-run.toml): flyctl secrets set HARNESS_SECRET=... JOBS_URL=... GH_APP_ID=... GH_APP_PRIVATE_KEY=... GH_APP_INSTALLATION_<OWNER>=... CLAUDE_CODE_OAUTH_TOKEN=... CODEX_AUTH_JSON=... CODEX_CONFIG_TOML=... -a $LF_APP --stage, and FLY_API_TOKEN_<PROJECT> (only for a group whose projects run the pool tick on Fly) through stdin: ( set -a; . $HENV/fly.env; printf 'FLY_API_TOKEN_<PROJECT>=%s\\n' \"\$FLY_API_TOKEN_<PROJECT>\" ) | flyctl secrets import -a $LF_APP --stage"
   return 1
 }
 

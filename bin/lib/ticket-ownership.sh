@@ -253,6 +253,7 @@ to_merge_hold() {
   # The repo's own App token: the hub's default PAT 404s on some repos, and a
   # 404 here would hold every PR there for ever. Every caller runs this inside
   # `$( )`, so the armed token dies with the subshell.
+  to__call auth
   command -v gh_auth_for >/dev/null 2>&1 && gh_auth_for "$slug"
   # A HOLD ON THE PR ITSELF, FIRST AND FOR EVERY PROJECT (BH-1668, review of
   # #1926 blocking 1). project-5 #3214 was held by a comment on the PR while its
@@ -261,11 +262,13 @@ to_merge_hold() {
   # the same. It sits before the lead exemption too: the lead's own PR is exempt
   # from the TICKET hold (the ticket is reserved for it), never from a HOLD
   # somebody wrote on that PR. RESUME on the PR lifts it; unreadable holds.
+  to__call pr-thread
   v=$(to_pr_thread_hold "$slug" "$num"); rc=$?
   case "$rc" in
     0) printf 'the PR itself is held (%s) — a HOLD on the PR does not merge; RESUME on the PR lifts it\n' "${v#*	}"; return 0 ;;
     2) printf 'the PR thread could not be read for a HOLD (%s) — not merged this pass, the next pass asks again\n' "${v#*	}"; return 0 ;;
   esac
+  to__call issue-repo
   to_issue_repo "$p" >/dev/null || return 1
   local f prc=0
   f=$(mktemp "${TMPDIR:-/tmp}/to-pr.XXXXXX" 2>/dev/null) || f=""
@@ -273,13 +276,16 @@ to_merge_hold() {
     [ -n "$f" ] && rm -f "$f"
     printf 'the PR could not be read to find its ticket (no REST contract lib on this box) — not merged this pass\n'; return 0
   fi
+  to__call pr-read
   gh_rest GET "repos/$slug/pulls/$num" > "$f" 2>/dev/null || prc=$?
   pj=$(cat "$f" 2>/dev/null); rm -f "$f"
   if [ "$prc" != 0 ] || [ -z "$pj" ]; then
     printf 'the PR could not be read to find its ticket (HTTP %s) — not merged this pass, the next pass asks again\n' "${GH_REST_STATUS:-000}"; return 0
   fi
+  to__call lead-row
   to_is_lead "$(printf '%s' "$pj" | jq -r '.user.login // ""' 2>/dev/null)" && return 1
   n=$(to_pr_issue "$pj") || return 1
+  to__call ticket-thread
   v=$(to_hold_verdict "$slug" "$n"); rc=$?
   case "$rc" in
     0) printf 'ticket #%s is held (%s) — a held ticket'"'"'s PR does not merge; RESUME on the ticket lifts it\n' "$n" "${v#*	}"; return 0 ;;
@@ -353,12 +359,128 @@ to__pr_state() {
   printf '%s' "$st"
 }
 
+# THE BOUND AND THE CALL IN FLIGHT. to_merge_hold makes up to five network
+# reads (the token mint, the PR thread, the PR, the lead row, the ticket
+# thread), and none of them had a bound of its own: a hung read held a
+# conductor worker until its deadline, and the kill named only the step.
+#
+# to__call <name> names the read that starts next: one line in TO_CALL_FILE,
+# `<epoch>\tticket-hold/<name>\tr\t<shell pid>\t<start cs>`, the format of
+# pq_call (bin/lib/mc-prequeue.d/call-bound.sh), so the worker watchdog in
+# mc_worker_bounded (bin/lib/fanin.sh) reads it at a kill. No TO_CALL_FILE: a
+# no-op, so every other caller of to_merge_hold is unchanged.
+to__call() {
+  [ -n "${TO_CALL_FILE:-}" ] || return 0
+  local up=""
+  [ -r /proc/uptime ] && read -r up _ < /proc/uptime 2>/dev/null
+  up="${up//[!0-9]/}"
+  printf '%s\tticket-hold/%s\tr\t%s\t%s\n' "${EPOCHSECONDS:-$(date +%s)}" "${1:-?}" "$BASHPID" "${up:-0}" > "$TO_CALL_FILE" 2>/dev/null
+  return 0
+}
+
+# to__hold_bound_s — the seconds the hold check may run: MC_TICKET_HOLD_TIMEOUT_S
+# (0, unset or not a number = no bound), never past MC_WORKER_DEADLINE_AT
+# minus 15 s (the mc_lock_wait_left margin). rc 1, and nothing printed, when
+# under 1 s is left: the caller holds the PR and reads nothing. Only the
+# conductor loads the knob (lane_env_apply merge-conductor), so every other
+# lane reads it unset. TO_HOLD_NOW is the test clock.
+to__hold_bound_s() {
+  local s="${MC_TICKET_HOLD_TIMEOUT_S:-}" at="${MC_WORKER_DEADLINE_AT:-}" left
+  [[ "$s" =~ ^[0-9]+$ ]] || s=0
+  s=$((10#$s))
+  if [ "$s" -gt 0 ] && [[ "$at" =~ ^[0-9]+$ ]]; then
+    left=$(( 10#$at - ${TO_HOLD_NOW:-${EPOCHSECONDS:-$(date +%s)}} - 15 ))
+    [ "$left" -ge 1 ] || return 1
+    [ "$s" -le "$left" ] || s=$left
+  fi
+  printf '%s\n' "$s"
+}
+
+# to__kill_tree <sig> <pid> — the conductor's _mc_kill_tree when it is loaded,
+# else <pid> and its descendants, children first.
+to__kill_tree() {
+  if declare -F _mc_kill_tree >/dev/null; then _mc_kill_tree "$1" "$2"; return 0; fi
+  local k
+  for k in $(ps -o pid= --ppid "$2" 2>/dev/null); do to__kill_tree "$1" "$k"; done
+  kill -"$1" "$2" 2>/dev/null
+  return 0
+}
+
+# to__wait_s <n> — wait <n> seconds of wall time with the read builtin, so
+# the bound never ends early when `sleep` is missing, fails or is a stub. A
+# read that does not time out (no fifo) falls back to `sleep 1` per pass.
+to__wait_s() {
+  local end=$(( ${EPOCHSECONDS:-$(date +%s)} + ${1:-0} )) r
+  while [ "${EPOCHSECONDS:-$(date +%s)}" -lt "$end" ]; do
+    read -rt "$(( end - ${EPOCHSECONDS:-$(date +%s)} ))" <> <(:) 2>/dev/null; r=$?
+    [ "$r" -gt 128 ] || sleep 1
+  done
+}
+
+# to__merge_hold_bounded <bound> <project> <owner/repo> <pr> [log-file] —
+# to_merge_hold under <bound> seconds (0 = none: it runs as before). Prints
+# the why and returns to_merge_hold's rc. Past the bound the check's process
+# tree gets TERM, then KILL 3 s later, and the answer is rc 124 with the why
+# `the hold check timed out (call <name>) ...` and one log line,
+# `<slug>#<num> TICKET_HOLD_TIMEOUT call=ticket-hold/<name> took=<n>s
+# timeout=<b>s rc=124: ...`. The timeout marker wins over a late answer, so a
+# check cut at its bound never clears a PR. The call file is MC_CALL_FILE in a
+# conductor worker, else a private one.
+to__merge_hold_bounded() {
+  local b="${1:-0}" p="${2:-}" slug="${3:-}" num="${4:-}" log="${5:-}" out w k rc=0 t0 cp msg
+  local TO_CALL_FILE="${MC_CALL_FILE:-}"
+  if [ "$b" = 0 ] || ! out=$(mktemp "${TMPDIR:-/tmp}/to-hold.XXXXXX" 2>/dev/null); then
+    to_merge_hold "$p" "$slug" "$num"; return
+  fi
+  [ -n "$TO_CALL_FILE" ] || TO_CALL_FILE="$out.call"
+  t0=${EPOCHSECONDS:-$(date +%s)}
+  to_merge_hold "$p" "$slug" "$num" > "$out" & w=$!
+  # Not on this $( )'s pipe: the capture would wait for the watchdog's sleep.
+  ( to__wait_s "$b"; : > "$out.to"; to__kill_tree TERM "$w"; to__wait_s 3; to__kill_tree KILL "$w" ) </dev/null >/dev/null 2>&1 & k=$!
+  wait "$w"; rc=$?
+  to__kill_tree KILL "$k"; wait "$k" 2>/dev/null
+  if [ -e "$out.to" ]; then
+    cp=""; { IFS=$'\t' read -r _ cp _ < "$TO_CALL_FILE"; } 2>/dev/null
+    cp=${cp:-unknown}
+    rm -f "$out" "$out.to" "$out.call" 2>/dev/null
+    msg="$slug#$num TICKET_HOLD_TIMEOUT call=$cp took=$(( ${EPOCHSECONDS:-$(date +%s)} - t0 ))s timeout=${b}s rc=124: the hold check did not answer; not merged this pass, the next pass asks again"
+    if [ -n "$log" ]; then
+      printf '%s [%s] %s\n' "$(date -u '+%Y-%m-%d %H:%M:%SZ')" "$p" "$msg" >> "$log"
+    else
+      to__say "$msg"
+    fi
+    printf 'the hold check timed out (call %s) — not merged this pass, the next pass asks again\n' "${cp#ticket-hold/}"
+    return 124
+  fi
+  cat "$out" 2>/dev/null
+  rm -f "$out" "$out.call" 2>/dev/null
+  return "$rc"
+}
+
 # to_lane_hold <project> <owner/repo> <pr> [log-file] — to_merge_hold plus its
 # ONE log line (the lane's file, else to__say), so a lane's call site is one
-# line: `command -v to_lane_hold … && to_lane_hold … && continue`.
+# line: `command -v to_lane_hold … && to_lane_hold … && continue`. rc 0 held
+# (a hold, an unreadable hold, a timed-out check, no worker time left), 1 clear.
+# In a conductor worker (MC_CALL_FILE set) the call file names each read while
+# it runs. After a held answer in step ticket-hold it names
+# `ticket-hold/hold-note`, the conductor's hold note that runs next; after
+# anything else it is emptied, so prequeue starts clean.
 to_lane_hold() {
-  local why
-  why=$(to_merge_hold "${1:-}" "${2:-}" "${3:-}") || { to__held_clear "${4:--}" "${2:-}" "${3:-}" ticket; return 1; }
+  local why rc=0 b
+  [ -n "${MC_CALL_FILE:-}" ] && : > "$MC_CALL_FILE" 2>/dev/null
+  if b=$(to__hold_bound_s); then
+    why=$(to__merge_hold_bounded "$b" "${1:-}" "${2:-}" "${3:-}" "${4:-}") || rc=$?
+  else
+    why='no worker time left for the hold check — not merged this pass, the next pass asks again'
+  fi
+  if [ "$rc" != 0 ] && [ "$rc" != 124 ]; then
+    [ -n "${MC_CALL_FILE:-}" ] && : > "$MC_CALL_FILE" 2>/dev/null
+    to__held_clear "${4:--}" "${2:-}" "${3:-}" ticket; return 1
+  fi
+  if [ -n "${MC_CALL_FILE:-}" ]; then
+    if [ "${MC_STEP_NAME:-}" = ticket-hold ]; then TO_CALL_FILE="$MC_CALL_FILE" to__call hold-note
+    else : > "$MC_CALL_FILE" 2>/dev/null; fi
+  fi
   to__held_once "${4:--}" "${2:-}" "${3:-}" ticket "$why" || return 0
   if [ -n "${4:-}" ]; then
     printf '%s [%s] %s#%s MERGE_HELD: %s\n' "$(date -u '+%Y-%m-%d %H:%M:%SZ')" "${1:-}" "${2:-}" "${3:-}" "$why" >> "$4"

@@ -413,9 +413,11 @@ fanin_end() {
 # THE CALL IN FLIGHT (BH-7029). The mark's 8th and 9th fields are the prequeue
 # call that ran at the kill (pq_call, bin/lib/mc-prequeue.d/call-bound.sh) and
 # its seconds. A mark with no call in flight keeps 7 fields and reads as call
-# `none`. With a call, the STEP_TIMEOUT line and alert carry
-# ` | call: <path> (<n>s)` before ` | calls:`, and the tags add `call`; with
-# none, the line is as before. The Sentry extra always has call and call_s.
+# `none`. With a call, the STEP_TIMEOUT and WORKER_DEADLINE lines and alerts
+# carry ` | call: <path> (<n>s)` before ` | calls:`, and the tags add `call`;
+# with none, the line is as before. Both Sentry extras always have call and
+# call_s. The ticket-hold step names its reads too (to__call,
+# bin/lib/ticket-ownership.sh: `ticket-hold/<name>`).
 # <mark>.call goes with the mark.
 mc_fanin_outcome() {
   local num head draft mstate st key mark d stage step step_s earlier mkind sto f ts nh kind text ds mt sa calls hmax hn call call_s cseg lk
@@ -467,7 +469,8 @@ mc_fanin_outcome() {
     fi
     if ! mc_attempt_has "workerdeadline $key $head" 2>/dev/null; then
       mc_attempt_put "workerdeadline $key $head" 2>/dev/null
-      text="worker killed after ${d:-?}s on ${head:0:8} at stage: ${stage:-unknown} | step: $step (${step_s:-?}s) | earlier: ${earlier:-none} | calls: ${calls:-none}"
+      cseg=""; [ "$call" = none ] || cseg=" | call: $call (${call_s:-?}s)"
+      text="worker killed after ${d:-?}s on ${head:0:8} at stage: ${stage:-unknown} | step: $step (${step_s:-?}s) | earlier: ${earlier:-none}$cseg | calls: ${calls:-none}"
       mc_log "$key WORKER_DEADLINE: $text" 2>/dev/null
       _mc_fanin_alert "WORKER_DEADLINE $key: $text"
       # BH-5617. fanin_run_sub reads this function's stdout as the outcome
@@ -479,10 +482,11 @@ mc_fanin_outcome() {
         "$(jq -nc --arg p "${P:-}" --arg k "$key" --arg h "$head" --arg s "${stage:-unknown}" --arg d "${d:-}" \
              --arg st "$step" --arg ss "${step_s:-}" --arg e "${earlier:-}" --arg sa "${sa:-}" \
              --arg dc "${MC_WORKER_DEADLINE_S:-180}" --arg cap "${MC_WORKER_DEADLINE_CAP_S:-}" --arg c "${calls:-none}" --arg lk "$lk" \
+             --arg cl "$call" --arg cs "${call_s:-}" \
              '{project:$p,pr:$k,head:$h,stage:$s,deadline_s:$d,step:$st,step_s:$ss,earlier:$e,
-               started_at:$sa,deadline_cfg_s:$dc,deadline_cap_s:$cap,calls:$c,lock:$lk}' 2>/dev/null)" \
-        "$(jq -nc --arg s "$step" --arg n "$num" --arg k "$key" --arg d "$ds" \
-             '{step:$s,pr:$n,worker_key:$k,deadline_secs:$d} | with_entries(select(.value != ""))' 2>/dev/null)" >/dev/null 2>&1
+               started_at:$sa,deadline_cfg_s:$dc,deadline_cap_s:$cap,calls:$c,lock:$lk,call:$cl,call_s:$cs}' 2>/dev/null)" \
+        "$(jq -nc --arg s "$step" --arg n "$num" --arg k "$key" --arg d "$ds" --arg c "${call#none}" \
+             '{step:$s,pr:$n,worker_key:$k,deadline_secs:$d,call:$c} | with_entries(select(.value != ""))' 2>/dev/null)" >/dev/null 2>&1
     fi
     echo killed:deadline; return 0
   fi

@@ -61,6 +61,9 @@ tests/hub-move.bh-7715-test.sh:generic-api-key:128
 tests/jobs-client-secret-sources.bh-7188-test.sh:generic-api-key:12
 tests/lane-run-agent-clis.bh-6260-test.sh:generic-api-key:90
 tests/lane-run-agent-clis.bh-6260-test.sh:generic-api-key:115
+tests/lane-run-image.bh-7516-test.sh:generic-api-key:196
+tests/lane-run-image.bh-7516-test.sh:generic-api-key:210
+tests/lane-run-image.bh-7516-test.sh:generic-api-key:210
 tests/lead-report-transcript.bh-5915-test.sh:generic-api-key:38
 tests/lead-report-transcript.bh-5915-test.sh:generic-api-key:114
 tests/lead-reviews-lib.bh-1948-test.sh:generic-api-key:101
@@ -79,6 +82,7 @@ tests/nightly-ticket-split.bh-6838-test.sh:generic-api-key:262
 tests/no-client-identifiers-test.sh:aws-access-token:51
 tests/openrouter-audit.bh-4001-test.sh:generic-api-key:21
 tests/plan-blocked-notice.bh-7116-test.sh:generic-api-key:39
+tests/plan-blocked-repeat.bh-7719-test.sh:generic-api-key:38
 tests/plan-contract-seams.bh-6384-test.sh:generic-api-key:161
 tests/prebuild-repro-self-comment.bh-2133-test.sh:generic-api-key:43
 tests/prebuild-repro-skip.bh-2040-test.sh:generic-api-key:31

@@ -16,7 +16,7 @@
 #   P2  stopped machine, row says ROLLOUT_FAILED / ROLLOUT_FILED → finished, no requeue
 #   P3  deaths=1 already + ROLLOUT_FAILED row → no `died 2 times`, no pool-fail beat
 #   P4  stopped, no row → still a death (unchanged)
-#   P5  stopped, PR_CREATED row → BH-2643 requeue, deaths unchanged (unchanged)
+#   P5  stopped, PR_CREATED / DECOMPOSE_FAILED row → the result, closed done, no requeue (BH-7719)
 set -uo pipefail
 . "$(dirname "$0")/lib/scratch.sh" || exit 1
 DIR=$(cd "$(dirname "$0")/.." && pwd)
@@ -183,15 +183,17 @@ ledger_row "$REFUSAL" m2 $((SPAWN_EPOCH+31))
 run_pool
 grep -q 'machine m1 for BH-3979 dead (state=stopped)' "$LOG" && ok || bad "P4b: foreign row must stay a death: $(cat "$LOG")"
 
-# ── P5: a non-rollout row keeps BH-2643's requeue, deaths unchanged ───────
+# ── P5: a non-rollout row is the result too (BH-7719): closed done, no requeue
 for RL in "PR_CREATED https://github.com/o/r/pull/9" "DECOMPOSE_FAILED x"; do
   reset_state
   machine_json BH-3979 0
   ledger_row "$RL" m1 $((SPAWN_EPOCH+300))
   run_pool
-  grep -q 'machine m1 for BH-3979 stopped (state=stopped) after job done .*not a death' "$LOG" && ok \
-    || bad "P5 ($RL): no BH-2643 line: $(cat "$LOG")"
-  [ "$(jq -r '.deaths' "$Q" 2>/dev/null)" = 0 ] && ok || bad "P5 ($RL): want requeue deaths=0: $(cat "$Q" 2>/dev/null)"
+  grep -q 'result for BH-3979 taken from the pool-result row' "$LOG" && ok \
+    || bad "P5 ($RL): the row is not taken as the result: $(cat "$LOG")"
+  grep -q "^done project-5 BH-3979 done ${RL%% *}" "$T/qsink" && ok || bad "P5 ($RL): want the row closed done: $(cat "$T/qsink")"
+  [ -e "$Q" ] && bad "P5 ($RL): a finished job was requeued: $(cat "$Q")" || ok
+  grep -q 'dead (state=\|after job done' "$LOG" && bad "P5 ($RL): a death or requeue line: $(cat "$LOG")" || ok
 done
 
 echo "fly-pool-terminal-result-not-death: $PASS passed, $FAIL failed"
