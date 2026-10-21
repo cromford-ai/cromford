@@ -1375,6 +1375,8 @@ export const CREATED_TABLE_OVERRIDES = {
     "CREATE UNIQUE INDEX IF NOT EXISTS idx_pr_state_events_dedupe ON pr_state_events(repo, number, state, since, alerted)",
     "CREATE INDEX IF NOT EXISTS idx_pr_state_events_pr ON pr_state_events(repo, number, id)",
     "CREATE INDEX IF NOT EXISTS idx_pr_state_events_state_at ON pr_state_events(state, at)",
+    // BH-7764: the gateFacts range read (lib/pr-gate.js).
+    "CREATE INDEX IF NOT EXISTS idx_pr_state_events_gate ON pr_state_events(repo, state, number, id)",
     "CREATE VIEW IF NOT EXISTS pr_state AS SELECT e.* FROM pr_state_events e WHERE e.id = (SELECT MAX(id) FROM pr_state_events WHERE repo=e.repo AND number=e.number)",
   ],
   pr_attempts: [

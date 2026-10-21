@@ -26,7 +26,7 @@
 // pins it; a route that answered `{events:[…]}` would hand that verb an empty
 // page for ever, which is a dead route with a green test (D27).
 
-import { json } from "../lib/http.js";
+import { json, overloadGuardedRoute } from "../lib/http.js";
 import { ensureTable, str, strictInt } from "../lib/core.js";
 import { GATE_FIELDS, INT_FIELDS, SHA_FIELDS, gateFacts, needsReviewRows, recordGateEvent } from "../lib/pr-gate.js";
 
@@ -237,11 +237,12 @@ export const routes = [
   // One folded row per PR: each field is its latest non-null gate value.
   [
     "GET", "/api/pr-state/gate",
-    async ({ env, url, t }) => {
+    // BH-7764: a D1 overload give-up is a 503 retryable, not a Sentry throw.
+    overloadGuardedRoute("pr_state_events", async ({ env, url, t }) => {
       const repo = qp(url, "repo");
       if (!repo) return json(400, { error: "repo is required" });
       return json(200, { rows: await gateFacts(env, { repo }), as_of: t });
-    },
+    }),
   ],
 
   // The lead-review worklist. "Nothing to review" is the common answer, so an
@@ -249,13 +250,15 @@ export const routes = [
   // as an old worker without this route.
   [
     "GET", "/api/pr-state/needs-review",
-    async ({ env, url, t }) => {
+    // BH-7764: an overload give-up is a 503 retryable, never `rows: []`,
+    // which the lead lane would read as a measured "nothing to review".
+    overloadGuardedRoute("pr_state_events", async ({ env, url, t }) => {
       const repo = qp(url, "repo");
       if (!repo) return json(400, { error: "repo is required" });
       const limit = limitOf(url);
       if (limit === null) return json(400, LIMIT_NOT_AN_INT);
       return json(200, { rows: await needsReviewRows(env, { repo, limit }), as_of: t });
-    },
+    }),
   ],
 
   // ── "We have already tried this" ───────────────────────────────────────

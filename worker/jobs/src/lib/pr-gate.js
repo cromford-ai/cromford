@@ -42,24 +42,50 @@ export async function recordGateEvent(env, t, ev) {
   return { recorded: !!res.meta.changes };
 }
 
-const latest = (f) =>
-  `(SELECT e.${f} FROM pr_state_events e WHERE e.repo=p.repo AND e.number=p.number
-     AND e.state='gate' AND e.${f} IS NOT NULL ORDER BY e.id DESC LIMIT 1) AS ${f}`;
-
 // One row per PR that has any gate row in `repo`. approved_at is the EARLIEST
 // `at` among that PR's gate rows carrying the current approve sha, so a
 // reconcile re-send of the same approve does not make the PR look newer.
+//
+// ONE statement per call, folded here (BH-7764, Sentry CROMFORD-HARNESS-1P).
+// The old SQL ran a correlated subquery per field per PR (14 x N), which kept
+// D1 busy long enough to answer "overloaded". This is one range read on
+// idx_pr_state_events_gate (repo, state, number, id): equality on repo and
+// state, rows already in (number, id) order, so no temp b-tree.
+const FOLDED = [...GATE_FIELDS, "url"];
+
 export async function gateFacts(env, { repo }) {
   await ready(env);
-  // sql-ident-ok: latest() reads names from the GATE_FIELDS constant
-  const rows = await env.DB.prepare(
-    `SELECT f.*, (SELECT MIN(e.at) FROM pr_state_events e WHERE e.repo=f.repo AND e.number=f.number
-                    AND e.state='gate' AND e.builder_approved_sha=f.builder_approved_sha) AS approved_at
-       FROM (SELECT p.repo, p.number, ${[...GATE_FIELDS, "url"].map(latest).join(", ")}
-               FROM (SELECT DISTINCT repo, number FROM pr_state_events WHERE state='gate' AND repo=?1) p) f
-      ORDER BY f.number`
+  // sql-ident-ok: column names come from the GATE_FIELDS constant
+  const res = await env.DB.prepare(
+    `SELECT number, at, ${FOLDED.join(", ")} FROM pr_state_events
+      WHERE repo=?1 AND state='gate' ORDER BY number, id`
   ).bind(repo).all();
-  return rows.results || [];
+  const out = [];
+  let i = 0;
+  const rows = res.results || [];
+  while (i < rows.length) {
+    const number = rows[i].number;
+    let j = i;
+    while (j < rows.length && rows[j].number === number) j++;
+    const pr = rows.slice(i, j);
+    const fact = { repo, number };
+    for (const f of FOLDED) {
+      let v = null;
+      for (const r of pr) if (r[f] !== null && r[f] !== undefined) v = r[f];
+      fact[f] = v;
+    }
+    // SQL `= NULL` matches nothing, so a null approve sha has no approved_at.
+    let approvedAt = null;
+    if (fact.builder_approved_sha !== null) {
+      for (const r of pr) {
+        if (r.builder_approved_sha === fact.builder_approved_sha && (approvedAt === null || r.at < approvedAt)) approvedAt = r.at;
+      }
+    }
+    fact.approved_at = approvedAt;
+    out.push(fact);
+    i = j;
+  }
+  return out;
 }
 
 export async function needsReviewRows(env, { repo, limit }) {

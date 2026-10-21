@@ -165,6 +165,14 @@ then hotfix, then oldest approval, then number. An empty list is a 200 with
 (an old worker), never as "nothing to review". Gate rows are never pruned
 here.
 
+`gateFacts` is ONE range read on `idx_pr_state_events_gate` (repo, state,
+number, id), folded in JS (BH-7764). The old SQL ran 14 correlated subqueries
+per PR and outlasted withD1Retry on an overloaded D1. When a D1 overload
+outlasts the retry, both gate GETs answer 503 `{error:"pr_state_events
+unavailable", retryable:true, d1_attempts}` with one `d1-overload:` warn line
+and no Sentry event. Every other error still throws to withSentry. Proven by
+`worker/jobs/test/pr-gate-overload.bh-7764.test.js`.
+
 ## What is NOT here
 
 No route, no `worker/jobs/src/index.js` change, no cron line, no
