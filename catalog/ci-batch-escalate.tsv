@@ -160,4 +160,5 @@ tests/fixtures/bh-4157/	worker	worker/jobs/test/ironlaw-accept.bh-4157.test.js r
 tests/fixtures/bh-7636/	worker	worker/jobs/test/lane-runs-box.bh-7636.test.js reads box-placement-cases.tsv (BH-7636)
 tests/fixtures/bh-7716/	worker	worker/jobs/test/lane-dedicated.bh-7716.test.js reads the dedicated-placement fixtures (BH-7716)
 tests/fixtures/unblock/bh-7728/	worker	worker/jobs/test/unblock-metrics.bh-7728.test.js reads metrics-week.json (BH-7728)
+tests/fixtures/bh-7802/	worker	worker/jobs/test/alerts-rows.bh-7802.test.js reads resolve-rows.json (BH-7802)
 catalog/ci-batch-regression.d/	infra	the regression list bin/ci-plan.sh and bin/test-impact.sh read (BH-6838)
