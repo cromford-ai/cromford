@@ -24,6 +24,8 @@ export const ARCHIVE_TABLES = {
   roadmap_ideas: { key: ["id"], time: "updated_at" },
   roadmap_idea_events: { key: ["id"], time: "at" },
   roadmap_waves: { key: ["id"], time: "updated_at" },
+  // BH-7595: the web_vault audit rule (routes/retention.js).
+  web_vault_audit: { key: ["id"], time: "at" },
 };
 
 // One text for every archive rule's "unbound" audit row (lib/archive-daily.js).

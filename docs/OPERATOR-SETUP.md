@@ -1742,14 +1742,13 @@ project (`flock -n`), so nothing overlaps itself.
   still a hard ceiling — a **cost** decision now, not a capacity one.
 - `POOL_CAP_MAX` in `env/global.env` is the fleet-wide brake (unset = unlimited)
   and trims every project at once.
-- The number every box already had in `flags/fly-pool-<project>` (2, then 10,
-  then 20) is retired by the first tick after this lands: the file stays, since
-  its presence enables the pool, the old value is kept in
-  `state/fly-pool/legacy-caps.<project>`, and one line says so in
-  `logs/fly-pool.log`. It happens once per project — a number written after that
-  stands.
+- The number every box had in `flags/fly-pool-<project>` (2, then 10, then 20)
+  was emptied once per project by a tick one-shot from 2026-09-14. BH-7433
+  removed that one-shot after it ran on every project. The old values stay in
+  `state/fly-pool/legacy-caps.<project>` on the hub. A number in the flag now
+  is a cap, and the tick leaves it alone.
 - `POOL_AUTOSCALE=0` in `env/global.env` restores the pre-2026-09-14 behaviour
-  byte-for-byte: default 3, `cap - live`, sequential sweep, no retirement.
+  byte-for-byte: default 3, `cap - live`, sequential sweep.
 - Every tick logs `pool <p>: queued=N running=M spawning=K cap=unlimited|C` to
   `logs/fly-pool.log`.
 

@@ -158,11 +158,14 @@ fallbacks. Nothing to apply to a database.
 
 **Manual-only / not automatable from a box:**
 
-- The two persistent **builder machines** behind the retired records
-  (`bin/fly-pool-tick.sh`'s `retire_builder_record`). The record is rewritten
-  here; the machine is destroyed by a human, because this harness must not run a
-  Fly command against a `builder-*` app and those machines carry volumes. The
-  ALERTS line carries the exact `fly machine destroy <id> -a <app> --force`.
+- The two persistent **builder machines** behind the retired records. A
+  one-shot in `bin/fly-pool-tick.sh` (BH-660, removed in BH-7433 after it ran on
+  every pool project) moved their ids under `builder_retired` in
+  `state/fly/<p>.json` and sent one ALERTS line with the exact
+  `fly machine destroy <id> -a <app> --force`. The machine is destroyed by a
+  human, because this harness must not run a Fly command against a `builder-*`
+  app and those machines carry volumes. `bin/fleet-fly-block.sh` still does not
+  publish a `builder_retired` record as a builder.
 - **Tailnet nodes.** The harness holds no Tailscale API credential (only
   `TS_AUTHKEY`, handed to machines by `fly/entrypoint.sh`), so retiring offline
   `builder-*` nodes is a Tailscale admin console action: Machines → select the

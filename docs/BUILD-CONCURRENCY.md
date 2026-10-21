@@ -775,22 +775,20 @@ sits on work rather than exceed it. `fly/pool-caps.conf` ships empty —
 1 → 10 → 20 over two days, which is what a ceiling nobody needs looks like on
 the way out.
 
-**The legacy flag caps retire themselves, once.** Every box's
-`flags/fly-pool-<p>` held a number — `bin/fly-pool-rollout.sh` wrote one (2 at
-wave-3, then 10, then 20 for project-5, raised by hand "as much parallel as
-possible"). A number is still a hard ceiling under the new ladder, so shipping
-unlimited without retiring them would have changed nothing at all. The first
-`bin/fly-pool-tick.sh` pass after this lands empties the number — keeping the
-file, which is the pool's enable switch — records the old value in
-`state/fly-pool/legacy-caps.<p>`, and logs one line per project. It runs once
-per project: a number written *after* that is a decision someone made with the
-new semantics in hand, and it stands. `fly/pool-caps.conf` is where a ceiling
+**The legacy flag caps were retired once, by a one-shot that is gone.** Every
+box's `flags/fly-pool-<p>` held a number that `bin/fly-pool-rollout.sh` wrote
+(2 at wave-3, then 10, then 20 for project-5). From 2026-09-14 a one-shot in
+`bin/fly-pool-tick.sh` emptied that number once per project and kept the old
+value in `state/fly-pool/legacy-caps.<p>`. It ran on every project and BH-7433
+removed it; the old files stay on the hub. Today `bin/fly-pool-rollout.sh`
+writes an empty flag unless the operator sets `POOL_CAP`, and a number in the
+flag is a cap the tick leaves alone. `fly/pool-caps.conf` is where a ceiling
 you actually want belongs, because a reviewed line survives every rollout.
 
 **Kill flag: `POOL_AUTOSCALE=0`** in `env/global.env` (or the environment)
 restores every pre-2026-09-14 behaviour byte-for-byte — default 3, `cap - live`,
 no per-tick line, `POOL_CAP_MAX` ignored entirely, a sequential
-`bin/fly-pool-tick.sh` sweep, and no retirement of the flag caps. `bin/pool-cap.sh --autoscale` is the one reader of
+`bin/fly-pool-tick.sh` sweep. `bin/pool-cap.sh --autoscale` is the one reader of
 that knob, the same way `bin/pool-cap.sh <project>` is the one reader of the cap.
 
 ---

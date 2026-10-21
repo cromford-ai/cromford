@@ -21,6 +21,7 @@
 
 import { d1Guarded, json } from "../lib/http.js";
 import { laneName, str } from "../lib/core.js";
+import { webTaskEnqueueRefused } from "./web-vault.js";
 
 // lp_enqueue_batch's LP_BATCH_MAX is the same number.
 export const BATCH_MAX = 500;
@@ -62,9 +63,12 @@ function argsOf(v) {
 export const routes = [
   [
     "POST", "/api/lane-runs/batch",
-    ({ env, t, body }) => d1Guarded("lane_runs", async () => {
+    ({ req, env, t, body }) => d1Guarded("lane_runs", async () => {
       const lane = laneName(body.lane);
       if (!lane) return json(400, { error: `lane is required and ${NAME_ERR}` });
+      // BH-7595: a web-task run unlocks the project's web_vault reads.
+      const refused = webTaskEnqueueRefused(req, env, lane);
+      if (refused) return refused;
       const rows = body.rows;
       if (!Array.isArray(rows) || rows.length < 1 || rows.length > BATCH_MAX) {
         return json(400, { error: `rows must be an array of 1..${BATCH_MAX} rows` });

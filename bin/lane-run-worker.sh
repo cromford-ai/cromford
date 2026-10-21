@@ -345,13 +345,16 @@ lw_report() {
 
 # lw_run <claim payload file> — steps 2-6 for one claimed row.
 lw_run() {
-  local f="$1" id lane project n out err pid rc prof fo frc reason eline wp
+  local f="$1" id lane project n out err pid rc prof fo frc reason eline wp vtok=""
   local -a args=()
   id=$(jq -r '.id // empty' "$f" 2>/dev/null)
   lane=$(jq -r '.lane // empty' "$f" 2>/dev/null)
   project=$(jq -r '.project // empty' "$f" 2>/dev/null)
   n=$(jq -r '.args | length' "$f" 2>/dev/null)
   mapfile -d '' -t args < <(jq -j '.args[] | ., "\u0000"' "$f" 2>/dev/null)
+  # BH-7595: a web-task claim answer carries the run's vault token. The run
+  # gets it as WEB_VAULT_RUN_TOKEN (bin/lib/web-vault.sh wv_read); it is never logged.
+  [ "$lane" = web-task ] && vtok=$(jq -r '.vault_token // empty' "$f" 2>/dev/null)
   case "$id" in ''|*[!0-9]*) lw_log "claim answer without an id: $(head -c 200 "$f")"; return 0 ;; esac
   if ! pl_name_ok "$lane" || ! pl_name_ok "$project" || [ "${#args[@]}" -lt 1 ] || [ "${#args[@]}" != "$n" ]; then
     lw_log "run $id: bad lane, project or args; not run, not reported"; return 0
@@ -392,10 +395,10 @@ lw_run() {
   err="$H/state/lane-run-worker/run-$id.err"
   LW_GRACE=$(lw_term_grace_s)
   if command -v setsid >/dev/null 2>&1; then
-    LANE_RUN_ID="$id" setsid -w "$H/bin/project-lane-run.sh" "$lane" "$project" 0 "$H/${args[0]}" "${args[@]:1}" \
+    LANE_RUN_ID="$id" WEB_VAULT_RUN_TOKEN="$vtok" setsid -w "$H/bin/project-lane-run.sh" "$lane" "$project" 0 "$H/${args[0]}" "${args[@]:1}" \
       > "$out" 2> "$err" < /dev/null &
   else
-    LANE_RUN_ID="$id" "$H/bin/project-lane-run.sh" "$lane" "$project" 0 "$H/${args[0]}" "${args[@]:1}" \
+    LANE_RUN_ID="$id" WEB_VAULT_RUN_TOKEN="$vtok" "$H/bin/project-lane-run.sh" "$lane" "$project" 0 "$H/${args[0]}" "${args[@]:1}" \
       > "$out" 2> "$err" < /dev/null &
   fi
   pid=$!

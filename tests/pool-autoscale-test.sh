@@ -141,9 +141,11 @@ N=$(tick POOL_AUTOSCALE=0)
 N=$(tick POOL_AUTOSCALE=0 POOL_CAP_MAX=1)
 [ "$N" = 5 ] && ok || bad "POOL_AUTOSCALE=0 must ignore POOL_CAP_MAX — it did not exist (got $N)"
 
-# ══ 5. THE SWEEP: no project waits on a sibling, and the old flag caps go ═══
+# ══ 5. THE SWEEP: no project waits on a sibling, and a flag number stays a cap
 # bin/fly-pool-tick.sh is DRIVEN here against its own scratch tree: fly-pool.sh
 # is replaced by a recorder, so this section is about the sweep alone.
+# BH-7433 removed the 2026-09-14 one-shot that emptied the number in the flag:
+# a number there now is an operator's POOL_CAP (bin/fly-pool-rollout.sh) and stays.
 S="$T/sweep"; mkdir -p "$S/bin" "$S/flags" "$S/logs" "$S/state/fly-pool"
 cp "$DIR/bin/pool-cap.sh" "$S/bin/"
 printf '#!/bin/bash\nexit 0\n' > "$S/bin/fly-lock-guard.sh"
@@ -159,21 +161,21 @@ START=$(date +%s); sweep; EL=$(( $(date +%s) - START ))
   && ok || bad "every flagged project must be ticked (got '$(tr '\n' ' ' < "$S/ticked.txt")')"
 [ "$EL" -lt 3 ] \
   && ok || bad "three 1s ticks must run CONCURRENTLY — a sibling project is not a queue (took ${EL}s)"
-# The one-shot: the number inside the flag is retired, the flag itself stays.
-[ -f "$S/flags/fly-pool-alpha" ] && [ ! -s "$S/flags/fly-pool-alpha" ] \
-  && ok || bad "the legacy flag cap must be emptied, and the enable switch must survive"
-grep -q '^10 retired ' "$S/state/fly-pool/legacy-caps.alpha" \
-  && ok || bad "the retired value must be recorded — a config change nobody can undo is not one"
-grep -q 'legacy flag cap 10 retired' "$S/logs/fly-pool.log" \
-  && ok || bad "the retirement must say so in the pool log"
-[ "$(HARNESS="$S" "$DIR/bin/pool-cap.sh" alpha)" = 0 ] \
-  && ok || bad "after the one-shot the project resolves to unlimited (got $(HARNESS="$S" "$DIR/bin/pool-cap.sh" alpha))"
-# ONCE only: a number written with the new semantics in hand is a decision.
+# The number inside the flag stays, and so does the flag itself.
+[ "$(cat "$S/flags/fly-pool-alpha")" = 10 ] \
+  && ok || bad "the sweep must leave the flag number 10 as it is (got '$(cat "$S/flags/fly-pool-alpha")')"
+[ ! -e "$S/state/fly-pool/legacy-caps.alpha" ] \
+  && ok || bad "the sweep must write no legacy-caps record: $(cat "$S/state/fly-pool/legacy-caps.alpha")"
+! grep -q 'legacy flag cap' "$S/logs/fly-pool.log" 2>/dev/null \
+  && ok || bad "the sweep must not report a retired cap in the pool log"
+[ "$(HARNESS="$S" "$DIR/bin/pool-cap.sh" alpha)" = 10 ] \
+  && ok || bad "after the sweep the flag number is still the cap (got $(HARNESS="$S" "$DIR/bin/pool-cap.sh" alpha))"
+# A second sweep changes nothing either.
 echo 4 > "$S/flags/fly-pool-alpha"; sweep
 [ "$(cat "$S/flags/fly-pool-alpha")" = 4 ] \
-  && ok || bad "a cap set AFTER the one-shot must never be retired again"
-# The kill flag skips the retirement and the concurrency both.
-echo 10 > "$S/flags/fly-pool-beta"; rm -f "$S/state/fly-pool/legacy-caps.beta"
+  && ok || bad "a cap set between sweeps must stand"
+# The kill flag gives back the sequential sweep and keeps the cap too.
+echo 10 > "$S/flags/fly-pool-beta"
 START=$(date +%s); sweep POOL_AUTOSCALE=0; EL=$(( $(date +%s) - START ))
 [ "$(cat "$S/flags/fly-pool-beta")" = 10 ] \
   && ok || bad "POOL_AUTOSCALE=0 must leave the legacy flag cap alone"

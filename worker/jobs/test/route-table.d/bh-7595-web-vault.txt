@@ -1,0 +1,8 @@
+# WEB VAULT (BH-7595, slice C0): the encrypted credential store of the
+# web-task lane. set, entries and audit also need the operator token
+# (x-web-vault-admin-token); read is bound to the caller's claimed lane run.
+# Bearer-gated.
+POST /api/web-vault/set
+POST /api/web-vault/read
+GET /api/web-vault/entries
+GET /api/web-vault/audit

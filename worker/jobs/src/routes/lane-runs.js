@@ -92,6 +92,7 @@ import { isoPlusSeconds, laneName, leaseWon, percentile, str } from "../lib/core
 import { sweepDead } from "./lane-runs-lease.js";
 import { failReason, runStatus } from "../lib/lane-run-status.js";
 import { prefixesOf, readGroups } from "../lib/lane-fleet-groups.js";
+import { mintRunToken, webTaskEnqueueRefused, WEB_TASK_LANE } from "./web-vault.js";
 import {
   allBoxKeys, boxKeysFor, boxMatch, boxNameOf, exceptKeys, fallbackKeys, readBoxPlacements,
 } from "../lib/lane-box-placement.js";
@@ -331,10 +332,13 @@ async function addRunP50(env, lanes) {
 export const routes = [
   [
     "POST", "/api/lane-runs",
-    ({ env, t, body }) => d1Guarded("lane_runs", async () => {
+    ({ req, env, t, body }) => d1Guarded("lane_runs", async () => {
       const lane = laneName(body.lane);
       const project = laneName(body.project);
       if (!lane || !project) return json(400, { error: `lane and project are required and ${NAME_ERR}` });
+      // BH-7595: a web-task run unlocks the project's web_vault reads.
+      const refused = webTaskEnqueueRefused(req, env, lane);
+      if (refused) return refused;
       const a = argsOf(body.args);
       if (a.err) return json(400, { error: a.err });
       const r = await env.DB.prepare(
@@ -413,10 +417,17 @@ export const routes = [
       if (!row) return new Response(null, { status: 204 });
       // A box claim's answer names the box: a box worker releases any row
       // whose answer does not (an older worker that ignored `box`).
-      return json(200, {
+      const out = {
         id: Number(row.id), lane: row.lane, project: row.project, args: JSON.parse(row.args_json),
         attempts: Number(row.attempts), lease_until: row.lease_until, ...(box !== null ? { box } : {}),
-      });
+      };
+      // BH-7595: the run token of a web-task claim (routes/web-vault.js). Only
+      // its hash is stored; a re-claim mints a new one, so the old one stops.
+      if (row.lane === WEB_TASK_LANE) {
+        const token = await mintRunToken(env, out.id, machine, t);
+        if (token) out.vault_token = token;
+      }
+      return json(200, out);
     }),
   ],
 

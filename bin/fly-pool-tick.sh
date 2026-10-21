@@ -10,8 +10,8 @@
 # ceiling we chose, not one Fly imposed. Each bin/fly-pool.sh self-locks on its
 # own locks/fly-pool-<p>.lock with `flock -n` and exits if it is held, so running
 # them together is exactly the same safety with none of the waiting.
-# KILL FLAG: POOL_AUTOSCALE=0 (env/global.env) restores the sequential sweep and
-# skips the one-shot below. bin/pool-cap.sh --autoscale is its one reader.
+# KILL FLAG: POOL_AUTOSCALE=0 (env/global.env) restores the sequential sweep.
+# bin/pool-cap.sh --autoscale is its one reader.
 #
 # HARNESS is overridable for the same reason bin/fly-pool.sh took that seam: a
 # suite that cannot point this loop at a scratch tree cannot drive it at all,
@@ -34,64 +34,10 @@ command -v lane_env_apply    >/dev/null 2>&1 && lane_env_apply    fly-pool-tick
 "$H/bin/fly-lock-guard.sh" >/dev/null 2>&1 || true
 AS=$("$H/bin/pool-cap.sh" --autoscale 2>/dev/null)
 
-# --- ONE-SHOT: the legacy per-project ceilings go (the operator, 2026-09-14) ----------
-# Every box's flags/fly-pool-<p> holds a NUMBER, because bin/fly-pool-rollout.sh
-# wrote one — 2 at wave-3, then 10, then 20 for project-5, raised by hand "as
-# much parallel as possible". Those numbers are a HARD ceiling under the new
-# resolution too, so shipping "unlimited by default" without retiring them would
-# change precisely nothing: nine projects would stay capped at 10 and the fleet
-# ceiling would still be ours. Nothing in this harness waits for a person to
-# empty nine files, so the code that makes the flag meaningless also retires it.
-# The flag's PRESENCE is the pool's enable switch and is left exactly as it is;
-# only the number inside is dropped, ONCE per project, with the old value kept
-# in state/fly-pool/legacy-caps.<p> so the change is auditable and reversible.
-# A ceiling anyone genuinely wants belongs in fly/pool-caps.conf, where it is a
-# reviewed line that survives this and every later rollout.
-retire_legacy_cap() { # retire_legacy_cap <flag-file> <project>
-  local n; n=$(cat "$1" 2>/dev/null | tr -dc '0-9')
-  [ -n "$n" ] || return 0
-  # Retired once and once only: a number written AFTER this ran is a decision
-  # someone made with the new semantics in hand, and it stands.
-  [ -e "$H/state/fly-pool/legacy-caps.$2" ] && return 0
-  mkdir -p "$H/state/fly-pool" "$H/logs"
-  printf '%s retired %s by bin/fly-pool-tick.sh (2026-09-14 pool autoscale)\n' \
-    "$n" "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" > "$H/state/fly-pool/legacy-caps.$2"
-  : > "$1"
-  echo "$(date -u '+%Y-%m-%d %H:%M:%SZ') [pool/$2] legacy flag cap $n retired — the pool now follows queue depth (old value in state/fly-pool/legacy-caps.$2; a ceiling you want belongs in fly/pool-caps.conf)" >> "$H/logs/fly-pool.log"
-}
-
-# --- ONE-SHOT: the stale persistent-builder record goes (BH-660) --------------
-# A pool-routed project still carries state/fly/<p>.json with the machine_id of
-# the persistent builder it stopped using. Nothing on the pool route reads that
-# id — bin/fly-dispatch.sh stands down for pool projects before it ever reaches
-# bin/fly-api.sh — but bin/fleet-fly-block.sh publishes it as `builder`, so the
-# console and the watchdog keep reporting a builder machine that is doing
-# nothing, and BH-660 counted two of them.
-#
-# The RECORD is what this retires, never the MACHINE: the pool must not run a
-# single Fly command against a builder-* app (the SPRAWL GUARD in
-# bin/fly-pool.sh — that app auto-recreates machines on destroy), and those
-# machines carry volumes. So the id is moved, not deleted — `app` stays where
-# bin/fly-pool.sh and bin/fly-sync-harness.sh read it, everything else nests
-# under `builder_retired`, and one ALERTS line hands a human the exact destroy
-# command. Reversible by construction, and a no-op on every later tick because
-# the top-level machine_id is gone.
-retire_builder_record() { # retire_builder_record <project>
-  local f="$H/state/fly/$1.json" mid app tmp
-  [ -s "$f" ] || return 0
-  mid=$(jq -r 'select(type=="object") | .machine_id // ""' "$f" 2>/dev/null)
-  [ -n "$mid" ] && [ "$mid" != null ] || return 0
-  app=$(jq -r '.app // ""' "$f" 2>/dev/null)
-  tmp="$f.retire.$$"
-  jq --arg ts "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" --arg by 'bin/fly-pool-tick.sh (BH-660)' \
-     '{app:(.app // "")} + {builder_retired: (del(.app) + {retired_at:$ts,retired_by:$by})}' \
-     "$f" > "$tmp" 2>/dev/null || { rm -f "$tmp"; return 0; }
-  [ -s "$tmp" ] || { rm -f "$tmp"; return 0; }
-  mv "$tmp" "$f" 2>/dev/null || { rm -f "$tmp"; return 0; }
-  mkdir -p "$H/logs"
-  echo "$(date -u '+%Y-%m-%d %H:%M:%SZ') [pool/$1] stale builder record retired — machine $mid in ${app:-no app} is no longer published as this project's builder (the id is kept under builder_retired in state/fly/$1.json)" >> "$H/logs/fly-pool.log"
-  HARNESS="$H" "$H/bin/alert-line.sh" "[pool/$1] builder machine $mid is still in ${app:-its builder app} and nothing uses it — this box never runs a Fly command against a builder-* app (sprawl guard), so destroy it by hand: fly machine destroy $mid -a ${app:-builder-$1} --force (its volume is your call)"
-}
+# The two 2026-09-14 one-shots (the legacy flag cap retire and the stale
+# builder record retire, BH-660) ran on every project and left in BH-7433. Old
+# values stay on the hub in state/fly-pool/legacy-caps.<p> and under
+# builder_retired in state/fly/<p>.json. A number in flags/fly-pool-<p> is a cap.
 
 # --- BH-7491: bounded wait and the hard limit on one project tick -------------
 # Both knobs are lane.fly-pool-tick.* settings rows (catalog/lanes.d/
@@ -196,13 +142,9 @@ for f in "$H"/flags/fly-pool-*; do
   [ -f "$f" ] || continue
   case "$f" in *fly-pool-app-*) continue;; esac   # app-name flag, not a project
   P="${f##*fly-pool-}"
-  # Only pool-routed projects: this loop is the definition of one, and a project
-  # that never had a machine_id is a no-op every tick.
-  retire_builder_record "$P"
   if [ "$AS" = 0 ]; then
     "$H/bin/fly-pool.sh" "$P"
   else
-    retire_legacy_cap "$f" "$P"
     TICK_PROJECTS+=("$P")
   fi
 done

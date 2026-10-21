@@ -212,11 +212,12 @@ OUT=$(fblock)
 [ "$(jq -r '."tproj".stopped_machines' <<<"$OUT")" = 0 ] && ok \
   || bad "a failed listing publishes no counts (got $(jq -r '."tproj".stopped_machines' <<<"$OUT"))"
 
-# ══ 7. THE STALE BUILDER RECORD IS RETIRED, ONCE ═══════════════════════════
-# A pool-routed project still carries the machine_id of the persistent builder
-# it stopped using, and the snapshot publishes it as a live builder. The record
-# is retired (reversibly); the MACHINE is a human step, because this box must
-# never run a Fly command against a builder-* app.
+# ══ 7. THE TICK LEAVES A BUILDER RECORD ALONE; RETIRED RECORDS STAY UNPUBLISHED
+# The BH-660 one-shot that moved a top-level machine_id under builder_retired
+# ran on every pool project and left in BH-7433. The tick now rewrites no
+# record and pages nobody, and it still runs no Fly command against a
+# builder-* app. Records the one-shot retired stay on the hub in that shape, so
+# bin/fleet-fly-block.sh must keep not publishing them as a builder.
 TK="$T/tk"; mkdir -p "$TK/bin" "$TK/logs" "$TK/flags" "$TK/state/fly" "$TK/fakebin"
 cp "$DIR/bin/pool-cap.sh" "$DIR/bin/alert-line.sh" "$TK/bin/"
 printf '#!/bin/bash\nexit 0\n' > "$TK/bin/fly-lock-guard.sh"
@@ -226,43 +227,28 @@ chmod +x "$TK/bin"/*.sh "$TK/fakebin"/*
 printf '1\n' > "$TK/flags/fly-pool-tproj"
 printf 'pool-tproj\n' > "$TK/flags/fly-pool-app-tproj"
 printf '{"app":"builder-tproj","machine_id":"7845007b999738","region":"iad"}\n' > "$TK/state/fly/tproj.json"
+cp "$TK/state/fly/tproj.json" "$TK/tproj.before"
 # A project with no pool flag is not pool-routed and must be left exactly alone.
 printf '{"app":"builder-other","machine_id":"85762e7f406658","region":"iad"}\n' > "$TK/state/fly/other.json"
 cp "$TK/state/fly/other.json" "$TK/other.before"
 pooltick() { ( export PATH="$TK/fakebin:$PATH" HARNESS="$TK" POOL_AUTOSCALE=0
                 bash "$DIR/bin/fly-pool-tick.sh" >/dev/null 2>&1 ); }
 pooltick
-[ "$(jq -r '.app' "$TK/state/fly/tproj.json")" = builder-tproj ] && ok \
-  || bad "the app must stay at the top level — bin/fly-pool.sh reads it: $(cat "$TK/state/fly/tproj.json")"
-[ "$(jq -r 'has("machine_id")' "$TK/state/fly/tproj.json")" = false ] && ok \
-  || bad "the stale machine_id must leave the top level: $(cat "$TK/state/fly/tproj.json")"
-[ "$(jq -r '.builder_retired.machine_id' "$TK/state/fly/tproj.json")" = 7845007b999738 ] && ok \
-  || bad "the id must be kept, not deleted — this has to be reversible: $(cat "$TK/state/fly/tproj.json")"
-[ "$(jq -r '.builder_retired.region' "$TK/state/fly/tproj.json")" = iad ] && ok \
-  || bad "every other field rides along: $(cat "$TK/state/fly/tproj.json")"
-[ -n "$(jq -r '.builder_retired.retired_at' "$TK/state/fly/tproj.json")" ] && ok || bad "retired_at must be stamped"
-[ "$(jq -r '.builder_retired.retired_by' "$TK/state/fly/tproj.json")" = 'bin/fly-pool-tick.sh (BH-660)' ] && ok \
-  || bad "retired_by must name what did it"
-[ "$(grep -c '7845007b999738' "$TK/logs/ALERTS.log")" = 1 ] && ok \
-  || bad "the retirement must page once, naming the machine: $(cat "$TK/logs/ALERTS.log" 2>/dev/null)"
-grep -q 'fly machine destroy 7845007b999738 -a builder-tproj --force' "$TK/logs/ALERTS.log" && ok \
-  || bad "the ALERT must carry the exact human command: $(cat "$TK/logs/ALERTS.log" 2>/dev/null)"
-grep -q 'builder record retired' "$TK/logs/fly-pool.log" && ok \
-  || bad "the retirement must be logged: $(cat "$TK/logs/fly-pool.log" 2>/dev/null)"
+cmp -s "$TK/state/fly/tproj.json" "$TK/tproj.before" && ok \
+  || bad "the tick must leave a pool project's builder record byte-identical: $(cat "$TK/state/fly/tproj.json")"
+! grep -qs '7845007b999738' "$TK/logs/ALERTS.log" && ok \
+  || bad "the tick must page nobody about the builder machine: $(cat "$TK/logs/ALERTS.log" 2>/dev/null)"
+! grep -q 'builder record retired' "$TK/logs/fly-pool.log" 2>/dev/null && ok \
+  || bad "the tick must log no record retirement: $(cat "$TK/logs/fly-pool.log" 2>/dev/null)"
 [ -s "$TK/fly-calls.log" ] \
   && bad "the tick must run NO Fly command against a builder-* app: $(cat "$TK/fly-calls.log")" || ok
 cmp -s "$TK/state/fly/other.json" "$TK/other.before" && ok \
   || bad "a project with no fly-pool flag must be untouched: $(cat "$TK/state/fly/other.json")"
-# ...and it is a ONE-SHOT: a second tick changes nothing and pages nobody again.
-cp "$TK/state/fly/tproj.json" "$TK/tproj.after1"
-pooltick
-cmp -s "$TK/state/fly/tproj.json" "$TK/tproj.after1" && ok \
-  || bad "a second tick must leave the file byte-identical: $(cat "$TK/state/fly/tproj.json")"
-[ "$(grep -c '7845007b999738' "$TK/logs/ALERTS.log")" = 1 ] && ok \
-  || bad "a second tick must not re-page: $(cat "$TK/logs/ALERTS.log")"
-# ...and the snapshot stops calling it a builder.
+# A retired record is not published as a builder.
+# The shape the BH-660 one-shot wrote, as the hub still holds it.
 mkdir -p "$FB/state/fly-pool/tproj"
-cp "$TK/state/fly/tproj.json" "$FB/state/fly/tproj.json"
+printf '{"app":"builder-tproj","builder_retired":{"machine_id":"7845007b999738","region":"iad","retired_at":"2026-09-14T00:00:00Z","retired_by":"bin/fly-pool-tick.sh (BH-660)"}}\n' \
+  > "$FB/state/fly/tproj.json"
 rm -f "$FB/state/fly-pool/tproj/.sweep.json"
 OUT=$(fblock)
 [ "$(jq -r '."tproj".builder' <<<"$OUT")" = null ] && ok \

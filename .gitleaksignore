@@ -136,4 +136,11 @@ worker/jobs/test/routes/cost.test.js:generic-api-key:136
 worker/jobs/test/scheduler-ready.bh-6979.test.js:generic-api-key:19
 worker/jobs/test/scheduler.bh-6978.test.js:generic-api-key:19
 worker/jobs/test/ticket-edges.bh-6977.test.js:generic-api-key:18
+worker/jobs/test/web-vault.bh-7595.test.js:generic-api-key:130
+worker/jobs/test/web-vault.bh-7595.test.js:generic-api-key:146
+worker/jobs/test/web-vault.bh-7595.test.js:generic-api-key:195
+worker/jobs/test/web-vault.bh-7595.test.js:generic-api-key:381
+worker/jobs/test/web-vault.bh-7595.test.js:generic-api-key:400
+worker/jobs/test/web-vault.bh-7595.test.js:generic-api-key:423
+worker/jobs/test/web-vault.bh-7595.test.js:generic-api-key:578
 worker/otp-inbox/test/email.bh-7732.test.js:generic-api-key:19
