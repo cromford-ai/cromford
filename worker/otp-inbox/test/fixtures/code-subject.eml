@@ -1,0 +1,20 @@
+From: Acme <noreply@vendor.example.test>
+To: Bot@OTP.example.test
+Subject: =?UTF-8?B?MzkxMDI3IGlzIHlvdXIgQWNtZSBjb2Rl?=
+Date: Tue, 20 Oct 2026 16:43:00 +0000
+Message-ID: <fixture-subject-1@vendor.example.test>
+MIME-Version: 1.0
+Content-Type: multipart/alternative; boundary="b1-fixture"
+
+This is a multi-part message in MIME format.
+
+--b1-fixture
+Content-Type: text/plain; charset=utf-8
+
+Your login code: 391027
+
+--b1-fixture
+Content-Type: text/html; charset=utf-8
+
+<p>Your login code: <b>391027</b></p>
+--b1-fixture--

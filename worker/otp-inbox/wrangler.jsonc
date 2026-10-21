@@ -1,0 +1,19 @@
+{
+  // harness-otp-inbox — the Email Worker behind Cloudflare Email Routing on
+  // otp.example.com (catch-all), BH-7732. It writes one otp_messages row per
+  // message to the harness-jobs D1; harness-jobs serves GET /api/otp from it.
+  // A separate worker from harness-jobs on purpose: a parser crash here never
+  // touches the coordination API. bin/harness-sync.sh deploys it with every
+  // other worker/<name>/wrangler.jsonc. The otp_messages table comes from the
+  // jobs schema (worker/jobs/schema.d/), which that loop applies first.
+  // Email Routing itself (MX records, the catch-all rule to this worker) is a
+  // Cloudflare dashboard step: docs/notes/2026-10-20-BH-7732-otp-inbox.md.
+  "name": "harness-otp-inbox",
+  "main": "src/index.js",
+  "compatibility_date": "2026-07-01",
+  "account_id": "00000000000000000000000000000000",
+  "workers_dev": false,
+  "d1_databases": [
+    { "binding": "DB", "database_name": "harness-jobs", "database_id": "00000000-0000-0000-0000-000000000000" }
+  ]
+}

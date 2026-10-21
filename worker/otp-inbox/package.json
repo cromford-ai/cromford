@@ -1,0 +1,9 @@
+{
+  "name": "harness-otp-inbox",
+  "private": true,
+  "type": "module",
+  "description": "Email Worker for the otp inbox (BH-7732). No dependencies on purpose, so node --test can drive the worker directly.",
+  "scripts": {
+    "test": "node --test test/*.test.js"
+  }
+}

@@ -136,7 +136,7 @@ def is_fixture_literal(s):
 # are not valid text (the malformed-input fixtures carry control bytes on
 # purpose); anything else non-text is refused outright.
 TEXT_EXT = {'', '.conf', '.cron', '.css', '.csv', '.diff', '.dockerfile', '.drop', '.editorconfig',
-            '.env', '.example', '.gitignore', '.golden', '.html', '.js',
+            '.eml', '.env', '.example', '.gitignore', '.golden', '.html', '.js',
             '.json', '.jsonc', '.jsonl', '.jsx', '.list', '.lock', '.log', '.md',
             '.mjs', '.cjs', '.order', '.patch', '.py', '.ro', '.rw', '.wo', '.sh', '.sql', '.svg', '.toml',
             '.ts', '.tsx', '.tsv', '.txt', '.xml', '.yaml', '.yml'}

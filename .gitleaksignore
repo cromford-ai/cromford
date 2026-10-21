@@ -68,6 +68,7 @@ tests/lead-report-transcript.bh-5915-test.sh:generic-api-key:38
 tests/lead-report-transcript.bh-5915-test.sh:generic-api-key:114
 tests/lead-reviews-lib.bh-1948-test.sh:generic-api-key:101
 tests/lib-root-records.bh-2613-test.sh:generic-api-key:296
+tests/lib/otp-worker.bh-7732.mjs:generic-api-key:31
 tests/lib/tracker-jira-stub.sh:generic-api-key:38
 tests/load-project-db.bh-5650-test.sh:curl-auth-header:111
 tests/main-red-state-rows.bh-4156-test.sh:generic-api-key:59
@@ -81,6 +82,7 @@ tests/merge-pr-release.bh-4917-test.sh:generic-api-key:59
 tests/nightly-ticket-split.bh-6838-test.sh:generic-api-key:262
 tests/no-client-identifiers-test.sh:aws-access-token:51
 tests/openrouter-audit.bh-4001-test.sh:generic-api-key:21
+tests/otp-wait.bh-7732-test.sh:generic-api-key:41
 tests/plan-blocked-notice.bh-7116-test.sh:generic-api-key:39
 tests/plan-blocked-repeat.bh-7719-test.sh:generic-api-key:38
 tests/plan-contract-seams.bh-6384-test.sh:generic-api-key:161
@@ -122,6 +124,7 @@ worker/jobs/test/landing-decisions.bh-6744.test.js:generic-api-key:18
 worker/jobs/test/landing-outcome.bh-6745.test.js:generic-api-key:16
 worker/jobs/test/main-red-state-indexes.bh-4156.test.js:generic-api-key:17
 worker/jobs/test/main-red-state.bh-4156.test.js:generic-api-key:20
+worker/jobs/test/otp.bh-7732.test.js:generic-api-key:16
 worker/jobs/test/pool-records-roundtrip.bh-7429.test.js:generic-api-key:19
 worker/jobs/test/pool-records.bh-7429.test.js:generic-api-key:16
 worker/jobs/test/pool-tick.bh-7709.test.js:generic-api-key:21
@@ -132,3 +135,4 @@ worker/jobs/test/routes/cost.test.js:generic-api-key:136
 worker/jobs/test/scheduler-ready.bh-6979.test.js:generic-api-key:19
 worker/jobs/test/scheduler.bh-6978.test.js:generic-api-key:19
 worker/jobs/test/ticket-edges.bh-6977.test.js:generic-api-key:18
+worker/otp-inbox/test/email.bh-7732.test.js:generic-api-key:19

@@ -1,0 +1,5 @@
+# OTP INBOX (BH-7732): the newest one-time code a vendor emailed to an
+# address on otp.example.com. The Email Worker worker/otp-inbox writes the
+# otp_messages rows; bin/otp-wait.sh reads them here. Bearer-gated; the code
+# is never logged.
+GET /api/otp

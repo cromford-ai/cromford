@@ -1,0 +1,28 @@
+From: Shop <news@vendor.example.test>
+To: bot@otp.example.test
+Subject: October news from the shop
+Date: Tue, 20 Oct 2026 16:44:00 +0000
+Message-ID: <fixture-news-1@vendor.example.test>
+MIME-Version: 1.0
+Content-Type: multipart/mixed; boundary="outer-fixture"
+
+--outer-fixture
+Content-Type: multipart/alternative; boundary="inner-fixture"
+
+--inner-fixture
+Content-Type: text/html; charset=utf-8
+
+<html><head><style>.c1{color:#FF5733} .c2{margin:2026px}</style><script>var x = 123456;</script></head>
+<body><p class="c1">Our October 2026 news.</p><p>Use promo code SAVE20 at checkout.</p>
+<p>Order #12345678 confirmed, your code ships soon.</p>
+<p><a href="https://x.test/verify/839201">Verify your subscription</a> https://x.test/verify/839201</p>
+<p>Total $1234 code</p></body></html>
+--inner-fixture--
+
+--outer-fixture
+Content-Type: application/pdf; name="flyer.pdf"
+Content-Disposition: attachment; filename="flyer.pdf"
+Content-Transfer-Encoding: base64
+
+JVBERi0xLjQKOTk5OTk5Cg==
+--outer-fixture--

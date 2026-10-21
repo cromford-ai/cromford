@@ -1,0 +1,13 @@
+From: Example <hello@vendor.example.test>
+To: bot@otp.example.test
+Subject: Sign in to Example
+Date: Tue, 20 Oct 2026 16:41:00 +0000
+Message-ID: <fixture-html-1@vendor.example.test>
+MIME-Version: 1.0
+Content-Type: text/html; charset="UTF-8"
+Content-Transfer-Encoding: base64
+
+PGh0bWw+PGhlYWQ+PHN0eWxlPnRke2ZvbnQtc2l6ZToyNHB4fTwvc3R5bGU+PC9oZWFkPjxib2R5
+PjxwPldlbGNvbWUgYmFjayEgRW50ZXIgdGhpcyB0byBjb250aW51ZTo8L3A+PHRhYmxlPjx0cj48
+dGQ+NzMwNDE1PC90ZD48L3RyPjwvdGFibGU+PHA+VGhhbmtzICZhbXA7IHNlZSB5b3Ugc29vbi48
+L3A+PC9ib2R5PjwvaHRtbD4=
