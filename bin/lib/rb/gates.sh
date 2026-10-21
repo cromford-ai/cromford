@@ -1101,6 +1101,14 @@ fi
 } # end rb_gate_prelude
 
 rb_gate_claim_and_workspace() {
+# >>> ticket lock lib (cross-harness, 2026-10-20)
+  # Sourced here, not at module scope: sourcing gates.sh defines rb_ entries only
+  # (tests/rb-modules-source-test.sh). Globals on purpose: _job_finish and the
+  # push gates read them.
+  TL_STATE=""; TL_BEAT=""
+  # shellcheck source=bin/lib/ticket-lock.sh
+  [ -r "$HARNESS/bin/lib/ticket-lock.sh" ] && . "$HARNESS/bin/lib/ticket-lock.sh"
+# <<< ticket lock lib
 
 # >>> hub-no-build
 # THE HUB RUNS NO AGENT BUILD WORK (BH-393, docs/HUB-THINNING-PLAN.md).
@@ -1450,6 +1458,24 @@ BUILDER_DIRECT_META=""
 # <<< builder-direct arm
 JOB_ID=""; JOB_BEAT=""
 _job_finish() { # EXIT hook: close the claim with the verdict the RESULT file carries
+# >>> ticket lock release
+  # The cross-harness lock goes first and runs with or without a ledger row, so
+  # every exit path hands the ticket back. The outcome word is the contract's
+  # free text: pr when a PR exists, skipped when parked, blocked otherwise.
+  if [ -n "${TL_STATE:-}" ] && command -v tl_release >/dev/null 2>&1; then
+    [ -n "${TL_BEAT:-}" ] && kill "$TL_BEAT" 2>/dev/null
+    local _tlr; _tlr=$(head -c 40 "$BUILD/RESULT" 2>/dev/null)
+    # Released by key: the worker only deletes OUR holder's row, so a lost lock
+    # (now the other harness's) is untouched and a rotated lease is still freed.
+    # if/elif, not a case: the status map below is the one `case` in this hook
+    # (tests/pr-create-failed-owned.bh-614-test.sh pins its arm order).
+    if [[ $_tlr == PR_CREATED* || $_tlr == PR_MERGED* ]]; then tl_release "$TL_STATE" pr
+    elif [[ $_tlr == BUILD_DEFERRED* || $_tlr == PLAN_* || $_tlr == DECOMPOSED* || $_tlr == ROLLOUT_FILED* ]]; then tl_release "$TL_STATE" skipped
+    else tl_release "$TL_STATE" blocked
+    fi
+    TL_STATE=""; TL_BEAT=""
+  fi
+# <<< ticket lock release
   [ -n "${JOB_ID:-}" ] || return 0
   [ -n "${JOB_BEAT:-}" ] && job_beat_stop "$JOB_BEAT"
   command -v job_update >/dev/null 2>&1 || return 0
@@ -1656,6 +1682,29 @@ if command -v job_open >/dev/null 2>&1; then
     *) JOB_ID="" ;;
   esac
 fi
+# >>> ticket lock acquire (cross-harness, 2026-10-20)
+# Taken here, in code, for every build on a board another harness also builds
+# (bin/lib/ticket-lock.sh tl_ns). Before this only the triage prompt asked for
+# it, and TK-249 was built by both harnesses. 409 = the other harness holds the
+# ticket: defer, exactly like a refused ledger claim, and the queue re-offers it
+# later. An outage is logged and the build goes on: the lock service being down
+# must not park the fleet. Renewed every 10 min; the push and PR-open gates
+# below stop the build if the lock was lost.
+if command -v tl_acquire >/dev/null 2>&1; then
+  TL_HOLDER=$(tl_acquire "$PROJECT" "$KEY" "$BUILD/.ticket-lock"); TL_RC=$?
+  case "$TL_RC" in
+    0) TL_STATE="$BUILD/.ticket-lock"
+       [ -n "${JOB_ID:-}" ] || trap _job_finish EXIT
+       TL_BEAT=$(tl_beat_start "$TL_STATE") || TL_BEAT=""
+       echo "$(STAMP) [$PROJECT/$KEY] ticket lock $(sed -n 1p "$TL_STATE") acquired" >> "$BUILD/pipeline.log" ;;
+    3) echo "$(STAMP) [$PROJECT/$KEY] ticket lock held by ${TL_HOLDER:-another harness} — deferring, the other harness is building this ticket" >> "$BUILD/pipeline.log"
+       RESULT "BUILD_DEFERRED ticket lock $(tl_ns "$PROJECT"):$KEY held by ${TL_HOLDER:-another harness}"; exit 3 ;;
+    1) echo "$(STAMP) [$PROJECT/$KEY] ticket lock service unreachable — building without the cross-harness lock" >> "$BUILD/pipeline.log"
+       [ -x "$HARNESS/bin/alert-line.sh" ] && "$HARNESS/bin/alert-line.sh" --project "$PROJECT" --id "ticket-lock-outage-$PROJECT" \
+         "[$PROJECT/$KEY] ticket lock service unreachable — building without the cross-harness lock" </dev/null >/dev/null 2>&1 || true ;;
+  esac
+fi
+# <<< ticket lock acquire
 
 # --- The local launch path CLAIMS its queue row (2026-09-10) -------------------
 # This build is about to run here. If a `build_queue` row exists for this key,
@@ -2083,6 +2132,7 @@ RB_HOLD_YIELD(){
 # caller skips this write. The reader is hold_push_verdict, the one RB_PUSH uses.
 RB_HOLD_GATE(){
   local v rc
+  ! declare -F RB_TICKET_LOCK_GATE >/dev/null || RB_TICKET_LOCK_GATE "$1" || return 3
   command -v hold_push_verdict >/dev/null 2>&1 || { echo "$(STAMP) [$PROJECT/$KEY] bin/lib/hold-push.sh missing at $1 — this write is skipped" >> "$BUILD/pipeline.log"; return 2; }
   v=$(hold_push_verdict "$PROJECT" - "$BRANCH"); rc=$?
   case "$rc" in
@@ -2092,10 +2142,29 @@ RB_HOLD_GATE(){
   echo "$(STAMP) [$PROJECT/$KEY] hold unreadable at $1 (${v#*	}) — this write is skipped" >> "$BUILD/pipeline.log"
   return 2
 }
+# RB_TICKET_LOCK_GATE <stage> — rc 0 unless the cross-harness lock was LOST
+# (a 404 on renew: it expired and the other harness may hold it now). Then the
+# build yields like a held ticket: nothing pushed, no PR (contract step 5).
+RB_TICKET_LOCK_GATE(){
+  [ -n "${TL_STATE:-}" ] && command -v tl_renew >/dev/null 2>&1 || return 0
+  if ! tl_lost "$TL_STATE"; then
+    tl_renew "$TL_STATE"; [ "$?" = 3 ] || return 0
+  fi
+  local _k; _k=$(sed -n 1p "$TL_STATE" 2>/dev/null)
+  echo "$(STAMP) [$PROJECT/$KEY] TICKET_LOCK_LOST $_k at $1 — another harness may be building it; nothing pushed" >> "$BUILD/pipeline.log"
+  if [ -n "${RB_PR_OPEN:-}" ]; then
+    HOLD_YIELD_NOTE="${HOLD_YIELD_NOTE:-} | TICKET_LOCK_LOST $_k at $1 — that push was skipped, the PR stays open"
+    return 3
+  fi
+  [ "$BASHPID" = "$$" ] || return 3
+  RESULT "BUILD_DEFERRED TICKET_LOCK_LOST $_k at $1 — the cross-harness lock expired and another harness may hold it; nothing pushed"
+  exit 3
+}
 RB_PUSH(){
   local up=() l stage rc=0
   [ "${1:-}" = -u ] && { up=(-u); shift; }
   stage="${1:-push}"
+  ! declare -F RB_TICKET_LOCK_GATE >/dev/null || RB_TICKET_LOCK_GATE "$stage" || return 3
   l=$(git rev-parse -q --verify "refs/remotes/origin/$BRANCH" 2>/dev/null) || l=""
   command -v hold_push >/dev/null 2>&1 || { echo "$(STAMP) [$PROJECT/$KEY] bin/lib/hold-push.sh missing — $BRANCH NOT pushed" >> "$BUILD/pipeline.log"; return 1; }
   HOLD_PUSH_LOG="$BUILD/pipeline.log" hold_push ${up[@]+"${up[@]}"} "$PROJECT" - "$PWD" origin "$BRANCH" "$BRANCH" "${l:-new}" || rc=$?

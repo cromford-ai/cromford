@@ -27,7 +27,8 @@
 #
 #   from the box's global.env : CLAUDE_CODE_OAUTH_TOKEN, CONSOLE_URL,
 #       HARNESS_SECRET, IS_SANDBOX, VERCEL_PLUGIN_TELEMETRY, TRIAGE_MODEL,
-#       all RUNNER_* (runner + failover parity with agent-call.sh), and a
+#       LOCKS_URL + LOCKS_TOKEN (the cross-harness ticket lock a build takes in
+#       bin/lib/rb/gates.sh, 2026-10-20), all RUNNER_* (runner + failover parity with agent-call.sh), and a
 #       JOBS_URL line verbatim when the box has one (empty included).
 #   ALL of the box's <project>.env (board token/base, Turso/DB creds the QA
 #       stage reads, migration/QA/bypass secrets — every var the pipeline stages
@@ -102,6 +103,12 @@ REMOTE_SCRIPT='
 set -a; . $E/global.env 2>/dev/null; set +a
 G=""
 for v in CLAUDE_CODE_OAUTH_TOKEN CONSOLE_URL HARNESS_SECRET IS_SANDBOX VERCEL_PLUGIN_TELEMETRY TRIAGE_MODEL; do
+  eval "val=\${$v:-}"; [ -n "$val" ] && G="$G$v=$val\n"
+done
+# The cross-harness ticket lock a build takes (bin/lib/rb/gates.sh, 2026-10-20).
+# Its own line: it is not an agent credential, so the lane-run parity check
+# (tests/lane-run-agent-clis.bh-6260-test.sh C4) must not count it as one.
+for v in LOCKS_URL LOCKS_TOKEN; do
   eval "val=\${$v:-}"; [ -n "$val" ] && G="$G$v=$val\n"
 done
 # JOBS_URL rides verbatim, an EMPTY value included (BH-1957): a box that set

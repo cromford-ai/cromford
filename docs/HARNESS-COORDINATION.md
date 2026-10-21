@@ -16,6 +16,23 @@ deployment, zero coupling to the console). Auth: per-harness bearer token.
 - Keys: "project-10:<JIRA-KEY>" (project-10) plus "project-1:TK-<n>", "project-2:TK-<n>", "project-3:TK-<n>", "project-4:TK-<n>" — the partner harness confirmed building on ALL boards (2026-08-01) — for tickets; "project-10:<repo>:<path>" reserved for file claims.
 - TTLs: clamp 60s..24h. Expiry = available again automatically (crash-safe; no janitor).
 
+## Our side takes the lock in code (2026-10-20)
+Every build on our side acquires `<ns>:<KEY>` in `bin/lib/rb/gates.sh` right after its
+ledger claim (`bin/lib/ticket-lock.sh`; ns project-3 / project-2 / project-4 / project-1), renews it every
+10 min, re-checks it before every push and PR open (a lost lock yields: nothing pushed),
+and releases it from the EXIT hook with outcome pr / skipped / blocked. A 409 defers the
+build (`BUILD_DEFERRED ticket lock <key> held by <holder>`); a lock-service outage is an
+ALERTS line and the build goes on. Before this only the triage prompt asked for the lock,
+and TK-249 (2026-10-04) was built by both harnesses. Pool machines get LOCKS_URL and
+LOCKS_TOKEN through bin/fly-envbundle.sh. All our machines share that one token, so to
+the lock service they are ONE holder: the lock keeps partner and us apart, and our own
+ledger claim (job_open) keeps our machines apart. Because the worker gives a NEW lease id
+whenever the same holder acquires, a renew 404 re-acquires the key: 201 = still ours,
+409 = lost. Release is by key (the worker deletes only our holder's row).
+Known gap: a pool build is QUEUED_FLY by the watcher before the acquire; from dispatch to
+machine start only triage's 2 h lease covers the ticket. A pool wait longer than that
+can reopen the TK-249 race until the dispatcher takes the lock too.
+
 ## Protocol (both harnesses, inside triage)
 1. Before deciding to build a ticket: acquire project-10:<KEY> (ttl 2h).
 2. 409 → skip the ticket this pass (it's the other harness's).
