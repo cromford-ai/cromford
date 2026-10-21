@@ -81,7 +81,9 @@
 # as today, and the dispatch writes ONE alert. When the worker answers 404 (it
 # has no batch route yet), the projects not yet placed take the per-row path,
 # lp_enqueue, with the same rules. The summary line gains
-# `; placed: <n> fly, <m> hub (<reason>)` after the text above.
+# `; placed: <n> fly, <m> hub (<reason>)` after the text above. A lane placed
+# on a box (LP_PLACE=box: `fly-dedicated`, BH-7716) is enqueued the same way
+# and counts as `fly` in that line; the jobs worker hands its rows to the box.
 #
 # Needs $H (the harness root). Defines functions only. Nothing runs on source.
 
@@ -178,6 +180,9 @@ pl_dispatch() {
   fi
   LP_PLACE=hub; LP_WHY="no lane-placement lib"
   command -v lp_decide >/dev/null 2>&1 && lp_decide "$lane"
+  # A box placement (BH-7716 fly-dedicated) enqueues as fly does: the jobs
+  # worker routes the rows to the box at claim time.
+  if [ "$LP_PLACE" = box ]; then LP_PLACE=fly; fi
   if [ "$LP_PLACE" = fly ] && ! lp_rel_cmd "$1" >/dev/null; then
     LP_PLACE=hub; LP_WHY="$LP_WHY; cmd not under bin/"
   fi

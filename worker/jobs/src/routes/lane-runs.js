@@ -63,12 +63,38 @@
 // skip_prefixes: it never withdraws a row. GET /api/lane-runs/stats?fleet=
 // <group|default> answers the same split, counting queued rows only, through
 // idx_lane_runs_claim (bin/lane-fleet.sh sizes each fleet with it).
+//
+// Box placement (BH-7636, lib/lane-box-placement.js). A project row
+// lane_placement.<lane>.<project> = box:<name> (lanes merge-conductor and
+// fly-pool) sends that (lane, project) row to one named box. A claim with
+// `box: <name>` takes only the rows placed on that box, and answers 204 at
+// once, with no lane_runs statement, when the box owns none. A claim without
+// `box` never takes a box row and never ends one (REFUSED_SQL), at any age and
+// past lane_run.group_fallback_s. The stats routes do not count a box row, so a
+// box row never sizes a Fly fleet. The withdraw route takes `expired: 1`: it
+// also ends a claimed row whose lease ran out (the hub's take-back from a box
+// that went silent mid-run).
+//
+// The dedicated lane host (BH-7716). `fly-dedicated` on a lane row or a project
+// row of a lane in lane_dedicated.lanes routes the rows to the box
+// `fly-dedicated` by the same box binds: a lane row is the key "<lane>|*", and
+// the lane's project rows with another value are exceptions (one more bind).
+// A no-box claim of the default fleet takes a dedicated blocked-resolver row
+// (every dedicated lane but merge-conductor) once it waited
+// lane_run.group_fallback_s (0 = never), so a fix round never stalls when the
+// machine is gone; a group claim (only_prefixes) never does. GET
+// /api/lane-runs/stats?fleet=<group with box> counts only that box's rows and
+// answers `box` and `placed` (a placement row points at the box now):
+// bin/lane-fleet.sh keeps the group's warm floor only while `placed` is true.
 
 import { d1Guarded, json } from "../lib/http.js";
 import { isoPlusSeconds, laneName, leaseWon, percentile, str } from "../lib/core.js";
 import { sweepDead } from "./lane-runs-lease.js";
 import { failReason, runStatus } from "../lib/lane-run-status.js";
 import { prefixesOf, readGroups } from "../lib/lane-fleet-groups.js";
+import {
+  allBoxKeys, boxKeysFor, boxMatch, boxNameOf, exceptKeys, fallbackKeys, readBoxPlacements,
+} from "../lib/lane-box-placement.js";
 
 const ARGS_MAX = 64;
 const ARG_BYTES_MAX = 4096;
@@ -104,7 +130,12 @@ const LIVE = "(status='queued' OR (status='claimed' AND lease_until < ?2))";
 // ?5 prefer JSON array or NULL ?6 the prefer cutoff (now - prefer_max_wait_s)
 // or NULL ?7 skip_prefixes JSON array or NULL ?8 only_prefixes JSON array or
 // NULL ?9 the group skip JSON array or NULL ?10 the fallback cutoff (now -
-// lane_run.group_fallback_s) or NULL (BH-7434). The subquery spells LIVE as a
+// lane_run.group_fallback_s) or NULL (BH-7434) ?11 the box's "lane|project"
+// keys JSON array or NULL ?12 every box key JSON array or NULL (BH-7636: a
+// claim binds one of the two, never both) ?13 the project keys a "lane|*" key
+// does not cover, or NULL ?14 the dedicated keys that fall back, or NULL ?15
+// their fallback cutoff (now - lane_run.group_fallback_s), or NULL (BH-7716:
+// a box key may be "lane|*", lib/lane-box-placement.js boxMatch). The subquery spells LIVE as a
 // status IN list and names the index: with table statistics (ANALYZE, 20,000
 // rows) SQLite planned a SCAN of lane_runs for the OR form of LIVE, and for
 // the IN form without INDEXED BY. The skip prefix test is substr, not LIKE:
@@ -121,6 +152,9 @@ export const CLAIM_SQL = `UPDATE lane_runs SET status='claimed', claimed_by=?1, 
             AND (?9 IS NULL OR enqueued_at < ?10
                  OR NOT EXISTS (SELECT 1 FROM json_each(?9) AS g
                                 WHERE substr(project || '.', 1, length(g.value)) = g.value))
+            AND (?11 IS NULL OR ${boxMatch("?11", "?13")})
+            AND (?12 IS NULL OR NOT ${boxMatch("?12", "?13")}
+                 OR (?15 IS NOT NULL AND enqueued_at < ?15 AND ?14 IS NOT NULL AND ${boxMatch("?14", "?13")}))
             ORDER BY CASE WHEN ?5 IS NULL THEN 0
                           WHEN enqueued_at < ?6 THEN 0
                           WHEN project IN (SELECT value FROM json_each(?5)) THEN 1
@@ -130,7 +164,9 @@ export const CLAIM_SQL = `UPDATE lane_runs SET status='claimed', claimed_by=?1, 
 // Ends the refused rows that waited too long (BH-6942, lead review of #6960).
 // Binds: ?1 now ?2 the cutoff (now - lane_run.refused_max_wait_s) ?3 lanes JSON
 // array or NULL ?4 skip_prefixes JSON array (never NULL here) ?5 prof_line
-// ?6 only_prefixes ?7 group skip ?8 fallback cutoff (BH-7434, as CLAIM_SQL ?8-?10).
+// ?6 only_prefixes ?7 group skip ?8 fallback cutoff (BH-7434, as CLAIM_SQL ?8-?10)
+// ?9 ?10 the box keys (BH-7636, as CLAIM_SQL ?11 ?12) ?11 ?12 ?13 the
+// exceptions, the fallback keys and their cutoff (BH-7716, as CLAIM_SQL ?13-?15).
 // The same skip, lanes and fleet filters as CLAIM_SQL, so a claim ends only
 // rows it would refuse itself: never a row of another fleet's project. `enqueued_at <= ?2` reads "waited ?2 or more", the
 // hub's own rule (mc_fly_stale_for). idx_lane_runs_claim (status,
@@ -146,16 +182,23 @@ export const REFUSED_SQL = `UPDATE lane_runs SET status='died', finished_at=?1, 
                AND (?7 IS NULL OR enqueued_at < ?8
                     OR NOT EXISTS (SELECT 1 FROM json_each(?7) AS g
                                    WHERE substr(project || '.', 1, length(g.value)) = g.value))
+               AND (?9 IS NULL OR ${boxMatch("?9", "?11")})
+               AND (?10 IS NULL OR NOT ${boxMatch("?10", "?11")}
+                    OR (?13 IS NOT NULL AND enqueued_at < ?13 AND ?12 IS NOT NULL AND ${boxMatch("?12", "?11")}))
                ORDER BY enqueued_at, id LIMIT ${REFUSED_END_MAX})
     AND status='queued'`;
 // BH-6890: end ONE queued row by id (the primary key). Binds: ?1 id,
-// ?2 now, ?3 prof_line.
+// ?2 now, ?3 prof_line, ?4 1 = also a claimed row whose lease ran out
+// (BH-7636), else 0.
 export const WITHDRAW_SQL = `UPDATE lane_runs SET status='died', finished_at=?2, prof_line=?3
-  WHERE id=?1 AND status='queued'`;
+  WHERE id=?1 AND (status='queued' OR (?4 = 1 AND status='claimed' AND lease_until < ?2))`;
 // One fleet's claimable rows per lane (BH-7434): queued, or claimed with an
 // expired lease (as CLAIM_SQL's LIVE), counted as `queued`. Binds: ?1 lane or
 // NULL ?2 only JSON array or NULL ?3 group skip JSON array or NULL ?4 the
-// fallback cutoff or NULL ?5 now. The same project tests as CLAIM_SQL, through
+// fallback cutoff or NULL ?5 now ?6 every box key JSON array or NULL (BH-7636:
+// a box row is no fleet's) ?7 the exceptions ?8 the fallback keys ?9 their
+// cutoff (BH-7716, as CLAIM_SQL ?13-?15) ?10 one box's keys or NULL (a box
+// group's own rows, BH-7716). The same project tests as CLAIM_SQL, through
 // idx_lane_runs_claim (status, enqueued_at): the full-table GROUP BY of the
 // plain stats is not run once per fleet per minute.
 export const FLEET_STATS_SQL = `SELECT lane, COUNT(*) AS queued, MIN(enqueued_at) AS oldest_queued
@@ -166,6 +209,9 @@ export const FLEET_STATS_SQL = `SELECT lane, COUNT(*) AS queued, MIN(enqueued_at
     AND (?3 IS NULL OR enqueued_at < ?4
          OR NOT EXISTS (SELECT 1 FROM json_each(?3) AS g
                         WHERE substr(project || '.', 1, length(g.value)) = g.value))
+    AND (?6 IS NULL OR NOT ${boxMatch("?6", "?7")}
+         OR (?9 IS NOT NULL AND enqueued_at < ?9 AND ?8 IS NOT NULL AND ${boxMatch("?8", "?7")}))
+    AND (?10 IS NULL OR ${boxMatch("?10", "?7")})
   GROUP BY lane ORDER BY lane LIMIT 500`;
 // One lane's newest done rows, for the run p50. Binds: ?1 lane.
 export const RUN_SAMPLE_SQL = `SELECT claimed_at, finished_at FROM lane_runs
@@ -185,22 +231,23 @@ function prefixList(v, field) {
   return { v: v.length > 0 ? JSON.stringify(v) : null };
 }
 
-// fleetBinds <env> <t> <fleet name|null> -> { only, gskip, cutoff } (JSON
-// strings or null) or { err } for a fleet that is not `default` or a valid group.
-// fleet null = the default fleet of a claim with no only_prefixes.
+// fleetBinds <env> <t> <fleet name|null> -> { only, gskip, cutoff, fcut, box }
+// (JSON strings or null) or { err } for a fleet that is not `default` or a
+// valid group. fleet null = the default fleet of a claim with no only_prefixes.
+// fcut is the fallback cutoff of a dedicated row (BH-7716): the default
+// fleet's, whether or not a projects group exists. box is a box group's box.
 async function fleetBinds(env, t, fleet) {
   const { groups, fallback_s: fb } = await readGroups(env);
+  const cut = fb > 0 ? isoPlusSeconds(t, -fb) : null;
   if (fleet !== null && fleet !== "default") {
     const g = groups.find((x) => x.name === fleet);
     if (!g) return { err: `fleet ${fleet} is not default or a valid lane_fleet.group.* row` };
-    return { only: JSON.stringify(prefixesOf(g.projects)), gskip: null, cutoff: null };
+    if (g.box) return { only: null, gskip: null, cutoff: null, fcut: null, box: g.box };
+    return { only: JSON.stringify(prefixesOf(g.projects)), gskip: null, cutoff: null, fcut: null, box: null };
   }
-  if (groups.length === 0) return { only: null, gskip: null, cutoff: null };
-  return {
-    only: null,
-    gskip: JSON.stringify(prefixesOf(groups.flatMap((g) => g.projects))),
-    cutoff: fb > 0 ? isoPlusSeconds(t, -fb) : null,
-  };
+  const proj = groups.flatMap((g) => g.projects);
+  if (proj.length === 0) return { only: null, gskip: null, cutoff: null, fcut: cut, box: null };
+  return { only: null, gskip: JSON.stringify(prefixesOf(proj)), cutoff: cut, fcut: cut, box: null };
 }
 
 // The longest prefix of s that fits in max UTF-8 bytes, cut on a character.
@@ -333,23 +380,42 @@ export const routes = [
       const skip = sk.v;
       const on = prefixList(body.only_prefixes, "only_prefixes");
       if (on.err) return json(400, { error: on.err });
+      let box = null;
+      if (body.box !== undefined && body.box !== null) {
+        box = boxNameOf(body.box);
+        if (box === null) return json(400, { error: "box must be a box name [a-z0-9][a-z0-9._-]{0,63}" });
+      }
+      // BH-7636: a box claims only its own keys and skips the fleet filters; any
+      // other claim never takes a box row.
+      const placed = await readBoxPlacements(env);
+      const boxOnly = box !== null ? boxKeysFor(placed, box) : null;
+      if (box !== null && boxOnly === null) return new Response(null, { status: 204 });
+      const boxSkip = box === null ? allBoxKeys(placed) : null;
       // A group machine names its projects; any other claim is the default fleet's.
-      const fb = on.v !== null ? { only: on.v, gskip: null, cutoff: null } : await fleetBinds(env, t, null);
+      const fb = box !== null ? { only: null, gskip: null, cutoff: null, fcut: null }
+        : on.v !== null ? { only: on.v, gskip: null, cutoff: null, fcut: null } : await fleetBinds(env, t, null);
+      // BH-7716: the "lane|*" exceptions, and the dedicated rows a no-box claim
+      // of the default fleet may take once they waited group_fallback_s.
+      const ex = exceptKeys(placed);
+      const fbk = fb.fcut !== null ? fallbackKeys(placed) : null;
       await sweepDead(env, t);
       if (skip !== null) {
         const w = await refusedMaxWaitSeconds(env);
         if (w > 0) {
           await env.DB.prepare(REFUSED_SQL).bind(t, isoPlusSeconds(t, -w), lanes, skip,
-            `withdrawn refused-at-claim machine=${machine} waited>=${w}s`, fb.only, fb.gskip, fb.cutoff).run();
+            `withdrawn refused-at-claim machine=${machine} waited>=${w}s`, fb.only, fb.gskip, fb.cutoff,
+            boxOnly, boxSkip, ex, fbk, fb.fcut).run();
         }
       }
       const lease = isoPlusSeconds(t, await leaseSeconds(env));
       const row = await env.DB.prepare(CLAIM_SQL).bind(machine, t, lease, lanes, prefer, cutoff, skip,
-        fb.only, fb.gskip, fb.cutoff).first();
+        fb.only, fb.gskip, fb.cutoff, boxOnly, boxSkip, ex, fbk, fb.fcut).first();
       if (!row) return new Response(null, { status: 204 });
+      // A box claim's answer names the box: a box worker releases any row
+      // whose answer does not (an older worker that ignored `box`).
       return json(200, {
         id: Number(row.id), lane: row.lane, project: row.project, args: JSON.parse(row.args_json),
-        attempts: Number(row.attempts), lease_until: row.lease_until,
+        attempts: Number(row.attempts), lease_until: row.lease_until, ...(box !== null ? { box } : {}),
       });
     }),
   ],
@@ -405,15 +471,17 @@ export const routes = [
     // BH-6890: the hub takes a stale queued row back. It ends the row in the
     // same step, so no machine claims it while the hub works the project.
     // Only a `queued` row: died, rc NULL, prof_line `withdrawn by=<by> <why>`
-    // (the hub reads it as no-capacity, mc_proj_newest). 409 not_queued for
-    // any other status; 404 for no row.
+    // (the hub reads it as no-capacity, mc_proj_newest). With `expired: 1`
+    // (BH-7636) also a `claimed` row whose lease ran out: a box that went
+    // silent mid-run. 409 not_queued for any other status (a live lease);
+    // 404 for no row.
     "POST", /^\/api\/lane-runs\/(\d+)\/withdraw$/,
     ({ env, t, body, m }) => d1Guarded("lane_runs", async () => {
       const id = Number(m[1]);
       const by = laneName(body.by);
       if (!by) return json(400, { error: `by is required and ${NAME_ERR}` });
       const why = (str(body.why, 200) || "").replace(/[^A-Za-z0-9._:=>-]/g, "").slice(0, 80) || "hub-takeback";
-      const r = await env.DB.prepare(WITHDRAW_SQL).bind(id, t, `withdrawn by=${by} ${why}`).run();
+      const r = await env.DB.prepare(WITHDRAW_SQL).bind(id, t, `withdrawn by=${by} ${why}`, body.expired === 1 ? 1 : 0).run();
       if (leaseWon(r)) return json(200, { id, status: "died", as_of: t });
       const row = await env.DB.prepare("SELECT status FROM lane_runs WHERE id=?1").bind(id).first();
       if (!row) return json(404, { error: "no such lane run", id });
@@ -443,7 +511,7 @@ export const routes = [
       // wildcard. Every legal character sorts below '~', so [prefix, prefix~)
       // is exactly the names that start with prefix.
       const rows = (await env.DB.prepare(
-        `SELECT id, lane, project, status, claimed_by, attempts, rc, prof_line, enqueued_at, finished_at
+        `SELECT id, lane, project, status, claimed_by, attempts, rc, prof_line, enqueued_at, finished_at, lease_until
          FROM lane_runs WHERE lane=?1 AND project >= ?2 AND project < ?3
            AND (?4 IS NULL OR status IN ('queued','claimed'))
          ORDER BY id DESC LIMIT ?5`
@@ -454,7 +522,7 @@ export const routes = [
           id: Number(r.id), lane: r.lane, project: r.project, status: runStatus(r), claimed_by: r.claimed_by,
           attempts: Number(r.attempts), rc: r.rc === null ? null : Number(r.rc),
           reason: r.status === "done" ? failReason(r.rc) : null, prof_line: r.prof_line,
-          enqueued_at: r.enqueued_at, finished_at: r.finished_at,
+          enqueued_at: r.enqueued_at, finished_at: r.finished_at, lease_until: r.lease_until,
         })),
         truncated, as_of: t,
       });
@@ -474,25 +542,43 @@ export const routes = [
         if (!FLEET_RE.test(fleet)) return json(400, { error: "fleet must be default or a group name [a-z0-9][a-z0-9-]{0,29}" });
         const fb = await fleetBinds(env, t, fleet);
         if (fb.err) return json(400, { error: fb.err });
-        const fr = (await env.DB.prepare(FLEET_STATS_SQL).bind(lane || null, fb.only, fb.gskip, fb.cutoff, t).all()).results || [];
+        const placed = await readBoxPlacements(env);
+        // A box group (BH-7716) counts only its box's rows; with no row placed
+        // on the box it answers placed:false and runs no lane_runs statement.
+        const own = fb.box ? boxKeysFor(placed, fb.box) : null;
+        const extra = fb.box ? { box: fb.box, placed: own !== null } : {};
+        if (fb.box && own === null) {
+          return json(200, { lanes: [], fleet, ...extra, ...(p50 === null ? {} : { run_p50_truncated: false }), as_of: t });
+        }
+        const boxSkip = fb.box ? null : allBoxKeys(placed);
+        const fbk = boxSkip !== null && fb.fcut !== null ? fallbackKeys(placed) : null;
+        const fr = (await env.DB.prepare(FLEET_STATS_SQL).bind(lane || null, fb.only, fb.gskip, fb.cutoff, t, boxSkip,
+          exceptKeys(placed), fbk, fbk !== null ? fb.fcut : null, own).all()).results || [];
         const now = Date.parse(t);
         const lanes = fr.map((r) => ({
           lane: r.lane, queued: Number(r.queued), claimed: null, done: null, died: null,
           oldest_queued_wait_s: Math.max(0, Math.floor((now - Date.parse(r.oldest_queued)) / 1000)),
           live_claimers: null,
         }));
-        if (p50 === null) return json(200, { lanes, fleet, as_of: t });
+        if (p50 === null) return json(200, { lanes, fleet, ...extra, as_of: t });
         const truncated = await addRunP50(env, lanes);
-        return json(200, { lanes, fleet, run_p50_truncated: truncated, as_of: t });
+        return json(200, { lanes, fleet, ...extra, run_p50_truncated: truncated, as_of: t });
       }
+      // A queued box row (BH-7636) is not Fly work: it is not counted queued.
+      const placed = await readBoxPlacements(env);
+      const boxSkip = allBoxKeys(placed);
+      // sql-ident-ok: boxMatch builds literal text from ?N placeholder names; the values are binds
       const rows = (await env.DB.prepare(
         `SELECT lane,
-           SUM(status='queued') AS queued, SUM(status='claimed') AS claimed,
+           SUM(status='queued' AND NOT bx) AS queued, SUM(status='claimed') AS claimed,
            SUM(status='done') AS done, SUM(status='died') AS died,
-           MIN(CASE WHEN status='queued' THEN enqueued_at END) AS oldest_queued,
+           MIN(CASE WHEN status='queued' AND NOT bx THEN enqueued_at END) AS oldest_queued,
            COUNT(DISTINCT CASE WHEN status='claimed' THEN claimed_by END) AS live_claimers
-         FROM lane_runs WHERE (?1 IS NULL OR lane=?1) GROUP BY lane ORDER BY lane LIMIT 500`
-      ).bind(lane || null).all()).results || [];
+         FROM (SELECT lane, status, enqueued_at, claimed_by,
+                 (?2 IS NOT NULL AND ${boxMatch("?2", "?3")}) AS bx
+               FROM lane_runs WHERE (?1 IS NULL OR lane=?1))
+         GROUP BY lane ORDER BY lane LIMIT 500`
+      ).bind(lane || null, boxSkip, exceptKeys(placed)).all()).results || [];
       const now = Date.parse(t);
       const lanes = rows.map((r) => ({
         lane: r.lane,

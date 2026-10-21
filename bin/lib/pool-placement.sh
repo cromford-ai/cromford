@@ -5,7 +5,8 @@
 # (bin/lib/mc/project-placement.sh): a settings row places the project, the
 # hub enqueues one lane_runs row, a machine runs it under the project lease.
 #
-#   lane_placement.fly-pool.<project>   fly | hub   (bin/lib/lane-placement.sh;
+#   lane_placement.fly-pool.<project>   fly | hub | box:<name>
+#                                       (bin/lib/lane-placement.sh;
 #                                       then the lane row lane_placement.fly-pool
 #                                       and its hub_only text. The default row
 #                                       does NOT place a pool: a pool moves by
@@ -19,6 +20,15 @@
 # takes the project lease, runs bin/fly-pool.sh with POOL_ON_MACHINE=1 and
 # returns the write-backs. The partial unique index lane_runs_live keeps one
 # live row per project.
+#
+# BOX PLACEMENT (BH-7636). box:<name> on the project row is handled as fly:
+# the same row, and only the box <name> claims it (bin/lane-run-worker.sh --box
+# <name> from the box's own cron). A claimed row whose lease ran out
+# POOL_FLY_QUEUE_STALE_S ago or more is stale (box-silent): withdrawn with
+# expired:1 and taken back. A take-back writes ONE ALERTS line per outage
+# (bin/lane-alert.sh --id pool-box-<project>), held by <project>.box-down until
+# the box answers again (a live claimed row, or a row with a run result) or the
+# placement is hub. Log lines say `placed box:<name>` instead of `placed fly`.
 #
 # ONE RUN AT A TIME, ACROSS HUB AND FLY. The project lease (lane fly-pool,
 # BH-6883) is the lock: a machine run holds it for the whole run, and a hub
@@ -39,10 +49,11 @@
 #       rc 0 when a FRESH box settings cache (state/settings-cache.json) says
 #       no lane_placement.fly-pool row is fly and no project has a placed mark:
 #       the hub skips the gate with one jq read.
-#   pp_newest <rows-json> <project> <now-epoch> <stale-s>
+#   pp_newest <rows-json> <project> <now-epoch> <stale-s> [box 0|1]
 #       one line `<kind> <id> <detail>` for the NEWEST row of <project>. kind:
 #       none, live (queued less than <stale-s> ago, or claimed), stale (queued
-#       <stale-s> or more; detail = its age), failed (died, failed, a done rc
+#       <stale-s> or more; detail = its age; with box 1 also claimed with a
+#       lease_until <stale-s> or more in the past, detail box-silent), failed (died, failed, a done rc
 #       that is not 0, or a done row with no `PROF fly-pool-project` line),
 #       deferred (a done row whose PROF line has deferred=<w>, w not `-`),
 #       withdrawn (died with a prof_line that starts `withdrawn `), done.
@@ -67,6 +78,7 @@
 #   <project>.taken       the id of the finished row the hub already took back
 #   <project>.takeback-at epoch of the last take-back (the backoff)
 #   <project>.failed-n    consecutive machine-failed take-backs
+#   <project>.box-down    a box placement's take-back alerted (BH-7636)
 #   <project>.published-at, <project>.alert-at
 #
 # Knobs (lane fly-pool, catalog/lanes.d/fly-pool.knobs.d): POOL_FLY_QUEUE_STALE_S,
@@ -139,17 +151,20 @@ pp_none_fly() {
              | select(.key | startswith("lane_placement.fly-pool"))
              | select(.key | endswith(".hub_only") | not)
              | (.value | tostring | ascii_downcase | gsub("\\s"; ""))]
-           | if any(. == "fly") then "fly" else "none" end
+           | if any(. == "fly" or startswith("box:")) then "fly" else "none" end
       end' "$f" 2>/dev/null)
   [ "$ans" = none ]
 }
 
-# _pp_decide <project> — rc 0 placed fly, rc 1 hub, rc 3 not known (no jobs
-# client, or the row could not be read). The default row never places a pool.
+# _pp_decide <project> — rc 0 placed fly or box:<name>, rc 1 hub, rc 3 not
+# known (no jobs client, or the row could not be read). The default row never
+# places a pool. Sets PP_BOX (the box name, empty for fly) and PP_TAG.
 _pp_decide() {
+  PP_BOX=""; PP_TAG="placed fly"
   _pp_client || { LP_WHY="no jobs client"; return 3; }
   lp_decide "$PP_LANE" "$1"
   [ "$LP_PLACE" = fly ] && case "$LP_WHY" in lane_placement.default=*) ;; *) return 0 ;; esac
+  if [ "$LP_PLACE" = box ] && [ -n "${LP_BOX:-}" ]; then PP_BOX="$LP_BOX"; PP_TAG="placed box:$LP_BOX"; return 0; fi
   case "$LP_WHY" in "no jobs client"|"settings unreadable") return 3 ;; esac
   return 1
 }
@@ -166,12 +181,16 @@ _pp_fallback() {
 }
 
 pp_newest() {
-  printf '%s' "${1:-}" | jq -r --arg p "${2:-}" --argjson now "${3:-0}" --argjson st "${4:-300}" '
+  local box=0; [ "${5:-0}" = 1 ] && box=1
+  printf '%s' "${1:-}" | jq -r --arg p "${2:-}" --argjson now "${3:-0}" --argjson st "${4:-300}" --argjson box "$box" '
     (.rows | if type == "array" then . else error("no rows") end)
     | (first(.[] | select(.project == $p)) // null) as $r
     | if $r == null then "none - -"
       else ($r.status // "") as $s | ($r.prof_line // "") as $pl | ($r.id | tostring) as $id
         | if $s == "died" and ($pl | startswith("withdrawn ")) then "withdrawn \($id) -"
+          elif $s == "claimed" and $box == 1
+               and ((($r.lease_until // "") | try fromdateiso8601 catch null) as $l | $l != null and ($now - $l) >= $st)
+            then "stale \($id) box-silent"
           elif $s == "claimed" then "live \($id) claimed"
           elif $s == "queued" then
             ((($r.enqueued_at // "") | try fromdateiso8601 catch null)) as $t
@@ -194,7 +213,7 @@ _pp_alert() {
   last=$(head -n 1 "$stamp" 2>/dev/null)
   every=$(_pp_int POOL_FLY_ALERT_S "$PP_ALERT_S")
   if [[ $last =~ ^[0-9]+$ ]] && [ $((now - last)) -lt "$every" ]; then
-    _pp_say "placed fly: alert held (one per ${every}s): $text"; return 0
+    _pp_say "${PP_TAG:-placed fly}: alert held (one per ${every}s): $text"; return 0
   fi
   _pp_put "$stamp" "$now"
   a="$(_pp_root)/bin/lane-alert.sh"
@@ -210,14 +229,14 @@ pp_publish() {
     # shellcheck source=bin/lib/lane-run-inputs.sh
     [ -r "$root/bin/lib/lane-run-inputs.sh" ] && . "$root/bin/lib/lane-run-inputs.sh" 2>/dev/null
   fi
-  declare -F lri_publish >/dev/null 2>&1 || { _pp_say "placed fly: no lane-run-inputs lib — the cron publisher's snapshot is used"; return 1; }
+  declare -F lri_publish >/dev/null 2>&1 || { _pp_say "${PP_TAG:-placed fly}: no lane-run-inputs lib — the cron publisher's snapshot is used"; return 1; }
   # The apply runs every time (one list call when nothing is pending): a
   # finished run's write-backs are the hub's state before the next row's
   # snapshot is cut. Only the publish is throttled.
-  out=$(lri_apply_pending "$PP_LANE" "$p" 2>&1) || _pp_say "placed fly: write-back apply failed ($(printf '%s' "$out" | tail -n 1))"
+  out=$(lri_apply_pending "$PP_LANE" "$p" 2>&1) || _pp_say "${PP_TAG:-placed fly}: write-back apply failed ($(printf '%s' "$out" | tail -n 1))"
   last=$(head -n 1 "$stamp" 2>/dev/null)
   [[ $last =~ ^[0-9]+$ ]] && [ $((now - last)) -lt "$(_pp_int POOL_FLY_PUBLISH_MIN_S "$PP_PUBLISH_MIN_S")" ] && return 0
-  out=$(lri_publish "$PP_LANE" "$p" 2>&1) || { _pp_say "placed fly: snapshot publish failed ($(printf '%s' "$out" | tail -n 1))"; return 1; }
+  out=$(lri_publish "$PP_LANE" "$p" 2>&1) || { _pp_say "${PP_TAG:-placed fly}: snapshot publish failed ($(printf '%s' "$out" | tail -n 1))"; return 1; }
   _pp_put "$stamp" "$now"
   return 0
 }
@@ -327,15 +346,15 @@ pp_checkpoint() {
 _pp_take() {
   local p="$1" w="$2" det="$3"
   if ! _pp_apply "$p"; then
-    _pp_say "placed fly: $w ($det) held — the machine's write-backs were not applied (${PP_APPLY_WHY:-?}); no hub work this tick"
+    _pp_say "${PP_TAG:-placed fly}: $w ($det) held — the machine's write-backs were not applied (${PP_APPLY_WHY:-?}); no hub work this tick"
     return 0
   fi
   _pp_lease_take "$p"
   case $? in
-    0) _pp_say "placed fly: $w ($det) — this tick runs on the hub (${PP_APPLY_WHY:-applied})"; return 1 ;;
+    0) _pp_say "${PP_TAG:-placed fly}: $w ($det) — this tick runs on the hub (${PP_APPLY_WHY:-applied})"; return 1 ;;
     3) _pp_say "a Fly run holds the project lease — $w ($det): no hub work this tick"; return 0 ;;
   esac
-  _pp_say "placed fly: $w ($det) — the lease was not answered, the hub flock alone holds; this tick runs on the hub"
+  _pp_say "${PP_TAG:-placed fly}: $w ($det) — the lease was not answered, the hub flock alone holds; this tick runs on the hub"
   return 1
 }
 
@@ -344,23 +363,25 @@ _pp_take() {
 _pp_fallback_run() {
   local p="$1" w="$2" det="$3"
   if [ "$(_pp_fallback "$p")" = off ]; then
-    _pp_say "placed fly: $w ($det) and lane_fallback.$PP_LANE.$p=off — the hub runs nothing for $p this tick"
+    _pp_say "${PP_TAG:-placed fly}: $w ($det) and lane_fallback.$PP_LANE.$p=off — the hub runs nothing for $p this tick"
     _pp_alert "$p" "$w ($det); the hub runs nothing for this project while the fallback row is off. Rollback: set lane_placement.$PP_LANE.$p to hub."
     return 0
   fi
   _pp_take "$p" "fallback=$w" "$det"
 }
 
-# _pp_withdraw <project> <id> <why> — end a queued row before the hub takes the
-# project. rc 0 = ended, rc 3 = a machine claimed it (the row is live), rc 2 =
-# not answered (the lease still keeps one run at a time).
+# _pp_withdraw <project> <id> <why> [expired] — end a queued row before the hub
+# takes the project; with expired = 1 (a box-silent row, BH-7636) also a claimed
+# row whose lease ran out. rc 0 = ended, rc 3 = a machine claimed it (the row is
+# live), rc 2 = not answered (the lease still keeps one run at a time).
 _pp_withdraw() {
-  local id="$2" why="$3" by rc
+  local id="$2" why="$3" ex="${4:-0}" by rc
   by="hub-$(hostname 2>/dev/null)"; by="${by//[^A-Za-z0-9._-]/_}"; by="${by:0:64}"
-  _jobs_req POST "/api/lane-runs/$id/withdraw" "$(jq -nc --arg b "$by" --arg w "$why" '{by:$b, why:$w}')" >/dev/null; rc=$?
+  _jobs_req POST "/api/lane-runs/$id/withdraw" "$(jq -nc --arg b "$by" --arg w "$why" --arg e "$ex" \
+    '{by:$b, why:$w} + (if $e == "1" then {expired:1} else {} end)')" >/dev/null; rc=$?
   [ "$rc" = 0 ] && return 0
   if [ "$rc" = 9 ] && [ "$(printf '%s' "${JOBS_BODY:-}" | jq -r '.reason // empty' 2>/dev/null)" = not_queued ]; then return 3; fi
-  _pp_say "placed fly: withdraw of row $id not answered (http ${JOBS_HTTP:-none}) — a machine may still claim it; the lease keeps one run at a time"
+  _pp_say "${PP_TAG:-placed fly}: withdraw of row $id not answered (http ${JOBS_HTTP:-none}) — a machine may still claim it; the lease keeps one run at a time"
   return 2
 }
 
@@ -393,8 +414,8 @@ _pp_enqueue() {
   pp_publish "$p" || true
   lp_enqueue "$PP_LANE" "$p" "$(_pp_root)/bin/fly-pool-project.sh" "$p"; rc=$?
   case "$rc" in
-    0) _pp_say "placed fly: enqueued $PP_LANE $p — no hub pool work this tick"; return 0 ;;
-    3) _pp_say "placed fly: a row of $p is already live — no hub pool work this tick"; return 0 ;;
+    0) _pp_say "${PP_TAG:-placed fly}: enqueued $PP_LANE $p — no hub pool work this tick"; return 0 ;;
+    3) _pp_say "${PP_TAG:-placed fly}: a row of $p is already live — no hub pool work this tick"; return 0 ;;
   esac
   return 1
 }
@@ -410,16 +431,45 @@ _pp_enqueue_or_backoff() {
   _pp_enqueue "$p" || _pp_fallback_run "$p" enqueue-failed "http ${JOBS_HTTP:-none}"
 }
 
-# _pp_stale <project> <id> <age-s> — an unclaimed row: withdrawn, then the hub
-# runs the tick (fallback=no-capacity). A row claimed meanwhile is live.
+# _pp_box_down <project> <id> <detail> <stale-s> — a box placement's take-back
+# (the withdraw answered 200): ONE ALERTS line per outage, held by
+# <project>.box-down, written only after bin/lane-alert.sh answers rc 0.
+_pp_box_down() {
+  local p="$1" id="$2" det="$3" st="$4" f a what
+  f="$(_pp_dir)/$p.box-down"
+  if [ -e "$f" ]; then _pp_say "$PP_TAG: row $id taken back ($det); the box-down alert of this outage is already sent"; return 0; fi
+  what="it did not claim row $id within ${st}s"
+  [ "$det" = box-silent ] && what="it claimed row $id and then stopped answering for ${st}s or more"
+  a="$(_pp_root)/bin/lane-alert.sh"
+  [ -x "$a" ] || return 0
+  "$a" --severity warn --id "pool-box-$p" fly-pool \
+    "fly-pool $p is placed on box $PP_BOX, and $what. The hub withdrew the row and took the project back to the hub. The box gets a new row after POOL_FLY_TAKEBACK_BACKOFF_S. Check the box cron (lane-run-worker.sh --box $PP_BOX) and its logs/lane-run-worker.log. Undo: set lane_placement.fly-pool.$p to hub." \
+    >/dev/null 2>&1 || return 0
+  _pp_put "$f" "$id $(date -u +%s)"
+  return 0
+}
+
+# _pp_box_up <project> — the box answered: the outage (if any) ends.
+_pp_box_up() {
+  local f; f="$(_pp_dir)/$1.box-down"
+  [ -e "$f" ] || return 0
+  rm -f "$f"; _pp_say "${PP_TAG:-placed fly}: the box answers again — the next take-back alerts again"
+}
+
+# _pp_stale <project> <id> <age-s|box-silent> — an unclaimed row (or, on a box
+# placement, a row its box went silent on): withdrawn, then the hub runs the
+# tick (fallback=no-capacity). A row claimed meanwhile is live.
 _pp_stale() {
-  local p="$1" id="$2" age="$3" wrc=2
+  local p="$1" id="$2" age="$3" wrc=2 st="${4:-}"
   if [ "$(_pp_fallback "$p")" = hub ]; then
-    _pp_withdraw "$p" "$id" "stale-${age}s"; wrc=$?
-    if [ "$wrc" = 3 ]; then _pp_say "placed fly: row $id was claimed before the withdraw — no hub work this tick"; return 0; fi
+    if [ "$age" = box-silent ]; then _pp_withdraw "$p" "$id" box-silent 1; wrc=$?
+    else _pp_withdraw "$p" "$id" "stale-${age}s"; wrc=$?; fi
+    if [ "$wrc" = 3 ]; then _pp_say "${PP_TAG:-placed fly}: row $id was claimed before the withdraw — no hub work this tick"; return 0; fi
     [ "$wrc" != 0 ] || { _pp_put "$(_pp_dir)/$p.taken" "$id"; _pp_stamp_takeback "$p"; }
+    [ "$wrc" = 0 ] && [ -n "${PP_BOX:-}" ] && _pp_box_down "$p" "$id" "$age" "$st"
   fi
-  _pp_fallback_run "$p" no-capacity "row $id unclaimed: ${age}s"
+  if [ "$age" = box-silent ]; then _pp_fallback_run "$p" no-capacity "row $id: box-silent"
+  else _pp_fallback_run "$p" no-capacity "row $id unclaimed: ${age}s"; fi
 }
 
 # _pp_failed <project> <kind> <id> <detail> — a finished row the machine could
@@ -428,6 +478,8 @@ _pp_failed() {
   local p="$1" kind="$2" id="$3" det="$4" nf
   if [ "$id" = "$(head -n 1 "$(_pp_dir)/$p.taken" 2>/dev/null)" ]; then _pp_enqueue_or_backoff "$p"; return; fi
   _pp_put "$(_pp_dir)/$p.taken" "$id"; _pp_stamp_takeback "$p"
+  # A row with a run result is the box's answer; a `died` row is none.
+  [ "$det" = died ] || _pp_box_up "$p"
   if [ "$kind" = failed ]; then
     kind=machine-failed; nf=$(_pp_failed_count "$p" inc)
     if [ "$nf" -ge "$PP_FAILED_ALERT_N" ]; then
@@ -441,17 +493,20 @@ _pp_failed() {
 
 # _pp_fly_row <project> — the project is placed fly: decide from its newest row.
 _pp_fly_row() {
-  local p="$1" d rows kind id det
+  local p="$1" d rows kind id det st boxed=0
   d=$(_pp_dir); mkdir -p "$d" 2>/dev/null
-  _pp_put "$d/$p.placed" fly
+  [ -n "${PP_BOX:-}" ] && boxed=1
+  _pp_put "$d/$p.placed" "${PP_BOX:+box:}${PP_BOX:-fly}"
+  st=$(_pp_int POOL_FLY_QUEUE_STALE_S "$PP_QUEUE_STALE_S" 0)
   rows=$(_jobs_req GET "/api/lane-runs/by-prefix?lane=$PP_LANE&project_prefix=$p&limit=10") \
-    && read -r kind id det < <(pp_newest "$rows" "$p" "$(date -u +%s)" "$(_pp_int POOL_FLY_QUEUE_STALE_S "$PP_QUEUE_STALE_S" 0)") \
+    && read -r kind id det < <(pp_newest "$rows" "$p" "$(date -u +%s)" "$st" "$boxed") \
     && [ -n "$kind" ] || { kind=read-failed; id=-; det="http ${JOBS_HTTP:-none}"; }
   case "$kind" in
-    live) _pp_say "placed fly: row $id is $det — no hub pool work this tick"; return 0 ;;
-    stale) _pp_stale "$p" "$id" "$det" ;;
+    live) [ "$det" = claimed ] && _pp_box_up "$p"
+          _pp_say "${PP_TAG:-placed fly}: row $id is $det — no hub pool work this tick"; return 0 ;;
+    stale) _pp_stale "$p" "$id" "$det" "$st" ;;
     failed|deferred) _pp_failed "$p" "$kind" "$id" "$det" ;;
-    none|done|withdrawn) [ "$kind" != done ] || _pp_failed_count "$p" reset >/dev/null
+    none|done|withdrawn) [ "$kind" != done ] || { _pp_failed_count "$p" reset >/dev/null; _pp_box_up "$p"; }
                          _pp_enqueue_or_backoff "$p" ;;
     *) _pp_fallback_run "$p" enqueue-failed "lane_runs read: $det" ;;
   esac
@@ -468,7 +523,7 @@ _pp_hub() {
     && read -r kind id det < <(pp_newest "$rows" "$p" "$(date -u +%s)" 0) || kind=none
   [ "$kind" != stale ] || { _pp_withdraw "$p" "$id" "rollback" >/dev/null; true; }
   _pp_take "$p" rollback "placement is hub again"; rc=$?
-  [ "$rc" = 1 ] && [ -n "${POOL_LEASE_FENCE:-}" ] && rm -f "$(_pp_dir)/$p.placed" "$(_pp_dir)/$p.taken" "$(_pp_dir)/$p.takeback-at"
+  [ "$rc" = 1 ] && [ -n "${POOL_LEASE_FENCE:-}" ] && rm -f "$(_pp_dir)/$p.placed" "$(_pp_dir)/$p.taken" "$(_pp_dir)/$p.takeback-at" "$(_pp_dir)/$p.box-down"
   return "$rc"
 }
 
@@ -478,11 +533,11 @@ _pp_hub() {
 _pp_unknown() {
   local p="$1" rows
   if [ -e "$(_pp_dir)/$p.placed" ]; then
-    _pp_say "placed fly: placement not readable ($LP_WHY) and $p was last placed fly — no hub pool work this tick"; return 0
+    _pp_say "${PP_TAG:-placed fly}: placement not readable ($LP_WHY) and $p was last placed fly — no hub pool work this tick"; return 0
   fi
   rows=$(_jobs_req GET "/api/lane-runs/by-prefix?lane=$PP_LANE&project_prefix=$p&live=1&limit=10" 2>/dev/null)
   if [ "$(printf '%s' "$rows" | jq -r --arg p "$p" '[.rows[]? | select(.project == $p)] | length' 2>/dev/null)" -gt 0 ] 2>/dev/null; then
-    _pp_say "placed fly: placement not readable ($LP_WHY) and a $PP_LANE row of $p is live — no hub pool work this tick"; return 0
+    _pp_say "${PP_TAG:-placed fly}: placement not readable ($LP_WHY) and a $PP_LANE row of $p is live — no hub pool work this tick"; return 0
   fi
   return 1
 }

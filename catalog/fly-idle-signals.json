@@ -11,6 +11,10 @@
   "apps": {
     "bh-testhost-example-org": { "source": "testhost" },
     "lane-run": { "source": "lane-run" },
+    "lane-run-dedicated": {
+      "source": "exempt",
+      "reason": "BH-7716 dedicated conductor host; bin/lane-fleet.sh stops it when no placement row is fly-dedicated"
+    },
     "bh-ci-runners-example-org": {
       "source": "exempt",
       "reason": "BH-1210 warm minimum: the runner fleet keeps started machines on purpose (docs/CI-RUNNERS.md)"

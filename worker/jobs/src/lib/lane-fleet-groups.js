@@ -22,13 +22,27 @@
 //   warm_floor  optional, 0..100; absent = the global lane_fleet.warm_floor
 //               (seed 1 = one machine started 24/7), so set 0 for a costly app
 // Absent optional fields answer null: the hub uses the lane_fleet.* rows.
+//
+// A box group (BH-7716) takes its rows by placement, not by project: its
+// machines claim with `box` (lib/lane-box-placement.js), so it has no projects
+// (absent or []) and the default fleet skips none for it.
+//   box         a box name ([a-z0-9][a-z0-9._-]{0,63}), at most one group per box
+//   volume      optional, a Fly volume name [a-z0-9_]{1,30}, mounted at /root/repos
+//   volume_gb   optional, 1..500 (bin/lane-fleet.sh: absent = 20)
+//   workers     optional, 1..16 worker loops per machine (absent = 1)
+// Only a box group's answer carries these four fields (a projects group's
+// answer is unchanged).
+// bin/lane-fleet.sh keeps a box group's warm_floor only while a placement row
+// points at the box (GET /api/lane-runs/stats?fleet=<name> answers `placed`).
 
 import { laneName } from "./core.js";
+import { boxNameOf } from "./lane-box-placement.js";
 
 export const GROUP_KEY_PREFIX = "lane_fleet.group.";
 const NAME_RE = /^[a-z0-9][a-z0-9-]{0,29}$/;
 const APP_RE = /^lane-run-[a-z0-9][a-z0-9-]{0,39}$/;
 const SIZE_RE = /^[a-z0-9-]{1,40}$/;
+const VOLUME_RE = /^[a-z0-9_]{1,30}$/;
 const PROJECTS_MAX = 64;
 export const FALLBACK_KEY = "lane_run.group_fallback_s";
 export const FALLBACK_DEFAULT_S = 900;
@@ -48,16 +62,24 @@ function optional(o, k, check) {
 }
 
 // parseGroup <name> <raw value> <taken projects Set> <taken apps Set>
-//   -> { group } or { err }.
-export function parseGroup(name, raw, projects, apps) {
+//   [taken boxes Set] -> { group } or { err }.
+export function parseGroup(name, raw, projects, apps, boxes = new Set()) {
   if (!NAME_RE.test(name)) return { err: "name must match [a-z0-9][a-z0-9-]{0,29}" };
   let o;
   try { o = JSON.parse(raw); } catch { return { err: "value is not JSON" }; }
   if (!o || typeof o !== "object" || Array.isArray(o)) return { err: "value is not a JSON object" };
   if (typeof o.app !== "string" || !APP_RE.test(o.app)) return { err: "app must match lane-run-[a-z0-9][a-z0-9-]{0,39}" };
   if (apps.has(o.app)) return { err: `app ${o.app} is already another group's` };
-  const p = o.projects;
-  if (!Array.isArray(p) || p.length < 1 || p.length > PROJECTS_MAX || !p.every((x) => laneName(x) === x)) {
+  let box = null;
+  if (o.box !== undefined && o.box !== null) {
+    box = boxNameOf(o.box);
+    if (box === null) return { err: "box must be a box name [a-z0-9][a-z0-9._-]{0,63}" };
+    if (boxes.has(box)) return { err: `box ${box} is already another group's` };
+  }
+  const p = box !== null && (o.projects === undefined || o.projects === null) ? [] : o.projects;
+  if (box !== null) {
+    if (!Array.isArray(p) || p.length > 0) return { err: "projects must be absent or [] on a box group (it claims by placement)" };
+  } else if (!Array.isArray(p) || p.length < 1 || p.length > PROJECTS_MAX || !p.every((x) => laneName(x) === x)) {
     return { err: `projects must be 1..${PROJECTS_MAX} project names` };
   }
   const dupe = p.find((x) => projects.has(x));
@@ -67,6 +89,9 @@ export function parseGroup(name, raw, projects, apps) {
     vm_memory: optional(o, "vm_memory", (v) => intIn(v, 256, 65536)),
     max_machines: optional(o, "max_machines", (v) => intIn(v, 0, 1000)),
     warm_floor: optional(o, "warm_floor", (v) => intIn(v, 0, 100)),
+    volume: optional(o, "volume", (v) => (typeof v === "string" && VOLUME_RE.test(v) ? v : undefined)),
+    volume_gb: optional(o, "volume_gb", (v) => intIn(v, 1, 500)),
+    workers: optional(o, "workers", (v) => intIn(v, 1, 16)),
   };
   const bad = Object.values(f).find((x) => x.err);
   if (bad) return { err: bad.err };
@@ -75,6 +100,7 @@ export function parseGroup(name, raw, projects, apps) {
     group: {
       name, app: o.app, vm_size: f.vm_size.v, vm_memory: f.vm_memory.v,
       max_machines: f.max_machines.v, warm_floor: f.warm_floor.v, projects: [...new Set(p)],
+      ...(box !== null ? { box, volume: f.volume.v, volume_gb: f.volume_gb.v, workers: f.workers.v } : {}),
     },
   };
 }
@@ -95,14 +121,16 @@ export async function readGroups(env) {
   const invalid = [];
   const projects = new Set();
   const apps = new Set();
+  const boxes = new Set();
   let fallback;
   for (const r of rows) {
     if (r.key === FALLBACK_KEY) { fallback = r.value; continue; }
     const name = r.key.slice(GROUP_KEY_PREFIX.length);
-    const g = parseGroup(name, String(r.value), projects, apps);
+    const g = parseGroup(name, String(r.value), projects, apps, boxes);
     if (g.err) { invalid.push({ name, error: g.err }); continue; }
     g.group.projects.forEach((x) => projects.add(x));
     apps.add(g.group.app);
+    if (g.group.box) boxes.add(g.group.box);
     groups.push(g.group);
   }
   return { groups, invalid, fallback_s: fallbackOf(fallback) };

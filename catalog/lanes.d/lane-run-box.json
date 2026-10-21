@@ -1,0 +1,23 @@
+{
+  "id": "lane-run-box",
+  "name": "Lane-run box worker (BH-7636, BH-7716)",
+  "scope": "box",
+  "script": "bin/lane-run-box.sh",
+  "cadence": "* * * * *",
+  "boxes": [
+    "project-6-os"
+  ],
+  "switch": {
+    "kind": "flag",
+    "name": "lane-off-lane-run-box",
+    "aliases": []
+  },
+  "wired": true,
+  "knobs": [],
+  "stats": {
+    "cost_stage": null,
+    "cost_project_filter": null,
+    "lanes_row": false,
+    "log": "logs/lane-run-box-cron.log"
+  }
+}

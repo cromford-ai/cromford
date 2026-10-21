@@ -1,6 +1,6 @@
 #!/bin/bash
-# bin/lane-run-worker.sh [--once] [--machine ID] — the machine loop of the
-# lane-run queue (BH-6124, BH-6047 part 1 of 5).
+# bin/lane-run-worker.sh [--once] [--machine ID] [--box NAME] — the machine
+# loop of the lane-run queue (BH-6124, BH-6047 part 1 of 5).
 #
 # pl_dispatch enqueues one lane_runs row per project for a lane placed `fly`
 # (bin/lib/lane-placement.sh). This loop, on a machine, takes one row at a
@@ -10,7 +10,15 @@
 #                lane-run machine, LANE_RUN_CODE_SYNC=1): lrc_sync fetches main
 #                and swaps in bin/, catalog/ and fleet.conf. Its one result
 #                line goes to the log and to stderr; after a swap (rc 10) the
-#                loop re-execs itself with its own argv. No run is in flight.
+#                loop re-execs itself with its own argv. No run is in flight:
+#                BH-7716, with N loops on one machine each loop holds
+#                locks/lane-run-code.lock SHARED for the length of a run
+#                (lw_run), and the sync takes it EXCLUSIVE with flock -n
+#                first. When another loop has a run in flight the sync is
+#                skipped (one `code sync skipped` log line) and tried again
+#                before the next claim. A loop whose HARNESS_COMMIT changed
+#                since it started (another loop swapped the code) re-execs
+#                itself with its own argv before its next claim.
 #   0b. repos    once per process start, when lrr_enabled (lib/lane-run-repos.sh;
 #                on with LANE_RUN_CODE_SYNC=1, or LANE_RUN_REPO_CHECK=1):
 #                lrr_check reads each fleet repo once and writes the projects
@@ -31,6 +39,10 @@
 #                of idling unpriced once its group row is gone (#7447 F1). 204 = the queue is empty:
 #                sleep lane_run.poll_s (1..300, fallback 15), or with --once
 #                exit 0. A transport failure logs one line; --once exits 1.
+#   1b. warm     BH-7716, only with LANE_RUN_WARM_CLONES=1 (the dedicated
+#                machine): lw_warm_refresh (lib/lane-run-warm.sh) runs before
+#                each claim and fetches or clones every fleet repo at most
+#                once per lane_run.warm_refresh_s.
 #   2. check     lane and project are path-safe names and args[0] is a path
 #                under bin/ with no `..`. A bad row is logged and NOT run and
 #                NOT reported: its lease runs out and the row is re-claimed.
@@ -38,6 +50,14 @@
 #                run and is reported rc 127 at once (no retry), with prof
 #                `PROF lane-run rc=127 reason=command-missing err=<args[0]> not
 #                in harness <HARNESS_COMMIT 12|unknown>`.
+#   2b. ensure   BH-7716, only with LANE_RUN_WARM_CLONES=1: lw_warm_ensure
+#                <project> makes or fetches ${REPOS_ROOT:-/root/repos}/<project>
+#                before step 3 (for lane merge-conductor-pr the project is the
+#                row project up to its first `.`). A failure does NOT run the
+#                lane: the row is reported rc 75 (EX_TEMPFAIL) at once with
+#                prof `PROF lane-run rc=75 reason=clone-ensure err=<why>` (at
+#                most 512 bytes), and one log line. A failed fetch of a clone
+#                that has .git is not a failure: the lane runs on it.
 #   3. inputs    lri_fetch <lane> <project> <state dir> (lib/lane-run-inputs.sh).
 #                A non-zero rc does NOT run the lane: the row is reported rc 66
 #                with prof `PROF lri_fetch rc=<n> <lane>/<project>`, and the
@@ -69,7 +89,10 @@
 #                lane-run machine (LANE_RUN=1), every clone past the newest
 #                lane_run.clone_cache_n (1..64, fallback 8) is removed, one
 #                `clone cache: evicted <name> (keep <n>)` line each. A failed
-#                removal logs one line and the loop goes on.
+#                removal logs one line and the loop goes on. With
+#                LANE_RUN_WARM_CLONES=1 nothing is evicted (the warm clones are
+#                the point): one `clone cache: warm clones on, no eviction`
+#                line at process start.
 #
 # TERM or INT (a Fly stop, BH-6495) with a run in flight: the run's process
 # group gets TERM, the loop waits up to lane_run.term_grace_s (1..25, fallback
@@ -81,7 +104,23 @@
 #
 # --once drains the queue: it loops until a claim comes back empty, then exits
 # 0. The machine id is --machine, else FLY_MACHINE_ID, else this box's name; it
-# must be a path-safe name, else exit 2. Log lines go to
+# must be a path-safe name, else exit 2.
+#
+# --box NAME (BH-7636): this is a named box, not a Fly machine. NAME is read by
+# the placement rule (lp_box_parse: whitespace deleted, A-Z lowercased,
+# [a-z0-9][a-z0-9._-]{0,63}, else exit 2 with no claim), the machine id is
+# NAME unless --machine names another one, and the claim carries `box: NAME`,
+# so the jobs worker hands it only the rows of a (lane, project) placed
+# lane_placement.<lane>.<project> = box:NAME. The box runs it from its own
+# cron (cron/boxes/<box>.d/). BH-7716: the env LANE_RUN_BOX is the env form of
+# --box (the flag wins), and --machine may differ from the box: each loop of
+# the dedicated machine claims as box `fly-dedicated` with its own machine id
+# `<FLY_MACHINE_ID>-w<i>` (fly/lane-run-entrypoint.sh, LANE_RUN_WORKERS). A claim
+# answer that does not echo `box: NAME` comes from a jobs worker that ignored
+# the field (deployed before BH-7636): the row is released at once, not run,
+# and the loop exits 1, so a box never runs a Fly machine's row. Steps 0,
+# 0b and 7's eviction stay off unless their own switches are set, as on any
+# host that is not a lane-run machine. Log lines go to
 # logs/lane-run-worker.log, stamped from LANE_RUN_NOW (epoch) when it is set.
 # Contract: docs/notes/2026-10-12-BH-6124-lane-runs.md.
 set -uo pipefail
@@ -101,14 +140,25 @@ export HARNESS="$H"
 # shellcheck source=bin/lib/lane-run-repos.sh
 . "$H/bin/lib/lane-run-repos.sh" || exit 1
 
-ONCE=0; MACHINE=""
+# shellcheck source=bin/lib/lane-run-warm.sh
+. "$H/bin/lib/lane-run-warm.sh" || exit 1
+
+ONCE=0; MACHINE=""; LW_BOX=""; LW_BOX_RAW="${LANE_RUN_BOX:-}"
+LW_USAGE="usage: lane-run-worker.sh [--once] [--machine ID] [--box NAME]"
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --once) ONCE=1; shift ;;
-    --machine) MACHINE="${2:-}"; shift 2 || { echo "usage: lane-run-worker.sh [--once] [--machine ID]" >&2; exit 2; } ;;
-    *) echo "usage: lane-run-worker.sh [--once] [--machine ID]" >&2; exit 2 ;;
+    --machine) MACHINE="${2:-}"; shift 2 || { echo "$LW_USAGE" >&2; exit 2; } ;;
+    --box) LW_BOX_RAW="${2:-}"; shift 2 || { echo "$LW_USAGE" >&2; exit 2; } ;;
+    *) echo "$LW_USAGE" >&2; exit 2 ;;
   esac
 done
+if [ -n "$LW_BOX_RAW" ]; then
+  # shellcheck source=bin/lib/lane-placement.sh
+  . "$H/bin/lib/lane-placement.sh" || exit 1
+  LW_BOX=$(lp_box_parse "box:$LW_BOX_RAW") || { echo "lane-run-worker: box name '$LW_BOX_RAW' is not [a-z0-9][a-z0-9._-]{0,63}" >&2; exit 2; }
+  [ -n "$MACHINE" ] || MACHINE="$LW_BOX"
+fi
 [ -n "$MACHINE" ] || MACHINE="${FLY_MACHINE_ID:-$(_jobs_box_name)}"
 pl_name_ok "$MACHINE" || { echo "lane-run-worker: machine id '$MACHINE' is not a path-safe name" >&2; exit 2; }
 
@@ -197,6 +247,7 @@ lw_cache_trim() {
     touch "$r/$p" 2>/dev/null
   fi
   [ "${LANE_RUN:-}" = 1 ] || return 0
+  [ "${LANE_RUN_WARM_CLONES:-}" = 1 ] && return 0
   keep=$(lw_clone_cache_n)
   while IFS= read -r n; do
     [ -n "$n" ] || continue
@@ -294,7 +345,7 @@ lw_report() {
 
 # lw_run <claim payload file> — steps 2-6 for one claimed row.
 lw_run() {
-  local f="$1" id lane project n out err pid rc prof fo frc reason eline
+  local f="$1" id lane project n out err pid rc prof fo frc reason eline wp
   local -a args=()
   id=$(jq -r '.id // empty' "$f" 2>/dev/null)
   lane=$(jq -r '.lane // empty' "$f" 2>/dev/null)
@@ -314,6 +365,15 @@ lw_run() {
     lw_alert_missing "$lane" "$project" 127 "${args[0]} not in harness"
     lw_report "$id" "$lane" "$project" 127 "${prof:0:512}"
     return 0
+  fi
+  if [ "${LANE_RUN_WARM_CLONES:-}" = 1 ]; then
+    wp="$project"; [ "$lane" = merge-conductor-pr ] && wp="${project%%.*}"
+    if ! lw_warm_ensure "$wp"; then
+      lw_log "run $id $lane/$project: warm ensure failed ($LW_WARM_WHY); not run, reported rc 75"
+      prof="PROF lane-run rc=75 reason=clone-ensure err=$LW_WARM_WHY"
+      lw_report "$id" "$lane" "$project" 75 "$(head -c 512 < <(printf '%s' "$prof"))"
+      return 0
+    fi
   fi
   fo=$(lri_fetch "$lane" "$project" "$H/state/$lane/$project" 2>&1); frc=$?
   if [ "$frc" != 0 ]; then
@@ -365,14 +425,39 @@ lw_run() {
   return 0
 }
 
+# The code lock (BH-7716): shared while a run is in flight, exclusive for a
+# code sync, so N loops on one machine never swap bin/ under a run.
+mkdir -p "$H/locks" 2>/dev/null
+# The braces keep the 2>/dev/null off the shell's own stderr.
+LW_CFD=""; { exec {LW_CFD}>>"$H/locks/lane-run-code.lock"; } 2>/dev/null || LW_CFD=""
+LW_COMMIT0=$(head -n 1 "$H/HARNESS_COMMIT" 2>/dev/null)
+# lw_reexec — the loop starts again on the current code, with its own argv.
+# The code lock fd is closed first: an exec keeps it open, and the new
+# process opens its own.
+lw_reexec() {
+  [ -z "$LW_CFD" ] || exec {LW_CFD}>&-
+  exec "$H/bin/lane-run-worker.sh" "${LW_ARGV[@]}"
+}
+[ "${LANE_RUN_WARM_CLONES:-}" = 1 ] && [ "${LANE_RUN:-}" = 1 ] && lw_log "clone cache: warm clones on, no eviction"
+
 lrr_enabled && lrr_check
 while :; do
-  if lrc_enabled && lrc_due; then
-    LW_CODE=$(lrc_sync); lrc=$?
-    lw_log "$LW_CODE"
-    echo "lane-run-worker $MACHINE: $LW_CODE" >&2
-    [ "$lrc" = 10 ] && exec "$H/bin/lane-run-worker.sh" "${LW_ARGV[@]}"
+  if [ "$(head -n 1 "$H/HARNESS_COMMIT" 2>/dev/null)" != "$LW_COMMIT0" ]; then
+    lw_log "code: HARNESS_COMMIT changed under this loop; re-exec"
+    lw_reexec
   fi
+  if lrc_enabled && lrc_due; then
+    if [ -n "$LW_CFD" ] && ! flock -n -x "$LW_CFD"; then
+      lw_log "code sync skipped: a run is in flight on another loop"
+    else
+      LW_CODE=$(lrc_sync); lrc=$?
+      [ -n "$LW_CFD" ] && flock -u "$LW_CFD"
+      lw_log "$LW_CODE"
+      echo "lane-run-worker $MACHINE: $LW_CODE" >&2
+      [ "$lrc" = 10 ] && lw_reexec
+    fi
+  fi
+  [ "${LANE_RUN_WARM_CLONES:-}" = 1 ] && lw_warm_refresh
   # Into a file, not $( ): JOBS_HTTP must survive the call to tell 204 apart.
   # The skip file is read only while the check is on: a file left by an
   # earlier process with the check on must not filter claims once it is off.
@@ -401,10 +486,11 @@ while :; do
   fi
   LW_NOGROUP_N=0
   _jobs_req POST /api/lane-runs/claim "$(jq -nc --arg m "$MACHINE" --argjson p "$(lw_prefer)" --argjson s "$LW_SKIP" \
-    --argjson o "$LW_ONLY" \
+    --argjson o "$LW_ONLY" --arg b "$LW_BOX" \
     '{machine:$m} + (if ($p | length) > 0 then {prefer:$p} else {} end)
      + (if $s == [] then {} else {skip_prefixes:$s} end)
-     + (if $o == [] then {} else {only_prefixes:$o} end)')" > "$RESP"; crc=$?
+     + (if $o == [] then {} else {only_prefixes:$o} end)
+     + (if $b == "" then {} else {box:$b} end)')" > "$RESP"; crc=$?
   if [ "$crc" != 0 ]; then
     lw_log "claim failed (rc $crc, http ${JOBS_HTTP:-none})"
     [ "$ONCE" = 1 ] && exit 1
@@ -416,6 +502,20 @@ while :; do
     # trap at once rather than after the sleep.
     sleep "$(lw_poll_s)" & wait "$!"; continue
   fi
+  if [ -n "$LW_BOX" ] && [ "$(jq -r '.box // empty' "$RESP" 2>/dev/null)" != "$LW_BOX" ]; then
+    LW_RID=$(jq -r '.id // empty' "$RESP" 2>/dev/null)
+    LW_REL="release failed (http ${JOBS_HTTP:-none}); the lease re-runs it"
+    [[ $LW_RID =~ ^[0-9]+$ ]] && _jobs_req POST "/api/lane-runs/$LW_RID/release" "$(jq -nc --arg m "$MACHINE" '{machine:$m}')" >/dev/null \
+      && LW_REL="released to the queue"
+    lw_log "claim answer for --box $LW_BOX does not name the box (the jobs worker does not route box rows yet); row ${LW_RID:-?} not run, $LW_REL"
+    exit 1
+  fi
+  # In the background and waited for, so a TERM during the wait runs the trap
+  # at once. The lock is on this process's open file, so it outlives flock.
+  if [ -n "$LW_CFD" ]; then
+    flock -s -w 300 "$LW_CFD" & wait "$!" || lw_log "code lock: no shared hold after 300 s; the run goes on"
+  fi
   lw_run "$RESP"
+  [ -n "$LW_CFD" ] && flock -u "$LW_CFD"
   lw_cache_trim "$(jq -r '.project // empty' "$RESP" 2>/dev/null)"
 done

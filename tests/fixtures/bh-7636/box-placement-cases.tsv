@@ -1,0 +1,29 @@
+# BH-7636: the box:<name> placement parse, one case per line. Read by
+# tests/lane-placement-box.bh-7636-test.sh (lp_decide) and by
+# worker/jobs/test/lane-runs-box.bh-7636.test.js (readBoxPlacements): a row
+# the two sides parse differently fails both. Tab-separated columns:
+#   lane  project(- = none)  row_key  value(\n = newline)  hub_only(- = none)  place  box(- = none)  why(substring of LP_WHY)
+merge-conductor	project-6-os	lane_placement.merge-conductor.project-6-os	box:box-project-6-os-1	-	box	box-project-6-os-1	lane_placement.merge-conductor.project-6-os=box:box-project-6-os-1
+fly-pool	project-6-os	lane_placement.fly-pool.project-6-os	 BOX:box-project-6-os-1\n	-	box	box-project-6-os-1	=box:box-project-6-os-1
+merge-conductor	project-6-os	lane_placement.merge-conductor.project-6-os	box: box-project-6-os-1	-	box	box-project-6-os-1	=box:box-project-6-os-1
+merge-conductor	project-6-os	lane_placement.merge-conductor.project-6-os	box:	-	hub	-	is not fly
+merge-conductor	project-6-os	lane_placement.merge-conductor.project-6-os	box:bad/name	-	hub	-	is not fly
+merge-conductor	project-6-os	lane_placement.merge-conductor.project-6-os	box:-lead	-	hub	-	is not fly
+merge-conductor	project-6-os	lane_placement.merge-conductor.project-6-os	boxes:x	-	hub	-	is not fly
+merge-conductor	project-6-os	lane_placement.merge-conductor.project-6-os	box	-	hub	-	is not fly
+merge-conductor	project-6-os	lane_placement.merge-conductor.project-6-os	xbox:y	-	hub	-	is not fly
+merge-conductor	project-6-os	lane_placement.merge-conductor.project-6-os	box:zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz	-	box	zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz	=box:zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz
+merge-conductor	project-6-os	lane_placement.merge-conductor.project-6-os	box:zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz	-	hub	-	is not fly
+merge-conductor	project-6-os	lane_placement.merge-conductor	box:box-project-6-os-1	-	hub	-	box: only on a project row
+merge-conductor	-	lane_placement.merge-conductor	box:box-project-6-os-1	-	hub	-	box: only on a project row
+merge-conductor	project-6-os	lane_placement.default	box:box-project-6-os-1	-	hub	-	box: only on a project row
+fly-pool	project-6-os	lane_placement.fly-pool	box:box-project-6-os-1	-	hub	-	box: only on a project row
+review-rescue	project-6-os	lane_placement.review-rescue.project-6-os	box:box-project-6-os-1	-	hub	-	box: only on a project row
+merge-conductor-pr	project-6-os	lane_placement.merge-conductor-pr.project-6-os	box:box-project-6-os-1	-	hub	-	box: only on a project row
+web-task	project-6-os	lane_placement.web-task.project-6-os	box:box-project-6-os-1	-	hub	-	box: only on a project row
+blocked-resolver	project-6-os	lane_placement.blocked-resolver.project-6-os	box:box-project-6-os-1	-	hub	-	box: only on a project row
+merge-conductor	project-6-os	lane_placement.merge-conductor.project-6-os	box:box-project-6-os-1	x	hub	-	hub_only: x
+merge-conductor	project-6-os-x	lane_placement.merge-conductor.project-6-os	box:box-project-6-os-1	-	hub	-	no lane_placement row
+merge-conductor	project-6-os	lane_placement.merge-conductor.project-6-os	fly	-	fly	-	lane_placement.merge-conductor.project-6-os=fly
+merge-conductor	project-6-os	lane_placement.merge-conductor.project-6-os	hub	-	hub	-	is not fly
+fly-pool	project-6-os	lane_placement.merge-conductor.project-6-os	box:box-project-6-os-1	-	hub	-	no lane_placement row

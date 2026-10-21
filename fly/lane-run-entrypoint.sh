@@ -28,7 +28,24 @@
 #      fails its call), the same as on a box with no account;
 #   5. exports LANE_RUN_CODE_SYNC=1, so the worker pulls main of the harness
 #      repo before a claim (bin/lib/lane-run-code.sh), and execs
-#      bin/lane-run-worker.sh --machine "$FLY_MACHINE_ID".
+#      bin/lane-run-worker.sh --machine "$FLY_MACHINE_ID" (plus
+#      --box "$LANE_RUN_BOX" when LANE_RUN_BOX is set);
+#   6. BH-7716, the dedicated machine: when LANE_RUN_WORKERS is an integer
+#      2..16 it does NOT exec. It starts N worker loops,
+#      `bin/lane-run-worker.sh --machine "$FLY_MACHINE_ID-w<i>"` for i = 1..N
+#      (plus --box "$LANE_RUN_BOX" when set), and supervises them:
+#      - TERM or INT: TERM to every loop (each one releases its row within
+#        lane_run.term_grace_s), wait for all, exit 0. INT is sent on as TERM:
+#        a background job of a script starts with INT ignored, and the worker
+#        treats the two the same.
+#      - a loop that exits non-zero is started again after 5 s, at most 10
+#        restarts an hour over all loops. Past that cap: one stderr line, TERM
+#        to the other loops, wait, exit 1, so Fly's restart policy restarts
+#        the machine. LANE_RUN_RESTART_SLEEP_S replaces the 5 s only with
+#        HARNESS_TEST_SANDBOX=1 (a test seam).
+#      - a loop that exits 0 is not started again; when no loop is left the
+#        entrypoint exits 0.
+#      Any other value (unset, 1, 0, 17, 08, text) is step 5's single exec.
 set -u
 H="${HARNESS:-/opt/harness}"
 for v in HARNESS_SECRET JOBS_URL FLY_MACHINE_ID; do
@@ -65,4 +82,58 @@ if [ -n "${GH_APP_ID:-}" ] && [ -n "${GH_APP_PRIVATE_KEY:-}" ]; then
 fi
 unset GH_APP_PRIVATE_KEY
 export HARNESS="$H" LANE_RUN_CODE_SYNC=1
-exec "$H/bin/lane-run-worker.sh" --machine "$FLY_MACHINE_ID"
+LRE_BOX=(); [ -z "${LANE_RUN_BOX:-}" ] || LRE_BOX=(--box "$LANE_RUN_BOX")
+[[ ${LANE_RUN_WORKERS:-} =~ ^([2-9]|1[0-6])$ ]] \
+  || exec "$H/bin/lane-run-worker.sh" --machine "$FLY_MACHINE_ID" ${LRE_BOX[@]+"${LRE_BOX[@]}"}
+
+# Step 6: the supervisor of N loops.
+LRE_N="$LANE_RUN_WORKERS"
+LRE_SLEEP=5
+if [ "${HARNESS_TEST_SANDBOX:-}" = 1 ] && [[ ${LANE_RUN_RESTART_SLEEP_S:-} =~ ^[0-9]{1,2}$ ]]; then LRE_SLEEP="$LANE_RUN_RESTART_SLEEP_S"; fi
+declare -A LRE_PID=()      # loop index -> pid
+LRE_RESTARTS=()            # epoch of each restart in the last hour
+
+lre_start() {
+  "$H/bin/lane-run-worker.sh" --machine "$FLY_MACHINE_ID-w$1" ${LRE_BOX[@]+"${LRE_BOX[@]}"} &
+  LRE_PID[$1]=$!
+}
+
+# lre_stop_all — TERM to every loop still listed, then wait for each.
+lre_stop_all() {
+  local i
+  for i in "${!LRE_PID[@]}"; do kill -TERM "${LRE_PID[$i]}" 2>/dev/null; done
+  for i in "${!LRE_PID[@]}"; do wait "${LRE_PID[$i]}" 2>/dev/null; done
+}
+
+lre_on_signal() {
+  trap '' TERM INT
+  lre_stop_all
+  exit 0
+}
+trap lre_on_signal TERM INT
+
+for ((i = 1; i <= LRE_N; i++)); do lre_start "$i"; done
+while [ "${#LRE_PID[@]}" -gt 0 ]; do
+  wait -n -p LRE_DONE "${LRE_PID[@]}"; rc=$?
+  # rc 127 with no pid: no child is left to wait for.
+  [ -n "${LRE_DONE:-}" ] || { [ "$rc" = 127 ] && break; continue; }
+  for i in "${!LRE_PID[@]}"; do [ "${LRE_PID[$i]}" = "$LRE_DONE" ] && break; done
+  [ "${LRE_PID[$i]}" = "$LRE_DONE" ] || continue
+  unset "LRE_PID[$i]"; LRE_DONE=""
+  [ "$rc" = 0 ] && continue
+  now=$(date -u +%s); kept=()
+  for t in ${LRE_RESTARTS[@]+"${LRE_RESTARTS[@]}"}; do [ $((now - t)) -lt 3600 ] && kept+=("$t"); done
+  LRE_RESTARTS=(${kept[@]+"${kept[@]}"})
+  if [ "${#LRE_RESTARTS[@]}" -ge 10 ]; then
+    echo "lane-run-entrypoint: loop w$i exited $rc after 10 restarts in the last hour; stopping all loops, exit 1" >&2
+    trap '' TERM INT
+    lre_stop_all
+    exit 1
+  fi
+  echo "lane-run-entrypoint: loop w$i exited $rc; restart $(( ${#LRE_RESTARTS[@]} + 1 )) of 10 this hour in ${LRE_SLEEP}s" >&2
+  LRE_RESTARTS+=("$now")
+  # In the background and waited for, so a TERM during the wait runs the trap.
+  sleep "$LRE_SLEEP" & wait "$!"
+  lre_start "$i"
+done
+exit 0

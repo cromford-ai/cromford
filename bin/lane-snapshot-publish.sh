@@ -10,7 +10,9 @@
 #      so a lane moved back to the hub never strands a machine's writes;
 #   2. publishes the project's snapshot (lri_publish), only when lp_decide
 #      places the lane on fly for that project (lane_placement.<lane>.<project>
-#      first, BH-6890; then the lane row, then the default);
+#      first, BH-6890; then the lane row, then the default), or on a named box
+#      (box:<name> on the project row of merge-conductor or fly-pool, BH-7636:
+#      the box fetches the same snapshot through the jobs worker);
 #
 # and then, once per tick for every lane (BH-6889):
 #
@@ -109,7 +111,7 @@ for p in "${PROJECTS[@]}"; do
   [ "${r:-0}" = 0 ] || RPROJ+=("$p")
   if [ "$arc" != 0 ]; then FAILED=$((FAILED + 1)); WHY+=("$p: apply"); continue; fi
   lp_decide "$LANE" "$p"
-  [ "$LP_PLACE" = fly ] || continue
+  case "$LP_PLACE" in fly|box) ;; *) continue ;; esac
   [ "$LANE_PLACE" = fly ] || FLYP+=("$p")
   out=$(lri_publish "$LANE" "$p" 2>&1); prc=$?
   case "$prc:$out" in

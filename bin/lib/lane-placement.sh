@@ -6,22 +6,45 @@
 # running bin/lane-run-worker.sh claims and runs it). The answer is a settings
 # row, so an operator moves a lane without a deploy:
 #
-#   lane_placement.<lane>.<project> fly | hub   (one project of a lane, BH-6890;
-#                                   read only when the caller names a project)
-#   lane_placement.<lane>           fly | hub   (the exact lane name)
+#   lane_placement.<lane>.<project> fly | hub | box:<name>
+#                                   (one project of a lane, BH-6890; read only
+#                                   when the caller names a project. box:<name>,
+#                                   BH-7636: the box <name> runs the lane for
+#                                   the project from its own cron; only on this
+#                                   row and only for a lane in LP_BOX_LANES)
+#   lane_placement.<lane>           fly | hub | fly-dedicated (the exact lane name)
 #   lane_placement.default          fly | hub   (seeded hub)
+#   lane_dedicated.lanes            comma list: the lanes a lane or project row
+#                                   may place `fly-dedicated` (BH-7716; no row
+#                                   = LP_DEDICATED_LANES, seeded the same)
 #   lane_placement.<lane>.hub_only  free text: the lane reads something that is
 #                                   only on the hub, so it stays there
 #
-# The value is trimmed and lowercased. Only `fly` is fly; every other value,
-# no row, a settings outage, no jobs client, or a lane name that is not a legal
-# settings key is hub, and LP_WHY names which. Hub is today's behaviour, so
-# every failure here falls back to it.
+# The value is trimmed and lowercased. Only `fly` is fly, and only a valid
+# `box:<name>` on a project row of a LP_BOX_LANES lane is box (LP_BOX = the
+# name). Every other value (a box: value on a lane or default row, or for
+# another lane, included), no row, a settings outage, no jobs client, or a lane
+# name that is not a legal settings key is hub, and LP_WHY names which. Hub is
+# today's behaviour, so every failure here falls back to it. A caller that
+# tests `"$LP_PLACE" = fly` reads box as hub.
 #
-#   lp_decide <lane> [project]   sets LP_PLACE (fly|hub) and LP_WHY; at most 4
-#                                settings reads
+# `fly-dedicated` (BH-7716) is the box `fly-dedicated`: the dedicated Fly
+# machine of lane_fleet.group.dedicated (bin/lane-fleet.sh), whose worker
+# loops claim with --box fly-dedicated. It is valid on the lane row and on a
+# project row, only for a lane in lane_dedicated.lanes (trimmed, lowercased),
+# and it is LP_PLACE=box, LP_BOX=fly-dedicated. For any other lane, on the
+# default row, with an empty list, or when the list read fails, it is hub.
+#
+#   lp_decide <lane> [project]   sets LP_PLACE (fly|hub|box), LP_BOX and
+#                                LP_WHY; at most 5 settings reads
+#   lp_box_parse <value>         prints the box name of a `box:<name>` value
+#                                (whitespace deleted, A-Z lowercased, name
+#                                [a-z0-9][a-z0-9._-]{0,63}), rc 0; else rc 1.
+#                                The jobs worker parses by the same rule
+#                                (worker/jobs/src/lib/lane-box-placement.js)
 #   lp_placement <lane> [project]
-#                                prints fly|hub, sets LP_PLACE and LP_WHY. With a
+#                                prints fly|hub|box, sets LP_PLACE, LP_BOX and
+#                                LP_WHY. With a
 #                                project, its row wins when it exists; no row
 #                                reads the lane row, then the default row. The
 #                                project `hub_only` is never a project row (that
@@ -55,6 +78,29 @@ _lp_root() { printf '%s' "${HARNESS:-${H:-}}"; }
 
 # The route's BATCH_MAX (worker/jobs/src/routes/lane-runs-batch.js).
 LP_BATCH_MAX=500
+# The lanes a project row may place on a named box (BH-7636).
+LP_BOX_LANES="merge-conductor fly-pool"
+# The dedicated lane host (BH-7716): the placement value, its box, and the
+# documented fallback of the settings row lane_dedicated.lanes.
+LP_DEDICATED=fly-dedicated
+LP_DEDICATED_LANES="merge-conductor,blocked-resolver"
+
+# _lp_dedicated_ok <lane> — rc 0 when <lane> is in lane_dedicated.lanes (no row
+# = LP_DEDICATED_LANES), rc 1 when it is not, rc 3 when the read failed.
+_lp_dedicated_ok() {
+  local raw rc
+  raw=$(setting_get lane_dedicated.lanes); rc=$?
+  case "$rc" in 0) ;; 2) raw="$LP_DEDICATED_LANES" ;; *) return 3 ;; esac
+  raw=$(printf '%s' "$raw" | tr -d '[:space:]' | tr 'A-Z' 'a-z')
+  [[ ",$raw," == *",$1,"* ]]
+}
+
+lp_box_parse() {
+  local v
+  v=$(printf '%s' "${1:-}" | tr -d '[:space:]' | tr 'A-Z' 'a-z')
+  [[ $v =~ ^box:[a-z0-9][a-z0-9._-]{0,63}$ ]] || return 1
+  printf '%s' "${v#box:}"
+}
 
 # _lp_client — rc 0 when setting_get and _jobs_req are defined. Sources
 # bin/jobs-client.sh when they are not, and restores pipefail, which the client
@@ -76,8 +122,8 @@ _lp_client() {
 }
 
 lp_placement() {
-  local lane="${1:-}" proj="${2:-}" key raw v rc=2
-  LP_PLACE=hub
+  local lane="${1:-}" proj="${2:-}" key raw v b rc=2
+  LP_PLACE=hub; LP_BOX=""
   if ! _lp_client; then LP_WHY="no jobs client"; printf 'hub'; return 0; fi
   key="lane_placement.$lane"
   if [ -z "$lane" ] || ! _setting_key_ok "$key.hub_only"; then
@@ -103,6 +149,23 @@ lp_placement() {
   v=$(printf '%s' "$raw" | tr -d '[:space:]' | tr 'A-Z' 'a-z')
   if [ "$v" = fly ]; then
     LP_PLACE=fly; LP_WHY="$key=fly"
+  elif [ "$v" = "$LP_DEDICATED" ]; then
+    if [ "$key" = lane_placement.default ]; then
+      LP_WHY="$key='$raw' fly-dedicated only on a lane or project row"
+    else
+      _lp_dedicated_ok "$lane"; rc=$?
+      case "$rc" in
+        0) LP_PLACE=box; LP_BOX="$LP_DEDICATED"; LP_WHY="$key=$LP_DEDICATED" ;;
+        3) LP_WHY="$key=$LP_DEDICATED, lane_dedicated.lanes: settings unreadable" ;;
+        *) LP_WHY="$key: fly-dedicated not allowed for $lane (lane_dedicated.lanes)" ;;
+      esac
+    fi
+  elif b=$(lp_box_parse "$raw"); then
+    if [ -n "$proj" ] && [ "$key" = "lane_placement.$lane.$proj" ] && [[ " $LP_BOX_LANES " == *" $lane "* ]]; then
+      LP_PLACE=box; LP_BOX="$b"; LP_WHY="$key=box:$b"
+    else
+      LP_WHY="$key='$raw' box: only on a project row of merge-conductor or fly-pool"
+    fi
   else
     LP_WHY="$key='$raw' is not fly"
   fi
@@ -121,8 +184,8 @@ lp_hub_only_reason() {
 lp_decide() {
   local lane="${1:-}" reason
   lp_placement "$lane" "${2:-}" >/dev/null
-  if [ "$LP_PLACE" = fly ] && reason=$(lp_hub_only_reason "$lane"); then
-    LP_PLACE=hub; LP_WHY="hub_only: $reason"
+  if { [ "$LP_PLACE" = fly ] || [ "$LP_PLACE" = box ]; } && reason=$(lp_hub_only_reason "$lane"); then
+    LP_PLACE=hub; LP_BOX=""; LP_WHY="hub_only: $reason"
   fi
   return 0
 }

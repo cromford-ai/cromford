@@ -1,0 +1,36 @@
+# BH-7716: the fly-dedicated placement, one case per line. Read by
+# tests/lane-dedicated-placement.bh-7716-test.sh (lp_decide) and by
+# worker/jobs/test/lane-dedicated.bh-7716.test.js (placementOf): a case the
+# two sides decide differently fails both. Tab-separated columns:
+#   lane  project(- = none)  rows(key=value, joined by ;;, \n = newline)
+#   lanes_row(the lane_dedicated.lanes value; - = no row, ~ = empty)
+#   place(fly|hub|box)  box(- = none)  why(substring of LP_WHY)
+# The worker side reads place=box with its box, and reads every other place
+# as "not a box row". A case with project - is shell-only (the worker routes
+# (lane, project) rows).
+merge-conductor	project-6-os	lane_placement.merge-conductor=fly-dedicated	-	box	fly-dedicated	lane_placement.merge-conductor=fly-dedicated
+merge-conductor	-	lane_placement.merge-conductor=fly-dedicated	-	box	fly-dedicated	lane_placement.merge-conductor=fly-dedicated
+blocked-resolver	project-6-os	lane_placement.blocked-resolver= FLY-Dedicated\n	-	box	fly-dedicated	lane_placement.blocked-resolver=fly-dedicated
+blocked-resolver	project-6-os	lane_placement.blocked-resolver.project-6-os=fly-dedicated	-	box	fly-dedicated	lane_placement.blocked-resolver.project-6-os=fly-dedicated
+merge-conductor	project-6-os	lane_placement.merge-conductor=hub;;lane_placement.merge-conductor.project-6-os=fly-dedicated	-	box	fly-dedicated	lane_placement.merge-conductor.project-6-os=fly-dedicated
+merge-conductor	project-6-os	lane_placement.merge-conductor=fly-dedicated;;lane_placement.merge-conductor.other-proj=hub	-	box	fly-dedicated	lane_placement.merge-conductor=fly-dedicated
+merge-conductor	project-6-os	lane_placement.merge-conductor=fly-dedicated	merge-conductor,blocked-resolver	box	fly-dedicated	lane_placement.merge-conductor=fly-dedicated
+merge-conductor	project-6-os	lane_placement.merge-conductor=fly-dedicated	 Pipeline-Health , MERGE-conductor 	box	fly-dedicated	lane_placement.merge-conductor=fly-dedicated
+pipeline-health	project-6-os	lane_placement.pipeline-health=fly-dedicated	pipeline-health	box	fly-dedicated	lane_placement.pipeline-health=fly-dedicated
+pipeline-health	project-6-os	lane_placement.pipeline-health=fly-dedicated	-	hub	-	fly-dedicated not allowed for pipeline-health
+merge-conductor-pr	project-6-os	lane_placement.merge-conductor-pr=fly-dedicated	-	hub	-	fly-dedicated not allowed for merge-conductor-pr
+merge-conductor-pr	project-6-os	lane_placement.merge-conductor-pr.project-6-os=fly-dedicated	-	hub	-	fly-dedicated not allowed for merge-conductor-pr
+web-task	project-6-os	lane_placement.web-task=fly-dedicated	-	hub	-	fly-dedicated not allowed for web-task
+fly-pool	project-6-os	lane_placement.fly-pool=fly-dedicated	-	hub	-	fly-dedicated not allowed for fly-pool
+merge-conductor	project-6-os	lane_placement.merge-conductor=fly-dedicatedx	-	hub	-	is not fly
+merge-conductor	project-6-os	lane_placement.merge-conductor=fly_dedicated	-	hub	-	is not fly
+merge-conductor	project-6-os	lane_placement.merge-conductor=dedicated	-	hub	-	is not fly
+merge-conductor	project-6-os	lane_placement.merge-conductor=fly-dedicated:	-	hub	-	is not fly
+merge-conductor	project-6-os	lane_placement.merge-conductor=box:fly-dedicated	-	hub	-	box: only on a project row
+merge-conductor	project-6-os	lane_placement.merge-conductor=fly-dedicated;;lane_placement.merge-conductor.project-6-os=hub	-	hub	-	lane_placement.merge-conductor.project-6-os='hub' is not fly
+merge-conductor	project-6-os	lane_placement.merge-conductor=fly-dedicated;;lane_placement.merge-conductor.project-6-os=fly	-	fly	-	lane_placement.merge-conductor.project-6-os=fly
+merge-conductor	project-6-os	lane_placement.merge-conductor=fly-dedicated;;lane_placement.merge-conductor.project-6-os=box:box-project-6-os-1	-	box	box-project-6-os-1	lane_placement.merge-conductor.project-6-os=box:box-project-6-os-1
+merge-conductor	project-6-os	lane_placement.merge-conductor=fly-dedicated	~	hub	-	fly-dedicated not allowed for merge-conductor
+merge-conductor	project-6-os	lane_placement.default=fly-dedicated	-	hub	-	fly-dedicated only on a lane or project row
+merge-conductor	project-6-os	lane_placement.merge-conductor=fly-dedicated;;lane_placement.merge-conductor.hub_only=reads the hub log	-	hub	-	hub_only: reads the hub log
+blocked-resolver	project-6-os	lane_placement.merge-conductor=fly-dedicated	-	hub	-	no lane_placement row

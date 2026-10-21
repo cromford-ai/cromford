@@ -109,8 +109,33 @@
 #     lane_run.group_fallback_s (the worker's answer, 0 = never) writes one
 #     ALERTS line per UTC day; the worker then lets the default fleet claim
 #     those rows, so a project never stalls because its fleet is gone.
+# BOX GROUPS (BH-7716). A group object with `box` set (`projects: []`; the
+# worker validates box, volume [a-z0-9_]{1,30}, volume_gb 1..500, workers
+# 1..16) is a dedicated host for the lanes a lane_placement row puts on that
+# box (lane_fleet.group.dedicated, box fly-dedicated). Its stats read answers
+# the rows routed to the box plus `placed` (a placement row resolves to the box
+# now). Every rule above holds, with four changes; a group without `box` keeps
+# every rule above unchanged:
+#   - its machines get -e LANE_RUN_BOX=<box> -e LANE_RUN_WORKERS=<workers,
+#     default 1> -e LANE_RUN_WARM_CLONES=1 and NO LANE_RUN_GROUP (a box group
+#     has no projects, so a group claim would refuse it); with `volume` set,
+#     also -v <volume>:/root/repos --region ${FLY_REGION:-iad};
+#   - before its first `machine run` of a tick: `volumes list --app <app>
+#     --json`; no volume of that name (not destroyed) = ONE `volumes create
+#     <volume> --app <app> --size <volume_gb, default 20> --region
+#     ${FLY_REGION:-iad} --yes`. A failed list or create runs no machine this
+#     tick (action=none volume-failed), one log line, one ALERTS line per UTC
+#     day (kind volume). A reused stopped machine keeps its volume, no check;
+#   - floor: the group's warm_floor only while the stats answer says
+#     `placed: true`; else 0 (log `box <box>: no placement row; floor 0`), so
+#     idle_stop_s stops the machine after a rollback to `hub`;
+#   - not placed, no queued run (W none) and no starting/started machine row:
+#     one log line `box <box>: no placement row and no machine; nothing to
+#     do` and the pass ends BEFORE the app check and any Fly call (no apps
+#     create, no secrets alert): the row exists before the app does.
 # The idle reaper covers the group apps through the `lane-run-` prefix in
-# catalog/fly-idle-signals.json.
+# catalog/fly-idle-signals.json; the exact entry lane-run-dedicated is exempt
+# (this pass stops it).
 #
 # Exit 0 on every path but a usage error (2). Seams for tests: LANE_FLEET_NOW
 # (epoch), LANE_FLEET_FLY (the flyctl binary; empty uses fly_bin from
@@ -287,6 +312,7 @@ lf_pass() {
 # single pass that read every row would mark a running group machine destroyed
 # once its group row is gone. Rows from before BH-7434 carry app lane-run.
 LF_GROUP="${1:-}"; GJ=""; LF_APP=lane-run; LF_SQ=""; LF_MQ="?app=lane-run"; LF_RAPP=lane-run; LF_GENV=()
+LF_BOX=""; LF_VOL=""; LF_VOL_OK=""
 W_DIR="$H/state/lane-fleet"
 if [ -n "$LF_GROUP" ]; then
   LF_SQ="&fleet=$LF_GROUP"
@@ -298,6 +324,15 @@ if [ -n "$LF_GROUP" ] && [ "$LF_GROUP" != default ]; then
   LF_MQ="?app=$LF_APP"; LF_RAPP="$LF_APP"; LF_TAG=":$LF_GROUP"; LF_KPFX="group-$LF_GROUP-"
   LF_GENV=(-e "LANE_RUN_GROUP=$LF_GROUP")
   W_DIR="$H/state/lane-fleet/group-$LF_GROUP"
+  # A box group (BH-7716): the machine claims by box, not by group.
+  LF_BOX=$(jq -r '.box // empty' <<<"$GJ")
+  if [ -n "$LF_BOX" ]; then
+    [[ "$LF_BOX" =~ ^[a-z0-9][a-z0-9._-]{0,63}$ ]] || { lf_log "group $LF_GROUP has an invalid box; skipped"; exit 0; }
+    LF_VOL=$(jq -r '.volume // empty' <<<"$GJ")
+    [ -z "$LF_VOL" ] || [[ "$LF_VOL" =~ ^[a-z0-9_]{1,30}$ ]] || { lf_log "group $LF_GROUP has an invalid volume; skipped"; exit 0; }
+    LF_GENV=(-e "LANE_RUN_BOX=$LF_BOX" -e "LANE_RUN_WORKERS=$(lf_gint workers 1 1 16)" -e LANE_RUN_WARM_CLONES=1)
+    [ -z "$LF_VOL" ] || LF_GENV+=(-v "$LF_VOL:/root/repos" --region "${FLY_REGION:-iad}")
+  fi
 fi
 mkdir -p "$W_DIR" 2>/dev/null
 FLOOR=$(lf_int warm_floor 1 0 100)
@@ -358,6 +393,20 @@ if [ -n "$GJ" ]; then
   if [ "$FB" -gt 0 ] && [ "$W" != none ] && [ "$W" -gt "$FB" ]; then
     lf_log "fallback: a queued run waited ${W}s > lane_run.group_fallback_s ${FB}s; lane-run may claim this group's rows"
     lf_alert fallback "group $LF_GROUP: a queued run waited ${W}s, over lane_run.group_fallback_s ${FB}s; the default lane-run fleet claims its rows until $LF_APP takes them again (fleet down, at max_machines, or failing starts)"
+  fi
+  if [ -n "$LF_BOX" ]; then
+    # The warm floor holds only while a placement row points at the box (A4).
+    # Not placed, no queued run and no starting/started row: nothing to stop or
+    # start, so no Fly call at all (the operator row can exist before the app).
+    if [ "$(jq -r '.placed == true' "$STATS")" != true ]; then
+      FLOOR=0
+      _jobs_req GET "/api/lane-fleet/machines$LF_MQ" > "$ROWS" || lf_read_fail machines "http ${JOBS_HTTP:-none}"
+      jq -e '.machines | type == "array"' "$ROWS" >/dev/null 2>&1 || lf_read_fail machines "no machines array"
+      if [ "$W" = none ] && [ "$(jq '[.machines[] | select(.state == "starting" or .state == "started")] | length' "$ROWS")" = 0 ]; then
+        lf_log "box $LF_BOX: no placement row and no machine; nothing to do"; exit 0
+      fi
+      lf_log "box $LF_BOX: no placement row; floor 0"
+    fi
   fi
   lf_app_ready || { lf_log "tick fleet=$LF_GROUP app=$LF_APP not ready; no start, no stop"; exit 0; }
 fi
@@ -525,6 +574,29 @@ LIVE=$(( LIVE - LOST )); [ "$LIVE" -ge 0 ] || LIVE=0
 # The stop candidates: rows Fly reports `started`.
 CANDS=$(jq -c --argjson fs "$FLY_STARTED" --argjson fl "$FAILED_IDS" '[.machines[] | select(.machine_id as $i | ($fs | index($i)) and ($fl | index($i) | not))]' "$ROWS")
 
+# lf_volume_ready — the box group's volume exists, else ONE create (BH-7716).
+# rc 1 = a failed list or create: no machine run this tick, one ALERTS line per
+# UTC day, and the next tick retries.
+lf_volume_ready() {
+  local out n gb rg="${FLY_REGION:-iad}"
+  if ! out=$(timeout 60 "$FLY" volumes list --app "$LF_APP" --json 2>&1); then
+    lf_log "volume $LF_VOL: volumes list failed: $(printf '%s' "$out" | tr '\n' ' ' | cut -c1-200); no machine run"
+    lf_alert volume "flyctl volumes list --app $LF_APP failed ($(printf '%s' "$out" | tr '\n' ' ' | cut -c1-160)); group $LF_GROUP starts no new machine until it answers"
+    return 1
+  fi
+  n=$(jq --arg v "$LF_VOL" '[.[]? | select((.name // .Name) == $v and (((.state // .State // "") | test("destroy")) | not))] | length' <<<"$out" 2>/dev/null)
+  [[ "$n" =~ ^[0-9]+$ ]] || { lf_log "volume $LF_VOL: volumes list is not a JSON array; no machine run"
+    lf_alert volume "flyctl volumes list --app $LF_APP gave no JSON array; group $LF_GROUP starts no new machine until it answers"; return 1; }
+  [ "$n" -gt 0 ] && return 0
+  gb=$(lf_gint volume_gb 20 1 500)
+  if ! out=$(timeout 180 "$FLY" volumes create "$LF_VOL" --app "$LF_APP" --size "$gb" --region "$rg" --yes 2>&1); then
+    lf_log "volume $LF_VOL: volumes create failed: $(printf '%s' "$out" | tr '\n' ' ' | cut -c1-200); no machine run"
+    lf_alert volume "flyctl volumes create $LF_VOL --app $LF_APP --size $gb --region $rg failed ($(printf '%s' "$out" | tr '\n' ' ' | cut -c1-160)); group $LF_GROUP starts no machine; the next tick retries"
+    return 1
+  fi
+  lf_log "volume $LF_VOL: created ${gb} GB in $rg"
+}
+
 # ---- decide -----------------------------------------------------------------
 read -r DEC N WHY <<<"$(lf_decide "$W" "$LIVE" "$INFLIGHT" "$FLOOR" "$UPWAIT" "$MAX" "$HOLD" "$WORK" "$TARGET" "$MAXSTARTS")"
 [ "$DEC" = start ] || { WHY="$N${WHY:+ $WHY}"; N=0; }
@@ -560,6 +632,10 @@ if [ "$DEC" = start ]; then
         FAILWHY="reuse-failed $REUSE"; break
       fi
     else
+      if [ -n "$LF_VOL" ] && [ -z "$LF_VOL_OK" ]; then
+        lf_volume_ready || { FAILWHY="volume-failed"; break; }
+        LF_VOL_OK=1
+      fi
       out=$(timeout 180 "$FLY" machine run "$IMAGE" --app "$LF_APP" --detach --restart no \
               --vm-size "$SIZE" --vm-memory "$MEM" -e LANE_RUN=1 ${LF_GENV[@]+"${LF_GENV[@]}"} 2>&1)
       # The id comes off the "Machine ID:" line ONLY (fly-pool.sh: the first bare

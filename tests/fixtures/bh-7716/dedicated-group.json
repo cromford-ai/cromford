@@ -1,0 +1,1 @@
+{"app":"lane-run-dedicated","vm_size":"performance-8x","vm_memory":16384,"max_machines":1,"warm_floor":1,"box":"fly-dedicated","volume":"repos","workers":6}

@@ -1,0 +1,8 @@
+{
+  "env": "FLY_REGION",
+  "type": "string",
+  "default": "iad",
+  "zero_means": null,
+  "note": "BH-7716: the Fly region bin/lane-fleet.sh creates a dedicated group's volume and machine in (`--region ${FLY_REGION:-iad}`). Read from env/fly.env on the hub. A placement, so only env moves it. NOT settable from the control plane.",
+  "settable": false
+}
