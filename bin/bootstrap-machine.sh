@@ -363,6 +363,12 @@ rm -f "$CRONTMP" "$CRONBASE"
 crontab -l
 
 echo "== smoke test =="
+# >>> smoke board (BH-7930) — every failure in this block prints one line
+# before the bootstrap ends: the gh read has its own FATAL, and the ERR trap
+# names any other failed step. The trap is cleared at the end of the block, so
+# the smoke model block below keeps its own FATAL lines.
+# tests/bootstrap-smoke-no-api-base.bh-7930-test.sh runs this block as shipped.
+trap 'echo "FATAL: smoke test step failed (line $LINENO, rc $?) — see the line above"' ERR
 set -a; . "$HENV/global.env"; . "$HENV/$PROJECT.env"; set +a
 # The env files carry the PAT; gh-token.sh answers the App token when this box
 # mints them and that same PAT when it does not. Exported explicitly so the gh
@@ -370,7 +376,10 @@ set -a; . "$HENV/global.env"; . "$HENV/$PROJECT.env"; set +a
 # empty answer leaves the env files' own GH_TOKEN standing, same as the identity
 # block above.
 _t=$("$HERE/gh-token.sh" "$REPO_SLUG" 2>/dev/null || true); [ -n "$_t" ] && export GH_TOKEN="$_t"; unset _t
-BASE_VAR=$(grep -oE "^[A-Z_]+_(API|APP)_BASE" "$HENV/$PROJECT.env" | head -1)
+# The `|| BASE_VAR=""` is load-bearing: an env with no *_API_BASE line makes
+# grep rc 1, pipefail carries it, and a bare assignment would end the bootstrap
+# under `set -e` with no message. No base line means the GitHub-Issues branch.
+BASE_VAR=$(grep -oE "^[A-Z_]+_(API|APP)_BASE" "$HENV/$PROJECT.env" | head -1) || BASE_VAR=""
 if [ -n "$BASE_VAR" ] && [ -n "${!BASE_VAR:-}" ] && [ "${!BASE_VAR}" != "-" ]; then
   echo "board reachable: $(curl -s -o /dev/null -w '%{http_code}' -m 10 "${!BASE_VAR}")"
 else
@@ -379,8 +388,15 @@ else
     # shellcheck source=bin/lib/gh-rest.sh
     [ -r "$_P" ] && { . "$_P"; break; }
   done
-  gh_rest GET "repos/$REPO_SLUG/issues" -F per_page=1 >/dev/null && echo "gh issue access OK (GH_TOKEN from gh-token.sh)"
+  if gh_rest GET "repos/$REPO_SLUG/issues" -F per_page=1 >/dev/null; then
+    echo "gh issue access OK (GH_TOKEN from gh-token.sh)"
+  else
+    echo "FATAL: smoke: gh issue read on $REPO_SLUG failed — check GH_TOKEN (gh-token.sh) and the repo slug"
+    exit 1
+  fi
 fi
+trap - ERR
+# <<< smoke board
 # >>> smoke model (BH-1510.4) — the model comes from the bootstrap.smoke row in
 # model_routes (bin/lib/model-route.sh), never a literal. No route in the DB and
 # none cached is FATAL: the resolver has already written its ALERTS line, and a

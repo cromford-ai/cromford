@@ -533,25 +533,46 @@ fi
 [ -f "/root/harness/prompts/$PROJECT.md" ] \
   || { echo "FATAL: /root/harness/prompts/$PROJECT.md not deployed — check rsync + harness-sync log"; exit 1; }
 ENVF="$E/$PROJECT.env"
-if [ ! -f "$ENVF" ]; then
+# >>> env stub (BH-7930)
+# A file that already exists (written by hand before the load, with tracker
+# credentials) gets the two keys bootstrap reads appended when they are missing:
+# a base var (same regex as bootstrap's smoke test) and BASE_BRANCH. The append
+# never rewrites the file or changes its mode. A file that has both is not
+# touched at all. tests/load-project-env-exists.bh-7930-test.sh runs this block.
+_k1=""; _k2=""
+if [ -f "$ENVF" ]; then
+  grep -qE "^[A-Z_]+_(API|APP)_BASE=" "$ENVF" || _k1="${PREFIX}_API_BASE=$PROD"
+  grep -q '^BASE_BRANCH=' "$ENVF" || _k2="BASE_BRANCH=$BASE"
+fi
+ADD="$_k1${_k1:+${_k2:+ }}$_k2"
+if [ ! -f "$ENVF" ] || [ -n "$ADD" ]; then
   # Literal path, [ -x ]-guarded: a box that has not synced bin/ yet simply has
   # no harden-state.sh and the wrap is a no-op (a false [ -x ] on the left of &&
   # does not trip this heredoc's `set -e`). --release on a file that does not
-  # exist is rc 0 and quiet; the --rearm after the write is what arms the fresh
-  # stub immediately, so the box is never left with one unhardened env file.
+  # exist is rc 0 and quiet; the --rearm after the write is what arms the file
+  # again immediately, so the box is never left with one unhardened env file.
   [ -x /root/harness/bin/harden-state.sh ] && /root/harness/bin/harden-state.sh --release "$ENVF"
-  {
-    echo "# $PROJECT project env — board is GitHub Issues (gh auth), no internal API token"
-    echo "${PREFIX}_API_BASE=$PROD"
-    echo "BASE_BRANCH=$BASE"
-    echo "# optional, add when available:"
-    echo "#DEPLOY_HOOK_URL="
-    echo "#VERCEL_AUTOMATION_BYPASS_SECRET="
-  } > "$ENVF"
-  chmod 600 "$ENVF"
+  if [ -n "$ADD" ]; then
+    # A last line with no newline must not glue onto the first appended key.
+    if [ -s "$ENVF" ] && [ -n "$(tail -c1 "$ENVF")" ]; then echo >> "$ENVF"; fi
+    for _kv in "$_k1" "$_k2"; do [ -z "$_kv" ] || echo "$_kv" >> "$ENVF"; done
+    _msg="env: added $ADD"
+  else
+    {
+      echo "# $PROJECT project env — board is GitHub Issues (gh auth), no internal API token"
+      echo "${PREFIX}_API_BASE=$PROD"
+      echo "BASE_BRANCH=$BASE"
+      echo "# optional, add when available:"
+      echo "#DEPLOY_HOOK_URL="
+      echo "#VERCEL_AUTOMATION_BYPASS_SECRET="
+    } > "$ENVF"
+    chmod 600 "$ENVF"
+    _msg="env stub written: $ENVF"
+  fi
   [ -x /root/harness/bin/harden-state.sh ] && /root/harness/bin/harden-state.sh --rearm "$ENVF"
-  echo "env stub written: $ENVF"
+  echo "$_msg"
 fi
+# <<< env stub
 /root/harness/bin/bootstrap-machine.sh "$PROJECT"
 REMOTE
 # The remote block's rc is CAPTURED rather than left to `set -e`. It propagates
