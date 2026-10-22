@@ -1533,6 +1533,7 @@ pool_terminal_check() {
   if [ -n "$cur" ] && [ "$cur" != "$old" ]; then
     say "terminal $key: remote head changed ($old -> $cur) — re-arming one attempt"
     rm -f "$tp" "${tp%.terminal}.terminal-noted" "${tp%.terminal}.terminal-alerted" "${tp%.terminal}.held"
+    command -v psr_marker_clear >/dev/null 2>&1 && { psr_marker_clear "$P" "$key" terminal-noted terminal-alerted || true; }
     command -v psr_hold_clear >/dev/null 2>&1 && { psr_hold_clear "$P" ticket "$key" || true; }
     command -v psr_terminal_patch >/dev/null 2>&1 && { psr_terminal_patch "$P" "$key" clear "remote head changed ($old -> $cur)" || true; }
     pool_terminal_rearm_row "$key" "$ticket"
@@ -1545,6 +1546,7 @@ pool_terminal_check() {
     if [ "$rearm_at" -gt "$created_at" ] 2>/dev/null; then
       say "terminal $key: an explicit human re-arm ($rearm_ts) re-arms one attempt"
       rm -f "$tp" "${tp%.terminal}.terminal-noted" "${tp%.terminal}.terminal-alerted" "${tp%.terminal}.held"
+      command -v psr_marker_clear >/dev/null 2>&1 && { psr_marker_clear "$P" "$key" terminal-noted terminal-alerted || true; }
       command -v psr_hold_clear >/dev/null 2>&1 && { psr_hold_clear "$P" ticket "$key" || true; }
       command -v psr_terminal_patch >/dev/null 2>&1 && { psr_terminal_patch "$P" "$key" clear "human re-arm ($rearm_ts)" || true; }
       pool_terminal_rearm_row "$key" "$ticket"
@@ -1716,11 +1718,13 @@ pool_terminal_noted() {
       && [ "$st" != failed ] \
       && QROW failed "$key" "terminal: push to ${br:-?} rejected at ${sha:-?}, head unchanged — not respawned until the branch moves or a RETRY comment (state/pool/$P/$key.terminal)"
   fi
-  if [ ! -f "$base.terminal-alerted" ]; then
+  # BH-7431: a pool_markers row counts as the marker too (a failed-over hub).
+  if ! { [ -f "$base.terminal-alerted" ] || { command -v psr_marker_has >/dev/null 2>&1 && psr_marker_has "$key" terminal-alerted "$base.terminal-alerted"; }; }; then
     HARNESS="$HARNESS" "$HARNESS/bin/alert-line.sh" "[pool/$P] $key: queued but never spawned — push-rejected terminal on ${br:-?} at ${sha:-?} since ${created:-?}; the branch has no open PR and has not moved. Re-arm: push to the branch, or comment RETRY on the ticket (a deleted branch reads as unchanged). Evidence: state/pool/$P/$key.terminal"
     : > "$base.terminal-alerted"
+    command -v psr_marker_put >/dev/null 2>&1 && { psr_marker_put "$P" "$key" terminal-alerted "" || true; }
   fi
-  [ -f "$base.terminal-noted" ] && return 0
+  { [ -f "$base.terminal-noted" ] || { command -v psr_marker_has >/dev/null 2>&1 && psr_marker_has "$key" terminal-noted "$base.terminal-noted"; }; } && return 0
   [ -n "$POOL_SLUG" ] || return 0
   case "$ticket" in ''|*[!0-9]*) return 0 ;; esac
   body=$(mktemp "${TMPDIR:-/tmp}/pool-terminal-note.XXXXXX") || return 0
@@ -1735,6 +1739,7 @@ pool_terminal_noted() {
   } > "$body"
   if GH_TOKEN="${POOL_SLUG_TOK:-${GH_TOKEN:-}}" gh api "repos/$POOL_SLUG/issues/$ticket/comments" -F "body=@$body" >/dev/null 2>&1; then
     : > "$base.terminal-noted"
+    command -v psr_marker_put >/dev/null 2>&1 && { psr_marker_put "$P" "$key" terminal-noted "" || true; }
   fi
   rm -f "$body"
   return 0
@@ -1827,16 +1832,17 @@ pool_after_loop_alert() {
   [ "$lim" -gt 0 ] && [ "$n" -ge "$lim" ] || return 0
   mkdir -p "$PDIR" 2>/dev/null
   mk="$PDIR/$key.after-loop"
-  [ "$(cat "$mk" 2>/dev/null)" = "$other" ] && return 0
+  [ "$( { command -v psr_marker_read >/dev/null 2>&1 && psr_marker_read "$key" after-loop "$mk"; } || cat "$mk" 2>/dev/null)" = "$other" ] && return 0
   printf '%s\n' "$other" > "$mk" 2>/dev/null
+  command -v psr_marker_put >/dev/null 2>&1 && { psr_marker_put "$P" "$key" after-loop "$other" || true; }
   HARNESS="$HARNESS" "$HARNESS/bin/alert-line.sh" "[pool/$P] $key: AFTER LOOP — stood down $n times waiting for $other ($why). The row stays queued and is re-offered the tick $other has no open PR and nothing in flight; this line is said once per blocker (DEFER_AFTER_LOOP_ALERT=$lim). If $other is stuck, that is the thing to move."
 }
 # pool_after_churned <key> <blocker> — rc 0 when the gate has released <key>
 # from <blocker> three or more times in the last 24 h (<key>.after-released).
 pool_after_churned() {
-  local ro rn rt
-  [ -r "$PDIR/$1.after-released" ] || return 1
-  IFS=$'\t' read -r ro rn rt < "$PDIR/$1.after-released"
+  local ro rn rt v
+  v=$( { command -v psr_marker_read >/dev/null 2>&1 && psr_marker_read "$1" after-released "$PDIR/$1.after-released"; } || cat "$PDIR/$1.after-released" 2>/dev/null) || return 1
+  IFS=$'\t' read -r ro rn rt <<<"$v"
   [ "$ro" = "$2" ] || return 1
   case "$rn" in ''|*[!0-9]*) return 1 ;; esac
   case "$rt" in ''|*[!0-9]*) return 1 ;; esac
@@ -1900,17 +1906,18 @@ pool_after_cycle() {
 # machine would stand down again, and the reset would keep it under
 # JOBS_QUEUE_DEFER_MAX and DEFER_AFTER_LOOP_ALERT for ever (review of 99682a0c6).
 pool_after_gate() {
-  local JF="$1" KEY="$2" TICKET="$3" other rc att now sf so st age max why="" cyc rf ro rn rt keep d
+  local JF="$1" KEY="$2" TICKET="$3" other rc att now sf so st age max why="" cyc rf ro rn rt keep d v
   other=$(jq -r '.after // empty' "$JF" 2>/dev/null)
   [ -n "$other" ] || return 0
   now=$(date -u +%s)
   # The wait's clock: <key>.after-since holds "<blocker>\t<epoch>", started on
   # the first held tick for that blocker.
   sf="$PDIR/$KEY.after-since"; so=""; st=""
-  [ -r "$sf" ] && IFS=$'\t' read -r so st < "$sf"
+  v=$( { command -v psr_marker_read >/dev/null 2>&1 && psr_marker_read "$KEY" after-since "$sf"; } || cat "$sf" 2>/dev/null) && IFS=$'\t' read -r so st <<<"$v"
   case "$st" in ''|*[!0-9]*) st="" ;; esac
   if [ "$so" != "$other" ] || [ -z "$st" ]; then
     mkdir -p "$PDIR" 2>/dev/null; printf '%s\t%s\n' "$other" "$now" > "$sf"; st="$now"
+    command -v psr_marker_put >/dev/null 2>&1 && { psr_marker_put "$P" "$KEY" after-since "$other"$'\t'"$now" || true; }
   fi
   age=$(( now - st ))
   max="${POOL_AFTER_MAX_MIN:-360}"; case "$max" in ''|*[!0-9]*) max=360 ;; esac
@@ -1935,7 +1942,7 @@ pool_after_gate() {
   fi
   # The release count for this blocker in the last 24 h.
   rf="$PDIR/$KEY.after-released"; ro=""; rn=0; rt=0
-  [ -r "$rf" ] && IFS=$'\t' read -r ro rn rt < "$rf"
+  v=$( { command -v psr_marker_read >/dev/null 2>&1 && psr_marker_read "$KEY" after-released "$rf"; } || cat "$rf" 2>/dev/null) && IFS=$'\t' read -r ro rn rt <<<"$v"
   case "$rn" in ''|*[!0-9]*) rn=0 ;; esac; case "$rt" in ''|*[!0-9]*) rt=0 ;; esac
   # A new blocker, or a 24 h window that ran out, starts the count again, and
   # only then may the AFTER LOOP page speak again for this row. Within the
@@ -1947,6 +1954,7 @@ pool_after_gate() {
     rn=0; rt="$now"
   elif [ $(( now - rt )) -ge 86400 ]; then
     rn=0; rt="$now"; rm -f "$PDIR/$KEY.after-loop" 2>/dev/null
+    command -v psr_marker_clear >/dev/null 2>&1 && { psr_marker_clear "$P" "$KEY" after-loop || true; }
   fi
   d=$(jq -r '.deferrals // 0' "$JF" 2>/dev/null); case "$d" in ''|*[!0-9]*) d=0 ;; esac
   keep=0; [ "$rn" -ge 2 ] && keep=1
@@ -1961,7 +1969,9 @@ pool_after_gate() {
   fi
   jq -c --argjson d "$d" 'del(.after) | .deferrals = $d' "$JF" > "$JF.tmp" 2>/dev/null && mv -f "$JF.tmp" "$JF"
   rm -f "$JF.tmp" "$sf" 2>/dev/null
+  command -v psr_marker_clear >/dev/null 2>&1 && { psr_marker_clear "$P" "$KEY" after-since || true; }
   printf '%s\t%s\t%s\n' "$other" "$((rn + 1))" "$rt" > "$rf" 2>/dev/null
+  command -v psr_marker_put >/dev/null 2>&1 && { psr_marker_put "$P" "$KEY" after-released "$other"$'\t'"$((rn + 1))"$'\t'"$rt" || true; }
   if [ "$keep" = 1 ]; then
     say "RELEASED $KEY: $why — re-offered this tick with a fresh row; release $((rn + 1)) for $other in 24 h, so deferrals stay at $d"
   else
@@ -2239,9 +2249,10 @@ pool_spawn_decision() {
     # name `.defer-to-human` is LEGACY (BH-4859): hub boxes hold live ones, and
     # renaming it would re-page every key mid-episode.
     local sentinel; sentinel="$(pool_terminal_path "$KEY")"; sentinel="${sentinel%.terminal}.defer-to-human"
-    if [ ! -f "$sentinel" ]; then
+    if ! { [ -f "$sentinel" ] || { command -v psr_marker_has >/dev/null 2>&1 && psr_marker_has "$KEY" cap-wait "$sentinel"; }; }; then
       HARNESS="$HARNESS" "$HARNESS/bin/alert-line.sh" "[pool/$P] $KEY: POOL_SPAWN_CAP_WAIT — spawn cap of ${POOL_SPAWN_CAP:-2} in ${POOL_SPAWN_CAP_WINDOW:-86400}s reached; row stays queued and spawns again $_psd_when"
       : > "$sentinel"
+      command -v psr_marker_put >/dev/null 2>&1 && { psr_marker_put "$P" "$KEY" cap-wait "" || true; }
     fi
     return 1
   fi
@@ -2251,6 +2262,7 @@ pool_spawn_decision() {
   # box, which is a page that stops arriving rather than a page sent once.
   _psd_sentinel="$(pool_terminal_path "$KEY")"
   rm -f "${_psd_sentinel%.terminal}.defer-to-human"
+  command -v psr_marker_clear >/dev/null 2>&1 && { psr_marker_clear "$P" "$KEY" cap-wait || true; }
   # 5. Who added the label (BH-6957): the builder's own trigger-actor gate,
   # asked before a machine is spent. After the cap on purpose: a capped or held
   # row costs no events read. bin/lib/pool-actor-gate.sh owns the answer.

@@ -1,0 +1,6 @@
+# POOL MARKERS (BH-7431, BH-6896 S4): the pool's once-markers and wait clocks
+# (terminal-noted, terminal-alerted, after-*, cap-wait) as pool_markers rows.
+# PUT upserts one marker (if_absent never overwrites); PATCH with clear:true
+# deletes the named markers of one key. The read is GET /api/pool-state.
+PUT /api/pool-state/markers
+PATCH /api/pool-state/markers

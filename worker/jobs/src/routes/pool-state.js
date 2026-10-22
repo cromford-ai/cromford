@@ -14,7 +14,7 @@ import { json } from "../lib/http.js";
 import { strictInt, str, ensureTable, ensureColumns, laneName } from "../lib/core.js";
 
 const TABLES = ["pool_spawns", "pool_terminals", "pool_holds"];
-const LIMITS = { spawns: 2000, terminals: 500, holds: 500 };
+const LIMITS = { spawns: 2000, terminals: 500, holds: 500, markers: 2000 };
 const ROWS_MAX = 500;
 const TEXT_MAX = 500;
 const KINDS = new Set(["spawn", "ticket"]);
@@ -24,7 +24,9 @@ const BOX_RE = /^[A-Za-z0-9._-]{1,64}(#[0-9]{1,6})?$/;
 // The same shape check queue.js applies to a claim's machine.
 const MACHINE_RE = /^[A-Za-z0-9._:-]{1,64}$/;
 
-const ensureAll = async (env) => { for (const tbl of TABLES) await ensureTable(env, tbl); };
+// pool_markers (BH-7431) is written by routes/pool-markers.js and read here, so
+// the one GET a tick makes still carries every pool_* list.
+const ensureAll = async (env) => { for (const tbl of [...TABLES, "pool_markers"]) await ensureTable(env, tbl); };
 const boxOf = (v) => (typeof v === "string" && BOX_RE.test(v) ? v : "");
 const epochOf = (v) => { const n = strictInt(v); return n !== null && n >= 0 ? n : null; };
 const isTrue = (v) => v === true || v === 1 || v === "1" || v === "true";
@@ -40,7 +42,7 @@ async function bounded(env, sql, binds, limit) {
 
 export const routes = [
   // The whole snapshot for one project: one read per pool tick. Spawns are the
-  // newest first from `since` on; terminals and holds are every row.
+  // newest first from `since` on; terminals, holds and markers are every row.
   [
     "GET", "/api/pool-state",
     async ({ env, url, t }) => {
@@ -59,6 +61,10 @@ export const routes = [
       const h = await bounded(env,
         "SELECT kind, ticket_key, ticket_id, until_at, why, first_seen, last_seen FROM pool_holds WHERE project = ?1 ORDER BY updated_at DESC, kind, ticket_key",
         [project], LIMITS.holds);
+      // BH-7431: the once-markers and wait clocks, the newest first.
+      const mk = await bounded(env,
+        "SELECT ticket_key, marker, value FROM pool_markers WHERE project = ?1 ORDER BY updated_at DESC, ticket_key, marker",
+        [project], LIMITS.markers);
       return json(200, {
         project,
         spawns: s.rows.map((r) => ({ key: r.ticket_key, ts: Number(r.ts), box: r.box, machine: r.machine ?? null })),
@@ -71,8 +77,9 @@ export const routes = [
           until_at: r.until_at === null || r.until_at === undefined ? null : Number(r.until_at),
           why: r.why ?? null, first_seen: r.first_seen ?? null, last_seen: r.last_seen ?? null,
         })),
+        markers: mk.rows.map((r) => ({ key: r.ticket_key, marker: r.marker, value: r.value ?? "" })),
         as_of: t,
-        truncated: { spawns: s.truncated, terminals: tm.truncated, holds: h.truncated },
+        truncated: { spawns: s.truncated, terminals: tm.truncated, holds: h.truncated, markers: mk.truncated },
       });
     },
   ],

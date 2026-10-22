@@ -1,0 +1,36 @@
+# tests/fixtures/migration-number/bh-7325-project-6-2026-10-17.tsv — BH-7325:
+# the five migration-number collisions on example-org/project-6 (project-6-os,
+# migrations_glob prisma/sql/*.sql) on 2026-10-17, replayed by
+# tests/migration-number.bh-7325-test.sh in this order against ONE reservation
+# store.
+#
+# SOURCE. The numbers were derived by the BH-7325 planner from a read-only
+# clone, with these commands:
+#   git clone --filter=blob:none https://github.com/example-org/project-6
+#   git fetch origin refs/pull/{1108,1122,1127,1140,1145,1149,1150,1173,1178}/head
+#   main at T:        git rev-list -1 --before=<T> origin/HEAD
+#   a PR's numbers:   its added prisma/sql/NNNN_*.sql names at its last commit before T
+# The build box could not re-run them (egress to github.com denied on
+# 2026-10-17 12:48Z), so the values are the plan's table, copied unchanged.
+#
+# NAMES. Only the NUMBERS are data. A name that is not in the ticket or the plan
+# is a placeholder `NNNN_replay_<holder>`; 0158_agent_tool_call is the real name.
+# A main column holds the highest numbers on main at T; lower numbers cannot
+# change 1 + max, so they are left out.
+#
+# COLUMNS (tab-separated):
+#   case  t_utc  pr  key  picked  main  open  taken_by  expected
+#   key       TK-<pr>, a replay ticket key (the real keys are not in the plan)
+#   picked    the NNNN(s) the build used, comma list
+#   main      NNNN_name list on main at T
+#   open      #n:NNNN_name list: the numbered files other open PRs added at T
+#   taken_by  holder:NNNN list that made `picked` a collision (main or #n);
+#             a holder that was not open at T (#1150 in C2 opened 39 s later)
+#             is NOT in `open`: only a reservation could have kept them apart
+#   expected  the number the allocator gives with the reservations of the
+#             earlier rows in place
+C1	08:44:34	#1140	TK-1140	0147	0145_replay_main,0146_replay_main	#1108:0147_replay_pr1108,#1122:0148_replay_pr1122	#1108:0147	0149
+C2	10:02:17	#1149	TK-1149	0158	0156_replay_main,0157_replay_main	#1145:0163_replay_pr1145	#1150:0158	0164
+C3	10:02:56	#1150	TK-1150	0158,0159	0156_replay_main,0157_replay_main	#1145:0163_replay_pr1145,#1122:0159_replay_pr1122,#1149:0158_replay_pr1149	#1149:0158,#1122:0159	0165
+C4	10:52:33	#1173	TK-1173	0158	0158_agent_tool_call,0163_replay_main	#1150:0166_replay_pr1150	main:0158	0167
+C5	11:11:07	#1178	TK-1178	0164	0158_agent_tool_call,0163_replay_main	#1149:0164_replay_pr1149,#1150:0166_replay_pr1150	#1149:0164	0168

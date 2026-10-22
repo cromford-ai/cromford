@@ -1,0 +1,10 @@
+# catalog/pr-self-check.d/bh-7325-migration-number.tsv — BH-7325: a PR must not
+# add a numbered migration (<dir>/NNNN_<name>.sql) whose NNNN is already on the
+# base under another file name or in a file another open PR adds and that PR
+# keeps (it holds the reservation, or neither holds it and it is older; else a
+# NOTE, so only one of the two renumbers). Only projects
+# with a migrations_glob.<project> settings row are checked; the PR's project is
+# the fleet.conf row whose column 2 is the repo's origin slug ($PSC_PROJECT
+# wins). bin/lib/migration-number.sh (mn_psc_check) has the rule. param and
+# match are unused (-). Set the mode to note or off to turn the refusal off.
+migration-number	refuse	-	a new migration whose NNNN is on main or in another open PR (BH-7325)	-

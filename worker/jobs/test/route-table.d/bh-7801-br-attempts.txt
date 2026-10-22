@@ -1,0 +1,4 @@
+# BR ATTEMPTS (BH-7801 slice C1 of #4157): the blocked-resolver record's
+# attempts as ledger rows (kind br_attempt). GET reads one record's rows,
+# oldest first, for a hub whose record file is gone. Bearer-gated.
+GET /api/br-attempts

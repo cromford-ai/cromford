@@ -94,6 +94,16 @@
 #                   names the owner PR: one gh_rest read per key root when the
 #                   caller has gh_rest, else the body's `Stacked on #N`, else the
 #                   branch. No own key and a keyed commit: one note.
+#   migration-number (BH-7325) a numbered migration the diff adds
+#                   (<dir>/NNNN_<name>.sql, <dir> from migrations_glob.<project>)
+#                   whose NNNN the base holds under another name, or another
+#                   open PR adds and keeps (the reservation holder, else the
+#                   older PR; the other side gets a NOTE):
+#                   `migration number NNNN taken by main (<path>)`
+#                   or `taken by #X (<path>)`, with the next free number. The PR
+#                   itself (the local branch, the head sha) is excluded. A
+#                   project with no migrations_glob row is silent; open PRs that
+#                   could not be read are one note. bin/lib/migration-number.sh.
 #   plan-validate   (BH-7072) each static VALIDATE check of the plan the PR
 #                   changes passes at the head and in the body, and the body
 #                   has no "not met" line and no missed Target metric, unless an
@@ -489,6 +499,9 @@ psc_plan_missing() {
 # rule is a NOTE, never a refusal.
 # shellcheck source=bin/lib/pr-self-check-gating.sh
 . "$(dirname "${BASH_SOURCE[0]}")/pr-self-check-gating.sh" 2>/dev/null || :
+# mn_psc_check, the migration-number rule (BH-7325). Missing = a NOTE.
+# shellcheck source=bin/lib/migration-number.sh
+. "$(dirname "${BASH_SOURCE[0]}")/migration-number.sh" 2>/dev/null || :
 # psc_validate_check, the plan-validate rule (BH-7072). Missing = a NOTE.
 # shellcheck source=bin/lib/pr-self-check-validate.sh
 . "$(dirname "${BASH_SOURCE[0]}")/pr-self-check-validate.sh" 2>/dev/null || :
@@ -643,6 +656,14 @@ psc_check() {
         done < "$lf"
         rm -f "$lf"
         if [ "$n" -gt 10 ]; then _psc_say "$mode" "$id" "and $((n - 10)) more"; fi ;;
+      migration-number)
+        # BH-7325: a numbered migration whose NNNN main or another open PR
+        # holds. bin/lib/migration-number.sh has the rule.
+        if command -v mn_psc_check >/dev/null 2>&1; then
+          mn_psc_check "$repo" "$base" "$head" "$mode" "$id" || rc=1
+        else
+          echo "NOTE $id: bin/lib/migration-number.sh not loaded, so migration numbers are not checked"
+        fi ;;
       body-live-probes-gating)
         # BH-7074: a gating diff (a lane_placement.* / *.require_* settings
         # seed in worker/jobs/schema.d/, a new && precondition on a cron lane,

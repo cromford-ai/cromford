@@ -34,6 +34,8 @@ cp "$DIR/prompts/lead-review.md" "$H/prompts/"
 cp "$DIR/bin/lead-review.sh" "$H/bin/"
 # TEST-CHANGE (BH-6293): bin/lead-review.sh loads its modules from bin/lib/lead-review/.
 scratch_install_closure bin/lib/lead-review/load.sh "$H" >/dev/null || { echo "closure install of bin/lib/lead-review failed"; exit 1; }
+# TEST-CHANGE (BH-7455): bin/lead-review.sh loads its optional libs from bin/lib/lead-review/libs.d/.
+cp -R "$DIR/bin/lib/lead-review/libs.d" "$H/bin/lib/lead-review/"
 echo box-demo > "$H/state/box-name"
 cat > "$H/fleet.conf" <<'EOF'
 # project repo prod board offset box

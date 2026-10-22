@@ -32,3 +32,8 @@ state/overlap-after/$p/*
 # lane_snapshot.max_bytes. With no plan.md on the machine push_preplan reads the
 # pre-plan from the jobs worker (preplan_fetch), the path it takes on any box
 # that never ran the plan.
+# BH-7431 (BH-6896 S4): the pre-plan record of the test-home step, read through
+# th_record_path (bin/fly-pool.sh:2451, bin/lib/test-home-lib.sh:52)
+state/preplan-files/$p-*
+# The dispatch-now markers bin/cmd-dispatch-issue.sh writes (bin/fly-pool.sh:179)
+state/dispatch-now/$p/*

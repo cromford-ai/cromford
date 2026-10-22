@@ -35,6 +35,7 @@
 #   SG_OUT SG_RC SG_SPLIT SG_SRC SG_SWITCH_SRC SG_TIER SG_TITLE SG_TLOG SG_UNDECL_WHY SG_VERDICT SG_WHY TH_N TH_REC
 #   TH_RN VMAP_ORIENT
 #   PC_BASE PC_HITS PC_N PC_NH PC_RC PC_RESOLVED PC_SLUG PC_SUMMARY PC_UNRES PC_VERDICT STN_NOTE UI_PLAN_NOTE
+#   MN_NOTE
 # shellcheck shell=bash
 
 rb_plan() {
@@ -714,6 +715,22 @@ command -v pc_plan_note >/dev/null 2>&1 && UI_PLAN_NOTE="${UI_PLAN_NOTE:-}$(pc_p
 SWN_NOTE=""; command -v sw_plan_note >/dev/null 2>&1 && SWN_NOTE=$(sw_plan_note "$BUILD")
 [ -n "$SWN_NOTE" ] && UI_PLAN_NOTE="${UI_PLAN_NOTE:-}$SWN_NOTE "
 # <<< stack section note (BH-6389)
+# >>> migration number note (BH-7325)
+# A project with a migrations_glob.<project> row and numbered files on main
+# (<dir>/NNNN_<name>.sql) gets its next number RESERVED here, before the
+# pre-plan adoption and the CC plan call, so the row exists before any file is
+# written. bin/lib/migration-number.sh decides; an outage leaves the number
+# unreserved and says so in the note. Kill switch: the settings row
+# migration_number.reserve = 0 (MIGRATION_NUMBER_RESERVE=0 on a box overrides).
+MN_NOTE=""
+# shellcheck source=bin/lib/migration-number.sh
+[ -r "$HARNESS/bin/lib/migration-number.sh" ] && . "$HARNESS/bin/lib/migration-number.sh" 2>/dev/null
+if command -v mn_plan_note >/dev/null 2>&1; then
+  MN_NOTE=$(mn_plan_note "$PROJECT" "$KEY" . "origin/${BASE:-main}" "${BRANCH:-}" 2>>"$BUILD/pipeline.log")
+  [ -n "$MN_NOTE" ] && UI_PLAN_NOTE="${UI_PLAN_NOTE:-}$MN_NOTE "
+  [ -s "$BUILD/migration-number.txt" ] && echo "$(STAMP) [$PROJECT/$KEY] migration-number: $(head -1 "$BUILD/migration-number.txt")" >> "$BUILD/pipeline.log"
+fi
+# <<< migration number note (BH-7325)
 # >>> spec trace note (BH-6485)
 # A ticket body with `Spec:` or `Reference:` lines tells the planner the
 # `## Spec trace` rule (prompts/plan-contract.md §17) through UI_PLAN_NOTE, so

@@ -12,6 +12,9 @@
 # also moved in the 9 the driver alone held: br_rows_count, br_cap_rows,
 # br_row_closed, br_set_flag, br_push_field, br_has_field_value, br_shape,
 # br_fix_cap and br_rebuild_cap.
+# BH-7801: br_save also mirrors rung_head, rung_pr and ladder_reset, and puts one
+# br_attempt row per appended attempt (bin/blocked-resolver.d/bh-7801-br-attempts.sh);
+# br_load restores them when the file is gone.
 # ---------------------------------------------------------------------------
 # State. One json per (project, key). rkey is the FILE name, so it is sanitized:
 # a conductor key is `example-org/project-5#510` and both of those characters are
@@ -30,7 +33,7 @@ br_cap_key() {
 }
 br_file() { echo "$ST/$1/$2.json"; }
 br_load() { # br_load <project> <rkey> — prints the json (a fresh one if absent)
-  local f row=""; f=$(br_file "$1" "$2")
+  local f row="" atts=""; f=$(br_file "$1" "$2")
   if [ -s "$f" ]; then cat "$f"; return 0; fi
   # THE FILE IS GONE: ASK THE ROW (BH-2317). br_save mirrors the counters and
   # the outcome into ledgers(kind=br_record), so a wiped or rebuilt hub gets
@@ -44,7 +47,12 @@ br_load() { # br_load <project> <rkey> — prints the json (a fresh one if absen
     row=$(job_ledger_row br_record "$1/$2" 2>/dev/null </dev/null) \
       || { row=""; [ -n "${BR_ROW_MISS:-}" ] && printf '%s\n' "$1/$2" >> "$BR_ROW_MISS" 2>/dev/null; }
   fi
-  printf '%s' "$row" | jq -c --arg p "$1" --arg k "$2" --arg t "$(STAMP)" -n '
+  # The attempts come back only when the record row did (BH-7801): a miss or an
+  # outage above makes no second read, so a never-written key stays at one.
+  if [ -n "$row" ] && command -v bra_list >/dev/null 2>&1; then
+    atts=$(bra_list "$1" "$2" 2>/dev/null </dev/null) || atts=""
+  fi
+  printf '%s' "$row" | jq -c --arg p "$1" --arg k "$2" --arg t "$(STAMP)" --arg atts "$atts" -n '
     {project:$p,rkey:$k,first_seen:$t,rebuilds:0,fixrounds:0,mechanicals:0,regens:0,adjudications:0,rereviews:0,outcome:"",attempts:[]}
     + ((try input catch null) as $r
        | if ($r | type) != "object" then {} else
@@ -54,24 +62,41 @@ br_load() { # br_load <project> <rkey> — prints the json (a fresh one if absen
                    | ["rebuilds","fixrounds","mechanicals","regens","adjudications","rereviews"] | index($x))
                  | select(.value | type == "number")))
                + (if ($d.first_seen | type) == "string" then {first_seen:$d.first_seen} else {} end)
+               + (if ($d.rung_head | type) == "string" then {rung_head:$d.rung_head} else {} end)
+               + (if ($d.rung_pr | type) == "string" then {rung_pr:$d.rung_pr} else {} end)
+               + (if ($d.ladder_reset | type) == "object" then {ladder_reset:$d.ladder_reset} else {} end)
                + {outcome: (if $r.status == "open" then "" else ($r.status // "") end), restored:"ledger"}
              end
-         end)'
+         end)
+    | if $atts == "" then . else
+        (try ($atts | fromjson) catch null) as $a
+        | if ($a | type) == "array" then .attempts = $a else . end
+      end'
 }
-# br_save <project> <rkey> <json> — THE ONE WRITE of a ticket's record
+# br_save <project> <rkey> <json> [bump] — THE ONE WRITE of a ticket's record
 #   (BH-2317). The file first, exactly as every writer did it, and rc 1 when
 #   that fails; then the counters and the outcome as a ledgers(kind=br_record)
 #   row, fail-open and its rc ignored — br_record's file-then-row order, so a
 #   row with no file behind it cannot happen and the next write heals a missed
-#   row. status is the outcome (`open` when there is none), detail the counters.
+#   row. status is the outcome (`open` when there is none), detail the counters
+#   plus the rung fields rung_head, rung_pr and ladder_reset when set (BH-7801).
+#   Then, when the BH-7801 fragment is loaded, one br_attempt row for each
+#   attempt this save appended (index >= the file's count before the write);
+#   [bump] is the counter br_record bumped with it. Every writer appends its
+#   attempt through here (br_record, br_head_reset, the contested stamp).
 br_save() {
-  local f status detail
+  local f status detail olda=0
   f=$(br_file "$1" "$2"); mkdir -p "$(dirname "$f")" 2>/dev/null
+  if [ -s "$f" ] && command -v bra_put_new >/dev/null 2>&1; then
+    olda=$(jq '(.attempts // []) | length' "$f" 2>/dev/null) || olda=0
+  fi
   printf '%s\n' "$3" > "$f" || return 1
   command -v job_ledger_put >/dev/null 2>&1 || return 0
-  status=$(printf '%s' "$3" | jq -r '(.outcome // "") | if . == "" then "open" else . end' 2>/dev/null) || return 0
-  detail=$(printf '%s' "$3" | jq -c '{rebuilds,fixrounds,mechanicals,regens,adjudications,rereviews,first_seen}' 2>/dev/null) || return 0
-  [ -n "$status" ] && job_ledger_put br_record "$1/$2" "$status" "$detail" >/dev/null 2>&1 </dev/null
+  status=$(printf '%s' "$3" | jq -r '(.outcome // "") | if . == "" then "open" else . end' 2>/dev/null) || status=""
+  detail=$(printf '%s' "$3" | jq -c '{rebuilds,fixrounds,mechanicals,regens,adjudications,rereviews,first_seen}
+    + ({rung_head,rung_pr,ladder_reset} | with_entries(select(.value != null)))' 2>/dev/null) || detail=""
+  [ -n "$status" ] && [ -n "$detail" ] && job_ledger_put br_record "$1/$2" "$status" "$detail" >/dev/null 2>&1 </dev/null
+  command -v bra_put_new >/dev/null 2>&1 && bra_put_new "$1" "$2" "$olda" "$3" "${4:-}" >/dev/null 2>&1 </dev/null
   return 0
 }
 br_num() { # br_num <json> <field>
@@ -164,7 +189,7 @@ br_record() {
         | .rung_head = $rh | .rung_pr = $ru
         | if $rh == "" then . else .attempts[-1].head = $rh end' 2>/dev/null) || return 1 ;;
   esac
-  br_save "$p" "$k" "$cur" || return 1
+  br_save "$p" "$k" "$cur" "$bump" || return 1
   # A RECORDED RUNG IS RESOLVER ACTIVITY (BH-3630). When the conductor holds a
   # claim for this PR (mc_resolver_claim), its active_at moves, and the
   # conductor's 24h re-page stays quiet while rungs keep landing. No claim, no-op.

@@ -283,6 +283,13 @@ export const RULES = [
     ids: "SELECT id FROM alert_decisions WHERE at < ?1 ORDER BY at LIMIT ?2",
     del: "DELETE FROM alert_decisions WHERE id IN (SELECT value FROM json_each(?1))",
   },
+  // BH-7325: a migration-number reservation is a short claim; after 30 days its
+  // number is on main, in a PR or unused, so the row is deleted, not archived.
+  {
+    rule: "migration_reservations.age", table: "migration_reservations", key: "retention.migration_reservations.days", def: 30,
+    ids: "SELECT rowid AS id FROM migration_reservations WHERE reserved_at < ?1 ORDER BY reserved_at LIMIT ?2",
+    del: "DELETE FROM migration_reservations WHERE rowid IN (SELECT value FROM json_each(?1))",
+  },
   // BH-6739: a split-ticket row is the "filed once" memory; after a year a still-hot path may file again.
   {
     rule: "hotspot_tickets.age", table: "hotspot_tickets", key: "retention.hotspot_tickets.days", def: 365,
@@ -354,6 +361,14 @@ export const RULES = [
     rule: "docker_pool_results.age", table: "docker_pool_results", key: "retention.docker_pool_results.days", def: 30,
     ids: "SELECT id FROM docker_pool_results WHERE posted_at < ?1 AND reaped_at IS NOT NULL ORDER BY posted_at LIMIT ?2",
     del: "DELETE FROM docker_pool_results WHERE id IN (SELECT value FROM json_each(?1)) AND reaped_at IS NOT NULL",
+  },
+  // BH-7431: the pool's once-markers and wait clocks. The after-gate ceiling is
+  // 6 h and the cap window 24 h, so a 30-day-old marker gates nothing. Reads on
+  // idx_pool_markers_updated; deletes by rowid. No money in these rows.
+  {
+    rule: "pool_markers.age", table: "pool_markers", key: "retention.pool_markers.days", def: 30,
+    ids: "SELECT rowid AS id FROM pool_markers WHERE updated_at < ?1 ORDER BY updated_at LIMIT ?2",
+    del: "DELETE FROM pool_markers WHERE rowid IN (SELECT value FROM json_each(?1))",
   },
   // BH-7595: the web_vault audit trail is history, so it is copied to the
   // archive D1 before the delete; unbound, nothing is deleted. web_vault itself

@@ -228,7 +228,9 @@ L_MI=$(grep -n '^  # >>> migration index lint (BH-7667)' "$LR" | cut -d: -f1)
 L_RE=$(grep -n 'elif lw_replay "\$repo" "\$pr" "\$sha" "\$REPO_DIR"; then' "$LR" | cut -d: -f1)
 [ -n "$L_CQ" ] && [ -n "$L_MI" ] && [ -n "$L_RE" ] && [ "$L_CQ" -lt "$L_MI" ] && [ "$L_MI" -lt "$L_RE" ] && ok \
   || bad "LR5: order console qa ${L_CQ:-none} < lint ${L_MI:-none} < replay ${L_RE:-none}"
-grep -q '^\. "\$H/bin/lib/migration-index-lint.sh" 2>/dev/null || log ' "$LR" && ok || bad "LR5: bin/lead-review.sh does not source the lib"
+# BH-7455: the host's optional libs are fragments in bin/lib/lead-review/libs.d/.
+grep -q '^\. "\$H/bin/lib/migration-index-lint.sh" 2>/dev/null || log ' "$LR" "$DIR"/bin/lib/lead-review/libs.d/*.sh 2>/dev/null && ok \
+  || bad "LR5: neither bin/lead-review.sh nor a bin/lib/lead-review/libs.d/ fragment sources the lib"
 
 # ── RP the real box blocks ────────────────────────────────────────────────────
 rp_cut() { awk '/^  # >>> review-prs migration lint \(BH-7667/{f=1} f{print} /^  # <<< review-prs migration lint$/{exit}' "$1" > "$2"; }

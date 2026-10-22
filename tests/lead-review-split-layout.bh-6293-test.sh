@@ -20,7 +20,8 @@
 #   L6  the production entry point (D2): scratch_closure_list names the module
 #       dir, and a real `bin/lead-review.sh tick` in a scratch harness sources
 #       the scratch copy of worker.sh (a canary).
-#   L7  the same tick with bin/lib/lead-review/ removed: rc 0, one log line,
+#   L7  the same tick with the module files of bin/lib/lead-review/ removed
+#       (libs.d/ kept, BH-7455): rc 0, one log line,
 #       one LEAD REVIEW MODULE MISSING alert line, and no request reaches the
 #       jobs worker.
 #   L8  with no DB rows, bin/lib/lead-authority.sh protects the module files
@@ -203,7 +204,10 @@ alerts() { local c; c=$(grep -c 'LEAD REVIEW MODULE MISSING' "$H/logs/ALERTS.log
 [ "$(alerts)" = 0 ] && ok || bad "L6: a tick that loaded its modules raised LEAD REVIEW MODULE MISSING"
 
 # ── L7. the module dir is gone: one log line, rc 0, no request ──────────────
-scratch_rm "$H/bin/lib/lead-review" || exit 1
+# TEST-CHANGE (BH-7455): bin/lib/lead-review/libs.d/ holds the host's optional
+# libs now, and a tick without it stops before the module loader. So L7
+# removes the module files and keeps libs.d/.
+for f in "$H/bin/lib/lead-review"/*; do [ "${f##*/}" = libs.d ] || scratch_rm "$f" || exit 1; done
 rm -f "$T/canary" "$T/log/worker" "$H/logs/lead-review.log"
 tick; rc=$?
 [ "$rc" = 0 ] && ok || bad "L7: a tick with no bin/lib/lead-review/ exited $rc, want 0"

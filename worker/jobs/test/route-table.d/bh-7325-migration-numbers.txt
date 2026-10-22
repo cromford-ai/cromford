@@ -1,0 +1,5 @@
+# BH-7325: the migration-number reservation, key-named (BH-5788). Written by
+# bin/lib/migration-number.sh (mn_reserve); the holder read by mn_holder.
+# Bearer-gated.
+POST /api/migration-numbers/reserve
+GET /api/migration-numbers/holder

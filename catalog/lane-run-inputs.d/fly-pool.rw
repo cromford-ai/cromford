@@ -46,3 +46,12 @@ builds/pool-$p-<KEY>-*/<pool marker>
 flags/alerted-pool-*
 flags/alerted-extra-read-missing-*
 flags/alerted-gh-app-profile-owner-*
+# BH-7431 (BH-6896 S4), NOT CARRIED as well. Each has a catalog/state-paths.json
+# row; S5 owns the answer:
+#   state/fly-onboard/*: the onboard drain ledger, hub tick only
+#     (bin/fly-pool-tick.sh:238)
+#   state/merge-queue/*: written on the owner box over ssh, never on this tree
+#     (bin/fly-pool.sh:2627)
+#   state/fly-pool/legacy-caps.$p: the tick wrapper's one-shot record, hub tick
+#     only (bin/fly-pool-tick.sh:55, :58); the state/fly-pool/$p/* line above
+#     does not reach it

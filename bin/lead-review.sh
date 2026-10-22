@@ -305,77 +305,22 @@ done
   . "$H/bin/lib/verdict-parse.sh"; . "$H/bin/lib/gh-rest.sh"; . "$H/bin/lib/review-pool.sh"
   . "$H/bin/lib/lead-worklist.sh"; }
 LW_LOGFN=log
-# The lane's daily spend cap (BH-5284: no new review starts over it), optional:
-# without it agent-call.sh's own gate still refuses each call over the cap.
-. "$H/bin/lib/llm-gate.sh" 2>/dev/null || true
-# The per-head guard fp (BH-3930). Optional: without it the calls carry no fp,
-# exactly as before, and the tick lock below still holds.
-. "$H/bin/lib/review-bought.sh" 2>/dev/null || log "bin/lib/review-bought.sh missing; lead calls carry no per-head fp this tick"
-command -v verdict_prime >/dev/null 2>&1 && verdict_prime || true
-# The lead-land doorbell (BH-5317), fail-open: without it the */15 land cron
-# promotes every result, as before.
-. "$H/bin/lib/lead-chain-wake.sh" 2>/dev/null || log "bin/lib/lead-chain-wake.sh missing; no lead-land doorbell this tick"
-# The standing-verdict reader (BH-5022), fail-open: without it no request is
-# superseded by a risk-tier sign-off and every one is reviewed as before.
-. "$H/bin/lib/verdicts.sh" 2>/dev/null || true
-# BH-5793: which rules-pack finding lines are environment failures. Missing =
-# every line is a finding, as before.
-# shellcheck source=bin/lib/review-env-fail.sh
-. "$H/bin/lib/review-env-fail.sh" 2>/dev/null || log "bin/lib/review-env-fail.sh missing; every rules-pack line counts as a finding this tick"
-# BH-6842: a rules-pack line whose only fault is the schema stamp order is a
-# NOTE (the merge conductor restamps before it queues). Missing = a finding.
-# shellcheck source=bin/lib/schema-restamp.sh
-. "$H/bin/lib/schema-restamp.sh" 2>/dev/null || log "bin/lib/schema-restamp.sh missing; a schema stamp-order line counts as a finding this tick"
-# BH-5151, optional: the open-PR list (hotfix order + the dead-row sweep) and the
-# hotfix label's name. Without them the tick still runs, ordered by priority.
-. "$H/bin/lib/pr-snapshot.sh" 2>/dev/null || log "bin/lib/pr-snapshot.sh missing; no hotfix order and no dead-row sweep this tick"
-. "$H/bin/lib/hotfix-lib.sh" 2>/dev/null || log "bin/lib/hotfix-lib.sh missing; no hotfix order this tick"
-# BH-6041, optional: one warn when /tmp or memory holds concurrency below the
-# configured value. Without it the cap is a log line only, as before.
-# shellcheck source=bin/lib/lead-review-capped.sh
-. "$H/bin/lib/lead-review-capped.sh" 2>/dev/null || log "bin/lib/lead-review-capped.sh missing; no capped-concurrency alert this tick"
-# BH-5801: lp_evidence, the review's `## Live probes` section (the harness App's
-# own comment for the head, never the PR body). Missing, the section says so.
-# shellcheck source=bin/lib/live-probes.sh
-. "$H/bin/lib/live-probes.sh" 2>/dev/null || log "bin/lib/live-probes.sh missing; reviews carry no live-probe evidence this tick"
-# BH-5355, optional: the builder review of the head (br_fetch). Without it
-# every review is a full review.
-# shellcheck source=bin/lib/builder-review.sh
-. "$H/bin/lib/builder-review.sh" 2>/dev/null || log "bin/lib/builder-review.sh missing; every lead review is a full review this tick"
-# BH-6372.3, optional: the outcome cap (an INCONCLUSIVE claim row on a perf/cost
-# PR caps the verdict at BLOCK). Without it every verdict stands as the agent gave it.
-# shellcheck source=bin/lib/lead-outcome-cap.sh
-. "$H/bin/lib/lead-outcome-cap.sh" 2>/dev/null || log "bin/lib/lead-outcome-cap.sh missing; no outcome cap this tick"
-# BH-6897, optional: CI's lint job steps on the reviewed head (bin/ci-local.sh).
-# shellcheck source=bin/lib/ci-local-verify.sh
-. "$H/bin/lib/ci-local-verify.sh" 2>/dev/null || log "bin/lib/ci-local-verify.sh missing; no ci-local run this tick"
-# BH-7123: the review level cap. A [BLOCK] that names no ALWAYS-BLOCK class
-# (catalog/review-always-block.tsv) is a NOTE; a report with no BLOCK left is
-# MERGE-WITH-NOTES. Missing lib = the model's verdict stands, as before.
-. "$H/bin/lib/review-level.sh" 2>/dev/null || log "bin/lib/review-level.sh missing; no review level cap this tick"
-# BH-7667, optional: the migration index lint (a plain CREATE INDEX on a table
-# in review.large_tables.<project> is a BLOCK with no model call).
-. "$H/bin/lib/migration-index-lint.sh" 2>/dev/null || log "bin/lib/migration-index-lint.sh missing; no migration lint this tick"
-# BH-5294, optional: delta mode. Without it every request is a full review.
-. "$H/bin/lib/lead-delta.sh" 2>/dev/null || true
-# BH-6391, optional: the re-review section and the NOTE pass. Without it a
-# re-review reads and answers as a first review.
-. "$H/bin/lib/lead-prev.sh" 2>/dev/null || true
-# BH-5873: the worklist's gate loader (header, THE GATES). Without it no
-# worklist item starts; request rows still run.
-LG_OK=0; . "$H/bin/lib/lead-gates.sh" 2>/dev/null && LG_OK=1
-# BH-4956, optional: the patch-same test for lw_replay. Without it no head is
-# replayed, and each is reviewed.
-. "$H/bin/lib/patch-same.sh" 2>/dev/null || true
-# BH-5271, optional: the project's conflict hotspots for checklist item 9.
-# Without it the prompt says the list could not be read, and the review runs.
-. "$H/bin/lib/hotspot-context.sh" 2>/dev/null || log "bin/lib/hotspot-context.sh missing; the review prompt carries no hotspot list this tick"
-# Optional: a full-review diff over DIFF_MAX is read in parts (plan files, tests,
-# rest), or answered "split required". Without it an oversize diff is answered
-# "split required" with no model call: no reviewer reads a cut diff.
-. "$H/bin/lib/lead-diff-parts.sh" 2>/dev/null || log "bin/lib/lead-diff-parts.sh missing; an oversize diff is answered split required this tick"
-# BH-6970: the break-it verifier (bi_review), after the model verdict. Off without it.
-. "$H/bin/lib/break-it.sh" 2>/dev/null || log "bin/lib/break-it.sh missing; no break-it run this tick"
+# The optional libs, one file each in bin/lib/lead-review/libs.d/, sourced here
+# at top level in LC_ALL=C name order. A new optional lib is a new file there,
+# named <yyyymmddhhmm>-<ticket-key>-<name>.sh, never a line in this file
+# (docs/notes/2026-10-19-BH-7455-lead-review-libs.md). No file = a broken
+# checkout: the tick stops, as for the module dir below.
+mapfile -t _lr_libs < <(for _lr_lib in "$H"/bin/lib/lead-review/libs.d/*.sh; do [ -f "$_lr_lib" ] && printf '%s\n' "$_lr_lib"; done | LC_ALL=C sort)
+if [ "${#_lr_libs[@]}" = 0 ]; then
+  log "bin/lib/lead-review/libs.d/ has no fragment; lead-review tick skipped"
+  HARNESS="$H" "$H/bin/alert-line.sh" --id "lead-review-libs-$(hostname)" "LEAD REVIEW LIBS MISSING: bin/lib/lead-review/libs.d/ has no fragment on $(hostname); no lead review ran this tick" >/dev/null 2>&1 || true
+  exit 0
+fi
+for _lr_lib in "${_lr_libs[@]}"; do
+  # shellcheck source=/dev/null
+  . "$H/bin/lib/lead-review/libs.d/${_lr_lib##*/}"
+done
+unset _lr_lib _lr_libs
 # BH-5909: the console QA gate. With LEAD_REVIEW_CONSOLE_QA_GATE=1 a harness PR
 # that changes console-ui/src/ and has no QA: PASS comment naming its head is a
 # BLOCK with no model call (bin/lib/console-qa-gate.sh). Default 0: it goes on

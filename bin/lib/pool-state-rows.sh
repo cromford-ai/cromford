@@ -52,6 +52,8 @@
 _PSR_NAME_RE='^[A-Za-z0-9._-]{1,64}$'
 _PSR=0; _PSR_SET=0
 _PSR_OK=0; _PSR_JSON=""; _PSR_MEMO=""; _PSR_NOTED=""; _PSR_WNOTED=""
+_PSR_MK_OK=0; _PSR_MK_CUT=0; declare -gA _PSR_MKO=()
+_PSR_MARKER_RE='^(terminal-noted|terminal-alerted|after-since|after-released|after-loop|cap-wait)$'
 
 psr_on() {
   command -v _flag_on_row >/dev/null 2>&1 || return 1
@@ -70,7 +72,7 @@ psr_load() {
   local p="${1:-}" since="${2:-0}" resp rc=0
   case "$since" in ''|*[!0-9]*) since=0 ;; esac
   if [ "$_PSR_MEMO" = "$p|$since" ]; then [ "${_PSR_OK:-0}" = 1 ] && return 0; return 2; fi
-  _PSR_MEMO="$p|$since"; _PSR_OK=0; _PSR_JSON=""
+  _PSR_MEMO="$p|$since"; _PSR_OK=0; _PSR_JSON=""; _PSR_MK_OK=0; _PSR_MK_CUT=0; _PSR_MKO=()
   [[ "$p" =~ $_PSR_NAME_RE ]] || return 2
   _psr_client || return 2
   resp=$(JOBS_ALERT=0 _jobs_req GET "/api/pool-state?project=$p&since=$since" 2>/dev/null) || rc=$?
@@ -79,10 +81,17 @@ psr_load() {
       and (.spawns | type) == "array" and (.terminals | type) == "array" and (.holds | type) == "array"' \
     >/dev/null 2>&1 || return 2
   _PSR_JSON=$resp; _PSR_OK=1
+  # BH-7431: `markers` is optional; an older worker answers without it, and
+  # then every marker reader reads its file only.
+  printf '%s' "$resp" | jq -e '(.markers | type) == "array"' >/dev/null 2>&1 && _PSR_MK_OK=1
   # A cut list may undercount; the caller still takes max(db, file), so this is
   # said, never treated as a fallback.
   if printf '%s' "$resp" | jq -e '.truncated.spawns == true' >/dev/null 2>&1; then
     _psr_log "$p" "POOL_STATE_TRUNCATED $p spawns (the cap count takes the larger of the rows and the file)"
+  fi
+  if printf '%s' "$resp" | jq -e '.truncated.markers == true' >/dev/null 2>&1; then
+    _PSR_MK_CUT=1
+    _psr_log "$p" "POOL_STATE_TRUNCATED $p markers (a marker past the cut reads from its file only)"
   fi
   return 0
 }
@@ -117,6 +126,33 @@ psr_spawn_hold() {
 psr_held_keys() {
   [ "${_PSR_OK:-0}" = 1 ] || return 2
   printf '%s' "$_PSR_JSON" | jq -r '.holds[] | select(.kind == "ticket") | .key' 2>/dev/null || return 2
+}
+
+psr_marker() {
+  local k="${1:-}" m="${2:-}" o r
+  [ "${_PSR_OK:-0}" = 1 ] && [ "${_PSR_MK_OK:-0}" = 1 ] || return 2
+  o="${_PSR_MKO[$k|$m]:-}"
+  case "$o" in
+    -) return 1 ;;
+    +*) printf '%s\n' "${o#+}"; return 0 ;;
+  esac
+  # The `=` prefix tells an empty value from no row.
+  r=$(printf '%s' "$_PSR_JSON" | jq -r --arg k "$k" --arg m "$m" \
+        'first(.markers[] | select(.key == $k and .marker == $m)) | "=" + (.value // "")' 2>/dev/null) || return 2
+  [ -n "$r" ] || return 1
+  printf '%s\n' "${r#=}"
+}
+
+psr_marker_has() {
+  [ -f "${3:-}" ] && return 0
+  psr_marker "${1:-}" "${2:-}" >/dev/null
+}
+
+psr_marker_read() {
+  local v
+  if [ -f "${3:-}" ]; then cat "$3" 2>/dev/null; return; fi
+  v=$(psr_marker "${1:-}" "${2:-}") || return 1
+  printf '%s\n' "$v"
 }
 
 psr_fallback_note() {
@@ -197,6 +233,35 @@ psr_hold_clear() {
   _psr_w || return 0
   body=$(jq -nc --arg p "$p" --arg kd "$kind" --arg k "$key" '{project:$p, kind:$kd, key:$k, clear:true}' 2>/dev/null) || return 3
   _psr_send "$p" "hold-clear-$kind ${key:-project}" PATCH /api/pool-state/holds "$body"
+}
+
+psr_marker_put() {
+  local p="${1:-}" key="${2:-}" m="${3:-}" v="${4:-}" body
+  _psr_w || return 0
+  [[ "$m" =~ $_PSR_MARKER_RE ]] || return 3
+  _PSR_MKO[$key|$m]="+$v"
+  body=$(jq -nc --arg p "$p" --arg k "$key" --arg m "$m" --arg v "$v" --arg b "${JOBS_BOX:-}" \
+    '{project:$p, key:$k, marker:$m, value:$v, box:$b}' 2>/dev/null) || return 3
+  _psr_send "$p" "marker-$m $key" PUT /api/pool-state/markers "$body"
+}
+
+psr_marker_clear() {
+  local p="${1:-}" key="${2:-}" m send=() body
+  shift 2 2>/dev/null || return 0
+  _psr_w || return 0
+  for m in "$@"; do
+    [[ "$m" =~ $_PSR_MARKER_RE ]] || continue
+    # Skip the PATCH only when this tick's full marker list answered and has
+    # no row. A failed GET, an older worker or a cut list cannot prove the row
+    # is gone, and a row left behind reads as live through the union readers.
+    if [ "${_PSR_MK_CUT:-0}" = 1 ] || [[ "${_PSR_MKO[$key|$m]:-}" == +* ]]; then send+=("$m")
+    else psr_marker "$key" "$m" >/dev/null; [ $? -eq 1 ] || send+=("$m"); fi
+    [ "${_PSR_OK:-0}" = 1 ] && _PSR_MKO[$key|$m]="-"
+  done
+  [ "${#send[@]}" -gt 0 ] || return 0
+  body=$(jq -nc --arg p "$p" --arg k "$key" '{project:$p, key:$k, markers:$ARGS.positional, clear:true}' \
+    --args "${send[@]}" 2>/dev/null) || return 3
+  _psr_send "$p" "marker-clear $key" PATCH /api/pool-state/markers "$body"
 }
 
 _psr_hold_file() { # <harness> <p> -> the path; rc 1 on a bad project name

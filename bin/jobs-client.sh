@@ -104,8 +104,18 @@ unset _jc_m
 if [ "${BASH_SOURCE[0]}" = "$0" ]; then
   # shellcheck source=/dev/null
   [ -f "$_JC_ENV/global.env" ] && { set -a; . "$_JC_ENV/global.env"; set +a; }
-  # The usage line, joined from the `    #: ` lines inside `case "$CMD" in`, in arm order.
-  _jc_usage() { printf 'usage: jobs-client.sh {%s}\n' "$(awk '/^  case "\$CMD" in/{f=1;next} f&&/^    \*\)/{exit} f&&sub(/^    #: /,""){printf "%s%s",(n++?"|":""),$0}' "${BASH_SOURCE[0]}")"; }
+  # BH-7456: a NEW verb is a fragment, never a new arm below (catalog/list-files.tsv).
+  # bin/jobs-client.d/<ticket-key>-<verb>.sh: its `#: <verb> <args>` line(s) at
+  # column 0 and one function jc_verb_<verb, - as _>. Read only for a verb no arm takes.
+  JC_FRAG_DIR="${JC_LIB_DIR%/lib/jobs}/jobs-client.d"
+  _jc_frags() { [ -d "$JC_FRAG_DIR" ] || return 0; find "$JC_FRAG_DIR" -maxdepth 1 -type f -name '*.sh' | LC_ALL=C sort; }
+  # The usage line: the `    #: ` lines inside `case "$CMD" in`, in arm order,
+  # then each fragment's `#: ` lines, in fragment file-name order.
+  _jc_usage() {
+    local f
+    printf 'usage: jobs-client.sh {%s}\n' "$( { awk '/^  case "\$CMD" in/{f=1;next} f&&/^    \*\)/{exit} f&&sub(/^    #: /,""){print}' "${BASH_SOURCE[0]}"
+      while IFS= read -r f; do [ -n "$f" ] && sed -n 's/^#: //p' "$f"; done < <(_jc_frags); } | sed '/^$/d' | paste -sd'|')"
+  }
   # WHICH SOURCE ANSWERED (BH-2643). flag-active answers through flag_active,
   # which decides from the pause_flags row and falls back to the flags/ file
   # only when there is no row to read (BH-5004). On 2026-09-26 the hub read
@@ -142,7 +152,7 @@ if [ "${BASH_SOURCE[0]}" = "$0" ]; then
   # Each verb's rc is the SCRIPT's rc — a trailing echo must not launder a
   # failed call into exit 0 (harness-sync's catalog sha-state relies on this).
   # The `#:` line above each arm IS the usage: _jc_usage joins them. A new verb
-  # adds its arm plus its `#:` line; nothing else lists the verbs.
+  # is a fragment file in bin/jobs-client.d/ (BH-7456), not a new arm here.
   case "$CMD" in
     #: open <project> <ticket> <kind> <stage> [lane] [meta]
     open)          job_open "$@"; RC=$?; echo ;;
@@ -474,7 +484,16 @@ if [ "${BASH_SOURCE[0]}" = "$0" ]; then
     call-guard)    call_guard_list "$@"; RC=$?; echo ;;
     #: call-guard-reset <project> <stage> <fp> [reason]
     call-guard-reset) call_guard_reset "$@"; RC=$?; echo ;;
-    *) _jc_usage >&2; exit 2 ;;
+    *)  # A verb no arm takes: a fragment's jc_verb_<verb>, else the usage.
+        if [[ $CMD =~ ^[a-z][a-z0-9-]*$ ]]; then
+          while IFS= read -r _jc_f; do
+            # shellcheck source=/dev/null
+            [ -n "$_jc_f" ] && { . "$_jc_f" 2>/dev/null || echo "jobs-client: fragment $_jc_f did not load" >&2; }
+          done < <(_jc_frags)
+        fi
+        if [[ $CMD =~ ^[a-z][a-z0-9-]*$ ]] && declare -F "jc_verb_${CMD//-/_}" >/dev/null; then
+          "jc_verb_${CMD//-/_}" "$@"; RC=$?
+        else _jc_usage >&2; exit 2; fi ;;
   esac
   exit "$RC"
 fi
