@@ -1,0 +1,9 @@
+{
+  "env": "CLAUDE_TRANSCRIPT_KEEP_DAYS",
+  "type": "int",
+  "default": 14,
+  "min": 3,
+  "zero_means": null,
+  "read_in": "bin/agent-transcripts-clean.sh",
+  "note": "BH-7933: stage 11 of bin/disk-clean.sh (bin/agent-transcripts-clean.sh) removes files under ~/.claude/projects older than this many days, then the dirs it emptied. Never a file a /proc fd names, never a project's memory/ dir. Read as ${CLAUDE_TRANSCRIPT_KEEP_DAYS-14}. Not a whole number from 3 to 9999 (empty included): the stage is skipped and logged, never guessed."
+}

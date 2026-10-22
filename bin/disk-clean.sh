@@ -31,6 +31,8 @@
 # ledgers and /tmp top level, see that file's header).
 # Stage 10 bounds each logs/*-cron.log at CRON_LOG_MAX_KB: over it, the file is
 # cut in place (same inode, so a >> writer keeps appending) to its newest half.
+# Stage 11 runs bin/agent-transcripts-clean.sh (~/.claude/projects files past
+# CLAUDE_TRANSCRIPT_KEEP_DAYS, dry by default; see that file's header).
 # Each is a no-op on a box with nothing to clean, and each counter in the
 # summary line is incremented only after the work really happened.
 #
@@ -449,6 +451,13 @@ else
       say "cron log cut: $cb is still ${cnew} bytes after the cut"
     fi
   done < <(find "$H/logs" -maxdepth 1 -type f -name '*-cron.log' 2>/dev/null)
+fi
+
+# 11. agent transcripts (BH-7933): files under ~/.claude/projects older than
+# CLAUDE_TRANSCRIPT_KEEP_DAYS, dry until lane.disk-clean.transcripts_dry_run is 0.
+if [ -x "$H/bin/agent-transcripts-clean.sh" ]; then
+  HARNESS_ROOT="$H" "$H/bin/agent-transcripts-clean.sh" >/dev/null 2>&1 \
+    || say "agent-transcripts exited rc=$? - see its lines above"
 fi
 
 after=$(df --output=pcent / | tail -1 | tr -dc 0-9)

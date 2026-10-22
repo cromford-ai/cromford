@@ -207,3 +207,11 @@ row, not an env edit, so the console can show it and it ends on its own.
 | all | `bin/alert-digest.sh` | one `PAUSED …` line per live pause in the daily beat |
 
 Details and the reasons: [`notes/2026-09-24-BH-1684-lanes-honor-pauses.md`](notes/2026-09-24-BH-1684-lanes-honor-pauses.md).
+
+## Agent transcript retention (BH-7933)
+
+Stage 11 of the daily `disk-clean` lane (`bin/disk-clean.sh`, 04:47Z, every box) runs `bin/agent-transcripts-clean.sh`.
+It removes files under `~/.claude/projects` older than `CLAUDE_TRANSCRIPT_KEEP_DAYS` days (default 14, min 3), then the dirs it emptied.
+It keeps a file any `/proc/<pid>/fd` link names, every project `memory/` dir, symlinks, and everything outside `projects/`.
+It ships dry: `TRANSCRIPTS_DRY_RUN` (row `lane.disk-clean.transcripts_dry_run`, default 1) logs one `would_remove=N freed_kb=K` line in `logs/disk-clean.log` and deletes nothing.
+Set the row to 0 to make it live. `bin/archie-learn.sh` then sees only `CLAUDE_TRANSCRIPT_KEEP_DAYS` days of orchestrator transcripts.

@@ -1,0 +1,10 @@
+{
+  "env": "TRANSCRIPTS_DRY_RUN",
+  "type": "int",
+  "default": 1,
+  "min": 0,
+  "max": 1,
+  "zero_means": null,
+  "read_in": "bin/agent-transcripts-clean.sh",
+  "note": "BH-7933: settings row lane.disk-clean.transcripts_dry_run. 1 (the default) = stage 11 of bin/disk-clean.sh deletes nothing and logs one `[agent-transcripts] agent-transcripts: dry-run would_remove=N freed_kb=K` line in logs/disk-clean.log. Only the exact value 0 deletes (live, not off); any other value runs dry and logs `TRANSCRIPTS_DRY_RUN invalid`."
+}
