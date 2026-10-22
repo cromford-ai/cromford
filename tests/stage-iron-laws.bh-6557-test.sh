@@ -36,7 +36,8 @@ LAWS_DIR="$DIR/prompts/iron-laws.d"
 # BH-7563 re-pinned it: the plan stage also carries
 # prompts/iron-laws.d/20261019-scalable-tests.md, and the review-levels class
 # list gained `scalable-tests`.
-TICKET_SHA="19c718c591bae292""6990d652be732d80""36c35e66497e5128""66ade9d42e872f8b"
+# TEST-CHANGE (BH-7945): the review-levels fragment's class list gained hardcoded-knob, so the block sha moved.
+TICKET_SHA="800744ee9c8999aa""a280942fd6bb9c1b""af3df10201ef5790""9f5bd6afd1e5f028"
 T1='PERFORMANCE BY DEFAULT'
 T2="BUILDING FROM A DESIGNER'S PROTOTYPE"
 T3='REVIEW LEVELS (iron law, BH-7123'

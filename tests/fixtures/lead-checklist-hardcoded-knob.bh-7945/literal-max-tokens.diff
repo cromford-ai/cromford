@@ -1,0 +1,12 @@
+diff --git a/src/interview.js b/src/interview.js
+index e5aee31..47eb836 100644
+--- a/src/interview.js
++++ b/src/interview.js
+@@ -5,6 +5,7 @@ import { resolveModel } from './models.js';
+ export async function answer(question) {
+   const res = await client.messages.create({
+     model: await resolveModel('interview'),
++    max_tokens: 1024,
+     messages: [{ role: 'user', content: question }],
+   });
+   return res.content[0].text;

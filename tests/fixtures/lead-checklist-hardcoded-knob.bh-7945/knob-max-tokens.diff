@@ -1,0 +1,18 @@
+diff --git a/src/interview.js b/src/interview.js
+index e5aee31..4a2f9b8 100644
+--- a/src/interview.js
++++ b/src/interview.js
+@@ -1,10 +1,13 @@
+ // answer(question) — one interview answer from the model.
+ import { client } from './llm.js';
+ import { resolveModel } from './models.js';
++import { settingInt } from './settings.js';
+ 
+ export async function answer(question) {
+   const res = await client.messages.create({
+     model: await resolveModel('interview'),
++    // fallback 1024; row interview.max_tokens
++    max_tokens: await settingInt('interview.max_tokens', 1024),
+     messages: [{ role: 'user', content: question }],
+   });
+   return res.content[0].text;

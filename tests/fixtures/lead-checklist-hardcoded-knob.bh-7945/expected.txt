@@ -1,0 +1,3 @@
+# <case> :: BLOCK|NONE — what the lead review must answer for <case>.diff on base/ (BH-7945).
+literal-max-tokens :: BLOCK
+knob-max-tokens :: NONE
