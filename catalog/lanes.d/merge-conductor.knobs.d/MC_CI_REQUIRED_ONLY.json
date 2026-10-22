@@ -1,0 +1,11 @@
+{
+  "env": "MC_CI_REQUIRED_ONLY",
+  "read_in": "bin/lib/mc-required-ci.sh",
+  "type": "int",
+  "default": 1,
+  "min": 0,
+  "max": 1,
+  "unit": null,
+  "zero_means": "off",
+  "note": "BH-8012: the READY gate decides on the repo's REQUIRED checks. 1 = on a Mergify repo (not project-4), a CI word of pending or red becomes green when every check-success name of .mergify.yml queue_rules is completed/success on one complete check-runs page of the head (one CI_REQUIRED_GREEN log line per PR and head), and autoenqueue G5 accepts mergeable_state unstable for a harness row whose G4 names came from .mergify.yml. 0 = off: the conductor waits on every workflow and G5 accepts clean only, as before BH-8012."
+}

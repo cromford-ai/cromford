@@ -35,7 +35,7 @@
 #   this tick   G4 every required check completed/success on the head, latest run (the
 #   knob MC_AUTOENQUEUE_CHECK when set, else the repo's .mergify.yml
 #   queue_conditions check-success names — _ae_required_checks)   G5 the REST re-read: open, same head, base = pbase,
-#   mergeable_state exactly `clean`   IL (external rows, AE_EXTERNAL=1, in GR's
+#   mergeable_state `clean` (or `unstable` on a harness row, BH-8012)   IL (external rows, AE_EXTERNAL=1, in GR's
 #   place) mc_iron_law_scan on this head's diff, an unread diff refuses   G7 lead fence, ticket hold, PR hold, main-red
 #   freeze, block gate, hotfix migration proof   G6 kill switches, MODE and
 #   the conductor's own merge switch (MERGES): a
@@ -61,6 +61,9 @@
 # crs_word undefined -> G4 reads the check as unreadable, never green.
 # shellcheck source=bin/lib/mc/check-run-state.sh
 . "${BASH_SOURCE[0]%/*}/mc/check-run-state.sh" 2>/dev/null || true
+# BH-8012: mcr_ae_unstable_ok (G5). Absent lib -> G5 keeps `clean` only.
+# shellcheck source=bin/lib/mc-required-ci.sh
+[ -r "${BASH_SOURCE[0]%/*}/mc-required-ci.sh" ] && . "${BASH_SOURCE[0]%/*}/mc-required-ci.sh"
 
 AE_KIND=autoenqueue
 AE_BODY='@mergifyio queue'
@@ -501,7 +504,12 @@ _ae_gates() {
   rm -f "$t"
   [ "$pst" = open ] && [ "$phd" = "$head" ] && [ "$pbs" = "$AE_PBASE" ] \
     || { _ae_skip "$key" "$head" reread "the re-read says state=${pst:-?} head=${phd:0:8} base=${pbs:-?}"; return 1; }
-  [ "$pms" = clean ] || { _ae_skip "$key" "$head" mergeable "mergeable_state $pms, not clean"; return 1; }
+  # BH-8012: `unstable` (a non-required check runs or is red) passes for a
+  # harness row whose G4 names came from .mergify.yml (mcr_ae_unstable_ok).
+  if [ "$pms" != clean ]; then
+    { [ "$pms" = unstable ] && command -v mcr_ae_unstable_ok >/dev/null 2>&1 && mcr_ae_unstable_ok "$AE_SLUG"; } \
+      || { _ae_skip "$key" "$head" mergeable "mergeable_state $pms, not clean"; return 1; }
+  fi
   # IL — external rows only (BH-4580): the iron-law scan the READY mark carries
   # for a harness row, on this head's diff. After G4/G5, so a red or unclean PR
   # never buys a diff read. An unread diff, or no scanner, is never "no hits".

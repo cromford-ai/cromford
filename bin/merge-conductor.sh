@@ -846,6 +846,9 @@ pr_worker() {
     fi
     case "$CI" in green|red) read_memo_put ci "$KEY" "$HEAD" "$UPDATED" "$MC_MEMO_FP" "$CI" ;; esac
   fi
+  # A non-required check does not hold a PR (BH-8012): pending/red becomes
+  # green when every required check is green (fragment bh-8012-required-ci).
+  MC_CI_REQUIRED_GREEN=0; command -v mc_cireq_apply >/dev/null 2>&1 && mc_cireq_apply
   # The strike ledger: one `red <key> <head>` per DIFFERENT head of this PR
   # that went red, not the same red seen on two ticks. Since BH-1671 it is a
   # record only — mc_classify no longer parks on it (`red-ci-twice` counted
@@ -962,8 +965,11 @@ pr_worker() {
   # <<< identity block
   MC_FLAKE=""; MC_CI_FLAKE=0; MC_FLAKE_RUNG=0; MC_CI_TIMEOUT_FIRING=0; MC_CI_TIMEOUT_CHECK=""; MC_CI_TIMEOUT_T=""; CIT_RUNS_LEFT=""; CIT_SKIP_RUNG=0
   if [ "$MC_IDENTITY_BLOCKED" != 1 ] && [ "$MSTATE" != DIRTY ] && [ "$MGABLE" != CONFLICTING ]; then
-    case "$CI:$MSTATE" in
-      none:*|green:BLOCKED|green:UNSTABLE) MC_FLAKE=$(mc_ci_flake_runs "$SLUG" "$HEAD") ;;
+    # BH-8012: green:UNSTABLE:1 = every required check passed and only
+    # non-required ones are not green, so a cancelled run buys no rerun.
+    case "$CI:$MSTATE:${MC_CI_REQUIRED_GREEN:-0}" in
+      green:UNSTABLE:1) ;;
+      none:*|green:BLOCKED:*|green:UNSTABLE:*) MC_FLAKE=$(mc_ci_flake_runs "$SLUG" "$HEAD") ;;
     esac
   fi
   if [ -n "$MC_FLAKE" ]; then
