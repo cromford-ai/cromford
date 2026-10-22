@@ -349,6 +349,7 @@
     },
     {
       "env": "MC_MAIN_RED_DETECT",
+      "read_in": "bin/lib/mc/tick-scope.sh",
       "type": "int",
       "default": 1,
       "min": 0,

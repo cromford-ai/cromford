@@ -54,6 +54,20 @@
 #   after the driver defines it. Sets MC_PROJ_GATE (tick_project reads it), P
 #   and PIDS as globals, no `local`.
 #
+# mc_tick_main_red (BH-7879)
+#   Sets MC_FLEET_SWEEPS (global, no `local`: the driver and mc_tick_fanout read
+#   it) to 1, or to 0 on a keyed (MC_ONLY_KEYS) or one-project (MC_ONLY_PROJECT)
+#   tick. On a fleet-sweep tick with MC_MAIN_RED_DETECT not 0 it runs
+#   bin/main-red-detector.sh once under locks/main-red-detect-tick.lock
+#   (MC_LOCK_DIR). Runs after mc_keyed_tick_parse and before the driver's parent
+#   GH_ETAG_COUNT_FILE export. Needs mc_log.
+#
+# mc_tick_sweeps (BH-7879)
+#   The fleet sweeps: the 14 housekeeping calls from mc_rereview_gc to
+#   mc_dv_reap (bin/lib/mc/{rebase,classify,queue,locks}.sh,
+#   bin/lib/pr-snapshot.sh). Reads MC_RB_DIR. The driver calls it after
+#   mc_tick_fanout, on a fleet-sweep tick only.
+#
 # THE KEYED TICK (BH-1387). bin/wake-loop.sh may hand this run the PR keys it
 # drained, as MC_ONLY_PR=owner/repo#n[,owner/repo#n…]; the run then does only
 # those PRs and none of the fleet sweeps, which stay the cron tick's. Parsed
@@ -334,3 +348,65 @@ done
 [ "${#PIDS[@]}" -gt 0 ] && wait "${PIDS[@]}"
 }
 # <<< per-project fan-out (BH-7879)
+# >>> fleet sweeps (BH-7879)
+mc_tick_main_red() {
+# ---- is MAIN itself red? (BH-636) -------------------------------------------
+# bin/main-red-detector.sh has existed, with its own suite, since 2026-09-15 and
+# NOTHING called it: no cron line, no caller, only comments. cromford's own
+# main was red for two runs on 2026-09-17 and no flag was ever raised, so the
+# freeze every project tick below reads (main_red_flag) could never engage.
+#
+# It runs HERE, before the first project ticks, so that flag is at most one tick
+# old when it is read. The lock is a DEDUPE and never a queue (the operator, 2026-09-13):
+# held means another tick is already doing it, and this one simply does not.
+# It is its OWN lock file, not the detector's — the detector takes
+# locks/main-red-detector.lock itself, and taking that one here would make every
+# invocation skip. A detector that fails, or is absent (every conductor fixture
+# copies the script into a scratch bin/ without it), never touches the tick.
+# ONE PROJECT (BH-6890): bin/merge-conductor-project.sh runs a full tick of
+# MC_ONLY_PROJECT only, on a lane-run machine. The fleet sweeps (this detector,
+# the held-page flush, the *_gc housekeeping) stay the hub's.
+MC_FLEET_SWEEPS=1
+{ [ -n "$MC_ONLY_KEYS" ] || [ -n "${MC_ONLY_PROJECT:-}" ]; } && MC_FLEET_SWEEPS=0
+if [ "$MC_FLEET_SWEEPS" = 1 ] && [ "${MC_MAIN_RED_DETECT:-1}" != 0 ] && [ -x "$H/bin/main-red-detector.sh" ]; then
+  ( flock -n 9 || { mc_log "main-red detector: another tick holds the lock — skipped (dedupe, never a queue)"; exit 0; }
+    mc_log "main-red detector: reading every repo's main before the project ticks"
+    "$H/bin/main-red-detector.sh" >> "$H/logs/main-red-detector.log" 2>&1 || true
+  ) 9>"$MC_LOCK_DIR/main-red-detect-tick.lock" || true
+fi
+}
+
+mc_tick_sweeps() {
+# Detached re-review jobs for PRs that have long since merged or closed.
+mc_rereview_gc
+# The rebase and deploy-verify lanes are read HERE, after every project tick has
+# released its lock: a lane that can hold a project lock is the 03:54-04:02Z
+# project-5 stall this whole change exists to kill.
+mc_lane_gc "$MC_RB_DIR"
+# Hand-off and release markers for PRs settled a fortnight ago, and the stuck
+# detector's one-alert-per-(PR, state, head) markers on the same rule.
+mc_handoff_gc
+mc_stuck_gc
+mc_resolver_claim_gc
+# Batch holds for trains that never settled: a stale hold is a PR nothing merges.
+mc_batch_gc
+# This tick's budget and metrics counters are keyed by tick id, so yesterday's
+# are dead weight the moment the day turns.
+mc_tick_gc
+# One lock file per PR the conductor has ever seen lives in locks/ for ever
+# otherwise; each is removed under its own lock, so a live worker keeps its file.
+mc_pr_lock_gc
+# Cached PR file lists (the overlap re-review test) keyed on heads long gone.
+type mc_pr_files_gc >/dev/null 2>&1 && mc_pr_files_gc
+# Cross-tick read memos (BH-1486) on the same three-day rule and for the same
+# reason: the head they are keyed on is long gone.
+read_memo_gc
+# The PR snapshot's per-PR bodies (BH-4659) on the same three-day rule.
+command -v prs_gc >/dev/null 2>&1 && prs_gc
+# Head-lag state (BH-1529) for PRs that merged or closed while lagging.
+head_lag_gc
+# UNVERIFIABLE streaks (BH-1634) for PRs that merged or closed mid-streak.
+unverif_gc
+mc_dv_reap
+}
+# <<< fleet sweeps (BH-7879)

@@ -184,13 +184,14 @@ command -v prs_open_list >/dev/null 2>&1 && export HPL_SNAPSHOT=1
 . "$H/bin/lib/merge-conductor-lib.sh"
 # >>> tick scope (BH-6518)
 # The keyed-tick parse, the full-tick window, the tick mode, the tick
-# prelude and the per-project fan-out live in bin/lib/mc/tick-scope.sh, a
+# prelude, the main-red detector call, the per-project fan-out and the fleet
+# sweeps live in bin/lib/mc/tick-scope.sh, a
 # driver-only file (no module header, so the lib's other users never load
 # it). A box mid-sync can see
 # this script new and that file missing or old: the tick refuses, before any
 # GitHub read, rather than run a scope it cannot parse.
 # shellcheck source=bin/lib/mc/tick-scope.sh
-if ! . "$H/bin/lib/mc/tick-scope.sh" || ! declare -F mc_keyed_tick_parse >/dev/null || ! declare -F mc_full_tick_window >/dev/null || ! declare -F mc_tick_mode >/dev/null || ! declare -F mc_tick_prelude >/dev/null || ! declare -F mc_tick_fanout >/dev/null; then
+if ! . "$H/bin/lib/mc/tick-scope.sh" || ! declare -F mc_keyed_tick_parse >/dev/null || ! declare -F mc_full_tick_window >/dev/null || ! declare -F mc_tick_mode >/dev/null || ! declare -F mc_tick_prelude >/dev/null || ! declare -F mc_tick_fanout >/dev/null || ! declare -F mc_tick_main_red >/dev/null || ! declare -F mc_tick_sweeps >/dev/null; then
   HARNESS="$H" "$H/bin/alert-line.sh" --id conductor-module-missing "CONDUCTOR MODULE MISSING: bin/lib/mc/tick-scope.sh is missing or unusable on $(hostname) — the box's bin/ is half-synced; no PR was ticked this tick" 2>/dev/null || true
   mc_log "bin/lib/mc/tick-scope.sh is missing or unusable — refusing the tick"
   exit 1
@@ -3459,30 +3460,10 @@ tick_project() {
 # the only file the tick rewrites whole (pr-state.tsv) is written under its own
 # flock in mc_row_put, and everything else it writes is append-only or keyed by
 # project, repo or PR.
-# ---- is MAIN itself red? (BH-636) -------------------------------------------
-# bin/main-red-detector.sh has existed, with its own suite, since 2026-09-15 and
-# NOTHING called it: no cron line, no caller, only comments. cromford's own
-# main was red for two runs on 2026-09-17 and no flag was ever raised, so the
-# freeze every project tick below reads (main_red_flag) could never engage.
-#
-# It runs HERE, before the first project ticks, so that flag is at most one tick
-# old when it is read. The lock is a DEDUPE and never a queue (the operator, 2026-09-13):
-# held means another tick is already doing it, and this one simply does not.
-# It is its OWN lock file, not the detector's — the detector takes
-# locks/main-red-detector.lock itself, and taking that one here would make every
-# invocation skip. A detector that fails, or is absent (every conductor fixture
-# copies the script into a scratch bin/ without it), never touches the tick.
-# ONE PROJECT (BH-6890): bin/merge-conductor-project.sh runs a full tick of
-# MC_ONLY_PROJECT only, on a lane-run machine. The fleet sweeps (this detector,
-# the held-page flush, the *_gc housekeeping) stay the hub's.
-MC_FLEET_SWEEPS=1
-{ [ -n "$MC_ONLY_KEYS" ] || [ -n "${MC_ONLY_PROJECT:-}" ]; } && MC_FLEET_SWEEPS=0
-if [ "$MC_FLEET_SWEEPS" = 1 ] && [ "${MC_MAIN_RED_DETECT:-1}" != 0 ] && [ -x "$H/bin/main-red-detector.sh" ]; then
-  ( flock -n 9 || { mc_log "main-red detector: another tick holds the lock — skipped (dedupe, never a queue)"; exit 0; }
-    mc_log "main-red detector: reading every repo's main before the project ticks"
-    "$H/bin/main-red-detector.sh" >> "$H/logs/main-red-detector.log" 2>&1 || true
-  ) 9>"$MC_LOCK_DIR/main-red-detect-tick.lock" || true
-fi
+# THE MAIN-RED DETECTOR (BH-636) and the fleet-sweeps decision (BH-6890) live
+# in mc_tick_main_red (bin/lib/mc/tick-scope.sh). It sets MC_FLEET_SWEEPS, which
+# mc_tick_fanout and the keyed exit below read.
+mc_tick_main_red
 
 # BH-1295 REVIEW FIX (F1, round 2): armed in the PARENT shell too, not only
 # inside each project's subshell below — gh-rest-etag.sh's _gh_etag_count is
@@ -3507,37 +3488,10 @@ if [ "$MC_FLEET_SWEEPS" != 1 ]; then
   command -v gh_rest_etag_report >/dev/null 2>&1 && gh_rest_etag_report merge-conductor
   hb_done merge-conductor; exit 0
 fi
-# Detached re-review jobs for PRs that have long since merged or closed.
-mc_rereview_gc
-# The rebase and deploy-verify lanes are read HERE, after every project tick has
-# released its lock: a lane that can hold a project lock is the 03:54-04:02Z
-# project-5 stall this whole change exists to kill.
-mc_lane_gc "$MC_RB_DIR"
-# Hand-off and release markers for PRs settled a fortnight ago, and the stuck
-# detector's one-alert-per-(PR, state, head) markers on the same rule.
-mc_handoff_gc
-mc_stuck_gc
-mc_resolver_claim_gc
-# Batch holds for trains that never settled: a stale hold is a PR nothing merges.
-mc_batch_gc
-# This tick's budget and metrics counters are keyed by tick id, so yesterday's
-# are dead weight the moment the day turns.
-mc_tick_gc
-# One lock file per PR the conductor has ever seen lives in locks/ for ever
-# otherwise; each is removed under its own lock, so a live worker keeps its file.
-mc_pr_lock_gc
-# Cached PR file lists (the overlap re-review test) keyed on heads long gone.
-type mc_pr_files_gc >/dev/null 2>&1 && mc_pr_files_gc
-# Cross-tick read memos (BH-1486) on the same three-day rule and for the same
-# reason: the head they are keyed on is long gone.
-read_memo_gc
-# The PR snapshot's per-PR bodies (BH-4659) on the same three-day rule.
-command -v prs_gc >/dev/null 2>&1 && prs_gc
-# Head-lag state (BH-1529) for PRs that merged or closed while lagging.
-head_lag_gc
-# UNVERIFIABLE streaks (BH-1634) for PRs that merged or closed mid-streak.
-unverif_gc
-mc_dv_reap
+# THE FLEET SWEEPS (BH-7879): the *_gc housekeeping and mc_dv_reap live in
+# mc_tick_sweeps (bin/lib/mc/tick-scope.sh). It runs after every project
+# subshell is done, on a fleet-sweep tick only.
+mc_tick_sweeps
 
 # Rows for PRs GitHub no longer lists as open (merged/closed by anyone) are
 # settled on the next pass through the closed list or by the open pass; a row

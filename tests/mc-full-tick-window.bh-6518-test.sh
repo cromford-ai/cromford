@@ -152,6 +152,8 @@ mc_keyed_tick_parse() { MC_ONLY_KEYS=""; }
 mc_tick_mode() { KILL=0 ACTIONS=0 MERGES=0 MODE=observe; MC_MODE=observe; export MC_MODE; }
 mc_tick_prelude() { REBASE_BUDGET=2 REREVIEW_BUDGET=2 MERGE_BUDGET=5 REREVIEW_CAP=0 CAPFILE=/dev/null; MC_TICK_ID=stub; export MC_TICK_ID; }
 mc_tick_fanout() { :; }
+mc_tick_main_red() { MC_FLEET_SWEEPS=0; }
+mc_tick_sweeps() { :; }
 SH
 }
 resetd; c0_ts
