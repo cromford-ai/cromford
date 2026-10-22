@@ -222,6 +222,10 @@ ppr_reap_landed() {
     *) say "push-rejected $KEY: landed at $PPR_BUILT but every PR create rung failed ($(tail -c 200 "$LOCAL/gh-stderr.log" 2>/dev/null | tr '\n' ' ')) — terminal"
        return 1 ;;
   esac
+  # The ticket's PR-Labels line (BH-7929), as pr.sh applies it on a machine.
+  if [ -r "$LOCAL/ticket-meta.json" ] && { command -v prl_apply >/dev/null 2>&1 || ppr_lib rb-pr-labels.sh; }; then
+    GH_TOKEN="${POOL_SLUG_TOK:-${GH_TOKEN:-}}" prl_apply "$P" "$url" "$LOCAL/ticket-meta.json" "$LOCAL/pipeline.log" || true
+  fi
   { printf 'PR_CREATED %s (opened by the hub: push reported rejected, %s already at %s)\n' "$url" "$PPR_BR" "$PPR_REMOTE"
     cat "$LOCAL/RESULT"; } > "$LOCAL/RESULT.ppr" && mv -f "$LOCAL/RESULT.ppr" "$LOCAL/RESULT"
   RLINE=$(head -n 1 "$LOCAL/RESULT")

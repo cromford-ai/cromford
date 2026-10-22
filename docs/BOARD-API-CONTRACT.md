@@ -614,6 +614,15 @@ with that token is never reused for another ticket. The builders App must be
 installed on the repo (`bin/lib/spec-repos.sh`,
 `docs/notes/2026-10-14-BH-6576-spec-repos.md`).
 
+A body line `PR-Labels: <label>[, <label>]` (or `PR-Label:`) makes the builder
+add those labels to the PR it opens for the ticket, in a separate REST write
+right after the create. The key follows the `Spec-repo:` rules: it must start
+the line, and a mention in a sentence, a fenced line or a comment does not
+count. Values split on commas, so a label may hold spaces; at most 10 are read.
+A label that does not exist in the repo, or that does not read, is one
+`pipeline.log` line and is skipped. It never fails the build, and a rebuild
+labels its new PR the same way (`bin/lib/rb-pr-labels.sh`).
+
 One asymmetry worth knowing: **self-write absorption is disabled on this lane**.
 On GitHub the harness's comments post as the same actor as a human's, so there
 is no safe way to tell them apart, and absorbing could eat a real reply

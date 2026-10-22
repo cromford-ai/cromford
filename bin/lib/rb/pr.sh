@@ -1488,6 +1488,16 @@ fi
 # THE PR IS OPEN from here on (BH-6091 review): a hold at a later write point
 # (the QA fix push) yields that write only, and RESULT still says PR_CREATED.
 [ -n "$PR_URL" ] && RB_PR_OPEN=1
+# >>> pr labels (BH-7929)
+# A ticket body line `PR-Labels: a, b` labels the PR it opens
+# (bin/lib/rb-pr-labels.sh). First after the create, so the labels land before
+# the first CI run reads them; an unknown label is one pipeline.log line.
+if [ -n "$PR_URL" ]; then
+  # shellcheck source=bin/lib/rb-pr-labels.sh
+  command -v prl_apply >/dev/null 2>&1 || { [ -r "$HARNESS/bin/lib/rb-pr-labels.sh" ] && . "$HARNESS/bin/lib/rb-pr-labels.sh"; }
+  command -v prl_apply >/dev/null 2>&1 && prl_apply "$PROJECT" "$PR_URL" "$BUILD/ticket-meta.json" "$BUILD/pipeline.log"
+fi
+# <<< pr labels
 # --- THE LABEL FOLLOWS THE WORK (#368, hotfix lane 1/3) ----------------------
 # A SEPARATE REST WRITE, never a `--label` flag on the create above. That flag
 # fails the whole CREATE when the label does not exist in the target repo, which
