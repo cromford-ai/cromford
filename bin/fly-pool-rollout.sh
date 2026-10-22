@@ -33,6 +33,13 @@ fail() { skip "$1"; echo "$(STAMP) [rollout/$P] $1" >> "$H/logs/ALERTS.log"; }
 export PATH="${FLYCTL_DIR:-/root/.fly/bin}:$PATH"
 set -a; . "$HENV/fly.env"; set +a
 FLY=$(command -v flyctl || command -v fly)
+# Same guard as bin/fly-pool.sh: cron's PATH can miss /usr/local/bin/flyctl,
+# and an empty FLY would make the wrapper below `exec ''` (2026-10-21).
+if [ -z "$FLY" ]; then
+  # shellcheck source=bin/lib/fly-bin.sh
+  [ -r "$H/bin/lib/fly-bin.sh" ] && . "$H/bin/lib/fly-bin.sh" && FLY=$(fly_bin) || FLY=""
+fi
+[ -n "$FLY" ] || { P=all; fail "no flyctl on this host — rollout skipped"; exit 1; }
 # Start the flyctl agent BEFORE any lock, and wrap flyctl so the agent never
 # inherits the per-project lock fd — same reasoning as bin/fly-pool.sh:83-95
 # (an agent auto-spawned inside the locked section holds the lock forever).

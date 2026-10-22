@@ -80,6 +80,22 @@ while [ $# -gt 0 ]; do
   esac
 done
 
+# >>> project name length
+# The worker refuses a settings key over 64 chars (SETTING_KEY_RE,
+# worker/jobs/src/lib/core.js). A project-scoped key is lane.<lane>.<project>.<knob>,
+# and the longest lane+knob part is 45 chars, so a project name may have 19.
+# cromford-sandbox-linear (23) made 19 keys of 65-68 chars and turned main red
+# (tests/lanes-registry-test.sh section 9). tests/load-project-name-length-test.sh
+# keeps this number in step with catalog/lanes.json. Checked before any write.
+MAX_PROJECT_LEN=19
+PROJECT_NAME="${PROJECT:-$(basename "$SLUG" | tr '[:upper:]' '[:lower:]')}"
+if [ "${#PROJECT_NAME}" -gt "$MAX_PROJECT_LEN" ]; then
+  echo "REFUSED: project name '$PROJECT_NAME' has ${#PROJECT_NAME} chars; the limit is $MAX_PROJECT_LEN (settings keys must fit 64)."
+  echo "pass a shorter --project <name>. nothing was written."
+  exit 2
+fi
+# <<< project name length
+
 # >>> readiness gate
 # BEFORE the first anything. Below this point the command appends a fleet.conf
 # row, renders a prompt, commits, pushes, creates a label and bootstraps a box —
@@ -210,7 +226,12 @@ else
     # in 00a9911): the old row's box column grew a project name, the new project
     # had no row at all, and the push went out green.
     [ ! -s fleet.conf ] || [ -z "$(tail -c1 fleet.conf)" ] || echo >> fleet.conf
-    printf '%-13s %-26s %-36s %-3s %-2s %s\n' "$PROJECT" "$SLUG" "$PROD" "-" "$OFF" "$BOX" >> fleet.conf
+    # The 7th column is the box's tailnet address. A box the registry already
+    # knows gets it (project-6-desktop, 8a1d9bc7c: a 6-column row on small made
+    # box-register refuse "box small already has the address -"). A new box has
+    # none yet, so its row stays at 6 columns until box-register sets it.
+    BOX_IP=$(bin/fleet-conf.sh --tailnet-ip-of-box "$BOX" 2>/dev/null) || BOX_IP=""
+    printf '%-13s %-26s %-36s %-3s %-2s %s%s\n' "$PROJECT" "$SLUG" "$PROD" "-" "$OFF" "$BOX" "${BOX_IP:+ $BOX_IP}" >> fleet.conf
     # Read the row back through the same parser every lane uses, BEFORE the commit
     # step below can publish it. This is the one check that would have stopped
     # 00a9911's row from reaching main.

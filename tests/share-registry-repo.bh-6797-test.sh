@@ -15,7 +15,9 @@
 #       row hint; a glued or other-owner slug is refused alone; a REPOS row
 #       added to a copy of mapping.py clears it
 #   Q4  a failed repo read is rc 2, not a dropped item
-#   Q5  the rewrite agrees with the rows, and the committed count is 58
+#   Q5  the rewrite agrees with the rows, and the guard counts every committed
+#       item (the counts derive from fleet.conf, so a project load does not
+#       make this suite red; each slug and item still has to be mapped)
 #   Q6  rule 4b changes no text the old rules gave, every row's slug included
 #   Q7  read_registry still returns 4-tuples (the BH-6760 X5 contract)
 #
@@ -77,10 +79,15 @@ done
 # ── Q2 every committed slug is mapped ───────────────────────────────────────
 mapfile -t SLUGS < <(FLEET_CONF="$DIR/fleet.conf" "$DIR/bin/fleet-conf.sh" --projects | while read -r p; do
   FLEET_CONF="$DIR/fleet.conf" "$DIR/bin/fleet-conf.sh" "$p" repo; done)
-[ "${#SLUGS[@]}" = 13 ] && ok || bad "Q2 want 13 committed slugs, got ${#SLUGS[@]}"
+# The expected count is the committed fleet.conf rows with a slug, read with
+# awk and not with the reader under test, so the count follows each project
+# load and a reader that drops a row still fails.
+NSLUG=$(awk 'NF && $1 !~ /^#/ && $2 != "-" {n++} END {print n+0}' "$DIR/fleet.conf")
+[ "$NSLUG" -gt 0 ] && [ "${#SLUGS[@]}" = "$NSLUG" ] && ok \
+  || bad "Q2 want $NSLUG committed slugs (fleet.conf rows with a slug), got ${#SLUGS[@]}"
 Q2=(); for s in "${SLUGS[@]}"; do Q2+=("repo:$s"); done
 verdicts "${Q2[@]}" > "$T/q2.out" 2>&1
-[ "$(grep -c ' mapped$' "$T/q2.out")" = 13 ] && ok || bad "Q2 not 13 of 13 slugs mapped: $(tr '\n' '|' < "$T/q2.out")"
+[ "$(grep -c ' mapped$' "$T/q2.out")" = "$NSLUG" ] && ok || bad "Q2 not $NSLUG of $NSLUG slugs mapped: $(tr '\n' '|' < "$T/q2.out")"
 
 # ── Q3 a new row: rc 1, the unmapped line and the hint ──────────────────────
 R="$T/q3"; mkroot "$R"
@@ -143,7 +150,7 @@ python3 -B "$GUARD" --root "$R4" --fleet-conf "$R4/fleet.conf" > "$T/q4.out" 2>&
   || bad "Q4 a failed repo read: rc=$rc, want 2 and 'could not read ... repo rc 3': $(tr '\n' ' ' < "$T/q4.out")"
 
 # ── Q5 the rewrite agrees with the rows ─────────────────────────────────────
-FLEET_CONF="$DIR/fleet.conf" python3 -B - "$DIR" > "$T/q5.out" 2>&1 <<'PY'
+FLEET_CONF="$DIR/fleet.conf" python3 -B - "$DIR" "$NSLUG" > "$T/q5.out" 2>&1 <<'PY'
 import os, sys
 root = sys.argv[1]
 sys.path.insert(0, os.path.join(root, "bin", "share"))
@@ -157,12 +164,33 @@ for p, slug in g.read_repos(root, dict(os.environ), "committed"):
         bad += 1
         print("MISMATCH %s: row says %s, rewrite gives %s" % (slug, pub, rewrite(slug)))
 print("checked %d" % n)
-sys.exit(1 if bad or n != 13 else 0)
+sys.exit(1 if bad or n != int(sys.argv[2]) else 0)
 PY
 [ $? = 0 ] && ok || bad "Q5 the rewrite and the REPOS rows disagree: $(tr '\n' '|' < "$T/q5.out")"
+# The item count: every distinct project, box, prefix and domain the readers
+# return, one no-prefix or no-box item per project without one, and the slugs.
+# It is built here from the readers' rows, not by main(), so a main() that
+# drops a kind still fails.
+NITEM=$(FLEET_CONF="$DIR/fleet.conf" python3 -B - "$DIR" <<'PY'
+import os, sys
+root = sys.argv[1]
+sys.path.insert(0, os.path.join(root, "bin", "share"))
+import registry_guard as g
+env = dict(os.environ)
+items = set()
+for p, box, prefix, host in g.read_registry(root, env, "committed"):
+    for kind, item in (("project", p), ("box", box), ("prefix", prefix), ("domain", host),
+                       ("no-prefix", "" if prefix else p), ("no-box", "" if box else p)):
+        if item:
+            items.add((kind, item))
+for p, slug in g.read_repos(root, env, "committed"):
+    items.add(("repo", slug))
+print(len(items))
+PY
+)
 python3 -B "$GUARD" --root "$DIR" --fleet-conf "$DIR/fleet.conf" > "$T/q5b.out" 2>&1; rc=$?
-[ "$rc" = 0 ] && grep -qx 'registry-guard: 58 item(s), all mapped' "$T/q5b.out" && ok \
-  || bad "Q5 the committed registry: rc=$rc, want 0 and 58 items: $(tr '\n' ' ' < "$T/q5b.out")"
+[ "$rc" = 0 ] && [ "${NITEM:-0}" -gt "$NSLUG" ] && grep -qx "registry-guard: $NITEM item(s), all mapped" "$T/q5b.out" && ok \
+  || bad "Q5 the committed registry: rc=$rc, want 0 and $NITEM items: $(tr '\n' ' ' < "$T/q5b.out")"
 
 # ── Q6 rule 4b changes no text ──────────────────────────────────────────────
 python3 -B - "$DIR/bin/share" > "$T/q6.out" 2>&1 <<'PY'

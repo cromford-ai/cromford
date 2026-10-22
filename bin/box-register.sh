@@ -115,7 +115,9 @@ if [ "$RETIRE" = 0 ] && [ "$TRAP" = 0 ]; then
     || refuse "fleet.conf has no row for project '$PROJECT'. Add it first: bin/load-project.sh <owner/repo> --project $PROJECT --box $HOST --no-bootstrap"
   OTHER=$(awk -v ip="$IP" -v id="$ID" '$3 == ip && $2 != id {print $2 " (project " $1 ")"; exit}' <<< "$ROWS")
   [ -z "$OTHER" ] || refuse "--ip $IP is already the address of box $OTHER"
-  OLDIP=$(awk -v ip="$IP" -v id="$ID" '$2 == id && $3 != ip {print $3 " (project " $1 ")"; exit}' <<< "$ROWS")
+  # "-" is a row with no tailnet_ip column (optional, fleet.conf header): it
+  # names no address, so it cannot conflict with --ip.
+  OLDIP=$(awk -v ip="$IP" -v id="$ID" '$2 == id && $3 != "-" && $3 != ip {print $3 " (project " $1 ")"; exit}' <<< "$ROWS")
   [ -z "$OLDIP" ] || refuse "box $ID already has the address $OLDIP; it cannot also be $IP"
   if [ -n "$LIKE" ]; then
     [ "$LIKE" != hub ] || refuse "--like hub: the hub's lanes are not a watcher box's lanes"

@@ -110,7 +110,31 @@ export FLY_ACCESS_TOKEN="$FLY_TOKEN_VAL"
 APP=$(jq -r '.app // ""' "$HARNESS/state/fly/$P.json" 2>/dev/null)
 [ -n "$APP" ] || exit 0
 FLY=$(command -v fly || command -v flyctl)
+# NO FLYCTL, NO TICK (2026-10-21). Cron's PATH is /usr/bin:/bin and the Fly hub
+# image puts flyctl in /usr/local/bin (BH-7715), so the lookup above can find
+# nothing. FLY was then empty, the no-leak wrapper below became `exec ''`, and
+# every flyctl call in the tick failed as "machines list unusable (exec: : not
+# found)" (project-3 09:10Z). The PATH lookup stays first (a test's FLY_BIN_DIR
+# stub must win); bin/lib/fly-bin.sh then checks the install dirs; nothing at
+# all is one alert a day and a clean exit, never a tick run on an empty binary.
+if [ -z "$FLY" ]; then
+  # shellcheck source=bin/lib/fly-bin.sh
+  [ -r "$HARNESS/bin/lib/fly-bin.sh" ] && . "$HARNESS/bin/lib/fly-bin.sh" && FLY=$(fly_bin) || FLY=""
+fi
 LOG="$HARNESS/logs/fly-pool.log"
+if [ -z "$FLY" ]; then
+  echo "$(date -u '+%F %TZ') [$P] no flyctl on this host (PATH=$PATH) — tick skipped" >> "$LOG"
+  # The once-a-day stamp lives in the pool's state dir, not flags/: it is an
+  # alert dedup mark, and new flags/ writes go through bin/lib/flags.sh (L1).
+  mkdir -p "$HARNESS/state/fly-pool/$P" 2>/dev/null
+  _NF="$HARNESS/state/fly-pool/$P/alerted-noflyctl-$(date -u +%Y%m%d)"
+  if [ ! -e "$_NF" ]; then
+    : > "$_NF" 2>/dev/null
+    [ -x "$HARNESS/bin/alert-line.sh" ] && "$HARNESS/bin/alert-line.sh" --project "$P" --id "pool-noflyctl-$P" \
+      "[pool/$P] no flyctl on $(hostname 2>/dev/null) — the pool tick is skipped until flyctl is installed or on cron's PATH (ls /usr/local/bin/flyctl /root/.fly/bin/flyctl)" </dev/null >/dev/null 2>&1 || true
+  fi
+  exit 0
+fi
 # shellcheck source=bin/lib/preplan-lib.sh
 [ -r "$HARNESS/bin/lib/preplan-lib.sh" ] && . "$HARNESS/bin/lib/preplan-lib.sh"
 # shellcheck source=bin/lib/test-home-lib.sh

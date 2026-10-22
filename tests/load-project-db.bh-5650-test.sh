@@ -146,8 +146,12 @@ eq "L5 rc" "$R" "0"
 [ "$R" = 0 ] || cat "$T/l5.out"
 OFF=$(FLEET_CONF="$T/f/fleet.conf" "$T/f/bin/fleet-conf.sh" newp offset 2>/dev/null)
 eq "L5 file mode picks the offset db mode picked" "$OFF" "$DBOFF"
+# The row carries the box's tailnet address when the registry knows it
+# (TEST-CHANGE, hotfix after 8a1d9bc7c: a 6-column row on small broke box-register).
+SMALL_IP=$(FLEET_CONF="$T/f.fleet.conf.orig" "$T/f/bin/fleet-conf.sh" --tailnet-ip-of-box box-small 2>/dev/null)
+[ -n "$SMALL_IP" ] && ok || bad "L5 precondition: the scratch registry knows the address of box-small"
 { cat "$T/f.fleet.conf.orig"
-  printf '%-13s %-26s %-36s %-3s %-2s %s\n' newp Acme/newp - - "$OFF" box-small
+  printf '%-13s %-26s %-36s %-3s %-2s %s%s\n' newp Acme/newp - - "$OFF" box-small "${SMALL_IP:+ $SMALL_IP}"
 } > "$T/l5.want"
 cmp -s "$T/f/fleet.conf" "$T/l5.want" && ok || bad "L5 fleet.conf is not the old file plus the one row: $(diff "$T/l5.want" "$T/f/fleet.conf" | head -4)"
 eq "L5 no registry call" "$(rfx_calls)" "$CALLS"
