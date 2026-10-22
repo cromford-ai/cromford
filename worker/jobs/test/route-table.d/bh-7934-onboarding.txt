@@ -1,0 +1,5 @@
+# BH-7934.0 (#7947): onboarding run create and read, key-named (BH-5788).
+# Written by the console's onboarding form; read by the runner (BH-7934.2).
+# Bearer-gated.
+POST /api/onboarding/runs
+GET re:/^\/api\/onboarding\/runs\/(ob_[0-9a-f]{20})$/
