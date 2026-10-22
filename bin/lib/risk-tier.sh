@@ -59,6 +59,12 @@
 #      never loaded them) is never an evidence low.
 #   3. changed lines > high_lines, or files > high_files    -> high
 #   4. otherwise                                             -> medium
+#   5. LOW-SMALL (BH-7041) is not a rule of rt_classify, whose answer it never
+#      changes. rt_low_small_apply runs rt_low_small on a head rt_classify
+#      called medium, and turns a yes into low only under
+#      risk_tier.low_small_mode enforce (see rt_low_small below). Both callers
+#      (the hub enqueue and the worklist gate 60-risk.sh) call it right after
+#      rt_classify, so the shared risk.tsv cache holds one answer per head.
 # UNREADABLE IS NEVER LOW. A rules row the worker could not answer (rc 1), or a
 # protected-path list that could not be read, caps the answer at medium, with
 # the reason saying which.
@@ -71,6 +77,8 @@
 #   risk_tier.high_lines 600, risk_tier.high_files 25, risk_tier.low_lines 300,
 #   risk_tier.rules_low_lines 80,
 #   risk_tier.low_score_max 0 (rule 2c off), risk_tier.low_min_suites 12
+#   risk_tier.low_small_mode   off|shadow|enforce, no row = shadow (RT_LOW_SMALL_MODE_DEFAULT)
+#   risk_tier.low_small_lines  RT_LOW_SMALL_LINES_DEFAULT 250, capped at RT_LOW_SMALL_LINES_MAX
 # Globs are space-separated and match like _la_match: `**` reads as `*`, and a
 # bash `*` already crosses `/`. The worker signs every risk_tier.* write; the
 # signature records who wrote a row, it does not gate the write, which is why
@@ -93,7 +101,13 @@
 #   loaded: a cached tier is only reused under the same one; the two rule 2c
 #   rows are in it only while the lane is on, so a lane that stays off keeps
 #   every cached tier) and RT_RULES_LOADED=1. rt_classify calls it unless the caller already did (the
-#   lane loads once per repo per tick).
+#   lane loads once per repo per tick). It also fills RT_LOW_SMALL_MODE
+#   (off|shadow|enforce) and RT_LOW_SMALL_LINES from the two low_small rows
+#   (_rt_low_small_rows): a bad or unreadable low_small row sets
+#   RT_LOW_SMALL_MODE=off and RT_LOW_SMALL_WHY, and never RT_RULES_UNREADABLE,
+#   so it never caps the wave-1 low. The two rows are in RT_RULES_SIG only
+#   under enforce: shadow and off never change a cached tier, so they keep
+#   today's sig, and a flip to or from enforce reclassifies each head once.
 # rt_inbuild_grace
 #   BH-5023: prints the seconds the hub enqueue holds a medium head under
 #   enforce for the in-build lead-grade review (bin/inbuild-lead-review.sh)
@@ -125,8 +139,41 @@
 #   The queue_risk rows are read once per rt_rules_load. Always rc 0.
 # rt_low_rule <tier> <reasons>
 #   prints which rule made a head low, for risk.tsv column 8: `evidence` (low
-#   or withheld, reasons start `evidence:`), `path` (any other low or withheld,
-#   a rules-text low included), else `-`.
+#   or withheld, reasons start `evidence:`), `low-small` (reasons start
+#   `low-small:`, BH-7041), `path` (any other low or withheld, a rules-text low
+#   included), else `-`.
+# rt_low_small <compare-json-file> <owner/repo> <tier>
+#   BH-7041. <tier> is the head's rt_classify answer (the caller has it; this
+#   never classifies again). rc 0 prints `yes\t<own> code lines, <n> files
+#   (spec lines <s> not counted)`; rc 1 prints `no\t<why>`; rc 2 prints nothing
+#   on an unreadable files[]. It never reads RT_LOW_SMALL_MODE: the caller
+#   decides what a yes does. Yes needs ALL of:
+#   - <tier> is medium (no high, sensitive or lead protected path, under 300
+#     files, not over high_lines or high_files, not already low);
+#   - the rules read whole (RT_RULES_UNREADABLE empty, RT_LOW_SMALL_LINES set)
+#     and la_globs readable;
+#   - no filename or previous_filename matches the floor RT_LOW_SMALL_DENY (a
+#     constant: a narrowed high_globs row can not remove a path from it), the
+#     current high and sensitive rows, or the la globs;
+#   - own lines (additions + deletions, RT_SPEC_GLOB files left out) are 1 or
+#     more and under min(RT_LOW_SMALL_LINES, RT_LOW_SMALL_LINES_MAX); a rename
+#     into or out of the spec dir is never low-small, and a count that is not
+#     a number is never zero. Rule 3 still counts every line;
+#   - every EXISTING test file (_rt_test_shape, status not added) is modified,
+#     sits directly in tests/, tests/mc/ or console-ui/tests/ or under
+#     worker/<name>/test/ with no lib, fixtures, helpers or __fixtures__
+#     directory, has a patch, loses no line matching RT_LOW_SMALL_ASSERT_RE and
+#     gains no `exit 0` and no `skip` (any case).
+# rt_low_small_apply <compare-json-file> <owner/repo> <tier> <why>
+#   BH-7041, the one place a caller applies low-small, right after rt_classify
+#   on a head classified now. Prints `<tier>\t<why>\t<log line or empty>` and
+#   sets no caller variable. Only a medium <tier> with RT_LOW_SMALL_MODE shadow
+#   or enforce runs rt_low_small:
+#     enforce + yes  `low\tlow-small: <reason>\t` (the caller's low path signs off)
+#     shadow + yes   `medium\t<why>\trisk-tier WOULD sign off (low-small: <reason>); ...`
+#     no             `medium\t<why>\tlow-small no (<why not>); medium`
+#   Any other tier, or mode off: <tier> and <why> unchanged, an empty log.
+#   Always rc 0.
 # rt_classify <compare-json-file> <owner/repo>
 #   Reads RT_RULES_RENDER (rule 2b; unset = not proved, never low) and
 #   RT_EVIDENCE_* (rule 2c; unset = no evidence, never an evidence low).
@@ -157,6 +204,18 @@ RT_INBUILD_GRACE_S_DEFAULT=3600
 RT_LOW_SCORE_MAX_DEFAULT=0
 RT_LOW_MIN_SUITES_DEFAULT=12
 RT_PQ_CONTEXT=prequeue-verdict
+# BH-7041 low-small. The floor and the cap are constants on purpose: a row may
+# lower the line limit, never raise it, and no row removes a floor path.
+RT_LOW_SMALL_DENY="$RT_HIGH_GLOBS_DEFAULT $RT_SENSITIVE_GLOBS_DEFAULT worker/jobs/schema* worker/*/schema.d/* .github/* .mergify.yml catalog/lanes.d/* bin/lead-* bin/lib/risk-tier.sh bin/lib/lead-* rules/* cron/*"
+RT_LOW_SMALL_LINES_MAX=250
+RT_LOW_SMALL_LINES_DEFAULT=250
+RT_LOW_SMALL_MODE_DEFAULT=shadow
+RT_SPEC_GLOB='.harness/specs/*'
+# A line an existing test may not lose (jq/Oniguruma regex, matched on the
+# line without its leading -). The helper names are this repo's own assertion
+# calls (eq, check, want, same, fail, pass, ok, bad), as a word followed by a
+# space or the line end, so a flipped `eq` expected value is a lost line too.
+RT_LOW_SMALL_ASSERT_RE='(^|[^A-Za-z_])(ok|bad|eq|check|want|same|fail|pass)( |$)|assert|expect|FAIL'
 
 # la_globs lives in the lead-authority lib; without it rule 1's catalog half is unreadable.
 # shellcheck source=bin/lib/lead-authority.sh
@@ -232,12 +291,48 @@ rt_rules_load() {
   [ "$f" = /dev/null ] || rm -f "$f"
   # The queue_risk rows rule 2c scores with are read again after a rules load.
   _RT_QR_LOADED=""
+  _rt_low_small_rows
+  # BH-7041: only enforce makes a low-small yes a cached tier, so only enforce
+  # (and its line limit) joins the sig; every other line is today's.
+  local ls=(); [ "$RT_LOW_SMALL_MODE" = enforce ] && ls=("low-small enforce $RT_LOW_SMALL_LINES")
   if [ "$RT_LOW_SCORE_MAX" -gt 0 ]; then
-    RT_RULES_SIG=$(printf '%s\n' "$RT_HIGH_GLOBS" "$RT_SENSITIVE_GLOBS" "$RT_LOW_GLOBS" "$RT_HIGH_LINES" "$RT_HIGH_FILES" "$RT_LOW_LINES" "$RT_RULES_LOW_LINES" "${RT_RULES_UNREADABLE:-}" "evidence $RT_LOW_SCORE_MAX $RT_LOW_MIN_SUITES" | cksum | cut -d' ' -f1)
+    RT_RULES_SIG=$(printf '%s\n' "$RT_HIGH_GLOBS" "$RT_SENSITIVE_GLOBS" "$RT_LOW_GLOBS" "$RT_HIGH_LINES" "$RT_HIGH_FILES" "$RT_LOW_LINES" "$RT_RULES_LOW_LINES" "${RT_RULES_UNREADABLE:-}" "evidence $RT_LOW_SCORE_MAX $RT_LOW_MIN_SUITES" "${ls[@]}" | cksum | cut -d' ' -f1)
   else
-    RT_RULES_SIG=$(printf '%s\n' "$RT_HIGH_GLOBS" "$RT_SENSITIVE_GLOBS" "$RT_LOW_GLOBS" "$RT_HIGH_LINES" "$RT_HIGH_FILES" "$RT_LOW_LINES" "$RT_RULES_LOW_LINES" "${RT_RULES_UNREADABLE:-}" | cksum | cut -d' ' -f1)
+    RT_RULES_SIG=$(printf '%s\n' "$RT_HIGH_GLOBS" "$RT_SENSITIVE_GLOBS" "$RT_LOW_GLOBS" "$RT_HIGH_LINES" "$RT_HIGH_FILES" "$RT_LOW_LINES" "$RT_RULES_LOW_LINES" "${RT_RULES_UNREADABLE:-}" "${ls[@]}" | cksum | cut -d' ' -f1)
   fi
   RT_RULES_LOADED=1
+  return 0
+}
+
+# _rt_low_small_rows — fills RT_LOW_SMALL_MODE, RT_LOW_SMALL_LINES and
+# RT_LOW_SMALL_WHY (empty when both rows read clean). Never touches
+# RT_RULES_UNREADABLE.
+_rt_low_small_rows() {
+  local v rc=0
+  RT_LOW_SMALL_MODE=off; RT_LOW_SMALL_LINES=""; RT_LOW_SMALL_WHY=""
+  if ! command -v setting_get >/dev/null 2>&1; then RT_LOW_SMALL_WHY="no settings reader; low-small off"; return 0; fi
+  v=$(setting_get risk_tier.low_small_mode) || rc=$?
+  case "$rc" in
+    0) v=$(printf '%s' "$v" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//' | tr '[:upper:]' '[:lower:]')
+       case "$v" in
+         off|shadow|enforce) RT_LOW_SMALL_MODE="$v" ;;
+         *) RT_LOW_SMALL_WHY="risk_tier.low_small_mode reads '$(printf '%s' "$v" | tr -d '\t\n' | head -c 40)', not off|shadow|enforce; low-small off this tick"; return 0 ;;
+       esac ;;
+    2) RT_LOW_SMALL_MODE="$RT_LOW_SMALL_MODE_DEFAULT" ;;
+    *) RT_LOW_SMALL_WHY="the risk_tier.low_small_mode row could not be read; low-small off this tick"; return 0 ;;
+  esac
+  rc=0; v=$(setting_get risk_tier.low_small_lines) || rc=$?
+  case "$rc" in
+    0) v=$(printf '%s' "$v" | tr -d '[:space:]')
+       if [[ "$v" =~ ^[0-9]{1,6}$ ]]; then
+         v=$((10#$v)); [ "$v" -gt "$RT_LOW_SMALL_LINES_MAX" ] && v="$RT_LOW_SMALL_LINES_MAX"
+         RT_LOW_SMALL_LINES="$v"
+       else
+         RT_LOW_SMALL_MODE=off; RT_LOW_SMALL_WHY="risk_tier.low_small_lines reads '${v:0:40}', not an integer; low-small off this tick"
+       fi ;;
+    2) RT_LOW_SMALL_LINES="$RT_LOW_SMALL_LINES_DEFAULT" ;;
+    *) RT_LOW_SMALL_MODE=off; RT_LOW_SMALL_WHY="the risk_tier.low_small_lines row could not be read; low-small off this tick" ;;
+  esac
   return 0
 }
 
@@ -329,7 +424,7 @@ _rt_rules_lane() {
 
 rt_low_rule() {
   case "${1:-}" in low|withheld) ;; *) printf -- '-'; return 0 ;; esac
-  case "${2:-}" in evidence:*) printf evidence ;; *) printf path ;; esac
+  case "${2:-}" in evidence:*) printf evidence ;; low-small:*) printf low-small ;; *) printf path ;; esac
 }
 
 # _rt_score_shim <flag-file> — defines mc_attempt_count over pr_attempt_count
@@ -480,4 +575,102 @@ rt_classify() {
     elif [ "$la_ok" != 1 ]; then tier=medium; reasons="protected paths unreadable; $reasons"; fi
   fi
   printf '%s\t%s\t%s\t%s\n' "$tier" "$(printf '%s' "$reasons" | tr '\t\n' '  ' | head -c 1000)" "$lines" "$nfiles"
+}
+# _rt_test_shape <path> — rc 0 for a test file or anything under a test dir.
+_rt_test_shape() {
+  case "$1" in
+    tests/*|console-ui/tests/*|worker/*/test/*|*.test.*|*-test.sh) return 0 ;;
+  esac
+  return 1
+}
+
+# _rt_test_home <path> — rc 0 when an existing test sits where an edit to it
+# can be read line by line: directly in tests/, tests/mc/ or console-ui/tests/,
+# or under worker/<name>/test/ with no helper or fixture directory.
+_rt_test_home() {
+  local p="$1" rest
+  case "$p" in
+    tests/mc/*) [[ "${p#tests/mc/}" == */* ]] && return 1; return 0 ;;
+    tests/*) [[ "${p#tests/}" == */* ]] && return 1; return 0 ;;
+    console-ui/tests/*) [[ "${p#console-ui/tests/}" == */* ]] && return 1; return 0 ;;
+    worker/*/test/*)
+      rest="/${p#worker/*/test/}"
+      case "$rest" in */lib/*|*/fixtures/*|*/helpers/*|*/__fixtures__/*) return 1 ;; esac
+      return 0 ;;
+  esac
+  return 1
+}
+
+rt_low_small() {
+  local cmp="$1" slug="$2" tier="${3:-}" la paths p pf st add del patch own=0 spec=0 nf=0 max hits gl
+  jq -e '(.files | type) == "array"' "$cmp" >/dev/null 2>&1 || return 2
+  [ "$tier" = medium ] || { printf 'no\trisk tier %s, not medium\n' "${tier:-unknown}"; return 1; }
+  [ "${RT_RULES_LOADED:-}" = 1 ] || rt_rules_load
+  [ -z "${RT_RULES_UNREADABLE:-}" ] || { printf 'no\trules unreadable\n'; return 1; }
+  [[ "${RT_LOW_SMALL_LINES:-}" =~ ^[0-9]+$ ]] || { printf 'no\tlow-small lines limit unreadable\n'; return 1; }
+  la=""
+  if command -v la_globs >/dev/null 2>&1; then la=$(la_globs "$slug" 2>/dev/null) || { printf 'no\tprotected paths unreadable\n'; return 1; }
+  else printf 'no\tprotected paths unreadable (no lead-authority lib)\n'; return 1; fi
+  gl="$RT_LOW_SMALL_DENY $RT_HIGH_GLOBS $RT_SENSITIVE_GLOBS $(printf '%s' "$la" | tr '\n' ' ')"
+  paths=$(mktemp "${TMPDIR:-/tmp}/risk-tier.XXXXXX") || return 2
+  jq -r '.files[] | .filename, (.previous_filename // empty)' "$cmp" > "$paths" 2>/dev/null || { rm -f "$paths"; return 2; }
+  hits=$(_rt_hits "$paths" "$gl"); rm -f "$paths"
+  [ -z "$hits" ] || { printf 'no\t%s (low-small floor or a protected path)\n' "$hits"; return 1; }
+  max="$RT_LOW_SMALL_LINES"; [ "$max" -gt "$RT_LOW_SMALL_LINES_MAX" ] && max="$RT_LOW_SMALL_LINES_MAX"
+  # One line per file: name, previous name, status, additions, deletions, and
+  # the patch's verdict (none | ok | lost | gained), computed in jq.
+  # The separator is \x1f, not a tab: read merges empty tab fields.
+  while IFS=$'\x1f' read -r p pf st add del patch; do
+    nf=$((nf + 1))
+    [[ "$add" =~ ^[0-9]+$ && "$del" =~ ^[0-9]+$ ]] || { printf 'no\t%s has no readable line counts\n' "$p"; return 1; }
+    if _rt_match "$p" "$RT_SPEC_GLOB" || { [ -n "$pf" ] && _rt_match "$pf" "$RT_SPEC_GLOB"; }; then
+      if ! _rt_match "$p" "$RT_SPEC_GLOB" || { [ -n "$pf" ] && ! _rt_match "$pf" "$RT_SPEC_GLOB"; }; then
+        printf 'no\t%s is renamed across the spec dir\n' "${pf:-$p}"; return 1
+      fi
+      spec=$((spec + add + del)); continue
+    fi
+    own=$((own + add + del))
+    if [ "$st" != added ] && { _rt_test_shape "$p" || { [ -n "$pf" ] && _rt_test_shape "$pf"; }; }; then
+      [ "$st" = modified ] || { printf 'no\t%s is an existing test file, %s\n' "${pf:-$p}" "$st"; return 1; }
+      _rt_test_home "$p" || { printf 'no\t%s is a test helper or fixture\n' "$p"; return 1; }
+      case "$patch" in
+        ok) ;;
+        none) printf 'no\t%s: patch not readable\n' "$p"; return 1 ;;
+        lost) printf 'no\t%s loses an assertion line\n' "$p"; return 1 ;;
+        *) printf "no\\t%s gains 'exit 0' or 'skip'\\n" "$p"; return 1 ;;
+      esac
+    fi
+  done < <(jq -r --arg re "$RT_LOW_SMALL_ASSERT_RE" '.files[] | [
+      (.filename | tostring), (.previous_filename // "" | tostring), (.status // "" | tostring),
+      (if (.additions | type) == "number" then .additions else "x" end),
+      (if (.deletions | type) == "number" then .deletions else "x" end),
+      (if (.patch | type) != "string" then "none"
+       else (.patch | split("\n")) as $l
+         | if any($l[]; startswith("-") and (.[1:] | test($re))) then "lost"
+           elif any($l[]; startswith("+") and (.[1:] | (test("exit 0") or test("skip"; "i")))) then "gained"
+           else "ok" end end)
+    ] | map(tostring | gsub("[\u001f\n]"; " ")) | join("\u001f")' "$cmp" 2>/dev/null)
+  [ "$nf" -gt 0 ] || { printf 'no\tempty diff\n'; return 1; }
+  [ "$own" -gt 0 ] || { printf 'no\t0 code lines (spec lines %s only)\n' "$spec"; return 1; }
+  [ "$own" -lt "$max" ] || { printf 'no\t%s code lines, low-small limit %s\n' "$own" "$max"; return 1; }
+  printf 'yes\t%s code lines, %s files (spec lines %s not counted)\n' "$own" "$nf" "$spec"
+  return 0
+}
+
+rt_low_small_apply() {
+  local cmp="$1" slug="$2" tier="$3" why="$4" a="" w="" out
+  case "$tier:${RT_LOW_SMALL_MODE:-off}" in medium:shadow|medium:enforce) ;;
+    *) printf '%s\t%s\t\n' "$tier" "$why"; return 0 ;;
+  esac
+  out=$(rt_low_small "$cmp" "$slug" "$tier")
+  IFS=$'\t' read -r a w <<<"$out"
+  w="${w//[$'\t\n']/ }"; w="${w:0:500}"
+  if [ "$a" = yes ] && [ "$RT_LOW_SMALL_MODE" = enforce ]; then
+    printf 'low\tlow-small: %s\t\n' "$w"
+  elif [ "$a" = yes ]; then
+    printf '%s\t%s\trisk-tier WOULD sign off (low-small: %s); shadow, so the lead review is requested as before\n' "$tier" "$why" "$w"
+  else
+    printf '%s\t%s\tlow-small no (%s); medium\n' "$tier" "$why" "${w:-compare files unreadable}"
+  fi
+  return 0
 }

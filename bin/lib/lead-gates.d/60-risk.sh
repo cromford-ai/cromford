@@ -8,6 +8,13 @@
 #   - Rule 2c (BH-6968): while risk_tier.low_score_max > 0, rt_evidence_load
 #     reads the head's evidence (the PR body, its prequeue-verdict status, the
 #     queue-risk score) before rt_classify, as the enqueue does.
+#   - Low-small (BH-7041): a head rt_classify calls medium in this call goes
+#     through rt_low_small_apply, as in the enqueue: under
+#     risk_tier.low_small_mode enforce a yes is cached and handled as low
+#     (`low-small: ...`, column 8 `low-small`), so the low + enforce path below
+#     signs it off; under shadow (no row) it stays medium with one `risk-tier
+#     WOULD sign off (low-small: ...)` line; a no logs one `low-small no` line.
+#     A bad or unreadable mode row is off and one line in lg_tick_risk.
 #   - The PR read (pulls/<n>, for .user.login) and the compare read failing =
 #     rc 11. The compare is lgc_compare's (bin/lib/lead-gates-compare.sh): the
 #     repo's default branch, the base gate 15 reads.
@@ -115,6 +122,7 @@ lg_tick_risk() {
   [ -n "$w" ] && _lgt_log "$slug risk tier: $w"
   case "${_lgr_mode[$slug]}" in shadow|enforce) ;; *) return 0 ;; esac
   rt_rules_load
+  [ -n "${RT_LOW_SMALL_WHY:-}" ] && _lgt_log "$slug risk tier: $RT_LOW_SMALL_WHY"
   [ -n "$root" ] && [ -x "$root/bin/jev-risk.sh" ] || return 0
   jv=$(setting_get jev_risk.mode 2>/dev/null) \
     && [ "$(printf '%s' "$jv" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//' | tr '[:upper:]' '[:lower:]')" = shadow ] || return 0
@@ -146,7 +154,7 @@ _lgr_lead_skip() {
 lg_gate_risk() {
   local slug="$1" n="$2" head="$3" h12="${3:0:12}" root="${HARNESS:-${H:-}}"
   local mode st risk safe project box prf tier="" why="" newc=0 rlines="" rfiles="" ract body
-  local js jti jp jx jout rrev rtxt snote prc out
+  local js jti jp jx jout rrev rtxt snote prc out lst lsw lslog
   LG_RISK_KEY=""; LG_RISK_TIER=""; LG_RISK_MODE=""; _LGRT_TOK=""
   [ -n "${_lgr_mode[$slug]+x}" ] || lg_tick_risk "$slug"
   mode="${_lgr_mode[$slug]}"
@@ -182,6 +190,13 @@ lg_gate_risk() {
       [ "${RT_LOW_SCORE_MAX:-0}" -gt 0 ] && rt_evidence_load "$slug" "$n" "$head" "$LGC_FILE" "$prf"
       IFS=$'\t' read -r tier why rlines rfiles < <(rt_classify "$LGC_FILE" "$slug")
       case "$tier" in low|medium|high) newc=1 ;; *) tier=""; why="compare files unreadable" ;; esac
+      # BH-7041 low-small (header): only a head classified now; the lib decides.
+      if [ "$newc" = 1 ]; then
+        lst=""; lsw=""; lslog=""
+        IFS=$'\t' read -r lst lsw lslog < <(rt_low_small_apply "$LGC_FILE" "$slug" "$tier" "$why")
+        [ -n "$lst" ] && { tier="$lst"; why="$lsw"; }
+        [ -n "$lslog" ] && _lgt_log "$slug#$n @$h12: $lslog"
+      fi
     else
       why="compare $LGC_SELF (a Lead-Lane commit, or not read whole)"
     fi

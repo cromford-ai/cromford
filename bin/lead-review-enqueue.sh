@@ -233,6 +233,20 @@
 #              high           requested as below with priority 1 (claimed first).
 #            The first enforce tick is the backfill: every approved head with
 #            no standing verdict is classified in it.
+#            LOW-SMALL (BH-7041): a head rt_classify calls medium THIS tick goes
+#            through rt_low_small_apply (bin/lib/risk-tier.sh), which asks
+#            rt_low_small when risk_tier.low_small_mode (no row = shadow; a bad
+#            or unreadable row = off, logged once per repo) reads shadow or
+#            enforce. Enforce + yes: the head is cached and handled as low with
+#            reasons `low-small: <own> code lines, ...`, so the low + enforce
+#            path above signs it off (the REQFOR and silence refusals hold; a
+#            lead-authored head stays `lead`). Shadow + yes: one `risk-tier
+#            WOULD sign off (low-small: ...)` line, and the head stays medium.
+#            No: one `low-small no (<why>); medium` line. The worklist gate
+#            (bin/lib/lead-gates.d/60-risk.sh) applies the same call, so the
+#            shared risk.tsv holds one answer per head whichever lane saw it
+#            first. Only enforce is in RT_RULES_SIG, so a flip to or from
+#            enforce reclassifies each head once.
 #   jev      (BH-5024) only inside `risk`, only for a head classified THIS
 #            tick, and only when the jev_risk.mode row reads exactly `shadow`
 #            (trimmed, any case; anything else, a 404 or an unreadable row is
@@ -1170,8 +1184,9 @@ for SLUG in $AUTO_REPOS; do
   RMODE=off; RWHY=""
   [ "$RT" = 1 ] && IFS=$'\t' read -r RMODE RWHY < <(rt_mode "$SLUG")
   [ -n "$RWHY" ] && log "$SLUG risk tier: $RWHY"
-  RT_RULES_LOADED=""; RT_RULES_SIG=""
+  RT_RULES_LOADED=""; RT_RULES_SIG=""; RT_LOW_SMALL_MODE=off; RT_LOW_SMALL_WHY=""
   { [ "$RMODE" = shadow ] || [ "$RMODE" = enforce ]; } && rt_rules_load
+  [ -n "${RT_LOW_SMALL_WHY:-}" ] && log "$SLUG risk tier: $RT_LOW_SMALL_WHY"
   # >>> jev shadow (BH-5024): header, `jev`. Only an exact `shadow` row turns it
   # on; anything else, an unreadable row or no row is off, and off reads nothing more.
   JMODE=off; JMAX=0; JT=30
@@ -1521,6 +1536,13 @@ for SLUG in $AUTO_REPOS; do
           [ "$RT_LOW_SCORE_MAX" -gt 0 ] && rt_evidence_load "$SLUG" "$N" "$HEAD" "$WORK/cmp-$N" "$WORK/pr"
           IFS=$'\t' read -r TIER WHY RLINES RFILES < <(rt_classify "$WORK/cmp-$N" "$SLUG")
           case "$TIER" in low|medium|high) NEWC=1 ;; *) TIER=""; WHY="compare files unreadable" ;; esac
+          # BH-7041 low-small (header, `risk`): only a head classified now; the lib decides.
+          if [ "$NEWC" = 1 ]; then
+            LST=""; LSW=""; LSLOG=""
+            IFS=$'\t' read -r LST LSW LSLOG < <(rt_low_small_apply "$WORK/cmp-$N" "$SLUG" "$TIER" "$WHY")
+            [ -n "$LST" ] && { TIER="$LST"; WHY="$LSW"; }
+            [ -n "$LSLOG" ] && log "$SLUG#$N @$H12: $LSLOG"
+          fi
         else
           WHY="compare $SELFHIT (a Lead-Lane commit, or not read whole)"
         fi
