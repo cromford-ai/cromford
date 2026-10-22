@@ -104,6 +104,15 @@
 # `bin/test-impact.sh regression [--changed <f>]` prints the rows, or the rows
 # a changed list touches, as `<suite>\t<path>`; bin/ci-plan.sh reads it.
 #
+# A DIRECTORY ROW THAT IS NOT A SCAN IS NARROWED (BH-8050). A suite row or a
+# source edge to a directory that came only from a loop-bound tail (`for f in
+# a.sh b.sh; do cp "$DIR/bin/$f" …`) or from a whole copy into a scratch tree
+# (`cp -a "$DIR/bin" "$T/bin"`, then `bash "$T/bin/x.sh"`) is replaced by the
+# files it names; a scan, a dynamic tail it cannot bind, and a treedir,
+# learned or regression row keep the directory. The rules are in
+# bin/lib/test-impact-dir-rows.sh. Env TI_DIR_ROWS=0 is today's map; `inputs`
+# (the suite fingerprint) always builds with 0.
+#
 # A suite's paths are the literal repo paths its TEXT names, closed over what
 # those scripts `source`. That is a static over-approximation on purpose: it can
 # name a file the suite never actually opens (harmless — one extra suite runs),
@@ -418,10 +427,10 @@ function asdir(p)  { if (p in DIR_) return p; if (((p "/")) in DIR_) return p "/
 # So a non-comment line with that call gives the edge <script> -> <its own dir>/,
 # and a change to any module selects every suite that reaches the loader.
 ti_source_edges() {
-  local idx="$1"
+  local idx="$1" dl="${2:-}"
   ( cd "$ROOT" && grep -REHn '^[[:space:]]*(\.|source)[[:space:]]|shellcheck source=|mm_load[[:space:]]+"?\$\{BASH_SOURCE' \
       --include='*.sh' --include='*.bash' bin cron fly checks guardrails 2>/dev/null ) |
-  awk -F: -v idxfile="$idx" "$TI_AWK_INDEX"'
+  awk -F: -v idxfile="$idx" -v DL_="$dl" "$TI_AWK_INDEX"'
     FILENAME == idxfile { FILE_[$0] = 1; adddirs($0); next }
     {
       script = $1
@@ -443,7 +452,11 @@ ti_source_edges() {
           cand = (j == 0) ? t : sd t
           if (isfile(cand) && cand ~ /\.(sh|bash|py|mjs|js)$/) { print script "\t" cand; break }
           d = asdir(cand)
-          if (d != "" && d != "bin/" && d != "cron/" && d != "fly/") { print script "\t" d; break }
+          if (d != "" && d != "bin/" && d != "cron/" && d != "fly/") {
+            print script "\t" d
+            if (DL_ != "") print script "\t" $2 "\t" d > DL_
+            break
+          }
         }
       }
     }
@@ -795,7 +808,17 @@ ti_build_map() {
 
   ti_files > "$idx"
   [ -s "$idx" ] || { echo "test-impact: $ROOT holds no files — refusing to build a map of nothing" >&2; return 2; }
-  ti_source_edges "$idx" > "$edges"
+  # BH-8050: the directory rows and edges that are not scans are narrowed to
+  # their files (bin/lib/test-impact-dir-rows.sh). The scans record which line
+  # made each directory row only when it is on. A failure leaves today's rows.
+  local dl_e="" dl_s=""
+  if ! . "$SELF_DIR/lib/test-impact-dir-rows.sh"; then echo "dir-rows: fallback (lib failed)" >&2
+  elif tdr_enabled; then dl_e="$TI_TMP/dirlines.edges"; dl_s="$TI_TMP/dirlines.suites"; : > "$dl_e"; : > "$dl_s"
+  fi
+  ti_source_edges "$idx" "$dl_e" > "$edges"
+  if [ -n "$dl_e" ]; then
+    { tdr_edges "$idx" "$edges" > "$edges.n" && mv "$edges.n" "$edges"; } || echo "dir-rows: fallback (edges: lib failed)" >&2
+  fi
   ti_closure "$edges" > "$closed"
 
   ti_rootvars "${_files[@]}" > "$TI_TMP/rootvars"
@@ -814,7 +837,10 @@ ti_build_map() {
   ti_regression_rows > "$TI_TMP/regression.rows" || return 2
   cat "$TI_TMP/regression.rows" >> "$TI_TMP/raw" || return 2
   # A suite that scans a whole source directory by its bare name (ti_treedir_rows).
-  ti_treedir_rows >> "$TI_TMP/raw" || return 2
+  # treedir.rows is what the dir-rows hook protects, with the learned and
+  # regression rows.
+  ti_treedir_rows > "$TI_TMP/treedir.rows" || return 2
+  cat "$TI_TMP/treedir.rows" >> "$TI_TMP/raw" || return 2
 
   # Literal paths and rooted globs, out of NORMALISED lines. One pass over the
   # corpus, one form of the checkout root to recognise — see TI_AWK_NORM.
@@ -839,7 +865,7 @@ ti_build_map() {
   # `audit` and a plain `map` — the scan is byte-for-byte what it always was.
   if ! ( cd "$ROOT" && LC_ALL=C awk -v idxfile="$TI_TMP/index" -v rvfile="$TI_TMP/rootvars" \
         -v ROOTVAR_="$TI_ROOTVAR" -v PFX_="$TI_PREFIX_AWK" \
-        -v NOCOMMENT_="${TI_ORPHAN_STRICT:-0}" \
+        -v NOCOMMENT_="${TI_ORPHAN_STRICT:-0}" -v DL_="$dl_s" \
         "$TI_AWK_INDEX$TI_AWK_NORM"'
         BEGIN { TOK = "(@ROOT@/)?(" PFX_ ")(/[A-Za-z0-9._/@+*-]*)?" }
         FILENAME == idxfile { FILE_[$0] = 1; adddirs($0); next }
@@ -858,7 +884,7 @@ ti_build_map() {
                               next }
         {
           if (NOCOMMENT_ && $0 ~ /^[ \t]*#/) next
-          line = ti_norm($0, FILENAME)
+          line = ti_norm($0, FILENAME); L0 = length(line)
           while (match(line, TOK)) {
             st = RSTART; ln = RLENGTH
             tok = substr(line, st, ln)
@@ -879,11 +905,13 @@ ti_build_map() {
               if (!rooted) continue
               sub(/[^\/]*\*.*$/, "", tok)   # the glob itself, back to its directory
               d = asdir(tok); if (d != "") print FILENAME "\t" d
+              if (d != "" && DL_ != "") print FILENAME "\t" FNR "\t" d "\t" (L0 - length(line) - ln + 1) "\t" ln > DL_
               continue
             }
             if (isfile(tok)) { print FILENAME "\t" tok; continue }
             if (!rooted) continue
             d = asdir(tok); if (d != "") print FILENAME "\t" d
+            if (d != "" && DL_ != "") print FILENAME "\t" FNR "\t" d "\t" (L0 - length(line) - ln + 1) "\t" ln > DL_
           }
         }
       ' "$TI_TMP/index" "$TI_TMP/rootvars" "${_files[@]}" ) >> "$TI_TMP/raw"; then
@@ -891,6 +919,11 @@ ti_build_map() {
     return 2
   fi
   LC_ALL=C sort -u "$TI_TMP/raw" > "$TI_TMP/direct"
+  if [ -n "$dl_s" ]; then
+    cat "$TI_TMP/treedir.rows" "$TI_TMP/learned.rows" "$TI_TMP/regression.rows" > "$TI_TMP/protected"
+    { tdr_rows "$idx" "$TI_TMP/direct" "$TI_TMP/protected" > "$TI_TMP/direct.n" && mv "$TI_TMP/direct.n" "$TI_TMP/direct" && tdr_report; } \
+      || echo "dir-rows: fallback (lib failed)" >&2
+  fi
 
   # Close each suite's FILE rows over what those scripts source. A directory row
   # is expanded to its members for this purpose only — a change under bin/lib/rb/
@@ -1298,7 +1331,10 @@ ti_named_scan() {
 # reuse that should not have happened. A map that cannot be built is rc 2.
 ti_inputs() {
   local map="$TI_TMP/inputs.map" files="$TI_TMP/inputs.files" defs="$TI_TMP/inputs.defs"
-  ti_build_map > "$map" || return 2
+  # Today's map, without the BH-8050 narrowing: a reuse claims "same inputs",
+  # which is stronger than "this diff can reach it", and a narrowed map would
+  # move every fingerprint in the suite ledger at once.
+  TI_DIR_ROWS=0 ti_build_map > "$map" || return 2
   [ -s "$map" ] || { echo "test-impact: the map came back empty" >&2; return 2; }
   ti_files > "$files" || return 2
   local scripts=() p
@@ -1720,7 +1756,7 @@ ti_audit() {
   while IFS= read -r _s; do [ -n "$_s" ] && _files+=("$_s"); done < <(ti_suites)
   [ "${#_files[@]}" -gt 0 ] || { echo "test-impact: no suites under tests/ in $ROOT" >&2; return 2; }
 
-  local map; map=$(ti_map_path) || return 2
+  local map; map=$(TDR_QUIET=1 ti_map_path) || return 2
   # The index is built by ti_build_map, which --map skips — so the audit builds
   # its own when it was handed a map to check rather than one it made.
   [ -s "$TI_TMP/index" ] || ti_files > "$TI_TMP/index"
