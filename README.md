@@ -100,6 +100,7 @@ every setting, the caps, upgrades and the common failures.
 | Recover a wiped box (Orgo snapshot + R2 state backup) | [docs/RESTORE.md](docs/RESTORE.md) |
 | Make your app drivable by the harness | [docs/BOARD-API-CONTRACT.md](docs/BOARD-API-CONTRACT.md) |
 | Contribute a change | [CONTRIBUTING.md](CONTRIBUTING.md) |
+| See how the parts connect: boxes, Cloudflare, Fly, GitHub, vendors | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) |
 | Understand what a build actually does, step by step | [docs/RUN-BUILD-GRAPH.md](docs/RUN-BUILD-GRAPH.md) |
 | Understand the database and who writes what | [docs/DB-COORDINATION-SPEC.md](docs/DB-COORDINATION-SPEC.md) |
 | Understand how context is composed and budgeted | [docs/CONTEXT-COMPOSITION.md](docs/CONTEXT-COMPOSITION.md) |
