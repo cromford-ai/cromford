@@ -43,6 +43,17 @@
 #   `local`. It exports MC_TICK_ID and the knobs the detached lanes re-read.
 #   Reads MC_STATE_DIR, so it runs after mc_init. Needs mc_tick_id.
 #
+# mc_tick_fanout (BH-7879)
+#   The per-project fan-out: the held-page flush before the first worker forks
+#   (BH-1201, BH-1840), the project gate (BH-6890), then one backgrounded
+#   subshell per fleet.conf project that takes the full-tick lock (BH-5463),
+#   runs tick_project and logs its PR-SNAPSHOT and ETag lines, and a final
+#   wait. Reads MC_FLEET_SWEEPS, MC_ONLY_KEYS, MC_ONLY_PROJECT, MC_ON_MACHINE,
+#   MC_PROJ_TAKEBACK, MC_FULL_TICK_SINGLE, MC_TICK_DIR and MC_LOCK_DIR. Calls
+#   tick_project (defined by the driver, which BH-685 keeps there), so it runs
+#   after the driver defines it. Sets MC_PROJ_GATE (tick_project reads it), P
+#   and PIDS as globals, no `local`.
+#
 # THE KEYED TICK (BH-1387). bin/wake-loop.sh may hand this run the PR keys it
 # drained, as MC_ONLY_PR=owner/repo#n[,owner/repo#n…]; the run then does only
 # those PRs and none of the fleet sweeps, which stay the cron tick's. Parsed
@@ -252,3 +263,74 @@ export MC_PR_PARALLEL MC_MERGE_LOCK_WAIT
 MC_TICK_ID=$(mc_tick_id); export MC_TICK_ID
 }
 # <<< tick prelude (BH-6518)
+# >>> per-project fan-out (BH-7879)
+mc_tick_fanout() {
+# THE HELD PAGES, BEFORE THE FIRST WORKER FORKS (BH-1201). This reads what the
+# conductor is holding into a tick-keyed cache and — when the mode has come back
+# to merge/actions — sends the oldest MC_FLUSH_MAX of them. It has to run HERE,
+# in the main process ahead of the fan-out: every pager below runs inside a
+# tick_project subshell and reads that cache to know which rows the flush owns.
+# `command -v`-guarded like mc_pr_files_gc below, so a box mid-sync with an older
+# lib runs exactly as it does today.
+# A keyed tick (BH-1387) skips the flush: it is a fleet sweep and the cron tick's alone.
+# It still LOADS the cache (BH-1840), so a woken PR's held row is paged by the cron
+# tick's capped flush with its held-since text, not directly by its own pager. The
+# `declare -f` guard keeps a box whose older lib ignores the flag off a full flush.
+if [ "$MC_FLEET_SWEEPS" = 1 ]; then
+  command -v mc_hold_tick_begin >/dev/null 2>&1 && mc_hold_tick_begin
+elif declare -f mc_hold_tick_begin 2>/dev/null | grep -q -- '--load-only'; then
+  mc_hold_tick_begin --load-only
+fi
+
+# THE PROJECT GATE, ONCE (BH-6890). One read of the box settings cache: when
+# no merge-conductor placement row is fly, no tick_project below reads a
+# placement row (MC_PROJ_GATE=0). A machine is never gated.
+MC_PROJ_GATE=1
+if [ "${MC_ON_MACHINE:-}" = 1 ] || [ "${MC_PROJ_TAKEBACK:-}" = 1 ]; then MC_PROJ_GATE=0
+elif command -v mc_fly_project_none >/dev/null 2>&1 && mc_fly_project_none; then MC_PROJ_GATE=0; fi
+PIDS=()
+for P in $("$H/bin/fleet-conf.sh" --projects 2>/dev/null); do
+  if [ -n "$MC_ONLY_KEYS" ]; then mc_only_slug "$("$H/bin/fleet-conf.sh" "$P" repo 2>/dev/null)" || continue; fi
+  [ -n "${MC_ONLY_PROJECT:-}" ] && [ "$P" != "$MC_ONLY_PROJECT" ] && continue
+  # BH-1295: the ETag counters live in a FILE now (mc_pr_view's return value
+  # is its whole point, so its callers are all `$( )`, and no shell variable
+  # survives that) — GH_ETAG_COUNT_FILE names which one. tick_project
+  # backgrounds into its own subshell per project, so a distinct, exported
+  # file per project (never the bare `$$` default, which is the SAME across
+  # every one of these subshells) keeps one project's reads from being summed
+  # into another's report line.
+  # BH-1322: `$BASHPID` — the subshell's OWN pid — is both the uniqueness and
+  # what the counts sweep judges liveness by, so a killed project subshell's
+  # file is removable by the next report. The trap inside the subshell fires
+  # for that subshell only and expands the re-exported value, never the
+  # parent's.
+  # BH-4659: PRS_COUNT_FILE collects this project's snapshot HIT/MISS words for
+  # its one PR-SNAPSHOT line. SLUG is cleared first: a project held or with no
+  # repo never sets it, and logs nothing.
+  ( export GH_ETAG_COUNT_FILE="$H/state/gh-etag/counts/merge-conductor.$P.$BASHPID"
+    export PRS_COUNT_FILE="$MC_TICK_DIR/prs-count.$P.$BASHPID"
+    trap 'rm -f "$GH_ETAG_COUNT_FILE" "$PRS_COUNT_FILE"' EXIT
+    mkdir -p "$MC_TICK_DIR" 2>/dev/null; SLUG=""
+    # >>> full-tick lock (BH-5463)
+    # ONE FULL TICK PER PROJECT AT A TIME. This subshell holds the lock on fd 5
+    # and only waits; tick_project runs in the inner subshell with fd 5 closed,
+    # so no lane it detaches can hold the lock. A keyed tick never takes it.
+    if [ -z "$MC_ONLY_KEYS" ] && [ "${MC_FULL_TICK_SINGLE:-1}" != 0 ]; then
+      mkdir -p "$MC_LOCK_DIR" 2>/dev/null
+      exec 5>"$MC_LOCK_DIR/merge-conductor-$(mc_safe_name "$P")-fulltick.lock"
+      flock -n 5 || { mc_log "TICK $P skipped: another full tick of $P is still running (locks/merge-conductor-$(mc_safe_name "$P")-fulltick.lock) — keyed ticks still run (decision=skipped-tick-running)"; exit 0; }
+    fi
+    # <<< full-tick lock
+    ( exec 5>&-
+      tick_project "$P"
+      # BH-6890: the hub mark of a take-back tick ends with the tick.
+      command -v mc_proj_hub_unmark >/dev/null 2>&1 && mc_proj_hub_unmark "$P"
+      if [ -n "$SLUG" ] && [ "$SLUG" != - ] && [ -f "$PRS_COUNT_FILE" ]; then
+        mc_log "$SLUG PR-SNAPSHOT hit=$(grep -c '^HIT ' "$PRS_COUNT_FILE") miss=$(grep -c '^MISS ' "$PRS_COUNT_FILE")"
+      fi
+      command -v gh_rest_etag_report >/dev/null 2>&1 && gh_rest_etag_report "merge-conductor:$P" )
+  ) & PIDS+=("$!")
+done
+[ "${#PIDS[@]}" -gt 0 ] && wait "${PIDS[@]}"
+}
+# <<< per-project fan-out (BH-7879)

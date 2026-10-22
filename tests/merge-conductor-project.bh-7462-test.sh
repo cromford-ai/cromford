@@ -219,8 +219,9 @@ rm -f "$T/held" "$T/release"
 echo "E2E: the streak through mc_fly_project_gate"
 reset; cycle 1 e2e; cycle 2 e2e; cycle 3 e2e
 [ "$(lines)" = 1 ] && ok "E2E 3 cycles through mc_fly_project_gate -> 1 line" || bad "E2E lines=$(lines); log: $(tail -n 5 "$T/gate.log")"
-[ "$(grep -c 'mc_proj_hub_unmark "\$P"' "$DIR/bin/merge-conductor.sh")" = 1 ] && ok "E2E the driver's tick still calls mc_proj_hub_unmark \"\$P\" (guard)" \
-  || bad "E2E the driver's unmark call moved"
+# BH-7879: the per-project tick lives in mc_tick_fanout (bin/lib/mc/tick-scope.sh).
+[ "$(grep -c 'mc_proj_hub_unmark "\$P"' "$DIR/bin/lib/mc/tick-scope.sh" 2>/dev/null)" = 1 ] && ok "E2E the fan-out's tick still calls mc_proj_hub_unmark \"\$P\" (guard)" \
+  || bad "E2E the fan-out's unmark call moved or tick-scope.sh is missing"
 
 echo "PASS=$PASS FAIL=$FAIL"
 [ "$FAIL" = 0 ]

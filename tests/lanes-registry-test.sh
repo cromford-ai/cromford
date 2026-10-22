@@ -183,6 +183,11 @@ PLUMBING="$PLUMBING TG_MODE TG_MODE_SRC"
 # none, never, off or unknown) and read back by bin/lead-review.sh in one log
 # line. GH_REST_STATUS's case: an output, not an input.
 PLUMBING="$PLUMBING HC_STATE"
+# MC_PROJ_GATE (BH-6890) is SET BY bin/lib/mc/tick-scope.sh's mc_tick_fanout
+# (BH-7879) once per tick, from the settings cache, and read back by the
+# driver's tick_project. MC_WORKERS_DONE_BY's case: computed per tick, never a
+# knob. A settings row that set it would be overwritten by the fan-out anyway.
+PLUMBING="$PLUMBING MC_PROJ_GATE"
 PLUMBING=$(printf '%s' "$PLUMBING" | tr '\n' ' ')
 
 # --- 1. shape ----------------------------------------------------------------

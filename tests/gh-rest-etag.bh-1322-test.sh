@@ -201,12 +201,13 @@ for L in reconcile-prs merge-sweep merge-conductor; do
   [ "$(grep -c 'gh-etag-count\.' "$F")" = 0 ] \
     && ok || bad "E: bin/$L.sh still names the old \$TMPDIR counter file (gh-etag-count.*)"
 done
-MC="$DIR/bin/merge-conductor.sh"
+# BH-7879: the per-project subshell lives in mc_tick_fanout now.
+MC="$DIR/bin/lib/mc/tick-scope.sh"
 if [ -r "$MC" ]; then
   grep -q 'state/gh-etag/counts/merge-conductor\.\$P\.\$BASHPID' "$MC" \
     && ok || bad "E: merge-conductor's per-project subshell must key its counter file on \$BASHPID, not \$\$"
 else
-  bad "E: bin/merge-conductor.sh is missing — the per-project pin cannot be checked"
+  bad "E: bin/lib/mc/tick-scope.sh is missing — the per-project pin cannot be checked"
 fi
 
 # ══ F. GH_ETAG_MAX_BYTES bounds BYTES, not characters ══════════════════════

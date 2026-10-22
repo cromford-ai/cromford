@@ -1,5 +1,6 @@
 {
   "env": "MC_PROJ_TAKEBACK",
+  "read_in": "bin/lib/mc/tick-scope.sh",
   "type": "string",
   "default": "",
   "zero_means": null,

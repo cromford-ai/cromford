@@ -134,7 +134,9 @@ else
 fi
 
 # D2: tick-scope.sh defines the parse, the window and the mode and not the
-# prelude. D2 and its mutation are the last driver cases: they replace the
+# prelude. The fan-out stub keeps the mc_tick_fanout (BH-7879) guard clause
+# satisfied, so the mutation below drops the only clause that refuses.
+# D2 and its mutation are the last driver cases: they replace the
 # installed file and nothing after them needs the real one back.
 c2_ts() { cat > "$HD/bin/lib/mc/tick-scope.sh" <<'SH'
 #!/bin/bash
@@ -142,6 +144,7 @@ c2_ts() { cat > "$HD/bin/lib/mc/tick-scope.sh" <<'SH'
 mc_keyed_tick_parse() { MC_ONLY_KEYS=""; }
 mc_full_tick_window() { :; }
 mc_tick_mode() { KILL=0 ACTIONS=0 MERGES=0 MODE=observe; MC_MODE=observe; export MC_MODE; }
+mc_tick_fanout() { :; }
 SH
 }
 resetd; c2_ts

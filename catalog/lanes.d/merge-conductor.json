@@ -879,6 +879,7 @@
     },
     {
       "env": "MC_FULL_TICK_SINGLE",
+      "read_in": "bin/lib/mc/tick-scope.sh",
       "type": "int",
       "default": 1,
       "min": 0,

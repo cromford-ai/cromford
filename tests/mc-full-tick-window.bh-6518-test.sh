@@ -140,9 +140,9 @@ rc=$(tick 'example-org/a#7')
 [ "$(nlog 'full tick:')" = 0 ] && ok || bad "D2: a keyed tick logged a window line: $(mclog)"
 
 # D3: tick-scope.sh defines the parse, the mode and the prelude, and not the
-# window. The mode and prelude stubs keep the mc_tick_mode (BH-6518 C2) and
-# mc_tick_prelude (C3) guard clauses satisfied, so the mutation below drops the
-# only clause that refuses.
+# window. The mode, prelude and fan-out stubs keep the mc_tick_mode (BH-6518
+# C2), mc_tick_prelude (C3) and mc_tick_fanout (BH-7879) guard clauses
+# satisfied, so the mutation below drops the only clause that refuses.
 # D3 and its mutation are the last driver cases: they replace the installed
 # file and nothing after them needs the real one back.
 c0_ts() { cat > "$HD/bin/lib/mc/tick-scope.sh" <<'SH'
@@ -151,6 +151,7 @@ c0_ts() { cat > "$HD/bin/lib/mc/tick-scope.sh" <<'SH'
 mc_keyed_tick_parse() { MC_ONLY_KEYS=""; }
 mc_tick_mode() { KILL=0 ACTIONS=0 MERGES=0 MODE=observe; MC_MODE=observe; export MC_MODE; }
 mc_tick_prelude() { REBASE_BUDGET=2 REREVIEW_BUDGET=2 MERGE_BUDGET=5 REREVIEW_CAP=0 CAPFILE=/dev/null; MC_TICK_ID=stub; export MC_TICK_ID; }
+mc_tick_fanout() { :; }
 SH
 }
 resetd; c0_ts

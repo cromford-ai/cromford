@@ -183,13 +183,14 @@ command -v prs_open_list >/dev/null 2>&1 && export HPL_SNAPSHOT=1
 # gh-rest: no-graphql
 . "$H/bin/lib/merge-conductor-lib.sh"
 # >>> tick scope (BH-6518)
-# The keyed-tick parse, the full-tick window, the tick mode and the tick
-# prelude live in bin/lib/mc/tick-scope.sh, a driver-only file (no module
-# header, so the lib's other users never load it). A box mid-sync can see
+# The keyed-tick parse, the full-tick window, the tick mode, the tick
+# prelude and the per-project fan-out live in bin/lib/mc/tick-scope.sh, a
+# driver-only file (no module header, so the lib's other users never load
+# it). A box mid-sync can see
 # this script new and that file missing or old: the tick refuses, before any
 # GitHub read, rather than run a scope it cannot parse.
 # shellcheck source=bin/lib/mc/tick-scope.sh
-if ! . "$H/bin/lib/mc/tick-scope.sh" || ! declare -F mc_keyed_tick_parse >/dev/null || ! declare -F mc_full_tick_window >/dev/null || ! declare -F mc_tick_mode >/dev/null || ! declare -F mc_tick_prelude >/dev/null; then
+if ! . "$H/bin/lib/mc/tick-scope.sh" || ! declare -F mc_keyed_tick_parse >/dev/null || ! declare -F mc_full_tick_window >/dev/null || ! declare -F mc_tick_mode >/dev/null || ! declare -F mc_tick_prelude >/dev/null || ! declare -F mc_tick_fanout >/dev/null; then
   HARNESS="$H" "$H/bin/alert-line.sh" --id conductor-module-missing "CONDUCTOR MODULE MISSING: bin/lib/mc/tick-scope.sh is missing or unusable on $(hostname) — the box's bin/ is half-synced; no PR was ticked this tick" 2>/dev/null || true
   mc_log "bin/lib/mc/tick-scope.sh is missing or unusable — refusing the tick"
   exit 1
@@ -376,7 +377,7 @@ command -v mc_tick_clock_start >/dev/null 2>&1 && mc_tick_clock_start
 # pr_worker takes (mc_pr_lock): two overlapping ticks can never handle the same
 # PR at once, and they no longer need to agree about a whole repo to do it.
 # BH-5463 adds back ONE project lock, for full (unkeyed) ticks only: see the
-# `>>> full-tick lock` block in the per-project loop at the bottom.
+# `>>> full-tick lock` block in mc_tick_fanout (bin/lib/mc/tick-scope.sh).
 
 flag_on() { # the file is the flag; flag_active reconciles it from the DB row first
   if command -v flag_active >/dev/null 2>&1; then flag_active "$1"; else [ -f "$H/flags/$1" ]; fi
@@ -2645,7 +2646,7 @@ pr_worker() {
 
 # tick_project <project> — one project's whole tick: the merge-queue settle
 # pass, the open-PR pass, the closed-unmerged pass. Run in its OWN background
-# subshell (see the loop at the bottom).
+# subshell (see mc_tick_fanout in bin/lib/mc/tick-scope.sh).
 #
 # THE PROJECT-WIDE LOCK IS GONE (2026-09-15). It was one flock per project taken
 # with `flock -n` for the WHOLE tick, so a tick that was still working — a queue
@@ -2696,8 +2697,8 @@ tick_project() {
   # (BH-7635) = a deferred row that names its PRs: on a full or a keyed tick,
   # the hub runs ONE keyed tick of only those PRs (mc_proj_takeback_keyed,
   # MC_PROJ_TAKEBACK_KEYS) and nothing more for the project. rc 1 = today's
-  # tick. A machine is never gated; MC_PROJ_GATE=0 (set once below
-  # from the settings cache) skips the gate when no project is placed fly.
+  # tick. A machine is never gated; MC_PROJ_GATE=0 (set once by
+  # mc_tick_fanout from the settings cache) skips the gate when no project is placed fly.
   if [ "${MC_PROJ_GATE:-1}" != 0 ] && command -v mc_fly_project_gate >/dev/null 2>&1; then
     mc_fly_project_gate "$P"
     case $? in
@@ -3490,73 +3491,11 @@ fi
 export GH_ETAG_COUNT_FILE="$H/state/gh-etag/counts/merge-conductor.$$"
 trap 'rm -f "$GH_ETAG_COUNT_FILE"' EXIT
 
-# THE HELD PAGES, BEFORE THE FIRST WORKER FORKS (BH-1201). This reads what the
-# conductor is holding into a tick-keyed cache and — when the mode has come back
-# to merge/actions — sends the oldest MC_FLUSH_MAX of them. It has to run HERE,
-# in the main process ahead of the fan-out: every pager below runs inside a
-# tick_project subshell and reads that cache to know which rows the flush owns.
-# `command -v`-guarded like mc_pr_files_gc below, so a box mid-sync with an older
-# lib runs exactly as it does today.
-# A keyed tick (BH-1387) skips the flush: it is a fleet sweep and the cron tick's alone.
-# It still LOADS the cache (BH-1840), so a woken PR's held row is paged by the cron
-# tick's capped flush with its held-since text, not directly by its own pager. The
-# `declare -f` guard keeps a box whose older lib ignores the flag off a full flush.
-if [ "$MC_FLEET_SWEEPS" = 1 ]; then
-  command -v mc_hold_tick_begin >/dev/null 2>&1 && mc_hold_tick_begin
-elif declare -f mc_hold_tick_begin 2>/dev/null | grep -q -- '--load-only'; then
-  mc_hold_tick_begin --load-only
-fi
-
-# THE PROJECT GATE, ONCE (BH-6890). One read of the box settings cache: when
-# no merge-conductor placement row is fly, no tick_project below reads a
-# placement row (MC_PROJ_GATE=0). A machine is never gated.
-MC_PROJ_GATE=1
-if [ "${MC_ON_MACHINE:-}" = 1 ] || [ "${MC_PROJ_TAKEBACK:-}" = 1 ]; then MC_PROJ_GATE=0
-elif command -v mc_fly_project_none >/dev/null 2>&1 && mc_fly_project_none; then MC_PROJ_GATE=0; fi
-PIDS=()
-for P in $("$H/bin/fleet-conf.sh" --projects 2>/dev/null); do
-  if [ -n "$MC_ONLY_KEYS" ]; then mc_only_slug "$("$H/bin/fleet-conf.sh" "$P" repo 2>/dev/null)" || continue; fi
-  [ -n "${MC_ONLY_PROJECT:-}" ] && [ "$P" != "$MC_ONLY_PROJECT" ] && continue
-  # BH-1295: the ETag counters live in a FILE now (mc_pr_view's return value
-  # is its whole point, so its callers are all `$( )`, and no shell variable
-  # survives that) — GH_ETAG_COUNT_FILE names which one. tick_project
-  # backgrounds into its own subshell per project, so a distinct, exported
-  # file per project (never the bare `$$` default, which is the SAME across
-  # every one of these subshells) keeps one project's reads from being summed
-  # into another's report line.
-  # BH-1322: `$BASHPID` — the subshell's OWN pid — is both the uniqueness and
-  # what the counts sweep judges liveness by, so a killed project subshell's
-  # file is removable by the next report. The trap inside the subshell fires
-  # for that subshell only and expands the re-exported value, never the
-  # parent's.
-  # BH-4659: PRS_COUNT_FILE collects this project's snapshot HIT/MISS words for
-  # its one PR-SNAPSHOT line. SLUG is cleared first: a project held or with no
-  # repo never sets it, and logs nothing.
-  ( export GH_ETAG_COUNT_FILE="$H/state/gh-etag/counts/merge-conductor.$P.$BASHPID"
-    export PRS_COUNT_FILE="$MC_TICK_DIR/prs-count.$P.$BASHPID"
-    trap 'rm -f "$GH_ETAG_COUNT_FILE" "$PRS_COUNT_FILE"' EXIT
-    mkdir -p "$MC_TICK_DIR" 2>/dev/null; SLUG=""
-    # >>> full-tick lock (BH-5463)
-    # ONE FULL TICK PER PROJECT AT A TIME. This subshell holds the lock on fd 5
-    # and only waits; tick_project runs in the inner subshell with fd 5 closed,
-    # so no lane it detaches can hold the lock. A keyed tick never takes it.
-    if [ -z "$MC_ONLY_KEYS" ] && [ "${MC_FULL_TICK_SINGLE:-1}" != 0 ]; then
-      mkdir -p "$MC_LOCK_DIR" 2>/dev/null
-      exec 5>"$MC_LOCK_DIR/merge-conductor-$(mc_safe_name "$P")-fulltick.lock"
-      flock -n 5 || { mc_log "TICK $P skipped: another full tick of $P is still running (locks/merge-conductor-$(mc_safe_name "$P")-fulltick.lock) — keyed ticks still run (decision=skipped-tick-running)"; exit 0; }
-    fi
-    # <<< full-tick lock
-    ( exec 5>&-
-      tick_project "$P"
-      # BH-6890: the hub mark of a take-back tick ends with the tick.
-      command -v mc_proj_hub_unmark >/dev/null 2>&1 && mc_proj_hub_unmark "$P"
-      if [ -n "$SLUG" ] && [ "$SLUG" != - ] && [ -f "$PRS_COUNT_FILE" ]; then
-        mc_log "$SLUG PR-SNAPSHOT hit=$(grep -c '^HIT ' "$PRS_COUNT_FILE") miss=$(grep -c '^MISS ' "$PRS_COUNT_FILE")"
-      fi
-      command -v gh_rest_etag_report >/dev/null 2>&1 && gh_rest_etag_report "merge-conductor:$P" )
-  ) & PIDS+=("$!")
-done
-[ "${#PIDS[@]}" -gt 0 ] && wait "${PIDS[@]}"
+# THE PER-PROJECT FAN-OUT (BH-7879): the held-page flush, the project gate and
+# one backgrounded tick_project subshell per project live in mc_tick_fanout
+# (bin/lib/mc/tick-scope.sh). It runs after the parent GH_ETAG_COUNT_FILE
+# trap above and returns when every project subshell is done.
+mc_tick_fanout
 # The *_gc housekeeping and mc_dv_reap are fleet sweeps: the cron tick's alone.
 if [ "$MC_FLEET_SWEEPS" != 1 ]; then
   command -v gh_rest_etag_report >/dev/null 2>&1 && gh_rest_etag_report merge-conductor
