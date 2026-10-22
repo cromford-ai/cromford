@@ -22,7 +22,9 @@
 # THE CHECK. The head's ADDED migrations against <main> and every QUEUED PR
 # (MNR_HEAD=<head> MNR_OPEN_QUEUED_ONLY=1 mnr_check, read-only, under the git
 # lock because the open-PR read fetches into the clone). A head that adds no
-# migration stops at one local `git diff` with no lock and no REST read.
+# migration stops at one local `git diff` with no lock and no REST read. Only
+# sequential names count (mnr_seq_added): a head that adds only 14-digit
+# timestamp migrations (BH-7875) stops there too.
 # THE FIX. mnr_fix in a temp detached worktree at <head> (every open PR read,
 # so the new number lands above all of them), then hold_push (it re-reads the
 # ticket's HOLD and leases on <head>) and an ls-remote proof. Under
@@ -111,8 +113,7 @@ _pq_mn_run() {
     git -C "$repo" cat-file -e "$head^{commit}" 2>/dev/null && git -C "$repo" cat-file -e "$main^{commit}" 2>/dev/null \
       || { _PQ_MN="transient ${head:0:12} or ${main:0:12} is not in the clone after the fetch"; return 0; }
   fi
-  [ -n "$(git -C "$repo" diff --no-renames --name-only --diff-filter=A "$main" "$head" -- "$MNR_C_DIR/" 2>/dev/null)" ] \
-    || { _PQ_MN=none; return 0; }
+  [ -n "$(mnr_seq_added "$repo" "$main" "$head")" ] || { _PQ_MN=none; return 0; }
   err=$(mktemp "${TMPDIR:-/tmp}/pq-mignum-err.XXXXXX") || { _PQ_MN="transient cannot make a temp file"; return 0; }
   out=$(MNR_HEAD="$head" MNR_OPEN_QUEUED_ONLY=1 mnr_check "$repo" "$main" "${P:-}" "${BR:-}" "$num" 2>"$err") || rc=$?
   _pq_mn_notes "${KEY:-$slug#$num}" "$head" "$err"; rm -f "$err"
@@ -175,7 +176,7 @@ pq_mignum() {
   # Cheapest first, with no credential, lock or fetch: both commits are in the
   # clone and the head adds no migration.
   if git -C "$lr" cat-file -e "$head^{commit}" 2>/dev/null && git -C "$lr" cat-file -e "$main^{commit}" 2>/dev/null \
-     && [ -z "$(git -C "$lr" diff --no-renames --name-only --diff-filter=A "$main" "$head" -- "$MNR_C_DIR/" 2>/dev/null)" ]; then
+     && [ -z "$(mnr_seq_added "$lr" "$main" "$head")" ]; then
     echo none; return 0
   fi
   if ! declare -F mc_funnel_repo >/dev/null || ! mc_funnel_repo "$slug" "${P:-}"; then

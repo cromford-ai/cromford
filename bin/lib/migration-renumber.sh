@@ -19,9 +19,15 @@
 #   migration_renumber.lock_prefix[.<project>]  MNR_LOCK_PREFIX  ^[a-z]{1,3}$; empty = no lock keys
 #   migration_renumber.open_prs[.<project>]     MNR_OPEN_PRS     1 = open PRs join TAKEN; else off
 #   migration_renumber.open_prs_max             MNR_OPEN_PRS_MAX open PRs read, 1..1000 (default 200)
+#   migration_renumber.format[.<project>]       MNR_FORMAT       sequential (default) | timestamp
+#     (BH-7875): timestamp = off, and mnr_fix writes one stderr line per branch
+#     it skipped that adds a file in <dir>
 #
 # THE RULE. A migration is a name in <dir>/ (one level) that matches
-# ^[0-9]+_[a-z0-9_]+\.sql$. TAKEN = the numbers of <base-ref>'s migrations.
+# ^[0-9]+_[a-z0-9_]+\.sql$. A name whose prefix is exactly 14 digits
+# (YYYYMMDDHHMMSS_slug.sql) is a timestamp migration (BH-7875): it is not part
+# of the check, is never renamed and never counts as TAKEN. TAKEN = the
+# numbers of <base-ref>'s migrations.
 # BRANCH = the migrations the branch ADDED (`--diff-filter=A`, `--no-renames`),
 # sorted by (number, name). The first BRANCH file whose number is TAKEN, or is
 # the number of an earlier BRANCH file, is the first collision. Files before it
@@ -80,8 +86,9 @@ _mnr_knob() {
   printf '%s' "$v"
 }
 
-# mnr_conf <project> — sets MNR_C_DIR, MNR_C_MODE, MNR_C_PREFIX. A bad value
-# prints one warning on stderr. MNR_C_DIR empty or MNR_C_MODE=off = off.
+# mnr_conf <project> — sets MNR_C_DIR, MNR_C_MODE, MNR_C_PREFIX, MNR_C_FORMAT.
+# A bad value prints one warning on stderr. MNR_C_DIR empty or MNR_C_MODE=off
+# = off. MNR_C_FORMAT=timestamp sets MNR_C_MODE=off.
 mnr_conf() {
   local p="${1:-}"
   MNR_C_DIR="${MNR_DIR:-}"
@@ -93,7 +100,7 @@ mnr_conf() {
       echo "migration renumber: migration_renumber.dir '$MNR_C_DIR' is not a relative repo path — off" >&2
       MNR_C_DIR="" ;;
   esac
-  MNR_C_MODE=off; MNR_C_PREFIX=""; MNR_C_OPEN_ON=0; MNR_C_OPEN_MAX=200
+  MNR_C_MODE=off; MNR_C_PREFIX=""; MNR_C_OPEN_ON=0; MNR_C_OPEN_MAX=200; MNR_C_FORMAT=sequential
   [ -n "$MNR_C_DIR" ] || return 0
   MNR_C_MODE="${MNR_MODE:-}"
   [ -n "$MNR_C_MODE" ] || MNR_C_MODE=$(_mnr_knob mode "$p")
@@ -102,6 +109,13 @@ mnr_conf() {
     fix|check|off) ;;
     *) echo "migration renumber: migration_renumber.mode '$MNR_C_MODE' is not fix|check|off — read as check" >&2
        MNR_C_MODE=check ;;
+  esac
+  local fm="${MNR_FORMAT:-}"
+  [ -n "$fm" ] || fm=$(_mnr_knob format "$p")
+  case "$fm" in
+    ''|sequential) ;;
+    timestamp) MNR_C_FORMAT=timestamp; MNR_C_MODE=off ;;
+    *) echo "migration renumber: migration_renumber.format '$fm' is not sequential|timestamp — read as sequential" >&2 ;;
   esac
   MNR_C_PREFIX="${MNR_LOCK_PREFIX:-}"
   [ -n "$MNR_C_PREFIX" ] || MNR_C_PREFIX=$(_mnr_knob lock_prefix "$p")
@@ -149,9 +163,18 @@ _mnr_names() {
   while IFS= read -r f; do
     [ "${f%/*}" = "$MNR_C_DIR" ] || continue
     b="${f##*/}"
+    [[ "$b" =~ ^[0-9]{14}_ ]] && continue
     [[ "$b" =~ ^([0-9]+)_[a-z0-9_]+\.sql$ ]] || continue
     printf '%s\t%s\n' "${BASH_REMATCH[1]}" "$b"
   done
+}
+
+# mnr_seq_added <wt> <base> <head> — after mnr_conf. Prints the sequential
+# migration names <head> added in $MNR_C_DIR (no timestamp names). Empty = none.
+# Always rc 0.
+mnr_seq_added() {
+  git -C "$1" diff --no-renames --name-only --diff-filter=A "$2" "$3" -- "$MNR_C_DIR/" 2>/dev/null | _mnr_names | cut -f2
+  return 0
 }
 
 # _mnr_open_taken <wt> <base-ref> <self-branch> — after mnr_conf. Sets
@@ -426,11 +449,18 @@ mnr_fix() {
   local wt="${1:-}" base="${2:-}" project="${3:-}" sb="${4:-}" sp="${5:-}" plan prc pre
   [ -n "$wt" ] && [ -n "$base" ] || { echo "migration renumber: usage mnr_fix <wt> <base-ref> <project> [<self-branch> [<self-pr>]]"; return 2; }
   mnr_conf "$project"
+  if [ "$MNR_C_FORMAT" = timestamp ] && [ -n "$MNR_C_DIR" ]; then
+    local na
+    na=$(git -C "$wt" diff --no-renames --name-only --diff-filter=A "$base" "${MNR_HEAD:-HEAD}" -- "$MNR_C_DIR/" 2>/dev/null | grep -c .)
+    [ "${na:-0}" -gt 0 ] \
+      && echo "migration renumber: skipped — migration_renumber.format.$project is timestamp ($na added file(s) in $MNR_C_DIR)" >&2
+    return 0
+  fi
   [ -n "$MNR_C_DIR" ] && [ "$MNR_C_MODE" != off ] || return 0
   # MNR_HEAD is for a check only: a fix commits on HEAD, so it plans on HEAD.
   [ "$MNR_C_MODE" = check ] || local MNR_HEAD=HEAD
   MNR_C_OPEN=""
-  if [ "$MNR_C_OPEN_ON" = 1 ] && [ -n "$(git -C "$wt" diff --no-renames --name-only --diff-filter=A "$base" "${MNR_HEAD:-HEAD}" -- "$MNR_C_DIR/" 2>/dev/null)" ]; then
+  if [ "$MNR_C_OPEN_ON" = 1 ] && [ -n "$(mnr_seq_added "$wt" "$base" "${MNR_HEAD:-HEAD}")" ]; then
     _mnr_open_taken "$wt" "$base" "$sb" \
       || echo "migration renumber: open PRs not read ($MNR_OPEN_WHY) — main only" >&2
   fi
