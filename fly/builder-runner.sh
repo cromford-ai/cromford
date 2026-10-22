@@ -687,6 +687,28 @@ slot_preflight() { # slot_preflight <key> <hotfix 1|""> -> 0 go on, 1 deferred (
   return 1
 }
 
+# --- worktree sweep (BH-8004) ---------------------------------------------------
+# The hub reuses a pool machine for the next job, and a pool build names its
+# worktree per key, so every earlier job's worktree stays on the rootfs until
+# the disk guard defers every build there (TK-1582: 11 deferrals). Before
+# warm_up and the disk guard, bin/pool-worktree-sweep.sh removes each entry of
+# the worktrees root that no live process uses, except this key's and the
+# warm_up pre-seed <project>-slot1. It never fails a job. A dedicated builder
+# (no POOL_MODE) keeps its slot-named worktree and is not swept.
+pool_worktree_sweep() { # pool_worktree_sweep <key> -> always 0; sets WTSWEEP_LINE
+  local key="$1" sw="$HARNESS/bin/pool-worktree-sweep.sh" slug out rc=0
+  WTSWEEP_LINE=""
+  [ "${POOL_MODE:-}" = 1 ] || return 0
+  if [ ! -x "$sw" ]; then log "worktree sweep: absent"; return 0; fi
+  # The same slug bin/lib/rb/gates.sh names the worktree with.
+  slug=$(printf '%s' "$key" | tr '[:upper:]' '[:lower:]' | tr -c 'a-z0-9._-' '-')
+  out=$("$sw" --root "${POOL_WORKTREES_ROOT:-/data/worktrees}" --keep "$PROJECT-slot1" --keep "$PROJECT-$slug" \
+        --harness "$HARNESS" 2>/dev/null) || rc=$?
+  WTSWEEP_LINE=${out%%$'\n'*}
+  log "worktree sweep: ${WTSWEEP_LINE:-no answer} (rc=$rc)"
+  return 0
+}
+
 _run_job() {
   local ticket key attempt
   ticket=$(jq -r '.ticket_id // ""' "$JOB" 2>/dev/null)
@@ -749,16 +771,22 @@ _run_job() {
   # --- a held build slot refuses before anything is spent (BH-5021) ----------
   slot_preflight "$key" "$hotfix" || return 1
 
+  # --- earlier jobs' worktrees off the disk, before the disk guard (BH-8004) --
+  pool_worktree_sweep "$key"
+
   # --- warm-up (clone/install) for real builds --------------------------------
   warm_up || { echo "BUILD_DEFERRED warm-up failed" > "$RESULT_FILE"; stop_heartbeat; return 1; }
 
   # --- disk guard (plan Failure-modes: >90% -> defer) -------------------------
-  local usepct
+  # The deferral names the machine (BH-8004), inside the hub's 120-char DWHY.
+  local usepct machine
   usepct=$(df --output=pcent /data 2>/dev/null | tr -dc '0-9' )
   if [ -n "$usepct" ] && [ "$usepct" -ge 90 ]; then
-    log "disk ${usepct}% on /data — deferring"
-    echo "BUILD_DEFERRED disk ${usepct}% used on /data" > "$RESULT_FILE"
-    beat "$(jq -nc --arg p "$PROJECT" --arg k "$key" '{kind:"fleet_alert",project:$p,ticket_key:$k,detail:"builder disk >90%",host:("builder-"+$p)}')"
+    machine="${FLY_MACHINE_ID:-$(hostname 2>/dev/null)}"
+    log "disk ${usepct}% on /data on machine $machine — deferring"
+    echo "BUILD_DEFERRED disk ${usepct}% used on /data on machine $machine (${WTSWEEP_LINE:-no sweep})" > "$RESULT_FILE"
+    beat "$(jq -nc --arg p "$PROJECT" --arg k "$key" --arg m "$machine" --arg d "builder disk ${usepct}% on machine $machine" \
+      '{kind:"fleet_alert",project:$p,ticket_key:$k,detail:$d,machine:$m,host:("builder-"+$p)}')"
     stop_heartbeat; return 1
   fi
 
