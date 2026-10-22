@@ -76,7 +76,9 @@ test('P1: overload twice, then rows: readHistory resolves the rows after 3 calls
   const rows = { results: [{ id: 1 }] };
   const s = stubDb({ fail: (_q, n) => (n <= 2 ? new Error('D1 DB is overloaded') : null), answer: () => rows });
   const r = await hist({ DB: retryingDb(s.binding) }, 1);
-  assert.deepEqual(r, { hot: rows, archive: null, state: 'unbound' });
+  assert.deepStrictEqual(r.hot, rows);
+  assert.strictEqual(r.archive, null);
+  assert.strictEqual(r.state, 'unbound');
   assert.equal(s.calls, 3);
 });
 

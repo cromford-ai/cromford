@@ -308,7 +308,10 @@ test('M12 the wrong tenant reads 0 rows: summary counts and detail stay per proj
   assert.equal(cross.status, 404);
   const s = await summary(o.DB);
   const by = Object.fromEntries(s.body.projects.map((p) => [p.project, p.total]));
-  assert.deepEqual(by, { 'cromford': 1, 'proj-b': 1, 'proj-empty': 0 });
+  assert.deepStrictEqual(Object.keys(by).sort(), ['cromford', 'proj-b', 'proj-empty']);
+  assert.strictEqual(by['cromford'], 1);
+  assert.strictEqual(by['proj-b'], 1);
+  assert.strictEqual(by['proj-empty'], 0);
   // A stray event row of another project on the same id is not shown.
   o.db.prepare(`INSERT INTO roadmap_idea_events (idea_id, project, kind, actor, at) VALUES (?, 'proj-b', 'moved', 'x', ?)`).run(mine.id, NOW);
   assert.equal((await detail(o.DB, mine.id)).body.events.length, 1);

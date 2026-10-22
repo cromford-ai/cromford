@@ -1,4 +1,5 @@
 #!/bin/bash
+# contract-test: Q6 pins the RB-* and plain queue row bytes (readers parse them); every other case asserts fields
 # tests/pool-rereview-row.bh-7635-test.sh — BH-7635 slice C1: the pool runs a
 # conductor RE-REVIEW row (`RR-<pr>-<head8>`, meta kind=rereview).
 #

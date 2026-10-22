@@ -127,12 +127,13 @@ async function fresh(t) {
 test("G0: withD1Retry, overload twice then a row -> the row, waits [100, 200] (increasing)", async () => {
   const waits = [];
   let calls = 0;
+  const want = { ok: 1 };
   const r = await withD1Retry(async () => {
     calls += 1;
     if (calls <= 2) throw new Error(OVERLOAD);
-    return { ok: 1 };
+    return want;
   }, { sleep: async (ms) => { waits.push(ms); }, random: () => 1 });
-  assert.deepEqual(r, { ok: 1 });
+  assert.strictEqual(r, want);
   assert.deepEqual(waits, [100, 200]);
 });
 

@@ -202,9 +202,17 @@ test('C5 the coord fragment: approve and reject only, actor stamped; lane writes
     assert.equal(res.status, 200);
     assert.equal(seen.length, 2);
     assert.equal(seen[0].url, `${JOBS}/api/roadmap/waves/approve`);
-    assert.deepEqual(JSON.parse(seen[0].body), { id: 'w1', project: 'cromford', expected_status: 'draft', actor: 'console' });
+    const b0 = JSON.parse(seen[0].body);
+    assert.equal(b0.id, 'w1');
+    assert.equal(b0.project, 'cromford');
+    assert.equal(b0.expected_status, 'draft');
+    assert.equal(b0.actor, 'console', 'the caller actor is never forwarded');
     assert.equal(seen[1].url, `${JOBS}/api/roadmap/waves/reject`);
-    assert.deepEqual(JSON.parse(seen[1].body), { id: 'w1', project: 'cromford', reason: 'no', actor: 'console' });
+    const b1 = JSON.parse(seen[1].body);
+    assert.equal(b1.id, 'w1');
+    assert.equal(b1.project, 'cromford');
+    assert.equal(b1.reason, 'no');
+    assert.equal(b1.actor, 'console', 'the caller actor is never forwarded');
     for (const [rest, method] of [['roadmap/waves/file-claim', 'POST'], ['roadmap/waves/filed', 'POST'],
       ['roadmap/waves/file-done', 'POST'], ['roadmap/links/state', 'PUT']]) {
       res = await call(rest, method, { id: 'w1', project: 'cromford' });

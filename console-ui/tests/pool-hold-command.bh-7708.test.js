@@ -89,7 +89,10 @@ test('C1 pool_hold refused by the worker is queued by Pages, signed in', async (
   assert.equal(rows[0].type, 'pool_hold');
   assert.equal(rows[0].project, 'pa');
   assert.equal(rows[0].status, 'pending');
-  assert.deepEqual(JSON.parse(rows[0].payload), { hold: true, reason: 'drain', actor: 'console' });
+  const p0 = JSON.parse(rows[0].payload);
+  assert.equal(p0.hold, true);
+  assert.equal(p0.reason, 'drain', 'the reason is trimmed');
+  assert.equal(p0.actor, 'console');
   const off = await post({ CONSOLE_DB: w.db }, { type: 'pool_hold', project: 'pa', hold: false });
   assert.equal(off.status, 200, off.text);
   assert.equal(off.json.ckey, 'pa:pool_hold:off:2026-10-20T15:42');
