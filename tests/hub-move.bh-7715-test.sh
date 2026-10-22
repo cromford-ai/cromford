@@ -110,6 +110,8 @@ newcase() {
       || bad "$1: jobs-client into $jside"
   done
   printf 'hub\n' > "$H/state/box-id"; printf 'box-hub\n' > "$H/state/box-name"
+  # BH-8038: a no-write tick runs only on a box seed marked as the target.
+  mkdir -p "$TGT/state/hub-move"; printf 'seeded fixture\n' > "$TGT/state/hub-move/target-seeded"
   export VC="$C/vendor-calls" CALLS="$C/calls" FLYD="$C/fly" TSJSON="$C/ts.json" CRONTAB_FILE="$C/crontab"
   : > "$VC"; : > "$CALLS"
   export HARNESS="$H" HARNESS_ENV_DIR="$H/env" HUB_MOVE_TARGET_HARNESS="$TGT"

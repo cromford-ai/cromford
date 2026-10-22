@@ -26,6 +26,10 @@
 #   flyctl, fly  allow: status, machine list|status, apps list, volumes list,
 #                  version. refuse: everything else.
 #   rsync   allow: no operand of the form host:path. refuse: any such operand.
+#   crontab allow: -l (with an optional -u <user>). refuse: everything else
+#           (install from a file or stdin, -r, -e). BH-8038: a no-write tick
+#           ran bin/update-runners.sh, which INSTALLED the full hub crontab on
+#           the target and made a split brain for 8 minutes.
 #   wrangler, ssh, scp, claude, codex: refuse always.
 #   aws, npx: refuse always (lead BLOCK #3203 on #7757). bin/state-backup.sh
 #           runs `aws s3api` on every hub tick and would write the live backup
@@ -38,7 +42,7 @@
 # PATH). bin/lane-shims/_fence.sh is a different tool: it guards only the five
 # iron laws and fails open, so it is not a no-write mode.
 
-HMN_NAMES="gh curl git flyctl fly rsync wrangler ssh scp claude codex aws npx"
+HMN_NAMES="gh curl git flyctl fly rsync crontab wrangler ssh scp claude codex aws npx"
 
 hmn_make_dir() {
   local dir="${1:-}" n
@@ -146,6 +150,18 @@ decide() {
         volumes|volume|vol) case "${2:-}" in list|ls) return 0 ;; esac ;;
       esac
       echo "${1:-} ${2:-}"; return 1 ;;
+    crontab)
+      local l=0
+      while [ $# -gt 0 ]; do
+        case "$1" in
+          -l) l=1 ;;
+          -u) shift ;;
+          *) echo "$1"; return 1 ;;
+        esac
+        shift
+      done
+      [ "$l" -eq 1 ] && return 0
+      echo "install"; return 1 ;;
     rsync)
       for a in "$@"; do
         case "$a" in

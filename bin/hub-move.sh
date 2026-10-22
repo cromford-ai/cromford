@@ -16,15 +16,21 @@
 #
 # inventory  print every hub role and how it moves, from live sources. Key
 #            NAMES only, never an env value.
-# provision  create the Fly app, the volume, the staged secrets (TS_AUTHKEY,
+# provision  Fly only. Create the Fly app, the volume, the staged secrets (TS_AUTHKEY,
 #            HUB_AUTHORIZED_KEY) and the machine. Each create runs only after
 #            its find answered "absent"; a find that cannot read stops the run
 #            and creates nothing. Then wait for the tailnet hostname and write
 #            state/hub-move/target.json. --plan prints each action, calls nothing.
+#            A non-Fly host (BH-8038, e.g. Hetzner bh-hub-2): write target.json
+#            by hand ({"provider":"hetzner","ts_ip":..,"ts_hostname":..}) and
+#            skip provision; provision refuses a provider other than fly, and
+#            no later verb needs a machine id.
 # seed       copy the age identity, the BACKUP_S3_* keys, the hub ssh keys and
 #            the harness code to the target; run state-restore.sh --apply and
 #            migrate-env-dir.sh there; check state/box-id and state/box-name;
 #            then bootstrap-machine.sh --repos-only for each fleet.conf project.
+#            Then set a LOCAL flags/all-off on the target (never a fleet row)
+#            and write state/hub-move/target-seeded there. Both stay until C6.
 # tick       run each rendered hub cron command once (bin/render-cron.sh <box-id>;
 #            comments, env lines and @reboot skipped; the gate kept). Without
 #            --real it runs under the no-write shim (bin/lib/hub-move-nowrite.sh)
@@ -34,7 +40,18 @@
 #            HUB_MOVE_FLY_HOME_BIN/flyctl (/root/.fly/bin) exists. Both modes
 #            fail (exit 4) when bin/lib/fly-bin.sh finds no flyctl. Writes
 #            state/hub-move/tick-<ts>.tsv (`lane rc secs refused timed_out`)
-#            and each lane's output to state/hub-move/tick-<ts>.out/<row>.out.
+#            and each lane's output to state/hub-move/tick-<ts>.out/<row>.out
+#            (a trailing >/dev/null / 2>&1 on the cron line is removed, so the
+#            output is kept). BH-8038: the cron installers (update-runners,
+#            registry-sync, fleet-propagate)
+#            never run in a tick (C6 runs update-runners.sh itself); the shim
+#            refuses `crontab` writes; a no-write tick runs only on a seeded
+#            target (state/hub-move/target-seeded, else exit 3), lifts the
+#            local flags/all-off for its lanes and sets it again at the end. On
+#            a seeded target, an active crontab line before or after the tick
+#            is saved to state/hub-move/target-crontab-found-<ts>.txt and
+#            removed, flags/all-off is set, one ALERTS line goes out, the tick
+#            table is marked `# mode=<m>-crontab-found` (C1 refuses it), exit 4.
 # dry-run    provision, seed latest, tick (no-write) on the target, then print
 #            the inventory and the tick table. --plan prints every step, calls
 #            nothing.
@@ -58,6 +75,12 @@
 # HUB_MOVE_FLY_HOME_BIN (/root/.fly/bin, the dir the fly-pool lanes prepend),
 # HUB_MOVE_TARGET_HARNESS (/root/harness, the harness path on the target),
 # HUB_MOVE_OLD_VM_ID (the old hub's Orgo VM id, printed by C8 only),
+# HUB_MOVE_C1_ALLOW (empty; a reviewed comma list of tick lane ids that C1
+# accepts as failed, e.g. lanes that fail under the shim by design; an id
+# also covers its ~N duplicates),
+# HUB_MOVE_C1_OLD_WINDOW_S (86400; C1 reads the old hub's cron journal from
+# this many seconds before the tick), HUB_MOVE_CRON_JOURNAL (empty; a file in
+# journalctl short-unix form that C1 reads in place of journalctl -t CRON),
 # HUB_MOVE_TARGET_SECRETS (/root/.config/hub-move), HUB_MOVE_TARGET_SSH_DIR
 # (/root/.ssh), HUB_MOVE_SSH_DIR ($HOME/.ssh, the old hub's keys).
 #
@@ -128,6 +151,19 @@ LEASE_WAIT_S="${HUB_MOVE_LEASE_WAIT_S:-120}"
 # PATH. A flyctl there walks past the no-write shim, so a no-write tick refuses.
 FLY_HOME_BIN="${HUB_MOVE_FLY_HOME_BIN:-/root/.fly/bin}"
 VOLUME_NAME=hub_data
+# BH-8038: the lanes that render and INSTALL a crontab. A tick never runs them:
+# a no-write tick of update-runners.sh installed the whole hub crontab on the
+# target on 2026-10-22. C6 runs update-runners.sh itself after the real tick.
+TICK_SKIP_LANES="update-runners registry-sync fleet-propagate"
+# The marker seed writes on the target and C6 removes. A no-write tick refuses
+# a box without it: on the live hub the crontab check below would remove the
+# live crontab.
+TARGET_MARK="$STATE/target-seeded"
+C1_ALLOW="${HUB_MOVE_C1_ALLOW:-}"
+C1_OLD_WINDOW_S="${HUB_MOVE_C1_OLD_WINDOW_S:-86400}"
+# The PATH this script started with: the crontab check runs the real crontab,
+# never the no-write shim (which refuses `crontab -r`).
+HM_PATH0="$PATH"
 
 is_posint() { case "$1" in ''|*[!0-9]*) return 1 ;; esac; [ "$1" -gt 0 ] 2>/dev/null; }
 is_uint() { case "$1" in ''|*[!0-9]*) return 1 ;; esac; }
@@ -135,7 +171,7 @@ is_name() { [[ "$1" != *$'\n'* ]] && grep -qE '^[a-z0-9][a-z0-9-]{0,62}$' <<<"$1
 
 check_knobs() {
   local k
-  for k in MEM_MB VOLUME_GB TICK_TIMEOUT_S TICK_PARALLEL DRAIN_TIMEOUT_S; do
+  for k in MEM_MB VOLUME_GB TICK_TIMEOUT_S TICK_PARALLEL DRAIN_TIMEOUT_S C1_OLD_WINDOW_S; do
     is_posint "${!k}" || { echo "hub-move: HUB_MOVE_$k='${!k}' is not a positive integer" >&2; exit 2; }
   done
   for k in TS_WAIT_S LEASE_WAIT_S; do
@@ -144,6 +180,9 @@ check_knobs() {
   for k in APP REGION VM_SIZE TS_HOSTNAME; do
     is_name "${!k}" || { echo "hub-move: HUB_MOVE_$k='${!k}' is not a valid name" >&2; exit 2; }
   done
+  if [ -n "$C1_ALLOW" ] && { [[ "$C1_ALLOW" == *$'\n'* ]] || ! grep -qE '^[A-Za-z0-9._~-]+(,[A-Za-z0-9._~-]+)*$' <<<"$C1_ALLOW"; }; then
+    echo "hub-move: HUB_MOVE_C1_ALLOW='$C1_ALLOW' is not a comma list of lane ids" >&2; exit 2
+  fi
 }
 
 # ---- state files --------------------------------------------------------------
@@ -156,6 +195,16 @@ tj_set() {
     && mv -f "$TARGET_JSON.tmp" "$TARGET_JSON"
 }
 tj_get() { jq -r --arg k "$1" '.[$k] // empty' "$TARGET_JSON" 2>/dev/null; }
+# target_provider — fly (provision wrote target.json, or no provider field) or
+# hetzner (an existing host the operator wrote target.json for). Any other
+# value refuses: no verb guesses how to treat an unknown host.
+target_provider() {
+  local p; p=$(tj_get provider)
+  case "${p:-fly}" in
+    fly|hetzner) printf '%s\n' "${p:-fly}" ;;
+    *) refuse "state/hub-move/target.json provider '$p' is not fly or hetzner" ;;
+  esac
+}
 
 step_record() { # step_record <step> <ok|fail> <detail>
   mkdir -p "$STATE" || return 1
@@ -258,6 +307,105 @@ lane_id() {
   printf '%s\n' "${id%.sh}"
 }
 
+# lane_rows — stdin: crontab text. stdout: `<id>\t<command>` for each cron
+# command, the ids the tick table uses (a repeated id is numbered id~2, id~3).
+# The tick and C1 both map ids through here, so the two never disagree.
+lane_rows() {
+  local cmd id
+  declare -A seen=()
+  while IFS= read -r cmd; do
+    [ -n "$cmd" ] || continue
+    id=$(lane_id "$cmd")
+    if [ -n "${seen[$id]:-}" ]; then seen[$id]=$(( ${seen[$id]} + 1 )); id="$id~${seen[$id]}"; else seen[$id]=1; fi
+    printf '%s\t%s\n' "$id" "$cmd"
+  done < <(cron_commands)
+}
+
+# ---- tick safety (BH-8038) ---------------------------------------------------------
+# crontab_active — the active lines of this box's crontab (no blank, comment or
+# NAME=value line), read with the real crontab.
+crontab_active() {
+  PATH="$HM_PATH0" crontab -l 2>/dev/null | grep -vE '^[[:space:]]*(#|$)' | grep -vE '^[[:space:]]*[A-Za-z_][A-Za-z0-9_]*='
+}
+# tick_cron_guard <before|after> [<tick-file>] — rc 0 when this box has no
+# active crontab line. Else: save the crontab, remove it, set the local
+# all-off, mark the tick file so C1 refuses it, one ALERTS line, rc 1.
+tick_cron_guard() {
+  local when="$1" tf="${2:-}" lines saved
+  lines=$(crontab_active)
+  [ -z "$lines" ] && return 0
+  mkdir -p "$STATE"
+  saved="$STATE/target-crontab-found-$(date -u +%Y%m%dT%H%M%SZ)-$$.txt"
+  PATH="$HM_PATH0" crontab -l > "$saved" 2>/dev/null
+  PATH="$HM_PATH0" crontab -r 2>/dev/null
+  hm_flag_on all-off "hub-move tick: a crontab was found on the target $when the tick" --local-only \
+    || echo "hub-move: cannot set flags/all-off on this box" >&2
+  if [ -n "$tf" ] && [ -f "$tf" ]; then
+    sed -i '1s/^# mode=\([a-z]*\) /# mode=\1-crontab-found /' "$tf" 2>/dev/null
+  fi
+  "$BIN/alert-line.sh" --id hub-move-tick-crontab "[hub-move] tick: $(printf '%s\n' "$lines" | wc -l) active crontab line(s) on the target $when the tick; removed (saved $saved), flags/all-off set" >/dev/null 2>&1 || true
+  echo "hub-move: failed: a crontab is installed on this box $when the tick ($(printf '%s\n' "$lines" | wc -l) active lines); removed, saved to $saved, flags/all-off set" >&2
+  [ -z "$(crontab_active)" ] || echo "hub-move: the crontab is STILL installed after crontab -r" >&2
+  return 1
+}
+# strip_devnull <command> — the command without a trailing redirect group that
+# sends output to /dev/null (`>/dev/null 2>&1`, `2>/dev/null >/dev/null`,
+# `&>/dev/null`), so the tick keeps the output. A group with no /dev/null
+# (`>> log 2>&1`) is kept as it is.
+strip_devnull() {
+  local c="$1" t dn=0 tail=""
+  # A trailing `|| true` / `|| :` stays; the redirect group before it goes.
+  if [[ "$c" =~ ^(.*[^[:space:]])[[:space:]]*(\|\|[[:space:]]*(true|:))[[:space:]]*$ ]]; then
+    c="${BASH_REMATCH[1]}"; tail=" ${BASH_REMATCH[2]}"
+  fi
+  while :; do
+    t=$(printf '%s' "$c" | sed -E 's/[[:space:]]*([12]?>>?|&>>?)[[:space:]]*\/dev\/null[[:space:]]*$//')
+    if [ "$t" != "$c" ]; then c="$t"; dn=1; continue; fi
+    t=$(printf '%s' "$c" | sed -E 's/[[:space:]]*[12]?>&[12][[:space:]]*$//')
+    if [ "$t" != "$c" ]; then c="$t"; continue; fi
+    break
+  done
+  if [ "$dn" -eq 1 ]; then printf '%s\n' "$c$tail"; else printf '%s\n' "$1"; fi
+}
+
+# ---- the old hub's rc for a lane (C1, BH-8038) ------------------------------------
+# cron_journal <t0> <out-file> — the cron journal of this box (the old hub) since
+# epoch <t0>, in journalctl short-unix form, into <out-file>. rc 0, or rc 1 with
+# the reason on stdout. HUB_MOVE_CRON_JOURNAL names a file to read instead.
+cron_journal() {
+  local t0="$1" out="$2" rc
+  if [ -n "${HUB_MOVE_CRON_JOURNAL:-}" ]; then
+    cat "$HUB_MOVE_CRON_JOURNAL" > "$out" 2>/dev/null || { echo "cannot read the cron journal file $HUB_MOVE_CRON_JOURNAL"; return 1; }
+    return 0
+  fi
+  command -v journalctl >/dev/null 2>&1 || { echo "no journalctl on this box"; return 1; }
+  journalctl -t CRON -o short-unix --since "@$t0" --no-pager -q > "$out" 2>/dev/null; rc=$?
+  [ "$rc" -eq 0 ] || { echo "journalctl -t CRON failed (rc=$rc)"; return 1; }
+}
+# journal_rc <t0> <journal-file> — env WANT: one cron command. Prints the rc of
+# the newest run of WANT at or after epoch <t0>, or `none` when no run is in the
+# journal. cron logs `CRON[<pid>]: (<user>) CMD (<command>)` at the start and
+# `CRON[<pid>]: (CRON) error (grandchild #<n> failed with exit status <rc>)` for
+# a non-zero exit, from the same pid. A run with no error line reads rc 0, so a
+# gap in the journal can only keep a target failure, never hide one.
+journal_rc() {
+  awk -v t0="$1" '
+    BEGIN { want = ENVIRON["WANT"]; found = 0 }
+    { if ($1 + 0 < t0) next
+      if (!match($0, /CRON\[[0-9]+\]: /)) next
+      pid = substr($0, RSTART + 5, RLENGTH - 8); rest = substr($0, RSTART + RLENGTH)
+      if (match(rest, /^\([^)]*\) CMD \(/)) {
+        txt = substr(rest, RLENGTH + 1); sub(/\)[ \t]*$/, "", txt)
+        if (txt == want || (length(txt) >= 200 && index(want, txt) == 1)) { found = 1; last = pid; rc = 0; mine[pid] = 1 } else mine[pid] = 0
+        next
+      }
+      if (pid == last && mine[pid] == 1 && match(rest, /failed with exit status [0-9]+/)) {
+        s = substr(rest, RSTART, RLENGTH); sub(/.* /, "", s); rc = s + 0
+      }
+    }
+    END { if (found) print rc; else print "none" }' "$2"
+}
+
 # ==== provision ================================================================
 cmd_provision() {
   local plan=0 a
@@ -273,6 +421,8 @@ cmd_provision() {
     echo "PLAN provision 6/6: wait up to ${TS_WAIT_S}s for tailnet host $TS_HOSTNAME, then write state/hub-move/target.json"
     return 0
   fi
+  local prov; prov=$(target_provider) || exit 3
+  [ "$prov" = fly ] || refuse "provision is Fly-only; state/hub-move/target.json says provider=$prov (an existing host: keep target.json, skip provision)"
   [ -n "$IMAGE" ] || { echo "hub-move: HUB_MOVE_IMAGE is not set (the pushed hub image ref)" >&2; exit 2; }
 
   # preflight: every input before the first call.
@@ -300,7 +450,7 @@ cmd_provision() {
     75) exit 75 ;;
     *) fail "cannot read the Fly app list; nothing created" ;;
   esac
-  tj_set app "$APP"; tj_set region "$REGION"; tj_set size "$VM_SIZE/${MEM_MB}MB/${VOLUME_GB}GB"; tj_set ts_hostname "$TS_HOSTNAME"
+  tj_set provider fly; tj_set app "$APP"; tj_set region "$REGION"; tj_set size "$VM_SIZE/${MEM_MB}MB/${VOLUME_GB}GB"; tj_set ts_hostname "$TS_HOSTNAME"
 
   # 2. volume
   vid=$(hmf_volume_find "$APP" "$VOLUME_NAME"); rc=$?
@@ -458,7 +608,14 @@ cmd_seed() {
     say "seed: repos for $p"
     on_target "$ip" "$TH/bin/bootstrap-machine.sh $p --repos-only" >/dev/null || fail "bootstrap-machine $p --repos-only on $ip"
   done
-  say "seed: done ($ts)"
+  # BH-8038: a LOCAL all-off on the target (the flags/ file, never a fleet row)
+  # until C6, so a stray cron line cannot run a lane there; and the marker that
+  # lets a no-write tick run on this box.
+  t_flag "$ip" flag-set --local-only all-off on "'hub-move seed: the target stands by until C6'"
+  t_flag "$ip" flag-has all-off || fail "seed: flags/all-off does not read on on the target"
+  on_target "$ip" "mkdir -p $TH/state/hub-move && date -u '+%Y-%m-%dT%H:%M:%SZ seed $ts' > $TH/state/hub-move/target-seeded" \
+    || fail "seed: cannot write state/hub-move/target-seeded on the target"
+  say "seed: done ($ts); flags/all-off set on the target until C6"
 }
 
 # ==== tick =====================================================================
@@ -472,7 +629,22 @@ cmd_tick() {
     esac
   done
   check_knobs
-  local run ts mode cron tsv i cmd id
+  local run ts mode cron tsv i cmd id seeded=0
+  [ -f "$TARGET_MARK" ] && seeded=1
+  # BH-8038: a no-write tick lifts and sets flags/all-off and removes a crontab
+  # it finds. On the live hub that would stop the fleet, so it runs only on a
+  # box seed marked as the target.
+  if [ "$real" -eq 0 ] && [ "$seeded" -eq 0 ]; then
+    refuse "no-write tick: this box is not a seeded hub-move target (no $TARGET_MARK; run seed for it first)"
+  fi
+  if [ "$seeded" -eq 1 ] && ! tick_cron_guard before; then
+    # A stub table for the stopped tick, so C1 never reads an older clean one.
+    local sm=nowrite sf; [ "$real" -eq 1 ] && sm=real
+    sf="$STATE/tick-$(date -u +%Y%m%dT%H%M%SZ).tsv"
+    printf '# mode=%s-crontab-found at=%s\nlane\trc\tsecs\trefused\ttimed_out\n' "$sm" "$(now_s)" > "$sf" \
+      && echo "tick-file: $sf"
+    exit 4
+  fi
   ts=$(date -u +%Y%m%dT%H%M%SZ)
   mkdir -p "$STATE" || fail "mkdir $STATE"
   run=$(mktemp -d "$STATE/tick-run.XXXXXX") || fail "mktemp"
@@ -498,15 +670,25 @@ cmd_tick() {
 
   local ids=() cmds=()
   if [ "$mode" = nowrite ]; then ids+=("harness-sync-deploy"); cmds+=("$BIN/harness-sync.sh deploy"); fi
-  declare -A seen=()
-  while IFS= read -r cmd; do
-    [ -n "$cmd" ] || continue
-    id=$(lane_id "$cmd")
-    if [ -n "${seen[$id]:-}" ]; then seen[$id]=$(( ${seen[$id]} + 1 )); id="$id~${seen[$id]}"; else seen[$id]=1; fi
+  local skipped=()
+  while IFS=$'\t' read -r id cmd; do
     if [ -n "$lanes" ]; then case ",$lanes," in *",${id%%~*},"*|*",$id,"*) ;; *) continue ;; esac; fi
-    ids+=("$id"); cmds+=("$cmd")
-  done < <(cron_commands <<<"$cron")
+    case " $TICK_SKIP_LANES " in *" ${id%%~*} "*) skipped+=("$id"); continue ;; esac
+    ids+=("$id"); cmds+=("$(strip_devnull "$cmd")")
+  done < <(lane_rows <<<"$cron")
+  for id in "${skipped[@]}"; do say "tick: skipped $id (it installs a crontab; C6 runs update-runners.sh)"; done
   [ "${#ids[@]}" -gt 0 ] || fail "no lane to tick"
+
+  # BH-8038: seed set a local all-off on the target. The no-write tick lifts it
+  # for its own lanes (else every gated lane exits 0 at its gate and the tick
+  # proves nothing) and sets it again however the tick ends.
+  local rearm=0
+  if [ "$mode" = nowrite ]; then
+    rearm=1
+    trap 'tick_rearm' EXIT
+    PATH="$HM_PATH0" hm_flag_off all-off "hub-move tick: the no-write lanes run" --local-only \
+      || fail "no-write tick: cannot lift the local flags/all-off (a fleet all-off row?)"
+  fi
 
   say "tick: flyctl=$flyctl_path"
   say "tick: ${#ids[@]} commands, mode=$mode, parallel=$TICK_PARALLEL, timeout=${TICK_TIMEOUT_S}s"
@@ -544,8 +726,20 @@ cmd_tick() {
   mkdir -p "$STATE/tick-$ts.out"
   for i in "${!ids[@]}"; do mv -f "$run/$i.out" "$STATE/tick-$ts.out/$((i + 1)).out" 2>/dev/null; done
   rm -rf "$run"
-  echo "tick: lanes=$n ok=$ok fail=$bad timeout=$tout refused_writes=$refused mode=$mode"
+  echo "tick: lanes=$n ok=$ok fail=$bad timeout=$tout refused_writes=$refused mode=$mode skipped=${#skipped[@]}"
   echo "tick-file: $tsv"
+  if [ "$rearm" -eq 1 ]; then tick_rearm; trap - EXIT; fi
+  if [ "$seeded" -eq 1 ]; then
+    tick_cron_guard after "$tsv" || exit 4
+  fi
+}
+# tick_rearm — set the local all-off again after a no-write tick (once).
+TICK_REARMED=0
+tick_rearm() {
+  [ "$TICK_REARMED" -eq 1 ] && return 0
+  TICK_REARMED=1
+  PATH="$HM_PATH0" hm_flag_on all-off "hub-move tick: the target stands by until C6" --local-only \
+    || echo "hub-move: cannot set flags/all-off again after the tick" >&2
 }
 
 # ==== dry-run ==================================================================
@@ -554,23 +748,36 @@ cmd_dry_run() {
   for a in "$@"; do case "$a" in --plan) plan=1 ;; *) usage ;; esac; done
   check_knobs
   if [ "$plan" -eq 1 ]; then
-    echo "PLAN dry-run 1/4: provision"
-    cmd_provision --plan | sed 's/^/  /'
+    if [ "$(tj_get provider)" = hetzner ]; then
+      echo "PLAN dry-run 1/4: provision skipped (target.json provider=hetzner: an existing host)"
+    else
+      echo "PLAN dry-run 1/4: provision"
+      cmd_provision --plan | sed 's/^/  /'
+    fi
     echo "PLAN dry-run 2/4: seed latest: scp the age identity, the BACKUP_S3_* keys and the hub ssh keys to the target; rsync bin/ prompts/ catalog/ fleet.conf and the checkout; state-restore.sh $(hub_id) latest --apply; migrate-env-dir.sh; check box-id=$(hub_id) box-name=$HARNESS_HUB_BOX; bootstrap-machine.sh --repos-only for: $("$BIN/fleet-conf.sh" --projects 2>/dev/null | tr '\n' ' ')"
     echo "PLAN dry-run 3/4: on the target: hub-move.sh tick (no-write): harness-sync.sh deploy, then each command of render-cron.sh $(hub_id) once, at most $TICK_PARALLEL at once, ${TICK_TIMEOUT_S}s each"
     echo "PLAN dry-run 4/4: print the inventory and the tick table"
     return 0
   fi
-  ( cmd_provision ) || exit $?
+  local prov; prov=$(target_provider) || exit 3
+  if [ "$prov" = fly ]; then
+    ( cmd_provision ) || exit $?
+  else
+    say "dry-run: provision skipped (target.json provider=$prov: an existing host)"
+  fi
   ( cmd_seed latest ) || exit $?
   ip=$(target_ip) || exit 3
   out=$(on_target "$ip" "HARNESS=$TH $TH/bin/hub-move.sh tick"); a=$?
   printf '%s\n' "$out"
-  [ "$a" -eq 0 ] || fail "tick on $ip rc=$a"
   f=$(printf '%s\n' "$out" | sed -n 's/^tick-file: //p' | tail -1)
+  # Fetch the table before the rc check: a stopped tick leaves a
+  # `-crontab-found` table, and C1 must read it, not an older clean one.
+  if [ -n "$f" ]; then
+    mkdir -p "$STATE"
+    on_target "$ip" "cat $f" > "$STATE/$(basename "$f")" || fail "fetch $f"
+  fi
+  [ "$a" -eq 0 ] || fail "tick on $ip rc=$a"
   [ -n "$f" ] || fail "tick on $ip printed no tick-file"
-  mkdir -p "$STATE"
-  on_target "$ip" "cat $f" > "$STATE/$(basename "$f")" || fail "fetch $f"
   cmd_inventory
   say "dry-run: done; tick table in $STATE/$(basename "$f")"
 }
@@ -579,12 +786,12 @@ cmd_dry_run() {
 CUTOVER_STEPS="C1 C2 C3 C4 C5 C6 C7 C8"
 step_text() {
   case "$1" in
-    C1) echo "C1 preflight: the newest no-write tick is under 24 h old and no lane failed except by a refused write or a timeout" ;;
+    C1) echo "C1 preflight: the newest no-write tick is under 24 h old and no lane failed except by a refused write, a timeout, HUB_MOVE_C1_ALLOW=${C1_ALLOW:-none} or the same rc on the old hub (its cron journal, ${C1_OLD_WINDOW_S}s before the tick)" ;;
     C2) echo "C2 pause merge: flag_set automerge-disabled and lane-off-merge-conductor on the old hub" ;;
     C3) echo "C3 drain: save the old crontab to state/hub-move/old-crontab, crontab -r, wait up to ${DRAIN_TIMEOUT_S}s for no $HARNESS/bin/ process" ;;
     C4) echo "C4 copy: BACKUP_FORCE=1 state-backup.sh, seed the target from that exact snapshot, flag_set --local-only all-off on the old hub" ;;
-    C5) echo "C5 split-brain check: old crontab empty and flags/all-off set here; on the target flags/all-off absent and flags/automerge-disabled present" ;;
-    C6) echo "C6 start: on the target hub-lease.sh renew until check rc 0 (${LEASE_WAIT_S}s), hub-move.sh tick --real, update-runners.sh" ;;
+    C5) echo "C5 split-brain check: old crontab empty and flags/all-off set here; on the target crontab empty, flags/all-off (set by seed) and flags/automerge-disabled present" ;;
+    C6) echo "C6 start: on the target flag-clear --local-only all-off, hub-lease.sh renew until check rc 0 (${LEASE_WAIT_S}s), hub-move.sh tick --real, remove state/hub-move/target-seeded, update-runners.sh" ;;
     C7) echo "C7 resume merge: flag-clear automerge-disabled and lane-off-merge-conductor on the target" ;;
     C8) echo "C8 cold standby: write state/hub-move/cold-standby-until (now + 7 d) on the target; print the retire step" ;;
   esac
@@ -624,9 +831,46 @@ run_step() {
       case "$line" in "# mode=nowrite at="*) ;; *) step_record C1 fail "newest tick not nowrite"; fail "C1: $f is not a no-write tick" ;; esac
       ts0=${line##*at=}
       is_uint "$ts0" && [ $(( $(now_s) - ts0 )) -lt 86400 ] || { step_record C1 fail "tick older than 24h"; fail "C1: $f is older than 24 h"; }
-      out=$(grep -v '^#' "$f" | tail -n +2 | awk -F'\t' '$2!=0 && $4==0 && $5==0 {print $1"(rc="$2")"}' | tr '\n' ' ')
-      [ -z "$out" ] || { step_record C1 fail "lanes failed: $out"; fail "C1: lanes failed with no refused write: $out"; }
-      step_record C1 ok "$(basename "$f")" ;;
+      local fl allowed="" blocking="" lid
+      while IFS= read -r fl; do
+        [ -n "$fl" ] || continue
+        lid=${fl%%"(rc="*}
+        # An allow-list id covers its ~N duplicates (lib covers lib~2).
+        if [ -n "$C1_ALLOW" ] && { case ",$C1_ALLOW," in *",$lid,"*|*",${lid%%~*},"*) true ;; *) false ;; esac; }; then
+          allowed="$allowed $fl"
+        else
+          blocking="$blocking $fl"
+        fi
+      done < <(grep -v '^#' "$f" | tail -n +2 | awk -F'\t' '$2!=0 && $4==0 && $5==0 {print $1"(rc="$2")"}')
+      allowed=${allowed# }; blocking=${blocking# }
+      say "cutover: C1 HUB_MOVE_C1_ALLOW=${C1_ALLOW:-none}; allowed failures: ${allowed:-none}"
+      # BH-8038 item 3: a lane that failed with the same rc on the old hub in
+      # the same window is `same-on-old-hub`, not a target failure. The old
+      # hub is this box: its cron journal and its rendered crontab.
+      local same="" still="" t0 jf jwhy jok=0 orows orc=0 trc ocmd orc_l
+      if [ -n "$blocking" ]; then
+        t0=$(( ts0 - C1_OLD_WINDOW_S ))
+        jf=$(mktemp "$STATE/c1-journal.XXXXXX") || fail "mktemp"
+        jwhy=$(cron_journal "$t0" "$jf") || jok=1
+        orows=$("$CHECKOUT/bin/render-cron.sh" "$(hub_id)" 2>/dev/null) || orc=$?
+        orows=$(lane_rows <<<"$orows")
+        for fl in $blocking; do
+          lid=${fl%%"(rc="*}; trc=${fl#*"(rc="}; trc=${trc%)}
+          if [ "$jok" -ne 0 ]; then still="$still; $fl old hub rc unreadable: $jwhy"; continue; fi
+          if [ "$orc" -ne 0 ]; then still="$still; $fl old hub rc unreadable: render-cron.sh $(hub_id) failed (rc=$orc)"; continue; fi
+          ocmd=$(awk -F'\t' -v l="$lid" '$1 == l { sub(/^[^\t]*\t/, ""); print; exit }' <<<"$orows")
+          if [ -z "$ocmd" ]; then still="$still; $fl old hub rc unreadable: not in the old hub crontab (render-cron.sh $(hub_id))"; continue; fi
+          orc_l=$(WANT="$ocmd" journal_rc "$t0" "$jf")
+          if [ "$orc_l" = none ]; then still="$still; $fl old hub rc unreadable: no run in the cron journal since @$t0"
+          elif [ "$orc_l" = "$trc" ]; then same="$same $fl"
+          else still="$still; $fl old hub rc=$orc_l"; fi
+        done
+        rm -f "$jf"
+        blocking=${still#; }; same=${same# }
+      fi
+      say "cutover: C1 same-on-old-hub: ${same:-none}"
+      [ -z "$blocking" ] || { step_record C1 fail "lanes failed: $blocking allow=${C1_ALLOW:-none} same_on_old_hub=$(printf '%s' "${same:-none}" | tr ' ' ',')"; fail "C1: lanes failed with no refused write: $blocking (HUB_MOVE_C1_ALLOW=${C1_ALLOW:-none}; read state/hub-move/$(basename "${f%.tsv}").out/<row>.out)"; }
+      step_record C1 ok "$(basename "$f") allow=${C1_ALLOW:-none} allowed_failed=$(printf '%s' "${allowed:-none}" | tr ' ' ',') same_on_old_hub=$(printf '%s' "${same:-none}" | tr ' ' ',')" ;;
     C2)
       hm_flag_on automerge-disabled "hub-move C2: pause merge for the hub move" \
         && hm_flag_on lane-off-merge-conductor "hub-move C2: pause merge for the hub move" \
@@ -660,12 +904,17 @@ run_step() {
       [ -z "$(crontab -l 2>/dev/null | grep -v '^#' | grep .)" ] || { step_record C5 fail "old crontab not empty"; fail "C5: the old hub crontab is not empty"; }
       flag_has all-off >/dev/null 2>&1 || { step_record C5 fail "old all-off missing"; fail "C5: flags/all-off is not set on the old hub"; }
       ip=$(target_ip) || exit 3
-      t_flag "$ip" flag-has all-off; rc=$?
-      [ "$rc" -eq 1 ] && t_flag "$ip" flag-has automerge-disabled \
-        || { step_record C5 fail "target flags"; fail "C5: on the target all-off is set or automerge-disabled is missing"; }
+      # BH-8038: seed set a local all-off on the target; it stays until C6.
+      [ -z "$(on_target "$ip" "crontab -l 2>/dev/null" | grep -vE '^[[:space:]]*(#|$)' | grep -vE '^[[:space:]]*[A-Za-z_][A-Za-z0-9_]*=')" ] \
+        || { step_record C5 fail "target crontab not empty"; fail "C5: the target has an active crontab line"; }
+      t_flag "$ip" flag-has all-off && t_flag "$ip" flag-has automerge-disabled \
+        || { step_record C5 fail "target flags"; fail "C5: on the target all-off or automerge-disabled is missing"; }
       step_record C5 ok "split-brain guard holds" ;;
     C6)
       ip=$(target_ip) || exit 3
+      t_flag "$ip" flag-clear --local-only all-off "'hub-move C6: the target starts'"
+      t_flag "$ip" flag-has all-off; rc=$?
+      [ "$rc" -eq 1 ] || { step_record C6 fail "target all-off"; fail "C6: flags/all-off still reads on on the target"; }
       waited=0
       until on_target "$ip" "$TH/bin/hub-lease.sh renew >/dev/null 2>&1; $TH/bin/hub-lease.sh check"; do
         if [ "$waited" -ge "$LEASE_WAIT_S" ]; then step_record C6 fail "lease"; fail "C6: hub-lease.sh check on the target is not rc 0 after ${LEASE_WAIT_S}s"; fi
@@ -673,6 +922,9 @@ run_step() {
       done
       out=$(on_target "$ip" "HARNESS=$TH $TH/bin/hub-move.sh tick --real") || { step_record C6 fail "tick --real"; fail "C6: tick --real failed"; }
       printf '%s\n' "$out"
+      # The marker goes BEFORE update-runners installs the crontab: a C6 rerun
+      # after a failed update-runners must not have its tick remove that crontab.
+      on_target "$ip" "rm -f $TH/state/hub-move/target-seeded" || { step_record C6 fail "marker"; fail "C6: cannot remove state/hub-move/target-seeded on the target"; }
       on_target "$ip" "$TH/bin/update-runners.sh" || { step_record C6 fail "update-runners"; fail "C6: update-runners.sh failed on the target"; }
       step_record C6 ok "$(printf '%s\n' "$out" | grep '^tick: ' | tail -1)" ;;
     C7)
@@ -688,6 +940,7 @@ run_step() {
       ts1=$(date -u -d "@$(( $(now_s) + 7 * 86400 ))" '+%Y-%m-%dT%H:%M:%SZ')
       on_target "$ip" "mkdir -p $TH/state/hub-move && printf '%s\n' '$ts1' > $TH/state/hub-move/cold-standby-until" \
         || { step_record C8 fail "write"; fail "C8: cannot write cold-standby-until on the target"; }
+      echo "The new hub: provider=$(target_provider) host=$(tj_get ts_hostname) ts_ip=$ip."
       echo "The old hub is a cold standby until $ts1 (crontab empty, flags/all-off)."
       echo "After $ts1: retire the old hub VM ${HUB_MOVE_OLD_VM_ID:-<HUB_MOVE_OLD_VM_ID>} in the Orgo console, then re-arm cfg:failover."
       step_record C8 ok "cold standby until $ts1" ;;
@@ -811,6 +1064,13 @@ sandbox_guard() {
     echo "hub-move: refused: HARNESS_TEST_SANDBOX=1 and $label=$p is outside the test scratch root ${base:-?}/scratch.*" >&2
     exit 2
   done
+  # BH-8038: tick, cutover and rollback run `crontab -l` / `crontab -r`. Under
+  # the sandbox the crontab on PATH must be the suite's stub.
+  p=$(command -v crontab 2>/dev/null) || return 0
+  r=$(realpath -m "$p" 2>/dev/null) || r=""
+  case "$r" in "$base"/scratch.??????/*) [ -n "$base" ] && return 0 ;; esac
+  echo "hub-move: refused: HARNESS_TEST_SANDBOX=1 and crontab=$p is outside the test scratch root ${base:-?}/scratch.*" >&2
+  exit 2
 }
 
 # ==== main =====================================================================

@@ -58,7 +58,7 @@ tests/gh-default-auth-lanes-test.sh:generic-api-key:272
 tests/gh-token-live-test.sh:generic-api-key:26
 tests/hotspot-split-ticket.bh-6739-test.sh:curl-auth-header:158
 tests/hotspot-split-ticket.bh-6739-test.sh:curl-auth-header:327
-tests/hub-move.bh-7715-test.sh:generic-api-key:128
+tests/hub-move.bh-7715-test.sh:generic-api-key:130
 tests/jobs-client-secret-sources.bh-7188-test.sh:generic-api-key:12
 tests/lane-run-agent-clis.bh-6260-test.sh:generic-api-key:90
 tests/lane-run-agent-clis.bh-6260-test.sh:generic-api-key:115
