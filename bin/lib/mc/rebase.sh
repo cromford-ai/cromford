@@ -1496,6 +1496,22 @@ mc_rebase() {
   # The remote is named EXPLICITLY rather than as `origin`: on the hub-clone
   # path `origin` is whatever that checkout was set up with, and it is the same
   # GitHub repo either way. One credential, both paths.
+  # THE QUEUE IS READ AGAIN AT THE PUSH (BH-8021). A detached rebase runs for
+  # minutes, and the PR can enter the Mergify queue while it runs (project-6
+  # #2309: queued at ~11:31Z, this push at 11:42Z, Mergify dequeued it). If
+  # Mergify holds the PR now, the result is dropped and nothing is pushed:
+  # rc 3, the caller's "come back next tick". A read that fails does not stop
+  # the push; the land arm already read it before the spawn.
+  if [ "$base" = main ] && command -v mc_mergify_holds >/dev/null 2>&1 \
+     && [ "$(mc_queue_provider "$slug" 2>/dev/null)" = mergify ]; then
+    local mqwhy mqrc
+    mqwhy=$(mc_mergify_holds "$slug" "$url" "$head"); mqrc=$?
+    case "$mqrc" in
+      0) mc_log "$url rebase: SKIP_PUSH mergify-queue: $mqwhy on ${head:0:8} — the rebase result ${new:0:8} is dropped, nothing pushed (BH-8021)"
+         mc_rebase_cleanup "$repo" "$wt" "$cloned"; return 3 ;;
+      2) mc_log "$url rebase: the Mergify check runs on ${head:0:8} could not be read at the push — pushing as before (BH-8021)" ;;
+    esac
+  fi
   # The push re-reads the hold and leases on the head this run started from
   # (BH-2504): mc_rebase's merge and mc_restack's rebase both rewrite a PR branch.
   if ! { mc_hold_push_load && HOLD_PUSH_LOG="${MC_LOG:-}" hold_push -n "$project" - "$wt" "$remote" HEAD "$br" "$head" >/dev/null 2>&1; }; then
@@ -4431,6 +4447,41 @@ land_rebase_arm() {
     mc_count_inc "$P" landskipped >/dev/null; mc_attempt_put "$mark"
     mc_log "$KEY LAND_SKIP Mergify dequeued label on ${HEAD:0:8} — a PR nobody queues is not rebased by this lane"
     return 1
+  fi
+  # MERGIFY HOLDS IT (BH-8021). A `@mergifyio queue` request that waits for its
+  # queue conditions has no label, so the row is WAIT_CI, not QUEUED. A push
+  # cancels that request (project-6 #2300). Mergify keeps a queued PR current
+  # by itself. One check-runs read, only on a Mergify repo and only on a
+  # landing. A read that fails is a deferral, never a push.
+  local mqwhy mqrc lane=""
+  if [ "${PROVIDER:-}" = mergify ] && command -v mc_mergify_holds >/dev/null 2>&1; then
+    mqwhy=$(mc_mergify_holds "$SLUG" "$URL" "$HEAD" "${RAWLBL:-}"); mqrc=$?
+    case "$mqrc" in
+      0) mc_count_inc "$P" landskipped >/dev/null; mc_attempt_put "$mark"
+         mc_log "$KEY LAND_SKIP mergify-queue: $mqwhy on ${HEAD:0:8} — Mergify owns this PR, no land rebase (BH-8021)"
+         return 1 ;;
+      2) mc_count_inc "$P" landdeferred >/dev/null
+         mc_log "$KEY LAND_DEFER mergify-queue: the Mergify check runs on ${HEAD:0:8} could not be read — offered again next tick (BH-8021)"
+         return 1 ;;
+    esac
+  fi
+  # THE MIGRATION APPLY LANE OWNS IT (BH-8021). With
+  # mc_migration_hold.apply_lane.<project> set, a PR that adds a file the
+  # globs match goes to that lane (bin/lib/migration-hold.sh), and a push here
+  # resets it (project-6 #2305). Asked only when the lane row is set.
+  if command -v mmh_decide >/dev/null 2>&1 && command -v setting_get >/dev/null 2>&1; then
+    lane=$(setting_get "mc_migration_hold.apply_lane.$P" 2>/dev/null) || lane=""
+  fi
+  if [ -n "$(printf '%s' "$lane" | tr -d '[:space:]')" ]; then
+    mmh_decide "$P" "$SLUG" "$NUM" "$KEY" "$HEAD"
+    case "$MMH_VERDICT" in
+      lane) mc_count_inc "$P" landskipped >/dev/null; mc_attempt_put "$mark"
+            mc_log "$KEY LAND_SKIP migration-apply-lane: $MMH_NAMES on ${HEAD:0:8} $MMH_DETAIL — no land rebase (BH-8021)"
+            return 1 ;;
+      unreadable) mc_count_inc "$P" landdeferred >/dev/null
+            mc_log "$KEY LAND_DEFER migration-apply-lane: $MMH_DETAIL on ${HEAD:0:8} — offered again next tick (BH-8021)"
+            return 1 ;;
+    esac
   fi
   # A head-bound re-review is READING this exact head right now. Moving it under
   # that read throws away a billed agent call and buys a verdict bound to a sha

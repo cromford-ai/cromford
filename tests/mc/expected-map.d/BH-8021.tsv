@@ -1,0 +1,3 @@
+# BH-8021: the land arm and the rebase push ask whether Mergify holds the PR
+# (a waiting queue request has no label, only a check run).
+queue	mc_mergify_holds	lib
