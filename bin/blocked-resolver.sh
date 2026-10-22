@@ -8529,7 +8529,7 @@ if [ -n "$RAW" ]; then
   fi
 fi
 CANDS=()
-[ -n "$ORDERED" ] && mapfile -t CANDS <<<"$ORDERED"
+[ -n "$ORDERED" ] && mapfile -t CANDS < <(printf '%s\n' "$ORDERED" | if command -v br_overdue_first >/dev/null 2>&1; then br_overdue_first "$(date -u +%s)"; else cat; fi)
 # EVERY CANDIDATE IS A HAND-OFF THIS LANE OWNS (BH-5125). A row on this list is
 # the resolver's own statement that the park is its to move, so it is claimed
 # here and the sweep at the end of the tick holds the tick to it: acted, or a
