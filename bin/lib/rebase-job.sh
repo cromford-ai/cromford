@@ -112,6 +112,8 @@
 #   7. gates, ONLY when <repo>/node_modules exists — warm-up installs with
 #      `npm install || true`, so calling a missing install GATE_RED would tell
 #      the hub the BRANCH is bad. Same condition as the hub twin mc_rebase.
+#      The root node_modules is linked, then each workspace's nested one
+#      (_rj_link_ws, BH-7953).
 #      typecheck, then <harness>/bin/test-select.sh if it is executable
 #      (recorded as unit=select) else `npm run test:unit`. Red pushes nothing.
 #      Gate output goes to one temp log (removed on every path), and a red gate
@@ -196,6 +198,31 @@ _rj_red() {
   local f; f=$(_rj_first_fail "$_rj_log")
   _rj_line="GATE_RED $1${f:+: $f}"
   case "$_rj_pi" in ''|0) ;; *) _rj_line="$_rj_line [postinstall rc=$_rj_pi]" ;; esac
+}
+
+# _rj_link_ws <repo> <wt> — link each npm workspace's nested node_modules
+#   (BH-7953). npm puts a dep whose version conflicts with the root in
+#   <ws>/node_modules, and a fresh worktree has none, so project-6's
+#   `npm run typecheck --workspaces` was TS2307 on ajv in packages/spec-compiler.
+#   The workspaces are read from the MERGED tree's package.json, the array form
+#   or {packages:[...]}. A glob expands against <repo>, the install; an entry
+#   with `..`, `**`, `!` or a leading `/` is skipped. A dir is linked only when
+#   <repo>/<dir>/node_modules exists, <wt>/<dir> exists and
+#   <wt>/<dir>/node_modules does not. No workspaces -> nothing, as before.
+_rj_link_ws() {
+  local repo="$1" wt="$2" g d
+  jq -r '((.workspaces | if type == "object" then .packages else . end) // [])
+         | if type == "array" then .[] else empty end | strings' \
+    "$wt/package.json" 2>/dev/null | while IFS= read -r g; do
+    case "$g" in ''|/*|*..*|*'**'*|'!'*) continue ;; esac
+    # shellcheck disable=SC2086  # the glob must expand
+    for d in "$repo"/${g%/}; do
+      d="${d#"$repo"/}"
+      [ -d "$repo/$d/node_modules" ] && [ -d "$wt/$d" ] && [ ! -e "$wt/$d/node_modules" ] \
+        && ln -s "$repo/$d/node_modules" "$wt/$d/node_modules" 2>/dev/null
+    done
+  done
+  return 0
 }
 
 # _rebase_job_body <repo> <slug> <branch> <head> <base> <harness>
@@ -321,6 +348,9 @@ _rebase_job_body() {
   # --- 7. the gates, only with deps at hand ----------------------------------
   if [ -d "$repo/node_modules" ]; then
     [ -e "$wt/node_modules" ] || ln -s "$repo/node_modules" "$wt/node_modules" 2>/dev/null
+    # BH-7953: and each workspace's own node_modules, which npm nests on a
+    # version conflict (project-6's packages/spec-compiler/node_modules/ajv).
+    _rj_link_ws "$repo" "$wt"
     # --- 6d. the generate step (BH-7656) -----------------------------------
     # Read from the MERGED tree, so a branch that adds the script runs it. With
     # Prisma < 7 the client goes to node_modules/.prisma, which is the linked
