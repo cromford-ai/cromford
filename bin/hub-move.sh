@@ -651,7 +651,7 @@ cmd_tick() {
   # The pool lanes (fly-pool-tick.sh and the scripts it starts) need flyctl, and
   # fly-pool-tick.sh exits 0 without it, so a lane rc cannot show the gap.
   local flyctl_path
-  flyctl_path=$(fly_bin) || fail "flyctl not found on this box (PATH, \$HOME/.fly/bin, ${FLY_BIN_DIR:-/root/.fly/bin}): the pool lanes cannot run"
+  flyctl_path=$(fly_bin) || fail "flyctl not found on this box (PATH, \$HOME/.fly/bin, ${FLY_BIN_DIR:-/root/.fly/bin}, ${FLY_SYSTEM_DIRS-/usr/local/bin}): the pool lanes cannot run"
   mode=real
   if [ "$real" -eq 0 ]; then
     mode=nowrite

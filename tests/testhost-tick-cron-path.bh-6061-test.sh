@@ -96,7 +96,9 @@ export FIX
 # run <home> <path> <verb...> — the cron environment: env -i, a bare PATH.
 run() {
   local home="$1" path="$2"; shift 2
-  OUT=$(env -i PATH="$path" HOME="$home" HARNESS="$H" FIX="$FIX" LANE_START_SPREAD_S=0 \
+  # FLY_SYSTEM_DIRS="": a real /usr/local/bin/flyctl (the hub image's) must not
+  # turn the "no flyctl anywhere" rows into a call to the real vendor.
+  OUT=$(env -i PATH="$path" HOME="$home" HARNESS="$H" FIX="$FIX" LANE_START_SPREAD_S=0 FLY_SYSTEM_DIRS= \
     TESTHOST_APP=bh-testhost-fixture ${MARK:+MARK=$MARK} \
     bash "$TICK" "$@" 2>&1 </dev/null); RC=$?
 }

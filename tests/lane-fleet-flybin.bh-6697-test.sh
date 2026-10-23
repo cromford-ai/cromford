@@ -78,7 +78,9 @@ stub "$T/homefx/.fly/bin" "$T/argv.home"
 
 # ============================================================================
 echo "B: fly_bin (bin/lib/fly-bin.sh)"
-fb() { env -i PATH="$BARE" HOME="$1" ${2:+FLY_BIN_DIR="$2"} \
+# FLY_SYSTEM_DIRS="" keeps a real /usr/local/bin/flyctl (the hub image's) out of
+# these rows, so B3 still proves "nothing found" on a box that has one.
+fb() { env -i PATH="$BARE" HOME="$1" FLY_SYSTEM_DIRS= ${2:+FLY_BIN_DIR="$2"} \
   bash -c '. "$1" || exit 99; fly_bin' _ "$REPO/bin/lib/fly-bin.sh"; }
 out=$(fb "$T/homefx" ""); rc=$?
 [ "$rc" = 0 ] && [ "$out" = "$T/homefx/.fly/bin/flyctl" ] && ok "B1 HOME stub, FLY_BIN_DIR unset" || bad "B1 rc=$rc out='$out'"
@@ -116,7 +118,7 @@ fresh() {
 clock() { export LANE_FLEET_NOW=$1; curl -sS -X PUT "$JOBS_URL/__clock" -d "{\"epoch\":$1}" >/dev/null; }
 # tick <FLY_BIN_DIR> [extra PATH dir] — one real tick under the bare PATH.
 tick() {
-  env -u LANE_FLEET_FLY PATH="${2:+$2:}$BARE" HOME="$T/home" FLY_BIN_DIR="$1" \
+  env -u LANE_FLEET_FLY PATH="${2:+$2:}$BARE" HOME="$T/home" FLY_BIN_DIR="$1" FLY_SYSTEM_DIRS= \
     bash "$H/bin/lane-fleet.sh" tick
   TRC=$?
 }

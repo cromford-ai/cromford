@@ -465,7 +465,7 @@ printf '* * * * * echo lane >> %s/ran\n' "$C" > "$C/cron.txt"
 mkdir -p "$C/nofly" "$C/emptyfly"
 for n in "$STUB"/*; do case "$(basename "$n")" in flyctl|fly) ;; *) ln -s "$n" "$C/nofly/$(basename "$n")" ;; esac; done
 for m in "" --real; do
-  out=$(HOME="$C" FLY_BIN_DIR="$C/emptyfly" PATH="$C/nofly:/usr/bin:/bin" HARNESS="$TGT" bash "$TGT/bin/hub-move.sh" tick $m 2>&1)
+  out=$(HOME="$C" FLY_BIN_DIR="$C/emptyfly" FLY_SYSTEM_DIRS= PATH="$C/nofly:/usr/bin:/bin" HARNESS="$TGT" bash "$TGT/bin/hub-move.sh" tick $m 2>&1)
   check "D10-rc${m}" "$?" 4
   has "D10-says${m}" "$out" "flyctl not found on this box"
 done

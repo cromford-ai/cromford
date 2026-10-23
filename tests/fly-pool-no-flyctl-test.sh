@@ -14,6 +14,7 @@
 #   N3  flyctl only in an install dir (not on PATH): bin/lib/fly-bin.sh finds it
 #       and the tick drives it
 #   N4  a stub on FLY_BIN_DIR still wins (the existing test seam)
+#   N5  flyctl only in /usr/local/bin (FLY_SYSTEM_DIRS), off cron's PATH: found
 # Run: HARNESS_TEST_SANDBOX=1 bash tests/fly-pool-no-flyctl-test.sh
 set -uo pipefail
 . "$(dirname "$0")/lib/scratch.sh" || exit 1
@@ -52,7 +53,8 @@ tick() { # tick <dir> [FLY_BIN_DIR] [extra PATH dir]
   local h="$1" fbd="${2:-$1/emptybin}" extra="${3:-}"
   ( export PATH="$h/fakebin${extra:+:$extra}:$SYS" HARNESS="$h" HOME="$h/home" HARNESS_SECRET=test-secret \
            JOBS_URL=https://jobs.invalid JOBS_BOX=hub JOBS_RETRIES=0 FLEET_CONF="$h/fleet.conf" \
-           FLY_API_TOKEN_project-5=tok TMPDIR="$h" FLY_BIN_DIR="$fbd" FD_SINK="$h/fly.txt"
+           FLY_API_TOKEN_project-5=tok TMPDIR="$h" FLY_BIN_DIR="$fbd" FD_SINK="$h/fly.txt" \
+           FLY_SYSTEM_DIRS="${SYSDIRS-}"
     bash "$DIR/bin/fly-pool.sh" project-5 >/dev/null 2>&1 ); echo $?
 }
 
@@ -74,6 +76,14 @@ rc=$(tick "$H")
 [ "$rc" = 0 ] && ok || bad "N3 the tick must run (rc $rc)"
 [ -s "$H/fly.txt" ] && ok || bad "N3 fly-bin.sh must find \$HOME/.fly/bin/flyctl and the tick must drive it"
 grep -q 'no flyctl' "$H/logs/fly-pool.log" 2>/dev/null && bad "N3 must not report no flyctl" || ok
+
+# --- N5: flyctl only in a system dir off cron's PATH (bh-hub-2, 2026-10-22) ----
+H="$T/n5"; setup "$H"; mkdir -p "$H/sysdir"
+printf '#!/bin/bash\necho "SYS $*" >> "%s/fly.txt"\ncase "$*" in *"machine status"*) echo "State: started";; esac\nexit 0\n' "$H" > "$H/sysdir/flyctl"
+chmod +x "$H/sysdir/flyctl"
+SYSDIRS="$H/sysdir" tick "$H" >/dev/null
+grep -q '^SYS' "$H/fly.txt" 2>/dev/null && ok || bad "N5 fly-bin.sh must find flyctl in a system dir (FLY_SYSTEM_DIRS) that cron's PATH lacks"
+grep -q 'no flyctl' "$H/logs/fly-pool.log" 2>/dev/null && bad "N5 must not report no flyctl" || ok
 
 # --- N4: the FLY_BIN_DIR stub seam still wins --------------------------------
 H="$T/n4"; setup "$H"; mkdir -p "$H/stubdir"

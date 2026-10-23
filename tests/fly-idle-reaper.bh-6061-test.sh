@@ -292,7 +292,9 @@ reset; : > "$H/env/fly.env"; run
 [ "$(nalert 'id fly-idle-reaper-unconfigured ')" = 1 ] && ok || bad "R19a no token raised no fly-idle-reaper-unconfigured"
 grep -q 'not configured' "$H/logs/fly-idle-reaper.log" && ok || bad "R19a the log does not say not configured"
 reset
-OUT=$(env PATH="/usr/bin:/bin" HOME="$T/home" HARNESS="$H" FIX="$FIX" FLY_IDLE_REAPER_NOW="$NOW" bash "$H/bin/fly-idle-reaper.sh" 2>&1); RC=$?
+# FLY_SYSTEM_DIRS="": a real /usr/local/bin/flyctl (the hub image's) must not
+# turn this "no flyctl" row into a found one.
+OUT=$(env PATH="/usr/bin:/bin" HOME="$T/home" HARNESS="$H" FIX="$FIX" FLY_IDLE_REAPER_NOW="$NOW" FLY_SYSTEM_DIRS= bash "$H/bin/fly-idle-reaper.sh" 2>&1); RC=$?
 [ "$RC" = 1 ] && ok || bad "R19b no flyctl exited $RC, want 1"
 grep -q 'flyctl not found' "$FIX/alert-calls" 2>/dev/null && ok || bad "R19b the alert does not name 'flyctl not found'"
 reset; touch "$FIX/apps-fail"; run
