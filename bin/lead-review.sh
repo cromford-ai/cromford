@@ -190,7 +190,10 @@
 #                           `VERDICT: <word>` (lr_verdict), gets ONE more call,
 #                           then <key>.empty is written, put as an artifact
 #                           with detail {empty:true,path,model}, and
-#                           outcome=failed detail=empty.
+#                           outcome=failed detail=empty. BH-8081: a spent head
+#                           whose ~noverdict key is paid gets ONE more call on
+#                           ~unread (no retry); unreadable again = one alert
+#                           (bin/lib/lead-unread.sh, lu_alert).
 #   delta mode (BH-5294)    scope_notes carrying `lead-delta:<G>` (set by
 #                           bin/lead-review-enqueue.sh) puts G's report on this
 #                           box, the inter-diff and the conflict resolutions
@@ -701,6 +704,7 @@ review_one() {
   local RP_STATE="" RP_TAIL="" CL_STATE="" CL_TAIL="" rp_rc rp_ci harness_repo dmode="" dprev="" dline="" dreport lb tn tslug tdone thread_note total half lfp lstage lnote
   local capr="" capo capf ctitle clabels
   local resets mreset since f what fields="" bfp bchg rsn gpaid bmode="" bline="" ldp_rc="" dbytes ldp_why nprod ldp_mode ldp_find
+  local lunread=0 lspent=""
   local lpv=0 lpk="" lprc imode="" imodel ire ckl imm wlnotes="" rlcap="" rlgl=0 rlgo bires="" bimode=off birw=0 biline=""
   # BH-5873: the mode the gates chose (full|delta|replay). Nothing reads it yet;
   # child 2 of #5870 (delta and replay) does.
@@ -1051,9 +1055,17 @@ review_one() {
   # BH-7792 (#7792 comment 6309315490): ask the lead-head guard first, read-only.
   # A head already paid for, not replayed above, would be refused at the agent
   # call after the rules pack and the host suite: release the claim now instead.
+  # BH-8081: a paid round with no readable verdict gets one more paid call on
+  # ~unread (bin/lib/lead-unread.sh); a blocked head counts ticks and alerts.
   if [ -n "$lfp" ] && gpaid=$(lr_guard_spent "$project" "$lfp"); then
-    log "$key: lead-head call-guard paid $gpaid on $lfp; no rules pack, no host suite, no agent call"
-    lr_release_claim "$id" "$job" "$key" "call-guard: lead-head paid $gpaid"; return
+    if command -v lu_extra_fp >/dev/null 2>&1 && lu_extra_fp "$project" "$repo" "$pr" "$sha" "$bchg" "$bfp"; then
+      log "$key: lead-head paid $gpaid on $lfp with no readable verdict; one more paid call on $LU_FP (BH-8081)"
+      lspent="$lfp"; lfp="$LU_FP"; lunread=1
+    else
+      log "$key: lead-head call-guard paid $gpaid on $lfp; no rules pack, no host suite, no agent call"
+      command -v lu_guard_blocked >/dev/null 2>&1 && lu_guard_blocked "$project" "$repo" "$pr" "$sha" "$key" "$lfp" "$gpaid"
+      lr_release_claim "$id" "$job" "$key" "call-guard: lead-head paid $gpaid"; return
+    fi
   fi
   if ! git -C "$REPO_DIR" worktree add -q --detach "$WT" "$sha" >/dev/null 2>&1; then
     log "checkout of $sha for $key failed"; lr_fail_counted "$id" "$job" "$sha" checkout; return
@@ -1479,7 +1491,7 @@ review_one() {
     # rate limit are not marked.
     [ "$MODE" = tick ] && lw_pr_day_mark "$repo" "$pr"
     verdict=unknown; lr_pick_review "$out" "$key" && verdict=$(lr_verdict "$out")
-    if [ "$verdict" = unknown ]; then
+    if [ "$verdict" = unknown ] && [ "$lunread" != 1 ]; then
       out="$WT.out2"
       if [ -n "$lfp" ]; then
         if [ "$bchg" = 1 ] && rsn=$(lr_body_reason "$bfp" nv); then lfp=$(lead_fp "$repo" "$pr" "$sha" "$rsn")
@@ -1497,11 +1509,13 @@ review_one() {
     lr_release_claim "$id" "$job" "$key" "agent-call rc $rc: nothing billed"; return
   fi
   if [ "$verdict" = unknown ]; then
-    log "no readable review (findings and a verdict) from $model for $key after one retry"
+    log "no readable review (findings and a verdict) from $model for $key $([ "$lunread" = 1 ] && echo "on the extra ~unread call" || echo "after one retry")"
     printf '%s\nreset=%s\n' "$model" "$resets" > "$empty.tmp.$$" && mv -f "$empty.tmp.$$" "$empty" || log "could not write $empty"
     job_artifact_put lead_review_report "$empty" "$(jq -nc --arg p "$empty" --arg m "$model" '{empty:true,path:$p,model:$m}')" "$job" \
       || log "empty artifact put for $key failed"
-    fail_terminal "$id" "$job" "$sha" empty "$model"; return
+    fail_terminal "$id" "$job" "$sha" empty "$model"
+    [ "$lunread" = 1 ] && command -v lu_alert >/dev/null 2>&1 && lu_alert "$project" "$repo" "$pr" "$sha" "$lspent" "second unreadable answer"
+    return
   fi
   # BH-6391: a BLOCK after an approved head keeps its findings on unchanged lines as NOTEs.
   if [ "$verdict" = BLOCK ] && [ "$lpv" = 1 ] && { [ "$LPV_WORD" = MERGE ] || [ "$LPV_WORD" = MERGE-WITH-NOTES ]; }; then

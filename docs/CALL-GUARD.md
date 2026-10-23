@@ -175,7 +175,10 @@ One paid review per head. The paid exceptions are named: a retry that has a
 real reason to buy again appends `~<reason>` (`^[a-z0-9]{1,24}$`), which makes
 it its own fingerprint and so exactly one more paid call. The reasons are
 `~rereq` (a re-review request on the same head), `~stepup` (a step-up to a
-stronger review), `~noverdict` (the paid call returned no verdict) and
+stronger review), `~noverdict` (the paid call returned no verdict),
+`~unread` / `~unbody<D>` (BH-8081: a later claim of a lead head whose paid
+round and its `~noverdict` retry had no readable verdict; one call, no retry,
+and a second unreadable answer alerts, see `bin/lib/lead-unread.sh`) and
 `~rebuy<epoch>` (the operator set `REVIEW_DEDUPE_REBUY_AFTER` after a prompt or
 model change). The builder does not check a reason against that list; it
 drops only a suffix outside `^[a-z0-9]{1,24}$`, with one line in
