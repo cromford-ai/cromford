@@ -1,0 +1,22 @@
+{
+  "libs": [
+    {
+      "id": "web-otp",
+      "file": "bin/lib/web-otp-action.mjs",
+      "note": "BH-8125. The type_otp() tool action of the web-task lane: makes a TOTP code at typing time from the vault (bin/lib/web-totp.sh), types it, and on a retry waits for the next TOTP window. The model never sees the code or the secret. Slice C1 of #8125 applies it with lib_env_apply web-otp in the web-task lane.",
+      "knobs": [
+        {
+          "env": "WEB_TASK_OTP_ATTEMPTS",
+          "type": "int",
+          "default": 2,
+          "min": 1,
+          "max": 5,
+          "unit": "attempts",
+          "zero_means": null,
+          "required": false,
+          "note": "How many codes type_otp may type in one agent run: the first try plus the retries after a refused code. 2 = retry once. Past the cap the action answers `refused: otp refused` and the run stops. A value that is not an integer in 1..5 makes createTypeOtp throw; it is never clamped. Read by createTypeOtp as env WEB_TASK_OTP_ATTEMPTS, fallback 2."
+        }
+      ]
+    }
+  ]
+}

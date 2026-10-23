@@ -267,7 +267,7 @@ else bad "C: the reason line should count 1 of 3, got '$(cat "$T/reason")'"; fi
 # tests/beta-test.sh names bin/beta.sh, which SOURCES bin/lib/alpha.sh. A diff
 # touching alpha.sh has to reach beta-test.sh through that edge, and this is the
 # whole reason the map is closed over `source` lines.
-echo '# touched' >> "$R/bin/lib/alpha.sh"
+echo ': touched' >> "$R/bin/lib/alpha.sh"
 git -C "$R" add -A
 git -C "$R" -c user.email=t@example.com -c user.name=t commit -qm alpha
 GOT=$(sel)
@@ -322,7 +322,7 @@ infra_full catalog/knob.conf
 #       suite really is dropped. This is what proves the rows do the work — a
 #       map whose contents changed nothing would pass every case above.
 git -C "$R" -c user.email=t@example.com -c user.name=t reset -q --hard "$BASE"
-echo '# touched again' >> "$R/bin/lib/alpha.sh"
+echo ': touched again' >> "$R/bin/lib/alpha.sh"
 git -C "$R" add -A
 git -C "$R" -c user.email=t@example.com -c user.name=t commit -qm alpha2
 "$TI" --root "$R" map --out "$T/smap.tsv" 2>/dev/null

@@ -159,7 +159,7 @@ else bad "2: the map names paths this tree does not hold: $(printf '%s' "$SBOGUS
 # that only ever names bin/delta.sh.
 ssel() { # <path to touch> -> prints the selection, reason into $T/src-reason
   sgit "$S" reset -q --hard "$SBASE"
-  echo '# touched' >> "$S/$1"
+  echo ': touched' >> "$S/$1"
   sgit "$S" add -A; sgit "$S" commit -qm "touch $1"
   "$TI" --root "$S" select "$SBASE..HEAD" 2>"$T/src-reason"
 }

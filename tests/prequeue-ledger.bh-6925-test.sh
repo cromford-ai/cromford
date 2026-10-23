@@ -136,10 +136,10 @@ R="$T/repo"; seed "$R"
 G() { GIT_COMMITTER_DATE="$NOW" GIT_AUTHOR_DATE="$NOW" git -C "$R" -c user.email=t@example.com -c user.name=t "$@"; }
 G init -q && G add -A && G commit -qm base || { echo "cannot build the scratch checkout"; exit 1; }
 B0=$(git -C "$R" rev-parse HEAD)
-printf '# c1\n' >> "$R/bin/s-input.sh"; printf '# c1\n' >> "$R/bin/e-input.sh"
+printf ': c1\n' >> "$R/bin/s-input.sh"; printf ': c1\n' >> "$R/bin/e-input.sh"
 G commit -qam c1 || exit 1
 G remote add origin https://github.com/acme/widget.git
-commit() { printf '# %s\n' "$2" >> "$R/$1"; G add -A && G commit -qm "$2" || { echo "commit failed: $2"; exit 1; }; }
+commit() { printf ': %s\n' "$2" >> "$R/$1"; G add -A && G commit -qm "$2" || { echo "commit failed: $2"; exit 1; }; }
 
 export SUITE_REUSE_CURL="$T/stub.sh" SUITE_REUSE_REPO=acme/widget
 export HARNESS="$T/empty" TEST_IMPACT_GATE_FAST="$T/fast.empty" TEST_IMPACT_DURATIONS_FILE="$T/dur.tsv"
@@ -409,7 +409,7 @@ DRY_LA="" DRY_A="" DRY_TA="" untrusted p7u-empty "all three empty"
 S8="$T/s8"; seed "$S8"
 G8() { GIT_COMMITTER_DATE="$NOW" GIT_AUTHOR_DATE="$NOW" git -C "$S8" -c user.email=t@example.com -c user.name=t "$@"; }
 G8 init -q -b main && G8 add -A && G8 commit -qm M || bad "P8 setup: M"
-printf '# A\n' >> "$S8/bin/s-input.sh"; G8 commit -qam A || bad "P8 setup: A"
+printf ': A\n' >> "$S8/bin/s-input.sh"; G8 commit -qam A || bad "P8 setup: A"
 read -r M8 A8 <<<"$(mkorigin "$S8")"
 export LEDGER_DB="$T/p8.db"; : > "$T/calls"
 dry p8 "$S8.git" "$M8" "$A8" "$TOK" HARNESS="$T/empty"
@@ -420,7 +420,7 @@ dry p8 "$S8.git" "$M8" "$A8" "$TOK" HARNESS="$T/empty"
   && ok "P8 prequeue ran S and wrote an ok ci row, run key prequeue-<run>-<attempt>" || bad "P8 rows $(rows prequeue-p8-1) calls $(cat "$T/calls")"
 # The batch tree: M+A+B, B edits docs/b.md only; the control B' edits bin/s-lib.sh.
 G8 checkout -q -b b "$M8" && printf '# B\n' >> "$S8/docs/b.md" && G8 commit -qam B || bad "P8 setup: B"
-G8 checkout -q -b bp "$M8" && printf "# B'\n" >> "$S8/bin/s-lib.sh" && G8 commit -qam "B'" || bad "P8 setup: B'"
+G8 checkout -q -b bp "$M8" && printf ": B'\n" >> "$S8/bin/s-lib.sh" && G8 commit -qam "B'" || bad "P8 setup: B'"
 # batchplan <tag> <branch> — merge A then <branch> onto M in a clone, then the call bin/ci-plan.sh makes.
 batchplan() {
   local tag="$1" br="$2" w="$T/batch-$1"

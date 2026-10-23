@@ -13,6 +13,7 @@
 #   F1  one function changed in a lib 50 suites source: only its namers
 #   F2  callers: same-lib caller, other-lib caller, entry script caller
 #   F3/F4/F17  top-level change, top-level comment, indented guard: fallback
+#              (F4: comment only, and fallback with TI_COMMENT_ONLY=0)
 #   F5/F14  knob 0 and an unknown knob value: today's reach, one off line
 #   F6/F7/F8/F10  no base, renamed/added, deleted file, short name, parse
 #   F9  a deleted function still selects its namers
@@ -176,9 +177,13 @@ fallback_equal F3 F3
 
 reset_base
 sed -i 's/^wide_beta_fn() {$/# note\nwide_beta_fn() {/' "$R/bin/lib/wide.sh"; commit F4
-sel F4; sel F4off TI_FN_REACH=0
-errhas F4 'fn-reach: fallback (top-level change at head:' && ok || bad "F4: a top-level comment must fall back (got: $(cat "$T/F4.err"))"
-fallback_equal F4 F4
+# BH-8099: rule P skips an inert comment line, so a comment-only diff is
+# `comment only`; with TI_COMMENT_ONLY=0 the old fallback holds.
+sel F4
+errhas F4 'fn-reach: comment only (bin/lib/wide.sh)' && ok || bad "F4: a top-level comment alone must be comment only (got: $(cat "$T/F4.err"))"
+sel F4c TI_COMMENT_ONLY=0; sel F4coff TI_COMMENT_ONLY=0 TI_FN_REACH=0
+errhas F4c 'fn-reach: fallback (top-level change at head:' && ok || bad "F4: with TI_COMMENT_ONLY=0 a top-level comment must fall back (got: $(cat "$T/F4c.err"))"
+fallback_equal F4c F4
 
 # ── F5 / F14: the knob ──────────────────────────────────────────────────────
 reset_base

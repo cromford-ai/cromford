@@ -99,7 +99,7 @@ echo note > "$R/docs/n.md"
 gitc() { git -C "$R" -c user.email=t@example.com -c user.name=t "$@"; }
 gitc init -q; gitc add -A; gitc commit -qm base
 BASE=$(git -C "$R" rev-parse HEAD)
-echo '# touched' >> "$R/bin/lib/widget.sh"; gitc commit -qam "touch widget"
+echo ': touched' >> "$R/bin/lib/widget.sh"; gitc commit -qam "touch widget"
 
 GOT=$("$TI" --root "$R" select "$BASE..HEAD" --map-only --why 2>"$T/reason")
 named() { grep -qxF "$(printf '%s\tnamed\tbin/lib/widget.sh#widget_close_all' "$1")" <<<"$GOT"; }

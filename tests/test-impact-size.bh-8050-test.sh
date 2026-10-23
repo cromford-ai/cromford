@@ -22,8 +22,12 @@
 # its own tree, plus at most 10% headroom for corpus growth, and never above
 # what the same tree selects with TI_DIR_ROWS=0 (main 593c547c and 5c6ea6c4 selected 393,
 # 118 and 94; this suite and its siblings add one or two readers). The ticket's
-# target is a lane diff under 200 and a median batch under 300; slices C1 (the
-# always set) and C2 (comment-only changes) owe that and tighten these bounds.
+# target is a lane diff under 200 and a median batch under 300. Slices C1 (the
+# always set, BH-8098) and C2 (comment-only changes, BH-8099) tightened these
+# bounds to what they measured. Z1 does NOT meet the 200 target: it is a code
+# diff, which the comment-only rule never narrows, and most of its rows are
+# suites that scan bin/. The comment-only lane shape is pinned under 200 in
+# tests/test-impact-comment-only.bh-8099-test.sh (Z5).
 #
 # Self-contained: no network, no secrets, no clock read. It reads the tree and
 # writes only under $T.
@@ -37,12 +41,12 @@ PASS=0; FAIL=0
 ok()  { PASS=$((PASS+1)); }
 bad() { FAIL=$((FAIL+1)); echo "FAIL: $1"; }
 
-# C0 measured on its own tree (BH-8050, docs/notes/2026-10-22-BH-8050-dir-rows.md),
-# after / with TI_DIR_ROWS=0. Each bound is the after-number plus at most 10%,
-# and never above the TI_DIR_ROWS=0 number.
-Z1_MAX=320   # after 291, off 395; ticket target: under 200 (owed by C1, C2)
-Z2_MAX=119   # after 118, off 119
-Z3_MAX=95    # after 95, off 95 (this suite names the doc itself)
+# C1+C2 measured on main 7137c85c plus BH-8099 (docs/notes/2026-10-23-BH-8099-comment-only.md).
+# Each bound is the measured number plus at most 10%, and never above C0's
+# bounds (320, 119, 95; docs/notes/2026-10-22-BH-8050-dir-rows.md).
+Z1_MAX=284   # measured 259; ticket target under 200 NOT met (a code diff)
+Z2_MAX=97    # measured 89
+Z3_MAX=68    # measured 62 (this suite names the doc itself)
 
 for f in bin/stuck-work.sh tests/stuck-work-classify.bh-3781-test.sh prompts/build-discipline.md docs/REMOTE-GATE.md; do
   [ -f "$DIR/$f" ] || { echo "FAIL: fixture path $f is gone from the tree; pick another of the same shape"; exit 1; }

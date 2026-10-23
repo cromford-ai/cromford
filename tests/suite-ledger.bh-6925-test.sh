@@ -94,11 +94,11 @@ G() { GIT_COMMITTER_DATE="$NOW" GIT_AUTHOR_DATE="$NOW" git -C "$R" -c user.email
 G init -q && G add -A && G commit -qm base || { echo "cannot build the scratch checkout"; exit 1; }
 B0=$(git -C "$R" rev-parse HEAD)
 # The diff the gates see: s-test reads bin/s-input.sh, flaky reads bin/f-input.sh, oot is itself.
-printf '# c1\n' >> "$R/bin/s-input.sh"; printf '# c1\n' >> "$R/bin/f-input.sh"; printf '# c1\n' >> "$R/tests/oot-test.sh"
+printf ': c1\n' >> "$R/bin/s-input.sh"; printf ': c1\n' >> "$R/bin/f-input.sh"; printf ': c1\n' >> "$R/tests/oot-test.sh"
 G commit -qam c1 || exit 1
 G remote add origin https://github.com/acme/widget.git
 # commit <file> <tag> — one line appended to <file>, committed.
-commit() { printf '# %s\n' "$2" >> "$R/$1"; G add -A && G commit -qm "$2" || { echo "commit failed: $2"; exit 1; }; }
+commit() { printf ': %s\n' "$2" >> "$R/$1"; G add -A && G commit -qm "$2" || { echo "commit failed: $2"; exit 1; }; }
 
 # ── the stub ledger: worker.fetch over a file-backed node:sqlite D1 ────────
 cat > "$T/driver.mjs" <<'EOF'

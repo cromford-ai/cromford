@@ -52,7 +52,9 @@
 #   deleted file                $ROOT/L is missing
 #   no hunks                    diff -U0 shows no changed line (mode only)
 #   top-level change at <side>:<n>  a changed line outside every function
-#                               block. A comment or a blank line counts.
+#                               block. An inert comment or blank line does not
+#                               count (see RULE P); with TI_COMMENT_ONLY off,
+#                               or the comment-only lib not loaded, it does.
 #   top-level call of <n>       a top-level line of L names <n>, a name in the
 #                               closed set (it runs at load time)
 #   short name <n>              a changed (or calling) function of L fails the
@@ -71,6 +73,13 @@
 # close, or EOF, is `parse: unclosed`. Known safe-side limit: a heredoc in a
 # body with `}` at column 0 ends the block early, and the lines after it read
 # as top-level, so the path falls back.
+#
+# Rule P skips a changed line that tco_classes (bin/lib/test-impact-comment-only.sh,
+# BH-8099) classes I: a comment or blank line bash ignores maps to no block
+# and is never a top-level change. When EVERY changed line is skipped, the path
+# logs `fn-reach: comment only (<p>)` and fn-reach leaves its rows whole: the
+# comment-only rule decides them. A tco_classes ERR on either side, the knob
+# TI_COMMENT_ONLY off, or the lib not loaded is the old rule (a comment counts).
 #
 # THE NAME RULE is TI_AWK_DEFS's: an underscore and 6 or more characters.
 #
@@ -135,6 +144,25 @@ function fnr_body(l,   r) {
 }
 '
 
+# names_dir — the line spells directory D (with or without its slash) rooted
+# (@ROOT@/D) or as a bare word, and the next byte ends it: the end, a non-path
+# byte, or a slash that a glob, quote or variable follows. Shared with the
+# directory-scan keep of bin/lib/test-impact-comment-only.sh.
+FNR_AWK_NAMES_DIR='
+function names_dir(ln, d,   dn, rest, off, i, pre, nx) {
+  dn = d; sub(/\/$/, "", dn)
+  rest = ln; off = 0
+  while ((i = index(rest, dn)) > 0) {
+    pre = (off + i > 1) ? substr(ln, off + i - 1, 1) : ""
+    nx = substr(ln, off + i + length(dn))
+    if ((substr(ln, 1, off + i - 1) ~ /@ROOT@\/$/ || pre == "" || pre !~ /[\/A-Za-z0-9._@+$*{-]/) &&
+        (nx == "" || nx ~ /^[^A-Za-z0-9._\/-]/ || nx ~ /^\/($|[^A-Za-z0-9._-])/)) return 1
+    off += i; rest = substr(rest, i + 1)
+  }
+  return 0
+}
+'
+
 # fnr_blocks <file> — `<start>\t<end>\t<name>` per block (rule P), or one
 # `ERR\t<reason>` line and rc 3.
 fnr_blocks() {
@@ -166,8 +194,9 @@ fnr_blocks() {
   ' "$1"
 }
 
-# fnr_changed_fns <p> — the changed set F of <p>, one name per line, or one
-# `FB\t<why>` line. rc != 0 only on an internal failure.
+# fnr_changed_fns <p> — the changed set F of <p>, one name per line, one
+# `FB\t<why>` line, or `CO` when every changed line is an inert comment or
+# blank line (rule P). rc != 0 only on an internal failure.
 fnr_changed_fns() {
   local p="$1" w="$TI_TMP/fnr.cf" rc
   [ -f "$ROOT/$p" ] || { printf 'FB\tdeleted file\n'; return 0; }
@@ -179,10 +208,19 @@ fnr_changed_fns() {
   [ "$rc" -eq 0 ] || { printf 'FB\tparse: %s at base\n' "$(cut -f2 "$w.bb" | head -1)"; return 0; }
   fnr_blocks "$ROOT/$p" > "$w.hb"; rc=$?
   [ "$rc" -eq 0 ] || { printf 'FB\tparse: %s at head\n' "$(cut -f2 "$w.hb" | head -1)"; return 0; }
-  LC_ALL=C awk -F'\t' -v bbf="$w.bb" -v hbf="$w.hb" "$FNR_AWK_P"'
+  # The line classes of rule P's inert skip: empty files keep the old rule.
+  : > "$w.bc"; : > "$w.hc"
+  if declare -F tco_classes >/dev/null && tco_on; then
+    { tco_classes "$w.base" > "$w.bc" && tco_classes "$ROOT/$p" > "$w.hc"; } || { : > "$w.bc"; : > "$w.hc"; }
+  fi
+  LC_ALL=C awk -F'\t' -v bbf="$w.bb" -v hbf="$w.hb" -v bcf="$w.bc" -v hcf="$w.hc" "$FNR_AWK_P"'
     FILENAME == bbf { nb++; bs[nb] = $1; be[nb] = $2; bn[nb] = $3; next }
     FILENAME == hbf { nh++; hs[nh] = $1; he[nh] = $2; hn[nh] = $3; next }
+    FILENAME == bcf { if ($1 == "I") bi[FNR] = 1; next }
+    FILENAME == hcf { if ($1 == "I") hi[FNR] = 1; next }
     function mapline(side, ln,   i) {
+      if ((side == "base" && (ln in bi)) || (side == "head" && (ln in hi))) { inert++; return }
+      mapped++
       if (side == "base") { for (i = 1; i <= nb; i++) if (ln >= bs[i] && ln <= be[i]) { F[bn[i]] = 1; return } }
       else { for (i = 1; i <= nh; i++) if (ln >= hs[i] && ln <= he[i]) { F[hn[i]] = 1; return } }
       if (fb == "") fb = "top-level change at " side ":" ln
@@ -196,10 +234,11 @@ fnr_changed_fns() {
     }
     END {
       if (fb != "") { print "FB\t" fb; exit 0 }
+      if (!mapped && inert) { print "CO"; exit 0 }
       for (f in F) if (!fnr_name_ok(f)) { print "FB\tshort name " f; exit 0 }
       for (f in F) print f
     }
-  ' "$w.bb" "$w.hb" "$w.diff" | LC_ALL=C sort
+  ' "$w.bb" "$w.hb" "$w.bc" "$w.hc" "$w.diff" | LC_ALL=C sort
 }
 
 # fnr_callers <seeds> — <seeds> is `<L>\t<name>` rows. Prints, per L, the
@@ -319,7 +358,7 @@ fnr_keep() {
     ti_rootvars "${suites[@]}" > "$w.rv" || return 1
     local args=(); for s in "${suites[@]}"; do args+=("./$s"); done
     ( cd "$ROOT" && LC_ALL=C awk -v cf="$w.cand" -v nf="$closed" -v df="$w.dirs" -v rvfile="$w.rv" \
-        -v ROOTVAR_="$TI_ROOTVAR" -v RR="$TI_READ_RE" -v XR="$TI_RUN_RE" "$TI_AWK_NORM"'
+        -v ROOTVAR_="$TI_ROOTVAR" -v RR="$TI_READ_RE" -v XR="$TI_RUN_RE" "$TI_AWK_NORM$FNR_AWK_NAMES_DIR"'
         BEGIN { FS = "\t" }
         FILENAME == cf { lsby[$2] = lsby[$2] "\t" $1; next }
         FILENAME == nf { if ($2 == "N") nm[$1, $3] = 1; next }
@@ -342,21 +381,6 @@ fnr_keep() {
                 if (!((dp[1], f) in kept) && names_dir(ln, dp[2])) { kept[dp[1], f] = 1; print dp[1] "\t" f }
               }
           }
-        }
-        # names_dir — the line spells directory D (with or without its slash)
-        # rooted (@ROOT@/D) or as a bare word, and the next byte ends it: the
-        # end, a non-path byte, or a slash that a glob, quote or variable follows.
-        function names_dir(ln, d,   dn, rest, off, i, pre, nx) {
-          dn = d; sub(/\/$/, "", dn)
-          rest = ln; off = 0
-          while ((i = index(rest, dn)) > 0) {
-            pre = (off + i > 1) ? substr(ln, off + i - 1, 1) : ""
-            nx = substr(ln, off + i + length(dn))
-            if ((substr(ln, 1, off + i - 1) ~ /@ROOT@\/$/ || pre == "" || pre !~ /[\/A-Za-z0-9._@+$*{-]/) &&
-                (nx == "" || nx ~ /^[^A-Za-z0-9._\/-]/ || nx ~ /^\/($|[^A-Za-z0-9._-])/)) return 1
-            off += i; rest = substr(rest, i + 1)
-          }
-          return 0
         }
       ' "$w.cand" "$closed" "$w.dirs" "$w.rv" "${args[@]}" ) >> "$w.rows" || return 1
   fi
@@ -384,6 +408,8 @@ fnr_apply() {
     if IFS= read -r line < "$w.one" && [[ $line == FB$'\t'* ]]; then
       printf '%s\t%s\n' "$p" "${line#FB$'\t'}" >> "$w.fb"; continue
     fi
+    # Rule P: a comment-only path is left whole; the comment-only rule decides it.
+    if [ "$line" = CO ]; then printf '%s\t@CO\n' "$p" >> "$w.fb"; continue; fi
     if [ ! -s "$w.one" ]; then printf '%s\tno hunks\n' "$p" >> "$w.fb"; continue; fi
     awk -v p="$p" '{ print p "\t" $0 }' "$w.one" >> "$w.fset"
   done < "$w.paths"
@@ -423,7 +449,8 @@ fnr_apply() {
   # One line per eligible path, in the diff order.
   while IFS= read -r p; do
     line=$(awk -F'\t' -v p="$p" '$1 == p { print $2; exit }' "$w.fb")
-    if [ -n "$line" ]; then echo "fn-reach: fallback ($line: $p)" >&2
+    if [ "$line" = @CO ]; then echo "fn-reach: comment only ($p)" >&2
+    elif [ -n "$line" ]; then echo "fn-reach: fallback ($line: $p)" >&2
     else awk -F'\t' -v p="$p" '$1 == p { print $2; exit }' "$w.log" >&2; fi
   done < "$w.paths"
   return 0

@@ -160,7 +160,7 @@ why() { "$TI" --root "$R" select "$BASE..HEAD" --why 2>"$T/reason"; }
 row() { printf '%s\t%s\t%s' "$1" "$2" "$3"; }
 
 # ── N. named: a function defined in the changed script ──────────────────────
-echo '# touched' >> "$R/bin/lib/widget.sh"; gitc commit -qam touch
+echo ': touched' >> "$R/bin/lib/widget.sh"; gitc commit -qam touch
 GOT=$(why)
 grep -qxF "$(row tests/pin-test.sh named 'bin/lib/widget.sh#widget_close_all')" <<<"$GOT" \
   && ok || bad "N: pin-test names widget_close_all (defined in bin/lib/widget.sh) and must be selected as named (got: $(printf '%s' "$GOT" | tr '\t\n' ' |'))"
@@ -189,7 +189,7 @@ why | grep -qxF "$(row tests/pin-test.sh self tests/pin-test.sh)" \
 # ── M. --map-only: the builder gate's view of an infra change ──────────────
 gitc reset -q --hard "$BASE"
 mkdir -p "$R/tests/lib"; echo '# lib' > "$R/tests/lib/h.sh"
-echo '# touched' >> "$R/bin/lib/widget.sh"; gitc add -A; gitc commit -qm "infra + widget"
+echo ': touched' >> "$R/bin/lib/widget.sh"; gitc add -A; gitc commit -qm "infra + widget"
 FULLN=$("$TI" --root "$R" select "$BASE..HEAD" 2>"$T/reason" | grep -c .)
 [ "$FULLN" -eq 4 ] && grep -q 'full: infra change (tests/lib/h.sh)' "$T/reason" \
   && ok || bad "M: without --map-only an infra change is still the whole corpus (got $FULLN, $(cat "$T/reason"))"

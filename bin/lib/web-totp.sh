@@ -18,6 +18,16 @@
 #     The secret and the code are held in local variables and go out through
 #     printf (a builtin) only: never on an argv, never in a file or a log.
 #
+#   wt_totp_step <project> <site>
+#     Reads the vault field totp_step through wv_read: the TOTP step of the
+#     site in seconds, for a retry that waits for the next window
+#     (bin/lib/web-otp-action.mjs, BH-8125). No row (`refused no_entry`)
+#     gives the RFC default 30, as wt_totp_code does.
+#     rc 0: the step on stdout, with no newline.
+#     rc 1: the vault refusal of wv_read.
+#     rc 2: usage, or a stored value that is not an integer >= 1
+#           (`web-totp: bad totp_step`; never clamped).
+#
 # Needs node, curl and jq. The env of wv_read: LANE_RUN_ID, WEB_VAULT_MACHINE
 # (or FLY_MACHINE_ID), WEB_VAULT_RUN_TOKEN, JOBS_URL, HARNESS_SECRET.
 
@@ -58,4 +68,19 @@ wt_totp_code() {
   fi
   echo "web-totp: totp.mjs failed (rc $rc)" >&2
   return 1
+}
+
+wt_totp_step() {
+  local project="${1:-}" site="${2:-}" out rc
+  if [ "$#" -ne 2 ] || [ -z "$project" ] || [ -z "$site" ]; then
+    echo "web-totp: usage: wt_totp_step <project> <site>" >&2; return 2
+  fi
+  out=$(wv_read "$project" "$site" totp_step 2>&1); rc=$?
+  if [ "$rc" != 0 ]; then
+    # The RFC 6238 default step, the same default wt_totp_code uses.
+    if [ "$out" = "web-vault: refused no_entry" ]; then printf '30'; return 0; fi
+    printf '%s\n' "$out" >&2; return "$rc"
+  fi
+  if [[ $out =~ ^[1-9][0-9]{0,14}$ ]]; then printf '%s' "$out"; return 0; fi
+  echo "web-totp: bad totp_step" >&2; return 2
 }

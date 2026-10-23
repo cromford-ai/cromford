@@ -113,6 +113,14 @@
 # bin/lib/test-impact-dir-rows.sh. Env TI_DIR_ROWS=0 is today's map; `inputs`
 # (the suite fingerprint) always builds with 0.
 #
+# A COMMENT-ONLY SHELL CHANGE KEEPS ONLY ITS READERS (BH-8099). In `select`
+# and `ci-select`, a changed .sh / .bash path whose diff changes only comment
+# and blank lines bash ignores keeps its self, reads, learned, regression and
+# always rows; its source, closure and named rows go, except for a suite that
+# scans its directory. A batch does not add such a helper's closure. The
+# rules are in bin/lib/test-impact-comment-only.sh. Env TI_COMMENT_ONLY=0 is
+# today's selection; `inputs` never runs it.
+#
 # THE ALWAYS SET IS NARROWED TO CHECKOUT READS (BH-8098). A `--tree`, `find`
 # or `git -C … ls-files` hit whose target variable the suite assigns only to a
 # scratch value is not a `*` row (see "the always-run set"). Env
@@ -1601,6 +1609,13 @@ ti_select_from() {
   # closure in a batch (BH-6371). The reason line still counts the diff.
   local work="$TI_TMP/changed.work"
   cp "$changed" "$work" 2>/dev/null || : > "$work"
+  # BH-8099: the shell paths whose change is comment-only (the lib's header has
+  # the rules); a failure leaves the set empty, which is today's selection.
+  : > "$TI_TMP/comment-only"
+  if grep -qE '\.(sh|bash)$' "$changed" 2>/dev/null; then
+    { . "$SELF_DIR/lib/test-impact-comment-only.sh" && tco_set "$changed"; } ||
+      { : > "$TI_TMP/comment-only"; echo "comment-only: fallback (lib failed)" >&2; }
+  fi
   while IFS= read -r p; do
     [ -n "$p" ] || continue
     # A BATCH (BH-6876): a workflow file selects its readers through its map
@@ -1624,7 +1639,7 @@ ti_select_from() {
         tests/lib/*)
           ti_testlib_closure "$p" > "$TI_TMP/closure"
           ti_testlib_mapped "$map" "$TI_TMP/closure" || { full="full: unmapped path ($p)"; break; }
-          cat "$TI_TMP/closure" >> "$work" ;;
+          grep -qxF -- "$p" "$TI_TMP/comment-only" || cat "$TI_TMP/closure" >> "$work" ;;
       esac
     fi
     # A PLAIN select (BH-7027): a catalog/ path selects the batch way, but an
@@ -1657,6 +1672,11 @@ ti_select_from() {
   # BH-7288: a bin/lib/ .sh change keeps only the sourcers that reach a changed
   # function (the lib's header has the rules); a failure leaves the rows as is.
   { . "$SELF_DIR/lib/test-impact-fn-reach.sh" && fnr_apply "$map" "$changed" "$TI_TMP/why"; } || echo "fn-reach: fallback (lib failed)" >&2
+  # BH-8099: a comment-only path keeps only its self, reads, learned,
+  # regression and always rows (and its directory scanners).
+  if [ -s "$TI_TMP/comment-only" ]; then
+    tco_apply "$map" "$TI_TMP/why" || echo "comment-only: fallback (apply failed)" >&2
+  fi
   local n; n=$(cut -f1 "$TI_TMP/why" | LC_ALL=C sort -u | grep -c .)
   # A selection of nothing is never a green run of nothing. The always-run set
   # is non-empty in this repo, so an empty answer means the map or the diff is
