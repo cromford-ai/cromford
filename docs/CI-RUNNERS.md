@@ -145,6 +145,23 @@ Every tick writes `logs/ci-minutes-watch.log` and
 critical once a day through `bin/lib/page-critical.sh`. All five are settings
 rows on the `ci-minutes-watch` lane. Tests: `tests/ci-minutes-watch.k1-test.sh`.
 
+### Merge-queue batch size (BH-8047, 2026-10-22)
+
+The MonkCI invoice for the period to 2026-10-22 was $9,284 for 1,160,553
+4-vCPU minutes. The merge queue ran about 54 batches a day, most of them one
+PR, each 7 to 18 shards of 20 minutes, so every merged PR paid a full impact
+run. The cromford `default` queue now holds up to 6 PRs and waits up to
+2 min to fill, which gives about 12 batches a day. The union impact set of 6
+PRs is smaller than 6 separate sets. A red batch of 6 costs more than a red
+batch of 1: Mergify does not split it (`batch_failure_attempts=0`), and the
+merge conductor ejects the culprit and re-queues the rest. The pre-queue gate
+ticket lowers the red rate. The hotfix, flake-fix and solo queues stay at 1 PR
+and 0 s. Two knobs turn it back, both in
+`config/mergify/repos/cromford.conf`: `batch_size` and
+`batch_max_wait_time` (4 / 3 min was the last value; 1 / 0 s turns batching
+off). After either edit, edit `.mergify.yml` to match and run
+`bin/mergify-template.sh --check`. Tests: `tests/mergify-template.bh-8047-test.sh`.
+
 ### Re-running the A/B
 
 The workflow has `workflow_dispatch`, so both halves run on the same sha and
