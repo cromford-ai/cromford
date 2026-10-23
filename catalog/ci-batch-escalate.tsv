@@ -144,6 +144,7 @@ catalog/llm-sites.d/	worker	the fragments the worker's imported llm-sites catalo
 bin/llm-sites-build.sh	worker	the worker-jobs step that composes the llm-sites catalog the worker imports
 catalog/context-budgets.json	worker	worker/jobs/src/routes/llm-sites.js imports it
 catalog/prompt-markers.json	worker	worker/jobs/src/lib/prompt-markers.js imports it
+catalog/prompt-markers.json	spa	console-ui/src/ui/PromptEditor.js imports it (BH-7973)
 catalog/context-budgets.d/	worker	the fragments the worker's imported budget manifest is composed from (BH-6487)
 bin/context-budgets-build.sh	worker	the worker-jobs step that composes the budget manifest the worker imports
 bin/ci-node-modules.sh	spa	the console-ui step that links the image's baked node_modules (BH-7255)
