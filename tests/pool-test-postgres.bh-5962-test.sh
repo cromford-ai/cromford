@@ -82,7 +82,7 @@ suite() {
   else printf '{"scripts":{"test":"x","db:apply":"y"}}\n' > "$REPO/package.json"; fi
   ( cd "$REPO" || exit 1
     export PATH="$T/fakebin:$PATH" HARNESS="$T/h" BUILD PROJECT="${PROJ:-project-6-os}" KEY=TK-1 TEST_SELECT=0 \
-      PGT_BIN_DIR="${PGT_BIN_DIR:-$T/pgbin}" TMPDIR="$T/tmp" LANE_GATE_NOW="$NOW"
+      PGT_BIN_DIR="${PGT_BIN_DIR:-$T/pgbin}" TMPDIR="$T/tmp" PGT_ROOTS="$T/tmp" LANE_GATE_NOW="$NOW"
     STAMP() { echo 2026-10-11T00:00:00Z; }
     # shellcheck source=/dev/null
     . "$T/suite-run.sh"
@@ -291,7 +291,7 @@ EOF
   printf '{"scripts":{"test":"x"}}\n' > "$REPO/package.json"
   ( cd "$REPO" || exit 1
     export PATH="$T/realbin:$PATH" HARNESS="$T/h" BUILD PROJECT=project-6-os KEY=TK-1 TEST_SELECT=0 \
-      PGT_BIN_DIR=/opt/pgtest/bin TMPDIR="$T/tmp" LANE_GATE_NOW="$NOW" POOL_TEST_POSTGRES=1
+      PGT_BIN_DIR=/opt/pgtest/bin TMPDIR="$T/tmp" PGT_ROOTS="$T/tmp" LANE_GATE_NOW="$NOW" POOL_TEST_POSTGRES=1
     STAMP() { echo 2026-10-11T00:00:00Z; }
     # shellcheck source=/dev/null
     . "$T/suite-run.sh"

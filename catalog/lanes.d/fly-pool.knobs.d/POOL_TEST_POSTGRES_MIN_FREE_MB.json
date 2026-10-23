@@ -1,0 +1,12 @@
+{
+  "env": "POOL_TEST_POSTGRES_MIN_FREE_MB",
+  "type": "int",
+  "default": 512,
+  "min": 64,
+  "max": 65536,
+  "unit": "MB",
+  "zero_means": null,
+  "read_in": "bin/lib/pg-test.sh",
+  "note": "BH-8175: the free MB the throwaway Postgres's data root must have. pg-test.sh tries /dev/shm, then TMPDIR; none with this much free = HARNESS_DISK: low and HARNESS_EXIT: could-not-run, no suite run. Per project: lane.fly-pool.<project>.pool_test_postgres_min_free_mb.",
+  "settable": true
+}

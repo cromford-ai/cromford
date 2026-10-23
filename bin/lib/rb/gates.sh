@@ -157,7 +157,7 @@ RB_TOKEN_REDACT() {
 # ran. Always returns 0: a red suite is EVIDENCE the reviewer reads, never a
 # reason this script stops.
 HARNESS_SUITE_RUN() {
-  local outfile="$1" phase="$2" script mode rc t0 stage reason prelude
+  local outfile="$1" phase="$2" script mode rc t0 stage reason prelude pgrc disk
   local pgenv=()
   local sel="$BUILD/test-select-$phase.txt" err="$BUILD/test-select-$phase.err"
   local FILES=()
@@ -225,20 +225,42 @@ HARNESS_SUITE_RUN() {
   # DATABASE_URL and DIRECT_URL reach the setup script and the suite, never the rest
   # of the build, always 127.0.0.1, and every other exported DB-address name is unset
   # for those two children (pgt_env). Off, or no lib: nothing here runs.
+  # LOW DISK (BH-8175): pgt_start rc 2 means no data root had the free MB the
+  # knob asks for. The suite is not run, and the exit is could-not-run: a box
+  # fault is no verdict on the code, and the PR head's CI decides.
+  disk=""; pgrc=""
   if { command -v pgt_enabled >/dev/null 2>&1 || { [ -r "$HARNESS/bin/lib/pg-test.sh" ] && . "$HARNESS/bin/lib/pg-test.sh"; }; } && pgt_enabled; then
-    if pgt_start "$BUILD/$outfile"; then
+    pgt_start "$BUILD/$outfile"; pgrc=$?
+    if [ "$pgrc" = 0 ]; then
       pgt_setup "$BUILD/$outfile"
       pgt_env && pgenv=("${PGT_ENV[@]}")
     fi
     echo "$(STAMP) [$PROJECT/$KEY] HARNESS-VERIFY $phase postgres: $(grep '^HARNESS_PG: ' "$BUILD/$outfile" | tail -1)" >> "$BUILD/pipeline.log"
+    if [ "$pgrc" = 2 ]; then
+      disk=$(sed -n 's/^HARNESS_PG: could-not-start (low disk: \(.*\))$/\1/p' "$BUILD/$outfile" | tail -1)
+      echo "HARNESS_DISK: low ($disk)" >> "$BUILD/$outfile"
+      echo "$(STAMP) [$PROJECT/$KEY] HARNESS-VERIFY $phase disk: low ($disk) — the suite is not run, could-not-run" >> "$BUILD/pipeline.log"
+      rc=could-not-run
+    fi
   fi
   # Unpiped, and HARNESS_EXIT written only AFTER the run returns: a pre-stamped
   # exit code is a claim, and 124 (timeout) and 127 (no npm) must land as the
   # numbers they are.
-  if [ "${#FILES[@]}" -gt 0 ]; then
+  if [ "$pgrc" = 2 ]; then :
+  elif [ "${#FILES[@]}" -gt 0 ]; then
     ${pgenv[@]+"${pgenv[@]}"} timeout 1500 npm run "$script" -- "${FILES[@]}" >> "$BUILD/$outfile" 2>&1; rc=$?
   else
     ${pgenv[@]+"${pgenv[@]}"} timeout 1500 npm run "$script" >> "$BUILD/$outfile" 2>&1; rc=$?
+  fi
+  # ENOSPC (BH-8175): a red suite whose output says the disk ran out is a box
+  # fault, not a code fault, so it is could-not-run, never a number the review
+  # reads as red. Only the full phrase counts (Node: `ENOSPC: no space left on
+  # device`, Postgres and coreutils: `No space left on device`); a bare ENOSPC
+  # token can be a test's name. rc 0 is never remapped.
+  if [ "$pgrc" != 2 ] && [ "$rc" != 0 ] && disk=$(grep -m1 -i 'no space left on device' "$BUILD/$outfile"); then
+    echo "HARNESS_DISK: ENOSPC (rc=$rc): $(printf '%s' "$disk" | tr -d '\r' | cut -c1-200)" >> "$BUILD/$outfile"
+    echo "$(STAMP) [$PROJECT/$KEY] HARNESS-VERIFY $phase disk: ENOSPC (rc=$rc) — recorded could-not-run" >> "$BUILD/pipeline.log"
+    rc=could-not-run
   fi
   # The teardown runs on every suite exit (green, red, 124), before HARNESS_EXIT.
   [ -n "${PGT_DIR:-}" ] && pgt_stop "$BUILD/$outfile"
@@ -1411,7 +1433,7 @@ LIVE_SUITE() { # LIVE_SUITE <suite-file> <prefix>
     0) pass=$(grep -oiE '[0-9]+ (tests? )?(passed|pass)' "$f" 2>/dev/null | tail -1)
        LIVE tests_green pass "${pre}tests green${pass:+: $pass}" ;;
     no-test-script) LIVE tests_green none "${pre}this repo has no test script — nothing was run, and that is not green" ;;
-    could-not-run) LIVE tests_green not-run "${pre}the impact gate could not run its suites (its runner could not start, or the stage timed out) — that is not green" ;;
+    could-not-run) LIVE tests_green not-run "${pre}the suite could not run (the impact gate could not start or timed out, or the disk ran out: see HARNESS_DISK) — not green and not red; the CI run on the PR head is the verdict" ;;
     '') LIVE tests_green not-run "${pre}the suite wrote no HARNESS_EXIT line — no verdict, not a pass" ;;
     *) LIVE tests_green fail "${pre}tests FAILED (exit $ex): $(grep -iE 'fail|error' "$f" 2>/dev/null | tail -1)" ;;
   esac

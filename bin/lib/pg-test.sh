@@ -17,6 +17,11 @@
 #                             `npm run <script>` for a script the repo's own
 #                             package.json declares; anything else is refused,
 #                             because a settable row must never carry a command.
+#   POOL_TEST_POSTGRES_MIN_FREE_MB  the free MB the data root must have (default
+#                             512). The root is the first of /dev/shm, then
+#                             ${TMPDIR:-/tmp}, that is a writable dir with this
+#                             much free (BH-8175: /tmp on a pool machine is a
+#                             small overlay, and the suite hit ENOSPC there).
 #
 # WHY. The pool runner had no database. A repo whose unit suite needs
 # DATABASE_URL (project-6-os: TK-3, TK-34, TK-35, TK-36) recorded HARNESS_EXIT: 1
@@ -35,13 +40,16 @@
 # The lines it writes into the suite file:
 #   HARNESS_PG: up (PostgreSQL <ver>, throwaway, <url>)
 #   HARNESS_PG: could-not-start (<reason>)      the suite runs with no URL
+#   HARNESS_PG: could-not-start (low disk: ...) pgt_start rc 2: the suite does
+#                                               not run (HARNESS_EXIT: could-not-run)
 #   HARNESS_PG: torn down
 #   HARNESS_PG_SETUP: npm run <script> (rc=N) | none (<why>) | refused (<why>)
 # (no HARNESS_PG_SETUP line when the start failed: there is nothing to set up)
-# None of them is a stop: the suite's own exit is still HARNESS_EXIT.
+# Only low disk is a stop: else the suite's own exit is still HARNESS_EXIT.
 
 # PGT_BIN_DIR is a test seam only. The image installs to /opt/pgtest (bake-pgtest block).
 : "${PGT_BIN_DIR:=/opt/pgtest/bin}"
+# PGT_ROOTS (the candidate data roots, in order) is a test seam only, like PGT_BIN_DIR.
 
 # pgt_knob <ENV> — the fly-pool knob for $PROJECT: row, then env, then registry default.
 # Resolved in a subshell so lane-gate.sh's globals never land in the caller.
@@ -92,10 +100,31 @@ _pgt_as() {
   fi
 }
 
+# pgt_root — print the first candidate root that is a writable dir with at least
+# POOL_TEST_POSTGRES_MIN_FREE_MB free. rc 1 when none, and what it prints instead
+# names the min and what each root had.
+pgt_root() {
+  local r min mb why=""
+  # The row lane.fly-pool.<project>.pool_test_postgres_min_free_mb; 512 is its fallback.
+  min=$(pgt_knob POOL_TEST_POSTGRES_MIN_FREE_MB)
+  [[ "$min" =~ ^[0-9]{1,7}$ ]] || min=512
+  for r in ${PGT_ROOTS:-/dev/shm ${TMPDIR:-/tmp}}; do
+    if [ ! -d "$r" ]; then why="$why, $r missing"; continue; fi
+    if [ ! -w "$r" ]; then why="$why, $r not writable"; continue; fi
+    mb=$(df -Pm -- "$r" 2>/dev/null | awk 'NR==2{print $4}')
+    if ! [[ "$mb" =~ ^[0-9]+$ ]]; then why="$why, $r unreadable free space"; continue; fi
+    [ "$mb" -ge "$min" ] && { printf '%s' "$r"; return 0; }
+    why="$why, $r $mb MB"
+  done
+  printf 'no root has %s MB free: %s' "$min" "${why#, }"
+  return 1
+}
+
 # pgt_start <outfile> — rc 0: up, PGT_URL and PGT_DIR set. rc 1: not up, the reason is a
-# `HARNESS_PG: could-not-start (...)` line, nothing left behind.
+# `HARNESS_PG: could-not-start (...)` line, nothing left behind. rc 2: the same, and
+# the reason is low disk (`could-not-start (low disk: ...)`): the suite must not run.
 pgt_start() {
-  local out="$1" w port n up=0 ver major have
+  local out="$1" w port n up=0 ver major have root
   PGT_URL=""; PGT_DIR=""
   for n in postgres initdb pg_ctl; do
     [ -x "$PGT_BIN_DIR/$n" ] || { echo "HARNESS_PG: could-not-start (no $n in $PGT_BIN_DIR)" >> "$out"; return 1; }
@@ -107,7 +136,8 @@ pgt_start() {
   ver=$(_pgt_as postgres --version 2>/dev/null | grep -oE '[0-9]+(\.[0-9]+)+' | head -1)
   have=${ver%%.*}
   [ "$have" = "$major" ] || { echo "HARNESS_PG: could-not-start (major $major is not in the image: it holds ${have:-an unreadable version})" >> "$out"; return 1; }
-  w=$(mktemp -d "${TMPDIR:-/tmp}/pgtest.XXXXXX") || { echo "HARNESS_PG: could-not-start (no temp dir)" >> "$out"; return 1; }
+  root=$(pgt_root) || { echo "HARNESS_PG: could-not-start (low disk: $root)" >> "$out"; return 2; }
+  w=$(mktemp -d "$root/pgtest.XXXXXX") || { echo "HARNESS_PG: could-not-start (no temp dir)" >> "$out"; return 1; }
   PGT_DIR="$w"
   [ "$(id -u)" = 0 ] && chown nobody:nogroup "$w"
   if ! _pgt_as initdb -D "$w/data" -U harness --auth=trust -E UTF8 --no-sync > "$w/initdb.log" 2>&1; then
