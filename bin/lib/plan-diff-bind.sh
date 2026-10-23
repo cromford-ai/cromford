@@ -25,6 +25,14 @@
 # `skip (batch: <plan> in <N> of <K> members)`. The plan text and case-missing
 # reads stay at HEAD.
 #
+# TEST MERGE (BH-8096): a `pull_request` checkout with no `ref:` is GitHub's
+# synthetic `refs/pull/<n>/merge`, a 2-parent commit `Merge <head> into
+# <base>`. When HEAD has exactly that shape (both full shas equal its
+# parents), the check judges its second parent, the PR head, in its place, and
+# says so on stderr: `HEAD <sha12> is the PR test merge, judging the PR head
+# <sha12>`. So a draft and an ordinary PR read the same under the lint job as
+# on their own branch, and "HEAD" above means that PR head.
+#
 # THE FOUR KINDS:
 #   planned-not-changed  an entry line of the `## Files to touch` section (a
 #       bullet, a numbered item or a table row, at most one space of indent)
@@ -271,6 +279,22 @@ END {
   for (i = 1; i <= NC; i++) { split(CASES[i], cf, "\t"); if (!(cf[3] in HEADID)) print "C\t" CASES[i] }
 }'
 
+# pdb_pr_head <repo> <hs> — the commit to judge. When <hs> is GitHub's PR
+# test merge (2 parents, subject `Merge <p2> into <p1>` with the full shas),
+# that is its second parent, the PR head; else <hs> itself.
+pdb_pr_head() {
+  local repo=$1 hs=$2 line p1 p2 extra subj
+  line=$(git -C "$repo" log -1 --format='%P%x09%s' "$hs" 2>/dev/null) || { printf '%s\n' "$hs"; return 0; }
+  IFS=$'\t' read -r line subj <<<"$line"
+  read -r p1 p2 extra <<<"$line"
+  if [ -n "$p2" ] && [ -z "$extra" ] && [ "$subj" = "Merge $p2 into $p1" ]; then
+    echo "plan-diff-bind: HEAD ${hs:0:12} is the PR test merge, judging the PR head ${p2:0:12}" >&2
+    printf '%s\n' "$p2"
+  else
+    printf '%s\n' "$hs"
+  fi
+}
+
 # pdb_check <repo> <base> <head> — see the header. Prints findings on stdout.
 pdb_check() {
   local repo="${1:-}" base="${2:-}" head="${3:-HEAD}" tmp hs bs fork p plan n i rc
@@ -278,6 +302,7 @@ pdb_check() {
   git -C "$repo" rev-parse --is-inside-work-tree >/dev/null 2>&1 || { echo "plan-diff-bind: $repo is not a git work tree" >&2; return 2; }
   hs=$(git -C "$repo" rev-parse --verify -q "$head^{commit}") || { echo "plan-diff-bind: cannot resolve head $head" >&2; return 2; }
   bs=$(git -C "$repo" rev-parse --verify -q "$base^{commit}") || { echo "plan-diff-bind: cannot resolve base $base" >&2; return 2; }
+  hs=$(pdb_pr_head "$repo" "$hs")
   fork=$(git -C "$repo" merge-base "$bs" "$hs" 2>/dev/null) || { echo "plan-diff-bind: no merge-base between $base and $head" >&2; return 2; }
   tmp=$(mktemp -d "${TMPDIR:-/tmp}/plan-diff-bind.XXXXXX") || { echo "plan-diff-bind: cannot make a temp dir" >&2; return 2; }
   if ! git -C "$repo" -c core.quotePath=false diff --no-renames --name-only "$fork" "$hs" > "$tmp/d"; then
