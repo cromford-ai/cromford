@@ -1,0 +1,4 @@
+# tests/mc/expected-map.d/BH-8020.tsv — 2026-10-22: the verdict-read step runs
+# each read in mc_verdict through mc_vr_run (bounded by mc_vr_call inside the
+# step); origin=lib because it is a new module function.
+classify	mc_vr_run	lib

@@ -539,29 +539,39 @@ mc_issue_of() {
 #   reader's. Ledger first (it survives a relay that drops the file), then the
 #   record's headbound-outcome file (it survives a worker outage) — the same
 #   belt-and-braces the reviewed sha already gets.
+# mc_vr_run [-w] <name> <cmd> [args...] — one call of the conductor's verdict-read
+#   step (BH-8020). Inside the step (_MC_VR_ON=1, set by mc_vr_begin) it runs
+#   through mc_vr_call (bin/merge-conductor.d/bh-8020-verdict-read-bound.sh):
+#   named, timed, a read bounded. Anywhere else it runs <cmd> as before.
+mc_vr_run() {
+  if [ "${_MC_VR_ON:-}" = 1 ] && declare -F mc_vr_call >/dev/null; then mc_vr_call "$@"; return; fi
+  [ "${1:-}" = -w ] && shift
+  shift; "$@"
+}
+
 mc_verdict() {
   local url="$1" rec="$2" lv="" lt="" lp="" ls="" lj="" lr="" rv="-" rs="-" rh="-" lh=""
   if [ -n "$rec" ]; then
     # The record's verdict through the one shared reader (BH-1625): anchored,
     # final block only, -L because run-build's re-review rounds APPEND to
     # review.md; unknown stays "-" — never APPROVE.
-    rv=$(verdict_parse -L "$rec/review.md" 2>/dev/null) || rv="-"
+    rv=$(mc_vr_run review-file verdict_parse -L "$rec/review.md" 2>/dev/null) || rv="-"
     rs=$(head -1 "$rec/reviewed-sha" 2>/dev/null || true); [ -n "$rs" ] || rs="-"
     rh=$(head -1 "$rec/headbound-outcome" 2>/dev/null || true); [ -n "$rh" ] || rh="-"
   fi
   if type job_verdict_headbound >/dev/null 2>&1; then
-    lh=$(job_verdict_headbound "$url" 2>/dev/null || true)
+    lh=$(mc_vr_run headbound job_verdict_headbound "$url" 2>/dev/null || true)
   fi
   case "$lh" in ""|"-"|null) lh="$rh" ;; esac
   if type job_verdict >/dev/null 2>&1; then
-    if lv=$(job_verdict "$url" 2>/dev/null) && [ -n "$lv" ]; then
+    if lv=$(mc_vr_run ledger-verdict job_verdict "$url" 2>/dev/null) && [ -n "$lv" ]; then
       IFS=$'\t' read -r lv lt lp ls lj lr <<<"$lv"
       if [ -n "$rec" ] && [ "$rv" != "-" ] && [ "$lv" != "$rv" ]; then
         # The sha the contradiction is ABOUT: the ledger's, else the record's
         # (BH-4585). A head-bound re-review that finished on exactly that sha
         # is a newer read of it than either side, so its verdict stands.
         case "$lr" in ""|"-") lr="$rs" ;; esac
-        local cv; cv=$(mc_rr_verdict_of "$url" "$lr")
+        local cv; cv=$(mc_vr_run rr-verdict mc_rr_verdict_of "$url" "$lr")
         if [ -n "$cv" ]; then
           printf '%s\t%s\t%s\t%s\t%s' "$cv" "${lp:--}" "$lr" "${lj:--}" "${lh:--}"; return 0
         fi
@@ -597,7 +607,7 @@ mc_rr_verdict_of() {
 #   the two verdicts behind a CONTRADICTION, for the park's reason (BH-4585).
 mc_contradiction_words() {
   local lv="-" rv="-"
-  type job_verdict >/dev/null 2>&1 && lv=$(job_verdict "$1" 2>/dev/null | cut -f1)
+  type job_verdict >/dev/null 2>&1 && lv=$(mc_vr_run contradiction job_verdict "$1" 2>/dev/null | cut -f1)
   [ -n "$2" ] && rv=$(verdict_parse -L "$2/review.md" 2>/dev/null)
   printf 'ledger %s vs record %s' "${lv:--}" "${rv:--}"
 }

@@ -749,6 +749,7 @@ pr_worker() {
     return 0
   fi
   mc_step verdict-read
+  command -v mc_vr_begin >/dev/null 2>&1 && mc_vr_begin
   # HEADBOUND is the head-bound gate's answer BOUND TO THE HEAD IT JUDGED:
   # `n/a` bare, or `<word>@<sha>` for reapproved|blocked|no-verdict, or "-" for
   # a record written before it existed. It only steers a PR whose head MOVED,
@@ -767,7 +768,9 @@ pr_worker() {
   fi
   # The audit of a base-conflict rebase whose push GitHub already lists
   # (BH-1677); rebase_consume below audits the one it reads itself.
-  eject_rebased_moved "$KEY" "$SLUG" "$NUM" "$URL" "$HEAD"
+  mc_vr_run -w eject-rebased eject_rebased_moved "$KEY" "$SLUG" "$NUM" "$URL" "$HEAD"
+  # A cut verdict read (BH-8020) decides nothing on this PR this tick.
+  command -v mc_vr_end >/dev/null 2>&1 && ! mc_vr_end && return 0
   mc_step rebase-result
   # A FINISHED DETACHED REBASE IS READ FIRST (2026-09-14). Its result is the
   # newest fact about this PR, and applying it is this tick's whole business

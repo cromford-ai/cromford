@@ -1,0 +1,12 @@
+{
+  "env": "MC_VERDICT_READ_CALL_TIMEOUT_S",
+  "type": "int",
+  "default": 45,
+  "min": 0,
+  "max": 300,
+  "unit": "seconds",
+  "zero_means": "off",
+  "required": true,
+  "read_in": "bin/merge-conductor.d/bh-8020-verdict-read-bound.sh",
+  "note": "BH-8020: the wall time each read of the verdict-read step (the review file, the jobs ledger's headbound and verdict reads, the re-review file, the contradiction read) may take for one PR. Past it the read's process tree is killed, nothing is decided on the PR this tick, a READY row is held as verdict-read-timeout, and one VERDICT_READ_TIMEOUT call=verdict-read/<name> took=<n>s timeout=<b>s rc=124 line goes to the lane log; no alert, no Sentry event. The eject-rebased write is never cut. The value used is never past the worker deadline minus 15 s. 0 = no bound; not a number reads as 45. Required so lane_env_apply exports the default to the conductor. Settings row: lane.merge-conductor.mc_verdict_read_call_timeout_s."
+}
