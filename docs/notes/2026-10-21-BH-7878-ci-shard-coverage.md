@@ -31,8 +31,8 @@ The code of #6491 shipped in three merges:
 | R5 | A suite with no recorded duration counts as the corpus median | median at `bin/lib/suite-runner.sh:132` | d1bf60e3 | `tests/ci-plan-shard-by-duration.bh-6491-test.sh` D1 (48 of 93 suites at the median) | MET |
 | R6 | No ledger: the count split, and the fallback is logged | fallback block at `bin/ci-plan.sh:1104`, line `sizing: count, ceil(...) cap N (<why>)`, run-page notice at `bin/ci-plan.sh:1139` | d1bf60e3, a7aa6ba7 | `tests/ci-plan-shard-by-duration.bh-6491-test.sh` D2, D3, D7 | MET |
 | R7 | Acceptance 1: the test, red on main | `tests/ci-plan-shard-by-duration.bh-6491-test.sh` (D7 was red before a7aa6ba7) | a7aa6ba7 | its own run on 3b1153e2: `ci-plan-shard-by-duration: 20 passed, 0 failed`, rc 0 | MET |
-| R8 | Acceptance 2: replay of the last 30 batches, predicted max at or under 14.9 min (comment 6172435630), and the no-ledger fallback count | `bin/ci-shard-replay.sh` (its own suite `tests/ci-shard-replay.bh-6491-test.sh`: 22 passed, 0 failed) | a7aa6ba7 | `## Replay` below | NOT RUN |
-| R9 | Acceptance 3: re-measure after merge, mean shard wall time and runner minutes per batch, numbers on the ticket | `bin/ci-shard-replay.sh` `--since` | a7aa6ba7 | `## Re-measure` below | NOT RUN |
+| R8 | Acceptance 2: replay of the last 30 batches, predicted max at or under 14.9 min (comment 6172435630), and the no-ledger fallback count | `bin/ci-shard-replay.sh` (its own suite `tests/ci-shard-replay.bh-6491-test.sh`: 22 passed, 0 failed) | a7aa6ba7 | `## Replay` below | NOT MET |
+| R9 | Acceptance 3: re-measure after merge, mean shard wall time and runner minutes per batch, numbers on the ticket | `bin/ci-shard-replay.sh` `--since` | a7aa6ba7 | `## Re-measure` below | MET |
 
 R2 and R3 are MET-AMENDED. The ticket asked for a 10 min target and a cap of 8.
 BH-7620 (2026-10-20) set 1200 s and 24 after measured merge-queue ejections:
@@ -40,41 +40,73 @@ at 480 s and 12 shards, shards ran past the 45 min job cap and Mergify ejected
 green batches. That later operator decision stands, and this build changes no
 knob. The code fallbacks are still 480 s and 8.
 
-R8 and R9 are NOT RUN. They are not MET. The build box could not read GitHub
-(see below). The numbers are still owed.
+R8 is NOT MET. The replay at the knobs on main (1200 s, 24 shards) predicts a
+max shard mean of 18.8 min. The target is 14.9 min or less. The no-ledger
+fallback fired 0 of 30 times. At a 600 s budget the same rule predicts
+11.3 min, so the sizing rule can meet the target. The knob default 1200 s
+(BH-7620) stops it. A product decision is owed to the operator: lower
+`CI_SHARD_BUDGET_S` (near 840 s) to meet 14.9 min, or keep 1200 s against the
+BH-7620 ejection risk and drop the target. This note changes no knob.
+
+R9 is MET. Both windows are measured below.
+
+Source of every `replay:` line below: the BH-7878 r2 plan stage on 2026-10-22,
+which could read GitHub. The r2 execute stage could not (its `gh api` call
+gave `Forbidden` at 2026-10-22T08:34Z), so it pasted the plan stage's lines
+verbatim and derived no number. No commit touched `bin/ci-plan.sh`,
+`bin/lib/suite-runner.sh` or the sizing knobs between 2026-10-20T10:03Z and
+main `311e161c`.
 
 ## Replay
 
-Command: `bin/ci-shard-replay.sh --last 30`, run 2026-10-21T19:41:10Z.
+Command: `bin/ci-shard-replay.sh --last 30`, run 2026-10-22T07:58Z to 08:04Z,
+rc 0. This is the rule on main (knob defaults 1200 s and 24 shards):
 
-NOT RUN: rc 1 at 2026-10-21T19:41:10Z. stderr:
-`ci-shard-replay: runs page 1: gh api repos/example-org/cromford/actions/workflows/harness-ci.yml/runs failed (rc 1: Get "https://api.github.com/repos/example-org/cromford/actions/workflows/harness-ci.yml/runs?status=completed&per_page=100&page=1": Forbidden )`
+replay: 30 batches; actual max shard mean 21.3 min; predicted max mean 18.8 min; no-ledger fallback 0 of 30; runner min per batch mean 276.6; sizing=time 30 of 30
+replay: read 30 runs (30 selected-mode) in the window
 
-Cause: the build stage's egress proxy denied `api.github.com:443` (the build's
-`egress.log`: `stage=execute DENY api.github.com:443 via=proxy`). The tool
-printed no `replay:` line, so this note gives no number. The only replay on
-record is from 2026-10-14, before BH-6876, and it does not measure the rule on
-main.
+Result: predicted max mean 18.8 min > 14.9 min, so R8 is NOT MET. No-ledger
+fallback: 0 of 30.
 
-To close R8, run it from a box with GitHub read access and paste both
-`replay:` lines here. The target is a predicted max shard mean at or under
-14.9 min. If the mean is over it, R8 is NOT MET.
+Counterfactual at the ticket's 600 s target, NOT the rule on main:
+`bin/ci-shard-replay.sh --last 30 --target 600 --max 24`, ended by
+2026-10-22T08:20Z, rc 0:
+
+replay: 30 batches; actual max shard mean 21.3 min; predicted max mean 11.3 min; no-ledger fallback 0 of 30; runner min per batch mean 276.6; sizing=time 30 of 30
+replay: read 30 runs (30 selected-mode) in the window
+
+History: r1 (2026-10-21T19:41:10Z) could not run the replay. Its egress proxy
+denied `api.github.com:443`.
 
 ## Re-measure
 
 Window 1 is from the merge of today's knobs (#7644, 2026-10-20T10:03:12Z).
 Window 2 is from the merge of the sizing notice (#7867, 2026-10-21T18:56:54Z).
-Runs before window 2 have no sizing notice: they show sizing `-`, and the
-replay uses the knob values for them.
+Window 2 is the primary window. Runs before window 2 have no sizing notice:
+they show sizing `-`, and the replay uses the knob values for them.
 
-Window 1: `bin/ci-shard-replay.sh --since 2026-10-20T10:03:12Z --last 200`
+Window 2: `bin/ci-shard-replay.sh --since 2026-10-21T18:56:54Z --last 200`,
+ended 2026-10-22T08:09Z, rc 0 (13 h of data):
 
-NOT RUN: rc 1 at 2026-10-21T19:41:10Z, the same `Forbidden` stderr line as `## Replay`.
+replay: 33 batches; actual max shard mean 21.3 min; predicted max mean 18.8 min; no-ledger fallback 0 of 33; runner min per batch mean 290.4; sizing=time 33 of 33
+replay: read 33 runs (33 selected-mode) in the window
 
-Window 2: `bin/ci-shard-replay.sh --since 2026-10-21T18:56:54Z --last 200`
+Window 1: `bin/ci-shard-replay.sh --since 2026-10-20T10:03:12Z --last 200`.
+A first try hit `timeout 580` (rc 124). The second try, with `timeout 1800`,
+ended 2026-10-22T08:32Z, rc 0:
 
-NOT RUN: rc 1 at 2026-10-21T19:41:10Z, the same `Forbidden` stderr line as `## Replay`.
+replay: 110 batches; actual max shard mean 22.3 min; predicted max mean 25.8 min; no-ledger fallback 0 of 110; runner min per batch mean 285.8; sizing=time 33 of 110
+replay: read 111 runs (110 selected-mode) in the window
 
-To close R9, run both windows from a box with GitHub read access. Paste the
-`actual max shard mean` and `runner min per batch mean` lines here, and post
-them on #7878. Window 2 is 6 h old at 2026-10-22T00:57Z.
+Window 1 caveat: 77 of the 110 runs are older than the sizing notice. For
+those runs the tool used `CI_SHARD_BUDGET_S`/`CI_MAX_SHARDS` from the shell,
+else 480 s and 8. The shell set neither, so they were predicted at 480 s and
+cap 8, not at the knobs on main. The predicted mean 25.8 min does not measure
+the rule on main. Only the actual and runner numbers of window 1 are
+re-measure data. Both windows asked for 200 runs. GitHub artifacts expire
+after 3 days, so the tool found 33 and 111.
+
+Re-measure numbers: mean selected-mode max shard wall time 21.3 min (window 2)
+and 22.3 min (window 1); runner minutes per batch 290.4 (window 2) and 285.8
+(window 1). The PR body of BH-7878 r2 carries them under `## Re-measure
+numbers`, and the close-out comment on #7878 quotes that section.

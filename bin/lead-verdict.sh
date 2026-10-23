@@ -455,10 +455,17 @@ lv_show() {
     q="$q&head=$head"
   fi
   resp=$(lv_req GET "$q") || exit 1
+  # A replayed or carried row (note `lead-replay:<G12>`, BH-8028) names its
+  # source: `carried_from:#N`, else `ref:#N`, else the source head G12.
   printf '%s' "$resp" | jq -r '
+    def carried: (.note // "") as $n
+      | if ($n | contains("lead-replay:") | not) then ""
+        elif ($n | test("(^| )carried_from:#[0-9]+")) then ", carried from #\($n | capture("(^| )carried_from:#(?<i>[0-9]+)").i)"
+        elif ($n | test("(^| )ref:#[0-9]+")) then ", carried from #\($n | capture("(^| )ref:#(?<i>[0-9]+)").i)"
+        else ", carried from \($n | capture("lead-replay:(?<g>[0-9a-fA-F]*)").g)" end;
     (if .head == null then empty
      elif .standing == null then "standing on \(.head[0:12]): none"
-     else "standing on \(.head[0:12]): \(.standing.verdict) (\(.standing.source), #\(.standing.id))" end),
+     else "standing on \(.head[0:12]): \(.standing.verdict) (\(.standing.source), #\(.standing.id)\(.standing | carried))" end),
     (.rows[] | "#\(.id)\t\(.created_at)\t\(.head_sha[0:12])\t\(.verdict)\t\(.source)\t\(.reviewer_model // "-")\t\(.report_url // "-")")'
 }
 

@@ -268,7 +268,9 @@ drive "$T/body-5454.md"
 rm -f "$T/gh-fail"
 
 # ════ C1: the checklist ═════════════════════════════════════════════════════
-head -1 "$SRC/prompts/lead-review-checklist.md" | grep -qx 'Checklist-Version: 9' && ok || bad "C1 checklist is not version 9"
+# TEST-CHANGE (BH-8029): the checklist moved to version 10; this case checks version 9 or later.
+ckv=$(head -1 "$SRC/prompts/lead-review-checklist.md" | sed -n 's/^Checklist-Version: \([0-9][0-9]*\)$/\1/p')
+[ -n "$ckv" ] && [ "$ckv" -ge 9 ] && ok || bad "C1 the lead checklist is not version 9 or later"
 grep -q 'outcome replay' "$SRC/prompts/lead-review-checklist.md" && grep -q 'k of N' "$SRC/prompts/lead-review-checklist.md" \
   && ok || bad "C1 checklist does not name the outcome replay and k of N"
 

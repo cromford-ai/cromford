@@ -59,7 +59,9 @@ for f in bin/lib/rb/plan.sh bin/run-preplan.sh bin/lib/rb/execute.sh prompts/lea
   has_law "$DIR/$f" && ok || bad "L2 $f does not carry the index/retention law"
 done
 grep -q 'per-row correlated subquery' "$DIR/prompts/lead-review.md" && ok || bad "L2 lead-review.md item 2 does not name the correlated subquery"
-head -1 "$DIR/prompts/lead-review-checklist.md" | grep -qx 'Checklist-Version: 9' && ok || bad "L2 the lead checklist is not version 9"
+# TEST-CHANGE (BH-8029): the checklist moved to version 10; this case checks version 9 or later.
+ckv=$(head -1 "$DIR/prompts/lead-review-checklist.md" | sed -n 's/^Checklist-Version: \([0-9][0-9]*\)$/\1/p')
+[ -n "$ckv" ] && [ "$ckv" -ge 9 ] && ok || bad "L2 the lead checklist is not version 9 or later"
 grep -qE '^15\. Indexes and retention \(BH-6730\)' "$DIR/prompts/lead-review-checklist.md" && ok || bad "L2 the lead checklist has no item 15"
 
 # ── L3 the rule text, self-contained ──────────────────────────────────────────

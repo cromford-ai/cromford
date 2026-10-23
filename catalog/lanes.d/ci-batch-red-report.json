@@ -1,0 +1,68 @@
+{
+  "id": "ci-batch-red-report",
+  "name": "CI red-batch report",
+  "scope": "hub",
+  "script": "bin/ci-batch-red-report.sh",
+  "cadence": "37 6 * * *",
+  "boxes": [
+    "hub"
+  ],
+  "switch": {
+    "kind": "flag",
+    "name": "lane-off-ci-batch-red-report",
+    "aliases": []
+  },
+  "wired": true,
+  "knobs": [
+    {
+      "env": "CI_BATCH_RED_REPO",
+      "type": "string",
+      "default": "example-org/cromford",
+      "zero_means": null,
+      "note": "BH-8048: the repo whose harness-ci.yml merge-queue batch runs are read, one local record per run in state/ci-batch-red/runs/. NOT settable from the control plane: it is an identity the lane reads GitHub as, so only env/global.env on the box moves it.",
+      "settable": false
+    },
+    {
+      "env": "CI_BATCH_RED_DAYS",
+      "type": "int",
+      "default": 7,
+      "min": 1,
+      "max": 30,
+      "zero_means": null,
+      "note": "BH-8048: the window. The run list reads the batch runs created in the last this-many days, and latest.tsv and the case are composed from the records in the same window. --days overrides it for one run."
+    },
+    {
+      "env": "CI_BATCH_RED_PAGES",
+      "type": "int",
+      "default": 5,
+      "min": 1,
+      "max": 10,
+      "zero_means": null,
+      "note": "BH-8048: at most this many 100-run pages of each run list (harness-ci.yml, prequeue-gate.yml) and 100-job pages of each run's jobs per tick."
+    },
+    {
+      "env": "CI_BATCH_RED_MAX",
+      "type": "int",
+      "default": 40,
+      "min": 1,
+      "max": 200,
+      "zero_means": null,
+      "note": "BH-8048: at most this many unrecorded batch runs are read per tick (jobs, shard logs, and for a red run 2 reads per member gate). The rest are logged as deferred and drain oldest first on later ticks. gh_budget_low is asked before each run."
+    },
+    {
+      "env": "CI_BATCH_RED_KEEP_DAYS",
+      "type": "int",
+      "default": 30,
+      "min": 7,
+      "max": 90,
+      "zero_means": null,
+      "note": "BH-8048: retention. Run records and strike files in state/ci-batch-red/runs/ created over this many days ago are deleted each tick, counted as pruned= in the log line. latest.tsv is rebuilt every tick."
+    }
+  ],
+  "stats": {
+    "cost_stage": null,
+    "cost_project_filter": null,
+    "lanes_row": false,
+    "log": "logs/ci-batch-red.log"
+  }
+}

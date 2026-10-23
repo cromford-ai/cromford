@@ -37,11 +37,13 @@ LAWS_DIR="$DIR/prompts/iron-laws.d"
 # prompts/iron-laws.d/20261019-scalable-tests.md, and the review-levels class
 # list gained `scalable-tests`.
 # TEST-CHANGE (BH-7945): the review-levels fragment's class list gained hardcoded-knob, so the block sha moved.
-TICKET_SHA="800744ee9c8999aa""a280942fd6bb9c1b""af3df10201ef5790""9f5bd6afd1e5f028"
+# TEST-CHANGE (BH-8029): the plan stage also carries prompts/iron-laws.d/20261022-user-flows.md, and the review-levels class list gained user-flows, so the block sha moved.
+TICKET_SHA="9e23394f05a38999""f32787e3878d6706""b1e4ca0c4c873d83""e4da14583c836fd9"
 T1='PERFORMANCE BY DEFAULT'
 T2="BUILDING FROM A DESIGNER'S PROTOTYPE"
 T3='REVIEW LEVELS (iron law, BH-7123'
 T4='SCALABLE TESTS (iron law, BH-7563'
+T5='USER FLOWS (iron law, BH-8029'
 MEMBERS="preplan plan execute fix review qa prodqa"
 
 # ── A1 ─────────────────────────────────────────────────────────────────────
@@ -53,6 +55,7 @@ case "$got" in *"PERFORMANCE BY DEFAULT (iron law, 2026-10-13)"*) ok ;; *) bad "
 case "$got" in *"BUILDING FROM A DESIGNER'S PROTOTYPE (iron law, 2026-10-13)"*) ok ;; *) bad "A1 prototype title missing" ;; esac
 case "$got" in *"$T3"*) ok ;; *) bad "A1 review-levels title missing" ;; esac
 case "$got" in *"$T4"*) ok ;; *) bad "A1 scalable-tests title missing" ;; esac
+case "$got" in *"$T5"*) ok ;; *) bad "A1 user-flows title missing" ;; esac
 case "$got" in *"each one a BLOCK"*|*"REVIEW blocks on"*|*"a visual check gates the merge"*) bad "A1 the plan block still carries a BLOCK-level review line (BH-7123)" ;; *) ok ;; esac
 
 # ── A2 ─────────────────────────────────────────────────────────────────────

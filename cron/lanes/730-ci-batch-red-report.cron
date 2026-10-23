@@ -1,0 +1,9 @@
+# @hub-lanes
+
+# ── CI BATCH RED REPORT (BH-8048) ──────────────────────────────────────────
+# Why merge-queue batches go red: one local record per batch run of Harness CI
+# (the failing suites, the suites each member's pre-queue gate ran), then
+# state/ci-batch-red/latest.tsv and one log line with red_rate= and case=.
+# Once a day at 06:37, off the :11/:23/:41/:53 batch-ledger and learned lanes;
+# gh_budget_low is asked before each run read. Kill: bin/harness-ctl.sh off ci-batch-red-report.
+37 6 * * * /root/harness/bin/hub-lease.sh check && /root/harness/bin/ci-batch-red-report.sh >/dev/null 2>&1

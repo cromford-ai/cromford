@@ -859,6 +859,14 @@ rebind_patch_id() {
   case "$id" in same:*) how="${id#same:}" ;; esac
   command -v review_saving_event >/dev/null 2>&1 \
     && review_saving_event "$proj" merge-conductor "$slug" "$num" "$head" REUSED "from=${rev:0:12} to=${head:0:12} how=$how" || true
+  # The lead word rides the same patch (BH-8028). The rebind set REVIEWED to
+  # the new head, so mc_lead_ready's gate 3 never reaches its lead_carry call:
+  # carry it here, before the publish below reads the status. Fail-open.
+  command -v lead_carry >/dev/null 2>&1 \
+    || { [ -r "${BASH_SOURCE[0]%/*}/../lead-carry.sh" ] && . "${BASH_SOURCE[0]%/*}/../lead-carry.sh"; }
+  local lreason="patch-id:$id"
+  case "$id" in same:*) lreason="$id" ;; esac
+  command -v lead_carry >/dev/null 2>&1 && { lead_carry "$key" "$slug" "$num" "$head" "$lreason" >/dev/null 2>&1 || true; }
   mc_rebind_publish "$key" "$proj" "$slug" "$num" "$url" "$head" "$rev" || true
   return 0
 }
