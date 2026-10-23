@@ -31,6 +31,13 @@
 # File: state/merge-conductor/red-checks/<id>: line 1 the head, then one
 # failing check name per line. Pruned after MC_RED_CHECKS_KEEP_D days.
 
+# BH-8049: the dispatch skips a head a green or running PR run of the same
+# workflow already covers (cds_check). Without the file the dispatch is as before.
+if ! command -v cds_check >/dev/null 2>&1 && [ -r "${BASH_SOURCE[0]%/*}/ci-dispatch-skip.sh" ]; then
+  # shellcheck source=bin/lib/ci-dispatch-skip.sh
+  . "${BASH_SOURCE[0]%/*}/ci-dispatch-skip.sh"
+fi
+
 # mst_on — rc 0 when the timers are on (MC_STUCK_TIMERS=1, the default).
 mst_on() { [ "${MC_STUCK_TIMERS:-1}" = 1 ]; }
 
@@ -161,6 +168,16 @@ mst_ci_nostart() {
         rc=0; mc_head_still "$slug" "$key" "$head" "CI dispatch" || rc=$?
         case "$rc" in
           0)
+            # BH-8049: the `ci=none` read can be a memo. A green or running
+            # pull_request/merge_group run of $wf on this head means CI did
+            # start: no dispatch, no cikick and no CI_NEVER_STARTED alert. The
+            # cinostart mark above stops a second look at this head.
+            local cds="" crc=1
+            if declare -F cds_check >/dev/null; then
+              crc=0; cds=$(cds_check "$slug" "$head" "$wf") || crc=$?
+              [ -n "$cds" ] && mc_log "$key $cds"
+              [ "$crc" = 0 ] && return 0
+            fi
             if gh_rest POST "repos/$slug/actions/workflows/$wf/dispatches" -f "ref=$br" >/dev/null; then
               mc_attempt_put "cikick $key $head"
               did="dispatched $wf on $br"

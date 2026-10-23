@@ -36,6 +36,13 @@
 # log line per repo and state/ci-minutes/latest.json whether or not it pages.
 # Deterministic, read-only against GitHub, never pauses anything.
 #
+# TWO COUNTS (BH-8049), from the same run list, no extra read. Per repo, one
+# `ci-counts repo=<slug> ...` line before its estimate line, and in
+# latest.json and the ci_health payload: dispatches_24h (workflow_dispatch runs,
+# split by workflow name, top 5) and pushes_per_pr (per head branch, the
+# distinct head SHAs of its pull_request runs: every push to a PR branch starts
+# one). Both count completed runs only, the ones this lane reads.
+#
 # usage: ci-minutes-watch.sh [--dry-run]    --dry-run measures and prints; no page
 # Kill switch: bin/harness-ctl.sh off ci-minutes-watch (flags/lane-off-ci-minutes-watch)
 # Tests: tests/ci-minutes-watch.k1-test.sh
@@ -90,7 +97,7 @@ REPOS=$(for P in $("$H/bin/fleet-conf.sh" --projects 2>/dev/null); do
 done | awk 'NF && $1 != "-"' | sort -u)
 [ -n "$REPOS" ] || { log "no repos: fleet.conf answered nothing"; exit 0; }
 
-CALLS=0; TOTAL=0; ROWS=""; UNREAD=""
+CALLS=0; TOTAL=0; ROWS=""; UNREAD=""; COUNTS="{}"
 for SLUG in $REPOS; do
   if command -v gh_repo_use_token >/dev/null 2>&1; then
     gh_repo_use_token "$SLUG" 2>/dev/null || { UNREAD="${UNREAD:+$UNREAD }$SLUG"; continue; }
@@ -100,7 +107,7 @@ for SLUG in $REPOS; do
     CALLS=$(( CALLS + 1 ))
     PAGE=$(gh_ci_api "$SLUG" -X GET "repos/$SLUG/actions/runs" -f status=completed \
              -f "created=>=$SINCE" -f per_page=100 -f "page=$pg" \
-             -q '{t: (.total_count // 0), r: [.workflow_runs[]? | {id, w: (.workflow_id // 0), s: .run_started_at, e: .updated_at}]}' 2>/dev/null) || { OK=0; break; }
+             -q '{t: (.total_count // 0), r: [.workflow_runs[]? | {id, w: (.workflow_id // 0), s: .run_started_at, e: .updated_at, ev: (.event // ""), wn: (.name // ""), b: (.head_branch // ""), h: (.head_sha // "")}]}' 2>/dev/null) || { OK=0; break; }
     [ -n "$PAGE" ] || PAGE='{"t":0,"r":[]}'
     [ "$pg" = 1 ] && TOTALC=$(jq -r '.t // 0' <<<"$PAGE" 2>/dev/null || echo 0)
     RUNS=$(jq -c --argjson p "$PAGE" '. + ($p.r // [])' <<<"$RUNS" 2>/dev/null) || { OK=0; break; }
@@ -156,6 +163,27 @@ for SLUG in $REPOS; do
     FLOOR=" floor (every page full, no total_count)"
   fi
   EST=$(awk -v e="$EST0" -v x="$XF" 'BEGIN{ printf "%d", e * x + 0.5 }')
+  # BH-8049: dispatches per day and pushes per PR, from the runs read above.
+  CNT=$(jq -c '
+      ([.[] | select(.ev == "workflow_dispatch")] | group_by(.wn)
+        | map({key: (.[0].wn | if . == "" then "?" else . end), value: length})
+        | sort_by(-.value, .key) | .[:5] | from_entries) as $dw
+      | ([.[] | select(.ev == "workflow_dispatch")] | length) as $d
+      | ([.[] | select(.ev == "pull_request" and .b != "")] | group_by(.b)
+        | map({b: .[0].b, n: (map(.h) | unique | length)}) | sort_by(-.n, .b)) as $pp
+      | ($pp | map(.n) | sort) as $ns | ($ns | length) as $k
+      | {dispatches_24h: $d, dispatches_by_workflow: $dw,
+         pushes_per_pr: {prs: $k,
+           median: (if $k == 0 then 0 elif $k % 2 == 1 then $ns[($k - 1) / 2]
+                    else ($ns[$k / 2 - 1] + $ns[$k / 2]) / 2 end),
+           max: ($pp[0].n // 0), max_branch: ($pp[0].b // ""), total: ($ns | add // 0)}}' <<<"$RUNS" 2>/dev/null) \
+    || CNT='{"dispatches_24h":0,"dispatches_by_workflow":{},"pushes_per_pr":{"prs":0,"median":0,"max":0,"max_branch":"","total":0}}'
+  COUNTS=$(jq -c --arg r "$SLUG" --argjson c "$CNT" '. + {($r): $c}' <<<"$COUNTS" 2>/dev/null) || COUNTS="{}"
+  log "ci-counts repo=$SLUG $(jq -r --argjson n "$NRUNS" '"dispatches_24h=\(.dispatches_24h)"
+      + (if .dispatches_24h > 0 then " (" + (.dispatches_by_workflow | to_entries | map("\(.key)=\(.value)") | join(",")) + ")" else "" end)
+      + " pushes_per_pr prs=\(.pushes_per_pr.prs)"
+      + (if .pushes_per_pr.prs > 0 then " median=\(.pushes_per_pr.median) max=\(.pushes_per_pr.max) (\(.pushes_per_pr.max_branch))" else "" end)
+      + " of \($n) run(s) read"' <<<"$CNT" 2>/dev/null)"
   log "$SLUG: $SEEN in 24h, $(printf '%.0f' "$WALL") wall min; sample $SN run(s) billed $(printf '%.0f' "$SB") job-min over $(printf '%.0f' "$SW") wall min -> est $EST billed job-min/24h$FLOOR"
   TOTAL=$(( TOTAL + EST ))
   ROWS="$ROWS$SLUG $EST$FLOOR"$'\n'
@@ -165,9 +193,10 @@ command -v gh_repo_token_reset >/dev/null 2>&1 && gh_repo_token_reset
 TOP=$(printf '%s' "$ROWS" | awk 'NF' | sort -k2 -nr | head -3 | awk '{n=$1" "$2" min"; if (NF > 2) n=n" ("$3")"; printf "%s, ", n}' | sed 's/, $//')
 log "fleet: est $TOTAL billed job-min/24h (runner match '$MATCH', job-minute x$MULT, line $DAY_MAX; $CALLS GitHub read(s))${UNREAD:+; could not read: $UNREAD}"
 jq -n --arg at "$(STAMP)" --argjson total "$TOTAL" --argjson max "$DAY_MAX" --argjson calls "$CALLS" \
-   --arg match "$MATCH" --arg rows "$ROWS" --arg unread "$UNREAD" \
+   --arg match "$MATCH" --arg rows "$ROWS" --arg unread "$UNREAD" --argjson counts "$COUNTS" \
    '{at: $at, est_billed_job_minutes_24h: $total, day_max: $max, gh_reads: $calls, runner_match: $match,
-     repos: ($rows | split("\n") | map(select(length > 0) | split(" ") | {repo: .[0], est: (.[1] | tonumber), note: (.[2:] | join(" "))})),
+     repos: ($rows | split("\n") | map(select(length > 0) | split(" ") | {repo: .[0], est: (.[1] | tonumber), note: (.[2:] | join(" "))}
+                                       | . + ($counts[.repo] // {}))),
      unread: ($unread | split(" ") | map(select(length > 0)))}' > "$STATE/latest.json" 2>/dev/null
 
 [ -n "$DRY" ] && exit 0
@@ -187,7 +216,8 @@ fi
 # push is one log line per tick naming the repos; the lane still exits 0.
 if command -v ci_health_put >/dev/null 2>&1; then
   if PUSH=$(jq -r '{day_max, runner_match, at} as $c
-                   | (.repos[]? | [.repo, ({est_24h: .est, note} + $c | tojson)]),
+                   | (.repos[]? | [.repo, ({est_24h: .est, note} + $c
+                                            + (if .dispatches_24h != null then {dispatches_24h, pushes_per_pr} else {} end) | tojson)]),
                      (.unread[]? | [., ({unread: true} + $c | tojson)])
                    | join("\t")' "$STATE/latest.json" 2>/dev/null); then
     PN=0; PFAIL=""

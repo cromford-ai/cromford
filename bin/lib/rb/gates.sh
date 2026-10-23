@@ -2109,6 +2109,10 @@ track_pushed(){ git update-ref "refs/remotes/origin/$BRANCH" "$(git rev-parse HE
 # write point reads the hold again.
 # shellcheck source=bin/lib/hold-push.sh
 [ -r "$HARNESS/bin/lib/hold-push.sh" ] && . "$HARNESS/bin/lib/hold-push.sh" 2>/dev/null
+# BH-8049: push once per build attempt on a PR branch (PUSH_BRANCH, CKPT_START,
+# and run-build.sh's EXIT trap read it; without the file nothing changes).
+# shellcheck source=bin/lib/push-once.sh
+[ -r "$HARNESS/bin/lib/push-once.sh" ] && . "$HARNESS/bin/lib/push-once.sh" 2>/dev/null
 # RB_HOLD_YIELD <stage> <why> — the build stops at this write point. In the
 # main shell it writes RESULT and exits 3, the exit HOLD_STAGE_CHECK takes. In
 # a subshell (the background E2E lane) an exit ends only the subshell, so it
@@ -2413,6 +2417,8 @@ YIELD_CHECK() {
   # resumed and rebuilt, which is recoverable. The other order leaves a dir that
   # stands down again on every re-entry, for ever.
   mv -f "$BUILD/YIELD" "$BUILD/YIELD.honored" 2>/dev/null
+  # BH-8049: send deferred commits before the sentence below measures origin.
+  declare -F po_flush >/dev/null && po_flush yield
   head_sha=$(git -C "$WT" rev-parse --short=8 HEAD 2>/dev/null)
   origin_sha=$(git -C "$WT" rev-parse --short=8 "origin/$BRANCH" 2>/dev/null)
   if [ -z "$origin_sha" ]; then

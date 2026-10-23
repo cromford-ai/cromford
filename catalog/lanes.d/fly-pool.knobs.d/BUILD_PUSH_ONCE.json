@@ -1,0 +1,11 @@
+{
+  "env": "BUILD_PUSH_ONCE",
+  "type": "string",
+  "default": "pr",
+  "min": null,
+  "max": null,
+  "unit": null,
+  "zero_means": null,
+  "note": "BH-8049: pr (default) | always | off. pr: a build attempt on a branch that already has a PR (SQUASH_OK=0, a dispatcher-supplied TARGET_BRANCH, or RB_PR_OPEN set) defers its backup pushes after execute and after each fix round, starts no checkpoint watcher, and pushes once at the end of the attempt (pr-push, or the EXIT trap for an attempt that ends early). It protects PR CI minutes: each push to a PR branch starts its CI and cancels the run before it. A first build with no PR keeps its backup pushes. always: defer every backup push. off: push after every commit-producing stage, as before. Any other value is read as pr.",
+  "read_in": "bin/lib/push-once.sh"
+}

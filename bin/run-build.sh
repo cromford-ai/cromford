@@ -225,7 +225,7 @@ flock -n 7 || { RESULT "BUILD_DEFERRED $KEY already building"; exit 3; }
 set -a; . "$HENV/global.env"; [ -f "$HENV/$PROJECT.env" ] && . "$HENV/$PROJECT.env"; set +a
 rb_gate_claim_and_workspace
 rb_plan
-trap 'CKPT_ON_EXIT; rm -f "$HARNESS/state/claims/$PROJECT/$KEY"; _job_finish' EXIT
+trap 'CKPT_ON_EXIT; declare -F PO_FLUSH_ON_EXIT >/dev/null && PO_FLUSH_ON_EXIT; rm -f "$HARNESS/state/claims/$PROJECT/$KEY"; _job_finish' EXIT
 rb_gate_overlap
 # >>> route shadow (P4; tests/route-rules.p4-test.sh drives this block)
 # LOG ONLY. The last point before EXECUTE, and the first where a plan exists:

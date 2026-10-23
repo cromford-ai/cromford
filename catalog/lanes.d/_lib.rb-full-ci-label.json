@@ -11,7 +11,7 @@
           "default": "",
           "zero_means": null,
           "required": false,
-          "note": "The label to add. Empty (the default) = off for that project: no classifier run, no label, no log line. Seeded `full-ci` for project-6-os (lib.rb-full-ci-label.project-6-os.full_ci_label)."
+          "note": "The label to add. Empty (the default) or `off` (any case, spaces trimmed) = off for that project: no classifier run, no label, no log line. A settings row cannot hold an empty value (setting_set and the worker PUT refuse it), so `off` is the row's off state (BH-8049). A label named `off` cannot be used. Seeded `full-ci` for project-6-os (lib.rb-full-ci-label.project-6-os.full_ci_label)."
         },
         {
           "env": "FULL_CI_LANE_SCRIPT",

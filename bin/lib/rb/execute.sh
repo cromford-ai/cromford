@@ -155,7 +155,12 @@ fi
 # it is rejected. These are backups, and a backup that can fail a build is worse
 # than no backup. Same reasoning as the E2E smoke push below: pushing a BRANCH
 # is not a merge and not a deploy, and no PR is created any earlier.
+# PUSH ONCE PER ATTEMPT (BH-8049). On a branch that already has a PR, each push
+# starts the PR's CI and cancels the run before it, so bin/lib/push-once.sh
+# defers these backup pushes: the commits collect here, and pr-push (or the EXIT
+# trap's PO_FLUSH_ON_EXIT, for an attempt that ends before it) sends them once.
 PUSH_BRANCH() { # PUSH_BRANCH <after-what>
+  declare -F po_defer >/dev/null && po_defer "$1" && return 0
   GH_LIVE
   if RB_PUSH -u "$1" 2>>"$BUILD/pipeline.log"; then
     track_pushed

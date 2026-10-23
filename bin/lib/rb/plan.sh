@@ -99,6 +99,15 @@ CKPT_WIP_COUNT()    { git log --format=%s "$BASE..HEAD" 2>/dev/null | grep -c  '
 CKPT_NONWIP_COUNT() { git log --format=%s "$BASE..HEAD" 2>/dev/null | grep -vc '^wip: checkpoint ' ; }
 CKPT_START() {
   CKPT_ON || return 0
+  # BH-8049: each checkpoint is a push, and on a PR branch each push starts its
+  # CI. While push-once defers the pushes, keep the traps (the EXIT flush still
+  # runs on a SIGTERM) but start no watcher.
+  if declare -F po_active >/dev/null && po_active; then
+    trap 'CKPT_ON_EXIT; trap - TERM; kill -TERM $$' TERM
+    trap 'CKPT_ON_EXIT; trap - INT;  kill -INT  $$' INT
+    echo "$(STAMP) [$PROJECT/$KEY] CHECKPOINT watcher not started: push-once defers pushes on a PR branch (BH-8049)" >> "$BUILD/pipeline.log"
+    return 0
+  fi
   CKPT_ACTIVE=1
   CHECKPOINT_PARENT_PID=$$ "$HARNESS/bin/lane-checkpoint.sh" --watch "$BUILD" "$WT" "$BRANCH" execute >/dev/null 2>&1 &
   CKPT_PID=$!

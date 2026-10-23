@@ -12,8 +12,8 @@
 # label above the block, and a failed write never fails the build.
 
 # fcl_apply <project> <pr-url> <worktree> <base-branch> <pipeline-log> — always rc 0.
-#   Knobs (lib_env_apply rb-full-ci-label <project>): FULL_CI_LABEL (empty =
-#   off), FULL_CI_LANE_SCRIPT (scripts/ci/lane.mjs), FULL_CI_LANE_TIMEOUT_S (60).
+#   Knobs (lib_env_apply rb-full-ci-label <project>): FULL_CI_LABEL (empty or
+#   off = off; a settings row cannot be empty, BH-8049), FULL_CI_LANE_SCRIPT (scripts/ci/lane.mjs), FULL_CI_LANE_TIMEOUT_S (60).
 fcl_apply() {
   local project="${1:-}" url="${2:-}" wt="${3:-}" base="${4:-}" log="${5:-/dev/null}"
   local root label script to slug num mb out rc lane why
@@ -27,6 +27,8 @@ fcl_apply() {
       && lib_env_apply rb-full-ci-label "$project" >/dev/null 2>&1; } || true
     printf '%s\x1f%s\x1f%s' "${FULL_CI_LABEL:-}" "${FULL_CI_LANE_SCRIPT:-}" "${FULL_CI_LANE_TIMEOUT_S:-}" )"
   [ -n "$label" ] || return 0
+  label=$(printf '%s' "$label" | sed -E 's/^[[:space:]]+//; s/[[:space:]]+$//')
+  [ "${label,,}" != off ] && [ -n "$label" ] || return 0   # fcl-off (BH-8049): `off` = no classifier, no label
   [ -n "$script" ] || script=scripts/ci/lane.mjs
   case "$to" in ''|*[!0-9]*|0) to=60 ;; esac
   slug=$(sed -nE 's#^https://github.com/([^/]+/[^/]+)/pull/[0-9]+$#\1#p' <<<"$url")

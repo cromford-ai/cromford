@@ -44,6 +44,12 @@ if ! command -v ph_ci_only_body >/dev/null 2>&1 && [ -r "${BASH_SOURCE[0]%/*}/..
   . "${BASH_SOURCE[0]%/*}/../pr-health.sh"
 fi
 
+# BH-8049: cds_check, the "a PR run already covers this head" skip.
+if ! command -v cds_check >/dev/null 2>&1 && [ -r "${BASH_SOURCE[0]%/*}/../ci-dispatch-skip.sh" ]; then
+  # shellcheck source=bin/lib/ci-dispatch-skip.sh
+  . "${BASH_SOURCE[0]%/*}/../ci-dispatch-skip.sh"
+fi
+
 # _mc_bci_ci_only <body> — rc 0 only when ph_ci_only_body says every BLOCK is a
 #   CI-did-not-run AND the body carries no word of doubt. ph_ci_only_body's own
 #   known gap ("CI passed, but the migration did not run on prod" is rc 0 there)
@@ -221,7 +227,7 @@ _mc_bci_rereview() {
 
 mc_block_ci_step() {
   local slug="${1:-}" num="${2:-}" head="${3:-}" bid="${5:-}" body="${6:-}"
-  local pr key fn rc=0 runs="" latest="" runs_read=0 br="" wf="" j="" id="" st="" co="" run="" detail="" ids="" row="" cur="" rerun=""
+  local pr key fn rc=0 runs="" latest="" runs_read=0 cds="" cds_rc=1 br="" wf="" j="" id="" st="" co="" run="" detail="" ids="" row="" cur="" rerun=""
   pr="$slug#$num"; key="$pr"
   if ! [[ "$slug" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] || ! [[ "$num" =~ ^[0-9]+$ ]] \
      || ! [[ "$head" =~ ^[0-9a-f]{40}$ ]] || ! [[ "$bid" =~ ^([0-9]+|verdict-[0-9]+)$ ]]; then
@@ -268,11 +274,22 @@ mc_block_ci_step() {
           wf=$(_mc_bci_pick_wf "$slug" "$br" "$body"); rc=$?
           [ "$rc" = 75 ] && { _mc_bci_log "block-ci $pr ${head:0:8}: workflows unreadable — no dispatch this tick"; return 1; }
         fi
-        if ! pr_attempt_put "$slug" "$num" blockci "$head"; then
+        # BH-8049: a green or running pull_request/merge_group run of $wf on
+        # this head (from the runs read above: no new read) makes the dispatch
+        # a duplicate. Skip it and write no attempt row: the green check below
+        # clears the block on a green run, and if that run ends red or
+        # cancelled the next tick dispatches once as before.
+        cds_rc=1
+        if [ -z "$rerun" ] && [ -n "$wf" ] && command -v cds_check >/dev/null 2>&1; then
+          cds_rc=0; cds=$(cds_check "$slug" "$head" "$wf" "$runs") || cds_rc=$?
+          [ -n "$cds" ] && _mc_bci_log "$cds"
+        fi
+        if [ "$cds_rc" = 0 ]; then
+          :
+        elif ! pr_attempt_put "$slug" "$num" blockci "$head"; then
           _mc_bci_log "BLOCK_CI_DISPATCH_FAILED $pr $head attempt-row-unwritten"
           return 2
-        fi
-        if [ -n "$rerun" ]; then
+        elif [ -n "$rerun" ]; then
           for id in $rerun; do _mc_bci_post "run:$id" "repos/$slug/actions/runs/$id/rerun"; done
         elif [ -n "$wf" ]; then
           _mc_bci_post "$wf" "repos/$slug/actions/workflows/$wf/dispatches" -f "ref=$br"
