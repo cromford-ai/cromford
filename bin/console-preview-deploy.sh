@@ -69,11 +69,36 @@
 # The streak survives a charge, so the next run skips that head with no alert.
 # A retry that uploads runs QA and posts the comment like any other deploy.
 #
+# THE BUILD ON THE FLY POOL (BH-8030). The hub ran at load 55-60, and step 6
+# (npm ci, vite build) and the upload were part of it. With the settings row
+# lane_placement.console-preview-deploy = fly (the exact lane row; the
+# lane_placement.default row never moves this lane), steps 1-5, the preview
+# binding check, QA and the comment stay on the hub, and steps 6-7 run on a
+# short-lived Fly pool machine. Per head, the hub queues ONE pool row
+# CP-<pr>-<head8>-<job> (meta kind console_preview) on the pool project
+# (CONSOLE_PREVIEW_POOL_PROJECT, else the fleet.conf project of HARNESS_REPO,
+# which must route builder=pool) and records `pool <job> <attempts>`. The
+# machine runs the same body (cpv_build_deploy, bin/lib/console-preview-job.sh)
+# and the pool reap closes the row with one RESULT line. A later tick reads it:
+#   CPV_DEPLOYED <sha>        QA and the comment, as for a hub deploy
+#   CPV_HEAD_FAILED <why>     charged to the head, as a hub head failure
+#   CPV_BOX_FAILED <why>, a failed row, a row gone, or a row queued or claimed
+#   past CONSOLE_PREVIEW_POOL_TIMEOUT_S: the box's fault. No head is charged,
+#   one console-preview-box alert, `box <job> <attempts>`, no new pool row this
+#   run, and the next tick queues job + 1.
+# Each state is read once, so the comment and the state file are written once.
+# A queued or claimed row counts toward CONSOLE_PREVIEW_MAX_PER_RUN. The upload
+# streak guard is a hub-build rule only: on the pool an upload box fault is
+# never charged. No row (or any value but fly, a settings outage, no fleet
+# project, a project that is not pool-routed) is the hub build, as before.
+# Rollback: bin/jobs-client.sh setting-set lane_placement.console-preview-deploy hub.
+#
 # Knobs (catalog/lanes.d/console-preview-deploy.json, lane_env_apply):
 # CONSOLE_PREVIEW_DEPLOY (0), CONSOLE_PREVIEW_MAX_PER_RUN (3),
 # CONSOLE_PREVIEW_QA_SCREENS ("/"), CONSOLE_PREVIEW_BUILD_USER (nobody),
 # CONSOLE_PREVIEW_BUILD_TMP (/tmp), CONSOLE_PREVIEW_WRANGLER (3.114.17),
-# CONSOLE_PREVIEW_STRIP_BINDINGS (1).
+# CONSOLE_PREVIEW_STRIP_BINDINGS (1), CONSOLE_PREVIEW_POOL_PROJECT (""),
+# CONSOLE_PREVIEW_POOL_TIMEOUT_S (3600).
 # Off switch: bin/harness-ctl.sh off console-preview-deploy.
 # Secrets: the API token lives only in the deploy subshell's env and is scrubbed
 # from the deploy log; HARNESS_SECRET and the QA token never reach a log line or
@@ -129,11 +154,15 @@ find "$SD" -maxdepth 1 -type f -mtime +14 -delete 2>/dev/null
 find "$QD" -mindepth 1 -maxdepth 1 -type d -mtime +14 -exec rm -rf -- {} + 2>/dev/null
 
 TMP=$(mktemp -d "${TMPDIR:-/tmp}/console-preview.XXXXXX") || exit 0
-D=""; B=""
+# CPV_B and CPV_D are the two trees cpv_build_deploy (bin/lib/console-preview.sh) makes.
+CPV_D=""; CPV_B=""
 BT="${CONSOLE_PREVIEW_BUILD_TMP:-/tmp}"
 find "$BT" -maxdepth 1 -type d -name 'console-preview-build.?*' -mmin +60 -exec rm -rf -- {} + 2>/dev/null
-cleanup_build() { case "$B" in "$BT/console-preview-build."?*) rm -rf -- "$B" ;; esac; B=""; }
-trap 'rm -rf -- "$TMP"; case "$D" in "$H/state/console-preview-snap."?*) rm -rf -- "$D" ;; esac; cleanup_build' EXIT
+cleanup_build() {
+  case "$CPV_B" in "$BT/console-preview-build."?*) rm -rf -- "$CPV_B" ;; esac; CPV_B=""
+  case "$CPV_D" in "$H/state/console-preview-snap."?*) rm -rf -- "$CPV_D" ;; esac; CPV_D=""
+}
+trap 'rm -rf -- "$TMP"; cleanup_build' EXIT
 trap 'exit 143' TERM INT
 
 git -C "$CO" fetch -q origin main >/dev/null 2>&1 || { log "git fetch origin main failed — not deploying"; exit 0; }
@@ -147,9 +176,11 @@ if [ -z "$ACCT" ]; then
 fi
 [[ "$ACCT" =~ ^[0-9a-zA-Z-]{6,64}$ ]] || { log "no Cloudflare account id (cloudflare.env or origin/main's worker/jobs/wrangler.jsonc) — not deploying"; exit 0; }
 
-# cpv_scrub <file> — the file with the API token and any Bearer value replaced.
-TOKV=$( set -a; . "$CFENV" >/dev/null 2>&1; set +a; printf '%s' "${CLOUDFLARE_API_TOKEN:-}" )
-cpv_scrub() { CP_TOK="$TOKV" awk '{t=ENVIRON["CP_TOK"]; if (t!="") while ((i=index($0,t))>0) $0=substr($0,1,i-1) "***" substr($0,i+length(t)); gsub(/Bearer[ \t]+[^ \t]+/,"Bearer ***"); print}' "$1"; }
+# cpv_scrub <file> (bin/lib/console-preview.sh) replaces this token and any Bearer value.
+CPV_TOKV=$( set -a; . "$CFENV" >/dev/null 2>&1; set +a; printf '%s' "${CLOUDFLARE_API_TOKEN:-}" )
+# The inputs of cpv_build_deploy, the one build-and-deploy body the hub and a
+# Fly pool machine share (BH-8030).
+CPV_CO="$CO"; CPV_BT="$BT"; CPV_SNAP_DIR="$H/state"; CPV_CFENV="$CFENV"; CPV_ACCT="$ACCT"; CPV_WRANGLER="$WRANGLER"
 
 # THE PREVIEW ENVIRONMENT HAS NO PRODUCTION WRITE BINDING, or nothing deploys.
 # Fail closed: every non-empty key of the preview config that is not a plain
@@ -256,94 +287,50 @@ preview_bindings_clean() {
   return 0
 }
 
+# WHERE STEPS 6-7 RUN (BH-8030): hub, or the Fly pool of project $PP.
+PLACE=hub; PP=""
+POOL_TO="${CONSOLE_PREVIEW_POOL_TIMEOUT_S:-3600}"
+case "$POOL_TO" in ''|*[!0-9]*|0) log "CONSOLE_PREVIEW_POOL_TIMEOUT_S='$POOL_TO' is not a positive number — using 3600"; POOL_TO=3600 ;; esac
+place_decide() {
+  local facts b hl
+  . "$H/bin/lib/lane-placement.sh" 2>/dev/null || . "$(dirname "${BASH_SOURCE[0]}")/lib/lane-placement.sh" 2>/dev/null || return 0
+  command -v lp_decide >/dev/null 2>&1 || return 0
+  # lp_decide always sets LP_PLACE and LP_WHY, so read them bare: a ${LP_X:-}
+  # default reads as an unregistered env knob in tests/lanes-registry-test.sh §7.
+  lp_decide console-preview-deploy
+  [ "$LP_PLACE" = fly ] || return 0
+  case "$LP_WHY" in lane_placement.default=*) return 0 ;; esac
+  PP="${CONSOLE_PREVIEW_POOL_PROJECT:-}"
+  [ -n "$PP" ] || PP=$(awk -v s="$SLUG" '!/^[[:space:]]*#/ && NF >= 2 && tolower($2) == tolower(s) { print $1; exit }' "${FLEET_CONF:-$H/fleet.conf}" 2>/dev/null)
+  if ! [[ "$PP" =~ ^[A-Za-z0-9._-]{1,64}$ ]]; then
+    log "placement fly (${LP_WHY}), but no pool project for $SLUG (CONSOLE_PREVIEW_POOL_PROJECT or fleet.conf) — the build runs on the hub this run"; PP=""; return 0
+  fi
+  facts=$(queue_routing_facts "$PP" 2>/dev/null) || facts=""
+  b=${facts%%|*}; hl=${facts##*|}
+  if [ "$b" != pool ] || [ "$hl" != 0 ]; then
+    log "placement fly (${LP_WHY}), but project $PP routes builder=${b:-unknown} halted=${hl:-unknown}, not an open pool — the build runs on the hub this run"; PP=""; return 0
+  fi
+  PLACE=fly
+  log "placement fly (${LP_WHY}): each console head is built and deployed by a pool row on project $PP; no npm or vite runs on the hub"
+}
+place_decide
+
 rc=0; gh_rest_pr_list "$SLUG" open > "$TMP/prs.json" || rc=$?
 [ "$rc" = 0 ] || { log "open PR list unreadable (rc=$rc HTTP ${GH_REST_STATUS:-000}) — not deploying"; exit 0; }
 jq -r --arg s "$SLUG" '.[]? | [(.number|tostring), (.head.ref // ""), (.head.sha // ""),
   (if (.head.repo.full_name // "" | ascii_downcase) == ($s | ascii_downcase) then "same" else "fork" end)] | @tsv' \
   "$TMP/prs.json" > "$TMP/prs.tsv" 2>/dev/null || { log "open PR list did not parse — not deploying"; exit 0; }
 
-# deploy_one <n> <alias> <sha> <url> — rc 0 only on a complete deploy.
-#   rc 1  the HEAD's own fault: its npm ci or vite build failed, or its dist was
-#         refused. Only this counts toward CONSOLE_PREVIEW_MAX_ATTEMPTS.
-#   rc 3  the BOX's fault, not the head's (lead BLOCK at 54f3dfea9): no build
-#         dir, a copy that failed, a build that cannot be isolated (rc 125: no
-#         setpriv, no build user, a dir it cannot write), main's Functions not
-#         copied, a wrangler or Cloudflare error. BOX_WHY says which. It is never
-#         charged to a head: the run stops and raises one alert.
-#   An UPLOAD failure is classified from wrangler's own words: only a dist
-#   Pages refuses (a file too large, too many files, a bad _headers or
-#   _redirects) is the head's (rc 1). Everything else is the box's (rc 3,
-#   BOX_STAGE=upload): auth, network, rate, a 5xx, npm's own errors (npm 10
-#   prints `npm error code ENOSPC`), a timeout (rc 124), a kill (rc 137) and any
-#   error nobody classified (lead BLOCK at 1f9246916). A head that keeps being
-#   the upload box fault is freed by the streak guard in the main loop.
+# deploy_one <n> <alias> <sha> <url> — the build and the deploy of one head on
+#   the hub: cpv_build_deploy in bin/lib/console-preview.sh (BH-8030 moved the
+#   body there, so a Fly pool machine runs the same one). rc 0 a complete
+#   deploy; rc 1 the HEAD's own fault (only this counts toward
+#   CONSOLE_PREVIEW_MAX_ATTEMPTS); rc 3 the BOX's fault (BOX_WHY, BOX_STAGE
+#   build|upload), never charged to a head: the run stops and raises one
+#   alert. A head that keeps being the upload box fault is freed by the streak
+#   guard in the main loop.
 BOX_WHY=""; BOX_STAGE=""
-# upload_fault <clean log> <wrangler rc> — box | head
-# A 401, 403 or 429 is the box's only after an error word (`HTTP 403`,
-# `status: 429`, `Error 401.`), never inside a file name (`dist/403.html`).
-# The head patterns read wrangler's error block only (from the first
-# `[ERROR]` line on). Wrangler logs `Uploading _headers` and `Uploading
-# _redirects` on every deploy before its /deployments POST, so a head pattern
-# run over the whole log would charge any unknown later failure to the head
-# (lead review lr-6056-72e007976067). No error block = an unknown fault = box.
-upload_fault() {
-  local err
-  case "$2" in 124|137) echo box; return ;; esac
-  err=$(sed -n '/\[ERROR\]/,$p' "$1")
-  if grep -qiE 'authentication error|code: 10000|unauthori[sz]ed|forbidden|invalid api token|(status|http|code|error|received|returned|response)[^0-9a-z/]{0,12}(401|403|429)([^0-9a-z./_-]|\.([^a-z0-9]|$)|$)|enotfound|econnreset|econnrefused|etimedout|eai_again|fetch failed|getaddrinfo|socket hang up|rate limit|too many requests|internal server error|service unavailable|bad gateway|gateway time-?out|npm (err!|error)|enospc|enomem|eacces|etarget' "$1"; then
-    echo box
-  elif [ -n "$err" ] && grep -qiE 'mib in size|too large|exceeds|too many files|maximum number of files|_redirects|_headers|invalid (asset|file|path)' <<<"$err"; then
-    echo head
-  else
-    echo box
-  fi
-}
-deploy_one() {
-  local n="$1" alias="$2" sha="$3" url="$4" s7=${3:0:7} drc ps urc=0 brc=0 why
-  BOX_STAGE=build
-  box() { BOX_WHY="$1"; log "#$n $1 at $s7 — not charged to the head; this run stops"; return 3; }
-  # 1. The build: the PR head in its own tree, unprivileged, clean env, no
-  #    install scripts. Only its dist's plain files come back.
-  B=$(mktemp -d "$BT/console-preview-build.XXXXXX") || { box "no build dir under $BT"; return; }
-  git -C "$CO" archive "$sha" console-ui worker catalog | tar -x -C "$B"
-  ps=("${PIPESTATUS[@]}")
-  [ "${ps[0]}" = 0 ] && [ "${ps[1]}" = 0 ] || { box "build copy failed (git archive rc=${ps[0]}, tar rc=${ps[1]})"; return; }
-  D=$(mktemp -d "$H/state/console-preview-snap.XXXXXX") || { box "no snapshot dir under $H/state"; return; }
-  cpv_run_unpriv "$B" "$B/console-ui" 600 npm ci --ignore-scripts --no-audit --no-fund >"$D/ci.log" 2>&1 || urc=$?
-  [ "$urc" = 125 ] && { box "build not isolated: $(tail -n 1 "$D/ci.log")"; return; }
-  [ "$urc" = 0 ] || { log "#$n npm ci failed at $s7 — preview not deployed"; return 1; }
-  cpv_run_unpriv "$B" "$B/console-ui" 300 npm run build >"$D/build.log" 2>&1 || brc=$?
-  [ "$brc" = 125 ] && { box "build not isolated: $(tail -n 1 "$D/build.log")"; return; }
-  [ "$brc" = 0 ] || { log "#$n vite build failed at $s7 — preview not deployed"; return 1; }
-  # 2. The deploy tree: origin/main's functions/ and src/, the PR's dist/ only.
-  git -C "$CO" archive origin/main console-ui/functions console-ui/src | tar -x -C "$D"
-  ps=("${PIPESTATUS[@]}")
-  [ "${ps[0]}" = 0 ] && [ "${ps[1]}" = 0 ] || { box "main's functions could not be copied (git archive rc=${ps[0]}, tar rc=${ps[1]})"; return; }
-  # BH-6487: the proxy's #coord-writes import needs package.json and the rendered table.
-  why=$(cpv_coord_writes "$CO" origin/main "$D" 2>&1) || { box "main's coord write table did not render (${why:-no reason})"; return; }
-  cpv_copy_dist "$B/console-ui/dist" "$D/console-ui/dist" 2>>"$D/build.log" \
-    || { log "#$n build output of $s7 refused: $(tail -n 1 "$D/build.log") — preview not deployed"; return 1; }
-  grep -q '^cpv_copy_dist: stripped' "$D/build.log" && log "#$n $(grep '^cpv_copy_dist: stripped' "$D/build.log" | tail -n 1 | sed 's/^cpv_copy_dist: //') (Pages would run them as server code; main's Functions deploy instead)"
-  # 3. The upload: pinned wrangler, no npm config from anywhere, pinned registry.
-  ( set -a; . "$CFENV"; set +a
-    export CLOUDFLARE_ACCOUNT_ID="$ACCT" npm_config_userconfig=/dev/null npm_config_globalconfig=/dev/null \
-           npm_config_registry=https://registry.npmjs.org/ npm_config_cache="$D/.npm"
-    cd "$D/console-ui" && timeout 600 npx --yes "wrangler@$WRANGLER" pages deploy dist --project-name "$(console_pages_project)" \
-      --branch "$alias" --commit-hash "$sha" --commit-message "preview PR #$n $s7" </dev/null ) >"$D/deploy.log" 2>&1
-  drc=$?
-  cpv_scrub "$D/deploy.log" > "$D/deploy.clean"
-  tail -n 5 "$D/deploy.clean" | sed "s/^/  #$n wrangler: /"
-  if [ "$drc" != 0 ] || ! grep -q 'Deployment complete' "$D/deploy.clean"; then
-    BOX_STAGE=upload
-    why="wrangler rc=$drc: $(grep -iE 'error|✘' "$D/deploy.clean" | tail -n 1 | cut -c1-200)"
-    if [ "$(upload_fault "$D/deploy.clean" "$drc")" = head ]; then
-      log "#$n preview deploy failed at $s7: Pages refused the head's own dist/ ($why) — charged to the head"; return 1
-    fi
-    box "preview deploy failed on the box side ($why) — no comment, the next tick retries"; return
-  fi
-  log "#$n preview deployed at $s7: $url"
-  return 0
-}
+deploy_one() { cpv_build_deploy "$@"; }
 
 # qa_one <n> <sha> <url> <outdir> — writes <outdir>/qa.md; rc 0 PASS, 1 FAIL.
 # The session is minted here and handed to the driver in its env only.
@@ -394,11 +381,13 @@ post_one() {
   return 1
 }
 
-# charge_fail <n> <sha> <attempts so far> — the head's own failure: record it,
-#   and at CONSOLE_PREVIEW_MAX_ATTEMPTS post the one terminal comment.
+# charge_fail <n> <sha> <attempts so far> [pool job] — the head's own failure:
+#   record it (`failed <k>`, plus the pool job number under PLACE=fly, so the
+#   next pool row is a new key), and at CONSOLE_PREVIEW_MAX_ATTEMPTS post the
+#   one terminal comment.
 charge_fail() {
   local n="$1" sha="$2" k=$(( $3 + 1 ))
-  failed=$((failed + 1)); echo "failed $k" > "$SD/$sha"
+  failed=$((failed + 1)); echo "failed $k${4:+ $4}" > "$SD/$sha"
   [ "$k" -ge "$MAXATT" ] || return 0
   {
     printf 'Console preview: not deployed for head %s.\n\n' "$sha"
@@ -411,8 +400,79 @@ charge_fail() {
 
 # box_alert <n> <sha> — the one console-preview-box alert, from the loop or the retry.
 box_alert() {
+  local who="The hub" fix="Fix it on the hub"
+  [ "$PLACE" = fly ] && { who="The Fly pool (project $PP)"; fix="Look at logs/fly-pool.log and the pool row; the hub stops waiting after CONSOLE_PREVIEW_POOL_TIMEOUT_S=$POOL_TO s"; }
   [ -x "$H/bin/lane-alert.sh" ] && "$H/bin/lane-alert.sh" --id console-preview-box console-preview-deploy \
-    "[console-preview] The hub could not build or deploy a preview: $BOX_WHY (PR #$1 head ${2:0:12}). This is the box, not the PR: no head is charged, and this run stopped. Fix it on the hub; the next tick tries again. logs/console-preview-deploy.log has the lines." >/dev/null 2>&1 || true
+    "[console-preview] $who could not build or deploy a preview: $BOX_WHY (PR #$1 head ${2:0:12}). This is the box, not the PR: no head is charged, and this run stopped. $fix; the next tick tries again. logs/console-preview-deploy.log has the lines." >/dev/null 2>&1 || true
+}
+
+# pool_box <n> <sha> <job> <attempts> <why> — the pool's fault (BH-8030): no
+#   charge, `box <job> <attempts>`, one alert, no new pool row this run.
+pool_box() {
+  BOX_WHY="$5"; echo "box $3 $4" > "$SD/$2"
+  log "#$1 $5 — not charged to the head; no new pool row this run"
+  box_alert "$1" "$2"; BOXSTOP=1
+}
+
+# fly_one <n> <alias> <sha> <url> <attempts> <job> <pool|box|""> <outdir> —
+#   one head under PLACE=fly (BH-8030). With `pool`, read row <job> once and act
+#   on it; else queue row <job>+1. rc 2: the preview binding check failed, the
+#   caller stops the loop. rc 0 otherwise.
+fly_one() {
+  local n="$1" alias="$2" sha="$3" url="$4" natt="$5" j="$6" st="$7" out="$8" key row prc rs age reason rsha meta r
+  if [ "$st" = pool ]; then
+    key=$(cpv_pool_key "$n" "$sha" "$j") || { pool_box "$n" "$sha" "$j" "$natt" "the state of ${sha:0:7} names no pool row"; return 0; }
+    prc=0; row=$(cpv_pool_row "$PP" "$key") || prc=$?
+    [ "$prc" = 0 ] || { log "#$n pool row $key unreadable — skipped this tick"; inflight=$((inflight + 1)); return 0; }
+    [ "$row" = none ] && { pool_box "$n" "$sha" "$j" "$natt" "the pool row $key is gone"; return 0; }
+    IFS=$'\t' read -r rs age reason <<<"$row"
+    case "$rs" in
+      queued|ready|claimed)
+        if [[ "$age" =~ ^[0-9]+$ ]] && [ "$age" -ge "$POOL_TO" ]; then
+          queue_done "$PP" "$key" failed "console preview: the hub stopped waiting after ${age}s (CONSOLE_PREVIEW_POOL_TIMEOUT_S=$POOL_TO)" >/dev/null 2>&1 || true
+          pool_box "$n" "$sha" "$j" "$natt" "the pool row $key was $rs for ${age}s, past CONSOLE_PREVIEW_POOL_TIMEOUT_S=$POOL_TO"
+        else
+          inflight=$((inflight + 1)); log "#$n pool row $key $rs (${age}s) — in flight"
+        fi
+        return 0 ;;
+      done)
+        case "${reason%% *}" in
+          CPV_DEPLOYED)
+            rsha=${reason#CPV_DEPLOYED }; rsha=${rsha%% *}
+            if [ "$rsha" = "$sha" ]; then
+              deployed=$((deployed + 1))
+              log "#$n preview deployed at ${sha:0:7} by pool row $key: $url"
+              qa_and_post "$n" "$sha" "$url" "$out"
+            else
+              pool_box "$n" "$sha" "$j" "$natt" "the pool row $key answered a deploy of another head (${rsha:0:12})"
+            fi
+            return 0 ;;
+          CPV_HEAD_FAILED)
+            log "#$n pool row $key: the head's own failure (${reason#CPV_HEAD_FAILED }) — charged to the head"
+            charge_fail "$n" "$sha" "$natt" "$j"
+            return 0 ;;
+        esac
+        pool_box "$n" "$sha" "$j" "$natt" "pool row $key: $(printf '%s' "${reason:--}" | cut -c1-200)"
+        return 0 ;;
+    esac
+    pool_box "$n" "$sha" "$j" "$natt" "the pool row $key is ${rs:-unknown}: $(printf '%s' "${reason:--}" | cut -c1-200)"
+    return 0
+  fi
+  if [ "$BOXSTOP" = 1 ] || [ $((queued + inflight)) -ge "$MAX" ] || [ "$attempts" -ge "$ACAP" ]; then
+    deferred=$((deferred + 1)); return 0
+  fi
+  preview_bindings_clean || return 2
+  j=$((j + 1)); key=$(cpv_pool_key "$n" "$sha" "$j") || return 0
+  meta=$(jq -nc --arg s "$SLUG" --argjson n "$n" --arg h "$sha" --arg a "$alias" --arg c "$ACCT" \
+           --arg p "$(console_pages_project)" --arg w "$WRANGLER" \
+           '{kind:"console_preview",slug:$s,pr:$n,head:$h,alias:$a,acct:$c,project:$p,wrangler:$w}') \
+    || { log "#$n pool meta for $key did not build — skipped this tick"; return 0; }
+  attempts=$((attempts + 1))
+  r=$(queue_put "$PP" "$key" "$n" fly "" "$meta") || { log "#$n queue put of $key on $PP failed — the next tick tries again"; return 0; }
+  echo "pool $j $natt" > "$SD/$sha"
+  queued=$((queued + 1))
+  log "#$n pool row $key ${r:-queued} on $PP for head ${sha:0:7} — the build runs on a Fly pool machine"
+  return 0
 }
 
 # qa_and_post <n> <sha> <url> <outdir> — after a deploy: QA, the kept comment
@@ -443,7 +503,7 @@ qa_and_post() {
 # and charges nothing. An account-wide fault (a token that can read but not
 # upload) never uploads anything, so it charges no head however long it lasts.
 PEND=""; PEND_N=""; PEND_ALIAS=""; PEND_URL=""; PEND_NATT=0; PROVEN=0; BOXSTOP=0
-seen=0; console=0; deployed=0; deferred=0; failed=0; passed=0; qfailed=0; terminal=0; attempts=0
+seen=0; console=0; deployed=0; deferred=0; failed=0; passed=0; qfailed=0; terminal=0; attempts=0; queued=0; inflight=0
 # A per-run ceiling on build attempts, so failing heads cannot hold the lane for hours.
 ACAP=$((MAX * 2))
 while IFS=$'\t' read -r n br sha kind; do
@@ -452,10 +512,17 @@ while IFS=$'\t' read -r n br sha kind; do
   [ "$kind" = same ] || continue
   rec=$(cat "$SD/$sha" 2>/dev/null)
   case "$rec" in done|no-console) continue ;; esac
-  natt=0; pk=-1
+  natt=0; pk=-1; jobn=0; jst=""
   case "$rec" in
-    "failed "*) natt=${rec#failed }; [[ "$natt" =~ ^[0-9]+$ ]] || natt=0 ;;
+    # `failed <k> [<pool job>]`: the job number is there under PLACE=fly (BH-8030).
+    "failed "*) read -r _ natt jobn _ <<<"$rec"
+                [[ "$natt" =~ ^[0-9]+$ ]] || natt=0; [[ "$jobn" =~ ^[0-9]+$ ]] || jobn=0 ;;
     "posting "*) pk=${rec#posting }; [[ "$pk" =~ ^[0-9]+$ ]] || pk=0 ;;
+    # BH-8030: a pool row of this head (`pool`) or the pool's last fault (`box`).
+    "pool "*|"box "*)
+      read -r jst jobn natt _ <<<"$rec"
+      [[ "$jobn" =~ ^[0-9]+$ ]] || jobn=0
+      [[ "$natt" =~ ^[0-9]+$ ]] || natt=0 ;;
   esac
   { [ "$natt" -ge "$MAXATT" ] || [ "$pk" -ge "$MAXATT" ]; } && { terminal=$((terminal + 1)); continue; }
   if ! git -C "$CO" fetch -q --no-write-fetch-head origin "refs/pull/$n/head" >/dev/null 2>&1 \
@@ -476,11 +543,16 @@ while IFS=$'\t' read -r n br sha kind; do
   if cpv_marker_seen "$TMP/c-$n.json" "$sha" "$url"; then echo done > "$SD/$sha"; continue; fi
   QO="$QD/$n-${sha:0:12}"
   if [ "$pk" -ge 0 ] && [ -s "$QO/comment.md" ]; then post_one "$n" "$sha" "$QO/comment.md" "$pk"; continue; fi
+  if [ "$PLACE" = fly ]; then
+    frc=0; fly_one "$n" "$alias" "$sha" "$url" "$natt" "$jobn" "$jst" "$QO" || frc=$?
+    [ "$frc" = 2 ] && break
+    continue
+  fi
   if [ "$deployed" -ge "$MAX" ] || [ "$attempts" -ge "$ACAP" ]; then deferred=$((deferred + 1)); continue; fi
   preview_bindings_clean || break
   attempts=$((attempts + 1))
   drc=0; deploy_one "$n" "$alias" "$sha" "$url" || drc=$?
-  case "$D" in "$H/state/console-preview-snap."?*) rm -rf -- "$D" ;; esac; D=""; cleanup_build
+  cleanup_build
   if [ "$drc" = 3 ] && [ "$BOX_STAGE" = upload ] && [ -z "$PEND" ]; then
     # ONE HEAD NEVER STALLS THE LANE (see THE STREAK HEAD above).
     ss=""; sk=0; read -r ss sk < "$SD/.box-streak" 2>/dev/null
@@ -517,7 +589,7 @@ done < "$TMP/prs.tsv"
 # did not stop on a box fault: one more try.
 if [ -n "$PEND" ] && [ "$PROVEN" = 1 ] && [ "$BOXSTOP" = 0 ]; then
   drc=0; deploy_one "$PEND_N" "$PEND_ALIAS" "$PEND" "$PEND_URL" || drc=$?
-  case "$D" in "$H/state/console-preview-snap."?*) rm -rf -- "$D" ;; esac; D=""; cleanup_build
+  cleanup_build
   if [ "$drc" = 0 ]; then
     rm -f "$SD/.box-streak"
     deployed=$((deployed + 1))
@@ -532,5 +604,6 @@ if [ -n "$PEND" ] && [ "$PROVEN" = 1 ] && [ "$BOXSTOP" = 0 ]; then
     box_alert "$PEND_N" "$PEND"
   fi
 fi
-log "open PRs $seen, console heads $console, deploys $deployed (failed $failed), QA pass $passed fail $qfailed, deferred $deferred (max_per_run $MAX), terminal heads $terminal"
+POOLSUM=""; [ "$PLACE" = fly ] && POOLSUM=", pool rows queued $queued, in flight $inflight (project $PP)"
+log "open PRs $seen, console heads $console, deploys $deployed (failed $failed), QA pass $passed fail $qfailed, deferred $deferred (max_per_run $MAX), terminal heads $terminal$POOLSUM"
 exit 0

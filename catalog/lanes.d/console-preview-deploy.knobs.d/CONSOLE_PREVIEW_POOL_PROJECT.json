@@ -1,0 +1,10 @@
+{
+  "env": "CONSOLE_PREVIEW_POOL_PROJECT",
+  "read_in": "bin/console-preview-deploy.sh",
+  "type": "string",
+  "default": "",
+  "zero_means": null,
+  "required": false,
+  "note": "BH-8030: the fleet project whose Fly pool builds and deploys the console previews when the settings row lane_placement.console-preview-deploy is fly. Empty = the fleet.conf project of HARNESS_REPO. The project must route builder=pool; any other routing builds on the hub, with one log line.",
+  "settable": true
+}

@@ -33,7 +33,7 @@
 queue_row_job_file() {
   local project="${1:-}" dest="${2:-}" key="${3:-}" ticket="${4:-}" attempt="${5:-}" meta="${6:-}"
   local h="${HARNESS:-/root/harness}" tag="${QRJ_TAG:-fly-dispatch/${1:-}}"
-  local ts def sb hf fs rb bad bf bv dth tmp brs cb kd rr=""
+  local ts def sb hf fs rb bad bf bv dth tmp brs cb kd rr="" cp=""
   [ -n "$project" ] && [ -n "$dest" ] && [ -n "$key" ] || return 1
   ts=$(date -u '+%Y-%m-%d %H:%M:%SZ')
   case "${ticket:-}" in -) ticket="" ;; esac
@@ -114,6 +114,15 @@ queue_row_job_file() {
     rereview:*)    _qrj_rr_refuse "$project" "$key" key "$h" "$tag"; return 3 ;;
     *:RR-*)        _qrj_rr_refuse "$project" "$key" kind "$h" "$tag"; return 3 ;;
   esac
+  # `console_preview` (BH-8030): a console preview build of one PR head,
+  # `CP-<pr>-<head8>-<job>`, queued by bin/console-preview-deploy.sh. The same
+  # both-ways rule: the meta on another key, or a CP- key without it, would be
+  # dispatched as an ordinary build of ticket <pr>.
+  case "$kd:$key" in
+    console_preview:CP-*) cp=$(_qrj_console_preview "$meta" "$key") || { _qrj_cp_refuse "$project" "$key" "$cp" "$h" "$tag"; return 3; } ;;
+    console_preview:*)    _qrj_cp_refuse "$project" "$key" key "$h" "$tag"; return 3 ;;
+    *:CP-*)               _qrj_cp_refuse "$project" "$key" kind "$h" "$tag"; return 3 ;;
+  esac
   if [ "$kd" = rebase ]; then
     rb=$(printf '%s' "$meta" | jq -c 'select(type=="object") | if (.rebase|type)=="object" then (.rebase + {kind:"rebase"}) else . end' 2>/dev/null)
     bad=""
@@ -152,7 +161,7 @@ queue_row_job_file() {
   tmp="$(dirname "$dest")/.$(basename "$dest").db"
   jq -nc --arg t "$ticket" --arg k "$key" --argjson a "$attempt" --argjson d "$def" \
      --arg ts "$ts" --arg sb "${sb:-}" --arg hf "${hf:-false}" --arg rb "${rb:-}" \
-     --arg dx "${dth:-}" --arg fs "${fs:-false}" --arg rbd "${brs:-false}" --arg cb "${cb:-}" --arg rr "${rr:-}" \
+     --arg dx "${dth:-}" --arg fs "${fs:-false}" --arg rbd "${brs:-false}" --arg cb "${cb:-}" --arg rr "${rr:-}" --arg cp "${cp:-}" \
        '{ticket_id:$t,key:$k,attempt:$a,deferrals:$d,enqueued_at:$ts,source:"db"}
         + (if $sb == "" then {} else {stack_base:$sb} end)
         + (if $cb == "" then {} else {continue_branch:$cb} end)
@@ -161,6 +170,7 @@ queue_row_job_file() {
         + (if $rbd == "true" then {rebuild:true} else {} end)
         + (if $rb == "" then {} else {rebase:($rb|fromjson)} end)
         + (if $rr == "" then {} else {rereview:($rr|fromjson)} end)
+        + (if $cp == "" then {} else {console_preview:($cp|fromjson)} end)
         + (if $dx == "" then {} else {deaths:($dx|tonumber)} end)' > "$tmp" \
     && mv "$tmp" "$dest" && return 0
   rm -f "$tmp"
@@ -216,4 +226,47 @@ _qrj_rr_refuse() {
   msg="[$tag] $key: this row's re-review meta is unusable (field '$bad') — the row is closed FAILED and NO queue file was written, because a re-review row that lost its rereview object is dispatched as an ordinary build. Fix the producer that queued this row."
   [ -x "$h/bin/alert-line.sh" ] && HARNESS="$h" "$h/bin/alert-line.sh" "$msg"
   printf '%s: rereview meta rejected (field %s) — row closed failed, no queue file written\n' "$key" "'$bad'"
+}
+
+# _qrj_console_preview <meta> <key> — the normalised `console_preview` object
+#   (BH-8030), or rc 1 with the name of the first bad field on stdout. Only the
+#   documented fields are carried, each held to the charset the machine body
+#   (bin/lib/console-preview-job.sh) checks again: `slug` owner/repo, `pr` a
+#   number, `head` 40 lowercase hex, `alias` a Pages branch alias, `acct` an
+#   account id, `project` a Pages project name, `wrangler` x.y.z. The key must
+#   be CP-<pr>-<head8>-<job>.
+_qrj_console_preview() {
+  local m="${1:-}" key="${2:-}" o f v pr="" head=""
+  o=$(printf '%s' "$m" | jq -c 'select(type=="object")
+        | {slug:(.slug // "" | tostring), pr:(.pr // "" | tostring), head:(.head // "" | tostring),
+           alias:(.alias // "" | tostring), acct:(.acct // "" | tostring),
+           project:(.project // "" | tostring), wrangler:(.wrangler // "" | tostring)}' 2>/dev/null)
+  [ -n "$o" ] || { printf 'meta'; return 1; }
+  for f in slug pr head alias acct project wrangler; do
+    v=$(printf '%s' "$o" | jq -r --arg f "$f" '.[$f]' 2>/dev/null)
+    case "$f" in
+      slug)     [[ "$v" =~ ^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$ ]] || { printf 'slug'; return 1; } ;;
+      pr)       [[ "$v" =~ ^[0-9]{1,9}$ ]] || { printf 'pr'; return 1; }; pr="$v" ;;
+      head)     [[ "$v" =~ ^[0-9a-f]{40}$ ]] || { printf 'head'; return 1; }; head="$v" ;;
+      alias)    [[ "$v" =~ ^[a-z0-9][a-z0-9-]{0,27}$ ]] || { printf 'alias'; return 1; } ;;
+      acct)     [[ "$v" =~ ^[0-9a-zA-Z-]{6,64}$ ]] || { printf 'acct'; return 1; } ;;
+      project)  [[ "$v" =~ ^[a-z0-9][a-z0-9-]{0,57}$ ]] || { printf 'project'; return 1; } ;;
+      wrangler) [[ "$v" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { printf 'wrangler'; return 1; } ;;
+    esac
+  done
+  [[ "$key" =~ ^CP-${pr}-${head:0:8}-[0-9]{1,6}$ ]] || { printf 'key'; return 1; }
+  printf '%s' "$o" | jq -c '{kind:"console_preview"} + . + {pr:(.pr|tonumber)}' 2>/dev/null
+}
+
+# _qrj_cp_refuse <project> <key> <field> <harness> <tag> — the rc 3 path for a
+#   console preview row: closed `failed`, ONE alert, no queue file, and the
+#   one-line `say` text on stdout. The hub lane reads the failed row as the
+#   box's fault and queues a new row on its next tick.
+_qrj_cp_refuse() {
+  local project="$1" key="$2" bad="${3:-meta}" h="$4" tag="$5" msg
+  command -v queue_done >/dev/null 2>&1 \
+    && { queue_done "$project" "$key" failed "console preview meta rejected ($bad)" >/dev/null 2>&1 || true; }
+  msg="[$tag] $key: this row's console preview meta is unusable (field '$bad') — the row is closed FAILED and NO queue file was written, because a console preview row that lost its console_preview object is dispatched as an ordinary build. Fix the producer (bin/console-preview-deploy.sh fly_one)."
+  [ -x "$h/bin/alert-line.sh" ] && HARNESS="$h" "$h/bin/alert-line.sh" "$msg"
+  printf '%s: console preview meta rejected (field %s) — row closed failed, no queue file written\n' "$key" "'$bad'"
 }

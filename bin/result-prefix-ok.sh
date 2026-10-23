@@ -22,5 +22,7 @@
 # REREVIEWED and REREVIEW_ are the words of a pool re-review (BH-7635,
 # bin/lib/rereview-job.sh); a bare REREVIEW prefix would pass REREVIEWX too.
 # REVIEW_ stays anchored, so the two never match each other's words.
-RESULT_PREFIX_RE='^(PR_|PLAN_|REVIEW_|BUILD_|QUEUED_|EXECUTE_|DECOMPOSE|ROLLOUT_|RESULT_|SECURITY_|REFUTE_|QA_|TAMPER_|SMOKE|REBASED|CONFLICT|GATE_RED|REBASE_|REREVIEWED|REREVIEW_)'
+# CPV_ covers CPV_DEPLOYED, CPV_HEAD_FAILED and CPV_BOX_FAILED, the words of a
+# pool console preview row (BH-8030, bin/lib/console-preview-job.sh).
+RESULT_PREFIX_RE='^(PR_|PLAN_|REVIEW_|BUILD_|QUEUED_|EXECUTE_|DECOMPOSE|ROLLOUT_|RESULT_|SECURITY_|REFUTE_|QA_|TAMPER_|SMOKE|REBASED|CONFLICT|GATE_RED|REBASE_|REREVIEWED|REREVIEW_|CPV_)'
 head -1 <<<"${1:-}" | grep -qE "$RESULT_PREFIX_RE"

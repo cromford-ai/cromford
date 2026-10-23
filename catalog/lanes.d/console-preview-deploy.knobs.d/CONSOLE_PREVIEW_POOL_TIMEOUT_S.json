@@ -1,0 +1,13 @@
+{
+  "env": "CONSOLE_PREVIEW_POOL_TIMEOUT_S",
+  "read_in": "bin/console-preview-deploy.sh",
+  "type": "int",
+  "default": 3600,
+  "min": 300,
+  "max": 86400,
+  "unit": "seconds",
+  "zero_means": null,
+  "required": false,
+  "note": "BH-8030: how long the hub waits for a queued or claimed pool row of a console head. Past it the hub closes the row failed and reads it as the box's fault (no charge to the head, one console-preview-box alert); the next tick queues a new row. Read as ${CONSOLE_PREVIEW_POOL_TIMEOUT_S:-3600}; a non-number or 0 is one log line and the default.",
+  "settable": true
+}

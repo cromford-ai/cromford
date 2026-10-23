@@ -244,3 +244,143 @@ cpv_coord_writes() {
   [ -f "$tree/console-ui/functions/_lib/coord-writes.gen.js" ] || { echo "the render wrote no coord-writes.gen.js" >&2; return 1; }
   return 0
 }
+
+# ── THE BUILD AND THE DEPLOY OF ONE HEAD (BH-8030) ───────────────────────────
+# One body for both places it runs: the hub lane (bin/console-preview-deploy.sh
+# deploy_one) and a Fly pool machine (bin/lib/console-preview-job.sh, a CP-*
+# row). The caller sets these globals and defines `log <text>`:
+#   CPV_CO        the git dir that holds <sha> and origin/main
+#   CPV_BT        where the unprivileged build tree console-preview-build.* is made
+#   CPV_SNAP_DIR  where the root-owned deploy tree console-preview-snap.* is made
+#   CPV_CFENV     the env file with CLOUDFLARE_API_TOKEN
+#   CPV_ACCT      the Cloudflare account id
+#   CPV_WRANGLER  the exact wrangler version
+#   CPV_TOKV      the API token value, for cpv_scrub
+# It sets CPV_B and CPV_D (the two trees: the caller removes them on every
+# path), BOX_WHY and BOX_STAGE (build|upload) for rc 3, CPV_HEAD_WHY for rc 1,
+# and CPV_STRIPPED (the dist entries cpv_copy_dist removed).
+
+# cpv_scrub <file> — the file with the API token (CPV_TOKV) and any Bearer
+# value replaced by ***.
+cpv_scrub() { CP_TOK="${CPV_TOKV:-}" awk '{t=ENVIRON["CP_TOK"]; if (t!="") while ((i=index($0,t))>0) $0=substr($0,1,i-1) "***" substr($0,i+length(t)); gsub(/Bearer[ \t]+[^ \t]+/,"Bearer ***"); print}' "$1"; }
+
+# cpv_upload_fault <clean log> <wrangler rc> — prints box | head.
+# A 401, 403 or 429 is the box's only after an error word (`HTTP 403`,
+# `status: 429`, `Error 401.`), never inside a file name (`dist/403.html`).
+# The head patterns read wrangler's error block only (from the first
+# `[ERROR]` line on). Wrangler logs `Uploading _headers` and `Uploading
+# _redirects` on every deploy before its /deployments POST, so a head pattern
+# run over the whole log would charge any unknown later failure to the head
+# (lead review lr-6056-72e007976067). No error block = an unknown fault = box.
+cpv_upload_fault() {
+  local err
+  case "$2" in 124|137) echo box; return ;; esac
+  err=$(sed -n '/\[ERROR\]/,$p' "$1")
+  if grep -qiE 'authentication error|code: 10000|unauthori[sz]ed|forbidden|invalid api token|(status|http|code|error|received|returned|response)[^0-9a-z/]{0,12}(401|403|429)([^0-9a-z./_-]|\.([^a-z0-9]|$)|$)|enotfound|econnreset|econnrefused|etimedout|eai_again|fetch failed|getaddrinfo|socket hang up|rate limit|too many requests|internal server error|service unavailable|bad gateway|gateway time-?out|npm (err!|error)|enospc|enomem|eacces|etarget' "$1"; then
+    echo box
+  elif [ -n "$err" ] && grep -qiE 'mib in size|too large|exceeds|too many files|maximum number of files|_redirects|_headers|invalid (asset|file|path)' <<<"$err"; then
+    echo head
+  else
+    echo box
+  fi
+}
+
+# cpv_build_deploy <n> <alias> <sha> <url> — rc 0 only on a complete deploy.
+#   rc 1  the HEAD's own fault: its npm ci or vite build failed, or its dist was
+#         refused (CPV_HEAD_WHY says which). Only this counts toward
+#         CONSOLE_PREVIEW_MAX_ATTEMPTS.
+#   rc 3  the BOX's fault, not the head's (lead BLOCK at 54f3dfea9): no build
+#         dir, a copy that failed, a build that cannot be isolated (rc 125: no
+#         setpriv, no build user, a dir it cannot write), main's Functions not
+#         copied, a wrangler or Cloudflare error. BOX_WHY says which. It is never
+#         charged to a head.
+#   An UPLOAD failure is classified from wrangler's own words: only a dist
+#   Pages refuses (a file too large, too many files, a bad _headers or
+#   _redirects) is the head's (rc 1). Everything else is the box's (rc 3,
+#   BOX_STAGE=upload): auth, network, rate, a 5xx, npm's own errors (npm 10
+#   prints `npm error code ENOSPC`), a timeout (rc 124), a kill (rc 137) and any
+#   error nobody classified (lead BLOCK at 1f9246916).
+cpv_build_deploy() {
+  local n="$1" alias="$2" sha="$3" url="$4" s7=${3:0:7} drc ps urc=0 brc=0 why
+  local co="${CPV_CO:-}" bt="${CPV_BT:-/tmp}" snap="${CPV_SNAP_DIR:-}"
+  BOX_STAGE=build; BOX_WHY=""; CPV_HEAD_WHY=""; CPV_STRIPPED=""; CPV_B=""; CPV_D=""
+  _cpv_box() { BOX_WHY="$1"; log "#$n $1 at $s7 — not charged to the head; this run stops"; return 3; }
+  _cpv_head() { CPV_HEAD_WHY="$1"; log "#$n $1 at $s7 — preview not deployed"; return 1; }
+  [ -n "$co" ] && [ -n "$snap" ] && [ -n "${CPV_CFENV:-}" ] || { _cpv_box "the build is not configured (CPV_CO, CPV_SNAP_DIR or CPV_CFENV unset)"; return; }
+  # 1. The build: the PR head in its own tree, unprivileged, clean env, no
+  #    install scripts. Only its dist's plain files come back.
+  CPV_B=$(mktemp -d "$bt/console-preview-build.XXXXXX") || { CPV_B=""; _cpv_box "no build dir under $bt"; return; }
+  git -C "$co" archive "$sha" console-ui worker catalog | tar -x -C "$CPV_B"
+  ps=("${PIPESTATUS[@]}")
+  [ "${ps[0]}" = 0 ] && [ "${ps[1]}" = 0 ] || { _cpv_box "build copy failed (git archive rc=${ps[0]}, tar rc=${ps[1]})"; return; }
+  CPV_D=$(mktemp -d "$snap/console-preview-snap.XXXXXX") || { CPV_D=""; _cpv_box "no snapshot dir under $snap"; return; }
+  cpv_run_unpriv "$CPV_B" "$CPV_B/console-ui" 600 npm ci --ignore-scripts --no-audit --no-fund >"$CPV_D/ci.log" 2>&1 || urc=$?
+  [ "$urc" = 125 ] && { _cpv_box "build not isolated: $(tail -n 1 "$CPV_D/ci.log")"; return; }
+  [ "$urc" = 0 ] || { _cpv_head "npm ci failed"; return; }
+  cpv_run_unpriv "$CPV_B" "$CPV_B/console-ui" 300 npm run build >"$CPV_D/build.log" 2>&1 || brc=$?
+  [ "$brc" = 125 ] && { _cpv_box "build not isolated: $(tail -n 1 "$CPV_D/build.log")"; return; }
+  [ "$brc" = 0 ] || { _cpv_head "vite build failed"; return; }
+  # 2. The deploy tree: origin/main's functions/ and src/, the PR's dist/ only.
+  git -C "$co" archive origin/main console-ui/functions console-ui/src | tar -x -C "$CPV_D"
+  ps=("${PIPESTATUS[@]}")
+  [ "${ps[0]}" = 0 ] && [ "${ps[1]}" = 0 ] || { _cpv_box "main's functions could not be copied (git archive rc=${ps[0]}, tar rc=${ps[1]})"; return; }
+  # BH-6487: the proxy's #coord-writes import needs package.json and the rendered table.
+  why=$(cpv_coord_writes "$co" origin/main "$CPV_D" 2>&1) || { _cpv_box "main's coord write table did not render (${why:-no reason})"; return; }
+  if ! cpv_copy_dist "$CPV_B/console-ui/dist" "$CPV_D/console-ui/dist" 2>>"$CPV_D/build.log"; then
+    CPV_HEAD_WHY="build output refused: $(tail -n 1 "$CPV_D/build.log")"
+    log "#$n build output of $s7 refused: $(tail -n 1 "$CPV_D/build.log") — preview not deployed"; return 1
+  fi
+  if grep -q '^cpv_copy_dist: stripped' "$CPV_D/build.log"; then
+    CPV_STRIPPED=$(grep '^cpv_copy_dist: stripped' "$CPV_D/build.log" | tail -n 1 | sed 's/^cpv_copy_dist: stripped from the PR build output://')
+    log "#$n $(grep '^cpv_copy_dist: stripped' "$CPV_D/build.log" | tail -n 1 | sed 's/^cpv_copy_dist: //') (Pages would run them as server code; main's Functions deploy instead)"
+  fi
+  # 3. The upload: pinned wrangler, no npm config from anywhere, pinned registry.
+  ( set -a; . "$CPV_CFENV"; set +a
+    export CLOUDFLARE_ACCOUNT_ID="$CPV_ACCT" npm_config_userconfig=/dev/null npm_config_globalconfig=/dev/null \
+           npm_config_registry=https://registry.npmjs.org/ npm_config_cache="$CPV_D/.npm"
+    cd "$CPV_D/console-ui" && timeout 600 npx --yes "wrangler@$CPV_WRANGLER" pages deploy dist --project-name "$(console_pages_project)" \
+      --branch "$alias" --commit-hash "$sha" --commit-message "preview PR #$n $s7" </dev/null ) >"$CPV_D/deploy.log" 2>&1
+  drc=$?
+  cpv_scrub "$CPV_D/deploy.log" > "$CPV_D/deploy.clean"
+  tail -n 5 "$CPV_D/deploy.clean" | sed "s/^/  #$n wrangler: /"
+  if [ "$drc" != 0 ] || ! grep -q 'Deployment complete' "$CPV_D/deploy.clean"; then
+    BOX_STAGE=upload
+    why="wrangler rc=$drc: $(grep -iE 'error|✘' "$CPV_D/deploy.clean" | tail -n 1 | cut -c1-200)"
+    if [ "$(cpv_upload_fault "$CPV_D/deploy.clean" "$drc")" = head ]; then
+      CPV_HEAD_WHY="Pages refused the head's own dist/ ($why)"
+      log "#$n preview deploy failed at $s7: $CPV_HEAD_WHY — charged to the head"; return 1
+    fi
+    _cpv_box "preview deploy failed on the box side ($why) — no comment, the next tick retries"; return
+  fi
+  log "#$n preview deployed at $s7: $url"
+  return 0
+}
+
+# ── THE POOL PLACEMENT (BH-8030) ──────────────────────────────────────────────
+# With the settings row lane_placement.console-preview-deploy = fly, the hub
+# lane queues one pool row per PR head (key CP-<pr>-<head8>-<job>, meta kind
+# console_preview) and a Fly pool machine runs cpv_build_deploy
+# (bin/lib/console-preview-job.sh). The hub reads the row back. These helpers
+# need the jobs client (_jobs_req).
+
+# cpv_pool_key <pr> <sha> <job> — CP-<pr>-<head8>-<job>.
+cpv_pool_key() {
+  [[ "${1:-}" =~ ^[0-9]+$ && "${2:-}" =~ ^[0-9a-f]{40}$ && "${3:-}" =~ ^[0-9]+$ ]] || return 1
+  printf 'CP-%s-%s-%s\n' "$1" "${2:0:8}" "$3"
+}
+
+# cpv_pool_row <project> <key> — ONE queue read. rc 0 prints `none`, or
+# `<status>\t<age s or ->\t<reason line 1>`. rc 1 when the read failed or the
+# body did not parse: a failed read is never `none`.
+cpv_pool_row() {
+  local resp now
+  resp=$(_jobs_req GET "/api/queue?project=$1&key=$2&limit=1") || return 1
+  now=${CPV_NOW:-$(date -u +%s)}
+  printf '%s' "$resp" | jq -er --argjson now "$now" '
+    def age: (. // "") | tostring | sub("\\.[0-9]+Z$"; "Z") | (fromdateiso8601? // null)
+      | if . == null then "-" else ($now - .) | tostring end;
+    if (.queue | type) != "array" then error("no queue")
+    else (.queue[0] // null) | if . == null then "none"
+    else [ (.status // ""), (.enqueued_at | age),
+           ((.reason // "") | (split("\n")[0] // "") | gsub("[\t\r]"; " ")) ] | join("\t") end end' 2>/dev/null
+}

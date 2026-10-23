@@ -151,6 +151,7 @@ dm_job_admit() {
     jq -e '.hotfix == true' "$f" >/dev/null 2>&1 && return 0
   fi
   a=$(jq -r 'if ((.rebase // null) | type) == "object" then "yes"
+      elif ((.console_preview // null) | type) == "object" then "yes"
       elif .rebuild == true then "yes"
       elif ((.deaths // 0) | tonumber? // 0) > 0 then "yes"
       else "no" end' "$f" 2>/dev/null)

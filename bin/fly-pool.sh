@@ -235,12 +235,13 @@ hotfix_first() {
   # once the budget is spent, so a hot row after any other row loses its cap
   # exemption (BH-7382). Then conductor rebase rows (RB-<pr>-<head8>) and
   # re-review rows (RR-<pr>-<head8>, BH-7635): each unblocks a merge and is one
-  # short machine. Newest by age, they starved
+  # short machine. Console preview rows (CP-<pr>-<head8>-<job>, BH-8030) go
+  # with them: each is one short build a hub lane waits on. Newest by age, they starved
   # behind 130 older builds in the 600 s tick budget (project-6-os, 2026-10-19).
   for f in "$@"; do job_is_hot "$f" && printf '%s\n' "$f"; done
-  for f in "$@"; do case "${f##*/}" in RB-*|RR-*) job_is_hot "$f" || printf '%s\n' "$f" ;; esac; done
-  for f in "$@"; do case "${f##*/}" in RB-*|RR-*) continue ;; esac; job_is_hot "$f" || ! job_is_now "$f" || printf '%s\n' "$f"; done
-  for f in "$@"; do case "${f##*/}" in RB-*|RR-*) continue ;; esac; job_is_hot "$f" || job_is_now "$f" || printf '%s\n' "$f"; done
+  for f in "$@"; do case "${f##*/}" in RB-*|RR-*|CP-*) job_is_hot "$f" || printf '%s\n' "$f" ;; esac; done
+  for f in "$@"; do case "${f##*/}" in RB-*|RR-*|CP-*) continue ;; esac; job_is_hot "$f" || ! job_is_now "$f" || printf '%s\n' "$f"; done
+  for f in "$@"; do case "${f##*/}" in RB-*|RR-*|CP-*) continue ;; esac; job_is_hot "$f" || job_is_now "$f" || printf '%s\n' "$f"; done
 }
 # Start the flyctl agent with fd 8 CLOSED: an agent auto-spawned by `machine
 # exec` inside the locked section inherits fd 8 and holds the lock forever
@@ -2038,6 +2039,9 @@ pool_spawn_decision() {
   case "$KEY" in
     RB-*) say "$KEY: rebase row — the ticket spawn gates do not apply"; return 0 ;;
     RR-*) say "$KEY: re-review row — the ticket spawn gates do not apply"; return 0 ;;
+    # A console preview row (BH-8030): a build of one PR head for the hub's
+    # console preview lane, which owns its retries. Never a ticket.
+    CP-*) say "$KEY: console preview row — the ticket spawn gates do not apply"; return 0 ;;
   esac
   if [ "${_POOL_ROWS_DECIDED:-0}" -ge 1 ] && pool_tick_budget_spent; then
     [ -n "${_POOL_BUDGET_SAID:-}" ] || say "tick budget of ${POOL_TICK_BUDGET_S:-600}s spent for $P: no more rows are decided this tick, the lock is released at the end"
@@ -3085,6 +3089,14 @@ next_job_or_destroy() { # hand this machine the next queued job, or destroy it
     REUSE_OK=0
     say "$MID carries a read token for $KEY's spec repos — destroying instead of reusing"
   fi
+  # ...and never reuse a machine that ran a console preview row (BH-8030): the
+  # hub pushed it the Pages token for that row alone.
+  case "${KEY:-}" in
+    CP-*) if [ "$REUSE_OK" = 1 ]; then
+            REUSE_OK=0
+            say "$MID ran console preview row $KEY — destroying instead of reusing"
+          fi ;;
+  esac
   if [ "$MSTATE" = "started" ] && [ "$REUSE_OK" = 1 ]; then
     # Hotfix jobs first when the helper is there, today's mtime order when it is
     # not. The fallback is not defensive noise: tests/pool-account-routing-test.sh
@@ -3117,6 +3129,9 @@ next_job_or_destroy() { # hand this machine the next queued job, or destroy it
       # never the key we just reaped (the runner detects new work partly by
       # key change), never a key already running elsewhere in the pool
       [ "$NKEY" = "$KEY" ] && continue
+      # ...and never a console preview row (BH-8030): its token is pushed at
+      # spawn, so it takes a fresh machine.
+      case "$NKEY" in CP-*) continue ;; esac
       # pool_key_live (BH-5001) reads the claim too; the bare grep is the
       # fallback for the suites that source this function alone.
       if command -v pool_key_live >/dev/null 2>&1; then pool_key_live "$NKEY" && continue
@@ -3187,7 +3202,7 @@ next_job_or_destroy() { # hand this machine the next queued job, or destroy it
         # as SPAWNCAPTS does in spawn_one, so a REFUSED claim on THIS machine's
         # next reap can be un-recorded too.
         NHANDOFFTS=""
-        case "$NKEY" in RB-*|RR-*) ;; *) command -v pool_spawn_cap_record >/dev/null 2>&1 && NHANDOFFTS=$(pool_spawn_cap_record "$NKEY" "$MID"); esac
+        case "$NKEY" in RB-*|RR-*|CP-*) ;; *) command -v pool_spawn_cap_record >/dev/null 2>&1 && NHANDOFFTS=$(pool_spawn_cap_record "$NKEY" "$MID"); esac
       fi
       # THE CLAIM COMES BEFORE THE HANDOFF (BH-1026.3), for the same reason it
       # comes before a spawn: this is a BUILD, metered exactly like a spawned one
@@ -3566,6 +3581,22 @@ for MF in "$POOL"/*.json; do
             esac ;;
         esac ;;
       RR-*) ;;
+      # A CP- console preview row carries the whole RESULT too (BH-8030); only a
+      # CPV_ word in it is the finished job.
+      CP-*)
+        case "$MSTATE" in
+          ""|stopped|destroyed|failed|suspended)
+            RBROWF=$(mktemp)
+            ROW_RLINE=$(pool_result_row_get "$P" "$KEY" "$MID" "$SPAT" "$RBROWF"); ROWRC=$?
+            [ "$ROWRC" = 0 ] || ROW_RLINE=""
+            [ "$ROWRC" = 1 ] && say "pool-result row for $KEY unreadable (machine $MID state=${MSTATE:-gone}) — reaped as it always was"
+            case "${ROW_RLINE%% *}" in
+              CPV_*)
+                RES="$ROW_RLINE"; RES_FROM_ROW=1
+                say "result for $KEY taken from the pool-result row (machine $MID state=${MSTATE:-gone}, unreachable)" ;;
+              *) ROW_RLINE=""; rm -f "$RBROWF"; RBROWF="" ;;
+            esac ;;
+        esac ;;
       *)
         case "$MSTATE" in
           ""|stopped|destroyed|failed|suspended)
@@ -3711,6 +3742,32 @@ for MF in "$POOL"/*.json; do
           esac ;;
       esac
     fi
+    # >>> pool console preview reap
+    # --- A CONSOLE PREVIEW IS NOT A BUILD (BH-8030) ---------------------------
+    # A CP-<pr>-<head8>-<job> machine ran the console preview lane's build and
+    # Pages upload (bin/lib/console-preview-job.sh). Its RESULT line 1 closes
+    # the row `done`, and the hub lane (bin/console-preview-deploy.sh) reads it
+    # there: QA, the comment and the state file are the lane's. There is no PR
+    # to verify and no board close-out. A CPV_ word on any other key, or any
+    # other word on a CP key (a stand-down excepted: the BUILD_DEFERRED arm
+    # below owns it), is a RESULT nobody can apply: the row is FAILED, and the
+    # build path never sees it.
+    CPK=0; case "$KEY" in CP-*) CPK=1 ;; esac
+    CPW=0; case "$RLINE" in CPV_*) CPW=1 ;; esac
+    if [ "$CPW" = 1 ] || { [ "$CPK" = 1 ] && [[ "$RLINE" != BUILD_DEFERRED* ]]; }; then
+      : > "$LOCAL/COMMENTED"
+      if [ "$CPW" = 1 ] && [ "$CPK" = 1 ]; then
+        QROW done "$KEY" "$(head -1 "$LOCAL/RESULT" | head -c 400)"
+        say "reaped console preview $KEY from $MID: $(head -1 "$LOCAL/RESULT" | head -c 120)"
+      else
+        QROW failed "$KEY" "console preview RESULT and row key do not match; row FAILED, not requeued"
+        HARNESS="$HARNESS" "$HARNESS/bin/alert-line.sh" "[pool/$P] $KEY: the RESULT ($(head -c 80 "$LOCAL/RESULT" | tr '\n' ' ')) and the row key do not match — a CPV_ word belongs to a CP- row and a CP- row answers only a CPV_ word. The queue row is FAILED and NOT requeued, and the RESULT is never read as a build. The RESULT is at $LOCAL/RESULT"
+        say "console preview $KEY: RESULT/key mismatch — row failed, RESULT at $LOCAL/RESULT"
+      fi
+      next_job_or_destroy
+      continue
+    fi
+    # <<< pool console preview reap
     # >>> pool rereview reap
     # --- A RE-REVIEW IS NOT A BUILD EITHER (BH-7635) --------------------------
     # An RR-<pr>-<head8> machine ran the conductor's head-bound re-review
@@ -3993,6 +4050,15 @@ for MF in "$POOL"/*.json; do
           QROW failed "$KEY" "re-review machine stood down before the job ran; row FAILED, not requeued"
           HARNESS="$HARNESS" "$HARNESS/bin/alert-line.sh" "[pool/$P] $KEY: re-review machine answered BUILD_DEFERRED ($DWHY) — the queue row is FAILED and NOT requeued, because the requeue rebuilds the queue file without the rereview object and the next machine would run an ordinary BUILD of ticket $TICKET. $RRREC. Evidence: $LOCAL"
           say "rereview $KEY: deferred ($DWHY) — row failed, not requeued"
+          next_job_or_destroy
+          continue ;;
+        CP-*)
+          # A CONSOLE PREVIEW ROW STANDS DOWN THE SAME WAY (BH-8030): the
+          # requeue would lose the console_preview object. The hub lane reads
+          # the failed row as the box's fault and queues a new row.
+          : > "$LOCAL/COMMENTED"
+          QROW failed "$KEY" "console preview machine stood down before the job ran; row FAILED, not requeued"
+          say "console preview $KEY: deferred ($DWHY) — row failed, not requeued; the hub lane queues a new row"
           next_job_or_destroy
           continue ;;
       esac
@@ -4467,7 +4533,7 @@ for MF in "$POOL"/*.json; do
     # below): announcing a requeue that never happens is how a log stops being
     # evidence. Every other key reads byte-for-byte the line it always did.
     DDISP="requeue attempt=$NEXT deaths=$DNEXT"
-    case "$KEY" in RB-*) DDISP="rebase row FAILED, not requeued" ;; RR-*) DDISP="re-review row FAILED, not requeued" ;; esac
+    case "$KEY" in RB-*) DDISP="rebase row FAILED, not requeued" ;; RR-*) DDISP="re-review row FAILED, not requeued" ;; CP-*) DDISP="console preview row FAILED, not requeued" ;; esac
     # A JOB THAT FINISHED NEVER GETS HERE (BH-2643, BH-7719): a not-started
     # machine whose own pool-result row carries a result was reaped from that
     # row above. What reaches this line has no result at all.
@@ -4531,6 +4597,12 @@ for MF in "$POOL"/*.json; do
         fi
         QROW failed "$KEY" "re-review machine $MID died (state=${MSTATE:-gone}); row FAILED, not requeued"
         HARNESS="$HARNESS" "$HARNESS/bin/alert-line.sh" "[pool/$P] $KEY: re-review machine $MID died (state=${MSTATE:-gone}) with no RESULT — the queue row is FAILED and NOT requeued, because a requeue rebuilds the queue file from the machine json, which carries no rereview object, and the next machine would run an ordinary BUILD of ticket $TICKET. $RRREC; nothing here retries."
+        continue ;;
+      CP-*)
+        # A DEAD CONSOLE PREVIEW is failed and never requeued (BH-8030), for
+        # the reason above. The hub lane reads the failed row as the box's
+        # fault, alerts once, and queues a new row on its next tick.
+        QROW failed "$KEY" "console preview machine $MID died (state=${MSTATE:-gone}); row FAILED, not requeued"
         continue ;;
     esac
     if [ "$DNEXT" -ge 2 ]; then
@@ -4957,6 +5029,9 @@ pool_pull_sweep() {
 # $tmp/seed holds the job and the relays; the env lines join it at launch.
 pool_pull_decide() {
   local k="$1" jf="$2" tmp="$3" why="${POOL_PULL_WHY:-}" exp ht max bytes
+  # BH-8030: a console preview row pushes the Pages token after the launch,
+  # never in a seed.
+  [ -n "$why" ] || case "$k" in CP-*) why="a console preview row carries the Pages token" ;; esac
   if [ -z "$why" ]; then
     if ! { command -v gh_auth_armed >/dev/null 2>&1 && gh_auth_armed && [ -x "$HARNESS/bin/gh-token.sh" ]; }; then
       why="App tokens are not armed"
@@ -5173,7 +5248,22 @@ spawn_one() { # spawn_one <job-file> <key> <ticket-id> <attempt> <deferrals> <de
     pool_unclaim "$KEY" "env bundle failed: $EB_WHY"; return 1
   fi
   local SPAWNCAPTS=""
-  case "$KEY" in RB-*|RR-*) ;; *) SPAWNCAPTS=$(pool_spawn_cap_record "$KEY") ;; esac
+  case "$KEY" in RB-*|RR-*|CP-*) ;; *) SPAWNCAPTS=$(pool_spawn_cap_record "$KEY") ;; esac
+  # A CONSOLE PREVIEW ROW CARRIES THE PAGES TOKEN (BH-8030). Its machine
+  # uploads the preview, so the hub's cloudflare.env (the token and account
+  # lines only) goes to /run/harness-env/cloudflare.env, mode 0600, on the push
+  # path only (pool_pull_decide sends a CP- row there: a pull seed can end up in
+  # the machine config). No token on the hub: the row is FAILED before any
+  # machine is bought, and the console preview lane reads that as the box's.
+  if [[ "$KEY" == CP-* ]]; then
+    grep -E '^(export[[:space:]]+)?CLOUDFLARE_(API_TOKEN|ACCOUNT_ID)=' "$HENV/cloudflare.env" 2>/dev/null > "$TMP/cloudflare.env"
+    if ! grep -qE '^(export[[:space:]]+)?CLOUDFLARE_API_TOKEN=.' "$TMP/cloudflare.env"; then
+      rm -rf "$TMP"; rm -f "$JF"
+      QROW failed "$KEY" "console preview: no CLOUDFLARE_API_TOKEN in the hub env/cloudflare.env; no machine spawned"
+      say "$KEY: no Cloudflare token on the hub — console preview row FAILED, no machine spawned"
+      return 1
+    fi
+  fi
   local MID TB SYNC_OK OK SNAP_SRC SNAP_MT MEXP="" MINST="" MAPP=hub SHF=false
   # `hotfix` is read off the JOB FILE rather than passed as an argument: the
   # spawn call's argument list is pinned by tests/no-serialize-test.sh (it is the
@@ -5546,6 +5636,7 @@ spawn_one() { # spawn_one <job-file> <key> <ticket-id> <attempt> <deferrals> <de
     mput "$MID" "$POOL_MR_BUNDLE" /run/harness-env/model-routes.tsv \
       || say "$MID: model-routes bundle push FAILED — it resolves its own ladders at job start"
   fi
+  if [ -s "$TMP/cloudflare.env" ]; then mput "$MID" "$TMP/cloudflare.env" /run/harness-env/cloudflare.env || OK=0; fi
   mput "$MID" "$JF" /run/harness/job.json || OK=0
   fi
   rm -rf "$TMP"
@@ -5764,7 +5855,7 @@ for JF in $(hotfix_first $(ls -tr "$QDIR"/*.json 2>/dev/null)); do
   # does in a serial walk; workers already started finish and spawn.
   if [ "$PDC_ON" = 1 ]; then
     case "$KEY" in
-      RB-*|RR-*) ;;
+      RB-*|RR-*|CP-*) ;;
       *) if [ "$PDC_BUDGET_N" -ge 1 ] && pool_tick_budget_spent; then
            [ -n "${_POOL_BUDGET_SAID:-}" ] || say "tick budget of ${POOL_TICK_BUDGET_S:-600}s spent for $P: no more rows are decided this tick, the lock is released at the end"
            _POOL_BUDGET_SAID=1; PDC_STOP=budget; PDC_SEEN=$((PDC_SEEN - 1)); break

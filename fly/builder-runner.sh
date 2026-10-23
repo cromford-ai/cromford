@@ -538,7 +538,7 @@ pool_result_row_write() {
   [ "${POOL_MODE:-}" = 1 ] || return 0
   local key full=""
   key=$(jq -r '.key // ""' "$JOB" 2>/dev/null)
-  case "$key" in ''|RR-*) return 0 ;; RB-*) full=full ;; esac
+  case "$key" in ''|RR-*) return 0 ;; RB-*|CP-*) full=full ;; esac
   # shellcheck source=bin/lib/pool-result-row.sh
   . "$HARNESS/bin/lib/pool-result-row.sh" 2>/dev/null || return 0
   command -v pool_result_row_put >/dev/null 2>&1 || return 0
@@ -560,7 +560,7 @@ pool_record_write() {
   [ "${POOL_MODE:-}" = 1 ] || return 0
   local key bd
   key=$(jq -r '.key // ""' "$JOB" 2>/dev/null)
-  case "$key" in ''|RB-*) return 0 ;; esac
+  case "$key" in ''|RB-*|CP-*) return 0 ;; esac
   # shellcheck source=bin/lib/pool-record.sh
   . "$HARNESS/bin/lib/pool-record.sh" 2>/dev/null || return 0
   command -v pool_record_put >/dev/null 2>&1 || return 0
@@ -660,6 +660,39 @@ run_rereview_job() { # run_rereview_job <job key>
   return "$rc"
 }
 
+# --- a POOL CONSOLE PREVIEW job (BH-8030) --------------------------------------
+# Not a build: the console preview lane (bin/console-preview-deploy.sh) queued
+# a `CP-<pr>-<head8>-<job>` row so the hub does not run npm ci and vite build.
+# bin/lib/console-preview-job.sh is the whole body: the hub's own unprivileged
+# build and the pinned Pages preview upload, one CPV_* RESULT, nothing to
+# GitHub. The Pages token the hub pushed for this row
+# (/run/harness-env/cloudflare.env) is removed on every path, and the hub never
+# hands this machine another job. A setup failure is CPV_BOX_FAILED, never
+# BUILD_DEFERRED: nothing re-offers the row, and the hub lane queues a new one.
+CPV_RUNNER_CFENV=/run/harness-env/cloudflare.env
+console_preview_setup_result() { # console_preview_setup_result <why>
+  local pr head
+  pr=$(jq -r '.console_preview.pr // "-"' "$JOB" 2>/dev/null); head=$(jq -r '.console_preview.head // "-"' "$JOB" 2>/dev/null)
+  printf 'CPV_BOX_FAILED setup: %s\nPR: %s\nHEAD: %s\n' "$1" "${pr:--}" "${head:--}" > "$RESULT_FILE"
+  log "console preview job setup failed: $1"
+}
+
+run_console_preview_job() { # run_console_preview_job <job key>
+  local key="$1" rc=1 lib="$HARNESS/bin/lib/console-preview-job.sh"
+  log "console preview job key=$key"
+  if ! warm_up; then
+    console_preview_setup_result "warm-up failed"
+  elif [ ! -r "$lib" ] || ! . "$lib" || ! type cpv_pool_job_run >/dev/null 2>&1; then
+    console_preview_setup_result "no console preview lib at $lib"
+  else
+    CPV_POOL_CFENV="$CPV_RUNNER_CFENV" cpv_pool_job_run "$REPO" "$JOB" "$RESULT_FILE"
+    rc=$?
+  fi
+  rm -f "$CPV_RUNNER_CFENV"
+  log "console preview job done: $(head -1 "$RESULT_FILE" 2>/dev/null)"
+  return "$rc"
+}
+
 # --- slot preflight (BH-5021) --------------------------------------------------
 # A pool machine runs one job at a time, so between jobs nothing may hold a
 # build slot. Something did on BH-4973's three reused machines (a stray from the
@@ -751,6 +784,13 @@ _run_job() {
     run_rebase_job "$key"; rrc=$?
     stop_heartbeat
     return "$rrc"
+  fi
+  # --- pool CONSOLE PREVIEW job (BH-8030): a preview build, never a ticket ----
+  if [ "$(jq -r '.console_preview.kind // ""' "$JOB" 2>/dev/null)" = console_preview ]; then
+    local cprc
+    run_console_preview_job "$key"; cprc=$?
+    stop_heartbeat
+    return "$cprc"
   fi
   # --- pool RE-REVIEW job (BH-7635): a conductor read, never a build ----------
   if [ "$(jq -r '.rereview.kind // ""' "$JOB" 2>/dev/null)" = rereview ]; then
