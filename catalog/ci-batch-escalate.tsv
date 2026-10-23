@@ -156,6 +156,7 @@ ci-images/	worker	the image worker-jobs runs in when CI_IMAGE is on (BH-7255)
 catalog/model-prices.json	worker	worker/jobs/test/route-rules.p4.test.js reads it
 catalog/readiness-levels.json	worker	worker/jobs/test/settings-conf-value.bh-2411.test.js reads it
 worker/jobs/src/lib/box-command-args.js	spa	console-ui/tests/machines-orgo-actions.bh-5750.test.js imports it (BH-5750)
+catalog/prompt-markers.json	spa	console-ui/src/ui/PromptEditor.js reads it by a relative path (BH-7973, #8154); fixes ci-plan-spa-worker X1 on main (BH-8207)
 console-ui/src/lib/box-commands.js	worker	worker/jobs/test/box-command-types-drift.bh-5750.test.js imports it (BH-5750)
 mcp/lib/	worker	worker/jobs/test/box-ssh.bh-7710.test.js imports mcp/lib/tools.mjs (BH-7710)
 mcp/tools/	worker	worker/jobs/test/box-ssh.bh-7710.test.js loads the MCP tool modules in mcp/tools/ (BH-7710)
