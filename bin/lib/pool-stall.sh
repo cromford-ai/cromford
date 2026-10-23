@@ -100,7 +100,7 @@ pool_inflight_hold_action() {
 pool_inflight_hold_due() {
   local t="${1:-}" k="${2:-}" ls="${3:-}" inl="${4:-0}" lk="${5:-}" last="${6:-}" used="${7:-}" max="${8:-}" eff
   case "$t" in ''|*[!0-9]*) printf 'skip\tboard-ticket\n'; return 0 ;; esac
-  case "$k" in RB-*) printf 'skip\trebase\n'; return 0 ;; RR-*) printf 'skip\trereview\n'; return 0 ;; CP-*) printf 'skip\tconsole-preview\n'; return 0 ;; esac
+  case "$k" in RB-*) printf 'skip\trebase\n'; return 0 ;; RR-*) printf 'skip\trereview\n'; return 0 ;; LR-*) printf 'skip\tleadreview\n'; return 0 ;; CP-*) printf 'skip\tconsole-preview\n'; return 0 ;; esac
   { _ps_int "$max" && [ "$max" -gt 0 ]; } || { printf 'skip\toff\n'; return 0; }
   _ps_int "$used" || used=0
   [ "$ls" = ok ] || { printf 'skip\tlisting %s\n' "${ls:-none}"; return 0; }
@@ -228,7 +228,7 @@ pool_inflight_hold_step() {
   fi
   [ "$_PIH_MAX" = 0 ] && return 1
   case "${TICKET:-}" in ''|*[!0-9]*) return 1 ;; esac
-  case "${KEY:-}" in RB-*|RR-*|CP-*) return 1 ;; esac
+  case "${KEY:-}" in RB-*|RR-*|LR-*|CP-*) return 1 ;; esac
   command -v pool_hold_check >/dev/null 2>&1 && command -v pool_hold_list_prime >/dev/null 2>&1 || return 1
   command -v pool_hold_cache_knobs >/dev/null 2>&1 && pool_hold_cache_knobs
   pool_hold_list_prime

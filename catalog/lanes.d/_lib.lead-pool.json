@@ -1,0 +1,21 @@
+{
+  "libs": [
+    {
+      "id": "lead-pool",
+      "file": "bin/lib/lead-pool.sh",
+      "note": "BH-8027. A lead review placed on the Fly pool (lane_placement.lead-review.<project> = fly): bin/lead-review.sh's tick puts ONE LR-<pr>-<head8> build_queue row a head through lrp_put. Its knob is read once a tick with setting_get from the row lib.lead-pool.lead_pool_retry_max, then env, then the default.",
+      "knobs": [
+        {
+          "env": "LEAD_POOL_RETRY_MAX",
+          "type": "int",
+          "default": 3,
+          "min": 0,
+          "max": 20,
+          "zero_means": "no retry: the first pool run that gives no review holds the head",
+          "required": false,
+          "note": "How many times lrp_put puts an LR- row again after a pool run that gave no review (a failed row, or done with a word that is not done/paid/replayed/superseded). Past it the head is held: nothing is put, the tick counts held=, and the first held tick of a key writes ONE ALERTS line. A request the land lane reset (a higher reset_count) is always put again. Read by bin/lib/lead-pool.sh _lrp_retry_max from the settings row lib.lead-pool.lead_pool_retry_max, then ${LEAD_POOL_RETRY_MAX:-3}."
+        }
+      ]
+    }
+  ]
+}

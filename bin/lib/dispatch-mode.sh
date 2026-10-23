@@ -138,6 +138,7 @@ dm_meta_admit() {
 }
 
 # dm_job_admit — a queued pool job. Admitted: a hotfix, a conductor rebase job,
+# a lead-review job (BH-8027: it unblocks a merge, it is no ticket build),
 # a blocked-resolver rebuild (rebuild:true), a death requeue (deaths > 0), or an
 # allow-listed ticket_id. These were admitted once already, or are not a new
 # ticket build at all.
@@ -151,6 +152,7 @@ dm_job_admit() {
     jq -e '.hotfix == true' "$f" >/dev/null 2>&1 && return 0
   fi
   a=$(jq -r 'if ((.rebase // null) | type) == "object" then "yes"
+      elif ((.leadreview // null) | type) == "object" then "yes"
       elif ((.console_preview // null) | type) == "object" then "yes"
       elif .rebuild == true then "yes"
       elif ((.deaths // 0) | tonumber? // 0) > 0 then "yes"

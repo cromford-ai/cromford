@@ -39,7 +39,7 @@ pool_orphan_row_verdict() {
   { [ -n "$me" ] && [ "$by" = "$me" ]; } || { printf 'keep\tother-claimant\n'; return 0; }
   # A dead rebase or re-review is closed FAILED by the reap on purpose; the
   # watchdog owns it.
-  case "$key" in RB-*) printf 'keep\trebase\n'; return 0 ;; RR-*) printf 'keep\trereview\n'; return 0 ;; CP-*) printf 'keep\tconsole-preview\n'; return 0 ;; esac
+  case "$key" in RB-*) printf 'keep\trebase\n'; return 0 ;; RR-*) printf 'keep\trereview\n'; return 0 ;; LR-*) printf 'keep\tleadreview\n'; return 0 ;; CP-*) printf 'keep\tconsole-preview\n'; return 0 ;; esac
   # A files-mode claim with its queue file is a job that waits, not an orphan.
   [ "$qf" = 1 ] && { printf 'keep\tqueued-file\n'; return 0; }
   [ "$pf" = 1 ] && { printf 'keep\tpool-file\n'; return 0; }

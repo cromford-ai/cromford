@@ -251,6 +251,9 @@
 # `one <request-id>` (BH-5023) reviews that one request now, the same way; the
 # in-build review (bin/inbuild-lead-review.sh) is its caller. See the block
 # above the tick lock.
+# FLY POOL (BH-8027). With lane_placement.lead-review.<project> = fly a tick
+# queues that project's item as ONE pool row (bin/lib/lead-pool.sh) and runs
+# nothing here; the pool machine runs `item` (block above the tick lock).
 # HEARTBEAT (BH-5351). A claimed review re-stamps its claim's heartbeat_at
 # (lr_beat_start, bin/lib/lead-reviews.sh) every stale_s/3 seconds, never under
 # LR_BEAT_MIN_S (default 10), where stale_s is the settings row
@@ -275,7 +278,10 @@ case "$MODE" in
   tick) ;;
   one) ONE_ID="${2:-}"
        [[ "$ONE_ID" =~ ^[A-Za-z0-9._-]+$ ]] || { echo "usage: bin/lead-review.sh one <request-id>" >&2; exit 2; } ;;
-  *) echo "usage: bin/lead-review.sh tick | one <request-id>" >&2; exit 2 ;;
+  item) IT_P="${2:-}"; IT_F="${3:-}"; IT_M="${4:-full}"; IT_OUT="${5:-}"
+        [[ "$IT_P" =~ ^[A-Za-z0-9._-]+$ && -r "$IT_F" && "$IT_M" =~ ^[a-z]+$ && -n "$IT_OUT" ]] \
+          || { echo "usage: bin/lead-review.sh item <project> <item-file> <mode> <word-file>" >&2; exit 2; } ;;
+  *) echo "usage: bin/lead-review.sh tick | one <request-id> | item <project> <item-file> <mode> <word-file>" >&2; exit 2 ;;
 esac
 H="${HARNESS:-/root/harness}"
 . "${HARNESS:-/root/harness}/bin/lib/env-path.sh" 2>/dev/null || . "$(dirname "${BASH_SOURCE[0]}")/lib/env-path.sh" 2>/dev/null || harness_env_dir() { printf '%s\n' "${1:-${HARNESS:-/root/harness}}/env"; }; HENV=$(harness_env_dir "$H")
@@ -739,7 +745,8 @@ review_one() {
   # attempts gate is for a worklist item: a request row's own status is its
   # record (the third counted failure posts outcome=failed to it, and a failed
   # row is not listed again), so a row costs no extra read on the serial path.
-  if [ "$MODE" = tick ]; then
+  # A pool `item` (BH-8027) is a tick's item and keeps these limits.
+  if [ "$MODE" != one ]; then
     if [ -z "$id" ]; then
       if ! n=$(lw_attempts "$repo" "$pr" "$sha"); then
         log "skip $key: its counted attempts are unreadable"; job_update "$job" status=done 'meta={"reason":"attempts unreadable"}'; return
@@ -1633,6 +1640,9 @@ if [ "$MODE" = one ]; then
   log "one $ONE_ID: ${R:-skipped}"
   case "$R" in done) exit 0 ;; superseded) exit 3 ;; failed) exit 1 ;; *) exit 2 ;; esac
 fi
+# item <project> <item-file> <mode> <word-file> (BH-8027): one pool LR- row on
+# a Fly machine, through review_one (bin/lib/lead-review/item.sh, lr_item_run).
+if [ "$MODE" = item ]; then lr_item_run; exit $?; fi
 
 # A tick DEDUPE, never a wait (BH-3930): a lead review runs 7-9 minutes, and a
 # second tick on the same request paid for it twice. fd 7 is held while the
@@ -1855,7 +1865,7 @@ done
 # lead_review.daily_spend_usd row, with the running count unreadable, or with
 # /tmp below LEAD_REVIEW_TMP_MIN_MB; one already running finishes and records,
 # and the tick waits for it before the summary.
-running_at_close=0 closed_by="" ratelimited="" paid=0 replayed=0 capped=0 held=0
+running_at_close=0 closed_by="" ratelimited="" paid=0 replayed=0 capped=0 held=0 pooled=0 poolreviewed=0
 # lr_rerun <force> — launch the owed (0) or forced (1) rerun (BH-5317); logs its line.
 lr_rerun() {
   local line
@@ -1883,12 +1893,15 @@ if [ -z "$stopped" ]; then
     if [ -n "$closed_by" ] || [ "$SECONDS" -ge "$DEADLINE" ]; then
       deferred=$((deferred + 1)); case "$closed_by" in spend*) capped=$((capped + 1)) ;; esac; continue
     fi
+    # BH-8027: an item placed on the Fly pool takes no slot, pause or /tmp here.
+    p=$(jq -r '.p' <<<"${ORDER[$n]}"); lrfly=0
+    command -v lrp_placed >/dev/null 2>&1 && lrp_placed "$p" && lrfly=1
     # A free place: under K and the fleet-wide row. The wait ends at the
     # deadline too, so starts close on time. An unreadable running count, or a
     # full fleet with nothing of ours running to free a place, closes starts:
     # the next tick asks again.
-    slot=0
-    while :; do
+    slot=$lrfly
+    while [ "$lrfly" = 0 ]; do
       lr_slot_free && { slot=1; break; }
       [ "$SECONDS" -ge "$DEADLINE" ] && break
       if [ "$LW_CONC_WHY" = unreadable ]; then closed_by=concurrency-unreadable; break; fi
@@ -1901,11 +1914,11 @@ if [ -z "$stopped" ]; then
     [ -n "$stopped" ] && break
     [ "$slot" = 1 ] || { deferred=$((deferred + 1)); continue; }
     # A rate-limit pause (BH-5284): wait it out inside the deadline, else defer.
-    while rpool_paused && [ "$SECONDS" -lt "$DEADLINE" ]; do _rpool_sleep; rpool_reap; done
-    if rpool_paused; then deferred=$((deferred + 1)); continue; fi
+    while [ "$lrfly" = 0 ] && rpool_paused && [ "$SECONDS" -lt "$DEADLINE" ]; do _rpool_sleep; rpool_reap; done
+    if [ "$lrfly" = 0 ] && rpool_paused; then deferred=$((deferred + 1)); continue; fi
     [ -n "$stopped" ] && break
-    p=$(jq -r '.p' <<<"${ORDER[$n]}")
-    if ! rpool_tmp_ok; then closed_by=tmp; deferred=$((deferred + 1)); continue; fi
+    if [ "$lrfly" = 1 ] && ! lw_concurrency_ok "$(rpool_box_running)"; then deferred=$((deferred + 1)); continue; fi
+    if [ "$lrfly" = 0 ] && ! rpool_tmp_ok; then closed_by=tmp; deferred=$((deferred + 1)); continue; fi
     if ! rpool_spend_ok lead-review "$p"; then
       log "spend cap reached for $p ($RPOOL_SPEND_REASON); no new review starts this tick"
       closed_by=spend; deferred=$((deferred + 1)); continue
@@ -1929,6 +1942,10 @@ if [ -z "$stopped" ]; then
         *) held=$((held + 1)); continue ;;
       esac
     fi
+    if [ "$lrfly" = 1 ]; then
+      lrp_put "${ORDER[$n]}" "$p" "$lgm"
+      case "$LRP_WORD" in queued|inflight) pooled=$((pooled + 1)) ;; held) held=$((held + 1)) ;; reviewed) poolreviewed=$((poolreviewed + 1)) ;; *) deferred=$((deferred + 1)) ;; esac; continue
+    fi
     rpool_start "r$n" lr_worker "$(jq -c '.r' <<<"${ORDER[$n]}")" "$p" "$lgm"
     rpool_gate_wait "r$n"
     rpool_reap
@@ -1943,7 +1960,7 @@ if [ -z "$stopped" ]; then
 fi
 rpool_finish
 rung=$(wc -l < "$QF.rung" 2>/dev/null | tr -d ' '); rung="${rung:-0}"
-log "tick seen=$seen owned=$owned done=$done_n superseded=$superseded failed=$failed skipped=$skipped deferred=$deferred concurrency=$RPOOL_K running=$running_at_close started=$RPOOL_STARTED worklist=$WL_N paid=$paid replayed=$replayed capped=$capped held=$held${ratelimited:+ ratelimited=$ratelimited} rung=$rung total=$TOTAL$PLUS prs=$PRS$PLUS${stopped:+ stopped=$stopped left=$((${#ORDER[@]} - visited))}$([ "$SPILL_ON" = 1 ] && printf ' spill=%s' "$spill")"
+log "tick seen=$seen owned=$owned done=$done_n superseded=$superseded failed=$failed skipped=$skipped deferred=$deferred concurrency=$RPOOL_K running=$running_at_close started=$RPOOL_STARTED worklist=$WL_N paid=$paid replayed=$replayed capped=$capped held=$held$([ "$pooled" -gt 0 ] && printf ' pooled=%s' "$pooled")$([ "$poolreviewed" -gt 0 ] && printf ' poolreviewed=%s' "$poolreviewed")${ratelimited:+ ratelimited=$ratelimited} rung=$rung total=$TOTAL$PLUS prs=$PRS$PLUS${stopped:+ stopped=$stopped left=$((${#ORDER[@]} - visited))}$([ "$SPILL_ON" = 1 ] && printf ' spill=%s' "$spill")"
 # The rerun (BH-5317). It is owed when a tick skipped on the lock (the marker),
 # or forced when this tick deferred work to its deadline. Never into a refusal
 # it would only repeat: low /tmp, a spend cap, the concurrency row, a stopped

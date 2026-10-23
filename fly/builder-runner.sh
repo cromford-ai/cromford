@@ -538,7 +538,7 @@ pool_result_row_write() {
   [ "${POOL_MODE:-}" = 1 ] || return 0
   local key full=""
   key=$(jq -r '.key // ""' "$JOB" 2>/dev/null)
-  case "$key" in ''|RR-*) return 0 ;; RB-*|CP-*) full=full ;; esac
+  case "$key" in ''|RR-*|LR-*) return 0 ;; RB-*|CP-*) full=full ;; esac
   # shellcheck source=bin/lib/pool-result-row.sh
   . "$HARNESS/bin/lib/pool-result-row.sh" 2>/dev/null || return 0
   command -v pool_result_row_put >/dev/null 2>&1 || return 0
@@ -662,6 +662,51 @@ run_rereview_job() { # run_rereview_job <job key>
   beat "$(jq -nc --arg p "$PROJECT" --arg k "$key" --arg r "$(head -1 "$RESULT_FILE" 2>/dev/null)" --arg u "$url" \
     '{kind:"build",project:$p,ticket_key:$k,stage:"rereview_done",detail:$r,pr_url:$u,host:("builder-"+$p)}')"
   return "$rc"
+}
+
+# --- a POOL LEAD REVIEW job (BH-8027) ------------------------------------------
+# Not a build: ONE lead review of one PR head, as an `LR-<pr>-<head8>` row that
+# bin/lib/lead-pool.sh queued because lane_placement.lead-review.<project> is
+# fly. bin/lead-review.sh item is the whole body (review_one: job, lock, claim,
+# call-guard, host suite, model call, the result post to /api/lead-reviews).
+# The RESULT is only for the hub reap, which closes the row:
+#   LEAD_REVIEWED <word>          the item ran; <word> is review_one's R
+#   LEAD_REVIEW_SETUP_FAILED <why> warm-up, the lane or its answer failed
+# then `PR: <url>` and `HEAD: <head>`. Never BUILD_DEFERRED: nothing re-offers
+# this row, the box's next tick decides again.
+leadreview_setup_result() { # leadreview_setup_result <why> <url> <head>
+  printf 'LEAD_REVIEW_SETUP_FAILED %s\nPR: %s\nHEAD: %s\n' "$1" "${2:--}" "${3:--}" > "$RESULT_FILE"
+  log "lead review job setup failed: $1"
+}
+
+run_leadreview_job() { # run_leadreview_job <job key>
+  local key="$1" url head mode d rc word lane="$HARNESS/bin/lead-review.sh"
+  url=$(jq -r  '.leadreview.url  // ""'     "$JOB" 2>/dev/null)
+  head=$(jq -r '.leadreview.head // ""'     "$JOB" 2>/dev/null)
+  mode=$(jq -r '.leadreview.mode // "full"' "$JOB" 2>/dev/null)
+  log "lead review job key=$key $url at ${head:0:8} (mode ${mode:-full})"
+  warm_up || { leadreview_setup_result "warm-up failed" "$url" "$head"; return 1; }
+  [ -r "$lane" ] || { leadreview_setup_result "no lead-review lane at $lane" "$url" "$head"; return 1; }
+  # The image clones --depth 50, and the review diff needs the PR's merge base.
+  if [ "$(git -C "$REPO" rev-parse --is-shallow-repository 2>/dev/null)" = true ]; then
+    git -C "$REPO" fetch -q --unshallow origin >/dev/null 2>&1 || log "lead review job: unshallow failed; the review's own fetch decides"
+  fi
+  d=$(mktemp -d "${TMPDIR:-/tmp}/leadreview-job.XXXXXX" 2>/dev/null) \
+    || { leadreview_setup_result "no temp dir" "$url" "$head"; return 1; }
+  jq -c '.leadreview.item' "$JOB" > "$d/item.json" 2>/dev/null
+  HARNESS="$HARNESS" HARNESS_ENV_DIR="$ENVDIR" REPOS_ROOT="${REPO%/*}" \
+    bash "$lane" item "$PROJECT" "$d/item.json" "${mode:-full}" "$d/word"; rc=$?
+  word=$(head -1 "$d/word" 2>/dev/null | tr -cd 'a-z_-')
+  rm -rf "$d"
+  if [ -n "$word" ]; then
+    printf 'LEAD_REVIEWED %s\nPR: %s\nHEAD: %s\n' "$word" "${url:--}" "${head:--}" > "$RESULT_FILE"
+  else
+    leadreview_setup_result "bin/lead-review.sh item answered rc $rc with no word" "$url" "$head"
+  fi
+  log "lead review job done: $(head -1 "$RESULT_FILE" 2>/dev/null)"
+  beat "$(jq -nc --arg p "$PROJECT" --arg k "$key" --arg r "$(head -1 "$RESULT_FILE" 2>/dev/null)" --arg u "$url" \
+    '{kind:"build",project:$p,ticket_key:$k,stage:"leadreview_done",detail:$r,pr_url:$u,host:("builder-"+$p)}')"
+  [ -n "$word" ]
 }
 
 # --- a POOL CONSOLE PREVIEW job (BH-8030) --------------------------------------
@@ -802,6 +847,13 @@ _run_job() {
     run_rereview_job "$key"; rrrc=$?
     stop_heartbeat
     return "$rrrc"
+  fi
+  # --- pool LEAD REVIEW job (BH-8027): bin/lead-review.sh item, never a build --
+  if [ "$(jq -r '.leadreview.kind // ""' "$JOB" 2>/dev/null)" = leadreview ]; then
+    local lrrc
+    run_leadreview_job "$key"; lrrc=$?
+    stop_heartbeat
+    return "$lrrc"
   fi
 
   # HOTFIX (#368): the watcher read the label off the issue and put the answer

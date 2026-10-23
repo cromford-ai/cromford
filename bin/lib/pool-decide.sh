@@ -123,7 +123,7 @@ pdc_prime() {
     PDC_ROOT=""; PDC_DIR=""
   fi
   if [ "$PDC_Q" -gt 0 ]; then
-    for jf in "${files[@]}"; do case "${jf##*/}" in RB-*|RR-*|CP-*) ;; *) plain=1; break ;; esac; done
+    for jf in "${files[@]}"; do case "${jf##*/}" in RB-*|RR-*|LR-*|CP-*) ;; *) plain=1; break ;; esac; done
     if pool_gates_applicable; then
       # The ai-build issue listing, when a row has a GitHub issue number.
       if command -v phc_get >/dev/null 2>&1 && command -v hold_check >/dev/null 2>&1 \
@@ -176,7 +176,7 @@ pdc_start() {
   PDC_N=$((PDC_N + 1))
   _PDC_HOT[$i]="$1"; _PDC_JF[$i]="$2"; _PDC_KEY[$i]="$3"; _PDC_TICKET[$i]="$4"
   _PDC_ATT[$i]="$5"; _PDC_SDTH[$i]="$6"; _PDC_SSB[$i]="$7"
-  case "$3" in RB-*|RR-*|CP-*) ;; *) PDC_BUDGET_N=$((PDC_BUDGET_N + 1)) ;; esac
+  case "$3" in RB-*|RR-*|LR-*|CP-*) ;; *) PDC_BUDGET_N=$((PDC_BUDGET_N + 1)) ;; esac
   if [ -z "$PDC_DIR" ]; then
     pool_spawn_decision "$2" "$3" "$4"; rc=$?
     PDC_DECIDED=$((PDC_DECIDED + 1))
