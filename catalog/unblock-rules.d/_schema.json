@@ -1,0 +1,58 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "catalog/unblock-rules.d/_schema.json",
+  "title": "One Tackler rule file (catalog/unblock-rules.d/<id>.json)",
+  "description": "BH-7722 (UNB-0). One rule per file; a new rule is a new file. The loader (bin/lib/unblock/rules.sh, #7752) refuses two files with one id. Every cite must be a key of _cites.json. Files whose name starts with _ are not rules.",
+  "type": "object",
+  "required": ["id", "priority", "family", "class", "cites", "match", "action", "key"],
+  "additionalProperties": false,
+  "properties": {
+    "id": { "type": "string", "pattern": "^U[0-9A-Za-z][A-Za-z0-9._-]{0,63}$", "description": "The rule id, written to unblock_decisions.rule_id." },
+    "priority": { "type": "integer", "minimum": 0, "maximum": 1000, "description": "Lower runs first; the first matching rule wins." },
+    "family": { "type": "string", "pattern": "^[a-z][a-z0-9-]{0,39}$", "description": "The collector family whose stall records the rule reads (queue, review, infra)." },
+    "class": { "type": "string", "pattern": "^[a-z][a-z0-9-]{0,39}$", "description": "The staff_classes row the action counts against." },
+    "cites": {
+      "type": "array", "minItems": 1, "uniqueItems": true,
+      "items": { "type": "string", "pattern": "^G[0-9]{1,2}$" },
+      "description": "Guideline codes; each must be a key of _cites.json."
+    },
+    "match": {
+      "type": "object",
+      "required": ["kind", "all"],
+      "additionalProperties": false,
+      "properties": {
+        "kind": { "type": "string", "pattern": "^[a-z][a-z0-9-]{0,63}$", "description": "The stall record's kind." },
+        "all": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 },
+          "description": "jq predicates over the stall record. An error or a null is unknown, and unknown never matches."
+        }
+      }
+    },
+    "judge": {
+      "type": ["object", "null"],
+      "additionalProperties": false,
+      "required": ["prompt", "question"],
+      "properties": {
+        "prompt": { "type": "string", "pattern": "^catalog/prompts/[A-Za-z0-9._-]+\\.md$" },
+        "question": { "type": "string", "minLength": 1 },
+        "when": { "type": "string", "minLength": 1, "description": "A jq predicate: the judge runs only when it is true." }
+      }
+    },
+    "action": {
+      "type": "object",
+      "required": ["name"],
+      "additionalProperties": false,
+      "properties": {
+        "name": { "type": "string", "pattern": "^[a-z_]{1,40}$" },
+        "args": { "type": "object", "description": "Each value is a jq path over the stall record." }
+      }
+    },
+    "key": {
+      "type": "array", "minItems": 1, "uniqueItems": true,
+      "items": { "type": "string", "pattern": "^[a-z_][a-z0-9_]{0,39}$" },
+      "description": "The fields hashed with the rule id into the decision key. No timestamp, no counter."
+    },
+    "note": { "type": "string" }
+  }
+}

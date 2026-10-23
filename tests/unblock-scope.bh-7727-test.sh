@@ -116,8 +116,14 @@ json.dump(cache, open(sys.argv[3], "w"))
 print(a + " | reapply=" + b)
 PY
 )
-  check "S0 12 off rows, no cromford row, project-6-os approved, actor seed; shadow survives a re-apply ($GOT)" \
-    '[ "$GOT" = "n=12 off=12 all=True bh=False appr=unblock.standing_approval.project-6-os=1 actors=seed | reapply=shadow" ]'
+  # TEST-CHANGE (BH-7722): UNB-0's fragment is in the composed schema now and
+  # seeds cromford (mode shadow, standing approval 1), as this fragment's
+  # header says it will. So the composed schema holds 13 mode rows; this
+  # fragment still holds no cromford row (the grep below pins that).
+  check "S0 12 off rows plus UNB-0's cromford shadow row, project-6-os and cromford approved, actor seed; shadow survives a re-apply ($GOT)" \
+    '[ "$GOT" = "n=13 off=12 all=True bh=True appr=unblock.standing_approval.cromford=1,unblock.standing_approval.project-6-os=1 actors=seed | reapply=shadow" ]'
+  grep -qE "'unblock\.(project\.cromford\.mode|standing_approval\.cromford)'" "$SEED" \
+    && bad "S0 this fragment seeds a cromford row (UNB-0 owns it)" || ok "S0 this fragment holds no cromford row"
   grep -qiE '^[[:space:]]*(drop|alter|delete|update|create)[[:space:]]' "$SEED" \
     && bad "S0 the fragment holds DDL or a destructive statement" || ok "S0 the fragment is INSERT OR IGNORE only"
   H0=$(mkh s0)

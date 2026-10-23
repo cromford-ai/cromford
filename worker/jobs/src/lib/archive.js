@@ -26,6 +26,8 @@ export const ARCHIVE_TABLES = {
   roadmap_waves: { key: ["id"], time: "updated_at" },
   // BH-7595: the web_vault audit rule (routes/retention.js).
   web_vault_audit: { key: ["id"], time: "at" },
+  // BH-7722: the Tackler decision ledger (routes/retention.js unblock_decisions.age).
+  unblock_decisions: { key: ["id"], time: "created_at" },
 };
 
 // One text for every archive rule's "unbound" audit row (lib/archive-daily.js).

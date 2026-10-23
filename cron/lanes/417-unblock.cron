@@ -1,0 +1,12 @@
+# @hub-lanes
+
+# ── UNBLOCK LANE (BH-7722, UNB-0) ───────────────────────────────────────────
+# Every 10 minutes, offset 4 from dequeue-watch, bin/unblock.sh tick runs
+# Tackler once per project whose mode is not off (bin/lib/unblock/scope.sh;
+# today cromford, shadow). Kill
+# switches first, then the collectors, the rules, a claim before any spend,
+# and one ledger row per decision. With no collector wired a tick logs
+# "0 collectors, 0 rows". A per-project lock (unb_scope_lock) dedupes; timeout 540.
+# Off: unblock.enabled=0, flags/lane-off-unblock, staff-kill-tackler,
+# flags/staff-off-tackler, or bin/harness-ctl.sh off unblock.
+4-59/10 * * * * /root/harness/bin/hub-lease.sh check && /root/harness/bin/unblock.sh tick >/dev/null 2>&1

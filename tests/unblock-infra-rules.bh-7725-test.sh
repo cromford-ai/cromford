@@ -272,13 +272,16 @@ eq "B9 fix rounds null -> U12" "$(jq -r .rule <<<"$V")" U12
 check "B9 the near miss names fixrounds" 'jq -e ".near_miss | map(.predicate) | any(test(\"fixrounds\"))" <<<"$V" >/dev/null'
 eq "B9 rung null -> U12" "$(jq -r .rule <<<"$(evaluate "$(jq -c '.mechanical_rung = null' <<<"$REC_PARK0")")")" U12
 
-check "B10 every rule file is valid JSON" 'jq -e . "$RULES_D"/*.json >/dev/null'
-eq "B10 rule ids are unique" "$(jq -r .id "$RULES_D"/*.json | sort | uniq -d)" ""
-eq "B10 every rule cites a guideline" "$(jq -r 'select((.cites | length) == 0) | .id' "$RULES_D"/*.json)" ""
+# TEST-CHANGE (BH-7722): UNB-0 adds the rule-file contract files _schema.json
+# and _cites.json to this directory. They are not rule files, so B10 reads
+# only the files without the `_` prefix. Every rule file is still checked.
+check "B10 every rule file is valid JSON" 'jq -e . "$RULES_D"/[!_]*.json >/dev/null'
+eq "B10 rule ids are unique" "$(jq -r .id "$RULES_D"/[!_]*.json | sort | uniq -d)" ""
+eq "B10 every rule cites a guideline" "$(jq -r 'select((.cites | length) == 0) | .id' "$RULES_D"/[!_]*.json)" ""
 eq "B10 no acting rule carries a never-auto class" \
-  "$(jq -r 'select(.action.verb != "card") | select(.class | IN("spend","production","live-probe","client-board","merge","deploy","governance")) | .id' "$RULES_D"/*.json)" ""
-eq "B10 U12 is the lowest priority" "$(for f in "$RULES_D"/*.json; do printf '%s %s\n' "$(jq -r .priority "$f")" "$(jq -r .id "$f")"; done | sort -n | tail -1 | cut -d' ' -f2)" U12
-eq "B10 the rule shape" "$(jq -r 'select((has("id") and has("priority") and has("family") and has("class") and has("cites") and has("match") and has("judge") and has("action") and has("key") and has("note")) | not) | .id' "$RULES_D"/*.json)" ""
+  "$(jq -r 'select(.action.verb != "card") | select(.class | IN("spend","production","live-probe","client-board","merge","deploy","governance")) | .id' "$RULES_D"/[!_]*.json)" ""
+eq "B10 U12 is the lowest priority" "$(for f in "$RULES_D"/[!_]*.json; do printf '%s %s\n' "$(jq -r .priority "$f")" "$(jq -r .id "$f")"; done | sort -n | tail -1 | cut -d' ' -f2)" U12
+eq "B10 the rule shape" "$(jq -r 'select((has("id") and has("priority") and has("family") and has("class") and has("cites") and has("match") and has("judge") and has("action") and has("key") and has("note")) | not) | .id' "$RULES_D"/[!_]*.json)" ""
 
 echo "unblock-infra-rules: $PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ]

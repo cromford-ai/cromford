@@ -1,0 +1,7 @@
+# UNBLOCK DECISIONS (BH-7722, UNB-0): the Tackler ledger's write side. The
+# lane claims a decision key before any spend, records one outcome, lists rows
+# by subject, project or outcome, and a person answers an escalated card.
+POST /api/unblock/decisions/claim
+POST /api/unblock/decisions/record
+GET /api/unblock/decisions
+POST re:/^\/api\/unblock\/decisions\/(\d{1,15})\/answer$/

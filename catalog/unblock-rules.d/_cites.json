@@ -1,0 +1,86 @@
+{
+  "G1": {
+    "source": "~/.claude/projects/-Users-operator/memory/feedback_cromford_standing_merge_approval.md",
+    "text": "Queue a cromford PR without asking when a lead MERGE or MERGE-WITH-NOTES binds the current head, the PR is clean, and no test was silently weakened. Never gh pr merge, never force-push. cromford only unless the operator extends it. Dead-shard ejects: @mergifyio queue."
+  },
+  "G2": {
+    "source": "feedback_mac_block_needs_verdict_row.md",
+    "text": "A BLOCK is three writes: PR comment, REQUEST_CHANGES review on the head, BLOCK verdict row. Re-post on a new head. Dismiss the CHANGES_REQUESTED review when the fix passes."
+  },
+  "G3": {
+    "source": "feedback_tripwire_not_ticket_budget.md",
+    "text": "No per-ticket budgets, no daily count caps. Tripwires alert and never stop a build."
+  },
+  "G4": {
+    "source": "feedback_deterministic_before_llm.md",
+    "text": "Selection, dedup, caps, scheduling, verification and retraction are deterministic. The model gets only judgment."
+  },
+  "G5": {
+    "source": "feedback_context_composition_contract.md, docs/CONTEXT-COMPOSITION.md",
+    "text": "Every lane has a manifest row in catalog/context-budgets.d/; context is composed per job, never accumulated."
+  },
+  "G6": {
+    "source": "feedback_lane_output_never_own_input.md",
+    "text": "A lane never reads its own output. An alert only a human can clear is stated once, parked, and the wait is declared daily."
+  },
+  "G7": {
+    "source": "~/.claude/CLAUDE.md \"GitHub CLI: REST API, never GraphQL\"",
+    "text": "All GitHub reads and writes go through gh api REST, bodies through files."
+  },
+  "G8": {
+    "source": "~/.claude/CLAUDE.md \"AI Model Configuration\", docs/MODEL-ROUTES.md",
+    "text": "Model selection is a DB row resolved at runtime. A hardcoded model id is a bug."
+  },
+  "G9": {
+    "source": "~/.claude/rules/release-lanes.md",
+    "text": "Merges go through the queue. Knobs and flags are DB rows. A rollback is a row flip."
+  },
+  "G10": {
+    "source": "~/.claude/rules/metered-api-dedup.md",
+    "text": "A persisted \"already paid\" check runs before the billable call. ok/empty/failed, never two outcomes."
+  },
+  "G11": {
+    "source": "~/cromford/CLAUDE.md \"Iron law: indexes and retention\"",
+    "text": "Every table ships with its indexes named per query, an EXPLAIN test, and a retention rule. History rows are archived, never deleted."
+  },
+  "G12": {
+    "source": "docs/MERGE-CONDUCTOR.md section 6 (Eject, Re-entry BH-636), docs/MERGIFY.md",
+    "text": "A red batch ejects every member. A green bystander goes back once per (PR, sha). A red head is never re-queued."
+  },
+  "G13": {
+    "source": "bin/blocked-resolver.sh header",
+    "text": "The ladder is mechanical, then one fix round, then rebuild. A rebuild is never the first answer to a branch problem."
+  },
+  "G14": {
+    "source": "~/.claude/CLAUDE.md \"Product Board / Ticket Triage\"",
+    "text": "A product choice inside a ticket belongs to the client or the operator, never to an agent."
+  },
+  "G15": {
+    "source": "prompts/lead-review-checklist.md line 99; ~/.claude/CLAUDE.md \"Speed and cost features: the proof is the metric\"",
+    "text": "An INCONCLUSIVE evidence row caps the verdict at BLOCK. The fix is evidence, not a rebuild."
+  },
+  "G16": {
+    "source": "~/.claude/CLAUDE.md \"Test integrity (iron rule)\"",
+    "text": "Silent test weakening is an instant BLOCK."
+  },
+  "G17": {
+    "source": "docs/GATES-VS-REPORTS.md",
+    "text": "A limit that protects money, the machine or security stays hard. Everything else is a report."
+  },
+  "G18": {
+    "source": "agent-core/SPEC.md, bin/staff.sh",
+    "text": "Kill before read. Claim before spend. decide is a pure function. NEVER lines refuse. One overrule demotes."
+  },
+  "G19": {
+    "source": "~/.claude/CLAUDE.md \"E2E / QA probes never touch client-visible surfaces\", \"probe the credential before building\"",
+    "text": "A live probe that creates resources is a human call."
+  },
+  "G20": {
+    "source": "~/.claude/rules/metered-api-dedup.md \"Billing-mode changes are architecture changes\"; metered CI runners (docs/CI-RUNNERS.md)",
+    "text": "Spend caps and metered capacity (CI shards) change who pays. the operator decides."
+  },
+  "G21": {
+    "source": "tasks/drain-handoff-2026-10-19.md, hub logs/merge-conductor-backstop.log 2026-10-19 19:20Z to 2026-10-20 14:17Z",
+    "text": "The case corpus: what a person decided, with what evidence, and what went to the operator."
+  }
+}

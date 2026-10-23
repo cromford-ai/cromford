@@ -1,0 +1,80 @@
+[
+    {
+      "lane": "unblock-decide",
+      "stage": "unblock",
+      "project": "fleet",
+      "runner": null,
+      "job": "At most one hub call per escalated Tackler decision (bin/unblock.sh tick, every 10 minutes, model route stage.unblock): compose the one-screen card for the operator (what, options, recommendation, default, deadline) for a stall no rule covers or an action in a never-auto class.",
+      "target_tokens": 12000,
+      "ceiling_tokens": 40000,
+      "composition": [
+        {
+          "component": "agent soul",
+          "source": "prompts/staff/tackler-soul.md",
+          "cap": "static",
+          "purpose": "what Tackler MAY do, NEVER does and REPORTS"
+        },
+        {
+          "component": "lane SOP",
+          "source": "catalog/prompts/unblock-decide.md",
+          "cap": "static",
+          "purpose": "the card contract: five fields, at most 900 characters, the safe default"
+        },
+        {
+          "component": "one stall record",
+          "source": "the collector's stall record for this decision, whole, as the claim stored it (redacted, at most 8 KB)",
+          "cap": "1 record: at most 40 fail lines, 60 BLOCK lines, 10 verdict rows",
+          "purpose": "THE SCOPED DELTA: only the stall this card is about"
+        },
+        {
+          "component": "near-miss rules",
+          "source": "catalog/unblock-rules.d/*.json whose kind matched and whose predicates did not",
+          "cap": "at most 5 rule files",
+          "purpose": "why no rule covered the case"
+        },
+        {
+          "component": "subject history",
+          "source": "GET /api/unblock/decisions?subject=<subject>&limit=5",
+          "cap": "5 ledger rows",
+          "purpose": "what Tackler decided on this subject before, as context, never as a finding"
+        }
+      ],
+      "bounds": [
+        "[lane:one_record] one stall record per call, cut to 8 KB at the claim (PENDING: bin/unblock.sh cuts the evidence, tests/unblock-contract.bh-7722-test.sh C5; the card seam ubt_stage_card is not wired yet)",
+        "[lane:history_5] at most 5 ledger rows of the same subject (PENDING: the card composer is #7762 and not on main)"
+      ],
+      "measured_before": null,
+      "measured_before_note": "never measured: the stage is new in BH-7722.",
+      "_unmeasured": "no unblock tick has called a model yet (S0 wires no stage seam). No context_kill_tokens either: BH-2538 arms no lane without measured rows."
+    },
+    {
+      "lane": "unblock-judge",
+      "stage": "unblock-judge",
+      "project": "fleet",
+      "runner": null,
+      "job": "At most one bounded hub call per Tackler decision whose rule names a judge question (model route unblock.judge): answer one closed question, for example LEGIT, WEAKENED or UNSURE over a test-file diff.",
+      "target_tokens": 6000,
+      "ceiling_tokens": 20000,
+      "composition": [
+        {
+          "component": "lane SOP",
+          "source": "catalog/prompts/unblock-judge.md",
+          "cap": "static",
+          "purpose": "the closed answer set; anything else is UNSURE"
+        },
+        {
+          "component": "one diff or the BLOCK lines",
+          "source": "exactly one of: the test-file diff of the PR head, or the lead BLOCK lines",
+          "cap": "at most 400 diff lines, jq-trimmed at fetch",
+          "purpose": "THE SCOPED DELTA: the one thing the judge question is about"
+        }
+      ],
+      "bounds": [
+        "[lane:diff_400] at most 400 test-diff lines (PENDING: the judge seam is #7753 and not on main)",
+        "[lane:claim_first] the decision key is claimed before the call, so a second tick never pays twice (VERIFIED: tests/unblock-contract.bh-7722-test.sh C7, C8)"
+      ],
+      "measured_before": null,
+      "measured_before_note": "never measured: the stage is new in BH-7722.",
+      "_unmeasured": "no judge call has run yet (S0 wires no stage seam). No context_kill_tokens: BH-2538 arms no lane without measured rows."
+    }
+]

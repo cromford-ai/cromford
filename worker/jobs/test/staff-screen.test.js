@@ -60,12 +60,14 @@ test('BH-5567 staff screen read routes', async (t) => {
     const r = await call(DB, '/api/staff/roster');
     assert.equal(r.status, 200, JSON.stringify(r.body));
     const rows = r.body.agents;
-    assert.equal(rows.length, 8);
+    // BH-7722 seeds tackler: archie + 7 + tackler.
+    assert.equal(rows.length, 9);
     assert.equal(rows[0].name, 'archie');
     assert.equal(rows[0].role, 'overlooker');
     assert.equal(rows[0].accountable, 'operator@example.com');
     assert.equal(rows[0].kind, 'overlooker');
-    assert.deepEqual(rows.slice(1).map((a) => a.name), STAFF);
+    assert.deepEqual(rows.slice(1).map((a) => a.name).filter((n) => n !== 'tackler'), STAFF);
+    assert.ok(rows.some((a) => a.name === 'tackler' && a.kind === 'staff'), 'BH-7722 seeds tackler');
     assert.ok(rows.slice(1).every((a) => a.kind === 'staff'));
     const open = Object.fromEntries(rows.map((a) => [a.name, a.open_findings]));
     assert.equal(open.watchman, 2, 'the merged row is not open');

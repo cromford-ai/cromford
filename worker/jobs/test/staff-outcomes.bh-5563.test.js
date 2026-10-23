@@ -275,7 +275,8 @@ test('BH-5563 staff learning loop', async (t) => {
     assert.equal(r.body.existing, true);
     assert.equal(level(db), 'augmentation', 'the losing batch demoted the agent');
     assert.equal(db.prepare('SELECT choice FROM staff_decisions WHERE escalation_key=?').get(`staff:${f.fp}`).choice, null);
-    assert.equal(db.prepare('SELECT count(*) AS n FROM staff_classes').get().n, 0);
+    // BH-7722 seeds tackler's classes; the batch must write none of its own.
+    assert.equal(db.prepare("SELECT count(*) AS n FROM staff_classes WHERE agent <> 'tackler'").get().n, 0);
   });
 
   await t.test('PR1 delegate_after=2: 1 agree makes no proposal, 2 make ONE pending row to the next level', async () => {

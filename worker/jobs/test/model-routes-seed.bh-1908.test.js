@@ -155,6 +155,9 @@ const SEEDED_AS_COPY = {
   // TEST-CHANGE (BH-6972): component-watch, the per-component alert watcher's
   // route, copies review.trivial's rung 0 (Haiku class) the same way.
   'component-watch': 'review.trivial',
+  // TEST-CHANGE (BH-7722): unblock.judge, Tackler's bounded judge route, copies
+  // stage.execute's claude rung 0 the same way stage.archie does.
+  'unblock.judge': 'stage.execute',
 };
 // TEST-CHANGE (BH-4065): archie-research.xsearch copies grok.default's GROK
 // rung 0 (Archie's direct xAI X search runs on the grok runner), so it is

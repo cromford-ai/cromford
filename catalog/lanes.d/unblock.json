@@ -1,0 +1,86 @@
+{
+  "id": "unblock",
+  "name": "Tackler (decide stalled PRs, batches, builds, boxes and lanes from the operator's guidelines)",
+  "scope": "hub",
+  "script": "bin/unblock.sh",
+  "cadence": "4-59/10 * * * *",
+  "boxes": [
+    "hub"
+  ],
+  "switch": {
+    "kind": "flag",
+    "name": "lane-off-unblock",
+    "aliases": []
+  },
+  "wired": true,
+  "knobs": [
+    {
+      "env": "UNBLOCK_ACT",
+      "type": "int",
+      "default": 0,
+      "min": 0,
+      "max": 1,
+      "zero_means": "off",
+      "note": "BH-7726/BH-7722: 1 = act where the project's row unblock.project.<p>.mode says act; 0 = shadow everywhere (logs WOULD_<ACTION>, writes only the ledger). The lane never flips it. Read by bin/lib/unblock/act.sh and by bin/unblock.sh for the ledger row's mode.",
+      "read_in": "bin/lib/unblock/act.sh",
+      "settable": true
+    },
+    {
+      "env": "UNBLOCK_MAX_RECORDS",
+      "type": "int",
+      "default": 200,
+      "min": 10,
+      "max": 1000,
+      "zero_means": null,
+      "note": "BH-7722: the most stall records one tick keeps from all collectors, in collector order; the cut is one truncated=<n> line in logs/unblock.log. Out of range is one warn line and the default.",
+      "settable": true
+    },
+    {
+      "env": "UB_NOW",
+      "type": "string",
+      "default": "",
+      "zero_means": null,
+      "note": "Test seam: epoch seconds bin/lib/unblock/act.sh uses as now. NOT settable from the control plane.",
+      "read_in": "bin/lib/unblock/act.sh",
+      "settable": false
+    },
+    {
+      "env": "UNBLOCK_NOW",
+      "type": "string",
+      "default": "",
+      "zero_means": null,
+      "note": "Test seam: epoch seconds bin/unblock.sh stamps its log lines with, only when HARNESS_TEST_SANDBOX=1. NOT settable from the control plane.",
+      "settable": false
+    },
+    {
+      "env": "UNBLOCK_FIXTURE",
+      "type": "string",
+      "default": "",
+      "zero_means": null,
+      "note": "Test seam: a stub file bin/unblock.sh sources after its libs, only when HARNESS_TEST_SANDBOX=1 (tests/unblock-contract.bh-7722-test.sh). NOT settable from the control plane.",
+      "settable": false
+    },
+    {
+      "env": "UNBLOCK_COLLECTORS_DIR",
+      "type": "string",
+      "default": "",
+      "zero_means": null,
+      "note": "Test seam: the collector directory bin/unblock.sh reads instead of bin/lib/unblock/collectors/, only when HARNESS_TEST_SANDBOX=1. NOT settable from the control plane.",
+      "settable": false
+    },
+    {
+      "env": "HARNESS_TEST_SANDBOX",
+      "type": "string",
+      "default": "",
+      "zero_means": null,
+      "note": "Test seam gate: bin/unblock.sh honours UNBLOCK_NOW, UNBLOCK_FIXTURE and UNBLOCK_COLLECTORS_DIR only when this is 1. Never set on a box, and NOT settable from the control plane.",
+      "settable": false
+    }
+  ],
+  "stats": {
+    "cost_stage": null,
+    "cost_project_filter": null,
+    "lanes_row": false,
+    "log": "logs/unblock.log"
+  }
+}

@@ -300,10 +300,13 @@ test('BH-7728 unblock metrics routes', async (t) => {
     assert.equal((await post({ ...body, id: 999999 })).status, 404);
     assert.equal((await post({ ...body, id: shadow })).status, 409);
     // The demote half of the pair override.sh drives.
-    db.prepare(`INSERT INTO staff_agents (name, role, accountable, autonomy, cap, status, soul_path, updated_at)
+    // BH-7722 seeds tackler and its queue-requeue class (ask_first); the
+    // demote needs that class delegated first.
+    db.prepare(`INSERT OR IGNORE INTO staff_agents (name, role, accountable, autonomy, cap, status, soul_path, updated_at)
       VALUES ('tackler', 'unblock', 'operator@example.com', 'automation', 'autonomy', 'active', 'prompts/staff/tackler-soul.md', '2026-10-20T00:00:00Z')`).run();
     db.prepare(`INSERT INTO staff_classes (agent, class, cap, state, streak, delegated_at, updated_at)
-      VALUES ('tackler', 'queue-requeue', 'autonomy', 'delegated', 5, '2026-10-19T00:00:00Z', '2026-10-19T00:00:00Z')`).run();
+      VALUES ('tackler', 'queue-requeue', 'autonomy', 'delegated', 5, '2026-10-19T00:00:00Z', '2026-10-19T00:00:00Z')
+      ON CONFLICT(agent, class) DO UPDATE SET state = 'delegated', streak = 5, delegated_at = excluded.delegated_at`).run();
     const d = await call(DB, '/api/staff/classes/delegation', { method: 'POST', body: {
       agent: 'tackler', class: 'queue-requeue', decision: 'ask_first', actor: 'unblock-override', reason: `override of decision #${id} by operator` } });
     assert.equal(d.status, 200, JSON.stringify(d.body));
@@ -341,17 +344,25 @@ test('BH-7728 unblock metrics routes', async (t) => {
     }
   });
 
-  await t.test('R8 no table: every route answers 503 schema not applied', async () => {
-    const { DB } = await openDb();
-    for (const [method, path, body] of [
-      ['GET', '/api/unblock/metrics?project=cromford&days=7&to=2026-10-20'],
-      ['GET', '/api/unblock/metrics/decisions?project=cromford'],
-      ['GET', '/api/unblock/overrides/candidates?since=2026-10-18T00:00:00Z'],
-      ['POST', '/api/unblock/overrides', { id: 1, override_by: 'operator', override_at: '2026-10-19T13:05:00Z', override_detail: 'x' }],
+  // TEST-CHANGE (BH-7722): UNB-0's fragment is in the composed schema now, so
+  // ensureTable rebuilds a dropped table and the 503 "schema not applied"
+  // answer is no longer reachable. R8 pins what is true instead: with the
+  // table gone, every route recreates it and answers, and none is a 503.
+  await t.test('R8 table dropped: every route recreates it from the schema and answers, never a 503', async () => {
+    for (const [method, path, body, want] of [
+      ['GET', '/api/unblock/metrics?project=cromford&days=7&to=2026-10-20', undefined, 200],
+      ['GET', '/api/unblock/metrics/decisions?project=cromford', undefined, 200],
+      ['GET', '/api/unblock/overrides/candidates?since=2026-10-18T00:00:00Z', undefined, 200],
+      ['POST', '/api/unblock/overrides', { id: 1, override_by: 'operator', override_at: '2026-10-19T13:05:00Z', override_detail: 'x' }, 404],
     ]) {
+      // A fresh db per route: ensureTable runs once per database.
+      const { DB, db } = await openDb();
+      const exists = () => db.prepare("SELECT count(*) AS n FROM sqlite_master WHERE type='table' AND name='unblock_decisions'").get().n;
+      db.exec('DROP TABLE IF EXISTS unblock_decisions');
+      assert.equal(exists(), 0);
       const r = await call(DB, path, { method, body });
-      assert.equal(r.status, 503, `${method} ${path}`);
-      assert.equal(r.body.error, 'unblock_decisions schema not applied');
+      assert.equal(r.status, want, `${method} ${path}: ${JSON.stringify(r.body)}`);
+      assert.equal(exists(), 1, `${method} ${path} recreated the table`);
     }
   });
 
