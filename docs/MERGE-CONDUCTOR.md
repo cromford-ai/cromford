@@ -539,6 +539,16 @@ the cron parent, and reads the result on a later tick. The job runs the same `mc
 body — same prompt, same verdict parsing — and writes NOTHING to GitHub: the PR comment, the
 approval rebind and the transition stay in the tick, behind the tick's own flags.
 
+**WHERE THE RE-REVIEW AGENT RUNS (BH-8103).** `mc_rereview` starts `bin/agent-call.sh` from
+a private, empty scratch dir, one per (PR, head):
+`$MC_RR_SCRATCH_ROOT/<repo>-<num>-<head12>`. `MC_RR_SCRATCH_ROOT` is a path; the default is
+`$TMPDIR/mc-rereview-<uid>` (the uid keeps a root tick and a `nobody` test run apart). The dir
+is made fresh before the call and removed after it. If it cannot be made, the job is a lane
+failure (rc 2) and nothing is billed. On 2026-10-23 the agent started in the hub's deploy
+checkout, checked out a PR branch there and ran a suite as root. `bin/iron-law-guard.sh`
+family 7 is the wall against that; the scratch dir removes the default that put the agent in
+a shared tree (docs/verification-map/iron-law-guard.md).
+
 A job is one file, `state/merge-conductor/rereview/<owner_repo>_<num>_<head>.json`:
 `{status: running|done|failed|lane-failed, pid, started_at, finished_at, verdict, head_sha,
 reviewed_sha, out_file, reason}`. What a tick does with a `HEAD_MOVED` PR is decided by that file

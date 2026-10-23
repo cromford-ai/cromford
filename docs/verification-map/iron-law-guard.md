@@ -73,6 +73,26 @@ wording and never the verdict. `hold_push` runs its own `git push` with
 sanctioned push. The remediator is not a guarded lane; its `git push` is denied
 by `Bash(git push:*)` in `bin/remediator-settings.json`.
 
+**Family 7: the review lane on a live harness box (BH-8103).** On 2026-10-23
+00:18Z the conductor's re-review agent ran `git checkout -q pr8069` in the hub's
+`/root/harness-checkout` and then ran a test suite there as root. Family 7 is
+judged only on `HARNESS_LANE=review` on a live box. A box is live when
+`${HARNESS_CHECKOUT:-/root/harness-checkout}/.git` exists (the hub and every
+Orgo box; not Fly pool machines or CI). `HARNESS_LIVE=1` or `HARNESS_LIVE=0`
+overrides that test. Two rules, findings row only (no ALERTS line):
+
+| rule | denies | still allowed |
+|---|---|---|
+| `review-checkout` | `git checkout/switch/reset/pull/merge/rebase/restore/stash/cherry-pick/am` and `gh pr checkout`, when the dir (`-C`, else the cwd after any `cd`) is under the deploy checkout, `$HARNESS`, `/root/harness`, `/root/repos` or `/root/orchestrator` (each also through `readlink -f`), or cannot be resolved | read-only git (`log show diff fetch worktree add stash list …`) anywhere; any verb in the lane's own clone or worktree elsewhere, or strictly inside a shared root when it is the lane's `HARNESS_LANE_WT`/`WT`/`BUILD_DIR` |
+| `review-suite` | a run of `tests/**/*.sh`, `bin/test-impact-gate.sh` or `bin/fast-lints.sh`: direct, through `bash`/`sh` (flags, `timeout`, `VAR=` and `bash -c` included), or as the body of a `for` loop over suite paths | `bash -n <suite>`, and reading a suite (`cat`, `grep`, `sed`, `shellcheck`) |
+
+The deny text tells the model to keep the review static and to say in its review
+that a suite was not run here. Honest limits: `find -exec`, `xargs`, `while read`
+loops, `source` and a script the session writes get through, and on a
+codex/gemini/grok lane only the shimmed `git`/`gh` reach the guard. The
+re-review agent also starts in a private scratch dir (`MC_RR_SCRATCH_ROOT`,
+docs/notes/2026-10-23-BH-8103-review-lane-live-box.md).
+
 **How to drive it:**
 
 | what | how |
@@ -84,6 +104,8 @@ by `Bash(git push:*)` in `bin/remediator-settings.json`.
 | the same classifier reached through the PATH shim | `bash tests/lane-fence-test.sh` |
 | agent-push: the hold named in the finding, the codex path, `hold_push` still landing | `bash tests/agent-push-guard.bh-2741-test.sh` |
 | no agent prompt tells the agent to push | `bash tests/agent-push-ratchet.bh-2741-test.sh` |
+| family 7: the review lane on a live box (checkout moves, suite runs) | `bash tests/iron-law-live-review.bh-8103-test.sh` |
+| the re-review agent's private scratch cwd | `bash tests/mc-rereview-scratch-cwd.bh-8103-test.sh` |
 
 Clear the box's own lane marker first, or the fence cases inherit it and go red
 for a reason that has nothing to do with the code:

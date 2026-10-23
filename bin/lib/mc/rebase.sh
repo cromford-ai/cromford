@@ -2904,7 +2904,7 @@ mc_union_renumber_fragments() {
 #           caller defers and logs, and asks again on a later tick.
 mc_rereview() {
   local slug="$1" num="$2" project="$3" url="$4" rev="$5" head="$6" rec="$7" out="$8"
-  local dfile pfile scope lede body prior="" evid="" v arc=0 why= dbytes=0 rr_acct="default" live rr_fp
+  local dfile pfile scope lede body prior="" evid="" v arc=0 why= dbytes=0 rr_acct="default" live rr_fp rr_wd out_abs
   mkdir -p "$MC_STATE_DIR/diffs"
   dfile="$MC_STATE_DIR/diffs/${slug##*/}-$num.diff"
   # A diff we could not READ is the lane failing too (rc 2), not a reviewer with
@@ -3004,11 +3004,35 @@ mc_rereview() {
   else
     rr_fp="review:$slug#$num@$head${MC_RR_REASON:+~$MC_RR_REASON}"
   fi
-  AGENT_CALL_RUNNERS="${MC_RR_RUNNERS-claude}" AGENT_CALL_LEDGER=1 \
-  AGENT_CALL_GUARD_STAGE=review-head AGENT_CALL_FP="$rr_fp" \
-  AGENT_CALL_PR="${slug:+https://github.com/$slug/pull/$num}" \
-    "$MC_H/bin/agent-call.sh" review "$project" "$(review_model "$MC_H")" 1200 "$out" "@$pfile" >/dev/null 2>&1; arc=$?
+  # A PRIVATE, EMPTY CWD FOR THE AGENT (BH-8103). The session is a full-tool
+  # Claude, and it starts wherever this job stands. On 2026-10-23 the detached
+  # job's agent checked out a PR branch in the hub's deploy checkout and ran a
+  # suite there as root. One stable dir per (PR, head) under
+  # MC_RR_SCRATCH_ROOT (a path, default $TMPDIR/mc-rereview-<uid>), so Claude's
+  # per-cwd transcript dirs stay one per head. The uid is in the default because
+  # a root made by one user is not writable by another (a root tick, then a
+  # `nobody` test run, on one box). bin/iron-law-guard.sh family 7 is the
+  # wall; this removes the default that put the agent in a shared tree. A dir
+  # that cannot be made is the lane failing (rc 2) before anything is billed.
+  rr_wd="${MC_RR_SCRATCH_ROOT:-${TMPDIR:-/tmp}/mc-rereview-$EUID}/${slug##*/}-$num-${head:0:12}"
+  rm -rf "$rr_wd" 2>/dev/null
+  if ! mkdir -p "$rr_wd" 2>/dev/null; then
+    mc_rr_reason "could not make the private scratch dir $rr_wd for the review agent — nothing was called" > "$out.lanefail"
+    rm -f "$pfile"; return 2
+  fi
+  # The call runs from $rr_wd, so a relative out file is made absolute for it.
+  # Every read below is in this shell's own cwd: the same file.
+  case "$out" in /*) out_abs="$out" ;; *) out_abs="$PWD/$out" ;; esac
+  # 97 if the cd fails: not 74 and not a claude answer, so mc_review_lane_failure
+  # reads it as the lane failing.
+  ( cd "$rr_wd" || exit 97
+    # agent-call-tools: the re-review reads the full diff file and the PR's files with tools; bin/iron-law-guard.sh family 7 fences it on a live box (BH-8103)
+    AGENT_CALL_RUNNERS="${MC_RR_RUNNERS-claude}" AGENT_CALL_LEDGER=1 \
+    AGENT_CALL_GUARD_STAGE=review-head AGENT_CALL_FP="$rr_fp" \
+    AGENT_CALL_PR="${slug:+https://github.com/$slug/pull/$num}" \
+      "$MC_H/bin/agent-call.sh" review "$project" "$(review_model "$MC_H")" 1200 "$out_abs" "@$pfile" ) >/dev/null 2>&1; arc=$?
   rm -f "$pfile"
+  rm -rf "$rr_wd" 2>/dev/null
   # Account that paid (or would have paid). agent-call.sh writes $out.account
   # on claude attempts; absent it we fall back to the default account (BH-1090).
   [ -f "$out.account" ] && rr_acct=$(tr -d '\n' < "$out.account" 2>/dev/null | head -c 256)

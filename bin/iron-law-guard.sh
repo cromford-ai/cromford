@@ -81,6 +81,9 @@
 #   has authority to delete the harness's env/state/logs/builds/flags/locks, the
 #   repo checkouts or the key material, and an `rm -rf` typed in a chat lane
 #   destroys exactly as much as one typed in a build lane.
+#   Family 7 (BH-8103) fires only on the review lane on a LIVE harness box (the
+#   deploy checkout exists, or HARNESS_LIVE=1): a review there is static, so it
+#   moves no shared checkout and runs no suite. See the family 7 section below.
 # The fence is checked here as well as at the wiring point on purpose: a settings
 # file that leaks into another session must still be inert.
 #
@@ -208,6 +211,19 @@ unset TMOUT
 # only family 6 applies there.
 FULL=0
 case " $GUARDED_LANES " in *" $LANE "*) FULL=1 ;; esac
+# LIVE_REVIEW=1 -> the review lane on a live harness box, and family 7 is
+# judged too (BH-8103). A box is live when it carries the deploy checkout
+# (the hub and every Orgo box do; Fly pool machines and CI runners do not).
+# HARNESS_LIVE=1/0 is the operator's override; any other value falls back to
+# the checkout test.
+ILG_CHECKOUT="${HARNESS_CHECKOUT:-/root/harness-checkout}"
+case "${HARNESS_LIVE:-}" in
+  1) LIVE=1 ;;
+  0) LIVE=0 ;;
+  *) LIVE=0; [ -e "$ILG_CHECKOUT/.git" ] && LIVE=1 ;;
+esac
+LIVE_REVIEW=0
+[ "$LANE" = review ] && [ "$LIVE" = 1 ] && LIVE_REVIEW=1
 
 [ -n "$IN" ] && [ "${IN#\{}" != "$IN" ] || LOUD "the hook payload was empty, unreadable on stdin, or not JSON"
 command -v jq >/dev/null 2>&1 || LOUD "jq is not on PATH, so the hook payload cannot be parsed"
@@ -275,15 +291,23 @@ esac
 # could matter. `rm` is matched as a WORD (`rm ` or at end) so `npm run format`
 # stays on the fast path; `>` is here because pure truncation is family 6, and
 # the classifier is what decides an ordinary `cmd > file` write is not.
-case "$CMD" in
-  *gh*|*git*|*prisma*|*psql*|*mysql*|*mariadb*|*mongo*|*vercel*|*vc\ *|*merge-*) ;;
-  *rm\ *|*rm|*find\ *|*truncate*|*shred*|*rsync*|*">"*) ;;
-  *) ALLOW ;;
-esac
+# Family 7 adds the suite words, on the review lane on a live box only
+# (`git` and `gh` are already on the slow path).
+_SUITE_WORD=0
+if [ "$LIVE_REVIEW" = 1 ]; then
+  case "$CMD" in *tests/*|*test-impact-gate*|*fast-lints*) _SUITE_WORD=1 ;; esac
+fi
+if [ "$_SUITE_WORD" = 0 ]; then
+  case "$CMD" in
+    *gh*|*git*|*prisma*|*psql*|*mysql*|*mariadb*|*mongo*|*vercel*|*vc\ *|*merge-*) ;;
+    *rm\ *|*rm|*find\ *|*truncate*|*shred*|*rsync*|*">"*) ;;
+    *) ALLOW ;;
+  esac
+fi
 # On a lane where only family 6 applies, a command naming a families-1-5 binary
 # but no filesystem verb has nothing left to judge. `git` still goes through,
 # because `git clean` and `git worktree remove` are family 6.
-if [ "$FULL" = 0 ]; then
+if [ "$FULL" = 0 ] && [ "$LIVE_REVIEW" = 0 ]; then
   case "$CMD" in
     *rm\ *|*rm|*find\ *|*truncate*|*shred*|*rsync*|*">"*|*git*) ;;
     *) ALLOW ;;
@@ -307,7 +331,8 @@ SPLIT=$(printf '%s' "$NORM" | sed -E 's/\$\(/\n/g; s/`/\n/g; s/\|\|/\n/g; s/&&/\
 RULE=""; WHY=""; PUSH_BR=""
 
 # Peel the wrappers that sit in front of the real command word, then report
-# that word (basename'd) and the rest of the segment, one per line.
+# that word (basename'd), the rest of the segment, and the word as written
+# (before basename; family 7 reads it), one per line.
 cmd_word() {
   local -a toks=(); local i=0 n t w
   read -r -a toks <<<"$1"
@@ -345,6 +370,7 @@ cmd_word() {
   if [ -n "$w" ]; then printf '%s\n' "$(basename -- "$w" 2>/dev/null || printf '%s' "$w")"
   else printf '\n'; fi
   printf '%s\n' "${toks[*]:i+1}"
+  printf '%s\n' "$w"
 }
 
 # Is this host/URL fragment a LOCAL database? Anything else is treated as prod:
@@ -689,11 +715,175 @@ fs_family() { # fs_family <cmd-word> <rest-of-segment> <segment> <segcwd>
   return 0
 }
 
+# --- family 7: the review lane on a live harness box (BH-8103) -------------
+# On 2026-10-23 00:18Z the merge conductor's re-review agent ran `git checkout
+# -q pr8069` in the hub's deploy checkout and then ran a test suite there as
+# root. A review on a live box is static: it reads the diff and the files. Two
+# rules, judged only when LIVE_REVIEW=1:
+#   review-checkout  a git verb that moves HEAD or the work tree (or `gh pr
+#                    checkout`) in a shared checkout, or in a dir this guard
+#                    cannot resolve. A lane's own clone or worktree elsewhere,
+#                    and every read-only git verb, stay allowed.
+#   review-suite     a run of a shell suite (any `tests/**/*.sh`,
+#                    bin/test-impact-gate.sh, bin/fast-lints.sh), directly, through
+#                    bash/sh, or as the body of a `for` over suite paths.
+#                    `bash -n` (syntax only) is allowed.
+# HONEST LIMITS: `find -exec`, `xargs`, `while read` loops, `source`, and a
+# suite reached through a script the session writes all get through. On a
+# codex/gemini/grok lane the PATH shims send only the shimmed binaries (`git`,
+# `gh`) here, so review-suite is a PreToolUse (claude) rule there.
+#
+# The shared roots: the deploy checkout, the harness, the repo checkouts and
+# the orchestrator, each also through `readlink -f` (/root/harness is a symlink
+# to /data/harness on the boxes). Filled lazily, once.
+SHARED=()
+_SHARED_READY=0
+_init_shared() {
+  [ "$_SHARED_READY" = 1 ] && return 0
+  _SHARED_READY=1
+  local r l
+  for r in "$ILG_CHECKOUT" "$HARNESS" /root/harness /root/repos /root/orchestrator; do
+    [ -n "$r" ] || continue
+    [ "$r" = / ] || r="${r%/}"
+    SHARED+=("$r")
+    l=$(timeout 5 readlink -f -- "$r" 2>/dev/null) || l=""
+    [ -n "$l" ] && [ "$l" != "$r" ] && SHARED+=("$l")
+  done
+  return 0
+}
+
+# Is <dir> a shared checkout? rc 0 + the root in $_SC_ROOT. A lane's own tree
+# (HARNESS_LANE_WT, WT, BUILD_DIR, HARNESS_LANE_BUILD_DIR) wins only when it is
+# STRICTLY inside the shared root: agent-call.sh sets HARNESS_LANE_WT to its own
+# cwd, and a call started in the deploy checkout does not make it the lane's.
+_SC_ROOT=""
+_in_shared() { # _in_shared <dir>
+  local d="$1" p r v w best=0 own=0
+  local -a cands=("$d")
+  _init_shared
+  p=$(timeout 5 readlink -f -- "$d" 2>/dev/null) || p=""
+  [ -n "$p" ] && [ "$p" != "$d" ] && cands+=("$p")
+  for p in "${cands[@]}"; do
+    for r in "${SHARED[@]}"; do
+      _under "$p" "$r" || continue
+      [ "$_UL" -gt "$best" ] && { best="$_UL"; _SC_ROOT="$r"; }
+    done
+    for v in HARNESS_LANE_WT WT BUILD_DIR HARNESS_LANE_BUILD_DIR; do
+      w=$(printenv "$v" 2>/dev/null) || continue
+      [ -n "$w" ] || continue
+      _under "$p" "$w" && [ "$_UL" -gt "$own" ] && own="$_UL"
+    done
+  done
+  [ "$best" -gt 0 ] && [ "$own" -le "$best" ]
+}
+
+# The file a segment executes: the peeled word, or, when cmd_word kept the
+# shell as the word (a flag follows it), the shell's first positional. rc 1
+# when there is none, and for `-c` (the bash -c recursion judges the string)
+# and `-n` / `--noexec` (syntax only, runs nothing).
+_run_target() { # _run_target <cw> <rest> <raw>
+  local cw="$1" rest="$2" raw="$3" t i=0
+  local -a a=()
+  case "$cw" in
+    bash|sh|zsh|dash) ;;
+    *) [ -n "$raw" ] || return 1; printf '%s' "$raw"; return 0 ;;
+  esac
+  read -r -a a <<<"$rest"
+  while [ "$i" -lt "${#a[@]}" ]; do
+    t="${a[i]}"
+    case "$t" in
+      --noexec) return 1 ;;
+      --rcfile|--init-file) i=$((i+2)); continue ;;
+      --) i=$((i+1)); break ;;
+      --*) ;;
+      [-+]o|[-+]O) i=$((i+2)); continue ;;
+      [-+]*) case "${t#?}" in *c*|*n*) return 1 ;; esac ;;
+      *) break ;;
+    esac
+    i=$((i+1))
+  done
+  [ "$i" -lt "${#a[@]}" ] || return 1
+  printf '%s' "${a[i]}"
+}
+
+# `for <v> in <words>` whose words name suites -> prints <v>.
+_suite_loop_var() { # _suite_loop_var <segment>
+  local -a w=()
+  read -r -a w <<<"$1"
+  [ "${w[0]:-}" = for ] && [ "${w[2]:-}" = in ] || return 0
+  case "${w[1]:-}" in ''|[0-9]*|*[!A-Za-z0-9_]*) return 0 ;; esac
+  case " ${w[*]:3} " in
+    *tests/*.sh*|*test-impact-gate*|*fast-lints*) printf '%s' "${w[1]}" ;;
+  esac
+  return 0
+}
+
+review_family() { # review_family <segment> <segcwd> <suite-loop-var>
+  local seg="$1" segcwd="$2" lv="$3" cw rest raw tgt sub="" gdir gi=0
+  local -a C7=() gt=()
+  # A loop or if body: the command word follows the keyword.
+  while :; do
+    case "$seg" in
+      do\ *|then\ *|else\ *|'{ '*) seg="${seg#* }"; seg="${seg#"${seg%%[![:space:]]*}"}" ;;
+      *) break ;;
+    esac
+  done
+  mapfile -t C7 < <(cmd_word "$seg")
+  cw="${C7[0]:-}"; rest="${C7[1]:-}"; raw="${C7[2]:-}"
+  [ -n "$cw" ] || return 0
+
+  # --- review-checkout ---
+  case "$cw" in
+    git)
+      gdir="$segcwd"
+      read -r -a gt <<<"$rest"
+      while [ "$gi" -lt "${#gt[@]}" ]; do
+        case "${gt[gi]}" in
+          -C) gdir=$(resolve_target "${gt[gi+1]:-}" "$segcwd") || gdir=""; gi=$((gi+2)) ;;
+          -c|--git-dir|--work-tree|--namespace|--exec-path) gi=$((gi+2)) ;;
+          -*) gi=$((gi+1)) ;;
+          *) sub="${gt[gi]}"; break ;;
+        esac
+      done
+      case "$sub" in
+        checkout|switch|reset|pull|merge|rebase|restore|cherry-pick|am) ;;
+        stash) case "${gt[gi+1]:-}" in list|show) sub="" ;; esac ;;
+        *) sub="" ;;
+      esac
+      [ -n "$sub" ] && sub="git $sub" ;;
+    gh)
+      gdir="$segcwd"
+      case " $rest " in *" pr checkout "*) sub="gh pr checkout" ;; esac ;;
+  esac
+  if [ -n "$sub" ]; then
+    if [ -z "$gdir" ]; then
+      deny review-checkout "\`$sub\` in a directory this guard cannot resolve — on a live harness box a review moves no checkout it cannot prove is its own, and a shared checkout must stay where the deploy left it"
+    elif _in_shared "$gdir"; then
+      deny review-checkout "\`$sub\` in $gdir — that is a shared checkout on a live harness box (under $_SC_ROOT), and a review never moves its HEAD or work tree"
+    fi
+    return 0
+  fi
+
+  # --- review-suite ---
+  tgt=$(_run_target "$cw" "$rest" "$raw") || return 0
+  tgt="${tgt//\"/}"; tgt="${tgt//\'/}"
+  if [ -n "$lv" ]; then
+    case "$tgt" in
+      "\$$lv"|"\${$lv}") deny review-suite "a \`for $lv in\` loop over test suites that runs each one — suites are not run here, on a live harness box"; return 0 ;;
+    esac
+  fi
+  case "$tgt" in
+    tests/*.sh|*/tests/*.sh|*test-impact-gate.sh|*fast-lints.sh)
+      deny review-suite "\`$tgt\` runs a test suite — suites are not run here, on a live harness box" ;;
+  esac
+  return 0
+}
+
 classify() { # classify <command-string> [segment-cwd]  (sets RULE/WHY on the
              # first match). The cwd is passed IN so the `bash -c` recursion
              # below keeps what an outer `cd` set; unset, not empty, falls back
              # to the payload cwd — an unresolvable cd is a real empty.
-  local line seg cw rest tok inner cdto
+  local line seg cw rest tok inner cdto lv=""
   local segcwd="${2-$CWD}"
   local -a CW=()
   while IFS= read -r line; do
@@ -730,6 +920,13 @@ classify() { # classify <command-string> [segment-cwd]  (sets RULE/WHY on the
     # env/state/logs/builds/flags/locks, the checkouts or the key material.
     fs_family "$cw" "$rest" "$seg" "$segcwd"
     [ -n "$RULE" ] && return 0
+
+    # --- 7. the review lane on a live harness box (BH-8103) -------------
+    if [ "$LIVE_REVIEW" = 1 ]; then
+      case "$seg" in "for "*) lv=$(_suite_loop_var "$seg") ;; esac
+      review_family "$seg" "$segcwd" "$lv"
+      [ -n "$RULE" ] && return 0
+    fi
 
     # Families 1-5 are authority laws, fenced to the guarded build stages.
     [ "$FULL" = 1 ] || continue
@@ -922,6 +1119,10 @@ so use the literal path if the refusal was an empty expansion." ;;
   agent-push) CLOSING="This is the $LANE lane. It commits; it does not push. The harness pushes the
 branch after your session ends, and it re-reads the ticket's HOLD before it does.
 Commit your work, say in your output what is left, and stop." ;;
+  review-*) CLOSING="This is the review lane on a live harness box. A review here is static: read the
+diff and the files, do not check out a branch in a shared checkout and do not
+run suites. If you wanted a suite result, say in your review that it was not run
+here (CI and the Fly test host run them). (BH-8103)" ;;
   *) CLOSING="This is the $LANE lane on a builder box. It has no merge, push-to-main, deploy or
 prod-write authority — that is a machine-wide iron law, not a preference of this
 ticket, and the gated merge/deploy lanes exist precisely so an agent never needs
