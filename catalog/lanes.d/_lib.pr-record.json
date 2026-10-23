@@ -1,0 +1,22 @@
+{
+  "libs": [
+    {
+      "id": "pr-record",
+      "file": "bin/lib/pr-record.sh",
+      "note": "BH-8067: the fleet's own record of each fleet-owned PR (D1 table pr_records, PUT/GET /api/pr-records). pr_record_put writes it; pr_record_get reads it and calls GitHub (one REST GET of the PR) only when the record does not know a requested field, or is older than PR_RECORD_MAX_AGE_S. Then it writes what it read into the record. In C0 the only writer is the PR open in bin/lib/gh-pr-create.sh and no lane reads the record yet. Log: logs/pr-record.log (one line per GitHub read).",
+      "knobs": [
+        {
+          "env": "PR_RECORD_MAX_AGE_S",
+          "type": "int",
+          "default": 900,
+          "min": 0,
+          "max": 86400,
+          "unit": "seconds",
+          "zero_means": "every pr_record_get reads GitHub; the record is written but never trusted",
+          "required": true,
+          "note": "The max age of a record pr_record_get serves without a GitHub read: the worker's now minus the record's last write (any source). An older record is re-read from GitHub once and refreshed. Read through lane_knob (libs scope) when the caller has it, else as ${PR_RECORD_MAX_AGE_S:-900}; a value that is not a non-negative integer is 900 and one logs/pr-record.log line names it."
+        }
+      ]
+    }
+  ]
+}

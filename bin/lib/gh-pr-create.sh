@@ -96,6 +96,13 @@ command -v harness_pr_author_match >/dev/null 2>&1 \
   || . "$_GPC_LIBDIR/gh-pr-list.sh" 2>/dev/null \
   || true
 
+# BH-8067: the PR record client. Sourcing it only defines functions; without it
+# the ladder opens PRs exactly as before and writes no record.
+# shellcheck source=bin/lib/pr-record.sh
+command -v pr_record_put >/dev/null 2>&1 \
+  || . "$_GPC_LIBDIR/pr-record.sh" 2>/dev/null \
+  || true
+
 _gpc_log() { # _gpc_log <pipeline-log> <text...>
   local lg="${1:-}"; shift
   [ -n "$lg" ] || return 0
@@ -301,7 +308,44 @@ _gpc_other_identities() {
   fi
 }
 
+# THE PR RECORD (BH-8067). After a rung answered with a URL, the ladder writes
+# the fleet's own record of the PR (bin/lib/pr-record.sh): state open, the head
+# and base refs, and the head sha the local branch resolves to. The write runs
+# AFTER GitHub answered, so a record never says open for a PR that was not
+# opened. It is best effort, in a subshell: it never changes the URL on stdout
+# or the rc. A failed write is one pipeline-log line, and the first
+# pr_record_get of that PR reads GitHub. base_sha is not written: the local
+# origin/<base> can be behind GitHub's base, and a wrong value is worse than an
+# unknown one.
+_gpc_record_open() { # <slug> <url> <head> <base> <plog> <tag>
+  local slug="$1" url="$2" head="$3" base="$4" plog="$5" tag="$6" n sha fields
+  command -v pr_record_put >/dev/null 2>&1 || return 0
+  if ! [[ "$url" =~ /pull/([0-9]+)$ ]]; then
+    _gpc_log "$plog" "[$tag] pr record: '$url' is not a /pull/<n> url — no record written"
+    return 0
+  fi
+  n="${BASH_REMATCH[1]}"
+  sha=$(git rev-parse --verify -q "$head^{commit}" 2>/dev/null | tr 'A-F' 'a-f')
+  [[ "$sha" =~ ^[0-9a-f]{40}$ ]] || sha=""
+  fields=$(jq -nc --arg h "$head" --arg b "$base" --arg s "$sha" \
+    '{state:"open", head_ref:$h, base_ref:$b} + (if $s != "" then {head_sha:$s} else {} end)') || return 0
+  if ! pr_record_put "$slug" "$n" fleet "$fields" >/dev/null 2>&1; then
+    _gpc_log "$plog" "[$tag] pr record: write failed for $slug#$n — the first pr_record_get will read GitHub"
+  fi
+  return 0
+}
+
 gh_pr_create_ladder() { # <slug> <head> <base> <title> <body-file> <stderr-log> <pipeline-log> [tag]
+  local url="" rc=0
+  url=$(_gpc_ladder "$@") || rc=$?
+  if [ "$rc" = 0 ] && [ -n "$url" ]; then
+    ( _gpc_record_open "${1:-}" "$url" "${2:-}" "${3:-}" "${7:-}" "${8:-pr-create}" ) </dev/null >/dev/null 2>&1 || true
+  fi
+  [ -z "$url" ] || printf '%s\n' "$url"
+  return "$rc"
+}
+
+_gpc_ladder() { # the ladder itself; gh_pr_create_ladder's args and contract
   local slug="${1:?owner/repo}" head="${2:?head branch}" base="${3:?base branch}" \
         title="${4:-}" bf="${5:-}" errlog="${6:-/dev/null}" plog="${7:-}" tag="${8:-pr-create}"
   local _GPC_STDERR="$errlog"          # every rung's stderr lands where the caller reads it

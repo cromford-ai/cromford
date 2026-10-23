@@ -1,0 +1,5 @@
+# BH-8067 (C0): the fleet's own PR record, key-named (BH-5788).
+# Written by bin/lib/gh-pr-create.sh at PR open and by bin/lib/pr-record.sh
+# after a GitHub read; read by pr_record_get. Bearer-gated.
+PUT /api/pr-records
+GET /api/pr-records

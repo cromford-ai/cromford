@@ -142,6 +142,7 @@ worker/jobs/test/otp.bh-7732.test.js:generic-api-key:16
 worker/jobs/test/pool-records-roundtrip.bh-7429.test.js:generic-api-key:19
 worker/jobs/test/pool-records.bh-7429.test.js:generic-api-key:16
 worker/jobs/test/pool-tick.bh-7709.test.js:generic-api-key:21
+worker/jobs/test/pr-records.bh-8067.test.js:generic-api-key:26
 worker/jobs/test/prompts.bh-7940.test.js:generic-api-key:15
 worker/jobs/test/review-tiers.bh-6969.test.js:generic-api-key:25
 worker/jobs/test/route-keyed.bh-5788.test.js:generic-api-key:130
