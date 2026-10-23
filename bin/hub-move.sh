@@ -31,6 +31,9 @@
 #            then bootstrap-machine.sh --repos-only for each fleet.conf project.
 #            Then set a LOCAL flags/all-off on the target (never a fleet row)
 #            and write state/hub-move/target-seeded there. Both stay until C6.
+#            BH-8108: each ssh key is copied alone; a target key with the
+#            same sha256 is not copied, and a different immutable one gets
+#            chattr -i, the copy, then chattr +i.
 # tick       run each rendered hub cron command once (bin/render-cron.sh <box-id>;
 #            comments, env lines and @reboot skipped; the gate kept). Without
 #            --real it runs under the no-write shim (bin/lib/hub-move-nowrite.sh)
@@ -542,6 +545,40 @@ case "$fresh" in "$HARNESS/"*|"$live/tmp/hub-move-fresh-"*) rm -rf "$fresh" ;; e
 EOF
 }
 
+# seed_ssh_key <ip> <local key> <target dir> — copy one hub ssh key to the
+# target (BH-8108). bin/harden-state.sh sets chattr +i on id_ed25519* there
+# after a no-write tick, and scp cannot open an immutable file. Same sha256:
+# no copy. Different and immutable: chattr -i, copy, chmod 600, chattr +i.
+# Returns 0 (copied or skipped), 1 (probe failed), 2 (chattr -i failed) or
+# 3 (scp failed; chattr +i was tried first). A failed chattr +i after a good
+# copy is a WARN line and 0: harden-state sets the flag again on its next run.
+seed_ssh_key() {
+  local ip="$1" k="$2" dir="$3" b f want line got flags imm=0 rc
+  b=$(basename "$k"); f="$dir/$b"
+  want=$(sha256sum < "$k" | cut -d' ' -f1)
+  line=$(on_target "$ip" "if [ -f $f ]; then s=\$(sha256sum < $f | cut -d' ' -f1); a=\$(lsattr -d $f 2>/dev/null | cut -d' ' -f1); echo \"\${s:--} \${a:--}\"; else echo '- -'; fi") || return 1
+  read -r got flags <<<"$line"
+  [ -n "$got" ] || return 1
+  if [ "$got" = "$want" ]; then
+    say "seed: $b on the target is the same as the hub key; copy skipped"
+    return 0
+  fi
+  case "$flags" in *i*) imm=1 ;; esac
+  if [ "$imm" -eq 1 ]; then
+    on_target "$ip" "chattr -i $f" || return 2
+    say "seed: $b on the target is immutable and differs; chattr -i"
+  fi
+  scp "${SSH_OPTS[@]}" -q "$k" "root@$ip:$f"; rc=$?
+  if [ "$imm" -eq 1 ]; then
+    if on_target "$ip" "chmod 600 $f 2>/dev/null; chattr +i $f"; then
+      say "seed: chattr +i $b again"
+    else
+      say "seed: WARN chattr +i $b failed on $ip; harden-state re-arms it"
+    fi
+  fi
+  [ "$rc" -eq 0 ] || return 3
+}
+
 cmd_seed() {
   local ts="${1:-latest}" ip idf envd tmp k id name want_id rc p
   case "$ts" in latest|[0-9]*T[0-9]*Z) ;; *) usage ;; esac
@@ -564,11 +601,16 @@ cmd_seed() {
     && scp "${SSH_OPTS[@]}" -q "$tmp" "root@$ip:$sec/backup-s3.env" \
     || { rm -f "$tmp"; fail "scp secrets to $ip"; }
   rm -f "$tmp"
-  local keys=()
-  for k in "${HUB_MOVE_SSH_DIR:-$HOME/.ssh}"/id_*; do [ -f "$k" ] && keys+=("$k"); done
-  if [ "${#keys[@]}" -gt 0 ]; then
-    scp "${SSH_OPTS[@]}" -q "${keys[@]}" "root@$ip:$tssh/" || fail "scp ssh keys to $ip"
-  fi
+  for k in "${HUB_MOVE_SSH_DIR:-$HOME/.ssh}"/id_*; do
+    [ -f "$k" ] || continue
+    seed_ssh_key "$ip" "$k" "$tssh"; rc=$?
+    case "$rc" in
+      0) ;;
+      1) fail "probe ssh key ${k##*/} on $ip" ;;
+      2) fail "chattr -i ssh key ${k##*/} on $ip" ;;
+      *) fail "scp ssh key ${k##*/} on $ip" ;;
+    esac
+  done
   on_target "$ip" "chmod 600 $sec/* $tssh/id_* 2>/dev/null; true" || fail "chmod on $ip"
 
   say "seed: harness code to $ip:$TH"
