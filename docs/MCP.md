@@ -20,6 +20,16 @@ The server reads these from its environment at startup.
 | `HARNESS_CONSOLE_TOKEN` | no | Sent as `Authorization: Bearer <token>` on every request. |
 | `HARNESS_CONSOLE_SECRET` | no | The console's `/login/<secret>` secret, which sets the `dash` cookie. Not wired yet: a secret alone sends nothing until the cookie flow lands. |
 | `HARNESS_MCP_REPO_ALLOWLIST` | no | Comma-separated `owner/name` repos the guarded tools may touch. Empty means the guarded tools always refuse. |
+| `HARNESS_MCP_GITHUB_TOKEN` | no | GitHub token for `batch_failure`, sent only to the GitHub API. Without it `batch_failure` answers `github_auth_not_configured` and sends nothing. Scrubbed from every result. |
+| `HARNESS_MCP_GITHUB_URL` | no | GitHub API origin for `batch_failure` (default `https://api.github.com`; GitHub Enterprise or a test stub). |
+| `HARNESS_MCP_GITHUB_RAW_CAP` | no | Bytes of a job log `batch_failure` keeps, from the end (default 8388608, 8 MiB). A longer log is `log_truncated` and named in `partial`. |
+| `HARNESS_MCP_BATCH_PAGE_CAP` | no | Pages of 100 `batch_failure` reads per list: check runs, PR files, timeline (default 3). |
+| `HARNESS_MCP_BATCH_CANDIDATE_CAP` | no | Mergify cross-references `batch_failure` reads from a PR timeline to find its draft (default 5). |
+| `HARNESS_MCP_BATCH_LOG_CAP` | no | Failed job logs `batch_failure` reads per call (default 10). A check past the cap is `not_read_cap` and leaves every PR `culprit: null`. |
+| `HARNESS_MCP_BATCH_LINE_CAP` | no | Failure lines `batch_failure` returns per failed check (default 40). |
+| `HARNESS_MCP_BATCH_LINE_LEN` | no | Characters kept per failure line (default 500). |
+
+A cap knob that is unset, empty or not a positive integer uses its default.
 
 With no token and no secret, every tool answers `console_auth_not_configured`
 and nothing is sent. The token and secret are scrubbed from every result and
@@ -139,6 +149,7 @@ parameters only when given.
 | `merge_queue` | read | `GET /api/coord/merge-queue/live?project=` (see [Merge-queue tools](#merge-queue-tools)) |
 | `pr_stage` | read | `GET /api/coord/merge-queue/live`, then `GET /api/coord/pr-state-events?repo=&number=&limit=50` and `GET /api/coord/risk-tiers?repo=&pr=&limit=1` |
 | `backlog` | read | `GET /api/coord/merge-queue/live?project=` and `GET /api/coord/jobs?project=&kind=build&status=running&limit=200` |
+| `batch_failure` | read | GitHub REST, GET only, through `mcp/lib/github.mjs`: the batch draft PR, its check runs and failed job logs, and each member and ahead PR with its files, head checks and verdict check. Needs `HARNESS_MCP_GITHUB_TOKEN`. A culprit is a likely culprit: a log line that names a file the PR changed. A match is not proof, and `requeue_candidates` is advice only. A `pending` or `passed` batch has no candidates. |
 | `file_issue` | write | `POST /api/dash/action` `{type:"file_issue", ...args}` |
 | `comment_issue` | write | `POST /api/dash/action` `{type:"comment_issue", ...args}`. The hub posts one comment on the issue as the GitHub App, once per command id (`bin/lib/issue-comment-cmd.sh`). |
 | `hold_issue` | write | `POST /api/dash/action` `{type:"hold_ticket", project, issue, reason}`. The hub adds the `hold` label (`bin/lib/ticket-hold-cmd.sh`). |

@@ -1,0 +1,588 @@
+{
+  "_comment": "BH-7714 batch_failure fixture: GitHub REST answers for batch draft #900 of acme/widgets (members 101-104, #99 queued ahead), shaped like the live answers for a failed batch. {{origin}} is the stub origin.",
+  "repo": "acme/widgets",
+  "draft": 900,
+  "head_sha": "ddddddddddddddddddddddddddddddddddddd900",
+  "routes": {
+    "/repos/acme/widgets/pulls/900": {
+      "json": {
+        "number": 900,
+        "title": "merge queue: embarking #101, #102, #103 and #104 together",
+        "state": "open",
+        "merged": false,
+        "draft": true,
+        "html_url": "https://github.com/acme/widgets/pull/900",
+        "user": {
+          "login": "mergify[bot]"
+        },
+        "head": {
+          "ref": "mergify/merge-queue/0f1e2d3c4b",
+          "sha": "ddddddddddddddddddddddddddddddddddddd900"
+        },
+        "body": "This pull request has been created by Mergify to speculatively check the mergeability of #101, #102, #103, #104.\nYou don't need to do anything. Mergify will close this pull request automatically when it is complete.\n\n**Required conditions of queue** `default` **for merge:**\n\n- [ ] `check-success=Harness CI`\n\n### Queued ahead of this batch\n\n- [#99](https://github.com/acme/widgets/pull/99) docs: queue notes\n\n<details>\n<summary>Mergify metadata</summary>\n\n```yaml\n---\nchecking_base_sha: bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb001\npull_requests:\n  - number: 101\n    scopes: []\n  - number: 102\n    scopes: []\n  - number: 103\n    scopes: []\n  - number: 104\n    scopes: []\nprevious_failed_batches: []\n...\n\n```\n</details>"
+      }
+    },
+    "/repos/acme/widgets/pulls/880": {
+      "json": {
+        "number": 880,
+        "title": "change 880",
+        "state": "closed",
+        "merged": false,
+        "draft": true,
+        "html_url": "https://github.com/acme/widgets/pull/880",
+        "user": {
+          "login": "mergify[bot]"
+        },
+        "head": {
+          "ref": "mergify/merge-queue/0a0a0a0a0a",
+          "sha": "ddddddddddddddddddddddddddddddddddddd880"
+        },
+        "body": "This pull request has been created by Mergify to speculatively check the mergeability of #101, #102, #103, #104.\nYou don't need to do anything. Mergify will close this pull request automatically when it is complete.\n\n**Required conditions of queue** `default` **for merge:**\n\n- [ ] `check-success=Harness CI`\n\n### Queued ahead of this batch\n\n- [#98](https://github.com/acme/widgets/pull/99) docs: queue notes\n\n<details>\n<summary>Mergify metadata</summary>\n\n```yaml\n---\nchecking_base_sha: bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb001\npull_requests:\n  - number: 101\n    scopes: []\n  - number: 102\n    scopes: []\n  - number: 103\n    scopes: []\n  - number: 104\n    scopes: []\nprevious_failed_batches: []\n...\n\n```\n</details>"
+      }
+    },
+    "/repos/acme/widgets/pulls/557": {
+      "json": {
+        "number": 557,
+        "title": "change 557",
+        "state": "open",
+        "merged": false,
+        "draft": false,
+        "html_url": "https://github.com/acme/widgets/pull/557",
+        "user": {
+          "login": "mergify[bot]"
+        },
+        "head": {
+          "ref": "mergify/bp/main/pr-103",
+          "sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa557"
+        },
+        "body": "Backport of #103."
+      }
+    },
+    "/repos/acme/widgets/pulls/555": {
+      "json": {
+        "number": 555,
+        "title": "change 555",
+        "state": "open",
+        "merged": false,
+        "draft": false,
+        "html_url": "https://github.com/acme/widgets/pull/555",
+        "user": {
+          "login": "dev-fixture"
+        },
+        "head": {
+          "ref": "ticket/w-555",
+          "sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa555"
+        },
+        "body": "Follows #103."
+      }
+    },
+    "/repos/acme/widgets/commits/ddddddddddddddddddddddddddddddddddddd900/check-runs?per_page=100&page=1": {
+      "json": {
+        "total_count": 5,
+        "check_runs": [
+          {
+            "id": 4990,
+            "name": "Jobs worker",
+            "status": "completed",
+            "conclusion": "failure",
+            "app": {
+              "slug": "github-actions"
+            },
+            "output": {
+              "title": null,
+              "summary": null
+            }
+          },
+          {
+            "id": 5001,
+            "name": "Syntax + shellcheck + config integrity",
+            "status": "completed",
+            "conclusion": "failure",
+            "app": {
+              "slug": "github-actions"
+            },
+            "output": {
+              "title": null,
+              "summary": null
+            }
+          },
+          {
+            "id": 5002,
+            "name": "Jobs worker",
+            "status": "completed",
+            "conclusion": "success",
+            "app": {
+              "slug": "github-actions"
+            },
+            "output": {
+              "title": null,
+              "summary": null
+            }
+          },
+          {
+            "id": 5003,
+            "name": "Harness CI shard 2",
+            "status": "completed",
+            "conclusion": "success",
+            "app": {
+              "slug": "github-actions"
+            },
+            "output": {
+              "title": null,
+              "summary": null
+            }
+          },
+          {
+            "id": 5004,
+            "name": "Harness CI shard 3",
+            "status": "completed",
+            "conclusion": "skipped",
+            "app": {
+              "slug": "github-actions"
+            },
+            "output": {
+              "title": null,
+              "summary": null
+            }
+          }
+        ]
+      }
+    },
+    "/repos/acme/widgets/actions/jobs/5001/logs": {
+      "status": 302,
+      "headers": {
+        "location": "{{origin}}/blob/job-5001.txt?sig=fixture-signed"
+      }
+    },
+    "/blob/job-5001.txt?sig=fixture-signed": {
+      "text": "2026-10-20T14:01:02.1234567Z ##[group]Run bin/state-paths-guard.sh --all\n2026-10-20T14:01:02.1234567Z \u001b[36;1mbin/state-paths-guard.sh --all\u001b[0m\n2026-10-20T14:01:02.1234567Z \u001b[36;1mFAIL=0\u001b[0m\n2026-10-20T14:01:02.1300000Z shell: /usr/bin/bash -e {0}\n2026-10-20T14:01:02.1300000Z ##[endgroup]\n2026-10-20T14:01:03.0000000Z   fail-on-cache-miss: false\n2026-10-20T14:01:04.0000000Z schema-additive.bh-1000-test: 2 pass, 0 fail (750 statements in worker/jobs/schema.d (composed))\n2026-10-20T14:01:05.0000000Z \u001b[31mSTATE-PATHS-GUARD: bin/x.sh:79: writes state/remote-results\u001b[0m\n2026-10-20T14:01:05.1000000Z ##[error]Process completed with exit code 1.\n"
+    },
+    "/repos/acme/widgets/issues/103/timeline?per_page=100&page=1": {
+      "json": [
+        {
+          "event": "labeled",
+          "created_at": "2026-10-20T08:00:00Z",
+          "label": {
+            "name": "queued"
+          }
+        },
+        {
+          "event": "cross-referenced",
+          "created_at": "2026-10-20T09:00:00Z",
+          "source": {
+            "type": "issue",
+            "issue": {
+              "number": 880,
+              "user": {
+                "login": "mergify[bot]"
+              },
+              "pull_request": {
+                "url": "https://api.github.com/repos/acme/widgets/pulls/880"
+              }
+            }
+          }
+        },
+        {
+          "event": "cross-referenced",
+          "created_at": "2026-10-20T09:40:00Z",
+          "source": {
+            "type": "issue",
+            "issue": {
+              "number": 900,
+              "user": {
+                "login": "mergify[bot]"
+              },
+              "pull_request": {
+                "url": "https://api.github.com/repos/acme/widgets/pulls/900"
+              }
+            }
+          }
+        },
+        {
+          "event": "cross-referenced",
+          "created_at": "2026-10-20T09:45:00Z",
+          "source": {
+            "type": "issue",
+            "issue": {
+              "number": 557,
+              "user": {
+                "login": "mergify[bot]"
+              },
+              "pull_request": {
+                "url": "https://api.github.com/repos/acme/widgets/pulls/557"
+              }
+            }
+          }
+        },
+        {
+          "event": "cross-referenced",
+          "created_at": "2026-10-20T09:50:00Z",
+          "source": {
+            "type": "issue",
+            "issue": {
+              "number": 556,
+              "user": {
+                "login": "mergify[bot]"
+              }
+            }
+          }
+        },
+        {
+          "event": "cross-referenced",
+          "created_at": "2026-10-20T10:00:00Z",
+          "source": {
+            "type": "issue",
+            "issue": {
+              "number": 555,
+              "user": {
+                "login": "dev-fixture"
+              },
+              "pull_request": {
+                "url": "https://api.github.com/repos/acme/widgets/pulls/555"
+              }
+            }
+          }
+        }
+      ]
+    },
+    "/repos/acme/widgets/issues/99/timeline?per_page=100&page=1": {
+      "json": [
+        {
+          "event": "cross-referenced",
+          "created_at": "2026-10-20T09:40:00Z",
+          "source": {
+            "type": "issue",
+            "issue": {
+              "number": 900,
+              "user": {
+                "login": "mergify[bot]"
+              },
+              "pull_request": {
+                "url": "https://api.github.com/repos/acme/widgets/pulls/900"
+              }
+            }
+          }
+        }
+      ]
+    },
+    "/repos/acme/widgets/issues/777/timeline?per_page=100&page=1": {
+      "json": [
+        {
+          "event": "cross-referenced",
+          "created_at": "2026-10-20T10:00:00Z",
+          "source": {
+            "type": "issue",
+            "issue": {
+              "number": 555,
+              "user": {
+                "login": "dev-fixture"
+              },
+              "pull_request": {
+                "url": "https://api.github.com/repos/acme/widgets/pulls/555"
+              }
+            }
+          }
+        }
+      ]
+    },
+    "/repos/acme/widgets/pulls/99/files?per_page=100&page=1": {
+      "json": [
+        {
+          "filename": "lib/z.py",
+          "status": "modified"
+        }
+      ]
+    },
+    "/repos/acme/widgets/commits/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa099/check-runs?per_page=100&page=1": {
+      "json": {
+        "total_count": 2,
+        "check_runs": [
+          {
+            "id": 991,
+            "name": "Harness CI",
+            "status": "completed",
+            "conclusion": "success",
+            "app": {
+              "slug": "github-actions"
+            },
+            "output": {
+              "title": null,
+              "summary": null
+            }
+          },
+          {
+            "id": 992,
+            "name": "lead-verdict",
+            "status": "completed",
+            "conclusion": "success",
+            "app": {
+              "slug": "github-actions"
+            },
+            "output": {
+              "title": null,
+              "summary": null
+            }
+          }
+        ]
+      }
+    },
+    "/repos/acme/widgets/pulls/101": {
+      "json": {
+        "number": 101,
+        "title": "change 101",
+        "state": "open",
+        "merged": false,
+        "draft": false,
+        "html_url": "https://github.com/acme/widgets/pull/101",
+        "user": {
+          "login": "dev-fixture"
+        },
+        "head": {
+          "ref": "ticket/w-101",
+          "sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa101"
+        },
+        "body": "Change 101."
+      }
+    },
+    "/repos/acme/widgets/pulls/101/files?per_page=100&page=1": {
+      "json": [
+        {
+          "filename": "docs/a.md",
+          "status": "modified"
+        }
+      ]
+    },
+    "/repos/acme/widgets/commits/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa101/check-runs?per_page=100&page=1": {
+      "json": {
+        "total_count": 2,
+        "check_runs": [
+          {
+            "id": 1011,
+            "name": "Harness CI",
+            "status": "completed",
+            "conclusion": "success",
+            "app": {
+              "slug": "github-actions"
+            },
+            "output": {
+              "title": null,
+              "summary": null
+            }
+          },
+          {
+            "id": 1012,
+            "name": "lead-verdict",
+            "status": "completed",
+            "conclusion": "success",
+            "app": {
+              "slug": "github-actions"
+            },
+            "output": {
+              "title": null,
+              "summary": null
+            }
+          }
+        ]
+      }
+    },
+    "/repos/acme/widgets/pulls/102": {
+      "json": {
+        "number": 102,
+        "title": "change 102",
+        "state": "open",
+        "merged": false,
+        "draft": false,
+        "html_url": "https://github.com/acme/widgets/pull/102",
+        "user": {
+          "login": "dev-fixture"
+        },
+        "head": {
+          "ref": "ticket/w-102",
+          "sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa102"
+        },
+        "body": "Change 102."
+      }
+    },
+    "/repos/acme/widgets/pulls/102/files?per_page=100&page=1": {
+      "json": [
+        {
+          "filename": "bin/x.sh",
+          "status": "added"
+        },
+        {
+          "filename": "tests/x.bh-102-test.sh",
+          "status": "added"
+        }
+      ]
+    },
+    "/repos/acme/widgets/commits/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa102/check-runs?per_page=100&page=1": {
+      "json": {
+        "total_count": 2,
+        "check_runs": [
+          {
+            "id": 1021,
+            "name": "Harness CI",
+            "status": "completed",
+            "conclusion": "success",
+            "app": {
+              "slug": "github-actions"
+            },
+            "output": {
+              "title": null,
+              "summary": null
+            }
+          },
+          {
+            "id": 1022,
+            "name": "lead-verdict",
+            "status": "completed",
+            "conclusion": "success",
+            "app": {
+              "slug": "github-actions"
+            },
+            "output": {
+              "title": null,
+              "summary": null
+            }
+          }
+        ]
+      }
+    },
+    "/repos/acme/widgets/pulls/103": {
+      "json": {
+        "number": 103,
+        "title": "change 103",
+        "state": "open",
+        "merged": false,
+        "draft": false,
+        "html_url": "https://github.com/acme/widgets/pull/103",
+        "user": {
+          "login": "dev-fixture"
+        },
+        "head": {
+          "ref": "ticket/w-103",
+          "sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa103"
+        },
+        "body": "Change 103."
+      }
+    },
+    "/repos/acme/widgets/pulls/103/files?per_page=100&page=1": {
+      "json": [
+        {
+          "filename": "worker/jobs/src/y.js",
+          "status": "modified"
+        }
+      ]
+    },
+    "/repos/acme/widgets/commits/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa103/check-runs?per_page=100&page=1": {
+      "json": {
+        "total_count": 2,
+        "check_runs": [
+          {
+            "id": 1031,
+            "name": "Harness CI",
+            "status": "completed",
+            "conclusion": "success",
+            "app": {
+              "slug": "github-actions"
+            },
+            "output": {
+              "title": null,
+              "summary": null
+            }
+          },
+          {
+            "id": 1032,
+            "name": "lead-verdict",
+            "status": "completed",
+            "conclusion": "success",
+            "app": {
+              "slug": "github-actions"
+            },
+            "output": {
+              "title": null,
+              "summary": null
+            }
+          }
+        ]
+      }
+    },
+    "/repos/acme/widgets/pulls/104": {
+      "json": {
+        "number": 104,
+        "title": "change 104",
+        "state": "open",
+        "merged": false,
+        "draft": false,
+        "html_url": "https://github.com/acme/widgets/pull/104",
+        "user": {
+          "login": "dev-fixture"
+        },
+        "head": {
+          "ref": "ticket/w-104",
+          "sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa104"
+        },
+        "body": "Change 104."
+      }
+    },
+    "/repos/acme/widgets/pulls/104/files?per_page=100&page=1": {
+      "json": [
+        {
+          "filename": "in/x.sh",
+          "status": "added"
+        }
+      ]
+    },
+    "/repos/acme/widgets/commits/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa104/check-runs?per_page=100&page=1": {
+      "json": {
+        "total_count": 2,
+        "check_runs": [
+          {
+            "id": 1041,
+            "name": "Harness CI",
+            "status": "completed",
+            "conclusion": "success",
+            "app": {
+              "slug": "github-actions"
+            },
+            "output": {
+              "title": null,
+              "summary": null
+            }
+          },
+          {
+            "id": 1042,
+            "name": "lead-verdict",
+            "status": "completed",
+            "conclusion": "success",
+            "app": {
+              "slug": "github-actions"
+            },
+            "output": {
+              "title": null,
+              "summary": null
+            }
+          }
+        ]
+      }
+    },
+    "/repos/acme/widgets/pulls/99": {
+      "json": {
+        "number": 99,
+        "title": "change 99",
+        "state": "closed",
+        "merged": true,
+        "draft": false,
+        "html_url": "https://github.com/acme/widgets/pull/99",
+        "user": {
+          "login": "dev-fixture"
+        },
+        "head": {
+          "ref": "ticket/w-99",
+          "sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa099"
+        },
+        "body": "Change 99."
+      }
+    }
+  }
+}
