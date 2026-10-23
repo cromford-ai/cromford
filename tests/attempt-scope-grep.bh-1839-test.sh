@@ -79,6 +79,11 @@ cp "$DIR"/bin/lib/jobs/*.sh "$H/bin/lib/jobs/" || exit 1
 cp "$DIR/bin/lib/env-path.sh" "$H/bin/lib/" || exit 1
 cp "$DIR/bin/lib/merge-conductor-lib.sh" "$H/bin/lib/" || exit 1
 cp "$DIR"/bin/lib/mc/*.sh "$H/bin/lib/mc/" || exit 1
+# TEST-CHANGE (BH-8035): every conductor rebase spawn asks mc_rebase_gate, which
+# loads bin/lib/migration-hold.sh and reads the hold rows, and defers when it
+# cannot. This suite has no hold rows: the lib is installed, setting_get says "no row".
+scratch_install_closure bin/lib/migration-hold.sh "$T/h" >/dev/null || { echo "closure install failed"; exit 1; }
+setting_get() { return 2; }; export -f setting_get
 
 ATT="$H/state/merge-conductor/attempts.txt"
 MCLOG="$H/logs/merge-conductor.log"

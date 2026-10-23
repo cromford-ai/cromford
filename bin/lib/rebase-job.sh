@@ -42,6 +42,9 @@
 #            such line the word stands alone.
 #   REBASE_LEASE_REJECTED <why>
 #   REBASE_SETUP_FAILED <why>
+#   REBASE_SKIPPED mergify-queue: <why> | migration-apply-lane: <why>   (BH-8035)
+#            another lane holds the PR, so nothing was pushed; the hub's
+#            mc_pool_rebase_apply reads it as a clean no-op.
 #
 # then, one per line, in this order:
 #
@@ -68,6 +71,12 @@
 #                    the number. A number is NEVER invented.
 #   REBASE_WT_DIR    where the per-job worktree is made. Unset -> /data/worktrees
 #                    when it exists (the pool machine's volume), else $TMPDIR.
+#   REBASE_JOB_MERGIFY  `true` when the hub queued the row for a Mergify repo
+#                    (the row meta's `mergify`, BH-8035). Step 8 then reads the
+#                    Mergify hold again just before the push. Unset -> no read.
+#   REBASE_JOB_HOLD  the row meta's `hold` (BH-8035): the migration hold gave
+#                    the PR to an apply lane when the hub queued the row. Set ->
+#                    REBASE_SKIPPED at step 2, before any git. Unset -> nothing.
 #
 # WHAT THE BODY DOES, in order, each step with its own RESULT word:
 #
@@ -230,8 +239,8 @@ _rj_link_ws() {
 #   rebase_job_run's locals — every `return` here is a step that decided, and
 #   the caller owns the cleanup and the write.
 _rebase_job_body() {
-  # $2 is the slug, and it is deliberately not bound here: the only thing the
-  # slug decides is the PR: fallback, which rebase_job_run owns.
+  # $2 is the slug, and it is deliberately not bound here: it decides the PR:
+  # fallback, which rebase_job_run owns, and the step 8 Mergify read (BH-8035).
   local repo="$1" br="$3" head="$4" base="$5" harness="$6"
   local wt wtbase shallow conf new actual rc lib="$harness/bin/lib/merge-conductor-lib.sh"
   local fargs=()
@@ -267,6 +276,11 @@ _rebase_job_body() {
   case "$br" in
     main|master|"$base") _rj_line="REBASE_SETUP_FAILED branch is protected"; return 1 ;;
   esac
+  # 2b. THE APPLY LANE OWNS IT (BH-8035): the hub saw it when it queued the row,
+  # and a push resets that lane's run (project-6 #2362). No git at all.
+  if [ -n "${REBASE_JOB_HOLD:-}" ]; then
+    _rj_line="REBASE_SKIPPED $(printf '%s' "$REBASE_JOB_HOLD" | tr '\t\r\n' '   ')"; return 1
+  fi
 
   # --- 3. fetch both sides, by explicit refspec ------------------------------
   shallow=$(git -C "$repo" rev-parse --is-shallow-repository 2>/dev/null)
@@ -386,6 +400,17 @@ _rebase_job_body() {
     . "$(dirname "${BASH_SOURCE[0]}")/hold-push.sh" 2>/dev/null \
       || . "$harness/bin/lib/hold-push.sh" 2>/dev/null \
       || { _rj_line="REBASE_SETUP_FAILED no bin/lib/hold-push.sh on this machine"; return 1; }
+  fi
+  # MERGIFY HOLDS IT NOW (BH-8035): the hub twin is mc_rebase's push-time read
+  # (BH-8021). The PR can enter the Mergify queue while this job runs, and a
+  # push cancels it. One check-runs read of the old head, only on a Mergify
+  # repo. A read that fails pushes as before, the same as the hub path.
+  local mqwhy mqrc
+  if [ "${REBASE_JOB_MERGIFY:-}" = true ] && [ "$base" = main ] && type mc_mergify_holds >/dev/null 2>&1; then
+    mqwhy=$(mc_mergify_holds "$2" "${REBASE_JOB_URL:-}" "$head" 2>/dev/null); mqrc=$?
+    if [ "$mqrc" = 0 ]; then
+      _rj_line="REBASE_SKIPPED mergify-queue: $(printf '%s' "$mqwhy" | tr '\t\r\n' '   ') on ${head:0:8}"; return 1
+    fi
   fi
   rc=0; hold_push "${PROJECT:--}" - "$wt" origin HEAD "$br" "$head" >/dev/null 2>&1 || rc=$?
   case "$rc" in

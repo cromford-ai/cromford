@@ -176,6 +176,11 @@ export PATH="$T/fakebin:$PATH"
 # Pure helpers only in THIS shell (file names); every decision runs in a fresh
 # process so the per-process flag cache sees the flag file as it is now.
 # shellcheck source=/dev/null
+# TEST-CHANGE (BH-8035): every conductor rebase spawn asks mc_rebase_gate, which
+# loads bin/lib/migration-hold.sh and reads the hold rows, and defers when it
+# cannot. This suite has no hold rows: the lib is installed, setting_get says "no row".
+scratch_install_closure bin/lib/migration-hold.sh "$T/h" >/dev/null || { echo "closure install failed"; exit 1; }
+setting_get() { return 2; }; export -f setting_get
 . "$T/h/bin/lib/merge-conductor-lib.sh"; mc_init
 SD="$T/h/state/merge-conductor"
 ATT="$SD/attempts.txt"

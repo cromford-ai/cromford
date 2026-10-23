@@ -44,6 +44,11 @@ export HARNESS="$T/h"
 mkdir -p "$T/h/bin/lib/jobs" "$T/h/logs" "$T/h/state" "$T/h/flags" "$T/h/locks" "$T/h/builds" \
          "$T/h/env" "$T/h/tmp" "$T/fakebin" "$T/repos"
 cp "$DIR/bin/lib/gh-pr-list.sh" "$DIR/bin/lib/merge-conductor-lib.sh" "$T/h/bin/lib/"
+# TEST-CHANGE (BH-8035): every conductor rebase spawn asks mc_rebase_gate, which
+# loads bin/lib/migration-hold.sh and reads the hold rows, and defers when it
+# cannot. This suite has no hold rows: the lib is installed, setting_get says "no row".
+scratch_install_closure bin/lib/migration-hold.sh "$T/h" >/dev/null || { echo "closure install failed"; exit 1; }
+setting_get() { return 2; }; export -f setting_get
 cp "$DIR/bin/lib/gh-rest.sh" "$DIR/bin/lib/gh-rest-var.sh" "$T/h/bin/lib/"
 cp "$DIR/tests/lib/rest-emit.sh" "$T/fakebin/restpr"; chmod +x "$T/fakebin/restpr"
 mkdir -p "$T/h/bin/lib/mc" && cp "$DIR"/bin/lib/mc/*.sh "$T/h/bin/lib/mc/"

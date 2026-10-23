@@ -951,8 +951,10 @@ mc_pool_rebase_enqueue() {
   type queue_put >/dev/null 2>&1 || {
     rm -f "$jf"
     mc_log "$url pool rebase: no queue client sourced on this box — nothing spent, retried next tick"; return 7; }
+  # BH-8035: `mergify` and `hold` tell the machine to read the hold again at its push.
   meta=$(jq -nc --arg s "$slug" --arg u "$url" --argjson n "$num" --arg b "$br" --arg h "$head" \
-    '{kind:"rebase",slug:$s,url:$u,pr:$n,branch:$b,head:$h,base:"main"}' 2>/dev/null) || {
+    --argjson x "$(mc_pool_rebase_meta_extra "$slug" "$project" "$num" "$head" "${PROVIDER:-}")" \
+    '{kind:"rebase",slug:$s,url:$u,pr:$n,branch:$b,head:$h,base:"main"} + $x' 2>/dev/null) || {
     rm -f "$jf"; mc_log "$url pool rebase: the queue meta could not be built — nothing spent"; return 7; }
   r=$(queue_put "$project" "$key" "$num" fly "" "$meta") || {
     rm -f "$jf"
@@ -1029,6 +1031,20 @@ mc_pool_rebase_apply() {
   fi
   [ -n "${slug:-}" ] && [ -n "$head" ] && jf=$(mc_rb_file "$slug" "$num" "$head")
   [ -n "${jf:-}" ] || return 1
+  # REBASE_SKIPPED (BH-8035): the machine read a hold just before its push and
+  # pushed nothing. A clean no-op: the job file of this head goes, so no tick
+  # reads a result, and the row is classified again from GitHub next tick.
+  if [ "$word" = REBASE_SKIPPED ]; then
+    ( flock 9 2>/dev/null
+      rm -f "$jf" "${jf%.json}.out"
+    ) 9>>"$MC_RB_DIR/.lock" 2>/dev/null
+    if [ -n "$url" ] && [ -n "$head" ]; then
+      type job_ledger_put >/dev/null 2>&1 && \
+        job_ledger_put rebase "$url@$head" SKIPPED "$(printf '%.200s' "$first")" >/dev/null 2>&1 || true
+    fi
+    mc_log "$project $key pool rebase applied: SKIPPED (${arg:-no reason}) on ${br:-the branch} at ${head:0:8} — nothing pushed, nothing to apply (BH-8035)"
+    return 0
+  fi
   case "$word" in
     REBASED)
       if [ "${#arg}" = 40 ] && [ -z "${arg//[0-9a-f]/}" ] && [ -n "$url" ]; then
@@ -4385,6 +4401,125 @@ merge_tree_clean() {
   return 0
 }
 
+# mc_rebase_mig_lane <project> <slug> <num> <key> <head> — BH-8035. Does the
+#   migration hold give this PR to an apply lane (bin/lib/migration-hold.sh)?
+#     rc 0  yes: MMH_NAMES and MMH_DETAIL name the files and the lane
+#     rc 1  no, or the project is not gated (no globs row, no apply_lane row)
+#     rc 2  a settings row or the files list could not be read: MMH_DETAIL says which
+#   A read that fails is rc 2, never rc 1 (BH-8021 had `lane=""` on a failed
+#   read, so an outage spawned the rebase).
+#   IT LOADS WHAT IT NEEDS (BH-8035). The BH-8021 check ran only when mmh_decide
+#   and setting_get were already defined, and a process without them passed in
+#   silence (project-6 #2362 and #2374 at 19:17Z: hold rows set, no LAND_SKIP,
+#   no "migration hold:" line). Now a missing mmh_decide sources
+#   $MC_H/bin/lib/migration-hold.sh here, and mmh_globs loads setting_get
+#   (the jobs client) when this shell has none. A lib or a settings reader that
+#   still cannot be loaded is rc 2: the caller defers, never spawns. So is a
+#   failed read after the globs row says the project is gated (the apply_lane
+#   row, the files list). An unreadable globs row is "not gated this tick",
+#   with one log line, as mc_mig_hold reads it.
+mc_rebase_mig_lane() {
+  local p="$1" lane grc=0 lrc=0 lib="${MC_H:-${HARNESS:-}}/bin/lib/migration-hold.sh"
+  if ! command -v mmh_decide >/dev/null 2>&1 || ! command -v mmh_globs >/dev/null 2>&1; then
+    # shellcheck source=bin/lib/migration-hold.sh
+    [ -r "$lib" ] && . "$lib" >/dev/null 2>&1
+  fi
+  if ! command -v mmh_decide >/dev/null 2>&1 || ! command -v mmh_globs >/dev/null 2>&1; then
+    MMH_DETAIL="the migration hold lib could not be loaded ($lib)"; return 2
+  fi
+  # The lib's root is HARNESS or H (D43); the conductor's root is MC_H.
+  [ -n "${HARNESS:-${H:-}}" ] || local H="${MC_H:-}"
+  mmh_globs "$p" >/dev/null 2>&1 || grc=$?
+  case "$grc" in
+    0) ;;
+    2) return 1 ;;
+    *) command -v setting_get >/dev/null 2>&1 || { MMH_DETAIL="no settings reader (setting_get) could be loaded"; return 2; }
+       # The globs row itself is unreadable: not gated this tick, the same rule
+       # the READY hold (mc_mig_hold) applies, and said out loud.
+       command -v mc_log >/dev/null 2>&1 && mc_log "${4:-$p} migration hold: $p globs row unreadable this tick (rc $grc); not gated this tick (BH-8035)"
+       return 1 ;;
+  esac
+  command -v setting_get >/dev/null 2>&1 || { MMH_DETAIL="no settings reader (setting_get) could be loaded"; return 2; }
+  lane=$(setting_get "mc_migration_hold.apply_lane.$p" 2>/dev/null) || lrc=$?
+  case "$lrc" in
+    0) ;;
+    2) return 1 ;;
+    *) MMH_DETAIL="the apply_lane row could not be read (rc $lrc)"; return 2 ;;
+  esac
+  [ -n "$(printf '%s' "$lane" | tr -d '[:space:]')" ] || return 1
+  mmh_decide "$@"
+  case "$MMH_VERDICT" in
+    lane) return 0 ;;
+    unreadable) return 2 ;;
+  esac
+  return 1
+}
+
+# mc_rebase_gate <what> — BH-8035. The one question each conductor rebase
+#   spawn asks first: does another lane own this PR? <what> names the spawn
+#   (land, eject, needs-rebase) in the log line. It reads pr_worker's row
+#   variables (P SLUG NUM KEY HEAD URL RAWLBL PROVIDER), as land_rebase_arm does.
+#     rc 0  no other lane holds it: spawn as before
+#     rc 1  held: Mergify holds it (mc_mergify_holds, BH-8021), or the migration
+#           hold gives it to an apply lane (mc_rebase_mig_lane). One LAND_SKIP
+#           line per (PR, head, reason).
+#     rc 2  a read failed: spawn nothing this tick. One LAND_DEFER line.
+#   MC_RBG_WHY is the reason word: mergify-queue | migration-apply-lane.
+#   A push cancels a waiting `@mergifyio queue` request (project-6 #2300) and
+#   resets the apply lane's run (project-6 #2305, #2362).
+mc_rebase_gate() {
+  local what="${1:-rebase}" why rc mark
+  MC_RBG_WHY=""
+  if [ "${PROVIDER:-}" = mergify ] && command -v mc_mergify_holds >/dev/null 2>&1; then
+    why=$(mc_mergify_holds "$SLUG" "$URL" "$HEAD" "${RAWLBL:-}"); rc=$?
+    case "$rc" in
+      0) MC_RBG_WHY=mergify-queue; mark="rbgate $KEY $HEAD $MC_RBG_WHY"
+         mc_attempt_has "$mark" 2>/dev/null \
+           || mc_log "$KEY LAND_SKIP mergify-queue: $why on ${HEAD:0:8} — Mergify owns this PR, no $what rebase (BH-8021, BH-8035)"
+         mc_attempt_put "$mark"
+         return 1 ;;
+      2) MC_RBG_WHY=mergify-queue
+         mc_log "$KEY LAND_DEFER mergify-queue: the Mergify check runs on ${HEAD:0:8} could not be read — no $what rebase this tick (BH-8021, BH-8035)"
+         return 2 ;;
+    esac
+  fi
+  mc_rebase_mig_lane "$P" "$SLUG" "$NUM" "$KEY" "$HEAD"; rc=$?
+  case "$rc" in
+    0) MC_RBG_WHY=migration-apply-lane; mark="rbgate $KEY $HEAD $MC_RBG_WHY"
+       mc_attempt_has "$mark" 2>/dev/null \
+         || mc_log "$KEY LAND_SKIP migration-apply-lane: $MMH_NAMES on ${HEAD:0:8} $MMH_DETAIL — no $what rebase (BH-8021, BH-8035)"
+       mc_attempt_put "$mark"
+       return 1 ;;
+    2) MC_RBG_WHY=migration-apply-lane
+       mc_log "$KEY LAND_DEFER migration-apply-lane: $MMH_DETAIL on ${HEAD:0:8} — no $what rebase this tick (BH-8021, BH-8035)"
+       return 2 ;;
+  esac
+  return 0
+}
+
+# mc_pool_rebase_meta_extra <slug> <project> <num> <head> [provider] — BH-8035.
+#   The JSON object a pool rebase row adds to its meta for the machine's push
+#   check (bin/lib/rebase-job.sh step 8): `mergify:true` on a Mergify repo, so
+#   the machine reads the Mergify hold again just before its push, and `hold`
+#   when the migration hold already gives the PR to an apply lane, so the
+#   machine pushes nothing (also when the hold cannot be read). [provider] is the tick's PROVIDER: given, nothing
+#   is probed (`-` = not known, no flag); empty, mc_queue_provider is asked.
+#   Prints {} when neither applies. Never fails.
+mc_pool_rebase_meta_extra() {
+  local slug="$1" p="$2" num="$3" head="$4" prov="${5:-}" mq=false hold=""
+  [ -n "$prov" ] || prov=$(mc_queue_provider "$slug" 2>/dev/null)
+  [ "$prov" = mergify ] && mq=true
+  # Fail closed (BH-8035): a hold that cannot be read is a hold, so the
+  # machine pushes nothing and the next tick asks the gate again.
+  mc_rebase_mig_lane "$p" "$slug" "$num" "$slug#$num" "$head" 2>/dev/null
+  case "$?" in
+    0) hold="migration-apply-lane: $MMH_NAMES $MMH_DETAIL" ;;
+    2) hold="migration-apply-lane: unreadable: $MMH_DETAIL" ;;
+  esac
+  jq -nc --argjson m "$mq" --arg h "$hold" \
+    '(if $m then {mergify:true} else {} end) + (if $h == "" then {} else {hold:$h} end)' 2>/dev/null || printf '{}'
+}
+
 # land_rebase_arm — moved verbatim from bin/merge-conductor.sh (BH-477 / BH-685); same name, same body.
 # land_rebase_arm — CHANGE 2 OF THE MERGE FUNNEL (BH-870). merge_tree_clean
 #   above is about a PR GitHub has already called DIRTY. This one is about the
@@ -4448,41 +4583,17 @@ land_rebase_arm() {
     mc_log "$KEY LAND_SKIP Mergify dequeued label on ${HEAD:0:8} — a PR nobody queues is not rebased by this lane"
     return 1
   fi
-  # MERGIFY HOLDS IT (BH-8021). A `@mergifyio queue` request that waits for its
-  # queue conditions has no label, so the row is WAIT_CI, not QUEUED. A push
-  # cancels that request (project-6 #2300). Mergify keeps a queued PR current
-  # by itself. One check-runs read, only on a Mergify repo and only on a
-  # landing. A read that fails is a deferral, never a push.
-  local mqwhy mqrc lane=""
-  if [ "${PROVIDER:-}" = mergify ] && command -v mc_mergify_holds >/dev/null 2>&1; then
-    mqwhy=$(mc_mergify_holds "$SLUG" "$URL" "$HEAD" "${RAWLBL:-}"); mqrc=$?
-    case "$mqrc" in
-      0) mc_count_inc "$P" landskipped >/dev/null; mc_attempt_put "$mark"
-         mc_log "$KEY LAND_SKIP mergify-queue: $mqwhy on ${HEAD:0:8} — Mergify owns this PR, no land rebase (BH-8021)"
-         return 1 ;;
-      2) mc_count_inc "$P" landdeferred >/dev/null
-         mc_log "$KEY LAND_DEFER mergify-queue: the Mergify check runs on ${HEAD:0:8} could not be read — offered again next tick (BH-8021)"
-         return 1 ;;
-    esac
-  fi
-  # THE MIGRATION APPLY LANE OWNS IT (BH-8021). With
-  # mc_migration_hold.apply_lane.<project> set, a PR that adds a file the
-  # globs match goes to that lane (bin/lib/migration-hold.sh), and a push here
-  # resets it (project-6 #2305). Asked only when the lane row is set.
-  if command -v mmh_decide >/dev/null 2>&1 && command -v setting_get >/dev/null 2>&1; then
-    lane=$(setting_get "mc_migration_hold.apply_lane.$P" 2>/dev/null) || lane=""
-  fi
-  if [ -n "$(printf '%s' "$lane" | tr -d '[:space:]')" ]; then
-    mmh_decide "$P" "$SLUG" "$NUM" "$KEY" "$HEAD"
-    case "$MMH_VERDICT" in
-      lane) mc_count_inc "$P" landskipped >/dev/null; mc_attempt_put "$mark"
-            mc_log "$KEY LAND_SKIP migration-apply-lane: $MMH_NAMES on ${HEAD:0:8} $MMH_DETAIL — no land rebase (BH-8021)"
-            return 1 ;;
-      unreadable) mc_count_inc "$P" landdeferred >/dev/null
-            mc_log "$KEY LAND_DEFER migration-apply-lane: $MMH_DETAIL on ${HEAD:0:8} — offered again next tick (BH-8021)"
-            return 1 ;;
-    esac
-  fi
+  # ANOTHER LANE OWNS IT (BH-8021, BH-8035): Mergify holds it (a waiting
+  # `@mergifyio queue` request has no label, so the row is WAIT_CI, and a push
+  # cancels it, project-6 #2300), or the migration hold gives it to an apply
+  # lane (a push resets that lane, project-6 #2305). mc_rebase_gate is the one
+  # gate every conductor rebase spawn asks. A read that fails is a deferral.
+  local grc
+  mc_rebase_gate land; grc=$?
+  case "$grc" in
+    1) mc_count_inc "$P" landskipped >/dev/null; mc_attempt_put "$mark"; return 1 ;;
+    2) mc_count_inc "$P" landdeferred >/dev/null; return 1 ;;
+  esac
   # A head-bound re-review is READING this exact head right now. Moving it under
   # that read throws away a billed agent call and buys a verdict bound to a sha
   # that no longer exists. Deferred, not skipped: no marker, so the next tick
@@ -4567,6 +4678,11 @@ land_rebase_arm() {
 #   only when nothing was spent: the cap refused (rc 3), the spawn failed, or
 #   the pool queue was unreachable (rc 7). The next tick offers it again.
 eject_rebase_arm() {
+  # THE NEEDS_REBASE ARM'S GATE (BH-8035). This arm is the first call of the
+  # NEEDS_REBASE arm in bin/merge-conductor.sh, so the gate sits here, before
+  # the eject rebase and before the pool, inline and detached spawns below it:
+  # a PR another lane holds gets no rebase from either, and its tick is over.
+  mc_rebase_gate needs-rebase || return 0
   [ "${MC_EJECT_REBASE:-1}" != 0 ] || return 1
   mc_attempt_has "ejectconflict $KEY $HEAD" 2>/dev/null || return 1
   mc_attempt_has "ejectrebase $KEY $HEAD" 2>/dev/null && return 1

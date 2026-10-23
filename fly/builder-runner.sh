@@ -595,12 +595,15 @@ rebase_setup_result() { # rebase_setup_result <why> <url> <head> <branch> <base>
 }
 
 run_rebase_job() { # run_rebase_job <job key>
-  local key="$1" slug branch head base url rc lib="$HARNESS/bin/lib/rebase-job.sh"
+  local key="$1" slug branch head base url mq hold rc lib="$HARNESS/bin/lib/rebase-job.sh"
   slug=$(jq -r   '.rebase.slug   // ""'     "$JOB" 2>/dev/null)
   branch=$(jq -r '.rebase.branch // ""'     "$JOB" 2>/dev/null)
   head=$(jq -r   '.rebase.head   // ""'     "$JOB" 2>/dev/null)
   base=$(jq -r   '.rebase.base   // "main"' "$JOB" 2>/dev/null)
   url=$(jq -r    '.rebase.url    // ""'     "$JOB" 2>/dev/null)
+  # BH-8035: the push-time hold read (bin/lib/rebase-job.sh REBASE_JOB_MERGIFY, REBASE_JOB_HOLD).
+  mq=$(jq -r     '.rebase.mergify // false' "$JOB" 2>/dev/null)
+  hold=$(jq -r   '.rebase.hold   // ""'     "$JOB" 2>/dev/null)
   [ -n "$base" ] || base=main
   log "rebase job key=$key $slug $branch onto $base (leased head ${head:0:8})"
   # The TIMINGS setup step starts here, so it counts the warm-up.
@@ -615,7 +618,8 @@ run_rebase_job() { # run_rebase_job <job key>
   if ! type rebase_job_run >/dev/null 2>&1; then
     rebase_setup_result "no rebase lib at $lib" "$url" "$head" "$branch" "$base"; return 1
   fi
-  REBASE_JOB_URL="$url" rebase_job_run "$REPO" "$slug" "$branch" "$head" "$base" \
+  REBASE_JOB_URL="$url" REBASE_JOB_MERGIFY="$mq" REBASE_JOB_HOLD="$hold" \
+    rebase_job_run "$REPO" "$slug" "$branch" "$head" "$base" \
     "$RESULT_FILE" "$HARNESS"
   rc=$?
   log "rebase job done: $(head -1 "$RESULT_FILE" 2>/dev/null)"

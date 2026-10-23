@@ -163,6 +163,11 @@ REC 27 "$H27" >/dev/null
 
 export PATH="$T/fakebin:$PATH"
 # shellcheck source=/dev/null
+# TEST-CHANGE (BH-8035): every conductor rebase spawn asks mc_rebase_gate, which
+# loads bin/lib/migration-hold.sh and reads the hold rows, and defers when it
+# cannot. This suite has no hold rows: the lib is installed, setting_get says "no row".
+scratch_install_closure bin/lib/migration-hold.sh "$T/h" >/dev/null || { echo "closure install failed"; exit 1; }
+setting_get() { return 2; }; export -f setting_get
 . "$T/h/bin/lib/merge-conductor-lib.sh"; mc_init
 
 ST="$T/h/state/merge-conductor"

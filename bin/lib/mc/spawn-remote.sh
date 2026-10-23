@@ -255,8 +255,11 @@ mc_remote_rebase_spawn() {
     stale) _mc_remote_defer "$id" "$dedup" "row is $detail old, past MC_REBASE_POOL_TIMEOUT_SECS=${MC_REBASE_POOL_TIMEOUT_SECS:-5400}"; return ;;
     *) _mc_remote_defer "$id" "$dedup" "row is $detail"; return ;;
   esac
-  meta=$(jq -nc --arg s "$slug" --arg u "$url" --argjson n "$n" --arg b "$br" --arg h "$head" --arg d "$dedup" \
-    '{kind:"rebase",slug:$s,url:$u,pr:$n,branch:$b,head:$h,base:"main",dedup:$d,by:"machine"}' 2>/dev/null) \
+  # BH-8035: the same push-check fields the hub row carries, from the tick's
+  # PROVIDER (no probe here: a machine spawn reads nothing it does not need).
+  local x='{}'; command -v mc_pool_rebase_meta_extra >/dev/null 2>&1 && x=$(mc_pool_rebase_meta_extra "$slug" "$project" "$n" "$head" "${PROVIDER:--}")
+  meta=$(jq -nc --arg s "$slug" --arg u "$url" --argjson n "$n" --arg b "$br" --arg h "$head" --arg d "$dedup" --argjson x "$x" \
+    '{kind:"rebase",slug:$s,url:$u,pr:$n,branch:$b,head:$h,base:"main",dedup:$d,by:"machine"} + $x' 2>/dev/null) \
     || { _mc_remote_defer "$id" "$dedup" "the queue meta could not be built"; return; }
   r=$(queue_put "$project" "$key" "$n" fly "" "$meta") || { _mc_remote_defer "$id" "$dedup" "queue put failed"; return; }
   if [ "$r" = duplicate ]; then

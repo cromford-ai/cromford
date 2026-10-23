@@ -1,0 +1,5 @@
+# BH-8035: one gate every conductor rebase spawn asks (Mergify hold, migration
+# apply lane), and the pool row fields the machine reads again at its push.
+rebase	mc_rebase_gate	lib
+rebase	mc_rebase_mig_lane	lib
+rebase	mc_pool_rebase_meta_extra	lib
