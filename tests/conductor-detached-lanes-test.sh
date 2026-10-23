@@ -199,7 +199,7 @@ probe_lane() { # probe_lane <name> <job-file-var-name> <spawn command...>
   local name="$1" jf="$2"; shift 2
   ( cd "$T" || exit 1; export TMPDIR="$T/h/tmp"
     exec 9>"$LOCK"; flock -n 9 || exit 1; MC_RR_PATH="$T/fakebin:$PATH"; "$@" >/dev/null 2>&1 )
-  local rc=$? pid i line out
+  local rc=$? pid i line out want_cwd
   [ "$rc" = 0 ] || { bad "$name: the spawn under the lock failed (rc $rc)"; return; }
   [ "$(jq -r .status "$jf" 2>/dev/null)" = running ] && ok || { bad "$name: no running job file was written ($jf)"; return; }
   pid=$(jq -r .pid "$jf" 2>/dev/null)
@@ -227,8 +227,11 @@ probe_lane() { # probe_lane <name> <job-file-var-name> <spawn command...>
       PROBE_AGENT_REACHED=1
       [ "$(printf '%s' "$line" | awk -F'\t' '{print $5}')" = "$out" ] && ok \
         || bad "$name: the stub's 5th argument is not the lane's <out> ($line)"
-      [ "$(printf '%s' "$line" | awk -F'\t' '{print $NF}')" = "cwd=$T" ] && ok \
-        || bad "$name: the lane ran agent-call.sh outside \$T ($line)"
+      # BH-8103: the lane runs the agent from a private dir under TMPDIR. The
+      # probe's TMPDIR is inside $T, so this dir proves BH-3856 and BH-8103.
+      want_cwd="$T/h/tmp/mc-rereview-$EUID/${SLUG##*/}-21-${NEW:0:12}"
+      [ "$(printf '%s' "$line" | awk -F'\t' '{print $NF}')" = "cwd=$want_cwd" ] && ok \
+        || bad "$name: the lane ran agent-call.sh outside its private dir under \$T (want $want_cwd; got $line)"
     fi
   esac; fi
   # The job is a setsid session leader, so its pid is its process group: kill
