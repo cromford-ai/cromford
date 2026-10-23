@@ -65,6 +65,9 @@ GH_REST_QUOTA_RETRY_AFTER=
 # the hub while a live GraphQL response said 80, so the header is the truth.
 GH_REST_QUOTA_RESOURCE=
 GH_REST_QUOTA_USED=
+# BH-8066: `cache` or `304` when the response was a replay by the PATH shim's
+# cache (its X-Gh-Cache-Served header), else empty.
+GH_REST_QUOTA_SERVED=
 
 # C2: the default-identity lib _gh_quota_gate asks (see the gate). Function
 # definitions only; a box without the file keeps today's credential.
@@ -289,15 +292,17 @@ _gh_quota_headers() {
       else if (k == "x-ratelimit-reset") t = v
       else if (k == "retry-after") a = v
       else if (k == "x-ratelimit-resource") s = tolower(v)
-      else if (k == "x-ratelimit-used") u = v }
-    END { printf "%s\037%s\037%s\037%s\037%s\037%s", r, l, t, a, s, u }' "$1" 2>/dev/null)
+      else if (k == "x-ratelimit-used") u = v
+      else if (k == "x-gh-cache-served") c = tolower(v) }
+    END { printf "%s\037%s\037%s\037%s\037%s\037%s\037%s", r, l, t, a, s, u, c }' "$1" 2>/dev/null)
   # \037 (unit separator), NOT a tab (BH-1574). A tab is IFS WHITESPACE, and
   # `read` collapses a run of it into one delimiter: an absent Retry-After — the
   # normal case — made "\t\t", every field after it slid one to the left, and
   # the resource landed in RETRY_AFTER where the digit check erased it. A
   # non-whitespace separator keeps an empty field empty.
   IFS=$'\037' read -r GH_REST_QUOTA_REMAINING GH_REST_QUOTA_LIMIT \
-    GH_REST_QUOTA_RESET GH_REST_QUOTA_RETRY_AFTER GH_REST_QUOTA_RESOURCE GH_REST_QUOTA_USED <<EOF
+    GH_REST_QUOTA_RESET GH_REST_QUOTA_RETRY_AFTER GH_REST_QUOTA_RESOURCE GH_REST_QUOTA_USED \
+    GH_REST_QUOTA_SERVED <<EOF
 $out
 EOF
   # BH-1585 files a `graphql` answer under its own bucket (gh_quota_bucket);
@@ -309,6 +314,8 @@ EOF
   case "${GH_REST_QUOTA_LIMIT:-}" in *[!0-9]*) GH_REST_QUOTA_LIMIT= ;; esac
   case "${GH_REST_QUOTA_RESET:-}" in *[!0-9]*) GH_REST_QUOTA_RESET= ;; esac
   case "${GH_REST_QUOTA_RETRY_AFTER:-}" in *[!0-9]*) GH_REST_QUOTA_RETRY_AFTER= ;; esac
+  # BH-8066: the shim cache's replay marker (bin/lib/gh-cache.sh ghc_replay).
+  case "${GH_REST_QUOTA_SERVED:-}" in cache|304) ;; *) GH_REST_QUOTA_SERVED= ;; esac
   return 0
 }
 
@@ -486,6 +493,7 @@ _gh_quota_gate_decide() {
 #
 #   ts  lane  project  method  path-class  status  counted  remaining  reset  bucket
 #     resource  source  used  limit                           (columns 11-14, BH-1574)
+#     served                                                  (column 15, BH-8066)
 #
 # THE BUCKET IS A COLUMN, not an assumption (BH-1484 review I-1). `remaining`
 # and `reset` are properties of a specific GitHub rate-limit bucket, and one
@@ -527,7 +535,7 @@ _gh_led_write() {
 # GH_LEDGER_CALLER (the shim's parent script — it is a process of its own, so
 # its own $0 would read `gh` on every row), then this shell's $0.
 gh_ledger_append() {
-  local dir ts hour lane proj cls line
+  local dir ts hour lane proj cls line served
   dir=$(_gh_led_dir)
   ts=$(date -u '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null) || return 0
   hour=${ts%:*}; hour=${hour%:*}
@@ -537,10 +545,14 @@ gh_ledger_append() {
   proj="${HARNESS_LANE_PROJECT:-${PROJECT:-}}"
   [ -n "$proj" ] || proj='-'
   cls=$(gh_rest_path_class "${3:-}")
-  line=$(printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s' "$ts" "$lane" "$proj" \
+  # Column 15 `served` (BH-8066), derived from the status: `cache` (the
+  # bin/lib/gh-cache.sh replay, no request), `304`, `-` (no answer at all) and
+  # `200` for any other answer — GitHub sent a full response, whatever its code.
+  case "${4:-000}" in cache) served=cache ;; 304) served=304 ;; 000|'') served=- ;; *) served=200 ;; esac
+  line=$(printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s' "$ts" "$lane" "$proj" \
     "${2:--}" "$cls" "${4:-000}" "${5:-1}" "${GH_REST_QUOTA_REMAINING:--}" \
     "${GH_REST_QUOTA_RESET:--}" "$(gh_quota_bucket)" "${GH_REST_QUOTA_RESOURCE:--}" \
-    "${1:--}" "${GH_REST_QUOTA_USED:--}" "${GH_REST_QUOTA_LIMIT:--}")
+    "${1:--}" "${GH_REST_QUOTA_USED:--}" "${GH_REST_QUOTA_LIMIT:--}" "$served")
   printf '%s\n' "$line" 2>/dev/null >> "$dir/$hour.tsv" && return 0
   mkdir -p "$dir" 2>/dev/null || { _gh_led_log mkdir "cannot create $dir — ledger line dropped"; return 0; }
   printf '%s\n' "$line" 2>/dev/null >> "$dir/$hour.tsv" \
@@ -556,14 +568,26 @@ gh_ledger_append() {
 #
 # FIRST it drops GH_LEDGER_BY_CALLER, the marker _gh_quota_gate exported for the
 # one request this gh_rest call made (see the gate).
+#
+# A REPLAY (BH-8066). The PATH shim's cache (bin/lib/gh-cache.sh) answers a
+# repeat GET from disk and marks the header block `X-Gh-Cache-Served: cache`
+# (no request) or `304` (a conditional request GitHub did not charge). The row
+# then says that, counted 0, and the replayed X-RateLimit-* headers are stale:
+# they are blanked and never persisted, so the gate reads only live answers.
 _gh_quota_observe() {
   local st="${4:-}" counted=1
   unset GH_LEDGER_BY_CALLER
   GH_REST_QUOTA_REMAINING=; GH_REST_QUOTA_LIMIT=; GH_REST_QUOTA_RESET=; GH_REST_QUOTA_RETRY_AFTER=
-  GH_REST_QUOTA_RESOURCE=; GH_REST_QUOTA_USED=
+  GH_REST_QUOTA_RESOURCE=; GH_REST_QUOTA_USED=; GH_REST_QUOTA_SERVED=
   _gh_quota_headers "${1:-}"
   case "$st" in ''|000) st=000; counted=0 ;; 304) counted=0 ;; esac
-  _gh_quota_persist
+  case "${GH_REST_QUOTA_SERVED:-}" in
+    cache|304)
+      st=$GH_REST_QUOTA_SERVED; counted=0
+      GH_REST_QUOTA_REMAINING=; GH_REST_QUOTA_LIMIT=; GH_REST_QUOTA_RESET=; GH_REST_QUOTA_RETRY_AFTER=
+      GH_REST_QUOTA_RESOURCE=; GH_REST_QUOTA_USED= ;;
+    *) _gh_quota_persist ;;
+  esac
   _gh_led_write "${2:-}" "${3:-}" "$st" "$counted"
   # The next PRE-request gate reads the REST bucket unless told otherwise.
   GH_REST_QUOTA_RESOURCE=

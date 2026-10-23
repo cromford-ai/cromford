@@ -138,8 +138,10 @@ if [ "$(nled)" = 1 ]; then ok; else bad "2a: exactly one ledger line per call, g
 # resource (X-RateLimit-Resource: core|graphql), source (rest|gh), used, limit —
 # so the fleet report can split the token's REST bucket from its GraphQL one.
 # Columns 1-10 are unchanged and every assertion below still reads them.
-if [ "$(ledger | awk -F'\t' '{print NF}')" = 14 ]; then ok
-else bad "2b: the ledger line must carry 14 tab-separated columns, got $(ledger | awk -F'\t' '{print NF}')"; fi
+# SPEC CHANGE (BH-8066): 14 -> 15. Column 15 `served` (cache | 304 | 200 | -)
+# is appended at the END, derived from the status; columns 1-14 are unchanged.
+if [ "$(ledger | awk -F'\t' '{print NF}')" = 15 ]; then ok
+else bad "2b: the ledger line must carry 15 tab-separated columns, got $(ledger | awk -F'\t' '{print NF}')"; fi
 # ts lane project method path-class status counted remaining reset bucket resource source used limit
 if grep -qE '^20[0-9][0-9]-[0-9][0-9]-[0-9][0-9]T[0-9][0-9]:[0-9][0-9]:[0-9][0-9]Z$' <<<"$(col 1 1)"; then ok
 else bad "2c: column 1 must be a UTC ISO timestamp, got '$(col 1 1)'"; fi

@@ -25,6 +25,13 @@
 #                     class is "(no repo)". Digits in a repo name show folded.
 #   calls per PR      the merge count is --merged, else GET /api/metrics/dora
 #                     ?days=<ceil(window/24h)> totals.merged, else n/a
+#   served            how each REST call was answered (ledger column 15,
+#                     BH-8066): `cache` (the gh shim's cache, no request),
+#                     `304`, `200` (a full answer, whatever its code) or `-`
+#                     (no answer). A `cache` row is not a request, so it is in
+#                     no other number here; SERVED prints each share. The fleet
+#                     reads it with group=served; a worker without that group
+#                     prints `SERVED n/a` and the rest of the report stays fleet.
 #
 # A lane with no row in the window is ABSENT, never printed as 0.
 #
@@ -32,7 +39,7 @@
 # (env, then the settings row conf.gh-budget-report.keep_days, then 90) are
 # deleted after each write, one logs/gh-budget-report.log line per sweep.
 #
-# It costs no GitHub API call. It makes at most 4 harness-jobs reads, each with
+# It costs no GitHub API call. It makes at most 5 harness-jobs reads, each with
 # JOBS_ALERT=0, so an operator's run never spends the fleet's outage alert.
 #
 # rc 0 = printed (including "no REST calls recorded")
@@ -118,9 +125,28 @@ fleet_read() {
   return 0
 }
 
+# fleet_served — the optional group=served read, into $WORK/served.json as
+# {cache, "304", "200", "-"}. rc 1 sets SERVED_WHY; the report stays fleet.
+fleet_served() {
+  if ! JOBS_ALERT=0 _jobs_req GET "/api/metrics/gh-ledger?since=$SINCE_HOUR&group=served" > "$WORK/served-raw.json" 2>/dev/null; then
+    case "${JOBS_HTTP:-}" in
+      400) SERVED_WHY="worker has no served group" ;;
+      *)   SERVED_WHY="served read failed (http=${JOBS_HTTP:-none})" ;;
+    esac
+    return 1
+  fi
+  jq -e '.group == "served" and (.rows | type == "array")' "$WORK/served-raw.json" >/dev/null 2>&1 \
+    || { SERVED_WHY="worker has no served group"; return 1; }
+  jq '{cache: 0, "304": 0, "200": 0, "-": 0} + (reduce .rows[] as $r ({}; .[$r.served | tostring] += ($r.calls // 0)))' \
+    "$WORK/served-raw.json" > "$WORK/served.json" 2>/dev/null || { SERVED_WHY="unparseable served answer"; return 1; }
+  return 0
+}
+
 # local_read — this box's hour files whose name is >= SINCE_HOUR, one awk pass.
 # Columns (bin/lib/gh-rest-ledger.sh gh_ledger_append): 1 ts, 2 lane, 5 path
-# class, 7 counted, 11 resource ("-" on a line written before column 11).
+# class, 6 status, 7 counted, 11 resource ("-" on a line written before column
+# 11), 15 served (derived from the status on a line written before column 15).
+# A REST row with status `cache` is counted in `served` and nowhere else.
 local_read() {
   local dir="$H/state/gh-rest-ledger" f files=() first="" last=""
   for f in "$dir"/*.tsv; do
@@ -141,6 +167,10 @@ local_read() {
         res = (NF >= 11 && $11 != "" ? $11 : "-")
         pc = $5; bare = pc; sub(/^\//, "", bare)
         if (res == "graphql" || bare == "graphql") { gc++; gk += c; next }
+        st = $6
+        sv = (NF >= 15 && $15 != "") ? $15 : (st == "cache" ? "cache" : (st == "304" ? "304" : ((st == "000" || st == "") ? "-" : "200")))
+        svc[sv]++
+        if (st == "cache") next
         rc++; rk += c
         lh = substr($1, 1, 13) "\t" $2; lhc[lh]++; lhk[lh] += c
         lc = $2 "\t" pc; lcc[lc]++; lck[lc] += c
@@ -156,6 +186,7 @@ local_read() {
         for (k in lhc) printf "LH\t%s\t%d\t%d\n", k, lhc[k], lhk[k]
         for (k in lcc) printf "LC\t%s\t%d\t%d\n", k, lcc[k], lck[k]
         for (k in rpc) printf "RP\t%s\t%d\t%d\n", k, rpc[k], rpk[k]
+        for (k in svc) printf "SV\t%s\t%d\n", k, svc[k]
       }' "${files[@]}" > "$WORK/local.tsv" || return 1
   fi
   jq -R -s '
@@ -163,6 +194,8 @@ local_read() {
     | { lane_hour: [ $l[] | select(.[0] == "LH") | {hour: .[1], lane: .[2], calls: (.[3] | tonumber), counted: (.[4] | tonumber)} ],
         lane_class: [ $l[] | select(.[0] == "LC") | {lane: .[1], path_class: .[2], calls: (.[3] | tonumber), counted: (.[4] | tonumber)} ],
         repo: [ $l[] | select(.[0] == "RP") | {repo: .[1], calls: (.[2] | tonumber), counted: (.[3] | tonumber)} ],
+        served: ({cache: 0, "304": 0, "200": 0, "-": 0}
+                 + (reduce ($l[] | select(.[0] == "SV")) as $s ({}; .[$s[1]] += ($s[2] | tonumber)))),
         truncated: {lane_hour: false, lane_class: false, repo: false},
         totals: ( [ $l[] | select(.[0] == "TOT") ][0] // ["TOT", "0", "0", "0", "0"]
                   | {rest_calls: (.[1] | tonumber), rest_counted: (.[2] | tonumber),
@@ -170,11 +203,14 @@ local_read() {
     "$WORK/local.tsv" > "$WORK/raw.json"
 }
 
-SOURCE=local; FIRST_LINE=""; SOURCE_NOTE=""; LOCAL_NOTE=""
+SOURCE=local; FIRST_LINE=""; SOURCE_NOTE=""; LOCAL_NOTE=""; SERVED_WHY=""
 if [ "$MODE" = fleet ]; then
   FLEET_WHY=""
   if fleet_read; then
     SOURCE=fleet; SOURCE_NOTE="fleet (D1) gh_ledger via GET /api/metrics/gh-ledger?group="
+    if fleet_served; then
+      jq --slurpfile s "$WORK/served.json" '.served = $s[0]' "$WORK/raw.json" > "$WORK/raw2.json" && mv -f "$WORK/raw2.json" "$WORK/raw.json"
+    fi
   else
     FIRST_LINE="gh-budget-report: fleet read failed (${FLEET_WHY:-worker unreachable}) — this box's ledger only"
   fi
@@ -199,7 +235,7 @@ fi
 jq -n --slurpfile raw "$WORK/raw.json" --arg gen "$GENERATED" --arg warg "$WINDOW" \
   --argjson hours "$HOURS" --arg since "$SINCE_HOUR" --arg source "$SOURCE" \
   --arg note "$SOURCE_NOTE" --argjson mcount "$M_COUNT" --arg msource "$M_SOURCE" \
-  --argjson days "$DAYS" --arg file "$STATE_FILE" '
+  --argjson days "$DAYS" --arg file "$STATE_FILE" --arg swhy "$SERVED_WHY" '
   def r1: (. * 10 | round) / 10;
   $raw[0] as $r
   | ($r.totals // {}) as $t
@@ -212,6 +248,8 @@ jq -n --slurpfile raw "$WORK/raw.json" --arg gen "$GENERATED" --arg warg "$WINDO
       totals: {rest_calls: ($t.rest_calls // 0), rest_counted: ($t.rest_counted // 0),
                graphql_calls: ($t.graphql_calls // 0), graphql_counted: ($t.graphql_counted // 0)},
       merged: {count: $mcount, source: $msource, days: $days},
+      served: ($r.served // null),
+      served_why: (if $r.served == null then (if $swhy == "" then "served read failed" else $swhy end) else null end),
       per_merged_pr: (if ($mcount // 0) > 0
                       then {calls: (($t.rest_calls // 0) / $mcount | r1), counted: (($t.rest_counted // 0) / $mcount | r1)}
                       else {calls: null, counted: null} end),
@@ -250,6 +288,11 @@ else
     (if .per_merged_pr.counted != null
      then "CALLS PER MERGED PR calls=\(.per_merged_pr.calls) counted=\(.per_merged_pr.counted) merged=\(.merged.count) (\(.merged.source))"
      else "CALLS PER MERGED PR n/a (\(.per_merged_pr_why))" end),
+    (if .served == null then "SERVED n/a (\(.served_why))"
+     else (.served as $s | ([$s[]] | add) as $n
+           | def share($k): "\($k)=\($s[$k]) (\(if $n > 0 then ($s[$k] * 1000 / $n | round) / 10 else 0 end)%)";
+           "SERVED \(share("cache")) \(share("304")) \(share("200"))\(if ($s["-"] // 0) > 0 then " " + share("-") else "" end)")
+     end),
     (if (.lane_hour | length) == 0 and (.top | length) == 0 then "no REST calls recorded in \(.window.arg)" else empty end),
     "",
     "TOP 10 (lane, endpoint class)\(trunc("lane_class"))",

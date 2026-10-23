@@ -86,6 +86,10 @@ write_fly_stub() { # write_fly_stub <mid>=<result-line>...
   cat > "$T/fakebin/fly" <<FLY
 #!/bin/bash
 echo "\$*" >> "$T/fly-calls"
+if [ -n "\${SCALE_FAKE_LATENCY_MS:-}\${SCALE_FAKE_RATE_LIMIT_EVERY:-}" ]; then
+  . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/scale.sh" || exit 1
+  scale_fake_gate fly "$T" && exit 1
+fi
 case "\$*" in
   *"machine status"*) echo "State: started" ;;
 $arms  *"ssh console"*) : ;;

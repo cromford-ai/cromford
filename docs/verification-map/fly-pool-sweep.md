@@ -37,7 +37,13 @@ rows instead of from files, with no ssh.
 
 **How an operator reaches it:** `cron/hub.cron` `*/10` → `bin/fly-pool-tick.sh` →
 one `bin/fly-pool.sh <project>` per `flags/fly-pool-<project>`, each self-locking
-on `locks/fly-pool-<project>.lock`. Inside that script:
+on `locks/fly-pool-<project>.lock`. Since BH-7890 the wrapper classifies the
+projects first (`ptb_split`), and it runs `bin/fly-lock-guard.sh` and reads
+`bin/pool-cap.sh --autoscale` only when a project is left for the hub (the
+guard also runs before an onboard launch); a fly-placed project gets no hub
+start in either autoscale mode
+(`HARNESS_TEST_SANDBOX=1 bash tests/fly-pool-tick-autoscale-move.bh-7890-test.sh`).
+Inside that script:
 
 | region | what it does |
 |---|---|

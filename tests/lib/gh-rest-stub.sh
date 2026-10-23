@@ -89,6 +89,11 @@ _ghs_pr_json() {
 gh_rest_stub() {
   local T="${GHT:?gh_rest_stub: GHT (the fixture dir) must be set}"
   local all="$*" a n ref row st sha brn ti base
+  # BH-7906: the scale knobs (tests/lib/scale.sh). Unset = this block is skipped.
+  if [ -n "${SCALE_FAKE_LATENCY_MS:-}${SCALE_FAKE_RATE_LIMIT_EVERY:-}" ]; then
+    . "$(dirname "${BASH_SOURCE[0]}")/scale.sh" || return 1
+    scale_fake_gate github "$T" && return 0
+  fi
   case "$all" in
     *"-X PATCH"*"/pulls/"*|*"-X PATCH"*"/issues/"*)
       printf '%s\n' "$all" >> "$T/closed.txt"

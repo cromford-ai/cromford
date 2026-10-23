@@ -78,7 +78,11 @@ for rel in config/keep.yml config/harness-cix/keep.yml; do
 done
 
 # U5. each drop is reported with its upstream-CI reason.
-grep -F 'drop config/harness-ci/160-tests-shard/000-job.yml' "$T/sanitize.out" | grep -qF 'upstream CI fragments' \
+# sanitize.py lists only the first 12 drops in path order, so a per-step split
+# (BH-7539) pushes any one fixed fragment out of the list: check every
+# fragment drop it does list. U2 and U6 prove each fragment is dropped.
+frag=$(grep -F '  drop config/harness-ci/' "$T/sanitize.out")
+[ -n "$frag" ] && ! grep -vqF 'upstream CI fragments' <<<"$frag" \
   && ok || bad "U5 sanitize.out does not report the fragment dropped as upstream CI"
 grep -F 'drop bin/render-ci-workflow.sh' "$T/sanitize.out" | grep -qF 'upstream CI renderer' \
   && ok || bad "U5 sanitize.out does not report the renderer dropped as upstream CI"

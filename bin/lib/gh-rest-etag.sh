@@ -211,12 +211,13 @@ _gh_etag_on_2xx() {
 # never `find -printf`, which BSD/macOS find does not have and this suite's
 # own `bash tests/*.sh` runs are exercised on. The size cap keeps the NEWEST
 # GH_ETAG_MAX entries by mtime and drops the rest — `ls -1t` is newest-first on
-# both GNU and BSD.
+# both GNU and BSD. An optional <dir> sweeps another cache under the same
+# rules and its own stamp; bin/lib/gh-cache.sh passes state/gh-cache (BH-8066).
 _gh_etag_mtime() { stat -c %Y "$1" 2>/dev/null || stat -f %m "$1" 2>/dev/null || echo 0; }
 
-_gh_etag_sweep() {
+_gh_etag_sweep() { # _gh_etag_sweep [dir]
   local dir stamp now last ttl_h cutoff max f n over
-  dir=$(_gh_etag_dir)
+  dir="${1:-$(_gh_etag_dir)}"
   [ -d "$dir" ] || return 0
   stamp="$dir/.swept"
   now=$(date -u +%s 2>/dev/null) || return 0

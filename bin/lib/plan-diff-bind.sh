@@ -17,6 +17,13 @@
 #
 # WHICH PLAN: the one changed path `.harness/specs/<KEY>/plan.md` that exists
 # at HEAD. No such path, or two and more (a merge-queue batch, a stack): skip.
+# A batch-shaped range (every first-parent commit of <fork>..HEAD is a merge
+# of exactly 2 parents, and no second parent is in <fork>) judges the one plan
+# against its own member's diff only (merge-base of base and member, to the
+# member; BH-7739). stderr: `batch of <K> members, <plan> bound to member
+# <sha12> only`. A plan in 0 or 2+ member diffs skips:
+# `skip (batch: <plan> in <N> of <K> members)`. The plan text and case-missing
+# reads stay at HEAD.
 #
 # THE FOUR KINDS:
 #   planned-not-changed  an entry line of the `## Files to touch` section (a
@@ -289,6 +296,29 @@ pdb_check() {
     rm -rf "$tmp"; return 0
   fi
   plan=$(cat "$tmp/plans")
+  # a merge-queue batch: judge the plan against its own member's diff only
+  local fp m extra k=0 hit=0 bound="" batch=1
+  fp=$(git -C "$repo" rev-list --first-parent --parents "$fork..$hs") \
+    || { echo "plan-diff-bind: git rev-list $fork..$hs failed" >&2; rm -rf "$tmp"; return 2; }
+  [ -n "$fp" ] || batch=0
+  while [ "$batch" -eq 1 ] && read -r _ _ m extra; do
+    if [ -z "$m" ] || [ -n "$extra" ] || git -C "$repo" merge-base --is-ancestor "$m" "$fork"; then batch=0; break; fi
+    k=$((k + 1))
+    printf '%s\n' "$m" >> "$tmp/members"
+  done <<<"$fp"
+  if [ "$batch" -eq 1 ]; then
+    while read -r m; do
+      i=$(git -C "$repo" merge-base "$bs" "$m") \
+        && git -C "$repo" -c core.quotePath=false diff --no-renames --name-only "$i" "$m" > "$tmp/m.$m" \
+        || { echo "plan-diff-bind: cannot diff member $m" >&2; rm -rf "$tmp"; return 2; }
+      grep -qxF -- "$plan" "$tmp/m.$m" && { hit=$((hit + 1)); bound=$m; }
+    done < "$tmp/members"
+    if [ "$hit" -ne 1 ]; then
+      echo "plan-diff-bind: skip (batch: $plan in $hit of $k members)" >&2; rm -rf "$tmp"; return 0
+    fi
+    cp "$tmp/m.$bound" "$tmp/d"
+    echo "plan-diff-bind: batch of $k members, $plan bound to member ${bound:0:12} only" >&2
+  fi
   if ! git -C "$repo" show "$hs:$plan" > "$tmp/plan" \
      || ! { git -C "$repo" ls-tree --name-only "$hs" && git -C "$repo" ls-tree --name-only "$fork"; } > "$tmp/top"; then
     echo "plan-diff-bind: cannot read $plan or the tree at $hs" >&2; rm -rf "$tmp"; return 2

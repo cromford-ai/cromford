@@ -332,7 +332,7 @@ else
     echo "job-abandon: worker node suites not repeated here — the Jobs worker CI job runs them on this run"
   else
     WK="$T/wk"; mkdir -p "$WK/worker" "$WK/catalog"
-    cp -R "$DIR/worker/jobs" "$WK/worker/" && cp "$(rendered_registry)" "$WK/catalog/lanes.json" && cp "$DIR/catalog/llm-sites.json" "$DIR/catalog/context-budgets.json" "$WK/catalog/"
+    cp -R "$DIR/worker/jobs" "$WK/worker/" && cp "$(rendered_registry)" "$WK/catalog/lanes.json" && cp "$DIR/catalog/llm-sites.json" "$DIR/catalog/context-budgets.json" "$DIR/catalog/prompt-markers.json" "$WK/catalog/"
     # The staff routes import agent-core/ by a relative path (BH-5559), so the
     # scratch tree carries it beside worker/, as the deployed bundle does.
     cp -R "$DIR/agent-core" "$WK/agent-core" || bad "cannot copy agent-core (the worker imports it, BH-5559)"

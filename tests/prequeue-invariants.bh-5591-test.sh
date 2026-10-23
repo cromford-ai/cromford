@@ -243,6 +243,7 @@ if [ -n "$NODE_OK" ]; then
   # and catalog/llm-sites.json (composed from llm-sites.d/, BH-4987) aside.
   cp -r "$DIR/agent-core" "$V/"
   cp "$DIR/catalog/context-budgets.json" "$V/catalog/"
+  cp "$DIR/catalog/prompt-markers.json" "$V/catalog/"
   # TEST-CHANGE (BH-6005.1): the node tests compose the schema from schema.d/
   # (worker/jobs/test/lib/jobs-schema.js), so the fixture copies the fragments.
   # schema.sql is a render the fixture does not need.

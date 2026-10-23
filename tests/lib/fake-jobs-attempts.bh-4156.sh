@@ -26,6 +26,7 @@ fja_install() {
   cat > "$d/bin/curl" <<EOF
 #!/bin/bash
 F="$d"
+SCALE_LIB="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/scale.sh"
 EOF
   cat >> "$d/bin/curl" <<'EOF'
 M=GET; URL=""; BODY=""
@@ -40,6 +41,10 @@ while [ $# -gt 0 ]; do
 done
 P="/${URL#*://*/}"; PO="${P%%\?*}"; Q=""; [[ "$P" == *\?* ]] && Q="${P#*\?}"
 printf '%s %s\n' "$M" "$P" >> "$F/req.log"
+if [ -n "${SCALE_FAKE_LATENCY_MS:-}${SCALE_FAKE_RATE_LIMIT_EVERY:-}" ]; then
+  . "$SCALE_LIB" || exit 1
+  scale_fake_gate jobs "$F" && exit 0
+fi
 [ -e "$F/down" ] && exit 7
 qv() { local x v; local -a kv; IFS='&' read -ra kv <<<"$Q"
   for x in "${kv[@]}"; do [ "${x%%=*}" = "$1" ] || continue; v="${x#*=}"; v="${v//+/ }"; printf '%b' "${v//%/\\x}"; return 0; done; return 1; }

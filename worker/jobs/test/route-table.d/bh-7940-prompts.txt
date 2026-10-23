@@ -1,0 +1,4 @@
+# PROMPTS (BH-7940.0): prompt versions and heads. Bearer-gated.
+GET /api/prompts
+GET re:/^\/api\/prompts\/([^/]+)\/([^/]+)\/([^/]+)$/
+POST re:/^\/api\/prompts\/([^/]+)\/([^/]+)$/

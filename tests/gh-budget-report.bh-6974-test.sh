@@ -268,7 +268,10 @@ eq "B3 the line" "$(grep '^github REST: ' "$H/state/dora/latest.txt")" \
   "github REST: 841 calls, 820 charged, 273.3/merged PR; top pollers: lane-a repos/Org/app/pulls/N 120 | lane-b repos/Org/app/issues/N/comments 110 | lane-c search/issues 100 | lane-d repos/Org/web/commits/SHA 90 | lane-e repos/Org/web/pulls/N 80"
 eq "B3 the line sits before sources:" "$(grep -A1 '^github REST: ' "$H/state/dora/latest.txt" | tail -1 | cut -c1-8)" "sources:"
 eq "B3 one dora read" "$(grep -c '^GET /api/metrics/dora' "$T/w.log")" 1
-eq "B3 three grouped reads" "$(grep -c '^GET /api/metrics/gh-ledger?since=.*&group=' "$T/w.log")" 3
+# SPEC CHANGE (BH-8066): the report makes one more grouped read, group=served,
+# for its SERVED line. The three spending reads are pinned as before, by name.
+eq "B3 three grouped reads" "$(grep -cE '^GET /api/metrics/gh-ledger\?since=.*&group=(lane-hour|lane-class|repo)' "$T/w.log")" 3
+eq "B3 one served read" "$(grep -c '^GET /api/metrics/gh-ledger?since=.*&group=served' "$T/w.log")" 1
 
 echo "B3b: DORA_GH_BUDGET=0"
 : > "$T/w.log"

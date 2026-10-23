@@ -132,7 +132,8 @@ test('BH-6974 gh_ledger grouped reads', async (t) => {
     const { DB } = await openDb();
     const bogus = await call(DB, `/api/metrics/gh-ledger?since=2026-10-15T10&group=bogus`);
     assert.equal(bogus.status, 400);
-    assert.equal(bogus.body.error, 'group must be one of lane-hour, lane-class, repo');
+    // SPEC CHANGE (BH-8066): group=served is a valid group, so the message names it.
+    assert.equal(bogus.body.error, 'group must be one of lane-hour, lane-class, repo, served');
     const noSince = await call(DB, '/api/metrics/gh-ledger?group=lane-hour');
     assert.equal(noSince.status, 400);
   });

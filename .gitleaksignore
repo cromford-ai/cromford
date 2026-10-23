@@ -54,7 +54,10 @@ tests/fly-pool-machine-pull.bh-7430-test.sh:generic-api-key:440
 tests/gh-app-ratchet-owner.bh-1984-test.sh:generic-api-key:120
 tests/gh-app-ratchet-owner.bh-1984-test.sh:generic-api-key:122
 tests/gh-app-ratchet-owner.bh-1984-test.sh:generic-api-key:135
+tests/gh-budget-report-served.bh-8066-test.sh:generic-api-key:102
 tests/gh-default-auth-lanes-test.sh:generic-api-key:272
+tests/gh-shim-cache.bh-8066-test.sh:generic-api-key:43
+tests/gh-shim-cache.bh-8066-test.sh:generic-api-key:464
 tests/gh-token-live-test.sh:generic-api-key:26
 tests/hotspot-split-ticket.bh-6739-test.sh:curl-auth-header:158
 tests/hotspot-split-ticket.bh-6739-test.sh:curl-auth-header:327
@@ -92,6 +95,7 @@ tests/pool-tick-summary.bh-7709-test.sh:generic-api-key:76
 tests/prebuild-repro-self-comment.bh-2133-test.sh:generic-api-key:43
 tests/prebuild-repro-skip.bh-2040-test.sh:generic-api-key:31
 tests/prebuild-repro-stop.bh-2043-test.sh:generic-api-key:32
+tests/prompt-resolve.bh-7940-test.sh:generic-api-key:32
 tests/qa-wiring-check.bh-6254-test.sh:stripe-access-token:112
 tests/qa-wiring-check.bh-6254-test.sh:generic-api-key:148
 tests/queue-partition.bh-4979-test.sh:generic-api-key:191
@@ -101,6 +105,7 @@ tests/run-decompose-fresh-token-test.sh:generic-api-key:50
 tests/run-decompose-fresh-token-test.sh:generic-api-key:57
 tests/run-decompose-inapp-deps-test.sh:generic-api-key:50
 tests/run-decompose.bh-1340-test.sh:generic-api-key:72
+tests/scale-fakes.bh-7906-test.sh:generic-api-key:102
 tests/secret-literals-token-length.bh-1124-test.sh:github-app-token:59
 tests/spend-lane-push.bh-6174-test.sh:curl-auth-header:214
 tests/state-backup-lowpri.bh-6173-test.sh:generic-api-key:120
@@ -137,12 +142,14 @@ worker/jobs/test/otp.bh-7732.test.js:generic-api-key:16
 worker/jobs/test/pool-records-roundtrip.bh-7429.test.js:generic-api-key:19
 worker/jobs/test/pool-records.bh-7429.test.js:generic-api-key:16
 worker/jobs/test/pool-tick.bh-7709.test.js:generic-api-key:21
+worker/jobs/test/prompts.bh-7940.test.js:generic-api-key:15
 worker/jobs/test/review-tiers.bh-6969.test.js:generic-api-key:25
 worker/jobs/test/route-keyed.bh-5788.test.js:generic-api-key:130
 worker/jobs/test/route-registry.bh-4607.test.js:generic-api-key:156
 worker/jobs/test/routes/cost.test.js:generic-api-key:136
 worker/jobs/test/scheduler-ready.bh-6979.test.js:generic-api-key:19
 worker/jobs/test/scheduler.bh-6978.test.js:generic-api-key:19
+worker/jobs/test/secret-envelopes.bh-7964.test.js:generic-api-key:19
 worker/jobs/test/ticket-edges.bh-6977.test.js:generic-api-key:18
 worker/jobs/test/web-vault.bh-7595.test.js:generic-api-key:130
 worker/jobs/test/web-vault.bh-7595.test.js:generic-api-key:146

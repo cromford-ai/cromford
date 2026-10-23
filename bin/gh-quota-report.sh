@@ -177,8 +177,10 @@ echo "gh-quota-report: $WIN — ${#FILES[@]} hour file(s) under $DIR"
 # ONE awk pass over the window, three groupings. Ties break on the name so the
 # same ledger always prints the same report — a report whose row order moves
 # between runs cannot be diffed, and diffing two hours is how a burst is found.
+# A status `cache` row is the gh shim's cache answering from disk (BH-8066):
+# not a request, so not a call here.
 awk -F'\t' '
-  NF >= 7 {
+  NF >= 7 && $6 != "cache" {
     calls++; counted += ($7 + 0)
     hour = substr($1, 1, 13)
     lk = hour "\t" $2

@@ -71,6 +71,7 @@ cp -R "$DIR/agent-core" "$W/agent-core" || bad "cannot copy agent-core (the work
 cp "$(rendered_registry)" "$W/catalog/lanes.json" || bad "cannot place the rendered lane registry"
 cp "$DIR/catalog/llm-sites.json" "$W/catalog/" || bad "cannot place the LLM sites catalog (the worker imports it, BH-2553)"
 cp "$DIR/catalog/context-budgets.json" "$W/catalog/" || bad "cannot place the context budgets (the worker imports them, BH-2554)"
+cp "$DIR/catalog/prompt-markers.json" "$W/catalog/" || bad "cannot place the prompt markers (the worker imports them, BH-7940)"
 
 # --- C1..C3: the real proxy over the real worker ------------------------------
 OUT=$(node --no-warnings --input-type=module -e "

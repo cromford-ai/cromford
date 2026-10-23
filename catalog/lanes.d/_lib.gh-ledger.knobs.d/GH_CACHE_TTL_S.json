@@ -1,0 +1,11 @@
+{
+  "env": "GH_CACHE_TTL_S",
+  "read_in": "bin/lib/gh-cache.sh",
+  "type": "int",
+  "default": 60,
+  "min": 0,
+  "unit": "seconds",
+  "zero_means": "off",
+  "required": false,
+  "note": "BH-8066. Seconds the gh PATH shim answers a repeat `gh api` GET from state/gh-cache/ with no request (bin/lib/gh-cache.sh). Past it the shim sends If-None-Match: a 304 keeps the entry, a 200 replaces it. It also bounds how stale an entry can be when no webhook wake names its object, and how long a box whose wakes read failed waits before it tries again. 0 turns the cache off. An env value wins; else the shim resolves it through lib_env_apply gh-ledger at most once per LANE_GATE_CACHE_S into state/gh-cache/.knobs; code fallback 60."
+}

@@ -138,7 +138,7 @@ mkdir -p "$M/worker" "$M/catalog"
 cp -R "$DIR/worker/jobs" "$M/worker/jobs"
 scratch_rm "$M/worker/jobs/node_modules"; scratch_rm "$M/worker/jobs/src/routes.gen.js"
 cp -R "$DIR/agent-core" "$M/agent-core"
-cp "$DIR"/catalog/lanes.json "$DIR"/catalog/llm-sites.json "$DIR"/catalog/context-budgets.json "$M/catalog/"
+cp "$DIR"/catalog/lanes.json "$DIR"/catalog/llm-sites.json "$DIR"/catalog/context-budgets.json "$DIR"/catalog/prompt-markers.json "$M/catalog/"
 sed -i '0,/^import { routes as webhooks }/s//import { routes as capFlags } from ".\/routes\/cap-flags.js";\n&/' \
   "$M/worker/jobs/src/index.js"
 grep -q '^import { routes as capFlags } from "./routes/cap-flags.js";$' "$M/worker/jobs/src/index.js" \

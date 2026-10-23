@@ -1,6 +1,6 @@
 import { createContext } from 'preact';
 import { useContext, useState, useEffect } from 'preact/hooks';
-import { html, Link, useRoute, matchRoute, navigate } from './router.js';
+import { html, Link, useRoute, matchRoute, navigate, currentSearch, currentHash } from './router.js';
 import { api } from './api.js';
 import { useApi, useCountdown } from './lib/hooks.js';
 import { healthFromAge } from './lib/format.js';
@@ -38,6 +38,8 @@ import { NeedsScreen } from './screens/Needs.js';
 import { WorldScreen } from './screens/World.js';
 import { SettingsScreen, LaneDetailScreen } from './screens/Settings.js';
 import { AppearanceScreen } from './screens/Appearance.js';
+import { SettingsFleetScreen, SettingsProjectScreen } from './screens/settings/Shell.js';
+import { redirectFor } from './lib/settings-menu.js';
 import { ModelsScreen, ModelRoleScreen } from './screens/Models.js';
 import { HubScreen } from './screens/Hub.js';
 import { CiHealthScreen } from './screens/CiHealth.js';
@@ -114,11 +116,19 @@ export const ROUTES = [
   ['/unblock', UnblockScreen],
   ['/ci', CiHealthScreen],
   ['/utilization', UtilizationScreen],
+  // App sends /settings and /settings/appearance to the settings shell
+  // (resolveRoute below, BH-7938). These two rows stay as the fallback the
+  // ROUTES readers in the tests pin.
   ['/settings', SettingsScreen],
   // Above /settings/:lane: the first match wins, and below it this would open
   // as a lane called "appearance".
   ['/settings/appearance', AppearanceScreen],
   ['/settings/:lane', LaneDetailScreen],
+  // The settings side menu (BH-7938). Three and four segments, so a lane
+  // (two segments) never matches here.
+  ['/settings/fleet/:page', SettingsFleetScreen],
+  ['/settings/p/:project', SettingsProjectScreen],
+  ['/settings/p/:project/:page', SettingsProjectScreen],
   ['/config', ConfigScreen],
   ['/config/:kind/:name', ConfigDetailScreen],
   ['/flags', FlagsScreen],
@@ -196,9 +206,32 @@ export const NAV = [
   { to: '/settings', label: 'SETTINGS', icon: IconSettings, match: (p) => p === '/settings' || p.startsWith('/settings/') || p === '/config' || p.startsWith('/config/') || p === '/flags' || p.startsWith('/controls/') }
 ];
 
+// The screen for a URL. A legacy path that moved (lib/settings-menu.js) is
+// matched at its new path, so the first paint is already the new screen;
+// `redirect` is the URL App then puts in the address bar with a replace.
+export function resolveRoute(path, search = '', hash = '') {
+  const redirect = redirectFor(path, search, hash);
+  const target = redirect ? redirect.replace(/[?#].*$/, '') : path;
+  for (const [pattern, Component] of ROUTES) {
+    const params = matchRoute(pattern, target);
+    if (params) return { Component, params, redirect, path: target };
+  }
+  return { Component: null, params: null, redirect, path: target };
+}
+
 export function App() {
-  const path = useRoute();
+  const urlPath = useRoute();
   const [locked, setLocked] = useState(false);
+  const route = resolveRoute(urlPath, currentSearch(), currentHash());
+  // The resolved path: /settings?project=x and the lanes page it replaces to
+  // are one screen, so the redirect does not remount it.
+  const path = route.path;
+
+  // Replace, not push: Back must not land on the old path and bounce again.
+  // Above the `locked` return so the hook order never changes.
+  useEffect(() => {
+    if (route.redirect) navigate(route.redirect, { replace: true });
+  }, [route.redirect]);
 
   useEffect(() => {
     const fn = () => setLocked(true);
@@ -217,11 +250,9 @@ export function App() {
 
   if (locked) return html`<${LoginNeeded} />`;
 
-  let screen = html`<${NotFound} path=${path} />`;
-  for (const [pattern, Component] of ROUTES) {
-    const params = matchRoute(pattern, path);
-    if (params) { screen = html`<${Component} ...${params} key=${path} />`; break; }
-  }
+  const screen = route.Component
+    ? html`<${route.Component} ...${route.params} key=${path} />`
+    : html`<${NotFound} path=${path} />`;
 
   const snap = fleet.data || {};
   const openAlerts = snap.open_alerts || 0;

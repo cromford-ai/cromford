@@ -45,24 +45,39 @@ export const GH_LEDGER_REPO_SQL =
   "OR substr(rest, instr(rest, '/') + 1, 1) = '/' THEN '(no repo)' " +
   "WHEN instr(substr(rest, instr(rest, '/') + 1), '/') = 0 THEN rest " +
   "ELSE substr(rest, 1, instr(rest, '/') + instr(substr(rest, instr(rest, '/') + 1), '/') - 1) END";
+// BH-8066: a row with status `cache` is the gh shim's cache answering from
+// disk (bin/lib/gh-cache.sh). It is not a request, so every read that counts
+// calls leaves it out; only group=served counts it.
+export const GH_LEDGER_NOT_CACHE_SQL = "status <> 'cache'";
 // group name -> the statement over a WHERE text and a LIMIT bind. Every piece
 // interpolated here is a constant of this file; every value is a bind.
 export const GH_LEDGER_GROUPS = Object.freeze({
   "lane-hour": (w, lim) =>
     `SELECT hour, lane, SUM(calls) AS calls, SUM(counted) AS counted
-       FROM gh_ledger WHERE ${w} AND ${GH_LEDGER_REST_SQL}
+       FROM gh_ledger WHERE ${w} AND ${GH_LEDGER_REST_SQL} AND ${GH_LEDGER_NOT_CACHE_SQL}
       GROUP BY hour, lane ORDER BY hour, lane LIMIT ${lim}`,
   "lane-class": (w, lim) =>
     `SELECT lane, path_class, SUM(calls) AS calls, SUM(counted) AS counted
-       FROM gh_ledger WHERE ${w} AND ${GH_LEDGER_REST_SQL}
+       FROM gh_ledger WHERE ${w} AND ${GH_LEDGER_REST_SQL} AND ${GH_LEDGER_NOT_CACHE_SQL}
       GROUP BY lane, path_class ORDER BY counted DESC, calls DESC, lane, path_class LIMIT ${lim}`,
   "repo": (w, lim) =>
     `SELECT ${GH_LEDGER_REPO_SQL} AS repo, SUM(calls) AS calls, SUM(counted) AS counted
        FROM (SELECT calls, counted, ${GH_LEDGER_REPO_REST_SQL} AS rest
-               FROM gh_ledger WHERE ${w} AND ${GH_LEDGER_REST_SQL})
+               FROM gh_ledger WHERE ${w} AND ${GH_LEDGER_REST_SQL} AND ${GH_LEDGER_NOT_CACHE_SQL})
       GROUP BY repo ORDER BY counted DESC, calls DESC, repo LIMIT ${lim}`,
 });
-const GH_LEDGER_GROUP_ERROR = `group must be one of ${Object.keys(GH_LEDGER_GROUPS).join(", ")}`;
+// BH-8066: group=served — how each REST call was answered, the ledger's column
+// 15 derived from status the same way gh_ledger_append derives it (`cache`,
+// `304`, `-` for 000, `200` for any other answer). The one read that counts
+// cache rows. Kept apart from GH_LEDGER_GROUPS: those are the "who spends the
+// budget" reads, and this one is not.
+export const GH_LEDGER_SERVED_SQL = (w, lim) =>
+  `SELECT CASE status WHEN 'cache' THEN 'cache' WHEN '304' THEN '304' WHEN '000' THEN '-' ELSE '200' END AS served,
+          SUM(calls) AS calls, SUM(counted) AS counted
+     FROM gh_ledger WHERE ${w} AND ${GH_LEDGER_REST_SQL}
+    GROUP BY served ORDER BY served LIMIT ${lim}`;
+const groupSql = (g) => (g === "served" ? GH_LEDGER_SERVED_SQL : GH_LEDGER_GROUPS[g]);
+const GH_LEDGER_GROUP_ERROR = `group must be one of ${[...Object.keys(GH_LEDGER_GROUPS), "served"].join(", ")}`;
 
 // "YYYY-MM-DDTHH" moved back by whole days. Hours are compared as strings in
 // SQL, which is correct only because every one of them has exactly this shape.
@@ -120,11 +135,11 @@ async function groupedRead(env, t, group, where, binds, since, until) {
   const lim = `?${binds.length + 1}`;
   // sql-ident-ok: w holds literal column = ?N clauses, the group SQL is a constant of this file
   const [res, tot] = await Promise.all([
-    env.DB.prepare(GH_LEDGER_GROUPS[group](w, lim)).bind(...binds, GH_LEDGER_READ_LIMIT + 1).all(),
-    // sql-ident-ok: GH_LEDGER_REST_SQL is a module string const, w holds literal column = ?N clauses
+    env.DB.prepare(groupSql(group)(w, lim)).bind(...binds, GH_LEDGER_READ_LIMIT + 1).all(),
+    // sql-ident-ok: GH_LEDGER_REST_SQL / GH_LEDGER_NOT_CACHE_SQL are module string consts, w holds literal column = ?N clauses
     env.DB.prepare(
-      `SELECT SUM(CASE WHEN ${GH_LEDGER_REST_SQL} THEN calls ELSE 0 END) AS rest_calls,
-              SUM(CASE WHEN ${GH_LEDGER_REST_SQL} THEN counted ELSE 0 END) AS rest_counted,
+      `SELECT SUM(CASE WHEN ${GH_LEDGER_REST_SQL} AND ${GH_LEDGER_NOT_CACHE_SQL} THEN calls ELSE 0 END) AS rest_calls,
+              SUM(CASE WHEN ${GH_LEDGER_REST_SQL} AND ${GH_LEDGER_NOT_CACHE_SQL} THEN counted ELSE 0 END) AS rest_counted,
               SUM(CASE WHEN ${GH_LEDGER_REST_SQL} THEN 0 ELSE calls END) AS graphql_calls,
               SUM(CASE WHEN ${GH_LEDGER_REST_SQL} THEN 0 ELSE counted END) AS graphql_counted
          FROM gh_ledger WHERE ${w}`
@@ -215,7 +230,7 @@ export const routes = [
       const group = url.searchParams.get("group");
       if (!HOUR_RE.test(since)) return json(400, { error: "since=YYYY-MM-DDTHH is required" });
       if (until && !HOUR_RE.test(until)) return json(400, { error: "until must be YYYY-MM-DDTHH" });
-      if (group !== null && !Object.hasOwn(GH_LEDGER_GROUPS, group)) {
+      if (group !== null && group !== "served" && !Object.hasOwn(GH_LEDGER_GROUPS, group)) {
         return json(400, { error: GH_LEDGER_GROUP_ERROR });
       }
       await ensureTable(env, "gh_ledger");
@@ -225,6 +240,8 @@ export const routes = [
       const box = str(url.searchParams.get("box"), 128);
       if (box) { binds.push(box); where.push(`box = ?${binds.length}`); }
       if (group !== null) return groupedRead(env, t, group, where, binds, since, until);
+      // The per-box read counts requests: a cache row is not one (BH-8066).
+      where.push(GH_LEDGER_NOT_CACHE_SQL);
       binds.push(GH_LEDGER_READ_LIMIT + 1);
       // sql-ident-ok: where holds literal column = ?N clauses, every value a bind
       const res = await env.DB.prepare(

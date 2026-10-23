@@ -1,0 +1,11 @@
+{
+  "env": "GH_CACHE_WAKE_GRACE_S",
+  "read_in": "bin/lib/gh-cache.sh",
+  "type": "int",
+  "default": 5,
+  "min": 0,
+  "unit": "seconds",
+  "zero_means": null,
+  "required": false,
+  "note": "BH-8066. A gh shim cache hit younger than this is served with no wake check, and a box reads GET /api/wakes?since= at most once per this many seconds (bin/lib/gh-cache.sh ghc_wake_sync), which bounds the reads to 720 an hour per box at 5. Resolved like GH_CACHE_TTL_S; code fallback 5."
+}

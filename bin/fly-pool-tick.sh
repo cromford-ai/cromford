@@ -10,8 +10,11 @@
 # ceiling we chose, not one Fly imposed. Each bin/fly-pool.sh self-locks on its
 # own locks/fly-pool-<p>.lock with `flock -n` and exits if it is held, so running
 # them together is exactly the same safety with none of the waiting.
-# KILL FLAG: POOL_AUTOSCALE=0 (env/global.env) restores the sequential sweep.
-# bin/pool-cap.sh --autoscale is its one reader.
+# KILL FLAG: POOL_AUTOSCALE=0 (env/global.env) restores the sequential sweep
+# for the projects that stay on the hub. bin/pool-cap.sh --autoscale is its one
+# reader. A fly-placed project gets no decision here (BH-7890): ptb_split
+# batches its row, and the lane-fleet autoscaler (bin/lane-fleet.sh lf_decide,
+# BH-6885) decides how many lane machines run it.
 #
 # HARNESS is overridable for the same reason bin/fly-pool.sh took that seam: a
 # suite that cannot point this loop at a scratch tree cannot drive it at all,
@@ -31,8 +34,15 @@ H="${HARNESS:-/root/harness}"
 command -v lane_gate_or_exit >/dev/null 2>&1 && lane_gate_or_exit fly-pool-tick
 command -v lane_env_apply    >/dev/null 2>&1 && lane_env_apply    fly-pool-tick
 
-"$H/bin/fly-lock-guard.sh" >/dev/null 2>&1 || true
-AS=$("$H/bin/pool-cap.sh" --autoscale 2>/dev/null)
+# The orphan-lock guard (about 295 forks) runs only when this wrapper is about
+# to run a hub flyctl user: a hub project tick or an onboard launch (BH-7890).
+# An all-fly tick runs neither, so it has nothing to guard. At most once a run.
+_TICK_GUARDED=""
+tick_guard_once() {
+  [ -n "$_TICK_GUARDED" ] && return 0
+  _TICK_GUARDED=1
+  "$H/bin/fly-lock-guard.sh" >/dev/null 2>&1 || true
+}
 
 # The two 2026-09-14 one-shots (the legacy flag cap retire and the stale
 # builder record retire, BH-660) ran on every project and left in BH-7433. Old
@@ -141,21 +151,26 @@ TICK_PROJECTS=()
 for f in "$H"/flags/fly-pool-*; do
   [ -f "$f" ] || continue
   case "$f" in *fly-pool-app-*) continue;; esac   # app-name flag, not a project
-  P="${f##*fly-pool-}"
-  if [ "$AS" = 0 ]; then
-    "$H/bin/fly-pool.sh" "$P"
-  else
-    TICK_PROJECTS+=("$P")
-  fi
+  TICK_PROJECTS+=("${f##*fly-pool-}")
 done
 # BATCHED ENQUEUE (BH-7432). ptb_split enqueues every fly-placed project in
 # one POST /api/lane-runs/batch and leaves in PTB_HUB only the projects that
 # still need a hub tick. With no fly row, the knob POOL_TICK_BATCH=0 or no
 # lib, PTB_HUB is every project and this is the start above it replaced.
+# It runs in both autoscale modes (BH-7890): POOL_AUTOSCALE=0 no longer
+# bypasses the batch, it only picks the sequential sweep for PTB_HUB.
 if [ "${#TICK_PROJECTS[@]}" -gt 0 ]; then
   PTB_HUB=("${TICK_PROJECTS[@]}")
   command -v ptb_split >/dev/null 2>&1 && ptb_split "${TICK_PROJECTS[@]}"
-  [ "${#PTB_HUB[@]}" -gt 0 ] && tick_start_capped "${PTB_HUB[@]}"
+  if [ "${#PTB_HUB[@]}" -gt 0 ]; then
+    tick_guard_once
+    AS=$("$H/bin/pool-cap.sh" --autoscale 2>/dev/null)
+    if [ "$AS" = 0 ]; then
+      for P in "${PTB_HUB[@]}"; do "$H/bin/fly-pool.sh" "$P"; done
+    else
+      tick_start_capped "${PTB_HUB[@]}"
+    fi
+  fi
 fi
 # BOUNDED WAIT (BH-7491). The sweep used to wait for EVERY tick, so one slow
 # project held this wrapper, the single-run gate (BH-7422) turned each later
@@ -279,6 +294,8 @@ if [ -r "$Q" ]; then
       echo "$(date -u '+%Y-%m-%d %H:%M:%SZ') [pool/$P] fly-onboard queued line -> launching bin/fly-onboard.sh $P (attempt $((N+1)) of $MAXA$POL)" >> "$H/logs/fly-pool.log"
       # Detached: a rollout takes minutes and this tick owns none of it.
       # fly-onboard.sh's own flock -n makes a duplicate launch a no-op anyway.
+      # The guard frees a stuck locks/fly-onboard-<p>.lock first (BH-7890).
+      tick_guard_once
       setsid "$H/bin/fly-onboard.sh" "$P" >> "$H/logs/fly-onboard.log" 2>&1 < /dev/null &
     done
   fi

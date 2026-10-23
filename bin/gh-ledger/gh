@@ -27,7 +27,12 @@
 #   1. change what gh prints or returns. stdout is gh's own fd (never piped), the
 #      rc is gh's rc, stdin is gh's stdin, and stderr loses only the trace this
 #      shim itself asked for. If the awk dies, `cat` drains the rest to stderr
-#      so gh can never take a SIGPIPE from us.
+#      so gh can never take a SIGPIPE from us. THE ONE EXCEPTION is the
+#      read-through cache (BH-8066, bin/lib/gh-cache.sh, _ghl_cache_try below):
+#      an eligible `gh api` GET has its stdout and stderr captured to files and
+#      printed after gh exits, a repeat inside GH_CACHE_TTL_S is replayed from
+#      state/gh-cache/ with no request, and an `-i` replay carries one added
+#      `X-Gh-Cache-Served:` header line. A missing lib means no cache.
 #   2. fail a caller because ledgering failed. Everything after gh exits runs
 #      with its output discarded and its status ignored; the exit is gh's rc.
 #   3. ledger what is already ledgered, or what it cannot see honestly:
@@ -40,7 +45,8 @@
 #                               gh_rest's own request; gh-rest-ledger.sh already
 #                               wrote its row (the marker covers ONLY that argv
 #                               shape, so a raw call in the same shell is
-#                               still ledgered);
+#                               still ledgered); a GET of that shape still goes
+#                               through the cache, and writes no shim row;
 #        flags/gh-ledger-off (or the `switch.gh-ledger-off` settings row),
 #        GH_LEDGER_OFF=1   the kill switch.
 #   4. loop. The real binary is the first `gh` on PATH that is not this file and
@@ -176,27 +182,6 @@ if [ "$_ghl_depth" = 0 ] && [ -z "${GH_TOKEN:-}" ] && [ -z "${GITHUB_TOKEN:-}" ]
   esac
 fi
 
-# ── the calls that go straight through, before anything else is spent ───────
-[ "$_ghl_depth" = 0 ] || _ghl_through "$@"
-[ "${GH_LEDGER_OFF:-}" != 1 ] || _ghl_through "$@"
-_ghl_h="${HARNESS:-}"
-[ -n "$_ghl_h" ] || _ghl_h="${_ghl_dir%/bin/gh-ledger}"
-# shellcheck source=bin/lib/lane-switch.sh
-command -v lane_switch >/dev/null 2>&1 || . "${_ghl_dir%/gh-ledger}/lib/lane-switch.sh" 2>/dev/null || lane_switch() { [ -e "${HARNESS:-${H:-/root/harness}}/flags/$1" ]; }
-! HARNESS="$_ghl_h" LANE_GATE_CACHE_S=2147483647 lane_switch gh-ledger-off file 2>/dev/null || _ghl_through "$@"
-[ -z "${GH_DEBUG:-}" ] || _ghl_through "$@"
-case "${1:-}" in
-  auth|config|completion|help|version|alias|extension|--version|-h|--help|'') _ghl_through "$@" ;;
-esac
-if [ -n "${GH_LEDGER_BY_CALLER:-}" ] && [ "${1:-} ${2:-} ${3:-}" = "api -i -X" ]; then
-  _ghl_through "$@"
-fi
-# `{fd}>&1` below is bash 4; every box and builder runs bash 5, and an older
-# shell simply loses the ledger rather than the command.
-[ "${BASH_VERSINFO[0]:-0}" -ge 4 ] || _ghl_through "$@"
-command -v awk >/dev/null 2>&1 || _ghl_through "$@"
-_ghl_rec=$(mktemp "${TMPDIR:-/tmp}/gh-ledger.XXXXXX" 2>/dev/null) || _ghl_through "$@"
-
 # _ghl_load_lib — source bin/lib/gh-rest-ledger.sh (this checkout's, then the
 # harness's) and point it at this harness; rc 1 when neither is there.
 _ghl_load_lib() {
@@ -213,6 +198,77 @@ _ghl_load_lib() {
   GH_LEDGER_CALLER=$(_ghl_caller)
   return 0
 }
+
+# ── BH-8066: THE READ-THROUGH CACHE (bin/lib/gh-cache.sh) ────────────────────
+# _ghl_cache_try <trace|hdr> <gh args…> — EXITS when the cache answered the
+# call or ran it; RETURNS, having run nothing, when the call is not eligible or
+# the lib is not there, and the call then runs exactly as before. `hdr` is
+# gh_rest's own `api -i -X`: no GH_DEBUG, the status read from the header block
+# on stdout, and no shim row (gh_rest writes it, from the X-Gh-Cache-Served
+# line a replay carries). `trace` is every other call, after the trace format
+# was proven: its row is _ghl_ledger's, or one `cache` row for a hit.
+_ghl_cache_try() {
+  local mode="$1" lib
+  shift
+  [ "${1:-}" = api ] || return 0
+  [ "${BASH_VERSINFO[0]:-0}" -ge 4 ] || return 0
+  for lib in "$_ghl_dir/../lib/gh-cache.sh" "$_ghl_h/bin/lib/gh-cache.sh"; do
+    # shellcheck source=bin/lib/gh-cache.sh
+    [ -r "$lib" ] && { . "$lib" 2>/dev/null; break; }
+  done
+  command -v ghc_main >/dev/null 2>&1 || return 0
+  _ghl_load_lib >/dev/null 2>&1 || return 0
+  ghc_main "$mode" "$@" || return 0
+  if [ "$mode" = trace ]; then
+    if [ "$GHC_SERVED" = cache ]; then
+      { GH_REST_QUOTA_REMAINING= GH_REST_QUOTA_RESET= GH_REST_QUOTA_USED= GH_REST_QUOTA_LIMIT= \
+          GH_REST_QUOTA_RESOURCE= gh_ledger_append gh GET "$GHC_LPATH" cache 0; } >/dev/null 2>&1
+    else
+      _ghl_ledger >/dev/null 2>&1
+    fi
+    rm -f "$_ghl_rec" 2>/dev/null
+  fi
+  exit "$GHC_RC"
+}
+# _ghl_run_capture <trace|hdr> <out> <err> <gh args…> — the real gh with stdout
+# and stderr to files, for the cache to decide what the caller sees. `trace`
+# filters stderr through the same awk as the run below and records each request
+# in $_ghl_rec. rc: gh's rc.
+_ghl_run_capture() {
+  local mode="$1" out="$2" err="$3" rc
+  shift 3
+  if [ "$mode" = trace ]; then
+    GH_DEBUG=api GH_LEDGER_DEPTH=$((_ghl_depth + 1)) "$_ghl_real" "$@" 2>&1 1>"$out" \
+      | { awk -v REC="$_ghl_rec" "$_GHL_AWK"; cat; } > "$err"
+    rc=${PIPESTATUS[0]}
+  else
+    GH_LEDGER_DEPTH=$((_ghl_depth + 1)) "$_ghl_real" "$@" > "$out" 2> "$err"
+    rc=$?
+  fi
+  return "$rc"
+}
+
+# ── the calls that go straight through, before anything else is spent ───────
+[ "$_ghl_depth" = 0 ] || _ghl_through "$@"
+[ "${GH_LEDGER_OFF:-}" != 1 ] || _ghl_through "$@"
+_ghl_h="${HARNESS:-}"
+[ -n "$_ghl_h" ] || _ghl_h="${_ghl_dir%/bin/gh-ledger}"
+# shellcheck source=bin/lib/lane-switch.sh
+command -v lane_switch >/dev/null 2>&1 || . "${_ghl_dir%/gh-ledger}/lib/lane-switch.sh" 2>/dev/null || lane_switch() { [ -e "${HARNESS:-${H:-/root/harness}}/flags/$1" ]; }
+! HARNESS="$_ghl_h" LANE_GATE_CACHE_S=2147483647 lane_switch gh-ledger-off file 2>/dev/null || _ghl_through "$@"
+[ -z "${GH_DEBUG:-}" ] || _ghl_through "$@"
+case "${1:-}" in
+  auth|config|completion|help|version|alias|extension|--version|-h|--help|'') _ghl_through "$@" ;;
+esac
+if [ -n "${GH_LEDGER_BY_CALLER:-}" ] && [ "${1:-} ${2:-} ${3:-}" = "api -i -X" ]; then
+  _ghl_cache_try hdr "$@"
+  _ghl_through "$@"
+fi
+# `{fd}>&1` below is bash 4; every box and builder runs bash 5, and an older
+# shell simply loses the ledger rather than the command.
+[ "${BASH_VERSINFO[0]:-0}" -ge 4 ] || _ghl_through "$@"
+command -v awk >/dev/null 2>&1 || _ghl_through "$@"
+_ghl_rec=$(mktemp "${TMPDIR:-/tmp}/gh-ledger.XXXXXX" 2>/dev/null) || _ghl_through "$@"
 
 # ── IS THIS gh's TRACE A SHAPE THE FILTER KNOWS? (review rounds 1-2) ────────
 # The filter below strips `* Request at <date> … * Request took` brackets. If a
@@ -322,7 +378,8 @@ fi
 # One record per bracketed request, fields split by \037 (unit separator) — not
 # a tab, which `read` collapses when a header is absent and an empty field would
 # shift every field after it:
-#   method  path  status  remaining  reset  resource  used  limit
+#   method  path  status  remaining  reset  resource  used  limit  etag  cache-control
+# (etag and cache-control, fields 9-10, are read by bin/lib/gh-cache.sh).
 # Everything outside a bracket that is not a `[git …]` debug line is printed
 # as-is and flushed per line, so a long-running gh (run watch) still streams.
 # A bracket that never closes (gh killed mid-request) is flushed at END.
@@ -330,12 +387,12 @@ fi
 _GHL_AWK='
 function flush() {
   if (inb && m != "")
-    printf "%s\037%s\037%s\037%s\037%s\037%s\037%s\037%s\n", m, p, (st == "" ? "000" : st), rem, rst, res, usd, lim >> REC
+    printf "%s\037%s\037%s\037%s\037%s\037%s\037%s\037%s\037%s\037%s\n", m, p, (st == "" ? "000" : st), rem, rst, res, usd, lim, et, cc >> REC
   inb = 0
 }
 {
   line = $0; sub(/\r$/, "", line)
-  if (line ~ /^\* Request at [0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9] /) { flush(); inb = 1; m = p = st = rem = rst = res = usd = lim = ""; next }
+  if (line ~ /^\* Request at [0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9] /) { flush(); inb = 1; m = p = st = rem = rst = res = usd = lim = et = cc = ""; next }
   if (inb) {
     if (line ~ /^\* Request took /) { flush(); next }
     if (m == "" && line ~ /^> [A-Z]+ [^ ]+ HTTP\//) { split(line, a, " "); m = a[2]; p = a[3]; next }
@@ -347,6 +404,8 @@ function flush() {
       else if (k == "x-ratelimit-resource") res = tolower(v)
       else if (k == "x-ratelimit-used") usd = v
       else if (k == "x-ratelimit-limit") lim = v
+      else if (k == "etag") et = v
+      else if (k == "cache-control") cc = v
     }
     next
   }
@@ -355,22 +414,13 @@ function flush() {
 }
 END { flush() }'
 
-# ── run gh ──────────────────────────────────────────────────────────────────
-# stdout goes to the caller's own fd, never through the pipe: only stderr is
-# filtered. The dup is closed in gh's copy so gh holds nothing it did not have.
-exec {_ghl_out}>&1
-GH_DEBUG=api GH_LEDGER_DEPTH=$((_ghl_depth + 1)) "$_ghl_real" "$@" 2>&1 1>&"$_ghl_out" {_ghl_out}>&- \
-  | { awk -v REC="$_ghl_rec" "$_GHL_AWK"; cat; } >&2
-_ghl_rc=${PIPESTATUS[0]}
-exec {_ghl_out}>&-
-
 # _ghl_ledger — one gh_ledger_append per record. Its output and its status are
 # discarded by the caller below: a ledger that cannot be written costs a row.
 _ghl_ledger() {
   local m p st rem rst res usd lim counted
   [ -s "$_ghl_rec" ] || return 0
   _ghl_load_lib || return 0
-  while IFS=$'\037' read -r m p st rem rst res usd lim; do
+  while IFS=$'\037' read -r m p st rem rst res usd lim _; do
     [ -n "$m" ] || continue
     case "$rem" in *[!0-9]*) rem= ;; esac
     case "$rst" in *[!0-9]*) rst= ;; esac
@@ -390,6 +440,17 @@ _ghl_ledger() {
   done < "$_ghl_rec"
   return 0
 }
+# ── run gh ──────────────────────────────────────────────────────────────────
+# An eligible `gh api` GET is answered by the cache, or run by it (and exits).
+_ghl_cache_try trace "$@"
+# stdout goes to the caller's own fd, never through the pipe: only stderr is
+# filtered. The dup is closed in gh's copy so gh holds nothing it did not have.
+exec {_ghl_out}>&1
+GH_DEBUG=api GH_LEDGER_DEPTH=$((_ghl_depth + 1)) "$_ghl_real" "$@" 2>&1 1>&"$_ghl_out" {_ghl_out}>&- \
+  | { awk -v REC="$_ghl_rec" "$_GHL_AWK"; cat; } >&2
+_ghl_rc=${PIPESTATUS[0]}
+exec {_ghl_out}>&-
+
 _ghl_ledger >/dev/null 2>&1 || true
 rm -f "$_ghl_rec" 2>/dev/null
 exit "$_ghl_rc"

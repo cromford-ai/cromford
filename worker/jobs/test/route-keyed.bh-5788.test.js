@@ -73,7 +73,7 @@ function scratchWorker() {
   }
   rmSync(join(jobs, 'src', 'routes.gen.js'), { force: true });
   mkdirSync(join(root, 'catalog'));
-  for (const c of ['lanes.json', 'llm-sites.json', 'context-budgets.json']) {
+  for (const c of ['lanes.json', 'llm-sites.json', 'context-budgets.json', 'prompt-markers.json']) {
     const from = join(REPO, 'catalog', c);
     assert.ok(existsSync(from), `catalog/${c} is missing: run bin/lanes-build.sh --write and bin/llm-sites-build.sh --compose`);
     cpSync(from, join(root, 'catalog', c));

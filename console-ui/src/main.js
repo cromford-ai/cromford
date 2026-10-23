@@ -6,6 +6,7 @@ import { syncFleetDefault } from './theme/apply.js';
 import { initSentry } from './lib/error-report.js';
 import './styles.css';
 import './phone-floor.css';
+import './settings-shell.css';
 
 // Off unless VITE_SENTRY_DSN was set at build time (BH-5619).
 initSentry(import.meta.env);

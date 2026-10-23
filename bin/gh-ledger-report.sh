@@ -79,11 +79,12 @@ done
 echo "gh-ledger-report: $DIR window $since_iso..$now_iso ($LAST) — ${#files[@]} hour file(s)"
 
 # One line per caller x endpoint: calls TAB counted TAB caller TAB endpoint,
-# sorted calls desc, then caller, then endpoint, so ties never reorder.
+# sorted calls desc, then caller, then endpoint, so ties never reorder. A
+# status `cache` row (BH-8066: the gh shim answered from disk) is not a call.
 groups=""
 if [ "${#files[@]}" -gt 0 ]; then
   groups=$(awk -F'\t' -v since="$since_iso" -v now="$now_iso" '
-    NF >= 7 && $1 >= since && $1 <= now {
+    NF >= 7 && $1 >= since && $1 <= now && $6 != "cache" {
       n = split($5, seg, "/"); path = ""
       for (i = 1; i <= n; i++) {
         s = seg[i]

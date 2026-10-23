@@ -125,7 +125,7 @@ test('N5 every route module that exports routes has a fragment or is imported by
 });
 
 // Lays out <root>/worker/jobs/{src,scripts,test/lib,test/route-table.d,schema.d,package.json},
-// the three catalogs the worker imports at ../../../../catalog/, and
+// the four catalogs the worker imports at ../../../../catalog/, and
 // agent-core/, which the staff routes import by a relative path.
 function scratchWorker() {
   const root = mkdtempSync(join(tmpdir(), 'bh4607-'));
@@ -135,7 +135,7 @@ function scratchWorker() {
   }
   rmSync(join(jobs, 'src', 'routes.gen.js'), { force: true });
   mkdirSync(join(root, 'catalog'));
-  for (const c of ['lanes.json', 'llm-sites.json', 'context-budgets.json']) {
+  for (const c of ['lanes.json', 'llm-sites.json', 'context-budgets.json', 'prompt-markers.json']) {
     const from = join(REPO, 'catalog', c);
     assert.ok(existsSync(from), `catalog/${c} is missing: run bin/lanes-build.sh --write and bin/llm-sites-build.sh --compose`);
     cpSync(from, join(root, 'catalog', c));

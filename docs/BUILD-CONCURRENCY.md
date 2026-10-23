@@ -788,7 +788,8 @@ you actually want belongs, because a reviewed line survives every rollout.
 **Kill flag: `POOL_AUTOSCALE=0`** in `env/global.env` (or the environment)
 restores every pre-2026-09-14 behaviour byte-for-byte — default 3, `cap - live`,
 no per-tick line, `POOL_CAP_MAX` ignored entirely, a sequential
-`bin/fly-pool-tick.sh` sweep. `bin/pool-cap.sh --autoscale` is the one reader of
+`bin/fly-pool-tick.sh` sweep of the projects left on the hub (a fly-placed
+project is batched in both modes; `bin/lane-fleet.sh` scales its lane machines). `bin/pool-cap.sh --autoscale` is the one reader of
 that knob, the same way `bin/pool-cap.sh <project>` is the one reader of the cap.
 
 ---

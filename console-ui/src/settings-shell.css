@@ -1,0 +1,56 @@
+/* The settings side menu (BH-7938). Tokens only: no colour literal here.
+   Above 768px the menu is a column beside the page. At 768px and below it is
+   one chip row that scrolls sideways inside itself; the body never does. */
+
+.settings-shell {
+  display: grid; grid-template-columns: 220px minmax(0, 1fr);
+  flex-grow: 1; min-height: 0; min-width: 0;
+}
+.settings-shell__page { min-width: 0; display: flex; flex-direction: column; }
+
+.settings-menu {
+  display: flex; flex-direction: column; gap: 14px;
+  padding: 14px 10px 18px 18px; border-right: 1px solid var(--line); min-width: 0;
+}
+.settings-menu__group { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.settings-menu__label {
+  font-family: var(--font-mono); text-transform: var(--label-case);
+  font-size: var(--fs-2xs); letter-spacing: 2px; color: var(--faint); padding: 0 8px 4px;
+}
+.settings-menu__project {
+  font-family: var(--font-mono); font-size: var(--fs-sm); color: var(--bright);
+  padding: 0 8px; overflow-wrap: anywhere;
+}
+.settings-menu__item {
+  display: flex; align-items: center; gap: 8px;
+  padding: 6px 8px; font-size: var(--fs-sm); color: var(--muted);
+  border: 1px solid transparent; border-radius: var(--r); overflow-wrap: anywhere;
+}
+a.settings-menu__item:hover { color: var(--text); }
+.settings-menu__item.on { color: var(--green); border-color: var(--line-active); background: var(--panel-active); }
+.settings-menu__item--off { color: var(--faint); cursor: default; }
+.settings-menu__item--off .tag { margin-left: auto; flex-shrink: 0; }
+.settings-menu__back { color: var(--text); letter-spacing: 1px; font-family: var(--font-mono); }
+.settings-menu__note { font-size: var(--fs-sm); color: var(--muted); padding: 0 8px; }
+.settings-menu__note--bad { color: var(--red-lt); }
+.settings-menu__skel { padding: 4px 8px; }
+
+@media (max-width: 768px) {
+  .settings-shell { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto 1fr; }
+  .settings-menu {
+    flex-direction: row; flex-wrap: nowrap; align-items: center; gap: 6px;
+    overflow-x: auto; overscroll-behavior-x: contain;
+    padding: 10px 12px; border-right: 0; border-bottom: 1px solid var(--line);
+  }
+  /* The groups dissolve into the one row: every item is a chip. */
+  .settings-menu__group { display: contents; }
+  .settings-menu__label { display: none; }
+  .settings-menu__project { flex-shrink: 0; white-space: nowrap; }
+  .settings-menu__item {
+    flex-shrink: 0; white-space: nowrap; min-height: 44px;
+    padding: 0 12px; border-color: var(--line); border-radius: var(--radius-pill);
+  }
+  .settings-menu__item--off .tag { margin-left: 0; }
+  .settings-menu__note { flex-shrink: 0; white-space: nowrap; }
+  .settings-menu__skel { flex: 0 0 120px; }
+}
