@@ -113,6 +113,11 @@
 # bin/lib/test-impact-dir-rows.sh. Env TI_DIR_ROWS=0 is today's map; `inputs`
 # (the suite fingerprint) always builds with 0.
 #
+# THE ALWAYS SET IS NARROWED TO CHECKOUT READS (BH-8098). A `--tree`, `find`
+# or `git -C … ls-files` hit whose target variable the suite assigns only to a
+# scratch value is not a `*` row (see "the always-run set"). Env
+# TI_ALWAYS_NARROW=0 is today's detector; `inputs` always builds with 0.
+#
 # A suite's paths are the literal repo paths its TEXT names, closed over what
 # those scripts `source`. That is a static over-approximation on purpose: it can
 # name a file the suite never actually opens (harmless — one extra suite runs),
@@ -518,6 +523,20 @@ ti_closure() {
 # `find "$DIR/bin"` still count. A heredoc body is read like any other line.
 # It prints each suite's FIRST matching line, which `always-why` hands back.
 #
+# ONLY ON THE REAL CHECKOUT (BH-8098). A `git -C <X> ls-files`, `--tree <X>` or
+# `find <X>` hit is dropped when X starts with a variable V ($V, ${V}, "$V") the
+# suite proves scratch: the scan reads that suite once more (bindfile, only
+# for a suite with such a hit) and records that the suite assigns V (also local, export, an env prefix; sourcing tests/lib/
+# scratch.sh assigns T), that no assignment of V is ROOTED (its value holds
+# `dirname "$0"`, `rev-parse --show-toplevel`, a ROOTED $W or an unassigned
+# checkout name of TI_ROOTVAR), and that no for, select, read, getopts,
+# printf -v, mapfile or positional value binds it. An unassigned V, `.`, a
+# literal path or a $(…) keeps the hit. find matches its root name as a whole
+# identifier, so find "$DEST" is not find "$D". The glob signal and a cwd
+# `git ls-files` are unchanged. No line that missed before can hit now. Env
+# TI_ALWAYS_NARROW: unset, empty or 1 is on, 0 is the detector before
+# BH-8098, any other value is off and logs one `always: off (…)` line.
+#
 # catalog/test-impact-always.txt adds the ones no signal can see; it is one line
 # per suite with a reason, and tests/test-impact-test.sh asserts the families
 # BH-1203 named are in the set by one route or the other.
@@ -549,10 +568,107 @@ function mask(s,   o, i, c, j, q, d, ch) {
   }
   return o
 }
+# idlead — V when word x starts with $V, ${V}, "$V or "${V} (V the whole
+# identifier), else "". ${V:-…} and $(…) are "": not provably a variable.
+function idlead(x) {
+  sub(/^"/, "", x)
+  if (substr(x, 1, 2) == "${") {
+    x = substr(x, 3)
+    if (!match(x, /^[A-Za-z_][A-Za-z0-9_]*\}/)) return ""
+    return substr(x, 1, RLENGTH - 1)
+  }
+  if (substr(x, 1, 1) != "$") return ""
+  x = substr(x, 2)
+  if (!match(x, /^[A-Za-z_][A-Za-z0-9_]*/)) return ""
+  return substr(x, 1, RLENGTH)
+}
+# scratchv — V is proven scratch in file F (BH-8098): the suite assigns it,
+# no assignment is checkout-rooted, and no for/read/positional binds it.
+function scratchv(F, v) {
+  if (v == "") return 0
+  bindfile(F)
+  return ((F, v) in asg_) && !((F, v) in root_) && !((F, v) in other_)
+}
+# bindfile — read suite F once more, through getline, for its variable
+# bindings. Only a suite with a hit on a variable target pays for it.
+function bindfile(F,   ln) {
+  if (F in bound_) return
+  bound_[F] = 1; ne_ = 0
+  while ((getline ln < F) > 0) bindline(F, ln)
+  close(F)
+  rootfix()
+}
+# bindline — the bindings of one line of F. An assignment is ASSIGNED, and
+# ROOTED when its value names the checkout (ROOTED, a $W that is ROOTED, or
+# an unassigned checkout name of ROOTVAR_); for, select, read, getopts,
+# printf -v, mapfile and a positional value are OTHER-BOUND. Sourcing
+# tests/lib/scratch.sh assigns T.
+function bindline(F, ln,   s, t, m, v, w, r, ref) {
+  if (ln ~ /^[[:space:]]*#/) return
+  if (ln !~ /[A-Za-z_][A-Za-z0-9_]*=|(for|select|read|getopts|mapfile|readarray|printf)[[:space:]]|lib\/scratch[.]sh/) return
+  s = mask(ln)
+  if (s ~ /(^|[[:space:];&|(])(\.|source)[[:space:]].*lib\/scratch[.]sh/) { asg_[F, "T"] = 1; asg_[F, "SCRATCH"] = 1 }
+  t = s
+  while (match(t, /(^|[[:space:];&|({`])[A-Za-z_][A-Za-z0-9_]*=/)) {
+    m = substr(t, RSTART, RLENGTH); t = substr(t, RSTART + RLENGTH)
+    sub(/^[^A-Za-z_]/, "", m); v = substr(m, 1, length(m) - 1)
+    asg_[F, v] = 1
+    w = firstword(t)
+    if (w ~ ROOTED) { root_[F, v] = 1; continue }
+    if (w ~ /^"?\$\{?[0-9@*]/) { other_[F, v] = 1; continue }
+    r = w
+    while (match(r, /\$\{?[A-Za-z_][A-Za-z0-9_]*/)) {
+      ref = substr(r, RSTART, RLENGTH); r = substr(r, RSTART + RLENGTH)
+      sub(/^\$\{?/, "", ref)
+      ne_++; ef_[ne_] = F; ev_[ne_] = v; ew_[ne_] = ref
+    }
+  }
+  t = s
+  while (match(t, /(^|[^A-Za-z0-9_.\/-])(for|select)[[:space:]]+[A-Za-z_][A-Za-z0-9_]*/)) {
+    m = substr(t, RSTART, RLENGTH); t = substr(t, RSTART + RLENGTH)
+    sub(/^.*[[:space:]]/, "", m); other_[F, m] = 1
+  }
+  t = s
+  while (match(t, /(^|[^A-Za-z0-9_.\/-])(read|getopts|mapfile|readarray|printf[[:space:]]+-v)[[:space:]]/)) {
+    t = substr(t, RSTART + RLENGTH); bindall(F, t)
+  }
+}
+# firstword — the word r starts with: up to an unquoted blank or ;|&<>`) at
+# $( depth 0. Quotes nested inside $( … ) do not toggle.
+function firstword(r,   i, c, q, d) {
+  q = ""; d = 0
+  for (i = 1; i <= length(r); i++) {
+    c = substr(r, i, 1)
+    if (c == "\\") { i++; continue }
+    if (d == 0 && q == "" && c ~ /[[:space:];|&<>`)]/) break
+    if (substr(r, i, 2) == "$(") { d++; i++; continue }
+    if (d > 0) { if (c == "(") d++; else if (c == ")") d--; continue }
+    if (q == "" && (c == "\"" || c == "\047")) q = c
+    else if (c == q) q = ""
+  }
+  return substr(r, 1, i - 1)
+}
+# bindall — mark every identifier word of r as bound by for/read/getopts.
+function bindall(F, r,   n, a, i) {
+  sub(/[;|&<>`)].*$/, "", r)
+  n = split(r, a, /[[:space:]]+/)
+  for (i = 1; i <= n; i++) if (a[i] ~ /^[A-Za-z_][A-Za-z0-9_]*$/) other_[F, a[i]] = 1
+}
+# rootfix — close ROOTED over `V=…$W…` edges, at most 5 rounds.
+function rootfix(   r, k, ch) {
+  for (r = 0; r < 5; r++) {
+    ch = 0
+    for (k = 1; k <= ne_; k++)
+      if (!((ef_[k], ev_[k]) in root_) && (((ef_[k], ew_[k]) in root_) || (ew_[k] in rv_ && !((ef_[k], ew_[k]) in asg_)))) { root_[ef_[k], ev_[k]] = 1; ch = 1 }
+    if (!ch) break
+  }
+}
 BEGIN {
   CASEARM = "^[[:space:]]*\\(?(\"[^\"]*\"|\047[^\047]*\047|[^[:space:]()\"\047$;])+\\)"
   FINDRE = "find[[:space:]]+\"?\\$\\{?(" ROOTVAR_ ")\\}?\"?"
   GLOBRE = "\\$\\{?(" ROOTVAR_ ")\\}?\"?/tests/\\*"
+  ROOTED = "dirname[[:space:]]+\"?\\$(0|\\{0\\}|\\{?BASH_SOURCE)|rev-parse[[:space:]]+--show-toplevel"
+  nrv = split(ROOTVAR_, rva, "|"); for (k = 1; k <= nrv; k++) rv_[rva[k]] = 1
 }
 FILENAME in done_ { next }
 /^[[:space:]]*#/ { next }
@@ -567,8 +683,14 @@ FILENAME in done_ { next }
   # the fd number behind as a pathspec.
   t = s
   while (!hit && match(t, /(^|[^[:alnum:]_.\/-])git([[:space:]]+(-[Cc][[:space:]]+[^[:space:]]+|-[^[:space:]]+))*[[:space:]]+ls-files/)) {
+    m = substr(t, RSTART, RLENGTH)
     rest = substr(t, RSTART + RLENGTH); t = rest
     if (rest !~ /^([[:space:]]|$|[;|&)<>`])/) continue
+    # BH-8098: git -C <a scratch variable> ls-files reads a scratch repo.
+    if (NARROW_ && match(m, /[[:space:]]-C[[:space:]]+[^[:space:]]+/)) {
+      w = substr(m, RSTART, RLENGTH); sub(/^[[:space:]]-C[[:space:]]+/, "", w)
+      if (scratchv(FILENAME, idlead(w))) continue
+    }
     gsub(/[0-9]*(>>?|<)&?[[:space:]]*[^[:space:];|&)<>`]*/, " ", rest)
     sub(/[;|&)<>`].*$/, "", rest)
     n = split(rest, a, /[[:space:]]+/); scoped = 0
@@ -576,7 +698,24 @@ FILENAME in done_ { next }
       if (a[i] != "" && a[i] != "--" && a[i] != "." && a[i] !~ /^-/) scoped = 1
     if (!scoped) hit = 1
   }
-  if (s ~ /(^|[[:space:]])--tree([[:space:]=]|$)/ || s ~ FINDRE || s ~ GLOBRE) hit = 1
+  if (!NARROW_) {
+    if (s ~ /(^|[[:space:]])--tree([[:space:]=]|$)/ || s ~ FINDRE || s ~ GLOBRE) hit = 1
+  } else {
+    # BH-8098: a --tree or find whose target is a scratch variable is not a
+    # whole-tree read, and find "$DEST" is not find "$D" (whole identifier).
+    if (s ~ GLOBRE) hit = 1
+    t = s
+    while (!hit && match(t, /(^|[[:space:]])--tree([[:space:]=]|$)/)) {
+      t = substr(t, RSTART + RLENGTH); w = t; sub(/^[[:space:]]+/, "", w)
+      if (!scratchv(FILENAME, idlead(w))) hit = 1
+    }
+    t = s
+    while (!hit && match(t, FINDRE)) {
+      w = substr(t, RSTART); t = substr(t, RSTART + RLENGTH)
+      sub(/^find[[:space:]]+/, "", w); v = idlead(w)
+      if (v == "" || (v in rv_ && !scratchv(FILENAME, v))) hit = 1
+    }
+  }
   if (hit) { done_[FILENAME] = 1; print FILENAME "\t" FNR "\t" $0 }
 }
 '
@@ -587,11 +726,26 @@ FILENAME in done_ { next }
 # one; a suite that is both gets its detected row. A scan that dies is rc 2 with
 # its stderr intact — never a short set, which fast-lints would read as fewer
 # suites to run and ti_build_map as a map with fewer `*` rows.
+# ti_always_narrow — rc 0 when the BH-8098 narrowing is on. Env
+# TI_ALWAYS_NARROW: unset, empty or 1 is on, 0 is today's detector, any other
+# value is off and logs one `always: off (TI_ALWAYS_NARROW=<v>)` line.
+TI_ALWAYS_OFF_SAID=0
+ti_always_narrow() {
+  case "${TI_ALWAYS_NARROW-}" in
+    ''|1) return 0 ;;
+    0) return 1 ;;
+    *) [ "$TI_ALWAYS_OFF_SAID" = 1 ] || echo "always: off (TI_ALWAYS_NARROW=$TI_ALWAYS_NARROW)" >&2
+       TI_ALWAYS_OFF_SAID=1; return 1 ;;
+  esac
+}
+
 ti_always_why() {
   local extra="$ROOT/catalog/test-impact-always.txt" tab=$'\t' s src _files=()
   while IFS= read -r s; do [ -n "$s" ] && _files+=("$s"); done < <(ti_suites)
   if [ "${#_files[@]}" -gt 0 ]; then
-    ( cd "$ROOT" && LC_ALL=C awk -v ROOTVAR_="$TI_ROOTVAR" "$TI_ALWAYS_AWK" "${_files[@]}" ) > "$TI_TMP/always-hits" || {
+    local narrow=0
+    ti_always_narrow && narrow=1
+    ( cd "$ROOT" && LC_ALL=C awk -v ROOTVAR_="$TI_ROOTVAR" -v NARROW_="$narrow" "$TI_ALWAYS_AWK" "${_files[@]}" ) > "$TI_TMP/always-hits" || {
       echo "test-impact: the always-run scan failed — refusing to hand back a short set" >&2
       return 2
     }
@@ -1333,8 +1487,9 @@ ti_inputs() {
   local map="$TI_TMP/inputs.map" files="$TI_TMP/inputs.files" defs="$TI_TMP/inputs.defs"
   # Today's map, without the BH-8050 narrowing: a reuse claims "same inputs",
   # which is stronger than "this diff can reach it", and a narrowed map would
-  # move every fingerprint in the suite ledger at once.
-  TI_DIR_ROWS=0 ti_build_map > "$map" || return 2
+  # move every fingerprint in the suite ledger at once. The same for the
+  # BH-8098 always narrowing: today's detector, so its `*` rows stay.
+  TI_ALWAYS_NARROW=0 TI_DIR_ROWS=0 ti_build_map > "$map" || return 2
   [ -s "$map" ] || { echo "test-impact: the map came back empty" >&2; return 2; }
   ti_files > "$files" || return 2
   local scripts=() p

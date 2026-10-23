@@ -23,6 +23,7 @@
 #   F10 the real tree: every suite the OLD detector put in the set at c84de0d
 #       is still there unless it only matched in comments (that list printed),
 #       and the new set adds nothing the old detector or the catalog did not
+#       (BH-8098: the C1_OUT suites left on purpose, slice C1 of #8050)
 #   F11 a scanner that dies fails `always` and makes fast-lints --list rc 2
 set -uo pipefail
 DIR=$(cd "$(dirname "$0")/.." && pwd)
@@ -217,7 +218,7 @@ grep -qE '^  WARN D1 .*tests/wide-test.sh' "$T/f9.out" && ok "F9 D1 warns on an 
 grep -qF 'D1 hint: tests/wide-test.sh is always-run via tests/wide-test.sh:1: git -C "$DIR" ls-files | wc -l; add a durations row or stop matching' "$T/f9.out" \
   && ok "F9 the hint names the matched line" || bad "F9 no hint: $(grep 'D1' "$T/f9.out" | tr '\n' '|')"
 
-echo "F10: the real tree keeps main's classification, except comment-only suites"
+echo "F10: the real tree keeps main's classification, except comment-only suites and BH-8098's cut"
 # The suites the old detector put in the set at c84de0d (main when BH-4551 was
 # planned), and that detector verbatim, to tell a comment-only match apart.
 SNAP="tests/account-lease-cas-test.sh tests/br-split-layout-test.sh tests/checks-suite-test.sh
@@ -243,11 +244,25 @@ OLD_RV='DIR|ROOT|REPO|HERE|D'
 OLD_RE='ls-files|--tree|find[[:space:]]+"?\$\{?('"$OLD_RV"')\}?"?|\$\{?('"$OLD_RV"')\}?"?/tests/\*'
 "$TI" always > "$T/real.always" 2> "$T/real.err"; rc=$?
 [ "$rc" = 0 ] && [ -s "$T/real.always" ] && ok "F10 real always rc 0, non-empty" || bad "F10 real always rc=$rc err=$(cat "$T/real.err")"
+# TEST-CHANGE BH-8098: slice C1 of #8050 cut the always set to reads of the
+# real checkout on purpose. These snapshot suites left it: 11 whose detector
+# hit read a scratch directory and 8 whose catalog pin read no real tree path.
+# Any OTHER snapshot suite that leaves the set still fails below.
+C1_OUT=" tests/gh-rest-etag-test.sh tests/gh-rest-etag.bh-1322-test.sh tests/gh-rest-lib-test.sh
+tests/gh-rest-list-lib-test.sh tests/gh-rest-quota-test.sh tests/gh-rest-quota.bh-1509-test.sh
+tests/rules-pack.bh-3510-test.sh tests/state-restore-standby.bh-401-test.sh tests/tests-trace-safety-test.sh
+tests/triage-state-pr-record.bh-3417-test.sh tests/untriaged-lib.bh-2752-test.sh
+tests/ci-shard-split-test.sh tests/fixround-lead-reviews.bh-2200-test.sh
+tests/fixround-unaddressed-report.bh-2276-test.sh tests/hold-push-guard.bh-2504-test.sh
+tests/lead-review-rules-pack.bh-3546-test.sh tests/readiness-report-test.sh
+tests/remote-gate.bh-1597-test.sh tests/spec-artifact-test.sh "
+C1_OUT=$(printf '%s' "$C1_OUT" | tr '\n' ' ')
 n=0 commentonly="" lost=""
 for s in $SNAP; do
   n=$((n + 1))
   [ -f "$DIR/$s" ] || continue
   grep -qxF "$s" "$T/real.always" && continue
+  case "$C1_OUT" in *" $s "*) continue ;; esac
   if grep -E "$OLD_RE" "$DIR/$s" | grep -qvE '^[[:space:]]*#'; then lost="$lost $s"
   else commentonly="$commentonly $s"; fi
 done

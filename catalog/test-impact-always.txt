@@ -44,6 +44,14 @@ tests/gh-app-ratchet-test.sh
 # that adds an unguarded own-range read would not select it.
 tests/pr-scoped-test-lint.bh-5684-test.sh
 #
+# BH-8098: tests/generated-not-tracked.bh-5518-test.sh G1/G6 lists every
+# tracked file of the checkout through `git "${g[@]}" ls-files`, and the
+# detector does not read an argument array. Its only detected line was a
+# `git -C "$S" ls-files` on a scratch repo, which the narrowed detector drops.
+# A tracked ignored file can come from any diff, so the suite stays always
+# (its G7 asserts it).
+tests/generated-not-tracked.bh-5518-test.sh
+#
 # BH-4551: the detector now reads only text that runs, and only an unscoped
 # `git … ls-files` (no pathspec, or `.`). The suites below were in the set at
 # c84de0d and the narrowed detector no longer sees them. They are pinned here so
@@ -51,19 +59,22 @@ tests/pr-scoped-test-lint.bh-5684-test.sh
 # tests/rb-prepr-gate.bh-1706-test.sh left, because it matched in a comment
 # alone). Each line names what the old whole-file grep matched. A pin whose
 # suite never reads the tree can be deleted on its own.
-tests/ci-shard-split-test.sh  case pattern *"bin/checks-run.sh --tree"*)
+#
+# BH-8098 (slice C1 of #8050) deleted 8 of these pins. None of those suites
+# reads a real tree path: tests/ci-shard-split-test.sh matched a case pattern,
+# fixround-lead-reviews.bh-2200, fixround-unaddressed-report.bh-2276 and
+# hold-push-guard.bh-2504 a git stub case arm, lead-review-rules-pack.bh-3546 a
+# quoted grep pattern, remote-gate.bh-1597 a quoted message,
+# readiness-report a `git ls-files` of its own fixture directory and
+# spec-artifact a `git ls-files` of a scratch repo. Each has map rows of its
+# own, so a diff to what it reads still selects it. The 8 pins below are
+# scoped reads of the real checkout (ratchets and lints over a set of
+# directories) and stay.
 tests/config-literal-lint.sh  scoped git ls-files -- "$d" over bin fly cron
-tests/fixround-lead-reviews.bh-2200-test.sh  git stub case arm "ls-files")
-tests/fixround-unaddressed-report.bh-2276-test.sh  git stub case arm "ls-files")
 tests/generated-files-train-test.sh  scoped git -C "$DIR" ls-files -- "$p"
-tests/hold-push-guard.bh-2504-test.sh  git stub case arm "ls-files")
-tests/lead-review-rules-pack.bh-3546-test.sh  quoted grep pattern "^--tree $H/…"
 tests/llm-call-ratchet-test.sh  scoped git -C "$DIR" ls-files -- docs/LLM_CALL_SITES.md
 tests/model-literal-lint.sh  scoped git ls-files -- "$d" over its SCAN_DIRS
 tests/ratchet-markers-test.sh  G ls-files -u, through a git wrapper
-tests/readiness-report-test.sh  scoped git -C "$DIR" ls-files tests/fixtures/readiness
 tests/registry-no-commit-test.sh  scoped git -C "$DIR" ls-files -- "$P"
-tests/remote-gate.bh-1597-test.sh  quoted message "… ls-files lists it …"
 tests/share-publish-clean.bh-795-test.sh  scoped git ls-files -- docs/verification-map/README.md
-tests/spec-artifact-test.sh  scoped git -C "$T/repo" ls-files "$1"
 tests/verification-map-no-commit-test.sh  scoped git -C "$DIR" ls-files -- docs/verification-map/README.md

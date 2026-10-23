@@ -102,9 +102,15 @@ cmp -s "$T/why-1481.suites" "$T/sel-1481" && ok \
   || bad "W: --why and plain select disagree on WHICH suites ($(diff "$T/why-1481.suites" "$T/sel-1481" | head -4 | tr '\n' ' '))"
 # Plain select is unchanged: bare suite paths, no tabs. CI's --only-file reads it.
 grep -q "$(printf '\t')" "$T/sel-1481" && bad "W: plain select must print bare suite paths (CI's --only-file reads it)" || ok
-# gh-rest-lib-test is in the always-run set, and says so.
-grep -qF "$(printf 'tests/gh-rest-lib-test.sh\talways\t')" "$T/why-one-ghr" \
-  && ok || bad "W: gh-rest-lib-test.sh is always-run and --why must say always"
+# An always-run suite says so. TEST-CHANGE BH-8098: this pinned
+# gh-rest-lib-test, whose only always hit was `find "$D/fx"` on a stub dir;
+# slice C1 of #8050 took it out of the set. tests/test-impact-test.sh runs
+# `git -C "$DIR" ls-files` on the checkout and stays always.
+grep -qF "$(printf 'tests/test-impact-test.sh\talways\t')" "$T/why-one-ghr" \
+  && ok || bad "W: test-impact-test.sh is always-run and --why must say always"
+# gh-rest-lib-test is still picked for gh-rest.sh, now for a map reason.
+grep -qE "^tests/gh-rest-lib-test[.]sh	(self|reads|named|source|closure)	" "$T/why-one-ghr" \
+  && ok || bad "W: gh-rest-lib-test.sh must be picked for bin/lib/gh-rest.sh by a map row (got: $(grep gh-rest-lib-test "$T/why-one-ghr" | tr '\t' ' ' | head -3))"
 
 # ── a scratch repository for the cases the real tree cannot pose ────────────
 R="$T/repo"
