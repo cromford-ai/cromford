@@ -4707,10 +4707,10 @@ br_rebuild_fresh() {
   fi
   if [ "$OBSERVE" = 1 ]; then say "$p/$rkey [$reason]: WOULD rebuild fresh (rebuild $((n+1)) of $lim) — observe mode"; return 0; fi
   if command -v br_head_gate >/dev/null 2>&1; then br_head_gate "$p" "$ck" "$reason" "$url" || return 0; fi
-  # THE CLOSE COMES FIRST, AND IT HAS TO LAND (#783). A rebuild enqueued behind a
-  # PR that is still open is two builds of one ticket, so a close GitHub refused
-  # defers the whole rung: no event, no superseded marker, no enqueue, no
-  # counter. The park is re-offered next tick and tries the same close again.
+  if command -v br_pm_release >/dev/null 2>&1; then br_pm_release "$p" "$rkey" "$reason" "$tkey" || return 0; fi   # BH-7836: a held ticket's rebuild must get a plan
+  # THE CLOSE COMES FIRST, AND IT HAS TO LAND (#783). A rebuild enqueued behind a PR that is still open
+  # is two builds of one ticket, so a close GitHub refused defers the whole rung: no event, no
+  # superseded marker, no enqueue, no counter. The park is re-offered next tick and tries the same close again.
   crc=0
   br_close_pr "$url" "Superseded by a fresh build against current main (blocked-resolver: $reason, rebuild $((n+1)) of $lim). This branch is left in place; the rebuild takes the next free name.$(br_close_facts "$p" "$ck" "$url")" || crc=$?
   if [ "$crc" = 3 ]; then

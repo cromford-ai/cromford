@@ -126,3 +126,30 @@ Owner: BH-7940.4.
 ## Console (BH-7940.5)
 
 Owner: BH-7940.5.
+
+Two settings pages show the seven kinds and edit one:
+
+- Settings · Fleet · Prompts, `/settings/fleet/prompts`: the fleet heads.
+- Settings · `<project>` · Prompts, `/settings/p/<project>/prompts`: what the
+  project gets, with the source of each row (`repo default`, `fleet override`
+  or `project override`).
+
+Click a kind to open the editor on the same page (`?kind=<kind>`). The editor
+shows:
+
+- The body in a full-width textarea. It starts from this scope's head. A
+  project with no head starts from the fleet head, else empty.
+- A line diff against the previous version of this scope.
+- A line diff against the level above: the fleet head for a project. For the
+  fleet, or a project with no fleet head, the level above is the repo file. The
+  console has no route to read that file, so the panel names it and says so.
+- The marker lint from `catalog/prompt-markers.json`. It shows only for a kind
+  with markers. The server lint is the authority: a 422 names each missing
+  marker.
+- SAVE opens the confirm modal. A note is required. The save sends
+  `base_version`, so a save on a stale version is a 409 and writes nothing.
+  After a save the page goes back to the list.
+
+The code is `console-ui/src/screens/Prompts.js`, `console-ui/src/ui/PromptEditor.js`
+and `console-ui/src/lib/prompts.js`. The editor renders `PromptVersionsSheet` and
+`UseLevelAboveButton` from `console-ui/src/ui/PromptHistoryActions.js`.

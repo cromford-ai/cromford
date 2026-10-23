@@ -11,7 +11,7 @@ export const SETTINGS_MENU = {
       { id: 'ai-vendors', label: 'AI vendors', tag: 'wave 4' },
       { id: 'github-app', label: 'GitHub app', tag: 'soon' },
       { id: 'machines', label: 'Machines and Tailscale', tag: 'soon' },
-      { id: 'prompts', label: 'Prompts', tag: 'wave 6b' },
+      { id: 'prompts', label: 'Prompts' },
       { id: 'lanes', label: 'Lanes' },
       { id: 'appearance', label: 'Appearance' }
     ] }
@@ -24,7 +24,7 @@ export const SETTINGS_MENU = {
       { id: 'builds', label: 'Builds and machines', tag: 'soon' },
       { id: 'deploy', label: 'Deploy and QA', tag: 'soon' },
       { id: 'alerts', label: 'Alerts', tag: 'soon' },
-      { id: 'prompts', label: 'Prompts', tag: 'wave 6b' },
+      { id: 'prompts', label: 'Prompts' },
       { id: 'pause', label: 'Pause and remove', tag: 'soon' }
     ] }
   ]

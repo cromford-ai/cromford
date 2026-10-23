@@ -1463,3 +1463,35 @@ a.statgrid__cell:hover { background: var(--surface-1); color: var(--text); }
 .card__track .st.now .lbl,
 .card__track .st.done:last-child .lbl,
 .card__track .st.done:has(+ .st:not(.done):not(.now)) .lbl { display: inline; }
+
+/* ---------- Prompts list and editor (BH-7940.5) ----------
+   Scoped .prompt-* rules only. The editor is full width at every size; a diff
+   scrolls inside its own box, so a long line never scrolls the page sideways.
+   Tokens only. */
+.prompt-editor { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+.prompt-editor__title {
+  margin: 0; font-family: var(--font-mono); font-size: var(--fs-sm); color: var(--text-strong);
+}
+.prompt-editor__actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.prompt-editor__meta { margin: 0; font-size: var(--fs-sm); color: var(--text-dim); }
+.prompt-editor__text {
+  width: 100%; box-sizing: border-box; min-height: 320px; resize: vertical;
+  font-family: var(--font-mono); font-size: var(--fs-sm); line-height: 1.5;
+  color: var(--text); background: var(--panel); border: 1px solid var(--line);
+  border-radius: var(--radius-md); padding: 8px;
+}
+.prompt-editor__panel { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.prompt-diff {
+  margin: 0; max-width: 100%; max-height: 420px; overflow-x: auto; overflow-y: auto;
+  font-family: var(--font-mono); font-size: var(--fs-xs); line-height: 1.5;
+  background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius-md); padding: 8px;
+}
+.prompt-diff > span { display: block; white-space: pre; }
+.prompt-diff__add { color: var(--ok); }
+.prompt-diff__del { color: var(--err); }
+.prompt-diff__ctx { color: var(--text-dim); }
+.prompt-lint { display: flex; flex-direction: column; gap: 2px; }
+.prompt-lint p { margin: 0; font-size: var(--fs-sm); }
+.prompt-lint__bad { color: var(--err); }
+.prompt-lint__ok { color: var(--ok); }
+.prompt-note { width: 100%; box-sizing: border-box; font-family: var(--font-mono); }

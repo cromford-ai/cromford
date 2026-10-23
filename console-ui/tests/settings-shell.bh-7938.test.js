@@ -67,8 +67,9 @@ test('R1: the fleet and project rows of decision 3, in order, with their tags', 
   assert.deepEqual(ids('project'), ['general', 'tickets', 'ai-accounts', 'builds', 'deploy', 'alerts', 'prompts', 'pause']);
   assert.equal(findItem(SETTINGS_MENU, 'fleet', 'lanes').tag, undefined);
   assert.equal(findItem(SETTINGS_MENU, 'fleet', 'appearance').tag, undefined);
-  assert.equal(findItem(SETTINGS_MENU, 'fleet', 'prompts').tag, 'wave 6b');
-  assert.equal(findItem(SETTINGS_MENU, 'project', 'prompts').tag, 'wave 6b');
+  // BH-7973 built the Prompts pages, so both rows lost their 'wave 6b' tag.
+  assert.equal(findItem(SETTINGS_MENU, 'fleet', 'prompts').tag, undefined);
+  assert.equal(findItem(SETTINGS_MENU, 'project', 'prompts').tag, undefined);
   assert.equal(findItem(SETTINGS_MENU, 'fleet', 'ai-vendors').tag, 'wave 4');
   assert.equal(findItem(SETTINGS_MENU, 'project', 'ai-accounts').tag, 'wave 4');
   assert.equal(findItem(SETTINGS_MENU, 'project', 'tickets').tag, 'wave 3');
@@ -133,10 +134,11 @@ test('S1: a new page is one registry row plus one screen entry', () => {
 
 test('S2: a tagged row is disabled, shows its tag, and its page mounts nothing', () => {
   const out = view({ screens: stubScreens, scope: 'fleet', page: 'lanes' });
-  assert.match(out, /<span[^>]*aria-disabled="true"[^>]*>Prompts\s*<span class="tag">wave 6b<\/span><\/span>/);
-  assert.doesNotMatch(out, /href="[^"]*\/prompts"/);
-  const page = view({ screens: { ...stubScreens, prompts: Probe('SHOULD NOT MOUNT') }, scope: 'fleet', page: 'prompts' });
-  assert.match(page, /Not built yet \(wave 6b\)\./);
+  // BH-7973: the sample tagged row moved from Prompts (now built) to AI vendors.
+  assert.match(out, /<span[^>]*aria-disabled="true"[^>]*>AI vendors\s*<span class="tag">wave 4<\/span><\/span>/);
+  assert.doesNotMatch(out, /href="[^"]*\/ai-vendors"/);
+  const page = view({ screens: { ...stubScreens, 'ai-vendors': Probe('SHOULD NOT MOUNT') }, scope: 'fleet', page: 'ai-vendors' });
+  assert.match(page, /Not built yet \(wave 4\)\./);
   assert.doesNotMatch(page, /SHOULD NOT MOUNT/);
 });
 

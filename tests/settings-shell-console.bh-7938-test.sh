@@ -53,8 +53,9 @@ eq('new-path',        redirectFor('/settings/fleet/lanes'), null);
 eq('prefix',          redirectFor('/settingsx'), null);
 eq('substring',       redirectFor('/settings/appearancex'), null);
 const items = menuFor(SETTINGS_MENU, { scope: 'fleet', page: 'lanes' }).flatMap((g) => g.items);
-eq('prompts-tag',     items.find((i) => i.id === 'prompts').tag, 'wave 6b');
-eq('prompts-no-href', items.find((i) => i.id === 'prompts').href, null);
+eq('prompts-href',    items.find((i) => i.id === 'prompts').href, '/settings/fleet/prompts');
+eq('ai-vendors-tag',  items.find((i) => i.id === 'ai-vendors').tag, 'wave 4');
+eq('ai-vendors-no-href', items.find((i) => i.id === 'ai-vendors').href, null);
 eq('lanes-href',      items.find((i) => i.id === 'lanes').href, '/settings/fleet/lanes');
 eq('project-href',    itemHref('project', 'general', 'a b'), '/settings/p/a%20b/general');
 " 2>&1)
