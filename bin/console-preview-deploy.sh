@@ -98,7 +98,7 @@
 # CONSOLE_PREVIEW_QA_SCREENS ("/"), CONSOLE_PREVIEW_BUILD_USER (nobody),
 # CONSOLE_PREVIEW_BUILD_TMP (/tmp), CONSOLE_PREVIEW_WRANGLER (3.114.17),
 # CONSOLE_PREVIEW_STRIP_BINDINGS (1), CONSOLE_PREVIEW_POOL_PROJECT (""),
-# CONSOLE_PREVIEW_POOL_TIMEOUT_S (3600).
+# CONSOLE_PREVIEW_POOL_TIMEOUT_S (3600), CONSOLE_PREVIEW_POOL_BOX_MAX (3).
 # Off switch: bin/harness-ctl.sh off console-preview-deploy.
 # Secrets: the API token lives only in the deploy subshell's env and is scrubbed
 # from the deploy log; HARNESS_SECRET and the QA token never reach a log line or
@@ -291,6 +291,11 @@ preview_bindings_clean() {
 PLACE=hub; PP=""
 POOL_TO="${CONSOLE_PREVIEW_POOL_TIMEOUT_S:-3600}"
 case "$POOL_TO" in ''|*[!0-9]*|0) log "CONSOLE_PREVIEW_POOL_TIMEOUT_S='$POOL_TO' is not a positive number — using 3600"; POOL_TO=3600 ;; esac
+# BH-8251: box faults on the pool for ONE head before the lane stops
+# trying that head (record `boxstop <k>`, one comment). Before it, 208 box faults
+# re-queued forever, up to 53 for one head.
+BOXMAX="${CONSOLE_PREVIEW_POOL_BOX_MAX:-3}"
+case "$BOXMAX" in ''|*[!0-9]*|0) log "CONSOLE_PREVIEW_POOL_BOX_MAX='$BOXMAX' is not a positive number — using 3"; BOXMAX=3 ;; esac
 place_decide() {
   local facts b hl
   . "$H/bin/lib/lane-placement.sh" 2>/dev/null || . "$(dirname "${BASH_SOURCE[0]}")/lib/lane-placement.sh" 2>/dev/null || return 0
@@ -408,10 +413,25 @@ box_alert() {
 
 # pool_box <n> <sha> <job> <attempts> <why> — the pool's fault (BH-8030): no
 #   charge, `box <job> <attempts>`, one alert, no new pool row this run.
+#   At CONSOLE_PREVIEW_POOL_BOX_MAX box faults for the head (BH-8251), the
+#   record is `boxstop <k>`, the PR gets one comment, and the head is not
+#   tried again. A new push is a new head; delete the record to retry this one.
 pool_box() {
+  local k=0
   BOX_WHY="$5"; echo "box $3 $4" > "$SD/$2"
   log "#$1 $5 — not charged to the head; no new pool row this run"
   box_alert "$1" "$2"; BOXSTOP=1
+  read -r k < "$SD/.boxes-$2" 2>/dev/null; [[ "$k" =~ ^[0-9]+$ ]] || k=0
+  k=$((k + 1)); echo "$k" > "$SD/.boxes-$2"
+  [ "$k" -ge "$BOXMAX" ] || return 0
+  echo "boxstop $k" > "$SD/$2"
+  {
+    printf 'Console preview: not deployed for head %s.\n\n' "$2"
+    printf 'The Fly pool failed %s times to build or upload this head, for a reason of the box, not of the PR. The last one: %s. The console-preview-deploy lane stops trying this head, and the console-preview-box alert has the details. A new push is a new head, and it is tried again.\n' "$k" "$5"
+    printf '<!-- console-preview-boxstop sha=%s -->\n' "$2"
+  } > "$TMP/boxstop-$1.md"
+  gh_rest_comment "$SLUG" "$1" "$TMP/boxstop-$1.md" || log "#$1 box-stop comment for ${2:0:7} not posted (HTTP ${GH_REST_STATUS:-000})"
+  log "#$1 head ${2:0:7}: $k pool box faults — CONSOLE_PREVIEW_POOL_BOX_MAX=$BOXMAX, not tried again"
 }
 
 # fly_one <n> <alias> <sha> <url> <attempts> <job> <pool|box|""> <outdir> —
@@ -511,7 +531,7 @@ while IFS=$'\t' read -r n br sha kind; do
   seen=$((seen + 1)); s7=${sha:0:7}
   [ "$kind" = same ] || continue
   rec=$(cat "$SD/$sha" 2>/dev/null)
-  case "$rec" in done|no-console) continue ;; esac
+  case "$rec" in done|no-console) continue ;; "boxstop "*) terminal=$((terminal + 1)); continue ;; esac
   natt=0; pk=-1; jobn=0; jst=""
   case "$rec" in
     # `failed <k> [<pool job>]`: the job number is there under PLACE=fly (BH-8030).

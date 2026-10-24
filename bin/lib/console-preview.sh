@@ -348,7 +348,11 @@ cpv_build_deploy() {
   tail -n 5 "$CPV_D/deploy.clean" | sed "s/^/  #$n wrangler: /"
   if [ "$drc" != 0 ] || ! grep -q 'Deployment complete' "$CPV_D/deploy.clean"; then
     BOX_STAGE=upload
-    why="wrangler rc=$drc: $(grep -iE 'error|✘' "$CPV_D/deploy.clean" | tail -n 1 | cut -c1-200)"
+    # The last error line, else the last non-blank line: npm's config refusal
+    # (#8251) printed no `error` line, and 208 failures read `rc=1: ` and nothing.
+    el=$(grep -iE 'error|✘' "$CPV_D/deploy.clean" | tail -n 1 | cut -c1-200)
+    [ -n "$el" ] || el=$(grep -v '^[[:space:]]*$' "$CPV_D/deploy.clean" | tail -n 1 | cut -c1-200)
+    why="wrangler rc=$drc: ${el:-no output}"
     if [ "$(cpv_upload_fault "$CPV_D/deploy.clean" "$drc")" = head ]; then
       CPV_HEAD_WHY="Pages refused the head's own dist/ ($why)"
       log "#$n preview deploy failed at $s7: $CPV_HEAD_WHY — charged to the head"; return 1

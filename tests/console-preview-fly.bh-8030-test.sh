@@ -26,6 +26,8 @@
 #   F6  a row queued past CONSOLE_PREVIEW_POOL_TIMEOUT_S: closed failed by the
 #       hub, the box's fault, no charge
 #   F7  a deploy of another head is never taken as this head's
+#   F8  at CONSOLE_PREVIEW_POOL_BOX_MAX box faults the head is `boxstop <k>`:
+#       one comment, then no row, no comment, no alert (BH-8251)
 #   M1  bin/lib/queue-row-job.sh: the row becomes a console_preview job, or is
 #       refused (rc 3, the row closed failed, no file)
 #   M2  fly/builder-runner.sh sends a console_preview job to the CP body only,
@@ -282,6 +284,21 @@ reset; setprs "$P29"; fly_on; run
 setrow "$(key 29 "$S29" 1)" done "CPV_DEPLOYED $S21"
 run
 [ "$(posts 29)" = 0 ] && [ "$(rec "$S29")" = "box 1 0" ] && ok || bad "F7 another head's deploy posts nothing: '$(rec "$S29")' posts=$(posts 29)"
+
+# ── F8 (BH-8251): at CONSOLE_PREVIEW_POOL_BOX_MAX box faults the head stops ──
+reset; setprs "$P27"; fly_on; RUN_ENV=CONSOLE_PREVIEW_POOL_BOX_MAX=2; run
+setrow "$(key 27 "$S27" 1)" done "CPV_BOX_FAILED upload: preview deploy failed on the box side (wrangler rc=1: x)"
+run
+[ "$(rec "$S27")" = "box 1 0" ] && [ "$(posts 27)" = 0 ] && ok || bad "F8 the first box fault is not a stop: '$(rec "$S27")' posts=$(posts 27)"
+run
+setrow "$(key 27 "$S27" 2)" done "CPV_BOX_FAILED upload: preview deploy failed on the box side (wrangler rc=1: y)"
+run
+[ "$(rec "$S27")" = "boxstop 2" ] && [ "$(posts 27)" = 1 ] && grep -q "<!-- console-preview-boxstop sha=$S27 -->" "$T/posted-27" && ok \
+  || bad "F8 THE POINT: the second box fault stops the head with one comment: '$(rec "$S27")' posts=$(posts 27)"
+run
+[ "$(puts)" = 0 ] && [ "$(posts 27)" = 1 ] && [ "$(alerts)" = 0 ] && ok \
+  || bad "F8 a stopped head queues nothing, posts nothing and alerts nothing: puts=$(puts) posts=$(posts 27) alerts=$(alerts)"
+RUN_ENV=""
 
 # ════════════════════════════════════════════════════════════════════════════
 # M  the machine side

@@ -1,0 +1,13 @@
+{
+  "env": "CONSOLE_PREVIEW_POOL_BOX_MAX",
+  "read_in": "bin/console-preview-deploy.sh",
+  "type": "int",
+  "default": 3,
+  "min": 1,
+  "max": 50,
+  "unit": "count",
+  "zero_means": null,
+  "required": false,
+  "note": "BH-8251: how many pool box faults (CPV_BOX_FAILED, a stale or missing row) one console head may have before the hub stops trying it: the record becomes `boxstop <k>` and the PR gets one comment. A new push is a new head. Before it, 208 box faults re-queued with no cap. Read as ${CONSOLE_PREVIEW_POOL_BOX_MAX:-3}; a non-number or 0 is one log line and the default.",
+  "settable": true
+}

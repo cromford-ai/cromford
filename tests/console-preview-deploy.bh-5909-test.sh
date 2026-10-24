@@ -14,7 +14,8 @@
 #      and one comment with the URL and the marker for the head sha
 #   P2 a diff outside console-ui/ (docs/console-ui/, console-ui-old/): no deploy
 #   P3 a marker for the head already on the PR: no deploy, no comment
-#   P4 wrangler rc 1, or rc 0 with no "Deployment complete": no comment
+#   P4 wrangler rc 1, or rc 0 with no "Deployment complete": no comment;
+#      P4b a failure with no `error` line names the last wrangler line (BH-8251)
 #   P5 max_per_run=1 with two console PRs: one deploy and a "deferred 1" line
 #   P6 a fork PR: no deploy (the hub never builds code from outside the repo)
 #   P7 a comments read that fails: no deploy (absent is not "no marker")
@@ -312,6 +313,12 @@ grep -q 'deploy failed' "$T/out" && ok || bad "P4 no failure line: $(cat "$T/out
 [ "$(deploys)" = 1 ] && [ -s "$T/posted-11" ] && ok || bad "P4 the next tick must retry a failed deploy"
 reset; setprs "$(prjson 11 ticket/bh-5909 "$S11")"; touch "$T/nocomplete"; run
 ls "$T"/posted-* >/dev/null 2>&1 && bad "P4 rc 0 with no 'Deployment complete' posted a comment" || ok
+# P4b (BH-8251): wrangler output with no `error` line still names its cause:
+# npm's config refusal printed none, and 208 failures read `wrangler rc=1: `.
+reset; setprs "$(prjson 11 ticket/bh-5909 "$S11")"; echo all > "$T/npx.failsha"
+printf 'cause\ndouble-loading config "/dev/null" as "global", previously loaded as "user"\n\n' > "$T/npx.failmsg"; run
+grep -q 'wrangler rc=1: double-loading config' "$T/out" && ok || bad "P4b the reason names the last wrangler line: $(grep 'wrangler rc=' "$T/out")"
+rm -f "$T/npx.failsha" "$T/npx.failmsg"
 
 # ── P5: the per-run cap defers, never drops ────────────────────────────────────
 reset; setprs "$(prjson 11 ticket/bh-5909 "$S11")" "$(prjson 13 feat/two "$S13")"
