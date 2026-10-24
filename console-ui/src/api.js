@@ -11,6 +11,7 @@ import { ideasApi } from './lib/roadmap-api/ideas.js';
 import { boardApi } from './lib/roadmap-api/board.js';
 import { wavesApi } from './lib/roadmap-api/waves.js';
 import { waveFileApi } from './lib/roadmap-api/wave-file.js';
+import { aiAccountsApi } from './lib/ai-accounts.js';
 
 export class AuthError extends Error {
   constructor() {
@@ -765,7 +766,9 @@ export const api = {
   ...ideasApi({ get, post, coordPath }),
   ...boardApi({ get, post, coordPath }),
   ...wavesApi({ get, post, coordPath }),
-  ...waveFileApi({ get, post, coordPath })
+  ...waveFileApi({ get, post, coordPath }),
+  // BH-7966: the AI account rows and the envelope status (lib/ai-accounts.js).
+  ...aiAccountsApi({ get, post, coordPath })
 };
 
 // `project` is mandatory on both fetches and there is no default: an empty or

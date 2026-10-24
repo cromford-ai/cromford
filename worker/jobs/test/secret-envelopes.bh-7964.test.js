@@ -235,12 +235,17 @@ test('E7 observable outcome: read once returns the ciphertext and deletes it; a 
 test('E8 /:id/status and /:id/confirm do not reach the read; a bad id is 404 with no write', async (t) => {
   const o = await fresh(t); if (!o) return;
   const { body: { id } } = await post(o.DB, { scope: 'ai-account:openai.default', ciphertext: CT });
-  for (const tail of ['status', 'confirm']) {
-    const r = await call(o.DB, 'GET', `/api/secrets/envelope/${id}/${tail}`, { hubHeader: HUB });
-    assert.equal(r.status, 404, tail);
-    assert.equal(r.body.error, 'unknown endpoint', tail);
-    assert.equal(rows(o.db, id), 1, `${tail}: the row stays`);
-  }
+  // TEST-CHANGE (BH-7966): GET /:id/status is now the BH-7966 status route
+  // (src/routes/ai-accounts.js), the owner this seam named. The premise kept:
+  // neither path reaches the read, so the row stays and no event is written.
+  const st = await call(o.DB, 'GET', `/api/secrets/envelope/${id}/status`, { hubHeader: HUB });
+  assert.equal(st.status, 200, 'status');
+  assert.deepEqual(Object.keys(st.body), ['state'], 'status: no ciphertext, no scope');
+  assert.equal(rows(o.db, id), 1, 'status: the row stays');
+  const cf = await call(o.DB, 'GET', `/api/secrets/envelope/${id}/confirm`, { hubHeader: HUB });
+  assert.equal(cf.status, 404, 'confirm');
+  assert.equal(cf.body.error, 'unknown endpoint', 'confirm');
+  assert.equal(rows(o.db, id), 1, 'confirm: the row stays');
   for (const bad of ['not-a-uuid', id.toUpperCase() + 'x', "x'%20OR%201=1"]) {
     const r = await read(o.DB, bad);
     assert.equal(r.status, 404, bad); assert.equal(r.body.error, 'no envelope', bad);
@@ -322,5 +327,7 @@ test('E13 the sibling seams load and are empty', async () => {
   const apply = await import('../src/routes/secret-envelope-apply.js');
   const ai = await import('../src/routes/ai-accounts.js');
   assert.deepEqual(apply.routes, []);
-  assert.deepEqual(ai.routes, []);
+  // TEST-CHANGE (BH-7966): the seam's named owner filled ai-accounts.js; its
+  // routes are pinned by test/ai-accounts.bh-7966.test.js and route-table.d.
+  assert.ok(Array.isArray(ai.routes));
 });

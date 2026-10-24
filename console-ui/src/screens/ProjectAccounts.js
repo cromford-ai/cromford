@@ -13,8 +13,9 @@ import { Section, Empty, Age } from '../ui/primitives.js';
 import { minutesSince } from '../lib/format.js';
 import { accountRows, checkAccountLabel } from '../lib/project-accounts.js';
 
-export function ProjectAccounts({ projects, accountActions, busy, guard }) {
-  const settings = useApi(() => api.settings(), []);
+export function ProjectAccounts({ projects, accountActions, busy, guard, onChoose, reloadKey }) {
+  // reloadKey (BH-7966): a choice sheet write re-reads the pins.
+  const settings = useApi(() => api.settings(), [reloadKey]);
   const rows = accountRows(settings.data, projects);
   const onSet = async (row, draft) => {
     const res = await accountActions.set(row, draft);
@@ -22,10 +23,10 @@ export function ProjectAccounts({ projects, accountActions, busy, guard }) {
     return res;
   };
   return html`<${ProjectAccountsView} rows=${rows} error=${settings.error}
-    loading=${settings.loading && !settings.data} busy=${busy} guard=${guard} onSet=${onSet}/>`;
+    loading=${settings.loading && !settings.data} busy=${busy} guard=${guard} onSet=${onSet} onChoose=${onChoose}/>`;
 }
 
-export function ProjectAccountsView({ rows, error, loading, busy, guard, onSet }) {
+export function ProjectAccountsView({ rows, error, loading, busy, guard, onSet, onChoose }) {
   return html`
     <${Section} title="PROJECT ACCOUNTS"
       note="which Claude account each project bills — a label, never a token; shared = the shared pool">
@@ -44,7 +45,7 @@ export function ProjectAccountsView({ rows, error, loading, busy, guard, onSet }
             },
             {
               key: 'label', label: 'ACCOUNT', sort: (r) => r.label || '',
-              cell: (r) => html`<${AccountCell} row=${r} busy=${busy} guard=${guard} onSet=${onSet}/>`
+              cell: (r) => html`<${AccountCell} row=${r} busy=${busy} guard=${guard} onSet=${onSet} onChoose=${onChoose}/>`
             },
             {
               key: 'actor', label: 'SET BY', sort: (r) => r.actor,
@@ -60,7 +61,7 @@ export function ProjectAccountsView({ rows, error, loading, busy, guard, onSet }
     <//>`;
 }
 
-function AccountCell({ row, busy, guard, onSet }) {
+function AccountCell({ row, busy, guard, onSet, onChoose }) {
   const [draft, setDraft] = useState(row.label || '');
   // A refetch that changed the stored label must win over a stale draft.
   useEffect(() => { setDraft(row.label || ''); }, [row.label]);
@@ -81,6 +82,9 @@ function AccountCell({ row, busy, guard, onSet }) {
         <button type="button" class="btn btn--sm" disabled=${busy !== null || !check.ok} onClick=${submit}>
           ${busy === key ? '…' : 'SET'}
         </button>` : null}
+      ${onChoose ? html`
+        <button type="button" class="btn btn--sm" disabled=${busy !== null}
+          aria-label=${`choose the AI account for ${row.project}`} onClick=${() => onChoose(row)}>CHOOSE…</button>` : null}
       <span id=${`${key}-note`} class=${check.ok ? 'knob__note' : 'knob__note knob__note--bad'}>
         ${!check.ok ? check.message : row.label ? '' : 'shared pool'}
       </span>

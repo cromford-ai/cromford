@@ -1,1 +1,7 @@
-# AI ACCOUNTS (owner BH-7937.3): ai-accounts and envelope status routes. Empty seam from BH-7964.
+# AI ACCOUNTS (BH-7966, BH-7937.2; seam from BH-7964): the ai_accounts rows and
+# the envelope status read. All four are bearer-gated. The status regex needs a
+# uuid and /status, so it never matches the bare /:id hub read.
+GET /api/ai-accounts
+POST /api/ai-accounts
+POST re:/^\/api\/ai-accounts\/([0-9a-f-]{36})\/revoke$/
+GET re:/^\/api\/secrets\/envelope\/([0-9a-f-]{36})\/status$/

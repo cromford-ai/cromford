@@ -15,6 +15,8 @@ import {
 import { ticketLink } from '../lib/anchored.js';
 import { makeAccountSetter } from '../lib/project-accounts.js';
 import { ProjectAccounts } from './ProjectAccounts.js';
+import { FleetAccounts } from './FleetAccounts.js';
+import { AiAccountChoiceSheet } from '../ui/AiAccountChoiceSheet.js';
 import { TokenHealthSection } from './TokenHealth.js';
 import { ProtectedPathsPanel } from '../ui/ProtectedPaths.js';
 import { StatePathModesPanel } from '../ui/StatePathModes.js';
@@ -113,6 +115,10 @@ export function SettingsView({
   // meanwhile. Drawing them the same would make ALL ON look like it worked.
   const allOffBoxes = (status && Array.isArray(status.all_off_flag_boxes)) ? status.all_off_flag_boxes : [];
   const guard = useGuard(setBusy);
+  // BH-7966: the project whose AI account choice sheet is open, and a key that
+  // re-reads PROJECT ACCOUNTS and ACCOUNTS ON THE FLEET after it closes.
+  const [choiceFor, setChoiceFor] = useState(null);
+  const [accountsKey, setAccountsKey] = useState(0);
 
   return html`
     <div class="page">
@@ -193,7 +199,12 @@ export function SettingsView({
 
       ${activeTab === 'hub' && accountActions ? html`
         <${ProjectAccounts} projects=${status && status.projects} accountActions=${accountActions}
-          busy=${busy} guard=${guard} />` : null}
+          busy=${busy} guard=${guard} onChoose=${(row) => setChoiceFor(row.project)} reloadKey=${accountsKey} />` : null}
+
+      ${activeTab === 'hub' ? html`<${FleetAccounts} reloadKey=${accountsKey}/>` : null}
+      ${activeTab === 'hub' && choiceFor ? html`
+        <${AiAccountChoiceSheet} project=${choiceFor}
+          onDone=${() => { setChoiceFor(null); setAccountsKey((k) => k + 1); }}/>` : null}
 
       ${activeTab === 'hub' ? html`<${TokenHealthSection}/>` : null}
 

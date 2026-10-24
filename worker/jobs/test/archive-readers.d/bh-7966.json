@@ -1,0 +1,16 @@
+{
+ "ticket": "BH-7966",
+ "note": "GET /api/ai-accounts reads today's spend per AI account label (since 00:00Z of the request day) from the hot store. Read by test/archive-readers.bh-6779.test.js R1.",
+ "readers": [
+  {
+   "file": "src/routes/ai-accounts.js",
+   "line_hint": 57,
+   "match": "FROM cost_rows WHERE ts >= ?1 AND auth_account IN",
+   "table": "cost_rows",
+   "window": "today since 00:00Z",
+   "class": "narrow",
+   "status": "hot-only",
+   "window_days": 1
+  }
+ ]
+}

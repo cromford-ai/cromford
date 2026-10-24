@@ -43,8 +43,10 @@ import { matchRoute } from './src/lib/router.js';
 const id = crypto.randomUUID();
 const q = [['POST', '/api/secrets/envelope'], ['GET', '/api/secrets/envelope/' + id], ['GET', '/api/secrets/envelope/' + id + '/status']];
 console.log(q.map(([m, p]) => (matchRoute(ROUTES, m, p) ? 'bearer' : 'none') + '/' + (matchRoute(OPEN_ROUTES, m, p) ? 'open' : 'closed')).join(' '));" 2>&1)
-  [ "$ROUTED" = 'bearer/closed bearer/closed none/closed' ] \
-    && ok "S2 POST and GET are in ROUTES, not OPEN_ROUTES; /:id/status matches neither" || bad "S2 route wiring: $ROUTED"
+  # TEST-CHANGE (BH-7966): /:id/status is now the BH-7966 status route, so it
+  # is bearer-gated too; it is still never in OPEN_ROUTES.
+  [ "$ROUTED" = 'bearer/closed bearer/closed bearer/closed' ] \
+    && ok "S2 POST, GET and /:id/status (BH-7966) are in ROUTES, not OPEN_ROUTES" || bad "S2 route wiring: $ROUTED"
   # A skipped test gates nothing, the same rule as the worker-jobs skip guard
   # in harness-ci.yml.
   skipped() { sed -n 's/^[^ ]* skipped \([0-9][0-9]*\)$/\1/p' <<<"$1" | tail -1; }

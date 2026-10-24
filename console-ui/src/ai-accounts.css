@@ -1,0 +1,49 @@
+/* AI accounts (BH-7966): ACCOUNTS ON THE FLEET, the add sheet and the
+   per-project choice sheet. Tokens only: no colour literal here.
+   Above 640px the sheet is a side sheet on the right. At 640px and below it is
+   a bottom sheet. The fleet table scrolls sideways inside its own box; the
+   body never does. */
+
+.aiacct__wrap { overflow-x: auto; max-width: 100%; }
+.aiacct__projects { display: inline-flex; flex-wrap: wrap; gap: 4px 10px; }
+
+.aisheet__scrim {
+  position: fixed; inset: 0; background: var(--scrim);
+  /* Above the phone bottom nav (40), below the confirm modal (50). */
+  z-index: 45;
+  display: flex; justify-content: flex-end; align-items: stretch;
+}
+.aisheet {
+  width: 440px; max-width: 100%; height: 100%; overflow-y: auto;
+  display: flex; flex-direction: column; gap: 12px; padding: 20px;
+  background: var(--panel); border-left: 1px solid var(--line-active);
+  box-sizing: border-box;
+}
+.aisheet__title { font-size: var(--fs-md); letter-spacing: 2px; color: var(--bright); font-weight: 700; overflow-wrap: anywhere; }
+.aisheet__note, .aisheet__hint { font-size: var(--fs-sm); color: var(--muted); margin: 0; overflow-wrap: anywhere; }
+.aisheet__form { display: flex; flex-direction: column; gap: 10px; }
+.aisheet__field { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.aisheet__field > span {
+  font-family: var(--font-mono); font-size: var(--fs-2xs); letter-spacing: 2px; color: var(--faint);
+}
+.aisheet__field input, .aisheet__field select {
+  min-height: 40px; padding: 0 10px; font-size: var(--fs-sm); color: var(--text);
+  background: var(--bg); border: 1px solid var(--line); border-radius: var(--r); min-width: 0; width: 100%;
+  box-sizing: border-box;
+}
+.aisheet__choice { display: flex; flex-direction: column; gap: 6px; padding: 10px 0; border-bottom: 1px solid var(--line); }
+.aisheet__status { font-size: var(--fs-sm); color: var(--soft); margin: 0; overflow-wrap: anywhere; }
+.aisheet__status--proved { color: var(--green); }
+.aisheet__status--failed, .aisheet__status--error { color: var(--red-lt); }
+.aisheet__status--waiting { color: var(--amber); }
+.aisheet__actions { display: flex; gap: 8px; justify-content: flex-end; flex-wrap: wrap; }
+.aisheet__actions .btn { min-height: 40px; }
+
+@media (max-width: 640px) {
+  .aisheet__scrim { align-items: flex-end; justify-content: stretch; }
+  .aisheet {
+    width: 100%; height: auto; max-height: 90vh;
+    border-left: 0; border-top: 1px solid var(--line-active);
+    border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+  }
+}
