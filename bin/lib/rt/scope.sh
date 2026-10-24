@@ -83,7 +83,8 @@ unset _RTS_P _RTS_R
 command -v rq_lines >/dev/null 2>&1 || rq_lines() {
   local r="${1:-${HARNESS:-${H:-}}}"
   [ -n "$r" ] || return 0
-  grep -E '^[A-Z]+-[0-9]' "$r/logs/READY-QUEUE.log" 2>/dev/null
+  if declare -F _rq_norm >/dev/null; then _rq_norm "$r" < "$r/logs/READY-QUEUE.log" 2>/dev/null
+  else grep -E '^[A-Z]+-[0-9]' "$r/logs/READY-QUEUE.log" 2>/dev/null; fi
 }
 
 inapp_released_lines() {

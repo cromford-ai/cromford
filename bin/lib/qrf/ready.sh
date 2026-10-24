@@ -17,7 +17,8 @@ qrf_gate_ready() {
     qrf_fail ready "row parity: not checked (live probe failed)"; return
   fi
   keys=$(jq -r '.queue[].ticket_key // empty' "$QRF_TMP" | sort -u)
-  if [ -r "$log" ]; then lines=$(grep -E '^[A-Z]+-[0-9]' "$log")
+  if [ -r "$log" ]; then
+    if declare -F _rq_norm >/dev/null; then lines=$(_rq_norm < "$log"); else lines=$(grep -E '^[A-Z]+-[0-9]' "$log"); fi
   else qrf_info "no READY-QUEUE.log on this box"; lines=""; fi
   local wrapped=$'\n'"$keys"$'\n' seen=$'\n'
   while IFS= read -r line; do

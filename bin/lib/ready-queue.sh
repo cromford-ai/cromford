@@ -184,7 +184,12 @@ _rq_scope() {
 # other line that does not start with a key (comments, `[HOTFIX] …`, prose) is
 # dropped, exactly as before.
 _rq_norm() {
-  awk '
+  # The fleet's project names, so the word after a timestamp becomes project=
+  # ONLY when it is a real project (lead review #8257: `<ISO> deferred TK-1 …`
+  # must not become project=deferred, which _rq_scope would drop everywhere).
+  local plist="" fc="${1:-${HARNESS:-}}/bin/fleet-conf.sh"
+  [ -x "$fc" ] && plist=" $("$fc" --projects 2>/dev/null | tr '\n' ' ') "
+  awk -v plist="$plist" '
     /^[A-Z]+-[0-9]/ { print; next }
     /^[[:space:]]*#/ || /^[[:space:]]*$/ { next }
     {
@@ -193,7 +198,10 @@ _rq_norm() {
       # start with a key (`[HOTFIX] BH-1 …`, prose) stays dropped, as before.
       if (!match(line, /^[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9][T ][^ ]* +/)) next
       line = substr(line, RLENGTH + 1)
-      if (match(line, /^[a-z][a-z0-9-]* /)) proj = substr(line, 1, RLENGTH - 1)
+      if (match(line, /^[a-z][a-z0-9-]* /)) {
+        w = substr(line, 1, RLENGTH - 1)
+        if (index(plist, " " w " ")) proj = w
+      }
       if (!match(line, /[A-Z]+-[0-9]+/)) next
       key = substr(line, RSTART, RLENGTH)
       rest = substr(line, 1, RSTART - 1) substr(line, RSTART + RLENGTH)
@@ -207,7 +215,7 @@ rq_lines() {
   local h="${1:-$(rq_root)}" project="${2:-}" q file_lines="" keys rows
   local p key tid line lp
   q=$(rq_file "$h")
-  [ -n "$q" ] && file_lines=$(_rq_norm < "$q" 2>/dev/null | _rq_scope "$h" "$project")
+  [ -n "$q" ] && file_lines=$(_rq_norm "$h" < "$q" 2>/dev/null | _rq_scope "$h" "$project")
   [ -n "$file_lines" ] && printf '%s\n' "$file_lines"
   rq_on || return 0
   rows=$(rq_rows "$h" "$project") || {
@@ -280,7 +288,7 @@ rq_fp_file() {
   local h="${1:-$(rq_root)}" project="${2:-}" q all scoped
   q=$(rq_file "$h")
   [ -n "$q" ] && [ -r "$q" ] || return 0
-  all=$(_rq_norm < "$q" 2>/dev/null)
+  all=$(_rq_norm "$h" < "$q" 2>/dev/null)
   scoped=$(printf '%s\n' "$all" | _rq_scope "$h" "$project")
   if [ "$all" = "$scoped" ]; then cat "$q"; else printf '%s\n' "$scoped"; fi
   return 0

@@ -91,7 +91,17 @@ for K in "$@"; do
   case "$K" in
     ''|*[!A-Za-z0-9._-]*) echo "queue-line-drop.sh: refusing key '$K' (not a ticket key)" >&2; rm -f "$TMP"; exit 2 ;;
   esac
-  grep -v "^${K}[[:space:]]" "$TMP" > "$TMP.n" 2>/dev/null; mv -f "$TMP.n" "$TMP"
+  # A key-first line `^K<space>`, AND a timestamp-first line whose first
+  # [A-Z]+-[0-9]+ token is K: bin/lib/ready-queue.sh _rq_norm makes those live
+  # (#8257), so they must be droppable too, or a shipped ticket's line keeps
+  # buying a paid queue-pending session forever (lead review #8257, BLOCK money).
+  awk -v k="$K" '
+    index($0, k" ") == 1 || index($0, k"\t") == 1 { next }
+    /^[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9][T ]/ {
+      l = $0; sub(/^[^ ]* +/, "", l)
+      if (match(l, /[A-Z]+-[0-9]+/) && substr(l, RSTART, RLENGTH) == k) next
+    }
+    { print }' "$TMP" > "$TMP.n" 2>/dev/null; mv -f "$TMP.n" "$TMP"
 done
 [ -x "$HS" ] && "$HS" --release "$Q"
 mv -f "$TMP" "$Q"; MVRC=$?
