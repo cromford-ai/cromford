@@ -13,6 +13,13 @@
 #       rc 0 = on. conductor_workers_on_fly.<project> wins when it has a row,
 #       else the fleet row conductor_workers_on_fly. Only the trimmed value 1
 #       is on. No row, any other value or a settings outage is off.
+#       BH-8238: with the switch on, a project the hub takes back from a
+#       machine is off too: MC_PROJ_TAKEBACK=1 (the take-back tick of
+#       bin/lib/mc/project-placement.sh), or the gate's mark
+#       state/merge-conductor/project-fly/<project>.placed (placed fly or
+#       box:<name>, so every hub tick of it is a fallback). A machine defers
+#       land, rebase and re-review to the hub, so those PRs run here. Sets
+#       MC_FLY_OFF_WHY and writes one `per-PR fly path off` mc_log line.
 #   mc_fly_run_key <project> <pr> <head>
 #       prints <project>.<pr>.<head12>. rc 1 when the pr is not a number, the
 #       head is not 12+ lower-case hex, or the key is not a lane name
@@ -102,13 +109,35 @@ mc_fly_workers_on() {
   if [ -n "$p" ] && _setting_key_ok "conductor_workers_on_fly.$p"; then
     v=$(setting_get "conductor_workers_on_fly.$p"); rc=$?
     case "$rc" in
-      0) [ "$(_mc_fly_trim "$v")" = 1 ]; return ;;
-      2) ;;
+      0) [ "$(_mc_fly_trim "$v")" = 1 ] || return 1 ;;
+      2) v=$(setting_get conductor_workers_on_fly) && [ "$(_mc_fly_trim "$v")" = 1 ] || return 1 ;;
       *) return 1 ;;
     esac
+  else
+    v=$(setting_get conductor_workers_on_fly) && [ "$(_mc_fly_trim "$v")" = 1 ] || return 1
   fi
-  v=$(setting_get conductor_workers_on_fly) || return 1
-  [ "$(_mc_fly_trim "$v")" = 1 ]
+  _mc_fly_placed_off "$p" && return 1
+  return 0
+}
+
+# _mc_fly_placed_off <project> — rc 0 when the hub runs this project's PRs
+# itself (BH-8238): a take-back tick, or the gate's .placed mark (the path of
+# _mc_proj_dir in bin/lib/mc/project-placement.sh). Sets MC_FLY_OFF_WHY and
+# logs one line.
+_mc_fly_placed_off() {
+  local p="$1" f w=""
+  MC_FLY_OFF_WHY=""
+  if [ "${MC_PROJ_TAKEBACK:-}" = 1 ]; then
+    w=take-back
+  elif [ -n "$p" ] && [[ $p != */* ]]; then
+    f="$(_mc_fly_root)/state/merge-conductor/project-fly/$p.placed"
+    [ -f "$f" ] && { w=$(head -n 1 "$f" 2>/dev/null); w="placed ${w:-fly}"; }
+  fi
+  [ -n "$w" ] || return 1
+  MC_FLY_OFF_WHY="$w"
+  command -v mc_log >/dev/null 2>&1 \
+    && mc_log "$p per-PR fly path off: $p is placed fly ($w) — the hub runs this tick's PRs itself"
+  return 0
 }
 
 mc_fly_run_key() {
