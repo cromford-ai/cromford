@@ -20,8 +20,9 @@
 #   O3     a Watchman tick drops two staff-labelled copies of a real line (one
 #          log line, count 2) and claims the `security` copy
 #   M1     the composed schema seeds watchman automation/augmentation/active;
-#          every row automation with cap <= augmentation; a row with no
-#          autonomy reads automation; a second apply changes nothing
+#          every row automation with cap <= augmentation, except tackler
+#          (cap autonomy, BH-7722; pinned exactly); a row with no autonomy
+#          reads automation; a second apply changes nothing
 #   M2     a tick at the seeded level (the row read from M1's database): 2
 #          digest lines level=automation verdict=refuse, 0 issue creates, 0
 #          list calls, 2 `digested` records, 1 beat (the history-secret beat)
@@ -368,9 +369,18 @@ if node -e 'require("node:sqlite")' >/dev/null 2>&1; then
     const row = () => db.prepare("SELECT name, autonomy, cap, status, soul_path FROM staff_agents WHERE name = ?").get("watchman");
     const w = row();
     console.log("ROW " + JSON.stringify(w));
+    // BH-7722 seeds tackler capped at autonomy (contract note
+    // docs/notes/2026-10-22-BH-7722-unblock-contract.md line 13; infra-restart is
+    // delegated from day one, the operator comment 6294289621 item 2, and effective_cap is
+    // min(agent cap, class cap)). Its full row is pinned in
+    // worker/jobs/test/unblock-decisions.bh-7722.test.js W3. BH-8233.
+    const CAP_ALLOW = { tackler: "autonomy" };
     const all = db.prepare("SELECT name, autonomy, cap FROM staff_agents ORDER BY name").all();
     console.log("ROWS " + all.length);
-    console.log("ABOVE " + all.filter((r) => r.autonomy !== "automation" || !["automation", "augmentation"].includes(r.cap)).map((r) => r.name).join(","));
+    const capOk = (r) => ["automation", "augmentation"].includes(r.cap) || (Object.hasOwn(CAP_ALLOW, r.name) && CAP_ALLOW[r.name] === r.cap);
+    console.log("ABOVE " + all.filter((r) => r.autonomy !== "automation" || !capOk(r)).map((r) => r.name).join(","));
+    const t = all.find((r) => r.name === "tackler") || {};
+    console.log("TACKLER " + t.autonomy + " " + t.cap);
     db.prepare("INSERT INTO staff_agents (name, role, accountable, soul_path, updated_at) VALUES (?, ?, ?, ?, ?)")
       .run("fx-new", "fixture", "ops@example.com", "prompts/staff/fx-new-soul.md", "2026-10-15T00:00:00Z");
     const n = db.prepare("SELECT autonomy, cap FROM staff_agents WHERE name = ?").get("fx-new");
@@ -383,6 +393,7 @@ if node -e 'require("node:sqlite")' >/dev/null 2>&1; then
     '{"autonomy":"automation","cap":"augmentation","status":"active"}'
   [ "$(sed -n 's/^ROWS //p' <<<"$GOT")" -ge 7 ] 2>/dev/null && ok || bad "M1: fewer than 7 seeded rows: $GOT"
   eq "M1 rows above observe mode or cap" "$(sed -n 's/^ABOVE //p' <<<"$GOT")" ""
+  eq "M1 tackler observe mode, cap autonomy" "$(sed -n 's/^TACKLER //p' <<<"$GOT")" "automation autonomy"
   eq "M1 a row with no autonomy" "$(sed -n 's/^NEW //p' <<<"$GOT")" "automation augmentation"
   eq "M1 second apply leaves watchman" "$(sed -n 's/^SAME //p' <<<"$GOT")" true
   M1OK=1
