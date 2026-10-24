@@ -116,6 +116,11 @@ for _P in "$(dirname "$0")/lib/pr-terminal.sh" "$H/bin/lib/pr-terminal.sh"; do
   # shellcheck source=bin/lib/pr-terminal.sh
   [ -r "$_P" ] && { . "$_P"; break; }
 done
+# BH-8268: per-PR reads from the fleet's own PR record first, GitHub on a miss.
+for _P in "$(dirname "$0")/lib/ph-pr-record.sh" "$H/bin/lib/ph-pr-record.sh"; do
+  # shellcheck source=bin/lib/ph-pr-record.sh
+  [ -r "$_P" ] && { . "$_P"; break; }
+done
 # BH-1585: the paged REST issue/PR lists the starved-project check reads.
 for _P in "$(dirname "$0")/lib/gh-rest-list.sh" "$H/bin/lib/gh-rest-list.sh"; do
   # shellcheck source=bin/lib/gh-rest-list.sh
@@ -818,9 +823,33 @@ for D in "$H"/builds/pool-*-*/ "$H"/builds/*-*/; do
   # ONE REST read (ETag: an unchanged PR answers 304). A merged/closed answer is
   # persisted on the record by prt_read; an unreadable one (75) is SST="" and
   # takes the not-CLEAN arm below, exactly as the old silent read did.
+  # The fleet's PR record answers first (bin/lib/ph-pr-record.sh). A hit sets
+  # what prt_read would: the terminal marker (rc 3) or SST in prt_fields' word
+  # order. An open row with no mergeable_state is a miss, never CLEAN. A miss
+  # is the REST read below, and its answer is written back to the record.
   SPJ=$(mktemp "${TMPDIR:-/tmp}/health-pr.XXXXXX") || continue
-  SPRC=0; prt_read "$D" "$PR" "$SPJ" || SPRC=$?
-  SST=""; [ "$SPRC" = 0 ] && SST=$(prt_fields "$SPJ")
+  SPRC=""; SST=""; SPNUM="${PR##*/}"
+  if command -v ph_prr_read >/dev/null 2>&1 && SPROW=$(ph_prr_read "$SSLUG" "$SPNUM" state head_sha); then
+    read -r SPRS SPRM SPRR SPRH < <(jq -r '[.state, (.mergeable_state // "-"), (.head_ref // "-"), .head_sha] | join(" ")' <<<"$SPROW" 2>/dev/null)
+    case "${SPRS:-}" in
+      merged|closed)
+        printf '%s %s %s\n' "$SPRS" "$(date +%s)" "$PR" > "$D/pr-terminal.tmp" 2>/dev/null \
+          && mv -f "$D/pr-terminal.tmp" "$D/pr-terminal" 2>/dev/null
+        SPRC=3 ;;
+      open)
+        if [ "${SPRM:--}" != - ]; then
+          rm -f "$D/pr-terminal" 2>/dev/null; SPRC=0; SST="OPEN ${SPRM^^} - $SPRR $SPRH"
+        else
+          ph_prr_miss "$SSLUG" "$SPNUM" no-field mergeable_state
+        fi ;;
+      *) ph_prr_miss "$SSLUG" "$SPNUM" unreadable ;;
+    esac
+  fi
+  if [ -z "$SPRC" ]; then
+    SPRC=0; prt_read "$D" "$PR" "$SPJ" || SPRC=$?
+    [ "$SPRC" = 0 ] && SST=$(prt_fields "$SPJ")
+    case "$SPRC" in 0|3) command -v ph_prr_writeback >/dev/null 2>&1 && ph_prr_writeback "$SSLUG" "$SPNUM" "$SPJ" ;; esac
+  fi
   rm -f "$SPJ"
   read -r SPS SPM _ _ SPH <<<"$SST"
   if [ "${SPS:-}" != "OPEN" ] || [ "${SPM:-}" != "CLEAN" ]; then
@@ -1139,7 +1168,12 @@ if ! gh_budget_low pipeline-health && [ -r "$H/bin/lib/mc-stale-dequeue.sh" ]; t
       [ "$SDST" = dequeued ] || continue
       SDAGE=$(( NOW - SDT ))
       [ "$SDAGE" -ge $(( SDMIN * 60 )) ] || continue
-      SDHEAD=$(gh api "repos/$SLUG/pulls/$NUM" --jq '.head.sha' 2>/dev/null) || continue
+      # The fleet's PR record first (bin/lib/ph-pr-record.sh); GitHub on a miss.
+      if command -v ph_prr_read >/dev/null 2>&1 && SDROW=$(ph_prr_read "$SLUG" "$NUM" head_sha); then
+        SDHEAD=$(jq -r '.head_sha // empty' <<<"$SDROW")
+      else
+        SDHEAD=$(gh api "repos/$SLUG/pulls/$NUM" --jq '.head.sha' 2>/dev/null) || continue
+      fi
       [ -n "$SDHEAD" ] || continue
       SDHE=$(sdq_head_pushed_epoch "$SLUG" "$SDHEAD") || continue
       [ "$SDHE" -le "$SDT" ] || continue
