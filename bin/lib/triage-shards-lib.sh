@@ -844,7 +844,9 @@ triage_prstates_prune() {
   [ -s "$f" ] || return 0
   cutoff=$(( $(date +%s) - $(triage_prstates_prune_s "$h") ))
   # The same extraction bin/triage-gate.sh and the refresh above already use.
-  names=$(grep -E '^[A-Z]+-[0-9]' "$h/logs/READY-QUEUE.log" 2>/dev/null \
+  # _rq_norm (bin/lib/ready-queue.sh) when loaded, so a timestamp-first line's
+  # PR numbers still count; the bare grep is the fallback for a box without it.
+  names=$({ if declare -F _rq_norm >/dev/null; then _rq_norm < "$h/logs/READY-QUEUE.log"; else grep -E '^[A-Z]+-[0-9]' "$h/logs/READY-QUEUE.log"; fi; } 2>/dev/null \
           | grep -oE 'PR ?#[0-9]+' | grep -oE '[0-9]+' | LC_ALL=C sort -un | tr '\n' ' ')
   (
     exec 9>"$f.lock" 2>/dev/null || exit 1

@@ -300,7 +300,9 @@ cat > "$T/tickets.json" <<'JSON'
  {"key":"TK-6","id":"i6","status":"in_progress","title":"already building","description":""},
  {"key":"TK-7","id":"i7","status":"todo","title":"plain ready one","description":""},
  {"key":"TK-8","id":"i8","status":"todo","title":"plain ready two","description":""},
- {"key":"TK-9","id":"i9","status":"todo","title":"plain ready three","description":""}
+ {"key":"TK-9","id":"i9","status":"todo","title":"plain ready three","description":""},
+ {"key":"TK-10","id":"i10","status":"paused","title":"paused, nobody builds it","description":""},
+ {"key":"TK-11","id":"i11","status":"todo","title":"waiting on the requester","description":"","triageVerdict":"needs_clarification","waitingOn":"requester"}
 ]
 JSON
 cat > "$T/bin/curl" <<'SH'
@@ -320,6 +322,10 @@ grep -qP '^TK-3\ti3\tchild$' <<<"$CAND" && ok || bad "a board child whose parent
 grep -q '^TK-4' <<<"$CAND" && bad "a board child whose parent is still todo must NOT be planned (got: $CAND)" || ok
 grep -q '^TK-5' <<<"$CAND" && bad "needs_clarification + waitingOn=client must NEVER be pre-planned (an early engagement)" || ok
 grep -q '^TK-6' <<<"$CAND" && bad "an in_progress ticket must NOT be pre-planned (got: $CAND)" || ok
+# project-3 2026-10: paused TK-147/122/119 rode as 'ahead' and held schema.prisma
+# in front of ready TK-319; project-3 spells the client's turn "requester".
+grep -q '^TK-10' <<<"$CAND" && bad "a paused ticket must NOT be pre-planned (got: $CAND)" || ok
+grep -q '^TK-11' <<<"$CAND" && bad "needs_clarification + waitingOn=requester must NEVER be pre-planned (got: $CAND)" || ok
 grep -qP '^TK-2\ti2\tahead$' <<<"$CAND" && ok || bad "a plain ready board ticket must ride as 'ahead' (got: $CAND)"
 [ "$(grep -c ahead <<<"$(OVERLAP_SCHEDULE=0 "$T/bin/preplan-candidates.sh" bproj 2>/dev/null)")" = 2 ] && ok \
   || bad "OVERLAP_SCHEDULE=0 + PREPLAN_AHEAD=2 must bound the board lane too (got: $CAND)"

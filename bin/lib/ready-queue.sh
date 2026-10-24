@@ -173,11 +173,41 @@ _rq_scope() {
 #   and bin/preplan-tick.sh — which reads rows fleet-wide — pre-plans it under
 #   whichever project the title happens to mention. The row knows; the line
 #   should say so.
+# _rq_norm — stdin: READY-QUEUE.log; stdout: its live lines, each starting with
+# the ticket key. A line that already starts with `<KEY>` passes unchanged. A line
+# a session wrote timestamp-first (`<ISO> <project> <ticket-id> <KEY> size=…`) is
+# re-led by its first `[A-Z]+-[0-9]+` token, the timestamp dropped and
+# `project=<p>` appended when the word after the timestamp names a project and the
+# line has none. Before this the readers below kept only `^[A-Z]+-[0-9]`, so such
+# a line was dead: project-3 TK-319 (deferred 2026-10-21 23:38Z) sat ~45 h until the
+# daily full sweep, and all 25 lines of that box's file had the shape. Every
+# other line that does not start with a key (comments, `[HOTFIX] …`, prose) is
+# dropped, exactly as before.
+_rq_norm() {
+  awk '
+    /^[A-Z]+-[0-9]/ { print; next }
+    /^[[:space:]]*#/ || /^[[:space:]]*$/ { next }
+    {
+      line = $0; proj = ""
+      # ONLY a timestamp-first line is re-led. Any other shape that does not
+      # start with a key (`[HOTFIX] BH-1 …`, prose) stays dropped, as before.
+      if (!match(line, /^[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9][T ][^ ]* +/)) next
+      line = substr(line, RLENGTH + 1)
+      if (match(line, /^[a-z][a-z0-9-]* /)) proj = substr(line, 1, RLENGTH - 1)
+      if (!match(line, /[A-Z]+-[0-9]+/)) next
+      key = substr(line, RSTART, RLENGTH)
+      rest = substr(line, 1, RSTART - 1) substr(line, RSTART + RLENGTH)
+      gsub(/  +/, " ", rest); sub(/^ +/, "", rest); sub(/ +$/, "", rest)
+      out = key (rest != "" ? " " rest : "")
+      if (proj != "" && out !~ /(^| )project=/) out = out " project=" proj
+      print out
+    }'
+}
 rq_lines() {
   local h="${1:-$(rq_root)}" project="${2:-}" q file_lines="" keys rows
   local p key tid line lp
   q=$(rq_file "$h")
-  [ -n "$q" ] && file_lines=$(grep -E '^[A-Z]+-[0-9]' "$q" 2>/dev/null | _rq_scope "$h" "$project")
+  [ -n "$q" ] && file_lines=$(_rq_norm < "$q" 2>/dev/null | _rq_scope "$h" "$project")
   [ -n "$file_lines" ] && printf '%s\n' "$file_lines"
   rq_on || return 0
   rows=$(rq_rows "$h" "$project") || {
@@ -250,7 +280,7 @@ rq_fp_file() {
   local h="${1:-$(rq_root)}" project="${2:-}" q all scoped
   q=$(rq_file "$h")
   [ -n "$q" ] && [ -r "$q" ] || return 0
-  all=$(grep -E '^[A-Z]+-[0-9]' "$q" 2>/dev/null)
+  all=$(_rq_norm < "$q" 2>/dev/null)
   scoped=$(printf '%s\n' "$all" | _rq_scope "$h" "$project")
   if [ "$all" = "$scoped" ]; then cat "$q"; else printf '%s\n' "$scoped"; fi
   return 0

@@ -638,7 +638,10 @@ for t in tickets:
 # columns differently and a positive list would silently drop whichever project
 # renamed a column; listing what is FINISHED OR IN FLIGHT is the stable half.
 BUSY = {"done", "closed", "cancelled", "canceled", "archived", "review",
-        "in_progress", "in-progress", "inprogress", "building", "shipped"}
+        "in_progress", "in-progress", "inprogress", "building", "shipped",
+        # paused: nobody builds it until it is un-paused, so it must not hold
+        # files ahead of a ready ticket (project-3 TK-147/122/119 vs TK-319, 2026-10).
+        "paused"}
 
 def blockers(text):
     out = set()
@@ -666,7 +669,8 @@ for t in tickets:
     # a build — the plan is what the build executes.
     tv = str(field(t, "triageVerdict", "triage_verdict") or "").lower()
     wo = str(field(t, "waitingOn", "waiting_on") or "").lower()
-    if tv == "needs_clarification" and wo == "client": continue
+    # project-3 spells the client's turn "requester" (feature-board waitingOn).
+    if tv == "needs_clarification" and wo in ("client", "requester"): continue
     b = blockers(field(t, "description", "body", "content"))
     tid = str(field(t, "id") or "") or k
     if b:
