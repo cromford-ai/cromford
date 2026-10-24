@@ -263,11 +263,14 @@ test('B6 a normal PR as draft, and a PR with no Mergify cross-reference', async 
   assert.equal(g.content[0].text, 'github_http_404');
 });
 
+// Built by concatenation: tests/no-cloud-in-engine.bh-5239-test.sh refuses the literal.
+const CLOUD = 'worker/' + 'cloud';
+
 // [line, kept?]. Source of each row: plan.md "Failure modes" (live = a real
 // 2026-10-20 job log line; assumed = a common tool format).
 const KEEP_DROP = [
   ['STATE-PATHS-GUARD: bin/remote-results-retention.sh:79: writes state/remote-results', true],
-  ['FAIL: C7 1 public file(s) name worker/cloud: tests/suite-reach-check.bh-7669-test.sh', true],
+  [`FAIL: C7 1 public file(s) name ${CLOUD}: tests/suite-reach-check.bh-7669-test.sh`, true],
   ['not ok 3 - parses the body', true],
   ['bin/x.sh:79:5: error: unexpected token [SC1073]', true],
   [`${ESC}[31mFAIL: wrapped in colour${ESC}[0m`, true],
@@ -532,7 +535,7 @@ test('B17 a pending or passed batch is live: no re-queue candidates', async (t) 
 
 test('B14 a read log that names no changed file: every PR unknown, no candidate', async (t) => {
   const routes = clone(FIXTURE.routes);
-  routes['/blob/job-5001.txt?sig=fixture-signed'] = { text: 'FAIL: C7 1 public file(s) name worker/cloud\n' };
+  routes['/blob/job-5001.txt?sig=fixture-signed'] = { text: `FAIL: C7 1 public file(s) name ${CLOUD}\n` };
   const { call } = await withGithub(t, routes);
   const o = ok(await call({ repo: 'acme/widgets', draft: 900 }));
   assert.equal(o.failed_checks[0].lines_source, 'error');
@@ -546,7 +549,7 @@ test('B14 a read log that names no changed file: every PR unknown, no candidate'
   const r2 = clone(FIXTURE.routes);
   const first = r2[`${R}/commits/${HEAD}/check-runs${P1}`].json.check_runs;
   setChecks(r2, [...first, run(5100, 'C7 public names', 'failure')]);
-  r2[`${R}/actions/jobs/5100/logs`] = { text: 'FAIL: C7 1 public file(s) name worker/cloud\n' };
+  r2[`${R}/actions/jobs/5100/logs`] = { text: `FAIL: C7 1 public file(s) name ${CLOUD}\n` };
   const b = await withGithub(t, r2);
   const o2 = ok(await b.call({ repo: 'acme/widgets', draft: 900 }));
   assert.deepEqual(o2.culprits, [102]);

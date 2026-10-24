@@ -1,0 +1,2 @@
+# hand edge (BH-8192, 2026-10-23): tests/no-cloud-in-engine.bh-5239-test.sh greps the whole tree for the Cloud path; a mcp/test/ change did not select it and main went red (#7749).
+mcp/test/	tests/no-cloud-in-engine.bh-5239-test.sh	example-org/cromford#7749 hand	2026-10-23
