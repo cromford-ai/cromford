@@ -146,6 +146,9 @@
 #                           (`~body<D>`), so the K=1 lead-head guard lets it
 #                           through once. With no body change seen, the key is
 #                           the plain per-head key (BH-3930).
+#   fresh conflict (BH-7816) right after the fetch: a lane-requested head that
+#                           conflicts with origin/<base> is superseded, no agent
+#                           call (bin/lib/lead-review/fresh-conflict.sh).
 #   console qa (BH-5909)    LEAD_REVIEW_CONSOLE_QA_GATE=1 (default 0), right after
 #                           the fetch and before any replay: a harness head that
 #                           changes console-ui/src/ with no QA: PASS comment naming
@@ -952,6 +955,11 @@ review_one() {
     log "checkout of $sha for $key failed (fetch); $key left for the next tick, not counted"
     lr_left_running "fetch failed"; job_update "$job" status=failed; return
   fi
+  # >>> fresh conflict hold (BH-7816): main rewrote what this head changes, so a
+  # review buys only a BLOCK the PR did not cause. Superseded, no agent call.
+  if command -v lr_fresh_conflict >/dev/null 2>&1 && lr_fresh_applies "$r" \
+     && lr_fresh_conflict "$REPO_DIR" "$base" "$sha"; then lr_fresh_supersede "$id" "$job" "$sha" "$key"; return; fi
+  # <<< fresh conflict hold
   # >>> console qa gate (BH-5909), before any replay: a console-ui/src/ head of
   # the harness repo with no QA: PASS naming it is a BLOCK with no model call.
   # An unreadable answer is not counted, and the request waits for the next tick.

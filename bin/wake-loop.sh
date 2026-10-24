@@ -185,6 +185,10 @@ command -v lane_env_apply    >/dev/null 2>&1 && lane_env_apply    wake-loop
 # Missing lib = wck_sha_prs undefined = every such lookup counts as unread.
 # shellcheck source=bin/lib/wake-conductor-keys.sh
 [ -r "$SELF/lib/wake-conductor-keys.sh" ] && . "$SELF/lib/wake-conductor-keys.sh"
+# BH-8173: a checks sha that is a MAIN sha -> the PRs pending on it in the
+# conductor's pre-queue cache whose gate run finished. Missing lib = today's path.
+# shellcheck source=bin/lib/wake-prequeue-keys.sh
+[ -r "$SELF/lib/wake-prequeue-keys.sh" ] && . "$SELF/lib/wake-prequeue-keys.sh"
 # The GitHub-budget reader (#372). OPTIONAL BY DESIGN: a box without the lib, or
 # with a partially synced one, must behave exactly as it did before — every use
 # below is guarded by `command -v gh_budget_low`.
@@ -391,6 +395,18 @@ SHA_LOOKUPS="${WAKE_CONDUCTOR_SHA_LOOKUPS:-5}"
 case "$SHA_LOOKUPS" in
   ''|*[!0-9]*) say "WAKE_CONDUCTOR_SHA_LOOKUPS='$SHA_LOOKUPS' is not a number — using 5"; SHA_LOOKUPS=5 ;;
 esac
+# BH-8173: before that lookup, a sha the conductor's pre-queue cache names as
+# the main of `pending` entries is mapped to those PRs whose gate run completed
+# (wpk_done_prs, one runs read from the same SHA_LOOKUPS budget). 0 = today's
+# path. Registered in catalog/lanes.d/wake-loop.json; `:-1` is the fallback.
+PREQUEUE_MAIN="${WAKE_CONDUCTOR_PREQUEUE_MAIN:-1}"
+case "$PREQUEUE_MAIN" in
+  0|1) ;;
+  *) say "WAKE_CONDUCTOR_PREQUEUE_MAIN='$PREQUEUE_MAIN' is not 0 or 1 — using 1"; PREQUEUE_MAIN=1 ;;
+esac
+# The page size of that runs read, 1..100 (wpk_done_prs clamps; registry row
+# WAKE_CONDUCTOR_PREQUEUE_PAGE, `:-100` is the fallback).
+PREQUEUE_PAGE="${WAKE_CONDUCTOR_PREQUEUE_PAGE:-100}"
 CONDUCTOR_LAUNCHED=0
 CONDUCTOR_HELD=0
 # How far the conductor's window stretches while bin/lib/gh-budget.sh says the
@@ -1130,11 +1146,14 @@ drain() {
   # key, col 4 head): same repo, prefixes compared both ways with a 7-char floor
   # like mc_hb_blocks. A sha with no row (or every sha, when the file is
   # unreadable) is then looked up on GitHub, up to SHA_LOOKUPS per drain
-  # (BH-5521, wck_sha_prs): an open PR with that head becomes a key. A sha still
+  # (BH-5521, wck_sha_prs): an open PR with that head becomes a key. First, a
+  # sha the conductor's pre-queue cache names as the MAIN of `pending` entries
+  # becomes the keys of those PRs whose gate run completed (BH-8173,
+  # wpk_done_prs, one runs read from the same budget). A sha still
   # unplaced launches nothing under WAKE_CONDUCTOR_FULL=0 (the sweep covers it)
   # and makes the launch unkeyed under 1, as before.
   if [ -n "$sha_q" ]; then
-    local resolved r unres="" u_repo u_sha got k s_used=0 s_miss=0 s_unread=0 s_skip=0
+    local resolved r unres="" u_repo u_sha got k s_used=0 s_miss=0 s_unread=0 s_skip=0 s_pq=0 s_running=0 pq_rc
     if resolved=$(printf %s "$sha_q" | awk -F'\t' '
         NR==FNR { if (NF >= 2) { q++; qr[q]=$1; qs[q]=$2 } next }
         { k=tolower($1); h=tolower($4); rp=k; sub(/#[^#]*$/, "", rp)
@@ -1157,6 +1176,30 @@ drain() {
     while IFS=$'\t' read -r u_repo u_sha; do
       [ -n "${u_sha:-}" ] || continue
       if [ "$SHA_LOOKUPS" -gt 0 ] && [ "$s_used" -lt "$SHA_LOOKUPS" ]; then
+        # BH-8173: a main sha with PRs pending on it. rc 1 (nothing pending)
+        # read nothing and falls through to wck_sha_prs; any other answer read
+        # once and places the sha.
+        if [ "$PREQUEUE_MAIN" = 1 ] && command -v wpk_done_prs >/dev/null 2>&1; then
+          pq_rc=0
+          got=$(wpk_done_prs "$H/state/merge-conductor" "$u_repo" "$u_sha" "$PREQUEUE_PAGE") || pq_rc=$?
+          if [ "$pq_rc" != 1 ]; then
+            s_used=$((s_used+1))
+            case "$pq_rc" in
+              0|2)
+                s_pq=$((s_pq+1))
+                for k in $got; do
+                  case ",$conductor_prs," in *",$k,"*) ;; *) conductor_prs="${conductor_prs:+$conductor_prs,}$k" ;; esac
+                done
+                if [ "$pq_rc" = 0 ]; then
+                  say "pr/checks: prequeue main ${u_sha:0:12} finished — woke $(printf '%s' "$got" | paste -sd, -)"
+                else
+                  say "pr/checks: prequeue main ${u_sha:0:12} run list unreadable — woke every PR pending on it: $(printf '%s' "$got" | paste -sd, -)"
+                fi ;;
+              *) s_running=$((s_running+1)) ;;
+            esac
+            continue
+          fi
+        fi
         if command -v wck_sha_prs >/dev/null 2>&1; then
           s_used=$((s_used+1))
           if got=$(wck_sha_prs "$u_repo" "$u_sha"); then
@@ -1174,10 +1217,11 @@ drain() {
       fi
       [ "$CONDUCTOR_FULL" = 1 ] && conductor_all=1
     done <<<"$unres"
-    if [ $((s_miss + s_unread + s_skip)) -gt 0 ]; then
+    if [ $((s_miss + s_unread + s_skip + s_running)) -gt 0 ]; then
       local tail_txt="not launched; the hourly sweep covers them"
-      [ "$CONDUCTOR_FULL" = 1 ] && tail_txt="launched unkeyed"
-      say "pr/checks: $((s_miss + s_unread + s_skip)) checks sha(s) named no open PR (lookups=$s_used miss=$s_miss unread=$s_unread skipped=$s_skip) — $tail_txt"
+      # A running pre-queue main never makes the launch unkeyed (BH-8173).
+      [ "$CONDUCTOR_FULL" = 1 ] && [ $((s_miss + s_unread + s_skip)) -gt 0 ] && tail_txt="launched unkeyed"
+      say "pr/checks: $((s_miss + s_unread + s_skip + s_running)) checks sha(s) named no open PR (lookups=$s_used miss=$s_miss unread=$s_unread skipped=$s_skip) prequeue=$s_pq running=$s_running — $tail_txt"
     fi
   fi
 

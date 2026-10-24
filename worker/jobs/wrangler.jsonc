@@ -50,4 +50,8 @@
   //     HARNESS_D1_GIVEUP_WINDOW_S (default 900): a verdict route's D1
   //     overload give-up reports only on every Nth give-up of a streak
   //     (lib/d1-giveup.js, BH-7541).
+  //   ENVELOPE_HUB_TOKEN — the hub-only token for GET /api/secrets/envelope/<id>
+  //     (BH-7964). The hub holds the same value in /etc/harness/env/global.env.
+  //     UNSET IS THE SAFE STATE: the read answers 503. See
+  //     docs/notes/2026-10-22-BH-7964-secret-envelopes.md.
 }

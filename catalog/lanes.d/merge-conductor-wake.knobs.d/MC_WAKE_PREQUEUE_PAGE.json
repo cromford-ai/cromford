@@ -1,0 +1,12 @@
+{
+  "env": "MC_WAKE_PREQUEUE_PAGE",
+  "type": "int",
+  "default": 100,
+  "min": 1,
+  "max": 100,
+  "unit": "runs",
+  "zero_means": null,
+  "read_in": "bin/merge-conductor-wake.sh",
+  "note": "BH-8173: per_page of the one prequeue-gate.yml runs read per main sha (wpk_done_prs reads anything outside 1..100 as 100, the API maximum and the script's fallback). A completed run past this page is a miss for that wake; its own workflow_run pr wake still wakes its PR.",
+  "settable": true
+}

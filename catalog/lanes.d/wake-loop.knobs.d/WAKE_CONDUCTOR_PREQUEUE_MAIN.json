@@ -1,0 +1,10 @@
+{
+  "env": "WAKE_CONDUCTOR_PREQUEUE_MAIN",
+  "read_in": "bin/wake-loop.sh",
+  "type": "int",
+  "default": 1,
+  "min": 0,
+  "max": 1,
+  "zero_means": "off",
+  "note": "BH-8173. Read by bin/wake-loop.sh as ${WAKE_CONDUCTOR_PREQUEUE_MAIN:-1}; not 0 or 1 is 1 with one log line. 1 = a checks-wake sha that the conductor's pre-queue cache names as the main of `pending` entries is first mapped through wpk_done_prs (bin/lib/wake-prequeue-keys.sh): one GET prequeue-gate.yml runs?head_sha=<sha>&status=completed read from the WAKE_CONDUCTOR_SHA_LOOKUPS budget, and each PR whose run completed becomes a keyed launch. A sha with no pending entry reads nothing and goes to the commits/<sha>/pulls lookup as before. 0 = that lookup only (the path before BH-8173)."
+}

@@ -1,0 +1,10 @@
+{
+  "env": "WAKE_CONDUCTOR_PREQUEUE_PAGE",
+  "read_in": "bin/wake-loop.sh",
+  "type": "int",
+  "default": 100,
+  "min": 1,
+  "max": 100,
+  "zero_means": null,
+  "note": "BH-8173. Read by bin/wake-loop.sh as ${WAKE_CONDUCTOR_PREQUEUE_PAGE:-100}; wpk_done_prs reads anything outside 1..100 as 100 (its documented fallback). per_page of the one prequeue-gate.yml runs read per main sha. A completed run past this page is a miss for that wake; its own workflow_run pr wake still wakes its PR."
+}

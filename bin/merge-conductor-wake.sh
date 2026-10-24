@@ -22,7 +22,12 @@
 # WHICH PR. A pr wake's key is the PR number. A checks wake's key is a head sha:
 # it maps through state/merge-conductor/pr-state.tsv (open rows only, prefix
 # match both ways, 7-char floor), else one wck_sha_prs read (GET
-# commits/<sha>/pulls), at most MC_WAKE_SHA_LOOKUPS a tick. A repo no fleet.conf
+# commits/<sha>/pulls), at most MC_WAKE_SHA_LOOKUPS a tick. Before that read, a
+# sha the conductor's pre-queue cache names as the MAIN of `pending` entries (a
+# prequeue-gate.yml run is dispatched on main, BH-8173) maps through
+# wpk_done_prs (bin/lib/wake-prequeue-keys.sh): one runs read from the same
+# budget, a keyed tick `reason=prequeue-main` for each PR whose run completed,
+# `skip prequeue-running` when none has. A repo no fleet.conf
 # project owns, or a `not-harness <key>` line in state/merge-conductor/
 # attempts.txt (the conductor's own verdict), is skipped. Every other PR gets
 # the keyed tick and the conductor makes the final call (mc_is_harness_pr).
@@ -43,7 +48,8 @@
 #
 # Knobs (catalog/lanes.d/merge-conductor-wake.json, settings rows
 # lane.merge-conductor-wake.<env>): MC_WAKE_BUDGET (10), MC_WAKE_WAKES (100),
-# MC_WAKE_MIN_S (30), MC_WAKE_MAX_AGE_S (900), MC_WAKE_SHA_LOOKUPS (5). Off:
+# MC_WAKE_MIN_S (30), MC_WAKE_MAX_AGE_S (900), MC_WAKE_SHA_LOOKUPS (5),
+# MC_WAKE_PREQUEUE_MAIN (1), MC_WAKE_PREQUEUE_PAGE (100). Off:
 # flags/lane-off-merge-conductor-wake, all-off, a factory stop,
 # automerge-disabled, lane-off-merge-conductor, lane.merge-conductor.mc_keyed_wake=0.
 #
@@ -96,6 +102,11 @@ NWAKES=$(knob MC_WAKE_WAKES 100)
 MIN_S=$(knob MC_WAKE_MIN_S 30)
 MAX_AGE=$(knob MC_WAKE_MAX_AGE_S 900)
 LOOKUPS=$(knob MC_WAKE_SHA_LOOKUPS 5)
+# BH-8173: a checks sha the conductor's pre-queue cache names as a main with
+# `pending` entries goes to wpk_done_prs first (1 = on, 0 = today's path), its
+# runs read paged at MC_WAKE_PREQUEUE_PAGE (1..100, wpk_done_prs clamps).
+PQ_MAIN=$(knob MC_WAKE_PREQUEUE_MAIN 1)
+PQ_PAGE=$(knob MC_WAKE_PREQUEUE_PAGE 100)
 
 # THE KEYED POOL BACKSTOP (BH-7139): a keyed tick waits in
 # state/merge-conductor/keyed-queue while every MC_KEYED_MAX_PARALLEL slot is
@@ -121,6 +132,8 @@ command -v kw_conductor >/dev/null 2>&1 || { say "kw_conductor not available —
 [ -r "$HARNESS/bin/lib/gh-app-auth.sh" ] && . "$HARNESS/bin/lib/gh-app-auth.sh"
 # shellcheck source=bin/lib/wake-conductor-keys.sh
 [ -r "$HARNESS/bin/lib/wake-conductor-keys.sh" ] && . "$HARNESS/bin/lib/wake-conductor-keys.sh"
+# shellcheck source=bin/lib/wake-prequeue-keys.sh
+[ -r "$HARNESS/bin/lib/wake-prequeue-keys.sh" ] && . "$HARNESS/bin/lib/wake-prequeue-keys.sh"
 
 TMP=$(mktemp -d "${TMPDIR:-/tmp}/merge-conductor-wake.XXXXXX") || { say "mktemp failed — nothing done"; exit 0; }
 trap 'rm -rf "$TMP"' EXIT
@@ -167,6 +180,9 @@ age_of() { # age_of <at> — seconds since <at>, or `-` when unknown
 }
 # line <pr> <event> <at> <repo> <wake> <action> <reason>
 line() { say "WAKE pr=$1 event=$2 latency_s=$(age_of "$3") repo=$4 wake=$5 action=$6 reason=$7"; }
+# The reason a started tick's line carries: `started`, or `prequeue-main` for a
+# PR a main sha woke through the pre-queue cache (BH-8173).
+TICK_REASON=started
 stale() { local a; a=$(age_of "$1"); [ "$a" != - ] && [ "$a" -gt "$MAX_AGE" ]; }
 
 USED=0; CARRIED=0
@@ -178,7 +194,7 @@ launch() {
   [ "$USED" -lt "$BUDGET" ] || return 1
   if MC_KEYED_WAKE_MIN_S="$MIN_S" kw_conductor "$slug" "$n" "wake $w $ev"; then
     USED=$((USED+1)); echo "$slug#$n" >> "$TMP/started"
-    line "$n" "$ev" "$at" "$slug" "$w" tick started
+    line "$n" "$ev" "$at" "$slug" "$w" tick "$TICK_REASON"
   else
     carry "$slug#$n" "$ev" "$at" "$w"
     line "$n" "$ev" "$at" "$slug" "$w" carry deduped
@@ -221,13 +237,28 @@ while IFS=$'\t' read -r WID REPO KIND KEY EV AT; do
   if stale "$AT"; then line "$PRN" "$EV" "$AT" "$SLUG" "$WID" skip stale; LASTDONE="$WID"; continue; fi
 
   # The PR number(s) this wake names.
-  : > "$TMP/nums"
+  : > "$TMP/nums"; TICK_REASON=started
   if [ "$KIND" = pr ]; then
     echo "$KEY" > "$TMP/nums"
   else
     awk -F'\t' -v r="$LREPO" -v s="$KEY" '{ k=$1; rp=k; sub(/#[^#]*$/, "", rp)
         if (rp == r && (index($2, s) == 1 || index(s, $2) == 1)) { n=k; sub(/.*#/, "", n); print n } }' \
       "$TMP/heads.tsv" | awk '!seen[$0]++' > "$TMP/nums"
+    # BH-8173: a MAIN sha with PRs pending on it in the pre-queue cache. rc 1
+    # (nothing pending) read nothing and falls through to wck_sha_prs; any
+    # other answer read once, from the same lookup budget.
+    if [ ! -s "$TMP/nums" ] && [ "$PQ_MAIN" = 1 ] && [ "$NLOOK" -lt "$LOOKUPS" ] \
+       && command -v wpk_done_prs >/dev/null 2>&1; then
+      RC=0
+      GOT=$(wpk_done_prs "$HARNESS/state/merge-conductor" "$LREPO" "$KEY" "$PQ_PAGE" </dev/null) || RC=$?
+      case "$RC" in
+        0|2) NLOOK=$((NLOOK+1)); TICK_REASON=prequeue-main
+             [ "$RC" = 2 ] && say "prequeue main ${KEY:0:12}: run list unreadable — waking every PR pending on it"
+             printf '%s\n' "$GOT" | sed 's/.*#//' > "$TMP/nums" ;;
+        3) NLOOK=$((NLOOK+1))
+           line - "$EV" "$AT" "$SLUG" "$WID" skip prequeue-running; LASTDONE="$WID"; continue ;;
+      esac
+    fi
     if [ ! -s "$TMP/nums" ]; then
       if [ "$NLOOK" -ge "$LOOKUPS" ] || ! command -v wck_sha_prs >/dev/null 2>&1; then
         line - "$EV" "$AT" "$SLUG" "$WID" skip sha-unplaced; LASTDONE="$WID"; continue

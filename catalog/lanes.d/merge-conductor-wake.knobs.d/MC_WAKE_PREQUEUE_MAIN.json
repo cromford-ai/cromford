@@ -1,0 +1,11 @@
+{
+  "env": "MC_WAKE_PREQUEUE_MAIN",
+  "type": "int",
+  "default": 1,
+  "min": 0,
+  "max": 1,
+  "zero_means": "off",
+  "read_in": "bin/merge-conductor-wake.sh",
+  "note": "BH-8173: 1 = a checks sha with no open pr-state.tsv row that the conductor's pre-queue cache names as the main of `pending` entries goes to wpk_done_prs (bin/lib/wake-prequeue-keys.sh) first: one prequeue-gate.yml runs read from the MC_WAKE_SHA_LOOKUPS budget, a keyed tick (reason=prequeue-main) for each PR whose run completed, `skip prequeue-running` when none has. A sha with no pending entry reads nothing and goes to wck_sha_prs as before. 0 = wck_sha_prs only. Fallback 1 in the script.",
+  "settable": true
+}
