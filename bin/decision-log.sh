@@ -56,4 +56,29 @@ if [ -r "$HARNESS/bin/lib/triage-skip-evidence.sh" ]; then
   # shellcheck source=/dev/null
   . "$HARNESS/bin/lib/triage-skip-evidence.sh" 2>/dev/null && tse_audit "$P" "$OUT" 2>/dev/null
 fi
+# QUEUE LINE LINT (BH-8262): a READY-QUEUE.log line that does not start with
+# its ticket key is a session that wrote the file by hand instead of through
+# bin/queue-line-put.sh. ONE logs/ready-queue.log line per change of the bad
+# set (fingerprint of the bad lines' text, not their line numbers), never an
+# ALERTS line: the readers re-lead such a line (_rq_norm), so this is a writer
+# to fix, not a page. A clean file clears the fingerprint so a later regression
+# logs again. Fail-open: no lint, no check.
+QLL="$HARNESS/bin/queue-line-lint.sh"
+if [ -x "$QLL" ]; then
+  QLF="$HARNESS/state/queue-line-lint.fp"
+  QLO=$("$QLL" "$HARNESS/logs/READY-QUEUE.log" 2>/dev/null); QLRC=$?
+  if [ "$QLRC" = 1 ] && [ -n "$QLO" ]; then
+    QLB=$(printf '%s\n' "$QLO" | sed 's/^NOT-KEY-FIRST [0-9]*: //')
+    QFP=$(printf '%s\n' "$QLB" | cksum | cut -d' ' -f1-2)
+    if [ "$QFP" != "$(cat "$QLF" 2>/dev/null)" ]; then
+      QN=$(printf '%s\n' "$QLB" | grep -c '' || true)
+      QFIRST=$(printf '%s\n' "$QLB" | sed -n '1p' | cut -c1-200)
+      printf '%s [ready-queue] [%s] QUEUE LINE NOT KEY-FIRST: %s line(s) in READY-QUEUE.log; first: %s. Writers use bin/queue-line-put.sh (BH-8262).\n' \
+        "$STAMP" "$P" "$QN" "$QFIRST" >> "$HARNESS/logs/ready-queue.log" 2>/dev/null
+      mkdir -p "$HARNESS/state" 2>/dev/null && printf '%s\n' "$QFP" > "$QLF" 2>/dev/null
+    fi
+  elif [ "$QLRC" = 0 ]; then
+    rm -f "$QLF" 2>/dev/null
+  fi
+fi
 exit 0

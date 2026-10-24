@@ -1,0 +1,20 @@
+{
+  "libs": [
+    {
+      "id": "queue-line-put",
+      "file": "bin/queue-line-put.sh",
+      "note": "BH-8262. The READY-QUEUE.log writer triage sessions call instead of a hand append: it writes `<KEY> <ticket-id> size=<S|M|L|XL> kind=<kind> :: <reason> project=<p>` under the READY-QUEUE.log.lock sidecar lock and mirrors the ready row through rq_put. Read through lib_env_apply queue-line-put. Doc: docs/notes/2026-10-24-BH-8262-queue-line-put.md.",
+      "knobs": [
+        {
+          "env": "QUEUE_LINE_PUT_LOCK_S",
+          "type": "int",
+          "default": 30,
+          "min": 1,
+          "max": 600,
+          "required": false,
+          "note": "Seconds the writer waits for READY-QUEUE.log.lock (and for locks/harden-state.lock on a replace) before it gives up with rc 1 and writes nothing. 30 is the wait bin/queue-line-drop.sh uses on the same lock. A value that is not a whole number uses 30."
+        }
+      ]
+    }
+  ]
+}
