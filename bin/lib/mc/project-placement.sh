@@ -47,7 +47,9 @@
 #       failed (died, failed, a done rc that is not 0, or a done row with no
 #       `PROF mc-project` line; detail names which), deferred (a clean done
 #       row whose PROF line has deferred=<w> with w not `-`; detail = w),
-#       done (a clean done row). rc 1 when the answer does not parse.
+#       done (a clean done row; detail lease-lost or lease-held when its PROF
+#       line has state=LEASE_LOST or state=LEASE_HELD, BH-6895, else -).
+#       rc 1 when the answer does not parse.
 #   mc_proj_defer_field <keys-file> <slug>
 #       BH-7635, on the machine: the value of the PROF field deferred_prs= from
 #       the run's MC_PR_DEFERRED_KEYS_FILE (lines `<word> <slug>#<n>`, written
@@ -68,6 +70,9 @@
 #       project per settings row mc_project_fly.alert_s (fallback 3600 s): the
 #       stamp is
 #       state/merge-conductor/project-fly/<project>.alert-at.
+#       With a third argument `lease` (BH-6895) the id is
+#       mc-project-lease-<project> and the stamp <project>.lease-alert-at, so
+#       the other alerts of the gate never hold a lease-miss alert.
 #   mc_proj_publish <project>
 #       applies the project's pending write-backs and publishes its snapshot
 #       (bin/lib/lane-run-inputs.sh), so the run starts from the hub's files
@@ -131,6 +136,10 @@
 #                       (BH-7462). A row a machine claimed resets it.
 #   <project>.box-down  a box placement's take-back alerted (BH-7636): no
 #                       second ALERTS line until the box answers again.
+#   <project>.lease-seen the id of the last done row that ended LEASE_LOST or
+#                       LEASE_HELD (BH-6895). The gate logs `row <id> ended
+#                       <state> — lease miss` and calls mc_proj_alert ... lease
+#                       once per row; routing is unchanged.
 #   <project>.hubtick   `<pid> <start stamp> <epoch>` of the hub tick that runs
 #                       <project> as a fallback (mc_proj_hub_mark), removed
 #                       when it ends (mc_proj_hub_unmark, under
@@ -272,7 +281,10 @@ mc_proj_newest() {
           elif ($r.rc != null and $r.rc != 0) then "failed \($id) rc=\($r.rc)"
           elif ($pl | test("(^| )PROF mc-project ")) | not then "failed \($id) no-prof"
           else ($pl | capture("(^| )deferred=(?<d>[^ ]+)").d // "-") as $d
-            | if $d != "-" then "deferred \($id) \($d)" else "done \($id) -" end
+            | if $d != "-" then "deferred \($id) \($d)"
+              elif $pl | test("(^| )state=LEASE_LOST( |$)") then "done \($id) lease-lost"
+              elif $pl | test("(^| )state=LEASE_HELD( |$)") then "done \($id) lease-held"
+              else "done \($id) -" end
           end
       end' 2>/dev/null
 }
@@ -334,8 +346,11 @@ mc_proj_defer_keys() {
 }
 
 mc_proj_alert() {
-  local p="$1" text="$2" d stamp now last
+  local p="$1" text="$2" d stamp now last aid="mc-project-fly-$1"
   d=$(_mc_proj_dir); stamp="$d/$p.alert-at"; now=$(date -u +%s)
+  # BH-6895: a lease miss has its own id and stamp, so an earlier
+  # no-capacity or machine-failed alert never holds it.
+  [ "${3:-}" = lease ] && { aid="mc-project-lease-$p"; stamp="$d/$p.lease-alert-at"; }
   last=$(head -n 1 "$stamp" 2>/dev/null)
   local every; every=$(_mc_proj_int mc_project_fly.alert_s "$MC_PROJ_ALERT_S")
   if [[ $last =~ ^[0-9]+$ ]] && [ $((now - last)) -lt "$every" ]; then
@@ -345,7 +360,7 @@ mc_proj_alert() {
   mkdir -p "$d" 2>/dev/null
   _mc_proj_put "$stamp" "$now"
   local a; a="$(_mc_proj_root)/bin/lane-alert.sh"
-  [ -x "$a" ] && "$a" --severity warn --id "mc-project-fly-$p" merge-conductor \
+  [ -x "$a" ] && "$a" --severity warn --id "$aid" merge-conductor \
     "merge-conductor $p (placed fly, fallback $(mc_proj_fallback "$p")): $text" >/dev/null 2>&1
   return 0
 }
@@ -750,6 +765,17 @@ mc_proj_gate() {
       fi ;;
     none|done)
       [ "$kind" = "done" ] && { _mc_proj_failed_count "$p" reset >/dev/null; _mc_proj_nocap_count "$p" reset >/dev/null; _mc_proj_box_up "$p"; }
+      # BH-6895: a run that ended LEASE_LOST or LEASE_HELD missed its lease:
+      # one log line and one held ALERTS line per row. Routing is unchanged.
+      case "$det" in
+        lease-lost|lease-held)
+          if [ "$(head -n 1 "$d/$p.lease-seen" 2>/dev/null)" != "$id" ]; then
+            _mc_proj_put "$d/$p.lease-seen" "$id"
+            det=$(printf '%s' "$det" | tr 'a-z-' 'A-Z_')
+            _mc_proj_log "$p ${MC_PROJ_TAG:-project-fly}: row $id ended $det — lease miss"
+            mc_proj_alert "$p" "the conductor run of row $id ended $det (${MC_PROJ_TAG:-project-fly}): it missed the project lease. If this was a landing write, set lane_placement.merge-conductor.$p to hub and stop the rollout." lease
+          fi ;;
+      esac
       _mc_proj_enqueue "$p" || { _mc_proj_fallback "$p" enqueue-failed "${MC_PROJ_ENQ_WHY:-http ${JOBS_HTTP:-none}}" 1; }; rc=$? ;;
     *)
       _mc_proj_fallback "$p" enqueue-failed "lane_runs read: $det" 1; rc=$? ;;
