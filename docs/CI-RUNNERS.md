@@ -183,6 +183,19 @@ gh api repos/example-org/cromford/actions/runs/<id>/jobs --paginate \
 Then flip `CI_RUNNER` to the other fleet, dispatch again on the **same sha**, and
 compare. Comparing two different shas measures the diff, not the fleet.
 
+### Merge-queue parallel checks (BH-8085, 2026-10-22)
+
+The cromford merge queue checks 1 batch at a time (`max_parallel_checks=1`
+in `config/mergify/repos/cromford.conf`, the operator, 2026-10-22). At 3, Mergify
+stacked 2 speculative drafts on the batch under test, and every red or dequeued
+batch discarded and restarted them. On 2026-10-22, 11 of 19 readable batches
+were red (BH-8048), so most of the 54 batch runs that day were restarts, and
+each run is 7 to 18 shards of 20 minutes. One batch takes 17 to 30 minutes, so
+1 at a time gives about 50 to 80 batches a day. Rollback: set
+`max_parallel_checks=3` in the conf once `logs/ci-batch-red.log` shows
+`red_rate` under 15 for 7 days, edit `.mergify.yml` to match, and run
+`bin/mergify-template.sh --check`. Tests: `tests/mergify-template.bh-8085-test.sh`.
+
 ### publish-cromford.yml
 
 The public-copy publisher hard-codes `runs-on: ubuntu-latest` and is left that

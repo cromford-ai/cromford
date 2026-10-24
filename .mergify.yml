@@ -37,12 +37,12 @@
 # is serial and the conductor only logs the lane each PR would take.
 merge_queue:
   # Speculative batches built at once, ahead of the one being merged.
-  # 3 (the operator, 2026-10-12, BH-6337; was 8 from 2026-09-28, 4 from #2220): a
-  # failed or dequeued lower batch restarts every batch above it, and most
-  # batches run the full corpus (25-30 min). Raise it again after #5454 and the
-  # pre-queue learned-suite gate, if a batch costs about 10 min and the batch
-  # failure rate is below 20%.
-  max_parallel_checks: 3
+  # 1 (the operator, 2026-10-22, BH-8085, CI cost hotfix; was 3 from BH-6337, 8 from
+  # 2026-09-28, 4 from #2220): every red or dequeued batch restarts the drafts
+  # above it, and 11 of 19 readable batches were red on 2026-10-22. Rollback:
+  # 3 once logs/ci-batch-red.log shows red_rate under 15 for 7 days, rendered
+  # from config/mergify/repos/cromford.conf.
+  max_parallel_checks: 1
 
 queue_rules:
   # FIRST IN THE FILE IS FIRST IN LINE: the hotfix queue is above default, and it

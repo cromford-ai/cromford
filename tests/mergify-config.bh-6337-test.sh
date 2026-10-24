@@ -1,6 +1,7 @@
 #!/bin/bash
-# tests/mergify-config.bh-6337-test.sh — this repo's Mergify queue builds 3
-# speculative batches at once, and nothing else in the queue changed with it.
+# tests/mergify-config.bh-6337-test.sh — this repo's Mergify queue checks 1
+# batch at a time (BH-8085; was 3, BH-6337), and nothing else in the queue
+# changed with it.
 #
 # Every render goes through the real CLI ($DIR/bin/mergify-template.sh). Values
 # are read from the PARSED YAML (python3 + PyYAML -> json -> jq), never grepped
@@ -28,20 +29,20 @@ render_json() {
   "$BIN" render "$1" > "$T/r.yml" 2>"$T/r.err" || { echo "render rc!=0: $(head -c 300 "$T/r.err")" >&2; return 1; }
   tojson "$T/r.yml" > "$2"
 }
-# three_parallel <json> — the C1/C2 assert
-three_parallel() { jq -e '.merge_queue.max_parallel_checks == 3' "$1" >/dev/null; }
+# one_parallel <json> — the C1/C2 assert
+one_parallel() { jq -e '.merge_queue.max_parallel_checks == 1' "$1" >/dev/null; }
 
 if ! python3 -c 'import yaml' 2>/dev/null; then
   for c in C1 C2 C3 C4 C5 C6 C7; do echo "SKIP (no PyYAML): $c"; done
   echo "PASS=0 FAIL=7"; exit 1
 fi
 
-# C1: the render of the conf builds 3 batches at once.
-if render_json "$CONF" "$T/now.json" && three_parallel "$T/now.json"; then ok
+# C1: the render of the conf checks 1 batch at a time (BH-8085; was 3, BH-6337).
+if render_json "$CONF" "$T/now.json" && one_parallel "$T/now.json"; then ok
 else bad "C1 render max_parallel_checks (got $(jq -c '.merge_queue' "$T/now.json" 2>/dev/null))"; fi
 
-# C2: the committed .mergify.yml (what Mergify reads) says 3.
-if tojson "$YML" > "$T/yml.json" && three_parallel "$T/yml.json"; then ok
+# C2: the committed .mergify.yml (what Mergify reads) says 1 (BH-8085; was 3, BH-6337).
+if tojson "$YML" > "$T/yml.json" && one_parallel "$T/yml.json"; then ok
 else bad "C2 .mergify.yml max_parallel_checks (got $(jq -c '.merge_queue' "$T/yml.json" 2>/dev/null))"; fi
 
 # C3: the conf and the committed file agree.
@@ -54,7 +55,7 @@ jq -e '[.queue_rules[].name] == ["hotfix","flake-fix","solo","default"]' "$T/yml
 
 # C5: the conf at the old value (8) and the real conf render the same rules, and
 # the two renders differ only in merge_queue.max_parallel_checks.
-sed 's/^max_parallel_checks=3$/max_parallel_checks=8/' "$CONF" > "$T/at8.conf"
+sed 's/^max_parallel_checks=.*/max_parallel_checks=8/' "$CONF" > "$T/at8.conf"
 if render_json "$T/at8.conf" "$T/at8.json" \
    && jq -e --slurpfile a "$T/at8.json" --slurpfile b "$T/now.json" -n '
         ($a[0] | {queue_rules, pull_request_rules, priority_rules}) == ($b[0] | {queue_rules, pull_request_rules, priority_rules})
@@ -63,7 +64,7 @@ else bad "C5 renders at 8 and at the conf value differ outside max_parallel_chec
 
 # C6: non-vacuity — the conf at 8 must fail the C1 assert.
 if [ -s "$T/at8.json" ] && jq -e '.merge_queue.max_parallel_checks == 8' "$T/at8.json" >/dev/null \
-   && ! three_parallel "$T/at8.json"; then ok
+   && ! one_parallel "$T/at8.json"; then ok
 else bad "C6 a conf at 8 did not fail the C1 assert (got $(jq -c '.merge_queue' "$T/at8.json" 2>/dev/null))"; fi
 
 # C7: one max_parallel_checks line, so no duplicate key hides the value.
