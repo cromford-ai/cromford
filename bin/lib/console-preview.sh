@@ -335,8 +335,11 @@ cpv_build_deploy() {
     log "#$n $(grep '^cpv_copy_dist: stripped' "$CPV_D/build.log" | tail -n 1 | sed 's/^cpv_copy_dist: //') (Pages would run them as server code; main's Functions deploy instead)"
   fi
   # 3. The upload: pinned wrangler, no npm config from anywhere, pinned registry.
+  # The user and global npm configs are two different empty files: npm 10+
+  # refuses one path loaded as both ("double-loading config /dev/null").
+  : > "$CPV_D/.npmrc-user"; : > "$CPV_D/.npmrc-global"
   ( set -a; . "$CPV_CFENV"; set +a
-    export CLOUDFLARE_ACCOUNT_ID="$CPV_ACCT" npm_config_userconfig=/dev/null npm_config_globalconfig=/dev/null \
+    export CLOUDFLARE_ACCOUNT_ID="$CPV_ACCT" npm_config_userconfig="$CPV_D/.npmrc-user" npm_config_globalconfig="$CPV_D/.npmrc-global" \
            npm_config_registry=https://registry.npmjs.org/ npm_config_cache="$CPV_D/.npm"
     cd "$CPV_D/console-ui" && timeout 600 npx --yes "wrangler@$CPV_WRANGLER" pages deploy dist --project-name "$(console_pages_project)" \
       --branch "$alias" --commit-hash "$sha" --commit-message "preview PR #$n $s7" </dev/null ) >"$CPV_D/deploy.log" 2>&1

@@ -223,9 +223,10 @@ cp -RP -- "$DIST" "$TREE/console-ui/dist" || report "NOT_COVERED deploy tree fai
 [ -n "$URL" ] || report "NOT_COVERED deploy tree failed (no console Pages host)"
 
 # 2. The upload. The token only ever lives in this subshell's env.
+: > "$TREE/.npmrc-user"; : > "$TREE/.npmrc-global"   # two empty files: npm 10+ refuses /dev/null as both
 ( set -a; . "$CFENV"; set +a
   acct=$(console_pages_account_id "$TREE") && [ -n "$acct" ] && export CLOUDFLARE_ACCOUNT_ID="$acct"
-  export npm_config_userconfig=/dev/null npm_config_globalconfig=/dev/null \
+  export npm_config_userconfig="$TREE/.npmrc-user" npm_config_globalconfig="$TREE/.npmrc-global" \
          npm_config_registry=https://registry.npmjs.org/ npm_config_cache="$TREE/.npm"
   cd "$TREE/console-ui" && timeout 600 npx --yes "wrangler@$WRANGLER" pages deploy dist --project-name "$(console_pages_project)" \
     --branch "$ALIAS" --commit-hash "$CSHA" --commit-message "post-merge QA $C7" </dev/null ) >"$TREE/deploy.log" 2>&1

@@ -187,7 +187,9 @@ EOF
 cat > "$T/sbin/npx" <<EOF
 #!/bin/bash
 printf 'npx %s|cwd=%s\n' "\$*" "\$PWD" >> "$T/calls.log"
-printf 'npxenv userconfig=%s globalconfig=%s registry=%s acct=%s\n' "\${npm_config_userconfig:-}" "\${npm_config_globalconfig:-}" "\${npm_config_registry:-}" "\${CLOUDFLARE_ACCOUNT_ID:-}" >> "$T/calls.log"
+uc=\${npm_config_userconfig:-}; gc=\${npm_config_globalconfig:-}
+cfg=bad; [ -n "\$uc" ] && [ -n "\$gc" ] && [ "\$uc" != "\$gc" ] && [ -f "\$uc" ] && [ ! -s "\$uc" ] && [ -f "\$gc" ] && [ ! -s "\$gc" ] && cfg=two-empty-files
+printf 'npxenv npmconfig=%s registry=%s acct=%s\n' "\$cfg" "\${npm_config_registry:-}" "\${CLOUDFLARE_ACCOUNT_ID:-}" >> "$T/calls.log"
 printf 'npxtree %s\n' "\$(ls -A | tr '\n' ' ')" >> "$T/calls.log"
 printf 'npxdist %s\n' "\$(ls -A dist | tr '\n' ' ')" >> "$T/calls.log"
 printf 'npxfn %s\n' "\$(cat functions/api/f.js 2>/dev/null)" >> "$T/calls.log"
@@ -359,7 +361,7 @@ grep -qx 'npxtree dist functions src ' "$T/calls.log" && ok || bad "P13 the depl
 
 # ── P14: pinned wrangler, npm config off, registry pinned, main's account ────
 reset; setprs "$(prjson 16 ticket/bh-16 "$S16")"; run
-grep -qx 'npxenv userconfig=/dev/null globalconfig=/dev/null registry=https://registry.npmjs.org/ acct=acct-fixture' "$T/calls.log" \
+grep -qx 'npxenv npmconfig=two-empty-files registry=https://registry.npmjs.org/ acct=acct-fixture' "$T/calls.log" \
   && ok || bad "P14 npx env: $(grep '^npxenv' "$T/calls.log")"
 grep -q '^npx --yes wrangler@3\.114\.17 ' "$T/calls.log" && ok || bad "P14 an exact wrangler: $(grep '^npx ' "$T/calls.log")"
 
