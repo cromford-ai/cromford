@@ -6,6 +6,7 @@
 // PUT /api/pr-records  {repo, number, source, at?, fields: {...}}
 //   source is fleet | webhook | github. at is YYYY-MM-DDTHH:MM:SSZ, default
 //   the worker's clock. fields holds one or more of the VALUE_FIELDS columns.
+//   mergeable_state may be null: stored NULL, "unknown" (NULLABLE_FIELDS).
 //   The whole body is checked before the DB; the first bad key is a 400 that
 //   names it and writes nothing. ONE statement upserts the row on (repo,
 //   number). Per field: the value is replaced when no time is stored for it
@@ -22,14 +23,14 @@ import { ensureTable } from "../lib/core.js";
 const SHA_RE = /^[0-9a-f]{40}$/;
 const WORD_RE = /^[a-z_]{1,32}$/;
 const AT_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/;
-const REPO_RE = /^[a-z0-9_.-]{1,100}\/[a-z0-9_.-]{1,100}$/;
+export const REPO_RE = /^[a-z0-9_.-]{1,100}\/[a-z0-9_.-]{1,100}$/;
 export const SOURCES = ["fleet", "webhook", "github"];
 // Input shape bounds, not tunable limits: GitHub allows at most 100 labels on
 // an issue or PR, and a git ref name of at most 255 bytes.
 const LABELS_MAX = 100;
 const NAME_MAX = 100;
 const REF_MAX = 255;
-const CHECKS_MAX = 100;
+export const CHECKS_MAX = 100;
 
 const isObj = (v) => v !== null && typeof v === "object" && !Array.isArray(v);
 const ref = (v) => (typeof v === "string" && v.length >= 1 && v.length <= REF_MAX ? v : undefined);
@@ -55,6 +56,9 @@ export const VALUE_FIELDS = {
   last_comment_id: (v) => (Number.isSafeInteger(v) && v > 0 ? v : undefined),
 };
 const JSON_FIELDS = ["labels", "checks", "fields_at"];
+// The columns where null is a value: "unknown, ask GitHub on the next read"
+// (case 2 of the read rule in bin/lib/pr-record.sh).
+export const NULLABLE_FIELDS = ["mergeable_state"];
 
 export const GET_SQL = "SELECT * FROM pr_records WHERE repo = ?1 AND number = ?2";
 
@@ -75,6 +79,7 @@ export function checkPut(body, now) {
   const fields = {};
   for (const [k, v] of Object.entries(body.fields)) {
     if (!Object.hasOwn(VALUE_FIELDS, k)) return { error: "unknown_field", field: k };
+    if (v === null && NULLABLE_FIELDS.includes(k)) { fields[k] = null; continue; }
     const val = VALUE_FIELDS[k](v);
     if (val === undefined) return { error: "invalid_field", field: k };
     fields[k] = val;
@@ -85,7 +90,9 @@ export function checkPut(body, now) {
 // The upsert for these field names. Binds: ?1 repo, ?2 number, ?3 at,
 // ?4 source, then one value per field in `names` order. In an UPDATE every
 // right-hand side reads the row as it was before the update.
-export function upsertSql(names) {
+// refresh: false keeps refreshed_at on an existing row: a write that does not
+// carry the whole PR (a webhook comment) must not reset the max-age backstop.
+export function upsertSql(names, { refresh = true } = {}) {
   const newer = (f) => `(json_extract(pr_records.fields_at, '$.${f}') IS NULL OR json_extract(pr_records.fields_at, '$.${f}') <= ?3)`;
   const cols = names.join(", ");
   const vals = names.map((_, i) => `?${i + 5}`).join(", ");
@@ -101,7 +108,7 @@ export function upsertSql(names) {
       last_source = ?4,
       gh_read_at = CASE WHEN ?4 = 'github' THEN max(coalesce(pr_records.gh_read_at, ''), ?3) ELSE pr_records.gh_read_at END,
       webhook_at = CASE WHEN ?4 = 'webhook' THEN max(coalesce(pr_records.webhook_at, ''), ?3) ELSE pr_records.webhook_at END,
-      refreshed_at = max(pr_records.refreshed_at, ?3)
+      refreshed_at = ${refresh ? "max(pr_records.refreshed_at, ?3)" : "pr_records.refreshed_at"}
     RETURNING *`;
 }
 

@@ -16,7 +16,12 @@
 #       `state head_sha`. GitHub is read (one REST GET of the PR) only when:
 #         unreadable   the jobs read failed (fail open to GitHub, as before)
 #         unknown      the PR has no record
-#         field:<f>    a requested field that a GitHub read fills is null
+#         field:<f>    a requested field that a GitHub read fills is null.
+#                      Case 2 (BH-8151): a webhook that names a change but
+#                      does not carry the field stores it null (a push to
+#                      the base nulls mergeable_state), and GitHub's own
+#                      mergeable_state "unknown" is stored null, so the
+#                      next get that asks for it reads GitHub again
 #         stale        the record is older than PR_RECORD_MAX_AGE_S, or that
 #                      knob is 0
 #       After a GitHub read it writes what it read into the record (source
@@ -34,7 +39,9 @@
 # The fields a GitHub read fills: state draft head_ref base_ref head_sha
 # base_sha mergeable_state labels. checks, review_decision, queue_state and
 # last_comment_id are stored and returned, but a null in them starts no GitHub
-# read: writes (C1) and webhooks (C2) fill them.
+# read: writes (C1) and webhooks (C2) fill them. The webhook writer is
+# worker/jobs/src/lib/pr-record-intake.js (checks entries are
+# {status, conclusion, sha, at} keyed <check name>, suite:<app>, workflow:<name>).
 #
 # The knob PR_RECORD_MAX_AGE_S (catalog/lanes.d/_lib.pr-record.json) is read
 # through lane_knob when the caller has it, else from the environment.
@@ -109,16 +116,19 @@ _prr_max_age() {
 }
 
 # _prr_map — a GitHub pulls object on stdin -> the record columns it fills,
-# with the absent ones left out.
+# with the absent ones left out. GitHub's mergeable_state "unknown" (it has
+# not computed it yet) maps to null and is kept: the record stores NULL, so
+# the next get that asks for mergeable_state reads GitHub again (case 2).
 _prr_map() {
-  jq -c 'select(type == "object") |
-    {state: (if .merged_at then "merged" else .state end),
+  jq -c 'select(type == "object") | . as $p |
+    ({state: (if .merged_at then "merged" else .state end),
      draft: .draft,
      head_ref: .head.ref, base_ref: .base.ref,
      head_sha: .head.sha, base_sha: .base.sha,
      mergeable_state: .mergeable_state,
      labels: (if (.labels | type) == "array" then [.labels[].name] else null end)}
-    | with_entries(select(.value != null and .value != ""))' 2>/dev/null
+    | with_entries(select(.value != null and .value != "")))
+    + (if $p.mergeable_state == "unknown" then {mergeable_state: null} else {} end)' 2>/dev/null
 }
 
 pr_record_get() {

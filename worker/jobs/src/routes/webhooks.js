@@ -18,6 +18,7 @@ import {
 } from "../lib/tracker-webhooks.js";
 import { mapMergeQueueDelivery } from "../lib/merge-queue-intake.js";
 import { recordGithubGate } from "../lib/pr-gate-intake.js";
+import { recordPrRecord } from "../lib/pr-record-intake.js";
 
 // recordWake — the one write every receiver makes (BH-4079). With a delivery
 // id, the delivery row and the wake row go in ONE env.DB.batch (one D1
@@ -168,6 +169,10 @@ export const routes = [
       // Keyed on the delivery id, so none means no row. Never throws, and the
       // response below is unchanged either way.
       await recordGithubGate(env, t, event, payload, deliveryIdOf("github", req.headers));
+      // BH-8067 C2: the fleet's PR record (pr_records) from the payload. Before
+      // wakeOf for the same reason: check_run.created is a delivery it drops.
+      // Never throws; the response below is unchanged either way.
+      await recordPrRecord(env, t, event, payload);
       const w = wakeOf(event, payload);
       const wakes = Boolean(w && w.key);
       try {
