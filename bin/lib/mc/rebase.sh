@@ -8,6 +8,12 @@
 # carried the marker while it carried these calls, and a module holding them
 # unmarked would be a call site the guard silently stopped policing.
 # gh-rest: no-graphql
+# BH-8150: pass-through stubs for a caller that sources this module without
+# mc/log.sh. mc/log.sh's stubs, or the real bin/lib/pr-record-write.sh, load
+# first in every other caller, so these never fire there.
+type prr_write >/dev/null 2>&1 || prr_write() { shift 4; "$@"; }
+type prr_note_push >/dev/null 2>&1 || prr_note_push() { return 0; }
+type prr_now >/dev/null 2>&1 || prr_now() { :; }
 
 
 # --- Generated-files table parser (BH-968) -----------------------------------
@@ -529,7 +535,7 @@ mc_retry_pr() {
 mc_retarget_base() {
   local slug="${1:-}" num="${2:-}" base="${3:-}"
   [ -n "$slug" ] && [ -n "$num" ] && [ -n "$base" ] || return 1
-  gh api -X PATCH "repos/$slug/pulls/$num" -f "base=$base" >/dev/null 2>&1
+  prr_write "$slug" "$num" pull - gh api -X PATCH "repos/$slug/pulls/$num" -f "base=$base" >/dev/null 2>&1
 }
 
 # mc_close_for_rebuild <owner/repo> <pr-number> <comment-body> -> rc 0 when the
@@ -547,8 +553,8 @@ mc_close_for_rebuild() {
   local slug="${1:-}" num="${2:-}" body="${3:-}"
   [ -n "$slug" ] && [ -n "$num" ] && [ -n "$body" ] || return 1
   mc_hold_keeps_pr "$slug" "$num" && return 1
-  gh api -X POST "repos/$slug/issues/$num/comments" -f "body=$body" >/dev/null 2>&1 || return 1
-  gh api -X PATCH "repos/$slug/pulls/$num" -f state=closed >/dev/null 2>&1
+  prr_write "$slug" "$num" comment - gh api -X POST "repos/$slug/issues/$num/comments" -f "body=$body" >/dev/null 2>&1 || return 1
+  prr_write "$slug" "$num" pull - gh api -X PATCH "repos/$slug/pulls/$num" -f state=closed >/dev/null 2>&1
 }
 
 # ── A HOLD ON THE TICKET KEEPS ITS PR (BH-1460, 2026-09-22) ──────────────────
@@ -719,10 +725,10 @@ mc_kick_ci() {
   fi
   # A refused close changed nothing at all: return without touching anything
   # else, and the caller retries on a later tick.
-  gh api -X PATCH "repos/$slug/pulls/$num" -f state=closed >/dev/null 2>&1 || return 1
+  prr_write "$slug" "$num" pull - gh api -X PATCH "repos/$slug/pulls/$num" -f state=closed >/dev/null 2>&1 || return 1
   MC_KICK_CLOSED=1
   while :; do
-    gh api -X PATCH "repos/$slug/pulls/$num" -f state=open >/dev/null 2>&1 && return 0
+    prr_write "$slug" "$num" pull - gh api -X PATCH "repos/$slug/pulls/$num" -f state=open >/dev/null 2>&1 && return 0
     [ "$i" -ge "${MC_KICK_REOPEN_TRIES:-3}" ] && break
     i=$((i+1)); sleep "${MC_KICK_REOPEN_SLEEP:-2}"
   done
@@ -1530,9 +1536,11 @@ mc_rebase() {
   fi
   # The push re-reads the hold and leases on the head this run started from
   # (BH-2504): mc_rebase's merge and mc_restack's rebase both rewrite a PR branch.
+  local prat; prat=$(prr_now)
   if ! { mc_hold_push_load && HOLD_PUSH_LOG="${MC_LOG:-}" hold_push -n "$project" - "$wt" "$remote" HEAD "$br" "$head" >/dev/null 2>&1; }; then
     mc_rebase_cleanup "$repo" "$wt" "$cloned"; return 3
   fi
+  prr_note_push "$slug" "$(mc_num_of_url "$url")" "$prat" "$wt" HEAD "$head"
   # A UNION-RESOLVED MERGE IS NOT A CLEAN MAIN MERGE (BH-4641, iron guardrail 1).
   # The resolution wrote code no reviewer has read, so the approval stays on the
   # old head: no reviewed-sha write, no ledger rebind, rc 5. Every caller already
@@ -1731,9 +1739,11 @@ mc_restack() {
   # (BH-2504): mc_rebase's merge and mc_restack's rebase both rewrite a PR branch.
   # HOLD_PUSH_CHILDREN=follow: this is the one sanctioned rewrite of a parent,
   # because its children are followed just below.
+  local prat; prat=$(prr_now)
   if ! { mc_hold_push_load && HOLD_PUSH_CHILDREN=follow HOLD_PUSH_LOG="${MC_LOG:-}" hold_push -n "$project" - "$wt" "$remote" HEAD "$br" "$head" >/dev/null 2>&1; }; then
     mc_rebase_cleanup "$repo" "$wt" "$cloned"; return 3
   fi
+  prr_note_push "$slug" "$(mc_num_of_url "$url")" "$prat" "$wt" HEAD "$head"
   for kid in $kids; do
     if mc_stack_pending_put "$slug" "$kid" "${url##*/}" "$url" "$br" "$head" "$br"; then
       mc_log "$url restack: $slug#$kid is based on $br — owed a restack from its old head ${head:0:8} onto the new ${new:0:8}"

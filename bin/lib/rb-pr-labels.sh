@@ -23,6 +23,11 @@
 [ -n "${_PRL_LOADED:-}" ] && declare -F prl_apply >/dev/null && return 0
 _PRL_LOADED=1
 PRL_MAX=10
+# BH-8150: the PR record writer. Without it the label write runs as before and
+# nothing is recorded.
+# shellcheck source=bin/lib/pr-record-write.sh
+command -v prr_write >/dev/null 2>&1 || . "${BASH_SOURCE[0]%/*}/pr-record-write.sh" 2>/dev/null \
+  || prr_write() { shift 4; "$@"; }
 
 # prl_parse — ticket body on stdin, the declared labels on stdout, one a line.
 prl_parse() {
@@ -85,7 +90,7 @@ prl_apply() {
     esac
   done <<<"$labels"
   [ "${#kept[@]}" -gt 0 ] || return 0
-  if gh api -X POST "repos/$slug/issues/$num/labels" "${args[@]}" >/dev/null 2>&1; then
+  if prr_write "$slug" "$num" labels - gh api -X POST "repos/$slug/issues/$num/labels" "${args[@]}" >/dev/null 2>&1; then
     echo "$ts [$project] pr labels: labelled $url '$(IFS=,; printf '%s' "${kept[*]}" | sed 's/,/, /g')' from the ticket's PR-Labels line" >> "$log"
   else
     echo "$ts [$project] pr labels: could NOT label $url (POST repos/$slug/issues/$num/labels failed)" >> "$log"

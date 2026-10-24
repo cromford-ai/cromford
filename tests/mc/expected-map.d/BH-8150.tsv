@@ -1,0 +1,8 @@
+# tests/mc/expected-map.d/BH-8150.tsv — BH-8150: the pass-through stubs of the
+# PR record writer (bin/lib/pr-record-write.sh). mc/log.sh defines them only
+# when the shim did not load the real lib, like issue_close_shipped; origin=lib
+# because they are new module functions.
+log	prr_write	lib
+log	prr_note_push	lib
+log	prr_now	lib
+log	prr_mergify_extra	lib

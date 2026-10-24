@@ -8,6 +8,10 @@
 # carried the marker while it carried these calls, and a module holding them
 # unmarked would be a call site the guard silently stopped policing.
 # gh-rest: no-graphql
+# BH-8150: pass-through stubs for a caller that sources this module without
+# mc/log.sh. mc/log.sh's stubs, or the real bin/lib/pr-record-write.sh, load
+# first in every other caller, so these never fire there.
+type prr_write >/dev/null 2>&1 || prr_write() { shift 4; "$@"; }
 
 
 # --- Enumeration helpers -----------------------------------------------------
@@ -1831,7 +1835,7 @@ mc_labels_csv_has() {
 mc_label_remove() {
   local url="${1:-}" label="${2:-}"
   [ -n "$url" ] && [ -n "$label" ] || return 2
-  gh api -X DELETE "repos/$(mc_slug_of_url "$url")/issues/$(mc_num_of_url "$url")/labels/$label" >/dev/null 2>&1
+  prr_write "$(mc_slug_of_url "$url")" "$(mc_num_of_url "$url")" labels - gh api -X DELETE "repos/$(mc_slug_of_url "$url")/issues/$(mc_num_of_url "$url")/labels/$label" >/dev/null 2>&1
 }
 
 # The once-per-(PR, head) marker. Same key shape as the stuck detector's.
@@ -2014,7 +2018,7 @@ mc_nhv_unqueue() {
     mc_log "$key WOULD unqueue ${head:0:8}: $MC_MERGIFY_LABEL is on and the lead-verdict is withheld (${LA_REASON}) — merges are off this tick"
     return 1
   fi
-  if ! err=$(gh api -X DELETE "repos/$slug/issues/$num/labels/$MC_MERGIFY_LABEL" 2>&1 >/dev/null); then
+  if ! err=$(prr_write "$slug" "$num" labels - gh api -X DELETE "repos/$slug/issues/$num/labels/$MC_MERGIFY_LABEL" 2>&1 >/dev/null); then
     case "$err" in
       *404*|*"Not Found"*|*"Label does not exist"*) : ;;
       *) mc_log "$key unqueue of ${head:0:8} FAILED: $MC_MERGIFY_LABEL could not be removed ($(head -1 <<<"$err")) — tried again next tick: $url"

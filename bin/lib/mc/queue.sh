@@ -8,6 +8,11 @@
 # carried the marker while it carried these calls, and a module holding them
 # unmarked would be a call site the guard silently stopped policing.
 # gh-rest: no-graphql
+# BH-8150: pass-through stubs for a caller that sources this module without
+# mc/log.sh. mc/log.sh's stubs, or the real bin/lib/pr-record-write.sh, load
+# first in every other caller, so these never fire there.
+type prr_write >/dev/null 2>&1 || prr_write() { shift 4; "$@"; }
+type prr_mergify_extra >/dev/null 2>&1 || prr_mergify_extra() { printf '%s' -; }
 
 
 # --- Batch trains (BH-498) ---------------------------------------------------
@@ -633,7 +638,7 @@ mc_pr_queued() { [ "$(mc_queue_state "$1" "${2:-}")" = queued ]; }
 mc_dequeue_label() {
   local url="$1"
   [ "$(mc_queue_provider "$(mc_slug_of_url "$url")")" = mergify ] || return 0
-  gh api -X DELETE "repos/$(mc_slug_of_url "$url")/issues/$(mc_num_of_url "$url")/labels/$MC_MERGIFY_LABEL" >/dev/null 2>&1 || true
+  prr_write "$(mc_slug_of_url "$url")" "$(mc_num_of_url "$url")" labels - gh api -X DELETE "repos/$(mc_slug_of_url "$url")/issues/$(mc_num_of_url "$url")/labels/$MC_MERGIFY_LABEL" >/dev/null 2>&1 || true
 }
 
 # mc_dequeue_reason <owner/repo> <pr-url> <head-sha> -> `github-review-approved`
@@ -1033,7 +1038,7 @@ mc_dequeue_surface() {
   if [ "$merges" = 1 ]; then
     cslug=$(mc_slug_of_url "$url"); cnum=$(mc_num_of_url "$url")
     if [ -n "$cslug" ] && [ -n "$cnum" ]; then
-      gh api -X POST "repos/$cslug/issues/$cnum/comments" -f "body=$body" >/dev/null 2>&1 \
+      prr_write "$cslug" "$cnum" comment - gh api -X POST "repos/$cslug/issues/$cnum/comments" -f "body=$body" >/dev/null 2>&1 \
         || mc_log "$key dequeue ($reason) on ${head:0:8} could NOT be commented on the PR — the beat is the only notice this head gets (POST repos/$cslug/issues/$cnum/comments)"
     else
       mc_log "$key dequeue ($reason) on ${head:0:8} has no readable owner/repo#number in its URL ($url) — no PR comment, the beat is the only notice"
@@ -1098,7 +1103,7 @@ mc_merge() {
   local mflag=--squash
   command -v gh_pr_merge_flag >/dev/null 2>&1 \
     && mflag=$(gh_pr_merge_flag "$(mc_slug_of_url "$url")" "${url##*/}" "$MC_LOG" "mc_merge ${url##*/}")
-  err=$(gh pr merge "$url" "$mflag" --match-head-commit "$head" 2>&1 >/dev/null) || true  # gh-guard-allow: gated merge verb, out of BH-770 scope
+  err=$(prr_write "$(mc_slug_of_url "$url")" "$(mc_num_of_url "$url")" none '{"queue_state":"merge_requested"}' gh pr merge "$url" "$mflag" --match-head-commit "$head" 2>&1 >/dev/null) || true  # gh-guard-allow: gated merge verb, out of BH-770 scope
   case "${MC_MERGE_SETTLE:-}" in ''|*[!0-9]*) ;; *) sleep "$MC_MERGE_SETTLE" ;; esac
   # The VERIFYING read, not gh's exit code (#272). A read that could not answer
   # is "not merged" here exactly as an empty GraphQL answer was — the caller's
@@ -1162,7 +1167,7 @@ mc_enqueue_github() {
   # repo that refuses squash refuses the verb (BH-1313). `--squash` without lib.
   command -v gh_pr_merge_flag >/dev/null 2>&1 \
     && mflag=$(gh_pr_merge_flag "$(mc_slug_of_url "$url")" "${url##*/}" "$MC_LOG" "mc_enqueue ${url##*/}")
-  err=$(gh pr merge "$url" "$mflag" --match-head-commit "$head" 2>&1 >/dev/null); mrc=$?  # gh-guard-allow: gated merge verb, out of BH-770 scope
+  err=$(prr_write "$(mc_slug_of_url "$url")" "$(mc_num_of_url "$url")" none '{"queue_state":"requested"}' gh pr merge "$url" "$mflag" --match-head-commit "$head" 2>&1 >/dev/null); mrc=$?  # gh-guard-allow: gated merge verb, out of BH-770 scope
   case "${MC_ENQUEUE_SETTLE:-}" in ''|*[!0-9]*) ;; *) sleep "$MC_ENQUEUE_SETTLE" ;; esac
   st=$(mc_pr_view "$url" .STATE 2>/dev/null); src=$?
   [ "$src" = 0 ] || st=""
@@ -1196,7 +1201,7 @@ mc_mergify_command() {
       case "${GH_TOKEN:-}" in ghs_*) unset GH_TOKEN ;; esac
     fi
     export GH_USE_PAT=1
-    gh api -X POST "repos/$slug/issues/$num/comments" -f "body=$body" >/dev/null 2>&1
+    prr_write "$slug" "$num" comment "$(prr_mergify_extra "$body")" gh api -X POST "repos/$slug/issues/$num/comments" -f "body=$body" >/dev/null 2>&1
   )
 }
 
@@ -1368,7 +1373,7 @@ mc_enqueue_mergify() {
   # A label write that fails is "the queue cannot be entered", the same
   # condition as a queue that never answers — rc 3, the conductor's hold with
   # its once-a-day alert (BH-2199) — never a strike against the PR.
-  err=$(gh api -X POST "repos/$slug/issues/$(mc_num_of_url "$url")/labels" -f "labels[]=$MC_MERGIFY_LABEL" 2>&1 >/dev/null) || {
+  err=$(prr_write "$slug" "$(mc_num_of_url "$url")" labels - gh api -X POST "repos/$slug/issues/$(mc_num_of_url "$url")/labels" -f "labels[]=$MC_MERGIFY_LABEL" 2>&1 >/dev/null) || {
     printf 'label %s could not be added via REST (%s) — the queue cannot be entered' "$MC_MERGIFY_LABEL" "$(head -1 <<<"$err")"
     return 3
   }
@@ -1434,7 +1439,7 @@ mc_enqueue_mergify() {
 mc_requeue_mergify() {
   local slug="$1" url="$2" head="$3" n err
   n=$(mc_num_of_url "$url")
-  if ! err=$(gh api -X DELETE "repos/$slug/issues/$n/labels/dequeued" 2>&1 >/dev/null); then
+  if ! err=$(prr_write "$slug" "$n" labels - gh api -X DELETE "repos/$slug/issues/$n/labels/dequeued" 2>&1 >/dev/null); then
     case "$err" in
       *404*|*"Not Found"*|*"Label does not exist"*) : ;;
       *) printf 'the dequeued label could not be removed (%s)' "$(head -1 <<<"$err")"; return 1 ;;
@@ -1564,12 +1569,12 @@ mc_cr_dequeue() {
     return 1
   fi
   mc_attempt_put "crdequeue $key $head"
-  gh api -X DELETE "repos/$slug/issues/$num/labels/$MC_MERGIFY_LABEL" >/dev/null 2>&1 || true
+  prr_write "$slug" "$num" labels - gh api -X DELETE "repos/$slug/issues/$num/labels/$MC_MERGIFY_LABEL" >/dev/null 2>&1 || true
   # The tag marks this comment as the conductor's own (BH-5819 lead review):
   # it posts as the shared PAT (type User), and mc_eject_culprit_mark must not
   # read it as a human dequeue once the crdequeue mark is cleared. The command
   # stays alone on the first line, where Mergify reads it.
-  gh api -X POST "repos/$slug/issues/$num/comments" -f body="@mergifyio dequeue
+  prr_write "$slug" "$num" comment '{"queue_state":"dequeue_requested"}' gh api -X POST "repos/$slug/issues/$num/comments" -f body="@mergifyio dequeue
 
 $MC_CRDEQUEUE_TAG" >/dev/null 2>&1 \
     || mc_log "$key the @mergifyio dequeue comment could not be posted — the label is off and .mergify.yml's #changes-requested-reviews-by=0 keeps it out"

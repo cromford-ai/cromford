@@ -373,6 +373,11 @@ mq_refused() {
 # <<< pre-merge guard
 
 # >>> mq_land
+# BH-8150: the PR record writer (bin/lib/pr-record-write.sh); the shim above
+# loads it. Without it the merge verb and the rebase push run as before.
+# shellcheck source=bin/lib/pr-record-write.sh
+command -v prr_write >/dev/null 2>&1 || . "$(dirname "${BASH_SOURCE[0]}")/lib/pr-record-write.sh" 2>/dev/null \
+  || { prr_write() { shift 4; "$@"; }; prr_note_push() { return 0; }; prr_now() { return 0; }; }
 # mq_land <num> — land ONE PR (BH-892). Prints `MERGED <sha>` when GitHub's own
 #   REST answer says the merge happened (the sha may be empty when the 200 did
 #   not carry one), `REFUSED <hold|handback> <reason>` when the pre-merge guard
@@ -434,7 +439,7 @@ mq_land() { # mq_land <num> [pin-head]
   command -v gh_pr_merge_flag >/dev/null 2>&1 \
     && mflag=$(gh_pr_merge_flag "$SLUG" "$num" "$LOG" "merge-queue #$num")
   local pinarg=(); [ -n "$sha" ] && pinarg=(--match-head-commit "$sha")   # BH-1606
-  gh pr merge "$num" -R "$SLUG" "$mflag" ${pinarg[@]+"${pinarg[@]}"} >/dev/null 2>&1 || true  # gh-guard-allow: gated merge verb, out of BH-770 scope
+  prr_write "$SLUG" "$num" none '{"queue_state":"merge_requested"}' gh pr merge "$num" -R "$SLUG" "$mflag" ${pinarg[@]+"${pinarg[@]}"} >/dev/null 2>&1 || true  # gh-guard-allow: gated merge verb, out of BH-770 scope
 }
 # <<< mq_land
 
@@ -860,7 +865,9 @@ for F in $(mq_queue_list); do
         # push, and a branch that moved since the rebase began is not overwritten.
         # shellcheck source=bin/lib/hold-push.sh
         command -v hold_push >/dev/null 2>&1 || . "$(dirname "${BASH_SOURCE[0]}")/lib/hold-push.sh" 2>/dev/null || . "$HARNESS/bin/lib/hold-push.sh" 2>/dev/null
+        MQ_PRAT=$(prr_now)
         if [ -n "${MQ_LEASE:-}" ] && HOLD_PUSH_LOG="$LOG" hold_push "$PROJECT" - "$WT" origin "$BR" "$BR" "$MQ_LEASE" 2>/dev/null; then
+          prr_note_push "$SLUG" "$NUM" "$MQ_PRAT" "$WT" "$BR" "$MQ_LEASE"
           echo "$(STAMP) [$PROJECT] #$NUM rebased onto main (clean)" >> "$LOG"
           MQ_PIN=$(cd "$WT" && git rev-parse HEAD 2>/dev/null)   # BH-1606: land the head this rebase pushed
           hb_rebind "$NUM" "$MQ_PIN"

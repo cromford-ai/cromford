@@ -162,6 +162,10 @@ CALL = re.compile(r"^gh\s+(?:%s)(?![A-Za-z0-9_-])" % VERBS)
 ASSIGN  = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=(?:\"[^\"]*\"|'[^']*'|[^\s;|&]*)\s+")
 TIMEOUT = re.compile(r"^timeout\s+(?:-k\s+\S+\s+)?\S+\s+")
 ENVP    = re.compile(r"^env\s+(?:-[iu]\s+\S+\s+|-[iu]\s+)*")
+# BH-8150: `prr_write <repo> <n> <kind> <extra> gh ...` (bin/lib/pr-record-write.sh)
+# runs the gh call it wraps. Its four arguments can hold `$(...)`, which SPLIT
+# would cut, so the whole prefix comes off the line before the split.
+PRRW    = re.compile(r"(?<![A-Za-z0-9_])prr_write\s.*?\s(?:labels|comment|pull|none)\s+.*?(?=(?<![A-Za-z0-9_-])gh\s)")
 # Command separators, exactly the ones #438 names. Bare "(" is NOT one of them:
 # prose like "(gh pr view for PR claims)" inside a heredoc is not a call.
 SPLIT = re.compile(r"\$\(|<\(|\|\||&&|[|;{]"
@@ -256,6 +260,7 @@ def raw_lines(path):
             code = strip_comment(line.rstrip("\n")).strip()
             if not code:
                 continue
+            code = PRRW.sub("", code)
             for chunk in SPLIT.split(code):
                 c = chunk.lstrip()
                 while True:
@@ -495,6 +500,26 @@ done
 for ONE in prose.sh armed.sh ciread.sh; do
   case " $GOT " in *" $ONE "*) bad "fixture: $ONE makes no raw gh call and must not be flagged" ;; *) ok ;; esac
 done
+
+# ── 1a. a gh call behind the PR-record wrapper is still a call (BH-8150) ────
+FP="$T/fixture-prr/bin"
+mkdir -p "$FP"
+cat > "$FP/wrapped.sh" <<'EOF2'
+#!/bin/bash
+prr_write "$(mc_slug_of_url "$url")" "$(mc_num_of_url "$url")" labels - gh api -X DELETE "repos/x/y/issues/1/labels/z" >/dev/null 2>&1 || true
+EOF2
+cat > "$FP/wrapsub.sh" <<'EOF2'
+#!/bin/bash
+err=$(prr_write "$slug" "$num" comment "$(prr_mergify_extra "$body")" gh api -X POST "repos/$slug/issues/$num/comments" 2>&1 >/dev/null)
+EOF2
+cat > "$FP/nowrap.sh" <<'EOF2'
+#!/bin/bash
+prr_note_push "$slug" "$num" "$at" "$wt" HEAD "$head"
+prr_write "$slug" "$num" none - true
+EOF2
+GOT=$(scan "$FP")
+[ "$GOT" = "wrapped.sh wrapsub.sh " ] && ok \
+  || bad "1a: a gh call behind prr_write must be flagged and a prr_ line with no gh call must not: expected 'wrapped.sh wrapsub.sh ', got '$GOT'"
 
 # ── 1b. the armed rule tells an App token from the PAT probe ────────────────
 # The rollout this ratchet drives is PAT -> App token, so a script pinned to the

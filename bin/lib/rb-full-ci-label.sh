@@ -11,6 +11,12 @@
 # unreadable label). The label write is a separate REST POST, like the hotfix
 # label above the block, and a failed write never fails the build.
 
+# BH-8150: the PR record writer. Without it the label write runs as before and
+# nothing is recorded.
+# shellcheck source=bin/lib/pr-record-write.sh
+command -v prr_write >/dev/null 2>&1 || . "${BASH_SOURCE[0]%/*}/pr-record-write.sh" 2>/dev/null \
+  || prr_write() { shift 4; "$@"; }
+
 # fcl_apply <project> <pr-url> <worktree> <base-branch> <pipeline-log> — always rc 0.
 #   Knobs (lib_env_apply rb-full-ci-label <project>): FULL_CI_LABEL (empty or
 #   off = off; a settings row cannot be empty, BH-8049), FULL_CI_LANE_SCRIPT (scripts/ci/lane.mjs), FULL_CI_LANE_TIMEOUT_S (60).
@@ -64,7 +70,7 @@ fcl_apply() {
     echo "$(date -u '+%Y-%m-%d %H:%M:%SZ') [$project] full-ci label: lane frontend — no '$label' label on $url" >> "$log"
     return 0
   fi
-  if gh api -X POST "repos/$slug/issues/$num/labels" -f "labels[]=$label" >/dev/null 2>&1; then
+  if prr_write "$slug" "$num" labels - gh api -X POST "repos/$slug/issues/$num/labels" -f "labels[]=$label" >/dev/null 2>&1; then
     echo "$(date -u '+%Y-%m-%d %H:%M:%SZ') [$project] full-ci label: $why — labelled $url '$label'" >> "$log"
   else
     echo "$(date -u '+%Y-%m-%d %H:%M:%SZ') [$project] full-ci label: $why — could NOT label $url '$label' (POST repos/$slug/issues/$num/labels failed); the PR runs the lane its CI picks without it" >> "$log"

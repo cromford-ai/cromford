@@ -190,6 +190,16 @@ if ! type rp_prov_is_claude >/dev/null 2>&1; then
   rp_out_is_claude()  { rp_prov_is_claude "$(rp_out_prov "$1")"; }
   rp_out_label()      { rp_out_prov "$1"; }
 fi
+# The PR record writer (BH-8150, bin/lib/pr-record-write.sh). The shim sources
+# it BEFORE the modules, like issue-state-lib.sh, so when it is on the box these
+# definitions never fire. Without it each GitHub write runs exactly as before
+# and nothing is recorded.
+if ! type prr_write >/dev/null 2>&1; then
+  prr_write()         { shift 4; "$@"; }
+  prr_note_push()     { return 0; }
+  prr_now()           { :; }
+  prr_mergify_extra() { printf '%s' -; }
+fi
 mc_stamp() { date -u '+%Y-%m-%d %H:%M:%SZ'; }
 mc_now()   { date -u +%s; }
 mc_mtime() { stat -c %Y "$1" 2>/dev/null || stat -f %m "$1" 2>/dev/null || echo 0; }

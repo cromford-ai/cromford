@@ -1,0 +1,21 @@
+{
+  "libs": [
+    {
+      "id": "pr-record-write",
+      "file": "bin/lib/pr-record-write.sh",
+      "note": "BH-8150: the fleet's own GitHub writes (labels, comments, PR state, queue requests, pushes) in bin/lib/mc/*.sh, bin/merge-queue.sh and bin/lib/rb/pr.sh update the PR record (bin/lib/pr-record.sh) after GitHub answered rc 0, from what GitHub answered. prr_write wraps each write; prr_note_push follows a push. Log: logs/pr-record.log, one `write <repo>#<n> <kind> put=failed` line per failed record write.",
+      "knobs": [
+        {
+          "env": "PR_RECORD_WRITES",
+          "type": "int",
+          "default": 1,
+          "min": 0,
+          "max": 1,
+          "zero_means": "no PR-record write from a GitHub write or a push; GitHub writes run as before",
+          "required": true,
+          "note": "1 = each successful fleet GitHub write also writes the PR record (one jobs request). Read through lane_knob (libs scope) when the caller has it, else as ${PR_RECORD_WRITES:-1}; a value that is not 0 or 1 is 1 and one logs/pr-record.log line names it."
+        }
+      ]
+    }
+  ]
+}

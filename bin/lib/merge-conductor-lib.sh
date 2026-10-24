@@ -18,6 +18,8 @@
 #   - The bin/lib/ siblings load BEFORE the modules. verdict-parse.sh (BH-1625)
 #     is the one reader mc_verdict and mc_rereview take every verdict through;
 #     queue-batch-only.sh keeps the corpus to the merge-queue batch (2026-09-24).
+#     pr-record-write.sh (BH-8150) loads before the modules, so mc/log.sh's
+#     pass-through prr_* stubs never fire when it is on the box.
 #   - The $MC_H siblings load AFTER the modules, so a real helper replaces
 #     mc/log.sh's fail-open stub: review-model.sh (BH-998) because mc_rereview
 #     reads the model off review_model and never a literal; gh-rest.sh (BH-784)
@@ -43,6 +45,7 @@ command -v main_red_hold >/dev/null 2>&1 || { [ -r "${BASH_SOURCE[0]%/*}/main-re
 command -v verdict_parse >/dev/null 2>&1 || { [ -r "${BASH_SOURCE[0]%/*}/verdict-parse.sh" ] && . "${BASH_SOURCE[0]%/*}/verdict-parse.sh"; }
 command -v mc_queue_batch_only >/dev/null 2>&1 || { [ -r "${BASH_SOURCE[0]%/*}/queue-batch-only.sh" ] && . "${BASH_SOURCE[0]%/*}/queue-batch-only.sh"; }
 command -v mnr_fix >/dev/null 2>&1 || { [ -r "${BASH_SOURCE[0]%/*}/migration-renumber.sh" ] && . "${BASH_SOURCE[0]%/*}/migration-renumber.sh"; }
+command -v prr_write >/dev/null 2>&1 || { [ -r "${BASH_SOURCE[0]%/*}/pr-record-write.sh" ] && . "${BASH_SOURCE[0]%/*}/pr-record-write.sh"; }
 . "$MC_LIB_DIR/load.sh" || { echo "merge-conductor-lib: the mc modules did not load from $MC_LIB_DIR" >&2; exit 1; }
 [ -r "$MC_LIB_DIR/block-ci.sh" ] && . "$MC_LIB_DIR/block-ci.sh"
 [ -r "$MC_LIB_DIR/spawn-remote.sh" ] && . "$MC_LIB_DIR/spawn-remote.sh"

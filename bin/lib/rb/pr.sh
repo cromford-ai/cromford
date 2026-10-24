@@ -1517,6 +1517,13 @@ if [ "$HF_PR" = 0 ] && command -v hotfix_meta_is >/dev/null 2>&1; then
   hotfix_meta_is "$BUILD/ticket-meta.json" "$HARNESS" && HF_PR=1
 fi
 if command -v hotfix_lane_on >/dev/null 2>&1 && [ "$(hotfix_lane_on "$HARNESS")" = 0 ]; then HF_PR=0; fi
+# BH-8150: the PR record writer. Without it each GitHub write below runs as
+# before and nothing is recorded.
+# shellcheck source=bin/lib/pr-record-write.sh
+command -v prr_write >/dev/null 2>&1 || . "$HARNESS/bin/lib/pr-record-write.sh" 2>/dev/null \
+  || { prr_write() { shift 4; "$@"; }; prr_note_push() { return 0; }; prr_now() { return 0; }; }
+PRR_SLUG=$(sed -nE 's#^https://github.com/([^/]+/[^/]+)/pull/[0-9]+$#\1#p' <<<"${PR_URL:-}")
+PRR_NUM=$(sed -nE 's#^https://github.com/[^/]+/[^/]+/pull/([0-9]+)$#\1#p' <<<"${PR_URL:-}")
 if [ -n "$PR_URL" ] && [ "$HF_PR" = 1 ]; then
   HOTFIX=1
   HF_LABEL=$(hotfix_label "$HARNESS")
@@ -1525,7 +1532,7 @@ if [ -n "$PR_URL" ] && [ "$HF_PR" = 1 ]; then
   HF_SLUG=$(sed -nE 's#^https://github.com/([^/]+/[^/]+)/pull/[0-9]+$#\1#p' <<<"$PR_URL")
   HF_NUM=$(grep -oE '[0-9]+$' <<<"$PR_URL")
   if [ -n "$HF_SLUG" ] && [ -n "$HF_NUM" ] \
-     && gh api -X POST "repos/$HF_SLUG/issues/$HF_NUM/labels" -f "labels[]=$HF_LABEL" >/dev/null 2>&1; then
+     && prr_write "$HF_SLUG" "$HF_NUM" labels - gh api -X POST "repos/$HF_SLUG/issues/$HF_NUM/labels" -f "labels[]=$HF_LABEL" >/dev/null 2>&1; then
     echo "$(STAMP) [$PROJECT/$KEY] labelled $PR_URL '$HF_LABEL'" >> "$BUILD/pipeline.log"
   else
     echo "$(STAMP) [$PROJECT/$KEY] HOTFIX $PR_URL could NOT be labelled '$HF_LABEL' — the hotfix merge rule keys on this label, so it will be treated as an ordinary PR until somebody adds it. If the label does not exist in the repo: gh label create $HF_LABEL -R ${HF_SLUG:-<slug>}" >> "$ALERTS"
@@ -1609,7 +1616,8 @@ if [ -n "$PR_URL" ] && grep -qiE '\.(tsx|jsx|css)$|(^|/)app/|(^|/)components/|(^
       echo "$(STAMP) [$PROJECT/$KEY] QA FAIL -> fix round" >> "$BUILD/pipeline.log"
       CC fix "$FIX_MODEL" 4800 "$BUILD/qa-fix-run.txt" "Address every defect in $BUILD/qa.md (browser QA of the preview deployment) on branch $BRANCH (plan: $BUILD/plan.md). Keep tests green; 'npm run build' must pass. Commit your work. Do NOT push: the harness pushes $BRANCH after this session, through its hold check."
       GH_LIVE
-      { RB_PUSH qa-fix 2>/dev/null && track_pushed; } || true
+      QF_AT=$(prr_now); QF_LEASE=$(git rev-parse -q --verify "refs/remotes/origin/$BRANCH" 2>/dev/null) || QF_LEASE=new
+      { RB_PUSH qa-fix 2>/dev/null && track_pushed && prr_note_push "$PRR_SLUG" "$PRR_NUM" "$QF_AT" "$PWD" "$BRANCH" "$QF_LEASE"; } || true
       SHA=$(git rev-parse HEAD)
       PREVIEW_URL=$("$HARNESS/bin/wait-preview.sh" "$SLUG" "$SHA" 600 2>"$BUILD/wait-preview.err"); WP_RC=$?
       cat "$BUILD/wait-preview.err" >> "$BUILD/pipeline.log" 2>/dev/null
@@ -1627,7 +1635,7 @@ if [ -n "$PR_URL" ] && grep -qiE '\.(tsx|jsx|css)$|(^|/)app/|(^|/)components/|(^
       "$HARNESS/bin/reference-shots.sh" publish "$BUILD" . "${PCF_SLUG:-$SLUG}" "$KEY" "$(git merge-base "$BASE" HEAD 2>/dev/null || git rev-parse "$BASE" 2>/dev/null)" >/dev/null 2>&1 || true
     fi
     # <<< reference shots (BH-6485)
-    gh pr comment "$PR_URL" --body "$(printf 'Preview QA (%s):\n%s' "$QA_MODEL" "$(tail -c 900 "$BUILD/qa.md" 2>/dev/null)")" 2>>"$BUILD/gh-stderr.log" || true   # gh-guard-allow: a write, not a decision read
+    prr_write "$PRR_SLUG" "$PRR_NUM" comment - gh pr comment "$PR_URL" --body "$(printf 'Preview QA (%s):\n%s' "$QA_MODEL" "$(tail -c 900 "$BUILD/qa.md" 2>/dev/null)")" 2>>"$BUILD/gh-stderr.log" || true   # gh-guard-allow: a write, not a decision read
   else
 # >>> preview-qa skip reason (BH-3438): the fail-open line names why, from the
 # last non-empty line wait-preview.sh wrote to stderr. The prefix is unchanged.
