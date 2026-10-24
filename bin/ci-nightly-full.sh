@@ -193,7 +193,7 @@ failed_suites() {
   [ "$total" -gt "$MAX_LOGS" ] && echo "$(( total - MAX_LOGS )) more failed shard job(s) were not read (cap CI_NIGHTLY_FULL_MAX_LOGS=$MAX_LOGS)." >> "$out.notes"
   while IFS=$'\t' read -r jid name; do
     [ -n "$jid" ] || continue
-    if lg=$(gh api "repos/$R/actions/jobs/$jid/logs" 2>/dev/null); then
+    if lg=$(gh api --allow-escape-sequences "repos/$R/actions/jobs/$jid/logs" 2>/dev/null); then
       printf '%s\n' "$lg" | sed -n 's/^\([0-9TZ:.-]* \)\{0,1\}--- \(tests\/[^ ]*\) rc=\([1-9][0-9]*\).*/\2 \3/p' >> "$out"
     else
       echo "Job $name: log unreadable." >> "$out.notes"

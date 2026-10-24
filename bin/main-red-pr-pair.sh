@@ -277,7 +277,7 @@ first_error_of_job() { # first_error_of_job <owner/repo> <job-id>
   # nothing — a lane that could never fire. Verified against a real failing job
   # on 2026-09-18. The bare retry is for a gh too old to know the flag.
   if ! gh api --allow-escape-sequences "repos/$slug/actions/jobs/$jid/logs" > "$tmp" 2>/dev/null; then
-    gh api "repos/$slug/actions/jobs/$jid/logs" > "$tmp" 2>/dev/null || { rm -f "$tmp"; return 1; }
+    gh api "repos/$slug/actions/jobs/$jid/logs" > "$tmp" 2>/dev/null || { rm -f "$tmp"; return 1; } # escape-flag-exempt: bare retry for a gh too old to know the flag (the flagged read on the line above failed)
   fi
   head -c 2000000 "$tmp" > "$tmp.b" 2>/dev/null
   out=$(awk -v re="$ERR_RE" '

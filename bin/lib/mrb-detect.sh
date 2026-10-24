@@ -30,8 +30,8 @@
 #
 # BH-3695 fills in the two bodies below. REST reads go through gh_rest_var,
 # never a `$( )` around a gh_rest helper. Log and artifact BYTES are the one
-# `gh api` call here: they are not JSON, and gh_rest's body handling is for
-# JSON. The file sources nothing at source time. bin/lib/gh-rest.sh,
+# `gh api` call here (_mrb_bytes, with --allow-escape-sequences): they
+# are not JSON, and gh_rest's body handling is for JSON. The file sources nothing at source time. bin/lib/gh-rest.sh,
 # bin/lib/gh-app-auth.sh and bin/lib/mrb-probe.sh load on the first call.
 #
 # gh-identity: app-token
@@ -68,7 +68,7 @@
 #   failed git fetch) returns 75, and that source writes no file.
 mrb_detect_episodes() {
   local slug="${1:-}" repo="${2:-}" out="${3:-}" root="${HARNESS:-${H:-}}" rc=0 worst=0
-  local _MRB_TMP _MRB_GREEN= _MRB_CLEARED_BY= _MRB_KEPT= _MRB_ABSENT=
+  local _MRB_TMP _MRB_GREEN= _MRB_CLEARED_BY= _MRB_KEPT= _MRB_ABSENT= _MRB_BYTES_WHY=
   _mrb_slug_ok "$slug" || { _mrb_log "${slug:-?}: bad slug"; return 75; }
   [ -n "$root" ] || { _mrb_log "$slug: no HARNESS root"; return 75; }
   { [ -n "$repo" ] && git -C "$repo" rev-parse --git-dir >/dev/null 2>&1; } || { _mrb_log "$slug: $repo is not a git checkout"; return 75; }
@@ -160,13 +160,27 @@ _mrb_max_merges() {
 }
 
 # _mrb_bytes <api-path> <out-file> — log or zip bytes. rc 0 read | 44 gone
-# (404/410: expired or deleted) | 75 anything else, network included.
+# (404/410: expired or deleted) | 76 gh refused to print bytes that hold
+# terminal escapes | 75 anything else, network included. Sets _MRB_BYTES_WHY
+# to `gh-refused: <gh line>` (76) or `gh: <gh line>` (75), empty otherwise.
+# BH-8223: gh prints a job log with ANSI escapes to a non-tty only with
+# --allow-escape-sequences; without it every log read failed and read as 75.
+# The flag follows the path. A gh too old to know the flag gets one bare retry.
 _mrb_bytes() {
-  local err="$_MRB_TMP/bytes.err"
-  if gh api "$1" > "$2" 2> "$err"; then return 0; fi
+  local err="$_MRB_TMP/bytes.err" rc=0 msg
+  _MRB_BYTES_WHY=
+  gh api "$1" --allow-escape-sequences > "$2" 2> "$err" && return 0
+  rc=$?
+  if grep -qF 'unknown flag: --allow-escape-sequences' "$err" 2>/dev/null; then
+    gh api "$1" > "$2" 2> "$err" && return 0
+    rc=$?
+  fi
+  msg=$(grep -m1 . "$err" 2>/dev/null | tr -d '\r')
   case "$(cat "$err" 2>/dev/null)" in
     *"HTTP 404"*|*"HTTP 410"*) return 44 ;;
+    *"terminal escape sequences"*) _MRB_BYTES_WHY="gh-refused: $msg"; return 76 ;;
   esac
+  _MRB_BYTES_WHY="gh: ${msg:-exit $rc}"
   return 75
 }
 
@@ -275,7 +289,7 @@ _mrb_main_cleared() {
       case "$rc" in
         0) _mrb_passed_suites_from_log < "$one" >> "$pass" ;;
         44) ;;
-        *) return 75 ;;
+        *) _mrb_log "$slug: job $jid log read failed rc=$rc $_MRB_BYTES_WHY"; return 75 ;;
       esac
     done
     for s in $suites; do
@@ -333,7 +347,7 @@ _mrb_flag() {
     case "$rc" in
       0) cat "$one" >> "$log" ;;
       44) _mrb_log "$slug: job $jid log is gone" ;;
-      *) _mrb_log "$slug: job $jid log read failed"; return 75 ;;
+      *) _mrb_log "$slug: job $jid log read failed rc=$rc $_MRB_BYTES_WHY"; return 75 ;;
     esac
   done
   suites=$(mrb_suites_from_log < "$log" | sort -u | tr '\n' ' ')
@@ -350,7 +364,7 @@ _mrb_flag() {
       0) _mrb_log "$slug: batch run $id red on $suites, but main run $_MRB_CLEARED_BY at $red ran them all rc=0: the batch's own PRs broke them, skipped"
          return 0 ;;
       1) ;;
-      *) _mrb_log "$slug: main runs at $red read failed"; return 75 ;;
+      *) _mrb_log "$slug: main runs at $red read failed${_MRB_BYTES_WHY:+: $_MRB_BYTES_WHY}"; return 75 ;;
     esac
   fi
   _mrb_green "$slug" "$repo" "$wfid" "$red" "$cls" || { _mrb_log "$slug: green anchor read failed"; return 75; }
@@ -387,7 +401,7 @@ with zipfile.ZipFile(sys.argv[1]) as z:
 PY
         ;;
       44) _mrb_log "$slug: artifact $aid is gone" ;;
-      *) _mrb_log "$slug: artifact $aid read failed"; return 75 ;;
+      *) _mrb_log "$slug: artifact $aid read failed rc=$rc $_MRB_BYTES_WHY"; return 75 ;;
     esac
   done
   suites=$(mrb_suites_from_log < "$log" | sort -u | tr '\n' ' ')
@@ -411,7 +425,7 @@ _mrb_failed_shard_suites() {
     case "$rc" in
       0) cat "$one" >> "$log" ;;
       44) _mrb_log "$slug: job $jid log is gone" ;;
-      *) _mrb_log "$slug: job $jid log read failed"; return 75 ;;
+      *) _mrb_log "$slug: job $jid log read failed rc=$rc $_MRB_BYTES_WHY"; return 75 ;;
     esac
   done
   return 0

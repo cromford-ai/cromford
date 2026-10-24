@@ -272,7 +272,7 @@ _fr_batch_ran() {
       | if length == 1 then .[0] else "" end' <<<"$jraw" 2>/dev/null) || return 2
     case "$jid" in ''|*[!0-9]*) return 2 ;; esac
     tmp=$(mktemp "${TMPDIR:-/tmp}/fr-plan.XXXXXX") || return 2
-    if ! GH_CI_READ_WHAT="actions/jobs/<id>/logs" gh_ci_api "$slug" "repos/$slug/actions/jobs/$jid/logs" > "$tmp" 2>/dev/null; then rm -f "$tmp"; return 2; fi
+    if ! GH_CI_READ_WHAT="actions/jobs/<id>/logs" gh_ci_api "$slug" "repos/$slug/actions/jobs/$jid/logs" --allow-escape-sequences > "$tmp" 2>/dev/null; then rm -f "$tmp"; return 2; fi
     sz=$(wc -c < "$tmp" 2>/dev/null | tr -d ' ')
     case "$sz" in ''|*[!0-9]*|0) rm -f "$tmp"; return 2 ;; esac
     [ "$sz" -le "$max" ] || { rm -f "$tmp"; return 2; }

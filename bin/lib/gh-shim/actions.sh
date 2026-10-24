@@ -51,7 +51,7 @@ gshim_cmd_run_view() {
     while IFS=$'\t' read -r jid jname; do
       [ -n "$jid" ] || continue
       printf '=== %s ===\n' "$jname"
-      gshim_api "repos/$GSHIM_SLUG/actions/jobs/$jid/logs" || exit $?
+      gshim_api "repos/$GSHIM_SLUG/actions/jobs/$jid/logs" --allow-escape-sequences || exit $?
     done < <(printf '%s' "$jobs" | jq -r "$filter | [(.id|tostring), .name] | @tsv")
     exit 0
   fi

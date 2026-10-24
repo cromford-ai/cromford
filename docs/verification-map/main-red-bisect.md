@@ -73,7 +73,10 @@ On a live hub: `tail logs/main-red-bisect.log`, and
 
 - `logs/main-red-bisect.log`: one line per repo per tick,
   `<ts> <slug> episodes=<n> <key>:<outcome> …` (or `unsupported`,
-  `forge-unreachable rc=<n>`, `ledger-unreachable`, `act-rc=<n> retry-next-tick`).
+  `forge-unreachable rc=<n>`, `log-read-failed rc=<n>`, `ledger-unreachable`,
+  `act-rc=<n> retry-next-tick`). BH-8223: a failed detect logs
+  `log-read-failed` when the last REST status is 2xx (gh refused a log, or a
+  read after a 200 broke) and `forge-unreachable` otherwise (000, 4xx, 5xx).
 - `state/main-red-bisect/<owner>-<repo>.last`: `outcome= red= green= culprit=
   steps= at=` of the last episode handled, `outcome=none` when there was none.
   A status cell, nothing decides on it.
