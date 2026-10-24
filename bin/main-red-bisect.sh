@@ -41,7 +41,9 @@
 #
 # OUTPUTS. One line per repo per tick to logs/main-red-bisect.log:
 #   <ts> <slug> episodes=<n> <key>:<outcome> …   (or `<slug> unsupported`,
-#   `<slug> forge-unreachable rc=<n>`, `… ledger-unreachable`)
+#   `<slug> forge-unreachable rc=<n> http=<s> reason=<r> why=<line>`, `… ledger-unreachable`)
+#   (BH-8195: http/reason are GH_REST_STATUS/GH_REST_REASON, why is the detect's
+#   last `mrb-detect: ` stderr line; `-` when there is none.)
 # state/main-red-bisect/<owner>-<repo>.last: outcome= red= green= culprit=
 # steps= at= of the last episode handled (outcome=none when there were none).
 # Alerts only through bin/lane-alert.sh --severity warn.
@@ -279,8 +281,13 @@ for SLUG in $(printf '%s' "$REPOS" | tr ',' ' '); do
   # mrb_act_culprit cuts the revert in this checkout (bin/lib/mrb-act.sh's contract).
   export MRB_REPO_DIR="$REPO_DIR"
   EPD="$TMP/ep.$n"; mkdir -p "$EPD"
-  rc=0; mrb_detect_episodes "$SLUG" "$REPO_DIR" "$EPD" || rc=$?
-  if [ "$rc" != 0 ]; then log "$SLUG forge-unreachable rc=$rc"; continue; fi
+  # BH-8195: the cron line drops stderr, so the detect's reason goes in the log line.
+  rc=0; mrb_detect_episodes "$SLUG" "$REPO_DIR" "$EPD" 2>"$TMP/detect.$n.err" || rc=$?
+  if [ "$rc" != 0 ]; then
+    why=$(grep '^mrb-detect: ' "$TMP/detect.$n.err" 2>/dev/null | tail -1 | tr -d '\r' | tr '\t' ' ')
+    log "$SLUG forge-unreachable rc=$rc http=${GH_REST_STATUS:--} reason=${GH_REST_REASON:--} why=${why:--}"
+    continue
+  fi
   PARTS=""; echo "outcome=none" > "$TMP/last"; cnt=0
   for f in "$EPD"/*; do [ -f "$f" ] && cnt=$((cnt+1)); done
   for f in "$EPD"/*; do

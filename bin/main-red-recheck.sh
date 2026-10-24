@@ -68,7 +68,8 @@ src=2
 if mrs_on; then last=$(mrs_recheck_get); src=$?; fi
 case "$src" in
   0|3) ;;
-  2) last=$(tr -dc '0-9' < "$STAMPF" 2>/dev/null) ;;
+  # BH-8195: the -f test, because bash opens `<` before `2>/dev/null` applies.
+  2) [ -f "$STAMPF" ] && last=$(tr -dc '0-9' < "$STAMPF" 2>/dev/null) ;;
   *) mkdir -p "$H/logs" 2>/dev/null
      echo "$(date -u '+%Y-%m-%d %H:%M:%SZ') main-red-recheck: the recheck stamp row is unreadable — no recheck this tick" >> "$H/logs/main-red.log"
      exit 0 ;;

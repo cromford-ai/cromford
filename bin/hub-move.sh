@@ -45,7 +45,10 @@
 #            state/hub-move/tick-<ts>.tsv (`lane rc secs refused timed_out`)
 #            and each lane's output to state/hub-move/tick-<ts>.out/<row>.out
 #            (a trailing >/dev/null / 2>&1 on the cron line is removed, so the
-#            output is kept). BH-8038: the cron installers (update-runners,
+#            output is kept). BH-8195: a lane whose command names an absent
+#            /bin/ path is not run: one `tick: <id>: missing script <path>`
+#            line, rc 127, and `missing=<n>` at the end of the summary.
+#            BH-8038: the cron installers (update-runners,
 #            registry-sync, fleet-propagate)
 #            never run in a tick (C6 runs update-runners.sh itself); the shim
 #            refuses `crontab` writes; a no-write tick runs only on a seeded
@@ -308,6 +311,22 @@ lane_id() {
   id=$(printf '%s\n' "$1" | grep -oE '/bin/[A-Za-z0-9._-]+' | sed 's|^/bin/||' | grep -v '^hub-lease\.sh$' | head -1)
   [ -n "$id" ] || id=$(basename "$(printf '%s\n' "$1" | awk '{print $1}')")
   printf '%s\n' "${id%.sh}"
+}
+
+# tick_missing_script <command> — print the first absolute path in the command
+# that holds a /bin/ segment and does not exist on this box; print nothing when
+# every such path exists (BH-8195). Tokens split on whitespace and ;&|()<>, with
+# quotes removed; a token with a $ or a glob (not expanded here) or a relative one
+# is skipped.
+tick_missing_script() {
+  local tok toks=()
+  read -ra toks <<<"$(printf '%s' "$1" | tr ";&|()<>'\"\n" ' ')"
+  for tok in "${toks[@]}"; do
+    case "$tok" in /*/bin/*|/bin/*) ;; *) continue ;; esac
+    case "$tok" in *'$'*|*[*?[]*) continue ;; esac
+    [ -e "$tok" ] || { printf '%s\n' "$tok"; return 0; }
+  done
+  return 0
 }
 
 # lane_rows — stdin: crontab text. stdout: `<id>\t<command>` for each cron
@@ -734,8 +753,15 @@ cmd_tick() {
 
   say "tick: flyctl=$flyctl_path"
   say "tick: ${#ids[@]} commands, mode=$mode, parallel=$TICK_PARALLEL, timeout=${TICK_TIMEOUT_S}s"
-  local running=0
+  local running=0 missing=0 gone
   for i in "${!ids[@]}"; do
+    # BH-8195: a lane whose script is absent is not run; one line names the path.
+    gone=$(tick_missing_script "${cmds[$i]}")
+    if [ -n "$gone" ]; then
+      echo "tick: ${ids[$i]}: missing script $gone" | tee "$run/$i.out"
+      echo "127 0" > "$run/$i.rc"; missing=$((missing + 1))
+      continue
+    fi
     while [ "$running" -ge "$TICK_PARALLEL" ]; do wait -n 2>/dev/null; running=$((running - 1)); done
     (
       s=$(date +%s)
@@ -768,7 +794,7 @@ cmd_tick() {
   mkdir -p "$STATE/tick-$ts.out"
   for i in "${!ids[@]}"; do mv -f "$run/$i.out" "$STATE/tick-$ts.out/$((i + 1)).out" 2>/dev/null; done
   rm -rf "$run"
-  echo "tick: lanes=$n ok=$ok fail=$bad timeout=$tout refused_writes=$refused mode=$mode skipped=${#skipped[@]}"
+  echo "tick: lanes=$n ok=$ok fail=$bad timeout=$tout refused_writes=$refused mode=$mode skipped=${#skipped[@]} missing=$missing"
   echo "tick-file: $tsv"
   if [ "$rearm" -eq 1 ]; then tick_rearm; trap - EXIT; fi
   if [ "$seeded" -eq 1 ]; then
