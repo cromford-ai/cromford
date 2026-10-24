@@ -368,24 +368,67 @@ jq -c '[ .[] | {number, state: ((.state // "") | ascii_upcase), closedAt: .close
   || { log "reconcile: could not reshape the all-states ai-build list — enqueued nothing"; exit 0; }
 [ -s "$TD/states.json" ] || exit 0
 
-RC=0
-gh_rest_pr_list_all "$REPO" open 200 > "$TD/prs.raw.json" || RC=$?
-if [ "$RC" != 0 ]; then rest_decline "the open PR list" "$RC"; exit 0; fi
-jq -c '[ .[] | {number, title, headRefName: (.head.ref // ""), body} ]' \
-  "$TD/prs.raw.json" > "$TD/prs.json" 2>/dev/null \
-  || { log "reconcile: could not reshape the open PR list — enqueued nothing"; exit 0; }
-[ -s "$TD/prs.json" ] || exit 0
+# shellcheck source=/dev/null
+[ -r "$HARNESS/bin/jobs-client.sh" ] && . "$HARNESS/bin/jobs-client.sh"
+# The wake backstop (BH-6976): the open PR list below and pass 1's per-issue
+# reads are reused when no wake says they changed. OPTIONAL: without it every
+# read happens, as before. The wake feed reads through the jobs client above.
+# shellcheck source=bin/lib/wake-backstop.sh
+[ -r "$HARNESS/bin/lib/wake-backstop.sh" ] && . "$HARNESS/bin/lib/wake-backstop.sh" 2>/dev/null
+WB_ON=0; command -v wb_cache_get >/dev/null 2>&1 && WB_ON=1
+WB_DIR="$HARNESS/state/orphan-reconcile/${REPO//\//_}"
+WB_OBS=1800; [ "$WB_ON" = 1 ] && WB_OBS=$(wb_knob ORPHAN_WAKE_BACKSTOP_S)
+
+# THE OPEN PR LIST IS REUSED (BH-8271). The last rc 0 list read is kept in
+# $WB_DIR/prlist.{json,meta} and used instead of a GitHub read only while all
+# of these hold: the copy is no older than PR_RECORD_MAX_AGE_S (the pr-record
+# lib's knob, catalog/lanes.d/_lib.pr-record.json), no `pr` wake for ANY PR of
+# the repo arrived since it was read (a PR opened, closed, reopened or pushed
+# rings one), and the copy reshapes. Every GitHub list read logs one
+# `PRR_MISS <repo>#list why=<no-row|stale>` line. A PR whose title or body is
+# edited rings no wake, so the knob is what bounds that staleness.
+# shellcheck source=bin/lib/pr-record.sh
+[ -r "$HARNESS/bin/lib/pr-record.sh" ] && . "$HARNESS/bin/lib/pr-record.sh" 2>/dev/null
+PRL_MAX=""
+command -v pr_record_max_age >/dev/null 2>&1 && PRL_MAX=$(pr_record_max_age 2>/dev/null)
+# Fallback only: the knob is PR_RECORD_MAX_AGE_S (default 900) in catalog/lanes.d/_lib.pr-record.json.
+[[ "$PRL_MAX" =~ ^[0-9]{1,9}$ ]] || PRL_MAX="${PR_RECORD_MAX_AGE_S:-900}"
+[[ "$PRL_MAX" =~ ^[0-9]{1,9}$ ]] || PRL_MAX=900
+PRL_MAX=$((10#$PRL_MAX))
+PRL=read
+prl_reshape() { # prl_reshape <raw-json> — the classifier's PR fields into $TD/prs.json
+  jq -c '[ .[] | {number, title, headRefName: (.head.ref // ""), body} ]' "$1" > "$TD/prs.json" 2>/dev/null \
+    && [ -s "$TD/prs.json" ]
+}
+if [ "$WB_ON" = 1 ] && [ "$PRL_MAX" -gt 0 ] && [ -r "$WB_DIR/prlist.json" ] && [ -r "$WB_DIR/prlist.meta" ]; then
+  PRL_E=$(cut -f2 "$WB_DIR/prlist.meta" 2>/dev/null)
+  PRL_NOW=$(command -v _wb_now >/dev/null 2>&1 && _wb_now || date +%s)
+  if [[ "$PRL_E" =~ ^[0-9]{1,12}$ ]] && [ "$((PRL_NOW - 10#$PRL_E))" -ge 0 ] \
+     && [ "$((PRL_NOW - 10#$PRL_E))" -le "$PRL_MAX" ] \
+     && wb_cache_get "$WB_DIR/prlist" "$REPO" pr - "$WB_OBS" - \
+     && prl_reshape "$WB_DIR/prlist.json"; then
+    PRL=hit
+  fi
+fi
+if [ "$PRL" = read ]; then
+  PRL_WHY=stale
+  [ -e "$WB_DIR/prlist.json" ] || [ -e "$WB_DIR/prlist.meta" ] || PRL_WHY=no-row
+  # Only a lane that keeps a copy can miss one.
+  [ "$WB_ON" = 1 ] && log "PRR_MISS $REPO#list why=$PRL_WHY"
+  RC=0; PRL_T=$(date +%s)
+  gh_rest_pr_list_all "$REPO" open 200 > "$TD/prs.raw.json" || RC=$?
+  if [ "$RC" != 0 ]; then rest_decline "the open PR list" "$RC"; exit 0; fi
+  prl_reshape "$TD/prs.raw.json" \
+    || { log "reconcile: could not reshape the open PR list — enqueued nothing"; exit 0; }
+  if [ "$WB_ON" = 1 ]; then
+    wb_cache_put "$WB_DIR/prlist" "-"$'\t'"$PRL_T" < "$TD/prs.raw.json" || true
+  fi
+fi
 
 # ---- the two ledger reads ---------------------------------------------------
 # NOT FAIL-OPEN. The ledger is owner class (a) — the only thing that knows a
 # build is running on a pool machine two hops away — so a ledger we cannot read
 # is a set of tickets whose owners we cannot name. Enqueue nothing and say why.
-# shellcheck source=/dev/null
-[ -r "$HARNESS/bin/jobs-client.sh" ] && . "$HARNESS/bin/jobs-client.sh"
-# The wake backstop (BH-6976): pass 1 below reuses a per-issue read when no
-# wake says it changed. OPTIONAL: without it every read happens, as before.
-# shellcheck source=bin/lib/wake-backstop.sh
-[ -r "$HARNESS/bin/lib/wake-backstop.sh" ] && . "$HARNESS/bin/lib/wake-backstop.sh" 2>/dev/null
 if ! command -v queue_list >/dev/null 2>&1 || ! command -v _jobs_req >/dev/null 2>&1; then
   log "reconcile: no jobs client — cannot name any ticket's owner, enqueued nothing"
   exit 0
@@ -945,10 +988,8 @@ CAPPED=""
 # of a GitHub read only while wb_cache_get says so: no issue or pr wake for N
 # since it was written, younger than ORPHAN_WAKE_BACKSTOP_S, and (thread) the
 # open list's updatedAt for N unchanged. A hit is not a read, so the caps above
-# are unchanged. Only an rc 0 read is cached.
-WB_ON=0; command -v wb_cache_get >/dev/null 2>&1 && WB_ON=1
-WB_DIR="$HARNESS/state/orphan-reconcile/${REPO//\//_}"
-WB_OBS=1800; [ "$WB_ON" = 1 ] && WB_OBS=$(wb_knob ORPHAN_WAKE_BACKSTOP_S)
+# are unchanged. Only an rc 0 read is cached. WB_ON, WB_DIR and WB_OBS are set
+# above the open PR list read.
 C_HITS=0; C_READS=0
 while IFS=$'\t' read -r KIND NUM; do
   case "$NUM" in ''|*[!0-9]*) continue ;; esac
@@ -1237,7 +1278,7 @@ if [ "$STRANDED_MODE" = 1 ]; then
   command -v gh_auth_reset >/dev/null 2>&1 && gh_auth_reset
   exit 0
 fi
-log "reconcile: open=$OPEN_N owned=$OWNED_N orphans=$ORPHAN_N enqueued=${ENQ:--} skipped=${SKIP:--} cache=$C_HITS/$C_READS stranded=$STRANDED_N"
+log "reconcile: open=$OPEN_N owned=$OWNED_N orphans=$ORPHAN_N enqueued=${ENQ:--} skipped=${SKIP:--} cache=$C_HITS/$C_READS pl=$PRL stranded=$STRANDED_N"
 
 # ---- the other half of the rule: every open PR has an owner too -------------
 # Owner class (b) above reads an OPEN PR as proof that a ticket is owned, which

@@ -43,6 +43,10 @@
 # worker/jobs/src/lib/pr-record-intake.js (checks entries are
 # {status, conclusion, sha, at} keyed <check name>, suite:<app>, workflow:<name>).
 #
+#   pr_record_max_age
+#       The resolved PR_RECORD_MAX_AGE_S as a non-negative integer on stdout.
+#       bin/orphan-reconcile.sh bounds its stored open-PR list with it (BH-8271).
+#
 # The knob PR_RECORD_MAX_AGE_S (catalog/lanes.d/_lib.pr-record.json) is read
 # through lane_knob when the caller has it, else from the environment.
 #
@@ -114,6 +118,8 @@ _prr_max_age() {
   fi
   printf '%s' "$((10#$v))"
 }
+
+pr_record_max_age() { _prr_max_age; }
 
 # _prr_map — a GitHub pulls object on stdin -> the record columns it fills,
 # with the absent ones left out. GitHub's mergeable_state "unknown" (it has
