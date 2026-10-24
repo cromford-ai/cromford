@@ -1,0 +1,11 @@
+{
+  "env": "SERVED_SHA_PRODBEHIND_REPEAT_H",
+  "read_in": "bin/lib/served-sha-watch.d/30-prodbehind.sh",
+  "type": "int",
+  "default": 4,
+  "min": 1,
+  "unit": "hours",
+  "zero_means": null,
+  "required": false,
+  "note": "BH-8255. Read by bin/lib/served-sha-watch.d/30-prodbehind.sh as ${SERVED_SHA_PRODBEHIND_REPEAT_H:-4}: passed to bin/lane-alert.sh as ALERT_REMINDER_S (this many hours times 3600) for the prodbehind:<project> id only, so the open page sends one \"still firing\" reminder per this many hours while prod stays behind with a failed newest deployment. 0 or a value that is not a whole number falls back to 4 and the fallback is logged."
+}

@@ -1,0 +1,11 @@
+{
+  "env": "SERVED_SHA_PRODBEHIND_MIN",
+  "read_in": "bin/lib/served-sha-watch.d/30-prodbehind.sh",
+  "type": "int",
+  "default": 45,
+  "min": 0,
+  "unit": "minutes",
+  "zero_means": "off",
+  "required": false,
+  "note": "BH-8255. Read by bin/lib/served-sha-watch.d/30-prodbehind.sh as ${SERVED_SHA_PRODBEHIND_MIN:-45}: when a Vercel production domain has served an older sha than main HEAD for this many minutes or more (the project-level clock .prodbehind.since in state/served-sha-watch/<project>.json, kept across head changes) AND the newest production deployment of the project is ERROR, the hook sends ONE critical page prodbehind:<project> through bin/lane-alert.sh --critical. 0 turns the page off; a value that is not a whole number falls back to 45 and the fallback is logged."
+}
