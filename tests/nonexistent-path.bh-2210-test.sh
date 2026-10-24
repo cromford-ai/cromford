@@ -42,9 +42,11 @@ mkdir -p "$T/confdir/state"
 GOT=$(MC_REGENERATED_PATHS_CONF="$T/confdir" mc_regen_paths 2>/dev/null)
 [ "$GOT" = "$MC_REGENERATED_PATHS_DEFAULT" ] && ok \
   || bad "1: mc_regen_paths on a directory must print the compiled default, got [$GOT]"
-GOT=$(MC_REGENERATED_PATHS_CONF="$T/confdir" mc_regen_cmd_for_path docs/notes/INDEX.md 2>/dev/null)
-[ "$GOT" = bin/render-doc-index.sh ] && ok \
-  || bad "1: with the conf a directory, docs/notes/INDEX.md must still map to bin/render-doc-index.sh, got [$GOT]"
+# TEST-CHANGE (BH-8254): this used the docs/notes/INDEX.md row, which left the
+# table with the file; rules/CLAUDE.md is a row the default still carries.
+GOT=$(MC_REGENERATED_PATHS_CONF="$T/confdir" mc_regen_cmd_for_path rules/CLAUDE.md 2>/dev/null)
+[ "$GOT" = "bin/render-rules.sh --write" ] && ok \
+  || bad "1: with the conf a directory, rules/CLAUDE.md must still map to bin/render-rules.sh --write, got [$GOT]"
 GOT=$(MC_GENERATED_PATHS_CONF="$T/confdir" mc_generated_globs 2>/dev/null)
 [ "$GOT" = "$MC_GENERATED_PATHS_DEFAULT" ] && ok \
   || bad "1: mc_generated_globs on a directory must print the compiled default, got [$GOT]"

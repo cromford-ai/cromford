@@ -13,6 +13,14 @@
 # two PRs that each add a note both land, and the conductor regenerates the
 # index with no human involved."
 #
+# TEST-CHANGE (BH-8254): docs/notes/INDEX.md left git (.gitignore) and so
+# left the regenerate registry. Section 1 now pins that it has NO row, in the
+# conf or the compiled default. Sections 2-3 still drive the whole regenerate
+# mechanism on the same INDEX.md fixture, through a scratch conf that names the
+# row ($T/regen.conf), because the fixture repos still COMMIT a render: the
+# shape this mechanism exists for. Section 4 flips "must stay tracked" to "must
+# not be tracked, and .gitignore covers it".
+#
 # WHY REAL GIT. The question is what git's index holds mid-merge and whether the
 # file the generator writes is what gets staged. A fake git pins none of that,
 # so every section below makes a real conflicting merge and reads real bytes.
@@ -38,20 +46,25 @@ MCLOG="$T/h/logs/merge-conductor.log"
 # 1. THE TABLE: one exact path, one command, conf and compiled default agree
 # ---------------------------------------------------------------------------
 [ -r "$DIR/config/regenerated-paths.conf" ] && ok || bad "config/regenerated-paths.conf is missing"
+mc_regen_cmd_for_path docs/notes/INDEX.md >/dev/null 2>&1 \
+  && bad "docs/notes/INDEX.md left git (BH-8254): the conf must have no row for it" || ok
+MC_REGENERATED_PATHS_CONF="$T/no-such.conf" mc_regen_cmd_for_path docs/notes/INDEX.md >/dev/null 2>&1 \
+  && bad "docs/notes/INDEX.md left git (BH-8254): the compiled default must have no row for it" || ok
+FROM_CONF=$(mc_regen_paths 2>/dev/null)
+FROM_DEFAULT=$(MC_REGENERATED_PATHS_CONF="$T/no-such.conf" mc_regen_paths 2>/dev/null)
+[ -n "$FROM_CONF" ] && [ "$FROM_CONF" = "$FROM_DEFAULT" ] && ok \
+  || bad "config/regenerated-paths.conf and MC_REGENERATED_PATHS_DEFAULT disagree: conf='$FROM_CONF' default='$FROM_DEFAULT'"
+# From here on the regenerate mechanism runs on a conf that names the row.
+printf 'docs/notes/INDEX.md\tbin/render-doc-index.sh\n' > "$T/regen.conf"
+export MC_REGENERATED_PATHS_CONF="$T/regen.conf"
 CMD=$(mc_regen_cmd_for_path docs/notes/INDEX.md 2>/dev/null); RC=$?
 [ "$RC" = 0 ] && [ "$CMD" = bin/render-doc-index.sh ] && ok \
-  || bad "docs/notes/INDEX.md should map to bin/render-doc-index.sh (rc=$RC, got '$CMD')"
+  || bad "with the scratch conf, docs/notes/INDEX.md should map to bin/render-doc-index.sh (rc=$RC, got '$CMD')"
 # Exact match only: a glob would let `*` span `/` in `case`.
 for p in docs/notes/README.md docs/notes/INDEX.md.orig other/docs/notes/INDEX.md \
          docs/verification-map/README.md docs/notes/2026-09-24-BH-1-x.md INDEX.md ""; do
   mc_regen_cmd_for_path "$p" >/dev/null 2>&1 && bad "'$p' must NOT be in the regenerate class" || ok
 done
-FROM_CONF=$(mc_regen_paths 2>/dev/null)
-FROM_DEFAULT=$(MC_REGENERATED_PATHS_CONF="$T/no-such.conf" mc_regen_paths 2>/dev/null)
-[ -n "$FROM_CONF" ] && [ "$FROM_CONF" = "$FROM_DEFAULT" ] && ok \
-  || bad "config/regenerated-paths.conf and MC_REGENERATED_PATHS_DEFAULT disagree: conf='$FROM_CONF' default='$FROM_DEFAULT'"
-[ "$(MC_REGENERATED_PATHS_CONF="$T/no-such.conf" mc_regen_cmd_for_path docs/notes/INDEX.md 2>/dev/null)" = bin/render-doc-index.sh ] \
-  && ok || bad "the compiled default (a pool image with no config/) must carry the INDEX.md rule"
 # The conf reaches every box: config/ is synced and propagated whole.
 grep -q 'rsync -a --delete "$CHECKOUT/config/"' "$DIR/bin/harness-sync.sh" && ok || bad "harness-sync.sh no longer syncs config/"
 grep -Eq '^FLEET_PATHS=".* config/ ' "$DIR/bin/lib/fleet-paths.sh" && ok || bad "bin/lib/fleet-paths.sh FLEET_PATHS no longer lists config/"
@@ -213,8 +226,10 @@ OUT=$(mc_resolve_conflicts "$R" ticket/bh-9001); RC=$?
 # "Do not use merge=union": no attribute on INDEX.md.
 [ "$(git -C "$DIR" check-attr merge docs/notes/INDEX.md)" = "docs/notes/INDEX.md: merge: unspecified" ] && ok \
   || bad "docs/notes/INDEX.md must carry no merge attribute: $(git -C "$DIR" check-attr merge docs/notes/INDEX.md)"
-# Option 3 (stop committing it) was voided: the file stays tracked.
-git -C "$DIR" ls-files --error-unmatch docs/notes/INDEX.md >/dev/null 2>&1 && ok || bad "docs/notes/INDEX.md must stay tracked"
+# BH-8254 took option 3 (stop committing it): the file is not tracked, and
+# .gitignore covers it.
+git -C "$DIR" ls-files --error-unmatch docs/notes/INDEX.md >/dev/null 2>&1 && bad "docs/notes/INDEX.md must not be tracked (BH-8254)" || ok
+git -C "$DIR" check-ignore -q --no-index docs/notes/INDEX.md && ok || bad ".gitignore must cover docs/notes/INDEX.md (BH-8254)"
 # Widening what the conductor resolves with no human is guard-sensitive.
 # shellcheck source=/dev/null
 . "$DIR/bin/lib/guard-silenced.sh"

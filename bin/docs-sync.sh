@@ -6,8 +6,10 @@
 #
 # bin/harness-sync.sh launches this DETACHED, after its rsyncs, its worker
 # phase and its success stamp, so a slow or failed doc build never holds back
-# code. It renders two files nothing in a sync or a worker deploy reads:
+# code. It renders three files nothing in a sync or a worker deploy reads:
 #   docs/LLM_CALL_SITES.md          (bin/llm-sites-build.sh, BH-1268)
+#   docs/notes/INDEX.md             (bin/render-doc-index.sh, BH-8254; about
+#                                    4 s, rendered every run, no key stamp)
 #   docs/verification-map/README.md (bin/verification-map-build.sh, BH-1175;
 #                                    bin/verification-map.sh renders primers
 #                                    from it)
@@ -36,6 +38,11 @@ flock -n 9 || exit 0
 if [ -x "$CK/bin/llm-sites-build.sh" ]; then
   nice -n 10 "$CK/bin/llm-sites-build.sh" --repo "$CK" \
     || echo "$(STAMP) harness sync: docs/LLM_CALL_SITES.md could not be regenerated" >> "$LOG"
+fi
+
+if [ -x "$CK/bin/render-doc-index.sh" ]; then
+  nice -n 10 "$CK/bin/render-doc-index.sh" "$CK/docs/notes" "$CK/docs/notes/INDEX.md" >/dev/null \
+    || echo "$(STAMP) harness sync: docs/notes/INDEX.md could not be regenerated" >> "$LOG"
 fi
 
 [ -x "$CK/bin/verification-map-build.sh" ] || exit 0

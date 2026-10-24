@@ -205,8 +205,8 @@ What CHANGED goes in its own file instead:
     docs/notes/<YYYY-MM-DD>-<KEY>-<slug>.md
 
 one note per change (what changed, why, which rule or state it touches), with a
-`Doc: <NAME>` line naming the docs it belongs to. Run bin/render-doc-index.sh in
-a docs pass to refresh docs/notes/INDEX.md; a feature PR does not re-render it.
+`Doc: <NAME>` line naming the docs it belongs to. docs/notes/INDEX.md is a
+git-ignored render (BH-8254); a PR never commits it.
 
 Three ways this passes: the note-instead-of-append above, a PR whose title
 starts with `docs:` (a real documentation pass, which may rewrite the contract),

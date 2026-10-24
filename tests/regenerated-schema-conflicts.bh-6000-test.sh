@@ -48,8 +48,7 @@ MCLOG="$T/h/logs/merge-conductor.log"
 
 # --- T1. the registry ---------------------------------------------------------
 for row in "rules/CLAUDE.md|bin/render-rules.sh --write" \
-           "docs/PR-OWNERSHIP.md|bin/render-doc-sections.sh --write" \
-           "docs/notes/INDEX.md|bin/render-doc-index.sh"; do
+           "docs/PR-OWNERSHIP.md|bin/render-doc-sections.sh --write"; do
   p="${row%%|*}"; want="${row#*|}"
   [ "$(mc_regen_cmd_for_path "$p" 2>/dev/null)" = "$want" ] && ok || bad "T1 $p must map to '$want' (got '$(mc_regen_cmd_for_path "$p" 2>/dev/null)')"
   [ "$(MC_REGENERATED_PATHS_CONF="$T/no-such.conf" mc_regen_cmd_for_path "$p" 2>/dev/null)" = "$want" ] && ok \
@@ -67,6 +66,11 @@ done < <(mc_regen_paths)
 mc_regen_cmd_for_path worker/jobs/schema.sql >/dev/null 2>&1 && bad "T1 worker/jobs/schema.sql must have no row any more" || ok
 MC_REGENERATED_PATHS_CONF="$T/no-such.conf" mc_regen_cmd_for_path worker/jobs/schema.sql >/dev/null 2>&1 \
   && bad "T1 the compiled default must have no worker/jobs/schema.sql row any more" || ok
+# TEST-CHANGE (BH-8254): docs/notes/INDEX.md left git the same way, so its
+# row left the loop above and its absence is pinned here.
+mc_regen_cmd_for_path docs/notes/INDEX.md >/dev/null 2>&1 && bad "T1 docs/notes/INDEX.md must have no row any more" || ok
+MC_REGENERATED_PATHS_CONF="$T/no-such.conf" mc_regen_cmd_for_path docs/notes/INDEX.md >/dev/null 2>&1 \
+  && bad "T1 the compiled default must have no docs/notes/INDEX.md row any more" || ok
 # The fixtures below still COMMIT a render (the shape this mechanism exists
 # for), so E1-R2 drive the regenerate through a conf that names it.
 printf 'worker/jobs/schema.sql\tbin/schema-build.sh --write\n' > "$T/regen.conf"

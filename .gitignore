@@ -32,6 +32,13 @@ __pycache__/
 # share mirror and every box run bin/verification-map-build.sh to get the index.
 docs/verification-map/README.md
 
+# The notes index is GENERATED and must never be committed (BH-8254, on
+# BH-1175's rule). bin/render-doc-index.sh renders it from docs/notes/*.md, so
+# every PR that added a note made the committed copy stale: #7181 put a byte
+# --check into CI, and Mergify draft #8239 dequeued it when #8060 merged first
+# with one note. CI, the share mirror and every box render it themselves.
+docs/notes/INDEX.md
+
 # The test-impact map is GENERATED and must never be committed (BH-1203, on
 # BH-1175's rule). It is derived from tests/ and bin/ and moves whenever any
 # suite, script or `source` line moves — which is most PRs — so a committed copy

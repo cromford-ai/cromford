@@ -18,7 +18,8 @@ does not stop a build that is already appending.
 
 **Tool:** shell (`check.sh`). The other half of the change is
 `bin/render-doc-index.sh`, which renders `docs/notes/INDEX.md` over the notes
-this check pushes work toward.
+this check pushes work toward. The index is a git-ignored render (BH-8254); a
+PR never commits it.
 
 ```bash
 PR_TITLE="$(gh pr view --json title -q .title)" \

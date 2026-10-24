@@ -2094,13 +2094,14 @@ mc_path_is_union() {
 
 # --- REGENERATED PATHS (BH-1162) ----------------------------------------------
 # A committed file a generator renders from the rest of the tree
-# (docs/notes/INDEX.md <- bin/render-doc-index.sh). Two PRs that each add a note
-# conflict on it, and neither side is right: the right answer is a render over
-# the MERGED tree. config/regenerated-paths.conf says which paths and why.
+# (rules/CLAUDE.md <- bin/render-rules.sh --write). Two PRs that each change a
+# source conflict on it, and neither side is right: the right answer is a render
+# over the MERGED tree. config/regenerated-paths.conf says which paths and why.
+# docs/notes/INDEX.md, the first row, left git and this table (BH-8254).
 MC_REGENERATED_PATHS_CONF="${MC_REGENERATED_PATHS_CONF:-$MC_H/config/regenerated-paths.conf}"
 # The pool-image fallback, as for MC_GENERATED_PATHS_DEFAULT. Keep in step with
 # config/regenerated-paths.conf.
-MC_REGENERATED_PATHS_DEFAULT=$'docs/notes/INDEX.md\tbin/render-doc-index.sh\nrules/CLAUDE.md\tbin/render-rules.sh --write\ndocs/PR-OWNERSHIP.md\tbin/render-doc-sections.sh --write'
+MC_REGENERATED_PATHS_DEFAULT=$'rules/CLAUDE.md\tbin/render-rules.sh --write\ndocs/PR-OWNERSHIP.md\tbin/render-doc-sections.sh --write'
 
 # mc_regen_paths — the table, `<path><TAB><command>` a line, comments stripped.
 mc_regen_paths() {
