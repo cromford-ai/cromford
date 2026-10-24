@@ -10,7 +10,7 @@ export const SETTINGS_MENU = {
     { group: 'FLEET', items: [
       { id: 'ai-vendors', label: 'AI vendors', tag: 'wave 4' },
       { id: 'github-app', label: 'GitHub app', tag: 'soon' },
-      { id: 'machines', label: 'Machines and Tailscale', tag: 'soon' },
+      { id: 'machines', label: 'Machines and Tailscale' },
       { id: 'prompts', label: 'Prompts' },
       { id: 'lanes', label: 'Lanes' },
       { id: 'appearance', label: 'Appearance' }
