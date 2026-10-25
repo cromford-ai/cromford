@@ -481,7 +481,8 @@ grep -q '^MISS replan amended' "$B/preplan-outcome" 2>/dev/null && ok || bad "W4
 
 # W5: the plan prompt carries REPLAN_LINE.
 newbuild W5
-{ printf 'CC() { printf "%%s" "$5" > "$BUILD/prompt"; }\n'; cat "$T/w-prompt.sh"; } > "$T/p-run.sh"
+# TEST-CHANGE (BH-7970): the block renders prompts/stages/plan.md through sp_render, so the driver sources the repo lib first.
+{ printf 'CC() { printf "%%s" "$5" > "$BUILD/prompt"; }\n. "%s/bin/lib/stage-prompt.sh"\n' "$DIR"; cat "$T/w-prompt.sh"; } > "$T/p-run.sh"
 env BUILD="$B" KEY=BH-61 TICKET=61 PROJECT=proj REPLAN_LINE=" REPLAN-LINE-MARKER" bash "$T/p-run.sh" >/dev/null 2>&1
 grep -q 'REPLAN-LINE-MARKER' "$B/prompt" 2>/dev/null && ok || bad "W5: the CC plan prompt must carry \${REPLAN_LINE:-}"
 

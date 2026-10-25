@@ -8,14 +8,14 @@
 #   LENS_PID LENS_PIDS LENS_SHA LENS_TAG LENS_TAGS LENS_TIER LENS_V LENSES LENSES_PARALLEL
 #   NH_ISSUE NH_SLUG NH_SUFFIX PR_URL PROJECT REFUTE_PRIORS REFUTE_PROMPT REFUTE_READ_PRIORS REOPEN_EXTRA_LENS REOPEN_HOT
 #   REOPEN_NOTE REVIEW_MODEL REVIEW_MODEL_T0 REVIEW_PROMPT REVIEW_TIER REVIEW_TIER_LINE
-#   REVIEW_TIER_REASON RISKY RT_LINE SECURITY_PROMPT SPEC_DIR T_E2E T_LENSES
+#   REVIEW_TIER_REASON RISKY RT_LINE SECURITY_PROMPT SP_FIX_ROUND SPEC_DIR T_E2E T_LENSES
 #   VMAP_LIES_OUT VMAP_LINE VMAP_NOTE
 # Writes: CC_ARTIFACT_KIND E2E_BASE_REF E2E_GATE_SAID E2E_JOIN_CAPPED E2E_JOIN_MAX E2E_NOTE
 #   E2E_PID E2E_RC E2E_SLUG E2E_VERDICT EV_OUT FIX_ROUND_CAP GATES_JOINED GATES_NOTE HIGHRISK
 #   L_ART L_CKPT L_FIX L_FIXLOG L_LOGLINE L_PROMPT L_PUSH L_RE L_RUN LENS_BLOCKED
 #   LENS_FIX_FILES LENS_LAUNCHED LENS_MR LENS_PIDS LENS_SHA LENS_T0 LENS_TAGS LENS_TIER LENS_V
 #   LENSES NH_ISSUE NH_SLUG NH_SUFFIX PTG_DETAIL PTG_IDS PTG_OUT PTG_RC PTG_SINCE REFUTE_PRIORS REFUTE_PROMPT REFUTE_READ_PRIORS REVIEW_PROMPT REVIEW_TIER
-#   REVIEW_TIER_LINE RISKY RT_LINE SECURITY_PROMPT T_E2E T_LENSES
+#   REVIEW_TIER_LINE RISKY RT_LINE SECURITY_PROMPT SP_FIX_ROUND T_E2E T_LENSES
 #   VMAP_LIES_OUT VMAP_LINE VMAP_NOTE
 # shellcheck shell=bash
 
@@ -643,7 +643,7 @@ LENS_VARS() { # LENS_VARS <lens> -> L_ART L_RUN L_RUN2 L_FIXRUN L_PUSH L_LOGLINE
       L_FIXLOG="FIX ROUND ($FIX_MODEL)"
       L_CKPT="REVIEW checkpoint hit — APPROVE on this exact head stands"
       L_PROMPT="${REVIEW_PROMPT:-}"
-      L_FIX="Address every blocking finding in $BUILD/review.md on branch $BRANCH (plan: $BUILD/plan.md). Re-verify; 'npm run build' must pass. Commit."
+      L_FIX="${SP_FIX_ROUND:-}"
       L_RE="${REVIEW_PROMPT:-} Re-review after fixes; append to $BUILD/review.md." ;;
     security)
       L_RUN=security-review-run.txt; L_RUN2=security-review2-run.txt; L_FIXRUN=security-fix-run.txt
@@ -870,15 +870,29 @@ if command -v st_has >/dev/null 2>&1 && [ -n "$(st_parse spec "$BUILD/ticket-met
 fi
 # <<< spec trace (BH-6485)
 
-REVIEW_PROMPT="MECHANICAL GATES ran before you, on the diff itself. Their findings are ground truth about WHAT CHANGED (they are diff counts, not opinions) — treat them as evidence to adjudicate, never as a verdict already reached:${GATES_NOTE}
-
-SPEC ARTIFACT, NOT CODE: this diff also carries $SPEC_DIR/ — this build's own plan.md (plus requirements.md when the plan stage wrote one), committed so the PR shows the spec beside the code. SKIP those files as a review target: they are ticket prose, so the iron laws do not apply to their lines (a client sentence quoting a native dialog, a model name, or VERCEL_URL inside the plan is not a violation), they are neither test evidence nor scope creep, and they are byte-identical to the plan you are already reviewing AGAINST. Judge the code against the spec; never judge the spec.
-
-KNOWN GATE BLIND SPOT, yours to cover: the reproduction gate only proves tests that are NEW FILES. A test APPENDED to an existing suite is reported but never blocked, so an always-passing test added to a file that already existed reaches you unchallenged. When the note above says modified test files were seen, read the added cases in them and ask the question the gate could not: would this test FAIL if the feature broke? The same applies to a TEST-CHANGE: justification — the gate stops blocking once one is present, it does not check that it is true.
-
-EVIDENCE VERDICTS: for every CONFIRMED row in the gates note above open the artifact it names and check it exists and shows the named test passing — a CONFIRMED whose artifact does not match is a verification-integrity finding (FRAUD: false-completion); a REFUTED row is a BLOCK unless the diff explains it; say for each INCONCLUSIVE row whether the diff lets you confirm it.
-
-Adversarially review the diff of branch $BRANCH against $BASE in this repo (git diff $BASE...HEAD) for ticket $KEY, against the plan at $BUILD/plan.md and the iron laws in ~/.claude/CLAUDE.md (correctness, edge cases, additive-only schema, RLS on new tables, indexes for every query on a new table in the same migration (proven with EXPLAIN on seeded data), no per-row correlated subquery over a large table, a retention rule (scheduled delete/archive, window in a settings row) for every growing table, DB-driven config, no native dialogs, sortable headers, list-over-cards, drill-down, De-AI voice, idempotent writes, dedup-before-spend on metered/billable APIs, honest verification). PERFORMANCE BY DEFAULT (BH-6946), each one a [NOTE] (a BLOCK only on a measured regression on a key screen over the REVIEW LEVELS thresholds, or on a perf ticket): a new sequential await over independent reads; a list read in a layout where a count would do; a route without loading.tsx; a repeated config read without a request memo; a list query without a matching index at seeded volume; unbounded rows to the client; a speed claim without before and after numbers; a client snapshot that holds a token, is not keyed by user and company, or survives sign-out; a key screen with two or more independent requests in sequence before its first content. FOLLOW-UPS ARE GROUPED: a follow-up found during a build or review goes into ONE follow-up ticket per screen or flow, with every item as a checklist, never one ticket per finding (BH-6902). GROUND TRUTH FIRST: read $BUILD/harness-suite.txt — the harness ran the repo's suite itself; its HARNESS_EXIT line outranks every agent-written claim. A nonzero HARNESS_EXIT with validate.txt/red.txt claiming green is an instant BLOCK and a verification-integrity finding (name it as such); 'no-test-script' and 'could-not-run' are recorded honestly, not treated as green (could-not-run: the impact gate's runner could not start or its stage timed out, or the suite ran out of disk, see its HARNESS_DISK line — nothing, or not everything, ran; it is not a red suite either; could-not-run is never by itself a reason to BLOCK: the CI run on the PR head is the suite verdict, and the merge gate requires it green). REQUIREMENTS COVERAGE: check the plan's '## Requirements coverage' matrix against the TICKET itself (re-read the ticket/thread) — a ticket requirement, including a negative one ('stop doing X'), absent from the matrix or undelivered by the diff is a blocking gap even if every listed task validated. SYSTEM INVARIANTS: verify the diff honors the plan's '## System invariants' section; an invariant the implementation quietly ignores is blocking. VALIDATION TRACE: read $BUILD/validate.txt against the plan's tasks. Every task's VALIDATE command must appear with a real exit code; a task the diff claims to deliver with no VALIDATE evidence is a [NOTE]; a VALIDATE recorded NOT RUN because it needs a key, prod, a browser or a CI token is a [NOTE] not verified here, never NEEDS_HUMAN; a recorded output that CONTRADICTS the claim on an ALWAYS-BLOCK path (data, tenant, auth, money, build) is a [BLOCK wrong-data] (an empty or missing validate.txt when the plan has VALIDATE lines is a [NOTE]). Check the SATISFIES traces too: work in the diff that traces to no acceptance criterion is scope creep, and a criterion with no task delivering it is a gap — call both. TEST HONESTY is part of the review: read the new/changed tests and $BUILD/red.txt — do the new tests actually assert the ticket's behavior (would they FAIL if the feature broke)? Was red proven before green? Was any existing test weakened, skipped, or deleted (instant BLOCK unless the diff justifies it as fixing a genuinely wrong test)? If the repo has test infra and the diff adds none for new behavior, that is a [NOTE] at smoke level and a [BLOCK core-flow-broken] only when the untested behavior is a core flow or an ALWAYS-BLOCK path. SECURITY: if $BUILD/semgrep.txt exists, triage every finding in it — real issues (injection, authz, secrets, SSRF, XSS) are blocking findings; note false positives with one line of reasoning each. For every finding that matches a rule in /root/harness/prompts/build-discipline.md, cite its rule number (D1-D34) so recurrence is measurable — and where the finding is ALSO one of the six fraud classes below, both citations ride the same line, e.g. (D1, FRAUD: weakened-tests); the top block-causes to hunt: non-probative tests (D1-D4), failure-mapped-to-success and dishonest completeness (D9-D13), authz fail-open and ungated sibling paths (D14-D15). FRAUD CLASSES — hunt these six by name. They are the shapes that survive review by looking like work: (weakened-tests) an assertion softened, skipped, deleted, or written so it cannot fail; (false-completion) a claim of done — PR body, board comment, status copy, validate.txt — the evidence does not support; (scope-creep) work in the diff nobody asked for; (unauthorized-action) a capability, route, permission, deletion or write the ticket never authorized; (spec-betrayal) an implementation that quietly contradicts the spec, docstring, or ticket line it claims to implement; (debris) leftover scaffolding, dead code, temp scripts, or stray logging shipped as if it belonged. When a finding IS one of them, tag it on the finding line as FRAUD: <weakened-tests|false-completion|scope-creep|unauthorized-action|spec-betrayal|debris> — one class, the closest fit, and no tag at all on a finding that is none of them. The tag is harvested into logs/findings.log, so a class that keeps recurring becomes measurable rather than a feeling. HUB PROBES (D44): when a check needs hub-only credentials and it is one of \`app-status-write <owner/repo> <40-hex sha>\`, \`app-permissions <app-slug>\`, \`app-installation-repos\` or \`d1-count <table> <all|last-24h>\`, write \`HUB_PROBE: <name> <args>\` on its own line at column 0, outside any code block, in $BUILD/review.md above the TIER:/VERDICT: lines, instead of saying it needs a human; the harness files it and the hub runs it. A go-live step a user depends on (a live connector key, a vendor console, a production credential, a product decision) gets \`NEEDS_HUMAN: <the step>\`; a verification this box cannot run (no Clerk key, no prod database, no browser, no CI token, a Lighthouse run, a design screenshot) is a [NOTE] not verified here, never NEEDS_HUMAN. Write findings to $BUILD/review.md, one per line, each tagged [BLOCK <class>] (class from the ALWAYS-BLOCK list in the REVIEW LEVELS rule: data-loss, tenant-leak, auth-bypass, money, destructive-migration, red-build, core-flow-broken, wrong-data, secret, model-id, hardcoded-knob, user-flows, weakened-test, scalable-tests) or [NOTE]; a review whose findings are all [NOTE] is VERDICT: APPROVE. Second-to-last line must be exactly 'TIER: 1' (low-risk: copy/docs/small UI, no schema, auth, permissions, payments, env, cron, or workflow changes, nothing touching client data handling) or 'TIER: 2' (everything else; reported, not gated). Last line must be exactly VERDICT: APPROVE or VERDICT: BLOCK.$(nh_prompt_field_note 2>/dev/null)$(dl_prompt_field_note 2>/dev/null)$(nh_prompt_release_note "${NH_SLUG:-}" "${NH_ISSUE:-}" 2>/dev/null)$(rl_prompt_note "$PROJECT" 2>/dev/null)"
+# BH-7970: sp_render (bin/lib/stage-prompt.sh). A box without the lib refuses the stage below; it never sends an empty prompt.
+. "$HARNESS/bin/lib/stage-prompt.sh" 2>/dev/null || sp_render() { echo "stage-prompt: bin/lib/stage-prompt.sh not loaded" >&2; return 1; }
+# >>> review prompt (tests/stage-prompt.bh-7970-test.sh drives this block)
+# The general lens text lives in prompts/stages/review.md and the review lens's
+# fix-round text in prompts/stages/fix-round.md. The $(...) pieces of the old
+# inline string are computed here, in the same order. fix-round renders here
+# once, not in LENS_VARS: LENS_VARS runs inside lens subshells, where a refusal
+# cannot stop the build, and $BUILD and $BRANCH do not change during a build.
+SP_REVIEW_NH_FIELD=$(nh_prompt_field_note 2>/dev/null)
+SP_REVIEW_DL_FIELD=$(dl_prompt_field_note 2>/dev/null)
+SP_REVIEW_NH_RELEASE=$(nh_prompt_release_note "${NH_SLUG:-}" "${NH_ISSUE:-}" 2>/dev/null)
+SP_REVIEW_RL=$(rl_prompt_note "$PROJECT" 2>/dev/null)
+sp_render review REVIEW_PROMPT || {
+  echo "$(STAMP) [$PROJECT/$KEY] BUILD_REFUSED prompt template missing (review): no prompts/stages/review.md on $(hostname) — no review session spent" >> "$BUILD/pipeline.log"
+  RESULT "BUILD_REFUSED prompt template missing (review)"
+  exit 3
+}
+sp_render fix-round SP_FIX_ROUND || {
+  echo "$(STAMP) [$PROJECT/$KEY] BUILD_REFUSED prompt template missing (fix-round): no prompts/stages/fix-round.md on $(hostname) — no review session spent" >> "$BUILD/pipeline.log"
+  RESULT "BUILD_REFUSED prompt template missing (fix-round)"
+  exit 3
+}
+# <<< review prompt
 
 # The T0 variant (BH-485). PREPENDED, never a rewrite: the gate note, the fraud
 # classes, the requirements/invariants/validation trace and the TIER:/VERDICT:

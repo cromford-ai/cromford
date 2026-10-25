@@ -484,7 +484,8 @@ has "A11 no row: pipeline.log" "$(plog)" "REVERT REASON: none"
 eq "A11 REVERT_REASON=0: empty" "$(block project-3 TK-271 REVERT_REASON=0)" ""
 has "A11 REVERT_REASON=0: pipeline.log" "$(plog)" "REVERT REASON: off"
 PS="$DIR/bin/lib/rb/plan.sh"
-eq "A11 the prompt carries the token once, before the reopen line" "$(grep -c '${REVERT_REASON_LINE:-}${REOPEN_REASON_LINE:-}$KIND_HINT_LINE' "$PS")" 1
+# TEST-CHANGE (BH-7970): the prompt text moved to prompts/stages/plan.md, where each token is written ${NAME}.
+eq "A11 the prompt carries the token once, before the reopen line" "$(grep -c '${REVERT_REASON_LINE}${REOPEN_REASON_LINE}${KIND_HINT_LINE}' "$DIR/prompts/stages/plan.md")" 1
 a=$(grep -n '^# <<< reopen reason (BH-6159)' "$PS" | cut -d: -f1); b=$(grep -n '^# >>> revert reason (BH-6160)' "$PS" | cut -d: -f1); c=$(grep -n '^# <<< ticket meta' "$PS" | cut -d: -f1)
 [ -n "$a" ] && [ -n "$b" ] && [ -n "$c" ] && [ "$a" -lt "$b" ] && [ "$b" -lt "$c" ] && ok \
   || bad "A11 the block must sit after the reopen block and before '# <<< ticket meta' (lines '$a' '$b' '$c')"

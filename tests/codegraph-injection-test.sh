@@ -87,12 +87,13 @@ grep -q 'CG_ORIENT="CODEGRAPH NOT AVAILABLE (codegraph-ensure.sh failed)"' "$RB"
 # ---------- 5. the probabilistic sentence is GONE ---------------------------
 # It is the direct cause: it told the model to test for a directory, and the
 # directory is present-and-empty in every worktree.
-! grep -q "If the repo has a .codegraph/ index, use 'codegraph explore'" "$RB" \
+# TEST-CHANGE (BH-7970): the plan and execute prompt texts moved to prompts/stages/*.md, so these three greps read the pipeline AND the stage files.
+! grep -q "If the repo has a .codegraph/ index, use 'codegraph explore'" "$RB" "$DIR"/prompts/stages/*.md \
   && ok || bad "the old soft 'if the repo has a .codegraph/ index' sentence must be gone"
-! grep -q 'if this repo is indexed (a .codegraph/ directory exists' "$RB" \
+! grep -q 'if this repo is indexed (a .codegraph/ directory exists' "$RB" "$DIR"/prompts/stages/*.md \
   && ok || bad "the old 'if a .codegraph/ directory exists' plan sentence must be gone"
 # and the replacement must warn the model off probing for the directory
-grep -q 'do not probe for a .codegraph/ directory' "$RB" \
+grep -q 'do not probe for a .codegraph/ directory' "$RB" "$DIR"/prompts/stages/*.md \
   && ok || bad "the prompts must tell the model NOT to probe for the directory"
 
 # ---------- 6. the after-merge refresh pulls before indexing ---------------

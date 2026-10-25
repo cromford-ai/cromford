@@ -359,13 +359,16 @@ grep -q 'SURVIVED: VERIFICATION MAP NOT AVAILABLE' <<<"$BLOCKOUT" \
   && ok || bad "a failed orient must degrade to a NOT AVAILABLE line, never to an empty prompt prefix"
 
 # ---------- 10. QA is pointed at the map, and preplan renders too -----------
-grep -q 'docs/verification-map' "$RB" \
+# TEST-CHANGE (BH-7970): QA_PROMPT_FOR renders prompts/stages/qa.md, so the
+# pointer lives in that template and the builder must render it (sp_render qa).
+grep -q 'docs/verification-map' "$DIR/prompts/stages/qa.md" \
   && ok || bad "the QA stage prompt must point QA at the map for screens/selectors"
-python3 - "$RB" <<'PY' && ok || bad "the map pointer must live inside the QA prompt builder, not somewhere else in the file"
+python3 - "$RB" "$DIR/prompts/stages/qa.md" <<'PY' && ok || bad "the map pointer must live inside the QA prompt builder, not somewhere else in the file"
 import sys
 s = open(sys.argv[1]).read()
 b = s.index("QA_PROMPT_FOR()")
-sys.exit(0 if "docs/verification-map" in s[b:b+6000] else 1)
+line = s[b:s.index("\n", b)]
+sys.exit(0 if "sp_render qa" in line and "docs/verification-map" in open(sys.argv[2]).read() else 1)
 PY
 grep -q 'verification-map.sh' "$DIR/bin/run-preplan.sh" \
   && ok || bad "run-preplan.sh reads the same primer — it must render it too"

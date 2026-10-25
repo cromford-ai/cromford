@@ -213,8 +213,10 @@ TEST_OUT='timed out' TEST_RC=124 suite
 [ "$(tail -1 "$OUT")" = 'HARNESS_EXIT: 124' ] && ok || bad "E9: 124 with no disk text stays 124: $(cat "$OUT")"
 
 # E10 — the three review prompt sites.
-for site in "review.sh:Adversarially review the diff of branch" "review.sh:RE-REVIEW AFTER ONE MERGED FIX ROUND" "result.sh:RE-REVIEW ON A MOVED HEAD"; do
-  f="$DIR/bin/lib/rb/${site%%:*}"; line=$(grep -F "${site#*:}" "$f" | head -1)
+# TEST-CHANGE (BH-7970): the general review prompt moved from bin/lib/rb/review.sh to prompts/stages/review.md; a site with a / in its file part is a repo path.
+for site in "prompts/stages/review.md:Adversarially review the diff of branch" "review.sh:RE-REVIEW AFTER ONE MERGED FIX ROUND" "result.sh:RE-REVIEW ON A MOVED HEAD"; do
+  case "${site%%:*}" in */*) f="$DIR/${site%%:*}" ;; *) f="$DIR/bin/lib/rb/${site%%:*}" ;; esac
+  line=$(grep -F "${site#*:}" "$f" | head -1)
   [ -n "$line" ] || { bad "E10: prompt site '$site' not found"; continue; }
   case "$line" in *"never by itself a reason to BLOCK"*) ok ;; *) bad "E10: '$site' must say could-not-run is never by itself a reason to BLOCK" ;; esac
   case "$line" in *HARNESS_DISK*) ok ;; *) bad "E10: '$site' must name the HARNESS_DISK line" ;; esac

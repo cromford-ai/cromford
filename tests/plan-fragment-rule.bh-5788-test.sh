@@ -54,13 +54,15 @@ awk 'index($0, "# >>> plan prompt")==1 {f=1;next} index($0, "# <<< plan prompt")
 [ -s "$T/plan-prompt.sh" ] && ok || bad "C1 could not extract the 'plan prompt' block"
 mkdir -p "$T/h/bin/lib" "$T/b"
 planprompt() { # planprompt <checkout> <capture> — the block, run from <checkout>
+  # TEST-CHANGE (BH-7970): the block renders prompts/stages/plan.md through sp_render, so the driver loads the repo's bin/lib/stage-prompt.sh.
   rm -f "$2"
   ( cd "$1" && env HARNESS="$T/h" BUILD="$T/b" KEY=BH-5788 TICKET=1 PROJECT=widget-os PLAN_MODEL=m \
-        PLAN_AMBIGUITY_RULE= KIND_HINT_LINE= CARRIED_NOTE_LINE= LIBP="$LIB" CAP="$2" \
+        PLAN_AMBIGUITY_RULE= KIND_HINT_LINE= CARRIED_NOTE_LINE= LIBP="$LIB" CAP="$2" SPLIB="$DIR/bin/lib/stage-prompt.sh" \
     bash -c 'set -uo pipefail
              CC() { printf "%s" "$5" > "$CAP"; }
              CC_ARTIFACT_KIND=; CC_ARTIFACT_FILE=
              . "$LIBP"
+             . "$SPLIB"
              . "$0"' "$T/plan-prompt.sh" ) >"$T/plan-prompt.out" 2>&1
 }
 planprompt "$T/withfrag" "$T/p1.txt"

@@ -306,7 +306,8 @@ W=$(grep -c '"\$HARNESS/bin/intent-gate.sh"' "$RB_ALL")
 [ "$W" = 1 ] && ok || bad "run-build.sh should invoke intent-gate.sh exactly once (got $W)"
 
 # 20. the EXECUTE prompt actually asks for the line the gate looks for
-grep -q 'INTENT:' "$RB_ALL" && ok \
+# TEST-CHANGE (BH-7970): the execute prompt text moved to prompts/stages/execute.md.
+grep -q 'INTENT:' "$DIR/prompts/stages/execute.md" && ok \
   || bad "the execute prompt must state the INTENT contract"
 grep -q 'D34' "$DIR/prompts/build-discipline.md" && ok \
   || bad "the intent discipline must be a numbered rule builders can cite"

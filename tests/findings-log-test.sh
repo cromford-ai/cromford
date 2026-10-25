@@ -211,7 +211,8 @@ for LENS in 'REVIEW_PROMPT=' 'SECURITY_PROMPT=' 'REFUTE_PROMPT=' 'SECURITY-ONLY 
   N=$(grep -c "$LENS" "$RB_ALL")
   [ "$N" -ge 1 ] || bad "lens prompt not found in run-build.sh: $LENS"
 done
-N=$(grep -c 'FRAUD: <weakened-tests' "$RB_ALL")
+# TEST-CHANGE (BH-7970): the general lens text moved to prompts/stages/review.md; the count spans the pipeline and that file.
+N=$(cat "$RB_ALL" "$DIR/prompts/stages/review.md" | grep -c 'FRAUD: <weakened-tests')
 [ "$N" = 3 ] && ok || bad "all three review lenses must name the six classes (got $N)"
 grep -q 'D1-D34' "$RB_ALL" && ok \
   || bad "the D-rule citation sentence must still be there, widened to D34"

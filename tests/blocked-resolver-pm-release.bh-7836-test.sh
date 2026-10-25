@@ -163,6 +163,9 @@ fx_br_harness "$DIR" "$T" || exit 1
 mkdir -p "$H/bin/blocked-resolver.d"
 cp "$DIR/bin/blocked-resolver.d/"*.sh "$H/bin/blocked-resolver.d/" || exit 1
 touch "$H/flags/fly-pool-tproj"   # pool project: the rebuild is a queue row
+# TEST-CHANGE (BH-7970): the plan launch region sources $HARNESS/bin/lib/stage-prompt.sh and renders prompts/stages/plan.md; the scratch harness carries both, as a synced box does.
+scratch_install_closure bin/lib/stage-prompt.sh "$H" >/dev/null || bad "could not install bin/lib/stage-prompt.sh into the scratch harness"
+mkdir -p "$H/prompts/stages"; cp "$DIR"/prompts/stages/*.md "$H/prompts/stages/"
 # The jobs client: the queue and a file-backed ledger. Every queue_put and
 # every ledger put lands in ONE ordered file, so "released before enqueued" is
 # a line order. $T/pm-put-fail makes the plan_malformed put fail (R2).

@@ -79,8 +79,9 @@ grep -qF '## Verify (run, not edited)' <<<"$R" && ok || bad "P4: vl_plan_rule mu
 grep -qF 'MODIFY or CREATE' <<<"$R" && ok || bad "P4: vl_plan_rule must say MODIFY or CREATE (got: $R)"
 # bin/lib/rb/plan.sh: the call must be inside the CC plan prompt line. The
 # count guards the absent-symbol case, so a deleted call is red.
-N=$(grep -c '^CC plan .*vl_plan_rule' "$DIR/bin/lib/rb/plan.sh")
-[ "${N:-0}" -ge 1 ] && ok || bad "P4: bin/lib/rb/plan.sh's plan prompt must call vl_plan_rule"
+# TEST-CHANGE (BH-7970): the call moved from the CC plan line to the SP_PLAN_VL precompute, and the template carries its token.
+N=$(grep -c '^SP_PLAN_VL=.*vl_plan_rule' "$DIR/bin/lib/rb/plan.sh")
+[ "${N:-0}" -ge 1 ] && grep -qF '${SP_PLAN_VL}' "$DIR/prompts/stages/plan.md" && ok || bad "P4: bin/lib/rb/plan.sh's plan prompt must call vl_plan_rule"
 N=$(grep -c 'lib/verify-list.sh' "$DIR/bin/lib/rb/plan.sh")
 [ "${N:-0}" -ge 1 ] && ok || bad "P4: bin/lib/rb/plan.sh must source bin/lib/verify-list.sh"
 

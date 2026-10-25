@@ -232,7 +232,8 @@ grep -q 'bin/e2e-smoke.sh' "$RB" \
 # review-run.txt` line — and the prompt assignment is the stricter anchor
 # anyway, since that is the line which interpolates ${GATES_NOTE}.
 E2ELN=$(grep -n 'bin/e2e-smoke.sh' "$RB" | head -1 | cut -d: -f1)
-REVLN=$(grep -n '^REVIEW_PROMPT="MECHANICAL GATES' "$RB" | head -1 | cut -d: -f1)
+# TEST-CHANGE (BH-7970): REVIEW_PROMPT is now assembled by `sp_render review REVIEW_PROMPT` from prompts/stages/review.md (which interpolates ${GATES_NOTE}).
+REVLN=$(grep -n '^sp_render review REVIEW_PROMPT' "$RB" | head -1 | cut -d: -f1)
 { [ -n "$E2ELN" ] && [ -n "$REVLN" ] && [ "$E2ELN" -lt "$REVLN" ]; } \
   && ok || bad "the e2e stage does not run before the review call (e2e=$E2ELN review=$REVLN)"
 # ...and its note must actually be spliced into what the reviewer reads.

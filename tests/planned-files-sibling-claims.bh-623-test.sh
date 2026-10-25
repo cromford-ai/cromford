@@ -132,12 +132,15 @@ done
 # text every build actually runs.
 . "$REPO/tests/lib/rb-all.sh" || exit 1
 FLAT=$(rb_all "$REPO" "$T/run-build.all.sh") || bad "A6: rb_all could not flatten bin/run-build.sh"
-for pair in "bin/run-build.sh:0" "bin/lib/rb/plan.sh:1" "FLAT:1"; do
+# TEST-CHANGE (BH-7970): the prompt text moved to prompts/stages/plan.md, and the
+# flattened pipeline renders that file once through `sp_render plan` (pinned below).
+for pair in "bin/run-build.sh:0" "prompts/stages/plan.md:1" "bin/lib/rb/plan.sh:0" "FLAT:0"; do
   f=${pair%:*}; want=${pair##*:}
   src="$REPO/$f"; [ "$f" = FLAT ] && src="$FLAT"
   n=$(grep -c "## Sibling claims (not touched)" "$src"); n=${n:-0}
   [ "$n" = "$want" ] && ok || bad "A6: $f carries the marker sentence $n times, want $want"
 done
+[ "$(grep -c '^sp_render plan ' "$FLAT")" = 1 ] && ok || bad "A6: FLAT must render prompts/stages/plan.md once (sp_render plan)"
 
 echo "PASS=$PASS FAIL=$FAIL"
 [ "$FAIL" = 0 ]

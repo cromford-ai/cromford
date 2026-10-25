@@ -42,6 +42,9 @@ mkdir -p "$T/bin/lib" "$T/fakebin" "$T/logs" "$T/repos"
 PASS=0; FAIL=0
 ok()  { PASS=$((PASS+1)); }
 bad() { FAIL=$((FAIL+1)); echo "FAIL: $1"; }
+# TEST-CHANGE (BH-7970): the driven review/plan code sources $HARNESS/bin/lib/stage-prompt.sh and renders prompts/stages/*.md; the scratch harness carries both, as a synced box does.
+scratch_install_closure bin/lib/stage-prompt.sh "$T" >/dev/null || bad "could not install bin/lib/stage-prompt.sh into the scratch harness"
+mkdir -p "$T/prompts/stages"; cp "$DIR"/prompts/stages/*.md "$T/prompts/stages/"
 
 LIB="$DIR/bin/lib/review-tier.sh"
 [ -r "$LIB" ] && ok || bad "bin/lib/review-tier.sh is missing — the classifier this whole suite drives does not exist"

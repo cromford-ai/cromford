@@ -67,14 +67,16 @@ xb 'plan prompt' "$T/plan-prompt.sh"
 [ -s "$T/plan-prompt.sh" ] && ok || bad "A0: could not extract the 'plan prompt' block — markers missing?"
 
 planprompt() { # planprompt <source-the-lib: 1|0> <capture file>
+  # TEST-CHANGE (BH-7970): the block renders prompts/stages/plan.md through sp_render, so the driver always loads bin/lib/stage-prompt.sh; only the test-home lib toggles.
   rm -f "$2"
   ( env HARNESS="$H" BUILD="$B" KEY=AB-1 TICKET=1 PROJECT=widget-os PLAN_MODEL=m \
         PLAN_AMBIGUITY_RULE= KIND_HINT_LINE= CARRIED_NOTE_LINE= \
-        SRC="$1" LIBP="$LIB" CAP="$2" \
+        SRC="$1" LIBP="$LIB" CAP="$2" SPLIB="$DIR/bin/lib/stage-prompt.sh" \
     bash -c 'set -uo pipefail
              CC() { printf "%s" "$5" > "$CAP"; }
              CC_ARTIFACT_KIND=; CC_ARTIFACT_FILE=
              if [ "$SRC" = 1 ]; then . "$LIBP"; fi
+             . "$SPLIB"
              . "$0"' "$T/plan-prompt.sh" ) >"$T/plan-prompt.out" 2>&1
 }
 
@@ -300,11 +302,12 @@ xb 'execute prompt' "$T/exec-prompt.sh"
 [ -s "$T/exec-prompt.sh" ] && ok || bad "D0: could not extract the 'execute prompt' block — markers missing?"
 
 chain() { # chain <capture file> [run the reroute block first: 1|0]
+  # TEST-CHANGE (BH-7970): the execute block renders prompts/stages/execute.md through sp_render, so the driver loads bin/lib/stage-prompt.sh.
   rm -f "$1"
   ( env HARNESS="$H" BUILD="$B" PROJECT=widget-os KEY=AB-1 KIND=feature WT="$W" \
         TEST_REROUTE_RELAY_DIR="$T/relay" LIBP="$LIB" BRANCH=ticket/ab-1 \
         EXECUTE_MODEL=m CKPT_RESUME_NOTE= KIND_EXEC_NOTE= EXECUTE_TIMEOUT_SECS=1 \
-        RR="$T/reroute.sh" CAP="$1" PRE="${2:-1}" VIOL="$VIOL" \
+        RR="$T/reroute.sh" CAP="$1" PRE="${2:-1}" VIOL="$VIOL" SPLIB="$DIR/bin/lib/stage-prompt.sh" \
     bash -c 'set -uo pipefail
              STAMP()  { echo TS; }
              RESULT() { echo "RESULT $*" >> "$VIOL"; }
@@ -313,6 +316,7 @@ chain() { # chain <capture file> [run the reroute block first: 1|0]
              REROUTE_EXEC_NOTE=""
              . "$LIBP"
              [ "$PRE" = 1 ] && . "$RR"
+             . "$SPLIB"
              . "$0"' "$T/exec-prompt.sh" ) >"$T/chain.out" 2>&1
 }
 

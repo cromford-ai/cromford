@@ -180,9 +180,10 @@ SP_LINE=$(grep -n '^# >>> spec artifact' "$RB_ALL" | head -1 | cut -d: -f1)
 # ---------- 7. the PR body links the spec, the review prompt skips it --------
 grep -q '"\$VERIFY_LINE" "\$SPEC_LINE"' "$RB_ALL" \
   && ok || bad "the PR body must be given SPEC_LINE"
-grep -q 'SPEC ARTIFACT, NOT CODE' "$RB_ALL" \
+# TEST-CHANGE (BH-7970): the general review prompt text moved to prompts/stages/review.md.
+grep -q 'SPEC ARTIFACT, NOT CODE' "$DIR/prompts/stages/review.md" \
   && ok || bad "the review prompt must tell the reviewer the spec is not a review target"
-grep -q 'Judge the code against the spec; never judge the spec' "$RB_ALL" \
+grep -q 'Judge the code against the spec; never judge the spec' "$DIR/prompts/stages/review.md" \
   && ok || bad "the review prompt must say which way the judging runs"
 grep -q "exclude).harness/specs'" "$RB_ALL" \
   && ok || bad "the tier size heuristic must exclude the spec (a plan is not blast radius)"

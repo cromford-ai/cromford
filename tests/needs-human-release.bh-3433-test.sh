@@ -179,7 +179,9 @@ reset; c operator User "2026-09-29T11:00:00Z" 'HUMAN-STEP-DONE: stray'; none E12
 RB_ALL=$(rb_all "$DIR" "$T/run-build.all.sh")
 cut_block() { awk -v n="$1" 'index($0,"# >>> " n)==1{f=1;next} index($0,"# <<< " n)==1{exit} f' "$RB_ALL" > "$2"; }
 cut_block "needs-human seam" "$T/seam.sh"
-awk '/^REVIEW_PROMPT="MECHANICAL GATES/{f=1} f{print} f&&/nh_prompt_release_note/{exit}' "$RB_ALL" > "$T/prompt.sh"
+# TEST-CHANGE (BH-7970): REVIEW_PROMPT is now built by the `review prompt` block (SP_REVIEW_* precompute + sp_render of
+# prompts/stages/review.md); the driver runs that real block with the repo lib bin/lib/stage-prompt.sh sourced first.
+cut_block "review prompt" "$T/prompt.sh"
 [ -s "$T/seam.sh" ] && grep -q 'nh_prompt_release_note' "$T/prompt.sh" && ok || bad "N: could not cut the seam / REVIEW_PROMPT"
 mkdir -p "$T/s/bin/lib/needs-human" "$T/s/repo"
 cp "$LIB" "$T/s/bin/lib/"; cp "$DIR"/bin/lib/needs-human/*.sh "$T/s/bin/lib/needs-human/"
@@ -187,7 +189,7 @@ printf '#!/bin/bash\n[ "${2:-}" = board_prefix ] && cat "%s/prefix"\n' "$T" > "$
 git -C "$T/s/repo" init -q && git -C "$T/s/repo" remote add origin https://github.com/o/r.git
 PROMPT() { # PROMPT <board prefix> — the prompt a review round on BH-7 builds
   echo "$1" > "$T/prefix"
-  (cd "$T/s/repo" && HARNESS="$T/s" PROJECT=p KEY=BH-7 bash -c '. "$1"; . "$2"; printf "%s" "$REVIEW_PROMPT"' _ "$T/seam.sh" "$T/prompt.sh" 2>"$T/prompt.err")
+  (cd "$T/s/repo" && HARNESS="$T/s" PROJECT=p KEY=BH-7 bash -c '. "$3"; . "$1"; . "$2"; printf "%s" "$REVIEW_PROMPT"' _ "$T/seam.sh" "$T/prompt.sh" "$DIR/bin/lib/stage-prompt.sh" 2>"$T/prompt.err")
 }
 reset; c harness-bot Bot "2026-09-29T10:00:00Z" "$MARK"; c operator User "2026-09-29T11:00:00Z" 'HUMAN-STEP-DONE: set FOO in Vercel prod'; serve
 OUT=$(PROMPT -)

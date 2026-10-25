@@ -277,7 +277,8 @@ mkdir -p "$T/h13e/bin" "$T/b13e"
 out=$( HARNESS="$T/h13e" BUILD="$T/b13e" PROJECT=p TICKET=42 KEY=BH-7 bash "$T/hookrun.sh" 2>&1 ); rc=$?
 [ "$rc" = 0 ] && [ "$out" = REACHED ] && ok || bad "A13: a box without the runner did not fall through (rc $rc '$out')"
 # e: the plan prompt carries the brief line right after the carried note.
-grep -qF '$KIND_HINT_LINE$CARRIED_NOTE_LINE${REPRO_BRIEF_LINE:-} IF KIND IS BUG' "$RB" && ok || bad "A13e: plan prompt does not carry \$REPRO_BRIEF_LINE after \$CARRIED_NOTE_LINE"
+# TEST-CHANGE (BH-7970): the plan prompt text moved to prompts/stages/plan.md, where each variable is written ${NAME}.
+grep -qF '${KIND_HINT_LINE}${CARRIED_NOTE_LINE}${REPRO_BRIEF_LINE} IF KIND IS BUG' "$DIR/prompts/stages/plan.md" && ok || bad "A13e: plan prompt does not carry \$REPRO_BRIEF_LINE after \$CARRIED_NOTE_LINE"
 # f: the PR body slot, and the section block with the stub render is empty.
 grep -qF '"${ASSUMPTIONS_SECTION}${PREPR_SECTION:-}${REPRO_SECTION:-}' "$RB" && ok || bad "A13f: PR_BODY_FOR does not carry \${REPRO_SECTION:-}"
 out=$( { cat "$T/section.sh"; echo 'printf "[%s]" "$REPRO_SECTION"'; } | HARNESS="$T/h13a" BUILD="$T/b13a" bash -c '. "$HARNESS/bin/lib/prebuild-repro.sh"; . /dev/stdin' 2>&1 )

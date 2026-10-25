@@ -238,7 +238,8 @@ awk 'index($0, "# >>> plan prompt")==1 {f=1} f {print} $0=="# <<< plan prompt" {
 [ -s "$T/prompt.sh" ] && ok || bad "G0: could not lift the plan prompt block"
 cat "$T/gate.sh" "$T/prompt.sh" > "$T/block.sh"
 run_block() { # run_block [block-file]
-  OUT=$(bash -c '. "$STUBS"; . "$0"; echo CONTINUED' "${1:-$T/block.sh}" 2>"$T/stderr"); RC=$?
+  # TEST-CHANGE (BH-7970): the plan prompt block calls sp_render; its source line sits just above the block, so the driver loads the repo lib.
+  OUT=$(bash -c '. "$STUBS"; . "$1" || exit 9; . "$0"; echo CONTINUED' "${1:-$T/block.sh}" "$DIR/bin/lib/stage-prompt.sh" 2>"$T/stderr"); RC=$?
 }
 continued() { case "$OUT" in *CONTINUED*) return 0 ;; *) return 1 ;; esac; }
 P() { cat "$CALLS/cc.prompt" 2>/dev/null; }

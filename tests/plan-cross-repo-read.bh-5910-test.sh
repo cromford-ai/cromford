@@ -180,8 +180,9 @@ grep -rq 'tok-fixture' "$T/build/" && bad "5: a token value reached pipeline.log
 # ── 4. the prompt sentence ──────────────────────────────────────────────────
 NOTE=$(bash -c ". '$LIB' && xrepo_plan_note")
 grep -q 'CROSS-REPO-READ: <owner>/<repo>' <<<"$NOTE" && ok || bad "4: xrepo_plan_note must name the declaration line, got: $NOTE"
-PROMPT=$(grep -m1 '^CC plan ' "$DIR/bin/lib/rb/plan.sh")
-grep -q 'xrepo_plan_note' <<<"$PROMPT" && ok || bad "4: the plan prompt (CC plan line in bin/lib/rb/plan.sh) must call xrepo_plan_note"
+# TEST-CHANGE (BH-7970): the call moved from the CC plan line to the SP_PLAN_XREPO precompute, and the template carries its token.
+PROMPT=$(grep -m1 '^SP_PLAN_XREPO=' "$DIR/bin/lib/rb/plan.sh")
+grep -q 'xrepo_plan_note' <<<"$PROMPT" && grep -qF '${SP_PLAN_XREPO}' "$DIR/prompts/stages/plan.md" && ok || bad "4: the plan prompt (CC plan line in bin/lib/rb/plan.sh) must call xrepo_plan_note"
 grep -q 'lib/rb/cross-repo-read.sh' "$DIR/bin/lib/rb/plan.sh" && ok || bad "4: bin/lib/rb/plan.sh must source bin/lib/rb/cross-repo-read.sh"
 
 # ── 6. a reused plan (pre-plan HIT, resume) meets the gate ──────────────────

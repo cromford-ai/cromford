@@ -301,6 +301,8 @@ BLD="$H/builds/p7"; mkdir -p "$BLD"
   PLAN_AMBIGUITY_RULE=""; KIND_HINT_LINE=""; CARRIED_NOTE_LINE=""
   . "$LIB"
   CC() { printf '%s' "$5" > "$BUILD/prompt.txt"; }
+  # TEST-CHANGE (BH-7970): the block renders prompts/stages/plan.md through sp_render, so the driver loads the repo's bin/lib/stage-prompt.sh.
+  . "$SRC/bin/lib/stage-prompt.sh"
   # shellcheck source=/dev/null
   . "$T/plan-prompt.sh" ) >/dev/null 2>&1
 for s in '## Spec changes from comments' 'NEWEST FIRST' "'none'"; do

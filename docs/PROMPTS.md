@@ -115,6 +115,72 @@ these files yet.
 
 Owner: BH-7940.2.
 
+The five stage prompts are files now. Each build stage renders its file with
+`sp_render <kind> [<outvar>]` from `bin/lib/stage-prompt.sh`, then calls the
+runner `CC` with the result. The runner call does not change.
+
+| Kind | File | Rendered in |
+|---|---|---|
+| `plan` | `prompts/stages/plan.md` | `bin/lib/rb/plan.sh`, block `plan prompt` |
+| `execute` | `prompts/stages/execute.md` | `bin/lib/rb/execute.sh`, block `execute prompt` |
+| `review` | `prompts/stages/review.md` | `bin/lib/rb/review.sh`, block `review prompt` |
+| `fix-round` | `prompts/stages/fix-round.md` | the same block; `LENS_VARS` reads it as the review lens `L_FIX` |
+| `qa` | `prompts/stages/qa.md` | `QA_PROMPT_FOR` in `bin/lib/rb/pr.sh` |
+
+The T0 static-review prefix, the security and refute lens prompts and their
+fix rounds stay inline in `bin/lib/rb/review.sh`.
+
+Template format:
+
+- A variable is written `${NAME}`. No other form is replaced: `$NAME`,
+  `${NAME:-x}`, `${ NAME}` and `${1}` stay literal text. So a literal `$` with no
+  braces, such as `$BUILD/validate.txt` in `execute.md`, stays as it is.
+- `NAME` must be a word of the whitelist `SP_VARS` in `bin/lib/stage-prompt.sh`.
+  A name that is not on the list stays literal, so a template cannot read
+  `${HARNESS_SECRET}` or any other env value. An unset listed name renders empty.
+- The render is one pass, left to right. A value is never scanned again and
+  nothing is evaluated, so `${KEY}` or `$(id)` inside a value stays as text.
+- The file's bytes are kept. No file ends in a newline today, and the render
+  adds none and removes none.
+- The `$(...)` parts of the old inline strings are computed by the stage before
+  the render, as `SP_PLAN_*` and `SP_REVIEW_*` variables. `SP_PLAN_SIZE_SCOPE` is
+  the output of `bin/size-scope.sh --rules`, run in the repo, because the old
+  plan string ran that command through an unescaped backtick pair.
+- `SP_PREVIEW_URL` is the preview URL that `QA_PROMPT_FOR` gets as `$1`.
+
+Source order for `sp_render <kind>`:
+
+1. `$HARNESS/state/prompts/$PROJECT/<kind>.md`, when it is readable and not
+   empty (the hub-resolved copy, BH-7940.3).
+2. Else `$SP_STAGES_DIR/<kind>.md`. `SP_STAGES_DIR` defaults to `prompts/stages`
+   in the checkout that holds the lib.
+3. Else no prompt: `stage-prompt: no template for <kind>` on stderr, rc 1.
+
+On rc 0, `SP_SOURCE_<kind>` names the file read (a dash becomes an underscore:
+`SP_SOURCE_fix_round`). An unknown kind is rc 2.
+
+When `$HARNESS/state/prompts/$PROJECT/rules.md` is not empty, the render starts
+with this line and one newline:
+
+```
+PROJECT RULES OVERRIDE: read <that path>; it replaces ~/.claude/CLAUDE.md for this build.
+```
+
+A missing template never sends an empty prompt:
+
+- `plan`, `execute`, `review`, `fix-round`: the stage writes `BUILD_REFUSED
+  prompt template missing (<kind>)` to `pipeline.log` and as the RESULT, and
+  exits 3 before any `CC` call.
+- `qa`: the PR is already open, so the build goes on. There is no QA session.
+  `qa.md` gets the reason, `MAP ENTRIES: none`, `QA COVERAGE: screens=0 flows=0
+  shots=0` and `QA: FAIL`. The PR is tier 2, and ALERTS.log gets one
+  `BUILD_REFUSED prompt template missing (qa)` line.
+
+`tests/stage-prompt.bh-7970-test.sh` pins the move: with no resolved file and
+no `rules.md`, each rendered prompt is byte-equal to the old inline string in
+`tests/fixtures/stage-prompt.bh-7970/`. A change to a template updates its
+fixture in the same diff.
+
 ## Hub render and build note (BH-7940.3)
 
 Owner: BH-7940.3.

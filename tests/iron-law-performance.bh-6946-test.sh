@@ -52,8 +52,9 @@ carriers() {
 
 # ── L1 every carrier ──────────────────────────────────────────────────────────
 mapfile -t C < <(carriers "$DIR")
+# TEST-CHANGE (BH-7970): the general review lens text moved from bin/lib/rb/review.sh to prompts/stages/review.md.
 for want in rules/CLAUDE.md rules/topics/04-building-software.md bin/review-prs.sh bin/review-autopilot.sh \
-            bin/lib/rb/review.sh prompts/project-6.md bin/draft-proposal.sh; do
+            prompts/stages/review.md prompts/project-6.md bin/draft-proposal.sh; do
   grep -qx "$want" < <(printf '%s\n' "${C[@]}") && ok || bad "L1 discovery did not find the known carrier $want (found: ${C[*]})"
 done
 for f in "${C[@]}"; do
@@ -61,11 +62,13 @@ for f in "${C[@]}"; do
 done
 
 # ── L2 the literal texts in the stage, review and lead prompts ───────────────
-for f in bin/lib/rb/plan.sh bin/run-preplan.sh bin/lib/rb/execute.sh prompts/project-6.md; do
+# TEST-CHANGE (BH-7970): the plan and execute prompt texts moved from bin/lib/rb/{plan,execute}.sh to prompts/stages/{plan,execute}.md.
+for f in prompts/stages/plan.md bin/run-preplan.sh prompts/stages/execute.md prompts/project-6.md; do
   grep -qF -- "$P" "$DIR/$f" && ok || bad "L2 $f lacks the plan text P"
   grep -qF -- "$R" "$DIR/$f" && ok || bad "L2 $f lacks the review text R"
 done
-for f in bin/lib/rb/review.sh bin/review-prs.sh bin/review-autopilot.sh prompts/lead-review.md prompts/lead-review-builds-on.md; do
+# TEST-CHANGE (BH-7970): the general review lens text moved from bin/lib/rb/review.sh to prompts/stages/review.md.
+for f in prompts/stages/review.md bin/review-prs.sh bin/review-autopilot.sh prompts/lead-review.md prompts/lead-review-builds-on.md; do
   grep -qF -- "$R" "$DIR/$f" && ok || bad "L2 $f lacks the review text R"
 done
 grep -qF -- "$P" "$DIR/bin/draft-proposal.sh" && ok || bad "L2 bin/draft-proposal.sh lacks the plan text P"
@@ -82,16 +85,20 @@ grep -qF -- "$P" "$DIR/rules/topics/04-building-software.md" && ok || bad "L4 ru
 # ── L5 the real prompt lines, expanded by bash ───────────────────────────────
 # Each line is copied from the real file into a script with stub variables and
 # run, so bash itself expands the double-quoted string the review lane sends.
-gen=$(grep -E '^Adversarially review the diff of branch' "$DIR/bin/lib/rb/review.sh")
+# TEST-CHANGE (BH-7970): the general-review line moved to prompts/stages/review.md,
+# a ${NAME} template. It is expanded by the real renderer, sp_render, instead of
+# by a bash double-quoted string; the assertions are the same.
+gen=$(grep -E '^Adversarially review the diff of branch' "$DIR/prompts/stages/review.md")
 sec=$(grep -E '^SECURITY_PROMPT=' "$DIR/bin/lib/rb/review.sh")
-if [ -n "$gen" ] && [ "${gen: -1}" = '"' ]; then
-  { printf 'BRANCH=b BASE=main KEY=X-1 BUILD=/tmp\nprintf %%s "'; printf '%s\n' "$gen"; } > "$T/gen.sh"
-  out=$(bash "$T/gen.sh" 2>"$T/gen.err"); rc=$?
+if [ -n "$gen" ]; then
+  mkdir -p "$T/stages"; printf '%s' "$gen" > "$T/stages/review.md"
+  out=$(HARNESS="$T/no-harness" PROJECT=p BRANCH=b BASE=main KEY=X-1 BUILD=/tmp SP_STAGES_DIR="$T/stages" \
+        bash -c 'set -u; . "$1" && sp_render review' _ "$DIR/bin/lib/stage-prompt.sh" 2>"$T/gen.err"); rc=$?
   [ "$rc" = 0 ] && ok || bad "L5 the general-review line did not expand (rc $rc: $(head -c 200 "$T/gen.err"))"
   grep -qF -- "$R" <<<"$out" && ok || bad "L5 the expanded general-review prompt lacks R"
   grep -qF -- 'branch b against main' <<<"$out" && ok || bad "L5 the stub variables did not expand in the general-review prompt"
 else
-  bad "L5 no general-review prompt line ending in a quote in bin/lib/rb/review.sh"
+  bad "L5 no general-review prompt line in prompts/stages/review.md"
 fi
 if [ -n "$sec" ]; then
   { printf 'BRANCH=b BASE=main KEY=X-1 BUILD=/tmp\n'; printf '%s\n' "$sec"; printf 'printf %%s "$SECURITY_PROMPT"\n'; } > "$T/sec.sh"

@@ -138,6 +138,8 @@ STAMP() { echo TS; }
 CC() { printf '%s' "$2" > "$T/cc.model"; printf '%s' "$5" > "$T/cc.prompt"; env | grep '^CONTEXT_KILL_TOKENS=' > "$T/cc.env"; return 0; }
 PROJECT=cromford KEY=BH-3495 TICKET=3495 BUILD="$T/b"
 PLAN_AMBIGUITY_RULE=AMBIG KIND_HINT_LINE= CARRIED_NOTE_LINE=
+# TEST-CHANGE (BH-7970): the plan prompt block calls sp_render; its source line sits just above the block, so the driver loads the lib.
+. "$SPLIB" || exit 9
 for f in "$@"; do . "$f"; done
 printf '%s' "$PLAN_MODEL" > "$T/final.model"
 printf '%s' "${CP_PARENT:-}" > "$T/final.parent"
@@ -146,7 +148,7 @@ prun() { # prun <block files...> ; env via PENV array
   scratch_rm "$B"; rm -rf "$T/cc."* "$T/final."* "$T/cp-calls"; mkdir -p "$B"; : > "$B/pipeline.log"
   [ -n "${SEED_RESUME:-}" ] && { echo '# plan' > "$B/plan.md"; printf 'resumed map\n' > "$B/context-pack.md"; echo BH-7000 > "$B/context-pack.md.parent"; }
   env -u CP_PARENT -u CP_PREAMBLE -u PLAN_MODEL_CHILD -u HARNESS_SECRET -u CONTEXT_KILL_TOKENS \
-    HARNESS="$H" T="$T" PLAN_MODEL=model-plan-a JOBS_URL= ${PENV[@]+"${PENV[@]}"} bash "$T/drive.sh" "$@" > "$T/drive.out" 2>&1
+    HARNESS="$H" T="$T" SPLIB="$DIR/bin/lib/stage-prompt.sh" PLAN_MODEL=model-plan-a JOBS_URL= ${PENV[@]+"${PENV[@]}"} bash "$T/drive.sh" "$@" > "$T/drive.out" 2>&1
 }
 plog() { cat "$B/pipeline.log"; }
 

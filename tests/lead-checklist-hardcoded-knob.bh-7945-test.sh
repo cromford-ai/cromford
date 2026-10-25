@@ -287,7 +287,8 @@ k6() {
   hits=$(grep 'hardcoded-knob' "$f" | grep -cE "$IRON_RE")
   [ "$hits" = 0 ] || echo "FAIL: ${tag:+$tag }K6 $f: $hits line(s) name hardcoded-knob and match the iron-law scan"
 }
-for f in bin/review-prs.sh bin/lib/rb/review.sh; do
+# TEST-CHANGE (BH-7970): the general review lens text (the class list) moved from bin/lib/rb/review.sh to prompts/stages/review.md.
+for f in bin/review-prs.sh prompts/stages/review.md; do
   k6 "$SRC/$f" "" > "$T/k6.out"
   if [ -s "$T/k6.out" ]; then while IFS= read -r l; do bad "${l#FAIL: }"; done < "$T/k6.out"; else ok; fi
 done

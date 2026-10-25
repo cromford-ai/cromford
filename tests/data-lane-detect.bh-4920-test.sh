@@ -102,12 +102,14 @@ NOTE=$(dl_prompt_field_note)
 RB_ALL=$(rb_all "$DIR" "$T/run-build.all.sh")
 cut_block() { awk -v n="$1" 'index($0,"# >>> " n)==1{f=1;next} index($0,"# <<< " n)==1{exit} f' "$RB_ALL" > "$2"; }
 cut_block "needs-human seam" "$T/seam.sh"
-awk '/^REVIEW_PROMPT="MECHANICAL GATES/{f=1} f{print} f&&/nh_prompt_release_note/{exit}' "$RB_ALL" > "$T/prompt.sh"
+# TEST-CHANGE (BH-7970): REVIEW_PROMPT is now built by the `review prompt` block (SP_REVIEW_* precompute + sp_render of
+# prompts/stages/review.md); PROMPT() drives that real block with the repo lib bin/lib/stage-prompt.sh sourced first.
+cut_block "review prompt" "$T/prompt.sh"
 [ -s "$T/seam.sh" ] && grep -q 'nh_prompt_release_note' "$T/prompt.sh" && ok || bad "D11: could not cut the seam / REVIEW_PROMPT"
 mkdir -p "$T/h/repo"
 printf '#!/bin/bash\nexit 1\n' > "$T/h/bin/fleet-conf.sh"; chmod +x "$T/h/bin/fleet-conf.sh"
 PROMPT() {
-  (cd "$T/h/repo" && HARNESS="$T/h" PROJECT=p KEY=BH-7 bash -c '. "$1"; . "$2"; printf "%s" "$REVIEW_PROMPT"' _ "$T/seam.sh" "$T/prompt.sh" 2>"$T/prompt.err")
+  (cd "$T/h/repo" && HARNESS="$T/h" PROJECT=p KEY=BH-7 bash -c '. "$3"; . "$1"; . "$2"; printf "%s" "$REVIEW_PROMPT"' _ "$T/seam.sh" "$T/prompt.sh" "$DIR/bin/lib/stage-prompt.sh" 2>"$T/prompt.err")
 }
 OUT=$(PROMPT); RC=$?
 [ "$RC" = 0 ] && grep -qF "DATA_LANE: <repo-relative script path>" <<<"$OUT" && grep -qF "${NOTE# }" <<<"$OUT" \

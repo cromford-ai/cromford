@@ -157,8 +157,10 @@ need 5 "$SH_CONF"; eq "L10 merge-queue request label only + conflict" "$OUT/$RC"
 # ═══ P. the prompts ═════════════════════════════════════════════════════════
 EXB=$(sed -n '/^# >>> execute prompt/,/^# <<< execute prompt/p' "$DIR/bin/lib/rb/execute.sh")
 [ -n "$EXB" ] && ok || bad "P1: the execute prompt block markers are gone"
+# TEST-CHANGE (BH-7970): the block renders prompts/stages/execute.md; the sentence is read from that template.
+grep -q 'sp_render execute ' <<<"$EXB" && ok || bad "P1: the execute prompt block no longer renders prompts/stages/execute.md"
 eq "P1 the execute prompt says when not to merge main" \
-  "$(grep -c 'Do not merge origin/main into this branch unless it conflicts with main: the merge queue tests every PR on current main' <<<"$EXB")" 1
+  "$(grep -c 'Do not merge origin/main into this branch unless it conflicts with main: the merge queue tests every PR on current main' "$DIR/prompts/stages/execute.md")" 1
 FRP=$(grep -m1 '^  prompt="FIX ROUND on an open pull request' "$DIR/bin/blocked-resolver.sh")
 [ -n "$FRP" ] && ok || bad "P2: the fix-round prompt line is gone"
 grep -qF 'do not merge origin/main again unless this branch still conflicts with main: the merge queue tests every PR on current main' <<<"$FRP" \

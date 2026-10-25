@@ -438,6 +438,8 @@ drive() {
     vars > "$T/vars.pre.$tag"
     if [ "$with" = 1 ]; then . "$T/hook.sh"; fi
     vars > "$T/vars.post.$tag"
+    # TEST-CHANGE (BH-7970): the execute block renders prompts/stages/execute.md through sp_render; load the lib after the hook's variable dump.
+    . "$DIR/bin/lib/stage-prompt.sh"
     . "$T/exec.sh"
   )
 }

@@ -264,18 +264,20 @@ grep -q 'REVIEW_BLOCKED reproduction-gate' "$T/build/RESULT" 2>/dev/null \
 
 # ---------- 6. the findings are wired INTO the review prompt ----------
 # A gate whose output never reaches the reviewer is just a slower build.
-grep -q 'MECHANICAL GATES ran before you' "$RB_ALL" \
+# TEST-CHANGE (BH-7970): the general review prompt text moved to prompts/stages/review.md; the five greps below read it there.
+RP="$DIR/prompts/stages/review.md"
+grep -q 'MECHANICAL GATES ran before you' "$RP" \
   && ok || bad "the review prompt must carry the gate findings"
-grep -q 'never as a verdict already reached' "$RB_ALL" \
+grep -q 'never as a verdict already reached' "$RP" \
   && ok || bad "the prompt must frame gate output as evidence, not as a verdict"
 # The two accepted blind spots are handed to the reviewer explicitly. A gate
 # with a known hole and a reviewer who has not been told about it is worse than
 # no gate — it buys confidence the coverage does not support.
-grep -q 'KNOWN GATE BLIND SPOT' "$RB_ALL" \
+grep -q 'KNOWN GATE BLIND SPOT' "$RP" \
   && ok || bad "the review prompt must name the gate's blind spots"
-grep -q 'would this test FAIL if the feature broke' "$RB_ALL" \
+grep -q 'would this test FAIL if the feature broke' "$RP" \
   && ok || bad "the prompt must tell the reviewer what to actually check"
-grep -q 'it does not check that it is true' "$RB_ALL" \
+grep -q 'it does not check that it is true' "$RP" \
   && ok || bad "the TEST-CHANGE escape hatch must be named to the reviewer too"
 
 # ---------- 7. no new stage beat name ----------

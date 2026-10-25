@@ -34,6 +34,9 @@ mkdir -p "$T/h/state" "$T/h/logs" "$T/old"
 PASS=0; FAIL=0
 ok()  { PASS=$((PASS+1)); }
 bad() { FAIL=$((FAIL+1)); echo "FAIL: $1"; }
+# TEST-CHANGE (BH-7970): the driven review/plan code sources $HARNESS/bin/lib/stage-prompt.sh and renders prompts/stages/*.md; the scratch harness carries both, as a synced box does.
+scratch_install_closure bin/lib/stage-prompt.sh "$T/h" >/dev/null || bad "could not install bin/lib/stage-prompt.sh into the scratch harness"
+mkdir -p "$T/h/prompts/stages"; cp "$DIR"/prompts/stages/*.md "$T/h/prompts/stages/"
 
 # The region by its markers, and — only when they are absent — by the anchors
 # that bounded the same lines before this change. The fallback is deliberate: it

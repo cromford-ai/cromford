@@ -410,7 +410,8 @@ PS="$DIR/bin/lib/rb/plan.sh"
 # $KIND_HINT_LINE, because tests/prebuild-repro-contract.bh-2039 A13e pins
 # `$KIND_HINT_LINE$CARRIED_NOTE_LINE${REPRO_BRIEF_LINE:-} IF KIND IS BUG` as one
 # run. The old R9 pinned it between those two, which A13e forbids.
-eq "R9 the prompt carries the line once" "$(grep -c '${REOPEN_REASON_LINE:-}$KIND_HINT_LINE$CARRIED_NOTE_LINE' "$PS")" 1
+# TEST-CHANGE (BH-7970): the prompt text moved to prompts/stages/plan.md, where each token is written ${NAME}.
+eq "R9 the prompt carries the line once" "$(grep -c '${REOPEN_REASON_LINE}${KIND_HINT_LINE}${CARRIED_NOTE_LINE}' "$DIR/prompts/stages/plan.md")" 1
 a=$(grep -n '^# <<< carried note' "$PS" | cut -d: -f1); b=$(grep -n '^# >>> reopen reason (BH-6159)' "$PS" | cut -d: -f1); c=$(grep -n '^# <<< ticket meta' "$PS" | cut -d: -f1)
 [ -n "$a" ] && [ -n "$b" ] && [ -n "$c" ] && [ "$a" -lt "$b" ] && [ "$b" -lt "$c" ] && ok \
   || bad "R9 the block must sit after '# <<< carried note' and before '# <<< ticket meta' (lines '$a' '$b' '$c')"

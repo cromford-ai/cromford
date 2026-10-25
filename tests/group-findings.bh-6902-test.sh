@@ -392,12 +392,19 @@ gf_from_observed project-3 "$T/broken.json" > /dev/null 2>"$T/conv.err"; CRC=$?
 [ "$CRC" != 0 ] && ok || bad "C1: an unreadable observed.json must not read as zero findings"
 
 # --- P1: the prompt sentence ----------------------------------------------------------------
-want="bin/lib/rb/plan.sh:1 bin/lib/rb/execute.sh:1 bin/lib/rb/review.sh:3 bin/lib/rb/result.sh:1 bin/lib/rb/pr.sh:1 bin/run-preplan.sh:1 bin/review-prs.sh:1"
+# TEST-CHANGE (BH-7970): the plan, execute, review and qa prompt texts moved from
+# bin/lib/rb/*.sh to prompts/stages/<kind>.md, so a stage's count is the sum over
+# its rb module and its stage file (a "+" joins them). The totals are unchanged;
+# bash -n still runs on every .sh.
+want="bin/lib/rb/plan.sh+prompts/stages/plan.md:1 bin/lib/rb/execute.sh+prompts/stages/execute.md:1 bin/lib/rb/review.sh+prompts/stages/review.md:3 bin/lib/rb/result.sh:1 bin/lib/rb/pr.sh+prompts/stages/qa.md:1 bin/run-preplan.sh:1 bin/review-prs.sh:1"
 for w in $want; do
-  f="${w%%:*}"; n="${w##*:}"
-  got=$(grep -c 'FOLLOW-UPS ARE GROUPED' "$DIR/$f")
+  fs="${w%%:*}"; n="${w##*:}"; f=${fs//+/ and }
+  got=0
+  for g in ${fs//+/ }; do
+    c=$(grep -c 'FOLLOW-UPS ARE GROUPED' "$DIR/$g"); got=$((got + c))
+    case "$g" in *.sh) bash -n "$DIR/$g" && ok || bad "P1: $g does not parse" ;; esac
+  done
   [ "$got" = "$n" ] && ok || bad "P1: $f carries the sentence $got time(s), want $n"
-  bash -n "$DIR/$f" && ok || bad "P1: $f does not parse"
 done
 
 echo "group-findings.bh-6902: $PASS passed, $FAIL failed"

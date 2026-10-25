@@ -46,9 +46,10 @@ for l in departmentSampleTools loadWorkspace departmentFacts listAddedBlocks con
 done
 
 # ── O2 the replay prompt carries R from the real review prompt ───────────────
-R=$(grep -E '^Adversarially review the diff of branch' "$DIR/bin/lib/rb/review.sh" \
+# TEST-CHANGE (BH-7970): the general review line moved from bin/lib/rb/review.sh to prompts/stages/review.md.
+R=$(grep -E '^Adversarially review the diff of branch' "$DIR/prompts/stages/review.md" \
       | grep -oE 'PERFORMANCE BY DEFAULT \(BH-6946\), each one a \[NOTE\] \(a BLOCK only [^)]*\):.*before its first content\.')
-[ -n "$R" ] && ok || bad "O2 the general review line of bin/lib/rb/review.sh carries no performance law"
+[ -n "$R" ] && ok || bad "O2 the general review line of prompts/stages/review.md carries no performance law"
 PROMPT="Review this diff of a Next.js server page against these rules. $R
 
 $(cat "$FX")

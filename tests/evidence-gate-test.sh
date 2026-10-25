@@ -186,6 +186,9 @@ setup_repo() { # setup_repo <file>...  — the file NAMES decide which lenses ru
 lenses_run() { # lenses_run <harness> — drives the block; each lens's prompt is dumped
   rm -rf "$T/build"; mkdir -p "$T/build"
   rm -f "$T/p-review.txt" "$T/p-security.txt" "$T/p-refute.txt"
+  # TEST-CHANGE (BH-7970): the block sources $HARNESS/bin/lib/stage-prompt.sh and renders prompts/stages/review.md; the scratch harness carries both, as a synced box does.
+  mkdir -p "$1/bin/lib" "$1/prompts/stages"
+  scratch_install_closure bin/lib/stage-prompt.sh "$1" >/dev/null || bad "B: could not install bin/lib/stage-prompt.sh into the scratch harness"; cp "$DIR"/prompts/stages/*.md "$1/prompts/stages/"
   ( cd "$REPO" || exit 1
     env HARNESS="$1" BUILD="$T/build" PROJECT=p KEY=K BASE=main BRANCH=feat \
         REVIEW_MODEL=rm FIX_MODEL=fm REOPEN_HOT=0 REOPEN_NOTE="" \
@@ -271,6 +274,10 @@ grep -q 'EVIDENCE VERDICTS: could not run (lib absent)' "$T/p-review.txt" 2>/dev
 EXEC_LINE=$(grep -a -m1 'CC execute "\$EXECUTE_MODEL"' "$SCRIPT")
 [ -n "$EXEC_LINE" ] && ok \
   || bad "B4 could not find the 'CC execute' prompt line in $SCRIPT — the pin below proves nothing"
+# TEST-CHANGE (BH-7970): the execute prompt text moved to prompts/stages/execute.md (the CC line now passes the rendered "$SP_PROMPT_EXECUTE"); the pins below read the template, guarded the same way.
+grep -q 'SP_PROMPT_EXECUTE' <<<"$EXEC_LINE" && [ -s "$DIR/prompts/stages/execute.md" ] && ok \
+  || bad "B4 the 'CC execute' line must send the rendered prompts/stages/execute.md — the pin below proves nothing"
+EXEC_LINE=$(cat "$DIR/prompts/stages/execute.md" 2>/dev/null)
 grep -q 'evidence-proposed.txt' <<<"$EXEC_LINE" && ok \
   || bad "B4 the execute prompt must ask the builder to write evidence-proposed.txt"
 grep -q 'REFUTED by definition' <<<"$EXEC_LINE" && ok \

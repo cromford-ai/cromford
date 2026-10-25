@@ -195,7 +195,8 @@ grep -q 'NOTE demoted from BLOCK.*14 px' "$T/s4.md" && ok || bad "S4 the 2 px fi
 echo "--- S5"
 classes=$(grep -v '^#' "$DIR/catalog/review-always-block.tsv" | awk -F'\t' 'NF{print $1}')
 grep -qx 'scalable-tests' <<<"$classes" && ok || bad "S5 catalog has no scalable-tests row"
-for f in bin/review-prs.sh bin/lib/rb/review.sh prompts/lead-review.md \
+# TEST-CHANGE (BH-7970): the general review lens text (the class list) moved from bin/lib/rb/review.sh to prompts/stages/review.md.
+for f in bin/review-prs.sh prompts/stages/review.md prompts/lead-review.md \
          rules/topics/13-review-levels.md prompts/iron-laws.d/20261016-review-levels.md; do
   for c in $classes; do
     grep -qE -- "(^|[^a-z-])\`?$c\`?([^a-z-]|$)" "$DIR/$f" && ok || bad "S5 $f does not name class '$c'"

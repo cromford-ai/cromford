@@ -171,7 +171,8 @@ prun 0 "$H" "PR_CREATED https://github.com/example-org/cromford/pull/1"
   && ok || bad "P4 rc=$(vrc) calls=$(cat "$CALLS")"
 
 # --- G1-G2 the prompts ----------------------------------------------------------
-for p in "$DIR/prompts/build-discipline.md" "$DIR/bin/lib/rb/review.sh"; do
+# TEST-CHANGE (BH-7970): the general review lens text moved from bin/lib/rb/review.sh to prompts/stages/review.md.
+for p in "$DIR/prompts/build-discipline.md" "$DIR/prompts/stages/review.md"; do
   [ "$(grep -c 'HUB_PROBE:' "$p")" -ge 1 ] && ok || bad "G1 no HUB_PROBE: in $p"
   for w in NEEDS_HUMAN: app-status-write app-permissions app-installation-repos d1-count; do
     grep -q -- "$w" "$p" && ok || bad "G2 $w missing from $p"

@@ -148,7 +148,8 @@ awk '/^PG_RUN; PG_RC=\$\?/{f=1} f && /Repair the plan/ {print; exit}' "$PS" | gr
 NOTE=$(bash -c '. "$1"; printf "  UNTRACED: failure modes — exit paths: no test named\n" > "$2/pg.txt"; pfm_repair_note "$2/pg.txt"' _ "$LIB" "$T")
 case "$NOTE" in *"## Failure modes"*"exit paths"*) ok ;; *) bad "F10 pfm_repair_note does not name the section and the gap: '$NOTE'" ;; esac
 [ -z "$(bash -c '. "$1"; printf "PLAN_TRACE: ok\n" > "$2/pg2.txt"; pfm_repair_note "$2/pg2.txt"' _ "$LIB" "$T")" ] && ok || bad "F10 a clean gate still gets a repair note"
-grep -q 'CC plan "$PLAN_MODEL" 1200 .*pfm_plan_rule' "$PS" && ok || bad "P1 the plan prompt does not carry pfm_plan_rule"
+# TEST-CHANGE (BH-7970): the call moved from the CC plan line to the SP_PLAN_PFM precompute, and the template carries its token.
+grep -q '^SP_PLAN_PFM=.*pfm_plan_rule' "$PS" && grep -qF '${SP_PLAN_PFM}' "$DIR/prompts/stages/plan.md" && ok || bad "P1 the plan prompt does not carry pfm_plan_rule"
 grep -q 'agent-call.sh" preplan .*' "$DIR/bin/run-preplan.sh" && awk '/^  "\$\{PP_PREAMBLE/ && /pfm_plan_rule/ {f = 1} END {exit !f}' "$DIR/bin/run-preplan.sh" \
   && ok || bad "P1 the pre-plan prompt does not carry pfm_plan_rule"
 

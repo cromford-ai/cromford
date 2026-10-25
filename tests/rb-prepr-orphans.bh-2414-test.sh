@@ -222,7 +222,9 @@ grep -q '^orphans: skipped' "$T/o8/prepr-scan.txt" 2>/dev/null && ok || bad "O8:
 D="$DIR/prompts/build-discipline.md"
 grep -E '^- \*\*D[0-9]+ ' "$D" | grep -F 'rooted path on a non-comment line' | grep -qF 'tests/cost-breaker-console.bh-2331-test.sh' && ok \
   || bad "O9: build-discipline.md has no rule naming new sources by rooted path on a non-comment line with the pattern suite"
-grep -qF 'build-discipline.md' <(awk '/^# >>> execute prompt/{f=1} f{print} /^# <<< execute prompt/{exit}' "$RB_ALL") && ok \
+# TEST-CHANGE (BH-7970): the execute block renders prompts/stages/execute.md through sp_render; the pointer lives in that template.
+grep -q '^sp_render execute ' <(awk '/^# >>> execute prompt/{f=1} f{print} /^# <<< execute prompt/{exit}' "$RB_ALL") \
+  && grep -qF 'build-discipline.md' "$DIR/prompts/stages/execute.md" && ok \
   || bad "O9: the execute prompt no longer points the builder at build-discipline.md"
 
 echo "rb-prepr-orphans: $PASS passed, $FAIL failed"

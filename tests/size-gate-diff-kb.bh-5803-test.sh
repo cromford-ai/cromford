@@ -62,12 +62,13 @@ OUT=$(LEAD_REVIEW_DIFF_MAX_BYTES=abc bash "$GATE" "$T/s5b.md" 700 20 2>&1); RC=$
 [ "$RC" = 2 ] && grep -qx 'SIZE_DIFF_LIMIT_KB: 400' <<<"$OUT" && ok || bad "S5 abc: rc=$RC out=$OUT"
 
 # ── S6: the planning prompt asks for it ──
-PP="$SRC/bin/lib/rb/plan.sh"
+# TEST-CHANGE (BH-7970): the plan prompt prose moved to prompts/stages/plan.md.
+PP="$SRC/prompts/stages/plan.md"
 if [ -f "$PP" ]; then
   [ "$(grep -c "DIFF_KB: <n>" "$PP")" -ge 1 ] && ok || bad "S6 the plan prompt does not ask for 'DIFF_KB: <n>'"
   [ "$(grep -c 'Two lines, exactly these keys' "$PP")" = 0 ] && ok || bad "S6 the plan prompt still says 'Two lines'"
 else
-  bad "S6 bin/lib/rb/plan.sh does not exist"
+  bad "S6 prompts/stages/plan.md does not exist"
 fi
 
 # ── M3: no diff axis -> S2 red ──

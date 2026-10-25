@@ -107,9 +107,10 @@ grep -qxF "WHAT USUALLY LIES: matched entries carry no 'What usually lies' bulle
 # SOURCE PIN: the block sits after the evidence verdicts and before REVIEW_PROMPT=,
 # so GATES_NOTE carries it into the prompt. Absent markers fail, never pass.
 lineof() { grep -a -n -m1 "^$1" "$RB_ALL" | cut -d: -f1; }
-L_EV=$(lineof '# <<< evidence verdicts'); L_VM=$(lineof '# >>> vmap lies'); L_RP=$(lineof 'REVIEW_PROMPT=')
+# TEST-CHANGE (BH-7970): REVIEW_PROMPT is rendered by sp_render inside the '# >>> review prompt' block, so that block is the order pin's anchor.
+L_EV=$(lineof '# <<< evidence verdicts'); L_VM=$(lineof '# >>> vmap lies'); L_RP=$(lineof '# >>> review prompt')
 if [ -n "$L_EV" ] && [ -n "$L_VM" ] && [ -n "$L_RP" ] && [ "$L_EV" -lt "$L_VM" ] && [ "$L_VM" -lt "$L_RP" ]; then ok
-else bad "PIN: '# >>> vmap lies' ($L_VM) must sit after '# <<< evidence verdicts' ($L_EV) and before REVIEW_PROMPT= ($L_RP)"; fi
+else bad "PIN: '# >>> vmap lies' ($L_VM) must sit after '# <<< evidence verdicts' ($L_EV) and before the '# >>> review prompt' block ($L_RP)"; fi
 
 # SOURCE PIN: the header's variable lists name VMAP_NOTE.
 REV="${RB_REPO:-$DIR}/bin/lib/rb/review.sh"

@@ -107,7 +107,8 @@ printf 'BLOCKED: already done on main by %s (BH-77: ship the guard)\n\nnothing t
 ( . "$T/pib.sh"; PLAN_IS_BLOCKED "$T/plan.md" ) && ok || bad "P3 the already-done line does not park the plan"
 
 # ── P4: the plan prompt carries the note ──
-grep -q 'CC plan "\$PLAN_MODEL" 1200 .*dup_main_plan_note' "$DIR/bin/lib/rb/plan.sh" && ok || bad "P4 the plan prompt does not carry dup_main_plan_note"
+# TEST-CHANGE (BH-7970): the call moved from the CC plan line to the SP_PLAN_DUP_MAIN precompute, and the template carries its token.
+grep -q '^SP_PLAN_DUP_MAIN=.*dup_main_plan_note' "$DIR/bin/lib/rb/plan.sh" && grep -qF '${SP_PLAN_DUP_MAIN}' "$DIR/prompts/stages/plan.md" && ok || bad "P4 the plan prompt does not carry dup_main_plan_note"
 
 # ── D1-D6 ──
 out=$(lib dup_main_pr "$R" origin/main "$D1"); rc=$?

@@ -245,7 +245,10 @@ W=$(mcs); RC=$?
 # ════════════════════════════════════════════════════════════════════════════
 CCLINE=$(grep -m1 '^CC plan ' "$DIR/bin/lib/rb/plan.sh")
 [ -n "$CCLINE" ] && ok || bad "P1: bin/lib/rb/plan.sh has no 'CC plan' line"
-PROMPT=$( set +u; CC() { printf '%s' "$5"; }; TICKET=2320 KEY=BH-2320 PROJECT=proj BUILD=/b; eval "$CCLINE" )
+# TEST-CHANGE (BH-7970): the CC plan line now sends "$SP_PROMPT_PLAN", rendered from
+# prompts/stages/plan.md, so the real plan prompt block is driven with the repo lib.
+awk '/^# >>> plan prompt/{f=1;next} /^# <<< plan prompt/{exit} f' "$DIR/bin/lib/rb/plan.sh" > "$T/plan-prompt-block.sh"
+PROMPT=$( set +u; cd "$T" && CC() { printf '%s' "$5"; }; TICKET=2320 KEY=BH-2320 PROJECT=proj BUILD="$T/nobuild" HARNESS="$T/noharness"; . "$DIR/bin/lib/stage-prompt.sh" && . "$T/plan-prompt-block.sh" 2>/dev/null )
 grep -qF 'SLICE: C<n> of #2320' <<<"$PROMPT" && ok \
   || bad "P1: the expanded planner prompt must ask for 'SLICE: C<n> of #2320' (prompt tail: ${PROMPT: -300})"
 grep -qF 'PLAN ONLY' <<<"$PROMPT" && ok || bad "P1: the extraction must be the real planner prompt"

@@ -185,7 +185,8 @@ grep -q 'NOTE demoted from BLOCK.*14 px' "$T/u4.md" && ok || bad "U4 the 2 px fi
 [ "$(sed -n '$p' "$T/u4.md")" = 'VERDICT: BLOCK' ] && ok || bad "U4 last line: $(sed -n '$p' "$T/u4.md")"
 grep -qx 'user-flows' <(grep -v '^#' "$DIR/catalog/review-always-block.tsv" | awk -F'\t' 'NF{print $1}') && ok \
   || bad "U4 catalog has no user-flows row"
-for f in bin/review-prs.sh bin/lib/rb/review.sh prompts/lead-review.md \
+# TEST-CHANGE (BH-7970): the general review lens text (the class list) moved from bin/lib/rb/review.sh to prompts/stages/review.md.
+for f in bin/review-prs.sh prompts/stages/review.md prompts/lead-review.md \
          rules/topics/13-review-levels.md prompts/iron-laws.d/20261016-review-levels.md; do
   grep -qE -- '(^|[^a-z-])`?user-flows`?([^a-z-]|$)' "$DIR/$f" && ok || bad "U4 $f does not name class 'user-flows'"
 done

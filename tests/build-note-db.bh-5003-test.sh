@@ -235,8 +235,9 @@ n2() { # n2 <block> <build-name> -> rc 0 when the AT holds on $BOX for TK-7
 [ ! -e "$BOX/state/build-notes" ] && [ ! -e "$T/run/build-note-tproj-TK-7.md" ] || bad "N2 precondition: the box has no hub state and no relay file"
 if out=$(n2 "$T/cn.sh" b1); then ok; else bad "N2 a build on another box gets the hub's ruling from the DB ($out)"; fi
 check "N2 the hub's own file is untouched by the box (it stays the mirror)" '[ -s "$HUB/state/build-notes/tproj/TK-7.md" ]'
+# TEST-CHANGE (BH-7970): the plan prompt text moved to prompts/stages/plan.md, where the token is ${CARRIED_NOTE_LINE}.
 check "N2 the CC plan prompt interpolates \$CARRIED_NOTE_LINE" \
-  'grep -E "^CC plan " "$DIR/bin/lib/rb/plan.sh" | grep -qF "\$CARRIED_NOTE_LINE"'
+  'grep -qF "\${CARRIED_NOTE_LINE}" "$DIR/prompts/stages/plan.md"'
 
 # ── N3: read once across boxes ─────────────────────────────────────────────
 L3=$(cn_run "$BOX" box b2 TK-7)
