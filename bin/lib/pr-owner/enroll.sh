@@ -21,7 +21,8 @@
 #   branch that is not ticket/* or main-red-revert/*). A row in any other state
 #   is a hand-off (resolver, human, rebase) and is never touched. A target equal
 #   to the row (state AND head) writes nothing.
-#   READY only when the head (read over REST) is APPROVEd, CI green, mergeable
+#   READY only when the head (the PR record's row when it is fresh, else read
+#   over REST; bin/lib/pr-owner/prr.sh, BH-8270) is APPROVEd, CI green, mergeable
 #   state clean and not a draft — and then the `enrolled` attempt row is written
 #   FIRST: no attempt row, no READY. Anything else is WAIT_CI, with no attempt
 #   row and no spawn. Both writes are mc_transition under the conductor's own
@@ -61,7 +62,7 @@ _po_mc_ready() {
 }
 
 po_enroll() {
-  local key="${PO_SLUG:-}#${PO_NUM:-}" recheck=0 pj rc head ms draft url ci approved=0 new lp lockf
+  local key="${PO_SLUG:-}#${PO_NUM:-}" recheck=0 pj rc row head ms draft url ci approved=0 new lp lockf
   [ -n "${PO_SLUG:-}" ] && [[ "${PO_NUM:-}" =~ ^[0-9]+$ ]] || return 2
   case "${PO_MC_STATE:-}" in
     READY|WAIT_CI)
@@ -99,10 +100,24 @@ po_enroll() {
   fi
   _po_mc_ready || { _po_log "enroll-skipped no-mc-lib $key"; return 2; }
 
-  rc=0; mc_rest_var pj gh_rest GET "repos/$PO_SLUG/pulls/$PO_NUM" || rc=$?
-  if [ "$rc" != 0 ]; then
-    case "${GH_REST_STATUS:-000}:$rc" in 000:*|401:*|403:*|404:*|429:*|*:75) PO_REPO_UNREAD=1 ;; esac
-    _po_log "enroll-skipped $key pull unreadable (HTTP ${GH_REST_STATUS:-000}, rc $rc)"; return 2
+  # THE RECORD FIRST (BH-8270, bin/lib/pr-owner/prr.sh): a fresh pr_records
+  # row answers the pulls/N read in the shape the code below parses. A record
+  # `merged` is not `open`, the same outcome as GitHub's `closed`. On a miss
+  # the GitHub read runs as before and its answer is written back.
+  pj=""
+  if command -v po_prr_read >/dev/null 2>&1 \
+     && row=$(po_prr_read "$PO_SLUG" "$PO_NUM" state head_sha draft mergeable_state); then
+    pj=$(jq -c --arg u "https://github.com/$PO_SLUG/pull/$PO_NUM" \
+      '{state: (if .state == "open" then "open" else "closed" end), head: {sha: .head_sha},
+        mergeable_state, draft, html_url: $u}' <<<"$row" 2>/dev/null) || pj=""
+  fi
+  if [ -z "$pj" ]; then
+    rc=0; mc_rest_var pj gh_rest GET "repos/$PO_SLUG/pulls/$PO_NUM" || rc=$?
+    if [ "$rc" != 0 ]; then
+      case "${GH_REST_STATUS:-000}:$rc" in 000:*|401:*|403:*|404:*|429:*|*:75) PO_REPO_UNREAD=1 ;; esac
+      _po_log "enroll-skipped $key pull unreadable (HTTP ${GH_REST_STATUS:-000}, rc $rc)"; return 2
+    fi
+    command -v po_prr_writeback >/dev/null 2>&1 && po_prr_writeback "$PO_SLUG" "$PO_NUM" "$pj"
   fi
   [ "$(jq -r '.state // empty' <<<"$pj" 2>/dev/null)" = open ] || return 2
   head=$(jq -r '.head.sha // empty' <<<"$pj" 2>/dev/null)

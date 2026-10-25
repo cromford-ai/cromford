@@ -265,7 +265,7 @@ grep -q 'GH .*merge' "$H/writes.log" && bad "E1: the sweep must never merge: $(W
 grep -qi 'claude\|agent-call' "$H/gh-calls.log" && bad "E1: no model call" || ok
 grep -q 'owner-source=d1' "$H/logs/pr-owner-sweep.log" && ok || bad "E1: the owner source is logged: $(LOG | head -3)"
 NEW=$(find "$H/state" "$H/flags" -newer "$T/marker2" -type f 2>/dev/null \
-      | grep -vE "/state/(pr-owners|merge-conductor|heartbeat|lane-gate|gh-etag|gh-rest-ledger|gh-budget)/")
+      | grep -vE "/state/(pr-owners|merge-conductor|heartbeat|lane-gate|gh-etag|gh-rest-ledger|gh-budget)/|/state/pr-owner-sweep/[^/]+/(openlist|mergedlist)\.(json|meta)$")
 [ -z "$NEW" ] && ok || bad "E1: no new file under state/ or flags/ outside the lanes' own stores: $NEW"
 
 # ============================================================================

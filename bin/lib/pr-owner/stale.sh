@@ -97,6 +97,22 @@ _po_stale_pull() {
   [ -n "$_PO_STALE_PULL" ]
 }
 
+# _po_stale_branch — the PR's head branch into _PO_STALE_BRANCH: the PR
+#   record's head_ref when po_prr_read (bin/lib/pr-owner/prr.sh) has a fresh
+#   row, else _po_stale_pull's head.ref (BH-8270). rc 1 when neither has one.
+#   Called directly, never inside $( ), so the pull cache survives.
+_po_stale_branch() {
+  local row
+  _PO_STALE_BRANCH=""
+  if command -v po_prr_read >/dev/null 2>&1 && row=$(po_prr_read "$PO_SLUG" "$PO_NUM" head_ref); then
+    _PO_STALE_BRANCH=$(printf '%s' "$row" | jq -r '.head_ref // empty' 2>/dev/null)
+  fi
+  if [ -z "$_PO_STALE_BRANCH" ] && _po_stale_pull; then
+    _PO_STALE_BRANCH=$(printf '%s' "$_PO_STALE_PULL" | jq -r '.head.ref // empty' 2>/dev/null)
+  fi
+  [ -n "$_PO_STALE_BRANCH" ]
+}
+
 # _po_stale_since — the newest of the head commit, the newest verdict and the
 #   PR's own creation, in epoch seconds, into _PO_STALE_SINCE. rc 1 when any
 #   side cannot be read. Called as a plain command (GH_REST_STATUS survives).
@@ -235,7 +251,7 @@ _po_stale_rebase() { # <age> <row-reason> <url> <rebase_hours> <clock-epoch>
     _po_stale_say "STALE_RUNG skip $tag rung=rebase reason=bin/blocked-resolver.sh owns this park ($rwhy)"
     return 2
   fi
-  br=""; _po_stale_pull && br=$(printf '%s' "$_PO_STALE_PULL" | jq -r '.head.ref // empty' 2>/dev/null)
+  br=""; _po_stale_branch && br="$_PO_STALE_BRANCH"
   if [ -z "$br" ]; then
     _po_stale_say "STALE_RUNG skip $tag rung=rebase reason=the PR's branch could not be read — no rung this tick"
     return 2

@@ -168,6 +168,10 @@ command -v lane_env_apply    >/dev/null 2>&1 && lane_env_apply    pr-owner-sweep
 . "$(dirname "$0")/lib/pr-owner/mc-read.sh" || exit 1
 # shellcheck source=lib/pr-owner/shipped.sh
 . "$(dirname "$0")/lib/pr-owner/shipped.sh" || exit 1
+# The PR record first, GitHub on a miss (BH-8270). Without bin/lib/pr-record.sh
+# it defines nothing and every read goes to GitHub, as before.
+# shellcheck source=lib/pr-owner/prr.sh
+. "$(dirname "$0")/lib/pr-owner/prr.sh" || exit 1
 
 command -v jq      >/dev/null 2>&1 || exit 0
 command -v python3 >/dev/null 2>&1 || exit 0
@@ -240,6 +244,10 @@ fi
 [ -r "$H/bin/lib/gh-app-auth.sh" ] && . "$H/bin/lib/gh-app-auth.sh"   # App token per repo (#425); unarmed box untouched
 # shellcheck source=/dev/null
 [ -r "$H/bin/jobs-client.sh" ] && . "$H/bin/jobs-client.sh" 2>/dev/null
+# The wake backstop (BH-6976): the open and merged lists below are reused while
+# no `pr` wake says they changed. OPTIONAL: without it every list is read.
+# shellcheck source=bin/lib/wake-backstop.sh
+[ -r "$H/bin/lib/wake-backstop.sh" ] && . "$H/bin/lib/wake-backstop.sh" 2>/dev/null
 # shellcheck source=bin/lib/comment-mark.sh
 [ -r "$H/bin/lib/comment-mark.sh" ] && . "$H/bin/lib/comment-mark.sh"
 # Every GitHub WRITE goes through the REST contract (comment, close, label).
@@ -376,6 +384,59 @@ handback() { # handback <project> <key>
   return 1
 }
 
+# ---- the open and merged lists, reused (BH-8270) -----------------------------
+# The PR record (bin/lib/pr-record.sh) has no list route and no title, author,
+# body or review fields, so the two list reads stay on GitHub, and their last
+# answer is reused the bin/orphan-reconcile.sh way (BH-8271). The pair is kept
+# in state/pr-owner-sweep/<owner>_<repo>/{openlist,mergedlist}.{json,meta} and
+# used instead of a read only while all of these hold: the wake backstop is
+# loaded and on, the knob is above 0, both halves are there with one epoch,
+# the copy is no older than PR_RECORD_MAX_AGE_S and not stamped in the future,
+# and no `pr` wake for ANY PR of the repo arrived since it was read (a feed
+# that cannot tell is a read). Every list read logs one `PRR_MISS <repo>#list
+# why=<no-row|stale>` line. A title or body edit rings no wake: the knob bounds
+# that staleness. wb_gc drops copies older than 3 days.
+PL_ON=0
+command -v wb_cache_get >/dev/null 2>&1 && command -v wb_cache_put >/dev/null 2>&1 && PL_ON=1
+PL_MAX=""
+command -v pr_record_max_age >/dev/null 2>&1 && PL_MAX=$(pr_record_max_age 2>/dev/null)
+# The knob is PR_RECORD_MAX_AGE_S in catalog/lanes.d/_lib.pr-record.json. Its
+# one reader is pr_record_max_age (row, then env, then 900). Fallback only, for
+# a box without bin/lib/pr-record.sh: 900, the lib's own default.
+[[ "$PL_MAX" =~ ^[0-9]{1,9}$ ]] || PL_MAX=900
+PL_MAX=$((10#$PL_MAX))
+# wb_due raises a backstop under its floor (WB_FLOOR_S) to the floor and logs
+# that once a day, so it is given at least the floor. The age bound that
+# counts is PL_MAX, checked before wb_cache_get.
+PL_BACK="$PL_MAX"
+# WB_FLOOR_S is the lib's constant, not a knob: set whenever PL_ON=1.
+[ "$PL_ON" = 1 ] && [[ "${WB_FLOOR_S-}" =~ ^[0-9]+$ ]] && [ "$PL_BACK" -lt "$WB_FLOOR_S" ] && PL_BACK="$WB_FLOOR_S"
+[ "$PL_ON" = 1 ] && wb_gc "$H/state/pr-owner-sweep"
+po_lists_now() { if command -v _wb_now >/dev/null 2>&1; then _wb_now; else date +%s; fi; }
+# po_lists_reuse — rc 0 when $OPENF and $MERGEDF were filled from the copy.
+#   Else rc 1: the caller reads GitHub. With PL_ON=1 that miss logs one PRR_MISS
+#   line; with no wake backstop no copy is kept, so nothing is missed.
+po_lists_reuse() {
+  local e now why=stale b
+  PL_DIR="$H/state/pr-owner-sweep/${SLUG//\//_}"
+  [ "$PL_ON" = 1 ] || return 1
+  # WAKE_BACKSTOP=0 makes wb_cache_get answer rc 1, so the switch is a read too.
+  if [ "$PL_MAX" -gt 0 ]; then
+    e=$(cut -f2 "$PL_DIR/openlist.meta" 2>/dev/null); now=$(po_lists_now)
+    if [[ "$e" =~ ^[0-9]{1,12}$ ]] && [ "$((now - 10#$e))" -ge 0 ] && [ "$((now - 10#$e))" -le "$PL_MAX" ] \
+       && [ "$(cut -f2 "$PL_DIR/mergedlist.meta" 2>/dev/null)" = "$e" ] \
+       && wb_cache_get "$PL_DIR/openlist" "$SLUG" pr - "$PL_BACK" - \
+       && cp "$PL_DIR/openlist.json" "$OPENF" 2>/dev/null && [ -s "$OPENF" ] \
+       && cp "$PL_DIR/mergedlist.json" "$MERGEDF" 2>/dev/null && [ -s "$MERGEDF" ]; then
+      return 0
+    fi
+  fi
+  why=no-row
+  for b in openlist.json openlist.meta mergedlist.json mergedlist.meta; do [ -e "$PL_DIR/$b" ] && why=stale; done
+  say "PRR_MISS $SLUG#list why=$why"
+  return 1
+}
+
 # ---- per repo ---------------------------------------------------------------
 SWEPT=0
 PO_TICK_NOW=$(date -u +%s)   # one clock per run, read by the health rollup
@@ -397,19 +458,29 @@ while read -r PROJECT SLUG; do
 
   command -v gh_auth_for >/dev/null 2>&1 && gh_auth_for "$SLUG" || true
   OPENF="$TD/open.json"; MERGEDF="$TD/merged.json"
-  if ! gh pr list -R "$SLUG" --state open --limit "$PR_LIMIT" \
-       --json number,title,headRefName,headRefOid,baseRefName,author,labels,body,mergeable,updatedAt,createdAt,url,isDraft,latestReviews \
-       > "$OPENF" 2>/dev/null || [ ! -s "$OPENF" ]; then
-    command -v gh_repo_list_failed >/dev/null 2>&1 &&
-      gh_repo_list_failed pr-owner-sweep "$SLUG" "no open PR was classified this run"
-    continue
+  if ! po_lists_reuse; then
+    PL_T=$(po_lists_now)
+    if ! gh pr list -R "$SLUG" --state open --limit "$PR_LIMIT" \
+         --json number,title,headRefName,headRefOid,baseRefName,author,labels,body,mergeable,updatedAt,createdAt,url,isDraft,latestReviews \
+         > "$OPENF" 2>/dev/null || [ ! -s "$OPENF" ]; then
+      command -v gh_repo_list_failed >/dev/null 2>&1 &&
+        gh_repo_list_failed pr-owner-sweep "$SLUG" "no open PR was classified this run"
+      continue
+    fi
+    # The MERGED list is what makes "this ticket already shipped" provable rather
+    # than assumed. Same limit: a key merged further back than that is a key whose
+    # orphan we simply do not close, which is the safe direction.
+    PL_MRC=0
+    gh pr list -R "$SLUG" --state merged --limit "$PR_LIMIT" \
+      --json number,title,headRefName,url,mergedAt,author > "$MERGEDF" 2>/dev/null || PL_MRC=1
+    [ "$PL_MRC" = 0 ] && [ -s "$MERGEDF" ] || { PL_MRC=1; echo '[]' > "$MERGEDF"; }
+    # Only a pair that both read rc 0 is kept; a failed merged read is [] for
+    # this run only.
+    if [ "$PL_MRC" = 0 ] && [ "$PL_ON" = 1 ]; then
+      wb_cache_put "$PL_DIR/openlist" "-"$'\t'"$PL_T" < "$OPENF" \
+        && wb_cache_put "$PL_DIR/mergedlist" "-"$'\t'"$PL_T" < "$MERGEDF" || true
+    fi
   fi
-  # The MERGED list is what makes "this ticket already shipped" provable rather
-  # than assumed. Same limit: a key merged further back than that is a key whose
-  # orphan we simply do not close, which is the safe direction.
-  gh pr list -R "$SLUG" --state merged --limit "$PR_LIMIT" \
-    --json number,title,headRefName,url,mergedAt,author > "$MERGEDF" 2>/dev/null || echo '[]' > "$MERGEDF"
-  [ -s "$MERGEDF" ] || echo '[]' > "$MERGEDF"
 
   # THE LEDGER IS OWNER CLASS (a) AND IT IS NOT FAIL-OPEN. A ledger we cannot
   # read is a set of PRs whose owners we cannot name, and the only honest thing
