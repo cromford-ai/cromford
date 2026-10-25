@@ -1,0 +1,12 @@
+{
+  "env": "SELECTION_GATE_FIX_TIMEOUT_S",
+  "type": "int",
+  "default": 1800,
+  "min": 300,
+  "max": 7200,
+  "unit": "seconds",
+  "zero_means": null,
+  "required": false,
+  "note": "BH-8062. The bound on the one fix turn the builder runs through CC when the selection gate is red and SELECTION_GATE_FIX_ROUNDS is 1 (bin/lib/selection-gate.sh sg_block). Past it the turn ends and the gate runs again on whatever the turn committed. 1800: the same bound the builder's other single fix turns use.",
+  "read_in": "bin/lib/selection-gate.sh"
+}

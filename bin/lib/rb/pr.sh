@@ -864,6 +864,19 @@ if [ -x bin/prepush-gate.sh ] && [ "$_PPG_MODE" != off ]; then
   fi
 fi
 # <<< prepush gate
+# >>> selection gate (BH-8062)
+# The merge-queue batch's selection for this head, on the fleet test host,
+# before the push (bin/lib/selection-gate.sh). Red: GATE_RED, exit 6, nothing
+# pushed, no PR. Otherwise the record rides in the PR body (PREPR_SECTION, so
+# the settle stage's re-render keeps it) for the lead review. No lib: one line.
+SG_MARKER=""
+if [ -r "$HARNESS/bin/lib/selection-gate.sh" ] && . "$HARNESS/bin/lib/selection-gate.sh" 2>/dev/null && command -v sg_block >/dev/null 2>&1; then
+  sg_block || exit 6
+  [ -z "$SG_MARKER" ] || PREPR_SECTION="${PREPR_SECTION:-}"$'\n'"$SG_MARKER"$'\n'
+else
+  echo "$(STAMP) [$PROJECT/$KEY] SELECTION-GATE skipped (no bin/lib/selection-gate.sh in the harness)" >> "$BUILD/pipeline.log"
+fi
+# <<< selection gate
 # >>> pr push
 # The rejected line names the head this build made: the pool reap compares it
 # with the remote branch, and a push that did land gets its PR from the hub.

@@ -158,19 +158,27 @@ _pq_rs_body() {
   return 0
 }
 
-pq_restamp() {
-  local slug="${1:-}" num="${2:-}" head="${3:-}" main="${4:-}" key rc=0 why new n
-  key="${KEY:-$slug#$num}"
-  [ "$(_pq_rs_knob)" != 0 ] || { echo none; return 0; }
-  [ "${ACTIONS:-0}" = 1 ] || { echo none; return 0; }
+# pq_restamp_wanted <slug> — rc 0 = run the hook. No credential, lock, fetch or
+#   network: the knob, ACTIONS, the lib, and a clone whose origin/main has a
+#   stamp fragment. pq_gate asks it with MC_PREQUEUE_GATE=0 (BH-8062), so a gate
+#   that is off reads the main tip only when a hook can act.
+pq_restamp_wanted() {
+  [ "$(_pq_rs_knob)" != 0 ] || return 1
+  [ "${ACTIONS:-0}" = 1 ] || return 1
   command -v sr_plan >/dev/null 2>&1 || { [ -r "$_pq_rs_dir/../schema-restamp.sh" ] && . "$_pq_rs_dir/../schema-restamp.sh"; }
-  command -v sr_plan >/dev/null 2>&1 || { echo none; return 0; }
-  [[ "$head" =~ ^[0-9a-f]{40}$ ]] && [[ "$main" =~ ^[0-9a-f]{40}$ ]] || { echo none; return 0; }
+  command -v sr_plan >/dev/null 2>&1 || return 1
   # Cheapest first, with no credential, lock or fetch: a repo the conductor has
   # no clone of, or whose clone's origin/main has no stamp fragment, cannot have
   # a stale one. Every repo without worker/*/schema.d stops here.
-  local lr; lr=$(_pq_rs_local "$slug") || { echo none; return 0; }
-  [ -n "$(sr_top "$lr" origin/main 2>/dev/null)" ] || { echo none; return 0; }
+  local lr; lr=$(_pq_rs_local "${1:-}") || return 1
+  [ -n "$(sr_top "$lr" origin/main 2>/dev/null)" ]
+}
+
+pq_restamp() {
+  local slug="${1:-}" num="${2:-}" head="${3:-}" main="${4:-}" key rc=0 why new n
+  key="${KEY:-$slug#$num}"
+  pq_restamp_wanted "$slug" || { echo none; return 0; }
+  [[ "$head" =~ ^[0-9a-f]{40}$ ]] && [[ "$main" =~ ^[0-9a-f]{40}$ ]] || { echo none; return 0; }
   if ! declare -F mc_funnel_repo >/dev/null || ! mc_funnel_repo "$slug" "${P:-}"; then
     _pq_rs_held "$key" "$head" "$main" "no clone of $slug could be had"; return 0
   fi

@@ -6300,16 +6300,16 @@ $live$brief"
     else echo "CLOSURE_LINT_EXIT: skipped (bin/lib/fixround-closure-lint.sh not on this box)"; fi
     # <<< br closure-lint verify
     # >>> br ci-local verify (BH-6897)
-    # The worktree's own bin/ci-local.sh: CI's lint job steps and the rules
-    # pack. Red refuses the push like a red unit run; could-not-run, skipped
-    # (no bin/ci-local.sh: every product repo) and off refuse nothing.
+    # The worktree's own bin/ci-local.sh: CI's lint job steps and the rules pack. Red refuses the push
+    # like a red unit run; could-not-run, skipped (no bin/ci-local.sh: every product repo) and off refuse nothing.
     if command -v cl_verify_lines >/dev/null 2>&1; then
       mkdir -p "$ST/$p" 2>/dev/null
       cl_verify_lines "$wt" "origin/${mref:-main}" "$ST/$p/$ck.ci-local"
     else echo "== ci-local =="; echo "CI_LOCAL_EXIT: skipped (bin/lib/ci-local-verify.sh not on this box)"; fi
     # <<< br ci-local verify
+    command -v br_sg_verify >/dev/null 2>&1 && br_sg_verify "$wt" "origin/${mref:-main}" "$ST/$p/$ck.selection-gate" "$p"   # BH-8062
   } > "$out" 2>&1
-  grep -qE '^(TYPECHECK|UNIT|CLOSURE_LINT)_EXIT: [1-9]' "$out" && vrc=1
+  grep -qE '^(TYPECHECK|UNIT|CLOSURE_LINT)_EXIT: [1-9]|SELECTION_GATE_EXIT: 1' "$out" && vrc=1
   grep -q '^CI_LOCAL_EXIT: 1' "$out" && { vrc=1; say "$p/$rkey [$reason]: the CI lint steps are red on the round's head ($(grep -c '^CI-LOCAL ' "$out") finding line(s), see $out) — not pushed"; }
   grep -q '^CLOSURE_LINT_EXIT: 1' "$out" && say "$p/$rkey [$reason]: the scratch-closure lint is red on the round's head ($(frcl_findings "$frcl_dir" | grep -c .) finding line(s), see $out) — not pushed"
   # A HALF-RESOLVED MERGE IS NEVER PUSHED. An agent that answered the conflict by
@@ -6518,13 +6518,13 @@ $(head -c 4000 "$unaddr")" >/dev/null 2>&1 || true
   if [ "$prc" = 0 ]; then
     say "$p/$rkey [$reason]: FIX ROUND pushed $(git -C "$wt" rev-parse --short HEAD) to $br — $br_next_judge"
     br_record "$p" "$ck" fix-round "$reason" "pushed $(git -C "$wt" rev-parse --short HEAD) to $br, typecheck+unit green$cok" fixrounds "$url" "${head:--}"
-    # THE PUSH IS REMEMBERED FOR THE SUPERSEDE GUARD (BH-1642): the rebuild rung
-    # may not close this PR inside the settle window after it, nor while a lead
-    # verdict stands on the head it pushed over (#1448).
+    # THE PUSH IS REMEMBERED FOR THE SUPERSEDE GUARD (BH-1642): the rebuild rung may not close this PR
+    # inside the settle window after it, nor while a lead verdict stands on the head it pushed over (#1448).
     br_fix_push_note "$p" "$ck" "$url" "$(git -C "$wt" rev-parse HEAD)" "${head:-}"
     # The body's live-CI block now names the pushed head (BH-1794).
     command -v br_preflight_after_push >/dev/null 2>&1 \
       && br_preflight_after_push "$slug" "$url" "$(git -C "$wt" rev-parse HEAD)" "$p" "$ck"
+    command -v br_sg_after_push >/dev/null 2>&1 && br_sg_after_push "$slug" "$url" "$(git -C "$wt" rev-parse HEAD)" "$ST/$p/$ck.selection-gate"   # BH-8062
     # An external PR's comment is extfix.sh's template (BH-4668); a box without
     # that module posts the generic one.
     if [ "${BR_XPR_ACTIVE-}" = 1 ] && command -v br_xpr_round_comment >/dev/null 2>&1; then

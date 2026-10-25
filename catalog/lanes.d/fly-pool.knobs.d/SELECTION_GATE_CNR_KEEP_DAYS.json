@@ -1,0 +1,12 @@
+{
+  "env": "SELECTION_GATE_CNR_KEEP_DAYS",
+  "type": "int",
+  "default": 14,
+  "min": 1,
+  "max": 365,
+  "unit": "days",
+  "zero_means": null,
+  "required": false,
+  "note": "BH-8062 r3 (F4). The day markers state/selection-gate/cnr-<yyyymmdd> (one could-not-run alert per box per UTC day) older than this many days are deleted on the next could-not-run build. A marker is only read on its own day.",
+  "read_in": "bin/lib/selection-gate.sh"
+}

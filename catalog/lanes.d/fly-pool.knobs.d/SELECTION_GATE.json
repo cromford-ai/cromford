@@ -1,0 +1,12 @@
+{
+  "env": "SELECTION_GATE",
+  "type": "int",
+  "default": 1,
+  "min": 0,
+  "max": 1,
+  "unit": null,
+  "zero_means": "off",
+  "required": false,
+  "note": "BH-8062 (shape B). 1: before the push, the build runs the merge-queue batch's selection for its head on the fleet test host (bin/selection-gate.sh, called from bin/lib/rb/pr.sh through bin/lib/selection-gate.sh). A red ends the build GATE_RED with the suites named and opens no PR; green, could-not-run and no-selection go on and leave a selection-gate record in the PR body for the lead review. 0: the gate does not run; the PR body carries an rc=off record, which the lead review accepts. A checkout with no bin/selection-gate.sh is never gated.",
+  "read_in": "bin/lib/selection-gate.sh"
+}

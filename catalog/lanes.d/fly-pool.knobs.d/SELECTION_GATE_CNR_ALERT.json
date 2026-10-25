@@ -1,0 +1,12 @@
+{
+  "env": "SELECTION_GATE_CNR_ALERT",
+  "type": "int",
+  "default": 1,
+  "min": 0,
+  "max": 1,
+  "unit": "flag",
+  "zero_means": "off",
+  "required": false,
+  "note": "BH-8062 r3 (F4). 1 (default): a build whose selection gate records rc=could-not-run (the pool image has no test-host route) writes one ALERTS line per box per UTC day through bin/alert-line.sh, so the gap is loud. 0: no alert; the could-not-run record still rides in the PR body.",
+  "read_in": "bin/lib/selection-gate.sh"
+}

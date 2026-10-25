@@ -1,0 +1,12 @@
+{
+  "env": "SELECTION_GATE_FIX_ROUNDS",
+  "type": "int",
+  "default": 0,
+  "min": 0,
+  "max": 1,
+  "unit": "rounds",
+  "zero_means": "off",
+  "required": false,
+  "note": "BH-8062. 1: a red selection gate buys one fix turn (CC fix, the prepush gate's pattern), then the gate runs again; still red is GATE_RED. 0 (default): no fix turn, because a fix round re-runs the whole selection on the shared host.",
+  "read_in": "bin/lib/selection-gate.sh"
+}

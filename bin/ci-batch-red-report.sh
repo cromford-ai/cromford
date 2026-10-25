@@ -68,6 +68,19 @@
 #   8. one log line to logs/ci-batch-red.log:
 #      ci-batch-red: repo=<r> days=<d> red=<n> green=<n> red_rate=<pct> unread=<u>
 #        deferred=<k> case=<A|B|A+B|C> share_a=<pct> share_b=<pct> pruned=<p> ignored=<i>
+#   9. once per ISO week (BH-8062), in logs/ci-batch-red-week.log (not the
+#      tick log, which keeps one line a tick):
+#      the last complete week (Mon 00:00Z to the next Mon 00:00Z, the week
+#      before NOW's) with no marker state/ci-batch-red/week-<YYYY-Www> gets
+#      one more line, counted from the records on disk (no gh read), then the
+#      marker:
+#      ci-batch-red-week: repo=<r> week=<YYYY-Www> red=<n> green=<n>
+#        red_rate=<pct|-> target=<CI_BATCH_RED_TARGET_PCT> met=<yes|no|no-data>[ why=pruned]
+#      met=yes when red_rate <= target. No batch in the week: red_rate=- and
+#      met=no-data. A week that starts before the record retention cut
+#      (CI_BATCH_RED_KEEP_DAYS) may have lost records: met=no-data why=pruned.
+#      A dry run prints the line and writes no marker. Week markers whose week
+#      started over CI_BATCH_RED_WEEK_KEEP_DAYS days ago are pruned in step 7.
 #
 # RECORD FORMAT, one file per run, $H/state/ci-batch-red/runs/<run_id>:
 #   run <id> attempt <n> created <epoch> concl red|green tree <tree|-> prs <csv|-> [unread]
@@ -82,10 +95,12 @@
 #   CI_BATCH_RED_PAGES      5  (1..10)   100-run pages of each run list
 #   CI_BATCH_RED_MAX       40  (1..200)  runs read per tick
 #   CI_BATCH_RED_KEEP_DAYS 30  (7..90)   record retention
+#   CI_BATCH_RED_TARGET_PCT 15 (1..100)  the weekly red-batch rate target (BH-8062)
+#   CI_BATCH_RED_WEEK_KEEP_DAYS 90 (30..730) week marker retention (BH-8062)
 #   CI_BATCH_RED_REPO          the repo read (default HARNESS_REPO); not settable
 # Kill switch: bin/harness-ctl.sh off ci-batch-red-report (flags/lane-off-ci-batch-red-report)
 # The lane id is the script name, as every cron lane's is (tests/lanes-registry-test.sh).
-# Tests: tests/ci-batch-red-report.bh-8048-test.sh
+# Tests: tests/ci-batch-red-report.bh-8048-test.sh, tests/ci-batch-red-week.bh-8062-test.sh
 set -uo pipefail
 DRY=""; DAYS_ARG=""
 usage() { echo "usage: ci-batch-red-report.sh [--days N] [--dry-run]" >&2; exit 2; }
@@ -93,7 +108,7 @@ while [ $# -gt 0 ]; do
   case "$1" in
     --days) [ $# -ge 2 ] || usage; DAYS_ARG="$2"; shift ;;
     --dry-run) DRY=1 ;;
-    -h|--help) sed -n '2,88p' "$0"; exit 0 ;;
+    -h|--help) sed -n '2,102p' "$0"; exit 0 ;;
     *) usage ;;
   esac
   shift
@@ -121,6 +136,9 @@ STATE="$H/state/ci-batch-red"
 [ -n "$DRY" ] || mkdir -p "$(dirname "$LOG")" 2>/dev/null
 STAMP() { date -u -d "@$NOW" '+%Y-%m-%d %H:%M:%SZ'; }
 log() { if [ -n "$DRY" ]; then echo "$*"; else echo "$(STAMP) $*" >> "$LOG" 2>/dev/null; fi; return 0; }
+# The weekly line (step 9) has its own log, so the tick log keeps one line a tick.
+WLOG="$H/logs/ci-batch-red-week.log"
+wlog() { if [ -n "$DRY" ]; then echo "$*"; else echo "$(STAMP) $*" >> "$WLOG" 2>/dev/null; fi; return 0; }
 
 # knob <ENV> <default> <min> <max> — lane_knob (row, env, registry default)
 #   when the lane gate is loaded, else the env, else the default; a value that
@@ -141,6 +159,10 @@ DAYS="${DAYS_ARG:-$(knob CI_BATCH_RED_DAYS 7 1 30)}"
 PAGES=$(knob CI_BATCH_RED_PAGES 5 1 10)
 MAX=$(knob CI_BATCH_RED_MAX 40 1 200)
 KEEP_DAYS=$(knob CI_BATCH_RED_KEEP_DAYS 30 7 90)
+# Fallback for the row lane.ci-batch-red-report.ci_batch_red_target_pct (BH-8062).
+TARGET=$(knob CI_BATCH_RED_TARGET_PCT 15 1 100)
+# Fallback for the row lane.ci-batch-red-report.ci_batch_red_week_keep_days (BH-8062).
+WEEK_KEEP_DAYS=$(knob CI_BATCH_RED_WEEK_KEEP_DAYS 90 30 730)
 CUT=$(( NOW - DAYS * 86400 ))
 SINCE=$(date -u -d "@$CUT" '+%Y-%m-%dT%H:%M:%SZ')
 # A gate run comes before its batch: the gate list reaches one day further back.
@@ -414,6 +436,16 @@ for f in "$RUNS_DIR"/[0-9]*; do
   case "$c" in ''|*[!0-9]*) continue ;; esac
   if [ "$c" -lt "$OLD" ]; then rm -f "$f" && PRUNED=$(( PRUNED + 1 )); fi
 done
+# Week markers (step 9) whose week started over WEEK_KEEP_DAYS days ago. A dry
+# run deletes nothing.
+if [ -z "$DRY" ]; then
+  for f in "$STATE"/week-[0-9]*; do
+    [ -f "$f" ] || continue
+    c=$(awk 'NR == 1 && $3 == "start" { print $4 }' "$f" 2>/dev/null)
+    case "$c" in ''|*[!0-9]*) continue ;; esac
+    [ "$c" -lt $(( NOW - WEEK_KEEP_DAYS * 86400 )) ] && rm -f "$f"
+  done
+fi
 
 # 8. the TSV and the tick's one line
 LINE="ci-batch-red: repo=$REPO days=$DAYS red=$NRED green=$NGREEN red_rate=$RATE unread=$NUNREAD deferred=$DEFER case=$CASE share_a=$SA share_b=$SB pruned=$PRUNED ignored=${IGNORED:-0}"
@@ -422,6 +454,34 @@ if [ -n "$DRY" ]; then
 elif ! { cp "$TMP/latest.tsv" "$STATE/.latest.tsv.tmp" 2>/dev/null && mv -f "$STATE/.latest.tsv.tmp" "$STATE/latest.tsv" 2>/dev/null; }; then
   rm -f "$STATE/.latest.tsv.tmp" 2>/dev/null
   log "ci-batch-red: latest.tsv write failed in $STATE"
+fi
+# 9. the weekly line: the last complete ISO week, once (BH-8062), in its own
+# log (logs/ci-batch-red-week.log).
+WEEK_END=$(( NOW - NOW % 86400 - ($(date -u -d "@$NOW" +%u) - 1) * 86400 ))
+WEEK_START=$(( WEEK_END - 7 * 86400 ))
+WEEK=$(date -u -d "@$WEEK_START" +%G-W%V)
+WMARK="$STATE/week-$WEEK"
+if [ ! -e "$WMARK" ]; then
+  read -r WRED WGREEN < <(awk -v s="$WEEK_START" -v e="$WEEK_END" '
+    FNR == 1 && $1 == "run" && $5 == "created" && $7 == "concl" && $6 + 0 >= s && $6 + 0 < e {
+      if ($8 == "red") r++; else if ($8 == "green") g++ }
+    END { print r + 0, g + 0 }' /dev/null "$RUNS_DIR"/[0-9]* 2>/dev/null)
+  WRED=${WRED:-0}; WGREEN=${WGREEN:-0}
+  if [ "$WEEK_START" -lt "$OLD" ]; then
+    # Step 7 deletes records created before OLD, so part of this week may be
+    # gone: never a rate from a partial week.
+    WRATE=-; MET="no-data why=pruned"
+  elif [ $(( WRED + WGREEN )) = 0 ]; then
+    WRATE=-; MET=no-data
+  else
+    WRATE=$(( WRED * 100 / (WRED + WGREEN) ))
+    if [ "$WRATE" -le "$TARGET" ]; then MET=yes; else MET=no; fi
+  fi
+  wlog "ci-batch-red-week: repo=$REPO week=$WEEK red=$WRED green=$WGREEN red_rate=$WRATE target=$TARGET met=$MET"
+  if [ -z "$DRY" ]; then
+    { mkdir -p "$STATE" && echo "week $WEEK start $WEEK_START" > "$WMARK.tmp" && mv -f "$WMARK.tmp" "$WMARK"; } 2>/dev/null \
+      || { rm -f "$WMARK.tmp" 2>/dev/null; log "ci-batch-red: week marker write failed in $STATE — the week line repeats next tick"; }
+  fi
 fi
 log "$LINE"
 exit 0

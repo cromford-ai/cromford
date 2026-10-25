@@ -1,0 +1,12 @@
+{
+  "env": "SELECTION_GATE_P",
+  "type": "int",
+  "default": 12,
+  "min": 1,
+  "max": 32,
+  "unit": "suites",
+  "zero_means": null,
+  "required": false,
+  "note": "BH-8062. Suites one selection-gate run starts in parallel on the shared test host (REMOTE_GATE_P for bin/remote-gate.sh). 12 is remote-gate's own default; the host's free-space and sweep thresholds still guard it.",
+  "read_in": "bin/lib/selection-gate.sh"
+}

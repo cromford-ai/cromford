@@ -1,0 +1,11 @@
+{
+  "env": "CI_BATCH_RED_TARGET_PCT",
+  "read_in": "bin/ci-batch-red-report.sh",
+  "type": "int",
+  "default": 15,
+  "min": 1,
+  "max": 100,
+  "unit": "percent",
+  "zero_means": null,
+  "note": "BH-8062: the weekly red-batch rate target. Once per ISO week the lane writes one ci-batch-red-week: line for the last complete Mon-Sun UTC week, with met=yes when that week's red merge-queue batches are at most this percent of its red plus green batches. 15 is the target in the BH-8062 ticket. A value outside 1..100 is the default. Settings key lane.ci-batch-red-report.ci_batch_red_target_pct."
+}

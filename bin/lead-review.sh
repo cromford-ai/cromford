@@ -960,6 +960,19 @@ review_one() {
   if command -v lr_fresh_conflict >/dev/null 2>&1 && lr_fresh_applies "$r" \
      && lr_fresh_conflict "$REPO_DIR" "$base" "$sha"; then lr_fresh_supersede "$id" "$job" "$sha" "$key"; return; fi
   # <<< fresh conflict hold
+  # >>> selection gate record (BH-8062)
+  # A ticket/* head with no record, or another head's, is a BLOCK, no agent call.
+  # Only where the merge base carries bin/selection-gate.sh (r3, F1).
+  local grw LR_GR_NOTE=""; grw=$(lr_gate_record "$body" "$sha" "$(jq -r '.head.ref // ""' <<<"$pr_json")" "$(lr_gate_record_mode)" "$REPO_DIR" "$base")
+  case "$grw" in
+    "refuse "*) mkdir -p "$(dirname "$report")"
+      lr_gate_record_report "$RVLINE" "$key" "$repo" "$pr" "$sha" "$bfp" "$grw" > "$report.tmp.$$" && mv -f "$report.tmp.$$" "$report" \
+        || { log "could not write $report"; job_update "$job" status=failed; return; }
+      log "$key: selection gate $grw; BLOCK with no agent call"
+      finish_done "$id" "$job" "$sha" BLOCK "$report" none:gate-record "selection gate: ${grw#refuse }" "$key"; return ;;
+    "note "*) LR_GR_NOTE="[NOTE] ${grw#note }"; log "$key: selection gate $LR_GR_NOTE" ;;
+  esac
+  # <<< selection gate record
   # >>> console qa gate (BH-5909), before any replay: a console-ui/src/ head of
   # the harness repo with no QA: PASS naming it is a BLOCK with no model call.
   # An unreadable answer is not counted, and the request waits for the next tick.
@@ -1468,6 +1481,7 @@ review_one() {
     tail -n 80 "$WT.suite"
     printf '\n## CI local\n%s\n' "$CL_STATE"
     [ -n "$CL_TAIL" ] && printf 'output tail:\n%s\n' "$CL_TAIL"
+    lr_gate_record_section
     printf '\n## Live probes\n'
     cat "$WT.probes"
     printf '\n## Conflict hotspots\n'

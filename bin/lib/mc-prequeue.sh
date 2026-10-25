@@ -31,6 +31,14 @@
 # migration whose number main or a queued PR took, pushes, and holds.
 #
 # THE KNOBS (lane merge-conductor; defaults in PQ_KNOB_DEFAULTS below):
+# MC_PREQUEUE_GATE is the gate itself. No seed row ships for
+# lane.merge-conductor.mc_prequeue_gate (BH-8062, option 1): the code fallback 1
+# keeps the CI pre-queue gate on beside the builder's selection gate
+# (bin/selection-gate.sh). An operator sets the row to 0 per
+# docs/notes/2026-10-24-BH-8062-builder-selection-gate.md; rollback: the row to 1.
+# 0 skips only the verdict (cache read, pq_resolve, dispatch). When pq_restamp or
+# pq_mignum can act (pq_restamp_wanted / pq_mignum_wanted, no network), the
+# main-tip read and both hooks still run, so an unreadable tip still holds.
 # MC_PREQUEUE_FRESH_COMMITS (BH-6335) is how many commits behind the current
 # main a reused non-red verdict's main may be (mc-prequeue.d/dispatch.sh).
 # MC_PREQUEUE_TRACE (BH-6335) 1 asks the gate to run its suites under the trace
@@ -130,7 +138,19 @@ pq_gate() {
   local MC_GIT_LOCK_WAIT; MC_GIT_LOCK_WAIT=$(pq_knob MC_PREQUEUE_GIT_LOCK_WAIT_S)
   PQ_VERDICT=proceed; PQ_MAIN=""; PQ_WHY=""; PQ_SUITES=""; PQ_PATH=""
   _pq_wf=""; _pq_key="$slug#$num"; _pq_cs=(); _pq_cl=()
-  [ "$(pq_knob MC_PREQUEUE_GATE)" = 0 ] && { declare -F pq_status_gate >/dev/null && pq_call -w status pq_status_gate "$slug" "$head" "$url" off; echo proceed; return 0; }
+  # THE GATE OFF (BH-8062). MC_PREQUEUE_GATE=0 turns off only the verdict: the
+  # cache read and the prequeue-gate.yml dispatch. pq_restamp and pq_mignum
+  # below still run when either one can act (its cheap *_wanted check, no
+  # network), because a stale stamp or a taken number turns main red after the
+  # merge whatever the gate says. When neither can act, no main tip is read.
+  local off=0
+  if [ "$(pq_knob MC_PREQUEUE_GATE)" = 0 ]; then
+    off=1
+    if ! { declare -F pq_restamp >/dev/null && { ! declare -F pq_restamp_wanted >/dev/null || pq_restamp_wanted "$slug"; }; } \
+       && ! { declare -F pq_mignum >/dev/null && pq_mignum_wanted; }; then
+      declare -F pq_status_gate >/dev/null && pq_call -w status pq_status_gate "$slug" "$head" "$url" off; echo proceed; return 0
+    fi
+  fi
   b=$(_pq_budget_s)
   if [ "$b" = -1 ]; then
     PQ_WHY="no prequeue time left in this worker (worker deadline or step timeout too near); asked next tick"
@@ -165,6 +185,12 @@ pq_gate() {
     "held "*) PQ_WHY="migration number check held: ${mn#held }"; _pq_end hold; return 0 ;;
   esac
   pq_over && { _pq_over_hold "$head" "$b"; return 0; }
+  # The gate off (BH-8062, above): the hooks ran and neither held.
+  if [ "$off" = 1 ]; then
+    _pq_budget_stop; PQ_VERDICT=proceed
+    declare -F pq_status_gate >/dev/null && pq_call -w status pq_status_gate "$slug" "$head" "$url" off
+    echo proceed; return 0
+  fi
   path=$(pq_key "$slug" "$num" "$head" "$PQ_MAIN")
   export PQ_PATH="$path"
   line=$(pq_cache_get "$path")

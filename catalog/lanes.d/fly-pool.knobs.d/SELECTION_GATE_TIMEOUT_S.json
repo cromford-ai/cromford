@@ -1,0 +1,12 @@
+{
+  "env": "SELECTION_GATE_TIMEOUT_S",
+  "type": "int",
+  "default": 2400,
+  "min": 300,
+  "max": 7200,
+  "unit": "seconds",
+  "zero_means": null,
+  "required": false,
+  "note": "BH-8062. The bound on one selection-gate run on the test host (bin/selection-gate.sh --timeout). Past it the record is could-not-run why=timeout, never a partial green, and the PR opens with the batch as the backstop. 2400: the batch is at most 8 shards of about 1200 s each, and the test host runs 16 cores, rounded up.",
+  "read_in": "bin/lib/selection-gate.sh"
+}

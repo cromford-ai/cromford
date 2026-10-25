@@ -755,7 +755,7 @@
       "unit": "flag",
       "zero_means": "off",
       "read_in": "bin/lib/mc-prequeue.sh",
-      "note": "BH-4545: the pre-queue isolation gate. 1 = before a READY head is marked ready or enqueued, the conductor reads the per-(PR, head, main tip) verdict and parks a cached red that names a suite as prequeue-red; an unreadable main tip holds the row READY. 0 = the gate is never asked. Read through pq_knob. Per project: lane.merge-conductor.<project>.mc_prequeue_gate."
+      "note": "BH-4545: the pre-queue isolation gate. 1 = before a READY head is marked ready or enqueued, the conductor reads the per-(PR, head, main tip) verdict and parks a cached red that names a suite as prequeue-red; an unreadable main tip holds the row READY. 0 = no verdict is read or dispatched; when pq_restamp (BH-6842) or pq_mignum (BH-7671) can act, the main-tip read and both hooks still run and can hold (BH-8062). Read through pq_knob. Per project: lane.merge-conductor.<project>.mc_prequeue_gate."
     },
     {
       "env": "MC_EJECT_CAUSE",

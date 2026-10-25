@@ -1,0 +1,11 @@
+{
+  "env": "CI_BATCH_RED_WEEK_KEEP_DAYS",
+  "read_in": "bin/ci-batch-red-report.sh",
+  "type": "int",
+  "default": 90,
+  "min": 30,
+  "max": 730,
+  "unit": "days",
+  "zero_means": null,
+  "note": "BH-8062: retention of the week markers state/ci-batch-red/week-<YYYY-Www>. A marker says the week line for that week was written; markers whose week started over this many days ago are deleted each tick. A value outside 30..730 is the default. Settings key lane.ci-batch-red-report.ci_batch_red_week_keep_days."
+}
