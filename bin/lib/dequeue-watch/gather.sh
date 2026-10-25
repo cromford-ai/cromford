@@ -5,7 +5,8 @@
 # dequeue-watch lane (bin/dequeue-watch.sh) makes before it classifies and acts.
 # Sourced by the lane, never run; nothing here runs on source.
 #
-# Every read is `gh_rest GET` except the batch log. An unread answer (rc 75,
+# The pulls/<n> read goes to the PR record first (ph_prr_read, BH-8269) and
+# to GitHub only on a miss. Every other read is `gh_rest GET` except the batch log. An unread answer (rc 75,
 # non-2xx) is never an empty one: a list that was not read skips the project,
 # and an input attribution needs that was not read leaves it `unknown`, never
 # `bystander` (D9/D11).
@@ -59,7 +60,7 @@ dqw_gather_dequeued() {
 dqw_gather_pr() {
   local P="$1" slug="$2" num="$3" h line state epoch cid body tsv draft run left checks pr
   local head ref mergeable url age dir runs title rerun=0 log suite members m word how vline verdict="" stale=0 main_red=0 run_url
-  local ev evcls own
+  local ev evcls own prow
   DQW_G_WATCH="" DQW_G_STALE="" DQW_G_RECORDED="" DQW_G_CLASS=""
   h=$(_dqw_g_root)
   [ -n "$h" ] && [ -d "${DQW_TMP:-}" ] || return 1
@@ -77,12 +78,29 @@ dqw_gather_pr() {
     || { _dqw_g_log "$slug#$num payload comment $cid unread, skipped"; return 1; }
   tsv=$(dqw_parse_payload_md "$body") || { _dqw_g_log "$slug#$num payload comment $cid does not parse as dequeued, skipped"; return 1; }
   IFS=$'\t' read -r draft run left checks <<<"$tsv"
-  gh_rest GET "repos/$slug/pulls/$num" > "$DQW_TMP/pull-${slug//\//_}-$num.json" 2>/dev/null \
-    && pr=$(cat "$DQW_TMP/pull-${slug//\//_}-$num.json") \
-    && head=$(printf '%s' "$pr" | jq -er '.head.sha | strings' 2>/dev/null) \
-    || { _dqw_g_log "$slug#$num pull unread, skipped"; return 1; }
-  ref=$(printf '%s' "$pr" | jq -r '.head.ref // ""')
-  mergeable=$(printf '%s' "$pr" | jq -r '.mergeable_state // "-"')
+  # The PR record first (bin/lib/ph-pr-record.sh). A miss logs one PRR_MISS
+  # line here and runs the GitHub read below, then writes its answer back.
+  # A null mergeable_state is a miss, never "-": classify reads that field.
+  head=""
+  if declare -F ph_prr_read >/dev/null \
+     && prow=$(PH_PRR_LOG=dequeue-watch ph_prr_read "$slug" "$num" head_sha head_ref mergeable_state); then
+    if head=$(jq -er '.head_sha | strings' <<<"$prow" 2>/dev/null); then
+      ref=$(jq -r '.head_ref // ""' <<<"$prow")
+      mergeable=$(jq -r '.mergeable_state // "-"' <<<"$prow")
+    else
+      head=""
+      PH_PRR_LOG=dequeue-watch ph_prr_miss "$slug" "$num" no-field head_sha
+    fi
+  fi
+  if [ -z "$head" ]; then
+    gh_rest GET "repos/$slug/pulls/$num" > "$DQW_TMP/pull-${slug//\//_}-$num.json" 2>/dev/null \
+      && pr=$(cat "$DQW_TMP/pull-${slug//\//_}-$num.json") \
+      && head=$(printf '%s' "$pr" | jq -er '.head.sha | strings' 2>/dev/null) \
+      || { _dqw_g_log "$slug#$num pull unread, skipped"; return 1; }
+    ref=$(printf '%s' "$pr" | jq -r '.head.ref // ""')
+    mergeable=$(printf '%s' "$pr" | jq -r '.mergeable_state // "-"')
+    declare -F ph_prr_writeback >/dev/null && ph_prr_writeback "$slug" "$num" "$DQW_TMP/pull-${slug//\//_}-$num.json"
+  fi
   if [ "$left" != "$head" ]; then
     _dqw_g_log "$slug#$num stale-event: left the queue at ${left:0:12}, head is now ${head:0:12}"
     DQW_G_STALE=1

@@ -20,7 +20,8 @@
 # and ` lib-missing`) → ` gh-budget` when GitHub is low → per Mergify project in
 # fleet.conf: the open merge-queue/dequeued PRs (unread list = skip the project,
 # never "none"), capped at DEQUEUE_WATCH_PR_CAP → per PR: dqw_gather_pr
-# (bin/lib/dequeue-watch/gather.sh), dqw_classify, dqw_llm_classify on an
+# (bin/lib/dequeue-watch/gather.sh; its pulls/<n> read goes to the PR record
+# first, bin/lib/ph-pr-record.sh), dqw_classify, dqw_llm_classify on an
 # unclassified dequeue with FAIL lines, dqw_event_state, dqw_act, dqw_watchdog →
 # dqw_mainred_recheck and dqw_gather_resolve → in observe mode,
 # observe_report_tick (bin/lib/observe-report.sh). The whole tick runs under
@@ -138,7 +139,7 @@ export HARNESS="$H"
   . "$SELF/lib/gh-budget.sh" 2>/dev/null || true
   . "$SELF/lib/gh-rest.sh" 2>/dev/null || true
   [ -r "$SELF/lib/merge-conductor-lib.sh" ] && . "$SELF/lib/merge-conductor-lib.sh" 2>/dev/null
-  for _l in verdicts mc-stale-dequeue fix-round-queue needs-human hub-box \
+  for _l in verdicts mc-stale-dequeue fix-round-queue needs-human hub-box ph-pr-record \
             dequeue-watch/attribute dequeue-watch/classify dequeue-watch/act dequeue-watch/llm dequeue-watch/gather; do
     [ -r "$SELF/lib/$_l.sh" ] && . "$SELF/lib/$_l.sh" 2>/dev/null
   done

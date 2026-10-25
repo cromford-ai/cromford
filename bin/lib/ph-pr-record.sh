@@ -1,7 +1,7 @@
 #!/bin/bash
 # bin/lib/ph-pr-record.sh — bin/pipeline-health.sh's per-PR reads from the
 # fleet's own PR record before GitHub. Sourced, never executed. Defines
-# functions only.
+# functions only. Also used by bin/lib/dequeue-watch/gather.sh (BH-8269).
 #
 # The read rule is pr_record_get's (bin/lib/pr-record.sh), with its helpers
 # and its knob, but GitHub is never called here: on a miss the caller runs
@@ -21,8 +21,10 @@
 #             no line.
 #
 #   ph_prr_miss <owner/repo> <number> <why> [field]
-#       Appends one line to logs/pipeline-health.log, best effort:
+#       Appends one line to logs/<PH_PRR_LOG>.log, best effort:
 #         <UTC> PRR_MISS <owner/repo>#<n> why=<why>[ field=<field>]
+#       PH_PRR_LOG is the caller's log name (default pipeline-health). A
+#       value that is not [A-Za-z0-9._-]+ is ignored, so it is never a path.
 #       Count the misses: grep -c ' PRR_MISS ' logs/pipeline-health.log
 #
 #   ph_prr_writeback <owner/repo> <number> <pulls-json-file>
@@ -41,12 +43,13 @@ _PHPRR_LIBDIR="${BASH_SOURCE[0]%/*}"
 _PHPRR_LOADED=1
 
 ph_prr_miss() {
-  local root="${HARNESS:-${H:-}}" extra=""
+  local root="${HARNESS:-${H:-}}" extra="" name="${PH_PRR_LOG:-pipeline-health}"
   [ -n "${4:-}" ] && extra=" field=$4"
   [ -n "$root" ] || return 0
+  [[ "$name" =~ ^[A-Za-z0-9._-]+$ ]] && [[ "$name" != *..* ]] || name=pipeline-health
   mkdir -p "$root/logs" 2>/dev/null
   printf '%s PRR_MISS %s#%s why=%s%s\n' "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" "${1:-}" "${2:-}" "${3:-}" "$extra" \
-    >> "$root/logs/pipeline-health.log" 2>/dev/null || true
+    >> "$root/logs/$name.log" 2>/dev/null || true
   return 0
 }
 
