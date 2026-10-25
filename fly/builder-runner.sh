@@ -538,7 +538,7 @@ pool_result_row_write() {
   [ "${POOL_MODE:-}" = 1 ] || return 0
   local key full=""
   key=$(jq -r '.key // ""' "$JOB" 2>/dev/null)
-  case "$key" in ''|RR-*|LR-*) return 0 ;; RB-*|CP-*) full=full ;; esac
+  case "$key" in ''|RR-*|LR-*|FXR-*) return 0 ;; RB-*|CP-*) full=full ;; esac
   # shellcheck source=bin/lib/pool-result-row.sh
   . "$HARNESS/bin/lib/pool-result-row.sh" 2>/dev/null || return 0
   command -v pool_result_row_put >/dev/null 2>&1 || return 0
@@ -709,6 +709,60 @@ run_leadreview_job() { # run_leadreview_job <job key>
   [ -n "$word" ]
 }
 
+# --- a POOL FIX ROUND job (BH-8065) --------------------------------------------
+# Not a build: ONE blocked-resolver fix round, as an `FXR-<id>-<ck8>` row that
+# bin/lib/fix-round-pool.sh put on the project box, because
+# lane_placement.blocked-resolver-fix.<project> is fly. The box still holds the
+# fix_round_jobs row claimed. `bin/fix-round-claim.sh --run-pool` is the whole
+# body: it reads the row again, runs `blocked-resolver.sh --fix-here` only when
+# the row is still claimed by that box, and posts the finish as that box. Its
+# one word line is the RESULT, only for the hub reap, which closes the row:
+#   FIX_ROUND_FINISHED <result> finish=<ok|409|failed>   the round ran
+#   FIX_ROUND_SKIPPED <why>                              nothing ran
+#   FIX_ROUND_SETUP_FAILED <why>                         warm-up or the lane failed
+# Never BUILD_DEFERRED: nothing re-offers this row; the box's stale re-offer does.
+fixround_setup_result() { # fixround_setup_result <why>
+  printf 'FIX_ROUND_SETUP_FAILED %s\n' "$1" > "$RESULT_FILE"
+  log "fix round job setup failed: $1"
+}
+
+run_fixround_job() { # run_fixround_job <job key>
+  local key="$1" id box proj ck rc line lane="$HARNESS/bin/fix-round-claim.sh"
+  id=$(jq -r   '.fixround.id      // ""' "$JOB" 2>/dev/null)
+  box=$(jq -r  '.fixround.box     // ""' "$JOB" 2>/dev/null)
+  proj=$(jq -r '.fixround.project // ""' "$JOB" 2>/dev/null)
+  ck=$(jq -r   '.fixround.cap_key // ""' "$JOB" 2>/dev/null)
+  log "fix round job key=$key row $id $proj/$ck for $box"
+  [ -r "$lane" ] || { fixround_setup_result "no fix-round lane at $lane"; return 1; }
+  if ! warm_up; then
+    # One setup-blocked finish for the claimed row, so the hub does not wait
+    # for the stale re-offer (BR_FIX_LANE_TIMEOUT + BR_FIX_HOP_MARGIN).
+    line=$(HARNESS="$HARNESS" HARNESS_ENV_DIR="$ENVDIR" REPOS_ROOT="${REPO%/*}" \
+      bash "$lane" --run-pool "$id" "$box" "$proj" "$ck" --blocked "warm-up failed" 2>/dev/null)
+    line="${line%%$'\n'*}"
+    case "$line" in FIX_ROUND_SETUP_FAILED*|FIX_ROUND_SKIPPED*) printf '%s\n' "$line" > "$RESULT_FILE" ;;
+      *) fixround_setup_result "warm-up failed; --run-pool --blocked answered '${line:0:120}'" ;; esac
+    log "fix round job done: $(head -1 "$RESULT_FILE" 2>/dev/null)"
+    return 1
+  fi
+  # The image clones --depth 50, and the fix round merges main into the PR branch.
+  if [ "$(git -C "$REPO" rev-parse --is-shallow-repository 2>/dev/null)" = true ]; then
+    git -C "$REPO" fetch -q --unshallow origin >/dev/null 2>&1 || log "fix round job: unshallow failed; the round's own fetch decides"
+  fi
+  line=$(HARNESS="$HARNESS" HARNESS_ENV_DIR="$ENVDIR" REPOS_ROOT="${REPO%/*}" \
+    bash "$lane" --run-pool "$id" "$box" "$proj" "$ck" 2>/dev/null); rc=$?
+  line="${line%%$'\n'*}"
+  case "$line" in
+    FIX_ROUND_FINISHED*|FIX_ROUND_SKIPPED*|FIX_ROUND_SETUP_FAILED*) printf '%s\n' "$line" > "$RESULT_FILE" ;;
+    *) fixround_setup_result "bin/fix-round-claim.sh --run-pool answered rc $rc with no word" ;;
+  esac
+  log "fix round job done: $(head -1 "$RESULT_FILE" 2>/dev/null)"
+  beat "$(jq -nc --arg p "$PROJECT" --arg k "$key" --arg r "$(head -1 "$RESULT_FILE" 2>/dev/null)" \
+    '{kind:"build",project:$p,ticket_key:$k,stage:"fixround_done",detail:$r,host:("builder-"+$p)}')"
+  case "$line" in FIX_ROUND_FINISHED*|FIX_ROUND_SKIPPED*) return 0 ;; esac
+  return 1
+}
+
 # --- a POOL CONSOLE PREVIEW job (BH-8030) --------------------------------------
 # Not a build: the console preview lane (bin/console-preview-deploy.sh) queued
 # a `CP-<pr>-<head8>-<job>` row so the hub does not run npm ci and vite build.
@@ -847,6 +901,13 @@ _run_job() {
     run_rereview_job "$key"; rrrc=$?
     stop_heartbeat
     return "$rrrc"
+  fi
+  # --- pool FIX ROUND job (BH-8065): fix-round-claim.sh --run-pool, never a build
+  if [ "$(jq -r '.fixround.kind // ""' "$JOB" 2>/dev/null)" = fixround ]; then
+    local fxrc
+    run_fixround_job "$key"; fxrc=$?
+    stop_heartbeat
+    return "$fxrc"
   fi
   # --- pool LEAD REVIEW job (BH-8027): bin/lead-review.sh item, never a build --
   if [ "$(jq -r '.leadreview.kind // ""' "$JOB" 2>/dev/null)" = leadreview ]; then

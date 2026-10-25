@@ -18,7 +18,8 @@
 #                     builder's own gate still defers, which is the old cost;
 #                     a pool that refused every unreadable read could stop all
 #                     builds of a project.
-#   RB-*/RR-*/LR-*/CP-* key, or no   spawn, as before this gate.
+#   an RB-*/RR-*/LR-*/CP-*/  spawn, as before this gate.
+#   FXR-* key, or no
 #   ta_gate to load
 # The caller is fly-pool.sh: P, POOL_SLUG, POOL_SLUG_TOK, say, QROW and
 # pool_hold_clear are its names. Root: ${HARNESS:-${H:-}} only (BH-2613).
@@ -26,7 +27,7 @@
 
 pool_actor_gate() {
   local jf="${1:-}" key="${2:-}" ticket="${3:-}" r dir rc=0 line
-  case "$key" in RB-*|RR-*|LR-*|CP-*) return 0 ;; esac
+  case "$key" in RB-*|RR-*|LR-*|CP-*|FXR-*-*) return 0 ;; esac
   r="${HARNESS:-${H:-}}"
   if ! command -v ta_gate >/dev/null 2>&1 && [ -n "$r" ] && [ -r "$r/bin/lib/trigger-actor.sh" ]; then
     # shellcheck source=bin/lib/trigger-actor.sh

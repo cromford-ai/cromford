@@ -38,6 +38,26 @@
 #      lane does not know, is setup-blocked with the reason. Never done (D9).
 #   6. a finish that fails leaves the row claimed (the stale re-offer and the
 #      guard recover it); a 409 is logged once. Neither is retried.
+#   Between 2 and 3, THE FLY PLACEMENT (BH-8065, bin/lib/fix-round-pool.sh):
+#   with lane_placement.blocked-resolver-fix.<project> = fly (the project row
+#   only) and the project pool-routed, the round is NOT run here. One
+#   build_queue row FXR-<id>-<ck8> (target fly) is put, and the row stays
+#   claimed by this box. A pool row already queued or claimed: nothing. Already
+#   done or failed: finish setup-blocked, no second round. Unreadable, or the
+#   put fails: nothing, the stale re-offer comes back. Never a local run after
+#   the placement said fly. A missing lib is the box, with one log line.
+#
+# THE POOL RUNNER (--run-pool <id> <box> <project> <cap_key> [--blocked <why>]),
+#   on a Fly pool machine (fly/builder-runner.sh run_fixround_job): reads the
+#   row again with fix_round_get. Only when its id is <id>, its status claimed
+#   and claimed_by <box> does it run steps 0-6 above as <box>, with no placement
+#   read and the machine's own GH_TOKEN kept when bin/gh-token.sh answers empty.
+#   It prints ONE word line, the machine's RESULT for the hub reap:
+#     FIX_ROUND_FINISHED <result-word> finish=<ok|409|failed>  the round ran
+#     FIX_ROUND_SKIPPED <why>     the row is not claimed by <box> (done,
+#                                 adopted, another id, unreadable): nothing ran
+#     FIX_ROUND_SETUP_FAILED <why> the lib is missing, the round did not start,
+#                                 or --blocked: one setup-blocked finish
 #
 # Knobs: lane.fix-round-claim FIX_ROUND_CLAIM, FIX_ROUND_CLAIM_MAX;
 #   lane.blocked-resolver BR_FIX_LANE_TIMEOUT, BR_FIX_HOP_MARGIN (read, not owned).
@@ -48,15 +68,16 @@ set -uo pipefail
 H="${HARNESS:-/root/harness}"
 LOG="$H/logs/fix-round-claim.log"
 
-frc_log() { mkdir -p "$H/logs" 2>/dev/null; printf '%s %s\n' "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" "$*" >> "$LOG"; }
+frc_log() { FRC_LAST="$*"; mkdir -p "$H/logs" 2>/dev/null; printf '%s %s\n' "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" "$*" >> "$LOG"; }
 frc_b64() { printf '%s' "$1" | base64 -w0; }
 
 # frc_run <id> <rowfile> — one claimed row, start to finish.
 frc_run() {
   local id="$1" rowf="$2" box row p ck attempt rin args_json fin out rc=0 line rb64="" rjson="" res=""
-  local f n0 n1 repo tmo result why
+  local f n0 n1 repo tmo result why where tok
   local -a args=()
-  box=$(local_box_name)
+  # FRC_AS_BOX (--run-pool): the claiming box, which the finish CAS needs.
+  box="${FRC_AS_BOX:-$(local_box_name)}"
   row=$(cat "$rowf" 2>/dev/null)
   rm -f "$rowf"
   [ -n "$box" ] || { frc_log "row $id: this box cannot name itself, the row stays claimed"; return 0; }
@@ -97,9 +118,20 @@ frc_run() {
     fi
   fi
 
+  # THE FLY PLACEMENT (BH-8065). FRC_POOL_RUN=1 is the pool machine itself:
+  # no placement read there, so the round never loops back to the pool.
+  if [ "${FRC_POOL_RUN:-0}" != 1 ] && command -v frp_placed >/dev/null 2>&1 && frp_placed "$p"; then
+    frp_put "$id" "$box" "$p" "$ck" "$attempt"
+    if [ "$FRP_WORD" = ran ]; then
+      frc_finish "$id" "$box" "setup-blocked $(frc_b64 "the Fly pool already ran this round as $FRP_KEY ($FRP_ST: $FRP_REASON) and no finish landed; it is not run a second time")" "" "pool row $FRP_ST"
+    fi
+    return 0
+  fi
+
+  where="$box"; [ "${FRC_POOL_RUN:-0}" = 1 ] && where="the Fly pool for $box"
   tmo=$(lane_knob blocked-resolver BR_FIX_LANE_TIMEOUT "$p")
   case "$tmo" in ''|*[!0-9]*)
-    frc_finish "$id" "$box" "setup-blocked $(frc_b64 "BR_FIX_LANE_TIMEOUT on $box is '$tmo', not a number of seconds, so the round was not started")" "" "no timeout"
+    frc_finish "$id" "$box" "setup-blocked $(frc_b64 "BR_FIX_LANE_TIMEOUT on $where is '$tmo', not a number of seconds, so the round was not started")" "" "no timeout"
     return 0 ;;
   esac
   fin=$(mktemp "${TMPDIR:-/tmp}/fix-round-in.XXXXXX") && out=$(mktemp "${TMPDIR:-/tmp}/fix-round-out.XXXXXX") || {
@@ -111,7 +143,11 @@ frc_run() {
   [ -n "$rin" ] || { rm -f "$fin"; fin=/dev/null; }
   export PATH="${PATH:+$PATH:}/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
   repo=$("$H/bin/fleet-conf.sh" "$p" repo 2>/dev/null)
-  if [ -n "$repo" ]; then GH_TOKEN=$("$H/bin/gh-token.sh" "$repo" 2>/dev/null); export GH_TOKEN; fi
+  if [ -n "$repo" ]; then
+    tok=$("$H/bin/gh-token.sh" "$repo" 2>/dev/null)
+    # A pool machine already pushes as the project: an empty mint keeps its token.
+    if [ -n "$tok" ] || [ "${FRC_POOL_RUN:-0}" != 1 ]; then GH_TOKEN="$tok"; export GH_TOKEN; fi
+  fi
   frc_log "row $id $p/$ck attempt $attempt: fix round starting"
   timeout -k 60 "$tmo" "$H/bin/blocked-resolver.sh" --fix-here "${args[@]}" < "$fin" > "$out" || rc=$?
   unset GH_TOKEN
@@ -128,25 +164,69 @@ frc_run() {
     [ -n "$rjson" ] || frc_log "row $id $p/$ck: the round sent back a record that is not $p's, it is not posted"
   fi
   if [ -z "$res" ]; then
-    result="setup-blocked $(frc_b64 "the round on $box gave no FIX_RESULT (rc=$rc)")"
+    result="setup-blocked $(frc_b64 "the round on $where gave no FIX_RESULT (rc=$rc)")"
   elif grep -qE '^(done|terminal|rebuild-fresh|setup-blocked [^ ]+|box-paused [^ ]+)$' <<<"$res"; then
     result="$res"
   else
-    result="setup-blocked $(frc_b64 "the round on $box answered an unrecognised FIX_RESULT: $res")"
+    result="setup-blocked $(frc_b64 "the round on $where answered an unrecognised FIX_RESULT: $res")"
   fi
   frc_finish "$id" "$box" "$result" "$rjson" "round rc=$rc"
 }
 
 # frc_finish <id> <box> <result> <record-or-empty> <what> — one finish, never
-# retried, and a failure is never read as success.
+# retried, and a failure is never read as success. Sets FRC_FIN (ok|409|failed)
+# and FRC_RESULT for --run-pool's word line.
 frc_finish() {
   local rc=0
+  FRC_RESULT="$3"
   fix_round_finish "$1" "$2" "$3" "$4" 2>>"$LOG" || rc=$?
   case "$rc" in
-    0) frc_log "row $1 finished: ${3%% *} ($5)" ;;
-    9) frc_log "row $1: 409 on finish (the row is no longer claimed by $2), not retried ($5)" ;;
-    *) frc_log "row $1: finish failed, the row stays claimed; the stale re-offer and the guard recover it ($5)" ;;
+    0) FRC_FIN=ok;     frc_log "row $1 finished: ${3%% *} ($5)" ;;
+    9) FRC_FIN=409;    frc_log "row $1: 409 on finish (the row is no longer claimed by $2), not retried ($5)" ;;
+    *) FRC_FIN=failed; frc_log "row $1: finish failed, the row stays claimed; the stale re-offer and the guard recover it ($5)" ;;
   esac
+}
+
+# frc_run_pool <id> <box> <project> <cap_key> [--blocked <why>] — the pool
+# machine's verb (see the header). Prints the ONE word line; always rc 0.
+frc_run_pool() {
+  local id="${1:-}" box="${2:-}" p="${3:-}" ck="${4:-}" blocked="" row rc=0 have rowf tmpd
+  [ "${5:-}" = --blocked ] && blocked="${6:-no reason given}"
+  FRC_FIN=""; FRC_RESULT=""; FRC_LAST=""
+  case "$id" in ''|*[!0-9]*) echo "FIX_ROUND_SETUP_FAILED --run-pool needs a numeric id, got '$id'"; return 0 ;; esac
+  for have in "$box" "$p" "$ck"; do
+    grep -qE '^[A-Za-z0-9._-]+$' <<<"$have" || { echo "FIX_ROUND_SETUP_FAILED --run-pool argument '$have' is not [A-Za-z0-9._-]+"; return 0; }
+  done
+  # shellcheck source=jobs-client.sh
+  . "$H/bin/jobs-client.sh" >/dev/null 2>&1
+  # shellcheck source=lib/fix-round-queue.sh
+  . "$H/bin/lib/fix-round-queue.sh" 2>/dev/null || { echo "FIX_ROUND_SETUP_FAILED bin/lib/fix-round-queue.sh missing on the machine"; return 0; }
+  row=$(fix_round_get "$p" "$ck" 2>>"$LOG") || rc=$?
+  case "$rc" in
+    0) ;;
+    2) echo "FIX_ROUND_SKIPPED row $id $p/$ck has no open row (adopted or gone)"; return 0 ;;
+    *) echo "FIX_ROUND_SKIPPED row $id $p/$ck is unreadable (rc $rc)"; return 0 ;;
+  esac
+  have=$(printf '%s' "$row" | jq -r '"\(.id // "-") \(.status // "-") \(.claimed_by // "-")"' 2>/dev/null)
+  if [ "$have" != "$id claimed $box" ]; then
+    echo "FIX_ROUND_SKIPPED row $id $p/$ck is not claimed by $box (id status claimed_by: ${have:-unreadable})"
+    return 0
+  fi
+  if [ -n "$blocked" ]; then
+    frc_finish "$id" "$box" "setup-blocked $(frc_b64 "the Fly pool machine for $box could not start the round: $blocked")" "" "pool setup failed"
+    echo "FIX_ROUND_SETUP_FAILED $blocked finish=$FRC_FIN"
+    return 0
+  fi
+  tmpd="$H/tmp"; mkdir -p "$tmpd" 2>/dev/null || tmpd="${TMPDIR:-/tmp}"
+  rowf=$(mktemp "$tmpd/fix-round-XXXXXX.json") || { echo "FIX_ROUND_SETUP_FAILED no temp file for row $id"; return 0; }
+  printf '%s' "$row" > "$rowf"
+  FRC_AS_BOX="$box" FRC_POOL_RUN=1 frc_run "$id" "$rowf"
+  if [ -n "$FRC_FIN" ]; then
+    echo "FIX_ROUND_FINISHED ${FRC_RESULT%% *} finish=$FRC_FIN"
+  else
+    echo "FIX_ROUND_SETUP_FAILED the round did not start: ${FRC_LAST:-no reason logged}"
+  fi
+  return 0
 }
 
 # frc_tick — claim up to the max, spawn one detached runner per row.
@@ -205,6 +285,12 @@ set -a +u; . "$HENV/global.env" 2>/dev/null; set +a -u
 . "$H/bin/lib/lane-gate.sh" 2>/dev/null || true
 command -v lane_knob >/dev/null 2>&1 || lane_knob() { local v="${!2:-}"; printf '%s' "$v"; }
 
+if [ "${1:-}" = --run-pool ]; then
+  shift
+  frc_run_pool "$@"
+  exit 0
+fi
+
 if [ "${1:-}" = --run ]; then
   # The tick already passed the lane gate; --fix-here re-checks this box's own
   # off switches and answers box-paused, so the runner does not gate again.
@@ -212,6 +298,11 @@ if [ "${1:-}" = --run ]; then
   . "$H/bin/jobs-client.sh" >/dev/null 2>&1
   # shellcheck source=lib/fix-round-queue.sh
   . "$H/bin/lib/fix-round-queue.sh" || { frc_log "row ${2:-?}: bin/lib/fix-round-queue.sh missing, the row stays claimed"; exit 0; }
+  # The fly placement (BH-8065). Missing = the round runs on this box.
+  # shellcheck source=lib/lane-placement.sh
+  . "$H/bin/lib/lane-placement.sh" 2>/dev/null || frc_log "row ${2:-?}: bin/lib/lane-placement.sh missing; the round runs on this box"
+  # shellcheck source=lib/fix-round-pool.sh
+  . "$H/bin/lib/fix-round-pool.sh" 2>/dev/null || frc_log "row ${2:-?}: bin/lib/fix-round-pool.sh missing; the round runs on this box"
   case "${2:-}" in ''|*[!0-9]*) echo "fix-round-claim: --run needs <id> <rowfile>" >&2; exit 2 ;; esac
   [ -r "${3:-}" ] || { frc_log "row $2: no row file '${3:-}', the row stays claimed"; exit 0; }
   frc_run "$2" "$3"

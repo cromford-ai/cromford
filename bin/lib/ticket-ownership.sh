@@ -35,7 +35,8 @@
 #       Only GitHub-Issues projects (fleet.conf board prefix "-") have a ticket
 #       to read; a board project, a non-numeric ticket and a merge-conductor
 #       RB-* rebase row, an RR-* re-review row, an LR-* lead-review row
-#       (BH-8027) and a CP-* console preview row (BH-8030) all answer 1.
+#       (BH-8027), a CP-* console preview row (BH-8030) and an FXR-* fix-round
+#       row (BH-8065) all answer 1.
 #   to_merge_hold <project> <owner/repo> <pr-number>
 #       rc 0 do NOT merge this pass (prints one reason line), 1 merge as today.
 #   to_lead_merge_hold <owner/repo> <pr> [head] [author]   (BH-1558)
@@ -137,7 +138,7 @@ to_hold_verdict() {
 
 to_build_hold() {
   local p="${1:-}" t="${2:-}" k="${3:-}" n slug
-  case "$k" in RB-*|RR-*|LR-*|CP-*) return 1 ;; esac
+  case "$k" in RB-*|RR-*|LR-*|CP-*|FXR-*-*) return 1 ;; esac
   case "$t" in
     ''|*[!0-9]*) n=$(printf '%s' "$k" | sed -nE 's/^[A-Za-z]+-([0-9]+)$/\1/p') ;;
     *) n="$t" ;;
