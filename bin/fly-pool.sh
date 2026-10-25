@@ -607,6 +607,9 @@ declare -A _POOL_HEAD_CACHE=() _POOL_PR_CACHE=() _POOL_HOLD_CACHE=() _POOL_COMME
 declare -A _POOL_HOLD_LKEY=()
 _POOL_HOLD_LIST=""; _POOL_HOLD_LIB=""; _PHC_V=""; _PHC_TTL=""; _PHC_PAGES=""
 _PHC_HITS=0; _PHC_MISSES=0; _PHC_BAD=0; _PHC_READ_S=0; _PHC_GATED=0
+# The listed issue object per issue number, and the hold-read counters (BH-7942)
+declare -A _POOL_HOLD_IJ=()
+_PHR_V=""; _PHR_BATCHED=0; _PHR_RETRIES=0; _PHR_RETRY_OK=0; _PHR_RETRY_OFF=0; _PHC_LIST_RETRIED=0
 # The PR the open-PR gate found, so the one comment it posts can NAME it. Kept
 # out of _POOL_PR_CACHE because that one answers y/n/u and a caller reads it
 # with a case: a third value would have to be parsed everywhere it is read.
@@ -688,6 +691,13 @@ case "${POOL_GH_READ_TIMEOUT_S:-}" in ''|*[!0-9]*) POOL_GH_READ_TIMEOUT_S=20 ;; 
 case "${POOL_TICK_BUDGET_S:-}" in ''|*[!0-9]*) POOL_TICK_BUDGET_S=600 ;; esac
 [ "$POOL_GH_READ_TIMEOUT_S" -le 300 ] || POOL_GH_READ_TIMEOUT_S=300
 [ "$POOL_TICK_BUDGET_S" -le 86400 ] || POOL_TICK_BUDGET_S=86400
+# BH-7942: POOL_HOLD_READ_TIMEOUT_S (45, a lane knob) cuts every HOLD read: the
+# ai-build listing pages, an issue GET and a comments read. 0 = no cut.
+case "${POOL_HOLD_READ_TIMEOUT_S:-}" in
+  '') POOL_HOLD_READ_TIMEOUT_S=45 ;;
+  *[!0-9]*) say "POOL_HOLD_READ_TIMEOUT_S=$POOL_HOLD_READ_TIMEOUT_S is not a number of seconds (0-300) — using 45"; POOL_HOLD_READ_TIMEOUT_S=45 ;;
+esac
+[ "$POOL_HOLD_READ_TIMEOUT_S" -le 300 ] || POOL_HOLD_READ_TIMEOUT_S=300
 # KILL FLAGS, and they are deliberately two. GH_APP_TOKENS=0 / flags/gh-app-tokens-off
 # (or the `switch.gh-app-tokens-off` settings row) is the existing one and it
 # turns the WHOLE App-token path off — no swap, no rotation, no
@@ -1089,7 +1099,15 @@ pool_hold_check() {
     printf '%s\n' "$v"
     case "$v" in held*) return 1 ;; clear*) return 0 ;; *) return 2 ;; esac
   fi
-  v=$(hold_check "$POOL_SLUG" "$ticket" 2>/dev/null) || true
+  # BH-7942: a ticket the tick's ai-build listing carries is classified from
+  # that listed object (one comments read, no issue GET); any other ticket
+  # reads its own issue. Both are cut at POOL_HOLD_READ_TIMEOUT_S.
+  local ij="${_POOL_HOLD_IJ[$ticket]:-}"
+  if [ -n "$ij" ] && command -v hold_check_issue >/dev/null 2>&1; then
+    v=$(POOL_GH_READ_TIMEOUT_S="${POOL_HOLD_READ_TIMEOUT_S:-45}" hold_check_issue "$POOL_SLUG" "$ticket" "$ij" 2>/dev/null) || true
+  else
+    v=$(POOL_GH_READ_TIMEOUT_S="${POOL_HOLD_READ_TIMEOUT_S:-45}" hold_check "$POOL_SLUG" "$ticket" 2>/dev/null) || true
+  fi
   # THE TOKEN GOES BACK. hold_check arms the App installation token for the repo
   # (hold__arm -> gh_auth_for) and says in its own header that the CALLER owns
   # the reset. Without one, every later read in this tick — the PR list, the
@@ -1105,6 +1123,40 @@ pool_hold_check() {
   _POOL_HOLD_CACHE[$ticket]="$v"
   printf '%s\n' "$v"
   case "$v" in held*) return 1 ;; clear*) return 0 ;; *) return 2 ;; esac
+}
+
+# pool_hold_read <ticket> (BH-7942) — pool_hold_check, in the CALLER's shell,
+# with ONE retry inside the tick: a read that did not answer is read again
+# before the row is skipped. The verdict is in _PHR_V; rc 0 always. A why that
+# no second read can change (no slug, no number, no jq) is not retried. After
+# one row's retry also fails, the rest of the tick reads once per row
+# (_PHR_RETRY_OFF), so a GitHub that is down does not double every row's cost.
+# A retry never touches a hold marker: the caller's unreadable arm still keeps
+# the last known state.
+pool_hold_read() {
+  local t="${1:-}"
+  case "$t" in ''|*[!0-9]*) ;; *)
+    [ -n "${_POOL_HOLD_IJ[$t]:-}" ] && command -v hold_check_issue >/dev/null 2>&1 && _PHR_BATCHED=$((_PHR_BATCHED + 1)) ;;
+  esac
+  _PHR_V=$(pool_hold_check "$t" 2>/dev/null) || true
+  case "$_PHR_V" in
+    "unreadable	"*) ;;
+    *) return 0 ;;
+  esac
+  case "${_PHR_V#unreadable	}" in
+    "no owner/repo"*|"no issue number"*|"jq is not on PATH"*|"missing slug or ticket"*|"no issue json"*) return 0 ;;
+  esac
+  [ "$_PHR_RETRY_OFF" = 0 ] || return 0
+  _PHR_RETRIES=$((_PHR_RETRIES + 1))
+  say "hold read for ${KEY:-$t} unreadable (${_PHR_V#unreadable	}): retrying once"
+  _PHR_V=$(pool_hold_check "$t" 2>/dev/null) || true
+  case "$_PHR_V" in
+    "unreadable	"*)
+      _PHR_RETRY_OFF=1
+      say "hold reads: retry off for the rest of this tick (the retry for ${KEY:-$t} did not answer either)" ;;
+    *) _PHR_RETRY_OK=$((_PHR_RETRY_OK + 1)) ;;
+  esac
+  return 0
 }
 
 # THE PR GATE READS THE OPEN-PR LIST ONCE PER TICK, NOT ONCE PER ROW (hotfix,
@@ -1224,20 +1276,30 @@ pool_hold_cache_knobs() {
 # unreadable(<code>) (every row misses: the table is emptied).
 pool_hold_list_prime() {
   [ -n "$_POOL_HOLD_LIST" ] && return 0
-  local page=1 _out _code _body _rows _len n u c
+  local page=1 _out _code _body _rows _len n u c j
+  # BH-7942: the listing is a hold read, so it takes the hold read's cut.
+  local POOL_GH_READ_TIMEOUT_S="${POOL_HOLD_READ_TIMEOUT_S:-45}"
   _POOL_HOLD_LIB=$(cksum < "$HARNESS/bin/lib/hold.sh" 2>/dev/null | awk '{print $1 "-" $2}')
   while [ "$page" -le "$_PHC_PAGES" ]; do
     _out=$(pool_rest_read "repos/$POOL_SLUG/issues?state=open&labels=ai-build&per_page=100&page=$page" "${POOL_SLUG_TOK:-}")
     _code=$(head -n 1 <<<"$_out"); _body=$(tail -n +2 <<<"$_out")
+    # BH-7942: one page that did not answer is read once more in this tick.
+    [ "$_code" != 200 ] && [ "$_PHC_LIST_RETRIED" = 0 ] && { _PHC_LIST_RETRIED=1; continue; }
     if [ "$_code" != 200 ]; then
-      _POOL_HOLD_LKEY=(); _POOL_HOLD_LIST="unreadable(${_code:-none})"; return 0
+      _POOL_HOLD_LKEY=(); _POOL_HOLD_IJ=(); _POOL_HOLD_LIST="unreadable(${_code:-none})"; return 0
     fi
     if ! _rows=$(phc_listing_keys "$_body"); then
-      _POOL_HOLD_LKEY=(); _POOL_HOLD_LIST="unreadable(body)"; return 0
+      _POOL_HOLD_LKEY=(); _POOL_HOLD_IJ=(); _POOL_HOLD_LIST="unreadable(body)"; return 0
     fi
     while IFS=$'\t' read -r n u c; do
       [ -n "$n" ] && [ -n "$c" ] && _POOL_HOLD_LKEY[$n]="$u|$c"
     done <<<"$_rows"
+    # BH-7942: each complete listed issue, so its row reads only its comments.
+    if command -v phc_listing_issues >/dev/null 2>&1; then
+      while IFS=$'\t' read -r n j; do
+        [ -n "$n" ] && [ -n "$j" ] && _POOL_HOLD_IJ[$n]="$j"
+      done < <(phc_listing_issues "$_body")
+    fi
     _len=$(jq 'length' <<<"$_body" 2>/dev/null)
     case "$_len" in ''|*[!0-9]*) _len=0 ;; esac
     [ "$_len" -ge 100 ] || { _POOL_HOLD_LIST=ok; return 0; }
@@ -2122,7 +2184,7 @@ pool_spawn_decision() {
     v="$_PHC_V"
   else
     _psd_t0=$SECONDS
-    v=$(pool_hold_check "$TICKET" 2>/dev/null) || true
+    pool_hold_read "$TICKET"; v="$_PHR_V"
     _PHC_READ_S=$((_PHC_READ_S + SECONDS - _psd_t0))
     command -v pool_hold_cache_store >/dev/null 2>&1 && pool_hold_cache_store "$TICKET" "$v"
   fi
@@ -5995,6 +6057,8 @@ fi
 # One hold-cache line per tick (BH-6549), only when a GitHub-issue row reached
 # the HOLD gate. NOT "pool $P: ..." (tests/pool-autoscale-test.sh reads that).
 [ "$_PHC_GATED" = 1 ] && say "hold cache: hits=$_PHC_HITS misses=$_PHC_MISSES bad=$_PHC_BAD listing=${_POOL_HOLD_LIST:-none} read_s=$_PHC_READ_S ttl_s=$_PHC_TTL"
+# BH-7942: batched = rows read from the listing's issue object (no issue GET).
+[ "$_PHC_GATED" = 1 ] && say "hold reads: batched=$_PHR_BATCHED retries=$_PHR_RETRIES retry_ok=$_PHR_RETRY_OK retry_off=$_PHR_RETRY_OFF timeout_s=$POOL_HOLD_READ_TIMEOUT_S"
 if [ -n "$DM_HELD" ]; then
   DM_N=$(printf '%s' "$DM_HELD" | wc -w | tr -d ' ')
   say "DISPATCH-MODE hotfix-only: held $DM_N queued job(s) ($DM_HELD) — they stay queued; allow-list: $(dm_allow_text)"

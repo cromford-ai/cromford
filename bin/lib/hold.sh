@@ -449,7 +449,7 @@ hold__gh() {
     if command -v timeout >/dev/null 2>&1; then timeout "$POOL_GH_READ_TIMEOUT_S" gh "$@"; else gh "$@"; fi ;; esac
 }
 hold_check() {
-  local slug="${1:-}" n="${2:-}" ij cj raw errf err rc
+  local slug="${1:-}" n="${2:-}" ij errf err rc
   case "$slug" in */*) ;; *) printf 'unreadable\tno owner/repo to read\n'; return 2 ;; esac
   case "$n" in ''|*[!0-9]*) printf 'unreadable\tno issue number to read\n'; return 2 ;; esac
   command -v jq >/dev/null 2>&1 || { printf 'unreadable\tjq is not on PATH\n'; return 2; }
@@ -462,6 +462,29 @@ hold_check() {
     [ "$errf" = /dev/null ] || rm -f "$errf"
     printf 'unreadable\t%s\n' "$err"; return 2
   fi
+  [ "$errf" = /dev/null ] || rm -f "$errf"
+  hold__from_issue "$slug" "$n" "$ij"
+}
+
+# hold_check_issue <owner/repo> <issue-number> <issue-json> (BH-7942) — hold_check
+# for a caller that already holds the issue object (the pool's open ai-build
+# listing): the comments read, then hold_classify. No issue GET. Same output,
+# rc and token arming as hold_check. An empty issue json is unreadable.
+hold_check_issue() {
+  local slug="${1:-}" n="${2:-}" ij="${3:-}"
+  case "$slug" in */*) ;; *) printf 'unreadable\tno owner/repo to read\n'; return 2 ;; esac
+  case "$n" in ''|*[!0-9]*) printf 'unreadable\tno issue number to read\n'; return 2 ;; esac
+  command -v jq >/dev/null 2>&1 || { printf 'unreadable\tjq is not on PATH\n'; return 2; }
+  [ -n "$ij" ] || { printf 'unreadable\tno issue json to classify\n'; return 2; }
+  hold__arm "$slug"
+  hold__from_issue "$slug" "$n" "$ij"
+}
+
+# hold__from_issue <owner/repo> <n> <issue-json> — the comments read, the
+# classify and the ambiguous note: the tail hold_check and hold_check_issue share.
+hold__from_issue() {
+  local slug="$1" n="$2" ij="$3" cj raw errf err rc
+  errf=$(mktemp 2>/dev/null) || errf=/dev/null
   raw=$(hold__gh api --paginate "repos/$slug/issues/$n/comments?per_page=100" 2>"$errf"); rc=$?
   if [ "$rc" != 0 ]; then
     err=$(head -n 1 "$errf" 2>/dev/null | tr -d '\r')

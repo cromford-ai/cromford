@@ -23,6 +23,12 @@
 #       one line per issue of one listing page: n<TAB>updated_at<TAB>comments.
 #       Pull requests and issues without both fields are dropped.
 #       rc 0, rc 2 when the input is not a JSON array.
+#   phc_listing_issues <listing-json>
+#       one line per complete issue of one listing page: n<TAB><compact issue
+#       json> (BH-7942). Complete: no pull_request, and number, state, title,
+#       labels (an array) and body (null allowed) all present. Any other item
+#       prints nothing, so its row reads its own issue.
+#       rc 0, rc 2 when the input is not a JSON array.
 #   phc_get <dir> <n> <key> <lib> <ttl_s> <now>
 #       rc 0 hit (prints the verdict), rc 1 miss, rc 3 bad file (prints
 #       nothing). The caller treats rc 3 as a miss, never as a clear.
@@ -41,6 +47,15 @@ phc_listing_keys() {
     | select(type == "object" and (has("pull_request") | not))
     | select(.number != null and .updated_at != null and .comments != null)
     | "\(.number)\t\(.updated_at)\t\(.comments)"' 2>/dev/null || return 2
+}
+
+phc_listing_issues() {
+  printf '%s' "${1:-}" | jq -r '
+    if type != "array" then error("not an array") else .[] end
+    | select(type == "object" and (has("pull_request") | not))
+    | select(has("number") and has("state") and has("title") and has("body") and has("labels"))
+    | select((.number | type) == "number" and (.labels | type) == "array" and (.state | type) == "string")
+    | "\(.number)\t\(tojson)"' 2>/dev/null || return 2
 }
 
 # _phc_keepable <verdict> — rc 0 when the verdict is one the cache may keep.

@@ -1,0 +1,12 @@
+{
+  "env": "POOL_HOLD_READ_TIMEOUT_S",
+  "type": "int",
+  "default": 45,
+  "min": 0,
+  "max": 300,
+  "unit": "seconds",
+  "zero_means": "off",
+  "required": false,
+  "read_in": "bin/fly-pool.sh",
+  "note": "BH-7942. Cuts every HOLD read of the pool after this many seconds: the open ai-build listing pages, an issue GET and a comments read (POOL_GH_READ_TIMEOUT_S still cuts the PR, branch head and repo reads). A cut read is read once more in the tick before the row is skipped; after one row's retry also fails, the rest of the tick reads once per row. A non-number uses 45 with one line. Settings row `lane.fly-pool.pool_hold_read_timeout_s`. 0 = off: no per-read limit."
+}

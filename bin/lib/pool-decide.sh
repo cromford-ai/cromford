@@ -21,11 +21,14 @@
 # The worker runs pool_spawn_decision unchanged in a subshell, so every gate
 # says the lines it said before. It writes one verdict file:
 #   <PDC_ROOT>/v/<idx>.v   rc hits misses bad read_s gated pr_unreadable pr_code
+#                          batched retries retry_ok retry_off (BH-7942)
 # (tab-separated) through a temp name and mv. A worker that exits with no
 # verdict file is a skip (one line); its row stays queued. pdc_collect adds the
 # counters into the tick's _PHC_* so the one `hold cache:` line counts every
 # row, and carries a PR read that did not answer (_POOL_PR_UNREADABLE, BH-7421)
 # into the tick's shell, so every worker started after it reads no more PRs.
+# The hold-read retry breaker (_PHR_RETRY_OFF, BH-7942) is carried the same
+# way: a worker started after a row whose retry failed reads once per row.
 # THE FIRST ROW IS DECIDED ALONE. A serial walk always decided its first row,
 # then applied the tick budget and the stop rule (BH-7421, BH-7475) before each
 # later row, and its first unreadable PR read stopped PR reads for the tick.
@@ -157,10 +160,12 @@ pdc_prime() {
 pdc_worker() {
   local rc t
   _POOL_ROWS_DECIDED=0; _PHC_HITS=0; _PHC_MISSES=0; _PHC_BAD=0; _PHC_READ_S=0; _PHC_GATED=0
+  _PHR_BATCHED=0; _PHR_RETRIES=0; _PHR_RETRY_OK=0
   pool_spawn_decision "$2" "$3" "$4"; rc=$?
   t="$PDC_DIR/$1.v.tmp"
-  printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$rc" "$_PHC_HITS" "$_PHC_MISSES" "$_PHC_BAD" "$_PHC_READ_S" "$_PHC_GATED" \
-    "${_POOL_PR_UNREADABLE:-0}" "${_POOL_PR_UNREADABLE_CODE:-none}" > "$t" \
+  printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$rc" "$_PHC_HITS" "$_PHC_MISSES" "$_PHC_BAD" "$_PHC_READ_S" "$_PHC_GATED" \
+    "${_POOL_PR_UNREADABLE:-0}" "${_POOL_PR_UNREADABLE_CODE:-none}" \
+    "${_PHR_BATCHED:-0}" "${_PHR_RETRIES:-0}" "${_PHR_RETRY_OK:-0}" "${_PHR_RETRY_OFF:-0}" > "$t" \
     && mv -f "$t" "$PDC_DIR/$1.v"
   exit "$rc"
 }
@@ -191,7 +196,7 @@ pdc_start() {
 
 # pdc_collect — wait for one worker and act on its verdict. rc 1 = none running.
 pdc_collect() {
-  local w="" p i f rc=1 h=0 m=0 b=0 r=0 g=0 u=0 uc=none
+  local w="" p i f rc=1 h=0 m=0 b=0 r=0 g=0 u=0 uc=none hb=0 hr=0 hk=0 ho=0
   [ "${#_PDC_PID[@]}" -gt 0 ] || return 1
   if [ "$_PDC_WAITN" = 1 ]; then
     wait -n -p w "${!_PDC_PID[@]}" 2>/dev/null
@@ -206,10 +211,13 @@ pdc_collect() {
   i="${_PDC_PID[$w]}"; unset "_PDC_PID[$w]"
   if [ "${_PDC_HOT[$i]}" = 1 ]; then PDC_PEND_HOT=$((PDC_PEND_HOT - 1)); else PDC_PEND_PLAIN=$((PDC_PEND_PLAIN - 1)); fi
   f="$PDC_DIR/$i.v"
-  if [ -r "$f" ] && IFS=$'\t' read -r rc h m b r g u uc < "$f" && [[ "$rc" =~ ^[01]$ ]]; then
+  if [ -r "$f" ] && IFS=$'\t' read -r rc h m b r g u uc hb hr hk ho < "$f" && [[ "$rc" =~ ^[01]$ ]]; then
     case "$h$m$b$r$g" in *[!0-9]*|'') h=0; m=0; b=0; r=0; g=0 ;; esac
     _PHC_HITS=$((_PHC_HITS + h)); _PHC_MISSES=$((_PHC_MISSES + m)); _PHC_BAD=$((_PHC_BAD + b))
     _PHC_READ_S=$((_PHC_READ_S + r)); [ "$g" = 1 ] && _PHC_GATED=1
+    case "$hb$hr$hk" in *[!0-9]*|'') hb=0; hr=0; hk=0 ;; esac
+    _PHR_BATCHED=$((${_PHR_BATCHED:-0} + hb)); _PHR_RETRIES=$((${_PHR_RETRIES:-0} + hr)); _PHR_RETRY_OK=$((${_PHR_RETRY_OK:-0} + hk))
+    [ "$ho" = 1 ] && _PHR_RETRY_OFF=1
     if [ "$u" = 1 ] && [ "${_POOL_PR_UNREADABLE:-0}" != 1 ]; then
       _POOL_PR_UNREADABLE=1; _POOL_PR_UNREADABLE_CODE="${uc:-none}"
     fi

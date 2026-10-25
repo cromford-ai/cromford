@@ -233,7 +233,10 @@ grep -q 'skipping BH-2001: PR check unreadable' "$H/logs/fly-pool.log" && ok || 
 # ── I: the hold read is cut too (I2) ─────────────────────────────────────────
 reset_state; real_timeout; queue_n 2001 2001
 S=$(date +%s)
-run_pool HOLDMODE=hang PRMODE=ok POOL_GH_READ_TIMEOUT_S=1
+# TEST-CHANGE (BH-7942): hold reads now have their own cut, POOL_HOLD_READ_TIMEOUT_S
+# (default 45 s, one retry), and POOL_GH_READ_TIMEOUT_S cuts only the PR, branch and
+# repo reads. Set both to 1 so the hung hold read is still cut well inside 20 s.
+run_pool HOLDMODE=hang PRMODE=ok POOL_GH_READ_TIMEOUT_S=1 POOL_HOLD_READ_TIMEOUT_S=1
 E=$(( $(date +%s) - S ))
 [ "$E" -lt 20 ] && ok || bad "I: the tick took ${E}s; the hung hold read was not cut"
 passthrough_timeout
