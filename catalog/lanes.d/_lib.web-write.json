@@ -1,0 +1,22 @@
+{
+  "libs": [
+    {
+      "id": "web-write",
+      "file": "bin/lib/web-write-step.mjs",
+      "note": "BH-7599. The write gate of the web-task lane: in write mode (`Mode: write` in the ticket body) every action that reads as a write waits for one Approve through S5's wh_request_human (kind approve) with a screenshot of the filled form. Cancel or no answer stops the run with nothing written. Payment pages are refused in every mode unless their host is in ALLOW_PAYMENT_SITES (row lane.web-task.<project>.allow_payment_sites). Slice C1 of #7599 wires it into the web-task agent loop.",
+      "knobs": [
+        {
+          "env": "WEB_TASK_WRITE_WAIT_S",
+          "type": "int",
+          "default": 300,
+          "min": 10,
+          "max": 3600,
+          "unit": "seconds",
+          "zero_means": null,
+          "required": false,
+          "note": "How long the write gate waits for an Approve or Cancel before it stops the run with `stopped: no approval for write <n> in <s>s; nothing written`. The default equals S5's web_task.human_wait_s seed. A value that is not an integer in 10..3600 makes createWriteGate throw; it is never clamped. Read by createWriteGate as env WEB_TASK_WRITE_WAIT_S, fallback 300."
+        }
+      ]
+    }
+  ]
+}
