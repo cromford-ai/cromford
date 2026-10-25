@@ -131,6 +131,47 @@ tick_start_capped() { # tick_start_capped <project>... — the autoscale start
   done < <(printf '%s\n' "${free[@]}" | LC_ALL=C sort -k1,1n -k2,2)
 }
 
+# --- BH-8123: a streak of hub pool ticks with no flyctl ------------------------
+# bin/fly-pool.sh skips a tick with no flyctl and alerts once a day per project
+# on the first skip. On bh-hub-2 (2026-10-23) every tick skipped for 3 h and
+# the streak itself named nothing. This counts hub pool ticks in a row with no
+# flyctl (state/fly-pool-tick/noflyctl.streak: `<count> <first epoch>`). Past
+# POOL_NOFLYCTL_ALERT_TICKS (0 = off) ONE ALERTS line per episode
+# (noflyctl.alerted, written before the send). A tick that finds flyctl ends
+# the episode. The lookup is bin/fly-pool.sh's own: FLY_BIN_DIR first on PATH,
+# then fly_bin. Always rc 0: the project ticks start as before.
+# shellcheck source=bin/lib/fly-bin.sh
+. "$H/bin/lib/fly-bin.sh" 2>/dev/null || . "$(dirname "${BASH_SOURCE[0]}")/lib/fly-bin.sh" 2>/dev/null || true
+tick_noflyctl_streak() {
+  command -v fly_bin >/dev/null 2>&1 || return 0
+  local d="$H/state/fly-pool-tick" n c first now
+  local streak="$d/noflyctl.streak" alerted="$d/noflyctl.alerted"
+  if PATH="${FLY_BIN_DIR:-/root/.fly/bin}:$PATH" fly_bin >/dev/null 2>&1; then
+    rm -f "$streak" "$alerted" 2>/dev/null
+    return 0
+  fi
+  mkdir -p "$d" 2>/dev/null
+  now=$(date +%s)
+  read -r c first < "$streak" 2>/dev/null
+  case "${c:-}" in ''|*[!0-9]*) c=0 ;; esac
+  case "${first:-}" in ''|*[!0-9]*) first=$now ;; esac
+  c=$((c + 1))
+  printf '%s %s\n' "$c" "$first" > "$streak" 2>/dev/null
+  # Settings row lane.fly-pool-tick.pool_noflyctl_alert_ticks; 3 is its fallback.
+  n=$(tick_knob POOL_NOFLYCTL_ALERT_TICKS 3)
+  [ "$n" -gt 0 ] 2>/dev/null || return 0
+  [ "$c" -gt "$n" ] || return 0
+  [ -e "$alerted" ] && return 0
+  date +%s > "$alerted" 2>/dev/null
+  local since msg
+  since=$(date -u -d "@$first" '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null || echo "@$first")
+  msg="[pool] no flyctl on $(hostname 2>/dev/null || echo this-box) for $c pool ticks in a row since $since: every hub pool tick is skipped (ls /usr/local/bin/flyctl /root/.fly/bin/flyctl; bin/lib/fly-bin.sh)"
+  mkdir -p "$H/logs" 2>/dev/null
+  echo "$(date -u '+%Y-%m-%d %H:%M:%SZ') $msg" >> "$H/logs/fly-pool.log"
+  HARNESS="$H" "$H/bin/alert-line.sh" --id pool-noflyctl-streak "$msg" >/dev/null 2>&1 || true
+  return 0
+}
+
 # shellcheck source=bin/jobs-client.sh
 [ -r "$H/bin/jobs-client.sh" ] && [ -d "$H/bin/lib/jobs" ] && . "$H/bin/jobs-client.sh" 2>/dev/null
 command -v routing_sync_all >/dev/null 2>&1 && { routing_sync_all >/dev/null 2>&1 || true; }
@@ -163,6 +204,7 @@ if [ "${#TICK_PROJECTS[@]}" -gt 0 ]; then
   PTB_HUB=("${TICK_PROJECTS[@]}")
   command -v ptb_split >/dev/null 2>&1 && ptb_split "${TICK_PROJECTS[@]}"
   if [ "${#PTB_HUB[@]}" -gt 0 ]; then
+    tick_noflyctl_streak
     tick_guard_once
     AS=$("$H/bin/pool-cap.sh" --autoscale 2>/dev/null)
     if [ "$AS" = 0 ]; then

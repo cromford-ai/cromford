@@ -1,0 +1,3 @@
+# tests/mc/expected-map.d/BH-8003.tsv — mc_rebase_reason: the rc-4 reason the
+# conductor logged for one PR, read by the resolver's setup alert (BH-8003).
+rebase	mc_rebase_reason	lib

@@ -4137,7 +4137,7 @@ br_ci_log() {
 # cost nothing to ask again.
 br_mechanical() {
   local p="$1" rkey="$2" reason="$3" url="$4" rec="$5" tkey="$6"
-  local ck st n slug br head out rc ref ckey rvw rrc=0 mbase=""
+  local ck st n slug br head out rc ref ckey rvw rrc=0 mbase="" mark=0 why=""
   ck=$(br_cap_key "$p" "$rkey" "$tkey")
   st=$(br_load "$p" "$ck"); n=$(br_num "$st" mechanicals)
   if [ "$n" -ge "$MAX_MECHANICAL" ]; then
@@ -4191,6 +4191,7 @@ br_mechanical() {
   if [ "$rc" = 3 ]; then out=$head; rc=0
   else
   br_event resolver_rung "$p" "$ck" "$reason" "rung 1 mechanical: merging origin/$mbase into $br at ${head:0:8}"
+  [ -f "${MC_LOG:-}" ] && mark=$(wc -l < "$MC_LOG" | tr -d ' ')   # BH-8003: this call's own log lines
   if [ "$mbase" = main ]; then out=$(mc_rebase "$slug" "$p" "$br" "$head" "$url"); rc=$?
   else out=$(mc_rebase "$slug" "$p" "$br" "$head" "$url" "$mbase"); rc=$?; fi
   fi
@@ -4271,20 +4272,17 @@ br_mechanical() {
       say "$p/$rkey [$reason]: pool queue unreachable — no rung spent, retried next tick"
       return 0 ;;
     *)
-      # SETUP FAILED (rc 4: no credential that can read the repo, a fetch that
-      # would not run, a clone that would not clone) — and any rc mc_rebase does
-      # not document, which is the same thing said less clearly.
-      #
-      # It does NOT cascade inside the tick: the fix round needs the SAME clone
-      # and the same credential, so falling through would walk a machine problem
-      # down to a fresh rebuild in one go. And since 2026-09-16 it SPENDS
-      # NOTHING either (br_setup_blocked). It used to spend the rung, on the
-      # reasoning that a broken setup must not park a key for ever — but parking
-      # it, out loud and with one alert, is exactly the right answer: the
-      # alternative walked the ladder toward the rung that CLOSES PRs on a fact
-      # about this box. The free rung is still there for the tick after somebody
-      # fixes the box.
-      br_setup_blocked "$p" "$ck" "$rkey" "$reason" "$url" "mc_rebase rc=$rc on $slug — a clone or credential problem; see the credential line in merge-conductor.log" mechanical
+      # SETUP FAILED (rc 4: a credential, fetch, clone or merge that would not
+      # run; the alert names the reason mc_rebase logged, BH-8003) — and any rc
+      # mc_rebase does not document. It does NOT cascade inside the tick: the
+      # fix round needs the SAME clone and the same credential, so falling
+      # through would walk a machine problem down to a fresh rebuild in one go.
+      # Since 2026-09-16 it SPENDS NOTHING either (br_setup_blocked): parking it,
+      # out loud and with one alert, is the right answer; spending walked the
+      # ladder toward the rung that CLOSES PRs on a fact about this box.
+      command -v mc_rebase_reason >/dev/null 2>&1 && why=$(mc_rebase_reason "$url" "$mark")
+      if [ -n "$why" ]; then br_setup_blocked "$p" "$ck" "$rkey" "$reason" "$url" "mc_rebase rc=$rc on $slug — $why (merge-conductor.log)" mechanical "the cause in that merge-conductor.log line fixed"
+      else br_setup_blocked "$p" "$ck" "$rkey" "$reason" "$url" "mc_rebase rc=$rc on $slug — a setup failure that logged no reason (credential, clone or fetch); see merge-conductor.log" mechanical; fi
       return 0 ;;
   esac
 }

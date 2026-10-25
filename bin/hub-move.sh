@@ -33,7 +33,11 @@
 #            and write state/hub-move/target-seeded there. Both stay until C6.
 #            BH-8108: each ssh key is copied alone; a target key with the
 #            same sha256 is not copied, and a different immutable one gets
-#            chattr -i, the copy, then chattr +i.
+#            chattr -i, the copy, then chattr +i. BH-8123: seed copies no ssh
+#            config, and before any copy it refuses (exit 4) a target
+#            <HUB_MOVE_TARGET_SSH_DIR>/config whose active ProxyCommand sends
+#            ssh through a loopback proxy port nothing listens on
+#            (bin/lib/hub-move-reach.sh).
 # tick       run each rendered hub cron command once (bin/render-cron.sh <box-id>;
 #            comments, env lines and @reboot skipped; the gate kept). Without
 #            --real it runs under the no-write shim (bin/lib/hub-move-nowrite.sh)
@@ -45,7 +49,14 @@
 #            state/hub-move/tick-<ts>.tsv (`lane rc secs refused timed_out`)
 #            and each lane's output to state/hub-move/tick-<ts>.out/<row>.out
 #            (a trailing >/dev/null / 2>&1 on the cron line is removed, so the
-#            output is kept). BH-8195: a lane whose command names an absent
+#            output is kept). BH-8123: before any lane, the tick runs one
+#            `ssh root@<HUB_MOVE_REACH_HOST> true` and one `flyctl version`,
+#            prints `tick: reach ssh=<rc> flyctl=<rc> host=<h>`, writes it as
+#            line 2 of the table (`# reach ...`) and both outputs to
+#            state/hub-move/tick-<ts>.reach.out. Either rc not 0 (or no
+#            flyctl, 127): a `# mode=<m>-reach-failed` stub table, no lane,
+#            exit 4. C1 refuses a table with no ok reach line.
+#            BH-8195: a lane whose command names an absent
 #            /bin/ path is not run: one `tick: <id>: missing script <path>`
 #            line, rc 127, and `missing=<n>` at the end of the summary.
 #            BH-8038: the cron installers (update-runners,
@@ -88,7 +99,9 @@
 # this many seconds before the tick), HUB_MOVE_CRON_JOURNAL (empty; a file in
 # journalctl short-unix form that C1 reads in place of journalctl -t CRON),
 # HUB_MOVE_TARGET_SECRETS (/root/.config/hub-move), HUB_MOVE_TARGET_SSH_DIR
-# (/root/.ssh), HUB_MOVE_SSH_DIR ($HOME/.ssh, the old hub's keys).
+# (/root/.ssh), HUB_MOVE_SSH_DIR ($HOME/.ssh, the old hub's keys),
+# HUB_MOVE_REACH_HOST (empty; the fleet box a tick dials, else the first
+# fleet-conf.sh --tailnet-ips address; dry-run and C6 pass it to the target).
 #
 # Exit: 0 done; 2 usage or a bad knob (nothing done); 3 preflight refused
 # (nothing done, one stderr line, one ALERTS line); 4 a step failed (no later
@@ -109,6 +122,8 @@ HARNESS="${HARNESS:-/root/harness}"
 . "$SELF_DIR/lib/fly-bin.sh" || exit 2
 # shellcheck source=bin/lib/flags.sh
 . "$SELF_DIR/lib/flags.sh" || exit 2
+# shellcheck source=bin/lib/hub-move-reach.sh
+. "$SELF_DIR/lib/hub-move-reach.sh" || exit 2
 
 BIN="$SELF_DIR"
 STATE="$HARNESS/state/hub-move"
@@ -189,7 +204,14 @@ check_knobs() {
   if [ -n "$C1_ALLOW" ] && { [[ "$C1_ALLOW" == *$'\n'* ]] || ! grep -qE '^[A-Za-z0-9._~-]+(,[A-Za-z0-9._~-]+)*$' <<<"$C1_ALLOW"; }; then
     echo "hub-move: HUB_MOVE_C1_ALLOW='$C1_ALLOW' is not a comma list of lane ids" >&2; exit 2
   fi
+  # It rides into a remote command line (dry-run, C6) and an ssh argv.
+  if [ -n "${HUB_MOVE_REACH_HOST:-}" ] && { [[ "$HUB_MOVE_REACH_HOST" == *$'\n'* ]] || ! grep -qE '^[A-Za-z0-9][A-Za-z0-9._:-]*$' <<<"$HUB_MOVE_REACH_HOST"; }; then
+    echo "hub-move: HUB_MOVE_REACH_HOST='$HUB_MOVE_REACH_HOST' is not a host name or address" >&2; exit 2
+  fi
 }
+# reach_env — the HUB_MOVE_REACH_HOST assignment for a tick run on the target
+# over ssh (the old hub's value, checked by check_knobs), or nothing.
+reach_env() { [ -n "${HUB_MOVE_REACH_HOST:-}" ] && printf 'HUB_MOVE_REACH_HOST=%s ' "$HUB_MOVE_REACH_HOST"; }
 
 # ---- state files --------------------------------------------------------------
 # tj_set <key> <value> — write one field of target.json (tmp + mv).
@@ -616,6 +638,17 @@ cmd_seed() {
   local sec="${HUB_MOVE_TARGET_SECRETS:-/root/.config/hub-move}" tssh="${HUB_MOVE_TARGET_SSH_DIR:-/root/.ssh}"
   say "seed: secrets to $ip:$sec (identity, bucket keys) and the hub ssh keys"
   on_target "$ip" "mkdir -p $sec $tssh && chmod 700 $sec $tssh" || { rm -f "$tmp"; fail "ssh to $ip"; }
+  # BH-8123: a target ssh config that sends ssh through a loopback proxy port
+  # nothing listens on (the Orgo SOCKS line) fails every fleet ssh from the
+  # new hub. Refuse before any copy. Seed copies no ssh config itself.
+  local dead
+  dead=$(hmr_proxy_check_script "$tssh" | on_target "$ip" "bash -s") || { rm -f "$tmp"; fail "ssh to $ip (ssh config check)"; }
+  dead=$(printf '%s\n' "$dead" | grep '^dead ' | head -1)
+  if [ -n "$dead" ]; then
+    rm -f "$tmp"
+    read -r _ p k <<<"$dead"
+    fail "seed: $tssh/config on the target sends ssh through 127.0.0.1:$p ($k), and nothing on the target listens on port $p; comment out that ProxyCommand or start the proxy, then seed again"
+  fi
   scp "${SSH_OPTS[@]}" -q "$idf" "root@$ip:$sec/age-identity" \
     && scp "${SSH_OPTS[@]}" -q "$tmp" "root@$ip:$sec/backup-s3.env" \
     || { rm -f "$tmp"; fail "scp secrets to $ip"; }
@@ -712,7 +745,28 @@ cmd_tick() {
   # The pool lanes (fly-pool-tick.sh and the scripts it starts) need flyctl, and
   # fly-pool-tick.sh exits 0 without it, so a lane rc cannot show the gap.
   local flyctl_path
-  flyctl_path=$(fly_bin) || fail "flyctl not found on this box (PATH, \$HOME/.fly/bin, ${FLY_BIN_DIR:-/root/.fly/bin}, ${FLY_SYSTEM_DIRS-/usr/local/bin}): the pool lanes cannot run"
+  flyctl_path=$(fly_bin) || flyctl_path=""
+  # BH-8123: one ssh to a fleet box and one `flyctl version`, with the real
+  # binaries (the no-write shim is not on PATH yet). Either one failing writes
+  # a `-reach-failed` stub table (so C1 never reads an older clean one) and
+  # stops the tick before any lane runs.
+  local rhost rout rcfg rm=nowrite
+  [ "$real" -eq 1 ] && rm=real
+  rhost=$(hmr_reach_host "$BIN"); rout="$STATE/tick-$ts.reach.out"
+  rcfg="${HUB_MOVE_TARGET_SSH_DIR:-/root/.ssh}/config"
+  hmr_reach_run "$rhost" "$flyctl_path" "$TICK_TIMEOUT_S" "$rout" "$rcfg" "${SSH_OPTS[@]}" || fail "write $rout"
+  echo "tick: reach ssh=$HMR_SSH_RC flyctl=$HMR_FLY_RC host=$rhost"
+  if [ "$HMR_SSH_RC" -ne 0 ] || [ "$HMR_FLY_RC" -ne 0 ]; then
+    printf '# mode=%s-reach-failed at=%s\n# reach ssh=%s flyctl=%s host=%s\nlane\trc\tsecs\trefused\ttimed_out\n' \
+      "$rm" "$(now_s)" "$HMR_SSH_RC" "$HMR_FLY_RC" "$rhost" > "$STATE/tick-$ts.tsv" \
+      && echo "tick-file: $STATE/tick-$ts.tsv"
+    rm -rf "$run"
+    [ -n "$flyctl_path" ] || fail "flyctl not found on this box (PATH, \$HOME/.fly/bin, ${FLY_BIN_DIR:-/root/.fly/bin}, ${FLY_SYSTEM_DIRS-/usr/local/bin}): the pool lanes cannot run"
+    if [ "$rhost" = - ]; then
+      fail "tick: reach check failed: no fleet box address (set HUB_MOVE_REACH_HOST, or fleet.conf has no tailnet address); read $rout"
+    fi
+    fail "tick: reach check failed: ssh root@$rhost rc=$HMR_SSH_RC, flyctl version rc=$HMR_FLY_RC; read the ssh config $rcfg (ProxyCommand: $HMR_PROXY) and $rout (another box: HUB_MOVE_REACH_HOST)"
+  fi
   mode=real
   if [ "$real" -eq 0 ]; then
     mode=nowrite
@@ -777,6 +831,7 @@ cmd_tick() {
   local rcs secs ref to n=0 ok=0 bad=0 tout=0 refused=0
   {
     printf '# mode=%s at=%s\n' "$mode" "$(now_s)"
+    printf '# reach ssh=%s flyctl=%s host=%s\n' "$HMR_SSH_RC" "$HMR_FLY_RC" "$rhost"
     printf 'lane\trc\tsecs\trefused\ttimed_out\n'
     for i in "${!ids[@]}"; do
       read -r rcs secs < "$run/$i.rc" 2>/dev/null || { rcs=255; secs=0; }
@@ -835,7 +890,7 @@ cmd_dry_run() {
   fi
   ( cmd_seed latest ) || exit $?
   ip=$(target_ip) || exit 3
-  out=$(on_target "$ip" "HARNESS=$TH $TH/bin/hub-move.sh tick"); a=$?
+  out=$(on_target "$ip" "$(reach_env)HARNESS=$TH $TH/bin/hub-move.sh tick"); a=$?
   printf '%s\n' "$out"
   f=$(printf '%s\n' "$out" | sed -n 's/^tick-file: //p' | tail -1)
   # Fetch the table before the rc check: a stopped tick leaves a
@@ -854,7 +909,7 @@ cmd_dry_run() {
 CUTOVER_STEPS="C1 C2 C3 C4 C5 C6 C7 C8"
 step_text() {
   case "$1" in
-    C1) echo "C1 preflight: the newest no-write tick is under 24 h old and no lane failed except by a refused write, a timeout, HUB_MOVE_C1_ALLOW=${C1_ALLOW:-none} or the same rc on the old hub (its cron journal, ${C1_OLD_WINDOW_S}s before the tick)" ;;
+    C1) echo "C1 preflight: the newest no-write tick reached the fleet (its # reach line: ssh and flyctl version rc 0), is under 24 h old and no lane failed except by a refused write, a timeout, HUB_MOVE_C1_ALLOW=${C1_ALLOW:-none} or the same rc on the old hub (its cron journal, ${C1_OLD_WINDOW_S}s before the tick)" ;;
     C2) echo "C2 pause merge: flag_set automerge-disabled and lane-off-merge-conductor on the old hub" ;;
     C3) echo "C3 drain: save the old crontab to state/hub-move/old-crontab, crontab -r, wait up to ${DRAIN_TIMEOUT_S}s for no $HARNESS/bin/ process" ;;
     C4) echo "C4 copy: BACKUP_FORCE=1 state-backup.sh, seed the target from that exact snapshot, flag_set --local-only all-off on the old hub" ;;
@@ -896,6 +951,13 @@ run_step() {
       f=$(ls -t "$STATE"/tick-*.tsv 2>/dev/null | head -1)
       [ -n "$f" ] || { step_record C1 fail "no tick file"; fail "C1: no state/hub-move/tick-*.tsv (run dry-run)"; }
       line=$(head -1 "$f")
+      # BH-8123: the tick proved it can reach the fleet (line 2). Checked
+      # before the allow-list: HUB_MOVE_C1_ALLOW never covers it.
+      local why; why=$(hmr_c1_reach "$f")
+      if [ -n "$why" ]; then
+        step_record C1 fail "reach $why"
+        fail "C1: the newest tick could not reach the fleet: $why; read the target ssh config ${HUB_MOVE_TARGET_SSH_DIR:-/root/.ssh}/config (a ProxyCommand through a port nothing listens on?) and state/hub-move/$(basename "${f%.tsv}").reach.out on the target, then run dry-run again"
+      fi
       case "$line" in "# mode=nowrite at="*) ;; *) step_record C1 fail "newest tick not nowrite"; fail "C1: $f is not a no-write tick" ;; esac
       ts0=${line##*at=}
       is_uint "$ts0" && [ $(( $(now_s) - ts0 )) -lt 86400 ] || { step_record C1 fail "tick older than 24h"; fail "C1: $f is older than 24 h"; }
@@ -988,7 +1050,10 @@ run_step() {
         if [ "$waited" -ge "$LEASE_WAIT_S" ]; then step_record C6 fail "lease"; fail "C6: hub-lease.sh check on the target is not rc 0 after ${LEASE_WAIT_S}s"; fi
         sleep 10; waited=$((waited + 10))
       done
-      out=$(on_target "$ip" "HARNESS=$TH $TH/bin/hub-move.sh tick --real") || { step_record C6 fail "tick --real"; fail "C6: tick --real failed"; }
+      out=$(on_target "$ip" "$(reach_env)HARNESS=$TH $TH/bin/hub-move.sh tick --real" 2>&1) || {
+        step_record C6 fail "tick --real"
+        fail "C6: tick --real failed: $(printf '%s\n' "$out" | grep 'hub-move: \(failed\|refused\):' | tail -1)"
+      }
       printf '%s\n' "$out"
       # The marker goes BEFORE update-runners installs the crontab: a C6 rerun
       # after a failed update-runners must not have its tick remove that crontab.

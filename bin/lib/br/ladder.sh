@@ -287,7 +287,7 @@ br_reason_of() {
 # tick, so this rung can only ever cost a merge.
 br_regen_rung() {
   local p="$1" rkey="$2" reason="$3" url="$4" rec="$5" tkey="$6" next="${7:-fix-round}"
-  local ck st n slug br head out rc ref ckey rvw
+  local ck st n slug br head out rc ref ckey rvw mark=0 why=""
   ck=$(br_cap_key "$p" "$rkey" "$tkey")
   st=$(br_load "$p" "$ck")
   # The displaced answer, dispatched by name. Everything below that cannot take
@@ -341,6 +341,7 @@ br_regen_rung() {
     br_regen_next; return 0
   fi
   br_event resolver_rung "$p" "$ck" "$reason" "rung 1b regenerate: mc_rebase on $br at ${head:0:8}"
+  [ -f "${MC_LOG:-}" ] && mark=$(wc -l < "$MC_LOG" | tr -d ' ')   # BH-8003: this call's own log lines
   out=$(mc_rebase "$slug" "$p" "$br" "$head" "$url"); rc=$?
   # Same as rung 1: the setup alert is cleared the moment the rung RAN. rc 4 is
   # the setup arm below and must not clear it.
@@ -383,8 +384,11 @@ br_regen_rung() {
       # SETUP FAILED (rc 4 and any rc mc_rebase does not document): a fact about
       # this box, not an event about the PR. It spends nothing, cascades into
       # nothing — the fix round wants the same clone and the same credential —
-      # and pages once per episode (br_setup_blocked).
-      br_setup_blocked "$p" "$ck" "$rkey" "$reason" "$url" "mc_rebase rc=$rc on $slug — a clone or credential problem; see the credential line in merge-conductor.log" regen
+      # and pages once per episode (br_setup_blocked). The alert names the
+      # reason mc_rebase logged in this call, or says it logged none (BH-8003).
+      command -v mc_rebase_reason >/dev/null 2>&1 && why=$(mc_rebase_reason "$url" "$mark")
+      if [ -n "$why" ]; then br_setup_blocked "$p" "$ck" "$rkey" "$reason" "$url" "mc_rebase rc=$rc on $slug — $why (merge-conductor.log)" regen "the cause in that merge-conductor.log line fixed"
+      else br_setup_blocked "$p" "$ck" "$rkey" "$reason" "$url" "mc_rebase rc=$rc on $slug — a setup failure that logged no reason (credential, clone or fetch); see merge-conductor.log" regen; fi
       return 0 ;;
   esac
 }

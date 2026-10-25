@@ -122,6 +122,8 @@ newcase() {
   export HUB_MOVE_ORCH="$C/lorch" HUB_MOVE_TARGET_ORCH="$C/torch" HUB_MOVE_FLY_HOME_BIN="$C/flyhome"
   export FLY_BIN_DIR="$C/flybin" HOME="$C/home"
   export HUB_MOVE_TS_WAIT_S=0 HUB_MOVE_LEASE_WAIT_S=0 HUB_MOVE_DRAIN_TIMEOUT_S=1
+  # BH-8123: every tick runs `ssh root@<this box> true` and `flyctl version` first.
+  export HUB_MOVE_REACH_HOST=192.0.2.20
   unset BACKUP_AGE_IDENTITY_FILE HUB_MOVE_TICK_PARALLEL HUB_MOVE_TICK_TIMEOUT_S HUB_MOVE_NOWRITE HUB_MOVE_C1_ALLOW HUB_MOVE_C1_OLD_WINDOW_S JOURNAL_FIXTURE
   # C1 reads the old hub's cron journal from this file (absent by default).
   export HUB_MOVE_CRON_JOURNAL="$C/cron-journal"
@@ -291,7 +293,7 @@ check O4-or-true-rc "$(row "$f" 'sh~2')" "0/0"
 # ==== L: C1 allow-list ===========================================================
 newcase l; mkdir -p "$H/state/hub-move"
 printf '{"ts_ip":"192.0.2.44"}\n' > "$H/state/hub-move/target.json"
-printf '# mode=nowrite at=1699990000\nlane\trc\tsecs\trefused\ttimed_out\nok-lane\t0\t1\t0\t0\nregistry-export\t1\t1\t0\t0\nlib\t1\t1\t0\t0\nlib~2\t1\t1\t0\t0\n' > "$H/state/hub-move/tick-a.tsv"
+printf '# mode=nowrite at=1699990000\n# reach ssh=0 flyctl=0 host=192.0.2.20\nlane\trc\tsecs\trefused\ttimed_out\nok-lane\t0\t1\t0\t0\nregistry-export\t1\t1\t0\t0\nlib\t1\t1\t0\t0\nlib~2\t1\t1\t0\t0\n' > "$H/state/hub-move/tick-a.tsv"
 out=$(hm cutover --step C1 --confirm 2>&1); check L1-without-allow-rc "$?" 4
 has L1-names "$out" "registry-export(rc=1)"
 out=$(HUB_MOVE_C1_ALLOW=registry-export,lib hm cutover --step C1 --confirm 2>&1); check L2-allowed-rc "$?" 0
@@ -329,7 +331,7 @@ SHELL=/bin/bash
 4,34 * * * * $CBB
 * * * * * /root/harness/bin/other.sh
 EOF
-printf '# mode=nowrite at=1699990000\nlane\trc\tsecs\trefused\ttimed_out\nok-lane\t0\t1\t0\t0\nregistry-export\t1\t1\t0\t0\nfleet-slo\t1\t1\t0\t0\nboard-conformance\t1\t1\t0\t0\nlib\t1\t1\t0\t0\nlib~2\t1\t1\t0\t0\nother\t2\t1\t0\t0\ngone\t1\t1\t0\t0\n' > "$H/state/hub-move/tick-s.tsv"
+printf '# mode=nowrite at=1699990000\n# reach ssh=0 flyctl=0 host=192.0.2.20\nlane\trc\tsecs\trefused\ttimed_out\nok-lane\t0\t1\t0\t0\nregistry-export\t1\t1\t0\t0\nfleet-slo\t1\t1\t0\t0\nboard-conformance\t1\t1\t0\t0\nlib\t1\t1\t0\t0\nlib~2\t1\t1\t0\t0\nother\t2\t1\t0\t0\ngone\t1\t1\t0\t0\n' > "$H/state/hub-move/tick-s.tsv"
 cat > "$C/cron-journal" <<EOF
 1699900000.000001 hub CRON[90]: (root) CMD ($CBB)
 1699900001.000001 hub CRON[90]: (CRON) error (grandchild #91 failed with exit status 1)
@@ -355,7 +357,7 @@ has S1-no-run "$blk" "other(rc=2) old hub rc unreadable: no run in the cron jour
 has S1-not-in-crontab "$blk" "gone(rc=1) old hub rc unreadable: not in the old hub crontab (render-cron.sh hub)"
 check S1-no-journalctl "$(grep -c '^journalctl' "$VC")" 0
 # S2: only lanes that fail on the old hub too: C1 passes and records them.
-printf '# mode=nowrite at=1699990000\nlane\trc\tsecs\trefused\ttimed_out\nok-lane\t0\t1\t0\t0\nregistry-export\t1\t1\t0\t0\nlib\t1\t1\t0\t0\n' > "$H/state/hub-move/tick-s.tsv"
+printf '# mode=nowrite at=1699990000\n# reach ssh=0 flyctl=0 host=192.0.2.20\nlane\trc\tsecs\trefused\ttimed_out\nok-lane\t0\t1\t0\t0\nregistry-export\t1\t1\t0\t0\nlib\t1\t1\t0\t0\n' > "$H/state/hub-move/tick-s.tsv"
 out=$(hm cutover --step C1 --confirm 2>&1); check S2-rc "$?" 0
 has S2-same "$out" "same-on-old-hub: registry-export(rc=1) lib(rc=1)"
 st=$(awk -F'\t' '$2=="C1"{v=$3"|"$4} END{print v}' "$H/state/hub-move/steps.tsv")
@@ -393,7 +395,7 @@ out=$(HUB_MOVE_C1_OLD_WINDOW_S=x hm cutover --step C1 --confirm 2>&1); check S7-
 # ==== T: dry-run fetches the stub table of a tick the before-guard stopped =======
 newcase t; mkdir -p "$H/state/hub-move"; export BACKUP_AGE_IDENTITY_FILE="$C/age.key"
 printf '{"provider":"hetzner","ts_ip":"192.0.2.55"}\n' > "$H/state/hub-move/target.json"
-printf '# mode=nowrite at=1699990000\nlane\trc\tsecs\trefused\ttimed_out\nok-lane\t0\t1\t0\t0\n' > "$H/state/hub-move/tick-old.tsv"
+printf '# mode=nowrite at=1699990000\n# reach ssh=0 flyctl=0 host=192.0.2.20\nlane\trc\tsecs\trefused\ttimed_out\nok-lane\t0\t1\t0\t0\n' > "$H/state/hub-move/tick-old.tsv"
 touch -t 202001010000 "$H/state/hub-move/tick-old.tsv"
 printf '* * * * * echo lane >> %s/ran\n' "$C" > "$C/cron.txt"
 printf '* * * * * echo planted\n' > "$CRONTAB_FILE"
@@ -417,7 +419,8 @@ printf '* * * * * true\n' > "$C/cron.txt"
 out=$(hm dry-run 2>&1); check E3-dry-run-rc "$?" 0
 has E3-provision-skipped "$out" "provision skipped"
 has E3-ticked "$out" "mode=nowrite"
-check E3-no-fly-call "$(grep -c '^flyctl' "$VC")" 0
+# BH-8123: `flyctl version` is the tick's local binary check, not a Fly API call.
+check E3-no-fly-call "$(grep '^flyctl' "$VC" | grep -vc '^flyctl version$')" 0
 out=$(hm dry-run --plan 2>&1); check E3-plan-rc "$?" 0
 has E3-plan-skip "$out" "provision skipped"
 printf 'x\tC4\tok\tfixture\n' > "$H/state/hub-move/steps.tsv"
@@ -434,7 +437,7 @@ check E4-c8-standby "$(yn "$TGT/state/hub-move/cold-standby-until")" yes
 printf '* * * * * /root/harness/bin/a.sh\n' > "$H/state/hub-move/old-crontab"
 printf '#!/bin/bash\necho %s > %s/state/backup-last.json\n' "'{\"ts\":\"20261022T130000Z\"}'" "$TGT" > "$TGT/bin/state-backup.sh"
 hm rollback --confirm >"$C/out" 2>&1; check E5-rollback-rc "$?" 0
-check E5-no-fly-call "$(grep -c '^flyctl' "$VC")" 0
+check E5-no-fly-call "$(grep '^flyctl' "$VC" | grep -vc '^flyctl version$')" 0
 # E6: C5 refuses while the target has no all-off (a seed that did not finish).
 newcase e6; mkdir -p "$H/state/hub-move"
 printf '{"provider":"hetzner","ts_ip":"192.0.2.55"}\n' > "$H/state/hub-move/target.json"

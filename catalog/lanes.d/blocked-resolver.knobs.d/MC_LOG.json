@@ -1,0 +1,8 @@
+{
+  "env": "MC_LOG",
+  "type": "string",
+  "default": "",
+  "zero_means": null,
+  "note": "Not a knob: the merge conductor's log file path, which br_mechanical reads (wc -l for a line mark, then mc_rebase_reason over the lines after it) to name why a conductor rebase failed (BH-8003). Read by bin/blocked-resolver.sh as ${MC_LOG:-/dev/null}; unset gives no reason line and nothing else changes. A path on the box, so it is NOT settable from the control plane.",
+  "settable": false
+}

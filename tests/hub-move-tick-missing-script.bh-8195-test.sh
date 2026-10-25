@@ -109,6 +109,8 @@ newcase() {
   export HUB_MOVE_ORCH="$C/lorch" HUB_MOVE_TARGET_ORCH="$C/torch" HUB_MOVE_FLY_HOME_BIN="$C/flyhome"
   export FLY_BIN_DIR="$C/flybin" HOME="$C/home"
   export HUB_MOVE_TS_WAIT_S=0 HUB_MOVE_LEASE_WAIT_S=0 HUB_MOVE_DRAIN_TIMEOUT_S=1
+  # BH-8123: every tick runs `ssh root@<this box> true` and `flyctl version` first.
+  export HUB_MOVE_REACH_HOST=192.0.2.20
   unset BACKUP_AGE_IDENTITY_FILE HUB_MOVE_TICK_PARALLEL HUB_MOVE_TICK_TIMEOUT_S HUB_MOVE_NOWRITE HUB_MOVE_C1_ALLOW HUB_MOVE_C1_OLD_WINDOW_S JOURNAL_FIXTURE
   # C1 reads the old hub's cron journal from this file (absent by default).
   export HUB_MOVE_CRON_JOURNAL="$C/cron-journal"

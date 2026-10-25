@@ -47,6 +47,7 @@ case "$1 $2" in
   "machine list") cat "$D/machines.json" 2>/dev/null || echo '[]' ;;
   "machine run")  echo '[{"id":"m_fixture1"}]' > "$D/machines.json" ;;
   "secrets import") sed 's/=.*//' >> "$D/secret-keys" ;;
+  "version "*)    echo "flyctl v0.0.0-fixture" ;;
   *) echo "flyctl stub: unknown $*" >&2; exit 9 ;;
 esac
 EOF
@@ -118,6 +119,8 @@ newcase() {
   export HUB_MOVE_TARGET_SECRETS="$C/tsec" HUB_MOVE_TARGET_SSH_DIR="$C/tssh" HUB_MOVE_SSH_DIR="$C/hssh"
   export HARNESS_CHECKOUT="$C/co" HUB_MOVE_IMAGE="registry.example/hub:fixture"
   export HUB_MOVE_TS_WAIT_S=0 HUB_MOVE_LEASE_WAIT_S=0 HUB_MOVE_DRAIN_TIMEOUT_S=1
+  # BH-8123: every tick runs `ssh root@<this box> true` and `flyctl version` first.
+  export HUB_MOVE_REACH_HOST=192.0.2.20
   unset BACKUP_AGE_IDENTITY_FILE HUB_MOVE_VOLUME_GB HUB_MOVE_TICK_PARALLEL HUB_MOVE_TICK_TIMEOUT_S FLY_BIN_DIR FLYCTL_INSTALL HUB_MOVE_NOWRITE
   # An empty stand-in for /root/.fly/bin, so a box with a real flyctl there does not refuse each no-write tick.
   export HUB_MOVE_FLY_HOME_BIN="$C/flyhome"
@@ -562,10 +565,10 @@ check C2-crontab-untouched "$(grep -c 'crontab' "$VC")" 0
 
 # C1 preflight on a fresh no-write tick; a lane that failed without a refusal refuses.
 newcase c1p; target_ready; mkdir -p "$H/state/hub-move"
-printf '# mode=nowrite at=1699990000\nlane\trc\tsecs\trefused\ttimed_out\na\t0\t1\t0\t0\nb\t75\t1\t1\t0\n' > "$H/state/hub-move/tick-a.tsv"
+printf '# mode=nowrite at=1699990000\n# reach ssh=0 flyctl=0 host=192.0.2.20\nlane\trc\tsecs\trefused\ttimed_out\na\t0\t1\t0\t0\nb\t75\t1\t1\t0\n' > "$H/state/hub-move/tick-a.tsv"
 hm cutover --step C1 --confirm >/dev/null 2>&1; check C1p-ok-rc "$?" 0
 check C1p-ok "$(awk -F'\t' '$2=="C1"{print $3}' "$H/state/hub-move/steps.tsv")" ok
-printf '# mode=nowrite at=1699990000\nlane\trc\tsecs\trefused\ttimed_out\na\t1\t1\t0\t0\n' > "$H/state/hub-move/tick-b.tsv"
+printf '# mode=nowrite at=1699990000\n# reach ssh=0 flyctl=0 host=192.0.2.20\nlane\trc\tsecs\trefused\ttimed_out\na\t1\t1\t0\t0\n' > "$H/state/hub-move/tick-b.tsv"
 touch -d '+1 minute' "$H/state/hub-move/tick-b.tsv"
 hm cutover --step C1 --confirm >/dev/null 2>"$C/err"; check C1p-fail-rc "$?" 4
 has C1p-names-lane "$(cat "$C/err")" "a(rc=1)"

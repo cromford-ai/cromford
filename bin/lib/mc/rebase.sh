@@ -1425,9 +1425,12 @@ mc_rebase() {
   # unmerged paths = git refused the merge outright and left nothing to
   # resolve; reading that as "everything resolved" is what produced a silent
   # rc 4 from the commit of a merge that never happened.
+  # The merge and its resolved commit carry the conductor's identity, as the
+  # regenerate and restack writes do (BH-8003: no global identity on the hub).
   local merr cerr healed=""
   while :; do
-    if merr=$(git -C "$wt" merge -q --no-edit "origin/$base" 2>&1 >/dev/null); then
+    if merr=$(git -C "$wt" -c user.name="${MC_GIT_NAME:-$HARNESS_MERGE_GIT_NAME}" -c user.email="${MC_GIT_EMAIL:-$HARNESS_GIT_EMAIL}" \
+                merge -q --no-edit "origin/$base" 2>&1 >/dev/null); then
       # A CLEAN merge is not always a healthy one: the `merge=union` attribute
       # on docs/verification-map/README.md resolves that file without ever
       # conflicting, gluing two tables into a README no entry file backs. The
@@ -1453,7 +1456,8 @@ mc_rebase() {
         git -C "$wt" merge --abort >/dev/null 2>&1
         printf '%s\n' "$conf"; mc_rebase_cleanup "$repo" "$wt" "$cloned"; return 1
       fi
-      cerr=$(git -C "$wt" -c commit.gpgsign=false commit -q --no-edit 2>&1 >/dev/null) || {
+      cerr=$(git -C "$wt" -c user.name="${MC_GIT_NAME:-$HARNESS_MERGE_GIT_NAME}" -c user.email="${MC_GIT_EMAIL:-$HARNESS_GIT_EMAIL}" \
+                 -c commit.gpgsign=false commit -q --no-edit 2>&1 >/dev/null) || {
         mc_log "$url rebase: commit of the resolved merge failed — $(mc_git_err_line "${cerr:-(no stderr)}")"
         mc_rebase_cleanup "$repo" "$wt" "$cloned"; return 4; }
       break
@@ -3919,6 +3923,24 @@ mc_git_bounded() {
 #   fleet is that no log line can leak one, and "anyway" is how that stays true.
 mc_git_err_line() {
   printf '%s' "$(printf '%s' "$1" | tr '\n' ' ' | sed 's/gh[pousr]_[A-Za-z0-9_]\{8,\}/REDACTED/g; s/  */ /g; s/^ //; s/ $//' | cut -c1-160)"
+}
+
+# mc_rebase_reason <url> <mark> — the text of the newest `<url> rebase: <text>`
+#   line in $MC_LOG after line <mark>, through mc_git_err_line. rc 1 and no
+#   output when there is none: no log, a bad mark, only older lines, another
+#   PR's lines, a restack line. The match is the fixed string " <url> rebase: ",
+#   so pull/9 never reads pull/19 or pull/92. The resolver's rc-4 alert names
+#   this text instead of guessing "clone or credential" (BH-8003).
+mc_rebase_reason() {
+  local url="$1" mark="$2" l
+  case "$mark" in ''|*[!0-9]*) return 1 ;; esac
+  [ -n "$url" ] && [ -r "${MC_LOG:-}" ] || return 1
+  l=$(tail -n +"$((mark + 1))" "$MC_LOG" 2>/dev/null | grep -F -- " $url rebase: " | tail -n 1)
+  [ -n "$l" ] || return 1
+  l=${l#*" $url rebase: "}
+  l=$(mc_git_err_line "$(printf '%s' "$l" | sed 's/github_pat_[A-Za-z0-9_]*/<redacted>/g')")
+  [ -n "$l" ] || return 1
+  printf '%s' "$l"
 }
 
 # mc_git_fail_line <stderr> — the line of git's stderr that says WHY, through

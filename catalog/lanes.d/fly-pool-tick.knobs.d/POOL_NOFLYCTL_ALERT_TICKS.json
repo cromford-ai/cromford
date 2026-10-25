@@ -1,0 +1,12 @@
+{
+  "env": "POOL_NOFLYCTL_ALERT_TICKS",
+  "type": "int",
+  "default": 3,
+  "min": 0,
+  "max": 1000,
+  "unit": "ticks",
+  "zero_means": "off",
+  "required": false,
+  "read_in": "bin/fly-pool-tick.sh",
+  "note": "BH-8123. bin/fly-pool-tick.sh counts hub pool ticks in a row that find no flyctl. Past this many, ONE ALERTS line (--id pool-noflyctl-streak) per episode; a tick that finds flyctl ends the episode. Settings row `lane.fly-pool-tick.pool_noflyctl_alert_ticks`. 0 means off: no streak alert (bin/fly-pool.sh keeps its once-a-day per-project alert)."
+}
