@@ -1,0 +1,5 @@
+# WEB TASK HUMAN STEP RESUME (BH-8314, slice C0): a new claimed web-task run
+# of the same project and site takes over an open or answered step of a run
+# that has stopped, so the poll route serves it. Bound to the new run's
+# x-web-vault-run-token. Bearer-gated.
+POST /api/web-task/human/resume

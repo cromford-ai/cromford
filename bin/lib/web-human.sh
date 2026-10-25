@@ -32,6 +32,17 @@
 #     The code is held in a local variable and goes out by printf (a builtin)
 #     and on curl's stdin only: never on an argv, in a file, a log or a prompt.
 #
+#   wh_resume_human <project> <site> <step>
+#     A NEW claimed run takes over an open or answered step of a run that has
+#     stopped (POST /api/web-task/human/resume, the same run binding), then
+#     polls it ONCE (POST /api/web-task/human/poll). No new wait, no message.
+#     rc 0: the code on stdout with no newline, or `done`. rc 3: cancelled.
+#     rc 4: `web-human: waiting on human (step <id>)` (still open).
+#     rc 1: `web-human: refused <why>` (the route's refusals), a consumed
+#           step, the worker unreachable or a failed poll.
+#     rc 2: usage, a step id that is not one, or the env of wh_request_human
+#           missing; no request is sent.
+#
 # Needs curl, jq and GNU date. Reads TELEGRAM_BOT_TOKEN (unset: the Telegram
 # channel is not-configured) and the env of wv_read from the environment only.
 
@@ -216,4 +227,61 @@ wh_request_human() {
   fi
   echo "web-human: waiting on human (step $step)" >&2
   return 4
+}
+
+wh_resume_human() {
+  local project="${1:-}" site="${2:-}" step="${3:-}"
+  local machine="${WEB_VAULT_MACHINE:-${FLY_MACHINE_ID:-}}" run="${LANE_RUN_ID:-}"
+  local out code body why state action
+  if [ "$#" -ne 3 ] || [ -z "$project" ] || [ -z "$site" ]; then
+    echo "web-human: usage: wh_resume_human <project> <site> <step>" >&2; return 2
+  fi
+  [[ $step =~ ^[1-9][0-9]{0,15}$ ]] || { echo "web-human: step is a step id, not '$step'" >&2; return 2; }
+  [[ $run =~ ^[1-9][0-9]{0,15}$ ]] || { echo "web-human: no LANE_RUN_ID (wh_resume_human runs inside a lane run)" >&2; return 2; }
+  [ -n "$machine" ] || { echo "web-human: no machine id (WEB_VAULT_MACHINE or FLY_MACHINE_ID)" >&2; return 2; }
+  [ -n "${WEB_VAULT_RUN_TOKEN:-}" ] || { echo "web-human: no WEB_VAULT_RUN_TOKEN (the claim of this run gave none)" >&2; return 2; }
+  [ -n "${JOBS_URL:-}" ] || { echo "web-human: not-configured: JOBS_URL" >&2; return 2; }
+  [ -n "${HARNESS_SECRET:-}" ] || { echo "web-human: not-configured: HARNESS_SECRET" >&2; return 2; }
+
+  # 1. The take-over.
+  out=$(jq -nc --argjson run_id "$run" --arg machine "$machine" --arg project "$project" --arg site "$site" --argjson step_id "$step" \
+          '{run_id:$run_id, machine:$machine, project:$project, site:$site, step_id:$step_id}' \
+        | _wh_post /api/web-task/human/resume run) || { echo "web-human: worker unreachable" >&2; return 1; }
+  code="${out##*$'\n'}"; body="${out%$'\n'*}"
+  if [ "$code" != 200 ]; then
+    why=$(printf '%s' "$body" | jq -r '.refused // empty' 2>/dev/null)
+    if [ -n "$why" ]; then echo "web-human: refused $why" >&2
+    else echo "web-human: $code $(printf '%s' "$body" | jq -r '.error // empty' 2>/dev/null)" >&2; fi
+    return 1
+  fi
+
+  # 2. One poll.
+  out=$(jq -nc --argjson run_id "$run" --arg machine "$machine" --argjson step_id "$step" \
+          '{run_id:$run_id, machine:$machine, step_id:$step_id}' | _wh_post /api/web-task/human/poll run) \
+    || { echo "web-human: poll failed: worker unreachable" >&2; return 1; }
+  code="${out##*$'\n'}"; body="${out%$'\n'*}"
+  if [ "$code" != 200 ]; then
+    why=$(printf '%s' "$body" | jq -r '.refused // empty' 2>/dev/null)
+    if [ -n "$why" ]; then echo "web-human: refused $why" >&2
+    else echo "web-human: poll failed: $code" >&2; fi
+    return 1
+  fi
+  state=$(printf '%s' "$body" | jq -r '.state // empty' 2>/dev/null)
+  case "$state" in
+    pending) echo "web-human: waiting on human (step $step)" >&2; return 4 ;;
+    answered)
+      action=$(printf '%s' "$body" | jq -r '.action // empty' 2>/dev/null)
+      if [ "$action" = code ]; then
+        local c
+        c=$(printf '%s' "$body" | jq -j 'if (.code | type) == "string" then .code else empty end' 2>/dev/null)
+        [ -n "$c" ] || { echo "web-human: the worker answered with no code" >&2; return 1; }
+        printf '%s' "$c"; unset c
+        return 0
+      fi
+      [ "$action" = done ] && { printf 'done'; return 0; }
+      echo "web-human: the worker answered an unknown action" >&2; return 1 ;;
+    cancelled) echo "web-human: cancelled" >&2; return 3 ;;
+    consumed) echo "web-human: step $step was consumed by another poll" >&2; return 1 ;;
+    *) echo "web-human: poll failed: no state" >&2; return 1 ;;
+  esac
 }

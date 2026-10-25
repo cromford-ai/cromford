@@ -1,0 +1,33 @@
+{
+  "libs": [
+    {
+      "id": "web-human-step",
+      "file": "bin/lib/web-human-step.mjs",
+      "note": "BH-8314. The page half of request_human() in the web-task lane: on the run's site only, it holds the run's page open while wh_request_human waits for a person, types the code the person sends into that page, and on no answer saves a resume record (step id, URL, the page's storage state) so a later run can resume with wh_resume_human. Slice C1 of #8314 applies it with lib_env_apply web-human-step in the web-task lane.",
+      "knobs": [
+        {
+          "env": "WEB_TASK_HUMAN_STEP_TIMEOUT_S",
+          "type": "int",
+          "default": 20,
+          "min": 5,
+          "max": 120,
+          "unit": "seconds",
+          "zero_means": null,
+          "required": false,
+          "note": "How long the human step waits for the page to load after it submits the code (or after an approval). Past it the step answers `error: human step timed out after <n>s`. The wait for the person is not this knob: it is the settings row web_task.human_wait_s. A value that is not an integer in 5..120 makes createHumanStep throw; it is never clamped. Read by createHumanStep as env WEB_TASK_HUMAN_STEP_TIMEOUT_S, fallback 20."
+        },
+        {
+          "env": "WEB_TASK_HUMAN_RESUME_KEEP_S",
+          "type": "int",
+          "default": 604800,
+          "min": 3600,
+          "max": 604800,
+          "unit": "seconds",
+          "zero_means": null,
+          "required": false,
+          "note": "How long a resume record (<state dir>/<step>.json and <step>.storage.json) stays on disk. Each save deletes the records saved before this window. The default is the top of the web_task.human_answer_ttl_s bounds (7 days), so no step that can still be answered loses its record. A value that is not an integer in 3600..604800 makes createHumanStep throw; it is never clamped. Read by createHumanStep as env WEB_TASK_HUMAN_RESUME_KEEP_S, fallback 604800."
+        }
+      ]
+    }
+  ]
+}
