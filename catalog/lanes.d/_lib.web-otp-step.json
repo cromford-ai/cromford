@@ -1,0 +1,22 @@
+{
+  "libs": [
+    {
+      "id": "web-otp-step",
+      "file": "bin/lib/web-otp-step.mjs",
+      "note": "BH-8172. The OTP step of the web-task lane, the page half of type_otp(): on the run's vault site only, and only when that site is on the allow-list, it finds the one-time-code input, types the code that type_otp (bin/lib/web-otp-action.mjs) makes at typing time, submits, and checks that the code form is gone. Slice C1 of #8172 applies it with lib_env_apply web-otp-step in the web-task lane.",
+      "knobs": [
+        {
+          "env": "WEB_TASK_OTP_STEP_TIMEOUT_S",
+          "type": "int",
+          "default": 20,
+          "min": 5,
+          "max": 120,
+          "unit": "seconds",
+          "zero_means": null,
+          "required": false,
+          "note": "How long the OTP step waits for the page to load after it submits the code. Past it the step answers `error: otp timed out after <n>s`. A value that is not an integer in 5..120 makes createOtpStep throw; it is never clamped. Read by createOtpStep as env WEB_TASK_OTP_STEP_TIMEOUT_S, fallback 20."
+        }
+      ]
+    }
+  ]
+}

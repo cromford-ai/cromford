@@ -62,6 +62,9 @@
 //   lib.web-signin.web_task_signin_attempts), an integer 1..3. The timeoutS and
 //   maxAttempts options win over the env. A bad value throws
 //   `web-signin: bad <ENV>`; it is never clamped.
+//
+//   gate, normHost and allowList are exported for the OTP step
+//   (bin/lib/web-otp-step.mjs, BH-8172), so both steps use one host gate.
 
 // Fallback of the knob lib.web-signin.web_task_signin_timeout_s
 // (WEB_TASK_SIGNIN_TIMEOUT_S): the wait for the page after a submit.
@@ -91,15 +94,15 @@ function intKnob(opt, env, fallback, min, max) {
 }
 
 // URL.hostname keeps the brackets of an IPv6 host; a site is written without them.
-const normHost = (h) => String(h || '').trim().toLowerCase().replace(/\.$/, '').replace(/^\[(.*)\]$/, '$1');
+export const normHost = (h) => String(h || '').trim().toLowerCase().replace(/\.$/, '').replace(/^\[(.*)\]$/, '$1');
 
-function allowList(allowed) {
+export function allowList(allowed) {
   const list = Array.isArray(allowed) ? allowed : String(allowed ?? '').split(',');
   return list.map((s) => String(s).trim().toLowerCase()).filter(Boolean);
 }
 
 // gate(url, site, allowed) — { host, ok }. host is for the outcome line only.
-function gate(url, site, allowed) {
+export function gate(url, site, allowed) {
   let u;
   try { u = new URL(String(url)); } catch { return { host: '(no host)', ok: false }; }
   const host = normHost(u.hostname);
