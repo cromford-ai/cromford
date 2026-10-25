@@ -55,7 +55,9 @@
 # `labeled ai-build` actor is one the trigger-actor gate accepts
 # (bin/lib/trigger-actor.sh); the workflow token's actor, github-actions[bot],
 # is refused there. Reads and comments keep GH_TOKEN. With NT_APP_TOKEN empty
-# the create runs as GH_TOKEN, as before, and stderr says so once.
+# no issue is opened (BH-8272): a create as GH_TOKEN would carry a label the
+# gate ignores, so stderr says so once (one ::error:: under Actions), the
+# create is refused, and the script exits 1. Comments on open issues still post.
 # NT_MAX_NEW is a workflow env with this code default: settings rows are not
 # readable inside a GitHub workflow.
 # A new issue is opened labelled `ai-build` (BH-3411); a comment on an open one
@@ -171,17 +173,19 @@ create() {
 }
 
 # wgh <gh args> — the two writes that set the label actor: as the App when
-# NT_APP_TOKEN is set. Without it, the workflow token, and one warning per run
-# (a marker file, because create runs in a command substitution). A refused App
-# call is not retried as the workflow token: that is the label the gate refuses.
+# NT_APP_TOKEN is set. Without it, no gh call and rc 1 (BH-8272): an issue the
+# workflow token opens is labelled by github-actions[bot], which the
+# trigger-actor gate refuses, so it would wait for nobody. The refusal prints
+# once per run (a marker file, because create runs in a command substitution).
+# A refused App call is not retried as the workflow token either.
 wgh() {
   if [ -n "${NT_APP_TOKEN:-}" ]; then GH_TOKEN="$NT_APP_TOKEN" "$GH" "$@"; return; fi
-  if [ ! -e "$WORK/app-token-warned" ]; then
-    : > "$WORK/app-token-warned"
-    echo "nightly-ticket: NT_APP_TOKEN not set; filing as the workflow token, and the trigger-actor gate refuses that label" >&2
-    [ "${GITHUB_ACTIONS:-}" = true ] && echo "::warning::nightly-ticket: NT_APP_TOKEN not set; the ai-build label is added by github-actions[bot], which the trigger-actor gate refuses" >&2
+  if [ ! -e "$WORK/app-token-refused" ]; then
+    : > "$WORK/app-token-refused"
+    echo "nightly-ticket: no App token; refusing to file a ticket the trigger-actor gate would ignore" >&2
+    [ "${GITHUB_ACTIONS:-}" = true ] && echo "::error::nightly-ticket: no App token; refusing to file a ticket the trigger-actor gate would ignore" >&2
   fi
-  "$GH" "$@"
+  return 1
 }
 
 # ── one issue per failing suite ─────────────────────────────────────────────

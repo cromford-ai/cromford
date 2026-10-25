@@ -9,14 +9,15 @@
 #   A1  NT_APP_TOKEN set: the create POST carries the App token; the open-issue
 #       search carries the workflow token; the tsv row is written
 #   A2  GitHub drops the label on create: the labels POST carries the App token
-#   A3  NT_APP_TOKEN empty: the create carries the workflow token (today's
-#       call), ONE warning line on stderr for two creates, rc 0
+#   A3  NT_APP_TOKEN empty: no create at all, ONE refusal line on stderr for
+#       two refused creates, rc 1 (BH-8272 replaced the old file-as-GH_TOKEN)
 #   A4  the comment-on-an-open-issue path carries the workflow token; no output
 #       and no tsv row ever holds the App token
 #   A4b neither the filer nor the workflow touches a trigger.actors row
 #   A5  the App create fails: rc 1, and no silent retry as the workflow token
 #   W1  harness-nightly.yml mints the App token before the verdict step and
-#       hands it over as NT_APP_TOKEN
+#       hands it over as NT_APP_TOKEN; on main the mint always runs and a
+#       failed mint fails the job (BH-8272)
 # Run from anywhere: tests/nightly-ticket-app-token.bh-6957-test.sh (exit 0 = all pass)
 set -uo pipefail
 . "$(dirname "$0")/lib/scratch.sh" || exit 1
@@ -101,18 +102,22 @@ LBL='api -X POST repos/o/r/issues/101/labels'
 [ "$(tok_of "$LBL")" = "$APP_TOK" ] && ok || bad "A2: the labels POST must carry the App token, got '$(tok_of "$LBL")'"
 
 # ── A3 ──────────────────────────────────────────────────────────────────────
+# BH-8272: with no App token the filer refuses; it never files as GH_TOKEN.
 run "$T/v2" "$T/none.json" "$LABELLED" NT_APP_TOKEN=
-[ "$RC" = 0 ] && ok || bad "A3: rc $RC (err: $ERR)"
-[ "$(grep -cP "\t$CREATE" "$T/sink")" = 2 ] && ok || bad "A3: two suites, two creates: $(cat "$T/sink")"
-[ "$(tok_of "$CREATE")" = "$WF_TOK" ] && ok || bad "A3: with no App token the create keeps the workflow token, got '$(tok_of "$CREATE")'"
-[ "$(grep -c 'nightly-ticket: NT_APP_TOKEN not set; filing as the workflow token' "$T/err")" = 1 ] && ok \
-  || bad "A3: exactly one warning line expected: $ERR"
+[ "$RC" = 1 ] && ok || bad "A3: rc $RC (err: $ERR)"
+[ "$(grep -cP "\t$CREATE" "$T/sink")" = 0 ] && ok || bad "A3: two suites, no create: $(cat "$T/sink")"
+[ -z "$(tok_of "$CREATE")" ] && ok || bad "A3: with no App token no create is made as any token, got '$(tok_of "$CREATE")'"
+# Anchored: under GitHub Actions the script also prints the same text as an
+# ::error:: annotation (A3b checks that one), and an unanchored count saw 2.
+[ "$(grep -c '^nightly-ticket: no App token; refusing to file a ticket the trigger-actor gate would ignore' "$T/err")" = 1 ] && ok \
+  || bad "A3: exactly one refusal line expected: $ERR"
 # the same with NT_APP_TOKEN absent from the environment, under Actions
 OUT=$(env -u NT_APP_TOKEN GH_TOKEN="$WF_TOK" GITHUB_ACTIONS=true NT_GH="$T/gh" FAKE_SINK="$T/sink" FAKE_N="$T/n" \
         FAKE_OPEN="$T/none.json" FAKE_CREATE_JSON="$LABELLED" NT_REPO=o/r NT_SHA=abc NT_PLAN_N=1 \
         bash "$NT" "$T/v" 2>"$T/err"); RC=$?
-[ "$RC" = 0 ] && ok || bad "A3b: rc $RC"
-grep -q '^::warning::' "$T/err" && ok || bad "A3b: under GitHub Actions the warning is a ::warning:: annotation: $(cat "$T/err")"
+[ "$RC" = 1 ] && ok || bad "A3b: rc $RC"
+[ "$(grep -c '^::error::' "$T/err")" = 1 ] && ok || bad "A3b: under GitHub Actions the refusal is one ::error:: annotation: $(cat "$T/err")"
+grep -q '^::warning::' "$T/err" && bad "A3b: the ::warning:: path is gone: $(cat "$T/err")" || ok
 
 # ── A4 ──────────────────────────────────────────────────────────────────────
 run "$T/v" "$T/open.json" "$LABELLED" NT_APP_TOKEN="$APP_TOK"
@@ -147,11 +152,12 @@ if vi is not None and ai is not None:
     a, v = steps[ai], steps[vi]
     if ai > vi: errs.append("the app-token step must come before the verdict step")
     if a.get("id") != "app-token": errs.append(f"app-token step id is {a.get('id')!r}")
-    if a.get("continue-on-error") is not True: errs.append("a mint failure must not turn the nightly red (continue-on-error: true)")
+    if a.get("continue-on-error") is True: errs.append("a mint failure must fail the job (continue-on-error must not be true)")
     w = a.get("with") or {}
     if "secrets.HARNESS_APP_PRIVATE_KEY" not in str(w.get("private-key", "")): errs.append(f"private-key: {w.get('private-key')!r}")
     if "vars.HARNESS_APP_ID" not in str(w.get("app-id", "")): errs.append(f"app-id: {w.get('app-id')!r}")
-    if "vars.HARNESS_APP_ID" not in str(a.get("if", "")): errs.append(f"an unset app id must skip the mint: if: {a.get('if')!r}")
+    if "vars.HARNESS_APP_ID" in str(a.get("if", "")) or "refs/heads/main" not in str(a.get("if", "")):
+        errs.append(f"the mint must run on every main run, an unset app id is a failed mint: if: {a.get('if')!r}")
     env = v.get("env") or {}
     if str(env.get("NT_APP_TOKEN", "")).replace(" ", "") != "${{steps.app-token.outputs.token}}":
         errs.append(f"verdict NT_APP_TOKEN is {env.get('NT_APP_TOKEN')!r}")

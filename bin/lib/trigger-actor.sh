@@ -318,6 +318,15 @@ _ta_post() {
   if [ "$src" = gh ]; then
     f="$b/trigger-actor-comment.md"
     printf '%s\n' "We didn't start a build for this one. The \`ai-build\` label was added by \`$actor\`, and only the people on this project's trigger list (or the harness itself) can start a build. If it should be built, someone on the list can take the label off and put it back." > "$f" || return 1
+    # BH-8272: an issue the nightly red lane opened (its body carries the
+    # filer's marker) gets one sentence on the cause and the recovery. A
+    # failed or odd read keeps the plain text. No capital re-arm word here.
+    if [ "$actor" = 'github-actions[bot]' ] \
+       && ( command -v gh_auth_for >/dev/null 2>&1 && gh_auth_for "$where" >/dev/null 2>&1
+            gh_rest GET "repos/$where/issues/$t" 2>/dev/null ) \
+          | jq -e '(.body // "") | tostring | test("<!-- harness-nightly-red(:| -->)")' >/dev/null 2>&1; then
+      printf '%s\n' "This one came from the nightly red lane, which labelled it as \`github-actions[bot]\` because the harness App token was missing on that run (BH-8272). A person on the trigger list can take \`ai-build\` off and put it back to start the build now." >> "$f" || return 1
+    fi
     ( command -v gh_auth_for >/dev/null 2>&1 && gh_auth_for "$where" >/dev/null 2>&1
       gh_rest_comment "$where" "$t" "$f" ) >/dev/null 2>&1
     return $?

@@ -94,7 +94,7 @@ run() { # run <verdict-dir> <open.json> [VAR=value ...]
   scratch_rm "$T/bodies"; mkdir -p "$T/bodies"; : > "$T/sink"
   OUT=$(env NT_GH="$T/bin/gh" FAKE_SINK="$T/sink" FAKE_BODIES="$T/bodies" FAKE_OPEN="$open" \
           NT_REPO=o/r NT_SHA="$B" NT_LAST_GREEN="$A" NT_GIT_DIR="$GITW" NT_RUN_URL="$RUN_URL" \
-          NT_PLAN_RESULT=success NT_PLAN_N=1 "$@" bash "$NT" "$v" 2>"$T/err"); RC=$?
+          NT_PLAN_RESULT=success NT_PLAN_N=1 NT_APP_TOKEN=app-tok-fixture "$@" bash "$NT" "$v" 2>"$T/err"); RC=$?
   ERR=$(cat "$T/err"); SINK=$(cat "$T/sink")
   TSV=""; [ -f "$v/ticket-requests.tsv" ] && TSV=$(cat "$v/ticket-requests.tsv")
 }

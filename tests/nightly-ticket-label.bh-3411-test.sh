@@ -65,7 +65,7 @@ run() { # run <open.json> <create-json> [VAR=value ...]
   local open="$1" create="$2"; shift 2
   : > "$T/sink"
   OUT=$(env NT_GH="$T/gh" FAKE_SINK="$T/sink" FAKE_OPEN="$open" FAKE_CREATE_JSON="$create" \
-          NT_REPO=o/r NT_SHA=abc NT_PLAN_RESULT=success NT_PLAN_N=1 "$@" \
+          NT_REPO=o/r NT_SHA=abc NT_PLAN_RESULT=success NT_PLAN_N=1 NT_APP_TOKEN=app-tok-fixture "$@" \
           bash "$NT" "$T/v" 2>"$T/err"); RC=$?
   ERR=$(cat "$T/err")
 }

@@ -80,7 +80,7 @@ run() { # run <open.json> [VAR=value ...]
   local open="$1"; shift
   : > "$T/sink"
   OUT=$(env NT_GH="$T/gh" FAKE_SINK="$T/sink" FAKE_OPEN="$open" NT_REPO=o/r NT_SHA=abc123 \
-          NT_RUN_URL=https://example.invalid/run/1 NT_PLAN_RESULT=success NT_PLAN_N=2 "$@" \
+          NT_RUN_URL=https://example.invalid/run/1 NT_PLAN_RESULT=success NT_PLAN_N=2 NT_APP_TOKEN=app-tok-fixture "$@" \
           bash "$NT" "$T/v" 2>&1); RC=$?
   SINK=$(cat "$T/sink")
 }
@@ -124,7 +124,7 @@ grep -qx '== POST repos/o/r/issues' <<<"$SINK" && bad "N2b: a second ticket was 
 # N3. the plan failed and nothing ran: still a ticket, saying so.
 mkdir -p "$T/empty"
 : > "$T/sink"
-OUT=$(env NT_GH="$T/gh" FAKE_SINK="$T/sink" FAKE_OPEN="$T/none.json" NT_REPO=o/r NT_PLAN_RESULT=failure NT_PLAN_N=0 \
+OUT=$(env NT_GH="$T/gh" FAKE_SINK="$T/sink" FAKE_OPEN="$T/none.json" NT_REPO=o/r NT_PLAN_RESULT=failure NT_PLAN_N=0 NT_APP_TOKEN=app-tok-fixture \
         bash "$NT" "$T/empty" 2>&1); RC=$?; SINK=$(cat "$T/sink")
 { [ "$RC" = 0 ] && has "== POST repos/o/r/issues" "$SINK" && has "plan job did not succeed (failure)" "$SINK"; } && ok \
   || bad "N3: a failed plan must still file, and say the plan failed (rc=$RC): $SINK"
@@ -134,12 +134,12 @@ OUT=$(env NT_GH="$T/gh" FAKE_SINK="$T/sink" FAKE_OPEN="$T/none.json" NT_REPO=o/r
 mkdir -p "$T/vs"; cp "$T/v/shard-0.txt" "$T/v/shard-0.log" "$T/vs/"
 printf '### `tests/gh-graphql-reads-lint.bh-1585-test.sh` (strict mode, rc 1)\n```\nFAIL: bin/x.sh: 2 GraphQL reads over its allowlisted 1\n```\n' > "$T/vs/strict.md"
 : > "$T/sink"
-OUT=$(env NT_GH="$T/gh" FAKE_SINK="$T/sink" FAKE_OPEN="$T/none.json" NT_REPO=o/r NT_PLAN_N=1 NT_STRICT_RESULT=failure \
+OUT=$(env NT_GH="$T/gh" FAKE_SINK="$T/sink" FAKE_OPEN="$T/none.json" NT_REPO=o/r NT_PLAN_N=1 NT_STRICT_RESULT=failure NT_APP_TOKEN=app-tok-fixture \
         bash "$NT" "$T/vs" 2>&1); RC=$?; SINK=$(cat "$T/sink")
 { [ "$RC" = 0 ] && has "Strict ratchets" "$SINK" && has "2 GraphQL reads over its allowlisted 1" "$SINK"; } && ok \
   || bad "N7: the strict summary must be in the ticket (rc=$RC): $SINK"
 : > "$T/sink"; rm -f "$T/vs/strict.md"
-OUT=$(env NT_GH="$T/gh" FAKE_SINK="$T/sink" FAKE_OPEN="$T/none.json" NT_REPO=o/r NT_PLAN_N=1 NT_STRICT_RESULT=failure \
+OUT=$(env NT_GH="$T/gh" FAKE_SINK="$T/sink" FAKE_OPEN="$T/none.json" NT_REPO=o/r NT_PLAN_N=1 NT_STRICT_RESULT=failure NT_APP_TOKEN=app-tok-fixture \
         bash "$NT" "$T/vs" 2>&1); SINK=$(cat "$T/sink")
 has "strict ratchet pass did not succeed (failure)" "$SINK" && ok || bad "N7: a dead strict job must be named: $SINK"
 
