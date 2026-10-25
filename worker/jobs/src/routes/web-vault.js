@@ -78,7 +78,7 @@ export const AUDIT_LIST_SQL = {
 const iso = (ms) => new Date(ms).toISOString().replace(/\.\d{3}Z$/, "Z");
 
 // Equal length and equal bytes, with no early exit on the first difference.
-function sameText(a, b) {
+export function sameText(a, b) {
   const x = new TextEncoder().encode(a), y = new TextEncoder().encode(b);
   let d = x.length ^ y.length;
   const len = Math.max(x.length, y.length);
@@ -101,7 +101,7 @@ export function webTaskEnqueueRefused(req, env, lane) {
 }
 
 const b64url = (u8) => btoa(String.fromCharCode(...u8)).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
-async function sha256Hex(s) {
+export async function sha256Hex(s) {
   const d = new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(s)));
   return Array.from(d, (x) => x.toString(16).padStart(2, "0")).join("");
 }

@@ -1,0 +1,33 @@
+{
+  "libs": [
+    {
+      "id": "web-human",
+      "file": "bin/lib/web-human.sh",
+      "note": "BH-7598 (slice C0): a person completes a 2FA step of a web-task run. wh_request_human asks harness-jobs (POST /api/web-task/human/ask), sends one Telegram message (bin/lib/web-human/telegram.sh) and one NEEDS-HUMAN: comment (bin/lib/web-human/board.sh), then polls. The wait, the poll interval, the answer TTL and the board logins are settings rows the worker reads (web_task.human_*); these two are the box-side HTTP timeouts. Applied by the lib through lib_env_apply web-human when the caller has loaded bin/lib/lane-gate.sh. Doc: docs/notes/2026-10-23-BH-7598-web-task-human.md.",
+      "knobs": [
+        {
+          "env": "WEB_HUMAN_TIMEOUT_S",
+          "type": "int",
+          "default": 15,
+          "min": 1,
+          "max": 120,
+          "unit": "seconds",
+          "zero_means": null,
+          "required": false,
+          "note": "The whole-request timeout of each worker call and each Telegram send of wh_request_human (curl -m). Read as ${WEB_HUMAN_TIMEOUT_S:-15}."
+        },
+        {
+          "env": "WEB_HUMAN_CONNECT_TIMEOUT_S",
+          "type": "int",
+          "default": 5,
+          "min": 1,
+          "max": 60,
+          "unit": "seconds",
+          "zero_means": null,
+          "required": false,
+          "note": "The connect timeout of the same calls (curl --connect-timeout). Read as ${WEB_HUMAN_CONNECT_TIMEOUT_S:-5}."
+        }
+      ]
+    }
+  ]
+}

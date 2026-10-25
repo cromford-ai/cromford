@@ -1,0 +1,7 @@
+# WEB TASK HUMAN STEP (BH-7598, slice C0): a person completes a 2FA step of a
+# web-task run. ask and poll are bound to the caller's claimed lane run (the
+# x-web-vault-run-token of the claim); answer takes a plain answer or a
+# forwarded Telegram update, bound to the step nonce. Bearer-gated.
+POST /api/web-task/human/ask
+POST /api/web-task/human/poll
+POST /api/web-task/answer
