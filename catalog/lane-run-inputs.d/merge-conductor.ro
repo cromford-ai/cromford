@@ -27,9 +27,8 @@
 #   pipeline.log            bin/lib/mc/classify.sh:572
 #   ticket-meta.json        bin/lib/mc/train.sh:636 (not reached by the fixture)
 #   planned-files.txt       bin/lib/mc/train.sh:704 (not reached by the fixture)
-#   iron-law-accepted-*     bin/merge-conductor.sh:1606 (not reached by the fixture)
 # A token name of its own: a second <record file> would replace the .rw one.
-@token <read file> RESULT review.md headbound-outcome pipeline.log ticket-meta.json planned-files.txt iron-law-accepted-*
+@token <read file> RESULT review.md headbound-outcome pipeline.log ticket-meta.json planned-files.txt
 # This project's records only; the hub's glob also opens other projects' RESULT.
 builds/$p-<KEY>-*/<read file>
 builds/pool-$p-<KEY>-*/<read file>

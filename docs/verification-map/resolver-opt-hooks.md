@@ -40,8 +40,8 @@ after the required `BR_MODULES` loop.
   `br_adjudicate` return without a model call, a posted ruling or a spent
   adjudication counter.
 - **Ordering.** `br_opt_family_record` runs at the END of the `ACCEPT` and
-  `REJECT` arms, so the per-PR `iron-law-accepted-<head>` marker already exists
-  when it is called. A run that produced no verdict reaches neither arm, so it
+  `REJECT` arms, so the per-PR `ironlaw-head-accept` row (or its `.ila_pending`)
+  is already written when it is called. A run that produced no verdict reaches neither arm, so it
   is never called and nothing is stored.
 - **Counters.** `llm_rungs=` counts every dispatch that REACHED a model call
   (adjudication, fix round, re-review); the other three are written by the

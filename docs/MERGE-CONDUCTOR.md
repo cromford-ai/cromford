@@ -2318,8 +2318,10 @@ It is a `ci-red` park, so it climbs the ladder above: merge main / re-run the fa
 first, then a fix round briefed with the failing job's own log — which is what made the rung
 possible at all, since a red CI run posts no review findings for `br_findings` to read.
 
-**ADJUDICATE outcomes.** `ACCEPT` on an iron-law hit writes `<record>/iron-law-accepted-<sha>`,
-which both `bin/merge-sweep.sh` and `bin/merge-conductor.sh` honor — bound to the sha it judged,
+**ADJUDICATE outcomes.** `ACCEPT` on an iron-law hit writes the jobs-DB row `ironlaw-head-accept`
+`<owner/repo>#<pr>@<sha>` (a failed write is kept as `.ila_pending` in the resolver record and
+retried on the next tick with no model call), which both `bin/merge-sweep.sh` and
+`bin/merge-conductor.sh` honor — bound to the sha it judged,
 for the same reason the head-bound approval is: a push after the ruling is code nobody
 adjudicated. `ACCEPT` on a test-tamper block writes the `TEST-CHANGE:` justification the gate
 reads: into the record's `plan.md` and resumes the build where the record is resumable, and

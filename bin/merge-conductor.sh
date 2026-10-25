@@ -1609,17 +1609,9 @@ pr_worker() {
       if [ "${SCAN:-0}" -gt 0 ] 2>/dev/null; then MC_HIT_NAMES=$(mc_iron_law_names "$DF" | awk 'NR <= 10' | paste -sd';' -); fi
       # <<< iron-law diff read
     fi
-    # ADJUDICATED HITS ARE NOT HITS (2026-09-13). bin/blocked-resolver.sh buys
-    # ONE Fable review of the flagged lines with their context and, on ACCEPT,
-    # writes iron-law-accepted-<sha> into the build record. The marker is bound
-    # to the SHA it judged for the same reason the head-bound approval is: a
-    # push after the adjudication is code nobody adjudicated, and the scan must
-    # bite again. A REJECT writes no marker, so this stays exactly as it was.
-    if [ "${SCAN:-0}" -gt 0 ] 2>/dev/null && [ -n "$REC" ] && [ -f "$REC/iron-law-accepted-$HEAD" ]; then
-      mc_log "$KEY iron-law scan found $SCAN hit(s) on ${HEAD:0:8}, ADJUDICATED ACCEPT by the blocked-resolver ($REC/iron-law-accepted-$HEAD) — not parking"
-      SCAN=0
-    fi
-    # AN ACCEPT IN THE DB IS AN ACCEPT (BH-4157): mc_ila_accept, fragment bh-4157-ironlaw-accept.sh
+    # AN ACCEPT IN THE DB IS AN ACCEPT (BH-4157): mc_ila_accept, fragment bh-4157-ironlaw-accept.sh.
+    # The row is bound to the sha it judged: a push after the adjudication is
+    # code nobody adjudicated, and the scan must bite again.
     command -v mc_ila_accept >/dev/null 2>&1 && mc_ila_accept
     # THE SAME HITS ON A NEW HEAD ARE STILL ADJUDICATED (BH-4474). An ACCEPT
     # also records each hit's fingerprint (rule, file, the flagged line's

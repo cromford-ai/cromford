@@ -38,7 +38,7 @@
 #              (native dialogs, hardcoded claude-* model strings, VERCEL_URL
 #              self-fetch) — a hit parks the PR for bin/blocked-resolver.sh to
 #              ADJUDICATE (one Fable call over the flagged lines; ACCEPT writes
-#              iron-law-accepted-<sha> into the record and this sweep honors it)
+#              an ironlaw-head-accept row in the jobs DB, which this sweep honors)
 #         AND  flags/automerge-disabled is absent        (the kill switch)
 #         AND  this repo's REVIEW GATE is not tightened   (SDLC item 2)
 #              bin/review-tighten.sh parks a repo whose trailing-window
@@ -1238,7 +1238,7 @@ while IFS=$'\t' read -r PROJ D BOR_KEY BOR_R BOR_TS; do
   # Iron-law red-flag scan over ADDED lines (tests excluded — they may assert
   # against these very patterns). A hit is not a verdict, it is an adjudication —
   # bin/blocked-resolver.sh buys one Fable call over the flagged lines and their
-  # context, and an ACCEPT lands as iron-law-accepted-<sha> in the build record,
+  # context, and an ACCEPT lands as an ironlaw-head-accept row in the jobs DB,
   # which this block honors below.
   # Exclude test/spec FILES (awk tracks the current file across the diff) —
   # the old per-line "grep -v test" missed test-file lines that don't say
@@ -1288,17 +1288,9 @@ while IFS=$'\t' read -r PROJ D BOR_KEY BOR_R BOR_TS; do
     fi
   fi
   # <<< iron-law scan
-  # ADJUDICATED HITS ARE NOT HITS (2026-09-13, the same marker the conductor
-  # reads). bin/blocked-resolver.sh writes iron-law-accepted-<sha> into THIS
-  # record when a Fable adjudication of the flagged lines came back ACCEPT. It is
-  # bound to the sha it judged: a push after the adjudication is code nobody
-  # adjudicated, and the scan bites again. No marker, no change to this block.
-  if [ "${FLAGS:-0}" -gt 0 ] && [ -n "${PHEAD:-}" ] && [ -f "$D/iron-law-accepted-$PHEAD" ]; then
-    echo "$(STAMP) $PR iron-law scan found $FLAGS hit(s) on $PHEAD, ADJUDICATED ACCEPT by the blocked-resolver ($(basename "$D")/iron-law-accepted-$PHEAD) — not parking" >> "$LOG"
-    FLAGS=0
-  fi
   # AN ACCEPT IN THE DB IS AN ACCEPT (BH-4157, the conductor's arm): a row for
-  # this exact head unparks it with no marker file; an unprovable read parks.
+  # this exact head unparks it; an unprovable read parks. The row is bound to
+  # the sha it judged: a push after the adjudication bites again.
   if [ "${FLAGS:-0}" -gt 0 ] && [ -n "${PHEAD:-}" ] && command -v ila_gate >/dev/null 2>&1; then
     ILA_OUT=$(ila_gate "$PR" "$PHEAD"); ILA_RC=$?
     case "$ILA_RC" in

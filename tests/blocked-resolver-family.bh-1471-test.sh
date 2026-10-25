@@ -11,14 +11,15 @@
 #
 # HOW IT ASSERTS. Every case but case 1 drives the REAL bin/blocked-resolver.sh
 # against a scratch $HARNESS (D2) and reads what the run DID: the
-# iron-law-accepted-<sha> marker files bin/merge-sweep.sh:1074 looks for, the
+# ironlaw-head-accept rows (BH-4157) the sweep and the conductor look for, as
+# claims the jobs stub records (a "marker" below is one such row), the
 # state jsons, the store under state/blocked-resolver/.families/, the `EVENT
 # family-carried` lines, the `tick:` line's counters, the recorded
 # bin/agent-call.sh argv and the posted comment BODIES. Nothing greps the source
 # of the module (D3).
 #
 # WHY A NEGATIVE TICK RULES `MAYBE`. A second PR that adjudicates ACCEPT writes
-# its own iron-law-accepted-<sha> through the lane's normal arm, so "no marker"
+# its own ironlaw-head-accept row through the lane's normal arm, so "no marker"
 # could not tell a carry from a ruling. ADJ_VERDICT=MAYBE is a session that came
 # back with no word: the call is billed and counted, no marker is written by
 # anybody, and nothing is stored — so a marker on that record could only have
@@ -55,6 +56,8 @@ cp "$DIR/bin/lib/br/opt/family.sh" "$H/bin/lib/br/opt/family.sh"
 cp "$DIR/bin/lib/gh-pr-list.sh" "$DIR/bin/lib/merge-conductor-lib.sh" \
    "$DIR/bin/lib/rebuild-ledger.sh" "$DIR/bin/lib/hold.sh" "$DIR/bin/lib/gh-rest.sh" "$H/bin/lib/"
 mkdir -p "$H/bin/lib/mc" && cp "$DIR"/bin/lib/mc/*.sh "$H/bin/lib/mc/"
+# The carry writes the ironlaw-head-accept row through ila_put (BH-7804).
+( cd "$DIR" && scratch_install_closure bin/lib/ironlaw-carry.sh "$H" >/dev/null ) || exit 1
 chmod +x "$H/bin/"*.sh
 { for I in 1 2; do printf 'p%s o/p%s - - 2 box-p%s 192.0.2.%s\n' "$I" "$I" "$I" "$I"; done; } > "$H/fleet.conf"
 export FLEET_CONF="$H/fleet.conf"
@@ -90,7 +93,7 @@ case "\$*" in
     printf 'ticket/ts-%s' "\$N" > "$T/prbranch"
     printf 'TK-%s: a thing' "\$N" > "$T/prtitle"
     if [ -f "$T/nohead-\$N" ]; then : > "$T/prhead"
-    else printf 'headsha%033d' "\$N" > "$T/prhead"; fi
+    else printf 'eadbeef%033d' "\$N" > "$T/prhead"; fi
     [ -f "$T/prdiff-\$N" ] && cp "$T/prdiff-\$N" "$T/prdiff"
     . "$DIR/tests/lib/gh-rest-stub.sh"; gh_rest_stub "\$@" ;;
   *"issues/"*"/comments"*) cat "$T/comments-\$N.json" 2>/dev/null || echo '[]' ;;
@@ -117,6 +120,9 @@ JOBS_OK() { cat > "$H/bin/jobs-client.sh" <<EOF
 queue_put() { printf '%s\n' "\$*" >> "$T/queue.txt"; echo queued; }
 queue_done() { printf 'done %s\n' "\$*" >> "$T/queue.txt"; return 0; }
 queue_list() { return 1; }
+# The ironlaw-head-accept write (ila_put): one "<kind> <key>" line per claim,
+# rc 1 (an outage) while \$T/claim-down exists.
+job_ledger_claim() { [ -f "$T/claim-down" ] && return 1; printf '%s %s\n' "\$1" "\$2" >> "$T/claims.txt"; return 0; }
 EOF
 }
 for I in 1 2; do touch "$H/flags/fly-pool-p$I"; done
@@ -155,10 +161,12 @@ FAMEDIT() {
   jq -c "$@" "$f" > "$f.edit" && mv "$f.edit" "$f"
 }
 NTMP() { find "$FAM" -maxdepth 1 -name '*.tmp.*' 2>/dev/null | wc -l | tr -d ' '; }
-PRHEAD() { printf 'headsha%033d' "$1"; }
-# NMARK <pr> — the adjudication markers on THAT PR's build record.
-NMARK() { find "$H/builds/p1-TK-$1-1" -maxdepth 1 -name 'iron-law-accepted-*' 2>/dev/null | wc -l | tr -d ' '; }
-NMARKALL() { find "$H/builds" -name 'iron-law-accepted-*' 2>/dev/null | wc -l | tr -d ' '; }
+# A head is 40 lower-case hex: ila_key refuses anything else (BH-7804).
+PRHEAD() { printf 'eadbeef%033d' "$1"; }
+# NMARK <pr> — the ironlaw-head-accept rows written for THAT PR (BH-7804: the
+# row replaced the iron-law-accepted-<sha> file). NMARKALL — all of them.
+NMARK() { grep -c "^ironlaw-head-accept o/p1#$1@" "$T/claims.txt" 2>/dev/null; }
+NMARKALL() { grep -c '^ironlaw-head-accept ' "$T/claims.txt" 2>/dev/null; }
 # CARRIED — the carry comment bodies, one per line (the body is a single line).
 CARRIED() { grep -c 'We ruled on this exact shape already' "$T/comment-bodies.txt" 2>/dev/null; }
 
@@ -189,7 +197,7 @@ CLEAN() { scratch_rm "$ST" 2>/dev/null
 # store IS what the second tick is about.
 RESET() { : > "$T/closed.txt"; : > "$T/queue.txt"; : > "$T/gh.txt"; : > "$T/ssh.txt"
           : > "$T/alerts.txt"; : > "$T/agent.txt"; : > "$T/comments.txt"
-          : > "$T/comment-bodies.txt"
+          : > "$T/comment-bodies.txt"; : > "$T/claims.txt"
           : > "$H/logs/blocked-resolver.log"; rm -f "$H/logs/ALERTS.log"
           echo OPEN > "$T/prstate"; JOBS_OK
           : > "$ROWS"; }
@@ -297,8 +305,8 @@ done
 [ "$(NAGENT)" = 1 ] && ok || bad "2: and exactly one model call (agent: $(cat "$T/agent.txt"))"
 [ "$(NTMP)" = 0 ] && ok || bad "2c: tmp+mv leaves no partial file ($(find "$FAM"))"
 [ "$(NMARK 32)" = 1 ] && ok || bad "2: the carried PR got its marker (got $(NMARK 32))"
-[ -f "$H/builds/p1-TK-32-1/iron-law-accepted-$(PRHEAD 32)" ] && ok \
-  || bad "2: bound to THAT PR's head ($(find "$H/builds/p1-TK-32-1" -name 'iron-law*'))"
+grep -qx "ironlaw-head-accept o/p1#32@$(PRHEAD 32)" "$T/claims.txt" && ok \
+  || bad "2: bound to THAT PR's head ($(grep 'o/p1#32@' "$T/claims.txt"))"
 
 # 2b. A SECOND TICK, a third PR, a different record path and a different PR
 #     number — and still ONE row. The key is the fingerprint, not the url.
@@ -350,7 +358,7 @@ BRENV=()
 [ "$(NMARKALL)" = 5 ] && ok || bad "3b: five markers, one per record (got $(NMARKALL))"
 MISS=""
 for N in 41 42 43 44 45; do
-  [ -f "$H/builds/p1-TK-$N-1/iron-law-accepted-$(PRHEAD "$N")" ] || MISS="$MISS $N"
+  grep -qx "ironlaw-head-accept o/p1#$N@$(PRHEAD "$N")" "$T/claims.txt" || MISS="$MISS $N"
 done
 [ -z "$MISS" ] && ok || bad "3b2: each marker is named for THAT PR's head, missing:$MISS"
 [ "$(LFIELD families)" = 4 ] && ok || bad "3c: families=4 (tick: $(LASTTICK))"

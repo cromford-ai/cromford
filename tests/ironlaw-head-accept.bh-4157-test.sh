@@ -4,8 +4,8 @@
 #
 # WHAT IS UNDER TEST. bin/lib/ironlaw-carry.sh's ila_key / ila_accepted / ila_put
 # read and write one `ironlaw-head-accept` ledger row per accepted head. The
-# conductor and the merge sweep unpark a head with such a row and no marker
-# file; the resolver and the family carry write the row next to the marker. The
+# conductor and the merge sweep unpark a head only on such a row; the resolver
+# and the family carry write the row and no marker file (BH-7804). The
 # three lanes are DRIVEN against a stub `curl` that serves /api/ledger and
 # /api/ledger/claim from a directory, so every assertion is a row or a log line
 # a real run wrote.
@@ -315,12 +315,13 @@ tick
   || bad "C3 one UNVERIFIABLE line (log: $(clog | grep -i iron | tail -3))"
 case "$(cverdict)" in "hold $SHA_B iron-law: "*) ok ;; *) bad "C3 an outage holds (got '$(cverdict)')" ;; esac
 
-# C4 — the file marker is present and the DB is down: unparks on the file, as today.
+# C4 — a legacy marker file is present and the DB is down: parks. Since
+# BH-7804 no lane reads the file; the DB row is the only ACCEPT.
 cfresh; DIFF_HIT > "$C/prdiff"; : > "$CREC/iron-law-accepted-$SHA_B"; : > "$L/get-503"
 tick
-clog | grep -q 'ADJUDICATED ACCEPT by the blocked-resolver' && ok || bad "C4 the file marker unparks (log: $(clog | grep -i iron | tail -3))"
-grep -q 'DB accept UNVERIFIABLE' <<<"$(clog)" && bad "C4 the DB is not asked when the marker answered" || ok
-[ "$(cverdict)" = "clear $SHA_B iron-law scan clean" ] && ok || bad "C4 clear (got '$(cverdict)')"
+grep -q 'ADJUDICATED ACCEPT by the blocked-resolver' <<<"$(clog)" && bad "C4 the file marker is not read ($(clog | grep -i 'ADJUDICATED'))" || ok
+[ "$(clog | grep -c "iron-law: DB accept UNVERIFIABLE on ${SHA_B:0:8}")" = 1 ] && ok || bad "C4 the DB is asked: one UNVERIFIABLE line (log: $(clog | grep -i iron | tail -3))"
+case "$(cverdict)" in "hold $SHA_B iron-law: "*) ok ;; *) bad "C4 a marker file with the DB down holds (got '$(cverdict)')" ;; esac
 
 # C5 — no hits: no ironlaw-head-accept GET at all.
 cfresh; DIFF_CLEAN > "$C/prdiff"
@@ -342,6 +343,8 @@ fx_br_harness "$DIR" "$T" || exit 1
 ( cd "$DIR" && for m in bin/lib/ms/*.sh bin/jobs-client.sh bin/lib/ironlaw-carry.sh bin/lib/br/opt/family.sh; do
     scratch_install_closure "$m" "$H" >/dev/null || exit 1
   done ) || exit 1
+# The BH-7804 fragment keeps an ACCEPT the DB could not take (W2).
+mkdir -p "$H/bin/blocked-resolver.d" && cp "$DIR/bin/blocked-resolver.d/bh-7804-ila-pending.sh" "$H/bin/blocked-resolver.d/" || exit 1
 mkcurl "$T/fakebin"
 . "$DIR/tests/lib/model-route-stub.sh" || exit 1
 mrs_fixture "$H" tproj
@@ -364,12 +367,12 @@ wfresh() {
   rm -f "$REC"/iron-law-accepted-* "$T/agent.txt"
 }
 
-# W1 — the resolver's ADJUDICATED ACCEPT on head A: marker AND one DB row.
+# W1 — the resolver's ADJUDICATED ACCEPT on head A: one DB row, no marker file.
 wfresh; DIFF_HIT > "$T/prdiff"; printf '%s' "$SHA_A" > "$T/prhead"
 ROW "o/tproj#9" "iron-law (1 hit(s))" "$URL9"
 BRENV=(ADJ_VERDICT=ACCEPT JOBS_BOX=box-fixture "${JENV[@]}")
 RUN
-[ -f "$REC/iron-law-accepted-$SHA_A" ] && ok || bad "W1 the marker is written (log: $(blog | tail -3))"
+[ ! -e "$REC/iron-law-accepted-$SHA_A" ] && ok || bad "W1 no marker file is written (BH-7804) (log: $(blog | tail -3))"
 [ "$(claims | jq -r .key)" = "o/tproj#9@$SHA_A" ] && ok || bad "W1 one claim keyed o/tproj#9@A (got '$(claims)')"
 [ "$(claims | jq -r '.detail | fromjson | .source + " " + .sha')" = "resolver $SHA_A" ] && ok || bad "W1 detail source resolver, sha A ($(claims))"
 [ "$(hacc_rows)" = 1 ] && ok || bad "W1 one ironlaw-head-accept row (got $(hacc_rows))"
@@ -377,12 +380,15 @@ blog | grep -q 'DB accept recorded' && ok || bad "W1 the recorded line (log: $(b
 W1ADJ=$(adjs)
 W1CALLS=$(grep -c . "$T/agent.txt" 2>/dev/null)
 
-# W2 — the DB claim fails: the marker stands, NOT recorded, the counters match W1's.
+# W2 — the DB claim fails: no marker, the ACCEPT kept as pending in the record,
+# the counters match W1's.
 wfresh; : > "$L/claim-503"
 ROW "o/tproj#9" "iron-law (1 hit(s))" "$URL9"
 RUN
-[ -f "$REC/iron-law-accepted-$SHA_A" ] && ok || bad "W2 the marker still stands (log: $(blog | tail -3))"
-blog | grep -q 'DB accept NOT recorded (the file marker stands)' && ok || bad "W2 the NOT recorded line (log: $(blog | grep -i iron | tail -3))"
+[ ! -e "$REC/iron-law-accepted-$SHA_A" ] && ok || bad "W2 no marker file is written (BH-7804) (log: $(blog | tail -3))"
+blog | grep -q 'DB accept NOT recorded; kept as pending in the record' && ok || bad "W2 the kept-as-pending line (log: $(blog | grep -i iron | tail -3))"
+[ "$(jq -r '.ila_pending.head // empty' "$H/state/blocked-resolver/tproj/"*.json 2>/dev/null | head -1)" = "$SHA_A" ] && ok \
+  || bad "W2 .ila_pending.head is A in the record ($(jq -c .ila_pending "$H/state/blocked-resolver/tproj/"*.json 2>/dev/null))"
 [ "$(hacc_rows)" = 0 ] && ok || bad "W2 no row (got $(hacc_rows))"
 [ -n "$W1ADJ" ] && [ "$(adjs)" = "$W1ADJ" ] && ok || bad "W2 the adjudication count matches W1 ($(adjs) vs $W1ADJ)"
 [ "$(grep -c . "$T/agent.txt" 2>/dev/null)" = "$W1CALLS" ] && ok || bad "W2 the same model calls as W1, no re-buy ($(grep -c . "$T/agent.txt" 2>/dev/null) vs $W1CALLS)"
@@ -397,7 +403,7 @@ ROW "o/tproj#9" "iron-law (1 hit(s))" "$URL9"
 RUN
 if blog | grep -q 'CARRIED family'; then
   ok
-  [ -f "$REC/iron-law-accepted-$SHA_B" ] && ok || bad "W3 the carried marker on B"
+  [ ! -e "$REC/iron-law-accepted-$SHA_B" ] && ok || bad "W3 the carry writes no marker file on B (BH-7804)"
   [ "$(claims | jq -r '.key + " " + (.detail | fromjson | .source)')" = "o/tproj#9@$SHA_B family" ] && ok \
     || bad "W3 one family claim on B (got '$(claims)')"
   [ -s "$T/agent.txt" ] && bad "W3 a carry buys no model call" || ok

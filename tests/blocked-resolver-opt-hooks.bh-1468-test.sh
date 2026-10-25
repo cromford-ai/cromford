@@ -46,6 +46,8 @@ br_modules_install "$DIR" "$H" || exit 1
 cp "$DIR/bin/lib/gh-pr-list.sh" "$DIR/bin/lib/merge-conductor-lib.sh" \
    "$DIR/bin/lib/rebuild-ledger.sh" "$DIR/bin/lib/hold.sh" "$DIR/bin/lib/gh-rest.sh" "$H/bin/lib/"
 mkdir -p "$H/bin/lib/mc" && cp "$DIR"/bin/lib/mc/*.sh "$H/bin/lib/mc/"
+# The ACCEPT arm writes the ironlaw-head-accept row through ila_put (BH-7804).
+( cd "$DIR" && scratch_install_closure bin/lib/ironlaw-carry.sh "$H" >/dev/null ) || exit 1
 chmod +x "$H/bin/"*.sh
 { for I in 1 2; do printf 'p%s o/p%s - - 2 box-p%s 192.0.2.%s\n' "$I" "$I" "$I" "$I"; done; } > "$H/fleet.conf"
 export FLEET_CONF="$H/fleet.conf"
@@ -104,6 +106,8 @@ JOBS_OK() { cat > "$H/bin/jobs-client.sh" <<EOF
 queue_put() { printf '%s\n' "\$*" >> "$T/queue.txt"; echo queued; }
 queue_done() { printf 'done %s\n' "\$*" >> "$T/queue.txt"; return 0; }
 queue_list() { return 1; }
+# The ironlaw-head-accept write (ila_put): one "<kind> <key>" line per claim.
+job_ledger_claim() { printf '%s %s\n' "\$1" "\$2" >> "$T/claims.txt"; return 0; }
 EOF
 }
 for I in 1 2; do touch "$H/flags/fly-pool-p$I"; done
@@ -146,7 +150,7 @@ CLEAN() { scratch_rm "$ST" 2>/dev/null
           scratch_rm "$H/builds" 2>/dev/null; mkdir -p "$H/builds"
           : > "$T/closed.txt"; : > "$T/queue.txt"; : > "$T/gh.txt"; : > "$T/ssh.txt"
           : > "$T/alerts.txt"; : > "$T/agent.txt"; : > "$T/comments.txt"
-          : > "$T/hooks.txt"; rm -f "$T/knobs.txt"
+          : > "$T/hooks.txt"; : > "$T/claims.txt"; rm -f "$T/knobs.txt"
           : > "$H/logs/blocked-resolver.log"; rm -f "$H/logs/ALERTS.log"
           echo OPEN > "$T/prstate"; JOBS_OK
           : > "$ROWS"; }
@@ -198,7 +202,8 @@ br_opt_conflict_rung() {
 EOF
 }
 # FAMILY <pre-rc> — br_opt_family_pre + br_opt_family_record. The record hook
-#                   probes for the per-PR ACCEPT marker at the moment it runs,
+#                   probes for the per-PR ACCEPT row (the ironlaw-head-accept
+#                   claim, BH-7804) at the moment it runs,
 #                   which is the ordering #1471 depends on.
 FAMILY() { MODW family <<EOF
 br_opt_family_pre() {
@@ -208,7 +213,7 @@ br_opt_family_pre() {
 }
 br_opt_family_record() {
   local m=no
-  for f in "\$4"/iron-law-accepted-*; do [ -e "\$f" ] && m=yes; done
+  grep -q '^ironlaw-head-accept ' "$T/claims.txt" 2>/dev/null && m=yes
   printf 'record|%s|%s|%s|%s|%s|%s|%s|marker=%s\n' "\$#" "\$1" "\$2" "\$3" "\$4" "\$5" "\$6" "\$m" >> "$T/hooks.txt"
   return 0
 }
@@ -340,9 +345,10 @@ ADJN=$(STATEJSON p1 p1-TK-23 | jq -r '.adjudications // 0' 2>/dev/null); [ -n "$
 [ -z "$(HOOKS record)" ] && ok || bad "5: a carried ruling stores nothing new (hooks: $(HOOKS record))"
 
 # ============================================================================
-# 6. THE RECORD HOOK SEES THE VERDICT — AND THE MARKER. Today's code writes the
-#    per-PR iron-law-accepted-<head> file FIRST; the family row is second, so a
-#    module may key its store on a marker that already exists.
+# 6. THE RECORD HOOK SEES THE VERDICT — AND THE ACCEPT. The code writes the
+#    per-PR ironlaw-head-accept row FIRST (BH-7804: it replaced the
+#    iron-law-accepted-<head> file); the family row is second, so a module may
+#    key its store on an ACCEPT that is already recorded.
 # ============================================================================
 CLEAN
 FAMILY 1
@@ -356,7 +362,7 @@ BRENV=()
 [ "$(HFIELD record 2)" = 6 ] && ok || bad "6: the record hook gets six arguments (got: $(HOOKS record))"
 [ "$(HFIELD record 8)" = ACCEPT ] && ok || bad "6: arg6 is the verdict (got: $(HOOKS record))"
 [ "$(HOOKS record | head -1 | sed -n 's/.*|marker=//p')" = yes ] && ok \
-  || bad "6: the ACCEPT marker must already exist when the hook runs (got: $(HOOKS record))"
+  || bad "6: the ironlaw-head-accept row must already be written when the hook runs (got: $(HOOKS record))"
 [ "$(LFIELD families)" = 0 ] && ok || bad "6: recording is not carrying (tick: $(LASTTICK))"
 
 # 6b. A REJECT IS RECORDED TOO — the store is of RULINGS, not of accepts.

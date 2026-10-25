@@ -6598,6 +6598,7 @@ br_adjudicate() {
   st=$(br_load "$p" "$rkey"); n=$(br_num "$st" adjudications)
   n=$(br_cap_rows "$p" "$rkey" "$reason" "$n" "$url" adjudicate adjudications)
   if [ "$n" -ge 1 ]; then
+    [ "$reason" = iron-law ] && command -v br_ila_pending_retry >/dev/null 2>&1 && br_ila_pending_retry "$p" "$rkey" "$reason" "$url" && return 0  # BH-7804: a kept ACCEPT is written first
     say "$p/$rkey [$reason]: already adjudicated once — dropping to the rung below"
     case "$reason" in
       iron-law) br_fix_round "$p" "$rkey" "$reason" "$url" "$rec" "$tkey" ;;
@@ -6728,19 +6729,18 @@ Write your reasoning, then the LAST LINE of your answer must be exactly one word
       br_record "$p" "$rkey" adjudicate "$reason" "ACCEPT — $adj" adjudications "$url" "${head:--}"
       if [ "$reason" = iron-law ]; then
         # A head this tick could not read leaves $head empty, and the else-branch
-        # below is the right answer for it: the ACCEPT marker is BOUND to a sha,
-        # so writing one for a sha nobody read would unpark code nobody judged.
+        # below is the right answer for it: the ACCEPT is BOUND to a sha, so
+        # writing one for a sha nobody read would unpark code nobody judged.
         head=$(br_pr_field "$url" .head.sha 'head sha')
-        if [ -n "$head" ] && [ -n "$rec" ] && [ "$rec" != "-" ] && [ -d "$rec" ]; then
+        if [ -n "$head" ]; then
           # BOUND TO THE SHA IT JUDGED, exactly like the head-bound approval. A
           # push after this ruling is code nobody adjudicated and the scan must
           # bite again — bin/merge-sweep.sh and bin/merge-conductor.sh both read
-          # this file name, and both key it on the head they are looking at.
-          : > "$rec/iron-law-accepted-$head"
-          say "$p/$rkey [iron-law]: ADJUDICATED ACCEPT — wrote $rec/iron-law-accepted-$head; the sweep and conductor unpark this sha"
-          command -v ila_record_say >/dev/null 2>&1 && say "$p/$rkey [iron-law]: $(ila_record_say "$url" "$head" resolver "adjudicated ACCEPT")"  # BH-4157: the same ACCEPT as a DB row
-          # AFTER the marker: a ledger failure leaves this head accepted and
-          # only costs the next head a re-adjudication, never a false carry.
+          # the ironlaw-head-accept row keyed on the head (BH-7804: a failed write is kept as .ila_pending).
+          if command -v br_ila_accept_write >/dev/null 2>&1; then br_ila_accept_write "$p" "$rkey" "$url" "$head"
+          else say "$p/$rkey [iron-law]: ADJUDICATED ACCEPT — $(command -v ila_put >/dev/null 2>&1 && ila_put "$url" "$head" resolver "adjudicated ACCEPT" && echo "DB accept recorded ($(ila_key "$url" "$head")); the sweep and conductor unpark this sha" || echo "DB accept NOT recorded (no pending fragment) — the park stands, next tick drops a rung")"; fi
+          # AFTER the head ACCEPT: a ledger failure leaves this head as it is
+          # and only costs the next head a re-adjudication, never a false carry.
           if ! command -v ilc_record >/dev/null 2>&1; then
             say "$p/$rkey [iron-law]: carry NOT recorded (no ironlaw-carry lib) — the next head re-adjudicates"
           elif [ "$ilc_rc" != 0 ] || [ ! -s "$ilc_f" ]; then
@@ -6751,7 +6751,7 @@ Write your reasoning, then the LAST LINE of your answer must be exactly one word
             say "$p/$rkey [iron-law]: carry NOT recorded (ledger write failed after ${ilc_n:-0} row(s)) — the next head re-adjudicates"
           fi
         else
-          say "$p/$rkey [iron-law]: ADJUDICATED ACCEPT but no record/head to mark — the park stands, next tick drops a rung"
+          say "$p/$rkey [iron-law]: ADJUDICATED ACCEPT but the head could not be read — the park stands, next tick drops a rung"
         fi
       else
         # A test-tamper ACCEPT has to reach the GATE, and the gate reads plan.md
@@ -6811,9 +6811,9 @@ Write your reasoning, then the LAST LINE of your answer must be exactly one word
       fi
       # THE RULING IS STORED LAST (BH-1468), at the END of the arm rather than
       # before the case, and that ordering is the contract #1471 asked for: the
-      # per-PR iron-law-accepted-<head> marker is written FIRST by the code
-      # above, so a module may key its family row on a marker that already
-      # exists. Best effort — a store that fails must never turn an ACCEPT the
+      # ironlaw-head-accept row (or its .ila_pending) is written FIRST by the
+      # code above, so a module may key its family row on an ACCEPT that is
+      # already recorded. Best effort — a store that fails must never turn an ACCEPT the
       # lane has already acted on into an error. A run with no verdict reaches
       # neither arm, which is the "a dead session stores nothing" rule for free.
       br_opt_family_store "$p" "$rkey" "$reason" "$rec" "$url" ACCEPT ;;

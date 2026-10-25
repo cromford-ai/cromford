@@ -223,16 +223,17 @@ brf_ruled_url() {
 #
 # rc 0 means br_adjudicate returns without a model call, without a posted ruling
 # and without spending the once-per-ticket adjudication counter. The order below
-# IS the contract, and the marker is LAST: it is what unparks a sha for
-# bin/merge-sweep.sh and bin/merge-conductor.sh, so it is written only once the
-# ruling is confirmed in TTL and the head it binds to has been read.
+# IS the contract. The ironlaw-head-accept row (ila_put) comes before every
+# other side effect: it is what unparks a sha for bin/merge-sweep.sh and
+# bin/merge-conductor.sh, so it is written only once the ruling is confirmed in
+# TTL and the head it binds to has been read, and nothing is spent without it.
 br_opt_family_pre() {
   local p="$1" rkey="$2" reason="$3" rec="${4:--}" url="${5:--}" key row rurl head
   # IRON-LAW ONLY. br_family_key answers for test-tamper too and the store keeps
-  # test-tamper rulings, but the only artifact a carry writes is
-  # iron-law-accepted-<head>, and the lane's test-tamper ACCEPT arm does far more
-  # than write a marker (a TEST-CHANGE block, then a resume or a fresh rebuild).
-  # Carrying a tamper ruling with a marker would silently drop the park.
+  # test-tamper rulings, but the only artifact a carry writes is the
+  # ironlaw-head-accept row, and the lane's test-tamper ACCEPT arm does far more
+  # than record an ACCEPT (a TEST-CHANGE block, then a resume or a fresh
+  # rebuild). Carrying a tamper ruling that way would silently drop the park.
   [ "$reason" = iron-law ] || return 1
   brf_key_for "$reason" "$rec" "$url"; key="${BRF_KEY:-}"
   [ -n "$key" ] || return 1
@@ -246,28 +247,27 @@ br_opt_family_pre() {
     say "$p/$rkey [$reason]: WOULD carry family $key from ${rurl:--} — observe mode"
     return 0
   fi
-  # NOWHERE TO WRITE THE MARKER IS A DECLINE, not a carry: a carry here would
-  # consume the ruling and unpark nothing. The lane adjudicates as it does today.
-  [ -n "$rec" ] && [ "$rec" != "-" ] && [ -d "$rec" ] || return 1
-  # The marker is BOUND TO THE SHA IT JUDGED, so a head this tick could not read
-  # buys nothing: no marker, no attempt, no uses bump, no count. The same park is
+  # The ACCEPT is BOUND TO THE SHA IT JUDGED, so a head this tick could not read
+  # buys nothing: no row, no attempt, no uses bump, no count. The same park is
   # offered its adjudication next tick — br_adjudicate's own :4935 rule, verbatim.
+  # The row needs no build record, so a PR with none is carried too (BH-7804).
   head=$(br_pr_field "$url" .head.sha 'head sha')
   if [ -z "$head" ]; then
-    say "$p/$rkey [$reason]: family $key is ruled but the head could not be read — no marker written, the adjudication is offered next tick"
+    say "$p/$rkey [$reason]: family $key is ruled but the head could not be read — no ACCEPT written, the adjudication is offered next tick"
     return 0
   fi
-  if ! : >"$rec/iron-law-accepted-$head" 2>/dev/null; then
-    say "$p/$rkey [$reason]: family $key is ruled but $rec/iron-law-accepted-$head could not be written — nothing carried, the adjudication is offered next tick"
-    return 1
+  # A ROW THAT CANNOT BE WRITTEN IS A DEFER, not a decline (BH-7804): rc 1 would
+  # buy a model ruling whose own write fails in the same outage. rc 0 with no
+  # side effect, and the next tick offers the carry again.
+  if ! command -v ila_put >/dev/null 2>&1 || ! ila_put "$url" "$head" family "carried family $key"; then
+    say "$p/$rkey [$reason]: family $key is ruled but the DB accept could not be written — nothing carried, the carry is offered next tick"
+    return 0
   fi
-  # BH-4157: the same ACCEPT as a DB row, after the marker it never retracts.
-  command -v ila_record_say >/dev/null 2>&1 && say "$p/$rkey [$reason]: $(ila_record_say "$url" "$head" family "carried family $key")"
   # THE COMMENT IS LAST OF THE TWO SIDE EFFECTS, and a failure to post never
-  # retracts a marker that has already unparked a judged sha.
+  # retracts a row that has already unparked a judged sha.
   if [ -n "$rurl" ]; then
     br_pr_comment "$url" "We ruled on this exact shape already, on $rurl. Same check, same lines, so we are not paying for a second read." >/dev/null 2>&1 \
-      || say "$p/$rkey [$reason]: carried family $key but the comment did not post — the marker stands"
+      || say "$p/$rkey [$reason]: carried family $key but the comment did not post — the DB accept stands"
   else
     say "$p/$rkey [$reason]: carried family $key but the stored ruling names no PR url — no comment posted"
   fi
@@ -277,7 +277,7 @@ br_opt_family_pre() {
   br_event family-carried "$p" "$rkey" "$reason" "$key from ${rurl:--}"
   brf_store_use "$key"
   br_count family
-  say "$p/$rkey [$reason]: CARRIED family $key from ${rurl:--} — wrote $rec/iron-law-accepted-$head, no model call"
+  say "$p/$rkey [$reason]: CARRIED family $key from ${rurl:--} — DB accept recorded ($(ila_key "$url" "$head")), no model call"
   return 0
 }
 

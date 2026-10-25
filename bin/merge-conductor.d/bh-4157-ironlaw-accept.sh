@@ -3,7 +3,7 @@
 # ACCEPT (BH-4157). Sourced by bin/merge-conductor.sh (the BH-7453 fragment
 # block), after bin/lib/ironlaw-carry.sh.
 #
-# mc_ila_accept — pr_worker calls it after the file-marker ACCEPT check, with
+# mc_ila_accept — pr_worker calls it as its head ACCEPT check, with
 # pr_worker's SCAN, KEY, URL and HEAD in scope. When the scan has hits and an
 # ironlaw-head-accept row names this exact head (from the console, the
 # resolver or the family carry), it logs the ACCEPT and sets SCAN=0. It needs

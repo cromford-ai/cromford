@@ -305,15 +305,15 @@ DIFF_A > "$T/prdiff"; printf '%s' "$SHA_A" > "$T/prhead"
 ROW "o/tproj#9" "iron-law (2 hit(s))" "$URL9"
 BRENV=(ADJ_VERDICT=ACCEPT "${JENV[@]}")
 RUN
-[ -f "$REC/iron-law-accepted-$SHA_A" ] && ok || bad "P1 the marker is still written first (log: $(blog | tail -3))"
+[ ! -e "$REC/iron-law-accepted-$SHA_A" ] && ok || bad "P1 no marker file is written (BH-7804: the ironlaw-head-accept row replaced it) (log: $(blog | tail -3))"
 [ "$(ilc_rows)" = 2 ] && ok || bad "P1 two ironlaw-accept rows (got $(ilc_rows); log: $(blog | grep -i 'iron' | tail -3))"
 K=$(jq -r 'select(.kind=="ironlaw-accept") | .key' "$L/puts.log" 2>/dev/null | sort -u)
 [ "$(printf '%s\n' "$K" | grep -c '^o/tproj#9|[0-9a-f]\{40\}$')" = 2 ] && ok || bad "P1 keys are <repo>#<pr>|<sha1> ($K)"
 [ "$(jq -r 'select(.kind=="ironlaw-accept") | .detail | fromjson | .sha' "$L/puts.log" 2>/dev/null | sort -u)" = "$SHA_A" ] && ok \
   || bad "P1 every row names head A ($(cat "$L/puts.log" 2>/dev/null))"
 blog | grep -q 'recorded 2 hit fingerprint(s) for carry' && ok || bad "P1 the record line (log: $(blog | tail -3))"
-[ "$(find "$REC" -newer "$REC/RESULT" -type f -name 'iron-law*' | wc -l | tr -d ' ')" = 1 ] && ok \
-  || bad "P1 no new file state beyond the marker ($(ls "$REC"))"
+[ "$(find "$REC" -newer "$REC/RESULT" -type f -name 'iron-law*' | wc -l | tr -d ' ')" = 0 ] && ok \
+  || bad "P1 no new iron-law file state in the record ($(ls "$REC"))"
 
 # P2 — a REJECT records nothing.
 ledger_clear; scratch_rm "$H/state/blocked-resolver"; : > "$H/logs/blocked-resolver.log"

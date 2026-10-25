@@ -92,14 +92,15 @@ grep -q 'iron-law red-flag line' "$H/logs/merge-sweep.log" && ok || bad "without
 : > "$REC/iron-law-accepted-$SHA"
 : > "$H/state/merge-sweep-done.txt"; : > "$H/logs/merge-sweep.log"
 SWEEP
-grep -q 'ADJUDICATED ACCEPT' "$H/logs/merge-sweep.log" && ok || bad "the sweep must honor iron-law-accepted-<sha> and not park (log: $(tail -2 "$H/logs/merge-sweep.log"))"
-# The marker is BOUND TO THE SHA: a different head must park again.
-mv "$REC/iron-law-accepted-$SHA" "$REC/iron-law-accepted-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
-: > "$H/state/merge-sweep-done.txt"; : > "$H/logs/merge-sweep.log"
-SWEEP
-grep -q 'iron-law red-flag line' "$H/logs/merge-sweep.log" && ok || bad "a marker for a DIFFERENT sha must not unpark this head"
-# The conductor reads the same file name.
-grep -q 'iron-law-accepted-\$HEAD' "$H/bin/merge-conductor.sh" && ok || bad "bin/merge-conductor.sh must read iron-law-accepted-<head> too"
+# BH-7804: the marker file is no ACCEPT any more; only the ironlaw-head-accept
+# row is (tests/ironlaw-head-accept.bh-4157-test.sh S1-S3 drive the row).
+grep -q 'iron-law red-flag line' "$H/logs/merge-sweep.log" && ok || bad "a legacy iron-law-accepted-<sha> file must not unpark: the sweep still parks (log: $(tail -2 "$H/logs/merge-sweep.log"))"
+grep -q 'ADJUDICATED ACCEPT' "$H/logs/merge-sweep.log" && bad "the sweep must not read iron-law-accepted-<sha> ($(grep 'ADJUDICATED ACCEPT' "$H/logs/merge-sweep.log"))" || ok
+rm -f "$REC/iron-law-accepted-$SHA"
+# The conductor does not read the file name either; its head ACCEPT check is
+# mc_ila_accept (guarded: an absent reader must fail, not pass).
+grep -q 'mc_ila_accept' "$H/bin/merge-conductor.sh" && ok || bad "bin/merge-conductor.sh must call mc_ila_accept"
+grep -q 'iron-law-accepted-' "$H/bin/merge-conductor.sh" && bad "bin/merge-conductor.sh must not read iron-law-accepted-<head>" || ok
 
 # ============================================================================
 # 5. fly-pool's death rule: a row enqueued at attempt>=1 must NOT park on its

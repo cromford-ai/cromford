@@ -2,11 +2,11 @@
 # Sourced, never executed; nothing runs at source time.
 # shellcheck shell=bash
 #
-# WHY IT EXISTS. An adjudicated ACCEPT is the empty file
-# <rec>/iron-law-accepted-<head>, bound to one sha. A push that never touches
-# the flagged line (a merge of main, a fixture fix, a renumber) still moves the
-# head, and the PR re-parks on the identical false positive and buys another
-# adjudication (#4044, #4142 on 2026-10-04).
+# WHY IT EXISTS. An adjudicated ACCEPT is the ironlaw-head-accept row (below),
+# bound to one sha. A push that never touches the flagged line (a merge of
+# main, a fixture fix, a renumber) still moves the head, and the PR re-parks
+# on the identical false positive and buys another adjudication (#4044, #4142
+# on 2026-10-04).
 #
 # WHAT IT STORES. At ACCEPT, bin/blocked-resolver.sh records the FINGERPRINT of
 # every hit the adjudicated diff carried, one row per distinct fingerprint, in
@@ -19,7 +19,7 @@
 # moved or re-indented line is the same hit; a changed character is not.
 #
 # WHAT IT ANSWERS. bin/merge-conductor.sh and bin/merge-sweep.sh, on a head
-# with hits and no per-head marker, ask ilc_covered. It carries only when
+# with hits and no per-head ACCEPT row, ask ilc_covered. It carries only when
 # every current fingerprint has a row for THIS PR with n at least the current
 # count. Anything it cannot prove (an outage, an unparseable row, a crashed
 # check, a hit over the cap) is rc 2, which both callers read as "park as
@@ -194,9 +194,10 @@ ilc_covered() {
 #   key    <owner/repo lowercased>#<pr>@<head40>
 #   status accepted
 #   detail {"sha":<head>,"source":resolver|family|console,"reason":..,"actor":..}
-# The resolver and the family carry write it next to the marker file; the
+# The resolver and the family carry write it with ila_put (the per-head
+# iron-law-accepted-<head> file they wrote before BH-7804 is gone); the
 # console writes it through POST /api/ironlaw-accept. bin/merge-conductor.sh
-# and bin/merge-sweep.sh read it when no marker file answered.
+# and bin/merge-sweep.sh read it with ila_gate.
 # ---------------------------------------------------------------------------
 
 # ila_key <pr-url> <head> -> the row key; rc 1 when the url does not parse or
@@ -255,19 +256,6 @@ ila_put() {
     0|3) return 0 ;;
     *) return 1 ;;
   esac
-}
-
-# ila_record_say <url> <head> <source> <reason> — ila_put, and the one log line
-# a writer prints about it. A failed write never retracts the marker the caller
-# already wrote; it only means a hub with no marker file re-asks.
-ila_record_say() {
-  if ! command -v job_ledger_claim >/dev/null 2>&1; then
-    printf 'DB accept NOT recorded (no jobs client; the file marker stands)'
-  elif ila_put "$@"; then
-    printf 'DB accept recorded (%s)' "$(ila_key "${1:-}" "${2:-}")"
-  else
-    printf 'DB accept NOT recorded (the file marker stands)'
-  fi
 }
 
 # ila_gate <pr-url> <head> -> the conductor and sweep question in one call:

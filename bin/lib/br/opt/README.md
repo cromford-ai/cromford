@@ -67,11 +67,12 @@ that would carry a ruling logs `WOULD carry family` and writes no marker when
 Returning on observe first would hide every carry from the module and make
 observe mode a worse predictor of a real tick than no observe mode at all.
 
-**Marker ordering.** The per-PR `iron-law-accepted-<head>` file is written FIRST,
-by the lane's own `ACCEPT` arm; the family row is second. So
-`br_opt_family_record` may key its store on a marker that already exists —
-`br_opt_family_pre` may not, because on the PR it is carrying a ruling ONTO
-there is no marker yet. That is what the module is there to write.
+**ACCEPT ordering.** The per-PR `ironlaw-head-accept` row (or, when the jobs DB
+did not take it, the record's `.ila_pending`) is written FIRST, by the lane's
+own `ACCEPT` arm; the family row is second. So `br_opt_family_record` may key
+its store on an ACCEPT that is already recorded — `br_opt_family_pre` may not,
+because on the PR it is carrying a ruling ONTO there is no ACCEPT row yet. That
+is what the module is there to write.
 
 ## Counting
 

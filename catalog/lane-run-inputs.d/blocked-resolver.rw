@@ -5,7 +5,7 @@
 #
 # The files a build record dir holds that the lane reads or writes. Anything
 # else in a record (transcripts, worktrees) stays on the hub.
-@token <record file> RESULT COMMENTED REAPED job.json ticket-meta.json plan.md review.md checks.txt reviewed-sha carried-note.md test-tamper*.txt iron-law-accepted-* .blocked-resolver-* .review-rescued .adjudicate-noverdict-paged .pruned
+@token <record file> RESULT COMMENTED REAPED job.json ticket-meta.json plan.md review.md checks.txt reviewed-sha carried-note.md test-tamper*.txt .blocked-resolver-* .review-rescued .adjudicate-noverdict-paged .pruned
 # The visit ledger is fleet-wide: a write-back carries only $p's row, merged
 # under the lock br_visited_put takes.
 @row state/blocked-resolver/.last-visited.tsv blocked-resolver-visited
