@@ -62,8 +62,15 @@ _pt_read() {
 }
 
 _pt_issue_in() { # _pt_issue_in <repo> <n> <dir>
+  _pt_read "$1" "$2" "$3" || return 3
+  _pt_classify_read "$1" "$2" "$3"
+}
+
+# _pt_classify_read <repo> <n> <dir> — pt_classify on the issue _pt_read put
+# in <dir>, then the one parent hop. bin/lib/lead-outcome-cap.sh calls it on
+# the read it made for the labels, so the ticket is read once (BH-8338).
+_pt_classify_read() {
   local d="$3" out rc t p=""
-  _pt_read "$1" "$2" "$d" || return 3
   t=$(cat "$d/t")
   out=$(pt_classify "$d/b" "$t" "$(cat "$d/l")"); rc=$?
   [ "$rc" = 1 ] || { [ -n "$out" ] && echo "$out"; return "$rc"; }

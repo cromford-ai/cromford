@@ -1572,7 +1572,8 @@ review_one() {
   case "$bires" in skipped:*) ;; *) biline="- break-it (BH-6970): $bires (mode $bimode)"$'\n' ;; esac
   # <<< break-it
   # BH-7123: the review level cap, after the re-review downgrade and before the
-  # outcome cap (a perf ticket's INCONCLUSIVE claim still caps at BLOCK below).
+  # outcome cap (BH-8338: an INCONCLUSIVE claim adds a NOTE below, or a BLOCK
+  # with its own finding line on a perf-gate ticket).
   # Fail closed like lpv_downgrade: a rewrite whose verdict no longer reads
   # restores the model's answer. strict/shadow modes rewrite nothing (rc 1).
   rlk=""; rlgl=0
@@ -1608,14 +1609,16 @@ review_one() {
   fi
   # BH-6372.3: the outcome cap. The ticket is the one the thread read (when it
   # read), else loc_cap reads #$tn itself; no ticket number is class unknown.
-  capr=""
+  # BH-8338: line 1 the verdict, line 3 the finding line (lr_cap_body).
+  capr=""; capfind=""
   if command -v loc_cap >/dev/null 2>&1; then
     printf '%s\n' "$body" > "$WT.capbody"; capf=""; ctitle=""; clabels=""
     if [ -n "$tn" ] && [ -z "$thread_note" ] && jq -r '.body // ""' "$WT.issue" > "$WT.capticket" 2>/dev/null; then
       capf="$WT.capticket"; ctitle=$(jq -r '.title // ""' "$WT.issue"); clabels=$(jq -r '[.labels[]?.name] | join(",")' "$WT.issue")
     fi
     capo=$(loc_cap "$verdict" "$WT.capbody" "$capf" "$ctitle" "$clabels" ${tn:+"$repo" "$tn"} 2>"$WT.capnote") \
-      && { verdict=BLOCK; capr=$(sed -n 2p <<<"$capo"); log "$key: outcome cap: $capr"; }
+      && { verdict=$(sed -n 1p <<<"$capo"); capr=$(sed -n 2p <<<"$capo"); capfind=$(sed -n 3p <<<"$capo")
+           log "$key: outcome cap: $capr; verdict $verdict"; }
     while IFS= read -r ll; do [ -n "$ll" ] && log "$key: $ll"; done < "$WT.capnote"
   fi
   # The report names the checklist it read; an intent review read none.
@@ -1636,7 +1639,7 @@ review_one() {
     [ "$ldp_rc" = 0 ] && printf -- '- diff read in parts: %s of %s files; not read: %s; digest: %s files\n' \
       "$LDP_READ_FILES" "$LDP_TOTAL_FILES" "$(ldp_unread_line)" "$LDP_DIGEST_FILES"
     printf '\n'
-    if [ -n "$capr" ]; then loc_demote "$out"; printf '\nVERDICT: BLOCK\n'; else cat "$out"; fi
+    if [ -n "$capr" ]; then lr_cap_body "$out" "$capfind" "$verdict"; else cat "$out"; fi
   } > "$report.tmp.$$" && mv -f "$report.tmp.$$" "$report" \
     || { log "could not write $report"; job_update "$job" status=failed; return; }
   # BH-7123 wave B: the go-live count rides on the result row's detail, so
@@ -1644,6 +1647,8 @@ review_one() {
   LR_DONE_DETAIL=""; [ "${rlgl:-0}" -gt 0 ] 2>/dev/null && LR_DONE_DETAIL="golive:$rlgl"
   # BH-6970: and the break-it result, which bin/lead-review-land.sh posts as --break-it.
   case "$bires" in clean|could-not-run|failed:*) LR_DONE_DETAIL="${LR_DONE_DETAIL:+$LR_DONE_DETAIL }break-it:$bires" ;; esac
+  lr_block_no_finding "$verdict" "$report" && { log "$key: BLOCK report has no '- [BLOCK' finding line; refused (outcome failed, detail block-no-finding)"
+    LR_DONE_DETAIL=""; fail_terminal "$id" "$job" "$sha" block-no-finding "$model"; return; }
   finish_done "$id" "$job" "$sha" "$verdict" "$report" "$model" "$suite_line" "$key"
   LR_DONE_DETAIL=""
 }

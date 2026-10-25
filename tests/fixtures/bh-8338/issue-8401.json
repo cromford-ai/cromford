@@ -1,0 +1,13 @@
+{
+  "number": 8401,
+  "title": "Move the stale-lock sweep into the hourly lane",
+  "body": "Move the stale-lock sweep from the 5-minute lane into the hourly lane.\n\n## Acceptance\n- The hourly lane runs the sweep once.\n- The 5-minute lane no longer runs it.\n",
+  "labels": [
+    {
+      "name": "ai-build"
+    },
+    {
+      "name": "perf-gate"
+    }
+  ]
+}

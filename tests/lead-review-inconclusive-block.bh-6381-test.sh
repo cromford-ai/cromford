@@ -10,19 +10,20 @@
 #       and prose are not rows (rc 1)
 #   U3  a blockquoted row, a lower-case row, a CONFIRMED row whose note says
 #       "inconclusive" are not rows
-#   U4  loc_cap MERGE-WITH-NOTES on a one-row body and a perf ticket: BLOCK and a
-#       reason naming claim 2 and the perf phrase
+#   U4  loc_cap MERGE-WITH-NOTES on a one-row body and a perf ticket:
+#       MERGE-WITH-NOTES, a reason naming claim 2 and the perf phrase, a NOTE line
 #   U5  loc_demote blockquotes each verdict-shaped line, nothing else
 #   U6  verdict BLOCK in: BLOCK out, rc 1, no reason
-#   U7  verdict MERGE on a perf ticket: BLOCK, rc 0
+#   U7  verdict MERGE on a perf ticket: MERGE-WITH-NOTES, rc 0
 #   U8  no ticket at all, or a ticket read that fails: not capped, one stderr
 #       line `perf class unknown`
 #   U9  a bad knob value reads as perf, with one stderr line naming it
 # Tick cases, the REAL bin/lead-review.sh tick (the rig of
 # tests/lead-review-thread-refs.bh-5905-test.sh; the agent stub answers
 # findings and `VERDICT: MERGE-WITH-NOTES`):
-#   L1  one INCONCLUSIVE row, Closes #5354 (perf): the report says BLOCK, has an
-#       `- outcome cap:` line, ends `VERDICT: BLOCK`; the result posts BLOCK
+#   L1  one INCONCLUSIVE row, Closes #5354 (perf): the report says
+#       MERGE-WITH-NOTES, has an `- outcome cap:` line and one NOTE cap line,
+#       ends `VERDICT: MERGE-WITH-NOTES`; the result posts MERGE-WITH-NOTES
 #   L2  all rows CONFIRMED: the agent verdict, no cap line, the agent text verbatim
 #   L3a a non-perf ticket (#6049) under the default knob: not capped
 #   L3b the same under LEAD_REVIEW_INCONCLUSIVE_BLOCK=all: capped
@@ -30,10 +31,18 @@
 #   L5  only the settled-tier row: not capped
 #   R2  the #5454 body verbatim (Closes #5368): capped through the parent hop to
 #       #5354, 18 rows named
-#   R3  the real lr_verdict on R2's report reads BLOCK
-#   N1  a second tick on R2's head replays the report: no agent call, BLOCK posted
+#   R3  the real lr_verdict on R2's report reads MERGE-WITH-NOTES
+#   N1  a second tick on R2's head replays the report: no agent call,
+#       MERGE-WITH-NOTES posted
 #   N2  R2 with the #5368 read failing: not capped, one `perf class unknown` log line
 #   C1  the checklist is version 7 and names the outcome replay
+#
+# TEST-CHANGE (BH-8338): a perf ticket by phrase or parent hop with no
+# perf-gate label is no longer capped at BLOCK. U4, U7, U9 (#5354), L1, R2, R3
+# and N1 now want MERGE-WITH-NOTES plus one `- [NOTE] outcome cap:` line; every
+# other assertion of those cases (cap line, claim names, reads) is unchanged.
+# The BLOCK side (perf-gate label) is pinned by
+# tests/lead-review-inconclusive-note.bh-8338-test.sh.
 #
 # Run from anywhere: HARNESS_TEST_SANDBOX=1 bash tests/lead-review-inconclusive-block.bh-6381-test.sh
 set -uo pipefail
@@ -156,9 +165,10 @@ run loc_inconclusive_rows "$FX2/body-all-confirmed.md"
 [ "$RC" = 1 ] && [ -z "$OUT" ] && ok || bad "U3 a CONFIRMED row whose note says inconclusive counted: $OUT"
 # U4
 run loc_cap MERGE-WITH-NOTES "$FX2/body-one-inconclusive.md" "$T/t5354" "$T5354_TITLE" "hotfix"
-[ "$RC" = 0 ] && [ "$(sed -n 1p <<<"$OUT")" = BLOCK ] && grep -q '(claim 2)' <<<"$(sed -n 2p <<<"$OUT")" \
+[ "$RC" = 0 ] && [ "$(sed -n 1p <<<"$OUT")" = MERGE-WITH-NOTES ] && grep -q '(claim 2)' <<<"$(sed -n 2p <<<"$OUT")" \
   && grep -q 'perf phrase:' <<<"$(sed -n 2p <<<"$OUT")" && grep -q '^1 INCONCLUSIVE claim row ' <<<"$(sed -n 2p <<<"$OUT")" \
-  && ok || bad "U4 want BLOCK and a reason naming claim 2 and perf phrase:, got rc $RC: $OUT"
+  && grep -q '^- \[NOTE\] outcome cap: .*(claim 2)' <<<"$(sed -n 3p <<<"$OUT")" \
+  && ok || bad "U4 want MERGE-WITH-NOTES, a reason naming claim 2 and perf phrase:, and a NOTE line, got rc $RC: $OUT"
 # U5
 printf 'Findings\n- [NOTE] the verdict is fine\nVERDICT: MERGE-WITH-NOTES\n**VERDICT:** MERGE\n## Verdict: MERGE\nplain line\n' > "$T/demote-in"
 run loc_demote "$T/demote-in"
@@ -169,8 +179,8 @@ run loc_cap BLOCK "$FX2/body-one-inconclusive.md" "$T/t5354" "$T5354_TITLE" ""
 [ "$RC" = 1 ] && [ "$OUT" = BLOCK ] && ok || bad "U6 BLOCK in: want BLOCK rc 1, got rc $RC: $OUT"
 # U7
 run loc_cap MERGE "$FX2/body-one-inconclusive.md" "$T/t5354" "$T5354_TITLE" ""
-[ "$RC" = 0 ] && [ "$(sed -n 1p <<<"$OUT")" = BLOCK ] && grep -q 'agent verdict MERGE$' <<<"$OUT" \
-  && ok || bad "U7 MERGE on a perf ticket: want BLOCK rc 0, got rc $RC: $OUT"
+[ "$RC" = 0 ] && [ "$(sed -n 1p <<<"$OUT")" = MERGE-WITH-NOTES ] && grep -q 'agent verdict MERGE$' <<<"$OUT" \
+  && ok || bad "U7 MERGE on a perf ticket: want MERGE-WITH-NOTES rc 0, got rc $RC: $OUT"
 # U8: no ticket at all
 run loc_cap MERGE-WITH-NOTES "$FX2/body-one-inconclusive.md" "" "" ""
 [ "$RC" = 1 ] && [ "$OUT" = MERGE-WITH-NOTES ] && [ "$(errn)" = 1 ] && grep -q 'perf class unknown' "$T/err" \
@@ -186,8 +196,8 @@ run loc_cap MERGE-WITH-NOTES "$FX2/body-one-inconclusive.md" "$T/t6049" "$T6049_
 # U9
 OUT=$(LEAD_REVIEW_INCONCLUSIVE_BLOCK=bogus bash -c '. "$1" || exit 9; shift; "$@"' loc-run "$LIB_SRC" \
   loc_cap MERGE-WITH-NOTES "$FX2/body-one-inconclusive.md" "$T/t5354" "$T5354_TITLE" "" 2>"$T/err"); RC=$?
-[ "$RC" = 0 ] && [ "$(sed -n 1p <<<"$OUT")" = BLOCK ] && [ "$(errn)" = 1 ] && grep -q "'bogus'" "$T/err" \
-  && grep -q 'LEAD_REVIEW_INCONCLUSIVE_BLOCK=perf' <<<"$OUT" && ok || bad "U9 bogus on a perf ticket: want BLOCK and one line naming bogus, got rc $RC: $OUT / $(cat "$T/err")"
+[ "$RC" = 0 ] && [ "$(sed -n 1p <<<"$OUT")" = MERGE-WITH-NOTES ] && [ "$(errn)" = 1 ] && grep -q "'bogus'" "$T/err" \
+  && grep -q 'LEAD_REVIEW_INCONCLUSIVE_BLOCK=perf' <<<"$OUT" && ok || bad "U9 bogus on a perf ticket: want MERGE-WITH-NOTES and one line naming bogus, got rc $RC: $OUT / $(cat "$T/err")"
 OUT=$(LEAD_REVIEW_INCONCLUSIVE_BLOCK=bogus bash -c '. "$1" || exit 9; shift; "$@"' loc-run "$LIB_SRC" \
   loc_cap MERGE-WITH-NOTES "$FX2/body-one-inconclusive.md" "$T/t6049" "$T6049_TITLE" "" 2>"$T/err"); RC=$?
 [ "$RC" = 1 ] && [ "$OUT" = MERGE-WITH-NOTES ] && grep -q "'bogus'" "$T/err" && ok || bad "U9 bogus on #6049: want not capped, got rc $RC: $OUT"
@@ -212,11 +222,12 @@ lrlog() { cat "$H/logs/lead-review.log" "$T/out" 2>/dev/null; }
 # L1
 drive "$(withcloses 5354 "$FX2/body-one-inconclusive.md")"
 [ "$RC" = 0 ] && [ -n "$RPT" ] && ok || bad "L1 tick rc=$RC, no report: $(tail -5 "$T/out")"
-[ "$(rv)" = BLOCK ] && ok || bad "L1 report verdict '$(rv)', want BLOCK"
+[ "$(rv)" = MERGE-WITH-NOTES ] && ok || bad "L1 report verdict '$(rv)', want MERGE-WITH-NOTES"
+[ "$(grep -c '^- \[NOTE\] outcome cap: ' "$RPT" 2>/dev/null)" = 1 ] && ok || bad "L1 want one NOTE outcome cap line"
 capline | grep -q '(claim 2) on perf phrase:' && ok || bad "L1 no outcome cap line naming claim 2: '$(capline)'"
-[ "$(lastline)" = "VERDICT: BLOCK" ] && ok || bad "L1 last line '$(lastline)', want VERDICT: BLOCK"
+[ "$(lastline)" = "VERDICT: MERGE-WITH-NOTES" ] && ok || bad "L1 last line '$(lastline)', want VERDICT: MERGE-WITH-NOTES"
 grep -qx '> VERDICT: MERGE-WITH-NOTES' "$RPT" 2>/dev/null && ok || bad "L1 the agent verdict line is not kept as a blockquote"
-[ "$(posted BLOCK)" -ge 1 ] && [ "$(posted MERGE-WITH-NOTES)" = 0 ] && ok || bad "L1 the result post does not carry BLOCK: $(grep -o '"verdict":"[^"]*"' "$T/log/worker")"
+[ "$(posted MERGE-WITH-NOTES)" -ge 1 ] && [ "$(posted BLOCK)" = 0 ] && ok || bad "L1 the result post does not carry MERGE-WITH-NOTES: $(grep -o '"verdict":"[^"]*"' "$T/log/worker")"
 
 # L2
 drive "$(withcloses 5354 "$FX2/body-all-confirmed.md")"
@@ -243,7 +254,7 @@ drive "$(withcloses 5354 "$FX2/body-negatives.md")"
 # R2
 rm -f "$T/calls"
 drive "$T/body-5454.md"
-[ "$(rv)" = BLOCK ] && ok || bad "R2 #5454 body: verdict '$(rv)', want BLOCK ($(tail -3 "$T/out"))"
+[ "$(rv)" = MERGE-WITH-NOTES ] && ok || bad "R2 #5454 body: verdict '$(rv)', want MERGE-WITH-NOTES ($(tail -3 "$T/out"))"
 CL=$(capline)
 grep -q '^- outcome cap: 18 INCONCLUSIVE claim rows (claim 1, claim 2, ' <<<"$CL" && grep -q 'perf parent:#5354' <<<"$CL" \
   && ! grep -q 'claim 8,' <<<"$CL" && ok || bad "R2 cap line: '$CL'"
@@ -251,14 +262,14 @@ grep -q 'issues/5368' "$T/log/gh" && grep -q 'issues/5354' "$T/log/gh" && ok || 
 # R3: the real lr_verdict on R2's report
 cp "$RPT" "$T/r2-report.md"
 OUT=$(bash -c '. "$1/bin/lib/verdict-parse.sh"; eval "$(sed -n "/^lr_verdict() {/,/^}/p" "$1/bin/lead-review.sh")"; lr_verdict "$2"' r3 "$H" "$T/r2-report.md" 2>&1)
-[ "$OUT" = BLOCK ] && ok || bad "R3 lr_verdict on the capped report: '$OUT', want BLOCK"
+[ "$OUT" = MERGE-WITH-NOTES ] && ok || bad "R3 lr_verdict on the capped report: '$OUT', want MERGE-WITH-NOTES"
 # N1: the second tick on the same head replays, no agent call
 c1=$(grep -c . "$T/calls" 2>/dev/null)
 drive "$T/body-5454.md" keep
 c2=$(grep -c . "$T/calls" 2>/dev/null)
 [ "$c1" = 1 ] && [ "$c1" = "$c2" ] && ok || bad "N1 agent calls $c1 then $c2, want 1 and no second call"
 lrlog | grep -q 'reusing .* no agent call' && ok || bad "N1 the tick did not take the replay path: $(tail -5 "$T/out")"
-[ "$(posted BLOCK)" -ge 1 ] && [ "$(posted MERGE-WITH-NOTES)" = 0 ] && ok || bad "N1 the replay posted $(grep -o '"verdict":"[^"]*"' "$T/log/worker")"
+[ "$(posted MERGE-WITH-NOTES)" -ge 1 ] && [ "$(posted BLOCK)" = 0 ] && ok || bad "N1 the replay posted $(grep -o '"verdict":"[^"]*"' "$T/log/worker")"
 
 # N2: the #5368 read fails
 echo 5368 > "$T/gh-fail"

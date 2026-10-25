@@ -166,8 +166,10 @@ has '/result .*"outcome":"done","verdict":"BLOCK".*"reviewer_model":"stub-model"
 [ "$(cat "$T/jobstate")" = done ] && ok || bad "B1e job not done after the retake"
 
 # (B2) a long answer with quotes, backslashes, é and an astral char: capped, valid, flagged
+# TEST-CHANGE (BH-8338): the answer carries one `- [BLOCK]` line. bin/lead-review.sh
+# now refuses a BLOCK report with no BLOCK finding line; B2 tests the detail cap.
 reset
-{ printf 'Findings\n'
+{ printf 'Findings\n- [BLOCK] a.txt:2 — it breaks\n'
   for i in $(seq 1 300); do printf -- '- [NOTE] "q" \\ back é %s 😀\n' "$i"; done
   printf '\nVERDICT: BLOCK\n'; } > "$T/answer"
 tick
