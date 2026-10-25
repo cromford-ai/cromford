@@ -28,6 +28,8 @@ export const ARCHIVE_TABLES = {
   web_vault_audit: { key: ["id"], time: "at" },
   // BH-7722: the Tackler decision ledger (routes/retention.js unblock_decisions.age).
   unblock_decisions: { key: ["id"], time: "created_at" },
+  // BH-7965: the secret envelope sweep (routes/secret-envelope-apply.js).
+  secret_envelope_events: { key: ["id"], time: "at" },
 };
 
 // One text for every archive rule's "unbound" audit row (lib/archive-daily.js).

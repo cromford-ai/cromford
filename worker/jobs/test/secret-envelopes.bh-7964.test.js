@@ -323,11 +323,14 @@ test('E12 the TTL settings row: a bad value uses 900, 120 is used', async (t) =>
   assert.equal(r.body.expires_at, iso(NOW_MS + 900e3), 'no row: 900');
 });
 
-test('E13 the sibling seams load and are empty', async () => {
+// TEST-CHANGE (BH-7965): BH-7965 fills the secret-envelope-apply seam, its
+// stated owner. The apply routes are pinned by
+// test/secret-envelope-apply.bh-7965.test.js.
+// TEST-CHANGE (BH-7966): the seam's named owner filled ai-accounts.js; its
+// routes are pinned by test/ai-accounts.bh-7966.test.js and route-table.d.
+test('E13 the sibling seams load', async () => {
   const apply = await import('../src/routes/secret-envelope-apply.js');
   const ai = await import('../src/routes/ai-accounts.js');
-  assert.deepEqual(apply.routes, []);
-  // TEST-CHANGE (BH-7966): the seam's named owner filled ai-accounts.js; its
-  // routes are pinned by test/ai-accounts.bh-7966.test.js and route-table.d.
+  assert.ok(Array.isArray(apply.routes));
   assert.ok(Array.isArray(ai.routes));
 });
