@@ -1,0 +1,9 @@
+{
+  "env": "POOL_ENVBUNDLE_SSH",
+  "type": "string",
+  "default": "on",
+  "zero_means": null,
+  "note": "BH-8316 (MKF-1): on (default) | off. The env fallback of the settings row pool.envbundle_ssh.<project>, which is what an operator sets (this is NOT the lane row lane.fly-pool.<project>.pool_envbundle_ssh; nothing reads that). Read by bin/fly-envbundle.sh only on the ssh branch (the owning box is not local): the row first, this env when there is no row, then on. off (trimmed, any case) refuses the ssh env extract: rc 1, 0 ssh calls, one ALERTS line 'push path refused: ssh off' (--id envbundle-ssh-off-<project>), and bin/fly-pool.sh unclaims, so the job stays queued. Any other value runs the extract as before. A failed row read fails open with one stderr WARN. Set the row to off only after the project's spawns take the pull path (lane.fly-pool.<project>.machine_pull=1); set it to on for a bin/fly-pool-secrets-sync.sh re-sync, which also uses the ssh extract. NOT settable from the control plane as a lane knob.",
+  "settable": false,
+  "read_in": "bin/fly-envbundle.sh"
+}

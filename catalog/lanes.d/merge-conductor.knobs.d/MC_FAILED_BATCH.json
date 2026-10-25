@@ -1,0 +1,11 @@
+{
+  "env": "MC_FAILED_BATCH",
+  "read_in": "bin/lib/mc-failed-batch.sh",
+  "type": "int",
+  "default": 1,
+  "min": 0,
+  "max": 1,
+  "unit": null,
+  "zero_means": "off",
+  "note": "BH-8186: a head Mergify dequeued for a failed batch (MC_FAILED_BATCH_CODES) is recorded against its patch-id under state/merge-conductor/failed-batch/, and a READY head that carries the same patch (verbatim patch-id, or mc_patch_same's clean-main-merge proof) is not enqueued until a new patch, a solo re-run that passes, or MC_FAILED_BATCH_UNJUDGED_HOLD_S. 0 = off: no record is written or read, and a rebased head is enqueued as before. Settings row: lane.merge-conductor.mc_failed_batch."
+}

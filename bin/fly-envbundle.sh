@@ -56,6 +56,11 @@
 # NEVER leaves the hub: ORGO_API_KEY, TELEGRAM_*, SLACK_* (the chat transports
 #   are the hub's alone), FLY_* tokens, TS_AUTHKEY_*,
 #   and any OTHER project's env. Blanket copy is forbidden — explicit keys only.
+#
+# SSH OFF (BH-8316): the settings row pool.envbundle_ssh.<project> = off refuses
+# the ssh extract (rc 1, 0 ssh calls, one ALERTS line "push path refused: ssh
+# off"). See envbundle_ssh_guard below and
+# docs/notes/2026-10-25-MKF-1-pull-path-project-6.md.
 set -uo pipefail
 
 PROJECT="${1:?usage: fly-envbundle.sh <project> <outdir> [--pool]}"
@@ -131,12 +136,44 @@ cat "$E/__PROJECT__.env" 2>/dev/null
 REMOTE_SCRIPT="${REMOTE_SCRIPT//__PROJECT__/$PROJECT}"
 REMOTE_SCRIPT="${REMOTE_SCRIPT//__SLUG__/$SLUG}"
 
+# SSH OFF GUARD (BH-8316, MKF-1). A project whose pool machines pull their
+# bundle (machine_pull) needs no ssh extract. The operator then sets the row
+# pool.envbundle_ssh.<project> = off, and an ssh extract that still happens is a
+# silent fallback to the push path. With the row off this refuses it: 0 ssh
+# calls, one ALERTS line, rc 1 (fly-pool.sh unclaims; the job stays queued).
+# Read order: the row, then env POOL_ENVBUNDLE_SSH (knob, fly-pool registry)
+# when there is no row, then `on`. Only `off` (trimmed, any case) refuses. A
+# failed read fails open with one WARN line: a settings outage must not stop
+# every spawn. The client loads in a subshell, so a half-synced bin/lib/jobs/
+# (its `exit 1`) reads as a failed read, not as a silent exit here.
+# envbundle_ssh_read <key> — setting_get's answer and rc; call it in $( ).
+envbundle_ssh_read() {
+  . "$HARNESS/bin/jobs-client.sh" >/dev/null 2>&1 || exit 1
+  JOBS_ALERT=0 setting_get "$1" 2>/dev/null
+}
+envbundle_ssh_guard() {
+  local key="pool.envbundle_ssh.$PROJECT" v rc
+  v=$(envbundle_ssh_read "$key"); rc=$?
+  case "$rc" in
+    0) ;;
+    # Fallback of the row pool.envbundle_ssh.<project> (knob POOL_ENVBUNDLE_SSH).
+    2) v="${POOL_ENVBUNDLE_SSH:-on}" ;;
+    *) echo "fly-envbundle/$PROJECT WARN: settings row $key read failed; ssh extract runs as before" >&2; return 0 ;;
+  esac
+  v="${v#"${v%%[![:space:]]*}"}"; v="${v%"${v##*[![:space:]]}"}"; v="${v,,}"
+  [ "$v" = off ] || return 0
+  "$HARNESS/bin/alert-line.sh" --id "envbundle-ssh-off-$PROJECT" --project "$PROJECT" \
+    "[fly-envbundle/$PROJECT] push path refused: ssh off (settings row $key=off). A spawn for $PROJECT asked for the ssh env extract from $BOX; its machines must pull the bundle (lane.fly-pool.$PROJECT.machine_pull=1). Check bin/fly-pool-probe-pull.sh $PROJECT, or set the row to on for a secrets re-sync." 2>/dev/null || true
+  die "push path refused: ssh off (settings row $key)"
+}
+
 # The box's harness is /root/harness; only a local extract (the hub owning the
 # project) runs against this process's own HARNESS, which on the hub is the same
 # path and in a test is the fixture's.
 if [ "$BOX" = "local" ]; then
   RAW=$(bash -c "${REMOTE_SCRIPT//\/root\/harness/$HARNESS}" 2>/dev/null) || { rc=$?; die "local env extract failed (rc $rc)"; }
 else
+  envbundle_ssh_guard
   RAW=$(ssh -n -o BatchMode=yes -o ConnectTimeout=15 "root@$BOX" "$REMOTE_SCRIPT" 2>/dev/null) \
     || { rc=$?; die "ssh env extract from $BOX failed (ssh rc $rc)"; }
 fi

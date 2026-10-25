@@ -113,6 +113,10 @@ set -a; . "$FLYENV"; set +a
 [ -r "$HARNESS/bin/jobs-client.sh" ] && . "$HARNESS/bin/jobs-client.sh"
 # shellcheck source=bin/lib/builder-direct.sh
 [ -r "$HARNESS/bin/lib/builder-direct.sh" ] && . "$HARNESS/bin/lib/builder-direct.sh"
+# The relay json's ledger row (BH-7860). No lib = no row; the file path is unchanged.
+# shellcheck source=bin/lib/rr-relay.sh
+{ [ -r "$HARNESS/bin/lib/rr-relay.sh" ] && . "$HARNESS/bin/lib/rr-relay.sh"; } \
+  || { [ -r "$(dirname "${BASH_SOURCE[0]}")/lib/rr-relay.sh" ] && . "$(dirname "${BASH_SOURCE[0]}")/lib/rr-relay.sh"; } || true
 
 tok_var() { echo "FLY_API_TOKEN_$(echo "$1" | tr '[:lower:].-' '[:upper:]__')"; }
 
@@ -415,6 +419,10 @@ ingest_one() {
       --arg pr "${pr_url:-}" --arg tier "${tier:-}" --arg bd "$(basename "$builddir")" --arg ts "$(STAMP)" \
       --arg mbd "${remote_bdir:-}" \
       '{key:$k,ticket_id:$t,result:$r,pr_url:$pr,tier:$tier,build_dir:$bd,machine_build_dir:$mbd,ingested_at:$ts,source:"fly"}')
+    # The rr-relay row (BH-7860), parked BEFORE the file is written or sent, on
+    # every box value. A box that consumes the file first can leave it parked;
+    # its rr-consumed row still answers. A failed PUT is one log line.
+    command -v rrr_park >/dev/null 2>&1 && rrr_park "$p" "$rr_payload"
     if [ "$box" = "local" ]; then
       mkdir -p "$HARNESS/state/remote-results/$p"
       printf '%s\n' "$rr_payload" > "$HARNESS/state/remote-results/$p/$key.json"

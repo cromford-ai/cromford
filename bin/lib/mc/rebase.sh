@@ -2101,7 +2101,7 @@ mc_path_is_union() {
 MC_REGENERATED_PATHS_CONF="${MC_REGENERATED_PATHS_CONF:-$MC_H/config/regenerated-paths.conf}"
 # The pool-image fallback, as for MC_GENERATED_PATHS_DEFAULT. Keep in step with
 # config/regenerated-paths.conf.
-MC_REGENERATED_PATHS_DEFAULT=$'rules/CLAUDE.md\tbin/render-rules.sh --write\ndocs/PR-OWNERSHIP.md\tbin/render-doc-sections.sh --write'
+MC_REGENERATED_PATHS_DEFAULT=$'rules/CLAUDE.md\tbin/render-rules.sh --write\ndocs/PR-OWNERSHIP.md\tbin/render-doc-sections.sh --write\n.github/workflows/harness-ci.yml\tbin/render-ci-workflow.sh --write'
 
 # mc_regen_paths — the table, `<path><TAB><command>` a line, comments stripped.
 mc_regen_paths() {

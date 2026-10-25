@@ -1,0 +1,11 @@
+{
+  "env": "MC_FAILED_BATCH_KEEP_LINES",
+  "read_in": "bin/lib/mc-failed-batch.sh",
+  "type": "int",
+  "default": 20,
+  "min": 2,
+  "max": 1000,
+  "unit": "lines",
+  "zero_means": null,
+  "note": "BH-8186: how many lines a state/merge-conductor/failed-batch/<repo>_<pr> record file keeps; fbh_append keeps the last N. Settings row: lane.merge-conductor.mc_failed_batch_keep_lines."
+}

@@ -1769,6 +1769,10 @@ pr_worker() {
       mc_attempt_has "ejectedheldlog $KEY $HEAD" 2>/dev/null || { mc_attempt_put "ejectedheldlog $KEY $HEAD"; mc_log "EJECTED_HELD $KEY $HEAD — not re-queued: this head was ejected, and only a new head clears an ejection"; }
     elif [ "$MGABLE" != MERGEABLE ] || [ "$VERDICT" != APPROVE ] || [ "$REVIEWED" != "$HEAD" ]; then
       STATE=WAIT_CI; WHY="$EJWHY"
+    # A head that failed its batch is held while it carries that patch (BH-8186);
+    # mc_fbh_apply sets STATE and WHY. A clear lets the gate below decide.
+    elif command -v mc_fbh_apply >/dev/null 2>&1 && mc_fbh_apply; then
+      :
     elif ! { FR_STATE=""; if command -v bej_reentry_gate >/dev/null 2>&1; then bej_reentry_gate "$SLUG" "$NUM" "$KEY" "$URL" "$HEAD" "$MSTATE"
              else fr_reentry_gate "$SLUG" "$NUM" "$KEY" "$URL" "$HEAD" "$MSTATE"; fi; }; then
       # BH-3776: CLEAN, or UNSTABLE only through Mergify's own leftover checks,
@@ -1815,6 +1819,7 @@ pr_worker() {
       RQERR=$(mc_requeue_mergify "$SLUG" "$URL" "$HEAD"); RQRC=$?
       case "$RQRC" in
         0|2) STATE=QUEUED; WHY="requeued on ${HEAD:0:8} after a flake ejection"
+             command -v mc_fbh_clear >/dev/null 2>&1 && mc_fbh_clear "$KEY" "$HEAD" bystander
              mc_attempt_clear crdequeue "$KEY" "$HEAD" 2>/dev/null   # BH-2275: back in after a cleared CR
              mc_log "REQUEUED $KEY $HEAD — dequeued label off, $MC_MERGIFY_LABEL back on, Mergify acknowledged; its batch build decides from here"
              fr_requeue_note "$SLUG" "$NUM" "$KEY" "$HEAD" ;;
@@ -1832,6 +1837,12 @@ pr_worker() {
   if [ "$STATE" = BLOCKED_HUMAN ] && [ "$CI" = green ] && [ "$REVIEWED" = "$HEAD" ] && command -v mc_hold_comment >/dev/null 2>&1; then
     case "$WHY" in tightened*) HCK=tightened ;; provenance*) HCK=provenance ;; iron-law*) HCK=iron-law ;; *) HCK="" ;; esac
     [ -n "$HCK" ] && mc_hold_comment "$KEY" "$HEAD" "$HCK" "$WHY"
+  fi
+  # ---- a failed batch follows its patch (BH-8186) --------------------------
+  # A READY head that carries the patch of a head Mergify dequeued for a failed
+  # batch is not enqueued (mc_fbh_apply, the BH-8186 fragment).
+  if [ "$STATE" = READY ] && [ "$QUEUE" = 1 ] && [ "$PROVIDER" = mergify ] && command -v mc_fbh_apply >/dev/null 2>&1; then
+    mc_fbh_apply || true
   fi
   # ---- a stale Mergify dequeue on a freshly approved head (BH-3480) -------
   # Our merge-queue label plus a row that was QUEUED last tick reads as "in the
@@ -2937,6 +2948,9 @@ tick_project() {
           # ejected is a human's problem and re-enqueueing it forever is the
           # exact loop this replaces.
           mc_attempt_has "ejected $QKEY $QHEAD" || mc_attempt_put "ejected $QKEY $QHEAD"
+          # The failure follows the PATCH, not only the sha (BH-8186): a rebase of
+          # this head must not come back READY with no failure on it.
+          [ "$PROVIDER" = mergify ] && command -v mc_fbh_record >/dev/null 2>&1 && mc_fbh_record "$SLUG" "$P" "$QKEY" "$QURL" "$QHEAD"
           # EJECTED AGAIN AFTER WE PUT IT BACK (BH-636). The `ejected` line is
           # already there from the first time, so without this the second
           # ejection of the SAME head would be invisible and the re-entry arm

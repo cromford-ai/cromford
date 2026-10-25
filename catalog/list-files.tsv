@@ -23,3 +23,4 @@ bin/blocked-resolver.sh	bin/blocked-resolver.d/	new optional resolver code since
 docs/PR-OWNERSHIP.md	rendered docs/PR-OWNERSHIP.d/	committed render of bin/render-doc-sections.sh
 worker/jobs/schema.sql	ignored worker/jobs/schema.d/	rendered by bin/schema-build.sh
 bin/lead-review.sh	bin/lib/lead-review/	an optional lib is a new file in bin/lib/lead-review/libs.d/ (BH-7455); new code is a module in bin/lib/lead-review/ (BH-6293)
+.github/workflows/harness-ci.yml	rendered config/harness-ci/	committed render of bin/render-ci-workflow.sh (BH-7452)

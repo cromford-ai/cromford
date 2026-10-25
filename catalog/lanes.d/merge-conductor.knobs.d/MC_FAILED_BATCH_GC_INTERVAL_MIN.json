@@ -1,0 +1,11 @@
+{
+  "env": "MC_FAILED_BATCH_GC_INTERVAL_MIN",
+  "read_in": "bin/lib/mc-failed-batch.sh",
+  "type": "int",
+  "default": 60,
+  "min": 0,
+  "max": 10080,
+  "unit": "minutes",
+  "zero_means": "off",
+  "note": "BH-8186: the least minutes between two fbh_gc sweeps of state/merge-conductor/failed-batch/ (a .gc stamp file). Settings row: lane.merge-conductor.mc_failed_batch_gc_interval_min. 0 turns the interval off: fbh_gc sweeps on every call."
+}

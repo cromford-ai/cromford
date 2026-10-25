@@ -14,6 +14,8 @@
 #   rr-since     key <p>                     status at       detail the watermark
 #   rr-consumed  key <p>/<KEY>@<build-id>    status staged|duplicate|empty|badjson
 #                                            detail the relay json (cut to 3500 bytes)
+#   rr-relay     key <p>/<KEY>@<build-id>    status set to the outcome here; the
+#                                            writer parks it (bin/lib/rr-relay.sh)
 #
 # THE FILE IS READ FIRST AND STILL WRITTEN (#4141: "DB-first with a last-good
 # cache for outages"). A reader answers from the file when it is there, so a box
@@ -125,6 +127,7 @@ rrc_json_consume() {
   [ -n "$key" ] || key="${base%.json}"
   [ -n "$bid" ] || bid=$(sha256sum < "$f" 2>/dev/null | cut -c1-16)
   _rrc_put "$p" "$base" rr-consumed "$p/$key@$bid" "$outcome" "$detail"
+  _rrc_put "$p" "$base" rr-relay "$p/$key@$bid" "$outcome"
   mkdir -p "$(dirname "$f")/.handled" 2>/dev/null
   mv -f "$f" "$(dirname "$f")/.handled/$target"
 }

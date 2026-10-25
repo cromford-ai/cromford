@@ -1,0 +1,11 @@
+{
+  "env": "MC_FAILED_BATCH_CODES",
+  "read_in": "bin/lib/mc-failed-batch.sh",
+  "type": "string",
+  "default": "CHECKS_FAILED,BATCH_MAX_FAILURE_RESOLUTION_ATTEMPTS",
+  "min": null,
+  "max": null,
+  "unit": null,
+  "zero_means": null,
+  "note": "BH-8186: the Mergify dequeue_reason.code values that record a failed batch, comma separated. Any other code (PR_MANUALLY_DEQUEUED, CONFLICT_WITH_BASE_BRANCH, ...) records nothing. Settings row: lane.merge-conductor.mc_failed_batch_codes."
+}

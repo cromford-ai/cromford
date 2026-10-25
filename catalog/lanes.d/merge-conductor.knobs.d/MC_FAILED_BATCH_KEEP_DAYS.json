@@ -1,0 +1,11 @@
+{
+  "env": "MC_FAILED_BATCH_KEEP_DAYS",
+  "read_in": "bin/lib/mc-failed-batch.sh",
+  "type": "int",
+  "default": 14,
+  "min": 1,
+  "max": 90,
+  "unit": "days",
+  "zero_means": null,
+  "note": "BH-8186: how long a state/merge-conductor/failed-batch/<repo>_<pr> record file is kept after its last line. fbh_gc deletes older files at most once per MC_FAILED_BATCH_GC_INTERVAL_MIN minutes (fallback 60) and logs FAILED_BATCH_GC n=<count>. Settings row: lane.merge-conductor.mc_failed_batch_keep_days."
+}

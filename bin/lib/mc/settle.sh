@@ -513,9 +513,13 @@ mc_patch_id_rebind() {
 # mc_patch_same <owner/repo> <project> <reviewed> <head> -> `same:<how>` and rc 0
 #   when bin/lib/patch-same.sh proves <head> carries exactly <reviewed>'s patch.
 #   rc 1 on a different patch, a missing lib, or anything it cannot fetch, and
-#   the caller buys the re-review exactly as before.
+#   the caller buys the re-review exactly as before. On the rc 1 it could not
+#   judge (no lib, an empty sha, a worktree or fetch failure, a sha the fetch
+#   did not bring) it also sets MC_PATCH_SAME_UNJUDGED=1, so a caller that must
+#   not store "different" for an answer it never had (BH-8186) can tell.
 mc_patch_same() {
   local slug="$1" project="$2" rev="$3" head="$4" wt how
+  MC_PATCH_SAME_UNJUDGED=1
   # Sourced here, at call time and off this module's directory, not at module
   # load: the lib's functions are bin/lib/patch-same.sh's, and a module that
   # sourced them would read as defining them (tests/mc-split-layout-test.sh). A
@@ -528,6 +532,13 @@ mc_patch_same() {
   # The conductor's fetch shape (token URL, no credential helper), as mc_patch_id.
   if ! git -C "$wt" -c credential.helper= fetch -q origin main "$head" >/dev/null 2>&1; then mc_git_auth_clear; return 1; fi
   git -C "$wt" -c credential.helper= fetch -q origin "$rev" >/dev/null 2>&1 || true
+  # patch_same answers rc 1 for a sha it cannot resolve too; that is not a judgement.
+  if ! git -C "$wt" rev-parse --verify -q "$rev^{commit}" >/dev/null 2>&1 \
+    || ! git -C "$wt" rev-parse --verify -q "$head^{commit}" >/dev/null 2>&1 \
+    || ! git -C "$wt" rev-parse --verify -q "origin/main^{commit}" >/dev/null 2>&1; then
+    mc_git_auth_clear; return 1
+  fi
+  MC_PATCH_SAME_UNJUDGED=0
   how=$(patch_same "$wt" origin/main "$rev" "$head"); local rc=$?
   mc_git_auth_clear
   [ "$rc" = 0 ] && [ -n "$how" ] || return 1

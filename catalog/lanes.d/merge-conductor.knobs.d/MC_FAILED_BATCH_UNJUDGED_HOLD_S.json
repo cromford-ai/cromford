@@ -1,0 +1,11 @@
+{
+  "env": "MC_FAILED_BATCH_UNJUDGED_HOLD_S",
+  "read_in": "bin/lib/mc-failed-batch.sh",
+  "type": "int",
+  "default": 86400,
+  "min": 0,
+  "max": 1209600,
+  "unit": "seconds",
+  "zero_means": "off",
+  "note": "BH-8186: the longest hold of a same-patch head whose failed batch no solo re-run judged (pending, could-not-run or none). Past it the record is cleared once (cleared:window) and the head may be enqueued. A solo re-run that reproduces the failure parks the head for the resolver whatever this says. Default 86400 s = the ticket's one day. Settings row: lane.merge-conductor.mc_failed_batch_unjudged_hold_s. 0 turns the hold off: no hold without a verdict."
+}

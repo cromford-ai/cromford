@@ -86,6 +86,9 @@ FLEET_PROJECTS=$("$H/bin/fleet-conf.sh" --projects 2>/dev/null)
 # files it has always counted.
 # shellcheck source=/dev/null
 [ -r "$H/bin/jobs-client.sh" ] && . "$H/bin/jobs-client.sh"
+# BH-7860: rrr_consumed, the owning box's rr-consumed row for a relay json.
+# shellcheck source=bin/lib/rr-relay.sh
+. "$H/bin/lib/rr-relay.sh" 2>/dev/null || . "$(dirname "${BASH_SOURCE[0]}")/lib/rr-relay.sh" 2>/dev/null || true
 # BH-5001: the held set as pool_holds rows, while pool_state_rows is on.
 # shellcheck source=bin/lib/pool-state-rows.sh
 . "$H/bin/lib/pool-state-rows.sh" 2>/dev/null || . "$(dirname "${BASH_SOURCE[0]}")/lib/pool-state-rows.sh" 2>/dev/null || true
@@ -219,7 +222,11 @@ fsp_project_row() {
     # inventing pending work out of a stat failure is how a portability bug
     # becomes a page.
     MT=$(stat -c %Y "$J" 2>/dev/null || stat -f %m "$J" 2>/dev/null || echo "$NOW")
-    [ $(( NOW - MT )) -gt 1800 ] && N=$((N+1))
+    [ $(( NOW - MT )) -gt 1800 ] || continue
+    # Consumed per the box's rr-consumed row: not pending. No row, an outage or
+    # no client counts it as before. Asked only for a json that would count.
+    command -v rrr_consumed >/dev/null 2>&1 && rrr_consumed "$P" "$J" >/dev/null && continue
+    N=$((N+1))
   done
   # The (project, box) pair the registry expects to tick (EXPECTED LANES below).
   # box-for.sh, not fleet-conf.sh directly: legacy rows carry no box column and
