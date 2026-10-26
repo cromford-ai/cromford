@@ -153,6 +153,7 @@ worker/jobs/test/pool-records-roundtrip.bh-7429.test.js:generic-api-key:19
 worker/jobs/test/pool-records.bh-7429.test.js:generic-api-key:16
 worker/jobs/test/pool-tick.bh-7709.test.js:generic-api-key:21
 worker/jobs/test/pr-record-intake.bh-8151.test.js:generic-api-key:22
+worker/jobs/test/pr-record-lists.bh-8452.test.js:generic-api-key:36
 worker/jobs/test/pr-records.bh-8067.test.js:generic-api-key:26
 worker/jobs/test/project-secrets.bh-8317.test.js:generic-api-key:19
 worker/jobs/test/project-secrets.bh-8317.test.js:generic-api-key:98

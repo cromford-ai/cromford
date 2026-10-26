@@ -16,13 +16,12 @@
 #   O1-O8  owed: lines and the operator's approval in the thread
 #   E1-E3  could-not-run paths hold nothing
 #   W1-W3  the catalog row, mode note, the line cap
-#   H1     the enqueue tick holds a PR whose plan VALIDATE fails, and the
-#          approved owed line (PSC_PR_REPO/N/PROJECT from the enqueue) lets it go
+#   H2     lgsc_run (bin/lib/lead-gates-selfcheck.sh, gates 75/78) passes
+#          PSC_PR_REPO, PSC_PR_N and PSC_PROJECT to psc_check
 #
 # Run from anywhere: HARNESS_TEST_SANDBOX=1 bash tests/pr-self-check-validate.bh-7072-test.sh
 set -uo pipefail
 . "$(dirname "$0")/lib/scratch.sh" || exit 1
-. "$(dirname "$0")/lib/lpp-stub.sh" || exit 1
 SRC=$(cd "$(dirname "$0")/.." && pwd)
 PASS=0; FAIL=0
 ok()  { PASS=$((PASS+1)); }
@@ -326,145 +325,17 @@ BR="$P_A1"; run "$WHY" "$T/cat/pr-self-check.tsv"
 BR="$P_A5"; OUT=$(PLAN_VALIDATE_MAX_LINES=1 PR_SELF_CHECK_CATALOG="$CAT" bash "$H/bin/pr-self-check.sh" check --repo "$R" --base main --head "$BR" --body "$WHY" --only "^$RULE\$" 2>/dev/null)
 { has "$OUT" "2 VALIDATE line(s) past the cap of 1" && has "$OUT" "T1 ok" && ! has "$OUT" "T2 ok"; } && ok || bad "W3 the cap reads 1 line and says 2 were not read: $OUT"
 
-# ── H1: the enqueue tick (the rig of tests/lead-enqueue-self-check.bh-5798-test.sh) ─
+# ── H2: the rig: a demo-os origin with one PR commit, its clone, a fleet.conf ─
 OR="$T/origin/demo-os.git"; WK="$T/work"
 git init -q --bare -b main "$OR"; git init -q -b main "$WK"
 echo base > "$WK/README"; git -C "$WK" add -A; git -C "$WK" commit -qm base
 git -C "$WK" checkout -qb pr; mkdir -p "$WK/bin" "$WK/.harness/specs/BH-41"
 printf '# plan\n\n## Files to touch\n- `bin/a.sh`\n\n### T7 — the knob file\n- VALIDATE: `test -f catalog/knob.json`\n- SATISFIES: x\n' > "$WK/.harness/specs/BH-41/plan.md"
 echo a > "$WK/bin/a.sh"; git -C "$WK" add -A; git -C "$WK" commit -qm "the pr"; C=$(git -C "$WK" rev-parse HEAD)
-git -C "$WK" checkout -qb pr2; mkdir -p "$WK/catalog"; echo '{}' > "$WK/catalog/knob.json"
-printf '# plan\n\n## Files to touch\n- `bin/a.sh`\n- `catalog/knob.json`\n\n### T7 — the knob file\n- VALIDATE: `test -f catalog/knob.json`\n- SATISFIES: x\n' > "$WK/.harness/specs/BH-41/plan.md"
-git -C "$WK" add -A; git -C "$WK" commit -qm "the pr, with the knob"; C2=$(git -C "$WK" rev-parse HEAD)
-git -C "$WK" push -q "$OR" main pr pr2
-Q="$T/hq"; mkdir -p "$Q/bin/lib/jobs" "$Q/state" "$Q/logs" "$Q/catalog/lanes.d" "$T/cfg" "$T/qrepos" "$T/log" "$T/qbin"
-printf '#!/bin/bash\nexit 0\n' > "$Q/bin/lead-verdict.sh"; printf '#!/bin/bash\nexit 0\n' > "$Q/bin/lane-alert.sh"
-chmod +x "$Q/bin/lead-verdict.sh" "$Q/bin/lane-alert.sh"
-scratch_install_closure bin/lead-review-enqueue.sh "$Q" >/dev/null || bad "H closure of bin/lead-review-enqueue.sh"
-scratch_install_closure bin/jobs-client.sh "$Q" >/dev/null || bad "H closure of bin/jobs-client.sh"
-scratch_install_closure bin/lead-review.sh "$Q" >/dev/null || bad "H closure of bin/lead-review.sh"
-cp "$SRC/bin/lib/plan-validate.py" "$Q/bin/lib/plan-validate.py"
-cp "$SRC/catalog/lanes.d/_lib.json" "$SRC/catalog/lanes.d/_lib.lead-delta.json" "$Q/catalog/lanes.d/"
-LPPF="$T/lpp.json"; LPPDOWN="$T/lpp-down"
-set -f; lpp_set "$LPPF" example-org/cromford $(cat "$SRC/tests/fixtures/lead-protected-paths.bh-4148.txt"); set +f
-lpp_install "$T/qbin" "$LPPF" "$LPPDOWN"
-cp "$SRC/catalog/pr-self-check.tsv" "$Q/catalog/"; cp -r "$SRC/catalog/pr-self-check.d" "$Q/catalog/"
-printf 'lead-test-token\n' > "$T/cfg/token"; chmod 600 "$T/cfg/token"
+git -C "$WK" push -q "$OR" main pr
+Q="$T/hq"; mkdir -p "$Q" "$T/qrepos"
 printf 'demo-os example-org/demo-os https://demo.test /api 3 box-hub\n' > "$Q/fleet.conf"
 git clone -q "$OR" "$T/qrepos/demo-os"
-printf 'queue_rules:\n  - name: default\n    queue_conditions:\n      - check-success = "CI"\n' | base64 | tr -d '\n' > "$T/mergify.b64"
-cat > "$T/qbin/curl" <<EOF
-#!/bin/bash
-m=GET; body=""; url=""; prev=""; hdrs=""
-for a in "\$@"; do
-  case "\$prev" in
-    -X) m="\$a" ;;
-    --data-binary|-d|--data) body="\$a" ;;
-    -H) case "\$a" in @*) hdrs="\$hdrs\$(cat "\${a#@}")"\$'\n' ;; *) hdrs="\$hdrs\$a"\$'\n' ;; esac ;;
-  esac
-  case "\$a" in http*) url="\$a" ;; esac
-  prev="\$a"
-done
-case "\$body" in @*) body=\$(cat "\${body#@}") ;; esac
-lead=0; grep -q '^x-lead-verdict-token: lead-test-token' <<<"\$hdrs" && lead=1
-p="\${url#https://jobs.test}"
-code=200; out='{}'
-case "\$m \$p" in
-$(lpp_curl_case m url body)
-  "GET /api/verdict?pr="*)
-    n="\${p##*%2F}"
-    if [ -f "$T/jv/\$n.json" ]; then out=\$(cat "$T/jv/\$n.json"); else code=404; out='{"error":"no job for this pr"}'; fi ;;
-  "GET /api/verdicts?"*standing_only=1*)
-    h=\$(printf '%s' "\$p" | tr '&?' '\n\n' | sed -n 's/^head_sha=//p')
-    out=\$(jq -c --arg h "\$h" '{standing:([.rows[] | select(.head_sha == \$h and (.source == "lead" or .source == "human"))] | last // null),
-      rows:[], truncated:false}' "$T/vrows.json") ;;
-  "GET /api/verdicts?"*) out=\$(cat "$T/vrows.json") ;;
-  "GET /api/settings/"*)
-    k="\${p#/api/settings/}"
-    if [ -f "$T/set/\$k" ]; then out=\$(jq -nc --arg k "\$k" --arg v "\$(cat "$T/set/\$k")" '{setting:{key:\$k,value:\$v}}')
-    else code=404; out='{"error":"no such setting"}'; fi ;;
-  "POST /api/risk-tiers") code=201; out='{"ok":true}' ;;
-  "POST /api/lead-reviews")
-    h=\$(jq -r .head_sha <<<"\$body")
-    if [ "\$lead" != 1 ]; then code=403; out='{"error":"needs the lead token"}'
-    else printf '%s\n' "\$body" >> "$T/log/created"
-      code=201; out=\$(jq -c '{request:(. + {id:"lr-9", status:"requested"})}' <<<"\$body"); fi ;;
-  *) code=404; out='{"error":"unknown endpoint","worker":"harness-jobs"}' ;;
-esac
-printf '%s\n%s' "\$out" "\$code"
-EOF
-cat > "$T/qbin/gh" <<EOF
-#!/bin/bash
-H=\$(cat "$T/qhead")
-case "\$*" in
-  *"api rate_limit"*)
-    echo '{"resources":{"core":{"remaining":5000,"limit":5000,"reset":2000000000},"graphql":{"remaining":5000,"limit":5000,"reset":2000000000}}}' ;;
-  *"-X GET repos/example-org/demo-os/pulls?"*)
-    printf 'HTTP/2 200\r\n\r\n'
-    jq -nc --arg h "\$H" '[{number:41, html_url:"https://github.com/example-org/demo-os/pull/41", title:"BH-41: t", draft:false, state:"open",
-      user:{login:"operator",type:"User"}, head:{sha:\$h,ref:"ticket/bh-41"}, base:{ref:"main"}}]' ;;
-  *"-X GET repos/example-org/demo-os/pulls/41"*)
-    printf 'HTTP/2 200\r\n\r\n'; jq -nc --arg s "\$H" --rawfile b "$T/prbody" '{head:{sha:\$s,ref:"ticket/bh-41"},base:{ref:"main"},title:"BH-41: t",user:{login:"operator"},body:\$b}' ;;
-  *"-X GET repos/example-org/demo-os/issues/41/comments"*)
-    echo read >> "$T/log/comment-reads"
-    printf 'HTTP/2 200\r\n\r\n'; cat "$T/thread.json" 2>/dev/null || echo '[]' ;;
-  *"-X POST repos/example-org/demo-os/issues/41/comments"*)
-    echo post >> "$T/log/comments"
-    f=\$(printf '%s' "\$*" | grep -oE 'body=@[^ ]+' | cut -c7-); cat "\$f" >> "$T/log/comment-bodies" 2>/dev/null
-    printf 'HTTP/2 201\r\n\r\n{"id":1}\n' ;;
-  *"-X GET repos/example-org/demo-os/contents/.mergify.yml"*)
-    printf 'HTTP/2 200\r\n\r\n'; jq -nc --arg c "\$(cat "$T/mergify.b64")" '{content:\$c, encoding:"base64"}' ;;
-  *"-X GET repos/example-org/demo-os/commits/"*"/check-runs"*)
-    printf 'HTTP/2 200\r\n\r\n'
-    jq -nc --arg h "\$H" '{total_count:1, check_runs:[{name:"CI", head_sha:\$h, status:"completed", conclusion:"success", app:{slug:"github-actions"}}]}' ;;
-  *"-X GET repos/example-org/demo-os/compare/"*)
-    printf 'HTTP/2 200\r\n\r\n{"total_commits":1,"commits":[{"parents":[{"sha":"p"}],"commit":{"message":"fix: outside"}}],"files":[]}\n' ;;
-esac
-exit 0
-EOF
-chmod +x "$T/qbin/curl" "$T/qbin/gh"
-QLOG="$Q/logs/lead-review-enqueue.log"
-approve() { # approve <head> <body-text>
-  rm -f "$T/log"/* "$QLOG" "$T/thread.json"
-  scratch_rm "$T/set"; mkdir -p "$T/set"
-  scratch_rm "$Q/state"; mkdir -p "$Q/state"; echo box-hub > "$Q/state/box-name"
-  scratch_rm "$T/jv"; mkdir -p "$T/jv"
-  echo "$1" > "$T/qhead"; printf '%s\n' "$2" > "$T/prbody"
-  jq -nc --arg s "$1" '{verdict:"APPROVE", tier:"2", provenance:"-", merge_sha:null, job_id:"job-1", reviewed_sha:$s,
-    artifacts:[{artifact_kind:"verdict", detail:({tier:"2", reviewed_sha:$s, settled:true}|tojson)}]}' > "$T/jv/41.json"
-  jq -nc --arg h "$1" '{rows:[{id:4,repo:"example-org/demo-os",pr:41,head_sha:$h,source:"box",verdict:"APPROVE",note:""}],truncated:false}' > "$T/vrows.json"
-}
-tick() {
-  ( cd "$T" && env -u GHT PATH="$T/qbin:$PATH" HARNESS="$Q" REPOS_ROOT="$T/qrepos" FLEET_CONF="$Q/fleet.conf" \
-      LEAD_VERDICT_TOKEN_FILE="$T/cfg/token" LEAD_REVIEW_AUTO_REPOS=example-org/demo-os \
-      LEAD_REVIEW_ENQUEUE_MAX_PER_TICK=5 LEAD_REVIEW_MAX_PER_PR_DAY=4 JOBS_URL=https://jobs.test \
-      HARNESS_SECRET=test-secret JOBS_RETRIES=0 GH_ETAG=0 \
-      bash -c 'unset -f gh_rest setting_get; exec bash "$1/bin/lead-review-enqueue.sh" tick' _ "$Q" ) > "$T/out" 2>&1; RC=$?
-}
-cnt() { [ -f "$T/log/$1" ] && wc -l < "$T/log/$1" | tr -d ' ' || echo 0; }
-HB="Refs #41
-
-## Why
-The knob file was missing, and nothing said so before the review.
-
-## Acceptance self-check
-- [x] a test
-
-<!-- evidence-head: $C -->"
-approve "$C" "$HB"; tick
-{ [ "$(cnt created)" = 0 ] && [ "$(cnt comments)" = 1 ] && grep -q "plan-validate: T7: .*catalog/knob.json.*missing at head" "$T/log/comment-bodies"; } \
-  && ok || bad "H1 a failing plan VALIDATE holds the review: created=$(cnt created) comments=$(cnt comments) bodies=$(cat "$T/log/comment-bodies" 2>/dev/null) log=$(tail -3 "$QLOG" 2>/dev/null) out=$(tail -5 "$T/out")"
-approve "$C2" "${HB//$C/$C2}"; tick
-{ [ "$(cnt created)" = 1 ] && [ "$(cnt comments)" = 0 ]; } \
-  && ok || bad "H1b the same PR with the knob committed is requested: created=$(cnt created) comments=$(cnt comments) $(tail -3 "$QLOG" 2>/dev/null)"
-approve "$C" "$HB
-
-owed: T7 the knob lands with BH-42"
-echo operator > "$T/set/trigger.actors.demo-os"
-jq -nc '[{user:{login:"operator"}, body:"approve owed: T7"}]' > "$T/thread.json"
-tick
-{ [ "$(cnt created)" = 1 ] && [ "$(cnt comment-reads)" -ge 1 ]; } \
-  && ok || bad "H1c an approved owed line (the enqueue passes the PR and project) is requested: created=$(cnt created) reads=$(cnt comment-reads) comments=$(cat "$T/log/comment-bodies" 2>/dev/null) $(tail -3 "$QLOG" 2>/dev/null)"
 
 # ── H2: gates 75/78 (lgsc_run) pass the PR and the project to psc_check too ──
 mkdir -p "$T/lgs"; jq -nc '{body:"x", base:{ref:"main"}, title:"BH-41: t"}' > "$T/lgs/pr.json"

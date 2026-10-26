@@ -59,9 +59,46 @@
 #       BH-8334: the resolved PR_RECORD_HEAD_FALLBACK_MAX_AGE_S (default 900,
 #       0 = never) as a non-negative integer on stdout.
 #
+#   pr_record_list <owner/repo> <open|merged|closed> <out-file> [need-csv]
+#       BH-8452: the record's list of the repo's PRs in that state. ONE jobs
+#       GET (/api/pr-records?repo=&state=[&need=]), never a GitHub call, never
+#       a write. rc 0: <out-file> holds the rows array (keys number title
+#       head_ref head_sha base_ref author labels body mergeable_state
+#       updated_at created_at url draft), nothing on stdout, no log line. The
+#       list is trusted only when ALL hold: the last full GitHub list write
+#       (its sync stamp) is 0..PR_RECORD_LIST_MAX_AGE_S seconds old on the
+#       worker's clock, the page is not truncated, no record of the repo was
+#       marked unknown by that last list write (`unknown` is 0: such a PR is
+#       not in the rows, and a reader would take it as "no PR"), and no
+#       <need-csv> field is null on a row. On rc 0, <out-file>.sync holds the
+#       stamp's synced_at (ISO), so a caller can ask the wake feed what
+#       changed since. Else rc 1, <out-file> and <out-file>.sync are empty, stdout is one word,
+#       and logs/pr-record.log gets `list <repo> state=<s> miss=<word>`:
+#         off          the knob is 0 (no request at all)
+#         unreadable   the jobs read failed
+#         malformed    the answer is not a list answer (an old worker)
+#         no-sync      no full list was ever written for the repo
+#         stale        the stamp is older than the knob, or in the future
+#         truncated    more rows exist than the page holds
+#         unknown      the last list write marked a record of the repo unknown
+#         field:<f>    a needed field is null on a row
+#       rc 2: bad args, no request.
+#
+#   pr_record_list_sync <owner/repo> <state> <rest-pulls-json-file> [at]
+#       BH-8452: writes one FULL GitHub list read (a REST `pulls` array, the
+#       shape gh_rest_pr_list_all prints) into the record: POST
+#       /api/pr-record-lists. <at> is the ISO time the read started (default
+#       the worker's clock). The worker marks an open record that is not in
+#       the list unknown and stamps the list. Call it only with an uncut list.
+#       rc 0 on a 200; else rc 1 and one `list-sync <repo> failed` log line.
+#
+#   pr_record_list_max_age
+#       BH-8452: the resolved PR_RECORD_LIST_MAX_AGE_S (default 900, 0 = off).
+#
 # The knob PR_RECORD_MAX_AGE_S (catalog/lanes.d/_lib.pr-record.json) is read
 # through lane_knob when the caller has it, else from the environment. So is
-# PR_RECORD_HEAD_FALLBACK_MAX_AGE_S (catalog/lanes.d/_lib.pr-record.knobs.d/).
+# PR_RECORD_HEAD_FALLBACK_MAX_AGE_S and PR_RECORD_LIST_MAX_AGE_S
+# (catalog/lanes.d/_lib.pr-record.knobs.d/).
 #
 # The root is ${HARNESS:-${H:-}}; with no root the jobs client cannot load, so
 # every put fails and every get reads GitHub.
@@ -72,6 +109,7 @@ _PRR_FIELDS="state draft head_ref base_ref head_sha base_sha mergeable_state lab
 _PRR_GH_FIELDS="state draft head_ref base_ref head_sha base_sha mergeable_state labels"
 _PRR_DEFAULT_MAX_AGE_S=900   # fallback only: the knob is PR_RECORD_MAX_AGE_S in catalog/lanes.d/_lib.pr-record.json
 _PRR_DEFAULT_HEAD_FALLBACK_S=900   # fallback only: the knob is PR_RECORD_HEAD_FALLBACK_MAX_AGE_S in catalog/lanes.d/_lib.pr-record.knobs.d/
+_PRR_DEFAULT_LIST_MAX_AGE_S=900   # fallback only: the knob is PR_RECORD_LIST_MAX_AGE_S in catalog/lanes.d/_lib.pr-record.knobs.d/
 
 _prr_root() { local r="${HARNESS:-${H:-}}"; [ -n "$r" ] || return 1; printf '%s' "$r"; }
 
@@ -139,6 +177,70 @@ _prr_max_age() { _prr_knob PR_RECORD_MAX_AGE_S "$_PRR_DEFAULT_MAX_AGE_S"; }
 pr_record_max_age() { _prr_max_age; }
 
 pr_record_head_fallback_max_age() { _prr_knob PR_RECORD_HEAD_FALLBACK_MAX_AGE_S "$_PRR_DEFAULT_HEAD_FALLBACK_S"; }
+
+pr_record_list_max_age() { _prr_knob PR_RECORD_LIST_MAX_AGE_S "$_PRR_DEFAULT_LIST_MAX_AGE_S"; }
+
+pr_record_list() {
+  local repo="${1:-}" st="${2:-}" outf="${3:-}" need="${4:-}" lr max q out why="" age
+  [[ "$repo" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] || return 2
+  case "$st" in open|merged|closed) ;; *) return 2 ;; esac
+  [ -n "$outf" ] || return 2
+  [ -z "$need" ] || [[ "$need" =~ ^[a-z_]+(,[a-z_]+)*$ ]] || return 2
+  : > "$outf" || return 2
+  : > "$outf.sync" || return 2
+  lr=$(_prr_lower "$repo")
+  max=$(pr_record_list_max_age)
+  q="/api/pr-records?repo=$lr&state=$st"
+  [ -z "$need" ] || q="$q&need=$need"
+  if [ "$max" = 0 ]; then
+    why=off
+  elif ! _prr_client || ! out=$(_jobs_req GET "$q"); then
+    why=unreadable
+  elif ! jq -e '(.rows | type) == "array" and (.truncated | type) == "boolean" and has("sync") and has("missing") and (.unknown | type) == "number"' <<<"$out" >/dev/null 2>&1; then
+    why=malformed
+  elif jq -e '.sync == null' <<<"$out" >/dev/null 2>&1; then
+    why=no-sync
+  else
+    age=$(jq -r '.sync.age_s // empty' <<<"$out" 2>/dev/null)
+    if ! [[ "$age" =~ ^[0-9]{1,12}$ ]] || [ "$age" -gt "$max" ]; then
+      why=stale
+    elif jq -e '.truncated' <<<"$out" >/dev/null 2>&1; then
+      why=truncated
+    elif ! jq -e '.unknown == 0' <<<"$out" >/dev/null 2>&1; then
+      why=unknown
+    elif ! jq -e '.missing == null' <<<"$out" >/dev/null 2>&1; then
+      why="field:$(jq -r '.missing' <<<"$out" 2>/dev/null)"
+    fi
+  fi
+  if [ -z "$why" ] && jq -c '.rows' <<<"$out" > "$outf" 2>/dev/null && [ -s "$outf" ] \
+     && jq -r '.sync.synced_at | strings' <<<"$out" > "$outf.sync" 2>/dev/null && [ -s "$outf.sync" ]; then
+    return 0
+  fi
+  [ -n "$why" ] || why=malformed
+  : > "$outf"; : > "$outf.sync"
+  _prr_log "list $lr state=$st miss=$why"
+  printf '%s\n' "$why"
+  return 1
+}
+
+pr_record_list_sync() {
+  local repo="${1:-}" st="${2:-}" inf="${3:-}" at="${4:-}" lr body out
+  [[ "$repo" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] && [ -n "$st" ] && [ -r "$inf" ] || return 1
+  lr=$(_prr_lower "$repo")
+  body=$(jq -c --arg r "$lr" --arg s "$st" --arg at "$at" '
+    {repo: $r, state: $s,
+     rows: [ .[] | {number, fields: ({state: $s, draft, title, author: .user.login, body: (.body // ""),
+       pr_created_at: .created_at, url: .html_url, pr_updated_at: .updated_at,
+       head_ref: .head.ref, head_sha: .head.sha, base_ref: .base.ref, base_sha: .base.sha,
+       labels: [ (.labels // [])[] | .name ]} | with_entries(select(.value != null)))} ]}
+    + (if $at != "" then {at: $at} else {} end)' "$inf" 2>/dev/null)
+  if [ -z "$body" ] || ! _prr_client || ! out=$(_jobs_req POST /api/pr-record-lists "$body") \
+     || ! jq -e '.synced_at | strings' <<<"$out" >/dev/null 2>&1; then
+    _prr_log "list-sync $lr failed"
+    return 1
+  fi
+  return 0
+}
 
 pr_record_peek() {
   local repo="${1:-}" n="${2:-}" lr out

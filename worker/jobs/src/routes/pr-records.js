@@ -17,8 +17,24 @@
 //   200 {row, age_s}. row is null when the PR has no record (200, so "absent"
 //   is never a transport error). age_s is the worker's now - refreshed_at, so
 //   a reader judges age on one clock. One statement, the unique index.
+//
+// GET /api/pr-records?repo=&state=open|merged|closed[&since=<at>][&need=<k,...>]
+//   BH-8452: the list read (no `number`). 200 {rows, truncated, sync, missing, unknown}.
+//   rows: every record of the repo in that state, LIST_KEYS only, newest
+//   pr_updated_at first, at most the pr_records.list_limit settings row.
+//   truncated: more rows exist. sync: {synced_at, age_s, rows} of the last
+//   full GitHub list write (POST /api/pr-record-lists), or null: without it a
+//   reader cannot know the record holds every PR. missing: the first `need`
+//   key that is NULL on a returned row, or null. unknown: how many records of
+//   the repo the LAST sync marked state NULL (not in its list, so closed,
+//   merged, or open but absent from a lagging GitHub answer). A list reader
+//   must treat unknown > 0 as incomplete: a NULL row is not in `rows`, and
+//   "not in rows" reads as "no PR". The next sync either lists the PR (open
+//   again) or leaves its mark older than the new stamp (no longer counted).
+//   ONE batch, three statements.
 import { d1Guarded, json } from "../lib/http.js";
-import { ensureTable } from "../lib/core.js";
+import { ensureColumns, ensureTable } from "../lib/core.js";
+import { settingsRows } from "../lib/settings-cache.js";
 
 const SHA_RE = /^[0-9a-f]{40}$/;
 const WORD_RE = /^[a-z_]{1,32}$/;
@@ -31,11 +47,19 @@ const LABELS_MAX = 100;
 const NAME_MAX = 100;
 const REF_MAX = 255;
 export const CHECKS_MAX = 100;
+// BH-8452, the same kind of bounds: GitHub's PR body limit (65,536
+// characters), a login of at most 39 characters (+ "[bot]"), a title far above
+// GitHub's own 256, and a URL length browsers accept.
+const BODY_MAX = 65536;
+const TITLE_MAX = 1024;
+const URL_MAX = 2048;
+const LOGIN_RE = /^[A-Za-z0-9-]{1,39}(\[bot\])?$/;
 
 const isObj = (v) => v !== null && typeof v === "object" && !Array.isArray(v);
 const ref = (v) => (typeof v === "string" && v.length >= 1 && v.length <= REF_MAX ? v : undefined);
 const sha = (v) => (typeof v === "string" && SHA_RE.test(v.toLowerCase()) ? v.toLowerCase() : undefined);
 const word = (v) => (typeof v === "string" && WORD_RE.test(v) ? v : undefined);
+const isoAt = (v) => (typeof v === "string" && AT_RE.test(v) && !Number.isNaN(Date.parse(v)) ? v : undefined);
 
 // column -> check. A check returns the value to store, or undefined for a 400.
 // The SET list of the upsert is built from THIS list, never from request keys.
@@ -54,6 +78,13 @@ export const VALUE_FIELDS = {
   review_decision: word,
   queue_state: word,
   last_comment_id: (v) => (Number.isSafeInteger(v) && v > 0 ? v : undefined),
+  // BH-8452: the list readers' columns (core.d/bh-8452-pr-records-list.js).
+  title: (v) => (typeof v === "string" && v.length >= 1 && v.length <= TITLE_MAX ? v : undefined),
+  author: (v) => (typeof v === "string" && LOGIN_RE.test(v) ? v : undefined),
+  body: (v) => (typeof v === "string" && v.length <= BODY_MAX ? v : undefined),
+  url: (v) => (typeof v === "string" && v.startsWith("https://github.com/") && v.length <= URL_MAX ? v : undefined),
+  pr_created_at: isoAt,
+  pr_updated_at: isoAt,
 };
 const JSON_FIELDS = ["labels", "checks", "fields_at"];
 // The columns where null is a value: "unknown, ask GitHub on the next read"
@@ -61,6 +92,75 @@ const JSON_FIELDS = ["labels", "checks", "fields_at"];
 export const NULLABLE_FIELDS = ["mergeable_state"];
 
 export const GET_SQL = "SELECT * FROM pr_records WHERE repo = ?1 AND number = ?2";
+
+// BH-8452: the list read. The keys a list reader gets (created_at and
+// updated_at are GitHub's times, stored as pr_created_at / pr_updated_at).
+export const LIST_KEYS = ["number", "title", "head_ref", "head_sha", "base_ref", "author", "labels", "body",
+  "mergeable_state", "updated_at", "created_at", "url", "draft"];
+export const LIST_STATES = ["open", "merged", "closed"];
+// Binds: ?1 repo, ?2 state, ?3 since or NULL, ?4 limit + 1 (so truncated is exact).
+// Index: idx_pr_records_repo_state_upd (repo, state, pr_updated_at), test X1.
+export const LIST_SQL = `SELECT number, title, head_ref, head_sha, base_ref, author, labels, body, mergeable_state,
+    pr_updated_at AS updated_at, pr_created_at AS created_at, url, draft
+  FROM pr_records WHERE repo = ?1 AND state = ?2 AND (?3 IS NULL OR pr_updated_at >= ?3)
+  ORDER BY pr_updated_at DESC, number DESC LIMIT ?4`;
+// Index: ux_pr_record_lists_repo_state.
+export const SYNC_SQL = "SELECT synced_at, rows FROM pr_record_lists WHERE repo = ?1 AND state = ?2";
+// Binds: ?1 repo, ?2 state. The records the last sync of (repo, state) marked
+// unknown: ABSENT_SQL (routes/pr-record-lists.js) sets state NULL and
+// fields_at.state = the sync's at, which is synced_at when it is the newest.
+// Index: idx_pr_records_repo_state_upd (repo, state IS NULL), the stamp by
+// ux_pr_record_lists_repo_state; test X1.
+export const UNKNOWN_SQL = `SELECT COUNT(*) AS n FROM pr_records
+  WHERE repo = ?1 AND state IS NULL
+    AND json_extract(fields_at, '$.state') >= (SELECT synced_at FROM pr_record_lists WHERE repo = ?1 AND state = ?2)`;
+// The settings row pr_records.list_limit (seed schema.d/202610261210-bh-8452-
+// pr-record-lists.sql); this is its fallback when the row is absent or not an
+// integer 1..LIST_LIMIT_MAX.
+const LIST_LIMIT_KEY = "pr_records.list_limit";
+const LIST_LIMIT_DEFAULT = 500;
+const LIST_LIMIT_MAX = 5000;
+
+// The pr_records.list_limit row, or its fallback.
+export async function listLimit(env) {
+  const row = (await settingsRows(env)).byKey.get(LIST_LIMIT_KEY);
+  const v = row ? String(row.value).trim() : "";
+  const n = /^\d{1,4}$/.test(v) ? Number(v) : NaN;
+  return n >= 1 && n <= LIST_LIMIT_MAX ? n : LIST_LIMIT_DEFAULT;
+}
+
+// A list row as it leaves the worker: labels parsed, nothing else changed.
+function listRow(r) {
+  const o = { ...r };
+  if (typeof o.labels === "string") { try { o.labels = JSON.parse(o.labels); } catch { /* left as stored */ } }
+  return o;
+}
+
+async function listRead(env, url, t, repo, state) {
+  if (!LIST_STATES.includes(state)) return json(400, { error: "invalid_field", field: "state" });
+  const since = url.searchParams.get("since");
+  if (since !== null && isoAt(since) === undefined) return json(400, { error: "invalid_field", field: "since" });
+  const needRaw = url.searchParams.get("need");
+  const need = needRaw === null || needRaw === "" ? [] : needRaw.split(",");
+  if (need.some((k) => !LIST_KEYS.includes(k))) return json(400, { error: "invalid_field", field: "need" });
+  await ensureTable(env, "pr_record_lists");
+  const limit = await listLimit(env);
+  const [list, sync, unk] = await env.DB.batch([
+    env.DB.prepare(LIST_SQL).bind(repo, state, since, limit + 1),
+    env.DB.prepare(SYNC_SQL).bind(repo, state),
+    env.DB.prepare(UNKNOWN_SQL).bind(repo, state),
+  ]);
+  const all = (list && list.results) || [];
+  const rows = all.slice(0, limit).map(listRow);
+  const s = sync && sync.results && sync.results[0];
+  const age = s ? Math.floor((Date.parse(t) - Date.parse(s.synced_at)) / 1000) : null;
+  const missing = need.find((k) => rows.some((r) => r[k] === null || r[k] === undefined)) ?? null;
+  const u = unk && unk.results && unk.results[0];
+  return json(200, {
+    rows, truncated: all.length > limit, missing, unknown: (u && Number(u.n)) || 0,
+    sync: s ? { synced_at: s.synced_at, age_s: Number.isFinite(age) ? age : null, rows: s.rows } : null,
+  });
+}
 
 // {repo, number, source, at, fields} with checked values, or {error, field}.
 export function checkPut(body, now) {
@@ -125,8 +225,11 @@ export function outRow(r) {
 const guarded = (fn) => (ctx) =>
   d1Guarded("pr_records", async () => {
     await ensureTable(ctx.env, "pr_records");
+    await ensureColumns(ctx.env, "pr_records");
     return fn(ctx);
   });
+
+export { guarded };
 
 export const routes = [
   [
@@ -150,6 +253,9 @@ export const routes = [
       const repo = (url.searchParams.get("repo") || "").trim().toLowerCase();
       const n = Number(url.searchParams.get("number"));
       if (!REPO_RE.test(repo)) return json(400, { error: "invalid_field", field: "repo" });
+      if (!url.searchParams.has("number") && url.searchParams.has("state")) {
+        return listRead(env, url, t, repo, url.searchParams.get("state"));
+      }
       if (!Number.isSafeInteger(n) || n < 1) return json(400, { error: "invalid_field", field: "number" });
       const r = await env.DB.prepare(GET_SQL).bind(repo, n).first();
       const row = outRow(r);

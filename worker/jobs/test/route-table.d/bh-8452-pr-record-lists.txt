@@ -1,0 +1,5 @@
+# BH-8452 (C0): one full GitHub open-PR list written into the PR record, and
+# its sync stamp. Written by bin/lib/pr-record.sh pr_record_list_sync after a
+# GitHub list read; the stamp is read back by GET /api/pr-records?state=.
+# Bearer-gated.
+POST /api/pr-record-lists

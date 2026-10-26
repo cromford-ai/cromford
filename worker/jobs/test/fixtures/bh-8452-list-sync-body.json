@@ -1,0 +1,11 @@
+{"repo": "example-org/project-5", "state": "open", "at": "2026-10-26T11:30:00Z", "rows": [
+  {"number": 101, "fields": {"state": "open", "draft": false, "title": "TK-11: wip", "author": "operator", "body": "",
+    "pr_created_at": "2026-10-26T09:00:00Z", "url": "https://github.com/example-org/project-5/pull/101", "pr_updated_at": "2026-10-26T11:00:00Z",
+    "head_ref": "ticket/TK-11", "head_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "base_ref": "main", "base_sha": "cccccccccccccccccccccccccccccccccccccccc", "labels": ["ai-build"]}},
+  {"number": 102, "fields": {"state": "open", "draft": true, "title": "a fix", "author": "dependabot[bot]", "body": "Closes #12",
+    "pr_created_at": "2026-10-25T09:00:00Z", "url": "https://github.com/example-org/project-5/pull/102", "pr_updated_at": "2026-10-26T10:00:00Z",
+    "head_ref": "feature/x", "head_sha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", "base_ref": "main", "base_sha": "cccccccccccccccccccccccccccccccccccccccc", "labels": []}},
+  {"number": 103, "fields": {"state": "open", "draft": false, "title": "chore: deps", "author": "cromford-builders", "body": "",
+    "pr_created_at": "2026-10-24T09:00:00Z", "url": "https://github.com/example-org/project-5/pull/103", "pr_updated_at": "2026-10-26T09:30:00Z",
+    "head_ref": "deps/bump", "head_sha": "cccccccccccccccccccccccccccccccccccccccc", "base_ref": "main", "base_sha": "cccccccccccccccccccccccccccccccccccccccc", "labels": ["deps", "tier-1"]}}
+]}

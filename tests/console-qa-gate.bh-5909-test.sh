@@ -2,14 +2,14 @@
 # tests/console-qa-gate.bh-5909-test.sh — BH-5909 slice 2: the lead gate for
 # console UI changes. A harness PR that changes console-ui/src/ with no QA: PASS
 # comment naming its head gets a lead BLOCK that names the head and the missing
-# comment, and a QA: PASS posted later clears it with no push.
+# comment, and a QA: PASS posted later clears it with no push (cqg_clear_block,
+# Q9; the hub reconcile sweep that calls it is pinned by
+# tests/lead-hub-reconcile.bh-7235-test.sh Q1-Q2).
 #   Q1-Q9   bin/lib/console-qa-gate.sh itself, with gh_rest, _jobs_req and
 #           lr_post_lead as shell stubs
 #   L1-L5   the REAL bin/lead-review.sh tick, built the way
 #           tests/lead-review-rules-pack.bh-3546-test.sh builds it (curl, gh,
 #           agent-call and rules-pack stubbed)
-#   E1-E3   the REAL bin/lead-review-enqueue.sh tick, built the way
-#           tests/lead-review-enqueue.bh-3545-test.sh builds it
 #   B1-B2   the REAL br_lead_pick, lifted from bin/blocked-resolver.sh the way
 #           tests/lead-block-fix-round.bh-3780-test.sh lifts it
 # Run from anywhere: HARNESS_TEST_SANDBOX=1 bash tests/console-qa-gate.bh-5909-test.sh
@@ -257,83 +257,6 @@ jq -nc --arg s "$DSHA" '{requests:[{id:"lr-2",repo:"example-org/cromford",pr:42,
 ltick LEAD_REVIEW_CONSOLE_QA_GATE=1
 [ "$(agents)" = 1 ] && ok || bad "L7 a doc head with the lib missing must still be reviewed ($(agents) calls)"
 mv "$T/cqg.away" "$H/bin/lib/console-qa-gate.sh"
-
-# ============================================================================
-# E — the real bin/lead-review-enqueue.sh: a PASS clears the gate BLOCK, no push
-# ============================================================================
-EH="$T/eh"; mkdir -p "$EH/bin/lib/jobs" "$EH/state" "$EH/logs" "$T/efake" "$T/elog" "$T/cfg"
-printf 'lead-test-token-fixture\n' > "$T/cfg/token"; chmod 600 "$T/cfg/token"
-printf 'cromford example-org/cromford https://bh.test /api 1 box-hub\n' > "$EH/fleet.conf"
-cat > "$T/efake/curl" <<EOF
-#!/bin/bash
-m=GET; body=""; url=""; prev=""; hdrs=""
-for a in "\$@"; do
-  case "\$prev" in
-    -X) m="\$a" ;;
-    --data-binary|-d|--data) body="\$a" ;;
-    -H) case "\$a" in @*) hdrs="\$hdrs\$(cat "\${a#@}")"\$'\n' ;; *) hdrs="\$hdrs\$a"\$'\n' ;; esac ;;
-  esac
-  case "\$a" in http*) url="\$a" ;; esac
-  prev="\$a"
-done
-lead=0; grep -q '^x-lead-verdict-token: lead-test-token-fixture' <<<"\$hdrs" && lead=1
-p="\${url#https://jobs.test}"
-printf '%s %s %s lead=%s\n' "\$m" "\$p" "\$body" "\$lead" >> "$T/elog/worker"
-code=200; out='{}'
-case "\$m \$p" in
-  "GET /api/verdict?pr="*) code=404; out='{"error":"no job for this pr"}' ;;
-  "GET /api/verdicts?"*) out=\$(jq -nc --argjson s "\$(cat "$T/estanding")" '{standing:\$s, rows:[], truncated:false}') ;;
-  "POST /api/lead-reviews/"*/reset) [ "\$lead" = 1 ] || code=403; out='{"request":{"id":"lr-9","status":"requested","reset_count":1}}' ;;
-  "GET /api/settings/"*) code=404; out='{"error":"no setting"}' ;;
-  *) code=404; out='{"error":"unknown endpoint","worker":"harness-jobs"}' ;;
-esac
-printf '%s\n%s' "\$out" "\$code"
-EOF
-cat > "$T/efake/gh" <<EOF
-#!/bin/bash
-printf '%s\n' "\$*" >> "$T/elog/gh"
-case "\$*" in
-  *"api rate_limit"*)
-    echo '{"resources":{"core":{"remaining":5000,"limit":5000,"reset":2000000000},"graphql":{"remaining":5000,"limit":5000,"reset":2000000000}}}' ;;
-  *"-X GET repos/example-org/cromford/pulls?"*)
-    printf 'HTTP/2 200\r\n\r\n'
-    jq -nc --arg h "$HEAD" '[{number:7, html_url:"https://github.com/example-org/cromford/pull/7", title:"t", draft:false, state:"open",
-      user:{login:"operator",type:"User"}, head:{sha:\$h,ref:"ticket/bh-7"}, base:{ref:"main"}}]' ;;
-  *"-X GET repos/example-org/cromford/pulls/7"*)
-    printf 'HTTP/2 200\r\n\r\n'; jq -nc --arg s "$HEAD" '{head:{sha:\$s},base:{ref:"main"}}' ;;
-  *"-X GET repos/example-org/cromford/issues/7/comments"*)
-    printf 'HTTP/2 200\r\n\r\n'; cat "$T/ecomments.json" ;;
-esac
-exit 0
-EOF
-printf '#!/bin/bash\nprintf "%%s\\n" "$*" >> "%s/elog/alerts"\nexit 0\n' "$T" > "$EH/bin/lane-alert.sh"
-chmod +x "$T/efake/curl" "$T/efake/gh" "$EH/bin/lane-alert.sh"
-scratch_install_closure bin/lead-review-enqueue.sh "$EH" >/dev/null || bad "closure of bin/lead-review-enqueue.sh"
-scratch_install_closure bin/jobs-client.sh "$EH" >/dev/null || bad "closure of bin/jobs-client.sh"
-ereset() { rm -f "$T/elog"/* "$EH/logs"/*; scratch_rm "$EH/state"; mkdir -p "$EH/state"; echo box-hub > "$EH/state/box-name"; echo '[]' > "$T/ecomments.json"; echo "$GATE_ROW" | jq -c .standing > "$T/estanding"; }
-etick() { ( cd "$T" && env PATH="$T/efake:$PATH" HARNESS="$EH" HARNESS_SECRET=fixture-secret JOBS_URL=https://jobs.test \
-  JOBS_RETRIES=0 TMPDIR="$T/tmp" LANE_GATE_DISABLE=1 LEAD_VERDICT_TOKEN_FILE="$T/cfg/token" FLEET_CONF="$EH/fleet.conf" \
-  GH_ETAG=0 LEAD_REVIEW_AUTO_REPOS=example-org/cromford HARNESS_SELF_APPS=cromford \
-  LEAD_REVIEW_ENQUEUE_MAX_PER_TICK=5 LEAD_REVIEW_MAX_PER_PR_DAY=4 \
-  bash "$EH/bin/lead-review-enqueue.sh" tick ) > "$T/out" 2>&1; RC=$?; }
-resets() { local n; n=$(grep -c '^POST /api/lead-reviews/lr-9/reset .* lead=1$' "$T/elog/worker" 2>/dev/null); echo "${n:-0}"; }
-
-# E1: the gate BLOCK stands and no PASS is posted: no reset
-ereset; etick
-[ "$RC" = 0 ] && ok || bad "E1 rc=$RC $(cat "$T/out")"
-[ "$(resets)" = 0 ] && ok || bad "E1 reset with no PASS: $(cat "$T/elog/worker")"
-# E2: the lane posts its PASS for this head: the next tick resets lr-9 with the lead token, once
-jq -nc --arg b "$(LANE_BODY "$HEAD" PASS)" '[{user:{login:"cromford[bot]",type:"Bot"},author_association:"NONE",body:$b,html_url:"https://github.com/x/pull/7#issuecomment-3"}]' > "$T/ecomments.json"
-etick
-[ "$(resets)" = 1 ] && ok || bad "E2 want one reset of lr-9 with the lead token: $(grep reset "$T/elog/worker" 2>/dev/null) log: $(tail -4 "$EH/logs/lead-review-enqueue.log" 2>/dev/null)"
-grep -q "lead review lr-9 reset" "$EH/logs/lead-review-enqueue.log" 2>/dev/null && ok || bad "E2 no log line for the reset"
-etick
-[ "$(resets)" = 1 ] && ok || bad "E2 a second tick reset again ($(resets))"
-# E3: a model's BLOCK on the head is never reset, PASS or not
-ereset; jq -nc '{verdict:"BLOCK",source:"lead",reviewer_model:"stub-model",note:"lead-review:lr-9"}' > "$T/estanding"
-jq -nc --arg b "$(LANE_BODY "$HEAD" PASS)" '[{user:{login:"cromford[bot]",type:"Bot"},author_association:"NONE",body:$b,html_url:"https://github.com/x/pull/7#issuecomment-3"}]' > "$T/ecomments.json"
-etick
-[ "$(resets)" = 0 ] && ok || bad "E3 a model's BLOCK was reset"
 
 # ============================================================================
 # B — the blocked-resolver briefs no fix round from a console-qa BLOCK

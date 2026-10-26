@@ -1,16 +1,15 @@
 #!/bin/bash
 # tests/pr-snapshot.bh-4658-test.sh — BH-4658 (BH-4656 part 1): the shared PR
-# snapshot library "$DIR/bin/lib/pr-snapshot.sh", its registry entry
-# "$DIR/catalog/lanes.d/_lib.pr-snapshot.json", and its first consumer
-# "$DIR/bin/lead-review-enqueue.sh", run WHOLE (`tick`).
+# snapshot library "$DIR/bin/lib/pr-snapshot.sh" and its registry entry
+# "$DIR/catalog/lanes.d/_lib.pr-snapshot.json", sourced by a driver (drv), and
+# its consumer on the worklist, gate 16 of bin/lead-review.sh (dispatcher section).
 #
-# A scratch harness carries the real libs. Stubbed:
+# A scratch harness carries the real lib closure. Stubbed:
 #   * gh   — rate_limit, the open PR list ($T/prs.json; a 403 rate limit when
 #            $T/list403 exists), pulls/<n> ($T/pr/<n>.json) and
 #            git/ref/heads/main (sha in $T/tip). Every argv is logged.
-#   * curl — the jobs worker, in the shape of the BH-3545 suite: job_verdict
-#            APPROVE from $T/jv/<n>.json, standing null, POST /api/lead-reviews
-#            201 (or existing:true for a head it already holds).
+#   * curl — logs every request to $T/log/worker and answers 404; the lib
+#            cases make no worker call.
 # Cache ages are set by rewriting open.meta / base-* epochs and `touch -d`,
 # never by sleeping.
 # Dispatcher section (BH-5874): gate 16, bin/lib/lead-gates.d/55-snapshot.sh,
@@ -41,15 +40,10 @@ bad() { FAIL=$((FAIL+1)); echo "FAIL: $1"; }
 command -v jq >/dev/null || { echo "jq missing — skipping"; exit 0; }
 command -v flock >/dev/null || { echo "flock missing — skipping"; exit 0; }
 
-H="$T/h"; mkdir -p "$H/bin/lib/jobs" "$H/state" "$H/logs" "$T/fakebin" "$T/log" "$T/tmp" "$T/cfg" "$T/pr" "$T/jv"
-# The lane and the jobs client with the bin/lib files each sources (BH-4552).
-scratch_install_closure bin/lead-review-enqueue.sh "$H" >/dev/null \
-  || { echo "FAIL: scratch_install_closure bin/lead-review-enqueue.sh"; exit 1; }
-scratch_install_closure bin/jobs-client.sh "$H" >/dev/null \
-  || { echo "FAIL: scratch_install_closure bin/jobs-client.sh"; exit 1; }
-printf 'lead-test-token\n' > "$T/cfg/token"; chmod 600 "$T/cfg/token"
-printf 'demo-os example-org/demo-os https://demo.test /api 3 box-hub\n' > "$H/fleet.conf"
-echo box-hub > "$H/state/box-name"
+H="$T/h"; mkdir -p "$H/bin/lib" "$H/state" "$H/logs" "$T/fakebin" "$T/log" "$T/tmp" "$T/pr"
+# The lib with the bin/lib files it sources (BH-4552).
+scratch_install_closure bin/lib/pr-snapshot.sh "$H" >/dev/null \
+  || { echo "FAIL: scratch_install_closure bin/lib/pr-snapshot.sh"; exit 1; }
 # The registry, composed from this checkout's catalog/lanes.d (never committed).
 HARNESS_TEST_SANDBOX=1 "$DIR/bin/lanes-build.sh" --root "$DIR" --to "$T/lanes.json" >/dev/null 2>&1 \
   || { echo "FAIL: bin/lanes-build.sh could not compose the registry"; exit 1; }
@@ -81,50 +75,20 @@ case "\$p" in
     printf 'HTTP/2 200\r\n\r\n'; cat "$T/pr/\$n.json" ;;
   repos/$SLUG/git/ref/heads/main)
     printf 'HTTP/2 200\r\n\r\n'; jq -nc --arg s "\$(cat "$T/tip")" '{ref:"refs/heads/main", object:{sha:\$s, type:"commit"}}' ;;
-  repos/$SLUG/compare/*)
-    printf 'HTTP/2 200\r\n\r\n{"total_commits":1,"commits":[{"parents":[{"sha":"p"}],"commit":{"message":"feat: the thing"}}]}\n' ;;
   *) printf 'HTTP/2 404\r\n\r\n{"message":"Not Found"}\n' ;;
 esac
 exit 0
 EOF
 cat > "$T/fakebin/curl" <<EOF
 #!/bin/bash
-m=GET; body=""; url=""; prev=""
-for a in "\$@"; do
-  case "\$prev" in -X) m="\$a" ;; --data-binary|-d|--data) body="\$a" ;; esac
-  case "\$a" in http*) url="\$a" ;; esac
-  prev="\$a"
-done
-case "\$body" in @*) body=\$(cat "\${body#@}") ;; esac
-p="\${url#https://jobs.test}"
-printf '%s %s %s\n' "\$m" "\$p" "\$body" >> "$T/log/worker"
-[ -f "$T/lrrows.json" ] || echo '[]' > "$T/lrrows.json"
-code=200; out='{}'
-case "\$m \$p" in
-  "GET /api/verdict?pr="*)
-    n="\${p##*%2F}"
-    if [ -f "$T/jv/\$n.json" ]; then out=\$(cat "$T/jv/\$n.json"); else code=404; out='{"error":"no job"}'; fi ;;
-  "GET /api/verdicts?"*) out='{"standing":null,"rows":[],"truncated":false}' ;;
-  "POST /api/lead-reviews")
-    have=\$(jq -c --argjson b "\$body" '[.[] | select(.repo == \$b.repo and .pr == \$b.pr and .head_sha == \$b.head_sha)] | first // empty' "$T/lrrows.json")
-    if [ -n "\$have" ]; then out=\$(jq -c '{request:., existing:true}' <<<"\$have")
-    else
-      row=\$(jq -c --arg id "lr-\$(jq length "$T/lrrows.json")" '. + {id:\$id, status:"requested"}' <<<"\$body")
-      jq -c --argjson r "\$row" '. + [\$r]' "$T/lrrows.json" > "$T/lrrows.tmp" && mv "$T/lrrows.tmp" "$T/lrrows.json"
-      code=201; out=\$(jq -c '{request:.}' <<<"\$row")
-    fi ;;
-  *) code=404; out='{"error":"unknown endpoint","worker":"harness-jobs"}' ;;
-esac
-printf '%s\n%s' "\$out" "\$code"
+printf '%s\n' "\$*" >> "$T/log/worker"
+printf '{"error":"unknown endpoint","worker":"harness-jobs"}\n404'
 EOF
-printf '#!/bin/bash\nexit 0\n' > "$H/bin/lane-alert.sh"
-chmod +x "$T/fakebin/gh" "$T/fakebin/curl" "$H/bin/lane-alert.sh"
+chmod +x "$T/fakebin/gh" "$T/fakebin/curl"
 
 unset PR_SNAPSHOT PR_SNAPSHOT_TTL_S PR_SNAPSHOT_QUIET_TTL_S PR_SNAPSHOT_FEED_STALE_S PRS_COUNT_FILE PR_SNAPSHOT_LIB
-export PATH="$T/fakebin:$PATH" HARNESS="$H" HARNESS_SECRET=test-secret JOBS_URL=https://jobs.test \
-  JOBS_RETRIES=0 TMPDIR="$T/tmp" LANE_GATE_DISABLE=1 LEAD_VERDICT_TOKEN_FILE="$T/cfg/token" \
-  FLEET_CONF="$H/fleet.conf" GH_ETAG=0 LEAD_REVIEW_AUTO_REPOS=$SLUG LANE_REGISTRY="$T/lanes.json" \
-  LEAD_REVIEW_ENQUEUE_MAX_PER_TICK=5 LEAD_REVIEW_MAX_PER_PR_DAY=4
+export PATH="$T/fakebin:$PATH" HARNESS="$H" HARNESS_SECRET=test-secret-fixture JOBS_URL=https://jobs.test \
+  JOBS_RETRIES=0 TMPDIR="$T/tmp" LANE_GATE_DISABLE=1 GH_ETAG=0 LANE_REGISTRY="$T/lanes.json"
 unset BOX_NAME JOBS_BOX HUB_BOX_NAME
 
 D="$H/state/pr-snapshot/example-org_demo-os"
@@ -139,14 +103,10 @@ pr() {
   jq -nc --arg h "${5:-$2}" --argjson m "$3" --arg ms "${4:-clean}" --arg u "$u" \
     '{head:{sha:$h}, base:{ref:"main"}, mergeable:$m, mergeable_state:$ms, updated_at:$u}' > "$T/pr/$1.json"
 }
-approve() {
-  jq -nc --arg s "$2" '{verdict:"APPROVE", tier:"2", provenance:"-", merge_sha:null, job_id:"job-1", reviewed_sha:$s,
-    artifacts:[{artifact_kind:"verdict", detail:({tier:"2", headbound:"n/a", reviewed_sha:$s, settled:true}|tojson)}]}' > "$T/jv/$1.json"
-}
 reset() {
-  scratch_rm "$H/state/pr-snapshot"; scratch_rm "$H/state/lead-review-enqueue"
-  rm -f "$T/log"/* "$T/count" "$T/lrrows.json" "$T/list403" "$H/logs"/* "$H/state/settings-cache.json" "$H/bin/lib/pr-snapshot-wakes.sh"
-  for d in pr jv upd; do scratch_rm "$T/$d"; mkdir -p "$T/$d"; done
+  scratch_rm "$H/state/pr-snapshot"
+  rm -f "$T/log"/* "$T/count" "$T/list403" "$H/logs"/* "$H/state/settings-cache.json" "$H/bin/lib/pr-snapshot-wakes.sh"
+  for d in pr upd; do scratch_rm "$T/$d"; mkdir -p "$T/$d"; done
   echo '[]' > "$T/prs.json"; echo "$TIPA" > "$T/tip"; : > "$T/log/gh"
 }
 # drv <bash code> — source the library in a fresh process and run the code.
@@ -162,32 +122,6 @@ reads() { grep -cE -- "GET repos/$SLUG/$1( |\$)" "$T/log/gh"; }
 lreads() { grep -cE -- "GET repos/$SLUG/pulls( |\?)" "$T/log/gh"; }
 get() { printf 'prs_pr_get %s %s %s %s main %s' "$SLUG" "$1" "$2" "$3" "$4"; }
 words() { grep -c "^$1 " "$T/count" 2>/dev/null; }
-LOG="$H/logs/lead-review-enqueue.log"
-tick() { ( cd "$T" && bash "$H/bin/lead-review-enqueue.sh" tick ) > "$T/out" 2>&1; RC=$?; }
-
-# ── S3: the real lane, twice over three open PRs ──
-reset
-for n in 1 2 3; do pr "$n" "$(sha $n)" true; approve "$n" "$(sha $n)"; done
-tick
-[ "$RC" = 0 ] && ok || bad "S3 run 1 rc=$RC $(cat "$T/out")"
-grep -q "$SLUG PR-SNAPSHOT hit=0 miss=3" "$LOG" && ok || bad "S3 run 1 log: $(cat "$LOG")"
-for n in 1 2 3; do [ -f "$D/pr-$n.key" ] && ok || bad "S3 pr-$n.key not written after run 1"; done
-[ "$(grep -c "GET repos/$SLUG/compare/" "$T/log/gh")" = 3 ] && ok || bad "S3 run 1 the compare read is not there once per PR"
-B=$(grep -c . "$T/log/gh")
-POSTS=$(grep -c '^POST /api/lead-reviews ' "$T/log/worker")
-[ "$POSTS" = 3 ] && ok || bad "S3 run 1 want 3 POSTs, got $POSTS"
-for n in 1 2 3; do
-  grep '^POST /api/lead-reviews ' "$T/log/worker" | sed 's#^POST /api/lead-reviews ##' \
-    | jq -e --argjson n "$n" --arg h "$(sha $n)" 'select(.pr == $n) | .head_sha == $h' >/dev/null 2>&1 \
-    && ok || bad "S3 the POST for #$n does not carry head $(sha $n)"
-done
-tick
-[ "$RC" = 0 ] && ok || bad "S3 run 2 rc=$RC"
-grep -q "$SLUG PR-SNAPSHOT hit=3 miss=0" "$LOG" && ok || bad "S3 run 2 log: $(grep PR-SNAPSHOT "$LOG")"
-NEW=$(tail -n +"$((B + 1))" "$T/log/gh" | grep -cE "pulls/[0-9]")
-[ "$NEW" = 0 ] && ok || bad "S3 run 2 made $NEW pulls/<n> reads"
-grep -q 'existing=3' "$LOG" && ok || bad "S3 run 2 the three heads were not re-confirmed: $(tail -1 "$LOG")"
-
 # ── S4 / S4b: a mergeable that is still being computed is never stored ──
 reset; pr 4 "$(sha 4)" null; pr 5 "$(sha 5)" true unknown
 drv "$(get 4 "$(sha 4)" "$UPD" "$T/o1"); $(get 4 "$(sha 4)" "$UPD" "$T/o2")"

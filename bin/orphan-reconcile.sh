@@ -400,7 +400,29 @@ prl_reshape() { # prl_reshape <raw-json> — the classifier's PR fields into $TD
   jq -c '[ .[] | {number, title, headRefName: (.head.ref // ""), body} ]' "$1" > "$TD/prs.json" 2>/dev/null \
     && [ -s "$TD/prs.json" ]
 }
-if [ "$WB_ON" = 1 ] && [ "$PRL_MAX" -gt 0 ] && [ -r "$WB_DIR/prlist.json" ] && [ -r "$WB_DIR/prlist.meta" ]; then
+# THE PR RECORD FIRST (BH-8452). The jobs worker's record of the repo's open
+# PRs is used when pr_record_list says it is complete: a full GitHub list
+# write no older than PR_RECORD_LIST_MAX_AGE_S, an uncut page and a title,
+# head_ref and body on every row, no record marked unknown by that write, AND
+# the BH-8271 guard: no `pr` wake for any PR of the repo since the stamp. The
+# webhook writes the record and the wake in two statements, and a failed record
+# write still rings the wake, so the wake is what forces the GitHub read. With
+# no wake feed (WB_ON=0, or wb_due cannot tell) the record is not used. A miss
+# logs its reason to logs/pr-record.log and the flow below runs as before.
+# After each GitHub list read the lane writes it back (pr_record_list_sync),
+# which is what refreshes the stamp.
+PRL_CAP=200
+if [ "$WB_ON" = 1 ] && command -v pr_record_list >/dev/null 2>&1 \
+   && pr_record_list "$REPO" open "$TD/prs.rec.json" title,head_ref,body >/dev/null 2>&1 \
+   && [ -s "$TD/prs.rec.json.sync" ] \
+   && PRL_SE=$(date -u -d "$(cat "$TD/prs.rec.json.sync" 2>/dev/null)" +%s 2>/dev/null) \
+   && [[ "$PRL_SE" =~ ^[0-9]{1,12}$ ]] \
+   && ! wb_due "$REPO" pr - "$PRL_SE" 0 "$WB_OBS" - >/dev/null 2>&1 \
+   && jq -c '[ .[] | {number, title, headRefName: (.head_ref // ""), body} ]' "$TD/prs.rec.json" > "$TD/prs.json" 2>/dev/null \
+   && [ -s "$TD/prs.json" ]; then
+  PRL=record
+fi
+if [ "$PRL" = read ] && [ "$WB_ON" = 1 ] && [ "$PRL_MAX" -gt 0 ] && [ -r "$WB_DIR/prlist.json" ] && [ -r "$WB_DIR/prlist.meta" ]; then
   PRL_E=$(cut -f2 "$WB_DIR/prlist.meta" 2>/dev/null)
   PRL_NOW=$(command -v _wb_now >/dev/null 2>&1 && _wb_now || date +%s)
   if [[ "$PRL_E" =~ ^[0-9]{1,12}$ ]] && [ "$((PRL_NOW - 10#$PRL_E))" -ge 0 ] \
@@ -416,12 +438,16 @@ if [ "$PRL" = read ]; then
   # Only a lane that keeps a copy can miss one.
   [ "$WB_ON" = 1 ] && log "PRR_MISS $REPO#list why=$PRL_WHY"
   RC=0; PRL_T=$(date +%s)
-  gh_rest_pr_list_all "$REPO" open 200 > "$TD/prs.raw.json" || RC=$?
+  gh_rest_pr_list_all "$REPO" open "$PRL_CAP" > "$TD/prs.raw.json" || RC=$?
   if [ "$RC" != 0 ]; then rest_decline "the open PR list" "$RC"; exit 0; fi
   prl_reshape "$TD/prs.raw.json" \
     || { log "reconcile: could not reshape the open PR list — enqueued nothing"; exit 0; }
   if [ "$WB_ON" = 1 ]; then
     wb_cache_put "$WB_DIR/prlist" "-"$'\t'"$PRL_T" < "$TD/prs.raw.json" || true
+  fi
+  # A list at the read cap may be cut: it is not a full list, so it is not synced.
+  if command -v pr_record_list_sync >/dev/null 2>&1 && [ "$(jq 'length' "$TD/prs.raw.json" 2>/dev/null)" -lt "$PRL_CAP" ] 2>/dev/null; then
+    pr_record_list_sync "$REPO" open "$TD/prs.raw.json" "$(date -u -d "@$PRL_T" '+%Y-%m-%dT%H:%M:%SZ')" >/dev/null 2>&1 || true
   fi
 fi
 

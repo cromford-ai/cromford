@@ -1,0 +1,12 @@
+{
+  "env": "PR_RECORD_LIST_MAX_AGE_S",
+  "read_in": "bin/lib/pr-record.sh",
+  "type": "int",
+  "default": 900,
+  "min": 0,
+  "max": 86400,
+  "unit": "seconds",
+  "zero_means": "off: every list read goes to GitHub as before",
+  "required": false,
+  "note": "BH-8452. pr_record_list trusts the PR record's list of a repo's open PRs (GET /api/pr-records?repo=&state=, no GitHub call) only while the last full GitHub list write (POST /api/pr-record-lists, its sync stamp) is at most this many seconds old on the worker's clock, the page is not truncated and no needed field is null. Else the caller reads GitHub as before. bin/orphan-reconcile.sh uses it before its BH-8271 file copy. Read through lane_knob (libs scope) when the caller has it, else from the environment; a value that is not a non-negative integer is 900 and one logs/pr-record.log line names it."
+}

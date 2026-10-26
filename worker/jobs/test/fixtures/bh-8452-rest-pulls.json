@@ -1,0 +1,14 @@
+[
+  {"number": 101, "state": "open", "title": "TK-11: wip", "user": {"login": "operator"}, "body": null,
+   "created_at": "2026-10-26T09:00:00Z", "updated_at": "2026-10-26T11:00:00Z", "html_url": "https://github.com/example-org/project-5/pull/101",
+   "draft": false, "merged_at": null, "head": {"ref": "ticket/TK-11", "sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}, "base": {"ref": "main", "sha": "cccccccccccccccccccccccccccccccccccccccc"},
+   "labels": [{"name": "ai-build"}], "node_id": "x", "assignees": []},
+  {"number": 102, "state": "open", "title": "a fix", "user": {"login": "dependabot[bot]"}, "body": "Closes #12",
+   "created_at": "2026-10-25T09:00:00Z", "updated_at": "2026-10-26T10:00:00Z", "html_url": "https://github.com/example-org/project-5/pull/102",
+   "draft": true, "merged_at": null, "head": {"ref": "feature/x", "sha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}, "base": {"ref": "main", "sha": "cccccccccccccccccccccccccccccccccccccccc"},
+   "labels": [], "node_id": "y", "assignees": []},
+  {"number": 103, "state": "open", "title": "chore: deps", "user": {"login": "cromford-builders"}, "body": "",
+   "created_at": "2026-10-24T09:00:00Z", "updated_at": "2026-10-26T09:30:00Z", "html_url": "https://github.com/example-org/project-5/pull/103",
+   "draft": false, "merged_at": null, "head": {"ref": "deps/bump", "sha": "cccccccccccccccccccccccccccccccccccccccc"}, "base": {"ref": "main", "sha": "cccccccccccccccccccccccccccccccccccccccc"},
+   "labels": [{"name": "deps"}, {"name": "tier-1"}], "node_id": "z", "assignees": []}
+]

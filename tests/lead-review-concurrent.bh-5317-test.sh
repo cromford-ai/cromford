@@ -2,15 +2,12 @@
 # tests/lead-review-concurrent.bh-5317-test.sh — BH-5317: the lead-review tick
 # lock (fd 7, locks/lead-review-tick.lock) is a dedupe that owes ONE rerun, is
 # never pinned by repo code the tick ran, and the chain's crons are */15
-# backstops. The REAL bin/lead-review.sh tick (and, for C3, the real
-# bin/lead-review-enqueue.sh tick) against scratch harnesses carrying their
-# real bin/lib closures ("$DIR/bin/lib/lead-chain-wake.sh" and
+# backstops. The REAL bin/lead-review.sh tick against scratch harnesses
+# carrying its real bin/lib closure ("$DIR/bin/lib/lead-chain-wake.sh" and
 # "$DIR/bin/lib/review-pool.sh" included). Stubbed: curl (the jobs worker), gh,
 # df and /proc/meminfo, bin/agent-call.sh, bin/rules-pack.sh.
 #   C1  the lock held elsewhere: rc 0 at once, no worker request, no agent
 #       call, state/lead-review/rerun-owed written, `tick skipped ... (rerun owed)`.
-#   C3  lead-review-enqueue with its tick lock held: rc 0, no gh call, no
-#       worker call, `another tick holds`.
 #   C4  marker + LEAD_REVIEW_RERUN_MAX=3 + a stored report: replayed with no
 #       agent call, `rerun owed (depth 1/3)`, marker gone, the detached rerun
 #       writes a second summary, zero agent calls, one `rerun owed (depth` line.
@@ -199,22 +196,6 @@ kill "$HOLD" 2>/dev/null; wait "$HOLD" 2>/dev/null; rm -f "$T/held"
 [ "$(agents)" = 0 ] && ok || bad "C1 agent calls=$(agents)"
 [ -e "$MARK" ] && ok || bad "C1 state/lead-review/rerun-owed not written"
 grep -q 'tick skipped: the previous tick still holds locks/lead-review-tick.lock.*(rerun owed)' "$L" && ok || bad "C1 no skip line: $(logtxt)"
-
-# ── C3: the enqueue lane's own tick lock ──
-H3="$T/h3"; mkdir -p "$H3/bin" "$H3/state/lead-review-enqueue" "$H3/logs"
-for s in bin/lead-review-enqueue.sh bin/jobs-client.sh bin/lane-alert.sh; do
-  scratch_install_closure "$s" "$H3" >/dev/null || { echo "FAIL: closure install of $s"; exit 1; }
-done
-echo box-hub > "$H3/state/box-name"
-rm -f "$T/log"/*
-( exec 8>"$H3/state/lead-review-enqueue/tick.lock"; flock -n 8 || exit 1; : > "$T/held"; exec sleep 30 ) & HOLD=$!
-for i in $(seq 1 100); do [ -e "$T/held" ] && break; sleep 0.05; done
-( cd "$T" && HARNESS="$H3" FLEET_CONF="$H3/fleet.conf" bash "$H3/bin/lead-review-enqueue.sh" tick ) > "$T/out" 2>&1; RC=$?
-kill "$HOLD" 2>/dev/null; wait "$HOLD" 2>/dev/null; rm -f "$T/held"
-[ "$RC" -eq 0 ] && ok || bad "C3 rc=$RC $(cat "$T/out")"
-[ -s "$T/log/gh" ] && bad "C3 a gh call: $(cat "$T/log/gh")" || ok
-[ -s "$T/log/worker" ] && bad "C3 a worker call: $(cat "$T/log/worker")" || ok
-grep -q 'another tick holds' "$H3/logs/lead-review-enqueue.log" 2>/dev/null && ok || bad "C3 no skip line: $(cat "$H3/logs/lead-review-enqueue.log" 2>/dev/null)"
 
 # ── C4: the owed rerun over a stored report: no agent call anywhere ──
 reset; mkdir -p "$H/state/lead-review" "$H/state/lead-reviews"; : > "$MARK"

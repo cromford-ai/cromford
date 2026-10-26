@@ -133,7 +133,9 @@ test('M1 pull_request.synchronize with mergeable_state unknown: every PR field, 
   assert.equal(w[0].refresh, true);
   assert.equal(w[0].at, ago(60));
   assert.deepEqual(w[0].fields, { state: 'open', draft: 0, head_ref: 'ticket/x', base_ref: 'main', head_sha: A, base_sha: B,
-    labels: '["ai-build","tier-1"]', mergeable_state: null });
+    labels: '["ai-build","tier-1"]', mergeable_state: null,
+    // TEST-CHANGE (BH-8452): prFields also stores GitHub's updated_at as pr_updated_at.
+    pr_updated_at: ago(60) });
   const k = prRecordWritesOf('pull_request', prEvent(R, 'synchronize', 7, { mergeable_state: 'clean' }), T);
   assert.equal(k[0].fields.mergeable_state, 'clean');
 });

@@ -16,7 +16,7 @@
 // worker's clock, through the same per-field guard the PUT uses: an older
 // delivery never replaces a newer value from any source.
 
-import { ensureTable } from "./core.js";
+import { ensureColumns, ensureTable } from "./core.js";
 import { upsertSql, VALUE_FIELDS, REPO_RE, CHECKS_MAX } from "../routes/pr-records.js";
 
 const isObj = (v) => v !== null && typeof v === "object" && !Array.isArray(v);
@@ -51,7 +51,15 @@ function checked(raw) {
   return out;
 }
 
-// The columns a whole pulls object fills (not mergeable_state).
+// A GitHub time without its fraction, or undefined (the field is then not written).
+function isoOf(v) {
+  const m = ISO_RE.exec(str(v));
+  return m ? `${m[1]}Z` : undefined;
+}
+
+// The columns a whole pulls object fills (not mergeable_state). BH-8452: the
+// list readers' columns too. A body that is null on GitHub (an empty PR body)
+// is stored "", so NULL keeps one meaning (unknown); no body key writes none.
 function prFields(pr) {
   const head = isObj(pr.head) ? pr.head : {}, base = isObj(pr.base) ? pr.base : {};
   return checked({
@@ -59,6 +67,12 @@ function prFields(pr) {
     draft: pr.draft,
     head_ref: head.ref, base_ref: base.ref, head_sha: head.sha, base_sha: base.sha,
     labels: Array.isArray(pr.labels) ? pr.labels.map((l) => (isObj(l) ? l.name : l)) : undefined,
+    title: pr.title,
+    author: isObj(pr.user) ? pr.user.login : undefined,
+    body: Object.hasOwn(pr, "body") ? (pr.body === null ? "" : pr.body) : undefined,
+    url: pr.html_url,
+    pr_created_at: isoOf(pr.created_at),
+    pr_updated_at: isoOf(pr.updated_at),
   });
 }
 
@@ -196,6 +210,7 @@ export async function recordPrRecord(env, t, event, payload) {
     const writes = prRecordWritesOf(event, payload, t);
     if (!writes.length) return { written: 0 };
     await ensureTable(env, "pr_records");
+    await ensureColumns(env, "pr_records");
     const res = await env.DB.batch(writes.map((w) => stmtOf(env.DB, w)));
     return { written: res.reduce((n, r) => n + ((r && r.meta && r.meta.changes) || 0), 0) };
   } catch (e) {
