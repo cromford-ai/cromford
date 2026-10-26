@@ -1,0 +1,11 @@
+{
+  "env": "PROMPT_RENDER_TIMEOUT_S",
+  "type": "int",
+  "default": 120,
+  "min": 30,
+  "max": 600,
+  "zero_means": null,
+  "read_in": "bin/fleet-propagate.sh",
+  "note": "BH-7971 (BH-7940.3): seconds the prompts step of bin/fleet-propagate.sh gives bin/prompt-render.sh on each tick (`timeout $PROMPT_RENDER_TIMEOUT_S`). Read as ${PROMPT_RENDER_TIMEOUT_S:-120}; 0 or a non-numeric value logs one line and uses 120. A timeout logs one line and the tick pushes the files the render left; the next run removes its *.tmp files.",
+  "settable": true
+}

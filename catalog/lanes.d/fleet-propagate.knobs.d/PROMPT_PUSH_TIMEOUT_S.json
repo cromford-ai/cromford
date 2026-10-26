@@ -1,0 +1,11 @@
+{
+  "env": "PROMPT_PUSH_TIMEOUT_S",
+  "type": "int",
+  "default": 60,
+  "min": 10,
+  "max": 600,
+  "zero_means": null,
+  "read_in": "bin/fleet-propagate.sh",
+  "note": "BH-7971 (BH-7940.3): seconds for each of the two box steps of the prompts push in bin/fleet-propagate.sh (the rsync of state/prompts/, then `sync-agent-rules.sh apply` over ssh). The boxes run in parallel. Read as ${PROMPT_PUSH_TIMEOUT_S:-60}; 0 or a non-numeric value logs one line and uses 60. A box that times out keeps its old digest and is pushed again on the next tick.",
+  "settable": true
+}

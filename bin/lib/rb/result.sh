@@ -560,6 +560,18 @@ if [ "${EVIDENCE_BLOCK:-1}" = 1 ]; then
   EVIDENCE=$("$HARNESS/bin/evidence-summary.sh" "$BUILD" "$TIER" "${QA_NOTE:-}" 2>/dev/null || true)
   if [ -n "$EVIDENCE" ]; then
     printf '%s\n' "$EVIDENCE" > "$BUILD/evidence.md"
+    # >>> prompt note (BH-7971; tests/prompt-build-note.bh-7971-test.sh drives this block)
+    # Seven `PROMPT <kind>: …` lines name the prompt version of each kind
+    # (bin/lib/prompt-note.sh). Written here, before job_evidence_put and the
+    # pool fan-back read the file. Never fatal: a failure is one pipeline.log line.
+    PN_RC=1
+    # shellcheck source=bin/lib/prompt-note.sh
+    if . "$HARNESS/bin/lib/prompt-note.sh" 2>/dev/null; then
+      prompt_note_append "$BUILD" "$PROJECT" 2>/dev/null
+      PN_RC=$?
+    fi
+    [ "$PN_RC" = 0 ] || echo "$(STAMP) [$PROJECT/$KEY] prompt note: not appended to evidence.md (bin/lib/prompt-note.sh missing or rc $PN_RC)" >> "$BUILD/pipeline.log"
+    # <<< prompt note
     MERGE_NOTE=$(MERGE_NOTE_FOR "$TIER")
     EVIDENCE_SECTION=$'\n'"$EVIDENCE"$'\n'
     # >>> pr-body hold gate (tests/pool-hold-yield.bh-6091-test.sh drives this block)

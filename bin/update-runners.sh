@@ -145,6 +145,7 @@ else
 fi
 # <<< flags import
 
+# >>> machine rules (tests/prompt-render.bh-7971-test.sh drives this block)
 # --- Machine rules are REPO-MANAGED (the operator, 2026-08-14) --------------------
 # /root/.claude/CLAUDE.md is now rendered from $CHECKOUT/rules/CLAUDE.md on every
 # box, every day. Edit the repo copy, never the box copy — local edits here are
@@ -166,24 +167,37 @@ fi
 # live crontab's CONTENT) and RENDERED (the rendered crontab's CONTENT), while
 # these two are PATHS to files. Two meanings for one name in one script is how a
 # later edit reaches for the wrong one and cats a crontab over CLAUDE.md.
+#
+# Fleet rules win (BH-7971, decision 7): a non-empty
+# state/prompts/_fleet/rules.md (a fleet `rules` head, rendered by the hub's
+# bin/prompt-render.sh and pushed by fleet-propagate) replaces the repo file as
+# the canon. bin/lib/rules-canon.sh decides; without it, the repo file.
+# RULES_CLAUDE_DIR overrides /root/.claude for TESTS only.
 CANON="$CHECKOUT/rules/CLAUDE.md"
-RULES_LIVE=/root/.claude/CLAUDE.md
+# shellcheck source=bin/lib/rules-canon.sh
+. "${HARNESS:-/root/harness}/bin/lib/rules-canon.sh" 2>/dev/null \
+  || . "$CHECKOUT/bin/lib/rules-canon.sh" 2>/dev/null || true
+command -v rules_canon_path >/dev/null 2>&1 && CANON=$(rules_canon_path "${HARNESS:-/root/harness}" "$CHECKOUT")
+case "$CANON" in */state/prompts/_fleet/rules.md) RULES_FROM="fleet head" ;; *) RULES_FROM=repo ;; esac
+RULES_DIR="${RULES_CLAUDE_DIR:-/root/.claude}"
+RULES_LIVE="$RULES_DIR/CLAUDE.md"
 if [ -f "$CANON" ]; then
   RULES_RENDERED=$(mktemp)
   cat "$CANON" > "$RULES_RENDERED"
-  [ -f /root/.claude/CLAUDE.local.md ] && {
-    printf '\n\n<!-- box-specific, from /root/.claude/CLAUDE.local.md -->\n\n' >> "$RULES_RENDERED"
-    cat /root/.claude/CLAUDE.local.md >> "$RULES_RENDERED"
+  [ -f "$RULES_DIR/CLAUDE.local.md" ] && {
+    printf '\n\n<!-- box-specific, from %s -->\n\n' "$RULES_DIR/CLAUDE.local.md" >> "$RULES_RENDERED"
+    cat "$RULES_DIR/CLAUDE.local.md" >> "$RULES_RENDERED"
   }
   if ! cmp -s "$RULES_RENDERED" "$RULES_LIVE"; then
     [ -f "$RULES_LIVE" ] && cp "$RULES_LIVE" "$RULES_LIVE.bak-$(date -u +%Y%m%d%H%M)"
-    mkdir -p /root/.claude
+    mkdir -p "$RULES_DIR"
     mv "$RULES_RENDERED" "$RULES_LIVE" && chmod 644 "$RULES_LIVE"
-    echo "$(STAMP) machine rules updated from repo ($(stat -c %s "$RULES_LIVE")B, $(grep -cE '^#{1,3} ' "$RULES_LIVE") sections)" >> "$LOG"
+    echo "$(STAMP) machine rules updated from $RULES_FROM ($(stat -c %s "$RULES_LIVE")B, $(grep -cE '^#{1,3} ' "$RULES_LIVE") sections)" >> "$LOG"
   else
     rm -f "$RULES_RENDERED"
   fi
 fi
+# <<< machine rules
 
 # Re-render AGENTS.md for the non-git dirs. The rules themselves ride the prompt
 # injection in agent-call.sh, which reads CLAUDE.md live; this only refreshes the

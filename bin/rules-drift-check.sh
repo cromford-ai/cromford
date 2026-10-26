@@ -91,10 +91,15 @@ CK="${HARNESS_CHECKOUT:-/root/harness-checkout}"
 CD="${RULES_DRIFT_CLAUDE_DIR:-/root/.claude}"
 m() { [ -f "$1" ] && md5sum "$1" 2>/dev/null | cut -d' ' -f1 || echo -; }
 # CLAUDE.md: rendered = canon + the box-local overlay, byte-identical to the
-# render in sync-agent-rules.sh apply_machine_rules().
+# render in sync-agent-rules.sh apply_machine_rules(). The canon is the fleet
+# rules head when the box holds a non-empty one (BH-7971, the rule of
+# bin/lib/rules-canon.sh, inline because this text runs on the far box), else
+# the checkout's file. The third column stays the checkout's own canon.
+FR="${HARNESS:-/root/harness}/state/prompts/_fleet/rules.md"
+if [ -f "$FR" ] && [ -r "$FR" ] && [ -s "$FR" ]; then SRC="$FR"; else SRC="$CK/rules/CLAUDE.md"; fi
 R=$(mktemp)
 if [ -f "$CK/rules/CLAUDE.md" ]; then
-  cat "$CK/rules/CLAUDE.md" > "$R"
+  cat "$SRC" > "$R"
   [ -f "$CD/CLAUDE.local.md" ] && {
     printf '\n\n<!-- box-specific, from %s -->\n\n' "$CD/CLAUDE.local.md" >> "$R"
     cat "$CD/CLAUDE.local.md" >> "$R"
@@ -220,7 +225,7 @@ for BOX in $BOXES; do
     fi
   fi
   if [ "$BOX" = local ]; then
-    OUT=$(HARNESS_CHECKOUT="$CHECKOUT" RULES_DRIFT_CLAUDE_DIR="${RULES_DRIFT_CLAUDE_DIR:-/root/.claude}" bash -c "$PROBE" 2>/dev/null)
+    OUT=$(HARNESS="$HARNESS" HARNESS_CHECKOUT="$CHECKOUT" RULES_DRIFT_CLAUDE_DIR="${RULES_DRIFT_CLAUDE_DIR:-/root/.claude}" bash -c "$PROBE" 2>/dev/null)
   else
     OUT=$($SSH_CMD "root@$BOX" "bash -s" <<<"$PROBE" 2>/dev/null)
   fi

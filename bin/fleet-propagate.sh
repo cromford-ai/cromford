@@ -366,6 +366,67 @@ if [ "$MODE" = check ]; then
 fi
 # <<< box lag
 
+# >>> prompts step (BH-7971, BH-7940.3; docs/PROMPTS.md "## Hub render and build note")
+# Every deploy tick, under the lane lock and before any "nothing new" exit, the
+# hub renders the resolved prompts (bin/prompt-render.sh) and pushes
+# state/prompts/ to each box whose last pushed digest differs. So a prompt head
+# that moves reaches the boxes on the next tick with no merge. A box counts as
+# pushed only when the rsync AND `sync-agent-rules.sh apply` (which turns a
+# fleet rules head into the box CLAUDE.md) both return 0; only then is its
+# digest written, so a failed box is tried again next tick. The hub re-applies
+# its own machine rules on a change. Never exits the lane, never gates a step.
+#   PROMPT_RENDER_TIMEOUT_S  default 120 (catalog/lanes.d/fleet-propagate.knobs.d/PROMPT_RENDER_TIMEOUT_S.json)
+#   PROMPT_PUSH_TIMEOUT_S    default 60 per box step (catalog/lanes.d/fleet-propagate.knobs.d/PROMPT_PUSH_TIMEOUT_S.json)
+fp_prompts_tick() {
+  [ -x "$H/bin/prompt-render.sh" ] || return 0
+  local RTO="${PROMPT_RENDER_TIMEOUT_S:-120}" PTO="${PROMPT_PUSH_TIMEOUT_S:-60}" RRC=0 D B IP N=0 OKN=0 FAILED=""
+  case "$RTO" in 0|*[!0-9]*|'') echo "$(STAMP) PROMPT_RENDER_TIMEOUT_S=${RTO:0:40} is not a number of seconds — using 120" >> "$LOG"; RTO=120 ;; esac
+  case "$PTO" in 0|*[!0-9]*|'') echo "$(STAMP) PROMPT_PUSH_TIMEOUT_S=${PTO:0:40} is not a number of seconds — using 60" >> "$LOG"; PTO=60 ;; esac
+  HARNESS="$H" timeout "$RTO" "$H/bin/prompt-render.sh" >/dev/null 2>&1 || RRC=$?
+  [ "$RRC" = 124 ] && echo "$(STAMP) prompts: bin/prompt-render.sh timed out after ${RTO}s — pushing the files it left" >> "$LOG"
+  [ -d "$H/state/prompts" ] || return 0
+  D=$(cd "$H/state/prompts" && find . -type f ! -name '*.tmp' -print0 | LC_ALL=C sort -z | xargs -0 -r sha256sum | sha256sum | cut -d' ' -f1)
+  [ -n "$D" ] || return 0
+  if [ "$(cat "$WORK/prompts-hub.sha" 2>/dev/null)" != "$D" ]; then
+    if HARNESS="$H" "$H/bin/sync-agent-rules.sh" apply >/dev/null 2>&1; then
+      echo "$D" > "$WORK/prompts-hub.sha"
+    else
+      echo "$(STAMP) prompts: hub sync-agent-rules.sh apply failed for ${D:0:12}" >> "$LOG"
+    fi
+  fi
+  local PP=()
+  for B in $(fp_boxes); do
+    [ "$(cat "$WORK/prompts-$B.sha" 2>/dev/null)" != "$D" ] || continue
+    N=$((N+1))
+    rm -f "$WORK/prompts-$B.result"
+    (
+      IP=$("$H/bin/fleet-conf.sh" --tailnet-ip-of-box "$B" 2>/dev/null)
+      [ -n "$IP" ] || { echo fail > "$WORK/prompts-$B.result"; exit 0; }
+      if timeout "$PTO" rsync -a --delete --exclude='*.tmp' -e 'ssh -o BatchMode=yes -o ConnectTimeout=15' \
+           "$H/state/prompts/" "root@$IP:/root/harness/state/prompts/" >/dev/null 2>"$WORK/prompts-$B.err" \
+         && timeout "$PTO" ssh -n -o BatchMode=yes -o ConnectTimeout=15 "root@$IP" \
+           '/root/harness/bin/sync-agent-rules.sh apply' >/dev/null 2>>"$WORK/prompts-$B.err"; then
+        echo ok > "$WORK/prompts-$B.result"
+      else
+        echo fail > "$WORK/prompts-$B.result"
+      fi
+    ) &
+    PP+=("$!")
+  done
+  [ "${#PP[@]}" -gt 0 ] || return 0
+  wait "${PP[@]}"
+  for B in $(fp_boxes); do
+    [ -f "$WORK/prompts-$B.result" ] || continue
+    if [ "$(cat "$WORK/prompts-$B.result")" = ok ]; then echo "$D" > "$WORK/prompts-$B.sha"; OKN=$((OKN+1))
+    else FAILED="$FAILED, $B"; fi
+    rm -f "$WORK/prompts-$B.result"
+  done
+  FAILED="${FAILED#, }"
+  echo "$(STAMP) prompts: ${D:0:12} pushed to $OKN/$N box(es)${FAILED:+, failed: $FAILED}" >> "$LOG"
+  return 0
+}
+# <<< prompts step
+
 if [ "$MODE" != check ]; then
   mkdir -p "$H/logs" "$H/locks" "$H/state" "$WORK" 2>/dev/null
   fp_box_lag
@@ -373,6 +434,9 @@ if [ "$MODE" != check ]; then
   # The lock covers the SYNC step only: it is released before the first bake
   # (see SYNC BEFORE BAKE in the header).
   exec 9>"$H/locks/fleet-propagate.lock"; flock -n 9 || exit 0
+  # >>> prompts tick (BH-7971; tests/prompt-render.bh-7971-test.sh drives it)
+  fp_prompts_tick
+  # <<< prompts tick
   # >>> BH-1061 wake backstop
   if [ -r "$H/bin/lib/wake-lanes.sh" ]; then
     # shellcheck source=bin/lib/wake-lanes.sh

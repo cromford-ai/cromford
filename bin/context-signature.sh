@@ -29,7 +29,12 @@ bytes_of() { [ -f "$1" ] && stat -c %s "$1" 2>/dev/null || echo 0; }
 jstr() { printf '%s' "${1:-}" | sed 's/\\/\\\\/g; s/"/\\"/g'; }
 
 MACHINE_RULES=/root/.claude/CLAUDE.md
-CANON_RULES="$CHECKOUT/rules/CLAUDE.md"
+# The canon is the fleet rules head when the hub rendered one (BH-7971,
+# bin/lib/rules-canon.sh), else the checkout's rules/CLAUDE.md: the same file
+# sync-agent-rules.sh apply writes, so machine_rules_in_sync agrees with it.
+# shellcheck source=bin/lib/rules-canon.sh
+. "$(dirname "$0")/lib/rules-canon.sh" 2>/dev/null || rules_canon_path() { printf '%s\n' "$2/rules/CLAUDE.md"; }
+CANON_RULES=$(rules_canon_path "$HARNESS" "$CHECKOUT")
 LOCAL_RULES=/root/.claude/CLAUDE.local.md
 
 HARNESS_COMMIT=$(git -C "$CHECKOUT" rev-parse --short HEAD 2>/dev/null || echo unknown)

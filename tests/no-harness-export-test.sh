@@ -72,11 +72,12 @@ for F in $FILES; do
   bash -n "$P" 2>"$T/syntax.err" && ok || bad "$F does not parse: $(cat "$T/syntax.err")"
 done
 # The two timeout children plus the setsid resume in blocked-resolver.sh; the
-# harness-sync and fly-image-build children in fleet-propagate.sh.
+# harness-sync, fly-image-build and prompt-render (BH-7971: it renders into
+# $H/state/prompts, so a scratch root must reach it) children in fleet-propagate.sh.
 rule_child_pass "$DIR/bin/blocked-resolver.sh" 3 && ok \
   || bad "bin/blocked-resolver.sh must hand HARNESS=\"\$H\" to its 3 named children (found $(grep -cE 'HARNESS="\$H" (timeout|setsid)' "$DIR/bin/blocked-resolver.sh"))"
-rule_child_pass "$DIR/bin/fleet-propagate.sh" 2 && ok \
-  || bad "bin/fleet-propagate.sh must hand HARNESS=\"\$H\" to its 2 named children (found $(grep -cE 'HARNESS="\$H" (timeout|setsid)' "$DIR/bin/fleet-propagate.sh"))"
+rule_child_pass "$DIR/bin/fleet-propagate.sh" 3 && ok \
+  || bad "bin/fleet-propagate.sh must hand HARNESS=\"\$H\" to its 3 named children (found $(grep -cE 'HARNESS="\$H" (timeout|setsid)' "$DIR/bin/fleet-propagate.sh"))"
 
 # ── B. every rule FIRES on a broken copy of the same file ───────────────────
 # Red-first, permanently: each rule is re-run against a copy carrying exactly

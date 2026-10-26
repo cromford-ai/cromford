@@ -30,6 +30,8 @@ cut_block "call fp write" "$T/b-write.sh"
 
 HB="$T/hb"; mkdir -p "$HB/bin/lib"
 cp "$DIR/bin/lib/call-guard.sh" "$HB/bin/lib/call-guard.sh"
+# BH-7919: TICKET_THREAD_SIG now asks bin/lib/tracker.sh trk_gh_issue_number.
+scratch_install_closure bin/lib/tracker.sh "$HB" >/dev/null || exit 1
 cat > "$HB/bin/fleet-conf.sh" <<'EOF'
 #!/bin/bash
 case "$2" in

@@ -11,6 +11,10 @@
 # prompts/stages/<kind>.md for the stage kinds. The body is printed byte for
 # byte, with no newline added.
 #
+# The reserved project `_fleet` (BH-7971) resolves with no project: the fleet
+# head, else the repo file. The hub render reads the fleet rules through it.
+# `_fleet watcher` is usage (rc 2): a watcher prompt is always per project.
+#
 # --source prints one line and no body: `<kind> <source> v<version> <version_id>`,
 # and `<kind> repo v0 -` for the repo file.
 #
@@ -51,8 +55,14 @@ for a in "$@"; do
 done
 [ "${#ARGS[@]}" -eq 2 ] || usage
 PROJECT=${ARGS[0]} KIND=${ARGS[1]}
-[[ "$PROJECT" =~ $PROJECT_RE ]] || usage "bad project"
 case "$KINDS" in *" $KIND "*) ;; *) usage "unknown kind $KIND" ;; esac
+if [ "$PROJECT" = _fleet ]; then
+  [ "$KIND" != watcher ] || usage "_fleet has no watcher"
+  LISTQ=""
+else
+  [[ "$PROJECT" =~ $PROJECT_RE ]] || usage "bad project"
+  LISTQ=$PROJECT
+fi
 
 ROOT=${PROMPT_RESOLVE_ROOT:-$(dirname "$SELF_DIR")}
 case "$KIND" in
@@ -105,7 +115,7 @@ CACHED=""
 if [ -n "$CACHED" ] && [ -f "$CACHED" ]; then
   LIST=$CACHED
 else
-  get "$URL/api/prompts?project=$PROJECT" "$LIST"
+  get "$URL/api/prompts?project=$LISTQ" "$LIST"
   if [ -n "$CACHED" ]; then cp "$LIST" "$CACHED.tmp.$$" && mv "$CACHED.tmp.$$" "$CACHED"; fi
 fi
 
@@ -116,7 +126,8 @@ read -r SRC VER VID <<<"$ROW"
 case "$SRC" in
   repo) repo_default ;;
   fleet) Q="" ;;
-  project) Q="?project=$PROJECT" ;;
+  project) [ "$PROJECT" != _fleet ] || fail3 "a project head in the _fleet list for $KIND"
+           Q="?project=$PROJECT" ;;
   *) fail3 "unknown source '$SRC' for $KIND" ;;
 esac
 [[ "$VER" =~ ^[1-9][0-9]*$ && "$VID" =~ ^[1-9][0-9]*$ ]] || fail3 "bad head v$VER id $VID for $KIND"

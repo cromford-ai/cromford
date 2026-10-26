@@ -31,7 +31,7 @@
 #                     is the cwd of the Telegram survival lane.
 set -uo pipefail
 GLOBAL_RULES=/root/.claude/CLAUDE.md
-LOG=/root/harness/logs/agent-rules.log
+LOG="${HARNESS:-/root/harness}/logs/agent-rules.log"
 ALERTS=/root/harness/logs/ALERTS.log
 STAMP() { date -u '+%Y-%m-%d %H:%M:%SZ'; }
 
@@ -96,11 +96,22 @@ install_into() {
 # Shared by update-runners (daily) and context-gate (self-heal before a build)
 # so there is exactly one implementation of "what /root/.claude/CLAUDE.md should
 # contain". Box-specific additions in CLAUDE.local.md are appended, never lost.
+#
+# Fleet rules win (BH-7971): a non-empty state/prompts/_fleet/rules.md is the
+# canon instead of the checkout's rules/CLAUDE.md (bin/lib/rules-canon.sh, the
+# same rule update-runners and context-signature use). RULES_CLAUDE_DIR
+# overrides /root/.claude for TESTS only.
 apply_machine_rules() {
-  local canon="${HARNESS_CHECKOUT:-/root/harness-checkout}/rules/CLAUDE.md"
-  local live=/root/.claude/CLAUDE.md
-  local localf=/root/.claude/CLAUDE.local.md
+  local dir="${RULES_CLAUDE_DIR:-/root/.claude}"
+  local canon from=repo
+  local live="$dir/CLAUDE.md"
+  local localf="$dir/CLAUDE.local.md"
   local rendered
+  # shellcheck source=bin/lib/rules-canon.sh
+  . "$(dirname "${BASH_SOURCE[0]}")/lib/rules-canon.sh" 2>/dev/null \
+    || rules_canon_path() { printf '%s\n' "$2/rules/CLAUDE.md"; }
+  canon=$(rules_canon_path "${HARNESS:-/root/harness}" "${HARNESS_CHECKOUT:-/root/harness-checkout}")
+  case "$canon" in */state/prompts/_fleet/rules.md) from="fleet head" ;; esac
   [ -f "$canon" ] || { echo "no canonical rules at $canon" >&2; return 1; }
   rendered=$(mktemp)
   cat "$canon" > "$rendered"
@@ -110,9 +121,9 @@ apply_machine_rules() {
   }
   if cmp -s "$rendered" "$live"; then rm -f "$rendered"; echo "already current"; return 0; fi
   [ -f "$live" ] && cp "$live" "$live.bak-$(date -u +%Y%m%d%H%M)"
-  mkdir -p /root/.claude
+  mkdir -p "$dir"
   mv "$rendered" "$live" && chmod 644 "$live"
-  echo "$(STAMP) machine rules applied from repo ($(stat -c %s "$live")B)" >> "$LOG"
+  echo "$(STAMP) machine rules applied from $from ($(stat -c %s "$live")B)" >> "$LOG" 2>/dev/null
   echo "applied ($(stat -c %s "$live")B)"
 }
 

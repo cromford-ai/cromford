@@ -1,0 +1,9 @@
+{
+  "env": "RULES_CLAUDE_DIR",
+  "type": "string",
+  "default": "/root/.claude",
+  "zero_means": null,
+  "read_in": "bin/update-runners.sh",
+  "note": "BH-7971: read by bin/update-runners.sh (the machine rules block) and bin/sync-agent-rules.sh apply as ${RULES_CLAUDE_DIR:-/root/.claude}, the directory of the box CLAUDE.md and CLAUDE.local.md. A test seam, the same contract as RULES_DRIFT_CLAUDE_DIR: tests/prompt-render.bh-7971-test.sh points it at a scratch dir. Registered so it is visible; NOT settable from the control plane, and production never sets it.",
+  "settable": false
+}

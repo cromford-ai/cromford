@@ -185,6 +185,121 @@ fixture in the same diff.
 
 Owner: BH-7940.3.
 
+The hub render now writes the files of `## Path convention`.
+
+### The render: `bin/prompt-render.sh`
+
+It runs on the hub only, on every `bin/fleet-propagate.sh` tick, and always
+exits 0. For each project of `fleet-conf.sh --projects` and each kind (rules,
+watcher, plan, execute, review, fix-round, qa), it reads the
+`prompt-resolve.sh --source` line:
+
+| Source | `state/prompts/<project>/<kind>.md` |
+|---|---|
+| `project` | holds the head body |
+| `fleet`, a stage kind | holds the fleet head body |
+| `fleet`, rules | removed: the fleet rules go to `_fleet/rules.md` only |
+| `repo` | removed: the box uses its own repo file |
+| rc 4 (no repo file) | removed, and the kind gets no `sources.tsv` line |
+
+Then `state/prompts/<project>/sources.tsv` gets the `--source` lines, after
+the kind files. Then `prompt-resolve.sh _fleet rules` decides
+`state/prompts/_fleet/rules.md`: it holds the fleet `rules` head, or it is
+removed. `_fleet` is the one reserved project name: it lists with no project,
+so only the fleet and repo sources answer, and `_fleet watcher` is usage (rc 2).
+A project dir that is not in `fleet.conf` is removed, but only when the project
+list is not empty.
+
+Each file is written to `<file>.tmp`, compared with `cmp`, and moved only when
+it differs, so an unchanged file keeps its mtime. A run removes the `*.tmp`
+files that a killed run left. A repo source reads the git checkout
+(`PROMPT_RESOLVE_ROOT=$HARNESS_CHECKOUT`), and the per-run cache makes one list
+call per project. Each run logs one line to `logs/prompt-render.log`:
+`projects=N written=W removed=R unchanged=U down=0|1`.
+
+- Not configured (no `JOBS_URL` in the env or `global.env`): the render logs
+  one line and touches nothing.
+- Worker down (rc 3): the run stops and keeps every file as it is, so builds
+  use the last resolved prompts. The first down run of an outage writes ONE
+  alert through `bin/alert-line.sh` (id `prompt-render-worker-down`, text
+  `prompt-render: worker did not answer …`) and the marker
+  `state/prompt-render.down-since`. Later down runs log only. The first run that
+  answers removes the marker and resolves the alert.
+- A timeout in the middle of a project leaves its new kind files and its old
+  `sources.tsv` until the next run.
+
+### The push: `fp_prompts_tick` in `bin/fleet-propagate.sh`
+
+The step runs in deploy mode right after the lane lock, before the wake
+backstop and before any "up to date" or "touches no fleet path" exit. So a head
+that moves reaches the boxes on the next tick, with no merge. With no
+`bin/prompt-render.sh` or no `state/prompts/`, it does nothing.
+
+- Digest: `sha256sum` over the sorted paths and contents of `state/prompts/`,
+  `*.tmp` excluded.
+- Hub: when the digest differs from `state/fleet-propagate/prompts-hub.sha`,
+  `sync-agent-rules.sh apply` runs, and the digest is written on rc 0.
+- Boxes: for each box whose `state/fleet-propagate/prompts-<box>.sha` differs,
+  one background job runs `rsync -a --delete --exclude='*.tmp'` of
+  `state/prompts/` to the box, then `ssh -n … sync-agent-rules.sh apply`. The
+  digest is written only when both return 0, so a failed box is pushed again
+  on the next tick. One log line per tick that pushed:
+  `prompts: <digest12> pushed to N/M box(es), failed: <boxes>`. There is no
+  alert: a box that stays down is paged by the box-lag check (BH-6201).
+
+| Knob | Default | Use |
+|---|---|---|
+| `PROMPT_RENDER_TIMEOUT_S` | 120 | `timeout` of the render on each tick |
+| `PROMPT_PUSH_TIMEOUT_S` | 60 | `timeout` of each box step (rsync, then apply) |
+
+Both are rows in `catalog/lanes.d/fleet-propagate.knobs.d/`. A value of 0 or a
+non-number logs one line and uses the default.
+
+### Fleet rules win (decision 7)
+
+A non-empty regular file at `state/prompts/_fleet/rules.md` is the canon for
+the box `~/.claude/CLAUDE.md` instead of the checkout's `rules/CLAUDE.md`. The
+`CLAUDE.local.md` append is unchanged. A missing, empty or directory path, a
+stray `.tmp` file or a project `rules.md` never picks the fleet file.
+`rules_canon_path` in `bin/lib/rules-canon.sh` decides, and the four readers of
+the canon use it:
+
+- `bin/update-runners.sh` (the `machine rules` block, daily);
+- `bin/sync-agent-rules.sh apply` (harness-sync, the context-gate self-heal,
+  and this push);
+- `bin/context-signature.sh` (the `machine_rules_in_sync` reference);
+- `bin/rules-drift-check.sh` (the probe, with the same rule inline because it
+  runs on the far box; its third column stays the checkout canon).
+
+A project `rules` head goes to `state/prompts/<project>/rules.md`, and
+`sp_render` points the build at it (see `## Stage prompt files`).
+
+### The build note
+
+`bin/lib/rb/result.sh` appends seven lines to `$BUILD/evidence.md` right after
+it writes the file, before `job_evidence_put` and the pool fan-back read it
+(`bin/lib/prompt-note.sh`, `prompt_note_append`). The lines are not in the PR
+body. Kinds are in the fixed order:
+
+```
+PROMPT review: project v1 (7)
+PROMPT rules: fleet v12 (40)
+PROMPT plan: repo default (3f2a9c1b0d4e)
+```
+
+A `repo` line, a kind with no line, or a malformed line (not four fields, a
+version that is not `v<n>`, an id that is not a number, a CR at the end) gives
+`repo default (<sha12>)`: the first 12 hex digits of `git hash-object` of the
+repo file (rules: `<checkout>/rules/CLAUDE.md`; watcher:
+`<harness>/prompts/<project>.md`; a stage kind:
+`<harness>/prompts/stages/<kind>.md`), or `repo default (no file)`. The first
+line of a kind wins. With no `sources.tsv`, all seven lines are
+`PROMPT <kind>: repo default`. A failure is one `pipeline.log` line and never
+changes the build verdict.
+
+Limit: a pool machine gets no `state/prompts/` in this slice. A pool build uses
+the repo templates, and its note says `repo default` seven times.
+
 ## Markers, versions and restore (BH-7940.4)
 
 Owner: BH-7940.4.
