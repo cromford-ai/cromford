@@ -237,6 +237,12 @@ check "S4 the lock files are per project" '[ -e "$H4/locks/unblock-alpha.lock" ]
 check "S4 a bad name is rc 2" '[ "$(run "$H4" unb_scope_lock "../x")" = "|rc=2" ]'
 touch "$B/release"; wait "$HOLDER" 2>/dev/null
 check "S4 alpha is free after its holder exits" '[ "$(run "$H4" unb_scope_lock alpha)" = "|rc=0" ]'
+# S4b: the cron shape. bin/unblock.sh sets H and does not export HARNESS, so
+# the lock must take its root from H (before 2026-10-26 a `local H` shadowed it
+# and every tick logged "lock held" with no lock taken).
+S4B=$(HARNESS="" H="$H4" bash -c '. "$H/bin/lib/unblock/scope.sh" || exit 9; unb_scope_lock alpha; printf "rc=%s" "$?"' 2>/dev/null)
+check "S4b H-only root (no HARNESS) takes the lock (rc 0)" '[ "$S4B" = "rc=0" ]'
+check "S4b the lock file is under H" '[ -f "$H4/locks/unblock-alpha.lock" ]'
 
 # ══ S5: the in-scope project list ═══════════════════════════════════════════
 echo "S5 projects"

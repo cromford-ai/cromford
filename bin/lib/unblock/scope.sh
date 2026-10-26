@@ -162,8 +162,13 @@ unb_scope_projects() {
 }
 
 unb_scope_lock() {
-  local H
-  H=$(_unb_scope_root)
+  # The root is read BEFORE `local H`: inside the function a bare `local H`
+  # shadows the caller's H with an empty value, so _unb_scope_root would read
+  # an empty H whenever HARNESS is not exported (cron runs bin/unblock.sh with
+  # H only). That made every tick log "lock held" with no lock (2026-10-26).
+  local root
+  root=$(_unb_scope_root)
+  local H="$root"
   [ -n "$H" ] && _unb_scope_name "${1:-}" || return 2
   _unb_scope_ready
   command -v pl_lane_lock >/dev/null 2>&1 || return 2
