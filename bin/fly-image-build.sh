@@ -239,7 +239,8 @@ BAKE_ARGS=(); BAKED=""; BAKE_MISSING=""
 # when the row gives no manifest (none, off, worker down).
 LAST_BAKE="$H/state/fly/$PROJECT.bake"
 ROW_BAKE=$(mktemp "${TMPDIR:-/tmp}/flybake-XXXX") || ROW_BAKE=""
-trap '[ -n "$ROW_BAKE" ] && rm -f "$ROW_BAKE"' EXIT
+RENDER=""
+trap '[ -n "$ROW_BAKE" ] && rm -f "$ROW_BAKE"; [ -n "$RENDER" ] && rm -f "$RENDER"' EXIT
 if [ -n "$ROW_BAKE" ] && declare -F fir_bake_to >/dev/null 2>&1 \
    && fir_bake_to "$PROJECT" "$ROW_BAKE" && [ -s "$ROW_BAKE" ]; then
   LAST_BAKE="$ROW_BAKE"
@@ -253,6 +254,43 @@ while read -r BNAME BARG BPROBE; do
 done < <(bake_deps)
 [ -z "$BAKE_MISSING" ] || { echo "FATAL: no pinned version for:$BAKE_MISSING (no row, no last-baked version for $PROJECT, no approved host install) — set them with bin/bake-seed.sh <name>=<version>; refusing to build with an unpinned dependency"; exit 1; }
 echo "== pinning baked deps: $(printf '%s' "$BAKED" | tr '\n' ' ')=="
+
+# --- per-project baked dependencies (BH-8319) ----------------------------------
+# A project opts in to a heavy extra (rust, webkit) with its own row
+# bake.<project>.<name>.version; bake_project_resolve (bin/lib/bake-deps.sh)
+# turns it into a pin, a skip, or a refusal. The Dockerfile flyctl builds is a
+# per-project render of fly/Dockerfile that keeps only the kept deps'
+# `project-*` blocks; with none kept it is fly/Dockerfile minus those blocks,
+# byte for byte what every pool built before. The render is a unique file per
+# run (fleet-propagate bakes 10 projects at once from one fly/), inside the
+# build context, and the EXIT trap removes it.
+declare -F bake_project_deps >/dev/null 2>&1 && declare -F bake_render_dockerfile >/dev/null 2>&1 \
+  || { echo "FATAL: bin/lib/bake-deps.sh predates BH-8319 (no bake_project_deps) — refusing to build"; exit 1; }
+PROJ_KEEP=(); PROJ_LINE=""; PROJ_REFUSED=0
+while read -r PNAME PARG; do
+  [ -n "$PNAME" ] || continue
+  PV=""; PRC=0
+  PV=$(bake_project_resolve "$PROJECT" "$PNAME" "$LAST_BAKE") || PRC=$?
+  if [ "$PRC" != 0 ]; then PROJ_REFUSED=1; continue; fi
+  if [ -n "$PV" ]; then
+    BAKE_ARGS+=(--build-arg "$PARG=$PV")
+    BAKED="$BAKED$PNAME=$PV"$'\n'
+    PROJ_KEEP+=("$PNAME"); PROJ_LINE="$PROJ_LINE $PNAME=$PV"
+  else
+    PROJ_LINE="$PROJ_LINE $PNAME=skipped"
+  fi
+done < <(bake_project_deps)
+[ "$PROJ_REFUSED" = 0 ] || { echo "FATAL: a bake.$PROJECT.<name>.version row is not usable (see above) — refusing to build"; exit 1; }
+mkdir -p "$FLYDIR/.render" && RENDER=$(mktemp "$FLYDIR/.render/Dockerfile.$PROJECT.XXXXXX") \
+  || { RENDER=""; echo "FATAL: cannot create a Dockerfile render under $FLYDIR/.render"; exit 1; }
+bake_render_dockerfile "$DOCKERFILE" "$RENDER" ${PROJ_KEEP[@]+"${PROJ_KEEP[@]}"} \
+  || { echo "FATAL: cannot render $DOCKERFILE for $PROJECT (see above) — refusing to build"; exit 1; }
+echo "== project deps:$PROJ_LINE =="
+# The cargo fetch on the warm layer (project-rust-warm) runs only on a warm
+# bake, bounded by the same pool.warm_build_timeout_s value as the warm build.
+case " ${PROJ_KEEP[*]-} " in
+  *" rust "*) [ -n "${WBT:-}" ] && BAKE_ARGS+=(--build-arg "WARM_CARGO_TIMEOUT_S=$WBT") ;;
+esac
 
 echo "== building + pushing image to registry.fly.io/$APP =="
 # --build-only --push: flyctl builds fly/Dockerfile and pushes to the app
@@ -271,7 +309,7 @@ OUT=$(mktemp /tmp/flybuild-XXXX.out)
 "$FLY" deploy \
   --app "$APP" \
   --config "$TOML" \
-  --dockerfile "$DOCKERFILE" \
+  --dockerfile "$RENDER" \
   --build-only --push --remote-only \
   --build-arg "CLAUDE_CODE_VERSION=$CLAUDE_CODE_VERSION" \
   --build-arg "CODEX_VERSION=$CODEX_VERSION" \

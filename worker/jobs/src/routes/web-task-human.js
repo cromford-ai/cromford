@@ -26,6 +26,14 @@
 //   409 old_nonce; 409 already_answered; 410 expired; 400 kind mismatch; 503
 //   key missing. Else ONE conditional UPDATE (status='open', not expired).
 //   The answer never echoes the code.
+//   The resume enqueue (BH-8360, settings row web_task.resume_enqueue,
+//   default 0 = off): with 1 and an 'answered' status, the UPDATE and a guarded
+//   INSERT run as ONE batch. The INSERT copies the asking run's args_json into
+//   a new queued web-task lane run (enqueued_by 'web-task-resume:<step_id>')
+//   only when the UPDATE changed one row and that run is web-task and done or
+//   died. The 200 then adds resume: enqueued (with resume_run_id) or skipped
+//   (with resume_why). A cancel never enqueues. With 0 the route is unchanged.
+//   Note: docs/notes/2026-10-25-BH-8360-web-task-resume-enqueue.md.
 import { d1Guarded, json } from "../lib/http.js";
 import { laneName } from "../lib/core.js";
 import { settingsRows } from "../lib/settings-cache.js";
@@ -62,6 +70,19 @@ export const STEP_SQL = "SELECT id, run_id, kind, status, wait_until, expires_at
 // ?1 id, ?2 status, ?3 t, ?4 via, ?5 ciphertext, ?6 iv, ?7 key id. The PRIMARY KEY.
 export const ANSWER_SQL = `UPDATE web_task_human_step SET status=?2, answered_at=?3, answer_via=?4, code_ct=?5, code_iv=?6, key_id=?7
  WHERE id=?1 AND status='open' AND expires_at > ?3`;
+// ?1 step id, ?2 t. Runs in the answer's batch right after ANSWER_SQL, so
+// changes() is that UPDATE's: a lost answer inserts nothing. Both lookups are
+// PRIMARY KEY; INSERT OR IGNORE meets lane_runs_live (one live run per lane
+// and project).
+export const RESUME_ENQUEUE_SQL = `INSERT OR IGNORE INTO lane_runs (lane, project, args_json, enqueued_at, enqueued_by, status)
+ SELECT o.lane, o.project, o.args_json, ?2, 'web-task-resume:' || s.id, 'queued'
+ FROM web_task_human_step s JOIN lane_runs o ON o.id = s.run_id
+ WHERE s.id = ?1 AND s.status = 'answered' AND o.lane = 'web-task' AND o.status IN ('done','died') AND changes() = 1`;
+// ?1 the asking run's id, read only when the enqueue inserted nothing. One row
+// by PRIMARY KEY; the inner lookup is one probe of lane_runs_live.
+export const RESUME_SKIP_SQL = `SELECT o.lane, o.status,
+ (SELECT l.id FROM lane_runs l WHERE l.lane = o.lane AND l.project = o.project AND l.status IN ('queued','claimed')) AS live_id
+ FROM lane_runs o WHERE o.id = ?1`;
 // ?1 id, ?2 t. Used once: the ciphertext goes in the same UPDATE.
 export const CONSUME_SQL = `UPDATE web_task_human_step SET status='consumed', code_ct=NULL, code_iv=NULL, consumed_at=?2
  WHERE id=?1 AND status='answered'`;
@@ -119,6 +140,20 @@ function loginsOf(byKey) {
   const row = byKey.get("web_task.human_logins");
   if (!row || row.value === null || row.value === undefined) return [];
   return String(row.value).split(",").map((s) => s.trim()).filter((s) => LOGIN_RE.test(s));
+}
+
+// The resume enqueue switch: row web_task.resume_enqueue, 0..1; any
+// other value and the code default are 0 (off).
+function resumeEnqueueOn(byKey) {
+  return intSetting(byKey, "web_task.resume_enqueue", 0, 0, 1) === 1;
+}
+
+// Why the resume enqueue inserted nothing, from RESUME_SKIP_SQL's row.
+function skipWhy(o) {
+  if (!o || o.lane !== "web-task") return "not_web_task";
+  if (o.status === "queued" || o.status === "claimed") return "run_live";
+  if (o.live_id !== null && o.live_id !== undefined) return "already_live";
+  return "not_enqueued";
 }
 
 // The answer body -> {stepId, nonce, action, code, runId, via} or {error}.
@@ -239,9 +274,20 @@ export const routes = [
         ct = enc.ciphertext; iv = enc.iv;
       }
       const status = p.action === "cancel" ? "cancelled" : "answered";
-      const r = await env.DB.prepare(ANSWER_SQL).bind(row.id, status, t, p.via, ct, iv, keyId).run();
+      const answerStmt = env.DB.prepare(ANSWER_SQL).bind(row.id, status, t, p.via, ct, iv, keyId);
+      if (status !== "answered" || !resumeEnqueueOn(byKey)) {
+        const r = await answerStmt.run();
+        if (!r || !r.meta || r.meta.changes !== 1) return refused(409, "already_answered");
+        return json(200, { ok: true, step_id: Number(row.id), status });
+      }
+      const [r, e] = await env.DB.batch([answerStmt, env.DB.prepare(RESUME_ENQUEUE_SQL).bind(row.id, t)]);
       if (!r || !r.meta || r.meta.changes !== 1) return refused(409, "already_answered");
-      return json(200, { ok: true, step_id: Number(row.id), status });
+      const base = { ok: true, step_id: Number(row.id), status };
+      const newId = e && e.meta && e.meta.changes === 1 ? Number(e.meta.last_row_id) : 0;
+      if (newId) return json(200, { ...base, resume: "enqueued", resume_run_id: newId });
+      // The answer is recorded either way; a skipped enqueue never fails it.
+      const o = await env.DB.prepare(RESUME_SKIP_SQL).bind(row.run_id).first();
+      return json(200, { ...base, resume: "skipped", resume_run_id: null, resume_why: skipWhy(o) });
     }),
   ],
 ];

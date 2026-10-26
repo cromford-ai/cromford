@@ -1,0 +1,11 @@
+{
+  "env": "MC_BACKSTOP_UNCHANGED_SKIP",
+  "type": "int",
+  "default": 3,
+  "min": 0,
+  "max": 50,
+  "unit": "runs",
+  "zero_means": "off",
+  "read_in": "bin/merge-conductor-backstop.sh",
+  "note": "BH-8310: a candidate whose last N keyed runs left its pr-state.tsv row byte-identical (same head) is skipped with one log line and uses no slot, until anything changes the row. #912 merged outside the conductor, its row stayed READY, and under MC_BACKSTOP_MAX_RUNNING=1 every fire ran it. 0 = off. Row: lane.merge-conductor-backstop.mc_backstop_unchanged_skip"
+}

@@ -162,7 +162,13 @@ pq_alert() {
 pq_settle() {
   local slug="$1" num="$2" url="$3" head="$4" main="$5" path="$6" at="$7" line="" v id su why
   _pq_word=hold
-  line=$(pq_read_run "$slug" "$(pq_run_title "$num" "$head" "$main")" "$path")
+  # BH-8327: a head that joined a group is read from the group run
+  # (mc-prequeue.d/group.sh), once per group, never from a per-head run.
+  if [ -r "$path.group" ] && declare -F pq_group_read >/dev/null; then
+    line=$(pq_group_read "$slug" "$num" "$head" "$main" "$path")
+  else
+    line=$(pq_read_run "$slug" "$(pq_run_title "$num" "$head" "$main")" "$path")
+  fi
   # BH-7029: a read the call budget killed is no answer and no deadline: hold.
   pq_over && return 0
   case "$at" in ''|*[!0-9]*) at=0 ;; esac
@@ -393,6 +399,18 @@ pq_resolve() {
   # BH-7029: past the call budget nothing is dispatched (a refused dispatch is
   # not a could-not-run): the gate holds and the next tick asks again.
   pq_over && { PQ_WHY="prequeue call budget passed before the dispatch"; echo hold; return 0; }
+  # BH-8327: join this repo's open group for this main instead of a run of
+  # its own; the conductor dispatches one run per group after its PR workers
+  # (pq_group_flush, mc-prequeue.d/group.sh). rc 1 or 4: per head, as before.
+  if declare -F pq_group_join >/dev/null; then
+    pq_call -w group pq_group_join "$slug" "$num" "$head" "$main" "$path"
+    case "$?" in
+      0) PQ_WHY="joined prequeue group $_pq_gid for main ${main:0:12}; dispatched at the end of this run, its verdict is read on a later tick"; echo hold; return 0 ;;
+      3) PQ_WHY="prequeue dispatch for ${head:0:8} is in another worker's hands"; echo hold; return 0 ;;
+      5) echo hold; return 0 ;;
+      124) PQ_WHY="prequeue call budget passed before the dispatch"; echo hold; return 0 ;;
+    esac
+  fi
   pq_call -w dispatch pq_dispatch "$slug" "$num" "$head" "$main"
   case "$?" in
     124) PQ_WHY="prequeue call budget passed before the dispatch"; echo hold ;;

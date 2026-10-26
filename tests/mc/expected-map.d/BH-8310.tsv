@@ -1,0 +1,3 @@
+# tests/mc/expected-map.d/BH-8310.tsv — mc_settle_offlist_rows: settles pr-state rows whose PR left the open list
+# (merged or closed), so the backstop never spends a slot on them (BH-8310).
+settle	mc_settle_offlist_rows	lib

@@ -71,3 +71,23 @@ bake_sha256() {
   fi
   echo "bake-pin: $3 sha256 ok"
 }
+
+#   bake_apt_version <package> <upstream-version>
+#       prints the full Debian version (epoch and revision included) apt
+#       offers for <package> whose upstream part is EXACTLY <upstream-version>
+#       (BH-8319: libwebkit2gtk-4.1-dev for a project's webkit row). The first
+#       match apt-cache madison lists is the newest. 2.48.70 never matches
+#       2.48.7. No match = FATAL naming the package, the wanted version and the
+#       newest one offered: the Ubuntu archive drops a superseded version, and a
+#       silently substituted one would be worse than a failed build. Run it
+#       after `apt-get update`.
+bake_apt_version() {
+  _bp_re=$(printf '%s' "$2" | sed 's/\./\\./g')
+  _bp_all=$(apt-cache madison "$1" 2>/dev/null | awk -F'|' '{gsub(/[[:space:]]/, "", $2); if ($2 != "") print $2}')
+  _bp_hit=$(printf '%s\n' "$_bp_all" | grep -E "^([0-9]+:)?${_bp_re}(-|$)" | head -1)
+  if [ -z "$2" ] || [ -z "$_bp_hit" ]; then
+    echo "FATAL: $1 $2 is not available from apt (newest offered: $(printf '%s\n' "$_bp_all" | head -1 | grep . || echo none))" >&2
+    exit 1
+  fi
+  printf '%s\n' "$_bp_hit"
+}

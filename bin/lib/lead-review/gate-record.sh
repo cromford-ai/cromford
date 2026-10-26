@@ -21,15 +21,21 @@
 # rule that rebinds an approval). Any other mismatch is a refusal.
 # Sourced by bin/lead-review.sh through bin/lib/lead-review/load.sh, never run.
 # Defines functions only. Reads LEAD_REVIEW_GATE_RECORD (catalog knob, row
-# lane.lead-review.lead_review_gate_record: block|note|off, default block).
+# lane.lead-review.lead_review_gate_record: block|note|off, default block) at
+# the call, through lane_knob when it is loaded (the settings cache, TTL
+# LANE_GATE_CACHE_S), so a row set after the tick started applies.
 
 LR_GR_RE='^<!-- selection-gate: head=([0-9a-f]{40}) suites=([0-9]+) rc=(0|could-not-run|no-selection|off) -->$'
 
 # lr_gate_record_mode — block|note|off. Unset, empty or any other value is
 # block, the code fallback for row lane.lead-review.lead_review_gate_record.
+# The row is read at the call (BH-8349): the env value lane_env_apply exported
+# at tick start is only the fallback when lane_knob is not loaded.
 lr_gate_record_mode() {
-  case "${LEAD_REVIEW_GATE_RECORD:-}" in
-    note|off) printf '%s' "$LEAD_REVIEW_GATE_RECORD" ;;
+  local m="${LEAD_REVIEW_GATE_RECORD:-}"
+  command -v lane_knob >/dev/null 2>&1 && m=$(lane_knob lead-review LEAD_REVIEW_GATE_RECORD)
+  case "$m" in
+    note|off) printf '%s' "$m" ;;
     *) printf block ;;
   esac
 }

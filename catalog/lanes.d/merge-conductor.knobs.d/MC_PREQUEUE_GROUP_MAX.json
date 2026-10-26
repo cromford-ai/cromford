@@ -1,0 +1,11 @@
+{
+  "env": "MC_PREQUEUE_GROUP_MAX",
+  "type": "int",
+  "default": 10,
+  "min": 2,
+  "max": 50,
+  "unit": "heads",
+  "zero_means": null,
+  "read_in": "bin/lib/mc-prequeue.d/group.sh",
+  "note": "BH-8327: at most this many heads in one prequeue-group-gate.yml run; a full group opens the next one for the same main (bin/lib/mc-prequeue.d/group.sh). The group read asks for MAX + 1 jobs (the plan job and the gate jobs), so keep it under 100. Per project: lane.merge-conductor.<project>.mc_prequeue_group_max."
+}

@@ -41,6 +41,9 @@ export HARNESS="$T/h"
 fx_mc_harness "$DIR" "$T" || exit 1
 fx_conductor_tick "$DIR" "$T" || exit 1
 [ -f "$DIR/bin/merge-conductor.sh" ] || exit 1   # impact: this suite drives the whole tick
+# The off-list settle (BH-8310) is a fragment; fx_conductor_tick copies no fragment.
+mkdir -p "$T/h/bin/merge-conductor.d" || exit 1
+cp "$DIR/bin/merge-conductor.d/bh-8310-stale-row-settle.sh" "$T/h/bin/merge-conductor.d/" || exit 1
 # The ETag half of the contract (C3): without gh-rest-etag.sh gh_rest reads
 # unconditionally and "the re-probe is conditional" could not be asked.
 cp "$DIR/bin/lib/gh-rest-etag.sh" "$T/h/bin/lib/" || exit 1
@@ -182,7 +185,10 @@ echo "CLOSED fix/by-hand" > "$T/pr/450"
 seed_rec 5 example-org/other
 run_tick   # candidates 600 500 450 400: budget 3, 400 deferred
 [ "$(cut -d' ' -f1 "$T/probes.txt" | tr '\n' ' ')" = "600 500 450 " ] && ok || bad "C4: never-probed candidates go by number, newest first (got: $(tr '\n' ' ' < "$T/probes.txt"))"
-[ "$(state_of 500)" = WAIT_CI ] && ok || bad "C4: a MERGED harness PR must not become CLOSED (row: $(state_of 500))"
+# TEST-CHANGE (BH-8310): this asserted the row stays WAIT_CI. That premise was
+# the defect: a merged PR's row then never left WAIT_CI. It now moves to MERGED,
+# which still proves "never CLOSED" and is stricter.
+[ "$(state_of 500)" = MERGED ] && ok || bad "C4: a MERGED harness PR must become MERGED, never CLOSED (row: $(state_of 500))"
 [ "$(memo 500)" != "" ] && [ "$(memo 500 | cut -d' ' -f1)" = merged ] && ok || bad "C4: a MERGED probe is memo'd merged (memo: $(memo 500))"
 [ "$(state_of 600)" = WAIT_CI ] && ok || bad "C4: an OPEN harness PR must not become CLOSED (row: $(state_of 600))"
 [ "$(memo 600 | cut -d' ' -f1)" = open ] && [ "$(memo 600 | cut -d' ' -f2)" != 0 ] && ok || bad "C4: an OPEN probe is memo'd open with its probe time (memo: $(memo 600))"

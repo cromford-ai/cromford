@@ -582,9 +582,13 @@ lrl_ask_human() {
 }
 
 # lrl_have <file> — step 1's read of a GET /api/verdicts answer, for request
-# $ID on $HEAD (job $SJOB, $RESETS resets): HAVE ADVICE SUPERSEDES OLDBLOCK as
-# one TSV line, nothing when the file does not parse. BH-5773: the 503 retry in
-# step 2 re-reads through it too.
+# $ID on $HEAD (job $SJOB, $RESETS resets): HAVE ADVICE SUPERSEDES OLDBLOCK
+# HFINAL NEWER as one TSV line, nothing when the file does not parse. BH-8349:
+# HFINAL counts this result's rows the worker recorded as advice because a
+# human verdict is final on the head (note token human-final:#<id>); NEWER is
+# the newest row of any source on $HEAD above SUPERSEDES that no landing of
+# this request wrote ("-" when none, or when SUPERSEDES is "-"). BH-5773: the
+# 503 retry in step 2 re-reads through it too.
 lrl_have() {
   jq -r --arg h "$HEAD" --arg tok "lead-review:$ID" \
     --arg job "$SJOB" --argjson resets "$RESETS" '
@@ -597,7 +601,11 @@ lrl_have() {
         ([$r[] | select(mine and (toks | index("authority:human-required") != null))] | length),
         ([$r[] | select(lr and (mine | not)) | .id] | max // "-"),
         (if (.truncated // false) or any($r[]; .source == "lead" and .verdict == "BLOCK" and .head_sha != $h)
-            or any($r[]; lr and (mine | not) and .verdict == "BLOCK") then "yes" else "no" end) ] | @tsv' "$1" 2>/dev/null
+            or any($r[]; lr and (mine | not) and .verdict == "BLOCK") then "yes" else "no" end),
+        ([$r[] | select(mine and (toks | any(startswith("human-final:"))))] | length),
+        ([$r[] | select(lr and (mine | not)) | .id] | max) as $sup
+        | if $sup == null then "-"
+          else ([$r[] | select(.head_sha == $h and (lr | not) and .id > $sup) | .id] | max // "-") end ] | @tsv' "$1" 2>/dev/null
 }
 
 # lrl_inbuild_ok <repo> <pr> <head> — BH-5023, step 1b. rc 0 = a builder
@@ -727,8 +735,11 @@ while IFS= read -r ROW; do
       # BLOCK was recorded on another head of this PR or by an earlier landing
       # of this request (a findings review is only ever posted after its row),
       # or when the row history came back truncated and cannot rule one out.
-      HAVE=""; ADVICE=""; SUPERSEDES=""; OLDBLOCK=""
-      IFS=$'\t' read -r HAVE ADVICE SUPERSEDES OLDBLOCK < <(lrl_have "$VT")
+      # BH-8349: HFINAL: those of them recorded as advice under a final human
+      # verdict. NEWER: a row on THAT head newer than SUPERSEDES that no landing
+      # of this request wrote.
+      HAVE=""; ADVICE=""; SUPERSEDES=""; OLDBLOCK=""; HFINAL=""; NEWER=""
+      IFS=$'\t' read -r HAVE ADVICE SUPERSEDES OLDBLOCK HFINAL NEWER < <(lrl_have "$VT")
       # BH-5213: the verdict row 2d's dismissal message names (the row that lands
       # THIS result, by the same rule as HAVE; or post's answer below).
       ROWREF=$(jq -r --arg h "$HEAD" --arg tok "lead-review:$ID" --arg job "$SJOB" --argjson resets "$RESETS" '
@@ -739,7 +750,13 @@ while IFS= read -r ROW; do
         [.rows[]? | select(mine)] | max_by(.id) | if . == null then "" else "#\(.id)" end' "$VT" 2>/dev/null)
       rm -f "$VT"
       case "$HAVE" in ''|*[!0-9]*) log "$REPO#$PR @${HEAD:0:12} lead review $ID: unparseable verdicts answer; next tick retries"; continue ;; esac
-      if [ "$HAVE" = 0 ]; then
+      if [ "$HAVE" = 0 ] && [ "$SUPERSEDES" != - ] && [ "${NEWER:--}" != - ]; then
+        # BH-8349: never re-land over a newer verdict row of any source (a human
+        # verdict, another request's landing, a box row). Stamped like rc 3, so
+        # it is not read again; nothing is posted.
+        log "$REPO#$PR @${HEAD:0:12} lead review $ID: re-landing skipped: row #$NEWER on this head is newer than lead row #$SUPERSEDES; nothing posted"
+        PRC=3
+      elif [ "$HAVE" = 0 ]; then
         # 2. Post the lead row.
         NOTE="lead-review:$ID$INB"
         [ -z "$SJOB" ] || NOTE="$NOTE lead-job:$SJOB"
@@ -805,19 +822,30 @@ while IFS= read -r ROW; do
           4) PROMOTED=$((PROMOTED + 1))
              log "$REPO#$PR @${HEAD:0:12} lead review $ID: $VERDICT posted as a source=lead row, but the lead-verdict status was NOT published ($(printf '%s' "$OUT" | tr '\n' ' ' | head -c 300))"
              [ "$VERDICT" = BLOCK ] || lrl_spotcheck "$SAFE_ID" "$REPO" "$PR" "$HEAD" "$VERDICT" "$MODEL" "$REF" ;;
+          # BH-8349: a human verdict is final on this head. The row is advice and
+          # nobody is asked: a human already decided. PRC 3 = stamp only (no
+          # findings review, no dismissal, no go-live, no ring).
           5) PROMOTED=$((PROMOTED + 1))
              WH=$(grep -m1 'status withheld' <<<"$OUT" | sed 's/^lead-verdict: //')
+             if [[ "$WH" == *' is final on this head'* ]]; then
+               HF=$(sed -nE 's/.*human verdict (#[0-9]+) .*/\1/p' <<<"$WH")
+               log "$REPO#$PR @${HEAD:0:12} lead review $ID: $VERDICT recorded as advice; human verdict ${HF:-?} is final on this head, status not changed"
+               PRC=3
+             else
              log "$REPO#$PR @${HEAD:0:12} lead review $ID: $VERDICT recorded as advice; lead-verdict status withheld (${WH:-$(head -1 <<<"$OUT")})"
              WR=${WH#status withheld on * }; WR=${WR%; a *}
-             lrl_ask_human "${WR:-see logs/lead-review-land.log}" || continue ;;
+             lrl_ask_human "${WR:-see logs/lead-review-land.log}" || continue
+             fi ;;
           *) log "$REPO#$PR @${HEAD:0:12} lead review $ID: verdict row NOT posted ($(printf '%s' "$OUT" | tr '\n' ' ' | head -c 200)); not stamped, next tick retries"
              continue ;;
         esac
       else
         log "$REPO#$PR @${HEAD:0:12} lead review $ID: its lead row is already recorded; stamping only"
         PRC=0
+        # BH-8349: advice under a final human verdict asks nobody and posts nothing.
+        if [ "${HFINAL:-0}" != 0 ]; then PRC=3
         # A withheld row whose beat was never sent (it failed, so no stamp) asks now.
-        if [ "$ADVICE" != 0 ]; then lrl_ask_human "recorded as advice on an earlier tick" || continue; fi
+        elif [ "$ADVICE" != 0 ]; then lrl_ask_human "recorded as advice on an earlier tick" || continue; fi
       fi
       # 2a-flip. BH-6391, a measurement: a verdict whose class differs from the
       # earlier lead word on a head with no own commit since it. One line per

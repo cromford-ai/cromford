@@ -3339,6 +3339,8 @@ tick_project() {
   # reaped answers rc 127 on stderr, which is why this is quiet and unchecked.
   for PID in "${PRPIDS[@]:-}"; do [ -n "$PID" ] && wait "$PID" 2>/dev/null; done
   fanin_end
+  # PREQUEUE GROUPS (BH-8327): one prequeue group gate run per (repo, main).
+  command -v mc_pq_group_tick_end >/dev/null 2>&1 && mc_pq_group_tick_end "$SLUG"
   if [ "$_fly" = 1 ] && [ -n "$MC_FLY_COUNT_FILE" ]; then
     MC_FLY_N_ENQ=$(grep -cx enq "$MC_FLY_COUNT_FILE" 2>/dev/null); MC_FLY_N_SKIP=$(grep -cx skip "$MC_FLY_COUNT_FILE" 2>/dev/null)
     MC_FLY_N_FB=$(grep -cx fb "$MC_FLY_COUNT_FILE" 2>/dev/null); rm -f "$MC_FLY_COUNT_FILE"
@@ -3455,6 +3457,7 @@ tick_project() {
       exec 9>&-
     done
     exec 9>&-
+    command -v mc_offlist_settle_tick >/dev/null 2>&1 && mc_offlist_settle_tick "$SLUG" "$OPEN_NUMS"
     # A memo nothing has touched in 30 days goes (D21); losing one costs a re-probe.
     find "$MC_CLOSED_WATCH_DIR" -type f -mtime +30 -delete 2>/dev/null
   fi

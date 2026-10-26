@@ -1,0 +1,11 @@
+{
+  "env": "MC_PREQUEUE_GROUP_PAGE",
+  "type": "int",
+  "default": 30,
+  "min": 1,
+  "max": 100,
+  "unit": "runs",
+  "zero_means": null,
+  "read_in": "bin/lib/mc-prequeue.d/group.sh",
+  "note": "BH-8327: how many prequeue-group-gate.yml runs one run-list read asks for (newest first, memoised per tick and repo) when the conductor looks for a group's run (bin/lib/mc-prequeue.d/group.sh). A run past this page is not found, and MC_PREQUEUE_DEADLINE_S makes its heads could-not-run. Per project: lane.merge-conductor.<project>.mc_prequeue_group_page."
+}

@@ -10,6 +10,8 @@
 #     provenance hold and its autopilot read for THAT head;
 #   BLOCK (source lead|human) stops every merge lane on THAT head, whatever a
 #     box review said, until a push or a newer MERGE row.
+#   A human row is final for its head (BH-8349): a later lead row on that
+#     head is advice and does not change what stands (exit 5 below).
 #
 # THE LEAD TOKEN. A lead or human row also needs LEAD_VERDICT_TOKEN (the worker
 # refuses it with 403 otherwise; HARNESS_SECRET alone writes only `box` rows).
@@ -148,6 +150,9 @@
 #         --source human verdict publishes it (BH-3683; lead_authority_mode=human,
 #         or an undecidable authority under either mode). Under --source
 #         risk-tier a 5 writes NO row: a lead review decides the head (BH-5022).
+#         Under --source lead a 5 is also a head where a human verdict is
+#         final: the worker answered human_final, the row is advice, and no
+#         status is published (BH-8349; a push to a new head resets it).
 if [ -z "${LV_BASH_REEXEC:-}" ]; then
   _lv_min="${LV_BASH_MIN:-4.4}"
   _lv_ge() { # _lv_ge <major> <minor> — is that bash at least LV_BASH_MIN
@@ -417,6 +422,14 @@ lv_post() {
   dup=$(printf '%s' "$resp" | jq -r '.human_sig_duplicate_of // empty' 2>/dev/null)
   if [ -n "$dup" ]; then
     echo "lead-verdict: WARNING: this post repeats verdict #$dup within the same second and will read unproven; wait a second and post again if a protected PR needs it" >&2
+  fi
+  # BH-8349: a human verdict on this head is final. The worker recorded this
+  # lead row as advice (note token human-final:#<id>, no gate fact); the status
+  # the human row published stays as it is.
+  local hfin
+  if [ "$source" = lead ] && hfin=$(printf '%s' "$resp" | jq -er '.human_final | select(type == "object" and .id != null) | "#\(.id) (\(.verdict // "?"))"' 2>/dev/null); then
+    echo "lead-verdict: status withheld on ${sha:0:12}: human verdict $hfin is final on this head; this lead row is advice" >&2
+    exit 5
   fi
   if [ -n "$withhold" ]; then
     echo "lead-verdict: status withheld on ${sha:0:12}: $withhold; a --source human verdict publishes it (bin/lead-verdict.sh post $repo $pr $sha $verdict --source human)" >&2

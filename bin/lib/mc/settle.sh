@@ -753,6 +753,111 @@ closed_unmerged_rows() {
   return 0
 }
 
+# mc_settle_offlist_rows <slug> <open-nums> <apply|dry> — BH-8310. Moves the
+# READY and WAIT_CI rows of <slug> whose PR is off this tick's open list and
+# memo'd `merged` or `closed` to MERGED or CLOSED. Always rc 0.
+#
+# THE DEFECT. closed_unmerged_rows memos a MERGED probe and writes no row, and a
+# `merged` memo takes the PR out of every later candidate list. So the row of a
+# PR merged outside the conductor stayed READY for good: #912 (merged
+# 2026-09-18) was the backstop's oldest READY row, and with
+# MC_BACKSTOP_MAX_RUNNING=1 every */5 fire ran it and no open PR got a run.
+#
+# A ROW-ONLY TRANSITION. No conductor_settle: these PRs merged outside the
+# conductor, often weeks ago, so an issue close or a deploy request now is
+# wrong (bin/reconcile-prs.sh owns the issue close of merged PRs). QUEUED rows
+# keep the queue settle; other parked states are not touched. A `gone` memo
+# (404) is not moved: a 404 can be a token scope, not a deleted PR.
+#
+# THE PROBE. A keyed tick (MC_ONLY_KEYS) in apply mode reads a key with no
+# merged/closed/gone memo once through mc_rest_pr_json and memos the answer as
+# closed_unmerged_rows does. A read that is not 200/404 stops the pass with no
+# write and no memo (D9). A full tick and the sweep (bin/mc-stale-rows-sweep.sh)
+# read memos only: 0 GitHub calls. With P set, a held PR lock skips the row.
+# A keyed probe that answers CLOSED moves no row: it puts the memo back to
+# "never probed" (closed_watch_reoffer), so closed_unmerged_rows reads the PR
+# first next tick and its settle runs the ticket_open check and the
+# closed-unmerged-issue-open page. Only a MERGED answer settles inline.
+# A `closed` memo older than the row's `since` is not moved: the row changed
+# after the close probe, so the PR can be open again (a reopen does not
+# rewrite an existing memo, closed_watch_seen).
+# Each row prints `STALE-ROW <key> <state> -> <target> memo=<word> (<mode>)`.
+mc_settle_offlist_rows() {
+  local slug="$1" open=" ${2:-} " mode="${3:-dry}" d line key num st since head rev url memo mep tgt why
+  local tmp rc pst br n=0 nm=0 nc=0 probed=0 now
+  [ "$mode" = apply ] || mode=dry
+  d=$(closed_watch_dir "$slug")
+  local -a CAND=()
+  mapfile -t CAND < <(awk -F'\t' -v p="$slug#" -v open="$open" '
+    index($1, p) == 1 && ($2 == "READY" || $2 == "WAIT_CI") {
+      n = substr($1, length(p) + 1)
+      if (n !~ /^[0-9]+$/ || index(open, " " n " ")) next
+      print $1 "\t" n "\t" $2 "\t" $3 "\t" $4 "\t" $5 "\t" $8 }' "$MC_ROWS" 2>/dev/null)
+  [ "${#CAND[@]}" -gt 0 ] || return 0
+  now=$(mc_now)
+  for line in "${CAND[@]}"; do
+    IFS=$'\t' read -r key num st since head rev url <<<"$line"
+    [ -n "$key" ] || continue
+    [ -n "${MC_ONLY_KEYS:-}" ] && ! mc_only_has "$key" && continue
+    memo=; mep=; IFS=$'\t' read -r memo mep _ < "$d/$num" 2>/dev/null
+    if [ -n "${MC_ONLY_KEYS:-}" ] && [ "$mode" = apply ]; then
+      case "$memo" in merged|closed|gone) ;; *)
+        tmp=$(mktemp "${TMPDIR:-/tmp}/mc-offlist.XXXXXX") || break
+        rc=0; mc_rest_pr_json "$slug" "$num" > "$tmp" || rc=$?
+        probed=$((probed + 1))
+        if [ "$rc" = 44 ]; then
+          closed_watch_put "$slug" "$num" gone "$now" "$url" -; memo=gone
+        elif [ "$rc" != 0 ]; then
+          rm -f "$tmp"
+          mc_log "$key: off-list probe unreadable (HTTP ${GH_REST_STATUS:-000}${GH_REST_REASON:+ $GH_REST_REASON}) — row left ${st}, retried next tick"
+          break
+        else
+          IFS=$'\t' read -r pst br < <(jq -r '[.STATE, (.head.ref // "-")] | @tsv' "$tmp" 2>/dev/null)
+          case "$pst" in
+            MERGED) memo=merged ;; OPEN) memo=open ;;
+            CLOSED) rm -f "$tmp"; closed_watch_reoffer "$slug" "$num"
+                    printf 'STALE-ROW %s %s -> - memo=open (skipped: closed unmerged, left to the closed-unmerged settle)\n' "$key" "$st"
+                    mc_log "$key: off-list probe answered CLOSED — row left ${st}, memo reoffered for the closed-unmerged settle"
+                    continue ;;
+            *) rm -f "$tmp"; mc_log "$key: off-list probe answered no state — row left ${st}, retried next tick"; break ;;
+          esac
+          closed_watch_put "$slug" "$num" "$memo" "$now" "$url" "$br"
+        fi
+        rm -f "$tmp" ;;
+      esac
+    fi
+    case "$memo" in
+      merged) tgt=MERGED; why="merged outside the conductor (closed-watch)" ;;
+      closed) case "$since:$mep" in *[!0-9:]*|:*|*:) ;; *)
+                if [ "$mep" -lt "$since" ]; then
+                  printf 'STALE-ROW %s %s -> - memo=closed (skipped: memo older than the row, PR may be reopened)\n' "$key" "$st"; continue
+                fi ;; esac
+              tgt=CLOSED; why="closed without merging (closed-watch)" ;;
+      gone)   printf 'STALE-ROW %s %s -> - memo=gone (skipped: 404 is not proof of a close)\n' "$key" "$st"; continue ;;
+      *)      continue ;;
+    esac
+    n=$((n + 1))
+    if [ "$mode" = dry ]; then
+      printf 'STALE-ROW %s %s -> %s memo=%s (dry-run)\n' "$key" "$st" "$tgt" "$memo"
+    else
+      if [ -n "${P:-}" ]; then
+        exec 9>"$(mc_pr_lock "$P" "$num")"
+        flock -n 9 || { exec 9>&-
+          printf 'STALE-ROW %s %s -> %s memo=%s (skipped: lock held)\n' "$key" "$st" "$tgt" "$memo"
+          mc_log "STALE-ROW $key $st -> $tgt memo=$memo (skipped: lock held)"; n=$((n - 1)); continue; }
+      fi
+      mc_transition "$key" "$tgt" "$why" "$head" "$rev" "$url" - - - >/dev/null
+      [ -n "${P:-}" ] && exec 9>&-
+      printf 'STALE-ROW %s %s -> %s memo=%s (applied)\n' "$key" "$st" "$tgt" "$memo"
+      mc_log "STALE-ROW $key $st -> $tgt memo=$memo (applied)"
+    fi
+    if [ "$tgt" = MERGED ]; then nm=$((nm + 1)); else nc=$((nc + 1)); fi
+  done
+  # A dry run writes nothing, the conductor log included.
+  [ "$mode" = apply ] && { [ "$n" -gt 0 ] || [ "$probed" -gt 0 ]; } && mc_log "$slug OFFLIST-SETTLE rows=$n merged=$nm closed=$nc probed=$probed (apply)"
+  return 0
+}
+
 # conductor_settle — moved verbatim from bin/merge-conductor.sh (BH-477 / BH-685); same name, same body.
 # conductor_settle <key> <url> <project> <slug> <branch> <record> <job> <head>
 #                  <reviewed> <verdict> <mstate> <reason> [merge-sha]

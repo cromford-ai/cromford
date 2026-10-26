@@ -52,7 +52,8 @@ export const BREAK_IT_RE = /^(clean|could-not-run|failed:[1-9][0-9]{0,2})$/;
 // A box row is history only. BH-5022: a risk-tier row stands too, because
 // vd_standing is what every merge lane reads, not the lead-verdict status. It
 // can only ever be a MERGE (validateVerdict) and a later lead/human row on the
-// head is newer, so it never outranks a reviewer.
+// head is newer, so it never outranks a reviewer. BH-8349: a final human row
+// (humanFinalRow) outranks every newer row on its head.
 // The sources that need the lead token on top of the bearer: every source that
 // stands. One list, so the auth check and STANDING_SOURCES cannot drift apart.
 export const LEAD_TOKEN_SOURCES = ["lead", "human", "risk-tier"];
@@ -321,6 +322,34 @@ async function leadClientMin(env) {
   }
 }
 
+// BH-8349: is this source=human row FINAL on its head? It is when it would
+// stand today: a BLOCK always (the safe direction); a MERGE / MERGE-WITH-NOTES
+// when it is proven (humanProven, and the first row with its sig in the PR), or
+// when human_verdict_sig_mode is not enforce. A sig mode that cannot be read is
+// not final: an unproven MERGE never gains the power to beat a lead BLOCK on a
+// read that failed. The human_verdict_mode rule (auth='lead-token') is the
+// caller's SQL filter.
+async function humanIsFinal(env, row, sk, firstBySig) {
+  if (row.verdict === "BLOCK") return true;
+  if (await humanProven(row, sk) === true && firstBySig.get(row.human_sig) === row.id) return true;
+  const sigMode = await protectedMode(env, "human_verdict_sig_mode");
+  return sigMode !== null && sigMode !== "enforce";
+}
+
+// BH-8349: the newest source=human row on repo/pr/head, when it is final; else
+// null. One indexed read (idx_verdicts_pr_head); a signed row adds the
+// firstRowBySig read.
+async function humanFinalRow(env, repo, pr, head, mode) {
+  const unproven = mode === "enforce" ? " AND auth IS NOT 'lead-token'" : "";
+  // sql-ident-ok: unproven is a literal picked by mode
+  const row = await env.DB.prepare(
+    `SELECT * FROM verdicts WHERE repo=?1 AND pr=?2 AND head_sha=?3 AND source='human'${unproven}
+      ORDER BY id DESC LIMIT 1`
+  ).bind(repo, pr, head).first();
+  if (!row) return null;
+  return await humanIsFinal(env, row, sigKeyOf(env), await firstRowBySig(env, repo, pr, [row])) ? row : null;
+}
+
 export const routes = [
   [
     "POST", "/api/verdicts",
@@ -405,6 +434,31 @@ export const routes = [
         }
         await ensureTable(env, "verdicts");
         await ensureColumns(env, "verdicts");
+        // BH-8349: a human verdict on a head is final for that head. A lead row
+        // on it is still written (history, and the precision scorer reads it),
+        // as advice: the note token human-final:#<id>, no lead-verdict gate
+        // fact, and human_final in the answer, so bin/lead-verdict.sh publishes
+        // no status. A new head has no human row: a push resets the rule. With
+        // the mode unreadable and a human row on the head, the rule is unknown:
+        // 503, nothing written (the GET's BH-3849 rule).
+        let humanFinal = null;
+        if (r.source === "lead") {
+          if (mode === null) {
+            const human = await env.DB.prepare(
+              "SELECT id FROM verdicts WHERE repo=?1 AND pr=?2 AND head_sha=?3 AND source='human' LIMIT 1"
+            ).bind(r.repo, r.pr, r.head_sha).first("id");
+            if (human) {
+              console.warn("[verdicts] BH-8349 refused source=lead: human_verdict_mode unreadable and a source=human row is on this head", `${r.repo}#${r.pr}`, r.head_sha.slice(0, 12));
+              return json(503, {
+                error: "human_verdict_mode could not be read and a source=human row is on this head; a source=lead verdict is refused until it can (fail closed)",
+                human_verdict_mode: null,
+              });
+            }
+          } else {
+            humanFinal = await humanFinalRow(env, r.repo, r.pr, r.head_sha, mode);
+          }
+          if (humanFinal) r.note = `${r.note ? `${r.note.trim()} ` : ""}human-final:#${humanFinal.id}`;
+        }
         // BH-3905: the signed message is second-grained, so a retry of the same
         // verdict in the same second signs identically, and firstRowBySig reads
         // the newer row as a replay. Still written (append-only), but loudly. A
@@ -435,9 +489,13 @@ export const routes = [
         }
         // BH-4954: a standing (lead/human) row is the PR's lead_verdict gate
         // fact. A box row is history only. Never throws; the 201 is unchanged.
-        if (STANDING_SOURCES.includes(r.source) && row) await recordLeadVerdict(env, t, row);
+        // BH-8349: an advice row (human_final) is not a gate fact.
+        if (humanFinal) {
+          console.warn(`[verdicts] BH-8349 lead row #${res.meta.last_row_id} on ${r.repo}#${r.pr} ${r.head_sha.slice(0, 12)} recorded as advice: human verdict #${humanFinal.id} is final`);
+        } else if (STANDING_SOURCES.includes(r.source) && row) await recordLeadVerdict(env, t, row);
         return json(201, {
           verdict: row, human_verified: auth === "human-token", human_signed: humanSig !== null, human_verdict_mode: mode,
+          human_final: humanFinal ? { id: humanFinal.id, verdict: humanFinal.verdict } : null,
           ...(dup ? { human_sig_duplicate_of: dup } : {}),
         });
       });
@@ -445,8 +503,9 @@ export const routes = [
   ],
 
   // ?repo=&pr= is the PR's history, newest first (capped, and the cap is
-  // named). &head= adds `standing`: the newest lead/human row bound to THAT
-  // head, or null. &standing_only=1 (needs &head=) skips the history read —
+  // named). &head= adds `standing`: the newest lead/human/risk-tier row bound
+  // to THAT head, or null. BH-8349: when the newest human row on the head is
+  // final (humanIsFinal), it stands over any newer row. &standing_only=1 (needs &head=) skips the history read —
   // it is what every merge-lane check asks, once per candidate per tick. The merge lanes only ever ask with the live head, so a row
   // for any earlier head can never stand for the one sitting there.
   //
@@ -503,12 +562,18 @@ export const routes = [
           }
           // IS, not =: an auth NULL row must never be caught by NULL logic.
           const unproven = mode === "enforce" ? "\n               AND NOT (source='human' AND auth IS 'lead-token')" : "";
-          // sql-ident-ok: STANDING_SOURCES is a frozen export const in lib/verdict-sources.js; unproven is a literal picked by mode
-          standing = await env.DB.prepare(
-            `SELECT * FROM verdicts WHERE repo=?1 AND pr=?2 AND head_sha=?3
+          // sql-ident-ok: STANDING_SOURCES is a frozen export const in lib/verdict-sources.js; unproven is a literal picked by mode, order a literal
+          const standingSql = (order) => `SELECT * FROM verdicts WHERE repo=?1 AND pr=?2 AND head_sha=?3
                AND source IN (${STANDING_SOURCES.map((s) => `'${s}'`).join(",")})${unproven}
-             ORDER BY id DESC LIMIT 1`
-          ).bind(repo, pr, head).first();
+             ORDER BY ${order} LIMIT 1`;
+          // BH-8349: the newest human row first. One statement on the hot path;
+          // a second only when that human row is not final (an unproven MERGE
+          // under sig enforce), and then today's newest-row answer.
+          standing = await env.DB.prepare(standingSql("(source='human') DESC, id DESC")).bind(repo, pr, head).first();
+          if (standing && standing.source === "human"
+              && !await humanIsFinal(env, standing, sigKeyOf(env), await firstRowBySig(env, repo, pr, [standing]))) {
+            standing = await env.DB.prepare(standingSql("id DESC")).bind(repo, pr, head).first();
+          }
         }
         const sk = sigKeyOf(env);
         // A whole-row replay (INSERT ... SELECT of an old signed MERGE) copies a

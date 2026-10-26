@@ -31,6 +31,15 @@
 # bounds the runs alive at once, earlier fires' included. READY keys start
 # first; a key past the cap is named and offered again by the next fire.
 #
+# AN UNCHANGED ROW IS SKIPPED (BH-8310). #912 merged outside the conductor and
+# its row stayed READY with the oldest `since`, so under MC_BACKSTOP_MAX_RUNNING=1
+# every fire ran it and no open PR got a run. Each run now records whether it
+# changed its row (state/merge-conductor/backstop-unchanged/<key>: key, cksum
+# of the row line, count). A key whose last MC_BACKSTOP_UNCHANGED_SKIP (default
+# 3, 0 = off) runs left its row byte-identical, same head included, is skipped
+# with one line and uses no slot, until anything changes the row. A counter of
+# a key that is no longer a candidate is removed on every fire.
+#
 # WHAT IT COSTS: nothing on an idle fleet. Per candidate, one conductor
 # process (its own project-level reads: one ETag-cached open-PR list) plus the
 # conductor's usual per-PR reads (pull, check-runs, thread; the read memo skips
@@ -97,6 +106,19 @@ CANDS=$(awk -F'\t' -v own="${HARNESS_REPO:-}" '
   s=$3; if (s !~ /^[0-9]+$/) s=0; r = $1; sub(/#.*/, "", r)
   print ($2 == "READY" ? 0 : 1) "\t" (own != "" && tolower(r) == own ? 0 : 1) "\t" s "\t" $1 }' "$ROWS" 2>/dev/null \
   | sort -t$'\t' -k1,1n -k2,2n -k3,3n -k4,4 | cut -f4 | awk 'NF && !seen[$0]++')
+# THE UNCHANGED-ROW SKIP (BH-8310). Knob row lane.merge-conductor-backstop.
+# mc_backstop_unchanged_skip (catalog/lanes.d/merge-conductor-backstop.knobs.d/
+# MC_BACKSTOP_UNCHANGED_SKIP.json); 3 is its documented fallback, 0 = off.
+SKIPN="${MC_BACKSTOP_UNCHANGED_SKIP:-3}"; [[ "$SKIPN" =~ ^[0-9]+$ ]] || SKIPN=3
+UDIR="$H/state/merge-conductor/backstop-unchanged"; mkdir -p "$UDIR" 2>/dev/null
+row_line() { awk -F'\t' -v k="$1" '$1 == k { print; exit }' "$ROWS" 2>/dev/null; }
+row_sum()  { printf '%s' "$1" | cksum | cut -d' ' -f1; }
+# Retention: a counter has no value once its key is no longer a candidate.
+for _u in "$UDIR"/*; do
+  [ -f "$_u" ] || continue
+  IFS=$'\t' read -r _uk _ _ < "$_u" 2>/dev/null
+  grep -qxF -- "${_uk:-}" <<<"$CANDS" || rm -f "$_u"
+done
 N=$(grep -c . <<<"$CANDS")
 [ "$N" -gt 0 ] || { say "0 candidates — nothing to do"; exit 0; }
 case "$CAP" in 6|0|'') ;; *) say "MC_BACKSTOP_MAX_KEYS=$CAP is deprecated and has no effect (BH-6000): every candidate gets its own run" ;; esac
@@ -131,9 +153,18 @@ if [ "$MAXR" -gt 0 ]; then
     ( exec 7>>"$_lk" && flock -n 7 ) 2>/dev/null || running=$((running + 1))
   done
 fi
-launched=0; capped=0
+launched=0; capped=0; skipped=0
 while IFS= read -r KEY; do
   [ -n "$KEY" ] || continue
+  UF="$UDIR/${KEY//[^A-Za-z0-9._-]/_}"
+  RL=$(row_line "$KEY"); RS=$(row_sum "$RL")
+  if [ "$SKIPN" -gt 0 ] && [ -f "$UF" ]; then
+    IFS=$'\t' read -r _ _us _uc < "$UF" 2>/dev/null
+    if [ "${_us:-}" = "$RS" ] && [[ "${_uc:-}" =~ ^[0-9]+$ ]] && [ "$_uc" -ge "$SKIPN" ]; then
+      say "$KEY: its last $_uc keyed runs left its row unchanged on head $(cut -f4 <<<"$RL" | cut -c1-8) — skipped until the row changes (MC_BACKSTOP_UNCHANGED_SKIP=$SKIPN)"
+      skipped=$((skipped + 1)); continue
+    fi
+  fi
   if [ "$MAXR" -gt 0 ] && [ $((running + launched)) -ge "$MAXR" ]; then capped=$((capped + 1)); continue; fi
   LK="$LOCKS/mc-backstop-${KEY//[^A-Za-z0-9._-]/_}.lock"
   # The lock is taken here, in the foreground, so a busy key is known and
@@ -151,12 +182,22 @@ while IFS= read -r KEY; do
   ( MC_ONLY_PR="$KEY" WAKE_LAUNCH=1 MC_KEYED_READY_FLOOR=1 MC_WORKER_DEADLINE_CAP_S="$WD" \
       setsid timeout "$TO" "$H/bin/merge-conductor.sh" </dev/null >/dev/null 2>&1 9>&-
     rc=$?
+    # The counter (BH-8310): a run that hit the timeout held the slot too, so it counts.
+    AL=$(row_line "$KEY")
+    if [ "$AL" = "$RL" ]; then
+      _uc=0; _us=""
+      [ -f "$UF" ] && IFS=$'\t' read -r _ _us _uc < "$UF" 2>/dev/null
+      [ "${_us:-}" = "$RS" ] && [[ "${_uc:-}" =~ ^[0-9]+$ ]] || _uc=0
+      printf '%s\t%s\t%s\n' "$KEY" "$RS" "$((_uc + 1))" > "$UF.tmp.$$" 2>/dev/null && mv -f "$UF.tmp.$$" "$UF" 2>/dev/null
+    else
+      rm -f "$UF"
+    fi
     if [ "$rc" = 124 ]; then say "$KEY: keyed conductor run hit timeout $TO — killed"
     else say "$KEY: keyed conductor run rc=$rc"; fi
     exit 0 ) &
   exec 9>&-
   launched=$((launched + 1))
 done <<<"$CANDS"
-say "$N candidate(s): $launched detached keyed conductor run(s) started, one per PR (timeout ${TO}s, worker cap ${WD}s each)"
+say "$N candidate(s): $launched detached keyed conductor run(s) started, one per PR (timeout ${TO}s, worker cap ${WD}s each)$([ "$skipped" = 0 ] || printf ', %s skipped as unchanged' "$skipped")"
 [ "$capped" = 0 ] || say "MC_BACKSTOP_MAX_RUNNING=$MAXR reached ($running already running): $capped left for the next fire"
 exit 0

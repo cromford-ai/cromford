@@ -308,7 +308,10 @@ else:
     ve = v.get("env") or {}
     want = {"SUITE_LEDGER_URL": "${{ vars.SUITE_LEDGER_URL }}", "SUITE_REUSE_CLASS": "ci",
             "SUITE_REUSE_REPO": "${{ github.repository }}",
-            "SUITE_REUSE_RUN_KEY": "prequeue-${{ github.run_id }}-${{ github.run_attempt }}"}
+            # TEST-CHANGE (BH-8327): a group run's matrix jobs share run_id, so a
+            # called gate appends its run_key_suffix (-<pr>); a dispatched gate has
+            # no such input and its key is unchanged.
+            "SUITE_REUSE_RUN_KEY": "prequeue-${{ github.run_id }}-${{ github.run_attempt }}${{ inputs.run_key_suffix }}"}
     for k, w in want.items():
         if ve.get(k) != w: problems.append(f"verdict env {k}={ve.get(k)!r}, want {w!r}")
     ci_ctx = {s.get("env", {}).get("CI_REUSE_CTX") for j in ci["jobs"].values() for s in (j.get("steps") or [])} - {None}

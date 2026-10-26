@@ -21,6 +21,7 @@
 #
 # STANDING = the newest lead/human row on the head (worker/jobs/src/routes/
 # verdicts.js decides it, in SQL). A box row is history and never stands.
+# BH-8349: a final human row on the head stands over any newer lead row.
 #
 # UNREADABLE IS rc 2, AND WHAT IT MEANS DEPENDS ON THE QUESTION (BH-1525 r2).
 # An unreachable worker, no HARNESS_SECRET, a non-2xx answer, or a head that

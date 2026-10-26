@@ -1,0 +1,105 @@
+# Pre-queue group smoke gate (BH-8327). Dispatched ONCE per (repo, main) by the
+# merge conductor's pq_group_flush (bin/lib/mc-prequeue.d/group.sh) for the
+# READY heads that joined one group in a conductor run. `members` is
+# `<pr>:<head>,...`. The plan job checks the inputs and turns the members into a
+# matrix; each gate job CALLS .github/workflows/prequeue-gate.yml for one head,
+# so each head is merged onto main alone, runs its own suites and prints its own
+# prequeue-verdict annotation, which the conductor reads per head
+# (pq_group_read). Bad input: one prequeue-group-verdict could-not-run notice,
+# no gate job, and every head reads could-not-run.
+# "smoke" in the name is load-bearing: the main-red detector skips workflows
+# whose name matches MAIN_RED_SKIP_RE (default `(e2e|nightly|smoke|publish|deploy)`),
+# and these runs sit on branch main.
+name: Pre-queue group smoke gate (BH-8327)
+run-name: prequeue group=${{ inputs.group_id }} main=${{ inputs.main }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      main:
+        description: the main tip sha (40 hex) every head is merged onto
+        required: true
+        type: string
+      group_id:
+        description: the conductor's group id (g<digits><hex>)
+        required: true
+        type: string
+      members:
+        description: comma list of <pr>:<head sha>, one per head
+        required: true
+        type: string
+      invariants:
+        description: optional comma list of id=off|<n> applied over main's invariant catalog
+        required: false
+        default: ''
+        type: string
+      learned:
+        description: optional comma list of tests/*.sh that failed merge-queue batches lately; run first
+        required: false
+        default: ''
+        type: string
+      trace:
+        description: optional 1 to run the suites under the trace of the check Tests cannot touch a real harness
+        required: false
+        default: ''
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  plan:
+    name: plan
+    runs-on: ${{ fromJSON(vars.CI_RUNNER || '"ubuntu-latest"') }}
+    timeout-minutes: 5
+    outputs:
+      ok: ${{ steps.plan.outputs.ok }}
+      matrix: ${{ steps.plan.outputs.matrix }}
+    steps:
+      - id: plan
+        # No errexit: every branch sets OK and falls through to the outputs.
+        shell: bash --noprofile --norc {0}
+        env:
+          PQ_MAIN: ${{ inputs.main }}
+          PQ_GROUP: ${{ inputs.group_id }}
+          PQ_MEMBERS: ${{ inputs.members }}
+        run: |
+          OK=0; WHY=""; M='{"include":[]}'
+          if ! [[ "$PQ_MAIN" =~ ^[0-9a-f]{40}$ ]]; then WHY=bad-main
+          elif ! [[ "$PQ_GROUP" =~ ^g[0-9a-f]{6,24}$ ]]; then WHY=bad-group
+          elif ! [[ "$PQ_MEMBERS" =~ ^[0-9]+:[0-9a-f]{40}(,[0-9]+:[0-9a-f]{40})*$ ]]; then WHY=bad-members
+          else
+            M='{"include":['; SEEN=","; N=0
+            IFS=, read -ra ITEMS <<<"$PQ_MEMBERS"
+            for it in "${ITEMS[@]}"; do
+              h="${it#*:}"
+              case "$SEEN" in *",$h,"*) WHY=bad-members-repeated-head ;; esac
+              SEEN="$SEEN$h,"
+              [ "$N" -gt 0 ] && M="$M,"
+              M="$M{\"pr\":\"${it%%:*}\",\"head\":\"$h\"}"; N=$((N + 1))
+            done
+            M="$M]}"
+            [ -z "$WHY" ] && OK=1
+          fi
+          if [ "$OK" != 1 ]; then
+            M='{"include":[]}'
+            echo "::notice title=prequeue-group-verdict::could-not-run main=${PQ_MAIN//[^0-9a-f]/} why=$WHY"
+          fi
+          { echo "ok=$OK"; echo "matrix=$M"; } >> "$GITHUB_OUTPUT"
+          exit 0
+  gate:
+    needs: plan
+    if: needs.plan.outputs.ok == '1'
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.plan.outputs.matrix) }}
+    uses: ./.github/workflows/prequeue-gate.yml
+    with:
+      pr: ${{ matrix.pr }}
+      head: ${{ matrix.head }}
+      main: ${{ inputs.main }}
+      invariants: ${{ inputs.invariants }}
+      learned: ${{ inputs.learned }}
+      trace: ${{ inputs.trace }}
+      run_key_suffix: -${{ matrix.pr }}
+    secrets: inherit

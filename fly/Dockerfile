@@ -351,6 +351,49 @@ RUN set -eux; . /opt/fly-boot/bake-pin.sh; \
     bake_verify postgres "$PGTEST_PG_VERSION" env LD_LIBRARY_PATH=/opt/pgtest/lib /opt/pgtest/bin/postgres --version
 # <<< bake-pgtest
 
+# >>> project-webkit
+# --- per-project blocks (BH-8319): kept only for a project whose row names them
+# bin/fly-image-build.sh renders this file per project (bake_render_dockerfile,
+# bin/lib/bake-deps.sh): a `project-<name>` block stays only when the row
+# bake.<project>.<name>.version holds an exact x.y.z, else it is cut out with its
+# markers. Every rust/webkit/cargo line lives inside a block, so a project with
+# no row gets this file byte for byte as it was before BH-8319 and keeps every
+# cached layer. The blocks stand after pgtest and before claude/codex, so a CLI
+# bump never rebakes them.
+# --- Tauri/webkit system packages (pinned: libwebkit2gtk-4.1-dev) -------------
+# The dev package is pinned to the row's upstream version (bake_apt_version
+# resolves the full Debian version, or FATALs when the archive dropped it). The
+# companion packages track the LTS, the same as base's apt line.
+ARG WEBKIT_VERSION
+RUN set -eux; . /opt/fly-boot/bake-pin.sh; bake_require WEBKIT_VERSION "${WEBKIT_VERSION:-}"; \
+    apt-get update; \
+    WEBKIT_DEB="$(bake_apt_version libwebkit2gtk-4.1-dev "$WEBKIT_VERSION")"; \
+    apt-get install -y --no-install-recommends "libwebkit2gtk-4.1-dev=${WEBKIT_DEB}" \
+      libxdo-dev libayatana-appindicator3-dev librsvg2-dev file; \
+    rm -rf /var/lib/apt/lists/*; \
+    bake_verify webkit "$WEBKIT_VERSION" dpkg-query -W -f='${Version}' libwebkit2gtk-4.1-dev
+# <<< project-webkit
+# >>> project-rust
+# --- rust toolchain (official standalone tarball, pinned) ---------------------
+# The versioned dist tarball, checked against its published .sha256, installed
+# into /usr/local with only the components a build uses. The C toolchain cargo
+# links with tracks the LTS. CARGO_HOME stays the default /root/.cargo.
+ARG RUST_VERSION
+RUN set -eux; . /opt/fly-boot/bake-pin.sh; bake_require RUST_VERSION "${RUST_VERSION:-}"; \
+    apt-get update; \
+    apt-get install -y --no-install-recommends build-essential pkg-config libssl-dev; \
+    rm -rf /var/lib/apt/lists/*; \
+    RUST_DIR="$(mktemp -d)"; \
+    curl -fsSL -o "$RUST_DIR/rust.tar.xz" \
+      "https://static.rust-lang.org/dist/rust-${RUST_VERSION}-x86_64-unknown-linux-gnu.tar.xz"; \
+    bake_sha256 "$RUST_DIR/rust.tar.xz" "https://static.rust-lang.org/dist/rust-${RUST_VERSION}-x86_64-unknown-linux-gnu.tar.xz.sha256" \
+      "rust-${RUST_VERSION}-x86_64-unknown-linux-gnu.tar.xz"; \
+    tar -xJf "$RUST_DIR/rust.tar.xz" -C "$RUST_DIR"; \
+    "$RUST_DIR/rust-${RUST_VERSION}-x86_64-unknown-linux-gnu/install.sh" --prefix=/usr/local \
+      --components=rustc,cargo,rust-std-x86_64-unknown-linux-gnu,clippy-preview,rustfmt-preview; \
+    rm -rf "$RUST_DIR"; \
+    bake_verify rust "$RUST_VERSION" cargo --version
+# <<< project-rust
 # --- claude CLI + codex CLI (npm global, PINNED; failover parity w/ agent-call.sh) ---
 # LAST of the tool layers: these move almost daily (cli.claude_code.version /
 # cli.codex.version follow the hub's own update), so a bump here re-runs only
@@ -403,6 +446,30 @@ COPY --from=warm /opt/warm /opt/warm
 # >>> warm-links
 RUN set -eu; . /opt/fly-boot/bake-pin.sh; bake_warm_links /opt/warm
 # <<< warm-links
+# >>> project-rust-warm
+# --- cargo crate cache on the warm layer (kept with project-rust) -------------
+# After the /opt/warm COPY (which changes every night: WARM_BUST), so the crate
+# cache is as fresh as the warm checkout. `cargo fetch --locked` for each
+# Cargo.lock in the checkout (node_modules pruned) fills /root/.cargo. Bounded
+# by the warm build's knob: bin/fly-image-build.sh passes the
+# pool.warm_build_timeout_s value as WARM_CARGO_TIMEOUT_S (its own ARG: the
+# warm stage timeout ARG stays out of this stage; 600 is the documented
+# fallback). Non-fatal like the warm build: a failure prints
+# `warm-cargo: FAILED` and leaves /opt/warm/.warm-cargo-failed.
+ARG WARM_CARGO_TIMEOUT_S
+RUN set -eu; \
+    if [ -e /opt/warm/repo/.git ]; then \
+      find /opt/warm/repo -maxdepth 3 -name node_modules -prune -o -name Cargo.lock -print | \
+      while IFS= read -r lock; do \
+        d="$(dirname "$lock")"; \
+        echo "warm-cargo: cargo fetch --locked in $d"; \
+        if ! timeout "${WARM_CARGO_TIMEOUT_S:-600}" cargo fetch --locked --manifest-path "$d/Cargo.toml"; then \
+          echo "warm-cargo: FAILED in $d (non-fatal: the image ships without that crate cache)"; \
+          : > /opt/warm/.warm-cargo-failed; \
+        fi; \
+      done; \
+    fi
+# <<< project-rust-warm
 
 # --- entrypoint ---------------------------------------------------------------
 # The runner scripts live on the volume at /data/harness/fly (compat-symlinked by

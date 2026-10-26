@@ -1,0 +1,11 @@
+{
+  "env": "MC_PREQUEUE_GROUP",
+  "type": "int",
+  "default": 1,
+  "min": 0,
+  "max": 1,
+  "unit": null,
+  "zero_means": "off",
+  "read_in": "bin/lib/mc-prequeue.d/group.sh",
+  "note": "BH-8327: 1 = a READY head that would dispatch prequeue-gate.yml joins this repo's open group for its main instead, and the conductor dispatches ONE prequeue-group-gate.yml run per group after its PR workers (a matrix, one per-head gate job each; each head keeps its own verdict) (bin/lib/mc-prequeue.d/group.sh). A repo without .github/workflows/prequeue-group-gate.yml, a named-suites run and a per-PR machine run without the lease stay per head. 0 = one run per head; an open group is abandoned at the next flush. Per project: lane.merge-conductor.<project>.mc_prequeue_group. 0 = off: one prequeue-gate.yml run per head, as before BH-8327."
+}
