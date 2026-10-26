@@ -1,0 +1,64 @@
+{
+  "libs": [
+    {
+      "id": "triage-starve",
+      "file": "bin/lib/triage-starve.sh",
+      "note": "BH-8475: the triage starvation guard. project-6-os TK-2601 sat in the triage-state 'to the model' list for 27 h and no shard ran for it. bin/lib/triage-state.sh ts_tick (enforce, readable rows) calls tsv_pass once per pass: the ledger state/triage-state/<p>/starve.tsv counts the passes each listed key has been listed; a key listed TRIAGE_STARVE_PASSES passes over at least TRIAGE_STARVE_WINDOW_S with no triage run (no logs/<p>.triage-<KEY>.out since first listed, no held shard lock) gets ONE bin/launch-fastpath.sh attempt (a decline is logged with its reason) and one warn lane-alert (id triage-starve-<p>). ts_tick then reorders TICK_SCOPE through tsv_order_scope: hotfix lines first, then the oldest first-listed, so the shard caps cut the youngest keys. bin/lib/rt/shards.sh is not edited. Fail-open: an unreadable or locked ledger leaves the tick as it was. Applied by the lib itself through lib_env_apply triage-starve <project>. Doc: docs/TRIAGE-STATE.md, 'Starvation guard (BH-8475)'.",
+      "knobs": [
+        {
+          "env": "TRIAGE_STARVE_PASSES",
+          "type": "int",
+          "default": 3,
+          "min": 0,
+          "max": 100,
+          "zero_means": "off",
+          "required": false,
+          "note": "Enforce passes a ticket must be listed to the model, with no triage run, before its one fastpath attempt and its alert. 0 = the guard is off: no ledger write, and TICK_SCOPE keeps its order. Code fallback 3, read as ${TRIAGE_STARVE_PASSES:-3}; settings row lib.triage-starve[.<project>].triage_starve_passes."
+        },
+        {
+          "env": "TRIAGE_STARVE_WINDOW_S",
+          "type": "int",
+          "default": 7200,
+          "min": 600,
+          "max": 604800,
+          "unit": "seconds",
+          "zero_means": null,
+          "required": false,
+          "note": "How long a ticket must have been listed (since it was first listed in this episode) before the fastpath attempt. Both this and TRIAGE_STARVE_PASSES must hold. Code fallback 7200 (2 h), read as ${TRIAGE_STARVE_WINDOW_S:-7200}; settings row lib.triage-starve[.<project>].triage_starve_window_s."
+        },
+        {
+          "env": "TRIAGE_STARVE_FASTPATH_MAX",
+          "type": "int",
+          "default": 10,
+          "min": 1,
+          "max": 50,
+          "zero_means": null,
+          "required": false,
+          "note": "Most keys handed to bin/launch-fastpath.sh in one pass, oldest first; the rest stay eligible for the next pass. fastpath's own cap is 50. Code fallback 10, read as ${TRIAGE_STARVE_FASTPATH_MAX:-10}; settings row lib.triage-starve[.<project>].triage_starve_fastpath_max."
+        },
+        {
+          "env": "TRIAGE_STARVE_FASTPATH_TIMEOUT_S",
+          "type": "int",
+          "default": 300,
+          "min": 30,
+          "max": 1800,
+          "unit": "seconds",
+          "zero_means": null,
+          "required": false,
+          "note": "Bound on the one bin/launch-fastpath.sh call a pass makes (it runs inside the triage tick and does REST reads per key). A timeout (exit 124) is recorded as `declined: fastpath exit 124` and spends the key's one attempt. Code fallback 300, read as ${TRIAGE_STARVE_FASTPATH_TIMEOUT_S:-300}; settings row lib.triage-starve[.<project>].triage_starve_fastpath_timeout_s."
+        },
+        {
+          "env": "TRIAGE_STARVE_LOCK_WAIT_S",
+          "type": "int",
+          "default": 5,
+          "min": 1,
+          "max": 60,
+          "unit": "seconds",
+          "zero_means": null,
+          "required": false,
+          "note": "How long a pass waits for the ledger lock (state/triage-state/<p>/starve.lock) before it skips counting, with one log line. Code fallback 5, read as ${TRIAGE_STARVE_LOCK_WAIT_S:-5}; settings row lib.triage-starve[.<project>].triage_starve_lock_wait_s."
+        }
+      ]
+    }
+  ]
+}

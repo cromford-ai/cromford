@@ -410,6 +410,51 @@ Read the shadow lines first: `grep 'triage-state shadow' logs/<p>.log` and
 
 What each tick still paid for unchanged input (`paid_unchanged=N`, the cost-row notes, the 3-tick alert and /costs TRIAGE PAID UNCHANGED): [docs/triage-state/paid-unchanged.md](triage-state/paid-unchanged.md).
 
+## Starvation guard (BH-8475)
+
+`bin/lib/triage-starve.sh`, enforce only. It stops a ticket from staying in the
+"to the model" list with no triage run (project-6-os TK-2601: 27 h).
+
+- **The ledger.** `state/triage-state/<p>/starve.tsv`, one row per key in the
+  current model set (decisions.tsv `llm`): `key label first_listed passes
+  last_run fastpath_epoch fastpath_outcome alerted`. `ts_tick` calls
+  `tsv_pass` once per enforce pass with readable rows, before the $0-end
+  check, so a $0 tick still counts. A key that leaves the model set loses its
+  row; a relisting starts at passes=1. The ledger never holds more rows than
+  the model set (the retention rule).
+- **The run signal.** A triage run is read from the shard's own files:
+  `logs/<p>.triage-<KEY>.out` written since the key was first listed, or a held
+  `locks/triage-key-<p>-<KEY>.lock`. A full tick's single session marks every
+  listed key run (`tsv_ran_all`). An out file older than first_listed is from
+  an earlier episode and does not count.
+- **The order.** `ts_tick` reorders `TICK_SCOPE` with `tsv_order_scope`:
+  `[HOTFIX] ` lines first, then lines whose key has a ledger row by oldest
+  `first_listed`, then every other line (PR lines, REOFFER, UNBLOCKED, unknown
+  keys). Ties keep the scope order. The shard units are built in TICK_SCOPE
+  order, so `TRIAGE_SHARDS_MAX` and the hour caps cut the youngest keys, not
+  the same old ones every pass. `bin/lib/rt/shards.sh` is not edited (BH-3418
+  B1). A scoped tick is not widened: a listed key outside its scope is covered
+  by the fallback below.
+- **The fallback.** A key listed `TRIAGE_STARVE_PASSES` passes, for at least
+  `TRIAGE_STARVE_WINDOW_S`, with no run since it was first listed, gets ONE
+  `bin/launch-fastpath.sh <p> <label...>` attempt per listing episode (GitHub
+  boards; at most `TRIAGE_STARVE_FASTPATH_MAX` keys per pass, oldest first,
+  under `timeout TRIAGE_STARVE_FASTPATH_TIMEOUT_S`). An in-app board records
+  `n/a: in-app board`. A live builds pause withholds the attempt to the next
+  pass.
+- **The alert.** One warn `bin/lane-alert.sh` alert per project per pass
+  (id `triage-starve-<p>`) names the keys tried and each outcome. A failed
+  lane-alert writes one `bin/alert-line.sh` line instead.
+- **Knobs** (`catalog/lanes.d/_lib.triage-starve.json`, rows
+  `lib.triage-starve[.<p>].<knob>`): `TRIAGE_STARVE_PASSES` (3, 0 = off),
+  `TRIAGE_STARVE_WINDOW_S` (7200), `TRIAGE_STARVE_FASTPATH_MAX` (10),
+  `TRIAGE_STARVE_FASTPATH_TIMEOUT_S` (300), `TRIAGE_STARVE_LOCK_WAIT_S` (5).
+- **Read it.** `grep TRIAGE-STARVE logs/<p>.log`:
+  `TRIAGE-STARVE <label> listed <n> passes over <h>h with no triage run — fastpath launched`,
+  `... — fastpath declined: <fastpath's own FASTPATH-DECLINED reason>`,
+  `... — fastpath declined: fastpath exit <rc>`, `... — n/a: in-app board`,
+  `TRIAGE-STARVE withheld <labels>: builds pause`.
+
 ## Follow-ups (out of scope here)
 
 - Native GitHub issue dependencies ("blocked by" relations) and sub-issues are

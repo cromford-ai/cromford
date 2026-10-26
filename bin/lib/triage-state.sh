@@ -877,6 +877,16 @@ ts_tick() {
   _ts_enforce_reason || { ts_waste_account unrestricted; _ts_log "triage-state enforce: $(_ts_sum) — observe only on a '${GATE_REASON:-?}' tick"; return 0; }
   TS_ENFORCING=1
   ts_enqueue
+  # BH-8475 starvation guard (bin/lib/triage-starve.sh): count the pass, fastpath a key listed too
+  # long with no run, then put the oldest listed keys first in TICK_SCOPE, which is the order the
+  # shard units are built in (bin/lib/rt/shards.sh is not edited, BH-3418 B1). No lib = as before.
+  local _ts_ord
+  if [ "${TS_ROWS_OK:-0}" = 1 ] && [ -r "$(_ts_h)/bin/lib/triage-starve.sh" ] \
+     && . "$(_ts_h)/bin/lib/triage-starve.sh"; then
+    tsv_pass "$(_ts_h)" "${PROJECT:-}" || true
+    _ts_ord=$(printf '%s\n' "${TICK_SCOPE:-}" | tsv_order_scope "$(_ts_h)" "${PROJECT:-}") \
+      && [ -n "${TICK_SCOPE:-}" ] && [ -n "$_ts_ord" ] && TICK_SCOPE=$_ts_ord
+  fi
   # WHAT THIS TICK WOULD SEND. A full-SOP tick reads every open ticket, so its
   # model set is the whole TS_LLM. A scoped tick (a board diff, a webhook's
   # keys) reads only its scope, so only the model-set tickets IN that scope
@@ -911,6 +921,8 @@ ${BOARD_SEC:-}" in *"board gate: REOFFER "*) can_end=0 ;; esac
   fi
   ts_waste_account restricted
   _ts_log "triage-state enforce: $(_ts_sum)${TS_LAUNCHED:+, launched:$TS_LAUNCHED}"
+  # A full tick's single session is told to re-triage the whole list (BH-8475).
+  [ "${SCOPE_N:-full}" = full ] && command -v tsv_ran_all >/dev/null 2>&1 && tsv_ran_all "$(_ts_h)" "${PROJECT:-}"
   local unchanged
   # A key with a queue line or a finished build in this tick is the session's
   # to work, whatever its triage state: it is never on the do-not-touch list.
