@@ -402,9 +402,11 @@ run_pool
 [ "$(( $(reads comment-reads.log) - C7 ))" = 20 ] && ok || bad "P7: a hold.sh change must re-read all 20, read $(( $(reads comment-reads.log) - C7 ))"
 
 # ── P8: TTL 0 is off; an expired entry is a re-read ────────────────────────
-fixture20; run_pool POOL_HOLD_CACHE_TTL_S=0
+# POOL_UNBLOCK_RANK=0: the unblock rank (BH-7874) reads the same listing for its
+# own use; off here, the count below is the hold cache's alone.
+fixture20; run_pool POOL_HOLD_CACHE_TTL_S=0 POOL_UNBLOCK_RANK=0
 C8=$(reads comment-reads.log)
-run_pool POOL_HOLD_CACHE_TTL_S=0
+run_pool POOL_HOLD_CACHE_TTL_S=0 POOL_UNBLOCK_RANK=0
 [ "$(( $(reads comment-reads.log) - C8 ))" = 20 ] && ok || bad "P8: TTL 0 must read all 20, read $(( $(reads comment-reads.log) - C8 ))"
 [ "$(reads listing-reads.log)" = 0 ] && ok || bad "P8: TTL 0 must make no listing read, made $(reads listing-reads.log)"
 grep -q 'listing=off .*ttl_s=0' <<<"$(summary)" && ok || bad "P8: the summary must say the cache is off: '$(summary)'"

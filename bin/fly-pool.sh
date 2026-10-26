@@ -226,6 +226,11 @@ job_is_now() {
   k=$(basename "${1:-}" .json)
   [ -n "$k" ] && [ -e "$HARNESS/state/dispatch-now/$P/$k" ]
 }
+# BH-7874: the unblock rank (pur_prime, pur_order) orders hotfix_first's last
+# group. Missing, that group keeps its age order.
+# shellcheck source=bin/lib/pool-unblock-rank.sh
+. "$HARNESS/bin/lib/pool-unblock-rank.sh" 2>/dev/null \
+  || . "$(dirname "${BASH_SOURCE[0]}")/lib/pool-unblock-rank.sh" 2>/dev/null || true
 # Hotfix files first, then dispatched keys, then the rest, order preserved
 # within each group — so the emergency takes the machine the tick can afford,
 # a reused machine takes the emergency job, and a dispatch goes next.
@@ -243,7 +248,13 @@ hotfix_first() {
   for f in "$@"; do job_is_hot "$f" && printf '%s\n' "$f"; done
   for f in "$@"; do case "${f##*/}" in RB-*|RR-*|LR-*|CP-*|FXR-*-*) job_is_hot "$f" || printf '%s\n' "$f" ;; esac; done
   for f in "$@"; do case "${f##*/}" in RB-*|RR-*|LR-*|CP-*|FXR-*-*) continue ;; esac; job_is_hot "$f" || ! job_is_now "$f" || printf '%s\n' "$f"; done
-  for f in "$@"; do case "${f##*/}" in RB-*|RR-*|LR-*|CP-*|FXR-*-*) continue ;; esac; job_is_hot "$f" || job_is_now "$f" || printf '%s\n' "$f"; done
+  # The rest, by unblock count when the lib is there (BH-7874), else by age.
+  # Suites cut this function out alone, so pur_order is optional.
+  local rest=()
+  for f in "$@"; do case "${f##*/}" in RB-*|RR-*|LR-*|CP-*|FXR-*-*) continue ;; esac; job_is_hot "$f" || job_is_now "$f" || rest+=("$f"); done
+  [ "${#rest[@]}" -gt 0 ] || return 0
+  if [ "${#rest[@]}" -gt 1 ] && command -v pur_order >/dev/null 2>&1; then pur_order "${rest[@]}"
+  else printf '%s\n' "${rest[@]}"; fi
 }
 # Start the flyctl agent with fd 8 CLOSED: an agent auto-spawned by `machine
 # exec` inside the locked section inherits fd 8 and holds the lock forever
@@ -1270,6 +1281,23 @@ pool_hold_cache_knobs() {
   return 0
 }
 
+# pool_ai_listing_page <page> — one page of the open ai-build issue listing,
+# answered in pool_rest_read's shape into _PAL_OUT (caller's shell, never a
+# substitution). A 200 page is kept for the rest of the process, so the unblock
+# rank (pur_prime, BH-7874) and the hold cache below share ONE listing per tick
+# (tests/fly-pool-decide-all.bh-7706-test.sh A1). A failed page is not kept:
+# the next reader asks again, as it did before the share. The listing is a
+# hold read whoever reads it first, so it takes the hold read's cut (BH-7942).
+declare -A _POOL_AI_LIST_PAGE=()
+pool_ai_listing_page() {
+  local pg="${1:-1}"
+  local POOL_GH_READ_TIMEOUT_S="${POOL_HOLD_READ_TIMEOUT_S:-45}"
+  if [ -n "${_POOL_AI_LIST_PAGE[$pg]+x}" ]; then _PAL_OUT="200"$'\n'"${_POOL_AI_LIST_PAGE[$pg]}"; return 0; fi
+  _PAL_OUT=$(pool_rest_read "repos/$POOL_SLUG/issues?state=open&labels=ai-build&per_page=100&page=$pg" "${POOL_SLUG_TOK:-}")
+  case "$_PAL_OUT" in 200$'\n'*) _POOL_AI_LIST_PAGE[$pg]=${_PAL_OUT#*$'\n'} ;; esac
+  return 0
+}
+
 # pool_hold_list_prime — the open ai-build issue listing, once per process,
 # into _POOL_HOLD_LKEY[<n>]. _POOL_HOLD_LIST says how it went: ok, truncated
 # (the page cap was reached on a full page; later issues miss) or
@@ -1281,7 +1309,7 @@ pool_hold_list_prime() {
   local POOL_GH_READ_TIMEOUT_S="${POOL_HOLD_READ_TIMEOUT_S:-45}"
   _POOL_HOLD_LIB=$(cksum < "$HARNESS/bin/lib/hold.sh" 2>/dev/null | awk '{print $1 "-" $2}')
   while [ "$page" -le "$_PHC_PAGES" ]; do
-    _out=$(pool_rest_read "repos/$POOL_SLUG/issues?state=open&labels=ai-build&per_page=100&page=$page" "${POOL_SLUG_TOK:-}")
+    pool_ai_listing_page "$page"; _out=$_PAL_OUT
     _code=$(head -n 1 <<<"$_out"); _body=$(tail -n +2 <<<"$_out")
     # BH-7942: one page that did not answer is read once more in this tick.
     [ "$_code" != 200 ] && [ "$_PHC_LIST_RETRIED" = 0 ] && { _PHC_LIST_RETRIED=1; continue; }
@@ -3497,6 +3525,10 @@ pool_custody_sweep
     machines_row machines_observe "$P" "$APP" "$LISTING"
   fi
   # <<< machines rows
+
+# BH-7874: one open-issue listing per tick ranks the queue by the open work
+# each ticket unblocks. Both hotfix_first callers read its file; fail-open.
+command -v pur_prime >/dev/null 2>&1 && { pur_prime || PUR_FILE=""; }
 
 # ---------- REAP ----------
 # BH-7429: read each finished machine's build record from the jobs API before

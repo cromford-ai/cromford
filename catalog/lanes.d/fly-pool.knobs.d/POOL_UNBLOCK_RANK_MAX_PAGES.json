@@ -1,0 +1,12 @@
+{
+  "env": "POOL_UNBLOCK_RANK_MAX_PAGES",
+  "type": "int",
+  "default": 10,
+  "min": 1,
+  "max": 50,
+  "unit": "pages",
+  "zero_means": null,
+  "required": false,
+  "read_in": "bin/lib/pool-unblock-rank.sh",
+  "note": "BH-7874: the most pages (100 issues each) of the open ai-build issue listing the pool reads per tick for the unblock rank. A full last page at the cap logs listing=truncated, and the counts from the pages read are still used."
+}

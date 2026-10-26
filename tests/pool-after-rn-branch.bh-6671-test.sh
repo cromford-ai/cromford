@@ -217,7 +217,11 @@ grep -q 'per_page=100&page=2' "$T/gh-calls" && ok || bad "R7: page 2 was read"
 # ── R8: two rows, two blockers, one list read ─────────────────────────────
 fresh; qwaitk BH-1016 1016 BH-890; qwaitk BH-1017 1017 BH-900; pr_list 1
 run_pool
-[ "$(grep -c 'per_page=100&page=1' "$T/gh-calls")" = 1 ] && ok || bad "R8: the list is read once per tick, got $(grep -c 'per_page=100&page=1' "$T/gh-calls")"
+# The open-PR list is the list under test. BH-7874's unblock rank reads the
+# open ai-build ISSUE listing once per tick too, so the count names the
+# endpoint; the issue listing is held to once per tick as well.
+[ "$(grep -cF 'pulls?state=open&per_page=100&page=1' "$T/gh-calls")" = 1 ] && ok || bad "R8: the list is read once per tick, got $(grep -cF 'pulls?state=open&per_page=100&page=1' "$T/gh-calls")"
+[ "$(grep -cF 'issues?state=open&labels=ai-build&per_page=100&page=1' "$T/gh-calls")" -le 1 ] && ok || bad "R8: the issue listing is read at most once per tick, got $(grep -cF 'issues?state=open&labels=ai-build&per_page=100&page=1' "$T/gh-calls")"
 grep -q 'RELEASED BH-1016: BH-890 is done' "$H/logs/fly-pool.log" && grep -q 'RELEASED BH-1017: BH-900 is done' "$H/logs/fly-pool.log" && ok \
   || bad "R8: both rows are released: $(log RELEASED)"
 

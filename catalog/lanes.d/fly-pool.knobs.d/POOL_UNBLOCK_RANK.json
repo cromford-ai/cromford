@@ -1,0 +1,12 @@
+{
+  "env": "POOL_UNBLOCK_RANK",
+  "type": "int",
+  "default": 1,
+  "min": 0,
+  "max": 1,
+  "unit": "flag",
+  "zero_means": "off",
+  "required": false,
+  "read_in": "bin/lib/pool-unblock-rank.sh",
+  "note": "BH-7874: 1 orders hotfix_first's last group (not hot, not RB/RR, not dispatch-now) by unblock count, highest first, ties by age. The count is the number of open ai-build issues that name the ticket in a Blocked-by: or Needs: line, directly or through a chain. One listing per tick; the `unblock rank <p>:` line in logs/fly-pool.log shows the top 5. Any read or parse failure gives the age order. 0 = hotfix_first keeps its last group in age order and the pool reads no listing for the rank."
+}
