@@ -1,0 +1,9 @@
+{
+  "env": "SLICE_CLOSEOUT_EXCLUDE_HEADINGS",
+  "read_in": "bin/lib/slice-remainder.sh",
+  "type": "string",
+  "default": "out of scope|non-goals|non-goal|not in scope|excluded|won't do",
+  "zero_means": null,
+  "required": false,
+  "note": "BH-8329: settings row lib.slice-closeout.slice_closeout_exclude_headings. A |-separated list of exclusion labels, matched case-insensitively. A coverage-matrix row, a sub-heading or a plan heading whose text IS one of them, or starts with one followed by `:`, `(` or a dash, is not remaining work: it never becomes a Rest-of child or a slice child. `none` turns exclusion off; empty uses the default. Read by slr_exclude_headings."
+}

@@ -31,7 +31,58 @@ _slr_env() {
   local v; eval "v=\${$2:-}"; printf '%s\n' "${v:-$3}"
 }
 
-# _slr_scan <plan.md> <parent-n> — ONE awk pass, mawk-safe (no match() arrays,
+# The exclusion labels (BH-8329). A heading, a coverage-matrix Requirement cell
+# or a sub-heading whose text IS one of them, or starts with one followed by
+# `:`, `(` or a dash, names work the ticket rules out, never remaining work.
+# Fallback of the settings row lib.slice-closeout.slice_closeout_exclude_headings
+# (BH-8329); the knob is catalog/lanes.d/_lib.slice-closeout.knobs.d/SLICE_CLOSEOUT_EXCLUDE_HEADINGS.json.
+_SLR_EXCLUDE_DEFAULT="out of scope|non-goals|non-goal|not in scope|excluded|won't do"
+
+# slr_exclude_headings — the |-separated exclusion list: the knob through
+# sco_knob when slice-closeout.sh is loaded, else the env, else the fallback
+# above. `none` prints an empty line (exclusion off).
+slr_exclude_headings() {
+  local v
+  if command -v sco_knob >/dev/null 2>&1; then v=$(sco_knob SLICE_CLOSEOUT_EXCLUDE_HEADINGS)
+  else v="${SLICE_CLOSEOUT_EXCLUDE_HEADINGS:-}"; fi
+  [ -n "${v//[[:space:]]/}" ] || v="$_SLR_EXCLUDE_DEFAULT"
+  case "$(printf '%s' "$v" | tr -d '[:space:]' | tr '[:upper:]' '[:lower:]')" in none) v="" ;; esac
+  printf '%s\n' "$v"
+}
+
+# _SLR_EXCL_AWK — the awk functions both libs prepend to their program, so the
+# rule is one text. exinit() reads -v EX; isexcl(s) is 1 when s is an
+# exclusion. xnorm: lower case, no `*_ emphasis, no ' or U+2019, " - " to an
+# em dash, other hyphens to spaces, spaces collapsed, trimmed. A match is the
+# whole text, or the label then (after one optional space) `:`, `(`, an em dash
+# or an en dash. A label then a word ("Excluded tenants see nothing") is not.
+# mawk-safe, and index() rather than byte counts so a UTF-8 gawk agrees.
+# shellcheck disable=SC2016 # awk text, not shell
+_SLR_EXCL_AWK='
+    function xnorm(s) {
+      s = tolower(s); gsub(/[`*_]/, "", s); gsub(/\047/, "", s); gsub(/\342\200\231/, "", s)
+      gsub(/ - /, " \342\200\224 ", s); gsub(/-/, " ", s); gsub(/[ \t]+/, " ", s)
+      sub(/^ /, "", s); sub(/ $/, "", s); return s
+    }
+    function exinit(   a, i, n, e) {
+      NEX = 0; n = split(EX, a, "|")
+      for (i = 1; i <= n; i++) { e = xnorm(a[i]); if (e != "") EXL[++NEX] = e }
+    }
+    function isexcl(s,   i, e, r) {
+      if (NEX == 0) return 0
+      s = xnorm(s)
+      for (i = 1; i <= NEX; i++) {
+        e = EXL[i]
+        if (s == e) return 1
+        if (index(s, e) != 1) continue
+        r = substr(s, length(e) + 1); sub(/^ /, "", r)
+        if (index(r, ":") == 1 || index(r, "(") == 1 || index(r, "\342\200\224") == 1 || index(r, "\342\200\223") == 1) return 1
+      }
+      return 0
+    }
+'
+
+# _slr_scan <plan.md> <parent-n> [exclusions] — ONE awk pass, mawk-safe (no match() arrays,
 # no gensub, no interval expressions, no POSIX classes). Tab-separated records:
 #   K <k>              the merged slice, from the first SLICE line for #n
 #   I <j> <text>       a remainder item C<j>, j > k, first line
@@ -39,8 +90,13 @@ _slr_env() {
 #   C <j> <text>       a continuation line of item j
 #   B <j> <i>          item j names `after C<i>` (or blocked by / depends on / needs)
 #   T <j> <text>       an acceptance test tagged for slice j
+# A level 2+ heading that is an exclusion (isexcl, BH-8329; the list is the
+# third argument, default slr_exclude_headings) hides its items like the
+# acceptance and test sections do.
 _slr_scan() {
-  awk -v N="$2" '
+  local ex
+  if [ "$#" -ge 3 ]; then ex="$3"; else ex=$(slr_exclude_headings); fi
+  awk -v N="$2" -v EX="$ex" "$_SLR_EXCL_AWK"'
     function lead(s, c,   n) { n = 0; while (substr(s, n + 1, 1) == c) n++; return n }
     function trim(s) { sub(/^[ \t]+/, "", s); sub(/[ \t]+$/, "", s); return s }
     function clean(s) { gsub(/\t/, " ", s); gsub(/\*\*/, "", s); return trim(s) }
@@ -65,7 +121,7 @@ _slr_scan() {
         s = substr(s, RSTART + RLENGTH)
       }
     }
-    BEGIN { k = -1; fch = ""; flen = 0; cur = -1; excl = 0; acc = 0; subj = -1 }
+    BEGIN { k = -1; fch = ""; flen = 0; cur = -1; excl = 0; acc = 0; subj = -1; exinit() }
     { sub(/\r$/, "") }
     # The merged slice: the guard regex of issue_close_guard, on any line.
     k < 0 && ($0 ~ ("^[ \t*_>]*SLICE:[ \t*_]*C[0-9]+[ \t]+of[ \t]+#" N "([^0-9]|$)") || $0 ~ /^[ \t*_>]*The build for THIS ticket is C[0-9]+/) {
@@ -98,6 +154,7 @@ _slr_scan() {
       # live verification contract" must not hide the whole plan.
       if (lvl < 2) next
       if (!excl && h ~ /acceptance|requirement|verification|reproduction|test|qa|regression|size|invariant|sibling/) { excl = 1; exlvl = lvl }
+      if (!excl) { ht = $0; sub(/^#+[ \t]+/, "", ht); if (isexcl(ht)) { excl = 1; exlvl = lvl } }
       if (!acc && h ~ /acceptance/) { acc = 1; aclvl = lvl; subj = -1 }
       next
     }

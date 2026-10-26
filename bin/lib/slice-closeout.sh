@@ -163,8 +163,13 @@ _sco_partial() {
 # is uncovered; a bare C<j> there is a test case ID and is not read
 # (lead review lr-6333: .harness/specs/BH-5653/plan.md, "NOT in C1 (A2) |
 # child slice C2", read covered at k=1 before).
+#   excluded    (BH-8329) the Requirement cell is an exclusion label
+#               (slr_exclude_headings: "Out of scope: the 17 tests"), or the
+#               row sits under a `###`+ sub-heading that is one, until the
+#               next heading of the same or a higher level. The ticket rules
+#               that work out, so it is never the rest (TK-2593 -> #2605).
 _sco_rows() {
-  awk -v K="${2:--1}" '
+  awk -v K="${2:--1}" -v EX="$(slr_exclude_headings)" "$_SLR_EXCL_AWK"'
     function lead(s, c,   n) { n = 0; while (substr(s, n + 1, 1) == c) n++; return n }
     function trim(s) { sub(/^[ \t]+/, "", s); sub(/[ \t]+$/, "", s); return s }
     # norm(s): lower case, no markdown emphasis, trimmed, and padded with one
@@ -214,7 +219,7 @@ _sco_rows() {
       if (t ~ /^(all|all tasks|every task|scope)$/) return "covered"
       return "undecided"
     }
-    BEGIN { fch = ""; sec = 0; seen = 0; hdr = 0 }
+    BEGIN { fch = ""; sec = 0; seen = 0; hdr = 0; xs = 0; exinit() }
     { sub(/\r$/, "") }
     {
       t = $0; sub(/^[ \t]+/, "", t)
@@ -222,7 +227,15 @@ _sco_rows() {
       if (lead(t, "`") >= 3) { fch = "`"; flen = lead(t, "`"); next }
       if (lead(t, "~") >= 3) { fch = "~"; flen = lead(t, "~"); next }
     }
-    /^## / { sec = (tolower($0) ~ /^##[ \t]+requirements coverage/) ? 1 : 0; if (sec) { seen = 1; hdr = 0 }; next }
+    /^## / { sec = (tolower($0) ~ /^##[ \t]+requirements coverage/) ? 1 : 0; xs = 0; if (sec) { seen = 1; hdr = 0 }; next }
+    # A sub-heading starts a new table (its first row is a header again).
+    sec && /^###+[ \t]/ {
+      lvl = lead($0, "#"); hdr = 0
+      if (xs && lvl <= xlvl) xs = 0
+      h = $0; sub(/^#+[ \t]+/, "", h)
+      if (!xs && isexcl(h)) { xs = 1; xlvl = lvl }
+      next
+    }
     sec && /^[ \t]*\|/ {
       if (!hdr) { hdr = 1; next }
       r = $0; gsub(/[ \t|:-]/, "", r); if (r == "") next
@@ -230,7 +243,7 @@ _sco_rows() {
       if (n < 3) next
       req = trim(c[2]); gsub(/\t/, " ", req)
       rest = ""; for (i = 4; i < n; i++) rest = rest " " c[i]
-      printf "%s\t%s\n", klass(c[3], rest), substr(req, 1, 200)
+      printf "%s\t%s\n", ((xs || isexcl(req)) ? "excluded" : klass(c[3], rest)), substr(req, 1, 200)
     }
     END { if (!seen) print "NOSEC" }
   ' "$1"
@@ -243,6 +256,8 @@ sco_coverage() {
   rows=$(_sco_rows "$plan" "$k") || { printf 'undecided\tscan\n'; return 3; }
   [ "$rows" = NOSEC ] && { printf 'undecided\tno-matrix\n'; return 3; }
   [ -n "$rows" ] || { printf 'undecided\tno-rows\n'; return 3; }
+  # Exclusion rows (BH-8329) are not work: they count as neither uncovered nor
+  # undecided, so a matrix of nothing but exclusions falls through to covered.
   nu=$(printf '%s\n' "$rows" | grep -c '^uncovered	')
   nd=$(printf '%s\n' "$rows" | grep -c '^undecided	')
   if [ "$nu" -gt 0 ]; then
@@ -418,8 +433,7 @@ _sco_file_rest() {
           *)           lead="The close-out could not read what the plan of the last merged slice left for later (${verdict#*	})." ;;
         esac
         lead="$lead The parent's scope, as written:"
-        items=$(awk '/^##[ \t]+[Ss]cope/ { f = 1; next } f && /^## / { exit } f' "$d/parent-body.md" 2>/dev/null)
-        [ -n "$(printf '%s' "$items" | tr -d '[:space:]')" ] || items=$(head -n 60 "$d/parent-body.md" 2>/dev/null) ;;
+        items=$(_sco_scope_items "$d/parent-body.md" "$(slr_exclude_headings)") ;;
     esac
     rc=0; dl=$(_sco_arm "$slug"; gh_rest_issue_list "$slug" open "" 300 2>/dev/null) || rc=$?
     if [ "$rc" = 0 ]; then
@@ -466,6 +480,38 @@ $deps" '[{ordinal: $o, title: $t, body: $b, after: []}]' > "$d/children.json.tmp
     "slice-closeout-failed issue $slug#$n: filing the rest of PR $pr as a child issue did not finish ($(head -c 300 "$d/fc-error.txt")); nothing was closed, and the next close-out tick resumes from $d"
   printf 'deferred:file-failed\n'
   return 1
+}
+
+# _sco_scope_items <parent-body.md> <exclusions> — the parent's `## Scope`
+# section with every exclusion sub-section (a `###`+ heading isexcl answers 1
+# for, to the next heading of its level or higher) left out. With no Scope
+# text, the first 60 lines of the body minus every level 2+ exclusion section
+# (BH-8329: `## Out of scope` is never the rest).
+_sco_scope_items() {
+  awk -v EX="${2:-}" "$_SLR_EXCL_AWK"'
+    function lead(s, c,   n) { n = 0; while (substr(s, n + 1, 1) == c) n++; return n }
+    function hd(s) { sub(/^#+[ \t]+/, "", s); return s }
+    BEGIN { exinit(); f = 0; done = 0; sx = 0; fx = 0; S = ""; F = "" }
+    { sub(/\r$/, "") }
+    /^#+[ \t]/ { lvl = lead($0, "#") }
+    !/^#+[ \t]/ { lvl = 0 }
+    # the Scope section: from the first `## Scope` to the next `## ` heading
+    { st = 0 }
+    f && /^## / { f = 0; done = 1 }
+    !done && !f && /^##[ \t]+[Ss]cope/ { f = 1; st = 1 }
+    f && !st {
+      if (sx && lvl >= 2 && lvl <= sxl) sx = 0
+      if (!sx && lvl >= 3 && isexcl(hd($0))) { sx = 1; sxl = lvl }
+      if (!sx) S = S $0 "\n"
+    }
+    # the fallback: the first 60 lines
+    NR <= 60 {
+      if (fx && lvl >= 2 && lvl <= fxl) fx = 0
+      if (!fx && lvl >= 2 && isexcl(hd($0))) { fx = 1; fxl = lvl }
+      if (!fx) F = F $0 "\n"
+    }
+    END { t = S; gsub(/[ \t\n]/, "", t); printf "%s", (t != "" ? S : F) }
+  ' "$1" 2>/dev/null
 }
 
 # _sco_close <slug> <n> <harness> <ledger> <closed-word> <comment> — comment
