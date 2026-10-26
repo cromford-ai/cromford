@@ -1,0 +1,11 @@
+{
+  "env": "REMOTE_RESULTS_RETENTION_APPLY",
+  "type": "int",
+  "default": 0,
+  "min": 0,
+  "max": 1,
+  "unit": null,
+  "zero_means": "off",
+  "read_in": "bin/remote-results-retention.sh",
+  "note": "BH-7582: 0 is dry-run. bin/remote-results-retention.sh lists its candidates in logs/remote-results-retention-dryrun-<p>.txt and writes no ledger row. 1 writes one ledger row per retired hub backup json through bin/jobs-client.sh (kind remote_result, key <p>/<KEY>, status retired). It never changes a file under state/remote-results. Read one dry-run audit line in logs/remote-results-retention.log first, then: bin/harness-ctl.sh set pipeline-health REMOTE_RESULTS_RETENTION_APPLY 1."
+}

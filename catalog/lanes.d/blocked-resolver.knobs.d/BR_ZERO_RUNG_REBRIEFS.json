@@ -1,0 +1,11 @@
+{
+  "env": "BR_ZERO_RUNG_REBRIEFS",
+  "type": "int",
+  "default": 1,
+  "min": 0,
+  "max": 20,
+  "unit": "refusals",
+  "zero_means": null,
+  "read_in": "bin/blocked-resolver.d/bh-8328-zero-rung.sh",
+  "note": "BH-8328: a fix-round park (review-changes-requested) is never closed when 0 fix rounds were counted on its head since the last head reset, or when its newest attempt is a fix round that found nothing to brief. Each refusal re-offers the park, and the next fix round re-reads the head's lead review. After this many refusals on one head, the next refusal sends ONE NEEDS_HUMAN lane alert (id br-zero-rung:<project>:<cap-key>:<head12>), and the PR still stays open. 0 = alert on the first refusal."
+}

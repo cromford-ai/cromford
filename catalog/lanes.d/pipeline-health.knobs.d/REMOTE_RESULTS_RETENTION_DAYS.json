@@ -1,0 +1,11 @@
+{
+  "env": "REMOTE_RESULTS_RETENTION_DAYS",
+  "type": "int",
+  "default": 7,
+  "min": 1,
+  "max": 365,
+  "unit": "days",
+  "zero_means": null,
+  "read_in": "bin/remote-results-retention.sh",
+  "note": "BH-7582: the retention window for hub backup jsons. bin/remote-results-retention.sh retires a json (one remote_result ledger row) when its jobs-ledger build row is terminal and its build folder is gone, or when it is older than this many days. Out of range or not a whole number falls back to 7, and the audit line says window=7(default)."
+}

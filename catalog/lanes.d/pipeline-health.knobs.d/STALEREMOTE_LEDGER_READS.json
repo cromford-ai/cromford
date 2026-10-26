@@ -1,0 +1,10 @@
+{
+  "env": "STALEREMOTE_LEDGER_READS",
+  "type": "int",
+  "default": 200,
+  "min": 0,
+  "max": 5000,
+  "unit": "reads",
+  "zero_means": null,
+  "note": "BH-7582: jobs-ledger reads per project per tick that the staleremote check spends on hub backup jsons older than 30 minutes whose build folder is gone. A terminal build row is cached in state/remote-results-terminal/<p>.tsv by (key, json mtime), so each json costs one read. A json past the cap is counted 'deferred' in the summary line and is not paged that tick. bin/remote-results-retention.sh uses the same cap per run. 0 reads nothing and pages nothing for those jsons. A non-number falls back to 200."
+}

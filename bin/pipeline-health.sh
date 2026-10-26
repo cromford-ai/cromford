@@ -92,6 +92,10 @@ if [ -f "$HENV/global.env" ]; then set -a; # shellcheck disable=SC1091
 command -v lane_env_apply    >/dev/null 2>&1 && lane_env_apply    pipeline-health
 if [ -f "$H/bin/jobs-client.sh" ]; then # shellcheck source=/dev/null
   . "$H/bin/jobs-client.sh"; fi
+# Section 5's staleremote check asks the ledger about a json whose build folder
+# is gone (BH-7582). Absent, that check pages exactly as it did before.
+if [ -r "$H/bin/lib/remote-results-ledger.sh" ]; then # shellcheck source=bin/lib/remote-results-ledger.sh
+  . "$H/bin/lib/remote-results-ledger.sh"; fi
 if [ -r "$H/bin/lib/gh-repo-token.sh" ]; then # shellcheck source=bin/lib/gh-repo-token.sh
   . "$H/bin/lib/gh-repo-token.sh"; fi
 # Checks 4 and 5: is this record's close-out still owed, or is the ticket over?
@@ -653,25 +657,75 @@ for P in $PROJECTS; do
     "$P: $EOPEN PR_CREATED result(s) with EMPTY URL ($(head -5 <<<"$(printf '%s\n' $ENAMES)" | tr '\n' ' ')) — the gh --head fix regressed or a new path leaks partial results (aged-out $EAGED ignored)"
 done
 # <<< empty url
+# >>> staleremote (tests/pipeline-health-staleremote-ledger.bh-7582-test.sh runs this block)
+# remote-result jsons older than 30m (staging should consume within one tick).
+# NOT when custody moved through the ledger: bin/fly-pool.sh keeps the hub json
+# as the backup copy on the row path (by design — nothing was pushed, so
+# nothing has provably arrived) and stamps its own pool-* dir RELAYED. The
+# owning box pulls the row; the json here is never consumed by anyone, and
+# reading it as a dead staging step paged 73 project-5 keys the box had
+# already pulled (2026-09-14). A json with no RELAYED sibling is still real.
+# NO BUILD FOLDER AT ALL (BH-7582): the prune took the RELAYED marker with it,
+# so ask the jobs ledger (bin/lib/remote-results-ledger.sh). A terminal build
+# row is no page, cached by (key, json mtime). No row, an open row or no jobs
+# client pages as before. An unreadable ledger is no page and one count in the
+# summary line: unknown is not stale. A folder that is present and has no
+# RELAYED still pages with no ledger read. Reads are capped per project per
+# tick (knob STALEREMOTE_LEDGER_READS). The cache and the retention stamp live
+# in state/remote-results-terminal/ (class cache, catalog/state-paths.json):
+# this block writes nothing under state/remote-results.
+SR_READ_CAP=${STALEREMOTE_LEDGER_READS:-200}           # fallback of the pipeline-health knob STALEREMOTE_LEDGER_READS
+[[ "$SR_READ_CAP" =~ ^[0-9]+$ ]] || SR_READ_CAP=200
+SR_RET_EVERY=${REMOTE_RESULTS_RETENTION_EVERY_S:-3600} # fallback of the pipeline-health knob REMOTE_RESULTS_RETENTION_EVERY_S
+[[ "$SR_RET_EVERY" =~ ^[0-9]+$ ]] || SR_RET_EVERY=3600
+SR_LIB=0; command -v rr_build_state >/dev/null 2>&1 && SR_LIB=1
+SR_TCD="$H/state/remote-results-terminal"
 for P in $PROJECTS; do
-  # remote-result jsons older than 30m (staging should consume within one tick).
-  # NOT when custody moved through the ledger: bin/fly-pool.sh keeps the hub json
-  # as the backup copy on the row path (by design — nothing was pushed, so
-  # nothing has provably arrived) and stamps its own pool-* dir RELAYED. The
-  # owning box pulls the row; the json here is never consumed by anyone, and
-  # reading it as a dead staging step paged 73 project-5 keys the box had
-  # already pulled (2026-09-14). A json with no RELAYED sibling is still real.
+  [ -d "$H/state/remote-results/$P" ] || continue
+  SR_TERM=0; SR_CACHED=0; SR_UNK=0; SR_DEF=0; SR_READS=0
+  [ "$SR_LIB" = 1 ] && rr_terminal_cache_load "$SR_TCD/$P.tsv"
   for J in "$H/state/remote-results/$P/"*.json; do
     [ -f "$J" ] || continue
-    JK=$(basename "$J" .json); RELAYED_SIB=0
+    JK=${J##*/}; JK=${JK%.json}; RELAYED_SIB=0
     for RD in "$H/builds/pool-$P-$JK-"*/RELAYED "$H/builds/$P-$JK-"*/RELAYED; do
       [ -f "$RD" ] && { RELAYED_SIB=1; break; }
     done
     [ "$RELAYED_SIB" = 1 ] && continue
-    [ $(( NOW - $(stat -c %Y "$J") )) -gt 1800 ] && \
-      alert 7200 "staleremote:$P:$(basename "$J")" "$P remote-result $(basename "$J") unconsumed >30m — the run-triage staging step is not running or failing"
+    JM=$(stat -c %Y "$J") || continue
+    [ $(( NOW - JM )) -gt 1800 ] || continue
+    SR_PAGE=1
+    if [ "$SR_LIB" = 1 ] && ! rr_folder_present "$H" "$P" "$JK"; then
+      if rr_terminal_cache_has "$JK" "$JM"; then
+        SR_CACHED=$((SR_CACHED+1)); SR_PAGE=0
+      elif [ "$SR_READS" -ge "$SR_READ_CAP" ]; then
+        SR_DEF=$((SR_DEF+1)); SR_PAGE=0
+      else
+        SR_READS=$((SR_READS+1))
+        SR_ST=$(rr_build_state "$P" "$JK"); SR_RC=$?
+        case "$SR_RC:$SR_ST" in
+          0:terminal) SR_TERM=$((SR_TERM+1)); SR_PAGE=0
+                      rr_terminal_cache_add "$SR_TCD/$P.tsv" "$JK" "$JM" ;;
+          0:*|3:*)    ;;   # absent or open row, or no jobs client: page as before
+          *)          SR_UNK=$((SR_UNK+1)); SR_PAGE=0 ;;
+        esac
+      fi
+    fi
+    [ "$SR_PAGE" = 1 ] && \
+      alert 7200 "staleremote:$P:$JK.json" "$P remote-result $JK.json unconsumed >30m — the run-triage staging step is not running or failing"
   done
+  [ $((SR_TERM+SR_CACHED+SR_UNK+SR_DEF)) -gt 0 ] && \
+    echo "$(STAMP) $P staleremote: ledger-terminal $SR_TERM, cached $SR_CACHED, unknown $SR_UNK (not paged, ledger unreadable), deferred $SR_DEF (read cap $SR_READ_CAP)" >> "$H/logs/pipeline-health.log"
+  # The retention rule for these jsons (bin/remote-results-retention.sh), once
+  # per project per REMOTE_RESULTS_RETENTION_EVERY_S. It writes its own audit
+  # line; its exit code never changes this lane.
+  SR_STAMP="$SR_TCD/$P.stamp"
+  if [ -x "$H/bin/remote-results-retention.sh" ] && { [ ! -f "$SR_STAMP" ] \
+       || [ $(( NOW - $(stat -c %Y "$SR_STAMP" 2>/dev/null || echo 0) )) -ge "$SR_RET_EVERY" ]; }; then
+    mkdir -p "$SR_TCD" 2>/dev/null && touch -d "@$NOW" "$SR_STAMP" 2>/dev/null
+    "$H/bin/remote-results-retention.sh" --project "$P" >/dev/null 2>>"$H/logs/remote-results-retention.err" || true
+  fi
 done
+# <<< staleremote
 
 # ── 6. Wasted-tick loop: same gate reason, zero action, 8+ consecutive ticks ─
 for P in $PROJECTS; do

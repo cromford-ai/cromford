@@ -1,0 +1,11 @@
+{
+  "env": "BR_HUMAN_PUSH_SETTLE_SECS",
+  "type": "int",
+  "default": 1800,
+  "min": 0,
+  "max": 86400,
+  "unit": "seconds",
+  "zero_means": "off",
+  "read_in": "bin/blocked-resolver.d/bh-8328-zero-rung.sh",
+  "note": "BH-8328: an ABANDON close is deferred while the PR's head is the head the ladder was reset to (a push br_head_gate saw), no counted rung ran on it, it is not this lane's own fix push, and its commit (author not a [bot] App, or no linked author) is younger than this. Measured on the head commit's committer date. Nothing is written; the close is re-checked each tick."
+}

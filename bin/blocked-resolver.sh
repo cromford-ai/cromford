@@ -1970,18 +1970,18 @@ br_lead_review() {
   br_lead_pick "$1" "$3" "$rows"
 }
 
-# br_review_newest <slug> <num> <head> — the review that parks this PR on
+# br_review_newest <slug> <num> <head> [rows-file] — the review that parks this PR on
 # <head>, as ONE line of base64: a standing lead/human CHANGES_REQUESTED first
 # (framed with BR_LEAD_HDR; the lead's word outranks the lane's own verdict,
 # including a later lane APPROVE), else the lane's own footer review exactly as
-# before (BH-872). ONE reviews read for both.
+# before (BH-872). ONE reviews read for both; [rows-file] gets those rows (BH-8307).
 #   rc 0  one; its body, base64, on stdout
 #   rc 1  the list was READ and holds no such review
 #   rc 2  THE READ FAILED — the caller says so and consumes nothing. An
 #         unreadable ledger is never "no review" (D11).
 br_review_newest() {
   local slug="$1" num="$2" head="$3" rows out rc=0
-  rows=$(br_review_rows "$slug" "$num") || return 2
+  rows=$(br_review_rows "$slug" "$num") || return 2; [ -z "${4:-}" ] || { printf '%s\n' "$rows" > "$4"; } 2>/dev/null
   out=$(br_lead_pick "$slug" "$head" "$rows") || rc=$?
   case "$rc" in
     0) printf '%s\n' "$out"; return 0 ;;
@@ -2035,7 +2035,7 @@ br_from_reviews() {
   # nothing here and keeps every other source exactly as it is.
   command -v harness_pr_list >/dev/null 2>&1 || return 0
   local p slug list rows row num head brn url draft upd upd_ep cutoff
-  local b64 body rkey tkey rc esc esc_rkey
+  local b64 body rkey tkey rc esc esc_rkey revf
   if command -v gh_budget_low >/dev/null 2>&1 && gh_budget_low blocked-resolver >/dev/null 2>&1; then
     say "the review-verdict source is skipped this tick — the GitHub API budget is low"
     return 0
@@ -2092,12 +2092,12 @@ br_from_reviews() {
           ''|-|"$rkey") continue ;;
         esac
       fi
-      rc=0; b64=$(br_review_newest "$slug" "$num" "$head") || rc=$?
+      rc=0; revf="${TMPDIR:-/tmp}/br-open-prs.$$/rev-${slug//\//_}-$num.json"; rm -f "$revf"; b64=$(br_review_newest "$slug" "$num" "$head" "$revf") || rc=$?
       case "$rc" in
         2) say "$p/$slug#$num: the reviews list would not read (GitHub answered nothing) — no verdict consumed this tick, unreadable is not 'no review'"
            continue ;;
         0) ;;
-        *) continue ;;
+        *) b64="" ;;
       esac
       body=$(printf '%s' "$b64" | base64 -d 2>/dev/null)
       # A lead/human CHANGES_REQUESTED (BH-2200) carries no `VERDICT:` line: its
@@ -2105,7 +2105,7 @@ br_from_reviews() {
       # stands, so the framed body is the candidate as it is.
       case "$body" in
         "$BR_LEAD_HDR"*) ;;
-        *) [ "$(br_review_verdict "$body")" = REQUEST_CHANGES ] || continue ;;
+        *) [ "$(br_review_verdict "$body")" = REQUEST_CHANGES ] || { command -v br_rsn_note >/dev/null 2>&1 && br_rsn_note "$p" "$slug" "$num" "$head" "$revf"; continue; } ;;
       esac
       [ -n "${url:-}" ] || url="https://github.com/$slug/pull/$num"
       # The reason is the NORMALIZED word: br_one hands the row's reason straight
@@ -6146,7 +6146,7 @@ br_fix_round() {
     br_wt_drop "there was nothing to brief a round with"
     git -C "$REPOS/$p" branch -D "brfix/$ck" >/dev/null 2>&1
     mc_git_auth_clear 2>/dev/null
-    br_fix_terminal "$p" "$rkey" "$reason" "$url" "$rec" "$tkey"; return 0
+    command -v zr_nobrief >/dev/null 2>&1 && zr_nobrief "$p" "$ck" "$reason" "$url" "${head:-}"; br_fix_terminal "$p" "$rkey" "$reason" "$url" "$rec" "$tkey"; return 0
   fi
   # THE MODEL BEFORE THE MARK (BH-1510.1). A round with no model route never
   # ran, so it must not spend this head's one mark: nothing is recorded and the
@@ -7181,7 +7181,7 @@ br_abandon() { # br_abandon <project> <rkey> <reason> <pr-url> <record> <why> <t
       return 4
     fi
   fi
-  if command -v br_head_gate >/dev/null 2>&1; then br_head_gate "$p" "$rkey" "$reason" "$url" || return $?; fi
+  if command -v zr_close_gate >/dev/null 2>&1; then zr_close_gate "$p" "$rkey" "$reason" "$url" || return $?; fi; if command -v br_head_gate >/dev/null 2>&1; then br_head_gate "$p" "$rkey" "$reason" "$url" || return $?; fi
   if [ "$OBSERVE" = 1 ]; then say "$p/$rkey [$reason]: WOULD abandon ($why) — observe mode"; return 0; fi
   # THE CLOSE COMES BEFORE THE STAMP (#783). A terminal recorded over a PR this
   # lane could not close is the worst of both: the ticket reads ABANDONED, the

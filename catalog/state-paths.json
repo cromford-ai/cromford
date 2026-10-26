@@ -38,6 +38,7 @@
     {"path": "alert-line-sent",     "class": "box-local", "authority": "alert-line send-once markers (BH-7431)", "note": "state/alert-line-sent/<sha1>: bin/alert-line.sh:41. Machine-local, never carried"},
     {"path": "blind-list",          "class": "box-local", "authority": "the GitHub blind-repo tick counters (BH-7431)", "note": "state/blind-list/<p>-<owner_repo>: bin/lib/gh-repo-token.sh:394. Machine-local, never carried"},
     {"path": "flags-cache",         "class": "cache",     "authority": "the last-good cache of flag rows (BH-7431)", "note": "state/flags-cache/<scope>/<name>: bin/lib/jobs/flags.sh:369, read by bin/lib/dispatch-mode.sh. Machine-local, never carried"},
-    {"path": "remote-results",      "class": "rows",      "authority": "pool_record_files rows (BH-7429) and the pool-result ledger row (BH-2643)", "note": "state/remote-results/<p>/<KEY>.json: the hub's parked relay copy; the machine's build record is in pool_record_files"}
+    {"path": "remote-results",      "class": "rows",      "authority": "pool_record_files rows (BH-7429) and the pool-result ledger row (BH-2643)", "note": "state/remote-results/<p>/<KEY>.json: the hub's parked relay copy; the machine's build record is in pool_record_files"},
+    {"path": "remote-results-terminal", "class": "cache", "authority": "the newest kind=build jobs row (BH-7582)", "note": "state/remote-results-terminal/<p>.tsv (key, json mtime, marked) and <p>.stamp: bin/lib/remote-results-ledger.sh, written by bin/pipeline-health.sh staleremote and bin/remote-results-retention.sh. Rebuildable: losing it costs ledger reads. Machine-local, never carried"}
   ]
 }

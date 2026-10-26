@@ -107,10 +107,16 @@ br_head_reset() {
 #   appends to its comment: the head the gate read in this call and what the
 #   ladder counted. Printed with two leading newlines, so it ends the body.
 br_close_facts() {
-  br_load "$1" "$2" | jq -r --arg h "${BR_GATE_HEAD:-}" --arg u "${3:-}" '
-    "\n\nJudged head: \(if $h == "" then "not read (the PR is not open)" else $h end). "
+  # The counts the close decided with (BH-8328, zr_counts), when it is loaded.
+  local zc=""
+  command -v zr_counts >/dev/null 2>&1 && zc=$(zr_counts "$1" "$2" "${3:-}" close 2>/dev/null)
+  br_load "$1" "$2" | jq -r --arg h "${BR_GATE_HEAD:-}" --arg u "${3:-}" --arg zc "$zc" '
+    ($zc | split(" ")) as $z
+    | (if ($z | length) == 3 then {m:$z[0], r:$z[1], f:$z[2]}
+       else {m:(.mechanicals // 0), r:(.regens // 0), f:(.fixrounds // 0)} end) as $c
+    | "\n\nJudged head: \(if $h == "" then "not read (the PR is not open)" else $h end). "
     + "Last counted rung ran on: \(if .rung_pr == $u and (.rung_head // "") != "" then .rung_head else "not recorded" end). "
-    + "Rungs counted since the last head reset: mechanical \(.mechanicals // 0), regenerate \(.regens // 0), fix round \(.fixrounds // 0). "
+    + "Rungs counted since the last head reset: mechanical \($c.m), regenerate \($c.r), fix round \($c.f). "
     + "Ticket-wide: adjudicate \(.adjudications // 0), rebuild \([(.rebuilds // 0), ((.rebuild_jobs // []) | length)] | max). "
     + "Attempts that could not start (not counted): \([.attempts[]? | select((.action // "") | endswith("-blocked"))] | length)."' 2>/dev/null
 }

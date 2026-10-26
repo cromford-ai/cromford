@@ -1,0 +1,10 @@
+{
+  "env": "REMOTE_RESULTS_RETENTION_EVERY_S",
+  "type": "int",
+  "default": 3600,
+  "min": 0,
+  "max": 604800,
+  "unit": "seconds",
+  "zero_means": null,
+  "note": "BH-7582: how often, per project, the staleremote section runs bin/remote-results-retention.sh (stamp state/remote-results-terminal/<p>.stamp). Each run writes one audit line to logs/remote-results-retention.log. 0 runs it every tick. A non-number falls back to 3600."
+}
