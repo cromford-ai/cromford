@@ -15,7 +15,9 @@
   // BH-4607: src/index.js imports ROUTES from "#routes", which is the
   // git-ignored src/routes.gen.js under wrangler. This renders it from
   // test/route-table.d/ before every bundle; a refused fragment fails the deploy.
-  "build": { "command": "node scripts/routes-build.mjs" },
+  // BH-8395: src/lib/core.js imports ADDED_COLUMNS/ADDED_INDEXES from
+  // "#core-registries", the git-ignored src/lib/core-registries.gen.js, rendered from src/lib/core.d/.
+  "build": { "command": "node scripts/routes-build.mjs && node scripts/core-registries-build.mjs" },
   "account_id": "00000000000000000000000000000000",
   "workers_dev": true,
   "preview_urls": false,

@@ -10,6 +10,10 @@
     "#routes": {
       "workerd": "./src/routes.gen.js",
       "default": "./test/lib/routes.node.js"
+    },
+    "#core-registries": {
+      "workerd": "./src/lib/core-registries.gen.js",
+      "default": "./src/lib/core-registries.node.js"
     }
   },
   "description": "Coordination worker for the box fleet. One runtime dependency, @sentry/cloudflare (BH-5618), imported lazily and only when HARNESS_SENTRY_DSN is bound, so node --test still drives the worker directly without an install.",

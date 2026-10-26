@@ -22,6 +22,10 @@ between. Three parts:
   rows, so no token value can reach it.
 - the counter in `bin/lib/gh-limit-logger.sh` — one line per wrapped `gh` call,
   which is what makes "the top three scripts by call count" answerable at all.
+  Since BH-8334 a `gh api -i -X <M> <path>` call (the shape `gh_rest` sends)
+  gets a 5th field, `<METHOD>:<template>`, and `gh_calls_top_endpoints [caller]
+  [n=10] [window=3600]` in `bin/lib/gh-quota.sh` prints `<count> <METHOD>:<template>`,
+  busiest first.
 
 **How an operator reaches it:** the hub's `bin/fleet-status-push.sh`
 (`cron/lanes/270-fleet-status-push.cron`, \*/10, behind `bin/hub-lease.sh check`)
@@ -36,6 +40,7 @@ and from `logs/ALERTS.log`.
 | the whole feature (six sections, three mutants) | `HARNESS_TEST_SANDBOX=1 bash tests/gh-quota.bh-426-test.sh` |
 | one line per credential, the 2h/band dedupe, the `credential` field | `HARNESS_TEST_SANDBOX=1 bash tests/gh-quota-credential.bh-4717-test.sh` |
 | `--status` beside the eleven per-project lanes | `bash tests/gh-default-auth-lanes-test.sh` |
+| the 5th field and `gh_calls_top_endpoints` (BH-8334) | `HARNESS_TEST_SANDBOX=1 bash tests/gh-calls-path.bh-8334-test.sh` |
 | the `gh` wrapper's transparency the counter rides on | `bash tests/gh-default-identity-test.sh` (§4) |
 | the push it lands in | `bash tests/fleet-status-push-fields-test.sh`, `HARNESS_TEST_SANDBOX=1 bash tests/fleet-status-lease-alert.bh-1000-test.sh` |
 
@@ -45,6 +50,7 @@ and from `logs/ALERTS.log`.
 bin/gh-token.sh --status
 bin/gh-token.sh --status --json | jq 'map({identity,credential,rest_remaining,graphql_remaining,resets_at})'
 ls logs/gh-calls/                      # one file per hour, pruned at 180 minutes
+(. bin/lib/gh-quota.sh; gh_calls_top_endpoints merge-conductor.sh 10 3600)   # the top 10 conductor endpoints, last hour
 tail -n 20 logs/gh-quota.log           # why a gh_quota key was absent, if it was
 grep '\[gh-quota\]' logs/ALERTS.log    # the low-budget lines
 ```
@@ -54,8 +60,13 @@ beat (the console's fleet row, or the watchdog's `/status`).
 
 **Files it owns on a live box:**
 
-- `logs/gh-calls/<YYYYMMDDHH>.log` — `<epoch> <caller> <argv1> <argv2>`, one line
-  per wrapped `gh` call, append-only. Pruned at 180 minutes by the first writer
+- `logs/gh-calls/<YYYYMMDDHH>.log` — `<epoch> <caller> <argv1> <argv2> [<METHOD>:<template>]`,
+  one line per wrapped `gh` call, append-only. The 5th field (BH-8334) is
+  written only when argv1 is `api` and argv2 is a flag. The template drops the
+  query string and a leading `/`, writes `repos/{o}/{r}`, `{n}` for an all-digit
+  segment, `{sha}` for a 40-hex segment or a 7-39 char hex segment with a digit,
+  and `{ref}` for everything after `heads/`, `branches/` or `compare/`. A plain
+  `gh api <path>` line stays 4 fields. Pruned at 180 minutes by the first writer
   into a new hour; no cron line and no other reader. The hour in the NAME is
   rotation only — readers glob the directory and filter on the epoch.
 - `flags/alerted-gh-quota-<credential>` — the alert dedupe, one per credential,

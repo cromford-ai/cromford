@@ -125,6 +125,21 @@ gh_calls_top() {
     | sort -k2,2nr -k1,1 | head -n "$n"
 }
 
+# gh_calls_top_endpoints [caller] [n=10] [window=3600] — BH-8334: "<count>
+# <METHOD>:<template>", busiest first, from field 5 of the same counter (a
+# gh_rest-shaped call writes it; a 4-field line is not counted here). With a
+# caller, only that caller's lines. Ties break on the endpoint. Prints nothing
+# when no line in the window has a 5th field.
+gh_calls_top_endpoints() {
+  local who="${1:-}" n="${2:-10}" win="${3:-3600}" dir now cutoff
+  dir="$(_ghq_home)/logs/gh-calls"
+  [ -d "$dir" ] || return 0
+  now=$(date -u +%s); cutoff=$(( now - win ))
+  awk -v c="$cutoff" -v w="$who" 'NF >= 5 && $1+0 >= c && (w == "" || $2 == w) { n[$5]++ }
+       END { for (k in n) printf "%s %s\n", n[k], k }' "$dir"/*.log 2>/dev/null \
+    | sort -k1,1nr -k2,2 | head -n "$n"
+}
+
 # _ghq_top_text — the "top callers" clause. "none recorded" when the counter is
 # empty, NEVER an empty list: a sentence that ends in nothing reads as "nobody
 # called GitHub", which beside a drained bucket is the one thing it cannot mean

@@ -47,8 +47,21 @@
 #       The resolved PR_RECORD_MAX_AGE_S as a non-negative integer on stdout.
 #       bin/orphan-reconcile.sh bounds its stored open-PR list with it (BH-8271).
 #
+#   pr_record_peek <owner/repo> <number>
+#       BH-8334: the record row as it is, plus age_s, as one JSON line, rc 0.
+#       rc 1 and nothing on stdout on bad args, no row, or a failed read. ONE
+#       jobs GET, never a GitHub call, never a write. A miss writes one
+#       logs/pr-record.log line: peek <repo>#<n> miss=<unreadable|unknown>.
+#       bin/lead-verdict.sh uses it when GitHub refused its head read for
+#       quota; the caller judges the age.
+#
+#   pr_record_head_fallback_max_age
+#       BH-8334: the resolved PR_RECORD_HEAD_FALLBACK_MAX_AGE_S (default 900,
+#       0 = never) as a non-negative integer on stdout.
+#
 # The knob PR_RECORD_MAX_AGE_S (catalog/lanes.d/_lib.pr-record.json) is read
-# through lane_knob when the caller has it, else from the environment.
+# through lane_knob when the caller has it, else from the environment. So is
+# PR_RECORD_HEAD_FALLBACK_MAX_AGE_S (catalog/lanes.d/_lib.pr-record.knobs.d/).
 #
 # The root is ${HARNESS:-${H:-}}; with no root the jobs client cannot load, so
 # every put fails and every get reads GitHub.
@@ -58,6 +71,7 @@ _PRR_LIBDIR="${BASH_SOURCE[0]%/*}"
 _PRR_FIELDS="state draft head_ref base_ref head_sha base_sha mergeable_state labels checks review_decision queue_state last_comment_id"
 _PRR_GH_FIELDS="state draft head_ref base_ref head_sha base_sha mergeable_state labels"
 _PRR_DEFAULT_MAX_AGE_S=900   # fallback only: the knob is PR_RECORD_MAX_AGE_S in catalog/lanes.d/_lib.pr-record.json
+_PRR_DEFAULT_HEAD_FALLBACK_S=900   # fallback only: the knob is PR_RECORD_HEAD_FALLBACK_MAX_AGE_S in catalog/lanes.d/_lib.pr-record.knobs.d/
 
 _prr_root() { local r="${HARNESS:-${H:-}}"; [ -n "$r" ] || return 1; printf '%s' "$r"; }
 
@@ -105,21 +119,41 @@ pr_record_put() {
   printf '%s\n' "$out"
 }
 
-# _prr_max_age — the knob as a non-negative integer.
-_prr_max_age() {
+# _prr_knob <ENV> <fallback> — a pr-record knob as a non-negative integer.
+_prr_knob() {
   local v="" _LG_KIND=libs
-  if command -v lane_knob >/dev/null 2>&1; then v=$(lane_knob pr-record PR_RECORD_MAX_AGE_S 2>/dev/null); fi
-  [ -n "$v" ] || v="${PR_RECORD_MAX_AGE_S:-}"
+  if command -v lane_knob >/dev/null 2>&1; then v=$(lane_knob pr-record "$1" 2>/dev/null); fi
+  [ -n "$v" ] || v="${!1:-}"
   # No lane_knob and no env: the registry default is not reachable here.
-  [ -n "$v" ] || v=$_PRR_DEFAULT_MAX_AGE_S
+  [ -n "$v" ] || v=$2
   if ! [[ "$v" =~ ^[0-9]{1,9}$ ]]; then
-    _prr_log "knob PR_RECORD_MAX_AGE_S='$v' is not a non-negative integer: using $_PRR_DEFAULT_MAX_AGE_S"
-    v=$_PRR_DEFAULT_MAX_AGE_S
+    _prr_log "knob $1='$v' is not a non-negative integer: using $2"
+    v=$2
   fi
   printf '%s' "$((10#$v))"
 }
 
+# _prr_max_age — the knob as a non-negative integer.
+_prr_max_age() { _prr_knob PR_RECORD_MAX_AGE_S "$_PRR_DEFAULT_MAX_AGE_S"; }
+
 pr_record_max_age() { _prr_max_age; }
+
+pr_record_head_fallback_max_age() { _prr_knob PR_RECORD_HEAD_FALLBACK_MAX_AGE_S "$_PRR_DEFAULT_HEAD_FALLBACK_S"; }
+
+pr_record_peek() {
+  local repo="${1:-}" n="${2:-}" lr out
+  _prr_args_ok "$repo" "$n" || return 1
+  lr=$(_prr_lower "$repo")
+  if ! _prr_client || ! out=$(_jobs_req GET "/api/pr-records?repo=$lr&number=$n") \
+     || ! jq -e 'has("row")' <<<"$out" >/dev/null 2>&1; then
+    _prr_log "peek $lr#$n miss=unreadable"
+    return 1
+  fi
+  if ! jq -ce 'select((.row | type) == "object") | .row + {age_s: .age_s}' <<<"$out" 2>/dev/null; then
+    _prr_log "peek $lr#$n miss=unknown"
+    return 1
+  fi
+}
 
 # _prr_map — a GitHub pulls object on stdin -> the record columns it fills,
 # with the absent ones left out. GitHub's mergeable_state "unknown" (it has
@@ -143,7 +177,7 @@ pr_record_get() {
   shift 2
   local want=("$@")
   [ "${#want[@]}" -gt 0 ] || want=(state head_sha)
-  for f in "${want[@]}"; do
+  for f in ${want[@]+"${want[@]}"}; do
     case " $_PRR_FIELDS " in *" $f "*) ;; *) return 2 ;; esac
   done
   lr=$(_prr_lower "$repo")
@@ -154,7 +188,7 @@ pr_record_get() {
     if [ "$row" = null ]; then
       reason=unknown
     else
-      for f in "${want[@]}"; do
+      for f in ${want[@]+"${want[@]}"}; do
         case " $_PRR_GH_FIELDS " in *" $f "*) ;; *) continue ;; esac
         if jq -e --arg f "$f" '.[$f] == null' <<<"$row" >/dev/null 2>&1; then reason="field:$f"; break; fi
       done

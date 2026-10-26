@@ -39,7 +39,7 @@ _GHB_KV=$(
   if [ -z "${LANE_REGISTRY:-}" ] && [ ! -r "$(_lg_registry)" ] && . "$_GHB_R/bin/lib/lanes-registry.sh" >/dev/null 2>&1; then
     LANE_REGISTRY=$(lanes_json_path "$_GHB_R" 2>/dev/null) && export LANE_REGISTRY
   fi
-  trap 'for _GHB_K in GH_BUDGET_TTL_S GH_BUDGET_DB_TIMEOUT_S; do printf "%s\t%s\n" "$_GHB_K" "${!_GHB_K:-}" >&3; done' EXIT
+  trap 'for _GHB_K in GH_BUDGET_TTL_S GH_BUDGET_DB_TIMEOUT_S GH_BUDGET_RATE_LIMIT_MIN_INTERVAL_S; do printf "%s\t%s\n" "$_GHB_K" "${!_GHB_K:-}" >&3; done' EXIT
   lib_env_apply gh-budget >/dev/null 2>&1)
 while IFS=$'\t' read -r _GHB_K _GHB_V; do
   if [ -n "$_GHB_V" ]; then printf -v "$_GHB_K" '%s' "$_GHB_V"; fi
@@ -55,6 +55,39 @@ _GHB_FLAG_DIR="$_GHB_H/flags"
 _GHB_DEFAULT_THRESHOLD=800
 
 _ghb_now() { date -u +%s; }
+
+# _ghb_rl_read — BH-8334: one `gh api rate_limit` body into _GHB_RL_OUT, rc 0;
+# rc 1 and _GHB_RL_OUT empty when the read failed or has no .resources. One
+# process reuses its last good body for GH_BUDGET_RATE_LIMIT_MIN_INTERVAL_S
+# seconds (knob catalog/lanes.d/_lib.gh-budget.knobs.d/; 0 = every call reads).
+# gh_repo_list_failed calls gh_budget_exhausted and then
+# gh_budget_ratelimit_alert on every failed repo list, so on a drained bucket
+# one conductor made two rate_limit calls per failed list. A failed read is
+# never kept. Shell variables, not a file (the memo is per process): it sets
+# them in the caller's shell, so never call it inside $( ).
+# An optional <cap> lowers the interval for one call: gh_budget_refresh passes
+# GH_BUDGET_TTL_S (0 when it is not a number: no cache is trusted), so TTL 0
+# ("no cache: every refresh reads") still reads.
+_GHB_RL_RAW=""; _GHB_RL_AT=""; _GHB_RL_OUT=""
+_ghb_rl_read() {
+  local iv="${GH_BUDGET_RATE_LIMIT_MIN_INTERVAL_S:-}" cap="${1:-}" now raw
+  # Fallback only: the knob is GH_BUDGET_RATE_LIMIT_MIN_INTERVAL_S.
+  _ghb_num "$iv" || iv=60
+  if _ghb_num "$cap" && [ "$cap" -lt "$iv" ]; then iv="$cap"; fi
+  now=$(_ghb_now)
+  _GHB_RL_OUT=""
+  if [ "$iv" -gt 0 ] && [ -n "$_GHB_RL_RAW" ] && _ghb_num "$_GHB_RL_AT" && _ghb_num "$now" \
+     && [ $((now - _GHB_RL_AT)) -lt "$iv" ] && [ "$now" -ge "$_GHB_RL_AT" ]; then
+    _GHB_RL_OUT="$_GHB_RL_RAW"
+    return 0
+  fi
+  raw=$(gh api rate_limit 2>/dev/null) || raw=""
+  if [ -z "$raw" ] || ! printf '%s' "$raw" | jq -e '.resources' >/dev/null 2>&1; then
+    return 1
+  fi
+  _GHB_RL_RAW="$raw"; _GHB_RL_AT="$now"; _GHB_RL_OUT="$raw"
+  return 0
+}
 _ghb_stamp() { date -u '+%Y-%m-%d %H:%M:%SZ'; }
 
 # _ghb_token — print the active token in a safe way. Never logged.
@@ -210,12 +243,15 @@ gh_budget_refresh() {
   # The fleet's reading before our own: one rate_limit call per TTL for the
   # whole fleet, and every box judging the same remaining figure.
   _ghb_shared_pull "$cache" "$threshold" && return 0
-  raw=$(gh api rate_limit 2>/dev/null) || raw=""
-  if [ -z "$raw" ] || ! printf '%s' "$raw" | jq -e '.resources' >/dev/null 2>&1; then
+  if _ghb_num "$_GHB_TTL"; then _ghb_rl_read "$_GHB_TTL" || true; else _ghb_rl_read 0 || true; fi
+  raw="$_GHB_RL_OUT"
+  if [ -z "$raw" ]; then
     [ -f "$cache" ] || { : > "$cache"; }
     return 1
   fi
-  now=$(_ghb_now)
+  # The reading's own time: a memo hit is up to the interval old.
+  now="$_GHB_RL_AT"
+  _ghb_num "$now" || now=$(_ghb_now)
   fetched=$(printf '%s' "$raw" | jq -nc --argjson n "$now" --argjson t "$threshold" 'input | {
     fetched_at: $n,
     _threshold: $t,
@@ -282,13 +318,13 @@ gh_budget_low() {
 _ghb_iso() { date -u -d "@$1" '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null || date -u '+%Y-%m-%dT%H:%M:%SZ'; }
 
 # gh_budget_exhausted — rc 0 only when a FRESH read says core or graphql
-# remaining == 0. Non-zero otherwise, including on read failure.
+# remaining == 0 (fresh: this process read it at most
+# GH_BUDGET_RATE_LIMIT_MIN_INTERVAL_S ago, _ghb_rl_read). Non-zero otherwise,
+# including on read failure. The box cache file is never read here.
 gh_budget_exhausted() {
   local raw core_rem graph_rem
-  raw=$(gh api rate_limit 2>/dev/null) || raw=""
-  if [ -z "$raw" ] || ! printf '%s' "$raw" | jq -e '.resources' >/dev/null 2>&1; then
-    return 1
-  fi
+  _ghb_rl_read || return 1
+  raw="$_GHB_RL_OUT"
   core_rem=$(printf '%s' "$raw" | jq -r '.resources.core.remaining // empty')
   graph_rem=$(printf '%s' "$raw" | jq -r '.resources.graphql.remaining // empty')
   [ "$core_rem" = "0" ] || [ "$graph_rem" = "0" ]
@@ -298,8 +334,8 @@ gh_budget_exhausted() {
 # Deduped by reset epoch per bucket; wording avoids HTTP 429 / rate_limit_error.
 gh_budget_ratelimit_alert() {
   local lane="$1" what="$2" raw core_rem core_lim core_reset graph_rem graph_lim graph_reset
-  raw=$(gh api rate_limit 2>/dev/null) || raw=""
-  [ -n "$raw" ] || return 1
+  _ghb_rl_read || return 1
+  raw="$_GHB_RL_OUT"
   mkdir -p "$_GHB_LOG_DIR" "$_GHB_FLAG_DIR" 2>/dev/null || true
   core_rem=$(printf '%s' "$raw" | jq -r '.resources.core.remaining // empty')
   core_lim=$(printf '%s' "$raw" | jq -r '.resources.core.limit // empty')

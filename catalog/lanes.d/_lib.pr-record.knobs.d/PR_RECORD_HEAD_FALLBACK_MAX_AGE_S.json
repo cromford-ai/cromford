@@ -1,0 +1,12 @@
+{
+  "env": "PR_RECORD_HEAD_FALLBACK_MAX_AGE_S",
+  "read_in": "bin/lib/pr-record.sh",
+  "type": "int",
+  "default": 900,
+  "min": 0,
+  "max": 86400,
+  "unit": "seconds",
+  "zero_means": "never: a post whose head read is rate-limited fails as before",
+  "required": false,
+  "note": "BH-8334. bin/lead-verdict.sh post reads the PR head from GitHub. When GitHub refuses that read for quota (GH_REST_REASON rate-limit or quota-reserve), it uses the PR record's head_sha (pr_record_peek, no GitHub call) only when the record is at most this many seconds old (the worker's now minus the record's last write). Any other failure still stops the post. Read through lane_knob (libs scope) when the caller has it, else from the environment; a value that is not a non-negative integer is 900 and one logs/pr-record.log line names it."
+}

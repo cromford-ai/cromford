@@ -1,0 +1,12 @@
+{
+  "env": "GH_BUDGET_RATE_LIMIT_MIN_INTERVAL_S",
+  "read_in": "bin/lib/gh-budget.sh",
+  "type": "int",
+  "default": 60,
+  "min": 0,
+  "max": 3600,
+  "unit": "seconds",
+  "zero_means": "every call reads rate_limit fresh (the old behavior)",
+  "required": false,
+  "note": "BH-8334. One process reuses its last good `gh api rate_limit` body for this many seconds in gh_budget_exhausted, gh_budget_ratelimit_alert and the fresh read of gh_budget_refresh (in-process memo _ghb_rl_read; shell variables, never the box cache file). A failed read is never kept. Resolved through lib_env_apply gh-budget at source time; code fallback 60, and a value that is not a non-negative integer is 60."
+}

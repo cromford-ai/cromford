@@ -123,8 +123,8 @@ with the deploy. Phase 3 adds `job_heartbeats` and `pause_flags`, phase 5 adds
 `job_phases`, and phase 6 adds `concurrency_rules`, `retry_policies` and
 `job_claims`; every one is a new table rather than a column on `jobs`, because D1
 has no `ADD COLUMN IF NOT EXISTS` and a column could not live in a re-runnable
-file. The column adds so far — every one of them a row in `ADDED_COLUMNS`
-(`pr_costs.auth_account` / `account_breakdown`, 2026-09-02;
+file. The column adds so far — every one of them a row in `ADDED_COLUMNS`,
+composed from `src/lib/core.d/` fragments since BH-8395 (`pr_costs.auth_account` / `account_breakdown`, 2026-09-02;
 `outcome_metrics.repairs`, 2026-09-06; the `cost_rows` provenance and
 `extra_usage_snapshots` meter columns, 2026-09-14; `jobs.issue_created_at` /
 `jobs.first_spawn_at`, 2026-09-17, BH-482, the launch lead time's two stamps,
@@ -1001,7 +1001,7 @@ Table `alerts`:
 - `state TEXT NOT NULL DEFAULT 'new'` — `new | quarantined | triaged | parked | resolved`.
 - `claimed_by TEXT` — `<lane>@<box>`, `NULL` = unclaimed.
 - `claimed_at TEXT`, `notified_at TEXT` (last send anywhere, `NULL` = never).
-- `component TEXT` (BH-6971) — the component that owns the alert, from `catalog/components.tsv` through `bin/component-of.sh`, or `unowned`. `NULL` = not stamped yet. An ADDED column (`ADDED_COLUMNS.alerts` in `src/lib/core.js`), never backfilled by the worker; `bin/alerts-groom.sh` stamps it.
+- `component TEXT` (BH-6971) — the component that owns the alert, from `catalog/components.tsv` through `bin/component-of.sh`, or `unowned`. `NULL` = not stamped yet. An ADDED column (`ADDED_COLUMNS.alerts` in `src/lib/core.d/0000-added-columns.js`), never backfilled by the worker; `bin/alerts-groom.sh` stamps it.
 
 Indexes: `idx_alerts_state (state, claimed_at, first_seen)`, `idx_alerts_family (family, last_seen)`, and `idx_alerts_component (component, last_seen)` (BH-6971, `ADDED_INDEXES.alerts`, created right after the column; it serves `component=` and `unstamped=1` below).
 

@@ -253,18 +253,56 @@ lv_key_ok() { # lv_key_ok <repo> <pr> — the argument checks both verbs share
 #   cache (a 304 replay is an old answer). Returns when it is <sha>; exits 3 when
 #   it is another sha, 1 when it cannot be read. The libs load here, not at the
 #   top: show/request/list never touch GitHub.
+#   BH-8334: the read goes to a FILE, so GH_REST_REASON stays in this shell.
+#   When GitHub refused it for quota (reason rate-limit or quota-reserve), the
+#   head is the PR record's (lv_record_head). Any other failure still exits 1.
 lv_head_check() {
-  local head rc=0
+  local head rc=0 t why=""
   # shellcheck source=bin/lib/verdict-status.sh
   command -v vs_publish >/dev/null 2>&1 || . "$SELF_DIR/lib/verdict-status.sh" 2>/dev/null \
     || die "bin/lib/verdict-status.sh did not load; the PR head cannot be checked"
   command -v _gh_rest_field >/dev/null 2>&1 || die "bin/lib/gh-rest.sh did not load; the PR head cannot be checked"
-  head=$(GH_ETAG=0 _gh_rest_field "repos/$1/pulls/$2" '.head.sha') || rc=$?
-  [ "$rc" = 0 ] || die "could not read the head of $1#$2 (gh_rest rc $rc); not posting a verdict that may bind a dead sha"
+  t=$(mktemp "${TMPDIR:-/tmp}/lead-verdict-head.XXXXXX") || die "mktemp failed; the PR head cannot be checked"
+  GH_ETAG=0 _gh_rest_field "repos/$1/pulls/$2" '.head.sha' > "$t" || rc=$?
+  head=$(cat "$t" 2>/dev/null); rm -f "$t"
+  if [ "$rc" != 0 ]; then
+    case "${GH_REST_REASON:-}" in
+      rate-limit|quota-reserve)
+        if lv_record_head "$1" "$2"; then
+          head="$LV_RECORD_HEAD"; rc=0
+          echo "lead-verdict: GitHub refused the head read of $1#$2 ($GH_REST_REASON); using the PR record's head ${head:0:12} (age ${LV_RECORD_AGE}s)" >&2
+        fi
+        why="; record: $LV_RECORD_WHY" ;;
+    esac
+  fi
+  [ "$rc" = 0 ] || die "could not read the head of $1#$2 (gh_rest rc $rc${GH_REST_REASON:+, $GH_REST_REASON}$why); not posting a verdict that may bind a dead sha"
   head=$(printf '%s' "$head" | tr 'A-F' 'a-f')
   [ "$head" = "$3" ] && return 0
   echo "lead-verdict: head moved: $1#$2 is at ${head:0:12}, not ${3:0:12}; the verdict would bind a sha that is not the PR's head — nothing posted" >&2
   exit 3
+}
+
+# lv_record_head <repo> <pr> — BH-8334: rc 0 with LV_RECORD_HEAD (40 hex,
+#   lower case) and LV_RECORD_AGE set when the PR record (pr_record_peek, one
+#   jobs GET, no GitHub call) holds a head no older than
+#   PR_RECORD_HEAD_FALLBACK_MAX_AGE_S. rc 1 otherwise, with LV_RECORD_WHY set
+#   to the reason it is not used. Never call it inside $( ).
+lv_record_head() {
+  local peek max age head
+  LV_RECORD_HEAD=""; LV_RECORD_AGE=""; LV_RECORD_WHY=""
+  # shellcheck source=bin/lib/pr-record.sh
+  command -v pr_record_peek >/dev/null 2>&1 || . "$SELF_DIR/lib/pr-record.sh" 2>/dev/null
+  command -v pr_record_peek >/dev/null 2>&1 || { LV_RECORD_WHY="bin/lib/pr-record.sh did not load"; return 1; }
+  max=$(pr_record_head_fallback_max_age)
+  [ "$max" -gt 0 ] 2>/dev/null || { LV_RECORD_WHY="PR_RECORD_HEAD_FALLBACK_MAX_AGE_S=${max:-?}, the fallback is off"; return 1; }
+  peek=$(pr_record_peek "$1" "$2") || { LV_RECORD_WHY="no row (or the jobs read failed)"; return 1; }
+  age=$(jq -r '.age_s // empty' <<<"$peek" 2>/dev/null)
+  [[ "$age" =~ ^-?[0-9]+$ ]] || { LV_RECORD_WHY="no age_s"; return 1; }
+  [ "$age" -le "$max" ] || { LV_RECORD_WHY="age ${age}s > ${max}s"; return 1; }
+  head=$(jq -r '.head_sha // empty' <<<"$peek" 2>/dev/null | tr 'A-F' 'a-f')
+  [[ "$head" =~ ^[0-9a-f]{40}$ ]] || { LV_RECORD_WHY="no 40-hex head_sha"; return 1; }
+  LV_RECORD_HEAD="$head"; LV_RECORD_AGE="$age"
+  return 0
 }
 
 # lv_lane_comment <repo> <pr> <sha> <paths> — BH-4145: ONE PR comment per head

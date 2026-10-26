@@ -41,7 +41,13 @@
 # the one place every lane's ordinary gh call already passes through. So each
 # call appends ONE line to logs/gh-calls/<YYYYMMDDHH>.log:
 #
-#   <epoch> <caller> <argv1> <argv2>
+#   <epoch> <caller> <argv1> <argv2> [<METHOD>:<template>]
+#
+# The 5th field (BH-8334) is written only for the `gh api -i -X M P` shape
+# gh_rest sends (argv1 `api`, argv2 a flag): the method and the path with its
+# ids replaced (_ghll_ep), so `gh_calls_top_endpoints` can name the busiest
+# endpoints. A plain `gh api <path>` already shows its path in field 4 and
+# stays 4 fields. Readers that take fields 1-2 are unchanged.
 #
 # and nothing else changes: not stdout, not stderr, not the exit code, and not
 # whether the call happens at all. The caller name is $0's basename, or
@@ -70,18 +76,73 @@ _GHLL_RE='rate limit (already )?exceeded|secondary rate limit|abuse detection|HT
 # under us, which is the one moment worth spending a `find` on.
 _GHLL_HOUR=""
 
-# _ghll_count <argv1> <argv2> — one line per wrapped call. printf's %()T is a
+# _ghll_tpl <path> — BH-8334: the path with its ids replaced, in _GHLL_TPL.
+# A leading / and the query string are dropped; repos/<o>/<r> is
+# repos/{o}/{r}; an all-digit segment is {n}; a 40-hex segment, or a 7-39 char
+# hex segment with a digit in it, is {sha}; everything after heads/, branches/
+# or compare/ is {ref}. Pure parameter expansion and [[ ]]: no fork (see below).
+_ghll_tpl() {
+  local p="${1#/}" seg out=""
+  p="${p%%\?*}"
+  if [[ "$p" == repos/*/* ]]; then
+    p="${p#repos/}"; p="${p#*/}"; out="repos/{o}/{r}"
+    if [[ "$p" == */* ]]; then p="${p#*/}"; else p=""; fi
+  fi
+  while [ -n "$p" ]; do
+    seg="${p%%/*}"
+    if [ "$seg" = "$p" ]; then p=""; else p="${p#*/}"; fi
+    if [[ "$seg" =~ ^[0-9]+$ ]]; then seg="{n}"
+    elif [[ "$seg" =~ ^[0-9a-fA-F]{40}$ ]]; then seg="{sha}"
+    elif [[ "$seg" =~ ^[0-9a-fA-F]{7,39}$ && "$seg" == *[0-9]* ]]; then seg="{sha}"
+    fi
+    out="${out:+$out/}$seg"
+    case "$seg" in heads|branches|compare) [ -n "$p" ] && { out="$out/{ref}"; p=""; } ;; esac
+  done
+  _GHLL_TPL="$out"
+}
+
+# _ghll_ep <argv of `gh api` after "api"> — BH-8334: `<METHOD>:<template>` in
+# _GHLL_EP, empty when the argv names no path. -X/--method sets the method;
+# with none it is POST when a field or --input is given (gh's own rule), else
+# GET. Flags that take a value skip it. No fork.
+_ghll_ep() {
+  local m="" path="" body=0 a
+  _GHLL_EP=""
+  while [ $# -gt 0 ]; do
+    a="$1"; shift
+    case "$a" in
+      -X|--method) m="${1:-}"; shift ;;
+      --method=*) m="${a#--method=}" ;;
+      -f|-F|--field|--raw-field|--input) body=1; shift ;;
+      --field=*|--raw-field=*|--input=*) body=1 ;;
+      -H|--header|-q|--jq|-t|--template|-p|--preview|--hostname|--cache) shift ;;
+      -*) ;;
+      *) [ -n "$path" ] || path="$a" ;;
+    esac
+  done
+  [ -n "$path" ] || return 0
+  [ -n "$m" ] || { if [ "$body" = 1 ]; then m=POST; else m=GET; fi; }
+  _ghll_tpl "$path"
+  [ -n "$_GHLL_TPL" ] && _GHLL_EP="$m:$_GHLL_TPL"
+  return 0
+}
+
+# _ghll_count <argv...> — one line per wrapped call. printf's %()T is a
 # bash builtin, so counting costs no fork; `date` here would double the process
 # count of every lane that makes hundreds of gh calls a tick. Every failure is
 # swallowed: the count is bookkeeping, the gh call is the point.
 _ghll_count() {
-  local ep hr dir
+  local ep hr dir x=""
   printf -v ep '%(%s)T' -1
   printf -v hr '%(%Y%m%d%H)T' -1
   dir="$_GHLL_H/logs/gh-calls"
   {
+    if [ "${1:-}" = api ] && [[ "${2:-}" == -* ]]; then
+      _ghll_ep "${@:2}"
+      [ -n "$_GHLL_EP" ] && x=" $_GHLL_EP"
+    fi
     mkdir -p "$dir"
-    printf '%s %s %s %s\n' "$ep" "${GH_CALL_CALLER:-${0##*/}}" "${1:-}" "${2:-}" \
+    printf '%s %s %s %s%s\n' "$ep" "${GH_CALL_CALLER:-${0##*/}}" "${1:-}" "${2:-}" "$x" \
       >> "$dir/$hr.log"
     # Pruned by the writer, on the hour boundary only. Readers glob the whole
     # directory and filter on the epoch in each line, so the file NAME is
@@ -95,7 +156,7 @@ _ghll_count() {
 
 gh() {
   local ef rc=0 msg
-  _ghll_count "${1:-}" "${2:-}"
+  _ghll_count "$@"
   ef=$(mktemp 2>/dev/null) || { command gh "$@"; return $?; }
   command gh "$@" 2>"$ef" || rc=$?
   cat "$ef" >&2

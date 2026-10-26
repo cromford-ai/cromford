@@ -127,6 +127,12 @@ worker/jobs/schema.sql
 # it (package.json "#routes" sends Node to test/lib/routes.node.js).
 worker/jobs/src/routes.gen.js
 
+# The jobs worker's schema registries (ADDED_COLUMNS, ADDED_INDEXES, fragment
+# overrides) are GENERATED and must never be committed (BH-8395). A function of
+# worker/jobs/src/lib/core.d/. wrangler.jsonc's build.command renders it; Node
+# reads src/lib/core-registries.node.js. `--check` refuses it back in git.
+worker/jobs/src/lib/core-registries.gen.js
+
 # The coord proxy's fragment write rows are GENERATED and must never be
 # committed (BH-6487, on BH-1175's rule). A function of console-ui/functions/_lib/coord-writes.d/.
 # `npm run build` and cpv_coord_writes render them; Node reads the directory.
