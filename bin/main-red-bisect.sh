@@ -9,8 +9,8 @@
 #   mrb_probe, mrb_bisect                        bin/lib/mrb-probe.sh
 #   mrb_act_culprit, mrb_act_notmerge            bin/lib/mrb-act.sh
 # The episode file format is the one bin/lib/mrb-detect.sh documents; this lane
-# appends the driver keys (culprit, pr, pr_title, pr_branch, steps, bisect,
-# outcome) to a working copy of it.
+# appends the driver keys (culprit, pr, pr_title, pr_branch, steps, shortcut,
+# bisect, outcome) to a working copy of it.
 #
 # PER EPISODE, in order:
 #   1. KEY = <slug>@<red>@<first 12 hex of sha256(suites sorted -u, one a line)>.
@@ -21,7 +21,11 @@
 #      reached a verdict whose act (or row write) did not finish. Re-dispatch it
 #      without probing again.
 #   3. detect said nosuite|noanchor: one warn, terminal row.
-#   4. P0 at green: norun -> aborted. P1 at red: green -> flake, norun ->
+#   4. ONE MERGE (BH-6747): when `git rev-list --first-parent green..red` is
+#      exactly one commit and its subject is a PR merge, that merge is the
+#      culprit at once: no P0, no P1, no bisect, steps=0, shortcut=one-merge.
+#      Any other span takes the path below.
+#      P0 at green: norun -> aborted. P1 at red: green -> flake, norun ->
 #      aborted. P0 red gives notmerge only when P1 is also red (BH-4318).
 #      Then `mrb_bisect _mrb_probe_at <MAX_STEPS-2> <merges>`
 #      over `git rev-list --first-parent --reverse green..red`. More than
@@ -141,10 +145,31 @@ _mrb_probe_at() {
   printf '%s\n' "$a"
 }
 
+# culprit_keys <ep> <sha> <steps> [shortcut] — appends the culprit keys to <ep>
+# when <sha>'s subject is `Merge pull request #N from O/<branch>`. rc 1: not a
+# PR merge, nothing written. The one-merge path and the bisect path share it.
+culprit_keys() {
+  local subj
+  subj=$(git -C "$REPO_DIR" log -1 --format=%s "$2" 2>/dev/null)
+  [[ "$subj" =~ ^Merge\ pull\ request\ \#([0-9]+)\ from\ [^/]+/(.+)$ ]] || return 1
+  { echo "culprit=$2"; echo "pr=${BASH_REMATCH[1]}"
+    echo "pr_title=$(git -C "$REPO_DIR" log -1 --format=%b "$2" 2>/dev/null | sed -n '/[^[:space:]]/{p;q}')"
+    echo "pr_branch=${BASH_REMATCH[2]}"; echo "steps=$3"
+    [ -z "${4:-}" ] || echo "shortcut=$4"; } >> "$1"
+}
+
 # verdict <ep> — probes and bisects; prints the outcome word, appends the driver
 # keys to <ep>. Every non-acting outcome but flake-free ones warns here.
 verdict() {
   local ep="$1" p0 p1 cands n line kind cul st subj
+  # One PR merge past the last green is the culprit without a probe (BH-6747).
+  { have "$GREEN" && have "$RED"; } || git -C "$REPO_DIR" fetch -q origin main >/dev/null 2>&1
+  if have "$GREEN" && have "$RED"; then
+    git -C "$REPO_DIR" rev-list --first-parent --reverse "$GREEN..$RED" > "$TMP/cands" 2>/dev/null
+    if [ "$(grep -c . "$TMP/cands")" = 1 ] && culprit_keys "$ep" "$(head -1 "$TMP/cands")" 0 one-merge; then
+      echo culprit; return
+    fi
+  fi
   p0=$(_mrb_probe_at "$GREEN")
   case "$p0" in
     norun) warn aborted "main-red-bisect: $SLUG P0 at green $GREEN could not run the suites. Nothing acted."
@@ -183,13 +208,8 @@ verdict() {
   read -r kind cul st _ <<< "$line"
   case "$kind" in
     found)
+      culprit_keys "$ep" "$cul" "$(( ${st:-0} + 2 ))" && { echo culprit; return; }
       subj=$(git -C "$REPO_DIR" log -1 --format=%s "$cul" 2>/dev/null)
-      if [[ "$subj" =~ ^Merge\ pull\ request\ \#([0-9]+)\ from\ [^/]+/(.+)$ ]]; then
-        { echo "culprit=$cul"; echo "pr=${BASH_REMATCH[1]}"
-          echo "pr_title=$(git -C "$REPO_DIR" log -1 --format=%b "$cul" 2>/dev/null | sed -n '/[^[:space:]]/{p;q}')"
-          echo "pr_branch=${BASH_REMATCH[2]}"; echo "steps=$(( ${st:-0} + 2 ))"; } >> "$ep"
-        echo culprit; return
-      fi
       warn aborted "main-red-bisect: $SLUG culprit $cul is not a PR merge (subject: $subj). Nothing acted."
       echo aborted ;;
     bounded)
@@ -216,7 +236,7 @@ finish() {
     elif [ "$rc" != 0 ]; then OUT="$o(still-red-rc=$rc)"; return 0
     else
       [ "$ep" = "$PEND" ] || {
-        [ -f "$BTAB" ] && cp "$BTAB" "${PEND%.ep}.bisect" && echo "bisect=${PEND%.ep}.bisect" >> "$ep"
+        [ -s "$BTAB" ] && cp "$BTAB" "${PEND%.ep}.bisect" && echo "bisect=${PEND%.ep}.bisect" >> "$ep"
         echo "outcome=$o" >> "$ep"; cp "$ep" "$PEND"; ep="$PEND"; }
       rc=0
       if [ "$o" = culprit ]; then mrb_act_culprit "$ep" || rc=$?; else mrb_act_notmerge "$ep" || rc=$?; fi

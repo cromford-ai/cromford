@@ -24,3 +24,4 @@ docs/PR-OWNERSHIP.md	rendered docs/PR-OWNERSHIP.d/	committed render of bin/rende
 worker/jobs/schema.sql	ignored worker/jobs/schema.d/	rendered by bin/schema-build.sh
 bin/lead-review.sh	bin/lib/lead-review/	an optional lib is a new file in bin/lib/lead-review/libs.d/ (BH-7455); new code is a module in bin/lib/lead-review/ (BH-6293)
 .github/workflows/harness-ci.yml	rendered config/harness-ci/	committed render of bin/render-ci-workflow.sh (BH-7452)
+tests/lane-switch.bh-2407-test.sh	tests/lane-switch.bh-2407-test.d/	new case or list entry since BH-8397; one fragment per file, sourced in LC_ALL=C order

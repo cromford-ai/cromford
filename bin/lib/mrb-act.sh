@@ -141,9 +141,9 @@ mrb_act_culprit() {
 }
 
 _mrb_culprit() { # <tmp> <episode>
-  local d="$1" ep="$2" k slug red green run suites culprit pr pr_title pr_branch bisect
+  local d="$1" ep="$2" k slug red green run suites culprit pr pr_title pr_branch bisect shortcut
   local m12 br lkey row="" rrc=0 st="" first runurl prn url sha files
-  for k in slug red green run suites culprit pr pr_title pr_branch bisect; do printf -v "$k" '%s' "$(_mrb_kv "$ep" "$k")"; done
+  for k in slug red green run suites culprit pr pr_title pr_branch bisect shortcut; do printf -v "$k" '%s' "$(_mrb_kv "$ep" "$k")"; done
   [[ "$slug" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] && [[ "$culprit" =~ ^[0-9a-f]{40}$ ]] && [[ "$pr" =~ ^[0-9]+$ ]] || return 1
   m12=${culprit:0:12}; br="main-red-revert/pr-$pr-$m12"; lkey="$slug@$culprit"; first=${suites%% *}
   runurl="https://github.com/$slug/actions/runs/$run"
@@ -230,7 +230,12 @@ _mrb_culprit() { # <tmp> <episode>
 _mrb_open_pr() {
   local sha="$1" rrc=0 prn tk=none
   { printf 'harness build: main-red-bisect revert of #%s\n\n' "$pr"
-    printf 'Main went red in %s. The bisect pinned it on merge %s (#%s), so this reverts it.\n' "$runurl" "$culprit" "$pr"
+    if [ "${shortcut:-}" = one-merge ]; then
+      printf 'Main went red in %s. Merge %s (#%s) is the only merge since the last green %s, so this reverts it without a bisect.\n' \
+        "$runurl" "$culprit" "$pr" "$green"
+    else
+      printf 'Main went red in %s. The bisect pinned it on merge %s (#%s), so this reverts it.\n' "$runurl" "$culprit" "$pr"
+    fi
     printf 'A re-land ticket carries the fix.\n\nRed suites: %s\nLast green: %s\nFirst red: %s\n' "$suites" "$green" "$red"
     _mrb_table
   } > "$d/prbody"
@@ -272,7 +277,8 @@ _mrb_table() {
 # The labels are main-red's (Mergify's hotfix queue) and hotfix_label's (the
 # merge conductor's hotfix-first order); `hotfix` is that function's own default.
 _mrb_finish() {
-  local n="" rc=0 hl=hotfix
+  local n="" rc=0 hl=hotfix one=""
+  [ "${shortcut:-}" = one-merge ] && one=" (the only merge since the last green; no bisect)"
   [ "$(type -t hotfix_label)" = function ] && hl=$(hotfix_label "$h")
   jq -n --arg l "$(main_red_label_resolve "$h")" --arg x "$hl" \
     '{labels: (if $x == "" or $x == $l then [$l] else [$l, $x] end)}' > "$d/label.json"
@@ -282,7 +288,7 @@ _mrb_finish() {
     "$(jq -nc --argjson p "$1" --arg u "$2" --arg r "$red" --arg s "$suites" '{pr: $p, url: $u, red: $r, suites: $s}')" || return 1
   _mrb_reland "" "$2" || rc=$?
   _mrb_alert warn "main-red-revert:$slug:$m12" \
-    "reverted #$pr ($pr_title): broke $suites; revert PR $2, re-land ticket ${MRB_TICKET_URL:-not filed}$n"
+    "reverted #$pr ($pr_title): broke $suites; revert PR $2, re-land ticket ${MRB_TICKET_URL:-not filed}$n$one"
   return "$rc"
 }
 
@@ -291,7 +297,10 @@ _mrb_reland() {
   local s sl=()
   read -ra sl <<<"$suites"
   { [ -z "$1" ] || printf '%s\n\n' "$1"
-    printf 'Merge #%s (%s) broke main. The bisect pinned the red on it.\n\n' "$pr" "$pr_title"
+    if [ "${shortcut:-}" = one-merge ]; then
+      printf 'Merge #%s (%s) broke main. It is the only merge since the last green %s, so no bisect ran.\n\n' \
+        "$pr" "$pr_title" "$green"
+    else printf 'Merge #%s (%s) broke main. The bisect pinned the red on it.\n\n' "$pr" "$pr_title"; fi
     [ -z "$2" ] || printf 'Revert PR: %s\n' "$2"
     printf 'Original PR: https://github.com/%s/pull/%s\nRed run: %s\n\nRed suites:\n' "$slug" "$pr" "$runurl"
     for s in ${sl[@]+"${sl[@]}"}; do printf -- '- %s: red\n' "$s"; done

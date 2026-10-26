@@ -20,6 +20,13 @@
 # their existing cases. The detector logs the real count as
 # `recheck: <n> flagged repo(s), <r> Actions read(s)` in logs/main-red.log.
 #
+# FREEZE_LIFTED (BH-6747). The detector runs as a child, not through exec. For
+# each freeze file that was up before it started and is gone after it returned,
+# this lane appends `<ts> main-red-recheck: FREEZE_LIFTED after=<min>
+# flag=<name>` to logs/main-red.log. <min> counts from the flag's raised=, else
+# its since=, else the file mtime, floored, never negative. The lane exits with
+# the detector's rc. A freeze the hourly pass lifts logs no such line.
+#
 # KNOB. MAIN_RED_RECHECK_MIN [5] minutes between rechecks; 0 = off; a value that
 # is not a whole number is 5. Settings row
 # lane.main-red-recheck.main_red_recheck_min > env > 5. The cron line is */5, so
@@ -53,12 +60,21 @@ case "$MIN" in ''|*[!0-9]*) MIN=5 ;; esac
 MIN=$((10#$MIN))
 [ "$MIN" = 0 ] && exit 0
 
-# Any freeze up? The same list as the detector's mr_flag_files.
-up=0
+# Any freeze up? The same list as the detector's mr_flag_files. Each one is
+# kept with its start epoch for the FREEZE_LIFTED line: raised=, else since=,
+# else the file mtime.
+up=0; frozen=()
 for f in "$H"/flags/main-red-*; do
   [ -f "$f" ] || continue
   case "$(basename "$f")" in main-red-detector-off|main-red-pr-pair-off) continue ;; esac
-  up=1; break
+  up=1; t=""
+  for k in raised since; do
+    v=$(sed -n "s/^$k=//p" "$f" 2>/dev/null | head -1)
+    [ -n "$v" ] && t=$(date -u -d "$v" +%s 2>/dev/null) && [ -n "$t" ] && break
+    t=""
+  done
+  [ -n "$t" ] || t=$(stat -c %Y "$f" 2>/dev/null) || t=""
+  frozen+=("${t:-}|$f")
 done
 [ "$up" = 1 ] || exit 0
 
@@ -86,4 +102,13 @@ case "$wrc" in
   *) mkdir -p "$H/logs" 2>/dev/null
      echo "$(date -u '+%Y-%m-%d %H:%M:%SZ') main-red-recheck: the recheck stamp row was not written — the next tick may recheck again" >> "$H/logs/main-red.log" ;;
 esac
-exec "$H/bin/main-red-detector.sh" --flagged-only
+rc=0; "$H/bin/main-red-detector.sh" --flagged-only || rc=$?
+end=$(date +%s)
+for e in "${frozen[@]}"; do
+  f=${e#*|}; t=${e%%|*}
+  [ -e "$f" ] && continue
+  m=0; [ -n "$t" ] && [ "$end" -gt "$t" ] && m=$(( (end - t) / 60 ))
+  mkdir -p "$H/logs" 2>/dev/null
+  echo "$(date -u '+%Y-%m-%d %H:%M:%SZ') main-red-recheck: FREEZE_LIFTED after=$m flag=$(basename "$f")" >> "$H/logs/main-red.log"
+done
+exit "$rc"

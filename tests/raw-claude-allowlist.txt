@@ -11,3 +11,4 @@
 #
 # Format:  <path>: <reason>
 #
+bin/lib/vendor/claude.sh: BH-7965 credential probe for the secret envelope. One "claude -p" with "ping" through vendor_cli_probe proves the NEW CLAUDE_CODE_OAUTH_TOKEN authenticates the bare CLI. A wrapper would run with the box credential path and a wrapper bug would read as an auth failure.

@@ -159,76 +159,22 @@ mutant() {  # mutant <label> <sed-expr> <must-fail-pattern>
 mutant M1 '/^  LANE_SWITCH_SRC=none; export LANE_SWITCH_SRC$/a\  [ "${LANE_GATE_DISABLE:-}" = 1 ] \&\& return 1' "L1"
 mutant M2 '/^    file) \[ -f "\$3" \]; return \$? ;;$/d' "L2 file mode"
 
-# RT1-RT3 — the ratchet's .drop floor, run as shipped (strict mode) over a
-# hermetic tree that sits AT its floor. fixture.drop stacks on the tree's own.
-R="$T/r"
-srt_tree "$R" 3 || bad "RT0 srt_tree could not build the fixture tree"
-ratchet() { srt_run "$R" > "$T/ratchet.out"; }
-
-ratchet; RC=$?
-eq "RT1 the tree at its floor passes ($(tail -1 "$T/ratchet.out"))" "$RC" "0"
-printf ' 1 \n' > "$R/tests/switch-ratchet.d/fixture.drop"
-ratchet; RC=$?
-[ "$RC" -ne 0 ] && ok || bad "RT2 a drop of 1 with no read removed must fail (the tree must sit AT the effective floor)"
-BARE_RE='\[ -[ef] [^]]*flags/[a-z0-9-]+-(off|disabled)[^]]*\]'
-RF=$(grep -rlE "$BARE_RE" "$R/bin" | head -n 1)
-[ -n "$RF" ] && ok || bad "RT2 no bare read in the fixture tree to remove"
-sed -i -E "0,\#$BARE_RE#s##false#" "$RF"
-ratchet; RC=$?
-eq "RT2 drop 1 + one bare read removed passes ($(tail -3 "$T/ratchet.out" | tr '\n' ' '))" "$RC" "0"
-for v in abc -1 1.5 ""; do
-  printf '%s' "$v" > "$R/tests/switch-ratchet.d/fixture.drop"
-  ratchet; RC=$?
-  if [ "$RC" -ne 0 ] && grep -q '^FAIL: R0 .*fixture.drop' "$T/ratchet.out"; then ok
-  else bad "RT3 a drop of '$v' must fail with an R0 line (rc=$RC): $(cat "$T/ratchet.out")"; fi
+# >>> lane-switch.bh-2407-test.d fragments (BH-8397)
+# The RT, G and S9 cases, and every case a later ticket adds, live in
+# tests/lane-switch.bh-2407-test.d/, one fragment per file
+# (<ticket-key>-<name>.sh). This block sources each regular *.sh there once, in
+# LC_ALL=C name order, in this shell, so a fragment uses ok/bad/eq, $T, $DIR,
+# the srt_* helpers and the counters. A mutant run stopped above, so it never
+# gets here. Fail-closed: no fragment is a FAIL, and a fragment that does not
+# parse is a FAIL and is not sourced. A fragment's own ok/bad lines are its
+# verdict, not its last status. Rules: tests/lane-switch.bh-2407-test.d/README.md.
+FRAG_DIR="$DIR/tests/lane-switch.bh-2407-test.d"
+mapfile -t _frags < <(for _f in "$FRAG_DIR"/*.sh; do [ -f "$_f" ] && printf '%s\n' "$_f"; done | LC_ALL=C sort)
+[ "${#_frags[@]}" -gt 0 ] || bad "F0 no fragment in $FRAG_DIR"
+for _f in "${_frags[@]}"; do
+  bash -n "$_f" 2>/dev/null || { bad "F0 fragment ${_f##*/} does not parse"; continue; }
+  . "$_f" || :
 done
-
-# G1/G2 — the a-f registry.
-SWITCHES="agent-call-ledger-off alert-quarantine-disabled alert-state-off audit-off batch-resolve-off
-bin-self-heal-off blocked-resolver-disabled builder-direct-off call-guard-off cliff-refuse-off
-cliff-route-off clock-sync-off context-gate-disabled context-kill-off cost-autohalt-off
-cost-reconcile-off cost-row-at-source-off cost-rows-from-db-off cost-rows-push-off dep-verify-off
-extra-usage-track-off fastpath-off fixpr-suppress-off fleet-slo-off fly-disabled"
-for n in $SWITCHES; do
-  f="$DIR/catalog/switches.d/$n.json"
-  [ -f "$f" ] || { bad "G1 catalog/switches.d/$n.json is missing"; continue; }
-  eq "G1 $n is one line" "$(wc -l < "$f" | tr -d ' ')" "1"
-  eq "G1 $n shape" "$(jq -c '[keys_unsorted, .name, .box_scoped, (.readers|type), (.what|type)]' "$f" 2>/dev/null)" \
-    "[[\"name\",\"readers\",\"box_scoped\",\"what\"],\"$n\",true,\"array\",\"string\"]"
-  RD=$(jq -r '.readers[]' "$f" 2>/dev/null)
-  [ -n "$RD" ] && ok || bad "G1 $n has no readers"
-  for r in $RD; do
-    if [ -f "$DIR/$r" ] && grep -nE "$n([^a-z0-9_-]|$)" "$DIR/$r" | grep -qvE '^[0-9]+:[[:space:]]*#'; then ok
-    else bad "G1 $n reader $r does not exist or names $n on no code line"; fi
-  done
-  case "$(jq -r '.what' "$f")" in "stops "*|"turns off "*) ok ;; *) bad "G1 $n what must start 'stops' or 'turns off'" ;; esac
-done
-jq -r '.what' "$DIR/catalog/switches.d/fly-disabled.json" 2>/dev/null | grep -qF 'bin/fly-trial-kill.sh' && ok \
-  || bad "G2 fly-disabled's what must name bin/fly-trial-kill.sh as its writer"
-
-# S9 — the real switch-migrate walks every registry file: the 40 (the 25, the
-# dora-digest pilot, the nine BH-2436 registered and the five sourced-lib
-# switches BH-2429 registered, whose own shape is pinned by
-# lane-switch-registry.bh-2410) and whatever later slices of BH-2408 register.
-C4="split-chain-off state-backup-off test-reroute-off triage-health-off triage-shards-off
-triage-shard-caps-off triage-spool-age-off vendor-spend-off wake-lanes-off
-pool-account-routing-off pr-create-rest-fallback-off pr-dep-gate-off pr-merge-rest-off resume-disabled"
-S="$T/s"; mkdir -p "$S/bin" "$S/flags" "$S/state" "$S/logs" "$S/catalog"
-cp -r "$DIR/catalog/switches.d" "$S/catalog/"
-cat > "$S/bin/jobs-client.sh" <<'SH'
-_jobs_req() { case "$1 $2" in "GET /api/settings") JOBS_HTTP=200; printf '{"settings":[]}' ;; *) return 1 ;; esac; }
-SH
-env HARNESS="$S" JOBS_BOX=hub-1 "$DIR/bin/switch-migrate.sh" --dry-run > "$T/s.out" 2>&1
-eq "S9 dry-run exits 0" "$?" "0"
-# Every registry file, not a count frozen at 26: a later slice registers more
-# (BH-2444 added six), and each of main's 40 must still be among them.
-ALL=$(for f in "$DIR"/catalog/switches.d/*.json; do basename "$f" .json; done | sort | tr '\n' ' ')
-GOT=$(grep '^absent ' "$T/s.out" | awk '{print $2}' | sort | tr '\n' ' ')
-eq "S9 dry-run names every switch absent" "$(grep -c '^absent ' "$T/s.out")" "$(printf '%s' "$ALL" | wc -w | tr -d ' ')"
-eq "S9 the name set" "$GOT" "$ALL"
-for n in $SWITCHES dora-digest-off $C4; do
-  case " $GOT" in *" $n "*) ok ;; *) bad "S9 $n missing from the dry-run" ;; esac
-done
-
+# <<< lane-switch.bh-2407-test.d fragments (BH-8397)
 echo "lane-switch.bh-2407: $PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ]
