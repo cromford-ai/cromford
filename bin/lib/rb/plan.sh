@@ -453,12 +453,16 @@ TICKET_META() {
                                  body:((.description // .body) // "")}' 2>/dev/null
     return 0
   fi
-  # GitHub-issue projects (board prefix "-"): the `bug` label is the whole
-  # deterministic signal there, and the jq projection keeps this to the three
-  # fields the classifier and the rollout hook read instead of a full issue
-  # object. A read that is not rc 0 prints nothing, so no empty file is promoted.
+  # GitHub-issue projects: the `bug` label is the whole deterministic signal
+  # there, and the jq projection keeps this to the three fields the classifier
+  # and the rollout hook read instead of a full issue object. A read that is not
+  # rc 0 prints nothing, so no empty file is promoted. Column 4 `-` is not
+  # proof of GitHub (a Linear or Jira project has it too), so the issue number
+  # comes only from trk_gh_issue_number (bin/lib/tracker.sh), which answers
+  # nothing unless the tracker is github-issues (BH-7919).
   repo=$("$HARNESS/bin/fleet-conf.sh" "$PROJECT" repo 2>/dev/null)
-  issue=$(sed -nE 's/^[A-Za-z]+-([0-9]+)$/\1/p' <<<"$KEY")
+  command -v trk_gh_issue_number >/dev/null 2>&1 || . "$HARNESS/bin/lib/tracker.sh" 2>/dev/null || return 0
+  issue=$(trk_gh_issue_number "$PROJECT" "$KEY" 2>/dev/null) || return 0
   [ -n "$repo" ] && [ -n "$issue" ] && command -v gh >/dev/null 2>&1 || return 0
   t=$(mktemp "${TMPDIR:-/tmp}/ticket-meta.XXXXXX") || return 0
   gh_rest GET "repos/$repo/issues/$issue" > "$t" || rc=$?
@@ -966,20 +970,22 @@ true
 # above hands it to plan, execute and fix.
 #
 # The thread is FP_BEFORE on an in-app board. On a GitHub-issue project
-# (prefix "-") FP_BEFORE is always empty, so the thread is the issue's WHOLE
+# (github-issues) FP_BEFORE is always empty, so the thread is the issue's WHOLE
 # comment thread projected to [id, updated_at]: a new comment adds an id, an
 # edit moves a stamp. The endpoint is oldest first, so it is paged to its end,
 # up to 1000 comments (BH-2485: one page never saw comment 101+). Past 1000
 # there is no signal. Only rc 0 and an array on every page count; a rate limit
 # (75) is no signal, not "no comments", and a partial thread is never signed.
 # Any missing input is NO build fp, and those calls fall back to the per-build
-# fingerprint: never an fp that could fold two pieces of work.
+# fingerprint: never an fp that could fold two pieces of work. The issue
+# number comes only from trk_gh_issue_number (BH-7919): a Linear or Jira
+# project has column 4 `-` too, and it has no GitHub thread to sign.
 TICKET_THREAD_SIG() { # prints the thread signature, rc 1 when there is none
   local repo issue t rc page acc='[]' sig=""
   if [ -n "${FP_BEFORE:-}" ]; then printf '%s\n' "$FP_BEFORE"; return 0; fi
-  [ "$("$HARNESS/bin/fleet-conf.sh" "$PROJECT" board_prefix 2>/dev/null)" = "-" ] || return 1
+  command -v trk_gh_issue_number >/dev/null 2>&1 || . "$HARNESS/bin/lib/tracker.sh" 2>/dev/null || return 1
+  issue=$(trk_gh_issue_number "$PROJECT" "$KEY" 2>/dev/null) || return 1
   repo=$("$HARNESS/bin/fleet-conf.sh" "$PROJECT" repo 2>/dev/null)
-  issue=$(sed -nE 's/^[A-Za-z]+-([0-9]+)$/\1/p' <<<"$KEY")
   [ -n "$repo" ] && [ -n "$issue" ] && command -v gh_rest >/dev/null 2>&1 || return 1
   t=$(mktemp "${TMPDIR:-/tmp}/ticket-thread.XXXXXX") || return 1
   for page in 1 2 3 4 5 6 7 8 9 10; do
@@ -1577,10 +1583,19 @@ fi
 # or lift vocabulary. replan-commented follows a successful post only, so a
 # failed post is retried by a resume; no App identity writes the distinct
 # replan-comment-skipped, so nothing reads as delivered. Neither blocks the build.
+# The issue number comes only from trk_gh_issue_number (BH-7919): a Linear or
+# Jira project has column 4 `-` too, and CRO-12 must never post on GitHub #12.
+# Its refusal (or a missing lib) is a skip, never replan-commented.
 if [ -s "$BUILD/replan-comment.md" ] && [ ! -e "$BUILD/replan-commented" ] && [ ! -e "$BUILD/replan-comment-skipped" ]; then
   RPC_SLUG=$("$HARNESS/bin/fleet-conf.sh" "$PROJECT" repo 2>/dev/null)
-  RPC_N=$(sed -nE 's/^[A-Za-z]+-([0-9]+)$/\1/p' <<<"$KEY")
-  case "${GH_TOKEN:-}" in
+  RPC_N=""
+  { command -v trk_gh_issue_number >/dev/null 2>&1 || . "$HARNESS/bin/lib/tracker.sh" 2>/dev/null; } \
+    && RPC_N=$(trk_gh_issue_number "$PROJECT" "$KEY" 2>/dev/null) || RPC_N=""
+  RPC_ID="${GH_TOKEN:-}"; [ -n "$RPC_N" ] || RPC_ID="not-github"
+  case "$RPC_ID" in
+    not-github)
+      touch "$BUILD/replan-comment-skipped"
+      echo "$(STAMP) [$PROJECT/$KEY] replan comment skipped: not a GitHub issue — the amendment already reached the plan" >> "$BUILD/pipeline.log" ;;
     ghs_*)
       if gh_rest_comment "$RPC_SLUG" "$RPC_N" "$BUILD/replan-comment.md"; then
         touch "$BUILD/replan-commented"

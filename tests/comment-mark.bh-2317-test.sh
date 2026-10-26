@@ -192,6 +192,8 @@ newcase() { # newcase <name> — a fresh scratch harness with the stub on PATH
   cp "$DIR/bin/lib/gh-rest.sh" "$DIR/bin/lib/gh-rest-var.sh" "$DIR/bin/lib/gh-rest-list.sh" "$H/bin/lib/"
   printf '#!/bin/bash\nexit 0\n' > "$H/bin/beat.sh"; chmod +x "$H/bin/beat.sh"
   cp "$CM" "$H/bin/lib/"
+  # BH-7919: escalate_block's ticket comment now asks bin/lib/tracker.sh trk_gh_issue_number.
+  scratch_install_closure bin/lib/tracker.sh "$H" >/dev/null || exit 1
   : > "$CASE/gh-calls.log"
   resp comment 201 '{"id":1}'
   resp close   200 '{"state":"closed"}'

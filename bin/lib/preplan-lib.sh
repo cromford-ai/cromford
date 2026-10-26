@@ -513,8 +513,27 @@ preplan_base_ref() {
 # do nothing: a pre-plan filed under a key the builder will never ask for is
 # $1-2 spent into a directory nobody reads, which is precisely the silence this
 # whole change exists to end.
+#
+# A JIRA OR LINEAR PROJECT (tracker_kind, bin/lib/tracker.sh, BH-7919) has its
+# prefix in the tracker: the Linear team key or the Jira project key
+# (tracker_key_prefix). Its prompt is never grepped, and no answer there is
+# rc 1: a prompt line naming another prefix would file CRO-12's work as XX-12.
 preplan_key_prefix() {
-  local h="${1:-}" p="${2:-}" pfx
+  local h="${1:-}" p="${2:-}" pfx kind=""
+  if ! command -v tracker_kind >/dev/null 2>&1 && [ -n "$h" ] && [ -r "$h/bin/lib/tracker.sh" ]; then
+    # shellcheck source=bin/lib/tracker.sh
+    . "$h/bin/lib/tracker.sh" 2>/dev/null
+  fi
+  if command -v tracker_kind >/dev/null 2>&1 && HARNESS="$h" tracker_kind "$p" >/dev/null 2>&1; then
+    kind=$(HARNESS="$h" tracker_kind "$p" 2>/dev/null) || kind=""
+  fi
+  case "$kind" in
+    jira|linear)
+      pfx=$(HARNESS="$h" tracker_key_prefix "$p" 2>/dev/null) || return 1
+      [ -n "$pfx" ] || return 1
+      printf '%s\n' "$pfx"
+      return 0 ;;
+  esac
   pfx=$(grep -ohE '\b[A-Z]{1,6}-<issue-number>' "$h/prompts/$p.md" 2>/dev/null | head -1 | cut -d- -f1)
   [ -n "$pfx" ] || return 1
   printf '%s\n' "$pfx"

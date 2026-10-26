@@ -378,7 +378,10 @@ fcstub() { # fcstub <board_prefix> <repo>
 run_gates_gh() { # run_gates_gh <key>
   rm -f "$T/build/RESULT" "$T/beats.jsonl" "$T/gh.log"; rm -rf "$T/state"; mkdir -p "$T/state"
   beatstub; ghstub
-  mkdir -p "$T/bin/lib"; cp "$DIR/bin/lib/gh-rest.sh" "$DIR/bin/lib/gh-rest-var.sh" "$T/bin/lib/"
+  # BH-7919: escalate_block takes the issue number from trk_gh_issue_number
+  # (bin/lib/tracker.sh), which reads the kind from fleet.conf column 4 here.
+  # scratch-closure-allow: the suite drives an extracted gate block, not a script, so there is no closure root; escalate_block sources these three libs at run time from $HARNESS/bin/lib
+  mkdir -p "$T/bin/lib"; cp "$DIR/bin/lib/gh-rest.sh" "$DIR/bin/lib/gh-rest-var.sh" "$DIR/bin/lib/tracker.sh" "$T/bin/lib/"
   ( PATH="$T/bin:$PATH" HARNESS="$T" BUILD="$T/build" ALERTS="$T/logs/ALERTS.log" \
     PROJECT=project-5 KEY="$1" BASE=main GHLOG="$T/gh.log" \
     bash -c 'set -uo pipefail; STAMP() { echo TS; }; RESULT() { echo "$*" > "$BUILD/RESULT"; }

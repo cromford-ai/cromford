@@ -1,0 +1,14 @@
+# catalog/security-classes.tsv — which attack-class notes the security lens gets (BH-7911).
+# Read by bin/lib/security-lens-classes.sh (slc_check, slc_for_diff).
+# Columns, TAB separated: class<TAB>path-ERE<TAB>diff-ERE<TAB>note
+#   class     the file stem in prompts/security-classes/<class>.md
+#   path-ERE  matched against every changed path and every planned file ("-" = no path match)
+#   diff-ERE  matched against every added or removed diff line ("-" = no line match)
+# Matching is case-insensitive. The first two matching rows in file order win.
+data-isolation	prisma/|migrations/|(^|[/_.-])rls([/_.-]|$)|tenant|company_id|withTenant	company_id|withTenant	schema, migrations, RLS and tenant scoping
+web-auth	auth|middleware|api/|session|clerk|cookie|redirect	-	auth, sessions, cookies, API routes and redirects
+ai-llm	agents/|prompts/|tool|mcp|llm|anthropic	-	agents, prompts, tools and LLM calls
+cloud-deploy	vercel\.json|wrangler|workflows/|Dockerfile|fly\.toml	-	deploy config and CI workflows
+supply-chain	(^|/)package\.json$|(^|/)[^/]*-lock\.(json|yaml)$|\.lock$|(^|/)yarn\.lock$|postinstall	postinstall	package manifests, lockfiles and install scripts
+client-side	-	dangerouslySetInnerHTML|innerHTML|postMessage	raw HTML sinks and cross-window messages in changed code
+resource-exhaustion	cron|queue|webhook|loop	-	crons, queues, webhooks and loops

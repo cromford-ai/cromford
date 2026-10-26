@@ -1016,15 +1016,18 @@ fi
 # replacement. It stays as the fallback for a body rendered with the block
 # switched off, where it is still the only pointer to the evidence files.
 [ -n "$EVIDENCE" ] && VERIFY_LINE="Verification evidence: the Evidence block below, rendered from this build's own files (the adversarial review is \`review.md\` in that record on the build box)."
-# Issue-driven projects (fleet.conf board prefix "-"): a "Closes #n" line in
-# the body, so a merge closes the issue and the box's issue-fingerprint gate
-# sees it move (2026-09-12: hand-merged project-5 PRs left their issues open
-# all day and the tick answered "gate no-change" from 06:21Z to 14:49Z). The
-# number is the KEY's (<PREFIX>-<n>). Board projects get no line. Fail-open:
-# no fleet-conf.sh, no numeric key, no line — the body is byte-identical.
-CLOSES_LINE=""
-if [ "$("$HARNESS/bin/fleet-conf.sh" "$PROJECT" board_prefix 2>/dev/null)" = "-" ]; then
-  _CL_ISSUE=$(sed -nE 's/^[A-Za-z]+-([0-9]+)$/\1/p' <<<"$KEY")
+# Issue-driven projects (tracker github-issues): a "Closes #n" line in the
+# body, so a merge closes the issue and the box's issue-fingerprint gate sees
+# it move (2026-09-12: hand-merged project-5 PRs left their issues open all day
+# and the tick answered "gate no-change" from 06:21Z to 14:49Z). The number is
+# the KEY's (<PREFIX>-<n>), and only trk_gh_issue_number (bin/lib/tracker.sh,
+# BH-7919) turns a KEY into one: a board, Jira or Linear project gets no line,
+# even with fleet.conf column 4 `-` (CRO-12 is not issue #12). Fail-open: no
+# tracker lib, no numeric key, no line — the body is byte-identical.
+CLOSES_LINE=""; _CL_ISSUE=""
+command -v trk_gh_issue_number >/dev/null 2>&1 || . "$HARNESS/bin/lib/tracker.sh" 2>/dev/null || true
+if command -v trk_gh_issue_number >/dev/null 2>&1; then
+  _CL_ISSUE=$(trk_gh_issue_number "$PROJECT" "$KEY" 2>/dev/null) || _CL_ISSUE=""
   [ -n "$_CL_ISSUE" ] && CLOSES_LINE="Closes #$_CL_ISSUE"
 fi
 # >>> partial build refs (BH-5798)

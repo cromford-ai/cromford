@@ -50,12 +50,6 @@ PR_RE='https://github\.com/[A-Za-z0-9._-]+/[A-Za-z0-9._-]+/pull/[0-9]+'
 set -uo pipefail
 # shellcheck source=bin/lib/tracker.sh
 . "$HARNESS/bin/lib/tracker.sh" 2>/dev/null || { say "bin/lib/tracker.sh is missing — nothing done"; exit 0; }
-# shellcheck source=bin/lib/board-creds.sh
-. "$HARNESS/bin/lib/board-creds.sh" 2>/dev/null || true
-# shellcheck source=bin/lib/internal-token.sh
-. "$HARNESS/bin/lib/internal-token.sh" 2>/dev/null || true
-# shellcheck source=bin/lib/env-path.sh
-. "$HARNESS/bin/lib/env-path.sh" 2>/dev/null || harness_env_dir() { printf '%s\n' "${1:-$HARNESS}/env"; }
 # shellcheck source=bin/lib/gh-token-live.sh
 . "$HARNESS/bin/lib/gh-token-live.sh" 2>/dev/null || true
 
@@ -113,41 +107,31 @@ write_body() {
 }
 
 ADAPTER=""; ADAPTER_OK=""; TARGET_STATUS=""
-# tracker_context — resolve the tracker once, on the first mapped member.
-# Prints nothing; sets ADAPTER_OK to yes, or to the flag status to record.
-tracker_context() {
+# _drb_context — resolve the tracker once, on the first mapped member.
+# Prints nothing; sets ADAPTER_OK to yes, or to the flag status to record. The
+# context itself (<app base><board prefix> and the internal token on a board,
+# the repo slug on GitHub) is bin/lib/tracker.sh's tracker_context, the one
+# every caller uses.
+_drb_context() {
   [ -n "$ADAPTER_OK" ] && return 0
-  ADAPTER=$(tracker_adapter "$PROJECT" 2>/dev/null) || ADAPTER=""
+  ADAPTER=""
+  tracker_kind "$PROJECT" >/dev/null 2>&1 && ADAPTER=$(tracker_kind "$PROJECT" 2>/dev/null)
   case "$ADAPTER" in
     board|github-issues) ;;
     *) ADAPTER_OK=flagged-unsupported; say "tracker '${ADAPTER:-unknown}' is not one this writes — flag only"; return 0 ;;
   esac
-  tracker_load "$ADAPTER" || { ADAPTER_OK=flagged-unsupported; say "tracker adapter $ADAPTER did not load — flag only"; return 0; }
   TRK_LOG="$HARNESS/logs/deploy-rollback-board.log"; TRK_ERR="$TRK_LOG"
-  if [ "$ADAPTER" = board ]; then
-    TARGET_STATUS=in_progress
-    # <app base><board prefix>, resolved the way every board caller does
-    # (bin/lib/board-creds.sh), not through the child filer's library.
-    local envf prefix bvar base=""
-    envf="$(harness_env_dir "$HARNESS")/$PROJECT.env"
-    prefix=$("$HARNESS/bin/fleet-conf.sh" "$PROJECT" board_prefix 2>/dev/null) || prefix=""
-    if [ -n "$prefix" ] && [ "$prefix" != "-" ] && command -v board_base_var >/dev/null 2>&1 \
-       && bvar=$(board_base_var "$PROJECT" "$envf" deploy-rollback-board 2>/dev/null); then
-      base=$(board_env_value "$bvar" "$envf")
-      while [ "${base%/}" != "$base" ]; do base="${base%/}"; done
-    fi
-    TRK_BOARD_BASE=""; [ -n "$base" ] && TRK_BOARD_BASE="$base$prefix"
-    TRK_BOARD_TOKEN_VAR=$(internal_token_var "$envf" 2>/dev/null) || TRK_BOARD_TOKEN_VAR=""
-    TRK_BOARD_TOKEN=$("$HARNESS/bin/internal-token-for.sh" "$PROJECT" 2>/dev/null) || TRK_BOARD_TOKEN=""
-    if [ -z "$TRK_BOARD_BASE" ] || [ -z "$TRK_BOARD_TOKEN" ]; then
-      ADAPTER_OK=flagged-unconfigured
-      say "no board base or internal token for $PROJECT — flag only"; return 0
-    fi
-  else
-    TARGET_STATUS=open
-    TRK_SLUG=$("$HARNESS/bin/fleet-conf.sh" "$PROJECT" repo 2>/dev/null) || TRK_SLUG=""
-    [ -n "$TRK_SLUG" ] || { ADAPTER_OK=flagged-unconfigured; say "no repo slug for $PROJECT — flag only"; return 0; }
-    if [ -z "${GH_TOKEN:-}" ] && command -v gh_token_live >/dev/null 2>&1; then gh_token_live "$TRK_SLUG" || true; fi
+  if [ "$ADAPTER" = board ]; then TARGET_STATUS=in_progress; else TARGET_STATUS=open; fi
+  if ! tracker_context "$PROJECT" deploy-rollback-board 2>/dev/null; then
+    case "${TRK_CTX_MISSING:-}" in
+      base|token) ADAPTER_OK=flagged-unconfigured; say "no board base or internal token for $PROJECT — flag only" ;;
+      slug) ADAPTER_OK=flagged-unconfigured; say "no repo slug for $PROJECT — flag only" ;;
+      *) ADAPTER_OK=flagged-unsupported; say "tracker adapter $ADAPTER did not load — flag only" ;;
+    esac
+    return 0
+  fi
+  if [ "$ADAPTER" = github-issues ] && [ -z "${GH_TOKEN:-}" ] && command -v gh_token_live >/dev/null 2>&1; then
+    gh_token_live "$TRK_SLUG" || true
   fi
   ADAPTER_OK=yes
 }
@@ -175,7 +159,7 @@ while IFS=$'\t' read -r SHA BD || [ -n "${SHA:-}" ]; do
   if [ -e "$MARK" ]; then say "$KEY ($S8) already handled (marker)"; continue; fi
   if ledger_handled "$LKEY"; then say "$KEY ($S8) already handled (ledger)"; continue; fi
   MERGE_PR=$(grep -ohE "$PR_RE" "$BD/RESULT" 2>/dev/null | head -1)
-  tracker_context
+  _drb_context
   if [ "$ADAPTER_OK" != yes ]; then
     ledger_put "$LKEY" "$ADAPTER_OK" "$(detail "$KEY" "$TID" "$SHA" "$MERGE_PR")"
     continue

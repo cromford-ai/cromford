@@ -422,15 +422,17 @@ for v in none H; do
   [ "$(cat "$s/children.txt" "$s/children-board.tsv")" = "$before" ] && ok || bad "A6 seeded ($v): the ledger changed"
 done
 
-# fc_file_board's own env read, past a base seam that answers: with no root it
-# finds no token (not even through HARNESS_ENV_DIR) and sends nothing.
+# fc_file_board's own env read: with no root it resolves no board context (no
+# base, so no token is read, not even through HARNESS_ENV_DIR) and sends
+# nothing. BH-7919: the base and token come from tracker_context
+# (bin/lib/tracker.sh), whose board arm refuses an empty root before it reads
+# an env file; fc_board_base is no longer fc_file_board's seam.
 mkdir -p "$T/allowed/fb"; printf '[{"title":"A","body":"a","after":[]}]\n' > "$T/allowed/fb/children.json"
 run_case a2-fc-file-board '. "$REPO/bin/lib/file-children.sh"; . "$REPO/bin/lib/fc-board.sh"
-fc_board_base() { printf "https://ledger.example/api/accounting/requests-board"; }
 FC_PROJECT=ledger-os FC_KEY=LG-9 FC_PARENT=cmParent01 FC_BUILD="$T/allowed/fb" FC_SPEC="$T/allowed/fb/children.json"
 rc=0; fc_file_board || rc=$?; echo "board=$rc err=$FC_ERROR"
 echo END' HARNESS_ENV_DIR="$T/fx/env" PATH="$T/stub:$PATH" CURL_LOG="$T/allowed/curl-fb.log"
-has "board=1 err=no *_INTERNAL_API_TOKEN for ledger-os" "A2 fc_file_board with no root reads no token"
+has "board=1 err=no board base for ledger-os" "A2 fc_file_board with no root reads no board context"
 [ ! -s "$T/allowed/curl-fb.log" ] && ok || bad "A2 fc_file_board with no root made curl calls"
 
 # ---- A7 entry points (rule 4) -------------------------------------------------

@@ -381,10 +381,12 @@ neg N5 "G5 docs/guide/02-onboarding.md: bin/load-project.sh has no --no-such-fla
 import sys
 p = sys.argv[1] + "/02-onboarding.md"
 open(p, "a").write("\n```bash\n$ bin/load-project.sh <owner/repo> --no-such-flag\n```\n")'
-neg N6 "G6 docs/guide/03-connectors.md: setting LINEAR_API_KEY" '
+# BH-7919: LINEAR_API_KEY is defined in bin/lib/tracker/linear.sh now, so the
+# undefined setting is a name no tree defines.
+neg N6 "G6 docs/guide/03-connectors.md: setting GUIDE_NOSUCH_SETTING" '
 import sys
 p = sys.argv[1] + "/03-connectors.md"
-open(p, "a").write("\nSet `LINEAR_API_KEY`.\n")'
+open(p, "a").write("\nSet `GUIDE_NOSUCH_SETTING`.\n")'
 neg N7 "G5 docs/guide/04-archie.md: rm is not a bin/ script" '
 import sys
 p = sys.argv[1] + "/04-archie.md"

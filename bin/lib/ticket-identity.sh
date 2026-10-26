@@ -25,9 +25,9 @@
 #         same fail-open every other guard in this repo takes.
 #
 # Sources are asked cheapest first and the FIRST HIT WINS — a keymap read is a
-# local file, the issues-board key is a registry read plus a prompt grep, a
-# build-record scan is local stat calls, and only the last two cost a round
-# trip.
+# local file, the issues-board key is a registry read plus a prompt grep (and
+# one cached settings read for the tracker kind), a build-record scan is local
+# stat calls, and only the last two cost a round trip each.
 #
 # THE ISSUES BOARD HAS NO KEYMAP (BH-1139). Source (a) is written by
 # bin/triage-gate.sh from a BOARD API, and a GitHub-Issues project has none — so
@@ -160,6 +160,41 @@ ticket_identity_say() {
   esac
 }
 
+# ticket_identity <harness> <project> <ticket-id> — the id on stdout, rc 0,
+# when it is a valid ticket id on that project's tracker (tracker_kind,
+# bin/lib/tracker.sh); rc 1 and one stderr line otherwise.
+#   github-issues  an issue number (`12`); `CRO-12` is refused
+#   board          a board id (`[A-Za-z0-9_.:-]+`)
+#   jira, linear   `<PREFIX>-<n>`, n >= 1, PREFIX the tracker's own key prefix
+#                  (tracker_key_prefix: the Linear team, the Jira project),
+#                  compared case-insensitively. A number, another team's key or
+#                  no prefix is refused.
+# A tracker that does not resolve is refused.
+ticket_identity() {
+  local h="${1:-}" p="${2:-}" id="${3:-}" kind pfx
+  [ -n "$h" ] && [ -n "$p" ] && [ -n "$id" ] || { printf 'ticket-identity: usage: ticket_identity <harness> <project> <ticket-id>\n' >&2; return 1; }
+  if ! command -v tracker_kind >/dev/null 2>&1; then
+    # shellcheck source=bin/lib/tracker.sh
+    . "$h/bin/lib/tracker.sh" 2>/dev/null || { printf 'ticket-identity: no bin/lib/tracker.sh under %s\n' "$h" >&2; return 1; }
+  fi
+  HARNESS="$h" tracker_kind "$p" >/dev/null 2>&1 && kind=$(HARNESS="$h" tracker_kind "$p" 2>/dev/null) \
+    || { printf 'ticket-identity: no tracker resolves for %s\n' "$p" >&2; return 1; }
+  case "$kind" in
+    github-issues)
+      [[ "$id" =~ ^[0-9]+$ ]] || { printf 'ticket-identity: %s is not a GitHub issue number (%s)\n' "$id" "$p" >&2; return 1; } ;;
+    board)
+      [[ "$id" =~ ^[A-Za-z0-9_.:-]+$ ]] || { printf 'ticket-identity: %s is not a board ticket id (%s)\n' "$id" "$p" >&2; return 1; } ;;
+    jira|linear)
+      pfx=$(HARNESS="$h" tracker_key_prefix "$p" 2>/dev/null) && [ -n "$pfx" ] \
+        || { printf 'ticket-identity: no %s key prefix for %s\n' "$kind" "$p" >&2; return 1; }
+      if ! [[ "$id" =~ ^([A-Za-z][A-Za-z0-9_]*)-[1-9][0-9]*$ ]] || [ "$(_ti_norm "${BASH_REMATCH[1]}")" != "$(_ti_norm "$pfx")" ]; then
+        printf 'ticket-identity: %s is not a %s key of %s (%s-<n>)\n' "$id" "$kind" "$p" "$pfx" >&2; return 1
+      fi ;;
+    *) printf 'ticket-identity: %s has tracker %s\n' "$p" "$kind" >&2; return 1 ;;
+  esac
+  printf '%s\n' "$id"
+}
+
 ticket_identity_conflict() {
   local h="${1:-}" project="${2:-}" tid="${3:-}" key="${4:-}"
   [ -n "$h" ] && [ -n "$project" ] && [ -n "$tid" ] && [ -n "$key" ] || return 1
@@ -220,9 +255,10 @@ ticket_identity_conflict() {
   # the same function rather than growing a second answer that could disagree
   # with the line triage actually runs.
   #
-  # ASKED SECOND, and it is local: a registry read, a prompt grep, no round
-  # trip. A mis-keyed launch is refused before the build-tree scan and before
-  # the ledger and queue are asked at all.
+  # ASKED SECOND, and it is cheap: a registry read, a prompt grep, and at most
+  # one settings read (tracker_kind, cached per process). A mis-keyed launch is
+  # refused before the build-tree scan and before the ledger and queue are
+  # asked at all.
   #
   # EVERY LEG FAILS OPEN AND SILENT — never `unknown`. No fleet-conf.sh on the
   # box, no row in the registry, an in-app board, a non-numeric id, no
@@ -235,31 +271,37 @@ ticket_identity_conflict() {
   # (AB-12), so deriving `AB-4711` there would refuse a launch naming a key that
   # exists nowhere — the one failure this guard promises never to produce.
   #
-  # A board-api prefix of "-" IS the GitHub-Issues lane — the same test
-  # bin/run-decompose.sh, bin/orphan-reconcile.sh and bin/triage-gate.sh apply.
-  local ipfx=""
-  if [ -x "$h/bin/fleet-conf.sh" ] \
-     && [ "$("$h/bin/fleet-conf.sh" "$project" board_prefix 2>/dev/null)" = "-" ]; then
-    case "$tid" in
-      # An issues board's ticket id IS the issue number. Anything else is not a
-      # number a key can be built out of, so there is nothing to compare.
-      ''|*[!0-9]*) : ;;
-      *)
-        if ! command -v preplan_key_prefix >/dev/null 2>&1 && [ -r "$h/bin/lib/preplan-lib.sh" ]; then
-          # shellcheck source=bin/lib/preplan-lib.sh
-          . "$h/bin/lib/preplan-lib.sh" 2>/dev/null
-        fi
-        if command -v preplan_key_prefix >/dev/null 2>&1; then
-          ipfx=$(preplan_key_prefix "$h" "$project" 2>/dev/null) || ipfx=""
-        fi
-        # The inequality is defensive, not decorative: the `*-<tid>` skip at the
-        # top already returned for the board's own key, and this has to keep
-        # holding if that skip is ever narrowed.
-        if [ -n "$ipfx" ] && [ "$(_ti_norm "$ipfx-$tid")" != "$keyn" ]; then
-          printf '%s\t%s\t%s\n' "$ipfx-$tid" issues-key board-key
-          return 0
-        fi ;;
-    esac
+  # The GitHub-Issues lane is the tracker seam's answer (tracker_kind,
+  # bin/lib/tracker.sh, BH-7919), not fleet.conf column 4 alone: a Linear or
+  # Jira project has column 4 `-` too, and its key is the tracker's (CRO-12),
+  # never `<PREFIX>-<id>`. tracker_kind is one settings read per process; with
+  # no worker it takes column 4, the test bin/run-decompose.sh,
+  # bin/orphan-reconcile.sh and bin/triage-gate.sh apply. The id must then be a
+  # valid id on that tracker (ticket_identity: an issue NUMBER), or there is
+  # nothing a key can be built out of.
+  local ipfx="" ikind=""
+  if ! command -v tracker_kind >/dev/null 2>&1 && [ -r "$h/bin/lib/tracker.sh" ]; then
+    # shellcheck source=bin/lib/tracker.sh
+    . "$h/bin/lib/tracker.sh" 2>/dev/null
+  fi
+  if command -v tracker_kind >/dev/null 2>&1 && HARNESS="$h" tracker_kind "$project" >/dev/null 2>&1; then
+    ikind=$(HARNESS="$h" tracker_kind "$project" 2>/dev/null) || ikind=""
+  fi
+  if [ "$ikind" = github-issues ] && ticket_identity "$h" "$project" "$tid" >/dev/null 2>&1; then
+    if ! command -v preplan_key_prefix >/dev/null 2>&1 && [ -r "$h/bin/lib/preplan-lib.sh" ]; then
+      # shellcheck source=bin/lib/preplan-lib.sh
+      . "$h/bin/lib/preplan-lib.sh" 2>/dev/null
+    fi
+    if command -v preplan_key_prefix >/dev/null 2>&1; then
+      ipfx=$(preplan_key_prefix "$h" "$project" 2>/dev/null) || ipfx=""
+    fi
+    # The inequality is defensive, not decorative: the `*-<tid>` skip at the
+    # top already returned for the board's own key, and this has to keep
+    # holding if that skip is ever narrowed.
+    if [ -n "$ipfx" ] && [ "$(_ti_norm "$ipfx-$tid")" != "$keyn" ]; then
+      printf '%s\t%s\t%s\n' "$ipfx-$tid" issues-key board-key
+      return 0
+    fi
   fi
 
   # ── b. this box's own build records ───────────────────────────────────────

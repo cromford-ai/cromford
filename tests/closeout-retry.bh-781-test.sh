@@ -121,6 +121,8 @@ newcase() { # newcase <name> — a fresh scratch harness with the stub on PATH
   mkdir -p "$H/bin/lib" "$H/logs" "$H/state" "$H/flags" "$H/env" "$H/builds"
   cp "$DIR/bin/lib/gh-rest.sh" "$DIR/bin/lib/gh-rest-var.sh" "$DIR/bin/lib/gh-rest-list.sh" "$H/bin/lib/"
   printf '#!/bin/bash\nexit 0\n' > "$H/bin/beat.sh"; chmod +x "$H/bin/beat.sh"
+  # BH-7919: escalate_block's ticket comment now asks bin/lib/tracker.sh trk_gh_issue_number.
+  scratch_install_closure bin/lib/tracker.sh "$H" >/dev/null || exit 1
   : > "$CASE/gh-calls.log"
   # The defaults are the happy path; a case overrides exactly what it is about.
   resp comment 201 '{"id":1}'
@@ -287,7 +289,7 @@ printf 'rc=%s\n' "$?" > "$CASE/settle.rc"
 DRIVE
 br() { # br <head-now>
   printf '%s\n' "$1" > "$CASE/pr-head.txt"
-  H="$H" SLUG="$SLUG" PROJECT=cromford STATE="$H/state/batch-resolve/cromford" \
+  H="$H" HARNESS="$H" SLUG="$SLUG" PROJECT=cromford STATE="$H/state/batch-resolve/cromford" \
     PBASE=main CASE="$CASE" BR_SRC="$BR_SRC" FN="$T/settle-fn.sh" \
     bash "$T/drive-br.sh" 12 deadbeefcafe "https://github.com/$SLUG/pull/99" abc123 \
     >/dev/null 2>&1

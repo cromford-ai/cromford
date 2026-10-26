@@ -122,26 +122,26 @@ fc_file_board() {
 
   command -v trk_board_transition >/dev/null 2>&1 \
     || { _fcb_fail "tracker adapter bin/lib/tracker/board.sh not found beside $(dirname "${BASH_SOURCE[0]}") or in \$HARNESS/bin/lib — nothing filed"; return 1; }
-  # Base from fleet.conf column 4, never a constant (docs/BOARD-API-CONTRACT.md).
-  BASE=$(fc_board_base "$FC_PROJECT") && [ -n "$BASE" ] \
+  # Base and token from tracker_context (bin/lib/tracker.sh), the one board
+  # context every caller uses: the base from fleet.conf column 4 + the env
+  # file's *_API_BASE, never a constant (docs/BOARD-API-CONTRACT.md); the token
+  # through bin/internal-token-for.sh, which refuses an env file with two. A
+  # dry run tolerates no token and, with no token variable at all, asks no one.
+  # No root = no env file, so no base.
+  command -v tracker_context >/dev/null 2>&1 \
+    || . "$(dirname "${BASH_SOURCE[0]}")/tracker.sh" 2>/dev/null \
+    || { [ -n "${HARNESS:-${H:-}}" ] && . "${HARNESS:-${H:-}}/bin/lib/tracker.sh" 2>/dev/null; }
+  TRK_DRY="$_FCB_DRY"
+  command -v tracker_context >/dev/null 2>&1 && tracker_context "$FC_PROJECT" fc-board 2>/dev/null
+  BASE="$TRK_BOARD_BASE"
+  [ "${TRK_ADAPTER:-}" = board ] && [ -n "$BASE" ] \
     || { _fcb_fail "no board base for $FC_PROJECT (fleet.conf column 4 + *_API_BASE)"; return 1; }
-  # The token the way bin/run-decompose.sh reads it: the first
-  # *_INTERNAL_API_TOKEN name in env/<project>.env, its exported value first,
-  # then the literal. fc_board_base above already sourced env-path.sh.
-  # No root = no env file (fc_board_base above has already refused).
   envdir=""; envfile=""
   if [ -z "${HARNESS:-${H:-}}" ]; then :
   elif command -v harness_env_dir >/dev/null 2>&1; then envdir=$(harness_env_dir "${HARNESS:-${H:-}}")
   else envdir="${HARNESS:-${H:-}}/env"; fi
   [ -n "$envdir" ] && envfile="$envdir/$FC_PROJECT.env"
-  _FCB_TOKEN_VAR=$(grep -oE '^[A-Z_]+_INTERNAL_API_TOKEN' "$envfile" 2>/dev/null | head -1)
-  if [ -n "$_FCB_TOKEN_VAR" ]; then
-    _FCB_TOKEN="${!_FCB_TOKEN_VAR:-}"
-    if [ -z "$_FCB_TOKEN" ]; then
-      _FCB_TOKEN=$(sed -n "s/^${_FCB_TOKEN_VAR}=//p" "$envfile" 2>/dev/null | head -1)
-      _FCB_TOKEN="${_FCB_TOKEN%\"}"; _FCB_TOKEN="${_FCB_TOKEN#\"}"; _FCB_TOKEN="${_FCB_TOKEN%\'}"; _FCB_TOKEN="${_FCB_TOKEN#\'}"
-    fi
-  fi
+  _FCB_TOKEN="$TRK_BOARD_TOKEN"; _FCB_TOKEN_VAR="$TRK_BOARD_TOKEN_VAR"
   [ -n "$_FCB_TOKEN" ] || [ "$_FCB_DRY" = 1 ] \
     || { _fcb_fail "no *_INTERNAL_API_TOKEN for $FC_PROJECT in $envfile — nothing filed"; return 1; }
   mkdir -p "$FC_BUILD/children"

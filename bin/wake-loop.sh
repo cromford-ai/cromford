@@ -700,22 +700,24 @@ push_children() {
 # released. A key we cannot read is not a closure: an expansion that guesses
 # costs a build, one that waits costs a tick.
 issue_closures() {
-  local p="$1" repo bp k n; shift
+  local p="$1" repo k n; shift
   [ "$RD_ON" = 1 ] || return 1
   command -v revdep_issue_state >/dev/null 2>&1 || return 1
-  # GitHub-Issues boards only, and the registry is how we know: board prefix "-"
-  # is the lane bin/load-project.sh onboards that way. An in-app board has no
-  # Blocked-by convention for a closure to release anything through, so asking
-  # GitHub about its issues would be one round trip to learn nothing.
-  bp=$("$SELF/fleet-conf.sh" "$p" board_prefix 2>/dev/null) || return 1
-  [ "$bp" = "-" ] || return 1
+  # GitHub-Issues boards only, and the tracker seam is how we know
+  # (tracker_kind, bin/lib/tracker.sh, BH-7919): column 4 `-` is the lane
+  # bin/load-project.sh onboards that way, but a Linear or Jira project has it
+  # too. An in-app board has no Blocked-by convention for a closure to release
+  # anything through, so asking GitHub about its issues would be one round trip
+  # to learn nothing. The first call warms the per-process cache for the loop.
+  command -v tracker_kind >/dev/null 2>&1 || . "$SELF/lib/tracker.sh" 2>/dev/null || return 1
+  tracker_kind "$p" >/dev/null 2>&1 || return 1
+  [ "$(tracker_kind "$p" 2>/dev/null)" = github-issues ] || return 1
   repo=$("$SELF/fleet-conf.sh" "$p" repo 2>/dev/null) || return 1
   [ -n "$repo" ] || return 1
   for k in "$@"; do
     # `TK-721` and `721` are one ticket on a GitHub-Issues board; the webhook
     # spells it bare, a lane ringing the doorbell by hand may not.
-    n="${k##*-}"
-    case "$n" in ''|*[!0-9]*) continue ;; esac
+    n=$(trk_gh_issue_number "$p" "$k" 2>/dev/null) || continue
     [ "$(revdep_issue_state "$repo" "$n" 2>/dev/null)" = CLOSED ] || continue
     printf '%s\n' "$n"
   done

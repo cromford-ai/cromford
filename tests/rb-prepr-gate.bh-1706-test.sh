@@ -159,6 +159,8 @@ cat > "$T/bin-fleet-conf.sh" <<'SH'
 [ "${2:-}" = board_prefix ] && echo "-"
 SH
 mkdir -p "$T/fh/bin/lib"; cp "$T/bin-fleet-conf.sh" "$T/fh/bin/fleet-conf.sh"; chmod +x "$T/fh/bin/fleet-conf.sh"
+# BH-7919: the Closes line (bin/lib/rb/pr.sh) now asks bin/lib/tracker.sh trk_gh_issue_number.
+scratch_install_closure bin/lib/tracker.sh "$T/fh" >/dev/null || exit 1
 render_body() { # render_body <build> <out> <why> [with-lib]
   ( cd "$W" || exit 1
     env HARNESS="$T/fh" BUILD="$1" KEY=BH-1706 WHY="$3" WITHLIB="${4:-}" LIBF="$H/bin/lib/prepr-gate.sh" VARS="$T/c3/vars.sh" \

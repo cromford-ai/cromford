@@ -35,6 +35,8 @@ case "${2:-}" in
 esac
 SH
 chmod +x "$H/bin/fleet-conf.sh"
+# BH-7919: TICKET_META's GitHub arm now asks bin/lib/tracker.sh trk_gh_issue_number.
+scratch_install_closure bin/lib/tracker.sh "$H" >/dev/null || exit 1
 
 # The fake gh. Every call is logged; the issue route is answered here, anything
 # else `-i` goes to the shared stub (which answers an unknown route as an empty

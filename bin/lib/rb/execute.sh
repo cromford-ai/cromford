@@ -235,16 +235,18 @@ escalate_block() { # escalate_block <gate> <detail>
   # operator asked for an ETA into a thread whose build had been stopped for 50
   # minutes with nothing there saying so.
   #
-  # GitHub-Issues lanes ONLY (fleet.conf board prefix "-"). The in-app product
+  # GitHub-Issues lanes ONLY (tracker github-issues). The in-app product
   # boards are CLIENT-FACING — project-9 bans even health tickets on its board —
   # and a build-internal "BUILD BLOCKED" posted there is the same leak class as
   # a stray E2E probe ticket. A key with no issue number maps to no issue, so
-  # it posts nothing rather than guessing at a number.
-  local prefix repo issue stamp
-  prefix=$("$HARNESS/bin/fleet-conf.sh" "$PROJECT" board_prefix 2>/dev/null) || return 0
+  # it posts nothing rather than guessing at a number. The number comes only
+  # from trk_gh_issue_number (bin/lib/tracker.sh, BH-7919), which answers
+  # nothing for a board, Jira or Linear project, whatever column 4 says.
+  local repo issue stamp
+  command -v trk_gh_issue_number >/dev/null 2>&1 || . "$HARNESS/bin/lib/tracker.sh" 2>/dev/null || return 0
+  issue=$(trk_gh_issue_number "$PROJECT" "$KEY" 2>/dev/null) || return 0
   repo=$("$HARNESS/bin/fleet-conf.sh" "$PROJECT" repo 2>/dev/null) || return 0
-  issue=$(sed -nE 's/^[A-Za-z]+-([0-9]+)$/\1/p' <<<"$KEY")
-  [ "$prefix" = "-" ] && [ -n "$repo" ] && [ -n "$issue" ] || return 0
+  [ -n "$repo" ] && [ -n "$issue" ] || return 0
   command -v gh >/dev/null 2>&1 || return 0
   # One comment per blocked build. exit 6 is terminal, but a resumed or
   # relaunched attempt must not restate the same block on the operator's thread.

@@ -45,6 +45,8 @@ awk '/^# >>> evidence block/{f=1;next} /^# <<< evidence block/{exit} f' "$RB_ALL
 grep -q CLOSES_LINE "$T/block.sh" && ok || bad "C1: could not extract the evidence block with CLOSES_LINE — markers moved?"
 mkdir -p "$T/fh/bin" "$T/repo"
 printf '#!/bin/bash\n[ "${2:-}" = board_prefix ] && echo "-"\n' > "$T/fh/bin/fleet-conf.sh"; chmod +x "$T/fh/bin/fleet-conf.sh"
+# BH-7919: the Closes line (bin/lib/rb/pr.sh) now asks bin/lib/tracker.sh trk_gh_issue_number.
+scratch_install_closure bin/lib/tracker.sh "$T/fh" >/dev/null || exit 1
 ( cd "$T/repo" && git init -q -b main && git config user.email t@example.com && git config user.name t \
   && echo one > a.txt && git add -A && git -c commit.gpgsign=false commit -qm "BH-4500: C0" ) >/dev/null 2>&1
 render_body() { # render_body <build> <out> — KEY BH-4477 on a "-" project: the block writes Closes #4477

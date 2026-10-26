@@ -46,6 +46,8 @@ printf '%s\n' "$1" >> "$BEAT_SINK"
 exit 0
 SH
 chmod +x "$T/bin/fleet-conf.sh" "$T/bin/beat.sh"
+# BH-7919: the Closes line (bin/lib/rb/pr.sh) now asks bin/lib/tracker.sh trk_gh_issue_number.
+scratch_install_closure bin/lib/tracker.sh "$T" >/dev/null || exit 1
 cat > "$T/fakebin/gh" <<'SH'
 #!/bin/bash
 printf '%s\n' "$*" >> "$GH_SINK"

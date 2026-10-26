@@ -165,6 +165,10 @@ GATE() { # GATE [VAR=value ...] -> rc of ee_stop_check mk TK-16 4242 (a GitHub-I
   ( for kv in "$@"; do export "${kv?}"; done
     export HARNESS="$H" EE_NOW="${EE_NOW_T:-$NOW}" HOLDLOG="$T/hold.log" HOLDRC="$T/hold.rc" ALERTLOG="$T/alert.log"
     say() { :; }
+    # BH-7919: the GitHub arms resolve the issue through trk_gh_issue_number,
+    # so the tracker lib is loaded before its adapter answer is stubbed.
+    # shellcheck disable=SC1090
+    . "$DIR/bin/lib/tracker.sh"
     tracker_adapter() { echo github-issues; }
     # bin/lib/hold.sh's reading of the ticket, stubbed: $T/holdv is its verdict line.
     hold_check() { local v; v=$(cat "$T/holdv" 2>/dev/null); printf '%s\n' "$v"

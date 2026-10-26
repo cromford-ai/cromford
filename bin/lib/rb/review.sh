@@ -8,14 +8,14 @@
 #   LENS_PID LENS_PIDS LENS_SHA LENS_TAG LENS_TAGS LENS_TIER LENS_V LENSES LENSES_PARALLEL
 #   NH_ISSUE NH_SLUG NH_SUFFIX PR_URL PROJECT REFUTE_PRIORS REFUTE_PROMPT REFUTE_READ_PRIORS REOPEN_EXTRA_LENS REOPEN_HOT
 #   REOPEN_NOTE REVIEW_MODEL REVIEW_MODEL_T0 REVIEW_PROMPT REVIEW_TIER REVIEW_TIER_LINE
-#   REVIEW_TIER_REASON RISKY RT_LINE SECURITY_PROMPT SP_FIX_ROUND SPEC_DIR T_E2E T_LENSES
+#   REVIEW_TIER_REASON RISKY RT_LINE SECURITY_PROMPT SLC_CLASSES SLC_LIB SLC_OUT SLC_RC SP_FIX_ROUND SPEC_DIR T_E2E T_LENSES
 #   VMAP_LIES_OUT VMAP_LINE VMAP_NOTE
 # Writes: CC_ARTIFACT_KIND E2E_BASE_REF E2E_GATE_SAID E2E_JOIN_CAPPED E2E_JOIN_MAX E2E_NOTE
 #   E2E_PID E2E_RC E2E_SLUG E2E_VERDICT EV_OUT FIX_ROUND_CAP GATES_JOINED GATES_NOTE HIGHRISK
 #   L_ART L_CKPT L_FIX L_FIXLOG L_LOGLINE L_PROMPT L_PUSH L_RE L_RUN LENS_BLOCKED
 #   LENS_FIX_FILES LENS_LAUNCHED LENS_MR LENS_PIDS LENS_SHA LENS_T0 LENS_TAGS LENS_TIER LENS_V
 #   LENSES NH_ISSUE NH_SLUG NH_SUFFIX PTG_DETAIL PTG_IDS PTG_OUT PTG_RC PTG_SINCE REFUTE_PRIORS REFUTE_PROMPT REFUTE_READ_PRIORS REVIEW_PROMPT REVIEW_TIER
-#   REVIEW_TIER_LINE RISKY RT_LINE SECURITY_PROMPT SP_FIX_ROUND T_E2E T_LENSES
+#   REVIEW_TIER_LINE RISKY RT_LINE SECURITY_PROMPT SLC_CLASSES SLC_LIB SLC_OUT SLC_RC SP_FIX_ROUND T_E2E T_LENSES
 #   VMAP_LIES_OUT VMAP_LINE VMAP_NOTE
 # shellcheck shell=bash
 
@@ -906,7 +906,39 @@ if [ "$REVIEW_TIER" = T0 ]; then
 $REVIEW_PROMPT"
 fi
 
-SECURITY_PROMPT="SECURITY-ONLY review of the diff of branch $BRANCH against $BASE (git diff $BASE...HEAD) for ticket $KEY. You are the SECOND reviewer with ONE lens: could this change lose, leak, corrupt, or double-move client data or money? Judge ONLY: authz on every new/changed route (who can call it, what tenant scoping), injection (SQL/command/path), secrets or tokens in code or logs, RLS coverage on new tables, a client snapshot (localStorage, sessionStorage, IndexedDB, a persisted store) that holds a token, is not keyed by user and company, or survives sign-out, idempotency where money or records move (retries, webhooks, crons — can any path double-fire?), runaway SPEND on metered/billable third-party APIs (any call billed per minute/token/record inside a cron, poll or retry loop MUST consult a persisted ledger BEFORE the call; a dedup that runs after the response has already cost the money, and a vendor success that returns nothing is billed and must be terminal, never retried), fail-open vs fail-closed on auth checks, and unsafe trust of client-supplied ids. Ignore style, tests, UX — the general review covered those. FRAUD CLASSES — hunt these six by name. They are the shapes that survive review by looking like work: (weakened-tests) an assertion softened, skipped, deleted, or written so it cannot fail; (false-completion) a claim of done — PR body, board comment, status copy, validate.txt — the evidence does not support; (scope-creep) work in the diff nobody asked for; (unauthorized-action) a capability, route, permission, deletion or write the ticket never authorized; (spec-betrayal) an implementation that quietly contradicts the spec, docstring, or ticket line it claims to implement; (debris) leftover scaffolding, dead code, temp scripts, or stray logging shipped as if it belonged. When a finding IS one of them, tag it on the finding line as FRAUD: <weakened-tests|false-completion|scope-creep|unauthorized-action|spec-betrayal|debris> — one class, the closest fit, and no tag at all on a finding that is none of them. The tag is harvested into logs/findings.log, so a class that keeps recurring becomes measurable rather than a feeling. Write findings to $BUILD/security-review.md. Last line exactly VERDICT: APPROVE or VERDICT: BLOCK."
+SECURITY_PROMPT="SECURITY-ONLY review of the diff of branch $BRANCH against $BASE (git diff $BASE...HEAD) for ticket $KEY. This is the risky-file lens on this diff. Never ask for, and never perform, a whole-repo audit here; that is the scheduled security-audit lane. You are the SECOND reviewer with ONE lens: could this change lose, leak, corrupt, or double-move client data or money? Judge ONLY: authz on every new/changed route (who can call it, what tenant scoping), injection (SQL/command/path), secrets or tokens in code or logs, RLS coverage on new tables, a client snapshot (localStorage, sessionStorage, IndexedDB, a persisted store) that holds a token, is not keyed by user and company, or survives sign-out, idempotency where money or records move (retries, webhooks, crons — can any path double-fire?), runaway SPEND on metered/billable third-party APIs (any call billed per minute/token/record inside a cron, poll or retry loop MUST consult a persisted ledger BEFORE the call; a dedup that runs after the response has already cost the money, and a vendor success that returns nothing is billed and must be terminal, never retried), fail-open vs fail-closed on auth checks, and unsafe trust of client-supplied ids. Ignore style, tests, UX — the general review covered those. FRAUD CLASSES — hunt these six by name. They are the shapes that survive review by looking like work: (weakened-tests) an assertion softened, skipped, deleted, or written so it cannot fail; (false-completion) a claim of done — PR body, board comment, status copy, validate.txt — the evidence does not support; (scope-creep) work in the diff nobody asked for; (unauthorized-action) a capability, route, permission, deletion or write the ticket never authorized; (spec-betrayal) an implementation that quietly contradicts the spec, docstring, or ticket line it claims to implement; (debris) leftover scaffolding, dead code, temp scripts, or stray logging shipped as if it belonged. When a finding IS one of them, tag it on the finding line as FRAUD: <weakened-tests|false-completion|scope-creep|unauthorized-action|spec-betrayal|debris> — one class, the closest fit, and no tag at all on a finding that is none of them. The tag is harvested into logs/findings.log, so a class that keeps recurring becomes measurable rather than a feeling. Write findings to $BUILD/security-review.md. Last line exactly VERDICT: APPROVE or VERDICT: BLOCK."
+# >>> security lens classes (BH-7911)
+# The attack-class notes for this diff's surface, appended to the security lens
+# prompt only. Nothing runs when the security lens is not on the list, so which
+# PRs get a lens and how many model calls a build buys do not change. A missing
+# lib or a bad table logs one line and leaves the prompt as it is; this block
+# never writes a RESULT, never exits and never alerts.
+case " $LENSES " in
+  *" security "*)
+    SLC_LIB="${HARNESS:-}/bin/lib/security-lens-classes.sh"
+    # shellcheck source=bin/lib/security-lens-classes.sh
+    command -v slc_for_diff >/dev/null 2>&1 || { [ -r "$SLC_LIB" ] && . "$SLC_LIB" 2>/dev/null; }
+    if ! command -v slc_for_diff >/dev/null 2>&1; then
+      echo "$(STAMP) [$PROJECT/$KEY] security-lens-classes: off (lib missing)" >> "$BUILD/pipeline.log"
+    else
+      git diff "$BASE"...HEAD > "$BUILD/security-lens.diff" 2>/dev/null
+      SLC_OUT=$(slc_for_diff "$BUILD/security-lens.diff" "$BUILD/planned-files.txt" 2>"$BUILD/security-lens-classes.err"); SLC_RC=$?
+      if [ "$SLC_RC" != 0 ]; then
+        echo "$(STAMP) [$PROJECT/$KEY] security-lens-classes: off (rc $SLC_RC: $(head -n1 "$BUILD/security-lens-classes.err" 2>/dev/null))" >> "$BUILD/pipeline.log"
+      elif [ -z "$SLC_OUT" ]; then
+        echo "$(STAMP) [$PROJECT/$KEY] SECURITY LENS CLASSES: none" >> "$BUILD/pipeline.log"
+      else
+        SLC_CLASSES=$(head -n1 <<< "$SLC_OUT"); SLC_CLASSES=${SLC_CLASSES#SLC_CLASSES: }
+        SECURITY_PROMPT="$SECURITY_PROMPT
+
+ATTACK-CLASS NOTES for this diff's surface ($SLC_CLASSES). Use them to hunt on the changed lines only. The lens does not widen its scope beyond the diff.
+
+$(tail -n +2 <<< "$SLC_OUT")"
+        echo "$(STAMP) [$PROJECT/$KEY] SECURITY LENS CLASSES: $SLC_CLASSES" >> "$BUILD/pipeline.log"
+      fi
+    fi ;;
+esac
+# <<< security lens classes (BH-7911)
 
 # The refuter's framing depends on WHEN it runs. Sequentially it opened on "two
 # reviewers already APPROVED" and was told to attack what they waved through;

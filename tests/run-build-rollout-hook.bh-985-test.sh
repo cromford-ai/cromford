@@ -88,6 +88,8 @@ case "${2:-}" in
 esac
 SH
 chmod +x "$H/bin/fleet-conf.sh"
+# BH-7919: TICKET_META's GitHub arm now asks bin/lib/tracker.sh trk_gh_issue_number.
+scratch_install_closure bin/lib/tracker.sh "$H" >/dev/null || exit 1
 printf 'o/r\n' > "$H/fc-repo"
 
 cat > "$T/fakebin/gh" <<'SH'

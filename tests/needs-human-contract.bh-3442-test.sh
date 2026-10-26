@@ -187,6 +187,8 @@ cut_block "merge note fn" "$T/mergenote.sh"
 mkdir -p "$T/p/bin/lib" "$T/p/build" "$T/p/repo"
 cp "$DIR/bin/lib/gh-rest.sh" "$DIR/bin/lib/gh-rest-var.sh" "$T/p/bin/lib/"
 cp "$T/s/bin/fleet-conf.sh" "$T/p/bin/"
+# BH-7919: the Closes line (bin/lib/rb/pr.sh) now asks bin/lib/tracker.sh trk_gh_issue_number.
+scratch_install_closure bin/lib/tracker.sh "$T/p" >/dev/null || exit 1
 ( cd "$T/p/repo" && git init -q -b main && git config user.email t@example.com && git config user.name t \
   && git remote add origin https://github.com/o/r.git \
   && echo one > a.txt && git add -A && git -c commit.gpgsign=false commit -qm "TK-269: the subject" ) >/dev/null 2>&1

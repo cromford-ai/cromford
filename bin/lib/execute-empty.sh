@@ -110,37 +110,24 @@ ee_on_empty() { # ee_on_empty <build-dir>
 
 # _ee_board_comment <project> <ticket-id> <bodyfile> — the NEEDS_HUMAN body as a
 # comment on an IN-APP board ticket, through the tracker contract's board
-# adapter (bin/lib/tracker.sh, trk_board_comment). The context is resolved the
-# way every board caller resolves it (bin/deploy-rollback-board.sh's
-# tracker_context): <app base><board prefix> from env/<project>.env and
-# fleet.conf, and the project's internal token. The board adapter has no label
+# adapter (bin/lib/tracker.sh, trk_board_comment). The context is the one every
+# board caller uses, tracker_context (bin/lib/tracker.sh): <app base><board
+# prefix> from env/<project>.env and fleet.conf, and the project's internal
+# token. The board adapter has no label
 # verb (trk_board_label_add answers 3), so on a board the comment IS the ask
 # and this gate's count of EXECUTE_EMPTY records keeps the key from relaunching.
 # rc 0 posted; anything else not posted.
 # _ee_board_ctx <project> — sets TRK_BOARD_BASE / TRK_BOARD_TOKEN /
 # TRK_BOARD_TOKEN_VAR / TRK_LOG / TRK_ERR in the CALLER's scope (the caller
-# declares them local) and loads the board adapter. rc 0 ready, 1 not.
+# declares them local) and loads the board adapter. rc 0 ready, 1 not: a
+# project whose tracker is not board, no base, or no token.
 _ee_board_ctx() {
-  local p="$1" r envf prefix bvar base=""
+  local p="$1" r
   r=$(_ee_root)
-  command -v harness_env_dir >/dev/null 2>&1 || . "$r/bin/lib/env-path.sh" 2>/dev/null \
-    || harness_env_dir() { printf '%s\n' "${1:-$r}/env"; }
-  command -v board_base_var >/dev/null 2>&1 || . "$r/bin/lib/board-creds.sh" 2>/dev/null || true
-  command -v internal_token_var >/dev/null 2>&1 || . "$r/bin/lib/internal-token.sh" 2>/dev/null || true
-  envf="$(harness_env_dir "$r")/$p.env"
-  prefix=$("$r/bin/fleet-conf.sh" "$p" board_prefix 2>/dev/null) || prefix=""
-  if [ -n "$prefix" ] && [ "$prefix" != "-" ] && command -v board_base_var >/dev/null 2>&1 \
-     && bvar=$(board_base_var "$p" "$envf" execute-empty 2>/dev/null); then
-    base=$(board_env_value "$bvar" "$envf" 2>/dev/null)
-    while [ "${base%/}" != "$base" ]; do base="${base%/}"; done
-  fi
-  [ -n "$base" ] || return 1
-  TRK_BOARD_BASE="$base$prefix"
-  TRK_BOARD_TOKEN_VAR=$(internal_token_var "$envf" 2>/dev/null) || TRK_BOARD_TOKEN_VAR=""
-  TRK_BOARD_TOKEN=$("$r/bin/internal-token-for.sh" "$p" 2>/dev/null) || TRK_BOARD_TOKEN=""
-  [ -n "$TRK_BOARD_TOKEN" ] || return 1
+  command -v tracker_context >/dev/null 2>&1 || . "$r/bin/lib/tracker.sh" 2>/dev/null || return 1
+  HARNESS="$r" tracker_context "$p" execute-empty 2>/dev/null || return 1
+  [ "${TRK_ADAPTER:-}" = board ] && [ -n "${TRK_BOARD_BASE:-}" ] && [ -n "${TRK_BOARD_TOKEN:-}" ] || return 1
   TRK_LOG="$r/logs/execute-empty.log"; TRK_ERR="$TRK_LOG"
-  tracker_load board 2>/dev/null
 }
 _ee_board_comment() {
   local p="$1" id="$2" f="$3"
@@ -158,11 +145,12 @@ _ee_board_comment() {
 _ee_post_human() {
   local p="$1" ticket="$2" fp="$3" body="$4" f="$5" r adapter
   r=$(_ee_root)
-  command -v tracker_adapter >/dev/null 2>&1 || . "$r/bin/lib/tracker.sh" 2>/dev/null || return 1
-  adapter=$(tracker_adapter "$p" 2>/dev/null) || return 1
+  command -v tracker_kind >/dev/null 2>&1 || . "$r/bin/lib/tracker.sh" 2>/dev/null || return 1
+  tracker_kind "$p" >/dev/null 2>&1 || return 1
+  adapter=$(tracker_kind "$p" 2>/dev/null) || return 1
   case "$adapter" in
     github-issues)
-      case "$ticket" in ''|*[!0-9]*) return 1 ;; esac
+      ticket=$(trk_gh_issue_number "$p" "$ticket" 2>/dev/null) || return 1
       [ -x "$r/bin/needs-human-hold.sh" ] || return 1
       "$r/bin/needs-human-hold.sh" "$p" "$ticket" "$fp" "$body" execute-empty >/dev/null 2>&1 ;;
     board)
@@ -198,11 +186,12 @@ _ee_defang() {
 _ee_lift_epoch() {
   local p="$1" ticket="$2" asked="$3" r adapter slug v at ep tj ij cj fp
   r=$(_ee_root)
-  command -v tracker_adapter >/dev/null 2>&1 || . "$r/bin/lib/tracker.sh" 2>/dev/null || return 0
-  adapter=$(tracker_adapter "$p" 2>/dev/null) || return 0
+  command -v tracker_kind >/dev/null 2>&1 || . "$r/bin/lib/tracker.sh" 2>/dev/null || return 0
+  tracker_kind "$p" >/dev/null 2>&1 || return 0
+  adapter=$(tracker_kind "$p" 2>/dev/null) || return 0
   case "$adapter" in
     github-issues)
-      case "$ticket" in ''|*[!0-9]*) return 0 ;; esac
+      ticket=$(trk_gh_issue_number "$p" "$ticket" 2>/dev/null) || return 0
       command -v hold_check >/dev/null 2>&1 || . "$r/bin/lib/hold.sh" 2>/dev/null || return 0
       slug=$("$r/bin/fleet-conf.sh" "$p" repo 2>/dev/null) || return 0
       v=$(hold_check "$slug" "$ticket" 2>/dev/null) || { [ $? = 0 ] || return 0; } ;;

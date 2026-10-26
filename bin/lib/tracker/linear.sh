@@ -5,7 +5,7 @@
 #
 # Sourced, never executed: no `set -e`, no `exit`, nothing at source time.
 #
-# CONTEXT (variables the caller sets):
+# CONTEXT (variables the caller sets, or trk_linear_context <project> below):
 #   TRK_LINEAR_TOKEN      a Linear personal API key, sent as `Authorization: <key>`
 #                         (no Bearer). Only ever on curl's argv.
 #   TRK_LINEAR_TOKEN_VAR  its variable NAME, which is what a log shows
@@ -36,6 +36,91 @@
 # is not empty (Entity not found), or a mutation that answered success:false is 1.
 
 _TRK_LINEAR_STATUS_TYPE='{"todo":"unstarted","in_progress":"started","done":"completed","closed":"canceled"}'
+
+_trk_linear_blank() {
+  TRK_LINEAR_TOKEN=""; TRK_LINEAR_TOKEN_VAR=""; TRK_LINEAR_TEAM=""; TRK_LINEAR_LABEL=""; TRK_LINEAR_STATES=""
+}
+
+# trk_linear_context <project> — the twin of trk_jira_context. It reads:
+#   <env dir>/<project>.env   LINEAR_API_KEY (required), LINEAR_TEAM,
+#                             LINEAR_LABEL, LINEAR_STATES (in a subshell;
+#                             nothing else from it survives)
+#   settings rows tracker_linear.<project>.team|label|states, all optional. A
+#     row wins over the env value. A row team and an env team that disagree is
+#     rc 1: a wrong team lists another team's tickets. Under TRK_DRY=1 no row
+#     is read (the tracker_adapter contract), so the env values decide.
+# rc 0 with TRK_LINEAR_TOKEN, TRK_LINEAR_TOKEN_VAR=LINEAR_API_KEY,
+# TRK_LINEAR_TEAM and (when set) TRK_LINEAR_LABEL / TRK_LINEAR_STATES. rc 1
+# with every one of them blank and one stderr line that names the variable or
+# the row, never a value. TRK_LINEAR_API is left alone.
+trk_linear_context() {
+  local p="${1:-}" root="${HARNESS:-${H:-}}" d ep envd="" ef jc rows k v n r
+  local tok team label states rteam="" rlabel="" rstates="" got=0
+  local vals=()
+  _trk_linear_blank
+  [[ "$p" =~ ^[a-z0-9_.-]+$ ]] || { printf 'linear: %s is not a project name\n' "$(_trk_sq "$p")" >&2; return 1; }
+  [ -n "$root" ] || { printf 'linear: no harness root (HARNESS) for %s\n' "$p" >&2; return 1; }
+  d="$(dirname "${BASH_SOURCE[0]}")"
+  ep="$d/../env-path.sh"; [ -r "$ep" ] || ep="$root/bin/lib/env-path.sh"
+  if [ -r "$ep" ]; then
+    # shellcheck source=/dev/null
+    envd=$( . "$ep" && harness_env_dir "$root" ) || envd=""
+  fi
+  [ -n "$envd" ] || envd="$root/env"
+  ef="$envd/$p.env"
+  [ -r "$ef" ] || { printf 'linear: %s has no env file %s\n' "$p" "$ef" >&2; return 1; }
+  # shellcheck source=/dev/null
+  mapfile -t vals < <( unset LINEAR_API_KEY LINEAR_TEAM LINEAR_LABEL LINEAR_STATES
+                       set -a; . "$ef" >/dev/null 2>&1; set +a
+                       printf '%s\n' "${LINEAR_API_KEY:-}" "${LINEAR_TEAM:-}" "${LINEAR_LABEL:-}" \
+                         "$(printf '%s' "${LINEAR_STATES:-}" | tr '\n\t' '  ')" )
+  tok="${vals[0]:-}"; team="${vals[1]:-}"; label="${vals[2]:-}"; states="${vals[3]:-}"
+  [ -n "$tok" ] || { printf 'linear: %s sets no LINEAR_API_KEY\n' "$ef" >&2; return 1; }
+
+  if ! _trk_dry; then
+    jc="$d/../../jobs-client.sh"; [ -r "$jc" ] || jc="$root/bin/jobs-client.sh"
+    [ -r "$jc" ] || { printf 'linear: no bin/jobs-client.sh to read the %s settings rows\n' "$p" >&2; return 1; }
+    # ONE subshell for every row, as trk_jira_context does.
+    # shellcheck source=/dev/null
+    rows=$( HARNESS="$root"; . "$jc" >/dev/null 2>&1 || exit 1
+            for n in team label states; do
+              r=0; v=$(JOBS_ALERT=0 setting_get "tracker_linear.$p.$n" 2>/dev/null) || r=$?
+              case "$r" in
+                0) printf '%s\t%s\n' "$n" "$(printf '%s' "$v" | tr '\t\n' '  ')" ;;
+                2) ;;
+                *) exit 1 ;;
+              esac
+            done ) \
+      || { printf 'linear: the settings rows tracker_linear.%s.* could not be read\n' "$p" >&2; return 1; }
+    while IFS=$'\t' read -r k v; do
+      case "$k" in
+        team) rteam="$v"; got=1 ;;
+        label) rlabel="$v" ;;
+        states) rstates="$v" ;;
+      esac
+    done <<<"$rows"
+  fi
+  if [ "$got" = 1 ]; then
+    [[ "$rteam" =~ ^[A-Z][A-Z0-9_]{0,9}$ ]] || { printf 'linear: settings row tracker_linear.%s.team is not a Linear team key\n' "$p" >&2; return 1; }
+    if [ -n "$team" ] && [ "$team" != "$rteam" ]; then
+      printf 'linear: settings row tracker_linear.%s.team and LINEAR_TEAM in %s name different teams\n' "$p" "$ef" >&2
+      return 1
+    fi
+    team="$rteam"
+  fi
+  [ -n "$rlabel" ] && label="$rlabel"
+  [ -n "$rstates" ] && states="$rstates"
+  [[ "$team" =~ ^[A-Z][A-Z0-9_]{0,9}$ ]] || { printf 'linear: %s has no Linear team key (LINEAR_TEAM or tracker_linear.%s.team)\n' "$ef" "$p" >&2; return 1; }
+  if [ -n "$label" ] && ! [[ "$label" =~ ^[A-Za-z0-9_.:-]{1,100}$ ]]; then
+    printf 'linear: the label for %s (LINEAR_LABEL or tracker_linear.%s.label) is not a label\n' "$p" "$p" >&2; return 1
+  fi
+  if [ -n "$states" ] && ! printf '%s' "$states" | jq -e 'type == "object"' >/dev/null 2>&1; then
+    printf 'linear: the states for %s (LINEAR_STATES or tracker_linear.%s.states) are not a JSON object\n' "$p" "$p" >&2; return 1
+  fi
+  TRK_LINEAR_TOKEN="$tok"; TRK_LINEAR_TOKEN_VAR=LINEAR_API_KEY; TRK_LINEAR_TEAM="$team"
+  TRK_LINEAR_LABEL="$label"; TRK_LINEAR_STATES="$states"
+  return 0
+}
 
 _trk_linear_ok() { # _trk_linear_ok <id> — a key to send and a well-formed id
   [ -n "${TRK_LINEAR_TOKEN:-}" ] || return 1

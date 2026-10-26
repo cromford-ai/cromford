@@ -45,6 +45,8 @@ mkdir -p "$H/bin/lib/jobs" && cp "$DIR"/bin/lib/jobs/*.sh "$H/bin/lib/jobs/"
 cp "$DIR/bin/fleet-conf.sh" "$H/bin/"
 cp "$DIR/bin/lib/build-caps.sh" "$DIR/bin/lib/preplan-lib.sh" "$DIR/bin/lib/env-path.sh" "$H/bin/lib/"
 chmod +x "$H/bin/"*.sh 2>/dev/null
+# BH-7919: source (a2) decides the issues lane through bin/lib/tracker.sh tracker_kind.
+scratch_install_closure bin/lib/tracker.sh "$H" >/dev/null || exit 1
 
 # THE PROJECT REGISTRY (§1e). board-api-prefix "-" is the GitHub-Issues lane,
 # the same test bin/run-decompose.sh, bin/orphan-reconcile.sh and

@@ -45,6 +45,10 @@ done
 cp "$DIR/bin/fleet-conf.sh" "$T/h/bin/"
 cp "$MOD_SRC" "$T/co/bin/lib/" 2>/dev/null || echo "note: $MOD_SRC does not exist"
 mkdir -p "$T/co/bin/lib/tracker" && cp "$DIR/bin/lib/tracker.sh" "$T/co/bin/lib/" && cp "$DIR/bin/lib/tracker/board.sh" "$T/co/bin/lib/tracker/"
+# BH-7919: the board base and token come from tracker_context, which resolves
+# them through bin/lib/board-creds.sh and bin/internal-token-for.sh.
+scratch_install_closure bin/lib/board-creds.sh "$T/co" >/dev/null || exit 1
+scratch_install_closure bin/internal-token-for.sh "$T/co" >/dev/null || exit 1
 cat > "$T/h/fleet.conf" <<'CONF'
 # <project> <repo> <prod> <board-api-prefix> <offset>
 ledger-os  example-org/ledger-os  https://ledger.example  /api/accounting/requests-board  3

@@ -79,6 +79,8 @@ case "$2" in
 esac
 EOF
 chmod +x "$HB/bin/fleet-conf.sh"
+# BH-7919: TICKET_THREAD_SIG now asks bin/lib/tracker.sh trk_gh_issue_number.
+scratch_install_closure bin/lib/tracker.sh "$HB" >/dev/null || exit 1
 W="$T/wt"; mkdir -p "$W"
 ( cd "$W" && git init -q -b main . && git -c user.email=t@t -c user.name=t commit -q --allow-empty -m base \
   && git update-ref refs/remotes/origin/main HEAD ) || bad "B0 scratch repo"

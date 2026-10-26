@@ -43,6 +43,10 @@ mkdir -p "$H/bin/lib/jobs" "$H/logs" "$H/flags" "$H/builds" "$T/fakebin" "$T/fix
 cp "$SCRIPT" "$H/bin/replan-check.sh" 2>/dev/null; chmod +x "$H/bin/replan-check.sh" 2>/dev/null
 cp "$DIR/bin/decision-log.sh" "$H/bin/decision-log.sh"; chmod +x "$H/bin/decision-log.sh"
 cp "$DIR/bin/lib/file-children.sh" "$H/bin/lib/file-children.sh"
+# BH-7919: the replan comment's RPC_N (bin/lib/rb/plan.sh) now asks
+# bin/lib/tracker.sh trk_gh_issue_number. Before the stubs below, which replace
+# the closure's gh-rest.sh.
+scratch_install_closure bin/lib/tracker.sh "$H" >/dev/null || exit 1
 
 cat > "$H/bin/fleet-conf.sh" <<'SH'
 #!/bin/bash

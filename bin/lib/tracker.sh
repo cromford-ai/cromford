@@ -9,7 +9,11 @@
 # source time, safe under the caller's `set -u`. Sourcing it twice is inert.
 #
 #   tracker_adapter <project>           github-issues | board | jira | linear, or rc 1
+#   tracker_kind <project>              tracker_adapter, cached per process (below)
 #   tracker_load <adapter>              sources bin/lib/tracker/<adapter>.sh, sets TRK_ADAPTER
+#   tracker_context <project> [<lane>]  tracker_load + that adapter's TRK_* context
+#   tracker_key_prefix <project>        jira/linear only: the ticket key prefix
+#   trk_gh_issue_number <project> <key> the GitHub issue number of a KEY, or rc 1/3
 #   tracker_list                        JSON array of open tickets (no body/comments)
 #   tracker_read <id>                   one normalized ticket (below)
 #   tracker_comment <id> <bodyfile>
@@ -45,7 +49,9 @@
 #   TRK_LINEAR_TOKEN_VAR linear: its variable NAME, which is what a log shows
 #   TRK_LINEAR_TEAM      linear: the team key the list reads
 #   TRK_LINEAR_API / TRK_LINEAR_LABEL / TRK_LINEAR_STATES
-#                        linear: see bin/lib/tracker/linear.sh
+#                        linear: see bin/lib/tracker/linear.sh; every
+#                        TRK_LINEAR_* but the API is what trk_linear_context
+#                        <project> sets
 #   TRK_STRICT           1 = tracker_waiting_on asks --buildable-strict
 #   TRK_JIRA_*           jira: set ONLY by trk_jira_context <project> (the
 #                        gateway base, credentials from the project's env file,
@@ -65,6 +71,28 @@
 # github-issues, any prefix is board. Column 4 never yields jira or linear;
 # only a row does. A row naming anything else is refused (rc 1): a typo must
 # not route a board project's writes to GitHub.
+#
+# THE KIND SEAM. A lane asks tracker_kind, never fleet.conf column 4 itself:
+# column 4 says `-` for a Linear or Jira project too, and a lane that reads `-`
+# as "GitHub" writes `Closes #12` for CRO-12. The answer is cached per process
+# in _TRK_KIND_CACHE, one `<live|dry> <project> <kind>` line each, so a dry
+# answer never serves a live call. A call in the CURRENT shell warms the cache;
+# a call inside `$( … )` reads it but cannot write it back, so a caller that
+# loops calls `tracker_kind <p> >/dev/null` once first.
+#
+# tracker_context <project> [<lane>] prints nothing. rc 0: the adapter is
+# loaded and its context is set (github-issues TRK_SLUG; board TRK_BOARD_BASE,
+# TRK_BOARD_TOKEN, TRK_BOARD_TOKEN_VAR; jira trk_jira_context; linear
+# trk_linear_context). rc 1: TRK_CTX_MISSING is one word, kind | adapter | slug
+# | base | token | context. A board with a base and no token keeps
+# TRK_BOARD_BASE set, so a dry-run caller can go on. It never sets TRK_LOG,
+# TRK_ERR, TRK_DRY or TRK_REQ_FILE: each caller owns those. <lane> names the
+# caller on the board-creds ALERTS line.
+#
+# trk_gh_issue_number <project> <key> is the ONLY place a KEY becomes a GitHub
+# issue number. rc 3 and nothing printed unless tracker_kind is github-issues;
+# on github-issues, `12` or `<letters>-12` prints 12 (rc 0) and any other
+# shape is rc 1. A site that gets rc 1 or 3 posts nothing to GitHub.
 
 : "${TRACKER_ADAPTERS:=github-issues board jira linear}"
 
@@ -166,6 +194,133 @@ tracker_load() {
   . "$f" || return 1
   TRK_ADAPTER="$a"
   return 0
+}
+
+# tracker_kind <project> — tracker_adapter's answer, cached per process (see
+# THE KIND SEAM above). rc 1 and nothing printed when tracker_adapter is rc 1;
+# a refusal is not cached.
+tracker_kind() {
+  local p="${1:-}" mode=live m q k
+  [ -n "$p" ] || return 1
+  _trk_dry && mode=dry
+  while read -r m q k; do
+    [ "$m" = "$mode" ] && [ "$q" = "$p" ] && [ -n "$k" ] && { printf '%s\n' "$k"; return 0; }
+  done <<<"${_TRK_KIND_CACHE:-}"
+  k=$(tracker_adapter "$p") || return 1
+  _TRK_KIND_CACHE="${_TRK_KIND_CACHE:-}${_TRK_KIND_CACHE:+$'\n'}$mode $p $k"
+  printf '%s\n' "$k"
+}
+
+# _trk_kind_now <project> — tracker_kind in this shell (so the cache is
+# warmed), its answer in _TRK_KIND_NOW. rc 1 when it does not resolve.
+_trk_kind_now() {
+  _TRK_KIND_NOW=""
+  tracker_kind "${1:-}" >/dev/null || return 1
+  _TRK_KIND_NOW=$(tracker_kind "${1:-}" 2>/dev/null)
+  [ -n "$_TRK_KIND_NOW" ]
+}
+
+# _trk_board_context <project> <lane> — the board arm of tracker_context:
+# <API base><board prefix> from env/<project>.env (bin/lib/board-creds.sh) and
+# fleet.conf column 4, and the token from bin/internal-token-for.sh.
+_trk_board_context() {
+  local p="$1" lane="$2" root="${HARNESS:-${H:-}}" d fcs itf envd="" envf prefix bvar base=""
+  TRK_BOARD_BASE=""; TRK_BOARD_TOKEN=""; TRK_BOARD_TOKEN_VAR=""
+  d=$(_trk_dir)
+  [ -n "$root" ] || { TRK_CTX_MISSING=base; return 1; }
+  if ! command -v harness_env_dir >/dev/null 2>&1; then
+    # shellcheck source=bin/lib/env-path.sh
+    . "$d/env-path.sh" 2>/dev/null || . "$root/bin/lib/env-path.sh" 2>/dev/null || true
+  fi
+  command -v harness_env_dir >/dev/null 2>&1 && envd=$(harness_env_dir "$root" 2>/dev/null)
+  [ -n "$envd" ] || envd="$root/env"
+  envf="$envd/$p.env"
+  if ! command -v board_base_var >/dev/null 2>&1; then
+    # shellcheck source=bin/lib/board-creds.sh
+    . "$d/board-creds.sh" 2>/dev/null || . "$root/bin/lib/board-creds.sh" 2>/dev/null || true
+  fi
+  # $HARNESS/bin first, as the three board callers this replaces read it; the
+  # copy beside this lib is the fallback.
+  fcs="$root/bin/fleet-conf.sh"; [ -x "$fcs" ] || fcs="$d/../fleet-conf.sh"
+  prefix=$("$fcs" "$p" board_prefix 2>/dev/null) || prefix=""
+  if [ -n "$prefix" ] && [ "$prefix" != "-" ] && command -v board_base_var >/dev/null 2>&1 \
+     && bvar=$(board_base_var "$p" "$envf" "$lane" 2>/dev/null); then
+    base=$(board_env_value "$bvar" "$envf" 2>/dev/null)
+    while [ "${base%/}" != "$base" ]; do base="${base%/}"; done
+  fi
+  [ -n "$base" ] || { TRK_CTX_MISSING=base; return 1; }
+  TRK_BOARD_BASE="$base$prefix"
+  TRK_BOARD_TOKEN_VAR=$(internal_token_var "$envf" 2>/dev/null) || TRK_BOARD_TOKEN_VAR=""
+  # A dry run with no token variable at all asks no one: internal-token-for.sh
+  # would write an ALERTS line for a run that sends nothing.
+  if [ -n "$TRK_BOARD_TOKEN_VAR" ] || ! _trk_dry; then
+    # HARNESS="$root": the token script reads only HARNESS, else its own
+    # directory. A caller that set only H would have it read the env and write
+    # its ALERTS flag next to this lib, not under the caller's root (BH-7919).
+    itf="$root/bin/internal-token-for.sh"; [ -x "$itf" ] || itf="$d/../internal-token-for.sh"
+    TRK_BOARD_TOKEN=$(HARNESS="$root" "$itf" "$p" 2>/dev/null) || TRK_BOARD_TOKEN=""
+  fi
+  [ -n "$TRK_BOARD_TOKEN" ] || { TRK_CTX_MISSING=token; return 1; }
+  return 0
+}
+
+# tracker_context <project> [<lane>] — see the header. Prints nothing on stdout.
+tracker_context() {
+  local p="${1:-}" lane="${2:-tracker-context}" root="${HARNESS:-${H:-}}" kind fcs
+  TRK_CTX_MISSING=""
+  _trk_kind_now "$p" 2>/dev/null || { TRK_CTX_MISSING=kind; return 1; }
+  kind="$_TRK_KIND_NOW"
+  tracker_load "$kind" || { TRK_CTX_MISSING=adapter; return 1; }
+  case "$kind" in
+    github-issues)
+      TRK_SLUG=""
+      fcs="${root:+$root/bin/fleet-conf.sh}"; [ -n "$fcs" ] && [ -x "$fcs" ] || fcs="$(_trk_dir)/../fleet-conf.sh"
+      [ -x "$fcs" ] && TRK_SLUG=$("$fcs" "$p" repo 2>/dev/null)
+      [ -n "$TRK_SLUG" ] || { TRK_SLUG=""; TRK_CTX_MISSING=slug; return 1; } ;;
+    board)
+      _trk_board_context "$p" "$lane" || return 1 ;;
+    jira)
+      trk_jira_context "$p" >/dev/null || { TRK_CTX_MISSING=context; return 1; } ;;
+    linear)
+      trk_linear_context "$p" >/dev/null || { TRK_CTX_MISSING=context; return 1; } ;;
+    *) TRK_CTX_MISSING=kind; return 1 ;;
+  esac
+  return 0
+}
+
+# tracker_key_prefix <project> — the ticket key prefix a jira or linear project
+# uses: the Linear team key, or the first write_projects (else read_projects)
+# Jira key. rc 1 for any other kind, so a GitHub project keeps its own
+# prefix source. Runs the context in a subshell: no TRK_* reaches the caller.
+tracker_key_prefix() {
+  local p="${1:-}" kind
+  _trk_kind_now "$p" 2>/dev/null || return 1
+  kind="$_TRK_KIND_NOW"
+  case "$kind" in jira|linear) ;; *) return 1 ;; esac
+  (
+    tracker_context "$p" tracker-key-prefix || exit 1
+    if [ "$kind" = linear ]; then
+      [ -n "${TRK_LINEAR_TEAM:-}" ] || exit 1
+      printf '%s\n' "$TRK_LINEAR_TEAM"
+    else
+      # shellcheck disable=SC2086 # the lists are validated Jira keys, space-separated
+      set -- ${TRK_JIRA_WRITE_PROJECTS:-}
+      # shellcheck disable=SC2086 # the same: validated Jira keys, split on purpose
+      [ $# -gt 0 ] || set -- ${TRK_JIRA_READ_PROJECTS:-}
+      [ $# -gt 0 ] || exit 1
+      printf '%s\n' "$1"
+    fi
+  )
+}
+
+# trk_gh_issue_number <project> <key> — see the header.
+trk_gh_issue_number() {
+  local p="${1:-}" key="${2:-}"
+  _trk_kind_now "$p" 2>/dev/null || return 3
+  [ "$_TRK_KIND_NOW" = github-issues ] || return 3
+  if [[ "$key" =~ ^[0-9]+$ ]]; then printf '%s\n' "$key"; return 0; fi
+  if [[ "$key" =~ ^[A-Za-z]+-([0-9]+)$ ]]; then printf '%s\n' "${BASH_REMATCH[1]}"; return 0; fi
+  return 1
 }
 
 tracker_list()         { _trk_call list "$@"; }

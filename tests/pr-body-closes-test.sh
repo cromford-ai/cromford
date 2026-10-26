@@ -17,6 +17,8 @@ mkdir -p "$T/bin/lib" "$T/build" "$T/fakebin" "$T/repo"
 # (BH-781) CLOSE_ISSUE_AFTER_MERGE's fallback pair writes through
 # bin/lib/gh-rest.sh, which bin/run-build.sh sources at the top.
 cp "$DIR/bin/lib/gh-rest.sh" "$DIR/bin/lib/gh-rest-var.sh" "$T/bin/lib/"
+# BH-7919: the Closes line (bin/lib/rb/pr.sh) now asks bin/lib/tracker.sh trk_gh_issue_number.
+scratch_install_closure bin/lib/tracker.sh "$T" >/dev/null || exit 1
 PASS=0; FAIL=0
 ok()  { PASS=$((PASS+1)); }
 bad() { FAIL=$((FAIL+1)); echo "FAIL: $1"; }

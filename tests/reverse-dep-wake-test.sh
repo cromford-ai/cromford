@@ -53,6 +53,8 @@ cp "$DIR/bin/jobs-client.sh" "$DIR/bin/wake-loop.sh" "$DIR/bin/unblocked-childre
 mkdir -p "$T/bin/lib/jobs" && cp "$DIR"/bin/lib/jobs/*.sh "$T/bin/lib/jobs/"
 cp "$DIR/bin/lib/revdep-lib.sh" "$DIR/bin/lib/dep-verify-lib.sh" "$DIR/bin/lib/gh-rest.sh" "$DIR/bin/lib/gh-rest-var.sh" "$DIR/bin/lib/gh-rest-list.sh" "$T/bin/lib/"
 chmod +x "$T/bin/"*.sh
+# BH-7919: issue_closures decides the issues lane through bin/lib/tracker.sh tracker_kind.
+scratch_install_closure bin/lib/tracker.sh "$T" >/dev/null || exit 1
 wcs_install "$T/bin"
 wcs_identity "$T/bin" || { echo "reverse-dep-wake: wcs_identity failed"; exit 1; }
 unset WAKE_CLAIM_LIMIT HUB_BOX_NAME CLAIM_ALL COOL_MODE CLAIM_MODE CURSOR_PUT_MODE CURSOR_GET_MODE
