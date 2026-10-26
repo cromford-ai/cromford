@@ -1,8 +1,8 @@
 #!/bin/bash
 # bin/security-audit.sh — one capped whole-repo security audit of a project with
-# the cloudflare/security-audit-skill (BH-7910). Operator-invoked: no cron line,
-# no lane entry. The result is an artifact directory, never a commit and never
-# a ticket.
+# the cloudflare/security-audit-skill (BH-7910). Operator-invoked: no cron line;
+# lane security-audit (catalog/lanes.d/security-audit.json) holds its switch and
+# knobs. The result is an artifact directory, never a commit and never a ticket.
 #
 # usage: security-audit.sh <project> [--out <dir>] [--cap-usd <n>] [--cap-minutes <n>] [--again]
 #   --out          the artifact root (default $BUILD/security-audit when BUILD is
@@ -47,6 +47,11 @@ SELF="$(cd "$(dirname "$0")" && pwd)"
 REPO="$(dirname "$SELF")"
 H="${HARNESS:-/root/harness}"
 export HARNESS="$H"
+# LANE security-audit: the switch and the knobs, before anything is cloned or
+# bought. No lane-gate.sh under $HARNESS (a Mac, a test tree) fails open.
+. "$HARNESS/bin/lib/lane-gate.sh" 2>/dev/null || true
+command -v lane_gate_or_exit >/dev/null 2>&1 && lane_gate_or_exit security-audit
+command -v lane_env_apply >/dev/null 2>&1 && lane_env_apply security-audit
 
 usage() { sed -n '/^# usage:/,/^# bin\/agent-call.sh\.$/p' "$0" | sed 's/^# \{0,1\}//'; }
 

@@ -1,0 +1,122 @@
+{
+  "id": "security-audit",
+  "name": "Security audit (LLM, operator-run)",
+  "scope": "hub",
+  "script": "bin/security-audit.sh",
+  "cadence": "on demand (via an operator running bin/security-audit.sh <project>; no cron line)",
+  "boxes": [
+    "hub"
+  ],
+  "switch": {
+    "kind": "flag",
+    "name": "lane-off-security-audit",
+    "aliases": []
+  },
+  "wired": true,
+  "knobs": [
+    {
+      "env": "SA_CONF",
+      "type": "string",
+      "default": "",
+      "zero_means": null,
+      "settable": false,
+      "note": "no static default — the script computes it ($REPO/catalog/security-audit.conf). Read by bin/security-audit.sh as ${SA_CONF:-$REPO/catalog/security-audit.conf}. A test seam and a path: NOT settable from the control plane."
+    },
+    {
+      "env": "SA_POLL_S",
+      "type": "int",
+      "default": 30,
+      "min": 1,
+      "max": 3600,
+      "unit": "s",
+      "zero_means": null,
+      "settable": false,
+      "note": "Seconds between cap polls. Read by bin/security-audit.sh as ${SA_POLL_S:-<conf poll_s, else 30>}. A test seam: the operator value is poll_s in catalog/security-audit.conf."
+    },
+    {
+      "env": "SA_MINUTE_S",
+      "type": "int",
+      "default": 60,
+      "min": 1,
+      "max": 60,
+      "unit": "s",
+      "zero_means": null,
+      "settable": false,
+      "note": "Seconds per cap minute. Read by bin/security-audit.sh as ${SA_MINUTE_S:-60}. A test seam only: tests shrink a cap minute to seconds."
+    },
+    {
+      "env": "SA_KILL_GRACE_S",
+      "type": "int",
+      "default": 30,
+      "min": 1,
+      "max": 600,
+      "unit": "s",
+      "zero_means": null,
+      "settable": false,
+      "note": "Seconds between TERM and KILL when a cap stops the session. Read by bin/security-audit.sh as ${SA_KILL_GRACE_S:-<conf kill_grace_s, else 30>}. A test seam: the operator value is kill_grace_s in the conf."
+    },
+    {
+      "env": "SA_REPO_URL",
+      "type": "string",
+      "default": "",
+      "zero_means": null,
+      "settable": false,
+      "note": "The clone url of the target. Read by bin/security-audit.sh as ${SA_REPO_URL:-}; empty falls through to the live checkout's origin, then fleet.conf. A test seam and a url: NOT settable from the control plane."
+    },
+    {
+      "env": "SA_REPOS_DIR",
+      "type": "string",
+      "default": "/root/repos",
+      "zero_means": null,
+      "settable": false,
+      "note": "Where the live checkouts are. Read by bin/security-audit.sh as ${SA_REPOS_DIR:-/root/repos}. A path: NOT settable from the control plane."
+    },
+    {
+      "env": "SA_AGENT_CALL",
+      "type": "string",
+      "default": "",
+      "zero_means": null,
+      "settable": false,
+      "note": "no static default — the script computes it ($SELF/agent-call.sh). Read by bin/security-audit.sh as ${SA_AGENT_CALL:-$SELF/agent-call.sh}. The command the audit runs, a test seam: NOT settable from the control plane."
+    },
+    {
+      "env": "LLM_LANE_ENABLED",
+      "type": "int",
+      "default": 1,
+      "min": 0,
+      "max": 1,
+      "unit": null,
+      "zero_means": "off",
+      "read_in": "bin/lib/llm-gate.sh",
+      "note": "0 makes the audit call no model at all. bin/agent-call.sh (AGENT_CALL_LANE=security-audit) refuses through bin/lib/llm-gate.sh BEFORE the vendor call and writes a zero-cost row_source=refused row; bin/security-audit.sh then exits 5 with 'agent-call refused (nothing billed)'."
+    },
+    {
+      "env": "LLM_RUNNER_ALLOWED",
+      "type": "string",
+      "default": "",
+      "min": null,
+      "max": null,
+      "unit": null,
+      "zero_means": null,
+      "read_in": "bin/lib/llm-gate.sh",
+      "note": "Comma/space list of the ONLY ladder rungs the stage.audit call may reach. Empty is every rung, i.e. today's ladder unchanged. A rung outside the list is refused before the call."
+    },
+    {
+      "env": "LLM_USD_CAP_DAY",
+      "type": "float",
+      "default": 0,
+      "min": 0,
+      "max": 10000,
+      "unit": "usd",
+      "zero_means": "unlimited",
+      "read_in": "bin/lib/llm-gate.sh",
+      "note": "Dollars this lane may spend in the current UTC day, summed from D1 cost_rows through GET /api/metrics/llm-spend. It is a day ceiling over all runs; the per-run caps stay security_audit.cap_usd and security_audit.cap_minutes (settings rows, else catalog/security-audit.conf)."
+    }
+  ],
+  "stats": {
+    "cost_stage": "audit",
+    "cost_project_filter": null,
+    "lanes_row": false,
+    "log": "logs/security-audit.log"
+  }
+}
