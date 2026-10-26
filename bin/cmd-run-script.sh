@@ -4,14 +4,15 @@
 # for `hub`), through bcx_run in bin/lib/box-cmd-exec.sh.
 #
 # payload {script: "<name>.sh", args: [<string>, ...]}. It runs bin/<script>
-# ONLY when <script> is an exact entry of catalog/run-script-allowlist.json.
-# Adding a script to that list is a reviewed PR. Every check passes before
-# anything runs:
+# ONLY when <script> is an exact entry of the allowlist: the union of
+# catalog/run-script-allowlist.json and every catalog/run-script-allowlist.d/*.json
+# (the same {about, scripts} shape; a ticket adds its own fragment). Adding a
+# script is a reviewed PR. Every check passes before anything runs:
 #   - script matches ^[A-Za-z0-9][A-Za-z0-9._-]*\.sh$ (no `/`, no `..`), is a
 #     list entry, and bin/<script> is an executable file;
 #   - args is absent or an array of at most 16 strings, each at most 512
 #     chars, with no NUL.
-# A missing or unparseable allowlist refuses everything (fail closed).
+# A missing or unparseable main file or fragment refuses everything (fail closed).
 #
 # Args reach the script as argv elements only: no eval, no sh -c, no word
 # splitting. The run is bounded by CMD_RUN_SCRIPT_TIMEOUT_S (default 300 s).
@@ -45,14 +46,21 @@ if [ "$PROJECT" != hub ]; then
     || emit 3 refused "'$PROJECT' is neither hub nor a fleet.conf project"
 fi
 jq -e 'type == "object"' >/dev/null 2>&1 <<<"$PAYLOAD" || emit 3 refused "payload is not a JSON object"
-LIST=$(jq -r 'if (.scripts|type) == "array" and all(.scripts[]; type == "string")
-              then .scripts | join(" ") else error("bad") end' "$AL" 2>/dev/null) \
-  || emit 3 refused "allowlist unreadable (catalog/run-script-allowlist.json); nothing runs"
+al_names() { # al_names <file> — its scripts, one per line; rc 1 when the shape is wrong
+  jq -r 'if type == "object" and (.scripts|type) == "array" and all(.scripts[]; type == "string")
+         then .scripts[] else error("bad") end' "$1" 2>/dev/null
+}
+NAMES=$(al_names "$AL") || emit 3 refused "allowlist unreadable (catalog/run-script-allowlist.json); nothing runs"
+for f in "$H/catalog/run-script-allowlist.d/"*.json; do
+  [ -e "$f" ] || continue
+  FN=$(al_names "$f") || emit 3 refused "allowlist fragment ${f##*/} unreadable; nothing runs"
+  NAMES+=$'\n'"$FN"
+done
+LIST=$(printf '%s\n' "$NAMES" | grep -v '^$' | tr '\n' ' '); LIST="${LIST% }"
 S=$(jq -r 'if (.script|type) == "string" then .script else "" end' <<<"$PAYLOAD")
 [[ "$S" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*\.sh$ ]] && [[ "$S" != *..* ]] \
   || emit 3 refused "script must be a plain <name>.sh on the allowlist: $LIST"
-[ "$(jq -r --arg s "$S" '.scripts | index($s) != null' "$AL")" = true ] \
-  || emit 3 refused "$S is not on the allowlist: $LIST"
+grep -qxF -- "$S" <<<"$NAMES" || emit 3 refused "$S is not on the allowlist: $LIST"
 SCRIPT="$S"
 [ -f "$H/bin/$S" ] && [ -x "$H/bin/$S" ] || emit 3 refused "bin/$S is listed but is not an executable file on this box"
 jq -e '(has("args") | not) or .args == null

@@ -57,11 +57,11 @@ their first argument. `counts_note` names any verdict that is not one of the thr
 
 This build ran on a pool machine that cannot read `example-org/project-2` (`git ls-remote` rc 128)
 or `github.com/cloudflare/security-audit-skill` (CONNECT 403). The pilot runs on
-`box-project-2-1`, which owns `/root/repos/project-2`:
-
-```bash
-BUILD=<build dir> /root/harness/bin/security-audit.sh project-2
-```
+`box-project-2-1`, which owns `/root/repos/project-2`. Start it from the console, with
+no ssh (BH-8375): a `run_script` command, project `project-2`, payload
+`{"script":"security-audit-launch.sh","args":["project-2"]}`. Read the numbers with args
+`["--status","project-2"]` after the run ends. The steps are in
+`docs/notes/2026-10-26-BH-8375-security-audit-console-launch.md`.
 
 | item | value |
 |---|---|

@@ -1,0 +1,4 @@
+{
+  "about": "BH-8375: start the capped security audit runner detached on the box that owns the project; --status prints numbers only, never a finding.",
+  "scripts": ["security-audit-launch.sh"]
+}
