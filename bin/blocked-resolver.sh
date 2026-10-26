@@ -5373,6 +5373,7 @@ br_fix_adopt() {
     *) say "$p/$rkey [$reason]: fix-round row $id: the adopt was not recorded — retried next tick, no rung taken"
        return 0 ;;
   esac
+  command -v br_wt_streak >/dev/null 2>&1 && br_wt_streak "$p" "$box" "$res"   # BH-8458: N worktree-add failures in a row, one alert
   case "$res" in
     "box-paused "*)
       what=$(printf '%s' "${res#box-paused }" | base64 -d 2>/dev/null)
@@ -5760,7 +5761,7 @@ br_archie_first() {
 br_fix_round() {
   local p="$1" rkey="$2" reason="$3" url="$4" rec="$5" tkey="$6"
   local ck st n cap slug br wt findings prompt rc out cilog="" lease head brief conflicts markers f ref gsv gsrc gsnot
-  local reuse=0 oldwt frc=0 br_next_judge dqbrief pqbrief="" archie="" ejruns=""
+  local reuse=0 oldwt frc=0 br_next_judge dqbrief pqbrief="" archie="" ejruns="" brfetch_err="" wterr=""
   local lead_blocked=0 unaddr="" noop_named noop_own noop_hit noop_n noop_f
   local gienv=() gibad="" girc=0 br_author_bad=0
   local hot=0 slots=0 reserve=0 running=0 directive="" drc=0
@@ -5946,9 +5947,9 @@ br_fix_round() {
   case "$(git -C "$REPOS/$p" remote get-url origin 2>/dev/null)" in
     https://*) mc_git_auth "$slug" >/dev/null 2>&1 || say "$p/$rkey: no git credential for $slug — the push will probably fail" ;;
   esac
-  git -C "$REPOS/$p" fetch -q origin 2>/dev/null
-  # THE LEASE IS THE PR HEAD, read from the fetch we just did — never the HEAD of
-  # the tree we start from, which on a reused checkpoint is already ahead of it.
+  git -C "$REPOS/$p" fetch -q origin 2>/dev/null; brfetch_err=$(git -C "$REPOS/$p" fetch -q origin "+refs/heads/$br:refs/remotes/origin/$br" 2>&1 >/dev/null) && brfetch_err=""
+  # THE PR BRANCH BY NAME (BH-8458): a single-branch clone (the pool's --depth 50) maps main only. THE LEASE IS
+  # THE PR HEAD, read from those fetches — never the HEAD of the tree we start from, already ahead on a reused checkpoint.
   # --verify -q, NOT a bare rev-parse: a bare one ECHOES the ref it could not
   # resolve ("origin/ticket/TK-93") and exits 128, so `lease` came back non-empty
   # for a branch this clone has never seen — the guard below could never fire and
@@ -5975,9 +5976,9 @@ br_fix_round() {
   BR_FIX_WT="$wt"; BR_FIX_REPO="$REPOS/$p"
   if [ "$reuse" = 1 ] && git -C "$REPOS/$p" worktree add -q "$wt" "brfix/$ck" 2>>"$LOG"; then
     say "$p/$rkey [$reason]: reusing the checkpoint branch brfix/$ck left by an earlier round ($(git -C "$wt" rev-parse --short HEAD))"
-  elif ! git -C "$REPOS/$p" worktree add -q "$wt" -B "brfix/$ck" "origin/$br" 2>>"$LOG"; then
-    mc_git_auth_clear 2>/dev/null
-    br_setup_blocked "$p" "$ck" "$rkey" "$reason" "$url" "worktree add failed for origin/$br in $REPOS/$p — see the git error in logs/blocked-resolver.log"
+  elif ! wterr=$(git -C "$REPOS/$p" worktree add -q "$wt" -B "brfix/$ck" "origin/$br" 2>&1 >/dev/null); then
+    mc_git_auth_clear 2>/dev/null; printf '%s\n' "$wterr" >>"$LOG"   # the git line rides the reason to the hub (BH-8458): this log is reaped on the pool
+    br_setup_blocked "$p" "$ck" "$rkey" "$reason" "$url" "worktree add failed for origin/$br in $REPOS/$p: git: $(br_git_why "$wterr" 2>/dev/null)${brfetch_err:+; fetch of $br: $(br_git_why "$brfetch_err" 2>/dev/null)}"
     return 0
   fi
   # THE ROUND COMMITS AS THE BOX'S CONFIGURED AUTHOR (BH-1134): the harness's own

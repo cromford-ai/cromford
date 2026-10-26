@@ -1,0 +1,11 @@
+{
+  "env": "BR_WT_FAIL_STREAK",
+  "type": "int",
+  "default": 3,
+  "min": 0,
+  "max": 50,
+  "unit": "rounds",
+  "zero_means": "off",
+  "read_in": "bin/blocked-resolver.d/bh-8458-wt-streak.sh",
+  "note": "BH-8458: after this many fix rounds in a row for one project end setup-blocked with 'worktree add failed for origin/<branch>' (from any placement), the hub sends ONE lane alert (id br-wt-streak:<project>) that names the kill knob lane_placement.blocked-resolver-fix.<project>=box. A round that gets past setup (done, terminal, rebuild-fresh) resets the count and resolves the alert. 0 = off."
+}

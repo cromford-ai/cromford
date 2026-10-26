@@ -25,6 +25,7 @@ tests/box-launch.bh-5748-test.sh:generic-api-key:220
 tests/box-launch.bh-5748-test.sh:generic-api-key:400
 tests/box-ssh-probe.bh-7710-test.sh:generic-api-key:79
 tests/box-ssh-probe.bh-7710-test.sh:generic-api-key:94
+tests/br-pool-fixround-fetch.bh-8458-test.sh:github-pat:137
 tests/ci-durations-missing-row.bh-5653-test.sh:curl-auth-header:68
 tests/ci-local.bh-6897-test.sh:generic-api-key:156
 tests/component-watch.bh-6972-test.sh:generic-api-key:186
