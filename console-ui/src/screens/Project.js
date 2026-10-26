@@ -24,6 +24,7 @@ import BuildQueuePanel from './BuildQueuePanel.js';
 import DeployQueuePanel from './DeployQueuePanel.js';
 import MergeTrainsPanel from './MergeTrainsPanel.js';
 import ConflictHotspotsPanel from './ConflictHotspotsPanel.js';
+import { SetupRunLink } from './SetupLine.js';
 
 export function ProjectScreen({ project }) {
   const p = useApi(() => api.project(project), [project], { intervalMs: 30000 });
@@ -133,6 +134,7 @@ export function ProjectScreen({ project }) {
         <div style="display:flex;gap:8px;margin-left:auto;flex-wrap:wrap">
           <${Link} to=${`/history?project=${encodeURIComponent(project)}`} class="btn">FULL HISTORY<//>
           <${Link} to=${`/needs?project=${encodeURIComponent(project)}`} class="btn">NEEDS<//>
+          <${SetupRunLink} project=${project}/>
           <button class="btn" disabled=${busy !== null}
             onClick=${() => act('run_triage', 'FORCE TRIAGE')}>
             ${busy === 'run_triage' ? 'QUEUEING…' : 'FORCE TRIAGE'}

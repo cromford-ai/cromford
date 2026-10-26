@@ -134,6 +134,7 @@ worker/jobs/test/landing-outcome.bh-6745.test.js:generic-api-key:16
 worker/jobs/test/main-red-state-indexes.bh-4156.test.js:generic-api-key:17
 worker/jobs/test/main-red-state.bh-4156.test.js:generic-api-key:20
 worker/jobs/test/migration-numbers.bh-7325.test.js:generic-api-key:26
+worker/jobs/test/onboarding-actions.bh-7934.test.js:generic-api-key:28
 worker/jobs/test/onboarding.bh-7934.test.js:generic-api-key:26
 worker/jobs/test/onboarding.bh-7934.test.js:generic-api-key:53
 worker/jobs/test/onboarding.bh-7934.test.js:generic-api-key:96

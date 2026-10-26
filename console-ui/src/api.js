@@ -97,6 +97,14 @@ export const api = {
   participant: (id) => get(coordPath(`/api/participants/${encodeURIComponent(id)}`)),
   participantDecide: (id, verb, body = {}) =>
     post(coordPath(`/api/participants/${encodeURIComponent(id)}/${verb}`), body),
+  // An onboarding run (BH-7934) and the setup line's two actions, through the
+  // coord proxy. The proxy stamps the actor, so the body is empty.
+  setupRun: (id) => get(coordPath(`/api/onboarding/runs/${encodeURIComponent(id)}`)),
+  setupRetry: (id) => post(coordPath(`/api/onboarding/runs/${encodeURIComponent(id)}/retry`), {}),
+  setupCancel: (id) => post(coordPath(`/api/onboarding/runs/${encodeURIComponent(id)}/cancel`), {}),
+  // The project's newest run ({run:{id, state, created_at}} or {run:null}),
+  // for the project page's link to its setup line.
+  setupLatest: (project) => get(coordPath(`/api/onboarding/projects/${encodeURIComponent(project)}/latest`)),
   projects: () => get('/api/dash/projects'),
   project: (p) => get(`/api/dash/p/${encodeURIComponent(p)}`),
   run: (id) => get(`/api/dash/runs/${encodeURIComponent(id)}`),

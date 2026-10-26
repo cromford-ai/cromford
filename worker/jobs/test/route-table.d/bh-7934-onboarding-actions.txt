@@ -1,0 +1,7 @@
+# BH-7934.3 (#7950): onboarding run retry and cancel, key-named (BH-5788).
+# Written by the console's setup line screen through the coord proxy. The
+# latest read is the project page's link to that screen.
+# Bearer-gated.
+POST re:/^\/api\/onboarding\/runs\/(ob_[0-9a-f]{20})\/retry$/
+POST re:/^\/api\/onboarding\/runs\/(ob_[0-9a-f]{20})\/cancel$/
+GET re:/^\/api\/onboarding\/projects\/([a-z0-9][a-z0-9-]{0,39})\/latest$/

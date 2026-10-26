@@ -1464,6 +1464,55 @@ a.statgrid__cell:hover { background: var(--surface-1); color: var(--text); }
 .card__track .st.done:last-child .lbl,
 .card__track .st.done:has(+ .st:not(.done):not(.now)) .lbl { display: inline; }
 
+/* ---------- BH-7934 setup line (src/screens/SetupLine.js) ---------- */
+.setup-line .setup-strip { margin: 0 0 16px; overflow-x: auto; }
+.setup-line .setup-stations { list-style: none; margin: 0 0 16px; padding: 0; border-top: 1px solid var(--line-row); }
+.setup-line .setup-station { padding: 10px 0; border-bottom: 1px solid var(--line-row); min-width: 0; }
+.setup-line .setup-station__row {
+  display: grid; grid-template-columns: 96px minmax(0, 10rem) minmax(0, 1fr) auto;
+  align-items: center; gap: 12px; min-width: 0;
+}
+.setup-line .setup-station__name { font-family: var(--font-mono); font-size: var(--fs-sm); color: var(--text-strong); overflow-wrap: anywhere; }
+.setup-line .setup-station__detail { font-size: var(--fs-sm); color: var(--text-dim); overflow-wrap: anywhere; min-width: 0; }
+.setup-line .setup-station--fail .setup-station__detail { color: var(--red-lt); }
+.setup-line .setup-station__dur { font-family: var(--font-mono); font-size: var(--fs-xs); color: var(--faint); white-space: nowrap; }
+.setup-line .setup-fixbox {
+  margin: 10px 0 0; padding: 12px; border: 1px solid var(--line-dead); border-radius: var(--radius-sm);
+  background: var(--bg-dead); min-width: 0;
+}
+.setup-line .setup-fixbox pre,
+.setup-line .setup-log pre {
+  margin: 0; white-space: pre-wrap; overflow-x: auto; max-width: 100%;
+  font-family: var(--font-mono); font-size: var(--fs-xs); color: var(--text); overflow-wrap: anywhere;
+}
+.setup-line .setup-fixbox__actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+.setup-line .setup-retry,
+.setup-line .setup-fix,
+.setup-line .setup-cancel,
+.setup-line .setup-open { min-height: 44px; display: inline-flex; align-items: center; justify-content: center; }
+.setup-line .setup-open[aria-disabled="true"] { opacity: 0.45; pointer-events: none; }
+.setup-line .setup-log { margin: 0 0 16px; border: 1px solid var(--line); border-radius: var(--radius-sm); padding: 0 12px; }
+.setup-line .setup-log summary {
+  min-height: 44px; display: flex; align-items: center; cursor: pointer;
+  font-family: var(--font-mono); font-size: var(--fs-xs); letter-spacing: 1px; color: var(--muted);
+}
+.setup-line .setup-log__entry { padding: 8px 0; border-top: 1px solid var(--line-row); }
+.setup-line .setup-log__station { display: block; font-family: var(--font-mono); font-size: var(--fs-2xs); color: var(--faint); margin-bottom: 4px; }
+.setup-line .setup-log__none { color: var(--faint); font-size: var(--fs-sm); }
+.setup-line .setup-stale,
+.setup-line .setup-error { margin: 0 0 12px; font-size: var(--fs-sm); color: var(--amber); }
+.setup-line .setup-error { color: var(--red-lt); }
+.setup-line .setup-bar {
+  position: sticky; bottom: 0; display: flex; flex-wrap: wrap; gap: 8px; justify-content: flex-end;
+  padding: 12px 0; background: var(--bg); border-top: 1px solid var(--line);
+}
+@media (max-width: 719.98px) {
+  .setup-line .setup-strip { display: none; }
+  .setup-line .setup-station__row { grid-template-columns: auto minmax(0, 1fr) auto; }
+  .setup-line .setup-station__detail { grid-column: 1 / -1; }
+}
+/* ---------- end setup line ---------- */
+
 /* ---------- Prompts list and editor (BH-7940.5) ----------
    Scoped .prompt-* rules only. The editor is full width at every size; a diff
    scrolls inside its own box, so a long line never scrolls the page sideways.
