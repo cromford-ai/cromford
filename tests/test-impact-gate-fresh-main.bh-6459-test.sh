@@ -20,6 +20,7 @@
 #   T1      the --table tag and header sentence
 #   I1      the isolated runner (root with setpriv only)
 #   X1-X2   --also (BH-6335): segment A, or the merge for an always suite
+#   X3-X5   the fresh phase in either order still passes X1's phase order (BH-8358)
 #   TR1-TR2 --runner traced: every segment runs under the trace
 #   K1-K4   the `learned` kind in select --why
 #   R1-R2   closure stays closure; the gate ranks learned above closure
@@ -125,6 +126,24 @@ gate() {
 }
 has()  { grep -qxF "$2" "$T/$1.log"; }
 outs() { grep -qF -- "$2" "$T/$1.out"; }
+# phase_order <tag> — the done-line order of $T/<tag>.out, with each contiguous
+# run of fresh suites (rows `<name> fresh` in $T/<tag>.log) printed as one
+# sorted {set}. The phases are ordered; the suites inside the fresh phase are
+# not, because the gate sorts a tier by the recorded duration, a hint (BH-8358).
+# A fresh suite split from its group by a HEAD suite gives two groups.
+phase_order() {
+  local fresh s grp="" out=""
+  fresh=$(awk '$2 == "fresh" { print "tests/" $1 ".sh" }' "$T/$1.log")
+  while read -r s; do
+    if [ -n "$fresh" ] && grep -qxF -- "$s" <<<"$fresh"; then grp+="$s"$'\n'; continue; fi
+    if [ -n "$grp" ]; then out+="{$(printf '%s' "$grp" | LC_ALL=C sort | paste -sd' ' -)} "; grp=""; fi
+    out+="$s "
+  done < <(grep '^impact-gate: done ' "$T/$1.out" | awk '{ print $3 }')
+  [ -n "$grp" ] && out+="{$(printf '%s' "$grp" | LC_ALL=C sort | paste -sd' ' -)} "
+  printf '%s' "${out% }"
+}
+# raw_order <tag> — the done-line order as it ran, space-joined.
+raw_order() { grep '^impact-gate: done ' "$T/$1.out" | awk '{ print $3 }' | paste -sd' ' -; }
 
 # ── F1 / F3 / O1: main ahead, merges clean, the ceiling is red on the merge ─
 gate f1 --fresh-main on --fresh-ref main --runner local
@@ -137,8 +156,8 @@ grep -qxF tests/ceiling-test.sh "$T/f1.failed" && ok "F1 --failed names the ceil
   || bad "F1 failed list: $(cat "$T/f1.failed")"
 has f1 "a-test head" && has f1 "l-test head" && has f1 "c-test head" && has f1 "s-test head" \
   && ok "F3 path picks run on HEAD" || bad "F3 log: $(cat "$T/f1.log")"
-ORDER=$(grep '^impact-gate: done ' "$T/f1.out" | awk '{print $3}' | tr '\n' ' ')
-[ "$ORDER" = "tests/s-test.sh tests/ceiling-test.sh tests/w-test.sh tests/a-test.sh tests/l-test.sh tests/c-test.sh " ] \
+ORDER=$(phase_order f1)
+[ "$ORDER" = "tests/s-test.sh {tests/ceiling-test.sh tests/w-test.sh} tests/a-test.sh tests/l-test.sh tests/c-test.sh" ] \
   && ok "O1 order: self on HEAD, fresh, then the rest on HEAD" || bad "O1 order: $ORDER plan: $(grep "^plan:" "$T/f1.out")"
 
 # ── F2: the switch off is today's gate ──────────────────────────────────────
@@ -270,9 +289,10 @@ fi
 # X1: a learned --also suite runs first, on HEAD, in segment A.
 printf 'tests/c-test.sh\n' > "$T/also-c.txt"
 gate x1 --fresh-main on --fresh-ref main --runner local --also "$T/also-c.txt"
-ORDER=$(grep '^impact-gate: done ' "$T/x1.out" | awk '{print $3}' | tr '\n' ' ')
+X1_ORDER="tests/c-test.sh tests/s-test.sh {tests/ceiling-test.sh tests/w-test.sh} tests/a-test.sh tests/l-test.sh"
+ORDER=$(phase_order x1)
 [ "$GRC" = 1 ] && has x1 "c-test head" \
-  && [ "$ORDER" = "tests/c-test.sh tests/s-test.sh tests/ceiling-test.sh tests/w-test.sh tests/a-test.sh tests/l-test.sh " ] \
+  && [ "$ORDER" = "$X1_ORDER" ] \
   && ok "X1 the --also suite runs first on HEAD, then self, fresh, the rest" \
   || bad "X1 rc=$GRC order: $ORDER log: $(cat "$T/x1.log")"
 # X2: an --also suite that is also an always suite runs on the merge, once.
@@ -282,6 +302,27 @@ has x2 "w-test fresh" && ! has x2 "w-test head" && ok "X2 the --also always suit
   || bad "X2 log: $(cat "$T/x2.log")"
 grep -F '`tests/w-test.sh`' "$T/x2.md" | grep -qF "(fresh main $M8) learned (failed merge-queue batches)" \
   && ok "X2 its row has the fresh tag and keeps the learned reason first" || bad "X2 table: $(grep w-test "$T/x2.md")"
+# X3 / X4: the fresh phase in both orders (BH-8358). Each case seeds its own
+# durations file, so the gate's shortest-first hint runs w-test first in X3 and
+# ceiling-test first in X4. X1's phase order holds for both.
+printf 'tests/ceiling-test.sh\t5\ntests/w-test.sh\t0\n' > "$T/x3.tsv"
+TEST_IMPACT_DURATIONS_FILE="$T/x3.tsv" gate x3 --fresh-main on --fresh-ref main --runner local --also "$T/also-c.txt"
+RAW=$(raw_order x3)
+[ "$GRC" = 1 ] && [[ "$RAW" == *"tests/w-test.sh tests/ceiling-test.sh"* ]] && [ "$(phase_order x3)" = "$X1_ORDER" ] \
+  && ok "X3 w-test ran first in the fresh phase, the phase order holds" \
+  || bad "X3 rc=$GRC raw: $RAW phases: $(phase_order x3)"
+printf 'tests/ceiling-test.sh\t0\ntests/w-test.sh\t5\n' > "$T/x4.tsv"
+TEST_IMPACT_DURATIONS_FILE="$T/x4.tsv" gate x4 --fresh-main on --fresh-ref main --runner local --also "$T/also-c.txt"
+RAW=$(raw_order x4)
+[ "$GRC" = 1 ] && [[ "$RAW" == *"tests/ceiling-test.sh tests/w-test.sh"* ]] && [ "$(phase_order x4)" = "$X1_ORDER" ] \
+  && ok "X4 ceiling-test ran first in the fresh phase, the phase order holds" \
+  || bad "X4 rc=$GRC raw: $RAW phases: $(phase_order x4)"
+# X5: phase_order itself. A HEAD suite between two fresh suites is two groups,
+# so an interleaved run never matches X1's phase order.
+printf 'c-test head\ns-test head\nceiling-test fresh\na-test head\nw-test fresh\nl-test head\n' > "$T/x5.log"
+for s in c s ceiling a w l; do echo "impact-gate: done tests/$s-test.sh rc=0 (0s)"; done > "$T/x5.out"
+[ "$(phase_order x5)" = "tests/c-test.sh tests/s-test.sh {tests/ceiling-test.sh} tests/a-test.sh {tests/w-test.sh} tests/l-test.sh" ] \
+  && ok "X5 a split fresh phase gives two groups" || bad "X5 phases: $(phase_order x5)"
 
 # ── TR1 / TR2: --runner traced (BH-6335) ────────────────────────────────────
 gate tr1 --fresh-main on --fresh-ref main --runner traced --trace-hits "$T/tr1.hits"
