@@ -1,0 +1,11 @@
+# @hub-lanes
+
+# ── ONBOARD-RUN LANE (BH-7934.2) ─────────────────────────────────────────────
+# Every minute. Picks the oldest queued onboarding run (the console's "add a
+# project" form), claims it on the jobs worker and runs its stations in order,
+# beating each one running, then done or failed. Alerts once a day on a running
+# run with no beat for ONBOARD_RUN_STALE_MIN minutes. The flock is dedupe: a
+# long run makes the next ticks skip, it never queues them. Log:
+# logs/onboard-run.log. Doc: docs/ONBOARDING.md.
+# Off: flags/lane-off-onboard-run (bin/harness-ctl.sh off onboard-run).
+* * * * * /root/harness/bin/hub-lease.sh check && flock -n /root/harness/locks/onboard-run.lock /root/harness/bin/onboard-run.sh >> /root/harness/logs/onboard-run-cron.log 2>&1

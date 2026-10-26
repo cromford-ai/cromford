@@ -1,0 +1,5 @@
+# BH-7934.2 (#7949): the onboarding runner's list and beat, key-named (BH-5788).
+# Written and read by bin/onboard-run.sh (the onboard-run hub lane).
+# Bearer-gated; no coord-writes row, so the console cannot send a beat.
+GET /api/onboarding/runs
+POST re:/^\/api\/onboarding\/runs\/(ob_[0-9a-f]{20})\/beat$/

@@ -1,0 +1,104 @@
+{
+  "id": "onboard-run",
+  "name": "Onboarding runner",
+  "scope": "hub",
+  "script": "bin/onboard-run.sh",
+  "cadence": "* * * * *",
+  "boxes": [
+    "hub"
+  ],
+  "switch": {
+    "kind": "flag",
+    "name": "lane-off-onboard-run",
+    "aliases": []
+  },
+  "wired": true,
+  "knobs": [
+    {
+      "env": "ONBOARD_RUN_TRIES",
+      "type": "int",
+      "default": 3,
+      "unit": null,
+      "zero_means": null,
+      "read_in": "bin/onboard-run.sh",
+      "note": "BH-7934.2: transport attempts per worker request (JOBS_RETRIES = this - 1). After the last one the tick raises one onboard-run:unreachable alert and exits 2. 1..99.",
+      "settable": true
+    },
+    {
+      "env": "ONBOARD_RUN_STALE_MIN",
+      "type": "int",
+      "default": 30,
+      "unit": "minutes",
+      "zero_means": null,
+      "read_in": "bin/onboard-run.sh",
+      "note": "BH-7934.2: a running onboarding run with no beat for this many minutes gets one onboard-run:stale_run:<id>:<date> warn alert per day.",
+      "settable": true
+    },
+    {
+      "env": "ONBOARD_RUN_STALE_LIST",
+      "type": "int",
+      "default": 20,
+      "unit": "runs",
+      "zero_means": null,
+      "read_in": "bin/onboard-run.sh",
+      "note": "BH-7934.2: running runs the stale check reads per tick, oldest beat first. The worker refuses a value above its onboarding.list_limit_max settings row.",
+      "settable": true
+    },
+    {
+      "env": "ONBOARD_RUN_EXCERPT_BYTES",
+      "type": "int",
+      "default": 4096,
+      "unit": "bytes",
+      "zero_means": null,
+      "read_in": "bin/onboard-run.sh",
+      "note": "BH-7934.2: the tail of a station's output the runner sends as the step log_excerpt. The worker keeps at most its onboarding.log_excerpt_max_bytes settings row.",
+      "settable": true
+    },
+    {
+      "env": "ONBOARD_SHARED_BOX",
+      "type": "string",
+      "default": "",
+      "unit": null,
+      "zero_means": null,
+      "read_in": "bin/onboard-run.sh",
+      "note": "BH-7934.2: the box a run with box=shared onboards onto. Empty = ${HARNESS_BOX_PREFIX}small, the default bin/load-project.sh uses for --box. A host name: NOT settable from the control plane (set it in env/global.env).",
+      "settable": false
+    },
+    {
+      "env": "ONBOARD_STATIONS_LIB",
+      "type": "string",
+      "default": "",
+      "unit": null,
+      "zero_means": null,
+      "read_in": "bin/onboard-run.sh",
+      "note": "BH-7934.2 test seam: the station lib path. Empty = bin/lib/onboard-stations.sh. NOT settable from the control plane.",
+      "settable": false
+    },
+    {
+      "env": "ONBOARD_RUN_LIB_ONLY",
+      "type": "string",
+      "default": "",
+      "unit": null,
+      "zero_means": null,
+      "read_in": "bin/onboard-run.sh",
+      "note": "BH-7934.2 test seam: 1 = define obs_error_code and obs_smoke and run nothing. NOT settable from the control plane.",
+      "settable": false
+    },
+    {
+      "env": "ONBOARD_RUN_NOW",
+      "type": "string",
+      "default": "",
+      "unit": null,
+      "zero_means": null,
+      "read_in": "bin/onboard-run.sh",
+      "note": "BH-7934.2 test seam: epoch seconds the stale check uses instead of the clock. Only all-digit values are used. NOT settable from the control plane.",
+      "settable": false
+    }
+  ],
+  "stats": {
+    "cost_stage": null,
+    "cost_project_filter": null,
+    "lanes_row": false,
+    "log": "logs/onboard-run.log"
+  }
+}
