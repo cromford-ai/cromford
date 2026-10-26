@@ -1,0 +1,5 @@
+# state drain (BH-8443, C1 of #4159): daily, archive then delete the top-level state/ entries that
+# no deployed code names (bin/, catalog/, the box crontab), that no catalog/state-paths.json row lists,
+# and that nothing has written for STATE_DRAIN_MIN_IDLE_DAYS (30). Dry-run first: STATE_DRAIN_DRY_RUN
+# defaults to 1. Knobs on the state-drain lane. Off via flags/lane-off-state-drain.
+37 4 * * * /root/harness/bin/state-drain.sh >/dev/null 2>&1

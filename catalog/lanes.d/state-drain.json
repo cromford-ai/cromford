@@ -1,0 +1,133 @@
+{
+  "id": "state-drain",
+  "name": "state/ drain (daily, dry-run first)",
+  "scope": "box",
+  "script": "bin/state-drain.sh",
+  "cadence": "37 4 * * *",
+  "boxes": [
+    "project-4",
+    "hub",
+    "project-6",
+    "project-6-os",
+    "project-1",
+    "project-3",
+    "project-9",
+    "small",
+    "project-2",
+    "project-5"
+  ],
+  "switch": {
+    "kind": "flag",
+    "name": "lane-off-state-drain"
+  },
+  "wired": true,
+  "knobs": [
+    {
+      "env": "HARNESS_ROOT",
+      "type": "string",
+      "default": "",
+      "zero_means": null,
+      "read_in": "bin/state-drain.sh",
+      "note": "no static default — the script computes it (${HARNESS:-/root/harness}). Read by bin/state-drain.sh as ${HARNESS_ROOT:-${HARNESS:-/root/harness}}. A test seam for BH-8443's state drain; NOT settable from the control plane — it is a path a root lane deletes under or reads, so only env/global.env on the box moves it.",
+      "settable": false
+    },
+    {
+      "env": "STATE_DRAIN_DRY_RUN",
+      "type": "int",
+      "default": 1,
+      "min": 0,
+      "max": 1,
+      "zero_means": "off",
+      "read_in": "bin/state-drain.sh",
+      "note": "BH-8443: 1 (the default, dry-run first) makes bin/state-drain.sh log would-drain lines and write its ledger row, and delete nothing. 0 = a real run: each drained state/ entry is archived to archive/state-drain/<stamp>/<name>.tgz, proven readable, then removed. Read a dry run in logs/state-drain.log before setting 0. Any other value refuses the run (log line, ledger row refused, warn state-drain:refused-<host>)."
+    },
+    {
+      "env": "STATE_DRAIN_MIN_IDLE_DAYS",
+      "type": "int",
+      "default": 30,
+      "min": 7,
+      "zero_means": null,
+      "read_in": "bin/state-drain.sh",
+      "note": "BH-8443: days since the NEWEST write anywhere inside a top-level state/ entry before bin/state-drain.sh may drain it. Daily and weekly lanes write far inside it. Not a whole number at or over 7 refuses the run."
+    },
+    {
+      "env": "STATE_DRAIN_ARCHIVE_KEEP_DAYS",
+      "type": "int",
+      "default": 90,
+      "min": 7,
+      "zero_means": null,
+      "read_in": "bin/state-drain.sh",
+      "note": "BH-8443: days bin/state-drain.sh keeps an archive run dir (archive/state-drain/<stamp>/) before a real run removes it: the window to restore a wrong drain. Not a whole number at or over 7 refuses the run."
+    },
+    {
+      "env": "STATE_DRAIN_MAX_PER_RUN",
+      "type": "int",
+      "default": 20,
+      "min": 1,
+      "max": 500,
+      "zero_means": null,
+      "read_in": "bin/state-drain.sh",
+      "note": "BH-8443: the most state/ entries one real run of bin/state-drain.sh drains; the rest are counted left= and drain on the next run. Bounds one bad run's reach. Outside 1..500 refuses the run."
+    },
+    {
+      "env": "STATE_DRAIN_SCAN_TIMEOUT_S",
+      "type": "int",
+      "default": 60,
+      "min": 5,
+      "zero_means": null,
+      "read_in": "bin/state-drain.sh",
+      "note": "BH-8443: seconds bin/state-drain.sh may spend reading the newest mtime inside one state/ entry; an entry not read in time is kept and counted unreadable=. Under 5 refuses the run."
+    },
+    {
+      "env": "STATE_DRAIN_STATE_DIR",
+      "type": "string",
+      "default": "",
+      "zero_means": null,
+      "read_in": "bin/state-drain.sh",
+      "note": "no static default — the script computes it ($HARNESS_ROOT/state). Read by bin/state-drain.sh as ${STATE_DRAIN_STATE_DIR:-...}. A test seam for BH-8443's state drain; NOT settable from the control plane — it is a path a root lane deletes under or reads, so only env/global.env on the box moves it.",
+      "settable": false
+    },
+    {
+      "env": "STATE_DRAIN_ARCHIVE_DIR",
+      "type": "string",
+      "default": "",
+      "zero_means": null,
+      "read_in": "bin/state-drain.sh",
+      "note": "no static default — the script computes it ($HARNESS_ROOT/archive/state-drain). Read by bin/state-drain.sh as ${STATE_DRAIN_ARCHIVE_DIR:-...}. A test seam for BH-8443's state drain; NOT settable from the control plane — it is a path a root lane deletes under or reads, so only env/global.env on the box moves it.",
+      "settable": false
+    },
+    {
+      "env": "STATE_DRAIN_CRONTAB_FILE",
+      "type": "string",
+      "default": "",
+      "zero_means": null,
+      "read_in": "bin/state-drain.sh",
+      "note": "Empty = bin/state-drain.sh reads crontab -l and /etc/cron.d/* into its reference corpus; a file here is read instead. A test seam for BH-8443's state drain; NOT settable from the control plane — it is a path a root lane deletes under or reads, so only env/global.env on the box moves it.",
+      "settable": false
+    },
+    {
+      "env": "STATE_DRAIN_NOW",
+      "type": "string",
+      "default": "",
+      "zero_means": null,
+      "read_in": "bin/state-drain.sh",
+      "note": "no static default — the script computes it ($(date +%s)). Read by bin/state-drain.sh as ${STATE_DRAIN_NOW:-...}. A test seam for BH-8443's state drain; NOT settable from the control plane — it is a clock a root lane uses, so only env/global.env on the box moves it.",
+      "settable": false
+    },
+    {
+      "env": "HARNESS_TEST_SANDBOX",
+      "type": "string",
+      "default": "",
+      "zero_means": null,
+      "read_in": "bin/state-drain.sh",
+      "note": "Test seam gate: when this is 1 and STATE_DRAIN_STATE_DIR is unset, bin/state-drain.sh skips the run with a log line, so a suite never drains the real state dir. Never set on a box, and NOT settable from the control plane. BH-8443.",
+      "settable": false
+    }
+  ],
+  "stats": {
+    "cost_stage": null,
+    "cost_project_filter": null,
+    "lanes_row": false,
+    "log": "logs/state-drain.log"
+  }
+}

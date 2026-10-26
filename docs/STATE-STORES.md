@@ -133,10 +133,40 @@ New state that other boxes need is a row: a jobs-worker table or ledger
 
 ## Not drained yet
 
-No rollout family has 0 raw writers today, so no `state/` directory is deleted
-on any box. The drain lane (C1 of #4159) deletes a family's directory only
-when the family has 0 writers in `bin/`. It runs dry-run first, and it archives
-before it deletes.
+No rollout family has 0 raw writers today, so the drain lane deletes none of
+them. The drain lane is `bin/state-drain.sh` (C1 of #4159, BH-8443). It runs
+daily on every board box and the hub. For each top-level `state/` entry, in
+name order, it keeps the entry when:
+
+1. the entry is a `cache` or `box-local` path of `catalog/state-paths.json`, or
+   `gh-policy-cache` (`allowlisted`);
+2. the entry is any other path of that catalog, a `rows` family (`catalog`);
+3. the entry is a symlink, socket or FIFO, or is on another mount (`link`);
+4. a key of its name is a fixed string in the deployed `bin/`, `catalog/` or
+   the box crontab (`referenced`). The keys are the name, the name with
+   `.tmp`/`.new`/`.prev`/`.lock`/`.err` and mktemp suffixes removed, the head
+   before the first `.` (4 chars or more) and the tail from the first `.` (5
+   chars or more, so `.gate-meta`);
+5. something inside it was written in the last `STATE_DRAIN_MIN_IDLE_DAYS`
+   (30) days, or its age could not be read (`fresh`, `unreadable`).
+
+Any other entry is drained. The writer census is not the delete test: it does
+not see a path built in a function (`state/alerts`), so a 0 count there is
+not proof. A `rows` family drains only after a PR removes its catalog row.
+
+`STATE_DRAIN_DRY_RUN` defaults to 1, so a run logs `would-drain` lines and
+deletes nothing. A real run archives each drained entry to
+`archive/state-drain/<stamp>/<name>.tgz`, reads the archive back, and then
+removes the entry. Archives older than `STATE_DRAIN_ARCHIVE_KEEP_DAYS` (90)
+are pruned. One run drains at most `STATE_DRAIN_MAX_PER_RUN` (20) entries.
+Read a dry run in `logs/state-drain.log` before you set
+`lane.state-drain.state_drain_dry_run` to 0.
+
+The hub observable is the count of files under `state/` whose first segment
+is not allowlisted. `bin/state-drain.sh --report` prints those files, and each
+run writes the count as `unallowlisted_files=<n>` in `logs/state-drain.log`
+and in the `state_drain` ledger row. The count is above 0 until the rollout
+families below lose their writers and their catalog rows.
 
 | Family | Raw writers left |
 |---|---|
