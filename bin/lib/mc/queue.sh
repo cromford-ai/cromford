@@ -1333,6 +1333,28 @@ mc_enqueue_mergify() {
     command -v mc_log >/dev/null 2>&1 && mc_log "${vserr:-vs_publish failed on $slug@${head:0:12}} — $url"
     mc_status_unpublished_alert "$slug" "$url" "$vserr"
   fi
+  # >>> stale lead review (BH-8337)
+  # This publish is the second lead-verdict success publisher (bin/lead-verdict.sh
+  # post is the first). The lane's own CHANGES_REQUESTED review on an older head
+  # still counts for #changes-requested-reviews-by=0, so it is dismissed here,
+  # after a success publish and BEFORE the label (#8278 waited for a person).
+  # Best effort: nothing on stdout (the rc 3/4 reason) or stderr, one conductor
+  # log line per review, the rc never changes.
+  if command -v vs_publish >/dev/null 2>&1 && [ -z "$vsnote" ]; then
+    command -v lsr_dismiss_on_enqueue >/dev/null 2>&1 \
+      || { [ -r "${BASH_SOURCE[0]%/*}/../lead-stale-review.sh" ] && . "${BASH_SOURCE[0]%/*}/../lead-stale-review.sh"; }
+    if command -v lsr_dismiss_on_enqueue >/dev/null 2>&1; then
+      local lsrout lsrline
+      if lsrout=$(mktemp "${TMPDIR:-/tmp}/mc-lsr.XXXXXX" 2>/dev/null); then
+        lsr_dismiss_on_enqueue "$slug" "$(mc_num_of_url "$url")" "$head" "$url" > "$lsrout" 2>/dev/null || true
+        while IFS= read -r lsrline; do
+          [ -n "$lsrline" ] && command -v mc_log >/dev/null 2>&1 && mc_log "$lsrline"
+        done < "$lsrout"
+        rm -f "$lsrout"
+      fi
+    fi
+  fi
+  # <<< stale lead review (BH-8337)
   # >>> queue partition scopes (BH-4979)
   # The PR's impact lane (bin/lib/queue-partition.sh): logged as a PARTITION
   # line, uploaded as Mergify scopes in enforce mode, BEFORE the label. rc 3 is

@@ -50,6 +50,18 @@
 #        rc 1 = the read failed or a dismissal was refused: the caller retries.
 #        Run it as a plain command (`> file`), never in $( ), so GH_REST_STATUS
 #        and the LSR_* counters reach the caller.
+#   lsr_dismiss_on_enqueue <repo> <pr> <head> <pr-url>
+#        BH-8337: the conductor's publish (mc_enqueue_mergify) is the second
+#        lead-verdict success publisher; it calls this after a success publish
+#        and before the queue label. Mode merge (other heads only). The verdict
+#        word and row come from job_verdict (`job:<id>`) when it answers, else
+#        MERGE / conductor-enqueue; a BLOCK word dismisses nothing. Runs under
+#        the App token. Shares bin/lead-verdict.sh's clean flag
+#        (state/lead-stale-review/clean-<repo>-<pr>-<head>): a flagged head
+#        reads nothing, a clean pass writes it. Prints one line per review:
+#        `<repo>#<pr> dismissed|NOT dismissed <id> <old12> ... (head <S12>,
+#        <word>, verdict row <ref>)`, or one line when the reviews are
+#        unreadable. Always rc 0. MC_DISMISS_STALE_LEAD=0 turns it off.
 #   lsr_sweep <repo> [--dry-run]
 #        the one-time sweep: every open PR whose head carries a green
 #        lead-verdict status and a stale own lead review. Prints one line per
@@ -131,6 +143,36 @@ lsr_dismiss_stale() { # lsr_dismiss_stale <repo> <pr> <head> <verdict> <row-ref>
   done < "$f.ids"
   rm -f "$f" "$f.ids"
   [ "$LSR_FAILED" = 0 ]
+}
+
+lsr_dismiss_on_enqueue() { # lsr_dismiss_on_enqueue <repo> <pr> <head> <pr-url>
+  local repo="$1" pr="$2" head="$3" url="${4:-}" root flag out lv word=MERGE ref=conductor-enqueue jid rc=0 line
+  local GH_TOKEN="${GH_TOKEN:-}"
+  [ "${MC_DISMISS_STALE_LEAD:-1}" = 0 ] && return 0
+  command -v gh_rest >/dev/null 2>&1 || return 0
+  root="${HARNESS:-${MC_H:-}}"
+  flag="$root/state/lead-stale-review/clean-$(printf '%s' "$repo" | tr 'A-Z/' 'a-z_')-$pr-$head"
+  [ -n "$root" ] && [ -e "$flag" ] && return 0
+  if [ -n "$url" ] && command -v job_verdict >/dev/null 2>&1 && lv=$(job_verdict "$url" 2>/dev/null) && [ -n "$lv" ]; then
+    word=$(printf '%s' "$lv" | cut -f1); jid=$(printf '%s' "$lv" | cut -f5)
+    [ -n "$word" ] || word=MERGE
+    case "$jid" in ''|-) ;; *) ref="job:$jid" ;; esac
+  fi
+  [ "$word" = BLOCK ] && return 0
+  out=$(mktemp "${TMPDIR:-/tmp}/lead-stale-review-e.XXXXXX") || return 0
+  command -v gh_auth_for >/dev/null 2>&1 && { gh_auth_for "$repo" || true; }
+  lsr_dismiss_stale "$repo" "$pr" "$head" "$word" "$ref" > "$out" || rc=$?
+  while read -r line; do
+    case "$line" in failed\ *) line="NOT dismissed ${line#failed }" ;; esac
+    [ -n "$line" ] && printf '%s#%s %s (head %s, %s, verdict row %s)\n' "$repo" "$pr" "$line" "${head:0:12}" "$word" "$ref"
+  done < "$out"
+  if [ "$rc" = 0 ]; then
+    [ -n "$root" ] && mkdir -p "${flag%/*}" 2>/dev/null && : > "$flag" 2>/dev/null
+  elif [ ! -s "$out" ]; then
+    printf '%s#%s stale lead reviews NOT dismissed: the reviews were unreadable (HTTP %s); the next enqueue of %s retries\n' "$repo" "$pr" "${GH_REST_STATUS:-000}" "${head:0:12}"
+  fi
+  rm -f "$out"
+  return 0
 }
 
 lsr_sweep() { # lsr_sweep <repo> [--dry-run]
