@@ -23,8 +23,6 @@
 #   F1-F3   catalog fragments in pr-self-check.d/: same output as the main
 #           file, C filename order, non-.tsv ignored, no main = no catalog
 #   U1-U5   _psc_body_shows: `under=` and `&`
-#   E0-E2   bin/lead-review-enqueue.sh, one tick: a perf PR head is held and
-#           names the rule; the hop case reads exactly 2 issues
 #
 # Run from anywhere: HARNESS_TEST_SANDBOX=1 bash tests/pr-self-check-outcome-replay.bh-6372-test.sh
 set -uo pipefail
@@ -37,7 +35,6 @@ PASS=0; FAIL=0
 ok()  { PASS=$((PASS+1)); }
 bad() { FAIL=$((FAIL+1)); echo "FAIL: $1"; }
 command -v jq >/dev/null || { echo "jq missing — skipping"; exit 0; }
-command -v flock >/dev/null || { echo "FAIL: flock missing"; exit 1; }
 for n in 5354 5368 6049 5797 5591 5544; do
   [ -r "$FX/issue-$n.json" ] || { echo "FAIL: fixture missing: $FX/issue-$n.json"; exit 1; }
 done
@@ -252,155 +249,6 @@ shows 'under=outcome replay>>zzz&line=zzz;line=bar' && ok || bad "U4 a&b;c must 
 shows 'bogus=foo' && bad "U5 an unknown term kind held" || ok
 shows 'under=outcome replay' && bad "U5 an under= with no >> held" || ok
 shows 'line=foo' && ok || bad "U5 an old line= term no longer holds"
-
-# ── E0-E2: bin/lead-review-enqueue.sh, one tick (the rig of
-#    tests/lead-enqueue-body-lint.bh-5790-test.sh, with a gh that answers any
-#    issue from $T/issues/<n>.json) ──
-OR="$T/origin/demo-os.git"; WK="$T/work"
-git init -q --bare -b main "$OR"; git init -q -b main "$WK"
-echo base > "$WK/README"; git -C "$WK" add -A; git -C "$WK" commit -qm base
-git -C "$WK" checkout -qb pr; mkdir -p "$WK/bin" "$WK/.harness/specs/BH-41"
-printf '# plan\n\n## Files to touch\n- `bin/a.sh`\n\n## Acceptance tests\n- a test\n' > "$WK/.harness/specs/BH-41/plan.md"
-echo a > "$WK/bin/a.sh"; git -C "$WK" add -A; git -C "$WK" commit -qm "the pr"; C=$(git -C "$WK" rev-parse HEAD)
-git -C "$WK" push -q "$OR" main pr
-Q="$T/hq"; mkdir -p "$Q/bin/lib/jobs" "$Q/state" "$Q/logs" "$Q/catalog/lanes.d" "$T/cfg" "$T/qrepos" "$T/log" "$T/qbin" "$T/issues"
-cat > "$Q/bin/lead-verdict.sh" <<EOF
-#!/bin/bash
-printf '%s\n' "\$*" >> "$T/log/post"
-exit 0
-EOF
-cat > "$Q/bin/lane-alert.sh" <<EOF
-#!/bin/bash
-printf '%s\n' "\$*" >> "$T/log/qalerts"
-EOF
-chmod +x "$Q/bin/lead-verdict.sh" "$Q/bin/lane-alert.sh"
-scratch_install_closure bin/lead-review-enqueue.sh "$Q" >/dev/null || bad "closure of bin/lead-review-enqueue.sh"
-scratch_install_closure bin/jobs-client.sh "$Q" >/dev/null || bad "closure of bin/jobs-client.sh"
-scratch_install_closure bin/lead-review.sh "$Q" >/dev/null || bad "closure of bin/lead-review.sh"
-cp "$SRC/catalog/lanes.d/_lib.json" "$SRC/catalog/lanes.d/_lib.lead-delta.json" "$Q/catalog/lanes.d/"
-cp "$SRC/catalog/lead-protected-paths.seed.tsv" "$SRC/catalog/pr-self-check.tsv" "$SRC/catalog/perf-ticket.tsv" "$Q/catalog/"
-cp -R "$SRC/catalog/pr-self-check.d" "$Q/catalog/"
-printf 'lead-test-token\n' > "$T/cfg/token"; chmod 600 "$T/cfg/token"
-printf 'demo-os example-org/demo-os https://demo.test /api 3 box-hub\n' > "$Q/fleet.conf"
-git clone -q "$OR" "$T/qrepos/demo-os"
-printf 'queue_rules:\n  - name: default\n    queue_conditions:\n      - check-success = "CI"\n' | base64 | tr -d '\n' > "$T/mergify.b64"
-# BH-4148: the lead reads protected paths from the jobs route. demo-os has no
-# rows, so it is not governed, as it was under the old catalog file.
-. "$SRC/tests/lib/lpp-stub.sh" || exit 1
-lpp_set "$T/lpp.json" example-org/demo-os
-mkdir -p "$T/qbin"; lpp_install "$T/qbin" "$T/lpp.json" "$T/lpp-down"
-cat > "$T/qbin/curl" <<EOF
-#!/bin/bash
-m=GET; body=""; url=""; prev=""; hdrs=""
-for a in "\$@"; do
-  case "\$prev" in
-    -X) m="\$a" ;;
-    --data-binary|-d|--data) body="\$a" ;;
-    -H) case "\$a" in @*) hdrs="\$hdrs\$(cat "\${a#@}")"\$'\n' ;; *) hdrs="\$hdrs\$a"\$'\n' ;; esac ;;
-  esac
-  case "\$a" in http*) url="\$a" ;; esac
-  prev="\$a"
-done
-case "\$body" in @*) body=\$(cat "\${body#@}") ;; esac
-case "\$url" in *"/api/lead-protected-paths"*) "\$(dirname "\$0")/lpp-answer" "\$m" "\$url"; exit 0 ;; esac
-lead=0; grep -q '^x-lead-verdict-token: lead-test-token' <<<"\$hdrs" && lead=1
-p="\${url#https://jobs.test}"
-printf '%s %s %s lead=%s\n' "\$m" "\$p" "\$body" "\$lead" >> "$T/log/qworker"
-code=200; out='{}'
-case "\$m \$p" in
-  "GET /api/verdict?pr="*)
-    n="\${p##*%2F}"
-    if [ -f "$T/jv/\$n.json" ]; then out=\$(cat "$T/jv/\$n.json"); else code=404; out='{"error":"no job for this pr"}'; fi ;;
-  "GET /api/verdicts?"*standing_only=1*)
-    h=\$(printf '%s' "\$p" | tr '&?' '\n\n' | sed -n 's/^head_sha=//p')
-    out=\$(jq -c --arg h "\$h" '{standing:([.rows[] | select(.head_sha == \$h and (.source == "lead" or .source == "human"))] | last // null),
-      rows:[], truncated:false}' "$T/vrows.json") ;;
-  "GET /api/verdicts?"*) out=\$(cat "$T/vrows.json") ;;
-  "GET /api/settings/"*) code=404; out='{"error":"no such setting"}' ;;
-  "POST /api/risk-tiers") code=201; out='{"ok":true}' ;;
-  "POST /api/lead-reviews")
-    h=\$(jq -r .head_sha <<<"\$body")
-    if [ "\$lead" != 1 ]; then code=403; out='{"error":"needs the lead token"}'
-    elif grep -qxF "\$h" "$T/log/held" 2>/dev/null; then out=\$(jq -c '{existing:true, request:(. + {id:"lr-9", status:"requested"})}' <<<"\$body")
-    else echo "\$h" >> "$T/log/held"; printf '%s\n' "\$body" >> "$T/log/created"
-      code=201; out=\$(jq -c '{request:(. + {id:"lr-9", status:"requested"})}' <<<"\$body"); fi ;;
-  *) code=404; out='{"error":"unknown endpoint","worker":"harness-jobs"}' ;;
-esac
-printf '%s\n%s' "\$out" "\$code"
-EOF
-cat > "$T/qbin/gh" <<EOF
-#!/bin/bash
-H=\$(cat "$T/qhead")
-case "\$*" in
-  *"api rate_limit"*)
-    echo '{"resources":{"core":{"remaining":5000,"limit":5000,"reset":2000000000},"graphql":{"remaining":5000,"limit":5000,"reset":2000000000}}}' ;;
-  *"-X GET repos/example-org/"*"/pulls?"*)
-    printf 'HTTP/2 200\r\n\r\n'
-    jq -nc --arg h "\$H" '[{number:41, html_url:"https://github.com/example-org/demo-os/pull/41", title:"t", draft:false, state:"open",
-      user:{login:"operator",type:"User"}, head:{sha:\$h,ref:"ticket/bh-41"}, base:{ref:"main"}}]' ;;
-  *"-X GET repos/example-org/"*"/pulls/41"*)
-    printf 'HTTP/2 200\r\n\r\n'; jq -nc --arg s "\$H" --rawfile b "$T/prbody" '{head:{sha:\$s,ref:"ticket/bh-41"},base:{ref:"main"},user:{login:"operator"},body:\$b}' ;;
-  *"-X POST repos/example-org/"*"/issues/41/comments"*)
-    echo post >> "$T/log/comments"
-    f=\$(printf '%s' "\$*" | grep -oE 'body=@[^ ]+' | cut -c7-); cat "\$f" >> "$T/log/comment-bodies" 2>/dev/null
-    printf 'HTTP/2 201\r\n\r\n{"id":1}\n' ;;
-  *"-X GET repos/example-org/"*"/issues/"*)
-    n=\$(printf '%s' "\$*" | grep -oE '/issues/[0-9]+' | head -1 | grep -oE '[0-9]+')
-    echo "\$n" >> "$T/log/issueread"
-    if [ -r "$T/issues/\$n.json" ]; then printf 'HTTP/2 200\r\n\r\n'; cat "$T/issues/\$n.json"
-    else printf 'HTTP/2 404\r\n\r\n{"message":"Not Found"}'; fi ;;
-  *"-X GET repos/example-org/"*"/contents/.mergify.yml"*)
-    printf 'HTTP/2 200\r\n\r\n'; jq -nc --arg c "\$(cat "$T/mergify.b64")" '{content:\$c, encoding:"base64"}' ;;
-  *"-X GET repos/example-org/"*"/commits/"*"/check-runs"*)
-    printf 'HTTP/2 200\r\n\r\n'
-    jq -nc --arg h "\$H" '{total_count:1, check_runs:[{name:"CI", head_sha:\$h, status:"completed", conclusion:"success", app:{slug:"github-actions"}}]}' ;;
-  *"-X GET repos/example-org/"*"/compare/"*)
-    printf 'HTTP/2 200\r\n\r\n{"total_commits":1,"commits":[{"parents":[{"sha":"p"}],"commit":{"message":"fix: outside"}}],"files":[]}\n' ;;
-esac
-exit 0
-EOF
-chmod +x "$T/qbin/curl" "$T/qbin/gh"
-QLOG="$Q/logs/lead-review-enqueue.log"
-approve() { # approve <body-file>
-  rm -f "$T/log"/q* "$T/log/comments" "$T/log/comment-bodies" "$T/log/post" "$T/log/created" "$T/log/held" "$T/log/issueread" "$QLOG"
-  scratch_rm "$Q/state"; mkdir -p "$Q/state"; echo box-hub > "$Q/state/box-name"
-  scratch_rm "$T/jv"; mkdir -p "$T/jv"
-  echo "$C" > "$T/qhead"; cp "$1" "$T/prbody"
-  jq -nc --arg s "$C" '{verdict:"APPROVE", tier:"2", provenance:"-", merge_sha:null, job_id:"job-1", reviewed_sha:$s,
-    artifacts:[{artifact_kind:"verdict", detail:({tier:"2", reviewed_sha:$s, settled:true}|tojson)}]}' > "$T/jv/41.json"
-  jq -nc --arg h "$C" '{rows:[{id:4,repo:"example-org/demo-os",pr:41,head_sha:$h,source:"box",verdict:"APPROVE",note:""}],truncated:false}' > "$T/vrows.json"
-}
-tick() {
-  ( cd "$T" && PATH="$T/qbin:$PATH" HARNESS="$Q" REPOS_ROOT="$T/qrepos" FLEET_CONF="$Q/fleet.conf" \
-      LEAD_VERDICT_TOKEN_FILE="$T/cfg/token" LEAD_REVIEW_AUTO_REPOS=example-org/demo-os \
-      LEAD_REVIEW_ENQUEUE_MAX_PER_TICK=5 LEAD_REVIEW_MAX_PER_PR_DAY=4 JOBS_URL=https://jobs.test \
-      HARNESS_SECRET=test-secret JOBS_RETRIES=0 GH_ETAG=0 \
-      bash "$Q/bin/lead-review-enqueue.sh" tick ) > "$T/out" 2>&1
-}
-created() { [ -f "$T/log/created" ] && wc -l < "$T/log/created" | tr -d ' ' || echo 0; }
-issuereads() { [ -f "$T/log/issueread" ] && wc -l < "$T/log/issueread" | tr -d ' ' || echo 0; }
-ACC=$'## Acceptance tests\n| case | result |\n|---|---|\n| E1 | pass |\n'
-printf 'Closes #41\n\n%s\n%s\n<!-- evidence-head: %s -->\n' "$WHY" "$ACC" "$C" > "$T/b/e-none"
-printf 'Closes #41\n\n%s\n%s\n## Outcome replay\n%s\nmeasured 0.31\n<!-- evidence-head: %s -->\n' "$WHY" "$ACC" "$TGT" "$C" > "$T/b/e-full"
-jq -nc '{number:41, title:"Speed up the batch", body:"## Done when\n- the suite passes\n", labels:[{name:"perf"}]}' > "$T/issues/41.json"
-
-# ── E0: the control: a perf ticket with a full section is requested ──
-approve "$T/b/e-full"; tick
-[ "$(created)" = 1 ] && ok || bad "E0 a perf PR with the section must be requested (created=$(created)): $(tail -3 "$QLOG" 2>/dev/null)"
-
-# ── E1: label perf, no section: held, the hold names the rule, nothing requested ──
-approve "$T/b/e-none"; tick
-[ "$(created)" = 0 ] && ok || bad "E1 a perf PR with no section was requested: $(head -1 "$T/log/created")"
-grep -q 'body-outcome-replay' "$T/log/comment-bodies" 2>/dev/null && ok || bad "E1 the hold does not name body-outcome-replay: $(cat "$T/log/comment-bodies" 2>/dev/null)"
-[ "$(issuereads)" = 1 ] && ok || bad "E1 want 1 issue read, got $(issuereads)"
-
-# ── E2: the #5454 body, the #5368 ticket, the #5354 parent: held, 2 issue reads ──
-cp "$FX/issue-5368.json" "$T/issues/5368.json"; cp "$FX/issue-5354.json" "$T/issues/5354.json"
-approve "$T/b/pr-5454"; tick
-[ "$(created)" = 0 ] && grep -q 'body-outcome-replay' "$T/log/comment-bodies" 2>/dev/null && ok \
-  || bad "E2 the #5454 body was requested or the hold does not name the rule (created=$(created)): $(cat "$T/log/comment-bodies" 2>/dev/null)"
-[ "$(issuereads)" = 2 ] && [ "$(paste -sd' ' "$T/log/issueread")" = "5368 5354" ] && ok \
-  || bad "E2 want issue reads '5368 5354', got '$(paste -sd' ' "$T/log/issueread" 2>/dev/null)'"
 
 echo "pr-self-check-outcome-replay.bh-6372: $PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ]

@@ -15,8 +15,10 @@
 #       The body comes from lgs_pr_body (55-snapshot.sh), else a live gh_rest
 #       read. The clone fetches the base and the head only when it lacks one of
 #       them. The linked issue (Closes/Fixes/Resolves/Refs/Part of #N) is read
-#       once, for the body-* rules, and the title key (`BH-N: ...`) is the PR's
-#       own key (BH-6392).
+#       once: its body for the body-* rules, its title and labels for the perf
+#       trigger, and the repo and number for that trigger's one parent hop. A
+#       failed read leaves all of them empty. The title key (`BH-N: ...`) is
+#       the PR's own key (BH-6392).
 #   lgsc_hold <slug> <n> <head> <refusals>   the enqueue's hold, moved: the
 #       marker state/lead-review-enqueue/selfcheck-<slug_>-<n>-<h12> (first
 #       line = first-sight epoch), ONE PR comment per (head, body cksum) naming
@@ -39,7 +41,7 @@ declare -g LGSC_OUT="" LGSC_BODY=""
 _lgsc_safe() { printf '%s' "${1//\//_}" | tr -cd 'A-Za-z0-9._-'; }
 
 lgsc_run() {
-  local slug="$1" n="$2" head h12="${3:0:12}" root="${HARNESS:-${H:-}}" d safe out project repo bf tf tn tk base rc
+  local slug="$1" n="$2" head h12="${3:0:12}" root="${HARNESS:-${H:-}}" d safe out project repo bf tf ij tn tk base rc it il ir itn
   head=$(printf '%s' "$3" | tr 'A-F' 'a-f')
   LGSC_OUT=""; LGSC_BODY=""
   command -v lgk_load >/dev/null 2>&1 || return 2
@@ -79,11 +81,16 @@ lgsc_run() {
      || ! git -C "$repo" rev-parse -q --verify "origin/$base^{commit}" >/dev/null 2>&1; then
     git -C "$repo" fetch -q origin "$base" "$head" >/dev/null 2>&1 || return 2
   fi
-  tf="$d/psc-ticket-$safe-$n"; : > "$tf"
+  tf="$d/psc-ticket-$safe-$n"; : > "$tf"; ij="$d/psc-ticket-$safe-$n.json"; : > "$ij"; it=""; il=""; ir=""; itn=""
   tn=$(grep -oiE '(closes|fixes|resolves|refs|part of)[[:space:]]+#[0-9]+' "$LGSC_BODY" 2>/dev/null | head -1 | grep -oE '[0-9]+$')
-  [ -n "$tn" ] && gh_rest GET "repos/$slug/issues/$tn" 2>/dev/null | jq -r '.body // ""' > "$tf" 2>/dev/null
+  if [ -n "$tn" ] && gh_rest GET "repos/$slug/issues/$tn" > "$ij" 2>/dev/null; then
+    jq -r '.body // ""' "$ij" > "$tf" 2>/dev/null
+    it=$(jq -r '.title // ""' "$ij" 2>/dev/null); il=$(jq -r '[.labels[]?.name] | join(",")' "$ij" 2>/dev/null)
+    ir="$slug"; itn="$tn"
+  fi
   tk=$(jq -r '.title // ""' "$bf" 2>/dev/null | sed -nE 's/^([A-Za-z]+-[0-9]+(\.[0-9]+)*):.*/\1/p')
   PR_SELF_CHECK_CATALOG="${PR_SELF_CHECK_CATALOG:-$root/catalog/pr-self-check.tsv}" PSC_PR_KEY="$tk" \
+    PSC_TICKET_TITLE="$it" PSC_TICKET_LABELS="$il" PSC_TICKET_REPO="$ir" PSC_TICKET_N="$itn" \
     PSC_PR_REPO="$slug" PSC_PR_N="$n" PSC_PROJECT="$project" \
     psc_check "$repo" "origin/$base" "$head" "$LGSC_BODY" "$tf" > "$out" 2>/dev/null
   rc=$?
