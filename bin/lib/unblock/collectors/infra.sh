@@ -95,7 +95,7 @@ unblock_infra_src() {
 _unblock_infra_unreadable() {
   jq -nc --arg s "$1" --arg p "${2:-}" --argjson now "$_UBI_NOW" '($now | todate) as $at
     | {family: "infra", kind: "source-unreadable", project: (if $p == "" then null else $p end),
-       subject: ("source:" + $s + (if $p == "" then "" else ":" + $p end)), subject_kind: "source",
+       subject: ("source:" + $s + (if $p == "" then "" else ":" + $p end)), subject_kind: "lane",
        source: $s, stall_at: $at, day: $at[0:10], truncated: false, unknown: [$s]}'
 }
 
@@ -212,7 +212,7 @@ _unblock_infra_pools() {
       select((.queued | type) == "number" and (.running | type) == "number" and .queued > 4 * .running
              and ((.last_tick.stop // "") | IN("max-ticks", "cap", "shed")))
       | ((.last_tick.at // "") | if test("^[0-9]{4}-[0-9]{2}-[0-9]{2}T") then . else ($now | todate) end) as $at
-      | {family: "infra", kind: "pool-starved", project: $p, subject: ("pool:" + $p), subject_kind: "pool",
+      | {family: "infra", kind: "pool-starved", project: $p, subject: ("pool:" + $p), subject_kind: "lane",
          queued, running, stop: .last_tick.stop, cap: .last_tick.cap, stop_knob: .last_tick.knob,
          stall_at: $at, day: ($now | todate)[0:10], truncated: false}' <<<"$st" 2>/dev/null)
     if [ -n "$base" ]; then
@@ -241,7 +241,7 @@ _unblock_infra_pools() {
       (.respawns // [])[] | select(type == "object" and (.key | type) == "string" and (.count | type) == "number"
                                    and .count > $max and .last_result == "PLAN_BLOCKED")
       | ((.last_at // "") | if test("^[0-9]{4}-[0-9]{2}-[0-9]{2}T") then . else ($now | todate) end) as $at
-      | {family: "infra", kind: "respawn-loop", project: $p, subject: ("respawn:" + $p + ":" + .key), subject_kind: "ticket",
+      | {family: "infra", kind: "respawn-loop", project: $p, subject: ("respawn:" + $p + ":" + .key), subject_kind: "build",
          respawn_key: .key, respawn_count: .count, last_result, respawn_max_day: $max,
          stall_at: $at, day: ($now | todate)[0:10], truncated: false}' <<<"$st" 2>/dev/null)
   done
