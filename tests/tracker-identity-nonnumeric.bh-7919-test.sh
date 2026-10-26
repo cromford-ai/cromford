@@ -174,8 +174,23 @@ eq "P4 escalate_block linear: no issue comment" "$(sink)" ""
 drive gh TK-12 '. "$T/esc.sh"; escalate_block test-tamper detail'
 eq "P4 escalate_block github: comments on issue 12" "$(sink)" "comment o/gh 12"
 
-drive ln CRO-12 'SELF="$HARNESS/bin"; RD_ON=1; . "$T/closures.sh"; issue_closures ln CRO-12 12; echo "rc=$?" >> "$SINK"'
-eq "P5 issue_closures linear: no GitHub read, rc 1 (not an issues board)" "$(sink)" "rc=1"
+# The linear arm reads each KEY through tracker_read (BH-8449): a Linear curl
+# stub in $T/fb answers TrkIssue with a completed issue, and logs the id.
+cat > "$T/fb/curl" <<'SH'
+#!/bin/bash
+d=""; o=/dev/stdout; w=""
+while [ $# -gt 0 ]; do case "$1" in --data-binary|-d) d="${2#@}"; shift ;; -o) o="$2"; shift ;; -w) w="$2"; shift ;; esac; shift; done
+id=$(jq -r '.variables.id // ""' "$d" 2>/dev/null); op=$(jq -r .query "$d" 2>/dev/null | sed -nE '1s/^query ([A-Za-z]+).*/\1/p')
+echo "linear $op $id" >> "$SINK"
+printf '{"data":{"issue":{"identifier":"%s","title":"t","description":"","url":null,"state":{"name":"Done","type":"completed"},"labels":{"nodes":[]},"comments":{"nodes":[],"pageInfo":{"hasNextPage":false}}}}}' "$id" > "$o"
+[ -n "$w" ] && printf 200
+exit 0
+SH
+chmod +x "$T/fb/curl"
+drive ln CRO-12 'SELF="$HARNESS/bin"; RD_ON=1; . "$T/closures.sh"; issue_closures ln CRO-12 12; echo "rc=$?" >> "$SINK"; echo "out=$(issue_closures ln CRO-12 12)" >> "$SINK"'
+eq "P5 issue_closures linear: no GitHub read, one Linear read of CRO-12 (never 12), a completed CRO-12 printed" \
+  "$(sink)" "linear TrkIssue CRO-12|rc=0|linear TrkIssue CRO-12|out=CRO-12"
+rm -f "$T/fb/curl"
 drive gh TK-12 'SELF="$HARNESS/bin"; RD_ON=1; . "$T/closures.sh"; issue_closures gh TK-12 TS2-13'
 eq "P5 issue_closures github: reads issue 12 only" "$(sink)" "state o/gh 12"
 

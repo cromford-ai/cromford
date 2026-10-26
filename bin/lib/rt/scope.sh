@@ -89,6 +89,8 @@ command -v rq_lines >/dev/null 2>&1 || rq_lines() {
 
 inapp_released_lines() {
   local bp old new cap out closed sc gr idl
+  # A Jira or Linear project has no in-app board, whatever column 4 says.
+  _rts_trk_kind; [ -z "$_RTS_TK" ] || return 0
   bp=$("$HARNESS/bin/fleet-conf.sh" "$PROJECT" board_prefix 2>/dev/null) || bp=""
   [ -n "$bp" ] && [ "$bp" != "-" ] || return 0
   old="$HARNESS/state/$PROJECT.gate.json"
@@ -173,6 +175,31 @@ rt_stack_filter() {
 }
 # <<< stack launch filter
 
+# >>> tracker routing (BH-8449)
+# _rts_trk_kind — _RTS_TK is jira or linear when the project's tickets live
+# there, else empty. The gate's trigger rule (bin/triage-gate.sh): asked only
+# when the project env, which bin/run-triage.sh sourced, sets JIRA_BASE or
+# LINEAR_API_KEY, so a board or GitHub project pays no settings call. No env
+# key, no bin/lib/tracker.sh, or any other answer (a worker that did not
+# answer is the column-4 fallback) leaves it empty: today's paths.
+_rts_trk_kind() {
+  local f k=""
+  _RTS_TK=""
+  [ -n "${JIRA_BASE:-}" ] || [ -n "${LINEAR_API_KEY:-}" ] || return 0
+  if ! declare -F tracker_kind >/dev/null 2>&1; then
+    for f in "$(dirname "${BASH_SOURCE[0]}")/../tracker.sh" "${HARNESS:+$HARNESS/bin/lib/tracker.sh}"; do
+      # shellcheck source=/dev/null
+      [ -n "$f" ] && [ -r "$f" ] && { . "$f"; break; }
+    done
+  fi
+  declare -F tracker_kind >/dev/null 2>&1 || return 0
+  # The first call warms tracker_kind's per-process cache in this shell.
+  tracker_kind "$PROJECT" >/dev/null 2>&1 && k=$(tracker_kind "$PROJECT" 2>/dev/null)
+  case "$k" in jira|linear) _RTS_TK="$k" ;; esac
+  return 0
+}
+# <<< tracker routing
+
 # board_section: fetch live fingerprint into gate.pending + diff it. Sets
 # BOARD_OK=1 when the board state is KNOWN (diff printed, or verified
 # unchanged); BOARD_SEC carries the changed-tickets text (may be empty).
@@ -182,6 +209,20 @@ board_section() {
   "$HARNESS/bin/triage-gate.sh" "$PROJECT" --pending >/dev/null 2>&1 || return 0
   local d rc
   d=$("$HARNESS/bin/gate-diff.sh" "$PROJECT" 2>/dev/null); rc=$?
+  # JIRA AND LINEAR (BH-8449): the gate diff is the whole scope. The readers
+  # below read the project's GitHub repo or an in-app board, not its tracker,
+  # so none of them runs here until it reads the contract (C3 of #7920).
+  _rts_trk_kind
+  if [ -n "$_RTS_TK" ]; then
+    if [ "$rc" -eq 0 ]; then
+      BOARD_OK=1
+      BOARD_SEC="ALSO changed on the board since the last consumed tick (work these too — fetch their threads):
+$d"
+    elif [ "$rc" -eq 2 ]; then
+      BOARD_OK=1
+    fi
+    return 0
+  fi
   if [ "$rc" -eq 0 ]; then
     BOARD_OK=1
     # A ticket that just went OPEN -> CLOSED from outside a tick (a hand merge,

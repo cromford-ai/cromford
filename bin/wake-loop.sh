@@ -690,7 +690,8 @@ push_children() {
 }
 
 # issue_closures <project> <key>... — of the objects this wake named, the ones
-# that are CLOSED on GitHub right now.
+# that are CLOSED right now: on GitHub (the issue number), or on Jira or Linear
+# (the key, through tracker_read).
 #
 # THE ROW CANNOT TELL US. docs/EVENTS.md §3: the receiver keeps identifiers and
 # nothing else, on purpose — no state, no action, no "merged: true" — so an
@@ -703,15 +704,34 @@ issue_closures() {
   local p="$1" repo k n; shift
   [ "$RD_ON" = 1 ] || return 1
   command -v revdep_issue_state >/dev/null 2>&1 || return 1
-  # GitHub-Issues boards only, and the tracker seam is how we know
+  # GitHub Issues, Jira and Linear, and the tracker seam is how we know
   # (tracker_kind, bin/lib/tracker.sh, BH-7919): column 4 `-` is the lane
-  # bin/load-project.sh onboards that way, but a Linear or Jira project has it
-  # too. An in-app board has no Blocked-by convention for a closure to release
-  # anything through, so asking GitHub about its issues would be one round trip
-  # to learn nothing. The first call warms the per-process cache for the loop.
+  # bin/load-project.sh onboards as GitHub Issues, but a Linear or Jira project
+  # has it too. An in-app board has no Blocked-by convention for a closure to
+  # release anything through, so asking about its tickets would be one round
+  # trip to learn nothing. The first call warms the per-process cache for the
+  # loop.
   command -v tracker_kind >/dev/null 2>&1 || . "$SELF/lib/tracker.sh" 2>/dev/null || return 1
   tracker_kind "$p" >/dev/null 2>&1 || return 1
-  [ "$(tracker_kind "$p" 2>/dev/null)" = github-issues ] || return 1
+  case "$(tracker_kind "$p" 2>/dev/null)" in
+    github-issues) ;;
+    jira|linear)
+      # JIRA AND LINEAR (BH-8449): the key as the tracker spells it (CRO-12),
+      # read through the contract, whose `state` is open | closed. A bare
+      # number or any other shape is skipped with no read. The closed keys go
+      # to released_by, which still keeps digits only, so a closed Linear key
+      # releases nothing until bin/unblocked-children.sh reads the contract
+      # (C3 of #7920). A context that does not load is rc 1, the same answer
+      # as "not an issues board".
+      TRK_ERR=/dev/null tracker_context "$p" wake-loop 2>/dev/null || return 1
+      for k in "$@"; do
+        [[ "$k" =~ ^[A-Z][A-Z0-9_]{0,19}-[1-9][0-9]{0,8}$ ]] || continue
+        [ "$(TRK_ERR=/dev/null tracker_read "$k" 2>/dev/null | jq -r '.state // empty' 2>/dev/null)" = closed ] || continue
+        printf '%s\n' "$k"
+      done
+      return 0 ;;
+    *) return 1 ;;
+  esac
   repo=$("$SELF/fleet-conf.sh" "$p" repo 2>/dev/null) || return 1
   [ -n "$repo" ] || return 1
   for k in "$@"; do

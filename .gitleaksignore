@@ -52,6 +52,7 @@ tests/fixtures/unblock-act.bh-7726/corpus-20261019.json:generic-api-key:157
 tests/fixtures/unblock-act.bh-7726/corpus-20261019.json:generic-api-key:197
 tests/fixtures/unblock-act.bh-7726/corpus-20261019.json:generic-api-key:217
 tests/fly-pool-machine-pull.bh-7430-test.sh:generic-api-key:440
+tests/gate-trk-selfwrite.bh-8449-test.sh:generic-api-key:40
 tests/gh-app-ratchet-owner.bh-1984-test.sh:generic-api-key:120
 tests/gh-app-ratchet-owner.bh-1984-test.sh:generic-api-key:122
 tests/gh-app-ratchet-owner.bh-1984-test.sh:generic-api-key:135
@@ -114,6 +115,7 @@ tests/run-decompose-fresh-token-test.sh:generic-api-key:57
 tests/run-decompose-inapp-deps-test.sh:generic-api-key:50
 tests/run-decompose.bh-1340-test.sh:generic-api-key:72
 tests/scale-fakes.bh-7906-test.sh:generic-api-key:102
+tests/scope-trk-route.bh-8449-test.sh:generic-api-key:47
 tests/secret-literals-token-length.bh-1124-test.sh:github-app-token:59
 tests/spend-lane-push.bh-6174-test.sh:curl-auth-header:214
 tests/state-backup-lowpri.bh-6173-test.sh:generic-api-key:120
@@ -127,6 +129,7 @@ tests/transcript-scrub-test.sh:generic-api-key:30
 tests/transcript-scrub-test.sh:curl-auth-header:89
 tests/triage-intake-linear.bh-7920-test.sh:generic-api-key:35
 tests/unblock-card.bh-7725-test.sh:generic-api-key:141
+tests/webhook-to-triage-linear.bh-8449-test.sh:generic-api-key:44
 worker/jobs/test/ai-accounts.bh-7966.test.js:generic-api-key:16
 worker/jobs/test/alert-decisions.bh-6972.test.js:generic-api-key:20
 worker/jobs/test/alert-lines-resolved.bh-6892.test.js:generic-api-key:12

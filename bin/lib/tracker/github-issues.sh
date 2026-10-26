@@ -52,6 +52,7 @@ _trk_gh_fail() {
 _trk_gh_norm() {
   jq -c --slurpfile cs "$2" "{id: (.number | tostring), key: (\"#\" + (.number | tostring)),
       title: (.title // \"\"), body: (.body // \"\"), status: (.state // null),
+      state: (if .state == \"closed\" then \"closed\" else \"open\" end),
       labels: $_TRK_GH_LABELS, waitingOn: null, triageVerdict: null, url: (.html_url // null),
       comments: [(\$cs[0] // [])[] | {author: (.user.login // null), body: (.body // \"\"),
                  createdAt: (.created_at // null), internal: false}]}" "$1" 2>/dev/null

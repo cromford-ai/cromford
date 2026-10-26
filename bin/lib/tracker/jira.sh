@@ -294,7 +294,9 @@ trk_jira_read() {
     jq -c --slurpfile cs "$cmf" --arg wf "${TRK_JIRA_WAITING_FIELD:-}" --arg vf "${TRK_JIRA_VERDICT_FIELD:-}" \
         --arg site "${TRK_JIRA_SITE:-}" "$_TRK_JIRA_JQ"'
       {id: .key, key: .key, title: (.fields.summary // ""), body: ((.fields.description // "") | adf),
-       status: (.fields.status.name // null), labels: [(.fields.labels // [])[] | tostring],
+       status: (.fields.status.name // null),
+       state: (if .fields.status.statusCategory.key == "done" then "closed" else "open" end),
+       labels: [(.fields.labels // [])[] | tostring],
        waitingOn: fld($wf), triageVerdict: fld($vf), url: jurl($site; .key),
        comments: [$cs[0][] | {author: (.author.displayName // .author.accountId // null),
                               body: ((.body // "") | adf), createdAt: (.created // null),

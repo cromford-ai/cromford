@@ -54,13 +54,18 @@ _TRK_BOARD_ROW='(.ticket // .) | {id: (.id | tostring), key: (.key // null),
   triageVerdict: ((.triageVerdict // .triage_verdict) | if . == null or . == "" then null else tostring end),
   url: (.url // .href // null)}'
 
-# The three keys only a LIST row carries (bin/lib/tracker.sh): updatedAt from
-# lastActivityAt (else updatedAt), state closed for the closed words the gate's
-# keymap uses, commentCount only when the board sent a number.
+# `state` of one ticket (`.ticket // .`): closed for the closed words the
+# gate's keymap uses, else open. The list row and the read both use it, so the
+# two cannot disagree.
 # shellcheck disable=SC2016
+_TRK_BOARD_STATE='(((.status // "") | tostring | ascii_downcase) as $s
+          | if (["done","closed","cancelled","canceled","archived"] | index($s)) != null then "closed" else "open" end)'
+
+# The three keys only a LIST row carries (bin/lib/tracker.sh): updatedAt from
+# lastActivityAt (else updatedAt), state (above), commentCount only when the
+# board sent a number.
 _TRK_BOARD_LIST_KEYS='(.ticket // .) | {updatedAt: ((.lastActivityAt // .updatedAt) | trk_iso),
-  state: (((.status // "") | tostring | ascii_downcase) as $s
-          | if (["done","closed","cancelled","canceled","archived"] | index($s)) != null then "closed" else "open" end),
+  state: '"$_TRK_BOARD_STATE"',
   commentCount: (.commentCount | if type == "number" then . else null end)}'
 
 # trk_board_ticket_raw <id> — the ONE ticket GET, raw answer, curl's rc. Honours
@@ -85,7 +90,8 @@ trk_board_read() {
   local TRK_DRY=0 raw
   raw=$(trk_board_ticket_raw "${1:-}") || return 1
   printf '%s' "$raw" | jq -ce "select(((.ticket // .) | type) == \"object\" and ((.ticket // .) | has(\"id\")))
-    | . as \$r | ($_TRK_BOARD_ROW) + {body: ((\$r.ticket // \$r) | (.description // .body // \"\")),
+    | . as \$r | ($_TRK_BOARD_ROW) + {state: ((\$r.ticket // \$r) | $_TRK_BOARD_STATE),
+      body: ((\$r.ticket // \$r) | (.description // .body // \"\")),
       comments: [((\$r.comments // \$r.ticket.comments // [])[]? | {
         author: (.author | if type == \"object\" then (.name // .userId // null) elif type == \"string\" then . else null end),
         body: (.body // \"\"), createdAt: (.createdAt // .created_at // null), internal: (.isInternal == true)})]}" 2>/dev/null \

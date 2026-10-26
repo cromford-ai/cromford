@@ -52,8 +52,10 @@ tracker_contract_run() {
   # C2 read
   out=$(tracker_read "$TC_T"); rc=$?
   [ "$rc" = 0 ] && _tc_ok || _tc_bad "C2 read $TC_T rc=$rc"
-  [ "$(printf '%s' "$out" | jq -c 'keys' 2>/dev/null)" = '["body","comments","id","key","labels","status","title","triageVerdict","url","waitingOn"]' ] \
-    && _tc_ok || _tc_bad "C2 the 10 normalized keys: $out"
+  [ "$(printf '%s' "$out" | jq -c 'keys' 2>/dev/null)" = '["body","comments","id","key","labels","state","status","title","triageVerdict","url","waitingOn"]' ] \
+    && _tc_ok || _tc_bad "C2 the 11 normalized keys: $out"
+  printf '%s' "$out" | jq -e '.state == "open" or .state == "closed"' >/dev/null 2>&1 \
+    && _tc_ok || _tc_bad "C2 state must be open or closed: $out"
   [ "$(printf '%s' "$out" | jq -c '[.comments[].body]' 2>/dev/null)" = '["first","second","third"]' ] \
     && _tc_ok || _tc_bad "C2 three comments in the stub's order: $(printf '%s' "$out" | jq -c .comments 2>/dev/null)"
   printf '%s' "$out" | jq -e '[.waitingOn, .triageVerdict] | all(.[]; . == null or (type == "string" and length > 0))' >/dev/null 2>&1 \

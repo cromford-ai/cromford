@@ -1173,18 +1173,33 @@ else
   # only by Bot-authored comments arrives here with its consumed values, so
   # reaching this line means something other than our own notes moved. The PAT
   # login is never absorbed there — it is also the operator's hand.
-  # Jira and Linear (TRK_GATE) have no self-write classifier yet either.
-  if [ -n "${GH_ISSUES_REPO:-}" ] || [ -n "${TRK_GATE:-}" ]; then
+  if [ -n "${GH_ISSUES_REPO:-}" ]; then
     echo "RUN board-changed"
     exit 0
   fi
-  SWERR=$(mktemp 2>/dev/null) || SWERR=""
-  VERDICT=$(GATE_OLD="$GATE" GATE_NEW="$PENDING" BASE="$BASE" BP="$BP" TOKEN="$TOKEN" \
-    SELF_ACTORS="$SELF_ACTORS" python3 "$HARNESS/bin/gate-selfwrite.py" 2>"${SWERR:-/dev/null}" || echo RUN)
-  # gate-selfwrite.py's stderr used to be appended to ALERTS.log raw; it is now one stamped line.
-  if [ -n "$SWERR" ]; then
-    [ -s "$SWERR" ] && "$HARNESS/bin/alert-line.sh" "[triage-gate] $PROJECT gate-selfwrite.py: $(tail -c 1500 "$SWERR")"
-    rm -f "$SWERR"
+  # Jira and Linear (TRK_GATE, BH-8449): bin/lib/gate-trk-selfwrite.sh answers
+  # ABSORB only when every moved row moved by our own comments (the
+  # tracker_<kind>.<project>.self_actors row; no row is no absorption). No lib
+  # is today's RUN. Both kinds of verdict share the one ABSORB branch below, so
+  # the gate file keeps one promote site per path (tests/no-state-files S1).
+  if [ -n "${TRK_GATE:-}" ]; then
+    VERDICT=RUN
+    for _P in "$(dirname "$0")/lib/gate-trk-selfwrite.sh" "$HARNESS/bin/lib/gate-trk-selfwrite.sh"; do
+      # shellcheck source=/dev/null
+      [ -r "$_P" ] && { . "$_P"; break; }
+    done
+    if declare -F gate_trk_selfwrite >/dev/null 2>&1; then
+      VERDICT=$(gate_trk_selfwrite "$GATE" "$PENDING" 2>/dev/null) || VERDICT=RUN
+    fi
+  else
+    SWERR=$(mktemp 2>/dev/null) || SWERR=""
+    VERDICT=$(GATE_OLD="$GATE" GATE_NEW="$PENDING" BASE="$BASE" BP="$BP" TOKEN="$TOKEN" \
+      SELF_ACTORS="$SELF_ACTORS" python3 "$HARNESS/bin/gate-selfwrite.py" 2>"${SWERR:-/dev/null}" || echo RUN)
+    # gate-selfwrite.py's stderr used to be appended to ALERTS.log raw; it is now one stamped line.
+    if [ -n "$SWERR" ]; then
+      [ -s "$SWERR" ] && "$HARNESS/bin/alert-line.sh" "[triage-gate] $PROJECT gate-selfwrite.py: $(tail -c 1500 "$SWERR")"
+      rm -f "$SWERR"
+    fi
   fi
   if [ "$VERDICT" = "ABSORB" ]; then
     mv -f "$PENDING" "$GATE"

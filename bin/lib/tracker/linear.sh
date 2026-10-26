@@ -238,7 +238,7 @@ trk_linear_list() {
 trk_linear_read() {
   local d
   _trk_linear_ok "${1:-}" || return 1
-  d=$(_trk_linear_gql 'query TrkIssue($id: String!) { issue(id: $id) { identifier title description url state { name } labels(first: 250) { nodes { name } } comments(first: 250) { nodes { body createdAt user { name displayName } botActor { name } } pageInfo { hasNextPage } } } }' \
+  d=$(_trk_linear_gql 'query TrkIssue($id: String!) { issue(id: $id) { identifier title description url state { name type } labels(first: 250) { nodes { name } } comments(first: 250) { nodes { body createdAt user { name displayName } botActor { name } } pageInfo { hasNextPage } } } }' \
     '{id: $id}' --arg id "$1") || return $?
   if printf '%s' "$d" | jq -e '.issue.comments.pageInfo.hasNextPage == true' >/dev/null 2>&1; then
     printf 'tracker: linear %s has more than 250 comments, the thread was not read to the end\n' "$1" >&2
@@ -246,6 +246,7 @@ trk_linear_read() {
   fi
   printf '%s' "$d" | jq -ce '.issue | select(type == "object") | {id: .identifier, key: .identifier,
     title: (.title // ""), body: (.description // ""), status: (.state.name // null),
+    state: (if (.state.type // "") == "completed" or (.state.type // "") == "canceled" then "closed" else "open" end),
     labels: [(.labels.nodes // [])[].name], waitingOn: null, triageVerdict: null, url: (.url // null),
     comments: [(.comments.nodes // []) | sort_by(.createdAt)[] | {
       author: (.user.displayName // .user.name // .botActor.name // null), body: (.body // ""),

@@ -60,14 +60,18 @@
 #                        bin/lib/tracker/jira.sh
 #
 # THE NORMALIZED TICKET tracker_read prints is one JSON object:
-#   {id, key, title, body, status, labels:[names], waitingOn, triageVerdict,
-#    url, comments:[{author, body, createdAt, internal}]}
-# waitingOn/triageVerdict are a string or JSON null, never "": GitHub has no
-# turn and no verdict, so it answers null for both. tracker_list prints an
-# array of the same objects without body and comments, plus three keys:
+#   {id, key, title, body, status, state, labels:[names], waitingOn,
+#    triageVerdict, url, comments:[{author, body, createdAt, internal}]}
+# status is the tracker's own name for the state; state is open | closed, by
+# one rule per tracker: GitHub `.state == "closed"`; board, a lower-cased
+# status of done, closed, cancelled, canceled or archived; Jira status
+# category `done`; Linear state type `completed` or `canceled`. Anything
+# else, a missing field included, is open: a ticket we cannot prove closed is
+# not a closure. waitingOn/triageVerdict are a string or JSON null, never "":
+# GitHub has no turn and no verdict, so it answers null for both. tracker_list
+# prints an array of the same objects without body and comments, plus two keys:
 #   updatedAt     the last change, UTC `YYYY-MM-DDTHH:MM:SSZ` (no fraction,
 #                 no offset), or null when the tracker gave none
-#   state         open | closed
 #   commentCount  an integer, or null when the tracker gave no exact count
 #
 # THE LIST FILTERS. With no flag every adapter sends the request it always

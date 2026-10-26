@@ -181,7 +181,8 @@ GitHub: `updated_at`, `state`, `comments`. Board: `lastActivityAt` (else
 (offset turned to UTC), `closed` when the status category is `done`,
 `fields.comment.total`. Linear: `updatedAt`; `closed` for state type
 `completed` or `canceled`; the number of comment ids on the row's first page,
-or null when that page has more. `tracker_read` is unchanged (the ten keys).
+or null when that page has more. `tracker_read` carries the same `state` by
+the same rule (BH-8449, below).
 
 **The Linear knob.** The settings row `tracker_linear.<project>.list_comment_cap`
 (integer 1..50, read by `trk_linear_context`) is how many comment ids one list
@@ -201,7 +202,8 @@ gate reads through the contract in every mode:
 - the fingerprint (plain mode, `--seed`, `--pending`) is
   `{"jira"|"linear": [{id,key,status,state,title,updatedAt,commentCount,waitingOn,triageVerdict}]}`
   from `tracker_list --state open --label <the project's label>`, sorted by id.
-  A changed fingerprint is `RUN board-changed` (no self-write classifier yet).
+  A changed fingerprint is `RUN board-changed`, unless every moved row moved
+  only by our own comments (`SKIP self-writes-only`, BH-8449, below).
   A list that fails is `RUN gate-fetch-failed` and `--pending` exits 1.
 - `--thread` and `--signal` read `tracker_read` as an `inapp` doc.
 - `--buildable` reads `trk_jira_gate_raw` (Jira) or `tracker_read` (Linear).
@@ -225,6 +227,65 @@ settings call.
 `tracker_adapter.<project>`. A sandbox whose env file or row is named for a
 different project name keeps the GitHub arm. A Linear project with no
 `LINEAR_API_KEY` in its env file also keeps the GitHub arm.
+
+## Wake and scope on the contract (BH-8449)
+
+**The read's `state`.** `tracker_read` prints an 11th key, `state`
+(`open|closed`), on all four adapters, by the list row's rule: GitHub
+`.state == "closed"`; board, a lower-cased status of `done closed cancelled
+canceled archived` (one `_TRK_BOARD_STATE` expression for the list and the
+read); Jira status category `done`; Linear state type `completed` or
+`canceled` (the `TrkIssue` query asks `state { name type }`). Anything else, a
+missing field included, is `open`.
+
+**The wake key.** A Linear or Jira delivery makes a `kind=issue` wake row
+keyed on the ticket key (`CRO-12`), and `bin/wake-loop.sh` keeps that key in
+the launch's `state/wake-keys-<p>`. `issue_closures` reads a jira or linear
+project's keys through `tracker_context` + `tracker_read` and prints the ones
+whose `state` is `closed`. A key that is not `^[A-Z][A-Z0-9_]{0,19}-[1-9][0-9]{0,8}$`
+is skipped with no read, a failed read is skipped, and a context that does not
+load is rc 1. `released_by` still keeps digits only, so a closed Linear key
+releases nothing yet (C3 of #7920 ports `bin/unblocked-children.sh`).
+
+**The scope.** `bin/lib/rt/scope.sh` `_rts_trk_kind` asks `tracker_kind`
+only when the project env sets `JIRA_BASE` or `LINEAR_API_KEY`. For a jira or
+linear answer, `board_section` uses the gate diff as the whole scope (rc 0:
+`BOARD_OK=1` and the "ALSO changed on the board" text; rc 2: `BOARD_OK=1`,
+no text) and runs none of `bin/unblocked-children.sh`, the hotfix marker, the
+stack filter or the in-app release lanes. `inapp_released_lines` returns at
+once for such a project, whatever column 4 says. A GitHub or board project
+makes no settings call and takes the same path as before.
+
+**Self-write absorption.** The settings row
+`tracker_<jira|linear>.<project>.self_actors` holds our comment authors,
+comma-separated, as `tracker_read` prints them (Linear `displayName`, else
+`name`, else `botActor.name`; Jira `displayName`). There is no seed row, and
+no row means no absorption: a changed fingerprint is `RUN board-changed`.
+With a row, `gate_trk_selfwrite` (`bin/lib/gate-trk-selfwrite.sh`) runs
+`bin/gate-selfwrite.py` in `GATE_SELFWRITE_MODE=ids`: only `commentCount` and
+`updatedAt` may move, the count must go up, at most 5 rows. Then it reads each
+moved ticket, and the newest `new - old` comments must each have an author in
+the row (exact match after a trim). Only then does the gate move
+`gate.pending` onto `gate.json` and print `SKIP self-writes-only`. Any other
+answer, or any failed read, is `RUN board-changed`.
+
+```bash
+bin/jobs-client.sh setting-set tracker_linear.<project>.self_actors "Harness Bot" "our Linear comment author"
+```
+
+| what | how |
+|---|---|
+| scope routing and `issue_closures` on the contract, the read's `state` | `HARNESS_TEST_SANDBOX=1 bash tests/scope-trk-route.bh-8449-test.sh` |
+| the real gate's absorption on Linear and Jira | `HARNESS_TEST_SANDBOX=1 bash tests/gate-trk-selfwrite.bh-8449-test.sh` |
+| a signed Linear delivery through the real worker, the real wake-loop and the real gate | `HARNESS_TEST_SANDBOX=1 bash tests/webhook-to-triage-linear.bh-8449-test.sh` (stage 1 `tests/lib/linear-wake-worker.bh-8449.mjs`) |
+
+**What usually lies:** the worker route row `webhook_route.linear.<team>` names
+a repo, and that repo must be the fleet.conf repo of the project whose
+`tracker_adapter.<project>` row says `linear`. A route row that names another
+spelling of the repo makes a wake row no loop claims. The worker also needs
+`LINEAR_WEBHOOK_SECRET` (or `JIRA_WEBHOOK_SECRET`) and the vendor webhook
+registered; until then the route answers 503 and only the 10-minute cron tick
+sees a change.
 
 ## Kind seam, context, refusal guard, ratchet (BH-7919)
 
