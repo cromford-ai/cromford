@@ -32,6 +32,7 @@
     "pool-": { "source": "pool" },
     "lane-run-": { "source": "lane-run" },
     "builder-": { "source": "builder" },
-    "project-12-": { "source": "exempt", "reason": "customer bots stay up; a retired or lab project-12 app gets an exact metrics entry" }
+    "project-12-": { "source": "exempt", "reason": "customer bots stay up; a retired or lab project-12 app gets an exact metrics entry" },
+    "box-": { "source": "exempt", "reason": "BH-8322: a project box moved to Fly by bin/box-move.sh runs its cron lanes; it is never idle-stopped" }
   }
 }

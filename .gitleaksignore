@@ -72,6 +72,7 @@ tests/lead-report-transcript.bh-5915-test.sh:generic-api-key:38
 tests/lead-report-transcript.bh-5915-test.sh:generic-api-key:114
 tests/lead-reviews-lib.bh-1948-test.sh:generic-api-key:101
 tests/lib-root-records.bh-2613-test.sh:generic-api-key:296
+tests/lib/box-move-fixture.bh-8322.sh:generic-api-key:23
 tests/lib/otp-worker.bh-7732.mjs:generic-api-key:31
 tests/lib/tracker-jira-stub.sh:generic-api-key:38
 tests/load-project-db.bh-5650-test.sh:curl-auth-header:111
