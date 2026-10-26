@@ -42,8 +42,8 @@ test('A0 CONFIG_KINDS gains MERGE_QUEUE and HELD_PAGE, stays frozen, every value
   try { CONFIG_KINDS.EXTRA = 'extra'; } catch { /* strict mode throws; either way it must not land */ }
   assert.equal(CONFIG_KINDS.EXTRA, undefined);
   const values = Object.values(CONFIG_KINDS);
-  // BH-4082 added PROJECT: eleven became twelve.
-  assert.equal(values.length, 12);
+  // BH-4082 added PROJECT: eleven became twelve. BH-8317 added PROJECT_SECRET: thirteen.
+  assert.equal(values.length, 13);
   assert.equal(new Set(values).size, values.length);
 });
 

@@ -1,5 +1,5 @@
 #!/bin/bash
-# bin/fly-pool-secrets-sync.sh <project> [--dry-run] — BH-7430 (BH-6896 S3).
+# bin/fly-pool-secrets-sync.sh <project> [--dry-run] [--no-box] — BH-7430 (BH-6896 S3).
 #
 # Writes the pool's STATIC env bundle into the pool app's Fly secrets, once, at
 # operator time, so a pull-path spawn (bin/fly-pool.sh POOL_MACHINE_PULL=1)
@@ -28,11 +28,23 @@
 # --dry-run prints the secret NAMES it would import and unset, never a value,
 # and changes nothing. Any failure: one ALERTS line naming the app and the
 # step, rc 1. The temp dir (it holds the bundle) is removed on every exit.
+#
+# --no-box (BH-8317): rewrite only HBUNDLE_G_*, from the HUB's own global.env
+# through the same whitelist (`bin/fly-envbundle.sh <p> <dir> --hub-global`):
+# 0 ssh calls, no owning box. Every HBUNDLE_P_* secret is left as it is: those
+# are the project's build secrets, kept by bin/project-secrets.sh. The stale
+# set is HBUNDLE_G_* names only. An app with no HBUNDLE_P_* gets one WARN
+# naming `bin/project-secrets.sh import <p>`. The default (ssh) mode does not
+# change; it stays the one-time import source from the owning box.
 set -uo pipefail
 
-P="${1:-}"
-case "${2:-}" in ''|--dry-run) DRY="${2:-}" ;; *) echo "usage: fly-pool-secrets-sync.sh <project> [--dry-run]" >&2; exit 2 ;; esac
-[ -n "$P" ] || { echo "usage: fly-pool-secrets-sync.sh <project> [--dry-run]" >&2; exit 2; }
+USAGE="usage: fly-pool-secrets-sync.sh <project> [--dry-run] [--no-box]"
+P="${1:-}"; DRY=""; NOBOX=""
+[ $# -le 3 ] || { echo "$USAGE" >&2; exit 2; }
+for a in "${@:2}"; do
+  case "$a" in --dry-run) DRY="$a" ;; --no-box) NOBOX=1 ;; *) echo "$USAGE" >&2; exit 2 ;; esac
+done
+[ -n "$P" ] || { echo "$USAGE" >&2; exit 2; }
 HARNESS="${HARNESS:-/root/harness}"
 command -v jq >/dev/null 2>&1 || { echo "fly-pool-secrets-sync/$P FATAL: jq required" >&2; exit 1; }
 
@@ -62,13 +74,15 @@ TMP=$(mktemp -d "${TMPDIR:-/tmp}/hbundle.XXXXXX") || fail "mktemp" "no temp dir"
 chmod 700 "$TMP"
 trap 'rm -rf "$TMP"' EXIT
 
-HARNESS="$HARNESS" "$HARNESS/bin/fly-envbundle.sh" "$P" "$TMP/b" --pool >/dev/null 2>"$TMP/err" \
+BUNDLE_MODE=--pool; PARTS="global:G $P:P"
+[ -z "$NOBOX" ] || { BUNDLE_MODE=--hub-global; PARTS="global:G"; }
+HARNESS="$HARNESS" "$HARNESS/bin/fly-envbundle.sh" "$P" "$TMP/b" "$BUNDLE_MODE" >/dev/null 2>"$TMP/err" \
   || fail "env bundle" "$(grep 'FATAL:' "$TMP/err" | tail -n 1 | sed 's/^.*FATAL: //' | tr -d '\000-\037' | cut -c1-200)"
 
 # The import stream. Only KEY=VAL lines with a shell-name key; the excluded
 # keys are dropped; a key that appears twice keeps its LAST value, as `. file`.
 ( umask 077
-  for f in global:G "$P":P; do
+  for f in $PARTS; do
     src="$TMP/b/${f%%:*}.env"; pre="HBUNDLE_${f##*:}_"
     [ -r "$src" ] || continue
     grep -E '^[A-Za-z_][A-Za-z0-9_]*=' "$src" | awk -F= -v pre="$pre" -v bad="$TMP/badkeys" '
@@ -91,9 +105,14 @@ rm -rf "$TMP/b"
 NEW=$(cut -d= -f1 "$TMP/import" | sort -u)
 [ "$(grep -c '^HBUNDLE_G_' <<<"$NEW")" -gt 0 ] || fail "env bundle" "the bundle has no global line"
 
-OLD=$(timeout 60 "$FLY" secrets list -a "$APP" --json 2>/dev/null \
-      | jq -r '.[]? | (.Name // .name // empty)' 2>/dev/null | grep '^HBUNDLE_' | sort -u)
+LIST=$(timeout 60 "$FLY" secrets list -a "$APP" --json 2>/dev/null); LIST_RC=$?
+OLD=$(printf '%s\n' "$LIST" | jq -r '.[]? | (.Name // .name // empty)' 2>/dev/null | grep '^HBUNDLE_' | sort -u)
+# --no-box owns only the HBUNDLE_G_* names: an HBUNDLE_P_* name is never stale.
+[ -z "$NOBOX" ] || OLD=$(grep '^HBUNDLE_G_' <<<"$OLD")
 STALE=$(comm -23 <(printf '%s\n' "$OLD" | grep -v '^$') <(printf '%s\n' "$NEW"))
+if [ -n "$NOBOX" ] && [ "$LIST_RC" = 0 ] && ! printf '%s\n' "$LIST" | jq -r '.[]? | (.Name // .name // empty)' 2>/dev/null | grep -q '^HBUNDLE_P_'; then
+  echo "fly-pool-secrets-sync/$P WARN: $APP has no HBUNDLE_P_* secret, so pool builds get no project env. Run bin/project-secrets.sh import $P after one ssh-mode sync, or bin/project-secrets.sh set $P <NAME> per secret." >&2
+fi
 
 if [ -n "$DRY" ]; then
   echo "fly-pool-secrets-sync/$P: dry run for $APP — would import $(grep -c . <<<"$NEW") secret(s):"
@@ -108,6 +127,10 @@ if [ -n "$STALE" ]; then
   # shellcheck disable=SC2086
   timeout 120 "$FLY" secrets unset --stage -a "$APP" $STALE >/dev/null 2>"$TMP/err" \
     || fail "stale unset" "the new bundle is in, but $(grep -c . <<<"$STALE") stale HBUNDLE secret(s) are still on the app"
+fi
+if [ -n "$NOBOX" ]; then
+  echo "fly-pool-secrets-sync/$P: no-box: $APP has $(grep -c '^HBUNDLE_G_' <<<"$NEW") HBUNDLE_G secret(s) from the hub, HBUNDLE_P_* untouched, $(grep -c . <<<"$STALE") stale unset"
+  exit 0
 fi
 echo "fly-pool-secrets-sync/$P: $APP has $(grep -c . <<<"$NEW") HBUNDLE secret(s), $(grep -c . <<<"$STALE") stale unset"
 exit 0

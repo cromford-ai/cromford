@@ -96,6 +96,8 @@ tests/pool-tick-summary.bh-7709-test.sh:generic-api-key:76
 tests/prebuild-repro-self-comment.bh-2133-test.sh:generic-api-key:43
 tests/prebuild-repro-skip.bh-2040-test.sh:generic-api-key:31
 tests/prebuild-repro-stop.bh-2043-test.sh:generic-api-key:32
+tests/project-secrets.bh-8317-test.sh:generic-api-key:167
+tests/project-secrets.bh-8317-test.sh:generic-api-key:168
 tests/prompt-render.bh-7971-test.sh:generic-api-key:32
 tests/prompt-resolve.bh-7940-test.sh:generic-api-key:32
 tests/qa-wiring-check.bh-6254-test.sh:stripe-access-token:112
@@ -152,6 +154,8 @@ worker/jobs/test/pool-records.bh-7429.test.js:generic-api-key:16
 worker/jobs/test/pool-tick.bh-7709.test.js:generic-api-key:21
 worker/jobs/test/pr-record-intake.bh-8151.test.js:generic-api-key:22
 worker/jobs/test/pr-records.bh-8067.test.js:generic-api-key:26
+worker/jobs/test/project-secrets.bh-8317.test.js:generic-api-key:19
+worker/jobs/test/project-secrets.bh-8317.test.js:generic-api-key:98
 worker/jobs/test/prompts.bh-7940.test.js:generic-api-key:15
 worker/jobs/test/review-tiers.bh-6969.test.js:generic-api-key:25
 worker/jobs/test/route-keyed.bh-5788.test.js:generic-api-key:130

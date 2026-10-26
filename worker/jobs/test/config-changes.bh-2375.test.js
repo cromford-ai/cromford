@@ -48,8 +48,8 @@ test('L1 CONFIG_KINDS gains SETTING and FLAG, stays frozen, every value distinct
   assert.ok(Object.isFrozen(CONFIG_KINDS));
   const values = Object.values(CONFIG_KINDS);
   // BH-3155 (BH-2325.0) added MERGE_QUEUE and HELD_PAGE: nine became eleven;
-  // BH-4082 added PROJECT: twelve.
-  assert.equal(values.length, 12);
+  // BH-4082 added PROJECT: twelve. BH-8317 added PROJECT_SECRET: thirteen.
+  assert.equal(values.length, 13);
   assert.equal(new Set(values).size, values.length);
 });
 

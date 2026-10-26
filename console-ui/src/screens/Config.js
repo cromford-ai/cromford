@@ -33,7 +33,8 @@ export const CONFIG_KIND_MEANING = Object.freeze({
   registry_seed: 'the starting list of projects and lanes',
   merge_queue: 'merge queue order and holds',
   held_page: 'a page that is held back from sending',
-  project: 'a watched project and where its board lives'
+  project: 'a watched project and where its board lives',
+  project_secret: 'a project build secret name in the Fly secret store (never a value)'
 });
 
 // One read per (kind, name, limit). An answer that lands after the filter

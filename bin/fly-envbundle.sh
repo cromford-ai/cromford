@@ -61,17 +61,27 @@
 # the ssh extract (rc 1, 0 ssh calls, one ALERTS line "push path refused: ssh
 # off"). See envbundle_ssh_guard below and
 # docs/notes/2026-10-25-MKF-1-pull-path-project-6.md.
+#
+# --hub-global (BH-8317): the GLOBAL whitelist only, extracted from THIS host's
+# own env/global.env. No owning-box lookup, no ssh, no ssh-off guard, no
+# gh-token.sh call, no <project>.env read: <outdir>/<project>.env is written
+# empty and gets no REPO_SLUG. The CLAUDE_CODE_OAUTH_TOKEN check still applies;
+# the GH_TOKEN check does not (the pool never ships the PAT). Its only caller is
+# `bin/fly-pool-secrets-sync.sh <project> --no-box`, so the whitelist keeps one
+# copy. See docs/notes/2026-10-25-BH-8317-secret-store.md.
 set -uo pipefail
 
-PROJECT="${1:?usage: fly-envbundle.sh <project> <outdir> [--pool]}"
-OUTDIR="${2:?usage: fly-envbundle.sh <project> <outdir> [--pool]}"
+PROJECT="${1:?usage: fly-envbundle.sh <project> <outdir> [--pool|--hub-global]}"
+OUTDIR="${2:?usage: fly-envbundle.sh <project> <outdir> [--pool|--hub-global]}"
 HARNESS="${HARNESS:-/root/harness}"
 
 die() { echo "fly-envbundle/$PROJECT FATAL: $*" >&2; exit 1; }
 # A typo here must never run dispatch semantics as pool or the reverse.
+HUBG=""
 case "${3:-}" in
   ''|--pool) POOL="${3:-}" ;;
-  *) die "usage: fly-envbundle.sh <project> <outdir> [--pool] (got '${3}')" ;;
+  --hub-global) POOL=""; HUBG=1 ;;
+  *) die "usage: fly-envbundle.sh <project> <outdir> [--pool|--hub-global] (got '${3}')" ;;
 esac
 command -v jq >/dev/null 2>&1 || die "jq required"
 
@@ -85,12 +95,15 @@ command -v jq >/dev/null 2>&1 || die "jq required"
 owning_box_ip() {
   "$HARNESS/bin/fleet-conf.sh" --tailnet-ip "$1" 2>/dev/null
 }
-BOX=$(owning_box_ip "$PROJECT") || die "no owning box mapping for $PROJECT"
+BOX=local; SLUG=""
+if [ -z "$HUBG" ]; then
+  BOX=$(owning_box_ip "$PROJECT") || die "no owning box mapping for $PROJECT"
 
-# The repo the bundle's GH_TOKEN is minted for, resolved BEFORE the extract
-# (C2): the token is scoped to one repo, so the box has to be told which.
-SLUG=$("$HARNESS/bin/fleet-conf.sh" "$PROJECT" repo 2>/dev/null || true)
-case "$SLUG" in */*) ;; *) die "no github repo slug for $PROJECT in fleet.conf — cannot mint the bundle's GH_TOKEN" ;; esac
+  # The repo the bundle's GH_TOKEN is minted for, resolved BEFORE the extract
+  # (C2): the token is scoped to one repo, so the box has to be told which.
+  SLUG=$("$HARNESS/bin/fleet-conf.sh" "$PROJECT" repo 2>/dev/null || true)
+  case "$SLUG" in */*) ;; *) die "no github repo slug for $PROJECT in fleet.conf — cannot mint the bundle's GH_TOKEN" ;; esac
+fi
 
 mkdir -p "$OUTDIR"
 chmod 700 "$OUTDIR"
@@ -170,7 +183,13 @@ envbundle_ssh_guard() {
 # The box's harness is /root/harness; only a local extract (the hub owning the
 # project) runs against this process's own HARNESS, which on the hub is the same
 # path and in a test is the fixture's.
-if [ "$BOX" = "local" ]; then
+if [ -n "$HUBG" ]; then
+  # The same extractor minus its two non-global lines: the gh-token.sh mint
+  # (and the line that appends its answer) and the <project>.env cat.
+  HUB_SCRIPT=$(printf '%s\n' "$REMOTE_SCRIPT" | grep -v -e 'gh-token\.sh' -e '^\[ -n "\$GH" \]' -e '^cat "\$E/')
+  case "$HUB_SCRIPT" in *gh-token*|*'cat "$E/'*) die "--hub-global could not strip the project lines from the extractor" ;; esac
+  RAW=$(bash -c "${HUB_SCRIPT//\/root\/harness/$HARNESS}" 2>/dev/null) || { rc=$?; die "hub global env extract failed (rc $rc)"; }
+elif [ "$BOX" = "local" ]; then
   RAW=$(bash -c "${REMOTE_SCRIPT//\/root\/harness/$HARNESS}" 2>/dev/null) || { rc=$?; die "local env extract failed (rc $rc)"; }
 else
   envbundle_ssh_guard
@@ -191,15 +210,16 @@ printf '%s\n' "$RAW" | awk '
 ' G="$OUTDIR/global.env" P="$OUTDIR/$PROJECT.env"
 
 # --- REPO_SLUG + BASE_BRANCH from fleet.conf on the hub -----------------------
-# SLUG was resolved (and required) above, before the extract.
-echo "REPO_SLUG=$SLUG" >> "$OUTDIR/$PROJECT.env"
+# SLUG was resolved (and required) above, before the extract. --hub-global
+# has no project part, so no slug either.
+[ -n "$HUBG" ] || echo "REPO_SLUG=$SLUG" >> "$OUTDIR/$PROJECT.env"
 
 # Sanity: the two things a real build cannot proceed without.
 grep -q '^CLAUDE_CODE_OAUTH_TOKEN=' "$OUTDIR/global.env" 2>/dev/null || die "bundle missing CLAUDE_CODE_OAUTH_TOKEN"
 # GH_TOKEN is only required here for fly-dispatch, which ships the bundle as-is.
 # The pool swaps the line for a builders-App token when this hub is armed, so a
 # --pool bundle with no PAT warns and ships (BH-4798; the header has the why).
-if ! grep -q '^GH_TOKEN=' "$OUTDIR/global.env" 2>/dev/null; then
+if [ -z "$HUBG" ] && ! grep -q '^GH_TOKEN=' "$OUTDIR/global.env" 2>/dev/null; then
   NOPAT="bin/gh-token.sh --pat $SLUG printed nothing on $BOX — that box has no PAT for the builder (GH_TOKEN in env/global.env, or env/gh-pat once its keyring is logged out)"
   [ -n "$POOL" ] || die "bundle missing GH_TOKEN: $NOPAT"
   # shellcheck source=bin/lib/gh-app-auth.sh

@@ -18,6 +18,7 @@ export const CONFIG_KINDS = Object.freeze({
   MERGE_QUEUE: 'merge_queue',
   HELD_PAGE: 'held_page',
   PROJECT: 'project',
+  PROJECT_SECRET: 'project_secret',
 });
 
 // Equality is on String() form, so a threshold read back from D1 as 5 and
