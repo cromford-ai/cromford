@@ -396,10 +396,11 @@ FRESH
 REC=$(RECORD "PR_CREATED https://github.com/o/tproj/pull/9" 10800 "$REVIEW_DL")
 OPENPR "$HEADSHA"
 # LANEREVIEW <data-lane-line|-> — the lane's own CHANGES_REQUESTED on $HEADSHA.
+# BH-8419: the lane's review is the App's (cromford[bot], type Bot).
 LANEREVIEW() {
   local dl=""; [ "$1" = - ] || dl="$1"$'\n'
   jq -nc --arg c "$HEADSHA" --arg b "$(printf 'Findings.\n\n%sTIER: 2\nVERDICT: REQUEST_CHANGES\n\n---\n_Automated harness review (Fable) of %s. Static review._\n' "$dl" "$HEADSHA")" \
-    '{id:11, state:"CHANGES_REQUESTED", commit_id:$c, user:{login:"operator"}, body:$b}'
+    '{id:11, state:"CHANGES_REQUESTED", commit_id:$c, user:{login:"cromford[bot]", type:"Bot"}, body:$b}'
 }
 jq -s . <(LANEREVIEW "DATA_LANE: $TS") > "$T/reviews-9.json"
 RUN
@@ -436,7 +437,7 @@ FRESH
 REC=$(RECORD "PR_CREATED https://github.com/o/tproj/pull/9" 10800 "$REVIEW_DL")
 OPENPR "$OTHERSHA"
 jq -nc --arg c "$OTHERSHA" --arg b "$(printf 'Findings.\n\nDATA_LANE: %s\nTIER: 2\nVERDICT: REQUEST_CHANGES\n\n---\n_Automated harness review (Fable) of %s. Static review._\n' "$TS" "$OTHERSHA")" \
-  '[{id:13, state:"CHANGES_REQUESTED", commit_id:$c, user:{login:"operator"}, body:$b}]' > "$T/reviews-9.json"
+  '[{id:13, state:"CHANGES_REQUESTED", commit_id:$c, user:{login:"cromford[bot]", type:"Bot"}, body:$b}]' > "$T/reviews-9.json"
 RUN
 [ "$(OUTCOME)" != DATA_LANE ] && ok || bad "13d: a moved head must not park on the old review: $(tail -5 "$RLOG")"
 [ "$(STATEJSON | jq -r '.data_lane_unbound // ""')" = "$FPV $HEADSHA" ] && ok || bad "13d: data_lane_unbound = '<fp> <reviewed head>'"

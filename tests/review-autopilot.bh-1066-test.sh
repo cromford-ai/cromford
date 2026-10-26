@@ -325,7 +325,8 @@ K1 | grep -qE '^status=reviewed-unposted .* tries=1$' && ok \
 [ "$(COUNTF "$T/gh-calls.txt" 'api repos/o/p1/issues/7/comments')" = 0 ] && ok \
   || bad "the FIRST post must buy no comments read (got $(COUNTF "$T/gh-calls.txt" 'api repos/o/p1/issues/7/comments'))"
 # The PR now genuinely carries that comment. The next tick must see it.
-jq -Rs '[{body:.,user:{login:"operator"}}]' < "$T/posted.txt" > "$T/comments.json"
+# BH-8419: the harness posts it as the hub App; the operator login is a person.
+jq -Rs '[{body:.,user:{login:"cromford[bot]",type:"Bot"}}]' < "$T/posted.txt" > "$T/comments.json"
 rm -f "$T/gh-comment-lands-nonzero"
 RUN
 [ "$(POSTS)" = 1 ] && ok || bad "a review already on the PR must not be posted again (posts=$(POSTS))"
@@ -343,7 +344,8 @@ K1 | grep -qE '^reviewed .* verdict=MERGE$' && ok \
 RESET
 touch "$T/gh-comment-lands-nonzero"
 RUN
-jq -n '[{body:"<!-- harness-review-autopilot ffffffffffff -->\nsome other review",user:{login:"operator"}}]' \
+# BH-8419: the hub App's marker, so the head is the only thing that differs.
+jq -n '[{body:"<!-- harness-review-autopilot ffffffffffff -->\nsome other review",user:{login:"cromford[bot]",type:"Bot"}}]' \
   > "$T/comments.json"
 RUN
 [ "$(POSTS)" = 2 ] && ok \
@@ -495,7 +497,8 @@ grep -qE '(^| )claude-opus-5( |$)' "$T/agent-calls.txt" && ok \
 RESET
 touch "$T/gh-comment-lands-nonzero"
 RUN
-jq -Rs '[{body:.,user:{login:"operator"}}]' < "$T/posted.txt" > "$T/comments.json"
+# BH-8419: the harness's own comment is the hub App's.
+jq -Rs '[{body:.,user:{login:"cromford[bot]",type:"Bot"}}]' < "$T/posted.txt" > "$T/comments.json"
 rm -f "$T/gh-comment-lands-nonzero"
 RUN
 K1 | grep -qE '^reviewed .* verdict=MERGE$' && ok || bad "8d setup: the promote must settle (got '$(K1)')"
@@ -575,11 +578,12 @@ RUN
 jq -Rs '[{body:.,user:{login:"cromford[bot]"}}]' < "$T/posted.txt" > "$T/comments.json"
 rm -f "$T/gh-comment-lands-nonzero"
 ( PATH="$T/fakebin:$PATH" HARNESS="$H" FLEET_CONF="$H/fleet.conf" GH_TOKEN="" \
-  REVIEW_AUTOPILOT_POST_TRIES="$PT" HARNESS_VERDICT_AUTHORS=operator \
+  REVIEW_AUTOPILOT_POST_TRIES="$PT" HARNESS_VERDICT_AUTHORS=app/some-other-app \
   bash "$H/bin/review-autopilot.sh" >>"$T/run.log" 2>&1 ) || true
 # TEST-CHANGE (BH-1668): the marker's author is judged against the VERDICT
 # author set now (HARNESS_VERDICT_AUTHORS), split from the PR-author set, so that
-# is the knob this case narrows. Same assertion.
+# is the knob this case narrows. Same assertion. BH-8419: the narrowed set is
+# another App, since the operator login is dropped from the set.
 [ "$(POSTS)" = 2 ] && ok \
   || bad "an actor outside HARNESS_VERDICT_AUTHORS must not settle the key (posts=$(POSTS))"
 

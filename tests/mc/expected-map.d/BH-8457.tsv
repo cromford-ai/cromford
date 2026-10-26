@@ -1,0 +1,4 @@
+# tests/mc/expected-map.d/BH-8457.tsv — the QUEUED pass reads state, branch and head from the open
+# list instead of one pulls/{n} GET per QUEUED row (BH-8457).
+queue	mc_queued_open_heads	lib
+queue	mc_queued_list_view	lib

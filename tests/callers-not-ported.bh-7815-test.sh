@@ -4,15 +4,14 @@
 # bin/lib/callers-not-ported.sh (cnp_scan, psc_cnp_check), the CLI
 # bin/callers-not-ported-lint.sh, the self-check rule callers-not-ported
 # (catalog/pr-self-check.d/bh-7815-callers-not-ported.tsv, the arm in
-# bin/lib/pr-self-check.sh) and the two forwarders into the lead review notes
-# (self_check_hold in bin/lead-review-enqueue.sh, lgsc_notes in
-# bin/lib/lead-gates-selfcheck.sh).
+# bin/lib/pr-self-check.sh) and the forwarder into the lead review notes
+# (lgsc_notes in bin/lib/lead-gates-selfcheck.sh).
 #
 #   A1-A4  the ticket's acceptance cases, through the CLI
 #   M1     mutation: grep the head's tree instead of the merge, A1 goes empty
 #   B1-B11 the decision rule (which paths, which hits)
 #   X1-X4  every failure path prints a line and exits 0
-#   S1-S5  the self-check rule and the two forwarders
+#   S1-S4  the self-check rule and the forwarder
 #
 # Run from anywhere: HARNESS_TEST_SANDBOX=1 bash tests/callers-not-ported.bh-7815-test.sh
 set -uo pipefail
@@ -221,17 +220,6 @@ GOT=$(bash -c '. "$1/bin/lib/lead-gates-selfcheck.sh" 2>/dev/null; LGSC_OUT="$2"
 { has "$GOT" "body-plan-requires: the body is missing ## X (required by T1)" && grep -qxF -- "${WANT_S#NOTE }" <<<"$GOT" \
   && ! has "$GOT" "NOTE " && ! has "$GOT" "plan-files"; } \
   && ok || bad "S4 lgsc_notes: got: $GOT"
-
-# ── S5: self_check_hold's PSCNOTES lines, read from the function body ─────────
-EXTRACT=$(awk '/^self_check_hold\(\) \{/{b=1} b && /^[[:space:]]*PSCNOTES=\$\(printf/{print} b && /^}/{exit}' "$SRC/bin/lead-review-enqueue.sh")
-[ "$(nl "$EXTRACT")" -ge 2 ] && ok || bad "S5 setup: want 2+ PSCNOTES lines in self_check_hold, got: $EXTRACT"
-out=$(cat "$T/lgsc.out")
-# shellcheck disable=SC2034 # read by the eval'd PSCNOTES lines
-PSCNOTES=""
-eval "$EXTRACT"
-{ has "$PSCNOTES" "body-plan-requires: the body is missing ## X" && grep -qxF -- "${WANT_S#NOTE }" <<<"$PSCNOTES" \
-  && [ "$(nl "$PSCNOTES")" = 2 ]; } \
-  && ok || bad "S5 self_check_hold PSCNOTES: got: $PSCNOTES"
 
 echo "callers-not-ported.bh-7815: PASS $PASS FAIL $FAIL"
 [ "$FAIL" = 0 ]

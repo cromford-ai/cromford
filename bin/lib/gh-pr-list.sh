@@ -196,7 +196,7 @@ _hpl_bare() { local l="${1#app/}"; printf '%s' "${l%\[bot\]}"; }
 # where the LLM build agent runs — so it opens PRs and belongs in the author set
 # above, but a `harness-review-autopilot` marker or a harness-footer review it
 # posts must never count as a verdict: that would let a (prompt-injected) build
-# approve its own PR. HARNESS_VERDICT_AUTHORS, default "operator app/cromford",
+# approve its own PR. HARNESS_VERDICT_AUTHORS, default "app/cromford",
 # is the set every verdict reader consults (bin/lib/mc/classify.sh
 # mc_autopilot_verdict, bin/review-autopilot.sh, bin/review-prs.sh's own-review
 # readers, bin/blocked-resolver.sh br_review_newest). Only the HUB App's slug
@@ -204,10 +204,18 @@ _hpl_bare() { local l="${1#app/}"; printf '%s' "${l%\[bot\]}"; }
 # trust. The knob is registered in catalog/lanes.d/_lib.json with
 # `settable: false`: a trust list is set in env/global.env by the operator,
 # never by a settings row a worker credential could write.
-HARNESS_VERDICT_AUTHORS_DEFAULT="${HARNESS_OPERATOR_LOGIN:-} app/cromford"
-harness_verdict_authors() { # -> "<operator login> app/cromford ...", stable order, no duplicates
-  local a out=""
+# The set holds Apps only (BH-8419). The operator login (HARNESS_OPERATOR_LOGIN)
+# is a PERSON: on PR #8351 the cap-notes lane read its CHANGES_REQUESTED as the
+# harness's own and dismissed it. So harness_verdict_authors drops the operator
+# login even when an env override lists it, and harness_verdict_author_match
+# answers 0 only for an App spelling (`app/<slug>` or `<slug>[bot]`). "A PR the
+# operator opened for the fleet" is harness_pr_author_match, which keeps it.
+HARNESS_VERDICT_AUTHORS_DEFAULT="app/cromford"
+harness_verdict_authors() { # -> "app/cromford ...", stable order, no duplicates, never the operator login
+  local a out="" op
+  op=$(_hpl_bare "${HARNESS_OPERATOR_LOGIN:-}")
   for a in ${HARNESS_VERDICT_AUTHORS:-$HARNESS_VERDICT_AUTHORS_DEFAULT} $(_hpl_app_login_from "$_HPL_H/env/github-app.env"); do
+    [ -n "$op" ] && [ "$(_hpl_bare "$a")" = "$op" ] && continue
     case " $out " in *" $a "*) continue ;; esac
     out="${out:+$out }$a"
   done
@@ -215,6 +223,8 @@ harness_verdict_authors() { # -> "<operator login> app/cromford ...", stable ord
 }
 harness_verdict_author_match() { # harness_verdict_author_match <login>; rc 0 = may issue a verdict
   local want a
+  # Bot-only (BH-8419): a plain login is a person, whatever the set says.
+  case "${1:-}" in app/?*|?*\[bot\]) ;; *) return 1 ;; esac
   want=$(_hpl_bare "${1:-}")
   [ -n "$want" ] || return 1
   for a in $(harness_verdict_authors); do
@@ -630,18 +640,50 @@ _hpl_pr_get() { # _hpl_pr_get <slug> <num> <sub-path-or-empty> <outfile>
 #     is dropped first, prs_pr_get misses and reads GitHub live, and a WAIT_CI
 #     row sees its own CI go green on the next tick (review F1). Only states CI
 #     cannot change (clean, dirty, behind, draft) are answered from disk.
+# BH-8457: a lane that exports HPL_PR_RECORD=1 (merge-conductor only) asks the
+# PR record FIRST (prr_serve_state, bin/lib/pr-record-serve.sh): one jobs GET,
+# no GitHub call. It serves any state, CI's included, while the record is at
+# most PR_RECORD_SERVE_MAX_AGE_S old (default 120) at the list head, so a
+# WAIT_CI row sees its CI go green within that window rather than on the next
+# tick; the conductor's enqueue decision still reads the PR live. On a miss the
+# read below runs unchanged, and a LIVE answer is written back into the record
+# (prr_serve_note). A snapshot hit is not written back: it is a disk body, and
+# the record must hold only what GitHub said at the time of the write.
 _hpl_state_get() { # _hpl_state_get <slug> <num> <outfile> [head updated_at base]
-  local sd
+  local sd rec=0 rc=0 cf="" hit=0
+  if [ "${HPL_PR_RECORD:-}" = 1 ] && command -v prr_serve_state >/dev/null 2>&1; then
+    rec=1
+    prr_serve_state "$1" "$2" "${4:-}" "$3" && return 0
+  fi
   if [ -n "${4:-}" ] && _hpl_snap_on; then
     if command -v _prs_dir >/dev/null 2>&1 && sd=$(_prs_dir "$1") \
        && jq -e '(.mergeable_state // "") | ascii_downcase | IN("blocked", "unstable", "has_hooks")' \
             "$sd/pr-$2.json" >/dev/null 2>&1; then
       rm -f "$sd/pr-$2.key"
     fi
-    HPL_READ_ROLE=list-lazy prs_pr_get "$1" "$2" "$4" "${5:--}" "${6:--}" "$3"
+    # Under the record, the snapshot's HIT/MISS word goes through a file of
+    # this call's own first, so a hit is told apart from a live read.
+    [ "$rec" = 1 ] && cf=$(mktemp 2>/dev/null)
+    PRS_COUNT_FILE="${cf:-${PRS_COUNT_FILE:-}}" HPL_READ_ROLE=list-lazy prs_pr_get "$1" "$2" "$4" "${5:--}" "${6:--}" "$3" || rc=$?
+    if [ -n "$cf" ]; then
+      grep -q '^HIT ' "$cf" 2>/dev/null && hit=1
+      [ -n "${PRS_COUNT_FILE:-}" ] && cat "$cf" >> "$PRS_COUNT_FILE" 2>/dev/null
+      rm -f "$cf"
+    fi
   else
-    _hpl_pr_get "$1" "$2" "" "$3"
+    _hpl_pr_get "$1" "$2" "" "$3" || rc=$?
   fi
+  [ "$rc" = 0 ] && [ "$rec" = 1 ] && [ "$hit" = 0 ] && prr_serve_note "$1" "$2" "$3"
+  return "$rc"
+}
+
+# BH-8457: HPL_LAZY_ONLY="<n> <n> …" (merge-conductor's keyed tick) limits the
+# merge-state read to those PR numbers. Unset = every row, as before; set and
+# empty = no row. Whole words only: "12" never matches 1 or 123.
+_hpl_lazy_in_scope() { # _hpl_lazy_in_scope <num>
+  [ -n "${HPL_LAZY_ONLY+x}" ] || return 0
+  case " ${HPL_LAZY_ONLY//,/ } " in *" $1 "*) return 0 ;; esac
+  return 1
 }
 
 # One row's lazy fields, appended to <acc> as `,"k":v` pairs.
@@ -654,12 +696,15 @@ _hpl_state_get() { # _hpl_state_get <slug> <num> <outfile> [head updated_at base
 #     reads "no files" as "touches nothing" — a null there fails OPEN (a
 #     colliding build launches, a mark advances past a PR for good) — and every
 #     one of them already handles an unreadable list safely.
+#   * A row outside HPL_LAZY_ONLY (BH-8457) is not read: UNKNOWN/UNKNOWN, and
+#     it is not degraded.
 # rc 0, or the files read's rc. _HPL_DEGRADED counts degraded rows and
 # _HPL_DEGRADED_LIMITED those whose read hit a rate limit.
 _hpl_lazy_row() { # _hpl_lazy_row <slug> <num> <isDraft> <fields> <scratch> <acc> [head updated_at base]
   local slug=$1 n=$2 d=$3 fields=$4 one=$5 acc=$6
   case ",$fields," in *,mergeStateStatus,*|*,mergeable,*)
     if [ "$d" = true ]; then printf ',"mergeStateStatus":"DRAFT","mergeable":"UNKNOWN"' >> "$acc"
+    elif ! _hpl_lazy_in_scope "$n"; then printf ',"mergeStateStatus":"UNKNOWN","mergeable":"UNKNOWN"' >> "$acc"
     elif _hpl_state_get "$slug" "$n" "$one" "${7:-}" "${8:-}" "${9:-}" \
          && jq -j '",\"mergeStateStatus\":\((.mergeable_state // "unknown") | ascii_upcase | tojson),\"mergeable\":\(if .mergeable == true then "MERGEABLE" elif .mergeable == false then "CONFLICTING" else "UNKNOWN" end | tojson)"' "$one" >> "$acc" 2>/dev/null; then :
     else
@@ -693,6 +738,8 @@ _hpl_lazy_list() { # _hpl_lazy_list <slug> <state> <fields> <limit>
   local slug=$1 state=$2 fields=$3 limit=$4 base f n d b rc=0 tmp one acc qn hd upd bref snapf=""
   # Under the snapshot the per-PR key rides the list too (BH-4659).
   _hpl_snap_on && snapf=",headRefOid,updatedAt"
+  # The record (BH-8457) is keyed on the list head too.
+  [ "${HPL_PR_RECORD:-}" = 1 ] && snapf="$snapf,headRefOid"
   base=$(printf '%s' "number,isDraft,baseRefName$snapf,$fields" | tr ',' '\n' | grep -vxE 'mergeStateStatus|mergeable|files|isInMergeQueue' | awk 'NF && !s[$0]++' | paste -sd, -)
   tmp=$(mktemp) || return 75; one=$(mktemp) || { rm -f "$tmp"; return 75; }
   acc=$(mktemp) || { rm -f "$tmp" "$one"; return 75; }
@@ -732,9 +779,13 @@ _hpl_lazy_list() { # _hpl_lazy_list <slug> <state> <fields> <limit>
   # is the token's bucket talking, not one PR: the list fails with 75 and sets
   # _HPL_LIMITED, so harness_pr_list retries once on the next rung, and a
   # caller never reads an all-UNVERIFIABLE answer as a successful list (which
-  # would close a blind streak on a repo it could not see).
+  # would close a blind streak on a repo it could not see). Rows outside
+  # HPL_LAZY_ONLY are not counted: they were never read (BH-8457).
   if [ "$rc" = 0 ] && [ "$_HPL_DEGRADED" -gt 0 ] \
-     && { [ "$_HPL_DEGRADED_LIMITED" -gt 0 ] || [ "$_HPL_DEGRADED" -ge "$(jq '[.[] | select((.isDraft // false) | not)] | length' "$tmp")" ]; }; then
+     && { [ "$_HPL_DEGRADED_LIMITED" -gt 0 ] || [ "$_HPL_DEGRADED" -ge "$(jq --arg only "${HPL_LAZY_ONLY-}" --arg set "${HPL_LAZY_ONLY+x}" \
+            '[.[] | select((.isDraft // false) | not)
+                  | (.number | tostring) as $n
+                  | select($set == "" or ((" " + ($only | gsub(","; " ")) + " ") | contains(" " + $n + " ")))] | length' "$tmp")" ]; }; then
     [ "$_HPL_DEGRADED_LIMITED" -gt 0 ] && _HPL_LIMITED=1
     _hpl_log "$slug ($state): $_HPL_DEGRADED of $nrows per-PR reads degraded (${_HPL_DEGRADED_LIMITED} rate-limited) — the list is unavailable this tick (BH-1585)"
     rc=75

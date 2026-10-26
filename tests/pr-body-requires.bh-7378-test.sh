@@ -11,8 +11,8 @@
 #   M1-M5  pbr_missing: CRLF, regex characters, case, substring, empty body
 #   A1-A5  the ticket's acceptance cases, through bin/pr-body-requires.sh
 #   C1-C3  --pr read success and failure, a usage error
-#   S1-S7  the self-check rule through bin/pr-self-check.sh (the entry point
-#          bin/lead-review-enqueue.sh's self_check_hold uses)
+#   S1-S7  the self-check rule through bin/pr-self-check.sh (psc_check, which
+#          lgsc_run in bin/lib/lead-gates-selfcheck.sh also calls)
 #   R1-R3  the planner sentence, its two seams, its round trip
 #
 # Run from anywhere: HARNESS_TEST_SANDBOX=1 bash tests/pr-body-requires.bh-7378-test.sh
@@ -177,12 +177,11 @@ rm -rf "$T/tmp"/*
 run s1 "$(body s5.md $'## Merge condition\nafter #1\n## Flip evidence\nred then green\n')" "$CAT" "^$RULE\$"
 left=$(find "$T/tmp" -name 'pbr-*' | wc -l | tr -d ' ')
 { [ "$RC" = 0 ] && [ -z "$OUT" ] && [ "$left" = 0 ]; } && ok || bad "S5 same head, body edited: want no line and no pbr-* temp files, got rc $RC, $left left: $OUT"
-# S6: the two forwarders on main keep the line (sed copied verbatim).
+# S6: the forwarder lgsc_notes keeps the line (sed copied verbatim).
 f1=$(printf '%s\n' "$S1_OUT" | sed -n 's/^NOTE \(body-[a-z0-9-]*: the body is missing .*\)/\1/p')
 printf '%s\n' "$S1_OUT" > "$T/lgsc.out"
 f2=$(sed -n 's/^NOTE \(body-[a-z0-9-]*: the body is missing .*\)/\1/p' "$T/lgsc.out")
 { [ "$f1" = "$RULE: the body is missing ## Flip evidence (required by T3)" ] && [ "$f2" = "$f1" ] \
-  && grep -qF "sed -n 's/^NOTE \\(body-[a-z0-9-]*: the body is missing .*\\)/\\1/p'" "$SRC/bin/lead-review-enqueue.sh" \
   && grep -qF "sed -n 's/^NOTE \\(body-[a-z0-9-]*: the body is missing .*\\)/\\1/p'" "$SRC/bin/lib/lead-gates-selfcheck.sh"; } \
   && ok || bad "S6 the forwarders keep the line: got '$f1' / '$f2'"
 br s7; git -C "$R" rm -q .harness/specs/BH-0/plan.md; cm s7

@@ -193,7 +193,8 @@ wait "$P2"
 ST=$(jq -nc --arg h "$HEAD" '{"7":{sha:$h,verdict:"REQUEST_CHANGES"},"8":{sha:$h,verdict:"REQUEST_CHANGES"},"9":{sha:$h,verdict:"REQUEST_CHANGES"}}')
 fresh "$ST"
 for n in 10 11 12; do
-  printf '%s\t%s\t%s\n' operator CHANGES_REQUESTED \
+  # BH-8419: this lane's review is the App's (cromford[bot]); operator is a person.
+  printf '%s\t%s\t%s\n' 'cromford[bot]' CHANGES_REQUESTED \
     "$(printf 'Findings.\nVERDICT: REQUEST_CHANGES\n\n---\n_%s %s. Static review._' "$MARKER" "$HEAD" | base64 -w0)" > "$T/reviews.$n"
 done
 REVIEW_CONCURRENCY=3 run_rp d

@@ -64,9 +64,10 @@ HFOOT() { # HFOOT <verdict> <sha> — the review bin/review-prs.sh posts
 # P1 (a): the incident — a user, COMMENTED, VERDICT: REQUEST_CHANGES, no footer.
 OUT=$(PICK "$H1" "$(ROW 5643798807 operator-mac "$H1" COMMENTED "$UBODY" | ROWS)"); RC=$?
 [ "$RC" = 0 ] && [ "$OUT" = $'5643798807\toperator-mac\tauthor,footer' ] && ok || bad "P1 the incident review must be noted as author,footer (rc $RC): $OUT"
-# P2 (b): the operator (a verdict author), no footer -> footer only.
+# P2 (b): the operator, no footer. BH-8419: the operator login is a person,
+# never a verdict author, so the review is noted as author,footer.
 OUT=$(PICK "$H1" "$(ROW 12 operator "$H1" COMMENTED "$UBODY" | ROWS)")
-[ "$OUT" = $'12\toperator\tfooter' ] && ok || bad "P2 a verdict author with no footer must be noted as footer: $OUT"
+[ "$OUT" = $'12\toperator\tauthor,footer' ] && ok || bad "P2 the operator with no footer must be noted as author,footer: $OUT"
 # P3 (c): a user pasting the footer -> author only.
 OUT=$(PICK "$H1" "$(ROW 13 mallory "$H1" COMMENTED "$(HFOOT REQUEST_CHANGES "$H1")" | ROWS)")
 [ "$OUT" = $'13\tmallory\tauthor' ] && ok || bad "P3 a non-verdict author pasting the footer must be noted as author: $OUT"
@@ -79,7 +80,11 @@ OUT=$(PICK "$H1" "$(ROW 15 mallory "$H1" COMMENTED 'Findings.
 **VERDICT:** REQUEST_CHANGES' | ROWS)")
 [ "$OUT" = $'15\tmallory\tauthor,footer' ] && ok || bad "P5 a **VERDICT:** REQUEST_CHANGES body must be noted: $OUT"
 # P6 (f): a real harness verdict is not noted.
-[ "$(PICK_RC "$H1" "$(ROW 16 operator "$H1" COMMENTED "$(HFOOT REQUEST_CHANGES "$H1")" | ROWS)")" = 1 ] && ok || bad "P6 a harness verdict must not be noted"
+# BH-8419: a harness verdict is the App's; the operator login with the footer
+# is a person who pasted it, noted as author.
+[ "$(PICK_RC "$H1" "$(ROW 16 'cromford[bot]' "$H1" COMMENTED "$(HFOOT REQUEST_CHANGES "$H1")" | ROWS)")" = 1 ] && ok || bad "P6 a harness verdict must not be noted"
+OUT=$(PICK "$H1" "$(ROW 16 operator "$H1" COMMENTED "$(HFOOT REQUEST_CHANGES "$H1")" | ROWS)")
+[ "$OUT" = $'16\toperator\tauthor' ] && ok || bad "P6 the operator's footer review is a person's, noted as author: $OUT"
 [ "$(PICK_RC "$H1" "$(ROW 16 'cromford[bot]' "$H1" COMMENTED "$(HFOOT REQUEST_CHANGES "$H1")" | ROWS)")" = 1 ] && ok || bad "P6 the App's harness verdict must not be noted"
 # P7 (g): a user APPROVE is not noted.
 [ "$(PICK_RC "$H1" "$(ROW 17 mallory "$H1" COMMENTED 'LGTM
@@ -315,7 +320,8 @@ rm -f "$E/st-comment"; : > "$E/comments.txt"; : > "$EH/logs/blocked-resolver.log
 # ── E3: a harness-footer review from a verdict author -> its fix round, nothing noted ──
 S82=$(osha ticket/TK-82)
 PRRESET; PRADD 82 "$S82" ticket/TK-82
-REVADD 82 7001 COMMENTED "$S82" operator User "$(HFOOT REQUEST_CHANGES "$S82")"
+# BH-8419: the harness verdict is posted by the App, never the operator login.
+REVADD 82 7001 COMMENTED "$S82" 'cromford[bot]' Bot "$(HFOOT REQUEST_CHANGES "$S82")"
 ERESET; RUN
 [ "$(NAGENT)" = 1 ] && ok || bad "E3 a harness verdict must start exactly one fix round, got $(NAGENT) (log: $(tail -5 "$EH/logs/blocked-resolver.log"))"
 [ "$(grep -c . <<<"$(CAND)")" = 1 ] && ok || bad "E3 control: the harness verdict must be one candidate: $(CAND)"

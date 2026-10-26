@@ -1,0 +1,12 @@
+{
+  "env": "PR_RECORD_SERVE_MAX_AGE_S",
+  "read_in": "bin/lib/pr-record-serve.sh",
+  "type": "int",
+  "default": 120,
+  "min": 0,
+  "max": 900,
+  "unit": "seconds",
+  "zero_means": "never: every open-list merge-state read of the conductor goes to GitHub, as before BH-8457",
+  "required": false,
+  "note": "BH-8457. The merge conductor (HPL_PR_RECORD=1) answers each open-list row's merge-state read (the GitHub pulls/{n} GET) from the PR record (pr_record_peek, one jobs GET, no GitHub call) when the record is open, at the list head, has a known mergeable_state, and is at most this many seconds old (the worker's now minus the record's last write). A miss reads GitHub and writes the answer back into the record. A PR whose CI goes green is seen at most this long after the record's last write; the enqueue decision still reads the PR live. Read through lane_knob (libs scope) when the caller has it, else from the environment; a value that is not a non-negative integer is 120 and one logs/pr-record.log line names it."
+}

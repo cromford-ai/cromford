@@ -140,7 +140,7 @@ PRADD() { # PRADD <num> <head> <branch> <login> <draft> <age-secs>
 }
 REVADD() { # REVADD <num> <id> <state> <commit_id> <login> <body>
   jq -nc --argjson i "$2" --arg s "$3" --arg c "$4" --arg l "$5" --arg b "$6" \
-    '{id:$i, state:$s, commit_id:$c, user:{login:$l}, body:$b}' >> "$T/revrows-$1"
+    '{id:$i, state:$s, commit_id:$c, user:{login:$l, type:(if ($l | endswith("[bot]")) then "Bot" else "User" end)}, body:$b}' >> "$T/revrows-$1"
   jq -s . "$T/revrows-$1" > "$T/reviews-$1.json"
 }
 REVADDA() { # REVADDA <num> <id> <state> <commit_id> <login> <association> <body> — with GitHub's author_association
@@ -292,8 +292,10 @@ SPENT() { # SPENT <num> <head> <fixrounds> [extra-json] — a review record at t
     > "$(RECF "tproj-TK-$1")"
 }
 REVPR() { # REVPR <num> <head> <branch> — one open harness PR with a footer CR at its head
+  # BH-8419: the operator opens the PR, but the harness's footer review is the
+  # App's (cromford[bot], type Bot); a operator review is a person's.
   PRADD "$1" "$2" "$3" operator false 600
-  REVADD "$1" 11 CHANGES_REQUESTED "$2" operator "$(RBODY REQUEST_CHANGES "$2")"
+  REVADD "$1" 11 CHANGES_REQUESTED "$2" 'cromford[bot]' "$(RBODY REQUEST_CHANGES "$2")"
 }
 
 # --- N1 + N2: the spent review row ends ABANDONED and pages nobody ---------

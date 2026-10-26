@@ -53,14 +53,15 @@ cat > "$T/fakebin/gh" <<'STUB'
 if [ "${1:-}" = pr ] && [ "${2:-}" = list ]; then
   printf '7\thead7aaaaaaa\texternaldev\tChange under review\n'
 elif [ "${1:-}" = api ] && [[ "$*" == */pulls/*/reviews* ]]; then
+  # BH-8419: the lane's own review is the App's (cromford[bot], type Bot).
   case "${GH_REVIEWS_MODE:-none}" in
     fail) echo "gh: Something went wrong (HTTP 502)" >&2; exit 1 ;;
     none) JSON='[]' ;;
-    head) JSON='[{"user":{"login":"operator"},"state":"CHANGES_REQUESTED","body":"Static review.\n\n1. A finding.\n\nTIER: 2\nVERDICT: REQUEST_CHANGES\n\n---\n_Automated harness review (Fable) of head7aaaaaaa. Static review — no build run._"}]' ;;
+    head) JSON='[{"user":{"login":"cromford[bot]","type":"Bot"},"state":"CHANGES_REQUESTED","body":"Static review.\n\n1. A finding.\n\nTIER: 2\nVERDICT: REQUEST_CHANGES\n\n---\n_Automated harness review (Fable) of head7aaaaaaa. Static review — no build run._"}]' ;;
     headapp) JSON='[{"user":{"login":"cromford[bot]"},"state":"CHANGES_REQUESTED","body":"Static review.\n\nTIER: 2\nVERDICT: REQUEST_CHANGES\n\n---\n_Automated harness review (Fable) of head7aaaaaaa. Static review — no build run._"}]' ;;
-    old)  JSON='[{"user":{"login":"operator"},"state":"CHANGES_REQUESTED","body":"Static review.\n\nTIER: 2\nVERDICT: REQUEST_CHANGES\n\n---\n_Automated harness review (Fable) of old7bbbbbbb. Static review — no build run._"}]' ;;
+    old)  JSON='[{"user":{"login":"cromford[bot]","type":"Bot"},"state":"CHANGES_REQUESTED","body":"Static review.\n\nTIER: 2\nVERDICT: REQUEST_CHANGES\n\n---\n_Automated harness review (Fable) of old7bbbbbbb. Static review — no build run._"}]' ;;
     stranger) JSON='[{"user":{"login":"passing-contributor"},"state":"COMMENTED","body":"I ran the Automated harness review (Fable) of head7aaaaaaa myself, looks fine."}]' ;;
-    noverdict) JSON='[{"user":{"login":"operator"},"state":"APPROVED","body":"Static review.\n\n---\n_Automated harness review (Fable) of head7aaaaaaa. Static review — no build run._"}]' ;;
+    noverdict) JSON='[{"user":{"login":"cromford[bot]","type":"Bot"},"state":"APPROVED","body":"Static review.\n\n---\n_Automated harness review (Fable) of head7aaaaaaa. Static review — no build run._"}]' ;;
     *) JSON='[]' ;;
   esac
   Q=""; prev=""

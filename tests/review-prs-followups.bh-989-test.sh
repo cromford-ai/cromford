@@ -193,9 +193,12 @@ footer_body() { # footer_body <sha> <APPROVE|REQUEST_CHANGES>
   printf 'Static review.\n1. lib/x.ts:4 leaks a token into the log — read it from env.\nTIER: 2\nVERDICT: %s\n\n---\n_Automated harness review (Fable) of %s. Static review — no build run._' "$2" "$1"
 }
 
+# BH-8419: the lane's own footer reviews are posted as the App
+# (cromford[bot], type Bot); the operator login operator is a person and
+# stays only the PR author below.
 review_row() { # review_row <id> <state> <commit> <login> <body>
   jq -nc --argjson id "$1" --arg st "$2" --arg c "$3" --arg l "$4" --arg b "$5" \
-    '{id:$id, state:$st, commit_id:$c, user:{login:$l}, body:$b}'
+    '{id:$id, state:$st, commit_id:$c, user:{login:$l, type:(if ($l | endswith("[bot]")) then "Bot" else "User" end)}, body:$b}'
 }
 
 state_put() { printf '%s\n' "$1" > "$T/h/state/tproj.pr-reviews.json"; }
@@ -244,7 +247,7 @@ grep -q '422' <<<"$(rplog)" \
 #    the CURRENT head: the row stays (the resolver's fix round consumes it), the
 #    ledger gate heals the cache, nothing is bought and nothing is posted.
 fresh_harness
-reviews "[$(review_row 11 CHANGES_REQUESTED S1 operator "$(footer_body S1 REQUEST_CHANGES)")]"
+reviews "[$(review_row 11 CHANGES_REQUESTED S1 'cromford[bot]' "$(footer_body S1 REQUEST_CHANGES)")]"
 PR_AUTHOR=operator run_lane
 [ "$(ghgrep 'dismissals')" = 0 ] \
   && ok || bad "2: the at-head review was dismissed, so the resolver skips the findings: $(ghlog)"
@@ -258,14 +261,14 @@ grep -q 'standing — it is AT the current head' <<<"$(rplog)" \
 #    PIPELINE-skip path still dismisses the at-head row, because there the
 #    build's own lenses approved the head and br_review_newest relies on it.
 fresh_harness
-reviews "[$(review_row 11 CHANGES_REQUESTED S0 operator "$(footer_body S0 REQUEST_CHANGES)"),$(review_row 12 CHANGES_REQUESTED S1 operator "$(footer_body S1 REQUEST_CHANGES)")]"
+reviews "[$(review_row 11 CHANGES_REQUESTED S0 'cromford[bot]' "$(footer_body S0 REQUEST_CHANGES)"),$(review_row 12 CHANGES_REQUESTED S1 'cromford[bot]' "$(footer_body S1 REQUEST_CHANGES)")]"
 PR_AUTHOR=operator run_lane
 [ "$(dismissals 11)" = 1 ] \
   && ok || bad "3: the stale-head blocking review stopped being dismissed: $(ghlog)"
 [ "$(dismissals 12)" = 0 ] \
   && ok || bad "3: the row at the current head was dismissed: $(ghlog)"
 fresh_harness
-reviews "[$(review_row 11 CHANGES_REQUESTED S1 operator "$(footer_body S1 REQUEST_CHANGES)")]"
+reviews "[$(review_row 11 CHANGES_REQUESTED S1 'cromford[bot]' "$(footer_body S1 REQUEST_CHANGES)")]"
 PR_AUTHOR=operator PR_BODY_MODE=marker_late run_lane
 [ "$(dismissals 11)" = 1 ] \
   && ok || bad "3: a pipeline PR's at-head dismissal was lost: $(ghlog)"
@@ -275,7 +278,7 @@ PR_AUTHOR=operator PR_BODY_MODE=marker_late run_lane
 # 4. A pipeline PR gets no `.sha` row ever — the lane never reviews it — so a
 #    clean dismissal pass leaves its own watermark, and tick 2 reads nothing.
 fresh_harness
-reviews "[$(review_row 11 CHANGES_REQUESTED S0 operator "$(footer_body S0 REQUEST_CHANGES)")]"
+reviews "[$(review_row 11 CHANGES_REQUESTED S0 'cromford[bot]' "$(footer_body S0 REQUEST_CHANGES)")]"
 PR_AUTHOR=operator PR_BODY_MODE=marker_late run_lane
 [ "$(reads)" -ge 1 ] && ok || bad "4: tick 1 never read the ledger: $(ghlog)"
 [ "$(dismissals 11)" = 1 ] && ok || bad "4: tick 1 did not dismiss the stale-head row: $(ghlog)"
@@ -290,7 +293,7 @@ PR_AUTHOR=operator PR_BODY_MODE=marker_late run_lane
 
 # 5. The watermark is keyed on the HEAD: a new head reads again.
 fresh_harness
-reviews "[$(review_row 11 CHANGES_REQUESTED S0 operator "$(footer_body S0 REQUEST_CHANGES)")]"
+reviews "[$(review_row 11 CHANGES_REQUESTED S0 'cromford[bot]' "$(footer_body S0 REQUEST_CHANGES)")]"
 PR_AUTHOR=operator PR_BODY_MODE=marker_late run_lane
 [ "$(st ledger_sha)" = S1 ] && ok || bad "5: tick 1 left no watermark"
 : > "$T/gh-calls.log"
@@ -302,7 +305,7 @@ PR_HEAD=S2 PR_AUTHOR=operator PR_BODY_MODE=marker_late run_lane
 #    dismissal pass never ran; skipping on `.sha` would leave a stale-head
 #    blocking row standing until the branch moved again.
 fresh_harness
-reviews "[$(review_row 11 CHANGES_REQUESTED S0 operator "$(footer_body S0 REQUEST_CHANGES)")]"
+reviews "[$(review_row 11 CHANGES_REQUESTED S0 'cromford[bot]' "$(footer_body S0 REQUEST_CHANGES)")]"
 state_put '{"7":{"sha":"S1","verdict":"REQUEST_CHANGES","tier":"2","served":"claude"}}'
 PR_AUTHOR=operator run_lane
 [ "$(reads)" -ge 1 ] \
@@ -317,7 +320,7 @@ PR_AUTHOR=operator run_lane
 #     block Mergify until the head moved again. It is on `.ledger_sha`, which
 #     that tick never wrote, so the next healthy tick reads and dismisses.
 fresh_harness
-reviews "[$(review_row 11 CHANGES_REQUESTED S0 operator "$(footer_body S0 REQUEST_CHANGES)")]"
+reviews "[$(review_row 11 CHANGES_REQUESTED S0 'cromford[bot]' "$(footer_body S0 REQUEST_CHANGES)")]"
 PR_AUTHOR=operator RATE_LOW=1 run_lane
 [ "$(list_reads)" = 0 ] \
   && ok || bad "6b: the deferred pass read the list anyway: $(ghlog)"
@@ -343,7 +346,7 @@ PR_AUTHOR=externaldev run_lane
 
 # 7. A FAILED dismissal writes no watermark: the next tick must retry.
 fresh_harness
-reviews "[$(review_row 11 CHANGES_REQUESTED S0 operator "$(footer_body S0 REQUEST_CHANGES)")]"
+reviews "[$(review_row 11 CHANGES_REQUESTED S0 'cromford[bot]' "$(footer_body S0 REQUEST_CHANGES)")]"
 PR_AUTHOR=operator PR_BODY_MODE=marker_late DISMISS_FAIL=1 run_lane
 [ -z "$(st ledger_sha)" ] \
   && ok || bad "7: a failed dismissal was watermarked as done (ledger_sha='$(st ledger_sha)')"
@@ -361,7 +364,7 @@ PR_AUTHOR=operator PR_BODY_MODE=marker_late REVIEWS_MODE=error run_lane
 # 8. Budget low: the per-tick read is non-essential and skips, with a line in
 #    both logs (ours names the PR, the lib's names the lane).
 fresh_harness
-reviews "[$(review_row 11 CHANGES_REQUESTED S0 operator "$(footer_body S0 REQUEST_CHANGES)")]"
+reviews "[$(review_row 11 CHANGES_REQUESTED S0 'cromford[bot]' "$(footer_body S0 REQUEST_CHANGES)")]"
 PR_AUTHOR=operator PR_BODY_MODE=marker_late RATE_LOW=1 run_lane
 [ "$(reads)" = 0 ] \
   && ok || bad "8: the reviews read ran with the GitHub budget low: $(ghlog)"
@@ -383,7 +386,7 @@ PR_AUTHOR=operator RATE_LOW=1 run_lane
 grep -qE 'pr review 7 .*--comment' <<<"$(ghlog)" \
   && ok || bad "9: the verdict did not post: $(ghlog)"
 fresh_harness
-reviews "[$(review_row 11 CHANGES_REQUESTED S0 operator "$(footer_body S0 REQUEST_CHANGES)")]"
+reviews "[$(review_row 11 CHANGES_REQUESTED S0 'cromford[bot]' "$(footer_body S0 REQUEST_CHANGES)")]"
 PR_AUTHOR=operator PR_BODY_MODE=marker_late RATE_LOW=unknown run_lane
 [ "$(reads)" -ge 1 ] \
   && ok || bad "9: an UNKNOWN budget was read as low and skipped the read: $(ghlog)"

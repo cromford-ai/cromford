@@ -7,8 +7,9 @@
 # body composer (bin/lib/rb/pr.sh PR_BODY_FOR) carries those lines from the
 # plan's `## Tests that must change` and the commit messages
 # (psc_test_change_section), and the planner sentence (bin/lib/test-home-lib.sh
-# th_plan_rule) asks for that section. bin/lead-review-enqueue.sh passes the PR
-# title key as PSC_PR_KEY.
+# th_plan_rule) asks for that section. lgsc_run (bin/lib/lead-gates-selfcheck.sh)
+# passes the PR title key as PSC_PR_KEY; K1-K3 of
+# tests/lead-gates-selfcheck-key.bh-8363-test.sh pin that.
 #
 #   O1  BH-200 edits tests/x.bh-100-test.sh, no line: REFUSE, rc 1
 #   O2  same, a line names the path and a premise: pass
@@ -28,7 +29,6 @@
 #   M1  the row set to `off`: O1 passes
 #   B1-B4  psc_test_change_section: plan lines, commit lines, dedup, None
 #   R1  B1+B2 output as the body passes; drop one line and it refuses that file
-#   E1  bin/lead-review-enqueue.sh self_check_hold passes the title key
 #   P1  th_plan_rule names `## Tests that must change` and TEST-CHANGE
 # Run from anywhere: HARNESS_TEST_SANDBOX=1 bash tests/pr-self-check-test-ownership.bh-6392-test.sh
 set -uo pipefail
@@ -170,19 +170,6 @@ grep -qx '## Test changes' <<<"$BODY" && grep -qF 'TEST-CHANGE: tests/y.bh-200-t
   && grep -qF 'TEST-CHANGE: tests/x.bh-100-test.sh — the floor moved' <<<"$BODY" && ok || bad "R2: PR_BODY_FOR must carry the ## Test changes lines [$BODY]"
 check r2 "$BODY"
 [ "$RC" = 0 ] && ! has "test-ownership" && ok || bad "R2: the composed body passes test-ownership (rc=$RC) [$OUT]"
-
-# ── E1: the enqueue passes the PR title key ──
-fn=$(awk '/^self_check_hold\(\) \{/ {on=1} on {print} on && /^}/ {exit}' "$DIR/bin/lead-review-enqueue.sh")
-[ -n "$fn" ] && ok || bad "E1: self_check_hold not found in bin/lead-review-enqueue.sh"
-e1() { # e1 <title> — prints the PSC_PR_KEY psc_check saw
-  ( WORK="$T/w"; mkdir -p "$WORK" "$T/rr/demo/.git"; REPOS_ROOT="$T/rr"; PSC=1; H="$T/h"
-    jq -nc --arg t "$1" '{title:$t, body:"no key here"}' > "$WORK/pr"
-    git() { return 0; }; gh_rest() { :; }
-    psc_check() { printf 'KEY=%s\n' "${PSC_PR_KEY:-}" > "$T/e1"; return 0; }
-    eval "$fn"; rm -f "$T/e1"; self_check_hold example-org/demo 41 abc main demo; cat "$T/e1" 2>/dev/null )
-}
-[ "$(e1 'BH-200: t')" = KEY=BH-200 ] && ok || bad "E1: title BH-200 gives PSC_PR_KEY=BH-200 [$(e1 'BH-200: t')]"
-[ "$(e1 'fix: a lead fix')" = KEY= ] && ok || bad "E1: a title with no key gives an empty key [$(e1 'fix: a lead fix')]"
 
 # ── P1: the planner sentence ──
 P=$( . "$DIR/bin/lib/test-home-lib.sh" && th_plan_rule AB-1 )

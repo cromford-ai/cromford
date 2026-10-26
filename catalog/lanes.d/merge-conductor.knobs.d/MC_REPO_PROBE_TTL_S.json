@@ -1,0 +1,11 @@
+{
+  "env": "MC_REPO_PROBE_TTL_S",
+  "type": "int",
+  "default": 300,
+  "min": 0,
+  "max": 3600,
+  "unit": "seconds",
+  "zero_means": "off",
+  "note": "BH-8457: how long the conductor keeps the verdict of bin/lib/gh-repo-token.sh's repo visibility probe (app, default or admin; never a token, never `none`) in state/gh-repo-probe/, so a keyed tick does not send GET repos/{o}/{r} again. The App token is still minted every tick; only the visibility GET is skipped. An App or PAT that loses the repo is noticed within this many seconds, because its list then fails and the existing list-failed paths run. Settings row: lane.merge-conductor.mc_repo_probe_ttl_s. 0 = off: every tick sends the repo visibility probe (GET repos/{o}/{r}), as before BH-8457.",
+  "read_in": "bin/lib/mc/tick-scope.sh"
+}

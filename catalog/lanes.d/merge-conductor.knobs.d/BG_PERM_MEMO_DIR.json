@@ -1,0 +1,8 @@
+{
+  "env": "BG_PERM_MEMO_DIR",
+  "type": "string",
+  "default": "",
+  "zero_means": null,
+  "note": "Not a knob: the per-tick dir bin/lib/mc/tick-scope.sh sets (BH-8457) under MC_TICK_DIR (perm-<tick id>). bg_reviewer_can_write (bin/lib/block-gate.sh) keeps each collaborator-permission word in <dir>/<slug>.<login>, so one tick reads each (repo, login) once. The conductor's EXIT trap removes it and mc_tick_gc prunes a dir a killed tick left. Unset = no memo, which is every other lane. A path, so NOT settable from the control plane.",
+  "settable": false
+}

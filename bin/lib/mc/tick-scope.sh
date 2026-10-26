@@ -41,7 +41,13 @@
 #   MC_INQUEUE_PROBE_TTL_SECS, MC_INQUEUE_STATES), REREVIEW_CAP and CAPFILE
 #   (it touches the day's cap file) and MC_TICK_ID. All are globals, no
 #   `local`. It exports MC_TICK_ID and the knobs the detached lanes re-read.
-#   Reads MC_STATE_DIR, so it runs after mc_init. Needs mc_tick_id.
+#   Reads MC_STATE_DIR, so it runs after mc_init. Needs mc_tick_id. BH-8457:
+#   it also sets the per-tick permission memo dir (BG_PERM_MEMO_DIR, exported)
+#   and the repo probe memo (_GHRT_PROBE_MEMO_DIR, _GHRT_PROBE_MEMO_TTL_S).
+#
+# mc_lazy_only_nums, mc_lazy_scoped (BH-8457)
+#   The open list of tick_project. On a keyed tick, its merge-state reads go
+#   to the woken PRs of that repo only (HPL_LAZY_ONLY).
 #
 # mc_tick_fanout (BH-7879)
 #   The per-project fan-out: the held-page flush before the first worker forks
@@ -275,8 +281,45 @@ export MC_PR_PARALLEL MC_MERGE_LOCK_WAIT
 # inherit its spent budgets. Two OVERLAPPING ticks therefore have separate
 # budgets, which is the same thing as saying each tick may spend its own.
 MC_TICK_ID=$(mc_tick_id); export MC_TICK_ID
+# BH-8457: the two read memos of a tick. The collaborator-permission read
+# (bg_reviewer_can_write, bin/lib/block-gate.sh) is kept for THIS tick only, in
+# a dir the parent's EXIT trap removes and mc_tick_gc prunes. The repo
+# visibility probe (bin/lib/gh-repo-token.sh) is kept across ticks for
+# MC_REPO_PROBE_TTL_S (settings row lane.merge-conductor.mc_repo_probe_ttl_s;
+# 300 is the fallback; 0 = probe every tick).
+# Both are derived from what the prelude already reads (MC_STATE_DIR, the tick
+# id), so the prelude still runs sourced alone, with no locks.sh and no H.
+# No harness root = no probe memo dir = no memo.
+BG_PERM_MEMO_DIR="${MC_TICK_DIR:-$MC_STATE_DIR/tick}/perm-${MC_TICK_ID//[^A-Za-z0-9._-]/_}"; export BG_PERM_MEMO_DIR
+_MC_ROOT="${HARNESS:-${H:-}}"; _GHRT_PROBE_MEMO_DIR="${_MC_ROOT:+$_MC_ROOT/state/gh-repo-probe}"
+_GHRT_PROBE_MEMO_TTL_S="${MC_REPO_PROBE_TTL_S:-300}"
 }
 # <<< tick prelude (BH-6518)
+# >>> open list scope (BH-8457)
+# mc_lazy_only_nums <slug> — the PR numbers of MC_ONLY_KEYS on <slug>, space
+#   separated (empty when none is). Keys are lower case (mc_keyed_tick_parse).
+mc_lazy_only_nums() {
+  local k s out=""
+  s=$(printf '%s' "$1" | tr 'A-Z' 'a-z')
+  for k in $MC_ONLY_KEYS; do [ "${k%#*}" = "$s" ] && out="$out ${k##*#}"; done
+  printf '%s' "${out# }"
+}
+# mc_lazy_scoped <slug> <command...> — runs <command> (the driver's
+#   harness_pr_list open-list call, spelled out in the driver so the lanes'
+#   field sets stay readable there, tests/graphql-cuts.bh-1585-test.sh). On a
+#   keyed tick the per-PR merge-state reads go to the woken PRs only
+#   (HPL_LAZY_ONLY, bin/lib/gh-pr-list.sh): every other row reads UNKNOWN, and
+#   the driver drops those rows from ROWS right after. A full tick reads every
+#   row.
+mc_lazy_scoped() {
+  local s=$1; shift
+  if [ -n "$MC_ONLY_KEYS" ]; then
+    HPL_LAZY_ONLY="$(mc_lazy_only_nums "$s")" "$@"
+  else
+    "$@"
+  fi
+}
+# <<< open list scope (BH-8457)
 # >>> per-project fan-out (BH-7879)
 mc_tick_fanout() {
 # THE HELD PAGES, BEFORE THE FIRST WORKER FORKS (BH-1201). This reads what the
@@ -341,6 +384,9 @@ for P in $("$H/bin/fleet-conf.sh" --projects 2>/dev/null); do
       command -v mc_proj_hub_unmark >/dev/null 2>&1 && mc_proj_hub_unmark "$P"
       if [ -n "$SLUG" ] && [ "$SLUG" != - ] && [ -f "$PRS_COUNT_FILE" ]; then
         mc_log "$SLUG PR-SNAPSHOT hit=$(grep -c '^HIT ' "$PRS_COUNT_FILE") miss=$(grep -c '^MISS ' "$PRS_COUNT_FILE")"
+        # BH-8457: the PR record's answers to the same reads (pr-record-serve.sh).
+        grep -qE '^R(SERVED|MISS) ' "$PRS_COUNT_FILE" \
+          && mc_log "$SLUG PR-RECORD served=$(grep -c '^RSERVED ' "$PRS_COUNT_FILE") miss=$(grep -c '^RMISS ' "$PRS_COUNT_FILE")"
       fi
       command -v gh_rest_etag_report >/dev/null 2>&1 && gh_rest_etag_report "merge-conductor:$P" )
   ) & PIDS+=("$!")

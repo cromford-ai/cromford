@@ -365,7 +365,12 @@ apcomment "${H_AP:0:12}" 'cromford-builders[bot]' 'VERDICT: MERGE'
 apcomment "${H_AP:0:12}" 'cromford[bot]' 'VERDICT: MERGE'
 [ "$(apv "$H_AP")" = MERGE ] && ok || bad "the hub App's marker comment still counts (got '$(apv "$H_AP")')"
 : > "$ATT"
-apcomment "${H_AP:0:12}" 'operator' 'this diff would BLOCK on a lesser day
+# BH-8419: the operator login is a person, never a verdict author; the
+# harness's marker comment is the hub App's.
+apcomment "${H_AP:0:12}" 'operator' 'VERDICT: MERGE'
+[ -z "$(apv "$H_AP")" ] && ok || bad "a marker comment by the operator login (a person) must never be consumed (got '$(apv "$H_AP")')"
+: > "$ATT"
+apcomment "${H_AP:0:12}" 'cromford[bot]' 'this diff would BLOCK on a lesser day
 
 VERDICT: MERGE-WITH-NOTES — fine'
 [ "$(apv "$H_AP")" = MERGE-WITH-NOTES ] && ok || bad "a marker comment by a harness login must be read, last VERDICT line wins, not the word BLOCK in prose (got '$(apv "$H_AP")')"

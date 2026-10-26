@@ -535,6 +535,30 @@ mc_mergify_witness() {
 # label for the same reason in reverse: Mergify does NOT remove the label a human
 # (or this conductor) added — its own signals are the check run and its own
 # `dequeued` label — so a stale trigger label must never outvote a red batch.
+# BH-8457: the QUEUED pass's first read, from the open list instead of one
+# pulls/{n} GET per QUEUED row.
+# mc_queued_open_heads <owner/repo> — the open list as `<num>\t<head>\t<branch>`
+#   lines (head lower case, `-` when absent). Empty when the list is unreadable:
+#   every row is then read live, as before.
+mc_queued_open_heads() {
+  command -v harness_pr_list >/dev/null 2>&1 || return 0
+  harness_pr_list "$1" open number,headRefOid,headRefName 100 2>/dev/null \
+    | jq -r '.[] | [(.number | tostring), ((.headRefOid // "") | ascii_downcase | if . == "" then "-" else . end),
+        ((.headRefName // "") | if . == "" then "-" else . end)] | @tsv' 2>/dev/null
+  return 0
+}
+# mc_queued_list_view <open-lines> <num> <queued-head> — rc 0 and
+#   `OPEN <branch> <head>` (mc_pr_view's QUEUED-pass shape) when <num> is in the
+#   open list at <queued-head>. rc 1 otherwise (absent, another head, no head):
+#   the caller reads the PR live. A list older than a merge still says OPEN;
+#   mc_queue_state's own live read then answers `merged`.
+mc_queued_list_view() {
+  local h
+  h=$(printf '%s' "${3:-}" | tr 'A-F' 'a-f')
+  [[ "$h" =~ ^[0-9a-f]{40}$ ]] && [ -n "${1:-}" ] || return 1
+  awk -F'\t' -v n="$2" -v h="$h" '$1 == n && $2 == h && $3 != "-" { print "OPEN " $3 " " $2; f = 1; exit } END { exit !f }' <<<"$1"
+}
+
 mc_queue_state() {
   local url="$1" head="${2:-}" slug prov j st head2 labels chk chkrc=0
   slug=$(mc_slug_of_url "$url"); prov=$(mc_queue_provider "$slug")

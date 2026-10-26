@@ -133,20 +133,22 @@ grep -qF "HARNESS_PR_AUTHORS:-$DEF}" "$DIR/bin/merge-sweep.sh" \
 # (review of #1926, blocking 2). Listing a PR is not issuing a verdict: the
 # builders App is the identity the pool build boxes hold, so a verdict comment it
 # posts must never count.
-[ "$(drive 'harness_verdict_authors')" = "operator app/cromford" ] \
+# BH-8419: the set holds Apps only; the operator login is a person.
+[ "$(drive 'harness_verdict_authors')" = "app/cromford" ] \
   && ok || bad "B7 default verdict set: '$(drive 'harness_verdict_authors')'"
 drive 'harness_verdict_author_match "cromford-builders[bot]"' && bad "B7 the builders App must NOT be a verdict author" || ok
 drive 'harness_verdict_author_match "app/cromford-builders"' && bad "B7 the builders App (app/ spelling) must NOT be a verdict author" || ok
 drive 'harness_verdict_author_match "cromford[bot]"' && ok || bad "B7 the hub App must stay a verdict author"
-drive 'harness_verdict_author_match "operator"' && ok || bad "B7 the PAT login must stay a verdict author"
+drive 'harness_verdict_author_match "operator"' && bad "B7 the operator (PAT) login must NOT be a verdict author (BH-8419)" || ok
 case "$(drive 'harness_verdict_authors_json')" in *builders*) bad "B7 verdict json carries builders: $(drive 'harness_verdict_authors_json')" ;; *'"cromford[bot]"'*) ok ;; *) bad "B7 verdict json lacks the REST spelling: $(drive 'harness_verdict_authors_json')" ;; esac
 # a profile file naming a slug makes that App a PR author, never a verdict author
 printf 'GH_APP_SLUG=cromford-builders\n' > "$T/h/env/github-app-builders.env"
 drive 'harness_verdict_author_match "cromford-builders[bot]"' && bad "B7 a profile slug must never grant verdict trust" || ok
 rm -f "$T/h/env/github-app-builders.env"
 # the knob narrows it; it is registered, and NOT settable from a DB row
-[ "$(drive 'HARNESS_VERDICT_AUTHORS=operator harness_verdict_authors')" = operator ] && ok || bad "B7 HARNESS_VERDICT_AUTHORS override ignored"
-jq -e '.libs[] | select(.id=="gh-pr-list") | .knobs[] | select(.env=="HARNESS_VERDICT_AUTHORS") | .settable == false and .default == "operator app/cromford"' "$DIR/catalog/lanes.d/_lib.json" >/dev/null \
+[ "$(drive 'HARNESS_VERDICT_AUTHORS=app/acme-review harness_verdict_authors')" = app/acme-review ] && ok || bad "B7 HARNESS_VERDICT_AUTHORS override ignored"
+[ -z "$(drive 'HARNESS_VERDICT_AUTHORS=operator harness_verdict_authors')" ] && ok || bad "B7 an override that lists the operator login must drop it (BH-8419)"
+jq -e '.libs[] | select(.id=="gh-pr-list") | .knobs[] | select(.env=="HARNESS_VERDICT_AUTHORS") | .settable == false and .default == "app/cromford"' "$DIR/catalog/lanes.d/_lib.json" >/dev/null \
   && ok || bad "B7 HARNESS_VERDICT_AUTHORS must be registered (catalog/lanes.d/_lib.json, gh-pr-list) with settable:false and the default"
 # every verdict-reading site uses the verdict set, never the PR-author set
 grep -q 'harness_verdict_authors_json' "$DIR/bin/lib/mc/classify.sh" && ! grep -q 'harness_pr_authors_json' "$DIR/bin/lib/mc/classify.sh" \

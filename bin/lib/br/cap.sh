@@ -147,15 +147,20 @@ br_cap_notes() {
   # The newest review per login that still says CHANGES_REQUESTED.
   standing=$(printf '%s' "$rows" | jq -c '[group_by(.l) | .[] | last | select(.s == "CHANGES_REQUESTED")]' 2>/dev/null) || return 1
   [ "$(printf '%s' "$standing" | jq 'length' 2>/dev/null)" -gt 0 ] 2>/dev/null || return 1
-  # Ours: a verdict author's review, or the lead lane's marker. A person's
-  # REQUEST_CHANGES is never dismissed by this lane: today's path.
-  while IFS=$'\t' read -r login lr; do
+  # Ours: a Bot row (BH-8419: the review's user.type is Bot, or a `[bot]`
+  # login) that is a verdict author's review or carries the lead lane's marker.
+  # Any other login is a person, the operator login included, and a person's
+  # REQUEST_CHANGES is never dismissed by this lane: today's path, before any
+  # record write or dismissal.
+  while IFS=$'\t' read -r login lr bot; do
     [ -n "$login" ] || continue
-    [ "$lr" = true ] && continue
-    command -v harness_verdict_author_match >/dev/null 2>&1 && harness_verdict_author_match "$login" && continue
+    if [ "$bot" = true ]; then
+      [ "$lr" = true ] && continue
+      command -v harness_verdict_author_match >/dev/null 2>&1 && harness_verdict_author_match "$login" && continue
+    fi
     say "$p/$rkey [$reason]: at the fix cap, a person's CHANGES_REQUESTED by $login stands — not this lane's to dismiss"
     return 1
-  done < <(printf '%s' "$standing" | jq -r '.[] | [.l, ((.b // "") | startswith("<!-- lead-review:"))] | @tsv' 2>/dev/null)
+  done < <(printf '%s' "$standing" | jq -r '.[] | [.l, ((.b // "") | startswith("<!-- lead-review:")), (((.t // "") == "Bot") or ((.l // "") | endswith("[bot]")))] | @tsv' 2>/dev/null)
   bodies=$(mktemp "${TMPDIR:-/tmp}/br-capnotes.XXXXXX") || return 1
   printf '%s' "$standing" | jq -r '.[] | .b // ""' 2>/dev/null | tr -d '\r' > "$bodies"
   if br_floor_stands "$bodies"; then

@@ -2862,6 +2862,10 @@ tick_project() {
   # hub's next tick of the project settles it.
   if [ "$QUEUE" = 1 ] && { [ "${MC_ON_MACHINE:-}" != 1 ] || { [ "${MC_LEASED_RUN:-}" = 1 ] && [ -n "${MC_LEASE_FENCE:-}" ]; }; }; then
     mapfile -t QROWS < <(awk -F'\t' -v p="$SLUG#" '$2=="QUEUED" && index($1,p)==1' "$MC_ROWS" 2>/dev/null)
+    # BH-8457: the open list (one list read, shared with the open pass under
+    # the snapshot) answers state, branch and head for a row still open at its
+    # QUEUED head; mc_queue_state below still reads that PR live once.
+    QOPEN=""; [ -n "${QROWS[0]:-}" ] && QOPEN=$(mc_queued_open_heads "$SLUG")
     for QROW in "${QROWS[@]:-}"; do
       [ -n "$QROW" ] || continue
       IFS=$'\t' read -r QKEY QST QSINCE QHEAD QREV QAL QWHY QURL <<<"$QROW"
@@ -2877,7 +2881,8 @@ tick_project() {
       # The PR's own state first (it is the same read for both providers and it
       # carries the branch the issue close needs), then, only for a PR that is
       # still OPEN, the provider-aware question "does the queue still hold it".
-      QV=$(mc_pr_view "$QURL" '"\(.STATE) \(.head.ref) \(.head.sha // "")"' 2>/dev/null) || QV=""
+      QV=$(mc_queued_list_view "$QOPEN" "${QKEY##*#}" "$QHEAD") \
+        || QV=$(mc_pr_view "$QURL" '"\(.STATE) \(.head.ref) \(.head.sha // "")"' 2>/dev/null) || QV=""
       read -r QPS QBR QLIVE <<<"$QV"
       [ -n "${QPS:-}" ] || { mc_log "$QKEY still QUEUED: GitHub read UNVERIFIABLE (HTTP $(mc_rest_status)) — row left as-is"; continue; }
       QREC=$(mc_record_for "$QURL" || true)
@@ -3102,11 +3107,11 @@ tick_project() {
   INQ_RC=0
   if [ "$QUEUE" = 1 ] && [ "$PROVIDER" = github ] && inq_list_ok "$SLUG"; then
     INQ_ASKED=1
-    LIST=$(harness_pr_list "$SLUG" open number,url,headRefOid,headRefName,baseRefName,isDraft,mergeStateStatus,mergeable,state,labels,isInMergeQueue,updatedAt,isCrossRepository 100 2>/dev/null) || INQ_RC=$?
+    LIST=$(mc_lazy_scoped "$SLUG" harness_pr_list "$SLUG" open number,url,headRefOid,headRefName,baseRefName,isDraft,mergeStateStatus,mergeable,state,labels,isInMergeQueue,updatedAt,isCrossRepository 100 2>/dev/null) || INQ_RC=$?
     [ -n "$LIST" ] && { INQ_IN_LIST=1; rm -f "$(inq_mark "$SLUG")" 2>/dev/null; }
   fi
   if [ "$INQ_IN_LIST" = 0 ]; then
-    LIST=$(harness_pr_list "$SLUG" open number,url,headRefOid,headRefName,baseRefName,isDraft,mergeStateStatus,mergeable,state,labels,updatedAt,isCrossRepository 100 2>/dev/null) || {
+    LIST=$(mc_lazy_scoped "$SLUG" harness_pr_list "$SLUG" open number,url,headRefOid,headRefName,baseRefName,isDraft,mergeStateStatus,mergeable,state,labels,updatedAt,isCrossRepository 100 2>/dev/null) || {
       command -v gh_repo_list_failed >/dev/null 2>&1 && gh_repo_list_failed merge-conductor "$SLUG" "$P: PR list failed this tick"; reset_token; mc_tick_metrics "$P" "$T0"; return 0; }
     [ -n "$LIST" ] || { command -v gh_repo_list_failed >/dev/null 2>&1 && gh_repo_list_failed merge-conductor "$SLUG" "$P: PR list failed this tick"; reset_token; mc_tick_metrics "$P" "$T0"; return 0; }
     # REMEMBERED ONLY WHEN IT WAS A REFUSAL (rc 65: GitHub answered the
@@ -3488,7 +3493,7 @@ mc_tick_main_red
 # project subshell below re-exports GH_ETAG_COUNT_FILE and sets its own trap,
 # so neither can remove the other's file.
 export GH_ETAG_COUNT_FILE="$H/state/gh-etag/counts/merge-conductor.$$"
-trap 'rm -f "$GH_ETAG_COUNT_FILE"' EXIT
+trap 'rm -f "$GH_ETAG_COUNT_FILE"; [ -n "${BG_PERM_MEMO_DIR:-}" ] && rm -rf -- "$BG_PERM_MEMO_DIR"' EXIT
 
 # THE PER-PROJECT FAN-OUT (BH-7879): the held-page flush, the project gate and
 # one backgrounded tick_project subshell per project live in mc_tick_fanout

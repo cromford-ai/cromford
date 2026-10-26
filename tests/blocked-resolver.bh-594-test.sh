@@ -166,8 +166,9 @@ REVB64=$(printf 'Findings.\n\nVERDICT: REQUEST_CHANGES\n\n---\n%sabc.' 'Automate
 mv "$T/fakebin/gh" "$T/fakebin/gh-base"
 # The reviews list as GitHub's REST answers it (BH-2200 moved the read onto the
 # REST contract, bin/lib/gh-rest.sh): the same one lane-footer review at H91.
+# BH-8419: the lane's review is the App's (cromford[bot], type Bot).
 REVJSON=$(jq -nc --arg c "$H91" --arg b "$(printf '%s' "$REVB64" | base64 -d)" \
-  '[{user:{login:"operator", type:"User"}, author_association:"MEMBER", commit_id:$c, state:"COMMENTED", body:$b}]')
+  '[{user:{login:"cromford[bot]", type:"Bot"}, author_association:"MEMBER", commit_id:$c, state:"COMMENTED", body:$b}]')
 cat > "$T/fakebin/gh" <<EOF
 #!/bin/bash
 case "\$*" in

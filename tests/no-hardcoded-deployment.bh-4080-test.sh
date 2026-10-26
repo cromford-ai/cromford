@@ -230,7 +230,9 @@ got=$(env -i PATH="$PATH" JOBS_URL= HARNESS_WORKERS_SUBDOMAIN=acme bash -c '. "$
 # ── C3: the PR author set ────────────────────────────────────────────────────
 mkdir -p "$T/c3/env"
 got=$(env -i PATH="$PATH" HARNESS="$T/c3" HARNESS_OPERATOR_LOGIN=acme-bot bash -c '. "$1" || exit 9; harness_pr_authors; harness_verdict_authors' _ "$DIR/bin/lib/gh-pr-list.sh")
-case "$got" in "acme-bot "*app/cromford*$'\n'"acme-bot app/cromford"*) ok ;; *) bad "C3 authors with HARNESS_OPERATOR_LOGIN=acme-bot: '$got'" ;; esac
+# BH-8419: the operator login opens fleet PRs (PR authors) but is a person, so
+# it is never in the verdict set.
+case "$got" in "acme-bot "*app/cromford*$'\n'"app/cromford") ok ;; *) bad "C3 authors with HARNESS_OPERATOR_LOGIN=acme-bot: '$got'" ;; esac
 case "$got" in *operator*) bad "C3 the default login leaked past the override: '$got'" ;; *) ok ;; esac
 got=$(env -i PATH="$PATH" HARNESS="$T/c3" bash -c '. "$1" || exit 9; harness_pr_authors' _ "$DIR/bin/lib/gh-pr-list.sh")
 case "$got" in "operator app/cromford app/cromford-builders"*) ok ;; *) bad "C3 default authors changed: '$got'" ;; esac

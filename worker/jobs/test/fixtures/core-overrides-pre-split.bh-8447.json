@@ -1,0 +1,159 @@
+{
+  "merge_trains": [
+    "CREATE TABLE IF NOT EXISTS merge_trains (\n       project TEXT NOT NULL,\n       branch TEXT NOT NULL,\n       repo TEXT,\n       train_pr INTEGER,\n       members TEXT,\n       member_count INTEGER,\n       union_sha TEXT,\n       run_id TEXT,\n       train_group TEXT,\n       outcome TEXT NOT NULL,\n       merge_sha TEXT,\n       detail TEXT,\n       created_at TEXT NOT NULL,\n       updated_at TEXT NOT NULL,\n       PRIMARY KEY (project, branch)\n     )",
+    "CREATE INDEX IF NOT EXISTS idx_merge_trains_outcome ON merge_trains(outcome, project, created_at)"
+  ],
+  "verdict_history": [
+    "CREATE TABLE IF NOT EXISTS verdict_history (\n       id INTEGER PRIMARY KEY AUTOINCREMENT,\n       job_id TEXT NOT NULL,\n       verdict TEXT NOT NULL,\n       reviewed_sha TEXT,\n       tier TEXT,\n       provenance TEXT,\n       served_by TEXT,\n       source TEXT,\n       detail TEXT,\n       actor TEXT,\n       created_at TEXT NOT NULL\n     )",
+    "CREATE INDEX IF NOT EXISTS idx_verdict_history_job ON verdict_history(job_id, id)"
+  ],
+  "wakes": [
+    "CREATE TABLE IF NOT EXISTS wakes (\n       id INTEGER PRIMARY KEY AUTOINCREMENT,\n       repo TEXT NOT NULL,\n       kind TEXT NOT NULL,\n       key TEXT NOT NULL,\n       event TEXT,\n       minute TEXT NOT NULL,\n       at TEXT NOT NULL,\n       acked_at TEXT\n     )",
+    "CREATE UNIQUE INDEX IF NOT EXISTS idx_wakes_dedupe ON wakes(repo, kind, key, minute)",
+    "CREATE INDEX IF NOT EXISTS idx_wakes_unacked ON wakes(acked_at, id)",
+    "CREATE INDEX IF NOT EXISTS idx_wakes_at ON wakes(at)",
+    "CREATE INDEX IF NOT EXISTS idx_wakes_repo_id ON wakes(repo, id)",
+    "CREATE INDEX IF NOT EXISTS idx_wakes_repo_lc_id ON wakes(lower(repo), id)",
+    "CREATE INDEX IF NOT EXISTS idx_wakes_kind_id ON wakes(kind, id)"
+  ],
+  "wake_claims": [
+    "CREATE TABLE IF NOT EXISTS wake_claims (\n       wake_id INTEGER NOT NULL,\n       box TEXT NOT NULL,\n       claimed_at TEXT NOT NULL,\n       PRIMARY KEY (wake_id, box)\n     )",
+    "CREATE INDEX IF NOT EXISTS idx_wake_claims_box_wake ON wake_claims(box, wake_id)"
+  ],
+  "pr_state_events": [
+    "CREATE TABLE IF NOT EXISTS pr_state_events (\n       id INTEGER PRIMARY KEY AUTOINCREMENT,\n       repo TEXT NOT NULL, number INTEGER NOT NULL, state TEXT NOT NULL, since TEXT NOT NULL,\n       head TEXT, reviewed TEXT, reason TEXT, url TEXT,\n       alerted TEXT NOT NULL DEFAULT '-',\n       at TEXT NOT NULL, actor TEXT\n     )",
+    "CREATE UNIQUE INDEX IF NOT EXISTS idx_pr_state_events_dedupe ON pr_state_events(repo, number, state, since, alerted)",
+    "CREATE INDEX IF NOT EXISTS idx_pr_state_events_pr ON pr_state_events(repo, number, id)",
+    "CREATE INDEX IF NOT EXISTS idx_pr_state_events_state_at ON pr_state_events(state, at)",
+    "CREATE INDEX IF NOT EXISTS idx_pr_state_events_gate ON pr_state_events(repo, state, number, id)",
+    "CREATE VIEW IF NOT EXISTS pr_state AS SELECT e.* FROM pr_state_events e WHERE e.id = (SELECT MAX(id) FROM pr_state_events WHERE repo=e.repo AND number=e.number)"
+  ],
+  "pr_attempts": [
+    "CREATE TABLE IF NOT EXISTS pr_attempts (\n       repo TEXT NOT NULL, number INTEGER NOT NULL, kind TEXT NOT NULL, sha TEXT NOT NULL,\n       at TEXT NOT NULL, actor TEXT,\n       PRIMARY KEY (repo, number, kind, sha)\n     )"
+  ],
+  "model_routes": [
+    "CREATE TABLE IF NOT EXISTS model_routes (\n       id INTEGER PRIMARY KEY AUTOINCREMENT,\n       scope TEXT NOT NULL,\n       project TEXT,\n       role TEXT NOT NULL,\n       position INTEGER NOT NULL,\n       model TEXT NOT NULL,\n       runner TEXT NOT NULL,\n       updated_by TEXT,\n       updated_at TEXT NOT NULL\n     )",
+    "CREATE UNIQUE INDEX IF NOT EXISTS idx_model_routes_key ON model_routes(coalesce(project,''), role, position)",
+    "CREATE INDEX IF NOT EXISTS idx_model_routes_role ON model_routes(role, project)"
+  ],
+  "routing_changes": [
+    "CREATE TABLE IF NOT EXISTS routing_changes (\n       id INTEGER PRIMARY KEY AUTOINCREMENT,\n       project TEXT NOT NULL,\n       before_builder TEXT,\n       before_pool_app TEXT,\n       before_halted INTEGER,\n       after_builder TEXT NOT NULL,\n       after_pool_app TEXT,\n       after_halted INTEGER NOT NULL,\n       actor TEXT NOT NULL,\n       reason TEXT,\n       at TEXT NOT NULL\n     )",
+    "CREATE INDEX IF NOT EXISTS idx_routing_changes_project ON routing_changes(project, at)"
+  ],
+  "cost_cap_changes": [
+    "CREATE TABLE IF NOT EXISTS cost_cap_changes (\n       id INTEGER PRIMARY KEY AUTOINCREMENT,\n       key TEXT NOT NULL,\n       before_value TEXT,\n       after_value TEXT NOT NULL,\n       actor TEXT NOT NULL,\n       reason TEXT,\n       at TEXT NOT NULL\n     )",
+    "CREATE INDEX IF NOT EXISTS idx_cost_cap_changes_key ON cost_cap_changes(key, at)"
+  ],
+  "config_changes": [
+    "CREATE TABLE IF NOT EXISTS config_changes (\n       id INTEGER PRIMARY KEY AUTOINCREMENT,\n       kind TEXT NOT NULL,\n       name TEXT NOT NULL,\n       before_json TEXT,\n       after_json TEXT NOT NULL,\n       actor TEXT NOT NULL,\n       reason TEXT,\n       at TEXT NOT NULL\n     )",
+    "CREATE INDEX IF NOT EXISTS idx_config_changes_kind_name ON config_changes(kind, name, id)"
+  ],
+  "harness_flags": [
+    "CREATE TABLE IF NOT EXISTS harness_flags (\n  scope TEXT NOT NULL DEFAULT 'fleet', name TEXT NOT NULL, value TEXT,\n  set_by TEXT, reason TEXT, set_at TEXT NOT NULL, cleared_at TEXT,\n  PRIMARY KEY (scope, name))",
+    "CREATE INDEX IF NOT EXISTS harness_flags_name ON harness_flags(name)",
+    "INSERT OR IGNORE INTO harness_flags (scope, name, value, set_by, reason, set_at, cleared_at)\n  SELECT 'fleet', name, NULL, actor, reason, updated_at, CASE WHEN active=1 THEN NULL ELSE updated_at END\n    FROM pause_flags WHERE name LIKE 'paused-%' OR name = 'automerge-disabled' OR name LIKE 'automerge-disabled-%' OR name LIKE 'lanedown-%'"
+  ],
+  "model_route_changes": [
+    "CREATE TABLE IF NOT EXISTS model_route_changes (\n       id INTEGER PRIMARY KEY AUTOINCREMENT,\n       scope TEXT NOT NULL,\n       project TEXT,\n       role TEXT NOT NULL,\n       position INTEGER NOT NULL,\n       before_model TEXT,\n       before_runner TEXT,\n       after_model TEXT,\n       after_runner TEXT,\n       actor TEXT NOT NULL,\n       reason TEXT,\n       at TEXT NOT NULL\n     )",
+    "CREATE INDEX IF NOT EXISTS idx_model_route_changes_role ON model_route_changes(role, project, at)"
+  ],
+  "verdicts": [
+    "CREATE TABLE IF NOT EXISTS verdicts (\n       id INTEGER PRIMARY KEY AUTOINCREMENT,\n       repo TEXT NOT NULL,\n       pr INTEGER NOT NULL,\n       head_sha TEXT NOT NULL,\n       verdict TEXT NOT NULL,\n       source TEXT NOT NULL,\n       reviewer_model TEXT,\n       reviewer TEXT,\n       report_url TEXT,\n       note TEXT,\n       created_at TEXT NOT NULL,\n       auth TEXT,\n       human_sig TEXT,\n       review_tier TEXT,\n       review_mode TEXT,\n       break_it TEXT\n     )",
+    "CREATE INDEX IF NOT EXISTS idx_verdicts_pr_head ON verdicts(repo, pr, head_sha, id)",
+    "CREATE INDEX IF NOT EXISTS idx_verdicts_created ON verdicts(created_at)",
+    "CREATE TRIGGER IF NOT EXISTS verdicts_no_update BEFORE UPDATE ON verdicts BEGIN SELECT RAISE(ABORT, 'verdicts is append-only'); END",
+    "CREATE TRIGGER IF NOT EXISTS verdicts_no_delete BEFORE DELETE ON verdicts BEGIN SELECT RAISE(ABORT, 'verdicts is append-only'); END"
+  ],
+  "lead_protected_paths": [
+    "CREATE TABLE IF NOT EXISTS lead_protected_paths (id INTEGER PRIMARY KEY AUTOINCREMENT, repo TEXT NOT NULL, glob TEXT NOT NULL, added_by TEXT NOT NULL, added_at TEXT NOT NULL, removed_at TEXT)",
+    "CREATE UNIQUE INDEX IF NOT EXISTS lpp_live ON lead_protected_paths(repo, glob) WHERE removed_at IS NULL"
+  ],
+  "setting_sigs": [
+    "CREATE TABLE IF NOT EXISTS setting_sigs (\n       id INTEGER PRIMARY KEY AUTOINCREMENT,\n       key TEXT NOT NULL,\n       seq INTEGER NOT NULL,\n       sig TEXT NOT NULL,\n       actor TEXT,\n       at TEXT NOT NULL,\n       UNIQUE(key, seq)\n     )",
+    "CREATE TRIGGER IF NOT EXISTS setting_sigs_no_update BEFORE UPDATE ON setting_sigs BEGIN SELECT RAISE(ABORT, 'setting_sigs is append-only'); END",
+    "CREATE TRIGGER IF NOT EXISTS setting_sigs_no_delete BEFORE DELETE ON setting_sigs BEGIN SELECT RAISE(ABORT, 'setting_sigs is append-only'); END"
+  ],
+  "lead_review_requests": [
+    "CREATE TABLE IF NOT EXISTS lead_review_requests (\n       id TEXT PRIMARY KEY,\n       repo TEXT NOT NULL,\n       pr INTEGER NOT NULL,\n       head_sha TEXT NOT NULL,\n       scope_notes TEXT,\n       prior_verdict_ref TEXT,\n       requested_by TEXT,\n       status TEXT NOT NULL DEFAULT 'requested',\n       job_id TEXT,\n       box TEXT,\n       verdict TEXT,\n       report_ref TEXT,\n       reviewer_model TEXT,\n       detail TEXT,\n       promoted_verdict_at TEXT,\n       created_at TEXT NOT NULL,\n       updated_at TEXT NOT NULL,\n       UNIQUE(repo, pr, head_sha)\n     )",
+    "CREATE INDEX IF NOT EXISTS idx_lead_review_requests_status ON lead_review_requests(status, repo)"
+  ],
+  "risk_tiers": [
+    "CREATE TABLE IF NOT EXISTS risk_tiers (\n       id INTEGER PRIMARY KEY AUTOINCREMENT,\n       repo TEXT NOT NULL,\n       pr INTEGER NOT NULL,\n       head_sha TEXT NOT NULL,\n       project TEXT,\n       tier TEXT NOT NULL,\n       mode TEXT NOT NULL,\n       action TEXT,\n       reasons TEXT,\n       lines INTEGER,\n       files INTEGER,\n       created_at TEXT NOT NULL,\n       UNIQUE(repo, pr, head_sha)\n     )",
+    "CREATE INDEX IF NOT EXISTS idx_risk_tiers_repo_pr ON risk_tiers(repo, pr)",
+    "CREATE INDEX IF NOT EXISTS idx_risk_tiers_tier ON risk_tiers(tier, id)"
+  ],
+  "jev_risk_calls": [
+    "CREATE TABLE IF NOT EXISTS jev_risk_calls (\n       id INTEGER PRIMARY KEY AUTOINCREMENT,\n       repo TEXT NOT NULL,\n       pr INTEGER NOT NULL,\n       head_sha TEXT NOT NULL,\n       question_version TEXT NOT NULL,\n       status TEXT NOT NULL CHECK (status IN ('claimed','ok','empty','failed')),\n       attempts INTEGER NOT NULL DEFAULT 0,\n       rule_tier TEXT,\n       jev_tier TEXT,\n       jev_prob REAL,\n       model TEXT,\n       caller TEXT,\n       error TEXT,\n       raw TEXT,\n       claimed_at TEXT,\n       created_at TEXT NOT NULL,\n       updated_at TEXT NOT NULL,\n       UNIQUE(repo, pr, head_sha, question_version)\n     )",
+    "CREATE INDEX IF NOT EXISTS idx_jev_risk_repo_pr ON jev_risk_calls(repo, pr)"
+  ],
+  "queue_risk_scores": [
+    "CREATE TABLE IF NOT EXISTS queue_risk_scores (\n       id INTEGER PRIMARY KEY AUTOINCREMENT,\n       repo TEXT NOT NULL,\n       pr INTEGER NOT NULL,\n       head_sha TEXT NOT NULL,\n       project TEXT,\n       score INTEGER,\n       threshold INTEGER NOT NULL,\n       route TEXT NOT NULL,\n       mode TEXT NOT NULL,\n       reasons TEXT,\n       created_at TEXT NOT NULL,\n       updated_at TEXT NOT NULL,\n       UNIQUE(repo, pr, head_sha)\n     )",
+    "CREATE INDEX IF NOT EXISTS idx_queue_risk_scores_repo_pr ON queue_risk_scores(repo, pr)",
+    "CREATE INDEX IF NOT EXISTS idx_queue_risk_scores_route ON queue_risk_scores(route, id)"
+  ],
+  "route_rules": [
+    "CREATE TABLE IF NOT EXISTS route_rules (\n       name TEXT PRIMARY KEY,\n       priority INTEGER NOT NULL,\n       effect TEXT NOT NULL,\n       mode TEXT NOT NULL,\n       match_json TEXT NOT NULL,\n       execute_role TEXT,\n       review_tier TEXT,\n       test_scope TEXT,\n       tier_bump INTEGER NOT NULL DEFAULT 0,\n       note TEXT,\n       version INTEGER NOT NULL DEFAULT 1,\n       updated_by TEXT,\n       updated_at TEXT NOT NULL\n     )",
+    "CREATE INDEX IF NOT EXISTS idx_route_rules_priority ON route_rules(priority)"
+  ],
+  "route_rule_changes": [
+    "CREATE TABLE IF NOT EXISTS route_rule_changes (\n       id INTEGER PRIMARY KEY AUTOINCREMENT,\n       name TEXT NOT NULL,\n       before_json TEXT,\n       after_json TEXT,\n       actor TEXT NOT NULL,\n       reason TEXT,\n       at TEXT NOT NULL\n     )",
+    "CREATE INDEX IF NOT EXISTS idx_route_rule_changes_name ON route_rule_changes(name, at)"
+  ],
+  "route_shadow": [
+    "CREATE TABLE IF NOT EXISTS route_shadow (\n       id INTEGER PRIMARY KEY AUTOINCREMENT,\n       build TEXT NOT NULL,\n       job_id TEXT,\n       project TEXT NOT NULL,\n       ticket_key TEXT,\n       rule TEXT,\n       bumped TEXT,\n       would_execute_role TEXT,\n       would_execute_model TEXT,\n       actual_execute_model TEXT,\n       would_review_tier TEXT,\n       planned_review_tier TEXT,\n       review_model TEXT,\n       would_test_scope TEXT,\n       differs INTEGER NOT NULL DEFAULT 0,\n       features_json TEXT,\n       box TEXT,\n       at TEXT NOT NULL\n     )",
+    "CREATE UNIQUE INDEX IF NOT EXISTS idx_route_shadow_build ON route_shadow(build)",
+    "CREATE INDEX IF NOT EXISTS idx_route_shadow_at ON route_shadow(at, project)",
+    "CREATE INDEX IF NOT EXISTS idx_route_shadow_job ON route_shadow(job_id)"
+  ],
+  "triage_state": [
+    "CREATE TABLE IF NOT EXISTS triage_state (\n       project TEXT NOT NULL,\n       ticket_key TEXT NOT NULL,\n       ticket_label TEXT,\n       input_hash TEXT,\n       verdict TEXT,\n       waiting_on TEXT,\n       verdict_hash TEXT,\n       triaged_at TEXT,\n       next_recheck_at TEXT,\n       reason TEXT,\n       last_decision TEXT,\n       last_decision_at TEXT,\n       last_mode TEXT,\n       updated_at TEXT NOT NULL,\n       PRIMARY KEY (project, ticket_key)\n     )",
+    "CREATE INDEX IF NOT EXISTS idx_triage_state_recheck ON triage_state(project, next_recheck_at)"
+  ],
+  "alert_family_scripts": [
+    "CREATE TABLE IF NOT EXISTS alert_family_scripts (\n       id TEXT PRIMARY KEY,\n       match_kind TEXT NOT NULL CHECK (match_kind IN ('akey_prefix','line_regex')),\n       match TEXT NOT NULL,\n       verify TEXT,\n       on_clear TEXT NOT NULL DEFAULT 'settle' CHECK (on_clear IN ('settle','model')),\n       on_repro TEXT NOT NULL DEFAULT 'model' CHECK (on_repro IN ('model','park')),\n       enabled INTEGER NOT NULL DEFAULT 1,\n       priority INTEGER NOT NULL DEFAULT 100,\n       note TEXT, actor TEXT, updated_at TEXT NOT NULL)",
+    "CREATE INDEX IF NOT EXISTS idx_alert_family_scripts_enabled_priority ON alert_family_scripts(enabled, priority)"
+  ],
+  "dequeue_events": [
+    "CREATE TABLE IF NOT EXISTS dequeue_events (\n       repo TEXT NOT NULL,\n       pr INTEGER NOT NULL,\n       head TEXT NOT NULL,\n       run_id TEXT NOT NULL,\n       project TEXT NOT NULL,\n       dequeued_at TEXT,\n       run_url TEXT,\n       comment_id TEXT,\n       batch_size INTEGER,\n       members TEXT,\n       draft INTEGER,\n       attribution TEXT,\n       attribution_how TEXT,\n       class TEXT CHECK (class IS NULL OR class IN ('rule-break','scanner-fp','semantic-test','textual-conflict','bystander','stale-status','flake','main-red','unclassified')),\n       class_how TEXT,\n       rule_id TEXT,\n       suites TEXT,\n       fail_lines TEXT,\n       llm_fp TEXT,\n       llm_attempted_at TEXT,\n       llm_class TEXT CHECK (llm_class IS NULL OR llm_class IN ('rule-break','scanner-fp','semantic-test','textual-conflict','bystander','stale-status','flake','main-red','unclassified')),\n       created_at TEXT NOT NULL,\n       updated_at TEXT NOT NULL,\n       PRIMARY KEY (repo, pr, head, run_id))",
+    "CREATE INDEX IF NOT EXISTS idx_dequeue_events_llm_fp ON dequeue_events(llm_fp)",
+    "CREATE INDEX IF NOT EXISTS idx_dequeue_events_created ON dequeue_events(created_at)"
+  ],
+  "dequeue_actions": [
+    "CREATE TABLE IF NOT EXISTS dequeue_actions (\n       repo TEXT NOT NULL,\n       pr INTEGER NOT NULL,\n       head TEXT NOT NULL,\n       class TEXT NOT NULL CHECK (class IN ('rule-break','scanner-fp','semantic-test','textual-conflict','bystander','stale-status','flake','main-red','unclassified')),\n       action TEXT NOT NULL CHECK (action IN ('requeue','lead-request','fix-round','main-red-wait','hold','observe')),\n       status TEXT NOT NULL DEFAULT 'claimed' CHECK (status IN ('claimed','done','failed','waiting')),\n       project TEXT NOT NULL,\n       ref TEXT,\n       note TEXT,\n       created_at TEXT NOT NULL,\n       updated_at TEXT NOT NULL,\n       PRIMARY KEY (repo, pr, head, class))",
+    "CREATE INDEX IF NOT EXISTS idx_dequeue_actions_repo_pr_class ON dequeue_actions(repo, pr, class)",
+    "CREATE INDEX IF NOT EXISTS idx_dequeue_actions_status_created ON dequeue_actions(status, created_at)"
+  ],
+  "projects": [
+    "CREATE TABLE IF NOT EXISTS projects (\n       project TEXT PRIMARY KEY,\n       repo TEXT NOT NULL,\n       prod_url TEXT,\n       board_api_prefix TEXT,\n       cron_offset INTEGER NOT NULL,\n       box TEXT,\n       tailnet_ip TEXT,\n       note TEXT,\n       created_at TEXT NOT NULL,\n       updated_at TEXT NOT NULL)"
+  ],
+  "pool_spawns": [
+    "CREATE TABLE IF NOT EXISTS pool_spawns (\n       project TEXT NOT NULL,\n       ticket_key TEXT NOT NULL,\n       ts INTEGER NOT NULL,\n       box TEXT NOT NULL,\n       machine TEXT,\n       created_at TEXT NOT NULL,\n       PRIMARY KEY (project, ticket_key, ts, box)\n     )",
+    "CREATE INDEX IF NOT EXISTS idx_pool_spawns_ts ON pool_spawns(project, ts)"
+  ],
+  "pool_terminals": [
+    "CREATE TABLE IF NOT EXISTS pool_terminals (\n       project TEXT NOT NULL,\n       ticket_key TEXT NOT NULL,\n       branch TEXT,\n       head_sha TEXT,\n       reason TEXT,\n       created_at TEXT NOT NULL,\n       box TEXT,\n       cleared_at TEXT,\n       cleared_why TEXT,\n       updated_at TEXT NOT NULL,\n       PRIMARY KEY (project, ticket_key)\n     )"
+  ],
+  "pool_holds": [
+    "CREATE TABLE IF NOT EXISTS pool_holds (\n       project TEXT NOT NULL,\n       kind TEXT NOT NULL,\n       ticket_key TEXT NOT NULL,\n       ticket_id TEXT,\n       until_at INTEGER,\n       why TEXT,\n       first_seen TEXT,\n       last_seen TEXT,\n       box TEXT,\n       updated_at TEXT NOT NULL,\n       PRIMARY KEY (project, kind, ticket_key)\n     )"
+  ],
+  "conflict_hotspots": [
+    "CREATE TABLE IF NOT EXISTS conflict_hotspots (\n       project TEXT NOT NULL,\n       file TEXT NOT NULL,\n       conflicts INTEGER NOT NULL,\n       rebases INTEGER NOT NULL,\n       prs TEXT,\n       window_days INTEGER NOT NULL,\n       since TEXT NOT NULL,\n       until TEXT NOT NULL,\n       ref_sha TEXT,\n       run_at TEXT NOT NULL,\n       PRIMARY KEY (project, file)\n     )",
+    "CREATE INDEX IF NOT EXISTS idx_conflict_hotspots_rank ON conflict_hotspots(project, conflicts DESC, rebases DESC, file)"
+  ],
+  "conflict_hotspot_runs": [
+    "CREATE TABLE IF NOT EXISTS conflict_hotspot_runs (\n       project TEXT PRIMARY KEY,\n       repo TEXT,\n       box TEXT,\n       status TEXT NOT NULL,\n       detail TEXT,\n       window_days INTEGER,\n       since TEXT,\n       until TEXT,\n       ref_sha TEXT,\n       pr_merges INTEGER,\n       sync_merges INTEGER,\n       merge_tree_errors INTEGER,\n       files_total INTEGER,\n       rows_stored INTEGER,\n       run_at TEXT NOT NULL,\n       last_ok_at TEXT\n     )"
+  ],
+  "participant_machines": [
+    "CREATE TABLE IF NOT EXISTS participant_machines (\n       id TEXT PRIMARY KEY,\n       name TEXT NOT NULL UNIQUE,\n       owner TEXT,\n       requested_roles TEXT NOT NULL,\n       granted_roles TEXT,\n       token_sha256 TEXT NOT NULL UNIQUE,\n       billing_account TEXT,\n       status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending','approved','denied','revoked')),\n       requested_at TEXT NOT NULL,\n       decided_by TEXT,\n       decided_at TEXT,\n       revoked_by TEXT,\n       revoked_at TEXT,\n       last_seen_at TEXT,\n       knobs TEXT\n     )",
+    "CREATE INDEX IF NOT EXISTS idx_participant_machines_status ON participant_machines(status)"
+  ],
+  "suite_results": [
+    "CREATE TABLE IF NOT EXISTS suite_results (\n       repo TEXT NOT NULL,\n       ctx TEXT NOT NULL,\n       class TEXT NOT NULL,\n       suite TEXT NOT NULL,\n       fingerprint TEXT NOT NULL,\n       status TEXT NOT NULL,\n       duration_s INTEGER,\n       run_id TEXT NOT NULL,\n       head_sha TEXT,\n       ok_at TEXT,\n       last_run_id TEXT NOT NULL,\n       runs INTEGER NOT NULL DEFAULT 1,\n       fails INTEGER NOT NULL DEFAULT 0,\n       first_at TEXT NOT NULL,\n       updated_at TEXT NOT NULL,\n       PRIMARY KEY (repo, ctx, class, suite, fingerprint)\n     )",
+    "CREATE INDEX IF NOT EXISTS idx_suite_results_updated ON suite_results(updated_at)",
+    "CREATE INDEX IF NOT EXISTS idx_suite_results_key ON suite_results(repo, ctx, suite, fingerprint)"
+  ],
+  "suite_reuse_runs": [
+    "CREATE TABLE IF NOT EXISTS suite_reuse_runs (\n       repo TEXT NOT NULL,\n       run_key TEXT NOT NULL,\n       ctx TEXT NOT NULL,\n       class TEXT NOT NULL,\n       head_sha TEXT,\n       ran INTEGER NOT NULL,\n       reused INTEGER NOT NULL,\n       total INTEGER NOT NULL,\n       saved_s INTEGER NOT NULL DEFAULT 0,\n       created_at TEXT NOT NULL,\n       updated_at TEXT NOT NULL,\n       PRIMARY KEY (repo, run_key)\n     )",
+    "CREATE INDEX IF NOT EXISTS idx_suite_reuse_runs_created ON suite_reuse_runs(created_at)"
+  ]
+}

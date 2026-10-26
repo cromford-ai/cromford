@@ -340,14 +340,14 @@
         {
           "env": "HARNESS_VERDICT_AUTHORS",
           "type": "string",
-          "default": "operator app/cromford",
+          "default": "app/cromford",
           "min": null,
           "max": null,
           "zero_means": null,
           "required": false,
           "settable": false,
           "read_in": "bin/lib/gh-pr-list.sh",
-          "note": "BH-1668. The logins whose harness verdicts COUNT: harness-review-autopilot marker comments (bin/lib/mc/classify.sh, bin/review-autopilot.sh) and harness-footer reviews (bin/review-prs.sh, bin/blocked-resolver.sh). Deliberately narrower than HARNESS_PR_AUTHORS: the builders App (app/cromford-builders) authors pool PRs but is held by the boxes where the build agent runs, so its verdicts must never count (self-approval). Space separated, any spelling (app/x, x[bot], x). settable:false: a trust list lives in env/global.env, never in a settings row. Read as ${HARNESS_VERDICT_AUTHORS:-operator app/cromford}; the hub App's GH_APP_SLUG (env/github-app.env, never an App profile file) is unioned in."
+          "note": "BH-1668, BH-8419. The logins whose harness verdicts COUNT: harness-review-autopilot marker comments (bin/lib/mc/classify.sh, bin/review-autopilot.sh) and harness-footer reviews (bin/review-prs.sh, bin/blocked-resolver.sh). Deliberately narrower than HARNESS_PR_AUTHORS: the builders App (app/cromford-builders) authors pool PRs but is held by the boxes where the build agent runs, so its verdicts must never count (self-approval). Apps only (BH-8419): space separated, any spelling (app/x, x[bot], x), but a login matches only in an App spelling (app/x or x[bot]); a plain login never matches, and the operator login (HARNESS_OPERATOR_LOGIN) is dropped even when listed, because it is a person. settable:false: a trust list lives in env/global.env, never in a settings row. Read as ${HARNESS_VERDICT_AUTHORS:-app/cromford}; the hub App's GH_APP_SLUG (env/github-app.env, never an App profile file) is unioned in."
         }
       ]
     },

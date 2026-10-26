@@ -128,9 +128,12 @@ PRADD() { # PRADD <num> <head> <branch> <login> <draft> <age-secs>
   cat "$T/pr-$1.json" >> "$T/prrows"
   PRWRITE
 }
+# BH-8419: the harness's own footer review is posted by the App
+# (cromford[bot], type Bot). operator is the operator, a PERSON: a review by
+# operator is never the harness's verdict, footer or not.
 REVADD() { # REVADD <num> <id> <state> <commit_id> <login> <body>
   jq -nc --argjson i "$2" --arg s "$3" --arg c "$4" --arg l "$5" --arg b "$6" \
-    '{id:$i, state:$s, commit_id:$c, user:{login:$l}, body:$b}' >> "$T/revrows-$1"
+    '{id:$i, state:$s, commit_id:$c, user:({login:$l} + (if ($l | endswith("[bot]")) then {type:"Bot"} else {} end)), body:$b}' >> "$T/revrows-$1"
   jq -s . "$T/revrows-$1" > "$T/reviews-$1.json"
 }
 REVADDA() { # REVADDA <num> <id> <state> <commit_id> <login> <association> <body> — with GitHub's author_association
@@ -289,7 +292,7 @@ NROWS() { ROWS "${1:-}" | grep -c . || true; }
 # --- 2a. the happy path: one PR, one footer REQUEST_CHANGES at its head ------
 PRRESET
 PRADD 7 S1sha ticket/TK-7 operator false 600
-REVADD 7 11 CHANGES_REQUESTED S1sha operator "$(RBODY REQUEST_CHANGES S1sha)"
+REVADD 7 11 CHANGES_REQUESTED S1sha "cromford[bot]" "$(RBODY REQUEST_CHANGES S1sha)"
 : > "$T/revreads.txt"
 [ "$(NROWS)" = 1 ] && ok || bad "one harness PR with a footer REQUEST_CHANGES review at its head must be exactly ONE candidate, got $(NROWS): $(ROWS)"
 ROW=$(ROWS)
@@ -309,13 +312,13 @@ REVADD 7 11 CHANGES_REQUESTED S1sha "cromford[bot]" "$(RBODY REQUEST_CHANGES S1s
 # --- 2c. a footer review at an OLDER commit never speaks for the new head ---
 PRRESET
 PRADD 7 S2sha ticket/TK-7 operator false 600
-REVADD 7 11 CHANGES_REQUESTED S1sha operator "$(RBODY REQUEST_CHANGES S1sha)"
+REVADD 7 11 CHANGES_REQUESTED S1sha "cromford[bot]" "$(RBODY REQUEST_CHANGES S1sha)"
 [ "$(NROWS)" = 0 ] && ok || bad "a footer review at an OLD head must not be a candidate on the new head, got: $(ROWS)"
 
 # --- 2d. an APPROVE body is never a fix round ------------------------------
 PRRESET
 PRADD 7 S1sha ticket/TK-7 operator false 600
-REVADD 7 11 APPROVED S1sha operator "$(RBODY APPROVE S1sha)"
+REVADD 7 11 APPROVED S1sha "cromford[bot]" "$(RBODY APPROVE S1sha)"
 [ "$(NROWS)" = 0 ] && ok || bad "a footer review whose body says APPROVE must never be a candidate, got: $(ROWS)"
 
 # --- 2e. a HUMAN's changes-requested (no footer) is for a human ------------
@@ -350,31 +353,31 @@ REVADD 7 11 CHANGES_REQUESTED S1sha outsider "$(RBODY REQUEST_CHANGES S1sha)"
 # --- 2g. a draft PR is never a candidate -----------------------------------
 PRRESET
 PRADD 7 S1sha ticket/TK-7 operator true 600
-REVADD 7 11 CHANGES_REQUESTED S1sha operator "$(RBODY REQUEST_CHANGES S1sha)"
+REVADD 7 11 CHANGES_REQUESTED S1sha "cromford[bot]" "$(RBODY REQUEST_CHANGES S1sha)"
 [ "$(NROWS)" = 0 ] && ok || bad "a DRAFT PR must never be a candidate, got: $(ROWS)"
 
 # --- 2h. an external-author PR is not this lane's business -----------------
 PRRESET
 PRADD 7 S1sha ticket/TK-7 outsider false 600
-REVADD 7 11 CHANGES_REQUESTED S1sha operator "$(RBODY REQUEST_CHANGES S1sha)"
+REVADD 7 11 CHANGES_REQUESTED S1sha "cromford[bot]" "$(RBODY REQUEST_CHANGES S1sha)"
 [ "$(NROWS)" = 0 ] && ok || bad "an external-author PR must never be fix-rounded by this lane, got: $(ROWS)"
 
 # --- 2i. the NEWEST footer review at the head is the only one that counts --
 PRRESET
 PRADD 7 S1sha ticket/TK-7 operator false 600
-REVADD 7 11 CHANGES_REQUESTED S1sha operator "$(RBODY REQUEST_CHANGES S1sha)"
-REVADD 7 12 APPROVED S1sha operator "$(RBODY APPROVE S1sha)"
+REVADD 7 11 CHANGES_REQUESTED S1sha "cromford[bot]" "$(RBODY REQUEST_CHANGES S1sha)"
+REVADD 7 12 APPROVED S1sha "cromford[bot]" "$(RBODY APPROVE S1sha)"
 [ "$(NROWS)" = 0 ] && ok || bad "an APPROVE that came AFTER the block must end the park, got: $(ROWS)"
 PRRESET
 PRADD 7 S1sha ticket/TK-7 operator false 600
-REVADD 7 11 APPROVED S1sha operator "$(RBODY APPROVE S1sha)"
-REVADD 7 12 CHANGES_REQUESTED S1sha operator "$(RBODY REQUEST_CHANGES S1sha)"
+REVADD 7 11 APPROVED S1sha "cromford[bot]" "$(RBODY APPROVE S1sha)"
+REVADD 7 12 CHANGES_REQUESTED S1sha "cromford[bot]" "$(RBODY REQUEST_CHANGES S1sha)"
 [ "$(NROWS)" = 1 ] && ok || bad "a block that came AFTER an approve on the same head IS the verdict, got $(NROWS)"
 
 # --- 2j. the lookback bounds the read, and it is a knob --------------------
 PRRESET
 PRADD 7 S1sha ticket/TK-7 operator false 300000
-REVADD 7 11 CHANGES_REQUESTED S1sha operator "$(RBODY REQUEST_CHANGES S1sha)"
+REVADD 7 11 CHANGES_REQUESTED S1sha "cromford[bot]" "$(RBODY REQUEST_CHANGES S1sha)"
 [ "$(NROWS)" = 0 ] && ok || bad "a PR untouched for longer than BR_REVIEW_LOOKBACK_SECS must not be read, got: $(ROWS)"
 export BR_REVIEW_LOOKBACK_SECS=400000
 [ "$(NROWS)" = 1 ] && ok || bad "BR_REVIEW_LOOKBACK_SECS must be the documented knob, not a constant"
@@ -383,7 +386,7 @@ unset BR_REVIEW_LOOKBACK_SECS
 # --- 2k. ONLY is respected ------------------------------------------------
 PRRESET
 PRADD 7 S1sha ticket/TK-7 operator false 600
-REVADD 7 11 CHANGES_REQUESTED S1sha operator "$(RBODY REQUEST_CHANGES S1sha)"
+REVADD 7 11 CHANGES_REQUESTED S1sha "cromford[bot]" "$(RBODY REQUEST_CHANGES S1sha)"
 [ "$(NROWS otherproj)" = 0 ] && ok || bad "a tick scoped to another project must produce no candidate here"
 [ "$(NROWS tproj)" = 1 ] && ok || bad "a tick scoped to THIS project must still produce it"
 
@@ -408,12 +411,12 @@ rm -f "$T/reviews-fail"
 #         round briefed off that row would push under a queued PR and eject it).
 PRRESET
 PRADD 7 S1sha ticket/TK-7 operator false 600
-REVADD 7 11 DISMISSED S1sha operator "$(RBODY REQUEST_CHANGES S1sha)"
+REVADD 7 11 DISMISSED S1sha "cromford[bot]" "$(RBODY REQUEST_CHANGES S1sha)"
 [ "$(NROWS)" = 0 ] && ok || bad "a DISMISSED footer REQUEST_CHANGES at the head must never be a candidate, got: $(ROWS)"
 PRRESET
 PRADD 7 S1sha ticket/TK-7 operator false 600
-REVADD 7 11 CHANGES_REQUESTED S1sha operator "$(RBODY REQUEST_CHANGES S1sha)"
-REVADD 7 12 DISMISSED S1sha operator "$(RBODY REQUEST_CHANGES S1sha)"
+REVADD 7 11 CHANGES_REQUESTED S1sha "cromford[bot]" "$(RBODY REQUEST_CHANGES S1sha)"
+REVADD 7 12 DISMISSED S1sha "cromford[bot]" "$(RBODY REQUEST_CHANGES S1sha)"
 [ "$(NROWS)" = 1 ] && ok || bad "a dismissed row must not hide a standing verdict on the same head, got $(NROWS)"
 
 # --- 2o. an ESCALATED record is terminal for this source, before the read --
@@ -421,7 +424,7 @@ REVADD 7 12 DISMISSED S1sha operator "$(RBODY REQUEST_CHANGES S1sha)"
 #         re-offering it every tick spent a reviews read and a log line each.)
 PRRESET
 PRADD 7 S1sha ticket/TK-7 operator false 600
-REVADD 7 11 CHANGES_REQUESTED S1sha operator "$(RBODY REQUEST_CHANGES S1sha)"
+REVADD 7 11 CHANGES_REQUESTED S1sha "cromford[bot]" "$(RBODY REQUEST_CHANGES S1sha)"
 mkdir -p "$H/state/blocked-resolver/tproj"
 jq -nc '{project:"tproj",rkey:"tproj-TK-7",fixrounds:2,rebuilds:0,outcome:"ESCALATED",attempts:[]}' \
   > "$H/state/blocked-resolver/tproj/tproj-TK-7.json"
@@ -457,7 +460,7 @@ rm -f "$H/state/blocked-resolver/tproj/tproj-TK-7.json"
 #         "no consumer" state, recreated for that ticket and silent.
 PRRESET
 PRADD 9 S9sha ticket/TK-7 operator false 600
-REVADD 9 21 CHANGES_REQUESTED S9sha operator "$(RBODY REQUEST_CHANGES S9sha)"
+REVADD 9 21 CHANGES_REQUESTED S9sha "cromford[bot]" "$(RBODY REQUEST_CHANGES S9sha)"
 mkdir -p "$H/state/blocked-resolver/tproj"
 jq -nc '{project:"tproj",rkey:"tproj-TK-7",fixrounds:2,rebuilds:0,outcome:"ESCALATED",escalated_rkey:"o-tproj-7",attempts:[]}' \
   > "$H/state/blocked-resolver/tproj/tproj-TK-7.json"
@@ -465,7 +468,7 @@ jq -nc '{project:"tproj",rkey:"tproj-TK-7",fixrounds:2,rebuilds:0,outcome:"ESCAL
 # ... and the PR that WAS escalated stays terminal.
 PRRESET
 PRADD 7 S1sha ticket/TK-7 operator false 600
-REVADD 7 11 CHANGES_REQUESTED S1sha operator "$(RBODY REQUEST_CHANGES S1sha)"
+REVADD 7 11 CHANGES_REQUESTED S1sha "cromford[bot]" "$(RBODY REQUEST_CHANGES S1sha)"
 : > "$T/revreads.txt"
 [ "$(NROWS)" = 0 ] && ok || bad "the escalated PR itself must stay terminal, got: $(ROWS)"
 [ -s "$T/revreads.txt" ] && bad "the escalated PR must still be skipped BEFORE the reviews read: $(cat "$T/revreads.txt")" || ok
@@ -532,7 +535,7 @@ NCOMMENTS() { grep -c . "$T/posted.txt" 2>/dev/null || true; }
 S71=$(osha ticket/TK-71)
 PRRESET
 PRADD 71 "$S71" ticket/TK-71 operator false 600
-REVADD 71 11 CHANGES_REQUESTED "$S71" operator "$(RBODY REQUEST_CHANGES "$S71")"
+REVADD 71 11 CHANGES_REQUESTED "$S71" "cromford[bot]" "$(RBODY REQUEST_CHANGES "$S71")"
 touch "$T/agent-commits"
 RESET
 RUN
@@ -579,7 +582,7 @@ rm -f "$T/agent-commits"
 S72=$(osha ticket/TK-72)
 PRRESET
 PRADD 72 "$S72" ticket/TK-72 operator false 600
-REVADD 72 11 CHANGES_REQUESTED "$S72" operator "$(RBODY REQUEST_CHANGES "$S72")"
+REVADD 72 11 CHANGES_REQUESTED "$S72" "cromford[bot]" "$(RBODY REQUEST_CHANGES "$S72")"
 RESET
 RUN
 [ "$(NAGENT)" = 1 ] && ok || bad "the first round on a new head must run, got $(NAGENT) agent calls"
@@ -622,7 +625,7 @@ grep -q 'already ran' "$H/logs/blocked-resolver.log" \
 S73=$(osha ticket/TK-73)
 PRRESET
 PRADD 73 "$S73" ticket/TK-73 operator false 600
-REVADD 73 11 CHANGES_REQUESTED "$S73" operator "$(RBODY REQUEST_CHANGES "$S73")"
+REVADD 73 11 CHANGES_REQUESTED "$S73" "cromford[bot]" "$(RBODY REQUEST_CHANGES "$S73")"
 mkdir -p "$H/state/blocked-resolver/tproj"
 jq -nc --arg h "$S73" '{project:"tproj",rkey:"tproj-TK-73",fixrounds:2,rebuilds:0,mechanicals:0,
    outcome:"",review_fix_heads:["oldheadone","oldheadtwo"],
@@ -649,7 +652,7 @@ grep -qiE 'needs a human review|please review|waiting for review|a person picks|
 # --- 3f. a footer review at an OLD head buys nothing END TO END -----------
 PRRESET
 PRADD 71 "oldheadsha" ticket/TK-71 operator false 600
-REVADD 71 11 CHANGES_REQUESTED "someotherhead" operator "$(RBODY REQUEST_CHANGES someotherhead)"
+REVADD 71 11 CHANGES_REQUESTED "someotherhead" "cromford[bot]" "$(RBODY REQUEST_CHANGES someotherhead)"
 RESET
 RUN
 [ "$(NAGENT)" = 0 ] && ok || bad "a verdict that is not on the current head must buy nothing, got $(NAGENT)"
@@ -658,7 +661,7 @@ RUN
 # --- 3g. observe mode takes no action at all -----------------------------
 PRRESET
 PRADD 73 "$S73" ticket/TK-73 operator false 600
-REVADD 73 11 CHANGES_REQUESTED "$S73" operator "$(RBODY REQUEST_CHANGES "$S73")"
+REVADD 73 11 CHANGES_REQUESTED "$S73" "cromford[bot]" "$(RBODY REQUEST_CHANGES "$S73")"
 rm -f "$H/state/blocked-resolver/tproj/tproj-TK-73.json"
 RESET
 touch "$H/flags/blocked-resolver-observe"
@@ -675,7 +678,7 @@ rm -f "$H/flags/blocked-resolver-observe"
 # close lands, so the refused ticks write no ALERTS line at all.
 PRRESET
 PRADD 73 "$S73" ticket/TK-73 operator false 600
-REVADD 73 11 CHANGES_REQUESTED "$S73" operator "$(RBODY REQUEST_CHANGES "$S73")"
+REVADD 73 11 CHANGES_REQUESTED "$S73" "cromford[bot]" "$(RBODY REQUEST_CHANGES "$S73")"
 jq -nc '{project:"tproj",rkey:"tproj-TK-73",fixrounds:2,rebuilds:0,mechanicals:0,
    outcome:"",review_fix_heads:["oldheadone","oldheadtwo"],
    attempts:[{at:"2026-09-18T10:00:00Z",action:"fix-round",reason:"review-changes-requested",detail:"pushed aaaa111 to ticket/TK-73"}]}' \

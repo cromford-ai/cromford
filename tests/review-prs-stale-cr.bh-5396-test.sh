@@ -120,8 +120,9 @@ EOF
   review_on 481 "$A" CHANGES_REQUESTED
 }
 # review_on <pr> <sha> <state> — this lane's review (its footer marker) of <sha>.
+# BH-8419: the lane's review is the App's (cromford[bot]); operator is a person.
 review_on() {
-  printf '%s\t%s\t%s\n' operator "$3" \
+  printf '%s\t%s\t%s\n' 'cromford[bot]' "$3" \
     "$(printf 'Findings.\nVERDICT: REQUEST_CHANGES\n\n---\n_%s %s. Static review._' "$MARKER" "$2" | base64 -w0)" >> "$T/reviews.$1"
 }
 stub_add() { printf '%s\n' "$1" >> "$H/bin/stub.sh"; }

@@ -162,9 +162,12 @@ footer_body() { # footer_body <sha> <APPROVE|REQUEST_CHANGES>
   printf 'Static review.\n1. lib/x.ts:4 leaks a token into the log — read it from env.\nTIER: 2\nVERDICT: %s\n\n---\n_Automated harness review (Fable) of %s. Static review — no build run._' "$2" "$1"
 }
 
+# BH-8419: the lane's own footer review is posted by the App
+# (cromford[bot], type Bot). operator is the operator, a PERSON: a review by
+# operator is never the harness's verdict, footer or not.
 review_row() { # review_row <id> <state> <commit> <login> <body>
   jq -nc --argjson id "$1" --arg st "$2" --arg c "$3" --arg l "$4" --arg b "$5" \
-    '{id:$id, state:$st, commit_id:$c, user:{login:$l}, body:$b}'
+    '{id:$id, state:$st, commit_id:$c, user:({login:$l} + (if ($l | endswith("[bot]")) then {type:"Bot"} else {} end)), body:$b}'
 }
 
 run_lane() {
@@ -187,7 +190,7 @@ rplog() { cat "$T/h/logs/pr-reviews.log" 2>/dev/null; }
 # 1. A standing footer review AT THIS HEAD is the ledger: nothing is bought,
 #    nothing is posted, and the local cache is healed from it.
 fresh_harness
-reviews "[$(review_row 11 CHANGES_REQUESTED S1 operator "$(footer_body S1 REQUEST_CHANGES)")]"
+reviews "[$(review_row 11 CHANGES_REQUESTED S1 "cromford[bot]" "$(footer_body S1 REQUEST_CHANGES)")]"
 PR_AUTHOR=externaldev run_lane
 [ "$(calls)" -eq 0 ] && ok || bad "1: a head GitHub already has our review for bought another review"
 [ "$(ghgrep 'pr review')" = 0 ] && ok || bad "1: the lane posted a review on an already-reviewed head"
@@ -205,7 +208,7 @@ grep -q 'not re-reviewed' <<<"$(rplog)" \
 # 2. The same, with a 0-byte state file — the state loss that started this.
 fresh_harness
 : > "$T/h/state/tproj.pr-reviews.json"
-reviews "[$(review_row 11 CHANGES_REQUESTED S1 operator "$(footer_body S1 REQUEST_CHANGES)")]"
+reviews "[$(review_row 11 CHANGES_REQUESTED S1 "cromford[bot]" "$(footer_body S1 REQUEST_CHANGES)")]"
 run_lane
 [ "$(calls)" -eq 0 ] && ok || bad "2: an empty state file re-bought a review of a reviewed head"
 [ "$(ghgrep 'pr review')" = 0 ] && ok || bad "2: an empty state file re-posted a review"
@@ -279,7 +282,7 @@ PR_AUTHOR=operator PR_BODY_MODE=none run_lane
 # 8. The lane's OWN legacy blocking review on a harness PR is dismissed, and an
 #    old-head review never stands in for the current head (it is still reviewed).
 fresh_harness
-reviews "[$(review_row 11 CHANGES_REQUESTED S0 operator "$(footer_body S0 REQUEST_CHANGES)")]"
+reviews "[$(review_row 11 CHANGES_REQUESTED S0 "cromford[bot]" "$(footer_body S0 REQUEST_CHANGES)")]"
 PR_AUTHOR=operator run_lane
 [ "$(ghgrep 'reviews/11/dismissals')" = 1 ] \
   && ok || bad "8: the lane's own standing CHANGES_REQUESTED was not dismissed exactly once: $(ghlog)"
@@ -295,13 +298,13 @@ PR_AUTHOR=operator run_lane
 
 # 10. Never on an external author's PR, footer or not.
 fresh_harness
-reviews "[$(review_row 11 CHANGES_REQUESTED S0 operator "$(footer_body S0 REQUEST_CHANGES)")]"
+reviews "[$(review_row 11 CHANGES_REQUESTED S0 "cromford[bot]" "$(footer_body S0 REQUEST_CHANGES)")]"
 PR_AUTHOR=externaldev run_lane
 [ "$(ghgrep 'dismissals')" = 0 ] && ok || bad "10: a review on an EXTERNAL author's PR was dismissed"
 
 # 11. Only a blocking state is dismissed: an APPROVED footer review is left alone.
 fresh_harness
-reviews "[$(review_row 11 APPROVED S0 operator "$(footer_body S0 APPROVE)")]"
+reviews "[$(review_row 11 APPROVED S0 "cromford[bot]" "$(footer_body S0 APPROVE)")]"
 PR_AUTHOR=operator run_lane
 [ "$(ghgrep 'dismissals')" = 0 ] && ok || bad "11: an APPROVED review was dismissed"
 
@@ -310,7 +313,7 @@ PR_AUTHOR=operator run_lane
 #     blocking review — the review is dismissed so the queue can take the PR
 #     back, and not one paid session is spent.
 fresh_harness
-reviews "[$(review_row 11 CHANGES_REQUESTED S1 operator "$(footer_body S1 REQUEST_CHANGES)")]"
+reviews "[$(review_row 11 CHANGES_REQUESTED S1 "cromford[bot]" "$(footer_body S1 REQUEST_CHANGES)")]"
 PR_AUTHOR=operator PR_BODY_MODE=marker_late run_lane
 [ "$(calls)" -eq 0 ] && ok || bad "12: the parked pipeline PR bought another review"
 [ "$(ghgrep 'reviews/11/dismissals')" = 1 ] \
@@ -318,7 +321,7 @@ PR_AUTHOR=operator PR_BODY_MODE=marker_late run_lane
 
 # 13. A failed dismissal is logged and nothing pretends it worked (D9).
 fresh_harness
-reviews "[$(review_row 11 CHANGES_REQUESTED S0 operator "$(footer_body S0 REQUEST_CHANGES)")]"
+reviews "[$(review_row 11 CHANGES_REQUESTED S0 "cromford[bot]" "$(footer_body S0 REQUEST_CHANGES)")]"
 PR_AUTHOR=operator DISMISS_FAIL=1 run_lane
 grep -q 'could not dismiss' <<<"$(rplog)" \
   && ok || bad "13: a failed dismissal was not logged: $(rplog)"
@@ -327,7 +330,7 @@ grep -q 'could not dismiss' <<<"$(rplog)" \
 #     reads keep the lane's own credential.
 fresh_harness
 arm_app
-reviews "[$(review_row 11 CHANGES_REQUESTED S0 operator "$(footer_body S0 REQUEST_CHANGES)")]"
+reviews "[$(review_row 11 CHANGES_REQUESTED S0 "cromford[bot]" "$(footer_body S0 REQUEST_CHANGES)")]"
 PR_AUTHOR=operator run_lane
 grep -E 'pr review 7 ' "$T/gh-calls.log" | grep -q '^ghs_x ' \
   && ok || bad "14: the review post did not go out on the App token: $(ghlog)"
@@ -338,7 +341,7 @@ grep -E 'pr list' "$T/gh-calls.log" | grep -q '^ghp_default ' \
 
 # 15. An UNARMED box is byte-for-byte what it was: every call on the one token.
 fresh_harness
-reviews "[$(review_row 11 CHANGES_REQUESTED S0 operator "$(footer_body S0 REQUEST_CHANGES)")]"
+reviews "[$(review_row 11 CHANGES_REQUESTED S0 "cromford[bot]" "$(footer_body S0 REQUEST_CHANGES)")]"
 PR_AUTHOR=operator run_lane
 grep -q '^ghp_default | pr review' "$T/gh-calls.log" \
   && ok || bad "15: an unarmed box did not post on its own credential: $(ghlog)"
@@ -348,7 +351,7 @@ grep -q '^ghs_' "$T/gh-calls.log" \
 # 16. The second tick on an unchanged head is silent: the healed record
 #     short-circuits locally, so not even the ledger is read again.
 fresh_harness
-reviews "[$(review_row 11 CHANGES_REQUESTED S1 operator "$(footer_body S1 REQUEST_CHANGES)")]"
+reviews "[$(review_row 11 CHANGES_REQUESTED S1 "cromford[bot]" "$(footer_body S1 REQUEST_CHANGES)")]"
 run_lane
 : > "$T/gh-calls.log"
 run_lane
@@ -365,7 +368,7 @@ run_lane
 #     the other side of the same rule: on a PIPELINE PR the row at the head DOES
 #     go, because the lane walks away and the conductor needs the queue back.
 fresh_harness
-reviews "[$(review_row 11 CHANGES_REQUESTED S1 operator "$(footer_body S1 REQUEST_CHANGES)")]"
+reviews "[$(review_row 11 CHANGES_REQUESTED S1 "cromford[bot]" "$(footer_body S1 REQUEST_CHANGES)")]"
 PR_AUTHOR=operator PR_BODY_MODE=none run_lane
 [ "$(ghgrep 'dismissals')" = 0 ] \
   && ok || bad "17: an AT-HEAD review on a hand harness PR was dismissed with nothing to consume the verdict: $(ghlog)"
@@ -376,7 +379,7 @@ grep -q 'left its own CHANGES_REQUESTED review 11 standing' <<<"$(rplog)" \
 # 18. The same PR one head later: the review is now STALE, so it IS dismissed —
 #     that is what lets a pushed branch re-enter the merge queue.
 fresh_harness
-reviews "[$(review_row 11 CHANGES_REQUESTED S0 operator "$(footer_body S0 REQUEST_CHANGES)")]"
+reviews "[$(review_row 11 CHANGES_REQUESTED S0 "cromford[bot]" "$(footer_body S0 REQUEST_CHANGES)")]"
 PR_AUTHOR=operator PR_BODY_MODE=none run_lane
 [ "$(ghgrep 'reviews/11/dismissals')" = 1 ] \
   && ok || bad "18: a STALE blocking review on a hand harness PR was not dismissed: $(ghlog)"
@@ -420,7 +423,7 @@ grep -q 'Can not approve your own pull request' <<<"$(rplog)" \
 # 22. A PERMANENTLY refused dismissal pages once instead of logging a line a
 #     tick for ever (#891 round 1, Nit 11). Three ticks, one ALERTS line.
 fresh_harness
-reviews "[$(review_row 11 CHANGES_REQUESTED S0 operator "$(footer_body S0 REQUEST_CHANGES)")]"
+reviews "[$(review_row 11 CHANGES_REQUESTED S0 "cromford[bot]" "$(footer_body S0 REQUEST_CHANGES)")]"
 for _ in 1 2 3 4; do
   rm -f "$T/h/state/tproj.pr-reviews.json"; printf '{}\n' > "$T/h/state/tproj.pr-reviews.json"
   PR_AUTHOR=operator DISMISS_FAIL=1 run_lane

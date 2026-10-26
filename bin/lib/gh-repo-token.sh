@@ -189,18 +189,66 @@ _ghrt_plain_pat() {
   case "$t" in ghs_*) return 1 ;; esac
   printf '%s' "$t"
 }
+# BH-8457: THE PROBE MEMO. The `gh api repos/<slug>` visibility GET answers the
+# same thing on every tick, and each conductor tick is a new process, so the
+# shell arrays above never carry it from one tick to the next. With
+# _GHRT_PROBE_MEMO_DIR set (bin/merge-conductor.sh sets it), each rung's
+# verdict WORD is kept in <dir>/<slug>.<app|pat> as `<epoch>\t<word>` for
+# _GHRT_PROBE_MEMO_TTL_S seconds (the conductor passes its knob
+# MC_REPO_PROBE_TTL_S; 300 here is the fallback; 0 = off). A word, never a
+# token. `none` is never stored, so an invisible repo is probed (and alerted)
+# as before. Unset dir = no memo, which is every other lane.
+_GHRT_PROBE_MEMO_TTL_DEFAULT=300   # fallback only: the knob is MC_REPO_PROBE_TTL_S in catalog/lanes.d/merge-conductor.knobs.d/
+_ghrt_memo_file() { # <slug> <app|pat>
+  [ -n "${_GHRT_PROBE_MEMO_DIR:-}" ] || return 1
+  printf '%s/%s.%s' "$_GHRT_PROBE_MEMO_DIR" "$(printf '%s' "${1//\//_}" | tr -cd 'A-Za-z0-9._-')" "$2"
+}
+_ghrt_memo_ttl() {
+  local t="${_GHRT_PROBE_MEMO_TTL_S:-$_GHRT_PROBE_MEMO_TTL_DEFAULT}"
+  [[ "$t" =~ ^[0-9]{1,9}$ ]] || t=$_GHRT_PROBE_MEMO_TTL_DEFAULT
+  printf '%s' "$((10#$t))"
+}
+_ghrt_memo_get() { # <slug> <app|pat> -> the stored word, rc 1 when none is fresh
+  local f ep v now ttl
+  f=$(_ghrt_memo_file "$1" "$2") || return 1
+  ttl=$(_ghrt_memo_ttl); [ "$ttl" -gt 0 ] || return 1
+  IFS=$'\t' read -r ep v < "$f" 2>/dev/null || return 1
+  [[ "$ep" =~ ^[0-9]{1,12}$ ]] || return 1
+  now=$(date +%s)
+  [ $((now - ep)) -ge 0 ] && [ $((now - ep)) -lt "$ttl" ] || return 1
+  case "$v" in app|default|default-file|admin) printf '%s' "$v" ;; *) return 1 ;; esac
+}
+_ghrt_memo_put() { # <slug> <app|pat> <word>
+  local f
+  case "${3:-}" in app|default|default-file|admin) ;; *) return 0 ;; esac
+  f=$(_ghrt_memo_file "$1" "$2") || return 0
+  [ "$(_ghrt_memo_ttl)" -gt 0 ] || return 0
+  mkdir -p "$_GHRT_PROBE_MEMO_DIR" 2>/dev/null || return 0
+  printf '%s\t%s\n' "$(date +%s)" "$3" > "$f.$$" 2>/dev/null && mv -f "$f.$$" "$f" 2>/dev/null
+  rm -f "$f.$$" 2>/dev/null
+  return 0
+}
 _ghrt_pat_probe() { # _ghrt_pat_probe <owner/repo> -> fills _GHRT_PAT_TOK[slug] in THIS shell
   # The no-token probe runs with GH_USE_PAT=1 (round 3): through the gh shim an
   # unset GH_TOKEN would otherwise be answered by the App, and "default" here
   # means a PAT can see the repo — never "the App can".
   local slug="$1" fp=""
   [ -n "${_GHRT_PAT_TOK[$slug]+x}" ] && return 0
+  # A fresh memo answers without the GET, only while the credential it names
+  # is still on this box.
+  case "$(_ghrt_memo_get "$slug" pat)" in
+    default) _GHRT_PAT_TOK[$slug]="default"; return 0 ;;
+    default-file) if _ghrt_file_pat >/dev/null; then _GHRT_PAT_TOK[$slug]="default"; _GHRT_VIA_FILE[$slug]=1; return 0; fi ;;
+    admin) if [ -n "$_GHRT_ADMIN_TOK" ]; then _GHRT_PAT_TOK[$slug]="admin"; return 0; fi ;;
+  esac
   if { if [ -n "$_GHRT_DEFAULT_TOK" ]; then GH_TOKEN="$_GHRT_DEFAULT_TOK" gh api "repos/$slug" -q .id
        else env -u GH_TOKEN GH_USE_PAT=1 gh api "repos/$slug" -q .id; fi; } >/dev/null 2>&1; then _GHRT_PAT_TOK[$slug]="default"
   elif _ghrt_file_pat >/dev/null && fp="$_GHRT_FILE_PAT" && GH_TOKEN="$fp" gh api "repos/$slug" -q .id >/dev/null 2>&1; then
     _GHRT_PAT_TOK[$slug]="default"; _GHRT_VIA_FILE[$slug]=1
   elif [ -n "$_GHRT_ADMIN_TOK" ] && GH_TOKEN="$_GHRT_ADMIN_TOK" gh api "repos/$slug" -q .id >/dev/null 2>&1; then _GHRT_PAT_TOK[$slug]="admin"
   else _GHRT_PAT_TOK[$slug]="none"; fi
+  if [ "${_GHRT_PAT_TOK[$slug]}" = default ] && [ "${_GHRT_VIA_FILE[$slug]:-}" = 1 ]; then _ghrt_memo_put "$slug" pat default-file
+  else _ghrt_memo_put "$slug" pat "${_GHRT_PAT_TOK[$slug]}"; fi
 }
 # rc 0 ONLY when an App installation token exists AND sees this repo. Every
 # other answer falls through to the PATs with nothing exported and nothing
@@ -214,7 +262,11 @@ _ghrt_app_probe() { # _ghrt_app_probe <owner/repo>
   [ -n "$tok" ] || return 1
   [ "$tok" = "$_GHRT_DEFAULT_TOK" ] && return 1
   [ -n "$_GHRT_ADMIN_TOK" ] && [ "$tok" = "$_GHRT_ADMIN_TOK" ] && return 1
-  GH_TOKEN="$tok" gh api "repos/$slug" -q .id >/dev/null 2>&1 || return 1
+  # The token is still minted every time; only the visibility GET is memoed.
+  if [ "$(_ghrt_memo_get "$slug" app)" != app ]; then
+    GH_TOKEN="$tok" gh api "repos/$slug" -q .id >/dev/null 2>&1 || return 1
+    _ghrt_memo_put "$slug" app app
+  fi
   _GHRT_APP_TOK[$slug]="$tok"; _GHRT_APP_AT[$slug]=$(date +%s)
   return 0
 }

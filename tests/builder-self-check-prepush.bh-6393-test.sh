@@ -7,8 +7,9 @@
 #   S1  a pr-out head with 7 unplanned files: one reason line per file under
 #       `## Files outside the plan` (no model turn), above the footer; the
 #       second check passes
-#   S2  the S1 body passes the full-rule CLI exactly as self_check_hold calls
-#       it, and self_check_hold runs every rule (no PR_SELF_CHECK_ONLY)
+#   S2  the S1 body passes the full-rule CLI (every rule, no --only); that
+#       the hub's lgsc_run (bin/lib/lead-gates-selfcheck.sh) narrows no rule
+#       is K4 of tests/lead-gates-selfcheck-key.bh-8363-test.sh
 #   S3  an unfixable closes-not-met: the span returns (the PR opens) after 2
 #       checks with `## Pre-open check: refusals left` in the body
 #   S4  that findings section (as S3 wrote it) is not read as an acceptance
@@ -106,9 +107,6 @@ grep -q 'pr self-check: wrote 7 reason line(s) under Files outside the plan' "$B
 # ── S2: the hub's own call passes on the S1 body ────────────────────────────
 OUT=$("$H/bin/pr-self-check.sh" check --repo "$R" --base main --head pr-out --body "$T/s1/pr-body.md" --ticket "$T/ticket.md" --key BH-1 2>&1); RC=$?
 [ "$RC" = 0 ] && ! grep -q '^REFUSE' <<<"$OUT" && ok || bad "S2 the full-rule check refuses the S1 body (rc $RC): $OUT"
-SCH=$(awk '/^self_check_hold\(\) *\{/{f=1} f{print} f && /^}/{exit}' "$DIR/bin/lead-review-enqueue.sh")
-grep -q 'psc_check' <<<"$SCH" && ! grep -q 'PR_SELF_CHECK_ONLY' <<<"$SCH" && ok \
-  || bad "S2 self_check_hold is missing, calls no psc_check, or narrows the rules: $(head -3 <<<"$SCH")"
 
 # ── S3: unfixable → 2 checks, findings in the body, the PR still opens ──────
 run_span s3 pr-plain "Closes #5

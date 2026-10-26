@@ -195,7 +195,8 @@ grep -q 'did NOT record' "$RLOG" && ok || bad "A2 the tick must say the comment 
 # A3. Next tick, worker up: own marker found -> no second comment, no model
 #     call, the row posted, the key reviewed
 # ============================================================================
-jq -Rs '[{body:.,user:{login:"operator"}}]' < "$T/posted.txt" > "$T/comments.json"
+# BH-8419: the harness's own marker comment is the hub App's; the operator login is a person.
+jq -Rs '[{body:.,user:{login:"cromford[bot]",type:"Bot"}}]' < "$T/posted.txt" > "$T/comments.json"
 rm -f "$T/v500"; RUN
 [ "$(CALLS)" = 1 ] && ok || bad "A3 the retry must buy no model call (calls=$(CALLS))"
 [ "$(POSTS)" = 1 ] && ok || bad "A3 no second comment (posts=$(POSTS))"
@@ -208,7 +209,8 @@ tail -1 "$T/order.txt" | grep -q "^${SHA:0:12} status=reviewed-unposted " && ok 
 # A2' the cap: a row that keeps failing parks the head like a post that does,
 # and no model call is ever bought for it.
 RESET; : > "$T/v500"; PT=2 RUN
-jq -Rs '[{body:.,user:{login:"operator"}}]' < "$T/posted.txt" > "$T/comments.json"
+# BH-8419: the harness's own marker comment is the hub App's; the operator login is a person.
+jq -Rs '[{body:.,user:{login:"cromford[bot]",type:"Bot"}}]' < "$T/posted.txt" > "$T/comments.json"
 PT=2 RUN
 K1 | grep -qE '^unposted-terminal .* tries=2$' && ok || bad "A2' a row that fails POST_TRIES times goes terminal: '$(K1)'"
 [ "$(CALLS)" = 1 ] && [ "$(POSTS)" = 1 ] && ok || bad "A2' calls=$(CALLS) posts=$(POSTS)"

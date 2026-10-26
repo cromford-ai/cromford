@@ -192,7 +192,8 @@ grep -qx "stage=review-head fp=review:$SLUG#$NUM@$HEAD" "$T/sink.txt" 2>/dev/nul
   || bad "C1e without the lib the lane buys under the inline key: $(cat "$T/sink.txt" 2>/dev/null)"
 
 # ---- C2: a re-review request buys under ~rereq and is never skipped
-rq_comment() { jq -nc --arg b "<!-- harness:rereview-requested $HEAD -->" '[{user:{login:"operator"}, body:$b}]' > "$T/comments.json"; }
+# BH-8419: the hub App posts the re-review request (cromford[bot], type Bot).
+rq_comment() { jq -nc --arg b "<!-- harness:rereview-requested $HEAD -->" '[{user:{login:"cromford[bot]", type:"Bot"}, body:$b}]' > "$T/comments.json"; }
 fresh_rp "{\"$NUM\":{\"sha\":\"$HEAD\",\"verdict\":\"REQUEST_CHANGES\"}}"
 rq_comment; echo REQUEST_CHANGES > "$T/rp-verdict"
 rb 0 box APPROVE approve
@@ -200,7 +201,7 @@ run_rp
 [ "$(sinkn)" = 1 ] && ok || bad "C2 a requested re-review is never skipped, even with a verdict on record: $(cat "$T/sink.txt" 2>/dev/null)"
 grep -qx "stage=review-head fp=review:$SLUG#$NUM@$HEAD~rereq" "$T/sink.txt" 2>/dev/null && ok \
   || bad "C2 the request must buy under ~rereq on review-head: $(cat "$T/sink.txt" 2>/dev/null)"
-rplog | grep -q 're-review requested by operator.*REREVIEW_REASON=rereq' && ok || bad "C2 the request line must name REREVIEW_REASON=rereq: $(rplog | grep -i requested)"
+rplog | grep -q 're-review requested by cromford\[bot\].*REREVIEW_REASON=rereq' && ok || bad "C2 the request line must name REREVIEW_REASON=rereq: $(rplog | grep -i requested)"
 [ "$(st rereq_sha)" = "$HEAD" ] && ok || bad "C2 the honoured request is spent on this head: $(cat "$STATE")"
 # A wiped rereq_sha asks again: the guard refuses the same key, nothing is paid,
 # and the request is handed back.

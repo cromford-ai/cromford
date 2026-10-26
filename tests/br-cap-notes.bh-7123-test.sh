@@ -73,7 +73,9 @@ br_review_rows() { [ -e "$T/rows-unreadable" ] && return 2; cat "$T/rows.json"; 
 br_review_cleared() { return 1; }
 br_rebuild_fresh() { printf 'rebuild %s\n' "\$*" >> "$T/rebuild.txt"; }
 br_abandon() { printf '%s\n' "\$*" >> "$T/abandon.txt"; return 0; }
-harness_verdict_author_match() { case "\$1" in harness-bot|cromford[bot]) return 0 ;; *) return 1 ;; esac; }
+# BH-8419: bot-only, like the real helper. The quotes keep [bot] literal (a bare
+# cromford[bot] glob is "cromford" plus one of b, o, t).
+harness_verdict_author_match() { case "\$1" in 'cromford[bot]'|app/cromford) return 0 ;; *) return 1 ;; esac; }
 gh_rest() { printf '%s\n' "\$*" >> "$T/gh.txt"; return 0; }
 _jobs_req() { printf '%s\n' "\$*" >> "$T/jobs.txt"
   case "\$2" in /api/lead-reviews*) printf '{"requests":[{"id":"req-1","repo":"o/r","pr":9,"head_sha":"$HEAD","status":"done","verdict":"BLOCK"}]}' ;; esac; return 0; }
@@ -136,7 +138,8 @@ RESET; touch "$T/fresh-row"; mkrows CHANGES_REQUESTED 'cromford[bot]' Bot "$LEAD
 TERM
 grep -q '^request' "$T/lead-verdict.txt" 2>/dev/null && ! grep -q '^reset' "$T/lead-verdict.txt" 2>/dev/null && ok || bad "C3: a 201 request needs no reset: $(cat "$T/lead-verdict.txt" 2>/dev/null)"
 # The lane's own footer review (review-prs.sh, a verdict author) is ours too.
-RESET; mkrows CHANGES_REQUESTED harness-bot User "$(printf '1. **[HIGH] Card padding is 14 px.** card.tsx:12.\n\nTIER: 2\nVERDICT: REQUEST_CHANGES\n\n---\nharness review footer')"
+# BH-8419: the lane posts it as the App, a Bot row; a plain User login is a person.
+RESET; mkrows CHANGES_REQUESTED 'cromford[bot]' Bot "$(printf '1. **[HIGH] Card padding is 14 px.** card.tsx:12.\n\nTIER: 2\nVERDICT: REQUEST_CHANGES\n\n---\nharness review footer')"
 TERM
 [ "$(OUTCOME)" = CAP_NOTES ] && ok || bad "C4: a lane review tagged HIGH with no class is notes-only -> CAP_NOTES, got '$(OUTCOME)'"
 [ "$(n abandon)" = 0 ] && ok || bad "C4: nothing abandoned"

@@ -509,6 +509,9 @@ mc_pr_lock_gc() {
 mc_tick_gc() {
   [ -d "$MC_TICK_DIR" ] || return 0
   find "$MC_TICK_DIR" -maxdepth 1 -type f -mtime +0 -delete 2>/dev/null
+  # BH-8457: a tick's permission memo dir that its EXIT trap did not remove
+  # (a killed tick). The parent removes its own on exit.
+  find "$MC_TICK_DIR" -mindepth 1 -maxdepth 1 -type d -name 'perm-*' -mtime +0 -exec rm -rf -- {} + 2>/dev/null
   return 0
 }
 

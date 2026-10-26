@@ -334,9 +334,21 @@ bg_own_diff_fp() {
 #   maintain/admin) on the repo, per the collaborator-permission read. A read
 #   that fails answers rc 0: whether a reviewer who left CHANGES_REQUESTED may
 #   block cannot be told, and the fail-closed answer is that they may.
+#   BH-8457: with BG_PERM_MEMO_DIR set (the conductor sets it to a dir of this
+#   tick), a read permission word is kept in <dir>/<slug>.<login>, so one tick
+#   reads each (repo, login) once. A failed or empty read is never stored.
 bg_reviewer_can_write() {
-  local p
-  p=$(gh api -X GET "repos/$1/collaborators/$2/permission" -q '.permission // empty' 2>/dev/null) || return 0
+  local p f=""
+  if [ -n "${BG_PERM_MEMO_DIR:-}" ]; then
+    f="$BG_PERM_MEMO_DIR/$(printf '%s.%s' "${1//\//_}" "$2" | tr -cd 'A-Za-z0-9._-')"
+    [ -s "$f" ] && p=$(head -c 32 "$f" 2>/dev/null)
+  fi
+  if [ -z "${p:-}" ]; then
+    p=$(gh api -X GET "repos/$1/collaborators/$2/permission" -q '.permission // empty' 2>/dev/null) || return 0
+    [ -n "$f" ] && [ -n "$p" ] && mkdir -p "$BG_PERM_MEMO_DIR" 2>/dev/null \
+      && printf '%s' "$p" > "$f.$$" 2>/dev/null && mv -f "$f.$$" "$f" 2>/dev/null
+    [ -n "$f" ] && rm -f "$f.$$" 2>/dev/null
+  fi
   case "$p" in admin|maintain|write) return 0 ;; '') return 0 ;; *) return 1 ;; esac
 }
 

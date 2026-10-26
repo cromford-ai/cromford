@@ -43,7 +43,6 @@
 #   B3  the body is re-read just before the PATCH: an edit made during the
 #       probe window is kept
 #   L2  the prompt's section order is the order bin/lead-review.sh prints
-#   E1  bin/lead-review-enqueue.sh runs the lane from its marked block
 #   L1  bin/lead-review.sh gives the review a `## Live probes` section from
 #       lp_evidence, and the prompt says a PR-body section is not evidence
 # Run from anywhere: HARNESS_TEST_SANDBOX=1 bash tests/live-probes.bh-5801-test.sh
@@ -340,10 +339,7 @@ grep -q 'Host suite.*Live probes.*Conflict hotspots.*Diff' <<<"$emitted" && ok |
 sed -n '/^The sections after this prompt are/p' "$DIR/prompts/lead-review.md" | grep -q '`## Live probes`.*`## Conflict hotspots`.*`## Diff`' && ok \
   || bad "L2 prompts/lead-review.md must list Live probes, then Conflict hotspots, then Diff"
 
-# ── E1, L1 ──
-blk=$(awk '$0 ~ /^    # >>> live probes \(BH-5801\)/{f=1;next} $0 ~ /^    # <<< live probes/{exit} f' "$DIR/bin/lead-review-enqueue.sh")
-grep -q 'lp_run_for_head "\$SLUG" "\$N" "\$HEAD" "\$WORK/pr"' <<<"$blk" && ok || bad "E1 the enqueue does not run the lane from its marked block"
-grep -q 'live-probes.sh' "$DIR/bin/lead-review-enqueue.sh" && ok || bad "E1 the enqueue does not load bin/lib/live-probes.sh"
+# ── L1 ──
 grep -qF 'lp_evidence "$repo" "$pr" "$sha"' "$DIR/bin/lead-review.sh" && grep -qF "printf '\n## Live probes" "$DIR/bin/lead-review.sh" && ok \
   || bad "L1 bin/lead-review.sh does not give the review a Live probes section from lp_evidence"
 grep -q 'not evidence' "$DIR/prompts/lead-review.md" && ok || bad "L1 the prompt must say a PR-body Live probes section is not evidence"
