@@ -6,7 +6,9 @@ gives an MCP client (Claude Code, Claude Desktop, Cursor, VS Code, Windsurf)
 tools to read the fleet and act on project boards.
 
 It holds no state of its own. Every tool call is one request to the console,
-sent once and never retried. If the console does not serve a route, the tool
+sent once and never retried, except `batch_failure` (GitHub REST) and
+`post_block` / `clear_block` (BH-7713), which run `gh api` and
+`bin/lead-verdict.sh` on the MCP host and send nothing to the console. If the console does not serve a route, the tool
 answers an error that says so (`console route not available: <path>`), never
 an empty success.
 
@@ -28,6 +30,9 @@ The server reads these from its environment at startup.
 | `HARNESS_MCP_BATCH_LOG_CAP` | no | Failed job logs `batch_failure` reads per call (default 10). A check past the cap is `not_read_cap` and leaves every PR `culprit: null`. |
 | `HARNESS_MCP_BATCH_LINE_CAP` | no | Failure lines `batch_failure` returns per failed check (default 40). |
 | `HARNESS_MCP_BATCH_LINE_LEN` | no | Characters kept per failure line (default 500). |
+| `HARNESS_MCP_GH_TIMEOUT_MS` | no | Milliseconds one `gh api` call from `post_block` / `clear_block` may run (default 60000). |
+| `HARNESS_MCP_LV_TIMEOUT_MS` | no | Milliseconds one `bin/lead-verdict.sh` run from `post_block` / `clear_block` may run (default 90000). |
+| `HARNESS_MCP_TEXT_CAP` | no | Characters of `gh` or `bin/lead-verdict.sh` output kept in a `post_block` / `clear_block` part (default 300). |
 
 A cap knob that is unset, empty or not a positive integer uses its default.
 
