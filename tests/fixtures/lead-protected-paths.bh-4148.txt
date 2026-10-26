@@ -10,6 +10,7 @@ bin/lib/lead-review/**
 bin/lib/lead-gates*
 bin/lead-review-land.sh
 bin/lead-review-enqueue.sh
+bin/lead-review-enqueue.d/**
 bin/lead-review-precision.sh
 catalog/lanes.d/lead-review*.json
 prompts/lead-review.md

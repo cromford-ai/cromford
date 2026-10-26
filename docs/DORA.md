@@ -268,6 +268,85 @@ sample is the settings row `review.tier_revert_min_n` (seeded `5`), then
 `fleet.review.margin`, `margin_source` (`row`, `env` or `default`) and `alert`
 (`over`, `withheld`, the exact `line`) record the decision.
 
+## Landing block (BH-6748)
+
+`fleet.landing` in `state/dora/<date>.json`, and one `landing <project>:` line
+per project with landing activity in the window (a `landing_decisions` row of
+any mode, or a direct merge). `bin/lib/landing-sources.sh` `ls_fetch` reads the
+rows; `bin/dora_landing.py` counts them. The same reader and the same rules are
+behind `bin/landing-replay.sh`, the evidence for the optimistic-landing flip
+(docs/OPERATING.md, "Optimistic landing: measure, then flip").
+
+| source | read | kept |
+| --- | --- | --- |
+| `decisions` | `GET /api/landing-decisions?repo=<r>&limit=200[&before_id=<id>]` per fleet repo, newest first, `before_id` = the smallest id of the last page; stops at the first row before the window start, at `truncated:false`, or after `landing.report.decision_pages` pages (capped). A worker that ignores `before_id` stops the read (capped, `cursor ignored`). | rows with `at` in the window |
+| `merges` | `GET /api/ledger?kind=merge&limit=1000`, paged by `before` + `before_key`, `landing.report.ledger_pages` pages | `status = merged`, `updated_at` from the window start |
+| `ci_batches` | `GET /api/ci-batches?repo=<r>&since=<start>&limit=5000`, active repos only | every row |
+| `pulls` | GitHub REST `repos/<r>/pulls?state=closed&sort=updated&direction=desc&per_page=100`, active repos only, `GH_REST_OPTIONAL=1`, `landing.report.gh_pages` pages | `updated_at` from the window start |
+| `ejected` | `state/merge-conductor/attempts.txt` (the hub only) | `ejected <owner/repo>#<n> <head>` lines |
+
+No repo has activity: `ci_batches` and `pulls` are `off` and GitHub is not
+called. Every decisions read failed: nothing else is read.
+
+The rules, to re-derive a figure by hand:
+
+* **Path of a merge.** `direct` when the merge ledger `detail`, split on
+  whitespace, has the token `path=direct` (`mc_settle_merged` writes
+  `merge-conductor path=direct` for a direct landing). Every other merge is
+  `queued`.
+* **merges** `{direct, queued}`: merge ledger rows in the window, by path.
+  This count is a measured 0 when there was no direct merge.
+* **direct_reverted** `{reverted, of}`: direct merges in the window whose PR a
+  revert PR names. A revert PR has the main-red label (`MC_MAIN_RED_LABEL`,
+  default `fix-main-red`), is merged, and names the culprit by the title
+  `revert: #N`, the branch `main-red-revert/pr-N-<sha12>`, or a `Revert "..."`
+  title with a body line `Reverts <repo>#N`. A PR without the label is not
+  counted. `null` (`n/a`) when there was no direct merge. `reverted` is
+  `null` (`n/a of N`) when the `pulls` source is not `ok`: a refused or failed
+  GitHub read is "unknown", never "0 reverted".
+* **ci_min_per_merge.queued**: the sum of `billed_min` of the repo's batches
+  completed in the window, divided by the queued merges. `null` with no batch
+  row or no queued merge. `ci_min_per_merge.direct` is always `null`: a direct
+  merge runs no merge-queue batch, and its push run on main is in no ledger.
+* **open_to_merge** `{direct, queued}` `{p50_s, p90_s, n, no_open_time}`: the
+  PR's GitHub `created_at` to `merged_at`, nearest rank (`ceil(p x n)`-th
+  smallest). A merge with no pulls row is counted in `no_open_time`. `null`
+  percentiles when `n` is 0.
+* **shadow_agreement** `{agree, of, rate, pending}`: over DISTINCT PRs with a
+  `mode=shadow, would=direct` row in the window, judged at the newest such
+  row's head. `of`: those with a merge row. `agree`: merged on the queued path,
+  no `ejected` line for that head, and not reverted. `pending`: not merged
+  yet. `rate` is `null` when `of` is 0. `agree` and `rate` are `null`
+  (`shadow agree n/a of N`) when the `pulls` or the `ejected` source is not
+  `ok` (off the hub `ejected` is `absent`): an unread revert or ejection is
+  "unknown", never a 100% agreement. The `landing sources:` line names the
+  source.
+
+`status` is `ok`, `off` (`DORA_LEDGER=0`, or no worker client), or `error`
+(every decisions read failed or answered no `rows` array,
+`bin/dora_landing.py` is not installed, or the module raised). `error` and
+`off` are one `landing: n/a (...)` or `landing: off (...)` line. `sources`
+records each source's `status`, `why`, `pages` and `capped`, and `knobs` the
+page caps in force. When a project line is printed, or a source is capped, a
+`landing sources:` line names each source; a capped one says `(capped)`.
+
+**The replay.** `bin/landing-replay.sh [--days N] [--last N] [--repo r] [--json]`
+reads the same sources over the last N days (the settings row
+`landing.replay.days`, then `LANDING_REPLAY_DAYS`, then 7; 1..90). Per repo
+and in total, over DISTINCT PRs with a `would=direct` row of any mode (newest
+head): `would_direct`, `merged`, `reverted` (`n/a` when the pulls read failed),
+`ejected` (`n/a` off the hub), `pending`, and `ci_min_saved` = the would-direct
+PRs merged on the queued path x the repo's batch minutes per queued merge in
+the window (an estimate; `n/a` with no batch rows). It also prints the 5
+commonest `would=queue` reasons and one `source` line per source. Exit 0
+printed, 2 usage, 3 every decisions read failed.
+
+The page caps are settings rows, seeded by
+`worker/jobs/schema.d/202610261457-bh-6748-landing-report-knobs.sql`:
+`landing.report.decision_pages` (10), `landing.report.ledger_pages` (5),
+`landing.report.gh_pages` (3); env `LANDING_REPORT_DECISION_PAGES`,
+`LANDING_REPORT_LEDGER_PAGES`, `LANDING_REPORT_GH_PAGES` when there is no row.
+
 ## Config
 
 Every threshold is a config value. Environment first, then

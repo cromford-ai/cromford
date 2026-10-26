@@ -68,6 +68,16 @@
 #   8. one log line to logs/ci-batch-red.log:
 #      ci-batch-red: repo=<r> days=<d> red=<n> green=<n> red_rate=<pct> unread=<u>
 #        deferred=<k> case=<A|B|A+B|C> share_a=<pct> share_b=<pct> pruned=<p> ignored=<i>
+#      and one line first on stdout (BH-8267), in both modes (before the TSV in
+#      --dry-run, the only stdout line otherwise):
+#      ci-batch-red: red-batch rate, last <d> days: <pct> percent (<r> red of <n> batches)
+#      the same red and red_rate numbers as the log line (unread red runs count
+#      red). In --dry-run a failed record write logs to stdout before it, so
+#      read the rate with `grep 'red-batch rate'`, not `head -1`. The merge
+#      queue's default batch_size goes back to 6 when this rate is under 15
+#      percent for a week
+#      (docs/notes/2026-10-24-BH-8267-default-queue-batch-size.md). The cron line
+#      sends stdout to /dev/null; the log line stays the record.
 #   9. once per ISO week (BH-8062), in logs/ci-batch-red-week.log (not the
 #      tick log, which keeps one line a tick):
 #      the last complete week (Mon 00:00Z to the next Mon 00:00Z, the week
@@ -448,6 +458,8 @@ if [ -z "$DRY" ]; then
 fi
 
 # 8. the TSV and the tick's one line
+RATE_LINE="ci-batch-red: red-batch rate, last $DAYS days: $RATE percent ($NRED red of $(( NRED + NGREEN )) batches)"
+echo "$RATE_LINE"
 LINE="ci-batch-red: repo=$REPO days=$DAYS red=$NRED green=$NGREEN red_rate=$RATE unread=$NUNREAD deferred=$DEFER case=$CASE share_a=$SA share_b=$SB pruned=$PRUNED ignored=${IGNORED:-0}"
 if [ -n "$DRY" ]; then
   cat "$TMP/latest.tsv"

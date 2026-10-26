@@ -15,6 +15,7 @@ example-org/cromford	bin/lib/lead-review/**
 example-org/cromford	bin/lib/lead-gates*
 example-org/cromford	bin/lead-review-land.sh
 example-org/cromford	bin/lead-review-enqueue.sh
+example-org/cromford	bin/lead-review-enqueue.d/**
 example-org/cromford	bin/lead-review-precision.sh
 example-org/cromford	catalog/lanes.d/lead-review*.json
 example-org/cromford	prompts/lead-review.md

@@ -24,8 +24,10 @@ records the decision. The conductor merges or enqueues exactly as before.
   - `POST /api/landing-decisions {repo, number, head, mode, would, reason}`:
     201 `{ok, id}` on a new (repo, number, head, mode); 200
     `{ok, existing:true}` on a repeat, stored row untouched; 400 on a bad field.
-  - `GET /api/landing-decisions?repo=<owner/name>[&number=<n>][&limit=1..200]`:
+  - `GET /api/landing-decisions?repo=<owner/name>[&number=<n>][&limit=1..200][&before_id=<id>]`:
     `{rows, truncated, as_of}`, newest first. `repo` is required.
+    `before_id` (BH-6748, a positive integer, else 400) keeps only ids below
+    it: the next page of `bin/lib/landing-sources.sh` `ls_fetch`.
 - Table `landing_decisions`
   (`worker/jobs/schema.d/202610151539-bh-6744-landing-decisions.sql`):
   unique (repo, number, head, mode); indexes `idx_landing_decisions_repo_id`

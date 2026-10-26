@@ -354,6 +354,8 @@
 # without the route, or no answer, is one log line and the tick goes on.
 # Unreadable is never "go": nothing is requested on a read that failed.
 # Hub only. Kill switch: flags/lane-off-lead-review-enqueue.
+# A new optional lib or helper is a file in bin/lead-review-enqueue.d/, not one
+# more source line here (bin/lead-review-enqueue.d/README.md).
 # Log: logs/lead-review-enqueue.log, one `tick repos=..` summary line a tick.
 #
 # bin/lead-review-enqueue.sh pr <owner/repo>#<n>=<trigger>|<owner/repo>@<sha>=<trigger>...
@@ -485,6 +487,20 @@ RT=0; . "$H/bin/lib/risk-tier.sh" 2>/dev/null && command -v rt_classify >/dev/nu
 # with no PASS. Missing lib = neither: a gate BLOCK then waits for a new head.
 CQG=0; . "$H/bin/lib/console-qa-gate.sh" 2>/dev/null && CQG=1
 CQG_HREPO=$(awk '$1 == "cromford" {print $2; exit}' "${FLEET_CONF:-$H/fleet.conf}" 2>/dev/null)
+# >>> lead-review-enqueue.d fragments (BH-8396)
+# A new optional lib is its own file, bin/lead-review-enqueue.d/<key>-<name>.sh,
+# not one more source line above: bin/list-file-lint.sh refuses that. Each
+# regular *.sh there is sourced once, in LC_ALL=C name order, after the in-file
+# libs. A fragment that does not parse or fails to source is one log line, and
+# the tick goes on.
+mapfile -t _lre_frags < <(set +f; for _f in "$H"/bin/lead-review-enqueue.d/*.sh; do [ -f "$_f" ] && printf '%s\n' "$_f"; done | LC_ALL=C sort)
+for _lre_frag in "${_lre_frags[@]}"; do
+  bash -n "$_lre_frag" 2>/dev/null || { log "lead-review-enqueue.d: ${_lre_frag##*/} does not parse; skipped this tick"; continue; }
+  # shellcheck source=/dev/null
+  . "$_lre_frag" || log "lead-review-enqueue.d: ${_lre_frag##*/} failed to source (rc $?); skipped this tick"
+done
+unset _lre_frags _lre_frag
+# <<< lead-review-enqueue.d fragments (BH-8396)
 # cqg_gate_on — the lead lane's LEAD_REVIEW_CONSOLE_QA_GATE, read as its settings
 # row (lane.lead-review.lead_review_console_qa_gate) once per tick. No row = off;
 # an unreadable row = on, so a replay is held and the head gets a review.

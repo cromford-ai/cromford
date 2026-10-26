@@ -8,5 +8,5 @@
   "zero_means": "off",
   "required": false,
   "read_in": "bin/fly-pool.sh",
-  "note": "BH-7421. pool_rest_read cuts one GitHub read of the pool (PR, branch head, hold, repo probe) after this many seconds. A cut read answers with no HTTP code. The first unreadable PR read in a tick stops PR reads for that project for the rest of the tick and raises ONE alert per project per hour (flags/alerted-pool-pr-unreadable-<p>). Settings row `lane.fly-pool.pool_gh_read_timeout_s`. 0 = off: no per-read limit."
+  "note": "BH-7421. pool_rest_read cuts one GitHub read of the pool (PR, branch head, hold, repo probe) after this many seconds. A cut read answers TIMEOUT as its code. The first unreadable PR read in a tick stops PR reads for that project for the rest of the tick and raises ONE alert per project per hour (flags/alerted-pool-pr-unreadable-<p>). Settings row `lane.fly-pool.pool_gh_read_timeout_s`. 0 = off: no per-read limit. Lane-scoped: never set it in env/global.env or in another lane's or lib's knobs, because some hold_check callers outside the pool proceed on an unreadable hold; bin/lane-scoped-knob-lint.sh refuses it (BH-7436)."
 }

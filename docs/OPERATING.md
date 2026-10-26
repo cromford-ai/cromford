@@ -55,6 +55,47 @@ cap there.
   can no longer turn a batch red (docs/ci-durations.md).
 - **Knob.** `MC_MAIN_RED_LABEL` (default `fix-main-red`; `bin/lib/main-red-label.sh`).
 
+### Optimistic landing: measure, then flip
+- **What goes wrong.** Every READY PR waits for a merge-queue batch, even a
+  low-risk PR whose checks are already green on its head. The conductor can
+  merge such a PR directly (`MC_LANDING_MODE=optimistic`, BH-6745), but a flip
+  with no evidence can land a PR that the queue would have stopped.
+- **What the factory does.** In `shadow` mode the conductor records what it
+  would have done (`landing_decisions`, `GET /api/landing-decisions`). The
+  `landing` lines of the daily DORA digest and `bin/landing-replay.sh` turn
+  those rows into the evidence for the flip (docs/DORA.md, "Landing block").
+- **Knob.** `MC_LANDING_MODE`: `queue` (default) | `shadow` | `optimistic`.
+  The per-project row is `lane.merge-conductor.<project>.mc_landing_mode`.
+  The global row `lane.merge-conductor.mc_landing_mode` changes every project
+  at once. Do not use the global row for the flip.
+
+The flip procedure. An operator does each step and records it on the flip
+ticket. The order of the projects for this fleet is in
+`docs/notes/2026-10-26-BH-6748-landing-report.md`.
+
+1. Run `bin/landing-replay.sh --days 7` on the hub. Paste its
+   `LANDING_REPLAY` lines on the flip ticket. They are the last lines of the
+   output.
+2. Start with the harness's own project. Run
+   `bin/jobs-client.sh setting-set lane.merge-conductor.<project>.mc_landing_mode optimistic`.
+3. Watch that project for 24 h: its `landing <project>:` line in the digest,
+   and the `LANDING_DIRECT` lines in `logs/merge-conductor.log`.
+4. If it stays green, set the row of the second internal project and watch
+   24 h.
+5. Then set the row of each client repo, one repo per day, each with its own
+   per-project row.
+6. Rollback: set the same per-project row back to `queue`:
+   `bin/jobs-client.sh setting-set lane.merge-conductor.<project>.mc_landing_mode queue`.
+
+Notes for the flip:
+- Optimistic mode merges directly only on a Mergify repo, and never on a
+  lane-run machine (`MC_ON_MACHINE=1`). On any other repo or machine the PR
+  enqueues as before (`landing_direct_on`, `bin/lib/mc/landing.sh`).
+- `MC_DIRECT_MERGE_BUDGET` caps the direct merges per project per tick
+  (default 6; 0 turns direct merging off).
+- `MC_LANDING_PQ_AGE_MIN` bounds the age of the pre-queue verdict a direct
+  merge needs (default 60 minutes; an older verdict is `prequeue-stale`).
+
 ## Review throughput
 
 ### Lead reviews run in parallel

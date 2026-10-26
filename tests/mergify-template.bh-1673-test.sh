@@ -177,8 +177,10 @@ tojson "$T/a10-1.yml" > "$T/a10-1.json" \
 # 2026-09-28): a red or dequeued batch restarts every batch above it, a policy
 # change, not a weakening. Batches of 6, 2 min (the operator, 2026-10-22, BH-8047).
 # 1 parallel (the operator, 2026-10-22, BH-8085, CI cost) until the red-batch rate is under 15%.
+# Batches of 3 (the operator, 2026-10-24, BH-8267, CI cost) until the 7-day red-batch
+# rate is under 15 percent for a week, then 6 again.
 jq -e '.merge_queue.max_parallel_checks == 1
-       and (.queue_rules[]|select(.name=="default") | .batch_size == 6 and .batch_max_wait_time == "2 min" and .max_checks_retries == 0 and .checks_timeout == "60 min" and .merge_method == "merge")
+       and (.queue_rules[]|select(.name=="default") | .batch_size == 3 and .batch_max_wait_time == "2 min" and .max_checks_retries == 0 and .checks_timeout == "60 min" and .merge_method == "merge")
        and (.queue_rules[]|select(.name=="hotfix")  | .batch_size == 1 and .batch_max_wait_time == "0 s" and .max_checks_retries == 0)' "$T/cromford.json" >/dev/null \
   && ok || bad "A11 cromford render values (got $(jq -c '{mq:.merge_queue, q:[.queue_rules[]|{name,batch_size,batch_max_wait_time,max_checks_retries}]}' "$T/cromford.json"))"
 
@@ -208,11 +210,13 @@ tojson "$DIR/.mergify.yml" > "$T/live.json" \
 # ---------------------------------------------------------------------------
 # A4 / A5: compare
 # ---------------------------------------------------------------------------
+# The drift value is 5: any value the live default queue does not carry (it
+# was 3 until BH-8267 made 3 the live value).
 want_rc "A4 compare cromford.conf .mergify.yml" 0 "$BIN" compare "$BHC" "$DIR/.mergify.yml"
-default_batch "$DIR/.mergify.yml" "$T/copy.yml" 3
+default_batch "$DIR/.mergify.yml" "$T/copy.yml" 5
 cmp -s "$DIR/.mergify.yml" "$T/copy.yml" && bad "A4 setup: the default batch_size edit changed nothing" || ok
-want_rc "A4 compare with default batch_size 3" 1 "$BIN" compare "$BHC" "$T/copy.yml"
-grep -q '"batch_size": 3' "$T/out" && ok || bad "A4 drift diff does not show batch_size 3: $(head -c 400 "$T/out")"
+want_rc "A4 compare with default batch_size 5" 1 "$BIN" compare "$BHC" "$T/copy.yml"
+grep -q '"batch_size": 5' "$T/out" && ok || bad "A4 drift diff does not show batch_size 5: $(head -c 400 "$T/out")"
 grep -q '^+++ ' "$T/out" && ok || bad "A4 drift output is not a unified diff"
 
 TSY="$T/project-5.yml"
@@ -254,7 +258,7 @@ mkrepo() { # mkrepo <dir> — a scratch copy of the CLI, its config and the root
   cp "$BIN" "$1/bin/"; cp -r "$DIR/config/mergify" "$1/config/"; cp "$DIR/.mergify.yml" "$1/"
 }
 mkrepo "$T/r"; want_rc "A9 --check on an untouched scratch copy" 0 "$T/r/bin/mergify-template.sh" --check
-default_batch "$DIR/.mergify.yml" "$T/r/.mergify.yml" 3
+default_batch "$DIR/.mergify.yml" "$T/r/.mergify.yml" 5
 want_rc "A9 --check with a drifted default batch_size" 1 "$T/r/bin/mergify-template.sh" --check
 echo '# harness-mergify: override hand-tuned for the A9 case' >> "$T/r/.mergify.yml"
 want_rc "A9 --check with drift plus the marker" 0 "$T/r/bin/mergify-template.sh" --check

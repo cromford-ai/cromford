@@ -3,7 +3,7 @@
 # cromford `default` merge queue batches up to 6 PRs and waits up to
 # 2 min to fill. The size-1 queues (hotfix, solo, flake-fix) do not change.
 #
-#   B1  the render of cromford.conf: default batch_size 6, wait "2 min"
+#   B1  the render of cromford.conf: default batch_size 3 (BH-8267; was 6), wait "2 min"
 #   B2  the render: hotfix batch_size 1, wait "0 s"
 #   B3  the render: solo and flake-fix stay 1 / "0 s"
 #   B4  the committed .mergify.yml carries the B1 and B2 values
@@ -38,7 +38,7 @@ BH="$R/config/mergify/repos/cromford.conf"
 bash "$MT" render "$BH" > "$T/bh.yml" 2>"$T/err"; RC=$?
 tojson "$T/bh.yml" > "$T/bh.json" 2>/dev/null || : > "$T/bh.json"
 [ "$RC" = 0 ] && [ -s "$T/bh.json" ] && ok || bad "the cromford conf renders (rc $RC): $(cat "$T/err")"
-[ "$(q "$T/bh.json" default)" = '[6,"2 min"]' ] && ok || bad "B1 render default batch_size 6, wait 2 min (got $(q "$T/bh.json" default))"
+[ "$(q "$T/bh.json" default)" = '[3,"2 min"]' ] && ok || bad "B1 render default batch_size 3, wait 2 min (got $(q "$T/bh.json" default))"
 [ "$(q "$T/bh.json" hotfix)" = '[1,"0 s"]' ] && ok || bad "B2 render hotfix batch_size 1, wait 0 s (got $(q "$T/bh.json" hotfix))"
 for n in solo flake-fix; do
   [ "$(q "$T/bh.json" "$n")" = '[1,"0 s"]' ] && ok || bad "B3 render $n batch_size 1, wait 0 s (got $(q "$T/bh.json" "$n"))"
@@ -46,7 +46,7 @@ done
 
 # ── B4: the committed .mergify.yml ──────────────────────────────────────────
 tojson "$DIR/.mergify.yml" > "$T/committed.json" 2>/dev/null || : > "$T/committed.json"
-[ "$(q "$T/committed.json" default)" = '[6,"2 min"]' ] && ok || bad "B4 .mergify.yml default 6 / 2 min (got $(q "$T/committed.json" default))"
+[ "$(q "$T/committed.json" default)" = '[3,"2 min"]' ] && ok || bad "B4 .mergify.yml default 3 / 2 min (got $(q "$T/committed.json" default))"
 [ "$(q "$T/committed.json" hotfix)" = '[1,"0 s"]' ] && ok || bad "B4 .mergify.yml hotfix 1 / 0 s (got $(q "$T/committed.json" hotfix))"
 
 # ── B5: --check on the scratch copy ─────────────────────────────────────────

@@ -60,6 +60,12 @@
 #                       resolver log, state/blocked-resolver/<p>/<key>.json
 #                       attempts (fix-round-conflict ok|failed) and
 #                       logs/repair-on-push.log (REPAIR and wake lines).
+#   landing block       bin/dora_landing.py (BH-6748), on the rows
+#                       bin/lib/landing-sources.sh ls_fetch reads:
+#                       GET /api/landing-decisions per fleet repo, the merge
+#                       ledger (GET /api/ledger?kind=merge), GET /api/ci-batches
+#                       and GitHub's closed pulls list for the repos with
+#                       landing activity, and the conductor's attempts.txt.
 #
 # OUTPUT:
 #   1. state/dora/<date>.json          (state/dora/<date>-<window>.json when the
@@ -363,6 +369,35 @@ if [ -z "$RV_MIN_N_SRC" ]; then
 fi
 # <<< review tiers min sample
 
+# >>> landing sources (BH-6748)
+# The `landing` block's rows: bin/lib/landing-sources.sh ls_fetch reads the
+# landing_decisions rows of every fleet repo, the merge ledger, and, for the
+# repos with landing activity only, the CI batch ledger and GitHub's closed
+# pulls list (GH_REST_OPTIONAL=1, so the quota gate can refuse it first). A
+# failed read is that source's status in the block; nothing here pages.
+# LANDING_STATUS: ok | off (DORA_LEDGER=0, no worker client, no fetcher).
+LANDING_DIR=""; LANDING_STATUS=off; LANDING_WHY="DORA_LEDGER=0"
+if [ "$LEDGER" = 1 ]; then
+  if ! command -v _jobs_req >/dev/null 2>&1; then
+    LANDING_WHY="no worker client (bin/jobs-client.sh)"
+  elif ! . "$BIN/lib/landing-sources.sh" 2>/dev/null || ! command -v ls_fetch >/dev/null 2>&1; then
+    LANDING_WHY="bin/lib/landing-sources.sh is not installed"
+  else
+    # shellcheck source=/dev/null
+    . "$H/bin/lib/gh-app-auth.sh" 2>/dev/null || true
+    # shellcheck source=/dev/null
+    . "$H/bin/lib/gh-rest.sh" 2>/dev/null || true
+    ls_fetch "$WORK/landing" "$SINCE_ISO" "$WORK/repos.tsv"
+    LANDING_DIR="$WORK/landing"; LANDING_STATUS=ok; LANDING_WHY=""
+  fi
+fi
+LANDING_LABEL=fix-main-red
+# shellcheck source=lib/main-red-label.sh
+if . "$BIN/lib/main-red-label.sh" 2>/dev/null && command -v main_red_label_resolve >/dev/null 2>&1; then
+  LANDING_LABEL=$(main_red_label_resolve "$H" 2>/dev/null); [ -n "$LANDING_LABEL" ] || LANDING_LABEL=fix-main-red
+fi
+# <<< landing sources
+
 DATE_TAG=$(date -u +%F)
 case "$WINDOW" in 24h) OUT_JSON="$OUTDIR/$DATE_TAG.json" ;; *) OUT_JSON="$OUTDIR/$DATE_TAG-$WINDOW.json" ;; esac
 OUT_TXT="$OUTDIR/latest.txt"
@@ -383,6 +418,8 @@ DORA_REVIEW_FILE="$REVIEW_FILE" DORA_REVIEW_STATUS="$REVIEW_STATUS" DORA_REVIEW_
 DORA_REVIEW_MARGIN="$RV_MARGIN" DORA_REVIEW_MARGIN_SRC="$RV_MARGIN_SRC" \
 DORA_REVIEW_MIN_N="$RV_MIN_N" DORA_REVIEW_MIN_N_SRC="$RV_MIN_N_SRC" \
 DORA_REVIEW_ALERT_FILE="$WORK/review-alert" DORA_REVIEW_COST_STAGE_RE="${DORA_REVIEW_COST_STAGE_RE:-review}" \
+DORA_LANDING_DIR="$LANDING_DIR" DORA_LANDING_STATUS="$LANDING_STATUS" DORA_LANDING_WHY="$LANDING_WHY" \
+DORA_MAIN_RED_LABEL="$LANDING_LABEL" \
   python3 "$BIN/dora-digest.py"
 RC=$?
 if [ "$RC" -ne 0 ]; then

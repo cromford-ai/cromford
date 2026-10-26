@@ -162,10 +162,11 @@ queue_rules:
       - check-success = "Jobs worker — routes + schema"
       - check-success = "Prompt replay evals (prompts/** only)"
     merge_method: merge
-    # 6, 2 min (the operator, 2026-10-22, BH-8047, CI cost): about 12 batches a day
-    # instead of 54. Was 4 / 3 min (2026-10-08), 8 (2026-09-24). A red batch
-    # is not split (batch_max_failure_resolution_attempts below).
-    batch_size: 6
+    # 3, 2 min (the operator, 2026-10-24, BH-8267, CI cost): back to 6 once the 7-day
+    # red-batch rate is under 15 percent for a week. Was 6 (2026-10-22,
+    # BH-8047), 4 / 3 min (2026-10-08), 8 (2026-09-24). A red batch is not
+    # split (batch_max_failure_resolution_attempts below).
+    batch_size: 3
     batch_max_wait_time: 2 min
     # A retry hides a real failure and costs a full corpus run: 0 (2026-09-24).
     max_checks_retries: 0

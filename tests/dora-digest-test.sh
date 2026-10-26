@@ -225,8 +225,17 @@ eq "24h run exits 0" "$?" "0"
 eq "the ledger was consulted" "$(grep -c 'metrics/dora' "$T/calls/jobs" 2>/dev/null)" "1"
 # TEST-CHANGE BH-6969: the digest now makes two worker reads, the dora route and
 # the review-tiers route (at least 7 days); the list still pins every request.
-eq "the worker reads are a GET on dora days=1, then review-tiers days=7" "$(cat "$T/calls/jobs")" "GET /api/metrics/dora?days=1
-GET /api/metrics/review-tiers?days=7"
+# TEST-CHANGE BH-6748: the landing block reads landing_decisions once per fleet
+# repo. This stub answers every route with the dora fixture, which has no
+# `rows` array, so every decisions read is refused and nothing else is read
+# (the block says n/a). The list stays exact; it gains those three lines.
+eq "the worker reads are a GET on dora days=1, review-tiers days=7, then landing decisions per repo" "$(cat "$T/calls/jobs")" "GET /api/metrics/dora?days=1
+GET /api/metrics/review-tiers?days=7
+GET /api/landing-decisions?repo=Org/alpha&limit=200
+GET /api/landing-decisions?repo=Org/beta&limit=200
+GET /api/landing-decisions?repo=Org/gamma&limit=200"
+grep -q '^landing: n/a (landing decisions error: ' "$TXT" && ok \
+  || bad "a refused decisions body must say landing n/a: $(grep '^landing' "$TXT")"
 eq "ledger source status" "$(q '.sources.ledger_dora.status')" "ok"
 eq "conductor log status" "$(q '.sources.conductor_log.status')" "ok"
 eq "resolver log status" "$(q '.sources.resolver_log.status')" "ok"

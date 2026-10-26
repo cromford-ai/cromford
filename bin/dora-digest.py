@@ -974,6 +974,41 @@ else:
 fleet["review"] = review
 # <<< review block
 
+# >>> landing block (BH-6748)
+# Per project with landing activity: merges by path (direct / queued), reverts
+# of direct merges, CI job-minutes per merge, open->merge p50/p90 by path and
+# the shadow agreement rate. The counting is bin/dora_landing.py on the rows
+# bin/lib/landing-sources.sh wrote; a failure here is status error, never a
+# digest crash, and nothing in this block pages.
+try:
+    import dora_landing  # noqa: E402  (bin/ is on sys.path: it is this script's dir)
+except ImportError:
+    dora_landing = None
+LD_STATUS = ENV.get("DORA_LANDING_STATUS") or "off"
+LD_WHY = ENV.get("DORA_LANDING_WHY") or ""
+landing = {"status": LD_STATUS, "window": {"since": SINCE, "until": UNTIL}, "sources": None,
+           "projects": None, "unavailable": None}
+if LD_STATUS == "ok" and dora_landing is None:
+    landing.update(status="error", unavailable="n/a (bin/dora_landing.py is not installed)")
+elif LD_STATUS == "ok":
+    try:
+        ld_src = dora_landing.load(ENV.get("DORA_LANDING_DIR") or "")
+        ld_dec = (ld_src["sources"].get("decisions") or {})
+        if ld_dec.get("status") != "ok" and ld_dec.get("status") != "partial":
+            landing.update(status="error", sources=ld_src["sources"],
+                           unavailable="n/a (landing decisions %s: %s)"
+                           % (ld_dec.get("status") or "absent", ld_dec.get("why") or "no sources written"))
+        else:
+            landing.update(dora_landing.block(ld_src, SINCE, UNTIL, REPO_PROJ,
+                                              ENV.get("DORA_MAIN_RED_LABEL") or "fix-main-red"))
+    except Exception as exc:  # noqa: BLE001 — the block must never take the digest down
+        landing.update(status="error", projects=None,
+                       unavailable="n/a (the landing block failed: %s)" % type(exc).__name__)
+else:
+    landing["unavailable"] = "n/a (%s)" % (LD_WHY or LD_STATUS)
+fleet["landing"] = landing
+# <<< landing block
+
 with open(OUT_JSON, "w") as fh:
     json.dump(payload, fh, indent=1, sort_keys=False)
     fh.write("\n")
@@ -1093,6 +1128,15 @@ elif review["status"] == "off":
 else:
     L.append("review: " + review["unavailable"])
 # <<< review lines
+
+# >>> landing lines (BH-6748)
+if landing["status"] == "ok":
+    L.extend(dora_landing.text_lines(landing))
+elif landing["status"] == "off":
+    L.append("landing: off (%s)" % (LD_WHY or "not configured"))
+else:
+    L.append("landing: " + landing["unavailable"])
+# <<< landing lines
 
 top = [a for a in accounts if a["cost_usd"] > 0][:4]
 if top:

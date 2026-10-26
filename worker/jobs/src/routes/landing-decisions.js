@@ -53,10 +53,13 @@ export const routes = [
     }),
   ],
 
-  // ?repo=&number=&limit= — newest first (id DESC). repo is required, so every
-  // read is an index range (idx_landing_decisions_repo_id). The limit is
-  // refused outside 1..200, never clamped, and `truncated` is measured by
-  // reading one row past it.
+  // ?repo=&number=&limit=&before_id= — newest first (id DESC). repo is
+  // required, so every read is an index range (idx_landing_decisions_repo_id).
+  // The limit is refused outside 1..200, never clamped, and `truncated` is
+  // measured by reading one row past it. BH-6748: before_id (a positive
+  // integer, else 400) keeps only ids below it — the next page is
+  // before_id = the smallest id of this one. The same index serves it as
+  // (repo=? AND id<?). No before_id = the rows the route always answered.
   [
     "GET", "/api/landing-decisions",
     guarded(async ({ env, url, t }) => {
@@ -71,11 +74,27 @@ export const routes = [
         limit = /^\d+$/.test(rawLimit) ? Number(rawLimit) : NaN;
         if (!(limit >= 1 && limit <= LIST_MAX)) return json(400, { error: `limit must be an integer 1..${LIST_MAX}` });
       }
-      const rows = (await env.DB.prepare(
-        "SELECT id, repo, number, head, mode, would, reason, at, outcome, outcome_at FROM landing_decisions" +
-        " WHERE repo = ?1 AND (?2 IS NULL OR number = ?2)" +
-        " ORDER BY id DESC LIMIT ?3"
-      ).bind(repo, number, limit + 1).all()).results || [];
+      const rawBefore = url.searchParams.get("before_id");
+      let beforeId = null;
+      if (rawBefore !== null && rawBefore !== "") {
+        beforeId = /^\d+$/.test(rawBefore) ? Number(rawBefore) : NaN;
+        if (!(Number.isSafeInteger(beforeId) && beforeId >= 1)) return json(400, { error: "before_id must be a positive integer" });
+      }
+      // The cursor is its own predicate, not `(?4 IS NULL OR id < ?4)`: SQLite
+      // plans that OR as (repo=?) and walks every newer row of the repo before
+      // the page. `id < ?4` plans as (repo=? AND id<?), one range.
+      const stmt = beforeId === null
+        ? env.DB.prepare(
+          "SELECT id, repo, number, head, mode, would, reason, at, outcome, outcome_at FROM landing_decisions" +
+          " WHERE repo = ?1 AND (?2 IS NULL OR number = ?2)" +
+          " ORDER BY id DESC LIMIT ?3"
+        ).bind(repo, number, limit + 1)
+        : env.DB.prepare(
+          "SELECT id, repo, number, head, mode, would, reason, at, outcome, outcome_at FROM landing_decisions" +
+          " WHERE repo = ?1 AND (?2 IS NULL OR number = ?2) AND id < ?4" +
+          " ORDER BY id DESC LIMIT ?3"
+        ).bind(repo, number, limit + 1, beforeId);
+      const rows = (await stmt.all()).results || [];
       return json(200, { rows: rows.slice(0, limit), truncated: rows.length > limit, as_of: t });
     }),
   ],

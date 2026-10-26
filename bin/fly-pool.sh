@@ -858,13 +858,13 @@ pool_gh_answered() {
 # name the three reads read as violations of a rule they are exempt from, to
 # `tests/gh-rest-no-subshell-lint.sh` and to a human alike. The port to the
 # library is still #770's, unchanged and still not done here.
-pool_rest_read() { # pool_rest_read <api-path> [token] -> line 1 = HTTP code (empty if none), rest = body
+pool_rest_read() { # pool_rest_read <api-path> [token] -> line 1 = HTTP code (empty if none, TIMEOUT if the read was cut), rest = body
   local _path="$1" _tok="${2:-}" _raw=""
   # -i puts the status line on STDOUT even on a 4xx, which is the whole point:
   # a 404 and a 403 are both "gh exited 1" without it.
-  # BH-7421: a read cut at POOL_GH_READ_TIMEOUT_S answers like any other read
-  # that never produced a status line (empty code), never a hung tick.
-  # A cut read prints the word TIMEOUT as line 1 (rc 124, or 137), so a caller can tell "the read was cut" from "the client cannot ask".
+  # BH-7421: a read cut at POOL_GH_READ_TIMEOUT_S (rc 124, or 137) prints the
+  # word TIMEOUT as line 1, never a hung tick, so a caller can tell "the read
+  # was cut" from "no status line" (an empty line 1).
   local _to=() _lim="${POOL_GH_READ_TIMEOUT_S:-20}" _rc=0
   case "$_lim" in ''|*[!0-9]*) _lim=20 ;; esac
   if [ "$_lim" -gt 0 ] && command -v timeout >/dev/null 2>&1; then _to=(timeout "$_lim"); fi
