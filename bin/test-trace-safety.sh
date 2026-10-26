@@ -53,7 +53,7 @@
 #   (BH-5541, the shape the retired trap-target guard read).
 #
 # WHAT COUNTS AS A HIT (the ticket's list, nothing more):
-#   rm <path>, find <path> … -delete, truncate <path>, git [-C <dir>] clean,
+#   rm <path>, find [-H|-L|-P|-D opts|-O<n>] <path> … -delete, truncate <path>, git [-C <dir>] clean,
 #   and a literal `> <absolute path>` / `>> <absolute path>` inside an argument
 #   handed to a shell ON THIS MACHINE (`bash -c`, `sh -c`, `eval`, `su -c`,
 #   and `declare`/`typeset`/`local NAME="(…)"`, which re-parses its string the
@@ -589,7 +589,14 @@ function scan(cmd, src, lno, cwd, raw,   ARR, RED, n, nr, k, st, v, j, endopt, h
     for (j = st + 1; j <= n; j++) if (ARR[j] == "-delete") hasdel = 1
     if (!hasdel) return
     cnt = 0
-    for (j = st + 1; j <= n; j++) {
+    # The leading options of find come before the paths (BH-8403): -H, -L, -P,
+    # -O<level>, and -D <debugopts> (or an attached -D<debugopts>).
+    j = st + 1
+    while (j <= n && (ARR[j] == "-H" || ARR[j] == "-L" || ARR[j] == "-P" || ARR[j] ~ /^-[OD]/)) {
+      if (ARR[j] == "-D") j++
+      j++
+    }
+    for (; j <= n; j++) {
       c1 = substr(ARR[j], 1, 1)
       if (c1 == "-" || c1 == "(" || c1 == "!") break
       cnt++
