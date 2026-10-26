@@ -25,6 +25,8 @@ import { FleetPauseForm, PauseReasonForm } from '../ui/PauseForms.js';
 import { FactoryStopBanner } from '../ui/FactoryStopBanner.js';
 import { shapeFleetCells, wipInputError, cellText, flagSortValue } from '../lib/flagrows.js';
 import { formatModeValue, allowInputError, parseAllowInput, modeText, modeRank } from '../lib/dispatch-mode.js';
+import { loadFirstRun, showFirstRun } from '../lib/first-run.js';
+import { FirstRun } from './FirstRun.js';
 
 // Same map as Now.js, so LAST RESULT reads in the colours /now uses.
 const TONE_CLASS = { green: 'tag tag--green', dead: 'tag tag--dead', warn: 'tag tag--warn', muted: 'tag tag--idle' };
@@ -48,6 +50,10 @@ export function FleetScreen() {
   const fleet = useFleet();
   const machines = useApi(() => api.machines(), [], { intervalMs: 30000 });
   const projects = useApi(() => api.projects(), [], { intervalMs: 30000 });
+  // BH-7977: the fleet's required accounts, read once per load in the same
+  // commit as the projects read (so the two run in parallel). A new fleet
+  // with one missing sees FirstRun in place of this page.
+  const firstRun = useApi(() => loadFirstRun(), []);
   // Third-party harnesses never ping the watchdog, so they cannot be boxes —
   // but their work is real and needs somewhere to appear.
   const tickets = useApi(() => api.ticketsSnapshot(), [], { intervalMs: 60000 });
@@ -262,6 +268,11 @@ export function FleetScreen() {
   const boxNames = Object.keys(boxes);
   const boxesUp = boxNames.filter((b) => healthFromAge(minutesFromPingText(boxes[b])) === 'ok').length;
 
+  // After every hook, so the hook order never changes between the two views.
+  if (firstRun.data && showFirstRun(firstRun.data)) {
+    return html`<div class="page"><${FirstRun} state=${firstRun.data} onChanged=${firstRun.reload}/></div>`;
+  }
+
   // Every tile below gates on the DATA, never on the loading flag: an errored
   // useApi returns {data:null, loading:false}, so falling through to a computed
   // 0 renders "0 boxes up" — indistinguishable from a dead fleet when the truth
@@ -329,6 +340,10 @@ export function FleetScreen() {
         </div>` : null}
       <${PauseBanner} rows=${pauses} truncated=${pauseView.truncated} onEnd=${endPause} busyId=${endBusy} />
 
+      ${firstRun.error && !firstRun.data ? html`
+        <div class="footnote" role="status">
+          <span style="color:var(--amber-dk)">could not check fleet accounts — ${firstRun.error.message}</span>
+        </div>` : null}
       <${Section} title="PROJECTS"
         note=${projects.data
           ? `${rows.length} ${projects.data.projects_source === 'fleet_status'

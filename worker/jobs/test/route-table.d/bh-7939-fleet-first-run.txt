@@ -1,0 +1,3 @@
+# FLEET FIRST RUN (BH-7977, BH-7939.3): the one-statement read of whether a new
+# fleet holds its three required accounts. Bearer-gated.
+GET /api/fleet/first-run
