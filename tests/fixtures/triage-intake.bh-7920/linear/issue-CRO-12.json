@@ -1,0 +1,46 @@
+{
+  "data": {
+    "issue": {
+      "id": "00000000-0000-0000-0000-100000000012",
+      "identifier": "CRO-12",
+      "title": "Ledger export to CSV",
+      "description": "Export the ledger page as CSV.",
+      "url": "https://linear.app/crosstest/issue/CRO-12/ledger-export-to-csv",
+      "state": {
+        "name": "Todo"
+      },
+      "labels": {
+        "nodes": [
+          {
+            "name": "ai-build"
+          }
+        ]
+      },
+      "comments": {
+        "nodes": [
+          {
+            "body": "Can it include the fee column?",
+            "createdAt": "2026-10-21T08:00:00.000Z",
+            "user": {
+              "name": "Client Fixture",
+              "displayName": "client"
+            },
+            "botActor": null
+          },
+          {
+            "body": "Yes, add the fee column too.",
+            "createdAt": "2026-10-21T09:15:00.000Z",
+            "user": {
+              "name": "Client Fixture",
+              "displayName": "client"
+            },
+            "botActor": null
+          }
+        ],
+        "pageInfo": {
+          "hasNextPage": false
+        }
+      }
+    }
+  }
+}

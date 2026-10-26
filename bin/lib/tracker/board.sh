@@ -54,6 +54,15 @@ _TRK_BOARD_ROW='(.ticket // .) | {id: (.id | tostring), key: (.key // null),
   triageVerdict: ((.triageVerdict // .triage_verdict) | if . == null or . == "" then null else tostring end),
   url: (.url // .href // null)}'
 
+# The three keys only a LIST row carries (bin/lib/tracker.sh): updatedAt from
+# lastActivityAt (else updatedAt), state closed for the closed words the gate's
+# keymap uses, commentCount only when the board sent a number.
+# shellcheck disable=SC2016
+_TRK_BOARD_LIST_KEYS='(.ticket // .) | {updatedAt: ((.lastActivityAt // .updatedAt) | trk_iso),
+  state: (((.status // "") | tostring | ascii_downcase) as $s
+          | if (["done","closed","cancelled","canceled","archived"] | index($s)) != null then "closed" else "open" end),
+  commentCount: (.commentCount | if type == "number" then . else null end)}'
+
 # trk_board_ticket_raw <id> — the ONE ticket GET, raw answer, curl's rc. Honours
 # TRK_DRY like every call here: bin/lib/fc-board.sh prints it in a dry run.
 trk_board_ticket_raw() {
@@ -68,7 +77,7 @@ trk_board_list() {
   bid=$(printf '%s' "$boards" | jq -r '(.boards? // .) | if type == "array" then (.[0].id // empty | tostring) else empty end' 2>/dev/null)
   [[ "$bid" =~ ^[A-Za-z0-9_.:-]+$ ]] || return 1
   rows=$(_trk_board_curl GET "$TRK_BOARD_BASE/boards/$bid/tickets") || return 1
-  printf '%s' "$rows" | jq -ce "(.tickets? // .) | if type == \"array\" then [.[] | $_TRK_BOARD_ROW] else error end" 2>/dev/null || return 1
+  printf '%s' "$rows" | jq -ce "${_TRK_ISO_JQ:-} (.tickets? // .) | if type == \"array\" then [.[] | ($_TRK_BOARD_ROW) + ($_TRK_BOARD_LIST_KEYS)] else error end" 2>/dev/null || return 1
 }
 
 # trk_board_read <id> — always SENT, even under TRK_DRY: a read writes nothing.

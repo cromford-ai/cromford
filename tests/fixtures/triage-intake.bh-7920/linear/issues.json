@@ -1,0 +1,84 @@
+{
+  "data": {
+    "issues": {
+      "nodes": [
+        {
+          "identifier": "CRO-12",
+          "title": "Ledger export to CSV",
+          "url": "https://linear.app/crosstest/issue/CRO-12/ledger-export-to-csv",
+          "updatedAt": "2026-10-21T09:15:00.000Z",
+          "state": {
+            "name": "Todo",
+            "type": "unstarted"
+          },
+          "labels": {
+            "nodes": [
+              {
+                "name": "ai-build"
+              }
+            ]
+          },
+          "comments": {
+            "nodes": [
+              {
+                "id": "00000000-0000-0000-0000-c00000000121"
+              },
+              {
+                "id": "00000000-0000-0000-0000-c00000000122"
+              }
+            ],
+            "pageInfo": {
+              "hasNextPage": false
+            }
+          }
+        },
+        {
+          "identifier": "CRO-13",
+          "title": "Old import job",
+          "url": "https://linear.app/crosstest/issue/CRO-13/old-import-job",
+          "updatedAt": "2026-10-20T08:00:00.000Z",
+          "state": {
+            "name": "Done",
+            "type": "completed"
+          },
+          "labels": {
+            "nodes": [
+              {
+                "name": "ai-build"
+              }
+            ]
+          },
+          "comments": {
+            "nodes": [],
+            "pageInfo": {
+              "hasNextPage": false
+            }
+          }
+        },
+        {
+          "identifier": "CRO-14",
+          "title": "Unlabeled idea",
+          "url": "https://linear.app/crosstest/issue/CRO-14/unlabeled-idea",
+          "updatedAt": "2026-10-21T10:00:00.000Z",
+          "state": {
+            "name": "Todo",
+            "type": "unstarted"
+          },
+          "labels": {
+            "nodes": []
+          },
+          "comments": {
+            "nodes": [],
+            "pageInfo": {
+              "hasNextPage": false
+            }
+          }
+        }
+      ],
+      "pageInfo": {
+        "hasNextPage": false,
+        "endCursor": "cursor-fixture-1"
+      }
+    }
+  }
+}

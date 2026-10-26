@@ -20,8 +20,10 @@ parent's labels (`trk_gh_labels`, one GET), posts the split comment
 (`trk_gh_comment`) and removes `ai-build` (`trk_gh_label_remove`);
 `bin/lib/fc-board.sh` sends every board call through `_trk_board_curl` and reads,
 comments on and moves the master with `trk_board_ticket_raw`,
-`trk_board_comment` and `trk_board_transition`. The triage lane,
-`bin/board-closeout.sh` and the prompts still make their own calls.
+`trk_board_comment` and `trk_board_transition`. The triage gate reads a Jira
+or Linear project through the contract (see "List filters and the triage
+gate" below). The rest of the triage lane, `bin/board-closeout.sh` and the
+prompts still make their own calls.
 
 **Which tracker a project uses** is the D1 settings row
 `tracker_adapter.<project>`, value `github-issues`, `board`, `jira` or
@@ -130,6 +132,9 @@ carry is 44.
 
 **`waiting_on`** is the shared one: `OK` unless a contested hold blocks it.
 Linear has no waiting-on-client turn, and its Asks / triage inbox are out of scope.
+For a project whose env file sets `LINEAR_API_KEY` and whose row is `linear`,
+the gate reads the ticket first (`tracker_read`): a read it cannot make is
+`BLOCKED unreadable` under `TRK_STRICT=1`.
 
 | what | how |
 |---|---|
@@ -147,6 +152,79 @@ tracker_list; tracker_read <KEY-n>; tracker_comment <KEY-n> f; tracker_link_pr <
 not recorded from a workspace; the list filter (`labels: { some: { name:
 { eqIgnoreCase } } }`) is the first thing to check if a live `tracker_list`
 comes back empty.
+
+## List filters and the triage gate (BH-7920)
+
+**The filters.** `tracker_list [--state open|all] [--label <name>] [--since <iso>]`.
+With no flag each adapter sends the request it always sent: GitHub
+`state=open labels=ai-build`, the board's two routes, Jira's JQL with
+`statusCategory != Done`, Linear's filter with `nin: ["completed", "canceled"]`.
+The values reach the adapter as `TRK_LIST_STATE`, `TRK_LIST_LABEL` and
+`TRK_LIST_SINCE`, set for that one call. GitHub sends them as the `state`,
+`labels` and `since` params. Jira puts them in the JQL; `--since` adds
+`updated >= "<the UTC day before>"`, because JQL reads a date in the API
+user's time zone. Linear adds `updatedAt: { gte: $since }` and declares
+`$since` only then. The board has no server filter. After the adapter answers,
+`tracker_list` runs one check on every row, whatever the server did: `--state
+open` keeps `state == "open"`, `--label` compares case-insensitively, and
+`--since` compares epoch seconds and KEEPS a row with a null `updatedAt`. A
+bad flag (unknown, no value, a state other than `open|all`, a label outside
+`[A-Za-z0-9_.: -]{1,100}`, a `--since` that is not `YYYY-MM-DDTHH:MM:SS[.f]Z`)
+is rc 1 with one stderr line, and nothing is sent.
+
+**The row keys.** Every list row also carries `updatedAt` (UTC
+`YYYY-MM-DDTHH:MM:SSZ`, no fraction, or null), `state` (`open|closed`) and
+`commentCount` (an integer, or null when the tracker gave no exact count).
+GitHub: `updated_at`, `state`, `comments`. Board: `lastActivityAt` (else
+`updatedAt`); `closed` for `done closed cancelled canceled archived`;
+`commentCount` only when the board sends a number. Jira: `fields.updated`
+(offset turned to UTC), `closed` when the status category is `done`,
+`fields.comment.total`. Linear: `updatedAt`; `closed` for state type
+`completed` or `canceled`; the number of comment ids on the row's first page,
+or null when that page has more. `tracker_read` is unchanged (the ten keys).
+
+**The Linear knob.** The settings row `tracker_linear.<project>.list_comment_cap`
+(integer 1..50, read by `trk_linear_context`) is how many comment ids one list
+row asks for. No row is 25. A value outside 1..50 fails the context (rc 1, one
+stderr line naming the row). The bound keeps `issues(first: 100)` x
+(`labels(first: 50)` + comments) under Linear's 10,000 point complexity limit.
+
+```bash
+bin/jobs-client.sh setting-set tracker_linear.<project>.list_comment_cap 10 "why"
+```
+
+**The triage gate** (`bin/triage-gate.sh`, generic arm). When the project's env
+file sets `JIRA_BASE` or `LINEAR_API_KEY`, the gate asks `tracker_kind`. A
+`jira` or `linear` answer loads `tracker_context <project> triage-gate` and the
+gate reads through the contract in every mode:
+
+- the fingerprint (plain mode, `--seed`, `--pending`) is
+  `{"jira"|"linear": [{id,key,status,state,title,updatedAt,commentCount,waitingOn,triageVerdict}]}`
+  from `tracker_list --state open --label <the project's label>`, sorted by id.
+  A changed fingerprint is `RUN board-changed` (no self-write classifier yet).
+  A list that fails is `RUN gate-fetch-failed` and `--pending` exits 1.
+- `--thread` and `--signal` read `tracker_read` as an `inapp` doc.
+- `--buildable` reads `trk_jira_gate_raw` (Jira) or `tracker_read` (Linear).
+- the split-chain, gate-reoffer and inapp-deps wakes stay off, as they were.
+
+A context that does not load writes one ALERTS line (at most one per project
+per day, `flags/alerted-token-<p>-<day>`), then answers `BLOCKED
+token-unresolved` (`--buildable[-strict]`), exit 1 (`--pending`, `--signal`,
+`--thread`), `SEED-FAILED` (`--seed`) or `SKIP token-unresolved` (plain). Any
+other kind (a `board` row, no row, a worker that did not answer) is the
+GitHub or board arm, as before. A project with neither env key makes no
+settings call.
+
+| what | how |
+|---|---|
+| contract case C12 against the four adapters, the request of today, the Linear knob | `HARNESS_TEST_SANDBOX=1 bash tests/tracker-list-filters.bh-7920-test.sh` (case in `tests/lib/tracker-contract-c12.bh-7920.sh`) |
+| the real gate on a Linear project | `HARNESS_TEST_SANDBOX=1 bash tests/triage-intake-linear.bh-7920-test.sh` (stub `tests/lib/linear-stub.bh-7920.sh`) |
+| the real gate on a Jira project | `HARNESS_TEST_SANDBOX=1 bash tests/triage-intake-jira.bh-7920-test.sh` |
+
+**What usually lies:** the gate reads `env/<project>.env` and the row
+`tracker_adapter.<project>`. A sandbox whose env file or row is named for a
+different project name keeps the GitHub arm. A Linear project with no
+`LINEAR_API_KEY` in its env file also keeps the GitHub arm.
 
 ## Kind seam, context, refusal guard, ratchet (BH-7919)
 

@@ -20,6 +20,8 @@
 # unknown, run with full context". It is only asked on a tick the plain gate
 # already answered RUN, and the plain gate answers SKIP for this same env file,
 # so it is reached only if the env file changed between the two calls.
+# A Jira or Linear project whose tracker context does not load gets the same
+# answers, plus SEED-FAILED under --seed (the generic arm, below).
 #
 # Fingerprint = per ticket (id,status,waitingOn,triageVerdict,commentCount,
 # lastActivityAt,title) across ALL boards — the same DIFF KEYS the triage
@@ -155,30 +157,59 @@ case "$PROJECT" in
     # literal slugs went in BH-4080) — fingerprint it via gh exactly like
     # project-5 (load-project.sh onboards small projects this way). Everything
     # else stays fail-open RUN.
-    # JIRA (BH-4076), --buildable[-strict] only: a project whose env file sets
-    # JIRA_BASE AND whose tracker_adapter.<project> row is `jira` reads the
-    # ticket through bin/lib/tracker/jira.sh, and buildable_gate runs its usual
-    # checks on that read. A context that does not load (credentials, a
-    # malformed allowlist row, the settings worker down) is the token-unresolved
-    # block the board arm gives. Every other project, and every other mode,
-    # never gets here and pays no settings call.
-    JIRA_GATE=""
-    if { [ "$MODE" = "--buildable" ] || [ "$MODE" = "--buildable-strict" ]; } && [ -n "${JIRA_BASE:-}" ]; then
+    # JIRA AND LINEAR, through the tracker contract (bin/lib/tracker.sh), in
+    # EVERY mode. Asked only when the env file sets JIRA_BASE or
+    # LINEAR_API_KEY, so every other project pays no settings call. Then
+    # tracker_kind decides: jira or linear loads tracker_context and the gate
+    # reads the project through tracker_list / tracker_read (TRK_GATE is the
+    # kind). Any other answer (a github-issues or board row, no row, a worker
+    # that did not answer: the column-4 fallback) is the code below, as it
+    # was. A jira or linear context that does not load (credentials, a
+    # malformed row, the settings worker down mid-read) writes one ALERTS line
+    # (at most one per project per day) and gives the token-unresolved answer
+    # for the mode, the same one the board arm gives. It never falls back to
+    # GitHub: a project whose tickets live on Jira has nothing to read there.
+    TRK_GATE=""
+    if [ -n "${JIRA_BASE:-}" ] || [ -n "${LINEAR_API_KEY:-}" ]; then
       for _P in "$(dirname "$0")/lib/tracker.sh" "$HARNESS/bin/lib/tracker.sh"; do
         # shellcheck source=/dev/null
         [ -r "$_P" ] && { . "$_P"; break; }
       done
-      if declare -F tracker_adapter >/dev/null 2>&1 && [ "$(tracker_adapter "$PROJECT" 2>/dev/null)" = jira ]; then
-        if tracker_load jira && trk_jira_context "$PROJECT" 2>/dev/null; then
-          JIRA_GATE=1; SELF_ACTORS=""
-        else
-          echo "BLOCKED token-unresolved"; exit 0
-        fi
+      _TK=""
+      if declare -F tracker_kind >/dev/null 2>&1 && tracker_kind "$PROJECT" >/dev/null 2>&1; then
+        _TK=$(tracker_kind "$PROJECT" 2>/dev/null)
       fi
+      case "$_TK" in
+        jira|linear)
+          TRK_ERR="${TRK_ERR:-/dev/null}"
+          _TKE=$(mktemp 2>/dev/null) || _TKE=/dev/null
+          if tracker_context "$PROJECT" triage-gate 2>"$_TKE"; then
+            TRK_GATE="$_TK"; SELF_ACTORS=""; BASE=""; TOKEN=""; BP=""
+            if [ "$_TK" = jira ]; then TRK_GATE_LABEL="${TRK_JIRA_LABEL:-ai-build}"
+            else TRK_GATE_LABEL="${TRK_LINEAR_LABEL:-ai-build}"; fi
+            [ "$_TKE" = /dev/null ] || rm -f "$_TKE"
+          else
+            _TKW=$(head -1 "$_TKE" 2>/dev/null | cut -c1-200)
+            [ "$_TKE" = /dev/null ] || rm -f "$_TKE"
+            for _P in "$(dirname "$0")/lib/board-creds.sh" "$HARNESS/bin/lib/board-creds.sh"; do
+              # shellcheck source=/dev/null
+              [ -r "$_P" ] && { . "$_P"; break; }
+            done
+            command -v _bc_alert >/dev/null 2>&1 \
+              && _bc_alert "$PROJECT" "the $_TK tracker context did not load (${TRK_CTX_MISSING:-context}${_TKW:+: $_TKW})" triage-gate
+            case "$MODE" in
+              --buildable|--buildable-strict) echo "BLOCKED token-unresolved" ;;
+              --pending|--signal|--thread) exit 1 ;;
+              --seed) echo "SEED-FAILED (the $_TK tracker context did not load)" ;;
+              *) echo "SKIP token-unresolved" ;;
+            esac
+            exit 0
+          fi ;;
+      esac
     fi
     BP_CONF=$("$HARNESS/bin/fleet-conf.sh" "$PROJECT" board_prefix 2>/dev/null || true)
     REPO_CONF=$("$HARNESS/bin/fleet-conf.sh" "$PROJECT" repo 2>/dev/null || true)
-    if [ -n "$JIRA_GATE" ]; then
+    if [ -n "$TRK_GATE" ]; then
       :
     elif [ "$BP_CONF" = "-" ] && [ -n "$REPO_CONF" ]; then
       GH_ISSUES_REPO="$REPO_CONF"; SELF_ACTORS="$HARNESS_SELF_ACTORS"
@@ -230,6 +261,21 @@ esac
 # and fail-open to RUN, which then absorbs the new format — self-migrating.
 fetch_fingerprint() { # -> fingerprint on stdout, rc!=0 on any failure
   command -v jq >/dev/null || return 1
+  # Jira and Linear (TRK_GATE): the OPEN labeled list through the contract,
+  # {"<kind>": [rows sorted by id]}. A ticket that closes leaves the list,
+  # which moves the fingerprint; --state all would grow without bound and hit
+  # the adapters' page caps. The rows reach jq through a file, never argv. No
+  # keymap: the id is the key.
+  if [ -n "${TRK_GATE:-}" ]; then
+    local tf trc=0
+    tf=$(mktemp) || return 1
+    tracker_list --state open --label "$TRK_GATE_LABEL" > "$tf" 2>/dev/null || trc=1
+    [ "$trc" = 0 ] && jq -cS --arg k "$TRK_GATE" 'if type == "array" then
+        {($k): ([.[] | {id, key, status, state, title, updatedAt, commentCount, waitingOn, triageVerdict}] | sort_by(.id))}
+        else error end' "$tf" 2>/dev/null || trc=1
+    rm -f "$tf"
+    return "$trc"
+  fi
   # GitHub-Issues boards (project-5): the fingerprint is the ai-build issue
   # list — number, state, title, comment count, updatedAt. Unchanged list =
   # nothing a fresh session could conclude differently ($148/day of paid
@@ -547,12 +593,17 @@ buildable_gate() {
   # --buildable-strict every unanswerable read below is BLOCKED unreadable.
   local unread="OK"; [ "${BUILDABLE_STRICT:-0}" = 1 ] && unread="BLOCKED unreadable"
   local raw
-  if [ -n "${JIRA_GATE:-}" ]; then
+  if [ "${TRK_GATE:-}" = jira ]; then
     # Jira (BH-4076): the adapter's read, in the shape board-fetch.sh returns.
     # A refused key or a partial thread is unreadable. An unanswered /myself
     # is not: the fields still decide, and only the newest-comment check that
     # needed it falls to $unread (ticket.ownUnknown, below).
     raw=$(trk_jira_gate_raw "$tid" 2>/dev/null) || { echo "$unread"; return 0; }
+  elif [ -n "${TRK_GATE:-}" ]; then
+    # Linear: the normalized ticket (tracker_read). waitingOn and
+    # triageVerdict are null there, no comment is internal, and SELF_ACTORS
+    # is empty, so the checks below read it as they read any board ticket.
+    raw=$(tracker_read "$tid" 2>/dev/null) || { echo "$unread"; return 0; }
   else
     [ -n "$BASE" ] && [ -n "$TOKEN" ] && [ -n "$BP" ] || { echo "$unread"; return 0; }
     local since=""
@@ -593,7 +644,7 @@ buildable_gate() {
   # first line is the answer; nothing, no lib, a failed temp file or
   # flags/inapp-deps-off falls through to the checks below, as today. The
   # function's rc never decides: a printed line is the answer either way.
-  if [ -z "$b" ] && [ -z "${GH_ISSUES_REPO:-}" ] && [ -z "${JIRA_GATE:-}" ]; then
+  if [ -z "$b" ] && [ -z "${GH_ISSUES_REPO:-}" ] && [ -z "${TRK_GATE:-}" ]; then
     for _P in "$(dirname "$0")/lib/inapp-deps.sh" "$HARNESS/bin/lib/inapp-deps.sh"; do
       # shellcheck source=/dev/null
       [ -r "$_P" ] && { . "$_P"; break; }
@@ -684,6 +735,18 @@ thread_doc() {
   local tid="${1:-}" n pg c sigd rc=0 apps
   command -v jq >/dev/null 2>&1 || return 1
   case "$tid" in ''|*[!A-Za-z0-9._-]*) return 1 ;; esac
+  # Jira and Linear: the normalized ticket (tracker_read) as an inapp doc,
+  # which bin/triage-signal.py --kind inapp reads (string authors, .body). A
+  # failed or partial read (rc 1 or 75) is rc 1 with nothing printed.
+  if [ -n "${TRK_GATE:-}" ]; then
+    sigd=$(mktemp) || return 1
+    tracker_read "$tid" > "$sigd" 2>/dev/null || rc=1
+    [ "$rc" = 0 ] && { jq -c --arg sa "$SELF_ACTORS" --arg si "${TRIAGE_SIGNAL_SELF_IDENTITIES:-}" \
+      'if type == "object" then {kind: "inapp", self_actors: $sa, self_identities: $si, self_apps: [], doc: .} else error end' \
+      "$sigd" 2>/dev/null || rc=1; }
+    rm -f "$sigd"
+    return "$rc"
+  fi
   if [ -n "${GH_ISSUES_REPO:-}" ]; then
     command -v gh_rest >/dev/null 2>&1 || return 1
     if command -v _gh_rest_args_ok >/dev/null 2>&1; then _gh_rest_args_ok "$GH_ISSUES_REPO" || return 1; fi
@@ -790,7 +853,7 @@ for _P in "$(dirname "$0")/lib/split-chain.sh" "$HARNESS/bin/lib/split-chain.sh"
   # shellcheck source=/dev/null
   [ -r "$_P" ] && { . "$_P"; break; }
 done
-if [ -z "${GH_ISSUES_REPO:-}" ] && command -v split_chain_gate >/dev/null 2>&1 && [ "$(split_chain_on "$HARNESS")" = 1 ]; then
+if [ -z "${GH_ISSUES_REPO:-}" ] && [ -z "${TRK_GATE:-}" ] && command -v split_chain_gate >/dev/null 2>&1 && [ "$(split_chain_on "$HARNESS")" = 1 ]; then
   SC=$(split_chain_gate "$HARNESS" "$PROJECT" 2>/dev/null) || SC=""
   [ -n "$SC" ] && { echo "RUN split-ready"; exit 0; }
 fi
@@ -807,7 +870,7 @@ fi
 # older than the window is deleted unread. No file (the default: the scan is
 # dark at GATE_RELEASE_MAX_LAUNCHES=0) is today exactly.
 _GRK="$HARNESS/state/gate-reoffer-keys-$PROJECT"
-if [ -z "${GH_ISSUES_REPO:-}" ] && [ -e "$_GRK" ]; then
+if [ -z "${GH_ISSUES_REPO:-}" ] && [ -z "${TRK_GATE:-}" ] && [ -e "$_GRK" ]; then
   for _P in "$(dirname "$0")/lib/gate-release.sh" "$HARNESS/bin/lib/gate-release.sh"; do
     # shellcheck source=/dev/null
     [ -r "$_P" ] && { . "$_P"; break; }
@@ -836,7 +899,7 @@ for _P in "$(dirname "$0")/lib/inapp-deps.sh" "$HARNESS/bin/lib/inapp-deps.sh"; 
   # shellcheck source=/dev/null
   [ -r "$_P" ] && { . "$_P"; break; }
 done
-if [ -z "${GH_ISSUES_REPO:-}" ] && declare -F inapp_deps_gate >/dev/null 2>&1 && [ "$(inapp_deps_on "$HARNESS")" = 1 ]; then
+if [ -z "${GH_ISSUES_REPO:-}" ] && [ -z "${TRK_GATE:-}" ] && declare -F inapp_deps_gate >/dev/null 2>&1 && [ "$(inapp_deps_on "$HARNESS")" = 1 ]; then
   _inapp_deps_knobs
   _IDR=$(inapp_deps_ready_file "$HARNESS" "$PROJECT") || _IDR=""
   if [ -n "$_IDR" ] && [ -e "$_IDR" ] \
@@ -1110,7 +1173,8 @@ else
   # only by Bot-authored comments arrives here with its consumed values, so
   # reaching this line means something other than our own notes moved. The PAT
   # login is never absorbed there — it is also the operator's hand.
-  if [ -n "${GH_ISSUES_REPO:-}" ]; then
+  # Jira and Linear (TRK_GATE) have no self-write classifier yet either.
+  if [ -n "${GH_ISSUES_REPO:-}" ] || [ -n "${TRK_GATE:-}" ]; then
     echo "RUN board-changed"
     exit 0
   fi

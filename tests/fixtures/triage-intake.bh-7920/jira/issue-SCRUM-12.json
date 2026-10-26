@@ -1,0 +1,46 @@
+{
+  "expand": "renderedFields,names,schema,operations,editmeta,changelog,versionedRepresentations",
+  "id": "10012",
+  "self": "https://api.atlassian.com/ex/jira/33333333-3333-3333-3333-333333333333/rest/api/3/issue/10012",
+  "key": "SCRUM-12",
+  "fields": {
+    "summary": "Ledger export to CSV",
+    "description": {
+      "type": "doc",
+      "version": 1,
+      "content": [
+        {
+          "type": "paragraph",
+          "content": [
+            {
+              "type": "text",
+              "text": "Export the ledger page as CSV."
+            }
+          ]
+        }
+      ]
+    },
+    "status": {
+      "name": "To Do",
+      "id": "1",
+      "statusCategory": {
+        "id": 2,
+        "key": "new",
+        "name": "To Do"
+      }
+    },
+    "labels": [
+      "ai-build"
+    ],
+    "project": {
+      "self": "https://api.atlassian.com/ex/jira/33333333-3333-3333-3333-333333333333/rest/api/3/project/10002",
+      "id": "10002",
+      "key": "SCRUM",
+      "name": "Sandbox SCRUM",
+      "projectTypeKey": "software"
+    },
+    "issuetype": {
+      "name": "Task"
+    }
+  }
+}

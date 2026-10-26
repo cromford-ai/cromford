@@ -14,7 +14,8 @@
 #   tracker_context <project> [<lane>]  tracker_load + that adapter's TRK_* context
 #   tracker_key_prefix <project>        jira/linear only: the ticket key prefix
 #   trk_gh_issue_number <project> <key> the GitHub issue number of a KEY, or rc 1/3
-#   tracker_list                        JSON array of open tickets (no body/comments)
+#   tracker_list [--state open|all] [--label <name>] [--since <iso>]
+#                                       JSON array of tickets (no body/comments)
 #   tracker_read <id>                   one normalized ticket (below)
 #   tracker_comment <id> <bodyfile>
 #   tracker_transition <id> <status>
@@ -63,7 +64,26 @@
 #    url, comments:[{author, body, createdAt, internal}]}
 # waitingOn/triageVerdict are a string or JSON null, never "": GitHub has no
 # turn and no verdict, so it answers null for both. tracker_list prints an
-# array of the same objects without body and comments.
+# array of the same objects without body and comments, plus three keys:
+#   updatedAt     the last change, UTC `YYYY-MM-DDTHH:MM:SSZ` (no fraction,
+#                 no offset), or null when the tracker gave none
+#   state         open | closed
+#   commentCount  an integer, or null when the tracker gave no exact count
+#
+# THE LIST FILTERS. With no flag every adapter sends the request it always
+# sent (GitHub and Jira and Linear: open + the build label; the board: every
+# row). Each flag narrows the answer:
+#   --state open|all   open only (closed rows dropped), or both
+#   --label <name>     rows carrying that label (case-insensitive)
+#   --since <iso>      rows whose updatedAt is at or after it; UTC ISO 8601
+#                      with a Z only. A row with a null updatedAt is KEPT: a
+#                      row we cannot date must not disappear.
+# A bad flag (unknown, no value, a state other than open|all, a label outside
+# [A-Za-z0-9_.: -]{1,100}, a since that is not Z ISO) is rc 1 with one stderr
+# line, and nothing is sent. The values reach the adapter as TRK_LIST_STATE,
+# TRK_LIST_LABEL and TRK_LIST_SINCE (empty = the flag is off), set for that
+# one call only; an adapter narrows its server query with them. Then ONE check
+# here applies the flags to every row, whatever the server did with them.
 #
 # WHICH TRACKER. The D1 settings row `tracker_adapter.<project>` (value
 # github-issues|board|jira|linear) wins. No row, or a worker that did not
@@ -323,7 +343,59 @@ trk_gh_issue_number() {
   return 1
 }
 
-tracker_list()         { _trk_call list "$@"; }
+# _TRK_ISO_JQ — the jq def trk_iso every adapter prints updatedAt through: a
+# string with Z, +HHMM or +HH:MM and an optional fraction becomes UTC
+# `YYYY-MM-DDTHH:MM:SSZ` (the fraction is dropped); anything else is null.
+# shellcheck disable=SC2016
+_TRK_ISO_JQ='def trk_iso:
+  if type != "string" then null
+  else (capture("^(?<d>[0-9]{4}-[0-9]{2}-[0-9]{2})T(?<t>[0-9]{2}:[0-9]{2}:[0-9]{2})(\\.[0-9]+)?(?<z>Z|[+-][0-9]{2}:?[0-9]{2})$") // null) as $m
+  | if $m == null then null
+    else (if $m.z == "Z" then 0
+          else ($m.z | sub(":"; "")) as $o
+          | ((($o[1:3] | tonumber) * 3600) + (($o[3:5] | tonumber) * 60)) * (if $o[0:1] == "-" then -1 else 1 end) end) as $off
+    | ((($m.d + "T" + $m.t + "Z") | fromdateiso8601) - $off | todateiso8601)
+    end
+  end;'
+
+# _TRK_LIST_BELT — the one check tracker_list runs on every adapter's answer,
+# so a server that ignored a filter cannot widen the list. --since compares
+# epoch seconds; a row with no readable updatedAt is kept.
+# shellcheck disable=SC2016
+_TRK_LIST_BELT='if type != "array" then error("not a list") else . end
+  | ($since | if . == "" then null else (trk_iso | fromdateiso8601) end) as $cut
+  | [.[] | select($state != "open" or .state == "open")
+         | select($label == "" or any((.labels // [])[]?; (tostring | ascii_downcase) == ($label | ascii_downcase)))
+         | select($cut == null or ((.updatedAt | trk_iso) as $u | $u == null or ($u | fromdateiso8601) >= $cut))]'
+
+tracker_list() {
+  local TRK_LIST_STATE="" TRK_LIST_LABEL="" TRK_LIST_SINCE="" out rc=0
+  local lre='^[A-Za-z0-9_.: -]{1,100}$'
+  local sre='^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\.[0-9]+)?Z$'
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --state|--label|--since)
+        [ $# -ge 2 ] || { printf 'tracker: tracker_list %s needs a value\n' "$1" >&2; return 1; } ;;
+      *) printf 'tracker: tracker_list does not take %s\n' "$(_trk_sq "$1")" >&2; return 1 ;;
+    esac
+    case "$1" in
+      --state)
+        case "$2" in open|all) TRK_LIST_STATE="$2" ;;
+          *) printf 'tracker: tracker_list --state is open or all, not %s\n' "$(_trk_sq "$2")" >&2; return 1 ;; esac ;;
+      --label)
+        [[ "$2" =~ $lre ]] || { printf 'tracker: tracker_list --label %s is not a label\n' "$(_trk_sq "$2")" >&2; return 1; }
+        TRK_LIST_LABEL="$2" ;;
+      --since)
+        [[ "$2" =~ $sre ]] || { printf 'tracker: tracker_list --since %s is not UTC ISO 8601 (YYYY-MM-DDTHH:MM:SSZ)\n' "$(_trk_sq "$2")" >&2; return 1; }
+        TRK_LIST_SINCE="$2" ;;
+    esac
+    shift 2
+  done
+  out=$(_trk_call list) || return $?
+  printf '%s' "$out" | jq -ce --arg state "$TRK_LIST_STATE" --arg label "$TRK_LIST_LABEL" --arg since "$TRK_LIST_SINCE" \
+    "$_TRK_ISO_JQ $_TRK_LIST_BELT" 2>/dev/null || rc=1
+  return "$rc"
+}
 tracker_read()         { _trk_call read "$@"; }
 tracker_comment()      { _trk_call comment "$@"; }
 tracker_transition()   { _trk_call transition "$@"; }

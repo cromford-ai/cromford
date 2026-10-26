@@ -113,9 +113,12 @@ tests/state-backup-lowpri.bh-6173-test.sh:generic-api-key:120
 tests/state-restore-standby.bh-401-test.sh:generic-api-key:50
 tests/tracker-contract-test.sh:generic-api-key:21
 tests/tracker-linear.bh-4077-test.sh:generic-api-key:36
+tests/tracker-list-filters.bh-7920-test.sh:generic-api-key:34
+tests/tracker-list-filters.bh-7920-test.sh:generic-api-key:41
 tests/tracker-port.bh-4075-test.sh:generic-api-key:33
 tests/transcript-scrub-test.sh:generic-api-key:30
 tests/transcript-scrub-test.sh:curl-auth-header:89
+tests/triage-intake-linear.bh-7920-test.sh:generic-api-key:35
 tests/unblock-card.bh-7725-test.sh:generic-api-key:141
 worker/jobs/test/ai-accounts.bh-7966.test.js:generic-api-key:16
 worker/jobs/test/alert-decisions.bh-6972.test.js:generic-api-key:20

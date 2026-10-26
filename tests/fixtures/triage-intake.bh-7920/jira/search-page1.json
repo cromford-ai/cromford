@@ -1,0 +1,84 @@
+{
+  "issues": [
+    {
+      "id": "10012",
+      "self": "https://api.atlassian.com/ex/jira/33333333-3333-3333-3333-333333333333/rest/api/3/issue/10012",
+      "key": "SCRUM-12",
+      "fields": {
+        "summary": "Ledger export to CSV",
+        "status": {
+          "name": "To Do",
+          "id": "1",
+          "statusCategory": {
+            "id": 2,
+            "key": "new",
+            "name": "To Do"
+          }
+        },
+        "labels": [
+          "ai-build"
+        ],
+        "updated": "2026-10-21T12:15:00.000+0300",
+        "comment": {
+          "comments": [],
+          "maxResults": 2,
+          "total": 2,
+          "startAt": 0
+        }
+      }
+    },
+    {
+      "id": "10013",
+      "self": "https://api.atlassian.com/ex/jira/33333333-3333-3333-3333-333333333333/rest/api/3/issue/10013",
+      "key": "SCRUM-13",
+      "fields": {
+        "summary": "Old import job",
+        "status": {
+          "name": "Done",
+          "id": "3",
+          "statusCategory": {
+            "id": 3,
+            "key": "done",
+            "name": "Done"
+          }
+        },
+        "labels": [
+          "ai-build"
+        ],
+        "updated": "2026-10-20T08:00:00.000+0000",
+        "comment": {
+          "comments": [],
+          "maxResults": 0,
+          "total": 0,
+          "startAt": 0
+        }
+      }
+    },
+    {
+      "id": "10014",
+      "self": "https://api.atlassian.com/ex/jira/33333333-3333-3333-3333-333333333333/rest/api/3/issue/10014",
+      "key": "SCRUM-14",
+      "fields": {
+        "summary": "Unlabeled idea",
+        "status": {
+          "name": "To Do",
+          "id": "1",
+          "statusCategory": {
+            "id": 2,
+            "key": "new",
+            "name": "To Do"
+          }
+        },
+        "labels": [],
+        "updated": "2026-10-21T10:00:00.000+0000",
+        "comment": {
+          "comments": [],
+          "maxResults": 0,
+          "total": 0,
+          "startAt": 0
+        }
+      }
+    }
+  ],
+  "isLast": true
+}

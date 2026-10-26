@@ -13,6 +13,8 @@
 #   TRK_LINEAR_API        default https://api.linear.app/graphql
 #   TRK_LINEAR_LABEL      the label list filters on, default ai-build
 #   TRK_LINEAR_STATES     optional JSON {"<contract status>": "<state name>"}
+#   TRK_LINEAR_LIST_COMMENT_CAP  the comment ids one list row asks for, to
+#                         count them (1..50; empty = 25, see trk_linear_list)
 #
 # IDS. A ticket id is the Linear identifier (CRO-12) or the issue UUID; id and
 # key are both the identifier. A mutation needs the UUID and the team's states
@@ -39,6 +41,7 @@ _TRK_LINEAR_STATUS_TYPE='{"todo":"unstarted","in_progress":"started","done":"com
 
 _trk_linear_blank() {
   TRK_LINEAR_TOKEN=""; TRK_LINEAR_TOKEN_VAR=""; TRK_LINEAR_TEAM=""; TRK_LINEAR_LABEL=""; TRK_LINEAR_STATES=""
+  TRK_LINEAR_LIST_COMMENT_CAP=""
 }
 
 # trk_linear_context <project> — the twin of trk_jira_context. It reads:
@@ -49,13 +52,16 @@ _trk_linear_blank() {
 #     row wins over the env value. A row team and an env team that disagree is
 #     rc 1: a wrong team lists another team's tickets. Under TRK_DRY=1 no row
 #     is read (the tracker_adapter contract), so the env values decide.
+#   settings row tracker_linear.<project>.list_comment_cap, optional: an
+#     integer 1..50, else rc 1. It sets TRK_LINEAR_LIST_COMMENT_CAP.
 # rc 0 with TRK_LINEAR_TOKEN, TRK_LINEAR_TOKEN_VAR=LINEAR_API_KEY,
-# TRK_LINEAR_TEAM and (when set) TRK_LINEAR_LABEL / TRK_LINEAR_STATES. rc 1
+# TRK_LINEAR_TEAM and (when set) TRK_LINEAR_LABEL / TRK_LINEAR_STATES /
+# TRK_LINEAR_LIST_COMMENT_CAP. rc 1
 # with every one of them blank and one stderr line that names the variable or
 # the row, never a value. TRK_LINEAR_API is left alone.
 trk_linear_context() {
   local p="${1:-}" root="${HARNESS:-${H:-}}" d ep envd="" ef jc rows k v n r
-  local tok team label states rteam="" rlabel="" rstates="" got=0
+  local tok team label states rteam="" rlabel="" rstates="" rcap="" got=0
   local vals=()
   _trk_linear_blank
   [[ "$p" =~ ^[a-z0-9_.-]+$ ]] || { printf 'linear: %s is not a project name\n' "$(_trk_sq "$p")" >&2; return 1; }
@@ -83,7 +89,7 @@ trk_linear_context() {
     # ONE subshell for every row, as trk_jira_context does.
     # shellcheck source=/dev/null
     rows=$( HARNESS="$root"; . "$jc" >/dev/null 2>&1 || exit 1
-            for n in team label states; do
+            for n in team label states list_comment_cap; do
               r=0; v=$(JOBS_ALERT=0 setting_get "tracker_linear.$p.$n" 2>/dev/null) || r=$?
               case "$r" in
                 0) printf '%s\t%s\n' "$n" "$(printf '%s' "$v" | tr '\t\n' '  ')" ;;
@@ -97,8 +103,12 @@ trk_linear_context() {
         team) rteam="$v"; got=1 ;;
         label) rlabel="$v" ;;
         states) rstates="$v" ;;
+        list_comment_cap) rcap="$v" ;;
       esac
     done <<<"$rows"
+  fi
+  if [ -n "$rcap" ] && ! { [[ "$rcap" =~ ^[0-9]{1,2}$ ]] && [ "$rcap" -ge 1 ] && [ "$rcap" -le 50 ]; }; then
+    printf 'linear: settings row tracker_linear.%s.list_comment_cap is not an integer 1..50\n' "$p" >&2; return 1
   fi
   if [ "$got" = 1 ]; then
     [[ "$rteam" =~ ^[A-Z][A-Z0-9_]{0,9}$ ]] || { printf 'linear: settings row tracker_linear.%s.team is not a Linear team key\n' "$p" >&2; return 1; }
@@ -118,7 +128,7 @@ trk_linear_context() {
     printf 'linear: the states for %s (LINEAR_STATES or tracker_linear.%s.states) are not a JSON object\n' "$p" "$p" >&2; return 1
   fi
   TRK_LINEAR_TOKEN="$tok"; TRK_LINEAR_TOKEN_VAR=LINEAR_API_KEY; TRK_LINEAR_TEAM="$team"
-  TRK_LINEAR_LABEL="$label"; TRK_LINEAR_STATES="$states"
+  TRK_LINEAR_LABEL="$label"; TRK_LINEAR_STATES="$states"; TRK_LINEAR_LIST_COMMENT_CAP="$rcap"
   return 0
 }
 
@@ -175,26 +185,52 @@ _trk_linear_issue() {
   printf '%s' "$d" | jq -ce '.issue | select(type == "object" and (.id | type == "string" and length > 0))' 2>/dev/null || return 1
 }
 
+# trk_linear_list — the team's issues with the label, at most 10 pages of 100.
+# The filter is built from parts: the team; the label (TRK_LIST_LABEL, else
+# TRK_LINEAR_LABEL, else ai-build); the open states unless TRK_LIST_STATE=all;
+# and `updatedAt >= $since` only when TRK_LIST_SINCE is set, which is the only
+# time $since is declared (GraphQL refuses a declared variable it does not
+# use). commentCount is the number of comment ids on the row's first page, or
+# null when that page has more: no count we did not measure.
+# THE COMMENT CAP is a knob: settings row tracker_linear.<p>.list_comment_cap
+# (trk_linear_context), fallback 25. 25, and the bound of 50, keep
+# issues(first: 100) x (labels(first: 50) + comments) under Linear's 10,000
+# point query complexity limit; the nightly vendor contract suite checks it.
 trk_linear_list() {
-  local d all after=null page=0 more=true
+  local d all after=null page=0 more=true cc q sf uf decl=""
   [[ "${TRK_LINEAR_TEAM:-}" =~ ^[A-Za-z0-9_]{1,16}$ ]] && [ -n "${TRK_LINEAR_TOKEN:-}" ] || return 1
+  cc="${TRK_LINEAR_LIST_COMMENT_CAP:-25}"   # fallback of settings row tracker_linear.<p>.list_comment_cap
+  if ! [[ "$cc" =~ ^[0-9]{1,2}$ ]] || [ "$cc" -lt 1 ] || [ "$cc" -gt 50 ]; then
+    printf 'tracker: linear list comment cap %s is not 1..50 (tracker_linear.<p>.list_comment_cap)\n' "$(_trk_sq "$cc")" >&2
+    return 1
+  fi
+  sf=', state: { type: { nin: ["completed", "canceled"] } }'
+  [ "${TRK_LIST_STATE:-}" = all ] && sf=""
+  uf=""
+  if [ -n "${TRK_LIST_SINCE:-}" ]; then uf=', updatedAt: { gte: $since }'; decl=', $since: DateTimeOrDuration'; fi
+  q="query TrkIssues(\$team: String!, \$label: String!, \$after: String, \$cc: Int!$decl) { issues(first: 100, after: \$after, filter: { team: { key: { eq: \$team } }, labels: { some: { name: { eqIgnoreCase: \$label } } }$sf$uf }) { nodes { identifier title url updatedAt state { name type } labels(first: 50) { nodes { name } } comments(first: \$cc) { nodes { id } pageInfo { hasNextPage } } } pageInfo { hasNextPage endCursor } } }"
   all='[]'
   while [ "$more" = true ]; do
     if [ "$page" -ge 10 ]; then
       printf 'tracker: linear list for team %s still has pages after %s, incomplete\n' "$TRK_LINEAR_TEAM" "$page" >&2
       return 1
     fi
-    d=$(_trk_linear_gql 'query TrkIssues($team: String!, $label: String!, $after: String) { issues(first: 100, after: $after, filter: { team: { key: { eq: $team } }, labels: { some: { name: { eqIgnoreCase: $label } } }, state: { type: { nin: ["completed", "canceled"] } } }) { nodes { identifier title url state { name } labels(first: 50) { nodes { name } } } pageInfo { hasNextPage endCursor } } }' \
-      '{team: $team, label: $label, after: $after}' --arg team "$TRK_LINEAR_TEAM" --arg label "${TRK_LINEAR_LABEL:-ai-build}" --argjson after "$after") || return $?
+    d=$(_trk_linear_gql "$q" \
+      '{team: $team, label: $label, after: $after, cc: $cc} + (if $since == "" then {} else {since: $since} end)' \
+      --arg team "$TRK_LINEAR_TEAM" --arg label "${TRK_LIST_LABEL:-${TRK_LINEAR_LABEL:-ai-build}}" --argjson after "$after" \
+      --argjson cc "$cc" --arg since "${TRK_LIST_SINCE:-}") || return $?
     all=$(printf '%s' "$d" | jq -ce --argjson a "$all" '.issues.nodes as $n | if ($n | type) == "array" then $a + $n else error end' 2>/dev/null) || return 1
     more=$(printf '%s' "$d" | jq -r '.issues.pageInfo.hasNextPage == true')
     after=$(printf '%s' "$d" | jq -c '.issues.pageInfo.endCursor // null')
     [ "$more" = true ] && [ "$after" = null ] && return 1
     page=$((page+1))
   done
-  printf '%s' "$all" | jq -c '[.[] | {id: .identifier, key: .identifier, title: (.title // ""),
+  printf '%s' "$all" | jq -c "${_TRK_ISO_JQ:-}"'[.[] | {id: .identifier, key: .identifier, title: (.title // ""),
     status: (.state.name // null), labels: [(.labels.nodes // [])[].name], waitingOn: null,
-    triageVerdict: null, url: (.url // null)}]'
+    triageVerdict: null, url: (.url // null), updatedAt: (.updatedAt | trk_iso),
+    state: (if (.state.type // "") == "completed" or (.state.type // "") == "canceled" then "closed" else "open" end),
+    commentCount: (if (.comments | type) != "object" or (.comments.nodes | type) != "array" or .comments.pageInfo.hasNextPage == true
+                   then null else (.comments.nodes | length) end)}]'
 }
 
 # trk_linear_read <id> — the issue and its whole thread, oldest comment first.

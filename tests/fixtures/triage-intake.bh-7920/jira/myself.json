@@ -1,0 +1,10 @@
+{
+  "self": "https://api.atlassian.com/ex/jira/33333333-3333-3333-3333-333333333333/rest/api/3/user?accountId=557058:44444444-4444-4444-4444-444444444444",
+  "accountId": "557058:44444444-4444-4444-4444-444444444444",
+  "displayName": "Harness Bot",
+  "accountType": "atlassian",
+  "active": true,
+  "emailAddress": "harness@example.com",
+  "timeZone": "UTC",
+  "locale": "en_US"
+}

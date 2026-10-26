@@ -331,16 +331,27 @@ trk_jira_gate_raw() {
 # trk_jira_list — open issues carrying the build label in the readable
 # projects, newest first. At most 4 pages of 50; a 4th page that still has a
 # nextPageToken is rc 1 ("list incomplete"), never a silent truncation.
+# TRK_LIST_LABEL (else TRK_JIRA_LABEL) is the label; TRK_LIST_STATE=all drops
+# the open clause; TRK_LIST_SINCE adds `updated >= "<the day before, UTC>"`:
+# JQL reads a date in the API user's time zone, so the server clause is a day
+# wide and a day early, and bin/lib/tracker.sh makes the exact cut.
 trk_jira_list() {
-  local keys="" k jql req acc page tok="" pages=0 rc=0 fields
+  local keys="" k jql req acc page tok="" pages=0 rc=0 fields day
   [ -n "${TRK_JIRA_BASE:-}" ] || return 1
   for k in ${TRK_JIRA_WRITE_PROJECTS:-} ${TRK_JIRA_COMMENT_PROJECTS:-} ${TRK_JIRA_READ_PROJECTS:-}; do
     case " $keys " in *" $k "*) ;; *) keys="${keys:+$keys }$k" ;; esac
   done
   [ -n "$keys" ] || { printf 'jira: %s has no readable project keys\n' "${TRK_JIRA_PROJECT:-}" >&2; return 1; }
   # shellcheck disable=SC2086
-  jql="project in ($(printf '"%s",' $keys | sed 's/,$//')) AND labels = \"${TRK_JIRA_LABEL:-ai-build}\" AND statusCategory != Done ORDER BY updated DESC"
-  fields=$(_trk_jira_fields)
+  jql="project in ($(printf '"%s",' $keys | sed 's/,$//')) AND labels = \"${TRK_LIST_LABEL:-${TRK_JIRA_LABEL:-ai-build}}\""
+  [ "${TRK_LIST_STATE:-}" = all ] || jql="$jql AND statusCategory != Done"
+  if [ -n "${TRK_LIST_SINCE:-}" ]; then
+    day=$(jq -rn --arg s "$TRK_LIST_SINCE" '$s | sub("\\.[0-9]+Z$"; "Z") | fromdateiso8601 - 86400 | strftime("%Y-%m-%d")' 2>/dev/null)
+    [[ "$day" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]] || return 1
+    jql="$jql AND updated >= \"$day\""
+  fi
+  jql="$jql ORDER BY updated DESC"
+  fields="$(_trk_jira_fields),updated,comment"
   req=$(mktemp "${TMPDIR:-/tmp}/trk-jira.XXXXXX") || return 1
   acc='[]'
   while :; do
@@ -363,10 +374,12 @@ trk_jira_list() {
   printf '%s' "$acc" | jq -e --arg ks " $keys " 'all(.[]; ((.key // "") | split("-")[0]) as $p | ($ks | contains(" " + $p + " ")))' >/dev/null 2>&1 \
     || { printf 'jira: the search answered an issue outside %s\n' "$keys" >&2; return 1; }
   printf '%s' "$acc" | jq -c --arg wf "${TRK_JIRA_WAITING_FIELD:-}" --arg vf "${TRK_JIRA_VERDICT_FIELD:-}" \
-      --arg site "${TRK_JIRA_SITE:-}" "$_TRK_JIRA_JQ"'
+      --arg site "${TRK_JIRA_SITE:-}" "${_TRK_ISO_JQ:-}$_TRK_JIRA_JQ"'
     [.[] | {id: .key, key: .key, title: (.fields.summary // ""), status: (.fields.status.name // null),
             labels: [(.fields.labels // [])[] | tostring], waitingOn: fld($wf), triageVerdict: fld($vf),
-            url: jurl($site; .key)}]' 2>/dev/null
+            url: jurl($site; .key), updatedAt: (.fields.updated | trk_iso),
+            state: (if .fields.status.statusCategory.key == "done" then "closed" else "open" end),
+            commentCount: (.fields.comment.total | if type == "number" then . else null end)}]' 2>/dev/null
 }
 
 # _trk_jira_adf <text file> <out file> — {"body": ADF} from plain text: blank

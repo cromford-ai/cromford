@@ -75,15 +75,24 @@ trk_gh_labels() {
   return "$rc"
 }
 
+# trk_gh_list — the issues list. TRK_LIST_STATE / TRK_LIST_LABEL /
+# TRK_LIST_SINCE (bin/lib/tracker.sh) become the state, labels and since
+# params; with none set it is the request of today (open, ai-build). The same
+# list helper and 200-row max gh_rest_issue_list uses.
 trk_gh_list() {
   local t rc=0
-  [[ "${TRK_SLUG:-}" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] && command -v gh_rest_issue_list >/dev/null 2>&1 || return 1
+  local -a a
+  [[ "${TRK_SLUG:-}" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] && command -v _gh_rest_list >/dev/null 2>&1 || return 1
+  a=(-f "state=${TRK_LIST_STATE:-open}" -f "labels=${TRK_LIST_LABEL:-ai-build}")
+  [ -n "${TRK_LIST_SINCE:-}" ] && a+=(-f "since=$TRK_LIST_SINCE")
   t=$(mktemp "${TMPDIR:-/tmp}/trk-gh.XXXXXX") || return 1
-  gh_rest_issue_list "$TRK_SLUG" open ai-build > "$t" || rc=$?
+  _gh_rest_list "$TRK_SLUG" issues 200 'select(.pull_request == null)' "${a[@]}" > "$t" || rc=$?
   if [ "$rc" != 0 ]; then rm -f "$t"; _trk_gh_fail "$rc"; return $?; fi
-  jq -c "[.[] | {id: (.number | tostring), key: (\"#\" + (.number | tostring)), title: (.title // \"\"),
+  jq -c "${_TRK_ISO_JQ:-} [.[] | {id: (.number | tostring), key: (\"#\" + (.number | tostring)), title: (.title // \"\"),
       status: (.state // null), labels: $_TRK_GH_LABELS, waitingOn: null, triageVerdict: null,
-      url: (.html_url // null)}]" "$t" 2>/dev/null || rc=1
+      url: (.html_url // null), updatedAt: (.updated_at | trk_iso),
+      state: (if .state == \"closed\" then \"closed\" else \"open\" end),
+      commentCount: (.comments | if type == \"number\" then . else null end)}]" "$t" 2>/dev/null || rc=1
   rm -f "$t"
   return "$rc"
 }
