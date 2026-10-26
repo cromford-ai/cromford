@@ -1,0 +1,1 @@
+{"run": "fixture", "surfaces": [{"path": "app/api", "status": "covered"}, {"path": "infra", "status": "partial"}]}

@@ -42,6 +42,7 @@ Layout: repos live in `/root/repos/<project>`, harness scripts in `/root/harness
 - [Review levels (BH-7123)](#review-levels-bh-7123)
 - [Scalable tests (BH-7563)](#scalable-tests-bh-7563)
 - [User flows (BH-8029)](#user-flows-bh-8029)
+- [Security audit (2026-10-21)](#security-audit-2026-10-21)
 
 ## Iron guardrails (this machine)
 
@@ -236,3 +237,7 @@ USER FLOWS (iron law, BH-8029, 2026-10-22). A new feature ties into the user flo
 4. The rule applies to UI-bearing projects (OS apps). A backend-only or harness-only change writes "no user-facing entry point" in the plan.
 - PLAN must carry a `## Entry points` section: one line per entry point (touched, or "no change, because ..."), or the single line "no user-facing entry point".
 - REVIEW checks the plan's entry points against the diff. A user-facing feature that a user cannot reach from an existing entry point is `[BLOCK user-flows]`. A missing "no change, because" line, or no entry-point test on a feature a user can reach, is a `[NOTE]`.
+
+## Security audit (2026-10-21)
+
+SECURITY AUDIT (2026-10-21). The whole-repo security audit (cloudflare/security-audit-skill) is a scheduled lane with a dollar cap, never a PR step. A PR gets the risky-file security lens only (auth, money, schema, webhooks, agents), and KIND: copy gets none. A reviewer never asks for a full audit on a PR. The lens receives the attack-class notes for the diff's surface; it does not widen its scope beyond the diff.

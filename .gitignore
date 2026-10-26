@@ -141,3 +141,6 @@ console-ui/functions/_lib/coord-writes.gen.js
 # shards' timings. docs/ci-durations.md. A local copy for bin/fast-lints.sh or
 # suite_shard_plan: `bin/ci-durations.sh fetch --out catalog/ci-suite-durations.tsv`.
 catalog/ci-suite-durations.tsv
+
+# BH-7910: bin/security-audit.sh output. A client's vulnerability list never lives in git.
+security-audit/

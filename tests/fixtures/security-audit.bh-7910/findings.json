@@ -1,0 +1,8 @@
+[
+  {"id": "F-001", "title": "Fixture: tenant id read from the request body", "class": "data-isolation", "location": "app/api/fixture/route.ts:12", "severity": "high", "verdict": "confirmed"},
+  {"id": "F-002", "title": "Fixture: webhook signature compared with ==", "class": "web-auth", "location": "app/api/hook/route.ts:30", "severity": "medium", "verdict": "confirmed"},
+  {"id": "F-003", "title": "Fixture: CDN cache key may omit the session", "class": "web-auth", "location": "next.config.js:8", "severity": "medium", "verdict": "needs_validation"},
+  {"id": "F-004", "title": "Fixture: bucket policy not visible in the repo", "class": "cloud-deploy", "location": "infra/fixture.tf:4", "severity": "low", "verdict": "needs_validation"},
+  {"id": "F-005", "title": "Fixture: model output rendered as HTML", "class": "ai-llm", "location": "components/Fixture.tsx:41", "severity": "medium", "verdict": "needs_validation"},
+  {"id": "F-006", "title": "Fixture: open redirect guarded by an allowlist", "class": "web-auth", "location": "app/login/page.tsx:22", "severity": "low", "verdict": "rejected"}
+]

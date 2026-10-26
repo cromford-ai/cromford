@@ -1,0 +1,45 @@
+[
+    {
+        "lane": "security-audit",
+        "stage": "audit",
+        "project": "$project",
+        "runner": null,
+        "job": "bin/security-audit.sh (BH-7910): one whole-repo security audit of a project with the cloudflare/security-audit-skill in full audit mode, in a scratch clone. DRAFT and OFF: no cron line; an operator starts it by hand. The scheduled lane is a later ticket.",
+        "target_tokens": 2000000,
+        "ceiling_tokens": 6000000,
+        "composition": [
+            {
+                "component": "audit prompt",
+                "source": "prompts/security-audit.md, rendered by bin/security-audit.sh",
+                "cap": "static (about 2 KB)",
+                "purpose": "full audit mode, the output directory, the sandbox controls and the hard rules"
+            },
+            {
+                "component": "the skill",
+                "source": "the pinned skill files installed in the clone (.claude/skills/security-audit/), read by tools",
+                "cap": "the pinned sha (catalog/security-audit.conf)",
+                "purpose": "the audit workflow and the attack-class notes"
+            },
+            {
+                "component": "the target repository",
+                "source": "the scratch clone of the target's main, read by tools",
+                "cap": "none: the session reads what the workflow needs",
+                "purpose": "THE SCOPED DELTA: the code under audit"
+            }
+        ],
+        "bounds": [
+            "[lane:cap_usd] the runner stops the session when the audit cost rows plus the live transcript reach security_audit.cap_usd; the live transcript is found under the CLI slug of the clone and every account config root (VERIFIED: tests/security-audit-caps.bh-7910-test.sh C5, C6: a stub claude writes the transcript where the CLI does, with no ledger row)",
+            "[lane:cap_minutes] the runner stops the session at security_audit.cap_minutes (VERIFIED: tests/security-audit-caps.bh-7910-test.sh)",
+            "[lane:call_budget] AGENT_CALL_BUDGET_USD_AUDIT=<cap-usd> is the claude --max-budget-usd of the call (VERIFIED: bin/security-audit.sh call site; UNVERIFIED that the CLI enforces it under subscription OAuth)",
+            "[lane:dedup] no call when a completed run of the same target sha and skill sha exists (VERIFIED: tests/security-audit-runner.bh-7910-test.sh)",
+            "[harness:prompt_guard] prompt_guard 720KB (VERIFIED — bounds the assembled prompt only, NOT session growth)"
+        ],
+        "runner_ceilings": {
+            "grok": 200000
+        },
+        "runner_ceilings_note": "grok bills the WHOLE request at double rate past 200K prompt tokens, so this lane's placeholder ceiling cannot follow it there; the cap is the same one every lane over the cliff carries. CUMULATIVE, NOT PER-REQUEST: the 200K is a per-request threshold and the resolver compares it against this manifest's cumulative per-call context, so it is a conservative bound, not a confirmed doubled bill.",
+        "measured_before": null,
+        "measured_before_note": "never measured: the pilot run (BH-7910 C1, on box-project-2-1) is the first measurement.",
+        "_unmeasured": "no audit session has run yet. The target and ceiling are placeholders: a whole-repo tool session reads far more than a review. The pilot's measured context replaces both. No context_kill_tokens: BH-2538 arms no lane without measured rows."
+    }
+]
