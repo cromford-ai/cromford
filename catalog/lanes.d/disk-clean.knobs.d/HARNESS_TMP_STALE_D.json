@@ -1,0 +1,9 @@
+{
+  "env": "HARNESS_TMP_STALE_D",
+  "type": "int",
+  "default": 7,
+  "min": 2,
+  "zero_means": null,
+  "read_in": "bin/disk-clean-stages.sh",
+  "note": "BH-7932: stage harness-tmp of bin/disk-clean-stages.sh (disk-clean stage 12) removes a top-level entry of $HARNESS/tmp whose newest mtime anywhere inside is older than this many days, when no process holds it, no claim names it and no keep-glob matches it. Read as ${HARNESS_TMP_STALE_D:-7}. Not a whole number >= 2: the stage is skipped and logged, never guessed."
+}

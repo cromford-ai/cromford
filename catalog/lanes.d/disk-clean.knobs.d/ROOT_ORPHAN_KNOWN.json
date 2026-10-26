@@ -1,0 +1,8 @@
+{
+  "env": "ROOT_ORPHAN_KNOWN",
+  "type": "string",
+  "default": "harness repos worktrees .npm .cache .claude .codex .grok .fly .local .config .ssh orchestrator bhfix-lane .docker .cargo .rustup .bun .vscode-server",
+  "zero_means": null,
+  "read_in": "bin/disk-clean-stages.sh",
+  "note": "BH-7932: space-separated top-level dir names under /root that the root-orphans stage of bin/disk-clean-stages.sh never lists. console-worker is known on its own terms: only when a systemd unit file names /root/console-worker. Read as ${ROOT_ORPHAN_KNOWN:-...}."
+}

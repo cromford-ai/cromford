@@ -152,6 +152,38 @@ leaves the row `claimed` for ever, which is `bin/jobs-watchdog.sh`'s job
 runs the same status through `QUEUE_TRANSITIONS` and answers 409 on an illegal
 move, so a close-out cannot walk a row backwards out of `done`.
 
+## disk-clean stages (BH-7932)
+
+`bin/disk-clean.sh` is the daily `disk-clean` lane (04:47Z, every box). It is
+the one lane that removes what other lanes leave on a box, so this is the list
+of what it may delete and what keeps a thing. Every stage writes a summary line
+to `logs/disk-clean.log`, and its counters move only after `[ ! -e ]` proved a
+removal. A knob that is not a whole number at or over its minimum skips its
+stage with a log line.
+
+| # | Stage | What it removes | Guards (any one keeps it) | Knobs |
+|---|---|---|---|---|
+| 1 | npm cache | `npm cache clean --force` | cache under the cap | `NPM_CACHE_MAX_MB` |
+| 2 | bench runs | `state/bench/*` older than 7 days | none | none |
+| 3 | stale worktrees | git worktrees under `/root/repos` | dirty, HEAD on no remote (except old `triage-*`), changed in 48 h, named by a running build | none |
+| 4 | aged-out tsv | `state/closeout-aged-out.tsv` rows, archived first | build dir still exists | `CLOSEOUT_TSV_KEEP_DAYS` |
+| 5 | stale locks | `locks/*.lock` | newer than the cutoff, an open fd, `flock -n` fails | `LOCK_STALE_H` |
+| 6 | operator scratch | moves `state/*.sh`, `*.done`, `*.bak-*` to `state/scratch/` | the crontab or a `bin/` script names it | none |
+| 7 | dead leases | `state/leases/` | anything inside changed recently | `LEASES_STALE_D` |
+| 8 | tmp scratch | `tmp/brfix/*`, `tmp/state-backup.*` | fresh, a `/proc` cwd, a build cmdline names it | `TMP_SCRATCH_STALE_H` |
+| 9 | box housekeeping | agent session ledgers, `/tmp` top level (`bin/box-housekeeping.sh`) | keep-globs, fresh, held, a git worktree | `AGENT_SESSION_KEEP_DAYS`, `TMP_TOPLEVEL_STALE_D`, `TMP_SWEEP_KEEP_GLOBS`, ... |
+| 10 | cron logs | cuts `logs/*-cron.log` to its newest half | under the cap | `CRON_LOG_MAX_KB` |
+| 11 | agent transcripts | files under `~/.claude/projects` older than the cutoff, then the dirs it emptied (`bin/agent-transcripts-clean.sh`); dry until the knob is 0 | a `/proc` fd names it, a project's `memory/` dir, a symlink, a symlinked `projects/` | `CLAUDE_TRANSCRIPT_KEEP_DAYS` (14, min 3), `TRANSCRIPTS_DRY_RUN` (1) |
+| 12a | `harness-tmp` | top-level entries of `$HARNESS/tmp` | a keep-glob name, a symlink, socket or FIFO, another mount, newest mtime inside not older than the cutoff, an age not read in time, a `/proc` cwd, fd or argv argument into it, a line of a live `job_claims` row naming it (every `fleet.conf` project, through `fclaim_list_dir`; rows it cannot read skip the stage); past the run deadline the rest is `left=`; each `git worktree prune` after a removed worktree is bounded by `HARNESS_TMP_SCAN_TIMEOUT_S` | `HARNESS_TMP_STALE_D` (7, min 2), `HARNESS_TMP_KEEP_GLOBS` (`conductor batch-resolve brfix state-restore`), `HARNESS_TMP_SCAN_TIMEOUT_S`, `HARNESS_TMP_RUN_DEADLINE_S` |
+| 12b | `tool-caches` | files in `~/.cache/gh` and `~/.cache/pip`, then empty dirs | file newer than the cutoff, a symlinked root; the playwright browser cache is never read | `GH_CACHE_STALE_D` (7), `PIP_CACHE_STALE_D` (30), `TOOL_CACHE_RUN_DEADLINE_S` (900) |
+| 12c | `root-orphans` | nothing: LIST ONLY | a name in the known set, newer than the cutoff, not a dir; `console-worker` is known only when a systemd unit names `/root/console-worker` | `ROOT_ORPHAN_STALE_D` (7), `ROOT_ORPHAN_KNOWN`, `DISK_CLEAN_UNIT_DIRS` |
+
+Stage 12 is `bin/disk-clean-stages.sh`. Its `root-orphans` stage writes one
+`root orphan: <path> <kb> KB newest <YYYY-MM-DD>` log line per dir and ONE warn
+per run through `bin/lane-alert.sh`, id `root-orphan-<host>`, that names every
+listed dir with its size and newest date. A run with no orphan resolves that
+id. Deleting a listed dir is a human decision.
+
 ## Endpoints this client calls that the worker still owes
 
 `bin/jobs-client.sh` is fail-open by construction: a route the worker does not

@@ -33,6 +33,9 @@
 # cut in place (same inode, so a >> writer keeps appending) to its newest half.
 # Stage 11 runs bin/agent-transcripts-clean.sh (~/.claude/projects files past
 # CLAUDE_TRANSCRIPT_KEEP_DAYS, dry by default; see that file's header).
+# Since BH-7932 stage 12 runs bin/disk-clean-stages.sh: stale $HARNESS/tmp
+# entries nothing holds or claims, old gh and pip cache files, and a LIST-ONLY
+# warn of hand-made dirs under /root (see that file's header).
 # Each is a no-op on a box with nothing to clean, and each counter in the
 # summary line is incremented only after the work really happened.
 #
@@ -458,6 +461,14 @@ fi
 if [ -x "$H/bin/agent-transcripts-clean.sh" ]; then
   HARNESS_ROOT="$H" "$H/bin/agent-transcripts-clean.sh" >/dev/null 2>&1 \
     || say "agent-transcripts exited rc=$? - see its lines above"
+fi
+
+# 12. disk-clean stages (BH-7932): harness-tmp, tool-caches, root-orphans. They
+# write their own summary lines here, so the line below keeps its shape and its
+# before/after % includes what they freed.
+if [ -x "$H/bin/disk-clean-stages.sh" ]; then
+  HARNESS_ROOT="$H" "$H/bin/disk-clean-stages.sh" >/dev/null 2>&1 \
+    || say "disk-clean-stages exited rc=$?"
 fi
 
 after=$(df --output=pcent / | tail -1 | tr -dc 0-9)

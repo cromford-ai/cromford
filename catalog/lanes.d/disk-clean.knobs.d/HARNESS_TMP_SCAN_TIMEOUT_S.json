@@ -1,0 +1,9 @@
+{
+  "env": "HARNESS_TMP_SCAN_TIMEOUT_S",
+  "type": "int",
+  "default": 60,
+  "min": 5,
+  "zero_means": null,
+  "read_in": "bin/disk-clean-stages.sh",
+  "note": "BH-7932: seconds bin/disk-clean-stages.sh gives one age or size scan (find/du) of a $HARNESS/tmp entry or a /root dir, and the bound on each `git worktree prune` the harness-tmp stage runs after it removed a worktree. An entry whose age is not read in time is kept (harness-tmp) or not listed (root-orphans). Read as ${HARNESS_TMP_SCAN_TIMEOUT_S:-60}. Not a whole number >= 5: harness-tmp is skipped and logged."
+}

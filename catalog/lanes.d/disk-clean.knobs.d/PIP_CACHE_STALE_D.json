@@ -1,0 +1,9 @@
+{
+  "env": "PIP_CACHE_STALE_D",
+  "type": "int",
+  "default": 30,
+  "min": 1,
+  "zero_means": null,
+  "read_in": "bin/disk-clean-stages.sh",
+  "note": "BH-7932: stage tool-caches of bin/disk-clean-stages.sh deletes regular files under ~/.cache/pip older than this many days, then the empty dirs. Read as ${PIP_CACHE_STALE_D:-30}. Not a whole number >= 1: the stage is skipped and logged, never guessed."
+}

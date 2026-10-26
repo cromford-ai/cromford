@@ -1,0 +1,8 @@
+{
+  "env": "HARNESS_TMP_KEEP_GLOBS",
+  "type": "string",
+  "default": "conductor batch-resolve brfix state-restore",
+  "zero_means": null,
+  "read_in": "bin/disk-clean-stages.sh",
+  "note": "BH-7932: space-separated basename globs the harness-tmp stage of bin/disk-clean-stages.sh never removes at any age (live lane dirs and the state-restore operator DEST). Read as ${HARNESS_TMP_KEEP_GLOBS:-conductor batch-resolve brfix state-restore}."
+}

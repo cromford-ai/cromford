@@ -1,0 +1,9 @@
+{
+  "env": "DISK_CLEAN_UNIT_DIRS",
+  "type": "string",
+  "default": "/etc/systemd/system /lib/systemd/system",
+  "zero_means": null,
+  "note": "BH-7932: test seam. Read by bin/disk-clean-stages.sh as ${DISK_CLEAN_UNIT_DIRS:-/etc/systemd/system /lib/systemd/system}: the dirs whose unit files the root-orphans stage greps for /root/console-worker. NOT settable from the control plane: a path a test sets, so only env moves it.",
+  "settable": false,
+  "read_in": "bin/disk-clean-stages.sh"
+}

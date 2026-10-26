@@ -1,0 +1,9 @@
+{
+  "env": "TOOL_CACHE_RUN_DEADLINE_S",
+  "type": "int",
+  "default": 900,
+  "min": 2,
+  "zero_means": null,
+  "read_in": "bin/disk-clean-stages.sh",
+  "note": "BH-7932: seconds the tool-caches stage of bin/disk-clean-stages.sh may spend deleting old ~/.cache/gh and ~/.cache/pip files. Past it, the files not yet judged stay for the next run and one `tool-caches hit TOOL_CACHE_RUN_DEADLINE_S` line is logged. Read as ${TOOL_CACHE_RUN_DEADLINE_S:-900}. Not a whole number >= 2: the stage is skipped and logged."
+}

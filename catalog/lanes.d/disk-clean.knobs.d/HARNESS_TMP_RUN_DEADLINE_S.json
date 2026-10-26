@@ -1,0 +1,9 @@
+{
+  "env": "HARNESS_TMP_RUN_DEADLINE_S",
+  "type": "int",
+  "default": 900,
+  "min": 2,
+  "zero_means": null,
+  "read_in": "bin/disk-clean-stages.sh",
+  "note": "BH-7932: seconds the harness-tmp stage of bin/disk-clean-stages.sh may run. Past it, the entries not yet judged are left untouched and counted left= for the next run. Read as ${HARNESS_TMP_RUN_DEADLINE_S:-900}. Not a whole number >= 2: the stage is skipped and logged."
+}
