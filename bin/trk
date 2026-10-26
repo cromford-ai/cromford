@@ -1,0 +1,203 @@
+#!/bin/bash
+# bin/trk — the ticket tracker CLI for a watcher session (BH-8450, slice C2 of
+# #7920). It is the twin of bin/gh-rest-shim for tickets: one command per
+# contract verb of bin/lib/tracker.sh, so a prompt for a Jira or Linear project
+# reads and writes its tickets without a token, an API URL or a hand-made call.
+# The token stays inside the adapter; trk never prints a TRK_* value.
+#
+#   trk list <project> [--state open|all] [--label <name>] [--since <iso>]
+#                     the contract's JSON array (no body, no comments)
+#   trk read <project> <id>
+#                     header lines, then the title + body and each comment,
+#                     every one inside a bin/lib/untrusted-input.sh ui_wrap block
+#   trk comment <project> <id> (--body <text> | --body-file <path>)
+#   trk transition <project> <id> <todo|in_progress|review|done|closed>
+#   trk label-add <project> <id> <label>
+#   trk label-remove <project> <id> <label>
+#   trk link-pr <project> <id> <https pr url>
+#   trk close-out <project> <id> (--body <text> | --body-file <path>) [--status <s>]
+#                     the comment, THEN the terminal status (default done)
+#   trk help
+#
+# <id> is a key (CRO-12), a number (12) or a UUID.
+#
+# EXIT CODES, the contract's table plus 2:
+#   0   ok. A write prints `trk: <verb> <id> ok`, only when it was sent.
+#   1   failed: no tracker context (`trk: no tracker context for <p>
+#       (missing: <what>)`), an absent ticket, a refused write
+#   2   usage error. Nothing was read and nothing was sent.
+#   3   the tracker does not support this verb; nothing was sent
+#   44  label-remove only: the label was not on the ticket
+#   75  rate limited or unverifiable. Retry later; it never means "absent".
+#
+# ENV (operator switches, not business config):
+#   HARNESS   the harness root; default the directory above this script
+#   TRK_DRY   1 = every write prints `DRYRUN <line>` and sends nothing. Empty
+#             or 0 = live. Any other value is a usage error (rc 2): the
+#             contract treats only 1 as dry, so `true` would send a real write.
+#             The project's tracker and context are resolved live even when
+#             dry, so a dry Linear write names the Linear mutation.
+#   TRK_LOG   the contract's write log; default $HARNESS/logs/trk.log. Set it
+#             empty for no log. It names a token's variable, never its value.
+#   TRK_ERR   where the adapter's curl stderr goes; empty = /dev/null
+#
+# Never `set -e`: every exit in here is written out on purpose.
+set -u
+
+TRK_SELF=$(readlink -f "$0")
+TRK_BIN=$(dirname "$TRK_SELF")
+HARNESS="${HARNESS:-$(dirname "$TRK_BIN")}"
+export HARNESS
+
+usage() {
+  cat <<'U'
+usage: trk <verb> <project> [<id>] [args]
+  trk list <project> [--state open|all] [--label <name>] [--since <iso>]
+  trk read <project> <id>
+  trk comment <project> <id> (--body <text> | --body-file <path>)
+  trk transition <project> <id> <todo|in_progress|review|done|closed>
+  trk label-add <project> <id> <label>
+  trk label-remove <project> <id> <label>
+  trk link-pr <project> <id> <https pr url>
+  trk close-out <project> <id> (--body <text> | --body-file <path>) [--status <s>]
+exit: 0 ok, 1 failed, 2 usage, 3 unsupported, 44 label not there, 75 rate limited
+U
+}
+die2() { printf 'trk: %s\n' "$1" >&2; exit 2; }
+
+verb="${1:-}"
+case "$verb" in
+  help|-h|--help) usage; exit 0 ;;
+  list|read|comment|transition|label-add|label-remove|link-pr|close-out) ;;
+  "") usage >&2; exit 2 ;;
+  *) die2 "unknown verb '$verb' (trk help)" ;;
+esac
+shift
+project="${1:-}"
+[[ "$project" =~ ^[a-z0-9_.-]+$ ]] || die2 "$verb needs a project name ([a-z0-9_.-])"
+shift
+
+dry="${TRK_DRY:-0}"
+case "$dry" in 0|1) ;; *) die2 "TRK_DRY is 1, 0 or empty, not '$dry'" ;; esac
+
+id=""; body=""; body_file=""; have_body=0; status=""; arg=""
+list_args=()
+if [ "$verb" = list ]; then
+  list_args=("$@")
+else
+  id="${1:-}"
+  [[ "$id" =~ ^[A-Za-z0-9]+-[0-9]+$ || "$id" =~ ^[0-9]+$ \
+     || "$id" =~ ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$ ]] \
+    || die2 "$verb needs a ticket id (KEY-12, 12 or a UUID)"
+  shift
+  case "$verb" in
+    read) [ $# = 0 ] || die2 "read takes only <project> <id>" ;;
+    transition|label-add|label-remove|link-pr)
+      [ $# = 1 ] && [ -n "$1" ] || die2 "$verb takes exactly one value after the id"
+      arg="$1"
+      if [ "$verb" = link-pr ] && ! [[ "$arg" =~ ^https://[^[:space:]]+$ ]]; then
+        die2 "link-pr needs an https url"
+      fi ;;
+    comment|close-out)
+      while [ $# -gt 0 ]; do
+        case "$1" in
+          --body|--body-file|--status) [ $# -ge 2 ] || die2 "$1 needs a value" ;;
+          *) die2 "$verb does not take '$1'" ;;
+        esac
+        case "$1" in
+          --body) [ "$have_body" = 0 ] || die2 "give one of --body or --body-file"; have_body=1; body="$2" ;;
+          --body-file) [ "$have_body" = 0 ] || die2 "give one of --body or --body-file"; have_body=1; body_file="$2" ;;
+          --status) [ "$verb" = close-out ] || die2 "comment does not take --status"; status="$2" ;;
+        esac
+        shift 2
+      done
+      [ "$have_body" = 1 ] || die2 "$verb needs --body or --body-file"
+      if [ -n "$body_file" ]; then
+        [ -r "$body_file" ] && [ -f "$body_file" ] || die2 "--body-file is not a readable file"
+        [ -s "$body_file" ] || die2 "the body is empty"
+      else
+        [ -n "$body" ] || die2 "the body is empty"
+      fi ;;
+  esac
+fi
+
+# shellcheck source=bin/lib/tracker.sh
+. "$TRK_BIN/lib/tracker.sh" || { printf 'trk: cannot load the tracker contract\n' >&2; exit 1; }
+# shellcheck source=bin/lib/untrusted-input.sh
+. "$TRK_BIN/lib/untrusted-input.sh" || { printf 'trk: cannot load the untrusted-input wrapper\n' >&2; exit 1; }
+
+# Kind and context are read live: under TRK_DRY=1 the contract reads no row
+# and would route a Linear project to GitHub. Only the verb is dry.
+TRK_DRY=0
+if ! tracker_context "$project" trk; then
+  printf 'trk: no tracker context for %s (missing: %s)\n' "$project" "${TRK_CTX_MISSING:-unknown}" >&2
+  exit 1
+fi
+TRK_DRY="$dry"
+TRK_LOG="${TRK_LOG-$HARNESS/logs/trk.log}"
+TRK_ERR="${TRK_ERR:-}"
+
+tmp=""
+cleanup() { [ -z "$tmp" ] || rm -f "$tmp"; }
+trap cleanup EXIT
+if [ "$have_body" = 1 ] && [ -z "$body_file" ]; then
+  tmp=$(mktemp "${TMPDIR:-/tmp}/trk-body.XXXXXX") || { printf 'trk: cannot write a temp file\n' >&2; exit 1; }
+  printf '%s' "$body" > "$tmp" || exit 1
+  body_file="$tmp"
+fi
+
+# fail <rc> — the stderr line for a non-zero contract rc, then exit with it.
+fail() {
+  case "$1" in
+    3) printf 'trk: %s is not supported by %s\n' "$verb" "${TRK_ADAPTER:-this tracker}" >&2 ;;
+    44) printf 'trk: label %s was not on %s\n' "$arg" "$id" >&2 ;;
+    75) printf 'trk: rate limited, retry later; this is not "absent"\n' >&2 ;;
+    *) printf 'trk: %s %s failed (rc %s)\n' "$verb" "${id:-$project}" "$1" >&2 ;;
+  esac
+  exit "$1"
+}
+
+# print_read <ticket json> — the read format: header lines, then one
+# ui_wrap block for the title + body and one per comment.
+print_read() {
+  local t="$1" n i
+  printf '%s' "$t" | jq -r '
+    "id: \(.id)", "key: \(.key)", "status: \(.status)",
+    "labels: \((.labels // []) | join(", "))",
+    "waitingOn: \(.waitingOn)", "triageVerdict: \(.triageVerdict)", "url: \(.url)"' || return 1
+  printf '\n'
+  { printf 'Title: %s\n\n' "$(printf '%s' "$t" | jq -r '.title // ""')"
+    printf '%s' "$t" | jq -j '.body // ""'; } | ui_wrap ticket-body || return 1
+  n=$(printf '%s' "$t" | jq -r '(.comments // []) | length') || return 1
+  printf '\ncomments: %s\n' "$n"
+  for ((i = 0; i < n; i++)); do
+    printf '%s' "$t" | jq -r --argjson i "$i" --argjson n "$n" \
+      '.comments[$i] | "--- comment \($i + 1) of \($n) (\(.createdAt)\(if .internal == true then ", internal" else "" end))"' || return 1
+    { printf 'author: %s\n\n' "$(printf '%s' "$t" | jq -r --argjson i "$i" '.comments[$i].author // "unknown"')"
+      printf '%s' "$t" | jq -j --argjson i "$i" '.comments[$i].body // ""'; } | ui_wrap ticket-thread || return 1
+  done
+}
+
+rc=0
+case "$verb" in
+  list)
+    out=$(tracker_list ${list_args[@]+"${list_args[@]}"}) || fail $?
+    printf '%s\n' "$out"
+    exit 0 ;;
+  read)
+    t=$(tracker_read "$id") || fail $?
+    print_read "$t" || { printf 'trk: read %s: the ticket did not parse\n' "$id" >&2; exit 1; }
+    exit 0 ;;
+  comment)      tracker_comment "$id" "$body_file" || rc=$? ;;
+  transition)   tracker_transition "$id" "$arg" || rc=$? ;;
+  label-add)    tracker_label_add "$id" "$arg" || rc=$? ;;
+  label-remove) tracker_label_remove "$id" "$arg" || rc=$? ;;
+  link-pr)      tracker_link_pr "$id" "$arg" || rc=$? ;;
+  close-out)
+    if [ -n "$status" ]; then tracker_close_out "$id" "$body_file" "$status" || rc=$?
+    else tracker_close_out "$id" "$body_file" || rc=$?; fi ;;
+esac
+[ "$rc" = 0 ] || fail "$rc"
+if [ "$TRK_DRY" = 1 ]; then printf 'trk: %s %s dry run, nothing sent\n' "$verb" "$id"
+else printf 'trk: %s %s ok\n' "$verb" "$id"; fi
+exit 0

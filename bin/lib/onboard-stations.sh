@@ -91,7 +91,7 @@ obs_register() {
 # _obs_prompt_render — step 2: render prompts/<project>.md and show the
 # crontab preview.
 _obs_prompt_render() {
-  local CONTEXT BOX_ID CRON_PREVIEW LINES
+  local CONTEXT BOX_ID CRON_PREVIEW LINES TRK_KIND
   local prefix_lc="${PREFIX_LC:-$(echo "$PREFIX" | tr '[:upper:]' '[:lower:]')}"
   echo "== prompt =="
   if [ -f "prompts/$PROJECT.md" ]; then
@@ -100,13 +100,41 @@ _obs_prompt_render() {
     CONTEXT=""
     if [ -n "${CONTEXT_FILE:-}" ]; then CONTEXT=$(cat "$CONTEXT_FILE") || return 1; fi
     export CONTEXT
+    # A jira or linear project gets the bin/trk command block in place of the
+    # GitHub Issues one (BH-8450). Any other kind, or no answer, renders as before.
+    if ! command -v tracker_kind >/dev/null 2>&1; then
+      # shellcheck source=bin/lib/tracker.sh
+      . bin/lib/tracker.sh 2>/dev/null || true
+    fi
+    TRK_KIND=""
+    if command -v tracker_kind >/dev/null 2>&1; then
+      TRK_KIND=$(HARNESS="${HARNESS:-$PWD}" tracker_kind "$PROJECT" 2>/dev/null) || TRK_KIND=""
+    fi
+    export TRK_KIND
     python3 - "$PROJECT" "$SLUG" "$PROD" "$PREFIX" "$prefix_lc" "$BASE" <<'PY' || return 1
 import sys, os
 project, slug, prod, prefix, prefix_lc, base = sys.argv[1:7]
 t = open('prompts/TEMPLATE-GH.md').read()
 # drop the template header note
 lines = t.split('\n')
-lines[0] = f'# Triage run — {project} (GitHub Issues board)'
+kind = os.environ.get('TRK_KIND', '')
+names = {'jira': 'Jira', 'linear': 'Linear'}
+if kind in names:
+    lines[0] = f'# Triage run — {project} ({names[kind]} tracker)'
+    starts = [i for i, l in enumerate(lines) if l.startswith('This project\'s "board" is **GitHub Issues')]
+    ends = [i for i, l in enumerate(lines) if l.startswith('- Close on shipped:')]
+    if len(starts) != 1 or len(ends) != 1 or ends[0] < starts[0]:
+        sys.stderr.write('render: TEMPLATE-GH.md has no single GitHub command block to replace\n')
+        sys.exit(1)
+    try:
+        frag = open('prompts/_template/trk-commands.md').read().rstrip('\n')
+    except OSError:
+        sys.stderr.write('render: prompts/_template/trk-commands.md is missing\n')
+        sys.exit(1)
+    frag = frag.replace('<TRACKER_NAME>', names[kind])
+    lines[starts[0]:ends[0] + 1] = frag.split('\n')
+else:
+    lines[0] = f'# Triage run — {project} (GitHub Issues board)'
 t = '\n'.join(lines)
 ctx = os.environ.get('CONTEXT','').strip()
 t = t.replace('<CONTEXT>', ctx if ctx else '')
@@ -116,7 +144,10 @@ for a,b in [('<PROJECT>',project),('<REPO_SLUG>',slug),('<PROD_URL>',prod),
     t = t.replace(a,b)
 open(f'prompts/{project}.md','w').write(t)
 PY
-    echo "prompts/$PROJECT.md rendered"
+    case "$TRK_KIND" in
+      jira|linear) echo "prompts/$PROJECT.md rendered (trk commands, tracker $TRK_KIND)" ;;
+      *) echo "prompts/$PROJECT.md rendered" ;;
+    esac
   fi
 
   echo "== crontab =="
