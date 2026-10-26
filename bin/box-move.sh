@@ -9,14 +9,16 @@
 #   bin/box-move.sh seed <oldbox> <newbox> [<ts>|latest]
 #   bin/box-move.sh tick <oldbox> <newbox>
 #   bin/box-move.sh proof <oldbox> <newbox>
+#   bin/box-move.sh cutover --step B1|B2|B3|B4|B5 [--confirm] [--force-drain] <oldbox> <newbox>
+#   bin/box-move.sh rollback [--confirm] [--force-drain] <oldbox> <newbox>
 #
 # <oldbox> and <newbox> are fleet box names (box-project-6-os-1,
 # box-mkfly). The old box id, address and projects come from the rows
 # (bin/fleet-conf.sh --boxes-with-roles, --tailnet-ip-of-box, --projects-on-box;
 # REGISTRY_SOURCE=db reads the D1 registry), never from a file on the old box.
 # The new machine keeps the old box id, so render-cron.sh <box id> renders the
-# old box's crontab there. This slice writes no fleet row, no crontab and no
-# file on the old box.
+# old box's crontab there. Only cutover and rollback write a fleet row (through
+# bin/registry.sh), a crontab or a file on the old box.
 #
 # inventory  names only: the rows, the old box's active crontab line count, the
 #            rendered line count, the env file and KEY names on the old box,
@@ -36,11 +38,26 @@
 #            on the new box; the table is copied to
 #            state/box-move/<newbox>/tick-<ts>.tsv with its summary line in
 #            tick-<ts>.summary. Exit 4 when the tick rc is not 0 or no
-#            tick-file line came back. --real is refused (exit 2): this slice
-#            has no cut-over step to run it in.
+#            tick-file line came back. --real is refused (exit 2): only
+#            cutover --step B5 runs a real tick.
 # proof      on the new box: load1 load5 load15 nproc load5_per_vcpu, the
 #            active crontab line count, flags/all-off; the newest tick summary
 #            on the hub; the projects the rows put on each box. Read-only.
+# cutover    one step per run (bin/lib/box-move/cutover.sh): B1 preflight on
+#            the newest no-write tick, B2 stop the old box (save its crontab
+#            and rows on the hub, crontab -r, drain), B3 copy (forced backup,
+#            seed from it, old box all-off), B4 rows (registry.sh add-box and
+#            move-project; REGISTRY_SOURCE=db), B5 start the new box
+#            (split-brain check, hub-move.sh tick --real, update-runners.sh).
+#            A step refuses (exit 3) unless the step before it is ok in
+#            state/box-move/<newbox>/steps.tsv. Without --confirm a step prints
+#            WOULD RUN and changes nothing.
+# rollback   one command: stop the new box (local all-off, crontab -r, drain),
+#            move the saved projects back and set the new box role retired
+#            (only when B4 ran), clear the old box flags and install the saved
+#            old crontab. Without --confirm it prints WOULD RUN.
+#            --force-drain (cutover B2, rollback) skips the drain wait; for
+#            rollback it also takes an unreachable new box as stopped.
 #
 # Knobs (env, operator-run, no lane row; the value after each name is the
 # fallback): BOX_MOVE_APP (<newbox>), BOX_MOVE_REGION (iad), BOX_MOVE_VM_SIZE
@@ -53,7 +70,12 @@
 # BOX_MOVE_SSH_DIR ($HOME/.ssh, the hub keys), BOX_MOVE_PROC_LOADAVG
 # (/proc/loadavg on the new box) and BOX_MOVE_NPROC (the new box's nproc) for
 # proof. HUB_MOVE_REACH_HOST, when set, is passed to the tick; else the old
-# box address is.
+# box address is. Cutover: BOX_MOVE_DRAIN_TIMEOUT_S (1800, the hub-move
+# drain default), BOX_MOVE_TICK_MAX_AGE_S (86400, the hub-move C1 window: the
+# oldest no-write tick B1 accepts), BOX_MOVE_B1_ALLOW (empty; a comma list of
+# lane ids whose failure B1 accepts, an id covers its ~N duplicates). B4 and
+# rollback read REGISTRY_SOURCE, REGISTRY_ADMIN_TOKEN and HARNESS_SECRET from
+# the environment.
 #
 # Exit: 0 done; 2 usage or a bad knob (nothing done); 3 preflight refused
 # (nothing done, one stderr line, one alert-line row box-move-preflight); 4 a
@@ -74,6 +96,10 @@ HARNESS="${HARNESS:-/root/harness}"
 . "$SELF_DIR/lib/box-move/provision.sh" || exit 2
 # shellcheck source=bin/lib/box-move/seed.sh
 . "$SELF_DIR/lib/box-move/seed.sh" || exit 2
+# shellcheck source=bin/lib/hub-move-reach.sh
+. "$SELF_DIR/lib/hub-move-reach.sh" || exit 2
+# shellcheck source=bin/lib/box-move/cutover.sh
+. "$SELF_DIR/lib/box-move/cutover.sh" || exit 2
 
 BIN="$SELF_DIR"
 BM_TH="${BOX_MOVE_TARGET_HARNESS:-/root/harness}"
@@ -86,7 +112,7 @@ BM_CHECKOUT="${HARNESS_CHECKOUT:-/root/harness-checkout}"
 BM_IDLE_SIGNALS="$SELF_DIR/../catalog/fly-idle-signals.json"
 BM_VOLUME_NAME=box_data
 
-usage() { sed -n '6,11p' "$0" | sed 's/^# \{0,1\}//' >&2; exit 2; }
+usage() { sed -n '6,13p' "$0" | sed 's/^# \{0,1\}//' >&2; exit 2; }
 
 # ---- sandbox guard (as bin/hub-move.sh's) ------------------------------------
 sandbox_guard() {
@@ -114,7 +140,7 @@ sandbox_guard() {
 
 check_knobs() {
   local k
-  for k in BM_MEM_MB BM_VOLUME_GB BM_TS_POLL_S BM_SSH_CONNECT_TIMEOUT_S; do
+  for k in BM_MEM_MB BM_VOLUME_GB BM_TS_POLL_S BM_SSH_CONNECT_TIMEOUT_S BM_DRAIN_TIMEOUT_S BM_TICK_MAX_AGE_S; do
     bm_is_posint "${!k}" || { echo "box-move: BOX_MOVE_${k#BM_}='${!k}' is not a positive integer" >&2; exit 2; }
   done
   bm_is_uint "$BM_TS_WAIT_S" || { echo "box-move: BOX_MOVE_TS_WAIT_S='$BM_TS_WAIT_S' is not a whole number" >&2; exit 2; }
@@ -122,6 +148,9 @@ check_knobs() {
   for k in BM_APP BM_REGION BM_VM_SIZE BM_TS_HOSTNAME; do
     bm_is_name "${!k}" || { echo "box-move: BOX_MOVE_${k#BM_}='${!k}' is not a valid name" >&2; exit 2; }
   done
+  if [ -n "$BM_B1_ALLOW" ] && { [[ "$BM_B1_ALLOW" == *$'\n'* ]] || ! grep -qE '^[A-Za-z0-9._~-]+(,[A-Za-z0-9._~-]+)*$' <<<"$BM_B1_ALLOW"; }; then
+    echo "box-move: BOX_MOVE_B1_ALLOW='$BM_B1_ALLOW' is not a comma list of lane ids" >&2; exit 2
+  fi
   if [ -n "$BM_REACH" ] && { [[ "$BM_REACH" == *$'\n'* ]] || ! grep -qE '^[A-Za-z0-9][A-Za-z0-9._:-]*$' <<<"$BM_REACH"; }; then
     echo "box-move: HUB_MOVE_REACH_HOST='$BM_REACH' is not a host name or address" >&2; exit 2
   fi
@@ -225,20 +254,29 @@ cmd_proof() {
 # ==== main =====================================================================
 sandbox_guard || exit 2
 VERB="${1:-}"; [ $# -gt 0 ] && shift
-PLAN=0; REAL=0; POS=()
-for a in "$@"; do
-  case "$a" in
+PLAN=0; REAL=0; CONFIRM=0; FORCE_DRAIN=0; STEP=""; POS=()
+while [ $# -gt 0 ]; do
+  case "$1" in
     --plan) PLAN=1 ;;
     --real) REAL=1 ;;
+    --confirm) CONFIRM=1 ;;
+    --force-drain) FORCE_DRAIN=1 ;;
+    --step) [ $# -ge 2 ] || usage; STEP="$2"; shift ;;
     -*) usage ;;
-    *) POS+=("$a") ;;
+    *) POS+=("$1") ;;
   esac
+  shift
 done
-case "$VERB" in inventory|provision|seed|tick|proof) ;; *) usage ;; esac
+case "$VERB" in inventory|provision|seed|tick|proof|cutover|rollback) ;; *) usage ;; esac
 [ "$PLAN" -eq 0 ] || [ "$VERB" = provision ] || usage
+case "$VERB" in
+  cutover) case "$STEP" in B1|B2|B3|B4|B5) ;; *) usage ;; esac ;;
+  rollback) [ -z "$STEP" ] || usage ;;
+  *) [ -z "$STEP" ] && [ "$CONFIRM" -eq 0 ] && [ "$FORCE_DRAIN" -eq 0 ] || usage ;;
+esac
 if [ "$REAL" -eq 1 ]; then
   [ "$VERB" = tick ] || usage
-  echo "box-move: tick --real runs only inside cutover (C1); this slice (C0) has no cutover step" >&2
+  echo "box-move: tick --real runs only inside cutover --step B5" >&2
   exit 2
 fi
 if [ "$VERB" = seed ]; then
@@ -262,25 +300,33 @@ BM_SSH_CONNECT_TIMEOUT_S="${BOX_MOVE_SSH_CONNECT_TIMEOUT_S:-15}"
 BM_LOADAVG="${BOX_MOVE_PROC_LOADAVG:-/proc/loadavg}"
 BM_NPROC="${BOX_MOVE_NPROC:-}"
 BM_REACH="${HUB_MOVE_REACH_HOST:-}"
+BM_DRAIN_TIMEOUT_S="${BOX_MOVE_DRAIN_TIMEOUT_S:-1800}"
+BM_TICK_MAX_AGE_S="${BOX_MOVE_TICK_MAX_AGE_S:-86400}"
+BM_B1_ALLOW="${BOX_MOVE_B1_ALLOW:-}"
 check_knobs
 BM_SSH_OPTS=(-o BatchMode=yes -o "ConnectTimeout=$BM_SSH_CONNECT_TIMEOUT_S" -o StrictHostKeyChecking=accept-new)
 BM_STATE="$HARNESS/state/box-move/$NEW"
 BM_TJ="$BM_STATE/target.json"
 
+LOCK=0
 case "$VERB" in
-  provision|seed|tick)
-    # Dedupe, never a queue: a held lock means another run is on this box.
-    # --plan writes nothing, so it takes no lock.
-    if [ "$PLAN" -eq 0 ]; then
-      mkdir -p "$HARNESS/locks" 2>/dev/null
-      exec 9>"$HARNESS/locks/box-move-$NEW.lock" || bm_fail "cannot open locks/box-move-$NEW.lock"
-      flock -n 9 || { echo "box-move: already running (locks/box-move-$NEW.lock held)"; exit 0; }
-    fi ;;
+  provision|seed|tick) [ "$PLAN" -eq 0 ] && LOCK=1 ;;
+  cutover|rollback) [ "$CONFIRM" -eq 1 ] && LOCK=1 ;;
 esac
+# Dedupe, never a queue: a held lock means another run is on this box. --plan
+# and a cutover or rollback without --confirm write nothing, so they take no
+# lock.
+if [ "$LOCK" -eq 1 ]; then
+  mkdir -p "$HARNESS/locks" 2>/dev/null
+  exec 9>"$HARNESS/locks/box-move-$NEW.lock" || bm_fail "cannot open locks/box-move-$NEW.lock"
+  flock -n 9 || { echo "box-move: already running (locks/box-move-$NEW.lock held)"; exit 0; }
+fi
 case "$VERB" in
   inventory) cmd_inventory "$OLD" "$NEW" ;;
   provision) bm_provision "$PLAN" "$OLD" "$NEW" ;;
   seed)      bm_seed "${POS[2]:-latest}" "$OLD" "$NEW" ;;
   tick)      cmd_tick "$OLD" ;;
   proof)     cmd_proof "$OLD" "$NEW" ;;
+  cutover)   bm_cutover "$STEP" "$CONFIRM" "$FORCE_DRAIN" "$OLD" "$NEW" ;;
+  rollback)  bm_rollback "$CONFIRM" "$FORCE_DRAIN" "$OLD" "$NEW" ;;
 esac

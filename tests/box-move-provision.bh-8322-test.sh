@@ -112,14 +112,14 @@ for w in "app=$BM_NEW" "region=iad" "vm_size=performance-4x" "mem_mb=8192" "volu
   has "K2 default $w" "$out" "$w"
 done
 bm_newcase k3
-for v in frobnicate cutover rollback ""; do
+for v in frobnicate cutover ""; do
   bm $v "$BM_OLD" "$BM_NEW" >/dev/null 2>&1; check "K3-verb-[$v]-rc" "$?" 2
 done
 bm provision "$BM_OLD" >/dev/null 2>&1; check K3-one-box-rc "$?" 2
 bm provision --nope "$BM_OLD" "$BM_NEW" >/dev/null 2>&1; check K3-bad-flag-rc "$?" 2
 usage_out=$(bm 2>&1)
-hasnt K3-usage-no-cutover "$usage_out" cutover
-hasnt K3-usage-no-rollback "$usage_out" rollback
+has K3-usage-cutover "$usage_out" "cutover --step"
+has K3-usage-rollback "$usage_out" "rollback [--confirm]"
 has K3-usage-tick "$usage_out" "tick <oldbox> <newbox>"
 check K3-no-vendor-call "$(wc -l < "$VC")" 0
 bm_newcase k4
