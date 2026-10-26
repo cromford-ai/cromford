@@ -293,7 +293,9 @@ grep -q 'unit (4848) \[check\]: failure https://github.com/o/tproj/runs/21' <<<"
   || bad "T3w the brief must carry each live check state with its run URL: $OUT"
 grep -q 'CI \[workflow\]: success https://github.com/o/tproj/actions/runs/11' <<<"$OUT" && ok \
   || bad "T3w the brief must carry the workflow run too: $OUT"
-grep -q "CI on ${NEW:0:12}: RED" <<<"$(body)" && ok || bad "T3w the body block must be refreshed to the live (red) state even when the round runs"
+# BH-8339: the body is written only after a push that landed (br_preflight_after_push, T5),
+# so a round that then pushes nothing leaves it as it was. The brief above still carries the live state.
+[ "$(body)" = "$STALE_BODY" ] && [ "$(patches)" = 0 ] && ok || bad "T3w the preflight must not rewrite the body before the round (patches $(patches))"
 
 # T7 — the knob. 0 is today's behaviour: rc 0, no brief, not one GitHub read.
 reset_gh; reset_rec; PRBODY "$NEW" "$STALE_BODY"

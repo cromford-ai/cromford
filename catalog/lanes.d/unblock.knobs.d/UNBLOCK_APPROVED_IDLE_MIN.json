@@ -1,0 +1,12 @@
+{
+  "env": "UNBLOCK_APPROVED_IDLE_MIN",
+  "read_in": "bin/lib/unblock/collectors/queue.sh",
+  "type": "int",
+  "default": 20,
+  "min": 1,
+  "max": 1440,
+  "unit": "minutes",
+  "zero_means": null,
+  "note": "BH-7723 (UNB-1): how long an approved PR sits unqueued before U4 may approve it into the queue. A bad value is the code fallback 20.",
+  "settable": true
+}

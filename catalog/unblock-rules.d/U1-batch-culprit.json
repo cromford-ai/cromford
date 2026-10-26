@@ -1,0 +1,23 @@
+{
+  "id": "U1-batch-culprit",
+  "priority": 10,
+  "family": "queue",
+  "class": "review-block",
+  "cites": ["G2", "G12", "G7"],
+  "note": "A merge batch failed, the batch_failure tool names exactly one culprit, and that culprit is this PR on the head the queue threw out. Post a BLOCK on that head with the failing lines, so the fix round starts from the evidence.",
+  "match": {
+    "kind": "pr-ejected",
+    "all": [
+      ".batch_state == \"failed\"",
+      ".culprit_count == 1",
+      ".culprit == .pr",
+      ".ejected_on_head == true"
+    ]
+  },
+  "action": {
+    "name": "post_block",
+    "args": {"pr": ".pr", "head": ".head", "verdict": "BLOCK", "source": "agent", "lines": ".fail_lines"}
+  },
+  "judge": null,
+  "key": ["repo", "pr", "head"]
+}

@@ -1,0 +1,251 @@
+{
+  "_about": "BH-7723 fixture. Merge batch draft #7699 (2026-10-20): one failed check names bin/remote-results-retention.sh:79, only #7617 touches it. GitHub REST answers by path, the #7714 batch_failure answer by draft, verdict rows (vd_standing TSV) by \"<repo>#<n> <head>\", conductor memory lines, setting rows. Shas are fakes.",
+  "now": "2026-10-20T12:00:00Z",
+  "project": "cromford",
+  "repo": "example-org/cromford",
+  "heads": {
+    "7617": "7617aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "7592": "7592bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "7666": "7666cccccccccccccccccccccccccccccccccccc",
+    "7588": "7588dddddddddddddddddddddddddddddddddddd",
+    "7363": "7363eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+    "7588_older": "7588000000000000000000000000000000000000"
+  },
+  "gh": {
+    "repos/example-org/cromford/pulls?state=closed&sort=updated&direction=desc&per_page=100": [
+      {
+        "number": 7699,
+        "user": {
+          "login": "mergify[bot]"
+        },
+        "head": {
+          "ref": "mergify/merge-queue/7699f1x",
+          "sha": "7699ffffffffffffffffffffffffffffffffffff"
+        },
+        "merged_at": null,
+        "closed_at": "2026-10-20T10:30:00Z",
+        "state": "closed"
+      },
+      {
+        "number": 7650,
+        "user": {
+          "login": "fixture-dev"
+        },
+        "head": {
+          "ref": "ticket/bh-7650",
+          "sha": "7699ffffffffffffffffffffffffffffffffffff"
+        },
+        "merged_at": "2026-10-20T10:00:00Z",
+        "closed_at": "2026-10-20T10:00:00Z",
+        "state": "closed"
+      },
+      {
+        "number": 7601,
+        "user": {
+          "login": "mergify[bot]"
+        },
+        "head": {
+          "ref": "mergify/merge-queue/7601f1x",
+          "sha": "7699ffffffffffffffffffffffffffffffffffff"
+        },
+        "merged_at": null,
+        "closed_at": "2026-10-19T20:00:00Z",
+        "state": "closed"
+      }
+    ],
+    "repos/example-org/cromford/pulls?state=open&per_page=100": [],
+    "repos/example-org/cromford/pulls/7617": {
+      "number": 7617,
+      "state": "open",
+      "merged": false,
+      "draft": false,
+      "head": {
+        "sha": "7617aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "ref": "ticket/bh-7617"
+      },
+      "mergeable_state": "clean",
+      "labels": []
+    },
+    "repos/example-org/cromford/pulls/7592": {
+      "number": 7592,
+      "state": "open",
+      "merged": false,
+      "draft": false,
+      "head": {
+        "sha": "7592bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "ref": "ticket/bh-7592"
+      },
+      "mergeable_state": "clean",
+      "labels": []
+    },
+    "repos/example-org/cromford/pulls/7666": {
+      "number": 7666,
+      "state": "open",
+      "merged": false,
+      "draft": false,
+      "head": {
+        "sha": "7666cccccccccccccccccccccccccccccccccccc",
+        "ref": "ticket/bh-7666"
+      },
+      "mergeable_state": "clean",
+      "labels": []
+    },
+    "repos/example-org/cromford/pulls/7588": {
+      "number": 7588,
+      "state": "open",
+      "merged": false,
+      "draft": false,
+      "head": {
+        "sha": "7588dddddddddddddddddddddddddddddddddddd",
+        "ref": "ticket/bh-7588"
+      },
+      "mergeable_state": "clean",
+      "labels": []
+    },
+    "repos/example-org/cromford/pulls/7363": {
+      "number": 7363,
+      "state": "open",
+      "merged": false,
+      "draft": false,
+      "head": {
+        "sha": "7363eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        "ref": "ticket/bh-7363"
+      },
+      "mergeable_state": "clean",
+      "labels": []
+    }
+  },
+  "batch_failure": {
+    "7699": {
+      "draft": 7699,
+      "head_sha": "7699ffffffffffffffffffffffffffffffffffff",
+      "members": [
+        7617,
+        7592,
+        7666,
+        7588,
+        7363
+      ],
+      "batch_state": "failed",
+      "dead_shards": [],
+      "failed_checks": [
+        {
+          "name": "Syntax + shellcheck + config integrity",
+          "lines": [
+            "In bin/remote-results-retention.sh line 79:",
+            "bin/remote-results-retention.sh:79:3: error: Couldn't parse this test expression. [SC1073]"
+          ],
+          "paths": [
+            "bin/remote-results-retention.sh"
+          ],
+          "culprits": [
+            7617
+          ]
+        }
+      ],
+      "culprits": [
+        7617
+      ],
+      "culprit_unknown": false,
+      "prs": [
+        {
+          "pr": 7617,
+          "role": "culprit",
+          "state": "open",
+          "merged": false,
+          "head_sha": "7617aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "files": [
+            "bin/remote-results-retention.sh",
+            "tests/remote-results-retention.bh-7617-test.sh"
+          ],
+          "files_complete": true,
+          "head_ci": "success",
+          "verdict": "MERGE",
+          "culprit": true
+        },
+        {
+          "pr": 7592,
+          "role": "bystander",
+          "state": "open",
+          "merged": false,
+          "head_sha": "7592bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "files": [
+            "bin/lib/review-pool.sh"
+          ],
+          "files_complete": true,
+          "head_ci": "success",
+          "verdict": "MERGE",
+          "culprit": false
+        },
+        {
+          "pr": 7666,
+          "role": "bystander",
+          "state": "open",
+          "merged": false,
+          "head_sha": "7666cccccccccccccccccccccccccccccccccccc",
+          "files": [
+            "docs/notes/2026-10-20-BH-7659-x.md"
+          ],
+          "files_complete": true,
+          "head_ci": "success",
+          "verdict": "MERGE",
+          "culprit": false
+        },
+        {
+          "pr": 7588,
+          "role": "bystander",
+          "state": "open",
+          "merged": false,
+          "head_sha": "7588dddddddddddddddddddddddddddddddddddd",
+          "files": [
+            "bin/lib/mc/classify.sh"
+          ],
+          "files_complete": true,
+          "head_ci": "success",
+          "verdict": "MERGE",
+          "culprit": false
+        },
+        {
+          "pr": 7363,
+          "role": "bystander",
+          "state": "open",
+          "merged": false,
+          "head_sha": "7363eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+          "files": [
+            "console-ui/src/lib/x.ts"
+          ],
+          "files_complete": true,
+          "head_ci": "success",
+          "verdict": "MERGE",
+          "culprit": false
+        }
+      ],
+      "requeue_candidates": [
+        7592,
+        7666,
+        7588,
+        7363
+      ],
+      "complete": true,
+      "partial": []
+    }
+  },
+  "verdicts": {
+    "example-org/cromford#7617 7617aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa": "MERGE\tlead\t9101\t2026-10-20T08:00:00Z\t-\tlead",
+    "example-org/cromford#7592 7592bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb": "MERGE\tlead\t9102\t2026-10-20T08:10:00Z\t-\tlead",
+    "example-org/cromford#7666 7666cccccccccccccccccccccccccccccccccccc": "MERGE-WITH-NOTES\tlead\t9103\t2026-10-20T08:20:00Z\t-\tlead",
+    "example-org/cromford#7588 7588dddddddddddddddddddddddddddddddddddd": "MERGE\tlead\t9104\t2026-10-20T08:30:00Z\t-\tlead",
+    "example-org/cromford#7363 7363eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee": "MERGE\tlead\t9105\t2026-10-20T08:40:00Z\t-\tlead"
+  },
+  "verdicts_older_head": {
+    "example-org/cromford#7588 7588000000000000000000000000000000000000": "MERGE\tlead\t9004\t2026-10-19T08:30:00Z\t-\tlead"
+  },
+  "attempts": [
+    "ejected example-org/cromford#7617 7617aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "ejected example-org/cromford#7592 7592bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "ejected example-org/cromford#7666 7666cccccccccccccccccccccccccccccccccccc",
+    "ejected example-org/cromford#7588 7588dddddddddddddddddddddddddddddddddddd",
+    "ejected example-org/cromford#7363 7363eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+  ],
+  "settings": {}
+}

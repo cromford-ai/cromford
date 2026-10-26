@@ -1,0 +1,248 @@
+{
+  "_about": "BH-7723 fixture. Merge batch drafts #7612 and #7613 (2026-10-19): both died on shards cancelled or timed out at 45 min, no culprit. Every member is green on its head except #7604 (head_ci failure). Shas are fakes.",
+  "now": "2026-10-19T23:00:00Z",
+  "project": "cromford",
+  "repo": "example-org/cromford",
+  "heads": {
+    "7590": "7590aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "7595": "7595bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "7600": "7600cccccccccccccccccccccccccccccccccccc",
+    "7604": "7604dddddddddddddddddddddddddddddddddddd"
+  },
+  "gh": {
+    "repos/example-org/cromford/pulls?state=closed&sort=updated&direction=desc&per_page=100": [
+      {
+        "number": 7613,
+        "user": {
+          "login": "mergify[bot]"
+        },
+        "head": {
+          "ref": "mergify/merge-queue/7613f1x",
+          "sha": "7613ffffffffffffffffffffffffffffffffffff"
+        },
+        "merged_at": null,
+        "closed_at": "2026-10-19T21:40:00Z",
+        "state": "closed"
+      },
+      {
+        "number": 7612,
+        "user": {
+          "login": "mergify[bot]"
+        },
+        "head": {
+          "ref": "mergify/merge-queue/7612f1x",
+          "sha": "7612eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+        },
+        "merged_at": null,
+        "closed_at": "2026-10-19T20:50:00Z",
+        "state": "closed"
+      }
+    ],
+    "repos/example-org/cromford/pulls?state=open&per_page=100": [],
+    "repos/example-org/cromford/pulls/7590": {
+      "number": 7590,
+      "state": "open",
+      "merged": false,
+      "draft": false,
+      "head": {
+        "sha": "7590aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "ref": "ticket/bh-7590"
+      },
+      "mergeable_state": "clean",
+      "labels": []
+    },
+    "repos/example-org/cromford/pulls/7595": {
+      "number": 7595,
+      "state": "open",
+      "merged": false,
+      "draft": false,
+      "head": {
+        "sha": "7595bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "ref": "ticket/bh-7595"
+      },
+      "mergeable_state": "clean",
+      "labels": []
+    },
+    "repos/example-org/cromford/pulls/7600": {
+      "number": 7600,
+      "state": "open",
+      "merged": false,
+      "draft": false,
+      "head": {
+        "sha": "7600cccccccccccccccccccccccccccccccccccc",
+        "ref": "ticket/bh-7600"
+      },
+      "mergeable_state": "clean",
+      "labels": []
+    },
+    "repos/example-org/cromford/pulls/7604": {
+      "number": 7604,
+      "state": "open",
+      "merged": false,
+      "draft": false,
+      "head": {
+        "sha": "7604dddddddddddddddddddddddddddddddddddd",
+        "ref": "ticket/bh-7604"
+      },
+      "mergeable_state": "clean",
+      "labels": []
+    }
+  },
+  "batch_failure": {
+    "7612": {
+      "draft": 7612,
+      "head_sha": "7612eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+      "members": [
+        7590,
+        7595
+      ],
+      "batch_state": "dead_shards",
+      "dead_shards": [
+        "tests (shard 3/8)",
+        "tests (shard 5/8)"
+      ],
+      "failed_checks": [
+        {
+          "name": "tests (shard 3/8)",
+          "lines": [
+            "The job running on runner fixture-runner-3 has exceeded the maximum execution time of 45 minutes."
+          ],
+          "paths": [],
+          "culprits": [],
+          "conclusion": "timed_out"
+        },
+        {
+          "name": "tests (shard 5/8)",
+          "lines": [
+            "The operation was canceled."
+          ],
+          "paths": [],
+          "culprits": [],
+          "conclusion": "cancelled"
+        }
+      ],
+      "culprits": [],
+      "culprit_unknown": false,
+      "prs": [
+        {
+          "pr": 7590,
+          "role": "member",
+          "state": "open",
+          "merged": false,
+          "head_sha": "7590aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "files": [
+            "bin/lib/x-7590.sh"
+          ],
+          "files_complete": true,
+          "head_ci": "success",
+          "verdict": "MERGE",
+          "culprit": false
+        },
+        {
+          "pr": 7595,
+          "role": "member",
+          "state": "open",
+          "merged": false,
+          "head_sha": "7595bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "files": [
+            "bin/lib/x-7595.sh"
+          ],
+          "files_complete": true,
+          "head_ci": "success",
+          "verdict": "MERGE",
+          "culprit": false
+        }
+      ],
+      "requeue_candidates": [
+        7590,
+        7595
+      ],
+      "complete": true,
+      "partial": []
+    },
+    "7613": {
+      "draft": 7613,
+      "head_sha": "7613ffffffffffffffffffffffffffffffffffff",
+      "members": [
+        7600,
+        7604
+      ],
+      "batch_state": "dead_shards",
+      "dead_shards": [
+        "tests (shard 3/8)",
+        "tests (shard 5/8)"
+      ],
+      "failed_checks": [
+        {
+          "name": "tests (shard 3/8)",
+          "lines": [
+            "The job running on runner fixture-runner-3 has exceeded the maximum execution time of 45 minutes."
+          ],
+          "paths": [],
+          "culprits": [],
+          "conclusion": "timed_out"
+        },
+        {
+          "name": "tests (shard 5/8)",
+          "lines": [
+            "The operation was canceled."
+          ],
+          "paths": [],
+          "culprits": [],
+          "conclusion": "cancelled"
+        }
+      ],
+      "culprits": [],
+      "culprit_unknown": false,
+      "prs": [
+        {
+          "pr": 7600,
+          "role": "member",
+          "state": "open",
+          "merged": false,
+          "head_sha": "7600cccccccccccccccccccccccccccccccccccc",
+          "files": [
+            "bin/lib/x-7600.sh"
+          ],
+          "files_complete": true,
+          "head_ci": "success",
+          "verdict": "MERGE",
+          "culprit": false
+        },
+        {
+          "pr": 7604,
+          "role": "member",
+          "state": "open",
+          "merged": false,
+          "head_sha": "7604dddddddddddddddddddddddddddddddddddd",
+          "files": [
+            "bin/lib/x-7604.sh"
+          ],
+          "files_complete": true,
+          "head_ci": "failure",
+          "verdict": "MERGE",
+          "culprit": false
+        }
+      ],
+      "requeue_candidates": [
+        7600,
+        7604
+      ],
+      "complete": true,
+      "partial": []
+    }
+  },
+  "verdicts": {
+    "example-org/cromford#7590 7590aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa": "MERGE\tlead\t9201\t2026-10-19T18:00:00Z\t-\tlead",
+    "example-org/cromford#7595 7595bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb": "MERGE\tlead\t9202\t2026-10-19T18:05:00Z\t-\tlead",
+    "example-org/cromford#7600 7600cccccccccccccccccccccccccccccccccccc": "MERGE-WITH-NOTES\tlead\t9203\t2026-10-19T18:10:00Z\t-\tlead",
+    "example-org/cromford#7604 7604dddddddddddddddddddddddddddddddddddd": "MERGE\tlead\t9204\t2026-10-19T18:15:00Z\t-\tlead"
+  },
+  "attempts": [
+    "ejected example-org/cromford#7590 7590aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "ejected example-org/cromford#7595 7595bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "ejected example-org/cromford#7600 7600cccccccccccccccccccccccccccccccccccc",
+    "ejected example-org/cromford#7604 7604dddddddddddddddddddddddddddddddddddd"
+  ],
+  "settings": {}
+}

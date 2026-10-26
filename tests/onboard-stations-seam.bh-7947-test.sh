@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # BH-7947 (BH-7934.0): the onboarding station seam bin/lib/onboard-stations.sh.
-# It ships empty: the owner comment, the interface comment, no statement and
-# no function. BH-7934.1 adds the obs_* functions and changes the "no function"
-# check below (it lists this suite under its "Tests that must change").
+# It shipped empty: the owner comment and the interface comment. BH-7934.1
+# filled it with the five obs_* functions, so S8 counts them and S9 checks that
+# a source runs no statement (no output, rc 0, under `set -u`). The function
+# bodies are pinned by tests/onboard-stations.bh-7934-test.sh.
 set -u
 ROOT="$(cd "$(dirname "$0")/.." && pwd)" || exit 1
 SEAM="$ROOT/bin/lib/onboard-stations.sh"
@@ -23,8 +24,11 @@ grep -Eq '^#.*non-zero' "$SEAM" && ok "S6 the return contract is named" || bad "
 # shellcheck disable=SC1090
 out=$(bash -c '. "$1"; rc=$?; declare -F | grep -c " obs_" ; exit "$rc"' _ "$SEAM"); rc=$?
 [ "$rc" -eq 0 ] && ok "S7 a source returns rc 0" || bad "S7 a source returns rc 0 (rc $rc)"
-[ "${out:-0}" = "0" ] && ok "S8 no obs_ function is defined yet" || bad "S8 no obs_ function is defined yet ($out)"
-[ -z "$(grep -Ev '^[[:space:]]*(#|$)' "$SEAM")" ] && ok "S9 the file has no statements" || bad "S9 the file has no statements"
+[ "${out:-0}" = "5" ] && ok "S8 a source defines the 5 obs_ functions" || bad "S8 a source defines the 5 obs_ functions (got ${out:-0})"
+# shellcheck disable=SC1090
+sout=$(bash -c 'set -u; . "$1"' _ "$SEAM" 2>&1); src_rc=$?
+[ "$src_rc" -eq 0 ] && [ -z "$sout" ] && ok "S9 a source under set -u prints nothing and returns 0" \
+  || bad "S9 a source under set -u prints nothing and returns 0 (rc $src_rc, output: $sout)"
 
 [ "$fail" -eq 0 ] && echo "PASS onboard-stations-seam" || echo "FAILED onboard-stations-seam"
 exit "$fail"

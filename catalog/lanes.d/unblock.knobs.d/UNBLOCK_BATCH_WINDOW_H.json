@@ -1,0 +1,12 @@
+{
+  "env": "UNBLOCK_BATCH_WINDOW_H",
+  "read_in": "bin/lib/unblock/collectors/queue.sh",
+  "type": "int",
+  "default": 6,
+  "min": 1,
+  "max": 168,
+  "unit": "hours",
+  "zero_means": null,
+  "note": "BH-7723 (UNB-1): how far back the queue collector reads closed merge-queue batch drafts (closed_at within this window). A bad value is the code fallback 6.",
+  "settable": true
+}

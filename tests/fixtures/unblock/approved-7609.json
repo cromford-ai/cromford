@@ -1,0 +1,144 @@
+{
+  "_about": "BH-7723 fixture. Open PR #7609 (2026-10-20): a lead MERGE-WITH-NOTES row on its head 60 min old, mergeable clean, every check run success, no CHANGES_REQUESTED, no test file in the diff. #7610 is a draft, #7611 is labelled queued, #7620 stands BLOCK. Shas are fakes.",
+  "now": "2026-10-20T12:00:00Z",
+  "project": "cromford",
+  "repo": "example-org/cromford",
+  "heads": {
+    "7609": "7609aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "7620": "7620dddddddddddddddddddddddddddddddddddd"
+  },
+  "gh": {
+    "repos/example-org/cromford/pulls?state=closed&sort=updated&direction=desc&per_page=100": [],
+    "repos/example-org/cromford/pulls?state=open&per_page=100": [
+      {
+        "number": 7609,
+        "state": "open",
+        "draft": false,
+        "head": {
+          "sha": "7609aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "ref": "ticket/bh-7609"
+        },
+        "labels": [
+          {
+            "name": "ready"
+          }
+        ]
+      },
+      {
+        "number": 7610,
+        "state": "open",
+        "draft": true,
+        "head": {
+          "sha": "7610bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "ref": "ticket/bh-7610"
+        },
+        "labels": []
+      },
+      {
+        "number": 7611,
+        "state": "open",
+        "draft": false,
+        "head": {
+          "sha": "7611cccccccccccccccccccccccccccccccccccc",
+          "ref": "ticket/bh-7611"
+        },
+        "labels": [
+          {
+            "name": "queued"
+          }
+        ]
+      },
+      {
+        "number": 7620,
+        "state": "open",
+        "draft": false,
+        "head": {
+          "sha": "7620dddddddddddddddddddddddddddddddddddd",
+          "ref": "ticket/bh-7620"
+        },
+        "labels": []
+      }
+    ],
+    "repos/example-org/cromford/pulls/7609": {
+      "number": 7609,
+      "state": "open",
+      "merged": false,
+      "draft": false,
+      "head": {
+        "sha": "7609aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "ref": "ticket/bh-7609"
+      },
+      "mergeable_state": "clean",
+      "labels": []
+    },
+    "repos/example-org/cromford/pulls/7620": {
+      "number": 7620,
+      "state": "open",
+      "merged": false,
+      "draft": false,
+      "head": {
+        "sha": "7620dddddddddddddddddddddddddddddddddddd",
+        "ref": "ticket/bh-7620"
+      },
+      "mergeable_state": "clean",
+      "labels": []
+    },
+    "repos/example-org/cromford/commits/7609aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/check-runs?per_page=100": {
+      "total_count": 3,
+      "check_runs": [
+        {
+          "name": "lint",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "tests (shard 1/8)",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "Syntax + shellcheck + config integrity",
+          "status": "completed",
+          "conclusion": "success"
+        }
+      ]
+    },
+    "repos/example-org/cromford/pulls/7609/reviews?per_page=100": [
+      {
+        "id": 1,
+        "user": {
+          "login": "fixture-dev"
+        },
+        "state": "COMMENTED",
+        "submitted_at": "2026-10-20T10:00:00Z"
+      },
+      {
+        "id": 2,
+        "user": {
+          "login": "fixture-lead"
+        },
+        "state": "APPROVED",
+        "submitted_at": "2026-10-20T10:30:00Z"
+      }
+    ],
+    "repos/example-org/cromford/pulls/7609/files?per_page=100": [
+      {
+        "filename": "bin/lib/review-pool.sh",
+        "status": "modified"
+      },
+      {
+        "filename": "docs/notes/2026-10-20-BH-7609-x.md",
+        "status": "added"
+      }
+    ]
+  },
+  "batch_failure": {},
+  "verdicts": {
+    "example-org/cromford#7609 7609aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa": "MERGE-WITH-NOTES\tlead\t9301\t2026-10-20T11:00:00Z\t-\tlead",
+    "example-org/cromford#7620 7620dddddddddddddddddddddddddddddddddddd": "BLOCK\tlead\t9302\t2026-10-20T09:00:00Z\t-\tlead"
+  },
+  "attempts": [],
+  "settings": {
+    "unblock.standing_approval.cromford": "1"
+  }
+}

@@ -1,0 +1,25 @@
+{
+  "id": "U4-standing-approval",
+  "priority": 40,
+  "family": "queue",
+  "class": "queue-approve",
+  "cites": ["G1", "G16", "G9"],
+  "note": "The project has a standing approval row (unblock.standing_approval.<project> = 1). A MERGE or MERGE-WITH-NOTES verdict stands on the head for at least the idle window, the PR is mergeable, every check is green and no CHANGES_REQUESTED is open. Approve it into the queue. A diff that touches tests goes to the test-weakening judge first.",
+  "match": {
+    "kind": "pr-approved-idle",
+    "all": [
+      ".standing_approval == \"1\"",
+      ".verdict_on_head | test(\"^MERGE\")",
+      ".idle_min >= .approved_idle_min",
+      ".mergeable_state == \"clean\"",
+      ".checks == \"green\"",
+      ".changes_requested_open == false"
+    ]
+  },
+  "action": {
+    "name": "queue_approve",
+    "args": {"pr": ".pr", "head": ".head", "verdict": ".verdict_on_head", "source": "agent"}
+  },
+  "judge": {"prompt": "catalog/prompts/unblock-judge.md", "question": "test-weakening", "when": ".touches_tests == true"},
+  "key": ["repo", "pr", "head"]
+}

@@ -2225,9 +2225,8 @@ br_round_robin() {
 #   br_record_index's row for this candidate's cap key; `-` for either means the
 #   record does not carry it.
 #
-#   ABANDONED is a TICKET-level terminal and br_one already treats it as one for
-#   every row under the cap key, so retiring it is today's behaviour minus the
-#   read.
+#   ABANDONED retires the PR it was about: bpr_retire (BH-8339) reads the url
+#   column, the record's abandoned_url. Its header says which candidates stay.
 #
 #   RESOLVED_MERGED IS NOT, AND THE URL-LESS ARM IS THE TRAP (review B2). The
 #   first cut retired any candidate carrying no url of its own. br_from_builds
@@ -2251,7 +2250,7 @@ br_round_robin() {
 br_finished() {
   local oc="${1:-}" rurl="${2:-}" url="${3:--}" reason="${4:-}"
   case "$oc" in
-    ABANDONED) return 0 ;;
+    ABANDONED) command -v bpr_retire >/dev/null 2>&1 || return 0; bpr_retire "$rurl" "$url"; return $? ;;
     RESOLVED_MERGED)
       # A REBUILD'S OWN ENDING IS STILL OWED (review I3). These reasons ARE the
       # rebuild this lane started reporting how it finished, and br_rebuild_*
@@ -2314,11 +2313,11 @@ br_cost_rank() {
 }
 
 # br_record_index — ONE jq pass over every record this lane holds, as
-#   `<project>\t<cap-key>\t<outcome>\t<resolved_url_eff>\t<retired>\t<mechanicals>\t<fixrounds>\t<fixround_bonus>\t<conflict_lines>`,
+#   `<project>\t<cap-key>\t<outcome>\t<outcome_url>\t<retired>\t<mechanicals>\t<fixrounds>\t<fixround_bonus>\t<conflict_lines>`,
 #   one row per record file. The glob is the one br_from_rebuilds already walks.
 #
-#   `resolved_url_eff` is `.resolved_url` when the record has one and otherwise
-#   the url the `resolved-merged` attempt recorded in its detail — the legacy
+#   `outcome_url` is `.abandoned_url` for ABANDONED (BH-8339), else `.resolved_url`
+#   when the record has one and otherwise the url the `resolved-merged` attempt recorded in its detail — the legacy
 #   half of review B2, read off the record rather than guessed.
 #
 #   `-` for an absent scalar, never an empty field: a reader that cannot tell
@@ -2376,10 +2375,10 @@ br_record_index() {
           + ( if $r == null then "!PARSE\t-\t0\t0\t0\t0\t-"
               else
                 d($r.outcome) + "\t"
-                + d( $r.resolved_url //
+                + d( if ($r.outcome // "") == "ABANDONED" then $r.abandoned_url else $r.resolved_url //
                      ( [ $r.attempts[]? | select((.action // "") == "resolved-merged")
                                         | (.detail // "")
-                                        | capture("^(?<u>https://github\\.com/[^ ]+) is already MERGED") .u ] | last ) ) + "\t"
+                                        | capture("^(?<u>https://github\\.com/[^ ]+) is already MERGED") .u ] | last ) end ) + "\t"
                 + ( if ($r.retired // false) == true then "1" else "0" end ) + "\t"
                 + (n($r.mechanicals)|tostring) + "\t"
                 + (n($r.fixrounds)|tostring) + "\t"
@@ -5352,6 +5351,7 @@ br_fix_stale_claim() {
 br_fix_adopt() {
   local p="$1" rkey="$2" reason="$3" url="$4" rec="$5" tkey="$6" ck="$7" row="$8"
   local id box res ro rjson="" n0 n1="" what arc=0
+  command -v bpr_adopt_other >/dev/null 2>&1 && bpr_adopt_other "$p" "$rkey" "$reason" "$url" "$row" && return 0
   id=$(printf '%s' "$row" | jq -r '.id // empty' 2>/dev/null)
   box=$(printf '%s' "$row" | jq -r '.claimed_by // .box // "the owning box"' 2>/dev/null)
   res=$(printf '%s' "$row" | jq -r '.result // empty | strings' 2>/dev/null)
@@ -5591,10 +5591,8 @@ br_preflight() { # br_preflight <p> <ck> <rkey> <reason> <url> <rec> <tkey> <slu
         return 1
       fi ;;
   esac
-  # THE ROUND RUNS. The body is brought up to date first (a failure costs the
-  # round nothing), and the brief carries the live state.
-  frp_body_refresh "$slug" "$num" "$ci" "" >/dev/null 2>&1; brc=$?
-  [ "$brc" = 4 ] && br_preflight_marker_alert "$p" "$ck" "$url"
+  # THE ROUND RUNS, and the brief carries the live state. br_preflight_after_push
+  # writes the body after a push that landed (BH-8339), never here.
   BR_PREFLIGHT_BRIEF=$(frp_brief "$ci" "$head" "$fh")
   [ -n "$noci_note" ] && BR_PREFLIGHT_BRIEF="$BR_PREFLIGHT_BRIEF
 - $noci_note: no workflow run or check-run has appeared on this head since the harness first waited on it"
@@ -5862,6 +5860,7 @@ br_fix_round() {
       return 0
     fi
     [ "$rc" = 0 ] && read -r slug br head <<<"$ref"
+    [ "$rc" = 0 ] && command -v bpr_fix_target >/dev/null 2>&1 && { bpr_fix_target "$p" "$ck" "$rkey" "$reason" "$url" || return 0; }
     # The head this rung read is the head this lane now knows the PR on (BH-1642).
     [ "$rc" = 0 ] && br_sup_seen "$p" "$ck" "$url" "$head"
     [ -n "${slug:-}" ] && br_use_token "$slug"
@@ -6213,8 +6212,9 @@ br_fix_round() {
   fi
   # <<< br closure-lint brief
   # >>> br ci-local brief (BH-6897)
-  # The previous round's CI lint findings, when that round was refused on them.
-  if [ -s "$ST/$p/$ck.ci-local/findings.txt" ]; then
+  # The previous round's CI lint findings, when that round was refused on them; bpr_lint_brief (BH-8339) runs the lint before the agent.
+  if command -v bpr_lint_brief >/dev/null 2>&1; then brief="$brief$(bpr_lint_brief "$wt" "origin/${mref:-main}" "$ST/$p/$ck.ci-local-pre" "$ST/$p/$ck.ci-local/findings.txt" "$conflicts")"
+  elif [ -s "$ST/$p/$ck.ci-local/findings.txt" ]; then
     brief="$brief"$'\n\n'"THE CI LINT STEPS WERE RED ON THE LAST ROUND (bin/ci-local.sh, the steps of CI's lint job and the rules pack). The harness re-runs them after you and will not push while they are red. Reproduce one step with \`bin/ci-local.sh --step '<step>'\`. Fix the code each line names; never edit .github/workflows/harness-ci.yml, bin/ci-local.sh or catalog/ci-local-skip.d/:"$'\n'"$(head -40 "$ST/$p/$ck.ci-local/findings.txt")"
   fi
   # <<< br ci-local brief
@@ -7202,6 +7202,7 @@ $lines$(br_close_facts "$p" "$rkey" "$url")" || crc=$?
   fi
   br_record "$p" "$rkey" abandoned "$reason" "$why"
   br_set_outcome "$p" "$rkey" ABANDONED
+  command -v bpr_stamp >/dev/null 2>&1 && bpr_stamp "$p" "$rkey" "$url"
   br_row_closed "$p" "$tkey" "$rec" "$url" abandoned "closed unmerged: resolver ladder exhausted — $why" "$reason"
   # EVERY HOLD THIS TICKET WON ENDS HERE (BH-579). The winner is gone, so the
   # PRs it was holding go back to the conductor in this same tick — waiting out
@@ -7759,11 +7760,10 @@ br_one() {
      && br_opt_unchanged_skip "$p" "$rkey" "$reason" "$url" "$rec" "$tkey" "$src"; then
     br_reset_token; return 3
   fi
-  # THE COUNTERS AND THE TERMINAL LIVE ON THE TICKET (br_cap_key), not on the PR
-  # number: a rebuild produces a new PR, so a ladder read off the number starts
-  # from zero on every rung and an ABANDONED ticket comes back under a new one.
-  # Read AFTER the derivation above, or a candidate that arrived keyless would
-  # count its rungs on a PR number that will not exist after the next rebuild.
+  # THE RECORD LIVES ON THE TICKET (br_cap_key): a rebuild makes a new PR, so a
+  # cap read off the number restarts on every rung. Read AFTER the derivation
+  # above. THE TERMINAL AND THE LADDER ARE THE PR'S (BH-8339): bpr_scope gives
+  # another OPEN PR of the ticket a fresh ladder before the check below.
   ck=$(br_cap_key "$p" "$rkey" "$tkey")
   st=$(br_load "$p" "$ck")
   # The row br_quiet marks at a quiet exit (BH-5946).
@@ -7771,6 +7771,7 @@ br_one() {
   # A TERMINAL TAKES NO RUNG (BH-1122). rc 3, not 0: PER_TICK counts rungs that
   # RAN, and an ABANDONED row at the top of a project's list used to be that
   # project's whole tick — a budget spent on reading a record and returning.
+  command -v bpr_scope >/dev/null 2>&1 && bpr_scope "$p" "$rkey" "$ck" "$reason" "$url" "$st" && st=$(br_load "$p" "$ck")
   [ "$(printf '%s' "$st" | jq -r '.outcome // ""')" = ABANDONED ] && { br_reset_token; return 3; }
   # A FIX ROUND THE HUB QUEUED IS THIS PARK'S ONE ACTION UNTIL IT IS ADOPTED
   # (BH-2674). The row is the whole state of a remote round, so this read is

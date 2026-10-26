@@ -384,8 +384,13 @@ tick; eq "C9 no collector rc" "$?" 0
 eq "C9 one log line" "$(grep -c . "$LOG")" 1
 case "$(tail -n1 "$LOG")" in *"0 collectors, 0 rows") ok ;; *) bad "C9 line: $(tail -n1 "$LOG")" ;; esac
 eq "C9 no ledger call" "$(ledger)" 0
+# TEST-CHANGE (BH-7723): #7752 ships bin/lib/unblock/rules.sh, so the closure
+# now holds the real engine and the tick is wired. The "rules not loaded" arm
+# is still checked: the file is moved away for this one tick, then restored.
 reset; collector queue "$T/one.jsonl"; : > "$COL/review.sh"
+[ -f "$H/bin/lib/unblock/rules.sh" ] && mv "$H/bin/lib/unblock/rules.sh" "$T/rules.sh.away"
 tick
+[ -f "$T/rules.sh.away" ] && mv "$T/rules.sh.away" "$H/bin/lib/unblock/rules.sh"
 has "C9 one wired collector" "$LOG" "collectors=1"
 has "C9 the unwired family is named" "$LOG" "unwired review"
 has "C9 rules not loaded is named" "$LOG" "rules=unwired"

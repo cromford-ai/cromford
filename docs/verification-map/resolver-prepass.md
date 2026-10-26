@@ -34,7 +34,9 @@ line as `+index-short`.
 
 | record | retired? |
 |---|---|
-| `outcome: ABANDONED` | yes, unconditionally — `br_one` already answers rc 3 for every row under that cap key, so this is today's behaviour minus the read |
+| `outcome: ABANDONED`, the record has no `abandoned_url` (written before BH-8339, or an operator's ABANDON) | yes — the ticket-level rule: `br_one` answers rc 3 for every row under that cap key |
+| `outcome: ABANDONED`, candidate url is `-`, not a PR url, or == `abandoned_url` | yes |
+| `outcome: ABANDONED`, candidate url is another PR of the ticket | **no** (BH-8339) — `br_one`'s `bpr_scope` gives it a fresh ladder when it is open, and keeps the terminal (rc 3) when it is closed, merged or unreadable |
 | `outcome: RESOLVED_MERGED`, candidate carries no url | **no** — `br_from_builds` always emits `-` and `br_from_rebuilds` often does, so retiring on an absent url deleted the only consumer a dead rebuild's record has |
 | `outcome: RESOLVED_MERGED`, candidate url == `resolved_url` | yes |
 | `outcome: RESOLVED_MERGED`, candidate url != `resolved_url` | **no** — a ticket can acquire a new PR (a rebuild's) and a park on it is real work; the row keeps today's path and `br_already_merged` decides it (today that answer comes off the record's own outcome before any repo read, which is a pre-existing slot burn this change does not close) |

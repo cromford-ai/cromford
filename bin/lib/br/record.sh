@@ -12,7 +12,8 @@
 # also moved in the 9 the driver alone held: br_rows_count, br_cap_rows,
 # br_row_closed, br_set_flag, br_push_field, br_has_field_value, br_shape,
 # br_fix_cap and br_rebuild_cap.
-# BH-7801: br_save also mirrors rung_head, rung_pr and ladder_reset, and puts one
+# BH-7801: br_save also mirrors rung_head, rung_pr and ladder_reset (BH-8339:
+# and abandoned_url), and puts one
 # br_attempt row per appended attempt (bin/blocked-resolver.d/bh-7801-br-attempts.sh);
 # br_load restores them when the file is gone.
 # ---------------------------------------------------------------------------
@@ -65,6 +66,7 @@ br_load() { # br_load <project> <rkey> — prints the json (a fresh one if absen
                + (if ($d.rung_head | type) == "string" then {rung_head:$d.rung_head} else {} end)
                + (if ($d.rung_pr | type) == "string" then {rung_pr:$d.rung_pr} else {} end)
                + (if ($d.ladder_reset | type) == "object" then {ladder_reset:$d.ladder_reset} else {} end)
+               + (if ($d.abandoned_url | type) == "string" then {abandoned_url:$d.abandoned_url} else {} end)
                + {outcome: (if $r.status == "open" then "" else ($r.status // "") end), restored:"ledger"}
              end
          end)
@@ -79,7 +81,8 @@ br_load() { # br_load <project> <rkey> — prints the json (a fresh one if absen
 #   row, fail-open and its rc ignored — br_record's file-then-row order, so a
 #   row with no file behind it cannot happen and the next write heals a missed
 #   row. status is the outcome (`open` when there is none), detail the counters
-#   plus the rung fields rung_head, rung_pr and ladder_reset when set (BH-7801).
+#   plus the rung fields rung_head, rung_pr and ladder_reset when set (BH-7801),
+#   and abandoned_url, the PR an ABANDONED is about (BH-8339).
 #   Then, when the BH-7801 fragment is loaded, one br_attempt row for each
 #   attempt this save appended (index >= the file's count before the write);
 #   [bump] is the counter br_record bumped with it. Every writer appends its
@@ -94,7 +97,7 @@ br_save() {
   command -v job_ledger_put >/dev/null 2>&1 || return 0
   status=$(printf '%s' "$3" | jq -r '(.outcome // "") | if . == "" then "open" else . end' 2>/dev/null) || status=""
   detail=$(printf '%s' "$3" | jq -c '{rebuilds,fixrounds,mechanicals,regens,adjudications,rereviews,first_seen}
-    + ({rung_head,rung_pr,ladder_reset} | with_entries(select(.value != null)))' 2>/dev/null) || detail=""
+    + ({rung_head,rung_pr,ladder_reset,abandoned_url} | with_entries(select(.value != null)))' 2>/dev/null) || detail=""
   [ -n "$status" ] && [ -n "$detail" ] && job_ledger_put br_record "$1/$2" "$status" "$detail" >/dev/null 2>&1 </dev/null
   command -v bra_put_new >/dev/null 2>&1 && bra_put_new "$1" "$2" "$olda" "$3" "${4:-}" >/dev/null 2>&1 </dev/null
   return 0

@@ -4,7 +4,7 @@
 # already exists, and says so, instead of leaving the file as found (BH-7930).
 #
 # The `# >>> env stub` / `# <<< env stub` block is extracted VERBATIM from the
-# REMOTE heredoc in bin/load-project.sh. Only the literal
+# REMOTE heredoc in bin/lib/onboard-stations.sh (obs_box). Only the literal
 # /root/harness/bin/harden-state.sh is rewritten, to a scratch stub that logs
 # its argv, so the box's real harden-state never runs. The block runs under
 # `set -euo pipefail` with PROJECT=cro PREFIX=CRO PROD=- BASE=main.
@@ -35,9 +35,9 @@ cat > "$T/stub/harden-state.sh" <<'SH'
 echo "$*" >> "$HS_LOG"
 SH
 chmod +x "$T/stub/harden-state.sh"
-awk '/^# >>> env stub/{f=1;next} /^# <<< env stub/{exit} f' "$DIR/bin/load-project.sh" \
+awk '/^# >>> env stub/{f=1;next} /^# <<< env stub/{exit} f' "$DIR/bin/lib/onboard-stations.sh" \
   | sed "s#/root/harness/bin/harden-state.sh#$T/stub/harden-state.sh#g" > "$T/stub.sh"
-[ -s "$T/stub.sh" ] && ok || bad "could not extract the env stub block from bin/load-project.sh — markers missing?"
+[ -s "$T/stub.sh" ] && ok || bad "could not extract the env stub block from bin/lib/onboard-stations.sh — markers missing?"
 grep -q '/root/harness' "$T/stub.sh" && bad "the extracted block still names /root/harness" || ok
 
 F="$T/env/cro.env"

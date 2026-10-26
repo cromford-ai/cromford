@@ -186,12 +186,14 @@ reset_rec; touch "$T/rec-ro"
 AFTER_PUSH
 [ "$(lines "$T/alerts.log")" = 0 ] && ok || bad "S4 an alert whose record write failed must not be sent (it would repeat every tick)"
 rm -f "$T/rec-ro"
-# ...and the preflight's own refreshes alert the same way: the fix path...
+# ...the fix path writes no body before the round (BH-8339: the body is written
+# only after a push that landed, AFTER_PUSH above), so it neither alerts nor PATCHes...
 reset_gh; reset_rec
 RUNS "$NEW" failure; PRBODY "$NEW" "$S1_BODY"
 [ "$(PRE head-not-reapproved "1. HIGH src/a.ts:1 bug" | head -1)" = 0 ] && ok || bad "S4 a broken body costs the round nothing"
-[ "$(lines "$T/alerts.log")" = 1 ] && [ "$(patches)" = 0 ] && ok || bad "S4 the fix path's refresh must alert once and send no PATCH (alerts $(lines "$T/alerts.log"), patches $(patches))"
-# ...and the review-lane evidence route: rc 4 is not 0 or 3, so the round runs.
+[ "$(lines "$T/alerts.log")" = 0 ] && [ "$(patches)" = 0 ] && [ "$(body)" = "$S1_BODY" ] && ok || bad "S4 the fix path must not touch the body before the round (alerts $(lines "$T/alerts.log"), patches $(patches))"
+# ...and the preflight's own refreshes alert the same way: the review-lane evidence route...
+# rc 4 is not 0 or 3, so the round runs.
 reset_gh; reset_rec
 RUNS "$NEW" success; PRBODY "$NEW" "$S1_BODY"
 [ "$(PRE review-changes-requested "$STALE_FINDINGS" | head -1)" = 0 ] && ok || bad "S4 an evidence route whose body refused the block must fall back to the fix round"

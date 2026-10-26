@@ -1,0 +1,24 @@
+{
+  "id": "U3-dead-shard-requeue",
+  "priority": 30,
+  "family": "queue",
+  "class": "queue-requeue",
+  "cites": ["G1", "G12"],
+  "note": "A merge batch died on shards that were cancelled or timed out, not on a code failure. A member whose own CI is green, with a MERGE verdict on its head, mergeable and not yet put back on this head, is requeued.",
+  "match": {
+    "kind": "pr-ejected",
+    "all": [
+      ".batch_state == \"dead_shards\"",
+      ".own_ci == \"green\"",
+      ".verdict_on_head | test(\"^MERGE\")",
+      ".mergeable_state == \"clean\"",
+      ".requeued_on_head == false"
+    ]
+  },
+  "action": {
+    "name": "requeue",
+    "args": {"pr": ".pr", "head": ".head", "note": "dead shards; shard cap ticket #7620"}
+  },
+  "judge": null,
+  "key": ["repo", "pr", "head"]
+}

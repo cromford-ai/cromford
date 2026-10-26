@@ -206,10 +206,11 @@ chattr -a "$COST" 2>/dev/null
 # A8. source pins (NOT behavioural proof — see the header)
 # ===========================================================================
 # fly-provision and fly-pool-rollout need a Fly org and a real token mint;
-# load-project's block runs inside an ssh heredoc on a remote box. None can be
+# load-project's block (bin/lib/onboard-stations.sh obs_box) runs inside an ssh
+# heredoc on a remote box. None can be
 # driven from a fixture, so the pin is the call being present, counted exactly:
 # `= 2` (release + rearm), so a deleted call fails rather than passing (D3).
-for f in bin/fly-provision.sh bin/fly-pool-rollout.sh bin/load-project.sh; do
+for f in bin/fly-provision.sh bin/fly-pool-rollout.sh bin/lib/onboard-stations.sh; do
   N=$(grep -c 'harden-state.sh --re' "$DIR/$f" 2>/dev/null || true)
   [ "${N:-0}" = 2 ] && ok || bad "A8 $f must carry exactly 2 harden-state.sh --re calls (got ${N:-0})"
 done

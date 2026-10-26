@@ -17,7 +17,7 @@ bin/feature-map-draft.sh	Pushes its own `feature-map/draft` branch.
 bin/guardrail-promote.sh	Pushes its own `guardrails/<slug>-<date>` branch.
 bin/qa-personas.sh	Pushes its own `qa/personas-<date>` branch.
 bin/rule-miner.sh	Pushes its own `rules/mined-<date>` branch.
-bin/load-project.sh	The operator's own checkout of this repo, publishing a registry commit before a box syncs. Not a lane and not a PR branch.
+bin/lib/onboard-stations.sh	The load-project.sh registry station (moved from bin/load-project.sh by BH-7948): the operator's own checkout of this repo, publishing a registry commit before a box syncs. Not a lane and not a PR branch.
 bin/publish-share.sh	Pushes the public repo's main as a fast-forward (a separate repository), never a branch of a fleet repo.
 bin/iron-law-guard.sh	Not a push: the text of the deny messages its push-main rule prints.
 bin/lane-fence.sh	Not a push: the command string handed to the fence's classifier from the pre-push hook.
