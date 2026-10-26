@@ -123,6 +123,9 @@ fi
 if [ -f "$FXT/seam-judge" ]; then
   ubt_stage_judge() { seq_log "JUDGE $(jq -r .decision_key <<<"$1") $2"; printf '{"outcome":"would","detail":"judge-fixture","model_calls":%s,"cost_usd":0.02}\n' "$(cat "$FXT/judge-calls" 2>/dev/null || echo 1)"; }
 fi
+# no-card: the shipped card.sh defines ubt_stage_card (BH-8418) and the tick's
+# seam loop loads it from the closure, so a card-absent case unsets it.
+[ -f "$FXT/no-card" ] && unset -f ubt_stage_card
 if [ -f "$FXT/seam-card" ]; then
   ubt_stage_card() { seq_log "CARD $(jq -r .decision_key <<<"$1") $2"; printf '{"outcome":"escalated","detail":"card-fixture","model_calls":1,"cost_usd":0.03,"card":{"id":"u-abc123","options":["a","b"]}}\n'; }
 fi
@@ -336,7 +339,7 @@ seam_case() { # seam_case <name> <decision> <judge|nojudge> <files...> -> want c
   fi
 }
 seam_case judge-absent act judge 0 act-stub
-seam_case card-absent escalate nojudge 0 seam-judge act-stub
+seam_case card-absent escalate nojudge 0 no-card seam-judge act-stub
 seam_case act-absent act nojudge 0 no-act seam-judge seam-card
 seam_case judge-present act judge 1 seam-judge
 seam_case card-present escalate nojudge 1 seam-card

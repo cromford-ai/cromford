@@ -218,7 +218,7 @@ fi
 # ═════ B: the rules ══════════════════════════════════════════════════════════
 V=$(evaluate "$REC_BOX")
 eq "B1 project-6-os -> U8" "$(jq -r .rule <<<"$V")" U8
-eq "B1 would-action box_restart on the box" "$(jq -c '[.action.verb, .action.args.box]' <<<"$V")" '["box_restart","box-project-6-os-1"]'
+eq "B1 would-action box_restart on the box" "$(jq -c '[.action.verb, .action.args.box_id]' <<<"$V")" '["box_restart","box-project-6-os-1"]'
 eq "B1 one decision per box per hour" "$(jq -r .key <<<"$V")" "box:box-project-6-os-1|2026-10-20T06|U8"
 eq "B1 U8 cites, delegation and the critical alert (the operator 6294290004 item 2)" \
   "$(jq -c '[(.cites | length > 0), .delegate_in_act, .after.alert]' "$RULES_D/U8-box-restart.json")" '[true,true,"critical"]'
@@ -235,8 +235,8 @@ eq "B3 hung threshold unknown -> U12" "$(jq -r .rule <<<"$(evaluate "$(jq -c '.h
 
 V=$(evaluate "$REC_POOL")
 eq "B4 project-6 pool -> U9" "$(jq -r .rule <<<"$V")" U9
-eq "B4 would-action setting_set to 8" "$(jq -c '.action | [.verb, .args.key, .args.new]' <<<"$V")" '["setting_set","lane.fly-pool-tick.pool_tick_max_parallel",8]'
-check "B4 the note names the old value 4" 'jq -e ".action.args.note | test(\"=4\")" <<<"$V" >/dev/null'
+eq "B4 would-action setting_set to 8" "$(jq -c '.action | [.verb, .args.key, .args.value]' <<<"$V")" '["setting_set","lane.fly-pool-tick.pool_tick_max_parallel",8]'
+check "B4 the note names the old value 4" 'jq -e ".action.args.why | test(\"=4\")" <<<"$V" >/dev/null'
 eq "B4 one change per knob per day" "$(jq -r .key <<<"$V")" "lane.fly-pool-tick.pool_tick_max_parallel|2026-10-20|U9"
 V=$(evaluate "$REC_SHARD")
 eq "B5 CI_MAX_SHARDS -> U12, class spend" "$(jq -c '[.rule, .class]' <<<"$V")" '["U12","spend"]'
@@ -250,7 +250,7 @@ eq "B5 a key with USD -> class spend" "$(jq -r .class <<<"$(evaluate "$(jq -c '.
 
 V=$(evaluate "$REC_RESP")
 eq "B6 respawn -> U9" "$(jq -r .rule <<<"$V")" U9
-eq "B6 pool_record_read=1 for project-6-os only" "$(jq -c '.action.args | [.key, .new]' <<<"$V")" '["lane.fly-pool.project-6-os.pool_record_read",1]'
+eq "B6 pool_record_read=1 for project-6-os only" "$(jq -c '.action.args | [.key, .value]' <<<"$V")" '["lane.fly-pool.project-6-os.pool_record_read",1]'
 
 V=$(evaluate "$(jq -c '.proposal.key = "hub_load.shed" | .proposal.key_allowlisted = true | .proposal.min = null | .proposal.max = null | .proposal.in_range = null' <<<"$REC_POOL")")
 eq "B7 hub_load.shed with no registry range -> U12" "$(jq -r .rule <<<"$V")" U12

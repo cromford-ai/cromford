@@ -14,7 +14,7 @@
     ]
   },
   "judge": null,
-  "action": {"verb": "setting_set", "args": {"key": ".proposal.key", "new": ".proposal.new", "note": ".proposal.rollback_note"}},
+  "action": {"verb": "setting_set", "args": {"key": ".proposal.key", "value": ".proposal.new", "old": ".proposal.old", "min": ".proposal.min", "max": ".proposal.max", "why": ".proposal.rollback_note"}},
   "key": ["proposal.key", "day", "id"],
   "note": "BH-7725 (UNB-3). A starved pool or a respawn loop gets one throughput knob change, only when the key is on the unblock.knob_allowlist settings row (the operator 6294290004 item 3), the new value is inside the knob's registry [min,max] (catalog/lanes.d/<lane>.knobs.d), no person set the row in the last 24 h, and the note says how to roll it back. One change per knob per day. Spend, CI shard and review caps are never on the list; U12 escalates them with class spend."
 }

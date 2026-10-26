@@ -16,7 +16,7 @@
     ]
   },
   "judge": null,
-  "action": {"verb": "box_restart", "args": {"box": ".box"}},
+  "action": {"verb": "box_restart", "args": {"box_id": ".box"}},
   "after": {"alert": "critical", "watch_min": 10},
   "delegate_in_act": true,
   "key": ["subject", "stall_at_hour", "id"],

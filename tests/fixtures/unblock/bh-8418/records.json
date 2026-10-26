@@ -1,0 +1,63 @@
+{
+  "note": "BH-8418. One stall record per shipped rule id in catalog/unblock-rules.d, each shaped as its collector prints it (values from the shipped corpus: batch-7699, ejects-20261019, approved-7609, box-project-6-os, pool-project-6, conflict-park). tests/unblock-rules-contract.bh-8418-test.sh S3 feeds each one through the tick and requires that it decides to its own rule. A new rule file with no record here turns S3 red.",
+  "records": {
+    "U1-batch-culprit": {
+      "kind": "pr-ejected", "family": "queue", "project": "cromford", "repo": "example-org/cromford",
+      "subject_kind": "pr", "subject": "example-org/cromford#7617", "pr": 7617,
+      "head": "7617aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "draft": 7699, "batch_state": "failed",
+      "culprit_count": 1, "culprit": 7617, "ejected_on_head": true, "requeued_on_head": false,
+      "fail_lines": ["tests/remote-results-retention-test.sh: FAIL bin/remote-results-retention.sh:79 rc 1"]
+    },
+    "U2-bystander-requeue": {
+      "kind": "pr-ejected", "family": "queue", "project": "cromford", "repo": "example-org/cromford",
+      "subject_kind": "pr", "subject": "example-org/cromford#7592", "pr": 7592,
+      "head": "7592bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", "draft": 7699, "batch_state": "failed",
+      "culprit_count": 1, "culprit": 7617, "ejected_on_head": true, "own_ci": "green",
+      "verdict_on_head": "MERGE", "mergeable_state": "clean", "requeued_on_head": false
+    },
+    "U3-dead-shard-requeue": {
+      "kind": "pr-ejected", "family": "queue", "project": "cromford", "repo": "example-org/cromford",
+      "subject_kind": "pr", "subject": "example-org/cromford#7590", "pr": 7590,
+      "head": "7590aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "draft": 7612, "batch_state": "dead_shards",
+      "culprit_count": 0, "culprit": null, "ejected_on_head": true, "own_ci": "green",
+      "verdict_on_head": "MERGE", "mergeable_state": "clean", "requeued_on_head": false
+    },
+    "U4-standing-approval": {
+      "kind": "pr-approved-idle", "family": "queue", "project": "cromford", "repo": "example-org/cromford",
+      "subject_kind": "pr", "subject": "example-org/cromford#7609", "pr": 7609,
+      "head": "7609aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "standing_approval": "1",
+      "verdict_on_head": "MERGE-WITH-NOTES", "idle_min": 60, "approved_idle_min": 20,
+      "mergeable_state": "clean", "checks": "green", "changes_requested_open": false, "touches_tests": false
+    },
+    "U8": {
+      "kind": "box-hung", "family": "infra", "project": "cromford", "repo": "example-org/cromford",
+      "subject_kind": "box", "subject": "box:box-project-6-os-1", "box": "box-project-6-os-1",
+      "orgo_hosted": true, "orgo_state": "running", "ssh_unreachable_min": 540, "hung_min_threshold": 30,
+      "envbundle_fail_1h": 14, "last_restart_min_ago": 600, "build_claim_10m": false,
+      "stall_at_hour": "2026-10-20T06", "unknown": []
+    },
+    "U9": {
+      "kind": "pool-starved", "family": "infra", "project": "cromford", "repo": "example-org/cromford",
+      "subject_kind": "pool", "subject": "pool:cromford", "day": "2026-10-20", "queued": 126, "running": 2,
+      "proposal": {
+        "key": "lane.fly-pool-tick.pool_tick_max_parallel", "old": 4, "new": 8, "min": 0, "max": 256,
+        "in_range": true, "key_allowlisted": true, "person_set_24h": false,
+        "rollback_note": "126 queued, 2 running at cap 4; roll back by setting lane.fly-pool-tick.pool_tick_max_parallel=4"
+      },
+      "unknown": []
+    },
+    "U10": {
+      "kind": "branch-park", "family": "infra", "project": "cromford", "repo": "example-org/cromford",
+      "subject_kind": "pr", "subject": "example-org/cromford#101", "pr": 101,
+      "head": "aaaa1111bbbb2222cccc3333dddd4444eeee5555", "mechanical_rung": "conflict-unresolvable",
+      "fixrounds": 0, "park_reason": "conflict-unresolvable: both sides edit bin/x.sh", "unknown": []
+    },
+    "U12": {
+      "kind": "pr-ejected", "family": "queue", "project": "cromford", "repo": "example-org/cromford",
+      "subject_kind": "pr", "subject": "example-org/cromford#7604", "pr": 7604,
+      "head": "7604dddddddddddddddddddddddddddddddddddd", "draft": 7612, "batch_state": "dead_shards",
+      "culprit_count": 0, "culprit": null, "ejected_on_head": true, "own_ci": "red",
+      "verdict_on_head": "MERGE", "mergeable_state": "clean", "requeued_on_head": false
+    }
+  }
+}

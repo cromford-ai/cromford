@@ -32,8 +32,10 @@
 #                                       is scrubbed. Text over 900 chars: the
 #                                       evidence is trimmed first, then WHAT,
 #                                       each with an ellipsis; still over = rc 1.
-#   unblock_card_decide <stall.json> <claim.json> <outfile>
+#   unblock_card_decide <stall.json> <claim.json> <outfile> [model]
 #                                       the bounded stage.unblock model call.
+#                                       A given model is used as is (the tick
+#                                       read the route once); none = model_for.
 #                                       CLAIM BEFORE SPEND (G10): 0 calls unless
 #                                       the claim says claimed:true for the
 #                                       stall's own decision_key. No route
@@ -55,6 +57,22 @@
 #                                       5), prints SENT_CARD <id> (rc 0) or
 #                                       SEND_FAILED <id> (rc 1). Else prints
 #                                       WOULD_SEND_CARD <id>, 0 alerts.
+#   ubt_stage_card <decision-json> <model> [mode]
+#                                       the tick's escalate seam (bin/unblock.sh
+#                                       step 6, BH-8418). 0 calls unless
+#                                       UBT_CLAIMED_KEY is the decision's own
+#                                       key (the tick sets it after its claim).
+#                                       The stall is the decision's evidence +
+#                                       decision_key, project, subject and
+#                                       near_miss [{rule, predicate, read}].
+#                                       Then decide (with <model>), compose and
+#                                       send (mode, default shadow). Prints
+#                                       {outcome, detail, model_calls, cost_usd,
+#                                       card}: WOULD_SEND_CARD = would,
+#                                       SENT_CARD = escalated, SEND_FAILED or a
+#                                       compose failure = failed (the spend is
+#                                       still counted). cost_usd is 0:
+#                                       logs/cost.csv carries the bill.
 #   unblock_card_redeclare <row.json> <now_epoch> <mode>
 #                                       row: id, key, text, deadline_at,
 #                                       last_declared_at. Past the deadline:
@@ -174,7 +192,7 @@ unblock_card_compose() {
 }
 
 unblock_card_decide() {
-  local stall="${1:-}" claim="${2:-}" out="${3:-}" key project root sop model pf raw arc attempt calls=0
+  local stall="${1:-}" claim="${2:-}" out="${3:-}" given="${4:-}" key project root sop model pf raw arc attempt calls=0
   local outcome="" acrc=null dec="" ans j acx
   [ -n "$out" ] || return 1
   key=$(jq -r '.decision_key // ""' "$stall" 2>/dev/null)
@@ -185,13 +203,15 @@ unblock_card_decide() {
   fi
   project=$(jq -r '.project // "fleet" | tostring' "$stall"); [[ $project =~ ^[A-Za-z0-9._-]{1,64}$ ]] || project=fleet
   root=$(_unblock_card_root); sop="$root/catalog/prompts/unblock-decide.md"
-  if [ -n "$root" ] && ! type model_for >/dev/null 2>&1; then
+  if [ -z "$given" ] && [ -n "$root" ] && ! type model_for >/dev/null 2>&1; then
     # shellcheck source=bin/lib/model-route.sh
     . "$root/bin/lib/model-route.sh" 2>/dev/null
   fi
   model=""; acx="$root/bin/agent-call.sh"
-  if [ -n "$root" ] && [ -x "$acx" ] && [ -r "$sop" ] && type model_for >/dev/null 2>&1; then
-    model=$(model_for stage.unblock "$project" 2>/dev/null) || model=""
+  if [ -n "$root" ] && [ -x "$acx" ] && [ -r "$sop" ]; then
+    if [ -n "$given" ]; then model=$given
+    elif type model_for >/dev/null 2>&1; then model=$(model_for stage.unblock "$project" 2>/dev/null) || model=""
+    fi
   fi
   if [ -z "$model" ]; then
     outcome=no-route
@@ -237,6 +257,52 @@ unblock_card_send() {
     printf 'SEND_FAILED %s\n' "$id"; return 1
   fi
   printf 'WOULD_SEND_CARD %s\n' "$id"
+}
+
+# _ubt_card_out <outcome> <detail> <model_calls> [card-json]
+_ubt_card_out() {
+  jq -nc --arg o "$1" --arg d "$2" --argjson n "${3:-0}" --argjson c "${4:-null}" \
+    '{outcome: $o, detail: $d, model_calls: $n, cost_usd: 0} + (if $c == null then {} else {card: $c} end)'
+}
+
+ubt_stage_card() {
+  local d="${1:-}" model="${2:-}" mode="${3:-shadow}" key tmp rc
+  key=$(jq -r '.decision_key // ""' <<<"$d" 2>/dev/null)
+  if [ -z "$key" ] || [ "${UBT_CLAIMED_KEY:-}" != "$key" ]; then
+    _ubt_card_out refused "no claim for this key" 0; return 0
+  fi
+  tmp=$(mktemp -d "${TMPDIR:-/tmp}/ubt-card.XXXXXX") || { _ubt_card_out failed card-tmp-unwritable 0; return 0; }
+  _ubt_stage_card_run "$d" "$model" "$mode" "$key" "$tmp"; rc=$?
+  rm -rf "$tmp"
+  return "$rc"
+}
+
+_ubt_stage_card_run() {
+  local d="$1" model="$2" mode="$3" key="$4" tmp="$5" calls dout card send now outcome
+  jq -c '(.evidence // {} | if type == "object" then . else {value: .} end)
+    + {decision_key, project, subject,
+       near_miss: [(.near_misses // [])[] | .rule as $r
+         | ((.failed // [])[] | {rule: $r, predicate: ., read: "false"}),
+           ((.unknown // [])[] | {rule: $r, predicate: ., read: "unknown"})]}' <<<"$d" > "$tmp/stall.json" 2>/dev/null \
+    || { _ubt_card_out failed stall-unreadable 0; return 0; }
+  jq -nc --arg k "$key" '{claimed: true, decision_key: $k}' > "$tmp/claim.json"
+  unblock_card_decide "$tmp/stall.json" "$tmp/claim.json" "$tmp/out.json" "$model"
+  calls=$(jq -r '.model_calls // 0' "$tmp/out.json" 2>/dev/null); [[ $calls =~ ^[0-9]+$ ]] || calls=0
+  dout=$(jq -r '.outcome // "failed"' "$tmp/out.json" 2>/dev/null)
+  [ "$dout" = refused ] && [ "$calls" = 0 ] && jq -e '.decide == null' "$tmp/out.json" >/dev/null 2>&1 \
+    && { _ubt_card_out refused "decide refused" 0; return 0; }
+  jq -c '.decide' "$tmp/out.json" > "$tmp/decide.json" 2>/dev/null
+  now=${UB_NOW:-}; [[ $now =~ ^[0-9]+$ ]] || now=$(date -u +%s)
+  card=$(unblock_card_compose "$tmp/stall.json" "$tmp/decide.json" "$key" "$now") && [ -n "$card" ] \
+    || { _ubt_card_out failed card-compose-failed "$calls"; return 0; }
+  printf '%s' "$card" > "$tmp/card.json"
+  send=$(unblock_card_send "$tmp/card.json" "$mode")
+  case "$send" in
+    WOULD_SEND_CARD*) outcome=would ;;
+    SENT_CARD*) outcome=escalated ;;
+    *) outcome=failed ;;
+  esac
+  _ubt_card_out "$outcome" "$dout; ${send:-no send line}" "$calls" "$card"
 }
 
 unblock_card_redeclare() {

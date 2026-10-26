@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "catalog/unblock-rules.d/_schema.json",
   "title": "One Tackler rule file (catalog/unblock-rules.d/<id>.json)",
-  "description": "BH-7722 (UNB-0). One rule per file; a new rule is a new file. The loader (bin/lib/unblock/rules.sh, #7752) refuses two files with one id. Every cite must be a key of _cites.json. Files whose name starts with _ are not rules.",
+  "description": "BH-7722 (UNB-0), BH-8418. One rule per file; a new rule is a new file. The loader (bin/lib/unblock/rules.sh ub_rules_load) refuses two files with one id and reads action.verb as action.name. The id need not equal the file stem: every lookup (bin/lib/unblock/override.sh uo_class_of) indexes by id. Every cite must be a key of _cites.json. Files whose name starts with _ are not rules. tests/unblock-rules-contract.bh-8418-test.sh validates every rule file against this schema.",
   "type": "object",
   "required": ["id", "priority", "family", "class", "cites", "match", "action", "key"],
   "additionalProperties": false,
@@ -21,7 +21,14 @@
       "required": ["kind", "all"],
       "additionalProperties": false,
       "properties": {
-        "kind": { "type": "string", "pattern": "^[a-z][a-z0-9-]{0,63}$", "description": "The stall record's kind." },
+        "kind": {
+          "oneOf": [
+            { "type": "string", "pattern": "^[a-z][a-z0-9-]{0,63}$" },
+            { "const": "*" },
+            { "type": "array", "minItems": 1, "uniqueItems": true, "items": { "type": "string", "pattern": "^[a-z][a-z0-9-]{0,63}$" } }
+          ],
+          "description": "The stall record's kind, a non-empty list of kinds, or \"*\" for any kind (U12)."
+        },
         "all": {
           "type": "array",
           "items": { "type": "string", "minLength": 1 },
@@ -41,18 +48,27 @@
     },
     "action": {
       "type": "object",
-      "required": ["name"],
+      "oneOf": [{ "required": ["name"] }, { "required": ["verb"] }],
       "additionalProperties": false,
       "properties": {
         "name": { "type": "string", "pattern": "^[a-z_]{1,40}$" },
-        "args": { "type": "object", "description": "Each value is a jq path over the stall record." }
-      }
+        "verb": { "type": "string", "pattern": "^[a-z_]{1,40}$", "description": "Read as name by the loader. A file sets name or verb, never both." },
+        "args": { "type": "object", "description": "Each value is a jq path over the stall record, or a literal. The keys are the action's input in bin/lib/unblock/act.sh, whose header lists them per action." }
+      },
+      "description": "card escalates (bin/lib/unblock/card.sh); every other action goes to ub_act (bin/lib/unblock/act.sh)."
     },
     "key": {
       "type": "array", "minItems": 1, "uniqueItems": true,
-      "items": { "type": "string", "pattern": "^[a-z_][a-z0-9_]{0,39}$" },
-      "description": "The fields hashed with the rule id into the decision key. No timestamp, no counter."
+      "items": { "type": "string", "pattern": "^[a-z_][a-z0-9_]*(\\.[a-z_][a-z0-9_]*)*$" },
+      "description": "The record field paths (dotted for a nested field) hashed with the rule id into the decision key; the word id is the rule id. No timestamp, no counter."
     },
+    "never_auto": {
+      "type": "object",
+      "additionalProperties": { "type": "string", "pattern": "^[a-z][a-z0-9-]{0,39}$" },
+      "description": "A proposal key glob (case-insensitive) to the class the decision carries when .proposal.key matches it (U12: spend)."
+    },
+    "after": { "type": "object", "description": "What follows the act in act mode (U8: the alert severity and the watch window)." },
+    "delegate_in_act": { "type": "boolean", "description": "true: the class is delegated from day one in act mode (U8, the operator 6294290004 item 2)." },
     "note": { "type": "string" }
   }
 }

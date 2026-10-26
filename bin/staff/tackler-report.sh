@@ -14,8 +14,8 @@
 #   3. For each project with unblock.project.<p>.mode shadow or act: GET
 #      /api/unblock/metrics?project=<p>&days=7&to=<today>. One line per project
 #      and one line per class: the rule ids of `rules[]` mapped through
-#      catalog/unblock-rules.d/<rule_id>.json `.class` (unclassified when the
-#      file or field is missing):
+#      `.class` of the catalog/unblock-rules.d file whose `.id` is <rule_id>
+#      (uo_class_of; unclassified when no file or field matches):
 #        - <class>: acts <n>, overrides <n>, precision <p>%   (n/a at 0 acts)
 #      precision = (acts - overrides) / acts. Then, over all projects:
 #      `cards expired: <n>`, `uncovered stalls: <n>`, and `promotions:` the

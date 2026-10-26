@@ -30,9 +30,9 @@
 #     never_auto {<key glob>: <class>} (the class when .proposal.key matches),
 #     note and any other key the engine does not read.
 #     The id is not required to be the file stem: main's U8-U12 files are
-#     U8-box-restart.json with id "U8". bin/lib/unblock/override.sh and
-#     bin/staff/tackler-report.sh look a class up by <rule_id>.json, so a new
-#     rule file keeps id == stem (U1-U4 do).
+#     U8-box-restart.json with id "U8". Every lookup indexes by id
+#     (bin/lib/unblock/override.sh uo_class_of, which
+#     bin/staff/tackler-report.sh calls), never by <rule_id>.json (BH-8418).
 #
 #   ub_rules_eval [dir]  < stall JSONL  > decision JSONL
 #     Each predicate reads T (true), F (false) or U (unknown: an error, a

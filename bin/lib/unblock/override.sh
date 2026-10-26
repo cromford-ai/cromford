@@ -33,8 +33,8 @@
 #                     *[bot], whose value differs from action_args.value
 #      Every signal counts only inside (acted_at, acted_at + window]. Another
 #      action has no signal: skipped, one log line per action name per run.
-#   3. On an override: the class is `.class` of
-#      catalog/unblock-rules.d/<rule_id>.json. A class: POST
+#   3. On an override: the class is `.class` of the rule file in
+#      catalog/unblock-rules.d whose `.id` is the row's rule_id. A class: POST
 #      /api/staff/classes/delegation ask_first (actor unblock-override). 200
 #      changed/existing, 404 not-found and 409 never-delegable go on to the
 #      stamp; a transport failure or any other answer stops this row with no
@@ -74,14 +74,17 @@ _uo_int() { # _uo_int <name> <value> <default> <min> <max>
 # _uo_plus <iso> <seconds>: the ISO time that many seconds later.
 _uo_plus() { local e; [ -n "${1:-}" ] || return 1; e=$(date -u -d "$1" +%s 2>/dev/null) || return 1; _uo_iso "$((e + $2))"; }
 
-# uo_class_of <rule_id>: prints the rule file's class; rc 1 when unknown.
+# uo_class_of <rule_id>: prints the class of the ONE rule file whose .id is
+# <rule_id>; rc 1 when no file or more than one file carries it (fail closed).
+# By id, not by file stem (BH-8418): U8-box-restart.json carries id U8. Each
+# file is read on its own, so a file that is not JSON hides no other rule.
 uo_class_of() {
   local id="${1:-}" root f c
   root=$(_uo_root); [ -n "$root" ] || return 1
   [[ $id =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$ ]] || return 1
-  f="$root/catalog/unblock-rules.d/$id.json"
-  [ -r "$f" ] || return 1
-  c=$(jq -r '.class // empty | strings' "$f" 2>/dev/null) || return 1
+  c=$(for f in "$root"/catalog/unblock-rules.d/[!_]*.json; do jq -c . "$f" 2>/dev/null || true; done \
+    | jq -rs --arg id "$id" '[.[] | select(type == "object" and .id == $id)]
+        | if length == 1 then .[0].class // empty | strings else empty end' 2>/dev/null) || return 1
   [[ $c =~ ^[a-z][a-z0-9-]{1,40}$ ]] || return 1
   printf '%s' "$c"
 }

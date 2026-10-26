@@ -38,7 +38,7 @@
 #      stage.unblock). No route = RECORD no-route (the detail names the role),
 #      0 model calls, and ONE bin/lane-alert.sh --severity warn --id
 #      unblock-no-route-<role> per role per tick. Else the seam is called with
-#      (decision JSON, model) and prints {outcome, detail, model_calls,
+#      (decision JSON, model, claim mode) and prints {outcome, detail, model_calls,
 #      cost_usd, card?}; anything else is RECORD failed.
 #   7. ACT: ub_act in this shell, with act.sh's input shape; RECORD
 #      UB_ACT_OUTCOME / UB_ACT_DETAIL. rc 1 = RECORD failed bad-input.
@@ -54,10 +54,13 @@
 #     {decision_key, project, repo, subject_kind, subject, pr?, head?,
 #      stall_class, rule_id, cites[], class, decision, action:{name,args}|null,
 #      judge:{...}|null, evidence:{...}}
-#   ubt_stage_judge <decision-json> <model>  -> {outcome,detail,model_calls,cost_usd}
+#   ubt_stage_judge <decision-json> <model> <mode>  -> {outcome,detail,model_calls,cost_usd}
 #     (it must call agent-call stage unblock-judge on route unblock.judge)
-#   ubt_stage_card  <decision-json> <model>  -> the same, plus card
-#     (it must call agent-call stage unblock on route stage.unblock)
+#   ubt_stage_card  <decision-json> <model> <mode>  -> the same, plus card
+#     (bin/lib/unblock/card.sh; it calls agent-call stage unblock on route
+#     stage.unblock, and only for the key in UBT_CLAIMED_KEY)
+#   <mode> is the claim's mode (shadow, or act with UNBLOCK_ACT=1). After a
+#   claim answered rc 0 the tick sets UBT_CLAIMED_KEY to that decision_key.
 #   Both manifest rows: catalog/context-budgets.d/7722-unblock.json.
 #   ub_act <record-json>                     bin/lib/unblock/act.sh (BH-7726)
 #
@@ -108,8 +111,20 @@ HENV=$(harness_env_dir "$H")
 . "$SELF/lib/unblock/scope.sh" || { echo "unblock: bin/lib/unblock/scope.sh missing" >&2; exit 1; }
 # shellcheck source=bin/lib/unblock/act.sh
 . "$SELF/lib/unblock/act.sh" || { echo "unblock: bin/lib/unblock/act.sh missing" >&2; exit 1; }
-# The rules engine (#7752) loads when its file is on the tree.
-for m in rules; do
+# The conductor libs (BH-8418): mc_attempt_has and mc_requeued_mark for the
+# queue collector's ejected_on_head and requeued_on_head, and the requeue,
+# post_block and queue_approve arms of act.sh. Not on the tree = those reads
+# are null (unknown) and those arms answer conductor-libs-not-loaded.
+# shellcheck source=bin/lib/merge-conductor-lib.sh
+[ -r "$SELF/lib/merge-conductor-lib.sh" ] && . "$SELF/lib/merge-conductor-lib.sh"
+# fix_round_enqueue, for act.sh's fix_round arm (U10).
+# shellcheck source=bin/lib/fix-round-queue.sh
+[ -r "$SELF/lib/fix-round-queue.sh" ] && . "$SELF/lib/fix-round-queue.sh"
+# Every seam module the tick dispatches to loads when its file is on the tree:
+# the rules engine (#7752), the judge (judge.sh, BH-7724 #7753) and the card
+# (card.sh, ubt_stage_card, BH-8418). tests/unblock-rules-contract.bh-8418-test.sh
+# S5 checks each ubt_stage_* below is defined after this loop.
+for m in rules judge card; do
   # shellcheck disable=SC1090
   [ -r "$SELF/lib/unblock/$m.sh" ] && . "$SELF/lib/unblock/$m.sh"
 done
@@ -196,6 +211,7 @@ ubt_record() {
 # ubt_decide <decision-json> <mode> — steps 4 to 7 for one decision.
 ubt_decide() {
   local d="$1" mode="$2" key kind seam="" role="" model ans out body ev cm rc
+  UBT_CLAIMED_KEY=""
   key=$(jq -r '.decision_key // ""' <<<"$d")
   kind=$(jq -r '.decision // ""' <<<"$d")
   if ! [[ $key =~ ^[A-Za-z0-9._:-]{1,128}$ ]]; then ubt_log "decision dropped: bad decision_key"; return 0; fi
@@ -220,7 +236,7 @@ ubt_decide() {
     || { ubt_log "decision $key dropped: unreadable"; return 0; }
   out=$(_jobs_req POST /api/unblock/decisions/claim "$body"); rc=$?
   case "$rc" in
-    0) CLAIMED=$((CLAIMED + 1)) ;;
+    0) CLAIMED=$((CLAIMED + 1)); UBT_CLAIMED_KEY=$key ;;
     9) ubt_log "claim $key: held by row $(jq -r '.id // "?"' <<<"$out" 2>/dev/null) ($(jq -r '.outcome // "?"' <<<"$out" 2>/dev/null)); skipped"; return 0 ;;
     *) ubt_log "claim $key failed (http ${JOBS_HTTP:-none}); nothing spent"; return 0 ;;
   esac
@@ -248,7 +264,7 @@ ubt_decide() {
         esac
         return 0
       fi
-      ans=$("$seam" "$d" "$model" 2>/dev/null)
+      ans=$("$seam" "$d" "$model" "$cm" 2>/dev/null)
       if jq -e 'type == "object" and (.outcome | IN("would","done","failed","refused","escalated"))
           and ([.model_calls | tonumber?] | length == 1) and ([.cost_usd | tonumber?] | length == 1)' >/dev/null 2>&1 <<<"$ans"; then
         ubt_record "$key" "$(jq -r .outcome <<<"$ans")" "$(jq -r '.detail // ""' <<<"$ans")" \
