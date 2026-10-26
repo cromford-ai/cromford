@@ -302,3 +302,12 @@ unblock_collect_infra() {
   case "$fam" in ''|park) _unblock_infra_parks ;; esac
   return 0
 }
+
+# ub_collect_infra <project> <repo> — the UNB-0 collector contract entry
+# (bin/lib/unblock/collect.sh calls ub_collect_<family> with these two args).
+# Without it the tick logged "unwired infra (no ub_collect_infra defined)"
+# and collected nothing (2026-10-26). <repo> is not needed here.
+ub_collect_infra() {
+  [ -n "${1:-}" ] || return 2
+  unblock_collect_infra --project "$1"
+}

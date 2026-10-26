@@ -283,5 +283,14 @@ eq "B10 no acting rule carries a never-auto class" \
 eq "B10 U12 is the lowest priority" "$(for f in "$RULES_D"/[!_]*.json; do printf '%s %s\n' "$(jq -r .priority "$f")" "$(jq -r .id "$f")"; done | sort -n | tail -1 | cut -d' ' -f2)" U12
 eq "B10 the rule shape" "$(jq -r 'select((has("id") and has("priority") and has("family") and has("class") and has("cites") and has("match") and has("judge") and has("action") and has("key") and has("note")) | not) | .id' "$RULES_D"/[!_]*.json)" ""
 
+# C0 (2026-10-26): every collector file defines the UNB-0 contract entry
+# ub_collect_<family> that bin/lib/unblock/collect.sh calls. infra.sh defined
+# only unblock_collect_infra, so the live tick logged "unwired infra" and read
+# nothing.
+DIR_REPO=$(cd "$(dirname "$0")/.." && pwd)
+for cf in "$DIR_REPO"/bin/lib/unblock/collectors/*.sh; do
+  cfam=$(basename "$cf" .sh); cfn="ub_collect_${cfam//-/_}"
+  check "C0 collectors/$cfam.sh defines $cfn" "bash -c '. \"\$1\" >/dev/null 2>&1; declare -F \"\$2\" >/dev/null' _ \"$cf\" \"$cfn\""
+done
 echo "unblock-infra-rules: $PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ]
