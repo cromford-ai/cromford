@@ -26,3 +26,4 @@ worker/jobs/schema.sql	ignored worker/jobs/schema.d/	rendered by bin/schema-buil
 bin/lead-review.sh	bin/lib/lead-review/	an optional lib is a new file in bin/lib/lead-review/libs.d/ (BH-7455); new code is a module in bin/lib/lead-review/ (BH-6293)
 .github/workflows/harness-ci.yml	rendered config/harness-ci/	committed render of bin/render-ci-workflow.sh (BH-7452)
 tests/lane-switch.bh-2407-test.sh	tests/lane-switch.bh-2407-test.d/	new case or list entry since BH-8397; one fragment per file, sourced in LC_ALL=C order
+worker/jobs/src/lib/core.js	worker/jobs/src/lib/	registry entry since BH-8448: a column, index or override is core.d/<ticket-key>-<name>.js; other new code is its own src/lib/ module

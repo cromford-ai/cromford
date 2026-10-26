@@ -3,11 +3,12 @@
 //
 // S1  each of the 16 fragments exists, exports only CREATED_TABLE_OVERRIDES,
 //     and names exactly its own table; no other 0000-* file exports overrides
+//     except a BH-8448 baseline of another fixture table
 // S2  each moved array equals the pre-split fixture, string for string
 // S3  the real core.js CREATED_TABLE_OVERRIDES equals the fixture (35 tables),
 //     and CREATED_TABLES uses each override
-// S4  the node loader holds exactly the 16 moved tables; a table left in both
-//     the literal and a fragment cannot load
+// S4  the node loader holds the 16 moved tables among the 35 fixture tables
+//     (BH-8448 moved the other 19); a table merged in twice cannot load
 // S5  the real ensureTable creates the moved tables with their extra objects
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -42,7 +43,12 @@ test('S1 one fragment per moved table, exporting only its own override', async (
   for (const file of readdirSync(FRAG_DIR).filter((f) => f.startsWith('0000-'))) {
     if (want.has(file)) continue;
     const mod = await load(file);
-    assert.ok(!('CREATED_TABLE_OVERRIDES' in mod), `${file} is not a moved table and must not export CREATED_TABLE_OVERRIDES`);
+    if (!('CREATED_TABLE_OVERRIDES' in mod)) continue;
+    // BH-8448 moved the other 19 fixture tables into their own baselines;
+    // core-overrides.bh-8448.test.js pins those. Anything else is refused.
+    const tables = Object.keys(mod.CREATED_TABLE_OVERRIDES);
+    assert.ok(tables.length === 1 && tables[0] in FIXTURE && !MOVED.includes(tables[0]),
+      `${file} is not a moved table and must not export CREATED_TABLE_OVERRIDES for [${tables}]`);
   }
 });
 
@@ -63,9 +69,10 @@ test('S3 core.js CREATED_TABLE_OVERRIDES equals the fixture and CREATED_TABLES u
   }
 });
 
-test('S4 the node loader holds exactly the moved tables; a table in both places throws', async () => {
+test('S4 the node loader holds the moved tables among the fixture tables; a table in both places throws', async () => {
   const { CREATED_TABLE_OVERRIDES: frag } = await import('../src/lib/core-registries.node.js');
-  assert.deepEqual(Object.keys(frag).sort(), [...MOVED].sort());
+  for (const t of MOVED) assert.ok(t in frag, `the node loader holds ${t}`);
+  assert.deepEqual(Object.keys(frag).sort(), Object.keys(FIXTURE).sort());
   assert.throws(() => mergeTableLists({ verdicts: FIXTURE.verdicts }, { verdicts: FIXTURE.verdicts }),
     (e) => e.message.includes('verdicts') && e.message.includes('twice'));
 });
