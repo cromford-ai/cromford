@@ -1,0 +1,32 @@
+{
+  "id": "roadmap-render",
+  "name": "Roadmap render (docs/ROADMAP.html from the roadmap board, one PR per project)",
+  "scope": "hub",
+  "script": "bin/roadmap-render.sh",
+  "cadence": "41 6 * * *",
+  "boxes": [
+    "hub"
+  ],
+  "switch": {
+    "kind": "flag",
+    "name": "lane-off-roadmap-render",
+    "aliases": []
+  },
+  "wired": true,
+  "knobs": [
+    {
+      "env": "ROADMAP_RENDER_NOW",
+      "type": "string",
+      "default": "",
+      "zero_means": null,
+      "note": "Test seam: the ISO-8601 UTC time bin/roadmap-render.sh writes as the generated-at line of docs/ROADMAP.html. Empty = the current time. NOT settable from the control plane.",
+      "settable": false
+    }
+  ],
+  "stats": {
+    "cost_stage": null,
+    "cost_project_filter": null,
+    "lanes_row": false,
+    "log": "logs/roadmap-render.log"
+  }
+}

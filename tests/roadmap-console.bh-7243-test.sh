@@ -50,7 +50,7 @@ const list = render(h(S.RoadmapScreen, { project: 'p' }));
 window.location.search = '?view=board';
 const board = render(h(S.RoadmapScreen, { project: 'p' }));
 say('list by default', /data-testid=\"roadmap-add\"/.test(list) && !/Not built yet/.test(list) && !/BH-7243\.2/.test(list));
-say('board on ?view=board', /BH-7243\.2/.test(board) && /Not built yet/.test(board));
+say('board on ?view=board', /data-testid=\"roadmap-board-skeleton\"/.test(board) && !/Not built yet/.test(board) && !/data-testid=\"roadmap-add\"/.test(board));
 " 2>&1)
   while IFS= read -r line; do
     case "$line" in

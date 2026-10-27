@@ -1,0 +1,8 @@
+# BH-7243.2 (BH-7265): the roadmap board, hand links and decisions, key-named (BH-5788).
+# POST /api/roadmap/links is its own path: BH-7243.4's GET /api/roadmap/links/stale
+# and PUT /api/roadmap/links/state differ in path and method.
+GET /api/roadmap/board
+POST /api/roadmap/links
+POST /api/roadmap/links/remove
+POST /api/roadmap/decisions
+POST /api/roadmap/decisions/decide

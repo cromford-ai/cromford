@@ -113,6 +113,7 @@ tests/qa-wiring-check.bh-6254-test.sh:generic-api-key:148
 tests/queue-partition.bh-4979-test.sh:generic-api-key:191
 tests/roadmap-file.bh-7243-test.sh:generic-api-key:198
 tests/roadmap-issue-sync.bh-7243-test.sh:generic-api-key:175
+tests/roadmap-render.bh-7243-test.sh:generic-api-key:263
 tests/run-decompose-fresh-token-test.sh:generic-api-key:50
 tests/run-decompose-fresh-token-test.sh:generic-api-key:57
 tests/run-decompose-inapp-deps-test.sh:generic-api-key:50

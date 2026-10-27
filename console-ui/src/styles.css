@@ -1464,6 +1464,40 @@ a.statgrid__cell:hover { background: var(--surface-1); color: var(--text); }
 .card__track .st.done:last-child .lbl,
 .card__track .st.done:has(+ .st:not(.done):not(.now)) .lbl { display: inline; }
 
+/* ---------- Roadmap board (BH-7243.2) ----------
+   Four columns at 900 px and up; under it the columns stack, each with its
+   lane header. Built on .kb / .kb__col / .card; tokens only. */
+.kb.roadmap-board { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+.roadmap-col { min-height: 96px; }
+.roadmap-col__empty { font-size: var(--fs-xs); color: var(--fainter); padding: 4px 2px; }
+.roadmap-card { gap: 6px; }
+.roadmap-card__head { display: flex; align-items: center; gap: 6px; min-width: 0; overflow-wrap: anywhere; }
+.roadmap-card__drag { cursor: grab; color: var(--faint); user-select: none; }
+.roadmap-card__note { font-size: var(--fs-2xs); color: var(--faint); }
+.roadmap-card__actions { display: flex; flex-wrap: wrap; gap: 6px; align-items: flex-start; }
+.roadmap-links { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; font-size: var(--fs-xs); }
+.roadmap-move { position: relative; }
+.roadmap-menu {
+  position: absolute; z-index: 5; top: 100%; left: 0; margin-top: 2px;
+  display: flex; flex-direction: column; gap: 4px; padding: 6px; min-width: 160px;
+  border: 1px solid var(--line-active); background: var(--panel-head); border-radius: var(--radius-md);
+}
+.roadmap-menu__note { font-size: var(--fs-2xs); color: var(--soft); max-width: 200px; }
+.roadmap-link { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; min-width: 0; }
+.roadmap-link .knob__input { width: 8ch; }
+.roadmap-decision-form { display: flex; flex-wrap: wrap; gap: 8px; align-items: flex-end; margin-bottom: 8px; }
+.roadmap-decision-form label { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.roadmap-decision-form__title { flex: 1 1 260px; }
+.roadmap-decision-form__body { flex: 1 1 100%; }
+.roadmap-decision__body { display: block; font-size: var(--fs-xs); color: var(--soft); }
+@media (max-width: 900px) {
+  .kb.roadmap-board { grid-template-columns: minmax(0, 1fr); }
+  .roadmap-col { min-height: 0; }
+}
+@media (max-width: 600px) {
+  .roadmap-card .btn--sm { min-height: 44px; }
+}
+
 /* ---------- BH-7934 setup line (src/screens/SetupLine.js) ---------- */
 .setup-line .setup-strip { margin: 0 0 16px; overflow-x: auto; }
 .setup-line .setup-stations { list-style: none; margin: 0 0 16px; padding: 0; border-top: 1px solid var(--line-row); }

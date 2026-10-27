@@ -5,10 +5,10 @@ import { h } from 'preact';
 // BH-7263 (BH-7243.0): the console seams the four roadmap children build on.
 //
 // S1 the ROUTES table maps the 4 roadmap paths to their screens
-// S2 RoadmapScreen renders the list view by default and the board
-//    placeholder with ?view=board. The list, index and idea views are built
-//    (BH-7243.1) and render without "Not built yet"; the board and wave
-//    placeholders still say it
+// S2 RoadmapScreen renders the list view by default and the board view with
+//    ?view=board. The list, index and idea views (BH-7243.1) and the board
+//    (BH-7243.2) are built and render without "Not built yet"; the wave
+//    placeholder still says it
 // S3 the IDEAS tab is lit on /roadmap*; NAV has no new slot
 // S4 api.roadmapIdeas / api.roadmapAddIdea call the coord proxy paths
 // S5 /ideas still routes to the old screens; WaveSelectBar and WaveActions
@@ -55,7 +55,7 @@ test('S1 the 4 roadmap paths route to their screens', () => {
   }
 });
 
-test('S2 RoadmapScreen picks the list or the board view; the board and wave placeholders say Not built yet', () => {
+test('S2 RoadmapScreen picks the list or the board view; the wave placeholder says Not built yet', () => {
   window.location.search = '';
   const listHtml = render(h(RS.RoadmapScreen, { project: 'cromford' }));
   // BH-7243.1 built the list: its first render is the ADD IDEA form, not the placeholder.
@@ -64,8 +64,9 @@ test('S2 RoadmapScreen picks the list or the board view; the board and wave plac
   assert.match(listHtml, /data-testid="roadmap-add"/);
   window.location.search = '?view=board';
   const boardHtml = render(h(RS.RoadmapScreen, { project: 'cromford' }));
-  assert.match(boardHtml, /Not built yet/);
-  assert.match(boardHtml, /BH-7243\.2/);
+  // BH-7243.2 built the board: its first render is the board skeleton, not the placeholder.
+  assert.match(boardHtml, /data-testid="roadmap-board-skeleton"/);
+  assert.doesNotMatch(boardHtml, /Not built yet/);
   assert.doesNotMatch(boardHtml, /data-testid="roadmap-add"/);
   window.location.search = '';
   const idx = render(h(RS.RoadmapIndexScreen, {}));

@@ -1,0 +1,124 @@
+{
+  "project": "cromford",
+  "columns": {
+    "ideas": [
+      {
+        "id": "f5",
+        "title": "Alpha idea",
+        "note": null,
+        "source": "operator",
+        "lane": "ideas",
+        "version": 1,
+        "updated_at": "2026-10-17T11:50:00Z",
+        "links": []
+      },
+      {
+        "id": "f1",
+        "title": "Bravo idea",
+        "note": null,
+        "source": "operator",
+        "lane": "ideas",
+        "version": 1,
+        "updated_at": "2026-10-17T11:10:00Z",
+        "links": []
+      }
+    ],
+    "next": [
+      {
+        "id": "f2",
+        "title": "Charlie idea",
+        "note": null,
+        "source": "operator",
+        "lane": "next",
+        "version": 2,
+        "updated_at": "2026-10-17T11:20:00Z",
+        "links": []
+      }
+    ],
+    "now": [
+      {
+        "id": "f3",
+        "title": "Delta idea",
+        "note": null,
+        "source": "operator",
+        "lane": "ideas",
+        "version": 1,
+        "updated_at": "2026-10-17T11:30:00Z",
+        "links": [
+          {
+            "repo": "example-org/cromford",
+            "issue": 101,
+            "wave_id": null,
+            "issue_state": "open",
+            "url": "https://github.com/example-org/cromford/issues/101",
+            "ticket": "BH-101"
+          },
+          {
+            "repo": "example-org/cromford",
+            "issue": 103,
+            "wave_id": null,
+            "issue_state": null,
+            "url": "https://github.com/example-org/cromford/issues/103",
+            "ticket": null
+          }
+        ]
+      }
+    ],
+    "shipped": [
+      {
+        "id": "f4",
+        "title": "Echo idea",
+        "note": null,
+        "source": "operator",
+        "lane": "next",
+        "version": 1,
+        "updated_at": "2026-10-17T11:40:00Z",
+        "links": [
+          {
+            "repo": "example-org/cromford",
+            "issue": 102,
+            "wave_id": "w1",
+            "issue_state": "closed_completed",
+            "url": "https://github.com/example-org/cromford/issues/102",
+            "ticket": null
+          }
+        ]
+      }
+    ]
+  },
+  "decisions": [
+    {
+      "id": "d1",
+      "kind": "log",
+      "title": "Ship the board first",
+      "body": "The wave view waits.",
+      "status": "decided",
+      "created_by": "operator",
+      "decided_by": "operator",
+      "created_at": "2026-10-17T11:00:00Z",
+      "updated_at": "2026-10-17T11:00:00Z",
+      "decided_at": "2026-10-17T11:00:00Z"
+    }
+  ],
+  "open_decisions": [
+    {
+      "id": "d2",
+      "kind": "open",
+      "title": "Render cadence",
+      "body": "Daily or on change?",
+      "status": "open",
+      "created_by": "operator",
+      "decided_by": null,
+      "created_at": "2026-10-17T11:30:00Z",
+      "updated_at": "2026-10-17T11:30:00Z",
+      "decided_at": null
+    }
+  ],
+  "truncated": {
+    "ideas": false,
+    "links": false,
+    "running": false,
+    "decisions": false
+  },
+  "as_of": "2026-10-17T12:00:00Z"
+}

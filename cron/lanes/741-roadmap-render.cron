@@ -1,0 +1,12 @@
+# @hub-lanes
+
+# ── ROADMAP-RENDER LANE (BH-7265, BH-7243.2) ───────────────────────────────
+# Daily at 06:41 it renders docs/ROADMAP.html for each project in the
+# roadmap.render_projects settings row (empty = none, the seed) from GET
+# /api/roadmap/board, compares it with the default branch (the generated-at
+# line dropped), and opens or updates ONE PR on roadmap/render-<project>. It
+# never writes the default branch and never merges. No model call. flock -n
+# dedupes.
+# Off: an empty roadmap.render_projects, flags/lane-off-roadmap-render, or
+# bin/harness-ctl.sh off roadmap-render.
+41 6 * * * /root/harness/bin/hub-lease.sh check && /root/harness/bin/roadmap-render.sh >/dev/null 2>&1

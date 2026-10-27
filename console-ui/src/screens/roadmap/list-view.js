@@ -161,7 +161,10 @@ export function RoadmapListView({ project }) {
     <div class="page">
       <${PageHeadline} chip="Roadmap" line1=${project}
         line2=${d ? `${total} ${total === 1 ? 'idea' : 'ideas'}.` : list.error ? 'The read failed.' : 'Reading the ideas.'}/>
-      <div><${Link} to="/roadmap" class="btn btn--sm">ALL ROADMAPS<//></div>
+      <div style="display:flex;gap:6px;flex-wrap:wrap">
+        <${Link} to="/roadmap" class="btn btn--sm">ALL ROADMAPS<//>
+        <${Link} to=${`${listPath(project)}?view=board`} class="btn btn--sm">BOARD<//>
+      </div>
       <${Section} title="ADD IDEA" note="Enter in the title adds the idea. It lands in Ideas.">
         <${AddIdeaForm} project=${project} onAdded=${list.reload}/>
       <//>
