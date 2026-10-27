@@ -1,0 +1,56 @@
+# The real-vendor contract suites for the Linear and Jira tracker seams
+# (BH-7936; BH-7563 rule 4). Five cases per vendor against the sandbox
+# accounts, one job, the two files in sequence (one worker).
+#
+# WHEN. On a push to main, nightly, by hand, and on a PR that changes a
+# tracker seam file or a contract suite. Never on any other PR: the PR suite
+# plays the vendors from stubs (tests/onboard-tracker-vendor-budget.bh-7936-test.sh
+# asserts 0 vendor calls there).
+#
+# SECRETS (repo Actions secrets, the cromford-sandbox-linear and
+# cromford-sandbox-jira sandboxes): LINEAR_CONTRACT_KEY, LINEAR_CONTRACT_TEAM,
+# JIRA_CONTRACT_SITE, JIRA_CONTRACT_EMAIL, JIRA_CONTRACT_TOKEN,
+# JIRA_CONTRACT_PROJECT. A suite with no secret prints `SKIP: no contract
+# credentials` and passes. A vendor error (429, 5xx, timeout) is a skip with
+# a reason and a ::warning:: line, never a red run. A PR from a fork gets no
+# secrets, so it skips.
+name: Tracker contract (Linear, Jira)
+on:
+  push:
+    branches: [main]
+  schedule:
+    - cron: '23 4 * * *'
+  workflow_dispatch: {}
+  pull_request:
+    paths:
+      - bin/lib/tracker.sh
+      - bin/lib/tracker/linear.sh
+      - bin/lib/tracker/jira.sh
+      - tests/contract/**
+concurrency:
+  group: tracker-contract
+  cancel-in-progress: false
+permissions:
+  contents: read
+jobs:
+  contract:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Linear contract (5 cases)
+        env:
+          HARNESS_TEST_SANDBOX: '1'
+          LINEAR_CONTRACT_KEY: ${{ secrets.LINEAR_CONTRACT_KEY }}
+          LINEAR_CONTRACT_TEAM: ${{ secrets.LINEAR_CONTRACT_TEAM }}
+        run: bash tests/contract/tracker-linear.bh-7936-contract-test.sh
+      - name: Jira contract (5 cases)
+        env:
+          HARNESS_TEST_SANDBOX: '1'
+          JIRA_CONTRACT_SITE: ${{ secrets.JIRA_CONTRACT_SITE }}
+          JIRA_CONTRACT_EMAIL: ${{ secrets.JIRA_CONTRACT_EMAIL }}
+          JIRA_CONTRACT_TOKEN: ${{ secrets.JIRA_CONTRACT_TOKEN }}
+          JIRA_CONTRACT_PROJECT: ${{ secrets.JIRA_CONTRACT_PROJECT }}
+        run: bash tests/contract/tracker-jira.bh-7936-contract-test.sh

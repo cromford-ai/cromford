@@ -134,6 +134,50 @@ trk_jira_context() {
   return 0
 }
 
+# trk_jira_cloud_id <site> — the cloudId of a Jira Cloud site
+# (<name>.atlassian.net, no scheme), from one GET https://<site>/_edge/tenant_info.
+# rc 0 with the UUID on stdout; 75 on 429, 5xx or no answer; 1 for a site that
+# is not <name>.atlassian.net (nothing sent) or any other answer.
+trk_jira_cloud_id() {
+  local site="${1:-}" out code id rc=1
+  [[ "$site" =~ ^[a-z0-9-]+\.atlassian\.net$ ]] || { printf 'jira: %s is not <name>.atlassian.net\n' "$(_trk_sq "$site")" >&2; return 1; }
+  out=$(mktemp "${TMPDIR:-/tmp}/trk-jira.XXXXXX") || return 1
+  code=$(curl -sS --max-time 30 -H "Accept: application/json" -o "$out" -w '%{http_code}' \
+    "https://$site/_edge/tenant_info" 2>>"${TRK_ERR:-/dev/null}") || true
+  case "$code" in
+    2??) id=$(jq -r '.cloudId // empty' "$out" 2>/dev/null)
+         if [[ "$id" =~ ^[0-9a-fA-F-]{36}$ ]]; then printf '%s\n' "$id"; rc=0
+         else printf 'jira: %s answered no cloudId\n' "$site" >&2; fi ;;
+    429|5??|000|'') printf 'jira: %s/_edge/tenant_info answered %s\n' "$site" "${code:-000}" >&2; rc=75 ;;
+    *) printf 'jira: %s/_edge/tenant_info answered %s\n' "$site" "$code" >&2 ;;
+  esac
+  rm -f "$out"
+  return "$rc"
+}
+
+# trk_jira_context_fields <site> <email> <token> <project key> <status_map> —
+# the context from the onboarding sheet's fields (BH-7936), for a project that
+# has no env file or settings rows yet. The gateway base comes from
+# trk_jira_cloud_id; every allowlist is the one project key; the label is the
+# default ai-build. rc 0 with TRK_JIRA_* set; rc 1 (or 75 from the cloudId
+# read) with every TRK_JIRA_* blank and one stderr line. trk_jira_context is
+# unchanged and stays the reader for a registered project.
+trk_jira_context_fields() {
+  local site="${1:-}" email="${2:-}" tok="${3:-}" key="${4:-}" smap="${5:-}" cid rc=0
+  _trk_jira_blank
+  [[ "$site" =~ ^[a-z0-9-]+\.atlassian\.net$ ]] || { printf 'jira: site %s is not <name>.atlassian.net\n' "$(_trk_sq "$site")" >&2; return 1; }
+  [ -n "$email" ] || { printf 'jira: no email\n' >&2; return 1; }
+  [ -n "$tok" ] || { printf 'jira: no API token\n' >&2; return 1; }
+  [[ "$key" =~ ^[A-Z][A-Z0-9_]{1,9}$ ]] || { printf 'jira: %s is not a Jira project key\n' "$(_trk_sq "$key")" >&2; return 1; }
+  [ -n "$smap" ] && _trk_jira_smap_ok "$smap" || { printf 'jira: the status map is not alias=Status;alias=Status\n' >&2; return 1; }
+  cid=$(trk_jira_cloud_id "$site") || rc=$?
+  [ "$rc" = 0 ] || return "$rc"
+  TRK_JIRA_PROJECT="$key"; TRK_JIRA_BASE="https://api.atlassian.com/ex/jira/$cid"
+  TRK_JIRA_EMAIL="$email"; TRK_JIRA_TOKEN="$tok"; TRK_JIRA_SITE="https://$site"
+  TRK_JIRA_WRITE_PROJECTS="$key"; TRK_JIRA_LABEL=ai-build; TRK_JIRA_STATUS_MAP="$smap"
+  return 0
+}
+
 _trk_jira_smap_ok() { # every `;`-separated entry is alias=Jira Status
   local e
   local IFS=';'

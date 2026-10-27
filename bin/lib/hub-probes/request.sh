@@ -11,7 +11,8 @@
 #   included). A line is a request only when the WHOLE line matches
 #   `^HUB_PROBE: ([a-z0-9-]+)( [^ ]+)*$` (case-sensitive, column 0, single spaces;
 #   the ticket's [a-z-]+ is widened by the digit so d1-count can match)
-#   and hp_validate accepts the probe and its args. Skipped: lines inside a
+#   and the probe is one of HP_PROBES and hp_validate accepts it and its args.
+#   Skipped: lines inside a
 #   ``` or ~~~ fence (quotes), any line carrying `lead-verdict`, any line with
 #   a control character after one trailing \r is stripped (tab included). A
 #   skipped or invalid line that starts with `HUB_PROBE:` is logged on stderr as
@@ -44,7 +45,8 @@ hp_parse_request_lines() {
     fi
     probe=${BASH_REMATCH[1]}
     IFS=' ' read -ra args <<< "${BASH_REMATCH[2]}"
-    if ! hp_validate "$probe" "${args[@]}"; then
+    # HP_SCREEN_PROBES validate too, but only the console files them (BH-7997).
+    if ! _hp_in "$probe" "$HP_PROBES" || ! hp_validate "$probe" "${args[@]}"; then
       printf 'hub-probe: dropped invalid request line: %.120s\n' "$line" >&2
       continue
     fi

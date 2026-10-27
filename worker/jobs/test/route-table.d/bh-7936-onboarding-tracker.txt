@@ -1,0 +1,7 @@
+# ONBOARDING TRACKER (BH-7936): the tracker sheets' Test and connect. The
+# credential goes to a one-time KV row (ONBOARD_KV, 900 s), the test runs on the
+# hub through the hub-probe ledger (probe tracker-test), and the hub takes the
+# KV row once.
+POST /api/onboarding/tracker-test
+GET re:/^\/api\/onboarding\/tracker-test\/([0-9a-f]{32})$/
+POST /api/onboarding/tracker-secret/take

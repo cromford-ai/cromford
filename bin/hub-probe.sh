@@ -21,12 +21,15 @@
 #      could not be read, sends the row back to pending with the note
 #      `deferred: daily cap` / `deferred: count unknown` (defer, never drop).
 #      Otherwise hp_run, then hp_result with the output capped at 4096 bytes.
-#      A failed store posts nothing. A stored PASS calls hp_on_pass. Then the
-#      comment is owed: it is spooled and delivered.
+#      A failed store posts nothing. A probe in HP_SCREEN_PROBES (tracker-test,
+#      BH-7936) stops at the store: a console screen reads its row, no comment
+#      is owed and nothing is spooled (counted `silent`). Otherwise a stored
+#      PASS calls hp_on_pass. Then the comment is owed: it is spooled and
+#      delivered.
 #   7. one summary line in logs/hub-probe.log:
 #      <ts> claimed=<n> ran=<n> pass=<n> fail=<n> rejected=<n> deferred=<n> commented=<n> healed=<n> post-failed=<n> store-failed=<n> not-configured=<n>[ <extra>=<n>...][ claim-failed| off]
 #      The extras (onpass-failed, bad-key, defer-failed, thread-unknown,
-#      spool-failed) appear only when non-zero.
+#      spool-failed, silent) appear only when non-zero.
 #
 # THE SPOOL. state/hub-probe/owed/<id>.json (+ <id>.out) is written only after
 # hp_result answered rc 0, and it means "a comment is owed for this row". A
@@ -88,13 +91,13 @@ mkdir -p "$H/logs" "$H/locks" 2>/dev/null
 LOG="$H/logs/hub-probe.log"
 declare -A C=()
 for k in claimed ran pass fail rejected deferred commented healed post-failed store-failed not-configured \
-  onpass-failed bad-key defer-failed thread-unknown spool-failed; do C[$k]=0; done
+  onpass-failed bad-key defer-failed thread-unknown spool-failed silent; do C[$k]=0; done
 inc() { C[$1]=$(( ${C[$1]} + 1 )); }
 summary() { # summary [suffix]
   local s="" k
   for k in claimed ran pass fail rejected deferred commented healed post-failed store-failed not-configured; do
     s="$s $k=${C[$k]}"; done
-  for k in onpass-failed bad-key defer-failed thread-unknown spool-failed; do
+  for k in onpass-failed bad-key defer-failed thread-unknown spool-failed silent; do
     [ "${C[$k]}" = 0 ] || s="$s $k=${C[$k]}"; done
   printf '%s%s%s\n' "$(date -u +%FT%TZ)" "$s" "${1:+ $1}" >> "$LOG"
 }
@@ -222,6 +225,8 @@ while IFS= read -r r; do
   if ! hp_result "$id" "$verdict" "$hs" "$TMP/$id.out"; then
     inc store-failed; note "store-failed id=$id"; continue
   fi
+  # HP_SCREEN_PROBES is the common.sh allowlist constant, not a knob: no :- read.
+  case " $HP_SCREEN_PROBES " in *" $probe "*) inc silent; continue ;; esac
   if [ "$verdict" = pass ]; then
     hp_on_pass "$project" "$key" "$probe" "$args_json" || inc onpass-failed
   fi

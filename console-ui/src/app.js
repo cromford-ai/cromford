@@ -14,6 +14,8 @@ import { FleetScreen } from './screens/Fleet.js';
 import { MachinesScreen } from './screens/Machines.js';
 import { ParticipantsScreen, ParticipantScreen } from './screens/Participants.js';
 import { ProjectScreen } from './screens/Project.js';
+import { OnboardScreen } from './screens/Onboard.js';
+import { ProjectReadyScreen } from './screens/ProjectReady.js';
 import { SetupLineScreen } from './screens/SetupLine.js';
 import { RunScreen } from './screens/Run.js';
 import { BuildScreen } from './screens/Build.js';
@@ -69,6 +71,8 @@ export const ROUTES = [
   ['/machines/participants', ParticipantsScreen],
   ['/machines/participants/:id', ParticipantScreen],
   ['/p/:project', ProjectScreen],
+  ['/projects/new', OnboardScreen],
+  ['/projects/:project/ready', ProjectReadyScreen],
   ['/projects/:project/setup/:runId', SetupLineScreen],
   ['/runs/:id', RunScreen],
   ['/builds/:id', BuildScreen],

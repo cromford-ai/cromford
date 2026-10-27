@@ -1,0 +1,42 @@
+/* The tracker connect sheets (BH-7936, src/ui/TrackerSheets.js). Scoped to
+   .tsheet; theme tokens only. A bottom sheet below 720px (full width, at most
+   90dvh, the body scrolls inside), a centred panel above. */
+.tsheet__scrim {
+  position: fixed; inset: 0; z-index: 50; background: var(--scrim);
+  display: flex; align-items: center; justify-content: center; padding: 20px;
+}
+.tsheet {
+  width: 100%; max-width: 520px; max-height: 90dvh; display: flex; flex-direction: column; gap: 14px;
+  padding: 20px; border: 1px solid var(--line-active); border-radius: var(--radius-lg);
+  background: var(--panel); color: var(--text); box-sizing: border-box; overflow: hidden;
+}
+.tsheet__title { margin: 0; font-size: var(--fs-md); letter-spacing: 2px; color: var(--bright); font-weight: 700; }
+.tsheet__body { display: flex; flex-direction: column; gap: 12px; overflow-y: auto; min-height: 0; }
+.tsheet__field, .tsheet__status { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.tsheet__label { font-size: var(--fs-xs); letter-spacing: 1px; color: var(--soft); }
+.tsheet__hint { font-size: var(--fs-xs); color: var(--text-dim); }
+.tsheet input {
+  width: 100%; box-sizing: border-box; min-height: 40px; padding: 8px 10px;
+  font: inherit; font-size: var(--fs-sm); color: var(--text-strong);
+  background: var(--surface-0); border: 1px solid var(--rule); border-radius: var(--radius-sm);
+}
+.tsheet input:focus-visible { outline: 1px solid var(--accent); outline-offset: 1px; }
+.tsheet__statuses { border: 1px solid var(--rule); border-radius: var(--radius-sm); padding: 10px; margin: 0;
+  display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+.tsheet__statuses legend { padding: 0 4px; }
+.tsheet__state { font-size: var(--fs-xs); color: var(--text-dim); }
+.tsheet__error {
+  white-space: pre-wrap; overflow-wrap: anywhere; max-height: 30vh; overflow-y: auto;
+  font-size: var(--fs-xs); color: var(--err); border: 1px solid var(--err); border-radius: var(--radius-sm); padding: 8px 10px;
+}
+.tsheet__note { margin: 0; font-size: var(--fs-xs); color: var(--text-dim); }
+.tsheet__actions { display: flex; gap: 8px; justify-content: flex-end; }
+.tsheet__actions .btn { min-height: 44px; }
+
+@media (max-width: 719.98px) {
+  .tsheet__scrim { align-items: flex-end; padding: 0; }
+  .tsheet { max-width: none; border-bottom: none; border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+    padding-bottom: calc(20px + env(safe-area-inset-bottom, 0px)); }
+  .tsheet__statuses { grid-template-columns: minmax(0, 1fr); }
+  .tsheet__actions .btn { flex: 1 1 0; }
+}

@@ -67,6 +67,15 @@ const post = (path, payload) =>
     body: JSON.stringify(payload)
   });
 
+// post() plus an Idempotency-Key header: a retried create answers the first
+// create's result instead of making a second one (BH-7997).
+const postKeyed = (path, payload, key) =>
+  request(path, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', 'Idempotency-Key': key },
+    body: JSON.stringify(payload)
+  });
+
 // Map a box_console_commands row onto the {status, command, log} shape that
 // logOutcome reads. The row may come bare or wrapped as {command} / {row}. An
 // unknown status stays pending so pollCommand's timeout still ends it, and a
@@ -769,6 +778,14 @@ export const api = {
     }
   },
   action: (payload) => post('/api/dash/action', payload),
+  // BH-7997 (BH-7935): onboarding. The repo check and the App's repos are
+  // answered from hub-probe rows: {state: pending | ok | error}.
+  onboardRepo: (slug) => get(coordPath('/api/onboarding/repo?slug=' + encodeURIComponent(slug))),
+  onboardRepos: () => get(coordPath('/api/onboarding/repos')),
+  onboardRun: (inputs, key) => postKeyed(coordPath('/api/onboarding/runs'), inputs, key),
+  onboardReady: (project) => get(coordPath(`/api/onboarding/ready/${encodeURIComponent(project)}`)),
+  onboardRepoCreate: (body, key) => postKeyed(coordPath('/api/onboarding/repo-create'), body, key),
+  onboardRepoCreateState: (id) => get(coordPath(`/api/onboarding/repo-create/${encodeURIComponent(id)}`)),
   // BH-7243: the roadmap calls, one factory per child ticket
   // (src/lib/roadmap-api/), so no child edits this object.
   ...ideasApi({ get, post, coordPath }),

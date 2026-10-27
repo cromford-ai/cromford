@@ -13,6 +13,7 @@
 # where it appears or what line it lands on.
 checks/secret-literals/fixtures/violation.diff:aws-access-token:7
 checks/secret-literals/fixtures/violation.diff:github-app-token:10
+console-ui/tests/tracker-sheets.bh-7936.test.js:generic-api-key:34
 fly/warm-env/project-1.env:generic-api-key:13
 fly/warm-env/project-2.env:generic-api-key:12
 fly/warm-env/project-3.env:generic-api-key:8
@@ -64,6 +65,8 @@ tests/gh-token-live-test.sh:generic-api-key:26
 tests/hotspot-split-ticket.bh-6739-test.sh:curl-auth-header:158
 tests/hotspot-split-ticket.bh-6739-test.sh:curl-auth-header:327
 tests/hub-move.bh-7715-test.sh:generic-api-key:133
+tests/hub-probe-tracker-test.bh-7936-test.sh:generic-api-key:42
+tests/hub-probe-tracker-test.bh-7936-test.sh:generic-api-key:198
 tests/jobs-client-secret-sources.bh-7188-test.sh:generic-api-key:12
 tests/lane-run-agent-clis.bh-6260-test.sh:generic-api-key:90
 tests/lane-run-agent-clis.bh-6260-test.sh:generic-api-key:115
@@ -155,6 +158,7 @@ worker/jobs/test/main-red-state.bh-4156.test.js:generic-api-key:20
 worker/jobs/test/migration-numbers.bh-7325.test.js:generic-api-key:26
 worker/jobs/test/onboarding-actions.bh-7934.test.js:generic-api-key:28
 worker/jobs/test/onboarding-runner.bh-7934.test.js:generic-api-key:33
+worker/jobs/test/onboarding-tracker.bh-7936.test.js:generic-api-key:19
 worker/jobs/test/onboarding.bh-7934.test.js:generic-api-key:26
 worker/jobs/test/onboarding.bh-7934.test.js:generic-api-key:53
 worker/jobs/test/onboarding.bh-7934.test.js:generic-api-key:96

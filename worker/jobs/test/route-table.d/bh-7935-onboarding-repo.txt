@@ -1,0 +1,4 @@
+# ONBOARDING REPO (BH-7997, wave 2 of #7935): the console's repo-detect step and
+# the App's installation repos, each answered from a hub-probe row. Bearer-gated.
+GET /api/onboarding/repo
+GET /api/onboarding/repos
