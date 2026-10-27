@@ -15,6 +15,8 @@ set -uo pipefail
 . "$(dirname "$0")/lib/scratch.sh" || exit 1
 REPO=$(cd "$(dirname "$0")/.." && pwd)
 . "$(dirname "$0")/lib/box-move-cutover-fixture.bh-8410.sh" || exit 1
+# The old box id as the code under test derives it (its name after the last dash): the public mirror must not carry the real box id as a literal (tests/share-publish-clean.bh-6494 C1).
+BM_OLD_ID="${BM_OLD##*-}"
 ST() { printf '%s' "$H/state/box-move/$BM_NEW"; }
 
 # ==== U: the CLI frame ========================================================
@@ -120,7 +122,7 @@ orig_cron=$(cat "$OLD/crontab")
 bmc_through B2
 check S1-b2-ok "$(bmc_status B2)" ok
 check S1-old-crontab-saved "$(cat "$(ST)/old-crontab" 2>/dev/null)" "$orig_cron"
-check S1-rows-box "$(grep '^box' "$(ST)/old-rows.tsv" 2>/dev/null)" "$(printf 'box\t%s\tmkos\t%s\tbuild' "$BM_OLD" "$BM_OLD_IP")"
+check S1-rows-box "$(grep '^box' "$(ST)/old-rows.tsv" 2>/dev/null)" "$(printf 'box\t%s\t%s\t%s\tbuild' "$BM_OLD" "$BM_OLD_ID" "$BM_OLD_IP")"
 check S1-rows-projects "$(grep '^project' "$(ST)/old-rows.tsv" | cut -f2 | tr '\n' ' ')" "alpha-os beta-os "
 check S1-old-crontab-gone "$( [ -e "$OLD/crontab" ] && echo yes || echo no)" no
 check S1-lane-off-update-runners "$(bmc_flag "$OLD" lane-off-update-runners)" on
@@ -155,7 +157,7 @@ bmc_newcase c1; bm_target_ready; bmc_tick_table
 bmc_through B3
 check C1-b3-ok "$(bmc_status B3)" ok
 has C1-forced-backup "$(cat "$CALLS")" "old:state-backup BACKUP_FORCE=1"
-has C1-seed-new-ts "$(grep 'new:state-restore' "$CALLS")" "project-6-os 20261026T010203Z --apply"
+has C1-seed-new-ts "$(grep 'new:state-restore' "$CALLS")" "$BM_OLD_ID 20261026T010203Z --apply"
 check C1-old-all-off "$(bmc_flag "$OLD" all-off)" on
 check C1-new-all-off "$(bmc_flag "$NEW" all-off)" on
 has C1-detail-ts "$(tail -1 "$(ST)/steps.tsv")" "20261026T010203Z"
@@ -179,7 +181,7 @@ bmc_newcase r1; bm_target_ready; bmc_tick_table
 gs0=$(git -C "$REPO" status --porcelain)
 bmc_through B4
 check R1-b4-ok "$(bmc_status B4)" ok
-check R1-add-box-once "$(grep -c "^registry add-box $BM_NEW --ip $BM_NEW_IP --like project-6-os --id project-6-os --role build --actor box-move-$BM_NEW" "$CALLS")" 1
+check R1-add-box-once "$(grep -c "^registry add-box $BM_NEW --ip $BM_NEW_IP --like $BM_OLD_ID --id $BM_OLD_ID --role build --actor box-move-$BM_NEW" "$CALLS")" 1
 check R1-move-alpha "$(grep -c "^registry move-project alpha-os --box $BM_NEW" "$CALLS")" 1
 check R1-move-beta "$(grep -c "^registry move-project beta-os --box $BM_NEW" "$CALLS")" 1
 check R1-new-projects "$(bash "$H/bin/fleet-conf.sh" --projects-on-box "$BM_NEW" | tr '\n' ' ')" "alpha-os beta-os "
@@ -222,7 +224,7 @@ check R4-rerun-moves-beta-only "$(grep '^registry move-project' "$CALLS" | awk '
 # again): B4 stops before any write, and names the fix.
 bmc_newcase r6; bm_target_ready; bmc_tick_table
 bmc_through B3
-printf '# @box %s 192.0.2.99\n# @boxrole %s project-6-os build\n' "$BM_NEW" "$BM_NEW" >> "$H/fleet.conf"
+printf '# @box %s 192.0.2.99\n# @boxrole %s %s build\n' "$BM_NEW" "$BM_NEW" "$BM_OLD_ID" >> "$H/fleet.conf"
 : > "$CALLS"
 cstep --step B4 --confirm >"$C/out" 2>&1; check R6-ip-mismatch-rc "$?" 4
 check R6-row "$(bmc_status B4)" fail
