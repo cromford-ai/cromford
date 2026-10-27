@@ -1,0 +1,12 @@
+{
+  "env": "UNBLOCK_BOX_PROBE_STALE_S",
+  "read_in": "bin/lib/unblock/collectors/infra.sh",
+  "type": "int",
+  "default": 600,
+  "min": 120,
+  "max": 86400,
+  "unit": "seconds",
+  "zero_means": null,
+  "note": "BH-8553: a box_ssh_state probe older than this says nothing about now (the probe lane runs every 2 min; 600 s = 5 missed runs, the same as mcp/tools/box-health.mjs STALE_S). A box whose newest probe is older gives no box-hung record. A bad value is the code fallback 600.",
+  "settable": true
+}

@@ -1,33 +1,25 @@
 {
-  "note": "BH-7725 U8 corpus case (2026-10-20 incident shape). routes maps a GET path of the declared box_health route to its 200 body. box-project-6-os-1: ssh unreachable 540 min, Orgo running, 14 env-bundle failures, last restart 600 min ago, no build claim. box-alpha: reachable, so no record.",
+  "note": "BH-7725 U8 corpus case (2026-10-20 incident shape). routes maps a GET path to its 200 body. TEST-CHANGE (BH-8553): the box_health source is GET /api/box-health, the route the jobs worker serves (worker/jobs/src/routes/box-ssh.js), in its real shape; the old key was /api/boxes/health, a route no worker had. box-project-6-os-1: the 14:58 probe got rc 255, last ssh answer 06:00 (540 min), Orgo running, 14 lane ssh failures in 900 s. The route does not carry the last restart (600 min ago) or the build claim (none); the suite adds those two incident facts itself. box-alpha: reachable, so no record.",
   "routes": {
-    "/api/boxes/health": {
-      "as_of": "2026-10-20T15:00:00Z",
+    "/api/box-health": {
       "boxes": [
-        {
-          "name": "box-project-6-os-1",
-          "project": "project-6-os",
-          "orgo_hosted": true,
-          "orgo_state": "running",
-          "ssh_reachable": false,
-          "ssh_unreachable_min": 540,
-          "ssh_unreachable_since": "2026-10-20T06:00:00Z",
-          "envbundle_fail_1h": 14,
-          "last_restart_min_ago": 600,
-          "build_claim_10m": false
-        },
-        {
-          "name": "box-alpha",
-          "project": "alpha",
-          "orgo_hosted": true,
-          "orgo_state": "running",
-          "ssh_reachable": true,
-          "ssh_unreachable_min": 0,
-          "envbundle_fail_1h": 0,
-          "last_restart_min_ago": 3000,
-          "build_claim_10m": true
-        }
-      ]
+        {"box": "box-alpha", "box_id": "alpha", "role": "watcher", "tailnet_ip": "192.0.2.21",
+         "ssh": {"rc": 0, "probed_at": "2026-10-20T14:58:00Z", "last_ok_at": "2026-10-20T14:58:00Z"},
+         "lane_ssh_failures": {"count": 0, "window_s": 900, "last_at": null},
+         "last_beat_at": "2026-10-20T14:59:00Z",
+         "vm": {"live": [{"id": "vm-alpha", "status": "running", "seen_at": "2026-10-20T14:00:00Z", "account": "acct-fixture"}], "gone": 0},
+         "restart": {"box": "hub", "type": "orgo_restart", "target": "alpha", "account": "acct-fixture"}},
+        {"box": "box-project-6-os-1", "box_id": "project-6-os", "role": "watcher", "tailnet_ip": "192.0.2.22",
+         "ssh": {"rc": 255, "probed_at": "2026-10-20T14:58:00Z", "last_ok_at": "2026-10-20T06:00:00Z"},
+         "lane_ssh_failures": {"count": 14, "window_s": 900, "last_at": "2026-10-20T14:57:00Z"},
+         "last_beat_at": "2026-10-20T05:59:00Z",
+         "vm": {"live": [{"id": "vm-project-6-os", "status": "running", "seen_at": "2026-10-20T14:00:00Z", "account": "acct-fixture"}], "gone": 0},
+         "restart": {"box": "hub", "type": "orgo_restart", "target": "project-6-os", "account": "acct-fixture"}}
+      ],
+      "vm_complete": true,
+      "partial": [],
+      "truncated": false,
+      "as_of": "2026-10-20T15:00:00Z"
     }
   }
 }

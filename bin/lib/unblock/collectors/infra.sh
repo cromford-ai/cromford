@@ -8,7 +8,8 @@
 #
 #   unblock_infra_src <name> [arg]   THE ONE INPUT SEAM. rc 0 + the source on
 #                                    stdout, rc 1 unreadable (no output).
-#     box_health        GET /api/boxes/health            (#7710's declared shape)
+#     box_health        GET /api/box-health (BH-7710's route, mapped here to
+#                       the record view by _unblock_infra_box_view, BH-8553)
 #     pool_status <p>   GET /api/pool/status?project=<p>  (#7709's declared shape)
 #     setting <key>     GET /api/settings/<key>          (the worker's own route;
 #                       a key with no row is 200 {"setting": null})
@@ -92,7 +93,7 @@ unblock_infra_src() {
       [ -f "$root/state/merge-conductor/pr-state.tsv" ] && [ -r "$root/state/merge-conductor/pr-state.tsv" ] || return 1
       cat "$root/state/merge-conductor/pr-state.tsv" 2>/dev/null || return 1
       return 0 ;;
-    box_health) path=/api/boxes/health ;;
+    box_health) path=/api/box-health ;;
     pool_status) [[ $arg =~ ^[A-Za-z0-9._-]{1,64}$ ]] || return 1; path="/api/pool/status?project=$arg" ;;
     setting) [[ $arg =~ ^[a-z0-9_.-]{1,64}$ ]] || return 1; path="/api/settings/$arg" ;;
     *) return 1 ;;
@@ -101,7 +102,57 @@ unblock_infra_src() {
   out=$(_jobs_req GET "$path" 2>/dev/null) || return 1
   [ -n "$out" ] || return 1
   jq -e 'type == "object"' <<<"$out" >/dev/null 2>&1 || return 1
+  if [ "$name" = box_health ]; then _unblock_infra_box_view <<<"$out"; return; fi
   printf '%s\n' "$out"
+}
+
+# _unblock_infra_box_view — the GET /api/box-health body (stdin) to the record
+# view _unblock_infra_boxes reads (BH-8553). rc 1, no output, when the body has
+# no boxes array or the probe sub-read failed (partial has "ssh"): that is an
+# unreadable source, never "every box is fine". A "vm" partial makes the Orgo
+# fields null; a "heartbeat" partial changes nothing (U8 reads no heartbeat).
+# A box is in the view only with a probe row (ssh.rc an integer) probed no
+# more than UNBLOCK_BOX_PROBE_STALE_S ago: a box with no probe row (the hub, no
+# tailnet IP) or a stale probe says nothing about now. Per box:
+#   ssh_reachable          ssh.rc == 0
+#   ssh_unreachable_since  ssh.last_ok_at when rc != 0 (null: never answered)
+#   ssh_unreachable_min    whole minutes since last_ok_at (0 when reachable)
+#   orgo_hosted/_state     1 live VM: true and its status; 0 live with
+#                          vm_complete true: false and null; else null, null
+#   envbundle_fail_1h      lane_ssh_failures.count when its window is 1..3600 s
+#                          (a lower bound of the 1 h count), else null
+#   last_restart_min_ago, build_claim_10m  null: the route does not carry them,
+#                          and a restart is never decided on an invented fact.
+_unblock_infra_box_view() {
+  local stale
+  # Knob: catalog/lanes.d/unblock.knobs.d/UNBLOCK_BOX_PROBE_STALE_S.json. 600 is
+  # its documented fallback, used for a value that is not 120..86400.
+  stale=$(_unblock_infra_int "${UNBLOCK_BOX_PROBE_STALE_S:-}" 600)
+  { [ "$stale" -ge 120 ] && [ "$stale" -le 86400 ]; } || stale=600
+  jq -ce --argjson now "$_UBI_NOW" --argjson stale "$stale" '
+    def ep: if type == "string" then (sub("\\.[0-9]+Z$"; "Z") | try fromdateiso8601 catch null) else null end;
+    select((.boxes | type) == "array" and ((.partial // []) | index("ssh")) == null)
+    | (.vm_complete == true) as $vmc
+    | {as_of, boxes: [.boxes[]
+        | select(type == "object" and (.box | type) == "string" and (.ssh | type) == "object"
+                 and (.ssh.rc | type) == "number" and (.ssh.rc | floor) == .ssh.rc)
+        | (.ssh.probed_at | ep) as $pt
+        | select($pt != null and $now - $pt <= $stale)
+        | (.ssh.rc == 0) as $up
+        | (if $up then null else .ssh.last_ok_at end) as $since
+        | ($since | ep) as $st
+        | (if (.vm | type) != "object" or (.vm.live | type) != "array" then [null, null]
+           elif (.vm.live | length) == 1 then [true, (.vm.live[0].status // null)]
+           elif (.vm.live | length) == 0 and $vmc then [false, null]
+           else [null, null] end) as $orgo
+        | (.lane_ssh_failures | if type == "object" and (.count | type) == "number"
+             and (.window_s | type) == "number" and .window_s >= 1 and .window_s <= 3600
+           then .count else null end) as $ebf
+        | {name: .box, ssh_reachable: $up,
+           ssh_unreachable_since: (if $st == null then null else $since end),
+           ssh_unreachable_min: (if $up then 0 elif $st == null then null else ((($now - $st) / 60) | floor) end),
+           orgo_hosted: $orgo[0], orgo_state: $orgo[1], envbundle_fail_1h: $ebf,
+           last_restart_min_ago: null, build_claim_10m: null}]}' 2>/dev/null || return 1
 }
 
 # _unblock_infra_unreadable <source> [project]

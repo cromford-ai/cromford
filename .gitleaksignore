@@ -145,6 +145,7 @@ worker/jobs/test/ai-accounts.bh-7966.test.js:generic-api-key:16
 worker/jobs/test/alert-decisions.bh-6972.test.js:generic-api-key:20
 worker/jobs/test/alert-lines-resolved.bh-6892.test.js:generic-api-key:12
 worker/jobs/test/alert-lines.bh-6889.test.js:generic-api-key:18
+worker/jobs/test/box-health-collector.bh-8553.test.js:generic-api-key:17
 worker/jobs/test/box-ssh.bh-7710.test.js:generic-api-key:14
 worker/jobs/test/br-attempts-indexes.bh-7801.test.js:generic-api-key:12
 worker/jobs/test/br-attempts.bh-7801.test.js:generic-api-key:17

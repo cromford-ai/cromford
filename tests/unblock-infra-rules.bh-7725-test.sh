@@ -117,9 +117,13 @@ eq "A1 unreachable minutes" "$(jq -r .ssh_unreachable_min <<<"$REC_BOX")" 540
 eq "A1 env-bundle failures" "$(jq -r .envbundle_fail_1h <<<"$REC_BOX")" 14
 eq "A1 the threshold rides the record" "$(jq -r .hung_min_threshold <<<"$REC_BOX")" 30
 eq "A1 the stall hour is the first unreachable reading's hour" "$(jq -r .stall_at_hour <<<"$REC_BOX")" "2026-10-20T06"
-eq "A1 family and unknown" "$(jq -c '[.family, .unknown]' <<<"$REC_BOX")" '["infra",[]]'
+# TEST-CHANGE (BH-8553): the collector now reads GET /api/box-health, the
+# route the worker serves. It does not carry the last restart or the build
+# claim, so the record as collected names those two unknown (it was [] when the
+# fixture held the old declared shape). B1-B3 add the two incident facts below.
+eq "A1 family and unknown" "$(jq -c '[.family, .unknown]' <<<"$REC_BOX")" '["infra",["last_restart_min_ago","build_claim_10m"]]'
 check "A1 the reachable box yields no record" '! grep -q box-alpha <<<"$OUT"'
-eq "A1 one read, a GET of the box_health route" "$(cat "$T/jobs.log")" "GET /api/boxes/health "
+eq "A1 one read, a GET of the box_health route" "$(cat "$T/jobs.log")" "GET /api/box-health "
 OUT=$(UNBLOCK_BOX_HUNG_MIN=600 collect "$FX/box-project-6-os.json" --family box)
 eq "A1 UNBLOCK_BOX_HUNG_MIN reaches the record" "$(jq -r .hung_min_threshold <<<"$OUT")" 600
 
@@ -181,7 +185,7 @@ eq "A4 cap: at most 100 park records, each marked truncated" "$(jq -s -c '[lengt
 
 rm -f "$T/jobs.log" "$T/writes.log"
 rm -f "$H/state/merge-conductor/pr-state.tsv"
-OUT=$(collect "$(with "$FX/box-project-6-os.json" '.routes["/api/boxes/health"] = "rc1"')")
+OUT=$(collect "$(with "$FX/box-project-6-os.json" '.routes["/api/box-health"] = "rc1"')")
 check "A5 box_health down: one source-unreadable record naming it" \
   'jq -s -e "map(select(.kind == \"source-unreadable\" and .unknown == [\"box_health\"])) | length == 1" <<<"$OUT" >/dev/null'
 check "A5 no pr-state.tsv: one source-unreadable record naming parks" \
@@ -190,7 +194,7 @@ OUT=$(collect "$FX/box-project-6-os.json" --family pool --project project-6-os)
 check "A5 pool_status 404 is unreadable too, never nothing stalled" \
   'jq -e "select(.kind == \"source-unreadable\") | .unknown == [\"pool_status\"] and .project == \"project-6-os\"" <<<"$OUT" >/dev/null'
 check "A5 0 writes: no curl, gh or lane-alert call, no non-GET request" '[ ! -s "$T/writes.log" ] && ! grep -qv "^GET " "$T/jobs.log"'
-OUT=$(collect "$(with "$FX/box-project-6-os.json" '.routes["/api/boxes/health"] = "not json"')" --family box)
+OUT=$(collect "$(with "$FX/box-project-6-os.json" '.routes["/api/box-health"] = "not json"')" --family box)
 check "A5 a body that is not an object is unreadable" 'jq -e ".kind == \"source-unreadable\"" <<<"$OUT" >/dev/null'
 # The seam itself, with no fixture stub: no jobs transport loaded at all.
 SEAM=$( (export HARNESS="$H" HARNESS_TEST_SANDBOX=1; . "$LIB"; unset -f _jobs_req 2>/dev/null; unblock_infra_src box_health; echo "rc=$?") )
@@ -216,6 +220,12 @@ else
 fi
 
 # ═════ B: the rules ══════════════════════════════════════════════════════════
+# TEST-CHANGE (BH-8553): the record as collected goes to U12, because the route
+# carries no restart or build-claim fact (unknown is not false). B1-B3 decide
+# U8 on the 2026-10-20 incident facts the fixture held before: last restart
+# 600 min ago, no build claim in the last 10 minutes.
+eq "B1 project-6-os as collected (restart and build claim unknown) -> U12" "$(jq -r .rule <<<"$(evaluate "$REC_BOX")")" U12
+REC_BOX=$(jq -c '.last_restart_min_ago = 600 | .build_claim_10m = false' <<<"$REC_BOX")
 V=$(evaluate "$REC_BOX")
 eq "B1 project-6-os -> U8" "$(jq -r .rule <<<"$V")" U8
 eq "B1 would-action box_restart on the box" "$(jq -c '[.action.verb, .action.args.box_id]' <<<"$V")" '["box_restart","box-project-6-os-1"]'

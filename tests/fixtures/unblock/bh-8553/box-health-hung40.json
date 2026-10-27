@@ -1,0 +1,29 @@
+{
+  "note": "BH-8553 S1. routes maps a GET path to its 200 body, in the real GET /api/box-health shape (worker/jobs/src/routes/box-ssh.js). NOW is 2026-10-20T15:00:00Z. watcher-bravo: the probe at 14:59 got rc 255, last answered at 14:20 (40 min), 1 live Orgo VM running, 5 lane ssh failures in 900 s. watcher-alpha: rc 0. watcher-hub: no probe row.",
+  "routes": {
+    "/api/box-health": {
+      "boxes": [
+        {"box": "watcher-alpha", "box_id": "alpha", "role": "watcher", "tailnet_ip": "192.0.2.11",
+         "ssh": {"rc": 0, "probed_at": "2026-10-20T14:59:00Z", "last_ok_at": "2026-10-20T14:59:00Z"},
+         "lane_ssh_failures": {"count": 0, "window_s": 900, "last_at": null},
+         "last_beat_at": "2026-10-20T14:58:00Z",
+         "vm": {"live": [{"id": "vm-a1", "status": "running", "seen_at": "2026-10-20T14:00:00Z", "account": "acct-fixture"}], "gone": 0},
+         "restart": {"box": "hub", "type": "orgo_restart", "target": "alpha", "account": "acct-fixture"}},
+        {"box": "watcher-bravo", "box_id": "bravo", "role": "watcher", "tailnet_ip": "192.0.2.12",
+         "ssh": {"rc": 255, "probed_at": "2026-10-20T14:59:00Z", "last_ok_at": "2026-10-20T14:20:00Z"},
+         "lane_ssh_failures": {"count": 5, "window_s": 900, "last_at": "2026-10-20T14:58:00Z"},
+         "last_beat_at": "2026-10-20T14:19:00Z",
+         "vm": {"live": [{"id": "vm-b1", "status": "running", "seen_at": "2026-10-20T14:00:00Z", "account": "acct-fixture"}], "gone": 1},
+         "restart": {"box": "hub", "type": "orgo_restart", "target": "bravo", "account": "acct-fixture"}},
+        {"box": "watcher-hub", "box_id": "hub", "role": "hub", "tailnet_ip": null,
+         "ssh": null, "lane_ssh_failures": null, "last_beat_at": "2026-10-20T14:59:30Z",
+         "vm": {"live": [{"id": "vm-h1", "status": "running", "seen_at": "2026-10-20T14:00:00Z", "account": "acct-fixture"}], "gone": 0},
+         "restart": null}
+      ],
+      "vm_complete": true,
+      "partial": [],
+      "truncated": false,
+      "as_of": "2026-10-20T15:00:00Z"
+    }
+  }
+}
