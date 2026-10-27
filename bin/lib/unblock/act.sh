@@ -22,7 +22,8 @@
 #     dismiss_review             {review_id}
 #     fix_round                  {brief, ticket?}
 #     lead_rerequest             {request_id, priority, notes?}; request_id
-#                                "none" = no reset, one new request (BH-8390)
+#                                "none" = no reset, one new request (BH-8390);
+#                                else one reset carrying notes (BH-8512)
 #     launch_fastpath            {key} (BH-8390; not a PR action)
 #     box_restart                {box_id, account?}
 #     setting_set                {key, value, old, min, max, why}
@@ -338,26 +339,31 @@ _ub_fix_round() {
 }
 
 # request_id "none" (BH-8390, U13-RESTAMP): the head has no request row, so
-# there is nothing to reset; only the request goes out. notes, when set, go
-# out as --notes.
-# After a reset the request answers 409 (UNIQUE repo, pr, head_sha), so the
-# notes do not reach a reset row yet: follow-up #8512 (reset --notes).
+# there is nothing to reset; only the request goes out, notes as --notes.
+# Else (BH-8512, U13-EMPTY): ONE reset, notes as reset --notes; the worker
+# appends them to the row's scope_notes in the reset's own compare-and-set. No
+# request follows: the row is UNIQUE(repo, pr, head_sha), so it answered 409
+# and the notes never reached the lead. Reset rc 3 = the row was reset but the
+# notes were not stored, which is not done. The reset row keeps its priority.
 _ub_lead_rerequest() {
-  local lv rc err rid notes after="after reset"
+  local lv rc err rid notes
   local -a extra=()
   lv="$(_ub_root)/bin/lead-verdict.sh"
   rid=$(_ub_arg request_id); notes=$(_ub_arg notes)
   [ -n "$notes" ] && extra=(--notes "$notes")
-  if [ "$rid" = none ]; then
-    after="with no reset"
-  else
-    "$lv" reset "$rid" >/dev/null 2>&1; rc=$?
-    [ "$rc" = 0 ] || { _ub_out failed "reset rc $rc"; return 0; }
+  if [ "$rid" != none ]; then
+    "$lv" reset "$rid" "${extra[@]+"${extra[@]}"}" >/dev/null 2>&1; rc=$?
+    case "$rc" in
+      0) _ub_out done reset ;;
+      3) _ub_out failed "notes-not-stored after reset" ;;
+      *) _ub_out failed "reset rc $rc" ;;
+    esac
+    return 0
   fi
   err=$("$lv" request "$_UB_SLUG" "$_UB_PR" "$_UB_HEAD" --priority "$(_ub_arg priority)" "${extra[@]+"${extra[@]}"}" 2>&1 >/dev/null); rc=$?
   if [ "$rc" = 0 ]; then _ub_out done requested
   elif grep -q 'HTTP 409' <<<"$err"; then _ub_out done already-requested
-  else _ub_out failed "request rc $rc $after"
+  else _ub_out failed "request rc $rc with no reset"
   fi
 }
 

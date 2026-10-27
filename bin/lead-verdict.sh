@@ -81,6 +81,13 @@
 # a 200 no-op. A running one with a fresh heartbeat is refused (exit 1, the
 # worker's message printed); one whose heartbeat is older than the settings row
 # lead_review_claim_stale_s (fallback 900 s) is reclaimed to `requested` (BH-7711).
+# BH-8512: `reset <request-id> --notes <text>` sends {append_notes}; the worker
+# appends the text to the row's scope_notes in the same compare-and-set as the
+# reset, so the re-review's prompt carries it (review-tier:/review-mode: become
+# =, as on a request). Exit 3 = the reset landed but the notes were not stored
+# (the worker answered no-room, or it predates BH-8512 and answered no `notes`).
+# With no --notes the body is {} and nothing changes.
+#
 # RETRACT (BH-8476). `retract <verdict-id> --reason empty-report` (lead token)
 # retracts a lead BLOCK row whose report had no finding line, through
 # POST /api/verdicts/<id>/retract. The verdicts table is append-only, so the
@@ -150,11 +157,12 @@
 #   bin/lead-verdict.sh request <owner/repo> <pr> <head-sha> [--notes <text>] [--prior <ref>]
 #                               [--priority <1..1000>]   nudge (request) a lead review of that head
 #   bin/lead-verdict.sh list [<owner/repo>]
-#   bin/lead-verdict.sh reset <request-id>
+#   bin/lead-verdict.sh reset <request-id> [--notes <text>]
 #   bin/lead-verdict.sh retract <verdict-id> --reason empty-report
 #   bin/lead-verdict.sh authority <owner/repo> [<pr> <head-sha>]
 # exit: 0 ok, 1 refused or the worker answered an error (its message printed),
 #       2 usage, 3 (post) the sha is not the PR's head: nothing written,
+#         (reset) the reset landed but the notes were not stored,
 #       4 (post) the row is recorded but the lead-verdict status is not published;
 #         (retract) the row is retracted but the status is not republished,
 #       5 (post) the row is recorded as advice; the status is withheld until a
@@ -601,18 +609,36 @@ lv_request() {
 
 # lv_reset <request-id> — BH-5400: the sanctioned reset, never raw SQL.
 lv_reset() {
-  [ $# = 1 ] || usage
-  local id="$1" resp
+  [ $# -ge 1 ] || usage
+  local id="$1" notes="" body='{}' resp said
+  shift
   [[ "$id" =~ ^[A-Za-z0-9._-]+$ ]] || { echo "lead-verdict: request-id must be the request's id (letters, digits, . _ -), got '$id'" >&2; usage; }
+  while [ $# -gt 0 ]; do
+    [ $# -ge 2 ] || usage
+    case "$1" in
+      # BH-8512: the same BH-6967 rule as a request's --notes.
+      --notes) notes="${2//review-tier:/review-tier=}"; notes="${notes//review-mode:/review-mode=}" ;;
+      *) usage ;;
+    esac
+    shift 2
+  done
+  [ -z "$notes" ] || body=$(jq -nc --arg n "$notes" '{append_notes:$n}') || die "could not build the reset body"
   lv_lr_load
   # lr_post_lead already wrote `HTTP <code>` (or why it made no call) to stderr.
-  if ! resp=$(lr_post_lead "/$id/reset" '{}'); then
+  if ! resp=$(lr_post_lead "/$id/reset" "$body"); then
     [ -n "$resp" ] && echo "lead-verdict: reset refused: $resp" >&2
     exit 1
   fi
-  printf '%s' "$resp" | jq -er '(.existing // false) as $e | .request
-    | "lead review \(.id): \(.status) (reset_count \(.reset_count // 0))\(if $e then ", already requested" else "" end)"' 2>/dev/null \
+  printf '%s' "$resp" | jq -er '(.existing // false) as $e | (.notes // null) as $n | .request
+    | "lead review \(.id): \(.status) (reset_count \(.reset_count // 0))\(if $e then ", already requested" else "" end)\(if $n then ", notes \($n)" else "" end)"' 2>/dev/null \
     || printf '%s\n' "$resp"
+  [ -n "$notes" ] || return 0
+  said=$(printf '%s' "$resp" | jq -r '.notes // empty' 2>/dev/null)
+  case "$said" in
+    stored|present) return 0 ;;
+    *) echo "lead-verdict: the reset landed but the notes were not stored (worker answered notes '${said:-none}'; no-room = scope_notes is full, none = the worker predates BH-8512)" >&2
+       exit 3 ;;
+  esac
 }
 
 # lv_retract <verdict-id> --reason empty-report — BH-8476 (see RETRACT above).

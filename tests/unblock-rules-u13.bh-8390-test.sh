@@ -27,7 +27,8 @@
 #       PR, 63 min -> U13-REACH card; BH-8475 PLAN_BLOCKED -> nothing; BH-8476
 #       (20 min) -> no card yet.
 #   A   act.sh, act mode: lead_rerequest request_id none sends 0 resets and
-#       1 request with --priority; notes reach --notes; launch_fastpath
+#       1 request with --priority; a request id sends 1 reset whose --notes
+#       carries the notes and 0 requests (BH-8512); launch_fastpath
 #       launches (done launched), a decline is refused with the log reason, a
 #       bad key is bad input (rc 1), shadow is would WOULD_LAUNCH_FASTPATH.
 #   A8-A11 (BLOCK #4376) UNBLOCK_FASTPATH_TIMEOUT_S reaches timeout (a bad
@@ -323,7 +324,8 @@ mkd() { # mkd <action> <args-json> [project]
   check "A1 0 resets, 1 request with --priority 900" "$(grep -c 'lead-verdict reset' "$CALLS") $(grep -c "lead-verdict request $R 42 $H42 --priority 900" "$CALLS")" "0 1"
   newact a2
   ub_act "$(mkd lead_rerequest '{"request_id":"91325b08-2165","priority":900,"notes":"write each finding as a - [BLOCK <class>] line"}')" >/dev/null
-  check "A2 reset then request with --notes" "$(grep -c 'lead-verdict reset 91325b08-2165' "$CALLS") $(grep -c -- '--notes write each finding as a - \[BLOCK <class>\] line' "$CALLS") $UB_ACT_OUTCOME" "1 1 done"
+  # TEST-CHANGE BH-8512: the note rides the reset; no request follows it.
+  check "A2 one reset with --notes, 0 requests" "$(grep -c -x -F 'lead-verdict reset 91325b08-2165 --notes write each finding as a - [BLOCK <class>] line' "$CALLS") $(grep -c 'lead-verdict request' "$CALLS") $UB_ACT_OUTCOME $UB_ACT_DETAIL" "1 0 done reset"
   newact a3
   ub_act "$(mkd launch_fastpath '{"key":"TK-2601"}' project-6-os | jq -c '.class = "triage-launch"')" >/dev/null
   check "A3 launch_fastpath launches" "$UB_ACT_OUTCOME $UB_ACT_DETAIL $(grep -c 'fastpath project-6-os TK-2601' "$CALLS")" "done launched 1"

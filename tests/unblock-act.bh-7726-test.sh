@@ -383,14 +383,17 @@ out=$(unset -f fix_round_enqueue; ub_act "$(mk fix_round '{"brief":"b"}')" >/dev
 [ "$out" = "failed fix-round-libs-not-loaded" ] && ok || bad "A19f: got '$out'"
 
 # ── A20: lead_rerequest ─────────────────────────────────────────────────────
-newcase a20; run "$(mk lead_rerequest '{"request_id":"901","priority":50}')"; expect A20 done requested
-[ "$(writes | tr '\n' '|')" = "lead-verdict reset 901|lead-verdict request $SLUG 42 $H42 --priority 50|" ] && ok \
-  || bad "A20: want reset then request, got $(writes | tr '\n' '|')"
+# TEST-CHANGE BH-8512: a reset is the whole re-request now. The request after
+# it answered 409 on UNIQUE(repo, pr, head_sha) and dropped the notes, so it is
+# gone; A20c keeps the 409 pin on request_id none, the one path that requests.
+newcase a20; run "$(mk lead_rerequest '{"request_id":"901","priority":50}')"; expect A20 done reset
+[ "$(writes | tr '\n' '|')" = "lead-verdict reset 901|" ] && ok \
+  || bad "A20: want one reset and no request, got $(writes | tr '\n' '|')"
 newcase a20b; echo 1 > "$HARNESS/stub/lv-reset.rc"; run "$(mk lead_rerequest '{"request_id":"901","priority":50}')"
 expect "A20b reset fails" failed "reset rc 1"
 [ "$(n '^lead-verdict request')" = 0 ] && ok || bad "A20b: no request after a failed reset"
 newcase a20c; echo 1 > "$HARNESS/stub/lv-request.rc"; echo 'lead-verdict: HTTP 409 a request is open' > "$HARNESS/stub/lv-request.err"
-run "$(mk lead_rerequest '{"request_id":"901","priority":50}')"; expect "A20c 409" done already-requested
+run "$(mk lead_rerequest '{"request_id":"none","priority":50}')"; expect "A20c 409" done already-requested
 
 # ── A21-A22: box restart, no card, one critical alert, one per hour ─────────
 box() { mk box_restart '{"box_id":"box-fixture-7","account":"acct-fixture"}' '.subject_kind="box" | .subject="box-fixture-7" | del(.pr, .head)'; }

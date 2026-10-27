@@ -23,6 +23,17 @@
 // that produced it and stamps with {job_id}, which this file refuses (409) once
 // the row holds another job.
 //
+// BH-8512: a reset body may carry {append_notes} (<= 4000 chars; "" or null =
+// absent). The note is appended to scope_notes after a newline in the SAME
+// compare-and-set as the reset, pinned to the scope_notes read here, so the
+// lead prompt's ## Scope notes carries it. review-tier: and review-mode: in it
+// become = (BH-6967: only the enqueue writes those tokens). A note already in
+// scope_notes is not appended again (a retry); one that would pass 4000 chars
+// is not stored and the old notes are never cut. The answer then names
+// notes: stored | present | no-room. A requested row takes the note in its
+// own pinned UPDATE, with no reset recorded. A body with no note is today's
+// reset, statement for statement.
+//
 // BH-5351 (BH-5348.2), who may hold a claim and for how long:
 // - A claim (and a /start) stamps heartbeat_at, and POST /:id/heartbeat {job_id}
 //   re-stamps it for the job that holds the running row (409 for anyone else).
@@ -629,12 +640,35 @@ export const routes = [
   // running row with a fresher beat = 409 (a review is in flight).
   [
     "POST", /^\/api\/lead-reviews\/([^/]+)\/reset$/,
-    guarded(async ({ req, env, t, m }) => {
+    guarded(async ({ req, env, t, body, m }) => {
       if (!leadTokenOk(req, env)) return json(403, { error: `resetting a lead review request ${NO_LEAD}` });
+      const o = optFields(body && typeof body === "object" ? body : {}, [["append_notes", 4000]]);
+      if (o.err) return json(400, { error: o.err });
+      const note = o.v.append_notes && o.v.append_notes.replaceAll("review-tier:", "review-tier=").replaceAll("review-mode:", "review-mode=");
       const id = decodeURIComponent(m[1]);
       const row = await getRow(env, id);
       if (!row) return json(404, { error: "no such lead review request" });
-      if (row.status === "requested") return json(200, { request: row, existing: true });
+      // BH-8512: what the note does to scope_notes. Only `stored` writes it.
+      const old = row.scope_notes ?? null;
+      let next = old, notes = null;
+      if (note) {
+        const cand = old ? `${old}\n${note}` : note;
+        if ((old ?? "").includes(note)) notes = "present";
+        else if (cand.length > 4000) notes = "no-room";
+        else { next = cand; notes = "stored"; }
+      }
+      const N = notes === "stored";
+      const said = notes ? { notes } : {};
+      const moved = (now) => json(409, { error: `lead review request is ${now.status}${now.job_id ? ` (job ${now.job_id})` : ""}; it moved while the reset ran`, request: now });
+      if (row.status === "requested") {
+        if (!N) return json(200, { request: row, existing: true, ...said });
+        const res = await env.DB.prepare(
+          "UPDATE lead_review_requests SET scope_notes=?1, updated_at=?2 WHERE id=?3 AND status='requested' AND scope_notes IS ?4"
+        ).bind(next, t, id, old).run();
+        const now = await getRow(env, id);
+        if (res.meta.changes === 1) return json(200, { request: now, existing: true, ...said });
+        return moved(now);
+      }
       if (row.status === "running") {
         const limit = await staleWindow(env);
         const beat = row.heartbeat_at ?? row.updated_at;
@@ -642,31 +676,35 @@ export const routes = [
           return json(409, { error: `lead review request is running${row.job_id ? ` (job ${row.job_id})` : ""}, heartbeat ${beat}, stale after ${limit} s; a review in flight is not reset`, request: row });
         }
         const why = `stale reset: running with no heartbeat since ${beat} (job ${row.job_id ?? "none"}, box ${row.box ?? "none"}); stale after ${limit} s`.slice(0, 4000);
+        // sql-ident-ok: the two ${N ? ...} parts are constant SQL text chosen by the note flag; values bind
         const res = await env.DB.prepare(
           `UPDATE lead_review_requests
               SET status='requested', job_id=NULL, box=NULL, participant=NULL, heartbeat_at=NULL, verdict=NULL,
                   report_ref=NULL, reviewer_model=NULL, promoted_verdict_at=NULL, detail=?1,
-                  reset_count=COALESCE(reset_count, 0) + 1, reset_at=?2, updated_at=?2
-            WHERE id=?3 AND status='running' AND job_id IS ?4 AND COALESCE(heartbeat_at, updated_at) = ?5`
-        ).bind(why, t, id, row.job_id ?? null, beat).run();
+                  reset_count=COALESCE(reset_count, 0) + 1, reset_at=?2, updated_at=?2${N ? ", scope_notes=?6" : ""}
+            WHERE id=?3 AND status='running' AND job_id IS ?4 AND COALESCE(heartbeat_at, updated_at) = ?5${N ? " AND scope_notes IS ?7" : ""}`
+        ).bind(why, t, id, row.job_id ?? null, beat, ...(N ? [next, old] : [])).run();
         const now = await getRow(env, id);
         if (res.meta.changes === 1) {
           return json(200, {
             request: now,
             reclaimed_from: { job_id: row.job_id ?? null, box: row.box ?? null, participant: row.participant ?? null, last_beat: beat },
             stale_s: limit,
+            ...said,
           });
         }
-        return json(409, { error: `lead review request is ${now.status}${now.job_id ? ` (job ${now.job_id})` : ""}; it moved while the reset ran`, request: now });
+        return moved(now);
       }
+      // sql-ident-ok: the two ${N ? ...} parts are constant SQL text chosen by the note flag; values bind
       const res = await env.DB.prepare(
         `UPDATE lead_review_requests SET status='requested', job_id=NULL, box=NULL, verdict=NULL, report_ref=NULL,
                                          reviewer_model=NULL, detail=NULL, promoted_verdict_at=NULL,
-                                         reset_count=COALESCE(reset_count, 0) + 1, reset_at=?1, updated_at=?1
-         WHERE id=?2 AND status IN ('done', 'failed', 'superseded')`
-      ).bind(t, id).run();
+                                         reset_count=COALESCE(reset_count, 0) + 1, reset_at=?1, updated_at=?1${N ? ", scope_notes=?3" : ""}
+         WHERE id=?2 AND status IN ('done', 'failed', 'superseded')${N ? " AND scope_notes IS ?4" : ""}`
+      ).bind(t, id, ...(N ? [next, old] : [])).run();
       const now = await getRow(env, id);
-      if (res.meta.changes === 1) return json(200, { request: now });
+      if (res.meta.changes === 1) return json(200, { request: now, ...said });
+      if (N && ["done", "failed", "superseded"].includes(now.status)) return moved(now);
       return json(409, { error: `lead review request is ${now.status}${now.job_id ? ` (job ${now.job_id})` : ""}; only a finished request can be reset`, request: now });
     }),
   ],
