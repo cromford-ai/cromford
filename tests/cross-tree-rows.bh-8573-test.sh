@@ -1,8 +1,9 @@
 #!/bin/bash
 # tests/cross-tree-rows.bh-8573-test.sh — every quoted ../ path that console-ui/
 # (spa) or worker/jobs/ (worker) JS/TS source reads OUTSIDE its own tree has a
-# row of that kind in catalog/ci-batch-escalate.tsv, checked fast enough for PR
-# lint (BH-8573).
+# row of that kind in the composed rules (catalog/ci-batch-escalate.tsv plus
+# catalog/ci-batch-escalate.d/, BH-8608), checked fast enough for PR lint
+# (BH-8573). A missing row goes in a new fragment named for the ticket.
 #
 # WHY. tests/ci-plan-spa-worker.bh-4969-test.sh X1/X2 makes this check, but it
 # takes 11-15 s and runs only in the merge-queue batch. Four batches went red on
@@ -70,7 +71,7 @@ ctr_scan() {
     CTR_MISS=$((CTR_MISS + 1))
     [ -z "${seen[$pat]:-}" ] || continue
     seen[$pat]=1
-    echo "FAIL: X$([ "$kind" = spa ] && echo 1 || echo 2): $f reads $tgt with no $kind row; add to catalog/ci-batch-escalate.tsv (replace <TICKET> with the ticket key):"
+    echo "FAIL: X$([ "$kind" = spa ] && echo 1 || echo 2): $f reads $tgt with no $kind row; add to catalog/ci-batch-escalate.d/<TICKET>.tsv (a new file named for your ticket; replace <TICKET> with the ticket key):"
     printf '%s\t%s\t%s reads %s (<TICKET>)\n' "$pat" "$kind" "$f" "$tgt"
   done < "$T/ctr-hits"
   [ "$CTR_MISS" -eq 0 ]
@@ -106,8 +107,8 @@ TAB=$'\t'
 scan base worker worker/jobs "$S/catalog/base.tsv"
 ROW1="tests/fixtures/x.bh-0001.json${TAB}worker${TAB}worker/jobs/test/a.test.js reads tests/fixtures/x.bh-0001.json (<TICKET>)"
 has "$ROW1" && ok || bad "C1: the exact row line for a.test.js is missing: [$OUT]"
-grep -q "^FAIL: X2: worker/jobs/test/a.test.js reads tests/fixtures/x.bh-0001.json with no worker row; add to catalog/ci-batch-escalate.tsv" <<<"$OUT" \
-  && ok || bad "C1: the FAIL line must name catalog/ci-batch-escalate.tsv: [$OUT]"
+grep -q "^FAIL: X2: worker/jobs/test/a.test.js reads tests/fixtures/x.bh-0001.json with no worker row; add to catalog/ci-batch-escalate.d/<TICKET>.tsv (a new file" <<<"$OUT" \
+  && ok || bad "C1: the FAIL line must name catalog/ci-batch-escalate.d/<TICKET>.tsv: [$OUT]"
 has "tests/fixtures/dir.bh-0001/${TAB}worker${TAB}worker/jobs/test/c.test.js reads tests/fixtures/dir.bh-0001 (<TICKET>)" \
   && ok || bad "C5: a cut tail that ends in / suggests tests/fixtures/dir.bh-0001/: [$OUT]"
 has "tests/fixtures/pre-*${TAB}worker${TAB}worker/jobs/test/d.test.js reads tests/fixtures/pre- (<TICKET>)" \
@@ -150,8 +151,10 @@ grep -vF "tests/fixtures/x.bh-0001.json${TAB}" "$T/rt.tsv" > "$T/mut.tsv"
 scan mut worker worker/jobs "$T/mut.tsv"
 { [ "$M" = 1 ] && has "$ROW1"; } && ok || bad "R2: deleting C1's row brings C1 back: M=$M [$OUT]"
 
-# ── X. the real tree under the real catalog.
-REAL_TSV="$DIR/catalog/ci-batch-escalate.tsv"
+# ── X. the real tree under the real catalog: the composed rules (BH-8608).
+[ -d "$DIR/catalog/ci-batch-escalate.d" ] || { echo "FAIL: X: catalog/ci-batch-escalate.d/ is missing"; exit 1; }
+REAL_TSV="$T/real.tsv"
+( unset CI_BATCH_ESCALATE_TSV; cbe_rules "$DIR" ) > "$REAL_TSV" || { echo "FAIL: X: cbe_rules cannot compose the real rules"; exit 1; }
 git -C "$DIR" ls-files > "$T/files"
 ctr_scan "$DIR" spa console-ui "$REAL_TSV" < "$T/files" && ok || bad "X1: console-ui/ reads outside its tree with no spa row (rows above)"
 xs=$CTR_N

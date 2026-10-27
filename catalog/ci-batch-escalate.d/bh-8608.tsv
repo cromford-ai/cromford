@@ -1,0 +1,2 @@
+# The rules fragments themselves (BH-8608).
+catalog/ci-batch-escalate.d/	escalate	the rules fragments; bin/ci-plan.sh reads them through bin/lib/ci-batch-escalate.sh; an add-only diff selects, a diff that deletes no row is infra (BH-8608)

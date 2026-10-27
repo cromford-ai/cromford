@@ -1538,9 +1538,10 @@ ti_inputs() {
 #   3. a catalog/ path, not *.md, with no specific map row (ti_specific: an
 #      exact or directory row that is not a whole-tree root row);
 #   4. any other tests/lib/ or catalog/ path, not *.md, that the TREE's own
-#      catalog/ci-batch-escalate.tsv escalates or calls infra (cbe_reason or
+#      rules (catalog/ci-batch-escalate.tsv plus catalog/ci-batch-escalate.d/,
+#      composed by cbe_rules, BH-8608) escalate or call infra (cbe_reason or
 #      cbe_infra, BH-7287; the global helpers). CI_BATCH_ESCALATE_TSV is
-#      never read: the fingerprint is a function of the tree.
+#      unset there and never read: the fingerprint is a function of the tree.
 # A rules lib that cannot be sourced is every tests/lib/ and catalog/ path
 # (the v1 set); an unreadable rules file is the same, because cbe_reason then
 # escalates every path. This is the set a batch select (TI_BATCH_SELECT=1)
@@ -1575,7 +1576,7 @@ ti_inputs_infra() {
     awk -F'\t' '$1 == "cand" { print $2 }' "$cand" | (
       # shellcheck source=lib/ci-batch-escalate.sh
       . "$ROOT/bin/lib/ci-batch-escalate.sh" || exit 2
-      export CI_BATCH_ESCALATE_TSV="$ROOT/catalog/ci-batch-escalate.tsv"
+      unset CI_BATCH_ESCALATE_TSV
       while IFS= read -r p; do { cbe_reason "$p" > /dev/null || cbe_infra "$p"; } && printf '%s\n' "$p"; done
       exit 0 ) || { echo "test-impact: the escalation rules scan failed" >&2; exit 2; }
   } | LC_ALL=C sort -u

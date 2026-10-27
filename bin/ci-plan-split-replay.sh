@@ -263,7 +263,7 @@ while IFS= read -r d; do
         fi
       fi
       ne=$(est "$TMP/list.$tag" "$nn")
-      case "$nesc" in "selection input: catalog/ci-batch-escalate.tsv")
+      case "$nesc" in "selection input: catalog/ci-batch-escalate.tsv"|"selection input: catalog/ci-batch-escalate.d/"*)
         note="${note:+$note; }upper bound: ${nesc#selection input: } narrowing needs a git range" ;; esac
     fi
   fi
@@ -314,7 +314,8 @@ while IFS= read -r d; do
     "$(clean "${note:--}")" >> "$TMP/rows"
 done < "$TMP/drafts.n"
 
-# Each escalate row of the committed rules, in file order, for the fire count.
+# Each escalate row of the committed rules (cbe_rules: the old file, then the
+# fragments, BH-8608), in that order, for the fire count.
 : > "$TMP/fires"
 awk -F'\t' 'NR > 1 && $2 == "ok" && $10 == "full" { print $14 }' "$TMP/rows" | while IFS= read -r e; do
   row=""
@@ -323,7 +324,7 @@ awk -F'\t' 'NR > 1 && $2 == "ok" && $10 == "full" { print $14 }' "$TMP/rows" | w
     while IFS=$'\t' read -r pat kind _; do
       case "$pat" in ''|'#'*) continue ;; esac
       [ "$kind" = escalate ] && _cbe_match "$p" "$pat" && { row="$pat"; break; }
-    done < "$ROOT/catalog/ci-batch-escalate.tsv" ;;
+    done < <(unset CI_BATCH_ESCALATE_TSV; cbe_rules "$ROOT") ;;
   esac
   if [ -n "$row" ]; then printf 'row %s\n' "$row"; else printf 'other full reason %s\n' "$e"; fi
 done | LC_ALL=C sort | uniq -c | awk '{ c = $1; sub(/^ *[0-9]+ /, ""); print $0 " fires " c }' > "$TMP/fires"

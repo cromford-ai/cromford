@@ -58,7 +58,10 @@
 #                             helper selects through its helper closure) and a
 #                             selection of every suite. BH-6371: a TI_BASE..HEAD
 #                             diff of the rules file itself that cbe_add_only
-#                             proves add-only does not escalate; the reason
+#                             proves add-only does not escalate (BH-8608: the
+#                             rules are the old file plus every
+#                             catalog/ci-batch-escalate.d/*.tsv, judged as one
+#                             diff); the reason
 #                             says `escalation rows added only (<kinds>)`, and
 #                             an added spa (worker) row sets spa=1 (worker=1).
 #                             BH-6490: a STACKED batch escalates only on its
@@ -578,19 +581,28 @@ batch_select() {
     OWNCH="$TMP/ownchanged"
     if [ "$OWN_BASE" != - ]; then cp "$TMP/own" "$OWNCH"; EBASE="$OWN_BASE"; else cp "$CH" "$OWNCH"; EBASE="$TI_BASE"; fi
     : > "$TMP/infra.paths"
+    RULES_V=""
     while IFS= read -r p; do
       [ -n "$p" ] || continue
-      # BH-6371: a diff to the rules file that only adds escalate, spa or
-      # worker rows selects through the map. BH-7287: one that deletes no row
-      # is an infra path. Proven on the batch's own diff; a diff that fails,
-      # or a delete, escalates as before.
-      if [ "$p" = catalog/ci-batch-escalate.tsv ] \
-         && git -C "$ROOT" diff --no-renames -U0 "$EBASE" HEAD -- catalog/ci-batch-escalate.tsv > "$TMP/cbe.diff" 2>/dev/null; then
-        if CBE_ADDED=$(cbe_add_only "$TMP/cbe.diff"); then
-          ADDNOTE="escalation rows added only ($(printf '%s\n' "$CBE_ADDED" | paste -sd, -))"
-          continue
+      # BH-6371: a diff to the rules that only adds escalate, spa or worker
+      # rows selects through the map. BH-7287: one that deletes no row is an
+      # infra path. BH-8608: the rules are the old file plus the fragments,
+      # judged as ONE diff on the first rules path (cbe_rules_diff), so a row
+      # moved between sources is not a delete; every rules path takes that
+      # verdict. Proven on the batch's own diff; a diff that fails, or a
+      # delete, escalates as before (each source has its escalate row).
+      if cbe_rules_path "$p"; then
+        if [ -z "$RULES_V" ]; then
+          RULES_V=delete
+          if cbe_rules_diff "$ROOT" "$EBASE" > "$TMP/cbe.diff" 2>/dev/null; then
+            if CBE_ADDED=$(cbe_add_only "$TMP/cbe.diff"); then RULES_V=add
+            elif ! cbe_deletes_row "$TMP/cbe.diff"; then RULES_V=infra; fi
+          fi
         fi
-        if ! cbe_deletes_row "$TMP/cbe.diff"; then printf '%s\n' "$p" >> "$TMP/infra.paths"; continue; fi
+        case "$RULES_V" in
+          add) ADDNOTE="escalation rows added only ($(printf '%s\n' "$CBE_ADDED" | paste -sd, -))"; continue ;;
+          infra) printf '%s\n' "$p" >> "$TMP/infra.paths"; continue ;;
+        esac
       fi
       # BH-6688: a workflow diff in non-test jobs only selects through the map.
       [ "$p" = .github/workflows/harness-ci.yml ] && wf_nontest "$EBASE" && continue
@@ -605,12 +617,17 @@ batch_select() {
     # spa/worker job on.
     if [ "$ESCALATION" = - ] && [ "$OWN_BASE" != - ]; then
       awk 'NR == FNR { o[$0] = 1; next } !($0 in o)' "$OWNCH" "$CH" > "$TMP/inherited"
+      INH_V=""
       while IFS= read -r p; do
         [ -n "$p" ] || continue
-        if [ "$p" = catalog/ci-batch-escalate.tsv ] \
-           && git -C "$ROOT" diff --no-renames -U0 "$TI_BASE" HEAD -- catalog/ci-batch-escalate.tsv > "$TMP/cbe.inh.diff" 2>/dev/null \
-           && r=$(cbe_add_only "$TMP/cbe.inh.diff"); then
-          CBE_ADDED=$(printf '%s\n%s\n' "$CBE_ADDED" "$r" | grep . | LC_ALL=C sort -u); continue
+        if cbe_rules_path "$p"; then
+          if [ -z "$INH_V" ]; then
+            INH_V=no
+            if cbe_rules_diff "$ROOT" "$TI_BASE" > "$TMP/cbe.inh.diff" 2>/dev/null && r=$(cbe_add_only "$TMP/cbe.inh.diff"); then
+              INH_V=add; CBE_ADDED=$(printf '%s\n%s\n' "$CBE_ADDED" "$r" | grep . | LC_ALL=C sort -u)
+            fi
+          fi
+          [ "$INH_V" = add ] && continue
         fi
         [ "$p" = .github/workflows/harness-ci.yml ] && wf_nontest "$TI_BASE" && continue
         if cbe_reason "$p" > /dev/null; then [ -n "$INHERITED" ] || INHERITED="$p"; else wf_note "$p"; fi

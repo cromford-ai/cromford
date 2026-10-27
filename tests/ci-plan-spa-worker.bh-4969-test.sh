@@ -21,7 +21,12 @@ set -uo pipefail
 DIR=$(cd "$(dirname "$0")/.." && pwd)
 PLAN="$DIR/bin/ci-plan.sh"
 LIB="$DIR/bin/lib/ci-batch-escalate.sh"
-REAL_TSV="$DIR/catalog/ci-batch-escalate.tsv"
+# The real rules are the composed set: the old file plus every fragment in
+# catalog/ci-batch-escalate.d/ (BH-8608), so a spa/worker row in a fragment counts.
+{ [ -f "$DIR/catalog/ci-batch-escalate.tsv" ] && [ -d "$DIR/catalog/ci-batch-escalate.d" ]; } \
+  || { echo "FAIL: catalog/ci-batch-escalate.tsv or catalog/ci-batch-escalate.d/ is missing"; exit 1; }
+REAL_TSV="$T/real.tsv"
+( unset CI_BATCH_ESCALATE_TSV; . "$LIB" && cbe_rules "$DIR" ) > "$REAL_TSV" || { echo "FAIL: cbe_rules cannot compose the real rules"; exit 1; }
 PASS=0; FAIL=0
 ok()  { PASS=$((PASS+1)); }
 bad() { FAIL=$((FAIL+1)); echo "FAIL: $1"; }
@@ -161,9 +166,9 @@ xchk() { # xchk <kind> <tree> — prints the uncovered targets, sets XN
   done < <(git -C "$DIR" ls-files -- "$tree" | grep -E '\.(m?js|cjs|jsx|ts|tsx)$')
 }
 miss=$(xchk spa console-ui)
-[ -z "$miss" ] && ok || bad "X1: console-ui/ reads these outside its tree with no spa row: $miss"
+[ -z "$miss" ] && ok || bad "X1: console-ui/ reads these outside its tree with no spa row; add each to catalog/ci-batch-escalate.d/<TICKET>.tsv (a new file named for your ticket): $miss"
 miss=$(xchk worker worker/jobs)
-[ -z "$miss" ] && ok || bad "X2: worker/jobs/ reads these outside its tree with no worker row: $miss"
+[ -z "$miss" ] && ok || bad "X2: worker/jobs/ reads these outside its tree with no worker row; add each to catalog/ci-batch-escalate.d/<TICKET>.tsv (a new file named for your ticket): $miss"
 # Not vacuous: the scan found the cross-tree reads that exist today.
 XN=0; xchk spa console-ui >/dev/null; xs=$XN; xchk worker worker/jobs >/dev/null; xw=$XN
 { [ "$xs" -ge 5 ] && [ "$xw" -ge 15 ]; } && ok || bad "X: the scan found too few cross-tree reads (spa=$xs worker=$xw) — the pattern stopped matching"

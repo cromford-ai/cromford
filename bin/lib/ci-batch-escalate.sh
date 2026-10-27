@@ -3,6 +3,26 @@
 # RUN THE WHOLE CORPUS? (BH-4968) Sourced, never executed; no side effects at
 # source time.
 #
+#   cbe_rules [root]    prints the composed rules (BH-8608): the env file
+#                       CI_BATCH_ESCALATE_TSV when it is set, else
+#                       <root>/catalog/ci-batch-escalate.tsv and then every
+#                       <root>/catalog/ci-batch-escalate.d/*.tsv in LC_ALL=C
+#                       name order. Root defaults to this lib's checkout. Each
+#                       source ends with a newline. rc 1 when a source cannot
+#                       be read; a missing folder is zero fragments.
+#   cbe_rules_path <path>
+#                       rc 0 when <path> is a rules source: the old file or a
+#                       catalog/ci-batch-escalate.d/<name>.tsv one level down.
+#   cbe_rules_diff <root> <base>
+#                       the `git diff --no-renames -U0 <base> HEAD` of both
+#                       sources in <root>, one diff, so a row moved between
+#                       them is not a delete. rc is git's.
+#   cbe_check [root]    the lint: one `ci-batch-escalate: <file>:<line>:
+#                       <problem>` line per problem, rc 1 on any. A row has 3
+#                       tab fields, a pattern, a known kind and a why; no
+#                       (pattern, kind) is in two source files; the directory
+#                       of the pattern's literal prefix exists; the folder
+#                       holds only readable *.tsv files and README.md.
 #   cbe_reason <path>   prints `selection input: <path>` and rc 0 when an
 #                       escalate row matches and no allow row does; else prints
 #                       nothing, rc 1
@@ -23,6 +43,9 @@
 #                       Prints the added kinds, one per line, sorted and
 #                       unique. Anything else is rc 1, an empty or missing
 #                       file and a header line it does not know included.
+#                       The header lines are diff --git, index, ---, +++,
+#                       new/deleted file mode and old/new mode (BH-8608: an
+#                       added or deleted fragment file).
 #   cbe_infra <path>    rc 0 when an infra row matches and no allow row does
 #                       (BH-7287): the batch runs the path's self and reads
 #                       suites plus catalog/ci-infra-canary.txt, not the
@@ -61,10 +84,11 @@
 # runs) is dropped. Unset, empty or `-` is the committed file, byte for byte.
 # cbe_reason reads the rules with the delta applied.
 #
-# The rules are catalog/ci-batch-escalate.tsv (see its header), or
-# CI_BATCH_ESCALATE_TSV. The kinds are escalate, infra (BH-7287), allow, spa
-# and worker; cbe_reason reads escalate and allow only. FAILS CLOSED: a rules file that cannot be read, or one
-# with no escalate row, answers `selection input: catalog/ci-batch-escalate.tsv
+# The rules are catalog/ci-batch-escalate.tsv (see its header) plus the
+# fragments in catalog/ci-batch-escalate.d/ (see its README), or
+# CI_BATCH_ESCALATE_TSV; every reader reads them through cbe_rules. The kinds are escalate, infra (BH-7287), allow, spa
+# and worker; cbe_reason reads escalate and allow only. FAILS CLOSED: rules that cannot be read (any source), or
+# rules with no escalate row, answers `selection input: catalog/ci-batch-escalate.tsv
 # unreadable` for every path, because an empty rule set must never mean
 # "nothing escalates".
 _CBE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -78,10 +102,82 @@ _cbe_match() {
   esac
 }
 
+# _cbe_cat <file> — the file with a final newline, rc 1 when it is not a
+# readable regular file.
+_cbe_cat() { [ -f "$1" ] && [ -r "$1" ] && LC_ALL=C awk 1 "$1"; }
+
+cbe_rules() {
+  local root="${1:-$_CBE_DIR/../..}"
+  if [ -n "${CI_BATCH_ESCALATE_TSV:-}" ]; then _cbe_cat "$CI_BATCH_ESCALATE_TSV"; return; fi
+  _cbe_cat "$root/catalog/ci-batch-escalate.tsv" || return 1
+  ( shopt -s nullglob; LC_ALL=C
+    for f in "$root"/catalog/ci-batch-escalate.d/*.tsv; do _cbe_cat "$f" || exit 1; done )
+}
+
+cbe_rules_path() {
+  case "$1" in
+    catalog/ci-batch-escalate.tsv) return 0 ;;
+    catalog/ci-batch-escalate.d/*/*) return 1 ;;
+    catalog/ci-batch-escalate.d/?*.tsv) return 0 ;;
+  esac
+  return 1
+}
+
+cbe_rules_diff() {
+  git -C "$1" diff --no-renames -U0 "$2" HEAD -- catalog/ci-batch-escalate.tsv ':(glob)catalog/ci-batch-escalate.d/*.tsv'
+}
+
+cbe_check() {
+  local root="${1:-$_CBE_DIR/../..}" d f n srcs=() bad=0 tag file line dir
+  d="$root/catalog/ci-batch-escalate.d"
+  if [ -f "$root/catalog/ci-batch-escalate.tsv" ] && [ -r "$root/catalog/ci-batch-escalate.tsv" ]; then
+    srcs+=("$root/catalog/ci-batch-escalate.tsv")
+  else
+    echo "ci-batch-escalate: catalog/ci-batch-escalate.tsv:0: not a readable file"; bad=1
+  fi
+  if [ -d "$d" ]; then
+    while IFS= read -r f; do
+      n="catalog/ci-batch-escalate.d/${f##*/}"
+      case "${f##*/}" in
+        README.md) [ -f "$f" ] || { echo "ci-batch-escalate: $n:0: README.md must be a file"; bad=1; } ;;
+        ?*.tsv) if [ -f "$f" ] && [ -r "$f" ]; then srcs+=("$f")
+                else echo "ci-batch-escalate: $n:0: not a readable file"; bad=1; fi ;;
+        *) if [ -d "$f" ]; then echo "ci-batch-escalate: $n:0: a sub-folder; fragments are <name>.tsv one level down"
+           else echo "ci-batch-escalate: $n:0: only <name>.tsv and README.md belong in the folder"; fi
+           bad=1 ;;
+      esac
+    done < <(shopt -s nullglob dotglob; LC_ALL=C; for f in "$d"/*; do printf '%s\n' "$f"; done)
+  fi
+  [ "${#srcs[@]}" -gt 0 ] || return 1
+  while IFS=$'\t' read -r tag file line dir; do
+    case "$tag" in
+      P) echo "ci-batch-escalate: $file:$line: $dir"; bad=1 ;;
+      D) [ -d "$root/$dir" ] || { echo "ci-batch-escalate: $file:$line: no directory $dir for the pattern"; bad=1; } ;;
+    esac
+  done < <(LC_ALL=C awk -F'\t' -v root="$root/" '
+    FNR == 1 { name = FILENAME; if (index(name, root) == 1) name = substr(name, length(root) + 1) }
+    /^[ \t]*$/ || /^#/ { next }
+    {
+      if (NF < 3) { print "P\t" name "\t" FNR "\tfewer than 3 tab-separated fields"; next }
+      if ($1 == "") { print "P\t" name "\t" FNR "\tan empty pattern"; next }
+      if ($2 != "escalate" && $2 != "infra" && $2 != "allow" && $2 != "spa" && $2 != "worker") {
+        print "P\t" name "\t" FNR "\tunknown kind " $2 " (escalate, infra, allow, spa or worker)"; next }
+      if ($3 ~ /^[ \t]*$/) { print "P\t" name "\t" FNR "\tan empty why"; next }
+      k = $1 "\t" $2
+      if (!(k in at)) { at[k] = name ":" FNR; src[k] = name }
+      else if (src[k] != name) print "P\t" name "\t" FNR "\tduplicate of " at[k] " (" $1 " " $2 ")"
+      lit = $1; g = match(lit, /[*?[]/); if (g > 0) lit = substr(lit, 1, g - 1)
+      dir = lit; if (g > 0 || lit !~ /\/$/) sub(/[^\/]*$/, "", dir)
+      if (dir == "") dir = "."
+      print "D\t" name "\t" FNR "\t" dir
+    }' "${srcs[@]}")
+  [ "$bad" = 0 ]
+}
+
 # The self rows: a delta can never remove these (BH-6838). The two runner rows
 # (tests/lib/scratch.sh, bin/lib/suite-runner.sh) are here because the plan
 # keeps them: removing one lets a runner change land untested.
-_CBE_SELF=' .github/ bin/ci-plan.sh bin/test-impact*.sh catalog/ci-batch-escalate.tsv bin/lib/ci-batch-escalate.sh catalog/ci-batch-regression.d/ tests/lib/scratch.sh bin/lib/suite-runner.sh '
+_CBE_SELF=' .github/ bin/ci-plan.sh bin/test-impact*.sh catalog/ci-batch-escalate.tsv catalog/ci-batch-escalate.d/ bin/lib/ci-batch-escalate.sh catalog/ci-batch-regression.d/ tests/lib/scratch.sh bin/lib/suite-runner.sh '
 
 # _cbe_delta_tokens <delta> — `<token>\t<why>` per token, why `ok` or the drop reason.
 _cbe_delta_tokens() {
@@ -127,16 +223,15 @@ cbe_delta_apply() {
 }
 
 cbe_reason() {
-  local p="$1" tsv="${CI_BATCH_ESCALATE_TSV:-$_CBE_DIR/../../catalog/ci-batch-escalate.tsv}"
-  local pat kind _why rows=0 esc=0 allow=0
-  if [ -r "$tsv" ]; then
+  local p="$1" rules pat kind _why rows=0 esc=0 allow=0
+  if rules=$(cbe_rules); then
     while IFS=$'\t' read -r pat kind _why; do
       case "$pat" in ''|'#'*) continue ;; esac
       case "$kind" in
         escalate) rows=$((rows + 1)); _cbe_match "$p" "$pat" && esc=1 ;;
         allow)    _cbe_match "$p" "$pat" && allow=1 ;;
       esac
-    done < <(cbe_delta_apply "$tsv" "${CI_FULL_TRIGGERS:-}")
+    done < <(cbe_delta_apply <(printf '%s\n' "$rules") "${CI_FULL_TRIGGERS:-}")
   fi
   if [ "$rows" -eq 0 ]; then
     echo "selection input: catalog/ci-batch-escalate.tsv unreadable"; return 0
@@ -146,18 +241,17 @@ cbe_reason() {
 }
 
 cbe_affects() {
-  local k="$1" p="$2" tsv="${CI_BATCH_ESCALATE_TSV:-$_CBE_DIR/../../catalog/ci-batch-escalate.tsv}"
-  local pat kind _why
+  local k="$1" p="$2" rules pat kind _why
   case "$k" in
     spa)    _cbe_match "$p" console-ui/ && return 0 ;;
     worker) _cbe_match "$p" worker/ && return 0 ;;
     *)      return 0 ;;
   esac
-  [ -r "$tsv" ] || return 0
+  rules=$(cbe_rules) || return 0
   while IFS=$'\t' read -r pat kind _why; do
     case "$pat" in ''|'#'*) continue ;; esac
     [ "$kind" = "$k" ] && _cbe_match "$p" "$pat" && return 0
-  done < "$tsv"
+  done <<<"$rules"
   return 1
 }
 
@@ -166,7 +260,7 @@ cbe_add_only() {
   local kinds
   kinds=$(LC_ALL=C awk '
     /^diff --git / { hunk = 0; next }
-    !hunk && (/^index / || /^--- / || /^\+\+\+ /) { next }
+    !hunk && (/^index / || /^--- / || /^\+\+\+ / || /^(new|deleted) file mode / || /^(old|new) mode /) { next }
     /^@@ / { hunk = 1; next }
     !hunk { bad = 1; exit }
     /^\\ / { next }
@@ -184,16 +278,15 @@ cbe_add_only() {
 }
 
 cbe_infra() {
-  local p="$1" tsv="${CI_BATCH_ESCALATE_TSV:-$_CBE_DIR/../../catalog/ci-batch-escalate.tsv}"
-  local pat kind _why inf=0
-  [ -r "$tsv" ] || return 1
+  local p="$1" rules pat kind _why inf=0
+  rules=$(cbe_rules) || return 1
   while IFS=$'\t' read -r pat kind _why; do
     case "$pat" in ''|'#'*) continue ;; esac
     case "$kind" in
       infra) _cbe_match "$p" "$pat" && inf=1 ;;
       allow) _cbe_match "$p" "$pat" && return 1 ;;
     esac
-  done < "$tsv"
+  done <<<"$rules"
   [ "$inf" = 1 ]
 }
 
@@ -201,7 +294,7 @@ cbe_deletes_row() {
   [ -s "${1:-}" ] && [ -r "$1" ] || return 0
   LC_ALL=C awk '
     /^diff --git / { hunk = 0; next }
-    !hunk && (/^index / || /^--- / || /^\+\+\+ /) { next }
+    !hunk && (/^index / || /^--- / || /^\+\+\+ / || /^(new|deleted) file mode / || /^(old|new) mode /) { next }
     /^@@ / { hunk = 1; next }
     !hunk { bad = 1; exit }
     /^\\ / { next }
