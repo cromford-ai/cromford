@@ -83,6 +83,7 @@ seed_all() { # every BH-1528 manifest row, so only the project rows vary
   row bake.semgrep.version 1.176.1;    row bake.tailscale.version 1.102.3
   row bake.gh.version 2.100.0;         row bake.bun.version 1.4.2
   row bake.codegraph.version 1.5.0;    row bake.rtk.version 0.45.0
+  row bake.flyctl.version 0.4.119
 }
 new_h() {
   local h; h=$(mktemp -d "$T/h-XXXXXX")

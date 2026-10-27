@@ -259,6 +259,25 @@ RUN set -eux; . /opt/fly-boot/bake-pin.sh; bake_require GH_VERSION "${GH_VERSION
     bake_verify gh "$GH_VERSION" gh --version
 # <<< bake-gh
 
+# --- flyctl (versioned GitHub release tarball, pinned) ------------------------
+# BH-8335: bin/remote-gate.sh needs flyctl on a pool machine (`flyctl proxy` to
+# the test host), so the selection gate can run there. The binary only: the
+# route (key, cert, a short-lived token) is pushed per machine by
+# bin/fly-pool.sh. The release's checksum file is flyctl_<v>_checksums.txt
+# (a bare checksums.txt is 404), the URL fly/hub/Dockerfile bakes with.
+# >>> bake-flyctl
+ARG FLYCTL_VERSION
+RUN set -eux; . /opt/fly-boot/bake-pin.sh; bake_require FLYCTL_VERSION "${FLYCTL_VERSION:-}"; \
+    A="flyctl_${FLYCTL_VERSION}_Linux_x86_64.tar.gz"; \
+    U="https://github.com/superfly/flyctl/releases/download/v${FLYCTL_VERSION}"; \
+    curl -fsSL -o "/tmp/$A" "$U/$A"; \
+    bake_sha256 "/tmp/$A" "$U/flyctl_${FLYCTL_VERSION}_checksums.txt" "$A"; \
+    mkdir -p /root/.fly/bin; tar -xzf "/tmp/$A" -C /root/.fly/bin flyctl; rm -f "/tmp/$A"; \
+    ln -sf flyctl /root/.fly/bin/fly; \
+    export FLY_NO_UPDATE_CHECK=1; bake_verify flyctl "$FLYCTL_VERSION" /root/.fly/bin/flyctl version
+ENV PATH=/root/.fly/bin:$PATH FLY_NO_UPDATE_CHECK=1
+# <<< bake-flyctl
+
 # --- bun (versioned GitHub release zip, pinned; static binary) ---------------
 # bun-linux-x64 is the AVX2 build (bun.sh/install used to pick -baseline on
 # CPUs without AVX2 by itself). Fly's x86 hosts have AVX2.

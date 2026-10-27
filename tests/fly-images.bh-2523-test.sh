@@ -229,7 +229,7 @@ for b in claude codex; do printf '#!/bin/bash\n[ "$1" = --version ] && echo "1.0
 chmod +x "$FB"/*
 # Every manifest row except node, so node can only come from "what this
 # project last baked" — the file on an old hub, the row on a fresh one.
-for d in playwright:1.48.2 semgrep:1.176.1 tailscale:1.102.3 gh:2.100.0 bun:1.4.2 codegraph:1.5.0 rtk:0.45.0; do
+for d in playwright:1.48.2 semgrep:1.176.1 tailscale:1.102.3 gh:2.100.0 bun:1.4.2 codegraph:1.5.0 rtk:0.45.0 flyctl:0.4.119; do
   printf '%s' "${d#*:}" > "$ROWS/bake.${d%%:*}.version"
 done
 new_bh() {

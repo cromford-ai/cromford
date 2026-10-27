@@ -56,6 +56,10 @@
 # NEVER leaves the hub: ORGO_API_KEY, TELEGRAM_*, SLACK_* (the chat transports
 #   are the hub's alone), FLY_* tokens, TS_AUTHKEY_*,
 #   and any OTHER project's env. Blanket copy is forbidden — explicit keys only.
+#   One Fly credential does reach a pool machine, and not through this file:
+#   bin/fly-pool.sh pushes a Fly SSH token scoped to the test-host app (no
+#   deploy, no secrets, no other app), valid only for the route's hours, to
+#   /run/harness-env/testhost.env (BH-8335).
 #
 # SSH OFF (BH-8316): the settings row pool.envbundle_ssh.<project> = off refuses
 # the ssh extract (rc 1, 0 ssh calls, one ALERTS line "push path refused: ssh

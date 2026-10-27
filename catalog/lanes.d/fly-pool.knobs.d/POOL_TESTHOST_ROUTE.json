@@ -1,0 +1,12 @@
+{
+  "env": "POOL_TESTHOST_ROUTE",
+  "type": "int",
+  "default": 0,
+  "min": 0,
+  "max": 1,
+  "unit": null,
+  "zero_means": "off",
+  "required": false,
+  "read_in": "bin/lib/pool-testhost-route.sh",
+  "note": "BH-8335. 1: bin/fly-pool.sh gives each pool machine its own route to the Fly test host at spawn and at each reuse hand-off: a Fly SSH token scoped to the test-host app only (flyctl tokens create ssh -a <TESTHOST_APP> -x <POOL_TESTHOST_TOKEN_HOURS>h), pushed mode 600 to /run/harness-env/testhost.env. bin/remote-gate.sh reads that file and reaches the host through flyctl ssh console -a <app>, so the selection gate (bin/selection-gate.sh) runs. Never an org-wide flyctl ssh issue cert. The cost is one token mint per spawn. A failure is one line in logs/fly-pool.log and the spawn goes on; the gate then records could-not-run. 0 (default): no route. Only cromford has the selection gate today, so the fleet default is 0 and the row `lane.fly-pool.cromford.pool_testhost_route` = 1 turns it on for cromford alone. A pull spawn (POOL_MACHINE_PULL) ships no route."
+}

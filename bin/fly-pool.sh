@@ -324,6 +324,11 @@ PDC_PEND_HOT=${PDC_PEND_HOT:-0}
 # BH-7116: pb_hub_copy, the reap's plan.md copy when the machine is gone.
 # shellcheck source=bin/lib/plan-blocked.sh
 . "$HARNESS/bin/lib/plan-blocked.sh" 2>/dev/null || true
+# BH-8335: ptr_build/ptr_push, a machine's own route to the Fly test host.
+# A tree without the lib ships no route, and the gate names the miss.
+# shellcheck source=bin/lib/pool-testhost-route.sh
+. "$HARNESS/bin/lib/pool-testhost-route.sh" 2>/dev/null \
+  || . "$(dirname "${BASH_SOURCE[0]}")/lib/pool-testhost-route.sh" 2>/dev/null || true
 command -v routing_sync_all >/dev/null 2>&1 && { routing_sync_all >/dev/null 2>&1 || true; }
 if command -v routing_pool_app >/dev/null 2>&1; then
   POOL_APP=$(routing_pool_app "$P" 2>/dev/null) || POOL_APP=""
@@ -3349,6 +3354,24 @@ next_job_or_destroy() { # hand this machine the next queued job, or destroy it
         "SLOTCLEAN ok cleaned="*)
           say "$MID: killed a stray build-slot holder before the handoff (${SLOTANS#SLOTCLEAN ok }) — reusing" ;;
       esac
+      # >>> pool testhost route refresh
+      # BH-8335: the route this machine booted with was cut for its first job.
+      # A fresh one (a new app-scoped SSH token) outlives the next job.
+      # Fail-soft, like the spawn's.
+      if command -v ptr_build >/dev/null 2>&1; then
+        TRDIR=$(mktemp -d /dev/shm/pool-tr.XXXX 2>/dev/null) || TRDIR=""
+        if [ -n "$TRDIR" ]; then
+          chmod 700 "$TRDIR"
+          TRERR=$(ptr_build "$TRDIR" "$NKEY" 2>&1 >/dev/null); TRRC=$?
+          if [ "$TRRC" = 0 ]; then
+            ptr_push "$MID" "$TRDIR" && say "$NKEY: testhost route refreshed on $MID (expires $(ptr_expires "$TRDIR"))"
+          elif [ "$TRRC" != 3 ]; then
+            say "$NKEY: ${TRERR:-testhost route: not shipped (rc $TRRC)} — $MID keeps the route it has"
+          fi
+          rm -rf "$TRDIR"
+        fi
+      fi
+      # <<< pool testhost route refresh
       if mput "$MID" "$NJ" /run/harness/job.json.next \
          && mexec "$MID" "mv /run/harness/job.json.next /run/harness/job.json" >/dev/null; then
         rm -f "$NJ"
@@ -5659,6 +5682,26 @@ spawn_one() { # spawn_one <job-file> <key> <ticket-id> <attempt> <deferrals> <de
     MTOK=""
   fi
   # <<< pool gh credential swap
+  # >>> pool testhost route
+  # THE TEST-HOST ROUTE (BH-8335). The selection gate runs the build's suites
+  # on the Fly test host through bin/remote-gate.sh, which needs a Fly
+  # credential the image does not carry. ptr_build mints one for THIS machine
+  # into $TMP/testhost.env: a Fly SSH token scoped to the test-host app only,
+  # for ptr_hours hours (never an org-wide `flyctl ssh issue` cert, lead BLOCK
+  # #4386), and the push phase sends it with the other secrets. Knob
+  # lane.fly-pool[.<project>].pool_testhost_route (1 = on, fleet default 0). It
+  # never refuses a spawn: a failure is one line, and the gate records
+  # could-not-run as before.
+  # Before the launch (BH-7215). A pull spawn ships no route (its seed is the
+  # machine config); the gate names that miss on the machine.
+  if [ "$PULL" != 1 ] && command -v ptr_build >/dev/null 2>&1; then
+    TRERR=$(ptr_build "$TMP" "$KEY" 2>&1 >/dev/null); TRRC=$?
+    case "$TRRC" in
+      0|3) ;;
+      *) say "$KEY: ${TRERR:-testhost route: not shipped (rc $TRRC)} — the selection gate will record could-not-run" ;;
+    esac
+  fi
+  # <<< pool testhost route
   # PER-MACHINE CLAUDE ACCOUNT (2026-09-14). Exactly the swap above, one
   # credential over: the bundle's CLAUDE_CODE_OAUTH_TOKEN is the owning box's
   # project-6 setup-token and every machine in the pool got the same one, so a
@@ -5832,6 +5875,13 @@ spawn_one() { # spawn_one <job-file> <key> <ticket-id> <attempt> <deferrals> <de
   # Only written when the swap happened, so an unarmed box pushes exactly the two
   # files it pushes today and the builder finds no file to prefer.
   if [ -s "$TMP/gh-token" ]; then mput "$MID" "$TMP/gh-token" /run/harness-env/gh-token || OK=0; fi
+  # >>> pool testhost route push
+  # BH-8335: before job.json, so the runner starts with it. A failed push costs
+  # the selection gate, never the build (OK stays).
+  if [ -s "$TMP/testhost.env" ] && command -v ptr_push >/dev/null 2>&1 && ptr_push "$MID" "$TMP"; then
+    say "$KEY: testhost route shipped to $MID (expires $(ptr_expires "$TMP"))"
+  fi
+  # <<< pool testhost route push
   # This tick's model-route answers (BH-1572, pool_mr_bundle below), before the
   # job file the runner starts on. A failed push costs the outage cover, never
   # the build: the machine resolves its own ladders, as it did before.

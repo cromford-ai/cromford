@@ -1,0 +1,12 @@
+{
+  "env": "POOL_TESTHOST_TOKEN_HOURS",
+  "type": "int",
+  "default": 0,
+  "min": 0,
+  "max": 72,
+  "unit": "hours",
+  "zero_means": null,
+  "required": false,
+  "read_in": "bin/lib/pool-testhost-route.sh",
+  "note": "BH-8335. How long a pool machine's test-host route lives: the -x of the Fly SSH token scoped to the test-host app (see POOL_TESTHOST_ROUTE). 0 (default) derives it from the build lane's deadline: ceil(lane.lane-reaper[.<project>].lane_reap_deadline_secs / 3600) + 1, which is 6 h for the 16200 s default, so the route outlives the longest build the reaper allows. A derived value is clamped to 1..72 too. A reused machine gets a fresh route at each hand-off. Per-project row `lane.fly-pool.<project>.pool_testhost_token_hours`."
+}

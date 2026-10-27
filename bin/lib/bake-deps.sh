@@ -28,6 +28,9 @@
 #   2026-09-22: hub node 22.22.3, gh 2.45.0, tailscale 1.98.9 vs image 22.23.2,
 #   2.100.0, 1.102.3), so the probe would silently DOWNGRADE the image. bun,
 #   semgrep and playwright are not installed on the hub at all.
+#   flyctl qualifies (BH-8335): bin/fly-image-build.sh already needs it on the
+#   host that bakes, and the fleet installs it from the superfly release
+#   tarball, the artifact the image's bake-flyctl block downloads.
 bake_deps() {
   cat <<'EOF'
 node NODE_VERSION -
@@ -38,6 +41,7 @@ gh GH_VERSION -
 bun BUN_VERSION -
 codegraph CODEGRAPH_VERSION codegraph
 rtk RTK_VERSION rtk
+flyctl FLYCTL_VERSION flyctl
 EOF
 }
 

@@ -118,7 +118,7 @@ STUB
 printf '#!/bin/bash\nexit 1\n' > "$FB/gh"
 for b in claude codex; do printf '#!/bin/bash\n[ "$1" = --version ] && echo "1.0.0"\n' > "$FB/$b"; done
 chmod +x "$FB"/*
-for d in playwright:1.48.2 semgrep:1.176.1 tailscale:1.102.3 gh:2.100.0 bun:1.4.2 codegraph:1.5.0 rtk:0.45.0; do
+for d in playwright:1.48.2 semgrep:1.176.1 tailscale:1.102.3 gh:2.100.0 bun:1.4.2 codegraph:1.5.0 rtk:0.45.0 flyctl:0.4.119; do
   printf '%s' "${d#*:}" > "$ROWS/bake.${d%%:*}.version"
 done
 build_run() { # build_run [env...]

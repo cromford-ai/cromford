@@ -2,7 +2,7 @@
 # tests/fly-image-bake-pin.bh-1528-test.sh — BH-1528: every dependency the Fly
 # builder image bakes is pinned from a bake.<name>.version settings row and
 # watched for drift — BH-1517's CLI pin, extended to node, playwright, semgrep,
-# tailscale, gh, bun, codegraph and rtk (manifest: bin/lib/bake-deps.sh).
+# tailscale, gh, bun, codegraph, rtk and flyctl (manifest: bin/lib/bake-deps.sh).
 #
 # What this pins:
 #   A. bin/fly-image-build.sh passes every manifest dependency as its own
@@ -35,7 +35,7 @@ command -v jq >/dev/null || { echo "jq missing — skipping"; exit 0; }
 # The manifest as the test knows it: names + ARGs. Asserted against
 # bin/lib/bake-deps.sh in B0, so a dependency added there without a Dockerfile
 # block (or the reverse) fails here instead of in a nightly build.
-DEPS="node:NODE_VERSION playwright:PLAYWRIGHT_VERSION semgrep:SEMGREP_VERSION tailscale:TAILSCALE_VERSION gh:GH_VERSION bun:BUN_VERSION codegraph:CODEGRAPH_VERSION rtk:RTK_VERSION"
+DEPS="node:NODE_VERSION playwright:PLAYWRIGHT_VERSION semgrep:SEMGREP_VERSION tailscale:TAILSCALE_VERSION gh:GH_VERSION bun:BUN_VERSION codegraph:CODEGRAPH_VERSION rtk:RTK_VERSION flyctl:FLYCTL_VERSION"
 
 # ===========================================================================
 # Shared fakebin. curl is the jobs-client transport: settings rows are files
@@ -85,6 +85,7 @@ seed_all() { # every manifest row set to a distinct recognizable version
   row bake.semgrep.version 1.176.1;    row bake.tailscale.version 1.102.3
   row bake.gh.version 2.100.0;         row bake.bun.version 1.4.2
   row bake.codegraph.version 1.5.0;    row bake.rtk.version 0.45.0
+  row bake.flyctl.version 0.4.119
 }
 new_h() {
   local h; h=$(mktemp -d "$T/h-XXXXXX")
@@ -123,6 +124,7 @@ has_arg GH_VERSION 2.100.0 && ok || bad "A1: GH_VERSION missing"
 has_arg BUN_VERSION 1.4.2 && ok || bad "A1: BUN_VERSION missing"
 has_arg CODEGRAPH_VERSION 1.5.0 && ok || bad "A1: CODEGRAPH_VERSION missing"
 has_arg RTK_VERSION 0.45.0 && ok || bad "A1: RTK_VERSION missing"
+has_arg FLYCTL_VERSION 0.4.119 && ok || bad "A1: FLYCTL_VERSION missing"
 grep -q 'bun=1.4.2' "$H/state/fly/demo1.bake" 2>/dev/null && grep -q 'node=22.23.2' "$H/state/fly/demo1.bake" && ok \
   || bad "A1: state/fly/demo1.bake not recorded: $(cat "$H/state/fly/demo1.bake" 2>/dev/null)"
 
@@ -175,7 +177,7 @@ grep -q -- '=latest' "$T/deploy-args" && bad "A7: 'latest' reached fly deploy" |
 # A8. The settings worker is DOWN but the project has a last baked set -> the
 # build pins exactly what it baked last time; an outage breaks no image.
 H=$(new_h); rows_reset
-printf 'node=22.23.2\nplaywright=1.48.2\nsemgrep=1.176.1\ntailscale=1.102.3\ngh=2.100.0\nbun=1.4.2\ncodegraph=1.5.0\nrtk=0.45.0\n' > "$H/state/fly/demo8.bake"
+printf 'node=22.23.2\nplaywright=1.48.2\nsemgrep=1.176.1\ntailscale=1.102.3\ngh=2.100.0\nbun=1.4.2\ncodegraph=1.5.0\nrtk=0.45.0\nflyctl=0.4.119\n' > "$H/state/fly/demo8.bake"
 build_run demo8 CURL_MODE=down
 [ "$RC" = 0 ] && ok || bad "A8: an outage with a last-baked set must still build (rc=$RC): $OUT"
 has_arg GH_VERSION 2.100.0 && ok || bad "A8: last-baked gh not pinned: $(cat "$T/deploy-args")"
@@ -313,7 +315,7 @@ refresh_run() { # refresh_run <h> [env...]
   OUT=$(env -i PATH="$FB:$PATH" HOME="$T" ROWS="$ROWS" HARNESS="$h" REQ_SINK="$T/req.log" "$@" \
         bash "$DIR/bin/fly-image-refresh.sh" 2>&1); RC=$?
 }
-BAKED_OK=$'node=22.23.2\nplaywright=1.48.2\nsemgrep=1.176.1\ntailscale=1.102.3\ngh=2.100.0\nbun=1.4.2\ncodegraph=1.5.0\nrtk=0.45.0\n'
+BAKED_OK=$'node=22.23.2\nplaywright=1.48.2\nsemgrep=1.176.1\ntailscale=1.102.3\ngh=2.100.0\nbun=1.4.2\ncodegraph=1.5.0\nrtk=0.45.0\nflyctl=0.4.119\n'
 
 # C1. Rows match the baked set -> fly_image_bake.<project> recorded; no alert.
 H=$(new_h); rows_reset; seed_all; : > "$H/flags/fly-pool-democ1"
@@ -321,7 +323,7 @@ stub_builder "$H" "$BAKED_OK"
 refresh_run "$H" FLY_MACHINES_ROWS=on
 grep -q '"key":"fly_image_bake.democ1"' "$T/req.log" && ok || bad "C1: fly_image_bake.democ1 not written: $(grep settings "$T/req.log" | head -3)"
 BAKE_PUT=$(grep 'fly_image_bake.democ1' "$T/req.log")
-grep -q '"value":"node=22.23.2 playwright=1.48.2 semgrep=1.176.1 tailscale=1.102.3 gh=2.100.0 bun=1.4.2 codegraph=1.5.0 rtk=0.45.0"' <<<"$BAKE_PUT" && ok \
+grep -q '"value":"node=22.23.2 playwright=1.48.2 semgrep=1.176.1 tailscale=1.102.3 gh=2.100.0 bun=1.4.2 codegraph=1.5.0 rtk=0.45.0 flyctl=0.4.119"' <<<"$BAKE_PUT" && ok \
   || bad "C1: fly_image_bake value wrong: $(grep fly_image_bake "$T/req.log")"
 grep -q 'democ1' "$H/logs/ALERTS.log" 2>/dev/null && bad "C1: no drift, no alert: $(cat "$H/logs/ALERTS.log")" || ok
 

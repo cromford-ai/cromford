@@ -44,6 +44,8 @@
 #   TESTHOST_TARGET one machine's 6PN address, when    (unset: Fly picks)
 #                   the app has several and a port should pin one
 #   REMOTE_GATE_BASE the branch CI diffs against       main (BH-1527)
+#   REMOTE_GATE_TRANSPORT openssh (proxy + cert) or     openssh
+#                   fly-ssh (a pool route, BH-8335)
 # and the run knobs: REMOTE_GATE_P, REMOTE_GATE_TAIL, REMOTE_GATE_FULL,
 # REMOTE_GATE_PROXY_WAIT_S, REMOTE_GATE_CERT_MIN_H, REMOTE_GATE_ISSUE_HOURS.
 # The cert reissue's time bound, REMOTE_GATE_CERT_ISSUE_TIMEOUT_S, is a settings
@@ -69,6 +71,54 @@
 set -uo pipefail
 
 SELF_DIR=$(cd "$(dirname "$0")" && pwd)
+
+# ── a pool machine's route (BH-8335) ────────────────────────────────────────
+# bin/fly-pool.sh hands each pool machine a route of its own in the harness
+# env dir (bin/lib/pool-testhost-route.sh): testhost.env, with a Fly SSH token
+# scoped to the test-host app alone (flyctl tokens create ssh -a <app> -x <h>).
+# The file is READ, never sourced: only the three keys below are taken, only
+# with a value that has no $, backtick, backslash, quote or control character
+# (TESTHOST_ROUTE_EXPIRES: digits only; REMOTE_GATE_TRANSPORT: openssh or
+# fly-ssh), and a variable the caller already set wins over it. With no file
+# (the hub, a laptop) nothing changes. REMOTE_GATE_ROUTE_ENV names another file.
+RG_ROUTE_FILE="${REMOTE_GATE_ROUTE_ENV:-}"
+[ -z "$RG_ROUTE_FILE" ] && [ -n "${HARNESS_ENV_DIR:-}" ] && RG_ROUTE_FILE="$HARNESS_ENV_DIR/testhost.env"
+_rg_pool_route() {
+  local line k v
+  [ -n "$RG_ROUTE_FILE" ] && [ -r "$RG_ROUTE_FILE" ] || return 0
+  while IFS= read -r line || [ -n "$line" ]; do
+    case "$line" in
+      REMOTE_GATE_TRANSPORT=*|FLY_API_TOKEN=*|TESTHOST_ROUTE_EXPIRES=*) ;;
+      *) continue ;;
+    esac
+    k=${line%%=*}; v=${line#*=}
+    case "$v" in ''|*[\$\`\\\"\']*|*[[:cntrl:]]*) continue ;; esac
+    case "$k" in
+      TESTHOST_ROUTE_EXPIRES) case "$v" in *[!0-9]*) continue ;; esac ;;
+      REMOTE_GATE_TRANSPORT) case "$v" in openssh|fly-ssh) ;; *) continue ;; esac ;;
+    esac
+    [ -n "${!k:-}" ] && continue
+    printf -v "$k" '%s' "$v"
+    export "${k?}"
+  done < "$RG_ROUTE_FILE"
+  return 0
+}
+_rg_pool_route
+
+# ── the transport (BH-8335) ─────────────────────────────────────────────────
+#   openssh  (default: the hub, a laptop) `flyctl proxy` to port 22 plus
+#            OpenSSH with the cert from `flyctl ssh issue <org>`.
+#   fly-ssh  (a pool machine's route) every remote call is `flyctl ssh console
+#            -a $TESTHOST_APP`, with the app-scoped SSH token in FLY_API_TOKEN.
+#            flyctl gets a fresh cert per connection that only this app's
+#            machines accept. No proxy, no key file, no `ssh issue`. rsync
+#            goes through bin/lib/remote-gate-fly-rsh.sh, which refuses
+#            anything but `rsync --server` to this app.
+RG_TRANSPORT="${REMOTE_GATE_TRANSPORT:-openssh}"
+case "$RG_TRANSPORT" in
+  openssh|fly-ssh) ;;
+  *) echo "remote-gate: REMOTE_GATE_TRANSPORT must be openssh or fly-ssh, got '$RG_TRANSPORT'" >&2; exit 2 ;;
+esac
 
 TESTHOST_APP="${TESTHOST_APP:-bh-testhost-example-org}"
 TESTHOST_PORT="${TESTHOST_PORT:-10022}"
@@ -147,6 +197,36 @@ else
     [ $# -ge 1 ] || die2 "-- needs a command"
     MODE=cmd
   fi
+fi
+
+# _rg_pool_miss — on a pool machine (POOL_MODE=1), ONE line that names every
+# part of the route and says which is missing. The exits below do not change:
+# this line only says where to look. Nothing on the hub or a laptop. The token
+# is named present, MISSING or expired, never printed.
+_rg_pool_miss() {
+  local fc rf kf cf tk miss=0
+  [ "${POOL_MODE:-}" = 1 ] || return 0
+  fc=$(command -v flyctl 2>/dev/null) || { fc=MISSING; miss=1; }
+  if [ -n "$RG_ROUTE_FILE" ] && [ -r "$RG_ROUTE_FILE" ]; then rf="$RG_ROUTE_FILE (present)"
+  else rf="${RG_ROUTE_FILE:-<no HARNESS_ENV_DIR>/testhost.env} (MISSING)"; miss=1; fi
+  if [ "$RG_TRANSPORT" = fly-ssh ]; then
+    if [ -z "${FLY_API_TOKEN:-}" ]; then tk=MISSING; miss=1
+    elif [ -n "${TESTHOST_ROUTE_EXPIRES:-}" ] && [ "$TESTHOST_ROUTE_EXPIRES" -le "$(date +%s)" ]; then tk=expired; miss=1
+    else tk=present; fi
+    [ "$miss" = 1 ] || return 0
+    echo "remote-gate: pool test-host route incomplete: flyctl=$fc route=$rf transport=fly-ssh token=$tk" >&2
+    return 0
+  fi
+  if [ -r "$TESTHOST_KEY" ]; then kf="$TESTHOST_KEY (present)"; else kf="$TESTHOST_KEY (MISSING)"; miss=1; fi
+  if [ -r "$TESTHOST_KEY-cert.pub" ]; then cf="$TESTHOST_KEY-cert.pub (present)"; else cf="$TESTHOST_KEY-cert.pub (MISSING)"; miss=1; fi
+  [ "$miss" = 1 ] || return 0
+  echo "remote-gate: pool test-host route incomplete: flyctl=$fc route=$rf transport=openssh key=$kf cert=$cf" >&2
+}
+_rg_pool_miss
+
+if [ "$RG_TRANSPORT" = fly-ssh ]; then
+  [ "$MODE" = issue ] && die2 "--issue-cert: the fly-ssh transport issues no cert (flyctl ssh console gets its own app-scoped cert per connection)"
+  case "$TESTHOST_APP" in ''|*[!a-z0-9-]*) die2 "TESTHOST_APP '$TESTHOST_APP' is not a Fly app name" ;; esac
 fi
 
 command -v flyctl >/dev/null 2>&1 || die_infra "flyctl is not on PATH — install it, or use bin/run-tests-in-docker.sh"
@@ -574,6 +654,32 @@ _rg_ensure_proxy() {
     sleep 1; waited=$((waited + 1))   # determinism: ok bounded poll for a port, not a fixed settle
   done
   die_infra "no route to the Fly test host: flyctl proxy $TESTHOST_PORT:22 -a $TESTHOST_APP did not open the port in ${RG_WAIT_S}s (tail $log; check flyctl auth whoami and that the machine is started — bin/testhost-tick.sh state)"
+}
+
+# ── the fly-ssh transport (BH-8335) ─────────────────────────────────────────
+# _rg_fly_bash <script file> — run the script on the host with `bash -s` over
+# `flyctl ssh console -a $TESTHOST_APP`, stdout streamed, and return the
+# script's own exit code. flyctl's exit code is not used: it does not tell "the
+# connection failed" from "the script failed". So the script goes up wrapped in
+# a subshell, and one marker line after it prints the subshell's rc. The marker
+# never reaches the caller's stdout. No marker means nothing can be concluded:
+# rc 255, the same as OpenSSH's own "could not run anything".
+# FLY_ACCESS_TOKEN is unset for flyctl, because it wins over FLY_API_TOKEN and
+# the route's token is the credential this transport is for.
+RG_FLY_MARK=""
+_rg_fly_bash() {
+  local f=$1 rcf rc
+  [ -n "$RG_FLY_MARK" ] || RG_FLY_MARK="@@remote-gate-rc-$$-$(date +%s)@@"
+  rcf=$(mktemp "${TMPDIR:-/tmp}/remote-gate-rc.XXXXXX") || return 255
+  { printf '(\n'; cat "$f"; printf '\n)\nrg_rc=$?; printf "\\n%%s %%s\\n" %s "$rg_rc"\n' "$RG_FLY_MARK"; } \
+    | env -u FLY_ACCESS_TOKEN flyctl ssh console -a "$TESTHOST_APP" -q -C "bash -s" \
+    | awk -v m="$RG_FLY_MARK" -v rcf="$rcf" '
+        $1 == m && NF == 2 { if (held && h != "") print h; held = 0; print $2 > rcf; close(rcf); next }
+        { if (held) { print h; fflush() } h = $0; held = 1 }
+        END { if (held) print h }'
+  rc=$(cat "$rcf" 2>/dev/null); rm -f "$rcf"
+  case "$rc" in ''|*[!0-9]*) return 255 ;; esac
+  return "$rc"
 }
 
 # ── the git context (BH-1527) ───────────────────────────────────────────────
@@ -1151,11 +1257,20 @@ trap '_rg_on_signal TERM 143' TERM
 _rg_knobs
 [ "$MODE" = issue ] && { _rg_issue_only; exit $?; }
 _rg_build_context
-_rg_ensure_cert
+[ "$RG_TRANSPORT" = openssh ] && _rg_ensure_cert
 _rg_wake
-_rg_ensure_proxy
+[ "$RG_TRANSPORT" = openssh ] && _rg_ensure_proxy
 
 SSH_OPTS="-i $TESTHOST_KEY -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR -p $TESTHOST_PORT"
+# rsync's remote shell. fly-ssh: the wrapper, which reads TESTHOST_APP.
+RG_RSH="ssh $SSH_OPTS"
+if [ "$RG_TRANSPORT" = fly-ssh ]; then RG_RSH="$SELF_DIR/lib/remote-gate-fly-rsh.sh"; export TESTHOST_APP; fi
+# _rg_remote_bash <script file> — the script on the host under `bash -s`.
+_rg_remote_bash() {
+  if [ "$RG_TRANSPORT" = fly-ssh ]; then _rg_fly_bash "$1"; return; fi
+  # shellcheck disable=SC2086
+  ssh $SSH_OPTS "root@localhost" bash -s < "$1"
+}
 # The run id is unique per run so two agents draining at once never share a
 # tree; $$ and the clock are enough, and the host removes the tree at the end.
 RUN_ID="$(date '+%s')-$$"
@@ -1175,19 +1290,26 @@ RUN_ROOT="/srv/tmp/runs/$RUN_ID"
 # after it is what says whether the host is reachable at all.
 PREP=$(mktemp "${TMPDIR:-/tmp}/remote-gate-prep.XXXXXX") || die_infra "cannot create a temp file in ${TMPDIR:-/tmp}"
 _rg_compose_prep_job "$PREP" "$RUN_ROOT"
-# shellcheck disable=SC2086
-ssh $SSH_OPTS "root@localhost" bash -s < "$PREP" >&2 \
+_rg_remote_bash "$PREP" >&2 \
   || echo "remote-gate: note — the host-side prep (sweep, tmpfs) did not finish (rc $?); the run goes on without it" >&2
 
-# shellcheck disable=SC2086
 # UNDER THE MOUNT LOCK (#1604 review, I2): when the prep did not finish, this
 # is the run's only mkdir, and an unlocked one could land between another run's
 # emptiness check and its mount — hidden under the tmpfs, a loud 125 later.
 # (After a prep that finished, the dir exists and this is a no-op.) argv, not a
 # shell string: Fly's ssh server execs it without one.
-ssh $SSH_OPTS "root@localhost" flock -w "$REMOTE_GATE_LOCK_WAIT_S" /srv/tmp.mount.lock \
-    mkdir -p "$RUN_ROOT/base" >/dev/null 2>&1 \
-  || die_infra "cannot create the run dir on the test host over the proxy on port $TESTHOST_PORT (ssh failed, or the mount lock stayed busy ${REMOTE_GATE_LOCK_WAIT_S}s) — the machine may be stopped: bin/testhost-tick.sh state"
+# fly-ssh sends the same argv as a one-line script (RUN_ROOT is digits, - and /).
+if [ "$RG_TRANSPORT" = fly-ssh ]; then
+  MKJOB=$(mktemp "${TMPDIR:-/tmp}/remote-gate-mkdir.XXXXXX") || die_infra "cannot create a temp file in ${TMPDIR:-/tmp}"
+  printf 'flock -w %s /srv/tmp.mount.lock mkdir -p %s\n' "$REMOTE_GATE_LOCK_WAIT_S" "$RUN_ROOT/base" > "$MKJOB"
+  _rg_fly_bash "$MKJOB" >/dev/null 2>&1; MKRC=$?; rm -f "$MKJOB"
+else
+  # shellcheck disable=SC2086
+  ssh $SSH_OPTS "root@localhost" flock -w "$REMOTE_GATE_LOCK_WAIT_S" /srv/tmp.mount.lock \
+      mkdir -p "$RUN_ROOT/base" >/dev/null 2>&1; MKRC=$?
+fi
+[ "$MKRC" = 0 ] \
+  || die_infra "cannot create the run dir on the test host over $([ "$RG_TRANSPORT" = fly-ssh ] && echo "flyctl ssh console -a $TESTHOST_APP" || echo "the proxy on port $TESTHOST_PORT") (ssh failed, or the mount lock stayed busy ${REMOTE_GATE_LOCK_WAIT_S}s) — the machine may be stopped: bin/testhost-tick.sh state"
 
 # WHAT GOES UP IS WHAT THE GATE NEEDS (#1604 review, I6). From a checkout that
 # is the tracked files as they stand on disk plus the untracked files git does
@@ -1211,13 +1333,13 @@ if [ -n "$RG_CTX" ]; then
   RG_UPLOAD_FROM=(--from0 --files-from="$RG_CTX/upload.list")
 fi
 # shellcheck disable=SC2086
-rsync -rlptD --delete -e "ssh $SSH_OPTS" ${RG_UPLOAD_FROM[@]+"${RG_UPLOAD_FROM[@]}"} \
+rsync -rlptD --delete -e "$RG_RSH" ${RG_UPLOAD_FROM[@]+"${RG_UPLOAD_FROM[@]}"} \
   --exclude .git --exclude node_modules --exclude .claude --exclude .codegraph \
   "$DIR/" "root@localhost:$RUN_ROOT/base/" >/dev/null 2>&1 \
   || die_infra "the upload to the test host failed (rsync) — nothing ran"
 if [ -n "$RG_CTX" ]; then
   # shellcheck disable=SC2086
-  rsync -rlptD --delete -e "ssh $SSH_OPTS" "$RG_CTX/ctx.git/" "root@localhost:$RUN_ROOT/ctx.git/" >/dev/null 2>&1 \
+  rsync -rlptD --delete -e "$RG_RSH" "$RG_CTX/ctx.git/" "root@localhost:$RUN_ROOT/ctx.git/" >/dev/null 2>&1 \
     || die_infra "the upload of the git context to the test host failed (rsync) — nothing ran"
 fi
 
@@ -1228,8 +1350,7 @@ else
   _rg_compose_suites_job "$JOB" "$RUN_ROOT" "$@"
 fi
 
-# shellcheck disable=SC2086
-ssh $SSH_OPTS "root@localhost" bash -s < "$JOB"
+_rg_remote_bash "$JOB"
 RC=$?
 # 255 is ssh's own "I could not run anything", not a suite count and not a
 # command's exit. Reporting it as either is the silent-pass shape this gate
