@@ -5,7 +5,7 @@
 // GET /api/pr-records?repo=&state= (routes/pr-records.js, `sync`).
 // test/route-table.d/bh-8452-pr-record-lists.txt pins this route list.
 //
-// POST /api/pr-record-lists  {repo, state: "open", at?, rows: [{number, fields}]}
+// POST /api/pr-record-lists  {repo, state: "open"|"merged", at?, rows: [{number, fields}]}
 //   at is the time of the GitHub read (YYYY-MM-DDTHH:MM:SSZ), default the
 //   worker's clock, and a later time is the worker's clock. Each row is
 //   checked as a PUT /api/pr-records body with source github; the first bad
@@ -22,7 +22,12 @@
 //     3. STAMP_SQL: pr_record_lists (repo, state) = {synced_at, rows};
 //     4. SYNC_SQL: the stamp read back (an older `at` does not move it).
 //   200 {written, absent, synced_at}.
-// Only state open in C0: an open list is the one a lane reads whole.
+// BH-8481: state merged too. A merged list is the newest window of merged PRs
+// (`gh pr list --state merged --limit n`), never every merged PR, so step 2
+// does not run (absent is 0), and every row must carry fields.state "merged"
+// (else a 400 `state` at its index): a merged sync never writes an open row.
+// The stamp (repo, merged) then tells a window reader the record holds that
+// window. closed stays a 400.
 import { json } from "../lib/http.js";
 import { ensureTable } from "../lib/core.js";
 import { checkPut, guarded, listLimit, upsertSql, REPO_RE, SYNC_SQL } from "./pr-records.js";
@@ -54,7 +59,7 @@ export function checkList(body, t, limit) {
   }
   const repo = typeof body.repo === "string" ? body.repo.trim().toLowerCase() : "";
   if (!REPO_RE.test(repo)) return { error: "invalid_field", field: "repo" };
-  if (body.state !== "open") return { error: "invalid_field", field: "state" };
+  if (body.state !== "open" && body.state !== "merged") return { error: "invalid_field", field: "state" };
   let at = body.at === undefined ? t : body.at;
   if (typeof at !== "string" || !AT_RE.test(at) || Number.isNaN(Date.parse(at))) return { error: "invalid_field", field: "at" };
   if (Date.parse(at) > Date.parse(t)) at = t;
@@ -68,6 +73,7 @@ export function checkList(body, t, limit) {
     }
     const c = checkPut({ repo, number: r.number, source: "github", at, fields: r.fields }, t);
     if (c.error) return { error: c.error, field: c.field, index };
+    if (body.state === "merged" && c.fields.state !== "merged") return { error: "invalid_field", field: "state", index };
     if (seen.has(c.number)) return { error: "duplicate_number", field: "number", index };
     seen.add(c.number);
     rows.push({ number: c.number, fields: c.fields });
@@ -91,11 +97,12 @@ export const routes = [
         const names = Object.keys(r.fields);
         return env.DB.prepare(upsertSql(names)).bind(c.repo, r.number, c.at, "github", ...names.map((f) => r.fields[f]));
       });
-      stmts.push(env.DB.prepare(ABSENT_SQL).bind(c.repo, JSON.stringify(c.rows.map((r) => r.number)), c.at));
+      const full = c.state === "open";
+      if (full) stmts.push(env.DB.prepare(ABSENT_SQL).bind(c.repo, JSON.stringify(c.rows.map((r) => r.number)), c.at));
       stmts.push(env.DB.prepare(STAMP_SQL).bind(c.repo, c.state, c.at, c.rows.length));
       stmts.push(env.DB.prepare(SYNC_SQL).bind(c.repo, c.state));
       const res = await env.DB.batch(stmts);
-      const absent = res[res.length - 3];
+      const absent = full ? res[res.length - 3] : null;
       const read = res[res.length - 1];
       const synced = read && read.results && read.results[0];
       return json(200, {

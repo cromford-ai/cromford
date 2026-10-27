@@ -185,7 +185,7 @@ test('L2 150 open rows answer in one GET with the 13 keys; the read is 1 batch o
   assert.equal(g.body.sync, null);
   assert.equal(g.body.missing, null);
   assert.equal(g.body.unknown, 0);
-  assert.deepEqual(LIST_KEYS.length, 13);
+  assert.deepEqual(LIST_KEYS.length, 15);  // BH-8481 added merged_at and reviews
   for (const r of g.body.rows) assert.deepEqual(Object.keys(r).sort(), [...LIST_KEYS].sort());
   assert.deepEqual(g.body.rows.slice(0, 3).map((r) => r.number), [1, 2, 3], 'newest pr_updated_at first');
   const r1 = g.body.rows[0];
@@ -342,7 +342,7 @@ test('S4 bad bodies are 400 and write nothing', async (t) => {
     [{ ...ok, rows: [row(1), row(2), row(3, { head_sha: 'abc' })] }, { error: 'invalid_field', field: 'head_sha', index: 2 }],
     [{ ...ok, rows: [row(1), row(2), { number: 3, fields: { bogus: 1 } }] }, { error: 'unknown_field', field: 'bogus', index: 2 }],
     [{ ...ok, rows: [row(1), row(1)] }, { error: 'duplicate_number', field: 'number', index: 1 }],
-    [{ ...ok, state: 'merged' }, { error: 'invalid_field', field: 'state' }],
+    [{ ...ok, state: 'closed' }, { error: 'invalid_field', field: 'state' }],  // BH-8481 accepts merged
     [{ ...ok, rows: 'x' }, { error: 'invalid_field', field: 'rows' }],
     [{ ...ok, at: 'now' }, { error: 'invalid_field', field: 'at' }],
     [{ ...ok, extra: 1 }, { error: 'unknown_key', field: 'extra' }],
@@ -452,23 +452,28 @@ async function seeded5000(t) {
   assert.equal(count(o.db), 5000);
   return o;
 }
+// index: one name, or a list of names any one of which serves the query.
 function check(db, sql, binds, index, tables = ['pr_records']) {
   const p = plan(db, sql, ...binds);
   assert.deepEqual(fullScans(p, tables), [], p.join(' | '));
-  assert.ok(p.some((l) => l.includes(index)), `${index} not in: ${p.join(' | ')}`);
+  const names = [].concat(index);
+  assert.ok(p.some((l) => names.some((n) => l.includes(n))), `${names.join(' or ')} not in: ${p.join(' | ')}`);
 }
+// BH-8481 added idx_pr_records_repo_state_created, a second (repo, state, ...)
+// index; the planner may serve a (repo, state) prefix with either one.
+const REPO_STATE = ['idx_pr_records_repo_state_upd', 'idx_pr_records_repo_state_created'];
 
 test('X1 LIST_SQL, SYNC_SQL and UNKNOWN_SQL use their index and no SCAN on 5,000 rows', async (t) => {
   const o = await seeded5000(t); if (!o) return;
   check(o.db, LIST_SQL, ['o/repo-7', 'open', null, 501], 'idx_pr_records_repo_state_upd');
   check(o.db, LIST_SQL, ['o/repo-7', 'open', ago(86400), 501], 'idx_pr_records_repo_state_upd');
   check(o.db, SYNC_SQL, ['o/repo-7', 'open'], 'ux_pr_record_lists_repo_state', ['pr_record_lists']);
-  check(o.db, UNKNOWN_SQL, ['o/repo-7', 'open'], 'idx_pr_records_repo_state_upd', ['pr_records', 'pr_record_lists']);
+  check(o.db, UNKNOWN_SQL, ['o/repo-7', 'open'], REPO_STATE, ['pr_records', 'pr_record_lists']);
 });
 
 test('X2 ABSENT_SQL and STAMP_SQL use an index and no SCAN on 5,000 rows', async (t) => {
   const o = await seeded5000(t); if (!o) return;
-  check(o.db, ABSENT_SQL, ['o/repo-7', '[1,2,3]', T], 'idx_pr_records_repo_state_upd');
+  check(o.db, ABSENT_SQL, ['o/repo-7', '[1,2,3]', T], REPO_STATE);
   const p = plan(o.db, STAMP_SQL, 'o/repo-7', 'open', T, 3);
   assert.deepEqual(fullScans(p, ['pr_record_lists', 'pr_records']), [], p.join(' | '));
   o.db.prepare(STAMP_SQL).run('o/repo-7', 'open', T, 3);

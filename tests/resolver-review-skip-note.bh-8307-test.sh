@@ -80,11 +80,15 @@ OUT=$(PICK "$H1" "$(ROW 15 mallory "$H1" COMMENTED 'Findings.
 **VERDICT:** REQUEST_CHANGES' | ROWS)")
 [ "$OUT" = $'15\tmallory\tauthor,footer' ] && ok || bad "P5 a **VERDICT:** REQUEST_CHANGES body must be noted: $OUT"
 # P6 (f): a real harness verdict is not noted.
-# BH-8419: a harness verdict is the App's; the operator login with the footer
-# is a person who pasted it, noted as author.
+# BH-8419: a harness verdict is the App's (BH-8466: or the operator login's
+# footer row, a PAT post; see the TEST-CHANGE below).
 [ "$(PICK_RC "$H1" "$(ROW 16 'cromford[bot]' "$H1" COMMENTED "$(HFOOT REQUEST_CHANGES "$H1")" | ROWS)")" = 1 ] && ok || bad "P6 a harness verdict must not be noted"
-OUT=$(PICK "$H1" "$(ROW 16 operator "$H1" COMMENTED "$(HFOOT REQUEST_CHANGES "$H1")" | ROWS)")
-[ "$OUT" = $'16\toperator\tauthor' ] && ok || bad "P6 the operator's footer review is a person's, noted as author: $OUT"
+# TEST-CHANGE (BH-8466): this pinned "the operator's footer review is a person's,
+# noted as author". A lane on the default PAT posts its review as the operator
+# login, so that row is the lane's own now (br_review_harness_pick briefs it) and
+# no skip note is posted. The operator with NO footer is still noted (P2).
+OUT=$(PICK "$H1" "$(ROW 16 operator "$H1" COMMENTED "$(HFOOT REQUEST_CHANGES "$H1")" | ROWS)"); RC=$?
+[ "$RC" = 1 ] && [ -z "$OUT" ] && ok || bad "P6 the operator's footer review is the lane's own PAT post, never noted (rc $RC): $OUT"
 [ "$(PICK_RC "$H1" "$(ROW 16 'cromford[bot]' "$H1" COMMENTED "$(HFOOT REQUEST_CHANGES "$H1")" | ROWS)")" = 1 ] && ok || bad "P6 the App's harness verdict must not be noted"
 # P7 (g): a user APPROVE is not noted.
 [ "$(PICK_RC "$H1" "$(ROW 17 mallory "$H1" COMMENTED 'LGTM

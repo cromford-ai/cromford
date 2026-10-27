@@ -232,6 +232,33 @@ harness_verdict_author_match() { # harness_verdict_author_match <login>; rc 0 = 
   done
   return 1
 }
+# "IS THIS ROW OUR OWN REVIEW?" IS A WIDER QUESTION THAN "MAY IT ISSUE A VERDICT?"
+# (BH-8466). A lane on the default PAT (bin/lib/gh-repo-token.sh: app, then the
+# PAT) posts its review under the operator login. The verdict matcher above
+# refuses that login, so after BH-8419 the lane did not see its own row: it
+# bought the same LLM review on every tick and never dismissed its own standing
+# CHANGES_REQUESTED. harness_own_review_match also accepts the bare operator
+# login. The operator login is also a PERSON (PR #8351), so a reader takes an
+# operator-login row as ours only when the body carries the harness footer or
+# starts with the lead marker: harness_own_review_row. A row with no footer is
+# a person's review, whatever the login. Verdict CONSUMERS (a merge, an
+# autopilot verdict) keep harness_verdict_author_match.
+HARNESS_OWN_REVIEW_FOOTER='Automated harness review (Fable) of '
+harness_own_review_match() { # <login>; rc 0 = the lane's own identity: an App verdict author, or the bare operator login (PAT auth)
+  harness_verdict_author_match "${1:-}" && return 0
+  local op; op=$(_hpl_bare "${HARNESS_OPERATOR_LOGIN:-}")
+  [ -n "$op" ] && [ "${1:-}" = "$op" ]
+}
+harness_own_review_marked() { # <body>; rc 0 = the body carries the harness footer or starts with the lead marker
+  case "${1:-}" in
+    *"$HARNESS_OWN_REVIEW_FOOTER"*|'<!-- lead-review:'*) return 0 ;;
+  esac
+  return 1
+}
+harness_own_review_row() { # <login> <body>; rc 0 = own match AND (an App login, or a marked body)
+  harness_verdict_author_match "${1:-}" && return 0
+  harness_own_review_match "${1:-}" && harness_own_review_marked "${2:-}"
+}
 harness_verdict_authors_json() { # -> every spelling of every verdict author, JSON array
   local a bare
   for a in $(harness_verdict_authors); do

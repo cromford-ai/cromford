@@ -1,0 +1,11 @@
+{
+  "env": "PR_OWNER_LIST_GITHUB_FLOOR_S",
+  "type": "int",
+  "default": 3600,
+  "min": 0,
+  "max": 86400,
+  "unit": "seconds",
+  "zero_means": "off",
+  "required": false,
+  "note": "BH-8481. bin/pr-owner-sweep.sh reads its open and merged PR lists from the PR record (po_lists_record) only while its own last GitHub list read (state/pr-owner-sweep/<owner>_<repo>/openlist.meta) is no older than this many seconds, so GitHub is still read at least this often per repo: a PR that turns CONFLICTING on a base push shows an unknown mergeable_state in the record until then. Read as ${PR_OWNER_LIST_GITHUB_FLOOR_S:-}, default 3600. 0 = this tier off: the sweep never uses the PR record's list and reads GitHub as before."
+}

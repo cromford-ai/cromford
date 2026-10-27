@@ -59,7 +59,7 @@
 #       BH-8334: the resolved PR_RECORD_HEAD_FALLBACK_MAX_AGE_S (default 900,
 #       0 = never) as a non-negative integer on stdout.
 #
-#   pr_record_list <owner/repo> <open|merged|closed> <out-file> [need-csv]
+#   pr_record_list <owner/repo> <open|merged|closed> <out-file> [need-csv] [window-n]
 #       BH-8452: the record's list of the repo's PRs in that state. ONE jobs
 #       GET (/api/pr-records?repo=&state=[&need=]), never a GitHub call, never
 #       a write. rc 0: <out-file> holds the rows array (keys number title
@@ -82,6 +82,12 @@
 #         truncated    more rows exist than the page holds
 #         unknown      the last list write marked a record of the repo unknown
 #         field:<f>    a needed field is null on a row
+#       BH-8481: rows also carry merged_at and reviews. With <window-n> (an
+#       integer 1..5000) the GET adds &order=created&limit=<n>: the newest n
+#       rows by GitHub's created_at, the window `gh pr list --limit n` returns.
+#       Then truncated is not a miss (more than n exist, and the reader asked
+#       for n). The worker answers 400 (unreadable) when n is above its
+#       pr_records.list_limit row. Pass need `-` for no need and a window.
 #       rc 2: bad args, no request.
 #
 #   pr_record_list_sync <owner/repo> <state> <rest-pulls-json-file> [at]
@@ -90,6 +96,19 @@
 #       /api/pr-record-lists. <at> is the ISO time the read started (default
 #       the worker's clock). The worker marks an open record that is not in
 #       the list unknown and stamps the list. Call it only with an uncut list.
+#       rc 0 on a 200; else rc 1 and one `list-sync <repo> failed` log line.
+#
+#   pr_record_list_sync_gql <owner/repo> <open|merged> <gh-json-file> [at]
+#       BH-8481: pr_record_list_sync for a `gh pr list --json` (GraphQL) page,
+#       the shape bin/pr-owner-sweep.sh reads. Keys: number title headRefName
+#       headRefOid baseRefName author labels body createdAt updatedAt url
+#       isDraft mergedAt latestReviews; a key the page lacks writes nothing.
+#       author app/x (or a bot) is stored x[bot], the REST spelling.
+#       latestReviews becomes reviews, keyed by the bare lowercase login, each
+#       {state, commit_id, at}, only when the page holds the array. It never
+#       writes mergeable_state: GraphQL's mergeable is not the REST value.
+#       An open page must be the WHOLE open list (the worker marks an open
+#       record not in it unknown); a merged page is a window (no mark).
 #       rc 0 on a 200; else rc 1 and one `list-sync <repo> failed` log line.
 #
 #   pr_record_list_max_age
@@ -181,17 +200,20 @@ pr_record_head_fallback_max_age() { _prr_knob PR_RECORD_HEAD_FALLBACK_MAX_AGE_S 
 pr_record_list_max_age() { _prr_knob PR_RECORD_LIST_MAX_AGE_S "$_PRR_DEFAULT_LIST_MAX_AGE_S"; }
 
 pr_record_list() {
-  local repo="${1:-}" st="${2:-}" outf="${3:-}" need="${4:-}" lr max q out why="" age
+  local repo="${1:-}" st="${2:-}" outf="${3:-}" need="${4:-}" win="${5:-}" lr max q out why="" age
   [[ "$repo" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] || return 2
   case "$st" in open|merged|closed) ;; *) return 2 ;; esac
   [ -n "$outf" ] || return 2
+  [ "$need" != - ] || need=""
   [ -z "$need" ] || [[ "$need" =~ ^[a-z_]+(,[a-z_]+)*$ ]] || return 2
+  [ -z "$win" ] || { [[ "$win" =~ ^[1-9][0-9]{0,3}$ ]] && [ "$win" -le 5000 ]; } || return 2
   : > "$outf" || return 2
   : > "$outf.sync" || return 2
   lr=$(_prr_lower "$repo")
   max=$(pr_record_list_max_age)
   q="/api/pr-records?repo=$lr&state=$st"
   [ -z "$need" ] || q="$q&need=$need"
+  [ -z "$win" ] || q="$q&order=created&limit=$win"
   if [ "$max" = 0 ]; then
     why=off
   elif ! _prr_client || ! out=$(_jobs_req GET "$q"); then
@@ -204,7 +226,7 @@ pr_record_list() {
     age=$(jq -r '.sync.age_s // empty' <<<"$out" 2>/dev/null)
     if ! [[ "$age" =~ ^[0-9]{1,12}$ ]] || [ "$age" -gt "$max" ]; then
       why=stale
-    elif jq -e '.truncated' <<<"$out" >/dev/null 2>&1; then
+    elif [ -z "$win" ] && jq -e '.truncated' <<<"$out" >/dev/null 2>&1; then
       why=truncated
     elif ! jq -e '.unknown == 0' <<<"$out" >/dev/null 2>&1; then
       why=unknown
@@ -233,6 +255,46 @@ pr_record_list_sync() {
        pr_created_at: .created_at, url: .html_url, pr_updated_at: .updated_at,
        head_ref: .head.ref, head_sha: .head.sha, base_ref: .base.ref, base_sha: .base.sha,
        labels: [ (.labels // [])[] | .name ]} | with_entries(select(.value != null)))} ]}
+    + (if $at != "" then {at: $at} else {} end)' "$inf" 2>/dev/null)
+  if [ -z "$body" ] || ! _prr_client || ! out=$(_jobs_req POST /api/pr-record-lists "$body") \
+     || ! jq -e '.synced_at | strings' <<<"$out" >/dev/null 2>&1; then
+    _prr_log "list-sync $lr failed"
+    return 1
+  fi
+  return 0
+}
+
+pr_record_list_sync_gql() {
+  local repo="${1:-}" st="${2:-}" inf="${3:-}" at="${4:-}" lr body out
+  [[ "$repo" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] && [ -r "$inf" ] || return 1
+  case "$st" in open|merged) ;; *) return 1 ;; esac
+  lr=$(_prr_lower "$repo")
+  # The checks are the worker's (routes/pr-records.js VALUE_FIELDS): a review
+  # entry it would refuse is left out here, so one odd reviewer cannot fail
+  # the whole page.
+  body=$(jq -c --arg r "$lr" --arg s "$st" --arg at "$at" '
+    def nofrac: if type == "string" then sub("\\.[0-9]+Z$"; "Z") else . end;
+    def bare: ascii_downcase | ltrimstr("app/") | rtrimstr("[bot]");
+    def who: (.login // null) as $l
+      | if ($l | type) != "string" or $l == "" then null
+        elif ($l | startswith("app/")) or .is_bot == true then ($l | ltrimstr("app/") | rtrimstr("[bot]")) + "[bot]"
+        else $l end;
+    def rev: if (.latestReviews | type) != "array" then null else
+      [ .latestReviews[]? | select(type == "object")
+        | {key: ((.author.login // "") | bare),
+           value: {state, commit_id: ((.commit.oid // "") | ascii_downcase | if test("^[0-9a-f]{40}$") then . else null end),
+                   at: ((.submittedAt // null) | nofrac | if type == "string" and test("^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$") then . else null end)}}
+        | select((.key | test("^[a-z0-9-]{1,39}$"))
+                 and (.value.state | IN("APPROVED", "CHANGES_REQUESTED", "COMMENTED", "DISMISSED", "PENDING"))) ]
+      | .[:100] | from_entries end;
+    {repo: $r, state: $s,
+     rows: [ .[] | {number, fields: ({state: $s, title, head_ref: .headRefName, head_sha: (.headRefOid // null | if type == "string" then ascii_downcase else . end),
+       base_ref: .baseRefName, author: (.author | if type == "object" then who else null end),
+       labels: (if (.labels | type) == "array" then [ .labels[] | .name ] else null end),
+       body: (if has("body") then (.body // "") else null end),
+       pr_created_at: (.createdAt | nofrac), pr_updated_at: (.updatedAt | nofrac), url,
+       draft: .isDraft, merged_at: (.mergedAt | nofrac), reviews: rev}
+       | with_entries(select(.value != null)))} ]}
     + (if $at != "" then {at: $at} else {} end)' "$inf" 2>/dev/null)
   if [ -z "$body" ] || ! _prr_client || ! out=$(_jobs_req POST /api/pr-record-lists "$body") \
      || ! jq -e '.synced_at | strings' <<<"$out" >/dev/null 2>&1; then

@@ -251,6 +251,26 @@ for _A in "$(dirname "$0")/lib/gh-app-auth.sh" "$HARNESS/bin/lib/gh-app-auth.sh"
 done
 type gh_auth_for >/dev/null 2>&1 || { gh_auth_for() { return 1; }; gh_auth_reset() { return 0; }; }
 
+# A REVIEW THAT FELL TO THE PAT IS SAID, NOT SILENT (BH-8466). On an App-armed
+# box a post whose GH_TOKEN after gh_auth_for is not an installation token
+# (ghs_) goes out as the operator login: the App could not see the repo. The
+# log gets one line per post. ALERTS.log gets one warn line per project per UTC
+# day, keyed by one overwritten marker file (no growth, so no retention job).
+# An unarmed box runs on the PAT by design and is silent. The ALERTS line is
+# written before the marker, so a failed marker write repeats it, never hides it.
+rp_pat_post_note() { # call right after gh_auth_for in the post step; always rc 0
+  command -v gh_auth_armed >/dev/null 2>&1 && gh_auth_armed || return 0
+  case "${GH_TOKEN:-}" in ghs_*) return 0 ;; esac
+  local f="$HARNESS/state/review-prs-pat-alert/$PROJECT" day
+  day=$(date -u +%F)
+  echo "$(STAMP) [$PROJECT] #$NUM @${SHA:0:7} github auth: default PAT — the App token did not answer for $SLUG, so this review posts as the operator login" >> "$LOG"
+  [ "$(cat "$f" 2>/dev/null)" = "$day" ] && return 0
+  HARNESS="$HARNESS" "$HARNESS/bin/alert-line.sh" --severity warn --id "review-prs-pat-$PROJECT" --project "$PROJECT" \
+    "[$PROJECT] review-prs: github auth: default PAT — reviews on $SLUG post as the operator login, not the App (first today: #$NUM)" >/dev/null 2>&1 || true
+  mkdir -p "${f%/*}" 2>/dev/null && printf '%s\n' "$day" > "$f" 2>/dev/null
+  return 0
+}
+
 # Is this login the REVIEWING App itself (BH-2119)? The one PR the App cannot
 # approve is its own: GitHub 422s a self-approve. rc 0 = yes, OR the App's login
 # cannot be read (no lib, no slug or name in env/github-app.env): unknown keeps
@@ -846,8 +866,9 @@ rp_dismiss_own() { # rp_dismiss_own <num> <reviews-tsv> [head-sha-to-keep] [mess
   : "${msg:=Dismissed by the harness review lane (BH-872): bot verdicts no longer block the merge queue; the findings stay in the review body and the harness fix round consumes them.}"
   while IFS=$'\t' read -r id st cid login foot; do
     [ -n "$id" ] && [ "$st" = CHANGES_REQUESTED ] && [ "$foot" = yes ] || continue
-    # the lane's OWN review: a verdict author, never merely a PR author (BH-1668)
-    harness_verdict_author_match "$login" || continue
+    # the lane's OWN review: a verdict author, never merely a PR author (BH-1668),
+    # or the operator login a PAT post goes out as (BH-8466; foot=yes above)
+    harness_verdict_author_match "$login" || harness_own_review_match "$login" 2>/dev/null || continue
     if [ -n "$keep" ] && [ "$cid" = "$keep" ]; then
       echo "$(STAMP) [$PROJECT] #$num left its own CHANGES_REQUESTED review $id standing — it is AT the current head (${keep:0:7}) on a PR this lane reviews itself, and nothing else would consume the findings if the state went" >> "$LOG"
       continue
@@ -1133,9 +1154,11 @@ rp_rehydrate() { # rp_rehydrate <num> <sha> [gh-only]
   while IFS=$'\t' read -r login rstate body; do
     [ -n "${login:-}" ] || continue
     # a harness verdict counts only from a verdict author (BH-1668): the builders
-    # App opens pool PRs and must never post the review that clears one
-    harness_verdict_author_match "$login" || continue
+    # App opens pool PRs and must never post the review that clears one. A PAT
+    # post goes out as the operator login, and that row is ours only with the
+    # footer (BH-8466), so the body is decoded first.
     body=$(printf '%s' "${body:-}" | base64 -d 2>/dev/null) || body=""
+    harness_verdict_author_match "$login" || harness_own_review_row "$login" "$body" 2>/dev/null || continue
     case "${body:-}" in *"$RP_MARKER $SHA"*) found="${rstate:-}"$'\t'"${body:-}" ;; esac
   done <<<"$out"
   [ -n "$found" ] || { if [ "$d1down" = 1 ]; then rp_d1_hold_or_fallback "$NUM" "$SHA"; return; fi; return 1; }
@@ -1315,7 +1338,8 @@ rp_one_pr() { for _rp_once in 1; do
     [ "$RP_COMS_F" = /dev/null ] || gh_rest_issue_comments "$SLUG" "$NUM" > "$RP_COMS_F" 2>/dev/null || echo '[]' > "$RP_COMS_F"
     while IFS=$'\t' read -r RP_RQ_LOGIN RP_RQ_B64; do
       [ -n "${RP_RQ_LOGIN:-}" ] && [ -n "${RP_RQ_B64:-}" ] || continue
-      harness_verdict_author_match "$RP_RQ_LOGIN" || continue
+      # the operator login a PAT lane posts as asks too (BH-8466); the tag is the marker
+      harness_verdict_author_match "$RP_RQ_LOGIN" || harness_own_review_match "$RP_RQ_LOGIN" 2>/dev/null || continue
       if frp_rereview_requested "$(printf '%s' "$RP_RQ_B64" | base64 -d 2>/dev/null)" "$SHA"; then
         RP_REREQ=1
         echo "$(STAMP) [$PROJECT] #$NUM @${SHA:0:7} re-review requested by $RP_RQ_LOGIN in a PR comment (fix-round preflight: the only blocker was stale evidence) — this head is reviewed once more when its CI is green, with the live CI in the prompt REREVIEW_REASON=rereq" >> "$LOG"
@@ -1897,7 +1921,7 @@ _Posted as a comment review: the harness fix round consumes this verdict; it doe
   [ "$RP_STATE_FLAG" = "--approve" ] && rp_author_is_reviewer_app "$AUTHOR" && RP_POST_APP=0
   RP_POSTED_REVIEW=0
   RP_POST_ERR=$(mktemp)
-  [ "$RP_POST_APP" = 1 ] && { gh_auth_for "$SLUG" || true; }
+  [ "$RP_POST_APP" = 1 ] && { gh_auth_for "$SLUG" || true; rp_pat_post_note; }
   if gh pr review "$NUM" -R "$SLUG" "$RP_STATE_FLAG" --body "$POSTED" >/dev/null 2>"$RP_POST_ERR"; then
     RP_POSTED_REVIEW=1
   else

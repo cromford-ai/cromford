@@ -51,6 +51,9 @@ F="$HARNESS/fixture"
 # TEST-CHANGE: BH-3936 — a ledger PUT also names its kind, so L7h can tell the
 # pr_health row this ticket adds from every other ledger write.
 LK=""; [ "${P%%\?*}" = /api/ledger ] && LK=" $(printf '%s' "$B" | jq -r '.kind // "?"' 2>/dev/null)"
+# TEST-CHANGE: BH-8481 — a PR-record list write also names its list state, so
+# L7h can tell the open and merged write-backs this ticket adds apart.
+[ "${P%%\?*}" = /api/pr-record-lists ] && LK=" $(printf '%s' "$B" | jq -r '.state // "?"' 2>/dev/null)"
 [ "$M" != GET ] && printf '%s %s%s\n' "$M" "${P%%\?*}" "$LK" >> "$HARNESS/curl-writes.log"
 [ "${JOBS_MODE:-ok}" = 500 ] && { printf '{"error":"boom"}\n500\n'; exit 0; }
 case "$M $P" in
@@ -375,7 +378,16 @@ if [ -n "$MAINREF" ]; then
   [ "$BRC/$MRC" = "0/0" ] && ok || bad "L7h both sweeps exit 0 (branch=$BRC main=$MRC)"
   if [ -n "$(ghw "$Mt/gh-writes.log")" ] && [ "$(ghw "$Bt/gh-writes.log")" = "$(ghw "$Mt/gh-writes.log")" ]; then ok
   else bad "L7h gh writes differ from main: branch=[$(cat "$Bt/gh-writes.log" 2>/dev/null)] main=[$(cat "$Mt/gh-writes.log" 2>/dev/null)]"; fi
-  if [ -s "$Mt/curl-writes.log" ] && [ "$(nogate "$Bt/curl-writes.log")" = "$(nogate "$Mt/curl-writes.log")" ]; then ok
+  # TEST-CHANGE: BH-8481 — after its GitHub list read the sweep now writes the
+  # open and the merged list into the PR record (POST /api/pr-record-lists, the
+  # write-back the record tier reads on the next tick). Those two writes are
+  # asserted on their own: each list exactly once on this branch (main, before
+  # this ticket lands, has none). Every OTHER jobs-API write must still equal
+  # main's, in order.
+  nolists() { nogate "$1" | grep -v -x -e 'POST /api/pr-record-lists open' -e 'POST /api/pr-record-lists merged'; }
+  [ "$(grep -c -x 'POST /api/pr-record-lists open' "$Bt/curl-writes.log" 2>/dev/null)/$(grep -c -x 'POST /api/pr-record-lists merged' "$Bt/curl-writes.log" 2>/dev/null)/$(grep -c '^POST /api/pr-record-lists' "$Bt/curl-writes.log" 2>/dev/null)" = 1/1/2 ] && ok \
+    || bad "L7h the sweep must write the open and the merged list into the PR record once each: $(grep '^POST /api/pr-record-lists' "$Bt/curl-writes.log" 2>/dev/null | tr '\n' ' ')"
+  if [ -s "$Mt/curl-writes.log" ] && [ "$(nolists "$Bt/curl-writes.log")" = "$(nolists "$Mt/curl-writes.log")" ]; then ok
   else bad "L7h jobs-API writes differ from main: branch=[$(tr '\n' ' ' < "$Bt/curl-writes.log" 2>/dev/null)] main=[$(tr '\n' ' ' < "$Mt/curl-writes.log" 2>/dev/null)]"; fi
   grep -qx 'POST /api/lanes/liveness' "$Bt/curl-writes.log" && ok || bad "L7h the sweep must now pass the registry gate (no liveness row posted)"
 else

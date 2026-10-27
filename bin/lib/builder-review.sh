@@ -60,7 +60,9 @@ br_fetch() {
   # Newest first; the first one by a verdict author is the one used.
   while IFS=$'\t' read -r login state body; do
     [ -n "$login" ] || continue
-    harness_verdict_author_match "$login" || continue
+    # or the operator login a PAT post goes out as (BH-8466; the jq select below
+    # requires the marker). A lib without the own matcher falls to the verdict one.
+    harness_own_review_match "$login" 2>/dev/null || harness_verdict_author_match "$login" || continue
     body=$(printf '%s' "$body" | base64 -d 2>/dev/null) || continue
     # The shared reader, footer (after the last ---) dropped; then the state.
     v=$(printf '%s\n' "$body" | verdict_parse -c -w 'APPROVE|REQUEST_CHANGES' 2>/dev/null) || v=""

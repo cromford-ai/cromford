@@ -1,0 +1,6 @@
+[
+  {"number": 199, "title": "TK-10: the fix", "headRefName": "ticket/TK-10", "url": "https://github.com/example-org/fx/pull/199", "mergedAt": "2026-10-25T12:00:00Z",
+   "author": {"login": "app/cromford", "is_bot": true}, "createdAt": "2026-10-25T10:00:00Z"},
+  {"number": 150, "title": "TK-9: older", "headRefName": "ticket/TK-9", "url": "https://github.com/example-org/fx/pull/150", "mergedAt": "2026-10-20T12:00:00Z",
+   "author": {"login": "operator", "is_bot": false}, "createdAt": "2026-10-19T10:00:00Z"}
+]

@@ -137,10 +137,13 @@ CAP; RC=$?
 [ "$RC" = 0 ] && [ "$(puts)" = 1 ] && ok || bad "C2b: the App's footer review is ours: rc $RC, $(puts) dismissals"
 
 # C3: a person who pastes the lead marker is still a person.
-RESET; mkrows 5645681626 CHANGES_REQUESTED operator User "$LEAD_NOTES"
+# TEST-CHANGE (BH-8466): the login was operator. An operator-login row with the
+# lead marker is now the lane's own (a PAT post); that dismissal is pinned in
+# tests/own-review-pat.bh-8466-test.sh §C. A non-operator person keeps the intent.
+RESET; mkrows 5645681626 CHANGES_REQUESTED some-person User "$LEAD_NOTES"
 CAP; RC=$?
-[ "$RC" = 1 ] && [ "$(puts)" = 0 ] && ok || bad "C3: operator with a pasted lead marker: rc $RC, $(puts) dismissals"
-grep -q "a person's CHANGES_REQUESTED by operator stands" "$T/say.txt" 2>/dev/null && ok || bad "C3: the stand line must name operator"
+[ "$RC" = 1 ] && [ "$(puts)" = 0 ] && ok || bad "C3: some-person with a pasted lead marker: rc $RC, $(puts) dismissals"
+grep -q "a person's CHANGES_REQUESTED by some-person stands" "$T/say.txt" 2>/dev/null && ok || bad "C3: the stand line must name some-person"
 # C3b: the operator's footer review (the PAT-posted shape) stands too.
 RESET; mkrows 42 CHANGES_REQUESTED operator User "$(printf -- '- [BLOCK] padding\n\nVERDICT: REQUEST_CHANGES\n\n---\nharness review footer')"
 CAP; RC=$?
@@ -161,7 +164,10 @@ want=$(printf '%s\n' bin/lib/br/cap.sh bin/lib/lead-stale-review.sh bin/lib/unbl
 [ "$got" = "$want" ] && ok || bad "D1: the dismissal call sites changed — add the new one here with its bot-only guard. got: $(tr '\n' ' ' <<<"$got")"
 # D2 cap.sh: the bot column gates both skips (driven in §C; pinned here too).
 grep -q '"Bot") or ((.l // "") | endswith("\[bot\]"))' "$DIR/bin/lib/br/cap.sh" && ok || bad "D2: br_cap_notes lost its bot column"
-# D3 rp_dismiss_own: driven. A operator footer review is never dismissed; the App's is.
+# D3 rp_dismiss_own: driven. A operator review with no footer is never dismissed; the App's is.
+# TEST-CHANGE (BH-8466): the operator row was foot=yes. A operator row WITH the
+# footer is now the lane's own PAT post and is dismissed (pinned in
+# tests/own-review-pat.bh-8466-test.sh §R2); a person's row has no footer.
 awk 'index($0, "rp_dismiss_own() ") == 1 {p=1} p{print} p&&/^}$/{exit}' "$DIR/bin/review-prs.sh" > "$T/rp.sh"
 grep -q '^rp_dismiss_own()' "$T/rp.sh" && ok || bad "D3: could not extract rp_dismiss_own"
 cat > "$T/rpdrv.sh" <<EOF
@@ -175,7 +181,7 @@ gh() { printf '%s\n' "\$*" >> "$T/rp-gh.txt"; return 0; }
 . "$T/rp.sh"
 EOF
 scratch_rm "$T/rp-gh.txt" 2>/dev/null
-( . "$T/rpdrv.sh"; rp_dismiss_own 9 "$(printf '501\tCHANGES_REQUESTED\tdead\toperator\tyes\n502\tCHANGES_REQUESTED\tdead\tcromford[bot]\tyes')" )
+( . "$T/rpdrv.sh"; rp_dismiss_own 9 "$(printf '501\tCHANGES_REQUESTED\tdead\toperator\tno\n502\tCHANGES_REQUESTED\tdead\tcromford[bot]\tyes')" )
 n=$(grep -c '/dismissals' "$T/rp-gh.txt" 2>/dev/null || echo 0)
 [ "$n" = 1 ] && ok || bad "D3: rp_dismiss_own must dismiss exactly the App's review, got $n: $(cat "$T/rp-gh.txt" 2>/dev/null)"
 grep -q 'reviews/502/dismissals' "$T/rp-gh.txt" 2>/dev/null && ok || bad "D3: the dismissed id must be 502 (cromford[bot])"

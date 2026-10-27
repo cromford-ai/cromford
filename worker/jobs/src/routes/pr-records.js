@@ -32,6 +32,12 @@
 //   "not in rows" reads as "no PR". The next sync either lists the PR (open
 //   again) or leaves its mark older than the new stamp (no longer counted).
 //   ONE batch, three statements.
+//   BH-8481: rows also carry merged_at and reviews (parsed). &order=created
+//   [&limit=<n>] is the window read: the newest n rows by pr_created_at (the
+//   window `gh pr list --limit n` returns; NULL pr_created_at sorts last), n
+//   default and at most the pr_records.list_limit row. `truncated` then means
+//   "more than n exist", which is no miss for a window reader. limit also caps
+//   the default order. A bad order or limit is a 400 that names it.
 import { d1Guarded, json } from "../lib/http.js";
 import { ensureColumns, ensureTable } from "../lib/core.js";
 import { settingsRows } from "../lib/settings-cache.js";
@@ -54,12 +60,41 @@ const BODY_MAX = 65536;
 const TITLE_MAX = 1024;
 const URL_MAX = 2048;
 const LOGIN_RE = /^[A-Za-z0-9-]{1,39}(\[bot\])?$/;
+// BH-8481, an input shape bound like CHECKS_MAX: the reviewers a PR can carry
+// before the object refuses a new one. The key is the bare lowercase login
+// (no app/ prefix, no [bot] suffix), so one reviewer is one key.
+export const REVIEWERS_MAX = 100;
+export const REVIEWER_RE = /^[a-z0-9-]{1,39}$/;
+export const REVIEW_STATES = ["APPROVED", "CHANGES_REQUESTED", "COMMENTED", "DISMISSED", "PENDING"];
 
 const isObj = (v) => v !== null && typeof v === "object" && !Array.isArray(v);
 const ref = (v) => (typeof v === "string" && v.length >= 1 && v.length <= REF_MAX ? v : undefined);
 const sha = (v) => (typeof v === "string" && SHA_RE.test(v.toLowerCase()) ? v.toLowerCase() : undefined);
 const word = (v) => (typeof v === "string" && WORD_RE.test(v) ? v : undefined);
 const isoAt = (v) => (typeof v === "string" && AT_RE.test(v) && !Number.isNaN(Date.parse(v)) ? v : undefined);
+// One reviews entry -> {state, commit_id, at}, or undefined. commit_id and at
+// may be null (unknown); no other key is accepted.
+function reviewEntry(v) {
+  if (!isObj(v) || !Object.keys(v).every((k) => ["state", "commit_id", "at"].includes(k))) return undefined;
+  if (!REVIEW_STATES.includes(v.state)) return undefined;
+  const commit = v.commit_id === null || v.commit_id === undefined ? null : sha(v.commit_id);
+  const at = v.at === null || v.at === undefined ? null : isoAt(v.at);
+  if (commit === undefined || at === undefined) return undefined;
+  return { state: v.state, commit_id: commit, at };
+}
+// The reviews object, checked and normalized, as JSON text; or undefined.
+export function reviewsValue(v) {
+  if (!isObj(v)) return undefined;
+  const keys = Object.keys(v);
+  if (keys.length > REVIEWERS_MAX || !keys.every((k) => REVIEWER_RE.test(k))) return undefined;
+  const out = {};
+  for (const k of keys) {
+    const e = reviewEntry(v[k]);
+    if (e === undefined) return undefined;
+    out[k] = e;
+  }
+  return JSON.stringify(out);
+}
 
 // column -> check. A check returns the value to store, or undefined for a 400.
 // The SET list of the upsert is built from THIS list, never from request keys.
@@ -85,8 +120,11 @@ export const VALUE_FIELDS = {
   url: (v) => (typeof v === "string" && v.startsWith("https://github.com/") && v.length <= URL_MAX ? v : undefined),
   pr_created_at: isoAt,
   pr_updated_at: isoAt,
+  // BH-8481 (core.d/bh-8481-pr-records-reviews.js).
+  merged_at: isoAt,
+  reviews: reviewsValue,
 };
-const JSON_FIELDS = ["labels", "checks", "fields_at"];
+const JSON_FIELDS = ["labels", "checks", "reviews", "fields_at"];
 // The columns where null is a value: "unknown, ask GitHub on the next read"
 // (case 2 of the read rule in bin/lib/pr-record.sh).
 export const NULLABLE_FIELDS = ["mergeable_state"];
@@ -96,14 +134,21 @@ export const GET_SQL = "SELECT * FROM pr_records WHERE repo = ?1 AND number = ?2
 // BH-8452: the list read. The keys a list reader gets (created_at and
 // updated_at are GitHub's times, stored as pr_created_at / pr_updated_at).
 export const LIST_KEYS = ["number", "title", "head_ref", "head_sha", "base_ref", "author", "labels", "body",
-  "mergeable_state", "updated_at", "created_at", "url", "draft"];
+  "mergeable_state", "updated_at", "created_at", "url", "draft", "merged_at", "reviews"];
 export const LIST_STATES = ["open", "merged", "closed"];
 // Binds: ?1 repo, ?2 state, ?3 since or NULL, ?4 limit + 1 (so truncated is exact).
 // Index: idx_pr_records_repo_state_upd (repo, state, pr_updated_at), test X1.
-export const LIST_SQL = `SELECT number, title, head_ref, head_sha, base_ref, author, labels, body, mergeable_state,
-    pr_updated_at AS updated_at, pr_created_at AS created_at, url, draft
+const LIST_COLS = `number, title, head_ref, head_sha, base_ref, author, labels, body, mergeable_state,
+    pr_updated_at AS updated_at, pr_created_at AS created_at, url, draft, merged_at, reviews`;
+export const LIST_SQL = `SELECT ${LIST_COLS}
   FROM pr_records WHERE repo = ?1 AND state = ?2 AND (?3 IS NULL OR pr_updated_at >= ?3)
   ORDER BY pr_updated_at DESC, number DESC LIMIT ?4`;
+// BH-8481: the window read (order=created). Same binds. NULL pr_created_at
+// sorts last (DESC). Index: idx_pr_records_repo_state_created, test X1 of
+// test/pr-record-reviews.bh-8481.test.js.
+export const LIST_CREATED_SQL = `SELECT ${LIST_COLS}
+  FROM pr_records WHERE repo = ?1 AND state = ?2 AND (?3 IS NULL OR pr_updated_at >= ?3)
+  ORDER BY pr_created_at DESC, number DESC LIMIT ?4`;
 // Index: ux_pr_record_lists_repo_state.
 export const SYNC_SQL = "SELECT synced_at, rows FROM pr_record_lists WHERE repo = ?1 AND state = ?2";
 // Binds: ?1 repo, ?2 state. The records the last sync of (repo, state) marked
@@ -129,10 +174,12 @@ export async function listLimit(env) {
   return n >= 1 && n <= LIST_LIMIT_MAX ? n : LIST_LIMIT_DEFAULT;
 }
 
-// A list row as it leaves the worker: labels parsed, nothing else changed.
+// A list row as it leaves the worker: labels and reviews parsed, nothing else changed.
 function listRow(r) {
   const o = { ...r };
-  if (typeof o.labels === "string") { try { o.labels = JSON.parse(o.labels); } catch { /* left as stored */ } }
+  for (const k of ["labels", "reviews"]) {
+    if (typeof o[k] === "string") { try { o[k] = JSON.parse(o[k]); } catch { /* left as stored */ } }
+  }
   return o;
 }
 
@@ -143,10 +190,18 @@ async function listRead(env, url, t, repo, state) {
   const needRaw = url.searchParams.get("need");
   const need = needRaw === null || needRaw === "" ? [] : needRaw.split(",");
   if (need.some((k) => !LIST_KEYS.includes(k))) return json(400, { error: "invalid_field", field: "need" });
+  const order = url.searchParams.get("order");
+  if (order !== null && order !== "created") return json(400, { error: "invalid_field", field: "order" });
+  const limitRaw = url.searchParams.get("limit");
   await ensureTable(env, "pr_record_lists");
-  const limit = await listLimit(env);
+  const rowLimit = await listLimit(env);
+  let limit = rowLimit;
+  if (limitRaw !== null) {
+    limit = /^[1-9]\d{0,3}$/.test(limitRaw) ? Number(limitRaw) : NaN;
+    if (!(limit <= rowLimit)) return json(400, { error: "invalid_field", field: "limit" });
+  }
   const [list, sync, unk] = await env.DB.batch([
-    env.DB.prepare(LIST_SQL).bind(repo, state, since, limit + 1),
+    env.DB.prepare(order === "created" ? LIST_CREATED_SQL : LIST_SQL).bind(repo, state, since, limit + 1),
     env.DB.prepare(SYNC_SQL).bind(repo, state),
     env.DB.prepare(UNKNOWN_SQL).bind(repo, state),
   ]);

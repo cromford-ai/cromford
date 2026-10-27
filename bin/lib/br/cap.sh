@@ -149,18 +149,23 @@ br_cap_notes() {
   [ "$(printf '%s' "$standing" | jq 'length' 2>/dev/null)" -gt 0 ] 2>/dev/null || return 1
   # Ours: a Bot row (BH-8419: the review's user.type is Bot, or a `[bot]`
   # login) that is a verdict author's review or carries the lead lane's marker.
-  # Any other login is a person, the operator login included, and a person's
-  # REQUEST_CHANGES is never dismissed by this lane: today's path, before any
-  # record write or dismissal.
-  while IFS=$'\t' read -r login lr bot; do
+  # The operator login (a lane on the default PAT posts as it, BH-8466) is ours
+  # only when the body carries the harness footer or starts with the lead
+  # marker (harness_own_review_row). Any other row is a person's, and a
+  # person's REQUEST_CHANGES is never dismissed by this lane: today's path,
+  # before any record write or dismissal.
+  while IFS=$'\t' read -r login lr bot b64; do
     [ -n "$login" ] || continue
     if [ "$bot" = true ]; then
       [ "$lr" = true ] && continue
       command -v harness_verdict_author_match >/dev/null 2>&1 && harness_verdict_author_match "$login" && continue
+    elif command -v harness_own_review_row >/dev/null 2>&1 \
+         && harness_own_review_row "$login" "$(printf '%s' "${b64:-}" | base64 -d 2>/dev/null)"; then
+      continue
     fi
     say "$p/$rkey [$reason]: at the fix cap, a person's CHANGES_REQUESTED by $login stands — not this lane's to dismiss"
     return 1
-  done < <(printf '%s' "$standing" | jq -r '.[] | [.l, ((.b // "") | startswith("<!-- lead-review:")), (((.t // "") == "Bot") or ((.l // "") | endswith("[bot]")))] | @tsv' 2>/dev/null)
+  done < <(printf '%s' "$standing" | jq -r '.[] | [.l, ((.b // "") | startswith("<!-- lead-review:")), (((.t // "") == "Bot") or ((.l // "") | endswith("[bot]"))), ((.b // "") | @base64)] | @tsv' 2>/dev/null)
   bodies=$(mktemp "${TMPDIR:-/tmp}/br-capnotes.XXXXXX") || return 1
   printf '%s' "$standing" | jq -r '.[] | .b // ""' 2>/dev/null | tr -d '\r' > "$bodies"
   if br_floor_stands "$bodies"; then

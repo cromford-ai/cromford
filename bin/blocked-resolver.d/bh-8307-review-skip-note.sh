@@ -40,7 +40,9 @@ br_rsn_pick() {
      && ! grep -qE 'VERDICT:[*[:space:]]*REQUEST_CHANGES' <<<"$body"; then
     return 1
   fi
-  harness_verdict_author_match "$login" 2>/dev/null || reasons=author
+  # the operator login a PAT post goes out as is the lane too, but only on a
+  # footer row (BH-8466): with no footer it is a person, noted as author too
+  harness_verdict_author_match "$login" 2>/dev/null || harness_own_review_row "$login" "$body" 2>/dev/null || reasons=author
   grep -qF "$BR_REVIEW_FOOTER" <<<"$body" || reasons="${reasons:+$reasons,}footer"
   [ -n "$reasons" ] || return 1
   printf '%s\t%s\t%s\n' "$id" "$login" "$reasons"

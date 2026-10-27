@@ -1825,12 +1825,12 @@ br_review_rows() {
 br_review_harness_pick() {
   local head="$1" rows="$2" login cid rstate b64 pick=""
   # Oldest first, which is the order GitHub lists reviews in, so the last row
-  # that matches is the newest one.
+  # that matches is the newest one. The operator login is a PAT post (BH-8466).
   while IFS=$'\t' read -r login cid rstate b64; do
     [ -n "${login:-}" ] && [ -n "${b64:-}" ] || continue
     [ "${cid:-}" = "$head" ] || continue
     [ "${rstate:-}" != DISMISSED ] || continue
-    harness_verdict_author_match "$login" || continue
+    harness_verdict_author_match "$login" || harness_own_review_match "$login" 2>/dev/null || continue
     printf '%s' "$b64" | base64 -d 2>/dev/null | grep -qF "$BR_REVIEW_FOOTER" || continue
     pick="$b64"
   done < <(printf '%s' "$rows" | jq -r '.[]? | [.l, .c, .s, (.b | @base64)] | @tsv' 2>/dev/null)
@@ -5476,19 +5476,19 @@ br_preflight_marker_alert() {
   "$H/bin/lane-alert.sh" blocked-resolver "$p/$ck: PR $url body has a harness:live-ci begin marker with no end; the live-CI block was NOT written and the body was left alone. Fix the body by hand." >/dev/null 2>&1 || true
 }
 
-# br_review_after <slug> <num> <head> <epoch> — has a verdict author reviewed
+# br_review_after <slug> <num> <head> <epoch> — has a verdict author (or a PAT post with footer/marker, BH-8466) reviewed
 # <head> since <epoch>? rc 0 yes, 1 no, 2 the list or the trust set could not
 # be read (the caller does not defer on that: when in doubt the round runs).
 br_review_after() {
-  local slug="$1" num="$2" head="$3" since="$4" out login cid at
+  local slug="$1" num="$2" head="$3" since="$4" out login cid at b64
   command -v harness_verdict_author_match >/dev/null 2>&1 || return 2
   out=$(gh api "repos/$slug/pulls/$num/reviews" --paginate \
-        --jq '.[] | [(.user.login // ""), (.commit_id // ""), ((.submitted_at // "") | (try fromdateiso8601 catch 0) | tostring)] | @tsv' 2>/dev/null) || return 2
-  while IFS=$'\t' read -r login cid at; do
+        --jq '.[] | [(.user.login // ""), (.commit_id // ""), ((.submitted_at // "") | (try fromdateiso8601 catch 0) | tostring), ((.body // "") | @base64)] | @tsv' 2>/dev/null) || return 2
+  while IFS=$'\t' read -r login cid at b64; do
     [ "${cid:-}" = "$head" ] || continue
     case "${at:-}" in ''|*[!0-9]*) continue ;; esac
     [ "$at" -gt "$since" ] || continue
-    harness_verdict_author_match "$login" && return 0
+    { harness_verdict_author_match "$login" || harness_own_review_row "$login" "$(printf '%s' "${b64:-}" | base64 -d 2>/dev/null)" 2>/dev/null; } && return 0
   done <<<"$out"
   return 1
 }

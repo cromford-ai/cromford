@@ -385,17 +385,18 @@ handback() { # handback <project> <key>
 }
 
 # ---- the open and merged lists, reused (BH-8270) -----------------------------
-# The PR record (bin/lib/pr-record.sh) has no list route and no title, author,
-# body or review fields, so the two list reads stay on GitHub, and their last
-# answer is reused the bin/orphan-reconcile.sh way (BH-8271). The pair is kept
+# The last GitHub answer of the two list reads is reused the
+# bin/orphan-reconcile.sh way (BH-8271); on a copy miss the PR record is the
+# next tier (po_lists_record, BH-8481), and GitHub the last. The pair is kept
 # in state/pr-owner-sweep/<owner>_<repo>/{openlist,mergedlist}.{json,meta} and
 # used instead of a read only while all of these hold: the wake backstop is
 # loaded and on, the knob is above 0, both halves are there with one epoch,
 # the copy is no older than PR_RECORD_MAX_AGE_S and not stamped in the future,
 # and no `pr` wake for ANY PR of the repo arrived since it was read (a feed
-# that cannot tell is a read). Every list read logs one `PRR_MISS <repo>#list
-# why=<no-row|stale>` line. A title or body edit rings no wake: the knob bounds
-# that staleness. wb_gc drops copies older than 3 days.
+# that cannot tell is a read). Every GitHub list read logs one `PRR_MISS
+# <repo>#list why=<no-row|stale>` line, and a record hit none. A title or body
+# edit rings no wake: the knob bounds that staleness. wb_gc drops copies older
+# than 3 days.
 PL_ON=0
 command -v wb_cache_get >/dev/null 2>&1 && command -v wb_cache_put >/dev/null 2>&1 && PL_ON=1
 PL_MAX=""
@@ -414,10 +415,12 @@ PL_BACK="$PL_MAX"
 [ "$PL_ON" = 1 ] && wb_gc "$H/state/pr-owner-sweep"
 po_lists_now() { if command -v _wb_now >/dev/null 2>&1; then _wb_now; else date +%s; fi; }
 # po_lists_reuse — rc 0 when $OPENF and $MERGEDF were filled from the copy.
-#   Else rc 1: the caller reads GitHub. With PL_ON=1 that miss logs one PRR_MISS
-#   line; with no wake backstop no copy is kept, so nothing is missed.
+#   Else rc 1, and PL_WHY is the miss word for the PRR_MISS line the caller
+#   writes just before its GitHub read; with no wake backstop no copy is kept,
+#   PL_WHY is empty and nothing is missed.
 po_lists_reuse() {
-  local e now why=stale b
+  local e now b
+  PL_WHY=""
   PL_DIR="$H/state/pr-owner-sweep/${SLUG//\//_}"
   [ "$PL_ON" = 1 ] || return 1
   # WAKE_BACKSTOP=0 makes wb_cache_get answer rc 1, so the switch is a read too.
@@ -431,10 +434,97 @@ po_lists_reuse() {
       return 0
     fi
   fi
-  why=no-row
-  for b in openlist.json openlist.meta mergedlist.json mergedlist.meta; do [ -e "$PL_DIR/$b" ] && why=stale; done
-  say "PRR_MISS $SLUG#list why=$why"
+  PL_WHY=no-row
+  for b in openlist.json openlist.meta mergedlist.json mergedlist.meta; do [ -e "$PL_DIR/$b" ] && PL_WHY=stale; done
   return 1
+}
+
+# ---- the open and merged lists from the PR record (BH-8481) ------------------
+# After a copy miss the two lists are read from the PR record (pr_records,
+# GET /api/pr-records?state=&order=created&limit=PR_LIMIT, the window gh pr
+# list returns) instead of GitHub, when ALL of these hold: the copy's wake
+# backstop is on (PL_ON) and PR_RECORD_MAX_AGE_S is above 0; this sweep's own
+# last GitHub list read (the copy's openlist.meta epoch) is no older than
+# PR_OWNER_LIST_GITHUB_FLOOR_S; pr_record_list trusts both lists (fresh sync
+# stamps, no record marked unknown, no needed field null); no `pr` wake for the
+# repo arrived since the older stamp (a feed that cannot tell is a read); and
+# no open PR the record shows with an unknown mergeable_state has a due
+# conflict clock and no `stale-conflict` label (that decision needs GitHub's
+# CONFLICTING). A hit logs one `PRR_HIT <repo>#list src=record` line. A miss
+# logs one logs/pr-record.log line (pr_record_list's own, or
+# `list <repo> miss=floor|wake|conflict|malformed`) and the caller reads GitHub.
+# The floor is what keeps the record honest: a PR that turns CONFLICTING on a
+# base push reads NULL in the record until GitHub is read, and the first
+# CONFLICTING sight backdates dirty_since to updatedAt, so a late sight does
+# not move the stale clock. After every GitHub read the lists are written back
+# (pr_record_list_sync_gql), the open one only when it is not a full page.
+# Knob: PR_OWNER_LIST_GITHUB_FLOOR_S in catalog/lanes.d/pr-owner-sweep.knobs.d/
+# (3600 is its documented fallback; 0 = this tier off).
+PL_FLOOR=$(num_or "${PR_OWNER_LIST_GITHUB_FLOOR_S:-}" 3600)
+PL_NEED_OPEN=title,head_ref,head_sha,base_ref,author,labels,body,url,created_at,updated_at,reviews,draft
+PL_NEED_MERGED=title,head_ref,url,merged_at,author,created_at
+po_lists_record_miss() { command -v _prr_log >/dev/null 2>&1 && _prr_log "list $(printf '%s' "$SLUG" | tr 'A-Z' 'a-z') miss=$1"; return 1; }
+# po_lists_record — rc 0 when $OPENF and $MERGEDF were filled from the record.
+po_lists_record() {
+  local e now so sm t
+  [ "$PL_ON" = 1 ] && [ "$PL_MAX" -gt 0 ] && [ "$PL_FLOOR" -gt 0 ] || return 1
+  command -v pr_record_list >/dev/null 2>&1 && command -v wb_due >/dev/null 2>&1 || return 1
+  e=$(cut -f2 "$PL_DIR/openlist.meta" 2>/dev/null); now=$(po_lists_now)
+  if ! [[ "$e" =~ ^[0-9]{1,12}$ ]] || [ "$((now - 10#$e))" -lt 0 ] || [ "$((now - 10#$e))" -gt "$PL_FLOOR" ]; then
+    po_lists_record_miss floor; return 1
+  fi
+  pr_record_list "$SLUG" open "$TD/rec-open.json" "$PL_NEED_OPEN" "$PR_LIMIT" >/dev/null || return 1
+  pr_record_list "$SLUG" merged "$TD/rec-merged.json" "$PL_NEED_MERGED" "$PR_LIMIT" >/dev/null || return 1
+  so=$(date -u -d "$(cat "$TD/rec-open.json.sync")" +%s 2>/dev/null)
+  sm=$(date -u -d "$(cat "$TD/rec-merged.json.sync")" +%s 2>/dev/null)
+  [[ "$so" =~ ^[0-9]+$ ]] && [[ "$sm" =~ ^[0-9]+$ ]] || { po_lists_record_miss malformed; return 1; }
+  t=$so; [ "$sm" -lt "$t" ] && t=$sm
+  # wb_due rc 0 = read now: a wake since the older stamp, the switch off, or no feed.
+  if wb_due "$SLUG" pr - "$t" 0 "$PL_BACK" - >/dev/null; then po_lists_record_miss wake; return 1; fi
+  # The GraphQL key names the classifier, dup-guard.sh and shipped.sh read.
+  # mergeable from the REST mergeable_state: dirty is CONFLICTING, a computed
+  # state is MERGEABLE, NULL / unknown / draft is UNKNOWN (A3 of the plan).
+  jq -c 'map({number, title, headRefName: .head_ref, headRefOid: .head_sha, baseRefName: .base_ref,
+      author: {login: .author}, labels: [(.labels // [])[] | {name: .}], body,
+      mergeable: (if .mergeable_state == "dirty" then "CONFLICTING"
+                  elif (.mergeable_state | IN("clean", "blocked", "behind", "unstable", "has_hooks")) then "MERGEABLE"
+                  else "UNKNOWN" end),
+      updatedAt: .updated_at, createdAt: .created_at, url, isDraft: (.draft == 1 or .draft == true),
+      latestReviews: [(.reviews // {}) | to_entries[] | {author: {login: .key}, state: .value.state,
+                       submittedAt: .value.at, commit: {oid: .value.commit_id}}]})' \
+    "$TD/rec-open.json" > "$OPENF" 2>/dev/null && [ -s "$OPENF" ] \
+  && jq -c 'map({number, title, headRefName: .head_ref, url, mergedAt: .merged_at, author: {login: .author}, createdAt: .created_at})' \
+    "$TD/rec-merged.json" > "$MERGEDF" 2>/dev/null && [ -s "$MERGEDF" ] \
+  || { po_lists_record_miss malformed; return 1; }
+  # The conflict clock (A3): an UNKNOWN row keeps its dirty_since, and a due
+  # one with no stale-conflict label is GitHub's to decide.
+  if jq -e --slurpfile st "$H/state/pr-owners/${SLUG//\//_}.json" --argjson now "$NOW" --argjson stale "$((STALE_DAYS * 86400))" '
+      (($st[0] // {}).prs // {}) as $p
+      | any(.[]; .mergeable == "UNKNOWN"
+             and ((($p[.number | tostring] // {}).dirty_since // 0) as $d | ($d | type) == "number" and $d > 0 and ($now - $d) >= $stale)
+             and ([.labels[].name | ascii_downcase] | index("stale-conflict") | not))' "$OPENF" >/dev/null 2>&1; then
+    po_lists_record_miss conflict; return 1
+  fi
+  say "PRR_HIT $SLUG#list src=record"
+  return 0
+}
+
+# po_lists_sync — write this tick's GitHub list read into the PR record
+#   (pr_record_list_sync_gql). A full open page may be cut, so it is not the
+#   whole open list (the worker would mark the rest unknown): only a shorter
+#   one is written. A failed merged read ($PL_MRC 1) and a dry run write
+#   nothing. The caller runs it only after the repo's owners were read: a repo
+#   this tick sweeps nothing for gets no write. Always rc 0.
+po_lists_sync() {
+  local iso n
+  [ "$DRY" != 1 ] && command -v pr_record_list_sync_gql >/dev/null 2>&1 || return 0
+  iso=$(date -u -d "@$PL_T" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null) || iso=""
+  n=$(jq 'length' "$OPENF" 2>/dev/null)
+  if [[ "$n" =~ ^[0-9]+$ ]] && [ "$n" -lt "$PR_LIMIT" ]; then
+    pr_record_list_sync_gql "$SLUG" open "$OPENF" "$iso" || true
+  fi
+  [ "$PL_MRC" = 0 ] && { pr_record_list_sync_gql "$SLUG" merged "$MERGEDF" "$iso" || true; }
+  return 0
 }
 
 # ---- per repo ---------------------------------------------------------------
@@ -458,7 +548,13 @@ while read -r PROJECT SLUG; do
 
   command -v gh_auth_for >/dev/null 2>&1 && gh_auth_for "$SLUG" || true
   OPENF="$TD/open.json"; MERGEDF="$TD/merged.json"
-  if ! po_lists_reuse; then
+  PL_SRC=github; PL_SYNC=0
+  if po_lists_reuse; then
+    PL_SRC=copy
+  elif po_lists_record; then
+    PL_SRC=record
+  else
+    [ -z "$PL_WHY" ] || say "PRR_MISS $SLUG#list why=$PL_WHY"
     PL_T=$(po_lists_now)
     if ! gh pr list -R "$SLUG" --state open --limit "$PR_LIMIT" \
          --json number,title,headRefName,headRefOid,baseRefName,author,labels,body,mergeable,updatedAt,createdAt,url,isDraft,latestReviews \
@@ -472,7 +568,7 @@ while read -r PROJECT SLUG; do
     # orphan we simply do not close, which is the safe direction.
     PL_MRC=0
     gh pr list -R "$SLUG" --state merged --limit "$PR_LIMIT" \
-      --json number,title,headRefName,url,mergedAt,author > "$MERGEDF" 2>/dev/null || PL_MRC=1
+      --json number,title,headRefName,url,mergedAt,author,createdAt > "$MERGEDF" 2>/dev/null || PL_MRC=1
     [ "$PL_MRC" = 0 ] && [ -s "$MERGEDF" ] || { PL_MRC=1; echo '[]' > "$MERGEDF"; }
     # Only a pair that both read rc 0 is kept; a failed merged read is [] for
     # this run only.
@@ -480,6 +576,10 @@ while read -r PROJECT SLUG; do
       wb_cache_put "$PL_DIR/openlist" "-"$'\t'"$PL_T" < "$OPENF" \
         && wb_cache_put "$PL_DIR/mergedlist" "-"$'\t'"$PL_T" < "$MERGEDF" || true
     fi
+    # BH-8481: this GitHub read goes into the PR record too (po_lists_sync,
+    # below), but only once the repo's owners are readable: a repo this tick
+    # sweeps nothing for gets no write at all (E7 of the BH-3929 suite).
+    PL_SYNC=1
   fi
 
   # THE LEDGER IS OWNER CLASS (a) AND IT IS NOT FAIL-OPEN. A ledger we cannot
@@ -508,6 +608,9 @@ while read -r PROJECT SLUG; do
   elif [ "$OWNER_SRC" = d1 ]; then
     say "$SLUG: conductor rows unreadable (D1 pr_state) — swept nothing (${PO_MC_WHY:-unknown})"; continue
   else PO_MC_OK=0; MC_SRC=unread; : > "$TD/mc-detail.tsv"; fi
+  # The owners are readable from here on, so this tick's GitHub list read is
+  # written back to the PR record (BH-8481) for the next ticks to read there.
+  [ "$PL_SYNC" = 1 ] && po_lists_sync
   MC_STATE_OF=(); MC_REASON_OF=(); MC_HEAD_OF=(); MC_SINCE_OF=()
   while IFS=$'\t' read -r MK MS MR MH MT; do
     [ -n "$MK" ] && { MC_STATE_OF["$MK"]="$MS"; MC_REASON_OF["$MK"]="${MR:--}"; MC_HEAD_OF["$MK"]="${MH:--}"; MC_SINCE_OF["$MK"]="${MT:--}"; }
@@ -586,7 +689,7 @@ while read -r PROJECT SLUG; do
 
   PO_SLUG="$SLUG" PO_PROJECT="$PROJECT" PO_AUTHORS="$AUTHORS" PO_NOW="$NOW" \
   PO_STALE_S="$((STALE_DAYS * 86400))" PO_MC_TERMINAL="$MC_TERMINAL" \
-  PO_GRACE_S="$((GRACE_MIN * 60))" PO_MC_OK="$PO_MC_OK" PO_MC_WHY="${PO_MC_WHY:-}" \
+  PO_GRACE_S="$((GRACE_MIN * 60))" PO_MC_OK="$PO_MC_OK" PO_MC_WHY="${PO_MC_WHY:-}" PO_LIST_SRC="$PL_SRC" \
   python3 - "$OPENF" "$MERGEDF" "$TD/jobs.json" "$TD/queue.tsv" "$TD/mc.tsv" \
     "$STATEF" "$TD/new-state.json" "$TD/spared-later.txt" > "$TD/verdicts.tsv" <<'PYEOF' 2>/dev/null
 import json, os, re, sys
@@ -618,6 +721,8 @@ TERMINAL = set(os.environ["PO_MC_TERMINAL"].split())
 # BH-5124: 0 = the conductor's rows could not be read from anywhere trustworthy.
 MC_OK   = os.environ.get("PO_MC_OK") == "1"
 MC_WHY  = os.environ.get("PO_MC_WHY") or "unknown"
+# BH-8481: `record` = the lists came from the PR record (po_lists_record).
+LIST_SRC = os.environ.get("PO_LIST_SRC") or "github"
 # Every spelling of every harness author (app/x, x[bot], x), bare-compared —
 # the same stripping bin/lib/gh-pr-list.sh's _hpl_bare does, PREFIX and SUFFIX
 # only, because GraphQL, REST and a git author name each pick a different one.
@@ -807,6 +912,10 @@ for p in sorted(prs, key=lambda x: int(x.get("number", 0) or 0)):
     dirty_since = 0
     if mergeable == "CONFLICTING":
         dirty_since = int(pv.get("dirty_since") or 0) or ts(p.get("updatedAt")) or NOW
+    elif LIST_SRC == "record" and mergeable == "UNKNOWN":
+        # BH-8481: the record nulls mergeable_state on every base push, so an
+        # UNKNOWN there is not "no conflict": the clock is carried, not reset.
+        dirty_since = int(pv.get("dirty_since") or 0)
 
     created = ts(p.get("createdAt"))
     if state == "ORPHAN":
@@ -826,7 +935,9 @@ for p in sorted(prs, key=lambda x: int(x.get("number", 0) or 0)):
         elif dirty_since and (NOW - dirty_since) >= STALE_S:
             days = (NOW - dirty_since) // 86400
             reason = "head has been CONFLICTING for %dd (limit %dd)" % (days, STALE_S // 86400)
-            action = "none" if "stale-conflict" in labels else "stale-conflict:%d" % days
+            # Only a CONFLICTING head is labelled; a carried clock (BH-8481) is
+            # not. From GitHub a clock is set only on CONFLICTING, so that is unchanged.
+            action = "none" if "stale-conflict" in labels or mergeable != "CONFLICTING" else "stale-conflict:%d" % days
         elif key != "-":
             reason = "no owner, no park — the key goes back to its box"
             action = "handback:%s" % key

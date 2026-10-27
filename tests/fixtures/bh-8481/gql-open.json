@@ -1,0 +1,14 @@
+[
+  {"number": 203, "title": "Bump wrangler from 3.1 to 3.2", "headRefName": "dependabot/npm/wrangler-3.2", "headRefOid": "cccccccccccccccccccccccccccccccccccccccc", "baseRefName": "main",
+   "author": {"login": "app/dependabot", "is_bot": true}, "labels": [{"name": "dependencies"}], "body": "Bumps wrangler.", "mergeable": "MERGEABLE",
+   "updatedAt": "2026-10-26T10:30:00Z", "createdAt": "2026-10-26T10:00:00Z", "url": "https://github.com/example-org/fx/pull/203", "isDraft": false, "latestReviews": []},
+  {"number": 202, "title": "TK-12: draft", "headRefName": "ticket/TK-12", "headRefOid": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", "baseRefName": "main",
+   "author": {"login": "operator", "is_bot": false}, "labels": [{"name": "parked"}, {"name": "ai-build"}], "body": null, "mergeable": "CONFLICTING",
+   "updatedAt": "2026-10-26T09:30:00Z", "createdAt": "2026-10-26T09:00:00Z", "url": "https://github.com/example-org/fx/pull/202", "isDraft": true, "latestReviews": []},
+  {"number": 201, "title": "TK-11: wip", "headRefName": "ticket/TK-11", "headRefOid": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", "baseRefName": "main",
+   "author": {"login": "app/cromford", "is_bot": true}, "labels": [], "body": "Refs #11", "mergeable": "MERGEABLE",
+   "updatedAt": "2026-10-26T08:30:00Z", "createdAt": "2026-10-26T08:00:00Z", "url": "https://github.com/example-org/fx/pull/201", "isDraft": false,
+   "latestReviews": [
+     {"author": {"login": "app/cromford"}, "state": "APPROVED", "submittedAt": "2026-10-26T08:20:00Z", "commit": {"oid": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}},
+     {"author": {"login": "operator"}, "state": "COMMENTED", "submittedAt": "2026-10-26T08:10:00.250Z", "commit": null}]}
+]

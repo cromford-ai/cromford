@@ -1,0 +1,77 @@
+{
+  "repo": "example-org/fx",
+  "state": "open",
+  "rows": [
+    {
+      "number": 203,
+      "fields": {
+        "state": "open",
+        "title": "Bump wrangler from 3.1 to 3.2",
+        "head_ref": "dependabot/npm/wrangler-3.2",
+        "head_sha": "cccccccccccccccccccccccccccccccccccccccc",
+        "base_ref": "main",
+        "author": "dependabot[bot]",
+        "labels": [
+          "dependencies"
+        ],
+        "body": "Bumps wrangler.",
+        "pr_created_at": "2026-10-26T10:00:00Z",
+        "pr_updated_at": "2026-10-26T10:30:00Z",
+        "url": "https://github.com/example-org/fx/pull/203",
+        "draft": false,
+        "reviews": {}
+      }
+    },
+    {
+      "number": 202,
+      "fields": {
+        "state": "open",
+        "title": "TK-12: draft",
+        "head_ref": "ticket/TK-12",
+        "head_sha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "base_ref": "main",
+        "author": "operator",
+        "labels": [
+          "parked",
+          "ai-build"
+        ],
+        "body": "",
+        "pr_created_at": "2026-10-26T09:00:00Z",
+        "pr_updated_at": "2026-10-26T09:30:00Z",
+        "url": "https://github.com/example-org/fx/pull/202",
+        "draft": true,
+        "reviews": {}
+      }
+    },
+    {
+      "number": 201,
+      "fields": {
+        "state": "open",
+        "title": "TK-11: wip",
+        "head_ref": "ticket/TK-11",
+        "head_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "base_ref": "main",
+        "author": "cromford[bot]",
+        "labels": [],
+        "body": "Refs #11",
+        "pr_created_at": "2026-10-26T08:00:00Z",
+        "pr_updated_at": "2026-10-26T08:30:00Z",
+        "url": "https://github.com/example-org/fx/pull/201",
+        "draft": false,
+        "reviews": {
+          "cromford": {
+            "state": "APPROVED",
+            "commit_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "at": "2026-10-26T08:20:00Z"
+          },
+          "operator": {
+            "state": "COMMENTED",
+            "commit_id": null,
+            "at": "2026-10-26T08:10:00Z"
+          }
+        }
+      }
+    }
+  ],
+  "at": "2026-10-26T11:30:00Z"
+}

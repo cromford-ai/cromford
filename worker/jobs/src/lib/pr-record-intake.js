@@ -17,7 +17,7 @@
 // delivery never replaces a newer value from any source.
 
 import { ensureColumns, ensureTable } from "./core.js";
-import { upsertSql, VALUE_FIELDS, REPO_RE, CHECKS_MAX } from "../routes/pr-records.js";
+import { upsertSql, VALUE_FIELDS, REPO_RE, CHECKS_MAX, REVIEWERS_MAX, REVIEWER_RE } from "../routes/pr-records.js";
 
 const isObj = (v) => v !== null && typeof v === "object" && !Array.isArray(v);
 const num = (v) => (Number.isSafeInteger(v) && v >= 1 && v <= 1e9 ? v : null);
@@ -73,7 +73,18 @@ function prFields(pr) {
     url: pr.html_url,
     pr_created_at: isoOf(pr.created_at),
     pr_updated_at: isoOf(pr.updated_at),
+    merged_at: isoOf(pr.merged_at),
   });
+}
+
+// BH-8481: a reviewer's key in the reviews object. GraphQL says app/x or x,
+// REST says x[bot]: the key is the bare lowercase login, or "" when it fails
+// REVIEWER_RE (the write is then dropped).
+export function reviewerKey(login) {
+  let v = str(login).trim().toLowerCase();
+  if (v.startsWith("app/")) v = v.slice(4);
+  if (v.endsWith("[bot]")) v = v.slice(0, -5);
+  return REVIEWER_RE.test(v) ? v : "";
 }
 
 const fieldsWrite = (repo, number, at, refresh, fields) =>
@@ -92,6 +103,7 @@ const prNumbers = (prs) => (Array.isArray(prs) ? prs.map((p) => (isObj(p) ? num(
 //   {kind:'fields', repo, number, at, refresh, fields}   fields are checked values
 //   {kind:'check', repo, number, at, name, value}        value {status, conclusion, sha, at}
 //   {kind:'base-push', repo, base_ref, at}
+//   {kind:'review', repo, number, at, login, value}      value {state, commit_id, at} (BH-8481)
 export function prRecordWritesOf(event, payload, t) {
   if (!isObj(payload)) return [];
   const repo = str(isObj(payload.repository) ? payload.repository.full_name : "").toLowerCase();
@@ -105,6 +117,9 @@ export function prRecordWritesOf(event, payload, t) {
     const ms = pr.mergeable_state;
     if (typeof ms === "string" && ms !== "unknown" && VALUE_FIELDS.mergeable_state(ms) !== undefined) fields.mergeable_state = ms;
     else if (PR_FIELD_ACTIONS.includes(action)) fields.mergeable_state = null;
+    // BH-8481: a PR that was just opened has no review. That is the one
+    // delivery that knows the whole reviews set; any other leaves it alone.
+    if (action === "opened") fields.reviews = VALUE_FIELDS.reviews({});
     return fieldsWrite(repo, num(pr.number ?? payload.number), atOf(pr.updated_at, t), true, fields);
   }
 
@@ -115,7 +130,16 @@ export function prRecordWritesOf(event, payload, t) {
     const state = str(rv.state).toLowerCase();
     if (action === "dismissed") fields.review_decision = null;
     else if (state === "approved" || state === "changes_requested") fields.review_decision = state;
-    return fieldsWrite(repo, num(pr.number ?? payload.number), atOf(rv.submitted_at ?? pr.updated_at, t), true, fields);
+    const number = num(pr.number ?? payload.number), at = atOf(rv.submitted_at ?? pr.updated_at, t);
+    // BH-8481: this reviewer's latest review, merged into a known reviews
+    // object (REVIEW_MERGE_SQL). A bad login or state writes no entry.
+    const login = reviewerKey(isObj(rv.user) ? rv.user.login : "");
+    const rstate = action === "dismissed" ? "DISMISSED" : state.toUpperCase();
+    const commit = str(rv.commit_id).toLowerCase();
+    const review = number !== null && login && ["APPROVED", "CHANGES_REQUESTED", "COMMENTED", "DISMISSED"].includes(rstate)
+      ? [{ kind: "review", repo, number, at, login, value: { state: rstate, commit_id: SHA_RE.test(commit) ? commit : null, at } }]
+      : [];
+    return [...fieldsWrite(repo, number, at, true, fields), ...review];
   }
 
   if (event === "issue_comment") {
@@ -192,7 +216,33 @@ export const BASE_PUSH_SQL = `UPDATE pr_records SET mergeable_state = NULL,
       AND (json_extract(fields_at, '$.mergeable_state') IS NULL OR json_extract(fields_at, '$.mergeable_state') <= ?3)
       AND (mergeable_state IS NOT NULL OR json_extract(fields_at, '$.mergeable_state') IS NOT ?3)`;
 
+// BH-8481: one reviewer's latest review merged into the reviews object.
+// Binds: ?1 repo, ?2 number, ?3 the path `$."<login>"` (a bind, never SQL
+// text), ?4 value (JSON), ?5 at. An UPDATE, never an insert, and only on a
+// row whose reviews is known (not NULL): a NULL object stays NULL, because one
+// entry is not the whole set. The merge runs when the stored entry is older,
+// or the same time and not a dismissal this value does not repeat (a dismissal
+// carries its review's submitted_at, so it wins the tie); when the value
+// differs (a replay changes 0 rows); and when the object already holds the
+// login or has fewer than REVIEWERS_MAX of them. fields_at.reviews moves
+// forward, so an older list sync does not replace a newer review.
+// refreshed_at does not move: a review does not carry the whole PR.
+export const REVIEW_MERGE_SQL = `UPDATE pr_records SET
+      reviews = json_set(reviews, ?3, json(?4)),
+      fields_at = json_set(fields_at, '$.reviews', max(coalesce(json_extract(fields_at, '$.reviews'), ''), ?5)),
+      last_source = 'webhook',
+      webhook_at = max(coalesce(webhook_at, ''), ?5)
+    WHERE repo = ?1 AND number = ?2 AND reviews IS NOT NULL
+      AND (json_extract(reviews, ?3 || '.at') IS NULL OR json_extract(reviews, ?3 || '.at') < ?5
+           OR (json_extract(reviews, ?3 || '.at') = ?5
+               AND (json_extract(?4, '$.state') = 'DISMISSED' OR json_extract(reviews, ?3 || '.state') IS NOT 'DISMISSED')))
+      AND json_extract(reviews, ?3) IS NOT json(?4)
+      AND (json_type(reviews, ?3) IS NOT NULL OR (SELECT count(*) FROM json_each(reviews)) < ${REVIEWERS_MAX})`;
+
 function stmtOf(DB, w) {
+  if (w.kind === "review") {
+    return DB.prepare(REVIEW_MERGE_SQL).bind(w.repo, w.number, `$."${w.login}"`, JSON.stringify(w.value), w.at);
+  }
   if (w.kind === "fields") {
     const names = Object.keys(w.fields);
     return DB.prepare(upsertSql(names, { refresh: w.refresh }))
