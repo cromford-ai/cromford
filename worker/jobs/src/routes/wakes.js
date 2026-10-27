@@ -38,6 +38,11 @@ const intSettingOr = (byKey, key, def, lo, hi) => {
 
 const NUDGE_REASONS = new Set(["untriaged", "unblocked"]);
 const NUDGE_DEDUPE_RE = /^[a-z0-9:#-]{1,64}$/;
+// A Jira or Linear ticket key (BH-8451): the same shape as JIRA_KEY_RE in
+// lib/tracker-webhooks.js, a superset of Linear's, which a webhook's Jira or
+// Linear wake row already stores. bin/untriaged-wake.sh nudges those projects
+// by this key.
+const NUDGE_TRK_KEY_RE = /^[A-Z][A-Z0-9_]{0,19}-[1-9][0-9]{0,8}$/;
 
 // The lead-chain doorbell's kinds and its dedupe shape, `<kind>:<pr>@<sha12>`
 // (BH-4057). A closed set: a typo'd kind is a 400, never a row nobody claims.
@@ -412,6 +417,7 @@ export const routes = [
   // webhook above wrote a row, so an open ai-build issue nobody touched was
   // never looked at. bin/untriaged-wake.sh posts one per untriaged or
   // dep-unblocked ticket; bin/wake-loop.sh reads it like any kind=issue row.
+  // `key` is an integer, or a Jira/Linear key string (NUDGE_TRK_KEY_RE).
   //
   // ONCE ONLY, on the existing idx_wakes_dedupe(repo,kind,key,minute): minute
   // is 'nudge:<dedupe>', which a webhook's YYYY-MM-DDTHH:MM:00Z can never
@@ -426,8 +432,8 @@ export const routes = [
       if (typeof repo !== "string" || !WAKE_REPO_RE.test(repo)) {
         return json(400, { error: "repo must be owner/name" });
       }
-      if (!wholeInRange(key, 1, 1e9)) {
-        return json(400, { error: "key must be an integer 1..1000000000" });
+      if (!wholeInRange(key, 1, 1e9) && !(typeof key === "string" && NUDGE_TRK_KEY_RE.test(key))) {
+        return json(400, { error: "key must be an integer 1..1000000000 or a tracker key like CRO-12" });
       }
       if (!NUDGE_REASONS.has(reason)) {
         return json(400, { error: "reason must be untriaged or unblocked" });

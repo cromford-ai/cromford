@@ -21,7 +21,8 @@
 #
 # GITHUB-ISSUES LANES ONLY, because the label lives on a GitHub issue; an in-app
 # product board has no such field in v1 (#368), so those projects never make the
-# call and render exactly what they render today.
+# call and render exactly what they render today. A Jira or Linear project
+# reads its hotfix label through the tracker contract (bin/lib/trk-lane.sh).
 #
 # EVERY UNCERTAIN ANSWER IS "NO HOTFIXES", which is today's behaviour: the lane
 # off, no gh, no jq, no repo slug, the shared API budget low, a call that fails.
@@ -58,8 +59,12 @@ _THL_R="${HARNESS:-${H:-}}"
 # list.
 # shellcheck source=bin/lib/gh-rest.sh
 [ -n "$_THL_R" ] && [ -r "$_THL_R/bin/lib/gh-rest.sh" ] && . "$_THL_R/bin/lib/gh-rest.sh"
+# Jira and Linear read the hotfix list through the tracker contract (BH-8451).
+# shellcheck source=bin/lib/trk-lane.sh
+[ -n "$_THL_R" ] && [ -r "$_THL_R/bin/lib/trk-lane.sh" ] && . "$_THL_R/bin/lib/trk-lane.sh"
 unset _THL_R
 TRIAGE_HOT=""        # " <key> <key> " — canonical keys, space-delimited
+TRIAGE_HOT_KEYS=""   # Jira/Linear only: the tracker's own keys, "CRO-12 CRO-15"
 TRIAGE_HOT_READY=0
 # triage_hot_load — the one read, memoised for the tick. Call it from the PARENT
 # shell before the marking pipelines: both marked slices are built inside a
@@ -72,6 +77,26 @@ triage_hot_load() {
   [ "$(hotfix_lane_on "$HARNESS")" = 1 ] || return 0
   command -v triage_shard_gh >/dev/null 2>&1 || return 0
   [ "$(triage_shard_gh "$HARNESS" "$PROJECT")" = 1 ] || return 0
+  # JIRA AND LINEAR (BH-8451): column 4 says `-` for them too, so the GitHub
+  # read below would list the code repo's issues as their tickets. They read
+  # the open ai-build AND hotfix list through the contract instead (trk_lane_list
+  # drops a row without the build label). TRIAGE_HOT
+  # holds the number of each key, because triage_shard_key canonicalizes a
+  # `CRO-12` line to 12 on this lane (gh=1). A failed read is "no hotfixes".
+  TRK_LANE_KIND=""
+  command -v trk_lane_kind >/dev/null 2>&1 && trk_lane_kind "$HARNESS" "$PROJECT"
+  case "$TRK_LANE_KIND" in
+    jira|linear)
+      local tl tk tn
+      command -v jq >/dev/null 2>&1 || return 0
+      tl=$(trk_lane_list "$HARNESS" "$PROJECT" run-triage --state open --label "$(hotfix_label "$HARNESS")" 2>/dev/null) || return 0
+      tk=$(printf '%s' "$tl" | jq -r '.[].key // empty | select(test("^[A-Za-z][A-Za-z0-9_]*-[1-9][0-9]*$"))' 2>/dev/null) || return 0
+      [ -n "$tk" ] || return 0
+      tn=$(printf '%s\n' "$tk" | sed 's/.*-//' | tr '\n' ' ')
+      TRIAGE_HOT=" $tn"
+      TRIAGE_HOT_KEYS=$(printf '%s' "$tk" | tr '\n' ' ')
+      return 0 ;;
+  esac
   command -v gh >/dev/null 2>&1 || return 0
   command -v jq >/dev/null 2>&1 || return 0
   command -v gh_rest_var >/dev/null 2>&1 || return 0   # BH-1485: the name this lane calls
@@ -174,6 +199,9 @@ triage_hot_intake() {
   [ -x "$h/bin/launch-fastpath.sh" ] || return 0
   triage_hot_load
   [ -n "$TRIAGE_HOT" ] || return 0
+  # A Jira/Linear hotfix is not offered: the fast path launches GitHub issues
+  # only (bin/launch-fastpath.sh declines these kinds; building them is wave 3).
+  [ -z "$TRIAGE_HOT_KEYS" ] || return 0
   # shellcheck disable=SC2086  # the set is space-delimited numbers, one per word
   nums=$(printf '%s\n' $TRIAGE_HOT | grep -E '^[0-9]+$' | sort -n | tr '\n' ' ')
   nums="${nums% }"
@@ -204,7 +232,8 @@ triage_hot_full_note() {
   local nums
   [ -n "$TRIAGE_HOT" ] || return 0
   # shellcheck disable=SC2086
-  nums=$(printf '%s\n' $TRIAGE_HOT | grep -E '^[0-9]+$' | sort -n | sed 's/^/#/' | tr '\n' ' ')
+  if [ -n "$TRIAGE_HOT_KEYS" ]; then nums="$TRIAGE_HOT_KEYS"
+  else nums=$(printf '%s\n' $TRIAGE_HOT | grep -E '^[0-9]+$' | sort -n | sed 's/^/#/' | tr '\n' ' '); fi
   [ -n "$nums" ] || return 0
   printf 'HOTFIX FIRST: open hotfix issues %s. Handle these before any other ticket this tick; a hotfix the harness did not launch is waiting on your decision.' "${nums% }"
 }

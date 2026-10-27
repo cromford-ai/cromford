@@ -20,7 +20,8 @@
 # hotfix is waiting on it, and beats NOTHING. Paging every ten minutes about a
 # pause somebody set on purpose is how an alert channel stops being read.
 #
-# GitHub-Issues lanes only, deterministic, no model call, FAIL-OPEN EVERYWHERE:
+# GitHub-Issues lanes, plus Jira and Linear through the tracker contract
+# (BH-8451). Deterministic, no model call, FAIL-OPEN EVERYWHERE:
 # any failure exits 0 having said nothing. This is an announcement, never a
 # tick killer.
 #
@@ -38,6 +39,34 @@ command -v hotfix_lane_on >/dev/null 2>&1 || exit 0
 # shellcheck source=bin/lib/preplan-lib.sh
 [ -r "$HERE/lib/preplan-lib.sh" ] && . "$HERE/lib/preplan-lib.sh" 2>/dev/null
 
+LOGF="$HARNESS/logs/$PROJECT.log"
+unverifiable() {
+  mkdir -p "$HARNESS/logs" 2>/dev/null
+  echo "$(date -u '+%Y-%m-%d %H:%M:%SZ') [$PROJECT] hotfix listing UNVERIFIABLE ($1) — nothing announced this tick, re-read next pass" \
+    >> "$LOGF" 2>/dev/null
+}
+LBL=$(hotfix_label "$HARNESS")
+
+# JIRA AND LINEAR (BH-8451). Column 4 says `-` for them too, so the GitHub read
+# below would announce the code repo's issues. They list the open tickets
+# that carry BOTH ai-build and hotfix through the tracker contract
+# (bin/lib/trk-lane.sh: a --label flag is an AND with the build label),
+# and the announce names the tracker's own key (CRO-12). An absent lib, or any
+# other kind, is today's path.
+TRK_LANE_KIND=""
+# shellcheck source=bin/lib/trk-lane.sh
+[ -r "$HERE/lib/trk-lane.sh" ] && . "$HERE/lib/trk-lane.sh" 2>/dev/null && trk_lane_kind "$HARNESS" "$PROJECT"
+ROWS=""
+case "$TRK_LANE_KIND" in
+  jira|linear)
+    command -v jq >/dev/null 2>&1 || exit 0
+    if ! TL=$(trk_lane_list "$HARNESS" "$PROJECT" hotfix-seen --state open --label "$LBL" 2>/dev/null); then
+      unverifiable "$TRK_LANE_KIND list"
+      exit 0
+    fi
+    ROWS=$(printf '%s' "$TL" | jq -r '.[] | select(type=="object") | select((.key // "") != "") | "\(.key)\t\(.title // "")"' 2>/dev/null) || exit 0
+    ;;
+  *)
 BP=$("$HERE/fleet-conf.sh" "$PROJECT" board_prefix 2>/dev/null || true)
 [ "$BP" = "-" ] || exit 0
 REPO="${GH_ISSUES_REPO:-$("$HERE/fleet-conf.sh" "$PROJECT" repo 2>/dev/null || true)}"
@@ -45,7 +74,6 @@ REPO="${GH_ISSUES_REPO:-$("$HERE/fleet-conf.sh" "$PROJECT" repo 2>/dev/null || t
 command -v preplan_key_prefix >/dev/null 2>&1 || exit 0
 PFX=$(preplan_key_prefix "$HARNESS" "$PROJECT" 2>/dev/null) || exit 0
 [ -n "$PFX" ] || exit 0
-LBL=$(hotfix_label "$HARNESS")
 
 # A COMMA LIST IS GITHUB'S AND, which is the prime rule of this lane: a
 # `hotfix` label on an issue without `ai-build` is invisible everywhere, because
@@ -65,25 +93,25 @@ command -v jq >/dev/null 2>&1 || exit 0
 # genuinely empty board were the same silence.
 ISSUES=""
 if ! gh_rest_var ISSUES GET "repos/$REPO/issues" -f "labels=ai-build,$LBL" -f state=open -F per_page=50; then
-  mkdir -p "$HARNESS/logs" 2>/dev/null
-  echo "$(date -u '+%Y-%m-%d %H:%M:%SZ') [$PROJECT] hotfix listing UNVERIFIABLE (HTTP ${GH_REST_STATUS:-000}${GH_REST_REASON:+ $GH_REST_REASON}) — nothing announced this tick, re-read next pass" \
-    >> "$HARNESS/logs/$PROJECT.log" 2>/dev/null
+  unverifiable "HTTP ${GH_REST_STATUS:-000}${GH_REST_REASON:+ $GH_REST_REASON}"
   exit 0
 fi
 [ -n "$ISSUES" ] || exit 0
-
-while IFS=$'\t' read -r N TITLE; do
-  [ -n "${N:-}" ] || continue
-  KEY="$PFX-$N"
-  if [ "$MODE" = "--paused" ]; then
-    mkdir -p "$HARNESS/logs" 2>/dev/null
-    echo "$(date -u '+%Y-%m-%d %H:%M:%SZ') [$PROJECT] hotfix $KEY is waiting on flags/paused-$PROJECT (a pause is a human decision; not overridden)" \
-      >> "$HARNESS/logs/$PROJECT.log" 2>/dev/null
-  else
-    hotfix_announce "$HARNESS" "$PROJECT" "$KEY" seen "$KEY — $TITLE"
-  fi
 # `select(.pull_request == null)` is REQUIRED: the /issues collection returns
 # PULL REQUESTS too and `gh issue list` did not, so without it a labelled PR
 # would be announced as a hotfix ticket.
-done < <(printf '%s' "$ISSUES" | jq -r '.[] | select(type=="object") | select(.pull_request == null) | "\(.number)\t\(.title // "")"' 2>/dev/null)
+ROWS=$(printf '%s' "$ISSUES" | jq -r --arg p "$PFX" '.[] | select(type=="object") | select(.pull_request == null) | "\($p)-\(.number)\t\(.title // "")"' 2>/dev/null)
+    ;;
+esac
+
+while IFS=$'\t' read -r KEY TITLE; do
+  [ -n "${KEY:-}" ] || continue
+  if [ "$MODE" = "--paused" ]; then
+    mkdir -p "$HARNESS/logs" 2>/dev/null
+    echo "$(date -u '+%Y-%m-%d %H:%M:%SZ') [$PROJECT] hotfix $KEY is waiting on flags/paused-$PROJECT (a pause is a human decision; not overridden)" \
+      >> "$LOGF" 2>/dev/null
+  else
+    hotfix_announce "$HARNESS" "$PROJECT" "$KEY" seen "$KEY — $TITLE"
+  fi
+done <<<"$ROWS"
 exit 0

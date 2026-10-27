@@ -174,6 +174,14 @@ if [ -n "$FP_SB$FP_SP" ]; then
 fi
 
 # ---- 1. the board has to be GitHub Issues -----------------------------------
+# Column 4 says `-` for a Jira or Linear project too (bin/lib/trk-lane.sh asks
+# tracker_kind). This path launches GitHub issues only; building a Jira or
+# Linear ticket is wave 3 of #7920.
+TRK_LANE_KIND=""
+# shellcheck source=bin/lib/trk-lane.sh
+{ . "$HARNESS/bin/lib/trk-lane.sh" 2>/dev/null || . "$(dirname "${BASH_SOURCE[0]}")/lib/trk-lane.sh" 2>/dev/null; } \
+  && trk_lane_kind "$HARNESS" "$project"
+case "$TRK_LANE_KIND" in jira|linear) decline_all "not a GitHub-Issues board ($TRK_LANE_KIND)" ;; esac
 BP=$("$HARNESS/bin/fleet-conf.sh" "$project" board_prefix 2>/dev/null || true)
 [ "$BP" = "-" ] || decline_all "not a GitHub-Issues board"
 REPO=$("$HARNESS/bin/fleet-conf.sh" "$project" repo 2>/dev/null || true)

@@ -49,3 +49,30 @@ ut_inapp_untriaged() {
   [ "$rc" = 0 ] || return 1
   [ -z "$out" ] || printf '%s\n' "$out"
 }
+
+# ut_trk_untriaged <project> <min_age_s> [now_epoch] — the Jira/Linear twin of
+# ut_inapp_untriaged (BH-8451): the open build-labelled list through the
+# tracker contract (bin/lib/trk-lane.sh). `<key>\t<key>\t<updatedAt>\t<title>`
+# for every row with commentCount 0 (a null count is not 0, D11), no triage
+# verdict, and an updatedAt after UT_INAPP_CUTOFF and more than min_age_s
+# before now. now_epoch is the test seam (default: the clock). The root is
+# HARNESS, then H; with neither, rc 1. A failed read is rc 1 and no output.
+ut_trk_untriaged() {
+  local p="${1:-}" min="${2:-}" now="${3:-}" root="${HARNESS:-${H:-}}" d tl out
+  [ -n "$p" ] && [ -n "$root" ] || return 1
+  case "$min" in ''|*[!0-9]*) return 1 ;; esac
+  [ -n "$now" ] || now=$(date -u +%s)
+  case "$now" in *[!0-9]*) return 1 ;; esac
+  if ! command -v trk_lane_list >/dev/null 2>&1; then
+    d=$(dirname "${BASH_SOURCE[0]}")
+    # shellcheck source=bin/lib/trk-lane.sh
+    . "$d/trk-lane.sh" 2>/dev/null || . "$root/bin/lib/trk-lane.sh" 2>/dev/null || return 1
+  fi
+  tl=$(trk_lane_list "$root" "$p" untriaged --state open 2>/dev/null) || return 1
+  out=$(printf '%s' "$tl" | jq -r --arg c "$UT_INAPP_CUTOFF" --argjson min "$min" --argjson now "$now" '
+      .[] | select(.state == "open" and .commentCount == 0 and .triageVerdict == null)
+      | select((.updatedAt | type) == "string" and .updatedAt > $c)
+      | select(((.updatedAt | fromdateiso8601?) // null) as $u | $u != null and ($now - $u) > $min)
+      | [.key, .key, .updatedAt, ((.title // "")[0:70])] | @tsv' 2>/dev/null) || return 1
+  [ -z "$out" ] || printf '%s\n' "$out"
+}

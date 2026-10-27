@@ -210,9 +210,16 @@ while IFS= read -r line; do
 done < <(rq_lines "$HARNESS" "$PROJECT" 2>/dev/null)
 
 BP=$("$HERE/fleet-conf.sh" "$PROJECT" board_prefix 2>/dev/null || true)
+# Jira and Linear (BH-8451): column 4 says `-` for them too, so the GitHub lane
+# below would offer the code repo's issues as their tickets. They take the
+# board lane's matcher instead, fed from the tracker contract (bin/lib/trk-lane.sh).
+TRK_LANE_KIND=""
+# shellcheck source=bin/lib/trk-lane.sh
+[ -r "$HERE/lib/trk-lane.sh" ] && . "$HERE/lib/trk-lane.sh" 2>/dev/null && trk_lane_kind "$HARNESS" "$PROJECT"
+case "$TRK_LANE_KIND" in jira|linear) ;; *) TRK_LANE_KIND="" ;; esac
 
 # ---- 2+3. GitHub-Issues lane ------------------------------------------------
-if [ "$BP" = "-" ]; then
+if [ "$BP" = "-" ] && [ -z "$TRK_LANE_KIND" ]; then
   REPO="${GH_ISSUES_REPO:-$("$HERE/fleet-conf.sh" "$PROJECT" repo 2>/dev/null || true)}"
   [ -n "$REPO" ] || { emit_queued; exit 0; }
   # The KEY the builder will ask for is <PREFIX>-<issue-number>; without the
@@ -587,11 +594,30 @@ PYB
   exit 0
 fi
 
-# ---- 2+3. in-app product board ----------------------------------------------
+# ---- 2+3. in-app product board (and Jira/Linear, BH-8451) -------------------
 # No hotfix class here: the label lives on a GitHub issue and #368 puts a
 # board-side priority field out of scope, so the queue lines go out exactly
 # where they always did — first, and before any of the checks below can leave.
 emit_queued
+if [ -n "$TRK_LANE_KIND" ]; then
+  # JIRA AND LINEAR: the open build-labelled list, in the board's ticket
+  # shape. Status is normalized to the BUSY words (lower case, spaces and `-`
+  # to `_`, in_review -> review), so "In Progress" and "In Review" are busy.
+  # The list carries no body, so there is no child class. A ticket this box
+  # is building now (preplan_midbuild_keys) is dropped. A failed read is the
+  # launch gate's UNKNOWN: queued lines only, one log line.
+  TF=$(mktemp); trap 'rm -f "$TF" "$QF" "$GF"' EXIT
+  trk_lane_list "$HARNESS" "$PROJECT" preplan --state open > "$GF" 2>/dev/null \
+    || gate_unknown "$TRK_LANE_KIND list unreadable"
+  MIDBUILD=""
+  command -v preplan_midbuild_keys >/dev/null 2>&1 \
+    && MIDBUILD=$(preplan_midbuild_keys "$HARNESS" "$PROJECT" 2>/dev/null | tr '\n' ' ')
+  jq -c --arg mid " $MIDBUILD " '[.[] | select(type == "object" and (.key // "") != "")
+      | select(.key as $k | ($mid | index(" " + $k + " ")) == null)
+      | {key, id: .key, waitingOn, triageVerdict, body: "",
+         status: ((.status // "") | ascii_downcase | gsub("[ -]"; "_") | if . == "in_review" then "review" else . end)}]' \
+    "$GF" > "$TF" 2>/dev/null || gate_unknown "$TRK_LANE_KIND list would not parse"
+else
 BASE=$("$HERE/fleet-conf.sh" "$PROJECT" prod 2>/dev/null || true)
 [ -n "$BASE" ] && [ "$BASE" != "-" ] && [ -n "$BP" ] || exit 0
 TOK=$("$HERE/internal-token-for.sh" "$PROJECT" 2>/dev/null || true)
@@ -602,6 +628,7 @@ BID=$(curl -sf -m 20 -H "Authorization: Bearer $TOK" -H "User-Agent: curl/8" "$B
 TF=$(mktemp); trap 'rm -f "$TF" "$QF" "$GF"' EXIT
 curl -sf -m 30 -H "Authorization: Bearer $TOK" -H "User-Agent: curl/8" \
   "$BASE$BP/boards/$BID/tickets" 2>/dev/null > "$TF" || exit 0
+fi
 [ -s "$TF" ] || exit 0
 AHEAD="$AHEAD" TERMINAL="$TERMINAL" python3 - "$TF" <<'PYEOF' 2>/dev/null || exit 0
 import json, os, re, sys

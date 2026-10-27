@@ -1,0 +1,394 @@
+{
+  "data": {
+    "issues": {
+      "nodes": [
+        {
+          "identifier": "CRO-12",
+          "title": "Ledger export to CSV",
+          "url": "https://linear.app/crosstest/issue/CRO-12/x",
+          "updatedAt": "2026-10-21T10:00:00.000Z",
+          "state": {
+            "name": "Todo",
+            "type": "unstarted"
+          },
+          "labels": {
+            "nodes": [
+              {
+                "name": "ai-build"
+              },
+              {
+                "name": "hotfix"
+              }
+            ]
+          },
+          "comments": {
+            "nodes": [],
+            "pageInfo": {
+              "hasNextPage": false
+            }
+          }
+        },
+        {
+          "identifier": "CRO-13",
+          "title": "Old import job",
+          "url": "https://linear.app/crosstest/issue/CRO-13/x",
+          "updatedAt": "2026-10-20T08:00:00.000Z",
+          "state": {
+            "name": "Done",
+            "type": "completed"
+          },
+          "labels": {
+            "nodes": [
+              {
+                "name": "ai-build"
+              }
+            ]
+          },
+          "comments": {
+            "nodes": [],
+            "pageInfo": {
+              "hasNextPage": false
+            }
+          }
+        },
+        {
+          "identifier": "CRO-14",
+          "title": "Unlabeled idea",
+          "url": "https://linear.app/crosstest/issue/CRO-14/x",
+          "updatedAt": "2026-10-21T09:00:00.000Z",
+          "state": {
+            "name": "Todo",
+            "type": "unstarted"
+          },
+          "labels": {
+            "nodes": []
+          },
+          "comments": {
+            "nodes": [],
+            "pageInfo": {
+              "hasNextPage": false
+            }
+          }
+        },
+        {
+          "identifier": "CRO-15",
+          "title": "Fee column on the ledger",
+          "url": "https://linear.app/crosstest/issue/CRO-15/x",
+          "updatedAt": "2026-10-21T09:00:00.000Z",
+          "state": {
+            "name": "In Progress",
+            "type": "started"
+          },
+          "labels": {
+            "nodes": [
+              {
+                "name": "ai-build"
+              }
+            ]
+          },
+          "comments": {
+            "nodes": [
+              {
+                "id": "00000000-0000-0000-0000-c00000001500"
+              }
+            ],
+            "pageInfo": {
+              "hasNextPage": false
+            }
+          }
+        },
+        {
+          "identifier": "CRO-16",
+          "title": "Busy thread",
+          "url": "https://linear.app/crosstest/issue/CRO-16/x",
+          "updatedAt": "2026-10-21T09:00:00.000Z",
+          "state": {
+            "name": "Todo",
+            "type": "unstarted"
+          },
+          "labels": {
+            "nodes": [
+              {
+                "name": "ai-build"
+              }
+            ]
+          },
+          "comments": {
+            "nodes": [
+              {
+                "id": "00000000-0000-0000-0000-c00000001600"
+              },
+              {
+                "id": "00000000-0000-0000-0000-c00000001601"
+              },
+              {
+                "id": "00000000-0000-0000-0000-c00000001602"
+              },
+              {
+                "id": "00000000-0000-0000-0000-c00000001603"
+              },
+              {
+                "id": "00000000-0000-0000-0000-c00000001604"
+              },
+              {
+                "id": "00000000-0000-0000-0000-c00000001605"
+              },
+              {
+                "id": "00000000-0000-0000-0000-c00000001606"
+              },
+              {
+                "id": "00000000-0000-0000-0000-c00000001607"
+              },
+              {
+                "id": "00000000-0000-0000-0000-c00000001608"
+              },
+              {
+                "id": "00000000-0000-0000-0000-c00000001609"
+              },
+              {
+                "id": "00000000-0000-0000-0000-c00000001610"
+              },
+              {
+                "id": "00000000-0000-0000-0000-c00000001611"
+              },
+              {
+                "id": "00000000-0000-0000-0000-c00000001612"
+              },
+              {
+                "id": "00000000-0000-0000-0000-c00000001613"
+              },
+              {
+                "id": "00000000-0000-0000-0000-c00000001614"
+              },
+              {
+                "id": "00000000-0000-0000-0000-c00000001615"
+              },
+              {
+                "id": "00000000-0000-0000-0000-c00000001616"
+              },
+              {
+                "id": "00000000-0000-0000-0000-c00000001617"
+              },
+              {
+                "id": "00000000-0000-0000-0000-c00000001618"
+              },
+              {
+                "id": "00000000-0000-0000-0000-c00000001619"
+              },
+              {
+                "id": "00000000-0000-0000-0000-c00000001620"
+              },
+              {
+                "id": "00000000-0000-0000-0000-c00000001621"
+              },
+              {
+                "id": "00000000-0000-0000-0000-c00000001622"
+              },
+              {
+                "id": "00000000-0000-0000-0000-c00000001623"
+              },
+              {
+                "id": "00000000-0000-0000-0000-c00000001624"
+              }
+            ],
+            "pageInfo": {
+              "hasNextPage": true
+            }
+          }
+        },
+        {
+          "identifier": "CRO-17",
+          "title": "Fresh ticket",
+          "url": "https://linear.app/crosstest/issue/CRO-17/x",
+          "updatedAt": "2026-10-21T11:55:00.000Z",
+          "state": {
+            "name": "Todo",
+            "type": "unstarted"
+          },
+          "labels": {
+            "nodes": [
+              {
+                "name": "ai-build"
+              }
+            ]
+          },
+          "comments": {
+            "nodes": [],
+            "pageInfo": {
+              "hasNextPage": false
+            }
+          }
+        },
+        {
+          "identifier": "CRO-18",
+          "title": "Legacy ticket",
+          "url": "https://linear.app/crosstest/issue/CRO-18/x",
+          "updatedAt": "2026-07-01T09:00:00.000Z",
+          "state": {
+            "name": "Todo",
+            "type": "unstarted"
+          },
+          "labels": {
+            "nodes": [
+              {
+                "name": "ai-build"
+              }
+            ]
+          },
+          "comments": {
+            "nodes": [],
+            "pageInfo": {
+              "hasNextPage": false
+            }
+          }
+        },
+        {
+          "identifier": "CRO-19",
+          "title": "Undated ticket",
+          "url": "https://linear.app/crosstest/issue/CRO-19/x",
+          "updatedAt": null,
+          "state": {
+            "name": "Todo",
+            "type": "unstarted"
+          },
+          "labels": {
+            "nodes": [
+              {
+                "name": "ai-build"
+              }
+            ]
+          },
+          "comments": {
+            "nodes": [],
+            "pageInfo": {
+              "hasNextPage": false
+            }
+          }
+        },
+        {
+          "identifier": "CRO-20",
+          "title": "Review pending",
+          "url": "https://linear.app/crosstest/issue/CRO-20/x",
+          "updatedAt": "2026-10-21T09:00:00.000Z",
+          "state": {
+            "name": "In Review",
+            "type": "started"
+          },
+          "labels": {
+            "nodes": [
+              {
+                "name": "ai-build"
+              }
+            ]
+          },
+          "comments": {
+            "nodes": [
+              {
+                "id": "00000000-0000-0000-0000-c00000002000"
+              }
+            ],
+            "pageInfo": {
+              "hasNextPage": false
+            }
+          }
+        },
+        {
+          "identifier": "CRO-9",
+          "title": "Closed parent",
+          "url": "https://linear.app/crosstest/issue/CRO-9/x",
+          "updatedAt": "2026-10-20T08:00:00.000Z",
+          "state": {
+            "name": "Done",
+            "type": "completed"
+          },
+          "labels": {
+            "nodes": [
+              {
+                "name": "ai-build"
+              }
+            ]
+          },
+          "comments": {
+            "nodes": [],
+            "pageInfo": {
+              "hasNextPage": false
+            }
+          }
+        },
+        {
+          "identifier": "ABC-3",
+          "title": "Another team",
+          "url": "https://linear.app/crosstest/issue/ABC-3/x",
+          "updatedAt": "2026-10-21T09:00:00.000Z",
+          "state": {
+            "name": "Todo",
+            "type": "unstarted"
+          },
+          "labels": {
+            "nodes": [
+              {
+                "name": "ai-build"
+              }
+            ]
+          },
+          "comments": {
+            "nodes": [],
+            "pageInfo": {
+              "hasNextPage": false
+            }
+          }
+        },
+        {
+          "identifier": "cro-4",
+          "title": "Lower-cased key",
+          "url": "https://linear.app/crosstest/issue/cro-4/x",
+          "updatedAt": "2026-10-21T09:00:00.000Z",
+          "state": {
+            "name": "Todo",
+            "type": "unstarted"
+          },
+          "labels": {
+            "nodes": [
+              {
+                "name": "ai-build"
+              }
+            ]
+          },
+          "comments": {
+            "nodes": [],
+            "pageInfo": {
+              "hasNextPage": false
+            }
+          }
+        },
+        {
+          "identifier": "CRO-012",
+          "title": "Zero-padded key",
+          "url": "https://linear.app/crosstest/issue/CRO-012/x",
+          "updatedAt": "2026-10-21T09:00:00.000Z",
+          "state": {
+            "name": "Todo",
+            "type": "unstarted"
+          },
+          "labels": {
+            "nodes": [
+              {
+                "name": "ai-build"
+              }
+            ]
+          },
+          "comments": {
+            "nodes": [],
+            "pageInfo": {
+              "hasNextPage": false
+            }
+          }
+        }
+      ],
+      "pageInfo": {
+        "hasNextPage": false,
+        "endCursor": "cursor-fixture-1"
+      }
+    }
+  }
+}

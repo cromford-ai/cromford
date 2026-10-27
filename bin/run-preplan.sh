@@ -31,6 +31,8 @@ LOG="$HARNESS/logs/preplan.log"
 HERE="$(cd "$(dirname "$0")" && pwd)"
 # shellcheck source=bin/lib/preplan-lib.sh
 [ -r "$HERE/lib/preplan-lib.sh" ] && . "$HERE/lib/preplan-lib.sh"
+# shellcheck source=bin/lib/trk-lane.sh
+[ -r "$HERE/lib/trk-lane.sh" ] && . "$HERE/lib/trk-lane.sh"
 command -v preplan_speculative >/dev/null 2>&1 || preplan_speculative() { echo 0; }
 mkdir -p "$HARNESS/locks" 2>/dev/null
 if [ "$(preplan_speculative "$HARNESS")" = 0 ]; then
@@ -194,8 +196,15 @@ BASE="${BASE_BRANCH:-main}"
 # against are the same string. A boardless project (fleet prefix "-") and any
 # API weather print nothing, and absence fails OPEN downstream exactly as it
 # does there — a board outage must not stop a pre-plan from being used.
+# A Jira or Linear project (bin/lib/trk-lane.sh) prints nothing too: the
+# build side gives no fingerprint for those yet (wave 3 of #7920), and a
+# value here that build could never match would throw the pre-plan away.
 TICKET_FP() {
   local base prefix tok
+  if command -v trk_lane_kind >/dev/null 2>&1; then
+    trk_lane_kind "$HARNESS" "$PROJECT"
+    case "$TRK_LANE_KIND" in jira|linear) return 0 ;; esac
+  fi
   base=$("$HARNESS/bin/fleet-conf.sh" "$PROJECT" prod 2>/dev/null)
   prefix=$("$HARNESS/bin/fleet-conf.sh" "$PROJECT" board_prefix 2>/dev/null)
   [ -n "$base" ] && [ "$base" != "-" ] || return 0

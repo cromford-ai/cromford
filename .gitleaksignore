@@ -69,6 +69,9 @@ tests/hub-move.bh-7715-test.sh:generic-api-key:133
 tests/hub-probe-tracker-test.bh-7936-test.sh:generic-api-key:42
 tests/hub-probe-tracker-test.bh-7936-test.sh:generic-api-key:198
 tests/jobs-client-secret-sources.bh-7188-test.sh:generic-api-key:12
+tests/lane-ports-linear.bh-8451-test.sh:generic-api-key:38
+tests/lane-ports-linear.bh-8451-test.sh:generic-api-key:173
+tests/lane-ports-untriaged-sched.bh-8451-test.sh:generic-api-key:32
 tests/lane-run-agent-clis.bh-6260-test.sh:generic-api-key:90
 tests/lane-run-agent-clis.bh-6260-test.sh:generic-api-key:115
 tests/lane-run-image.bh-7516-test.sh:generic-api-key:196

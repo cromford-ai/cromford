@@ -13,6 +13,10 @@
 #                            after a close inside the last
 #                            UNTRIAGED_WAKE_LOOKBACK_MIN.      dedupe unblocked:<n>:<lastdep>
 #
+# A Jira or Linear project (bin/lib/trk-lane.sh) gets only the UNTRIAGED class,
+# read through the tracker contract (ut_trk_untriaged): key CRO-12, dedupe
+# untriaged:cro-12, posted after every GitHub row.
+#
 # bin/wake-loop.sh reads the row like any kind=issue wake and launches a scoped
 # triage. The worker's UNIQUE(repo,kind,key,minute) with minute
 # 'nudge:<dedupe>' is the only once-only store: this lane keeps no watermark
@@ -61,11 +65,16 @@ say() { echo "$(date -u '+%Y-%m-%d %H:%M:%SZ') untriaged-wake $*" >> "$LOG"; }
 . "$H/bin/lib/untriaged-lib.sh" 2>/dev/null
 # shellcheck source=bin/lib/gh-rest.sh
 . "$H/bin/lib/gh-rest.sh" 2>/dev/null
+# Jira and Linear read through the tracker contract (BH-8451).
+# shellcheck source=bin/lib/trk-lane.sh
+. "$H/bin/lib/trk-lane.sh" 2>/dev/null
+# shellcheck source=bin/lib/untriaged-board-read.sh
+. "$H/bin/lib/untriaged-board-read.sh" 2>/dev/null
 if bash -c '. "$1"' _ "$H/bin/jobs-client.sh" >/dev/null 2>&1; then
   # shellcheck source=bin/jobs-client.sh
   . "$H/bin/jobs-client.sh" >/dev/null 2>&1
 fi
-for f in ut_gh_projects ut_open_issues gh_rest _gh_rest_list _jobs_req; do
+for f in ut_gh_projects ut_open_issues gh_rest _gh_rest_list _jobs_req trk_lane_kind ut_trk_untriaged; do
   declare -F "$f" >/dev/null || { say "could-not-run lib"; exit 0; }
 done
 # Whichever token can SEE the repo, as bin/unblocked-children.sh does: the hub's
@@ -92,6 +101,26 @@ SEEN=0; FAILS=""; NOTES=""
 PROJECTS=$(ut_gh_projects) || { say "could-not-run fleet-conf"; exit 0; }
 while read -r -u 3 project slug; do
   [ -n "$slug" ] || continue
+  # JIRA AND LINEAR (BH-8451). Column 4 says `-` for them too, so the reads
+  # below would list the code repo's GitHub issues as their tickets. Their
+  # UNTRIAGED candidates come from the tracker contract, keyed by the tracker's
+  # own key (CRO-12), rank 2: after every GitHub row, so a worker that still
+  # refuses a string key stops the posting only once every GitHub nudge is
+  # out. No closed read and no UNBLOCKED class (no Blocked-by convention there).
+  trk_lane_kind "$H" "$project"
+  case "$TRK_LANE_KIND" in
+    jira|linear)
+      if ! ut_trk_untriaged "$project" "$((AFTER * 60))" "$NOW" > "$W/trk"; then
+        FAILS="$FAILS could-not-run trk@$project"; continue
+      fi
+      SEEN=$((SEEN + $(grep -c . "$W/trk")))
+      while IFS=$'\t' read -r k _ ts _; do
+        [ -n "$k" ] && [ -n "$ts" ] || continue
+        c=$(date -u -d "$ts" +%s 2>/dev/null) || continue
+        printf '2\t%s\t%s\t%s\tuntriaged\tuntriaged:%s\n' "$c" "$slug" "$k" "$(printf '%s' "$k" | tr '[:upper:]' '[:lower:]')"
+      done < "$W/trk" >> "$CAND"
+      continue ;;
+  esac
   if command -v gh_repo_use_token >/dev/null 2>&1 && ! gh_repo_use_token "$slug"; then
     FAILS="$FAILS could-not-run token@$project"; continue
   fi
@@ -154,7 +183,9 @@ if [ "$TOTAL" -gt 0 ] && [ "$MAX" -gt 0 ]; then
   else
     while IFS=$'\t' read -r -u 4 _ _ slug key reason dedupe; do
       [ "$POSTED" -lt "$MAX" ] || break
-      body=$(jq -nc --arg r "$slug" --argjson k "$key" --arg why "$reason" --arg d "$dedupe" \
+      # A GitHub key is a number; a Jira/Linear key (CRO-12) is a string.
+      ka=--argjson; case "$key" in ''|*[!0-9]*) ka=--arg ;; esac
+      body=$(jq -nc --arg r "$slug" "$ka" k "$key" --arg why "$reason" --arg d "$dedupe" \
                '{repo:$r, key:$k, reason:$why, dedupe:$d}')
       # A plain call into a file, never $( ): JOBS_HTTP must survive it.
       rc=0; _jobs_req POST /api/wakes/nudge "$body" > "$W/resp" 2>/dev/null || rc=$?
@@ -174,7 +205,7 @@ fi
 LEFT=$((TOTAL - POSTED))
 NAMES=""
 if [ "$LEFT" -gt 0 ]; then
-  NAMES=$(tail -n "$LEFT" "$W/queue" | awk -F'\t' 'NR<=50 {printf "%s#%s", (NR>1?" ":""), $4}
+  NAMES=$(tail -n "$LEFT" "$W/queue" | awk -F'\t' 'NR<=50 {printf "%s%s%s", (NR>1?" ":""), ($4 ~ /^[0-9]+$/ ? "#" : ""), $4}
     END { if (NR > 50) printf " +%d more", NR-50 }')
   NAMES=" ($NAMES)"
 fi

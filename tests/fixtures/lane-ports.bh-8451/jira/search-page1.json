@@ -1,0 +1,120 @@
+{
+  "issues": [
+    {
+      "id": "10012",
+      "self": "https://api.atlassian.com/ex/jira/33333333-3333-3333-3333-333333333333/rest/api/3/issue/10012",
+      "key": "SCRUM-12",
+      "fields": {
+        "summary": "Ledger export to CSV",
+        "status": {
+          "name": "To Do",
+          "id": "1",
+          "statusCategory": {
+            "id": 2,
+            "key": "new",
+            "name": "To Do"
+          }
+        },
+        "labels": [
+          "ai-build",
+          "hotfix"
+        ],
+        "updated": "2026-10-21T09:00:00.000+0000",
+        "comment": {
+          "comments": [],
+          "maxResults": 0,
+          "total": 0,
+          "startAt": 0
+        }
+      }
+    },
+    {
+      "id": "10015",
+      "self": "https://api.atlassian.com/ex/jira/33333333-3333-3333-3333-333333333333/rest/api/3/issue/10015",
+      "key": "SCRUM-15",
+      "fields": {
+        "summary": "Fee rule question",
+        "status": {
+          "name": "To Do",
+          "id": "1",
+          "statusCategory": {
+            "id": 2,
+            "key": "new",
+            "name": "To Do"
+          }
+        },
+        "labels": [
+          "ai-build"
+        ],
+        "updated": "2026-10-21T09:00:00.000+0000",
+        "comment": {
+          "comments": [],
+          "maxResults": 1,
+          "total": 1,
+          "startAt": 0
+        },
+        "customfield_10050": {
+          "value": "client"
+        },
+        "customfield_10051": {
+          "value": "needs_clarification"
+        }
+      }
+    },
+    {
+      "id": "10016",
+      "self": "https://api.atlassian.com/ex/jira/33333333-3333-3333-3333-333333333333/rest/api/3/issue/10016",
+      "key": "SCRUM-16",
+      "fields": {
+        "summary": "Import retry",
+        "status": {
+          "name": "In Progress",
+          "id": "1",
+          "statusCategory": {
+            "id": 2,
+            "key": "indeterminate",
+            "name": "In Progress"
+          }
+        },
+        "labels": [
+          "ai-build"
+        ],
+        "updated": "2026-10-21T09:00:00.000+0000",
+        "comment": {
+          "comments": [],
+          "maxResults": 0,
+          "total": 0,
+          "startAt": 0
+        }
+      }
+    },
+    {
+      "id": "10017",
+      "self": "https://api.atlassian.com/ex/jira/33333333-3333-3333-3333-333333333333/rest/api/3/issue/10017",
+      "key": "SCRUM-17",
+      "fields": {
+        "summary": "Ready ticket",
+        "status": {
+          "name": "To Do",
+          "id": "1",
+          "statusCategory": {
+            "id": 2,
+            "key": "new",
+            "name": "To Do"
+          }
+        },
+        "labels": [
+          "ai-build"
+        ],
+        "updated": "2026-10-21T09:00:00.000+0000",
+        "comment": {
+          "comments": [],
+          "maxResults": 0,
+          "total": 0,
+          "startAt": 0
+        }
+      }
+    }
+  ],
+  "isLast": true
+}

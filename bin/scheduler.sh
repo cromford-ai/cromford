@@ -28,6 +28,9 @@
 #      read of the issue (closed -> closed-done). At most
 #      scheduler.parent_reads_max (20) such reads per tick; past it -> unknown.
 #      A branch is never read.
+#      A Jira or Linear project (bin/lib/trk-lane.sh) reads step 1's tickets
+#      and step 3d's issue state through the tracker contract instead: the
+#      open list, and ONE `--state all` list per tick for every parent.
 #   3b. Enforce only: bin/sibling-serial.sh parts <p> once, then one
 #      `SIBLING_STACK=0 sibling-serial.sh check <p> <KEY>` per judged candidate
 #      that is a part, ascending, at most scheduler.sibling_checks_max (20).
@@ -98,6 +101,8 @@ flock -n 8 || { line "skipped (running)"; exit 0; }
 . "$SELF/lib/file-claims.sh" 2>/dev/null
 # shellcheck source=bin/lib/preplan-lib.sh
 . "$SELF/lib/preplan-lib.sh" 2>/dev/null
+# shellcheck source=bin/lib/trk-lane.sh
+. "$SELF/lib/trk-lane.sh" 2>/dev/null
 # shellcheck source=bin/lib/stack-wait.sh
 . "$SELF/lib/stack-wait.sh" 2>/dev/null
 # shellcheck source=bin/lib/scheduler.sh
@@ -134,13 +139,17 @@ get() {
 }
 
 tick() {
-  local p="$1" PFX SLUG D since last s fails partial n m k st
+  local p="$1" PFX SLUG D since last s fails partial n m k st TK=""
   [[ $p =~ ^[A-Za-z0-9._-]{1,64}$ ]] || { line "SCHED-TICK project=$p skipped=bad-name"; return 0; }
   if [ "$MODE" = off ]; then line "SCHED-TICK project=$p mode=off"; return 0; fi
   PFX=$(preplan_key_prefix "$H" "$p") || { line "SCHED-TICK project=$p skipped=no-prefix"; return 0; }
   SLUG=$("$H/bin/fleet-conf.sh" "$p" repo 2>/dev/null)
   [[ $SLUG =~ ^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$ ]] || { line "SCHED-TICK project=$p skipped=no-slug"; return 0; }
   D="$TMP/$p"; mkdir -p "$D/.fail" "$D/planned" "$D/claims"
+  # Jira and Linear (BH-8451): column 4 says `-` for them too, so the GitHub
+  # reads below would take the code repo's issues as their tickets. They read
+  # through the tracker contract instead. Asked here, in the tick's shell.
+  if command -v trk_lane_kind >/dev/null 2>&1; then trk_lane_kind "$H" "$p"; TK="$TRK_LANE_KIND"; fi
 
   local since_s=$((AT_S - 300))
   last=$(head -1 "$H/state/scheduler/$p.last" 2>/dev/null)
@@ -154,6 +163,16 @@ tick() {
   # ── the reads, independent ones in parallel ──────────────────────────────
   (
     : > "$D/issues.tsv"
+    case "$TK" in
+      jira|linear)
+        # The open build-labelled tickets; a key with another prefix (another
+        # team, a lower-cased key, a zero-padded number) is not this project's.
+        trk_lane_list "$H" "$p" scheduler --state open > "$D/issues.trk" 2>/dev/null \
+          || { : > "$D/.fail/issues"; exit 0; }
+        jq -r --arg x "$PFX-" '.[].key // empty | select(startswith($x)) | ltrimstr($x) | select(test("^[1-9][0-9]*$"))' \
+          "$D/issues.trk" >> "$D/issues.tsv" 2>/dev/null || : > "$D/.fail/issues"
+        exit 0 ;;
+    esac
     for k in 1 2 3; do
       gh_rest GET "repos/$SLUG/issues?state=open&labels=ai-build&per_page=100&page=$k" > "$D/issues.$k" 2>/dev/null \
         && jq -e 'type == "array"' "$D/issues.$k" >/dev/null 2>&1 || { : > "$D/.fail/issues"; exit 0; }
@@ -247,7 +266,23 @@ tick() {
     fi
     if [ "$st" = d ]; then
       if grep -qx "$k" "$D/candidates"; then st=open
-      elif [ "$reads" -ge "$READS_MAX" ]; then st=unknown
+      elif [ "$reads" -ge "$READS_MAX" ] && { [ -z "$TK" ] || [ ! -e "$D/trk-all.json" ]; }; then st=unknown
+      elif [ "$TK" = jira ] || [ "$TK" = linear ]; then
+        # ONE `--state all` list per tick for every parent (tracker_read has
+        # no open/closed state), counted as one read. A failed list makes
+        # every parent unknown, never closed. A parent without the build
+        # label is not in the list: unknown.
+        if [ ! -e "$D/trk-all.json" ] && [ ! -e "$D/trk-all.fail" ]; then
+          reads=$((reads + 1))
+          trk_lane_list "$H" "$p" scheduler --state all > "$D/trk-all.json" 2>/dev/null \
+            || { rm -f "$D/trk-all.json"; : > "$D/trk-all.fail"; }
+        fi
+        st=unknown
+        if [ -e "$D/trk-all.json" ]; then
+          case "$(jq -r --arg k "$PFX-$k" '[.[] | select(.key == $k)][0].state // empty' "$D/trk-all.json" 2>/dev/null)" in
+            closed) st=closed-done ;; open) st=open ;;
+          esac
+        fi
       else
         reads=$((reads + 1))
         # To a file, never inside $( ): GH_REST_STATUS stays in this shell.

@@ -142,6 +142,14 @@ command -v sp_wait_mode >/dev/null 2>&1 && STACK_WAIT=$(sp_wait_mode "$PROJECT" 
 
 repo="${GH_ISSUES_REPO:-}"
 if [ -z "$repo" ]; then
+  # Jira and Linear (bin/lib/trk-lane.sh): column 4 says `-` for them too, and
+  # their tickets have no Blocked-by convention the harness writes yet (child
+  # filing is wave 3 of #7920), so they get no line. An absent lib is today's path.
+  TRK_LANE_KIND=""
+  # shellcheck source=bin/lib/trk-lane.sh
+  { . "$HARNESS/bin/lib/trk-lane.sh" 2>/dev/null || . "$(dirname "$0")/lib/trk-lane.sh" 2>/dev/null; } \
+    && trk_lane_kind "$HARNESS" "$PROJECT"
+  case "$TRK_LANE_KIND" in jira|linear) exit 0 ;; esac
   # The same mapping triage-gate.sh keeps; a fleet.conf project whose board
   # prefix is "-" is a GitHub-Issues board (load-project.sh onboards them so).
   # project-5 and project-6 are two such rows; their literal slugs are gone
