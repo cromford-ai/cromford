@@ -27,6 +27,20 @@
 #                 `inbuild:<box>`. No such approval = no post, no stamp, ONE
 #                 critical lane-alert (lead-inbuild-noapprove-<id>), and the
 #                 next tick checks again. An unreadable ledger = next tick.
+#              1c. BH-8476, BLOCK only, before the post: the report is read
+#                 (lrl_report_fetch, the rule step 2b uses). Unreadable = no
+#                 post, no stamp, next tick. This head's whole report with no
+#                 line starting `- [BLOCK` is INCONCLUSIVE (lrl_inconclusive):
+#                 no row, no status; its first LEAD_REVIEW_EMPTY_CAPTURE_BYTES
+#                 bytes go to logs/lead-review-empty/<id>.txt; the request is
+#                 reset once per head (a `lead_empty_block` ledger row keyed
+#                 <owner/name>#<pr>@<head>, written after the reset answered
+#                 2xx) and not stamped; a second empty result on that head is
+#                 stamped. Both alert (emptyblock-<id>, once per reset). A
+#                 truncated report, the pointer, or another head's report posts
+#                 as before. Captures older than LEAD_REVIEW_EMPTY_KEEP_DAYS
+#                 are deleted at the end of a tick.
+#                 A retracted row (bin/lead-verdict.sh retract) is absent here.
 #              2. bin/lead-verdict.sh post … --source lead --reviewer box:<box>
 #                 --note "lead-review:<id>[ lead-job:<job>][ supersedes:<rowid>][ report:<ref>]"
 #                 [--model <reviewer_model>]
@@ -72,8 +86,10 @@
 #                 head's whole report (not truncated, not the `Full report:`
 #                 pointer) and has no line starting `- [BLOCK`, no review is
 #                 posted. One ALERTS line (emptyblock-<id>, once per reset) says
-#                 so, and the request is stamped; an ALERTS append that fails
-#                 is no stamp.
+#                 so and names `bin/lead-verdict.sh retract <row>`, and the
+#                 request is stamped; an ALERTS append that fails is no stamp.
+#                 Since BH-8476 only a row an earlier tick recorded gets here:
+#                 step 1c stops a new one.
 #              2a-flip. BH-6391: when the request's scope_notes carry a
 #                 `lead-prev:` group (bin/lib/lead-prev.sh) with own-commits:0
 #                 and the verdict class (BLOCK vs MERGE/MERGE-WITH-NOTES)
@@ -421,6 +437,100 @@ lrl_block_route() {
   return 0
 }
 
+# lrl_report_fetch <row-json> <repo> <pr> <head> <out> — the lead_review_report
+#   artifact of the result's job, read once by step 1c and by step 2b with one
+#   rule. LRL_ARC: 0 = the report of THIS repo#pr at THIS head, its body in
+#   <out> (bin/lead-review.sh's replay guard); 3 = no job id, no artifact, or a
+#   report of another repo#pr or head (<out> empty); anything else = unreadable.
+#   LRL_TRUNC=1 when the artifact is truncated, LRL_RPATH its path on the
+#   owning box. rc 0 always.
+lrl_report_fetch() {
+  local row="$1" repo="$2" pr="$3" head="$4" out="$5" jid af body
+  LRL_ARC=3; LRL_TRUNC=0; LRL_RPATH=""
+  : > "$out"
+  jid=$(jq -r '.job_id // ""' <<<"$row" 2>/dev/null)
+  [ -n "$jid" ] || return 0
+  af=$(mktemp "${TMPDIR:-/tmp}/lead-review-land-a.XXXXXX") || { LRL_ARC=1; return 0; }
+  LRL_ARC=0; JOBS_ALERT=0 job_artifact_detail lead_review_report "$jid" > "$af" 2>/dev/null || LRL_ARC=$?
+  if [ "$LRL_ARC" = 0 ]; then
+    body=$(jq -r 'if (.body | type) == "string" then .body else empty end' "$af" 2>/dev/null)
+    case "$(printf '%s\n' "$body" | lr_report_title)" in
+      "# Lead review "*" ($repo#$pr at $head)")
+        printf '%s\n' "$body" > "$out"
+        [ "$(jq -r '.truncated // false' "$af" 2>/dev/null)" = true ] && LRL_TRUNC=1
+        LRL_RPATH=$(jq -r '.path // ""' "$af" 2>/dev/null) ;;
+      *) LRL_ARC=3 ;;
+    esac
+  fi
+  rm -f "$af"
+  return 0
+}
+
+# lrl_report_empty <file> — rc 0 when the last lrl_report_fetch read this
+#   head's WHOLE report (not truncated, not the pointer) and it has no line
+#   starting `- [BLOCK` (BH-6090's rule). A report that cannot prove it is
+#   empty is never empty.
+lrl_report_empty() {
+  [ "$LRL_ARC" = 0 ] && [ "$LRL_TRUNC" = 0 ] && ! grep -q '^- \[BLOCK' "$1"
+}
+
+# lrl_inconclusive <id> <safe_id> <repo> <pr> <head> <report-file> — step 1c,
+#   BH-8476: a BLOCK whose report has no finding line is INCONCLUSIVE. No verdict
+#   row and no status are written. In order:
+#   1. the first LEAD_REVIEW_EMPTY_CAPTURE_BYTES bytes of the report go to
+#      logs/lead-review-empty/<id>.txt (0 = off; a failed write is a log line);
+#   2. the PR head is read: unread = rc 1; moved = rc 0 (a dead head gates
+#      nothing, so nothing is re-requested);
+#   3. no `lead_empty_block` ledger row keyed <owner/name>#<pr>@<head> (the
+#      jobs worker's ledgers table, job_ledger_get rc 2): the request is reset
+#      (POST /api/lead-reviews/<id>/reset, the call bin/lead-verdict.sh reset
+#      makes), THEN the row is written (status rerequested), one log line and
+#      one ALERTS line (emptyblock-<id>, generation r<reset_count>). rc 3: the
+#      reset cleared the stamp, so there is nothing to stamp. A refused reset
+#      = rc 1, no row. An unreadable ledger = rc 1, no reset;
+#   4. the row is there (re-requested once already for this head): one log
+#      line and one ALERTS line. rc 0 when the alert is written (or was for
+#      this generation), rc 1 when the append failed.
+#   rc 0 = stamp. rc 1 = no stamp, the next tick retries. rc 3 = no stamp.
+lrl_inconclusive() {
+  local id="$1" sid="$2" repo="$3" pr="$4" head="$5" rf="$6" at="$3#$4 @${5:0:12} lead review $1"
+  local cap="$H/logs/lead-review-empty/$2.txt" mark mrc rout what arc capn="No raw capture (LEAD_REVIEW_EMPTY_CAPTURE_BYTES=0)"
+  local line="lead-review: empty BLOCK on $3#$4 @${5:0:12}: no verdict recorded"
+  if [ "$CAPTURE_BYTES" -gt 0 ]; then
+    capn="Raw report: logs/lead-review-empty/$sid.txt (first $CAPTURE_BYTES bytes)"
+    { mkdir -p "${cap%/*}" && head -c "$CAPTURE_BYTES" "$rf" > "$cap"; } 2>/dev/null \
+      || { log "$at: the empty report could not be written to $cap"; capn="The raw report could not be captured"; }
+  fi
+  if ! lrl_pr_head "$repo" "$pr"; then
+    log "$at: empty BLOCK, no verdict recorded; PR head read failed (HTTP $GH_REST_STATUS); nothing re-requested, not stamped, next tick retries"; return 1
+  fi
+  if [ "$LRL_HEAD" != "$head" ]; then
+    log "$line; the PR head moved; nothing re-requested"; return 0
+  fi
+  mark="$repo#$pr@$head"
+  mrc=0; job_ledger_get lead_empty_block "$mark" >/dev/null 2>&1 || mrc=$?
+  if [ "$mrc" = 1 ]; then
+    log "$at: empty BLOCK, no verdict recorded; the lead_empty_block ledger row could not be read; nothing re-requested, not stamped, next tick retries"; return 1
+  fi
+  if [ "$mrc" = 2 ]; then
+    if ! rout=$(lr_post_lead "/$id/reset" '{}' 2>&1); then
+      log "$at: empty BLOCK, no verdict recorded; the re-request was refused ($(printf '%s' "$rout" | tr '\n' ' ' | head -c 200)); not stamped, next tick retries"; return 1
+    fi
+    job_ledger_put lead_empty_block "$mark" rerequested "lead-review:$id r$RESETS" >/dev/null 2>&1 \
+      || log "$at: re-requested, but the lead_empty_block ledger row $mark could not be written; a later empty result on this head may re-request again"
+    log "$line, re-requested"
+    what="It was re-requested once"
+  else
+    log "$line, already re-requested once for this head"
+    what="a re-review was already requested once for this head, so it is not requested again"
+  fi
+  arc=0
+  alert_once "$STATE/emptyblock-$sid" "[lead-review-land] $repo#$pr @${head:0:12} lead review $id: its BLOCK report has no '- [BLOCK' finding line, so NO verdict row was recorded (inconclusive). $what. $capn; the whole report is $REF on the owning box. To decide this head by hand, record a verdict with bin/lead-verdict.sh post $repo $pr $head <VERDICT>" "r$RESETS" || arc=$?
+  [ "$what" = "It was re-requested once" ] && return 3
+  [ "$arc" = 2 ] && { log "$at: empty BLOCK, the alert was not written; not stamped, next tick retries"; return 1; }
+  return 0
+}
+
 # lrl_findings <id> <safe_id> <repo> <pr> <head> <model> <ref> <row-json> — step 2b.
 #   rc 0 = the findings review OF THIS RESULT is on the PR (posted now, or found
 #   by flag or by the marker pair `<!-- lead-review:<id> -->` +
@@ -432,7 +542,7 @@ lrl_block_route() {
 #   is posted, one ALERTS line is written: stamp, and dismiss nothing.
 lrl_findings() {
   local id="$1" sid="$2" repo="$3" pr="$4" head="$5" model="$6" ref="$7" row="$8"
-  local flag="$STATE/findings-$2" mark="<!-- lead-review:$1 -->" jmark="<!-- lead-job:$SJOB -->" f bf af grc jid rbox arc body trunc=0
+  local flag="$STATE/findings-$2" mark="<!-- lead-review:$1 -->" jmark="<!-- lead-job:$SJOB -->" f bf af grc jid rbox
   local at="$3#$4 @${5:0:12} lead review $1"
   lrl_flag_done "$flag" && return 0
   f=$(mktemp "${TMPDIR:-/tmp}/lead-review-land-r.XXXXXX") || { log "$at: mktemp failed; findings not posted, not stamped"; return 1; }
@@ -458,39 +568,29 @@ lrl_findings() {
   printf '%s\n' "$mark" > "$bf"
   [ -z "$SJOB" ] || printf '%s\n' "$jmark" >> "$bf"
   printf 'Lead review (automated lead-review lane, %s) of %s\n\n' "$model" "${head:0:12}" >> "$bf"
-  arc=3
-  if [ -n "$jid" ]; then
-    af=$(mktemp "${TMPDIR:-/tmp}/lead-review-land-a.XXXXXX") || { rm -f "$f" "$bf"; log "$at: mktemp failed; not stamped"; return 1; }
-    arc=0; JOBS_ALERT=0 job_artifact_detail lead_review_report "$jid" > "$af" 2>/dev/null || arc=$?
-    if [ "$arc" != 0 ] && [ "$arc" != 3 ]; then
-      rm -f "$f" "$bf" "$af"; log "$at: the report artifact of job $jid could not be read (HTTP ${JOBS_HTTP:-none}); findings not posted, not stamped, next tick retries"; return 1
-    fi
-    if [ "$arc" = 0 ]; then
-      # Only a report of THIS repo#pr at THIS head is posted (bin/lead-review.sh's replay guard).
-      body=$(jq -r 'if (.body | type) == "string" then .body else empty end' "$af" 2>/dev/null)
-      case "$(printf '%s\n' "$body" | lr_report_title)" in
-        "# Lead review "*" ($repo#$pr at $head)")
-          printf '%s\n' "$body" >> "$bf"
-          if [ "$(jq -r '.truncated // false' "$af" 2>/dev/null)" = true ]; then
-            trunc=1
-            printf '\nReport truncated here; the full report is on box %s at %s\n' "$rbox" "$(jq -r '.path // ""' "$af" 2>/dev/null)" >> "$bf"
-          fi ;;
-        *) arc=3 ;;
-      esac
-    fi
-    rm -f "$af"
+  af=$(mktemp "${TMPDIR:-/tmp}/lead-review-land-a.XXXXXX") || { rm -f "$f" "$bf"; log "$at: mktemp failed; not stamped"; return 1; }
+  lrl_report_fetch "$row" "$repo" "$pr" "$head" "$af"
+  if [ "$LRL_ARC" != 0 ] && [ "$LRL_ARC" != 3 ]; then
+    rm -f "$f" "$bf" "$af"; log "$at: the report artifact of job $jid could not be read (HTTP ${JOBS_HTTP:-none}); findings not posted, not stamped, next tick retries"; return 1
   fi
-  [ "$arc" = 3 ] && printf 'Full report: %s on box %s\n' "$ref" "$rbox" >> "$bf"
+  if [ "$LRL_ARC" = 0 ]; then
+    cat "$af" >> "$bf"
+    [ "$LRL_TRUNC" = 0 ] || printf '\nReport truncated here; the full report is on box %s at %s\n' "$rbox" "$LRL_RPATH" >> "$bf"
+  fi
+  [ "$LRL_ARC" = 3 ] && printf 'Full report: %s on box %s\n' "$ref" "$rbox" >> "$bf"
   # BH-6090: a BLOCK report with no `- [BLOCK` line briefs nothing a round or a
   # person can answer (a postscript was stored as the report). Never post it.
-  if [ "$arc" = 0 ] && [ "$trunc" = 0 ] && ! grep -q '^- \[BLOCK' <<<"$body"; then
-    rm -f "$f" "$bf"
-    alert_once "$STATE/emptyblock-$sid" "[lead-review-land] $repo#$pr @${head:0:12} lead review $id: its BLOCK report has no '- [BLOCK' finding line, so no REQUEST_CHANGES review was posted and no fix round is briefed. The BLOCK verdict row stands. Read $ref on box $rbox (and the session transcript), then request a new review with bin/lead-verdict.sh request $repo $pr $head or record one with bin/lead-verdict.sh post" "r$RESETS"
+  # BH-8476: the done branch checks this BEFORE it posts a row, so this arm is
+  # reached by a row an earlier tick already recorded.
+  if lrl_report_empty "$af"; then
+    rm -f "$f" "$bf" "$af"
+    alert_once "$STATE/emptyblock-$sid" "[lead-review-land] $repo#$pr @${head:0:12} lead review $id: its BLOCK report has no '- [BLOCK' finding line, so no REQUEST_CHANGES review was posted and no fix round is briefed. The BLOCK verdict row ${ROWREF:-} stands: retract it with bin/lead-verdict.sh retract ${ROWREF#\#} --reason empty-report, then request a new review with bin/lead-verdict.sh request $repo $pr $head. Read $ref on box $rbox (and the session transcript)" "r$RESETS"
     case $? in 2) log "$at: empty BLOCK withheld but the alert was not written; not stamped, next tick retries"; return 1 ;; esac
     log "$at: BLOCK report has no finding line; review withheld, alerted"; return 2
   fi
   # BH-3780: the hold (when one is due) goes on the ticket BEFORE the review, so
   # no resolver tick ever sees this review without it.
+  rm -f "$af"
   lrl_block_route "$id" "$sid" "$repo" "$pr" "$head" "$bf" || { rm -f "$f" "$bf"; return 1; }
   # Plain commands into a file, never $( ): GH_REST_STATUS must survive to be read.
   grc=0; gh_rest POST "repos/$repo/pulls/$pr/reviews" -f commit_id="$head" -f event=REQUEST_CHANGES -F body=@"$bf" > "$f" 2>/dev/null || grc=$?
@@ -588,7 +688,8 @@ lrl_ask_human() {
 # human verdict is final on the head (note token human-final:#<id>); NEWER is
 # the newest row of any source on $HEAD above SUPERSEDES that no landing of
 # this request wrote ("-" when none, or when SUPERSEDES is "-"). BH-5773: the
-# 503 retry in step 2 re-reads through it too.
+# 503 retry in step 2 re-reads through it too. BH-8476: a retracted row
+# (retracted_at set, bin/lead-verdict.sh retract) is absent from every count.
 lrl_have() {
   jq -r --arg h "$HEAD" --arg tok "lead-review:$ID" \
     --arg job "$SJOB" --argjson resets "$RESETS" '
@@ -596,7 +697,7 @@ lrl_have() {
     def lr: .source == "lead" and (toks | index($tok) != null);
     def mine: lr and .head_sha == $h and ($job == "" or (toks | index("lead-job:" + $job) != null)
         or ((toks | any(startswith("lead-job:")) | not) and $resets == 0));
-    [.rows[]?] as $r
+    [.rows[]? | select(.retracted_at == null)] as $r
     | [ ([$r[] | select(mine)] | length),
         ([$r[] | select(mine and (toks | index("authority:human-required") != null))] | length),
         ([$r[] | select(lr and (mine | not)) | .id] | max // "-"),
@@ -665,6 +766,19 @@ case "$SPOTCHECK_PCT" in
   *) log "LEAD_REVIEW_SPOTCHECK_PCT='$SPOTCHECK_PCT' is not 0..100; spot-check off this tick"
      SPOTCHECK_PCT=0 ;;
 esac
+
+# BH-8476: the empty-report capture size and how long captures are kept.
+# 400 and 30 are only the fallbacks of the lane knobs
+# LEAD_REVIEW_EMPTY_CAPTURE_BYTES / LEAD_REVIEW_EMPTY_KEEP_DAYS
+# (catalog/lanes.d/lead-review-land.json). Out of range = logged, the fallback.
+CAPTURE_BYTES="${LEAD_REVIEW_EMPTY_CAPTURE_BYTES:-400}"
+if ! [[ "$CAPTURE_BYTES" =~ ^(0|[1-9][0-9]{0,4})$ ]] || [ "$CAPTURE_BYTES" -gt 65536 ]; then
+  log "LEAD_REVIEW_EMPTY_CAPTURE_BYTES='$CAPTURE_BYTES' is not 0..65536; using 400"; CAPTURE_BYTES=400
+fi
+KEEP_DAYS="${LEAD_REVIEW_EMPTY_KEEP_DAYS:-30}"
+if ! [[ "$KEEP_DAYS" =~ ^[1-9][0-9]{0,2}$ ]] || [ "$KEEP_DAYS" -gt 365 ]; then
+  log "LEAD_REVIEW_EMPTY_KEEP_DAYS='$KEEP_DAYS' is not 1..365; using 30"; KEEP_DAYS=30
+fi
 
 LIST=$(mktemp "${TMPDIR:-/tmp}/lead-review-land.XXXXXX") || { log "mktemp failed; tick skipped"; exit 0; }
 trap 'rm -f "$LIST"' EXIT
@@ -747,10 +861,32 @@ while IFS= read -r ROW; do
         def mine: .source == "lead" and (toks | index($tok) != null) and .head_sha == $h
           and ($job == "" or (toks | index("lead-job:" + $job) != null)
             or ((toks | any(startswith("lead-job:")) | not) and $resets == 0));
-        [.rows[]? | select(mine)] | max_by(.id) | if . == null then "" else "#\(.id)" end' "$VT" 2>/dev/null)
+        [.rows[]? | select(.retracted_at == null and mine)] | max_by(.id) | if . == null then "" else "#\(.id)" end' "$VT" 2>/dev/null)
       rm -f "$VT"
       case "$HAVE" in ''|*[!0-9]*) log "$REPO#$PR @${HEAD:0:12} lead review $ID: unparseable verdicts answer; next tick retries"; continue ;; esac
-      if [ "$HAVE" = 0 ] && [ "$SUPERSEDES" != - ] && [ "${NEWER:--}" != - ]; then
+      # 1c. BH-8476: a BLOCK about to be posted is read FIRST. Its report with
+      # no `- [BLOCK` line is inconclusive: no row, no status (lrl_inconclusive).
+      # An unread report posts nothing this tick; one that is not provably
+      # empty (truncated, a pointer, another head's) posts as before.
+      EB=post
+      if [ "$HAVE" = 0 ] && [ "$VERDICT" = BLOCK ] && { [ "$SUPERSEDES" = - ] || [ "${NEWER:--}" = - ]; }; then
+        RF=$(mktemp "${TMPDIR:-/tmp}/lead-review-land-e.XXXXXX") || { log "mktemp failed; $ID skipped"; continue; }
+        lrl_report_fetch "$ROW" "$REPO" "$PR" "$HEAD" "$RF"
+        if [ "$LRL_ARC" != 0 ] && [ "$LRL_ARC" != 3 ]; then
+          EB=skip
+          log "$REPO#$PR @${HEAD:0:12} lead review $ID: the BLOCK report could not be read (rc $LRL_ARC, HTTP ${JOBS_HTTP:-none}); no verdict posted, not stamped, next tick retries"
+        elif lrl_report_empty "$RF"; then
+          IRC=0; lrl_inconclusive "$ID" "$SAFE_ID" "$REPO" "$PR" "$HEAD" "$RF" || IRC=$?
+          if [ "$IRC" = 0 ]; then EB=stamp; else EB=skip; fi
+        fi
+        rm -f "$RF"
+        [ "$EB" = skip ] && continue
+      fi
+      if [ "$EB" = stamp ]; then
+        # Inconclusive and done with (a dead head, or re-requested once already
+        # and alerted): stamped like rc 3; nothing is posted.
+        PRC=3
+      elif [ "$HAVE" = 0 ] && [ "$SUPERSEDES" != - ] && [ "${NEWER:--}" != - ]; then
         # BH-8349: never re-land over a newer verdict row of any source (a human
         # verdict, another request's landing, a box row). Stamped like rc 3, so
         # it is not read again; nothing is posted.
@@ -921,6 +1057,9 @@ while IFS= read -r ROW; do
   esac
 done < <(jq -c '.requests[]' "$LIST")
 
+# BH-8476: retention of the empty-report captures. The re-request marker is a
+# lead_empty_block ledger row (a few a month), kept by the ledgers' own policy.
+[ -d "$H/logs/lead-review-empty" ] && find "$H/logs/lead-review-empty" -maxdepth 1 -type f -mtime +"$KEEP_DAYS" -delete 2>/dev/null
 log "seen=$SEEN promoted=$PROMOTED stamped=$STAMPED alerted=$ALERTED rung=$RUNG"
 # BH-4057: a tick refused by the lock left rerun-owed; this one reruns once for it. The lock is
 # released and fd 9 closed in THIS shell first: lcw_rerun runs in $( ), where its own close

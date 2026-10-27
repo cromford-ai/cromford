@@ -4,9 +4,9 @@
 #
 # One tick: GET /api/secrets/envelope?state=pending&limit=$SECRETS_APPLY_BATCH
 # (main bearer AND x-envelope-hub-token), then bin/envelope-consume.sh <id> once
-# per pending id whose scope starts `ai-account:`, one after the other (two
-# envelopes for one env file never race). Other scopes (tracker:) stay for
-# their own consumer. `flock -n locks/secrets-apply.lock` dedupes: a held lock
+# per pending id whose scope starts `ai-account:` or `fleet:` (BH-8541), one
+# after the other (two envelopes for one env file never race). Other scopes
+# (tracker:) stay for their own consumer. `flock -n locks/secrets-apply.lock` dedupes: a held lock
 # skips the tick. Rotated keys envelope.key.<epoch> older than the TTL are
 # deleted first. Doc: docs/SECRETS-ENVELOPE.md.
 #
@@ -105,7 +105,7 @@ fi
 CONSUMED=0; FAILED=0; SKIPPED=0
 while IFS=$'\t' read -r id scope; do
   [ -n "$id" ] || continue
-  case "$scope" in ai-account:*) ;; *) SKIPPED=$((SKIPPED + 1)); continue ;; esac
+  case "$scope" in ai-account:*|fleet:*) ;; *) SKIPPED=$((SKIPPED + 1)); continue ;; esac
   "$SELF/envelope-consume.sh" "$id" >/dev/null 2>&1; rc=$?
   case "$rc" in
     0) CONSUMED=$((CONSUMED + 1)) ;;

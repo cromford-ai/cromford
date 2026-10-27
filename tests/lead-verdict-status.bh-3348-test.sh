@@ -123,9 +123,15 @@ reset; echo 422 > "$G/status-code"
 vsp "$SLUG" "$HEAD1" success d; RC=$?
 [ "$RC" = 1 ] && [ "$(grep -c . "$T/vs.err")" = 1 ] && grep -q 'HTTP 422' "$T/vs.err" && ok \
   || bad "S3 a 422 is rc 1 with one stderr line naming it (rc $RC, err $(cat "$T/vs.err"))"
+# TEST-CHANGE (BH-8476): pending is now a valid state (bin/lead-verdict.sh
+# retract clears a head with no standing row to pending), so the refused-state
+# probe uses `error`, which vs_publish still refuses, and pending is pinned as sent.
 reset
+vsp "$SLUG" "$HEAD1" error d; RC=$?
+[ "$RC" = 2 ] && [ "$(statuses)" = 0 ] && ok || bad "S3 state error is rc 2 and sends nothing (rc $RC)"
 vsp "$SLUG" "$HEAD1" pending d; RC=$?
-[ "$RC" = 2 ] && [ "$(statuses)" = 0 ] && ok || bad "S3 state pending is rc 2 and sends nothing (rc $RC)"
+[ "$RC" = 0 ] && ghlog | grep -q -- '-f state=pending' && ok || bad "S3 state pending is rc 0 and is sent (rc $RC): $(ghlog)"
+reset
 vsp "$SLUG" "${HEAD1:0:39}" success d; RC=$?
 [ "$RC" = 2 ] && [ "$(statuses)" = 0 ] && ok || bad "S3 a 39-char sha is rc 2 and sends nothing (rc $RC)"
 ( . "$H/bin/lib/verdict-status.sh"; LEAD_VERDICT_CONTEXT=other vs_context ) | grep -x other >/dev/null && ok || bad "S4 LEAD_VERDICT_CONTEXT overrides the context"

@@ -30,10 +30,15 @@
 # Part L runs the REAL bin/lead-review-land.sh (the hub land lane) with curl,
 # gh and bin/lane-alert.sh stubbed:
 #   L1  a BLOCK report with no `- [BLOCK` line: no review, one ALERTS line,
-#       stamped, a second tick adds nothing
+#       re-requested and not stamped; a second tick adds no alert and stamps
 #   L1b a BLOCK report with only `- [NOTE]` lines: the same
 #   L1c the ALERTS append fails: nothing posted, nothing stamped
 #   L1d a re-landed empty BLOCK dismisses nothing (BH-5400 arm skipped)
+# TEST-CHANGE (BH-8476): an empty BLOCK report no longer lands a row. The first
+# empty result on a head posts no row, re-requests the review once
+# (POST /api/lead-reviews/lr-1/reset) and is not stamped; only a later empty
+# result on that head (the lead_empty_block ledger row) is stamped. L1, L1b, L1c and L1d keep their
+# point (no review posted, one alert, nothing dismissed) with those counts.
 #   L2  a `- [BLOCK] a.sh:3` report posts as today
 #   L3  a `- [BLOCK needs-human]` report posts as today
 #   L4  a truncated artifact posts as today
@@ -319,10 +324,20 @@ qp() { printf '%s' "${p#*\?}" | tr '&' '\n' | sed -n "s/^$1=//p" | head -1; }
 code=200; out='{}'
 case "$m $p" in
   *"/api/lead-protected-paths"*) lpp-answer "$m" "$url" "$body"; exit 0 ;;
+  "GET /api/ledger?"*)
+    [ -f "@L@/ledger.json" ] || echo '{}' > "@L@/ledger.json"
+    k=$(qp kind); v=$(qp key); v=$(printf '%b' "${v//%/\\x}")
+    out=$(jq -c --arg k "$k" --arg v "$v" '.[$k + " " + $v] // empty | {ledger:.}' "@L@/ledger.json")
+    [ -n "$out" ] || { code=404; out='{"error":"not found"}'; } ;;
+  "PUT /api/ledger")
+    [ -f "@L@/ledger.json" ] || echo '{}' > "@L@/ledger.json"
+    jq -c --argjson r "$body" '. + {($r.kind + " " + $r.key): $r}' "@L@/ledger.json" > "@L@/ledger.tmp" && mv "@L@/ledger.tmp" "@L@/ledger.json"
+    out=$(jq -c '{ledger:.}' <<<"$body") ;;
   "GET /api/lead-reviews"*) out=$(cat "@L@/requests.json") ;;
   "POST /api/lead-reviews/"*/promoted)
     if [ "$lead" != 1 ]; then code=403; out='{"error":"needs the lead token"}'
     else out='{"request":{"promoted_verdict_at":"2026-10-12T00:00:00Z"}}'; fi ;;
+  "POST /api/lead-reviews/"*/reset) out='{"request":{"id":"lr-1","status":"requested","reset_count":1}}' ;;
   "GET /api/jobs/"*/artifacts)
     j="${p#/api/jobs/}"; j="${j%/artifacts}"
     if [ -f "@L@/artifacts-$j.json" ]; then out=$(cat "@L@/artifacts-$j.json")
@@ -402,9 +417,9 @@ lart() {
 lreport() { printf '# Lead review lr-7-%s (%s#7 at %s)\n\n- verdict: BLOCK\n- rules pack: red\n\n%s\n' "${LSHA:0:12}" "$SLUG" "$LSHA" "$1"; }
 lreset() {
   scratch_rm "$L/log"; mkdir -p "$L/log"; : > "$L/log/gh"; : > "$L/log/worker"; : > "$L/log/alerts"
-  rm -f "$L/vrows.json" "$L"/reviews-*.json "$L"/artifacts-*.json "$HL/logs/lead-review-land.log"
+  rm -f "$L/ledger.json" "$L/vrows.json" "$L"/reviews-*.json "$L"/artifacts-*.json "$HL/logs/lead-review-land.log"
   scratch_rm "$HL/logs/ALERTS.log"
-  scratch_rm "$ST"
+  scratch_rm "$ST"; scratch_rm "$HL/state/lead-review"
   lsetreqs "$(lreq lr-1 done BLOCK j1)"
 }
 ltick() {
@@ -414,6 +429,8 @@ ltick() {
 }
 rposts()  { grep -c "^POST repos/$SLUG/pulls/7/reviews " "$L/log/gh"; }
 stamps()  { grep -c '^POST /api/lead-reviews/lr-1/promoted ' "$L/log/worker"; }
+resets()  { grep -c '^POST /api/lead-reviews/lr-1/reset ' "$L/log/worker"; }
+vposts()  { grep -c '^POST /api/verdicts ' "$L/log/worker"; }
 dismissals() { grep -c "^PUT repos/$SLUG/pulls/7/reviews/[0-9]*/dismissals " "$L/log/gh"; }
 alerts_empty() { cat "$HL/logs/ALERTS.log" 2>/dev/null | grep -c "no '- \[BLOCK' finding line"; }
 lbody() { cat "$L/log/body-7-$1" 2>/dev/null; }
@@ -425,23 +442,30 @@ lreset; lart j1 "$(lreport "$POSTSCRIPT")"; ltick
 [ "$(rposts)" = 0 ] && ok || bad "L1 posted $(rposts) review(s) for a BLOCK with no finding line: $(lbody 1)"
 [ "$(alerts_empty)" = 1 ] && ok || bad "L1 want one ALERTS line, got $(alerts_empty): $(cat "$HL/logs/ALERTS.log" 2>/dev/null)"
 grep -qF "$SLUG#7 @${LSHA:0:12} lead review lr-1" "$HL/logs/ALERTS.log" 2>/dev/null && ok || bad "L1 the ALERTS line does not name the PR and request"
-[ "$(stamps)" = 1 ] && ok || bad "L1 want one stamp, got $(stamps)"
+# TEST-CHANGE (BH-8476): was 1 stamp and a landed row; now no row, 1 reset, no stamp.
+[ "$(stamps)" = 0 ] && [ "$(resets)" = 1 ] && [ "$(vposts)" = 0 ] && ok || bad "L1 want 0 stamps, 1 reset, 0 rows: $(stamps) $(resets) $(vposts)"
 [ "$(dismissals)" = 0 ] && ok || bad "L1 dismissed a review"
 [ -e "$ST/findings-lr-1" ] && bad "L1 wrote the findings flag for a review it never posted" || ok
-llog | grep -q 'BLOCK report has no finding line; review withheld, alerted' && ok || bad "L1 no log line: $(llog | tail -2)"
+llog | grep -q 'empty BLOCK on example-org/demo-os#7 @aaaaaaaaaaaa: no verdict recorded, re-requested' && ok || bad "L1 no log line: $(llog | tail -2)"
 ltick
 [ "$(alerts_empty)" = 1 ] && ok || bad "L1 a second tick alerted again ($(alerts_empty))"
 [ "$(rposts)" = 0 ] && ok || bad "L1 a second tick posted"
+[ "$(stamps)" = 1 ] && [ "$(resets)" = 1 ] && ok || bad "L1 the second tick: want 1 stamp and no new reset: $(stamps) $(resets)"
 
 # ── L1b: only NOTE lines under a BLOCK verdict ──
 lreset; lart j1 "$(lreport $'Findings\n- [NOTE] b.sh:1 rename it\n\nVERDICT: BLOCK')"; ltick
-[ "$(rposts)" = 0 ] && [ "$(alerts_empty)" = 1 ] && [ "$(stamps)" = 1 ] && ok || bad "L1b posts=$(rposts) alerts=$(alerts_empty) stamps=$(stamps)"
+# TEST-CHANGE (BH-8476): stamps 1 -> 0; the request is re-requested instead.
+[ "$(rposts)" = 0 ] && [ "$(alerts_empty)" = 1 ] && [ "$(stamps)" = 0 ] && [ "$(resets)" = 1 ] && ok || bad "L1b posts=$(rposts) alerts=$(alerts_empty) stamps=$(stamps) resets=$(resets)"
 
 # ── L1c: the ALERTS append fails: nothing posted, nothing stamped ──
-lreset; lart j1 "$(lreport "$POSTSCRIPT")"; mkdir -p "$HL/logs/ALERTS.log"; ltick
+# TEST-CHANGE (BH-8476): the stamp now follows only a re-requested head (the
+# lead_empty_block ledger row), so the row is placed first; the log line is the
+# new path's.
+lreset; lart j1 "$(lreport "$POSTSCRIPT")"; mkdir -p "$HL/logs/ALERTS.log"
+jq -nc --arg k "$SLUG#7@$LSHA" '{("lead_empty_block " + $k): {kind:"lead_empty_block", key:$k, status:"rerequested"}}' > "$L/ledger.json"; ltick
 [ "$(rposts)" = 0 ] && ok || bad "L1c posted with no alert written"
 [ "$(stamps)" = 0 ] && ok || bad "L1c stamped with no alert written ($(stamps))"
-llog | grep -q 'empty BLOCK withheld but the alert was not written' && ok || bad "L1c no log line: $(llog | tail -2)"
+llog | grep -q 'empty BLOCK, the alert was not written; not stamped' && ok || bad "L1c no log line: $(llog | tail -2)"
 scratch_rm "$HL/logs/ALERTS.log"
 
 # ── L1d: landed BLOCK (job j1), reset, the re-review's report is a postscript (job j2) ──
@@ -451,7 +475,8 @@ lreset; lart j1 "$(lreport $'Findings\n- [BLOCK] a.sh:3 the guard is inverted\n\
 lart j2 "$(lreport "$POSTSCRIPT")"; lsetreqs "$(lreq lr-1 done BLOCK j2 1)"; ltick
 [ "$(rposts)" = 0 ] && ok || bad "L1d the re-land posted the postscript"
 [ "$(dismissals)" = 0 ] && ok || bad "L1d the re-land dismissed the standing review ($(dismissals)) with nothing to replace it"
-[ "$(alerts_empty)" = 1 ] && [ "$(stamps)" = 1 ] && ok || bad "L1d alerts=$(alerts_empty) stamps=$(stamps)"
+# TEST-CHANGE (BH-8476): stamps 1 -> 0 and no second row; the re-review is re-requested.
+[ "$(alerts_empty)" = 1 ] && [ "$(stamps)" = 0 ] && [ "$(resets)" = 1 ] && [ "$(vposts)" = 0 ] && ok || bad "L1d alerts=$(alerts_empty) stamps=$(stamps) resets=$(resets) rows=$(vposts)"
 
 # ── L2: a real BLOCK line posts as today ──
 lreset; lart j1 "$(lreport $'Findings\n- [BLOCK] a.sh:3 the guard is inverted\n\nVERDICT: BLOCK')"; ltick

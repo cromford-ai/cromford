@@ -7,6 +7,14 @@
 #      The read deletes the envelope, so this runs at most once per id.
 #   2. Decrypt with openssl pkeyutl, RSA-OAEP SHA-256 (MGF1 SHA-256): the
 #      current key, then each envelope.key.<epoch> younger than the TTL.
+#   2b. A fleet:<target>[:<arg>] scope (BH-8541) stops here: bin/lib/envelope-fleet.sh
+#      writes the value to the hub's OWN env file (fly.env or global.env; no
+#      ssh, no vendor probe), reads it back and sets its flag. For
+#      fleet:telegram the hub then runs bin/fleet-telegram-chat.sh (#7974),
+#      which stores telegram.chat_id and telegram.bot_present. Confirm detail:
+#      `fleet=<fly|tailscale|telegram>[ chat=<ok|waiting|not-installed>]`, or
+#      apply_failed `fleet=<target> <refused|write-failed|unflagged>` /
+#      `fleet=telegram chat=failed` (the token line stays written). Exits 0, 1, 2, 3, 75.
 #   3. Parse the scope ai-account:<vendor>:<label>:<use_kind>[:<project>].
 #   4. Prove the secret: bin/lib/vendor/<vendor>.sh probe, the value on stdin.
 #   5. Write it to every target box over ssh, the value on stdin:
@@ -121,6 +129,40 @@ for k in "${KEYS[@]}"; do
 done
 CT=""
 [ "$OKD" = 1 ] || fail 2 "decrypt failed"
+
+# ── 2b. fleet: scopes (BH-8541) — the hub's own env files, no ssh, no probe ──
+case "$SCOPE" in
+  fleet:*)
+    # shellcheck source=bin/lib/envelope-fleet.sh
+    . "$SELF/lib/envelope-fleet.sh" || fail 1 "fleet lib missing"
+    FPARSED=$(envelope_fleet_scope_parse "$SCOPE") || FPARSED="-"
+    FT=${FPARSED%% *}
+    printf '%s' "$VALUE" > "$TMP/fleet.val"; VALUE=""
+    envelope_fleet_apply "$SCOPE" "$TMP/fleet.val" >/dev/null 2>&1; FRC=$?
+    rm -f "$TMP/fleet.val"
+    log "fleet $FT rc=$FRC"
+    case "$FRC" in
+      0) ;;
+      1) fail 1 "fleet=$FT refused" ;;
+      3) fail 1 "fleet=$FT unflagged" ;;
+      *) fail 1 "fleet=$FT write-failed" ;;
+    esac
+    if [ "$FT" != telegram ]; then confirm true "fleet=$FT" || exit 75; exit 0; fi
+    if [ ! -x "$SELF/fleet-telegram-chat.sh" ]; then
+      log "telegram chat verb not installed"
+      confirm true "fleet=telegram chat=not-installed" || exit 75; exit 0
+    fi
+    # The consumer sourced global.env at start, so its env holds the OLD token:
+    # the verb runs without it and reads the line just written. Its line may
+    # hold a chat id or vendor text: it is never logged or put in the event.
+    TL=$(env -u TELEGRAM_BOT_TOKEN HARNESS="$H" "$SELF/fleet-telegram-chat.sh" 2>/dev/null | head -n 1; exit "${PIPESTATUS[0]}"); TRC=$?
+    case "$TRC:$TL" in
+      "0:TELEGRAM_CHAT ok "?*) confirm true "fleet=telegram chat=ok" || exit 75; exit 0 ;;
+      "0:TELEGRAM_CHAT waiting" | "0:TELEGRAM_CHAT waiting "*) confirm true "fleet=telegram chat=waiting" || exit 75; exit 0 ;;
+    esac
+    log "telegram chat verb rc=$TRC"
+    fail 1 "fleet=telegram chat=failed" ;;
+esac
 
 # ── 3. scope ──────────────────────────────────────────────────────────────────
 if ! PARSED=$(envelope_scope_parse "$SCOPE"); then fail 1 "scope refused: $PARSED"; fi

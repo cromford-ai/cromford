@@ -80,7 +80,8 @@ lead_carry() {
   fi
   # Gate 50's source rule: the newest lead word on another head that is not
   # itself a replay.
-  IFS=$'\t' read -r ph pw pid < <(jq -r --arg h "$head" '[.rows[] | select(.source == "lead"
+  # BH-8476: a retracted lead BLOCK is absent.
+  IFS=$'\t' read -r ph pw pid < <(jq -r --arg h "$head" '[.rows[] | select(.retracted_at == null) | select(.source == "lead"
       and ((.head_sha // "") | ascii_downcase) != $h
       and ((.verdict // "") | IN("MERGE", "MERGE-WITH-NOTES", "BLOCK"))
       and (((.note // "") | contains("lead-replay:")) | not))]

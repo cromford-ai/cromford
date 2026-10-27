@@ -3,9 +3,9 @@
 # hub's env files (BH-7976, BH-7939.2). Sourced, never run. It prints nothing at
 # source time and never prints a secret value.
 #
-# This slice has no production caller yet: the envelope consumer
-# (bin/envelope-consume.sh, BH-7965) calls envelope_fleet_apply for `fleet:`
-# scopes in the BH-7976 child C1. See docs/notes/2026-10-25-BH-7976-fleet-accounts.md.
+# Called by bin/envelope-consume.sh for `fleet:` scopes (BH-8541), which
+# bin/secrets-apply.sh runs once per pending envelope. See
+# docs/notes/2026-10-25-BH-7976-fleet-accounts.md.
 #
 # THE SCOPE GRAMMAR (worker/jobs/src/routes/secret-envelopes.js FLEET_SCOPE_RE
 # is the same; tests/fixtures/fleet-scopes.bh-7939.tsv is the one table):

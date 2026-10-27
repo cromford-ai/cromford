@@ -347,7 +347,8 @@ lw_replay() {
   resp=$(JOBS_ALERT=0 _jobs_req GET "/api/verdicts?repo=$slug&pr=$pr" 2>/dev/null) \
     && printf '%s' "$resp" | jq -e '(.rows | type) == "array" and .truncated != true' >/dev/null 2>&1 \
     || { LW_REPLAY_WHY="verdicts unreadable"; return 1; }
-  IFS=$'\t' read -r ph pw < <(printf '%s' "$resp" | jq -r --arg h "$sha" '[.rows[] | select(.source == "lead"
+  # BH-8476: a retracted lead BLOCK is absent.
+  IFS=$'\t' read -r ph pw < <(printf '%s' "$resp" | jq -r --arg h "$sha" '[.rows[] | select(.retracted_at == null) | select(.source == "lead"
       and ((.head_sha // "") | ascii_downcase) != $h
       and ((.verdict // "") | IN("MERGE", "MERGE-WITH-NOTES", "BLOCK"))
       and (((.note // "") | contains("lead-replay:")) | not))]

@@ -539,10 +539,15 @@ export const routes = [
         const standingOnly = url.searchParams.get("standing_only") === "1";
         if (standingOnly && !head) return json(400, { error: "standing_only needs head" });
         await ensureTable(env, "verdicts");
+        // BH-8476: a retracted lead BLOCK row is absent for standing and kept,
+        // annotated, in history (routes/verdict-retractions.js).
+        await ensureTable(env, "verdict_retractions");
         let rows = [];
         if (!standingOnly) {
           const hrows = await env.DB.prepare(
-            "SELECT * FROM verdicts WHERE repo=?1 AND pr=?2 ORDER BY id DESC LIMIT 100"
+            `SELECT v.*, r.created_at AS retracted_at, r.reason AS retract_reason
+               FROM verdicts v LEFT JOIN verdict_retractions r ON r.verdict_id = v.id
+              WHERE v.repo=?1 AND v.pr=?2 ORDER BY v.id DESC LIMIT 100`
           ).bind(repo, pr).all();
           rows = hrows.results || [];
         }
@@ -565,6 +570,7 @@ export const routes = [
           // sql-ident-ok: STANDING_SOURCES is a frozen export const in lib/verdict-sources.js; unproven is a literal picked by mode, order a literal
           const standingSql = (order) => `SELECT * FROM verdicts WHERE repo=?1 AND pr=?2 AND head_sha=?3
                AND source IN (${STANDING_SOURCES.map((s) => `'${s}'`).join(",")})${unproven}
+               AND id NOT IN (SELECT verdict_id FROM verdict_retractions)
              ORDER BY ${order} LIMIT 1`;
           // BH-8349: the newest human row first. One statement on the hot path;
           // a second only when that human row is not final (an unproven MERGE

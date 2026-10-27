@@ -1,0 +1,11 @@
+{
+  "env": "LEAD_REVIEW_EMPTY_CAPTURE_BYTES",
+  "type": "int",
+  "default": 400,
+  "min": 0,
+  "max": 65536,
+  "unit": "bytes",
+  "zero_means": "off",
+  "required": false,
+  "note": "BH-8476: how many bytes of a lead BLOCK report with no '- [BLOCK' finding line (an inconclusive result: no verdict row is recorded) are written to logs/lead-review-empty/<request-id>.txt, so a person can see why the model answered BLOCK with no finding. 0 = off: no file. Anything not 0..65536 is logged and reads 400."
+}

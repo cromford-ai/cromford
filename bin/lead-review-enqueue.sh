@@ -1342,25 +1342,25 @@ for SLUG in $AUTO_REPOS; do
       if ! JOBS_ALERT=0 _jobs_req GET "/api/verdicts?repo=$SLUG&pr=$N" > "$WORK/vd" 2>/dev/null \
          || ! jq -e '(.rows | type) == "array" and .truncated != true' "$WORK/vd" >/dev/null 2>&1; then
         WHY="verdicts read failed; requesting as before"
-      elif jq -e --arg h "$HEAD" 'any(.rows[]; .source == "lead" and ((.head_sha // "") | ascii_downcase) == $h
+      elif jq -e --arg h "$HEAD" 'any(.rows[] | select(.retracted_at == null); .source == "lead" and ((.head_sha // "") | ascii_downcase) == $h
              and ((.note // "") | split(" ") | any(startswith("lead-replay:"))))' "$WORK/vd" >/dev/null 2>&1; then
         # Already replayed onto this head (an advice row, rc 5, may not stand):
         # the row is the record, so never post it a second time.
         REPLAYED=$((REPLAYED + 1))
         skip_line replayed "$SLUG#$N @$H12: lead word already replayed onto this head; no post, no review requested"
         continue
-      elif { [ "$APPROVED" = 0 ] || [ "$BCARRY" = 1 ]; } && jq -e --arg h "$HEAD" 'any(.rows[]; ((.head_sha // "") | ascii_downcase) == $h
+      elif { [ "$APPROVED" = 0 ] || [ "$BCARRY" = 1 ]; } && jq -e --arg h "$HEAD" 'any(.rows[] | select(.retracted_at == null); ((.head_sha // "") | ascii_downcase) == $h
              and ((.source // "") | IN("lead", "human", "risk-tier")))' "$WORK/vd" >/dev/null 2>&1; then
         VERD=$((VERD + 1)); skip_line verdict "$SLUG#$N @$H12: a lead/human/risk-tier row stands on this head (verdict history)"; continue
       else
-        # BH-6391: the earlier REVIEWED head (a replay row has no review behind it).
-        IFS=$'\t' read -r LPVH LPVW < <(jq -r --arg h "$HEAD" '[.rows[] | select(.source == "lead"
+        # BH-6391: the earlier REVIEWED head (a replay row has no review behind it). BH-8476: no read counts a retracted row.
+        IFS=$'\t' read -r LPVH LPVW < <(jq -r --arg h "$HEAD" '[.rows[] | select(.retracted_at == null) | select(.source == "lead"
             and ((.head_sha // "") | ascii_downcase) != $h
             and ((.verdict // "") | IN("MERGE", "MERGE-WITH-NOTES", "BLOCK"))
             and (((.note // "") | split(" ") | any(startswith("lead-replay:"))) | not))]
           | max_by(.id) // empty | "\(.head_sha | ascii_downcase)\t\(.verdict)"' "$WORK/vd" 2>/dev/null)
         [[ "$LPVH" =~ ^[0-9a-f]{40}$ ]] || { LPVH=""; LPVW=""; }
-        IFS=$'\t' read -r PH PW PID PM < <(jq -r --arg h "$HEAD" '[.rows[] | select(.source == "lead"
+        IFS=$'\t' read -r PH PW PID PM < <(jq -r --arg h "$HEAD" '[.rows[] | select(.retracted_at == null) | select(.source == "lead"
             and ((.head_sha // "") | ascii_downcase) != $h
             and ((.verdict // "") | IN("MERGE", "MERGE-WITH-NOTES", "BLOCK")))]
           | max_by(.id) // empty | "\(.head_sha | ascii_downcase)\t\(.verdict)\t\(.id)\t\(.review_mode // "")"' "$WORK/vd" 2>/dev/null)

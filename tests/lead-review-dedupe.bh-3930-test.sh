@@ -25,6 +25,8 @@
 #         box-only history, an empty lead word: today's request path.
 #     D7  HEAD already carries a source=lead lead-replay: row and nothing
 #         stands (advice): no second post, no request, replayed=1.
+#     D8  (BH-8476) the lead BLOCK on PH is retracted: no replay post, the
+#         request is POSTed.
 # Stubbed: curl (the jobs worker), gh (REST reads), bin/agent-call.sh,
 # bin/lead-verdict.sh and bin/lane-alert.sh (argv recorders).
 # Dispatcher section (BH-5874): gate 3's BH-3930 rebound replay,
@@ -36,6 +38,7 @@
 #   B1  the lead MERGEd G: one POST /api/verdicts, MERGE on H1, and no job.
 #   B2  the lead BLOCKed G: one POST /api/verdicts with BLOCK, never MERGE.
 #   B3  a lead row with a lead-replay: note is already on H1: no post, no job.
+#   B4  (BH-8476) the lead BLOCK on G is retracted: no post, a full review job.
 # Run from anywhere: HARNESS_TEST_SANDBOX=1 bash tests/lead-review-dedupe.bh-3930-test.sh
 set -uo pipefail
 . "$(dirname "$0")/lib/scratch.sh" || exit 1
@@ -377,6 +380,20 @@ jq -c --arg n "lead-replay:$PH12 how:main-merge" \
 tick2
 grep -q 'already replayed' "$QLOG" && bad "D7 a replay on another head blocked this one: $(cat "$QLOG")" || ok
 
+# ── D8 (BH-8476): a retracted lead BLOCK is absent, so it is never replayed ──
+reset2 "$HM"
+jq -c '.rows |= map(if .source == "lead" then .verdict = "BLOCK" | .retracted_at = "2026-10-26T01:00:00Z" | .retract_reason = "empty-report" else . end)' \
+  "$T/vrows.json" > "$T/v2" && mv "$T/v2" "$T/vrows.json"
+tick2
+[ "$RC" -eq 0 ] && ok || bad "D8 rc=$RC out=$(cat "$T/out")"
+[ "$(postn)" = 0 ] && ok || bad "D8 a retracted BLOCK was replayed: $(cat "$T/log/post")"
+[ "$(qposts)" = 1 ] && hasw replayed=0 && ok || bad "D8 want one request, no replay: requests=$(qposts) $(summ)"
+# control: the same BLOCK, not retracted, IS replayed on the rebound head
+reset2 "$HM"
+jq -c '.rows |= map(if .source == "lead" then .verdict = "BLOCK" else . end)' "$T/vrows.json" > "$T/v2" && mv "$T/v2" "$T/vrows.json"
+tick2
+grep -q "^post example-org/demo-os 41 $HM BLOCK " "$T/log/post" 2>/dev/null && ok || bad "D8 control: a standing BLOCK was not replayed: $(cat "$T/log/post" 2>/dev/null)"
+
 # ═══════════ dispatcher section (BH-5874): the rebound replay on the worklist ═══════════
 T="$T/disp"; mkdir -p "$T"
 lwf_setup
@@ -417,6 +434,14 @@ lwf_tick
 [ "$(nvposts)" = 0 ] && ok || bad "B3 posts=$(nvposts) (want 0)"
 [ "$(djobs)" = 0 ] && ok || bad "B3 lead_review jobs=$(djobs) (want 0)"
 grep -q "example-org/demo-os#201 @${H1:0:12}: lead word already replayed onto this head; no post, no review" "$L" && ok || bad "B3 no line: $(cat "$L")"
+
+# ── B4 (BH-8476): a retracted lead BLOCK on G is absent: no replay, a full review ──
+bset BLOCK
+jq '.rows |= map(.retracted_at = "2026-10-26T01:00:00Z" | .retract_reason = "empty-report")' \
+  "$FX/verdicts.json" > "$FX/v.tmp" && mv "$FX/v.tmp" "$FX/verdicts.json"
+lwf_tick
+[ "$(nvposts)" = 0 ] && ok || bad "B4 a retracted BLOCK was replayed: $(vposts)"
+[ "$(djobs)" = 1 ] && ok || bad "B4 lead_review jobs=$(djobs) (want 1): $(cat "$L")"
 
 echo "lead-review-dedupe.bh-3930: PASS=$PASS FAIL=$FAIL"
 [ "$FAIL" -eq 0 ]

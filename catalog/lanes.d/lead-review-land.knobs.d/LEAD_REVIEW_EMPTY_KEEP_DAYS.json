@@ -1,0 +1,11 @@
+{
+  "env": "LEAD_REVIEW_EMPTY_KEEP_DAYS",
+  "type": "int",
+  "default": 30,
+  "min": 1,
+  "max": 365,
+  "unit": "days",
+  "zero_means": null,
+  "required": false,
+  "note": "BH-8476: the land lane deletes the empty-report captures (logs/lead-review-empty/) older than this many days at the end of each tick. The once-per-head re-request marker is a lead_empty_block ledger row, not a file. Anything not 1..365 is logged and reads 30."
+}

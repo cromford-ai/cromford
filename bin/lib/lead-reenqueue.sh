@@ -108,7 +108,8 @@ lre_row_go() {
      || ! jq -e '(.rows | type) == "array" and .truncated != true' <<<"$vd" >/dev/null 2>&1; then
     log "$slug#$n @${head:0:12}: verdict history unreadable; left to the */15 tick"; return 1
   fi
-  if ! jq -e --arg h "$head" 'any(.rows[]; .source == "lead"
+  # BH-8476: a retracted lead BLOCK is absent.
+  if ! jq -e --arg h "$head" 'any(.rows[] | select(.retracted_at == null); .source == "lead"
          and ((.head_sha // "") | ascii_downcase) != $h
          and ((.verdict // "") | IN("MERGE", "MERGE-WITH-NOTES", "BLOCK")))' <<<"$vd" >/dev/null 2>&1; then
     log "$slug#$n @${head:0:12}: no prior lead verdict; left to the */15 tick"; return 1

@@ -81,6 +81,15 @@
 # a 200 no-op. A running one with a fresh heartbeat is refused (exit 1, the
 # worker's message printed); one whose heartbeat is older than the settings row
 # lead_review_claim_stale_s (fallback 900 s) is reclaimed to `requested` (BH-7711).
+# RETRACT (BH-8476). `retract <verdict-id> --reason empty-report` (lead token)
+# retracts a lead BLOCK row whose report had no finding line, through
+# POST /api/verdicts/<id>/retract. The verdicts table is append-only, so the
+# worker stores a verdict_retractions row, and the standing read skips a
+# retracted row. The worker refuses any other row (a human, box, risk-tier or
+# MERGE row: 409). Then the head's standing row is read again and lead-verdict
+# is republished from it: failure for a BLOCK, success for a MERGE /
+# MERGE-WITH-NOTES, pending for none or for a lead row withheld for a human
+# verdict (authority:human-required). A retract sent again republishes too.
 #
 # BASH 3.2 (BH-3565). The lead's Mac runs this under /bin/bash 3.2, where an
 # empty "${arr[@]}" is unbound under set -u: every post died in gh-rest.sh
@@ -142,10 +151,12 @@
 #                               [--priority <1..1000>]   nudge (request) a lead review of that head
 #   bin/lead-verdict.sh list [<owner/repo>]
 #   bin/lead-verdict.sh reset <request-id>
+#   bin/lead-verdict.sh retract <verdict-id> --reason empty-report
 #   bin/lead-verdict.sh authority <owner/repo> [<pr> <head-sha>]
 # exit: 0 ok, 1 refused or the worker answered an error (its message printed),
 #       2 usage, 3 (post) the sha is not the PR's head: nothing written,
-#       4 (post) the row is recorded but the lead-verdict status is not published,
+#       4 (post) the row is recorded but the lead-verdict status is not published;
+#         (retract) the row is retracted but the status is not republished,
 #       5 (post) the row is recorded as advice; the status is withheld until a
 #         --source human verdict publishes it (BH-3683; lead_authority_mode=human,
 #         or an undecidable authority under either mode). Under --source
@@ -200,13 +211,13 @@ HUMAN_VERDICT_TOKEN_FILE="${HUMAN_VERDICT_TOKEN_FILE:-$HOME/.config/cromford/hum
 # Raise it with the next capability the worker must be able to insist on.
 LV_CLIENT_LEVEL=4
 
-# lv_post_lead <json-body> <source> — POST /api/verdicts with the bearer AND the
+# lv_post_lead <json-body> <source> [path] — POST <path> (default /api/verdicts) with the bearer AND the
 #   lead token (and, for source human, the human token when its file is
 #   readable), all in a header file. For source lead with no readable lead
 #   token file it sends the participant token instead (BH-5352). Prints the worker's answer; dies with the
 #   worker's own error on anything but 2xx. Never echoes a secret.
 lv_post_lead() {
-  local body="$1" source="${2:-}" tok htok="" hdr out code payload tfile="$LEAD_VERDICT_TOKEN_FILE" theader=x-lead-verdict-token
+  local body="$1" source="${2:-}" path="${3:-/api/verdicts}" tok htok="" hdr out code payload tfile="$LEAD_VERDICT_TOKEN_FILE" theader=x-lead-verdict-token
   local pfile="${HARNESS_PARTICIPANT_TOKEN_FILE:-}"
   # BH-5352: no lead token here, so a source=lead post goes as a participant.
   if [ "$source" = lead ] && [ ! -r "$LEAD_VERDICT_TOKEN_FILE" ] && [ -n "$pfile" ] && [ -r "$pfile" ]; then
@@ -237,7 +248,7 @@ lv_post_lead() {
     unset htok
   fi
   out=$(curl -sS -m "${JOBS_TIMEOUT:-8}" --connect-timeout 3 -w $'\n%{http_code}' -X POST \
-          -H "@$hdr" --data-binary "$body" "$JOBS_URL/api/verdicts" 2>/dev/null) || { rm -f "$hdr"; die "worker unreachable ($JOBS_URL)"; }
+          -H "@$hdr" --data-binary "$body" "$JOBS_URL$path" 2>/dev/null) || { rm -f "$hdr"; die "worker unreachable ($JOBS_URL)"; }
   rm -f "$hdr"
   code="${out##*$'\n'}"; payload="${out%$'\n'*}"
   case "$code" in 2*) printf '%s' "$payload" ;;
@@ -517,7 +528,7 @@ lv_show() {
     (if .head == null then empty
      elif .standing == null then "standing on \(.head[0:12]): none"
      else "standing on \(.head[0:12]): \(.standing.verdict) (\(.standing.source), #\(.standing.id)\(.standing | carried))" end),
-    (.rows[] | "#\(.id)\t\(.created_at)\t\(.head_sha[0:12])\t\(.verdict)\t\(.source)\t\(.reviewer_model // "-")\t\(.report_url // "-")")'
+    (.rows[] | "#\(.id)\t\(.created_at)\t\(.head_sha[0:12])\t\(.verdict)\t\(.source)\t\(.reviewer_model // "-")\t\(.report_url // "-")\(if .retracted_at then "\tretracted:\(.retract_reason // "?")" else "" end)")'
 }
 
 # lv_lr_load — bin/lib/lead-reviews.sh, loaded by request/list only: post and
@@ -604,6 +615,49 @@ lv_reset() {
     || printf '%s\n' "$resp"
 }
 
+# lv_retract <verdict-id> --reason empty-report — BH-8476 (see RETRACT above).
+lv_retract() {
+  [ $# = 3 ] && [ "$2" = --reason ] || usage
+  local id="$1" reason="$3" resp sd repo pr head sid sword held state desc what stxt
+  [[ "$id" =~ ^[1-9][0-9]{0,17}$ ]] || { echo "lead-verdict: verdict-id must be a positive integer, got '$id'" >&2; usage; }
+  case "$reason" in empty-report) ;; *) echo "lead-verdict: --reason must be empty-report, got '$reason'" >&2; usage ;; esac
+  resp=$(lv_post_lead "$(jq -nc --arg r "$reason" --arg a "${LV_REVIEWER:-$(hostname -s 2>/dev/null)}" '{reason:$r, actor:$a}')" "" "/api/verdicts/$id/retract") || exit 1
+  repo=$(printf '%s' "$resp" | jq -r '.verdict.repo // ""' 2>/dev/null)
+  pr=$(printf '%s' "$resp" | jq -r '.verdict.pr // "" | tostring' 2>/dev/null)
+  head=$(printf '%s' "$resp" | jq -r '.verdict.head_sha // ""' 2>/dev/null | tr 'A-F' 'a-f')
+  [[ "$repo" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] && [[ "$pr" =~ ^[1-9][0-9]*$ ]] && [[ "$head" =~ ^[0-9a-f]{40}$ ]] \
+    || die "verdict #$id: the worker's answer names no verdict row (repo '$repo', pr '$pr', head '$head'); the status is not republished"
+  what="retracted verdict #$id ($reason)"
+  [ "$(printf '%s' "$resp" | jq -r '.existing // false' 2>/dev/null)" = true ] && what="verdict #$id already retracted ($reason)"
+  sd=$(lv_req GET "/api/verdicts?repo=$repo&pr=$pr&head=$head&standing_only=1") || exit 1
+  sid=$(printf '%s' "$sd" | jq -r '.standing.id // empty' 2>/dev/null)
+  sword=$(printf '%s' "$sd" | jq -r '.standing.verdict // empty' 2>/dev/null)
+  # BH-3683: a lead row recorded as advice never publishes success here either.
+  held=$(printf '%s' "$sd" | jq -r '.standing | if . != null and .source != "human"
+    and (((.note // "") | split(" ") | index("authority:human-required")) != null) then "yes" else "" end' 2>/dev/null)
+  case "$sid:$sword" in
+    :) state=pending; desc="no standing lead verdict; #$id retracted ($reason)" ;;
+    *:BLOCK) state=failure ;;
+    *:MERGE|*:MERGE-WITH-NOTES) state=success; [ -z "$held" ] || state=pending ;;
+    *) die "verdict #$id retracted, but the standing row on ${head:0:12} is unreadable ('$sid' '$sword'); the status is not republished - re-run this retract" ;;
+  esac
+  # shellcheck source=bin/lib/verdict-status.sh
+  command -v vs_publish >/dev/null 2>&1 || . "$SELF_DIR/lib/verdict-status.sh" 2>/dev/null \
+    || die "$what, but bin/lib/verdict-status.sh did not load; the status is not republished - re-run this retract"
+  stxt=none
+  if [ -n "$sid" ]; then
+    stxt="#$sid $sword"
+    desc="$sword by $(printf '%s' "$sd" | jq -r '.standing.reviewer // "?"' 2>/dev/null) (verdict #$sid)"
+    [ -z "$held" ] || desc="$desc is withheld for a human verdict"
+    desc=$(vs_lead_desc "$(printf '%s' "$sd" | jq -c '.standing' 2>/dev/null)" "$desc")
+  fi
+  if ! vs_publish "$repo" "$head" "$state" "$desc" "https://github.com/$repo/pull/$pr"; then
+    echo "lead-verdict: $what, but the $(vs_context) status ($state) is NOT published on ${head:0:12}; re-run this retract to publish it" >&2
+    exit 4
+  fi
+  printf '%s; %s=%s on %s@%s (standing: %s)\n' "$what" "$(vs_context)" "$state" "$repo" "${head:0:12}" "$stxt"
+}
+
 lv_list() {
   local repo="${1:-}" out rc
   [ -z "$repo" ] || [[ "$repo" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] || die "repo must be owner/name, got '$repo'"
@@ -659,5 +713,6 @@ case "${1:-}" in
   request) shift; lv_request "$@" ;;
   list) shift; lv_list "$@" ;;
   reset) shift; lv_reset "$@" ;;
+  retract) shift; lv_retract "$@" ;;
   *) usage ;;
 esac

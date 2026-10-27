@@ -142,16 +142,17 @@ lg_gate_replay_delta() {
     fi
     _lgt_log "$slug#$n @$h12: verdicts read failed; full review"; return 0
   fi
-  if jq -e --arg h "$head" 'any(.rows[]; .source == "lead" and ((.head_sha // "") | ascii_downcase) == $h
+  # BH-8476: a retracted lead BLOCK (bin/lead-verdict.sh retract) is absent here too.
+  if jq -e --arg h "$head" 'any(.rows[] | select(.retracted_at == null); .source == "lead" and ((.head_sha // "") | ascii_downcase) == $h
        and ((.note // "") | split(" ") | any(startswith("lead-replay:"))))' "$vd" >/dev/null 2>&1; then
     _lgt_log "$slug#$n @$h12: lead word already replayed onto this head; no post, no review"
     return 12
   fi
-  if { [ "$approved" = 0 ] || [ "$carried" = 1 ]; } && jq -e --arg h "$head" 'any(.rows[]; ((.head_sha // "") | ascii_downcase) == $h
+  if { [ "$approved" = 0 ] || [ "$carried" = 1 ]; } && jq -e --arg h "$head" 'any(.rows[] | select(.retracted_at == null); ((.head_sha // "") | ascii_downcase) == $h
        and ((.source // "") | IN("lead", "human", "risk-tier")))' "$vd" >/dev/null 2>&1; then
     _lgr_skip "$slug" "$n" "$head" verdict "a lead, human or risk-tier verdict is on this head"; return 10
   fi
-  IFS=$'\t' read -r ph pw pid pm < <(jq -r --arg h "$head" '[.rows[] | select(.source == "lead"
+  IFS=$'\t' read -r ph pw pid pm < <(jq -r --arg h "$head" '[.rows[] | select(.retracted_at == null) | select(.source == "lead"
       and ((.head_sha // "") | ascii_downcase) != $h
       and ((.verdict // "") | IN("MERGE", "MERGE-WITH-NOTES", "BLOCK"))
       and (((.note // "") | contains("lead-replay:")) | not))]

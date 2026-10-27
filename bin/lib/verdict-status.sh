@@ -19,7 +19,10 @@
 #                              conductor is about to enqueue, after its own
 #                              head-bound jobs-ledger verdict
 #
-# vs_publish <owner/repo> <sha> <success|failure> <description> [<https target url>]
+# vs_publish <owner/repo> <sha> <success|failure|pending> <description> [<https target url>]
+#   pending (BH-8476): bin/lead-verdict.sh retract, when no row stands on the
+#   sha any more or the one left is withheld for a human verdict. Mergify needs
+#   success, so pending holds the head as failure does, without a verdict.
 #   rc 0  GitHub answered 2xx (201): the status is on that sha.
 #   rc 1  anything else; ONE stderr line names GH_REST_STATUS / GH_REST_REASON.
 #   rc 2  a bad argument (slug, 40-hex sha, state); nothing is sent.
@@ -68,7 +71,7 @@ vs_publish() {
   local -a a
   [[ "$slug" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] || { echo "vs_publish: repo must be owner/name, got '$slug'" >&2; return 2; }
   [[ "$sha" =~ ^[0-9a-f]{40}$ ]] || { echo "vs_publish: sha must be 40 lowercase hex, got '$sha'" >&2; return 2; }
-  case "$state" in success|failure) ;; *) echo "vs_publish: state must be success or failure, got '$state'" >&2; return 2 ;; esac
+  case "$state" in success|failure|pending) ;; *) echo "vs_publish: state must be success, failure or pending, got '$state'" >&2; return 2 ;; esac
   command -v gh_rest >/dev/null 2>&1 || { echo "vs_publish: bin/lib/gh-rest.sh is not loaded; $(vs_context) not published on ${sha:0:12}" >&2; return 1; }
   a=(-f "state=$state" -f "context=$(vs_context)" -f "description=${desc:0:140}")
   case "$url" in https://*) a+=(-f "target_url=$url") ;; esac
