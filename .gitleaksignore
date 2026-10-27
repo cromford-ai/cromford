@@ -147,6 +147,7 @@ worker/jobs/test/conductor-state.bh-4156.test.js:generic-api-key:16
 worker/jobs/test/docker-pool-results.bh-7348.test.js:generic-api-key:15
 worker/jobs/test/docker-pool.bh-7300.test.js:generic-api-key:17
 worker/jobs/test/flags-legacy-overload.bh-7819.test.js:generic-api-key:22
+worker/jobs/test/fleet-accounts.bh-7939.test.js:generic-api-key:17
 worker/jobs/test/fleet-first-run.bh-7939.test.js:generic-api-key:18
 worker/jobs/test/ironlaw-accept-indexes.bh-4157.test.js:generic-api-key:13
 worker/jobs/test/ironlaw-accept.bh-4157.test.js:generic-api-key:25

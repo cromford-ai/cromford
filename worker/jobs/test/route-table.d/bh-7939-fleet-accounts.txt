@@ -1,0 +1,3 @@
+# FLEET ACCOUNTS (BH-7976, BH-7939.2): which envelope carries the Telegram bot
+# token. Body {envelope_id} only; a token in the body is 400. Bearer-gated.
+POST /api/fleet/accounts/telegram

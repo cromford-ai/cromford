@@ -6,6 +6,10 @@
 //
 // POST /api/secrets/envelope {scope, ciphertext}   (main bearer)
 //   400 on a bad scope or a ciphertext that is not base64 of 344..1024 chars.
+//   A scope is ai-account:<name>, tracker:<name>, or one of the fleet scopes
+//   (BH-7976): fleet:fly:<org>, fleet:tailscale, fleet:tailscale:<project>,
+//   fleet:telegram. bin/lib/envelope-fleet.sh parses the same fleet grammar,
+//   and tests/fixtures/fleet-scopes.bh-7939.tsv is the one table both obey.
 //   expires_at = now + settings secret_envelope_ttl_s (60..86400, else 900).
 //   ONE batch: the row and its `stored` event. 200 {id, expires_at}, no-store.
 // GET /api/secrets/envelope/:id   (main bearer AND x-envelope-hub-token)
@@ -24,6 +28,8 @@ export const ENVELOPE_EXPIRED_SQL = "SELECT id FROM secret_envelopes WHERE expir
 
 const TTL_DEFAULT_S = 900;
 const SCOPE_RE = /^(ai-account|tracker):[a-z0-9._:@-]{1,96}$/;
+// org: a Fly org slug. project: the harness project-name charset.
+export const FLEET_SCOPE_RE = /^fleet:(fly:[a-z0-9][a-z0-9-]{0,62}|tailscale(:[a-z0-9_-][a-z0-9._-]{0,63})?|telegram)$/;
 const B64_RE = /^[A-Za-z0-9+/]+={0,2}$/;
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 
@@ -49,7 +55,7 @@ export function hubTokenOk(req, env) {
 }
 
 export function checkEnvelopeScope(scope) {
-  return typeof scope === "string" && SCOPE_RE.test(scope) && !scope.includes("..");
+  return typeof scope === "string" && (SCOPE_RE.test(scope) || FLEET_SCOPE_RE.test(scope)) && !scope.includes("..");
 }
 
 const ciphertextOk = (ct) =>
@@ -86,7 +92,7 @@ export const routes = [
     "POST", "/api/secrets/envelope",
     ({ env, t, body }) => d1Guarded("secret_envelopes", async () => {
       const { scope, ciphertext } = body || {};
-      if (!checkEnvelopeScope(scope)) return noStore(400, { error: "scope must be ai-account:<name> or tracker:<name>" });
+      if (!checkEnvelopeScope(scope)) return noStore(400, { error: "scope must be ai-account:<name>, tracker:<name> or a fleet: scope" });
       if (!ciphertextOk(ciphertext)) return noStore(400, { error: "ciphertext must be base64, 344..1024 chars" });
       await ensureTables(env);
       const ttl = await ttlSeconds(env.DB);

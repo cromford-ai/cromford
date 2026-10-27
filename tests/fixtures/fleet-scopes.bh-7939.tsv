@@ -1,0 +1,39 @@
+# tests/fixtures/fleet-scopes.bh-7939.tsv: the fleet envelope scope grammar (BH-7976).
+# One table, two parsers: worker/jobs/src/routes/secret-envelopes.js checkEnvelopeScope
+# (worker/jobs/test/fleet-accounts.bh-7939.test.js A5) and bin/lib/envelope-fleet.sh
+# envelope_fleet_scope_parse (tests/envelope-fly-tailscale.bh-7939-test.sh E5).
+# Columns, TAB-separated: scope, accept|refuse, the hub parse output (- on refuse).
+# A scope may start or end with a space on purpose: those rows are refusals.
+fleet:fly:acme	accept	fly acme
+fleet:fly:a	accept	fly a
+fleet:fly:zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz	accept	fly zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz
+fleet:fly:acme-2	accept	fly acme-2
+fleet:tailscale	accept	tailscale -
+fleet:tailscale:cromford	accept	tailscale cromford
+fleet:tailscale:a.b_c	accept	tailscale a.b_c
+fleet:tailscale:_x	accept	tailscale _x
+fleet:tailscale:zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz	accept	tailscale zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz
+fleet:telegram	accept	telegram -
+fleet:	refuse	-
+fleet:fly	refuse	-
+fleet:fly:	refuse	-
+fleet:fly:-acme	refuse	-
+fleet:fly:Acme	refuse	-
+fleet:fly:zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz	refuse	-
+fleet:fly:a_b	refuse	-
+fleet:fly:a.b	refuse	-
+fleet:fly:acme:x	refuse	-
+fleet:tailscale:	refuse	-
+fleet:tailscale:.x	refuse	-
+fleet:tailscale:a..b	refuse	-
+fleet:tailscale:a/b	refuse	-
+fleet:tailscale:A	refuse	-
+fleet:tailscale:zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz	refuse	-
+fleet:tailscales	refuse	-
+fleet:telegram:x	refuse	-
+fleet:telegrams	refuse	-
+FLEET:telegram	refuse	-
+ fleet:telegram	refuse	-
+fleet:telegram 	refuse	-
+fleet:aws	refuse	-
+fleets:telegram	refuse	-
