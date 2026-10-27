@@ -7,11 +7,11 @@
 #             publishes nothing; a protected-path hit, or an undecidable
 #             authority, is withheld (exit 5) and writes NO verdict row.
 #   C3        "$DIR/bin/lead-review.sh" tick, run whole: a requested head on
-#             which a risk-tier MERGE stands is posted `superseded` and no
-#             model is called. The same request with nothing standing IS
-#             reviewed (the control). C3b: a request a PERSON filed
-#             (requested_by not lead-review-enqueue:*) on that same risk-tier
-#             head is reviewed, never superseded.
+#             which a risk-tier MERGE stands is reviewed for every requester,
+#             the enqueue's own rows included (BH-8525 removed the supersede;
+#             worklist gate 60 holds a risk-tier head before the start). The
+#             same request with nothing standing, or a lead row standing, is
+#             reviewed (the controls).
 #   C6        C5's withheld post, then the lead-review.sh tick on what it left
 #             standing: the fallback lead review runs and is not superseded.
 #   C4        to_lane_lead_fence in "$DIR/bin/lib/ticket-ownership.sh": a
@@ -134,7 +134,7 @@ mv "$VF/files.json.keep" "$VF/files.json"
 lpp_set "$LPPF" "$SLUG"
 
 # ════════════════════════════════════════════════════════════════════════════
-# C3: bin/lead-review.sh tick supersedes a request on a risk-tier head
+# C3: bin/lead-review.sh tick reviews a request on a risk-tier head
 # ════════════════════════════════════════════════════════════════════════════
 RH="$T/lr/h"; RX="$T/lr"; mkdir -p "$RH/state" "$RH/prompts" "$RH/catalog/lanes.d" "$RX/fakebin" "$RX/log" "$RX/repos" "$RX/standing"
 scratch_install_closure bin/jobs-client.sh "$RH" >/dev/null || exit 1
@@ -205,16 +205,14 @@ lrtick() {
 resultpost() { grep '^POST /api/lead-reviews/lr-1/result ' "$RX/log/worker" 2>/dev/null; }
 
 jq -nc '{verdict:"MERGE",source:"risk-tier",id:9,created_at:"2026-10-07T00:00:00Z",report_url:null,reviewer:"risk-tier:hub"}' > "$RX/standing/41"
-lrtick
-resultpost | grep -q '"outcome":"superseded"' && ok || bad "C3 no superseded result: $(cat "$RX/log/worker" 2>/dev/null | head -20) $(tail -5 "$RH/logs/lead-review.log" 2>/dev/null)"
-[ -s "$RX/log/agent" ] && bad "C3 agent-call.sh ran on a risk-tier head: $(cat "$RX/log/agent")" || ok
-grep -q "signed off by risk-tier" "$RH/logs/lead-review.log" 2>/dev/null && ok || bad "C3 no log line"
-# C3b: the same risk-tier head, but a person asked for the review -> it runs
-for by in operator 'lead-verdict.sh:mac' ''; do
+# TEST-CHANGE BH-8525: C3 asserted that a request filed by the enqueue (requested_by lead-review-enqueue:hub) on a head with a standing risk-tier MERGE is posted superseded with no model call; BH-8525 removes that supersede (the enqueue has no launch, and worklist gate 60 holds a risk-tier head before the start), so that row is now reviewed like any other request; C3 asserts it in the C3b loop, and asserts the signed off by risk-tier line is absent from logs/lead-review.log.
+# C3b: the same risk-tier head, whoever asked for the review -> it runs
+for by in lead-review-enqueue:hub operator 'lead-verdict.sh:mac' ''; do
   reqs "$by"; lrtick
   grep -q '"outcome":"superseded"' <<<"$(resultpost)" && bad "C3b a request filed by '$by' was superseded: $(tail -3 "$RH/logs/lead-review.log" 2>/dev/null)" || ok
   [ -s "$RX/log/agent" ] && resultpost | grep -q '"outcome":"done"' && ok || bad "C3b a request filed by '$by' was not reviewed: $(resultpost) $(tail -3 "$RH/logs/lead-review.log" 2>/dev/null)"
 done
+grep -q "signed off by risk-tier" "$RH/logs/lead-review.log" 2>/dev/null && bad "C3 a risk-tier supersede line: $(grep "signed off by risk-tier" "$RH/logs/lead-review.log")" || ok
 reqs lead-review-enqueue:hub
 # control: a lead row standing (not risk-tier), and nothing standing, are reviewed
 jq -nc '{verdict:"MERGE",source:"lead",id:9,created_at:"2026-10-07T00:00:00Z",report_url:null,reviewer:"box:x"}' > "$RX/standing/41"

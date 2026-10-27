@@ -847,17 +847,6 @@ review_one() {
   # bchg=1 once a stored review of this head is seen to name another body: the
   # paid call then carries the body in its guard key (below).
   bchg=0
-  # BH-5022: a risk-tier MERGE already stands on this head (the enqueue signed
-  # it off after this request was made), so the review would buy nothing. Only
-  # an answered rc 0 with source risk-tier skips; any other answer reviews. Only
-  # the enqueue's own requests are superseded: one a person filed (REQUEST LEAD
-  # REVIEW, lead-verdict.sh request) is a review someone asked for, so it runs.
-  if command -v vd_standing >/dev/null 2>&1 \
-     && [[ "$(jq -r '.requested_by // ""' <<<"$r")" == lead-review-enqueue:* ]] \
-     && [ "$(vd_standing "$repo" "$pr" "$sha" 2>/dev/null | cut -f2)" = risk-tier ]; then
-    post_result "$id" "$(jq -nc --arg j "$job" --arg s "$sha" '{job_id:$j,head_sha:$s,outcome:"superseded"}')" || return
-    job_update "$job" status=done; log "superseded $key: signed off by risk-tier"; R=superseded; return
-  fi
   # Paid already (BH-2202): a retry after a failed post replays what it stored,
   # the job's artifact first (BH-2624), the disk second.
   mkdir -p "$H/state/lead-reviews"
@@ -1043,8 +1032,7 @@ review_one() {
   # enqueue's own requests (requested_by lead-review-enqueue:*) and worklist
   # items (a row lr_start created: requested_by lead-review-worklist) are replayed:
   # any other row is a review someone asked for (REQUEST LEAD REVIEW,
-  # lead-verdict.sh request, harness-ctl review), so it runs, the same rule as
-  # the risk-tier supersede above (BH-5022).
+  # lead-verdict.sh request, harness-ctl review), so it runs.
   rby=$(jq -r '.requested_by // ""' <<<"$r"); rsrc=$(jq -r '.src // ""' <<<"$r")
   if [[ "$rby" != lead-review-enqueue:* ]] && [ "$rby" != lead-review-worklist ] && [ "$rsrc" != worklist ]; then
     LW_REPLAY_WHY="requested by ${rby:-unknown}, not the enqueue: a person's request is reviewed"; false

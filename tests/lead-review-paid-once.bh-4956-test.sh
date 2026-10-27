@@ -117,7 +117,8 @@ grep -q "lr-201-${H1:0:12}: no replay (.*BLOCK" "$L" && ok || bad "P4e no no-rep
 # request row on H1 (a main-merge of G, which the lead approved) filed by a
 # person (requested_by is the box: lead-verdict.sh request, harness-ctl review)
 # is reviewed by the model. The enqueue's own row on the same head (P4g) is
-# still replayed, the BH-5022 rule the risk-tier supersede already follows.
+# still replayed (requested_by lead-review-enqueue:*, the rule at
+# bin/lead-review.sh's replay).
 p4row() { # p4row <requested_by>: one `requested` row for pr 201 at H1
   jq -nc --arg s "$H1" --arg by "$1" '[{id:"r-201", repo:"example-org/demo-os", pr:201, head_sha:$s, status:"requested",
     created_at:"2026-10-10 03:00:00", scope_notes:null, requested_by:$by}]' > "$FX/rows.json"
