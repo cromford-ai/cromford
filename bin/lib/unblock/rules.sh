@@ -171,7 +171,7 @@ def esc_km($r): [$r.repo, $r.subject, $r.head, $r.kind] | map(. // "" | tostring
 def base($r): {project: $r.project, repo: $r.repo,
   subject_kind: ($r.subject_kind // (if ($r.pr | type) == "number" then "pr" else null end)),
   subject: $r.subject, pr: $r.pr, head: $r.head, stall_class: $r.kind, stall_kind: $r.kind, evidence: $r};
-def unkeyed($r; $reason; $nm): base($r) + {decision: "escalate", rule_id: null, cites: [], class: "escalate",
+def unkeyed($r; $reason; $nm): base($r) + {decision: "escalate", rule_id: null, cites: ["unkeyed"], class: "escalate",
   action: null, judge: null, reason: $reason, near_misses: $nm,
   inputs_unreadable: ($r.inputs_unreadable // []), _km: esc_km($r)};
 def misses($tried): [$tried[] | select(.res | all(. == "T") | not) | .r as $x | .res as $res
@@ -183,7 +183,7 @@ def klass($r; $rec): ($rec.proposal.key? // "" | tostring | ascii_upcase) as $k
   | ([($r.never_auto // {}) | to_entries[] | select(.key as $g | $k != "" and ($k | test(glob($g)))) | .value] | first) // $r.class;
 (try fromjson catch null) as $rec
 | if ($rec | type) != "object" then
-    {decision: "escalate", rule_id: null, cites: [], class: "escalate", action: null, judge: null,
+    {decision: "escalate", rule_id: null, cites: ["unkeyed"], class: "escalate", action: null, judge: null,
      reason: "unparseable stall record", near_misses: [], evidence: {unparseable: .},
      _km: ([., "U12"] | join("\u001f")), project: null, repo: null, subject_kind: null, subject: null,
      pr: null, head: null, stall_class: null, stall_kind: null}

@@ -23,6 +23,9 @@
 #    cromford), never the tick's project, and only in that project's tick.
 # K8 a line that is not JSON drops that line only, and the tick gets a
 #    source-unreadable record with a project, a subject and a kind in the set.
+# K9 a record no rule matches becomes an escalate decision whose cites are a
+#    non-empty list the route's CITE_RE accepts (2026-10-27: 14 x 400
+#    rule_cites, the unkeyed decision had cites []).
 # Run: HARNESS_TEST_SANDBOX=1 bash tests/unblock-subject-kinds.bh-8498-test.sh
 set -uo pipefail
 # shellcheck source=tests/lib/scratch.sh
@@ -111,6 +114,15 @@ if [ -n "$UR" ] && grep -qx "$UK" <<<"$KINDS" && [ -n "$US" ] && [ "$UP" = alpha
 else bad "K8 a bad line yields a source-unreadable record with project, subject and kind: got [$UR] (records: ${OUTK:0:300})"; fi
 PP=$(kind_field branch-park project <<<"$OUTK")
 [ "$PP" = alpha ] && ok || bad "K8 the records after a bad line still pass: branch-park project [$PP]"
+
+CRE=$(grep -oE '^const CITE_RE = /\^[^/]*\$/' "$ROUTE" | sed -E 's#^const CITE_RE = /(.*)/$#\1#')
+DEC=$( . "$DIR/bin/lib/unblock/rules.sh" >/dev/null 2>&1
+  printf '%s\n' '{"kind":"k9-no-such-kind","project":"alpha","repo":"example-org/fixture-repo","subject":"lane:k9","subject_kind":"lane"}' \
+    | ub_rules_eval "$DIR/catalog/unblock-rules.d" 2>/dev/null )
+DCITES=$(jq -r 'select(.decision == "escalate") | .cites | if type == "array" and length > 0 then .[] else "<empty>" end' <<<"$DEC" 2>/dev/null)
+K9OK=1; [ -n "$CRE" ] && [ -n "$DCITES" ] || K9OK=0
+while IFS= read -r c; do [ -n "$c" ] || continue; grep -qE "$CRE" <<<"$c" || K9OK=0; done <<<"$DCITES"
+[ "$K9OK" = 1 ] && ok || bad "K9 unkeyed escalate cites must be non-empty and match CITE_RE [$CRE], got [$(tr '\n' ' ' <<<"$DCITES")] (decision: ${DEC:0:200})"
 
 echo "unblock-subject-kinds.bh-8498: $PASS passed, $FAIL failed"
 [ "$FAIL" = 0 ]
