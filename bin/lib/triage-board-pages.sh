@@ -24,6 +24,12 @@ TRIAGE_BOARD_PAGES_LIB=1
 if ! command -v gh_rest >/dev/null 2>&1; then
   . "$(dirname "${BASH_SOURCE[0]}")/gh-rest.sh" 2>/dev/null || return 0 2>/dev/null
 fi
+# The page GET goes through the tracker seam's GitHub Issues adapter (BH-7919
+# ratchet: no script outside the allowlist calls the issues API directly).
+# shellcheck source=bin/lib/tracker/github-issues.sh
+if ! command -v trk_gh_issue_page >/dev/null 2>&1; then
+  . "$(dirname "${BASH_SOURCE[0]}")/tracker/github-issues.sh" 2>/dev/null || return 0 2>/dev/null
+fi
 
 # tbp_issue_pages <slug> <max_pages> <outfile> — every open ai-build issue (PRs
 # included, as /issues returns them; the caller filters) as ONE JSON array in
@@ -41,7 +47,7 @@ tbp_issue_pages() {
   while [ "$pg" -le "$max" ]; do
     rc=0
     # `> file`, never `$( )`: the status has to survive into this shell.
-    gh_rest GET "repos/$slug/issues" -f labels=ai-build -f state=open -F per_page=100 -F "page=$pg" > "$raw" || rc=$?
+    TRK_SLUG="$slug" trk_gh_issue_page "$pg" > "$raw" || rc=$?
     if [ "$rc" != 0 ]; then rm -f "$raw" "$acc"; return "$rc"; fi
     n=$(jq 'if type == "array" then length else -1 end' "$raw" 2>/dev/null)
     case "$n" in ''|-1|*[!0-9]*) rm -f "$raw" "$acc"; return 75 ;; esac

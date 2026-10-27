@@ -98,6 +98,16 @@ trk_gh_list() {
   return "$rc"
 }
 
+# trk_gh_issue_page <page> — one raw page (per_page=100) of the OPEN ai-build
+# issues list, exactly as gh_rest answers it (BH-8497's paged board read in
+# bin/lib/triage-board-pages.sh). The args keep the order that read used, so
+# each page keeps its own ETag cache entry. rc as gh_rest; 1 on a bad slug or
+# page number.
+trk_gh_issue_page() {
+  [[ "${TRK_SLUG:-}" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] && [[ "${1:-}" =~ ^[1-9][0-9]*$ ]] || return 1
+  gh_rest GET "repos/$TRK_SLUG/issues" -f labels=ai-build -f state=open -F per_page=100 -F "page=$1"
+}
+
 # trk_gh_read <n> — the issue and its whole thread. A thread at the comment
 # cap is a PARTIAL read and answers 1: never decide on a truncated thread.
 trk_gh_read() {
