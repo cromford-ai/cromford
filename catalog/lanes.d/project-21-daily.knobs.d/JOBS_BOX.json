@@ -1,0 +1,9 @@
+{
+  "env": "JOBS_BOX",
+  "read_in": "bin/project-21-daily.sh",
+  "type": "string",
+  "default": "",
+  "zero_means": null,
+  "note": "BH-8079: no static default — the script computes it from the hostname. Read by bin/project-21-daily.sh as ${JOBS_BOX:-$(hostname -s)}: the box name the project-21-check-failing alert names. NOT settable from the control plane — it is a host identity a root lane uses, so only env/global.env on the box moves it.",
+  "settable": false
+}

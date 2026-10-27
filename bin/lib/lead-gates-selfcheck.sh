@@ -114,6 +114,7 @@ lgsc_notes() {
   [ -r "$LGSC_OUT" ] || return 0
   sed -n 's/^NOTE \(body-[a-z0-9-]*: the body is missing .*\)/\1/p' "$LGSC_OUT"
   sed -n 's/^NOTE \(callers-not-ported: .*\)/\1/p' "$LGSC_OUT"
+  sed -n 's/^NOTE \(project-21-upgrade: .*\)/\1/p' "$LGSC_OUT"
 }
 
 lgsc_hold() {

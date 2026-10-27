@@ -1,0 +1,165 @@
+#!/bin/bash
+# bin/lib/project-21.example — the project-21 dependency check of every build (BH-8079).
+# Sourced, never executed: functions only, no output at source time.
+#
+# Callers: bin/project-21-check.sh (the one POST), bin/lib/rb/pr.sh (the
+# `project-21 check (BH-8079)` block after the push), bin/lib/pr-self-check.sh (the
+# `project-21-upgrade` rule) and bin/project-21-daily.sh (the daily failure count).
+#
+#   project-21_knobs
+#       Sets project-21_ENABLED, project-21_REVIEW_BLOCK, project-21_TIMEOUT_S,
+#       project-21_ROWS_MAX, project-21_FIELD_MAX, project-21_NOTE_MAX from env, then the
+#       `lib.project-21.*` settings rows (lib_env_apply project-21), then the code
+#       fallbacks below. A value that is not a whole number is its fallback.
+#   project-21_pr_section <result.json>
+#       The `## Dependency advisories (project-21)` PR body section, or nothing for
+#       an off result or a missing file. A failed, nothing or partial result
+#       never prints "None known".
+#   project-21_log_line <prefix> <result.json>
+#       `<prefix> project-21 state=<s> checked=<n> affected=<n> skipped=<n>`, the
+#       pipeline.log line bin/project-21-daily.sh counts. No file = state=failed.
+#   project-21_build_run <build-dir> <worktree> <log-prefix>
+#       The build lane's step: one check per head (a $BUILD/project-21.json for the
+#       same head is reused, no second call), one pipeline.log line, and the
+#       section on stdout. rc 0 always.
+#   project-21_psc_check <body-file> <mode> <id>
+#       The self-check rule. One `NOTE <id>: <dep>@<version> has a fix in <x>
+#       that this PR does not apply: <upgrade> (<url>)` per table row whose
+#       `fixed in` is not none. REFUSE instead, and rc 1, when
+#       project-21_REVIEW_BLOCK=1. No section or no such row: no output, rc 0.
+
+_project-21_LIB=$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)
+project-21_HEADING='## Dependency advisories (project-21)'
+project-21_TABLE_HEAD='| dependency | version | severity | fixed in | upgrade | advisory |'
+
+# The build-tripwire pattern (bin/lib/build-tripwire.sh _tw_knobs): lane-gate
+# runs in a subshell, so its fail-closed exit cannot stop a build, and the EXIT
+# trap hands back on fd 3 every knob that resolved.
+project-21_knobs() {
+  local kv k v
+  kv=$(
+    exec 3>&1
+    command -v lib_env_apply >/dev/null 2>&1 || . "$_project-21_LIB/lane-gate.sh" >/dev/null 2>&1 || exit 0
+    if [ -z "${LANE_REGISTRY:-}" ] && [ ! -r "$(_lg_registry)" ] && . "$_project-21_LIB/lanes-registry.sh" >/dev/null 2>&1; then
+      LANE_REGISTRY=$(lanes_json_path "$_project-21_LIB/../.." 2>/dev/null) && export LANE_REGISTRY
+    fi
+    trap 'for k in project-21_ENABLED project-21_REVIEW_BLOCK project-21_TIMEOUT_S project-21_ROWS_MAX project-21_FIELD_MAX project-21_NOTE_MAX; do printf "%s\t%s\n" "$k" "${!k:-}" >&3; done' EXIT
+    lib_env_apply project-21 >/dev/null 2>&1) || true
+  while IFS=$'\t' read -r k v; do
+    [ -n "$k" ] && [ -n "$v" ] || continue
+    case "$k" in project-21_*) printf -v "$k" '%s' "$v" ;; esac
+  done <<<"$kv"
+  # Code fallbacks; each names its settings row (catalog/lanes.d/_lib.project-21.json).
+  [[ "${project-21_ENABLED:-}" =~ ^[01]$ ]]        || project-21_ENABLED=1        # lib.project-21.project-21_enabled
+  [[ "${project-21_REVIEW_BLOCK:-}" =~ ^[01]$ ]]   || project-21_REVIEW_BLOCK=0   # lib.project-21.project-21_review_block
+  [[ "${project-21_TIMEOUT_S:-}" =~ ^[1-9][0-9]*$ ]] || project-21_TIMEOUT_S=30   # lib.project-21.project-21_timeout_s
+  [[ "${project-21_ROWS_MAX:-}" =~ ^[1-9][0-9]*$ ]]  || project-21_ROWS_MAX=50    # lib.project-21.project-21_rows_max
+  [[ "${project-21_FIELD_MAX:-}" =~ ^[1-9][0-9]*$ ]] || project-21_FIELD_MAX=200  # lib.project-21.project-21_field_max
+  [[ "${project-21_NOTE_MAX:-}" =~ ^[1-9][0-9]*$ ]]  || project-21_NOTE_MAX=10    # lib.project-21.project-21_note_max
+  return 0
+}
+
+project-21_pr_section() {
+  local f="${1:-}" st
+  [ -n "$f" ] && [ -r "$f" ] || return 0
+  st=$(jq -r '.state // "" | tostring' "$f" 2>/dev/null) || st=""
+  [ "$st" = off ] && return 0
+  project-21_knobs
+  jq -r --arg heading "$project-21_HEADING" --arg thead "$project-21_TABLE_HEAD" --arg file "$f" \
+        --argjson rows "$project-21_ROWS_MAX" --argjson fmax "$project-21_FIELD_MAX" '
+    def cell: (. // "" | tostring | gsub("[\r\n\t]"; " ") | gsub("\\|"; "/") | .[0:$fmax]);
+    def tick: "`" + (tostring | gsub("`"; "'"'"'")) + "`";
+    def skips: ((.skipped // []) + (.local_skipped // []));
+    def skiplines:
+      (skips | length) as $n
+      | if $n > 0 then
+          "", "Partial coverage: \($n) item(s) were not checked, so this is not a clean result.",
+          (skips[0:$rows][] | "- " + (tojson | .[0:$fmax] | tick)),
+          (if $n > $rows then "- ... and \($n - $rows) more (see `\($file)` on the build box)" else empty end)
+        else empty end;
+    def files: ((.files // []) | map(tick) | join(", "));
+    (.state // "" | tostring) as $s
+    | $heading, "",
+      if $s == "affected" then
+        (.affected // []) as $a
+        | "project-21 found \($a | length) advisory(ies) at head \((.head // "") | tostring | .[0:12]).",
+          "", $thead, "|---|---|---|---|---|---|",
+          ($a[0:$rows][]
+            | "| \(.dependency.name | cell) (\(.dependency.ecosystem | cell)) | \(.dependency.version | cell) | \((.severity.label // "unknown") | cell) | \((if (.fixed_in // "") == "" then "none" else .fixed_in end) | cell) | \(.action | cell) | \(.advisory_id | cell) \(.url | cell) |"),
+          (if ($a | length) > $rows then "", "... and \(($a | length) - $rows) more (see `\($file)` on the build box)" else empty end),
+          skiplines
+      elif $s == "clean" then
+        "None known: \(.checked) dependencies checked in \(files)."
+      elif $s == "nothing" then
+        "Nothing to check: no lockfile in this tree."
+      elif $s == "partial" then
+        if (skips | length) > 0 then skiplines | select(. != "")
+        else "Partial coverage: \((.reason // "incomplete answer") | cell), so this is not a clean result." end
+      elif $s == "failed" then
+        "Check failed (\((.reason // "unknown") | cell)). This is not a clean result."
+      else
+        "Check failed (unreadable result). This is not a clean result."
+      end
+  ' "$f" 2>/dev/null || printf '%s\n\nCheck failed (unreadable result). This is not a clean result.\n' "$project-21_HEADING"
+}
+
+project-21_log_line() {
+  local pre="${1:-}" f="${2:-}" l=""
+  [ -r "$f" ] && l=$(jq -r '"project-21 state=\(.state // "failed") checked=\(.checked // 0) affected=\((.affected // []) | length) skipped=\(((.skipped // []) + (.local_skipped // [])) | length)"' "$f" 2>/dev/null)
+  [ -n "$l" ] || l="project-21 state=failed checked=0 affected=0 skipped=0"
+  printf '%s %s\n' "$pre" "$l"
+}
+
+project-21_build_run() {
+  local b="${1:-}" wt="${2:-.}" pre="${3:-}" h out
+  [ -n "$b" ] && [ -d "$b" ] || return 0
+  out="$b/project-21.json"
+  h=$(git -C "$wt" rev-parse HEAD 2>/dev/null) || h=""
+  if [ -z "$h" ] || [ "$(jq -r '.head // ""' "$out" 2>/dev/null)" != "$h" ]; then
+    "$_project-21_LIB/../project-21-check.sh" "$wt" --out "$out" ${h:+--head "$h"} > "$b/project-21.txt" 2>&1 || true
+  fi
+  project-21_log_line "$pre" "$out" >> "$b/pipeline.log" 2>/dev/null
+  if [ -r "$out" ]; then
+    project-21_pr_section "$out"
+  else
+    printf '%s\n\nCheck failed (no result file). This is not a clean result.\n' "$project-21_HEADING"
+  fi
+  return 0
+}
+
+project-21_psc_check() {
+  local body="${1:-}" id="${3:-project-21-upgrade}" rows word n=0 line
+  [ -r "$body" ] || return 0
+  # The FIRST exact heading line outside a code fence; it ends at the next
+  # `## ` heading. Only rows under the exact table header line are read.
+  rows=$(awk -v h="$project-21_HEADING" -v th="$project-21_TABLE_HEAD" '
+    /^```/ { fence = !fence; next }
+    fence { next }
+    in_s && /^## / { exit }
+    !in_s && !done && $0 == h { in_s = 1; done = 1; next }
+    in_s && $0 == th { in_t = 1; next }
+    in_s && in_t && /^\|/ {
+      if ($0 ~ /^\|[-| ]+\|$/) next
+      n = split($0, c, "|")
+      if (n < 8) next
+      for (i = 2; i <= 7; i++) { gsub(/^ +| +$/, "", c[i]) }
+      if (c[5] == "" || c[5] == "none") next
+      dep = c[2]; sub(/ \([^)]*\)$/, "", dep)
+      url = c[7]; sub(/^.* /, "", url)
+      printf "%s@%s has a fix in %s that this PR does not apply: %s (%s)\n", dep, c[3], c[5], c[6], url
+      next
+    }
+    in_s && in_t && !/^\|/ { in_t = 0 }
+  ' "$body" 2>/dev/null)
+  [ -n "$rows" ] || return 0
+  project-21_knobs
+  word=NOTE; [ "$project-21_REVIEW_BLOCK" = 1 ] && word=REFUSE
+  while IFS= read -r line; do
+    [ -n "$line" ] || continue
+    n=$((n+1)); [ "$n" -le "$project-21_NOTE_MAX" ] || continue
+    printf '%s %s: %s\n' "$word" "$id" "$line"
+  done <<<"$rows"
+  [ "$n" -gt "$project-21_NOTE_MAX" ] && printf '%s %s: and %s more\n' "$word" "$id" "$((n - project-21_NOTE_MAX))"
+  [ "$word" = REFUSE ] && return 1
+  return 0
+}

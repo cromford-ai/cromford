@@ -1224,12 +1224,38 @@ refused_by_run_build() {
   return 1
 }
 
+# stranded_push_rejected_reason <KEY> — the pool's push-rejected terminal reason
+# for KEY into SPR_REASON (BH-7946): the pool_terminal row when
+# bin/lib/pool-state-rows.sh is loaded and its knob is on, else the file
+# state/pool/<project>/<KEY>.terminal. A read only: the pool owns both. rc 0
+# read, 1 not readable (SPR_REASON empty).
+SPR_REASON=""; SPR_PSR=""
+stranded_push_rejected_reason() {
+  local key="$1" row f="$HARNESS/state/pool/$PROJECT/$1.terminal"
+  SPR_REASON=""
+  if [ -z "$SPR_PSR" ]; then
+    SPR_PSR=off
+    # shellcheck source=bin/lib/pool-state-rows.sh
+    command -v psr_terminal >/dev/null 2>&1 || { [ -r "$HARNESS/bin/lib/pool-state-rows.sh" ] && . "$HARNESS/bin/lib/pool-state-rows.sh" 2>/dev/null; }
+    command -v psr_on >/dev/null 2>&1 && psr_on && psr_load "$PROJECT" && SPR_PSR=on
+  fi
+  if [ "$SPR_PSR" = on ] && row=$(psr_terminal "$key"); then
+    SPR_REASON=$(jq -r '.reason // empty' <<<"$row" 2>/dev/null)
+    [ -n "$SPR_REASON" ] && return 0
+  fi
+  [ -f "$f" ] && SPR_REASON=$(jq -r '.reason // empty' "$f" 2>/dev/null)
+  [ -n "$SPR_REASON" ]
+}
+
 # stranded_reoffer <KEY> <issue> <why> — the stranded watch's launch (BH-5967).
 # rc 0 when a fresh queue row went in, 1 otherwise (said). The ledger is
 # state/stranded-watch/<project>/<KEY>.reoffers, one epoch per re-offer; the
 # lines older than the window drop off. Past STRANDED_REOFFER_MAX in the window
 # the ticket gets a NEEDS-HUMAN: marker with its last result instead of a row.
 SW_DIR="$HARNESS/state/stranded-watch/$PROJECT"
+# The push-rejected alert-once clock (BH-7946): box-local in
+# catalog/state-paths.json; losing it costs one repeated alert line.
+RJ_DIR="$HARNESS/state/stranded-push-rejected/$PROJECT"
 stranded_reoffer() {
   local key="$1" num="$2" why="$3" led now cut n last row qst qwhy fp
   mkdir -p "$SW_DIR" 2>/dev/null
@@ -1241,13 +1267,54 @@ stranded_reoffer() {
   row=""; command -v queue_row >/dev/null 2>&1 && row=$(queue_row "$PROJECT" "$key" 2>/dev/null)
   qst=$(printf '%s' "$row" | cut -f1); qwhy=$(printf '%s' "$row" | cut -f5)
   last="${qst:-no row}${qwhy:+: $qwhy}"
+  # >>> push-rejected arm (BH-7946)
+  # A pool push-rejected terminal is a branch question, not a re-offer one: a
+  # re-offer runs into the same terminal. When the build's own RESULT line says
+  # `branch-check=own`, `ancestor` or `ancestor-of-base` (bin/lib/rb/pr.sh), the
+  # branch holds this ticket's own work or nothing past main, and the next pool
+  # build resumes it (bin/lib/ticket-branch-resume.sh). A legacy reason with no
+  # `branch-check=` token (from before BH-7946) is not held either, but its
+  # alert says the branch was not checked. So these are not held: ONE ALERTS
+  # line per key per window says how to recover. Every other verdict (foreign,
+  # unreadable, open-pr, absent, tracked) and a reason nobody can read keeps
+  # the hold, and its text names the branch head and the recovery step.
+  local rj_br="" rj_head="" rj_first="" rj_mark rj_then rj_what hold_extra=""
+  case "$last" in
+    *"push to ticket/"*"rejected at"*)
+      if [[ "$last" =~ push\ to\ ([^[:space:]]+)\ rejected\ at\ ([0-9a-f]{7,40}|unknown) ]]; then
+        rj_br="${BASH_REMATCH[1]}"; rj_head="${BASH_REMATCH[2]}"
+      fi
+      if stranded_push_rejected_reason "$key" \
+         && { [[ "$SPR_REASON" =~ branch-check=(own|ancestor|ancestor-of-base)([[:space:]]|$) ]] \
+              || [[ "$SPR_REASON" != *"branch-check="* ]]; }; then
+        if [[ "$SPR_REASON" == *"branch-check="* ]]; then
+          rj_what="with no foreign commits — not held (BH-7946). Recover: comment RETRY on #$num; the next pool build resumes ${rj_br:-the branch} from its head"
+        else
+          rj_what="— branch not checked (a reason from before BH-7946), not held. Recover: read ${rj_br:-the branch}; if it is this ticket's work, comment RETRY on #$num"
+        fi
+        rj_mark="$RJ_DIR/$key.alerted"
+        rj_then=$(head -n 1 "$rj_mark" 2>/dev/null); case "$rj_then" in ''|*[!0-9]*) rj_then=0 ;; esac
+        if [ "$rj_then" -lt "$cut" ] \
+           && "$HARNESS/bin/alert-line.sh" --project "$PROJECT" \
+                "[stranded/$PROJECT] $key: push to ${rj_br:-its branch} rejected at ${rj_head:-unknown} $rj_what"; then
+          mkdir -p "$RJ_DIR" 2>/dev/null; printf '%s\n' "$now" > "$rj_mark"
+        fi
+        log "stranded: $key (issue #$num) push-rejected on its own branch ${rj_br:-?} at ${rj_head:-unknown} — not held (BH-7946)"
+        SKIP="${SKIP:+$SKIP,}$key:push-rejected-own"
+        return 1
+      fi
+      [[ "$SPR_REASON" =~ (first=[0-9a-f]{7,40}\ by\ .*)$ ]] && rj_first="${BASH_REMATCH[1]}"
+      hold_extra=" Branch ${rj_br:-?} head ${rj_head:-unknown}${rj_first:+: $rj_first}. Recover: if the branch is this ticket's work, open a PR from ${rj_br:-the branch}; otherwise move that work to another branch and comment RESUME."
+      ;;
+  esac
+  # <<< push-rejected arm
   if [ "$n" -ge "$REOFFER_MAX" ]; then
     if [ -e "$SW_DIR/$key.needs-human" ]; then
       SKIP="${SKIP:+$SKIP,}$key:needs-human"; return 1
     fi
     fp=$(printf 'stranded %s %s' "$PROJECT" "$key" | cksum | awk '{printf "%08x", $1}')
     if "$HARNESS/bin/needs-human-hold.sh" "$PROJECT" "$num" "$fp" \
-         "the stranded-ticket watch re-offered $key $n times in ${REOFFER_WIN_H}h and no PR came of it. Last result: $last. Read the newest build record for $key and decide; RESUME re-offers it." \
+         "the stranded-ticket watch re-offered $key $n times in ${REOFFER_WIN_H}h and no PR came of it. Last result: $last. Read the newest build record for $key and decide; RESUME re-offers it.$hold_extra" \
          stranded-watch >/dev/null 2>&1; then
       printf '%s\t%s\n' "$now" "$last" > "$SW_DIR/$key.needs-human"
       log "stranded: $key (issue #$num) NEEDS_HUMAN — re-offered $n times in ${REOFFER_WIN_H}h with no PR; last result: $last"
@@ -1284,6 +1351,7 @@ stranded_reoffer() {
 if [ "$STRANDED_MODE" = 1 ] && [ -d "$SW_DIR" ]; then
   awk -F'\t' '$3 == "OWNED" && $4 ~ /^pr:/ {print $1}' "$TD/verdicts.tsv" | while IFS= read -r _k; do
     rm -f "$SW_DIR/$_k.reoffers" "$SW_DIR/$_k.needs-human" 2>/dev/null
+    rm -f "$RJ_DIR/$_k.alerted" 2>/dev/null
   done
 fi
 

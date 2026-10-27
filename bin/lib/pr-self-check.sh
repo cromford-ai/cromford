@@ -104,6 +104,13 @@
 #                   itself (the local branch, the head sha) is excluded. A
 #                   project with no migrations_glob row is silent; open PRs that
 #                   could not be read are one note. bin/lib/migration-number.sh.
+#   project-21-upgrade  (BH-8079) each row of the PR body's `## Dependency
+#                   advisories (project-21)` table whose `fixed in` is not none is
+#                   one `NOTE project-21-upgrade: <dep>@<version> has a fix in <x>
+#                   that this PR does not apply: <upgrade> (<url>)` line. It is a
+#                   REFUSE, and sets rc 1, only when lib.project-21.project-21_review_block
+#                   = 1 (default 0); the row's mode only turns it off.
+#                   bin/lib/project-21.example has the rule.
 #   plan-validate   (BH-7072) each static VALIDATE check of the plan the PR
 #                   changes passes at the head and in the body, and the body
 #                   has no "not met" line and no missed Target metric, unless an
@@ -513,6 +520,10 @@ psc_plan_missing() {
 # that deleted paths are not checked.
 # shellcheck source=bin/lib/callers-not-ported.sh
 . "$(dirname "${BASH_SOURCE[0]}")/callers-not-ported.sh" 2>/dev/null || :
+# project-21_psc_check, the project-21-upgrade rule (BH-8079). Missing = one NOTE
+# that the project-21 section is not read.
+# shellcheck source=bin/lib/project-21.example
+. "$(dirname "${BASH_SOURCE[0]}")/project-21.example" 2>/dev/null || :
 
 psc_check() {
   local repo="${1:-}" base="${2:-}" head="${3:-}" body="${4:-}" ticket="${5:-${PSC_TICKET_FILE:-}}"
@@ -700,6 +711,14 @@ psc_check() {
           psc_cnp_check "$repo" "$base" "$head" "$id" || :
         else
           echo "NOTE $id: bin/lib/callers-not-ported.sh not loaded, so deleted paths are not checked"
+        fi ;;
+      project-21-upgrade)
+        # BH-8079: an affected dependency with a fix the PR does not apply. A
+        # NOTE unless lib.project-21.project-21_review_block = 1 makes it a REFUSE.
+        if command -v project-21_psc_check >/dev/null 2>&1; then
+          project-21_psc_check "$body" "$mode" "$id" || rc=1
+        else
+          echo "NOTE $id: bin/lib/project-21.example not loaded, so the project-21 section is not read"
         fi ;;
       body-*)
         # BH-5790: a PR-body section the lead review would BLOCK on. When it

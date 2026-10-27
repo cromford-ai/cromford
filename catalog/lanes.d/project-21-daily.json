@@ -1,0 +1,63 @@
+{
+  "id": "project-21-daily",
+  "name": "project-21 check failure rate (daily)",
+  "scope": "box",
+  "script": "bin/project-21-daily.sh",
+  "cadence": "41 6 * * *",
+  "boxes": [
+    "project-4",
+    "hub",
+    "project-6",
+    "project-6-os",
+    "project-1",
+    "project-3",
+    "project-9",
+    "small",
+    "project-2",
+    "project-5"
+  ],
+  "switch": {
+    "kind": "flag",
+    "name": "lane-off-project-21-daily",
+    "aliases": []
+  },
+  "wired": true,
+  "knobs": [
+    {
+      "env": "project-21_DAILY_FAIL_PCT",
+      "type": "int",
+      "default": 50,
+      "min": 1,
+      "max": 100,
+      "unit": "percent",
+      "zero_means": null,
+      "note": "BH-8079: the lane alerts (warn, id project-21-check-failing) when more than this percent of the counted builds in the window say project-21 state=failed, and resolves the alert at or under it. Read by bin/project-21-daily.sh as ${project-21_DAILY_FAIL_PCT:-50}.",
+      "settable": true
+    },
+    {
+      "env": "project-21_DAILY_WINDOW_H",
+      "type": "int",
+      "default": 24,
+      "min": 1,
+      "max": 168,
+      "unit": "hours",
+      "zero_means": null,
+      "note": "BH-8079: the window of builds the lane counts: a build dir whose last pipeline.log project-21 line is stamped within this many hours. Read by bin/project-21-daily.sh as ${project-21_DAILY_WINDOW_H:-24}.",
+      "settable": true
+    },
+    {
+      "env": "project-21_DAILY_NOW",
+      "type": "int",
+      "default": 0,
+      "zero_means": null,
+      "note": "Read by bin/project-21-daily.sh as ${project-21_DAILY_NOW:-<date +%s>}: the clock the window is counted from. Test seam; NOT settable from the control plane.",
+      "settable": false
+    }
+  ],
+  "stats": {
+    "cost_stage": null,
+    "cost_project_filter": null,
+    "lanes_row": false,
+    "log": "logs/project-21-daily.log"
+  }
+}

@@ -1,0 +1,75 @@
+{
+  "libs": [
+    {
+      "id": "project-21",
+      "file": "bin/lib/project-21.example",
+      "note": "BH-8079: the project-21 dependency check of every build. bin/project-21-check.sh sends the build worktree's tracked lockfiles to ${project-21_BASE_URL-https://project-21.example}/v1/check in one request after the push; bin/lib/rb/pr.sh puts the `## Dependency advisories (project-21)` section in the PR body; the self-check rule project-21-upgrade makes each affected row with a fix a lead-review NOTE. A tripwire: no value of any knob here stops a build. Resolved at call time with lib_env_apply project-21 (project-21_knobs); tests/project-21-check.bh-8079-test.sh, tests/project-21-pr-section.bh-8079-test.sh and tests/project-21-review-note.bh-8079-test.sh drive it.",
+      "knobs": [
+        {
+          "env": "project-21_ENABLED",
+          "type": "int",
+          "default": 1,
+          "min": 0,
+          "max": 1,
+          "zero_means": "off",
+          "required": false,
+          "note": "1 = every build checks its lockfiles with project-21, 0 = no call and no PR body section (pipeline.log says project-21 state=off). Read by bin/project-21-check.sh through project-21_knobs as ${project-21_ENABLED:-1}."
+        },
+        {
+          "env": "project-21_REVIEW_BLOCK",
+          "type": "int",
+          "default": 0,
+          "min": 0,
+          "max": 1,
+          "zero_means": null,
+          "required": false,
+          "note": "0 = an affected dependency with a fix the PR does not apply is a NOTE in the lead review request; 1 = the self-check rule project-21-upgrade REFUSEs it and holds the lead review. Read by project-21_psc_check (bin/lib/project-21.example) as ${project-21_REVIEW_BLOCK:-0}."
+        },
+        {
+          "env": "project-21_TIMEOUT_S",
+          "type": "int",
+          "default": 30,
+          "min": 5,
+          "max": 120,
+          "unit": "seconds",
+          "zero_means": null,
+          "required": false,
+          "note": "curl --max-time of the one project-21 request; the call sits on the build's path to its PR, after the push. A timeout is `check failed (curl rc=28)`. Read by bin/project-21-check.sh as ${project-21_TIMEOUT_S:-30}."
+        },
+        {
+          "env": "project-21_ROWS_MAX",
+          "type": "int",
+          "default": 50,
+          "min": 1,
+          "max": 500,
+          "unit": "rows",
+          "zero_means": null,
+          "required": false,
+          "note": "The most affected rows, and the most skip lines, the PR body section lists; the rest is one `... and <n> more` line that names $BUILD/project-21.json. Read by project-21_pr_section as ${project-21_ROWS_MAX:-50}."
+        },
+        {
+          "env": "project-21_FIELD_MAX",
+          "type": "int",
+          "default": 200,
+          "min": 20,
+          "max": 2000,
+          "unit": "characters",
+          "zero_means": null,
+          "required": false,
+          "note": "The most characters of one field (a table cell or a skip line) in the PR body section. Read by project-21_pr_section as ${project-21_FIELD_MAX:-200}."
+        },
+        {
+          "env": "project-21_NOTE_MAX",
+          "type": "int",
+          "default": 10,
+          "min": 1,
+          "max": 100,
+          "unit": "lines",
+          "zero_means": null,
+          "required": false,
+          "note": "The most project-21-upgrade NOTE (or REFUSE) lines one self-check prints; the rest is one `and <n> more` line. Read by project-21_psc_check as ${project-21_NOTE_MAX:-10}."
+        }
+      ]
+    }
+  ]
+}

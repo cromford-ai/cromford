@@ -31,6 +31,7 @@
 #   VERDICT_RSHA VERDICT_WORD VERIFY_LINE WHAT_BASE WHAT_LIST WHAT_MB WHY_EXCERPT WP_RC WP_WHY _ASSUM _SPECC
 #   _CL_ISSUE
 #   CALLERS_SECTION CK_BASE CK_RC CK_SUM RB_BUILT_SHA
+#   SQUASH_OK TBR_DETAIL TBR_OLD TBR_PUBLISHED TBR_REMOTE TBR_SLUG TBR_VERDICT
 #   MNR_OUT MNR_RC MNR_SECTION PREPR_SECTION _MNR_L
 # shellcheck shell=bash
 
@@ -201,6 +202,48 @@ if [ -n "${STACK_ON:-}" ]; then
 fi
 # <<< stack recheck
 
+# >>> ticket branch resume (BH-7946)
+# A BRANCH THAT APPEARED ON ORIGIN AFTER THE CUT. The TAKEN check at the cut
+# (bin/lib/rb/gates.sh) reads the remote once. When another writer creates the
+# same ticket/<key> while this build runs, the push below leases on "new" and
+# the remote refuses it: BH-7519 (a Mac session, PR #7852) and TK-1556 were held
+# for a human that way. So, when the lease would be "new", read the remote name
+# once (bin/lib/ticket-branch-resume.sh). `own` (every commit names this ticket,
+# no open PR): the build moves onto that branch, the update below MERGES the
+# base into it, the typecheck and the pre-push gate verify it, and the push is a
+# fast-forward. `ancestor`: the remote head is already in HEAD, so it is the
+# lease. Every other verdict keeps the refusal and names itself in the RESULT.
+TBR_VERDICT=""; TBR_REMOTE=""; TBR_DETAIL=""; TBR_PUBLISHED=0
+if [ -n "${BRANCH:-}" ] && ! git rev-parse -q --verify "refs/remotes/origin/$BRANCH" >/dev/null 2>&1; then
+  # shellcheck source=bin/lib/ticket-branch-resume.sh
+  command -v tbr_classify >/dev/null 2>&1 || { [ -r "$HARNESS/bin/lib/ticket-branch-resume.sh" ] && . "$HARNESS/bin/lib/ticket-branch-resume.sh" 2>/dev/null; }
+  if ! command -v tbr_classify >/dev/null 2>&1; then
+    echo "$(STAMP) [$PROJECT/$KEY] BRANCH-CHECK skipped: bin/lib/ticket-branch-resume.sh is not loaded — $BRANCH is pushed with lease new, as before (BH-7946)" >> "$BUILD/pipeline.log"
+  else
+    GH_LIVE
+    TBR_SLUG="${GH_AUTH_SLUG:-}"
+    [ -n "$TBR_SLUG" ] || TBR_SLUG=$(git remote get-url origin 2>/dev/null | sed -E 's#(git@github.com:|https://([^@/]*@)?github.com/)##; s#\.git$##')
+    IFS=$'\t' read -r TBR_VERDICT TBR_REMOTE TBR_DETAIL <<<"$(tbr_classify "$BRANCH" "$KEY" "origin/$BASE" "$TBR_SLUG" 2>>"$BUILD/pipeline.log")" || true
+    [ -n "$TBR_VERDICT" ] || { TBR_VERDICT=unreadable; TBR_DETAIL="no-answer"; }
+    case "$TBR_VERDICT" in
+      own)
+        if TBR_OLD=$(tbr_resume "$BRANCH" "$TBR_REMOTE" "$KEY" 2>>"$BUILD/pipeline.log"); then
+          TBR_PUBLISHED=1; SQUASH_OK=0
+          echo "$(STAMP) [$PROJECT/$KEY] BRANCH-CHECK own $BRANCH remote=$TBR_REMOTE $TBR_DETAIL — resumed: $BRANCH now starts from origin/$BRANCH, and this build's head $TBR_OLD is kept at refs/harness/superseded/$KEY" >> "$BUILD/pipeline.log"
+          PREPR_SECTION="${PREPR_SECTION:-}"$'\n## Resumed from an existing branch\n\n'"\`$BRANCH\` was already on origin at \`$TBR_REMOTE\` with no open PR, and every commit on it names $KEY ($TBR_DETAIL). This build resumed that branch and merged \`origin/$BASE\` into it, so the push is a fast-forward. This build's own head \`$TBR_OLD\` is kept at \`refs/harness/superseded/$KEY\` on the build machine and is not pushed. The approval of that head does not carry: the head-bound gate re-reviews this one."$'\n'
+        else
+          echo "$(STAMP) [$PROJECT/$KEY] BRANCH-CHECK own $BRANCH remote=$TBR_REMOTE $TBR_DETAIL — resume FAILED, HEAD stays $(git rev-parse --short HEAD 2>/dev/null); the push leases on new" >> "$BUILD/pipeline.log"
+        fi ;;
+      ancestor)
+        git update-ref "refs/remotes/origin/$BRANCH" "$TBR_REMOTE" 2>>"$BUILD/pipeline.log" && TBR_PUBLISHED=1
+        echo "$(STAMP) [$PROJECT/$KEY] BRANCH-CHECK ancestor $BRANCH remote=$TBR_REMOTE — the remote head is already in HEAD; it is the lease" >> "$BUILD/pipeline.log" ;;
+      *)
+        echo "$(STAMP) [$PROJECT/$KEY] BRANCH-CHECK $TBR_VERDICT $BRANCH remote=${TBR_REMOTE:-none} ${TBR_DETAIL}" >> "$BUILD/pipeline.log" ;;
+    esac
+  fi
+fi
+# <<< ticket branch resume
+
 # >>> pre-pr rebase
 T_REBASE=$(STAGE_START)
 # STACKED (2026-09-14): $BASE is the parent's branch, so this is a rebase onto
@@ -266,7 +309,11 @@ if [ -n "$RB_MAIN" ] && [ -n "$RB_MB" ] && [ "$RB_MAIN" != "$RB_MB" ]; then
   # main merge), and the children are not touched. Children that cannot be read
   # merge as well: a merge is always safe, a blind rebase is not.
   RB_UPDATE=rebase; RB_KIDS=""
-  if [ -n "${BRANCH:-}" ] && git rev-parse -q --verify "refs/remotes/origin/$BRANCH" >/dev/null 2>&1; then
+  # A branch this build RESUMED or found published (`# >>> ticket branch
+  # resume`, BH-7946) is never rewritten either: it merges, children or not.
+  if [ "${TBR_PUBLISHED:-0}" = 1 ]; then
+    RB_UPDATE=merge
+  elif [ -n "${BRANCH:-}" ] && git rev-parse -q --verify "refs/remotes/origin/$BRANCH" >/dev/null 2>&1; then
     # shellcheck source=bin/lib/stale-parent.sh
     command -v sp_open_children >/dev/null 2>&1 || . "$HARNESS/bin/lib/stale-parent.sh" 2>/dev/null
     RB_SLUG="${GH_AUTH_SLUG:-}"
@@ -282,7 +329,11 @@ if [ -n "$RB_MAIN" ] && [ -n "$RB_MB" ] && [ "$RB_MAIN" != "$RB_MB" ]; then
   fi
   if [ "$RB_UPDATE" = merge ]; then
     RH_N=""
-    echo "$(STAMP) [$PROJECT/$KEY] pre-PR update by MERGE: $BRANCH has open stacked children ($RB_KIDS) — merging origin/$BASE rather than rewriting a published parent" >> "$BUILD/pipeline.log"
+    if [ "${TBR_PUBLISHED:-0}" = 1 ]; then
+      echo "$(STAMP) [$PROJECT/$KEY] pre-PR update by MERGE: $BRANCH is already on origin (BH-7946) — merging origin/$BASE so the push is a fast-forward" >> "$BUILD/pipeline.log"
+    else
+      echo "$(STAMP) [$PROJECT/$KEY] pre-PR update by MERGE: $BRANCH has open stacked children ($RB_KIDS) — merging origin/$BASE rather than rewriting a published parent" >> "$BUILD/pipeline.log"
+    fi
     RB_ABORT=(merge --abort); RB_DID="merged origin/$BASE into $BRANCH"
   else
     RB_ABORT=(rebase --abort); RB_DID="rebased onto origin/$BASE"
@@ -880,13 +931,37 @@ fi
 # >>> pr push
 # The rejected line names the head this build made: the pool reap compares it
 # with the remote branch, and a push that did land gets its PR from the hub.
+# A branch-check verdict rides after the sha (BH-7946), only when a check ran:
+# the reap (bin/lib/pool-push-rejected.sh) and bin/fly-pool.sh read the prefix,
+# and the stranded watch reads `branch-check=foreign` to decide a hold.
+# A resumed or published branch is pushed only as a fast-forward: when HEAD
+# lost the remote head, nothing is pushed.
+if [ "${TBR_PUBLISHED:-0}" = 1 ] && ! git merge-base --is-ancestor "$TBR_REMOTE" HEAD 2>/dev/null; then
+  RB_BUILT_SHA=$(git rev-parse HEAD 2>/dev/null) || RB_BUILT_SHA=""
+  echo "$(STAMP) [$PROJECT/$KEY] the push of $BRANCH at ${RB_BUILT_SHA:-an unreadable head} is NOT a fast-forward of origin/$BRANCH ($TBR_REMOTE) — nothing pushed, deferring (BH-7946)" >> "$BUILD/pipeline.log"
+  RESULT "BUILD_DEFERRED push of $BRANCH rejected${RB_BUILT_SHA:+ at $RB_BUILT_SHA} branch-check=$TBR_VERDICT remote=$TBR_REMOTE not-fast-forward"; exit 3
+fi
 GH_LIVE
 { RB_PUSH -u pr-push && track_pushed; } || { sleep 10; GH_LIVE; RB_PUSH -u pr-push && track_pushed; } || {
   RB_BUILT_SHA=$(git rev-parse HEAD 2>/dev/null) || RB_BUILT_SHA=""
   echo "$(STAMP) [$PROJECT/$KEY] the push of $BRANCH at ${RB_BUILT_SHA:-an unreadable head} was REJECTED (a HOLD on the ticket, an unreadable hold, or the lease) — deferring, no PR claimed" >> "$BUILD/pipeline.log"
-  RESULT "BUILD_DEFERRED push of $BRANCH rejected${RB_BUILT_SHA:+ at $RB_BUILT_SHA}"; exit 3
+  RESULT "BUILD_DEFERRED push of $BRANCH rejected${RB_BUILT_SHA:+ at $RB_BUILT_SHA}${TBR_VERDICT:+ branch-check=$TBR_VERDICT remote=${TBR_REMOTE:-none}${TBR_DETAIL:+ $TBR_DETAIL}}"; exit 3
 }
 # <<< pr push
+# >>> project-21 check (BH-8079)
+# The project-21 dependency check of the pushed head, before the body renders. One
+# call per head ($BUILD/project-21.json), a pipeline.log project-21 line for
+# bin/project-21-daily.sh, and project-21_SECTION for PR_BODY_FOR. A tripwire: no path
+# here stops the build (bin/lib/project-21.example project-21_build_run).
+project-21_SECTION=""
+# shellcheck source=bin/lib/project-21.example
+if [ -r "$HARNESS/bin/lib/project-21.example" ] && . "$HARNESS/bin/lib/project-21.example" 2>/dev/null; then
+  project-21_SECTION=$(project-21_build_run "$BUILD" . "$(STAMP) [$PROJECT/$KEY]") || project-21_SECTION=""
+else
+  echo "$(STAMP) [$PROJECT/$KEY] project-21 state=failed checked=0 affected=0 skipped=0 (bin/lib/project-21.example not loaded)" >> "$BUILD/pipeline.log"
+fi
+[ -n "$project-21_SECTION" ] && project-21_SECTION=$'\n'"$project-21_SECTION"
+# <<< project-21 check (BH-8079)
 # What/why for humans (the operator 2026-08-24: the body showed only models+cost —
 # our own rule says what/why + verify evidence). Deterministic, no model call:
 # the commit subjects are the WHAT, the plan's opening section is the WHY,
@@ -1243,7 +1318,7 @@ Full manifest (per-input digests): `%s/context.json` on the build box.
 %s
 🤖 Generated with [Claude Code](https://claude.com/claude-code)' \
     "$HOTFIX_PREFIX" "$KEY" "$EB_SUBJECT" "${CLOSES_LINE:+$CLOSES_LINE
-}" "$STACK_SECTION" "$WHAT_LIST" "$WHY_EXCERPT" "$VERIFY_LINE" "$SPEC_LINE" "${ASSUMPTIONS_SECTION}${PREPR_SECTION:-}${REPRO_SECTION:-}${SPEC_CHANGES_SECTION:-}${NOTMET_SECTION:-}${NH_PR_SECTION:-}${CALLERS_SECTION:-}${TEST_CHANGE_SECTION:-}" "$(basename "$BUILD")" "$PLAN_MODEL" "$EXECUTE_MODEL" "$REVIEW_MODEL" "$MERGE_NOTE" "$MIG_SECTION" "$COST_LINE" \
+}" "$STACK_SECTION" "$WHAT_LIST" "$WHY_EXCERPT" "$VERIFY_LINE" "$SPEC_LINE" "${ASSUMPTIONS_SECTION}${PREPR_SECTION:-}${REPRO_SECTION:-}${SPEC_CHANGES_SECTION:-}${project-21_SECTION:-}${NOTMET_SECTION:-}${NH_PR_SECTION:-}${CALLERS_SECTION:-}${TEST_CHANGE_SECTION:-}" "$(basename "$BUILD")" "$PLAN_MODEL" "$EXECUTE_MODEL" "$REVIEW_MODEL" "$MERGE_NOTE" "$MIG_SECTION" "$COST_LINE" \
     "$CTX_SIG" "$CTX_SIG" "$CTX_COMMIT" "$(hostname)" "$CTX_SYNC" "$CTX_FRESH" "$BUILD" "$1" \
     | "$_KW"
 }
