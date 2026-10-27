@@ -8,8 +8,7 @@
 #   BOX (box-demo)  "$DIR/bin/inbuild-lead-review.sh" and
 #                             "$DIR/bin/lead-review.sh" one <id>, with the real
 #                             prompts and a real git origin for the PR
-#   HUB (box-hub)     "$DIR/bin/lead-review-land.sh" and
-#                             "$DIR/bin/lead-review-enqueue.sh" tick
+#   HUB (box-hub)     "$DIR/bin/lead-review-land.sh"
 #   the hook                  the `# >>> inbuild lead review` block of
 #                             bin/run-build.sh, extracted from the
 #                             pipeline's flatten (tests/lib/rb-all.sh) and run
@@ -20,8 +19,10 @@
 #
 # D1 mutations this suite was checked against: delete the hook's call line in
 # run-build.sh (hook goes red), drop the inbuild: approve check in land
-# (L-noapprove goes red), let the script post on a moved head (C2 goes red),
-# drop the grace `continue` in the enqueue (G1 goes red).
+# (L-noapprove goes red), let the script post on a moved head (C2 goes red).
+# The hub's in-build grace for a medium head is the worklist gate
+# bin/lib/lead-gates.d/70-inbuild-grace.sh; its cases are in
+# tests/lead-gates-inbuild-grace.bh-5875-test.sh and tests/lead-gates-inbuild-ports.bh-8527-test.sh.
 # Run from anywhere: HARNESS_TEST_SANDBOX=1 bash tests/medium-tier-inbuild-review.bh-5023-test.sh
 set -uo pipefail
 . "$(dirname "$0")/lib/scratch.sh" || exit 1
@@ -39,7 +40,7 @@ INB_OK=1
 for s in bin/inbuild-lead-review.sh bin/lead-review.sh bin/jobs-client.sh bin/box-for.sh bin/fleet-conf.sh; do
   scratch_install_closure "$s" "$BH" >/dev/null || { INB_OK=0; echo "note: no closure for $s"; }
 done
-for s in bin/lead-review-land.sh bin/lead-review-enqueue.sh bin/jobs-client.sh bin/fleet-conf.sh; do
+for s in bin/lead-review-land.sh bin/jobs-client.sh bin/fleet-conf.sh; do
   scratch_install_closure "$s" "$HH" >/dev/null || exit 1
 done
 cp "$DIR/prompts/lead-review.md" "$DIR/prompts/lead-review-checklist.md" "$BH/prompts/"
@@ -230,10 +231,6 @@ inbuild() { # inbuild <sha> — the box half, as the hook calls it
       cromford example-org/cromford 41 "$1" "$T/build" ) > "$T/out" 2>&1; RC=$?
 }
 land() { ( cd "$T" && HARNESS="$HH" FLEET_CONF="$HH/fleet.conf" bash "$HH/bin/lead-review-land.sh" ) > "$T/lout" 2>&1; LRC=$?; }
-enqueue() {
-  ( cd "$T" && HARNESS="$HH" FLEET_CONF="$HH/fleet.conf" LEAD_REVIEW_AUTO_REPOS=example-org/cromford \
-      LEAD_REVIEW_ENQUEUE_MAX_PER_TICK=5 LEAD_REVIEW_MAX_PER_PR_DAY=4 bash "$HH/bin/lead-review-enqueue.sh" tick ) > "$T/eout" 2>&1; ERC=$?
-}
 wlog() { cat "$T/log/worker" 2>/dev/null; }
 creates() { wlog | grep -c '^POST /api/lead-reviews {' ; }
 claims() { wlog | grep -c '^POST /api/lead-reviews/[^ ]*/claim ' ; }
@@ -241,8 +238,6 @@ agents() { [ -f "$T/log/agent-count" ] && wc -l < "$T/log/agent-count" | tr -d '
 lvn() { [ -f "$T/log/lv" ] && wc -l < "$T/log/lv" | tr -d ' ' || echo 0; }
 rowof() { jq -c --arg h "$1" '[.[] | select(.head_sha == $h)] | first // empty' "$T/lrrows.json"; }
 txt() { sed -n "s/^$1=//p" "$T/build/inbuild-lead-review.txt" 2>/dev/null | head -1; }
-ELOG="$HH/logs/lead-review-enqueue.log"
-esumm() { grep ' tick repos=' "$ELOG" 2>/dev/null | tail -1; }
 
 [ "$INB_OK" = 1 ] && [ -f "$DIR/bin/inbuild-lead-review.sh" ] && ok || bad "bin/inbuild-lead-review.sh does not exist"
 
@@ -288,10 +283,7 @@ reset; echo "$SHA2" > "$T/livehead"; git --git-dir="$O" update-ref refs/pull/41/
 inbuild "$SHA"
 [ "$(creates)" = 0 ] && [ "$(agents)" = 0 ] && ok || bad "C2 a moved head was requested/reviewed: creates $(creates) agents $(agents)"
 [ "$(txt result)" = head-moved ] && ok || bad "C2 inbuild-lead-review.txt result: $(txt result)"
-approve 41 "$SHA2"; enqueue
-[ "$(creates)" = 0 ] && ok || bad "C2 the enqueue requested H2 inside the grace: $(wlog | grep '^POST /api/lead-reviews ')"
-grep -q "awaiting the in-build lead-grade review" "$ELOG" && ok || bad "C2 no awaiting line: $(cat "$ELOG")"
-grep -qw 'risk_inbuild_wait=1' <<<"$(esumm)" && ok || bad "C2 summary: $(esumm)"
+approve 41 "$SHA2"
 inbuild "$SHA2"
 [ "$(creates)" = 1 ] && [ "$(jq -r .head_sha <<<"$(rowof "$SHA2")")" = "$SHA2" ] && ok || bad "C2 no request for H2: $(cat "$T/lrrows.json")"
 [ "$(jq -r .verdict <<<"$(rowof "$SHA2")")" = MERGE ] && ok || bad "C2 H2 not reviewed MERGE: $(rowof "$SHA2")"
@@ -347,37 +339,6 @@ reset; seedrow lr-5 "$SHA" done inbuild:box-demo:BH-77 "inbuild: x" MERGE; appro
 # ...and a row the enqueue filed is promoted as before, whatever job_verdict says
 reset; seedrow lr-5 "$SHA" done lead-review-enqueue:box-hub "auto: x" MERGE; approve 41 "$OTHER"; land
 [ "$(lvn)" = 1 ] && ! grep -q 'inbuild:' "$T/log/lv" && ok || bad "L-enqueue row: $(cat "$T/log/lv" 2>/dev/null)"
-
-# ── G: the enqueue's grace for a medium head under enforce ──
-MARK="$HH/state/lead-review-enqueue/inbuild-wait-example-org_cromford-41-${SHA:0:12}"
-reset; enqueue
-[ "$ERC" = 0 ] && [ "$(creates)" = 0 ] && ok || bad "G1 medium inside the grace: rc $ERC creates $(creates); $(cat "$ELOG")"
-[ -f "$MARK" ] && ok || bad "G1 no grace marker"
-grep -q "awaiting the in-build lead-grade review (3[0-9][0-9][0-9]s left)" "$ELOG" && ok || bad "G1 awaiting line: $(grep awaiting "$ELOG")"
-touch -d '-2 hours' "$MARK"; enqueue
-[ "$(creates)" = 1 ] && ok || bad "G2 grace spent: want 1 request, got $(creates)"
-[ "$(wlog | grep '^POST /api/lead-reviews {' | grep -c 'lead=1')" = 1 ] && ok || bad "G2 the hub request lacks the lead token"
-grep -q 'in-build grace spent' "$ELOG" && ok || bad "G2 no grace-spent line"
-reset; cmpx default "$HIGH"; enqueue
-[ "$(creates)" = 1 ] && [ "$(wlog | sed -n 's#^POST /api/lead-reviews \({.*}\) lead=.$#\1#p' | jq -r '.priority // 0')" = 1 ] && ok || bad "G3 high: $(wlog | grep '^POST /api/lead-reviews ')"
-[ -f "$MARK" ] && bad "G3 a high head waited" || ok
-reset; echo shadow > "$T/set/risk_tier.mode.example-org.cromford"; enqueue
-[ "$(creates)" = 1 ] && ok || bad "G4 shadow medium was not requested: $(creates)"
-reset; echo 60 > "$T/set/risk_tier.inbuild_grace_s"; enqueue; touch -d '-2 minutes' "$MARK"; enqueue
-[ "$(creates)" = 1 ] && ok || bad "G5 a 60 s grace row did not override 3600: $(creates); $(grep -E 'awaiting|grace' "$ELOG")"
-reset; enqueue; touch -d '-2 minutes' "$MARK"; enqueue
-[ "$(creates)" = 0 ] && ok || bad "G5 control: a 2-minute-old marker under the 3600 s default requested"
-reset; approve 41 "$OTHER" "reapproved@$SHA"; enqueue
-[ "$(creates)" = 1 ] && [ ! -f "$MARK" ] && ok || bad "G6 a rebound head (no build will review it) waited: creates $(creates)"
-# G8: a grace row of 0 is no hold at all, even when the marker is NEWER than the
-# tick's start (its clock read). The marker is written seconds after the tick
-# reads its clock, so `now - marker` was -1..-n there and `< 0` held the head:
-# that made tests/jev-risk-shadow.bh-5024 B2/B5 flaky on main (976ce1e0a).
-reset; echo 0 > "$T/set/risk_tier.inbuild_grace_s"; mkdir -p "$(dirname "$MARK")"; : > "$MARK"; touch -d '+1 minute' "$MARK"; enqueue
-[ "$(creates)" = 1 ] && ok || bad "G8 a 0 s grace held a head whose marker is newer than the tick: creates $(creates); $(grep -E 'awaiting|grace' "$ELOG")"
-reset; seedrow lr-1 "$SHA" done inbuild:box-demo:BH-77 "inbuild: x" MERGE
-jq -nc '{verdict:"MERGE",source:"lead",id:9,created_at:"2026-10-07T00:00:00Z",report_url:null,reviewer:"box:hub"}' > "$T/standing/41"; enqueue
-[ "$(creates)" = 0 ] && grep -qw 'skipped_verdict=1' <<<"$(esumm)" && ok || bad "G7 a head with the in-build lead verdict standing: $(esumm)"
 
 # ── the hook: the marked block of the pipeline (tests/lib/rb-all.sh's flatten) ──
 . "$DIR/tests/lib/rb-all.sh" || exit 1

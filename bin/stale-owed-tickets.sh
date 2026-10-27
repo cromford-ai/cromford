@@ -256,9 +256,12 @@ so_board() {
       NEW=$(printf '%s\n' "$LINES" | while IFS= read -r L; do grep -qxF "$L" "$H/logs/READY-QUEUE.log" 2>/dev/null || printf '%s\n' "$L"; done)
       [ -n "$NEW" ] && { printf '%s\n' "$NEW" >> "$H/logs/READY-QUEUE.log"; touch "$H/flags/force-triage-$P"; }
     else
-      printf '%s\n' "$LINES" | timeout 25 ssh -o BatchMode=yes -o ConnectTimeout=8 "root@$IP" \
+      # $IP holds the box NAME. The ssh host is the fleet.conf tailnet IP
+      # (bin/box-host.sh, BH-8545): a tailnet name can point at a dead device.
+      HOST=$("$H/bin/box-host.sh" "$IP" 2>/dev/null) && [ -n "$HOST" ] || HOST="$IP"
+      printf '%s\n' "$LINES" | timeout 25 ssh -o BatchMode=yes -o ConnectTimeout=8 "root@$HOST" \
         "cat >> /root/harness/logs/READY-QUEUE.log && touch /root/harness/flags/force-triage-$P" 2>/dev/null \
-        || echo "$(STAMP) $P: push to box $IP FAILED" >> "$LOG"
+        || echo "$(STAMP) $P: push to box $IP ($HOST) FAILED" >> "$LOG"
     fi
     echo "$(STAMP) $P: $N owed-stale, $NQ queued (rest in 24h cooldown)" >> "$LOG"
     so_queued_merge "$P" "$QUEUEABLE"

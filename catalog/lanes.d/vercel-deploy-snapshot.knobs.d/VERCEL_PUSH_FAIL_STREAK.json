@@ -1,0 +1,11 @@
+{
+  "env": "VERCEL_PUSH_FAIL_STREAK",
+  "read_in": "bin/vercel-deploy-snapshot.sh",
+  "type": "int",
+  "default": 3,
+  "min": 1,
+  "max": 1000,
+  "unit": "runs",
+  "required": false,
+  "note": "BH-8545. Consecutive failed snapshot pushes to one box before one ALERTS line names the box, the host and the ssh error. Read as ${VERCEL_PUSH_FAIL_STREAK:-3}; not a positive whole number reads as 3."
+}

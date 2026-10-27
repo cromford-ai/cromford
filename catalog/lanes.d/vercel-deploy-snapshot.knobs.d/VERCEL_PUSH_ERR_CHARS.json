@@ -1,0 +1,11 @@
+{
+  "env": "VERCEL_PUSH_ERR_CHARS",
+  "read_in": "bin/vercel-deploy-snapshot.sh",
+  "type": "int",
+  "default": 200,
+  "min": 20,
+  "max": 2000,
+  "unit": "chars",
+  "required": false,
+  "note": "BH-8545. The ssh error in the push fail-streak ALERTS line is cut to this many characters. Read as ${VERCEL_PUSH_ERR_CHARS:-200}; not a positive whole number reads as 200."
+}
