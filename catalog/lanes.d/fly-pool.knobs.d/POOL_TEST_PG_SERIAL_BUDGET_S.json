@@ -1,0 +1,12 @@
+{
+  "env": "POOL_TEST_PG_SERIAL_BUDGET_S",
+  "type": "int",
+  "default": 1500,
+  "min": 60,
+  "max": 7200,
+  "unit": "s",
+  "zero_means": null,
+  "read_in": "bin/lib/pg-test.sh",
+  "note": "BH-8499: the total seconds a one-file-at-a-time run (the serial run or the ENOSPC rerun) may take. A file past it is HARNESS_PG_FILE: <file> (not run: budget spent), and the run is could-not-run. Per project: lane.fly-pool.<project>.pool_test_pg_serial_budget_s.",
+  "settable": true
+}

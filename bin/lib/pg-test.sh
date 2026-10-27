@@ -18,10 +18,18 @@
 #                             package.json declares; anything else is refused,
 #                             because a settable row must never carry a command.
 #   POOL_TEST_POSTGRES_MIN_FREE_MB  the free MB the data root must have (default
-#                             512). The root is the first of /dev/shm, then
-#                             ${TMPDIR:-/tmp}, that is a writable dir with this
-#                             much free (BH-8175: /tmp on a pool machine is a
-#                             small overlay, and the suite hit ENOSPC there).
+#                             512). The root is the one of /dev/shm and
+#                             ${TMPDIR:-/tmp} that is a writable dir with the
+#                             most free, and at least this much (a tie keeps
+#                             that order). BH-8175: /tmp on a pool machine is a
+#                             small overlay, and the suite hit ENOSPC there.
+#   POOL_TEST_POSTGRES_SERIAL 1 = a selected suite runs one file at a time, each
+#                             file on its own fresh cluster (default 0 = off).
+#   POOL_TEST_PG_RERUN_MAX_FILES  the most failed files an ENOSPC red reruns
+#                             (default 20; 0 = no rerun). More = no rerun.
+#   POOL_TEST_PG_SERIAL_BUDGET_S  the seconds a one-file-at-a-time run may
+#                             take in total (default 1500). A file past it is
+#                             not run.
 #
 # WHY. The pool runner had no database. A repo whose unit suite needs
 # DATABASE_URL (project-6-os: TK-3, TK-34, TK-35, TK-36) recorded HARNESS_EXIT: 1
@@ -46,6 +54,16 @@
 #   HARNESS_PG_SETUP: npm run <script> (rc=N) | none (<why>) | refused (<why>)
 # (no HARNESS_PG_SETUP line when the start failed: there is nothing to set up)
 # Only low disk is a stop: else the suite's own exit is still HARNESS_EXIT.
+#
+# ONE FILE AT A TIME (pgt_run_files). Each file gets the lines above for its own
+# cluster, then:
+#   HARNESS_PG_FILE: <file> (rc=N) | (rc=N, ENOSPC) | (not run: <why>)
+# HARNESS_SUITE_RUN uses it for the serial run and for the one rerun of the files
+# an ENOSPC red names, and writes around it:
+#   HARNESS_PG_SERIAL: on (<n> file(s), one fresh cluster each) | off (<why>)
+#   HARNESS_PG_SERIAL: green | red (rc=N) | could-not-run (<file>: <why>)
+#   HARNESS_PG_RERUN: <n> failed file(s) after ENOSPC, once, one at a time, ...
+#   HARNESS_PG_RERUN: green | red (rc=N) | could-not-run (<file>: <why>)
 
 # PGT_BIN_DIR is a test seam only. The image installs to /opt/pgtest (bake-pgtest block).
 : "${PGT_BIN_DIR:=/opt/pgtest/bin}"
@@ -100,11 +118,11 @@ _pgt_as() {
   fi
 }
 
-# pgt_root — print the first candidate root that is a writable dir with at least
-# POOL_TEST_POSTGRES_MIN_FREE_MB free. rc 1 when none, and what it prints instead
-# names the min and what each root had.
+# pgt_root — print the candidate root that is a writable dir with the most free MB,
+# and at least POOL_TEST_POSTGRES_MIN_FREE_MB. A tie keeps the earlier root. rc 1 when
+# none, and what it prints instead names the min and what each root had.
 pgt_root() {
-  local r min mb why=""
+  local r min mb why="" best="" bestmb=-1
   # The row lane.fly-pool.<project>.pool_test_postgres_min_free_mb; 512 is its fallback.
   min=$(pgt_knob POOL_TEST_POSTGRES_MIN_FREE_MB)
   [[ "$min" =~ ^[0-9]{1,7}$ ]] || min=512
@@ -113,9 +131,13 @@ pgt_root() {
     if [ ! -w "$r" ]; then why="$why, $r not writable"; continue; fi
     mb=$(df -Pm -- "$r" 2>/dev/null | awk 'NR==2{print $4}')
     if ! [[ "$mb" =~ ^[0-9]+$ ]]; then why="$why, $r unreadable free space"; continue; fi
-    [ "$mb" -ge "$min" ] && { printf '%s' "$r"; return 0; }
+    if [ "$mb" -ge "$min" ]; then
+      [ "$mb" -gt "$bestmb" ] && { best="$r"; bestmb="$mb"; }
+      continue
+    fi
     why="$why, $r $mb MB"
   done
+  [ -n "$best" ] && { printf '%s' "$best"; return 0; }
   printf 'no root has %s MB free: %s' "$min" "${why#, }"
   return 1
 }
@@ -188,4 +210,109 @@ pgt_stop() {
   PGT_DIR=""; PGT_URL=""
   [ -n "${1:-}" ] && echo "HARNESS_PG: torn down" >> "$1"
   return 0
+}
+
+# pgt_serial — rc 0 only when POOL_TEST_POSTGRES_SERIAL resolves to exactly 1.
+pgt_serial() { [ "$(pgt_knob POOL_TEST_POSTGRES_SERIAL)" = 1 ]; }
+
+# pgt_failed_files <outfile> [from-line] — print the test files a red run names on
+# `FAIL <path>` lines (the vitest and jest default reporters), from line from-line
+# (default 1) on, deduped in first-seen order. A path counts only when it is
+# relative, has no `..` part, ends in .test.<ext> or .spec.<ext>, and is a regular
+# file under the cwd (the repo). rc 0 = a list, rc 1 = none (or the cap is 0),
+# rc 2 = more than the cap (nothing printed), rc 3 = a FAIL line names a path that
+# does not count (nothing printed): the rerun cannot run that file, so a green
+# rerun of the rest must not read as the whole red run gone green (BH-8499 D9).
+pgt_failed_files() {
+  local out="$1" from="${2:-1}" cap p seen=() n=0 x dup drop=0
+  # The row lane.fly-pool.<project>.pool_test_pg_rerun_max_files; 20 is its fallback.
+  cap=$(pgt_knob POOL_TEST_PG_RERUN_MAX_FILES)
+  [[ "$cap" =~ ^[0-9]{1,4}$ ]] || cap=20
+  [[ "$from" =~ ^[0-9]+$ ]] && [ "$from" -ge 1 ] || from=1
+  [ "$cap" -gt 0 ] || return 1
+  while IFS= read -r p; do
+    case "$p" in /*|..|../*|*/..|*/../*) drop=1; continue ;; esac
+    [[ "$p" =~ \.(test|spec)\.[cm]?[jt]sx?$ ]] || { drop=1; continue; }
+    [ -f "$p" ] && [ ! -L "$p" ] || { drop=1; continue; }
+    dup=0; for x in ${seen[@]+"${seen[@]}"}; do [ "$x" = "$p" ] && { dup=1; break; }; done
+    [ "$dup" = 1 ] && continue
+    seen+=("$p"); n=$((n + 1))
+  done < <(tail -n +"$from" "$out" 2>/dev/null | sed 's/\x1b\[[0-9;]*m//g' \
+             | sed -nE 's/^[[:space:]]*FAIL[[:space:]]+([^[:space:]]+).*$/\1/p')
+  [ "$drop" = 0 ] || return 3
+  [ "$n" -gt 0 ] || return 1
+  [ "$n" -le "$cap" ] || return 2
+  printf '%s\n' "${seen[@]}"
+  return 0
+}
+
+# pgt_run_files <outfile> <script> <file>... — run `npm run <script> -- <file>` once per
+# file, each on its own fresh cluster (pgt_start, pgt_setup, the run, pgt_stop), and
+# write one HARNESS_PG_FILE line per file. All of it inside the budget knob
+# POOL_TEST_PG_SERIAL_BUDGET_S. A start that fails stops the loop, and every
+# file left is listed as not run. Returns 0 when every file is rc 0 with no ENOSPC in
+# its own lines; else the first red rc (not ENOSPC, not 124 or 125) because a real
+# failing test is evidence; else 125, "could not run" (ENOSPC, a timeout, a file not
+# run), with PGT_RUN_WHY = "<file>: <why>" for the first such file and PGT_RUN_DISK =
+# the first ENOSPC line. PGT_DIR is empty on every return.
+pgt_run_files() {
+  local out="$1" script="$2" f budget t0 rem rc n0 eno why red="" cnr=0 stop="" srs env=()
+  shift 2
+  PGT_RUN_WHY=""; PGT_RUN_DISK=""
+  [ $# -gt 0 ] || { PGT_RUN_WHY="no file to run"; return 125; }
+  # The row lane.fly-pool.<project>.pool_test_pg_serial_budget_s; 1500 (the single
+  # run's timeout) is its fallback.
+  budget=$(pgt_knob POOL_TEST_PG_SERIAL_BUDGET_S)
+  [[ "$budget" =~ ^[0-9]{1,6}$ ]] && [ "$budget" -gt 0 ] || budget=1500
+  t0=$(date +%s)
+  for f in "$@"; do
+    if [ -n "$stop" ]; then
+      echo "HARNESS_PG_FILE: $f (not run: $stop)" >> "$out"; continue
+    fi
+    rem=$(( budget - ( $(date +%s) - t0 ) ))
+    if [ "$rem" -le 0 ]; then
+      echo "HARNESS_PG_FILE: $f (not run: budget spent)" >> "$out"
+      cnr=1; [ -n "$PGT_RUN_WHY" ] || PGT_RUN_WHY="$f: budget spent"; continue
+    fi
+    pgt_start "$out"; srs=$?
+    if [ "$srs" != 0 ]; then
+      if [ "$srs" = 2 ]; then why="low disk"; else why="postgres could not start"; fi
+      echo "HARNESS_PG_FILE: $f (not run: $why)" >> "$out"
+      cnr=1; [ -n "$PGT_RUN_WHY" ] || PGT_RUN_WHY="$f: $why"
+      stop="an earlier start failed"; continue
+    fi
+    pgt_setup "$out"
+    env=(); pgt_env && env=("${PGT_ENV[@]}")
+    n0=$(wc -l < "$out")
+    ${env[@]+"${env[@]}"} timeout "$rem" npm run "$script" -- "$f" >> "$out" 2>&1; rc=$?
+    eno=""
+    [ "$rc" != 0 ] && eno=$(tail -n +"$((n0 + 1))" "$out" | grep -m1 -i 'no space left on device')
+    pgt_stop "$out"
+    if [ -n "$eno" ]; then
+      echo "HARNESS_PG_FILE: $f (rc=$rc, ENOSPC)" >> "$out"
+      cnr=1; [ -n "$PGT_RUN_WHY" ] || PGT_RUN_WHY="$f: ENOSPC"
+      [ -n "$PGT_RUN_DISK" ] || PGT_RUN_DISK=$(printf '%s' "$eno" | tr -d '\r' | cut -c1-200)
+      continue
+    fi
+    echo "HARNESS_PG_FILE: $f (rc=$rc)" >> "$out"
+    case "$rc" in
+      0) ;;
+      124|125) cnr=1; [ -n "$PGT_RUN_WHY" ] || PGT_RUN_WHY="$f: rc=$rc (timed out or could not run)" ;;
+      *) [ -n "$red" ] || red="$rc" ;;
+    esac
+  done
+  PGT_DIR=""
+  [ -n "$red" ] && return "$red"
+  [ "$cnr" = 1 ] && return 125
+  return 0
+}
+
+# pgt_verdict <pgt_run_files rc> — PGT_VERDICT_RC (what HARNESS_EXIT says) and
+# PGT_VERDICT (the state word for the HARNESS_PG_SERIAL/HARNESS_PG_RERUN line).
+pgt_verdict() {
+  case "$1" in
+    0)   PGT_VERDICT_RC=0; PGT_VERDICT=green ;;
+    125) PGT_VERDICT_RC=could-not-run; PGT_VERDICT="could-not-run (${PGT_RUN_WHY:-no reason recorded})" ;;
+    *)   PGT_VERDICT_RC="$1"; PGT_VERDICT="red (rc=$1)" ;;
+  esac
 }

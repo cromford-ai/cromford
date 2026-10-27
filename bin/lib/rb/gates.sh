@@ -158,6 +158,7 @@ RB_TOKEN_REDACT() {
 # reason this script stops.
 HARNESS_SUITE_RUN() {
   local outfile="$1" phase="$2" script mode rc t0 stage reason prelude pgrc disk
+  local pgon serial=0 rc0 n0 prc why rerun=()
   local pgenv=()
   local sel="$BUILD/test-select-$phase.txt" err="$BUILD/test-select-$phase.err"
   local FILES=()
@@ -228,8 +229,30 @@ HARNESS_SUITE_RUN() {
   # LOW DISK (BH-8175): pgt_start rc 2 means no data root had the free MB the
   # knob asks for. The suite is not run, and the exit is could-not-run: a box
   # fault is no verdict on the code, and the PR head's CI decides.
-  disk=""; pgrc=""
+  # SERIAL (BH-8499): with POOL_TEST_POSTGRES_SERIAL=1 a selected run is one file at
+  # a time, each on its own fresh cluster (pgt_run_files), in place of the single
+  # start and run below. A full run names no files, so it runs as before.
+  disk=""; pgrc=""; pgon=0
   if { command -v pgt_enabled >/dev/null 2>&1 || { [ -r "$HARNESS/bin/lib/pg-test.sh" ] && . "$HARNESS/bin/lib/pg-test.sh"; }; } && pgt_enabled; then
+    pgon=1
+    if command -v pgt_serial >/dev/null 2>&1 && pgt_serial; then
+      if [ "${#FILES[@]}" -gt 0 ]; then
+        serial=1; echo "HARNESS_PG_SERIAL: on (${#FILES[@]} file(s), one fresh cluster each)" >> "$BUILD/$outfile"
+      else
+        echo "HARNESS_PG_SERIAL: off (a full run names no files)" >> "$BUILD/$outfile"
+      fi
+    fi
+  fi
+  if [ "$serial" = 1 ]; then
+    pgt_run_files "$BUILD/$outfile" "$script" "${FILES[@]}"; prc=$?
+    pgt_verdict "$prc"; rc="$PGT_VERDICT_RC"
+    disk=$(sed -n 's/^HARNESS_PG: could-not-start (low disk: \(.*\))$/\1/p' "$BUILD/$outfile" | tail -1)
+    [ -n "$disk" ] && echo "HARNESS_DISK: low ($disk)" >> "$BUILD/$outfile"
+    [ "$rc" = could-not-run ] && [ -n "$PGT_RUN_DISK" ] && echo "HARNESS_DISK: ENOSPC (serial): $PGT_RUN_DISK" >> "$BUILD/$outfile"
+    echo "HARNESS_PG_SERIAL: $PGT_VERDICT" >> "$BUILD/$outfile"
+    [ -n "$disk" ] && echo "$(STAMP) [$PROJECT/$KEY] HARNESS-VERIFY $phase disk: low ($disk) — a serial file was not run" >> "$BUILD/pipeline.log"
+    echo "$(STAMP) [$PROJECT/$KEY] HARNESS-VERIFY $phase serial (${#FILES[@]} file(s)): $PGT_VERDICT" >> "$BUILD/pipeline.log"
+  elif [ "$pgon" = 1 ]; then
     pgt_start "$BUILD/$outfile"; pgrc=$?
     if [ "$pgrc" = 0 ]; then
       pgt_setup "$BUILD/$outfile"
@@ -246,7 +269,8 @@ HARNESS_SUITE_RUN() {
   # Unpiped, and HARNESS_EXIT written only AFTER the run returns: a pre-stamped
   # exit code is a claim, and 124 (timeout) and 127 (no npm) must land as the
   # numbers they are.
-  if [ "$pgrc" = 2 ]; then :
+  n0=$(( $(wc -l < "$BUILD/$outfile") + 1 ))
+  if [ "$pgrc" = 2 ] || [ "$serial" = 1 ]; then :
   elif [ "${#FILES[@]}" -gt 0 ]; then
     ${pgenv[@]+"${pgenv[@]}"} timeout 1500 npm run "$script" -- "${FILES[@]}" >> "$BUILD/$outfile" 2>&1; rc=$?
   else
@@ -257,10 +281,32 @@ HARNESS_SUITE_RUN() {
   # reads as red. Only the full phrase counts (Node: `ENOSPC: no space left on
   # device`, Postgres and coreutils: `No space left on device`); a bare ENOSPC
   # token can be a test's name. rc 0 is never remapped.
-  if [ "$pgrc" != 2 ] && [ "$rc" != 0 ] && disk=$(grep -m1 -i 'no space left on device' "$BUILD/$outfile"); then
+  # A serial run already wrote its own record per file, so it is not mapped again.
+  if [ "$pgrc" != 2 ] && [ "$serial" = 0 ] && [ "$rc" != 0 ] && disk=$(grep -m1 -i 'no space left on device' "$BUILD/$outfile"); then
     echo "HARNESS_DISK: ENOSPC (rc=$rc): $(printf '%s' "$disk" | tr -d '\r' | cut -c1-200)" >> "$BUILD/$outfile"
     echo "$(STAMP) [$PROJECT/$KEY] HARNESS-VERIFY $phase disk: ENOSPC (rc=$rc) — recorded could-not-run" >> "$BUILD/pipeline.log"
-    rc=could-not-run
+    rc0="$rc"; rc=could-not-run
+    # THE RERUN (BH-8499): once, only the files the red run names, one at a time,
+    # each on a fresh cluster. Only for a plain red (rc 1: a timeout can hide files
+    # it never named) on the harness Postgres. HARNESS_DISK stays as the first
+    # run's record; the rerun's own result is the exit.
+    if [ "$rc0" != 1 ]; then why="rc $rc0 is not a plain red"
+    elif [ "$pgrc" != 0 ]; then why="not on the harness Postgres"
+    else
+      why=$(pgt_failed_files "$BUILD/$outfile" "$n0"); prc=$?
+      [ "$prc" = 0 ] && mapfile -t rerun <<< "$why"
+      case "$prc" in 0) why="" ;; 2) why="more failed files than the rerun cap" ;; 3) why="a FAIL line names a file the rerun cannot run" ;; *) why="the output names no failed test file, or the cap is 0" ;; esac
+    fi
+    if [ -n "$why" ]; then
+      echo "$(STAMP) [$PROJECT/$KEY] HARNESS-VERIFY $phase rerun: none ($why)" >> "$BUILD/pipeline.log"
+    else
+      [ -n "${PGT_DIR:-}" ] && pgt_stop "$BUILD/$outfile"
+      echo "HARNESS_PG_RERUN: ${#rerun[@]} failed file(s) after ENOSPC, once, one at a time, each on a fresh cluster" >> "$BUILD/$outfile"
+      pgt_run_files "$BUILD/$outfile" "$script" "${rerun[@]}"; prc=$?
+      pgt_verdict "$prc"; rc="$PGT_VERDICT_RC"
+      echo "HARNESS_PG_RERUN: $PGT_VERDICT" >> "$BUILD/$outfile"
+      echo "$(STAMP) [$PROJECT/$KEY] HARNESS-VERIFY $phase rerun: $PGT_VERDICT" >> "$BUILD/pipeline.log"
+    fi
   fi
   # The teardown runs on every suite exit (green, red, 124), before HARNESS_EXIT.
   [ -n "${PGT_DIR:-}" ] && pgt_stop "$BUILD/$outfile"

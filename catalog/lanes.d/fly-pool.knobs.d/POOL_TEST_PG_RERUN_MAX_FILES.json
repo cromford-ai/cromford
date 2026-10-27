@@ -1,0 +1,12 @@
+{
+  "env": "POOL_TEST_PG_RERUN_MAX_FILES",
+  "type": "int",
+  "default": 20,
+  "min": 0,
+  "max": 500,
+  "unit": "files",
+  "zero_means": "off",
+  "read_in": "bin/lib/pg-test.sh",
+  "note": "BH-8499: the most failed test files an ENOSPC red on the throwaway Postgres reruns, once, one at a time, each on a fresh cluster (HARNESS_PG_RERUN lines). More failed files than this = no rerun, HARNESS_EXIT: could-not-run as before. Per project: lane.fly-pool.<project>.pool_test_pg_rerun_max_files.",
+  "settable": true
+}

@@ -1,0 +1,12 @@
+{
+  "env": "POOL_TEST_POSTGRES_SERIAL",
+  "type": "int",
+  "default": 0,
+  "min": 0,
+  "max": 1,
+  "unit": "switch",
+  "zero_means": "off",
+  "read_in": "bin/lib/pg-test.sh",
+  "note": "BH-8499: 1 = a selected suite on the throwaway Postgres runs one file at a time, each file on its own fresh cluster (HARNESS_PG_SERIAL lines), inside POOL_TEST_PG_SERIAL_BUDGET_S. A full run names no files and runs as before. Only exactly 1 is on. Per project: lane.fly-pool.<project>.pool_test_postgres_serial.",
+  "settable": true
+}
