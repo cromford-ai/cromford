@@ -22,7 +22,9 @@ export function repoPath(kind, project) {
   return `prompts/stages/${kind}.md`;
 }
 
-async function call(path, init) {
+// The one fetch helper of the prompts calls (lib/prompt-history.js uses it
+// too): a 403 is the console AuthError, any other failure carries status and body.
+export async function call(path, init) {
   let res;
   try {
     res = await fetch(path, { credentials: 'same-origin', ...init });

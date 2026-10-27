@@ -1,0 +1,5 @@
+# PROMPT HISTORY (BH-7940.4): the version list, restore and drop head. Bearer-gated.
+# Sorts before bh-7940-prompts.txt, so GET …/versions matches before the contract's :version row.
+GET re:/^\/api\/prompts\/([^/]+)\/([^/]+)\/versions$/
+POST re:/^\/api\/prompts\/([^/]+)\/([^/]+)\/restore$/
+DELETE re:/^\/api\/prompts\/([^/]+)\/([^/]+)\/head$/

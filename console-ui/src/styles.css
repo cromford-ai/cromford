@@ -1578,3 +1578,25 @@ a.statgrid__cell:hover { background: var(--surface-1); color: var(--text); }
 .prompt-lint__bad { color: var(--err); }
 .prompt-lint__ok { color: var(--ok); }
 .prompt-note { width: 100%; box-sizing: border-box; font-family: var(--font-mono); }
+/* ---------- Prompt versions sheet (BH-7940.4) ----------
+   A centred panel at 640 px and wider, a bottom sheet under 640 px. It sits
+   below the confirm modal (z-index 50), which opens on top of it for RESTORE.
+   The table scrolls in .tablewrap, never the page. Tokens only. */
+.prompt-versions__scrim {
+  position: fixed; inset: 0; background: var(--scrim); z-index: 40;
+  display: flex; align-items: center; justify-content: center; padding: 20px;
+}
+.prompt-versions {
+  width: 100%; max-width: 760px; max-height: 80vh; overflow-y: auto; box-sizing: border-box;
+  display: flex; flex-direction: column; gap: 12px; min-width: 0; padding: 16px;
+  background: var(--panel); border: 1px solid var(--line-active); border-radius: var(--radius-lg);
+}
+.prompt-versions__head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.prompt-versions .btn { min-height: 44px; }
+@media (max-width: 639px) {
+  .prompt-versions__scrim { align-items: flex-end; padding: 0; }
+  .prompt-versions {
+    position: fixed; left: 0; right: 0; bottom: 0; width: 100%; max-width: none; max-height: 85vh;
+    border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+  }
+}

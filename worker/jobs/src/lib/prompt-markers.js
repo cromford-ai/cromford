@@ -1,8 +1,8 @@
-// Owner: BH-7940.4 (marker lint). BH-7940.0 ships the seam.
 // prompt-markers — the markers a saved prompt body must keep, per kind, read
 // from the bundled catalog/prompt-markers.json. saveVersion refuses a body
-// that lacks one (422 missing_marker). The lists are empty until BH-7940.4
-// fills them, so today every known kind answers [].
+// that lacks one (422 missing_marker), and so does a restore, which saves
+// through it. review, plan and rules have markers (docs/PROMPTS.md, "Markers,
+// versions and restore"); the other four kinds answer [] for any body.
 
 import CATALOG from "../../../../catalog/prompt-markers.json" with { type: "json" };
 

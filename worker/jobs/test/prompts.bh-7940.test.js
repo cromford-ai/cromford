@@ -13,6 +13,9 @@ import { PROMPT_KINDS, saveVersion } from '../src/lib/prompt-store.js';
 import CATALOG from '../../../catalog/prompt-markers.json' with { type: 'json' };
 
 const SECRET = 'sec-fixture-7969';
+// BH-7972 filled the review, plan and rules marker lists: a save of those kinds
+// carries its markers (the other four kinds take any body).
+const MARK = Object.fromEntries(Object.entries(CATALOG).map(([k, v]) => [k, v.length ? `${v.join('\n')}\n` : '']));
 
 const call = (DB, path, { method = 'GET', body, auth = SECRET } = {}) => worker.fetch(new Request(`https://jobs.test${path}`, {
   method,
@@ -30,28 +33,27 @@ test('BH-7940 prompt store', async (t) => {
   const probe = await openDb();
   if (probe === null) { t.skip('node:sqlite unavailable in this runtime'); return; }
 
-  await t.test('markers-seam: a known kind has no missing markers; an unknown kind throws', () => {
-    for (const k of PROMPT_KINDS) assert.deepEqual(missingMarkers(k, 'any body'), []);
+  await t.test('markers-seam: a known kind lists its missing markers; an unknown kind throws', () => {
+    for (const k of PROMPT_KINDS) {
+      assert.deepEqual(missingMarkers(k, 'any body'), CATALOG[k]);
+      assert.deepEqual(missingMarkers(k, `${MARK[k]}any body`), []);
+    }
+    for (const k of ['watcher', 'execute', 'fix-round', 'qa']) assert.deepEqual(CATALOG[k], []);
+    for (const k of ['review', 'plan', 'rules']) assert.ok(CATALOG[k].length > 0, k);
     assert.throws(() => missingMarkers('deploy', 'x'), /unknown prompt kind: deploy/);
     assert.throws(() => missingMarkers('toString', 'x'), /unknown prompt kind/);
   });
 
   await t.test('missing-marker-422: a body that lacks a catalog marker is refused; nothing written', async () => {
-    // The catalog lists are empty until BH-7940.4, so this case puts one
-    // marker in the imported catalog object (the one prompt-markers.js holds).
+    // The real catalog (BH-7972): review needs TIER: and VERDICT:.
     const { db, DB } = await openDb();
-    CATALOG.review.push('VERDICT:');
-    try {
-      const r = await save(DB, 'project', 'review', 'demo-marker', { body: 'no verdict line', author: 'operator' });
-      assert.equal(r.status, 422, JSON.stringify(r.body));
-      assert.equal(r.body.error, 'missing_marker');
-      assert.deepEqual(r.body.missing, ['VERDICT:']);
-      assert.equal(count(db, 'prompt_versions'), 0);
-      const ok = await save(DB, 'project', 'review', 'demo-marker', { body: 'VERDICT: x', author: 'operator' });
-      assert.equal(ok.status, 201, JSON.stringify(ok.body));
-    } finally {
-      CATALOG.review.pop();
-    }
+    const r = await save(DB, 'project', 'review', 'demo-marker', { body: 'TIER: 1\nno verdict line', author: 'operator' });
+    assert.equal(r.status, 422, JSON.stringify(r.body));
+    assert.equal(r.body.error, 'missing_marker');
+    assert.deepEqual(r.body.missing, ['VERDICT:']);
+    assert.equal(count(db, 'prompt_versions'), 0);
+    const ok = await save(DB, 'project', 'review', 'demo-marker', { body: 'TIER: 1\nVERDICT: x', author: 'operator' });
+    assert.equal(ok.status, 201, JSON.stringify(ok.body));
   });
 
   await t.test('save-moves-head: v1 then v2; the head moves; v1 is still readable', async () => {
@@ -81,12 +83,15 @@ test('BH-7940 prompt store', async (t) => {
     const r2 = await read(DB, 'project', 'watcher', 2, p);
     assert.equal(r2.body.prompt.body, 'two');
     assert.equal(r2.body.prompt.note, '');
-    // Near misses that must be accepted: a body of only "0", a CRLF body.
-    const z = await save(DB, 'project', 'plan', p, { body: '0', author: 'operator' });
+    // Near misses that must be accepted: a body of only "0" (execute has no
+    // markers), a CRLF body (plan, after its markers).
+    const z = await save(DB, 'project', 'execute', p, { body: '0', author: 'operator' });
     assert.equal(z.status, 201, JSON.stringify(z.body));
-    const c = await save(DB, 'project', 'plan', p, { body: 'a\r\nb\r\n', author: 'operator' });
+    const z2 = await save(DB, 'project', 'plan', p, { body: `${MARK.plan}0`, author: 'operator' });
+    assert.equal(z2.status, 201, JSON.stringify(z2.body));
+    const c = await save(DB, 'project', 'plan', p, { body: `${MARK.plan}a\r\nb\r\n`, author: 'operator' });
     assert.equal(c.status, 201, JSON.stringify(c.body));
-    assert.equal((await read(DB, 'project', 'plan', 2, p)).body.prompt.body, 'a\r\nb\r\n');
+    assert.equal((await read(DB, 'project', 'plan', 2, p)).body.prompt.body, `${MARK.plan}a\r\nb\r\n`);
     const dotted = await save(DB, 'project', 'qa', 'a.b-c_1', { body: 'x', author: 'operator' });
     assert.equal(dotted.status, 201, JSON.stringify(dotted.body));
   });
@@ -111,8 +116,12 @@ test('BH-7940 prompt store', async (t) => {
     const p = 'demo-too-large';
     const max = Number(db.prepare("SELECT value FROM settings WHERE key='prompts.body_max_bytes'").get().value);
     assert.equal(max, 262144);
-    // "é" is two UTF-8 bytes: max/2 chars is exactly max bytes; one more ASCII byte is over.
-    const exact = 'é'.repeat(max / 2);
+    // "é" is two UTF-8 bytes: the rules markers plus enough "é" (and one "x"
+    // when the markers have an odd byte count) is exactly max bytes; one more
+    // ASCII byte is over.
+    const mb = new TextEncoder().encode(MARK.rules).length;
+    const exact = MARK.rules + (mb % 2 ? 'x' : '') + 'é'.repeat(Math.floor((max - mb) / 2));
+    assert.equal(new TextEncoder().encode(exact).length, max);
     const over = await save(DB, 'project', 'rules', p, { body: exact + 'x', author: 'operator' });
     assert.equal(over.status, 413, JSON.stringify(over.body).slice(0, 200));
     assert.equal(over.body.error, 'body_too_large');
@@ -120,11 +129,12 @@ test('BH-7940 prompt store', async (t) => {
     assert.equal(count(db, 'prompt_versions'), 0);
     const ok = await save(DB, 'project', 'rules', p, { body: exact, author: 'operator' });
     assert.equal(ok.status, 201, JSON.stringify(ok.body).slice(0, 200));
-    db.prepare("UPDATE settings SET value='10' WHERE key='prompts.body_max_bytes'").run();
-    const small = await save(DB, 'project', 'rules', p, { body: 'ééééé!', author: 'operator' });
+    // The row sets the max: the markers plus 10 bytes.
+    db.prepare("UPDATE settings SET value=? WHERE key='prompts.body_max_bytes'").run(String(mb + 10));
+    const small = await save(DB, 'project', 'rules', p, { body: `${MARK.rules}ééééé!`, author: 'operator' });
     assert.equal(small.status, 413);
-    assert.equal(small.body.max_bytes, 10);
-    const fits = await save(DB, 'project', 'rules', p, { body: 'ééééé', author: 'operator' });
+    assert.equal(small.body.max_bytes, mb + 10);
+    const fits = await save(DB, 'project', 'rules', p, { body: `${MARK.rules}ééééé`, author: 'operator' });
     assert.equal(fits.status, 201);
   });
 
@@ -178,8 +188,8 @@ test('BH-7940 prompt store', async (t) => {
     const { db, DB } = await openDb();
     const p = 'demo-concurrent';
     const [a, b] = await Promise.all([
-      save(DB, 'project', 'review', p, { body: 'from-a', author: 'a', base_version: 0 }),
-      save(DB, 'project', 'review', p, { body: 'from-b', author: 'b', base_version: 0 }),
+      save(DB, 'project', 'review', p, { body: `${MARK.review}from-a`, author: 'a', base_version: 0 }),
+      save(DB, 'project', 'review', p, { body: `${MARK.review}from-b`, author: 'b', base_version: 0 }),
     ]);
     const statuses = [a.status, b.status].sort();
     assert.deepEqual(statuses, [201, 409], `${JSON.stringify(a.body)} ${JSON.stringify(b.body)}`);
@@ -190,16 +200,16 @@ test('BH-7940 prompt store', async (t) => {
     const head = db.prepare("SELECT version_id FROM prompt_heads WHERE scope='project' AND project=? AND kind='review'").get(p);
     assert.equal(head.version_id, win.body.id);
     // A stale base after v1 is 409 and the head stays.
-    const stale = await save(DB, 'project', 'review', p, { body: 'late', author: 'c', base_version: 0 });
+    const stale = await save(DB, 'project', 'review', p, { body: `${MARK.review}late`, author: 'c', base_version: 0 });
     assert.equal(stale.status, 409);
     assert.equal(count(db, 'prompt_versions'), 1);
     // base_version equal to the current max is accepted.
-    const next = await save(DB, 'project', 'review', p, { body: 'v2', author: 'c', base_version: 1 });
+    const next = await save(DB, 'project', 'review', p, { body: `${MARK.review}v2`, author: 'c', base_version: 1 });
     assert.equal(next.status, 201, JSON.stringify(next.body));
     assert.equal(next.body.version, 2);
     // The head moved back to v1 by hand while v2 exists; a failed stale save must not move it.
     db.prepare("UPDATE prompt_heads SET version_id=? WHERE scope='project' AND project=? AND kind='review'").run(win.body.id, p);
-    const stale2 = await save(DB, 'project', 'review', p, { body: 'late2', author: 'c', base_version: 1 });
+    const stale2 = await save(DB, 'project', 'review', p, { body: `${MARK.review}late2`, author: 'c', base_version: 1 });
     assert.equal(stale2.status, 409);
     const after = db.prepare("SELECT version_id FROM prompt_heads WHERE scope='project' AND project=? AND kind='review'").get(p);
     assert.equal(after.version_id, win.body.id);
@@ -210,7 +220,7 @@ test('BH-7940 prompt store', async (t) => {
     const { db } = await openDb();
     const real = d1(db);
     const stub = (err) => ({ prepare: (s) => real.prepare(s), batch: async () => { throw err; } });
-    const args = { scope: 'project', project: 'demo-unique', kind: 'rules', body: 'x', author: 'operator' };
+    const args = { scope: 'project', project: 'demo-unique', kind: 'rules', body: `${MARK.rules}x`, author: 'operator' };
     const r = await saveVersion({ DB: stub(new Error('D1_ERROR: UNIQUE constraint failed: prompt_versions.scope, prompt_versions.project, prompt_versions.kind, prompt_versions.version: SQLITE_CONSTRAINT')) }, args);
     assert.ok(r instanceof Response);
     assert.equal(r.status, 409);
@@ -248,25 +258,25 @@ test('BH-7940 prompt store', async (t) => {
     for (const r of empty.body.prompts) {
       assert.deepEqual([r.source, r.version, r.version_id, r.author, r.set_at], ['repo', null, null, null, null]);
     }
-    const f = await save(DB, 'fleet', 'rules', undefined, { body: 'fleet rules', author: 'operator' });
+    const f = await save(DB, 'fleet', 'rules', undefined, { body: `${MARK.rules}fleet rules`, author: 'operator' });
     assert.equal(byKind(await list(DB, p)).rules.source, 'fleet');
     // The fleet list (no project) shows fleet and repo only.
     const fl = await list(DB, undefined);
     assert.equal(fl.status, 200);
     assert.equal(byKind(fl).rules.source, 'fleet');
     assert.equal(byKind(fl).rules.version_id, f.body.id);
-    const pr = await save(DB, 'project', 'rules', p, { body: 'project rules', author: 'operator' });
+    const pr = await save(DB, 'project', 'rules', p, { body: `${MARK.rules}project rules`, author: 'operator' });
     const l = byKind(await list(DB, p));
     assert.equal(l.rules.source, 'project');
     assert.equal(l.rules.version_id, pr.body.id);
-    await save(DB, 'project', 'plan', p, { body: 'plan', author: 'operator' });
+    await save(DB, 'project', 'plan', p, { body: `${MARK.plan}plan`, author: 'operator' });
     const l2 = byKind(await list(DB, p));
     assert.equal(l2.plan.source, 'project');
     assert.equal(l2.watcher.source, 'repo');
     // A fleet-scope read uses no project.
     const fr = await read(DB, 'fleet', 'rules', 1, undefined);
     assert.equal(fr.status, 200);
-    assert.equal(fr.body.prompt.body, 'fleet rules');
+    assert.equal(fr.body.prompt.body, `${MARK.rules}fleet rules`);
     assert.equal(fr.body.prompt.project, '');
   });
 

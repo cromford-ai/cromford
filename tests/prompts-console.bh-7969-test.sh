@@ -1,13 +1,14 @@
 #!/bin/bash
 # tests/prompts-console.bh-7969-test.sh — the console half of the prompts
-# contract (BH-7969, BH-7940.0): the /api/prompts proxy and the UI placeholder
-# seam that BH-7940.4 fills.
+# contract (BH-7969, BH-7940.0): the /api/prompts proxy and the UI history
+# seam, which BH-7940.4 (BH-7972) fills.
 #
 # The proxy's behaviour is proved by node --test in
 # console-ui/tests/prompts-proxy.bh-7969.test.js. This file names both new
 # sources by path so the impact lane and the orphan ratchet can see them, and:
 #   1. both files exist;
-#   2. PromptHistoryActions.js exports the two placeholders, each returning null;
+#   2. PromptHistoryActions.js exports both seam names as functions (their
+#      behaviour is console-ui/tests/prompt-history.bh-7972.test.js);
 #   3. the node suite passes (it needs no console-ui dependencies).
 # Run from anywhere: tests/prompts-console.bh-7969-test.sh   (exit 0 = all pass)
 set -uo pipefail
@@ -25,11 +26,12 @@ done
 
 command -v node >/dev/null 2>&1 || { echo "prompts-console: FAIL — node is not installed on this box"; exit 1; }
 
-# --- 2: the placeholder seam ------------------------------------------------
-if node --input-type=module -e "
-import { PromptVersionsSheet, UseLevelAboveButton } from '$ACTIONS';
-if (PromptVersionsSheet() !== null || UseLevelAboveButton() !== null) process.exit(1);
-"; then ok; else bad "PromptHistoryActions.js placeholders do not both return null"; fi
+# --- 2: the seam exports ---------------------------------------------------
+# A text check: importing the module needs preact, and this suite runs without
+# console-ui dependencies.
+for name in PromptVersionsSheet UseLevelAboveButton; do
+  grep -Eq "^export function $name\(" "$ACTIONS" && ok || bad "PromptHistoryActions.js does not export function $name"
+done
 
 # --- 3: the proxy node suite ------------------------------------------------
 if NOUT=$(cd "$DIR/console-ui" && node --test tests/prompts-proxy.bh-7969.test.js 2>&1); then ok

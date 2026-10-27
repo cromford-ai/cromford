@@ -1,1 +1,32 @@
-{"rules":[],"watcher":[],"plan":[],"execute":[],"review":[],"fix-round":[],"qa":[]}
+{
+  "rules": [
+    "## Iron guardrails (this machine)",
+    "## Product Board Triage — read the whole thread before deciding",
+    "## Filing tickets for out-of-band work",
+    "## Building Software (when a ticket IS ready)",
+    "## Voice for board comments",
+    "## Cadence & hygiene",
+    "## CodeGraph",
+    "## rtk (token-optimized bash output, fleet-wide 2026-08-22)",
+    "## Token discipline (fleet-wide, 2026-08-22)",
+    "## Claim discipline (the operator, 2026-08-30 — \"it said done but it wasn't\")",
+    "## Reports & explanations: Simplified Technical English (the operator, 2026-10-07)",
+    "## QA findings: collect first, one ticket per screen or flow (the operator, 2026-10-15)",
+    "## Review levels (BH-7123)",
+    "## Scalable tests (BH-7563)",
+    "## User flows (BH-8029)",
+    "## Security audit (2026-10-21)"
+  ],
+  "watcher": [],
+  "plan": [
+    "## Requirements coverage",
+    "## ASSUMPTIONS"
+  ],
+  "execute": [],
+  "review": [
+    "TIER:",
+    "VERDICT:"
+  ],
+  "fix-round": [],
+  "qa": []
+}

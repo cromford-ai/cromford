@@ -6,8 +6,13 @@
 // Sign-in is delegated to the console worker's probe (signedIn), as in
 // functions/api/coord/. The browser cookie goes to that probe only, never to
 // harness-jobs. Every path segment and the `project` param are checked by value
-// before anything is forwarded, and a save's `author` is the identity resolved
-// here, never the browser's.
+// before anything is forwarded, and a save's or a restore's `author` is the
+// identity resolved here, never the browser's.
+//
+// Shapes (BH-7940.0, BH-7940.4): GET '' (the list), GET <scope>/<kind>/<n>,
+// POST <scope>/<kind> (a save), GET <scope>/<kind>/versions,
+// POST <scope>/<kind>/restore?version=<n> and DELETE <scope>/<kind>/head.
+// Any other method and shape is 405.
 
 import { signedIn } from '../../_lib/board-commands.js';
 import { resolveIdentity } from '../../_lib/access-identity.js';
@@ -18,8 +23,19 @@ const SCOPES = new Set(['fleet', 'project']);
 const KINDS = new Set(['rules', 'watcher', 'plan', 'execute', 'review', 'fix-round', 'qa']);
 const VERSION_RE = /^[1-9][0-9]{0,8}$/;
 const PROJECT_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$/;
-const SEGMENT_OK = [(s) => SCOPES.has(s), (s) => KINDS.has(s), (s) => VERSION_RE.test(s)];
+// The third segment is a version number, or the one method a history action takes.
+const ACTIONS = Object.freeze({ versions: 'GET', restore: 'POST', head: 'DELETE' });
+const isAction = (s) => Object.prototype.hasOwnProperty.call(ACTIONS, s);
+const SEGMENT_OK = [(s) => SCOPES.has(s), (s) => KINDS.has(s), (s) => VERSION_RE.test(s) || isAction(s)];
 const FORWARDED = ['body', 'note', 'base_version'];
+
+// True when `method` may go to these segments.
+function shapeAllowed(method, segs) {
+  if (segs.length === 0) return method === 'GET';
+  if (segs.length === 2) return method === 'POST';
+  if (segs.length !== 3) return false;
+  return isAction(segs[2]) ? ACTIONS[segs[2]] === method : method === 'GET';
+}
 
 const json = (status, obj) =>
   new Response(JSON.stringify(obj), { status, headers: { 'content-type': 'application/json' } });
@@ -44,7 +60,7 @@ export async function onRequest(context) {
     if (i < SEGMENT_OK.length && !SEGMENT_OK[i](segs[i])) return json(400, { error: 'bad path segment' });
   }
   const method = request.method;
-  if (!((method === 'GET' && (segs.length === 0 || segs.length === 3)) || (method === 'POST' && segs.length === 2))) {
+  if (!shapeAllowed(method, segs)) {
     return json(405, { error: `method ${method} not allowed on /api/prompts/${segs.join('/')}` });
   }
 
@@ -54,6 +70,12 @@ export async function onRequest(context) {
   if (project !== null) {
     if (!PROJECT_RE.test(project)) return json(400, { error: 'bad project' });
     target.searchParams.set('project', project);
+  }
+  const restoring = segs[2] === 'restore';
+  if (restoring) {
+    const version = url.searchParams.get('version');
+    if (!VERSION_RE.test(version || '')) return json(400, { error: 'version must be a whole number >= 1' });
+    target.searchParams.set('version', version);
   }
 
   const init = {
@@ -68,8 +90,9 @@ export async function onRequest(context) {
     }
     const author = (await resolveIdentity(request, env)).actor;
     if (typeof author !== 'string' || !author.trim()) return json(403, { error: 'unauthorized' });
+    // A restore takes only the author; a save takes the FORWARDED keys too.
     const out = {};
-    for (const k of FORWARDED) if (k in sent) out[k] = sent[k];
+    if (!restoring) for (const k of FORWARDED) if (k in sent) out[k] = sent[k];
     out.author = author;
     init.body = JSON.stringify(out);
   }

@@ -66,6 +66,10 @@ post() {
     --data-binary @"$T/post.json" "$1/api/prompts/$2/$3$q"
 }
 
+# marks <kind> — the kind's catalog markers, one per line (BH-7972: a rules
+# save without them is a 422). The fixtures put them before their own text.
+marks() { jq -r --arg k "$1" '.[$k][]' "$DIR/catalog/prompt-markers.json"; }
+
 ROOTD="$T/repo"
 mkdir -p "$ROOTD/rules" "$ROOTD/prompts"
 printf 'repo rules\nline two' > "$ROOTD/rules/CLAUDE.md"
@@ -91,7 +95,7 @@ AID=$(jq -r '.id' <<<"$A"); AVER=$(jq -r '.version' <<<"$A")
 resolve "$URL_main" "$P" watcher
 [ "$RC" = 0 ] && ok || bad "project-wins: rc $RC ($(cat "$T/err"))"
 cmp -s "$T/out" "$T/hello" && ok || bad "project-wins: printed $(od -c "$T/out" | head -2)"
-printf 'a\r\nb\r\n' > "$T/crlf"
+{ marks rules; printf 'a\r\nb\r\n'; } > "$T/crlf"
 post "$URL_main" project rules "$P" "$T/crlf" >/dev/null
 resolve "$URL_main" "$P" rules
 [ "$RC" = 0 ] && cmp -s "$T/out" "$T/crlf" && ok || bad "project-wins: CRLF body did not round-trip (rc $RC)"
@@ -103,7 +107,7 @@ resolve "$URL_main" "$P" watcher --source
 
 # ── fleet-wins ───────────────────────────────────────────────────────────────
 F=demo-x-fleetwins
-printf 'fleet rules body\n' > "$T/fleet"
+{ marks rules; printf 'fleet rules body\n'; } > "$T/fleet"
 FA=$(post "$URL_main" fleet rules - "$T/fleet")
 FID=$(jq -r '.id' <<<"$FA")
 resolve "$URL_main" "$F" rules

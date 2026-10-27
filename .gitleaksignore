@@ -13,6 +13,7 @@
 # where it appears or what line it lands on.
 checks/secret-literals/fixtures/violation.diff:aws-access-token:7
 checks/secret-literals/fixtures/violation.diff:github-app-token:10
+console-ui/tests/prompt-history.bh-7972.test.js:generic-api-key:377
 console-ui/tests/tracker-sheets.bh-7936.test.js:generic-api-key:34
 fly/warm-env/project-1.env:generic-api-key:13
 fly/warm-env/project-2.env:generic-api-key:12
@@ -176,6 +177,7 @@ worker/jobs/test/pr-record-reviews.bh-8481.test.js:generic-api-key:32
 worker/jobs/test/pr-records.bh-8067.test.js:generic-api-key:26
 worker/jobs/test/project-secrets.bh-8317.test.js:generic-api-key:19
 worker/jobs/test/project-secrets.bh-8317.test.js:generic-api-key:98
+worker/jobs/test/prompt-history.bh-7972.test.js:generic-api-key:18
 worker/jobs/test/prompts.bh-7940.test.js:generic-api-key:15
 worker/jobs/test/review-tiers.bh-6969.test.js:generic-api-key:25
 worker/jobs/test/route-keyed.bh-5788.test.js:generic-api-key:130

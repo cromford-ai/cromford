@@ -127,7 +127,10 @@ normalize "$W" ./src/routes/retention.js >"$T/branch.json" 2>"$T/branch.err" \
 compare "$BASE_JSON" "$T/branch.json" >"$T/s3.out" 2>&1 && ok "S3 same names, order and entries" \
   || bad "S3 the branch RULES differ: $(head -5 "$T/s3.out")"
 NB=$(node -e 'console.log(JSON.parse(require("fs").readFileSync(process.argv[1],"utf8")).length)' "$BASE_JSON" 2>/dev/null)
-NG=$(node -e 'console.log(JSON.parse(require("fs").readFileSync(process.argv[1],"utf8")).length)' "$T/branch.json" 2>/dev/null)
+# The branch rules that carry a $PIN name, as compare() filters them: a later
+# fragment adds a rule with a new name, and that is not a change to these.
+NG=$(node -e 'const fs = require("fs"); const names = new Set(JSON.parse(fs.readFileSync(process.argv[1], "utf8")).map((r) => r.rule));
+console.log(JSON.parse(fs.readFileSync(process.argv[2], "utf8")).filter((r) => names.has(r.rule)).length)' "$BASE_JSON" "$T/branch.json" 2>/dev/null)
 [ -n "$NB" ] && [ "$NB" = "$NG" ] && ok "S3 the same count ($NB)" || bad "S3 count: base ${NB:-?}, branch ${NG:-?}"
 
 # ── S9 mutation: the moved rule is gone ───────────────────────────────────────

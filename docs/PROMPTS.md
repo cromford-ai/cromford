@@ -30,7 +30,7 @@ A head on project A never changes what project B gets.
 
 - Table `prompt_versions`: one row per save, keyed by `(scope, project, kind,
   version)` (unique index `prompt_versions_key`). No route updates or deletes a
-  row.
+  row; only the retention rule moves old rows to the archive (BH-7940.4).
 - Table `prompt_heads`: one row per `(scope, project, kind)` (unique index
   `prompt_heads_key`). `version_id` is the `prompt_versions.id` in use.
 - A save inserts version n+1 and moves the head in one D1 batch. Both rows are
@@ -40,8 +40,8 @@ A head on project A never changes what project B gets.
   is a 409 and nothing is written, so two people cannot both save on top of the
   same version. Without `base_version`, the save takes the next number.
 - Settings rows: `prompts.body_max_bytes` (262144) is the largest body a save
-  accepts, in UTF-8 bytes. `prompts.retention.keep_versions` (200) is seeded for
-  the retention rule of BH-7940.4; nothing reads it yet.
+  accepts, in UTF-8 bytes. `prompts.retention.keep_versions` (200) is read by
+  the retention rule of BH-7940.4.
 - Schema: `worker/jobs/schema.d/202610221216-bh-7940-prompt-versions.sql`.
 
 ## Routes (harness-jobs, bearer-gated)
@@ -62,7 +62,7 @@ Refusals, each of which writes nothing:
 - 413 `body_too_large`: the body is over `prompts.body_max_bytes`.
 - 422 `empty_body`: an empty or blank body, for every kind.
 - 422 `missing_marker`: the body lacks a marker from
-  `catalog/prompt-markers.json` (the lists are empty until BH-7940.4).
+  `catalog/prompt-markers.json` (see "Markers, versions and restore").
 - 503: the tables are not applied (`<table> schema not applied`).
 
 The console reaches these routes only through
@@ -106,8 +106,7 @@ these files yet.
 - `catalog/prompt-markers.json` and `worker/jobs/src/lib/prompt-markers.js`
   (`missingMarkers(kind, body)`): owner BH-7940.4.
 - `console-ui/src/ui/PromptHistoryActions.js` (`PromptVersionsSheet`,
-  `UseLevelAboveButton`, both render null today): owner BH-7940.4, imported by
-  BH-7940.5.
+  `UseLevelAboveButton`): owner BH-7940.4, imported by BH-7940.5.
 - `console-ui/functions/api/prompts/[[path]].js`: used by BH-7940.4 and
   BH-7940.5.
 
@@ -302,7 +301,79 @@ the repo templates, and its note says `repo default` seven times.
 
 ## Markers, versions and restore (BH-7940.4)
 
-Owner: BH-7940.4.
+Owner: BH-7940.4 (BH-7972).
+
+### Markers
+
+A save, and a restore, is refused with 422 `missing_marker` when the body does
+not contain every marker of its kind. The check is a case-sensitive substring
+check, so a marker counts at the end of the file, inside a code fence, with
+CRLF line ends, in any order and more than once. The lists are in
+`catalog/prompt-markers.json`; `worker/jobs/src/lib/prompt-markers.js` reads
+them on the server, and the console editor reads the same file for its lint
+lines.
+
+| Kind | Markers |
+|---|---|
+| `review` | `TIER:`, `VERDICT:` |
+| `plan` | `## Requirements coverage`, `## ASSUMPTIONS` |
+| `rules` | The first `## ` line of each `rules/topics/NN-*.md` that has one, in file order, byte for byte (16 today; `00-intro.md` has none). |
+| `watcher`, `execute`, `fix-round`, `qa` | none |
+
+A topic heading change must edit the `rules` list in the same PR.
+`worker/jobs/test/prompt-history.bh-7972.test.js` (`rules-markers-match-topics`)
+fails until the two agree, and `rules-markers-in-rules-claude-md` checks each
+marker is in the rendered `rules/CLAUDE.md`.
+
+### Routes
+
+| Route | Answer |
+|---|---|
+| `GET /api/prompts/<scope>/<kind>/versions?project=<p>` | 200 `{scope, project, kind, versions: [{id, version, author, note, created_at}], limit}`, newest first, no body. `limit` is the settings row `prompts.versions_list_max` (200; a value that is not a whole number in 1..1000 is 200). |
+| `POST /api/prompts/<scope>/<kind>/restore?project=<p>&version=<n>` `{author}` | Saves the body of version n again as the next version, with note `restored from v<n>`, and moves the head to it. 201 `{id, version, restored_from}`. |
+| `DELETE /api/prompts/<scope>/<kind>/head?project=<p>` | Deletes the head row of this level only. 200 `{scope, project, kind, dropped: 0 or 1}`. The versions stay, and the level above is in use. |
+
+A restore goes through `saveVersion`, so it has the save's refusals: 422 for a
+missing marker (a version saved before its markers existed cannot be
+restored), 413, and 409 when another save wins the race. It sends no
+`base_version`. Its own refusals: 400 for a bad or absent `version` or a blank
+`author`; 404 `archived` when version n is at or below the newest version but
+is no longer in the table (retention moved it); 404 `not_found` for any other
+missing n. Every refusal writes nothing. The routes live in
+`worker/jobs/src/routes/prompt-history.js`; the route fragment
+`worker/jobs/test/route-table.d/bh-7940-prompt-history.txt` sorts before the
+contract's, so `…/versions` never reaches the `…/<version>` matcher.
+
+### Retention
+
+The d1-retention rule `prompt_versions.archive`
+(`worker/jobs/src/routes/retention.d/bh-7972-prompt-versions.js`) copies a
+version to the archive D1, counts the copy back, and only then deletes it. A
+version is eligible when all three are true:
+
+- it is not one of the newest `prompts.retention.keep_versions` (200) of its
+  `(scope, project, kind)`. A value that is not a whole number of 1 or more is
+  200, never "archive all";
+- it is older than `retention.prompt_versions.days` (30; 0 turns the rule off);
+- no head points at it.
+
+With the archive unbound it moves nothing, and it reports "archive not bound"
+only while a row waits. `retention.dry_run` (1, the seed) makes a run count the
+eligible rows and delete none. Each run writes one `retention_runs` row.
+
+### Console
+
+The editor shows two actions (`console-ui/src/ui/PromptHistoryActions.js`,
+calls in `console-ui/src/lib/prompt-history.js`, all through the proxy):
+
+- VERSIONS opens a sheet (a centred panel; a bottom sheet under 640 px). It
+  reads the list once per open, never on mount. Each row shows VERSION, WHO,
+  WHEN and NOTE, with a RESTORE button. RESTORE opens the confirm modal; on
+  confirm the sheet closes, the editor reloads, and the line says
+  "Restored v<n> as v<m>.". A refusal stays in the sheet as one line.
+- USE LEVEL ABOVE opens the confirm modal, which names what takes over: for a
+  project, the fleet override if one exists, else the repo file; for the fleet,
+  the repo file. On confirm it drops the head and the editor reloads.
 
 ## Console (BH-7940.5)
 

@@ -30,6 +30,8 @@ export const ARCHIVE_TABLES = {
   unblock_decisions: { key: ["id"], time: "created_at" },
   // BH-7965: the secret envelope sweep (routes/secret-envelope-apply.js).
   secret_envelope_events: { key: ["id"], time: "at" },
+  // BH-7972: old prompt versions (routes/retention.d/bh-7972-prompt-versions.js).
+  prompt_versions: { key: ["id"], time: "created_at" },
 };
 
 // One text for every archive rule's "unbound" audit row (lib/archive-daily.js).

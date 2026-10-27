@@ -64,6 +64,10 @@ post() {
     --data-binary @"$T/post.json" "$1/api/prompts/$2/$3$q" | jq -r '.id'
 }
 
+# marks <kind> — the kind's catalog markers, one per line (BH-7972: a rules,
+# review or plan save without them is a 422). The fixtures put them first.
+marks() { jq -r --arg k "$1" '.[$k][]' "$DIR/catalog/prompt-markers.json"; }
+
 # The scratch checkout: the repo rules, every stage template and two watcher
 # prompts. demo-z has no prompts/demo-z.md, so its watcher resolves to rc 4.
 CK="$T/checkout"
@@ -98,8 +102,8 @@ tree_sum() { (cd "$1" && find . -type f -print0 | sort -z | xargs -0 -r sha256su
 
 # ── resolve-_fleet ───────────────────────────────────────────────────────────
 start rf
-printf 'fleet rules body\n' > "$T/fleet-rules"
-printf 'demo-x project rules\n' > "$T/proj-rules"
+{ marks rules; printf 'fleet rules body\n'; } > "$T/fleet-rules"
+{ marks rules; printf 'demo-x project rules\n'; } > "$T/proj-rules"
 FID=$(post "$URL_rf" fleet rules - "$T/fleet-rules")
 post "$URL_rf" project rules demo-x "$T/proj-rules" >/dev/null
 JOBS_URL="$URL_rf" HARNESS_SECRET="$SECRET" PROMPT_RESOLVE_ROOT="$CK" "$RESOLVE" _fleet rules > "$T/out" 2>"$T/err"; RC=$?
@@ -118,7 +122,7 @@ JOBS_URL="$URL_rf" HARNESS_SECRET="$SECRET" PROMPT_RESOLVE_ROOT="$CK" "$RESOLVE"
 
 # ── render-writes-seven ──────────────────────────────────────────────────────
 start rw
-printf 'review head ${KEY}\nno newline at end' > "$T/review-body"
+{ marks review; printf 'review head ${KEY}\nno newline at end'; } > "$T/review-body"
 RID=$(post "$URL_rw" project review demo-x "$T/review-body")
 H1=$(mkh h1 demo-x)
 render "$H1" "$URL_rw"
@@ -158,7 +162,7 @@ cmp -s "$H2/state/prompts/_fleet/rules.md" "$T/fleet-rules" && ok || bad "fleet-
 [ ! -e "$H2/state/prompts/demo-x/rules.md" ] && ok || bad "fleet-rules-to-_fleet: demo-x/rules.md written for a fleet head"
 grep -qx "rules fleet v1 $FRID" "$H2/state/prompts/demo-x/sources.tsv" && ok || bad "fleet-rules-to-_fleet: no 'rules fleet v1 $FRID' line"
 # A fleet head on a stage kind is written to the project file.
-printf 'fleet plan body\n' > "$T/fleet-plan"
+{ marks plan; printf 'fleet plan body\n'; } > "$T/fleet-plan"
 post "$URL_fr" fleet plan - "$T/fleet-plan" >/dev/null
 render "$H2" "$URL_fr"
 cmp -s "$H2/state/prompts/demo-x/plan.md" "$T/fleet-plan" && ok || bad "fleet-rules-to-_fleet: a fleet plan head was not written to demo-x/plan.md"
@@ -427,7 +431,8 @@ HARNESS="$PH" HARNESS_CHECKOUT="$T/pcheckout" FLEET_PROPAGATE_PATH="$PB:/usr/bin
 
 # ── round-trip ───────────────────────────────────────────────────────────────
 start rt
-printf 'RT review head for ${KEY}\n' > "$T/rt-body"
+{ marks review; printf 'RT review head for ${KEY}\n'; } > "$T/rt-body"
+RT_MARKS=$(marks review)
 RTID=$(post "$URL_rt" project review demo-x "$T/rt-body")
 H7=$(mkh h7 demo-x)
 render "$H7" "$URL_rt"
@@ -440,6 +445,6 @@ fi
 # shellcheck source=bin/lib/stage-prompt.sh
 . "$DIR/bin/lib/stage-prompt.sh" || exit 1
 OUT=$(HARNESS="$H7" PROJECT=demo-x KEY=BH-1; sp_render review RT_OUT; printf '%s|%s' "$RT_OUT" "$SP_SOURCE_review")
-[ "$OUT" = "RT review head for BH-1"$'\n'"|$H7/state/prompts/demo-x/review.md" ] && ok || bad "round-trip: sp_render gave '$OUT'"
+[ "$OUT" = "$RT_MARKS"$'\n'"RT review head for BH-1"$'\n'"|$H7/state/prompts/demo-x/review.md" ] && ok || bad "round-trip: sp_render gave '$OUT'"
 
 done_
