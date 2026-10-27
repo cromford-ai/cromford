@@ -1,0 +1,12 @@
+{
+  "env": "TELEGRAM_API_TIMEOUT_S",
+  "read_in": "bin/lib/vendor/telegram.sh",
+  "type": "int",
+  "default": 20,
+  "min": 1,
+  "max": 120,
+  "unit": "seconds",
+  "zero_means": null,
+  "required": false,
+  "note": "BH-7974: curl --max-time for each Telegram Bot API call in tg_call. Read as ${TELEGRAM_API_TIMEOUT_S:-20}; a value that is not an integer in 1..120 is 20."
+}

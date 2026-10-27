@@ -1,0 +1,8 @@
+{
+  "getMe": {"ok": true, "result": {"id": 1, "is_bot": true, "first_name": "Fake", "username": "fake_bot"}},
+  "getUpdates": {"ok": true, "result": [
+    {"update_id": 9001, "message": {"message_id": 1, "date": 1700000000, "chat": {"id": -1009990003, "type": "supergroup", "title": "fixture group c"}, "text": "fixture"}},
+    {"update_id": 9002, "my_chat_member": {"date": 1700000001, "chat": {"id": -1009990002, "type": "supergroup", "title": "fixture group b"}}},
+    {"update_id": 9003, "message": {"message_id": 2, "date": 1700000002, "chat": {"id": -1009990001, "type": "supergroup", "title": "fixture group a"}, "text": "fixture"}}
+  ]}
+}

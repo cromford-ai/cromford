@@ -165,6 +165,10 @@ if [ -x "$DIR/bin/fleet-telegram-chat.sh" ] && [ -f "$DIR/bin/lib/vendor/telegra
   ( cd "$DIR" && scratch_install_closure bin/fleet-telegram-chat.sh "$H" ) >/dev/null 2>&1 || bad "F9 setup: could not install the verb"
   chmod +x "$H/bin/fleet-telegram-chat.sh"
   es_sql "DELETE FROM settings WHERE key IN ('telegram.chat_id','telegram.bot_present')"
+  # The closure is bin/ code only; the seed stays in the repo. The seam's default
+  # seed dir is relative to the installed lib ($H/tests/fakes/vendor), which a
+  # scratch harness does not have, so point the seam at the repo seed.
+  export VENDOR_FAKE_DIR="$DIR/tests/fakes/vendor"
   export VENDOR_CALL_LOG="$T/vendor-calls.log"; : > "$VENDOR_CALL_LOG"
   ID=$(seal '777:fixture-token-f9' fleet:telegram)
   HARNESS_VENDOR_MODE=fake consume "$ID"

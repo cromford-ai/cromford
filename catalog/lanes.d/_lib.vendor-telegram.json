@@ -1,0 +1,10 @@
+{
+  "libs": [
+    {
+      "id": "vendor-telegram",
+      "file": "bin/lib/vendor/telegram.sh",
+      "note": "BH-7974: the Telegram vendor seam. tg_call runs one Bot API GET (or the local fake in vendor fake mode); tg_latest_chat_id reads the newest chat id from getUpdates. Its one knob is the curl wall-clock limit.",
+      "knobs": []
+    }
+  ]
+}
