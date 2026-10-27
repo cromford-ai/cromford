@@ -17,7 +17,7 @@
   // test/route-table.d/ before every bundle; a refused fragment fails the deploy.
   // BH-8395: src/lib/core.js imports ADDED_COLUMNS/ADDED_INDEXES from
   // "#core-registries", the git-ignored src/lib/core-registries.gen.js, rendered from src/lib/core.d/.
-  "build": { "command": "node scripts/routes-build.mjs && node scripts/core-registries-build.mjs" },
+  "build": { "command": "node scripts/routes-build.mjs && node scripts/core-registries-build.mjs && node scripts/retention-build.mjs" },
   "account_id": "00000000000000000000000000000000",
   "workers_dev": true,
   "preview_urls": false,

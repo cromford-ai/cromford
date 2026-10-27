@@ -159,10 +159,10 @@ zr_close_gate() {
   fi
   # R3. Registry knob lane.blocked-resolver.BR_HUMAN_PUSH_SETTLE_SECS
   # (catalog/lanes.d/blocked-resolver.knobs.d/BR_HUMAN_PUSH_SETTLE_SECS.json);
-  # 1800 is its documented fallback, 0 is off.
-  win="${BR_HUMAN_PUSH_SETTLE_SECS:-1800}"
+  # 3600 (60 min, BH-8474) is its documented fallback, 0 is off.
+  win="${BR_HUMAN_PUSH_SETTLE_SECS:-3600}"
   case "$win" in
-    ''|*[!0-9]*) say "$p/$ck [$reason]: BR_HUMAN_PUSH_SETTLE_SECS is '$win', not a number — the fallback 1800 is used"; win=1800 ;;
+    ''|*[!0-9]*) say "$p/$ck [$reason]: BR_HUMAN_PUSH_SETTLE_SECS is '$win', not a number — the fallback 3600 is used"; win=3600 ;;
   esac
   [ "$win" -gt 0 ] || return 0
   lt=$(printf '%s' "$st" | jq -r --arg u "$url" 'if (.ladder_reset.url // "") == $u then (.ladder_reset.to // "") else "" end' 2>/dev/null | tr 'A-F' 'a-f')

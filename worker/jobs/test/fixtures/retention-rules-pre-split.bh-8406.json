@@ -1,0 +1,430 @@
+[
+ {
+  "rule": "wakes.age",
+  "table": "wakes",
+  "key": "retention.wakes.days",
+  "def": 30,
+  "ids": "SELECT id FROM wakes WHERE at < ?1 ORDER BY at LIMIT ?2",
+  "del": "DELETE FROM wakes WHERE id IN (SELECT value FROM json_each(?1))"
+ },
+ {
+  "rule": "wakes.acked",
+  "table": "wakes",
+  "key": "retention.wakes.acked_days",
+  "def": 3,
+  "ids": "SELECT id FROM wakes WHERE acked_at IS NOT NULL AND acked_at < ?1 ORDER BY acked_at LIMIT ?2",
+  "del": "DELETE FROM wakes WHERE id IN (SELECT value FROM json_each(?1))"
+ },
+ {
+  "rule": "mc_budget.age",
+  "table": "mc_budget",
+  "key": "retention.mc_budget.days",
+  "def": 30,
+  "ids": "SELECT rowid AS id FROM mc_budget WHERE day < substr(?1,1,10) ORDER BY day LIMIT ?2",
+  "del": "DELETE FROM mc_budget WHERE rowid IN (SELECT value FROM json_each(?1))"
+ },
+ {
+  "rule": "landing_decisions.age",
+  "table": "landing_decisions",
+  "key": "retention.landing_decisions.days",
+  "def": 90,
+  "ids": "SELECT id FROM landing_decisions WHERE at < ?1 ORDER BY at LIMIT ?2",
+  "del": "DELETE FROM landing_decisions WHERE id IN (SELECT value FROM json_each(?1))"
+ },
+ {
+  "rule": "job_heartbeats.closed",
+  "table": "job_heartbeats",
+  "key": "retention.job_heartbeats.days",
+  "def": 30,
+  "ids": "SELECT h.job_id AS id FROM job_heartbeats h LEFT JOIN jobs j ON j.id = h.job_id\n           WHERE h.beat_at < ?1 AND (j.id IS NULL OR j.status <> 'running')\n           ORDER BY h.beat_at LIMIT ?2",
+  "del": "DELETE FROM job_heartbeats WHERE job_id IN (SELECT value FROM json_each(?1))"
+ },
+ {
+  "rule": "stage_events.closed",
+  "table": "stage_events",
+  "key": "retention.stage_events.days",
+  "def": 90,
+  "archive": "stage_events",
+  "archiveFlag": "retention.stage_events.archive",
+  "sel": "SELECT * FROM stage_events WHERE id IN (SELECT value FROM json_each(?1))",
+  "ids": "SELECT e.id AS id FROM stage_events e LEFT JOIN jobs j ON j.id = e.job_id\n           WHERE e.created_at < ?1 AND (j.id IS NULL OR j.status <> 'running')\n           ORDER BY e.created_at LIMIT ?2",
+  "rollup": "INSERT INTO stage_events_daily (day, stage, verdict, actor, n)\n             SELECT substr(created_at, 1, 10), stage, COALESCE(verdict, ''), actor, COUNT(*)\n               FROM stage_events WHERE id IN (SELECT value FROM json_each(?1))\n              GROUP BY 1, 2, 3, 4\n             ON CONFLICT (day, stage, verdict, actor) DO UPDATE SET n = n + excluded.n",
+  "del": "DELETE FROM stage_events WHERE id IN (SELECT value FROM json_each(?1))"
+ },
+ {
+  "rule": "stage_events_daily.archive",
+  "table": "stage_events_daily",
+  "key": "retention.stage_events_daily.archive_days",
+  "def": 0,
+  "ids": "SELECT rowid AS id FROM stage_events_daily\n           WHERE day < MIN(substr(?1, 1, 10), COALESCE((SELECT substr(MIN(created_at), 1, 10) FROM stage_events), '9999-12-31'))\n           ORDER BY day LIMIT ?2",
+  "move": {
+   "$fn": "moveDailyBatch",
+   "src": "async function moveDailyBatch(env, idsJson, at) {\n  const hot = (await env.DB.prepare(HOT_READ_SQL).bind(idsJson).all()).results || [];\n  if (hot.length === 0) return [];\n  const list = JSON.stringify(hot.map((r) => ({\n    id: r.id, day: r.day, stage: r.stage, verdict: r.verdict, actor: r.actor, n: r.n,\n  })));\n  try {\n    await env.ARCHIVE.prepare(ARCHIVE_DDL).run();\n    await env.ARCHIVE.prepare(COPY_SQL).bind(list, at).run();\n  } catch (e) {\n    throw new Error(`archive copy failed: ${String((e && e.message) || e)}`);\n  }\n  const ok = (await env.ARCHIVE.prepare(VERIFY_SQL).bind(list).all()).results || [];\n  return ok.map((r) => ({ id: Number(r.id), n: Number(r.n) }));\n}"
+  },
+  "del": "DELETE FROM stage_events_daily WHERE rowid IN\n           (SELECT d.rowid FROM json_each(?1) j JOIN stage_events_daily d\n             ON d.rowid = json_extract(j.value, '$.id') AND d.n = json_extract(j.value, '$.n'))"
+ },
+ {
+  "rule": "cost_project_hourly.age",
+  "table": "cost_project_hourly",
+  "key": "retention.cost_project_hourly.days",
+  "def": 400,
+  "ids": "SELECT rowid AS id FROM cost_project_hourly WHERE hour < substr(?1, 1, 13) ORDER BY hour LIMIT ?2",
+  "del": "DELETE FROM cost_project_hourly WHERE rowid IN (SELECT value FROM json_each(?1))"
+ },
+ {
+  "rule": "cost_rows.archive",
+  "table": "cost_rows",
+  "key": "retention.cost_rows.archive_days",
+  "def": 0,
+  "floorDays": 60,
+  "archive": "cost_rows",
+  "ids": "SELECT rowid AS id FROM cost_rows WHERE ts < ?1 ORDER BY ts LIMIT ?2",
+  "sel": "SELECT * FROM cost_rows WHERE rowid IN (SELECT value FROM json_each(?1))",
+  "del": "DELETE FROM cost_rows WHERE rowid IN (SELECT value FROM json_each(?1))"
+ },
+ {
+  "rule": "lane_ticks.stale",
+  "table": "lane_ticks",
+  "key": "retention.lane_ticks.days",
+  "def": 30,
+  "ids": "SELECT rowid AS id FROM lane_ticks WHERE last_tick_at < ?1 ORDER BY last_tick_at LIMIT ?2",
+  "del": "DELETE FROM lane_ticks WHERE rowid IN (SELECT value FROM json_each(?1))"
+ },
+ {
+  "rule": "alert_lines.applied",
+  "table": "alert_lines",
+  "key": "retention.alert_lines.applied_days",
+  "def": 7,
+  "ids": "SELECT id FROM alert_lines WHERE applied_at < ?1 ORDER BY applied_at LIMIT ?2",
+  "del": "DELETE FROM alert_lines WHERE id IN (SELECT value FROM json_each(?1))"
+ },
+ {
+  "rule": "alert_lines.unapplied",
+  "table": "alert_lines",
+  "key": "retention.alert_lines.unapplied_days",
+  "def": 30,
+  "ids": "SELECT id FROM alert_lines WHERE applied_at IS NULL AND created_at < ?1 ORDER BY id LIMIT ?2",
+  "del": "DELETE FROM alert_lines WHERE id IN (SELECT value FROM json_each(?1))"
+ },
+ {
+  "rule": "retention_runs.age",
+  "table": "retention_runs",
+  "key": "retention.retention_runs.days",
+  "def": 90,
+  "ids": "SELECT id FROM retention_runs WHERE started_at < ?1 ORDER BY started_at LIMIT ?2",
+  "del": "DELETE FROM retention_runs WHERE id IN (SELECT value FROM json_each(?1))"
+ },
+ {
+  "rule": "staff_outcomes.age",
+  "table": "staff_outcomes",
+  "key": "retention.staff_outcomes.days",
+  "def": 180,
+  "ids": "SELECT o.id AS id FROM staff_outcomes o LEFT JOIN staff_agents a ON a.name = o.agent\n           WHERE o.resolved_at < ?1 AND o.applied = 1 AND (a.name IS NULL OR o.resolved_at < a.updated_at)\n           ORDER BY o.resolved_at LIMIT ?2",
+  "del": "DELETE FROM staff_outcomes WHERE id IN (SELECT value FROM json_each(?1))"
+ },
+ {
+  "rule": "staff_promotions.void",
+  "table": "staff_promotions",
+  "key": "retention.staff_promotions.void_days",
+  "def": 30,
+  "ids": "SELECT id FROM staff_promotions WHERE status = 'void' AND decided_at < ?1 ORDER BY decided_at LIMIT ?2",
+  "pre": [
+   "DELETE FROM staff_promotion_decisions WHERE promotion_id IN (SELECT value FROM json_each(?1))"
+  ],
+  "del": "DELETE FROM staff_promotions WHERE id IN (SELECT value FROM json_each(?1))"
+ },
+ {
+  "rule": "staff_promotions.applied",
+  "table": "staff_promotions",
+  "key": "retention.staff_promotions.applied_days",
+  "def": 180,
+  "ids": "SELECT id FROM staff_promotions WHERE status = 'applied' AND decided_at < ?1 ORDER BY decided_at LIMIT ?2",
+  "pre": [
+   "DELETE FROM staff_promotion_decisions WHERE promotion_id IN (SELECT value FROM json_each(?1))"
+  ],
+  "del": "DELETE FROM staff_promotions WHERE id IN (SELECT value FROM json_each(?1))"
+ },
+ {
+  "rule": "staff_findings.done",
+  "table": "staff_findings",
+  "key": "retention.staff_findings.done_days",
+  "def": 365,
+  "ids": "SELECT id FROM staff_findings\n           WHERE status IN ('digested','refused','unsupported','failed','merged','rejected','noise') AND updated_at < ?1\n           ORDER BY updated_at LIMIT ?2",
+  "pre": [
+   "DELETE FROM staff_outcomes WHERE fingerprint IN\n         (SELECT fingerprint FROM staff_findings WHERE id IN (SELECT value FROM json_each(?1)))",
+   "DELETE FROM staff_decisions WHERE escalation_key IN\n         (SELECT 'staff:' || fingerprint FROM staff_findings WHERE id IN (SELECT value FROM json_each(?1)))"
+  ],
+  "del": "DELETE FROM staff_findings WHERE id IN (SELECT value FROM json_each(?1))"
+ },
+ {
+  "rule": "staff_suppressions.revoked",
+  "table": "staff_suppressions",
+  "key": "retention.staff_suppressions.revoked_days",
+  "def": 180,
+  "ids": "SELECT id FROM staff_suppressions WHERE status = 'revoked' AND created_at < ?1 ORDER BY created_at LIMIT ?2",
+  "del": "DELETE FROM staff_suppressions WHERE id IN (SELECT value FROM json_each(?1))"
+ },
+ {
+  "rule": "staff_suppressions.expired",
+  "table": "staff_suppressions",
+  "key": "retention.staff_suppressions.expired_days",
+  "def": 180,
+  "ids": "SELECT id FROM staff_suppressions WHERE status = 'active' AND expires_at < ?1 ORDER BY expires_at LIMIT ?2",
+  "del": "DELETE FROM staff_suppressions WHERE id IN (SELECT value FROM json_each(?1))"
+ },
+ {
+  "rule": "fly_idle_stops.age",
+  "table": "fly_idle_stops",
+  "key": "retention.fly_idle_stops.days",
+  "def": 400,
+  "ids": "SELECT stop_id AS id FROM fly_idle_stops WHERE stopped_at < ?1 ORDER BY stopped_at LIMIT ?2",
+  "rollup": "INSERT INTO fly_idle_daily (day, app, action, n, usd_per_hour_sum)\n             SELECT substr(stopped_at, 1, 10), app, 'stop', COUNT(*), SUM(COALESCE(usd_per_hour, 0))\n               FROM fly_idle_stops WHERE stop_id IN (SELECT value FROM json_each(?1))\n              GROUP BY 1, 2\n             ON CONFLICT (day, app, action) DO UPDATE SET n = n + excluded.n,\n               usd_per_hour_sum = usd_per_hour_sum + excluded.usd_per_hour_sum",
+  "del": "DELETE FROM fly_idle_stops WHERE stop_id IN (SELECT value FROM json_each(?1))"
+ },
+ {
+  "rule": "fly_idle_destroys.age",
+  "table": "fly_idle_destroys",
+  "key": "retention.fly_idle_destroys.days",
+  "def": 400,
+  "ids": "SELECT destroy_id AS id FROM fly_idle_destroys WHERE destroyed_at < ?1 ORDER BY destroyed_at LIMIT ?2",
+  "rollup": "INSERT INTO fly_idle_daily (day, app, action, n, usd_per_hour_sum)\n             SELECT substr(destroyed_at, 1, 10), app, 'destroy', COUNT(*), SUM(COALESCE(usd_per_hour, 0))\n               FROM fly_idle_destroys WHERE destroy_id IN (SELECT value FROM json_each(?1))\n              GROUP BY 1, 2\n             ON CONFLICT (day, app, action) DO UPDATE SET n = n + excluded.n,\n               usd_per_hour_sum = usd_per_hour_sum + excluded.usd_per_hour_sum",
+  "del": "DELETE FROM fly_idle_destroys WHERE destroy_id IN (SELECT value FROM json_each(?1))"
+ },
+ {
+  "rule": "staff_autonomy_changes.age",
+  "table": "staff_autonomy_changes",
+  "key": "retention.staff_autonomy_changes.days",
+  "def": 1095,
+  "ids": "SELECT id FROM staff_autonomy_changes WHERE created_at < ?1 ORDER BY created_at LIMIT ?2",
+  "del": "DELETE FROM staff_autonomy_changes WHERE id IN (SELECT value FROM json_each(?1))"
+ },
+ {
+  "rule": "staff_ticks.age",
+  "table": "staff_ticks",
+  "key": "retention.staff_ticks.days",
+  "def": 90,
+  "ids": "SELECT id FROM staff_ticks WHERE started_at < ?1 ORDER BY started_at LIMIT ?2",
+  "del": "DELETE FROM staff_ticks WHERE id IN (SELECT value FROM json_each(?1))"
+ },
+ {
+  "rule": "ticket_edges.age",
+  "table": "ticket_edges",
+  "key": "retention.ticket_edges.days",
+  "def": 365,
+  "ids": "SELECT id FROM ticket_edges WHERE at < ?1 ORDER BY at LIMIT ?2",
+  "del": "DELETE FROM ticket_edges WHERE id IN (SELECT value FROM json_each(?1))"
+ },
+ {
+  "rule": "ticket_holds.age",
+  "table": "ticket_holds",
+  "key": "retention.ticket_holds.days",
+  "def": 365,
+  "ids": "SELECT id FROM ticket_holds WHERE at < ?1 ORDER BY at LIMIT ?2",
+  "del": "DELETE FROM ticket_holds WHERE id IN (SELECT value FROM json_each(?1))"
+ },
+ {
+  "rule": "alert_decisions.age",
+  "table": "alert_decisions",
+  "key": "retention.alert_decisions.days",
+  "def": 90,
+  "ids": "SELECT id FROM alert_decisions WHERE at < ?1 ORDER BY at LIMIT ?2",
+  "del": "DELETE FROM alert_decisions WHERE id IN (SELECT value FROM json_each(?1))"
+ },
+ {
+  "rule": "migration_reservations.age",
+  "table": "migration_reservations",
+  "key": "retention.migration_reservations.days",
+  "def": 30,
+  "ids": "SELECT rowid AS id FROM migration_reservations WHERE reserved_at < ?1 ORDER BY reserved_at LIMIT ?2",
+  "del": "DELETE FROM migration_reservations WHERE rowid IN (SELECT value FROM json_each(?1))"
+ },
+ {
+  "rule": "pr_records.closed",
+  "table": "pr_records",
+  "key": "retention.pr_records.closed_days",
+  "def": 14,
+  "ids": "SELECT id FROM pr_records WHERE state IN ('closed','merged') AND refreshed_at < ?1 ORDER BY state, refreshed_at LIMIT ?2",
+  "del": "DELETE FROM pr_records WHERE id IN (SELECT value FROM json_each(?1)) AND state IN ('closed','merged')"
+ },
+ {
+  "rule": "pr_records.age",
+  "table": "pr_records",
+  "key": "retention.pr_records.days",
+  "def": 90,
+  "ids": "SELECT id FROM pr_records WHERE refreshed_at < ?1 ORDER BY refreshed_at LIMIT ?2",
+  "del": "DELETE FROM pr_records WHERE id IN (SELECT value FROM json_each(?1))"
+ },
+ {
+  "rule": "hotspot_tickets.age",
+  "table": "hotspot_tickets",
+  "key": "retention.hotspot_tickets.days",
+  "def": 365,
+  "ids": "SELECT rowid AS id FROM hotspot_tickets WHERE filed_at < ?1 ORDER BY filed_at LIMIT ?2",
+  "del": "DELETE FROM hotspot_tickets WHERE rowid IN (SELECT value FROM json_each(?1))"
+ },
+ {
+  "rule": "roadmap_ideas.discarded",
+  "table": "roadmap_ideas",
+  "key": "retention.roadmap_ideas.discarded_days",
+  "def": 180,
+  "archive": "roadmap_ideas",
+  "quietUnbound": true,
+  "ids": "SELECT id FROM roadmap_ideas WHERE lane = 'discarded' AND discarded_at < ?1 ORDER BY discarded_at LIMIT ?2",
+  "sel": "SELECT * FROM roadmap_ideas WHERE id IN (SELECT value FROM json_each(?1))",
+  "del": "DELETE FROM roadmap_ideas WHERE id IN (SELECT value FROM json_each(?1)) AND lane = 'discarded'"
+ },
+ {
+  "rule": "roadmap_idea_events.age",
+  "table": "roadmap_idea_events",
+  "key": "retention.roadmap_idea_events.days",
+  "def": 730,
+  "archive": "roadmap_idea_events",
+  "quietUnbound": true,
+  "ids": "SELECT id FROM roadmap_idea_events WHERE at < ?1 ORDER BY at LIMIT ?2",
+  "sel": "SELECT * FROM roadmap_idea_events WHERE id IN (SELECT value FROM json_each(?1))",
+  "del": "DELETE FROM roadmap_idea_events WHERE id IN (SELECT value FROM json_each(?1))"
+ },
+ {
+  "rule": "roadmap_waves.closed",
+  "table": "roadmap_waves",
+  "key": "retention.roadmap_waves.days",
+  "def": 365,
+  "archive": "roadmap_waves",
+  "quietUnbound": true,
+  "ids": "SELECT id FROM roadmap_waves WHERE status IN ('rejected','failed') AND updated_at < ?1 ORDER BY updated_at LIMIT ?2",
+  "sel": "SELECT * FROM roadmap_waves WHERE id IN (SELECT value FROM json_each(?1))",
+  "del": "DELETE FROM roadmap_waves WHERE id IN (SELECT value FROM json_each(?1)) AND status IN ('rejected','failed')"
+ },
+ {
+  "rule": "unblock_decisions.age",
+  "table": "unblock_decisions",
+  "key": "retention.unblock_decisions.days",
+  "def": 180,
+  "archive": "unblock_decisions",
+  "quietUnbound": true,
+  "ids": "SELECT id FROM unblock_decisions WHERE created_at < ?1 AND outcome NOT IN ('claimed','escalated')\n           ORDER BY created_at LIMIT ?2",
+  "sel": "SELECT * FROM unblock_decisions WHERE id IN (SELECT value FROM json_each(?1))",
+  "del": "DELETE FROM unblock_decisions WHERE id IN (SELECT value FROM json_each(?1)) AND outcome NOT IN ('claimed','escalated')"
+ },
+ {
+  "rule": "staff_chat.age",
+  "table": "staff_chat",
+  "key": "retention.staff_chat.days",
+  "def": 365,
+  "ids": "SELECT id FROM staff_chat WHERE role = 'operator' AND created_at < ?1\n           AND state IN ('read','unanswered','failed') ORDER BY created_at LIMIT ?2",
+  "pre": [
+   "DELETE FROM staff_chat WHERE reply_to IN (SELECT value FROM json_each(?1))"
+  ],
+  "del": "DELETE FROM staff_chat WHERE id IN (SELECT value FROM json_each(?1))"
+ },
+ {
+  "rule": "sched_diffs.age",
+  "table": "sched_diffs",
+  "key": "retention.sched_diffs.days",
+  "def": 30,
+  "ids": "SELECT id FROM sched_diffs WHERE at < ?1 ORDER BY at LIMIT ?2",
+  "del": "DELETE FROM sched_diffs WHERE id IN (SELECT value FROM json_each(?1))"
+ },
+ {
+  "rule": "sched_ticks.age",
+  "table": "sched_ticks",
+  "key": "retention.sched_ticks.days",
+  "def": 30,
+  "ids": "SELECT id FROM sched_ticks WHERE at < ?1 ORDER BY at LIMIT ?2",
+  "del": "DELETE FROM sched_ticks WHERE id IN (SELECT value FROM json_each(?1))"
+ },
+ {
+  "rule": "sched_ready.age",
+  "table": "sched_ready",
+  "key": "retention.sched_ready.days",
+  "def": 3,
+  "ids": "SELECT id FROM sched_ready WHERE at < ?1 ORDER BY at LIMIT ?2",
+  "del": "DELETE FROM sched_ready WHERE id IN (SELECT value FROM json_each(?1))"
+ },
+ {
+  "rule": "docker_pool_leases.ended",
+  "table": "docker_pool_leases",
+  "key": "retention.docker_pool_leases.days",
+  "def": 30,
+  "ids": "SELECT id FROM docker_pool_leases WHERE ended_at < ?1 AND status <> 'active' ORDER BY ended_at LIMIT ?2",
+  "del": "DELETE FROM docker_pool_leases WHERE id IN (SELECT value FROM json_each(?1)) AND status <> 'active'"
+ },
+ {
+  "rule": "docker_pool_results.age",
+  "table": "docker_pool_results",
+  "key": "retention.docker_pool_results.days",
+  "def": 30,
+  "ids": "SELECT id FROM docker_pool_results WHERE posted_at < ?1 AND reaped_at IS NOT NULL ORDER BY posted_at LIMIT ?2",
+  "del": "DELETE FROM docker_pool_results WHERE id IN (SELECT value FROM json_each(?1)) AND reaped_at IS NOT NULL"
+ },
+ {
+  "rule": "pool_markers.age",
+  "table": "pool_markers",
+  "key": "retention.pool_markers.days",
+  "def": 30,
+  "ids": "SELECT rowid AS id FROM pool_markers WHERE updated_at < ?1 ORDER BY updated_at LIMIT ?2",
+  "del": "DELETE FROM pool_markers WHERE rowid IN (SELECT value FROM json_each(?1))"
+ },
+ {
+  "rule": "web_vault_audit.age",
+  "table": "web_vault_audit",
+  "key": "retention.web_vault_audit.days",
+  "def": 90,
+  "archive": "web_vault_audit",
+  "quietUnbound": true,
+  "ids": "SELECT id FROM web_vault_audit WHERE at < ?1 ORDER BY at LIMIT ?2",
+  "sel": "SELECT * FROM web_vault_audit WHERE id IN (SELECT value FROM json_each(?1))",
+  "del": "DELETE FROM web_vault_audit WHERE id IN (SELECT value FROM json_each(?1))"
+ },
+ {
+  "rule": "web_vault_run_token.age",
+  "table": "web_vault_run_token",
+  "key": "retention.web_vault_run_token.days",
+  "def": 2,
+  "ids": "SELECT run_id AS id FROM web_vault_run_token WHERE created_at < ?1 ORDER BY created_at LIMIT ?2",
+  "del": "DELETE FROM web_vault_run_token WHERE run_id IN (SELECT value FROM json_each(?1))"
+ },
+ {
+  "rule": "pool_record_files.reaped",
+  "table": "pool_record_files",
+  "key": "retention.pool_record_files.reaped_days",
+  "def": 1,
+  "ids": "SELECT id FROM pool_record_files WHERE reaped_at IS NOT NULL AND reaped_at < ?1 ORDER BY reaped_at LIMIT ?2",
+  "del": "DELETE FROM pool_record_files WHERE id IN (SELECT value FROM json_each(?1)) AND reaped_at IS NOT NULL"
+ },
+ {
+  "rule": "pool_record_files.unread",
+  "table": "pool_record_files",
+  "key": "retention.pool_record_files.unread_days",
+  "def": 3,
+  "ids": "SELECT id FROM pool_record_files WHERE reaped_at IS NULL AND posted_at < ?1 ORDER BY posted_at LIMIT ?2",
+  "del": "DELETE FROM pool_record_files WHERE id IN (SELECT value FROM json_each(?1)) AND reaped_at IS NULL"
+ },
+ {
+  "rule": "otp_messages.age",
+  "table": "otp_messages",
+  "key": "retention.otp_messages.days",
+  "def": 1,
+  "ids": "SELECT id FROM otp_messages WHERE received_at < ?1 ORDER BY received_at LIMIT ?2",
+  "del": "DELETE FROM otp_messages WHERE id IN (SELECT value FROM json_each(?1))"
+ },
+ {
+  "rule": "onboarding_runs.finished",
+  "table": "onboarding_runs",
+  "key": "onboarding_runs_retention_days",
+  "def": 30,
+  "ids": "SELECT id FROM onboarding_runs WHERE state IN ('done','failed','cancelled') AND updated_at < ?1\n          ORDER BY updated_at LIMIT ?2",
+  "pre": [
+   "DELETE FROM onboarding_steps WHERE run_id IN\n           (SELECT id FROM onboarding_runs WHERE id IN (SELECT value FROM json_each(?1))\n              AND state IN ('done','failed','cancelled'))"
+  ],
+  "del": "DELETE FROM onboarding_runs WHERE id IN (SELECT value FROM json_each(?1)) AND state IN ('done','failed','cancelled')"
+ },
+ {
+  "rule": "web_task_human_step.age",
+  "table": "web_task_human_step",
+  "key": "retention.web_task_human_step.days",
+  "def": 30,
+  "ids": "SELECT id FROM web_task_human_step WHERE created_at < ?1 ORDER BY created_at LIMIT ?2",
+  "del": "DELETE FROM web_task_human_step WHERE id IN (SELECT value FROM json_each(?1))"
+ }
+]

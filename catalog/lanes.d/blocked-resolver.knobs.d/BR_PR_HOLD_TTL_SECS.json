@@ -1,0 +1,11 @@
+{
+  "env": "BR_PR_HOLD_TTL_SECS",
+  "type": "int",
+  "default": 86400,
+  "min": 0,
+  "max": 604800,
+  "unit": "seconds",
+  "zero_means": "off",
+  "read_in": "bin/blocked-resolver.d/bh-8474-pr-hold.sh",
+  "note": "BH-8474: how long the per-PR hold label (BR_PR_HOLD_LABEL) stops every rung on an open PR: no fix round, no rebuild, no close. Measured from the first tick that saw the label (the record's pr_hold.since). At expiry the resolver sends one alert (id br-pr-hold-expired:<slug>#<n>:<since>) and processes the PR as normal; the label stays on the PR."
+}

@@ -44,6 +44,8 @@ import { d1Guarded, json } from "../lib/http.js";
 import { settingsRows } from "../lib/settings-cache.js";
 import { ARCHIVE_NOT_BOUND, archiveDailyBound, moveDailyBatch } from "../lib/archive-daily.js";
 import { archiveBound, archiveCopy, ensureArchiveTable } from "../lib/archive.js";
+import { checkRules } from "../lib/retention-rules.js";
+import { RULES as FRAGMENT_RULES } from "#retention-rules";
 
 const DAY_MS = 86400e3;
 export const COST_ARCHIVE_FLOOR_DAYS = 60;
@@ -56,7 +58,14 @@ export const COST_ARCHIVE_FLOOR_DAYS = 60;
 // (optional, BH-7109) takes (env, JSON ids, now) and returns the rows the
 // archive verified as [{id, n}]; the delete then takes that JSON list instead
 // of the ids, and deletes a row only while its hot n still matches.
-export const RULES = [
+//
+// WHERE A RULE LIVES (BH-8398.0). A new rule is a new file
+// retention.d/bh-<n>-<name>.js that does `export default [ ...rules ]`. Never
+// append to the list below. A fragment imports only from ../../lib/, never
+// from this file. Node reads the fragments through src/lib/retention-rules.node.js
+// and wrangler bundles the render src/retention-rules.gen.js. They compose
+// after the list below, in fragment-name order.
+const INLINE_RULES = [
   {
     rule: "wakes.age", table: "wakes", key: "retention.wakes.days", def: 30,
     ids: "SELECT id FROM wakes WHERE at < ?1 ORDER BY at LIMIT ?2",
@@ -443,14 +452,8 @@ export const RULES = [
               AND state IN ('done','failed','cancelled'))`],
     del: "DELETE FROM onboarding_runs WHERE id IN (SELECT value FROM json_each(?1)) AND state IN ('done','failed','cancelled')",
   },
-  // BH-7598: a web-task human step is a short-lived request that can hold a
-  // code ciphertext; not money or history. The window outlives the answer TTL.
-  {
-    rule: "web_task_human_step.age", table: "web_task_human_step", key: "retention.web_task_human_step.days", def: 30,
-    ids: "SELECT id FROM web_task_human_step WHERE created_at < ?1 ORDER BY created_at LIMIT ?2",
-    del: "DELETE FROM web_task_human_step WHERE id IN (SELECT value FROM json_each(?1))",
-  },
 ];
+export const RULES = checkRules([...INLINE_RULES, ...FRAGMENT_RULES]);
 
 // intSetting(byKey, key, def, min, max) — the row's value when it is an integer
 // in [min, max], else def. routes/roadmap-ideas.js reads its list cap with it.

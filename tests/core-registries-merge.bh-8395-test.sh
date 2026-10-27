@@ -158,7 +158,14 @@ touch -d '@1600000000' "$GEN"
 # ── G1 the real repo's wiring ─────────────────────────────────────────────────
 git -C "$DIR" check-ignore -q worker/jobs/src/lib/core-registries.gen.js && ok || bad "G1 core-registries.gen.js is not git-ignored"
 [ -z "$(git -C "$DIR" ls-files worker/jobs/src/lib/core-registries.gen.js)" ] && ok || bad "G1 core-registries.gen.js is tracked"
-grep -qE '"command": *"node scripts/routes-build.mjs && node scripts/core-registries-build.mjs"' "$DIR/worker/jobs/wrangler.jsonc" \
+# TEST-CHANGE (BH-8406): build.command now chains a third render
+# (retention-build.mjs), so G1 parses the command and asserts both scripts run,
+# routes first, instead of pinning the whole string.
+node -e '
+  const t = require("fs").readFileSync(process.argv[1], "utf8").replace(/^\s*\/\/.*$/gm, "");
+  const steps = String((JSON.parse(t).build || {}).command || "").split("&&").map((s) => s.trim());
+  const r = steps.indexOf("node scripts/routes-build.mjs"), c = steps.indexOf("node scripts/core-registries-build.mjs");
+  process.exit(r >= 0 && c > r ? 0 : 1);' "$DIR/worker/jobs/wrangler.jsonc" \
   && ok || bad "G1 wrangler.jsonc build.command must run both render scripts"
 node -e '
   const p = JSON.parse(require("fs").readFileSync(process.argv[1], "utf8")).imports["#core-registries"] || {};

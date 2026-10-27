@@ -7182,7 +7182,7 @@ br_abandon() { # br_abandon <project> <rkey> <reason> <pr-url> <record> <why> <t
       return 4
     fi
   fi
-  if command -v zr_close_gate >/dev/null 2>&1; then zr_close_gate "$p" "$rkey" "$reason" "$url" || return $?; fi; if command -v br_head_gate >/dev/null 2>&1; then br_head_gate "$p" "$rkey" "$reason" "$url" || return $?; fi
+  if command -v prh_close_gate >/dev/null 2>&1; then prh_close_gate "$p" "$rkey" "$reason" "$url" "$tkey" || return $?; fi; if command -v zr_close_gate >/dev/null 2>&1; then zr_close_gate "$p" "$rkey" "$reason" "$url" || return $?; fi; if command -v br_head_gate >/dev/null 2>&1; then br_head_gate "$p" "$rkey" "$reason" "$url" || return $?; fi
   if [ "$OBSERVE" = 1 ]; then say "$p/$rkey [$reason]: WOULD abandon ($why) — observe mode"; return 0; fi
   # THE CLOSE COMES BEFORE THE STAMP (#783). A terminal recorded over a PR this
   # lane could not close is the worst of both: the ticket reads ABANDONED, the
@@ -7760,7 +7760,7 @@ br_one() {
   if command -v br_opt_unchanged_skip >/dev/null 2>&1 \
      && br_opt_unchanged_skip "$p" "$rkey" "$reason" "$url" "$rec" "$tkey" "$src"; then
     br_reset_token; return 3
-  fi
+  fi; if command -v prh_gate >/dev/null 2>&1 && ! prh_gate "$p" "$rkey" "$reason" "$url" "$tkey"; then br_reset_token; return 3; fi
   # THE RECORD LIVES ON THE TICKET (br_cap_key): a rebuild makes a new PR, so a
   # cap read off the number restarts on every rung. Read AFTER the derivation
   # above. THE TERMINAL AND THE LADDER ARE THE PR'S (BH-8339): bpr_scope gives

@@ -372,7 +372,7 @@ Z4() { # Z4 <case> <want-rc> <login> <ago> [filter] [env]
 Z4 Z4a 5 person-fixture 300
 [ ! -s "$U/alerts" ] && cmp -s "$URF" <(RESET_REC | jq -c --arg h "$H91" .) && ok || bad "Z4a: a defer writes nothing"
 grep -q "deferred: person-fixture committed ${H91:0:12} 300s ago" "$U/log" && ok || bad "Z4a: the defer line names the author, head and age (log: $(cat "$U/log"))"
-Z4 Z4b 0 person-fixture 1801
+Z4 Z4b 0 person-fixture 3601
 Z4 Z4c 0 person-fixture 60 '.fix_pr = $u | .fix_head = $h'
 Z4 Z4d 0 'cromford[bot]' 60
 Z4 Z4e 5 null 60
@@ -399,12 +399,12 @@ USEED '.zero_rung = {head:$h, n:1, alerted:false}'; touch "$U/save-fail"
 [ "$(UGATE)" = rc=75 ] && ok || bad "Z5: a failed write is rc 75 (got '$(UGATE)')"
 [ "$(ALERTS)" = 0 ] && [ "$(jq -r .outcome "$URF")" = "" ] && ok || bad "Z5: no alert, no outcome"
 
-# Z9. The code fallbacks with no knob in the environment: 1 and 1800.
+# Z9. The code fallbacks with no knob in the environment: 1 and 3600 (BH-8474: 60 minutes).
 USEED '.'
 UNIT "zr_close_gate tproj $CK91 review-changes-requested $PR91; zr_close_gate tproj $CK91 review-changes-requested $PR91" >/dev/null
 [ "$(ALERTS)" = 1 ] && ok || bad "Z9: the fallback BR_ZERO_RUNG_REBRIEFS is 1 (alerts $(ALERTS))"
-Z4 Z9b 5 person-fixture 1799
-Z4 Z9c 0 person-fixture 1800
+Z4 Z9b 5 person-fixture 3599
+Z4 Z9c 0 person-fixture 3600
 
 # Observe mode: WOULD, rc 5, nothing written.
 USEED '.'; cp "$URF" "$T/before.json"

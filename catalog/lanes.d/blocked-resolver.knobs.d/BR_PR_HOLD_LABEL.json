@@ -1,0 +1,8 @@
+{
+  "env": "BR_PR_HOLD_LABEL",
+  "type": "string",
+  "default": "resolver-hold",
+  "zero_means": null,
+  "read_in": "bin/blocked-resolver.d/bh-8474-pr-hold.sh",
+  "note": "BH-8474: the GitHub label a person puts on a PR to stop the blocked-resolver on it (exact, case-sensitive name match). Only [A-Za-z0-9._:-] is accepted; any other value falls back to resolver-hold with one log line."
+}
