@@ -51,6 +51,16 @@
 . "${HARNESS_DEPLOYMENT_FILE-${BASH_SOURCE[0]%/*}/../deployment.sh}" || return 1
 MC_TRAIN_CI_IGNORE="${BATCH_CI_IGNORE:-^(Mergify|Publish share mirror)}"
 
+# MERGIFY'S OWN CHECK RUNS ARE NEVER THIS HEAD'S CI (BH-8623). The name list
+# above missed the queue-rule run, `Rule: queue on the harness label (queue)`:
+# at 16:06Z on 2026-10-27 a CANCELLED run of it read as #8570's own CI red, the
+# lane rebased and force-pushed the PR, and the push dequeued it from Mergify
+# batch #8620. A run whose app is `mergify` is Mergify's whatever its name. A
+# run with no app object falls back to the name ERE mc_mergify_check reads.
+# A run from any other app is own CI, so a job named `lint (queue)` counts.
+MC_TRAIN_MERGIFY_JQ='def mergify_run: if ((.app.slug // "") != "") then (.app.slug == "mergify")
+  else ((.name // "") | test("^Mergify|^Queue:|\\(queue\\)")) end;'
+
 # THE WORKFLOW RUN A HEAD IS JUDGED ON, by name. Check-run COUNTS lie: train
 # #1229 merged at 08:45Z on "0 pending, 6 ok" while its shard jobs were still
 # waiting for a pool runner and had raised no check runs at all, and the run
@@ -110,8 +120,8 @@ mrt_own_red() {
   # skipped a candidate on a 403 logged the same nothing as one that skipped it
   # on a dead network.
   gh_rest_var body GET "repos/$slug/commits/$sha/check-runs" -F per_page=100 2>/dev/null || return 2
-  names=$(printf '%s' "$body" | jq -r --arg ig "$MC_TRAIN_CI_IGNORE" '
-    [ .check_runs[]? | select((.name // "") | test($ig) | not)
+  names=$(printf '%s' "$body" | jq -r --arg ig "$MC_TRAIN_CI_IGNORE" "$MC_TRAIN_MERGIFY_JQ"'
+    [ .check_runs[]? | select((.name // "") | test($ig) | not) | select(mergify_run | not)
       | select(.conclusion == "failure" or .conclusion == "timed_out" or .conclusion == "cancelled")
       | .name ] | join("; ")' 2>/dev/null) || return 2
   [ -n "$names" ] || return 1
@@ -363,9 +373,10 @@ excluded from the patch identity the carry is decided on." >/dev/null 2>&1 \
 }
 
 # mrt_rebase_pure <repo> <remote> <base-ref> <head-branch> <head-sha>
-#                 <exclude-file> [regen-table-file] [project]
+#                 <exclude-file> [regen-table-file] [project] [pr-url]
 #   [project] names the lane's project so the push can read the ticket's hold
 #   (BH-2504, bin/lib/hold-push.sh); `-` or absent = lease only.
+#   [pr-url] lets the push ask Mergify first (BH-8623); absent = no read.
 #   A PURE rebase onto the base ref: no regenerate, no resolver, no merge of
 #   main into the branch. Prints the new head sha. Exit codes:
 #     0  rebased, the verdict carries, the renders still build, and the new head
@@ -378,7 +389,11 @@ excluded from the patch identity the carry is decided on." >/dev/null 2>&1 \
 #     3  it rebased cleanly and carries, but the repo's own generated files do
 #        not SETTLE on the result — a generator with no fixed point — so nothing
 #        was pushed: that is a real conflict wearing a clean rebase's clothes
-#   On 3 the unsettled paths are printed. The worktree is removed on every path.
+#     4  it rebased cleanly and carries, but Mergify holds the PR (queued or
+#        checking, mc_mergify_holds) — nothing was pushed: a push would dequeue
+#        it and dissolve its batch (BH-8623)
+#   On 3 the unsettled paths are printed, on 4 the Mergify reason. The worktree
+#   is removed on every path.
 #
 #   WHY PURE, AND WHY EVERYTHING IS DECIDED BEFORE THE PUSH. The point is a
 #   FRESH MERGE REF so GitHub raises a fresh run; any content change would move
@@ -388,7 +403,7 @@ excluded from the patch identity the carry is decided on." >/dev/null 2>&1 \
 #   instead of pushed.
 mrt_rebase_pure() {
   local repo="${1:-}" remote="${2:-}" base="${3:-}" br="${4:-}" head="${5:-}" ex="${6:-}"
-  local tbl="${7:-}" proj="${8:--}" w new drift rc=1
+  local tbl="${7:-}" proj="${8:--}" url="${9:-}" w new drift mqwhy rc=1
   [ -n "$repo" ] && [ -n "$remote" ] && [ -n "$br" ] && [ -n "$head" ] || return 1
   w=$(mktemp -d "${TMPDIR:-/tmp}/mrt-rb-XXXXXX") || return 1
   if git -C "$repo" worktree add -f --detach "$w" "$head" >/dev/null 2>&1; then
@@ -410,9 +425,17 @@ mrt_rebase_pure() {
           printf '%s' "$drift"; rc=3
         else
           new=$(git -C "$w" rev-parse HEAD 2>/dev/null)
+          # THE QUEUE IS READ AT THE PUSH (BH-8623), as mc_rebase does
+          # (BH-8021): a push to a PR Mergify holds dequeues it and dissolves
+          # its batch (#8570 left batch #8620 at 16:06Z on 2026-10-27). Held =
+          # rc 4, nothing pushed. A read that fails pushes as before (BH-8021).
+          if [ -n "$url" ] && command -v mc_mergify_holds >/dev/null 2>&1 \
+             && [ "$(mc_queue_provider "$(mc_slug_of_url "$url")" 2>/dev/null)" = mergify ] \
+             && mqwhy=$(mc_mergify_holds "$(mc_slug_of_url "$url")" "$url" "$head" 2>/dev/null); then
+            printf '%s' "$mqwhy"; rc=4
           # A PR branch, rewritten: the hold is re-read and the lease is the
           # head this rebase started from (BH-2504, bin/lib/hold-push.sh).
-          if { command -v hold_push >/dev/null 2>&1 \
+          elif { command -v hold_push >/dev/null 2>&1 \
                  || . "$(cd "$(dirname "${BASH_SOURCE[0]}")/.." 2>/dev/null && pwd)/hold-push.sh" 2>/dev/null; } \
              && HOLD_PUSH_LOG="${MC_LOG:-}" hold_push -n "$proj" - "$repo" "$remote" "$new" "$br" "$head" >/dev/null 2>&1; then
             printf '%s' "$new"; rc=0

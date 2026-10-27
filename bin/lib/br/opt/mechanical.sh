@@ -251,7 +251,7 @@ _brm_conflict() {
       # mrt_rebase_pure mktemps its worktree under ${TMPDIR:-/tmp}.
       mkdir -p "$H/tmp/brmech" 2>/dev/null
       newhead=$(TMPDIR="$H/tmp/brmech" mrt_rebase_pure "$repo" "$MC_REMOTE" \
-                  "origin/$base" "$br" "$head" "$_BRM_EX" "$_BRM_RG" "$p"); rc=$?
+                  "origin/$base" "$br" "$head" "$_BRM_EX" "$_BRM_RG" "$p" "$url"); rc=$?
       case "$rc" in
         0)
           detail="rebased $br purely onto origin/$base and pushed ${newhead:0:8}; only $paths conflicted and this repo declares it generated or union-mergeable"
@@ -268,6 +268,7 @@ _brm_conflict() {
           return 0 ;;
         2) say "$p/$rkey [$reason]: $br rebases cleanly onto origin/$base but the rebased patch is NOT the same patch (a commit landed upstream, or a hunk was auto-merged) — nothing pushed, today's ladder owns it" ;;
         3) say "$p/$rkey [$reason]: $br rebases cleanly onto origin/$base but this repo's generated files do not settle on the result (${newhead:-?} still move after a regenerate and a commit) — a render with no fixed point is a real conflict wearing a clean rebase's clothes. Nothing pushed, today's ladder owns it" ;;
+        4) say "$p/$rkey [$reason]: $br rebases onto origin/$base but Mergify holds the PR ($newhead) — nothing pushed (a push would dequeue it, BH-8623), today's ladder owns it" ;;
         *) say "$p/$rkey [$reason]: the pure rebase of $br onto origin/$base did not happen (rc $rc — a conflict, a worktree, or a refused push) — nothing pushed, today's ladder owns it" ;;
       esac
       return 1 ;;

@@ -2300,13 +2300,18 @@ for ROW in "${ROWS[@]:-}"; do
       if [ "$(git -C "$REPO" rev-list --count "$HEAD..origin/$PBASE" 2>/dev/null || echo 0)" -gt 0 ] \
          && ! grep -qxF "$NUM $HEAD" "$RBM" 2>/dev/null && [ "$RBN" -lt "$REBASE_MAX" ]; then
         mkdir -p "$STATE" 2>/dev/null
-        echo "$NUM $HEAD" >> "$RBM"
-        NEWHEAD=$(mrt_rebase_pure "$REPO" "$REMOTE" "origin/$PBASE" "$BR" "$HEAD" "$EXCL_FILE" "$REGEN_FILE" "$PROJECT"); RBRC=$?
+        NEWHEAD=$(mrt_rebase_pure "$REPO" "$REMOTE" "origin/$PBASE" "$BR" "$HEAD" "$EXCL_FILE" "$REGEN_FILE" "$PROJECT" "$URL"); RBRC=$?
+        # The rebase budget is spent AFTER the attempt, and never on rc 4
+        # (BH-8623): Mergify held the PR and nothing was pushed. Recording it
+        # after the call, not before and then deleting it, adds no state write.
+        [ "$RBRC" = 4 ] || echo "$NUM $HEAD" >> "$RBM"
         case "$RBRC" in
           0) mrt_carry_verdict "$REC" "$SLUG" "$PROJECT" "$NUM" "$URL" "$NEWHEAD" "$PROV" "$SLUG#$NUM"
              say "#$NUM own CI is red on ${HEAD:0:12} ($OWNRED) and the head is behind $PBASE — that red was INHERITED from the base, and a rerun would re-test the same pinned merge ref. Rebased purely onto $PBASE (${NEWHEAD:0:12}); the patch's added/removed lines are identical and the repo's generated files still build from the result, so the head-bound verdict is CARRIED and a fresh CI run is raised. It rides the next train." ;;
           2) say "#$NUM own CI is red on ${HEAD:0:12} ($OWNRED) and it rebases cleanly onto $PBASE, but the rebased patch is NOT the same patch (a commit landed upstream, or a hunk was auto-merged) — nothing was pushed and a re-review is genuinely owed, so the ordinary conductor path owns it" ;;
           3) say "#$NUM own CI is red on ${HEAD:0:12} ($OWNRED) and it rebases cleanly onto $PBASE, but the repo's generated files do not SETTLE on the result (${NEWHEAD:-?} still move after a regenerate and a commit) — a render with no fixed point is a real conflict wearing a clean rebase's clothes, and pushing it would make this PR red for a NEW reason on a head that is no longer behind $PBASE. Nothing was pushed; the conductor's own rebase path owns it" ;;
+          4) # BH-8623: nothing was pushed, so the rebase budget is not spent.
+             say "#$NUM own CI is red on ${HEAD:0:12} ($OWNRED) but Mergify holds it ($NEWHEAD) — nothing was pushed: a push would dequeue it and dissolve its batch. Not batched this pass; the rebase is not spent" ;;
           *) say "#$NUM own CI is red on ${HEAD:0:12} ($OWNRED) and the rebase onto $PBASE did not happen (conflict, worktree or push) — nothing was pushed and it is not batched this pass" ;;
         esac
         continue
