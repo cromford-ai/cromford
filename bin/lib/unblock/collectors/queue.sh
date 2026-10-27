@@ -145,7 +145,8 @@ _ubq_mc() {
   esac
 }
 
-_ubq_unreadable() { jq -nc --arg p "$1" --arg r "$2" --arg i "$3" '{kind: "queue-unreadable", project: $p, repo: $r, input: $i}'; }
+_ubq_unreadable() { jq -nc --arg p "$1" --arg r "$2" --arg i "$3" '{kind: "queue-unreadable", project: $p, repo: $r, input: $i,
+  subject_kind: "lane", subject: ("queue:" + $r + ":" + $i)}'; }
 
 _ubq_ejected() { # _ubq_ejected <project> <slug> <tmpdir> <draft json>
   local proj="$1" slug="$2" d="$3" dj="$4" draft bf n pf h head mstate labels open v vword ej rq unread

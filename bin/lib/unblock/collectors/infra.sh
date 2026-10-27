@@ -17,11 +17,14 @@
 #     The HTTP reads go through _jobs_req (bin/lib/jobs/req.sh), which the
 #     caller loads; without it every HTTP source is rc 1.
 #
-#   unblock_collect_infra [--project <p>]... [--family box|pool|park]
+#   unblock_collect_infra [--project <p>]... [--repo <owner/repo>] [--family box|pool|park]
 #     Prints the records. No --project: the projects of fleet.conf
 #     (FLEET_CONF, else $HARNESS/fleet.conf). No --family: all three. rc 0
 #     always (rc 2 on a bad argument). An unreadable source is a
 #     `source-unreadable` record that names it, never "nothing stalled".
+#     With exactly one --project (the tick) every record gets a project and
+#     goes to one tick only: a park to its repo's tick (--repo), a box or
+#     hub source to the UNBLOCK_HUB_PROJECT tick (BH-8498; see the function).
 #
 # THE RECORD. Every record carries family "infra", kind, project, subject,
 # subject_kind, stall_at (ISO), day (UTC date), truncated and unknown (the
@@ -273,17 +276,69 @@ _unblock_infra_parks() {
 }
 
 unblock_collect_infra() {
-  local fam="" p conf root
+  local fam="" repo="" hub tmp
   local -a projects=()
   while [ $# -gt 0 ]; do
     case "$1" in
       --project) [ -n "${2:-}" ] || return 2; projects+=("$2"); shift ;;
+      --repo) [ -n "${2:-}" ] || return 2; repo="$2"; shift ;;
       --family) case "${2:-}" in box|pool|park) fam="$2" ;; *) return 2 ;; esac; shift ;;
       *) return 2 ;;
     esac
     shift
   done
   _UBI_NOW=$(_unblock_infra_now); _UBI_AL_RC=""; _UBI_AL=""
+  if [ "${#projects[@]}" != 1 ]; then
+    _unblock_collect_infra_body "$fam" "${projects[@]}"
+    return 0
+  fi
+  # ONE --project (the tick's contract call, BH-8498). The claim route refuses
+  # a decision with no project (2026-10-26: 6 x 400 project), and the tick
+  # runs once per project, so each record goes to exactly one tick:
+  #   branch-park  pr-state.tsv is fleet-wide: a park is kept only in the tick
+  #                of its own repo (--repo, compared case-blind) and takes that
+  #                tick's project. Another repo's park is its own tick's. No
+  #                --repo keeps no park.
+  #   box-hung, and a source-unreadable record with no project (box_health,
+  #                parks): hub-wide, so they are emitted only in the tick whose
+  #                project is UNBLOCK_HUB_PROJECT (default cromford), and
+  #                a null project becomes that knob, never the tick's.
+  #   the rest     (pool records) carry their own project and pass unchanged.
+  # Every line is parsed on its own: a line that is not a JSON object is
+  # dropped and counted, the lines after it still pass, and one
+  # source-unreadable record (subject source:collect:<p>) says so. A filter
+  # that fails is the same record, never a clean collect.
+  hub="${UNBLOCK_HUB_PROJECT:-}"
+  [[ $hub =~ ^[A-Za-z0-9._-]{1,64}$ ]] || hub=cromford
+  # The body runs in this shell (a redirect, not a pipe), so the globals it
+  # sets (_UBI_AL*) outlive it.
+  tmp=$(mktemp "${TMPDIR:-/tmp}/ubi.XXXXXX") || { _unblock_infra_unreadable collect "${projects[0]}"; return 0; }
+  _unblock_collect_infra_body "$fam" "${projects[0]}" > "$tmp"
+  jq -R -n -c --arg p "${projects[0]}" --arg repo "$repo" --arg hub "$hub" --argjson now "$_UBI_NOW" '
+    [inputs | select(test("\\S")) | (try fromjson catch null)] as $all
+    | ([$all[] | select(type != "object")] | length) as $bad
+    | ($all[] | select(type == "object")
+       | if .kind == "branch-park" then
+           select($repo != "" and ((.repo // "") | ascii_downcase) == ($repo | ascii_downcase)) | .project = $p
+         elif .kind == "box-hung" or (.kind == "source-unreadable" and .project == null) then
+           select($p == $hub) | .project = (.project // $hub)
+         else . end),
+      (if $bad > 0 then
+         ($now | todate) as $at
+         | {family: "infra", kind: "source-unreadable", project: $p, subject: ("source:collect:" + $p),
+            subject_kind: "lane", source: "collect", bad_lines: $bad, stall_at: $at, day: $at[0:10],
+            truncated: false, unknown: ["collect"]}
+       else empty end)' < "$tmp" 2>/dev/null \
+    || _unblock_infra_unreadable collect "${projects[0]}"
+  rm -f "$tmp"
+  return 0
+}
+
+# _unblock_collect_infra_body <family|''> [project...] — the record readers.
+_unblock_collect_infra_body() {
+  local fam="$1" p conf root
+  shift
+  local -a projects=("$@")
   case "$fam" in ''|box) _unblock_infra_boxes ;; esac
   case "$fam" in ''|pool)
     if [ "${#projects[@]}" = 0 ]; then
@@ -306,8 +361,12 @@ unblock_collect_infra() {
 # ub_collect_infra <project> <repo> — the UNB-0 collector contract entry
 # (bin/lib/unblock/collect.sh calls ub_collect_<family> with these two args).
 # Without it the tick logged "unwired infra (no ub_collect_infra defined)"
-# and collected nothing (2026-10-26). <repo> is not needed here.
+# and collected nothing (2026-10-26). <repo> picks this tick's parks out of
+# the fleet-wide pr-state.tsv (BH-8498); `-` or empty keeps none.
 ub_collect_infra() {
   [ -n "${1:-}" ] || return 2
-  unblock_collect_infra --project "$1"
+  local r="${2:-}"
+  [ "$r" = - ] && r=""
+  if [ -n "$r" ]; then unblock_collect_infra --project "$1" --repo "$r"
+  else unblock_collect_infra --project "$1"; fi
 }

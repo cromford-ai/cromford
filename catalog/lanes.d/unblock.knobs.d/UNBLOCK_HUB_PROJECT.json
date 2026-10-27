@@ -1,0 +1,9 @@
+{
+  "env": "UNBLOCK_HUB_PROJECT",
+  "read_in": "bin/lib/unblock/collectors/infra.sh",
+  "type": "string",
+  "default": "cromford",
+  "zero_means": null,
+  "note": "BH-8498: the project the infra collector gives its hub-wide records (box-hung, and a box_health or parks source-unreadable with no project of its own). Those records are emitted only in the unblock tick of this project, so each box is claimed once, under one label, and never under whichever tick read it first. Empty or not a project name is the code fallback cromford.",
+  "settable": true
+}
