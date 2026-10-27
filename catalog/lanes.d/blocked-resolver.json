@@ -303,7 +303,8 @@
       "max": 50,
       "unit": "ticks",
       "zero_means": null,
-      "note": "BH-4926: held ticks in a row on a data-lane park whose review cannot be read (reviewed sha, diff or file) before one escalation (br_dl_escalate, deduped on the fp). The row stays held. It protects against a park that waits forever with nobody told; each firing costs one warn page."
+      "note": "BH-4926: held ticks in a row on a data-lane park whose review cannot be read (reviewed sha, diff or file) before one escalation (br_dl_escalate, deduped on the fp). The row stays held. It protects against a park that waits forever with nobody told; each firing costs one warn page.",
+      "read_in": "bin/lib/br/datalane.sh"
     },
     {
       "env": "BR_DL_FETCH_MISS_S",
@@ -313,7 +314,8 @@
       "max": 86400,
       "unit": "seconds",
       "zero_means": "off",
-      "note": "BH-4926: after a git fetch could not find a data-lane park's reviewed sha, that sha is not fetched again for this many seconds (a miss stamp in state/blocked-resolver/.dl-fetch-miss/). It protects the tick from a fetch per parked row per tick; a firing costs a delay of at most this long before a force-pushed sha is seen again. 0 = fetch every time."
+      "note": "BH-4926: after a git fetch could not find a data-lane park's reviewed sha, that sha is not fetched again for this many seconds (a miss stamp in state/blocked-resolver/.dl-fetch-miss/). It protects the tick from a fetch per parked row per tick; a firing costs a delay of at most this long before a force-pushed sha is seen again. 0 = fetch every time.",
+      "read_in": "bin/lib/br/datalane.sh"
     },
     {
       "env": "BR_LADDER",

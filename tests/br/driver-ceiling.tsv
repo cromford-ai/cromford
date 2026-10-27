@@ -1,3 +1,3 @@
-# tests/br/driver-ceiling.tsv — BH-5241: the ceiling on bin/blocked-resolver.sh, read by tests/br-split-layout.bh-5241-test.sh (B3a, B3b). key<TAB>max. `lines` = wc -l of the driver; `br_fns` = column-0 `br_*() {` definitions in it. Each slice that moves a concern into bin/lib/br/ LOWERS both rows in the same PR; nothing raises them. `lines` is the post-move count (9927 at the BH-5241 ladder cut, 9605 at its record cut, 9444 at the BH-6461 keys cut, 8905 at the BH-6517 discovery cut) plus 150 lines of headroom for the open PRs that add to the driver; `br_fns` is exact. The end state is `br_fns 0`: the driver defines none.
-lines	9055
-br_fns	144
+# tests/br/driver-ceiling.tsv — BH-5241: the ceiling on bin/blocked-resolver.sh, read by tests/br-split-layout.bh-5241-test.sh (B3a, B3b). key<TAB>max. `lines` = wc -l of the driver; `br_fns` = column-0 `br_*() {` definitions in it. Each slice that moves a concern into bin/lib/br/ LOWERS both rows in the same PR; nothing raises them. `lines` is the post-move count (9927 at the BH-5241 ladder cut, 9605 at its record cut, 9444 at the BH-6461 keys cut, 8905 at the BH-6517 discovery cut, 8481 at the BH-8626 data-lane + contested cut) plus 150 lines of headroom for the open PRs that add to the driver; `br_fns` is exact. The end state is `br_fns 0`: the driver defines none.
+lines	8631
+br_fns	133

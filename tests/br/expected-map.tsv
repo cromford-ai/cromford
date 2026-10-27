@@ -1,4 +1,4 @@
-# tests/br/expected-map.tsv — BH-1176: module	function	origin. Generated from bin/blocked-resolver.sh at 9fec0912, regenerated at 4fafe48b when the branch rebased onto main (BH-579/#715 added br_json_edit to the record layer and grew br_ladder_rung/br_action); the binding ownership map the bin/lib/br/ split is judged by. `lib` = the function is still defined inline in bin/blocked-resolver.sh too (the slice landed DARK; the inline copy wins and the module is inert until the cut). `mod` = moved: the function is defined ONLY in the module, and the inline copy is gone (BH-5241 cut the ladder rows, then the record rows; BH-6461 cut the key rows; BH-6517 cut the build-record discovery rows; no `lib` row remains).
+# tests/br/expected-map.tsv — BH-1176: module	function	origin. Generated from bin/blocked-resolver.sh at 9fec0912, regenerated at 4fafe48b when the branch rebased onto main (BH-579/#715 added br_json_edit to the record layer and grew br_ladder_rung/br_action); the binding ownership map the bin/lib/br/ split is judged by. `lib` = the function is still defined inline in bin/blocked-resolver.sh too (the slice landed DARK; the inline copy wins and the module is inert until the cut). `mod` = moved: the function is defined ONLY in the module, and the inline copy is gone (BH-5241 cut the ladder rows, then the record rows; BH-6461 cut the key rows; BH-6517 cut the build-record discovery rows; BH-8626 cut the data-lane park and contested-hold rows; no `lib` row remains).
 ladder	br_ladder_class	mod
 ladder	br_skips_mechanical	mod
 ladder	br_ladder_rung	mod
@@ -52,3 +52,16 @@ record	br_review_fix_cap	mod
 headgate	br_head_gate	mod
 headgate	br_head_reset	mod
 headgate	br_close_facts	mod
+datalane	br_dl_eval	mod
+datalane	br_dl_escalate	mod
+datalane	br_dl_unbind	mod
+datalane	br_dl_rcr_bound	mod
+datalane	br_data_lane_route	mod
+datalane	br_data_lane_release	mod
+datalane	_br_dl_fetch_due	mod
+datalane	_br_dl_fetch_miss	mod
+contested	br_competitors	mod
+contested	br_contested_hold	mod
+contested	br_contested_withdraw	mod
+contested	br_contested_sweep	mod
+contested	br_release_hold	mod

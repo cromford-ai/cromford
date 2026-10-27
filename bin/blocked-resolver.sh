@@ -976,7 +976,7 @@ case "$FIX_LANE_TIMEOUT" in ''|*[!0-9]*) ;; *) [ "$((FIX_LANE_TIMEOUT / 3))" -gt
 # classifier — every park answered `none`, nothing fixed, and a log line that
 # reads exactly like a quiet tick.
 BR_LIB_DIR="$H/bin/lib/br"
-BR_MODULES="discovery keys ladder record cap headgate"
+BR_MODULES="discovery keys ladder record cap headgate datalane contested"
 for _br_m in $BR_MODULES; do
   # shellcheck source=/dev/null
   if [ -r "$BR_LIB_DIR/$_br_m.sh" ] && . "$BR_LIB_DIR/$_br_m.sh"; then continue; fi
@@ -3331,296 +3331,7 @@ br_needs_human_park() {
   return 3
 }
 
-# >>> data-lane park (BH-4926)
-# A review block whose ONLY finding is a migration not yet applied to prod (the
-# reviewer's DATA_LANE: line, bin/lib/data-lane.sh) waits on the data lane's
-# pre-merge apply, not on a rebuild: a rebuild of the same diff ends on the same
-# BLOCK, and rebuild-review-blocked -> abandon-rebuild is how TK-32 was
-# ABANDONED. State, all on this ticket's record: outcome DATA_LANE (the park),
-# data_lane_file/_fp (what was parked), data_lane_escalated=<fp> (alerted once),
-# data_lane_released="<fp> <head>" (the one re-review, claimed before the call),
-# data_lane_unbound="<fp> <head>" (the PR head moved past it: the ladder's).
-
-# br_dl_eval <project> <record|-> <ticket-key> — is this park's review a
-#   data-lane candidate? Sets BR_DL_REC BR_DL_FILE BR_DL_HEAD BR_DL_FP, so it is
-#   called directly, never inside $( ). The record is <record> when it holds a
-#   review.md, else the ticket's newest local build dir that does.
-#   rc 0 candidate. rc 1 not one: a final round with no DATA_LANE line costs no
-#   git call. rc 2 it HAS a DATA_LANE line but the reviewed sha, the diff or the
-#   file could not be read: unreadable holds, it is never "not a candidate".
-# _br_dl_fetch_due <sha> — rc 0 a fetch for this sha may run: no miss stamp, or
-#   one older than BR_DL_FETCH_MISS_S. _br_dl_fetch_miss <sha> stamps a miss.
-_br_dl_fetch_due() {
-  local f="$ST/.dl-fetch-miss/$1" t
-  [ -f "$f" ] || return 0
-  t=$(tr -dc '0-9' < "$f" 2>/dev/null); [ -n "$t" ] || return 0
-  [ $(( $(date -u +%s) - t )) -ge "${BR_DL_FETCH_MISS_S:-600}" ]
-}
-_br_dl_fetch_miss() { mkdir -p "$ST/.dl-fetch-miss" 2>/dev/null && date -u +%s > "$ST/.dl-fetch-miss/$1" 2>/dev/null; return 0; }
-
-br_dl_eval() {
-  local p="$1" rec="${2:--}" tkey="${3:--}" repo d diff blob mb cand rc=0
-  BR_DL_REC=""; BR_DL_FILE=""; BR_DL_HEAD=""; BR_DL_FP=""
-  command -v dl_candidate >/dev/null 2>&1 && command -v _nh_final >/dev/null 2>&1 || return 1
-  if [ "$rec" = - ] || [ ! -f "$rec/review.md" ]; then
-    rec=""
-    if [ -n "$tkey" ] && [ "$tkey" != - ]; then
-      # The trailing dash keeps BH-23 from answering for BH-234.
-      for d in $(ls -td "$H"/builds/pool-"$p"-"$tkey"-*/ "$H"/builds/"$p"-"$tkey"-*/ 2>/dev/null); do
-        [ -f "$d/review.md" ] && { rec="${d%/}"; break; }
-      done
-    fi
-    [ -n "$rec" ] || return 1
-  fi
-  _nh_final "$rec/review.md" | tr -d '\r' | _nh_lines | grep -q '^DATA_LANE:' || return 1
-  BR_DL_REC="$rec"
-  BR_DL_HEAD=$(dl_reviewed_sha "$rec") || return 2
-  repo="$REPOS/$p"
-  diff=$(mktemp) || return 2
-  blob=$(mktemp) || { rm -f "$diff"; return 2; }
-  # A merged re-review header carries the SHORT sha review.sh writes (7 to 40
-  # hex, dl_reviewed_sha). Resolve it to the full commit here, so every later
-  # compare, dedupe key and reviewed-sha binding uses one form. A short sha
-  # cannot be fetched by itself: fetch origin's branches (the PR branch is one)
-  # and resolve again. Unresolvable or ambiguous holds (rc 2), never "moved".
-  # A fetch runs only when the object is missing here; once fetched, later
-  # ticks resolve it locally. A sha that a fetch could not find is not fetched
-  # again for BR_DL_FETCH_MISS_S (600 s): one miss stamp per sha
-  # (_br_dl_fetch_due), so an unresolvable park costs one fetch per window,
-  # not one per tick and per br_abandon call (lead NOTE on dbed6c45).
-  # The miss stamp is written ONLY when a fetch really ran and still could not
-  # find the sha (lead BLOCK on 0d5f96563): a call inside the window skips the
-  # fetch and leaves the stamp alone, so the window ends BR_DL_FETCH_MISS_S
-  # after the last real fetch, not after the last tick.
-  if ! [[ "$BR_DL_HEAD" =~ ^[0-9a-f]{40}$ ]]; then
-    local full
-    full=$(git -C "$repo" rev-parse --verify -q "$BR_DL_HEAD^{commit}" 2>/dev/null) || full=""
-    if ! [[ "$full" =~ ^[0-9a-f]{40}$ ]] && _br_dl_fetch_due "$BR_DL_HEAD"; then
-      git -C "$repo" fetch -q origin 2>/dev/null
-      full=$(git -C "$repo" rev-parse --verify -q "$BR_DL_HEAD^{commit}" 2>/dev/null) || full=""
-      [[ "$full" =~ ^[0-9a-f]{40}$ ]] || _br_dl_fetch_miss "$BR_DL_HEAD"
-    fi
-    [[ "$full" =~ ^[0-9a-f]{40}$ ]] || { rm -f "$diff" "$blob"; return 2; }
-    BR_DL_HEAD="$full"
-  fi
-  local have=0
-  git -C "$repo" cat-file -e "$BR_DL_HEAD^{commit}" 2>/dev/null && have=1
-  if [ "$have" = 0 ] && _br_dl_fetch_due "$BR_DL_HEAD"; then
-    git -C "$repo" fetch -q origin "$BR_DL_HEAD" 2>/dev/null && git -C "$repo" cat-file -e "$BR_DL_HEAD^{commit}" 2>/dev/null && have=1
-    [ "$have" = 1 ] || _br_dl_fetch_miss "$BR_DL_HEAD"
-  fi
-  [ "$have" = 1 ] \
-    && mb=$(git -C "$repo" merge-base origin/HEAD "$BR_DL_HEAD" 2>/dev/null) \
-    && git -C "$repo" diff --name-only "$mb" "$BR_DL_HEAD" > "$diff" 2>/dev/null || rc=2
-  if [ "$rc" = 0 ]; then cand=$(dl_candidate "$rec/review.md" "$diff"); rc=$?; fi
-  if [ "$rc" = 0 ]; then
-    BR_DL_FILE="${cand#*$'\t'}"
-    git -C "$repo" show "$BR_DL_HEAD:$BR_DL_FILE" > "$blob" 2>/dev/null && BR_DL_FP=$(dl_fp "$blob") || rc=2
-  fi
-  rm -f "$diff" "$blob"
-  return "$rc"
-}
-
-# br_dl_escalate <project> <rkey> <reason> <url> <cap-key> <ticket-key> <why>
-#   ONCE per fingerprint. The record row and the stamp are written before the
-#   send (br_stall's rule), so a failed send can never re-page every tick; the
-#   alert's --id is the second dedupe. The row stays DATA_LANE.
-br_dl_escalate() {
-  local p="$1" rkey="$2" reason="$3" url="${4:--}" ck="$5" tkey="${6:--}" why="$7" ref
-  [ "$(br_load "$p" "$ck" | jq -r '.data_lane_escalated // ""' 2>/dev/null)" = "$BR_DL_FP" ] && return 0
-  if [ "$OBSERVE" = 1 ]; then say "$p/$rkey [$reason]: WOULD escalate the data-lane park ($BR_DL_FILE: $why) — observe mode"; return 0; fi
-  br_record "$p" "$ck" escalate-data-lane "$reason" "$BR_DL_FILE fp=${BR_DL_FP:0:12}: $why"
-  br_set_field "$p" "$ck" data_lane_escalated "$BR_DL_FP"
-  ref="$tkey"
-  case "$url" in https://github.com/*/pull/*) ref="$(mc_num_of_url "$url")" ;; esac
-  "$H/bin/lane-alert.sh" --id "data-lane-escalate:$p:$ref:$BR_DL_FP" --severity warn blocked-resolver \
-    "[$p] data-lane: $tkey ${url:+($url) }is parked because its only review BLOCK is $BR_DL_FILE, which is not applied to prod, and the data lane will not apply it: $why. The row stays DATA_LANE. Nothing was abandoned or closed." >/dev/null 2>&1 || true
-  say "$p/$rkey [$reason]: data-lane park escalated once ($BR_DL_FILE fp ${BR_DL_FP:0:12}: $why) — the row stays DATA_LANE"
-}
-
-# br_dl_unbind <project> <rkey> <reason> <cap-key> <why> — this fp+head no
-#   longer describes the PR (its head moved past the reviewed sha), so the park
-#   hands the row back to the ladder and is never re-taken on the same fp+head:
-#   data_lane_unbound="<fp> <head>". Nothing in this lane re-binds the record's
-#   review.md, so a park that stayed would wait forever with nobody told.
-br_dl_unbind() {
-  local p="$1" rkey="$2" reason="$3" ck="$4" why="$5"
-  if [ "$OBSERVE" = 1 ]; then say "$p/$rkey [$reason]: WOULD hand the data-lane park back to the ladder ($why) — observe mode"; return 0; fi
-  [ "$(br_load "$p" "$ck" | jq -r '.outcome // ""' 2>/dev/null)" = DATA_LANE ] && br_set_outcome "$p" "$ck" ""
-  br_set_field "$p" "$ck" data_lane_unbound "$BR_DL_FP $BR_DL_HEAD"
-  br_record "$p" "$ck" data-lane-unbound "$reason" "$BR_DL_FILE fp=${BR_DL_FP:0:12}: $why — the ladder owns it"
-  say "$p/$rkey [$reason]: data-lane park handed back to the ladder — $why"
-}
-
-# br_dl_rcr_bound <url> — for a review-changes-requested row: is the PR's
-#   standing CHANGES_REQUESTED the record's own DATA_LANE BLOCK, on the record's
-#   review-head? The row's reason comes from the PR's newest standing review,
-#   and the record is only the ticket's newest local build: a lead review on an
-#   unrelated bug is not the data lane's to park.
-#   rc 0 bound. rc 1 not bound (the ladder's). rc 4 the head moved. rc 2 the
-#   head or the reviews list could not be read: held, never "not bound".
-br_dl_rcr_bound() {
-  local url="${1:--}" slug num head rc=0 b64 body
-  slug=$(br_slug_of_url "$url") || return 2
-  num=$(mc_num_of_url "$url"); [ -n "$num" ] || return 2
-  head=$(br_pr_field "$url" .head.sha 'head sha') || return 2
-  [ -n "$head" ] || return 2
-  dl_sha_is "$BR_DL_HEAD" "$head" || return 4
-  b64=$(br_review_newest "$slug" "$num" "$head") || rc=$?
-  case "$rc" in 0) ;; 1) return 1 ;; *) return 2 ;; esac
-  body=$(printf '%s' "$b64" | base64 -d 2>/dev/null | tr -d '\r')
-  case "$body" in "$BR_LEAD_HDR"*) return 1 ;; esac
-  grep -qxF -- "DATA_LANE: $BR_DL_FILE" <<<"$body" || return 1
-  return 0
-}
-
-# br_data_lane_route <project> <rkey> <reason> <url> <record> <ticket-key> <cap-key>
-#   rc 0 not a data-lane park: today's path. rc 3 parked (or held): no rung, no
-#   slot, like HELD. rc 5 the release is due: the ledger says applied at this fp,
-#   the probe file names this fp, and this fp+head has not been released yet.
-br_data_lane_route() {
-  local p="$1" rkey="$2" reason="$3" url="${4:--}" rec="${5:--}" tkey="${6:--}" ck="$7"
-  local st oc rc=0 key status lrc probe base
-  st=$(br_load "$p" "$ck"); oc=$(printf '%s' "$st" | jq -r '.outcome // ""' 2>/dev/null)
-  br_dl_eval "$p" "$rec" "$tkey" || rc=$?
-  case "$rc" in
-    2) # Held, but never silently forever (lead BLOCK on dbed6c45): after
-       # BR_DL_UNREADABLE_MAX (3) held ticks in a row, one escalation, deduped
-       # on the park's fp (or on the record, for a review never parked).
-       local nu
-       nu=$(( $(br_num "$st" data_lane_unreadable) + 1 ))
-       br_set_field "$p" "$ck" data_lane_unreadable "$nu"
-       say "$p/$rkey [$reason]: DATA_LANE review in ${BR_DL_REC:-its record} could not be read (reviewed sha, diff or file) — held ($nu in a row), nothing abandoned, asked again next tick"
-       if [ "$nu" -ge "${BR_DL_UNREADABLE_MAX:-3}" ]; then
-         BR_DL_FILE=$(printf '%s' "$st" | jq -r '.data_lane_file // "its migration"')
-         BR_DL_FP=$(printf '%s' "$st" | jq -r --arg r "unreadable:${BR_DL_REC##*/}" '.data_lane_fp // $r')
-         br_dl_escalate "$p" "$rkey" "$reason" "$url" "$ck" "$tkey" "its review could not be read for $nu ticks in a row (reviewed sha, diff or file), so the park can neither release nor hand back"
-       fi
-       return 3 ;;
-    1) if [ "$oc" = DATA_LANE ]; then
-         br_set_outcome "$p" "$ck" ""
-         br_record "$p" "$ck" data-lane-cleared "$reason" "the review is no longer a data-lane candidate — the ladder resumes"
-         say "$p/$rkey [$reason]: the review is no longer a data-lane candidate — DATA_LANE cleared, the ladder resumes"
-       fi
-       return 0 ;;
-  esac
-  [ "$(br_num "$st" data_lane_unreadable)" = 0 ] || br_set_field "$p" "$ck" data_lane_unreadable 0
-  key="$BR_DL_FP $BR_DL_HEAD"
-  # Handed back once (the head moved): the same fp+head never parks again.
-  [ "$(printf '%s' "$st" | jq -r '.data_lane_unbound // ""' 2>/dev/null)" = "$key" ] && return 0
-  if [ "$reason" = review-changes-requested ]; then
-    rc=0; br_dl_rcr_bound "$url" || rc=$?
-    case "$rc" in
-      2) say "$p/$rkey [$reason]: DATA_LANE — the PR's head or reviews could not be read — held, nothing abandoned, asked again next tick"
-         return 3 ;;
-      4) br_dl_unbind "$p" "$rkey" "$reason" "$ck" "the PR head moved past the reviewed ${BR_DL_HEAD:0:12}"
-         return 0 ;;
-      1) if [ "$oc" = DATA_LANE ]; then
-           br_set_outcome "$p" "$ck" ""
-           br_record "$p" "$ck" data-lane-cleared "$reason" "the PR's standing CHANGES_REQUESTED is not the data-lane BLOCK — the ladder resumes"
-         fi
-         say "$p/$rkey [$reason]: the PR's standing CHANGES_REQUESTED is not the record's data-lane BLOCK — not parked, the ladder runs"
-         return 0 ;;
-    esac
-  fi
-  if [ "$oc" != DATA_LANE ]; then
-    # The one release ran and its re-review did not approve: the ladder owns it,
-    # and the same fp+head never parks again.
-    [ "$(printf '%s' "$st" | jq -r '.data_lane_released // ""' 2>/dev/null)" = "$key" ] && return 0
-    if [ "$OBSERVE" = 1 ]; then say "$p/$rkey [$reason]: WOULD park DATA_LANE ($BR_DL_FILE) — observe mode"; return 3; fi
-    br_set_outcome "$p" "$ck" DATA_LANE
-    br_set_field "$p" "$ck" data_lane_file "$BR_DL_FILE"
-    br_set_field "$p" "$ck" data_lane_fp "$BR_DL_FP"
-    br_record "$p" "$ck" data-lane-parked "$reason" "$BR_DL_FILE fp=${BR_DL_FP:0:12} head=${BR_DL_HEAD:0:12}: the review's only BLOCK is this migration, not applied yet"
-    say "$p/$rkey [$reason]: parked DATA_LANE — the only BLOCK is $BR_DL_FILE, not applied yet (fp ${BR_DL_FP:0:12}); no rung, nothing abandoned"
-    st=$(br_load "$p" "$ck")
-  fi
-  status=$(dl_ledger_status "$p" "$BR_DL_FILE"); lrc=$?
-  case "$lrc" in
-    0) case "$status" in
-         "flagged "*" fp=$BR_DL_FP"|"failed "*" fp=$BR_DL_FP")
-           br_dl_escalate "$p" "$rkey" "$reason" "$url" "$ck" "$tkey" "ledger: $status"
-           return 3 ;;
-         "applied "*" fp=$BR_DL_FP"|"already-applied "*" fp=$BR_DL_FP")
-           probe=$(dl_probe_file "$BR_DL_REC")
-           if [ -f "$probe" ] && grep -qF "fp=$BR_DL_FP" "$probe"; then
-             if [ "$(printf '%s' "$st" | jq -r '.data_lane_released // ""' 2>/dev/null)" = "$key" ]; then
-               say "$p/$rkey [$reason]: DATA_LANE — the release for ${BR_DL_HEAD:0:12} was already requested; the conductor merges on its APPROVE"
-               return 3
-             fi
-             return 5
-           fi
-           say "$p/$rkey [$reason]: DATA_LANE — $BR_DL_FILE applied, no probe yet — release waits"
-           return 3 ;;
-       esac ;;
-    1) ;;
-    *) say "$p/$rkey [$reason]: DATA_LANE — the migration ledger is unknown this tick, held (no alert, no release)"
-       return 3 ;;
-  esac
-  # Absent, or another fp: the apply lane owns it, unless it has nowhere to go.
-  # Read for emptiness only and never logged: it is the host the token goes to.
-  base=$(sed -n 's/^DATA_LANE_APP_BASE=//p' "$HENV/$p.env" 2>/dev/null | sed -n '$p' | tr -d "\"' ")
-  if [ -z "$base" ]; then
-    br_dl_escalate "$p" "$rkey" "$reason" "$url" "$ck" "$tkey" "no apply path: DATA_LANE_APP_BASE unset in env/$p.env"
-  else
-    say "$p/$rkey [$reason]: DATA_LANE — $BR_DL_FILE waits on the data lane's apply (fp ${BR_DL_FP:0:12})"
-  fi
-  return 3
-}
-
-# br_data_lane_release <project> <cap-key> <reason> <url> <record> <ticket-key>
-#   The release rung: ONE re-review of the SAME head, with the probe file as
-#   evidence that the BLOCK is answered. It never merges, enqueues or builds; the
-#   conductor merges on the head-bound APPROVE as for any other review. Reads the
-#   BR_DL_* globals br_data_lane_route set in this same br_one.
-br_data_lane_release() {
-  local p="$1" ck="$2" reason="$3" url="${4:--}" tkey="${6:--}"
-  local key probe purl="" slug brn head rc n0 n1 last
-  key="$BR_DL_FP $BR_DL_HEAD"; probe=$(dl_probe_file "$BR_DL_REC")
-  case "$url" in https://github.com/*/pull/*) purl="$url" ;; esac
-  if [ -z "$purl" ]; then
-    slug=$("$H/bin/fleet-conf.sh" "$p" repo 2>/dev/null)
-    brn=$(sed -n 1p "$BR_DL_REC/branch" 2>/dev/null | tr -d '[:space:]')
-    [ -n "$slug" ] && [ -n "$brn" ] \
-      && purl=$(br_open_prs "$slug" | jq -r --arg b "$brn" '[.[]? | select(.headRefName == $b) | .url] | first // empty' 2>/dev/null)
-  fi
-  if [ -z "$purl" ]; then
-    say "$p/$ck [$reason]: DATA_LANE release due, but no open PR carries ${BR_DL_REC##*/}'s branch — asked again next tick"
-    return 0
-  fi
-  head=$(br_pr_field "$purl" .head.sha 'head sha'); rc=$?
-  if [ "$rc" != 0 ] || [ -z "$head" ]; then
-    say "$p/$ck [$reason]: DATA_LANE release due, but the head of $purl could not be read — asked again next tick"
-    return 0
-  fi
-  if ! dl_sha_is "$BR_DL_HEAD" "$head"; then
-    br_dl_unbind "$p" "$ck" "$reason" "$ck" "release refused, the PR head moved (${head:0:12}, reviewed ${BR_DL_HEAD:0:12})"
-    return 0
-  fi
-  if [ "$OBSERVE" = 1 ]; then say "$p/$ck [$reason]: WOULD request the data-lane re-review of ${head:0:12} — observe mode"; return 0; fi
-  br_set_field "$p" "$ck" data_lane_released "$key" || return 0
-  n0=$(br_num "$(br_load "$p" "$ck")" data_lane_rereviews)
-  br_rereview "$p" "$ck" "$reason" "$purl" "$BR_DL_REC" "$tkey" data-lane "$probe" "dl-${BR_DL_FP:0:12}"
-  n1=$(br_num "$(br_load "$p" "$ck")" data_lane_rereviews)
-  last=$(br_load "$p" "$ck" | jq -r '[.attempts[]? | select(.action == "re-review")] | last | (.detail // "")' 2>/dev/null)
-  if [ "${n1:-0}" -le "${n0:-0}" ]; then
-    # Nothing read the code (the lane failed, the call-guard deferred, the head
-    # was unreadable): the claim is given back and the next tick asks again.
-    br_set_field "$p" "$ck" data_lane_released "-"
-    return 0
-  fi
-  case "$last" in
-    APPROVE*) br_record "$p" "$ck" data-lane-released "$reason" "re-review APPROVE on ${head:0:12}, the BLOCK answered by $probe" ;;
-    BLOCK*)   br_set_outcome "$p" "$ck" ""
-              br_record "$p" "$ck" data-lane-release-blocked "$reason" "re-review BLOCK on ${head:0:12} after the apply — the ladder owns it" ;;
-    # A paid read with no verdict is asked again next tick, up to the lane's
-    # no-verdict cap; past it the claim stays (nothing more is bought) and one
-    # escalation says so. The row stays DATA_LANE either way.
-    *) if [ "${n1:-0}" -lt "$BR_NOVERDICT_MAX" ]; then br_set_field "$p" "$ck" data_lane_released "-"
-       else br_dl_escalate "$p" "$ck" "$reason" "$purl" "$ck" "$tkey" "$n1 data-lane re-reviews of ${head:0:12} returned no verdict (BR_NOVERDICT_MAX)"; fi ;;
-  esac
-}
-# <<< data-lane park
+# data-lane park (BH-4926): bin/lib/br/datalane.sh
 
 # br_resolve_merged <project> <cap-key> <reason> <url> <record> — the park points
 # at a PR that is ALREADY MERGED: the work landed and the row is just stale.
@@ -5386,7 +5097,8 @@ br_fix_adopt() {
         say "$p/$rkey [$reason]: fix round ran on $box: $(br_load "$p" "$ck" | jq -r '.attempts[-1].detail // "-"' 2>/dev/null)"
       else
         say "$p/$rkey [$reason]: fix round on $box recorded nothing new (its logs/blocked-resolver.log says why) — re-offered next tick"
-      fi; command -v brnc_settle_pending >/dev/null 2>&1 && brnc_settle_pending "$p" "$ck" "$rkey" "$reason" "$url" "$rec" "$tkey" >/dev/null ;;   # BH-8592: a no-change round's head goes back in the queue here, on the hub
+      fi
+      command -v brnc_settle_pending >/dev/null 2>&1 && brnc_settle_pending "$p" "$ck" "$rkey" "$reason" "$url" "$rec" "$tkey" >/dev/null ;;   # BH-8592: a no-change round's head goes back in the queue here, on the hub
     "setup-blocked "*)
       what=$(printf '%s' "${res#setup-blocked }" | base64 -d 2>/dev/null)
       br_setup_blocked "$p" "$ck" "$rkey" "$reason" "$url" "on $box: ${what:-no detail}" fix-round "whatever the owning box $box names above, on $box" ;;
@@ -6336,7 +6048,8 @@ $live$brief"
       echo "AUTHOR_CHECK: could-not-run" >> "$out"
       say "$p/$rkey [$reason]: the commit-author check could not run (bin/lib/git-identity.sh missing or git log failed) — not pushed"
     fi
-  fi; command -v brnc_fix_exit >/dev/null 2>&1 && brnc_fix_exit "$p" "$ck" "$rkey" "$reason" "$url" "$slug" "$wt" "$lease" "${mref:-main}" "${head:-}" "$rec" "$tkey" "$rc" "$vrc" "$conflicts" && return 0   # BH-8592: own commits that change no file are never pushed (sets nctail)
+  fi
+  command -v brnc_fix_exit >/dev/null 2>&1 && brnc_fix_exit "$p" "$ck" "$rkey" "$reason" "$url" "$slug" "$wt" "$lease" "${mref:-main}" "${head:-}" "$rec" "$tkey" "$rc" "$vrc" "$conflicts" && return 0   # BH-8592: own commits that change no file are never pushed (sets nctail)
   if [ "$rc" != 0 ] || [ "$vrc" != 0 ] || [ "$(git -C "$wt" rev-parse HEAD)" = "$lease" ] || [ -n "$nctail" ]; then
     br_record "$p" "$ck" fix-round "$reason" "agent rc=$rc, verify rc=$vrc — no verified commit$cfail$nctail" fixrounds "$url" "${head:--}"
     # A FAILED ROUND WITH ROUNDS REMAINING ENDS THE TICK. The cap is re-read
@@ -6499,7 +6212,8 @@ $(head -c 4000 "$unaddr")" >/dev/null 2>&1 || true
     0) hticket="${href% *}#${href##* }" ;;
     1) hticket=none ;;
     *) hticket=- ;;
-  esac; command -v brnc_queued_guard >/dev/null 2>&1 && ! brnc_queued_guard "$p" "$ck" "$rkey" "$reason" "$url" "$lease" "${head:-}" && return 0   # BH-8592: never push while Mergify holds the PR (a push dequeues it and kills its batch)
+  esac
+  command -v brnc_queued_guard >/dev/null 2>&1 && ! brnc_queued_guard "$p" "$ck" "$rkey" "$reason" "$url" "$lease" "${head:-}" && return 0   # BH-8592: never push while Mergify holds the PR (a push dequeues it and kills its batch)
   HOLD_PUSH_LOG="$LOG" hold_push "$p" "$hticket" "$wt" origin HEAD "$br" "$lease" >>"$LOG" 2>&1 || prc=$?
   if [ "$prc" = 3 ] || [ "$prc" = 4 ]; then
     # NOT PUSHED, NOTHING SPENT: no fixrounds counter, no PR comment, and the
@@ -7418,297 +7132,7 @@ $quote"
   fi
 }
 
-# ---------------------------------------------------------------------------
-# THE CONTESTED HOLD (BH-579). Who else wants the path this ticket keeps losing,
-# and the hold that parks them behind it.
-# ---------------------------------------------------------------------------
-# br_competitors <project> <cap-key> <slug> <path> <winner-num> <winner-key>
-#   Writes {loser_prs, loser_tickets, note} to
-#   state/blocked-resolver/<p>/<ck>.competitors.json — one file, REWRITTEN per
-#   path, because the caller reads it before asking about the next one — and
-#   answers rc 0; rc 1 only
-#   when the PR list could not be READ, which is never the same thing as "nobody
-#   else wants it". The file is the channel because the caller cannot run this
-#   in a command substitution and still see a global it set.
-#
-#   ONE LIST CALL, then cached per-(PR, head) file lists (mc_pr_files), capped at
-#   CONTESTED_SCAN_MAX. Two PRs are never losers: the winner itself, and the
-#   winner's OWN rebuild (ticket/<key>-rN carries the same ticket key). A PR this
-#   harness did not author is not in harness_pr_list's answer at all.
-#
-#   THE 7th ARGUMENT IS THAT LIST, already read (review round 1). The competitor
-#   set is per PATH — a sibling that touches only the second contested file is a
-#   loser of that file's hold and of no other — so this runs once per path, and
-#   the caller hoists the one open-PR list call out of the loop rather than
-#   buying it again per path. Absent, it is read here, which is what any other
-#   caller and every direct test gets.
-br_competitors() {
-  local p="$1" ck="$2" slug="$3" path="$4" wnum="$5" wkey="$6" list="${7:-}"
-  local total seen=0 num url head bkey k f want line
-  local prs='[]' tix='[]' note="" skipped=""
-  if [ -z "$list" ]; then
-    command -v harness_pr_list >/dev/null 2>&1 || return 1
-    list=$(br_open_prs "$slug") || return 1
-  fi
-  printf '%s' "$list" | jq -e 'type == "array"' >/dev/null 2>&1 || return 1
-  total=$(printf '%s' "$list" | jq 'length' 2>/dev/null); case "$total" in ''|*[!0-9]*) total=0 ;; esac
-  while IFS=$'\t' read -r num url head bkey; do
-    case "$num" in ''|*[!0-9]*) continue ;; esac
-    [ "$num" = "$wnum" ] && continue
-    # THE CAP IS DECLARED, NEVER SILENT (D12): what was not scanned is named in
-    # the log and in the hold's own `why`.
-    if [ "$seen" -ge "${CONTESTED_SCAN_MAX:-40}" ]; then skipped="${skipped:+$skipped }#$num"; continue; fi
-    seen=$((seen+1))
-    k=$(br_key_from_branch "$bkey" 2>/dev/null) || k="-"
-    [ -n "$k" ] && [ "$k" = "$wkey" ] && continue
-    grep -Fxq -- "$path" <<<"$(mc_pr_files "$slug" "$num" "$url" "$head" 2>/dev/null)" || continue
-    prs=$(printf '%s' "$prs" | jq -c --argjson n "$num" --arg u "$url" --arg k "${k:--}" \
-            '. + [{num:$n,url:$u,key:$k}]' 2>/dev/null) || return 1
-  done < <(printf '%s' "$list" | jq -r '.[]? | "\(.number)\t\(.url)\t\(.headRefOid)\t\(.headRefName)"' 2>/dev/null)
-  if [ -n "$skipped" ]; then
-    note="scan capped at ${CONTESTED_SCAN_MAX:-40} of $total"
-    say "$p/$ck: contested scan capped at ${CONTESTED_SCAN_MAX:-40} of $total open PRs — $skipped were not read and are NOT parked"
-  fi
-  # And the tickets that are PLANNED to touch it: a build that has not launched
-  # yet is the cheapest competitor to stop (bin/triage-gate.sh reads this list).
-  for f in "$H/plans/$p-"*/planned-files.txt; do
-    [ -s "$f" ] || continue
-    k=$(basename "$(dirname "$f")"); k="${k#"$p-"}"
-    [ -n "$k" ] && [ "$k" != "$wkey" ] || continue
-    while IFS= read -r want; do
-      [ -n "$want" ] || continue
-      case "$want" in '#'*|SOURCE:*|source:*) continue ;; esac
-      # The path itself, or a directory scope that contains it. Never a string
-      # prefix: a.txt is not claimed by a plan that names a.txtx.
-      # shellcheck disable=SC2254
-      case "$path" in
-        "$want"|"$want"/*) tix=$(printf '%s' "$tix" | jq -c --arg k "$k" '. + [$k]' 2>/dev/null); break ;;
-      esac
-    done < "$f"
-  done
-  mkdir -p "$ST/$p" 2>/dev/null
-  jq -nc --argjson prs "$prs" --argjson tix "$tix" --arg note "$note" \
-    '{loser_prs:$prs, loser_tickets:($tix|unique), note:$note}' > "$ST/$p/$ck.competitors.json" 2>/dev/null || return 1
-  return 0
-}
-
-# br_contested_hold <project> <cap-key> <slug> <pr-url> <ticket-key> <head> <paths>
-#   rc 0 when the path is held and the bonus round is granted; rc 1, with ONE
-#   log line saying why, for every case that leaves the ladder exactly where it
-#   was — the PR list unreadable, nobody to hold, a hold that will not write.
-#
-#   THE ORDER IS THE DURABILITY ARGUMENT. Hold files first (tmp+rename, so a
-#   reader never sees half a hold), then ONE json write that records the attempt,
-#   grants the bonus and marks the ticket contested, then the loser rows, then
-#   the event. A crash after the holds and before the json rewrites the same
-#   holds next tick (same key, last write wins). A crash after the json leaves
-#   the losers named in a live hold, so they are skipped here and parked by the
-#   conductor. Nothing is ever marked contested without a hold on disk.
-br_contested_hold() {
-  local p="$1" ck="$2" slug="$3" url="$4" tkey="$5" head="$6" recs="$7"
-  local first num list prs tix note why written="" heldpaths="" parks="" path f
-  local prevpr prevhead cnum cpurl nums keys detail arr allprs='[]' alltix='[]'
-  first=$(printf '%s\n' "$recs" | sed '/^$/d' | head -1)
-  [ -n "$first" ] || return 1
-  num=$(mc_num_of_url "$url")
-  # ONE OPEN-PR LIST FOR THE WHOLE HOLD CREATION, hoisted out of the path loop
-  # (review round 1, finding 3). What is PER PATH is the file match: the first
-  # cut computed the loser set for the first recurring path and stamped it onto
-  # every hold, so a sibling touching only the SECOND path was named by no hold,
-  # parked by nobody and raced the winner exactly as before — while the second
-  # path's hold parked PRs that never touch it. The file lists mc_pr_files reads
-  # are cached per (PR, head), so the second path costs no API call either.
-  if ! command -v harness_pr_list >/dev/null 2>&1 \
-     || ! list=$(br_open_prs "$slug") \
-     || [ -z "$list" ]; then
-    say "$p/$ck [$tkey]: competitors unreadable (harness_pr_list failed) — contested hold not written, rebuilding as before"
-    return 1
-  fi
-  while IFS= read -r path; do
-    [ -n "$path" ] || continue
-    if ! br_competitors "$p" "$ck" "$slug" "$path" "$num" "$tkey" "$list"; then
-      say "$p/$ck [$tkey]: competitors unreadable (harness_pr_list failed) — contested hold not written, rebuilding as before"
-      br_contested_withdraw "$written" "hold read incomplete"
-      return 1
-    fi
-    f="$ST/$p/$ck.competitors.json"
-    prs=$(jq -c '.loser_prs' "$f" 2>/dev/null); tix=$(jq -c '.loser_tickets' "$f" 2>/dev/null)
-    note=$(jq -r '.note // ""' "$f" 2>/dev/null)
-    [ -n "$prs" ] || prs='[]'; [ -n "$tix" ] || tix='[]'
-    if [ "$prs" = '[]' ] && [ "$tix" = '[]' ]; then
-      say "$p/$ck [$tkey]: $path recurs but no open PR or planned ticket touches it — nothing to hold on that path"
-      continue
-    fi
-    IFS=$'\t' read -r prevpr prevhead < <(br_load "$p" "$ck" | jq -r --arg pr "$num" --arg h "$head" --arg path "$path" '
-        [ (.conflicts // [])[]
-          | select((((.pr|tostring) != $pr) or (.head != $h)) and (((.paths // []) | index($path)) != null)) ]
-        | last | select(. != null) | "\(.pr)\t\(.head)"' 2>/dev/null)
-    # THE `select(. != null)` IS THE POINT. `last` over an empty list is jq's
-    # `null`, and `"\(null)"` renders the four letters n-u-l-l — so with no
-    # earlier occurrence the `${prevpr:--}` default below never fired and the
-    # hold's own `why` read `after null@null`. Selected away, the no-match case
-    # prints nothing, `read` leaves both variables empty, and the defaults answer.
-    why="recurred on $num@${head:0:8} after ${prevpr:--}@${prevhead:0:8}${note:+; $note}"
-    if ! mc_contested_write "$p" "$slug" "$path" "$tkey" "$url" "$prs" "$tix" "" "$why"; then
-      say "$p/$ck [$tkey]: contested hold could not be written — rebuilding as before"
-      br_contested_withdraw "$written" "hold write incomplete"
-      return 1
-    fi
-    written="$written$(mc_contested_file "$p" "$path")"$'\n'
-    heldpaths="$heldpaths$path"$'\n'
-    allprs=$(printf '%s\n%s\n' "$allprs" "$prs" | jq -sc 'add | unique_by(.num)' 2>/dev/null) || allprs='[]'
-    alltix=$(printf '%s\n%s\n' "$alltix" "$tix" | jq -sc 'add | unique' 2>/dev/null) || alltix='[]'
-    # EVERY LOSER IS PARKED ON THE PATH THAT NAMED IT FIRST. A PR in two holds
-    # carries one reason, and the release rule (mc_contested_loser, asked with
-    # the hold being released excluded) is what keeps it parked until the LAST
-    # hold naming it is gone.
-    while IFS=$'\t' read -r cnum cpurl; do
-      [ -n "$cnum" ] || continue
-      case $'\n'"$parks" in *$'\n'"$cnum"$'\t'*) continue ;; esac
-      parks="$parks$cnum"$'\t'"${cpurl:--}"$'\t'"$path"$'\n'
-    done < <(printf '%s' "$prs" | jq -r '.[]? | "\(.num)\t\(.url // "-")"' 2>/dev/null)
-  done < <(printf '%s\n' "$recs" | sed '/^$/d')
-  if [ -z "$heldpaths" ]; then
-    say "$p/$ck [$tkey]: $(tr '\n' ' ' <<<"$recs")recurred but no open PR or planned ticket touches any of them — nothing to hold, rebuilding as before"
-    return 1
-  fi
-  first=$(head -1 <<<"$heldpaths")
-  arr=$(printf '%s' "$heldpaths" | sed '/^$/d' | jq -R . | jq -sc .)
-  nums=$(printf '%s' "$allprs" | jq -r '[.[].num] | join(", ")' 2>/dev/null)
-  keys=$(printf '%s' "$alltix" | jq -r 'join(", ")' 2>/dev/null)
-  detail="hold on $(tr '\n' ' ' <<<"$heldpaths")written — winner $tkey, loser PRs ${nums:-none}, loser tickets ${keys:-none}; one bonus fix round granted"
-  # ONE WRITE: the attempt, the bonus and the mark. The bonus is persisted BEFORE
-  # the round runs and the mark is what stops a second hold, so they cannot come
-  # apart — two writes here would let a crash grant the bonus twice.
-  if ! br_json_edit "$p" "$ck" '
-        .attempts += [{at:$t, action:"contested", reason:$why, detail:$d}]
-        | .updated = $t
-        | .fixround_bonus = ((.fixround_bonus // 0) + 1)
-        | .contested = {at:$t, paths:$paths, hold:$hold}' \
-        --arg t "$(STAMP)" --arg why conflict-unresolvable --arg d "$detail" \
-        --argjson paths "$arr" --arg hold "$(mc_contested_file "$p" "$first")"; then
-    say "$p/$ck [$tkey]: the contested hold could not be recorded on the ticket — holds withdrawn, rebuilding as before"
-    br_contested_withdraw "$written" "hold could not be recorded"
-    return 1
-  fi
-  # THE LOSERS' ROWS. mc_transition is the conductor's own writer, so the park
-  # is recorded exactly like every other one — and `contested:*` is not a
-  # hand-off reason, so the conductor may reclassify the row the moment it is
-  # released. A loser with NO row is left alone: this lane invents no rows.
-  local lnum lurl lpath row lhead lrev
-  while IFS=$'\t' read -r lnum lurl lpath; do
-    [ -n "$lnum" ] || continue
-    row=$(mc_row_get "$slug#$lnum")
-    if [ -z "$row" ]; then
-      say "$p/$ck: loser #$lnum has no conductor row — left to the conductor"
-      continue
-    fi
-    lhead=$(cut -f4 <<<"$row"); lrev=$(cut -f5 <<<"$row")
-    case "$lurl" in ''|-|null) lurl=$(cut -f8 <<<"$row") ;; esac
-    mc_transition "$slug#$lnum" BLOCKED_HUMAN "contested:$lpath (winner $tkey)" \
-      "$lhead" "$lrev" "$lurl" - - - >/dev/null
-  done <<<"$parks"
-  br_event resolver_contested "$p" "$ck" conflict-unresolvable \
-    "hold on $(tr '\n' ' ' <<<"$heldpaths")— winner $tkey ($url), loser PRs ${nums:-none}, loser tickets ${keys:-none}"
-  return 0
-}
-
-# br_contested_withdraw <written-list> <why> — every hold this creation managed
-#   to write, released, for the paths that came before the one that failed. A
-#   half-written hold set parks people behind a winner nothing recorded.
-br_contested_withdraw() {
-  local written="${1:-}" why="${2:-withdrawn}" f
-  [ -n "$written" ] || return 0
-  while IFS= read -r f; do
-    [ -n "$f" ] && mc_contested_release "$f" "$why" >/dev/null 2>&1
-  done <<<"$written"
-  return 0
-}
-
-# br_contested_sweep — once per tick, before the drain. Every hold is read and
-#   ended when its winner is done with it:
-#     row MERGED           -> released, no page (the happy ending)
-#     row ABANDONED        -> released + alert (it was held for nothing)
-#     no row, gh merged    -> released
-#     no row, gh closed     -> released + alert (same shape as abandoned)
-#     no row, read failed  -> left in place, one UNVERIFIABLE line, no page
-#     now - created >= ttl -> released + alert
-#   A TTL RELEASE IS NOT A TIME KILL: it unparks rows and closes nothing. A hold
-#   whose created/ttl do not parse is MALFORMED, not expired — it holds nobody
-#   (the contract decides liveness per read), it is left on disk as the evidence
-#   of a bad write, and it pages nobody.
-#
-#   NO LOCK, ever (the operator, 2026-09-13 — we never lock and serialize): every write
-#   here is either a contract-atomic file op or a row transition the conductor's
-#   own writer already serialises. Bounded by the number of holds, outside
-#   PER_TICK, and on the row path it costs no GitHub call at all.
-br_contested_sweep() {
-  local d p f repo wkey wurl created ttl now st rc malformed
-  [ -d "$MC_CONTESTED_DIR" ] || return 0
-  now=$(date -u +%s)
-  for d in "$MC_CONTESTED_DIR"/*; do
-    [ -d "$d" ] || continue
-    p=$(basename "$d")
-    [ -z "$ONLY" ] || [ "$p" = "$ONLY" ] || continue
-    while IFS= read -r f; do
-      [ -n "$f" ] || continue
-      IFS=$'\t' read -r repo wkey wurl created ttl < <(jq -r \
-        'select(type=="object")|"\(.repo)\t\(.winner_key)\t\(.winner_url)\t\(.created)\t\(.ttl)"' "$f" 2>/dev/null)
-      malformed=0
-      case "${created:-}" in ''|*[!0-9]*) malformed=1 ;; esac
-      case "${ttl:-}"     in ''|*[!0-9]*) malformed=1 ;; esac
-      if [ "$malformed" = 1 ]; then
-        say "contested hold $f is malformed — not live, left in place"
-        continue
-      fi
-      if [ "$(( now - created ))" -ge "$ttl" ]; then
-        br_release_hold "$f" "expired after ${ttl}s" alert
-        continue
-      fi
-      st=$(mc_row_field "$repo#$(mc_num_of_url "$wurl")" 2)
-      case "$st" in
-        MERGED)    br_release_hold "$f" "winner merged" ;;
-        ABANDONED) br_release_hold "$f" "winner abandoned" alert ;;
-        '')
-          # No row at all — the only arm that asks GitHub, and the only one that
-          # can. Anything but merged/closed (open, a PR GitHub says is absent, a
-          # read nobody could make) leaves the hold exactly where it is.
-          #
-          # THE READ IS br_pr_state, this file's own (#783), NEVER `gh pr view`
-          # (docs/verification-map/gh-pr-list-rest.md): `gh pr view --json` is
-          # GraphQL, and the GraphQL bucket is the one that empties first on
-          # these accounts — a sweep that cannot read the winner leaves every
-          # loser parked until the TTL, i.e. the feature fails exactly when the
-          # fleet is busiest. It is also the three-answer contract rather than a
-          # raw `gh api -q`: rc 0 a state, rc 44 the PR is absent, rc 75 GitHub
-          # did not answer, with the `UNVERIFIABLE (HTTP …)` line written for us.
-          # A raw read collapsed a 5xx and a rate limit into "not merged" and
-          # left nothing in the log to say a read had failed at all.
-          br_use_token "$repo"
-          st=$(br_pr_state "$wurl"); rc=$?
-          if [ "$rc" = 0 ]; then
-            case "$st" in
-              merged) br_release_hold "$f" "winner merged" ;;
-              closed) br_release_hold "$f" "winner closed" alert ;;
-            esac
-          fi
-          br_reset_token ;;
-      esac
-    done < <(mc_contested_list "$p")
-  done
-  return 0
-}
-# br_release_hold <file> <why> [alert] — mc_contested_release, except while the
-#   fleet kill switch or this lane's observe flag is on, when a release would
-#   move other people's rows for a tick that took no action at all.
-br_release_hold() {
-  local f="$1" why="$2" alert="${3:-}"
-  if [ "$OBSERVE" = 1 ]; then
-    say "WOULD release contested hold on $(jq -r '.path // "?"' "$f" 2>/dev/null) ($why) — observe mode"
-    return 0
-  fi
-  mc_contested_release "$f" "$why" "$alert"
-}
+# contested hold (BH-579): bin/lib/br/contested.sh
 
 # ---------------------------------------------------------------------------
 # The drain. ONE action per key per tick, under a PER-KEY lock.
@@ -7760,7 +7184,8 @@ br_one() {
   if command -v br_opt_unchanged_skip >/dev/null 2>&1 \
      && br_opt_unchanged_skip "$p" "$rkey" "$reason" "$url" "$rec" "$tkey" "$src"; then
     br_reset_token; return 3
-  fi; if command -v prh_gate >/dev/null 2>&1 && ! prh_gate "$p" "$rkey" "$reason" "$url" "$tkey"; then br_reset_token; return 3; fi
+  fi
+  if command -v prh_gate >/dev/null 2>&1 && ! prh_gate "$p" "$rkey" "$reason" "$url" "$tkey"; then br_reset_token; return 3; fi
   # THE RECORD LIVES ON THE TICKET (br_cap_key): a rebuild makes a new PR, so a
   # cap read off the number restarts on every rung. Read AFTER the derivation
   # above. THE TERMINAL AND THE LADDER ARE THE PR'S (BH-8339): bpr_scope gives
@@ -8105,7 +7530,8 @@ br_one() {
            fi
            action=rebuild-fresh ;;
       esac ;;
-  esac; command -v brnc_one_gate >/dev/null 2>&1 && brnc_one_gate "$p" "$ck" "$rkey" "$reason" "$url" "$rec" "$tkey" && { br_reset_token; return 3; }   # BH-8592: a pending no-change head is requeued before any rung
+  esac
+  command -v brnc_one_gate >/dev/null 2>&1 && brnc_one_gate "$p" "$ck" "$rkey" "$reason" "$url" "$rec" "$tkey" && { br_reset_token; return 3; }   # BH-8592: a pending no-change head is requeued before any rung
   # <<< needs-human park
   case "$action" in
     rebuild-fresh|rebuild-retry|adjudicate) ;;
