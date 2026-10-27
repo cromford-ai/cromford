@@ -32,7 +32,7 @@ const NAME_RE = /^[a-z0-9._-]{1,64}$/;
 const SHA_RE = /^[0-9a-f]{64}$/;
 const LIST_MAX = 200;
 const DETAIL_MAX = 50;
-const STALE_FALLBACK_S = 900;
+export const STALE_FALLBACK_S = 900;
 const NO_LEAD = "needs the lead verdict token (x-lead-verdict-token)";
 
 // One normalisation, used at write and at lookup (D17).

@@ -1,0 +1,6 @@
+-- ── BH-8579: lead review release knobs ─────────────────────────────────────────
+-- POST /api/lead-reviews/reclaim-stale (worker/jobs/src/lib/lead-review-release.js)
+-- reads both rows in its one settings statement. No table is created here.
+-- INSERT OR IGNORE: a re-apply changes nothing and an operator's value stays.
+INSERT OR IGNORE INTO settings (key,value,note,actor,updated_at) VALUES ('lead_review.stale_running_min','15','BH-8579: minutes a running lead review may go without heartbeat_at (else updated_at) before POST /api/lead-reviews/reclaim-stale resets it; wins over lead_review_running_deadline_s and is floored at lead_review_claim_stale_s; code fallback 15 (LEAD_REVIEW_STALE_RUNNING_MIN_FALLBACK in worker/jobs/src/lib/lead-review-release.js)','seed','2026-10-27T00:00:00Z');
+INSERT OR IGNORE INTO settings (key,value,note,actor,updated_at) VALUES ('lead_review.release_max_resets','3','BH-8579: releases (bound job failed, or no heartbeat past lead_review.stale_running_min) of one lead review request before reclaim-stale sets it failed, counted in stale_reclaims; 0 = the first event goes to failed; code fallback 3 (LEAD_REVIEW_RELEASE_MAX_FALLBACK in worker/jobs/src/lib/lead-review-release.js)','seed','2026-10-27T00:00:00Z');

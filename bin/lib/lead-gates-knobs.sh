@@ -22,16 +22,18 @@
 #   LGK_TWF       LEAD_REVIEW_TRACED_WORKFLOW        harness-ci.yml
 #   LGK_TMAX      LEAD_REVIEW_TRACED_MAX_WAIT_MIN    30
 #   LGK_RBHOLD    LEAD_REVIEW_REBASE_HOLD            1 (0 = off) 85, 57
+#   LGK_RCOOL     LEAD_REVIEW_RELEASE_COOLDOWN_MIN   15 (0 = off) 95-retry-reclaim.sh (BH-8579)
 
 declare -g _LGK_DONE="" LGK_RC=0 LGK_MAXT="" LGK_RETRYMAX="" LGK_PSC="" LGK_PSCMAX=""
-declare -g LGK_TWAIT="" LGK_TJOB="" LGK_TWF="" LGK_TMAX="" LGK_RBHOLD=""
+declare -g LGK_TWAIT="" LGK_TJOB="" LGK_TWF="" LGK_TMAX="" LGK_RBHOLD="" LGK_RCOOL=""
 
 # _lgk_print — one knob a line, in the order lgk_load reads them back.
 _lgk_print() {
   printf '%s\n' "${LEAD_REVIEW_ENQUEUE_MAX_PER_TICK:-}" "${LEAD_REVIEW_FAILED_RETRY_MAX:-}" \
     "${PR_SELF_CHECK:-}" "${PR_SELF_CHECK_MAX_WAIT_MIN:-}" "${LEAD_REVIEW_TRACED_WAIT:-}" \
     "${LEAD_REVIEW_TRACED_JOB:-}" "${LEAD_REVIEW_TRACED_WORKFLOW:-}" \
-    "${LEAD_REVIEW_TRACED_MAX_WAIT_MIN:-}" "${LEAD_REVIEW_REBASE_HOLD:-}" | tr -d '\r'
+    "${LEAD_REVIEW_TRACED_MAX_WAIT_MIN:-}" "${LEAD_REVIEW_REBASE_HOLD:-}" \
+    "${LEAD_REVIEW_RELEASE_COOLDOWN_MIN:-}" | tr -d '\r'
 }
 
 lgk_load() {
@@ -55,5 +57,6 @@ lgk_load() {
   LGK_TWF="${v[6]:-}"; [ -n "$LGK_TWF" ] || LGK_TWF="harness-ci.yml"
   LGK_TMAX="${v[7]:-30}"; [[ "$LGK_TMAX" =~ ^[0-9]{1,5}$ ]] || LGK_TMAX=30
   LGK_RBHOLD="${v[8]:-1}"; [ "$LGK_RBHOLD" = 0 ] || LGK_RBHOLD=1
+  LGK_RCOOL="${v[9]:-15}"; [[ "$LGK_RCOOL" =~ ^[0-9]{1,5}$ ]] || LGK_RCOOL=15
   return 0
 }

@@ -1,8 +1,8 @@
 #!/bin/bash
 # tests/lead-review-dedupe.bh-3930-test.sh — BH-3941 (BH-3930.4): a PR head buys
-# ONE lead review. Two production entry points, each run WHOLE (`tick`) against
-# a scratch harness carrying the real jobs client and the real libs they source,
-# "$DIR/bin/lib/review-bought.sh" and "$DIR/bin/lib/patch-same.sh" included:
+# ONE lead review. bin/lead-review.sh tick runs WHOLE in two sections, each
+# against a scratch harness carrying the real jobs client and the real libs it
+# sources ("$DIR/bin/lib/review-bought.sh" included in the first):
 #
 #   bin/lead-review.sh tick (D1-D3)
 #     D1  tick 1 blocks inside its agent call; tick 2 exits 0 at once. Since
@@ -15,22 +15,13 @@
 #         agent call.
 #     D3  both calls carry AGENT_CALL_GUARD_STAGE=lead-head and the per-head fp
 #         lead:o/r#7@<sha>; the unknown-verdict retry is ...~noverdict.
-#   bin/lead-review-enqueue.sh tick (D4-D6), on a reapproved@HEAD approval
-#     D4  the previous head's lead MERGE, HEAD = that head + a clean main merge
-#         (real git): bin/lead-verdict.sh post replays it, no POST
-#         /api/lead-reviews, replayed=1. D4b: post rc 5 (advice) still replays.
-#     D5  HEAD changed the patch: no post, the request is POSTed, replayed=0.
-#     D6  the verdicts read answers 500, or non-JSON: today's request path.
-#         D6b: post rc 1: today's request path. D6c: a truncated read, a
-#         box-only history, an empty lead word: today's request path.
-#     D7  HEAD already carries a source=lead lead-replay: row and nothing
-#         stands (advice): no second post, no request, replayed=1.
-#     D8  (BH-8476) the lead BLOCK on PH is retracted: no replay post, the
-#         request is POSTed.
-# Stubbed: curl (the jobs worker), gh (REST reads), bin/agent-call.sh,
-# bin/lead-verdict.sh and bin/lane-alert.sh (argv recorders).
+# Stubbed: curl (the jobs worker), gh (REST reads) and bin/agent-call.sh.
 # Dispatcher section (BH-5874): gate 3's BH-3930 rebound replay,
-# bin/lib/lead-gates.d/50-replay-delta.sh, on the worklist. bin/lead-review.sh
+# bin/lib/lead-gates.d/50-replay-delta.sh (it reads bin/lib/patch-same.sh), on
+# the worklist. Its post-rc, unreadable-history, no-G and already-replayed
+# near misses are in tests/lead-gates-replay-dedupe.bh-8557-test.sh; the
+# replay line and modes.tsv row in tests/lead-replay-merge-only.bh-5294-test.sh
+# R1. bin/lead-review.sh
 # tick runs WHOLE over tests/lib/lead-worklist-fixture.bh-4956.sh, with the real
 # bin/lead-verdict.sh and the lead token on the box. G is the PR commit, H1 = G
 # + a main merge (#201); the builder APPROVE is on G and head-bound
@@ -53,7 +44,7 @@ bad() { FAIL=$((FAIL+1)); echo "FAIL: $1"; }
 command -v jq >/dev/null || { echo "jq missing — skipping"; exit 0; }
 command -v flock >/dev/null || { echo "FAIL: flock missing"; exit 1; }
 command -v setsid >/dev/null || { echo "FAIL: setsid missing"; exit 1; }
-for f in bin/lead-review.sh bin/lead-review-enqueue.sh bin/lib/review-bought.sh bin/lib/patch-same.sh; do
+for f in bin/lead-review.sh bin/lib/review-bought.sh bin/lib/patch-same.sh; do
   [ -f "$DIR/$f" ] || { echo "FAIL: $f does not exist"; exit 1; }
 done
 export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@example.invalid GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@example.invalid
@@ -206,193 +197,6 @@ L1=$(sed -n 1p "$T/log/agent-fp" 2>/dev/null); L2=$(sed -n 2p "$T/log/agent-fp" 
 [ "$L1" = "lead-head lead:o/r#7@$SHA" ] && ok || bad "D3 first call stage/fp: '$L1'"
 [ "$L2" = "lead-head lead:o/r#7@$SHA~noverdict" ] && ok || bad "D3 retry stage/fp: '$L2'"
 grep -q '"verdict":"MERGE"' "$T/log/worker" && ok || bad "D3 the retry's MERGE was not posted"
-
-# ═══════════════════════ part 2: bin/lead-review-enqueue.sh ═══════════════════
-Q="$T/hq"; mkdir -p "$Q/bin/lib/jobs" "$Q/state" "$Q/logs" "$T/cfg" "$T/qrepos"
-cp "$DIR/bin/jobs-client.sh" "$DIR/bin/lead-review-enqueue.sh" "$Q/bin/"
-cp "$DIR"/bin/lib/jobs/*.sh "$Q/bin/lib/jobs/"
-for f in env-path lane-gate hub-box lead-reviews verdicts gh-rest gh-pr-list gh-budget patch-same; do
-  cp "$DIR/bin/lib/$f.sh" "$Q/bin/lib/"
-done
-printf 'lead-test-token\n' > "$T/cfg/token"; chmod 600 "$T/cfg/token"
-printf 'demo-os example-org/demo-os https://demo.test /api 3 box-hub\n' > "$Q/fleet.conf"
-
-# The hub's clone of the repo. PH is the head the lead reviewed; main moved on;
-# HEAD is either PH + a clean main merge (D4) or PH + a real change (D5).
-QO="$T/qorigin/demo-os.git"; QW="$T/qwork"
-git init -q --bare -b main "$QO"; git init -q -b main "$QW"
-printf 'line 1\nline 2\nline 3\n' > "$QW/f.txt"; printf 'other\n' > "$QW/o.txt"
-git -C "$QW" add -A; git -C "$QW" commit -qm base
-git -C "$QW" checkout -qb pr; echo 'pr line' >> "$QW/f.txt"; git -C "$QW" commit -qam "the pr"
-PH=$(git -C "$QW" rev-parse HEAD)
-git -C "$QW" checkout -q main; echo 'main moved' >> "$QW/o.txt"; git -C "$QW" commit -qam "main moves"
-git -C "$QW" checkout -q pr; git -C "$QW" merge -q --no-edit main; HM=$(git -C "$QW" rev-parse HEAD)
-git -C "$QW" checkout -qb pr2 "$PH"; echo 'a real change' >> "$QW/f.txt"; git -C "$QW" commit -qam "changed"
-HC=$(git -C "$QW" rev-parse HEAD)
-git -C "$QW" push -q "$QO" main pr pr2
-git clone -q "$QO" "$T/qrepos/demo-os"
-PH12=${PH:0:12}
-
-cat > "$T/fakebin/qcurl" <<EOF
-#!/bin/bash
-m=GET; body=""; url=""; prev=""; hdrs=""
-for a in "\$@"; do
-  case "\$prev" in
-    -X) m="\$a" ;;
-    --data-binary|-d|--data) body="\$a" ;;
-    -H) case "\$a" in @*) hdrs="\$hdrs\$(cat "\${a#@}")"\$'\n' ;; *) hdrs="\$hdrs\$a"\$'\n' ;; esac ;;
-  esac
-  case "\$a" in http*) url="\$a" ;; esac
-  prev="\$a"
-done
-case "\$body" in @*) body=\$(cat "\${body#@}") ;; esac
-lead=0; grep -q '^x-lead-verdict-token: lead-test-token' <<<"\$hdrs" && lead=1
-p="\${url#https://jobs.test}"
-printf '%s %s %s lead=%s\n' "\$m" "\$p" "\$body" "\$lead" >> "$T/log/qworker"
-code=200; out='{}'
-case "\$m \$p" in
-  "GET /api/verdict?pr="*)
-    n="\${p##*%2F}"
-    if [ -f "$T/jv/\$n.json" ]; then out=\$(cat "$T/jv/\$n.json"); else code=404; out='{"error":"no job for this pr"}'; fi ;;
-  "GET /api/verdicts?"*standing_only=1*) out='{"standing":null,"rows":[],"truncated":false}' ;;
-  "GET /api/verdicts?"*)
-    if [ -e "$T/vd500" ]; then code=500; out='{"error":"boom"}'
-    elif [ -e "$T/vdjunk" ]; then out='<html>not json</html>'
-    else out=\$(cat "$T/vrows.json"); fi ;;
-  "POST /api/lead-reviews")
-    if [ "\$lead" != 1 ]; then code=403; out='{"error":"needs the lead token"}'
-    else code=201; out=\$(jq -c '{request:(. + {id:"lr-9", status:"requested"})}' <<<"\$body"); fi ;;
-  *) code=404; out='{"error":"unknown endpoint","worker":"harness-jobs"}' ;;
-esac
-printf '%s\n%s' "\$out" "\$code"
-EOF
-cat > "$T/fakebin/qgh" <<EOF
-#!/bin/bash
-case "\$*" in
-  *"api rate_limit"*)
-    echo '{"resources":{"core":{"remaining":5000,"limit":5000,"reset":2000000000},"graphql":{"remaining":5000,"limit":5000,"reset":2000000000}}}' ;;
-  *"-X GET repos/example-org/demo-os/pulls?"*)
-    printf 'HTTP/2 200\r\n\r\n'
-    jq -nc --arg h "\$(cat "$T/qhead")" '[{number:41, html_url:"https://github.com/example-org/demo-os/pull/41", title:"t", draft:false, state:"open",
-      user:{login:"operator",type:"User"}, head:{sha:\$h,ref:"ticket/bh-41"}, base:{ref:"main"}}]' ;;
-  *"-X GET repos/example-org/demo-os/pulls/41"*)
-    printf 'HTTP/2 200\r\n\r\n'; jq -nc --arg s "\$(cat "$T/qhead")" '{head:{sha:\$s},base:{ref:"main"}}' ;;
-  *"-X GET repos/example-org/demo-os/compare/"*)
-    printf 'HTTP/2 200\r\n\r\n{"total_commits":1,"commits":[{"parents":[{"sha":"p"}],"commit":{"message":"feat: the thing"}}]}\n' ;;
-esac
-exit 0
-EOF
-cat > "$Q/bin/lead-verdict.sh" <<EOF
-#!/bin/bash
-printf '%s\n' "\$*" >> "$T/log/post"
-exit "\$(cat "$T/postrc" 2>/dev/null || echo 0)"
-EOF
-cat > "$Q/bin/lane-alert.sh" <<EOF
-#!/bin/bash
-printf '%s\n' "\$*" >> "$T/log/qalerts"
-exit 0
-EOF
-mkdir -p "$T/qbin"; cp "$T/fakebin/qcurl" "$T/qbin/curl"; cp "$T/fakebin/qgh" "$T/qbin/gh"
-chmod +x "$T/qbin/curl" "$T/qbin/gh" "$Q/bin/lead-verdict.sh" "$Q/bin/lane-alert.sh"
-
-QLOG="$Q/logs/lead-review-enqueue.log"
-reset2() { # reset2 <head>
-  rm -f "$T/log"/q* "$T/log/post" "$T"/{vd500,vdjunk,postrc} "$QLOG"
-  scratch_rm "$Q/state"; mkdir -p "$Q/state"; echo box-hub > "$Q/state/box-name"
-  scratch_rm "$T/jv"; mkdir -p "$T/jv"
-  echo "$1" > "$T/qhead"
-  # the builder's approval was on PH, rebound to the live head
-  jq -nc --arg s "$PH" --arg hb "reapproved@$1" '{verdict:"APPROVE", tier:"2", provenance:"-", merge_sha:null, job_id:"job-1", reviewed_sha:$s,
-    artifacts:[{artifact_kind:"verdict", detail:({tier:"2", headbound:$hb, reviewed_sha:$s, settled:true}|tojson)}]}' > "$T/jv/41.json"
-  # the verdict history: a box APPROVE and the lead MERGE, both on PH
-  jq -nc --arg ph "$PH" '{rows:[{id:4,repo:"example-org/demo-os",pr:41,head_sha:$ph,source:"box",verdict:"APPROVE",note:""},
-    {id:5,repo:"example-org/demo-os",pr:41,head_sha:$ph,source:"lead",verdict:"MERGE",note:"lead-review:lr-3"}],truncated:false}' > "$T/vrows.json"
-}
-tick2() {
-  ( cd "$T" && PATH="$T/qbin:$PATH" HARNESS="$Q" REPOS_ROOT="$T/qrepos" FLEET_CONF="$Q/fleet.conf" \
-      LEAD_VERDICT_TOKEN_FILE="$T/cfg/token" LEAD_REVIEW_AUTO_REPOS=example-org/demo-os \
-      LEAD_REVIEW_ENQUEUE_MAX_PER_TICK=5 LEAD_REVIEW_MAX_PER_PR_DAY=4 \
-      bash "$Q/bin/lead-review-enqueue.sh" tick ) > "$T/out" 2>&1; RC=$?
-}
-qposts() { grep -c '^POST /api/lead-reviews ' "$T/log/qworker" 2>/dev/null || true; }
-summ() { grep ' tick repos=' "$QLOG" 2>/dev/null | tail -1; }
-hasw() { summ | grep -qw -- "$1"; }
-postn() { [ -f "$T/log/post" ] && wc -l < "$T/log/post" | tr -d ' ' || echo 0; }
-
-# ── D4: a carried-over approval on an unchanged patch replays the lead MERGE ──
-reset2 "$HM"; tick2
-[ "$RC" -eq 0 ] && ok || bad "D4 rc=$RC out=$(cat "$T/out")"
-# TEST-CHANGE (BH-6967): the replay post also names the replayed row's review
-# mode; that row has none, so it was a full review.
-WANT="post example-org/demo-os 41 $HM MERGE --source lead --reviewer box:box-hub --note lead-replay:$PH12 how:main-merge --review-mode full"
-[ "$(cat "$T/log/post" 2>/dev/null)" = "$WANT" ] && ok || bad "D4 lead-verdict argv: '$(cat "$T/log/post" 2>/dev/null)' want '$WANT'"
-[ "$(qposts)" = 0 ] && ok || bad "D4 a lead review was requested on an unchanged patch: $(grep 'POST /api/lead-reviews' "$T/log/qworker")"
-hasw replayed=1 && hasw requested=0 && ok || bad "D4 summary: $(summ)"
-grep -q "example-org/demo-os#41 @${HM:0:12}: lead MERGE replayed from $PH12 (how:main-merge, post rc 0); no review requested" "$QLOG" \
-  && ok || bad "D4 no replay log line: $(cat "$QLOG")"
-# D4b: the post records the row as advice (rc 5): still replayed, still no request
-reset2 "$HM"; echo 5 > "$T/postrc"; tick2
-[ "$(postn)" = 1 ] && [ "$(qposts)" = 0 ] && hasw replayed=1 && ok || bad "D4b rc 5: posts=$(postn) requests=$(qposts) $(summ)"
-
-# ── D5: the patch changed: no replay, today's request ──
-reset2 "$HC"; tick2
-[ "$(postn)" = 0 ] && ok || bad "D5 a changed patch was replayed: $(cat "$T/log/post")"
-[ "$(qposts)" = 1 ] && ok || bad "D5 want one POST /api/lead-reviews, got $(qposts)"
-hasw replayed=0 && hasw requested=1 && ok || bad "D5 summary: $(summ)"
-
-# ── D6: an unreadable verdicts read is never a replay and never a skip ──
-reset2 "$HM"; : > "$T/vd500"; tick2
-[ "$(postn)" = 0 ] && [ "$(qposts)" = 1 ] && hasw replayed=0 && hasw requested=1 && ok \
-  || bad "D6 a 500 verdicts read: posts=$(postn) requests=$(qposts) $(summ)"
-grep -q 'verdicts read failed; requesting as before' "$QLOG" && ok || bad "D6 no read-failed line: $(cat "$QLOG")"
-reset2 "$HM"; : > "$T/vdjunk"; tick2
-[ "$(postn)" = 0 ] && [ "$(qposts)" = 1 ] && hasw replayed=0 && hasw requested=1 && ok \
-  || bad "D6 a non-JSON verdicts read: posts=$(postn) requests=$(qposts) $(summ)"
-# D6b: the post itself refused (rc 1): today's request
-reset2 "$HM"; echo 1 > "$T/postrc"; tick2
-[ "$(postn)" = 1 ] && [ "$(qposts)" = 1 ] && hasw replayed=0 && hasw requested=1 && ok \
-  || bad "D6b post rc 1: posts=$(postn) requests=$(qposts) $(summ)"
-
-# D6c: what never replays: a truncated history, only a box row on PH, a lead
-# row with no word. Each takes today's request path.
-reset2 "$HM"; jq -c '.truncated = true' "$T/vrows.json" > "$T/v2" && mv "$T/v2" "$T/vrows.json"; tick2
-[ "$(postn)" = 0 ] && [ "$(qposts)" = 1 ] && hasw replayed=0 && ok || bad "D6c a truncated read replayed: posts=$(postn) requests=$(qposts) $(summ)"
-grep -q 'verdicts read failed; requesting as before' "$QLOG" && ok || bad "D6c a truncated read was not named unreadable: $(cat "$QLOG")"
-reset2 "$HM"; jq -c '.rows |= map(select(.source != "lead"))' "$T/vrows.json" > "$T/v2" && mv "$T/v2" "$T/vrows.json"; tick2
-[ "$(postn)" = 0 ] && [ "$(qposts)" = 1 ] && hasw replayed=0 && ok || bad "D6c a box-only history replayed: posts=$(postn) requests=$(qposts) $(summ)"
-reset2 "$HM"; jq -c '.rows |= map(if .source == "lead" then .verdict = "" else . end)' "$T/vrows.json" > "$T/v2" && mv "$T/v2" "$T/vrows.json"; tick2
-[ "$(postn)" = 0 ] && [ "$(qposts)" = 1 ] && hasw replayed=0 && ok || bad "D6c an empty lead word replayed: posts=$(postn) requests=$(qposts) $(summ)"
-
-# ── D7: a head already replayed onto is not posted again (rc 5 advice does not stand) ──
-reset2 "$HM"
-jq -c --arg h "$HM" --arg n "lead-replay:$PH12 how:main-merge" \
-  '.rows += [{id:6,repo:"example-org/demo-os",pr:41,head_sha:$h,source:"lead",verdict:"MERGE",note:$n}]' "$T/vrows.json" > "$T/v2" && mv "$T/v2" "$T/vrows.json"
-tick2
-[ "$RC" -eq 0 ] && ok || bad "D7 rc=$RC out=$(cat "$T/out")"
-[ "$(postn)" = 0 ] && ok || bad "D7 a replayed head was posted again: $(cat "$T/log/post")"
-[ "$(qposts)" = 0 ] && ok || bad "D7 a replayed head was requested: $(qposts)"
-hasw replayed=1 && hasw requested=0 && ok || bad "D7 summary: $(summ)"
-grep -q "example-org/demo-os#41 @${HM:0:12}: lead word already replayed onto this head" "$QLOG" && ok || bad "D7 no already-replayed line: $(cat "$QLOG")"
-# a lead-replay: note on ANOTHER head does not count for this one
-reset2 "$HM"
-jq -c --arg n "lead-replay:$PH12 how:main-merge" \
-  '.rows += [{id:6,repo:"example-org/demo-os",pr:41,head_sha:"'"$HC"'",source:"lead",verdict:"MERGE",note:$n}]' "$T/vrows.json" > "$T/v2" && mv "$T/v2" "$T/vrows.json"
-tick2
-grep -q 'already replayed' "$QLOG" && bad "D7 a replay on another head blocked this one: $(cat "$QLOG")" || ok
-
-# ── D8 (BH-8476): a retracted lead BLOCK is absent, so it is never replayed ──
-reset2 "$HM"
-jq -c '.rows |= map(if .source == "lead" then .verdict = "BLOCK" | .retracted_at = "2026-10-26T01:00:00Z" | .retract_reason = "empty-report" else . end)' \
-  "$T/vrows.json" > "$T/v2" && mv "$T/v2" "$T/vrows.json"
-tick2
-[ "$RC" -eq 0 ] && ok || bad "D8 rc=$RC out=$(cat "$T/out")"
-[ "$(postn)" = 0 ] && ok || bad "D8 a retracted BLOCK was replayed: $(cat "$T/log/post")"
-[ "$(qposts)" = 1 ] && hasw replayed=0 && ok || bad "D8 want one request, no replay: requests=$(qposts) $(summ)"
-# control: the same BLOCK, not retracted, IS replayed on the rebound head
-reset2 "$HM"
-jq -c '.rows |= map(if .source == "lead" then .verdict = "BLOCK" else . end)' "$T/vrows.json" > "$T/v2" && mv "$T/v2" "$T/vrows.json"
-tick2
-grep -q "^post example-org/demo-os 41 $HM BLOCK " "$T/log/post" 2>/dev/null && ok || bad "D8 control: a standing BLOCK was not replayed: $(cat "$T/log/post" 2>/dev/null)"
 
 # ═══════════ dispatcher section (BH-5874): the rebound replay on the worklist ═══════════
 T="$T/disp"; mkdir -p "$T"

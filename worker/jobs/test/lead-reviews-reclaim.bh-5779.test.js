@@ -1,6 +1,6 @@
 // BH-5779 — POST /api/lead-reviews/reclaim-stale sends a `running` lead review
 // whose heartbeat went quiet past the deadline (settings
-// lead_review_running_deadline_s, fallback 3600, floored at
+// lead_review_running_deadline_s, fallback 900 since BH-8579, floored at
 // lead_review_claim_stale_s) back to `requested` the first time and to
 // `failed` (detail `stale: ...`) the second time. Driven through worker.fetch
 // against the schema.sql that ships (the bh-5351 idiom): the reclaim is a
@@ -34,7 +34,16 @@ function sqliteDB(db, afterAll = null) {
     prepare: (sql) => ({ ...bindAndRun(sql, []), bind: (...b) => bindAndRun(sql, b.map((v) => (v === undefined ? null : v))) }),
   };
 }
-const fresh = (afterAll = null) => { const db = new DatabaseSync(':memory:'); db.exec(SCHEMA); return { db, DB: sqliteDB(db, afterAll) }; };
+// TEST-CHANGE (BH-8579): the two new seed rows are deleted, so every W case
+// keeps reading lead_review_running_deadline_s (seed 3600) and W5 pins the
+// cap of 1 it was written for. lead-reviews-release.bh-8579.test.js covers
+// the seeded rows.
+const fresh = (afterAll = null) => {
+  const db = new DatabaseSync(':memory:');
+  db.exec(SCHEMA);
+  db.exec("DELETE FROM settings WHERE key IN ('lead_review.stale_running_min','lead_review.release_max_resets')");
+  return { db, DB: sqliteDB(db, afterAll) };
+};
 
 const call = (DB, path, { method = 'GET', body, lead = false } = {}) => {
   const headers = { authorization: `Bearer ${SECRET}`, 'content-type': 'application/json' };
@@ -95,7 +104,9 @@ test('W2. running, job-1, heartbeat 2 h old → requested; job, beat, box cleare
   const res = await reclaim(DB);
   assert.equal(res.status, 200, JSON.stringify(res.body));
   assert.equal(res.body.reclaimed.length, 1);
-  assert.deepEqual(res.body.reclaimed[0], { id: r.id, repo: REPO, pr: PR, head_sha: H1, to: 'requested', last_beat: beat, job_id: 'job-1' });
+  // TEST-CHANGE (BH-8579): the entry gained reason, detail, releases and cap; the old fields are unchanged.
+  assert.deepEqual(res.body.reclaimed[0], { id: r.id, repo: REPO, pr: PR, head_sha: H1, to: 'requested', last_beat: beat, job_id: 'job-1',
+    reason: 'stale', detail: `stale: running with no heartbeat since ${beat} (job job-1, box box-a); reclaimed after 3600 s`, releases: 1, cap: 3 });
   const now = row(db, r.id);
   assert.equal(now.status, 'requested');
   assert.equal(now.job_id, null);
@@ -138,6 +149,7 @@ test('W4. running with heartbeat_at NULL, job_id NULL, updated_at 2 h old (the #
 
 test('W5. the same row stale a second time → failed, detail stale:, stale_reclaims 2, job_id kept', async () => {
   const { db, DB } = fresh();
+  setting(db, 'lead_review.release_max_resets', '1'); // TEST-CHANGE (BH-8579): the cap of 1 this case pins is now a settings row (seed 3)
   const r = await staleRunning(db, DB, 7200, 'job-1');
   assert.equal((await reclaim(DB)).body.reclaimed[0].to, 'requested');
   assert.equal((await claim(DB, r.id, 'job-2', 'box-b')).status, 200);
@@ -186,16 +198,20 @@ test('W6b. a deadline above the floor is used as set', async () => {
   assert.equal(row(db, quiet.id).status, 'running');
 });
 
-test('W7. a setting that is not a positive integer uses the fallback 3600', async () => {
+// TEST-CHANGE (BH-8579): the code fallback is now 15 min (LEAD_REVIEW_STALE_RUNNING_MIN_FALLBACK,
+// the ticket's number), not 3600 s. A bad old row with no new row uses 900, so a
+// 2000 s quiet row is reclaimed and a 300 s one stays.
+test('W7. a setting that is not a positive integer uses the fallback 900', async () => {
   for (const bad of ['abc', '0', '-5', '1.5']) {
     const { db, DB } = fresh();
     setting(db, 'lead_review_running_deadline_s', bad);
     const r = await staleRunning(db, DB, 2000);
+    const quiet = await staleRunning(db, DB, 300, 'job-q', head('b'));
     const res = await reclaim(DB);
     assert.equal(res.status, 200, JSON.stringify(res.body));
-    assert.equal(res.body.deadline_s, 3600, `value ${bad}`);
-    assert.deepEqual(res.body.reclaimed, [], `value ${bad}: 2000 s is under the fallback`);
-    assert.equal(row(db, r.id).status, 'running');
+    assert.equal(res.body.deadline_s, 900, `value ${bad}`);
+    assert.deepEqual(res.body.reclaimed.map((x) => x.id), [r.id], `value ${bad}: 2000 s is over the fallback, 300 s is under it`);
+    assert.equal(row(db, quiet.id).status, 'running');
   }
 });
 

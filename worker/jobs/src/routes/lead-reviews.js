@@ -45,20 +45,38 @@
 //
 // BH-5779, a running row nobody claims again:
 // - POST /api/lead-reviews/reclaim-stale (lead token) takes back every running
-//   row whose COALESCE(heartbeat_at, updated_at) is older than the deadline:
-//   settings lead_review_running_deadline_s, fallback LEAD_REVIEW_DEADLINE_S
-//   (3600), floored at staleWindow so it never undercuts the claim takeover.
-//   The first time, the row goes back to `requested` and the reset is recorded;
-//   the second time (stale_reclaims > 0) it goes to `failed` with detail
-//   `stale: ...`, and the enqueue's bounded retry ladder owns it from there.
-// - Each row is ONE compare-and-set pinned to the job and the beat the sweep
-//   read, so a claim or a heartbeat that lands first wins and the row is not
+//   row whose COALESCE(heartbeat_at, updated_at) is older than the deadline
+//   (BH-8579 below sets it), floored at staleWindow so it never undercuts the
+//   claim takeover.
+//   Under the cap (BH-8579 below) the row goes back to `requested` and the
+//   reset is recorded; at the cap it goes to `failed` with its detail, and the
+//   failed rung's bounded retry ladder owns it from there.
+// - Each row is ONE compare-and-set pinned to the job, the beat and the
+//   stale_reclaims the sweep read, so a claim or a heartbeat that lands first wins and the row is not
 //   listed. At most LIST_MAX rows a call; `truncated` says more are left.
 // - A reclaimed `requested` row clears job_id, so the old job's /result and
 //   /heartbeat answer 409 through the existing `row.job_id !== job_id` binding.
 //   A `failed` row keeps job_id: a late /result from that job is still bound
 //   to it, and /reset treats the row as finished.
 // - jobLive is NOT used: this is a heartbeat deadline, not the /start takeover.
+//
+// BH-8579, a failed job releases its request (lib/lead-review-release.js):
+// - The sweep also takes a running row whose bound job ended failed, abandoned
+//   or budget_stopped more than one beat interval (staleWindow / 3) ago, when
+//   no request heartbeat arrived after the job ended. Detail `job failed: ...`.
+// - abandoned and budget_stopped are terminal: that row (on either path) goes
+//   straight to `failed`, reason job-terminal, detail `job terminal: ...`. It
+//   is never requeued, so a budget stop never buys a second paid review.
+// - The deadline is settings lead_review.stale_running_min (minutes, fallback
+//   15), else lead_review_running_deadline_s, floored at staleWindow as above.
+// - The cap is settings lead_review.release_max_resets (fallback 3) on
+//   stale_reclaims: under it a row goes back to `requested` (a reset is
+//   recorded); at it the row goes to `failed`, job_id kept.
+// - Before either, a pr_records fact field stamped after the request was
+//   created that says closed/merged or another head makes the row
+//   `superseded` (no counter moves, job_id kept).
+// - Each listed entry adds reason (stale | job-failed | job-terminal |
+//   pr-closed | head-moved), detail, releases and cap; the answer adds cap.
 //
 // BH-7792, a finished paid review is never lost to a rebind:
 // - /result from a job the row is not bound to lands when it is a done verdict
@@ -70,8 +88,9 @@
 // A missing id is `no such lead review request`, never the worker's own
 // unknown-endpoint body: lr_get reads THAT one as "not deployed" (rc 75).
 import { d1Guarded, json } from "../lib/http.js";
-import { JOBS_SELECT, OPEN_STATUS, decorateJob, ensureColumns, ensureTable, isoPlusSeconds, strictInt } from "../lib/core.js";
+import { JOBS_SELECT, OPEN_STATUS, decorateJob, ensureColumns, ensureTable, isoPlusSeconds } from "../lib/core.js";
 import { participantAuth, staleWindow } from "./participants.js";
+import { releaseSweep } from "../lib/lead-review-release.js";
 import { REPO_RE, VERDICT_WORDS, leadTokenOk, optStr, prOf, shaOf } from "./verdicts.js";
 
 export const LR_STATUSES = ["requested", "running", "done", "superseded", "failed"];
@@ -97,9 +116,6 @@ const NO_LEAD = "needs the lead verdict token (x-lead-verdict-token); HARNESS_SE
 // business parameter, so it is not a settings row; a settings read with this as
 // the fallback is the place to make it tunable.
 const LR_START_STALE_S = 15 * 60;
-
-// BH-5779: the code fallback for settings lead_review_running_deadline_s.
-const LEAD_REVIEW_DEADLINE_S = 3600;
 
 // jobLive — the jobs watchdog's own judgement (routes/jobs.js stale_min):
 // status running and activity_age_s (decorateJob: the newer of the last beat
@@ -429,46 +445,14 @@ export const routes = [
     }),
   ],
 
-  // BH-5779: the stale-running sweep (header above). One constant SELECT, then
-  // one CAS per row; only the rows whose CAS won are listed.
+  // BH-5779, BH-8579: the stale-running sweep (header above). One settings
+  // statement, one constant SELECT, then one CAS per row; only the rows whose
+  // CAS won are listed. The rule is lib/lead-review-release.js.
   [
     "POST", "/api/lead-reviews/reclaim-stale",
     guarded(async ({ req, env, t }) => {
       if (!leadTokenOk(req, env)) return json(403, { error: `reclaiming stale lead reviews ${NO_LEAD}` });
-      // first() with no column: the lead-reviews suites' D1 stand-ins take no argument.
-      const s = await env.DB.prepare("SELECT value FROM settings WHERE key='lead_review_running_deadline_s'").first();
-      const set = strictInt(s ? s.value : null);
-      const deadline = Math.max(set !== null && set > 0 ? set : LEAD_REVIEW_DEADLINE_S, await staleWindow(env));
-      const cutoff = isoPlusSeconds(t, -deadline);
-      const { results } = await env.DB.prepare(
-        `SELECT id, repo, pr, head_sha, job_id, box, participant, heartbeat_at, updated_at, stale_reclaims
-           FROM lead_review_requests
-          WHERE status='running' AND COALESCE(heartbeat_at, updated_at) < ?1
-          ORDER BY updated_at LIMIT ?2`
-      ).bind(cutoff, LIST_MAX).all();
-      const rows = results || [];
-      const reclaimed = [];
-      for (const r of rows) {
-        const beat = r.heartbeat_at ?? r.updated_at;
-        const why = `stale: running with no heartbeat since ${beat} (job ${r.job_id ?? "none"}, box ${r.box ?? "none"}); reclaimed after ${deadline} s`.slice(0, 4000);
-        const first = !r.stale_reclaims;
-        const res = await env.DB.prepare(first
-          ? `UPDATE lead_review_requests
-                SET status='requested', job_id=NULL, box=NULL, participant=NULL, heartbeat_at=NULL, verdict=NULL,
-                    report_ref=NULL, promoted_verdict_at=NULL, detail=?1, reset_count=COALESCE(reset_count, 0) + 1,
-                    reset_at=?2, stale_reclaims=1, updated_at=?2
-              WHERE id=?3 AND status='running' AND job_id IS ?4 AND COALESCE(heartbeat_at, updated_at) = ?5
-                AND COALESCE(stale_reclaims, 0) = 0`
-          : `UPDATE lead_review_requests
-                SET status='failed', detail=?1, stale_reclaims=COALESCE(stale_reclaims, 0) + 1, updated_at=?2
-              WHERE id=?3 AND status='running' AND job_id IS ?4 AND COALESCE(heartbeat_at, updated_at) = ?5
-                AND COALESCE(stale_reclaims, 0) > 0`
-        ).bind(why, t, r.id, r.job_id ?? null, beat).run();
-        if (res.meta.changes === 1) {
-          reclaimed.push({ id: r.id, repo: r.repo, pr: r.pr, head_sha: r.head_sha, to: first ? "requested" : "failed", last_beat: beat, job_id: r.job_id ?? null });
-        }
-      }
-      return json(200, { reclaimed, deadline_s: deadline, as_of: t, truncated: rows.length === LIST_MAX });
+      return json(200, await releaseSweep(env, t, LIST_MAX));
     }),
   ],
 
