@@ -4,20 +4,27 @@
 #
 # Every vendor adapter in bin/lib/vendor/<vendor>.sh sources this file and asks
 # vendor_mode before it calls the network. In fake mode it answers from a seed
-# file through vendor_fake and makes no network call. Test-only env:
-#   HARNESS_VENDOR_MODE  unset, empty or `real` = real calls (the production
-#                        default); exactly `fake` = seed answers; any other
-#                        value fails closed (rc 2), so a typo never reads a seed.
-#   VENDOR_FAKE_DIR      the seed directory (default <repo>/tests/fakes/vendor).
-#   VENDOR_CALL_LOG      in real mode, one `<epoch> <vendor> <method>` line per
-#                        real call; the budget test counts them.
+# file through vendor_fake and makes no network call. Test-only env (BH-8555:
+# the ONE fake switch of every bin/lib/vendor/ seam, read by vendor_fake_on in
+# _common.sh):
+#   HARNESS_VENDOR_FAKE      unset, empty or 0 = real calls (the production
+#                            default); exactly 1 = seed answers; any other
+#                            value fails closed (rc 2), so a typo never reads
+#                            a seed and never calls the vendor.
+#   HARNESS_VENDOR_FAKE_DIR  the seed directory (default
+#                            <repo>/tests/fixtures/vendor-fake).
+#   VENDOR_CALL_LOG          in real mode, one `<epoch> <vendor> <method>` line
+#                            per real call; the budget test counts them.
+# shellcheck source=_common.sh
+. "${BASH_SOURCE[0]%/*}/_common.sh" || return 1
 
-# vendor_mode — print `real` or `fake`; rc 2 on any other HARNESS_VENDOR_MODE.
+# vendor_mode — print `real` or `fake`; rc 2 on an unknown switch value.
 vendor_mode() {
-  case "${HARNESS_VENDOR_MODE:-}" in
-    ''|real) echo real ;;
-    fake) echo fake ;;
-    *) echo "vendor-mode: unknown '${HARNESS_VENDOR_MODE}'" >&2; return 2 ;;
+  vendor_fake_on
+  case $? in
+    0) echo fake ;;
+    1) echo real ;;
+    *) echo "vendor-mode: unknown fake switch value '${HARNESS_VENDOR_FAKE:-}' (use unset, 0 or 1)" >&2; return 2 ;;
   esac
 }
 
@@ -26,7 +33,7 @@ vendor_mode() {
 # rc 70 when the file, the method or the key is not seeded. Uses jq only.
 vendor_fake() {
   local vendor="${1:-}" method="${2:-}" dir out
-  dir="${VENDOR_FAKE_DIR:-${BASH_SOURCE[0]%/*}/../../../tests/fakes/vendor}"
+  dir="${HARNESS_VENDOR_FAKE_DIR:-${BASH_SOURCE[0]%/*}/../../../tests/fixtures/vendor-fake}"
   if [[ "$vendor" =~ ^[a-z0-9_-]+$ ]] && [ -r "$dir/$vendor.json" ]; then
     if [ $# -ge 3 ]; then
       out=$(jq -c --arg m "$method" --arg k "$3" \

@@ -1,6 +1,7 @@
 #!/bin/bash
 # bin/lib/vendor/fake.sh <vendor> — BH-7965: the test-mode answer of a vendor
-# seam (HARNESS_VENDOR_FAKE=1). The key on stdin. 0 network calls.
+# seam (HARNESS_VENDOR_FAKE=1, read only by vendor_fake_on in _common.sh,
+# BH-8555). The key on stdin. 0 network calls.
 # Fixture: ${HARNESS_VENDOR_FAKE_DIR:-<root>/tests/fixtures/vendor-fake}/<vendor>.json,
 #   {"probe":{"accept":[...],"unreachable":[...]}}
 # Exit 0 key in probe.accept, 75 key in probe.unreachable, 1 any other key,

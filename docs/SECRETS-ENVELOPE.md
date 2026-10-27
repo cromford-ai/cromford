@@ -68,8 +68,14 @@ unknown verb (`unimplemented: <verb>`).
   The base comes from settings row `vendor.<v>.base_url`, else the code
   fallback. The row is used only when its host is the fallback's host: any
   main-bearer holder can write the row, and the probe sends the plain key there.
-- `HARNESS_VENDOR_FAKE=1` answers from `tests/fixtures/vendor-fake/<v>.json`
-  with 0 network calls.
+- `HARNESS_VENDOR_FAKE=1` is the one fake switch for every `bin/lib/vendor/`
+  seam (BH-8555). The seam answers from `tests/fixtures/vendor-fake/<v>.json`
+  (override the root with `HARNESS_VENDOR_FAKE_DIR`) with 0 network calls.
+  Unset, empty or `0` is real mode. Any other value fails closed: exit 99, no
+  call. `vendor_fake_on` in `bin/lib/vendor/_common.sh` is the only reader.
+- `HARNESS_VENDOR_MODE=fake` is a retired alias (BH-7974) for one release: it also turns on fake mode and prints one deprecation line. <!-- retired-alias BH-8555 -->
+  `tests/vendor-fake-switch.bh-8555-test.sh` refuses the retired names (and the
+  old fixture root) anywhere else in the tree.
 - The real-vendor contract suite is `tests/contract/vendor-probe.bh-7965-contract.sh`.
   It runs nightly (`harness-nightly.yml`, job `vendor-contract`), never on a PR.
 

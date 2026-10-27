@@ -18,7 +18,7 @@
 set -uo pipefail
 DIR=$(cd "$(dirname "$0")/../.." && pwd)
 . "$DIR/bin/lib/vendor/telegram.sh" || exit 1
-export HARNESS_VENDOR_MODE=real
+export HARNESS_VENDOR_FAKE=0
 PASS=0; FAIL=0
 ok()  { PASS=$((PASS+1)); }
 bad() { FAIL=$((FAIL+1)); echo "FAIL: $1"; }

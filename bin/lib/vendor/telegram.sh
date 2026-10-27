@@ -3,8 +3,9 @@
 # only. Every call takes the NAME of the env variable that holds the bot token,
 # never the token, so the token is in no argv and no log. curl reads its URL
 # from stdin (`-K -`) through printf, a builtin, so the token is not in
-# /proc/<pid>/cmdline either. In fake mode the answer comes from
-# tests/fakes/vendor/telegram.json (bin/lib/vendor/seam.sh) and no call is made.
+# /proc/<pid>/cmdline either. In fake mode (HARNESS_VENDOR_FAKE=1) the answer
+# comes from tests/fixtures/vendor-fake/telegram.json (bin/lib/vendor/seam.sh)
+# and no call is made.
 # shellcheck source=seam.sh
 . "${BASH_SOURCE[0]%/*}/seam.sh" || return 1
 

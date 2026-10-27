@@ -14,6 +14,9 @@
 #
 # HARNESS_VENDOR_FAKE=1 (test mode): the seam asks only bin/lib/vendor/fake.sh,
 # which answers from tests/fixtures/vendor-fake/<v>.json. 0 network calls.
+# It is the ONE fake switch (BH-8555); vendor_fake_on below is its only reader,
+# and it also reads the retired BH-7974 alias for one release. Any value other
+# than unset, '', 0 or 1 fails closed: exit 99, no call.
 #
 # THE KEY never reaches argv, a log, stdout or stderr. It lives in VENDOR_KEY
 # and reaches the vendor only through a pipe (curl -K -) or the environment of
@@ -143,6 +146,26 @@ vendor_api_probe() {
   return "$rc"
 }
 
+# vendor_fake_on — the ONE fake-mode switch (BH-8555). rc 0 fake, 1 real, 2 unknown.
+#   HARNESS_VENDOR_FAKE  unset, '' or 0 = real; 1 = fake; anything else rc 2.
+#   HARNESS_VENDOR_MODE  RETIRED alias (BH-7974 name), read only here, for one
+#                        release: unset, '' or real = no say; fake = fake; else rc 2.
+#                        #7985 merged and moved to HARNESS_VENDOR_FAKE (seam.sh
+#                        vendor_mode calls this); remove the alias next release.
+# Fake when either says fake. tests/vendor-fake-switch.bh-8555-test.sh refuses
+# the retired name anywhere outside this block.
+vendor_fake_on() {
+  local f="${HARNESS_VENDOR_FAKE:-}" m="${HARNESS_VENDOR_MODE:-}" on=1
+  case "$f" in ''|0) ;; 1) on=0 ;; *) return 2 ;; esac
+  case "$m" in
+    '') ;;
+    real) vendor_say "HARNESS_VENDOR_MODE is retired; use HARNESS_VENDOR_FAKE=0" ;;
+    fake) vendor_say "HARNESS_VENDOR_MODE is retired; use HARNESS_VENDOR_FAKE=1"; on=0 ;;
+    *) return 2 ;;
+  esac
+  return "$on"
+}
+
 # vendor_main <vendor> <verb> — the one entry every seam calls. The seam defines
 # vendor_probe_real (reads VENDOR_KEY) before it calls this.
 vendor_main() {
@@ -150,7 +173,11 @@ vendor_main() {
   if [ "$verb" != probe ]; then printf 'unimplemented: %s\n' "$verb" >&2; exit 99; fi
   vendor_timeout >/dev/null || { vendor_say "SECRETS_APPLY_PROBE_TIMEOUT_S must be an integer 5..300"; exit 1; }
   vendor_read_key || { vendor_say "$v: key format refused (8..512 of A-Z a-z 0-9 . _ -)"; exit 1; }
-  if [ "${HARNESS_VENDOR_FAKE:-0}" = 1 ]; then
+  vendor_fake_on; rc=$?
+  if [ "$rc" = 2 ]; then
+    vendor_say "unknown fake switch value: HARNESS_VENDOR_FAKE must be unset, 0 or 1"
+    VENDOR_KEY=""; exit 99
+  elif [ "$rc" = 0 ]; then
     printf '%s' "$VENDOR_KEY" | "$VENDOR_DIR/fake.sh" "$v"; rc=$?
   else
     vendor_probe_real; rc=$?

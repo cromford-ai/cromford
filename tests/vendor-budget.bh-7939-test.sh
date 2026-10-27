@@ -5,7 +5,7 @@
 # PATH stubs for curl, flyctl, fly, ssh and tailscale append
 # `<epoch> stub <name>` to $VENDOR_CALL_LOG and exit 99. Every path is a glob,
 # so a sibling adds a suite or a seam and never edits this file.
-#   B1  HARNESS_VENDOR_MODE=fake: every tests/*bh-7939*-test.sh but this one
+#   B1  HARNESS_VENDOR_FAKE=1: every tests/*bh-7939*-test.sh but this one
 #       passes and the call log stays at 0 lines
 #   B2  mutation: real mode, one tg_latest_chat_id -> exactly 1 `stub curl` line
 #       and 1 `telegram getUpdates` seam line; fake mode after it -> 0 new lines
@@ -47,7 +47,7 @@ for s in "$DIR"/tests/*bh-7939*-test.sh; do
   [ -f "$s" ] || continue
   [ "$(basename "$s")" = "$SELF" ] && continue
   n=$((n+1))
-  env PATH="$T/b1/stub-bin:$PATH" HARNESS_VENDOR_MODE=fake VENDOR_CALL_LOG="$T/b1/calls.log" \
+  env PATH="$T/b1/stub-bin:$PATH" HARNESS_VENDOR_FAKE=1 VENDOR_CALL_LOG="$T/b1/calls.log" \
     bash "$s" >"$T/b1/out.$n" 2>&1; rc=$?
   eq "B1 $(basename "$s") rc" "$rc" 0
   [ "$rc" = 0 ] || tail -n 20 "$T/b1/out.$n"
@@ -57,13 +57,13 @@ eq "B1 0 vendor calls in fake mode" "$(count "$T/b1/calls.log")" 0
 
 # B2 — the stubs and the seam log do count a real call (the budget can fail).
 mkdir -p "$T/b2"; stubs "$T/b2/stub-bin"; : > "$T/b2/calls.log"
-env PATH="$T/b2/stub-bin:$PATH" HARNESS_VENDOR_MODE=real VENDOR_CALL_LOG="$T/b2/calls.log" TELEGRAM_BOT_TOKEN="$TOK" \
+env PATH="$T/b2/stub-bin:$PATH" HARNESS_VENDOR_FAKE=0 VENDOR_CALL_LOG="$T/b2/calls.log" TELEGRAM_BOT_TOKEN="$TOK" \
   bash -c '. "$1" || exit 98; tg_latest_chat_id TELEGRAM_BOT_TOKEN' _ "$DIR/bin/lib/vendor/telegram.sh" >"$T/b2/out" 2>&1; rc=$?
 eq "B2 the stub curl failure is rc 1" "$rc" 1
 eq "B2 exactly 1 stub curl line" "$(grep -c ' stub curl$' "$T/b2/calls.log")" 1
 eq "B2 exactly 1 seam line" "$(grep -c ' telegram getUpdates$' "$T/b2/calls.log")" 1
-env PATH="$T/b2/stub-bin:$PATH" HARNESS_VENDOR_MODE=fake VENDOR_CALL_LOG="$T/b2/calls.log" TELEGRAM_BOT_TOKEN="$TOK" \
-  VENDOR_FAKE_DIR="$DIR/tests/fakes/vendor" \
+env PATH="$T/b2/stub-bin:$PATH" HARNESS_VENDOR_FAKE=1 VENDOR_CALL_LOG="$T/b2/calls.log" TELEGRAM_BOT_TOKEN="$TOK" \
+  HARNESS_VENDOR_FAKE_DIR="$DIR/tests/fixtures/vendor-fake" \
   bash -c '. "$1" || exit 98; tg_latest_chat_id TELEGRAM_BOT_TOKEN' _ "$DIR/bin/lib/vendor/telegram.sh" >"$T/b2/out" 2>&1; rc=$?
 eq "B2 fake mode answers the seed" "$rc $(cat "$T/b2/out")" "0 -1009990001"
 eq "B2 fake mode adds 0 lines" "$(count "$T/b2/calls.log")" 2
@@ -156,34 +156,34 @@ sm() {
   out=$(env "${e[@]}" bash -c '. "$1" || exit 98; shift; "$@"' _ "$SEAM" "$@" 2>"$T/sm.err"); rc=$?
   printf '%s|rc=%s|err=%s' "$out" "$rc" "$(cat "$T/sm.err")"
 }
-# S1 — the mode table; an unknown value fails closed.
-eq "S1 unset -> real" "$(sm -u HARNESS_VENDOR_MODE -- vendor_mode)" "real|rc=0|err="
-eq "S1 real -> real" "$(sm HARNESS_VENDOR_MODE=real -- vendor_mode)" "real|rc=0|err="
-eq "S1 empty -> real" "$(sm HARNESS_VENDOR_MODE= -- vendor_mode)" "real|rc=0|err="
-eq "S1 fake -> fake" "$(sm HARNESS_VENDOR_MODE=fake -- vendor_mode)" "fake|rc=0|err="
-eq "S1 Fake -> rc 2" "$(sm HARNESS_VENDOR_MODE=Fake -- vendor_mode)" "|rc=2|err=vendor-mode: unknown 'Fake'"
-eq "S1 'fake ' -> rc 2" "$(sm "HARNESS_VENDOR_MODE=fake " -- vendor_mode)" "|rc=2|err=vendor-mode: unknown 'fake '"
+# S1 — the mode table (the one switch, BH-8555); an unknown value fails closed.
+eq "S1 unset -> real" "$(sm -u HARNESS_VENDOR_FAKE -- vendor_mode)" "real|rc=0|err="
+eq "S1 0 -> real" "$(sm HARNESS_VENDOR_FAKE=0 -- vendor_mode)" "real|rc=0|err="
+eq "S1 empty -> real" "$(sm HARNESS_VENDOR_FAKE= -- vendor_mode)" "real|rc=0|err="
+eq "S1 1 -> fake" "$(sm HARNESS_VENDOR_FAKE=1 -- vendor_mode)" "fake|rc=0|err="
+eq "S1 yes -> rc 2" "$(sm HARNESS_VENDOR_FAKE=yes -- vendor_mode)" "|rc=2|err=vendor-mode: unknown fake switch value 'yes' (use unset, 0 or 1)"
+eq "S1 '1 ' -> rc 2" "$(sm "HARNESS_VENDOR_FAKE=1 " -- vendor_mode)" "|rc=2|err=vendor-mode: unknown fake switch value '1 ' (use unset, 0 or 1)"
 # S2 — an unseeded method, key or vendor is rc 70.
 mkdir -p "$T/s/fake"; echo '{"m":{"ok":true,"k":{"v":1}},"n":null}' > "$T/s/fake/v.json"
-eq "S2 unseeded method" "$(sm VENDOR_FAKE_DIR="$T/s/fake" -- vendor_fake v nope)" "|rc=70|err=vendor-fake: v.nope not implemented"
-eq "S2 unseeded key" "$(sm VENDOR_FAKE_DIR="$T/s/fake" -- vendor_fake v m nokey)" "|rc=70|err=vendor-fake: v.m not implemented"
+eq "S2 unseeded method" "$(sm HARNESS_VENDOR_FAKE_DIR="$T/s/fake" -- vendor_fake v nope)" "|rc=70|err=vendor-fake: v.nope not implemented"
+eq "S2 unseeded key" "$(sm HARNESS_VENDOR_FAKE_DIR="$T/s/fake" -- vendor_fake v m nokey)" "|rc=70|err=vendor-fake: v.m not implemented"
 # S3 — a seeded method and key print compact JSON; a seeded null is an answer.
-eq "S3 seeded method" "$(sm VENDOR_FAKE_DIR="$T/s/fake" -- vendor_fake v m)" '{"ok":true,"k":{"v":1}}|rc=0|err='
-eq "S3 seeded key" "$(sm VENDOR_FAKE_DIR="$T/s/fake" -- vendor_fake v m k)" '{"v":1}|rc=0|err='
-eq "S3 seeded null" "$(sm VENDOR_FAKE_DIR="$T/s/fake" -- vendor_fake v n)" 'null|rc=0|err='
-eq "S3 default dir is the repo seed" "$(env -u VENDOR_FAKE_DIR bash -c '. "$1" && vendor_fake telegram getMe' _ "$SEAM" | jq -r '.result.is_bot')" true
+eq "S3 seeded method" "$(sm HARNESS_VENDOR_FAKE_DIR="$T/s/fake" -- vendor_fake v m)" '{"ok":true,"k":{"v":1}}|rc=0|err='
+eq "S3 seeded key" "$(sm HARNESS_VENDOR_FAKE_DIR="$T/s/fake" -- vendor_fake v m k)" '{"v":1}|rc=0|err='
+eq "S3 seeded null" "$(sm HARNESS_VENDOR_FAKE_DIR="$T/s/fake" -- vendor_fake v n)" 'null|rc=0|err='
+eq "S3 default dir is the repo seed" "$(env -u HARNESS_VENDOR_FAKE_DIR bash -c '. "$1" && vendor_fake telegram getMe' _ "$SEAM" | jq -r '.result.is_bot')" true
 # S4 — a missing seed file and a path-like vendor are rc 70.
-eq "S4 no seed file" "$(sm VENDOR_FAKE_DIR="$T/s/fake" -- vendor_fake nofile m)" "|rc=70|err=vendor-fake: nofile.m not implemented"
-eq "S4 ../ vendor" "$(sm VENDOR_FAKE_DIR="$T/s/fake/sub" -- vendor_fake ../v m)" "|rc=70|err=vendor-fake: ../v.m not implemented"
+eq "S4 no seed file" "$(sm HARNESS_VENDOR_FAKE_DIR="$T/s/fake" -- vendor_fake nofile m)" "|rc=70|err=vendor-fake: nofile.m not implemented"
+eq "S4 ../ vendor" "$(sm HARNESS_VENDOR_FAKE_DIR="$T/s/fake/sub" -- vendor_fake ../v m)" "|rc=70|err=vendor-fake: ../v.m not implemented"
 # S5 — vendor_fake makes no network call, even with the stub curl first on PATH.
 mkdir -p "$T/s5"; stubs "$T/s5/stub-bin"; : > "$T/s5/calls.log"
-sm PATH="$T/s5/stub-bin:$PATH" VENDOR_CALL_LOG="$T/s5/calls.log" HARNESS_VENDOR_MODE=fake VENDOR_FAKE_DIR="$T/s/fake" -- vendor_fake v m >/dev/null
+sm PATH="$T/s5/stub-bin:$PATH" VENDOR_CALL_LOG="$T/s5/calls.log" HARNESS_VENDOR_FAKE=1 HARNESS_VENDOR_FAKE_DIR="$T/s/fake" -- vendor_fake v m >/dev/null
 eq "S5 vendor_fake writes 0 lines" "$(count "$T/s5/calls.log")" 0
 # S6 — vendor_call_log: real mode appends one line; fake mode or no log writes nothing.
-sm VENDOR_CALL_LOG="$T/s5/calls.log" HARNESS_VENDOR_MODE=fake -- vendor_call_log telegram getMe >/dev/null
+sm VENDOR_CALL_LOG="$T/s5/calls.log" HARNESS_VENDOR_FAKE=1 -- vendor_call_log telegram getMe >/dev/null
 eq "S6 fake mode writes nothing" "$(count "$T/s5/calls.log")" 0
-eq "S6 no log set is rc 0" "$(sm -u VENDOR_CALL_LOG -u HARNESS_VENDOR_MODE -- vendor_call_log telegram getMe)" "|rc=0|err="
-sm -u HARNESS_VENDOR_MODE VENDOR_CALL_LOG="$T/s5/calls.log" -- vendor_call_log telegram getMe >/dev/null
+eq "S6 no log set is rc 0" "$(sm -u VENDOR_CALL_LOG -u HARNESS_VENDOR_FAKE -- vendor_call_log telegram getMe)" "|rc=0|err="
+sm -u HARNESS_VENDOR_FAKE VENDOR_CALL_LOG="$T/s5/calls.log" -- vendor_call_log telegram getMe >/dev/null
 eq "S6 real mode writes one line" "$(grep -cE '^[0-9]+ telegram getMe$' "$T/s5/calls.log")" 1
 
 # B5 — the console factories and the api object.

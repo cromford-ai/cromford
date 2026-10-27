@@ -16,7 +16,7 @@
 #   G9  chat id "abc", no `ok`, a non-JSON body -> rc 1, nothing on stdout
 #   G10 the stub curl's argv holds no token, its stdin does; one call,
 #       --max-time 20, no offset
-#   G11 a bad variable name rc 2, an unset token rc 3, HARNESS_VENDOR_MODE=Fake
+#   G11 a bad variable name rc 2, an unset token rc 3, HARNESS_VENDOR_FAKE=yes
 #       rc 2 and no curl
 #   G12 an unseeded fake method -> rc 70
 #   V1  fake seed -> `TELEGRAM_CHAT ok -1009990001`, rows chat_id/bot_present/
@@ -32,7 +32,7 @@
 #   V8  no bin/jobs-client.sh -> failed `jobs not configured`
 #   V9  waiting, but the state PUT answers 500 -> failed
 #   V10 a seam that answers rc 0 with a non-integer -> failed, 0 PUTs
-#   V11 HARNESS_VENDOR_MODE=Fake -> failed, 0 PUTs
+#   V11 HARNESS_VENDOR_FAKE=yes -> failed, 0 PUTs
 #   V12 bash -n and shellcheck -S error on the verb
 #
 # Fake-mode cases append to the inherited $VENDOR_CALL_LOG (the budget test
@@ -78,11 +78,14 @@ exit ${3:-0}
 SH
   chmod +x "$T/$1/bin/curl"
 }
+# fsw <mode> — the HARNESS_VENDOR_FAKE value of a mode (BH-8555, the one
+# switch): fake -> 1, real -> 0, anything else passes through (a typo case).
+fsw() { case "$1" in fake) echo 1 ;; real) echo 0 ;; *) printf '%s\n' "$1" ;; esac; }
 # chat <case> <mode> [var] — tg_latest_chat_id in a child bash. Sets OUT ERR RC.
 chat() {
   local c="$1" mode="$2" var="${3:-TOK_FIXTURE}" log="$VENDOR_CALL_LOG"
   [ "$mode" = fake ] || log="$T/$c/real-calls.log"
-  env PATH="$T/$c/bin:$PATH" HARNESS_VENDOR_MODE="$mode" VENDOR_FAKE_DIR="$T/$c/fake" \
+  env PATH="$T/$c/bin:$PATH" HARNESS_VENDOR_FAKE="$(fsw "$mode")" HARNESS_VENDOR_FAKE_DIR="$T/$c/fake" \
       VENDOR_CALL_LOG="$log" TOK_FIXTURE="$TOK" \
       bash -c '. "$1" || exit 99; tg_latest_chat_id "$2"' _ "$SEAM" "$var" \
       >"$T/$c/out" 2>"$T/$c/err"; RC=$?
@@ -143,9 +146,9 @@ eq "G9c non-JSON rc 1" "$RC" 1; eq "G9c stdout empty" "$OUT" ""; has "G9c bad an
 seed g11 "$(msgs message 1)"; chat g11 fake "tok"
 eq "G11 lower-case name rc 2" "$RC" 2
 chat g11 fake NO_SUCH_TOKEN_VAR; eq "G11 unset rc 3" "$RC" 3; has "G11 says not set" "$ERR" "NO_SUCH_TOKEN_VAR is not set"
-stubcurl g11 '{"ok":true,"result":[]}'; chat g11 Fake
-eq "G11 Fake rc 2" "$RC" 2; has "G11 says unknown" "$ERR" "vendor-mode: unknown 'Fake'"
-eq "G11 Fake made no call" "$([ -f "$T/g11/argv" ] && echo called || echo none)" none
+stubcurl g11 '{"ok":true,"result":[]}'; chat g11 yes
+eq "G11 yes rc 2" "$RC" 2; has "G11 says unknown" "$ERR" "vendor-mode: unknown fake switch value 'yes'"
+eq "G11 yes made no call" "$([ -f "$T/g11/argv" ] && echo called || echo none)" none
 
 # G12 — an unseeded method.
 mkdir -p "$T/g12/fake"; echo '{"getMe":{"ok":true}}' > "$T/g12/fake/telegram.json"; chat g12 fake
@@ -192,7 +195,7 @@ verb() {
   [ -n "${TOKV-$TOK}" ] && tokenv=(TELEGRAM_BOT_TOKEN="${TOKV-$TOK}")
   local log="$VENDOR_CALL_LOG"; [ "${MODE:-fake}" = fake ] || log="$T/$c/real-calls.log"
   env "${tokenv[@]}" PATH="$T/$c/bin:$PATH" HARNESS="$H" HARNESS_ENV_DIR="${ENVDIR:-$T/env}" \
-      HARNESS_VENDOR_MODE="${MODE:-fake}" VENDOR_FAKE_DIR="${FAKEDIR:-$T/$c/fake}" VENDOR_CALL_LOG="$log" \
+      HARNESS_VENDOR_FAKE="$(fsw "${MODE:-fake}")" HARNESS_VENDOR_FAKE_DIR="${FAKEDIR:-$T/$c/fake}" VENDOR_CALL_LOG="$log" \
       CALLS="$T/$c/calls" ROWS_FILE="$T/$c/rows.json" JOBS_URL=http://stub.invalid \
       PUT_HTTP="${PUT_HTTP:-200}" PUT_HTTP_2="${PUT_HTTP_2:-}" GET_VALUE="${GET_VALUE:-}" \
       "$H/bin/fleet-telegram-chat.sh" "$@" >"$T/$c/out" 2>"$T/$c/err"; RC=$?
@@ -203,7 +206,7 @@ verb() {
 lines() { grep -c . <<<"$1"; }
 
 # V1 — the Observable outcome: the repo seed, the rows, the read-back, 0 calls.
-FAKEDIR="$DIR/tests/fakes/vendor" verb v1
+FAKEDIR="$DIR/tests/fixtures/vendor-fake" verb v1
 eq "V1 rc 0" "$RC" 0
 eq "V1 exactly one line" "$OUT" "TELEGRAM_CHAT ok -1009990001"
 has "V1 chat_id row" "$ROWS" "telegram.chat_id=-1009990001"
@@ -269,9 +272,9 @@ seed v10 "$(msgs message -42)"; verb v10
 H="$T/h"
 eq "V10 rc 1" "$RC" 1; has "V10 failed" "$OUT" "TELEGRAM_CHAT failed chat id"; eq "V10 0 PUTs" "$PUTS" 0
 
-# V11 — an unknown vendor mode fails closed.
-seed v11 "$(msgs message -42)"; MODE=Fake verb v11
-eq "V11 rc 1" "$RC" 1; has "V11 failed" "$OUT" "TELEGRAM_CHAT failed vendor-mode: unknown 'Fake'"; eq "V11 0 PUTs" "$PUTS" 0
+# V11 — an unknown fake switch value fails closed.
+seed v11 "$(msgs message -42)"; MODE=yes verb v11
+eq "V11 rc 1" "$RC" 1; has "V11 failed" "$OUT" "TELEGRAM_CHAT failed vendor-mode: unknown fake switch value 'yes'"; eq "V11 0 PUTs" "$PUTS" 0
 
 # V12 — syntax and shellcheck.
 bash -n "$DIR/bin/fleet-telegram-chat.sh" && ok || bad "V12 bash -n"

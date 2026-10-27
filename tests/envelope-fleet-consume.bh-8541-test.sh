@@ -160,18 +160,19 @@ grep -q "tick pending=3 consumed=2 failed=0 skipped=1 " "$H/logs/secrets-apply.l
 [ "$(count '^TELEGRAM_BOT_TOKEN=' "$G")" = 1 ] && ok "F8 still one TELEGRAM_BOT_TOKEN line" || bad "F8 token lines $(count '^TELEGRAM_BOT_TOKEN=' "$G")"
 
 echo "F9: the real verb in fake mode"
-if [ -x "$DIR/bin/fleet-telegram-chat.sh" ] && [ -f "$DIR/bin/lib/vendor/telegram.sh" ] && [ -f "$DIR/tests/fakes/vendor/telegram.json" ]; then
+if [ -x "$DIR/bin/fleet-telegram-chat.sh" ] && [ -f "$DIR/bin/lib/vendor/telegram.sh" ] && [ -f "$DIR/tests/fixtures/vendor-fake/telegram.json" ]; then
   rm -f "$H/bin/fleet-telegram-chat.sh"
   ( cd "$DIR" && scratch_install_closure bin/fleet-telegram-chat.sh "$H" ) >/dev/null 2>&1 || bad "F9 setup: could not install the verb"
   chmod +x "$H/bin/fleet-telegram-chat.sh"
   es_sql "DELETE FROM settings WHERE key IN ('telegram.chat_id','telegram.bot_present')"
   # The closure is bin/ code only; the seed stays in the repo. The seam's default
-  # seed dir is relative to the installed lib ($H/tests/fakes/vendor), which a
-  # scratch harness does not have, so point the seam at the repo seed.
-  export VENDOR_FAKE_DIR="$DIR/tests/fakes/vendor"
+  # seed dir is relative to the installed lib ($H/tests/fixtures/vendor-fake),
+  # which a scratch harness does not have, and the suite lib points
+  # HARNESS_VENDOR_FAKE_DIR at its probe fixtures, so this one consume points the
+  # one fake switch (BH-8555) at the repo seed.
   export VENDOR_CALL_LOG="$T/vendor-calls.log"; : > "$VENDOR_CALL_LOG"
   ID=$(seal '777:fixture-token-f9' fleet:telegram)
-  HARNESS_VENDOR_MODE=fake consume "$ID"
+  HARNESS_VENDOR_FAKE=1 HARNESS_VENDOR_FAKE_DIR="$DIR/tests/fixtures/vendor-fake" consume "$ID"
   [ "$RC" = 0 ] && ok "F9 exit 0 ($(events "$ID"))" || bad "F9 rc=$RC $(events "$ID")"
   [ -n "$(setting telegram.chat_id)" ] && [ "$(setting telegram.bot_present)" = 1 ] \
     && ok "F9 telegram.chat_id and telegram.bot_present=1 are stored" || bad "F9 rows: '$(setting telegram.chat_id)' '$(setting telegram.bot_present)'"
