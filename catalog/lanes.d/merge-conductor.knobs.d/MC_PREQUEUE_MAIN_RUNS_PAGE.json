@@ -1,0 +1,11 @@
+{
+  "env": "MC_PREQUEUE_MAIN_RUNS_PAGE",
+  "type": "int",
+  "default": 100,
+  "min": 1,
+  "max": 100,
+  "unit": "runs",
+  "zero_means": null,
+  "read_in": "bin/lib/mc-prequeue.d/main-runs.sh",
+  "note": "BH-8152: the page size of the one head_sha=<main> run-list read (MC_PREQUEUE_MAIN_RUNS). Only the first page is read: a title past it is a miss, and the 30-run list is the fallback. 100 is the API maximum and covers every main seen (at most 20 runs per main in 24 h, 2026-10-22/23). A value outside 1..100 is read as 100. Per project: lane.merge-conductor.<project>.mc_prequeue_main_runs_page."
+}

@@ -8,8 +8,8 @@
 #   C1-C10  the classifier, "$DIR/bin/lib/risk-tier.sh", on compare answers.
 #   G1-G4   the head render check, "$DIR/bin/lib/rules-render-head.sh", on a
 #           real scratch origin and clone with the real bin/render-rules.sh.
-#   E1-E6   bin/lead-review-enqueue.sh tick, WHOLE, against a scratch harness
-#           (scratch_install_closure), a real hub checkout, stub curl and gh.
+#   The worklist half is tests/lead-gates-risk-jev-ports.bh-8629-test.sh
+#           RJ1-RJ3 and tests/lead-gates-risk.bh-5875-test.sh R3, R7-R9.
 #   F1-F3   to_lead_merge_hold from the real bin/lib/ticket-ownership.sh.
 #   Q1      a rules diff does not escalate the merge-queue batch.
 # Run from anywhere: HARNESS_TEST_SANDBOX=1 bash tests/risk-tier-rules-lane.bh-5325-test.sh
@@ -152,8 +152,8 @@ reset_set; RT_RULES_LOADED=""; rt_rules_load
 rm -f "$LPPDOWN"
 
 # ════════════════════════════════════════════════════════════════════════════
-# The rules fixture repo: main, a clean topic head, a stale-render head,
-# topic+bin and docs-only heads.
+# The rules fixture repo: main, a clean topic head, a stale-render head and a
+# symlinked-topic head.
 # ════════════════════════════════════════════════════════════════════════════
 OR="$T/origin/bh.git"; WK="$T/work"
 git init -q --bare -b main "$OR"; git init -q -b main "$WK"
@@ -172,19 +172,11 @@ printf '## A new topic\n\nOne rule.\n' > "$WK/rules/topics/12-x.md"
 echo 'hand edit' >> "$WK/rules/CLAUDE.md"
 git -C "$WK" add -A; git -C "$WK" commit -qm "rules: stale render"
 HS=$(git -C "$WK" rev-parse HEAD)
-git -C "$WK" checkout -qb withbin clean
-mkdir -p "$WK/bin"; printf '#!/bin/bash\n' > "$WK/bin/foo.sh"
-git -C "$WK" add -A; git -C "$WK" commit -qm "rules and a script"
-HB=$(git -C "$WK" rev-parse HEAD)
 git -C "$WK" checkout -qb link clean
 printf '## secret line\n' > "$T/outside.txt"; ln -s "$T/outside.txt" "$WK/rules/topics/13-link.md"
 git -C "$WK" add -A; git -C "$WK" commit -qm "rules: a symlinked topic"
 HL=$(git -C "$WK" rev-parse HEAD)
-git -C "$WK" checkout -qb docs main
-mkdir -p "$WK/docs"; printf 'a note\n' > "$WK/docs/a.md"
-git -C "$WK" add -A; git -C "$WK" commit -qm "docs: a note"
-HD=$(git -C "$WK" rev-parse HEAD)
-git -C "$WK" push -q "$OR" main clean stale withbin link docs
+git -C "$WK" push -q "$OR" main clean stale link
 mkdir -p "$T/repos"; git clone -q "$OR" "$T/repos/cromford"
 
 # ════════════════════════════════════════════════════════════════════════════
@@ -223,165 +215,6 @@ if command -v rrh_check >/dev/null 2>&1; then
 else
   bad "G1-G4 bin/lib/rules-render-head.sh has no rrh_check"
 fi
-
-# ════════════════════════════════════════════════════════════════════════════
-# E: bin/lead-review-enqueue.sh tick, whole
-# ════════════════════════════════════════════════════════════════════════════
-Q="$T/hq"; mkdir -p "$Q/bin/lib/jobs" "$Q/state" "$Q/logs" "$Q/catalog/lanes.d" "$T/cfg" "$T/log" "$T/qbin"
-cat > "$Q/bin/lead-verdict.sh" <<EOF
-#!/bin/bash
-printf '%s\n' "\$*" >> "$T/log/post"
-exit 0
-EOF
-cat > "$Q/bin/lane-alert.sh" <<EOF
-#!/bin/bash
-printf '%s\n' "\$*" >> "$T/log/qalerts"
-EOF
-chmod +x "$Q/bin/lead-verdict.sh" "$Q/bin/lane-alert.sh"
-scratch_install_closure bin/lead-review-enqueue.sh "$Q" >/dev/null || bad "closure of bin/lead-review-enqueue.sh"
-scratch_install_closure bin/jobs-client.sh "$Q" >/dev/null || bad "closure of bin/jobs-client.sh"
-scratch_install_closure bin/lead-review.sh "$Q" >/dev/null || bad "closure of bin/lead-review.sh"
-scratch_install_closure bin/render-rules.sh "$Q" >/dev/null || bad "closure of bin/render-rules.sh"
-cp "$DIR/catalog/lanes.d/_lib.json" "$DIR/catalog/lanes.d/_lib.lead-delta.json" "$Q/catalog/lanes.d/"
-lpp_install "$T/qbin" "$LPPF" "$LPPDOWN"   # TEST-CHANGE BH-4148: rows, not the TSV
-printf 'lead-test-token\n' > "$T/cfg/token"; chmod 600 "$T/cfg/token"
-printf 'cromford example-org/cromford https://demo.test /api 3 box-hub\n' > "$Q/fleet.conf"
-printf 'queue_rules:\n  - name: default\n    queue_conditions:\n      - check-success = "CI"\n' | base64 | tr -d '\n' > "$T/mergify.b64"
-
-cat > "$T/qbin/curl" <<EOF
-#!/bin/bash
-m=GET; body=""; url=""; prev=""; hdrs=""
-for a in "\$@"; do
-  case "\$prev" in
-    -X) m="\$a" ;;
-    --data-binary|-d|--data) body="\$a" ;;
-    -H) case "\$a" in @*) hdrs="\$hdrs\$(cat "\${a#@}")"\$'\n' ;; *) hdrs="\$hdrs\$a"\$'\n' ;; esac ;;
-  esac
-  case "\$a" in http*) url="\$a" ;; esac
-  prev="\$a"
-done
-case "\$body" in @*) body=\$(cat "\${body#@}") ;; esac
-lead=0; grep -q '^x-lead-verdict-token: lead-test-token' <<<"\$hdrs" && lead=1
-p="\${url#https://jobs.test}"
-printf '%s %s %s lead=%s\n' "\$m" "\$p" "\$body" "\$lead" >> "$T/log/qworker"
-code=200; out='{}'
-case "\$m \$p" in
-$(lpp_curl_case m url body)
-  "GET /api/verdict?pr="*) code=404; out='{"error":"no job for this pr"}' ;;
-  "GET /api/verdicts?"*standing_only=1*) out='{"standing":null,"rows":[],"truncated":false}' ;;
-  "GET /api/verdicts?"*) out='{"rows":[],"truncated":false}' ;;
-  "GET /api/settings/"*)
-    k="\${p#/api/settings/}"
-    if [ -f "$T/qset/\$k" ]; then out=\$(jq -nc --arg k "\$k" --arg v "\$(cat "$T/qset/\$k")" '{setting:{key:\$k,value:\$v}}')
-    else code=404; out='{"error":"no such setting"}'; fi ;;
-  "POST /api/risk-tiers") printf '%s\n' "\$body" >> "$T/log/risktiers"; code=201; out='{"ok":true}' ;;
-  "POST /api/lead-reviews")
-    h=\$(jq -r .head_sha <<<"\$body")
-    if [ "\$lead" != 1 ]; then code=403; out='{"error":"needs the lead token"}'
-    elif grep -qxF "\$h" "$T/log/held" 2>/dev/null; then out=\$(jq -c '{existing:true, request:(. + {id:"lr-9", status:"requested"})}' <<<"\$body")
-    else echo "\$h" >> "$T/log/held"; printf '%s\n' "\$body" >> "$T/log/created"
-      code=201; out=\$(jq -c '{request:(. + {id:"lr-9", status:"requested"})}' <<<"\$body"); fi ;;
-  *) code=404; out='{"error":"unknown endpoint","worker":"harness-jobs"}' ;;
-esac
-printf '%s\n%s' "\$out" "\$code"
-EOF
-cat > "$T/qbin/gh" <<EOF
-#!/bin/bash
-H=\$(cat "$T/qhead")
-case "\$*" in
-  *"api rate_limit"*)
-    echo '{"resources":{"core":{"remaining":5000,"limit":5000,"reset":2000000000},"graphql":{"remaining":5000,"limit":5000,"reset":2000000000}}}' ;;
-  *"-X GET repos/example-org/"*"/pulls?"*)
-    printf 'HTTP/2 200\r\n\r\n'
-    jq -nc --arg h "\$H" '[{number:41, html_url:"https://github.com/$SLUG/pull/41", title:"t", draft:false, state:"open",
-      user:{login:"operator",type:"User"}, head:{sha:\$h,ref:"ticket/bh-41"}, base:{ref:"main"}}]' ;;
-  *"-X GET repos/example-org/"*"/pulls/41"*)
-    printf 'HTTP/2 200\r\n\r\n'; jq -nc --arg s "\$H" --arg u "\$(cat "$T/author" 2>/dev/null || echo operator)" '{head:{sha:\$s},base:{ref:"main"},user:{login:\$u}}' ;;
-  *"-X GET repos/example-org/"*"/contents/.mergify.yml"*)
-    printf 'HTTP/2 200\r\n\r\n'; jq -nc --arg c "\$(cat "$T/mergify.b64")" '{content:\$c, encoding:"base64"}' ;;
-  *"-X GET repos/example-org/"*"/commits/"*"/check-runs"*)
-    printf 'HTTP/2 200\r\n\r\n'
-    jq -nc --arg h "\$H" '{total_count:1, check_runs:[{name:"CI", head_sha:\$h, status:"completed", conclusion:"success", app:{slug:"github-actions"}}]}' ;;
-  *"-X GET repos/example-org/"*"/compare/"*)
-    echo x >> "$T/log/cmpread"
-    printf 'HTTP/2 200\r\n\r\n'; cat "$T/cmp.json" ;;
-esac
-exit 0
-EOF
-chmod +x "$T/qbin/curl" "$T/qbin/gh"
-
-QLOG="$Q/logs/lead-review-enqueue.log"
-# ecmp <head> — the compare answer GitHub gives for main...<head>, from the real diff
-ecmp() {
-  git -C "$WK" diff --numstat main "$1" | jq -Rn --arg h "$1" '{total_commits:1, commits:[{sha:$h, parents:[{sha:"p"}], commit:{message:"rules: x"}}],
-    files:[inputs | split("\t") | {filename:.[2], additions:(.[0]|tonumber), deletions:(.[1]|tonumber), status:"modified"}]}' > "$T/cmp.json"
-}
-# ereset <head> <mode> [author]
-ereset() {
-  rm -f "$T/log"/* "$T/author" "$QLOG"
-  scratch_rm "$T/qset"; mkdir -p "$T/qset"
-  scratch_rm "$Q/state"; mkdir -p "$Q/state"; echo box-hub > "$Q/state/box-name"
-  echo "$1" > "$T/qhead"; ecmp "$1"
-  printf '%s' "$2" > "$T/qset/risk_tier.mode.example-org.cromford"; printf 'operator' > "$T/qset/lead_pr_authors"
-  [ -n "${3:-}" ] && echo "$3" > "$T/author"
-  return 0
-}
-etick() {
-  ( cd "$T" && PATH="$T/qbin:$PATH" HARNESS="$Q" REPOS_ROOT="$T/repos" FLEET_CONF="$Q/fleet.conf" \
-      LEAD_VERDICT_TOKEN_FILE="$T/cfg/token" LEAD_REVIEW_AUTO_REPOS="$SLUG" \
-      LEAD_REVIEW_ENQUEUE_MAX_PER_TICK=5 LEAD_REVIEW_MAX_PER_PR_DAY=4 JOBS_URL=https://jobs.test \
-      HARNESS_SECRET=test-secret JOBS_RETRIES=0 GH_ETAG=0 RT_RULES_RENDER= \
-      bash "$Q/bin/lead-review-enqueue.sh" tick ) > "$T/out" 2>&1; RC=$?
-}
-cnt() { [ -f "$T/log/$1" ] && wc -l < "$T/log/$1" | tr -d ' ' || echo 0; }
-summ() { grep ' tick repos=' "$QLOG" 2>/dev/null | tail -1; }
-hasw() { summ | grep -qw -- "$1"; }
-
-# E1: lead-authored topic+render, enforce, no builder row, CI green: signed as rules-text
-ereset "$HC" enforce; etick
-[ "$RC" -eq 0 ] && ok || bad "E1 rc=$RC out=$(cat "$T/out")"
-grep -q -- "post $SLUG 41 $HC MERGE --source risk-tier --reviewer risk-tier:rules-text:" "$T/log/post" 2>/dev/null && ok \
-  || bad "E1 no rules-text sign-off: post=$(cat "$T/log/post" 2>/dev/null) log: $(tail -6 "$QLOG" 2>/dev/null)"
-grep -q -- "--note low risk: rules-text:" "$T/log/post" 2>/dev/null && ok || bad "E1 the note does not start 'low risk: rules-text:': $(cat "$T/log/post" 2>/dev/null)"
-hasw risk_signed=1 && hasw requested=0 && hasw risk_lead=0 && ok || bad "E1 summary: $(summ)"
-grep -q 'risk tier skipped' "$QLOG" && bad "E1 logged a lead skip: $(grep 'risk tier skipped' "$QLOG")" || ok
-[ "$(cnt created)" = 0 ] && ok || bad "E1 a lead review was requested"
-
-# E2: lead-authored topic+render+bin: skipped and requested as today
-ereset "$HB" enforce; etick
-[ "$(cnt post)" = 0 ] && ok || bad "E2 lead-verdict.sh was called: $(cat "$T/log/post")"
-[ "$(cnt risktiers)" = 0 ] && ok || bad "E2 a risk-tiers row was posted: $(cat "$T/log/risktiers")"
-grep -q "@${HB:0:12}: risk tier skipped (lead-authored (operator): a risk-tier row never clears a lead PR); requested as before" "$QLOG" && ok \
-  || bad "E2 no skip line: $(tail -5 "$QLOG")"
-hasw risk_lead=1 && hasw requested=1 && ok || bad "E2 summary: $(summ)"
-# E5: a second tick on the same head reads no compare again
-C5=$(cnt cmpread); etick
-[ "$(cnt cmpread)" = "$C5" ] && ok || bad "E5 the second tick read the compare again ($C5 -> $(cnt cmpread))"
-[ "$(grep -c "@${HB:0:12}: risk tier skipped (lead-authored (operator)" "$QLOG")" = 2 ] && ok || bad "E5 no skip line on the second tick: $(tail -4 "$QLOG")"
-[ "$(cnt post)" = 0 ] && [ "$(cnt risktiers)" = 0 ] && ok || bad "E5 the second tick posted"
-
-# E3: lead-authored docs-only: skipped and requested as today
-ereset "$HD" enforce; etick
-[ "$(cnt post)" = 0 ] && [ "$(cnt risktiers)" = 0 ] && ok || bad "E3 posted for a lead docs PR: $(cat "$T/log/post" "$T/log/risktiers" 2>/dev/null)"
-hasw risk_lead=1 && hasw requested=1 && ok || bad "E3 summary: $(summ)"
-
-# E4: shadow, lead-authored topic+render: WOULD line, requested, nothing signed
-ereset "$HC" shadow; etick
-[ "$(cnt post)" = 0 ] && ok || bad "E4 shadow signed: $(cat "$T/log/post")"
-grep -q "@${HC:0:12}: risk-tier WOULD sign off (low risk: rules-text:" "$QLOG" && ok || bad "E4 no WOULD line: $(tail -5 "$QLOG")"
-hasw requested=1 && hasw risk_shadow=1 && ok || bad "E4 summary: $(summ)"
-
-# E6: a non-lead docs-only low head with no builder row: still refused (BH-5630)
-ereset "$HD" enforce 'cromford[bot]'; etick
-[ "$(cnt post)" = 0 ] && ok || bad "E6 a docs head nobody approved was signed: $(cat "$T/log/post")"
-grep -q "@${HD:0:12}: risk tier low, but no reviewer approved this head" "$QLOG" && ok || bad "E6 no refusal line: $(tail -5 "$QLOG")"
-# ...and so is a non-lead rules-text head: only a lead author lifts the refusal
-ereset "$HC" enforce 'cromford[bot]'; etick
-[ "$(cnt post)" = 0 ] && ok || bad "E6b a non-lead rules-text head nobody approved was signed: $(cat "$T/log/post")"
-grep -q "@${HC:0:12}: risk tier low, but no reviewer approved this head" "$QLOG" && ok || bad "E6b no refusal line: $(tail -5 "$QLOG")"
-# a stale render on the head is not low
-ereset "$HS" enforce; etick
-[ "$(cnt post)" = 0 ] && hasw risk_lead=1 && ok || bad "E6c a stale-render head was signed or not skipped: $(summ)"
 
 # ════════════════════════════════════════════════════════════════════════════
 # F: the lead-PR fence

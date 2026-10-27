@@ -1,0 +1,11 @@
+{
+  "env": "MC_PREQUEUE_MAIN_RUNS",
+  "type": "int",
+  "default": 1,
+  "min": 0,
+  "max": 1,
+  "unit": null,
+  "zero_means": "off",
+  "read_in": "bin/lib/mc-prequeue.d/main-runs.sh",
+  "note": "BH-8152: 1 reads the runs of prequeue-gate.yml for one main (`head_sha=<main>`), once per tick and main, shared by every READY PR on that main. pq_find_run (adopt) and pq_read_run (settle) look up their exact run title there before the 30 newest runs, and a plain-gate pq_dispatch reads it again before it pays: a run with that title in any state is recorded pending and not dispatched again (8 duplicate titles in 24 h on 2026-10-22/23, all past the 30 newest). Per project: lane.merge-conductor.<project>.mc_prequeue_main_runs. 0 is off: the rule before BH-8152, no head_sha run-list read; adopt and settle read only the 30 newest runs and a dispatch reads nothing before it pays."
+}

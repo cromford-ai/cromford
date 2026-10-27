@@ -1,12 +1,12 @@
 #!/bin/bash
 # tests/jev-risk-shadow.bh-5024-test.sh — BH-5024 (BH-4973.3): Jev, a second
-# opinion on the rule-based risk tier, in shadow only. Two production entry
-# points run WHOLE against a scratch harness carrying their real bin closures:
+# opinion on the rule-based risk tier, in shadow only. The production entry
+# point runs WHOLE against a scratch harness carrying its real bin closure:
 #   * "$DIR/bin/jev-risk.sh" ask — the ONLY code path that spends on Jev:
 #     claim in the ledger, call TypeSafe, write the answer locally, settle.
-#   * "$DIR/bin/lead-review-enqueue.sh" tick — the shadow hook: on a NEW
-#     classification with jev_risk.mode=shadow it asks Jev and logs the answer
-#     next to the rule tier, and changes nothing else.
+# The shadow hook (gate 60 on the worklist) is
+# tests/lead-gates-risk-jev-ports.bh-8629-test.sh RJ4-RJ8 and
+# tests/lead-gates-risk.bh-5875-test.sh R13, R14.
 # Stubbed:
 #   * curl — a STATEFUL jobs worker (the tests/lead-review-enqueue-risk.bh-5022
 #            one) plus the jev-risk ledger ($T/jev.json, the worker's claim and
@@ -30,7 +30,6 @@ command -v jq >/dev/null || { echo "jq missing — skipping"; exit 0; }
 [ -f "$DIR/bin/jev-risk.sh" ] && ok || bad "bin/jev-risk.sh does not exist"
 H="$T/h"; mkdir -p "$H/state" "$H/logs" "$T/fakebin" "$T/log" "$T/tmp" "$T/cfg" "$T/repos"
 scratch_install_closure bin/jobs-client.sh "$H" >/dev/null || exit 1
-scratch_install_closure bin/lead-review-enqueue.sh "$H" >/dev/null || exit 1
 [ -f "$DIR/bin/jev-risk.sh" ] && { scratch_install_closure bin/jev-risk.sh "$H" >/dev/null || exit 1; }
 mkdir -p "$H/catalog"
 # TEST-CHANGE BH-4148 (merge of main): the lead protected paths come from the
@@ -42,9 +41,8 @@ lpp_install "$T/fakebin" "$LPPF" "$LPPDOWN"
 printf 'lead-test-token\n' > "$T/cfg/token"; chmod 600 "$T/cfg/token"
 printf 'cromford example-org/cromford https://demo.test /api 3 box-hub\n' > "$H/fleet.conf"
 
-SHA=$(printf 'a%.0s' {1..40}); SHA12=${SHA:0:12}
+SHA=$(printf 'a%.0s' {1..40})
 H2=$(printf 'b%.0s' {1..40})
-S42=$(printf 'd%.0s' {1..40})
 KEY=tsk-secret-5024-do-not-log
 
 cat > "$T/fakebin/curl" <<EOF
@@ -187,16 +185,6 @@ export PATH="$T/fakebin:$PATH" HARNESS="$H" HARNESS_SECRET=test-secret JOBS_URL=
   LEAD_REVIEW_ENQUEUE_MAX_PER_TICK=5 LEAD_REVIEW_MAX_PER_PR_DAY=4 REPOS_ROOT="$T/repos" TYPESAFE_API_KEY="$KEY"
 unset BOX_NAME JOBS_BOX HUB_BOX_NAME
 
-pr() {
-  jq -c --argjson n "$1" --arg h "$2" '[.[] | select(.number != $n)] + [{number:$n, html_url:("https://github.com/example-org/cromford/pull/"+($n|tostring)),
-    title:"t", draft:false, state:"open", user:{login:"cromford[bot]",type:"Bot"}, head:{sha:$h,ref:("ticket/bh-"+($n|tostring))}, base:{ref:"main"}}]' \
-    "$T/prs.json" > "$T/prs.tmp" && mv "$T/prs.tmp" "$T/prs.json"
-  echo "$2" > "$T/head/$1"
-}
-approve() {
-  jq -nc --arg s "$2" '{verdict:"APPROVE", tier:"2", provenance:"-", merge_sha:null, job_id:"job-1", reviewed_sha:$s,
-    artifacts:[{artifact_kind:"verdict", detail:({tier:"2", headbound:"n/a", reviewed_sha:$s, settled:true}|tojson)}]}' > "$T/jv/$1.json"
-}
 # cmpx <head> <files json: [[name, add, del]...]> — every file carries a patch line.
 cmpx() {
   jq -nc --argjson f "$2" '{total_commits:1, commits:[{parents:[{sha:"p"}], commit:{message:"feat: x"}}],
@@ -218,18 +206,13 @@ reset() {
 # jev_on [mode-row] — the vendor configured, and the jev_risk.mode row (default shadow)
 jev_on() { printf 'https://typesafe.test/v1/choice' > "$T/set/jev_risk.api_url"; printf '%s' "${1-shadow}" > "$T/set/jev_risk.mode"; }
 answer() { printf '%s' "$1" > "$T/jev-answer"; }
-DOCS='[["docs/a.md",30,12]]'
 MED='[["bin/lib/thing.sh",40,10]]'
-HIGH='[[".mergify.yml",2,1]]'
-tick() { ( cd "$T" && bash "$H/bin/lead-review-enqueue.sh" tick ) > "$T/out" 2>&1; RC=$?; }
 CMPF="$T/cmp-ask.json"
 ask() { ( cd "$T" && bash "$H/bin/jev-risk.sh" ask example-org/cromford 41 "${1:-$SHA}" "${2:-medium}" "$CMPF" ) > "$T/askout" 2>"$T/askerr"; ARC=$?; AOUT=$(cat "$T/askout"); }
 hits() { [ -f "$T/log/jev-hits" ] && wc -l < "$T/log/jev-hits" | tr -d ' ' || echo 0; }
 claims() { wlog | grep -c '^POST /api/jev-risk/claim '; }
 jrow() { jq -r --arg h "${2:-$SHA}" "[.[] | select(.head_sha == \$h)] | first | $1" "$T/jev.json" 2>/dev/null; }
 wlog() { cat "$T/log/worker" 2>/dev/null; }
-LOGF="$H/logs/lead-review-enqueue.log"
-summ() { grep ' tick repos=' "$LOGF" 2>/dev/null | tail -1; }
 SPOOL="$H/state/jev-risk"
 
 # ══ the client: bin/jev-risk.sh ask ══
@@ -315,79 +298,8 @@ bash "$H/bin/jev-risk.sh" ask example-org/cromford 41 nothex medium "$CMPF" >/de
 Q=$(bash "$H/bin/jev-risk.sh" question high "$CMPF")
 [ "$(tail -1 <<<"$Q")" = '[truncated]' ] && [ "${#Q}" -le 163 ] && ok || bad "A7 question did not read the max_diff_chars row ask reads: ${#Q} chars"
 
-# ══ the shadow hook: bin/lead-review-enqueue.sh tick ══
-# scenario <low|medium|high> — one approved head under risk enforce
-scenario() {
-  reset; echo enforce > "$T/mode"; pr 41 "$SHA"; approve 41 "$SHA"
-  case "$1" in low) cmpx "$SHA" "$DOCS" ;; medium) cmpx "$SHA" "$MED" ;; high) cmpx "$SHA" "$HIGH" ;; esac
-}
-# the verdict path's whole record: lead-verdict.sh argv, the request and tier bodies
-record() {
-  { echo "== lv"; cat "$T/log/lv" 2>/dev/null
-    echo "== lead-reviews"; wlog | sed -n 's#^POST /api/lead-reviews \(.*\) lead=.$#\1#p'
-    echo "== risk-tiers"; wlog | sed -n 's#^POST /api/risk-tiers \(.*\) lead=.$#\1#p'
-    echo "== statuses"; grep 'statuses/' "$T/log/gh" 2>/dev/null; } > "$1"
-}
-
-# ── B1 shadow on, a low PR under enforce: the answer is logged next to the rule tier ──
-scenario low; jev_on; answer '{"choice":"low","probability":0.9}'; tick
-[ "$RC" = 0 ] && ok || bad "B1 rc=$RC out=$(cat "$T/out")"
-[ "$(hits)" = 1 ] && ok || bad "B1 want one vendor hit, got $(hits)"
-grep -q "example-org/cromford#41 @$SHA12: jev shadow ok low 0.9 (rule tier low); shadow only, nothing changed" "$LOGF" && ok || bad "B1 log line: $(grep jev "$LOGF")"
-summ | grep -qw 'jev_shadow=1' && ok || bad "B1 summary: $(summ)"
-[ "$(jrow .caller)" = shadow:box-hub ] && ok || bad "B1 caller: $(jrow .caller)"
-
-# ── B2 shadow never changes the posted verdict: Jev answering the OPPOSITE tier ──
-for s in low:high medium:low high:low; do
-  tier=${s%%:*}; jt=${s#*:}
-  scenario "$tier"; tick; record "$T/rec-off"
-  [ "$(hits)" = 0 ] && ok || bad "B2 $tier: mode off called the vendor"
-  scenario "$tier"; jev_on; answer "{\"choice\":\"$jt\",\"probability\":0.99}"; tick; record "$T/rec-on"
-  [ "$(hits)" = 1 ] && ok || bad "B2 $tier: shadow did not ask Jev ($(hits) hits), so the comparison proves nothing"
-  grep -q "jev shadow ok $jt 0.99 (rule tier $tier)" "$LOGF" && ok || bad "B2 $tier: no jev line: $(grep jev "$LOGF")"
-  if cmp -s "$T/rec-off" "$T/rec-on"; then ok; else bad "B2 $tier: Jev answering $jt changed the verdict path: $(diff "$T/rec-off" "$T/rec-on")"; fi
-  [ -s "$T/rec-on" ] && grep -q . <(sed '/^== /d' "$T/rec-on") && ok || bad "B2 $tier: the verdict path recorded nothing"
-done
-
-# ── B3 Jev hangs: the tick is bounded by timeout and still posts the same verdict ──
-scenario low; tick; record "$T/rec-off"
-scenario low; jev_on; printf 1 > "$T/set/jev_risk.timeout_s"; answer '{"choice":"high","probability":0.9}'; echo 30 > "$T/jev-sleep"
-T0=$(date +%s); tick; T1=$(date +%s); record "$T/rec-on"
-[ $((T1 - T0)) -lt 25 ] && ok || bad "B3 a hanging Jev held the tick $((T1 - T0))s"
-[ "$(hits)" = 1 ] && ok || bad "B3 setup: Jev was not asked ($(hits))"
-cmp -s "$T/rec-off" "$T/rec-on" && ok || bad "B3 a hanging Jev changed the verdict path: $(diff "$T/rec-off" "$T/rec-on")"
-grep -q "jev shadow no answer" "$LOGF" && ok || bad "B3 log: $(grep jev "$LOGF")"
-rm -f "$T/jev-sleep"
-
-# ── B4 only exact `shadow` (trimmed, any case) turns it on ──
-scenario medium; jev_on 'Shadow '; answer '{"choice":"low","probability":0.9}'; tick
-[ "$(hits)" = 1 ] && ok || bad "B4 'Shadow ' did not enable the call ($(hits))"
-for v in on enforce 1 true ''; do
-  scenario medium; jev_on "$v"; answer '{"choice":"low","probability":0.9}'; tick
-  [ "$(hits)" = 0 ] && [ "$(claims)" = 0 ] && ok || bad "B4 mode '$v' reached the ledger ($(claims)) or the vendor ($(hits))"
-done
-scenario medium; jev_on; : > "$T/set500/jev_risk.mode"; answer '{"choice":"low","probability":0.9}'; tick
-[ "$(hits)" = 0 ] && [ "$(claims)" = 0 ] && ok || bad "B4 a 500 on the mode row enabled the call"
-[ "$RC" = 0 ] && [ "$(wlog | grep -c '^POST /api/lead-reviews ')" = 1 ] && ok || bad "B4 a 500 on the mode row broke the tick: $(summ)"
-
-# ── B5 mode off (the seed) or no row: zero claims, zero calls, not even the vendor config read ──
-for v in off -; do
-  scenario medium; printf 'https://typesafe.test/v1/choice' > "$T/set/jev_risk.api_url"
-  [ "$v" = off ] && printf off > "$T/set/jev_risk.mode"
-  answer '{"choice":"low","probability":0.9}'; tick
-  [ "$(hits)" = 0 ] && [ "$(claims)" = 0 ] && ok || bad "B5 mode $v: claims $(claims) hits $(hits)"
-  grep -q 'GET /api/settings/jev_risk.api_url' <<<"$(wlog)" && bad "B5 mode $v read the vendor config" || ok
-done
-# ...and max_per_tick=1 with two new heads -> exactly one call and one over-cap line
-reset; echo enforce > "$T/mode"; jev_on; printf 1 > "$T/set/jev_risk.max_per_tick"; answer '{"choice":"low","probability":0.9}'
-pr 41 "$SHA"; approve 41 "$SHA"; cmpx "$SHA" "$MED"; pr 42 "$S42"; approve 42 "$S42"; cmpx "$S42" "$MED"; tick
-[ "$(hits)" = 1 ] && ok || bad "B5 max_per_tick=1: $(hits) hits"
-[ "$(grep -c 'jev shadow not asked' "$LOGF")" = 1 ] && ok || bad "B5 over-cap line: $(grep jev "$LOGF")"
-[ "$(wlog | grep -c '^POST /api/lead-reviews ')" = 2 ] && ok || bad "B5 the cap changed the requests: $(summ)"
-
 # ── no secret anywhere in the lane log ──
-grep -qF "$KEY" "$LOGF" "$T/log/worker" "$T/log/jev-argv" 2>/dev/null && bad "the TypeSafe key reached a log" || ok
-grep -q 'test-secret\|lead-test-token' "$LOGF" && bad "a worker secret reached the log" || ok
+grep -qF "$KEY" "$T/log/worker" "$T/log/jev-argv" 2>/dev/null && bad "the TypeSafe key reached a log" || ok
 [ -s "$T/log/agent-call" ] && bad "agent-call.sh ran" || ok
 
 echo "jev-risk-shadow.bh-5024: PASS=$PASS FAIL=$FAIL"

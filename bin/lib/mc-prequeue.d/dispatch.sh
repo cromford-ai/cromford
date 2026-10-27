@@ -49,6 +49,15 @@
 # gate's call budget passed (pq_over), a settle that read nothing holds before
 # the deadline rule, and nothing is dispatched: a read the budget killed never
 # becomes a could-not-run record or an alert.
+#
+# ONE RUN PER KEY, READ BY MAIN (BH-8152, knobs MC_PREQUEUE_MAIN_RUNS and
+# MC_PREQUEUE_MAIN_RUNS_PAGE). pq_read_run finds its run in the runs of the
+# title's main (mc-prequeue.d/main-runs.sh) before the 30 newest, so a run past
+# them is read on time. A plain-gate pq_dispatch reads that list again, with no
+# memo, under its lock, before it pays: a run with the exact title in any state
+# is recorded `pending <created> <run_id>` and answers rc 3, with one
+# `PREQUEUE dedup ... -> no-dispatch` line. A failed read dispatches as before
+# (one `-> read-failed, dispatched` line). A named-suites run is never deduped.
 
 PQ_WF=prequeue-gate.yml
 PQ_VERDICT_RE='^(green|red|no-selection|conflict|could-not-run) main=([0-9a-f]{40}) head=([0-9a-f]{40}) suites=([^ ]*)( why=[^ ]+)?$'
@@ -82,6 +91,18 @@ pq_dispatch() {
   (
     flock -n 9 || exit 3
     [ -n "$(pq_cache_get "$path")" ] && exit 3
+    # BH-8152: the same title already has a run on this main: read it, never pay again.
+    if [ -z "$suites" ] && declare -F pq_main_run_find >/dev/null; then
+      local r="" rrc=0 rid rst rat
+      r=$(pq_main_run_find "$slug" "$(pq_run_title "$num" "$head" "$main")" fresh) || rrc=$?
+      read -r rid rst _ rat <<<"$r"
+      if [ "$rrc" = 0 ] && [[ "$rid" =~ ^[0-9]+$ ]] && [[ "$rat" =~ ^[0-9]+$ ]] && [ "$rat" -gt 0 ]; then
+        pq_cache_put "$path" pending "$rat" "$rid" "" || exit 4
+        mc_log "PREQUEUE dedup #$num head=${head:0:12} main=${main:0:12} run=$rid status=$rst -> no-dispatch"
+        exit 3
+      fi
+      [ "$rrc" = 75 ] && mc_log "PREQUEUE dedup #$num head=${head:0:12} main=${main:0:12} -> read-failed, dispatched"
+    fi
     pq_cache_put "$path" pending "$now" - "" || exit 4
     mc_use_token "$slug"
     args=(-f "pr=$num" -f "head=$head" -f "main=$main"); [ -n "$suites" ] && args+=(-f "suites=$suites")
@@ -118,9 +139,13 @@ pq_parse_verdict() {
 pq_read_run() {
   local slug="$1" t="$2" path="${3:-}" raw="" id st concl jid msgs='[]' n v
   local head main num why fail timing
-  mc_rest_var raw gh_rest GET "repos/$slug/actions/workflows/$PQ_WF/runs?event=workflow_dispatch&per_page=30" || return 75
-  read -r id st concl <<<"$(jq -r --arg t "$t" '[.workflow_runs[]? | select(.display_title == $t)]
-    | sort_by(.created_at) | last // empty | "\(.id) \(.status) \(.conclusion // "-")"' <<<"$raw" 2>/dev/null)"
+  # BH-8152: the runs of the title's main first; the 30 newest on a miss.
+  declare -F pq_main_run_find >/dev/null && read -r id st concl _ <<<"$(pq_main_run_find "$slug" "$t")"
+  if [ -z "${id:-}" ]; then
+    mc_rest_var raw gh_rest GET "repos/$slug/actions/workflows/$PQ_WF/runs?event=workflow_dispatch&per_page=30" || return 75
+    read -r id st concl <<<"$(jq -r --arg t "$t" '[.workflow_runs[]? | select(.display_title == $t)]
+      | sort_by(.created_at) | last // empty | "\(.id) \(.status) \(.conclusion // "-")"' <<<"$raw" 2>/dev/null)"
+  fi
   [ -n "$id" ] && [ "$st" = completed ] || return 0
   [ "$concl" = success ] || { echo "could-not-run $id - $concl"; return 0; }
   mc_rest_var raw gh_rest GET "repos/$slug/actions/runs/$id/jobs" || return 75

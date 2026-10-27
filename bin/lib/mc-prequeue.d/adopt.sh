@@ -27,10 +27,15 @@
 #                                 when a run was adopted or another worker holds
 #                                 the key; rc 1 when there is no run to adopt
 
-# pq_find_run <slug> <title> — one read of the run list, memoised per tick and
-#   repo in MC_TICK_DIR (the list pq_read_run reads, the same 30 runs).
+# pq_find_run <slug> <title> — the runs of the title's main first
+#   (mc-prequeue.d/main-runs.sh, BH-8152); on a miss or a failed read, one read
+#   of the run list, memoised per tick and repo in MC_TICK_DIR (the list
+#   pq_read_run reads, the same 30 runs).
 pq_find_run() {
-  local slug="$1" t="$2" raw="" memo=""
+  local slug="$1" t="$2" raw="" memo="" r id st at
+  if declare -F pq_main_run_find >/dev/null && r=$(pq_main_run_find "$slug" "$t") && [ -n "$r" ]; then
+    read -r id st _ at <<<"$r"; echo "$id $st $at"; return 0
+  fi
   [ -n "${MC_TICK_ID:-}" ] && [ -n "${MC_TICK_DIR:-}" ] && memo="$MC_TICK_DIR/$(mc_safe_name "$MC_TICK_ID").pq-runs.${slug//\//_}"
   if [ -n "$memo" ] && [ -s "$memo" ]; then raw=$(cat "$memo" 2>/dev/null)
   else
