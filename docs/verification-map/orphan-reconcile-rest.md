@@ -31,7 +31,11 @@ by construction" promise. So the classifier runs twice over the same data:
    are still ownerless and have at least one comment. It deliberately skips
    class (c), so its need set is a SUPERSET of what pass 2 can ask for.
 2. bash fetches exactly those, capped by `ORPHAN_BLOCKER_FETCH_MAX` (20) and
-   `ORPHAN_THREAD_FETCH_MAX` (40).
+   `ORPHAN_THREAD_FETCH_MAX` (200, the settings row
+   `lib.orphan-reconcile.<project>.orphan_thread_fetch_max` since BH-8497).
+   Threads are taken in issue-number order from past a cursor the last capped
+   run wrote (the `ledgers` row kind `orphan-thread-cursor`), so a thread the cap cut is read first on the next run, and a cut
+   writes one ALERTS line per project per UTC day with the count.
 3. pass `decide` is the classifier as it always was, reading those answers off
    disk.
 

@@ -1,0 +1,24 @@
+{
+  "libs": [
+    {
+      "id": "orphan-reconcile",
+      "file": "bin/orphan-reconcile.sh",
+      "note": "BH-8497. The read bounds of the owner reconciler (bin/orphan-reconcile.sh, run inside each GitHub-Issues triage tick and as --stranded by the stranded watch). The script calls lib_env_apply orphan-reconcile <project> in a subshell, so a fail-closed exit there never stops the lane.",
+      "knobs": [
+        {
+          "env": "ORPHAN_THREAD_FETCH_MAX",
+          "read_in": "bin/orphan-reconcile.sh",
+          "type": "int",
+          "default": 200,
+          "min": 0,
+          "max": 1000,
+          "unit": "reads",
+          "zero_means": null,
+          "required": false,
+          "settable": true,
+          "note": "The comment-thread reads one run may ask for (commented issues with no ledger row and no open PR). Past it a ticket is parked unverifiable:thread, the run logs the cut tickets, keeps a thread cursor (state/orphan-reconcile/<owner_repo>/thread-cursor-<mode>) so the next run reads them first, and writes ONE ALERTS line per project per UTC day with the count. Default 200 (was a literal 40): one project-6 board, 131 open ai-build on 2026-10-26, fits in one run. Read as ${ORPHAN_THREAD_FETCH_MAX:-200}; junk is 200. Rows: lib.orphan-reconcile.<project>.orphan_thread_fetch_max, then lib.orphan-reconcile.orphan_thread_fetch_max."
+        }
+      ]
+    }
+  ]
+}

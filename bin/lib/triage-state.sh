@@ -166,6 +166,11 @@ ts_defer_ttl() { _ts_int "${TRIAGE_STATE_DEFER_TTL_S:-7200}" 7200 600; }
 # BH-3920: a model-set ticket an rc-0 session left no evidence for is held off
 # the model this long (bin/triage-state.py record, `handed-no-decision`).
 ts_hnd_backoff() { _ts_int "${TRIAGE_STATE_HANDED_NO_DECISION_BACKOFF_S:-7200}" 7200 600; }
+# BH-8497: a `triaged` verdict with no DECISION line goes back to the model this
+# many times (one backoff apart), then is final with one ALERT line. Row
+# lib.triage-state.<project>.triage_state_no_decision_retries; fallback 3, junk
+# is 3, 0 = off (the verdict is final at once, as before).
+ts_nd_retries() { _ts_int "${TRIAGE_STATE_NO_DECISION_RETRIES:-3}" 3 0; }
 _ts_mtime() { stat -c %Y "$1" 2>/dev/null || stat -f %m "$1" 2>/dev/null || echo 0; }
 
 # _ts_refs_merge <refs-file> <number> <state> — ONE entry into refs.json. The
@@ -632,7 +637,7 @@ ts_precheck() {
   [ "$nofetch" = 1 ] && dwhy=budget
   PYTHONDONTWRITEBYTECODE=1 python3 "$py" decide --hashes "$d/hashes.tsv" --rows "$rowsf" --now "$now" --ttl "$ttl" --defer-ttl "$dttl" --world "$d/world.json" \
     --decisions "$h/logs/decisions.log" --project "$p" --prefix "$pfx" --keymap "$km" --gh "$gh" --deferred "$d/deferred.tick" \
-    --deferred-why "$dwhy" --nudge "$(ts_nudge)" \
+    --deferred-why "$dwhy" --nudge "$(ts_nudge)" --no-decision-retries "$(ts_nd_retries)" \
     > "$d/decided.tsv" 2>/dev/null || { _ts_log "triage-state $TS_MODE: the decision pass failed — nothing decided"; return 0; }
   # deferred.keys is the owed-read list bin/triage-gate.sh step 1d drains with
   # `RUN ts-deferred` ticks: rewritten whole by every enforce pre-check, and
@@ -948,6 +953,7 @@ _ts_record_run() {
   PYTHONDONTWRITEBYTECODE=1 python3 "$h/bin/triage-state.py" record --project "$p" --out "$out" --rc "$rc" \
     --now "$(_ts_now)" --ttl "$(ts_ttl)" --defer-ttl "$(ts_defer_ttl)" --decisions "$DEC" --key "$key" --hash "$hash" \
     --world "$W" --refs "$priv" --rows "$ROWS" --hnd-backoff "$(ts_hnd_backoff)" --nudge "$(ts_nudge)" \
+    --no-decision-retries "$(ts_nd_retries)" --nd-backoff "$(ts_hnd_backoff)" \
     --prefix "${pfx:-}" --keymap "$h/state/$p.keymap.json" --gh "$gh" > "$d/record.$$.json" 2>/dev/null
 }
 
@@ -1059,6 +1065,13 @@ ts_after_session() {
   case "$hnd_n" in ''|*[!0-9]*) hnd_n=0 ;; esac
   [ "$hnd_n" -gt 0 ] && _ts_log "triage-state: handed-no-decision $hnd_n: $(jq -r '.handed_no_decision | join(" ")' "$d/record.$$.json" | cut -c1-600) — the session returned no DECISION line for them; offered again after $(ts_hnd_backoff)s"
   [ -z "$key" ] && [ "$rc" = 0 ] && printf '%s\t%s\t%s\n' "$(_ts_now)" "$hnd_n" "$(jq -r '.handed_no_decision // [] | join(" ")' "$d/record.$$.json" 2>/dev/null | cut -c1-600)" > "$d/hnd.last"
+  # BH-8497: the keys whose no-DECISION retries ran out this session. Each key
+  # spends once (a spent reason stays spent), so this is one line per spend.
+  if [ "$(jq '.no_decision_spent // [] | length' "$d/record.$$.json" 2>/dev/null)" -gt 0 ] 2>/dev/null; then
+    HARNESS="$h" "$h/bin/alert-line.sh" --id "triage-no-decision:$p" --project "$p" \
+      "[run-triage] $p: triage returned no DECISION line $(( $(ts_nd_retries) + 1 )) times for: $(jq -r '.no_decision_spent | join(" ")' "$d/record.$$.json" | cut -c1-600); their verdict is now final (triaged). Read state/triage-state/$p/rows.json" \
+      >/dev/null 2>&1 || true
+  fi
   n=$(jq '.rows | length' "$d/record.$$.json" 2>/dev/null)
   if [ "$n" -gt 0 ] 2>/dev/null; then
     _ts_libs

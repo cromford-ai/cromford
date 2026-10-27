@@ -86,9 +86,13 @@ grep -q "^SEEDED" <<<"$OUT" && [ "$(jq -r '.prs[0].number' "$T/state/p.gate.json
   && [ "$(jq -r '.issues[0].number' "$T/state/p.gate.json")" = 7 ] \
   && [ "$(jq -r '.issues[0].state' "$T/state/p.gate.json")" = OPEN ] \
   && ok || bad "seed did not carry prs: $OUT $(cat "$T/state/p.gate.json" 2>/dev/null) err=$(cat "$T/err.txt")"
+# TEST-CHANGE (BH-8497): the issue list is the open set (one page here: a
+# short page ends it) and no closed read, so still one issue read, now state=open.
 [ "$(grep -c 'repos/o/r/pulls' "$T/gh.txt")" = 1 ] \
   && [ "$(grep -c 'repos/o/r/issues' "$T/gh.txt")" = 1 ] \
-  && ok || bad "expected exactly one REST read each: $(cat "$T/gh.txt")"
+  && [ "$(grep -c 'repos/o/r/issues .*state=open' "$T/gh.txt")" = 1 ] \
+  && ! grep -q 'repos/o/r/issues .*state=\(closed\|all\)' "$T/gh.txt" \
+  && ok || bad "expected one PR read and one open-issue page, no closed or all-states read: $(cat "$T/gh.txt")"
 # ...and nothing GraphQL-backed was used for either.
 ! grep -qE '(^| )(pr|issue|run) ' "$T/gh.txt" && ok || bad "the gate reached for a GraphQL call: $(cat "$T/gh.txt")"
 # 2. nothing moved: SKIP

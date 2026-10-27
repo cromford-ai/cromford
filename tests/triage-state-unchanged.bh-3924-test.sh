@@ -276,7 +276,11 @@ TRIAGE_STATE_MAX_FETCH=100 tick drain2
 
 # ═══ T — the one timer rule ═══════════════════════════════════════════════════
 # T1 — a 3-day-old triaged row with a stale next_recheck_at is never due at TTL 0
-setrow 401 "triaged_at='$(iso $((NOW-259200)))', next_recheck_at='$(iso $((NOW-172800)))'"
+# TEST-CHANGE (BH-8497): the U-section's tickets= stamp is a no-DECISION retry
+# now (due at its stamp), so T1 gives 401 a real DECISION reason: the premise is
+# a final triaged verdict with a stale stamp. The reason names no ref, so the
+# hash does not move.
+setrow 401 "triaged_at='$(iso $((NOW-259200)))', next_recheck_at='$(iso $((NOW-172800)))', reason='DECISION skip: nothing to do'"
 tick t1
 [ "$(dec 401)" = "skip unchanged:triaged" ] && ok || bad "(T1) a stale stamp is not a recheck at the default TTL: [$(dec 401)]"
 triage_state_list "$P" > "$T/rows.t1" 2>/dev/null

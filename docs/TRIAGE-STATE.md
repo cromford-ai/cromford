@@ -190,6 +190,8 @@ re-offers it on a timer: `bin/blocked-resolver.sh` owns failed builds. With
 and `recheck_ttl` is what `record` stamps:
 
 - a `handed-no-decision` row is due at its `next_recheck_at` (the backoff);
+- a `triaged` no-DECISION row with retries left is due at its `next_recheck_at`,
+  or now when it has none (see "No-DECISION retries" below);
 - `TRIAGE_STATE_TTL_S` = 0 (the default; unset or junk also reads as 0): a
   verdict whose inputs did not move is never re-offered on a timer, EXCEPT a
   DEFER-LIKE verdict naming no ref (due at the earlier of its `next_recheck_at`
@@ -240,6 +242,37 @@ BACKFILL: a ticket with no row is seeded, against today's hash, from the newest
 last update of ANY kind (its own updated stamp and every comment, ours
 included), or in-app from the board's `waitingOn=client`.
 Everything else has no row, so the first enforce tick sends it to the model once.
+
+### No-DECISION retries (BH-8497)
+
+An rc-0 session that left evidence (a DECISION line for another ticket, or a
+`tickets=` summary) and no DECISION line for a model-set ticket stamps it
+`triaged` with reason `in the model set and in scope, no DECISION line,
+session rc 0 (no-decision c/N)` and `next_recheck_at = now +
+TRIAGE_STATE_HANDED_NO_DECISION_BACKOFF_S`. The row is due again at that stamp
+until `c` reaches N, the settings row
+`lib.triage-state.<project>.triage_state_no_decision_retries` (env
+`TRIAGE_STATE_NO_DECISION_RETRIES`, fallback 3, 0 = off). The next empty answer
+writes `(no-decision retries spent N/N)`: final, no timer, and ONE ALERTS line
+`[run-triage] <p>: triage returned no DECISION line <N+1> times for: <keys>`.
+A spent row stays spent: a moved thread still sends it to the model through
+the hash, and another empty answer writes no second ALERT. A row with the bare
+reason (written before BH-8497, or at N = 0) counts as 1, so it is due on the
+first tick. A DECISION line replaces the reason and ends the count.
+
+### Board snapshot pages (BH-8497)
+
+On a GitHub-Issues board the fingerprint (`bin/triage-gate.sh`
+`fetch_fingerprint`, through `bin/lib/triage-board-pages.sh`) holds every open
+ai-build issue: `state=open`, 100 per page, paged to the first short page, each
+page with its own ETag (an unchanged board answers 304s). It holds no closed
+issue (the operator, 2026-10-26): the state of a closed blocker is looked up over REST
+into `refs.json`, and a ticket that closes leaves the snapshot. Any failed page fails the fetch (`RUN gate-fetch-failed`). The
+page cap is the settings row
+`lib.triage-state.<project>.triage_state_board_max_pages` (env
+`TRIAGE_STATE_BOARD_MAX_PAGES`, fallback 20 = 2000 open issues, 1..100). A full
+last page is a cap hit: the rows read are used, and ONE ALERTS line per project
+per UTC day says `triage board snapshot hit the page cap` (never on `--seed`).
 
 ### What each mode does
 

@@ -593,6 +593,35 @@ def hnd_was(reason):
     return reason[i + len(HND_WAS):] if i >= 0 else ""
 
 
+# NO-DECISION RETRY (BH-8497). An rc-0 session that left evidence (a DECISION
+# line for another ticket, or a `tickets=` summary) but no DECISION line for a
+# model-set ticket stamps it `triaged` with this reason. That was final: at TTL
+# 0 nothing re-offered it, and an old ticket sat off the model forever. Now the
+# reason carries a counter, `(no-decision c/N)`, and the row is due again after
+# the backoff until c reaches N (--no-decision-retries); the next one is
+# `(no-decision retries spent N/N)`, final, and named in `no_decision_spent`.
+# The bare prefix (no counter) is a row written before this, or with N = 0: it
+# counts as 1.
+ND_PREFIX = "in the model set and in scope, no DECISION line, session rc 0"
+ND_RE = re.compile(r" \(no-decision (\d+)/(\d+)\)$")
+ND_SPENT = " (no-decision retries spent "
+
+
+def nd_count(reason):
+    """The no-DECISION count a reason carries: 0 for any other reason, 1 for
+    the bare prefix, the counter when present, None when spent."""
+    reason = str(reason or "")
+    if not reason.startswith(ND_PREFIX):
+        return 0
+    rest = reason[len(ND_PREFIX):]
+    if not rest:
+        return 1
+    if rest.startswith(ND_SPENT):
+        return None
+    m = ND_RE.fullmatch(rest)
+    return int(m.group(1)) if m else 0
+
+
 # CLIENT TURN (BH-3921): the ticket waits on the client. Its reply moves the
 # input hash, so the only timer it gets is the nudge (--nudge, 0 = off).
 CLIENT_TURN = ("needs_clarification", "waiting_client")
@@ -615,10 +644,12 @@ def recheck_ttl(verdict, ttl, defer_ttl, names_refs=False, nudge=0, client=False
     return ttl if ttl > 0 else None
 
 
-def due_at(row, now, ttl, defer_ttl, names_refs, nudge=0):
+def due_at(row, now, ttl, defer_ttl, names_refs, nudge=0, nd_retries=0):
     """When a stored verdict is due back at the model (epoch), or None: never
     on a timer. ONE place for the rule (`due` and `decide` both ask it):
       a. a handed-no-decision row: its backoff stamp;
+      a2. nd_retries > 0, a `triaged` no-DECISION row with retries left
+         (1 <= nd_count <= nd_retries): its stamp, else now (BH-8497);
       b. ttl > 0, the per-ticket sweep: the stamp, else triaged_at + ttl; a
          defer-like verdict naming no ref is clamped to triaged_at + defer_ttl
          and a client turn to triaged_at + nudge;
@@ -630,6 +661,10 @@ def due_at(row, now, ttl, defer_ttl, names_refs, nudge=0):
     if stamp is not None and hnd_marker(row):
         # a hand-off's backoff, never cut short by the clamps below
         return stamp
+    if nd_retries > 0 and row.get("verdict") == "triaged":
+        c = nd_count(row.get("reason"))
+        if c is not None and 1 <= c <= nd_retries:
+            return stamp if stamp is not None else now
     ta = iso_epoch(row.get("triaged_at"))
     defer = row.get("verdict") in DEFER_LIKE and not names_refs
     client = client_turn(row.get("verdict"), row.get("waiting_on"))
@@ -662,13 +697,14 @@ def cmd_due(a):
     now, ttl = int(a.now), int(a.ttl)
     defer_ttl = int(a.defer_ttl) if a.defer_ttl else ttl
     nudge = int(a.nudge or 0)
+    nd = int(a.no_decision_retries or 0)
     for r in rows:
         if not isinstance(r, dict) or not r.get("ticket_key"):
             continue
         if not r.get("next_recheck_at") and not r.get("triaged_at"):
             continue
         refs = reason_names_refs(a.gh == "1", str(r.get("reason") or ""), a.prefix, r["ticket_key"], r.get("ticket_label") or "")
-        d = due_at(r, now, ttl, defer_ttl, refs, nudge)
+        d = due_at(r, now, ttl, defer_ttl, refs, nudge, nd)
         if d is not None and now >= d:
             print(r["ticket_key"])
 
@@ -711,6 +747,7 @@ def cmd_decide(a):
     now, ttl = int(a.now), int(a.ttl)
     defer_ttl = int(a.defer_ttl) if a.defer_ttl else ttl
     nudge = int(a.nudge or 0)
+    nd = int(a.no_decision_retries or 0)
     gh = a.gh == "1"
     deferred_why = "deferred:" + (a.deferred_why if a.deferred_why in ("cap", "budget") else "cap")
     deferred = set()
@@ -828,7 +865,7 @@ def cmd_decide(a):
         if vh != h:
             out(key, label, "llm", "changed", h, seed_json, base)
             continue
-        due = due_at(row, now, ttl, defer_ttl, bool(rdeps), nudge)
+        due = due_at(row, now, ttl, defer_ttl, bool(rdeps), nudge, nd)
         if due is not None and now >= due:
             out(key, label, "llm", "recheck-due", h, seed_json, base, note)
             continue
@@ -934,6 +971,8 @@ def cmd_record(a):
     extra = load_refs(a.refs)
     defer_ttl = int(a.defer_ttl) if a.defer_ttl else ttl
     hnd_backoff = int(a.hnd_backoff) if a.hnd_backoff else defer_ttl
+    nd_cap = int(a.no_decision_retries or 0)
+    nd_backoff = int(a.nd_backoff) if a.nd_backoff else hnd_backoff
     prev = {}   # ticket_key -> the row's reason before this session
     if a.rows:
         try:
@@ -963,7 +1002,9 @@ def cmd_record(a):
     noop = []     # a DECISION on a skipped ticket that changed nothing
     work = []     # a DECISION on a skipped ticket with queue / close-out work
     handed = []   # model-set tickets the session returned nothing for
+    nd_spent = []  # no-DECISION retries spent this session (BH-8497)
     for k, (label, h, in_set, in_scope, why0, dec0, base, wk) in sorted(targets.items()):
+        nd_next = None
         if k in said:
             action, why = said[k]
             v, won = verdict_of(action, why)
@@ -987,7 +1028,18 @@ def cmd_record(a):
         elif in_set and in_scope and evidence:
             # Only a ticket this tick's scope actually put in front of the
             # model: a scoped tick never read the rest of the model set.
-            v, won, reason = "triaged", "none", "in the model set and in scope, no DECISION line, session rc 0"
+            v, won, reason = "triaged", "none", ND_PREFIX
+            if nd_cap > 0 and why0 != "closed" and k not in closed_now:
+                c0 = nd_count(prev.get(k, ""))
+                if c0 is None:
+                    # already spent: stays final, and was named when it spent
+                    reason = f"{ND_PREFIX}{ND_SPENT}{nd_cap}/{nd_cap})"
+                elif c0 + 1 <= nd_cap:
+                    reason = f"{ND_PREFIX} (no-decision {c0 + 1}/{nd_cap})"
+                    nd_next = now + nd_backoff
+                else:
+                    reason = f"{ND_PREFIX}{ND_SPENT}{nd_cap}/{nd_cap})"
+                    nd_spent.append(label or k)
         elif in_set and in_scope and shard_llm and not k.startswith("pr-") and k not in closed_now and why0 != "closed":
             # HANDED, NO DECISION, NO EVIDENCE: hold it for the backoff, claim
             # nothing. The marker is the hash the next tick computes when
@@ -1023,11 +1075,13 @@ def cmd_record(a):
         rt = recheck_ttl(v, ttl, defer_ttl, reason_names_refs(gh, reason, a.prefix, k, label), nudge, client_turn(v, won))
         if rt is not None:
             r["next_recheck_at"] = epoch_iso(now + rt)
+        if not is_closed and nd_next is not None:
+            r["next_recheck_at"] = epoch_iso(nd_next)
         if label and re.fullmatch(r"[A-Za-z0-9._#-]{1,64}", label):
             r["ticket_label"] = label
         rows.append(r)
     print(canon({"project": a.project, "rows": rows, "missed": missed, "missed_detail": missed_detail,
-                 "noop": noop, "work": work, "handed_no_decision": handed,
+                 "noop": noop, "work": work, "handed_no_decision": handed, "no_decision_spent": nd_spent,
                  "unresolved": sorted(unresolved, key=lambda x: int(x) if x.isdigit() else 0)}))
 
 
@@ -1061,6 +1115,7 @@ def main():
     d.add_argument("--deferred", default="")
     d.add_argument("--deferred-why", default="cap")   # cap | budget (anything else reads as cap)
     d.add_argument("--nudge", default="0")
+    d.add_argument("--no-decision-retries", default="0")   # 0 = a no-DECISION verdict is final
     u = sub.add_parser("due")
     u.add_argument("--rows", required=True)
     u.add_argument("--now", required=True)
@@ -1069,6 +1124,7 @@ def main():
     u.add_argument("--prefix", default="")
     u.add_argument("--gh", default="0")
     u.add_argument("--nudge", default="0")
+    u.add_argument("--no-decision-retries", default="0")
     r = sub.add_parser("record")
     r.add_argument("--project", required=True)
     r.add_argument("--out", required=True)
@@ -1087,6 +1143,8 @@ def main():
     r.add_argument("--rows", default="")
     r.add_argument("--hnd-backoff", default="")
     r.add_argument("--nudge", default="0")
+    r.add_argument("--no-decision-retries", default="0")
+    r.add_argument("--nd-backoff", default="")   # empty = --hnd-backoff
     a = ap.parse_args()
     if a.cmd == "entries":
         cmd_entries(a)

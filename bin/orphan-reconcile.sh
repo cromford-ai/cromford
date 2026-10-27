@@ -113,9 +113,10 @@
 #       STRANDED_MAX_PER_RUN (the stranded-watch lane row, default 0 = no cap)
 #       is the same brake for --stranded.
 # Read caps (GitHub quota, kept): ORPHAN_BLOCKER_FETCH_MAX (default 20) blocker
-#       reads, ORPHAN_THREAD_FETCH_MAX (default 40) comment-thread reads. They
-#       bound one tick's REST reads on a board that has gone quiet everywhere;
-#       in the 24 h to 2026-10-11 19:00Z neither bound in 731 runs.
+#       reads, ORPHAN_THREAD_FETCH_MAX (default 200, a settings row since
+#       BH-8497) comment-thread reads. They bound one tick's REST reads on a
+#       board that has gone quiet everywhere. A thread the bound cuts is read
+#       on the next run (the thread cursor), and a cut writes one ALERT a day.
 #
 # GitHub-Issues boards only (board_prefix "-" in fleet.conf): the in-app boards
 # have no `ai-build` label and no Blocked-by convention. Never merges, never
@@ -197,8 +198,20 @@ case "$BLOCKER_FETCH_MAX" in ''|*[!0-9]*) BLOCKER_FETCH_MAX=20 ;; esac
 # a handful; the cap is what stops a board that has gone quiet everywhere from
 # turning one tick into hundreds of reads. Past the cap a ticket is OWNED, not
 # launched — the fail-closed direction.
-THREAD_FETCH_MAX="${ORPHAN_THREAD_FETCH_MAX:-40}"
-case "$THREAD_FETCH_MAX" in ''|*[!0-9]*) THREAD_FETCH_MAX=40 ;; esac
+# The bound is the settings row lib.orphan-reconcile.<project>.orphan_thread_fetch_max
+# (then lib.orphan-reconcile.orphan_thread_fetch_max), env ORPHAN_THREAD_FETCH_MAX,
+# registered in catalog/lanes.d/_lib.orphan-reconcile.json (BH-8497). Code
+# fallback 200: one project-6 board (131 open ai-build, 2026-10-26) fits in one
+# run. Past the bound, the thread cursor (below) reads the rest on the next run.
+# Resolved in a subshell, so a fail-closed exit there never stops this lane.
+_OR_TFM=$(
+  exec 3>&1
+  trap 'printf "%s" "${ORPHAN_THREAD_FETCH_MAX:-}" >&3' EXIT
+  command -v lib_env_apply >/dev/null 2>&1 || . "$HARNESS/bin/lib/lane-gate.sh" >/dev/null 2>&1 || exit 0
+  lib_env_apply orphan-reconcile "$PROJECT" >/dev/null 2>&1)
+THREAD_FETCH_MAX="${_OR_TFM:-200}"
+case "$THREAD_FETCH_MAX" in ''|*[!0-9]*) THREAD_FETCH_MAX=200 ;; esac
+unset _OR_TFM
 if [ "$STRANDED_MODE" = 1 ]; then
   GRACE_MIN="${STRANDED_IDLE_MIN:-60}"
   case "$GRACE_MIN" in ''|*[!0-9]*) GRACE_MIN=60 ;; esac
@@ -568,7 +581,14 @@ NOW   = int(os.environ["ORPHAN_NOW"])
 GRACE = int(os.environ["ORPHAN_GRACE_S"])
 REPO  = os.environ["ORPHAN_REPO"]
 FETCH_MAX = int(os.environ["ORPHAN_FETCH_MAX"])
-THREAD_MAX = int(os.environ.get("ORPHAN_THREAD_MAX") or 40)
+THREAD_MAX = int(os.environ.get("ORPHAN_THREAD_MAX") or 200)
+# THE THREAD CURSOR (BH-8497): the issue number the last capped run read up to.
+# The commented orphans are walked in issue-number order from the first one
+# past it (wrapping), so a ticket the cap cut on one run is read on the next.
+try:
+    THREAD_CURSOR = int(os.environ.get("ORPHAN_THREAD_CURSOR") or 0)
+except ValueError:
+    THREAD_CURSOR = 0
 # `needs` prints one `<kind>\t<number>` line per read it wants; `decide` reads
 # those answers back out of ORPHAN_EXTRA and produces the verdicts.
 MODE  = os.environ.get("ORPHAN_MODE") or "decide"
@@ -578,6 +598,8 @@ MODE  = os.environ.get("ORPHAN_MODE") or "decide"
 HOLD_LIB = os.environ.get("ORPHAN_HOLD_LIB") == "1"
 EXTRA = os.environ.get("ORPHAN_EXTRA") or ""
 NEEDS = []
+THREAD_WANT = []   # needs mode: the commented orphans, in board order
+HOLD_WANT = []     # needs mode: the hold answers, asked AFTER every thread read
 
 def answer(kind, n):
     """The REST answer bash pre-fetched for <kind>-<n>, or None when the read
@@ -849,14 +871,12 @@ for i in sorted(issues, key=lambda x: int(x.get("number", 0))):
             # nobody has anything to say about. `capped` is NOT a read request:
             # bash skips it in the fetch loop and only names it in one line, so
             # the operator can see which knob bound and on which tickets.
-            if len([x for x in NEEDS if x.startswith("thread\t")]) < THREAD_MAX:
-                NEEDS.append("thread\t%d" % n)
-            else:
-                NEEDS.append("capped\t%d" % n)
+            # Which ones are read is decided after the loop (the cursor).
+            THREAD_WANT.append(n)
         # The hold verdict is bin/lib/hold.sh's, computed in bash AFTER the
-        # thread read above (the line order is the order bash works in).
+        # thread reads (the line order is the order bash works in).
         if verdict == "ORPHAN" and HOLD_LIB:
-            NEEDS.append("hold\t%d" % n)
+            HOLD_WANT.append(n)
         continue
     # (c) an open blocker, or open children of a decompose parent
     if verdict == "ORPHAN":
@@ -963,6 +983,15 @@ for i in sorted(issues, key=lambda x: int(x.get("number", 0))):
     rows.append("%s\t%d\t%s\t%s" % (key, n, verdict, why))
 
 if MODE == "needs":
+    # The cap takes THREAD_MAX threads in number order, starting past the
+    # cursor and wrapping; the rest are `capped`. All thread lines come before
+    # all hold lines, so every hold answer has its thread on disk.
+    want = sorted(set(THREAD_WANT))
+    k = next((j for j, x in enumerate(want) if x > THREAD_CURSOR), 0)
+    want = want[k:] + want[:k]
+    NEEDS += ["thread\t%d" % x for x in want[:THREAD_MAX]]
+    NEEDS += ["capped\t%d" % x for x in sorted(want[THREAD_MAX:])]
+    NEEDS += ["hold\t%d" % x for x in HOLD_WANT]
     print("\n".join(NEEDS))
     sys.exit(0)
 print("\n".join(rows))
@@ -996,7 +1025,8 @@ hold_answer() {
 classify() { # classify <needs|decide> <outfile>
   ORPHAN_PFX="$PFX" ORPHAN_NOW="$(date -u +%s)" ORPHAN_GRACE_S="$((GRACE_MIN * 60))" \
   ORPHAN_REPO="$REPO" ORPHAN_FETCH_MAX="$BLOCKER_FETCH_MAX" \
-  ORPHAN_THREAD_MAX="$THREAD_FETCH_MAX" ORPHAN_MODE="$1" ORPHAN_EXTRA="$TD/extra" \
+  ORPHAN_THREAD_MAX="$THREAD_FETCH_MAX" ORPHAN_THREAD_CURSOR="$THREAD_CURSOR" \
+  ORPHAN_MODE="$1" ORPHAN_EXTRA="$TD/extra" \
   ORPHAN_HOLD_LIB="$HOLD_LIB" \
   python3 "$TD/classify.py" "$TD/open.json" "$TD/states.json" "$TD/prs.json" \
     "$TD/jobs.json" "$TD/queue.tsv" "$TD/marks.txt" > "$2" 2>/dev/null
@@ -1007,8 +1037,22 @@ classify() { # classify <needs|decide> <outfile>
 # leaves no file behind, and pass 2's `answer()` reads that absence as the
 # fail-closed verdict (blocker OPEN, thread unverifiable). So a GitHub that has
 # stopped answering costs this lane a quiet tick, never a wrong launch.
+# THE THREAD CURSOR (BH-8497): the last thread number a capped run asked for,
+# per repo and per mode. Pass 1 starts past it, so no commented orphan stays
+# `unverifiable:thread` for more than one run while the board fits in two.
+# The cursor is a `ledgers` row (kind orphan-thread-cursor, key
+# "<owner>/<repo> <orphan|stranded>", status at, detail the issue number), so a
+# rebuilt box keeps it and no state/ file is written. One row per repo and
+# mode, overwritten in place. No row, an unreadable row or a worker outage
+# reads 0: the walk starts at the first thread, the behaviour before the cursor.
+TC_KIND=orphan-thread-cursor
+TC_KEY="$REPO orphan"; [ "$STRANDED_MODE" = 1 ] && TC_KEY="$REPO stranded"
+THREAD_CURSOR=""
+command -v job_ledger_row >/dev/null 2>&1 \
+  && THREAD_CURSOR=$(job_ledger_row "$TC_KIND" "$TC_KEY" 2>/dev/null | jq -r '.detail // "" | tostring' 2>/dev/null)
+case "$THREAD_CURSOR" in ''|*[!0-9]*) THREAD_CURSOR=0 ;; esac
 classify needs "$TD/needs.tsv" || true
-CAPPED=""
+CAPPED=""; LAST_THREAD=""; N_CAPPED=0
 # THE WAKE BACKSTOP (BH-6976). A thread or blocker read is kept in
 # state/orphan-reconcile/<owner>_<repo>/<kind>-N.{json,meta} and reused instead
 # of a GitHub read only while wb_cache_get says so: no issue or pr wake for N
@@ -1022,9 +1066,10 @@ while IFS=$'\t' read -r KIND NUM; do
   # `capped` is not a read — it is pass 1 naming a thread it did not ask for
   # because ORPHAN_THREAD_FETCH_MAX bound. Collected, never fetched.
   case "$KIND" in
-    capped) CAPPED="${CAPPED:+$CAPPED,}#$NUM"; continue ;;
+    capped) CAPPED="${CAPPED:+$CAPPED,}#$NUM"; N_CAPPED=$((N_CAPPED + 1)); continue ;;
     hold)   hold_answer "$NUM"; continue ;;   # no GitHub read: the thread is already here
-    blocker|thread) ;;
+    blocker) ;;
+    thread) LAST_THREAD="$NUM" ;;
     *) continue ;;
   esac
   CU=-
@@ -1058,7 +1103,27 @@ while IFS=$'\t' read -r KIND NUM; do
 done < "$TD/needs.tsv"
 [ "$WB_ON" = 1 ] && wb_gc "$WB_DIR"
 if [ -n "$CAPPED" ]; then
-  log "reconcile: ORPHAN_THREAD_FETCH_MAX=$THREAD_FETCH_MAX bound — $CAPPED parked unverifiable:thread"
+  log "reconcile: ORPHAN_THREAD_FETCH_MAX=$THREAD_FETCH_MAX bound — $CAPPED parked unverifiable:thread; next run starts past #${LAST_THREAD:-0}"
+  command -v job_ledger_put >/dev/null 2>&1 \
+    && { job_ledger_put "$TC_KIND" "$TC_KEY" at "${LAST_THREAD:-0}" >/dev/null 2>&1 \
+         || log "reconcile: thread cursor row NOT written (the next run starts at the first thread)"; }
+  # ONE ALERT a project a UTC day names the count the bound cut. The day flag
+  # goes through bin/lib/flags.sh (flag_has --cached / flag_set; the file
+  # flags/alerted-orphan-thread-cap-<project>-<YYYYMMDD>); bin/alerts-groom.sh
+  # prunes old alerted-* days.
+  # shellcheck source=bin/lib/flags.sh
+  command -v flag_set >/dev/null 2>&1 || . "$HARNESS/bin/lib/flags.sh" 2>/dev/null
+  TC_FLAG="alerted-orphan-thread-cap-$(printf '%s' "$PROJECT" | tr -c 'A-Za-z0-9._-' '_')-$(date -u +%Y%m%d)"
+  if command -v flag_set >/dev/null 2>&1 && ! flag_has --cached "$TC_FLAG" 2>/dev/null; then
+    flag_set "$TC_FLAG" on "orphan-reconcile: thread cap alert sent" >/dev/null 2>&1
+    "$HARNESS/bin/lane-alert.sh" --id "orphan-thread-cap:$PROJECT" --severity warn "orphan-reconcile/$PROJECT" \
+      "ORPHAN_THREAD_FETCH_MAX=$THREAD_FETCH_MAX cut $N_CAPPED comment-thread read(s) this run; they are read on the next run. Raise lib.orphan-reconcile.$PROJECT.orphan_thread_fetch_max if this repeats." \
+      >/dev/null 2>&1 || true
+  fi
+elif [ "$THREAD_CURSOR" != 0 ] && command -v job_ledger_put >/dev/null 2>&1; then
+  # An uncut run resets the cursor, so the next capped run starts at the first thread.
+  job_ledger_put "$TC_KIND" "$TC_KEY" at 0 >/dev/null 2>&1 \
+    || log "reconcile: thread cursor row NOT reset (the next capped run starts past #$THREAD_CURSOR)"
 fi
 
 # ---- pass 2: the verdicts ---------------------------------------------------

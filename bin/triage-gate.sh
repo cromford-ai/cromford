@@ -102,6 +102,12 @@ for _P in "$(dirname "$0")/lib/gh-rest.sh" "$HARNESS/bin/lib/gh-rest.sh"; do
   # shellcheck source=/dev/null
   [ -r "$_P" ] && { . "$_P"; break; }
 done
+# BH-8497: the paged open-issue read for the GitHub-Issues fingerprint. No lib
+# (a box mid-sync) = the one `state=all` page this file always read.
+for _P in "$(dirname "$0")/lib/triage-board-pages.sh" "$HARNESS/bin/lib/triage-board-pages.sh"; do
+  # shellcheck source=/dev/null
+  [ -r "$_P" ] && { . "$_P"; break; }
+done
 # BH-2133: bot-only comment bumps on a GitHub-Issues board are absorbed. No lib
 # = today's behaviour (every bump wakes the tick).
 for _P in "$(dirname "$0")/lib/gate-self-comments.sh" "$HARNESS/bin/lib/gate-self-comments.sh"; do
@@ -290,10 +296,24 @@ fetch_fingerprint() { # -> fingerprint on stdout, rc!=0 on any failure
       _gh_rest_args_ok "$GH_ISSUES_REPO" || return 1
     fi
     gf=$(mktemp) || return 1
-    # `> file`, never `$( )`: the status has to survive into this shell.
-    gh_rest GET "repos/$GH_ISSUES_REPO/issues" -f labels=ai-build -f state=all -F per_page=100 \
-      > "$gf" || rc=$?
-    [ "$rc" = 0 ] || { rm -f "$gf"; return 1; }
+    if command -v tbp_issue_pages >/dev/null 2>&1; then
+      # EVERY OPEN ai-build ISSUE (BH-8497), paged up to the cap, and nothing
+      # else. Closed tickets are not in the open-ticket snapshot (the operator,
+      # 2026-10-26, comment 6426367666): the state of a closed blocker comes
+      # from the ref lookup into refs.json (bin/lib/triage-state.sh
+      # _ts_fetch_refs), and a ticket that closes leaves the snapshot, which
+      # is itself the change that wakes the tick. A failed page fails the fetch.
+      local mp
+      mp=$(tbp_max_pages "$PROJECT")
+      tbp_issue_pages "$GH_ISSUES_REPO" "$mp" "$gf" || rc=$?
+      [ "$rc" = 0 ] || { rm -f "$gf"; return 1; }
+      [ "${TBP_CAPPED:-0}" = 1 ] && [ "$MODE" != "--seed" ] && _tbp_alert "$PROJECT" "$TBP_SEEN" "$mp"
+    else
+      # `> file`, never `$( )`: the status has to survive into this shell.
+      gh_rest GET "repos/$GH_ISSUES_REPO/issues" -f labels=ai-build -f state=all -F per_page=100 \
+        > "$gf" || rc=$?
+      [ "$rc" = 0 ] || { rm -f "$gf"; return 1; }
+    fi
     # REST /issues returns PULL REQUESTS too; they are filtered out so the
     # fingerprint stays a fingerprint of the issue threads.
     #

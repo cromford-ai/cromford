@@ -144,11 +144,27 @@ CLRST() { rm -f "$H"/st-* 2>/dev/null; }
 
 # curl shim for jobs-client: /api/jobs and /api/queue answer from fixtures.
 # CURL_MODE=down is the ledger outage the script must fail CLOSED on.
+# The orphan-thread-cursor `ledgers` row (BH-8497) is kept in
+# $HARNESS/fixture/ledger-cursor/<key>.json: a PUT writes it, a GET reads it
+# back ({"ledger":null} when absent). Every other ledger kind answers as before.
 cat > "$T/fakebin/curl" <<'SH'
 #!/bin/bash
 URL="${!#}"
 [ "${CURL_MODE:-ok}" = down ] && exit 7
+M=GET; D=""; prev=""
+for a in "$@"; do case "$prev" in -X) M="$a" ;; --data-binary) D="$a" ;; esac; prev="$a"; done
+LD="$HARNESS/fixture/ledger-cursor"
 case "$URL" in
+  */api/ledger\?kind=orphan-thread-cursor\&key=*)
+    K=$(python3 -c 'import sys,urllib.parse; print(urllib.parse.unquote(sys.argv[1].split("&key=",1)[1]), end="")' "$URL" | tr -c 'A-Za-z0-9._-' '_')
+    if [ -f "$LD/$K.json" ]; then printf '{"ledger":%s}\n200\n' "$(cat "$LD/$K.json")"
+    else printf '{"ledger":null}\n200\n'; fi ;;
+  */api/ledger)
+    if [ "$M" = PUT ] && [ "$(jq -r '.kind' <<<"$D" 2>/dev/null)" = orphan-thread-cursor ]; then
+      K=$(jq -j '.key' <<<"$D" | tr -c 'A-Za-z0-9._-' '_'); mkdir -p "$LD"
+      jq -c '{status, detail}' <<<"$D" > "$LD/$K.json"
+    fi
+    printf '{"ok":true}\n200\n' ;;
   */api/jobs*)  printf '%s\n200\n' "$(cat "$HARNESS/fixture/jobs.json")" ;;
   */api/queue*) printf '%s\n200\n' "$(cat "$HARNESS/fixture/queuerows.json")" ;;
   *)            printf '{"ok":true}\n200\n' ;;
@@ -219,6 +235,7 @@ reset() {
   scratch_rm "$H/state"; scratch_rm "$H/locks"; scratch_rm "$H/logs"; scratch_rm "$H/builds"
   mkdir -p "$H/state" "$H/locks" "$H/logs" "$H/builds"
   rm -f "$H/launches.log" "$H/alerts-called.log" "$H/gh-calls.log" "$H/fixture"/issue-*.json
+  scratch_rm "$H/fixture/ledger-cursor"
   CLRST
   open_board
 }
@@ -713,6 +730,66 @@ grep -qx "project-5 963 TK-963" <<<"$(launched)" && bad \
   "14b: a HOLD past the row cap must never be launched over: $(launched)" || ok
 grep -q 'reconcile: parked unread — TK-963(unverifiable:thread-truncated)' "$H/logs/$P.log" && ok \
   || bad "14b: the truncated read must be named in the log: $(grep -o 'reconcile: .*' "$H/logs/$P.log" | tr '\n' '|')"
+
+# ---------- 15. a 131-issue board: every thread is read (BH-8497) -----------
+# The project-6 shape (comment 6426367666): 131 open ai-build issues, created
+# #1..#131, where the 20 OLDEST-created carry the NEWEST comments. The old
+# literal bound (40) parked 91 of them `unverifiable:thread` on every run.
+# Every thread here ends in a HOLD, so no run launches anything and every run
+# needs every thread again: the worst case for the bound.
+#   15a  the default bound (a settings row, fallback 200) fits the board: no
+#        ticket parked unverifiable on either of two runs, no cap line, no ALERT
+#   15b  a bound of 100 parks 31 on run 1 and writes ONE ALERT with the count;
+#        run 2 starts past the cursor, so none of run 1's parked tickets is
+#        parked again, and the ALERT is not repeated the same day
+board131() {
+  jq -nc --arg old "$(NOWISO 7200)" --arg new "$(NOWISO 60)" '[range(131; 0; -1) as $n
+    | {number: $n, title: "TK-\($n) old project-6 ticket", body: "## Scope",
+       comments: [{body: "HOLD — the operator: wait for the drain."}],
+       updatedAt: (if $n <= 20 then $new else $old end)}]' > "$H/fixture/open.json"
+  jq -nc '[range(1; 132) as $n | {number: $n, state: "OPEN", closedAt: null}]' > "$H/fixture/states.json"
+  echo '[]' > "$H/fixture/prs.json"
+  echo '{"jobs":[]}' > "$H/fixture/jobs.json"
+  echo '{"queue":[]}' > "$H/fixture/queuerows.json"
+}
+nunv() { awk -F'\t' '$4 ~ /^unverifiable:/' <<<"$1" | grep -c . || true; }
+nhold() { awk -F'\t' '$3=="OWNED" && $4 ~ /^hold:/' <<<"$1" | grep -c . || true; }
+reset; board131; rm -f "$H/flags/alerted-orphan-thread-cap-"*
+OUT15A1=$(run); OUT15A2=$(run)
+[ "$(grep -c . <<<"$OUT15A1")" = 131 ] && [ "$(nunv "$OUT15A1")" = 0 ] && [ "$(nunv "$OUT15A2")" = 0 ] && ok \
+  || bad "15a: the default bound reads all 131 threads on both runs: run1 $(nunv "$OUT15A1") unverifiable, run2 $(nunv "$OUT15A2")"
+[ "$(nhold "$OUT15A2")" = 131 ] && ok || bad "15a: every thread was read, so every HOLD holds: $(nhold "$OUT15A2") of 131"
+for n in 1 20; do
+  grep -q "^TK-$n	$n	OWNED	hold:" <<<"$OUT15A2" && ok || bad "15a: an old ticket with the newest comment (#$n) is read: $(awk -F'\t' -v n="$n" '$2==n' <<<"$OUT15A2")"
+done
+grep -q 'ORPHAN_THREAD_FETCH_MAX' "$H/logs/$P.log" && bad "15a: a board inside the default bound logs no cap: $(summary)" || ok
+grep -q 'orphan-thread-cap' "$H/alerts-called.log" 2>/dev/null && bad "15a: no ALERT inside the bound: $(cat "$H/alerts-called.log")" || ok
+[ "$(nlaunch)" = 0 ] && ok || bad "15a: a held board launches nothing: $(launched)"
+
+reset; board131; rm -f "$H/flags/alerted-orphan-thread-cap-"*
+OUT15B1=$(ORPHAN_THREAD_FETCH_MAX=100 run)
+P1=$(awk -F'\t' '$4 ~ /^unverifiable:thread/ {print $2}' <<<"$OUT15B1" | sort -n | tr '\n' ' ')
+[ "$P1" = "$(seq 101 131 | tr '\n' ' ')" ] && ok || bad "15b: run 1 reads #1..#100 and parks #101..#131: [$P1]"
+grep -q 'reconcile: ORPHAN_THREAD_FETCH_MAX=100 bound — .*; next run starts past #100' "$H/logs/$P.log" && ok \
+  || bad "15b: the cap line names the cursor: $(grep -o 'reconcile: ORPHAN.*' "$H/logs/$P.log")"
+[ "$(grep -c 'orphan-thread-cap' "$H/alerts-called.log" 2>/dev/null)" = 1 ] && grep 'orphan-thread-cap' "$H/alerts-called.log" | grep -q 'cut 31 comment-thread read' && ok \
+  || bad "15b: one ALERT names the 31 cut: $(cat "$H/alerts-called.log" 2>/dev/null)"
+OUT15B2=$(ORPHAN_THREAD_FETCH_MAX=100 run)
+P2=$(awk -F'\t' '$4 ~ /^unverifiable:thread/ {print $2}' <<<"$OUT15B2" | sort -n | tr '\n' ' ')
+[ "$P2" = "$(seq 70 100 | tr '\n' ' ')" ] && ok || bad "15b: run 2 reads #101..#131 then #1..#69, and parks #70..#100: [$P2]"
+BOTH=$(comm -12 <(tr ' ' '\n' <<<"$P1" | grep . | sort) <(tr ' ' '\n' <<<"$P2" | grep . | sort) | tr '\n' ' ')
+[ -z "$BOTH" ] && ok || bad "15b: no ticket is parked unverifiable on two runs in a row: [$BOTH]"
+[ "$(grep -c 'orphan-thread-cap' "$H/alerts-called.log" 2>/dev/null)" = 1 ] && ok \
+  || bad "15b: the ALERT is not repeated the same day: $(cat "$H/alerts-called.log" 2>/dev/null)"
+# The cursor is a `ledgers` row, never a state/ file (BH-4159).
+CURF=$(ls "$H"/fixture/ledger-cursor/*orphan.json 2>/dev/null | head -1)
+[ -n "$CURF" ] && [ "$(jq -r '.status + " " + .detail' "$CURF")" = "at 69" ] && ok \
+  || bad "15b: the cursor is the ledger row orphan-thread-cursor (at 69, run 2 read up to #69): $(cat "$H"/fixture/ledger-cursor/* 2>/dev/null)"
+ls "$H"/state/orphan-reconcile/*/thread-cursor* >/dev/null 2>&1 && bad "15b: no thread-cursor state file: $(ls "$H"/state/orphan-reconcile/*/)" || ok
+# A run inside the bound resets the cursor, so the next capped run starts at #1.
+OUT15B3=$(run)
+[ "$(nunv "$OUT15B3")" = 0 ] && [ "$(jq -r '.detail' "$CURF" 2>/dev/null)" = 0 ] && ok \
+  || bad "15b: an uncut run resets the cursor row to 0: $(cat "$CURF" 2>/dev/null)"
 
 echo "orphan-reconcile: $PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ]

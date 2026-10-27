@@ -1,0 +1,13 @@
+{
+  "env": "TRIAGE_STATE_NO_DECISION_RETRIES",
+  "read_in": "bin/lib/triage-state.sh",
+  "type": "int",
+  "default": 3,
+  "min": 0,
+  "max": 20,
+  "unit": "retries",
+  "zero_means": "off: a no-DECISION verdict is final, as before BH-8497",
+  "required": false,
+  "settable": true,
+  "note": "BH-8497. A model-set ticket an rc-0 session gave no DECISION line (while it left other evidence) is stamped triaged with reason '... no DECISION line, session rc 0 (no-decision c/N)' and next_recheck_at = now + TRIAGE_STATE_HANDED_NO_DECISION_BACKOFF_S, and is due back at the model until c reaches this. The next one is '(no-decision retries spent N/N)': final, and ONE ALERTS line names the keys. A row with the bare reason (written before this) counts as 1. Read by ts_nd_retries as ${TRIAGE_STATE_NO_DECISION_RETRIES:-3}; junk is 3. Rows: lib.triage-state.<project>.triage_state_no_decision_retries, then lib.triage-state.triage_state_no_decision_retries."
+}

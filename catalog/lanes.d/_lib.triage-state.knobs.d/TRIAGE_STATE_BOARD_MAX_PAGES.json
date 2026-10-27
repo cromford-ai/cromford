@@ -1,0 +1,13 @@
+{
+  "env": "TRIAGE_STATE_BOARD_MAX_PAGES",
+  "read_in": "bin/lib/triage-board-pages.sh",
+  "type": "int",
+  "default": 20,
+  "min": 1,
+  "max": 100,
+  "unit": "pages",
+  "zero_means": null,
+  "required": false,
+  "settable": true,
+  "note": "BH-8497. The GitHub-Issues board fingerprint (bin/triage-gate.sh fetch_fingerprint) reads every page of open ai-build issues (100 per page, each page with its own ETag) up to this many pages, and no closed issue (a closed blocker resolves through refs.json). A full last page is a cap hit: the rows read are used and ONE ALERTS line per project per UTC day names the project and the count read (never on --seed). Read by tbp_max_pages as ${TRIAGE_STATE_BOARD_MAX_PAGES:-20}; junk is 20, clamped to 1..100. Rows: lib.triage-state.<project>.triage_state_board_max_pages, then lib.triage-state.triage_state_board_max_pages."
+}
