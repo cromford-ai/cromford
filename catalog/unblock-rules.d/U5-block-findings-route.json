@@ -20,5 +20,5 @@
     "args": {"repo": ".repo", "pr": ".pr", "head": ".head", "lines": ".block_lines"}
   },
   "key": ["repo", "pr", "head", "id"],
-  "note": "A lead BLOCK stands on the head, its report names BLOCK findings, and nothing routed them: no CHANGES_REQUESTED review on the head, no findings comment on the head, no fix round running. Post the findings so the fix round has a brief."
+  "note": "A lead BLOCK stands on the head, its report names BLOCK findings, and nothing routed them: no CHANGES_REQUESTED review on the head, no findings comment on the head, no fix round running. Post the findings so the fix round has a brief. A report with no '- [BLOCK' line never reaches U5: the review collector leaves it to U13-EMPTY (BH-8554)."
 }

@@ -21,6 +21,11 @@
 #   lead-block-unrouted   U5  the standing verdict on the head is a lead BLOCK,
 #                             and no CR review on the head and no findings
 #                             comment on the head says it was routed.
+#                             A whole report with 0 `- [BLOCK` lines (the same
+#                             `^- \[BLOCK` test as bin/lead-review-land.sh) and
+#                             no cap line gives NO record: land withholds it,
+#                             and the queue family's U13-EMPTY is its one owner
+#                             (BH-8554). The log line counts it as empty_owned.
 #   lead-block-cap-only   U6  the same, and the report's only BLOCK reason is
 #                             the outcome cap line (bin/lead-review.sh writes
 #                             `- outcome cap: ...` from loc_cap): 0 `- [BLOCK` lines.
@@ -180,7 +185,8 @@ unblock_collect_review() {
   wait
 
   # The records.
-  local base fr detail report readable reviews comments
+  local base fr detail report readable reviews comments rec
+  local -a eowned=()
   while IFS=$'\t' read -r pr head; do
     [ -n "$pr" ] && [ -f "$tmp/vd-$pr.ok" ] || continue
     sv=$(jq -r '.standing.verdict // ""' "$tmp/vd-$pr.json"); ss=$(jq -r '.standing.source // ""' "$tmp/vd-$pr.json")
@@ -200,18 +206,19 @@ unblock_collect_review() {
       comments=null; [ -f "$tmp/cm-$pr.ok" ] && comments=$(jq -c 'if type == "array" then . else null end' "$tmp/cm-$pr.json")
       fr=$(_ucr_fix_round "$h" "$project" "$slug" "$pr")
       readable=true; [ "$report" = null ] && readable=null
-      jq -c --argjson b "$base" --argjson st "$(jq -c .standing "$tmp/vd-$pr.json")" --arg job "$job" \
+      rec=$(jq -c --argjson b "$base" --argjson st "$(jq -c .standing "$tmp/vd-$pr.json")" --arg job "$job" \
             --argjson body "$report" --argjson rv "${reviews:-null}" --argjson cm "${comments:-null}" \
             --argjson fr "$fr" --argjson readable "$readable" --argjson blmax "$blmax" -n '
         ($b.head) as $h | ($h[0:12]) as $h12
-        | (if $body == null then null else [$body | split("\n")[] | select(test("^\\s*- \\[BLOCK"))] end) as $bl
+        | (if $body == null then null else [$body | split("\n")[] | select(test("^- \\[BLOCK"))] end) as $bl
         | (if $body == null then null else ([$body | split("\n")[] | select(test("^- outcome cap: "))] | first // null) end) as $cap
         | (if $rv == null then null else any($rv[]; .state == "CHANGES_REQUESTED" and .commit_id == $h) end) as $cr
         | (if $cm == null then null else any($cm[]; (.body // "") as $t
              | ($t | contains("<!-- review-verdict:block " + $h))
                or (($t | contains("<!-- tackler:")) and ($t | contains($h12)))
                or (($t | test("(^|\\n)\\s*- \\[BLOCK")) and ($t | contains($h12)))) end) as $fc
-        | if $cr == true or $fc == true then empty else
+        | if $cr == true or $fc == true then empty
+          elif $body != null and ($bl | length) == 0 and $cap == null then "empty-owned" else
           ($cap != null and $bl != null and ($bl | length) == 0) as $caponly
           | $b + {
               kind: (if $caponly then "lead-block-cap-only" else "lead-block-unrouted" end),
@@ -227,7 +234,8 @@ unblock_collect_review() {
               cap_line: $cap, cap_only_candidate: $caponly,
               cr_on_head: $cr, findings_comment_on_head: $fc, fix_round_running: $fr }
             + (if $caponly then {metric: ($cap | capture("\\((?<m>[^)]*)\\) on ").m // null)} else {} end)
-          end' >> "$tmp/out.jsonl"
+          end')
+      if [ "$rec" = '"empty-owned"' ]; then eowned+=("$pr"); elif [ -n "$rec" ]; then printf '%s\n' "$rec" >> "$tmp/out.jsonl"; fi
     elif [[ $sv == MERGE* ]] && [ -f "$tmp/rv-$pr.ok" ] && [ "$reviews" != null ]; then
       jq -c --argjson b "$base" --argjson rv "$reviews" --arg sv "$sv" --arg logins "$logins" -n '
         ($logins | split(",") | map(gsub("^\\s+|\\s+$"; "")) | map(select(. != ""))) as $ls
@@ -272,7 +280,7 @@ unblock_collect_review() {
   jq -nc --arg r "$slug" --argjson n "$(jq 'length' <<<"$prs")" --argjson t "$truncated" \
     --argjson u "$(printf '%s\n' ${unreadable[@]+"${unreadable[@]}"} | jq -R . | jq -sc 'map(select(. != ""))')" \
     '{kind: "collector-meta", family: "review", repo: $r, prs_seen: $n, truncated: $t, unreadable: $u}'
-  _ucr_log "$slug prs=$(jq 'length' <<<"$prs") records=$nrec unknown=$nunk rest=$nrest worker=$nwork${unreadable[*]:+ unreadable=${unreadable[*]}}"
+  _ucr_log "$slug prs=$(jq 'length' <<<"$prs") records=$nrec unknown=$nunk rest=$nrest worker=$nwork${unreadable[*]:+ unreadable=${unreadable[*]}}${eowned[*]:+ empty_owned=${#eowned[@]}:$(IFS=,; echo "${eowned[*]}")}"
   rm -rf "$tmp"
   return 0
 }

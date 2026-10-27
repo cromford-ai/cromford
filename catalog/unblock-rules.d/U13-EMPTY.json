@@ -32,5 +32,5 @@
     "empty_blocks",
     "id"
   ],
-  "note": "BH-8390 R-EMPTY. bin/lead-review-land.sh withheld a lead BLOCK whose report has no '- [BLOCK' line (#7560 #8170 #8278). While the empty BLOCKs on a head are at most empty_block_max (UNBLOCK_EMPTY_BLOCK_MAX, default 1): reset that lead request and ask again with the note. Overlaps #8326 (whichever lands first owns it)."
+  "note": "BH-8390 R-EMPTY. bin/lead-review-land.sh withheld a lead BLOCK whose report has no '- [BLOCK' line (#7560 #8170 #8278). While the empty BLOCKs on a head are at most empty_block_max (UNBLOCK_EMPTY_BLOCK_MAX, default 1): reset that lead request and ask again with the note. Overlaps #8326 (whichever lands first owns it). It is the one owner of an empty BLOCK; the review family emits no record for it (BH-8554)."
 }

@@ -1,0 +1,82 @@
+{
+  "_source": "BH-8554. Synthesized to the REST shapes the 7724 and 8390 fixtures use (pulls, search/issues, pulls/<n>/reviews, issues/<n>/comments, pulls/<n>; worker verdicts, job artifacts, lead-reviews). One open PR #8554 with a standing lead BLOCK on its head whose report has no anchored - [BLOCK line, and the land log line bin/lead-review-land.sh writes when it withholds that report. The test edits .worker.artifacts[\"job-8554\"].lead_review_report.body per case.",
+  "now": "2026-10-27T04:00:00Z",
+  "gh": {
+    "repos/example-org/cromford/pulls?state=open&per_page=100": [
+      {
+        "number": 8554,
+        "state": "open",
+        "draft": false,
+        "head": {
+          "sha": "8554eeee0000000000000000000000000000e001",
+          "ref": "ticket/bh-8554"
+        },
+        "user": {
+          "login": "operator"
+        },
+        "labels": [],
+        "updated_at": "2026-10-27T03:00:00Z"
+      }
+    ],
+    "search/issues?q=repo:example-org/cromford+is:pr+is:open+review:changes_requested&per_page=100": {
+      "total_count": 0,
+      "incomplete_results": false,
+      "items": []
+    },
+    "repos/example-org/cromford/pulls/8554/reviews?per_page=100": [],
+    "repos/example-org/cromford/issues/8554/comments?per_page=100": [],
+    "repos/example-org/cromford/pulls/8554": {
+      "number": 8554,
+      "state": "open",
+      "merged": false,
+      "head": {
+        "sha": "8554eeee0000000000000000000000000000e001",
+        "ref": "ticket/bh-8554"
+      },
+      "labels": []
+    },
+    "repos/example-org/cromford/pulls?state=closed&sort=updated&direction=desc&per_page=100": []
+  },
+  "worker": {
+    "verdicts": {
+      "8554": {
+        "repo": "example-org/cromford",
+        "pr": 8554,
+        "head": "8554eeee0000000000000000000000000000e001",
+        "standing": {
+          "id": 98554,
+          "repo": "example-org/cromford",
+          "pr": 8554,
+          "head_sha": "8554eeee0000000000000000000000000000e001",
+          "verdict": "BLOCK",
+          "source": "lead",
+          "reviewer": "hub-lead",
+          "reviewer_model": "stub-model-x",
+          "report_url": null,
+          "note": "lead-review:lr-fixture-8554 lead-job:job-8554",
+          "created_at": "2026-10-27T03:00:00Z",
+          "auth": "secret",
+          "human_sig": null,
+          "human_proven": null
+        },
+        "rows": [],
+        "truncated": false,
+        "as_of": "2026-10-27T04:00:00Z"
+      }
+    },
+    "artifacts": {
+      "job-8554": {
+        "lead_review_report": {
+          "body": "<!-- review-verdict: v2 -->\n# Lead review cromford#8554 (example-org/cromford#8554 at 8554eee)\n\nVerdict: BLOCK\n\n- review level: smoke\n",
+          "path": "state/lead-review/fixture-8554.md",
+          "verdict": "BLOCK"
+        }
+      }
+    },
+    "lead_reviews_running": {
+      "requests": [],
+      "truncated": false
+    }
+  },
+  "verdict_line": "BLOCK\tlead\t98554\t2026-10-27T03:00:00Z\t-\t-"
+}
