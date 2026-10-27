@@ -13,7 +13,9 @@
 #       a FAIL): each record decides to its own rule; an acting rule goes
 #       through the REAL act.sh in shadow and records `would` (never failed
 #       bad-input, never unknown-action); the card rule escalates and reaches
-#       ubt_stage_card (never deferred).
+#       ubt_stage_card (never deferred); a rule whose judge runs on its record
+#       (U6, BH-7724) reaches ubt_stage_judge and records `would` with the
+#       judge's proceed detail (never deferred).
 #   S4  uo_class_of looks a rule up by its id: U8 U9 U10 U12 by id (id is not
 #       the stem), U1-batch-culprit; a stem, a case change, a space, ../U8, an
 #       ambiguous id (two files) give rc 1; a file that is not JSON next to a
@@ -174,18 +176,20 @@ budget S2
 
 # ═════ the tick harness (S3, S5, S6, S7) ═════════════════════════════════════
 # mktick <name> [queue] -> prints the case dir. The shipped bin/unblock.sh by
-# its closure, with the rules engine and the card seam it loads by a loop, the
-# shipped rules, a settings cache, a logging lane-alert and an agent-call stub
-# that answers per $FXT/ac.mode. `queue` adds the real queue collector, the
-# fake batch_failure tool and a gh that answers from the case fixture.
+# its closure, with the rules engine, the judge seam (BH-7724) and the card
+# seam it loads by a loop, the shipped rules, a settings cache, a logging
+# lane-alert and an agent-call stub that answers per $FXT/ac.mode (the
+# unblock-judge stage answers $FXT/judge.answer, default CAP_ONLY). `queue`
+# adds the real queue collector, the fake batch_failure tool and a gh that
+# answers from the case fixture.
 mktick() {
   local C="$T/$1" S
   mkdir -p "$C/h/env" "$C/h/state" "$C/h/logs" "$C/h/catalog/unblock-rules.d" "$C/h/catalog/prompts" "$C/fx" "$C/col" "$C/bin"
-  for S in bin/unblock.sh bin/fleet-conf.sh bin/jobs-client.sh bin/lib/unblock/rules.sh bin/lib/unblock/card.sh; do
+  for S in bin/unblock.sh bin/fleet-conf.sh bin/jobs-client.sh bin/lib/unblock/rules.sh bin/lib/unblock/judge.sh bin/lib/unblock/card.sh; do
     ( cd "$SRC" && scratch_install_closure "$S" "$C/h" ) >/dev/null || { echo "setup: closure $S" >&2; return 1; }
   done
   cp "$RULES"/*.json "$C/h/catalog/unblock-rules.d/"
-  cp "$SRC/catalog/prompts/unblock-decide.md" "$C/h/catalog/prompts/"
+  cp "$SRC/catalog/prompts/unblock-decide.md" "$SRC/catalog/prompts/unblock-judge.md" "$C/h/catalog/prompts/"
   : > "$C/h/env/global.env"
   printf 'cromford example-org/cromford - - 3 hub 192.0.2.10\n' > "$C/h/fleet.conf"
   rm -f "$C/h/bin/lane-alert.sh" "$C/h/bin/agent-call.sh"
@@ -199,6 +203,7 @@ SH
   cat > "$C/h/bin/agent-call.sh" <<'SH'
 #!/bin/bash
 echo "AGENTCALL $1 $2 $3" >> "$FXT/seq.log"
+if [ "$1" = unblock-judge ]; then cat "$FXT/judge.answer" 2>/dev/null > "$5" || echo CAP_ONLY > "$5"; exit 0; fi
 case "$(cat "$FXT/ac.mode" 2>/dev/null)" in
   empty) : > "$5" ;;
   *) printf '{"what":"#7604 waits: its own CI is red on a dead-shard batch.","options":["hold: keep it parked","re-run its CI by hand"],"recommendation":1,"reason":"own CI is red"}\n' > "$5" ;;
@@ -320,7 +325,15 @@ for f in "$RULES"/[!_]*.json; do
   check "S3 $id: its record decides to $id" "$got" "$id"
   key=$(jq -rs --arg s "$subj" 'map(select(.subject == $s))[0].decision_key // ""' "$C/claims.jsonl")
   rec=$(jq -rs --arg k "$key" 'map(select(.decision_key == $k)) | map("\(.outcome) \(.outcome_detail)") | join(",")' "$C/records.jsonl")
-  if [ "$verb" = card ]; then
+  # A rule whose judge runs on its record (no `when`, or `when` true) goes
+  # through ubt_stage_judge (BH-7724): the stub answers the proceed word, so
+  # the record is would with the judge's detail; act.sh is UNB-4's, later.
+  jw=$(jq -r 'if .judge == null then "" else (.judge.when // "true") end' "$f")
+  jr=$(jq -c --arg id "$id" '.records[$id]' "$RECS")
+  if [ -n "$jw" ] && [ "$(jq -c "$jw" <<<"$jr" 2>/dev/null)" = true ]; then
+    jq_=$(jq -r .judge.question "$f")
+    check "S3 $id: judge $jq_, through ubt_stage_judge, recorded would" "$rec" "would judge $jq_=CAP_ONLY (ok): proceed $verb"
+  elif [ "$verb" = card ]; then
     check "S3 $id: escalate, through ubt_stage_card, recorded would" "$(jq -rs --arg k "$key" 'map(select(.decision_key == $k))[0] | "\(.decision) \(.action)"' "$C/claims.jsonl") ${rec%% *}" "escalate card would"
   else
     WANT="WOULD_$(printf '%s' "$verb" | tr '[:lower:]' '[:upper:]')"

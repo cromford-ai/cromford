@@ -1,0 +1,12 @@
+{
+  "env": "UNBLOCK_LEAD_STALE_S",
+  "read_in": "bin/lib/unblock/collectors/review.sh",
+  "type": "int",
+  "default": 900,
+  "min": 60,
+  "max": 86400,
+  "unit": "seconds",
+  "zero_means": null,
+  "note": "BH-7724 (UNB-2): the lead-review heartbeat age that makes a request stale for U7. A bad value is the code fallback 900.",
+  "settable": true
+}

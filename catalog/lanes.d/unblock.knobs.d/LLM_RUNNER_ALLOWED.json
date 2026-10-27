@@ -1,0 +1,12 @@
+{
+  "env": "LLM_RUNNER_ALLOWED",
+  "type": "string",
+  "default": "",
+  "min": null,
+  "max": null,
+  "unit": null,
+  "zero_means": null,
+  "read_in": "bin/lib/llm-gate.sh",
+  "note": "BH-7724 (UNB-2): comma/space list of the ONLY ladder rungs the unblock-judge call may reach. Empty is every rung, i.e. the ladder unchanged. A rung outside the list is refused before the call.",
+  "settable": true
+}

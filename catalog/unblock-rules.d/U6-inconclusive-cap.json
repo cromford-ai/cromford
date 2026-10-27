@@ -1,0 +1,30 @@
+{
+  "id": "U6",
+  "priority": 45,
+  "family": "review",
+  "class": "review-route",
+  "cites": ["G15", "G13"],
+  "match": {
+    "kind": "lead-block-cap-only",
+    "all": [
+      ".report_readable == true",
+      ".cap_only_candidate == true",
+      ".fix_round_running == false"
+    ]
+  },
+  "judge": {
+    "question": "cap-only",
+    "prompt": "catalog/prompts/unblock-judge.md"
+  },
+  "action": {
+    "name": "fix_round",
+    "args": {
+      "repo": ".repo",
+      "pr": ".pr",
+      "head": ".head",
+      "brief": "\"fill the evidence rows from a replay over real inputs: \" + .metric"
+    }
+  },
+  "key": ["repo", "pr", "head", "id"],
+  "note": "The only BLOCK reason is the outcome cap (INCONCLUSIVE claim rows on a perf or cost claim). The judge confirms CAP_ONLY; then a fix round fills the evidence rows. UNSURE escalates."
+}

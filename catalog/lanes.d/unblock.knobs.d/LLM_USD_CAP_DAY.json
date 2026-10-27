@@ -1,0 +1,12 @@
+{
+  "env": "LLM_USD_CAP_DAY",
+  "type": "float",
+  "default": 0,
+  "min": 0,
+  "max": 10000,
+  "unit": "usd",
+  "zero_means": "unlimited",
+  "read_in": "bin/lib/llm-gate.sh",
+  "note": "BH-7724 (UNB-2): dollars the unblock lane may spend in the current UTC day, summed from D1 cost_rows through GET /api/metrics/llm-spend. It is a day ceiling over all judge calls; the per-call cap stays UNBLOCK_LLM_MAX_USD.",
+  "settable": true
+}

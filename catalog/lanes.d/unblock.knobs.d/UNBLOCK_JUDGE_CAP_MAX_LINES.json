@@ -1,0 +1,12 @@
+{
+  "env": "UNBLOCK_JUDGE_CAP_MAX_LINES",
+  "read_in": "bin/lib/unblock/judge.sh",
+  "type": "int",
+  "default": 60,
+  "min": 1,
+  "max": 2000,
+  "unit": "lines",
+  "zero_means": null,
+  "note": "BH-7724 (UNB-2): the most input lines the cap-only judge question takes. A longer input is outcome over-cap: UNSURE, no model call, no spend. Out of range is one warn line in logs/unblock.log and the code fallback 60.",
+  "settable": true
+}

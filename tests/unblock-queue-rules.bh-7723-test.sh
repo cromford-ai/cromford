@@ -40,8 +40,9 @@
 #   C8  the closed-PR list answers 500: one queue-unreadable record, 0 act.
 #       C8b the batch_failure tool file is missing: one queue-unreadable record.
 #       C8c the tool answers complete:false: inputs_unreadable names it, 0 act.
-#   C9  ub_rules_load on catalog/unblock-rules.d: every shipped rule, U1-U4 and
-#       main's U8 U9 U10 U12, in priority order.
+#   C9  ub_rules_load on catalog/unblock-rules.d: every shipped rule, U1-U4,
+#       the review family's U5 U6 U7 U11 (BH-7724) and U8 U9 U10 U12, in
+#       priority order.
 #   C10 bin/unblock.sh tick, sandboxed, with the real queue collector, rules
 #       engine and act layer in shadow: collectors=1 unwired=0, U1/U2 claims
 #       with object actions, WOULD_ lines from act.sh, 0 bad-input records.
@@ -344,7 +345,7 @@ C=$(mkcase c9) || exit 1
 ids=$( export HARNESS="$C/h" UNBLOCK_CITES_FILE="$C/cites.json"
   . "$HARNESS/bin/lib/unblock/rules.sh" || exit 9
   ub_rules_load "$RULES" | jq -r 'map(.id) | join(" ")' )
-check "C9 shipped rules load in priority order" "$ids" "U1-batch-culprit U2-bystander-requeue U3-dead-shard-requeue U4-standing-approval U8 U9 U10 U12"
+check "C9 shipped rules load in priority order" "$ids" "U1-batch-culprit U2-bystander-requeue U3-dead-shard-requeue U4-standing-approval U6 U5 U7 U11 U8 U9 U10 U12"
 
 # ---------------------------------------------------------------- C10
 # The tick path: the shipped bin/unblock.sh, sandboxed (HARNESS_TEST_SANDBOX=1,

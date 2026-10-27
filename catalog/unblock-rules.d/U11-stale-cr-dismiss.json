@@ -1,0 +1,22 @@
+{
+  "id": "U11",
+  "priority": 70,
+  "family": "review",
+  "class": "review-route",
+  "cites": ["G2"],
+  "match": {
+    "kind": "stale-change-request",
+    "all": [
+      ".review_commit != .head",
+      "(.standing_verdict | test(\"^MERGE\"))",
+      ".review_marker != null or .review_author_listed == true"
+    ]
+  },
+  "judge": null,
+  "action": {
+    "name": "dismiss_review",
+    "args": {"repo": ".repo", "pr": ".pr", "head": ".head", "review_id": ".review_id"}
+  },
+  "key": ["repo", "pr", "head", "id", "review_id"],
+  "note": "A CHANGES_REQUESTED review by the lead review (review-verdict:block marker) or by the agent (tackler marker), or by a listed login, is on an old head, and the current head stands MERGE. Dismiss that one review id only. A person's review with no marker is never dismissed."
+}

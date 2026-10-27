@@ -1,0 +1,21 @@
+{
+  "id": "U7",
+  "priority": 60,
+  "family": "review",
+  "class": "review-rerequest",
+  "cites": ["G18"],
+  "match": {
+    "kind": "lead-request-stale",
+    "all": [
+      ".head_current == true",
+      ".attempts < 3"
+    ]
+  },
+  "judge": null,
+  "action": {
+    "name": "lead_rerequest",
+    "args": {"repo": ".repo", "pr": ".pr", "head": ".head", "request_id": ".request_id", "priority": ".priority"}
+  },
+  "key": ["repo", "pr", "head", "id", "request_id"],
+  "note": "A running lead review request on the PR's current head has no heartbeat for longer than UNBLOCK_LEAD_STALE_S. Re-request it. At 3 attempts no review rule matches, so the stall goes to the card (U12)."
+}

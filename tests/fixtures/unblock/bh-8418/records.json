@@ -1,5 +1,5 @@
 {
-  "note": "BH-8418. One stall record per shipped rule id in catalog/unblock-rules.d, each shaped as its collector prints it (values from the shipped corpus: batch-7699, ejects-20261019, approved-7609, box-project-6-os, pool-project-6, conflict-park). tests/unblock-rules-contract.bh-8418-test.sh S3 feeds each one through the tick and requires that it decides to its own rule. A new rule file with no record here turns S3 red.",
+  "note": "BH-8418. One stall record per shipped rule id in catalog/unblock-rules.d, each shaped as its collector prints it (values from the shipped corpus: batch-7699, ejects-20261019, approved-7609, box-project-6-os, pool-project-6, conflict-park; the review family BH-7724: block-7556, cap-7560, stuck-request, stale-cr-7553). tests/unblock-rules-contract.bh-8418-test.sh S3 feeds each one through the tick and requires that it decides to its own rule. A new rule file with no record here turns S3 red.",
   "records": {
     "U1-batch-culprit": {
       "kind": "pr-ejected", "family": "queue", "project": "cromford", "repo": "example-org/cromford",
@@ -58,6 +58,36 @@
       "head": "7604dddddddddddddddddddddddddddddddddddd", "draft": 7612, "batch_state": "dead_shards",
       "culprit_count": 0, "culprit": null, "ejected_on_head": true, "own_ci": "red",
       "verdict_on_head": "MERGE", "mergeable_state": "clean", "requeued_on_head": false
+    },
+    "U5": {
+      "kind": "lead-block-unrouted", "family": "review", "project": "cromford", "repo": "example-org/cromford",
+      "subject_kind": "pr", "subject": "example-org/cromford#7556", "pr": 7556,
+      "head": "7556aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "stall_at": "2026-10-20T13:10:00Z", "unknown": [],
+      "verdict_id": 4201, "job_id": "job-fixture-7556", "report_readable": true,
+      "block_lines": ["- [BLOCK wrong-data] bin/lib/fixture-a.sh:41: the total is doubled."], "block_lines_truncated": false,
+      "cap_line": null, "cap_only_candidate": false, "cr_on_head": false, "findings_comment_on_head": false, "fix_round_running": false
+    },
+    "U6": {
+      "kind": "lead-block-cap-only", "family": "review", "project": "cromford", "repo": "example-org/cromford",
+      "subject_kind": "pr", "subject": "example-org/cromford#7560", "pr": 7560,
+      "head": "7560bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", "stall_at": "2026-10-20T13:20:00Z", "unknown": [],
+      "verdict_id": 4202, "job_id": "job-fixture-7560", "report_readable": true, "block_lines": [], "block_lines_truncated": false,
+      "cap_line": "- outcome cap: 1 INCONCLUSIVE claim row (claim 1) on a perf claim", "cap_only_candidate": true,
+      "cr_on_head": false, "findings_comment_on_head": false, "fix_round_running": false, "metric": "claim 1"
+    },
+    "U7": {
+      "kind": "lead-request-stale", "family": "review", "project": "cromford", "repo": "example-org/cromford",
+      "subject_kind": "pr", "subject": "example-org/cromford#7591", "pr": 7591,
+      "head": "7591cccccccccccccccccccccccccccccccccccc", "stall_at": "2026-10-20T15:20:00Z", "unknown": [],
+      "request_id": "lr-fixture-7591", "request_head": "7591cccccccccccccccccccccccccccccccccccc",
+      "heartbeat_age_s": 2400, "attempts": 0, "priority": 5, "head_current": true
+    },
+    "U11": {
+      "kind": "stale-change-request", "family": "review", "project": "cromford", "repo": "example-org/cromford",
+      "subject_kind": "pr", "subject": "example-org/cromford#7553", "pr": 7553,
+      "head": "7553dddddddddddddddddddddddddddddddddddd", "stall_at": "2026-10-19T10:00:00Z", "unknown": [],
+      "review_id": 3001, "review_commit": "7553eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee", "review_author": "cromford[bot]",
+      "review_marker": "tackler", "review_author_listed": false, "standing_verdict": "MERGE"
     }
   }
 }

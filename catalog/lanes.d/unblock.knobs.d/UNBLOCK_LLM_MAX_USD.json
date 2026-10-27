@@ -1,0 +1,12 @@
+{
+  "env": "UNBLOCK_LLM_MAX_USD",
+  "read_in": "bin/lib/unblock/judge.sh",
+  "type": "float",
+  "default": 0.6,
+  "min": 0.05,
+  "max": 5,
+  "unit": "usd",
+  "zero_means": null,
+  "note": "BH-7724 (UNB-2): the per-call dollar cap for the one judge call; bin/lib/unblock/judge.sh passes it as AGENT_CALL_BUDGET_USD_UNBLOCK_JUDGE. A value that is not a number is the code fallback 0.6.",
+  "settable": true
+}

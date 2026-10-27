@@ -1,0 +1,12 @@
+{
+  "env": "UNBLOCK_JUDGE_TIMEOUT_S",
+  "read_in": "bin/lib/unblock/judge.sh",
+  "type": "int",
+  "default": 120,
+  "min": 10,
+  "max": 900,
+  "unit": "seconds",
+  "zero_means": null,
+  "note": "BH-7724 (UNB-2): the timeout bin/lib/unblock/judge.sh passes to bin/agent-call.sh for the one judge call (stage unblock-judge). A value that is not an integer in range is one warn line in logs/unblock.log and the code fallback 120.",
+  "settable": true
+}

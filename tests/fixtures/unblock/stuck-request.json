@@ -1,0 +1,71 @@
+{
+  "_source": "GitHub parts: synthesized to the REST shapes of pulls, search/issues, pulls/<n>/reviews and issues/<n>/comments (no GitHub read was possible from the build box). Worker parts: synthesized to the shapes of worker/jobs/src/routes/verdicts.js, job-artifacts and lead-reviews.js. Head shas are fixture values except #7553's, which is the real head of that PR (merge 4ba51a5a, second parent).",
+  "repo": "example-org/cromford",
+  "now": "2026-10-20T16:00:00Z",
+  "pulls": [
+    {
+      "number": 7590,
+      "state": "open",
+      "draft": false,
+      "head": {
+        "sha": "7590dddd0000000000000000000000000000d001",
+        "ref": "ticket/bh-7590"
+      },
+      "user": {
+        "login": "operator"
+      },
+      "updated_at": "2026-10-20T13:00:00Z"
+    }
+  ],
+  "search": {
+    "total_count": 0,
+    "incomplete_results": false,
+    "items": []
+  },
+  "verdicts": {
+    "7590": {
+      "repo": "example-org/cromford",
+      "pr": 7590,
+      "head": "7590dddd0000000000000000000000000000d001",
+      "standing": null,
+      "rows": [],
+      "truncated": false,
+      "as_of": "2026-10-20T16:00:00Z"
+    }
+  },
+  "artifacts": {},
+  "reviews": {},
+  "comments": {},
+  "lead_reviews_running": {
+    "requests": [
+      {
+        "id": "lr-fixture-7590",
+        "repo": "example-org/cromford",
+        "pr": 7590,
+        "head_sha": "7590dddd0000000000000000000000000000d001",
+        "scope_notes": null,
+        "prior_verdict_ref": null,
+        "requested_by": "lead-review-enqueue",
+        "status": "running",
+        "job_id": "job-fixture-7590",
+        "box": "box-fixture-1",
+        "verdict": null,
+        "report_ref": null,
+        "reviewer_model": null,
+        "detail": null,
+        "promoted_verdict_at": null,
+        "created_at": "2026-10-20T15:00:00Z",
+        "updated_at": "2026-10-20T15:20:00Z",
+        "priority": 5,
+        "reset_count": 0,
+        "reset_at": null,
+        "heartbeat_at": "2026-10-20T15:20:00Z",
+        "participant": null,
+        "head_authors": null,
+        "stale_reclaims": 0
+      }
+    ],
+    "truncated": false,
+    "as_of": "2026-10-20T16:00:00Z"
+  }
+}

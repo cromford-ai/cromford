@@ -1,0 +1,88 @@
+{
+  "_source": "GitHub parts: synthesized to the REST shapes of pulls, search/issues, pulls/<n>/reviews and issues/<n>/comments (no GitHub read was possible from the build box). Worker parts: synthesized to the shapes of worker/jobs/src/routes/verdicts.js, job-artifacts and lead-reviews.js. Head shas are fixture values except #7553's, which is the real head of that PR (merge 4ba51a5a, second parent).",
+  "repo": "example-org/cromford",
+  "now": "2026-10-20T16:00:00Z",
+  "pulls": [
+    {
+      "number": 7560,
+      "state": "open",
+      "draft": false,
+      "head": {
+        "sha": "7560cccc0000000000000000000000000000c001",
+        "ref": "ticket/bh-7560"
+      },
+      "user": {
+        "login": "operator"
+      },
+      "updated_at": "2026-10-20T13:00:00Z"
+    }
+  ],
+  "search": {
+    "total_count": 0,
+    "incomplete_results": false,
+    "items": []
+  },
+  "verdicts": {
+    "7560": {
+      "repo": "example-org/cromford",
+      "pr": 7560,
+      "head": "7560cccc0000000000000000000000000000c001",
+      "standing": {
+        "id": 92001,
+        "repo": "example-org/cromford",
+        "pr": 7560,
+        "head_sha": "7560cccc0000000000000000000000000000c001",
+        "verdict": "BLOCK",
+        "source": "lead",
+        "reviewer": "hub-lead",
+        "reviewer_model": "stub-model-x",
+        "report_url": null,
+        "note": "lead-review:lr-fixture-7560 lead-job:job-fixture-7560",
+        "created_at": "2026-10-20T14:05:00Z",
+        "auth": "secret",
+        "human_sig": null,
+        "human_proven": null
+      },
+      "rows": [
+        {
+          "id": 92001,
+          "repo": "example-org/cromford",
+          "pr": 7560,
+          "head_sha": "7560cccc0000000000000000000000000000c001",
+          "verdict": "BLOCK",
+          "source": "lead",
+          "reviewer": "hub-lead",
+          "reviewer_model": "stub-model-x",
+          "report_url": null,
+          "note": "lead-review:lr-fixture-7560 lead-job:job-fixture-7560",
+          "created_at": "2026-10-20T14:05:00Z",
+          "auth": "secret",
+          "human_sig": null,
+          "human_proven": null
+        }
+      ],
+      "truncated": false,
+      "as_of": "2026-10-20T16:00:00Z"
+    }
+  },
+  "artifacts": {
+    "job-fixture-7560": {
+      "lead_review_report": {
+        "body": "# Lead review cromford#7560 (example-org/cromford#7560 at 7560cccc0000000000000000000000000000c001)\n\n- verdict: BLOCK\n- suite: 398 suites green\n- rules pack: green\n- reviewer model: stub-model-x\n- checklist: v12\n- review level (BH-7123): mode smoke\n- outcome cap: 1 INCONCLUSIVE claim row (claim 1) on perf (LEAD_REVIEW_INCONCLUSIVE_BLOCK=1); agent verdict MERGE\n- ci-local: not run\n- pr body: 9a8b7c6d\n\n## Findings\n\n- [NOTE] bin/fixture-c.sh:12: the log line names the old knob.\n\n| claim 1: p95 of the queue screen loader | INCONCLUSIVE | no before/after numbers in the PR body |\n\n> VERDICT: MERGE\n\nVERDICT: BLOCK\n",
+        "path": "state/lead-review/fixture-7560.md",
+        "verdict": "BLOCK"
+      }
+    }
+  },
+  "reviews": {
+    "7560": []
+  },
+  "comments": {
+    "7560": []
+  },
+  "lead_reviews_running": {
+    "requests": [],
+    "truncated": false,
+    "as_of": "2026-10-20T16:00:00Z"
+  }
+}

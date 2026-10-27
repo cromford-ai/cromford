@@ -1,0 +1,12 @@
+{
+  "env": "UNBLOCK_JUDGE_MAX_ATTEMPTS",
+  "read_in": "bin/lib/unblock/judge.sh",
+  "type": "int",
+  "default": 2,
+  "min": 1,
+  "max": 10,
+  "unit": "attempts",
+  "zero_means": null,
+  "note": "BH-7724 (UNB-2): the judge calls one decision gets before it records outcome failed with no further call. A value that is not a positive integer is the code fallback 2.",
+  "settable": true
+}

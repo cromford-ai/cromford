@@ -52,6 +52,7 @@ refuses a NEW script that writes a `rows` path. The ratchet allowlists every
 | `state/model-routes` | cache | cache | the model route answers cache | allowlisted | BH-7431 |
 | `state/flags-cache` | cache | cache | the last-good cache of flag rows | allowlisted | BH-4153 |
 | `state/remote-results-terminal` | cache | cache | the newest kind=build jobs row | allowlisted | BH-7582 |
+| `state/unblock-judge` | cache | cache | the `unblock_decisions` claim row (the judge's paid-answer memo) | allowlisted | BH-7724 |
 | `state/box-id` | box-local | box-local | this box's identity | allowlisted | |
 | `state/box-name` | box-local | box-local | this box's identity | allowlisted | |
 | `state/scratch` | box-local | box-local | scratch space | allowlisted | |

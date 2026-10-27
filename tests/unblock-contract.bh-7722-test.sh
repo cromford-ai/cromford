@@ -120,6 +120,9 @@ lane_role_model() { seq_log "ROUTE $*"; [ -f "$FXT/route.rc" ] && return "$(cat 
 if [ -f "$FXT/rules" ]; then
   ub_rules_eval() { cat > "$FXT/rules-in.jsonl"; seq_log "RULES $(grep -c . "$FXT/rules-in.jsonl")"; cat "$FXT/decisions.jsonl" 2>/dev/null; }
 fi
+# no-judge: bin/unblock.sh loads the real seam from judge.sh (BH-7724); the
+# case for "seam not loaded" unloads it.
+[ -f "$FXT/no-judge" ] && unset -f ubt_stage_judge
 if [ -f "$FXT/seam-judge" ]; then
   ubt_stage_judge() { seq_log "JUDGE $(jq -r .decision_key <<<"$1") $2"; printf '{"outcome":"would","detail":"judge-fixture","model_calls":%s,"cost_usd":0.02}\n' "$(cat "$FXT/judge-calls" 2>/dev/null || echo 1)"; }
 fi
@@ -338,7 +341,7 @@ seam_case() { # seam_case <name> <decision> <judge|nojudge> <files...> -> want c
     eq "C6 $name no act call" "$(cnt '^ACT ' "$FXT/seq.log")" 0
   fi
 }
-seam_case judge-absent act judge 0 act-stub
+seam_case judge-absent act judge 0 no-judge act-stub
 seam_case card-absent escalate nojudge 0 no-card seam-judge act-stub
 seam_case act-absent act nojudge 0 no-act seam-judge seam-card
 seam_case judge-present act judge 1 seam-judge

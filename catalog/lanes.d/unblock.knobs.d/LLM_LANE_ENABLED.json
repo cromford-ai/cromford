@@ -1,0 +1,12 @@
+{
+  "env": "LLM_LANE_ENABLED",
+  "type": "int",
+  "default": 1,
+  "min": 0,
+  "max": 1,
+  "unit": null,
+  "zero_means": "off",
+  "read_in": "bin/lib/llm-gate.sh",
+  "note": "BH-7724 (UNB-2): 0 makes the unblock judge call no model at all. bin/agent-call.sh (AGENT_CALL_LANE=unblock, stage unblock-judge) refuses through bin/lib/llm-gate.sh BEFORE the vendor call and writes a zero-cost row_source=refused row; the agent-call rc 74..79 hands the judge attempt back.",
+  "settable": true
+}

@@ -1,0 +1,178 @@
+{
+  "_source": "GitHub parts: synthesized to the REST shapes of pulls, search/issues, pulls/<n>/reviews and issues/<n>/comments (no GitHub read was possible from the build box). Worker parts: synthesized to the shapes of worker/jobs/src/routes/verdicts.js, job-artifacts and lead-reviews.js. Head shas are fixture values except #7553's, which is the real head of that PR (merge 4ba51a5a, second parent).",
+  "repo": "example-org/cromford",
+  "now": "2026-10-20T16:00:00Z",
+  "pulls": [
+    {
+      "number": 7556,
+      "state": "open",
+      "draft": false,
+      "head": {
+        "sha": "7556aaaa0000000000000000000000000000a001",
+        "ref": "ticket/bh-7556"
+      },
+      "user": {
+        "login": "operator"
+      },
+      "updated_at": "2026-10-20T13:00:00Z"
+    },
+    {
+      "number": 7601,
+      "state": "open",
+      "draft": false,
+      "head": {
+        "sha": "7601aaaa0000000000000000000000000000a002",
+        "ref": "ticket/bh-7601"
+      },
+      "user": {
+        "login": "operator"
+      },
+      "updated_at": "2026-10-20T13:00:00Z"
+    }
+  ],
+  "search": {
+    "total_count": 0,
+    "incomplete_results": false,
+    "items": []
+  },
+  "verdicts": {
+    "7556": {
+      "repo": "example-org/cromford",
+      "pr": 7556,
+      "head": "7556aaaa0000000000000000000000000000a001",
+      "standing": {
+        "id": 91001,
+        "repo": "example-org/cromford",
+        "pr": 7556,
+        "head_sha": "7556aaaa0000000000000000000000000000a001",
+        "verdict": "BLOCK",
+        "source": "lead",
+        "reviewer": "hub-lead",
+        "reviewer_model": "stub-model-x",
+        "report_url": null,
+        "note": "lead-review:lr-fixture-7556 lead-job:job-fixture-7556",
+        "created_at": "2026-10-20T13:10:00Z",
+        "auth": "secret",
+        "human_sig": null,
+        "human_proven": null
+      },
+      "rows": [
+        {
+          "id": 91001,
+          "repo": "example-org/cromford",
+          "pr": 7556,
+          "head_sha": "7556aaaa0000000000000000000000000000a001",
+          "verdict": "BLOCK",
+          "source": "lead",
+          "reviewer": "hub-lead",
+          "reviewer_model": "stub-model-x",
+          "report_url": null,
+          "note": "lead-review:lr-fixture-7556 lead-job:job-fixture-7556",
+          "created_at": "2026-10-20T13:10:00Z",
+          "auth": "secret",
+          "human_sig": null,
+          "human_proven": null
+        },
+        {
+          "id": 90990,
+          "repo": "example-org/cromford",
+          "pr": 7556,
+          "head_sha": "7556aaaa0000000000000000000000000000a001",
+          "verdict": "BLOCK",
+          "source": "box",
+          "reviewer": "box-fixture",
+          "reviewer_model": "stub-model-x",
+          "report_url": null,
+          "note": "box review",
+          "created_at": "2026-10-20T12:50:00Z",
+          "auth": "secret",
+          "human_sig": null,
+          "human_proven": null
+        }
+      ],
+      "truncated": false,
+      "as_of": "2026-10-20T16:00:00Z"
+    },
+    "7601": {
+      "repo": "example-org/cromford",
+      "pr": 7601,
+      "head": "7601aaaa0000000000000000000000000000a002",
+      "standing": {
+        "id": 91002,
+        "repo": "example-org/cromford",
+        "pr": 7601,
+        "head_sha": "7601aaaa0000000000000000000000000000a002",
+        "verdict": "MERGE",
+        "source": "lead",
+        "reviewer": "hub-lead",
+        "reviewer_model": "stub-model-x",
+        "report_url": null,
+        "note": "lead-review:lr-fixture-7601 lead-job:job-fixture-7601",
+        "created_at": "2026-10-20T13:20:00Z",
+        "auth": "secret",
+        "human_sig": null,
+        "human_proven": null
+      },
+      "rows": [
+        {
+          "id": 91002,
+          "repo": "example-org/cromford",
+          "pr": 7601,
+          "head_sha": "7601aaaa0000000000000000000000000000a002",
+          "verdict": "MERGE",
+          "source": "lead",
+          "reviewer": "hub-lead",
+          "reviewer_model": "stub-model-x",
+          "report_url": null,
+          "note": "lead-review:lr-fixture-7601 lead-job:job-fixture-7601",
+          "created_at": "2026-10-20T13:20:00Z",
+          "auth": "secret",
+          "human_sig": null,
+          "human_proven": null
+        }
+      ],
+      "truncated": false,
+      "as_of": "2026-10-20T16:00:00Z"
+    }
+  },
+  "artifacts": {
+    "job-fixture-7556": {
+      "lead_review_report": {
+        "body": "<!-- review-verdict: v2 -->\n# Lead review cromford#7556 (example-org/cromford#7556 at 7556aaaa0000000000000000000000000000a001)\n\n- verdict: BLOCK\n- suite: 412 suites green\n- rules pack: green\n- reviewer model: stub-model-x\n- checklist: v12\n- review level (BH-7123): mode smoke\n- ci-local: not run\n- pr body: 1f2e3d4c\n\n## Findings\n\n- [BLOCK wrong-data] bin/lib/fixture-a.sh:41: the rollup sums cost_usd twice for a retried row, so the daily total is doubled.\n- [BLOCK red-build] tests/fixture-a.bh-7556-test.sh: case 4 fails on HEAD (exit 1), see the CI run on the head.\n- [BLOCK core-flow-broken] bin/fixture-a.sh:88: the --apply path returns before the write, so the ticket's primary action does nothing.\n- [NOTE] docs/notes: the change note has no Doc: line.\n\nVERDICT: BLOCK\n",
+        "path": "state/lead-review/fixture-7556.md",
+        "verdict": "BLOCK"
+      }
+    }
+  },
+  "reviews": {
+    "7556": [
+      {
+        "id": 5001,
+        "user": {
+          "login": "cromford[bot]"
+        },
+        "state": "COMMENTED",
+        "commit_id": "7556aaaa0000000000000000000000000000a001",
+        "body": "Build review: tier 2.",
+        "submitted_at": "2026-10-20T12:40:00Z"
+      }
+    ]
+  },
+  "comments": {
+    "7556": [
+      {
+        "id": 6001,
+        "user": {
+          "login": "operator"
+        },
+        "body": "Please look at the cost rollup.",
+        "created_at": "2026-10-20T12:30:00Z"
+      }
+    ]
+  },
+  "lead_reviews_running": {
+    "requests": [],
+    "truncated": false,
+    "as_of": "2026-10-20T16:00:00Z"
+  }
+}
