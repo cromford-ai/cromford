@@ -1,0 +1,80 @@
+/* /projects/new (BH-7999): the two-step onboarding form. Theme tokens only,
+   no colour literal. Every rule is scoped to .onboard. At 720px and below the
+   bar buttons share the bar's width and every control is at least 44px high.
+   Long slugs wrap, so the body never scrolls sideways. */
+
+.onboard { display: flex; flex-direction: column; gap: 16px; min-width: 0; max-width: 880px; }
+.onboard .onboard-body { display: flex; flex-direction: column; gap: 14px; min-width: 0; }
+
+.onboard .onboard-field { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.onboard .onboard-field > span:first-child {
+  font-family: var(--font-mono); font-size: var(--fs-2xs); letter-spacing: 2px; color: var(--faint);
+}
+.onboard .onboard-field input {
+  width: 100%; min-width: 0; min-height: 40px; box-sizing: border-box; padding: 0 10px;
+  font-family: var(--font-mono); font-size: var(--fs-sm); color: var(--text);
+  background: var(--bg); border: 1px solid var(--line); border-radius: var(--radius-md);
+}
+.onboard .onboard-field input:focus { outline: none; border-color: var(--accent); }
+.onboard .onboard-field input[aria-invalid="true"] { border-color: var(--line-dead); }
+.onboard .onboard-field__err { font-size: var(--fs-xs); color: var(--red-lt); overflow-wrap: anywhere; }
+
+.onboard .onboard-radios { display: flex; flex-wrap: wrap; gap: 8px; min-width: 0; }
+.onboard .onboard-radio {
+  display: flex; flex-direction: column; align-items: flex-start; gap: 4px; min-width: 0; min-height: 40px;
+  padding: 8px 12px; text-align: left; cursor: pointer;
+  font-family: var(--font-body); font-size: var(--fs-sm); color: var(--text);
+  background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius-md);
+}
+.onboard .onboard-radio--on { border-color: var(--accent); background: var(--panel-active); color: var(--text-strong); }
+.onboard .onboard-radio:disabled { cursor: not-allowed; color: var(--faint); }
+.onboard .onboard-radio__label { font-weight: 700; }
+.onboard .onboard-radio__note { font-size: var(--fs-xs); color: var(--text-dim); overflow-wrap: anywhere; }
+
+.onboard .onboard-detect {
+  display: flex; flex-direction: column; gap: 8px; padding: 12px; min-width: 0;
+  background: var(--panel); border: 1px solid var(--rule); border-radius: var(--radius-md);
+}
+.onboard .onboard-detect__note { margin: 0; font-size: var(--fs-sm); color: var(--text-dim); overflow-wrap: anywhere; }
+.onboard .onboard-facts,
+.onboard .onboard-review dl { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 6px 14px; margin: 0; }
+.onboard .onboard-facts dt,
+.onboard .onboard-review dt { font-family: var(--font-mono); font-size: var(--fs-2xs); letter-spacing: 1px; color: var(--faint); }
+.onboard .onboard-facts dd,
+.onboard .onboard-review dd { margin: 0; font-size: var(--fs-sm); color: var(--text); overflow-wrap: anywhere; min-width: 0; }
+
+.onboard .onboard-new { display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+.onboard .onboard-hint { margin: 0; font-size: var(--fs-xs); color: var(--text-dim); }
+
+.onboard .onboard-adv { border-top: 1px solid var(--rule); padding-top: 10px; display: flex; flex-direction: column; gap: 10px; }
+.onboard .onboard-adv > summary { cursor: pointer; font-family: var(--font-display); font-size: var(--fs-sm); color: var(--text-strong); }
+.onboard .onboard-adv[open] > summary { margin-bottom: 10px; }
+.onboard .onboard-adv .onboard-field { margin-bottom: 10px; }
+.onboard .onboard-box { border: 1px solid var(--line); border-radius: var(--radius-md); padding: 8px 12px; margin: 0; min-width: 0; }
+.onboard .onboard-box legend { font-family: var(--font-mono); font-size: var(--fs-2xs); letter-spacing: 2px; color: var(--faint); }
+.onboard .onboard-box__opt { display: flex; align-items: center; gap: 8px; min-height: 32px; font-size: var(--fs-sm); color: var(--text); }
+
+.onboard .onboard-review {
+  display: flex; flex-direction: column; gap: 10px; padding: 14px; min-width: 0;
+  background: var(--panel); border: 1px solid var(--rule); border-radius: var(--radius-md);
+}
+.onboard .onboard-review__title { margin: 0; font-family: var(--font-display); font-size: var(--fs-md); color: var(--text-strong); }
+.onboard .onboard-review .onboard-review__last { grid-column: 1 / -1; color: var(--text-dim); }
+.onboard .onboard-review__err { margin: 0; font-size: var(--fs-sm); color: var(--red-lt); overflow-wrap: anywhere; }
+
+.onboard .onboard-bar {
+  position: sticky; bottom: 0; z-index: 5;
+  display: flex; justify-content: flex-end; gap: 8px; padding: 10px 0;
+  background: var(--bg); border-top: 1px solid var(--rule);
+}
+.onboard .onboard-bar .btn { min-height: 40px; border-radius: var(--radius-md); }
+
+@media (max-width: 720px) {
+  .onboard .onboard-bar { gap: 0; padding: 0; }
+  .onboard .onboard-bar .btn { flex: 1; min-height: 44px; justify-content: center; border-radius: 0; }
+  .onboard .onboard-field input,
+  .onboard .onboard-radio,
+  .onboard .onboard-detect .btn { min-height: 44px; }
+  .onboard .onboard-radio { flex: 1 1 100%; }
+  .onboard .onboard-box__opt { min-height: 44px; }
+}

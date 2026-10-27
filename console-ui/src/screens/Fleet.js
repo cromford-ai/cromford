@@ -345,6 +345,7 @@ export function FleetScreen() {
           <span style="color:var(--amber-dk)">could not check fleet accounts — ${firstRun.error.message}</span>
         </div>` : null}
       <${Section} title="PROJECTS"
+        right=${html`<${Link} to="/projects/new" class="btn btn--sm onboard-new">NEW<//>`}
         note=${projects.data
           ? `${rows.length} ${projects.data.projects_source === 'fleet_status'
               ? 'from the fleet registry'

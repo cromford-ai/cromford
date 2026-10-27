@@ -5,3 +5,6 @@ dist/
 
 # the drive writes its screenshots here; the committed ones live in docs/world-v2
 shots/
+
+# the BH-7999 onboard drive writes its screenshots and computed JSON here
+tests/drive/out/

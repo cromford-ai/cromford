@@ -66,6 +66,9 @@ const isJobAbandon = (rest) => {
 // THE WRITE SURFACE (BH-2405): the row contract is in functions/_lib/coord-writes.js.
 // BH-6487: WRITES is closed. A new write route is a new file,
 // functions/_lib/coord-writes.d/<NNNN>-<slug>.js, never a row appended here.
+// BH-7999: a row may set `idempotencyKey: true`; only such a row forwards an
+// Idempotency-Key header (KEY_RE in worker/jobs/src/routes/onboarding.js).
+const IDEMPOTENCY_KEY_RE = /^[A-Za-z0-9._:-]{8,128}$/;
 // BH-5353: one participant decision on a worker-minted (crypto.randomUUID) id.
 const PARTICIPANT_ID = '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}';
 const participantDecision = (verb) => {
@@ -438,6 +441,15 @@ export async function onRequest(context) {
     }
   };
   if (lead) init.headers['x-lead-verdict-token'] = lead;
+  // BH-7999: a row with `idempotencyKey` forwards the browser's Idempotency-Key
+  // (the worker's own key rule) and the stamped actor as x-harness-actor. A
+  // missing or bad key is refused before anything is forwarded.
+  if (row && row.idempotencyKey) {
+    const key = (request.headers.get('idempotency-key') || '').trim();
+    if (!IDEMPOTENCY_KEY_RE.test(key)) return jsonError(400, 'idempotency_key_required');
+    init.headers['idempotency-key'] = key;
+    init.headers['x-harness-actor'] = actor;
+  }
   if (row && row.body) {
     // A body that is not a JSON object is refused rather than forwarded:
     // passing it through unparsed would pass its actor through too.
