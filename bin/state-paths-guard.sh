@@ -24,7 +24,9 @@
 #     regression for a new script.
 # Paths under bin/, scripts/ and cron/ count, plus any .sh .bash .py .js .mjs
 # .cjs file. tests/, test/, docs/, catalog/, guardrails/*/fixtures/ and *.md
-# never count.
+# never count. Nor does config/fly-pool.d/ (BH-7542): its fragments are the
+# source of bin/fly-pool.sh, an existing writer, so an added fragment is an edit
+# of that file and is not checked, the same as a direct edit of it.
 #
 # Configuration (env):
 #   SPG_CATALOG  the catalog (default: catalog/state-paths.json beside bin/).
@@ -82,6 +84,7 @@ fi
 is_script() {
   case "$1" in
     *.md|tests/*|test/*|*/tests/*|*/test/*|docs/*|catalog/*|guardrails/*/fixtures/*) return 1 ;;
+    config/fly-pool.d/*) return 1 ;;
     bin/*|scripts/*|cron/*) return 0 ;;
     *.sh|*.bash|*.py|*.js|*.mjs|*.cjs) return 0 ;;
   esac
