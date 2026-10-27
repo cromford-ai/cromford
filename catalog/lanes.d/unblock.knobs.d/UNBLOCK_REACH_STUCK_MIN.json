@@ -1,0 +1,12 @@
+{
+  "env": "UNBLOCK_REACH_STUCK_MIN",
+  "read_in": "bin/lib/unblock/collectors/infra.sh",
+  "type": "int",
+  "default": 45,
+  "min": 0,
+  "max": 1440,
+  "unit": "minutes",
+  "zero_means": null,
+  "note": "BH-8390: how long a REVIEW_BLOCKED suite-reach build with no PR waits before U13-REACH sends a card; copied into reach_stuck_min. A bad value is the code fallback 45.",
+  "settable": true
+}

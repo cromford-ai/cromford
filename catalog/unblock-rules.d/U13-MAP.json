@@ -1,0 +1,39 @@
+{
+  "id": "U13-MAP",
+  "priority": 33,
+  "family": "queue",
+  "class": "fix-round",
+  "cites": [
+    "G13",
+    "G12",
+    "G21"
+  ],
+  "match": {
+    "kind": "pr-ejected",
+    "all": [
+      ".batch_state == \"failed\"",
+      ".owns_failure == true",
+      ".ejected_on_head == true",
+      "(.fixrounds | type) == \"number\" and (.fixround_max | type) == \"number\" and .fixrounds < .fixround_max",
+      "(.fix_brief | type) == \"string\" and (.fix_brief | length) > 0",
+      ".signal == \"map\""
+    ]
+  },
+  "judge": null,
+  "action": {
+    "name": "fix_round",
+    "args": {
+      "pr": ".pr",
+      "head": ".head",
+      "brief": ".fix_brief",
+      "ticket": ".ticket"
+    }
+  },
+  "key": [
+    "repo",
+    "pr",
+    "head",
+    "id"
+  ],
+  "note": "BH-8390 R-MAP. mc-split-layout-test case 3 (a function a bin/lib/mc module defines that the map does not assign), and this member defines that function. Fix round: tests/mc/expected-map.d/<TICKET>.tsv with <module>\\t<fn>\\tlib. Hand fix #8331."
+}

@@ -1,0 +1,39 @@
+{
+  "id": "U13-PDB",
+  "priority": 34,
+  "family": "queue",
+  "class": "fix-round",
+  "cites": [
+    "G13",
+    "G12",
+    "G21"
+  ],
+  "match": {
+    "kind": "pr-ejected",
+    "all": [
+      ".batch_state == \"failed\"",
+      ".owns_failure == true",
+      ".ejected_on_head == true",
+      "(.fixrounds | type) == \"number\" and (.fixround_max | type) == \"number\" and .fixrounds < .fixround_max",
+      "(.fix_brief | type) == \"string\" and (.fix_brief | length) > 0",
+      ".signal == \"pdb\""
+    ]
+  },
+  "judge": null,
+  "action": {
+    "name": "fix_round",
+    "args": {
+      "pr": ".pr",
+      "head": ".head",
+      "brief": ".fix_brief",
+      "ticket": ".ticket"
+    }
+  },
+  "key": [
+    "repo",
+    "pr",
+    "head",
+    "id"
+  ],
+  "note": "BH-8390 R-PDB. plan-diff-bind changed-not-planned <path>, and the path is in this member's diff. Fix round: name the path in the plan's Files to touch / Tests that must change, plus a TEST-CHANGE: line when it is another ticket's test. Hand fixes #8181 #7548 #8026 #7961."
+}

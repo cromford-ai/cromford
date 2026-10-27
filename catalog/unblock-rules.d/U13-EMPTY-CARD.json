@@ -1,0 +1,30 @@
+{
+  "id": "U13-EMPTY-CARD",
+  "priority": 111,
+  "family": "queue",
+  "class": "escalate",
+  "cites": [
+    "G2",
+    "G21"
+  ],
+  "match": {
+    "kind": "pr-empty-block",
+    "all": [
+      ".head_current == true",
+      "(.empty_blocks | type) == \"number\" and (.empty_block_max | type) == \"number\" and .empty_blocks > .empty_block_max"
+    ]
+  },
+  "judge": null,
+  "action": {
+    "verb": "card",
+    "args": {
+      "subject": ".subject"
+    }
+  },
+  "key": [
+    "subject",
+    "head",
+    "id"
+  ],
+  "note": "BH-8390 R-EMPTY, past the limit. More empty BLOCK reports on one head than empty_block_max (UNBLOCK_EMPTY_BLOCK_MAX, default 1) re-requests: one card, no further review."
+}

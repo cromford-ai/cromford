@@ -1,0 +1,12 @@
+{
+  "env": "UNBLOCK_STARVE_WINDOW_H",
+  "read_in": "bin/lib/unblock/collectors/infra.sh",
+  "type": "int",
+  "default": 6,
+  "min": 1,
+  "max": 72,
+  "unit": "hours",
+  "zero_means": null,
+  "note": "BH-8390: how far back the infra collector reads pipeline-health lines for starved tickets. A bad value is the code fallback 6.",
+  "settable": true
+}

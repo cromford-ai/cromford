@@ -17,7 +17,8 @@
 #     The HTTP reads go through _jobs_req (bin/lib/jobs/req.sh), which the
 #     caller loads; without it every HTTP source is rc 1.
 #
-#   unblock_collect_infra [--project <p>]... [--repo <owner/repo>] [--family box|pool|park]
+#   unblock_collect_infra [--project <p>]... [--repo <owner/repo>]
+#                         [--family box|pool|park|starve|reach]
 #     Prints the records. No --project: the projects of fleet.conf
 #     (FLEET_CONF, else $HARNESS/fleet.conf). No --family: all three. rc 0
 #     always (rc 2 on a bad argument). An unreadable source is a
@@ -47,7 +48,16 @@
 #                 br_rows_count <url> fixround (bin/lib/br/record.sh, loaded by
 #                 the caller); null when that lib is absent or the read fails.
 #                 At most 100 rows.
+#   ticket-starved (BH-8390, U13-STARVE)  one per ticket logs/pipeline-health.log
+#                 calls "queued <N>m with no spawn" since its last RESOLVED
+#                 line (see _unblock_infra_starve). --project only.
+#   build-reach-blocked (BH-8390, U13-REACH)  one per ticket whose newest
+#                 `stranded:` line in logs/<p>.log ends REVIEW_BLOCKED
+#                 suite-reach (see _unblock_infra_reach). --project only;
+#                 has_pr needs --repo and gh_rest.
 #   source-unreadable  one per source that answered rc 1: unknown [<source>].
+# A log source (pipeline-health, logs/<p>.log) that exists and cannot be read,
+# or whose lines the parser cannot read, is one source-unreadable record.
 # A capped family sets truncated: true on every record of that family.
 #
 # THE PROPOSAL (U9), computed with no model: key, old (the settings row),
@@ -275,6 +285,105 @@ _unblock_infra_parks() {
   done < <(head -n 100 <<<"$rows")
 }
 
+# _unblock_infra_tail <file>: the last UNBLOCK_LOG_SCAN_LINES lines (default
+# 5000). rc 0 and nothing when the file does not exist (the lane never wrote
+# it on this box); rc 1 when it exists and cannot be read.
+_unblock_infra_tail() {
+  local n
+  [ -e "$1" ] || return 0
+  [ -r "$1" ] || return 1
+  n=$(_unblock_infra_int "${UNBLOCK_LOG_SCAN_LINES:-}" 5000)
+  tail -n "$n" "$1" 2>/dev/null
+}
+
+# _unblock_infra_starve <project>... — BH-8390 (U13-STARVE). One
+# ticket-starved record per ticket that logs/pipeline-health.log calls
+# "queued <N>m with no spawn" on UNBLOCK_STARVE_PASSES (3) or more passes
+# since its last RESOLVED line, inside UNBLOCK_STARVE_WINDOW_H (6) hours.
+# Fields: ticket, queued_min (the newest pass), passes, first_at, last_at,
+# starve_min (UNBLOCK_STARVE_MIN, 120), starve_passes, triage_out (a
+# logs/<p>.triage-<KEY>.out newer than the first pass), day.
+_unblock_infra_starve() {
+  local root txt win smin spass p key out
+  # An unread log is one source-unreadable record PER project asked about, so
+  # each project's tick sees it (a record with no project goes only to the
+  # hub project's tick, BH-8498).
+  root=$(_unblock_infra_root)
+  if [ -z "$root" ] || ! txt=$(_unblock_infra_tail "$root/logs/pipeline-health.log"); then
+    for p in "$@"; do _unblock_infra_unreadable pipeline_health_log "$p"; done
+    return 0
+  fi
+  [ -n "$txt" ] || return 0
+  win=$(_unblock_infra_int "${UNBLOCK_STARVE_WINDOW_H:-}" 6)
+  smin=$(_unblock_infra_int "${UNBLOCK_STARVE_MIN:-}" 120)
+  spass=$(_unblock_infra_int "${UNBLOCK_STARVE_PASSES:-}" 3)
+  local recs
+  for p in "$@"; do
+    recs=$(jq -Rnc --arg p "$p" --argjson now "$_UBI_NOW" --argjson win "$win" --argjson smin "$smin" --argjson spass "$spass" '
+      def ep($a): ($a | sub(" "; "T") + "Z" | fromdateiso8601);
+      [inputs | (capture("^(?<at>[0-9]{4}-[0-9]{2}-[0-9]{2} [0-9]{2}:[0-9]{2}:[0-9]{2})Z (?<p>[A-Za-z0-9._-]+) (?<key>[A-Za-z0-9.-]+) queued (?<min>[0-9]+)m with no spawn") | . + {ev: "q"}),
+                (capture("^(?<at>[0-9]{4}-[0-9]{2}-[0-9]{2} [0-9]{2}:[0-9]{2}:[0-9]{2})Z RESOLVED stuckqueue:(?<p>[A-Za-z0-9._-]+):(?<key>[A-Za-z0-9.-]+)\\.json") | . + {ev: "r"})
+       | select(.p == $p) | . + {t: ep(.at)} | select(.t >= $now - $win * 3600)]
+      | group_by(.key)[] | sort_by(.t)
+      | (map(.ev) | rindex("r")) as $r
+      | (if $r == null then . else .[($r + 1):] end) as $q
+      | select(($q | length) > 0)
+      | {family: "infra", kind: "ticket-starved", project: $p, subject: ("ticket:" + $p + ":" + $q[0].key), subject_kind: "build",
+         ticket: $q[0].key, queued_min: ($q | last | .min | tonumber), passes: ($q | length),
+         first_at: ($q[0].at + "Z"), last_at: ($q | last | .at + "Z"), first_epoch: $q[0].t,
+         starve_min: $smin, starve_passes: $spass, window_h: $win,
+         stall_at: (($q[0].t) | todate), day: ($now | todate)[0:10], truncated: false, unknown: []}' <<<"$txt" 2>/dev/null) || { _unblock_infra_unreadable pipeline_health_log "$p"; continue; }
+    while IFS= read -r out; do
+      [ -n "$out" ] || continue
+      key=$(jq -r .ticket <<<"$out")
+      local tf="$root/logs/$p.triage-$key.out" to=false first
+      first=$(jq -r .first_epoch <<<"$out")
+      if [ -e "$tf" ]; then
+        if [ "$(stat -c %Y "$tf" 2>/dev/null || stat -f %m "$tf" 2>/dev/null || echo 0)" -ge "$first" ]; then to=true; fi
+      fi
+      jq -c --argjson to "$to" 'del(.first_epoch) + {triage_out: $to}' <<<"$out"
+    done <<<"$recs"
+  done
+}
+
+# _unblock_infra_reach <project> <repo> — BH-8390 (U13-REACH, the #8481
+# case). One build-reach-blocked record per ticket whose newest `stranded:`
+# line in logs/<p>.log says its build ended REVIEW_BLOCKED suite-reach (the
+# execute stage's gate: no PR was opened). Fields: ticket, issue, suites (the
+# tests/*.sh the line names), detail (at most UNBLOCK_DETAIL_MAX_CHARS, 400),
+# stranded_at,
+# age_min, reach_stuck_min (UNBLOCK_REACH_STUCK_MIN, 45), has_pr (an open PR
+# from ticket/<key lowercased>; null unread), day.
+_unblock_infra_reach() {
+  local p="$1" repo="${2:-}" root txt rec key br hp owner
+  root=$(_unblock_infra_root); [ -n "$root" ] || { _unblock_infra_unreadable project_log "$p"; return 0; }
+  txt=$(_unblock_infra_tail "$root/logs/$p.log") || { _unblock_infra_unreadable project_log "$p"; return 0; }
+  [ -n "$txt" ] || return 0
+  local recs
+  recs=$(jq -Rnc --arg p "$p" --argjson now "$_UBI_NOW" --argjson stuck "$(_unblock_infra_int "${UNBLOCK_REACH_STUCK_MIN:-}" 45)" --argjson dmax "$(_unblock_infra_int "${UNBLOCK_DETAIL_MAX_CHARS:-}" 400)" '
+    def ep($a): ($a | sub(" "; "T") + "Z" | fromdateiso8601);
+    [inputs | capture("^(?<at>[0-9]{4}-[0-9]{2}-[0-9]{2} [0-9]{2}:[0-9]{2}:[0-9]{2})Z \\[[^\\]]*\\] stranded: (?<key>[A-Za-z0-9.-]+) \\(issue #(?<issue>[0-9]+)\\)(?<rest>.*)$")]
+    | group_by(.key)[] | sort_by(.at) | last
+    | select(.rest | test("REVIEW_BLOCKED suite-reach"))
+    | (.rest | sub("^.*REVIEW_BLOCKED suite-reach: "; "")) as $detail
+    | {family: "infra", kind: "build-reach-blocked", project: $p, subject: ("ticket:" + $p + ":" + .key), subject_kind: "build",
+       ticket: .key, issue: (.issue | tonumber), suites: ([$detail | scan("tests/[A-Za-z0-9._/-]+\\.sh")] | unique),
+       detail: $detail[0:$dmax], stranded_at: (.at + "Z"), age_min: ((($now - ep(.at)) / 60) | floor),
+       reach_stuck_min: $stuck, stall_at: (.at + "Z"), day: ($now | todate)[0:10], truncated: false}' <<<"$txt" 2>/dev/null) || { _unblock_infra_unreadable project_log "$p"; return 0; }
+  # shellcheck disable=SC1091
+  declare -F gh_rest >/dev/null || . "$root/bin/lib/gh-rest.sh" 2>/dev/null || true
+  while IFS= read -r rec; do
+    [ -n "$rec" ] || continue
+    key=$(jq -r .ticket <<<"$rec"); hp=null
+    br="ticket/$(printf '%s' "$key" | tr '[:upper:]' '[:lower:]')"; owner="${repo%%/*}"
+    if [[ $repo =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] && declare -F gh_rest >/dev/null \
+       && gh_rest GET "repos/$repo/pulls?state=open&head=$owner:$br&per_page=10" > "$_UBI_TMP/reach-pr.json" 2>/dev/null; then
+      hp=$(jq -c 'if type == "array" then length > 0 else null end' "$_UBI_TMP/reach-pr.json" 2>/dev/null) || hp=null
+    fi
+    jq -c --argjson hp "$hp" '. + {has_pr: $hp, unknown: (if $hp == null then ["has_pr"] else [] end)}' <<<"$rec"
+  done <<<"$recs"
+}
+
 unblock_collect_infra() {
   local fam="" repo="" hub tmp
   local -a projects=()
@@ -282,7 +391,7 @@ unblock_collect_infra() {
     case "$1" in
       --project) [ -n "${2:-}" ] || return 2; projects+=("$2"); shift ;;
       --repo) [ -n "${2:-}" ] || return 2; repo="$2"; shift ;;
-      --family) case "${2:-}" in box|pool|park) fam="$2" ;; *) return 2 ;; esac; shift ;;
+      --family) case "${2:-}" in box|pool|park|starve|reach) fam="$2" ;; *) return 2 ;; esac; shift ;;
       *) return 2 ;;
     esac
     shift
@@ -355,6 +464,14 @@ _unblock_collect_infra_body() {
     [ "${#projects[@]}" = 0 ] || _unblock_infra_pools "${projects[@]}" ;;
   esac
   case "$fam" in ''|park) _unblock_infra_parks ;; esac
+  case "$fam" in ''|starve|reach)
+    _UBI_TMP=$(mktemp -d "${TMPDIR:-/tmp}/ubi.XXXXXX") || return 0
+    if [ "${#projects[@]}" -gt 0 ]; then
+      case "$fam" in ''|starve) _unblock_infra_starve "${projects[@]}" ;; esac
+      case "$fam" in ''|reach) for p in "${projects[@]}"; do _unblock_infra_reach "$p" "$repo"; done ;; esac
+    fi
+    rm -rf "$_UBI_TMP" ;;
+  esac
   return 0
 }
 
@@ -362,7 +479,8 @@ _unblock_collect_infra_body() {
 # (bin/lib/unblock/collect.sh calls ub_collect_<family> with these two args).
 # Without it the tick logged "unwired infra (no ub_collect_infra defined)"
 # and collected nothing (2026-10-26). <repo> picks this tick's parks out of
-# the fleet-wide pr-state.tsv (BH-8498); `-` or empty keeps none.
+# the fleet-wide pr-state.tsv (BH-8498) and gives build-reach-blocked its
+# has_pr read (BH-8390); `-` or empty keeps none.
 ub_collect_infra() {
   [ -n "${1:-}" ] || return 2
   local r="${2:-}"

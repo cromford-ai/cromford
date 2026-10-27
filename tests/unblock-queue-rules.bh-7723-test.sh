@@ -344,7 +344,7 @@ check "C8c complete:false: every record names batch_failure unreadable" "$(jq -s
 C=$(mkcase c9) || exit 1
 ids=$( export HARNESS="$C/h" UNBLOCK_CITES_FILE="$C/cites.json"
   . "$HARNESS/bin/lib/unblock/rules.sh" || exit 9
-  ub_rules_load "$RULES" | jq -r 'map(.id) | join(" ")' )
+  ub_rules_load "$RULES" | jq -r 'map(.id | select(startswith("U13-") | not)) | join(" ")' )  # BH-8390: tests/unblock-rules-u13.bh-8390-test.sh pins U13-*
 check "C9 shipped rules load in priority order" "$ids" "U1-batch-culprit U2-bystander-requeue U3-dead-shard-requeue U4-standing-approval U6 U5 U7 U11 U8 U9 U10 U12"
 
 # ---------------------------------------------------------------- C10

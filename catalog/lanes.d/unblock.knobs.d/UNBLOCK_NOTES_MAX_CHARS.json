@@ -1,0 +1,12 @@
+{
+  "env": "UNBLOCK_NOTES_MAX_CHARS",
+  "read_in": "bin/lib/unblock/act.sh",
+  "type": "int",
+  "default": 300,
+  "min": 20,
+  "max": 2000,
+  "unit": "characters",
+  "zero_means": null,
+  "note": "BH-8390: the longest notes value act.sh accepts on lead_rerequest; a longer one is bad input. A bad value is the code fallback 300.",
+  "settable": true
+}

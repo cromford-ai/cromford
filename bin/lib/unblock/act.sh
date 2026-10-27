@@ -21,7 +21,9 @@
 #     queue_approve              {verdict: MERGE|MERGE-WITH-NOTES}
 #     dismiss_review             {review_id}
 #     fix_round                  {brief, ticket?}
-#     lead_rerequest             {request_id, priority}
+#     lead_rerequest             {request_id, priority, notes?}; request_id
+#                                "none" = no reset, one new request (BH-8390)
+#     launch_fastpath            {key} (BH-8390; not a PR action)
 #     box_restart                {box_id, account?}
 #     setting_set                {key, value, old, min, max, why}
 #     send_card                  {card_id, text}
@@ -70,6 +72,9 @@
 # Knobs (env; the lane registers them, the code default is the fallback):
 #   UNBLOCK_ACT  0   1 = act where the project's mode row says act
 #   UB_NOW       -   epoch seconds, the clock seam for tests
+#   UNBLOCK_FASTPATH_TIMEOUT_S 300  the wall-clock bound on launch_fastpath
+#   UNBLOCK_NOTES_MAX_CHARS    300  the longest lead_rerequest notes accepted
+#   UNBLOCK_DECLINE_MAX_CHARS  200  the decline reason kept in the detail
 # Rows: unblock.project.<p>.mode; unblock.knob_allowlist (comma list, `*`
 #   matches one dot-free segment). Absent -> the code list below. A key under
 #   unblock.* or lane.unblock.* is refused whatever the row says.
@@ -85,12 +90,14 @@
 
 UB_NEVER_CLASSES="spend production live-probe client-board merge deploy governance"
 UB_NEVER_ACTIONS="merge force_push deploy pause_project"
-UB_ACTIONS="post_block post_findings requeue queue_approve dismiss_review fix_round lead_rerequest box_restart setting_set send_card"
+UB_ACTIONS="post_block post_findings requeue queue_approve dismiss_review fix_round lead_rerequest box_restart setting_set send_card launch_fastpath"
 UB_PR_ACTIONS="post_block post_findings requeue queue_approve dismiss_review fix_round lead_rerequest"
 UB_KNOB_ALLOWLIST_DEFAULT="lane.fly-pool-tick.pool_tick_max_parallel,hub_load.shed,lane.fly-pool.*.pool_record_read,lane_placement.*,conductor_remote_spawn.*"
 UB_MARKER_PAGES=5
 
 _ub_root() { printf '%s' "${HARNESS:-${H:-}}"; }
+# _ub_knob_int <value> <default> — a whole number from 1 to 999999, else the default.
+_ub_knob_int() { if [[ ${1:-} =~ ^[1-9][0-9]{0,5}$ ]]; then printf '%s' "$1"; else printf '%s' "$2"; fi; }
 _ub_now() { printf '%s' "${UB_NOW:-$(date -u +%s)}"; }
 _ub_in() { case " $2 " in *" $1 "*) return 0 ;; esac; return 1; }
 
@@ -149,7 +156,11 @@ _ub_valid() {
     dismiss_review) [[ "$(_ub_arg review_id)" =~ ^[1-9][0-9]*$ ]] || return 1 ;;
     lead_rerequest)
       [[ "$(_ub_arg request_id)" =~ ^[A-Za-z0-9_-]+$ ]] || return 1
-      [[ "$(_ub_arg priority)" =~ ^[1-9][0-9]*$ ]] || return 1 ;;
+      [[ "$(_ub_arg priority)" =~ ^[1-9][0-9]*$ ]] || return 1
+      f=$(_ub_arg notes)
+      [ "${#f}" -le "$(_ub_knob_int "${UNBLOCK_NOTES_MAX_CHARS:-}" 300)" ] && [[ "$f" != *$'\n'* ]] || return 1 ;;
+    launch_fastpath)
+      [[ "$(_ub_arg key)" =~ ^([A-Z][A-Z0-9]*-)?[0-9]+([.][0-9]+)?$ ]] || return 1 ;;
     box_restart)
       [[ "$(_ub_arg box_id)" =~ ^[A-Za-z0-9._-]+$ ]] || return 1
       f=$(_ub_arg account); [ -z "$f" ] || [[ "$f" =~ ^[A-Za-z0-9._@-]+$ ]] || return 1 ;;
@@ -326,16 +337,51 @@ _ub_fix_round() {
   fi
 }
 
+# request_id "none" (BH-8390, U13-RESTAMP): the head has no request row, so
+# there is nothing to reset; only the request goes out. notes, when set, go
+# out as --notes.
+# After a reset the request answers 409 (UNIQUE repo, pr, head_sha), so the
+# notes do not reach a reset row yet: follow-up #8512 (reset --notes).
 _ub_lead_rerequest() {
-  local lv rc err
+  local lv rc err rid notes after="after reset"
+  local -a extra=()
   lv="$(_ub_root)/bin/lead-verdict.sh"
-  "$lv" reset "$(_ub_arg request_id)" >/dev/null 2>&1; rc=$?
-  [ "$rc" = 0 ] || { _ub_out failed "reset rc $rc"; return 0; }
-  err=$("$lv" request "$_UB_SLUG" "$_UB_PR" "$_UB_HEAD" --priority "$(_ub_arg priority)" 2>&1 >/dev/null); rc=$?
+  rid=$(_ub_arg request_id); notes=$(_ub_arg notes)
+  [ -n "$notes" ] && extra=(--notes "$notes")
+  if [ "$rid" = none ]; then
+    after="with no reset"
+  else
+    "$lv" reset "$rid" >/dev/null 2>&1; rc=$?
+    [ "$rc" = 0 ] || { _ub_out failed "reset rc $rc"; return 0; }
+  fi
+  err=$("$lv" request "$_UB_SLUG" "$_UB_PR" "$_UB_HEAD" --priority "$(_ub_arg priority)" "${extra[@]+"${extra[@]}"}" 2>&1 >/dev/null); rc=$?
   if [ "$rc" = 0 ]; then _ub_out done requested
   elif grep -q 'HTTP 409' <<<"$err"; then _ub_out done already-requested
-  else _ub_out failed "request rc $rc after reset"
+  else _ub_out failed "request rc $rc $after"
   fi
+}
+
+# launch_fastpath (BH-8390, U13-STARVE): bin/launch-fastpath.sh <project>
+# <key>. It is deterministic, takes its own launch lock and declines anything
+# it is not sure of (a blocker open, an owner, a hold). rc 0 = launched; a
+# decline is `refused` with its FASTPATH-DECLINED reason from logs/<p>.log.
+_ub_launch_fastpath() {
+  local h key out rc why
+  h=$(_ub_root); key=$(_ub_arg key)
+  [ -x "$h/bin/launch-fastpath.sh" ] || { _ub_out failed fastpath-missing; return 0; }
+  out=$(timeout "$(_ub_knob_int "${UNBLOCK_FASTPATH_TIMEOUT_S:-}" 300)" "$h/bin/launch-fastpath.sh" "$_UB_P" "$key" 2>/dev/null); rc=$?
+  if [ "$rc" = 0 ]; then _ub_out done launched; return 0; fi
+  # The script's contract: exit 1, the declined key AS GIVEN on stdout, and
+  # one `FASTPATH-DECLINED <KEY> :: <reason>` line in logs/<p>.log; in
+  # dispatch mode hotfix-only there is no per-key line, only one
+  # `DISPATCH-MODE hotfix-only: ... (<KEYS>)` line for the run.
+  if [ "$rc" = 1 ] && grep -qxF -- "$key" <<<"$out"; then
+    why=$(grep -F -e "FASTPATH-DECLINED $key " -e "DISPATCH-MODE hotfix-only:" "$h/logs/$_UB_P.log" 2>/dev/null | tail -n 1 \
+      | sed -e 's/^.*FASTPATH-DECLINED [^ ]* :: //' -e 's/^.*\(DISPATCH-MODE hotfix-only\).*$/\1/' \
+      | tr -c 'A-Za-z0-9 ._:/#=-' ' ' | cut -c1-"$(_ub_knob_int "${UNBLOCK_DECLINE_MAX_CHARS:-}" 200)" | sed 's/ *$//')
+    _ub_out refused "declined: ${why:-no reason logged}"; return 0
+  fi
+  _ub_out failed "fastpath rc $rc"
 }
 
 _ub_box_restart() {
@@ -469,6 +515,7 @@ ub_act() {
     box_restart)    _ub_box_restart ;;
     setting_set)    _ub_setting_set ;;
     send_card)      _ub_send_card ;;
+    launch_fastpath) _ub_launch_fastpath ;;
   esac
   _ub_in "$_UB_ACTION" "$UB_PR_ACTIONS" && _ub_gh_reset
   return 0

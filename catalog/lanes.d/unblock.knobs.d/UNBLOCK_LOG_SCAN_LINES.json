@@ -1,0 +1,12 @@
+{
+  "env": "UNBLOCK_LOG_SCAN_LINES",
+  "read_in": "bin/lib/unblock/collectors/infra.sh",
+  "type": "int",
+  "default": 5000,
+  "min": 100,
+  "max": 100000,
+  "unit": "lines",
+  "zero_means": null,
+  "note": "BH-8390: the last lines of logs/pipeline-health.log and logs/<project>.log the infra collector reads (U13-STARVE, U13-REACH). A bad value is the code fallback 5000.",
+  "settable": true
+}

@@ -1,0 +1,12 @@
+{
+  "env": "UNBLOCK_RERQ_PRIORITY",
+  "read_in": "bin/lib/unblock/collectors/queue.sh",
+  "type": "int",
+  "default": 900,
+  "min": 1,
+  "max": 1000,
+  "unit": "priority",
+  "zero_means": null,
+  "note": "BH-8390: the lead request priority U13-EMPTY and U13-RESTAMP ask for (lead-verdict.sh request --priority, 1..1000, higher first). A bad value is the code fallback 900.",
+  "settable": true
+}

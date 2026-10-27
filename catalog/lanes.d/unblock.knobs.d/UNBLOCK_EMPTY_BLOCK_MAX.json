@@ -1,0 +1,12 @@
+{
+  "env": "UNBLOCK_EMPTY_BLOCK_MAX",
+  "read_in": "bin/lib/unblock/collectors/queue.sh",
+  "type": "int",
+  "default": 1,
+  "min": 0,
+  "max": 5,
+  "unit": "re-requests",
+  "zero_means": "off",
+  "note": "BH-8390: how many empty lead BLOCK reports on one head U13-EMPTY re-requests; past it U13-EMPTY-CARD sends a card. Copied into empty_block_max. 0 = no re-request, the first empty BLOCK is a card. A bad value is the code fallback 1.",
+  "settable": true
+}

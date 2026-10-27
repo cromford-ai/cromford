@@ -1,0 +1,12 @@
+{
+  "env": "UNBLOCK_STARVE_PASSES",
+  "read_in": "bin/lib/unblock/collectors/infra.sh",
+  "type": "int",
+  "default": 3,
+  "min": 1,
+  "max": 50,
+  "unit": "passes",
+  "zero_means": null,
+  "note": "BH-8390: the pipeline-health passes since the last RESOLVED line a starved ticket needs for U13-STARVE; copied into starve_passes. A bad value is the code fallback 3.",
+  "settable": true
+}

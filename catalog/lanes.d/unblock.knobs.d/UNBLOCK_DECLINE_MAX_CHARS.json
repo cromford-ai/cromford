@@ -1,0 +1,12 @@
+{
+  "env": "UNBLOCK_DECLINE_MAX_CHARS",
+  "read_in": "bin/lib/unblock/act.sh",
+  "type": "int",
+  "default": 200,
+  "min": 20,
+  "max": 500,
+  "unit": "characters",
+  "zero_means": null,
+  "note": "BH-8390: the length of the FASTPATH-DECLINED reason kept in a refused launch_fastpath detail. A bad value is the code fallback 200.",
+  "settable": true
+}

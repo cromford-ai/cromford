@@ -1,0 +1,12 @@
+{
+  "env": "UNBLOCK_LEAD_LOG_LINES",
+  "read_in": "bin/lib/unblock/collectors/queue.sh",
+  "type": "int",
+  "default": 2000,
+  "min": 100,
+  "max": 100000,
+  "unit": "lines",
+  "zero_means": null,
+  "note": "BH-8390: the last lines of logs/lead-review-land.log the queue collector reads for withheld empty BLOCK reports (U13-EMPTY). A bad value is the code fallback 2000.",
+  "settable": true
+}

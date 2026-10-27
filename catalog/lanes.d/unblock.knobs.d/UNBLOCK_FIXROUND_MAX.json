@@ -1,0 +1,12 @@
+{
+  "env": "UNBLOCK_FIXROUND_MAX",
+  "read_in": "bin/lib/unblock/collectors/queue.sh",
+  "type": "int",
+  "default": 2,
+  "min": 1,
+  "max": 5,
+  "unit": "rounds",
+  "zero_means": null,
+  "note": "BH-8390 (UNB-7): the fix rounds a PR may have had (pr_attempt_count kind fixrounds, every head) for the U13 fix-round rules to start one more; copied into fixround_max. A bad value is the code fallback 2.",
+  "settable": true
+}

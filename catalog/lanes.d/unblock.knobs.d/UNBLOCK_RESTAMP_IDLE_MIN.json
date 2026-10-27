@@ -1,0 +1,12 @@
+{
+  "env": "UNBLOCK_RESTAMP_IDLE_MIN",
+  "read_in": "bin/lib/unblock/collectors/queue.sh",
+  "type": "int",
+  "default": 20,
+  "min": 0,
+  "max": 1440,
+  "unit": "minutes",
+  "zero_means": null,
+  "note": "BH-8390: how long a new head with nothing standing and no open lead request waits, since its commit, before U13-RESTAMP asks the lead; copied into restamp_idle_min. A bad value is the code fallback 20.",
+  "settable": true
+}

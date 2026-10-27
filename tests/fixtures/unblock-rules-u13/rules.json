@@ -1,0 +1,723 @@
+{
+ "note": "BH-8390: one stall record per U13 rule and a non-matching neighbour (tests/unblock-rules-u13.bh-8390-test.sh R).",
+ "cases": [
+  {
+   "rule": "U13-REG",
+   "want": "WOULD_FIX_ROUND",
+   "brief_has": "merge-conductor/MC_LOG",
+   "record": {
+    "kind": "pr-ejected",
+    "family": "queue",
+    "project": "cromford",
+    "repo": "example-org/cromford",
+    "subject": "example-org/cromford#8071",
+    "pr": 8071,
+    "head": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "draft": 8344,
+    "batch_state": "failed",
+    "culprit_count": 0,
+    "culprit": null,
+    "ejected_on_head": true,
+    "requeued_on_head": false,
+    "own_ci": "green",
+    "verdict_on_head": "MERGE-WITH-NOTES",
+    "mergeable_state": "clean",
+    "fixrounds": 0,
+    "fixround_max": 2,
+    "owner_count": 1,
+    "owners": [
+     8071
+    ],
+    "ticket": "BH-8070",
+    "owns_failure": true,
+    "signal": "reg",
+    "owned": [
+     "reg"
+    ],
+    "fix_brief": "tests/lanes-registry-test.sh is red (section 7) on merge-conductor/MC_LOG. Section 7: add the fragment."
+   },
+   "neighbour": {
+    "kind": "pr-ejected",
+    "family": "queue",
+    "project": "cromford",
+    "repo": "example-org/cromford",
+    "subject": "example-org/cromford#8071",
+    "pr": 8071,
+    "head": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "draft": 8344,
+    "batch_state": "failed",
+    "culprit_count": 0,
+    "culprit": null,
+    "ejected_on_head": true,
+    "requeued_on_head": false,
+    "own_ci": "green",
+    "verdict_on_head": "MERGE-WITH-NOTES",
+    "mergeable_state": "clean",
+    "fixrounds": 2,
+    "fixround_max": 2,
+    "owner_count": 1,
+    "owners": [
+     8071
+    ],
+    "ticket": "BH-8070",
+    "owns_failure": true,
+    "signal": "reg",
+    "owned": [
+     "reg"
+    ],
+    "fix_brief": "x"
+   }
+  },
+  {
+   "rule": "U13-CAT",
+   "want": "WOULD_FIX_ROUND",
+   "brief_has": "worker_catalogs",
+   "record": {
+    "kind": "pr-ejected",
+    "family": "queue",
+    "project": "cromford",
+    "repo": "example-org/cromford",
+    "subject": "example-org/cromford#8089",
+    "pr": 8089,
+    "head": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "draft": 8344,
+    "batch_state": "failed",
+    "culprit_count": 0,
+    "culprit": null,
+    "ejected_on_head": true,
+    "requeued_on_head": false,
+    "own_ci": "green",
+    "verdict_on_head": "MERGE-WITH-NOTES",
+    "mergeable_state": "clean",
+    "fixrounds": 0,
+    "fixround_max": 2,
+    "owner_count": 1,
+    "owners": [
+     8071
+    ],
+    "ticket": "BH-8070",
+    "owns_failure": true,
+    "signal": "cat",
+    "owned": [
+     "cat"
+    ],
+    "fix_brief": "worker-node R0: tests/x.sh loads the worker. Add worker_catalogs \"$DIR\" || exit 1."
+   },
+   "neighbour": {
+    "kind": "pr-ejected",
+    "family": "queue",
+    "project": "cromford",
+    "repo": "example-org/cromford",
+    "subject": "example-org/cromford#8089",
+    "pr": 8089,
+    "head": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "draft": 8344,
+    "batch_state": "failed",
+    "culprit_count": 0,
+    "culprit": null,
+    "ejected_on_head": false,
+    "requeued_on_head": false,
+    "own_ci": "green",
+    "verdict_on_head": "MERGE-WITH-NOTES",
+    "mergeable_state": "clean",
+    "fixrounds": 0,
+    "fixround_max": 2,
+    "owner_count": 1,
+    "owners": [
+     8071
+    ],
+    "ticket": "BH-8070",
+    "owns_failure": true,
+    "signal": "cat",
+    "owned": [
+     "cat"
+    ],
+    "fix_brief": "worker_catalogs"
+   }
+  },
+  {
+   "rule": "U13-MAP",
+   "want": "WOULD_FIX_ROUND",
+   "brief_has": "expected-map.d/BH-8331.tsv",
+   "record": {
+    "kind": "pr-ejected",
+    "family": "queue",
+    "project": "cromford",
+    "repo": "example-org/cromford",
+    "subject": "example-org/cromford#8331",
+    "pr": 8331,
+    "head": "cccccccccccccccccccccccccccccccccccccccc",
+    "draft": 8344,
+    "batch_state": "failed",
+    "culprit_count": 0,
+    "culprit": null,
+    "ejected_on_head": true,
+    "requeued_on_head": false,
+    "own_ci": "green",
+    "verdict_on_head": "MERGE-WITH-NOTES",
+    "mergeable_state": "clean",
+    "fixrounds": 0,
+    "fixround_max": 2,
+    "owner_count": 1,
+    "owners": [
+     8071
+    ],
+    "ticket": "BH-8070",
+    "owns_failure": true,
+    "signal": "map",
+    "owned": [
+     "map"
+    ],
+    "fix_brief": "Add tests/mc/expected-map.d/BH-8331.tsv with one row per function: queue<TAB>mc_x<TAB>lib."
+   },
+   "neighbour": {
+    "kind": "pr-ejected",
+    "family": "queue",
+    "project": "cromford",
+    "repo": "example-org/cromford",
+    "subject": "example-org/cromford#8331",
+    "pr": 8331,
+    "head": "cccccccccccccccccccccccccccccccccccccccc",
+    "draft": 8344,
+    "batch_state": "failed",
+    "culprit_count": 0,
+    "culprit": null,
+    "ejected_on_head": true,
+    "requeued_on_head": false,
+    "own_ci": "green",
+    "verdict_on_head": "MERGE-WITH-NOTES",
+    "mergeable_state": "clean",
+    "fixrounds": null,
+    "fixround_max": 2,
+    "owner_count": 1,
+    "owners": [
+     8071
+    ],
+    "ticket": "BH-8070",
+    "owns_failure": true,
+    "signal": "map",
+    "owned": [
+     "map"
+    ],
+    "fix_brief": "expected-map.d/BH-8331.tsv"
+   }
+  },
+  {
+   "rule": "U13-PDB",
+   "want": "WOULD_FIX_ROUND",
+   "brief_has": "changed-not-planned bin/foo.sh",
+   "record": {
+    "kind": "pr-ejected",
+    "family": "queue",
+    "project": "cromford",
+    "repo": "example-org/cromford",
+    "subject": "example-org/cromford#8181",
+    "pr": 8181,
+    "head": "dddddddddddddddddddddddddddddddddddddddd",
+    "draft": 8344,
+    "batch_state": "failed",
+    "culprit_count": 0,
+    "culprit": null,
+    "ejected_on_head": true,
+    "requeued_on_head": false,
+    "own_ci": "green",
+    "verdict_on_head": "MERGE-WITH-NOTES",
+    "mergeable_state": "clean",
+    "fixrounds": 0,
+    "fixround_max": 2,
+    "owner_count": 1,
+    "owners": [
+     8071
+    ],
+    "ticket": "BH-8070",
+    "owns_failure": true,
+    "signal": "pdb",
+    "owned": [
+     "pdb"
+    ],
+    "fix_brief": "plan-diff-bind: changed-not-planned bin/foo.sh. Name each path in the plan."
+   },
+   "neighbour": {
+    "kind": "pr-ejected",
+    "family": "queue",
+    "project": "cromford",
+    "repo": "example-org/cromford",
+    "subject": "example-org/cromford#8181",
+    "pr": 8181,
+    "head": "dddddddddddddddddddddddddddddddddddddddd",
+    "draft": 8344,
+    "batch_state": "failed",
+    "culprit_count": 0,
+    "culprit": null,
+    "ejected_on_head": true,
+    "requeued_on_head": false,
+    "own_ci": "green",
+    "verdict_on_head": "MERGE-WITH-NOTES",
+    "mergeable_state": "clean",
+    "fixrounds": 0,
+    "fixround_max": 2,
+    "owner_count": 1,
+    "owners": [
+     8071
+    ],
+    "ticket": "BH-8070",
+    "owns_failure": true,
+    "signal": "pdb",
+    "owned": [
+     "pdb"
+    ],
+    "fix_brief": ""
+   }
+  },
+  {
+   "rule": "U13-TRACE",
+   "want": "WOULD_FIX_ROUND",
+   "brief_has": "HIT line",
+   "record": {
+    "kind": "pr-ejected",
+    "family": "queue",
+    "project": "cromford",
+    "repo": "example-org/cromford",
+    "subject": "example-org/cromford#8350",
+    "pr": 8350,
+    "head": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+    "draft": 8344,
+    "batch_state": "failed",
+    "culprit_count": 0,
+    "culprit": null,
+    "ejected_on_head": true,
+    "requeued_on_head": false,
+    "own_ci": "green",
+    "verdict_on_head": "MERGE-WITH-NOTES",
+    "mergeable_state": "clean",
+    "fixrounds": 0,
+    "fixround_max": 2,
+    "owner_count": 1,
+    "owners": [
+     8071
+    ],
+    "ticket": "BH-8070",
+    "owns_failure": true,
+    "signal": "trace",
+    "owned": [
+     "trace"
+    ],
+    "fix_brief": "Tests cannot touch a real harness: 237 HIT line(s) from rust-bake.bh-8350-test.sh.",
+    "trace_own_new": true
+   },
+   "neighbour": {
+    "kind": "pr-ejected",
+    "family": "queue",
+    "project": "cromford",
+    "repo": "example-org/cromford",
+    "subject": "example-org/cromford#8350",
+    "pr": 8350,
+    "head": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+    "draft": 8344,
+    "batch_state": "failed",
+    "culprit_count": 0,
+    "culprit": null,
+    "ejected_on_head": true,
+    "requeued_on_head": false,
+    "own_ci": "green",
+    "verdict_on_head": "MERGE-WITH-NOTES",
+    "mergeable_state": "clean",
+    "fixrounds": 0,
+    "fixround_max": 2,
+    "owner_count": 1,
+    "owners": [
+     8071
+    ],
+    "ticket": "BH-8070",
+    "owns_failure": true,
+    "signal": "trace",
+    "owned": [
+     "trace"
+    ],
+    "fix_brief": "HIT line",
+    "trace_own_new": null
+   }
+  },
+  {
+   "rule": "U13-TRACE-CARD",
+   "want": "escalate",
+   "record": {
+    "kind": "pr-ejected",
+    "family": "queue",
+    "project": "cromford",
+    "repo": "example-org/cromford",
+    "subject": "example-org/cromford#7654",
+    "pr": 7654,
+    "head": "ffffffffffffffffffffffffffffffffffffffff",
+    "draft": 8344,
+    "batch_state": "failed",
+    "culprit_count": 0,
+    "culprit": null,
+    "ejected_on_head": true,
+    "requeued_on_head": false,
+    "own_ci": "green",
+    "verdict_on_head": "MERGE-WITH-NOTES",
+    "mergeable_state": "clean",
+    "fixrounds": 0,
+    "fixround_max": 2,
+    "owner_count": 1,
+    "owners": [
+     8071
+    ],
+    "ticket": "BH-8070",
+    "owns_failure": true,
+    "signal": "trace",
+    "owned": [
+     "trace"
+    ],
+    "fix_brief": "Tests cannot touch a real harness: 3 HIT line(s) from mc-x-test.sh.",
+    "trace_own_new": false
+   },
+   "neighbour": {
+    "kind": "pr-ejected",
+    "family": "queue",
+    "project": "cromford",
+    "repo": "example-org/cromford",
+    "subject": "example-org/cromford#7654",
+    "pr": 7654,
+    "head": "ffffffffffffffffffffffffffffffffffffffff",
+    "draft": 8344,
+    "batch_state": "failed",
+    "culprit_count": 0,
+    "culprit": null,
+    "ejected_on_head": true,
+    "requeued_on_head": false,
+    "own_ci": "green",
+    "verdict_on_head": "MERGE-WITH-NOTES",
+    "mergeable_state": "clean",
+    "fixrounds": 0,
+    "fixround_max": 2,
+    "owner_count": 1,
+    "owners": [
+     8071
+    ],
+    "ticket": "BH-8070",
+    "owns_failure": true,
+    "signal": "trace",
+    "owned": [
+     "trace"
+    ],
+    "fix_brief": "x",
+    "trace_own_new": null
+   }
+  },
+  {
+   "rule": "U13-OWNER",
+   "want": "WOULD_FIX_ROUND",
+   "brief_has": "tests/fly-pool-pr-unreadable",
+   "record": {
+    "kind": "pr-ejected",
+    "family": "queue",
+    "project": "cromford",
+    "repo": "example-org/cromford",
+    "subject": "example-org/cromford#7961",
+    "pr": 7961,
+    "head": "9999999999999999999999999999999999999999",
+    "draft": 8344,
+    "batch_state": "failed",
+    "culprit_count": 0,
+    "culprit": null,
+    "ejected_on_head": true,
+    "requeued_on_head": false,
+    "own_ci": "green",
+    "verdict_on_head": "MERGE-WITH-NOTES",
+    "mergeable_state": "clean",
+    "fixrounds": 0,
+    "fixround_max": 2,
+    "owner_count": 1,
+    "owners": [
+     8071
+    ],
+    "ticket": "BH-8070",
+    "owns_failure": true,
+    "signal": "suite",
+    "owned": [
+     "suite"
+    ],
+    "fix_brief": "The merge-queue batch #8344 ran tests/fly-pool-pr-unreadable.bh-1-test.sh red."
+   },
+   "neighbour": {
+    "kind": "pr-ejected",
+    "family": "queue",
+    "project": "cromford",
+    "repo": "example-org/cromford",
+    "subject": "example-org/cromford#7961",
+    "pr": 7961,
+    "head": "9999999999999999999999999999999999999999",
+    "draft": 8344,
+    "batch_state": "failed",
+    "culprit_count": 0,
+    "culprit": null,
+    "ejected_on_head": true,
+    "requeued_on_head": false,
+    "own_ci": "green",
+    "verdict_on_head": "MERGE-WITH-NOTES",
+    "mergeable_state": "clean",
+    "fixrounds": 0,
+    "fixround_max": 2,
+    "owner_count": 0,
+    "owners": [
+     8071
+    ],
+    "ticket": "BH-8070",
+    "owns_failure": false,
+    "signal": "suite",
+    "owned": [
+     "suite"
+    ],
+    "fix_brief": "x"
+   }
+  },
+  {
+   "rule": "U13-INNOCENT",
+   "want": "WOULD_REQUEUE",
+   "record": {
+    "kind": "pr-ejected",
+    "family": "queue",
+    "project": "cromford",
+    "repo": "example-org/cromford",
+    "subject": "example-org/cromford#8341",
+    "pr": 8341,
+    "head": "1111111111111111111111111111111111111111",
+    "draft": 8344,
+    "batch_state": "failed",
+    "culprit_count": 0,
+    "culprit": null,
+    "ejected_on_head": true,
+    "requeued_on_head": false,
+    "own_ci": "green",
+    "verdict_on_head": "MERGE-WITH-NOTES",
+    "mergeable_state": "clean",
+    "fixrounds": 0,
+    "fixround_max": 2,
+    "owner_count": 1,
+    "owners": [
+     8071
+    ],
+    "ticket": "BH-8070",
+    "owns_failure": false,
+    "signal": null,
+    "owned": [],
+    "fix_brief": ""
+   },
+   "neighbour": {
+    "kind": "pr-ejected",
+    "family": "queue",
+    "project": "cromford",
+    "repo": "example-org/cromford",
+    "subject": "example-org/cromford#8341",
+    "pr": 8341,
+    "head": "1111111111111111111111111111111111111111",
+    "draft": 8344,
+    "batch_state": "failed",
+    "culprit_count": 0,
+    "culprit": null,
+    "ejected_on_head": true,
+    "requeued_on_head": false,
+    "own_ci": "green",
+    "verdict_on_head": "MERGE-WITH-NOTES",
+    "mergeable_state": "clean",
+    "fixrounds": 0,
+    "fixround_max": 2,
+    "owner_count": 0,
+    "owners": [],
+    "ticket": "BH-8070",
+    "owns_failure": false,
+    "signal": null,
+    "owned": [],
+    "fix_brief": ""
+   }
+  },
+  {
+   "rule": "U13-EMPTY",
+   "want": "WOULD_LEAD_REREQUEST",
+   "record": {
+    "kind": "pr-empty-block",
+    "project": "cromford",
+    "repo": "example-org/cromford",
+    "pr": 8278,
+    "subject": "example-org/cromford#8278",
+    "head": "a15e86c6395d0000000000000000000000000000",
+    "logged_head12": "a15e86c6395d",
+    "head_current": true,
+    "request_id": "00000000-0000-0000-0000-000000008278",
+    "empty_blocks": 1,
+    "verdict_on_head": "BLOCK",
+    "priority": 900,
+    "notes": "write each finding as a - [BLOCK <class>] line",
+    "labels": [],
+    "empty_block_max": 1
+   },
+   "neighbour": {
+    "kind": "pr-empty-block",
+    "project": "cromford",
+    "repo": "example-org/cromford",
+    "pr": 8278,
+    "subject": "example-org/cromford#8278",
+    "head": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "logged_head12": "bbbbbbbbbbbb",
+    "head_current": false,
+    "request_id": "00000000-0000-0000-0000-000000008278",
+    "empty_blocks": 1,
+    "verdict_on_head": "BLOCK",
+    "priority": 900,
+    "notes": "write each finding as a - [BLOCK <class>] line",
+    "labels": [],
+    "empty_block_max": 1
+   }
+  },
+  {
+   "rule": "U13-EMPTY-CARD",
+   "want": "escalate",
+   "record": {
+    "kind": "pr-empty-block",
+    "project": "cromford",
+    "repo": "example-org/cromford",
+    "pr": 8372,
+    "subject": "example-org/cromford#8372",
+    "head": "2c78a3f064d10000000000000000000000000000",
+    "logged_head12": "2c78a3f064d1",
+    "head_current": true,
+    "request_id": "d33280b6",
+    "empty_blocks": 2,
+    "verdict_on_head": "BLOCK",
+    "priority": 900,
+    "notes": "write each finding as a - [BLOCK <class>] line",
+    "labels": [],
+    "empty_block_max": 1
+   },
+   "neighbour": {
+    "kind": "pr-empty-block",
+    "project": "cromford",
+    "repo": "example-org/cromford",
+    "pr": 8372,
+    "subject": "example-org/cromford#8372",
+    "head": "2c78a3f064d10000000000000000000000000000",
+    "logged_head12": "2c78a3f064d1",
+    "head_current": false,
+    "request_id": "d33280b6",
+    "empty_blocks": 2,
+    "verdict_on_head": "BLOCK",
+    "priority": 900,
+    "notes": "write each finding as a - [BLOCK <class>] line",
+    "labels": [],
+    "empty_block_max": 1
+   }
+  },
+  {
+   "rule": "U13-RESTAMP",
+   "want": "WOULD_LEAD_REREQUEST",
+   "record": {
+    "kind": "pr-verdict-old-head",
+    "project": "cromford",
+    "repo": "example-org/cromford",
+    "pr": 8136,
+    "subject": "example-org/cromford#8136",
+    "head": "c7ace3fb11111111111111111111111111111111",
+    "verdict_on_head": "none",
+    "old_head": "3155722a22222222222222222222222222222222",
+    "old_verdict": "MERGE-WITH-NOTES",
+    "old_verdict_id": 4100,
+    "lead_request_open": false,
+    "idle_min": 31,
+    "restamp_idle_min": 20,
+    "request_id": "none",
+    "priority": 900,
+    "labels": []
+   },
+   "neighbour": {
+    "kind": "pr-verdict-old-head",
+    "project": "cromford",
+    "repo": "example-org/cromford",
+    "pr": 8136,
+    "subject": "example-org/cromford#8136",
+    "head": "c7ace3fb11111111111111111111111111111111",
+    "verdict_on_head": "none",
+    "old_head": "3155722a22222222222222222222222222222222",
+    "old_verdict": "MERGE-WITH-NOTES",
+    "old_verdict_id": 4100,
+    "lead_request_open": true,
+    "idle_min": 31,
+    "restamp_idle_min": 20,
+    "request_id": "none",
+    "priority": 900,
+    "labels": []
+   }
+  },
+  {
+   "rule": "U13-STARVE",
+   "want": "WOULD_LAUNCH_FASTPATH",
+   "record": {
+    "family": "infra",
+    "kind": "ticket-starved",
+    "project": "project-6-os",
+    "subject": "ticket:project-6-os:TK-2601",
+    "subject_kind": "build",
+    "ticket": "TK-2601",
+    "queued_min": 296,
+    "passes": 3,
+    "starve_min": 120,
+    "starve_passes": 3,
+    "triage_out": false,
+    "day": "2026-10-26"
+   },
+   "neighbour": {
+    "family": "infra",
+    "kind": "ticket-starved",
+    "project": "project-6-os",
+    "subject": "ticket:project-6-os:TK-2601",
+    "subject_kind": "build",
+    "ticket": "TK-2601",
+    "queued_min": 46,
+    "passes": 1,
+    "starve_min": 120,
+    "starve_passes": 3,
+    "triage_out": false,
+    "day": "2026-10-26"
+   }
+  },
+  {
+   "rule": "U13-REACH",
+   "want": "escalate",
+   "record": {
+    "family": "infra",
+    "kind": "build-reach-blocked",
+    "project": "cromford",
+    "subject": "ticket:cromford:BH-8452.1",
+    "subject_kind": "build",
+    "ticket": "BH-8452.1",
+    "issue": 8481,
+    "suites": [
+     "tests/pr-health-lib.bh-8452-test.sh"
+    ],
+    "detail": "1 suite(s) green on base, red on head",
+    "age_min": 51,
+    "reach_stuck_min": 45,
+    "has_pr": false,
+    "day": "2026-10-26"
+   },
+   "neighbour": {
+    "family": "infra",
+    "kind": "build-reach-blocked",
+    "project": "cromford",
+    "subject": "ticket:cromford:BH-8452.1",
+    "subject_kind": "build",
+    "ticket": "BH-8452.1",
+    "issue": 8481,
+    "suites": [
+     "tests/pr-health-lib.bh-8452-test.sh"
+    ],
+    "detail": "1 suite(s) green on base, red on head",
+    "age_min": 51,
+    "reach_stuck_min": 45,
+    "has_pr": true,
+    "day": "2026-10-26"
+   }
+  }
+ ]
+}

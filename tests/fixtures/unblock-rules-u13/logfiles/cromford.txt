@@ -1,0 +1,3 @@
+2026-10-26 18:37:00Z [cromford] stranded: BH-8452.1 (issue #8481) re-offered with a fresh queue row (1 of 3 in 24h) — stranded because: no owner; last row: done: REVIEW_BLOCKED suite-reach: 1 suite(s) green on base, red on head: tests/pr-health-lib.bh-8452-test.sh (FAIL: L7h the sweep makes a list read)
+2026-10-26 18:49:40Z [cromford] stranded: BH-8475 (issue #8475) re-offered with a fresh queue row (1 of 3 in 24h) — stranded because: no owner; last row: done: PLAN_BLOCKED
+2026-10-26 19:20:00Z [cromford] stranded: BH-8476 (issue #8476) re-offered with a fresh queue row (1 of 3 in 24h) — stranded because: no owner; last row: done: REVIEW_BLOCKED suite-reach: 1 suite(s) green on base, red on head: tests/a-test.sh (FAIL: x)

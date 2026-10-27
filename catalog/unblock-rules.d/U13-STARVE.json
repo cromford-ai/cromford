@@ -1,0 +1,32 @@
+{
+  "id": "U13-STARVE",
+  "priority": 120,
+  "family": "infra",
+  "class": "triage-launch",
+  "cites": [
+    "G4",
+    "G21"
+  ],
+  "match": {
+    "kind": "ticket-starved",
+    "all": [
+      ".queued_min >= .starve_min",
+      ".passes >= .starve_passes",
+      ".triage_out == false"
+    ]
+  },
+  "judge": null,
+  "action": {
+    "name": "launch_fastpath",
+    "args": {
+      "key": ".ticket"
+    }
+  },
+  "key": [
+    "project",
+    "ticket",
+    "day",
+    "id"
+  ],
+  "note": "BH-8390 R-STARVE (TK-2601). pipeline-health says the ticket is queued with no spawn on starve_passes passes and starve_min minutes, and no triage out file is newer than the first pass. Run bin/launch-fastpath.sh <project> <key>: deterministic, its own launch lock, and it declines when a blocker is open or it is not sure (the decline reason is the ledger evidence). One try per ticket per day."
+}

@@ -1,0 +1,12 @@
+{
+  "env": "UNBLOCK_SIGNAL_LINES",
+  "read_in": "bin/lib/unblock/collectors/queue.sh",
+  "type": "int",
+  "default": 8,
+  "min": 1,
+  "max": 40,
+  "unit": "lines",
+  "zero_means": null,
+  "note": "BH-8390: the failure lines kept per batch signal and in a U13 fix-round brief (bin/lib/unblock/signals.sh). A bad value is the code fallback 8.",
+  "settable": true
+}

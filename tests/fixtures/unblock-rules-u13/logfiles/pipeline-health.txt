@@ -1,0 +1,7 @@
+2026-10-25 22:48:18Z project-6-os TK-2601 queued 46m with no spawn — fly-dispatch/pool not picking it up
+2026-10-26 00:48:19Z project-6-os TK-2601 queued 166m with no spawn — fly-dispatch/pool not picking it up
+2026-10-26 01:00:00Z project-6-os TK-9 queued 200m with no spawn — fly-dispatch/pool not picking it up
+2026-10-26 02:00:00Z RESOLVED stuckqueue:project-6-os:TK-9.json — condition no longer holds
+2026-10-26 02:10:00Z project-6-os TK-9 queued 10m with no spawn — fly-dispatch/pool not picking it up
+2026-10-26 02:30:00Z cromford BH-1 queued 300m with no spawn — fly-dispatch/pool not picking it up
+2026-10-26 02:58:21Z project-6-os TK-2601 queued 296m with no spawn — fly-dispatch/pool not picking it up

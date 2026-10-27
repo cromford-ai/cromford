@@ -1,0 +1,190 @@
+{
+ "now": "2026-10-25T20:30:00Z",
+ "gh": {
+  "repos/example-org/cromford/pulls/8071": {
+   "number": 8071,
+   "state": "open",
+   "merged": false,
+   "head": {
+    "sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "ref": "ticket/bh-8070"
+   },
+   "mergeable_state": "clean",
+   "labels": []
+  },
+  "repos/example-org/cromford/pulls/8341": {
+   "number": 8341,
+   "state": "open",
+   "merged": false,
+   "head": {
+    "sha": "1111111111111111111111111111111111111111",
+    "ref": "ticket/bh-8340"
+   },
+   "mergeable_state": "clean",
+   "labels": []
+  },
+  "repos/example-org/cromford/pulls/7882": {
+   "number": 7882,
+   "state": "open",
+   "merged": false,
+   "head": {
+    "sha": "2222222222222222222222222222222222222222",
+    "ref": "ticket/bh-7881"
+   },
+   "mergeable_state": "clean",
+   "labels": []
+  },
+  "repos/example-org/cromford/pulls/8204": {
+   "number": 8204,
+   "state": "open",
+   "merged": false,
+   "head": {
+    "sha": "3333333333333333333333333333333333333333",
+    "ref": "ticket/bh-8203"
+   },
+   "mergeable_state": "clean",
+   "labels": []
+  },
+  "repos/example-org/cromford/pulls/8332": {
+   "number": 8332,
+   "state": "open",
+   "merged": false,
+   "head": {
+    "sha": "4444444444444444444444444444444444444444",
+    "ref": "ticket/bh-8331"
+   },
+   "mergeable_state": "clean",
+   "labels": []
+  },
+  "repos/example-org/cromford/pulls/8342": {
+   "number": 8342,
+   "state": "open",
+   "merged": false,
+   "head": {
+    "sha": "5555555555555555555555555555555555555555",
+    "ref": "ticket/bh-8341"
+   },
+   "mergeable_state": "clean",
+   "labels": []
+  },
+  "repos/example-org/cromford/pulls/8071/files?per_page=100": [
+   {
+    "filename": "bin/merge-conductor.sh",
+    "status": "modified",
+    "patch": "@@ -1 +1,2 @@\n+  : \"${MC_LOG:-$H/logs/mc.log}\"\n"
+   }
+  ],
+  "repos/example-org/cromford/pulls/8341/files?per_page=100": [
+   {
+    "filename": "docs/notes/a.md",
+    "status": "added",
+    "patch": "+MC_LOG is the log"
+   }
+  ],
+  "repos/example-org/cromford/pulls/7882/files?per_page=100": [
+   {
+    "filename": "bin/lib/x.sh",
+    "status": "modified",
+    "patch": "+echo ${MC_LOGGER:-}"
+   }
+  ],
+  "repos/example-org/cromford/pulls/8204/files?per_page=100": [
+   {
+    "filename": "catalog/lanes.d/fly-pool.knobs.d/POOL_Y.json",
+    "status": "added",
+    "patch": "+{}"
+   }
+  ],
+  "repos/example-org/cromford/pulls/8332/files?per_page=100": [
+   {
+    "filename": "tests/y-test.sh",
+    "status": "modified",
+    "patch": "+ok"
+   }
+  ],
+  "repos/example-org/cromford/pulls?state=open&per_page=100": []
+ },
+ "gh_status": {
+  "repos/example-org/cromford/pulls/8342/files?per_page=100": "500"
+ },
+ "batch_failure": {
+  "8344": {
+   "batch_state": "failed",
+   "complete": true,
+   "culprits": [],
+   "failed_checks": [
+    {
+     "name": "Tests, traced (shard 2/8)",
+     "conclusion": "failure",
+     "lines": [
+      "2026-10-25T20:00:01Z FAIL: 7 wired lanes read env knobs the registry does not carry: merge-conductor/MC_LOG"
+     ],
+     "paths": [],
+     "culprits": []
+    }
+   ],
+   "prs": [
+    {
+     "pr": 8071,
+     "role": "member",
+     "head_ci": "success",
+     "files_complete": true
+    },
+    {
+     "pr": 8341,
+     "role": "member",
+     "head_ci": "success",
+     "files_complete": true
+    },
+    {
+     "pr": 7882,
+     "role": "member",
+     "head_ci": "success",
+     "files_complete": true
+    },
+    {
+     "pr": 8204,
+     "role": "member",
+     "head_ci": "success",
+     "files_complete": true
+    },
+    {
+     "pr": 8332,
+     "role": "member",
+     "head_ci": "success",
+     "files_complete": true
+    },
+    {
+     "pr": 8342,
+     "role": "member",
+     "head_ci": "success",
+     "files_complete": true
+    }
+   ]
+  }
+ },
+ "drafts": [
+  {
+   "draft": 8344,
+   "closed_at": "2026-10-25T20:05:00Z",
+   "truncated": false
+  }
+ ],
+ "verdicts": {
+  "example-org/cromford#8071 aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa": "MERGE-WITH-NOTES\tlead\t1\t2026-10-25T19:00:00Z\t-\t-",
+  "example-org/cromford#8341 1111111111111111111111111111111111111111": "MERGE-WITH-NOTES\tlead\t1\t2026-10-25T19:00:00Z\t-\t-",
+  "example-org/cromford#7882 2222222222222222222222222222222222222222": "MERGE-WITH-NOTES\tlead\t1\t2026-10-25T19:00:00Z\t-\t-",
+  "example-org/cromford#8204 3333333333333333333333333333333333333333": "MERGE-WITH-NOTES\tlead\t1\t2026-10-25T19:00:00Z\t-\t-",
+  "example-org/cromford#8332 4444444444444444444444444444444444444444": "MERGE-WITH-NOTES\tlead\t1\t2026-10-25T19:00:00Z\t-\t-",
+  "example-org/cromford#8342 5555555555555555555555555555555555555555": "MERGE-WITH-NOTES\tlead\t1\t2026-10-25T19:00:00Z\t-\t-"
+ },
+ "attempts": [
+  "ejected example-org/cromford#8071 aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "ejected example-org/cromford#8341 1111111111111111111111111111111111111111",
+  "ejected example-org/cromford#7882 2222222222222222222222222222222222222222",
+  "ejected example-org/cromford#8204 3333333333333333333333333333333333333333",
+  "ejected example-org/cromford#8332 4444444444444444444444444444444444444444",
+  "ejected example-org/cromford#8342 5555555555555555555555555555555555555555"
+ ],
+ "requeued": {}
+}

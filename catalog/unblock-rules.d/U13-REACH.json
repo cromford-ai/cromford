@@ -1,0 +1,30 @@
+{
+  "id": "U13-REACH",
+  "priority": 121,
+  "family": "infra",
+  "class": "escalate",
+  "cites": [
+    "G13",
+    "G21"
+  ],
+  "match": {
+    "kind": "build-reach-blocked",
+    "all": [
+      ".has_pr == false",
+      ".age_min >= .reach_stuck_min"
+    ]
+  },
+  "judge": null,
+  "action": {
+    "verb": "card",
+    "args": {
+      "subject": ".subject"
+    }
+  },
+  "key": [
+    "subject",
+    "day",
+    "id"
+  ],
+  "note": "BH-8390 (#8481). A build ended REVIEW_BLOCKED suite-reach, so no PR exists and a fix round has nothing to push to; after reach_stuck_min minutes with no PR, one card per ticket per day names the suite and the red lines."
+}

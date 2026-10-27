@@ -1,0 +1,39 @@
+{
+  "id": "U13-CAT",
+  "priority": 32,
+  "family": "queue",
+  "class": "fix-round",
+  "cites": [
+    "G13",
+    "G12",
+    "G21"
+  ],
+  "match": {
+    "kind": "pr-ejected",
+    "all": [
+      ".batch_state == \"failed\"",
+      ".owns_failure == true",
+      ".ejected_on_head == true",
+      "(.fixrounds | type) == \"number\" and (.fixround_max | type) == \"number\" and .fixrounds < .fixround_max",
+      "(.fix_brief | type) == \"string\" and (.fix_brief | length) > 0",
+      ".signal == \"cat\""
+    ]
+  },
+  "judge": null,
+  "action": {
+    "name": "fix_round",
+    "args": {
+      "pr": ".pr",
+      "head": ".head",
+      "brief": ".fix_brief",
+      "ticket": ".ticket"
+    }
+  },
+  "key": [
+    "repo",
+    "pr",
+    "head",
+    "id"
+  ],
+  "note": "BH-8390 R-CAT. worker-node-lanes-build / worker-node-catalog-compose R0 'real tree has offenders', and this member adds or edits the suite that loads the worker without the worker_catalogs helper. Fix round: the two helper lines after DIR=. Hand fixes #8089 #8300."
+}

@@ -1,0 +1,12 @@
+{
+  "env": "UNBLOCK_BRIEF_MAX_CHARS",
+  "read_in": "bin/lib/unblock/collectors/queue.sh",
+  "type": "int",
+  "default": 1800,
+  "min": 200,
+  "max": 8000,
+  "unit": "characters",
+  "zero_means": null,
+  "note": "BH-8390: the longest fix_brief a U13 fix round carries. A bad value is the code fallback 1800.",
+  "settable": true
+}

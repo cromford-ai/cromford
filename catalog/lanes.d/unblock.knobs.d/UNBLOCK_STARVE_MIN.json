@@ -1,0 +1,12 @@
+{
+  "env": "UNBLOCK_STARVE_MIN",
+  "read_in": "bin/lib/unblock/collectors/infra.sh",
+  "type": "int",
+  "default": 120,
+  "min": 10,
+  "max": 10080,
+  "unit": "minutes",
+  "zero_means": null,
+  "note": "BH-8390: the queued minutes (pipeline-health 'queued <N>m with no spawn') a ticket reaches before U13-STARVE runs the fastpath; copied into starve_min. A bad value is the code fallback 120.",
+  "settable": true
+}

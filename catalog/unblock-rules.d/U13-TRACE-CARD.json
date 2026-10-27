@@ -1,0 +1,32 @@
+{
+  "id": "U13-TRACE-CARD",
+  "priority": 36,
+  "family": "queue",
+  "class": "escalate",
+  "cites": [
+    "G6",
+    "G21"
+  ],
+  "match": {
+    "kind": "pr-ejected",
+    "all": [
+      ".batch_state == \"failed\"",
+      ".owns_failure == true",
+      ".signal == \"trace\"",
+      ".trace_own_new == false"
+    ]
+  },
+  "judge": null,
+  "action": {
+    "verb": "card",
+    "args": {
+      "subject": ".subject"
+    }
+  },
+  "key": [
+    "subject",
+    "head",
+    "id"
+  ],
+  "note": "BH-8390 R-TRACE, false-positive case (#7654). HIT lines from a suite this member did not add: no fix round; one card with the suite and the first 3 HIT lines (in fix_brief)."
+}

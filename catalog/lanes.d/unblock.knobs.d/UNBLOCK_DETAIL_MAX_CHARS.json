@@ -1,0 +1,12 @@
+{
+  "env": "UNBLOCK_DETAIL_MAX_CHARS",
+  "read_in": "bin/lib/unblock/collectors/infra.sh",
+  "type": "int",
+  "default": 400,
+  "min": 50,
+  "max": 2000,
+  "unit": "characters",
+  "zero_means": null,
+  "note": "BH-8390: the length of the suite-reach detail a build-reach-blocked record (U13-REACH) carries. A bad value is the code fallback 400.",
+  "settable": true
+}

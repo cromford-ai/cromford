@@ -1,0 +1,12 @@
+{
+  "env": "UNBLOCK_FASTPATH_TIMEOUT_S",
+  "read_in": "bin/lib/unblock/act.sh",
+  "type": "int",
+  "default": 300,
+  "min": 30,
+  "max": 1800,
+  "unit": "seconds",
+  "zero_means": null,
+  "note": "BH-8390: the wall-clock bound (timeout) on one bin/launch-fastpath.sh run from the launch_fastpath action (U13-STARVE). A bad value is the code fallback 300.",
+  "settable": true
+}

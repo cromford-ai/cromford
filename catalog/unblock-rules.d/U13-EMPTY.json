@@ -1,0 +1,36 @@
+{
+  "id": "U13-EMPTY",
+  "priority": 110,
+  "family": "queue",
+  "class": "review-rerequest",
+  "cites": [
+    "G2",
+    "G21"
+  ],
+  "match": {
+    "kind": "pr-empty-block",
+    "all": [
+      ".head_current == true",
+      "(.empty_blocks | type) == \"number\" and (.empty_block_max | type) == \"number\" and .empty_blocks <= .empty_block_max",
+      ".verdict_on_head == \"BLOCK\""
+    ]
+  },
+  "judge": null,
+  "action": {
+    "name": "lead_rerequest",
+    "args": {
+      "request_id": ".request_id",
+      "priority": ".priority",
+      "notes": ".notes"
+    }
+  },
+  "key": [
+    "repo",
+    "pr",
+    "head",
+    "request_id",
+    "empty_blocks",
+    "id"
+  ],
+  "note": "BH-8390 R-EMPTY. bin/lead-review-land.sh withheld a lead BLOCK whose report has no '- [BLOCK' line (#7560 #8170 #8278). While the empty BLOCKs on a head are at most empty_block_max (UNBLOCK_EMPTY_BLOCK_MAX, default 1): reset that lead request and ask again with the note. Overlaps #8326 (whichever lands first owns it)."
+}

@@ -1,0 +1,12 @@
+{
+  "env": "UNBLOCK_PATCH_MAX_CHARS",
+  "read_in": "bin/lib/unblock/collectors/queue.sh",
+  "type": "int",
+  "default": 20000,
+  "min": 1000,
+  "max": 100000,
+  "unit": "characters",
+  "zero_means": null,
+  "note": "BH-8390: the patch text kept per changed file when the queue collector decides which batch member owns a failure. A bad value is the code fallback 20000.",
+  "settable": true
+}

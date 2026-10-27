@@ -1,0 +1,39 @@
+{
+  "id": "U13-REG",
+  "priority": 31,
+  "family": "queue",
+  "class": "fix-round",
+  "cites": [
+    "G13",
+    "G12",
+    "G21"
+  ],
+  "match": {
+    "kind": "pr-ejected",
+    "all": [
+      ".batch_state == \"failed\"",
+      ".owns_failure == true",
+      ".ejected_on_head == true",
+      "(.fixrounds | type) == \"number\" and (.fixround_max | type) == \"number\" and .fixrounds < .fixround_max",
+      "(.fix_brief | type) == \"string\" and (.fix_brief | length) > 0",
+      ".signal == \"reg\""
+    ]
+  },
+  "judge": null,
+  "action": {
+    "name": "fix_round",
+    "args": {
+      "pr": ".pr",
+      "head": ".head",
+      "brief": ".fix_brief",
+      "ticket": ".ticket"
+    }
+  },
+  "key": [
+    "repo",
+    "pr",
+    "head",
+    "id"
+  ],
+  "note": "BH-8390 (UNB-7) R-REG. A red merge-queue batch whose lines say tests/lanes-registry-test.sh section 7 (a wired lane reads an env knob the registry does not carry) or section 8 (a knob with a bad zero_means or no type/default) on <lane>/<KNOB>, and this member's diff names that KNOB. One fix round on the ejected head with the exact fix in the brief. Seven hand fixes 2026-10-25/26: #8204 #8054 #8031 #8149 #7986 #8366 #8071. The round limit is fixround_max (UNBLOCK_FIXROUND_MAX), not a literal."
+}

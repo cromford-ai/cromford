@@ -1,0 +1,73 @@
+{
+ "now": "2026-10-26T16:31:00Z",
+ "gh": {
+  "repos/example-org/cromford/pulls/8278": {
+   "number": 8278,
+   "state": "open",
+   "merged": false,
+   "head": {
+    "sha": "a15e86c6395d0000000000000000000000000000",
+    "ref": "ticket/bh-8277"
+   },
+   "labels": []
+  },
+  "repos/example-org/cromford/pulls/8372": {
+   "number": 8372,
+   "state": "open",
+   "merged": false,
+   "head": {
+    "sha": "2c78a3f064d10000000000000000000000000000",
+    "ref": "ticket/bh-8371"
+   },
+   "labels": []
+  },
+  "repos/example-org/cromford/pulls?state=open&per_page=100": [
+   {
+    "number": 8136,
+    "draft": false,
+    "head": {
+     "sha": "c7ace3fb11111111111111111111111111111111"
+    },
+    "labels": []
+   }
+  ],
+  "repos/example-org/cromford/commits/c7ace3fb11111111111111111111111111111111": {
+   "sha": "c7ace3fb11111111111111111111111111111111",
+   "commit": {
+    "committer": {
+     "date": "2026-10-26T16:00:00Z"
+    }
+   }
+  },
+  "repos/example-org/cromford/pulls/8136": {
+   "number": 8136,
+   "mergeable_state": "clean"
+  }
+ },
+ "gh_status": {},
+ "batch_failure": {},
+ "drafts": [],
+ "verdicts": {
+  "example-org/cromford#8278 a15e86c6395d0000000000000000000000000000": "BLOCK\tlead\t9\t2026-10-25T19:47:00Z\t-\t-",
+  "example-org/cromford#8372 2c78a3f064d10000000000000000000000000000": "BLOCK\tlead\t9\t2026-10-26T01:54:00Z\t-\t-"
+ },
+ "verdict_rows": {
+  "8136": {
+   "rows": [
+    {
+     "id": 4100,
+     "source": "lead",
+     "verdict": "MERGE-WITH-NOTES",
+     "head_sha": "3155722a22222222222222222222222222222222",
+     "created_at": "2026-10-26T15:00:00Z"
+    }
+   ]
+  }
+ },
+ "lead_open": {
+  "requests": [],
+  "truncated": false
+ },
+ "attempts": [],
+ "requeued": {}
+}

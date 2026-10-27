@@ -1,0 +1,39 @@
+{
+  "id": "U13-INNOCENT",
+  "priority": 38,
+  "family": "queue",
+  "class": "queue-requeue",
+  "cites": [
+    "G1",
+    "G12",
+    "G21"
+  ],
+  "match": {
+    "kind": "pr-ejected",
+    "all": [
+      ".batch_state == \"failed\"",
+      ".culprit_count != 1",
+      ".owns_failure == false",
+      "(.owner_count | type) == \"number\" and .owner_count >= 1",
+      ".own_ci == \"green\"",
+      ".verdict_on_head | test(\"^MERGE\")",
+      ".mergeable_state == \"clean\"",
+      ".requeued_on_head == false"
+    ]
+  },
+  "judge": null,
+  "action": {
+    "name": "requeue",
+    "args": {
+      "pr": ".pr",
+      "head": ".head"
+    }
+  },
+  "key": [
+    "repo",
+    "pr",
+    "head",
+    "id"
+  ],
+  "note": "BH-8390 R-INNOCENT. A red batch the batch_failure tool could not pin on one culprit. This member's whole diff was read, it owns none of the failures, another member does (owner_count >= 1), its own CI is green, a MERGE verdict stands on its head, it is mergeable and not requeued on this head: requeue it. No owner at all is a card (U12). Six batches 2026-10-25/26 (#8344 #8361 #8370 #8377 ...)."
+}
