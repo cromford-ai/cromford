@@ -22,8 +22,9 @@
 #   rc 2 bad args, root not a git work tree, or an unreadable --env-file
 #
 # SCAN SET: the tracked files of root (git ls-files). Untracked files are not read.
-# ALLOWED (never red): the lane's own script and registry entry
-#   (bin/<lane>.sh, catalog/lanes.d/<lane>.json, catalog/lanes.d/<lane>.knobs.d/*),
+# ALLOWED (never red): the lane's own script, its source fragments and registry
+#   entry (bin/<lane>.sh, config/<lane>.d/NNNN-<name>.sh with no subdirectory,
+#   catalog/lanes.d/<lane>.json, catalog/lanes.d/<lane>.knobs.d/*),
 #   this lint, and the non-runtime trees tests/**, docs/**, .harness/specs/**, *.md.
 # READER: bin/lib/hold.sh may read the knob. It is red only on a line that
 #   assigns or exports it.
@@ -79,6 +80,12 @@ while read -r knob lane; do
     case "$path" in
       "bin/$lane.sh"|bin/lane-scoped-knob-lint.sh|"catalog/lanes.d/$lane.json"|"catalog/lanes.d/$lane.knobs.d/"*) continue ;;
       tests/*|docs/*|.harness/specs/*|*.md) continue ;;
+    esac
+    # A source fragment of bin/<lane>.sh (BH-8581): the fragments are the lane
+    # script itself (bin/fly-pool-build.sh). A subdirectory is not a fragment.
+    case "${path#"config/$lane.d/"}" in
+      "$path"|*/*) ;;
+      [0-9][0-9][0-9][0-9]-*.sh) continue ;;
     esac
     while IFS=: read -r ln text; do
       case "$path" in
