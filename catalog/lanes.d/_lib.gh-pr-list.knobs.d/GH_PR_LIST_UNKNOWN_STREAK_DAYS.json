@@ -1,0 +1,12 @@
+{
+  "env": "GH_PR_LIST_UNKNOWN_STREAK_DAYS",
+  "read_in": "bin/lib/gh-pr-list.sh",
+  "type": "int",
+  "default": 2,
+  "min": 0,
+  "max": 365,
+  "unit": "days",
+  "zero_means": "never warn",
+  "required": true,
+  "note": "BH-8530. An open ticket/* PR the author filter drops (UNKNOWN-AUTHOR) on more than this many consecutive UTC days raises ONE warn fleet_alert and one ALERTS line per streak (state in state/pr-author-unknown/). The daily UNKNOWN-AUTHOR line and alert stay as they are. Resolved through lib_env_apply gh-pr-list (_hpl_knobs_resolve); code fallback 2, and a value that is not a non-negative integer is 2. 0 = never warn."
+}

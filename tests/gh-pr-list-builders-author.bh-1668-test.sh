@@ -76,7 +76,7 @@ chmod +x "$T/fakebin/gh"
 
 drive() { # drive <bash snippet>; the lib sourced fresh with HARNESS=$T/h
   ( export PATH="$T/fakebin:$PATH" HARNESS="$T/h" GH_CALLS="$T/calls.txt" BEATS="$T/beats.txt"
-    unset HARNESS_PR_AUTHORS GH_PR_LIST_REST_PAGES
+    unset HARNESS_PR_AUTHORS GH_PR_LIST_REST_PAGES HARNESS_SELF_APPS  # TEST-CHANGE (BH-8530): the default derives from it
     # shellcheck source=/dev/null
     . "$DIR/bin/lib/gh-pr-list.sh"; eval "$1" )
 }
@@ -125,7 +125,11 @@ drive "harness_pr_list o/strange closed $F 100" >/dev/null
 grep -q "UNKNOWN-AUTHOR" "$T/h/logs/gh-pr-list.log" && bad "B5 a closed list raised UNKNOWN-AUTHOR" || ok
 
 # B6 — merge-sweep's inline fallback is the lib default, word for word
-DEF=$(sed -n 's/^HARNESS_PR_AUTHORS_DEFAULT="\(.*\)"$/\1/p' "$DIR/bin/lib/gh-pr-list.sh")
+# TEST-CHANGE (BH-8530): the default is derived from HARNESS_SELF_APPS, not one
+# literal line. Same assertion: the sourced default, with the operator login
+# put back as its variable, is merge-sweep's fallback word for word.
+DEF=$(drive 'printf %s "$HARNESS_PR_AUTHORS_DEFAULT"'); OP=$(drive 'printf %s "${HARNESS_OPERATOR_LOGIN:-}"')
+DEF='${HARNESS_OPERATOR_LOGIN:-}'"${DEF#"$OP"}"
 grep -qF "HARNESS_PR_AUTHORS:-$DEF}" "$DIR/bin/merge-sweep.sh" \
   && ok || bad "B6 bin/merge-sweep.sh's inline fallback drifted from '$DEF'"
 

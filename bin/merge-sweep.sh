@@ -295,7 +295,7 @@ done
 declare -A SWEEP_IDV   # (repo, base) -> "<verdict>\t<identity>\t<allow-list>"
 command -v harness_pr_author_match >/dev/null 2>&1 || harness_pr_author_match() {
   local l="${1#app/}"; l="${l%\[bot\]}"
-  case " ${HARNESS_PR_AUTHORS:-${HARNESS_OPERATOR_LOGIN:-} app/cromford app/cromford-builders} " in *" $l "*|*" app/$l "*) return 0 ;; esac
+  case " ${HARNESS_PR_AUTHORS:-${HARNESS_OPERATOR_LOGIN:-} app/cromford app/cromford-builders app/cromford-board} " in *" $l "*|*" app/$l "*) return 0 ;; esac
   return 1; }
 
 # >>> sweep token routing

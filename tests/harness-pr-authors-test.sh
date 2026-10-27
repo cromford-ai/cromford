@@ -34,6 +34,7 @@ case "$R/$A" in
   o/repo/operator)             echo '[{"number":1,"title":"pat-one"},{"number":2,"title":"both"}]' ;;
   o/repo/app/cromford)  echo '[{"number":2,"title":"both"},{"number":3,"title":"app-three"}]' ;;
   o/repo/app/cromford-builders) echo '[]' ;;
+  o/repo/app/cromford-board) echo '[]' ;;
   o/flaky/operator)            echo '[{"number":7,"title":"survivor"}]' ;;
   o/flaky/app/cromford) exit 1 ;;
   o/empty/*)                 echo '[]' ;;
@@ -48,7 +49,9 @@ drive() { # drive <bash snippet>; the lib is sourced fresh with HARNESS=$T/h
   # reach it with a field nothing else carries (potentialMergeCommit) and the
   # switch on — the same move BH-374/BH-782 made here. Assertions unchanged.
   ( export PATH="$T/fakebin:$PATH" HARNESS="$T/h" GH_CALLS="$T/calls.txt" GH_PR_LIST_GRAPHQL_FALLBACK=1
-    unset HARNESS_PR_AUTHORS
+    # TEST-CHANGE (BH-8530): the default derives from HARNESS_SELF_APPS, so a
+    # runner that exports it must not change the exact strings pinned below.
+    unset HARNESS_PR_AUTHORS HARNESS_SELF_APPS
     # shellcheck source=/dev/null
     . "$DIR/bin/lib/gh-pr-list.sh"; eval "$1" )
 }
@@ -57,7 +60,9 @@ drive() { # drive <bash snippet>; the lib is sourced fresh with HARNESS=$T/h
 # TEST-CHANGE (BH-1668): the default now carries the second App, the builders
 # App BH-1578 moved pool machines onto; "operator app/cromford" was the set
 # that hid every pool-built PR. Same assertion, the new default.
-[ "$(drive 'harness_pr_authors')" = "operator app/cromford app/cromford-builders" ] \
+# TEST-CHANGE (BH-8530): the default derives from HARNESS_SELF_APPS and gains the
+# board App, cromford-board, whose PRs (project-6-desktop #6) it dropped.
+[ "$(drive 'harness_pr_authors')" = "operator app/cromford app/cromford-builders app/cromford-board" ] \
   && ok || bad "default author set: $(drive 'harness_pr_authors')"
 
 
@@ -73,7 +78,8 @@ OUT=$(drive 'harness_pr_list o/repo open number,title,potentialMergeCommit')
 [ "$(jq -r '.[1].title' <<<"$OUT")" = "both" ] && ok || bad "the union dropped a field: $OUT"
 # ...and it really did ask once per author, never once for everybody
 # TEST-CHANGE (BH-1668): three authors in the default now, so three calls.
-[ "$(grep -c . "$T/calls.txt")" = 3 ] && ok || bad "expected one gh call per author, got: $(cat "$T/calls.txt")"
+# TEST-CHANGE (BH-8530): four (the board App joined the default), so four calls.
+[ "$(grep -c . "$T/calls.txt")" = 4 ] && ok || bad "expected one gh call per author, got: $(cat "$T/calls.txt")"
 grep -qx "o/repo operator" "$T/calls.txt" && grep -qx "o/repo app/cromford" "$T/calls.txt" \
   && ok || bad "both authors should have been listed: $(cat "$T/calls.txt")"
 
@@ -109,7 +115,8 @@ OUT=$(drive 'HARNESS_PR_AUTHORS="operator" harness_pr_list o/repo open number,ti
   && ok || bad "HARNESS_PR_AUTHORS override ignored by harness_pr_authors"
 # the App slug named in env/github-app.env is unioned in, slugified like GitHub does
 printf 'GH_APP_SLUG=Cromford Two\n' > "$T/h/env/github-app.env"
-[ "$(drive 'harness_pr_authors')" = "operator app/cromford app/cromford-builders app/cromford-two" ] \
+# TEST-CHANGE (BH-8530): the board App sits before the env file's slug.
+[ "$(drive 'harness_pr_authors')" = "operator app/cromford app/cromford-builders app/cromford-board app/cromford-two" ] \
   && ok || bad "env/github-app.env slug not unioned in: $(drive 'harness_pr_authors')"
 # ...and reading that file must not export GH_APP_* into the caller
 [ -z "$(drive 'printf %s "${GH_APP_SLUG:-}"')" ] \
@@ -124,9 +131,10 @@ drive 'harness_pr_author_match "operator"' && ok || bad "the PAT login should st
 drive 'harness_pr_author_match "collaborator-1"' && bad "a third-party lane must NOT read as ours" || ok
 drive 'harness_pr_author_match ""' && bad "an empty author must NOT read as ours" || ok
 # TEST-CHANGE (BH-1668): the builders App's three spellings follow the hub App's.
-[ "$(drive 'harness_pr_authors_csv')" = "operator,app/cromford,cromford[bot],cromford,app/cromford-builders,cromford-builders[bot],cromford-builders" ] \
+# TEST-CHANGE (BH-8530): and the board App's three follow the builders App's.
+[ "$(drive 'harness_pr_authors_csv')" = "operator,app/cromford,cromford[bot],cromford,app/cromford-builders,cromford-builders[bot],cromford-builders,app/cromford-board,cromford-board[bot],cromford-board" ] \
   && ok || bad "SELF_ACTORS csv: $(drive 'harness_pr_authors_csv')"
-[ "$(drive 'harness_pr_authors_json')" = '["operator","app/cromford","cromford[bot]","cromford","app/cromford-builders","cromford-builders[bot]","cromford-builders"]' ] \
+[ "$(drive 'harness_pr_authors_json')" = '["operator","app/cromford","cromford[bot]","cromford","app/cromford-builders","cromford-builders[bot]","cromford-builders","app/cromford-board","cromford-board[bot]","cromford-board"]' ] \
   && ok || bad "jq --argjson array: $(drive 'harness_pr_authors_json')"
 
 # 7. THE REGRESSION GUARD. No script under bin/ may discover harness PRs by a
@@ -144,9 +152,14 @@ done
 # merge-sweep carries an inline fallback (the fixtures copy it standalone, the
 # same reason its token probe is inline). If the two defaults ever disagree, a
 # scratch tree silently goes back to the 2026-09-14 behaviour.
-DEF=$(sed -n 's/^HARNESS_PR_AUTHORS_DEFAULT="\(.*\)"$/\1/p' "$DIR/bin/lib/gh-pr-list.sh")
-[ -n "$DEF" ] && grep -qF "HARNESS_PR_AUTHORS:-$DEF" "$DIR/bin/merge-sweep.sh" \
-  && ok || bad "bin/merge-sweep.sh's inline fallback has drifted from HARNESS_PR_AUTHORS_DEFAULT ($DEF)"
+# TEST-CHANGE (BH-8530): HARNESS_PR_AUTHORS_DEFAULT is derived from
+# HARNESS_SELF_APPS, not one literal line, so read the SOURCED value and check
+# merge-sweep's fallback carries the operator-login variable and every App of it.
+DEF=$(drive 'printf %s "$HARNESS_PR_AUTHORS_DEFAULT"')
+MS=$(grep -o 'HARNESS_PR_AUTHORS:-\${HARNESS_OPERATOR_LOGIN:-}[^}]*}' "$DIR/bin/merge-sweep.sh"); MS="${MS%\}}"
+MISS=""; for a in $DEF; do case "$a" in app/*) case "$MS " in *" $a "*) ;; *) MISS="$MISS $a" ;; esac ;; esac; done
+[ -n "$DEF" ] && [ -n "$MS" ] && [ -z "$MISS" ] \
+  && ok || bad "bin/merge-sweep.sh's inline fallback has drifted from HARNESS_PR_AUTHORS_DEFAULT ($DEF); missing:$MISS"
 
 echo "harness-pr-authors: $PASS passed, $FAIL failed"
 [ "$FAIL" = 0 ]

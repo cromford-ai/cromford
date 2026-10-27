@@ -119,10 +119,12 @@
 #                                any non-zero.
 #
 # THE SET IS ONE STRING, not a scatter of literals: HARNESS_PR_AUTHORS, default
-# "operator app/cromford app/cromford-builders". A box that renames an
-# App sets it once in env/global.env, or names GH_APP_SLUG in env/github-app.env
-# or in an App profile's env/github-app-<profile>.env, and the `app/<slug>` form
-# is derived here. Nothing else may hardcode a login.
+# the operator login plus `app/<slug>` for each HARNESS_SELF_APPS slug
+# ("operator app/cromford app/cromford-builders app/cromford-board",
+# BH-8530). A new App is added once, to HARNESS_SELF_APPS in env/global.env; an
+# App can also be named by GH_APP_SLUG in env/github-app.env or in an App
+# profile's env/github-app-<profile>.env, and the `app/<slug>` form is derived
+# here. Nothing else may hardcode a login.
 #
 # THE SECOND APP IS IN THE DEFAULT (BH-1668). BH-1578 moved pool builders onto
 # cromford-builders, so from 2026-09-23 every pool-built PR was authored
@@ -143,7 +145,24 @@ for _P in "${HARNESS_DEPLOYMENT_FILE-}" "${BASH_SOURCE[0]%/*}/deployment.sh" "$_
   [ -r "$_P" ] && . "$_P" && break
 done
 unset _P
-HARNESS_PR_AUTHORS_DEFAULT="${HARNESS_OPERATOR_LOGIN:-} app/cromford app/cromford-builders"
+# ONE TRUST LIST (BH-8530). The default author set is the operator login plus
+# `app/<slug>` for every slug of HARNESS_SELF_APPS, the list
+# catalog/lanes.d/_lib.harness-self.json registers. It is read from the
+# environment only (env/global.env exports it); this lib does not source
+# bin/lib/harness-self.sh, because a hundred-odd suites copy this file alone.
+# _HPL_SELF_APPS_FALLBACK is the registry default of HARNESS_SELF_APPS, the
+# documented fallback when the box does not export it. It is the same SET as
+# the registry row (tests/gh-pr-list-self-apps.bh-8530-test.sh pins it); the
+# order keeps the two pre-BH-8530 Apps first, so the default only grows at the end.
+_HPL_SELF_APPS_FALLBACK="cromford cromford-builders cromford-board"
+HARNESS_PR_AUTHORS_DEFAULT="${HARNESS_OPERATOR_LOGIN:-}"
+for _S in ${HARNESS_SELF_APPS:-$_HPL_SELF_APPS_FALLBACK}; do
+  _S="${_S#app/}"; _S="${_S%\[bot\]}"; _S=$(printf '%s' "$_S" | tr '[:upper:]' '[:lower:]')
+  [ -n "$_S" ] || continue
+  case " $HARNESS_PR_AUTHORS_DEFAULT " in *" app/$_S "*) continue ;; esac
+  HARNESS_PR_AUTHORS_DEFAULT="${HARNESS_PR_AUTHORS_DEFAULT:+$HARNESS_PR_AUTHORS_DEFAULT }app/$_S"
+done
+unset _S
 
 # The REST contract (#780). Beside this file first, then the harness copy — the
 # same two-rung source bin/triage-gate.sh uses for THIS file, so a worktree run
@@ -343,8 +362,12 @@ _hpl_unknown_authors() {
              | select(((.user.login // "") | sub("^app/"; "") | sub("\\[bot\\]$"; "")) as $l | ($a | index($l)) | not)
              | "#\(.number) \(.user.login // "?")" ] | join(", ")' "$page" 2>/dev/null) || return 0
   [ -n "$found" ] || return 0
-  line="$slug (open): UNKNOWN-AUTHOR harness-branch PR(s) dropped by the author filter: $found — every harness lane reads them as absent until the login is in HARNESS_PR_AUTHORS (or GH_APP_SLUG in env/github-app*.env)"
+  line="$slug (open): UNKNOWN-AUTHOR harness-branch PR(s) dropped by the author filter: $found — every harness lane reads them as absent until the App slug is in HARNESS_SELF_APPS (or the login in HARNESS_PR_AUTHORS, or GH_APP_SLUG in env/github-app*.env)"
   _hpl_log "$line"
+  local pr
+  while IFS=' ' read -r pr; do
+    [ -n "$pr" ] && _hpl_unknown_streak "$slug" "${pr%% *}" "${pr#* }"
+  done <<<"$(printf '%s' "$found" | sed 's/, /\n/g; s/#//g')"
   mkdir -p "$_HPL_H/flags" 2>/dev/null
   flag="$_HPL_H/flags/alerted-pr-author-unknown-${slug//\//_}-$(date -u +%Y%m%d)"
   [ -f "$flag" ] && return 0
@@ -352,6 +375,79 @@ _hpl_unknown_authors() {
   echo "$(date -u '+%Y-%m-%d %H:%M:%SZ') [gh-pr-list] $line" >> "$_HPL_H/logs/ALERTS.log" 2>/dev/null
   [ -x "$_HPL_H/bin/beat.sh" ] && "$_HPL_H/bin/beat.sh" "$(jq -nc --arg akey "prauthorunknown:$slug" --arg l "[gh-pr-list] $line" \
     '{kind:"fleet_alert",project:"fleet",akey:$akey,line:$l}')" >/dev/null 2>&1
+  return 0
+}
+
+# AN UNKNOWN AUTHOR THAT STAYS IS A WARN, NOT A DAILY WHISPER (BH-8530).
+# project-6-desktop #6 (cromford-board[bot]) wrote one UNKNOWN-AUTHOR line a
+# day from 10-21 and nothing louder. The streak is ONE LEDGER ROW per PR, so
+# every box reads the same streak and the fleet warns once (docs/STATE-STORES.md:
+# a durable fact other boxes need is a row, never a file under state/):
+#   kind pr_author_unknown, key "<owner>/<repo>#<num>", status streak,
+#   detail "<first-yyyymmdd> <last-yyyymmdd> <warned 0|1>".
+# A read on the day after `last` extends the streak; a gap, no row or an
+# unparseable detail starts a new one. When the streak is more than
+# GH_PR_LIST_UNKNOWN_STREAK_DAYS days long (a `lib.gh-pr-list` row,
+# catalog/lanes.d/_lib.json; 0 = never warn) it sends ONE warn fleet_alert and
+# one ALERTS line (bin/alert-line.sh) per streak. The row (warned=1) is written
+# BEFORE the beat, and a failed write sends nothing, so a crash after the write
+# never sends twice; a beat failure is logged to gh-pr-list.log and not retried.
+# A read that changes nothing (same day, same warned) writes nothing.
+# FAIL-OPEN: no jobs client, or an outage on the read or the write, skips the
+# streak for this call with one log line; it never changes the list answer.
+# Retention: one row per PR that was ever UNKNOWN-AUTHOR (a handful a month). A
+# row whose `last` is before yesterday is inert (the next read starts a new
+# streak over it), so stale rows carry no behaviour; the kind is eligible for
+# the ledger archive rule (retention.ledgers.archive_kinds, BH-6780).
+#   _hpl_unknown_streak <owner/repo> <num> <login>
+_hpl_ledger_on() {
+  command -v job_ledger_row >/dev/null 2>&1 && command -v job_ledger_put >/dev/null 2>&1 && return 0
+  # jobs-client.sh sets -uo pipefail at its top level; keep the caller's options.
+  local _hpl_opts
+  _hpl_opts=$(set +o)
+  # shellcheck source=bin/jobs-client.sh
+  [ -r "$_HPL_H/bin/jobs-client.sh" ] && . "$_HPL_H/bin/jobs-client.sh" >/dev/null 2>&1
+  eval "$_hpl_opts" 2>/dev/null
+  command -v job_ledger_row >/dev/null 2>&1 && command -v job_ledger_put >/dev/null 2>&1
+}
+_hpl_unknown_streak() {
+  local slug="$1" num="$2" login="$3" key today yday first="" last="" warned="" days n line row rc detail
+  _hpl_ledger_on || { _hpl_log "unknown-author streak: no jobs client; streak for $slug#$num skipped"; return 0; }
+  key="$slug#$num"
+  today=$(date -u +%Y%m%d); yday=$(date -u -d "$today -1 day" +%Y%m%d 2>/dev/null) || return 0
+  row=$(job_ledger_row pr_author_unknown "$key" 2>/dev/null); rc=$?
+  case "$rc" in
+    0) detail=$(printf '%s' "$row" | jq -r '.detail // ""' 2>/dev/null)
+       read -r first last warned _ <<<"$detail" ;;
+    2) : ;;
+    *) _hpl_log "unknown-author streak: ledger read failed for $slug#$num; skipped"; return 0 ;;
+  esac
+  local prev="$first $last $warned"
+  case "$first/$last/$warned" in
+    [0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]/"$today"/[01]|[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]/"$yday"/[01])
+      [ -n "$first" ] && date -u -d "$first" +%s >/dev/null 2>&1 && [ "$first" -le "$last" ] || { first=$today; warned=0; } ;;
+    *) first=$today; warned=0 ;;
+  esac
+  last=$today
+  [ -n "$today" ] && [ -n "$first" ] && days=$(( ($(date -u -d "$today" +%s) - $(date -u -d "$first" +%s)) / 86400 + 1 )) || return 0
+  _hpl_knobs_resolve
+  n="${GH_PR_LIST_UNKNOWN_STREAK_DAYS-}"
+  case "$n" in ''|*[!0-9]*) n=2 ;; esac   # 2: fallback of the lib.gh-pr-list row GH_PR_LIST_UNKNOWN_STREAK_DAYS
+  local send=0
+  [ "$n" -gt 0 ] && [ "$days" -gt "$n" ] && [ "$warned" = 0 ] && { warned=1; send=1; }
+  if [ "$prev" != "$first $last $warned" ]; then
+    job_ledger_put pr_author_unknown "$key" streak "$first $last $warned" >/dev/null 2>&1 \
+      || { _hpl_log "unknown-author streak: ledger write failed for $slug#$num; no warn"; return 0; }
+  fi
+  [ "$send" = 1 ] || return 0
+  line="[gh-pr-list] $slug #$num $login: UNKNOWN-AUTHOR for $days consecutive days (since $first). Every harness lane reads it as absent. Add the App slug to HARNESS_SELF_APPS in env/global.env."
+  [ -x "$_HPL_H/bin/alert-line.sh" ] && HARNESS="$_HPL_H" "$_HPL_H/bin/alert-line.sh" --severity warn \
+    --id "prauthorunknown-streak:$slug#$num" "$line" >/dev/null 2>&1
+  if [ -x "$_HPL_H/bin/beat.sh" ]; then
+    "$_HPL_H/bin/beat.sh" "$(jq -nc --arg akey "prauthorunknown-streak:$slug#$num" --arg l "$line" \
+      '{kind:"fleet_alert",project:"fleet",severity:"warn",akey:$akey,line:$l}')" >/dev/null 2>&1 \
+      || _hpl_log "unknown-author streak: warn beat failed for $slug#$num (not retried this streak)"
+  fi
   return 0
 }
 
@@ -631,19 +727,23 @@ _hpl_queued_nums() { # _hpl_queued_nums <slug> <branch> <outfile> -> PR numbers,
 # The operator switch, resolved once per process through the settings contract
 # (bin/lib/lane-gate.sh lib_env_apply, sourced lazily as bin/lib/wake-lanes.sh
 # does). No row, no env: off.
+# The same resolve exports GH_PR_LIST_UNKNOWN_STREAK_DAYS (BH-8530).
 _HPL_FB_RESOLVED=0
-_hpl_fallback_on() {
-  if [ "$_HPL_FB_RESOLVED" = 0 ]; then
-    _HPL_FB_RESOLVED=1
-    if ! command -v lib_env_apply >/dev/null 2>&1; then
-      local g
-      for g in "${BASH_SOURCE[0]%/*}/lane-gate.sh" "$_HPL_H/bin/lib/lane-gate.sh"; do
-        # shellcheck source=bin/lib/lane-gate.sh
-        [ -r "$g" ] && { . "$g" 2>/dev/null; break; }
-      done
-    fi
-    command -v lib_env_apply >/dev/null 2>&1 && lib_env_apply gh-pr-list
+_hpl_knobs_resolve() {
+  [ "$_HPL_FB_RESOLVED" = 0 ] || return 0
+  _HPL_FB_RESOLVED=1
+  if ! command -v lib_env_apply >/dev/null 2>&1; then
+    local g
+    for g in "${BASH_SOURCE[0]%/*}/lane-gate.sh" "$_HPL_H/bin/lib/lane-gate.sh"; do
+      # shellcheck source=bin/lib/lane-gate.sh
+      [ -r "$g" ] && { . "$g" 2>/dev/null; break; }
+    done
   fi
+  command -v lib_env_apply >/dev/null 2>&1 && lib_env_apply gh-pr-list
+  return 0
+}
+_hpl_fallback_on() {
+  _hpl_knobs_resolve
   [ "${GH_PR_LIST_GRAPHQL_FALLBACK:-}" = 1 ]
 }
 
