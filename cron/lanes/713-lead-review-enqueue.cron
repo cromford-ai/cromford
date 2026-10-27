@@ -1,8 +1,0 @@
-# @hub-lanes
-
-# ── LEAD REVIEW AUTO-REQUEST (BH-3545): NO SCHEDULE ─────────────────────────
-# Nothing runs bin/lead-review-enqueue.sh since BH-7235. The worklist
-# (710-lead-review.cron) is the one input of the lead review.
-# This file stays because the D1 registry row lane_boxes lead-review-enqueue/hub
-# makes bin/render-cron.sh refuse a registry lane with no cron/lanes fragment.
-# C2 (BH-7236) deletes this file together with catalog/lanes.d/lead-review-enqueue.json.

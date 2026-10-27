@@ -20,8 +20,8 @@
 #   C6b the agent leaves a process behind holding fd 7 and tick 1 ends
 #       normally: tick 2 is not skipped (the end-of-tick flock -u 7).
 #   C7  lines 2-4 of bin/lead-review.sh name `15 minutes` and the `doorbell`.
-#   C8  710/715 each run once at */15; 713 (the enqueue) has zero schedule
-#       lines since BH-7235; 410-* and 714-* match origin/main.
+#   C8  710/715 each run once at */15; 713 (the enqueue) is deleted
+#       (BH-8363); 410-* and 714-* match origin/main.
 #   C9  K=1, two requests, a slow agent and LEAD_REVIEW_DEADLINE_S=4 (BH-4956:
 #       the per-tick start cap is gone, so the deadline defers the second), no
 #       marker: deferred=1 forces `rerun owed (depth 1/3)` and the rerun
@@ -275,15 +275,14 @@ HDR=$(sed -n 2,4p "$H/bin/lead-review.sh")
 [[ "$HDR" == *"15 minutes"* && "$HDR" == *doorbell* ]] && ok || bad "C7 lines 2-4: $HDR"
 
 # ── C8: the two stage crons are */15 backstops; the neighbours are untouched ──
-# TEST-CHANGE BH-7235: 713-lead-review-enqueue.cron is a comment-only stub (the
-# enqueue is unwired), so it is checked for zero schedule lines, not one.
+# TEST-CHANGE BH-8363: 713-lead-review-enqueue.cron is deleted with the lane
+# JSON, so it is checked for absence, not for a stub with zero schedule lines.
 for f in 710-lead-review 715-lead-review-land; do
   CL=$(grep -v '^[[:space:]]*#' "$DIR/cron/lanes/$f.cron" | grep -c '[^[:space:]]')
   C15=$(grep -c '^\*/15 ' "$DIR/cron/lanes/$f.cron")
   [ "$CL" = 1 ] && [ "$C15" = 1 ] && ok || bad "C8 $f.cron: $CL command lines, $C15 at */15"
 done
-CL=$(grep -v '^[[:space:]]*#' "$DIR/cron/lanes/713-lead-review-enqueue.cron" 2>/dev/null | grep -c '[^[:space:]]')
-[ -f "$DIR/cron/lanes/713-lead-review-enqueue.cron" ] && [ "$CL" = 0 ] && ok || bad "C8 713-lead-review-enqueue.cron: $CL command lines, want a stub with 0"
+[ ! -e "$DIR/cron/lanes/713-lead-review-enqueue.cron" ] && ok || bad "C8 cron/lanes/713-lead-review-enqueue.cron exists, want it deleted"
 if git -C "$DIR" rev-parse -q --verify origin/main >/dev/null 2>&1; then
   for f in "$DIR"/cron/lanes/410-*.cron "$DIR"/cron/lanes/714-*.cron; do
     rel="cron/lanes/${f##*/}"

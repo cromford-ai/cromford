@@ -2,31 +2,18 @@
 # tests/lead-replay-merge-only.bh-5294-test.sh — BH-5294: a PR head that only
 # took main in keeps the lead's word with no model call, and a head that changed
 # the PR's own files by a few lines gets a DELTA lead review on the same
-# lead.review model route. Two production entry points, each run WHOLE (`tick`)
-# against a scratch harness: the script plus its sourced closure
-# (scratch_install_closure), with bin/lib/lead-delta.sh, real git fixture repos,
-# and stubs for curl (the jobs worker), gh (REST), bin/lead-verdict.sh and
-# bin/agent-call.sh (both count their calls).
+# lead.review model route. bin/lead-review.sh runs WHOLE (`tick`) against a
+# scratch harness: the script plus its sourced closure (scratch_install_closure),
+# with bin/lib/lead-delta.sh, a real git fixture repo, and stubs for curl (the
+# jobs worker), gh (REST) and bin/agent-call.sh (it counts its calls). The lead
+# MERGEd head G; HD = G + 12 lines in the PR's own file.
 #
-#   bin/lead-review-enqueue.sh tick. The lead MERGEd head G; the builder's
-#   APPROVE is on G (not on the new head) unless a case says otherwise.
-#     R1  H = G + a clean merge of main: the MERGE is posted on H with source
-#         lead and note lead-replay:<G12> how:main-merge; no lead review is
-#         requested, no agent call. today_replay=1 in the summary.
-#     R2  a second tick on R1's H (the post wrote its row): no post, no request.
-#     R3  G was BLOCKed: nothing is replayed onto H and nothing is requested.
-#     R4  H = G + 12 lines in the PR's own file, the builder approved H: ONE
-#         request, scope_notes carrying lead-delta:<G> lines:12/40, and
-#         prior_verdict_ref naming the lead row. No post. today_delta=1.
-#     R5  the same head with the builder's APPROVE still on G: no request, no
-#         post (only the builder's approval asks for a review); the class is
-#         cached, and the later approved tick reuses it with no git fetch.
-#     R6  H = G + a .github/ file (protected), LEAD_DELTA_PROTECTED_MAX_LINES=0
-#         (BH-5582: the knob-off path): a FULL request (no lead-delta), and
-#         even a byte-identical patch rule cannot replay it.
-#     R7  H = G + 60 lines (over LEAD_DELTA_REVIEW_MAX_LINES=40): a full request.
+#   ld_protected on its own (bin/lib/lead-delta.sh): .mergify.yml, schema and a
+#   catalog glob of the harness repo are protected; an unreadable rows read is rc 2.
+#   gate 50's over-max class and the reuse of a plain cached delta row are in
+#   tests/lead-gates-delta-class.bh-8496-test.sh (DC1, DC1b, DC3).
 #   bin/lead-review.sh tick
-#     L1  the R4 delta request: ONE agent call on the lead.review route's model
+#     L1  a delta request on HD: ONE agent call on the lead.review route's model
 #         (stub-model), the prompt carries the prior report, the inter-diff and
 #         DELTA REVIEW, and not G's own branch lines; the report says
 #         `- review mode: delta from <G>`.
@@ -61,14 +48,14 @@ ok()  { PASS=$((PASS+1)); }
 bad() { FAIL=$((FAIL+1)); echo "FAIL: $1"; }
 command -v jq >/dev/null || { echo "jq missing — skipping"; exit 0; }
 command -v flock >/dev/null || { echo "FAIL: flock missing"; exit 1; }
-for f in bin/lead-review.sh bin/lead-review-enqueue.sh bin/lib/lead-delta.sh bin/lib/patch-same.sh catalog/lanes.d/_lib.lead-delta.json; do
+for f in bin/lead-review.sh bin/lib/lead-delta.sh bin/lib/patch-same.sh catalog/lanes.d/_lib.lead-delta.json; do
   [ -f "$SRC/$f" ] || { echo "FAIL: $f does not exist"; exit 1; }
 done
 export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@example.invalid GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@example.invalid
 export GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null
 unset LEAD_DELTA_REVIEW_MAX_LINES LEAD_DELTA_REVIEW_MAX_BYTES AGENT_CALL_FP AGENT_CALL_GUARD_STAGE
 
-# ───────────── the fixture repo: G, then the heads R1..R7 move to ─────────────
+# ───────────── the fixture repo: G, then the head HD ─────────────
 OR="$T/origin/demo-os.git"; WK="$T/work"
 git init -q --bare -b main "$OR"; git init -q -b main "$WK"
 seq 1 20 | sed 's/^/base line /' > "$WK/f.txt"; printf 'other\n' > "$WK/o.txt"
@@ -77,209 +64,23 @@ git -C "$WK" add -A; git -C "$WK" commit -qm base
 git -C "$WK" checkout -qb pr; echo 'pr line' >> "$WK/f.txt"; git -C "$WK" commit -qam "the pr"
 G=$(git -C "$WK" rev-parse HEAD); G12=${G:0:12}
 git -C "$WK" checkout -q main; echo 'main moved' >> "$WK/o.txt"; git -C "$WK" commit -qam "main moves"
-git -C "$WK" checkout -q pr; git -C "$WK" merge -q --no-edit main; HM=$(git -C "$WK" rev-parse HEAD)
 git -C "$WK" checkout -qb small "$G"; seq 1 12 | sed 's/^/small change /' >> "$WK/f.txt"; git -C "$WK" commit -qam "12 lines"
 HD=$(git -C "$WK" rev-parse HEAD)
-git -C "$WK" checkout -qb prot "$G"; mkdir -p "$WK/.github/workflows"; printf 'on: push\n' > "$WK/.github/workflows/x.yml"
-git -C "$WK" add -A; git -C "$WK" commit -qm "touch ci"; HP=$(git -C "$WK" rev-parse HEAD)
-git -C "$WK" checkout -qb big "$G"; seq 1 60 | sed 's/^/big change /' >> "$WK/f.txt"; git -C "$WK" commit -qam "60 lines"
-HB=$(git -C "$WK" rev-parse HEAD)
-git -C "$WK" push -q "$OR" main pr small prot big
+git -C "$WK" push -q "$OR" main pr small
 git -C "$WK" push -q "$OR" "$HD:refs/pull/41/head"
 
-# ═══════════════════════ part 1: bin/lead-review-enqueue.sh ═══════════════════
-Q="$T/hq"; mkdir -p "$Q/bin/lib/jobs" "$Q/state" "$Q/logs" "$Q/catalog/lanes.d" "$T/cfg" "$T/qrepos" "$T/log" "$T/qbin"
-# Stubs first: scratch_install_closure never clobbers.
-cat > "$Q/bin/lead-verdict.sh" <<EOF
-#!/bin/bash
-# The post records the row as the worker would, so the next tick reads it.
-printf '%s\n' "\$*" >> "$T/log/post"
-rc=\$(cat "$T/postrc" 2>/dev/null || echo 0)
-if [ "\$1" = post ] && [ "\$rc" = 0 ]; then
-  note=""; prev=""; for a in "\$@"; do [ "\$prev" = --note ] && note="\$a"; prev="\$a"; done
-  jq -c --arg h "\$4" --arg v "\$5" --arg n "\$note" '.rows += [{id:99, head_sha:\$h, source:"lead", verdict:\$v, note:\$n}]' \
-    "$T/vrows.json" > "$T/vrows.tmp" && mv "$T/vrows.tmp" "$T/vrows.json"
-fi
-exit "\$rc"
-EOF
-cat > "$Q/bin/lane-alert.sh" <<EOF
-#!/bin/bash
-printf '%s\n' "\$*" >> "$T/log/qalerts"
-EOF
-cat > "$Q/bin/agent-call.sh" <<EOF
-#!/bin/bash
-echo x >> "$T/log/agent-count"
-exit 1
-EOF
-chmod +x "$Q/bin/lead-verdict.sh" "$Q/bin/lane-alert.sh" "$Q/bin/agent-call.sh"
-scratch_install_closure bin/lead-review-enqueue.sh "$Q" >/dev/null || bad "closure of bin/lead-review-enqueue.sh"
-scratch_install_closure bin/jobs-client.sh "$Q" >/dev/null || bad "closure of bin/jobs-client.sh"
-cp "$SRC/catalog/lanes.d/_lib.json" "$SRC/catalog/lanes.d/_lib.lead-delta.json" "$Q/catalog/lanes.d/"
+# ═══════════════════ the libs ld_protected sources ═══════════════════
+Q="$T/hq"; mkdir -p "$Q/state" "$T/log"
+scratch_install_closure bin/lib/lead-delta.sh "$Q" >/dev/null || bad "closure of bin/lib/lead-delta.sh"
+scratch_install_closure bin/lib/lead-authority.sh "$Q" >/dev/null || bad "closure of bin/lib/lead-authority.sh"
 # TEST-CHANGE BH-4148 (merge of main): the lead protected paths come from the
 # lead_protected_paths rows (tests/lib/lpp-stub.sh), not the deleted TSV. The rows
 # are the cromford globs the TSV held (the fixture).
 LPPF="$T/lpp.json"; LPPDOWN="$T/lpp-down"
 set -f; lpp_set "$LPPF" example-org/cromford $(cat "$SRC/tests/fixtures/lead-protected-paths.bh-4148.txt"); set +f
-lpp_install "$T/qbin" "$LPPF" "$LPPDOWN"
 lpp_install "$T/fakebin" "$LPPF" "$LPPDOWN"
-printf 'lead-test-token\n' > "$T/cfg/token"; chmod 600 "$T/cfg/token"
-printf 'demo-os example-org/demo-os https://demo.test /api 3 box-hub\n' > "$Q/fleet.conf"
-git clone -q "$OR" "$T/qrepos/demo-os"
-# Every git fetch the enqueue makes is counted (R5's cache check).
-mkdir -p "$T/gitbin"; REALGIT=$(command -v git)
-cat > "$T/gitbin/git" <<EOF
-#!/bin/bash
-for a in "\$@"; do [ "\$a" = fetch ] && { echo x >> "$T/log/fetches"; break; }; done
-exec "$REALGIT" "\$@"
-EOF
-chmod +x "$T/gitbin/git"
 
-cat > "$T/qbin/curl" <<EOF
-#!/bin/bash
-m=GET; body=""; url=""; prev=""; hdrs=""
-for a in "\$@"; do
-  case "\$prev" in
-    -X) m="\$a" ;;
-    --data-binary|-d|--data) body="\$a" ;;
-    -H) case "\$a" in @*) hdrs="\$hdrs\$(cat "\${a#@}")"\$'\n' ;; *) hdrs="\$hdrs\$a"\$'\n' ;; esac ;;
-  esac
-  case "\$a" in http*) url="\$a" ;; esac
-  prev="\$a"
-done
-case "\$body" in @*) body=\$(cat "\${body#@}") ;; esac
-lead=0; grep -q '^x-lead-verdict-token: lead-test-token' <<<"\$hdrs" && lead=1
-p="\${url#https://jobs.test}"
-printf '%s %s %s lead=%s\n' "\$m" "\$p" "\$body" "\$lead" >> "$T/log/qworker"
-code=200; out='{}'
-case "\$m \$p" in
-$(lpp_curl_case m url body)
-  "GET /api/verdict?pr="*)
-    n="\${p##*%2F}"
-    if [ -f "$T/jv/\$n.json" ]; then out=\$(cat "$T/jv/\$n.json"); else code=404; out='{"error":"no job for this pr"}'; fi ;;
-  "GET /api/verdicts?"*standing_only=1*)
-    h=\$(printf '%s' "\$p" | tr '&?' '\n\n' | sed -n 's/^head_sha=//p')
-    out=\$(jq -c --arg h "\$h" '{standing:([.rows[] | select(.head_sha == \$h and (.source == "lead" or .source == "human"))] | last // null),
-      rows:[], truncated:false}' "$T/vrows.json") ;;
-  "GET /api/verdicts?"*) out=\$(cat "$T/vrows.json") ;;
-  "POST /api/lead-reviews")
-    if [ "\$lead" != 1 ]; then code=403; out='{"error":"needs the lead token"}'
-    else code=201; out=\$(jq -c '{request:(. + {id:"lr-9", status:"requested"})}' <<<"\$body"); fi ;;
-  *) code=404; out='{"error":"unknown endpoint","worker":"harness-jobs"}' ;;
-esac
-printf '%s\n%s' "\$out" "\$code"
-EOF
-cat > "$T/qbin/gh" <<EOF
-#!/bin/bash
-case "\$*" in
-  *"api rate_limit"*)
-    echo '{"resources":{"core":{"remaining":5000,"limit":5000,"reset":2000000000},"graphql":{"remaining":5000,"limit":5000,"reset":2000000000}}}' ;;
-  *"-X GET repos/example-org/demo-os/pulls?"*)
-    printf 'HTTP/2 200\r\n\r\n'
-    jq -nc --arg h "\$(cat "$T/qhead")" '[{number:41, html_url:"https://github.com/example-org/demo-os/pull/41", title:"t", draft:false, state:"open",
-      user:{login:"operator",type:"User"}, head:{sha:\$h,ref:"ticket/bh-41"}, base:{ref:"main"}}]' ;;
-  *"-X GET repos/example-org/demo-os/pulls/41"*)
-    printf 'HTTP/2 200\r\n\r\n'; jq -nc --arg s "\$(cat "$T/qhead")" '{head:{sha:\$s},base:{ref:"main"},user:{login:"operator"}}' ;;
-  *"-X GET repos/example-org/demo-os/compare/"*)
-    printf 'HTTP/2 200\r\n\r\n{"total_commits":1,"commits":[{"parents":[{"sha":"p"}],"commit":{"message":"feat: the thing"}}],"files":[]}\n' ;;
-esac
-exit 0
-EOF
-chmod +x "$T/qbin/curl" "$T/qbin/gh"
-
-QLOG="$Q/logs/lead-review-enqueue.log"
-# reset <head> <builder-approved sha> <lead word on G>
-reset() {
-  rm -f "$T/log"/q* "$T/log/post" "$T/log/fetches" "$T/postrc" "$QLOG"
-  scratch_rm "$Q/state"; mkdir -p "$Q/state"; echo box-hub > "$Q/state/box-name"
-  scratch_rm "$T/jv"; mkdir -p "$T/jv"
-  echo "$1" > "$T/qhead"
-  jq -nc --arg s "$2" '{verdict:"APPROVE", tier:"2", provenance:"-", merge_sha:null, job_id:"job-1", reviewed_sha:$s,
-    artifacts:[{artifact_kind:"verdict", detail:({tier:"2", reviewed_sha:$s, settled:true}|tojson)}]}' > "$T/jv/41.json"
-  jq -nc --arg g "$G" --arg w "$3" '{rows:[{id:4,repo:"example-org/demo-os",pr:41,head_sha:$g,source:"box",verdict:"APPROVE",note:""},
-    {id:5,repo:"example-org/demo-os",pr:41,head_sha:$g,source:"lead",verdict:$w,note:"lead-review:lr-3"}],truncated:false}' > "$T/vrows.json"
-}
-tick() {
-  ( cd "$T" && PATH="$T/qbin:$T/gitbin:$PATH" HARNESS="$Q" REPOS_ROOT="$T/qrepos" FLEET_CONF="$Q/fleet.conf" \
-      LEAD_VERDICT_TOKEN_FILE="$T/cfg/token" LEAD_REVIEW_AUTO_REPOS=example-org/demo-os \
-      LEAD_REVIEW_ENQUEUE_MAX_PER_TICK=5 LEAD_REVIEW_MAX_PER_PR_DAY=4 JOBS_URL=https://jobs.test \
-      HARNESS_SECRET=test-secret JOBS_RETRIES=0 GH_ETAG=0 \
-      bash "$Q/bin/lead-review-enqueue.sh" tick ) > "$T/out" 2>&1; RC=$?
-}
-reqs() { grep -c '^POST /api/lead-reviews ' "$T/log/qworker" 2>/dev/null || true; }
-reqbody() { grep '^POST /api/lead-reviews ' "$T/log/qworker" | head -1 | sed 's/^POST \/api\/lead-reviews //; s/ lead=[01]$//'; }
-postn() { [ -f "$T/log/post" ] && wc -l < "$T/log/post" | tr -d ' ' || echo 0; }
-agents() { [ -f "$T/log/agent-count" ] && wc -l < "$T/log/agent-count" | tr -d ' ' || echo 0; }
-fetches() { [ -f "$T/log/fetches" ] && wc -l < "$T/log/fetches" | tr -d ' ' || echo 0; }
-summ() { grep ' tick repos=' "$QLOG" 2>/dev/null | tail -1; }
-hasw() { summ | grep -qw -- "$1"; }
-
-# ── R1: only main merged in, builder APPROVE still on G: the lead MERGE is replayed ──
-reset "$HM" "$G" MERGE; tick
-[ "$RC" -eq 0 ] && ok || bad "R1 rc=$RC out=$(cat "$T/out")"
-# TEST-CHANGE (BH-6967): the replay post also names the replayed row's review
-# mode; that row has none, so it was a full review.
-WANT="post example-org/demo-os 41 $HM MERGE --source lead --reviewer box:box-hub --note lead-replay:$G12 how:main-merge --review-mode full"
-[ "$(cat "$T/log/post" 2>/dev/null)" = "$WANT" ] && ok || bad "R1 lead-verdict argv: '$(cat "$T/log/post" 2>/dev/null)' want '$WANT'"
-[ "$(reqs)" = 0 ] && ok || bad "R1 a lead review was requested on a main-merge head: $(reqbody)"
-[ "$(agents)" = 0 ] && ok || bad "R1 an agent was called $(agents) time(s)"
-hasw replayed=1 && hasw requested=0 && hasw today_replay=1 && ok || bad "R1 summary: $(summ) log: $(cat "$QLOG")"
-[ "$(awk -F'\t' '$3 == "replay"' "$Q/state/lead-review-enqueue/modes.tsv" | wc -l | tr -d ' ')" = 1 ] && ok || bad "R1 modes.tsv: $(cat "$Q/state/lead-review-enqueue/modes.tsv")"
-
-# ── R2: idempotent: the next tick sees its own row and does nothing ──
-rm -f "$T/log/post" "$T/log/qworker"; tick
-[ "$(postn)" = 0 ] && ok || bad "R2 posted again: $(cat "$T/log/post")"
-[ "$(reqs)" = 0 ] && ok || bad "R2 requested a review: $(reqbody)"
-[ "$(agents)" = 0 ] && ok || bad "R2 an agent call"
-grep -q "example-org/demo-os#41 @${HM:0:12}: lead word already replayed onto this head" "$QLOG" && ok || bad "R2 no already-replayed line: $(cat "$QLOG")"
-[ "$(awk -F'\t' '$3 == "replay"' "$Q/state/lead-review-enqueue/modes.tsv" | wc -l | tr -d ' ')" = 1 ] && ok || bad "R2 a second replay row was counted"
-
-# ── R3: a lead BLOCK on G is never replayed, and nothing is requested ──
-# TEST-CHANGE (BH-5630): R3 and R5's first tick pin "only the builder's approval
-# asks for a review", which is LEAD_REVIEW_REQUIRE_BUILDER_APPROVE=1 since
-# BH-5630, so they tick with the builder gate on. No case removed.
-reset "$HM" "$G" BLOCK; LEAD_REVIEW_REQUIRE_BUILDER_APPROVE=1 tick
-[ "$RC" -eq 0 ] && ok || bad "R3 rc=$RC"
-[ "$(postn)" = 0 ] && ok || bad "R3 a BLOCK was replayed: $(cat "$T/log/post")"
-[ "$(reqs)" = 0 ] && ok || bad "R3 requested: $(reqbody)"
-hasw replayed=0 && hasw skipped_no_approve=1 && ok || bad "R3 summary: $(summ)"
-
-# ── R4: 12 changed lines, builder approved H: one delta-mode request ──
-reset "$HD" "$HD" MERGE; tick
-[ "$(postn)" = 0 ] && ok || bad "R4 a changed patch was replayed: $(cat "$T/log/post")"
-[ "$(reqs)" = 1 ] && ok || bad "R4 want one request, got $(reqs)"
-B=$(reqbody)
-# TEST-CHANGE (BH-6391): a re-review now also carries the lead-prev: group after the
-# lead-delta: note; the old prefix is matched exactly, then the new group's head.
-case "$(jq -r .scope_notes <<<"$B" 2>/dev/null)" in
-  "auto: builder APPROVE on ${HD:0:12}; lead-delta:$G lines:12/40 files:1; lead-prev:$G word:MERGE "*) ok ;;
-  *) bad "R4 scope_notes: $B" ;;
-esac
-[ "$(jq -r .prior_verdict_ref <<<"$B" 2>/dev/null)" = "lead MERGE on $G12 (verdict row #5)" ] && ok || bad "R4 prior_verdict_ref: $B"
-jq -e 'has("model") or has("reviewer_model")' <<<"$B" >/dev/null 2>&1 && bad "R4 the request names a model: $B" || ok
-hasw delta=1 && hasw full=0 && hasw today_delta=1 && ok || bad "R4 summary: $(summ)"
-[ "$(agents)" = 0 ] && ok || bad "R4 the enqueue called an agent"
-
-# ── R5: the same head, builder APPROVE still on G: nothing asked; cached for later ──
-reset "$HD" "$G" MERGE; LEAD_REVIEW_REQUIRE_BUILDER_APPROVE=1 tick
-[ "$(reqs)" = 0 ] && [ "$(postn)" = 0 ] && ok || bad "R5 requests=$(reqs) posts=$(postn)"
-hasw skipped_no_approve=1 && ok || bad "R5 summary: $(summ)"
-grep -q "	$G	$HD	40	delta 12 40 1$" "$Q/state/lead-review-enqueue/delta.tsv" && ok || bad "R5 no cached class: $(cat "$Q/state/lead-review-enqueue/delta.tsv")"
-F1=$(fetches)
-[ "$F1" -ge 1 ] && ok || bad "R5 the first look fetched nothing"
-# the builder now approves H: the cached class is reused, no second fetch
-jq -c --arg s "$HD" '.reviewed_sha = $s' "$T/jv/41.json" > "$T/jv/x" && mv "$T/jv/x" "$T/jv/41.json"
-rm -f "$T/log/qworker"; tick
-[ "$(fetches)" = "$F1" ] && ok || bad "R5 fetched again ($(fetches) vs $F1) for a cached head pair"
-case "$(jq -r .scope_notes <<<"$(reqbody)" 2>/dev/null)" in *"lead-delta:$G lines:12/40"*) ok ;; *) bad "R5 the approved tick did not ask in delta mode: $(reqbody)" ;; esac
-
-# ── R6: a protected path in the inter-diff: a full review ──
-reset "$HP" "$HP" MERGE; LEAD_DELTA_PROTECTED_MAX_LINES=0 tick
-[ "$(postn)" = 0 ] && ok || bad "R6 a protected change was replayed: $(cat "$T/log/post")"
-[ "$(reqs)" = 1 ] && ok || bad "R6 want one request, got $(reqs)"
-case "$(jq -r .scope_notes <<<"$(reqbody)" 2>/dev/null)" in *lead-delta*) bad "R6 delta mode on a protected path: $(reqbody)" ;; *) ok ;; esac
-grep -q "full protected:.github/workflows/x.yml" "$QLOG" && ok || bad "R6 no protected line: $(cat "$QLOG")"
-hasw full=1 && hasw delta=0 && ok || bad "R6 summary: $(summ)"
-# ld_protected on its own: .mergify.yml, schema, a catalog glob of the harness repo
+# ── ld_protected on its own ──
 (
   HARNESS="$Q"; . "$Q/bin/lib/lead-authority.sh"; . "$Q/bin/lib/lead-delta.sh"
   setting_get() { return 2; }
@@ -295,12 +96,6 @@ hasw full=1 && hasw delta=0 && ok || bad "R6 summary: $(summ)"
   exit 0
 ); PRC=$?; rm -f "$LPPDOWN"
 [ "$PRC" = 0 ] && ok || bad "R6 ld_protected unit check failed at exit $PRC"
-
-# ── R7: over LEAD_DELTA_REVIEW_MAX_LINES: a full review ──
-reset "$HB" "$HB" MERGE; tick
-[ "$(reqs)" = 1 ] && ok || bad "R7 want one request, got $(reqs)"
-case "$(jq -r .scope_notes <<<"$(reqbody)" 2>/dev/null)" in *lead-delta*) bad "R7 delta mode over the threshold: $(reqbody)" ;; *) ok ;; esac
-grep -q "full over-max:60" "$QLOG" && ok || bad "R7 no over-max line: $(cat "$QLOG")"
 
 # ═════════════════════════ part 2: bin/lead-review.sh ═════════════════════════
 B2="$T/hb"; mkdir -p "$B2/bin/lib/jobs" "$B2/prompts" "$B2/catalog/lanes.d" "$B2/state/lead-reviews" "$T/repos" "$T/tmp" "$T/fakebin"

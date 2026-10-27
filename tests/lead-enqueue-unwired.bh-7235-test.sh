@@ -2,16 +2,13 @@
 # tests/lead-enqueue-unwired.bh-7235-test.sh — BH-7235 (BH-5878.1, slice C1):
 # nothing starts bin/lead-review-enqueue.sh. The lead review worklist
 # (bin/lead-review.sh tick on each box) is the one input of the lead review.
-#   U1  no cron/lanes/*.cron non-comment line runs lead-review-enqueue.sh;
-#       cron/lanes/713-lead-review-enqueue.cron exists and has zero schedule
-#       lines (a comment-only stub, see U3 and M2).
+#   U1  no cron/lanes/*.cron non-comment line runs lead-review-enqueue.sh.
 #   U2  a scratch bin/lanes-build.sh --write, then bin/render-cron.sh --root
 #       <scratch> <box> for every cron/boxes/<box>.d (not _*), file mode:
 #       each exits 0 and renders no crontab line that runs the enqueue.
 #   U3  the hub render in db mode (REGISTRY_SOURCE=db) over a registry cache
 #       (tests/lib/registry-cache.bh-5651.sh) that still holds the D1 row
 #       lane_boxes {lead-review-enqueue, hub}: rc 0, no enqueue line.
-#   U4  catalog/lanes.d/lead-review-enqueue.json .boxes is [].
 #   bin/wake-loop.sh on tests/lib/wake-claim-stub.sh, every lane script an
 #   argv recorder, bin/lib/lead-reenqueue.sh installed beside it:
 #   W1  the hub, one pr row pull_request.synchronize: no lead-enqueue launch,
@@ -20,9 +17,10 @@
 #       row: one bin/lead-review.sh tick launch (unchanged).
 #   M1  (D1) the BH-5581 source line and its two calls put back in the loop:
 #       W1 goes red.
-#   M2  (D1) the stub fragment removed from the scratch tree: U3's db-mode
-#       render exits 1 with `registry lanes with no cron/lanes fragment`
-#       (the stub is load-bearing; this is the first attempt's refusal).
+# The 713 stub and the lane JSON are deleted together (BH-8363): the db-mode
+# overlay maps the D1 rows over file lanes only, so the row has no lane to
+# land on. The old stub and .boxes pins live on as R1-R4 and M1 of
+# tests/lead-enqueue-lane-retired.bh-8363-test.sh.
 # Run from anywhere: HARNESS_TEST_SANDBOX=1 bash tests/lead-enqueue-unwired.bh-7235-test.sh
 set -uo pipefail
 . "$(dirname "$0")/lib/scratch.sh" || exit 1
@@ -41,10 +39,6 @@ command -v perl >/dev/null || { echo "FAIL: perl missing"; exit 1; }
 U1=$(grep -l 'lead-review-enqueue\.sh' "$DIR"/cron/lanes/*.cron 2>/dev/null \
   | while IFS= read -r f; do grep -v '^[[:space:]]*#' "$f" | grep -q 'lead-review-enqueue\.sh' && echo "${f#"$DIR"/}"; done)
 [ -z "$U1" ] && ok || bad "U1 a cron/lanes fragment runs the enqueue: $U1"
-STUB="$DIR/cron/lanes/713-lead-review-enqueue.cron"
-[ -f "$STUB" ] && ok || bad "U1 cron/lanes/713-lead-review-enqueue.cron is gone (the db-mode render needs it, see M2)"
-NSCHED=$(grep -cv '^[[:space:]]*\(#\|$\)' "$STUB" 2>/dev/null)
-[ "${NSCHED:-x}" = 0 ] && ok || bad "U1 the 713 stub has ${NSCHED:-?} schedule line(s): $(grep -v '^[[:space:]]*\(#\|$\)' "$STUB" 2>&1)"
 
 # ── U2: every box's render runs no enqueue ──
 RR="$T/render"; mkdir -p "$RR"
@@ -85,21 +79,6 @@ jq -e '.lane_boxes | any(.lane == "lead-review-enqueue" and .box_id == "hub")' "
   && ok || bad "U3 setup: the cache does not hold the lead-review-enqueue/hub row"
 [ -s "$T/db.hub" ] && ok || bad "U3 the db-mode render printed nothing"
 hit=$(grep -v '^[[:space:]]*#' "$T/db.hub" | grep 'lead-review-enqueue\.sh') && bad "U3 db mode runs the enqueue: $hit" || ok
-
-# ── U4: the lane is in the registry with no box ──
-[ "$(jq -c '.boxes' "$DIR/catalog/lanes.d/lead-review-enqueue.json" 2>/dev/null)" = '[]' ] && ok \
-  || bad "U4 .boxes is $(jq -c '.boxes' "$DIR/catalog/lanes.d/lead-review-enqueue.json" 2>&1)"
-[ "$(jq -c '[.lanes[] | select(.id == "lead-review-enqueue") | .boxes]' "$RR/catalog/lanes.json")" = '[[]]' ] && ok \
-  || bad "U4 the rendered registry: $(jq -c '[.lanes[] | select(.id == "lead-review-enqueue")]' "$RR/catalog/lanes.json")"
-
-# ── M2: no stub fragment -> the db-mode hub render refuses (attempt 1) ──
-RM2="$T/render-m2"; mkdir -p "$RM2"
-cp -r "$RR/cron" "$RR/catalog" "$RR/fleet.conf" "$RM2/"
-rm -f "$RM2/cron/lanes/713-lead-review-enqueue.cron"
-render_db "$RM2" "$T/m2.hub"; RC=$?
-[ "$RC" = 1 ] && ok || bad "M2 db-mode render with no stub rc=$RC (want 1): $(head -3 "$T/m2.hub.err" 2>/dev/null)"
-grep -q 'registry lanes with no cron/lanes fragment: *lead-review-enqueue' "$T/m2.hub.err" 2>/dev/null && ok \
-  || bad "M2 no 'registry lanes with no cron/lanes fragment' line: $(head -3 "$T/m2.hub.err" 2>/dev/null)"
 
 # ═══════════════════ bin/wake-loop.sh ═══════════════════
 WH="$T/wh"
