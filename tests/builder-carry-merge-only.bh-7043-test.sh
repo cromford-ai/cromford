@@ -11,7 +11,6 @@
 #   nosha       any fetch naming a bare sha fails (a server that refuses sha
 #               wants; local git always serves a reachable sha, so only the
 #               shim can make the PR-ref rung the one that works).
-#   allfail     every fetch fails, with an https URL carrying credentials.
 # The hub clone is `--single-branch -b main`, so it lacks A and every PR head.
 #
 #   patch_same_fetch (sourced from the repo)
@@ -32,25 +31,6 @@
 #     B4  a repeat call in a new process answers from builder-carry.tsv with
 #         0 fetches and the same HOW; rc 2 wrote no row.
 #     B5  bc_prune drops a row 8 days old and keeps a row 1 day old.
-#   bin/lead-review-enqueue.sh tick (whole, scratch harness and closure)
-#     E1  builder APPROVE on A, lead MERGE on A, B = A + main merge: the lead
-#         MERGE is posted on B (lead-replay:<A12> how:main-merge), 0 requests,
-#         0 agent calls, one modes.tsv builder-replay row from=<A12>
-#         how=main-merge, `replayed=1 builder_replayed=1 fetch_failed=0`, no
-#         worker write with source box.
-#     E2  B = A + 1 own line, CI green: no builder-replay row, no post, one
-#         request with lead-delta:<A> lines:1/.
-#     E3  E1 with nocombined: still the post, fetch_failed=0.
-#     E4  lead BLOCK on A, CI not green: no post, no request, no builder-replay.
-#     E5  no lead row, LEAD_REVIEW_REQUIRE_BUILDER_APPROVE=1, CI not green: one
-#         request, notes `auto: builder APPROVE carried from <A12>
-#         (how:main-merge) on <B12>`.
-#     E6  the verdict history answers 500: the carry does not stand; `verdicts
-#         read failed; requesting as before`, no request (CI not green).
-#     E7  allfail: fetch_failed=1, the log names the redacted git error, no
-#         builder-carry.tsv row.
-#     E8  a risk-tier row on B in the history (not standing): the carried head
-#         is skipped_verdict, as an unapproved one is; no post, no request.
 #   bin/lead-review.sh tick (worklist gates 10 and 50,
 #   tests/lib/lead-worklist-fixture.bh-4956.sh), CI NOT green on the head:
 #     W1  builder APPROVE on $SHA, H1 = $SHA + main merge, lead MERGE on $SHA:
@@ -71,10 +51,13 @@
 #     U3  a truncated history, CI green: as U1.
 #     U4  a carry that stands (no lead row): gate 60 makes no sign-off.
 #     U5  control: an APPROVE bound to the head: gate 60 signs it off.
+# tests/lead-gates-builder-carry.bh-8524-test.sh pins the rest of gate 10's
+# carry on a whole tick: no second post over a replay row, the carried notes
+# under LEAD_REVIEW_REQUIRE_BUILDER_APPROVE=1, and the redacted not-carried
+# line when every fetch fails.
 # Run from anywhere: HARNESS_TEST_SANDBOX=1 bash tests/builder-carry-merge-only.bh-7043-test.sh
 set -uo pipefail
 . "$(dirname "$0")/lib/scratch.sh" || exit 1
-. "$(dirname "$0")/lib/lpp-stub.sh" || exit 1
 . "$(dirname "$0")/lib/lead-worklist-fixture.bh-4956.sh" || exit 1
 SRC=$(cd "$(dirname "$0")/.." && pwd)
 PASS=0; FAIL=0
@@ -82,7 +65,7 @@ ok()  { PASS=$((PASS+1)); }
 bad() { FAIL=$((FAIL+1)); echo "FAIL: $1"; }
 command -v jq >/dev/null || { echo "jq missing — skipping"; exit 0; }
 command -v flock >/dev/null || { echo "FAIL: flock missing"; exit 1; }
-for f in bin/lead-review.sh bin/lead-review-enqueue.sh bin/lib/patch-same.sh; do
+for f in bin/lead-review.sh bin/lib/patch-same.sh; do
   [ -f "$SRC/$f" ] || { echo "FAIL: $f does not exist"; exit 1; }
 done
 # Not an exit: without the lib each case below fails on its own (the red run).
@@ -136,7 +119,6 @@ if [ "\$f" = 1 ]; then
   case "\$(cat "$T/gitmode" 2>/dev/null)" in
     nocombined) [ "\$m\$s" = 11 ] && { echo "error: cannot lock ref 'refs/remotes/origin/main': fixture" >&2; exit 1; } ;;
     nosha) [ "\$s" = 1 ] && { echo "fatal: remote error: upload-pack: not our ref (fixture)" >&2; exit 128; } ;;
-    allfail) echo "fatal: unable to access 'https://u:secret@github.com/example-org/demo-os/': fixture outage" >&2; exit 128 ;;
   esac
 fi
 exec "$REALGIT" "\$@"
@@ -217,203 +199,6 @@ printf '%s\texample-org/demo-os\t9\t%s\t%s\trefused\n%s\texample-org/demo-os\t8\
 [ "$(awk -F'\t' '$3 == 9' "$ST/builder-carry.tsv" | wc -l | tr -d ' ')" = 0 ] && ok || bad "B5 the 8-day-old row was kept"
 awk -F'\t' '$3 == 8' "$ST/builder-carry.tsv" | grep -q . && ok || bad "B5 the 1-day-old row was dropped"
 [ "$(awk -F'\t' -v h="$B1" '$5 == h' "$ST/builder-carry.tsv" | wc -l | tr -d ' ')" = 1 ] && ok || bad "B5 a fresh row was dropped"
-
-# ═════════════════ bin/lead-review-enqueue.sh tick: E1-E7 ═════════════════
-Q="$T/hq"; mkdir -p "$Q/bin/lib/jobs" "$Q/state" "$Q/logs" "$Q/catalog/lanes.d" "$T/cfg" "$T/qrepos" "$T/qbin"
-cat > "$Q/bin/lead-verdict.sh" <<EOF
-#!/bin/bash
-# The post records the row as the worker would, so the next tick reads it.
-printf '%s\n' "\$*" >> "$T/log/post"
-if [ "\$1" = post ]; then
-  note=""; prev=""; for a in "\$@"; do [ "\$prev" = --note ] && note="\$a"; prev="\$a"; done
-  jq -c --arg h "\$4" --arg v "\$5" --arg n "\$note" '.rows += [{id:99, head_sha:\$h, source:"lead", verdict:\$v, note:\$n}]' \
-    "$T/vrows.json" > "$T/vrows.tmp" && mv "$T/vrows.tmp" "$T/vrows.json"
-fi
-exit 0
-EOF
-cat > "$Q/bin/lane-alert.sh" <<EOF
-#!/bin/bash
-printf '%s\n' "\$*" >> "$T/log/qalerts"
-EOF
-cat > "$Q/bin/agent-call.sh" <<EOF
-#!/bin/bash
-echo x >> "$T/log/agent-count"
-exit 1
-EOF
-chmod +x "$Q/bin/lead-verdict.sh" "$Q/bin/lane-alert.sh" "$Q/bin/agent-call.sh"
-scratch_install_closure bin/lead-review-enqueue.sh "$Q" >/dev/null || bad "closure of bin/lead-review-enqueue.sh"
-scratch_install_closure bin/jobs-client.sh "$Q" >/dev/null || bad "closure of bin/jobs-client.sh"
-scratch_install_closure bin/lead-review.sh "$Q" >/dev/null || bad "closure of bin/lead-review.sh"
-[ -r "$Q/bin/lib/builder-carry.sh" ] && ok || bad "setup: the closure of bin/lead-review-enqueue.sh lacks bin/lib/builder-carry.sh"
-cp "$SRC/catalog/lanes.d/_lib.json" "$SRC/catalog/lanes.d/_lib.lead-delta.json" "$Q/catalog/lanes.d/"
-LPPF="$T/lpp.json"; LPPDOWN="$T/lpp-down"
-set -f; lpp_set "$LPPF" example-org/cromford $(cat "$SRC/tests/fixtures/lead-protected-paths.bh-4148.txt"); set +f
-lpp_install "$T/qbin" "$LPPF" "$LPPDOWN"
-printf 'lead-test-token\n' > "$T/cfg/token"; chmod 600 "$T/cfg/token"
-printf 'demo-os example-org/demo-os https://demo.test /api 3 box-hub\n' > "$Q/fleet.conf"
-printf 'queue_rules:\n  - name: default\n    queue_conditions:\n      - check-success = "CI"\n' | base64 | tr -d '\n' > "$T/mergify.b64"
-
-cat > "$T/qbin/curl" <<EOF
-#!/bin/bash
-m=GET; body=""; url=""; prev=""; hdrs=""
-for a in "\$@"; do
-  case "\$prev" in
-    -X) m="\$a" ;;
-    --data-binary|-d|--data) body="\$a" ;;
-    -H) case "\$a" in @*) hdrs="\$hdrs\$(cat "\${a#@}")"\$'\n' ;; *) hdrs="\$hdrs\$a"\$'\n' ;; esac ;;
-  esac
-  case "\$a" in http*) url="\$a" ;; esac
-  prev="\$a"
-done
-case "\$body" in @*) body=\$(cat "\${body#@}") ;; esac
-lead=0; grep -q '^x-lead-verdict-token: lead-test-token' <<<"\$hdrs" && lead=1
-p="\${url#https://jobs.test}"
-printf '%s %s %s lead=%s\n' "\$m" "\$p" "\$body" "\$lead" >> "$T/log/qworker"
-code=200; out='{}'
-case "\$m \$p" in
-$(lpp_curl_case m url body)
-  "GET /api/verdict?pr="*)
-    n="\${p##*%2F}"
-    if [ -f "$T/jv/\$n.json" ]; then out=\$(cat "$T/jv/\$n.json"); else code=404; out='{"error":"no job for this pr"}'; fi ;;
-  "GET /api/verdicts?"*standing_only=1*)
-    h=\$(printf '%s' "\$p" | tr '&?' '\n\n' | sed -n 's/^head_sha=//p')
-    out=\$(jq -c --arg h "\$h" '{standing:([.rows[] | select(.head_sha == \$h and (.source == "lead" or .source == "human"))] | last // null),
-      rows:[], truncated:false}' "$T/vrows.json") ;;
-  "GET /api/verdicts?"*)
-    if [ -e "$T/vfail" ]; then code=500; out='{"error":"fixture outage"}'; else out=\$(cat "$T/vrows.json"); fi ;;
-  "POST /api/risk-tiers") code=201; out='{"ok":true}' ;;
-  "POST /api/lead-reviews")
-    if [ "\$lead" != 1 ]; then code=403; out='{"error":"needs the lead token"}'
-    else code=201; out=\$(jq -c '{request:(. + {id:"lr-9", status:"requested"})}' <<<"\$body"); fi ;;
-  *) code=404; out='{"error":"unknown endpoint","worker":"harness-jobs"}' ;;
-esac
-printf '%s\n%s' "\$out" "\$code"
-EOF
-cat > "$T/qbin/gh" <<EOF
-#!/bin/bash
-H=\$(cat "$T/qhead")
-case "\$*" in
-  *"api rate_limit"*)
-    echo '{"resources":{"core":{"remaining":5000,"limit":5000,"reset":2000000000},"graphql":{"remaining":5000,"limit":5000,"reset":2000000000}}}' ;;
-  *"-X GET repos/example-org/demo-os/pulls?"*)
-    printf 'HTTP/2 200\r\n\r\n'
-    jq -nc --arg h "\$H" '[{number:41, html_url:"https://github.com/example-org/demo-os/pull/41", title:"t", draft:false, state:"open",
-      user:{login:"operator",type:"User"}, head:{sha:\$h,ref:"ticket/bh-41"}, base:{ref:"main"}}]' ;;
-  *"-X GET repos/example-org/demo-os/pulls/41"*)
-    printf 'HTTP/2 200\r\n\r\n'; jq -nc --arg s "\$H" '{head:{sha:\$s},base:{ref:"main"},user:{login:"operator"}}' ;;
-  *"-X GET repos/example-org/demo-os/contents/.mergify.yml"*)
-    [ -e "$T/ci" ] || exit 0
-    printf 'HTTP/2 200\r\n\r\n'; jq -nc --arg c "\$(cat "$T/mergify.b64")" '{content:\$c, encoding:"base64"}' ;;
-  *"-X GET repos/example-org/demo-os/commits/"*"/check-runs"*)
-    [ -e "$T/ci" ] || exit 0
-    printf 'HTTP/2 200\r\n\r\n'
-    jq -nc --arg h "\$H" '{total_count:1, check_runs:[{name:"CI", head_sha:\$h, status:"completed", conclusion:"success", app:{slug:"github-actions"}}]}' ;;
-  *"-X GET repos/example-org/demo-os/compare/"*)
-    printf 'HTTP/2 200\r\n\r\n{"total_commits":1,"commits":[{"parents":[{"sha":"p"}],"commit":{"message":"feat: the thing"}}],"files":[]}\n' ;;
-esac
-exit 0
-EOF
-chmod +x "$T/qbin/curl" "$T/qbin/gh"
-
-QLOG="$Q/logs/lead-review-enqueue.log"; QST="$Q/state/lead-review-enqueue"
-# reset <head> <lead word on A, or "">
-reset() {
-  rm -f "$T/log"/q* "$T/log/post" "$T/log/fetches" "$T/log/agent-count" "$T/gitmode" "$T/vfail" "$T/ci" "$QLOG"
-  scratch_rm "$Q/state"; mkdir -p "$Q/state"; echo box-hub > "$Q/state/box-name"
-  scratch_rm "$T/jv"; mkdir -p "$T/jv"
-  fresh "$T/qrepos/demo-os"
-  echo "$1" > "$T/qhead"
-  jq -nc --arg s "$A" '{verdict:"APPROVE", tier:"2", provenance:"-", merge_sha:null, job_id:"job-1", reviewed_sha:$s,
-    artifacts:[{artifact_kind:"verdict", detail:({tier:"2", reviewed_sha:$s, settled:true}|tojson)}]}' > "$T/jv/41.json"
-  jq -nc --arg a "$A" --arg w "$2" '{rows:([{id:4,repo:"example-org/demo-os",pr:41,head_sha:$a,source:"box",verdict:"APPROVE",note:""}]
-    + (if $w == "" then [] else [{id:5,repo:"example-org/demo-os",pr:41,head_sha:$a,source:"lead",verdict:$w,note:"lead-review:lr-3"}] end)),
-    truncated:false}' > "$T/vrows.json"
-}
-tick() {
-  ( cd "$T" && PATH="$T/qbin:$T/gitbin:$PATH" HARNESS="$Q" REPOS_ROOT="$T/qrepos" FLEET_CONF="$Q/fleet.conf" \
-      LEAD_VERDICT_TOKEN_FILE="$T/cfg/token" LEAD_REVIEW_AUTO_REPOS=example-org/demo-os \
-      LEAD_REVIEW_ENQUEUE_MAX_PER_TICK=5 LEAD_REVIEW_MAX_PER_PR_DAY=4 JOBS_URL=https://jobs.test \
-      HARNESS_SECRET=test-secret JOBS_RETRIES=0 GH_ETAG=0 \
-      bash "$Q/bin/lead-review-enqueue.sh" tick ) > "$T/out" 2>&1; RC=$?
-}
-reqs() { grep -c '^POST /api/lead-reviews ' "$T/log/qworker" 2>/dev/null || true; }
-reqbody() { grep '^POST /api/lead-reviews ' "$T/log/qworker" | head -1 | sed 's/^POST \/api\/lead-reviews //; s/ lead=[01]$//'; }
-postn() { [ -f "$T/log/post" ] && wc -l < "$T/log/post" | tr -d ' ' || echo 0; }
-agents() { [ -f "$T/log/agent-count" ] && wc -l < "$T/log/agent-count" | tr -d ' ' || echo 0; }
-summ() { grep ' tick repos=' "$QLOG" 2>/dev/null | tail -1; }
-hasw() { summ | grep -qw -- "$1"; }
-brows() { awk -F'\t' '$3 == "builder-replay"' "$QST/modes.tsv" 2>/dev/null | wc -l | tr -d ' '; }
-boxw() { grep -E '^(POST|PUT|PATCH) ' "$T/log/qworker" 2>/dev/null | grep -c '"source":"box"\|/artifacts' || true; }
-
-# ── E1: builder APPROVE on A, lead MERGE on A, B = A + main merge ──
-reset "$B1" MERGE; tick
-[ "$RC" -eq 0 ] && ok || bad "E1 rc=$RC out=$(cat "$T/out")"
-[ "$(postn)" = 1 ] && grep -q "^post example-org/demo-os 41 $B1 MERGE --source lead .*--note lead-replay:$A12 how:main-merge" "$T/log/post" && ok \
-  || bad "E1 the lead MERGE was not replayed onto B: posts=$(cat "$T/log/post" 2>/dev/null) log: $(cat "$QLOG")"
-[ "$(reqs)" = 0 ] && ok || bad "E1 a lead review was requested: $(reqbody)"
-[ "$(agents)" = 0 ] && ok || bad "E1 an agent was called $(agents) time(s)"
-[ "$(brows)" = 1 ] && [ "$(awk -F'\t' '$3 == "builder-replay" {print $6 " " $7}' "$QST/modes.tsv")" = "$B1 from=$A12 how=main-merge" ] && ok \
-  || bad "E1 modes.tsv builder-replay row: $(cat "$QST/modes.tsv" 2>/dev/null)"
-[ "$(awk -F'\t' '$3 == "builder-replay" {print NF}' "$QST/modes.tsv" 2>/dev/null)" = 7 ] && ok || bad "E1 the builder-replay row is not 7 columns"
-summ | grep -q ' replayed=1 builder_replayed=1 fetch_failed=0 ' && hasw requested=0 && hasw today_replay=1 && ok || bad "E1 summary: $(summ)"
-grep -q "example-org/demo-os#41 @$B112: builder APPROVE carried from $A12 (how:main-merge)" "$QLOG" && ok || bad "E1 no carried line: $(cat "$QLOG")"
-[ "$(boxw)" = 0 ] && ok || bad "E1 a box verdict or artifact write: $(grep -E '^(POST|PUT|PATCH) ' "$T/log/qworker")"
-# a second tick: no second builder-replay row, no second post
-rm -f "$T/log/post"; tick
-[ "$(brows)" = 1 ] && [ "$(postn)" = 0 ] && ok || bad "E1 second tick: builder-replay rows=$(brows) posts=$(postn)"
-
-# ── E2: one own line, CI green: a delta request, no carry ──
-reset "$BOWN" MERGE; : > "$T/ci"; tick
-[ "$(brows)" = 0 ] && ok || bad "E2 a builder-replay row for a changed patch: $(cat "$QST/modes.tsv")"
-[ "$(postn)" = 0 ] && ok || bad "E2 a changed patch was replayed: $(cat "$T/log/post")"
-[ "$(reqs)" = 1 ] && ok || bad "E2 want one request, got $(reqs): $(cat "$QLOG")"
-case "$(jq -r .scope_notes <<<"$(reqbody)" 2>/dev/null)" in *"lead-delta:$A lines:1/"*) ok ;; *) bad "E2 scope_notes: $(reqbody)" ;; esac
-grep -q 'builder APPROVE carried' "$QLOG" && bad "E2 a carried line: $(cat "$QLOG")" || ok
-hasw builder_replayed=0 && ok || bad "E2 summary: $(summ)"
-
-# ── E3: the combined fetch fails: the by-sha fetch saves the replay ──
-reset "$B1" MERGE; echo nocombined > "$T/gitmode"; tick
-[ "$(postn)" = 1 ] && grep -q "how:main-merge" "$T/log/post" && ok || bad "E3 no replay post: $(cat "$T/log/post" 2>/dev/null) log: $(cat "$QLOG")"
-[ "$(reqs)" = 0 ] && ok || bad "E3 requested: $(reqbody)"
-summ | grep -q ' replayed=1 builder_replayed=1 fetch_failed=0 ' && ok || bad "E3 summary: $(summ)"
-grep -q "fetch -q origin main $B1" "$T/log/fetches" && grep -q "fetch -q origin $B1\$" "$T/log/fetches" && ok || bad "E3 fetches: $(cat "$T/log/fetches" 2>/dev/null)"
-
-# ── E4: a lead BLOCK on A: the carry does not stand ──
-reset "$B1" BLOCK; tick
-[ "$(postn)" = 0 ] && [ "$(reqs)" = 0 ] && [ "$(brows)" = 0 ] && ok || bad "E4 posts=$(postn) requests=$(reqs) builder-replay=$(brows): $(cat "$QLOG")"
-grep -q "builder APPROVE on $A12 not carried: the newest lead verdict on another head is a BLOCK" "$QLOG" && ok || bad "E4 no not-carried line: $(cat "$QLOG")"
-hasw builder_replayed=0 && hasw skipped_ci=1 && ok || bad "E4 summary: $(summ)"
-
-# ── E5: no lead row, the builder gate on, CI not green: the carried APPROVE asks ──
-reset "$B1" ""; LEAD_REVIEW_REQUIRE_BUILDER_APPROVE=1 tick
-[ "$(reqs)" = 1 ] && ok || bad "E5 want one request, got $(reqs): $(cat "$QLOG")"
-case "$(jq -r .scope_notes <<<"$(reqbody)" 2>/dev/null)" in
-  "auto: builder APPROVE carried from $A12 (how:main-merge) on $B112"*) ok ;;
-  *) bad "E5 scope_notes: $(reqbody)" ;;
-esac
-[ "$(brows)" = 1 ] && hasw builder_replayed=1 && hasw skipped_no_approve=0 && ok || bad "E5 builder-replay=$(brows) summary: $(summ)"
-
-# ── E6: the verdict history answers 500: the carry does not stand ──
-reset "$B1" MERGE; : > "$T/vfail"; tick
-grep -q "example-org/demo-os#41 @$B112: verdicts read failed; requesting as before" "$QLOG" && ok || bad "E6 no read-failed line: $(cat "$QLOG")"
-grep -q "builder APPROVE on $A12 not carried: the verdict history is unreadable" "$QLOG" && ok || bad "E6 no not-carried line: $(cat "$QLOG")"
-[ "$(reqs)" = 0 ] && [ "$(postn)" = 0 ] && [ "$(brows)" = 0 ] && hasw skipped_ci=1 && ok || bad "E6 requests=$(reqs) posts=$(postn) builder-replay=$(brows) summary: $(summ)"
-
-# ── E7: every fetch fails: counted once, the redacted git error is logged ──
-reset "$B1" MERGE; echo allfail > "$T/gitmode"; tick
-summ | grep -q ' builder_replayed=0 fetch_failed=1 ' && ok || bad "E7 summary: $(summ)"
-grep -q "builder APPROVE on $A12 not carried: fetch of $A12/$B112 failed (fatal: unable to access 'https://\*\*\*@github.com/example-org/demo-os/': fixture outage)" "$QLOG" && ok \
-  || bad "E7 no redacted error line: $(cat "$QLOG")"
-grep -q secret "$QLOG" && bad "E7 the credential reached the log: $(grep secret "$QLOG")" || ok
-[ -s "$QST/builder-carry.tsv" ] && bad "E7 a cache row for an undecided answer: $(cat "$QST/builder-carry.tsv")" || ok
-[ "$(postn)" = 0 ] && [ "$(reqs)" = 0 ] && ok || bad "E7 posts=$(postn) requests=$(reqs)"
-
-# ── E8: a risk-tier row on the carried head: skipped like an unapproved head ──
-reset "$B1" MERGE
-jq --arg h "$B1" '.rows += [{id:8, repo:"example-org/demo-os", pr:41, head_sha:$h, source:"risk-tier", verdict:"MERGE", note:""}]' "$T/vrows.json" > "$T/v.tmp" && mv "$T/v.tmp" "$T/vrows.json"
-tick
-grep -q "example-org/demo-os#41 @$B112: a lead/human/risk-tier row stands on this head (verdict history)" "$QLOG" && ok || bad "E8 no verdict skip: $(cat "$QLOG")"
-[ "$(postn)" = 0 ] && [ "$(reqs)" = 0 ] && hasw skipped_verdict=1 && ok || bad "E8 posts=$(postn) requests=$(reqs) summary: $(summ)"
 
 # ════════════ bin/lead-review.sh tick: worklist gates 10 and 50 ════════════
 T="$ROOT_T/disp"; mkdir -p "$T"

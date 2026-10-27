@@ -2,10 +2,10 @@
 # tests/lead-review-delta-scope.bh-6391-test.sh — BH-6391: a lead re-review
 # carries the earlier review and the delta since it, a finding on a line that did
 # not change since an approved head is a NOTE, and the land lane logs a verdict
-# flip with no own commit. bin/lib/lead-prev.sh, and three production entry
+# flip with no own commit. bin/lib/lead-prev.sh, and two production entry
 # points run WHOLE against scratch harnesses (scratch_install_closure), with real
-# git fixture repos and stubs for curl (the jobs worker), gh, bin/lead-verdict.sh
-# (enqueue only) and bin/agent-call.sh (it writes the case's answer file).
+# git fixture repos and stubs for curl (the jobs worker), gh and
+# bin/agent-call.sh (it writes the case's answer file).
 #
 # Fixture: base f.txt (20 lines), p.txt (10 lines), o.txt. G (the PR) appends to
 # f.txt and edits p.txt line 5. main then changes f.txt line 1 and o.txt.
@@ -25,15 +25,9 @@
 #         ./bin/x.sh:12, bin/nope.sh:3) stays BLOCK, bin/x.sh:12 stays,
 #         bin/x.sh:3 is a NOTE; own-cause: bin/x.sh (an own file) stays,
 #         own-cause: o.txt and own-cause with no own-files file are NOTEs
-#   bin/lead-review-enqueue.sh tick
-#     D1a lead MERGE on G, builder APPROVE on HO: the request carries
-#         lead-prev:G word:MERGE report:... own-commits:1 own-files:p.txt
-#         main-files:f.txt, and the log names the re-review
-#     D1b LEAD_DELTA_REVIEW_MAX_LINES=0 (full): no lead-delta:, the same group
-#     D1c the earlier head GX is on no remote: the group carries ? lists
-#     D1d a newer lead-replay: row on HM: lead-prev still names G
-#     D1e lead BLOCK on G, builder gate off: word:BLOCK
-#   bin/lead-review.sh tick (the notes are the ones D1a-D1c posted)
+#   bin/lead-review.sh tick, one request row. Its scope notes are the builder
+#   APPROVE prefix and the lead-prev group lpv_note writes: N1A (with a
+#   lead-delta: group) and N1B (without) for G, N1C for GX (? lists).
 #     D2a BLOCK on f.txt:5 (unchanged since G) -> MERGE-WITH-NOTES, NOTE tag,
 #         the re-review header line, one agent call
 #     D2b BLOCK on p.txt:3 (own change) -> BLOCK, no re-review line
@@ -56,6 +50,8 @@
 #     D4b word BLOCK, verdict MERGE: one flip line
 #     D4c MERGE -> MERGE-WITH-NOTES: none   D4d own-commits:1: none
 #     D4e own-commits:?: none                D4f no lead-prev group: none
+# The worklist gate that writes the lead-prev group into a job is pinned by
+# tests/lead-gates-prev-note.bh-8524-test.sh and tests/lead-gates-notes.bh-5878-test.sh N1.
 # Run from anywhere: HARNESS_TEST_SANDBOX=1 bash tests/lead-review-delta-scope.bh-6391-test.sh
 set -uo pipefail
 . "$(dirname "$0")/lib/scratch.sh" || exit 1
@@ -99,109 +95,16 @@ git -C "$WK" push -q "$OR" main pr del binf subx
 git -C "$WK" push -q "$OR" "$HO:refs/pull/41/head"
 git -C "$OR" cat-file -e "$GX^{commit}" 2>/dev/null && { echo "FAIL: setup: GX reached the origin"; exit 1; }
 
-# ═══════════════════════ part 1: bin/lead-review-enqueue.sh ═══════════════════
-Q="$T/hq"; mkdir -p "$Q/bin/lib/jobs" "$Q/state" "$Q/logs" "$Q/catalog/lanes.d" "$T/cfg" "$T/qrepos" "$T/log" "$T/qbin"
-cat > "$Q/bin/lead-verdict.sh" <<EOF
-#!/bin/bash
-printf '%s\n' "\$*" >> "$T/log/post"
-exit 0
-EOF
-cat > "$Q/bin/lane-alert.sh" <<EOF
-#!/bin/bash
-printf '%s\n' "\$*" >> "$T/log/qalerts"
-EOF
-cat > "$Q/bin/agent-call.sh" <<EOF
-#!/bin/bash
-echo x >> "$T/log/agent-count"
-exit 1
-EOF
-chmod +x "$Q/bin/lead-verdict.sh" "$Q/bin/lane-alert.sh" "$Q/bin/agent-call.sh"
-scratch_install_closure bin/lead-review-enqueue.sh "$Q" >/dev/null || bad "closure of bin/lead-review-enqueue.sh"
-scratch_install_closure bin/jobs-client.sh "$Q" >/dev/null || bad "closure of bin/jobs-client.sh"
-cp "$SRC/catalog/lanes.d/_lib.json" "$SRC/catalog/lanes.d/_lib.lead-delta.json" "$Q/catalog/lanes.d/"
-cp "$SRC/catalog/lead-protected-paths.seed.tsv" "$Q/catalog/"
+# ═══════════════════════ the lib and the shared fixture ═══════════════════════
+Q="$T/hq"; mkdir -p "$Q" "$T/cfg" "$T/qrepos" "$T/log"
+scratch_install_closure bin/lib/lead-prev.sh "$Q" >/dev/null || bad "closure of bin/lib/lead-prev.sh"
 printf 'lead-test-token\n' > "$T/cfg/token"; chmod 600 "$T/cfg/token"
-printf 'demo-os example-org/demo-os https://demo.test /api 3 box-hub\n' > "$Q/fleet.conf"
 git clone -q "$OR" "$T/qrepos/demo-os"
 
 # BH-4148: the lead reads protected paths from the jobs route. demo-os has no
 # rows, so it is not governed, as it was under the old catalog file.
 . "$SRC/tests/lib/lpp-stub.sh" || exit 1
 lpp_set "$T/lpp.json" example-org/demo-os
-mkdir -p "$T/qbin"; lpp_install "$T/qbin" "$T/lpp.json" "$T/lpp-down"
-cat > "$T/qbin/curl" <<EOF
-#!/bin/bash
-m=GET; body=""; url=""; prev=""; hdrs=""
-for a in "\$@"; do
-  case "\$prev" in
-    -X) m="\$a" ;;
-    --data-binary|-d|--data) body="\$a" ;;
-    -H) case "\$a" in @*) hdrs="\$hdrs\$(cat "\${a#@}")"\$'\n' ;; *) hdrs="\$hdrs\$a"\$'\n' ;; esac ;;
-  esac
-  case "\$a" in http*) url="\$a" ;; esac
-  prev="\$a"
-done
-case "\$body" in @*) body=\$(cat "\${body#@}") ;; esac
-case "\$url" in *"/api/lead-protected-paths"*) "\$(dirname "\$0")/lpp-answer" "\$m" "\$url"; exit 0 ;; esac
-lead=0; grep -q '^x-lead-verdict-token: lead-test-token' <<<"\$hdrs" && lead=1
-p="\${url#https://jobs.test}"
-printf '%s %s %s lead=%s\n' "\$m" "\$p" "\$body" "\$lead" >> "$T/log/qworker"
-code=200; out='{}'
-case "\$m \$p" in
-  "GET /api/verdict?pr="*)
-    n="\${p##*%2F}"
-    if [ -f "$T/jv/\$n.json" ]; then out=\$(cat "$T/jv/\$n.json"); else code=404; out='{"error":"no job for this pr"}'; fi ;;
-  "GET /api/verdicts?"*standing_only=1*)
-    h=\$(printf '%s' "\$p" | tr '&?' '\n\n' | sed -n 's/^head_sha=//p')
-    out=\$(jq -c --arg h "\$h" '{standing:([.rows[] | select(.head_sha == \$h and (.source == "lead" or .source == "human"))] | last // null),
-      rows:[], truncated:false}' "$T/vrows.json") ;;
-  "GET /api/verdicts?"*) out=\$(cat "$T/vrows.json") ;;
-  "POST /api/lead-reviews")
-    if [ "\$lead" != 1 ]; then code=403; out='{"error":"needs the lead token"}'
-    else code=201; out=\$(jq -c '{request:(. + {id:"lr-9", status:"requested"})}' <<<"\$body"); fi ;;
-  *) code=404; out='{"error":"unknown endpoint","worker":"harness-jobs"}' ;;
-esac
-printf '%s\n%s' "\$out" "\$code"
-EOF
-cat > "$T/qbin/gh" <<EOF
-#!/bin/bash
-case "\$*" in
-  *"api rate_limit"*)
-    echo '{"resources":{"core":{"remaining":5000,"limit":5000,"reset":2000000000},"graphql":{"remaining":5000,"limit":5000,"reset":2000000000}}}' ;;
-  *"-X GET repos/example-org/demo-os/pulls?"*)
-    printf 'HTTP/2 200\r\n\r\n'
-    jq -nc --arg h "\$(cat "$T/qhead")" '[{number:41, html_url:"https://github.com/example-org/demo-os/pull/41", title:"t", draft:false, state:"open",
-      user:{login:"operator",type:"User"}, head:{sha:\$h,ref:"ticket/bh-41"}, base:{ref:"main"}}]' ;;
-  *"-X GET repos/example-org/demo-os/pulls/41"*)
-    printf 'HTTP/2 200\r\n\r\n'; jq -nc --arg s "\$(cat "$T/qhead")" '{head:{sha:\$s},base:{ref:"main"},user:{login:"operator"}}' ;;
-  *"-X GET repos/example-org/demo-os/compare/"*)
-    printf 'HTTP/2 200\r\n\r\n{"total_commits":1,"commits":[{"parents":[{"sha":"p"}],"commit":{"message":"feat: the thing"}}],"files":[]}\n' ;;
-esac
-exit 0
-EOF
-chmod +x "$T/qbin/curl" "$T/qbin/gh"
-
-QLOG="$Q/logs/lead-review-enqueue.log"
-# reset <head> <builder-approved sha> <lead word> [<earlier head>] — one lead row on the earlier head (default G)
-reset() {
-  rm -f "$T/log"/q* "$T/log/post" "$QLOG"
-  scratch_rm "$Q/state"; mkdir -p "$Q/state"; echo box-hub > "$Q/state/box-name"
-  scratch_rm "$T/jv"; mkdir -p "$T/jv"
-  echo "$1" > "$T/qhead"
-  jq -nc --arg s "$2" '{verdict:"APPROVE", tier:"2", provenance:"-", merge_sha:null, job_id:"job-1", reviewed_sha:$s,
-    artifacts:[{artifact_kind:"verdict", detail:({tier:"2", reviewed_sha:$s, settled:true}|tojson)}]}' > "$T/jv/41.json"
-  jq -nc --arg g "${4:-$G}" --arg w "$3" '{rows:[{id:4,repo:"example-org/demo-os",pr:41,head_sha:$g,source:"box",verdict:"APPROVE",note:""},
-    {id:5,repo:"example-org/demo-os",pr:41,head_sha:$g,source:"lead",verdict:$w,note:"lead-review:lr-3"}],truncated:false}' > "$T/vrows.json"
-}
-tick() {
-  ( cd "$T" && PATH="$T/qbin:$PATH" HARNESS="$Q" REPOS_ROOT="$T/qrepos" FLEET_CONF="$Q/fleet.conf" \
-      LEAD_VERDICT_TOKEN_FILE="$T/cfg/token" LEAD_REVIEW_AUTO_REPOS=example-org/demo-os \
-      LEAD_REVIEW_ENQUEUE_MAX_PER_TICK=5 LEAD_REVIEW_MAX_PER_PR_DAY=4 JOBS_URL=https://jobs.test \
-      HARNESS_SECRET=test-secret JOBS_RETRIES=0 GH_ETAG=0 \
-      bash "$Q/bin/lead-review-enqueue.sh" tick ) > "$T/out" 2>&1; RC=$?
-}
-reqs() { grep -c '^POST /api/lead-reviews ' "$T/log/qworker" 2>/dev/null || true; }
-notes() { grep '^POST /api/lead-reviews ' "$T/log/qworker" 2>/dev/null | head -1 | sed 's/^POST \/api\/lead-reviews //; s/ lead=[01]$//' | jq -r .scope_notes 2>/dev/null; }
 PREVG="lead-prev:$G word:MERGE report:state/lead-reviews/lr-41-$G12.md"
 
 # ═══════════════════════════ lib unit cases U1-U6 ═══════════════════════════
@@ -305,42 +208,6 @@ case "$U7" in "0|1|"*"VERDICT: MERGE-WITH-NOTES") ok ;; *) bad "U7 own-cause on 
 U7=$(u7 'Findings\n- [BLOCK] f.txt:5: x; own-cause: bin/x.sh\n\nVERDICT: BLOCK\n')
 case "$U7" in "0|1|"*"VERDICT: MERGE-WITH-NOTES") ok ;; *) bad "U7 own-cause with no own-files file: '$U7'" ;; esac
 
-# ═══════════════════════════ enqueue cases D1a-D1e ═══════════════════════════
-# ── D1a: lead MERGE on G, builder APPROVE on HO ──
-reset "$HO" "$HO" MERGE; tick
-[ "$RC" -eq 0 ] && ok || bad "D1a rc=$RC out=$(cat "$T/out")"
-[ "$(reqs)" = 1 ] && ok || bad "D1a want one request, got $(reqs): $(cat "$QLOG")"
-N1A=$(notes)
-case "$N1A" in *"; $PREVG own-commits:1 own-files:p.txt main-files:f.txt"*) ok ;; *) bad "D1a scope_notes: '$N1A'" ;; esac
-grep -q "example-org/demo-os#41 @${HO:0:12}: re-review of $G12 (MERGE): own-commits:1" "$QLOG" && ok || bad "D1a no re-review log line: $(cat "$QLOG")"
-
-# ── D1b: delta mode off: a full request still carries the group ──
-reset "$HO" "$HO" MERGE; LEAD_DELTA_REVIEW_MAX_LINES=0 tick
-N1B=$(notes)
-case "$N1B" in *lead-delta:*) bad "D1b a delta note with the knob off: '$N1B'" ;; *) ok ;; esac
-case "$N1B" in *"; $PREVG own-commits:1 own-files:p.txt main-files:f.txt"*) ok ;; *) bad "D1b scope_notes: '$N1B'" ;; esac
-
-# ── D1c: the earlier head is on no remote: ? lists, the request still goes ──
-reset "$HO" "$HO" MERGE "$GX"; tick
-[ "$(reqs)" = 1 ] && ok || bad "D1c want one request, got $(reqs)"
-N1C=$(notes)
-case "$N1C" in *"lead-prev:$GX word:MERGE report:state/lead-reviews/lr-41-${GX:0:12}.md own-commits:? own-files:? main-files:?"*) ok ;;
-  *) bad "D1c scope_notes: '$N1C'" ;; esac
-
-# ── D1d: a newer replay row on HM is not the earlier review ──
-reset "$HO" "$HO" MERGE
-jq --arg h "$HM" '.rows += [{id:6,repo:"example-org/demo-os",pr:41,head_sha:$h,source:"lead",verdict:"MERGE",note:"lead-replay:aaaaaaaaaaaa how:main-merge"}]' \
-  "$T/vrows.json" > "$T/v.tmp" && mv "$T/v.tmp" "$T/vrows.json"
-tick
-N1D=$(notes)
-case "$N1D" in *"; $PREVG "*) ok ;; *) bad "D1d lead-prev does not name G: '$N1D'" ;; esac
-case "$N1D" in *"lead-prev:$HM"*) bad "D1d lead-prev names the replay head: '$N1D'" ;; *) ok ;; esac
-
-# ── D1e: lead BLOCK on G, builder gate off ──
-reset "$HO" "$HO" BLOCK; LEAD_REVIEW_REQUIRE_BUILDER_APPROVE=0 tick
-[ "$(reqs)" = 1 ] && ok || bad "D1e want one request, got $(reqs)"
-case "$(notes)" in *"lead-prev:$G word:BLOCK report:"*) ok ;; *) bad "D1e scope_notes: '$(notes)'" ;; esac
-
 # ═══════════════════════════ part 2: bin/lead-review.sh ═══════════════════════
 B2="$T/hb"; mkdir -p "$B2/bin/lib/jobs" "$B2/prompts" "$B2/catalog/lanes.d" "$B2/state/lead-reviews" "$T/repos" "$T/tmp" "$T/fakebin"
 cat > "$B2/bin/agent-call.sh" <<EOF
@@ -415,6 +282,15 @@ lragents() { [ -f "$T/log/lr-agent-count" ] && wc -l < "$T/log/lr-agent-count" |
 rverdict() { grep '^POST /api/lead-reviews/lr-1/result ' "$T/log/worker" 2>/dev/null | tail -1 | sed 's/^POST \/api\/lead-reviews\/lr-1\/result //' | jq -r .verdict 2>/dev/null; }
 BLK5='Findings\n- [BLOCK] f.txt:5: reads p line 5 the wrong way\n\nVERDICT: BLOCK\n'
 
+# ── part 2's request notes ──
+NG=$( HARNESS="$Q"; . "$LIB" && lpv_note "$QR" origin/main "$G" MERGE "$HO" 41 ) || true
+NX=$( HARNESS="$Q"; . "$LIB" && lpv_note "$QR" origin/main "$GX" MERGE "$HO" 41 ) || true
+[ "$NG" = "$PREVG own-commits:1 own-files:p.txt main-files:f.txt" ] || { echo "FAIL: setup: the G group: '$NG'"; exit 1; }
+case "$NX" in "lead-prev:$GX word:MERGE "*" own-commits:? own-files:? main-files:?") ;; *) echo "FAIL: setup: the GX group: '$NX'"; exit 1 ;; esac
+N1A="auto: builder APPROVE on ${HO:0:12}; lead-delta:$G lines:2/40 files:1; $NG"
+N1B="auto: builder APPROVE on ${HO:0:12}; $NG"
+N1C="auto: builder APPROVE on ${HO:0:12}; $NX"
+
 # ── D2a: a new BLOCK on a line unchanged since the approved head: MERGE-WITH-NOTES ──
 setup2 "$HO" "$N1A" "$BLK5"; tick2
 [ "$RC" -eq 0 ] && ok || bad "D2a rc=$RC out=$(cat "$T/out2")"
@@ -474,7 +350,7 @@ grep -qF -- "- [BLOCK] f.txt:5: calls what the own fix changed; own-cause: p.txt
 setup2 "$HO" "$N1A" 'Findings\n- [BLOCK] p.txt:7: something; own-cause: f.txt\n\nVERDICT: BLOCK\n'; tick2
 [ "$(rverdict)" = MERGE-WITH-NOTES ] && ok || bad "D3e posted verdict '$(rverdict)'"
 
-# ── P1: the prompt section, full mode (D1b's notes) ──
+# ── P1: the prompt section, full mode (N1B, no lead-delta:) ──
 setup2 "$HO" "$N1B" 'Findings\n- none\n\nVERDICT: MERGE\n'; tick2
 PF="$T/log/prompt.1"
 rp=$(grep -n '^## Rules pack$' "$PF" 2>/dev/null | tail -1 | cut -d: -f1)
