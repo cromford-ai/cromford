@@ -36,7 +36,14 @@
 #                 reset once per head (a `lead_empty_block` ledger row keyed
 #                 <owner/name>#<pr>@<head>, written after the reset answered
 #                 2xx) and not stamped; a second empty result on that head is
-#                 stamped. Both alert (emptyblock-<id>, once per reset). A
+#                 stamped. Both alert (emptyblock-<id>, once per reset).
+#                 BH-8326: that second empty result is NEEDS_HUMAN: the
+#                 needs-human hold goes on the ticket (bin/needs-human-hold.sh
+#                 ... lead-review; placer rc 75 = nothing written, no stamp),
+#                 the ledger row is set to needs-human, and its ALERTS line
+#                 says NEEDS_HUMAN and names the hold (or why there is none).
+#                 A report with a `[HUMAN ...]` line (LRL_HUMAN_RE) is not
+#                 empty: it posts its row and goes to step 2b. A
 #                 truncated report, the pointer, or another head's report posts
 #                 as before. Captures older than LEAD_REVIEW_EMPTY_KEEP_DAYS
 #                 are deleted at the end of a tick.
@@ -90,6 +97,18 @@
 #                 request is stamped; an ALERTS append that fails is no stamp.
 #                 Since BH-8476 only a row an earlier tick recorded gets here:
 #                 step 1c stops a new one.
+#                 BH-8326, after that and before the route: this head's whole
+#                 report with no `- [BLOCK` line and at least one `[HUMAN ...]`
+#                 line (lrl_report_golive) is posted as a COMMENT, never
+#                 REQUEST_CHANGES (br_lead_pick briefs no fix round from it),
+#                 with `Human decision needed before this PR can merge: <list>`
+#                 after the markers, then ONE warn lane-alert
+#                 (lead-golive-block-<id>) names the decisions and
+#                 bin/lead-verdict.sh post. No hold route runs. The posted
+#                 comment is recorded as a `lead_golive_block` ledger row keyed
+#                 <owner/name>#<pr>@<head> (status commented), not a state/
+#                 flag; the marker read dedupes a stamp retry. A failed POST =
+#                 no row, no alert, no stamp.
 #              2a-flip. BH-6391: when the request's scope_notes carry a
 #                 `lead-prev:` group (bin/lib/lead-prev.sh) with own-commits:0
 #                 and the verdict class (BLOCK vs MERGE/MERGE-WITH-NOTES)
@@ -466,12 +485,24 @@ lrl_report_fetch() {
   return 0
 }
 
+# LRL_HUMAN_RE — BH-8326: a `[HUMAN <word>]` line (`[HUMAN go-live]` and any
+#   other word), at the line start after an optional list marker and optional
+#   `**`. Read with grep -iE. lrl_golive_route's rule, widened to any word.
+LRL_HUMAN_RE='^[[:space:]]*([-*]|[0-9]+[.)])?[[:space:]]*(\*\*)?\[HUMAN [^]]*\]'
+
 # lrl_report_empty <file> — rc 0 when the last lrl_report_fetch read this
 #   head's WHOLE report (not truncated, not the pointer) and it has no line
-#   starting `- [BLOCK` (BH-6090's rule). A report that cannot prove it is
-#   empty is never empty.
+#   starting `- [BLOCK` (BH-6090's rule) and no `[HUMAN ...]` line (BH-8326).
+#   A report that cannot prove it is empty is never empty.
 lrl_report_empty() {
-  [ "$LRL_ARC" = 0 ] && [ "$LRL_TRUNC" = 0 ] && ! grep -q '^- \[BLOCK' "$1"
+  [ "$LRL_ARC" = 0 ] && [ "$LRL_TRUNC" = 0 ] && ! grep -q '^- \[BLOCK' "$1" && ! grep -qiE "$LRL_HUMAN_RE" "$1"
+}
+
+# lrl_report_golive <file> — BH-8326: rc 0 when the last lrl_report_fetch read
+#   this head's WHOLE report, it has no line starting `- [BLOCK`, and it has at
+#   least one `[HUMAN ...]` line: the BLOCK names only human decisions.
+lrl_report_golive() {
+  [ "$LRL_ARC" = 0 ] && [ "$LRL_TRUNC" = 0 ] && ! grep -q '^- \[BLOCK' "$1" && grep -qiE "$LRL_HUMAN_RE" "$1"
 }
 
 # lrl_inconclusive <id> <safe_id> <repo> <pr> <head> <report-file> — step 1c,
@@ -488,13 +519,16 @@ lrl_report_empty() {
 #      one ALERTS line (emptyblock-<id>, generation r<reset_count>). rc 3: the
 #      reset cleared the stamp, so there is nothing to stamp. A refused reset
 #      = rc 1, no row. An unreadable ledger = rc 1, no reset;
-#   4. the row is there (re-requested once already for this head): one log
-#      line and one ALERTS line. rc 0 when the alert is written (or was for
-#      this generation), rc 1 when the append failed.
+#   4. the row is there (re-requested once already for this head): NEEDS_HUMAN
+#      (BH-8326). The needs-human hold goes on the ticket (lrl_ticket_of; rc 75
+#      from the placer = rc 1, nothing else written), the row is set to status
+#      needs-human, then one log line and one ALERTS line that say NEEDS_HUMAN
+#      and name the hold or why none was placed. rc 0 when the alert is
+#      written (or was for this generation), rc 1 when the append failed.
 #   rc 0 = stamp. rc 1 = no stamp, the next tick retries. rc 3 = no stamp.
 lrl_inconclusive() {
   local id="$1" sid="$2" repo="$3" pr="$4" head="$5" rf="$6" at="$3#$4 @${5:0:12} lead review $1"
-  local cap="$H/logs/lead-review-empty/$2.txt" mark mrc rout what arc capn="No raw capture (LEAD_REVIEW_EMPTY_CAPTURE_BYTES=0)"
+  local cap="$H/logs/lead-review-empty/$2.txt" mark mrc rout what arc hn fp prc capn="No raw capture (LEAD_REVIEW_EMPTY_CAPTURE_BYTES=0)"
   local line="lead-review: empty BLOCK on $3#$4 @${5:0:12}: no verdict recorded"
   if [ "$CAPTURE_BYTES" -gt 0 ]; then
     capn="Raw report: logs/lead-review-empty/$sid.txt (first $CAPTURE_BYTES bytes)"
@@ -521,8 +555,27 @@ lrl_inconclusive() {
     log "$line, re-requested"
     what="It was re-requested once"
   else
-    log "$line, already re-requested once for this head"
-    what="a re-review was already requested once for this head, so it is not requested again"
+    # BH-8326: the second empty answer on this head is NEEDS_HUMAN. Hold first,
+    # ledger second, alert third, stamp last.
+    lrl_ticket_of "$repo"
+    if ! declare -F nh_fingerprint >/dev/null 2>&1; then
+      hn="no hold can be placed (needs-human lib missing)"
+    elif [ -z "$LRL_TISSUE" ]; then
+      hn="no hold can be placed ($LRL_TWHY)"
+    else
+      fp=$(nh_fingerprint "lead review empty BLOCK $repo") || fp=$(printf 'emptyblock%s' "$sid" | sha1sum | cut -c1-12)
+      prc=0; HARNESS="$H" "$H/bin/needs-human-hold.sh" "$LRL_TP" "$LRL_TISSUE" "$fp" \
+        "lead review of $repo#$pr @${head:0:12} answered BLOCK twice with no finding line; a person must read the report and record a verdict" lead-review >/dev/null 2>&1 || prc=$?
+      case "$prc" in
+        0) hn="a needs-human hold is on $LRL_TP#$LRL_TISSUE" ;;
+        75) log "$at: empty BLOCK, needs-human hold on $LRL_TP#$LRL_TISSUE: the thread is unreadable (placer rc 75); not stamped, next tick retries"; return 1 ;;
+        *) hn="the hold could not be placed (placer rc $prc)" ;;
+      esac
+    fi
+    job_ledger_put lead_empty_block "$mark" needs-human "lead-review:$id r$RESETS" >/dev/null 2>&1 \
+      || log "$at: the lead_empty_block ledger row $mark could not be set to needs-human"
+    log "$line, already re-requested once for this head; NEEDS_HUMAN ($hn)"
+    what="a re-review was already requested once for this head, so it is not requested again. NEEDS_HUMAN: $hn"
   fi
   arc=0
   alert_once "$STATE/emptyblock-$sid" "[lead-review-land] $repo#$pr @${head:0:12} lead review $id: its BLOCK report has no '- [BLOCK' finding line, so NO verdict row was recorded (inconclusive). $what. $capn; the whole report is $REF on the owning box. To decide this head by hand, record a verdict with bin/lead-verdict.sh post $repo $pr $head <VERDICT>" "r$RESETS" || arc=$?
@@ -542,7 +595,7 @@ lrl_inconclusive() {
 #   is posted, one ALERTS line is written: stamp, and dismiss nothing.
 lrl_findings() {
   local id="$1" sid="$2" repo="$3" pr="$4" head="$5" model="$6" ref="$7" row="$8"
-  local flag="$STATE/findings-$2" mark="<!-- lead-review:$1 -->" jmark="<!-- lead-job:$SJOB -->" f bf af grc jid rbox
+  local flag="$STATE/findings-$2" mark="<!-- lead-review:$1 -->" jmark="<!-- lead-job:$SJOB -->" f bf af grc jid rbox dec nm
   local at="$3#$4 @${5:0:12} lead review $1"
   lrl_flag_done "$flag" && return 0
   f=$(mktemp "${TMPDIR:-/tmp}/lead-review-land-r.XXXXXX") || { log "$at: mktemp failed; findings not posted, not stamped"; return 1; }
@@ -587,6 +640,32 @@ lrl_findings() {
     alert_once "$STATE/emptyblock-$sid" "[lead-review-land] $repo#$pr @${head:0:12} lead review $id: its BLOCK report has no '- [BLOCK' finding line, so no REQUEST_CHANGES review was posted and no fix round is briefed. The BLOCK verdict row ${ROWREF:-} stands: retract it with bin/lead-verdict.sh retract ${ROWREF#\#} --reason empty-report, then request a new review with bin/lead-verdict.sh request $repo $pr $head. Read $ref on box $rbox (and the session transcript)" "r$RESETS"
     case $? in 2) log "$at: empty BLOCK withheld but the alert was not written; not stamped, next tick retries"; return 1 ;; esac
     log "$at: BLOCK report has no finding line; review withheld, alerted"; return 2
+  fi
+  # BH-8326: a BLOCK that names only `[HUMAN ...]` decisions has nothing a fix
+  # round can answer. It goes to the PR as a COMMENT (br_lead_pick briefs no
+  # round from it) whose third line names each decision, plus one warn alert.
+  if lrl_report_golive "$af"; then
+    dec=$(grep -iE "$LRL_HUMAN_RE" "$af" | tr -d '\r' \
+      | sed -E 's/^[[:space:]]*([-*]|[0-9]+[.)])?[[:space:]]*(\*\*)?\[HUMAN [^]]*\](\*\*)?[[:space:]]*//I' \
+      | tr -s '\t ' ' ' | sed -E 's/ $//' | awk 'NF { printf "%s%s", (n++ ? "; " : ""), $0 }')
+    rm -f "$af"
+    nm=1; [ -z "$SJOB" ] || nm=2
+    { head -n "$nm" "$bf"; printf 'Human decision needed before this PR can merge: %s\n' "${dec:-see the [HUMAN] lines below}"; tail -n +"$((nm + 1))" "$bf"; } > "$bf.d" && mv "$bf.d" "$bf" \
+      || { rm -f "$f" "$bf" "$bf.d"; log "$at: the decision comment could not be built; not stamped, next tick retries"; return 1; }
+    grc=0; gh_rest POST "repos/$repo/pulls/$pr/reviews" -f commit_id="$head" -f event=COMMENT -F body=@"$bf" > "$f" 2>/dev/null || grc=$?
+    rm -f "$f" "$bf"
+    if [ "$grc" != 0 ]; then
+      log "$at: go-live-only BLOCK; decision comment NOT posted (HTTP $GH_REST_STATUS${GH_REST_REASON:+ $GH_REST_REASON}); not stamped, next tick retries"; return 1
+    fi
+    # BH-4159: the record is a jobs ledger row, not a state/ flag. The marker
+    # read above is the dedupe when a stamp retry reaches this arm again.
+    job_ledger_put lead_golive_block "$repo#$pr@$head" commented "lead-review:$id${SJOB:+ job:$SJOB}" >/dev/null 2>&1 \
+      || log "$at: decision comment posted but the lead_golive_block ledger row could not be written; the marker read dedupes the next tick"
+    "$H/bin/lane-alert.sh" --severity warn --id "lead-golive-block-$sid" lead-review-land \
+      "[lead-review-land] $repo#$pr @${head:0:12}: lead BLOCK names only human decision(s): $dec. No fix round runs. A person decides, then records the verdict with bin/lead-verdict.sh post $repo $pr $head MERGE (or BLOCK): https://github.com/$repo/pull/$pr" >/dev/null 2>&1 \
+      || log "$at: the go-live decision alert could not be sent; the PR comment names the decision"
+    log "$at: go-live-only BLOCK; decision comment posted, no fix round briefed"
+    return 0
   fi
   # BH-3780: the hold (when one is due) goes on the ticket BEFORE the review, so
   # no resolver tick ever sees this review without it.
