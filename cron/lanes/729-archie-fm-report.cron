@@ -1,0 +1,13 @@
+# @hub-lanes
+
+# ── ARCHIE DAILY FACTORY REPORT + STOP-THE-LINE BEAT (BH-4588) ──────────────
+# Every 15 minutes at :03/:18/:33/:48, clear of the watch (:07/:27/:47) and the
+# improve loop (:43). A tick sends ONE immediate Telegram beat per open
+# stop-the-line incident (catalog/archie-stop-the-line.tsv, aged against the
+# archie.stl.*_min rows, at most archie.stl.beats_per_tick a tick), and from
+# archie.report.send_hour_utc it sends yesterday's factory report once
+# (archie-tg-send fm-report:<day>). It writes no row and never acks an alert.
+# Off: ARCHIE_FMR_ENABLED=0, flags/lane-off-archie-fm-report, or
+# bin/harness-ctl.sh off archie-fm-report. archie.manage=off sends no beat;
+# the report still goes out and says Archie is off.
+3,18,33,48 * * * * /root/harness/bin/hub-lease.sh check && /root/harness/bin/archie-fm-report.sh >/dev/null 2>&1

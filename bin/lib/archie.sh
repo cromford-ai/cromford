@@ -80,6 +80,18 @@ ARCHIE_BODY_MAX=4000
 # settings row: the ticket makes these classes never delegable, and a row would
 # let a settings write widen Archie's authority without the operator.
 ARCHIE_SENSITIVE_RE='client|customer|money|spend|cost|budget|billing|invoice|pric|\$[0-9]|usd|prod\b|production|merge|land(ing)? (the )?(train|#|pr)|deploy|release|ship(ping)? (it|to)|roll ?back|migration|secret|key rotation|rotate .*key|vercel|wrangler'
+# BH-4588: the hard limits, the only scan a lever-* class gets. A code
+# constant for the same reason as ARCHIE_SENSITIVE_RE: a settings write must
+# not widen Archie's authority. A direct merge (a squash or land into main
+# too), a push to main (a `HEAD:main` refspec too), a production DB write, a
+# deploy (outside the deploy lanes Archie does not run one), a release or a
+# rollback, money, cost or a spend-cap raise (`usd` with no word boundary, so
+# `..._max_usd` is caught), a client-visible write, and the topics the full
+# scan protects that no lever needs: secrets, key rotation and migrations.
+# "merge queue", "push with lease", "rebase onto main" and "merge-conductor"
+# are not hard limits; a lever names them. A write to a board other than the
+# harness board is checked in archie_sensitive (archie_client_board).
+ARCHIE_HARD_LIMIT_RE='gh (pr )?merge|pulls/[0-9]+/merge|\<merge[[:space:]]+(#?[0-9]+|pr|it|this|that|them|now|the (pr|branch|change))\>|\<(squash|direct(ly)?|admin)[- ]merge|merge[[:space:]]+(--admin|directly)|push(es|ed|ing)?[^.]{0,40}\<(to|onto|into) (origin/)?(main|master)\>|force[- ]?push(es|ed|ing)? (origin/)?(main|master)\>|\<push(es|ed|ing)? (origin )?(main|master)\>|prod(uction)?[- ]?(db|database|d1|postgres|sql)\>|(db|database) (in|on) prod|prisma db push|:(refs/heads/)?(main|master)\>|\<(squash|merge|land|cherry-?pick)(s|es|ed|ing)?\>[^.]{0,40}\<(to|onto|into) (origin/)?(main|master)\>|\<land(s|ed|ing)? (the )?(train|#|pr)|\<deploy(s|ed|ing|ment)?\>|wrangler|vercel|flyctl|\<releas(e|es|ed|ing)\>|roll(s|ed|ing)? ?back|spend|budget|cost|dollar|\$[0-9]|usd|money|billing|invoice|\<pric(e|es|ing)\>|secret|credential|key rotation|rotat(e|es|ed|ing)[^.]{0,40}\<(key|token|password)s?\>|migration|client[- ]?(board|ticket|comment|facing|visible|email|message|channel)|customer|(post|comment|reply|write|message|email|tell)[^.]{0,40}\<clients?\>'
 ARCHIE_CLASS_RE='^[a-z][a-z0-9-]{1,40}$'
 # BH-4779: "nothing for you to do" is not a message. Defaults equal the registry
 # defaults in catalog/lanes.d/archie.json (lane_env_apply archie exports a row).
@@ -322,6 +334,31 @@ archie_split_class() {
   printf 'unclassified\n%s\n' "$t"
 }
 
+# archie_sensitive <class> <goal> <recommendation> -> rc 0 when the decision
+#   touches a protected topic. A lever-* class (BH-4588: Archie's own factory
+#   levers, delegated by default) is scanned for the hard limits only; every
+#   other class gets the full ARCHIE_SENSITIVE_RE scan.
 archie_sensitive() {
-  grep -Eiq -- "$ARCHIE_SENSITIVE_RE" < <(printf '%s\n' "${1:-}" "${2:-}" "${3:-}")
+  local re="$ARCHIE_SENSITIVE_RE"
+  case "${1:-}" in lever-*) re="$ARCHIE_HARD_LIMIT_RE" ;; esac
+  grep -Eiq -- "$re" < <(printf '%s\n' "${1:-}" "${2:-}" "${3:-}") && return 0
+  case "${1:-}" in lever-*) archie_client_board "${2:-}" "${3:-}" ;; *) return 1 ;; esac
+}
+
+# archie_client_board <text>... -> rc 0 when a write names any board other
+#   than the harness board ("the project-1 board ticket", "the board"). A client
+#   board is client-visible, so a lever never writes one under its standing OK.
+#   Only "harness board", "BH board", "cromford board" and "ai-build
+#   board" are Archie's own; anything else fails toward asking.
+archie_client_board() {
+  local s w
+  s=$(printf '%s\n' "$@")
+  grep -Eiq -- '\<(comment|post|reply|write|tell|message|email|file|update|close|label)(s|ed|ing)?\>' <<<"$s" || return 1
+  while IFS= read -r w; do
+    case "$(printf '%s' "$w" | tr '[:upper:]' '[:lower:]')" in
+      harness|bh|cromford|ai-build) ;;
+      *) return 0 ;;
+    esac
+  done < <(grep -Eio -- '[a-z0-9_-]+ board\>' <<<"$s" | awk '{print $1}')
+  return 1
 }

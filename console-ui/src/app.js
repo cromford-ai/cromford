@@ -58,6 +58,7 @@ import { MergeQueueScreen } from './screens/MergeQueue.js';
 import { LeadReviewsScreen } from './screens/LeadReviews.js';
 import { LaneRunsScreen, LaneRunListScreen, LaneRunScreen } from './screens/LaneRuns.js';
 import { UnblockScreen } from './screens/Unblock.js';
+import { FactoryScreen } from './screens/Factory.js';
 import { ErrorBoundary } from './ui/ErrorBoundary.js';
 
 export const FleetContext = createContext(null);
@@ -120,6 +121,7 @@ export const ROUTES = [
   ['/staff/finding/:id', StaffFindingScreen],
   ['/staff/tick/:id', StaffTickScreen],
   ['/unblock', UnblockScreen],
+  ['/factory', FactoryScreen],
   ['/ci', CiHealthScreen],
   ['/utilization', UtilizationScreen],
   // App sends /settings and /settings/appearance to the settings shell
@@ -201,7 +203,7 @@ export const NAV = [
   { to: '/hub', label: 'HUB', icon: IconFleet, match: (p) => p === '/hub' },
   // STAFF is the staff roster (BH-5567): Archie and the mill agents, their open
   // findings down to the ticket, and a kill switch per agent. FLEET glyph.
-  { to: '/staff', label: 'STAFF', icon: IconFleet, match: (p) => p === '/staff' || p.startsWith('/staff/') || p === '/unblock' },
+  { to: '/staff', label: 'STAFF', icon: IconFleet, match: (p) => p === '/staff' || p.startsWith('/staff/') || p === '/unblock' || p === '/factory' },
   // SETTINGS is the only screen that turns the harness OFF. Every other tab
   // reports on what the fleet did; this one is the switch and the bounds —
   // which lane is allowed to run, on what cadence, and how much it may spend

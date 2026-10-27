@@ -1,0 +1,16 @@
+{
+ "ticket": "BH-4588",
+ "note": "The cost_rows read of GET /api/archie/factory-report (src/routes/archie-factory.js): one UTC day of spend per project. Hot store only: a day the retention.cost_rows.archive_days rule may have moved is answered spend.ok:false, never a short sum. Read by test/archive-readers.bh-6779.test.js R1.",
+ "readers": [
+  {
+   "file": "src/routes/archie-factory.js",
+   "line_hint": 82,
+   "match": "FROM cost_rows WHERE ts >= ?1 AND ts < ?2",
+   "table": "cost_rows",
+   "window": "one UTC day (the report's ?day=)",
+   "class": "narrow",
+   "status": "hot-only",
+   "window_days": 1
+  }
+ ]
+}

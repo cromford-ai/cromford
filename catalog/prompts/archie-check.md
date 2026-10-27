@@ -63,9 +63,23 @@ make, picked from this list:
 - production: production systems, data or keys
 - merge: merging or landing a PR or a train
 - deploy: deploying or releasing anything
+- lever-enqueue: enqueue a PR into the merge queue, on any project
+- lever-dequeue: dequeue a PR from the merge queue
+- lever-fix-round: start a fix round on a PR
+- lever-rebuild: rebuild a ticket fresh
+- lever-rebase: rebase a PR branch onto main (push with lease, never to main)
+- lever-re-review: ask for a new review of a PR head
+- lever-hold-label: add or remove a hold label
+- lever-pause-row: write or clear a pause row through the jobs API
+- lever-iron-law-ack: record an iron-law acknowledgement with evidence
+- lever-ticket: file or comment on an ai-build ticket
+- lever-alert-ack: ack or resolve an alert
 
 Whenever the recommendation touches clients, money, production, merges or
 deploys, pick that class, even when another one also fits.
+Exception: when the recommendation is one of your own factory levers above,
+pick its lever class. Pick merge, production or deploy only for a direct
+merge, a push to main, a production DB write or a deploy outside the deploy lanes.
 
 Line 2 is the sentence, or blank when nothing is needed from him.
 

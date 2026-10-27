@@ -17,7 +17,7 @@ import { humanProven } from "../../routes/verdicts.js";
 
 // One day's merges are read whole; a day past this is an error, not a
 // silently short count.
-const MERGE_MAX = 2000;
+export const MERGE_MAX = 2000;
 const TOP_TICKETS = 3;
 // One day's signed human verdict rows are read up to this; past it the count
 // is of the rows read, and the log says so.

@@ -298,14 +298,16 @@ test('BH-5559 staff charter and autonomy', async (t) => {
 
   await t.test('S8 Archie rows read unchanged; the agent views name them archie', async () => {
     const { DB, db } = await openDb();
-    assert.equal(db.prepare('SELECT count(*) AS n FROM archie_classes').get().n, 11);
+    // BH-4588 seeds 11 lever-* classes beside BH-4067's 11; the view names all 22 archie.
+    assert.equal(db.prepare("SELECT count(*) AS n FROM archie_classes WHERE class NOT LIKE 'lever-%'").get().n, 11);
+    assert.equal(db.prepare("SELECT count(*) AS n FROM archie_classes WHERE class LIKE 'lever-%'").get().n, 11);
     const row = db.prepare("SELECT * FROM archie_classes WHERE class='watch-cadence'").get();
     assert.deepEqual({ ...row }, {
       class: 'watch-cadence', never_delegable: 0, state: 'ask_first', streak: 0, delegated_at: null,
       reverted_at: null, updated_at: '2026-10-04T00:00:00Z', note: 'check more or less often',
     });
     assert.equal(db.prepare("SELECT agent FROM agent_classes WHERE class='watch-cadence'").get().agent, 'archie');
-    assert.equal(db.prepare("SELECT count(*) AS n FROM agent_classes WHERE agent='archie'").get().n, 11);
+    assert.equal(db.prepare("SELECT count(*) AS n FROM agent_classes WHERE agent='archie'").get().n, 22);
     addClass(db, 'watchman', 'secret-ticket', 'augmentation', 0);
     const s = db.prepare("SELECT * FROM agent_classes WHERE class='secret-ticket'").get();
     assert.equal(s.agent, 'watchman');

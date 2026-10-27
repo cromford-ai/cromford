@@ -474,7 +474,7 @@ check "C5 no proposal for merge ($(tr '\n' ' ' <<<"${R[1]}${R[2]}"))" '! grep -q
 eq "C5 merge streak untouched" "$(clsf merge streak)" 9
 # C6: and the operator cannot hand it over either.
 icpt "Archie delegate merge"
-check "C6 stays with you ($(out))" 'grep -qF "merge stays with you. Anything touching clients, money, production, merges or deploys always does." "$T/out"'
+check "C6 stays with you ($(out))" 'grep -qF "merge stays with you. Clients, money, direct merges, pushes to main, production DB writes and deploys outside the deploy lanes always do." "$T/out"'
 eq "C6 merge still ask_first" "$(clsf merge state)" ask_first
 icpt "Archie delegate Deploy"
 check "C6 deploy too (case folded)" 'grep -qF "deploy stays with you." "$T/out"'

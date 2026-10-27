@@ -52,10 +52,14 @@ Archie delegate <class>
 Archie ask first <class>
 ```
 
-Some classes are never delegable: clients and customers, money, spend, cost,
-budget, billing, invoices, prices, production, merges, deploys, releases, and
-an escalation with no class. Archie also always asks when the goal or the
-message is about secrets, key rotation or migrations.
+Archie's own factory levers (enqueue, dequeue, fix round, rebuild, rebase,
+re-review, hold label, pause row, iron-law ack, ticket, alert ack) are
+`lever-*` classes, delegated by default; one overrule puts a lever back to ask
+first. Some classes are never delegable, the hard limits: clients and
+customers, money, spend, cost, budget, billing, invoices, prices, production,
+direct merges, deploys, releases, and an escalation with no class. Archie also always asks when the goal or the
+message is about secrets, key rotation or migrations, and a lever never writes
+to a board other than the harness board without asking.
 
 ## When it runs
 

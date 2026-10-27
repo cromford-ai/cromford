@@ -1,0 +1,76 @@
+{
+  "ok": true,
+  "day": "2026-10-01",
+  "project": null,
+  "generated_at": "2026-10-23T00:26:18Z",
+  "mode": {
+    "ok": true,
+    "fleet": "observe",
+    "off": false,
+    "projects": {},
+    "source": "archie.manage"
+  },
+  "merges": {
+    "ok": true,
+    "total": 0,
+    "by_project": [],
+    "empty_reason": "no merge was recorded on 2026-10-01"
+  },
+  "queue": {
+    "ok": true,
+    "actions": {
+      "total": 0,
+      "by_action": {},
+      "by_outcome": {}
+    },
+    "batches": {
+      "total": 0,
+      "by_outcome": {}
+    },
+    "empty_reason": "no merge-queue batch finished and Archie took no queue action on 2026-10-01"
+  },
+  "stuck": {
+    "ok": true,
+    "total": 0,
+    "cleared": 0,
+    "open": 0,
+    "failed": 0,
+    "would": 0,
+    "skipped": 0,
+    "items": [],
+    "truncated": false,
+    "empty_reason": "Archie cleared nothing and nothing was stuck on 2026-10-01"
+  },
+  "tickets": {
+    "ok": true,
+    "filed": 0,
+    "commented": 0,
+    "shipped": 0,
+    "verified": 0,
+    "reopened": 0,
+    "would": 0,
+    "items": [],
+    "empty_reason": "Archie filed, commented on and shipped no ticket on 2026-10-01"
+  },
+  "spend": {
+    "ok": true,
+    "by_project": [],
+    "empty_reason": "no model call was recorded on 2026-10-01"
+  },
+  "totals": {
+    "ok": true,
+    "total": 0,
+    "by_outcome": {}
+  },
+  "actions": {
+    "ok": true,
+    "limit": 300,
+    "truncated": false,
+    "rows": [],
+    "empty_reason": "Archie wrote no action row on 2026-10-01"
+  },
+  "one_thing": {
+    "kind": "none",
+    "text": "Nothing needs you from 2026-10-01."
+  }
+}

@@ -1,0 +1,3 @@
+# ARCHIE FACTORY REPORT (BH-4588, BH-4574.6): the daily factory report, one
+# read for the report lane and the console Factory screen.
+GET /api/archie/factory-report

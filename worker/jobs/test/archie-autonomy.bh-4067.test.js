@@ -43,7 +43,8 @@ test('BH-4067 earned autonomy', async (t) => {
 
   await t.test('A1 seeds: 11 classes, six protected, all ask_first; the settings row reads 5', async () => {
     const { db } = await openDb();
-    const rows = db.prepare('SELECT * FROM archie_classes ORDER BY class').all();
+    // BH-4588 adds the lever-* classes, seeded delegated; its own suite pins them.
+    const rows = db.prepare("SELECT * FROM archie_classes WHERE class NOT LIKE 'lever-%' ORDER BY class").all();
     assert.equal(rows.length, 11);
     assert.deepEqual(rows.filter((r) => r.never_delegable === 1).map((r) => r.class).sort(),
       ['client-board', 'deploy', 'merge', 'production', 'spend', 'unclassified']);

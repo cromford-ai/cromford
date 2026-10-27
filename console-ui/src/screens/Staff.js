@@ -201,7 +201,7 @@ export function StaffView({ roster, flags, onKill, busy = false, note = null, di
       ${note ? html`<div class="banner banner--warn" role="status"
         style="margin-bottom:10px;border-color:var(--line-active);background:var(--panel-active);color:var(--green-lt)">
         <span style="overflow-wrap:anywhere">${note}</span></div>` : null}
-      <${Section} title="ROSTER" note=${html`every staff agent; the flags page is <${Link} to="/flags">/flags<//>`}>
+      <${Section} title="ROSTER" note=${html`every staff agent; the flags page is <${Link} to="/flags">/flags<//>; what Archie did each day is <${Link} to="/factory">/factory<//>`}>
         <div style="display:flex;flex-wrap:wrap;gap:8px 16px;align-items:center;margin-bottom:8px">
           <span style="color:var(--faint);overflow-wrap:anywhere;flex:1 1 30ch">${FLAGS_NOTE}</span>
           <span>${`${KILL_ALL}: ${KILL_LABEL[allState]}`}</span>

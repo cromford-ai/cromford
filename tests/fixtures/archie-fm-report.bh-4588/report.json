@@ -1,0 +1,350 @@
+{
+  "ok": true,
+  "day": "2026-10-22",
+  "project": null,
+  "generated_at": "2026-10-23T00:23:42Z",
+  "mode": {
+    "ok": true,
+    "fleet": "observe",
+    "off": false,
+    "projects": {},
+    "source": "archie.manage"
+  },
+  "merges": {
+    "ok": true,
+    "total": 3,
+    "by_project": [
+      {
+        "project": "cromford",
+        "n": 2,
+        "prs": [
+          {
+            "repo": "example-org/cromford",
+            "pr": 101,
+            "url": "https://github.com/example-org/cromford/pull/101",
+            "merged_at": "2026-10-22T09:00:00Z"
+          },
+          {
+            "repo": "example-org/cromford",
+            "pr": 103,
+            "url": "https://github.com/example-org/cromford/pull/103",
+            "merged_at": "2026-10-22T15:00:00Z"
+          }
+        ]
+      },
+      {
+        "project": "project-4",
+        "n": 1,
+        "prs": [
+          {
+            "repo": "example-org/project-4",
+            "pr": 12,
+            "url": "https://github.com/example-org/project-4/pull/12",
+            "merged_at": "2026-10-22T11:00:00Z"
+          }
+        ]
+      }
+    ]
+  },
+  "queue": {
+    "ok": true,
+    "actions": {
+      "total": 2,
+      "by_action": {
+        "block_verdict": 1,
+        "enqueue": 1
+      },
+      "by_outcome": {
+        "failed": 1,
+        "done": 1
+      }
+    },
+    "batches": {
+      "total": 3,
+      "by_outcome": {
+        "failed": 1,
+        "merged": 2
+      }
+    }
+  },
+  "stuck": {
+    "ok": true,
+    "total": 3,
+    "cleared": 2,
+    "open": 1,
+    "failed": 0,
+    "would": 0,
+    "skipped": 0,
+    "items": [
+      {
+        "id": 3,
+        "project": "hub",
+        "repo": "example-org/cromford",
+        "pr": 0,
+        "playbook": "watch-main-red",
+        "mode": "on",
+        "action": "kick_lane",
+        "outcome": "requested",
+        "why": "main red 70 min; kicked main-red-bisect",
+        "created_at": "2026-10-22T11:03:00Z",
+        "url": null,
+        "alert_id": "main-red-cromford",
+        "kind": "kick_lane"
+      },
+      {
+        "id": 2,
+        "project": "project-4",
+        "repo": "example-org/project-4",
+        "pr": 12,
+        "playbook": "stacked-parent-merged",
+        "mode": "on",
+        "action": "restack",
+        "outcome": "done",
+        "why": "parent #11 merged; restacked onto main",
+        "created_at": "2026-10-22T10:02:00Z",
+        "url": "https://github.com/example-org/project-4/pull/12",
+        "alert_id": null,
+        "kind": "restack"
+      },
+      {
+        "id": 1,
+        "project": "cromford",
+        "repo": "example-org/cromford",
+        "pr": 101,
+        "playbook": "rebase-repair",
+        "mode": "on",
+        "action": "repair",
+        "outcome": "done",
+        "why": "merged main and pushed with lease",
+        "created_at": "2026-10-22T09:01:00Z",
+        "url": "https://github.com/example-org/cromford/pull/101",
+        "alert_id": null,
+        "kind": "repair"
+      }
+    ],
+    "truncated": false
+  },
+  "tickets": {
+    "ok": true,
+    "filed": 1,
+    "commented": 1,
+    "shipped": 1,
+    "verified": 0,
+    "reopened": 0,
+    "would": 0,
+    "items": [
+      {
+        "id": 8,
+        "project": "hub",
+        "repo": "example-org/cromford",
+        "pr": 0,
+        "playbook": "improve",
+        "mode": "on",
+        "action": "track_merged",
+        "outcome": "done",
+        "why": "fix #9000 merged in #103",
+        "created_at": "2026-10-22T16:08:00Z",
+        "url": "https://github.com/example-org/cromford/issues/9000",
+        "alert_id": null,
+        "kind": "shipped"
+      },
+      {
+        "id": 7,
+        "project": "hub",
+        "repo": "example-org/cromford",
+        "pr": 0,
+        "playbook": "watch-ticket",
+        "mode": "on",
+        "action": "file_ticket",
+        "outcome": "done",
+        "why": "commented on the open escalation",
+        "created_at": "2026-10-22T15:07:00Z",
+        "url": "https://github.com/example-org/cromford/issues/8999",
+        "alert_id": null,
+        "kind": "commented"
+      },
+      {
+        "id": 6,
+        "project": "hub",
+        "repo": "example-org/cromford",
+        "pr": 0,
+        "playbook": "improve",
+        "mode": "on",
+        "action": "file_ticket",
+        "outcome": "done",
+        "why": "watch|disk|hub|run_cleanup recurred 3 times",
+        "created_at": "2026-10-22T14:06:00Z",
+        "url": "https://github.com/example-org/cromford/issues/9001",
+        "alert_id": null,
+        "kind": "filed"
+      }
+    ]
+  },
+  "spend": {
+    "ok": true,
+    "by_project": [
+      {
+        "project": "cromford",
+        "usd": 3.75,
+        "calls": 3,
+        "unpriced_calls": 1,
+        "cap_usd": 11323.76,
+        "over": false
+      },
+      {
+        "project": "project-4",
+        "usd": null,
+        "calls": 1,
+        "unpriced_calls": 1,
+        "cap_usd": 4970.21,
+        "over": false
+      }
+    ]
+  },
+  "totals": {
+    "ok": true,
+    "total": 8,
+    "by_outcome": {
+      "done": 6,
+      "failed": 1,
+      "requested": 1
+    }
+  },
+  "actions": {
+    "ok": true,
+    "limit": 300,
+    "truncated": false,
+    "rows": [
+      {
+        "id": 8,
+        "created_at": "2026-10-22T16:08:00Z",
+        "updated_at": "2026-10-22T16:08:00Z",
+        "project": "hub",
+        "repo": "example-org/cromford",
+        "pr": 0,
+        "playbook": "improve",
+        "mode": "on",
+        "action": "track_merged",
+        "outcome": "done",
+        "why": "fix #9000 merged in #103",
+        "evidence": {
+          "fp": "abcdef012345",
+          "issue": 9000,
+          "pr": 103,
+          "before": 4
+        }
+      },
+      {
+        "id": 7,
+        "created_at": "2026-10-22T15:07:00Z",
+        "updated_at": "2026-10-22T15:07:00Z",
+        "project": "hub",
+        "repo": "example-org/cromford",
+        "pr": 0,
+        "playbook": "watch-ticket",
+        "mode": "on",
+        "action": "file_ticket",
+        "outcome": "done",
+        "why": "commented on the open escalation",
+        "evidence": {
+          "issue": "https://github.com/example-org/cromford/issues/8999",
+          "existing": true
+        }
+      },
+      {
+        "id": 6,
+        "created_at": "2026-10-22T14:06:00Z",
+        "updated_at": "2026-10-22T14:06:00Z",
+        "project": "hub",
+        "repo": "example-org/cromford",
+        "pr": 0,
+        "playbook": "improve",
+        "mode": "on",
+        "action": "file_ticket",
+        "outcome": "done",
+        "why": "watch|disk|hub|run_cleanup recurred 3 times",
+        "evidence": {
+          "fp": "0123456789ab",
+          "issue_url": "https://github.com/example-org/cromford/issues/9001",
+          "existing": false
+        }
+      },
+      {
+        "id": 5,
+        "created_at": "2026-10-22T13:05:00Z",
+        "updated_at": "2026-10-22T13:05:00Z",
+        "project": "cromford",
+        "repo": "example-org/cromford",
+        "pr": 102,
+        "playbook": "queue-culprit",
+        "mode": "on",
+        "action": "block_verdict",
+        "outcome": "failed",
+        "why": "solo run could not start",
+        "evidence": {}
+      },
+      {
+        "id": 4,
+        "created_at": "2026-10-22T12:04:00Z",
+        "updated_at": "2026-10-22T12:04:00Z",
+        "project": "project-4",
+        "repo": "example-org/project-4",
+        "pr": 13,
+        "playbook": "queue-enqueue",
+        "mode": "on",
+        "action": "enqueue",
+        "outcome": "done",
+        "why": "approved and green; enqueued",
+        "evidence": {}
+      },
+      {
+        "id": 3,
+        "created_at": "2026-10-22T11:03:00Z",
+        "updated_at": "2026-10-22T11:03:00Z",
+        "project": "hub",
+        "repo": "example-org/cromford",
+        "pr": 0,
+        "playbook": "watch-main-red",
+        "mode": "on",
+        "action": "kick_lane",
+        "outcome": "requested",
+        "why": "main red 70 min; kicked main-red-bisect",
+        "evidence": {
+          "alert_id": "main-red-cromford"
+        }
+      },
+      {
+        "id": 2,
+        "created_at": "2026-10-22T10:02:00Z",
+        "updated_at": "2026-10-22T10:02:00Z",
+        "project": "project-4",
+        "repo": "example-org/project-4",
+        "pr": 12,
+        "playbook": "stacked-parent-merged",
+        "mode": "on",
+        "action": "restack",
+        "outcome": "done",
+        "why": "parent #11 merged; restacked onto main",
+        "evidence": {}
+      },
+      {
+        "id": 1,
+        "created_at": "2026-10-22T09:01:00Z",
+        "updated_at": "2026-10-22T09:01:00Z",
+        "project": "cromford",
+        "repo": "example-org/cromford",
+        "pr": 101,
+        "playbook": "rebase-repair",
+        "mode": "on",
+        "action": "repair",
+        "outcome": "done",
+        "why": "merged main and pushed with lease",
+        "evidence": {}
+      }
+    ]
+  },
+  "one_thing": {
+    "kind": "failed",
+    "text": "1 Archie action failed on 2026-10-22. The latest: queue-culprit on example-org/cromford#102 (solo run could not start)."
+  }
+}

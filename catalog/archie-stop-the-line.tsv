@@ -1,0 +1,25 @@
+# catalog/archie-stop-the-line.tsv — which open alerts are a stop-the-line
+# event (BH-4588). Read by bin/lib/archie-fm-report/stl.sh afr_stl_class, once
+# per open alert on every bin/archie-fm-report.sh tick. An event gets ONE
+# immediate Telegram beat per incident (<alert-id>@<first_seen epoch>) once the
+# alert has been open for the minutes in its settings row.
+#
+# Columns, tab-separated: class, alert-id glob, settings key of the minimum
+# age in minutes. Rows are read top to bottom and the FIRST match wins. A row
+# whose class is `-` is an exclusion: an id it matches is no event, whatever
+# a later row says (another lane's alert that shares a prefix).
+#
+# Sources of the ids: main-red-<slug> bin/main-red-detector.sh (the same ids
+# bin/lib/archie-fm-watch/sources.sh afw_match reads), main-red-bisect_* and
+# main-red-prs:* are other lanes' alerts; mc-window-stall-<scope>
+# bin/lib/fanin-window-stall.sh; pool-box-<box> bin/lib/pool-placement.sh; the
+# cost ids pipeline-health and the budget stop (afw_match's cost-anomaly).
+# ph-costrollupstale_hub is a stale rollup, not a spike: it matches no row.
+-	main-red-bisect_*	-
+-	main-red-prs:*	-
+main-red	main-red-?*	archie.stl.main_red_min
+queue-stalled	mc-window-stall-?*	archie.stl.queue_stall_min
+box-down	pool-box-?*	archie.stl.box_down_min
+spend-spike	ph-costrate_?*	archie.stl.spend_spike_min
+spend-spike	ph-overcap_?*	archie.stl.spend_spike_min
+spend-spike	budget-stop_?*	archie.stl.spend_spike_min

@@ -229,7 +229,7 @@ intercept() {
         0:delegate) printf "Done. I'll handle %s calls and report after each one. One overrule puts it back.\n" "$cls" ;;
         0:askfirst) printf "OK, %s calls stay with you, and I'll ask first. Its count starts again from zero.\n" "$cls" ;;
         9:*) case "$(jq -r '.error // ""' <<<"$resp" 2>/dev/null)" in
-               never_delegable) printf '%s stays with you. Anything touching clients, money, production, merges or deploys always does.\n' "$cls" ;;
+               never_delegable) printf '%s stays with you. Clients, money, direct merges, pushes to main, production DB writes and deploys outside the deploy lanes always do.\n' "$cls" ;;
                not_earned) printf 'Not yet. %s is at %s of %s agreements in a row.\n' "$cls" "$(jq -r '.streak // 0' <<<"$resp")" "$ARCHIE_DELEGATE_AFTER" ;;
                *) printf "The jobs DB refused that. Nothing changed.\n" ;;
              esac ;;
