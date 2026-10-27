@@ -1,0 +1,10 @@
+{
+  "env": "BR_NOCHANGE_REQUEUE",
+  "type": "int",
+  "default": 1,
+  "min": 0,
+  "max": 1,
+  "zero_means": "off",
+  "read_in": "bin/blocked-resolver.d/bh-8592-fixround-nochange.sh",
+  "note": "BH-8592: 1 = when a queue-ejected-twice fix round changes no file (nothing is pushed), the hub puts the SAME head back in the Mergify queue once (@mergifyio requeue), or marks the row QUEUED if Mergify already holds it. 0 = the round is still recorded and noted on the PR, and the park goes to the ladder's next rung."
+}

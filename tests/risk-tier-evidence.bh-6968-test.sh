@@ -10,9 +10,10 @@
 #   G1-G4          HARNESS_IMPACT_GATE_RUN (bin/lib/rb/gates.sh, extracted)
 #                  writes HARNESS_HEAD; bin/evidence-summary.sh turns it into
 #                  the builder-gate marker that rt_evidence_load reads back.
-#   E5, W1, W2     bin/lead-review-enqueue.sh tick, run WHOLE on a scratch
-#                  harness (the tests/lead-review-enqueue-risk.bh-5022-test.sh
-#                  stubs): risk.tsv column 8 names the rule.
+#   V1-V3          lg_gate_risk (bin/lib/lead-gates.d/60-risk.sh), the worklist
+#                  half: risk.tsv column 8 names the rule. The docs-only `path`
+#                  row on the worklist is RP3 in
+#                  tests/lead-gates-risk-ports.bh-8526-test.sh.
 # Run from anywhere: HARNESS_TEST_SANDBOX=1 bash tests/risk-tier-evidence.bh-6968-test.sh
 set -uo pipefail
 . "$(dirname "$0")/lib/scratch.sh" || exit 1
@@ -285,155 +286,6 @@ grep -q '^HARNESS_HEAD:' "$B6/harness-suite.txt" && bad "G4c a HARNESS_HEAD line
 # G4b: an old suite file with no HARNESS_HEAD line renders as before (no marker)
 B5="$T/b5"; mkdir -p "$B5"; printf 'impact-gate: ran 12 of 14 selected suites via local: passed (x)\nHARNESS_EXIT: 0\n' > "$B5/harness-suite.txt"
 ES=$(bash "$DIR/bin/evidence-summary.sh" "$B5" 2 "" provisional); grep -q 'builder-gate' <<<"$ES" && bad "G4b no HARNESS_HEAD has a marker" || ok
-
-# ════════════════ part 3: the enqueue tick, whole (E5, W1, W2) ════════════════
-H="$T/h"; mkdir -p "$H/state" "$H/logs" "$T/fakebin" "$T/elog" "$T/cfg" "$T/repos"
-scratch_install_closure bin/jobs-client.sh "$H" >/dev/null || exit 1
-scratch_install_closure bin/lead-review-enqueue.sh "$H" >/dev/null || exit 1
-[ -f "$H/bin/lib/queue-risk.sh" ] && ok || bad "bin/lib/queue-risk.sh is not in the lane's closure"
-LPPF2="$T/lpp2.json"; DOWNF2="$T/lpp2-down"
-lpp_install "$T/fakebin" "$LPPF2" "$DOWNF2"
-set -f; lpp_set "$LPPF2" example-org/cromford $(cat "$DIR/tests/fixtures/lead-protected-paths.bh-4148.txt"); set +f
-printf 'lead-test-token-fixture\n' > "$T/cfg/token"; chmod 600 "$T/cfg/token"
-printf 'cromford example-org/cromford https://demo.test /api 3 box-hub\n' > "$H/fleet.conf"
-E=$T/e; mkdir -p "$E"
-cat > "$T/fakebin/curl" <<EOF
-#!/bin/bash
-m=GET; body=""; url=""; prev=""; hdrs=""
-for a in "\$@"; do
-  case "\$prev" in
-    -X) m="\$a" ;;
-    --data-binary|-d|--data) body="\$a" ;;
-    -H) case "\$a" in @*) hdrs="\$hdrs\$(cat "\${a#@}")"\$'\n' ;; *) hdrs="\$hdrs\$a"\$'\n' ;; esac ;;
-  esac
-  case "\$a" in http*) url="\$a" ;; esac
-  prev="\$a"
-done
-case "\$body" in @*) body=\$(cat "\${body#@}") ;; esac
-lead=0; grep -q '^x-lead-verdict-token: lead-test-token-fixture' <<<"\$hdrs" && lead=1
-p="\${url#https://jobs.test}"
-printf '%s %s %s lead=%s\n' "\$m" "\$p" "\$body" "\$lead" >> "$T/elog/worker"
-[ -f "$E/lrrows.json" ] || echo '[]' > "$E/lrrows.json"
-code=200; out='{}'
-case "\$m \$p" in
-$(lpp_curl_case m url body)
-  "GET /api/settings/risk_tier.mode.example-org.cromford")
-    if [ -f "$E/mode" ]; then out=\$(jq -nc --arg v "\$(cat "$E/mode")" '{setting:{key:"risk_tier.mode.example-org.cromford",value:\$v}}')
-    else code=404; out='{"error":"no such setting"}'; fi ;;
-  "GET /api/settings/"*)
-    k="\${p#/api/settings/}"
-    if [ -f "$E/set/\$k" ]; then out=\$(jq -nc --arg k "\$k" --arg v "\$(cat "$E/set/\$k")" '{setting:{key:\$k,value:\$v}}')
-    else code=404; out='{"error":"no such setting"}'; fi ;;
-  "GET /api/pr-attempts?"*)
-    if [ -e "$E/pa500" ]; then code=500; out='{"error":"boom"}'; else out='{"count":0}'; fi ;;
-  "GET /api/verdict?pr="*)
-    n="\${p##*%2F}"
-    if [ -f "$E/jv/\$n.json" ]; then out=\$(cat "$E/jv/\$n.json"); else code=404; out='{"error":"no job for this pr"}'; fi ;;
-  "GET /api/verdicts?"*)
-    out='{"standing":null, "rows":[], "truncated":false}' ;;
-  "POST /api/risk-tiers") code=201; out='{"ok":true,"id":1}' ;;
-  "POST /api/lead-reviews")
-    if [ "\$lead" != 1 ]; then code=403; out='{"error":"needs the lead token"}'
-    else
-      n=\$(jq length "$E/lrrows.json")
-      row=\$(jq -c --arg id "lr-\$((n + 1))" '. + {id:\$id, status:"requested"}' <<<"\$body")
-      jq -c --argjson r "\$row" '. + [\$r]' "$E/lrrows.json" > "$E/lrrows.tmp" && mv "$E/lrrows.tmp" "$E/lrrows.json"
-      code=201; out=\$(jq -c '{request:.}' <<<"\$row")
-    fi ;;
-  *) code=404; out='{"error":"unknown endpoint","worker":"harness-jobs"}' ;;
-esac
-printf '%s\n%s' "\$out" "\$code"
-EOF
-cat > "$T/fakebin/gh" <<EOF
-#!/bin/bash
-printf '%s\n' "\$*" >> "$T/elog/gh"
-case "\$*" in
-  *"api rate_limit"*)
-    echo '{"resources":{"core":{"remaining":5000,"limit":5000,"reset":2000000000},"graphql":{"remaining":5000,"limit":5000,"reset":2000000000}}}' ;;
-  *"-X GET repos/example-org/"*"/commits/"*"/status"|*"-X GET repos/example-org/"*"/commits/"*"/status "*)
-    a="\$*"; h="\${a##*/commits/}"; h="\${h%%/*}"
-    printf 'HTTP/2 200\r\n\r\n'
-    if [ -f "$E/status/\$h.json" ]; then cat "$E/status/\$h.json"; else echo '{"state":"pending","statuses":[]}'; fi ;;
-  *"-X GET repos/example-org/"*"/pulls?"*)
-    printf 'HTTP/2 200\r\n\r\n'; cat "$E/prs.json" ;;
-  *"-X GET repos/example-org/"*"/pulls/"*)
-    a="\$*"; n="\${a##*/pulls/}"; n="\${n%% *}"
-    printf 'HTTP/2 200\r\n\r\n'; jq -nc --arg s "\$(cat "$E/head/\$n")" --arg b "\$(cat "$E/body/\$n" 2>/dev/null)" \
-      '{head:{sha:\$s},base:{ref:"main"},user:{login:"cromford[bot]"},body:\$b}' ;;
-  *"-X GET repos/example-org/"*"/compare/"*)
-    a="\$*"; h="\${a##*...}"; h="\${h%% *}"
-    printf 'HTTP/2 200\r\n\r\n'; cat "$E/cmp/\$h.json" ;;
-  *"-X POST repos/example-org/"*"/statuses/"*)
-    printf 'HTTP/2 201\r\n\r\n{"state":"success"}\n' ;;
-esac
-exit 0
-EOF
-cat > "$H/bin/lead-verdict.sh" <<EOF
-#!/bin/bash
-printf '%s\n' "\$*" >> "$T/elog/lv"
-exit 0
-EOF
-printf '#!/bin/bash\nexit 0\n' > "$H/bin/lane-alert.sh"; printf '#!/bin/bash\nexit 0\n' > "$H/bin/agent-call.sh"
-chmod +x "$T/fakebin/curl" "$T/fakebin/gh" "$H/bin/lead-verdict.sh" "$H/bin/lane-alert.sh" "$H/bin/agent-call.sh"
-
-etick() {
-  ( cd "$T" && unset BOX_NAME JOBS_BOX HUB_BOX_NAME && PATH="$T/fakebin:$PATH" HARNESS="$H" HARNESS_SECRET=test-secret-fixture JOBS_URL=https://jobs.test \
-    JOBS_RETRIES=0 TMPDIR="$T/tmp" LANE_GATE_DISABLE=1 LEAD_VERDICT_TOKEN_FILE="$T/cfg/token" \
-    FLEET_CONF="$H/fleet.conf" GH_ETAG=0 LEAD_REVIEW_AUTO_REPOS=example-org/cromford \
-    LEAD_REVIEW_ENQUEUE_MAX_PER_TICK=5 LEAD_REVIEW_MAX_PER_PR_DAY=4 REPOS_ROOT="$T/repos" \
-    bash "$H/bin/lead-review-enqueue.sh" tick ) > "$T/eout" 2>&1; ERC=$?
-}
-ereset() {
-  rm -f "$T/elog"/* "$E/lrrows.json" "$E/pa500" "$H/logs"/*
-  scratch_rm "$H/state"; mkdir -p "$H/state"
-  for d in jv head cmp set body status; do scratch_rm "$E/$d"; mkdir -p "$E/$d"; done
-  printf 'operator' > "$E/set/lead_pr_authors"
-  printf 25 > "$E/set/risk_tier.low_score_max"
-  echo box-hub > "$H/state/box-name"
-  echo "${1:-enforce}" > "$E/mode"
-  jq -nc --arg h "$SHA" '[{number:41, html_url:"https://github.com/example-org/cromford/pull/41", title:"t", draft:false,
-    state:"open", user:{login:"cromford[bot]",type:"Bot"}, head:{sha:$h,ref:"ticket/bh-41"}, base:{ref:"main"}}]' > "$E/prs.json"
-  echo "$SHA" > "$E/head/41"
-  jq -nc --arg s "$SHA" '{verdict:"APPROVE", tier:"2", provenance:"-", merge_sha:null, job_id:"job-1", reviewed_sha:$s,
-    job:{id:"job-1", kind:"build", status:"running"},
-    artifacts:[{artifact_kind:"verdict", detail:({tier:"2", headbound:"n/a", reviewed_sha:$s, settled:true}|tojson)}]}' > "$E/jv/41.json"
-  jq -nc '{total_commits:1, commits:[{parents:[{sha:"p"}], commit:{message:"feat: x"}}],
-    files:[{filename:"bin/foo.sh", additions:30, deletions:10, status:"modified"}]}' > "$E/cmp/$SHA.json"
-  printf '## Evidence\n%s\n' "$(marker "$SHA" 12)" > "$E/body/41"
-  jq -nc '{state:"success", statuses:[{context:"prequeue-verdict", state:"success", description:"green on main abc123def456"}]}' > "$E/status/$SHA.json"
-}
-RISKF="$H/state/lead-review-enqueue/risk.tsv"
-col() { awk -F'\t' -v c="$1" -v h="$SHA" '$4 == h {v = $c} END {print v}' "$RISKF" 2>/dev/null; }
-wn() { grep -c "^$1" "$T/elog/worker" 2>/dev/null; }
-
-# ── E5: an evidence-low head through the real tick -> risk.tsv names `evidence` ──
-ereset; etick
-[ "$ERC" = 0 ] && ok || bad "E5 rc=$ERC $(cat "$T/eout")"
-[ "$(col 5)" = low ] && ok || bad "E5 risk.tsv tier: '$(col 5)' ($(col 6)) — $(cat "$RISKF" 2>/dev/null)"
-[ "$(col 8)" = evidence ] && ok || bad "E5 risk.tsv column 8: '$(col 8)'"
-case "$(col 6)" in "evidence: score 0 under 25, 12 suites green on head, prequeue-verdict green, 40 lines") ok ;; *) bad "E5 reasons: $(col 6)" ;; esac
-grep -q "post example-org/cromford 41 $SHA MERGE --source risk-tier .*--note low risk: evidence: " "$T/elog/lv" 2>/dev/null && ok || bad "E5 sign-off argv: $(cat "$T/elog/lv" 2>/dev/null)"
-# ── W2: the next tick reuses the line: no second classify, no second status read ──
-RP=$(wn 'POST /api/risk-tiers'); SR=$(grep -c '/status' "$T/elog/gh")
-etick
-[ "$(wn 'POST /api/risk-tiers')" = "$RP" ] && ok || bad "W2 the head was classified again: $RP -> $(wn 'POST /api/risk-tiers')"
-[ "$(grep -c '/status' "$T/elog/gh")" = "$SR" ] && ok || bad "W2 the status was read again"
-# ── a docs-only head -> column 8 `path` ──
-ereset; jq -nc '{total_commits:1, commits:[{parents:[{sha:"p"}], commit:{message:"feat: x"}}],
-  files:[{filename:"docs/a.md", additions:3, deletions:0, status:"modified"}]}' > "$E/cmp/$SHA.json"; etick
-[ "$(col 5)" = low ] && [ "$(col 8)" = path ] && ok || bad "E5b docs-only: tier '$(col 5)' column 8 '$(col 8)'"
-# ── W1: no marker in the body -> medium, column 8 `-`, requested as today ──
-ereset shadow; printf 'no marker\n' > "$E/body/41"; etick
-[ "$(col 5)" = medium ] && [ "$(col 8)" = - ] && ok || bad "W1 tier '$(col 5)' column 8 '$(col 8)' ($(col 6))"
-[ "$(wn 'POST /api/lead-reviews')" -ge 1 ] && ok || bad "W1 the medium head was not requested: $(cat "$T/elog/worker" | cut -c1-120)"
-[ -s "$T/elog/lv" ] && bad "W1 a medium head was signed off" || ok
-# ── W1b: the lane off (no row) -> no status read at all ──
-ereset; rm -f "$E/set/risk_tier.low_score_max"; etick
-grep -q '/status' "$T/elog/gh" 2>/dev/null && bad "W1b the lane is off but the status was read" || ok
-[ "$(col 5)" = medium ] && ok || bad "W1b lane off read '$(col 5)'"
-# ── W1c: the attempt history down -> medium ──
-ereset; : > "$E/pa500"; etick
-[ "$(col 5)" = medium ] && ok || bad "W1c history outage read '$(col 5)' ($(col 6))"
 
 # ════════════════ part 4: lg_gate_risk (60-risk.sh), sourced (V1-V3) ════════════════
 # The worklist twin of the enqueue's risk block, with the same in-shell stubs

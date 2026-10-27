@@ -5386,7 +5386,7 @@ br_fix_adopt() {
         say "$p/$rkey [$reason]: fix round ran on $box: $(br_load "$p" "$ck" | jq -r '.attempts[-1].detail // "-"' 2>/dev/null)"
       else
         say "$p/$rkey [$reason]: fix round on $box recorded nothing new (its logs/blocked-resolver.log says why) — re-offered next tick"
-      fi ;;
+      fi; command -v brnc_settle_pending >/dev/null 2>&1 && brnc_settle_pending "$p" "$ck" "$rkey" "$reason" "$url" "$rec" "$tkey" >/dev/null ;;   # BH-8592: a no-change round's head goes back in the queue here, on the hub
     "setup-blocked "*)
       what=$(printf '%s' "${res#setup-blocked }" | base64 -d 2>/dev/null)
       br_setup_blocked "$p" "$ck" "$rkey" "$reason" "$url" "on $box: ${what:-no detail}" fix-round "whatever the owning box $box names above, on $box" ;;
@@ -5766,7 +5766,7 @@ br_fix_round() {
   local gienv=() gibad="" girc=0 br_author_bad=0
   local hot=0 slots=0 reserve=0 running=0 directive="" drc=0
   local frcl_w="" frcl_dir=""
-  local mref=main pbase=""
+  local mref=main pbase="" nctail=""
   local cok="" cfail="" clines cbytes cbase cdiff cplan cplan_show cpaths=()
   ck=$(br_cap_key "$p" "$rkey" "$tkey")
   st=$(br_load "$p" "$ck"); n=$(br_num "$st" fixrounds)
@@ -6336,9 +6336,9 @@ $live$brief"
       echo "AUTHOR_CHECK: could-not-run" >> "$out"
       say "$p/$rkey [$reason]: the commit-author check could not run (bin/lib/git-identity.sh missing or git log failed) — not pushed"
     fi
-  fi
-  if [ "$rc" != 0 ] || [ "$vrc" != 0 ] || [ "$(git -C "$wt" rev-parse HEAD)" = "$lease" ]; then
-    br_record "$p" "$ck" fix-round "$reason" "agent rc=$rc, verify rc=$vrc — no verified commit$cfail" fixrounds "$url" "${head:--}"
+  fi; command -v brnc_fix_exit >/dev/null 2>&1 && brnc_fix_exit "$p" "$ck" "$rkey" "$reason" "$url" "$slug" "$wt" "$lease" "${mref:-main}" "${head:-}" "$rec" "$tkey" "$rc" "$vrc" "$conflicts" && return 0   # BH-8592: own commits that change no file are never pushed (sets nctail)
+  if [ "$rc" != 0 ] || [ "$vrc" != 0 ] || [ "$(git -C "$wt" rev-parse HEAD)" = "$lease" ] || [ -n "$nctail" ]; then
+    br_record "$p" "$ck" fix-round "$reason" "agent rc=$rc, verify rc=$vrc — no verified commit$cfail$nctail" fixrounds "$url" "${head:--}"
     # A FAILED ROUND WITH ROUNDS REMAINING ENDS THE TICK. The cap is re-read
     # because this round just measured the conflict, and the checkpoint branch
     # is KEPT: the next round starts from whatever this one got done rather
@@ -6499,7 +6499,7 @@ $(head -c 4000 "$unaddr")" >/dev/null 2>&1 || true
     0) hticket="${href% *}#${href##* }" ;;
     1) hticket=none ;;
     *) hticket=- ;;
-  esac
+  esac; command -v brnc_queued_guard >/dev/null 2>&1 && ! brnc_queued_guard "$p" "$ck" "$rkey" "$reason" "$url" "$lease" "${head:-}" && return 0   # BH-8592: never push while Mergify holds the PR (a push dequeues it and kills its batch)
   HOLD_PUSH_LOG="$LOG" hold_push "$p" "$hticket" "$wt" origin HEAD "$br" "$lease" >>"$LOG" 2>&1 || prc=$?
   if [ "$prc" = 3 ] || [ "$prc" = 4 ]; then
     # NOT PUSHED, NOTHING SPENT: no fixrounds counter, no PR comment, and the
@@ -8105,7 +8105,7 @@ br_one() {
            fi
            action=rebuild-fresh ;;
       esac ;;
-  esac
+  esac; command -v brnc_one_gate >/dev/null 2>&1 && brnc_one_gate "$p" "$ck" "$rkey" "$reason" "$url" "$rec" "$tkey" && { br_reset_token; return 3; }   # BH-8592: a pending no-change head is requeued before any rung
   # <<< needs-human park
   case "$action" in
     rebuild-fresh|rebuild-retry|adjudicate) ;;

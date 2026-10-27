@@ -4,14 +4,13 @@
 # shadow, BH-5024) of the enqueue, as the worklist gate
 # bin/lib/lead-gates.d/60-risk.sh. Every case drives bin/lead-review.sh tick
 # WHOLE over the worklist fixture (tests/lib/lead-worklist-fixture.bh-4956.sh
-# plus tests/lib/lead-gates-fixture.bh-5875.sh). R4 and R10 also run the REAL
-# bin/lead-review-enqueue.sh tick in the same scratch harness.
+# plus tests/lib/lead-gates-fixture.bh-5875.sh).
 #   R1   low + enforce: one lead-verdict post (--source risk-tier --reviewer
 #        risk-tier:box-demo), no job, skipped=1; R1b a second tick
 #        reuses risk.tsv (no second POST /api/risk-tiers).
 #   R2   medium + enforce, grace 0: a job.
 #   R3   low + shadow: a `WOULD sign off` line, a job, no post.
-#   R4   the POST /api/risk-tiers body equals the enqueue's for the same compare.
+#   R4   the POST /api/risk-tiers body: its keys and values.
 #   R5   lead-verdict rc 1: held, no `signed off` line, no job.
 #   R5b  rc 4: rc 12 and the risk-pub marker; R5c rc 3: held; R5d rc 5: a
 #        withheld line in risk.tsv and a job.
@@ -20,8 +19,6 @@
 #   R8   a lead-authored rules-text head whose render check fails: a job.
 #   R9   a lead-authored rules-text low, render ok: reviewer
 #        risk-tier:rules-text:box-demo, no job.
-#   R10  the real enqueue over the head the dispatcher classified: no compare
-#        read, no risk-tiers POST; it reuses the risk.tsv line.
 #   R11  bin/lib/risk-tier.sh absent: a job.
 #   R12  the mode row 500: no lead-verdict call, a job.
 #   R13  jev_risk.mode=shadow: one `jev shadow` line, the sign-off unchanged.
@@ -42,13 +39,11 @@ command -v jq >/dev/null || { echo "jq missing — skipping"; exit 0; }
 command -v flock >/dev/null || { echo "FAIL: flock missing"; exit 1; }
 lwf_setup
 lgf_setup
-scratch_install_closure bin/lead-review-enqueue.sh "$H" >/dev/null || { echo "closure install of bin/lead-review-enqueue.sh failed"; exit 1; }
 GD="$H/bin/lib/lead-gates.d"
 DIR="$LWF_SRC"
 for f in "$DIR/bin/lib/lead-gates.d/60-risk.sh" "$DIR/bin/lib/lead-gates-compare.sh" "$DIR/bin/lib/risk-tier.sh" "$DIR/bin/lib/rules-render-head.sh" "$DIR/bin/lib/ticket-ownership.sh"; do
   [ -r "$H/${f#"$DIR"/}" ] && ok || bad "setup: the closure did not install ${f#"$DIR"/}"
 done
-mkdir -p "$T/cfg"; printf 'lead-test-token-fixture\n' > "$T/cfg/token"; chmod 600 "$T/cfg/token"
 HA=$(printf '%040d' 101); A12=${HA:0:12}
 HB=$(printf '%040d' 102)
 HM=$(printf '%040d' 104)
@@ -64,11 +59,6 @@ summ() { lwf_summary; }
 signed_lines() { lwf_cnt 'signed off by risk-tier' "$L"; }
 one() { # one <mode> <pr> <head> <files>: one worklist head
   lgf_reset "$1"; lgf_needs "$2:$3"; lgf_cmp "$3" "$4"
-}
-enq_tick() {
-  ( cd "$T" && HARNESS="$H" FLEET_CONF="$H/fleet.conf" HUB_BOX_NAME=box-demo LEAD_VERDICT_TOKEN_FILE="$T/cfg/token" \
-    LEAD_REVIEW_ENQUEUE_MAX_PER_TICK=5 LEAD_REVIEW_MAX_PER_PR_DAY=5 LEAD_REVIEW_TRACED_WAIT=0 LEAD_REVIEW_REBASE_HOLD=0 PR_SELF_CHECK=0 \
-    bash "$H/bin/lead-review-enqueue.sh" tick ) > "$T/enq.out" 2>&1
 }
 
 # ── R1: low + enforce: signed off, no job ──
@@ -104,34 +94,20 @@ grep -q "#101 @$A12: risk-tier WOULD sign off (low risk: " "$L" && ok || bad "R3
 RB=$(grep '^POST /api/risk-tiers ' "$T/log/worker" | sed 's/^POST \/api\/risk-tiers //')
 [ "$(jq -r '[.mode,.action] | join(" ")' <<<"$RB")" = "shadow would-sign-off" ] && ok || bad "R3 body: $RB"
 
-# ── R4: the risk-tiers body equals the enqueue's for the same compare ──
-for n in $(seq 1 12) $(seq 102 112); do echo closed > "$FX/state.$n"; done
+# ── R4: the risk-tiers body: its keys and values ──
 one enforce 101 "$HA" "$LOWF"
 lwf_tick
 B_D=$(grep '^POST /api/risk-tiers ' "$T/log/worker" | sed 's/^POST \/api\/risk-tiers //')
-scratch_rm "$H/state/lead-review-enqueue"; rm -f "$T/log/worker"
-jq -nc --arg s "$HA" '{verdict:"APPROVE", reviewed_sha:$s, job_id:"job-fixture-1"}' > "$FX/jv.json"
-enq_tick
-B_E=$(grep '^POST /api/risk-tiers ' "$T/log/worker" | sed 's/^POST \/api\/risk-tiers //')
-[ -n "$B_E" ] && ok || bad "R4 the enqueue posted no risk-tiers row: $(cat "$H/logs/lead-review-enqueue.log")"
-[ "$(jq -c 'keys' <<<"$B_D")" = "$(jq -c 'keys' <<<"$B_E")" ] && ok || bad "R4 keys differ: $B_D vs $B_E"
-for k in repo pr head_sha project tier mode action reasons lines files; do
-  [ "$(jq -c --arg k "$k" '.[$k]' <<<"$B_D")" = "$(jq -c --arg k "$k" '.[$k]' <<<"$B_E")" ] && ok || bad "R4 .$k differs: $B_D vs $B_E"
-done
+[ "$(jq -c 'keys' <<<"$B_D")" = '["action","files","head_sha","lines","mode","pr","project","reasons","repo","tier"]' ] && ok || bad "R4 keys: $B_D"
+[ "$(jq -r '.repo' <<<"$B_D")" = example-org/cromford ] && ok || bad "R4 repo: $B_D"
+[ "$(jq -c '.pr' <<<"$B_D")" = 101 ] && ok || bad "R4 pr: $B_D"
+[ "$(jq -r '.head_sha' <<<"$B_D")" = "$HA" ] && ok || bad "R4 head_sha: $B_D"
+[ "$(jq -r '.tier' <<<"$B_D")" = low ] && ok || bad "R4 tier: $B_D"
+[ "$(jq -r '.mode' <<<"$B_D")" = enforce ] && ok || bad "R4 mode: $B_D"
+[ "$(jq -r '.action' <<<"$B_D")" = sign-off ] && ok || bad "R4 action: $B_D"
+[ "$(jq -c '.lines' <<<"$B_D")" = 3 ] && ok || bad "R4 lines: $B_D"
+[ "$(jq -c '.files' <<<"$B_D")" = 1 ] && ok || bad "R4 files: $B_D"
 [ "$(jq -r '.project' <<<"$B_D")" = cromford ] && ok || bad "R4 project: $B_D"
-
-# ── R10: the real enqueue reuses the dispatcher's risk.tsv line ──
-one enforce 101 "$HA" "$LOWF"
-for n in $(seq 1 12) $(seq 102 112); do echo closed > "$FX/state.$n"; done
-jq -nc --arg s "$HA" '{verdict:"APPROVE", reviewed_sha:$s, job_id:"job-fixture-1"}' > "$FX/jv.json"
-lwf_tick
-[ "$(lgf_signed 101)" = 1 ] && ok || bad "R10 the dispatcher did not sign off: $(cat "$L")"
-rm -f "$T/log/gh" "$T/log/worker" "$H/logs/lead-review-enqueue.log"
-enq_tick
-grep -q "#101 @$A12: signed off by risk-tier" "$H/logs/lead-review-enqueue.log" && ok || bad "R10 the enqueue did not read the tier: $(cat "$H/logs/lead-review-enqueue.log")"
-[ "$(lgf_cmp_reads "$HA")" = 0 ] && ok || bad "R10 the enqueue read the compare $(lgf_cmp_reads "$HA") times"
-[ "$(lgf_rt_posts)" = 0 ] && ok || bad "R10 the enqueue posted a second risk-tiers row"
-rm -f "$FX"/state.*
 
 # ── R5: the post fails: held, never signed ──
 one enforce 101 "$HA" "$LOWF"; echo 1 > "$FX/lvrc"

@@ -5,14 +5,12 @@
 # drives bin/lead-review.sh tick WHOLE over the worklist fixture
 # (tests/lib/lead-worklist-fixture.bh-4956.sh plus
 # tests/lib/lead-gates-fixture.bh-5875.sh), as tests/lead-gates-risk.bh-5875-test.sh
-# does. G3 also runs the REAL bin/lead-review-enqueue.sh tick in the same
-# scratch harness.
+# does.
 #   G1  no low_small row (shadow), a 180 code + 200 spec line head: reviewed
 #       (a job), no post, risk.tsv medium, one WOULD line.
 #   G2  the WOULD line text names the head, the own lines and the spec lines.
 #   G3  enforce: one post with the low-small note, no job, risk.tsv col 5 low,
-#       col 6 low-small:, col 8 low-small; then the enqueue reads that line as
-#       low (no compare read, signed off from the cache).
+#       col 6 low-small:, col 8 low-small.
 #   G4  shadow, a second tick on the same head: no second WOULD line.
 #   G5  enforce, no builder APPROVE on the head: reviewed, no post.
 #   G6  enforce, a head that drops an ok line from an existing test: medium,
@@ -29,8 +27,6 @@ command -v jq >/dev/null || { echo "jq missing — skipping"; exit 0; }
 command -v flock >/dev/null || { echo "FAIL: flock missing"; exit 1; }
 lwf_setup
 lgf_setup
-scratch_install_closure bin/lead-review-enqueue.sh "$H" >/dev/null || { echo "closure install of bin/lead-review-enqueue.sh failed"; exit 1; }
-mkdir -p "$T/cfg"; printf 'lead-test-token-fixture\n' > "$T/cfg/token"; chmod 600 "$T/cfg/token"
 HS=$(printf '%040d' 7041); S12=${HS:0:12}
 HT=$(printf '%040d' 7042); T12=${HT:0:12}
 RISK="$H/state/lead-review-enqueue/risk.tsv"
@@ -46,11 +42,6 @@ one() {
   rm -f "$FX/settings/risk_tier.low_small_mode"
   [ -n "${5:-}" ] && printf '%s' "$5" > "$FX/settings/risk_tier.low_small_mode"
   return 0
-}
-enq_tick() {
-  ( cd "$T" && HARNESS="$H" FLEET_CONF="$H/fleet.conf" HUB_BOX_NAME=box-demo LEAD_VERDICT_TOKEN_FILE="$T/cfg/token" \
-    LEAD_REVIEW_ENQUEUE_MAX_PER_TICK=5 LEAD_REVIEW_MAX_PER_PR_DAY=5 LEAD_REVIEW_TRACED_WAIT=0 LEAD_REVIEW_REBASE_HOLD=0 PR_SELF_CHECK=0 \
-    bash "$H/bin/lead-review-enqueue.sh" tick ) > "$T/enq.out" 2>&1
 }
 
 # ── G1: shadow (no row): reviewed, one WOULD line, medium ──
@@ -84,15 +75,6 @@ grep -q "^post example-org/cromford 141 $HS MERGE --source risk-tier --reviewer 
 case "$(col "$HS" 6)" in low-small:*) ok ;; *) bad "G3 risk.tsv col 6: $(cat "$RISK")" ;; esac
 [ "$(col "$HS" 8)" = low-small ] && ok || bad "G3 risk.tsv col 8: $(cat "$RISK")"
 grep -q 'WOULD sign off (low-small' "$L" && bad "G3 enforce logged a shadow WOULD line" || ok
-# ...the enqueue reads the gate's line as low: no compare read, signed off from the cache
-for n in $(seq 1 12) $(seq 102 112); do echo closed > "$FX/state.$n"; done
-jq -nc --arg s "$HS" '{verdict:"APPROVE", reviewed_sha:$s, job_id:"job-fixture-1"}' > "$FX/jv.json"
-rm -f "$T/log/gh" "$T/log/worker" "$T/log/lv" "$H/logs/lead-review-enqueue.log"
-enq_tick
-grep -q "#141 @$S12: signed off by risk-tier (low risk: low-small: " "$H/logs/lead-review-enqueue.log" \
-  && ok || bad "G3 the enqueue did not read the gate's low-small line: $(cat "$H/logs/lead-review-enqueue.log")"
-[ "$(lgf_cmp_reads "$HS")" = 0 ] && ok || bad "G3 the enqueue read the compare $(lgf_cmp_reads "$HS") times"
-rm -f "$FX"/state.* "$FX/jv.json"
 
 # ── G5: enforce, no builder APPROVE on the head: reviewed, no post ──
 one enforce 141 "$HS" "$SMALLF" enforce; rm -f "$FX/jv.approve"

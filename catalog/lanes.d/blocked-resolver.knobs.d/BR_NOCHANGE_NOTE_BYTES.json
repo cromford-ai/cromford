@@ -1,0 +1,10 @@
+{
+  "env": "BR_NOCHANGE_NOTE_BYTES",
+  "type": "int",
+  "default": 3000,
+  "min": 200,
+  "max": 20000,
+  "unit": "bytes",
+  "read_in": "bin/blocked-resolver.d/bh-8592-fixround-nochange.sh",
+  "note": "BH-8592: bytes of a no-change fix round's own commit messages that its PR comment carries. A value outside 200..20000 reads as 3000."
+}
