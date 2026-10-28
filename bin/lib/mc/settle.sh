@@ -600,19 +600,27 @@ mc_settle_merged() { # … <head> [merge-sha]
     # the other one does not say it twice. The strip word is logged beside the
     # close so `strip-failed` stays greppable on a box (BH-637 §3b: the label is
     # the handoff, and a shipped issue still carrying it re-offers finished work
-    # to every selector in the fleet). A failure takes the branch it always did:
-    # bin/reconcile-prs.sh is the retry lane here.
+    # to every selector in the fleet). A failure leaves `issue-close-owed` in the
+    # record, the marker sweep_close_issue writes: the PR url is already in the
+    # done-file, and bin/merge-sweep.sh lets a done record through only while it
+    # owes a close (BH-7731). bin/reconcile-prs.sh closes no issue at all.
     # BH-2477: the PR url lets the close-out see a merge that only SLICED the
     # issue (no Closes keyword, a C<n> plan, open children); that one is left
     # open with a "Slice delivered" comment and logged as exactly that.
     if [ -n "$issue" ]; then
+      [ -n "$rec" ] && [ -d "$rec" ] && touch "$rec/issue-close-owed" 2>/dev/null
       if w=$(mc_close_shipped "$slug" "$issue" "Merged in $url (merge conductor$note). Closing this issue." "$rec" "$url"); then
+        [ -n "$rec" ] && rm -f "$rec/issue-close-owed"
         case "$w" in
           kept-slice*) mc_log "$key left issue #$issue open, slice delivered ($w)" ;;
           *)           mc_log "$key closed issue #$issue (ai-build: $w)" ;;
         esac
       else
-        mc_log "$key merged but issue #$issue could not be closed ($w, HTTP $(mc_rest_status)) — bin/reconcile-prs.sh re-reads merged PRs and closes it on a later tick"
+        if [ -n "$rec" ] && [ -f "$rec/issue-close-owed" ]; then
+          mc_log "$key merged but issue #$issue could not be closed ($w, HTTP $(mc_rest_status)) — merge-sweep retries it (issue-close-owed in $(basename "$rec"))"
+        else
+          mc_log "$key merged but issue #$issue could not be closed ($w, HTTP $(mc_rest_status)) — no build record, so no retry marker; bin/merged-build-closeout.sh finds it"
+        fi
       fi
     fi
   fi

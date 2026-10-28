@@ -1,0 +1,15 @@
+# issue	issue_title	pr	pr_title	head_ref	merged_at	body	files	timeline
+# project-6: the 13 tickets of BH-7731 comment 6294092080. #1936 and #2004 are the live PR numbers; the 11 slice PR numbers 2101-2110 and 2008's title are fixture values.
+1364	TK-1364: Versions	1936	TK-1364: TK-1327.4: Versions	ticket/TK-1364	2026-10-20T06:09:00Z	## Summary\nCloses #1364\n\nharness build	code	none
+1741	TK-1741: Drive	2004	TK-1741: Drive 1/6: connect	ticket/TK-1741	2026-10-20T06:10:00Z	## Summary\nCloses #1741\n\nharness build	code	none
+1525	TK-1525: fixture	2008	TK-1525: fixture slice C1	ticket/TK-1525	2026-10-19T10:00:00Z	Part of #1525\nSLICE: C1 of #1525\n\nharness build	code	none
+1523	TK-1523: fixture	2101	TK-1523: fixture slice C0	ticket/TK-1523	2026-10-19T09:00:00Z	Part of #1523\nSLICE: C0 of #1523\n\nharness build	code	none
+1527	TK-1527: fixture	2102	TK-1527: fixture slice C0	ticket/TK-1527	2026-10-19T09:00:00Z	Part of #1527\nSLICE: C0 of #1527\n\nharness build	code	none
+1531	TK-1531: fixture	2103	TK-1531: fixture slice C0	ticket/TK-1531	2026-10-19T09:00:00Z	Part of #1531\nSLICE: C0 of #1531\n\nharness build	code	none
+1545	TK-1545: fixture	2104	TK-1545: fixture slice C0	ticket/TK-1545	2026-10-19T09:00:00Z	Part of #1545\nSLICE: C0 of #1545\n\nharness build	code	none
+1559	TK-1559: fixture	2105	TK-1559: fixture slice C0	ticket/TK-1559	2026-10-19T09:00:00Z	Part of #1559\nSLICE: C0 of #1559\n\nharness build	code	none
+1577	TK-1577: fixture	2106	TK-1577: fixture slice C0	ticket/TK-1577	2026-10-19T09:00:00Z	Part of #1577\nSLICE: C0 of #1577\n\nharness build	code	none
+1580	TK-1580: fixture	2107	TK-1580: fixture slice C0	ticket/TK-1580	2026-10-19T09:00:00Z	Part of #1580\nSLICE: C0 of #1580\n\nharness build	code	none
+1581	TK-1581: fixture	2108	TK-1581: fixture slice C0	ticket/TK-1581	2026-10-19T09:00:00Z	Part of #1581\nSLICE: C0 of #1581\n\nharness build	code	none
+1686	TK-1686: fixture	2109	TK-1686: fixture slice C0	ticket/TK-1686	2026-10-19T09:00:00Z	Part of #1686\nSLICE: C0 of #1686\n\nharness build	code	none
+1993	TK-1993: fixture	2110	TK-1993: fixture slice C0	ticket/TK-1993	2026-10-19T09:00:00Z	Part of #1993\nSLICE: C0 of #1993\n\nharness build	code	none

@@ -37,3 +37,7 @@ state/overlap-after/$p/*
 state/preplan-files/$p-*
 # The dispatch-now markers bin/cmd-dispatch-issue.sh writes (bin/fly-pool.sh:179)
 state/dispatch-now/$p/*
+# BH-7731: the merged-PR list both merge lanes append on a merge, read by
+# pool_key_slice_merged (bin/fly-pool.sh:1950). Read only: an absent copy makes
+# the helper answer rc 1, which keeps a queued blocker in flight (today's rule).
+state/merge-sweep-done.txt

@@ -1,0 +1,22 @@
+# issue	issue_title	pr	pr_title	head_ref	merged_at	body	files	timeline
+# lab: the decision-rule tables of the BH-7731 plan (M1-M11, D1-D9). Every value here is a fixture.
+1364	LB-1364: m1	3001	LB-1364: LB-1327.4: Versions	feature/x	2026-10-20T06:00:00Z	Closes #1364	code	none
+1741	LB-1741: m2	3002	LB-1741: Drive 1/6	feature/y	2026-10-20T06:00:00Z	Fixes #1741	code	none
+301	LB-301: m3	3003	lb-301: lower case	feature/z	2026-10-20T06:00:00Z	Closes #301	code	none
+302	LB-302: m4	3004	rerun with another title	ticket/lb-302-r2	2026-10-20T06:00:00Z	Closes #302	code	none
+303	LB-303: m5	3005	LB-303.2: a slice	ticket/lb-303-2	2026-10-20T06:00:00Z	Closes #303	code	none
+304	LB-304: m6	3006	LB-3040: near miss	ticket/lb-3040	2026-10-20T06:00:00Z	Closes #304	code	none
+305	LB-305: m7a	3007	LB-1/LB-305: two keys	feature/a	2026-10-20T06:00:00Z	Closes #305	code	none
+306	LB-306: m7b	3008	LB-306, LB-307: two keys	feature/b	2026-10-20T06:00:00Z	Closes #306	code	none
+308	LB-308: m8	3009	chore: Refs LB-308	feature/c	2026-10-20T06:00:00Z	Closes #308	code	none
+309	LB-309: m9	3010	LB-309: closed unmerged	ticket/lb-309	-	Closes #309	code	none
+310	LB-310: m10	3011	LB-310: before since	ticket/lb-310	2026-09-01T00:00:00Z	Closes #310	code	none
+311	LB-311: m11	3012	LB-311: older	feature/d	2026-10-19T00:00:00Z	Refs #311	code	none
+-	-	3013	LB-311: newer	feature/e	2026-10-20T00:00:00Z	Closes #311	code	none
+312	LB-312: d3	3014	LB-312: slice C1	ticket/lb-312	2026-10-20T06:00:00Z	Part of #312\nSLICE: C1 of #312	code	none
+313	LB-313: d5	3015	LB-313: title only	ticket/lb-313	2026-10-20T06:00:00Z	Refs #313	code	none
+314	LB-314: d6	3016	LB-314: docs	ticket/lb-314	2026-10-20T06:00:00Z	Closes #314	docs	none
+315	LB-315: d7	3017	LB-315: near miss	ticket/lb-315	2026-10-20T06:00:00Z	Closes #3150	code	none
+316	LB-316: d8	3018	LB-316: open child	ticket/lb-316	2026-10-20T06:00:00Z	Closes #316	code	child:900
+317	LB-317: d9	3019	LB-317: timeline down	ticket/lb-317	2026-10-20T06:00:00Z	Closes #317	code	broken
+319	no key in this title	-	-	-	-	-	-	none

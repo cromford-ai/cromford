@@ -1,0 +1,55 @@
+{
+  "libs": [
+    {
+      "id": "merged-build-closeout",
+      "file": "bin/merged-build-closeout.sh",
+      "note": "BH-7731. The operator backfill that closes open ai-build issues whose build PR merged without a closing keyword. Not a cron lane: an operator runs it on the hub. Applied with lib_env_apply merged-build-closeout at the top of the script. Each knob keeps its code literal only as the fallback named on its read.",
+      "knobs": [
+        {
+          "env": "MBC_PR_PAGE_CAP",
+          "type": "int",
+          "default": 10,
+          "min": 1,
+          "max": 100,
+          "unit": "pages",
+          "zero_means": null,
+          "required": false,
+          "note": "Pages of 100 closed PRs one project reads, newest update first, before the read counts as capped. A capped read marks every issue of that project skip:capped (never keep:no-pr). Raise it when a project has more than 100 x this many PRs closed since --since. Non-number or below 1 reads 10."
+        },
+        {
+          "env": "MBC_FILES_PAGE_CAP",
+          "type": "int",
+          "default": 3,
+          "min": 1,
+          "max": 30,
+          "unit": "pages",
+          "zero_means": null,
+          "required": false,
+          "note": "Pages of 100 files read from one merged PR to decide docs-only. Past this the issue is skip:files-capped. Non-number or below 1 reads 3."
+        },
+        {
+          "env": "MBC_ISSUE_CAP",
+          "type": "int",
+          "default": 1000,
+          "min": 1,
+          "max": 10000,
+          "unit": "issues",
+          "zero_means": null,
+          "required": false,
+          "note": "Most open ai-build issues read per project (the limit passed to gh_rest_issue_list). Non-number or below 1 reads 1000."
+        },
+        {
+          "env": "MBC_SINCE_DAYS",
+          "type": "int",
+          "default": 14,
+          "min": 1,
+          "max": 365,
+          "unit": "days",
+          "zero_means": null,
+          "required": false,
+          "note": "The default --since window: merged PRs from this many days before now. An explicit --since wins. Non-number or below 1 reads 14."
+        }
+      ]
+    }
+  ]
+}

@@ -808,7 +808,11 @@ while IFS=$'\t' read -r PROJ D BOR_KEY BOR_R BOR_TS; do
     continue
   fi
   # <<< project hold
-  sweep_seen "$PR" && continue
+  # A done record that still owes its issue close is let through (BH-7731): the
+  # conductor records the merge before its close-out, so a failed close would
+  # otherwise be skipped here for ever. The PR reads MERGED and the BH-784 retry
+  # below runs. `-/issue-close-owed` never exists, so a ledger-only row is skipped.
+  sweep_seen "$PR" && [ ! -f "$D/issue-close-owed" ] && continue
   # A LEDGER-ONLY RECORD IS NEVER MERGED (BH-2348). No local dir means no
   # review.md, no MIGRATION GATE grep and no REBASE note to read, and merging on
   # job_verdict alone would be a new merge path (guardrail 1). Held, logged once

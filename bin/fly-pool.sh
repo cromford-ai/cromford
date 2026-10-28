@@ -1946,6 +1946,22 @@ pool_after_churned() {
   case "$rt" in ''|*[!0-9]*) return 1 ;; esac
   [ "$rn" -ge 3 ] && [ $(( $(date -u +%s) - rt )) -lt 86400 ]
 }
+# pool_key_slice_merged <key> — rc 0 when a local build record for <key>
+# (builds/pool-<P>-<key>-*/RESULT or builds/<P>-<key>-*/RESULT, the record
+# names mc_record_for reads) has line 1 `PR_CREATED <url>` and that url is a line of
+# state/merge-sweep-done.txt, which both merge lanes write on a merge. rc 1
+# otherwise. Local files only, no network read.
+pool_key_slice_merged() {
+  local key="$1" f url done="$HARNESS/state/merge-sweep-done.txt"
+  [ -n "$key" ] && [ -r "$done" ] || return 1
+  for f in "$HARNESS/builds/pool-$P-$key-"*/RESULT "$HARNESS/builds/$P-$key-"*/RESULT; do
+    [ -r "$f" ] || continue
+    url=$(head -n 1 "$f" 2>/dev/null)
+    case "$url" in "PR_CREATED https://"*) url="${url#PR_CREATED }"; url="${url%% *}" ;; *) continue ;; esac
+    grep -qxF "$url" "$done" && return 0
+  done
+  return 1
+}
 # pool_after_open <blocker-key> — rc 0 when the blocker still holds: it is in
 # flight in this pool (a pool json or a queue file names it, or its queue row is
 # queued/claimed), or an open PR is on its branch, on a `-r<N>` re-run branch, or
@@ -1955,20 +1971,26 @@ pool_after_churned() {
 # spawn_one runs in the background and moves the queue file away BEFORE it
 # writes the pool json, so for that moment neither file names the key, and a
 # later row in the same tick that waits on it would read it as done.
+# A QUEUED BLOCKER WHOSE SLICE MERGED IS NOT IN FLIGHT (BH-7731). A multi-slice
+# ticket stays open after a slice merges, and its next slice is queued but not
+# built. A queue file or a `queued` row then held every sibling until the
+# 360-min ceiling. When pool_key_slice_merged says the key's build PR merged,
+# a queued (not claimed) blocker is judged by its PR reads alone.
 pool_after_open() {
-  local other="$1" st
+  local other="$1" st queued=0
   case "${TICK_KEYS:-}" in *" $other "*) return 0 ;; esac
   grep -lsE "\"key\": *\"$other\"" "$POOL"/*.json >/dev/null 2>&1 && return 0
-  [ -e "$QDIR/$other.json" ] && return 0
+  [ -e "$QDIR/$other.json" ] && queued=1
   # BH-7706: the tick read the queued and claimed rows once (pdc_queue_prime).
   # From a complete listing a key that is absent is neither; any other listing
   # leaves the per-key read below.
   if [ "${_PDC_QOK:-0}" = 1 ]; then
-    case "${_PDC_QSTATE[$other]:-}" in queued|claimed) return 0 ;; esac
+    case "${_PDC_QSTATE[$other]:-}" in claimed) return 0 ;; queued) queued=1 ;; esac
   elif command -v queue_status >/dev/null 2>&1; then
     st=$(queue_status "$P" "$other" 2>/dev/null) || st=""
-    case "$st" in queued|claimed) return 0 ;; esac
+    case "$st" in claimed) return 0 ;; queued) queued=1 ;; esac
   fi
+  [ "$queued" = 1 ] && ! pool_key_slice_merged "$other" && return 0
   pr_exists_for_key_rest "$other"
   case $? in 0) return 0 ;; 1) ;; *) return 2 ;; esac
   pr_open_for_key_any_rest "$other"
