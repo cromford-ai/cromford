@@ -8,7 +8,11 @@
 # workers get ONE prequeue-group-gate.yml run per (repo, main) through
 # pq_group_flush (bin/lib/mc-prequeue.d/group.sh, sourced by
 # bin/lib/mc-prequeue.sh). No open group: no call. No lib: no-op.
+# BH-8610: before the flush, pq_group_release_sweep (mc-prequeue.d/
+# group-release.sh) reads each dispatched group's completed run once and
+# releases its members from the backstop's unchanged-row skip.
 mc_pq_group_tick_end() {
+  declare -F pq_group_release_sweep >/dev/null 2>&1 && pq_group_release_sweep "$1"
   declare -F pq_group_flush >/dev/null 2>&1 || return 0
   pq_group_flush "$1"
   return 0

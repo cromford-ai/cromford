@@ -23,6 +23,18 @@
 # A head that asks after the flush opens the next group. A dispatched group
 # (`.run`) is never flushed again.
 #
+# THE SHARE RULE (BH-8610, knob MC_PREQUEUE_GROUP_SHARE_S, default 300, 0 = the
+# BH-8327 rule). The backstop and the wakes start one keyed conductor run per
+# PR (BH-6000), each with its own tick id. Under the BH-8327 rule each of them
+# opened its own group, and each flush abandoned the others' groups: a re-gate
+# of 6 PRs after a main move became n=1 groups and abandons. Now a head may
+# also join an open group of this repo and main that ANOTHER run opened less
+# than the knob's seconds ago, and it writes `<gid>.joined.<tick>`. A flush
+# dispatches an open group of its own tick, or one this run joined that is
+# still younger than the knob. Every other open group is abandoned as before,
+# so a run with no member in a group still abandons it. The completed group
+# run is read on every tick by pq_group_release_sweep (group-release.sh).
+#
 # NOT GROUPED, per head as before: the knob is 0; the repo has no
 # prequeue-group-gate.yml (probe 404, or a probe that is unreadable); a named
 # suites run (batch-solo.sh calls pq_dispatch directly). A per-PR machine run
@@ -40,6 +52,11 @@
 #       one `<num> <head>` line per member
 #   <gid>.verdicts      one `<head> <verdict> <run_id> <suites|-> [why]` line
 #                       per member, written once from the completed run
+#   <gid>.joined.<tick> empty: the run <tick> has a member in this open group
+#                       (BH-8610); removed when the group is dispatched or
+#                       abandoned
+#   <gid>.released      `released <epoch> <n>`: the sweep released the members
+#                       (BH-8610, group-release.sh)
 #   <gid>.<head>.why|fail|timing  that head's invariant sidecars
 # And next to each member's cache entry: `<path>.group`, one line `<gid>`.
 #
@@ -50,6 +67,8 @@
 #                           opens the next one. The jobs read asks for MAX + 1
 #                           jobs (the plan job and the gate jobs).
 #   MC_PREQUEUE_GROUP_PAGE  runs per run-list read (default 30)
+#   MC_PREQUEUE_GROUP_SHARE_S  seconds another run's open group stays joinable
+#                           (default 300, 0 = same run only; THE SHARE RULE)
 # The group lock waits MC_PREQUEUE_GIT_LOCK_WAIT_S; the group dispatch is
 # bounded by MC_PREQUEUE_CALL_BUDGET_S (0 = no bound).
 #
@@ -66,7 +85,7 @@
 PQ_GROUP_WF=prequeue-group-gate.yml
 case " ${PQ_KNOB_DEFAULTS:-} " in
   *" MC_PREQUEUE_GROUP="*) ;;
-  *) PQ_KNOB_DEFAULTS="${PQ_KNOB_DEFAULTS:-} MC_PREQUEUE_GROUP=1 MC_PREQUEUE_GROUP_MAX=10 MC_PREQUEUE_GROUP_PAGE=30" ;;
+  *) PQ_KNOB_DEFAULTS="${PQ_KNOB_DEFAULTS:-} MC_PREQUEUE_GROUP=1 MC_PREQUEUE_GROUP_MAX=10 MC_PREQUEUE_GROUP_PAGE=30 MC_PREQUEUE_GROUP_SHARE_S=300" ;;
 esac
 
 # pq_group_title <gid> <main> — the run-name of prequeue-group-gate.yml.
@@ -130,10 +149,14 @@ pq_group_join() {
     [ -n "$(pq_cache_get "$path")" ] && exit 3
     flock -w "$w" 8 || exit 3
     max=$(pq_knob MC_PREQUEUE_GROUP_MAX); tick="${MC_TICK_ID:--}"; g=""; n=0
+    share=$(pq_knob MC_PREQUEUE_GROUP_SHARE_S); now=$(date +%s)
     for f in "$gd/${slug//\//_}_${main}_"*.open; do
       [ -r "$f" ] || continue
-      read -r st _ tk _ < "$f"
-      [ "$st" = open ] && [ "$tk" = "$tick" ] || continue
+      read -r st oat tk _ < "$f"
+      [ "$st" = open ] || continue
+      # THE SHARE RULE: this run's group, or another run's young one.
+      [[ "$oat" =~ ^[0-9]+$ ]] || oat=0
+      [ "$tk" = "$tick" ] || { [ "$share" -gt 0 ] && [ $((now - oat)) -lt "$share" ]; } || continue
       n=$(( $(grep -c . "$f") - 1 ))
       [ "$n" -lt "$max" ] && { g="$f"; break; }
     done
@@ -150,6 +173,7 @@ pq_group_join() {
       grep -vx "$num $head" "$g" | { read -r l1; _pq_gwrite "$g" "$l1"; }
       exit 4
     fi
+    : > "$gd/$gid.joined.${tick//[^A-Za-z0-9._-]/_}" 2>/dev/null
     printf '%s %s\n' "$gid" "$((n + 1))"
   } 9>"$lk" 8>"$glk" ) || rc=$?
   [ "$rc" = 0 ] || return "$rc"
@@ -186,13 +210,21 @@ pq_group_flush() {
       mc_log "PREQUEUE group-flush $slug: the group lock was busy; the next run flushes or abandons"; exit 0
     fi
     knob=$(pq_knob MC_PREQUEUE_GROUP); tick="${MC_TICK_ID:--}"; b=$(pq_knob MC_PREQUEUE_CALL_BUDGET_S)
+    share=$(pq_knob MC_PREQUEUE_GROUP_SHARE_S); now=$(date +%s)
     for f in "$gd/${slug//\//_}_"*.open; do
       [ -r "$f" ] || continue
       read -r st oat tk m < "$f"
       gid="${f##*_}"; gid="${gid%.open}"
       [ "$st" = open ] && [[ "$m" =~ ^[0-9a-f]{40}$ ]] || { rm -f "$f"; continue; }
       mapfile -t mem < <(_pq_gmembers "$f" "$slug" "$gid" "$m")
-      if [ "$tk" != "$tick" ] || [ "$knob" = 0 ] || [ "${#mem[@]}" = 0 ]; then
+      # THE SHARE RULE: another run's group is this run's to dispatch when this
+      # run joined it and it is still younger than the knob.
+      mine=0; [ "$tk" = "$tick" ] && mine=1
+      [[ "$oat" =~ ^[0-9]+$ ]] || oat=0
+      [ "$mine" = 0 ] && [ "$share" -gt 0 ] && [ -e "$gd/$gid.joined.${tick//[^A-Za-z0-9._-]/_}" ] \
+        && [ $((now - oat)) -lt "$share" ] && mine=1
+      rm -f "$gd/$gid.joined."* 2>/dev/null
+      if [ "$mine" = 0 ] || [ "$knob" = 0 ] || [ "${#mem[@]}" = 0 ]; then
         why="the group is from another run"; [ "$knob" = 0 ] && why="MC_PREQUEUE_GROUP=0"; [ "${#mem[@]}" = 0 ] && why="no member waits on it"
         for r in "${mem[@]}"; do read -r _ _ p _ <<<"$r"; rm -f "$p" "$p.group"; done
         rm -f "$f"

@@ -1,0 +1,10 @@
+{
+  "env": "MC_PREQUEUE_GROUP_SHARE_S",
+  "type": "int",
+  "default": 300,
+  "min": 0,
+  "max": 1800,
+  "unit": "seconds",
+  "read_in": "bin/lib/mc-prequeue.d/group.sh",
+  "note": "BH-8610: a READY head may join an open prequeue group of its repo and main that ANOTHER conductor run (a keyed backstop or wake run) opened less than this many seconds ago, and that run's flush may dispatch it (bin/lib/mc-prequeue.d/group.sh, THE SHARE RULE). So a re-gate of several PRs, each in its own keyed run, is one group run instead of n=1 groups. 300 is one backstop period (*/5). A run with no member in a group still abandons it. Per project: lane.merge-conductor.<project>.mc_prequeue_group_share_s. 0 = only the run that opened a group joins and flushes it, as before BH-8610."
+}
