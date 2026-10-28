@@ -2,7 +2,7 @@
 # bin/ci-plan-settings.sh [owner/repo] [--dry-run] — hourly projection of the
 # settings row CI_FULL_TRIGGERS into the repo Actions variable of the same name
 # (BH-6838). bin/ci-plan.sh reads the variable as the full-trigger delta over
-# catalog/ci-batch-escalate.tsv (grammar: bin/lib/ci-batch-escalate.sh). It
+# the rules in catalog/ci-batch-escalate.d/ (grammar: bin/lib/ci-batch-escalate.sh). It
 # projects the shard sizing rows CI_MAX_SHARDS and CI_SHARD_BUDGET_S the same
 # way (BH-6876), which bin/ci-plan.sh reads as its cap and per-shard budget.
 #

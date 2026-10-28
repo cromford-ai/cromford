@@ -1,0 +1,9 @@
+# The escalate and allow rows: what runs the whole corpus, and the docs and workflow edits exempt from it.
+# Seeded from catalog/ci-batch-escalate.tsv (BH-8649); the kinds are described in README.md.
+.github/	escalate	the workflow decides what runs and on which runner
+.github/workflows/*.yml	allow	a workflow edit selects the suites that read it plus the always set; the nightly corpus runs the rest (BH-6876)
+.github/workflows/*.yaml	allow	a workflow edit selects the suites that read it plus the always set; the nightly corpus runs the rest (BH-6876)
+.mergify.yml	escalate	the merge queue's own conditions
+catalog/ci-batch-escalate.tsv	escalate	this file; bin/ci-plan.sh reads it through bin/lib/ci-batch-escalate.sh, and no other row covers it; an add-only diff selects instead (BH-6371), and a diff that deletes no row is infra (BH-7287)
+bin/lib/*.md	allow	a doc never escalates on its own (BH-6059)
+catalog/*.md	allow	a doc never escalates on its own (BH-6059)

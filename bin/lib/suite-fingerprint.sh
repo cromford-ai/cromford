@@ -25,7 +25,7 @@
 # the fingerprint and the suite runs.
 #
 # v2 (BH-6406): a tests/lib/ or catalog/ path is NOT infra as a rule. It is
-# infra only when the tree's catalog/ci-batch-escalate.tsv escalates it (the
+# infra only when the tree's rules in catalog/ci-batch-escalate.d/ escalate it (the
 # global helpers, e.g. tests/lib/scratch.sh), when no suite reaches it (a
 # helper no suite names after the closure, a catalog/ file with no specific
 # map row), or when the rules cannot be read (then every such path is, the

@@ -1,6 +1,6 @@
 #!/bin/bash
 # tests/ci-plan-testlib-select.bh-6371-test.sh — a merge-queue batch that
-# changes a tests/lib/ helper, or only ADDS rows to catalog/ci-batch-escalate.tsv,
+# changes a tests/lib/ helper, or only ADDS rows to the rules in catalog/ci-batch-escalate.d/,
 # runs its impact set instead of the whole corpus (BH-6371).
 #
 # WHY. catalog/ci-batch-escalate.tsv had a blanket `tests/lib/` escalate row,
@@ -30,11 +30,16 @@ set -uo pipefail
 DIR=$(cd "$(dirname "$0")/.." && pwd)
 PLAN="$DIR/bin/ci-plan.sh"
 LIB="$DIR/bin/lib/ci-batch-escalate.sh"
-TSV="$DIR/catalog/ci-batch-escalate.tsv"
 PASS=0; FAIL=0
 ok()  { PASS=$((PASS+1)); }
 bad() { FAIL=$((FAIL+1)); echo "FAIL: $1"; }
 has() { case "$2" in *"$1"*) return 0 ;; esac; return 1; }
+# The real rules, composed from catalog/ci-batch-escalate.d/ (BH-8649: the old
+# single file is retired).
+TSV="$T/composed.tsv"
+[ -d "$DIR/catalog/ci-batch-escalate.d" ] && ( . "$LIB" && unset CI_BATCH_ESCALATE_TSV && cbe_rules "$DIR" ) > "$TSV" \
+  && grep -q $'\tescalate\t' "$TSV" \
+  || { echo "FAIL: cannot compose the real rules"; exit 1; }
 
 # ── The real selector, with the map built once.
 "$DIR/bin/test-impact.sh" map --out "$T/map" || { echo "FAIL: the map could not be built"; exit 1; }
@@ -119,8 +124,8 @@ escalates "T2 order" "unmapped path tests/lib/zz-bh6371-orphan.sh" tests/lib/gh-
 bplan tests/lib/scratch.sh
 { [ "$RC" = 0 ] && [ "$(out mode)" = infra ] && [ "$(out escalation)" = - ] && [ "$(out count)" -lt "$(out total)" ]; } && ok \
   || bad "T2b: tests/lib/scratch.sh must be mode=infra (rc=$RC mode=$(out mode) escalation='$(out escalation)') [$OUT]"
-grep -qx $'tests/lib/scratch.sh\tinfra\t.*' "$TSV" && ok || bad "T2b: the tsv must carry the tests/lib/scratch.sh infra row"
-grep -qx $'tests/lib/\tescalate\t.*' "$TSV" && bad "T2b: the tsv still has the blanket tests/lib/ escalate row" || ok
+grep -qx $'tests/lib/scratch.sh\tinfra\t.*' "$TSV" && ok || bad "T2b: the rules must carry the tests/lib/scratch.sh infra row"
+grep -qx $'tests/lib/\tescalate\t.*' "$TSV" && bad "T2b: the rules still have the blanket tests/lib/ escalate row" || ok
 
 # ── T2c. a doc under tests/lib/ never goes full.
 selected T2c tests/lib/README.md
@@ -134,11 +139,13 @@ R=$(env -u TI_BATCH_SELECT "$T/impact.sh" select --map-only --changed "$T/npr" -
 has "map-only: CI runs the corpus, full: infra change (tests/lib/gh-shim-stub.sh)" "$R" && ok \
   || bad "N-PR: the builder gate's --map-only select must still say CI runs the corpus: $R"
 
-# ── A scratch repo with the planner, its lib and the real rules file.
+# ── A scratch repo with the planner, its lib and the real rules, composed into
+# one fragment ($RF).
 G="$T/repo"; mkdir -p "$G/catalog"
 scratch_install_closure bin/ci-plan.sh "$G" > /dev/null || { echo "FAIL: cannot install bin/ci-plan.sh's closure"; exit 1; }
 [ -f "$G/bin/lib/ci-batch-escalate.sh" ] || { echo "FAIL: the closure has no bin/lib/ci-batch-escalate.sh"; exit 1; }
-cp "$TSV" "$G/catalog/ci-batch-escalate.tsv"
+RF=catalog/ci-batch-escalate.d/rules.tsv
+mkdir -p "$G/catalog/ci-batch-escalate.d" && cp "$TSV" "$G/$RF"
 # The stub selector records what it was asked and answers with two suites.
 cat > "$G/impact.sh" <<'EOF'
 #!/bin/bash
@@ -164,7 +171,7 @@ BASE=$(git -C "$G" rev-parse HEAD)
 
 # edit <tag> <sed-or-append-cmd> — reset the rules file to the base, change it, commit
 edit() {
-  git -C "$G" checkout -q "$BASE" -- catalog/ci-batch-escalate.tsv
+  git -C "$G" checkout -q "$BASE" -- $RF
   ( cd "$G" && eval "$2" ) || { bad "$1: the edit failed"; return 1; }
   git -C "$G" -c user.email=t@example.invalid -c user.name=t commit -qam "$1" --allow-empty
 }
@@ -177,7 +184,7 @@ gplan() {
   GO=$(cat "$G/go" 2>/dev/null)
 }
 # diffof — the rules file's -U0 diff, base to head, as the planner reads it
-diffof() { git -C "$G" diff --no-renames -U0 "$BASE" HEAD -- catalog/ci-batch-escalate.tsv > "$T/u.diff"; }
+diffof() { git -C "$G" diff --no-renames -U0 "$BASE" HEAD -- $RF > "$T/u.diff"; }
 cbe_add() { ( . "$G/bin/lib/ci-batch-escalate.sh" || exit 9; cbe_add_only "$@" ); }
 # addonly <tag> <want-rc> [want-out] — cbe_add_only over the current diff
 addonly() {
@@ -190,17 +197,17 @@ ROW_WRK=$'zz-bh6371-wrk/\tworker\ta path the worker reads (fixture)'
 ROW_ALW=$'zz-bh6371-doc.md\tallow\ta doc (fixture)'
 
 # ── U1-U8. cbe_add_only over real `git diff -U0` output.
-edit U1 "printf '%s\n' \"\$ROW_SPA\" >> catalog/ci-batch-escalate.tsv"; addonly "U1 added spa" 0 spa
-edit U2 "printf '%s\n' \"\$ROW_ESC\" >> catalog/ci-batch-escalate.tsv"; addonly "U2 added escalate" 0 escalate
-edit U2b "printf '%s\n%s\n%s\n' \"\$ROW_WRK\" \"\$ROW_SPA\" \"\$ROW_WRK\" >> catalog/ci-batch-escalate.tsv"; addonly "U2b kinds sorted, unique" 0 $'spa\nworker'
-edit U3 "printf '%s\n' \"\$ROW_ALW\" >> catalog/ci-batch-escalate.tsv"; addonly "U3 added allow" 1
-edit U4 "sed -i '/^bin\/test-tiers.sh\t/d' catalog/ci-batch-escalate.tsv"; addonly "U4 removed row" 1
-edit U5 "sed -i 's/^\(bin\/ci-plan.sh\tescalate\t\).*/\1the planner (changed)/' catalog/ci-batch-escalate.tsv"; addonly "U5 changed row" 1
-edit U6 "printf '# a new comment\n' >> catalog/ci-batch-escalate.tsv"; addonly "U6 comment only" 1
-edit U7 "printf 'zz-bh6371-two\tspa\n' >> catalog/ci-batch-escalate.tsv"; addonly "U7 two columns" 1
-edit U7b "printf 'zz-bh6371-case/\tSpa\tx\n' >> catalog/ci-batch-escalate.tsv"; addonly "U7b kind case" 1
-edit U7c "printf '\tspa\tno pattern\n' >> catalog/ci-batch-escalate.tsv"; addonly "U7c empty pattern" 1
-edit U7d "printf '%s\n# why\n\n' \"\$ROW_SPA\" >> catalog/ci-batch-escalate.tsv"; addonly "U7d row plus comment and blank" 0 spa
+edit U1 "printf '%s\n' \"\$ROW_SPA\" >> $RF"; addonly "U1 added spa" 0 spa
+edit U2 "printf '%s\n' \"\$ROW_ESC\" >> $RF"; addonly "U2 added escalate" 0 escalate
+edit U2b "printf '%s\n%s\n%s\n' \"\$ROW_WRK\" \"\$ROW_SPA\" \"\$ROW_WRK\" >> $RF"; addonly "U2b kinds sorted, unique" 0 $'spa\nworker'
+edit U3 "printf '%s\n' \"\$ROW_ALW\" >> $RF"; addonly "U3 added allow" 1
+edit U4 "sed -i '/^bin\/test-tiers.sh\t/d' $RF"; addonly "U4 removed row" 1
+edit U5 "sed -i 's/^\(bin\/ci-plan.sh\tescalate\t\).*/\1the planner (changed)/' $RF"; addonly "U5 changed row" 1
+edit U6 "printf '# a new comment\n' >> $RF"; addonly "U6 comment only" 1
+edit U7 "printf 'zz-bh6371-two\tspa\n' >> $RF"; addonly "U7 two columns" 1
+edit U7b "printf 'zz-bh6371-case/\tSpa\tx\n' >> $RF"; addonly "U7b kind case" 1
+edit U7c "printf '\tspa\tno pattern\n' >> $RF"; addonly "U7c empty pattern" 1
+edit U7d "printf '%s\n# why\n\n' \"\$ROW_SPA\" >> $RF"; addonly "U7d row plus comment and blank" 0 spa
 : > "$T/empty.diff"
 r=$(cbe_add "$T/empty.diff"); [ "$?" = 1 ] && [ -z "$r" ] && ok || bad "U8: an empty diff must be rc 1 (got '$r')"
 r=$(cbe_add "$T/no-such.diff"); [ "$?" = 1 ] && [ -z "$r" ] && ok || bad "U8: a missing diff must be rc 1 (got '$r')"
@@ -208,48 +215,48 @@ r=$(cbe_add); [ "$?" = 1 ] && ok || bad "U8: no argument must be rc 1"
 ( . "$G/bin/lib/ci-batch-escalate.sh" ) > "$T/src.out" 2>&1 && [ ! -s "$T/src.out" ] && ok || bad "U8: sourcing the lib must print nothing"
 
 # ── T3. an added spa row: the real planner, the real diff.
-edit T3 "printf '%s\n' \"\$ROW_SPA\" >> catalog/ci-batch-escalate.tsv"
+edit T3 "printf '%s\n' \"\$ROW_SPA\" >> $RF"
 gplan
 { [ "$RC" = 0 ] && [ "$(out mode)" = batch-selected ] && [ "$(out escalation)" = - ]; } && ok \
   || bad "T3: an add-only spa row must be batch-selected (rc=$RC mode=$(out mode) escalation='$(out escalation)') [$OUT]"
 [ "$(out spa)" = 1 ] && ok || bad "T3: an added spa row must set spa=1 (spa=$(out spa))"
 [ "$(out worker)" = 0 ] && ok || bad "T3: an added spa row must not set worker=1 (worker=$(out worker))"
 has "escalation rows added only (spa)" "$(out summary)" && ok || bad "T3: the reason must say 'escalation rows added only (spa)': '$(out summary)'"
-[ "$(cat "$G/seen.cmd" 2>/dev/null)" = select ] && grep -qx 'catalog/ci-batch-escalate.tsv' "$G/seen.changed" 2>/dev/null && ok \
-  || bad "T3: the selector must get catalog/ci-batch-escalate.tsv in its changed list (cmd=$(cat "$G/seen.cmd" 2>/dev/null))"
+[ "$(cat "$G/seen.cmd" 2>/dev/null)" = select ] && grep -qxF "$RF" "$G/seen.changed" 2>/dev/null && ok \
+  || bad "T3: the selector must get $RF in its changed list (cmd=$(cat "$G/seen.cmd" 2>/dev/null))"
 # ...and the real map selects the selector's own suites for that path.
-printf 'catalog/ci-batch-escalate.tsv\n' > "$T/t3.changed"
+printf '%s\n' "$RF" > "$T/t3.changed"
 TI_BATCH_SELECT=1 "$T/impact.sh" select --changed "$T/t3.changed" --out "$T/t3.list" 2>"$T/t3.why"
 for s in tests/ci-plan-spa-worker.bh-4969-test.sh tests/ci-plan-batch-impact.bh-4968-test.sh tests/ci-batch-escalate-narrow.bh-6059-test.sh; do
   grep -qxF "$s" "$T/t3.list" && ok || bad "T3: the real map must select $s for the rules file [$(cat "$T/t3.why")]"
 done
 
 # ── T3b. a removed row escalates.
-edit T3b "sed -i '/^bin\/test-tiers.sh\t/d' catalog/ci-batch-escalate.tsv"
+edit T3b "sed -i '/^bin\/test-tiers.sh\t/d' $RF"
 gplan
-{ [ "$(out mode)" = full ] && [ "$(out escalation)" = "selection input: catalog/ci-batch-escalate.tsv" ]; } && ok \
+{ [ "$(out mode)" = full ] && [ "$(out escalation)" = "selection input: $RF" ]; } && ok \
   || bad "T3b: a removed row must escalate (mode=$(out mode) escalation='$(out escalation)') [$OUT]"
 
 # ── T3c. an added allow row escalates.
-edit T3c "printf '%s\n' \"\$ROW_ALW\" >> catalog/ci-batch-escalate.tsv"
+edit T3c "printf '%s\n' \"\$ROW_ALW\" >> $RF"
 gplan
-{ [ "$(out mode)" = full ] && [ "$(out escalation)" = "selection input: catalog/ci-batch-escalate.tsv" ]; } && ok \
+{ [ "$(out mode)" = full ] && [ "$(out escalation)" = "selection input: $RF" ]; } && ok \
   || bad "T3c: an added allow row must escalate (mode=$(out mode) escalation='$(out escalation)') [$OUT]"
 
 # ── T3d. the rules file listed, but no diff (TI_BASE = HEAD): escalates.
-edit T3d "printf '%s\n' \"\$ROW_SPA\" >> catalog/ci-batch-escalate.tsv"
-printf 'catalog/ci-batch-escalate.tsv\n' > "$T/t3d.changed"
+edit T3d "printf '%s\n' \"\$ROW_SPA\" >> $RF"
+printf '%s\n' "$RF" > "$T/t3d.changed"
 gplan TI_BASE="$(git -C "$G" rev-parse HEAD)" CI_PLAN_CHANGED_FILE="$T/t3d.changed"
-{ [ "$(out mode)" = full ] && [ "$(out escalation)" = "selection input: catalog/ci-batch-escalate.tsv" ]; } && ok \
+{ [ "$(out mode)" = full ] && [ "$(out escalation)" = "selection input: $RF" ]; } && ok \
   || bad "T3d: an empty rules diff must escalate (mode=$(out mode) escalation='$(out escalation)') [$OUT]"
 
 # ── T3e. a base the diff cannot resolve: escalates.
 gplan TI_BASE=0000000000000000000000000000000000000bad CI_PLAN_CHANGED_FILE="$T/t3d.changed"
-{ [ "$(out mode)" = full ] && [ "$(out escalation)" = "selection input: catalog/ci-batch-escalate.tsv" ]; } && ok \
+{ [ "$(out mode)" = full ] && [ "$(out escalation)" = "selection input: $RF" ]; } && ok \
   || bad "T3e: an unresolvable base must escalate (mode=$(out mode) escalation='$(out escalation)') [$OUT]"
 
 # ── T3f. an added worker row turns the worker job on.
-edit T3f "printf '%s\n' \"\$ROW_WRK\" >> catalog/ci-batch-escalate.tsv"
+edit T3f "printf '%s\n' \"\$ROW_WRK\" >> $RF"
 gplan
 { [ "$(out mode)" = batch-selected ] && [ "$(out worker)" = 1 ] && [ "$(out spa)" = 0 ]; } && ok \
   || bad "T3f: an added worker row must be batch-selected with worker=1 spa=0 (mode=$(out mode) spa=$(out spa) worker=$(out worker)) [$OUT]"

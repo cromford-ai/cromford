@@ -1,0 +1,23 @@
+# The spa rows: paths outside console-ui/ that the console-ui job builds or tests from (BH-4969).
+# Seeded from catalog/ci-batch-escalate.tsv (BH-8649); the kinds are described in README.md.
+.github/workflows/harness-ci.yml	spa	the workflow defines the console-ui job, and a workflow edit no longer escalates (BH-6876)
+catalog/lanes.d/	spa	the lane sources the rendered registry is built from
+catalog/lanes.json	spa	the rendered lane registry
+worker/jobs/schema.sql	spa	the schema the SPA's API reads
+worker/jobs/schema.d/	spa	the fragments the SPA's API schema is composed from
+console-ui/	spa	the SPA itself (also built into cbe_affects)
+worker/jobs/src/lib/config-changes.js	spa	console-ui tests import it to pin the console's CONFIG_KINDS copy against the worker's
+worker/watchdog/src/	spa	console-ui/tests/standby-panel.bh-2641.test.js imports worker/watchdog/src/standby.js
+worker/jobs/test/fixtures/fly-idle-stop.bh-6061.json	spa	console-ui/tests/fly-idle.bh-6061.test.js reads the reaper's stop-row fixture to pin the panel against the worker's row
+worker/jobs/test/fixtures/fly-idle-destroy.bh-6877.json	spa	console-ui/tests/fly-idle.bh-6877.test.js reads the reaper's destroy-row fixture to pin the panel against the worker's row
+bin/lib/dispatch-mode.sh	spa	console-ui/tests/dispatch-mode.bh-6350.test.js runs its dm_parse to pin the console's parseModeValue against the shell's
+catalog/prompt-markers.json	spa	console-ui/src/ui/PromptEditor.js imports it (BH-7973)
+bin/ci-node-modules.sh	spa	the console-ui step that links the image's baked node_modules (BH-7255)
+bin/ci-image.sh	spa	the ci-image job that picks the container console-ui runs in (BH-7255)
+ci-images/	spa	the image console-ui runs in when CI_IMAGE is on (BH-7255)
+worker/jobs/src/lib/box-command-args.js	spa	console-ui/tests/machines-orgo-actions.bh-5750.test.js imports it (BH-5750)
+catalog/prompt-markers.json	spa	console-ui/src/ui/PromptEditor.js reads it by a relative path (BH-7973, #8154); fixes ci-plan-spa-worker X1 on main (BH-8207)
+worker/jobs/test/fixtures/roadmap-board.bh-7243.json	spa	console-ui/tests/roadmap-board.bh-7243.test.js reads the board route fixture to pin the board view against the worker answer (BH-7243.2)
+worker/jobs/src/routes/onboarding-repo.js	spa	console-ui/tests/onboard.bh-7935.test.js imports the repo-detect route to pin the Onboard screen against the worker answer (BH-7999)
+worker/jobs/src/routes/onboarding.js	spa	console-ui/tests/onboard.bh-7935.test.js imports the onboarding route to pin the Onboard screen against the worker answer (BH-7999)
+tests/fixtures/archie-fm-report.bh-4588/	spa	console-ui/tests/factory.bh-4588.test.js renders the factory report fixtures (BH-4588)

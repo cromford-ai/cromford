@@ -25,8 +25,9 @@ PASS=0; FAIL=0
 ok()  { PASS=$((PASS+1)); }
 bad() { FAIL=$((FAIL+1)); echo "FAIL: $1"; }
 
-# A copy, so a process substitution can be read more than once.
-cat "${CI_BATCH_ESCALATE_TSV:-$DIR/catalog/ci-batch-escalate.tsv}" > "$T/real.tsv" \
+# A copy of the composed rules (the fragments in catalog/ci-batch-escalate.d/,
+# BH-8649), so a process substitution can be read more than once.
+( . "$LIB" && unset CI_BATCH_ESCALATE_TSV && cbe_rules "$DIR" ) > "$T/real.tsv" \
   || { echo "FAIL: cannot read the catalog"; exit 1; }
 unset CI_BATCH_ESCALATE_TSV
 aff() { ( . "$LIB" || exit 9; cbe_affects "$@" ); }

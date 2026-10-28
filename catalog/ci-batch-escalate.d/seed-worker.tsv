@@ -1,0 +1,44 @@
+# The worker rows: paths outside worker/ that the worker-jobs job builds or tests from (BH-4969).
+# Seeded from catalog/ci-batch-escalate.tsv (BH-8649); the kinds are described in README.md.
+.github/workflows/harness-ci.yml	worker	the workflow defines the worker-jobs job, and a workflow edit no longer escalates (BH-6876)
+catalog/lanes.d/	worker	the lane sources the worker's imported registry is built from
+catalog/lanes.json	worker	the registry worker/jobs/src/lib/core.js imports
+worker/jobs/schema.sql	worker	the schema the replay step applies
+worker/jobs/schema.d/	worker	the fragments the replay step composes
+worker/	worker	the worker itself (also built into cbe_affects)
+bin/lib/jobs/	worker	the box-side jobs client the worker's routes answer
+agent-core/	worker	worker/jobs/src/routes/staff.js imports agent-core/src and its charter schema (BH-5559)
+console-ui/tests/fixtures/lane-runs.bh-6127.json	worker	worker/jobs/test/lane-runs-metrics.bh-6127.test.js checks the console panel fixture against the worker answer
+bin/lanes-build.sh	worker	the worker-jobs step that renders the registry the worker imports
+bin/worker-schema-upgrade.sh	worker	the worker-jobs step that replays schema.sql over main's
+bin/lib/d1-schema.sh	worker	the splitter bin/worker-schema-upgrade.sh sources and worker tests run
+bin/lib/hub-probes/	worker	worker/jobs/test/hub-probe-count.bh-3434.test.js reads common.sh
+bin/lib/mc/log.sh	worker	worker/jobs/test/conductor-held-nhv.bh-3777.test.js reads MC_STATES from it
+bin/agent-call.sh	worker	worker/jobs/test/egress-seed.bh-4492.test.js scans its base_url hosts
+tests/fixtures/daily-digest/	worker	the fixtures five worker/jobs/test/daily-digest*.test.js read
+tests/fixtures/migration-number/	worker	worker/jobs/test/migration-numbers.bh-7325.test.js reads the reserve body the shell test also posts (BH-7325)
+fleet.conf	worker	worker/jobs/test/routes/projects.bh-4082.test.js reads it
+catalog/llm-sites.json	worker	worker/jobs/src/lib/llm-sites-catalog.js imports it
+catalog/llm-sites.d/	worker	the fragments the worker's imported llm-sites catalog is composed from (BH-4987)
+bin/llm-sites-build.sh	worker	the worker-jobs step that composes the llm-sites catalog the worker imports
+catalog/context-budgets.json	worker	worker/jobs/src/routes/llm-sites.js imports it
+catalog/prompt-markers.json	worker	worker/jobs/src/lib/prompt-markers.js imports it
+catalog/context-budgets.d/	worker	the fragments the worker's imported budget manifest is composed from (BH-6487)
+bin/context-budgets-build.sh	worker	the worker-jobs step that composes the budget manifest the worker imports
+bin/ci-node-modules.sh	worker	the worker-jobs step that links the image's baked node_modules (BH-7255)
+bin/ci-image.sh	worker	the ci-image job that picks the container worker-jobs runs in (BH-7255)
+ci-images/	worker	the image worker-jobs runs in when CI_IMAGE is on (BH-7255)
+catalog/model-prices.json	worker	worker/jobs/test/route-rules.p4.test.js reads it
+catalog/readiness-levels.json	worker	worker/jobs/test/settings-conf-value.bh-2411.test.js reads it
+console-ui/src/lib/box-commands.js	worker	worker/jobs/test/box-command-types-drift.bh-5750.test.js imports it (BH-5750)
+mcp/lib/	worker	worker/jobs/test/box-ssh.bh-7710.test.js imports mcp/lib/tools.mjs (BH-7710)
+mcp/tools/	worker	worker/jobs/test/box-ssh.bh-7710.test.js loads the MCP tool modules in mcp/tools/ (BH-7710)
+tests/fixtures/bh-4157/	worker	worker/jobs/test/ironlaw-accept.bh-4157.test.js reads head-accept.json (BH-4157)
+tests/fixtures/bh-7636/	worker	worker/jobs/test/lane-runs-box.bh-7636.test.js reads box-placement-cases.tsv (BH-7636)
+tests/fixtures/bh-7716/	worker	worker/jobs/test/lane-dedicated.bh-7716.test.js reads the dedicated-placement fixtures (BH-7716)
+tests/fixtures/unblock/bh-7728/	worker	worker/jobs/test/unblock-metrics.bh-7728.test.js reads metrics-week.json (BH-7728)
+tests/fixtures/bh-7802/	worker	worker/jobs/test/alerts-rows.bh-7802.test.js reads resolve-rows.json (BH-7802)
+tests/fixtures/fleet-scopes.bh-7939.tsv	worker	worker/jobs/test/fleet-accounts.bh-7939.test.js reads the fleet scope fixture (BH-7976)
+tests/fixtures/lane-ports.bh-8451/	worker	worker/jobs/test/wakes-nudge-trk-key.bh-8451.test.js reads the lane-port fixtures (BH-8451)
+tests/fixtures/archie-fm-report.bh-4588/	worker	worker/jobs/test/archie-factory.bh-4588.test.js reads the factory report fixtures (BH-4588)
+bin/lib/unblock/collectors/infra.sh	worker	worker/jobs/test/box-health-collector.bh-8553.test.js reads the infra collector to pin the box_health record shape against the worker route (BH-8553)

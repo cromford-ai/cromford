@@ -68,7 +68,7 @@
 # `failing` is a comma list of `<culprit>=<verdict>`; a lint culprit is
 # `lint:<job>/<step>`. Then the summary lines: `drafts:`, `full fires: <k> of
 # <N> (unreadable <u>)`, one `row <pattern> fires <k>` per escalate row of
-# catalog/ci-batch-escalate.tsv that fired, `other full reason <r> fires <k>`,
+# the rules in catalog/ci-batch-escalate.d/ that fired, `other full reason <r> fires <k>`,
 # `median wall (min): old <x> over <k>, new est <y> over <j>`, `verdicts:`,
 # `durations:`, `weights source: <api|cache|artifact|seed|none>` (line 1 of
 # the fetched file), `corpus: <n> suites at <sha12>` (tests/*.sh +
@@ -314,8 +314,8 @@ while IFS= read -r d; do
     "$(clean "${note:--}")" >> "$TMP/rows"
 done < "$TMP/drafts.n"
 
-# Each escalate row of the committed rules (cbe_rules: the old file, then the
-# fragments, BH-8608), in that order, for the fire count.
+# Each escalate row of the committed rules (cbe_rules: the fragments in
+# LC_ALL=C name order, BH-8608, BH-8649), in that order, for the fire count.
 : > "$TMP/fires"
 awk -F'\t' 'NR > 1 && $2 == "ok" && $10 == "full" { print $14 }' "$TMP/rows" | while IFS= read -r e; do
   row=""

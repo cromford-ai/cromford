@@ -9,7 +9,7 @@
 # the last proof before a tree lands, so the failure to fear is the opposite one:
 # a batch that touched the harness's own plumbing (the runner libs, the
 # workflow, the selector, the tier file) selecting a small set and landing
-# green. Those paths are data in catalog/ci-batch-escalate.tsv, read by
+# green. Those paths are data in catalog/ci-batch-escalate.d/, read by
 # bin/lib/ci-batch-escalate.sh, and every one of them is pinned below as NEVER
 # batch-selected. BH-6059 narrowed bin/lib/ and catalog/ to the files the
 # selection reads (tests/ci-batch-escalate-narrow.bh-6059-test.sh); a bin/lib/
@@ -156,7 +156,7 @@ git -C "$DIR" archive HEAD | tar -x -C "$S4"
 # the working tree's ci-plan closure and rules, so this case tests THIS change
 rm -f "$S4/bin/ci-plan.sh" "$S4/bin/lib/ci-batch-escalate.sh"; mkdir -p "$S4/catalog"
 scratch_install_closure bin/ci-plan.sh "$S4" > /dev/null || bad "4b: cannot install ci-plan's closure"
-cp "$DIR/catalog/ci-batch-escalate.tsv" "$S4/catalog/" 2>/dev/null
+scratch_rm "$S4/catalog/ci-batch-escalate.d"; cp -r "$DIR/catalog/ci-batch-escalate.d" "$S4/catalog/"
 printf '#!/bin/bash\necho new\n' > "$S4/bin/zz-unmapped-bh4964.sh"
 "$S4/bin/test-impact.sh" map --out "$T/map4" || bad "4b: the scratch map could not be built"
 printf '#!/bin/bash\nexec "%s/bin/test-impact.sh" "$@" --map "%s"\n' "$S4" "$T/map4" > "$T/impact4.sh"; chmod +x "$T/impact4.sh"
@@ -207,7 +207,7 @@ bplan docs/x.md
 # BH-7287 a bin/lib/ selection input is an infra row, not an escalate row).
 RR="$T/rr"; mkdir -p "$RR/bin/lib" "$RR/catalog" "$RR/.github/actions/zz"
 scratch_install_closure bin/ci-plan.sh "$RR" > /dev/null || bad "7 rename: cannot install ci-plan's closure"
-cp "$DIR/catalog/ci-batch-escalate.tsv" "$RR/catalog/" 2>/dev/null
+cp -r "$DIR/catalog/ci-batch-escalate.d" "$RR/catalog/"
 printf 'name: zz\n' > "$RR/.github/actions/zz/action.yml"
 cat > "$T/fake-rr.sh" <<'FAKE'
 #!/bin/bash

@@ -24,7 +24,7 @@
 #   N5  a new top-level bin/ script: not unmapped (the bin/ scanners reach it)
 #   N6  select WITHOUT TI_BATCH_SELECT is unchanged (PR CI and the builder gate)
 #   N6b an unreadable rules file still escalates every batch
-#   N7  the real tsv has no bin/lib/ or catalog/ escalate row
+#   N7  the real rules have no bin/lib/ or catalog/ escalate row
 #   G1  every literal path in test-impact's infra list has an escalate or
 #       infra row
 set -uo pipefail
@@ -32,13 +32,18 @@ set -uo pipefail
 DIR=$(cd "$(dirname "$0")/.." && pwd)
 PLAN="$DIR/bin/ci-plan.sh"
 LIB="$DIR/bin/lib/ci-batch-escalate.sh"
-TSV="$DIR/catalog/ci-batch-escalate.tsv"
 PASS=0; FAIL=0
 ok()  { PASS=$((PASS+1)); }
 bad() { FAIL=$((FAIL+1)); echo "FAIL: $1"; }
 has() { case "$2" in *"$1"*) return 0 ;; esac; return 1; }
 cbe() { ( . "$LIB" || exit 9; cbe_reason "$1" ); }
 cbi() { ( . "$LIB" || exit 9; command -v cbe_infra > /dev/null || exit 9; cbe_infra "$1" ); }
+# The real rules, composed from catalog/ci-batch-escalate.d/ (BH-8649: the old
+# single file is retired).
+TSV="$T/composed.tsv"
+[ -d "$DIR/catalog/ci-batch-escalate.d" ] && ( . "$LIB" && unset CI_BATCH_ESCALATE_TSV && cbe_rules "$DIR" ) > "$TSV" \
+  && grep -q $'\tescalate\t' "$TSV" \
+  || { echo "FAIL: cannot compose the real rules"; exit 1; }
 
 # The derived selection inputs: what the planner, the selector, the tier step
 # and the runners source or read when CI decides what a batch runs.

@@ -1,0 +1,25 @@
+# The infra rows: the paths the selection itself runs on (mode=infra, BH-7287).
+# Seeded from catalog/ci-batch-escalate.tsv (BH-8649); the kinds are described in README.md.
+bin/ci-plan.sh	infra	the planner itself
+bin/test-impact*.sh	infra	the selector and its builder gate
+bin/test-tiers.sh	infra	the tier step that runs after the selection
+tests/lib/scratch.sh	infra	the sandbox guard every suite sources (2109 of 2147); its own suites and the canaries test a change to it (BH-7287)
+bin/lib/ci-batch-escalate.sh	infra	the rules reader bin/ci-plan.sh sources
+catalog/test-tiers.tsv	infra	the tiers bin/ci-plan.sh and bin/test-tiers.sh read
+bin/lib/test-protected.sh	infra	sourced by bin/test-tiers.sh: which suites the tier step may never drop
+catalog/test-quarantine-protected.txt	infra	read by bin/test-tiers.sh and bin/lib/test-protected.sh
+catalog/nightly-strict.txt	infra	read by bin/lib/test-protected.sh: a suite listed here is never dropped
+catalog/test-impact-always.txt	infra	the always set bin/test-impact.sh adds to every selection
+bin/lib/train-shape.sh	infra	sourced by bin/test-impact.sh: what a merge train looks like
+bin/lib/suite-runner.sh	infra	sourced by bin/test-suite-run.sh and the runners: how a suite runs
+bin/suite-reuse.sh	infra	the suite ledger plan/record (BH-5366): which suites a batch reuses instead of running
+bin/lib/suite-fingerprint.sh	infra	the suite input fingerprint (BH-5366): a change here moves every fingerprint
+bin/lib/prepush-record.sh	infra	the pre-push gate record reader bin/ci-plan.sh sources (BH-7289): which always-suites a batch drops
+catalog/test-impact-always-prepush.txt	infra	the always-suites a batch may drop for a green pre-push gate record (BH-7289)
+bin/test-suite-run.sh	infra	the suite runner the shards call
+bin/test-trace-safety.sh	infra	the trace-safety runner the workflow calls
+bin/run-tests-in-docker.sh	infra	the docker runner; decides what tree a green ran on
+bin/lib/docker-host.sh	infra	sourced by bin/run-tests-in-docker.sh: which daemon a green ran on
+bin/lib/env-path.sh	infra	sourced by bin/lib/docker-host.sh
+bin/lib/test-image-node.sh	infra	sourced by bin/run-tests-in-docker.sh: the node version the tests run on
+catalog/ci-batch-regression.d/	infra	the regression list bin/ci-plan.sh and bin/test-impact.sh read (BH-6838)

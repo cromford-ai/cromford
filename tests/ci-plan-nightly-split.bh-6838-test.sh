@@ -52,7 +52,7 @@ mkdir -p "$R/bin" "$R/tests/lib" "$R/catalog/ci-batch-regression.d" "$R/worker/j
 for s in bin/ci-plan.sh bin/test-impact.sh bin/test-impact-gate.sh bin/test-tiers.sh bin/test-impact-workflow.sh; do
   scratch_install_closure "$s" "$R" > /dev/null || { echo "FAIL: cannot install $s"; exit 1; }
 done
-cp "$DIR/catalog/ci-batch-escalate.tsv" "$R/catalog/"
+cp -r "$DIR/catalog/ci-batch-escalate.d" "$R/catalog/"
 printf '#!/bin/bash\necho widget\n' > "$R/bin/widget.sh"
 printf '#!/bin/bash\necho foo\n' > "$R/bin/foo.sh"
 printf 'GET /api/a\n' > "$R/worker/jobs/test/route-table.d/a.txt"

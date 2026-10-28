@@ -5,7 +5,7 @@
 #
 # v1 hashed every tests/lib/ and catalog/ path into infra_hash, so one helper
 # edit moved all 2,147 fingerprints and a batch could reuse nothing. v2 keeps a
-# path infra only when the tree's own catalog/ci-batch-escalate.tsv escalates
+# path infra only when the tree's own rules (catalog/ci-batch-escalate.d/) escalate
 # it, when no suite reaches it, or when the rules cannot be read. Each case is
 # a one-file commit in a committed scratch checkout carrying the real
 # bin/test-impact.sh, bin/fast-lints.sh, bin/suite-reuse.sh,
@@ -60,7 +60,8 @@ printf '# scratch v1\n' > "$R/tests/lib/scratch.sh"
 printf '# helpers v1\n' > "$R/tests/lib/README.md"
 printf '{"v":1}\n' > "$R/catalog/c1.json"
 printf '{"v":1}\n' > "$R/catalog/c2.json"
-printf 'tests/lib/scratch.sh\tescalate\tglobal\n' > "$R/catalog/ci-batch-escalate.tsv"
+mkdir -p "$R/catalog/ci-batch-escalate.d"
+printf 'tests/lib/scratch.sh\tescalate\tglobal\n' > "$R/catalog/ci-batch-escalate.d/x.tsv"
 printf '#!/bin/bash\n. "$(dirname "$0")/lib/h1.sh"\nh1\n' > "$R/tests/u1.sh"
 printf '#!/bin/bash\n. "$(dirname "$0")/lib/h3.sh"\nh3\n' > "$R/tests/u2.sh"
 printf '#!/bin/bash\nDIR=$(cd "$(dirname "$0")/.." && pwd)\ncat "$DIR/catalog/c1.json"\n' > "$R/tests/u3.sh"
@@ -101,7 +102,7 @@ ALL="$U"
 has() { grep -qxF "$(printf '%s\t%s' "$1" "$2")" "$T/in.tsv"; }
 for r in "tests/u1.sh tests/lib/h1.sh" "tests/u1.sh tests/lib/h2.sh" "tests/u1.sh tests/lib/h3.sh" \
          "tests/u3.sh catalog/c1.json" "@infra tests/lib/orphan.sh" "@infra catalog/c2.json" \
-         "@infra tests/lib/scratch.sh" "@infra catalog/ci-batch-escalate.tsv"; do
+         "@infra tests/lib/scratch.sh" "@infra catalog/ci-batch-escalate.d/x.tsv"; do
   has ${r% *} ${r#* } && ok "V8 row present: $r" || bad "V8 no row: $r"
 done
 for r in "@infra tests/lib/h1.sh" "@infra tests/lib/h2.sh" "@infra tests/lib/h3.sh" "@infra catalog/c1.json" \
@@ -140,7 +141,7 @@ G rm -q bin/lib/ci-batch-escalate.sh && G commit -qm nolib; fp "$T/v7c0"; LAST="
 check V7c v7c tests/lib/h3.sh "$ALL"
 G checkout -q HEAD~2 -- bin/lib/ci-batch-escalate.sh && G commit -qm lib-back; fp "$T/v7b0"; LAST="$T/v7b0"
 check V7c-back v7cb tests/lib/h3.sh "tests/u1.sh tests/u2.sh"
-G rm -q catalog/ci-batch-escalate.tsv && G commit -qm norules; fp "$T/v7b1"; LAST="$T/v7b1"
+G rm -q catalog/ci-batch-escalate.d/x.tsv && G commit -qm norules; fp "$T/v7b1"; LAST="$T/v7b1"
 check V7b v7b tests/lib/h3.sh "$ALL"
 
 echo "suite-fingerprint-v2: $PASS passed, $FAIL failed"

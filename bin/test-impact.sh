@@ -1147,11 +1147,11 @@ ti_inert() {
 # tree or an empty /repo.
 # A batch select (TI_BATCH_SELECT=1, BH-6059) uses the core list without
 # ^catalog/: bin/ci-plan.sh has already judged the catalogs the selection
-# reads (catalog/ci-batch-escalate.tsv: escalate or infra rows, BH-7287), and
+# reads (the rules in catalog/ci-batch-escalate.d/: escalate or infra rows, BH-7287), and
 # every other catalog/ path selects through the map or is unmapped. Every
-# literal path here has an escalate or infra row in that file
+# literal path here has an escalate or infra row in those rules
 # (tests/ci-batch-escalate-narrow.bh-6059-test.sh G1). ^tests/lib/ is out of the
-# core list too (BH-6371): the global helpers have infra rows in that file, and
+# core list too (BH-6371): the global helpers have infra rows in those rules, and
 # every other helper selects through ti_testlib_closure. The full
 # list, which the PR select and the builder gate read, adds ^tests/lib/ back.
 # It has no ^catalog/ (BH-7027): a plain select sends a catalog/ path through
@@ -1538,8 +1538,8 @@ ti_inputs() {
 #   3. a catalog/ path, not *.md, with no specific map row (ti_specific: an
 #      exact or directory row that is not a whole-tree root row);
 #   4. any other tests/lib/ or catalog/ path, not *.md, that the TREE's own
-#      rules (catalog/ci-batch-escalate.tsv plus catalog/ci-batch-escalate.d/,
-#      composed by cbe_rules, BH-8608) escalate or call infra (cbe_reason or
+#      rules (the fragments in catalog/ci-batch-escalate.d/, composed by
+#      cbe_rules, BH-8608) escalate or call infra (cbe_reason or
 #      cbe_infra, BH-7287; the global helpers). CI_BATCH_ESCALATE_TSV is
 #      unset there and never read: the fingerprint is a function of the tree.
 # A rules lib that cannot be sourced is every tests/lib/ and catalog/ path

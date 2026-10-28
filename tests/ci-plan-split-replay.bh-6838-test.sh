@@ -45,7 +45,7 @@ for s in bin/ci-plan-split-replay.sh bin/ci-plan.sh bin/test-impact.sh bin/test-
 done
 mkdir -p "$G/catalog/ci-batch-regression.d" "$G/tests/lib" "$G/worker/jobs/test/route-table.d" \
          "$G/worker/jobs/scripts" "$G/.github/workflows"
-cp "$DIR/catalog/ci-batch-escalate.tsv" "$G/catalog/" || { echo "FAIL: no escalation rules"; exit 1; }
+cp -r "$DIR/catalog/ci-batch-escalate.d" "$G/catalog/" || { echo "FAIL: no escalation rules"; exit 1; }
 cp "$DIR/tests/lib/scratch.sh" "$G/tests/lib/"
 printf 'tests/always-a-test.sh\n' > "$G/catalog/test-impact-always.txt"
 printf '# a scratch tier file\ntests/nightly-y-test.sh\tnightly\t30\t-\tfixture: a slow suite\n' > "$G/catalog/test-tiers.tsv"

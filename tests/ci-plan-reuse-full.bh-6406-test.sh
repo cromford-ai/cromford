@@ -7,7 +7,7 @@
 # bin/test-tiers.sh run in a committed scratch checkout: u1 sources
 # tests/lib/h1.sh, which names h2.sh and h3.sh; u2 sources h3.sh; u3 reads
 # catalog/c1.json; u4 sources tests/lib/scratch.sh, which the tree's
-# catalog/ci-batch-escalate.tsv escalates; tests/lib/orphan.sh is reached by
+# catalog/ci-batch-escalate.d/x.tsv escalates; tests/lib/orphan.sh is reached by
 # nothing; sa is an always suite. The ledger is the 5368 suite's:
 # SUITE_REUSE_CURL hands each request to worker.fetch over a file-backed
 # node:sqlite, seeded `ok` for the BASE tree's fingerprints as run BASEKEY.
@@ -68,7 +68,8 @@ printf 'h3() { echo v1; }\n' > "$R/tests/lib/h3.sh"
 printf 'orphan() { echo v1; }\n' > "$R/tests/lib/orphan.sh"
 printf '# scratch v1\n' > "$R/tests/lib/scratch.sh"
 printf '{"v":1}\n' > "$R/catalog/c1.json"
-printf 'tests/lib/scratch.sh\tescalate\tglobal\n' > "$R/catalog/ci-batch-escalate.tsv"
+mkdir -p "$R/catalog/ci-batch-escalate.d"
+printf 'tests/lib/scratch.sh\tescalate\tglobal\n' > "$R/catalog/ci-batch-escalate.d/x.tsv"
 printf '#!/bin/bash\n. "$(dirname "$0")/lib/h1.sh"\nh1\n' > "$R/tests/u1.sh"
 printf '#!/bin/bash\n. "$(dirname "$0")/lib/h3.sh"\nh3\n' > "$R/tests/u2.sh"
 printf '#!/bin/bash\nDIR=$(cd "$(dirname "$0")/.." && pwd)\ncat "$DIR/catalog/c1.json"\n' > "$R/tests/u3.sh"

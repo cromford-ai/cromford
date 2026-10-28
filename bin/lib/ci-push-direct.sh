@@ -35,7 +35,7 @@
 #   Builds $CH (CI_PLAN_CHANGED_FILE, else `git diff --no-renames --name-only
 #   HEAD^1 HEAD`) and sets MODE, REASON and $LIST. It ESCALATES to the full
 #   corpus (MODE=full, `TI_EVENT=push ci-select`, the reason given) on: a diff
-#   that cannot be read or is empty, a path catalog/ci-batch-escalate.tsv names
+#   that cannot be read or is empty, a path the rules in catalog/ci-batch-escalate.d/ name
 #   (cbe_reason; rules that cannot be read escalate too), test-impact's own
 #   `full:` answer, an always set that cannot be read, or a selection of every
 #   suite. Else MODE=push-direct. A failed test-impact call is rc 2 (exit),

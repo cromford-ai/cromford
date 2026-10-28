@@ -13,7 +13,9 @@
 #   C1  catalog/lanes.d/<lane>.json is bounded and holds a suite that names it
 #   C2  catalog/lanes.d/<lane>.knobs.d/<K>.json is bounded
 #   C3  catalog/pr-self-check.tsv is bounded
-#   C4  catalog/ci-batch-escalate.tsv is bounded and holds its own suite
+#   C4  a seed rules fragment, catalog/ci-batch-escalate.d/seed-infra.tsv, is
+#       bounded and holds the fragments suite (the old single file is retired,
+#       BH-8649)
 #   C5  a tests/lib/ helper (not scratch.sh) is bounded
 #   C6  an unmapped bin/lib/ file is `*` with its reason in <files>.full, and
 #       _bim_compute logs BATCH_IMPACT_FULL and BATCH_IMPACT_REACH
@@ -69,9 +71,9 @@ KNOB=$(cd "$DIR" && ls catalog/lanes.d/*.knobs.d/*.json 2>/dev/null | head -1)
 # C3, C4 — catalog TSVs read by one script.
 bounded C3 catalog/pr-self-check.tsv
 WSUITE=$(head -1 <<<"$R")
-bounded C4 catalog/ci-batch-escalate.tsv
-grep -qxF tests/ci-batch-escalate-narrow.bh-6059-test.sh <<<"$R" && ok \
-  || bad "C4 catalog/ci-batch-escalate.tsv reaches tests/ci-batch-escalate-narrow.bh-6059-test.sh"
+bounded C4 catalog/ci-batch-escalate.d/seed-infra.tsv
+grep -qxF tests/ci-batch-escalate-fragments.bh-8608-test.sh <<<"$R" && ok \
+  || bad "C4 catalog/ci-batch-escalate.d/seed-infra.tsv reaches tests/ci-batch-escalate-fragments.bh-8608-test.sh"
 
 # C5 — the first tests/lib/ helper the map names, scratch.sh and docs aside.
 HELPER=$(awk -F'\t' '$2 ~ /^tests\/lib\// && $2 !~ /\/$/ && $2 != "tests/lib/scratch.sh" && $2 !~ /\.md$/ { print $2 }' "$MAP" | LC_ALL=C sort -u | head -1)

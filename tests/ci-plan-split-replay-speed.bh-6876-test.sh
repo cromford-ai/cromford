@@ -42,7 +42,7 @@ mkrepo() {
   for s in bin/ci-plan-split-replay.sh bin/ci-plan.sh bin/test-impact.sh bin/test-tiers.sh bin/ci-durations.sh; do
     ( cd "$DIR" && scratch_install_closure "$s" "$G" ) > /dev/null || { echo "FAIL: cannot install $s's closure"; exit 1; }
   done
-  cp "$DIR/catalog/ci-batch-escalate.tsv" "$G/catalog/" && cp "$DIR/tests/lib/scratch.sh" "$G/tests/lib/" \
+  cp -r "$DIR/catalog/ci-batch-escalate.d" "$G/catalog/" && cp "$DIR/tests/lib/scratch.sh" "$G/tests/lib/" \
     || { echo "FAIL: fixture copy"; exit 1; }
   printf 'tests/always-a-test.sh\n' > "$G/catalog/test-impact-always.txt"
   printf '# a scratch tier file\n' > "$G/catalog/test-tiers.tsv"

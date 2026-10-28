@@ -1,7 +1,8 @@
 #!/bin/bash
 # tests/ci-batch-escalate-fragments.bh-8608-test.sh — the batch-escalation
-# rules are composed from catalog/ci-batch-escalate.tsv and every
-# catalog/ci-batch-escalate.d/*.tsv fragment (BH-8608, slice C0).
+# rules are composed from every catalog/ci-batch-escalate.d/*.tsv fragment
+# (BH-8608, slice C0; the old file catalog/ci-batch-escalate.tsv is retired
+# since BH-8649 and still keys the rules diff).
 #
 # WHY. Every PR that added a cross-tree row appended it to the end of one
 # file, and parallel PRs conflicted on the same last lines (#7653, #8550,
@@ -17,7 +18,8 @@
 #   P1-P10  cbe_rules_path, and the real bin/ci-plan.sh in a scratch repo
 #   L1-L13  cbe_check, and cbe_check on the real tree
 #   M1      two branches that each add a fragment merge with no conflict
-#   Q1      the real planner gives the same answers with the old file alone
+#   Q1      the real planner gives the same answers with the old file's rows
+#           (tests/fixtures/bh-8649/old-rules.tsv) and the composed rules
 #   F1      the fingerprint's @infra set reads a fragment row
 #   S1      a batch select of a changed fragment selects this suite
 #   X1      the row tests/cross-tree-rows.bh-8573-test.sh prints, in a fragment
@@ -33,20 +35,20 @@ bad() { FAIL=$((FAIL+1)); echo "FAIL: $1"; }
 TAB=$'\t'
 GC() { git -C "$1" -c user.email=t@example.invalid -c user.name=t "${@:2}"; }
 
-# mkroot <name> — a scratch root with the real lib, a one-row old file and an
-# empty fragment folder. Prints the root.
+# mkroot <name> — a scratch root with the real lib and a fragment folder that
+# holds one base fragment, 0-base.tsv, with one row. Prints the root.
 mkroot() {
   local r="$T/$1"
   mkdir -p "$r/catalog/ci-batch-escalate.d"
   scratch_install_closure bin/lib/ci-batch-escalate.sh "$r" > /dev/null || return 1
-  printf '# old file\nzz-base/\tescalate\tbase row\n' > "$r/catalog/ci-batch-escalate.tsv"
+  printf '# base fragment\nzz-base/\tescalate\tbase row\n' > "$r/catalog/ci-batch-escalate.d/0-base.tsv"
   printf '%s\n' "$r"
 }
 # inr <root> <fn> [args] — call a lib function sourced from <root>/bin/lib.
 inr() { local r="$1"; shift; ( . "$r/bin/lib/ci-batch-escalate.sh" || exit 9; "$@" ); }
 frag() { printf '%b' "$3" > "$1/catalog/ci-batch-escalate.d/$2"; }
 
-# ── R1. composition order: the old file, then fragments in LC_ALL=C order. A
+# ── R1. composition order: the fragments in LC_ALL=C order. A
 # fragment with no final newline does not glue its last row to the next one.
 R=$(mkroot r1)
 frag "$R" b.tsv 'zz-b/\tspa\tb\n'
@@ -54,13 +56,13 @@ frag "$R" a.tsv 'zz-a/\tworker\ta'
 frag "$R" B.tsv 'zz-B/\tinfra\tB\n'
 frag "$R" README.md 'zz-readme/\tescalate\tnot a source\n'
 frag "$R" x.txt 'zz-txt/\tescalate\tnot a source\n'
-want=$(printf '# old file\nzz-base/\tescalate\tbase row\nzz-B/\tinfra\tB\nzz-a/\tworker\ta\nzz-b/\tspa\tb')
+want=$(printf '# base fragment\nzz-base/\tescalate\tbase row\nzz-B/\tinfra\tB\nzz-a/\tworker\ta\nzz-b/\tspa\tb')
 got=$(LC_ALL=en_US.UTF-8 inr "$R" cbe_rules 2>/dev/null); rc=$?
 { [ "$rc" = 0 ] && [ "$got" = "$want" ]; } && ok || bad "R1: cbe_rules order (rc=$rc): [$got]"
 got=$( . "$LIB" && cbe_rules "$R" ); [ "$got" = "$want" ] && ok || bad "R1: cbe_rules <root> reads that root: [$got]"
 scratch_rm "$R/catalog/ci-batch-escalate.d"
 got=$(inr "$R" cbe_rules); rc=$?
-{ [ "$rc" = 0 ] && [ "$got" = "$(cat "$R/catalog/ci-batch-escalate.tsv")" ]; } && ok || bad "R1: no folder is zero fragments (rc=$rc): [$got]"
+{ [ "$rc" = 0 ] && [ -z "$got" ]; } && ok || bad "R1: no folder is zero fragments (rc=$rc): [$got]"
 
 # ── R2. a row that exists only in a fragment changes every reader's answer.
 R=$(mkroot r2)
@@ -75,8 +77,8 @@ reads "R2 no fragment" 0
 frag "$R" bh-1.tsv 'frag-esc/\tescalate\te\nfrag-spa/\tspa\ts\nfrag-inf/\tinfra\ti\nzz-base/*.md\tallow\tdocs\n'
 reads "R2 fragment" 1
 [ "$(inr "$R" cbe_reason frag-esc/x)" = "selection input: frag-esc/x" ] && ok || bad "R2: cbe_reason names the path"
-inr "$R" cbe_reason zz-base/doc.md > /dev/null && bad "R2: a fragment allow row exempts an old-file escalate row" || ok
-inr "$R" cbe_reason zz-base/x.sh > /dev/null && ok || bad "R2: the old file's escalate row still counts"
+inr "$R" cbe_reason zz-base/doc.md > /dev/null && bad "R2: a fragment allow row exempts another fragment's escalate row" || ok
+inr "$R" cbe_reason zz-base/x.sh > /dev/null && ok || bad "R2: the base fragment's escalate row still counts"
 inr "$R" cbe_affects worker frag-spa/x && bad "R2: a spa row is not a worker row" || ok
 
 # ── R3. CI_BATCH_ESCALATE_TSV replaces both sources.
@@ -88,12 +90,17 @@ CI_BATCH_ESCALATE_TSV="$T/env.tsv" inr "$R" cbe_affects spa frag-spa/x && bad "R
 
 # ── R4-R6. fail closed on a source that cannot be read.
 closed() { # closed <tag> [VAR=val] — every reader fails closed on root $R
-  local r tag="$1"; shift
+  local r tag="$1" rrc=1; shift
+  [ "${1:-}" = RULES_RC0 ] && { rrc=0; shift; }
   r=$(env "$@" bash -c '. "$1" && cbe_reason docs/x.md' _ "$R/bin/lib/ci-batch-escalate.sh")
   [ "$r" = "selection input: catalog/ci-batch-escalate.tsv unreadable" ] && ok || bad "$tag: cbe_reason must fail closed, got [$r]"
   env "$@" bash -c '. "$1" && cbe_affects spa docs/x.md' _ "$R/bin/lib/ci-batch-escalate.sh" && ok || bad "$tag: cbe_affects must answer rc 0"
   env "$@" bash -c '. "$1" && cbe_infra frag-inf/x' _ "$R/bin/lib/ci-batch-escalate.sh" && bad "$tag: cbe_infra must answer rc 1" || ok
-  env "$@" bash -c '. "$1" && cbe_rules > /dev/null' _ "$R/bin/lib/ci-batch-escalate.sh" && bad "$tag: cbe_rules must be rc 1" || ok
+  if [ "$rrc" = 1 ]; then
+    env "$@" bash -c '. "$1" && cbe_rules > /dev/null' _ "$R/bin/lib/ci-batch-escalate.sh" && bad "$tag: cbe_rules must be rc 1" || ok
+  else # zero fragments: nothing to read, so cbe_rules prints nothing, rc 0, and the readers above fail closed on that
+    r=$(env "$@" bash -c '. "$1" && cbe_rules' _ "$R/bin/lib/ci-batch-escalate.sh"); [ $? = 0 ] && [ -z "$r" ] && ok || bad "$tag: cbe_rules must print nothing, rc 0 [$r]"
+  fi
 }
 # The bad source sorts first, so a good fragment is read after it.
 ln -s "$T/no-such-target" "$R/catalog/ci-batch-escalate.d/aa-dangling.tsv"
@@ -102,9 +109,11 @@ rm "$R/catalog/ci-batch-escalate.d/aa-dangling.tsv"
 mkdir "$R/catalog/ci-batch-escalate.d/aa-dir.tsv"
 closed "R4 a fragment that is a directory" X=1
 rmdir "$R/catalog/ci-batch-escalate.d/aa-dir.tsv"
-mv "$R/catalog/ci-batch-escalate.tsv" "$T/r2-old.tsv"
-closed "R5 old file missing" X=1
-mv "$T/r2-old.tsv" "$R/catalog/ci-batch-escalate.tsv"
+mv "$R/catalog/ci-batch-escalate.d" "$T/r2-frags"
+closed "R5 no fragment folder" RULES_RC0 X=1
+mkdir "$R/catalog/ci-batch-escalate.d"
+closed "R5 an empty fragment folder" RULES_RC0 X=1
+rmdir "$R/catalog/ci-batch-escalate.d"; mv "$T/r2-frags" "$R/catalog/ci-batch-escalate.d"
 closed "R6 env file unreadable" CI_BATCH_ESCALATE_TSV="$T/no-such.tsv"
 reads "R6 control: the root reads again" 1
 
@@ -172,7 +181,6 @@ done
 G="$T/repo"; mkdir -p "$G/catalog/ci-batch-escalate.d" "$G/tests"
 scratch_install_closure bin/ci-plan.sh "$G" > /dev/null || { echo "FAIL: cannot install bin/ci-plan.sh's closure"; exit 1; }
 [ -f "$G/bin/lib/ci-batch-escalate.sh" ] || { echo "FAIL: the closure has no bin/lib/ci-batch-escalate.sh"; exit 1; }
-cp "$DIR/catalog/ci-batch-escalate.tsv" "$G/catalog/"
 cp "$DIR"/catalog/ci-batch-escalate.d/* "$G/catalog/ci-batch-escalate.d/" 2>/dev/null
 printf 'zz-p/\tworker\texisting fragment\n' > "$G/catalog/ci-batch-escalate.d/bh-7.tsv"
 printf '#!/bin/bash\n' > "$G/tests/canary-test.sh"; printf 'tests/canary-test.sh\n' > "$G/canary.txt"
@@ -209,13 +217,13 @@ pwant() { # pwant <tag> <mode> <spa> <worker> <escalation> [summary substring]
 }
 pcase P2 "printf 'zz-p2/\tspa\tx\n' > $F/bh-2.tsv"
 pwant "P2 a new spa fragment" batch-selected 1 0 - "escalation rows added only (spa)"
-pcase P3 "printf 'zz-p3/\tworker\tx\n' > $F/bh-2.tsv; printf 'zz-p3e/\tescalate\ty\n' >> catalog/ci-batch-escalate.tsv"
-pwant "P3 a worker fragment + an old-file row" batch-selected 0 1 - "escalation rows added only (escalate,worker)"
+pcase P3 "printf 'zz-p3/\tworker\tx\n' > $F/bh-2.tsv; printf 'zz-p3e/\tescalate\ty\n' >> $F/seed-escalate.tsv"
+pwant "P3 a worker fragment + a row appended to a seed fragment" batch-selected 0 1 - "escalation rows added only (escalate,worker)"
 pcase P4 "sed -i 's/existing fragment/edited why/' $F/bh-7.tsv"
 pwant "P4 a why edit is infra (both jobs run whole)" infra 1 1 -
 pcase P4b "sed -i '/^bin\/test-tiers.sh\t/{w $F/bh-2.tsv
-d}' catalog/ci-batch-escalate.tsv"
-pwant "P4b a row moved into a fragment is infra" infra 1 1 -
+d}' $F/seed-infra.tsv"
+pwant "P4b a row moved into another fragment is infra" infra 1 1 -
 pcase P5 "rm $F/bh-7.tsv"
 pwant "P5 a deleted fragment escalates" full 1 1 "selection input: $F/bh-7.tsv"
 pcase P6 "printf 'zz-p6/*.md\tallow\tx\n' > $F/bh-2.tsv"
@@ -255,8 +263,8 @@ L=$(lroot l5); frag "$L" bh-1.tsv '\n# c\nzz-base/x\tspa\t \n'
 lint "L5 an empty why" "$L" 1 "bh-1.tsv:3:"
 L=$(lroot l6); frag "$L" bh-1.tsv 'zz-base/x\tspa\ta\n'; frag "$L" bh-2.tsv 'zz-base/x\tspa\tb\n'
 lint "L6 a duplicate across fragments" "$L" 1 "bh-2.tsv:1:" "catalog/ci-batch-escalate.d/bh-1.tsv:1"
-L=$(lroot l7); frag "$L" bh-1.tsv 'zz-base/\tescalate\tdup of the old file\n'
-lint "L7 a duplicate of an old-file row" "$L" 1 "bh-1.tsv:1:" "catalog/ci-batch-escalate.tsv:2"
+L=$(lroot l7); printf 'zz-base/\tescalate\ta planted old file\n' > "$L/catalog/ci-batch-escalate.tsv"
+lint "L7 a planted old file is retired" "$L" 1 "catalog/ci-batch-escalate.tsv:0: retired (BH-8649)"
 L=$(lroot l8); frag "$L" bh-1.tsv 'nosuchdir/x.sh\tescalate\twhy\n'
 lint "L8 a missing directory" "$L" 1 "bh-1.tsv:1:" nosuchdir
 L=$(lroot l9); mkdir "$L/catalog/ci-batch-escalate.d/sub"
@@ -274,7 +282,7 @@ lint "L13 the real tree" "$DIR" 0
 # ── M1. two PRs that each add a fragment merge with no conflict.
 M="$T/m"; mkdir -p "$M/catalog/ci-batch-escalate.d"
 scratch_install_closure bin/lib/ci-batch-escalate.sh "$M" > /dev/null || { echo "FAIL: cannot install the lib for M1"; exit 1; }
-printf 'zz-base/\tescalate\tbase\n' > "$M/catalog/ci-batch-escalate.tsv"
+printf 'zz-base/\tescalate\tbase\n' > "$M/catalog/ci-batch-escalate.d/0-base.tsv"
 printf 'readme\n' > "$M/catalog/ci-batch-escalate.d/README.md"
 GC "$M" init -q -b main && GC "$M" add -A && GC "$M" commit -qm base || { echo "FAIL: cannot commit the M base"; exit 1; }
 GC "$M" checkout -qb a && printf 'zz-a/\tspa\tPR a\n' > "$M/catalog/ci-batch-escalate.d/bh-1.tsv" && GC "$M" add -A && GC "$M" commit -qm a
@@ -283,14 +291,15 @@ GC "$M" checkout -q a && GC "$M" merge -q --no-edit b > "$T/m.out" 2>&1; rc=$?
 [ "$rc" = 0 ] && ok || bad "M1: two fragment PRs must merge clean (rc=$rc) $(cat "$T/m.out")"
 got=$(inr "$M" cbe_rules)
 { grep -qx "zz-a/${TAB}spa${TAB}PR a" <<<"$got" && grep -qx "zz-b/${TAB}worker${TAB}PR b" <<<"$got"; } && ok || bad "M1: the composed rules carry both rows: [$got]"
-# Control: the same two rows appended to the old file conflict.
-GC "$M" checkout -q main && GC "$M" checkout -qb oa && printf 'zz-a/\tspa\tPR a\n' >> "$M/catalog/ci-batch-escalate.tsv" && GC "$M" commit -qam oa
-GC "$M" checkout -q main && GC "$M" checkout -qb ob && printf 'zz-b/\tworker\tPR b\n' >> "$M/catalog/ci-batch-escalate.tsv" && GC "$M" commit -qam ob
+# Control: the same two rows appended to one shared file conflict.
+GC "$M" checkout -q main && GC "$M" checkout -qb oa && printf 'zz-a/\tspa\tPR a\n' >> "$M/catalog/ci-batch-escalate.d/0-base.tsv" && GC "$M" commit -qam oa
+GC "$M" checkout -q main && GC "$M" checkout -qb ob && printf 'zz-b/\tworker\tPR b\n' >> "$M/catalog/ci-batch-escalate.d/0-base.tsv" && GC "$M" commit -qam ob
 GC "$M" checkout -q oa && GC "$M" merge -q --no-edit ob > /dev/null 2>&1 && bad "M1 control: two appends to one file must conflict" || ok
 GC "$M" merge --abort > /dev/null 2>&1
 
-# ── Q1. the real planner: the old file alone and the composed rules give the
-# same answers on a fixed diff (no path here touches the fragment folder).
+# ── Q1. the real planner: the old file's rows (the BH-8649 fixture) and the
+# composed rules give the same answers on a fixed diff (no path here touches
+# the fragment folder).
 QHEAD=$(git -C "$DIR" rev-parse HEAD)
 cat > "$T/qimpact.sh" <<'EOF'
 #!/bin/bash
@@ -313,7 +322,7 @@ for set in "docs/x.md console-ui/src/screens/Jobs.js bin/lib/jobs/cost.sh catalo
            "bin/lib/suite-runner.sh catalog/test-tiers.tsv" "worker/jobs/src/index.js tests/fixtures/daily-digest/empty-day.json" \
            ".mergify.yml" ".github/actions/x/action.yml" "bin/ci-plan.sh"; do
   printf '%s\n' $set > "$T/q.paths"; qn=$((qn + $(grep -c . "$T/q.paths")))
-  a=$(qplan "$T/q.paths" CI_BATCH_ESCALATE_TSV="$DIR/catalog/ci-batch-escalate.tsv" CI_INFRA_CANARY_FILE="$DIR/catalog/ci-infra-canary.txt")
+  a=$(qplan "$T/q.paths" CI_BATCH_ESCALATE_TSV="$DIR/tests/fixtures/bh-8649/old-rules.tsv" CI_INFRA_CANARY_FILE="$DIR/catalog/ci-infra-canary.txt")
   b=$(qplan "$T/q.paths" CI_INFRA_CANARY_FILE="$DIR/catalog/ci-infra-canary.txt")
   { [ "$a" = "$b" ] && [[ $a == "rc=0 mode="* ]]; } && ok || bad "Q1: [$set] old file [$a] vs composed [$b]"
 done
@@ -326,7 +335,7 @@ for s in bin/test-impact.sh bin/lib/ci-batch-escalate.sh; do
 done
 mkdir -p "$FR/tests/lib" "$FR/catalog/ci-batch-escalate.d"
 printf '{"v":1}\n' > "$FR/catalog/c1.json"
-printf 'tests/lib/scratch.sh\tescalate\tglobal\n' > "$FR/catalog/ci-batch-escalate.tsv"
+printf 'tests/lib/scratch.sh\tescalate\tglobal\n' > "$FR/catalog/ci-batch-escalate.d/0-base.tsv"
 printf '# scratch\n' > "$FR/tests/lib/scratch.sh"
 printf '#!/bin/bash\nDIR=$(cd "$(dirname "$0")/.." && pwd)\ncat "$DIR/catalog/c1.json"\n' > "$FR/tests/u1.sh"
 printf '#!/bin/bash\necho always\n' > "$FR/tests/sa.sh"; printf 'tests/sa.sh\n' > "$FR/catalog/test-impact-always.txt"

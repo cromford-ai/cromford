@@ -34,7 +34,7 @@
 set -uo pipefail
 . "$(dirname "$0")/lib/scratch.sh" || exit 1
 DIR=$(cd "$(dirname "$0")/.." && pwd)
-TSV="$DIR/catalog/ci-batch-escalate.tsv"
+LIB="$DIR/bin/lib/ci-batch-escalate.sh"
 PASS=0; FAIL=0
 ok()  { PASS=$((PASS+1)); }
 bad() { FAIL=$((FAIL+1)); echo "FAIL: $1"; }
@@ -44,7 +44,11 @@ has() { case "$2" in *"$1"*) return 0 ;; esac; return 1; }
 G="$T/repo"; mkdir -p "$G/catalog" "$G/bin"
 scratch_install_closure bin/ci-plan.sh "$G" > /dev/null || { echo "FAIL: cannot install bin/ci-plan.sh's closure"; exit 1; }
 [ -f "$G/bin/lib/ci-batch-escalate.sh" ] || { echo "FAIL: the closure has no bin/lib/ci-batch-escalate.sh"; exit 1; }
-cp "$TSV" "$G/catalog/ci-batch-escalate.tsv"
+# The real rules, composed into ONE fragment the cases edit (BH-8649: the old
+# single file is retired).
+mkdir -p "$G/catalog/ci-batch-escalate.d"
+( . "$LIB" && unset CI_BATCH_ESCALATE_TSV && cbe_rules "$DIR" ) > "$G/catalog/ci-batch-escalate.d/rules.tsv" \
+  || { echo "FAIL: cannot compose the rules"; exit 1; }
 # The stub: `select --changed F [--map-only]` maps x/name.ext -> tests/name-test.sh
 # plus tests/always-test.sh; ^.github/ and ^bin/test-impact are infra, unknown/*
 # is unknown reach; a full answer is all 50 suites. Every call is logged.
@@ -180,14 +184,14 @@ gplan "$B3" CI_PR_BODY="$(body "$A3")" STUB_FAIL_ON=3
 { [ "$RC" = 2 ] && ! grep -q '^n=' <<<"$GO"; } && ok || bad "O5: a failed --map-only select must be rc 2 with no n= ($(st)) [$OUT]"
 
 # ── O6. The rules file changed in the lower batch only.
-git -C "$G" checkout -q --detach "$M"; sed -i '/^bin\/test-tiers.sh\t/d' "$G/catalog/ci-batch-escalate.tsv"; gcommit A6
+git -C "$G" checkout -q --detach "$M"; sed -i '/^bin\/test-tiers.sh\t/d' "$G/catalog/ci-batch-escalate.d/rules.tsv"; gcommit A6
 A6=$(git -C "$G" rev-parse HEAD); echo 'echo foo' > "$G/bin/foo.sh"; gcommit B6; B6=$(git -C "$G" rev-parse HEAD)
 gplan "$A6" CI_PR_BODY="$(body "$M")"
-[ "$(out escalation)" = "selection input: catalog/ci-batch-escalate.tsv" ] && ok || bad "O6: A6's own row delete must escalate ($(st))"
+[ "$(out escalation)" = "selection input: catalog/ci-batch-escalate.d/rules.tsv" ] && ok || bad "O6: A6's own row delete must escalate ($(st))"
 gplan "$B6" CI_PR_BODY="$(body "$A6")"
 { [ "$(out mode)" = batch-selected ] && [ "$(out escalation)" = - ]; } && ok || bad "O6: an inherited row delete must not escalate B6 ($(st)) [$OUT]"
 has "escalation rows added only" "$(out summary)" && bad "O6: an inherited diff gets no add-only note: '$(out summary)'" || ok
-git -C "$G" checkout -q --detach "$M"; printf 'zz-bh6490-spa/\tspa\ta path the SPA reads (fixture)\n' >> "$G/catalog/ci-batch-escalate.tsv"; gcommit A6s
+git -C "$G" checkout -q --detach "$M"; printf 'zz-bh6490-spa/\tspa\ta path the SPA reads (fixture)\n' >> "$G/catalog/ci-batch-escalate.d/rules.tsv"; gcommit A6s
 A6S=$(git -C "$G" rev-parse HEAD); echo 'echo foo' > "$G/bin/foo.sh"; gcommit B6s; B6S=$(git -C "$G" rev-parse HEAD)
 gplan "$B6S" CI_PR_BODY="$(body "$A6S")"
 { [ "$(out mode)" = batch-selected ] && [ "$(out spa)" = 1 ] && [ "$(out worker)" = 0 ]; } && ok \

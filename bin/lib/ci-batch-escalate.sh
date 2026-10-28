@@ -4,25 +4,34 @@
 # source time.
 #
 #   cbe_rules [root]    prints the composed rules (BH-8608): the env file
-#                       CI_BATCH_ESCALATE_TSV when it is set, else
-#                       <root>/catalog/ci-batch-escalate.tsv and then every
+#                       CI_BATCH_ESCALATE_TSV when it is set, else every
 #                       <root>/catalog/ci-batch-escalate.d/*.tsv in LC_ALL=C
 #                       name order. Root defaults to this lib's checkout. Each
 #                       source ends with a newline. rc 1 when a source cannot
-#                       be read; a missing folder is zero fragments.
+#                       be read; a missing folder is zero fragments. The old
+#                       file catalog/ci-batch-escalate.tsv is retired
+#                       (BH-8649) and never read.
 #   cbe_rules_path <path>
-#                       rc 0 when <path> is a rules source: the old file or a
+#                       rc 0 when <path> is a rules source in a git diff: the
+#                       retired old file or a
 #                       catalog/ci-batch-escalate.d/<name>.tsv one level down.
 #   cbe_rules_diff <root> <base>
-#                       the `git diff --no-renames -U0 <base> HEAD` of both
-#                       sources in <root>, one diff, so a row moved between
-#                       them is not a delete. rc is git's.
+#                       the `git diff --no-renames -U0 <base> HEAD` of the
+#                       retired old file and the fragments in <root>, one
+#                       diff, so a row moved between them is not a delete.
+#                       rc is git's.
 #   cbe_check [root]    the lint: one `ci-batch-escalate: <file>:<line>:
 #                       <problem>` line per problem, rc 1 on any. A row has 3
 #                       tab fields, a pattern, a known kind and a why; no
 #                       (pattern, kind) is in two source files; the directory
 #                       of the pattern's literal prefix exists; the folder
-#                       holds only readable *.tsv files and README.md.
+#                       holds only readable *.tsv files and README.md, and at
+#                       least one *.tsv (`catalog/ci-batch-escalate.d:0: no
+#                       rules fragment`). Anything at
+#                       catalog/ci-batch-escalate.tsv (a file, a directory, a
+#                       symlink) is `catalog/ci-batch-escalate.tsv:0: retired
+#                       (BH-8649); put its rows in
+#                       catalog/ci-batch-escalate.d/<name>.tsv`.
 #   cbe_reason <path>   prints `selection input: <path>` and rc 0 when an
 #                       escalate row matches and no allow row does; else prints
 #                       nothing, rc 1
@@ -32,8 +41,9 @@
 #                       it cannot (BH-4969). A path is affected when it is under
 #                       the job's own tree (console-ui/, worker/ — built in, so
 #                       deleting a row cannot un-gate the job) or a row of that
-#                       kind matches. FAILS CLOSED: an unreadable rules file or
-#                       an unknown kind answers rc 0.
+#                       kind matches. FAILS CLOSED: an unreadable rules file,
+#                       rules with no row at all (no fragment, BH-8649) or an
+#                       unknown kind answers rc 0.
 #   cbe_add_only <diff-file>
 #                       rc 0 when the `git diff -U0` output in <diff-file> (of
 #                       the rules file) only ADDS rows (BH-6371): no removed
@@ -84,11 +94,12 @@
 # runs) is dropped. Unset, empty or `-` is the committed file, byte for byte.
 # cbe_reason reads the rules with the delta applied.
 #
-# The rules are catalog/ci-batch-escalate.tsv (see its header) plus the
-# fragments in catalog/ci-batch-escalate.d/ (see its README), or
-# CI_BATCH_ESCALATE_TSV; every reader reads them through cbe_rules. The kinds are escalate, infra (BH-7287), allow, spa
-# and worker; cbe_reason reads escalate and allow only. FAILS CLOSED: rules that cannot be read (any source), or
-# rules with no escalate row, answers `selection input: catalog/ci-batch-escalate.tsv
+# The rules are the fragments in catalog/ci-batch-escalate.d/ (see its
+# README), or CI_BATCH_ESCALATE_TSV; every reader reads them through
+# cbe_rules. The kinds are escalate, infra (BH-7287), allow, spa and worker;
+# cbe_reason reads escalate and allow only. FAILS CLOSED: rules that cannot
+# be read (any source), or rules with no escalate row (no fragment
+# included), answers `selection input: catalog/ci-batch-escalate.tsv
 # unreadable` for every path, because an empty rule set must never mean
 # "nothing escalates".
 _CBE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -109,7 +120,6 @@ _cbe_cat() { [ -f "$1" ] && [ -r "$1" ] && LC_ALL=C awk 1 "$1"; }
 cbe_rules() {
   local root="${1:-$_CBE_DIR/../..}"
   if [ -n "${CI_BATCH_ESCALATE_TSV:-}" ]; then _cbe_cat "$CI_BATCH_ESCALATE_TSV"; return; fi
-  _cbe_cat "$root/catalog/ci-batch-escalate.tsv" || return 1
   ( shopt -s nullglob; LC_ALL=C
     for f in "$root"/catalog/ci-batch-escalate.d/*.tsv; do _cbe_cat "$f" || exit 1; done )
 }
@@ -128,12 +138,11 @@ cbe_rules_diff() {
 }
 
 cbe_check() {
-  local root="${1:-$_CBE_DIR/../..}" d f n srcs=() bad=0 tag file line dir
+  local root="${1:-$_CBE_DIR/../..}" d f n srcs=() bad=0 tag file line dir ret
   d="$root/catalog/ci-batch-escalate.d"
-  if [ -f "$root/catalog/ci-batch-escalate.tsv" ] && [ -r "$root/catalog/ci-batch-escalate.tsv" ]; then
-    srcs+=("$root/catalog/ci-batch-escalate.tsv")
-  else
-    echo "ci-batch-escalate: catalog/ci-batch-escalate.tsv:0: not a readable file"; bad=1
+  ret="$root/catalog/ci-batch-escalate.tsv"
+  if [ -e "$ret" ] || [ -L "$ret" ]; then
+    echo "ci-batch-escalate: catalog/ci-batch-escalate.tsv:0: retired (BH-8649); put its rows in catalog/ci-batch-escalate.d/<name>.tsv"; bad=1
   fi
   if [ -d "$d" ]; then
     while IFS= read -r f; do
@@ -148,7 +157,7 @@ cbe_check() {
       esac
     done < <(shopt -s nullglob dotglob; LC_ALL=C; for f in "$d"/*; do printf '%s\n' "$f"; done)
   fi
-  [ "${#srcs[@]}" -gt 0 ] || return 1
+  [ "${#srcs[@]}" -gt 0 ] || { echo "ci-batch-escalate: catalog/ci-batch-escalate.d:0: no rules fragment"; return 1; }
   while IFS=$'\t' read -r tag file line dir; do
     case "$tag" in
       P) echo "ci-batch-escalate: $file:$line: $dir"; bad=1 ;;
@@ -241,7 +250,7 @@ cbe_reason() {
 }
 
 cbe_affects() {
-  local k="$1" p="$2" rules pat kind _why
+  local k="$1" p="$2" rules pat kind _why rows=0
   case "$k" in
     spa)    _cbe_match "$p" console-ui/ && return 0 ;;
     worker) _cbe_match "$p" worker/ && return 0 ;;
@@ -250,9 +259,10 @@ cbe_affects() {
   rules=$(cbe_rules) || return 0
   while IFS=$'\t' read -r pat kind _why; do
     case "$pat" in ''|'#'*) continue ;; esac
+    rows=$((rows + 1))
     [ "$kind" = "$k" ] && _cbe_match "$p" "$pat" && return 0
   done <<<"$rules"
-  return 1
+  [ "$rows" -eq 0 ]
 }
 
 cbe_add_only() {

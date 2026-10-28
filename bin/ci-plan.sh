@@ -46,7 +46,7 @@
 #                             `member labels unreadable`, never "no label"),
 #                             a diff that cannot be read or is
 #                             empty, a path an escalate row of
-#                             catalog/ci-batch-escalate.tsv names
+#                             the rules in catalog/ci-batch-escalate.d/ name
 #                             (bin/lib/ci-batch-escalate.sh; unreadable rules
 #                             escalate; since BH-7287 only .github/ outside a
 #                             top-level workflow, .mergify.yml and a rules
@@ -57,11 +57,11 @@
 #                             row -> `unmapped path <p>`; BH-6371: a tests/lib/
 #                             helper selects through its helper closure) and a
 #                             selection of every suite. BH-6371: a TI_BASE..HEAD
-#                             diff of the rules file itself that cbe_add_only
+#                             diff of the rules themselves that cbe_add_only
 #                             proves add-only does not escalate (BH-8608: the
-#                             rules are the old file plus every
-#                             catalog/ci-batch-escalate.d/*.tsv, judged as one
-#                             diff); the reason
+#                             rules are every
+#                             catalog/ci-batch-escalate.d/*.tsv and the
+#                             retired old file, judged as one diff); the reason
 #                             says `escalation rows added only (<kinds>)`, and
 #                             an added spa (worker) row sets spa=1 (worker=1).
 #                             BH-6490: a STACKED batch escalates only on its
@@ -198,7 +198,7 @@
 # THE FULL-TRIGGER DELTA (BH-6838). CI_FULL_TRIGGERS (the repo variable,
 # projected from the ci-plan-settings row by bin/ci-plan-settings.sh) adds
 # (`+<pattern>`) or removes (`-<pattern>`) escalate rows of
-# catalog/ci-batch-escalate.tsv; bin/lib/ci-batch-escalate.sh owns the grammar.
+# the rules in catalog/ci-batch-escalate.d/; bin/lib/ci-batch-escalate.sh owns the grammar.
 # A batch publishes the normalised value as `full_triggers` (`-` for none) and
 # every shard re-plans with THAT, so the two agree on --expect-n.
 #
@@ -586,11 +586,12 @@ batch_select() {
       [ -n "$p" ] || continue
       # BH-6371: a diff to the rules that only adds escalate, spa or worker
       # rows selects through the map. BH-7287: one that deletes no row is an
-      # infra path. BH-8608: the rules are the old file plus the fragments,
-      # judged as ONE diff on the first rules path (cbe_rules_diff), so a row
-      # moved between sources is not a delete; every rules path takes that
-      # verdict. Proven on the batch's own diff; a diff that fails, or a
-      # delete, escalates as before (each source has its escalate row).
+      # infra path. BH-8608: the fragments and the retired old file
+      # (BH-8649) are judged as ONE diff on the first rules path
+      # (cbe_rules_diff), so a row moved between files is not a delete;
+      # every rules path takes that verdict. Proven on the batch's own diff;
+      # a diff that fails, or a delete, escalates as before (each path has
+      # its escalate row).
       if cbe_rules_path "$p"; then
         if [ -z "$RULES_V" ]; then
           RULES_V=delete

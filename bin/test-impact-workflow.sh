@@ -4,13 +4,13 @@
 # (BH-6688)
 #
 # A merge-queue batch escalated to the whole corpus on ANY change to the
-# workflow (the `.github/` row of catalog/ci-batch-escalate.tsv, and
+# workflow (the `.github/` row of the rules in catalog/ci-batch-escalate.d/, and
 # `^\.github/workflows/` in bin/test-impact.sh's infra list). Most of those
 # changes are a lint step: the corpus proves nothing about them. This script
 # reads the diff line by line and names the job each changed line is in, on
 # the side it is in (a removed line on <base>'s file, an added line on
 # <head>'s). Since BH-6876 a batch selects a workflow file's readers on any
-# answer (an allow row in catalog/ci-batch-escalate.tsv); bin/ci-plan.sh still
+# answer (an allow row in the rules in catalog/ci-batch-escalate.d/); bin/ci-plan.sh still
 # asks this script, and on rc 1 its reason names the non-test jobs.
 #
 #   rc 1  every changed line is in a NON-TEST job below, or is a column-0 `#`

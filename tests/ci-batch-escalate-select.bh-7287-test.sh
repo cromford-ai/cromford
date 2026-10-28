@@ -19,7 +19,7 @@
 #   S1  tests/lib/scratch.sh: mode=infra, list = self/reads + canaries + always
 #   S2  .mergify.yml: full, `selection input: .mergify.yml`
 #   S3  a non-workflow .github/ path: full; a top-level workflow: not full
-#   S4  every infra row of the tsv: mode=infra
+#   S4  every infra row of the rules: mode=infra
 #   S5  CI_FULL_TRIGGERS=+tests/lib/scratch.sh: full (escalate beats infra)
 #   S6  an infra path plus an unmapped path, union off (BH-7290): full, `unmapped: <p>`
 #   S7  an infra path plus an ordinary path: infra, the other path's suites kept
@@ -28,16 +28,15 @@
 #       has a `..` or is empty: full, `infra canary list unreadable (...)`
 #   F1  the infra select fails: rc 2, no n= written
 #   U1-U12 cbe_deletes_row and cbe_infra units
-#   R1-R3 the rules file in a batch: add-only selects, a delete is full, a why
-#       edit is infra
-#   G1  the infra rows answer cbe_infra, not cbe_reason; 3 escalate rows left
+#   R1-R3 a rules fragment in a batch: add-only selects, a delete is full, a
+#       why edit is infra
+#   G1  the infra rows answer cbe_infra, not cbe_reason; 4 escalate rows left
 #   G2  the canary list: 40 suites, unique, present, never nightly or guard
 set -uo pipefail
 . "$(dirname "$0")/lib/scratch.sh" || exit 1
 DIR=$(cd "$(dirname "$0")/.." && pwd)
 PLAN="$DIR/bin/ci-plan.sh"
 LIB="$DIR/bin/lib/ci-batch-escalate.sh"
-TSV="$DIR/catalog/ci-batch-escalate.tsv"
 CANARY="$DIR/catalog/ci-infra-canary.txt"
 PASS=0; FAIL=0
 ok()  { PASS=$((PASS+1)); }
@@ -46,6 +45,12 @@ has() { case "$2" in *"$1"*) return 0 ;; esac; return 1; }
 cbe() { ( . "$LIB" || exit 9; cbe_reason "$1" ); }
 # rc 9 when the function does not exist, so neither rc 0 nor rc 1 can pass by accident
 cbi() { ( . "$LIB" || exit 9; command -v cbe_infra > /dev/null || exit 9; cbe_infra "$1" ); }
+# The real rules, composed from catalog/ci-batch-escalate.d/ (BH-8649: the old
+# single file is retired).
+TSV="$T/composed.tsv"
+[ -d "$DIR/catalog/ci-batch-escalate.d" ] && ( . "$LIB" && unset CI_BATCH_ESCALATE_TSV && cbe_rules "$DIR" ) > "$TSV" \
+  && grep -q $'\tescalate\t' "$TSV" \
+  || { echo "FAIL: cannot compose the real rules"; exit 1; }
 canaries() { grep -vE '^[[:space:]]*(#|$)' "$CANARY" 2>/dev/null; }
 # sample <pattern> — one concrete path the row matches
 sample() {
@@ -63,7 +68,8 @@ TICKET_PATHS=(tests/lib/scratch.sh bin/test-impact.sh bin/test-impact-gate.sh bi
   bin/lib/ci-batch-escalate.sh catalog/test-tiers.tsv catalog/test-quarantine-protected.txt
   catalog/nightly-strict.txt catalog/test-impact-always.txt catalog/ci-batch-regression.d/bh-6838.txt)
 
-# ── G1. the infra rows answer cbe_infra and not cbe_reason; three escalate rows left.
+# ── G1. the infra rows answer cbe_infra and not cbe_reason; four escalate rows left
+# (BH-8608 added the fragment folder's own row).
 for p in "${TICKET_PATHS[@]}"; do
   cbi "$p"; rc=$?; [ "$rc" = 0 ] && ok || bad "G1: $p must be an infra path (cbe_infra rc=$rc)"
   r=$(cbe "$p"); rc=$?; { [ "$rc" = 1 ] && [ -z "$r" ]; } && ok || bad "G1: $p must not escalate (rc=$rc, got '$r')"
@@ -76,8 +82,8 @@ for pat in ${INFRA_ROWS[@]+"${INFRA_ROWS[@]}"}; do
   cbe "$p" > /dev/null && bad "G1: row $pat: $p must not answer cbe_reason" || ok
 done
 ESC=$(awk -F'\t' '!/^#/ && $2 == "escalate" { print $1 }' "$TSV" | LC_ALL=C sort | paste -sd' ' -)
-[ "$ESC" = ".github/ .mergify.yml catalog/ci-batch-escalate.tsv" ] && ok \
-  || bad "G1: the escalate rows must be exactly .github/ .mergify.yml catalog/ci-batch-escalate.tsv (got '$ESC')"
+[ "$ESC" = ".github/ .mergify.yml catalog/ci-batch-escalate.d/ catalog/ci-batch-escalate.tsv" ] && ok \
+  || bad "G1: the escalate rows must be exactly .github/ .mergify.yml catalog/ci-batch-escalate.d/ catalog/ci-batch-escalate.tsv (got '$ESC')"
 
 # ── G2. the canary list: 40 suites, unique, in the tree, never dropped by the tier step.
 canaries > "$T/canaries"
@@ -217,10 +223,12 @@ chmod +x "$T/impact-fail.sh"
 bplan tests/lib/scratch.sh -- CI_PLAN_IMPACT="$T/impact-fail.sh"
 { [ "$RC" = 2 ] && ! grep -q '^n=' "$T/go" 2>/dev/null; } && ok || bad "F1: a failed infra select must be rc 2 with no n= (rc=$RC) [$(tail -2 <<<"$OUT")]"
 
-# ── A scratch repo with the planner, its lib and the real rules file.
+# ── A scratch repo with the planner, its lib and the real rules, composed into
+# one fragment ($RF).
 G="$T/repo"; mkdir -p "$G/catalog" "$G/tests"
 scratch_install_closure bin/ci-plan.sh "$G" > /dev/null || { echo "FAIL: cannot install bin/ci-plan.sh's closure"; exit 1; }
-cp "$TSV" "$G/catalog/ci-batch-escalate.tsv"
+RF=catalog/ci-batch-escalate.d/rules.tsv
+mkdir -p "$G/catalog/ci-batch-escalate.d" && cp "$TSV" "$G/$RF"
 printf '#!/bin/bash\nexit 0\n' > "$G/tests/c-test.sh"
 printf '# fixture canary list\ntests/c-test.sh\n' > "$G/canary.txt"
 # The stub selector answers with two suites, and the corpus with ten.
@@ -244,7 +252,7 @@ git -C "$G" init -q && git -C "$G" add -A && git -C "$G" -c user.email=t@example
   || { echo "FAIL: cannot commit the scratch base"; exit 1; }
 BASE=$(git -C "$G" rev-parse HEAD)
 edit() { # edit <tag> <cmd> — reset the rules file to the base, change it, commit
-  git -C "$G" checkout -q "$BASE" -- catalog/ci-batch-escalate.tsv
+  git -C "$G" checkout -q "$BASE" -- $RF
   ( cd "$G" && eval "$2" ) || { bad "$1: the edit failed"; return 1; }
   git -C "$G" -c user.email=t@example.invalid -c user.name=t commit -qam "$1" --allow-empty
 }
@@ -257,31 +265,31 @@ gplan() { # gplan [VAR=val ...] — the real planner in the scratch repo, TI_BAS
 }
 # move_row — the bin/ci-plan.sh row, removed and re-added at the end of the file
 move_row() {
-  awk -F'\t' '$1 == "bin/ci-plan.sh" { m = $0; next } { print } END { print m }' catalog/ci-batch-escalate.tsv > x.tsv \
-    && mv x.tsv catalog/ci-batch-escalate.tsv
+  awk -F'\t' '$1 == "bin/ci-plan.sh" { m = $0; next } { print } END { print m }' $RF > x.tsv \
+    && mv x.tsv $RF
 }
 cbd() { ( . "$G/bin/lib/ci-batch-escalate.sh" || exit 9; command -v cbe_deletes_row > /dev/null || exit 9; cbe_deletes_row "$@" ); }
 # deletes <tag> <want-rc> — cbe_deletes_row over the current base..head diff
 deletes() {
   local rc
-  git -C "$G" diff --no-renames -U0 "$BASE" HEAD -- catalog/ci-batch-escalate.tsv > "$T/u.diff"
+  git -C "$G" diff --no-renames -U0 "$BASE" HEAD -- $RF > "$T/u.diff"
   cbd "$T/u.diff"; rc=$?
   [ "$rc" = "$2" ] && ok || bad "$1: cbe_deletes_row must be rc $2 (rc=$rc) [$(grep '^[-+][^-+]' "$T/u.diff" | head -4 | tr '\n' '|')]"
 }
 
 # ── U1-U9. cbe_deletes_row over real `git diff -U0` output. rc 0 = a delete (full).
-edit U1 "sed -i '/^\.mergify\.yml\t/d' catalog/ci-batch-escalate.tsv"; deletes "U1 an escalate row removed" 0
-edit U2 "sed -i 's/^\(\.mergify\.yml\t\)escalate\t/\1infra\t/' catalog/ci-batch-escalate.tsv"; deletes "U2 a kind changed" 0
-edit U3 "printf 'zz-bh7287-doc.md\tallow\ta doc (fixture)\n' >> catalog/ci-batch-escalate.tsv"; deletes "U3 an added allow row" 0
-edit U4 "printf 'zz-bh7287-two\tinfra\n' >> catalog/ci-batch-escalate.tsv"; deletes "U4 a malformed added row" 0
-edit U4b "printf 'zz-bh7287-kind\tInfra\tx\n' >> catalog/ci-batch-escalate.tsv"; deletes "U4b an unknown kind" 0
-edit U5 "sed -i 's/^\(tests\/lib\/scratch\.sh\tinfra\t\).*/\1the sandbox guard (changed)/' catalog/ci-batch-escalate.tsv"; deletes "U5 a why edit" 1
-edit U6 "sed -i '1s/.*/# a changed first comment line/' catalog/ci-batch-escalate.tsv"; deletes "U6 a comment edit" 1
-edit U7 "printf 'zz-bh7287-new.sh\tinfra\ta new runner (fixture)\n' >> catalog/ci-batch-escalate.tsv"; deletes "U7 an added infra row" 1
+edit U1 "sed -i '/^\.mergify\.yml\t/d' $RF"; deletes "U1 an escalate row removed" 0
+edit U2 "sed -i 's/^\(\.mergify\.yml\t\)escalate\t/\1infra\t/' $RF"; deletes "U2 a kind changed" 0
+edit U3 "printf 'zz-bh7287-doc.md\tallow\ta doc (fixture)\n' >> $RF"; deletes "U3 an added allow row" 0
+edit U4 "printf 'zz-bh7287-two\tinfra\n' >> $RF"; deletes "U4 a malformed added row" 0
+edit U4b "printf 'zz-bh7287-kind\tInfra\tx\n' >> $RF"; deletes "U4b an unknown kind" 0
+edit U5 "sed -i 's/^\(tests\/lib\/scratch\.sh\tinfra\t\).*/\1the sandbox guard (changed)/' $RF"; deletes "U5 a why edit" 1
+edit U6 "sed -i '1s/.*/# a changed first comment line/' $RF"; deletes "U6 a comment edit" 1
+edit U7 "printf 'zz-bh7287-new.sh\tinfra\ta new runner (fixture)\n' >> $RF"; deletes "U7 an added infra row" 1
 edit U8 move_row
 deletes "U8 a row moved to another line" 1
 grep -q $'^-bin/ci-plan.sh\t' "$T/u.diff" && ok || bad "U8: the fixture must remove and re-add the bin/ci-plan.sh row"
-edit U9 "sed -i 's/^\(bin\/lib\/\*\.md\tallow\t\).*/\1a doc never selects on its own (changed)/' catalog/ci-batch-escalate.tsv"; deletes "U9 an allow row's why edit" 1
+edit U9 "sed -i 's/^\(bin\/lib\/\*\.md\tallow\t\).*/\1a doc never selects on its own (changed)/' $RF"; deletes "U9 an allow row's why edit" 1
 : > "$T/empty.diff"
 cbd "$T/empty.diff"; [ "$?" = 0 ] && ok || bad "U10: an empty diff must count as a delete"
 cbd "$T/no-such.diff"; [ "$?" = 0 ] && ok || bad "U10: a missing diff must count as a delete"
@@ -297,18 +305,18 @@ CI_BATCH_ESCALATE_TSV="$T/no-such.tsv" cbi bin/lib/x.sh; [ "$?" = 1 ] && ok || b
 r=$(CI_BATCH_ESCALATE_TSV="$T/u11.tsv" cbe bin/lib/x.sh); rc=$?; { [ "$rc" = 1 ] && [ -z "$r" ]; } && ok || bad "U12: cbe_reason must skip an infra row (rc=$rc out='$r')"
 
 # ── R1-R3. the rules file in a real batch diff.
-edit R1 "printf 'zz-bh7287-esc.sh\tescalate\ta selection input (fixture)\n' >> catalog/ci-batch-escalate.tsv"
+edit R1 "printf 'zz-bh7287-esc.sh\tescalate\ta selection input (fixture)\n' >> $RF"
 gplan
 { [ "$RC" = 0 ] && [ "$(out mode)" = batch-selected ] && has "escalation rows added only (escalate)" "$(out summary)"; } && ok \
   || bad "R1: an add-only diff must select (rc=$RC mode=$(out mode) summary='$(out summary)') [$(tail -2 <<<"$OUT")]"
-edit R2 "sed -i '/^\.mergify\.yml\t/d' catalog/ci-batch-escalate.tsv"
+edit R2 "sed -i '/^\.mergify\.yml\t/d' $RF"
 gplan
-{ [ "$RC" = 0 ] && [ "$(out mode)" = full ] && [ "$(out escalation)" = "selection input: catalog/ci-batch-escalate.tsv" ]; } && ok \
+{ [ "$RC" = 0 ] && [ "$(out mode)" = full ] && [ "$(out escalation)" = "selection input: $RF" ]; } && ok \
   || bad "R2: a deleted row must run the corpus (rc=$RC mode=$(out mode) escalation='$(out escalation)') [$(tail -2 <<<"$OUT")]"
-edit R3 "sed -i 's/^\(bin\/test-tiers\.sh\tinfra\t\).*/\1the tier step (changed)/' catalog/ci-batch-escalate.tsv"
+edit R3 "sed -i 's/^\(bin\/test-tiers\.sh\tinfra\t\).*/\1the tier step (changed)/' $RF"
 gplan
 { [ "$RC" = 0 ] && [ "$(out mode)" = infra ] && [ "$(out escalation)" = - ] \
-    && has "infra: 1 path(s) (catalog/ci-batch-escalate.tsv)" "$(out summary)" \
+    && has "infra: 1 path(s) ($RF)" "$(out summary)" \
     && grep -qxF tests/c-test.sh "$G/list" && [ "$(out count)" = 3 ]; } && ok \
   || bad "R3: a why edit must plan infra with the canary (rc=$RC mode=$(out mode) count=$(out count) summary='$(out summary)') [$(tail -2 <<<"$OUT")]"
 

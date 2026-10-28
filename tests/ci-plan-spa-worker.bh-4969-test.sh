@@ -21,17 +21,18 @@ set -uo pipefail
 DIR=$(cd "$(dirname "$0")/.." && pwd)
 PLAN="$DIR/bin/ci-plan.sh"
 LIB="$DIR/bin/lib/ci-batch-escalate.sh"
-# The real rules are the composed set: the old file plus every fragment in
-# catalog/ci-batch-escalate.d/ (BH-8608), so a spa/worker row in a fragment counts.
-{ [ -f "$DIR/catalog/ci-batch-escalate.tsv" ] && [ -d "$DIR/catalog/ci-batch-escalate.d" ]; } \
-  || { echo "FAIL: catalog/ci-batch-escalate.tsv or catalog/ci-batch-escalate.d/ is missing"; exit 1; }
+# The real rules are the composed set: every fragment in
+# catalog/ci-batch-escalate.d/ (BH-8608; the old single file is retired,
+# BH-8649), so a spa/worker row in a fragment counts.
+{ [ -d "$DIR/catalog/ci-batch-escalate.d" ] && compgen -G "$DIR/catalog/ci-batch-escalate.d/*.tsv" > /dev/null; } \
+  || { echo "FAIL: catalog/ci-batch-escalate.d/ is missing or holds no *.tsv"; exit 1; }
 REAL_TSV="$T/real.tsv"
 ( unset CI_BATCH_ESCALATE_TSV; . "$LIB" && cbe_rules "$DIR" ) > "$REAL_TSV" || { echo "FAIL: cbe_rules cannot compose the real rules"; exit 1; }
 PASS=0; FAIL=0
 ok()  { PASS=$((PASS+1)); }
 bad() { FAIL=$((FAIL+1)); echo "FAIL: $1"; }
 
-# The scratch rules: the real file's spa/worker rows, and one escalate row that
+# The scratch rules: the real rules' spa/worker rows, and one escalate row that
 # matches none of the paths below, so cbe_reason passes them to the selection.
 grep -P '\t(spa|worker)\t' "$REAL_TSV" > "$T/rules.tsv"
 [ "$(grep -c . "$T/rules.tsv")" -ge 9 ] || { echo "FAIL: the real catalog carries fewer than 9 spa/worker rows"; exit 1; }
