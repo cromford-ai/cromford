@@ -1,7 +1,7 @@
 # ── project-21 DAILY LANE (BH-8079) ──────────────────────────────────────────────
-# Once a day each box counts its builds of the last project-21_DAILY_WINDOW_H hours
+# Once a day each box counts its builds of the last PROJECT_21_DAILY_WINDOW_H hours
 # (the last `project-21 state=` line of each builds/*/pipeline.log) and raises one
 # warn alert, id project-21-check-failing, when the project-21 check failed on more
-# than project-21_DAILY_FAIL_PCT percent of them. It resolves the alert otherwise.
+# than PROJECT_21_DAILY_FAIL_PCT percent of them. It resolves the alert otherwise.
 # Off: flags/lane-off-project-21-daily, or bin/harness-ctl.sh off project-21-daily.
 41 6 * * * /root/harness/bin/project-21-daily.sh >/dev/null 2>&1

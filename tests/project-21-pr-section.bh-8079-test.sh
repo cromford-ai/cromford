@@ -18,7 +18,7 @@ ok()  { PASS=$((PASS+1)); }
 bad() { FAIL=$((FAIL+1)); echo "FAIL: $1"; }
 export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@example.invalid GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@example.invalid
 export GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null
-unset project-21_ENABLED project-21_TIMEOUT_S project-21_SECTION
+unset PROJECT_21_ENABLED PROJECT_21_TIMEOUT_S PROJECT_21_SECTION
 
 H="$T/h"; mkdir -p "$H"
 scratch_install_closure bin/project-21-check.sh "$H" >/dev/null || { echo "FAIL: closure of bin/project-21-check.sh"; exit 1; }
@@ -71,7 +71,7 @@ result zero "$T/zero.json"; s=$(project-21_pr_section "$T/zero.json")
   && ok || bad "P5 zero checked: $s"
 
 # P6 off and P7 missing render nothing
-tf_mode affected; project-21_ENABLED=0 "$H/bin/project-21-check.sh" "$R" --out "$T/off.json" >/dev/null 2>&1
+tf_mode affected; PROJECT_21_ENABLED=0 "$H/bin/project-21-check.sh" "$R" --out "$T/off.json" >/dev/null 2>&1
 s=$(project-21_pr_section "$T/off.json")
 { [ "$(jq -r .state "$T/off.json")" = off ] && [ -z "$s" ]; } && ok || bad "P6 off: '$s'"
 s=$(project-21_pr_section "$T/nope.json")
@@ -89,8 +89,8 @@ PRSH="$SRC/bin/lib/rb/pr.sh"
 awk '/^# >>> project-21 check \(BH-8079\)/{f=1;next} /^# <<< project-21 check \(BH-8079\)/{exit} f' "$PRSH" > "$T/project-21-block.sh"
 awk '/^# >>> evidence block/{f=1;next} /^# <<< evidence block/{exit} f' "$PRSH" > "$T/block.sh"
 awk '/^# >>> merge note fn/{f=1;next} /^# <<< merge note fn/{exit} f' "$PRSH" > "$T/mergenote.sh"
-{ [ -s "$T/project-21-block.sh" ] && [ -s "$T/block.sh" ] && grep -q 'project-21_SECTION' "$T/block.sh"; } \
-  && ok || bad "P9 setup: the project-21 block or project-21_SECTION in the evidence block is missing"
+{ [ -s "$T/project-21-block.sh" ] && [ -s "$T/block.sh" ] && grep -q 'PROJECT_21_SECTION' "$T/block.sh"; } \
+  && ok || bad "P9 setup: the project-21 block or PROJECT_21_SECTION in the evidence block is missing"
 lp=$(grep -n '^# <<< pr push' "$PRSH" | cut -d: -f1); lt=$(grep -n '^# >>> project-21 check (BH-8079)' "$PRSH" | cut -d: -f1)
 lb=$(grep -n '^PR_BODY_FOR() {' "$PRSH" | cut -d: -f1)
 { [ -n "$lp" ] && [ -n "$lt" ] && [ -n "$lb" ] && [ "$lp" -lt "$lt" ] && [ "$lt" -lt "$lb" ]; } \
@@ -147,7 +147,7 @@ tf_mode affected; tf_reset; drive "$T/b1" "$T/body1c.md"
 
 # The knob off: no section at all, the body byte-identical to a body with no block
 tf_mode affected; tf_reset
-( export project-21_ENABLED=0; drive "$T/b4" "$T/body4.md" )
+( export PROJECT_21_ENABLED=0; drive "$T/b4" "$T/body4.md" )
 { ! has "$(cat "$T/body4.md")" 'Dependency advisories' && [ "$(tf_posts)" = 0 ] && grep -q 'project-21 state=off ' "$T/b4/pipeline.log"; } \
   && ok || bad "P13 off: posts=$(tf_posts) log=$(cat "$T/b4/pipeline.log")"
 

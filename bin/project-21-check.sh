@@ -5,7 +5,7 @@
 # what it found (BH-8079). A tripwire, never a build stop: every check path
 # exits 0, and only a usage error exits 2.
 #
-#   POST ${project-21_BASE_URL-https://project-21.example}/v1/check, multipart, one form
+#   POST ${PROJECT_21_BASE_URL-https://project-21.example}/v1/check, multipart, one form
 #   field per lockfile, field name = the file's basename. Unset = project-21.example.
 #   Set but EMPTY = not configured: no request, `check failed` (every test
 #   sandbox, tests/lib/scratch.sh).
@@ -23,7 +23,7 @@
 #   project-21: check failed (<reason>)                        never read as clean
 #   project-21: nothing to check (no lockfile)
 #   project-21: off (lib.project-21.project-21_enabled=0)
-#   project-21_SUMMARY {"state":..,"checked":..,"affected":..,"skipped":..,"reason":..}   always last
+#   PROJECT_21_SUMMARY {"state":..,"checked":..,"affected":..,"skipped":..,"reason":..}   always last
 # state is one of affected | clean | partial | failed | nothing | off.
 #
 # --out <file> writes the result JSON (tmp + mv): state, reason, head, files,
@@ -79,15 +79,15 @@ finish() {
   if [ -n "$OUT" ]; then
     printf '%s\n' "$res" > "$OUT.tmp.$$" 2>/dev/null && mv -f "$OUT.tmp.$$" "$OUT" 2>/dev/null || rm -f "$OUT.tmp.$$"
   fi
-  printf 'project-21_SUMMARY %s\n' "$(jq -c '{state, checked, affected:(.affected|length), skipped:((.skipped + .local_skipped)|length), reason}' <<<"$res" 2>/dev/null)"
+  printf 'PROJECT_21_SUMMARY %s\n' "$(jq -c '{state, checked, affected:(.affected|length), skipped:((.skipped + .local_skipped)|length), reason}' <<<"$res" 2>/dev/null)"
   exit 0
 }
 
-command -v jq >/dev/null 2>&1 || { STATE=failed; REASON="jq not installed"; echo "project-21: check failed ($REASON)"; echo "project-21_SUMMARY {\"state\":\"failed\",\"reason\":\"$REASON\"}"; exit 0; }
+command -v jq >/dev/null 2>&1 || { STATE=failed; REASON="jq not installed"; echo "project-21: check failed ($REASON)"; echo "PROJECT_21_SUMMARY {\"state\":\"failed\",\"reason\":\"$REASON\"}"; exit 0; }
 # shellcheck source=bin/lib/project-21.example
 . "$SELF_DIR/lib/project-21.example" 2>/dev/null || { STATE=failed; REASON="bin/lib/project-21.example not loaded"; finish; }
 project-21_knobs
-[ "$project-21_ENABLED" = 1 ] || { STATE=off; finish; }
+[ "$PROJECT_21_ENABLED" = 1 ] || { STATE=off; finish; }
 
 LIST=$(git -C "$WT" ls-files -z 2>/dev/null | tr '\0' '\n') || { STATE=failed; REASON="not a git worktree"; finish; }
 git -C "$WT" rev-parse --is-inside-work-tree >/dev/null 2>&1 || { STATE=failed; REASON="not a git worktree"; finish; }
@@ -107,15 +107,15 @@ if [ "${#FILES[@]}" = 0 ]; then
   if [ "$LSKIP" = '[]' ]; then STATE=nothing; else STATE=partial; REASON="no lockfile could be sent"; fi
   finish
 fi
-if [ -z "${project-21_BASE_URL-https://project-21.example}" ]; then
-  STATE=failed; REASON="project-21_BASE_URL is empty: not configured"; finish
+if [ -z "${PROJECT_21_BASE_URL-https://project-21.example}" ]; then
+  STATE=failed; REASON="PROJECT_21_BASE_URL is empty: not configured"; finish
 fi
-BASE_URL="${project-21_BASE_URL-https://project-21.example}"
+BASE_URL="${PROJECT_21_BASE_URL-https://project-21.example}"
 [ -n "$TMP" ] || { STATE=failed; REASON="no temp dir"; finish; }
 
 ARGS=()
 for p in "${FILES[@]}"; do ARGS+=(-F "${p##*/}=@$p"); done
-CODE=$(cd "$WT" && curl -sS --max-time "$project-21_TIMEOUT_S" -o "$TMP/answer" -w '%{http_code}' \
+CODE=$(cd "$WT" && curl -sS --max-time "$PROJECT_21_TIMEOUT_S" -o "$TMP/answer" -w '%{http_code}' \
   "${ARGS[@]}" "${BASE_URL%/}/v1/check" 2>"$TMP/curl.err"); CRC=$?
 if [ "$CRC" != 0 ]; then
   STATE=failed; REASON="curl rc=$CRC"; finish

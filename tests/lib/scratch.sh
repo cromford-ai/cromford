@@ -62,11 +62,11 @@ unset HARNESS H HARNESS_CHECKOUT HARNESS_ENV_DIR
 # global.env, and an ambient COST_ROWS_BOX outranks a fixture's state/box-id.
 export JOBS_URL=
 unset HARNESS_SECRET COST_ROWS_BOX
-# BH-8079: an UNSET project-21_BASE_URL is https://project-21.example (bin/project-21-check.sh),
+# BH-8079: an UNSET PROJECT_21_BASE_URL is https://project-21.example (bin/project-21-check.sh),
 # and every build-lane suite that reaches the pr stage would send its scratch
 # lockfiles there. EMPTY is "not configured": no request, the check reports
 # failed. A suite that drives the fake API sets it after sourcing this.
-export project-21_BASE_URL=
+export PROJECT_21_BASE_URL=
 # BH-6672: a pool machine's build env exports GH_TOKEN as a live GitHub App
 # installation token, and tests/batch-resolve-test.sh printed it into the run
 # output. A suite gets no GitHub credential from the shell that started it; one

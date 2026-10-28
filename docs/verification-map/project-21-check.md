@@ -3,7 +3,7 @@
 **What it is:** every build sends the lockfiles its worktree TRACKS
 (package-lock.json, pnpm-lock.yaml, yarn.lock, requirements.txt, go.sum,
 composer.lock, Cargo.lock, Gemfile.lock, at any depth) to project-21 in ONE request,
-`POST ${project-21_BASE_URL-https://project-21.example}/v1/check`, after the push and before
+`POST ${PROJECT_21_BASE_URL-https://project-21.example}/v1/check`, after the push and before
 the PR body renders. The result is the PR body section
 `## Dependency advisories (project-21)`. It is a tripwire: no path stops a build.
 
@@ -12,7 +12,7 @@ the PR body renders. The result is the PR body section
 - The build lane: the block `# >>> project-21 check (BH-8079)` in
   `bin/lib/rb/pr.sh`, right after `# <<< pr push`. It calls
   `project-21_build_run` (`bin/lib/project-21.example`), which runs `bin/project-21-check.sh`
-  once per head and sets `project-21_SECTION`; `PR_BODY_FOR` prints it.
+  once per head and sets `PROJECT_21_SECTION`; `PR_BODY_FOR` prints it.
 - By hand: `bin/project-21-check.sh <worktree> [--out <file>] [--head <sha>]`.
 - The review: the self-check rule `project-21-upgrade`
   (`catalog/pr-self-check.d/bh-8079-project-21-upgrade.tsv`), through
@@ -25,7 +25,7 @@ the PR body renders. The result is the PR body section
 | artifact | what it says |
 |---|---|
 | `$BUILD/project-21.json` | the result: `state` (affected, clean, partial, failed, nothing, off), `reason`, `head`, `files`, `local_skipped`, `checked`, `affected`, `skipped` |
-| `$BUILD/project-21.txt` | the CLI's stdout: one `project-21: affected ...` line per advisory, `project-21: skipped ...`, `none known`, `check failed (<reason>)`, and `project-21_SUMMARY <json>` last |
+| `$BUILD/project-21.txt` | the CLI's stdout: one `project-21: affected ...` line per advisory, `project-21: skipped ...`, `none known`, `check failed (<reason>)`, and `PROJECT_21_SUMMARY <json>` last |
 | `$BUILD/pipeline.log` | `project-21 state=<s> checked=<n> affected=<n> skipped=<n>` |
 | the PR body | `## Dependency advisories (project-21)`: the table (dependency, version, severity, fixed in, upgrade, advisory), or `None known`, `Check failed (...)`, `Nothing to check`, `Partial coverage` |
 | the lead review request notes | `project-21-upgrade: <dep>@<version> has a fix in <x> that this PR does not apply: <upgrade> (<url>)` |
@@ -45,7 +45,7 @@ the section says it is not a clean result.
 - `lane.project-21-daily.project-21_daily_fail_pct` (50),
   `lane.project-21-daily.project-21_daily_window_h` (24);
   off: `flags/lane-off-project-21-daily`.
-- `project-21_BASE_URL` (env, `env-templates/lanes/385-project-21.env.example`): unset =
+- `PROJECT_21_BASE_URL` (env, `env-templates/lanes/385-project-21.env.example`): unset =
   https://project-21.example, empty = not configured (every test sandbox).
 
 ## Tests

@@ -8,9 +8,9 @@
 #   C5  HTTP 429; C6 an HTML answer; C7 a timeout
 #   C8  a partial_coverage skip and a checked:0 answer are partial, never clean
 #   C9  which files are sent (nested, near-miss names, untracked)
-#   C10 project-21_ENABLED=0: off, 0 requests
+#   C10 PROJECT_21_ENABLED=0: off, 0 requests
 #   C11 not a git worktree: check failed, rc 0
-#   C12 the scratch default (project-21_BASE_URL empty): not configured, 0 curl calls
+#   C12 the scratch default (PROJECT_21_BASE_URL empty): not configured, 0 curl calls
 #   C13 a usage error exits 2; C14 --out writes the result JSON
 # Run from anywhere: HARNESS_TEST_SANDBOX=1 bash tests/project-21-check.bh-8079-test.sh
 set -uo pipefail
@@ -21,7 +21,7 @@ ok()  { PASS=$((PASS+1)); }
 bad() { FAIL=$((FAIL+1)); echo "FAIL: $1"; }
 export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@example.invalid GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@example.invalid
 export GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null
-unset project-21_ENABLED project-21_TIMEOUT_S
+unset PROJECT_21_ENABLED PROJECT_21_TIMEOUT_S
 
 H="$T/h"; mkdir -p "$H"
 scratch_install_closure bin/project-21-check.sh "$H" >/dev/null || { echo "FAIL: closure of bin/project-21-check.sh"; exit 1; }
@@ -42,13 +42,13 @@ mkdir -p "$T/shim"
 printf '#!/bin/bash\necho "$*" >> %q\nexit 7\n' "$T/curl-calls.log" > "$T/shim/curl"; chmod +x "$T/shim/curl"
 : > "$T/curl-calls.log"
 out=$(PATH="$T/shim:$PATH" "$CHECK" "$T/r-lock" 2>&1); rc=$?
-{ [ "$rc" = 0 ] && grep -qxF 'project-21: check failed (project-21_BASE_URL is empty: not configured)' <<<"$out" \
+{ [ "$rc" = 0 ] && grep -qxF 'project-21: check failed (PROJECT_21_BASE_URL is empty: not configured)' <<<"$out" \
   && [ ! -s "$T/curl-calls.log" ]; } && ok || bad "C12 scratch default: rc=$rc out=$out curl=$(cat "$T/curl-calls.log")"
 
 . "$SRC/tests/lib/project-21-fake.bh-8079.sh" "$SRC" || exit 1
 tf_start || exit 1
 
-summary() { sed -n 's/^project-21_SUMMARY //p' <<<"$1" | tail -1; }
+summary() { sed -n 's/^PROJECT_21_SUMMARY //p' <<<"$1" | tail -1; }
 run() { # run <repo> [args] -> $out $rc
   tf_reset
   out=$("$CHECK" "$@" 2>&1); rc=$?
@@ -60,7 +60,7 @@ s=$(summary "$out")
 { [ "$rc" = 0 ] \
   && grep -q '^project-21: affected npm/lodash@4.17.15 high fixed_in=4.17.21 GHSA-p6mc-m468-83gw https://osv.dev/vulnerability/GHSA-p6mc-m468-83gw$' <<<"$out" \
   && [ "$(grep -c '^project-21: affected ' <<<"$out")" = 2 ] \
-  && [ "$(tail -1 <<<"$out" | cut -d' ' -f1)" = project-21_SUMMARY ] \
+  && [ "$(tail -1 <<<"$out" | cut -d' ' -f1)" = PROJECT_21_SUMMARY ] \
   && [ "$(jq -r .state <<<"$s")" = affected ] && [ "$(jq -r .affected <<<"$s")" = 2 ] && [ "$(jq -r .checked <<<"$s")" = 2 ] \
   && [ "$(tf_posts)" = 1 ] && grep -qx 'POST /v1/check package-lock.json' "$TF_DIR/req.log"; } \
   && ok || bad "C1 affected: rc=$rc out=$out req=$(cat "$TF_DIR/req.log")"
@@ -91,7 +91,7 @@ tf_mode html; run "$T/r-lock"
 tf_mode noarray; run "$T/r-lock"
 { [ "$rc" = 0 ] && grep -qxF 'project-21: check failed (bad answer)' <<<"$out"; } && ok || bad "C6b no affected array: rc=$rc out=$out"
 tf_mode slow; tf_reset
-out=$(project-21_TIMEOUT_S=5 "$CHECK" "$T/r-lock" 2>&1); rc=$?
+out=$(PROJECT_21_TIMEOUT_S=5 "$CHECK" "$T/r-lock" 2>&1); rc=$?
 { [ "$rc" = 0 ] && grep -qxF 'project-21: check failed (curl rc=28)' <<<"$out" && ! grep -q 'none known' <<<"$out"; } \
   && ok || bad "C7 timeout: rc=$rc out=$out"
 
@@ -116,7 +116,7 @@ tf_mode clean; run "$T/r-many"
 
 # C10 the knob off
 tf_mode affected; tf_reset
-out=$(project-21_ENABLED=0 "$CHECK" "$T/r-lock" 2>&1); rc=$?
+out=$(PROJECT_21_ENABLED=0 "$CHECK" "$T/r-lock" 2>&1); rc=$?
 { [ "$rc" = 0 ] && grep -qxF 'project-21: off (lib.project-21.project-21_enabled=0)' <<<"$out" && [ "$(tf_posts)" = 0 ] \
   && [ "$(jq -r .state <<<"$(summary "$out")")" = off ]; } && ok || bad "C10 off: rc=$rc out=$out posts=$(tf_posts)"
 

@@ -4,11 +4,11 @@
 # Each build writes one `<stamp> [<project>/<KEY>] project-21 state=<s> ...` line to
 # its pipeline.log (bin/lib/rb/pr.sh, project-21_log_line in bin/lib/project-21.example). This
 # lane reads the LAST such line of each $HARNESS/builds/*/pipeline.log and counts
-# the builds whose line is stamped within project-21_DAILY_WINDOW_H hours (24). A
+# the builds whose line is stamped within PROJECT_21_DAILY_WINDOW_H hours (24). A
 # build whose state is off is not counted. Pool builds count on the hub, which
 # fly-results-ingest.sh copies their pipeline.log to.
 #
-#   failed x 100 > project-21_DAILY_FAIL_PCT (50) x counted  -> one warn lane-alert,
+#   failed x 100 > PROJECT_21_DAILY_FAIL_PCT (50) x counted  -> one warn lane-alert,
 #                                                           id project-21-check-failing
 #   counted >= 1 and at or under it                      -> --resolve that id
 #   counted = 0                                          -> a log line only
@@ -30,11 +30,11 @@ HENV=$(harness_env_dir "$H")
 command -v lane_gate_or_exit >/dev/null 2>&1 && lane_gate_or_exit project-21-daily
 command -v lane_env_apply >/dev/null 2>&1 && lane_env_apply project-21-daily
 
-PCT="${project-21_DAILY_FAIL_PCT:-50}"   # lane.project-21-daily.project-21_daily_fail_pct
-WIN="${project-21_DAILY_WINDOW_H:-24}"   # lane.project-21-daily.project-21_daily_window_h
+PCT="${PROJECT_21_DAILY_FAIL_PCT:-50}"   # lane.project-21-daily.project-21_daily_fail_pct
+WIN="${PROJECT_21_DAILY_WINDOW_H:-24}"   # lane.project-21-daily.project-21_daily_window_h
 [[ "$PCT" =~ ^[1-9][0-9]*$ ]] && [ "$PCT" -le 100 ] || PCT=50
 [[ "$WIN" =~ ^[1-9][0-9]*$ ]] || WIN=24
-NOW="${project-21_DAILY_NOW:-}"
+NOW="${PROJECT_21_DAILY_NOW:-}"
 [[ "$NOW" =~ ^[1-9][0-9]*$ ]] || NOW=$(date +%s)
 BOX="${JOBS_BOX:-$(hostname -s 2>/dev/null || echo unknown)}"
 

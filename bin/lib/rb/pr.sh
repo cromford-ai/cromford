@@ -951,16 +951,16 @@ GH_LIVE
 # >>> project-21 check (BH-8079)
 # The project-21 dependency check of the pushed head, before the body renders. One
 # call per head ($BUILD/project-21.json), a pipeline.log project-21 line for
-# bin/project-21-daily.sh, and project-21_SECTION for PR_BODY_FOR. A tripwire: no path
+# bin/project-21-daily.sh, and PROJECT_21_SECTION for PR_BODY_FOR. A tripwire: no path
 # here stops the build (bin/lib/project-21.example project-21_build_run).
-project-21_SECTION=""
+PROJECT_21_SECTION=""
 # shellcheck source=bin/lib/project-21.example
 if [ -r "$HARNESS/bin/lib/project-21.example" ] && . "$HARNESS/bin/lib/project-21.example" 2>/dev/null; then
-  project-21_SECTION=$(project-21_build_run "$BUILD" . "$(STAMP) [$PROJECT/$KEY]") || project-21_SECTION=""
+  PROJECT_21_SECTION=$(project-21_build_run "$BUILD" . "$(STAMP) [$PROJECT/$KEY]") || PROJECT_21_SECTION=""
 else
   echo "$(STAMP) [$PROJECT/$KEY] project-21 state=failed checked=0 affected=0 skipped=0 (bin/lib/project-21.example not loaded)" >> "$BUILD/pipeline.log"
 fi
-[ -n "$project-21_SECTION" ] && project-21_SECTION=$'\n'"$project-21_SECTION"
+[ -n "$PROJECT_21_SECTION" ] && PROJECT_21_SECTION=$'\n'"$PROJECT_21_SECTION"
 # <<< project-21 check (BH-8079)
 # What/why for humans (the operator 2026-08-24: the body showed only models+cost —
 # our own rule says what/why + verify evidence). Deterministic, no model call:
@@ -1318,7 +1318,7 @@ Full manifest (per-input digests): `%s/context.json` on the build box.
 %s
 🤖 Generated with [Claude Code](https://claude.com/claude-code)' \
     "$HOTFIX_PREFIX" "$KEY" "$EB_SUBJECT" "${CLOSES_LINE:+$CLOSES_LINE
-}" "$STACK_SECTION" "$WHAT_LIST" "$WHY_EXCERPT" "$VERIFY_LINE" "$SPEC_LINE" "${ASSUMPTIONS_SECTION}${PREPR_SECTION:-}${REPRO_SECTION:-}${SPEC_CHANGES_SECTION:-}${project-21_SECTION:-}${NOTMET_SECTION:-}${NH_PR_SECTION:-}${CALLERS_SECTION:-}${TEST_CHANGE_SECTION:-}" "$(basename "$BUILD")" "$PLAN_MODEL" "$EXECUTE_MODEL" "$REVIEW_MODEL" "$MERGE_NOTE" "$MIG_SECTION" "$COST_LINE" \
+}" "$STACK_SECTION" "$WHAT_LIST" "$WHY_EXCERPT" "$VERIFY_LINE" "$SPEC_LINE" "${ASSUMPTIONS_SECTION}${PREPR_SECTION:-}${REPRO_SECTION:-}${SPEC_CHANGES_SECTION:-}${PROJECT_21_SECTION:-}${NOTMET_SECTION:-}${NH_PR_SECTION:-}${CALLERS_SECTION:-}${TEST_CHANGE_SECTION:-}" "$(basename "$BUILD")" "$PLAN_MODEL" "$EXECUTE_MODEL" "$REVIEW_MODEL" "$MERGE_NOTE" "$MIG_SECTION" "$COST_LINE" \
     "$CTX_SIG" "$CTX_SIG" "$CTX_COMMIT" "$(hostname)" "$CTX_SYNC" "$CTX_FRESH" "$BUILD" "$1" \
     | "$_KW"
 }

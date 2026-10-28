@@ -10,7 +10,7 @@
 #   D6 a failed line older than the window is not counted
 #   D7 the LAST line of a build decides (failed, then clean = clean)
 #   D8 no builds dir: rc 0, one log line, no call
-#   D9 project-21_DAILY_FAIL_PCT is the threshold (3 of 4 under 80 = no open)
+#   D9 PROJECT_21_DAILY_FAIL_PCT is the threshold (3 of 4 under 80 = no open)
 # Run from anywhere: HARNESS_TEST_SANDBOX=1 bash tests/project-21-daily.bh-8079-test.sh
 set -uo pipefail
 . "$(dirname "$0")/lib/scratch.sh" || exit 1
@@ -18,7 +18,7 @@ SRC=$(cd "$(dirname "$0")/.." && pwd)
 PASS=0; FAIL=0
 ok()  { PASS=$((PASS+1)); }
 bad() { FAIL=$((FAIL+1)); echo "FAIL: $1"; }
-unset project-21_DAILY_FAIL_PCT project-21_DAILY_WINDOW_H project-21_DAILY_NOW
+unset PROJECT_21_DAILY_FAIL_PCT PROJECT_21_DAILY_WINDOW_H PROJECT_21_DAILY_NOW
 
 H="$T/h"; mkdir -p "$H/bin"
 scratch_install_closure bin/project-21-daily.sh "$H" >/dev/null || { echo "FAIL: closure of bin/project-21-daily.sh"; exit 1; }
@@ -40,7 +40,7 @@ build() { # build <name> <stamp> <state>... : one project-21 line per state, in 
 }
 lane() { lane_env; }
 lane_env() { # lane_env [VAR=value]...
-  out=$(env HARNESS="$H" LANE_GATE_DISABLE=1 project-21_DAILY_NOW="$NOW" "$@" "$H/bin/project-21-daily.sh" 2>&1); rc=$?; }
+  out=$(env HARNESS="$H" LANE_GATE_DISABLE=1 PROJECT_21_DAILY_NOW="$NOW" "$@" "$H/bin/project-21-daily.sh" 2>&1); rc=$?; }
 opens()    { grep -c -- '--severity warn' "$T/alerts.log" 2>/dev/null || true; }
 resolves() { grep -c -- '--resolve' "$T/alerts.log" 2>/dev/null || true; }
 T1='2026-10-23 06:00:00Z'
@@ -89,7 +89,7 @@ lane
 
 # D9 the threshold knob
 reset; build b1 "$T1" failed; build b2 "$T1" failed; build b3 "$T1" failed; build b4 "$T1" clean
-lane_env project-21_DAILY_FAIL_PCT=80
+lane_env PROJECT_21_DAILY_FAIL_PCT=80
 { [ "$(opens)" = 0 ] && [ "$(resolves)" = 1 ]; } && ok || bad "D9 threshold 80: alerts=$(cat "$T/alerts.log")"
 
 echo "project-21-daily.bh-8079: PASS $PASS FAIL $FAIL"

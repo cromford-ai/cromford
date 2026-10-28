@@ -4,7 +4,7 @@
 # catalog/pr-self-check.d/bh-8079-project-21-upgrade.tsv), through the CLI
 # bin/pr-self-check.sh, and its two forwarders into the lead review notes.
 #   R1 an affected row with a fixed_in: a NOTE that names the upgrade line, rc 0
-#   R2 lib.project-21.project-21_review_block=1 (env project-21_REVIEW_BLOCK): the same line as a REFUSE, rc 1
+#   R2 lib.project-21.project-21_review_block=1 (env PROJECT_21_REVIEW_BLOCK): the same line as a REFUSE, rc 1
 #   R3 fixed in `none`: no line       R4 clean, failed, partial-only: no line
 #   R5 the heading quoted in a code fence: not read
 #   R6 two project-21 headings: only the first is read    R7 no section: no line
@@ -18,7 +18,7 @@ ok()  { PASS=$((PASS+1)); }
 bad() { FAIL=$((FAIL+1)); echo "FAIL: $1"; }
 export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@example.invalid GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@example.invalid
 export GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null
-unset PR_SELF_CHECK_ONLY PSC_TICKET_FILE PSC_PR_KEY project-21_REVIEW_BLOCK project-21_ENABLED
+unset PR_SELF_CHECK_ONLY PSC_TICKET_FILE PSC_PR_KEY PROJECT_21_REVIEW_BLOCK PROJECT_21_ENABLED
 export TMPDIR="$T/tmp"; mkdir -p "$TMPDIR"
 
 H="$T/h"; mkdir -p "$H"
@@ -57,7 +57,7 @@ psc "$T/b-aff.md"
 R1_OUT="$out"
 
 # R2 the knob on
-out=$(project-21_REVIEW_BLOCK=1 "$H/bin/pr-self-check.sh" check --repo "$R" --base "$BASE" --head "$HD" --body "$T/b-aff.md" --only '^project-21-upgrade$' 2>&1); rc=$?
+out=$(PROJECT_21_REVIEW_BLOCK=1 "$H/bin/pr-self-check.sh" check --repo "$R" --base "$BASE" --head "$HD" --body "$T/b-aff.md" --only '^project-21-upgrade$' 2>&1); rc=$?
 { [ "$rc" = 1 ] && grep -qxF -- "REFUSE ${WANT#NOTE }" <<<"$out" && ! grep -q '^NOTE project-21' <<<"$out"; } \
   && ok || bad "R2 refuse: rc=$rc out=$out"
 

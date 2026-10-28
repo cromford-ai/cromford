@@ -7,8 +7,8 @@
 # `project-21-upgrade` rule) and bin/project-21-daily.sh (the daily failure count).
 #
 #   project-21_knobs
-#       Sets project-21_ENABLED, project-21_REVIEW_BLOCK, project-21_TIMEOUT_S,
-#       project-21_ROWS_MAX, project-21_FIELD_MAX, project-21_NOTE_MAX from env, then the
+#       Sets PROJECT_21_ENABLED, PROJECT_21_REVIEW_BLOCK, PROJECT_21_TIMEOUT_S,
+#       PROJECT_21_ROWS_MAX, PROJECT_21_FIELD_MAX, PROJECT_21_NOTE_MAX from env, then the
 #       `lib.project-21.*` settings rows (lib_env_apply project-21), then the code
 #       fallbacks below. A value that is not a whole number is its fallback.
 #   project-21_pr_section <result.json>
@@ -26,11 +26,11 @@
 #       The self-check rule. One `NOTE <id>: <dep>@<version> has a fix in <x>
 #       that this PR does not apply: <upgrade> (<url>)` per table row whose
 #       `fixed in` is not none. REFUSE instead, and rc 1, when
-#       project-21_REVIEW_BLOCK=1. No section or no such row: no output, rc 0.
+#       PROJECT_21_REVIEW_BLOCK=1. No section or no such row: no output, rc 0.
 
 _project-21_LIB=$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)
-project-21_HEADING='## Dependency advisories (project-21)'
-project-21_TABLE_HEAD='| dependency | version | severity | fixed in | upgrade | advisory |'
+PROJECT_21_HEADING='## Dependency advisories (project-21)'
+PROJECT_21_TABLE_HEAD='| dependency | version | severity | fixed in | upgrade | advisory |'
 
 # The build-tripwire pattern (bin/lib/build-tripwire.sh _tw_knobs): lane-gate
 # runs in a subshell, so its fail-closed exit cannot stop a build, and the EXIT
@@ -43,19 +43,19 @@ project-21_knobs() {
     if [ -z "${LANE_REGISTRY:-}" ] && [ ! -r "$(_lg_registry)" ] && . "$_project-21_LIB/lanes-registry.sh" >/dev/null 2>&1; then
       LANE_REGISTRY=$(lanes_json_path "$_project-21_LIB/../.." 2>/dev/null) && export LANE_REGISTRY
     fi
-    trap 'for k in project-21_ENABLED project-21_REVIEW_BLOCK project-21_TIMEOUT_S project-21_ROWS_MAX project-21_FIELD_MAX project-21_NOTE_MAX; do printf "%s\t%s\n" "$k" "${!k:-}" >&3; done' EXIT
+    trap 'for k in PROJECT_21_ENABLED PROJECT_21_REVIEW_BLOCK PROJECT_21_TIMEOUT_S PROJECT_21_ROWS_MAX PROJECT_21_FIELD_MAX PROJECT_21_NOTE_MAX; do printf "%s\t%s\n" "$k" "${!k:-}" >&3; done' EXIT
     lib_env_apply project-21 >/dev/null 2>&1) || true
   while IFS=$'\t' read -r k v; do
     [ -n "$k" ] && [ -n "$v" ] || continue
-    case "$k" in project-21_*) printf -v "$k" '%s' "$v" ;; esac
+    case "$k" in PROJECT_21_*) printf -v "$k" '%s' "$v" ;; esac
   done <<<"$kv"
   # Code fallbacks; each names its settings row (catalog/lanes.d/_lib.project-21.json).
-  [[ "${project-21_ENABLED:-}" =~ ^[01]$ ]]        || project-21_ENABLED=1        # lib.project-21.project-21_enabled
-  [[ "${project-21_REVIEW_BLOCK:-}" =~ ^[01]$ ]]   || project-21_REVIEW_BLOCK=0   # lib.project-21.project-21_review_block
-  [[ "${project-21_TIMEOUT_S:-}" =~ ^[1-9][0-9]*$ ]] || project-21_TIMEOUT_S=30   # lib.project-21.project-21_timeout_s
-  [[ "${project-21_ROWS_MAX:-}" =~ ^[1-9][0-9]*$ ]]  || project-21_ROWS_MAX=50    # lib.project-21.project-21_rows_max
-  [[ "${project-21_FIELD_MAX:-}" =~ ^[1-9][0-9]*$ ]] || project-21_FIELD_MAX=200  # lib.project-21.project-21_field_max
-  [[ "${project-21_NOTE_MAX:-}" =~ ^[1-9][0-9]*$ ]]  || project-21_NOTE_MAX=10    # lib.project-21.project-21_note_max
+  [[ "${PROJECT_21_ENABLED:-}" =~ ^[01]$ ]]        || PROJECT_21_ENABLED=1        # lib.project-21.project-21_enabled
+  [[ "${PROJECT_21_REVIEW_BLOCK:-}" =~ ^[01]$ ]]   || PROJECT_21_REVIEW_BLOCK=0   # lib.project-21.project-21_review_block
+  [[ "${PROJECT_21_TIMEOUT_S:-}" =~ ^[1-9][0-9]*$ ]] || PROJECT_21_TIMEOUT_S=30   # lib.project-21.project-21_timeout_s
+  [[ "${PROJECT_21_ROWS_MAX:-}" =~ ^[1-9][0-9]*$ ]]  || PROJECT_21_ROWS_MAX=50    # lib.project-21.project-21_rows_max
+  [[ "${PROJECT_21_FIELD_MAX:-}" =~ ^[1-9][0-9]*$ ]] || PROJECT_21_FIELD_MAX=200  # lib.project-21.project-21_field_max
+  [[ "${PROJECT_21_NOTE_MAX:-}" =~ ^[1-9][0-9]*$ ]]  || PROJECT_21_NOTE_MAX=10    # lib.project-21.project-21_note_max
   return 0
 }
 
@@ -65,8 +65,8 @@ project-21_pr_section() {
   st=$(jq -r '.state // "" | tostring' "$f" 2>/dev/null) || st=""
   [ "$st" = off ] && return 0
   project-21_knobs
-  jq -r --arg heading "$project-21_HEADING" --arg thead "$project-21_TABLE_HEAD" --arg file "$f" \
-        --argjson rows "$project-21_ROWS_MAX" --argjson fmax "$project-21_FIELD_MAX" '
+  jq -r --arg heading "$PROJECT_21_HEADING" --arg thead "$PROJECT_21_TABLE_HEAD" --arg file "$f" \
+        --argjson rows "$PROJECT_21_ROWS_MAX" --argjson fmax "$PROJECT_21_FIELD_MAX" '
     def cell: (. // "" | tostring | gsub("[\r\n\t]"; " ") | gsub("\\|"; "/") | .[0:$fmax]);
     def tick: "`" + (tostring | gsub("`"; "'"'"'")) + "`";
     def skips: ((.skipped // []) + (.local_skipped // []));
@@ -100,7 +100,7 @@ project-21_pr_section() {
       else
         "Check failed (unreadable result). This is not a clean result."
       end
-  ' "$f" 2>/dev/null || printf '%s\n\nCheck failed (unreadable result). This is not a clean result.\n' "$project-21_HEADING"
+  ' "$f" 2>/dev/null || printf '%s\n\nCheck failed (unreadable result). This is not a clean result.\n' "$PROJECT_21_HEADING"
 }
 
 project-21_log_line() {
@@ -122,7 +122,7 @@ project-21_build_run() {
   if [ -r "$out" ]; then
     project-21_pr_section "$out"
   else
-    printf '%s\n\nCheck failed (no result file). This is not a clean result.\n' "$project-21_HEADING"
+    printf '%s\n\nCheck failed (no result file). This is not a clean result.\n' "$PROJECT_21_HEADING"
   fi
   return 0
 }
@@ -132,7 +132,7 @@ project-21_psc_check() {
   [ -r "$body" ] || return 0
   # The FIRST exact heading line outside a code fence; it ends at the next
   # `## ` heading. Only rows under the exact table header line are read.
-  rows=$(awk -v h="$project-21_HEADING" -v th="$project-21_TABLE_HEAD" '
+  rows=$(awk -v h="$PROJECT_21_HEADING" -v th="$PROJECT_21_TABLE_HEAD" '
     /^```/ { fence = !fence; next }
     fence { next }
     in_s && /^## / { exit }
@@ -153,13 +153,13 @@ project-21_psc_check() {
   ' "$body" 2>/dev/null)
   [ -n "$rows" ] || return 0
   project-21_knobs
-  word=NOTE; [ "$project-21_REVIEW_BLOCK" = 1 ] && word=REFUSE
+  word=NOTE; [ "$PROJECT_21_REVIEW_BLOCK" = 1 ] && word=REFUSE
   while IFS= read -r line; do
     [ -n "$line" ] || continue
-    n=$((n+1)); [ "$n" -le "$project-21_NOTE_MAX" ] || continue
+    n=$((n+1)); [ "$n" -le "$PROJECT_21_NOTE_MAX" ] || continue
     printf '%s %s: %s\n' "$word" "$id" "$line"
   done <<<"$rows"
-  [ "$n" -gt "$project-21_NOTE_MAX" ] && printf '%s %s: and %s more\n' "$word" "$id" "$((n - project-21_NOTE_MAX))"
+  [ "$n" -gt "$PROJECT_21_NOTE_MAX" ] && printf '%s %s: and %s more\n' "$word" "$id" "$((n - PROJECT_21_NOTE_MAX))"
   [ "$word" = REFUSE ] && return 1
   return 0
 }
