@@ -1,0 +1,7 @@
+# BH-8731 (lifecycle 1/6): the ticket phase ledger. A lane moves a ticket's
+# phase (one ticket_events row per accepted move, 409 on an illegal or
+# wrong-owner move), and reads the stuck rows and one ticket's history.
+# Bearer-gated.
+POST /api/lifecycle/transition
+GET /api/lifecycle/stuck
+GET /api/lifecycle/history

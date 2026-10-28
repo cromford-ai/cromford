@@ -25,6 +25,9 @@ function fakeDB(state) {
   state.events = state.events || [];
   if (state.hasMachine === undefined) state.hasMachine = true;
   if (state.hasHarnessCommit === undefined) state.hasHarnessCommit = state.hasMachine;
+  // TEST-CHANGE (BH-8731): ensureColumns also adds the four lifecycle columns
+  // (core.d/bh-8731-lifecycle.js); the fake reports them as harness_commit is.
+  if (state.hasLifecycle === undefined) state.hasLifecycle = state.hasMachine;
   const calls = [];
   const batches = [];
   const norm = (sql) => sql.replace(/\s+/g, ' ').trim();
@@ -35,11 +38,19 @@ function fakeDB(state) {
     calls.push({ sql: s, binds: b });
     if (/^PRAGMA table_info\(build_queue\)$/.test(s)) {
       const cols = ['project', 'ticket_key', 'status', 'claimed_by', 'claimed_at', 'reason', 'updated_at'];
-      return { rows: [...cols, ...(state.hasMachine ? ['machine'] : []), ...(state.hasHarnessCommit ? ['harness_commit'] : [])].map((name) => ({ name })) };
+      return { rows: [...cols, ...(state.hasMachine ? ['machine'] : []), ...(state.hasHarnessCommit ? ['harness_commit'] : []),
+        ...(state.hasLifecycle ? ['phase', 'phase_at', 'phase_actor', 'question'] : [])].map((name) => ({ name })) };
     }
     if (/^ALTER TABLE build_queue ADD COLUMN machine TEXT$/.test(s)) { state.hasMachine = true; return { changes: 0 }; }
     // BH-7302: ensureColumns also adds harness_commit; the fake reports it after.
     if (/^ALTER TABLE build_queue ADD COLUMN harness_commit TEXT$/.test(s)) { state.hasHarnessCommit = true; return { changes: 0 }; }
+    // TEST-CHANGE (BH-8731): the lifecycle columns and their index.
+    if (/^ALTER TABLE build_queue ADD COLUMN (phase|phase_at|phase_actor|question) TEXT$/.test(s)) {
+      state.lifecycleAdded = [...(state.lifecycleAdded || []), s.split(' ')[5]];
+      if (state.lifecycleAdded.length === 4) state.hasLifecycle = true;
+      return { changes: 0 };
+    }
+    if (/^CREATE INDEX IF NOT EXISTS idx_build_queue_phase_at ON build_queue\(phase, phase_at\)$/.test(s)) return { changes: 0 };
     if (/^SELECT \* FROM build_queue WHERE project=\?1 AND ticket_key=\?2$/.test(s)) {
       const r = row(b[0], b[1]);
       return { rows: r ? [{ ...r }] : [] };

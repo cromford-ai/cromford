@@ -487,6 +487,9 @@ export const QUEUE_TRANSITIONS = {
   failed:  ["failed", "queued"],
   dropped: ["dropped", "ready", "queued"],
 };
+// The TICKET's phases (BH-8731), beside the queue row's statuses: the table
+// and the owner map live in lib/lifecycle.js (routes/ticket-lifecycle.js).
+export { LIFECYCLE_TRANSITIONS, LIFECYCLE_OWNERS } from "./lifecycle.js";
 
 // The merge queue (2026-09-10). `dropped` is a fourth status beyond the three
 // the brief named, and it earns its place: a PR dequeued because it is no longer

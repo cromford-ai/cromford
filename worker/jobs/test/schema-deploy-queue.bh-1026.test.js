@@ -155,7 +155,10 @@ test('build_queue.machine is nullable, defaultless and never backfilled', () => 
   // The CREATE reaches only a fresh database; ADDED_COLUMNS is what reaches the
   // live one, and the two must name the same column. BH-7302 appends
   // harness_commit, which only ADDED_COLUMNS carries.
-  assert.deepEqual(ADDED_COLUMNS.build_queue, [['machine', 'TEXT'], ['harness_commit', 'TEXT']],
+  // TEST-CHANGE (BH-8731): the four lifecycle columns (core.d/bh-8731-lifecycle.js)
+  // follow, ADDED_COLUMNS only, as harness_commit is.
+  assert.deepEqual(ADDED_COLUMNS.build_queue, [['machine', 'TEXT'], ['harness_commit', 'TEXT'],
+    ['phase', 'TEXT'], ['phase_at', 'TEXT'], ['phase_actor', 'TEXT'], ['question', 'TEXT']],
     'ADDED_COLUMNS.build_queue must stay in sync with the CREATE');
   db.close();
 });
@@ -194,12 +197,16 @@ test('ensureColumns reaches a build_queue that predates machine, once', async ()
     'ensureColumns must ALTER the column into an existing table');
   const alters = seen.filter((s) => /ALTER TABLE/i.test(s));
   // BH-7302: one ALTER per ADDED column, machine and harness_commit.
-  assert.equal(alters.length, 2, `exactly two ALTERs, got ${alters.length}: ${alters.join(' | ')}`);
+  // TEST-CHANGE (BH-8731): plus phase, phase_at, phase_actor and question.
+  assert.equal(alters.length, 6, `exactly six ALTERs, got ${alters.length}: ${alters.join(' | ')}`);
   assert.ok(alters.some((s) => /ADD COLUMN machine TEXT/.test(s)), alters.join(' | '));
   assert.ok(alters.some((s) => /ADD COLUMN harness_commit TEXT/.test(s)), alters.join(' | '));
+  for (const c of ['phase', 'phase_at', 'phase_actor', 'question']) {
+    assert.ok(alters.some((s) => new RegExp(`ADD COLUMN ${c} TEXT$`).test(s)), alters.join(' | '));
+  }
 
   await ensureColumns(env, 'build_queue');
-  assert.equal(seen.filter((s) => /ALTER TABLE/i.test(s)).length, 2,
+  assert.equal(seen.filter((s) => /ALTER TABLE/i.test(s)).length, 6,
     'memoised per DB handle: a second call must not re-ALTER');
   assert.equal(seen.filter((s) => /PRAGMA table_info/i.test(s)).length, 1,
     'memoised per DB handle: a second call must not re-PRAGMA');
@@ -302,8 +309,10 @@ test('a claim with NO machine is byte for byte today: no PRAGMA, no ALTER, same 
 
   // The response shape: the keys it had before, PLUS the one this column adds.
   assert.deepEqual(Object.keys(claim.body.queued).sort(),
-    [...CLAIM_KEYS_ON_MAIN, 'machine', 'harness_commit'].sort(),
-    'the claim response is the row: every key it had, machine and harness_commit — nothing else');
+    // TEST-CHANGE (BH-8731): the enqueue's ensureColumns widened the row by the
+    // four lifecycle columns, so the row the claim returns carries them too.
+    [...CLAIM_KEYS_ON_MAIN, 'machine', 'harness_commit', 'phase', 'phase_at', 'phase_actor', 'question'].sort(),
+    'the claim response is the row: every key it had, machine, harness_commit and the lifecycle columns — nothing else');
   assert.deepEqual(Object.keys(claim.body).sort(), ['as_of', 'claimed', 'queued'],
     'the claim body keys are unchanged');
   assert.equal(claim.body.queued.machine, null);

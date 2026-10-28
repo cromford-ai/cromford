@@ -32,6 +32,8 @@ export const ARCHIVE_TABLES = {
   secret_envelope_events: { key: ["id"], time: "at" },
   // BH-7972: old prompt versions (routes/retention.d/bh-7972-prompt-versions.js).
   prompt_versions: { key: ["id"], time: "created_at" },
+  // BH-8731: the ticket lifecycle ledger (routes/retention.d/bh-8731-ticket-events.js).
+  ticket_events: { key: ["id"], time: "at" },
 };
 
 // One text for every archive rule's "unbound" audit row (lib/archive-daily.js).
