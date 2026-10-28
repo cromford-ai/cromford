@@ -1,0 +1,12 @@
+{
+  "env": "POOL_TESTHOST_ENSURE_TIMEOUT_S",
+  "type": "int",
+  "default": 120,
+  "min": 10,
+  "max": 600,
+  "unit": "seconds",
+  "zero_means": null,
+  "required": false,
+  "read_in": "bin/lib/pool-testhost-route.sh",
+  "note": "BH-8659. The bound on the hub's `bin/testhost-tick.sh ensure --route-until` call before each pool test-host route ship (ptr_ensure_host): a machine start plus two status reads. On a timeout the route still ships and the pool log says the start was not confirmed. Per-project row `lane.fly-pool.<project>.pool_testhost_ensure_timeout_s`."
+}

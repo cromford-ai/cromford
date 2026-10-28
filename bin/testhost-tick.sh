@@ -9,6 +9,11 @@
 #                                   TESTHOST_IDLE_STOP_MIN
 #   bin/testhost-tick.sh ensure     a run needs the host now: stamp the use and
 #                                   start it if it is stopped
+#   bin/testhost-tick.sh ensure --route-until <epoch>
+#                                   the hub ships a pool test-host route that
+#                                   lives until <epoch> (BH-8659): hold the idle
+#                                   stop until then, ensure as above, and end
+#                                   with one `ensure-result: <word>` line
 #   bin/testhost-tick.sh used       stamp the use and nothing else
 #   bin/testhost-tick.sh state      print the machine's Fly state, change nothing
 #   bin/testhost-tick.sh busy       ask the host what is running, change nothing
@@ -42,6 +47,14 @@
 # `ensure` is the deliberate exception to the "worker answered" rule: there the
 # start is what a human just asked for and the stamp is only bookkeeping, so a
 # silent worker costs a loud line, not the run.
+#
+# A SHIPPED POOL ROUTE HOLDS THE STOP (BH-8659). A pool machine reaches the
+# host with an app-scoped SSH token (bin/lib/pool-testhost-route.sh), which
+# cannot start a machine. So the hub runs `ensure --route-until <expiry>` before
+# each route ship, and that writes the settings row `testhost.route_until` (the
+# latest expiry, a decimal epoch). While that row is in the future, the tick
+# does not stop the host and `idle` answers 0, so bin/fly-idle-reaper.sh does
+# not stop it either. A row we cannot read is "do not stop", as above.
 #
 # WHY flyctl AND NOT bin/fly-api.sh. fly-api.sh is the builder pool's HTTP
 # client: it is keyed on `state/fly/<project>.json` and a per-PROJECT deploy
@@ -273,6 +286,62 @@ _th_size_note() {
 
 _th_stamp_use() { # rc 0 written, rc 1 the worker did not take it
   _th_set testhost.last_used "$(date -u '+%s')"
+}
+
+# _th_route_max_s — the longest a route hold may reach past now: the registry
+# max of POOL_TESTHOST_TOKEN_HOURS (a pool route token never lives longer), in
+# seconds. 72 is that file's max, the fallback when it cannot be read
+# (catalog/lanes.d/fly-pool.knobs.d/POOL_TESTHOST_TOKEN_HOURS.json).
+_th_route_max_s() {
+  local h
+  h=$(jq -r '.max // empty' "$(dirname "${BASH_SOURCE[0]}")/../catalog/lanes.d/fly-pool.knobs.d/POOL_TESTHOST_TOKEN_HOURS.json" 2>/dev/null)
+  case "$h" in ''|*[!0-9]*|0) h=72 ;; esac
+  printf '%s\n' "$(( h * 3600 ))"
+}
+
+# _th_hold_route <epoch> — raise `testhost.route_until` to <epoch> (never lower
+# it), clamped to now + _th_route_max_s. A value that is not a future epoch
+# writes nothing. rc 0 always: the ensure runs either way.
+_th_hold_route() {
+  local want="${1:-}" now max cur
+  now=$(date -u '+%s')
+  case "$want" in ''|*[!0-9]*) want="" ;; esac
+  # more than 12 digits would overflow bash arithmetic; it is far future anyway
+  if [ -n "$want" ] && [ "${#want}" -le 12 ] && [ "$want" -le "$now" ]; then want=""; fi
+  if [ -z "$want" ]; then
+    say "ensure: --route-until '${1:-}' is not a future epoch — no route hold written"
+    return 0
+  fi
+  max=$(( now + $(_th_route_max_s) ))
+  if [ "${#want}" -gt 12 ] || [ "$want" -gt "$max" ]; then want="$max"; fi
+  cur=$(_th_get testhost.route_until) || cur=""
+  case "$cur" in ''|*[!0-9]*) cur="" ;; esac
+  if [ -n "$cur" ] && [ "${#cur}" -le 12 ] && [ "$cur" -ge "$want" ] && [ "$cur" -le "$max" ]; then
+    return 0
+  fi
+  _th_set testhost.route_until "$want" \
+    || say "the worker did not take testhost.route_until — the idle stop cannot see this route"
+  return 0
+}
+
+# _th_route_live — rc 0 a shipped pool route is live (testhost.route_until is
+# in the future; TH_ROUTE_UNTIL holds it), rc 1 no live route (no row, a past
+# row, a row that is not an epoch), rc 2 the worker did not answer.
+TH_ROUTE_UNTIL=""
+_th_route_live() {
+  local v rc now
+  TH_ROUTE_UNTIL=""
+  v=$(_th_get testhost.route_until); rc=$?
+  [ "$rc" = 1 ] && return 2
+  [ "$rc" = 0 ] || return 1
+  case "$v" in
+    ''|*[!0-9]*) log "testhost.route_until is not an epoch ('$v') — no route hold"; return 1 ;;
+  esac
+  [ "${#v}" -le 12 ] || { log "testhost.route_until is out of range ('$v') — no route hold"; return 1; }
+  now=$(date -u '+%s')
+  [ "$v" -gt "$now" ] || return 1
+  TH_ROUTE_UNTIL="$v"
+  return 0
 }
 
 # _th_busy — ASK THE MACHINE, do not infer from a row.
@@ -675,7 +744,7 @@ cmd_disk() {
 # wrong in the field — the row because a Mac cannot write it, the probe because
 # "nothing this second" is also what the gap between two suites looks like.
 cmd_tick() {
-  local lu rc now idle brc
+  local lu rc now idle brc rrc
   # FIRST, and on purpose: every branch below this returns early (a worker
   # outage, no row, a machine that is not started, a use inside the idle
   # window), so a pool check placed after them would almost never run.
@@ -713,6 +782,16 @@ cmd_tick() {
     log "in use ${idle}s ago (window ${IDLE_MIN}m) — left started"
     return 0
   fi
+  # A shipped pool route holds the stop until it expires (BH-8659).
+  _th_route_live; rrc=$?
+  if [ "$rrc" = 0 ]; then
+    log "a pool test-host route is live until $(date -u -d "@$TH_ROUTE_UNTIL" '+%Y-%m-%dT%H:%MZ' 2>/dev/null || printf '%s' "$TH_ROUTE_UNTIL") — left started"
+    return 0
+  fi
+  if [ "$rrc" = 2 ]; then
+    say "could not read testhost.route_until — NOT stopping; a route we cannot see is treated as live"
+    return 0
+  fi
   # The row says idle. Ask the machine before believing it.
   _th_busy; brc=$?
   if [ "$brc" = 0 ]; then
@@ -739,37 +818,54 @@ cmd_tick() {
   return 0
 }
 
+# cmd_ensure [--route-until <epoch>] — with the flag (the hub's pool route
+# ship, BH-8659) the hold is written FIRST, so a tick that runs between the
+# start and the ship already sees it, and the verb ends with one line
+# `ensure-result: was-started|started-now|unknown|start-failed` that
+# bin/lib/pool-testhost-route.sh reads. Without the flag the output is as it
+# was (bin/remote-gate.sh's caller reads it).
 cmd_ensure() {
+  local route="" res rc=0
+  if [ "${1:-}" = --route-until ]; then route=1; _th_hold_route "${2:-}"; fi
   _th_stamp_use || say "the worker did not answer — this run is not recorded in testhost.last_used"
   _th_read_state
   _th_size_note
   case "$TH_STATE" in
-    started) _th_record_state "$TH_STATE" || true; return 0 ;;
-    unknown) say "Fly did not answer with a machine state for $APP — not starting anything blind"; return 0 ;;
+    started) _th_record_state "$TH_STATE" || true; res=was-started ;;
+    unknown) say "Fly did not answer with a machine state for $APP — not starting anything blind"; res=unknown ;;
+    *)
+      say "starting $APP (state was $TH_STATE)"
+      if _th_fly machine start "$(_th_machine)" -a "$APP" >/dev/null 2>&1; then
+        _th_read_state
+        _th_record_state "$TH_STATE" || true
+        log "started on demand (state now $TH_STATE)"
+        res=started-now
+      else
+        say "flyctl could not start the machine — the run that asked for it will fail to connect"
+        log "start FAILED"
+        res=start-failed; rc=1
+      fi ;;
   esac
-  say "starting $APP (state was $TH_STATE)"
-  if _th_fly machine start "$(_th_machine)" -a "$APP" >/dev/null 2>&1; then
-    _th_read_state
-    _th_record_state "$TH_STATE" || true
-    log "started on demand (state now $TH_STATE)"
-  else
-    say "flyctl could not start the machine — the run that asked for it will fail to connect"
-    log "start FAILED"
-    return 1
-  fi
-  return 0
+  [ -n "$route" ] && printf 'ensure-result: %s\n' "$res"
+  return "$rc"
 }
 
 # cmd_idle [<machine-id>] — READ-ONLY, for bin/fly-idle-reaper.sh: it stamps
 # nothing and stops nothing. Prints the idle seconds (now - testhost.last_used),
 # 0 when the machine says it is busy, or `unknown` with rc 2 when either witness
 # cannot answer. It needs the same two witnesses as the stop, so the reaper and
-# this tick can never disagree about whether the host is in use.
+# this tick can never disagree about whether the host is in use. A live pool
+# route (testhost.route_until in the future, BH-8659) is busy: 0.
 cmd_idle() {
   local mid="${1:-}" lu now idle brc
   case "$mid" in *[!a-z0-9]*) echo unknown; return 2 ;; esac
   lu=$(_th_get testhost.last_used) || { echo unknown; return 2; }
   case "$lu" in ''|*[!0-9]*) echo unknown; return 2 ;; esac
+  _th_route_live
+  case "$?" in
+    0) echo 0; return 0 ;;
+    2) echo unknown; return 2 ;;
+  esac
   _th_busy "$mid"; brc=$?
   case "$brc" in
     0) echo 0 ;;
@@ -784,7 +880,7 @@ case "$VERB" in
   tick|"")  cmd_tick; RC=$? ;;
   # THE RC IS THE VERB'S. `ensure` returns 1 when the start failed, and the old
   # `exit 0` below threw that away — the file said one thing and did another.
-  ensure)   cmd_ensure; RC=$? ;;
+  ensure)   cmd_ensure "${2:-}" "${3:-}"; RC=$? ;;
   used)     _th_stamp_use || { say "the worker did not answer — use not recorded"; RC=0; } ;;
   state)    _th_read_state; printf '%s\n' "$TH_STATE" ;;
   # A READ, and the one an operator actually wants before touching the host:
@@ -798,12 +894,14 @@ case "$VERB" in
             esac ;;
   idle)     cmd_idle "${2:-}"; RC=$? ;;
   -h|--help|help)
-    echo "usage: testhost-tick.sh [tick|ensure|used|state|busy|idle [<machine-id>]]"
+    echo "usage: testhost-tick.sh [tick|ensure [--route-until <epoch>]|used|state|busy|idle [<machine-id>]]"
     echo "  tick    check the bh-ci runner pool (alert after CI_RUNNERS_ALERT_HOLD_MIN minutes"
     echo "          empty or unreadable), log every started machine's disk (alert above"
     echo "          TESTHOST_DISK_ALERT_PCT), then stop the shared test host once it has been"
     echo "          idle TESTHOST_IDLE_STOP_MIN minutes"
     echo "  ensure  stamp the use and start the host if it is stopped (bin/remote-gate.sh calls this)"
+    echo "          --route-until <epoch>: first hold the idle stop until <epoch> (a pool route"
+    echo "          ship), then end with one 'ensure-result: <word>' line"
     echo "  used    stamp the use and nothing else"
     echo "  state   print the machine's Fly state, change nothing"
     echo "  busy    ask the host what is running (run roots + live suites), change nothing"

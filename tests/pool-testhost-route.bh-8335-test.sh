@@ -29,6 +29,8 @@
 #   R5 POOL_TESTHOST_ROUTE=0 or unset: no flyctl call, rc 3. The registry
 #      default is 0 (the cromford row turns it on).
 #   R6 ptr_push: testhost.env to /run/harness-env/testhost.env, nothing else.
+#      (ptr_ensure_host, the host start before the push, is stubbed here and
+#      pinned in tests/pool-testhost-ensure.bh-8659-test.sh.)
 #   R7 ptr_push with a failing mput: rc 1 and one say line.
 #   S1 spawn block + push block: the file lands in $TMP, the push sends it,
 #      and `shipped` is said only after the push returns 0.
@@ -167,7 +169,7 @@ done
 
 # ── R6 / R7 ─────────────────────────────────────────────────────────────────
 O=$(newout); echo x > "$O/testhost.env"
-MPUT='mput() { echo "$1 $2 $3" >> "$CALLS"; [ "${MPUT_FAIL:-}" != "$(basename "$3")" ]; }; say() { echo "SAY $*" >> "$CALLS"; }; '
+MPUT='mput() { echo "$1 $2 $3" >> "$CALLS"; [ "${MPUT_FAIL:-}" != "$(basename "$3")" ]; }; say() { echo "SAY $*" >> "$CALLS"; }; ptr_ensure_host() { :; }; '
 run_lib "${MPUT}ptr_push m-fixture '$O'"
 [ "$LRC" = 0 ] && ok || bad "R6: rc $LRC"
 [ "$(grep -v '^SAY' "$T/calls" | tr '\n' '|')" = "m-fixture $O/testhost.env /run/harness-env/testhost.env|" ] && ok \
@@ -187,7 +189,7 @@ REFR=$(sed -n '/^ *# >>> pool testhost route refresh$/,/^ *# <<< pool testhost r
 # The lib is sourced by the pool tick (a removed source line ships no route).
 grep -qE '^\. "\$HARNESS/bin/lib/pool-testhost-route\.sh"' "$POOLSH" && ok || bad "S: bin/fly-pool.sh does not source the lib"
 printf '%s\n' "$BLOCK" > "$T/spawn-block.sh"; printf '%s\n' "$PUSHB" > "$T/push-block.sh"; printf '%s\n' "$REFR" > "$T/refresh-block.sh"
-STUBS='say() { echo "SAY $*" >> "$CALLS"; }; mput() { echo "MPUT $1 $3" >> "$CALLS"; [ "${MPUT_FAIL:-0}" != 1 ]; }; '
+STUBS='say() { echo "SAY $*" >> "$CALLS"; }; mput() { echo "MPUT $1 $3" >> "$CALLS"; [ "${MPUT_FAIL:-0}" != 1 ]; }; ptr_ensure_host() { :; }; '
 # spawn <env...> — TMP holds a bundle as the swap block leaves it; the spawn
 # block runs, then (with MID) the push block.
 spawn() {

@@ -304,7 +304,7 @@ bin/harness-ctl.sh set testhost-tick TESTHOST_IDLE_STOP_MIN 60
 | verb | what it does |
 | --- | --- |
 | `tick` (default) | report every started machine's disk (and alert above `TESTHOST_DISK_ALERT_PCT`), then stop the host once it has been idle `TESTHOST_IDLE_STOP_MIN` minutes |
-| `ensure` | stamp the use and start the host if it is stopped — `bin/remote-gate.sh` calls this before connecting |
+| `ensure` | stamp the use and start the host if it is stopped — `bin/remote-gate.sh` calls this before connecting; `--route-until <epoch>` first holds the idle stop (below) |
 | `used` | stamp the use and nothing else |
 | `state` | print the machine's Fly state, change nothing |
 
@@ -345,6 +345,24 @@ was never stopped and the cost promise quietly did not happen.
 `ensure` is the deliberate exception to "the worker must answer": there the
 start is what a human just asked for and the stamp is only bookkeeping, so a
 silent worker costs a loud warning rather than the run.
+
+### A pool route holds the stop (BH-8659)
+
+A pool machine reaches the host with an app-scoped SSH token
+(`bin/lib/pool-testhost-route.sh`, BH-8335). That token cannot start a
+machine. So before each route ship (the spawn push and the reuse refresh),
+the hub runs `bin/testhost-tick.sh ensure --route-until <route expiry>` with
+its own Fly credential. It writes the settings row `testhost.route_until`
+(the latest route expiry, never lowered, at most the registry max of
+`POOL_TESTHOST_TOKEN_HOURS` from now), then starts the host if it is stopped,
+and ends with one `ensure-result: was-started|started-now|unknown|start-failed`
+line. A `started-now` puts one line in `logs/fly-pool.log`; any other answer
+puts one "did not confirm" line there, and the route still ships. While
+`testhost.route_until` is in the future, the tick does not stop the host and
+`idle` answers `0`, so `bin/fly-idle-reaper.sh` does not stop it either. A row
+that cannot be read is treated as live. When the newest route has expired, the
+stop needs its two witnesses again, as above. The call is bounded by
+`lane.fly-pool[.<project>].pool_testhost_ensure_timeout_s` (120 s).
 
 ### Every machine's disk (#1597)
 

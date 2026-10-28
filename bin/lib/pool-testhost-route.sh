@@ -9,7 +9,9 @@
 #
 #   ptr_hours                  how long the route lives, in whole hours
 #   ptr_build <outdir> <label> mint the route into <outdir>; rc 0 / 1 / 3
-#   ptr_push <mid> <outdir>    mput the route file to /run/harness-env/
+#   ptr_push <mid> <outdir>    start the test host if it is stopped, then mput
+#                              the route file to /run/harness-env/
+#   ptr_ensure_host <mid> <outdir>  the start part of ptr_push (BH-8659)
 #
 # THE CREDENTIAL IS SCOPED TO ONE APP (lead BLOCK #4386, the operator 2026-10-27). It
 # is a Fly SSH token for the test-host app only:
@@ -36,6 +38,14 @@
 #
 # A failed mint writes no file and prints ONE `testhost route: not shipped
 # (<why>)` line on stderr. The token never reaches stdout, stderr or a log line.
+#
+# THE HUB STARTS THE HOST (BH-8659). The route's token cannot start a machine,
+# and bin/testhost-tick.sh stops the host when it is idle. So ptr_push first
+# runs `bin/testhost-tick.sh ensure --route-until <expiry>` on the hub, with the
+# hub's own Fly credential (env/fly.env, as the tick's cron resolves it). That
+# starts a stopped host and holds the idle stop until the route expires. The
+# start credential never goes to the machine. A start that is not confirmed
+# costs one say line; the route still ships.
 #
 # Root (D43): ${HARNESS:-${H:-}} for the knob reads only.
 
@@ -146,12 +156,55 @@ ptr_expires() {
   date -u -d "@$e" '+%Y-%m-%dT%H:%MZ' 2>/dev/null || printf '%s' "$e"
 }
 
-# ptr_push <mid> <outdir> — testhost.env to /run/harness-env/ through mput
-# (which writes it mode 600). One file, so a failed push never leaves half a
-# route. rc 1 and one `say` line on a failed push; the build always goes on,
-# and the gate then names the missing part itself.
+# _ptr_say <line> — say when the pool tick defines it, else stderr.
+_ptr_say() {
+  if declare -F say >/dev/null 2>&1; then say "$1"; else echo "testhost route: $1" >&2; fi
+}
+
+# ptr_ensure_host <mid> <outdir> — start the test host if it is stopped, and
+# hold its idle stop until the route in <outdir>/testhost.env expires, through
+# bin/testhost-tick.sh ensure --route-until. FLY_ACCESS_TOKEN and FLY_API_TOKEN
+# are unset for it, so the tick uses the hub's test-host credential and never
+# the pool project's token. It reads the LAST `ensure-result:` line:
+#   was-started  nothing said
+#   started-now  one line: the host was stopped and is started now
+#   anything else (unknown, start-failed, no line, a timeout, no script) one
+#                line: not confirmed. The gate may then record could-not-run.
+# Bounded by the knob lane.fly-pool[.<project>].pool_testhost_ensure_timeout_s.
+# rc 0 always: the route ships either way.
+ptr_ensure_host() {
+  local mid="${1:-}" out="${2:-}" exp t tick res rc app
+  local -a flag=()
+  exp=$(sed -n 's/^TESTHOST_ROUTE_EXPIRES=//p' "$out/testhost.env" 2>/dev/null | head -1)
+  case "$exp" in ''|*[!0-9]*) ;; *) flag=(--route-until "$exp") ;; esac
+  t=$(_ptr_knob fly-pool POOL_TESTHOST_ENSURE_TIMEOUT_S)
+  # 120 is the registry default (catalog/lanes.d/fly-pool.knobs.d/POOL_TESTHOST_ENSURE_TIMEOUT_S.json).
+  case "$t" in ''|*[!0-9]*|0) t=120 ;; esac
+  tick="$(dirname "${BASH_SOURCE[0]}")/../testhost-tick.sh"
+  app="${TESTHOST_APP:-bh-testhost-example-org}"
+  if [ -f "$tick" ]; then
+    res=$(env -u FLY_ACCESS_TOKEN -u FLY_API_TOKEN timeout "$t" bash "$tick" ensure ${flag[@]+"${flag[@]}"} </dev/null 2>/dev/null)
+    rc=$?
+  else
+    res=""; rc=127
+  fi
+  res=$(printf '%s\n' "$res" | sed -n 's/^ensure-result: //p' | tail -n 1 | tr -cd 'A-Za-z0-9-' | cut -c1-40)
+  case "$res" in
+    was-started) ;;
+    started-now) _ptr_say "$mid: test host $app was stopped — started it before the route ship" ;;
+    *) _ptr_say "$mid: test host ensure did not confirm a started host (${res:-rc $rc}) — the route ships, the selection gate may record could-not-run" ;;
+  esac
+  return 0
+}
+
+# ptr_push <mid> <outdir> — ptr_ensure_host, then testhost.env to
+# /run/harness-env/ through mput (which writes it mode 600). One file, so a
+# failed push never leaves half a route. rc 1 and one `say` line on a failed
+# push; the build always goes on, and the gate then names the missing part
+# itself.
 ptr_push() {
   local mid="${1:-}" out="${2:-}"
+  ptr_ensure_host "$mid" "$out"
   if ! mput "$mid" "$out/testhost.env" /run/harness-env/testhost.env; then
     if declare -F say >/dev/null 2>&1; then
       say "$mid: testhost route push FAILED — the selection gate will record could-not-run"
