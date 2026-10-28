@@ -11,7 +11,7 @@
 #          side and the fail-open (unknown) side
 #   R1-R5  the real bin/orphan-reconcile.sh against a scratch HARNESS, fake gh
 #          and curl: skip, a human comment re-opens, a bot comment does not,
-#          the knob turns it off, the triage-tick mode is unchanged
+#          the knob turns it off, the triage-tick mode skips it too (BH-8707)
 #
 # The rig is tests/stranded-watch.bh-5967-test.sh's. Run from anywhere (exit 0 = pass).
 set -uo pipefail
@@ -196,15 +196,17 @@ STRANDED_SKIP_PLAN_BLOCKED=maybe watch
 grep -q 'TK-101:plan-blocked' <<<"$(summary)" && ok || bad "R4: a bad value is read as 1: $(summary)"
 grep -q "STRANDED_SKIP_PLAN_BLOCKED='maybe'" "$H/logs/$P.log" && ok || bad "R4: a bad value is said once in the log"
 
-# R5: the default (no settings row, no env) skips; the triage-tick mode does not.
+# R5: the default (no settings row, no env) skips, and since BH-8707 the
+# triage-tick mode skips the same ticket too (tests/orphan-reconcile-triage-plan-blocked.bh-8707-test.sh
+# pins that mode in full).
 reset; board '[]'; qrow TK-101 done "$REASON"
 ( unset STRANDED_SKIP_PLAN_BLOCKED; watch )
 grep -q 'TK-101:plan-blocked' <<<"$(summary)" && ok || bad "R5: the default skips: $(summary)"
 reset; board '[]'; qrow TK-101 done "$REASON"
 "$H/bin/orphan-reconcile.sh" "$P" 2>/dev/null
 for _w in 1 2 3 4 5 6 7 8 9 10; do [ -s "$H/launches.log" ] && break; sleep 0.2; done   # the launch is detached
-grep -q 'plan-blocked' "$H/logs/$P.log" && bad "R5: the triage-tick reconcile is unchanged: $(grep -o 'skipped=[^ ]*' "$H/logs/$P.log")" || ok
-grep -q 'project-5 101 TK-101' "$H/launches.log" 2>/dev/null && ok || bad "R5: the triage tick still launches it as today: $(grep 'reconcile: open' "$H/logs/$P.log")"
+grep -q 'reconcile: open=.*skipped=[^ ]*TK-101:plan-blocked' "$H/logs/$P.log" && ok || bad "R5: the triage-tick reconcile skips it as plan-blocked (BH-8707): $(grep 'reconcile: open' "$H/logs/$P.log")"
+grep -q 'project-5 101 TK-101' "$H/launches.log" 2>/dev/null && bad "R5: the triage tick does not launch it (BH-8707): $(cat "$H/launches.log")" || ok
 
 echo "orphan-reconcile-plan-blocked (BH-7116): $PASS passed, $FAIL failed"
 [ "$FAIL" = 0 ]

@@ -14,11 +14,12 @@
 #                                                   the builder's one comment
 #   pb_hub_copy <harness> <project> <local-dir>     plan.md into the hub record
 #   pb_stranded_skip <project> <key> <thread-json> <comment-count>
-#                                                   the stranded watch's skip
+#                                                   the reconcile's skip (both modes)
 #
 # Callers: bin/lib/rb/gates.sh `# >>> plan-blocked notice` (pb_notice, inside
 # _job_finish on a builder), bin/fly-pool.sh's reap (pb_hub_copy) and
-# bin/orphan-reconcile.sh --stranded (pb_stranded_skip). Every dependency is
+# bin/orphan-reconcile.sh in both modes, the triage tick and --stranded
+# (pb_stranded_skip; the triage tick since BH-8707). Every dependency is
 # sourced inside the function that needs it, so loading this file costs nothing.
 
 # pb_excerpt <plan-file> -> the plan's blocked section, scrubbed, at most 40

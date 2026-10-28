@@ -141,6 +141,10 @@ set -uo pipefail
 # counted toward NEEDS_HUMAN: the builder's notice on the ticket is the ask.
 # STRANDED_SKIP_PLAN_BLOCKED=0 (the lane row) re-offers it as before. On
 # 2026-10-16 the watch re-offered eight such tickets 2-6 times each.
+# BOTH MODES (BH-8707): the triage tick runs the same skip, on the same lane
+# row, and logs it with its own `reconcile:` prefix. On 2026-10-27/28 the watch
+# skipped BH-8467 while box-small's triage tick relaunched it 5 times
+# in one night, each relaunch a critical "reconciliation enqueued" alert.
 EXPLAIN=0; STRANDED_MODE=0; PROJECT=""
 for _arg in "$@"; do
   case "$_arg" in
@@ -225,12 +229,27 @@ if [ "$STRANDED_MODE" = 1 ]; then
   case "$REOFFER_MAX" in ''|*[!0-9]*) REOFFER_MAX=3 ;; esac
   REOFFER_WIN_H="${STRANDED_REOFFER_WINDOW_H:-24}"
   case "$REOFFER_WIN_H" in ''|*[!0-9]*) REOFFER_WIN_H=24 ;; esac
-  SKIP_PB="${STRANDED_SKIP_PLAN_BLOCKED:-1}"
-  case "$SKIP_PB" in
-    0|1) ;;
-    *) log "stranded-watch: STRANDED_SKIP_PLAN_BLOCKED='$SKIP_PB' is not 0 or 1; read as 1"; SKIP_PB=1 ;;
-  esac
 fi
+# The PLAN_BLOCKED skip's knob, both modes (BH-7116, BH-8707): the stranded-watch
+# lane row STRANDED_SKIP_PLAN_BLOCKED. Stranded mode applied that row above. The
+# triage tick resolves it in a subshell, the _OR_TFM shape, so a fail-closed exit
+# in the lane gate never stops this lane and no other stranded-watch knob leaks
+# into the tick. Code fallback 1 (the row's documented default).
+if [ "$STRANDED_MODE" = 1 ]; then
+  SKIP_PB="${STRANDED_SKIP_PLAN_BLOCKED:-1}"; _OR_PFX=stranded-watch
+else
+  SKIP_PB=$(
+    exec 3>&1
+    trap 'printf "%s" "${STRANDED_SKIP_PLAN_BLOCKED:-}" >&3' EXIT
+    command -v lane_env_apply >/dev/null 2>&1 || . "$HARNESS/bin/lib/lane-gate.sh" >/dev/null 2>&1 || exit 0
+    lane_env_apply stranded-watch >/dev/null 2>&1)
+  SKIP_PB="${SKIP_PB:-1}"; _OR_PFX=reconcile
+fi
+case "$SKIP_PB" in
+  0|1) ;;
+  *) log "$_OR_PFX: STRANDED_SKIP_PLAN_BLOCKED='$SKIP_PB' is not 0 or 1; read as 1"; SKIP_PB=1 ;;
+esac
+unset _OR_PFX
 
 command -v jq >/dev/null 2>&1 || exit 0
 command -v python3 >/dev/null 2>&1 || exit 0
@@ -1397,15 +1416,17 @@ while IFS=$'\t' read -r KEY NUM VERDICT WHY; do
     SKIP="${SKIP:+$SKIP,}$KEY:awaiting-closeout"
     continue
   fi
-  # GUARD RAIL, stranded watch only (BH-7116): the last build ended PLAN_BLOCKED
-  # and nobody has answered since. A re-offer only blocks it again. Unknown
-  # (rc 2: the queue or the thread could not be read) re-offers, as before.
-  if [ "$STRANDED_MODE" = 1 ] && [ "${SKIP_PB:-1}" = 1 ] && command -v pb_stranded_skip >/dev/null 2>&1; then
+  # GUARD RAIL, both modes (BH-7116; the triage tick since BH-8707): the last
+  # build ended PLAN_BLOCKED and nobody has answered since. A re-offer or a
+  # relaunch only blocks it again. Unknown (rc 2: the queue or the thread could
+  # not be read) launches, as before. Before the cap, so a skip takes no slot.
+  if [ "${SKIP_PB:-1}" = 1 ] && command -v pb_stranded_skip >/dev/null 2>&1; then
     PB_CNT=$(jq -r --argjson n "$NUM" 'first(.[] | select(.number == $n)) | .commentCount // 0' "$TD/open.json" 2>/dev/null)
     PB_TH=""; [ -f "$TD/extra/thread-$NUM.json" ] && PB_TH="$TD/extra/thread-$NUM.json"
     if PB_AT=$(pb_stranded_skip "$PROJECT" "$KEY" "$PB_TH" "${PB_CNT:-0}"); then
       SKIP="${SKIP:+$SKIP,}$KEY:plan-blocked"
-      log "stranded: $KEY (issue #$NUM) skip :: last build ended PLAN_BLOCKED at $PB_AT and no human comment since"
+      if [ "$STRANDED_MODE" = 1 ]; then PB_PFX=stranded; else PB_PFX=reconcile; fi
+      log "$PB_PFX: $KEY (issue #$NUM) skip :: last build ended PLAN_BLOCKED at $PB_AT and no human comment since"
       continue
     fi
   fi
@@ -1463,7 +1484,9 @@ fi
 # owner" is the normal, silent shape. An enqueue means the event path MISSED a
 # ticket, which is a bug in the event path and is worth a line.
 if [ -n "$ENQ" ]; then
-  WHYS=$(awk -F'\t' '$3=="ORPHAN" {printf "%s (%s); ", $1, $4}' "$TD/verdicts.tsv" | sed 's/; $//')
+  # Only the keys this run enqueued: a skipped key is not an enqueue (BH-8707).
+  WHYS=$(awk -F'\t' -v enq="$ENQ" 'BEGIN { n = split(enq, k, ","); for (i = 1; i <= n; i++) e[k[i]] = 1 }
+    $3=="ORPHAN" && ($1 in e) {printf "%s (%s); ", $1, $4}' "$TD/verdicts.tsv" | sed 's/; $//')
   "$HARNESS/bin/lane-alert.sh" "orphan-reconcile/$PROJECT" \
     "reconciliation enqueued $N_ENQ ai-build issue(s) no event ever named: $ENQ. Each had no ledger row, no open PR, no open blocker, no hold and no fresh owner: $WHYS. The event-wake path missed them — check logs/$PROJECT.log for the gate reasons around now.${SKIP:+ Held back this run: $SKIP.}" \
     >/dev/null 2>&1 || true

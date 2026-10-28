@@ -7,5 +7,5 @@
   "max": 1,
   "unit": null,
   "zero_means": "off",
-  "note": "BH-7116: 1 skips a ticket whose queue row says its last build ended PLAN_BLOCKED and that has no human comment created or edited since that row's updated_at (bin/lib/plan-blocked.sh pb_stranded_skip); the run summary names it `<KEY>:plan-blocked`, and it is not counted toward NEEDS_HUMAN. 0 re-offers it as before. A value that is not 0 or 1 is read as 1 with one log line."
+  "note": "BH-7116: 1 skips a ticket whose queue row says its last build ended PLAN_BLOCKED and that has no human comment created or edited since that row's updated_at (bin/lib/plan-blocked.sh pb_stranded_skip); the run summary names it `<KEY>:plan-blocked`, and it is not counted toward NEEDS_HUMAN. BH-8707: the same row drives the triage-tick reconcile (bin/orphan-reconcile.sh with no --stranded), which skips the same ticket with a `reconcile:` log line instead of relaunching it. 0 re-offers or relaunches it as before. A value that is not 0 or 1 is read as 1 with one log line."
 }
