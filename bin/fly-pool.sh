@@ -164,6 +164,10 @@ trap 'command -v pp_release >/dev/null 2>&1 && pp_release; true' EXIT
 # shellcheck source=bin/lib/pool-underuse.sh
 . "$HARNESS/bin/lib/pool-underuse.sh" 2>/dev/null \
   || . "$(dirname "${BASH_SOURCE[0]}")/lib/pool-underuse.sh" 2>/dev/null || true
+# BH-8318: the guest size and memory of a pool machine (rows vm_size, vm_memory_mb).
+# shellcheck source=bin/lib/pool-vm-size.sh
+. "$HARNESS/bin/lib/pool-vm-size.sh" 2>/dev/null \
+  || . "$(dirname "${BASH_SOURCE[0]}")/lib/pool-vm-size.sh" 2>/dev/null || true
 # BH-7382: release a claimed fly row that no hub file and no live machine owns.
 # shellcheck source=bin/lib/pool-orphan-rows.sh
 . "$HARNESS/bin/lib/pool-orphan-rows.sh" 2>/dev/null \
@@ -5836,7 +5840,11 @@ spawn_one() { # spawn_one <job-file> <key> <ticket-id> <attempt> <deferrals> <de
   # Parse the id off the "Machine ID:" line ONLY — the first bare 14-hex run in
   # the output is the image's sha256 digest when IMAGE carries one, and treating
   # that as the id orphans the real machine (2026-08-12, pool-project-3).
-  MID=$(timeout 180 "$FLY" machine run "$IMAGE" -a "$APP" --detach --vm-size performance-8x --vm-memory 16384 \
+  # BH-8318: rows lane.fly-pool.<project>.vm_size / .vm_memory_mb; the literals
+  # are their documented fallback (no lib, no row, or a refused row).
+  local PVM_SIZE=performance-8x PVM_MEM=16384 PVM_WHY=""
+  command -v pool_vm_resolve >/dev/null 2>&1 && { pool_vm_resolve || say "$KEY: VM size row refused ($PVM_WHY) — launching performance-8x/16384"; }
+  MID=$(timeout 180 "$FLY" machine run "$IMAGE" -a "$APP" --detach --vm-size "$PVM_SIZE" --vm-memory "$PVM_MEM" \
         -e PROJECT="$P" -e POOL_MODE=1 -e HARNESS_CHECKOUT=/data/harness -e WARMUP_WAIT_S="$WW" ${PULL_ARGS[@]+"${PULL_ARGS[@]}"} 2>/dev/null | grep -i 'machine id' | grep -oE "[0-9a-f]{14}" | head -1)
   # EVERY EXIT FROM HERE DOWN HANDS THE ROW BACK (see pool_unclaim): the claim is
   # already won, and under the flag a claim nobody releases is a key stranded in

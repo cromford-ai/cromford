@@ -1,0 +1,12 @@
+{
+  "env": "VM_MEMORY_MB",
+  "type": "int",
+  "default": 16384,
+  "min": 2048,
+  "max": 131072,
+  "unit": "MB",
+  "zero_means": null,
+  "required": false,
+  "read_in": "bin/lib/pool-vm-size.sh",
+  "note": "BH-8318 (MKF-3). The memory of every pool machine of the project: spawn_one passes it as `--vm-memory` on `fly machine run`. Per-project row `lane.fly-pool.<project>.vm_memory_mb`. It must be a multiple of 1024 and between 2048 and 8192 MB per CPU of VM_SIZE (performance-16x: 32768..131072). A value that breaks the rule launches the WHOLE pair as performance-8x/16384 and logs one `VM size row refused` line per spawn. No row: 16384, the memory before this knob."
+}
