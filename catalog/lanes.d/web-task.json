@@ -1,0 +1,372 @@
+{
+  "id": "web-task",
+  "name": "Web task: a read-only browser task on a site with no API (per ticket)",
+  "scope": "project",
+  "single_run": false,
+  "script": "bin/web-task.sh",
+  "cadence": "on demand (via the build pipeline's web-task hook, bin/lib/web-task/route.sh, which enqueues one lane_runs row per ticket labelled web-task; Fly placement through lane_placement.web-task; no cron line)",
+  "boxes": [
+    "project-4",
+    "hub",
+    "project-6",
+    "project-6-os",
+    "project-1",
+    "project-3",
+    "project-9",
+    "small",
+    "project-2",
+    "project-5"
+  ],
+  "switch": {
+    "kind": "flag",
+    "name": "lane-off-web-task",
+    "aliases": []
+  },
+  "wired": true,
+  "stats": {
+    "cost_stage": "web-task",
+    "cost_project_filter": null,
+    "lanes_row": false,
+    "log": "logs/web-task.log"
+  },
+  "knobs": [
+    {
+      "env": "WEB_TASK_MAX_STEPS",
+      "type": "int",
+      "default": 40,
+      "min": 1,
+      "max": 200,
+      "unit": null,
+      "zero_means": null,
+      "note": "Steps one web-task run may take (one step = one observation, one model call, one action). At the cap the run stops with status step-cap and the comment says the answer is incomplete."
+    },
+    {
+      "env": "WEB_TASK_MAX_S",
+      "type": "int",
+      "default": 600,
+      "min": 30,
+      "max": 3600,
+      "unit": "seconds",
+      "zero_means": null,
+      "note": "Wall time of one web-task run. The agent checks it before each step and gives each model call at most the time left; at the cap the run stops with status time-cap."
+    },
+    {
+      "env": "LLM_LANE_ENABLED",
+      "type": "int",
+      "default": 1,
+      "min": 0,
+      "max": 1,
+      "unit": null,
+      "zero_means": "off",
+      "read_in": "bin/lib/llm-gate.sh",
+      "note": "0 makes this lane call no model at all. bin/lib/llm-gate.sh refuses BEFORE the vendor call and writes a zero-cost row_source=refused row; the run ends refused-spend."
+    },
+    {
+      "env": "LLM_RUNNER_ALLOWED",
+      "type": "string",
+      "default": "",
+      "min": null,
+      "max": null,
+      "unit": null,
+      "zero_means": null,
+      "read_in": "bin/lib/llm-gate.sh",
+      "note": "Comma/space list of the ONLY ladder rungs this lane may reach. Empty is every rung (the BH-2533 registry default). The seeded row lane.web-task.llm_runner_allowed = claude sets it for this lane: its calls run with AGENT_CALL_NO_TOOLS=1, which every runner but claude refuses anyway; the row says so before the call."
+    },
+    {
+      "env": "LLM_USD_CAP_DAY",
+      "type": "float",
+      "default": 0,
+      "min": 0,
+      "max": 1000,
+      "unit": "usd",
+      "zero_means": "unlimited",
+      "read_in": "bin/lib/llm-gate.sh",
+      "note": "Dollars this lane may spend in the current UTC day, summed from D1 cost_rows (GET /api/metrics/llm-spend). 0 = unlimited is the BH-2533 registry default; the seeded row lane.web-task.llm_usd_cap_day = 5 is this lane's cap. Over it, the next model call is refused before any spend and the run ends refused-spend. A project ceiling is the lane.web-task.<project>.llm_usd_cap_day row."
+    },
+    {
+      "env": "WEB_TASK_TEXT_CHUNK",
+      "type": "int",
+      "default": 6000,
+      "min": 500,
+      "max": 50000,
+      "unit": "chars",
+      "zero_means": null,
+      "note": "Characters of page text one observation (and one read action) hands the model. It sets the prompt size of every model call, so it drives the spend. bin/web-task.sh passes it to bin/web-task-agent.mjs as --text-chunk."
+    },
+    {
+      "env": "WEB_TASK_MAX_ELEMENTS",
+      "type": "int",
+      "default": 60,
+      "min": 5,
+      "max": 500,
+      "unit": null,
+      "zero_means": null,
+      "note": "Clickable or typeable elements one observation lists for the model (the first N in page order). bin/web-task.sh passes it to the agent as --max-elements."
+    },
+    {
+      "env": "WEB_TASK_DECIDE_MAX_S",
+      "type": "int",
+      "default": 120,
+      "min": 10,
+      "max": 600,
+      "unit": "seconds",
+      "zero_means": null,
+      "note": "The most one model decision may take (the agent gives it the smaller of this and the wall time left). bin/web-task.sh passes it as --decide-max-s; bin/lib/web-task/decide.sh falls back to the same 120 when it gets no WEB_TASK_DECIDE_TIMEOUT."
+    },
+    {
+      "env": "WEB_TASK_DECIDE_GRACE_S",
+      "type": "int",
+      "default": 5,
+      "min": 0,
+      "max": 60,
+      "unit": "seconds",
+      "zero_means": null,
+      "note": "Seconds past the decision timeout before the agent kills a decide command that did not exit. Passed as --decide-grace-s."
+    },
+    {
+      "env": "WEB_TASK_MAX_SHOTS",
+      "type": "int",
+      "default": 5,
+      "min": 1,
+      "max": 5,
+      "unit": null,
+      "zero_means": null,
+      "note": "Screenshots one result comment carries (the last N of the run). The ticket caps it at 5. The agent keeps the last N (--keep-shots) and bin/lib/web-task/shots.sh publishes at most N."
+    },
+    {
+      "env": "WEB_TASK_MAX_HOPS",
+      "type": "int",
+      "default": 10,
+      "min": 1,
+      "max": 20,
+      "unit": null,
+      "zero_means": null,
+      "note": "Redirect hops one navigation may follow. Each hop passes the host check; past the cap the step ends with an error outcome. Passed as --max-hops."
+    },
+    {
+      "env": "WEB_TASK_NAV_TIMEOUT_S",
+      "type": "int",
+      "default": 30,
+      "min": 1,
+      "max": 300,
+      "unit": "seconds",
+      "zero_means": null,
+      "note": "Upper bound on one page navigation (goto). Never past the wall time left. Passed as --nav-timeout-s."
+    },
+    {
+      "env": "WEB_TASK_ACTION_TIMEOUT_S",
+      "type": "int",
+      "default": 10,
+      "min": 1,
+      "max": 120,
+      "unit": "seconds",
+      "zero_means": null,
+      "note": "Upper bound on one settle wait, click or fill. Never past the wall time left. Passed as --action-timeout-s."
+    },
+    {
+      "env": "WEB_TASK_SHOT_TIMEOUT_S",
+      "type": "int",
+      "default": 15,
+      "min": 1,
+      "max": 120,
+      "unit": "seconds",
+      "zero_means": null,
+      "note": "Upper bound on one screenshot and on the recovery goto to the last good page. Passed as --shot-timeout-s."
+    },
+    {
+      "env": "WEB_TASK_BACKSTOP_PAD_S",
+      "type": "int",
+      "default": 30,
+      "min": 1,
+      "max": 600,
+      "unit": "seconds",
+      "zero_means": null,
+      "note": "Seconds past WEB_TASK_MAX_S before the agent's backstop ends a run whose browser call hangs (status time-cap). Passed as --backstop-pad-s."
+    },
+    {
+      "env": "WEB_TASK_HISTORY_ACTIONS",
+      "type": "int",
+      "default": 8,
+      "min": 1,
+      "max": 50,
+      "unit": null,
+      "zero_means": null,
+      "note": "Past actions the model sees in each observation. It sets the prompt size, so it sets the spend. Passed as --history-actions."
+    },
+    {
+      "env": "WEB_TASK_HISTORY_REFUSALS",
+      "type": "int",
+      "default": 10,
+      "min": 1,
+      "max": 50,
+      "unit": null,
+      "zero_means": null,
+      "note": "Past refused actions the model sees in each observation. It sets the prompt size, so it sets the spend. Passed as --history-refusals."
+    },
+    {
+      "env": "WEB_TASK_POST_SLEEPS",
+      "type": "string",
+      "default": "5 20",
+      "min": null,
+      "max": null,
+      "unit": "seconds",
+      "zero_means": null,
+      "note": "The sleeps between result-comment post retries, one word per retry (whole seconds, 0..600 each, at most 5 words). An invalid list falls back to 5 20. Before each retry the lane re-reads the thread, so a post that landed is never posted twice."
+    },
+    {
+      "env": "WEB_TASK_AGENT_PAD_S",
+      "type": "int",
+      "default": 90,
+      "min": 10,
+      "max": 600,
+      "unit": "seconds",
+      "zero_means": null,
+      "note": "Seconds past WEB_TASK_MAX_S before the lane timeout stops the agent process (the agent stops itself at WEB_TASK_MAX_S; this is the backstop for a hung browser)."
+    },
+    {
+      "env": "WEB_TASK_AGENT_KILL_S",
+      "type": "int",
+      "default": 10,
+      "min": 1,
+      "max": 120,
+      "unit": "seconds",
+      "zero_means": null,
+      "note": "Seconds after the lane timeout signal before a KILL (timeout -k)."
+    },
+    {
+      "env": "WEB_TASK_NPM_ROOT_TIMEOUT_S",
+      "type": "int",
+      "default": 15,
+      "min": 1,
+      "max": 120,
+      "unit": "seconds",
+      "zero_means": null,
+      "note": "How long the agent waits for `npm root -g` while it looks for playwright. Passed as --npm-root-timeout-s.",
+      "read_in": "bin/web-task.sh"
+    },
+    {
+      "env": "WEB_TASK_CLOSE_TIMEOUT_S",
+      "type": "int",
+      "default": 5,
+      "min": 1,
+      "max": 60,
+      "unit": "seconds",
+      "zero_means": null,
+      "note": "How long the agent waits for the browser to close after it wrote result.json, before it exits anyway. Passed as --close-timeout-s.",
+      "read_in": "bin/web-task.sh"
+    },
+    {
+      "env": "WEB_TASK_SETTLE_MS",
+      "type": "int",
+      "default": 300,
+      "min": 0,
+      "max": 5000,
+      "unit": "milliseconds",
+      "zero_means": "off",
+      "note": "The wait after a click before the agent reads the page again. 0 = no wait. Passed as --settle-ms.",
+      "read_in": "bin/web-task.sh"
+    },
+    {
+      "env": "WEB_TASK_SCROLL_WAIT_MS",
+      "type": "int",
+      "default": 200,
+      "min": 0,
+      "max": 5000,
+      "unit": "milliseconds",
+      "zero_means": "off",
+      "note": "The wait after a scroll before the next observation. 0 = no wait. Passed as --scroll-wait-ms.",
+      "read_in": "bin/web-task.sh"
+    },
+    {
+      "env": "WEB_TASK_SCROLL_PX",
+      "type": "int",
+      "default": 700,
+      "min": 100,
+      "max": 5000,
+      "unit": "pixels",
+      "zero_means": null,
+      "note": "How far one scroll action moves the page. Passed as --scroll-px.",
+      "read_in": "bin/web-task.sh"
+    },
+    {
+      "env": "WEB_TASK_THREAD_MAX_PAGES",
+      "type": "int",
+      "default": 30,
+      "min": 1,
+      "max": 100,
+      "unit": "pages",
+      "zero_means": null,
+      "note": "The most pages of 100 comments the lane reads from the issue thread. The read is the dedup-before-spend check, so a thread longer than this is rc 75 and no run (fail closed), never a partial read.",
+      "read_in": "bin/web-task.sh"
+    },
+    {
+      "env": "WEB_TASK_COMMENT_MAX_ACTIONS",
+      "type": "int",
+      "default": 40,
+      "min": 1,
+      "max": 200,
+      "unit": "actions",
+      "zero_means": null,
+      "note": "The most numbered actions the result comment lists; the rest is one '… and N more steps.' line.",
+      "read_in": "bin/web-task.sh"
+    },
+    {
+      "env": "WEB_TASK_COMMENT_MAX_REFUSALS",
+      "type": "int",
+      "default": 20,
+      "min": 1,
+      "max": 200,
+      "unit": "refusals",
+      "zero_means": null,
+      "note": "The most guard refusals the result comment lists.",
+      "read_in": "bin/web-task.sh"
+    },
+    {
+      "env": "WEB_TASK_COMMENT_ANSWER_CHARS",
+      "type": "int",
+      "default": 3000,
+      "min": 200,
+      "max": 60000,
+      "unit": "characters",
+      "zero_means": null,
+      "note": "The most answer characters the result comment quotes. GitHub caps a comment at 65536 characters.",
+      "read_in": "bin/web-task.sh"
+    },
+    {
+      "env": "WEB_TASK_COMMENT_REASON_CHARS",
+      "type": "int",
+      "default": 1000,
+      "min": 100,
+      "max": 10000,
+      "unit": "characters",
+      "zero_means": null,
+      "note": "The most characters of the stop reason the comment shows for a run that did not finish.",
+      "read_in": "bin/web-task.sh"
+    },
+    {
+      "env": "HARNESS_TEST_SANDBOX",
+      "type": "int",
+      "default": 0,
+      "zero_means": null,
+      "settable": false,
+      "note": "Test seam: 1 lets the three WEB_TASK_* test seams below and WEB_TASK_PW_ROOT apply. Never set on a box."
+    },
+    {
+      "env": "WEB_TASK_TEST_LIB",
+      "type": "string",
+      "default": "",
+      "zero_means": null,
+      "settable": false,
+      "note": "Test seam, read only under HARNESS_TEST_SANDBOX=1: a file sourced after the real libs (stubs for gh_rest, setting_get, model_env_or_route, job_artifact_put)."
+    },
+    {
+      "env": "WEB_TASK_DECIDE_CMD",
+      "type": "string",
+      "default": "",
+      "zero_means": null,
+      "settable": false,
+      "note": "Test seam, read only under HARNESS_TEST_SANDBOX=1: the decide command in place of bin/lib/web-task/decide.sh."
+    }
+  ],
+  "factory_stop": "launch"
+}

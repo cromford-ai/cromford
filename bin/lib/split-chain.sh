@@ -102,7 +102,7 @@ _sc_idle() {
     [ -n "$d" ] || continue
     [ -f "$d/RESULT" ] || return 1          # a build in flight
     l=""; IFS= read -r l < "$d/RESULT" 2>/dev/null
-    case "$l" in PR_CREATED*|PR_MERGED*|DECOMPOSED*|ROLLOUT_FILED*) return 1 ;; esac
+    case "$l" in PR_CREATED*|PR_MERGED*|DECOMPOSED*|ROLLOUT_FILED*|WEBTASK_QUEUED*) return 1 ;; esac
   done < <(_sc_dirs "$1" "$2" "$3")
   lock="$1/locks/build-key-$2-$3.lock"
   if [ -e "$lock" ]; then

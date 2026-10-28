@@ -1,0 +1,20 @@
+[
+    {
+        "id": "web-task",
+        "script": "bin/lib/web-task/decide.sh",
+        "marker": "agent-call.sh\" web-task \"$proj\"",
+        "kind": "agent-call",
+        "lane": "web-task",
+        "stage": "web-task",
+        "project": "per ticket",
+        "runners": [
+            "the web-task route ladder (model_routes role web-task), claude only under AGENT_CALL_NO_TOOLS=1"
+        ],
+        "through_agent_call": true,
+        "priced": "yes",
+        "gated": "agent-call",
+        "dedup": "the ticket's own thread: bin/web-task.sh reads every comment before any spend and stops at the <!-- web-task-result:<KEY> --> marker, which rides inside the one result comment; agent-call rc 74..79 ends the run refused-spend with nothing billed",
+        "deterministic_candidate": null,
+        "note": "BH-7594 (web-task S1): one call per browser step of bin/web-task-agent.mjs, at most WEB_TASK_MAX_STEPS (default 40) per run and inside WEB_TASK_MAX_S (default 600). The page text and the ticket text ride in marked untrusted blocks; no tools. Day cap LLM_USD_CAP_DAY (default 5 usd) on the web-task lane."
+    }
+]

@@ -1,7 +1,7 @@
 # fly/lane-run.Dockerfile — the image of the Fly app `lane-run` (BH-6126).
 # Built from the repo root: flyctl deploy . -c fly/lane-run.toml --build-only
 # --push --image-label latest --build-arg HARNESS_COMMIT=$(git rev-parse HEAD)
-# plus the three version build args named below (BH-6260) and
+# plus the four version build args named below (BH-6260, BH-7594) and
 # --build-arg FLYCTL_VERSION=<bake.flyctl.version row> (BH-7516).
 # It bakes bin/, catalog/, fleet.conf, prompts/, rules/ and fly/ (BH-7516:
 # POOL_HARNESS_SRC names that tree for a pool spawn); a machine then pulls main
@@ -23,6 +23,8 @@
 #   --build-arg NODE_VERSION=<bake.node.version row>
 #   --build-arg CLAUDE_CODE_VERSION=<cli.claude_code.version row>
 #   --build-arg CODEX_VERSION=<cli.codex.version row>
+#   --build-arg PLAYWRIGHT_VERSION=<bake.playwright.version row> (BH-7594; the
+#     bin/lib/bake-deps.sh `playwright PLAYWRIGHT_VERSION` pin)
 # The credentials are Fly secrets (CLAUDE_CODE_OAUTH_TOKEN, CODEX_AUTH_JSON),
 # written to files by fly/lane-run-entrypoint.sh at boot, never baked here.
 FROM ubuntu:24.04
@@ -66,6 +68,27 @@ RUN set -eux; \
     claude --version; \
     codex --version
 # <<< cli-pin-verify
+# BH-7594: the web-task lane drives chromium through playwright on this
+# machine (bin/web-task-agent.mjs). The bake-playwright block below is a
+# byte-identical copy of the pool image's, under the same drift test; its
+# browsers land in PLAYWRIGHT_BROWSERS_PATH, an ENV of the pool image's base
+# stage and so an ENV here too.
+ENV PLAYWRIGHT_BROWSERS_PATH=/opt/pw-browsers
+# >>> bake-playwright
+ARG PLAYWRIGHT_VERSION
+RUN set -eux; . /opt/fly-boot/bake-pin.sh; bake_require PLAYWRIGHT_VERSION "${PLAYWRIGHT_VERSION:-}"; \
+    npx --yes "playwright@${PLAYWRIGHT_VERSION}" install --with-deps chromium; \
+    bake_verify playwright "$PLAYWRIGHT_VERSION" npx --yes "playwright@${PLAYWRIGHT_VERSION}" --version; \
+    ls -la "${PLAYWRIGHT_BROWSERS_PATH}"
+# <<< bake-playwright
+# >>> web-task-playwright-module
+# The module itself, global and at the same pin: the npx cache the block above
+# fills is not a stable root, and the agent resolves playwright with
+# createRequire over `npm root -g` (ESM ignores the global root).
+RUN set -eux; npm install -g "playwright@${PLAYWRIGHT_VERSION}"; \
+    node -e "require(require('path').join(process.argv[1], 'playwright'))" "$(npm root -g)"; \
+    test "$(node -p "require(require('path').join(process.argv[1], 'playwright', 'package.json')).version" "$(npm root -g)")" = "$PLAYWRIGHT_VERSION"
+# <<< web-task-playwright-module
 # >>> bake-flyctl
 # BH-7516: flyctl for a pool tick on this machine (bin/fly-pool-project.sh,
 # its fly-binary check). Pinned from the bake.flyctl.version row, no default;

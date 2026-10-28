@@ -1538,7 +1538,7 @@ _job_finish() { # EXIT hook: close the claim with the verdict the RESULT file ca
     # if/elif, not a case: the status map below is the one `case` in this hook
     # (tests/pr-create-failed-owned.bh-614-test.sh pins its arm order).
     if [[ $_tlr == PR_CREATED* || $_tlr == PR_MERGED* ]]; then tl_release "$TL_STATE" pr
-    elif [[ $_tlr == BUILD_DEFERRED* || $_tlr == PLAN_* || $_tlr == DECOMPOSED* || $_tlr == ROLLOUT_FILED* ]]; then tl_release "$TL_STATE" skipped
+    elif [[ $_tlr == BUILD_DEFERRED* || $_tlr == PLAN_* || $_tlr == DECOMPOSED* || $_tlr == ROLLOUT_FILED* || $_tlr == WEBTASK_QUEUED* ]]; then tl_release "$TL_STATE" skipped
     else tl_release "$TL_STATE" blocked
     fi
     TL_STATE=""; TL_BEAT=""
@@ -1554,6 +1554,9 @@ _job_finish() { # EXIT hook: close the claim with the verdict the RESULT file ca
     # the build's work is finished. ROLLOUT_FAILED is deliberately NOT here — it
     # reaches `failed` through `*)`, exactly as DECOMPOSE_FAILED does.
     PR_MERGED*|PR_CREATED*|DECOMPOSED*|ROLLOUT_FILED*)   st="done" ;;
+    # WEBTASK_QUEUED the same way (BH-7594): the ticket is on the web-task lane.
+    # WEBTASK_FAILED reaches `failed` through `*)`.
+    WEBTASK_QUEUED*)                      st="done" ;;
     BUILD_DEFERRED*|QUEUED_FLY*|PLAN_BLOCKED*|PLAN_MALFORMED*|PLAN_STALE*) st=parked ;;
     # Named, not left to `*)` (BH-614): a build that opened no PR is a FAILED row
     # bin/blocked-resolver.sh re-enters, and the word is load-bearing enough (the

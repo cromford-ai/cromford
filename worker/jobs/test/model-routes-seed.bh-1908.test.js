@@ -155,6 +155,9 @@ const SEEDED_AS_COPY = {
   // TEST-CHANGE (BH-6972): component-watch, the per-component alert watcher's
   // route, copies review.trivial's rung 0 (Haiku class) the same way.
   'component-watch': 'review.trivial',
+  // TEST-CHANGE (BH-7594): web-task, the web-task lane's route
+  // (bin/web-task.sh), copies triage's claude rung 0 the same way.
+  'web-task': 'triage',
   // TEST-CHANGE (BH-7722): unblock.judge, Tackler's bounded judge route, copies
   // stage.execute's claude rung 0 the same way stage.archie does.
   'unblock.judge': 'stage.execute',

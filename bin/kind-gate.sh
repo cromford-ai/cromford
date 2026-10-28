@@ -59,7 +59,7 @@ set -uo pipefail
 BUILD="${1:-}"
 META="$BUILD/ticket-meta.json"
 PLAN="$BUILD/plan.md"
-KINDS="bug feature copy migration infra"
+KINDS="bug feature copy migration infra web-task"
 
 # One vocabulary map, used for the board field, the labels and the title
 # prefix alike. Everything not on it is silence, never a guess. `build` and
@@ -74,8 +74,15 @@ map_kind() { # map_kind <word> -> a KIND or nothing
     migration|migrate|backfill)                   echo migration ;;
     infra|infrastructure|chore|ci|ops|devops|deps|dependencies) echo infra ;;
     feature|feat|enhancement|improvement)         echo feature ;;
+    web-task|webtask|web_task)                    echo web-task ;;
   esac
 }
+# web-task (BH-7594) is EVIDENCE-ONLY: a board type field or a GitHub label. A
+# web-task ticket is never planned; bin/lib/web-task/route.sh runs it on the
+# web-task lane, which spends model money and posts a comment on the ticket. A
+# title prefix is the weakest evidence the board offers, and a planner's KIND
+# line comes after the decision, so neither of those two may say web-task.
+not_web_task() { [ "${1:-}" = web-task ] || printf '%s' "${1:-}"; }
 
 HINT=""; HINT_SRC=""
 if [ -n "$BUILD" ] && [ -s "$META" ] && command -v jq >/dev/null 2>&1; then
@@ -110,7 +117,7 @@ EOF
     T=$(jq -r '(.title // "") | tostring' "$META" 2>/dev/null \
         | sed -E 's/^[[:space:]]*//; s/^\[([A-Za-z]+)\][[:space:]]*/\1: /' \
         | sed -nE 's/^([A-Za-z]+)[[:space:]]*:.*/\1/p')
-    K=$(map_kind "$T")
+    K=$(not_web_task "$(map_kind "$T")")
     [ -n "$K" ] && { HINT="$K"; HINT_SRC="title=$T"; }
   fi
 fi
@@ -123,7 +130,7 @@ PLAN_KIND=""
 if [ -n "$BUILD" ] && [ -s "$PLAN" ]; then
   V=$(sed -nE 's/^[[:space:]]*(([-*+]|[0-9]+[.)])[[:space:]]+)?(\*\*)?KIND[[:space:]]*:[[:space:]]*//p' "$PLAN" \
       | tr -d '*`' | awk 'NF{print $1}' | tail -1)
-  PLAN_KIND=$(map_kind "$V")
+  PLAN_KIND=$(not_web_task "$(map_kind "$V")")
 fi
 echo "KIND_PLAN: ${PLAN_KIND:-none}"
 

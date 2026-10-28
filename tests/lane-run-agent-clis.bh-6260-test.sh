@@ -7,8 +7,9 @@
 # lane-run image must bake claude and codex the way the pool image does, and
 # a lane-run machine must get the same agent credentials a pool machine gets.
 #
-#   C1  fly/lane-run.Dockerfile has the `bake-node` and `cli-pin-verify`
-#       blocks, byte-identical to the same blocks in fly/Dockerfile (the pool
+#   C1  fly/lane-run.Dockerfile has the `bake-node`, `cli-pin-verify` and
+#       (BH-7594, the web-task lane's browser) `bake-playwright` blocks,
+#       byte-identical to the same blocks in fly/Dockerfile (the pool
 #       image), and the CLI block installs @anthropic-ai/claude-code and
 #       @openai/codex. It copies fly/bake-pin.sh, which the node block sources.
 #   C2  the lane-run CLI block, run as shipped against stub npm/claude/codex:
@@ -42,7 +43,7 @@ extract() { # extract <marker> <file>
 }
 
 echo "C1: the lane-run image bakes the pool image's node + CLI blocks"
-for m in bake-node cli-pin-verify; do
+for m in bake-node cli-pin-verify bake-playwright; do
   L=$(extract "$m" "$LDF"); P=$(extract "$m" "$PDF")
   [ -n "$P" ] || bad "C1 fly/Dockerfile has no $m block (markers moved?)"
   [ -n "$L" ] && [ "$L" = "$P" ] && ok "C1 $m block is byte-identical to the pool image's" \

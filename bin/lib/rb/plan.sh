@@ -35,6 +35,7 @@
 #   SG_OUT SG_RC SG_SPLIT SG_SRC SG_SWITCH_SRC SG_TIER SG_TITLE SG_TLOG SG_UNDECL_WHY SG_VERDICT SG_WHY TH_N TH_REC
 #   TH_RN VMAP_ORIENT
 #   PC_BASE PC_HITS PC_N PC_NH PC_RC PC_RESOLVED PC_SLUG PC_SUMMARY PC_UNRES PC_VERDICT STN_NOTE UI_PLAN_NOTE
+#   WT_LINE WT_RC LP_PLACE LP_WHY
 #   MN_NOTE
 # shellcheck shell=bash
 
@@ -703,6 +704,28 @@ else
   exit 3
 fi
 # <<< untrusted input gate (BH-4491)
+# >>> web-task hook (BH-7594)
+# A web-task ticket (a board type field or a label, never a title) is never
+# planned: bin/lib/web-task/route.sh queues one web-task lane-run row, here,
+# after the untrusted input gate and before any plan spend. No lib on the box
+# is WEBTASK_FAILED, never a plan of a ticket that asked for no code.
+if [ "${KIND_HINT:-}" = web-task ]; then
+  WT_LINE=""; WT_RC=1
+  # shellcheck source=bin/lib/web-task/route.sh
+  [ -r "$HARNESS/bin/lib/web-task/route.sh" ] && . "$HARNESS/bin/lib/web-task/route.sh" 2>/dev/null
+  if command -v wt_route >/dev/null 2>&1; then
+    wt_route "$PROJECT" "${TICKET:-}" "$KEY" "${JOB_ID:-}" "$KIND_HINT" "${KIND_HINT_SRC:-}"; WT_RC=$?
+  else
+    WT_LINE="WEBTASK_FAILED bin/lib/web-task/route.sh is missing on $(hostname)"; WT_RC=0
+  fi
+  if [ -n "$WT_LINE" ]; then
+    echo "$(STAMP) [$PROJECT/$KEY] WEB-TASK: $WT_LINE" >> "$BUILD/pipeline.log"
+    RESULT "$WT_LINE"
+    [ "$WT_RC" = 3 ] && exit 3
+    exit 0
+  fi
+fi
+# <<< web-task hook (BH-7594)
 # >>> pr-body-requires note (BH-7378)
 # The planner lists each section or literal the PR body must carry in a
 # fenced ```pr-body-requires block, and the pre-review self-check NOTEs each

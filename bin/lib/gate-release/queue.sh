@@ -74,7 +74,7 @@ gr_owned() {
     word="${nr#*$'\t'}"; word="${word%% *}"
     case "$word" in
       INFLIGHT) return 1 ;;
-      PR_CREATED|PR_MERGED|DECOMPOSED|ROLLOUT_FILED)
+      PR_CREATED|PR_MERGED|DECOMPOSED|ROLLOUT_FILED|WEBTASK_QUEUED)
         _grq_note_once "$s" "$k" "$sha owner $word" "$h" "$p" "GATE_RELEASE_SKIP $k: $word already owns it"
         return 1 ;;
     esac
