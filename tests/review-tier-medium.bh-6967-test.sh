@@ -382,7 +382,7 @@ VB=$(sed -n 's#^POST /api/verdicts \(.*\)$#\1#p' "$T/log/vworker" 2>/dev/null | 
 lvpost
 VB=$(sed -n 's#^POST /api/verdicts \(.*\)$#\1#p' "$T/log/vworker" 2>/dev/null | head -1)
 [ "$(jq -r 'has("review_tier") or has("review_mode")' <<<"$VB" 2>/dev/null)" = false ] && ok || bad "M9 a post with no flags sends tier or mode: '$VB'"
-# A hand request never carries the tokens the enqueue owns.
+# A hand request never carries the tokens the worklist owns (gate 60).
 rm -f "$T/log/vworker"
 ( cd "$T" && env PATH="$T/vbin:$PATH" HARNESS="$HV" HARNESS_SECRET=test-secret JOBS_URL=https://jobs.test \
   JOBS_RETRIES=0 TMPDIR="$T/tmp" GH_ETAG=0 LEAD_VERDICT_TOKEN_FILE="$T/cfg/token" \
