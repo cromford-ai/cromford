@@ -118,7 +118,9 @@ run
   && ok "R1 lane off: rc 0, no run line, nothing archived" || bad "R1 rc=$RC log=$(lastlog)"
 rm -f "$H/flags/lane-off-builds-retention"
 
-# R2 + R4: no settings at all -> the defaults, dry run
+# R2 + R4: no rule-1 settings -> the defaults, dry run. Rule 2 (BH-7931,
+# builds_retention.settled_window_days) is off in scenario A: it pins rule 1.
+settings '{"builds_retention.settled_window_days":"0"}'
 run
 [ "$RC" = 0 ] && ok "R2 rc 0" || bad "R2 rc=$RC $(cat "$T/run.out")"
 lastlog | grep -q " dry=1 window=14(default) " && ok "R2 dry=1 window=14(default)" || bad "R2 line: $(lastlog)"
@@ -131,12 +133,12 @@ grep -qxF "alpha-os-TK-1-$S30	$M30/alpha-os-TK-1-$S30" "$H/logs/builds-retention
 [ "$(field would_move)" = 6 ] && [ "$(field moved)" = 0 ] && ok "R4 would_move=6 moved=0" || bad "R4 $(lastlog)"
 
 # --dry-run forces a dry run whatever the row says
-settings '{"builds_retention.dry_run":"0"}'
+settings '{"builds_retention.dry_run":"0","builds_retention.settled_window_days":"0"}'
 run --dry-run
 [ "$(field dry)" = 1 ] && [ ! -e "$H/builds-archive/index.tsv" ] && ok "R4 --dry-run overrides dry_run=0" || bad "R4 --dry-run $(lastlog)"
 
 # R6 real run, a held build-key lock on TK-10
-settings '{"builds_retention.dry_run":"0","builds_retention.window_days":"14"}'
+settings '{"builds_retention.dry_run":"0","builds_retention.window_days":"14","builds_retention.settled_window_days":"0"}'
 run
 L=$(lastlog)
 [ "$(field dry)" = 0 ] && lastlog | grep -q " window=14 " && ok "R6 dry=0 window=14 from the rows" || bad "R6 line: $L"
@@ -179,7 +181,7 @@ OUT=$("$H/bin/fetch-artifact.sh" alpha-os TK-1 review cid-r7 2>/dev/null)
   && ok "R7 fetch-artifact: archived:true, missing:false, the archive build_dir" || bad "R7 out=$OUT"
 
 # R18 the run line carries every field, in order
-re='^[0-9T:-]+Z run dry=[01] window=[0-9]+(\(default\))? cut=[0-9]{12} dirs=[0-9]+ groups=[0-9]+ eligible_groups=[0-9]+ moved=[0-9]+ would_move=[0-9]+ kept no-stamp=[0-9]+ young=[0-9]+ not-merged=[0-9]+ unswept=[0-9]+ remote-json=[0-9]+ live=[0-9]+ collision=[0-9]+ capped=[01] errors=[0-9]+ wall=[0-9]+s$'
+re='^[0-9T:-]+Z run dry=[01] window=[0-9]+(\(default\))? cut=[0-9]{12} dirs=[0-9]+ groups=[0-9]+ eligible_groups=[0-9]+ moved=[0-9]+ would_move=[0-9]+ kept no-stamp=[0-9]+ young=[0-9]+ not-merged=[0-9]+ unswept=[0-9]+ remote-json=[0-9]+ live=[0-9]+ collision=[0-9]+ settled-open=[0-9]+ settled-young=[0-9]+ tracker-unreadable=[0-9]+ tracker-budget=[0-9]+ capped=[01] errors=[0-9]+ settled=[0-9]+(\(default\))? tracker_reads=[0-9]+ wall=[0-9]+s$'
 [ "$(grep -c ' run ' "$H/logs/builds-retention.log")" = 4 ] && ok "R18 one run line per run (4 runs)" || bad "R18 lines: $(cat "$H/logs/builds-retention.log")"
 bad18=$(grep ' run ' "$H/logs/builds-retention.log" | grep -cvE "$re")
 [ "$bad18" = 0 ] && ok "R18 every run line has every field" || bad "R18 malformed: $(grep ' run ' "$H/logs/builds-retention.log" | grep -vE "$re")"

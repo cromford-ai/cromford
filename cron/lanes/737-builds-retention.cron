@@ -1,11 +1,14 @@
-# @hub-lanes
-
-# ── BUILDS-RETENTION LANE (BH-7437) ─────────────────────────────────────────
-# Daily at 04:27Z. Moves SETTLED build-dir groups (merged, swept, no live lock,
-# no remote-results json) older than builds_retention.window_days (14) from
-# builds/ to builds-archive/<YYYYMM>/<dir>, one index row per dir in
-# builds-archive/index.tsv. Lists only while the settings row
+# ── BUILDS-RETENTION LANE (BH-7437, BH-7931) ────────────────────────────────
+# Daily at 04:27Z on every box: each box retains its own builds/. Moves
+# settled build-dir groups from builds/ to builds-archive/<YYYYMM>/<dir>, one
+# index row per dir in builds-archive/index.tsv. Rule 1: merged groups older
+# than builds_retention.window_days (14). Rule 2: unmerged groups older than
+# builds_retention.settled_window_days (30) whose ticket is closed, or that are
+# superseded or all-terminal. Lists only while the settings row
 # builds_retention.dry_run is 1 (the seed): logs/builds-retention-dryrun.txt.
 # One line per run in logs/builds-retention.log. Runs under nice/ionice.
 # Off: flags/lane-off-builds-retention (bin/harness-ctl.sh off builds-retention).
+27 4 * * * /root/harness/bin/builds-retention.sh >> /root/harness/logs/builds-retention-cron.log 2>&1
+# @box hub
+# @hub-lanes
 27 4 * * * /root/harness/bin/hub-lease.sh check && /root/harness/bin/builds-retention.sh >> /root/harness/logs/builds-retention-cron.log 2>&1

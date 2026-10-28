@@ -240,6 +240,40 @@ row, not an env edit, so the console can show it and it ends on its own.
 
 Details and the reasons: [`notes/2026-09-24-BH-1684-lanes-honor-pauses.md`](notes/2026-09-24-BH-1684-lanes-honor-pauses.md).
 
+## builds/ retention settings (BH-7931)
+
+`bin/builds-retention.sh` runs on every fleet box, daily at 04:27Z. Each box
+moves its own settled build dirs from `builds/` to `builds-archive/`. The hub
+runs it behind its hub lease. It reads these settings rows. A missing row, an
+outage or a bad value uses the code default, and the run line names it
+`(default)`.
+
+| row | default | meaning |
+|---|---|---|
+| `builds_retention.window_days` | 14 | rule 1: a merged group older than this (plus one day) moves |
+| `builds_retention.settled_window_days` | 30 | rule 2: an unmerged group older than this (plus one day) moves when its ticket is closed, or it is superseded or all-terminal; 0 = rule 2 off |
+| `builds_retention.dry_run` | 1 | 1 = list only (`logs/builds-retention-dryrun.txt`); 0 = move |
+| `builds_retention.max_dirs` | 2000 | dirs per run; two real runs in a row that hit it raise `builds-retention:drain` |
+| `builds_retention.tracker_reads_max` | 200 | ticket reads per run for rule 2; past it a group is kept as `tracker-budget` |
+
+### Flip procedure (dry run to real moves)
+
+BH-7931 does not flip `builds_retention.dry_run`. It stays 1 until an operator
+does these steps:
+
+1. On each box, read one dry run line in `logs/builds-retention.log`: the
+   `would_move=` count and the kept reasons. Read the list in
+   `logs/builds-retention-dryrun.txt`.
+2. If every box's list is correct, run
+   `bin/jobs-client.sh setting-set builds_retention.dry_run 0`.
+3. After the next 04:27Z run, read the run line on each box: `dry=0`,
+   `moved=` and `errors=0`.
+
+To stop the moves again, set the row back to 1. To turn off rule 2 only, set
+`builds_retention.settled_window_days` to 0. A restore is one `mv` back from
+`builds-archive/<YYYYMM>/<dir>` plus deleting its row in
+`builds-archive/index.tsv`.
+
 ## Agent transcript retention (BH-7933)
 
 Stage 11 of the daily `disk-clean` lane (`bin/disk-clean.sh`, 04:47Z, every box) runs `bin/agent-transcripts-clean.sh`.

@@ -1,0 +1,10 @@
+{
+  "env": "BOX_NAME",
+  "type": "string",
+  "default": "",
+  "unit": null,
+  "zero_means": null,
+  "read_in": "bin/builds-retention.sh",
+  "note": "Fallback for this box's name in the builds-retention:drain alert text. Read by bin/builds-retention.sh as ${BOX_NAME:-$(hostname -s)}. NOT settable from the control plane — it is an identity a root lane uses, so only env/global.env on the box moves it.",
+  "settable": false
+}

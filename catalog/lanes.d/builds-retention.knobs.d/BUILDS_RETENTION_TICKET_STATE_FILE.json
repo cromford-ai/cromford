@@ -1,0 +1,10 @@
+{
+  "env": "BUILDS_RETENTION_TICKET_STATE_FILE",
+  "type": "string",
+  "default": "",
+  "unit": null,
+  "zero_means": null,
+  "read_in": "bin/lib/ticket-state.sh",
+  "note": "BH-7931 test seam: a TSV (<project> TAB <id> TAB open|closed|unreadable|ratelimited) that tks_state reads instead of the tracker, with 0 network calls. NOT settable from the control plane. Rule 2's window and read budget are settings rows (builds_retention.settled_window_days, builds_retention.tracker_reads_max), not lane knobs.",
+  "settable": false
+}

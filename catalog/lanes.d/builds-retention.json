@@ -1,11 +1,21 @@
 {
   "id": "builds-retention",
   "name": "builds/ retention",
-  "scope": "hub",
+  "scope": "box",
   "script": "bin/builds-retention.sh",
   "cadence": "27 4 * * *",
   "boxes": [
-    "hub"
+    "project-4",
+    "hub",
+    "project-6",
+    "project-6-os",
+    "project-1",
+    "project-3",
+    "project-10",
+    "project-9",
+    "small",
+    "project-2",
+    "project-5"
   ],
   "switch": {
     "kind": "flag",
