@@ -73,12 +73,7 @@ one child issue with the rest. The child issue text:
 
 ## Operator steps
 
-1. Create the KV namespace: `npx wrangler kv namespace create harness-onboard-kv`.
-2. Add the binding to `worker/jobs/wrangler.jsonc`:
-   `"kv_namespaces": [{ "binding": "ONBOARD_KV", "id": "<id from step 1>" }]`,
-   and deploy. Until then every route here answers
-   `503 onboarding KV not bound`, and nothing else changes.
-3. Add the repo Actions secrets the contract workflow reads:
+1. Add the repo Actions secrets the contract workflow reads:
    `LINEAR_CONTRACT_KEY`, `LINEAR_CONTRACT_TEAM`, `JIRA_CONTRACT_SITE`,
    `JIRA_CONTRACT_EMAIL`, `JIRA_CONTRACT_TOKEN`, `JIRA_CONTRACT_PROJECT`.
    Without them each suite prints `SKIP: no contract credentials` and passes.
@@ -86,10 +81,14 @@ one child issue with the rest. The child issue text:
 ## The wait
 
 The hub-probe lane runs every 10 minutes and caps each probe at 20 runs a UTC
-day (`HUB_PROBE_DAILY_CAP`). A test can wait up to 10 minutes. A row deferred
-past the 15-minute KV TTL fails with `credential expired, test again`.
+day (`HUB_PROBE_DAILY_CAP`). A test can wait up to 10 minutes. BH-7968 replaced
+the KV row with the secret envelope, so a deferred row no longer depends on a
+15-minute KV TTL; see the envelope's own expiry in `docs/SECRETS-ENVELOPE.md`.
 
-## TEMPORARY
+## Superseded by BH-7968
 
-The KV row is the stand-in for the secret envelope of onboarding wave 4, which
-replaces `onb_take` and the take route.
+The KV row, `ONBOARD_KV`, `onb_take` and the take route are gone. BH-7968
+(slice C0) moved the sheet to the secret envelope: the sheet seals the fields,
+`POST /api/coord/onboarding/tracker-test` takes `{project, kind, envelope_id}`,
+and the hub probe reads and decrypts the envelope. No KV operator step is
+needed. See `docs/SECRETS-ENVELOPE.md` and `docs/ONBOARDING.md`.

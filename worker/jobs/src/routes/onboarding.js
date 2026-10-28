@@ -5,7 +5,7 @@
 // (BH-7936). test/route-table.d/bh-7934-onboarding.txt pins this route list.
 //
 // POST /api/onboarding/runs  header Idempotency-Key, body
-//   {repo, project, tracker, box, prefix?, base?, prod?}
+//   {repo, project, tracker, box, prefix?, base?, prod?, ai_envelope?}
 //   The key names the run: id = ob_ + the first 20 hex of sha256(key). Each
 //   field is trimmed and checked; the first bad one is a 400 that names it and
 //   writes nothing. Every other body key is dropped, so a field such as token
@@ -47,6 +47,8 @@ const FIELDS = [
   ["prefix", false, (v) => /^[A-Z][A-Z0-9]{1,9}$/.test(v)],
   ["base", false, (v) => /^[A-Za-z0-9._/-]{1,100}$/.test(v) && !v.includes("..")],
   ["prod", false, prodOk],
+  // BH-7968: the AI-account envelope of this run; bin/onboard-run.sh consumes it.
+  ["ai_envelope", false, (v) => /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(v)],
 ];
 
 // {inputs} with the kept fields in sorted key order, or {error, field}.

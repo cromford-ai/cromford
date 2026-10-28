@@ -6,7 +6,10 @@
 # (main bearer AND x-envelope-hub-token), then bin/envelope-consume.sh <id> once
 # per pending id whose scope starts `ai-account:` or `fleet:` (BH-8541), one
 # after the other (two envelopes for one env file never race). Other scopes
-# (tracker:) stay for their own consumer. `flock -n locks/secrets-apply.lock` dedupes: a held lock
+# (tracker:) stay for their own consumer. An ai-account project scope whose
+# project bin/fleet-conf.sh --projects does not list stays pending too, one
+# `held <id> (project <p> not registered)` line (BH-7968).
+# `flock -n locks/secrets-apply.lock` dedupes: a held lock
 # skips the tick. Rotated keys envelope.key.<epoch> older than the TTL are
 # deleted first. Doc: docs/SECRETS-ENVELOPE.md.
 #
@@ -102,10 +105,31 @@ if [ "$PENDING" -gt 0 ] && [ ! -r "$KEY" ]; then
   exit 0
 fi
 
+# registered <project> — rc 0 when bin/fleet-conf.sh --projects lists it. The
+# list is read once per tick, and only when a project scope is pending.
+PROJECTS=""; PROJECTS_READ=0
+registered() {
+  if [ "$PROJECTS_READ" = 0 ]; then
+    PROJECTS=$("$SELF/fleet-conf.sh" --projects 2>/dev/null) || PROJECTS=""
+    PROJECTS_READ=1
+  fi
+  grep -qxF -- "$1" <<< "$PROJECTS"
+}
+
 CONSUMED=0; FAILED=0; SKIPPED=0
 while IFS=$'\t' read -r id scope; do
   [ -n "$id" ] || continue
   case "$scope" in ai-account:*|fleet:*) ;; *) SKIPPED=$((SKIPPED + 1)); continue ;; esac
+  # A project scope whose project is not registered yet stays pending (BH-7968).
+  # The Onboard form seals the new project's own account before the onboarding
+  # run's register station writes the registry row. The read deletes the
+  # envelope and envelope-consume.sh refuses an unknown project after the read,
+  # so a consume now would lose the secret. The run consumes it after register;
+  # a project that never registers lets the envelope expire (the sweep).
+  IFS=: read -r _ _ _ use proj _ <<< "$scope"
+  if [ "$use" = project ] && [ -n "$proj" ] && ! registered "$proj"; then
+    SKIPPED=$((SKIPPED + 1)); line "held $id (project $proj not registered)"; continue
+  fi
   "$SELF/envelope-consume.sh" "$id" >/dev/null 2>&1; rc=$?
   case "$rc" in
     0) CONSUMED=$((CONSUMED + 1)) ;;

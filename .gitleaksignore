@@ -14,7 +14,7 @@
 checks/secret-literals/fixtures/violation.diff:aws-access-token:7
 checks/secret-literals/fixtures/violation.diff:github-app-token:10
 console-ui/tests/prompt-history.bh-7972.test.js:generic-api-key:377
-console-ui/tests/tracker-sheets.bh-7936.test.js:generic-api-key:34
+console-ui/tests/tracker-sheets.bh-7936.test.js:generic-api-key:39
 fly/warm-env/project-1.env:generic-api-key:13
 fly/warm-env/project-2.env:generic-api-key:12
 fly/warm-env/project-3.env:generic-api-key:8
@@ -66,8 +66,10 @@ tests/gh-token-live-test.sh:generic-api-key:26
 tests/hotspot-split-ticket.bh-6739-test.sh:curl-auth-header:158
 tests/hotspot-split-ticket.bh-6739-test.sh:curl-auth-header:327
 tests/hub-move.bh-7715-test.sh:generic-api-key:133
-tests/hub-probe-tracker-test.bh-7936-test.sh:generic-api-key:42
-tests/hub-probe-tracker-test.bh-7936-test.sh:generic-api-key:198
+tests/hub-probe-tracker-envelope.bh-7968-test.sh:generic-api-key:85
+tests/hub-probe-tracker-envelope.bh-7968-test.sh:generic-api-key:203
+tests/hub-probe-tracker-test.bh-7936-test.sh:generic-api-key:51
+tests/hub-probe-tracker-test.bh-7936-test.sh:generic-api-key:214
 tests/jobs-client-secret-sources.bh-7188-test.sh:generic-api-key:12
 tests/lane-ports-linear.bh-8451-test.sh:generic-api-key:38
 tests/lane-ports-linear.bh-8451-test.sh:generic-api-key:173
@@ -96,6 +98,8 @@ tests/merge-conductor-box.bh-7636-test.sh:curl-auth-header:314
 tests/merge-pr-release.bh-4917-test.sh:generic-api-key:59
 tests/nightly-ticket-split.bh-6838-test.sh:generic-api-key:262
 tests/no-client-identifiers-test.sh:aws-access-token:51
+tests/onboard-envelope.bh-7937-test.sh:generic-api-key:180
+tests/onboard-envelope.bh-7937-test.sh:generic-api-key:183
 tests/onboard-run-vendor-budget.bh-7934-test.sh:generic-api-key:57
 tests/onboard-run.bh-7934-test.sh:generic-api-key:76
 tests/openrouter-audit.bh-4001-test.sh:generic-api-key:21
@@ -165,7 +169,9 @@ worker/jobs/test/main-red-state.bh-4156.test.js:generic-api-key:20
 worker/jobs/test/migration-numbers.bh-7325.test.js:generic-api-key:26
 worker/jobs/test/onboarding-actions.bh-7934.test.js:generic-api-key:28
 worker/jobs/test/onboarding-runner.bh-7934.test.js:generic-api-key:33
-worker/jobs/test/onboarding-tracker.bh-7936.test.js:generic-api-key:19
+worker/jobs/test/onboarding-tracker-envelope.bh-7968.test.js:generic-api-key:20
+worker/jobs/test/onboarding-tracker-envelope.bh-7968.test.js:generic-api-key:99
+worker/jobs/test/onboarding-tracker.bh-7936.test.js:generic-api-key:20
 worker/jobs/test/onboarding.bh-7934.test.js:generic-api-key:26
 worker/jobs/test/onboarding.bh-7934.test.js:generic-api-key:53
 worker/jobs/test/onboarding.bh-7934.test.js:generic-api-key:96

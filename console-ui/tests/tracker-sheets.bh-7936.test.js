@@ -10,6 +10,11 @@
 //   R1-R4 runTrackerTest: pending then ok; error; the deadline; one POST only
 //   C1 the client calls the coord proxy paths
 //   P1 the proxy admits POST onboarding/tracker-test and refuses the take route
+// TEST-CHANGE (BH-7968): the start body is {project, kind, envelope_id}, not
+// {project, kind, fields}, and runTrackerTest seals and stores the envelope
+// before the start. R1-R4, C1 and P1 now build that premise; what each case
+// pins (one start, the poll, the deadline, the abort, the proxy rows) is the
+// same. The seal itself is pinned in tests/onboard-envelope.bh-7937.test.js.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { h } from 'preact';
@@ -144,30 +149,36 @@ test('K7 Escape calls onLater, other keys do not; Tab wraps inside the sheet', (
   assert.ok(prevented >= 3);
 });
 
+const ENV_ID = crypto.randomUUID();
 function fakeClient(answers) {
-  const calls = { start: [], result: [] };
+  const calls = { start: [], result: [], envelope: [] };
   return {
     calls,
-    async start(project, kind, fields) { calls.start.push({ project, kind, fields }); return { test_id: 'f'.repeat(32) }; },
+    async publicKey() { return 'fixture-public-key'; },
+    async postEnvelope(body) { calls.envelope.push(body); return { id: ENV_ID }; },
+    async start(project, kind, envelopeId) { calls.start.push({ project, kind, envelopeId }); return { test_id: 'f'.repeat(32) }; },
     async result(project, id) { calls.result.push({ project, id }); return answers.length > 1 ? answers.shift() : answers[0]; }
   };
 }
+const seal = async (_key, text) => `sealed:${text.length}`;
 const noSleep = async () => {};
 
 test('R1 runTrackerTest: one POST, a poll while pending, then ok', async () => {
   const c = fakeClient([{ state: 'pending' }, { state: 'pending' }, { state: 'ok', detail: 'ok list=2 dry-write=ok' }]);
   const seen = [];
-  const r = await lib.runTrackerTest({ client: c, project: 'p', kind: 'linear', fields: FULL.linear, sleep: noSleep, onPending: (x) => seen.push(x.state) });
+  const r = await lib.runTrackerTest({ client: c, seal, project: 'p', kind: 'linear', fields: FULL.linear, sleep: noSleep, onPending: (x) => seen.push(x.state) });
   assert.equal(r.state, 'ok');
   assert.equal(r.test_id, 'f'.repeat(32));
   assert.equal(c.calls.start.length, 1);
+  assert.deepEqual(c.calls.start[0], { project: 'p', kind: 'linear', envelopeId: ENV_ID });
+  assert.equal(c.calls.envelope.length, 1);
   assert.equal(c.calls.result.length, 3);
   assert.deepEqual(seen, ['pending', 'pending']);
 });
 
 test('R2 runTrackerTest: an error answer returns its text', async () => {
   const c = fakeClient([{ state: 'error', error: 'FAIL credential expired, test again' }]);
-  const r = await lib.runTrackerTest({ client: c, project: 'p', kind: 'board', fields: FULL.board, sleep: noSleep });
+  const r = await lib.runTrackerTest({ client: c, seal, project: 'p', kind: 'board', fields: FULL.board, sleep: noSleep });
   assert.deepEqual([r.state, r.error], ['error', 'FAIL credential expired, test again']);
 });
 
@@ -175,7 +186,7 @@ test('R3 runTrackerTest: no answer before the deadline is an error, never ok', a
   let now = 0;
   const c = fakeClient([{ state: 'pending' }]);
   const r = await lib.runTrackerTest({
-    client: c, project: 'p', kind: 'board', fields: FULL.board, pollMs: 5000, maxWaitMs: 20000,
+    client: c, seal, project: 'p', kind: 'board', fields: FULL.board, pollMs: 5000, maxWaitMs: 20000,
     sleep: async (ms) => { now += ms; if (now > 10 * 20000) throw new Error('runaway poll: no deadline'); }, now: () => now
   });
   assert.equal(r.state, 'error');
@@ -184,33 +195,38 @@ test('R3 runTrackerTest: no answer before the deadline is an error, never ok', a
 });
 
 test('R4 runTrackerTest: a start the worker refuses is an error with its text; an abort stops the poll', async () => {
-  const c = { async start() { const e = new Error('onboarding KV not bound'); e.status = 503; throw e; }, async result() { throw new Error('never'); } };
-  const r = await lib.runTrackerTest({ client: c, project: 'p', kind: 'board', fields: FULL.board, sleep: noSleep });
-  assert.deepEqual([r.state, r.error], ['error', 'onboarding KV not bound']);
+  const c = { ...fakeClient([]), async start() { const e = new Error('the hub-probe request could not be filed'); e.status = 503; throw e; }, async result() { throw new Error('never'); } };
+  const r = await lib.runTrackerTest({ client: c, seal, project: 'p', kind: 'board', fields: FULL.board, sleep: noSleep });
+  assert.deepEqual([r.state, r.error], ['error', 'the hub-probe request could not be filed']);
   const ac = new AbortController();
   const c2 = fakeClient([{ state: 'pending' }]);
-  const run = lib.runTrackerTest({ client: c2, project: 'p', kind: 'board', fields: FULL.board, signal: ac.signal, sleep: async () => { ac.abort(); } });
+  const run = lib.runTrackerTest({ client: c2, seal, project: 'p', kind: 'board', fields: FULL.board, signal: ac.signal, sleep: async () => { ac.abort(); } });
   const r2 = await run;
   assert.equal(r2.state, 'aborted');
   assert.equal(c2.calls.result.length, 1);
 });
 
-test('C1 the client posts {project, kind, fields} to the coord proxy and reads the result by id', async () => {
+test('C1 the client posts the envelope, then {project, kind, envelope_id} to the coord proxy, and reads the result by id', async () => {
   const seen = [];
   const fetchImpl = async (url, init = {}) => {
     seen.push({ url, method: init.method || 'GET', body: init.body });
+    if (url.endsWith('/secrets/envelope')) return new Response(JSON.stringify({ id: ENV_ID }), { status: 200 });
     const body = url.includes('/tracker-test/') ? { state: 'pending' } : { test_id: 'a'.repeat(32) };
     return new Response(JSON.stringify(body), { status: url.includes('/tracker-test/') ? 200 : 202 });
   };
-  const c = lib.trackerClient(fetchImpl);
-  assert.deepEqual(await c.start('newproj', 'linear', FULL.linear), { test_id: 'a'.repeat(32) });
+  const c = lib.trackerClient(fetchImpl, { settings: async () => ({ settings: [] }) });
+  assert.deepEqual(await c.postEnvelope({ scope: 'tracker:linear:newproj', ciphertext: 'QQ==' }), { id: ENV_ID });
+  assert.deepEqual(await c.start('newproj', 'linear', ENV_ID), { test_id: 'a'.repeat(32) });
   assert.deepEqual(await c.result('newproj', 'a'.repeat(32)), { state: 'pending' });
-  assert.equal(seen[0].url, '/api/coord/onboarding/tracker-test');
-  assert.equal(seen[0].method, 'POST');
-  assert.deepEqual(JSON.parse(seen[0].body), { project: 'newproj', kind: 'linear', fields: FULL.linear });
-  assert.equal(seen[1].url, `/api/coord/onboarding/tracker-test/${'a'.repeat(32)}?project=newproj`);
-  const failing = lib.trackerClient(async () => new Response(JSON.stringify({ error: 'team must be a Linear team key' }), { status: 400 }));
-  await assert.rejects(failing.start('p', 'linear', FULL.linear), /team must be a Linear team key/);
+  assert.equal(seen[0].url, '/api/coord/secrets/envelope');
+  assert.equal(seen[1].url, '/api/coord/onboarding/tracker-test');
+  assert.equal(seen[1].method, 'POST');
+  const sb = JSON.parse(seen[1].body);
+  assert.deepEqual(Object.keys(sb).sort(), ['envelope_id', 'kind', 'project']);
+  assert.deepEqual([sb.project, sb.kind, sb.envelope_id], ['newproj', 'linear', ENV_ID]);
+  assert.equal(seen[2].url, `/api/coord/onboarding/tracker-test/${'a'.repeat(32)}?project=newproj`);
+  const failing = lib.trackerClient(async () => new Response(JSON.stringify({ error: 'no envelope with that id' }), { status: 400 }));
+  await assert.rejects(failing.start('p', 'linear', ENV_ID), /no envelope with that id/);
 });
 
 test('P1 the coord proxy admits POST onboarding/tracker-test and refuses the take route', async () => {
@@ -230,16 +246,17 @@ test('P1 the coord proxy admits POST onboarding/tracker-test and refuses the tak
     params: { path: rest.split('/').filter(Boolean) }
   });
   try {
-    const ok = await call('onboarding/tracker-test', 'POST', JSON.stringify({ project: 'p', kind: 'linear', fields: FULL.linear, extra: 1 }));
+    const ok = await call('onboarding/tracker-test', 'POST', JSON.stringify({ project: 'p', kind: 'linear', envelope_id: ENV_ID, fields: FULL.linear, extra: 1 }));
     assert.equal(ok.status, 202);
     assert.equal(seen.length, 1);
     assert.match(seen[0].url, /\/api\/onboarding\/tracker-test$/);
     const fwd = JSON.parse(seen[0].body);
-    assert.deepEqual([fwd.project, fwd.kind, fwd.fields], ['p', 'linear', FULL.linear]);
+    assert.deepEqual([fwd.project, fwd.kind, fwd.envelope_id], ['p', 'linear', ENV_ID]);
     assert.equal('extra' in fwd, false);
-    const notObj = await call('onboarding/tracker-test', 'POST', JSON.stringify({ project: 'p', kind: 'linear', fields: { team: 7 } }));
-    assert.equal(notObj.status, 202);
-    assert.equal('fields' in JSON.parse(seen[1].body), false, 'fields that are not all strings are not forwarded');
+    assert.equal('fields' in fwd, false, 'a field value is never forwarded');
+    const notStr = await call('onboarding/tracker-test', 'POST', JSON.stringify({ project: 'p', kind: 'linear', envelope_id: 7 }));
+    assert.equal(notStr.status, 202);
+    assert.equal('envelope_id' in JSON.parse(seen[1].body), false, 'an envelope_id that is not a string is not forwarded');
     const take = await call('onboarding/tracker-secret/take', 'POST', JSON.stringify({ nonce: 'a'.repeat(32) }));
     assert.equal(take.status, 405);
     assert.equal(seen.length, 2, 'the take route never reached the worker');

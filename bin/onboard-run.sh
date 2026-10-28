@@ -12,6 +12,17 @@
 #   4. Read the run (GET /api/onboarding/runs/<id>) and set the globals the
 #      station lib reads: PROJECT SLUG REPO PROD BOX PREFIX PREFIX_LC BASE
 #      TRACKER. Arm the repo's App token and source the station lib.
+#      If the run has a queued step and an ai_envelope input (BH-7968: the
+#      AI-account envelope the onboarding form sealed), run
+#      bin/envelope-consume.sh <id> once, as soon as the run's project is
+#      registered: before the first station when it already is, else right
+#      after the register station. Until then the call logs `held` and the
+#      envelope stays pending, because the consumer refuses an unknown
+#      project only after its read deleted the envelope. The read deletes the
+#      envelope, so secrets-apply never applies it a second time;
+#      a consume that already happened answers 404 (exit 3), logged `gone`.
+#      The consume never fails or stops the run: the account row carries its
+#      own result.
 #   5. Each QUEUED step in ord: beat `running`, run the station in a subshell
 #      (stdout and stderr to one file), then beat `done` on rc 0, or `failed`
 #      with the last ONBOARD_RUN_EXCERPT_BYTES bytes and obs_error_code on rc
@@ -34,8 +45,12 @@
 #   | failed <id> at <station> code=<code> | cancelled <id> at <station>
 #   | done <id> <project> | stale <id> | worker-failed (<status>)
 #   | not-configured (<why>)
+#   | envelope <id> <envelope> <applied|gone|deferred rc=75|failed rc=<n>>
+#   | envelope <id> <envelope> held (project <p> not registered)
+#   | envelope <id> refused bad id
 #
 # Env, test seams: ONBOARD_STATIONS_LIB (the station lib path);
+#   ONBOARD_ENVELOPE_CONSUME and ONBOARD_FLEET_CONF (bin/lib/onboard-envelopes.sh);
 #   ONBOARD_RUN_LIB_ONLY=1 defines the functions and runs nothing;
 #   ONBOARD_RUN_NOW (epoch seconds) is the stale check's clock.
 # OFF: flags/lane-off-onboard-run (bin/harness-ctl.sh off onboard-run).
@@ -166,6 +181,9 @@ _obr_beat() {
   esac
 }
 
+# shellcheck source=bin/lib/onboard-envelopes.sh
+. "$SELF/lib/onboard-envelopes.sh" || { echo "onboard-run: bin/lib/onboard-envelopes.sh did not load" >&2; exit 2; }
+
 [ "${ONBOARD_RUN_LIB_ONLY:-}" = 1 ] && return 0 2>/dev/null
 
 . "$H/bin/lib/env-path.sh" 2>/dev/null || . "$SELF/lib/env-path.sh" 2>/dev/null \
@@ -241,6 +259,7 @@ PROD=$(inp prod); [ -n "$PROD" ] || PROD="-"
 BASE=$(inp base); PREFIX=$(inp prefix)
 ROOT="$H"
 cd "$ROOT" || { line "worker-failed (no $ROOT)"; exit 2; }
+obe_consume "$TMP/run.json" "$ID"   # the run's AI-account envelope (BH-7968): held until the project is registered
 # shellcheck source=bin/lib/deployment.sh
 . "$ROOT/bin/lib/deployment.sh" 2>/dev/null || . "$SELF/lib/deployment.sh" 2>/dev/null || true
 BOX=""
@@ -273,6 +292,7 @@ for st in "${TODO[@]}"; do
   if [ "$src" = 0 ]; then
     _obr_beat "$(jq -nc --arg s "$st" --rawfile l "$TMP/excerpt" '{station:$s, state:"done", log_excerpt:$l}')"
     line "step $ID $st done rc=0 secs=$secs"
+    [ "$st" = register ] && obe_consume "$TMP/run.json" "$ID"   # the project is registered now
     continue
   fi
   code=$(_obr_code "$st" "$TMP/$st.out")

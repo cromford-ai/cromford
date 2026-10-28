@@ -11,7 +11,7 @@
 #     app-permissions <app-slug>
 #     app-installation-repos
 #     d1-count <table in HP_D1_TABLES> <template in HP_D1_TEMPLATES>
-#     tracker-test <linear|jira|board> <32 lower-case hex>   (HP_SCREEN_PROBES)
+#     tracker-test <linear|jira|board> <lower-case envelope uuid> (HP_SCREEN_PROBES)
 #     repo-detect <owner/repo>  (neither half . or ..)        (HP_SCREEN_PROBES)
 #     ready-facts <project>     ([a-z0-9][a-z0-9-]{0,18})     (HP_SCREEN_PROBES)
 #     repo-create <owner> <name> <template in HP_TEMPLATE_KEYS> (HP_SCREEN_PROBES)
@@ -65,7 +65,8 @@ hp_validate() {
     d1-count)
       [ $# -eq 3 ] && _hp_in "$2" "$HP_D1_TABLES" && _hp_in "$3" "$HP_D1_TEMPLATES" || return 2 ;;
     tracker-test)
-      [ $# -eq 3 ] && _hp_in "$2" "$HP_TRACKER_KINDS" && [[ "$3" =~ ^[0-9a-f]{32}$ ]] || return 2 ;;
+      [ $# -eq 3 ] && _hp_in "$2" "$HP_TRACKER_KINDS" \
+        && [[ "$3" =~ ^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$ ]] || return 2 ;;
     repo-detect)
       [ $# -eq 2 ] && [[ "$2" =~ $re_repo ]] || return 2
       case "/$2/" in */./*|*/../*) return 2 ;; esac ;;

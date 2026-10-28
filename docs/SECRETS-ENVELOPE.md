@@ -31,7 +31,17 @@ half, BH-7965 (BH-7937.2). The console screen that seals an envelope is BH-7937.
    gets the id and scope only, never the ciphertext. `flock -n
    locks/secrets-apply.lock` dedupes the tick.
 3. For each `ai-account:` scope, one after the other, it runs
-   `bin/envelope-consume.sh <id>`. Other scopes (`tracker:`) stay for their own consumer.
+   `bin/envelope-consume.sh <id>`. Other scopes (`tracker:`) stay for their own
+   consumer: the hub probe `tracker-test` (see Tracker envelopes). The
+   onboarding runner (`bin/onboard-run.sh`) also runs `envelope-consume.sh` for
+   the `ai_envelope` of its run; whichever reader comes first applies it, and
+   the other gets 404, exit 3. A `project` scope whose project
+   `bin/fleet-conf.sh --projects` does not list yet is not read by either
+   reader (BH-7968): `secrets-apply` logs `held <id> (project <p> not
+   registered)` and the onboarding runner logs `held` until its register
+   station writes the row. The read deletes the envelope and step 5 refuses an
+   unknown project after it, so a consume before the row exists loses the
+   secret. A project that never registers lets its envelope expire.
 4. `envelope-consume.sh` reads the envelope: `GET /api/secrets/envelope/<id>`.
    The read deletes the row, so an id is read at most once. Then it:
    1. decrypts with `openssl pkeyutl` (the current key, then each rotated key
@@ -96,6 +106,25 @@ ai-account:<vendor>:<label>:<use_kind>[:<project>]
 
 The parser is `envelope_scope_parse` in `bin/lib/envelope.sh`. A refused scope
 writes nothing and confirms `apply_failed` with the reason.
+
+## Tracker envelopes
+
+```
+tracker:<linear|jira|board>:<project>
+```
+
+The onboarding tracker sheets (BH-7968) seal one JSON plaintext,
+`{"fields":{...}}`, the sheet's fields with the credential, at most 446 bytes.
+`POST /api/onboarding/tracker-test {project, kind, envelope_id}` refuses an id
+whose row is gone, expired, or not exactly `tracker:<kind>:<project>`, so a
+tracker test never reads an `ai-account:` envelope. The hub probe
+`tracker-test` (`bin/lib/hub-probes/tracker-test.sh` `onb_open`) reads the
+envelope once with the hub token, opens it with `envelope_decrypt`
+(`bin/lib/envelope.sh`: the same keys and TTL rule as `envelope-consume.sh`),
+checks the scope again, and keeps the plaintext only in a mode-600 temp file
+that it removes before it returns. It posts no `/confirm`: the result is the
+hub-probe row. `secrets-apply` skips these scopes; an unread one expires and
+the sweep deletes it.
 
 ## TTL
 

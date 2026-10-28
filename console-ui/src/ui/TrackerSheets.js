@@ -4,18 +4,23 @@ import {
   TRACKER_FIELDS, TRACKER_TITLES, JIRA_STATUS_DEFAULTS, defaultStatuses, initialValues,
   missingField, sendFields, publicFields, trackerClient, runTrackerTest, sheetKeyHandler
 } from '../lib/tracker-sheets.js';
+import { sealSecret } from '../lib/envelope.js';
 
 // The tracker connect sheets (BH-7936, onboarding UI wave 3): Linear, Jira and
 // the app's own board. One sheet per tracker, with the fields of decision 1, a
-// Later button and a Test and connect button. Test and connect files a hub
-// test (POST /api/coord/onboarding/tracker-test) and polls its answer every 5 s.
-// `ok` calls onConnected with the fields minus the credential; an error shows
-// the hub's text in place and keeps every field. A bottom sheet below 720 px,
-// a centred panel above (src/ui/TrackerSheets.css). Nothing is stored in the
-// browser: the credential lives in this component's state until it is sent.
+// Later button and a Test and connect button. Test and connect seals the
+// fields to the hub key, stores them as a secret envelope (POST
+// /api/coord/secrets/envelope, scope tracker:<kind>:<project>), files a hub
+// test with the envelope id (POST /api/coord/onboarding/tracker-test) and
+// polls its answer every 5 s. `ok` calls onConnected with the fields minus
+// the credential; an error shows in place and keeps every field. A bottom
+// sheet below 720 px, a centred panel above (src/ui/TrackerSheets.css).
+// Nothing is stored in the browser: the credential lives in this component's
+// state, and only its ciphertext leaves the page.
 //
 // Props: kind (linear|jira|board), project, onConnected({kind, fields,
-// test_id}), onLater(), and `client` (the coord calls; tests pass a fake).
+// test_id}), onLater(), `client` (the coord calls) and `seal` (default
+// sealSecret); tests may pass either.
 
 export { JIRA_STATUS_DEFAULTS };
 
@@ -66,7 +71,7 @@ export function TrackerSheetView({ kind, values, statuses, phase, error, note, b
     </div>`;
 }
 
-export function TrackerSheet({ kind, project, onConnected, onLater, client }) {
+export function TrackerSheet({ kind, project, onConnected, onLater, client, seal }) {
   const [values, setValues] = useState(() => initialValues(kind));
   const [statuses, setStatuses] = useState(() => defaultStatuses());
   const [phase, setPhase] = useState('idle');
@@ -98,7 +103,7 @@ export function TrackerSheet({ kind, project, onConnected, onLater, client }) {
     const fields = sendFields(kind, values, statuses);
     setPhase('testing'); setError(''); setNote('');
     const r = await runTrackerTest({
-      client: client || trackerClient(), project, kind, fields, signal: ac.signal,
+      client: client || trackerClient(), seal: seal || sealSecret, project, kind, fields, signal: ac.signal,
       onPending: (p) => setNote(p && p.note ? String(p.note) : '')
     });
     if (r.state === 'aborted') return;

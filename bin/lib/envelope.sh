@@ -1,8 +1,9 @@
 #!/bin/bash
 # shellcheck shell=bash
 # bin/lib/envelope.sh — BH-7965 (BH-7937.2): the hub half of the secret
-# envelope. Sourced by bin/envelope-keygen.sh, bin/envelope-consume.sh and
-# bin/secrets-apply.sh, never run. Doc: docs/SECRETS-ENVELOPE.md.
+# envelope. Sourced by bin/envelope-keygen.sh, bin/envelope-consume.sh,
+# bin/secrets-apply.sh and bin/lib/hub-probes/tracker-test.sh, never run.
+# Doc: docs/SECRETS-ENVELOPE.md.
 #
 #   envelope_req <method> <path> [body-file] <out-file>
 #       ONE request to the jobs worker with the main bearer AND the
@@ -17,6 +18,12 @@
 #       rc 0 prints "<vendor> <label> <use_kind> <project|->"; rc 1 prints one
 #       fixed reason. `bin/fleet-conf.sh --projects` must list <project>
 #       (ENVELOPE_FLEET_CONF_BIN names the script, the caller sets it).
+#   envelope_decrypt <key-path>
+#       Reads the base64 ciphertext on stdin and prints the plaintext, rc 0.
+#       Tries <key-path>, then each <key-path>.<epoch> younger than the
+#       settings row secret_envelope_ttl_s (60..86400, else 900), with
+#       openssl pkeyutl RSA-OAEP SHA-256 (MGF1 SHA-256). rc 1 and no output
+#       when no key opens it. ENVELOPE_NOW (epoch seconds) is the test clock.
 #
 # No function here prints a credential, a ciphertext or a secret value.
 
@@ -80,4 +87,27 @@ envelope_scope_parse() {
     *) echo "unknown use kind"; return 1 ;;
   esac
   printf '%s %s %s %s\n' "$vendor" "$label" "$use" "$project"
+}
+
+envelope_decrypt() {
+  local key="${1:-}" ct ttl now k ts out
+  ct=$(cat)
+  [ -n "$ct" ] && [ -n "$key" ] || return 1
+  ttl=""
+  declare -F setting_get >/dev/null 2>&1 && ttl=$(setting_get secret_envelope_ttl_s 2>/dev/null)
+  [[ "$ttl" =~ ^[0-9]+$ ]] && [ "$ttl" -ge 60 ] && [ "$ttl" -le 86400 ] || ttl=900   # fallback of settings row secret_envelope_ttl_s
+  now="${ENVELOPE_NOW:-$(date +%s)}"
+  for k in "$key" "$key".*; do
+    [ -r "$k" ] || continue
+    if [ "$k" != "$key" ]; then
+      ts="${k##*.}"; [[ "$ts" =~ ^[0-9]+$ ]] || continue
+      [ $((now - ts)) -lt "$ttl" ] || continue
+    fi
+    if out=$(printf '%s' "$ct" | base64 -d 2>/dev/null | openssl pkeyutl -decrypt -inkey "$k" \
+        -pkeyopt rsa_padding_mode:oaep -pkeyopt rsa_oaep_md:sha256 -pkeyopt rsa_mgf1_md:sha256 2>/dev/null) && [ -n "$out" ]; then
+      printf '%s' "$out"
+      return 0
+    fi
+  done
+  return 1
 }

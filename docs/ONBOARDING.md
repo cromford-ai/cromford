@@ -152,7 +152,9 @@ Connection timed out`, and an `HTTP 403` on a line with neither `label` nor
 Log lines, `logs/onboard-run.log`: `idle`, `claim-lost <id>`, `not-found <id>`,
 `step <id> <station> <done|failed> rc=<n> secs=<n>`, `failed <id> at <station>
 code=<code>`, `cancelled <id> at <station>`, `done <id> <project>`, `stale
-<id>`, `worker-failed (<status>)`, `not-configured (<why>)`.
+<id>`, `worker-failed (<status>)`, `not-configured (<why>)`, `envelope <id>
+<envelope> <applied|gone|deferred rc=75|failed rc=<n>>`, `envelope <id> refused
+bad id` (see Secrets).
 
 Knobs (settings rows `lane.onboard-run.<env lowercased>`): `ONBOARD_RUN_TRIES`
 (3), `ONBOARD_RUN_STALE_MIN` (30), `ONBOARD_RUN_STALE_LIST` (20),
@@ -162,6 +164,42 @@ Knobs (settings rows `lane.onboard-run.<env lowercased>`): `ONBOARD_RUN_TRIES`
 
 Cron: `hub-lease.sh check && flock -n locks/onboard-run.lock`. The flock is
 dedupe: a long run makes the next ticks skip, it never queues them.
+
+## Secrets
+
+No secret in onboarding is sent or stored in plain text. Each one moves as a
+secret envelope: the console seals it to the hub key, the jobs worker stores
+only the ciphertext, and the hub reads it once (the read deletes it). See
+[SECRETS-ENVELOPE.md](SECRETS-ENVELOPE.md).
+
+- Tracker connect sheets (`console-ui/src/ui/TrackerSheets.js`): Test and
+  connect seals the sheet's fields as `{"fields":{...}}` and stores them with
+  scope `tracker:<linear|jira|board>:<project>`. Then it starts the test with
+  `POST /api/onboarding/tracker-test {project, kind, envelope_id}`. The worker
+  accepts the id only when the envelope exists, has not expired and has
+  exactly that scope, and files the hub probe `tracker-test` with args
+  `[kind, envelope_id]`. The probe (`bin/lib/hub-probes/tracker-test.sh`)
+  reads and opens the envelope, checks the fields, and runs one list and one
+  dry write. No KV store and no take route is used.
+- The run's AI account: on `/projects/new` Step 2, the review line "AI
+  account" has a `Change` button. It opens `AiAccountChoiceSheet` for the
+  form's project (the fleet pool, an existing account, or the project's own
+  new account), and the line shows the choice. The choice writes the settings
+  row `account.<project>` at once. When the operator added the project's own
+  account, Start setup sends that account's envelope id as the optional run
+  input `ai_envelope` (a lower-case UUID). A choice made for another project
+  name is dropped: the line falls back to `fleet pool` and no `ai_envelope`
+  is sent. The runner calls `bin/envelope-consume.sh <ai_envelope>` once, as
+  soon as the run's project is registered: before the first station when
+  `bin/fleet-conf.sh --projects` already lists it, else right after the
+  register station (`obe_consume` in `bin/lib/onboard-envelopes.sh`; test
+  seams `ONBOARD_ENVELOPE_CONSUME`, `ONBOARD_FLEET_CONF`). Until then it logs
+  `envelope <run> <id> held (project <p> not registered)` and does not read
+  the envelope, and `secrets-apply` holds it too: the read deletes the
+  envelope and the consumer refuses an unknown project only after the read
+  (BH-7968 review r2). Exit 3 (the envelope is gone, because
+  `secrets-apply` or an earlier tick read it) is logged `gone` and is not an
+  error. No consume result fails or stops the run.
 
 ## Relation to bin/load-project.sh
 

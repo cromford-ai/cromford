@@ -10,8 +10,8 @@
 #      files, and harness-ci.yml's test loop does not name tests/contract/
 #   B4 the contract suites skip with a reason, rc 0, when no credential is set
 #   B5 the worker and console node suites for this ticket pass (when node and
-#      the console's dependencies are there) under the same recorder: the KV
-#      and the proxy are fakes
+#      the console's dependencies are there) under the same recorder: the
+#      envelope rows and the proxy are fakes
 #
 # Sources: bin/lib/hub-probes/tracker-test.sh, the route
 # worker/jobs/src/routes/onboarding-tracker.js, the sheet

@@ -5,20 +5,26 @@
 # bin/lib/tracker/jira.sh) and the hub-probe lane's no-comment rule for it
 # (bin/hub-probe.sh).
 #
-#   V1-V12 hp_validate tracker-test: the kind and nonce table
+#   V1-V12 hp_validate tracker-test: the kind and envelope id table
 #   P1-P3  linear / jira / board pass: `ok list=<n> dry-write=ok`, 0 vendor writes
 #   P4     the secret never reaches the output, even when the vendor echoes it
-#   P5     a failed list is FAIL with the adapter's error   P6 take 404 is `credential expired`
-#   P7     an empty list is `dry-write=skipped`              P8 a kind that differs from the taken row
-#   P9     the take route down is FAIL, not expired
+#   P5     a failed list is FAIL with the adapter's error   P6 envelope 404 is `credential expired`
+#   P7     an empty list is `dry-write=skipped`              P8 a kind that differs from the envelope scope
+#   P9     the envelope route down is FAIL, not expired
 #   J1-J4  trk_jira_context_fields: base from tenant_info, bad status_map, 429, bad site
 #   S1     the REAL lane: 3 tracker-test rows on a GitHub-Issues project post 0
 #          comments, raise 0 alerts and log silent=3
 #
-# No network. A front `curl` stub on PATH answers the jobs worker's take route,
-# api.linear.app, the board base and <site>/_edge/tenant_info, and hands every
-# other URL to the Jira gateway stub (tests/lib/tracker-jira-stub.sh). Every
-# vendor request is logged to $T/stub/vendor.log, never a header.
+# No network. A front `curl` stub on PATH answers the jobs worker's envelope
+# read (GET /api/secrets/envelope/<id>, asked through a `-K -` config on
+# stdin, as bin/lib/envelope.sh envelope_req asks it), api.linear.app, the
+# board base and <site>/_edge/tenant_info, and hands every other URL to the
+# Jira gateway stub (tests/lib/tracker-jira-stub.sh). Every vendor request is
+# logged to $T/stub/vendor.log, never a header.
+# TEST-CHANGE (BH-7968): the credential comes from a secret envelope sealed to
+# a key made here at run time, not from the KV take route, which is gone.
+# take_row became seal_row; V1-V12 take a UUID; P1, P6, P8, P9 and S1 read the
+# envelope. What each case pins is unchanged.
 #   HARNESS_TEST_SANDBOX=1 bash tests/hub-probe-tracker-test.bh-7936-test.sh
 set -uo pipefail
 . "$(dirname "$0")/lib/scratch.sh" || exit 1
@@ -36,8 +42,11 @@ HPD="$DIR/bin/lib/hub-probes"
 
 jira_stub_setup "$T/j" || { echo "jira stub setup failed"; exit 1; }
 STUB="$T/stub"
-mkdir -p "$STUB/take"
+mkdir -p "$STUB/env" "$T/k"
 export TT_STUB="$STUB" TT_JSTUB="$T/j/jstub/curl" PATH="$STUB:$PATH"
+openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:4096 -out "$T/k/envelope.key" 2>/dev/null \
+  && openssl pkey -in "$T/k/envelope.key" -pubout -out "$T/k/pub.pem" 2>/dev/null || { echo "setup: openssl genpkey failed"; exit 1; }
+export JOBS_URL=https://jobs.example ENVELOPE_KEY="$T/k/envelope.key" ENVELOPE_HUB_TOKEN=tok-fixture-hub-7936 TT_HUB=tok-fixture-hub-7936
 
 LIN_KEY=lin-api-fixture-SENTINEL-7936
 BOARD_TOK=board-fixture-SENTINEL-7936
@@ -45,10 +54,13 @@ export TT_LIN_KEY="$LIN_KEY" TT_BOARD_TOK="$BOARD_TOK" TT_LFIX="$DIR/tests/fixtu
 
 cat > "$STUB/curl" <<'SH'
 #!/bin/bash
-S="$TT_STUB"; m=GET; url=""; data=""; out=""; fmt=""; auth=""; fail=0
+S="$TT_STUB"; m=GET; url=""; data=""; out=""; fmt=""; auth=""; fail=0; hub=""
 args=("$@")
 while [ $# -gt 0 ]; do
   case "$1" in
+    -K) cfg=$(cat)
+      url=$(sed -n 's/^url = "\(.*\)"$/\1/p' <<<"$cfg"); m=$(sed -n 's/^request = "\(.*\)"$/\1/p' <<<"$cfg")
+      hub=$(sed -n 's/^header = "x-envelope-hub-token: \(.*\)"$/\1/p' <<<"$cfg"); shift ;;
     -X) m="$2"; shift ;;
     --data-binary|-d) data="$2"; shift ;;
     -o) out="$2"; shift ;;
@@ -69,13 +81,13 @@ reply() { # reply <code> <body>
 body() { case "$data" in @*) cat "${data#@}" ;; *) printf '%s' "$data" ;; esac; }
 arm() { cat "$S/arm-$1" 2>/dev/null; }
 case "$url" in
-  https://jobs.example/api/onboarding/tracker-secret/take)
-    echo "take" >> "$S/jobs.log"
-    [ "$(arm take)" = down ] && reply 500 '{"error":"boom"}'
-    n=$(body | jq -r '.nonce // empty')
-    f="$S/take/$n.json"
-    if [ -n "$n" ] && [ -r "$f" ]; then j=$(cat "$f"); rm -f "$f"; reply 200 "$j"; fi
-    reply 404 '{"error":"no onboarding credential for that nonce (expired or already taken)"}' ;;
+  https://jobs.example/api/secrets/envelope/*)
+    echo "envelope $m" >> "$S/jobs.log"
+    [ "$(arm env)" = down ] && reply 500 '{"error":"boom"}'
+    [ "$hub" = "$TT_HUB" ] || reply 403 '{"error":"forbidden"}'
+    f="$S/env/${url##*/}.json"
+    if [ "$m" = GET ] && [ -r "$f" ]; then j=$(cat "$f"); rm -f "$f"; reply 200 "$j"; fi
+    reply 404 '{"error":"no envelope"}' ;;
   https://*.atlassian.net/_edge/tenant_info)
     echo "tenant ${url#https://}" >> "$S/vendor.log"
     [ "$(arm tenant)" = 429 ] && reply 429 '{"message":"slow down"}'
@@ -121,13 +133,16 @@ exit 7
 SH
 chmod +x "$STUB/curl"
 
-echo 0 > "$T/nonce-seq"
-# take_row <kind> <fields json> — a KV row the take route answers once; prints
-# its nonce. The counter is a file: take_row runs inside $( ).
-take_row() {
-  local q n; q=$(( $(cat "$T/nonce-seq") + 1 )); echo "$q" > "$T/nonce-seq"
-  n=$(printf '%032x' "$q")
-  jq -nc --arg k "$1" --argjson f "$2" '{kind:$k, project:"newproj", fields:$f}' > "$STUB/take/$n.json"
+echo 0 > "$T/env-seq"
+# seal_row <kind> <fields json> — an envelope with scope tracker:<kind>:newproj,
+# its fields sealed to the run-time key, that the envelope route answers once;
+# prints its id. The counter is a file: seal_row runs inside $( ).
+seal_row() {
+  local q n ct; q=$(( $(cat "$T/env-seq") + 1 )); echo "$q" > "$T/env-seq"
+  n=$(printf '00000000-0000-4000-8000-%012x' "$q")
+  ct=$(jq -nc --argjson f "$2" '{fields:$f}' | openssl pkeyutl -encrypt -pubin -inkey "$T/k/pub.pem" \
+    -pkeyopt rsa_padding_mode:oaep -pkeyopt rsa_oaep_md:sha256 -pkeyopt rsa_mgf1_md:sha256 | base64 -w0)
+  jq -nc --arg i "$n" --arg s "tracker:$1:newproj" --arg c "$ct" '{id:$i, scope:$s, ciphertext:$c}' > "$STUB/env/$n.json"
   printf '%s' "$n"
 }
 LIN_FIELDS=$(jq -nc --arg k "$LIN_KEY" '{api_key:$k, team:"CRO", label:"ai-build"}')
@@ -136,7 +151,7 @@ JIRA_FIELDS=$(jq -nc --arg e "$JIRA_EMAIL_FX" --arg t "$JIRA_TOKEN_FX" \
 BOARD_FIELDS=$(jq -nc --arg t "$BOARD_TOK" '{api_base:"https://board.example.com/api/board", token:$t}')
 
 reset_stub() { rm -f "$STUB"/vendor.log "$STUB"/arm-* "$STUB"/jobs.log "$JIRA_STUB_STATE/writes" "$JIRA_STUB_STATE/requests"; }
-# probe <kind> <nonce> — hp_run in a child shell, as the lane runs it. Out in $T/out, rc in $T/rc.
+# probe <kind> <envelope id> — hp_run in a child shell, as the lane runs it. Out in $T/out, rc in $T/rc.
 probe() {
   bash -c '. "$1/common.sh" || exit 99; hp_run tracker-test "$2" "$3"' _ "$HPD" "$1" "$2" > "$T/out" 2>&1
   echo $? > "$T/rc"
@@ -147,46 +162,47 @@ writes() { local n; n=$( { grep -c '^WRITE' "$STUB/vendor.log" 2>/dev/null; cat 
 # ── V1-V12: hp_validate ─────────────────────────────────────────────────────
 val() { bash -c '. "$1/common.sh" || exit 99; shift; hp_validate "$@"' _ "$HPD" "$@"; echo $?; }
 N32=$(printf '%s' 0123456789abcdef 0123456789abcdef)  # 32 hex, built at run time (share-mirror leakcheck)
-check "V1 linear + 32 hex validates" '[ "$(val tracker-test linear $N32)" = 0 ]'
-check "V2 jira validates" '[ "$(val tracker-test jira $N32)" = 0 ]'
-check "V3 board validates" '[ "$(val tracker-test board $N32)" = 0 ]'
-check "V4 Linear (case) refused" '[ "$(val tracker-test Linear $N32)" = 2 ]'
-check "V5 github-issues refused" '[ "$(val tracker-test github-issues $N32)" = 2 ]'
-check "V6 trailing space refused" '[ "$(val tracker-test "jira " $N32)" = 2 ]'
-check "V7 31 hex refused" '[ "$(val tracker-test jira ${N32:1})" = 2 ]'
-check "V8 33 hex refused" '[ "$(val tracker-test jira ${N32}0)" = 2 ]'
-check "V9 upper-case hex refused" '[ "$(val tracker-test jira "$(printf '%s' 0123456789ABCDEF 0123456789abcdef)")" = 2 ]'
+NU="${N32:0:8}-${N32:8:4}-${N32:12:4}-${N32:16:4}-${N32:20:12}"  # the same 32 hex as a UUID
+check "V1 linear + uuid validates" '[ "$(val tracker-test linear $NU)" = 0 ]'
+check "V2 jira validates" '[ "$(val tracker-test jira $NU)" = 0 ]'
+check "V3 board validates" '[ "$(val tracker-test board $NU)" = 0 ]'
+check "V4 Linear (case) refused" '[ "$(val tracker-test Linear $NU)" = 2 ]'
+check "V5 github-issues refused" '[ "$(val tracker-test github-issues $NU)" = 2 ]'
+check "V6 trailing space refused" '[ "$(val tracker-test "jira " $NU)" = 2 ]'
+check "V7 a short uuid, and 32 hex with no dashes, refused" '[ "$(val tracker-test jira ${NU:1})" = 2 ] && [ "$(val tracker-test jira $N32)" = 2 ]'
+check "V8 a long uuid refused" '[ "$(val tracker-test jira ${NU}0)" = 2 ]'
+check "V9 upper-case hex refused" '[ "$(val tracker-test jira "$(tr "[:lower:]" "[:upper:]" <<<"$NU")")" = 2 ]'
 check "V10 ../x refused" '[ "$(val tracker-test jira ../x)" = 2 ]'
-check "V11 an extra arg refused" '[ "$(val tracker-test jira $N32 x)" = 2 ]'
+check "V11 an extra arg refused" '[ "$(val tracker-test jira $NU x)" = 2 ]'
 check "V12 no args refused" '[ "$(val tracker-test)" = 2 ]'
 check "V13 HP_PROBES (the comment allowlist) does not carry tracker-test" \
   '! bash -c ". \"\$1/common.sh\"; case \" \$HP_PROBES \" in *\" tracker-test \"*) exit 0 ;; esac; exit 1" _ "$HPD"'
 
 # ── P1: linear ──────────────────────────────────────────────────────────────
-reset_stub; probe linear "$(take_row linear "$LIN_FIELDS")"
+reset_stub; probe linear "$(seal_row linear "$LIN_FIELDS")"
 check "P1 linear rc 0 ($(cat "$T/out"))" '[ "$(vrc)" = 0 ]'
 check "P1 linear prints ok list=2 dry-write=ok" 'grep -qx "ok list=2 dry-write=ok" "$T/out"'
 check "P1 linear read the list and the first issue" 'grep -q "^linear TrkIssues" "$STUB/vendor.log" && grep -q "^linear TrkIssueMeta" "$STUB/vendor.log"'
 check "P1 linear sent no write" '[ "$(writes)" = 0 ]'
-check "P1 the KV row was taken (one take)" '[ "$(grep -c take "$STUB/jobs.log")" = 1 ]'
+check "P1 the envelope was read once" '[ "$(grep -c "^envelope GET$" "$STUB/jobs.log")" = 1 ] && [ -z "$(ls -A "$STUB/env")" ]'
 
 # ── P2: jira ────────────────────────────────────────────────────────────────
-reset_stub; probe jira "$(take_row jira "$JIRA_FIELDS")"
+reset_stub; probe jira "$(seal_row jira "$JIRA_FIELDS")"
 check "P2 jira rc 0 ($(cat "$T/out"))" '[ "$(vrc)" = 0 ]'
 check "P2 jira prints ok list=2 dry-write=ok" 'grep -qx "ok list=2 dry-write=ok" "$T/out"'
 check "P2 jira asked tenant_info for the site" 'grep -qx "tenant sandbox-example.atlassian.net/_edge/tenant_info" "$STUB/vendor.log"'
 check "P2 jira searched and read CROM-1 through the gateway" 'grep -q "^jira POST /ex/jira/33333333-3333-3333-3333-333333333333/rest/api/3/search/jql" "$STUB/vendor.log" && grep -q "^jira GET .*/issue/CROM-1" "$STUB/vendor.log"'
 check "P2 jira sent no write" '[ "$(writes)" = 0 ] && [ ! -s "$JIRA_STUB_STATE/writes" ]'
-check "P2 jira auth was the taken credential" '[ ! -s "$JIRA_STUB_STATE/authbad" ]'
+check "P2 jira auth was the sealed credential" '[ ! -s "$JIRA_STUB_STATE/authbad" ]'
 
 # ── P3: board ───────────────────────────────────────────────────────────────
-reset_stub; probe board "$(take_row board "$BOARD_FIELDS")"
+reset_stub; probe board "$(seal_row board "$BOARD_FIELDS")"
 check "P3 board rc 0 ($(cat "$T/out"))" '[ "$(vrc)" = 0 ]'
 check "P3 board prints ok list=3 dry-write=ok" 'grep -qx "ok list=3 dry-write=ok" "$T/out"'
 check "P3 board sent no write" '[ "$(writes)" = 0 ]'
 
 # ── P4/P5: a vendor that echoes the key in its error ────────────────────────
-reset_stub; echo echo401 > "$STUB/arm-linear"; probe linear "$(take_row linear "$LIN_FIELDS")"
+reset_stub; echo echo401 > "$STUB/arm-linear"; probe linear "$(seal_row linear "$LIN_FIELDS")"
 check "P5 a failed list is rc 1" '[ "$(vrc)" = 1 ]'
 check "P5 the first line says the list failed" 'head -1 "$T/out" | grep -q "^FAIL tracker list failed"'
 check "P5 the adapter error is shown" 'grep -q "linear answered HTTP 401: Authentication required" "$T/out"'
@@ -196,29 +212,29 @@ for f in "$T/out" "$STUB/vendor.log" "$STUB/jobs.log"; do
   check "P4 no SENTINEL in $(basename "$f")" '! grep -q "SENTINEL-7936" "$f"'
 done
 reset_stub; echo x > "$STUB/arm-none"; JF=$(jq -c '.api_token = "tok-fixture-wrong-SENTINEL-7936"' <<<"$JIRA_FIELDS")
-probe jira "$(take_row jira "$JF")"
+probe jira "$(seal_row jira "$JF")"
 check "P5 jira bad token is FAIL rc 1" '[ "$(vrc)" = 1 ] && head -1 "$T/out" | grep -q "^FAIL tracker list failed"'
 check "P5 jira says check the token" 'grep -q "answered 401" "$T/out"'
 check "P4 jira token not in the output" '! grep -q "SENTINEL-7936" "$T/out"'
 
-# ── P6: take 404 ────────────────────────────────────────────────────────────
-reset_stub; probe linear "$(printf '%032x' 999)"
+# ── P6: envelope 404 ────────────────────────────────────────────────────────
+reset_stub; probe linear "$(printf '00000000-0000-4000-8000-%012x' 999)"
 check "P6 rc 1" '[ "$(vrc)" = 1 ]'
 check "P6 credential expired" 'grep -qx "FAIL credential expired, test again" "$T/out"'
 check "P6 no vendor call" '[ ! -s "$STUB/vendor.log" ]'
 
 # ── P7: empty list ──────────────────────────────────────────────────────────
-reset_stub; echo empty > "$STUB/arm-linear"; probe linear "$(take_row linear "$LIN_FIELDS")"
+reset_stub; echo empty > "$STUB/arm-linear"; probe linear "$(seal_row linear "$LIN_FIELDS")"
 check "P7 linear empty list rc 0" '[ "$(vrc)" = 0 ] && grep -qx "ok list=0 dry-write=skipped" "$T/out"'
 check "P7 says why the write was skipped" 'grep -q "no open ticket with the build label; dry write skipped" "$T/out"'
-reset_stub; echo empty > "$STUB/arm-board"; probe board "$(take_row board "$BOARD_FIELDS")"
+reset_stub; echo empty > "$STUB/arm-board"; probe board "$(seal_row board "$BOARD_FIELDS")"
 check "P7 board empty list rc 0" '[ "$(vrc)" = 0 ] && grep -qx "ok list=0 dry-write=skipped" "$T/out"'
 
-# ── P8: kind mismatch; P9: take route down ──────────────────────────────────
-reset_stub; probe jira "$(take_row linear "$LIN_FIELDS")"
-check "P8 a jira probe over a linear row is FAIL" '[ "$(vrc)" = 1 ] && grep -q "^FAIL credential is for linear, not jira" "$T/out" && [ ! -s "$STUB/vendor.log" ]'
-reset_stub; echo down > "$STUB/arm-take"; probe board "$(take_row board "$BOARD_FIELDS")"
-check "P9 take down is FAIL, not expired" '[ "$(vrc)" = 1 ] && grep -q "^FAIL credential store unreachable" "$T/out"'
+# ── P8: kind mismatch; P9: envelope route down ──────────────────────────────
+reset_stub; probe jira "$(seal_row linear "$LIN_FIELDS")"
+check "P8 a jira probe over a linear envelope is FAIL" '[ "$(vrc)" = 1 ] && grep -q "^FAIL scope refused: the credential is for linear, not jira" "$T/out" && [ ! -s "$STUB/vendor.log" ]'
+reset_stub; echo down > "$STUB/arm-env"; probe board "$(seal_row board "$BOARD_FIELDS")"
+check "P9 envelope route down is FAIL, not expired" '[ "$(vrc)" = 1 ] && grep -q "^FAIL credential store unreachable" "$T/out"'
 
 # ── J1-J4: trk_jira_context_fields ──────────────────────────────────────────
 jctx() { # jctx <site> <status_map> — prints rc|TRK_JIRA_BASE|write|site
@@ -251,18 +267,14 @@ cat > "$T/fx.sh" <<'SH'
 lane_gate_or_exit() { :; }
 lane_env_apply() { :; }
 lane_switch() { return 1; }
-# The worker: claim answers $FXT/claim, the take route answers the KV rows in
-# $TT_STUB/take once, every other call is {"ok":true}. Bodies are kept.
+# The worker: claim answers $FXT/claim, every other call is {"ok":true}.
+# Bodies are kept. The envelope read goes through the curl stub.
 _jobs_req() {
   echo "_jobs_req $1 $2" >> "$FXT/calls.log"
   case "$2" in
     /api/hub-probe/claim) cat "$FXT/claim"; return 0 ;;
     /api/hub-probe/count-today*) echo '{"count":0}'; return 0 ;;
     /api/hub-probe/result) printf '%s\n' "$3" >> "$FXT/results"; echo '{"ok":true}'; return 0 ;;
-    /api/onboarding/tracker-secret/take)
-      local n f; n=$(jq -r .nonce <<<"$3"); f="$TT_STUB/take/$n.json"
-      [ -r "$f" ] || return 2
-      cat "$f"; rm -f "$f"; return 0 ;;
   esac
   echo '{"ok":true}'
 }
@@ -270,7 +282,7 @@ gh_rest() { echo "gh_rest $*" >> "$FXT/calls.log"; return 0; }
 gh_rest_issue_comments() { echo "gh_rest_issue_comments $*" >> "$FXT/calls.log"; echo '[]'; }
 SH
 reset_stub
-NB=$(take_row board "$BOARD_FIELDS"); NL=$(take_row linear "$LIN_FIELDS"); NX=$(printf '%032x' 4242)
+NB=$(seal_row board "$BOARD_FIELDS"); NL=$(seal_row linear "$LIN_FIELDS"); NX=$(printf '00000000-0000-4000-8000-%012x' 4242)
 jq -nc --arg b "$NB" --arg l "$NL" --arg x "$NX" '{rows:[
   {id:11, project:"bp", ticket_key:("onb-"+$b), probe:"tracker-test", args:["board",$b]},
   {id:12, project:"bp", ticket_key:("onb-"+$l), probe:"tracker-test", args:["linear",$l]},

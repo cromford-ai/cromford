@@ -6,12 +6,14 @@ import { Skeleton } from '../ui/primitives.js';
 import { useApi } from '../lib/hooks.js';
 import {
   KNOBS, knobInt, parseSlug, deriveProject, derivePrefix, projectOk, prefixOk, defaultTracker,
-  TRACKERS, canContinue, canStart, reviewLines, makeStarter
+  TRACKERS, canContinue, canStart, reviewLines, makeStarter, aiChoiceOf, aiChoiceFor
 } from '../lib/onboard.js';
 import { NewRepoPanel } from './onboard/NewRepoPanel.js';
+import { AiAccountChoiceSheet } from '../ui/AiAccountChoiceSheet.js';
 
 // /projects/new (BH-7999, BH-7935.2): step 1 picks the repo, step 2 the
-// tracker, and Start setup files one onboarding run (POST
+// tracker (its review's "AI account" line opens AiAccountChoiceSheet, BH-7968),
+// and Start setup files one onboarding run (POST
 // /api/coord/onboarding/runs) and opens its setup line. The pure rules are in
 // lib/onboard.js; the styles are onboard.css, imported by main.js because the
 // node suites import this file and node cannot load CSS.
@@ -133,6 +135,8 @@ export function OnboardScreen() {
   const [picked, setPicked] = useState(false);
   const [starting, setStarting] = useState(false);
   const [startErr, setStartErr] = useState(null);
+  const [aiChoice, setAiChoice] = useState(null);
+  const [aiOpen, setAiOpen] = useState(false);
   const alive = useRef(true);
   useEffect(() => () => { alive.current = false; }, []);
 
@@ -149,7 +153,14 @@ export function OnboardScreen() {
   const projectErr = parsed && !projectOk(project) ? 'Use 1-19 chars of a-z, 0-9 and -, starting with a letter or digit.' : null;
   const prefixErr = parsed && !prefixOk(prefix) ? 'Use 2-10 chars of A-Z and 0-9, starting with a letter.' : null;
 
-  const state = { segment, slug, project, prefix, base, prod, tracker, inFlight: starting };
+  const ai = aiChoiceFor(aiChoice, project);
+  const state = { segment, slug, project, prefix, base, prod, tracker, inFlight: starting,
+    aiAccount: ai ? ai.value : null, aiEnvelope: ai ? ai.envelopeId : null };
+  const onAiDone = (res) => {
+    setAiOpen(false);
+    const next = aiChoiceOf(project, res);
+    if (next) setAiChoice(next);
+  };
   const starter = useMemo(() => makeStarter({ run: api.onboardRun, navigate, uuid: () => crypto.randomUUID() }), []);
 
   const onContinue = () => {
@@ -227,12 +238,17 @@ export function OnboardScreen() {
     <section class="onboard-review">
       <h2 class="onboard-review__title">Review</h2>
       <dl>
-        ${reviewLines(state).map((l) => (l.label
-          ? html`<dt>${l.label}</dt><dd>${l.value}</dd>`
-          : html`<dd class="onboard-review__last">${l.value}</dd>`))}
+        ${reviewLines(state).map((l) => (!l.label
+          ? html`<dd class="onboard-review__last">${l.value}</dd>`
+          : l.change
+            ? html`<dt>${l.label}</dt><dd>${l.value} <button type="button" class="btn btn--sm"
+                aria-label="change the AI account" disabled=${!projectOk(project)}
+                onClick=${() => setAiOpen(true)}>Change</button></dd>`
+            : html`<dt>${l.label}</dt><dd>${l.value}</dd>`))}
       </dl>
       ${startErr ? html`<p class="onboard-review__err" role="alert">${startErr}</p>` : null}
-    </section>`;
+    </section>
+    ${aiOpen ? html`<${AiAccountChoiceSheet} project=${project} onDone=${onAiDone} />` : null}`;
 
   return html`<div class="onboard">
     <${PageHeadline} line1="New project" line2=${step === 1 ? 'Step 1 of 2: the repo' : 'Step 2 of 2: the tracker'} />

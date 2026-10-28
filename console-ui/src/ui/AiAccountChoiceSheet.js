@@ -16,7 +16,10 @@ import { activeAccounts, chooseAccount } from '../lib/ai-accounts.js';
 import { AiAccountSheet, useSheetFocus } from '../screens/AiAccountSheet.js';
 
 // AiAccountChoiceSheet({project, onDone}). onDone(result) runs on every
-// outcome: {status:'written'|'cancelled'|'failed'|'closed', ...}.
+// outcome: {status:'written'|'cancelled'|'failed'|'closed', ...}. A result of
+// a choice also carries `choice` ({kind:'pool'} or {kind:'account', label},
+// with own:true for the project's new account) and, for the new account,
+// `envelope_id` (BH-7968: Onboard sends it as the run input ai_envelope).
 export function AiAccountChoiceSheet({ project, onDone, api = realApi }) {
   const [dialog, confirm] = useConfirm();
   const [note, setNote] = useState(null);
@@ -36,14 +39,15 @@ export function AiAccountChoiceSheet({ project, onDone, api = realApi }) {
     try {
       const res = await chooseAccount({ choice, project, setter });
       if (res.status === 'open-add') { setAdding(true); return; }
-      if (res.status !== 'cancelled') finish(res);
+      if (res.status !== 'cancelled') finish({ ...res, choice });
     } finally { setBusy(false); }
   };
   // The new project account saved: pin it, through the same confirm.
   const onSaved = async (saved) => {
     setAdding(false);
-    const res = await chooseAccount({ choice: { kind: 'account', label: saved.label }, project, setter });
-    finish(res);
+    const choice = { kind: 'account', label: saved.label };
+    const res = await chooseAccount({ choice, project, setter });
+    finish({ ...res, choice: { ...choice, own: true }, envelope_id: saved.envelope_id });
   };
 
   if (adding) {

@@ -79,7 +79,11 @@ export const TRACKERS = [
 ];
 const trackerLabel = (id) => (TRACKERS.find((t) => t.id === id) || {}).label;
 
+const ENVELOPE_ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+
 // The body of POST /api/onboarding/runs. Empty optional fields are dropped.
+// ai_envelope (BH-7968) is the envelope id of the project's own AI account,
+// added from the Step 2 "AI account" line; bin/onboard-run.sh consumes it.
 export function runInputs(state) {
   const p = parseSlug(state.slug);
   const out = { repo: p ? p.slug : '', project: state.project, tracker: state.tracker, box: 'shared' };
@@ -87,8 +91,24 @@ export function runInputs(state) {
     const v = typeof state[k] === 'string' ? state[k].trim() : '';
     if (v) out[k] = v;
   }
+  if (typeof state.aiEnvelope === 'string' && ENVELOPE_ID_RE.test(state.aiEnvelope)) out.ai_envelope = state.aiEnvelope;
   return out;
 }
+
+// aiChoiceOf(project, result) -> the Step 2 AI account choice that an
+// AiAccountChoiceSheet result makes, or null when it changes nothing (a
+// cancel, a failure, a close). {project, value, envelopeId}: envelopeId only
+// for the project's own new account, the one envelope the run must consume.
+export function aiChoiceOf(project, res) {
+  if (!res || res.status !== 'written' || !res.choice) return null;
+  if (res.choice.kind === 'pool') return { project, value: 'fleet pool', envelopeId: null };
+  const envelopeId = res.choice.own && typeof res.envelope_id === 'string' && ENVELOPE_ID_RE.test(res.envelope_id) ? res.envelope_id : null;
+  return { project, value: res.choice.label, envelopeId };
+}
+
+// The choice that holds for the form's current project: a choice made for
+// another project name falls back to the fleet pool and sends no envelope.
+export const aiChoiceFor = (choice, project) => (choice && choice.project === project ? choice : null);
 
 export const canContinue = (state) => state.segment === 'existing' && parseSlug(state.slug) !== null;
 
@@ -104,7 +124,7 @@ export function reviewLines(state) {
     { label: 'Project', value: `${state.project || 'not set'} · prefix ${state.prefix || 'not set'}` },
     { label: 'Tracker', value: trackerLabel(state.tracker) || 'not picked' },
     { label: 'Box', value: 'Shared' },
-    { label: 'AI account', value: 'fleet pool' },
+    { label: 'AI account', value: state.aiAccount || 'fleet pool', change: true },
     { label: null, value: LAST_REVIEW_LINE }
   ];
 }
