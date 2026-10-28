@@ -1,0 +1,12 @@
+{
+  "env": "POOL_TESTHOST_ROUTE_WARN_HOURS",
+  "type": "int",
+  "default": 48,
+  "min": 1,
+  "max": 720,
+  "unit": "hours",
+  "zero_means": null,
+  "required": false,
+  "read_in": "bin/lib/pool-testhost-route.sh",
+  "note": "BH-8677. When the pre-minted test-host route token (<env dir>/testhost-route.env) expires in fewer hours than this, or is expired, the pool writes one ALERTS line per UTC day (hub-wide) that asks a person to mint a new token. Per-project row `lane.fly-pool.<project>.pool_testhost_route_warn_hours`."
+}

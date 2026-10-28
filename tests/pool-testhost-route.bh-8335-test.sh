@@ -57,7 +57,7 @@ ok()  { PASS=$((PASS+1)); }
 bad() { FAIL=$((FAIL+1)); echo "FAIL: $1"; }
 [ -f "$LIB" ] || { echo "FAIL: bin/lib/pool-testhost-route.sh does not exist"; exit 1; }
 
-FB="$T/fakebin"; mkdir -p "$FB" "$T/h/logs" "$T/h/flags" "$T/home"
+FB="$T/fakebin"; mkdir -p "$FB" "$T/h/logs" "$T/h/flags" "$T/h/env" "$T/home"
 TOKEN="FlyV1 fm2_fixture-token-8335"
 # flyctl: every call is logged with whether a credential was in the env.
 # MINT=ok|fail|notoken|session-only. `ssh issue` writes a pair, so a route

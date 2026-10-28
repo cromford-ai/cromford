@@ -47,7 +47,32 @@
 # start credential never goes to the machine. A start that is not confirmed
 # costs one say line; the route still ships.
 #
-# Root (D43): ${HARNESS:-${H:-}} for the knob reads only.
+# A PRE-MINTED TOKEN (BH-8677). The hub's FLY_API_TOKEN is deploy-scoped, so
+# `flyctl tokens create ssh` answers `Not authorized` there. ptr_build first
+# reads <env dir>/testhost-route.env (harness_env_dir; mode 600, written by a
+# person, read by whitelist, never `.`):
+#   TESTHOST_ROUTE_TOKEN=FlyV1 <...>
+#   TESTHOST_ROUTE_EXPIRES=<epoch seconds>
+# minted on a workstation with
+#   flyctl tokens create ssh -a bh-testhost-example-org -x 720h -n hub-testhost-route
+# If the file is valid and expires more than ptr_hours away, its token ships
+# with the build's own expiry (now + ptr_hours), never the file's, so the
+# test-host hold stays the build's window; else the mint runs as before. The file's token is ONE credential
+# shared by every pool machine for up to 30 days. Its scope is the same as a
+# minted one: the test-host app only (issueCertificate + addWireGuardPeer, the
+# RESIDUAL above). The hub holds no org token on purpose: an org token could
+# mint for any app, and one leaked copy would open every app in the org. Under
+# the knob POOL_TESTHOST_ROUTE_WARN_HOURS of life left, one ALERTS line per
+# UTC day asks for a new token. A mint whose output says `Not authorized` names
+# that cause in the reason line.
+# Docs: docs/REMOTE-GATE.md "A pre-minted route token (BH-8677)".
+#
+# Root (D43): ${HARNESS:-${H:-}} for the knob reads, the env dir and the alert.
+
+if ! command -v harness_env_dir >/dev/null 2>&1; then
+  # shellcheck source=bin/lib/env-path.sh
+  . "${BASH_SOURCE[0]%/*}/env-path.sh" 2>/dev/null || true
+fi
 
 # _ptr_knob <lane> <ENV> — lane_knob with the pool's project, else the env.
 _ptr_knob() {
@@ -112,6 +137,9 @@ _ptr_mint() {
       echo "$?" > "$d/.ptr-mint.rc" ) | ( umask 077; head -c 65536 > "$d/.ptr-mint.out" )
     rc=$(cat "$d/.ptr-mint.rc" 2>/dev/null); case "$rc" in ''|*[!0-9]*) rc=141 ;; esac
     tok=$(grep -oE 'FlyV1 [^[:space:]]+' "$d/.ptr-mint.out" 2>/dev/null | head -1)
+    # The cause class rides out of this $(...) in a file: one word, no token text.
+    grep -q 'Not authorized' "$d/.ptr-mint.out" 2>/dev/null \
+      && ( umask 077; echo unauthorized > "$d/.ptr-mint.cause" )
     rm -f "$d/.ptr-mint.out" "$d/.ptr-mint.rc"
     if [ "$rc" = 0 ] && [ -n "$tok" ]; then printf '%s' "$tok"; return 0; fi
     [ "$rc" = 0 ] && rc=4
@@ -119,24 +147,93 @@ _ptr_mint() {
   return "$rc"
 }
 
+# _ptr_route_file — the pre-minted token file, <env dir>/testhost-route.env.
+_ptr_route_file() {
+  local r="${HARNESS:-${H:-}}"
+  if command -v harness_env_dir >/dev/null 2>&1; then
+    printf '%s/testhost-route.env\n' "$(harness_env_dir "$r")"
+  else
+    printf '%s/env/testhost-route.env\n' "$r"
+  fi
+}
+
+# _ptr_file_alert <expiry> <now> — one ALERTS line per UTC day, hub-wide (the
+# file is one credential for every pool project). The day marker lives under
+# state/testhost-route/, classed box-local in catalog/state-paths.json: it is
+# this hub's own dedup mark, never a row. The day marker is made
+# atomically first (set -C), so only the tick that makes it alerts; the other
+# days' markers are deleted then. The token is never in the line.
+_ptr_file_alert() {
+  local exp=$1 now=$2 r="${HARNESS:-${H:-}}" dir day mk m when
+  [ -n "$r" ] || return 0
+  dir="$r/state/testhost-route"
+  day=$(date -u -d "@$now" +%Y%m%d 2>/dev/null) || return 0
+  mkdir -p "$dir" 2>/dev/null || return 0
+  mk="$dir/alerted-testhost-route-token-$day"
+  ( set -C; : > "$mk" ) 2>/dev/null || return 0
+  for m in "$dir"/alerted-testhost-route-token-*; do
+    [ "$m" = "$mk" ] || rm -f "$m"
+  done
+  when=$(date -u -d "@$exp" '+%Y-%m-%dT%H:%MZ' 2>/dev/null) || when=$exp
+  [ -x "$r/bin/alert-line.sh" ] && "$r/bin/alert-line.sh" --project cromford --id pool-testhost-route-token \
+    "[cromford] testhost route token expires $when; mint a new one: flyctl tokens create ssh -a ${TESTHOST_APP:-bh-testhost-example-org} -x 720h -n hub-testhost-route" \
+    </dev/null >/dev/null 2>&1
+  return 0
+}
+
+# _ptr_file_route <hours> <now> — `<token> <expiry>` on stdout and rc 0 when
+# the pre-minted file is a regular file, mode 600 (a symlink reads 777 and is
+# refused), its LAST token line is `FlyV1 <word>`, its LAST expiry line is
+# digits, and the expiry is more than <hours> away. Else rc 1. A file with
+# less than the warn window left (expired too) writes the day's alert.
+_ptr_file_route() {
+  local h=$1 now=$2 f tok exp warn
+  f=$(_ptr_route_file)
+  [ -f "$f" ] && [ ! -L "$f" ] || return 1
+  [ "$(stat -c %a "$f" 2>/dev/null)" = 600 ] || return 1
+  tok=$(sed -n 's/^TESTHOST_ROUTE_TOKEN=//p' "$f" 2>/dev/null | tail -n 1)
+  exp=$(sed -n 's/^TESTHOST_ROUTE_EXPIRES=//p' "$f" 2>/dev/null | tail -n 1)
+  [[ "$tok" =~ ^FlyV1\ [^[:space:]]+$ ]] || return 1
+  [[ "$exp" =~ ^[0-9]{1,12}$ ]] || return 1
+  exp=$((10#$exp))
+  warn=$(_ptr_knob fly-pool POOL_TESTHOST_ROUTE_WARN_HOURS)
+  # 48 is the registry default (catalog/lanes.d/fly-pool.knobs.d/POOL_TESTHOST_ROUTE_WARN_HOURS.json).
+  case "$warn" in ''|*[!0-9]*|0) warn=48 ;; esac
+  [ $((exp - now)) -lt $((warn * 3600)) ] && _ptr_file_alert "$exp" "$now"
+  [ "$exp" -gt $((now + h * 3600)) ] || return 1
+  printf '%s %s\n' "$tok" "$exp"
+}
+
 # ptr_build <outdir> <label> — the route into <outdir> (which must exist and
 # be private: the spawn's /dev/shm bundle dir). rc 0: testhost.env, mode 600.
-# rc 1: no file, one reason line on stderr. rc 3: the knob
+# The pre-minted file (_ptr_file_route) is read first; the mint runs only when
+# it does not answer. rc 1: no file, one reason line on stderr. rc 3: the knob
 # lane.fly-pool[.<project>].pool_testhost_route is not 1; nothing done.
 ptr_build() {
-  local out="${1:-}" label="${2:-}" h rc tok exp name
+  local out="${1:-}" label="${2:-}" h rc tok exp name now fr cause
   [ -n "$out" ] && [ -d "$out" ] || { echo "testhost route: not shipped (no outdir)" >&2; return 1; }
   [ "$(_ptr_knob fly-pool POOL_TESTHOST_ROUTE)" = 1 ] || return 3
   h=$(ptr_hours)
-  rm -f "$out/testhost.env"
-  name="pool-$(printf '%s' "$label" | tr -c 'A-Za-z0-9-' '-')"
-  tok=$(_ptr_mint "$h" "${name:0:60}" "$out"); rc=$?
-  if [ "$rc" != 0 ] || [ -z "$tok" ]; then
-    if [ "$rc" = 4 ]; then echo "testhost route: not shipped (token empty)" >&2
-    else echo "testhost route: not shipped (token mint rc $rc)" >&2; fi
-    return 1
+  now=${PTR_NOW:-$(date +%s)}
+  rm -f "$out/testhost.env" "$out/.ptr-mint.cause"
+  if fr=$(_ptr_file_route "$h" "$now"); then
+    tok=${fr% *}; exp=${fr##* }
+    # The route hold (testhost.route_until) follows this expiry, so it stays the
+    # build's window. The file's token itself may live far longer (BH-8677 review).
+    [ "$exp" -le $((now + h * 3600)) ] || exp=$((now + h * 3600))
+  else
+    name="pool-$(printf '%s' "$label" | tr -c 'A-Za-z0-9-' '-')"
+    tok=$(_ptr_mint "$h" "${name:0:60}" "$out"); rc=$?
+    cause=$(cat "$out/.ptr-mint.cause" 2>/dev/null); rm -f "$out/.ptr-mint.cause"
+    if [ "$rc" != 0 ] || [ -z "$tok" ]; then
+      if [ "$cause" = unauthorized ]; then
+        echo "testhost route: not shipped (hub token cannot mint tokens; put a pre-minted token in env/testhost-route.env)" >&2
+      elif [ "$rc" = 4 ]; then echo "testhost route: not shipped (token empty)" >&2
+      else echo "testhost route: not shipped (token mint rc $rc)" >&2; fi
+      return 1
+    fi
+    exp=$(( now + h * 3600 ))
   fi
-  exp=$(( ${PTR_NOW:-$(date +%s)} + h * 3600 ))
   if ! ( umask 077
          printf 'REMOTE_GATE_TRANSPORT=fly-ssh\nFLY_API_TOKEN=%s\nTESTHOST_ROUTE_EXPIRES=%s\n' \
            "$tok" "$exp" > "$out/testhost.env" ); then

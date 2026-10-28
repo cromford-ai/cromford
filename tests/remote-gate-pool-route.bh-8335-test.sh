@@ -50,7 +50,7 @@ bad() { FAIL=$((FAIL+1)); echo "FAIL: $1"; }
 [ -x "$RSH" ] || { echo "FAIL: bin/lib/remote-gate-fly-rsh.sh does not exist or is not executable"; exit 1; }
 
 FIX="$T/fix"; FB="$T/fakebin"; NOFLY="$T/nofly"
-mkdir -p "$FIX" "$FB" "$NOFLY" "$T/h/flags" "$T/h/logs" "$T/home" "$T/tmp"
+mkdir -p "$FIX" "$FB" "$NOFLY" "$T/h/flags" "$T/h/logs" "$T/h/env" "$T/home" "$T/tmp"
 : > "$T/h/flags/lane-off-testhost-tick"
 export FIX
 

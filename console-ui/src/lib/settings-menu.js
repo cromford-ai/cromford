@@ -11,6 +11,7 @@ export const SETTINGS_MENU = {
       { id: 'ai-vendors', label: 'AI vendors', tag: 'wave 4' },
       { id: 'github-app', label: 'GitHub app', tag: 'soon' },
       { id: 'machines', label: 'Machines and Tailscale' },
+      { id: 'connections', label: 'Tracker connections' },
       { id: 'prompts', label: 'Prompts' },
       { id: 'lanes', label: 'Lanes' },
       { id: 'appearance', label: 'Appearance' }

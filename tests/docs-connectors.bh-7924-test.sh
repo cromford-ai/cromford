@@ -17,15 +17,16 @@
 #   D4  docs/quickstart.md links both setup sections of
 #       docs/connecting-a-board.md and the guide page, and each anchor names a
 #       heading that exists
-#   D5  neither page names `/connections` or PROBE NOW: the console screen is
-#       not shipped yet (BH-7924 C1 adds it and flips this case)
+#   D5  each "Set up Linear" and "Set up Jira" section of both pages names the
+#       console screen `/connections` and its PROBE NOW button (BH-8674, the
+#       C1 slice of BH-7924, shipped the screen and flipped this case)
 #   D6  while bin/lib/rb/pr.sh has no `tracker_kind` route (the build stage
 #       resolves only GitHub issues), the "## Jira Cloud" and "## Linear"
 #       sections of each page say "Today Cromford reads, triages and wakes"
 #       and that a build does not post its PR link back yet
 #
 # The suite runs the checker on the checkout, then on fixture copies that put
-# one fault back each (N1-N4), so a checker that cannot go red is red here.
+# one fault back each (N1-N6), so a checker that cannot go red is red here.
 #
 # Run: HARNESS_TEST_SANDBOX=1 bash tests/docs-connectors.bh-7924-test.sh
 set -uo pipefail
@@ -142,9 +143,14 @@ for want in ("connecting-a-board.md#set-up-linear", "connecting-a-board.md#set-u
 # D5
 for rel in PAGES:
     t = read(rel)
-    for word in ("/connections", "PROBE NOW"):
-        if word in t:
-            fails.append(f"D5 {rel}: names {word}, a screen this release does not ship")
+    for title in NEED:
+        body = section(t, title)
+        if body is None:
+            continue
+        text = "\n".join(l for l, _ in body)
+        for word in ("`/connections`", "PROBE NOW"):
+            if word not in text:
+                fails.append(f"D5 {rel}: '{title}' does not name {word.strip('`')}")
 
 # D6
 pr_sh = os.path.join(base, "bin/lib/rb/pr.sh")
@@ -231,14 +237,22 @@ p = sys.argv[1] + "/guide/03-connectors.md"
 t = open(p).read().replace("Set up Linear", "Linear setup")
 open(p, "w").write(t)'
 
-neg N5 "D5 docs/guide/03-connectors.md: names /connections" '
+neg N5 "D5 docs/guide/03-connectors.md: 'Set up Linear' does not name /connections" '
 import sys
 p = sys.argv[1] + "/guide/03-connectors.md"
-open(p, "a").write("\nOpen `/connections` in the console.\n")'
-neg N5b "D5 docs/connecting-a-board.md: names PROBE NOW" '
+t = open(p).read()
+i = t.index("Set up Linear")
+j = t.index("\n#", i)
+t = t[:i] + t[i:j].replace("`/connections`", "the console") + t[j:]
+open(p, "w").write(t)'
+neg N5b "D5 docs/connecting-a-board.md: 'Set up Jira' does not name PROBE NOW" '
 import sys
 p = sys.argv[1] + "/connecting-a-board.md"
-open(p, "a").write("\nPress PROBE NOW.\n")'
+t = open(p).read()
+i = t.index("Set up Jira")
+j = t.index("\n#", i)
+t = t[:i] + t[i:j].replace("PROBE NOW", "the probe button") + t[j:]
+open(p, "w").write(t)'
 neg N6 "D6 docs/connecting-a-board.md: '## Linear' does not say what runs today" '
 import sys
 p = sys.argv[1] + "/connecting-a-board.md"

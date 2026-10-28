@@ -44,6 +44,7 @@ import { resolveIdentity } from '../_lib/access-identity.js';
 import { rekeyHeadMovedRefusal } from '../_lib/merge-pr-rekey.js';
 import { BOARD_FALLBACK_TYPES, boardCommand, enqueueBoardCommand, signedIn } from '../_lib/board-commands.js';
 import { POOL_HOLD_TYPES, poolHoldCommand } from '../_lib/pool-hold-command.js';
+import { CONNECTION_PROBE_TYPES, connectionProbeCommand } from '../_lib/connection-probe-command.js';
 import { readOnlyRefusal } from '../_lib/qa-session.js';
 
 const WORKER = 'https://harness-console.operator.workers.dev';
@@ -139,6 +140,13 @@ export async function onRequest(context) {
       cookie: request.headers.get('cookie') || '',
       authorization: request.headers.get('authorization') || ''
     }, poolHoldCommand);
+  }
+  // PROBE NOW (BH-7924): run_script, connection-probe.sh <project> only.
+  if (sent && CONNECTION_PROBE_TYPES.has(sent.type) && upstream.status === 400) {
+    return boardFallback(upstream, { ...sent, actor }, env, {
+      cookie: request.headers.get('cookie') || '',
+      authorization: request.headers.get('authorization') || ''
+    }, connectionProbeCommand);
   }
 
   // Pass everything back verbatim.

@@ -63,7 +63,7 @@ const stubScreens = { lanes: Probe('LANES PAGE'), appearance: Probe('APPEARANCE 
 
 test('R1: the fleet and project rows of decision 3, in order, with their tags', () => {
   const ids = (scope) => SETTINGS_MENU[scope].flatMap((g) => g.items.map((i) => i.id));
-  assert.deepEqual(ids('fleet'), ['ai-vendors', 'github-app', 'machines', 'prompts', 'lanes', 'appearance']);
+  assert.deepEqual(ids('fleet'), ['ai-vendors', 'github-app', 'machines', 'connections', 'prompts', 'lanes', 'appearance']);
   assert.deepEqual(ids('project'), ['general', 'tickets', 'ai-accounts', 'builds', 'deploy', 'alerts', 'prompts', 'pause']);
   assert.equal(findItem(SETTINGS_MENU, 'fleet', 'lanes').tag, undefined);
   assert.equal(findItem(SETTINGS_MENU, 'fleet', 'appearance').tag, undefined);

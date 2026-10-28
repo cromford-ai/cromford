@@ -541,6 +541,9 @@ export const api = {
     }),
   // Every settings row (BH-1657's PROJECT ACCOUNTS reads the account.* rows).
   settings: () => get('/api/coord/settings'),
+  // BH-7924: the tracker connections (/connections) and their EDIT write.
+  connections: () => get(coordPath('/api/connections')),
+  connectionPut: (body) => request(coordPath('/api/connections'), { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) }),
   // A knob row on the settings table. The key is built in lib/settings.js and
   // is lowercase there for a reason the worker enforces — see settingKey().
   setCoordSetting: (body) =>

@@ -76,7 +76,8 @@ post its PR link or close-out comment back to the Jira issue yet.
    bin/load-project.sh <owner/repo> --tracker jira --prefix <KEY>
    ```
 
-   For a project that is already loaded, set
+   For a project that is already loaded, open `/connections` in the console
+   (Settings, then Tracker connections) and press EDIT on its row. Or set
    `tracker_adapter.<project>` to `jira` and the three rows
    `tracker_jira.<project>.write_projects`, `read_projects` and
    `comment_projects` to the project key.
@@ -85,7 +86,8 @@ post its PR link or close-out comment back to the Jira issue yet.
    `https://<jobs-host>/webhooks/jira` with the same secret, and set the row
    `webhook_route.jira.<project key in lower case>` to `owner/repo`. See
    [Webhooks for Jira and Linear](#webhooks-for-jira-and-linear).
-6. Check the connection. Run this on the box:
+6. Check the connection. Press PROBE NOW on the project's row in
+   `/connections`, or run this on the box:
 
    ```bash
    bin/connection-probe.sh <project>
@@ -93,7 +95,9 @@ post its PR link or close-out comment back to the Jira issue yet.
 
    The result is the settings row `connection.<project>.status`. It shows
    `ok`, or the error and the names of any missing variables. The lane
-   `connection-probe` runs the same check every hour.
+   `connection-probe` runs the same check every hour. The LAST PROBE column
+   of `/connections` then shows `ok`, or `failed` with the error and the names
+   of the missing variables.
 
 ## Linear
 
@@ -122,7 +126,8 @@ post its PR link or close-out comment back to the Linear issue yet.
    bin/load-project.sh <owner/repo> --tracker linear --prefix <TEAM>
    ```
 
-   For a project that is already loaded, set
+   For a project that is already loaded, open `/connections` in the console
+   (Settings, then Tracker connections) and press EDIT on its row. Or set
    `tracker_adapter.<project>` to `linear` and `tracker_linear.<project>.team`
    to the team key.
 5. To get changes at once instead of by polling, arm the webhook: set
@@ -130,7 +135,8 @@ post its PR link or close-out comment back to the Linear issue yet.
    `https://<jobs-host>/webhooks/linear` with the same secret, and set the row
    `webhook_route.linear.<team key in lower case>` to `owner/repo`. See
    [Webhooks for Jira and Linear](#webhooks-for-jira-and-linear).
-6. Check the connection. Run this on the box:
+6. Check the connection. Press PROBE NOW on the project's row in
+   `/connections`, or run this on the box:
 
    ```bash
    bin/connection-probe.sh <project>
@@ -138,7 +144,9 @@ post its PR link or close-out comment back to the Linear issue yet.
 
    The result is the settings row `connection.<project>.status`. It shows
    `ok`, or the error and the names of any missing variables. The lane
-   `connection-probe` runs the same check every hour.
+   `connection-probe` runs the same check every hour. The LAST PROBE column
+   of `/connections` then shows `ok`, or `failed` with the error and the names
+   of the missing variables.
 
 ## Webhooks for Jira and Linear
 

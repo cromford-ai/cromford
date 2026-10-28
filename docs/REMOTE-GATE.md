@@ -364,6 +364,46 @@ that cannot be read is treated as live. When the newest route has expired, the
 stop needs its two witnesses again, as above. The call is bounded by
 `lane.fly-pool[.<project>].pool_testhost_ensure_timeout_s` (120 s).
 
+### A pre-minted route token (BH-8677)
+
+The hub's `FLY_API_TOKEN` is deploy-scoped, so `flyctl tokens create ssh`
+answers `Not authorized` on the hub. So `ptr_build` first reads a token that a
+person minted, from `<env dir>/testhost-route.env` (`/etc/harness/env` on the
+hub, as `harness_env_dir` resolves it). The file is mode 600 and has two lines:
+
+```
+TESTHOST_ROUTE_TOKEN=FlyV1 <...>
+TESTHOST_ROUTE_EXPIRES=<epoch seconds>
+```
+
+Mint and install it:
+
+1. On a workstation with org access, run
+   `flyctl tokens create ssh -a bh-testhost-example-org -x 720h -n hub-testhost-route`.
+2. Write the two lines to a local file. Set the expiry to the mint time plus 720 h (`date -d '+720 hours' +%s`).
+3. Copy the file to the hub and install it atomically:
+   `install -m 600 testhost-route.env /etc/harness/env/testhost-route.env`.
+
+The token is one credential that every pool machine shares for up to 30 days.
+Its scope is the same as a minted one: the test-host app only. The hub holds
+no org token on purpose: an org token can mint for any app.
+
+The pool ships the file's token and expiry only when the file is a regular
+file (not a symlink), its mode is 600, the token starts with `FlyV1 `, and the
+expiry is more than `ptr_hours` away. The last line of each key wins. A 644
+file, a symlink, an expired file or a bad line is ignored, and the mint runs as
+before. A mint that answers `Not authorized` writes the reason
+`testhost route: not shipped (hub token cannot mint tokens; put a pre-minted token in env/testhost-route.env)`.
+
+Rotation: when fewer than `lane.fly-pool[.<project>].pool_testhost_route_warn_hours`
+(48 h) are left, or the file is expired, the pool writes one ALERTS line per
+UTC day for the whole hub (`alert:pool-testhost-route-token`). The day marker
+is `state/testhost-route/alerted-testhost-route-token-<YYYYmmdd>` (classed box-local in `catalog/state-paths.json`). When the alert
+fires, mint a new token and replace the file with `install -m 600`, as above.
+The route expiry the pool ships is the build's own window (now + `ptr_hours`),
+never the file's expiry, so `--route-until` holds the test host for one build,
+as a minted route does. The file's token outlives that route by design.
+
 ### Every machine's disk (#1597)
 
 Each tick (once the worker has answered) lists the app's machines and runs one

@@ -59,6 +59,7 @@ import { LeadReviewsScreen } from './screens/LeadReviews.js';
 import { LaneRunsScreen, LaneRunListScreen, LaneRunScreen } from './screens/LaneRuns.js';
 import { UnblockScreen } from './screens/Unblock.js';
 import { FactoryScreen } from './screens/Factory.js';
+import { ConnectionsScreen } from './screens/Connections.js';
 import { ErrorBoundary } from './ui/ErrorBoundary.js';
 
 export const FleetContext = createContext(null);
@@ -124,6 +125,8 @@ export const ROUTES = [
   ['/factory', FactoryScreen],
   ['/ci', CiHealthScreen],
   ['/utilization', UtilizationScreen],
+  // Tracker connections (BH-7924). Also at /settings/fleet/connections.
+  ['/connections', ConnectionsScreen],
   // App sends /settings and /settings/appearance to the settings shell
   // (resolveRoute below, BH-7938). These two rows stay as the fallback the
   // ROUTES readers in the tests pin.

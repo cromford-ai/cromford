@@ -206,8 +206,9 @@ if command -v node >/dev/null 2>&1; then
     mkdir -p "$T/b5/src"; echo '{"type":"module"}' > "$T/b5/package.json"
     for e in "$DIR"/console-ui/src/*; do [ "$(basename "$e")" = api.js ] || ln -s "$e" "$T/b5/src/"; done
     git -C "$DIR" show "$base:console-ui/src/api.js" > "$T/b5/src/api.js"
-    nb=$(node --input-type=module -e 'const a = await import(process.argv[1]); console.log(Object.keys(a.api).length)' "$T/b5/src/api.js" 2>&1)
-    eq "B5 no key removed (base $nb, head $nk)" "$nk" "$nb"
+    # A new key is allowed (BH-8674). A removed or renamed base key is named.
+    gone=$(node --input-type=module -e 'const [b, h] = await Promise.all(process.argv.slice(1, 3).map((p) => import(p))); const m = Object.keys(b.api).filter((k) => !(k in h.api)); console.log(m.length ? m.join(",") : "none")' "$T/b5/src/api.js" "$DIR/console-ui/src/api.js" 2>&1)
+    eq "B5 no key removed (head has $nk keys)" "$gone" none
   else
     echo "SKIP B5 key count: no merge base with origin/main"
   fi
