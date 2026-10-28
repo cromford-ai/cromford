@@ -141,6 +141,7 @@ tests/tracker-linear.bh-4077-test.sh:generic-api-key:36
 tests/tracker-list-filters.bh-7920-test.sh:generic-api-key:34
 tests/tracker-list-filters.bh-7920-test.sh:generic-api-key:41
 tests/tracker-port.bh-4075-test.sh:generic-api-key:33
+tests/tracker-seam-callers.bh-8682-test.sh:generic-api-key:56
 tests/transcript-scrub-test.sh:generic-api-key:30
 tests/transcript-scrub-test.sh:curl-auth-header:89
 tests/triage-intake-linear.bh-7920-test.sh:generic-api-key:35

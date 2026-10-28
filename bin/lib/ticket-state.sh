@@ -1,7 +1,9 @@
 #!/bin/bash
 # bin/lib/ticket-state.sh — is a ticket open or closed, one read through the
 # tracker contract (bin/lib/tracker.sh). Read by bin/builds-retention.sh (rule
-# 2, `settled`). Reads only: no tracker write verb is called.
+# 2, `settled`). Reads only: no tracker write verb is called. A board
+# project's base and token come from tracker_context (BH-8682): this file never
+# reads fleet.conf column 4 itself.
 #
 # Sourced, never executed: no `set -e`, no `exit`, no output at source time.
 #
@@ -28,29 +30,8 @@ if ! command -v tracker_adapter >/dev/null 2>&1 && [ -r "$_tks_dir/tracker.sh" ]
   . "$_tks_dir/tracker.sh"
 fi
 
-# _tks_board_ctx <root> <project> — TRK_BOARD_BASE / TRK_BOARD_TOKEN in the
-# caller's scope (the caller declares them local), the way
-# bin/lib/execute-empty.sh's _ee_board_ctx resolves them. rc 0 ready, 1 not.
-_tks_board_ctx() {
-  local r="$1" p="$2" envf prefix bvar base=""
-  command -v board_base_var >/dev/null 2>&1 || . "$_tks_dir/board-creds.sh" 2>/dev/null || return 1
-  command -v internal_token_var >/dev/null 2>&1 || . "$_tks_dir/internal-token.sh" 2>/dev/null || return 1
-  command -v harness_env_dir >/dev/null 2>&1 || . "$_tks_dir/env-path.sh" 2>/dev/null || return 1
-  envf="$(harness_env_dir "$r")/$p.env"
-  prefix=$("$r/bin/fleet-conf.sh" "$p" board_prefix 2>/dev/null) || prefix=""
-  [ -n "$prefix" ] && [ "$prefix" != "-" ] || return 1
-  bvar=$(board_base_var "$p" "$envf" builds-retention 2>/dev/null) || return 1
-  base=$(board_env_value "$bvar" "$envf" 2>/dev/null)
-  while [ "${base%/}" != "$base" ]; do base="${base%/}"; done
-  [ -n "$base" ] || return 1
-  TRK_BOARD_BASE="$base$prefix"
-  TRK_BOARD_TOKEN_VAR=$(internal_token_var "$envf" 2>/dev/null) || TRK_BOARD_TOKEN_VAR=""
-  TRK_BOARD_TOKEN=$("$r/bin/internal-token-for.sh" "$p" 2>/dev/null) || TRK_BOARD_TOKEN=""
-  [ -n "$TRK_BOARD_TOKEN" ]
-}
-
 tks_state() {
-  local r="${1:-}" p="${2:-}" id="${3:-}" v ad t rc=0 st
+  local r="${1:-}" p="${2:-}" id="${3:-}" v ad t rc=0 st TRK_CTX_MISSING=""
   [ -n "$r" ] && [ -n "$p" ] && [ -n "$id" ] && [ "$id" != - ] || return 1
   if [ -n "${BUILDS_RETENTION_TICKET_STATE_FILE:-}" ]; then
     v=$(awk -F'\t' -v p="$p" -v i="$id" '$1 == p && $2 == i { print $3; exit }' \
@@ -70,7 +51,7 @@ tks_state() {
       [[ $id =~ ^[0-9]+$ ]] || return 1
       TRK_SLUG=$("$r/bin/fleet-conf.sh" "$p" repo 2>/dev/null) || return 1
       ;;
-    board) _tks_board_ctx "$r" "$p" || return 1 ;;
+    board) HARNESS="$r" tracker_context "$p" builds-retention 2>/dev/null || return 1 ;;
     *) return 1 ;;
   esac
   tracker_load "$ad" 2>/dev/null || return 1

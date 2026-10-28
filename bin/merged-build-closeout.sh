@@ -11,12 +11,14 @@
 #   --apply           : closes each `close` verdict through issue_close_shipped
 #                       (comment, close, strip `ai-build`), one CLOSED audit
 #                       line per close in the log.
-#   --project P       : only project P (it must be issue-driven, board prefix -).
+#   --project P       : only project P (it must be issue-driven: tracker
+#                       github-issues, tracker_kind).
 #   --since ISO       : merged PRs from this UTC time on, as
 #                       YYYY-MM-DDTHH:MM:SSZ (default: MBC_SINCE_DAYS, 14,
 #                       days before now).
 #
-# Per project (every fleet-conf row with board prefix `-`, or --project):
+# Per project (every fleet-conf project whose tracker is github-issues
+# (tracker_kind, bin/lib/tracker.sh), or --project):
 #   1. One paged read of open `ai-build` issues.
 #   2. One paged read of closed PRs, newest update first, stopped at the first
 #      page that reaches back past --since. MBC_PR_PAGE_CAP (10) full pages is a capped read:
@@ -58,7 +60,7 @@ while [ $# -gt 0 ]; do
     --apply) APPLY=1; shift ;;
     --project) [ $# -ge 2 ] && [ -n "$2" ] || usage; PROJECT="$2"; shift 2 ;;
     --since) [ $# -ge 2 ] || usage; SINCE="$2"; shift 2 ;;
-    -h|--help) sed -n '2,48p' "$0"; exit 0 ;;
+    -h|--help) sed -n '2,50p' "$0"; exit 0 ;;
     *) usage ;;
   esac
 done
@@ -69,8 +71,11 @@ LIB="$HARNESS/bin/lib"
 . "$LIB/gh-rest-list.sh" 2>/dev/null
 # shellcheck source=bin/lib/issue-state-lib.sh
 . "$LIB/issue-state-lib.sh" 2>/dev/null
+# shellcheck source=bin/lib/tracker.sh
+. "$LIB/tracker.sh" 2>/dev/null
 command -v gh_rest_issue_list >/dev/null 2>&1 && command -v issue_close_guard >/dev/null 2>&1 \
-  || { echo "merged-build-closeout: bin/lib/gh-rest-list.sh or bin/lib/issue-state-lib.sh missing" >&2; exit 2; }
+  && command -v tracker_kind >/dev/null 2>&1 \
+  || { echo "merged-build-closeout: bin/lib/gh-rest-list.sh, bin/lib/issue-state-lib.sh or bin/lib/tracker.sh missing" >&2; exit 2; }
 # shellcheck source=bin/lib/gh-app-auth.sh
 [ -r "$LIB/gh-app-auth.sh" ] && . "$LIB/gh-app-auth.sh" 2>/dev/null
 # The comment-once marker is a ledger row, not a state/ file (docs/STATE-STORES.md).
@@ -97,13 +102,13 @@ SINCE_DAYS=$(mbc_int "${MBC_SINCE_DAYS:-}" 14)          # 14: fallback of row li
 
 FC="$HARNESS/bin/fleet-conf.sh"
 if [ -n "$PROJECT" ]; then
-  [ "$("$FC" "$PROJECT" board_prefix 2>/dev/null)" = - ] \
-    || { echo "merged-build-closeout: $PROJECT is not an issue-driven project (board prefix is not -)" >&2; exit 2; }
+  [ "$(tracker_kind "$PROJECT" 2>/dev/null)" = github-issues ] \
+    || { echo "merged-build-closeout: $PROJECT is not an issue-driven project (its tracker is not github-issues)" >&2; exit 2; }
   PROJECTS="$PROJECT"
 else
   PROJECTS=""
   for p in $("$FC" --projects 2>/dev/null); do
-    [ "$("$FC" "$p" board_prefix 2>/dev/null)" = - ] && PROJECTS="$PROJECTS $p"
+    [ "$(tracker_kind "$p" 2>/dev/null)" = github-issues ] && PROJECTS="$PROJECTS $p"
   done
 fi
 
@@ -191,7 +196,7 @@ for P in $PROJECTS; do
   SLUG=$("$FC" "$P" repo 2>/dev/null)
   [ -n "$SLUG" ] || { line "$P" - - skip:no-repo -; continue; }
   mbc_auth "$SLUG"
-  if ! gh_rest_issue_list "$SLUG" open ai-build "$ISSUE_CAP" > "$WORK/issues.json"; then
+  if ! gh_rest_issue_list "$SLUG" open ai-build "$ISSUE_CAP" > "$WORK/open-issues.json"; then
     line "$P" - - "skip:issue-list-read" -; continue
   fi
   PRC=0; mbc_closed_prs "$SLUG" "$WORK/prs.json" || PRC=$?
@@ -249,7 +254,7 @@ for P in $PROJECTS; do
       NSKIP=$((NSKIP + 1)); line "$P" "#$N" "$KEY" skip:close-deferred "$URL"
       printf '%s DEFERRED %s #%s by %s (%s)\n' "$(stamp)" "$P" "$N" "$URL" "${W:-no answer}" >> "$LOG"
     fi
-  done < <(jq -r '.[] | select(type == "object") | "\(.number)\t\(.title // "" | gsub("[\t\n]"; " "))"' "$WORK/issues.json" 2>/dev/null)
+  done < <(jq -r '.[] | select(type == "object") | "\(.number)\t\(.title // "" | gsub("[\t\n]"; " "))"' "$WORK/open-issues.json" 2>/dev/null)
 done
 
 line "${PROJECT:-all}" summary - "checked $CHECKED, close $NCLOSE, keep $NKEEP, skip $NSKIP, closed $NCLOSED ($MODE)" -
