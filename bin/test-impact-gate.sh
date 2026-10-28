@@ -552,14 +552,34 @@ while IFS= read -r s; do
 done < "$list"
 exit $rc'
 
-# snapshot_tree <tree-ish> <dir> — <tree-ish> as a fresh one-commit repo in
-# <dir>/repo (git archive, then `git init` — the shape bin/remote-gate.sh gives
-# the test host). rc 3: the archive failed; rc 4: the git init or commit failed.
+# snapshot_tree <tree-ish> <dir> [<base-tree-ish>] — <tree-ish> as a fresh repo
+# in <dir>/repo (git archive, then `git init`). With no base it is one commit.
+# With a base it is two, `base` then `head`, and refs/remotes/origin/main points
+# at `base` (rp_snapshot_build's shape): a suite that sources
+# tests/lib/ratchet-delta.sh needs that base in rd_base, or it is red "no base
+# to diff against" on every snapshot (BH-8697). rc 3: an archive failed; rc 4:
+# the git init, commit or ref failed.
 snapshot_tree() {
-  mkdir -p "$2/repo" || return 3
-  git -C "$ROOT" archive --format=tar "$1" | tar -x -C "$2/repo" || return 3
-  ( cd "$2/repo" && git init -q && git add -A \
-      && git -c user.email=gate@harness -c user.name=gate commit -qm snapshot ) >/dev/null 2>&1 || return 4
+  local d="$2/repo" ps
+  sgit() { git -C "$d" -c user.email=gate@harness -c user.name=gate -c commit.gpgsign=false "$@"; }
+  mkdir -p "$d" || return 3
+  if [ -n "${3:-}" ]; then
+    git -C "$ROOT" archive --format=tar "$3" | tar -x -C "$d"; ps="${PIPESTATUS[*]}"
+    [ "$ps" = "0 0" ] || return 3
+    { sgit init -q && sgit add -A && sgit commit -q --no-verify --allow-empty -m base \
+        && sgit rm -rq --cached --ignore-unmatch . \
+        && find "$d" -mindepth 1 -maxdepth 1 ! -name .git -exec rm -rf {} +; } >/dev/null 2>&1 || return 4
+  fi
+  git -C "$ROOT" archive --format=tar "$1" | tar -x -C "$d"; ps="${PIPESTATUS[*]}"
+  [ "$ps" = "0 0" ] || return 3
+  { [ -d "$d/.git" ] || sgit init -q; } >/dev/null 2>&1 || return 4
+  sgit add -A >/dev/null 2>&1 || return 4
+  if [ -n "${3:-}" ]; then
+    { sgit commit -q --no-verify --allow-empty -m head \
+        && sgit update-ref refs/remotes/origin/main HEAD~1; } >/dev/null 2>&1 || return 4
+  else
+    sgit commit -qm snapshot >/dev/null 2>&1 || return 4
+  fi
 }
 
 # run_segs <segment-fn> <head-root> — each segment of $TMP/segs (`head|fresh
@@ -614,8 +634,9 @@ isolated_run() {
   setpriv --reuid="$uid" --regid="$gid" --clear-groups true >/dev/null 2>&1 \
     || { echo "impact-gate: isolated runner: setpriv cannot switch to nobody here (not root, or no CAP_SETUID/SETGID)" >&2; return 125; }
   mkdir -p "$w/repo" "$w/home" "$w/tmp" || return 125
-  snapshot_tree "$HEAD_REF" "$w"; sr=$?
-  [ "$sr" = 3 ] && { echo "impact-gate: isolated runner: could not snapshot $HEAD_REF" >&2; return 125; }
+  # The fork is the snapshot's origin/main, so a delta ratchet reads this diff only.
+  snapshot_tree "$HEAD_REF" "$w" "$FORK"; sr=$?
+  [ "$sr" = 3 ] && { echo "impact-gate: isolated runner: could not snapshot $HEAD_REF or its base $FORK" >&2; return 125; }
   [ "$sr" = 0 ] || { echo "impact-gate: isolated runner: could not git-init the snapshot" >&2; return 125; }
   cp "$TMP/run.list" "$w/list"; : > "$w/progress"
   # GITLEAKS (BH-2115): a selected suite that looks for gitleaks gets the pinned,
@@ -683,7 +704,8 @@ fresh_prep() {
   tree="${tree%%$'\n'*}"
   [ "$r" = 1 ] && { fm_off "head conflicts with main ${FM_SHA:0:12}"; return; }
   if [ "$r" != 0 ] || ! [[ "$tree" =~ ^[0-9a-f]{40}([0-9a-f]{24})?$ ]]; then fm_off "merge-tree failed (rc $r)"; return; fi
-  snapshot_tree "$tree" "$TMP/fresh" || { fm_off "could not snapshot the merged tree"; return; }
+  # Main's tip is the base: the merged tree minus main is this diff (BH-8697).
+  snapshot_tree "$tree" "$TMP/fresh" "$FM_SHA" || { fm_off "could not snapshot the merged tree"; return; }
   FM=1
 }
 if [ "$FRESH_ON" = 1 ]; then
