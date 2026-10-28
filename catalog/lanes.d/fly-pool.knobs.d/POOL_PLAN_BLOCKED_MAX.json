@@ -1,0 +1,12 @@
+{
+  "env": "POOL_PLAN_BLOCKED_MAX",
+  "type": "int",
+  "default": 2,
+  "min": 0,
+  "max": 20,
+  "unit": "results",
+  "zero_means": "off",
+  "read_in": "bin/lib/plan-blocked-stop.sh",
+  "note": "BH-8309: PLAN_BLOCKED results of class other (not 'already done', not a named prerequisite) of one key inside POOL_PLAN_BLOCKED_WINDOW_S at which the pool stops relaunching it and places ONE NEEDS_HUMAN hold on the ticket. 0 = the cap is off. Read as ${POOL_PLAN_BLOCKED_MAX:-2}; a non-integer is the default.",
+  "settable": true
+}

@@ -328,6 +328,10 @@ PDC_PEND_HOT=${PDC_PEND_HOT:-0}
 # BH-7116: pb_hub_copy, the reap's plan.md copy when the machine is gone.
 # shellcheck source=bin/lib/plan-blocked.sh
 . "$HARNESS/bin/lib/plan-blocked.sh" 2>/dev/null || true
+# BH-8309: pbs_stop_check, the spawn gate for a key whose newest record is
+# PLAN_BLOCKED. Missing, the gate is skipped and the pool spawns as before.
+# shellcheck source=bin/lib/plan-blocked-stop.sh
+. "$HARNESS/bin/lib/plan-blocked-stop.sh" 2>/dev/null || true
 # BH-8335: ptr_build/ptr_push, a machine's own route to the Fly test host.
 # A tree without the lib ships no route, and the gate names the miss.
 # shellcheck source=bin/lib/pool-testhost-route.sh
@@ -2232,6 +2236,18 @@ pool_spawn_decision() {
     }
     return 0
   fi
+  # >>> plan-blocked stop (BH-8309)
+  # 0a. A key whose newest hub record is PLAN_BLOCKED is not relaunched into the
+  # same stop (bin/lib/plan-blocked-stop.sh): "already done on main by <sha>"
+  # closes the ticket once, a named prerequisite holds the row until it closes,
+  # and any other reason stops after POOL_PLAN_BLOCKED_MAX in the window with
+  # one NEEDS_HUMAN hold. The row stays queued. Below pool_gates_applicable
+  # because it reads GitHub; above the HOLD gate and the cap, so a refusal
+  # costs no spawn-cap count.
+  if command -v pbs_stop_check >/dev/null 2>&1 && ! pbs_stop_check "$P" "$KEY" "$TICKET" "$JF"; then
+    return 1
+  fi
+  # <<< plan-blocked stop
   # 0b. A ROW WAITING ON A NAMED BLOCKER (BH-5967): held with no machine until
   # the blocker is done, then released in the same tick. Before the HOLD read,
   # because a held row needs no other read.

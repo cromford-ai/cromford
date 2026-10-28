@@ -1,0 +1,12 @@
+{
+  "env": "POOL_PLAN_BLOCKED_STOP",
+  "type": "int",
+  "default": 1,
+  "min": 0,
+  "max": 1,
+  "unit": "switch",
+  "zero_means": "off",
+  "read_in": "bin/lib/plan-blocked-stop.sh",
+  "note": "BH-8309: 1 = pool_spawn_decision runs pbs_stop_check on a key whose newest hub build record is PLAN_BLOCKED (GitHub-Issues projects only): 'already done on main by <ancestor sha>' closes the ticket once, a named prerequisite holds the row until it closes, any other reason stops after POOL_PLAN_BLOCKED_MAX in POOL_PLAN_BLOCKED_WINDOW_S with one NEEDS_HUMAN hold. 0 = off, the pool spawns as before. Read as ${POOL_PLAN_BLOCKED_STOP:-1}.",
+  "settable": true
+}

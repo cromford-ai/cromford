@@ -1,0 +1,12 @@
+{
+  "env": "POOL_PLAN_BLOCKED_WINDOW_S",
+  "type": "int",
+  "default": 86400,
+  "min": 3600,
+  "max": 604800,
+  "unit": "s",
+  "zero_means": null,
+  "read_in": "bin/lib/plan-blocked-stop.sh",
+  "note": "BH-8309: the window, in seconds, over which POOL_PLAN_BLOCKED_MAX counts a key's PLAN_BLOCKED results (the hub build records' RESULT mtime), and in which an auto-closed record stops a second auto-close. Read as ${POOL_PLAN_BLOCKED_WINDOW_S:-86400}; a non-integer is the default.",
+  "settable": true
+}
