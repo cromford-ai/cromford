@@ -5,7 +5,7 @@
 export const CONFIG_KIND_VALUES = Object.freeze([
   'review_gate_threshold', 'concurrency_rule', 'retry_policy', 'phase_contract',
   'cost_cap', 'telegram_topic', 'registry_seed', 'setting', 'flag', 'merge_queue',
-  'held_page', 'project', 'project_secret'
+  'held_page', 'project', 'project_secret', 'connection'
 ]);
 export const isKnownKind = (kind) => CONFIG_KIND_VALUES.includes(kind);
 

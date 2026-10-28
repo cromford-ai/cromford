@@ -37,23 +37,108 @@ This is the default. It needs nothing beyond your GitHub credential.
 
 ## Jira Cloud
 
+Today Cromford reads, triages and wakes on Jira issues. A build does not
+post its PR link or close-out comment back to the Jira issue yet.
+
 - **Credentials**, in the project's env file: `JIRA_BASE`, `JIRA_EMAIL`,
   `JIRA_API_TOKEN`, and optionally `JIRA_SITE`.
 - **Settings rows:** `tracker_jira.<project>.write_projects`,
   `comment_projects` and `read_projects` are allowlists of Jira project keys.
   With no write row, nothing is written.
 
-**Not yet:** today only the readiness check reads Jira tickets through this
-adapter. The rest of the pipeline does not drive a Jira project end to end.
+### Set up Jira
+
+1. Create a scoped API token in your Atlassian account, with scopes that read
+   and write Jira issues and comments. Find your site's cloud id:
+
+   ```bash
+   curl -s https://<your-site>.atlassian.net/_edge/tenant_info
+   ```
+
+   The gateway base is `https://api.atlassian.com/ex/jira/<cloudId>`. A site
+   URL base is refused.
+2. In Jira, put the label `ai-build` on the issues you want built. Note the
+   status names of your workflow, for example To Do, In Progress, In Review
+   and Done. The row `tracker_jira.<project>.status_map` maps Cromford's
+   statuses to them, as `alias=Status;alias=Status`:
+
+   ```bash
+   bin/jobs-client.sh setting-set tracker_jira.<project>.status_map "todo=To Do;in_progress=In Progress;review=In Review;done=Done"
+   ```
+
+3. On the box that runs the project, put `JIRA_BASE`, `JIRA_EMAIL`
+   and `JIRA_API_TOKEN` in `/etc/harness/env/<project>.env`. `JIRA_SITE` is
+   optional: set it to `https://<your-site>.atlassian.net` and each ticket
+   gets a link to its issue.
+4. Point the project at Jira. A new project gets the rows when you load it:
+
+   ```bash
+   bin/load-project.sh <owner/repo> --tracker jira --prefix <KEY>
+   ```
+
+   For a project that is already loaded, set
+   `tracker_adapter.<project>` to `jira` and the three rows
+   `tracker_jira.<project>.write_projects`, `read_projects` and
+   `comment_projects` to the project key.
+5. To get changes at once instead of by polling, arm the webhook: set
+   `JIRA_WEBHOOK_SECRET` on the jobs worker, add a Jira webhook to
+   `https://<jobs-host>/webhooks/jira` with the same secret, and set the row
+   `webhook_route.jira.<project key in lower case>` to `owner/repo`. See
+   [Webhooks for Jira and Linear](#webhooks-for-jira-and-linear).
+6. Check the connection. Run this on the box:
+
+   ```bash
+   bin/connection-probe.sh <project>
+   ```
+
+   The result is the settings row `connection.<project>.status`. It shows
+   `ok`, or the error and the names of any missing variables. The lane
+   `connection-probe` runs the same check every hour.
 
 ## Linear
+
+Today Cromford reads, triages and wakes on Linear issues. A build does not
+post its PR link or close-out comment back to the Linear issue yet.
 
 - **Reads:** your team's open issues with a label (default `ai-build`), over
   Linear's GraphQL API.
 - **Writes:** comments, labels and state. A PR link is a Linear attachment.
 
-**Not yet:** the adapter is built and tested, but nothing in the pipeline
-loads a Linear key or calls it. A Linear board cannot drive builds today.
+### Set up Linear
+
+1. In Linear, open Settings and create a personal API key. Cromford sends it
+   as the `Authorization` header of each GraphQL call.
+2. In your Linear team, create the label `ai-build`. Cromford never creates a
+   label, so a label your workspace does not have is an error. Review is the
+   state named "In Review". If your team names it another way, set the row
+   `tracker_linear.<project>.states` to a JSON object such as
+   `{"review": "Code Review"}`.
+3. On the box that runs the project, put `LINEAR_API_KEY` in
+   `/etc/harness/env/<project>.env`.
+4. Point the project at Linear. A new project gets the rows when you load it,
+   with your team key as the prefix:
+
+   ```bash
+   bin/load-project.sh <owner/repo> --tracker linear --prefix <TEAM>
+   ```
+
+   For a project that is already loaded, set
+   `tracker_adapter.<project>` to `linear` and `tracker_linear.<project>.team`
+   to the team key.
+5. To get changes at once instead of by polling, arm the webhook: set
+   `LINEAR_WEBHOOK_SECRET` on the jobs worker, add a Linear webhook to
+   `https://<jobs-host>/webhooks/linear` with the same secret, and set the row
+   `webhook_route.linear.<team key in lower case>` to `owner/repo`. See
+   [Webhooks for Jira and Linear](#webhooks-for-jira-and-linear).
+6. Check the connection. Run this on the box:
+
+   ```bash
+   bin/connection-probe.sh <project>
+   ```
+
+   The result is the settings row `connection.<project>.status`. It shows
+   `ok`, or the error and the names of any missing variables. The lane
+   `connection-probe` runs the same check every hour.
 
 ## Webhooks for Jira and Linear
 

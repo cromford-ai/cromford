@@ -1,0 +1,10 @@
+# @ungated each box probes its own projects: the tracker credentials live in the env files of the box that owns the project, so the hub cannot probe them.
+
+# ── CONNECTION PROBE LANE (BH-7924) ──────────────────────────────────────────
+# Hourly at :17 each box probes the tracker connection of every project it
+# owns (bin/box-for.sh): tracker_context, then one read (Linear viewer, Jira
+# /myself, board or GitHub open list). It writes the settings row
+# connection.<project>.status through POST /api/connections/<p>/status; the
+# console's /connections screen reads it. No ALERTS line on a failed probe.
+# Off: flags/lane-off-connection-probe, or bin/harness-ctl.sh off connection-probe.
+17 * * * * /root/harness/bin/connection-probe.sh --box >/dev/null 2>&1

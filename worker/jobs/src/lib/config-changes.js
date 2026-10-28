@@ -19,6 +19,7 @@ export const CONFIG_KINDS = Object.freeze({
   HELD_PAGE: 'held_page',
   PROJECT: 'project',
   PROJECT_SECRET: 'project_secret',
+  CONNECTION: 'connection', // BH-7924: PUT /api/connections, one row per changed project
 });
 
 // Equality is on String() form, so a threshold read back from D1 as 5 and

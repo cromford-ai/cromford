@@ -5,6 +5,7 @@
 #                   [--prefix <KEY>] [--base <branch>] [--context <file>]
 #                   [--no-bootstrap] [--vmap-ticket] [--arch-ticket] [--fly]
 #                   [--require-readiness <n>] [--repo-dir <checkout>]
+#                   [--tracker linear|jira --prefix <KEY>]
 #
 # What it does (idempotent — re-running skips what exists). Steps 1-5 live in
 # bin/lib/onboard-stations.sh (obs_register, obs_prompt, obs_label, obs_box),
@@ -31,6 +32,18 @@
 #   5. over ssh to the box: pulls /root/harness-checkout, syncs runtime, writes
 #      an env stub, runs bootstrap-machine.sh <project> (crons, clone, smoke)
 #
+# --tracker linear|jira (BH-7924) makes the project a Linear or Jira project.
+# It needs --prefix <KEY>: the Linear team key or the Jira project key, checked
+# with the adapter's own pattern; anything else is rc 2 and nothing is written.
+# Before step 1 it writes the settings rows through bin/jobs-client.sh
+# setting-set: linear tracker_linear.<p>.team=<KEY>; jira
+# tracker_jira.<p>.write_projects, read_projects and comment_projects=<KEY>;
+# then tracker_adapter.<p>=<adapter> (last, so a failed write never routes the
+# project to an adapter without its key). A failed write is FATAL before any
+# registry write. fleet.conf column 4 stays `-`. Settings are D1 in file and
+# db mode alike. The credentials stay in env/<project>.env on the box (see
+# docs/connecting-a-board.md); bin/connection-probe.sh <project> checks them.
+#
 # --require-readiness <n> grades a LOCAL checkout of the repo (--repo-dir) with
 # bin/readiness-report.sh and refuses to enrol it below level n, before step 1.
 # Default 0: the gate is skipped entirely and nothing changes for any project
@@ -55,7 +68,7 @@ cd "$ROOT"
 # shellcheck source=bin/lib/gh-rest-list.sh
 [ -r "$ROOT/bin/lib/gh-rest-list.sh" ] && . "$ROOT/bin/lib/gh-rest-list.sh" || true
 
-SLUG="${1:?usage: load-project.sh <owner/repo> [--project name] [--prod url] [--box host] [--prefix KEY] [--base branch] [--context file] [--no-bootstrap] [--require-readiness <n> --repo-dir <checkout>]}"
+SLUG="${1:?usage: load-project.sh <owner/repo> [--project name] [--prod url] [--box host] [--prefix KEY] [--base branch] [--context file] [--no-bootstrap] [--require-readiness <n> --repo-dir <checkout>] [--tracker linear|jira --prefix KEY]}"
 shift
 # BH-4080: the default box name and the harness repo the box clones live in
 # the deployment defaults home.
@@ -70,7 +83,7 @@ OBS_LIB="$(dirname "$0")/lib/onboard-stations.sh"
 . "$OBS_LIB" || exit 1
 PROJECT="" PROD="-" BOX="${HARNESS_BOX_PREFIX}small" PREFIX="" BASE="" CONTEXT_FILE="" BOOTSTRAP=1 VMAP_TICKET=0 ARCH_TICKET=0 FLY=0
 QUEUE="fly/onboard-queue.conf"
-REQUIRE_READINESS=0 REPO_DIR=""
+REQUIRE_READINESS=0 REPO_DIR="" TRACKER=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --require-readiness) REQUIRE_READINESS="$2"; shift 2 ;;
@@ -85,9 +98,24 @@ while [ $# -gt 0 ]; do
     --vmap-ticket)  VMAP_TICKET=1; shift ;;
     --arch-ticket)  ARCH_TICKET=1; shift ;;
     --fly)          FLY=1; shift ;;
+    --tracker)      [ $# -ge 2 ] || { echo "load-project: --tracker takes linear or jira"; exit 2; }
+                    TRACKER="$2"; shift 2 ;;
     *) echo "unknown flag $1"; exit 2 ;;
   esac
 done
+
+# >>> tracker flag (BH-7924) -- checked before any write, as the gates below
+if [ -n "$TRACKER" ]; then
+  case "$TRACKER" in
+    linear) TRK_KEY_RE='^[A-Z][A-Z0-9_]{0,9}$' ;;   # trk_linear_context's team key
+    jira)   TRK_KEY_RE='^[A-Z][A-Z0-9_]{1,9}$' ;;   # trk_jira_context's project key
+    *) echo "load-project: --tracker takes linear or jira (got '$TRACKER'); nothing was written"; exit 2 ;;
+  esac
+  [ -n "$PREFIX" ] || { echo "load-project: --tracker $TRACKER needs --prefix <KEY> (the $TRACKER key); nothing was written"; exit 2; }
+  [[ "$PREFIX" =~ $TRK_KEY_RE ]] \
+    || { echo "load-project: --prefix '$PREFIX' is not a $TRACKER key ($TRK_KEY_RE); nothing was written"; exit 2; }
+fi
+# <<< tracker flag
 
 # >>> project name length
 # The worker refuses a settings key over 64 chars (SETTING_KEY_RE,
@@ -198,9 +226,27 @@ fi
 PREFIX_LC=$(echo "$PREFIX" | tr '[:upper:]' '[:lower:]')
 echo "project=$PROJECT slug=$SLUG base=$BASE prefix=$PREFIX box=$BOX prod=$PROD"
 
-obs_register || exit 1
+# >>> tracker rows (BH-7924) -- before the registry row and the prompt render
+# (which reads tracker_kind, BH-8450). The adapter row goes last.
+if [ -n "$TRACKER" ]; then
+  echo "== tracker rows =="
+  if [ "$TRACKER" = linear ]; then TRK_ROWS="tracker_linear.$PROJECT.team"
+  else TRK_ROWS="tracker_jira.$PROJECT.write_projects tracker_jira.$PROJECT.read_projects tracker_jira.$PROJECT.comment_projects"; fi
+  for TRK_ROW in $TRK_ROWS "tracker_adapter.$PROJECT"; do
+    TRK_VAL="$PREFIX"; [ "$TRK_ROW" = "tracker_adapter.$PROJECT" ] && TRK_VAL="$TRACKER"
+    bin/jobs-client.sh setting-set "$TRK_ROW" "$TRK_VAL" "load-project --tracker $TRACKER" >/dev/null \
+      || { echo "FATAL: could not write the settings row $TRK_ROW (bin/jobs-client.sh setting-set) — no registry row, no prompt, no commit"; exit 1; }
+    echo "settings: $TRK_ROW=$TRK_VAL"
+  done
+fi
+# <<< tracker rows
 
-_obs_prompt_render || exit 1
+# A failure after the tracker rows names them: they stay until a re-run.
+_trk_left() { [ -n "$TRACKER" ] && echo "FATAL: the tracker rows above stay written (tracker_adapter.$PROJECT and its $TRACKER rows); re-run this command to finish, or delete them"; return 0; }
+
+obs_register || { _trk_left; exit 1; }
+
+_obs_prompt_render || { _trk_left; exit 1; }
 
 if [ "$FLY" = 1 ]; then
   echo "== fly onboarding queue =="

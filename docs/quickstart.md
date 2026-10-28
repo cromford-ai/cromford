@@ -71,7 +71,11 @@ hub you can reach.
 
 **6. Connect a board.** GitHub Issues is the default and needs nothing beyond
 your GitHub credential. [Connecting a board](connecting-a-board.md) covers Jira
-and Linear, and what each one supports today.
+and Linear, and what each one supports today. To use one of them, follow its
+numbered steps: [Set up Linear](connecting-a-board.md#set-up-linear) or
+[Set up Jira](connecting-a-board.md#set-up-jira). The user guide has the same
+steps: [Set up Linear](guide/03-connectors.md#set-up-linear) and
+[Set up Jira](guide/03-connectors.md#set-up-jira).
 
 **7. Onboard a repo.** Follow [Onboarding a repo](onboarding-a-repo.md).
 Expect the project in `fleet.conf`, the `ai-build` label on the repo, and a

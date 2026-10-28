@@ -44,7 +44,7 @@ eq('C2 not-stub',      controlBody({ keyFields: [], editFields: [] }, {}, 'r').e
 eq('C3 href',          controlHref('retry_policy'), '/controls/retry_policy');
 eq('C3 href-encoded',  controlHref('a b'), '/controls/a%20b');
 eq('K rule',           CONFIG_KINDS.RULE, 'concurrency_rule');
-eq('K all',            Object.values(CONFIG_KINDS).sort(), ['concurrency_rule', 'cost_cap', 'flag', 'held_page', 'merge_queue', 'phase_contract', 'project', 'project_secret', 'registry_seed', 'retry_policy', 'review_gate_threshold', 'setting', 'telegram_topic']);
+eq('K all',            Object.values(CONFIG_KINDS).sort(), ['concurrency_rule', 'connection', 'cost_cap', 'flag', 'held_page', 'merge_queue', 'phase_contract', 'project', 'project_secret', 'registry_seed', 'retry_policy', 'review_gate_threshold', 'setting', 'telegram_topic']);
 " 2>&1)
 while IFS= read -r line; do
   case "$line" in

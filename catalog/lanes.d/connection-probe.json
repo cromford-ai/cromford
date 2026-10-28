@@ -1,0 +1,64 @@
+{
+  "id": "connection-probe",
+  "name": "Connection probe (one tracker read per project, status row connection.<project>.status)",
+  "scope": "box",
+  "script": "bin/connection-probe.sh",
+  "cadence": "17 * * * *",
+  "boxes": [
+    "project-4",
+    "hub",
+    "project-6",
+    "project-6-os",
+    "project-1",
+    "project-3",
+    "project-10",
+    "project-9",
+    "small",
+    "project-2",
+    "project-5"
+  ],
+  "switch": {
+    "kind": "flag",
+    "name": "lane-off-connection-probe",
+    "aliases": []
+  },
+  "wired": true,
+  "knobs": [
+    {
+      "env": "CONNECTION_PROBE_TIMEOUT_S",
+      "type": "int",
+      "default": 60,
+      "min": 5,
+      "max": 300,
+      "unit": "seconds",
+      "zero_means": null,
+      "note": "BH-7924: the time one project's probe (context + one tracker read) may take, read as ${CONNECTION_PROBE_TIMEOUT_S:-60} by bin/connection-probe.sh. A probe past it is written as ok:false \"timed out after Ns\". A value outside 5..300 is refused: one log line, nothing probed.",
+      "settable": true
+    },
+    {
+      "env": "CONNECTION_PROBE_ERROR_MAX",
+      "type": "int",
+      "default": 300,
+      "min": 40,
+      "max": 1500,
+      "unit": "bytes",
+      "zero_means": null,
+      "note": "BH-7924: the cut of the scrubbed error text in connection.<project>.status, in bytes of its JSON encoding, read as ${CONNECTION_PROBE_ERROR_MAX:-300} by bin/connection-probe.sh. Any value in 40..1500 keeps the row under the worker's status bound (settings row connection.status_max_bytes, 2048..16384) with every var name. A value outside 40..1500 is refused: one log line, nothing probed.",
+      "settable": true
+    },
+    {
+      "env": "CONNECTION_PROBE_NOW",
+      "type": "int",
+      "default": 0,
+      "zero_means": null,
+      "note": "BH-7924 test seam: epoch seconds checkedAt is taken from, read as ${CONNECTION_PROBE_NOW:-<date +%s>}. NOT settable from the control plane.",
+      "settable": false
+    }
+  ],
+  "stats": {
+    "cost_stage": null,
+    "cost_project_filter": null,
+    "lanes_row": false,
+    "log": "logs/connection-probe.log"
+  }
+}

@@ -329,6 +329,18 @@ _trk_jira_fetch() {
   done
 }
 
+# trk_jira_myself — the connection probe's one read (BH-7924): a single GET
+# /rest/api/3/myself. It proves the gateway base, email and token are
+# accepted and prints nothing on stdout. rc 0, or _trk_jira_http's rc (1 with
+# its 401/403 stderr line, 75 rate-limited or no answer). Needs the context
+# (trk_jira_context or trk_jira_context_fields).
+trk_jira_myself() {
+  local d
+  d=$(_trk_jira_http GET /rest/api/3/myself) || return $?
+  printf '%s' "$d" | jq -e '.accountId | type == "string" and length > 0' >/dev/null 2>&1 || return 1
+  return 0
+}
+
 trk_jira_read() {
   local key="${1:-}" isf cmf rc=0
   isf=$(mktemp "${TMPDIR:-/tmp}/trk-jira.XXXXXX") || return 1

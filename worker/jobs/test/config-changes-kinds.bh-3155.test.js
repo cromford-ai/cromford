@@ -43,7 +43,8 @@ test('A0 CONFIG_KINDS gains MERGE_QUEUE and HELD_PAGE, stays frozen, every value
   assert.equal(CONFIG_KINDS.EXTRA, undefined);
   const values = Object.values(CONFIG_KINDS);
   // BH-4082 added PROJECT: eleven became twelve. BH-8317 added PROJECT_SECRET: thirteen.
-  assert.equal(values.length, 13);
+  // TEST-CHANGE (BH-7924): CONNECTION added: fourteen.
+  assert.equal(values.length, 14);
   assert.equal(new Set(values).size, values.length);
 });
 

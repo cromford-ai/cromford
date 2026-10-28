@@ -35,6 +35,9 @@ tests/component-watch.bh-6972-test.sh:generic-api-key:186
 tests/conductor-enqueue-only.bh-6495-test.sh:curl-auth-header:141
 tests/conductor-fly-fallback.bh-6817-test.sh:curl-auth-header:128
 tests/conductor-head-lag-cost.bh-6462-test.sh:generic-api-key:74
+tests/connection-probe.bh-7924-test.sh:generic-api-key:43
+tests/connection-probe.bh-7924-test.sh:generic-api-key:79
+tests/connection-probe.bh-7924-test.sh:generic-api-key:247
 tests/coord-writes-fragments.bh-6487-test.sh:generic-api-key:186
 tests/cost-row-attribution.bh-3986-test.sh:generic-api-key:54
 tests/cost-row-attribution.bh-3986-test.sh:generic-api-key:144

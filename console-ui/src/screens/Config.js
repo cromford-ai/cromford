@@ -34,7 +34,8 @@ export const CONFIG_KIND_MEANING = Object.freeze({
   merge_queue: 'merge queue order and holds',
   held_page: 'a page that is held back from sending',
   project: 'a watched project and where its board lives',
-  project_secret: 'a project build secret name in the Fly secret store (never a value)'
+  project_secret: 'a project build secret name in the Fly secret store (never a value)',
+  connection: 'a project\'s tracker rows: adapter, team or project keys, label, status map, webhook route'
 });
 
 // One read per (kind, name, limit). An answer that lands after the filter

@@ -1,0 +1,4 @@
+{
+  "about": "BH-7924: probe the tracker connection of one project now",
+  "scripts": ["connection-probe.sh"]
+}

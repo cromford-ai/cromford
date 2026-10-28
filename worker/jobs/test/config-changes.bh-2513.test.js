@@ -85,8 +85,9 @@ test('S1c: the schema.sql config_changes block carries APPEND-ONLY and NO RLS ST
 // BH-2375 (BH-2330.0) added SETTING and FLAG;
 // BH-3155 (BH-2325.0) added MERGE_QUEUE and HELD_PAGE;
 // BH-4082 added PROJECT;
-// BH-8317 added PROJECT_SECRET.
-test('K1: CONFIG_KINDS is exactly the thirteen kinds, frozen', () => {
+// BH-8317 added PROJECT_SECRET;
+// TEST-CHANGE (BH-7924): CONNECTION added (PUT /api/connections audit); no other kind changes.
+test('K1: CONFIG_KINDS is exactly the fourteen kinds, frozen', () => {
   assert.deepEqual({ ...CONFIG_KINDS }, {
     REVIEW_GATE_THRESHOLD: 'review_gate_threshold',
     RULE: 'concurrency_rule',
@@ -101,6 +102,7 @@ test('K1: CONFIG_KINDS is exactly the thirteen kinds, frozen', () => {
     HELD_PAGE: 'held_page',
     PROJECT: 'project',
     PROJECT_SECRET: 'project_secret',
+    CONNECTION: 'connection',
   });
   assert.ok(Object.isFrozen(CONFIG_KINDS));
 });

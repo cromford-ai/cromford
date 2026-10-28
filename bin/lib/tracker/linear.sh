@@ -185,6 +185,17 @@ _trk_linear_issue() {
   printf '%s' "$d" | jq -ce '.issue | select(type == "object" and (.id | type == "string" and length > 0))' 2>/dev/null || return 1
 }
 
+# trk_linear_viewer — the connection probe's one read (BH-7924): a single
+# `viewer { id }` query. It proves the key is accepted and prints nothing on
+# stdout. rc 0, or the call's rc (1 refused, 75 rate-limited or no answer);
+# the HTTP line goes to TRK_ERR. Needs TRK_LINEAR_TOKEN (trk_linear_context).
+trk_linear_viewer() {
+  local d
+  d=$(_trk_linear_gql 'query TrkViewer { viewer { id } }' '{}') || return $?
+  printf '%s' "$d" | jq -e '.viewer.id | type == "string" and length > 0' >/dev/null 2>&1 || return 1
+  return 0
+}
+
 # trk_linear_list — the team's issues with the label, at most 10 pages of 100.
 # The filter is built from parts: the team; the label (TRK_LIST_LABEL, else
 # TRK_LINEAR_LABEL, else ai-build); the open states unless TRK_LIST_STATE=all;
