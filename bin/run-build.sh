@@ -223,6 +223,15 @@ exec 7>"$HARNESS/locks/build-key-$PROJECT-$KEY.lock"
 flock -n 7 || { RESULT "BUILD_DEFERRED $KEY already building"; exit 3; }
 
 set -a; . "$HENV/global.env"; [ -f "$HENV/$PROJECT.env" ] && . "$HENV/$PROJECT.env"; set +a
+# >>> build limits (BH-8281)
+# CARGO_BUILD_JOBS and a lower CPU priority for this build and every child, so
+# sshd, cron lanes and the pool ticks keep a reserve on the box (on 2026-10-24
+# a cargo build took box-project-6-os-1 to load 92). After the env load, so a
+# CARGO_BUILD_JOBS the project env file sets wins. bin/lib/build-limits.sh.
+if . "$HARNESS/bin/lib/build-limits.sh" 2>/dev/null; then
+  bl_apply "$HARNESS" "$PROJECT" || true
+fi
+# <<< build limits
 rb_gate_claim_and_workspace
 rb_plan
 trap 'CKPT_ON_EXIT; declare -F PO_FLUSH_ON_EXIT >/dev/null && PO_FLUSH_ON_EXIT; rm -f "$HARNESS/state/claims/$PROJECT/$KEY"; _job_finish' EXIT

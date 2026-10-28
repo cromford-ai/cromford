@@ -149,7 +149,15 @@ frc_run() {
     if [ -n "$tok" ] || [ "${FRC_POOL_RUN:-0}" != 1 ]; then GH_TOKEN="$tok"; export GH_TOKEN; fi
   fi
   frc_log "row $id $p/$ck attempt $attempt: fix round starting"
-  timeout -k 60 "$tmo" "$H/bin/blocked-resolver.sh" --fix-here "${args[@]}" < "$fin" > "$out" || rc=$?
+  # The round runs in a subshell with the build limits (BH-8281: CARGO_BUILD_JOBS
+  # and a lower CPU priority), so this runner's own priority does not change.
+  # bl_apply's stdout goes nowhere: $out is parsed for FIX_* lines.
+  (
+    if . "$H/bin/lib/build-limits.sh" 2>/dev/null; then
+      bl_apply "$H" "$p" >/dev/null 2>>"$LOG" || :
+    fi
+    exec timeout -k 60 "$tmo" "$H/bin/blocked-resolver.sh" --fix-here "${args[@]}"
+  ) < "$fin" > "$out" || rc=$?
   unset GH_TOKEN
   [ "$fin" = /dev/null ] || rm -f "$fin"
   while IFS= read -r line; do

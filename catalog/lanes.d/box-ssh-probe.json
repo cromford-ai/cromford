@@ -27,12 +27,12 @@
     {
       "env": "POOL_TAILNET_WINDOW_S",
       "type": "int",
-      "default": 900,
+      "default": 1800,
       "min": 60,
       "max": 7200,
       "unit": "seconds",
       "zero_means": null,
-      "note": "BH-7710: the window bin/box-ssh-probe.sh counts state/pool-tailnet/<ip>.fails lines in (lane_fails), read as ${POOL_TAILNET_WINDOW_S:-900}. The same name and default as the fly-pool knob that bin/lib/pool-tailnet.sh ptn_note uses (BH-6693); set both rows to the same value. A value that is not a positive integer is 900.",
+      "note": "BH-7710: the window bin/box-ssh-probe.sh counts state/pool-tailnet/<ip>.fails lines in (lane_fails), read as ${POOL_TAILNET_WINDOW_S:-1800}. The same name and default as the fly-pool knob that bin/lib/pool-tailnet.sh ptn_note uses (BH-6693; 1800 since BH-8281, 3 pool ticks of 10 min); set both rows to the same value. A value that is not a positive integer is 1800.",
       "settable": true
     },
     {

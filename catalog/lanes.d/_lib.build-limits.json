@@ -1,0 +1,33 @@
+{
+  "libs": [
+    {
+      "id": "build-limits",
+      "file": "bin/lib/build-limits.sh",
+      "note": "BH-8281. The CPU caps bl_apply puts on a build session (bin/run-build.sh) and a fix round (bin/fix-round-claim.sh) on the box that runs it, so sshd, cron lanes and the pool ticks keep a reserve. Resolved through lib_env_apply build-limits <project> in a subshell, so a row lib.build-limits.<project>.<knob> sets one project tighter. Then from this file's own default in the checkout.",
+      "knobs": [
+        {
+          "env": "BUILD_CARGO_JOBS",
+          "type": "int",
+          "default": 0,
+          "min": 0,
+          "max": 64,
+          "unit": "jobs",
+          "zero_means": "auto: half the cores, at least 1",
+          "required": true,
+          "note": "CARGO_BUILD_JOBS exported for the session, unless CARGO_BUILD_JOBS is already set. Only cargo reads it. On 2026-10-24 a project-6-desktop cargo build on box-project-6-os-1 took the box to load 92 and the hub could not ssh to it for 7 hours."
+        },
+        {
+          "env": "BUILD_NICE",
+          "type": "int",
+          "default": 10,
+          "min": 0,
+          "max": 19,
+          "unit": "nice",
+          "zero_means": "off",
+          "required": true,
+          "note": "The niceness the build shell is reniced to (never lowered back). Its children inherit it, so a build only yields CPU under contention."
+        }
+      ]
+    }
+  ]
+}

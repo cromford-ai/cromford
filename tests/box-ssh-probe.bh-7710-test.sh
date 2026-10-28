@@ -11,7 +11,7 @@
 # from a map file, and a stub timeout that records its first argument. No real
 # ssh and no network: the stubs are the only ssh and curl on PATH.
 #   L1 two boxes, rc 0 and 255, no knob set: one POST, 2 rows, timeout 15
-#   L2 a .fails file: 3 epochs inside 900 s and 2 outside -> lane_fails 3
+#   L2 a .fails file: 3 epochs inside 1800 s and 2 outside -> lane_fails 3
 #   L3 a bad timeout knob: exactly 1 ALERTS line, exit 1, 0 probes, 0 POSTs
 #   L4 flags/lane-off-box-ssh-probe: exit 0, 0 probes
 #   L5 no registry: exit 0, 1 log line, 0 POSTs
@@ -118,16 +118,16 @@ grep -q 'probed 2, answered 1' "$H/logs/box-ssh-probe.log" && ok || bad "L1 log:
 
 # ---- L2 ----
 new_harness
-printf '%s\n' $((NOW - 2000)) $((NOW - 1000)) $((NOW - 800)) $((NOW - 300)) $((NOW - 60)) > "$H/state/pool-tailnet/192.0.2.12.fails"
+printf '%s\n' $((NOW - 4000)) $((NOW - 2500)) $((NOW - 800)) $((NOW - 300)) $((NOW - 60)) > "$H/state/pool-tailnet/192.0.2.12.fails"
 run_lane
 B=$(body)
 [ "$(jq -r '.rows[] | select(.box=="watcher-bravo") | .lane_fails' <<<"$B")" = 3 ] && ok || bad "L2 lane_fails: $B"
 [ "$(jq -r '.rows[] | select(.box=="watcher-bravo") | .lane_last_fail_at' <<<"$B")" = "$(iso $((NOW - 60)))" ] && ok || bad "L2 last: $B"
-[ "$(jq -r '.rows[] | select(.box=="watcher-bravo") | .lane_window_s' <<<"$B")" = 900 ] && ok || bad "L2 window: $B"
+[ "$(jq -r '.rows[] | select(.box=="watcher-bravo") | .lane_window_s' <<<"$B")" = 1800 ] && ok || bad "L2 window: $B"
 [ "$(jq -r '.rows[] | select(.box=="watcher-alpha") | "\(.lane_fails) \(.lane_last_fail_at)"' <<<"$B")" = "0 null" ] && ok || bad "L2 no file: $B"
-run_lane POOL_TAILNET_WINDOW_S=1500
+run_lane POOL_TAILNET_WINDOW_S=3000
 B=$(body)
-[ "$(jq -r '.rows[] | select(.box=="watcher-bravo") | "\(.lane_fails) \(.lane_window_s)"' <<<"$B")" = "4 1500" ] && ok || bad "L2 window knob: $B"
+[ "$(jq -r '.rows[] | select(.box=="watcher-bravo") | "\(.lane_fails) \(.lane_window_s)"' <<<"$B")" = "4 3000" ] && ok || bad "L2 window knob: $B"
 
 # ---- L3 ----
 for v in abc 0 -5; do

@@ -26,7 +26,7 @@
 #
 # Off: flags/lane-off-box-ssh-probe or bin/harness-ctl.sh off box-ssh-probe.
 # Knobs: BOX_SSH_PROBE_TIMEOUT_S (settings row lane.box-ssh-probe.*),
-# POOL_TAILNET_WINDOW_S (default 900, the same default as ptn_note).
+# POOL_TAILNET_WINDOW_S (default 1800, the same default as ptn_note; BH-8281).
 # Test seams: HARNESS, BOX_SSH_PROBE_SSH (the ssh command), BOX_SSH_PROBE_NOW
 # (epoch seconds). Never set these in cron.
 set -uo pipefail
@@ -58,7 +58,7 @@ case "$TO" in
       >/dev/null 2>&1 9>&-
     exit 1 ;;
 esac
-WIN="${POOL_TAILNET_WINDOW_S:-900}"; case "$WIN" in ''|*[!0-9]*|0) WIN=900 ;; esac
+WIN="${POOL_TAILNET_WINDOW_S:-1800}"; case "$WIN" in ''|*[!0-9]*|0) WIN=1800 ;; esac
 [ "$WIN" -le 86400 ] || WIN=86400
 NOW="${BOX_SSH_PROBE_NOW:-$(date -u +%s)}"
 read -ra SSH_CMD <<< "${BOX_SSH_PROBE_SSH:-ssh -n -o BatchMode=yes -o ConnectTimeout=8 -o StrictHostKeyChecking=accept-new}"

@@ -11,8 +11,10 @@
 #   `ssh env extract from <box> failed` counts nothing. Otherwise one epoch line
 #   goes to state/pool-tailnet/<box>.fails (lines older than the window are
 #   dropped). At POOL_TAILNET_FAILS failures (3) inside POOL_TAILNET_WINDOW_S
-#   (900) it writes ONE alert line through bin/alert-line.sh, which names the
-#   box and says "tailnet unreachable", and marks the episode
+#   (1800; BH-8281: the pool ticks every 10 min, so 3 failed ticks in a row
+#   span 1200 s and a 900 s window never alerted on one queued row) it writes ONE alert line through bin/alert-line.sh, which names the
+#   box and says "tailnet unreachable or box overloaded" (BH-8281: on
+#   2026-10-24 the tailnet was up and the box was at load 92), and marks the episode
 #   (<box>.alerted). The episode ends when a failure arrives after a quiet
 #   window (no failure for longer than POOL_TAILNET_WINDOW_S): the marker goes,
 #   and the next streak alerts again. rc 0 always; a state dir it cannot write
@@ -28,7 +30,7 @@ ptn_note() {
   mkdir -p "$dir" 2>/dev/null || return 0
   f="$dir/$box.fails"
   now=$(date -u +%s)
-  win="${POOL_TAILNET_WINDOW_S:-900}"; case "$win" in ''|*[!0-9]*) win=900 ;; esac
+  win="${POOL_TAILNET_WINDOW_S:-1800}"; case "$win" in ''|*[!0-9]*) win=1800 ;; esac
   min="${POOL_TAILNET_FAILS:-3}"; case "$min" in ''|*[!0-9]*|0) min=3 ;; esac
   # A quiet window since the newest recorded failure ends the episode.
   last=$(tail -n 1 "$f" 2>/dev/null)
@@ -41,7 +43,7 @@ ptn_note() {
   [ -e "$dir/$box.alerted" ] && return 0
   : > "$dir/$box.alerted" 2>/dev/null || return 0
   HARNESS="$root" "$root/bin/alert-line.sh" \
-    "[pool/$p] box $box: tailnet unreachable — ssh env extract failed $ok_n times in $((win / 60)) min, so no build can start on it. Check tailscaled on the box (bin/tailscaled-watchdog.sh restarts it every 2 min); the hub reaches it again when ssh root@$box works." \
+    "[pool/$p] box $box: tailnet unreachable or box overloaded — ssh env extract failed $ok_n times in $((win / 60)) min, so no build can start on it. Check tailscaled on the box (bin/tailscaled-watchdog.sh restarts it every 2 min), then the load on the box (uptime, ps); a cargo build can starve sshd (BH-8281). The hub reaches it again when ssh root@$box works." \
     >/dev/null 2>&1 || true
   return 0
 }

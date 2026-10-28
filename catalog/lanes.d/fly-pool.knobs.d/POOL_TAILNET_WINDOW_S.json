@@ -1,12 +1,12 @@
 {
   "env": "POOL_TAILNET_WINDOW_S",
   "type": "int",
-  "default": 900,
+  "default": 1800,
   "min": 60,
   "max": 7200,
   "unit": "seconds",
   "zero_means": null,
   "required": false,
-  "note": "BH-6693: bin/lib/pool-tailnet.sh writes one ALERTS line naming a box as 'tailnet unreachable' when the pool's env bundle fails 'ssh env extract from <box>' POOL_TAILNET_FAILS times inside POOL_TAILNET_WINDOW_S. One line per episode; a quiet window ends the episode.",
+  "note": "BH-6693: bin/lib/pool-tailnet.sh writes one ALERTS line naming a box as 'tailnet unreachable' when the pool's env bundle fails 'ssh env extract from <box>' POOL_TAILNET_FAILS times inside POOL_TAILNET_WINDOW_S. One line per episode; a quiet window ends the episode. BH-8281: the default is 1800 s so 3 failed pool ticks in a row alert; the fly-pool tick runs every 10 min (cron/lanes/240-fly-pool-tick.cron), so 3 ticks with one queued row land at 0, 600 and 1200 s, which a 900 s window never holds. Keep the box-ssh-probe row the same.",
   "read_in": "bin/lib/pool-tailnet.sh"
 }
