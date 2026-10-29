@@ -93,7 +93,9 @@ test('U6 mergeTableLists keeps base arrays when nothing is added', () => {
   assert.equal(same.b, base.b);
   const more = mergeTableLists(base, { b: ['B2'], c: ['C1'] });
   assert.equal(more.a, base.a);
-  assert.deepEqual(more, { a: ['A1'], b: ['B1', 'B2'], c: ['C1'] });
+  assert.deepEqual(Object.keys(more).sort(), ['a', 'b', 'c']);
+  assert.deepEqual(more.b, ['B1', 'B2']);
+  assert.deepEqual(more.c, ['C1']);
   assert.deepEqual(base.b, ['B1'], 'base is not mutated');
   assert.throws(() => mergeTableLists(base, { a: ['A1'] }), /A1|twice/);
 });

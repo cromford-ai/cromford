@@ -221,8 +221,8 @@ else ok "C4 the module has no console and no stdout/stderr write"; fi
 
 # --- E: the knob registry ----------------------------------------------------
 REG=$(HARNESS_TEST_SANDBOX=1 "$DIR/bin/lanes-build.sh" 2> "$T/lb.err"); LRC=$?
-KN=$(jq -c '.libs[] | select(.id=="web-otp") | {file, k: (.knobs[] | select(.env=="WEB_TASK_OTP_ATTEMPTS") | {type, default, min, max})}' <<<"$REG" 2>/dev/null)
-[ "$LRC" = 0 ] && [ "$KN" = '{"file":"bin/lib/web-otp-action.mjs","k":{"type":"int","default":2,"min":1,"max":5}}' ] \
+KN=$(jq -c '.libs[] | select(.id=="web-otp") | .file as $f | .knobs[] | select(.env=="WEB_TASK_OTP_ATTEMPTS") | [$f, .type, .default, .min, .max]' <<<"$REG" 2>/dev/null)
+[ "$LRC" = 0 ] && [ "$KN" = '["bin/lib/web-otp-action.mjs","int",2,1,5]' ] \
   && ok "E1 the composed registry has lib web-otp, knob WEB_TASK_OTP_ATTEMPTS int 2 in 1..5" || bad "E1 rc=$LRC knob='$KN' err='$(head -c 300 "$T/lb.err")'"
 FB=$(env -u WEB_TASK_OTP_ATTEMPTS node --input-type=module -e "
   const m = await import(process.argv[1]); const r = m.createTypeOtp({ project: 'p', site: 's', now: () => 59, sleep: async () => {}, codeFor: () => '287082', stepFor: () => 30 });

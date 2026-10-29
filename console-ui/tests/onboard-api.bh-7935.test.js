@@ -65,9 +65,16 @@ test('(A2) onboardRun and onboardRepoCreate send Idempotency-Key and a JSON body
   await api.onboardRepoCreate({ owner: 'example-org', name: 'x', template: 'nextjs' }, 'k-create-1');
   assert.equal(headerOf(calls[0], 'Idempotency-Key'), 'k-run-1');
   assert.equal(headerOf(calls[0], 'content-type'), 'application/json');
-  assert.deepEqual(JSON.parse(calls[0].body), { slug: 'example-org/project-11', template: null });
+  const b0 = JSON.parse(calls[0].body);
+  assert.deepEqual(Object.keys(b0).sort(), ['slug', 'template']);
+  assert.equal(b0.slug, 'example-org/project-11');
+  assert.equal(b0.template, null);
   assert.equal(headerOf(calls[1], 'Idempotency-Key'), 'k-create-1');
-  assert.deepEqual(JSON.parse(calls[1].body), { owner: 'example-org', name: 'x', template: 'nextjs' });
+  const b1 = JSON.parse(calls[1].body);
+  assert.deepEqual(Object.keys(b1).sort(), ['name', 'owner', 'template']);
+  assert.equal(b1.owner, 'example-org');
+  assert.equal(b1.name, 'x');
+  assert.equal(b1.template, 'nextjs');
 });
 
 test('(A3) the four GET wrappers send no Idempotency-Key and no body', async (t) => {

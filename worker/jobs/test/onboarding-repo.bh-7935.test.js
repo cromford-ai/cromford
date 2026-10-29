@@ -1,3 +1,4 @@
+// contract-test: M/W/L/X cases pin the /api/onboarding/repo(s) answers whole (the console reads that shape); other cases assert fields
 import test, { mock } from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';

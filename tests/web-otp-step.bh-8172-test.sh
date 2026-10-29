@@ -272,8 +272,8 @@ else ok "L1 the module has no console and no stdout/stderr write"; fi
 
 # --- K4: the composed registry row matches the module ------------------------
 REG=$(HARNESS_TEST_SANDBOX=1 "$DIR/bin/lanes-build.sh" 2> "$T/lb.err"); LRC=$?
-KN=$(jq -c '.libs[] | select(.id=="web-otp-step") | {file, k: (.knobs[] | select(.env=="WEB_TASK_OTP_STEP_TIMEOUT_S") | {type, default, min, max, unit})}' <<<"$REG" 2>/dev/null)
-[ "$LRC" = 0 ] && [ "$KN" = '{"file":"bin/lib/web-otp-step.mjs","k":{"type":"int","default":20,"min":5,"max":120,"unit":"seconds"}}' ] \
+KN=$(jq -c '.libs[] | select(.id=="web-otp-step") | .file as $f | .knobs[] | select(.env=="WEB_TASK_OTP_STEP_TIMEOUT_S") | [$f, .type, .default, .min, .max, .unit]' <<<"$REG" 2>/dev/null)
+[ "$LRC" = 0 ] && [ "$KN" = '["bin/lib/web-otp-step.mjs","int",20,5,120,"seconds"]' ] \
   && ok "K4 the composed registry has lib web-otp-step, knob WEB_TASK_OTP_STEP_TIMEOUT_S int 20 in 5..120" \
   || bad "K4 rc=$LRC knob='$KN' err='$(head -c 300 "$T/lb.err")'"
 BOUNDS=$(env -u WEB_TASK_OTP_STEP_TIMEOUT_S node --input-type=module -e "

@@ -573,7 +573,10 @@ test('B15 a non-log redirect keeps the token on the same origin; a cross-origin 
   const moved = gh.requests.find((q) => q.path === '/repos/new/name/pulls/1');
   assert.equal(moved.authorization, `Bearer ${GH_TOKEN}`, 'a renamed private repo is still read with the token');
   const x = await githubFetch(cfg, '/repos/old/name/pulls/2');
-  assert.deepEqual(x, { ok: false, status: 301, error: 'github_http_301' });
+  assert.equal(x.ok, false);
+  assert.equal(x.status, 301);
+  assert.equal(x.error, 'github_http_301');
+  assert.deepEqual(Object.keys(x).sort(), ['error', 'ok', 'status']);
   assert.ok(!fetched.some((u) => u.includes('elsewhere.invalid')), 'the token never goes to another origin');
 });
 

@@ -103,10 +103,15 @@ test('K1 the table, its 3 indexes and its 5 seed rows exist', async (t) => {
   assert.match(idx.idx_web_task_human_run || '', /\(run_id, status\)/);
   assert.match(idx.idx_web_task_human_created || '', /\(created_at\)/);
   const seeds = Object.fromEntries(s.db.prepare("SELECT key, value FROM settings WHERE key LIKE 'web_task.human_%' OR key = 'retention.web_task_human_step.days'").all().map((r) => [r.key, r.value]));
-  assert.deepEqual(seeds, {
-    'web_task.human_wait_s': '300', 'web_task.human_poll_s': '5', 'web_task.human_answer_ttl_s': '86400',
-    'web_task.human_logins': 'operator', 'retention.web_task_human_step.days': '30',
-  });
+  assert.deepEqual(Object.keys(seeds).sort(), [
+    'retention.web_task_human_step.days', 'web_task.human_answer_ttl_s', 'web_task.human_logins',
+    'web_task.human_poll_s', 'web_task.human_wait_s',
+  ]);
+  assert.equal(seeds['web_task.human_wait_s'], '300');
+  assert.equal(seeds['web_task.human_poll_s'], '5');
+  assert.equal(seeds['web_task.human_answer_ttl_s'], '86400');
+  assert.equal(seeds['web_task.human_logins'], 'operator');
+  assert.equal(seeds['retention.web_task_human_step.days'], '30');
   const cols = s.db.prepare('PRAGMA table_info(web_task_human_step)').all().map((c) => c.name);
   assert.ok(cols.includes('nonce_hash') && cols.includes('code_ct') && cols.includes('code_iv'));
   assert.equal(cols.some((c) => /^(nonce|code)$/.test(c)), false, 'no plain nonce or code column');

@@ -1,4 +1,5 @@
 #!/bin/bash
+# contract-test: R4 pins the list-sync POST body byte for byte against the worker suite fixture (the reader parses it); every other case asserts fields
 # tests/pr-record-list.bh-8452-test.sh — BH-8452 (C0): the PR record list.
 # bin/lib/pr-record.sh pr_record_list / pr_record_list_sync, and the record
 # tier of bin/orphan-reconcile.sh in front of its BH-8271 file copy.

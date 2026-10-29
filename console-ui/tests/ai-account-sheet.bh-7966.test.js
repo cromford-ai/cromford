@@ -1,3 +1,4 @@
+// contract-test: the ai-accounts POST body is pinned whole (its key set proves no token field leaves the browser); other cases assert fields
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { render } from 'preact-render-to-string';
