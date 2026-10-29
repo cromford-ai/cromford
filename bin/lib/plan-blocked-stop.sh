@@ -78,7 +78,9 @@ _pbs_base() {
 # (compare status ahead|identical), 1 it is not (other status, or 404), 75 the
 # compare could not be read.
 _pbs_ancestor() {
-  local st rc=0 GH_REST_TIMEOUT_S="${GH_REST_TIMEOUT_S:-${POOL_GH_READ_TIMEOUT_S:-20}}"
+  # GH_REST_TIMEOUT_S only: POOL_GH_READ_TIMEOUT_S is a fly-pool lane-only knob and this
+  # lib runs on the box lanes too (lane-scoped-knob-lint, BH-7436).
+  local st rc=0 GH_REST_TIMEOUT_S="${GH_REST_TIMEOUT_S:-20}"
   command -v _gh_rest_field >/dev/null 2>&1 || return 75
   st=$(_gh_rest_field "repos/$1/compare/$2...$3" '.status') || rc=$?
   case "$rc" in 0) ;; 44) return 1 ;; *) return 75 ;; esac
