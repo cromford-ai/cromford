@@ -1,0 +1,12 @@
+{
+  "env": "SELECTION_GATE_WHY_MAX",
+  "type": "int",
+  "default": 160,
+  "min": 40,
+  "max": 1000,
+  "unit": "characters",
+  "zero_means": null,
+  "required": false,
+  "note": "BH-8725. The cap on the runner's reason in gate.txt's why (`runner-rc-125: <remote-gate line>`). bin/lib/selection-gate.sh reads it and passes it to bin/selection-gate.sh in the env; the why also goes into the SELECTION-GATE log line and the could-not-run alert.",
+  "read_in": "bin/lib/selection-gate.sh"
+}

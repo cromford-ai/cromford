@@ -43,6 +43,8 @@
 #   TESTHOST_ORG    the org that issues the cert       board-builders
 #   TESTHOST_TARGET one machine's 6PN address, when    (unset: Fly picks)
 #                   the app has several and a port should pin one
+#   TESTHOST_MACHINE fly-ssh: the machine id every     (unset: one hostname
+#                   call goes to                       probe picks it)
 #   REMOTE_GATE_BASE the branch CI diffs against       main (BH-1527)
 #   REMOTE_GATE_TRANSPORT openssh (proxy + cert) or     openssh
 #                   fly-ssh (a pool route, BH-8335)
@@ -156,6 +158,7 @@ Exit 130/143 = interrupted by INT/TERM.
 
   TESTHOST_APP  TESTHOST_PORT  TESTHOST_KEY  TESTHOST_ORG   where the host is
   TESTHOST_TARGET   one machine's 6PN address (unset: Fly picks one)
+  TESTHOST_MACHINE  fly-ssh: the machine id every call goes to (unset: one hostname probe picks it)
   REMOTE_GATE_BASE  the base branch; origin/<it> goes up with the tree (main)
   REMOTE_GATE_P  REMOTE_GATE_TAIL  REMOTE_GATE_FULL         how it runs
 USAGE
@@ -672,7 +675,7 @@ _rg_fly_bash() {
   [ -n "$RG_FLY_MARK" ] || RG_FLY_MARK="@@remote-gate-rc-$$-$(date +%s)@@"
   rcf=$(mktemp "${TMPDIR:-/tmp}/remote-gate-rc.XXXXXX") || return 255
   { printf '(\n'; cat "$f"; printf '\n)\nrg_rc=$?; printf "\\n%%s %%s\\n" %s "$rg_rc"\n' "$RG_FLY_MARK"; } \
-    | env -u FLY_ACCESS_TOKEN flyctl ssh console -a "$TESTHOST_APP" -q -C "bash -s" \
+    | env -u FLY_ACCESS_TOKEN flyctl ssh console -a "$TESTHOST_APP" --machine "$RG_FLY_MACHINE" -q -C "bash -s" \
     | awk -v m="$RG_FLY_MARK" -v rcf="$rcf" '
         $1 == m && NF == 2 { if (held && h != "") print h; held = 0; print $2 > rcf; close(rcf); next }
         { if (held) { print h; fflush() } h = $0; held = 1 }
@@ -680,6 +683,44 @@ _rg_fly_bash() {
   rc=$(cat "$rcf" 2>/dev/null); rm -f "$rcf"
   case "$rc" in ''|*[!0-9]*) return 255 ;; esac
   return "$rc"
+}
+
+# _rg_fly_pin — ONE test-host machine for every fly-ssh call of this run
+# (BH-8725). Unpinned, `flyctl ssh console -a <app>` prints `No machine
+# specified, using <id> in region <r>` on STDOUT: rsync reads that line as
+# protocol bytes ("is your shell clean?"), and each call can land on another
+# machine of the app, so the run dir, the upload and the job split. The id is
+# TESTHOST_MACHINE, else the last stdout line of one `-C hostname` probe that
+# is a machine id (on a Fly machine the hostname is its id). No id: exit 125
+# before anything is sent. Exports RG_FLY_MACHINE for the rsync wrapper.
+RG_FLY_MACHINE=""
+_rg_fly_pin() {
+  local out rc=0 id ef last=""
+  if [ -n "${TESTHOST_MACHINE:-}" ]; then
+    [[ "$TESTHOST_MACHINE" =~ ^[0-9a-f]{8,32}$ ]] || die2 "TESTHOST_MACHINE '$TESTHOST_MACHINE' is not a Fly machine id"
+    id=$TESTHOST_MACHINE
+  else
+    ef=$(mktemp "${TMPDIR:-/tmp}/remote-gate-pin.XXXXXX") || ef=/dev/null
+    out=$(env -u FLY_ACCESS_TOKEN flyctl ssh console -a "$TESTHOST_APP" -q -C hostname 2>"$ef" </dev/null) || rc=$?
+    id=$(printf '%s\n' "$out" | tr -d '\r' | grep -E '^[0-9a-f]{8,32}$' | tail -n 1)
+    # flyctl's own reason (a Forbidden token, a stopped app), never a token line.
+    [ -n "$id" ] || last=$(grep -v '^[[:space:]]*$' "$ef" 2>/dev/null | grep -v 'FlyV1\|fm2_' | tail -n 1 | tr -d '\000-\037\177' | cut -c1-200)
+    [ "$ef" = /dev/null ] || rm -f "$ef"
+    [ -n "$id" ] || die_infra "could not pick one test-host machine over flyctl ssh console -a $TESTHOST_APP (the hostname probe printed no machine id, rc $rc${last:+: $last}) — nothing was sent to the host"
+  fi
+  RG_FLY_MACHINE=$id; export RG_FLY_MACHINE
+  echo "remote-gate: fly-ssh: every call goes to test-host machine $id" >&2
+}
+
+# _rg_rsync_up <what> <rsync args…> — one upload, stdout dropped. A failure is
+# exit 125 with rsync's rc and the last line it printed on stderr.
+_rg_rsync_up() {
+  local what=$1 ef rc=0 last=""; shift
+  ef=$(mktemp "${TMPDIR:-/tmp}/remote-gate-rsync.XXXXXX") || ef=/dev/null
+  rsync "$@" >/dev/null 2>"$ef" || rc=$?
+  [ "$rc" = 0 ] || last=$(grep -v '^[[:space:]]*$' "$ef" 2>/dev/null | grep -v -e FlyV1 -e fm2_ | tail -n 1 | tr -d '\000-\037\177' | cut -c1-200)
+  [ "$ef" = /dev/null ] || rm -f "$ef"
+  [ "$rc" = 0 ] || die_infra "the $what to the test host failed (rsync rc $rc${last:+: $last}) — nothing ran"
 }
 
 # ── the git context (BH-1527) ───────────────────────────────────────────────
@@ -920,6 +961,40 @@ rg_host_resources() {
 rg_df() { # rg_df <path> — prints "<free MB> <mount point>", nothing when df cannot say
   df -Pk "$1" 2>/dev/null | awk 'NR == 2 && $4 ~ /^[0-9]+$/ { print int($4 / 1024), $6; exit }'
 }
+# rg_compose_catalogs — THE CATALOGS CI COMPOSES BEFORE THE SUITES (BH-8725).
+# They are git-ignored renders, so the upload never carries them, and every
+# suite that loads the worker in node died on the host with
+# ERR_MODULE_NOT_FOUND catalog/lanes.json while CI ran it green. RG_COMPOSE is
+# the bin/*-build.sh lines of harness-ci.yml's tests/ job step "render the lane
+# registry and the llm-sites catalog the worker imports", in that order;
+# tests/selection-gate-host-run.bh-8725-test.sh H4 pins the two lists equal.
+# It runs ONCE in $R/base, before the per-suite copies. A script the tree does
+# not carry is skipped (another repo, an old branch). A failure is ONE line,
+# `remote-gate: compose-<name> failed (rc <n>): <last line of its log>`, then
+# exit 125 with nothing run: bin/selection-gate.sh reads that line as
+# could-not-run why=compose-<name>, never as a red suite.
+RG_COMPOSE='bin/lanes-build.sh --write
+bin/llm-sites-build.sh --compose
+bin/context-budgets-build.sh --compose'
+rg_compose_catalogs() {
+  local line s a n rc last ran=""
+  while IFS= read -r line; do
+    s=${line%% *}; a=${line#* }; n=${s##*/}; n=${n%.sh}
+    [ -f "$R/base/$s" ] || continue
+    rc=0
+    # shellcheck disable=SC2086 # $a is the step's own argument list
+    ( cd "$R/base" && HARNESS_TEST_SANDBOX=1 bash "$s" $a ) > "$R/compose-$n.log" 2>&1 || rc=$?
+    if [ "$rc" != 0 ]; then
+      last=$(tr -d '\000-\011\013-\037\177' < "$R/compose-$n.log" | grep -v 'FlyV1\|fm2_' | grep -v '^[[:space:]]*$' | tail -n 1)
+      echo "remote-gate: compose-$n failed (rc $rc): $last" >&2
+      rg_host_resources >&2
+      cd /; rm -rf "$R"; exit 125
+    fi
+    ran="$ran${ran:+ }$n"
+  done <<<"$RG_COMPOSE"
+  [ -z "$ran" ] || echo "remote-gate: composed the catalogs CI composes before the suites ($ran)"
+  return 0
+}
 EOS
 }
 
@@ -1152,6 +1227,8 @@ _rg_compose_suites_job() { # _rg_compose_suites_job <file> <runroot> <suite...>
     cat <<EOS
 rg_n=\$(grep -c . "\$R/suites")
 if [ "\$rg_n" -lt $RG_P ]; then rg_room "\$rg_n" 1; else rg_room $RG_P 1; fi
+# Once, before any copy, so every suite copy carries the catalogs (BH-8725).
+rg_compose_catalogs
 # In the background and waited for, so a HUP/TERM reaches rg_abort at once
 # (a foreground pipeline would hold the trap until the slowest suite returned).
 (
@@ -1264,7 +1341,7 @@ _rg_wake
 SSH_OPTS="-i $TESTHOST_KEY -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR -p $TESTHOST_PORT"
 # rsync's remote shell. fly-ssh: the wrapper, which reads TESTHOST_APP.
 RG_RSH="ssh $SSH_OPTS"
-if [ "$RG_TRANSPORT" = fly-ssh ]; then RG_RSH="$SELF_DIR/lib/remote-gate-fly-rsh.sh"; export TESTHOST_APP; fi
+if [ "$RG_TRANSPORT" = fly-ssh ]; then RG_RSH="$SELF_DIR/lib/remote-gate-fly-rsh.sh"; export TESTHOST_APP; _rg_fly_pin; fi
 # _rg_remote_bash <script file> — the script on the host under `bash -s`.
 _rg_remote_bash() {
   if [ "$RG_TRANSPORT" = fly-ssh ]; then _rg_fly_bash "$1"; return; fi
@@ -1333,14 +1410,12 @@ if [ -n "$RG_CTX" ]; then
   RG_UPLOAD_FROM=(--from0 --files-from="$RG_CTX/upload.list")
 fi
 # shellcheck disable=SC2086
-rsync -rlptD --delete -e "$RG_RSH" ${RG_UPLOAD_FROM[@]+"${RG_UPLOAD_FROM[@]}"} \
+_rg_rsync_up upload -rlptD --delete -e "$RG_RSH" ${RG_UPLOAD_FROM[@]+"${RG_UPLOAD_FROM[@]}"} \
   --exclude .git --exclude node_modules --exclude .claude --exclude .codegraph \
-  "$DIR/" "root@localhost:$RUN_ROOT/base/" >/dev/null 2>&1 \
-  || die_infra "the upload to the test host failed (rsync) — nothing ran"
+  "$DIR/" "root@localhost:$RUN_ROOT/base/"
 if [ -n "$RG_CTX" ]; then
   # shellcheck disable=SC2086
-  rsync -rlptD --delete -e "$RG_RSH" "$RG_CTX/ctx.git/" "root@localhost:$RUN_ROOT/ctx.git/" >/dev/null 2>&1 \
-    || die_infra "the upload of the git context to the test host failed (rsync) — nothing ran"
+  _rg_rsync_up "upload of the git context" -rlptD --delete -e "$RG_RSH" "$RG_CTX/ctx.git/" "root@localhost:$RUN_ROOT/ctx.git/"
 fi
 
 JOB=$(mktemp "${TMPDIR:-/tmp}/remote-gate-job.XXXXXX") || die_infra "cannot create a temp file in ${TMPDIR:-/tmp}"

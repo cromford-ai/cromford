@@ -1,0 +1,5 @@
+# catalog/selection-gate-host-notes.d/bh-8725.tsv — suites the pre-PR selection gate notes, not reds, on the test host (BH-8725).
+# <suite path>TAB<class>TAB<ERE every failure line must match>TAB<reason>. Classes: shallow-context, host-timing. Read by bin/selection-gate.sh step 5.
+# The merge-queue batch still runs and gates these suites; this list changes only the gate's gate.txt.
+tests/fly-pool-split.bh-7542-test.sh	shallow-context	C3 0100-head\.sh is not a byte prefix of bin/fly-pool\.sh at commit [0-9a-f]+	the host gets a shallow git context; git log names the graft root, not the commit that last wrote 0100-head.sh (CI checks out with fetch-depth 0)
+tests/issue-testhost-cert.bh-5210-test.sh	host-timing	W1i?x (with SIGPIPE ignored )?the spew ran [0-9]+s, to the timeout	a 6 s wall-clock bound on a shared, loaded test host; CI runs it on its own runner

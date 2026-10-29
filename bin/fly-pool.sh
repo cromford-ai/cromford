@@ -3843,6 +3843,8 @@ for MF in "$POOL"/*.json; do
       # suite re-run the re-reviewer is told outranks every claim goes to
       # harness-suite-fix.txt. Without these two, a pool build's fanned-back
       # verdicts would arrive on the hub with their reasoning left on the machine.
+      # gate.txt and gate-run.tail.txt are the pre-PR selection gate's record: on
+      # the hub they are the only place a pool build's could-not-run says why.
       # This list is pinned equal to POOL_RECORD_FILES (bin/lib/pool-record.sh,
       # BH-7429) by tests/pool-record-lib.bh-7429-test.sh: the machine's build
       # record carries the same names, and tests grep this file for them.
@@ -3851,7 +3853,7 @@ for MF in "$POOL"/*.json; do
                qa.md e2e.md evidence.md changed-files.txt \
                reviewed-sha headbound-outcome headbound-review.md headbound-review-run.txt harness-suite-head.txt \
                pipeline.log cost.csv validate.txt red.txt green.txt mutation-check.txt context.json gh-stderr.log \
-               execute-transcript.md stop-reason.txt ticket-meta.json; do
+               execute-transcript.md stop-reason.txt ticket-meta.json gate.txt gate-run.tail.txt; do
         T=$(mktemp); if mexec "$MID" "base64 -w0 $RB/$A 2>/dev/null" > "$T" && [ -s "$T" ]; then base64 -d "$T" > "$LOCAL/$A" 2>/dev/null; fi; rm -f "$T"
       done
       # The machine's bill, under the machine's own box id. Before the RESULT is

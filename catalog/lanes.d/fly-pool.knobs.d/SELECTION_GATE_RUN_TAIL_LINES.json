@@ -1,0 +1,12 @@
+{
+  "env": "SELECTION_GATE_RUN_TAIL_LINES",
+  "type": "int",
+  "default": 40,
+  "min": 1,
+  "max": 2000,
+  "unit": "lines",
+  "zero_means": null,
+  "required": false,
+  "note": "BH-8725. How many lines from the end of the selection gate's run.txt go into $BUILD/gate-run.tail.txt (token lines dropped). The pool record carries that file and gate.txt to the hub's builds/pool-<project>-<KEY>-<ts>/, so a could-not-run gate is readable there.",
+  "read_in": "bin/lib/selection-gate.sh"
+}

@@ -10,7 +10,8 @@
 #   B   one FAIL line, rc 1: red names it, exit 1
 #   C   three FAIL lines, rc 3, a PASS line beside them: three names, no PASS
 #   D   rc 1 with no FAIL line: could-not-run why=red-without-names
-#   E   125: could-not-run, no red names, exit 3
+#   E   125: could-not-run, no red names, exit 3; why carries the runner's
+#       remote-gate: line (BH-8725)
 #   F   a runner past --timeout 2: could-not-run why=timeout
 #   G   rc 2 with no FAIL line (remote-gate's bad arguments): could-not-run
 #   H   a RUNNER-FAILURE line: could-not-run, not red
@@ -111,7 +112,7 @@ run d STUB_N=5 STUB_RC=1 CI_QUARANTINE=- STUB_RUN_OUT='something broke'
 
 # ── E: 125, the run could not happen ─────────────────────────────────────────
 run e STUB_N=5 STUB_RC=125 CI_QUARANTINE=- STUB_RUN_OUT='remote-gate: no flyctl'
-[ "$RC" = 3 ] && [ "$(gv e rc)" = could-not-run ] && [ "$(gv e red)" = - ] && [ "$(gv e why)" = runner-rc-125 ] && ok || bad "E 125: could-not-run, no red (exit $RC; $(cat "$T/e/out/gate.txt" 2>/dev/null))"
+[ "$RC" = 3 ] && [ "$(gv e rc)" = could-not-run ] && [ "$(gv e red)" = - ] && [ "$(gv e why)" = "runner-rc-125: remote-gate: no flyctl" ] && ok || bad "E 125: could-not-run, no red, the runner's reason in why (exit $RC; $(cat "$T/e/out/gate.txt" 2>/dev/null))"
 
 # ── F: the timeout ───────────────────────────────────────────────────────────
 SG_ARGS="--timeout 2" run f STUB_N=5 STUB_SLEEP=6 CI_QUARANTINE=-
@@ -166,7 +167,8 @@ bash "$SG" --tree "$R" --base main --out "$T/q" --timeout x >/dev/null 2>&1; [ "
 
 # ── R: one whole write ───────────────────────────────────────────────────────
 [ -z "$(find "$T" -name 'gate.txt.tmp.*' 2>/dev/null)" ] && ok || bad "R no gate.txt tmp file left"
-[ "$(grep -c '' "$T/b/out/gate.txt")" = 9 ] && ok || bad "R gate.txt has its nine lines ($(cat "$T/b/out/gate.txt"))"
+# Ten lines since BH-8725 added `host-noted:` as the last one.
+[ "$(grep -c '' "$T/b/out/gate.txt")" = 10 ] && [ "$(tail -n 1 "$T/b/out/gate.txt")" = 'host-noted: -' ] && ok || bad "R gate.txt has its ten lines, host-noted: last ($(cat "$T/b/out/gate.txt"))"
 
 echo "selection-gate.bh-8062: $PASS passed, $FAIL failed"
 [ "$FAIL" = 0 ]

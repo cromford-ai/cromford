@@ -17,7 +17,8 @@
 #   G1 POOL_MODE=1, no flyctl, no route: exit 125 and ONE `pool test-host route
 #      incomplete:` line with flyctl=MISSING and the route path.
 #   F1 round trip: the REAL ptr_build writes the route; the gate reads it and
-#      every remote call is `flyctl ssh console -a <app> -q -C …` with the
+#      every remote call is `flyctl ssh console -a <app> --machine <id> -q -C …`
+#      (one `-C hostname` probe picks <id>, BH-8725) with the
 #      minted token in FLY_API_TOKEN and FLY_ACCESS_TOKEN unset. No `proxy`,
 #      no `ssh issue`, no OpenSSH call. rsync goes through the wrapper, which
 #      runs `rsync --server …` over `ssh console`.
@@ -71,6 +72,9 @@ case "$1 ${2:-}" in
     echo "console API=${FLY_API_TOKEN:-} ACCESS=${FLY_ACCESS_TOKEN:-}" >> "$FIX/console-env"
     cmd=""; while [ $# -gt 0 ]; do [ "$1" = -C ] && { cmd=$2; break; }; shift; done
     case "$cmd" in
+      # The machine pin's probe (BH-8725): the real unpinned answer, the
+      # `No machine specified` line first, then the hostname (the machine id).
+      hostname) echo "No machine specified, using 0f1c7e5000aa01 in region sjc"; echo 0f1c7e5000aa01; exit 0 ;;
       "bash -s")
         n=$(ls "$FIX" | grep -c '^console-in\.'); in="$FIX/console-in.$n"; cat > "$in"
         [ "${FAKE_NOMARK:-0}" = 1 ] && exit 0
@@ -144,9 +148,11 @@ grep -q '^tokens create ssh -a fixture -x [0-9]*h ' "$FIX/fly-calls" && ok || ba
 gate "$FB" POOL_MODE=1 HARNESS_ENV_DIR="$E4" FLY_ACCESS_TOKEN=tok-fixture-other -- "$SRC" -- true
 [ "$GRC" = 0 ] && ok || bad "F1: exit $GRC on the route ptr_build wrote: $GERR"
 [ "$(nmiss)" = 0 ] && ok || bad "F1: the miss line printed on a complete route: $GERR"
-[ "$(grep -c '^ssh console -a fixture -q -C bash -s$' "$FIX/fly-calls")" = 3 ] && ok \
-  || bad "F1: want 3 'ssh console -a fixture -q -C bash -s' calls (prep, mkdir, job): $(cat "$FIX/fly-calls")"
-grep -q '^ssh console -a fixture -q -C rsync --server ' "$FIX/fly-calls" && ok || bad "F1: rsync did not go over ssh console: $(cat "$FIX/fly-calls")"
+[ "$(grep -c '^ssh console -a fixture -q -C hostname$' "$FIX/fly-calls")" = 1 ] && ok \
+  || bad "F1: want one 'ssh console -a fixture -q -C hostname' machine pin probe: $(cat "$FIX/fly-calls")"
+[ "$(grep -c '^ssh console -a fixture --machine 0f1c7e5000aa01 -q -C bash -s$' "$FIX/fly-calls")" = 3 ] && ok \
+  || bad "F1: want 3 'ssh console -a fixture --machine 0f1c7e5000aa01 -q -C bash -s' calls (prep, mkdir, job): $(cat "$FIX/fly-calls")"
+grep -q '^ssh console -a fixture --machine 0f1c7e5000aa01 -q -C rsync --server ' "$FIX/fly-calls" && ok || bad "F1: rsync did not go over ssh console: $(cat "$FIX/fly-calls")"
 grep -qE '^(proxy|ssh issue)' "$FIX/fly-calls" && bad "F1: fly-ssh still ran proxy or ssh issue: $(grep -E '^(proxy|ssh issue)' "$FIX/fly-calls")" || ok
 [ ! -s "$FIX/ssh-calls" ] && ok || bad "F1: fly-ssh still called OpenSSH: $(cat "$FIX/ssh-calls")"
 grep -qx "rsync -e $REPO/bin/lib/remote-gate-fly-rsh.sh" "$FIX/rsync-calls" && ok || bad "F1: rsync -e is not the wrapper: $(cat "$FIX/rsync-calls")"

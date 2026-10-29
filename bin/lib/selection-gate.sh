@@ -25,7 +25,8 @@
 # else the fallback named on each read): SELECTION_GATE, SELECTION_GATE_TIMEOUT_S,
 # SELECTION_GATE_P, SELECTION_GATE_FIX_TIMEOUT_S (the bound on that fix turn), SELECTION_GATE_FIX_ROUNDS (0 = a red ends the build; 1 = one
 # fix turn through CC, then the gate runs again), SELECTION_GATE_CNR_ALERT and
-# SELECTION_GATE_CNR_KEEP_DAYS (sg_cnr_alert, r3 F4).
+# SELECTION_GATE_CNR_KEEP_DAYS (sg_cnr_alert, r3 F4), SELECTION_GATE_WHY_MAX
+# and SELECTION_GATE_RUN_TAIL_LINES (_sg_run).
 #
 # The caller provides STAMP, RESULT, PROJECT, KEY, BUILD, BASE and, for the
 # notice, TICKET, BUILDER_DIRECT_ON and HARNESS. The root is ${HARNESS:-${H:-}}
@@ -95,7 +96,9 @@ sg_marker_replace() {
 #   builds on one box race to one line). Markers older than
 #   SELECTION_GATE_CNR_KEEP_DAYS (default 14) days are deleted on the same call. Through bin/alert-line.sh only (no alert-line.sh:
 #   one pipeline.log line, and no marker, so a later build tries again). rc 0
-#   always (fail-open).
+#   always (fail-open). A why that carries the runner's reason
+#   (`<token>: <remote-gate line>`) is the alert's cause, so the generic
+#   `Needed:` hint is left out; a bare token keeps it.
 sg_cnr_alert() {
   local g="${1:-}" root="${HARNESS:-${H:-}}" why day dir host msg keep
   [ -n "$root" ] || return 0
@@ -107,7 +110,8 @@ sg_cnr_alert() {
   day=$(date -u +%Y%m%d)
   mkdir "$dir/cnr-$day" 2>/dev/null || return 0
   why=$(_sg_field "$g" why); host=$(hostname 2>/dev/null || echo unknown-host)
-  msg="SELECTION GATE COULD NOT RUN on $host: ${why:-unknown}. Builds open PRs with no pre-PR selection run; the batch is the only check. Needed: a test-host route on the builder image (flyctl + test-host cert), from an operator."
+  msg="SELECTION GATE COULD NOT RUN on $host: ${why:-unknown}. Builds open PRs with no pre-PR selection run; the batch is the only check."
+  case "$why" in *": "*) ;; *) msg+=" Needed: a test-host route on the builder image (flyctl + test-host cert), from an operator." ;; esac
   if [ -x "$root/bin/alert-line.sh" ]; then
     HARNESS="$root" "$root/bin/alert-line.sh" --id "selection-gate-cnr-$host-$day" "$msg" >/dev/null 2>&1
     _sg_log "SELECTION-GATE could-not-run alert written ($why)"
@@ -131,14 +135,27 @@ sg_off_gate() {
     && mv -f "$t" "$od/gate.txt" || { rm -f "$t"; return 1; }
 }
 
-# _sg_run <timeout> <par> — one run of the gate; its exit code.
+# _sg_run <timeout> <par> — one run of the gate; its exit code. Next to
+#   $BUILD/gate.txt it writes $BUILD/gate-run.tail.txt, the last
+#   SELECTION_GATE_RUN_TAIL_LINES lines of run.txt with every line that holds a
+#   Fly token replaced by `<token line dropped>` (the pool record carries both
+#   files to the hub; run.txt stays on the machine).
 _sg_run() {
-  local rc=0
+  local rc=0 n t
   rm -rf "$BUILD/selection-gate"
-  bin/selection-gate.sh --tree . --base "$BASE" --out "$BUILD/selection-gate" --timeout "$1" -P "$2" \
-    > "$BUILD/selection-gate.txt" 2>&1 || rc=$?
+  SELECTION_GATE_WHY_MAX=$(_sg_knob SELECTION_GATE_WHY_MAX 160) \
+    bin/selection-gate.sh --tree . --base "$BASE" --out "$BUILD/selection-gate" --timeout "$1" -P "$2" \
+    > "$BUILD/selection-gate.txt" 2>&1 || rc=$?   # lane.fly-pool.selection_gate_why_max
   if [ -s "$BUILD/selection-gate/gate.txt" ]; then cp -f "$BUILD/selection-gate/gate.txt" "$BUILD/gate.txt"
   else rm -f "$BUILD/gate.txt"; fi
+  rm -f "$BUILD/gate-run.tail.txt"
+  if [ -f "$BUILD/selection-gate/run.txt" ]; then
+    n=$(_sg_knob SELECTION_GATE_RUN_TAIL_LINES 40)   # lane.fly-pool.selection_gate_run_tail_lines
+    [ "$n" -ge 1 ] 2>/dev/null || n=40
+    t="$BUILD/gate-run.tail.txt.tmp.$$"
+    tail -n "$n" "$BUILD/selection-gate/run.txt" | sed -E '/FlyV1|fm2_/s/.*/<token line dropped>/' > "$t" \
+      && mv -f "$t" "$BUILD/gate-run.tail.txt" || rm -f "$t"
+  fi
   return "$rc"
 }
 
@@ -182,7 +199,7 @@ sg_notice() {
 
 # sg_block — see the header. rc 0 go on, 6 red (RESULT written).
 sg_block() {
-  local to par fr rc red n line note=""
+  local to par fr rc red n why hn line note=""
   SG_MARKER=""
   if [ ! -x bin/selection-gate.sh ]; then
     _sg_log "SELECTION-GATE skipped (repo carries no bin/selection-gate.sh)"; return 0
@@ -208,7 +225,9 @@ sg_block() {
     _sg_run "$to" "$par"; rc=$?
   fi
   red=$(_sg_field "$BUILD/gate.txt" red); n=$(_sg_field "$BUILD/gate.txt" suites)
-  _sg_log "SELECTION-GATE rc=$(_sg_field "$BUILD/gate.txt" rc) suites=${n:-?} red=${red:--} exit=$rc"
+  why=$(_sg_field "$BUILD/gate.txt" why); case "$why" in ''|-) why="" ;; *) why=" why=$why" ;; esac
+  hn=$(_sg_field "$BUILD/gate.txt" host-noted); case "$hn" in ''|-) hn="" ;; *) hn=" host-noted=$(tr ',' '\n' <<<"$hn" | grep -c .)" ;; esac
+  _sg_log "SELECTION-GATE rc=$(_sg_field "$BUILD/gate.txt" rc) suites=${n:-?} red=${red:--} exit=$rc$why$hn"
   if [ "$rc" = 1 ] && [ -n "$red" ] && [ "$red" != - ]; then
     if sg_notice; then
       command -v bd_note >/dev/null 2>&1 || . "${HARNESS:-${H:-}}/bin/lib/builder-direct.sh" 2>/dev/null

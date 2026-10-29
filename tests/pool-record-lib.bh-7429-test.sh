@@ -80,10 +80,11 @@ printf '\ntail-marker\n' >> "$T/m/data/harness/logs/failovers.log"
 RF="$T/m/RESULT"
 printf 'PR_CREATED https://github.com/o/r/pull/9\nTIER: 2\nBUILD_DIR: /data/harness/builds/project-5-BH-9-202610191500\n' > "$RF"
 
-# ── L14 the file list is the 27 names the reap pulled before BH-7429 ───────
-WANT="plan.md review.md security-review.md security-review-run.txt refute-review.md merged-review2.md harness-suite-fix.txt qa.md e2e.md evidence.md changed-files.txt reviewed-sha headbound-outcome headbound-review.md headbound-review-run.txt harness-suite-head.txt pipeline.log cost.csv validate.txt red.txt green.txt mutation-check.txt context.json gh-stderr.log execute-transcript.md stop-reason.txt ticket-meta.json"
+# ── L14 the file list: the 27 names the reap pulled before BH-7429, then the
+# selection gate's record, gate.txt and gate-run.tail.txt (BH-8725) ─────────
+WANT="plan.md review.md security-review.md security-review-run.txt refute-review.md merged-review2.md harness-suite-fix.txt qa.md e2e.md evidence.md changed-files.txt reviewed-sha headbound-outcome headbound-review.md headbound-review-run.txt harness-suite-head.txt pipeline.log cost.csv validate.txt red.txt green.txt mutation-check.txt context.json gh-stderr.log execute-transcript.md stop-reason.txt ticket-meta.json gate.txt gate-run.tail.txt"
 [ "${POOL_RECORD_FILES[*]:-}" = "$WANT" ] && ok || bad "L14 POOL_RECORD_FILES drifted: ${POOL_RECORD_FILES[*]:-<unset>}"
-[ "${#POOL_RECORD_FILES[@]}" = 27 ] && ok || bad "L14 count ${#POOL_RECORD_FILES[@]}"
+[ "${#POOL_RECORD_FILES[@]}" = 29 ] && ok || bad "L14 count ${#POOL_RECORD_FILES[@]}"
 # L14b the hub's ssh pull in bin/fly-pool.sh names the same files in the same order
 SSHLIST=$(awk '/^      for A in plan\.md /{f=1} f{print} f&&/; do$/{exit}' "$DIR/bin/fly-pool.sh" \
   | sed -e 's/^      for A in //' -e 's/; do$//' -e 's/\\$//' | tr -s ' \n' ' ' | sed 's/^ //; s/ $//')

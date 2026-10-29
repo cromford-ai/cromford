@@ -404,6 +404,62 @@ The route expiry the pool ships is the build's own window (now + `ptr_hours`),
 never the file's expiry, so `--route-until` holds the test host for one build,
 as a minted route does. The file's token outlives that route by design.
 
+### One machine per run, and the could-not-run reason (BH-8725)
+
+On fly-ssh, `bin/remote-gate.sh` sends every call to ONE test-host machine.
+Before the prep it runs one probe, `flyctl ssh console -a <app> -q -C hostname`
+(a Fly machine's hostname is its id), and then passes `--machine <id>` on every
+`bash -s` call and in the rsync wrapper (`RG_FLY_MACHINE`). Set
+`TESTHOST_MACHINE=<id>` to choose the machine yourself. A probe that prints no
+machine id is exit 125, `could not pick one test-host machine`, with flyctl's
+last stderr line (for example `get app: … Forbidden` for a token that cannot
+read the app), and nothing is sent. Without `--machine`, flyctl writes `No machine specified, using <id> in
+region <r>` on stdout. rsync reads that line as protocol bytes and stops with
+`protocol version mismatch -- is your shell clean?`. A failed upload now says
+`the upload to the test host failed (rsync rc <n>: <rsync's last stderr line>)`.
+
+A could-not-run selection gate carries the runner's reason in `gate.txt`:
+`why: runner-rc-125: remote-gate: <the line>`. The line is the
+`pool test-host route incomplete:` line when there is one, else the last
+`remote-gate:` line, cut to `SELECTION_GATE_WHY_MAX` (160) characters. The
+`SELECTION-GATE rc=` line in pipeline.log and the could-not-run alert print the
+same why. A pool build's record carries `gate.txt` and `gate-run.tail.txt` (the
+last `SELECTION_GATE_RUN_TAIL_LINES`, 40, lines of run.txt, token lines
+dropped) to the hub's `builds/pool-<project>-<KEY>-<ts>/`.
+
+### The host run matches CI: compose, and host notes (BH-8725)
+
+The suites job composes the git-ignored catalogs before any suite copy. CI's
+`tests-shard` job runs the same three commands in the step "render the lane
+registry and the llm-sites catalog the worker imports":
+`bin/lanes-build.sh --write`, `bin/llm-sites-build.sh --compose` and
+`bin/context-budgets-build.sh --compose`. The job (`rg_compose_catalogs`) runs
+them once in `$R/base`, with `HARNESS_TEST_SANDBOX=1`, in that order. A script
+the tree does not carry is skipped. On success the job prints
+`remote-gate: composed the catalogs CI composes before the suites (<names>)`.
+A failed compose prints one line,
+`remote-gate: compose-<name> failed (rc <n>): <last line of its log>`, then
+the host resources, and exits 125 with no suite run. The selection gate then
+writes `why: compose-<name>: <that line>` (could-not-run, never a red). The `--`
+command mode does not compose. `tests/selection-gate-host-run.bh-8725-test.sh`
+H4 pins the host list to CI's step.
+
+Some suites are red only on the test host, for a reason CI does not have. The
+selection gate reads `catalog/selection-gate-host-notes.d/*.tsv` from the tree
+under test, one file per ticket. A row is
+`<suite path>TAB<class>TAB<ERE>TAB<reason>`. The classes are a closed set:
+`shallow-context` (the host's git context is shallow, so `git log` names the
+graft root) and `host-timing` (a wall-clock bound on a shared, loaded host). A
+red suite moves to `noted:` only when a row names it, its run.txt section holds
+at least one failure line (`FAIL` at the line start or after a space, then `:`
+or a space), and every failure line in that section matches the row's ERE. A
+row with another class, fewer than 4 fields or a bad ERE is skipped with one
+`selection-gate: host-notes: skipped <file>:<line> (<why>)` line, and the suite
+stays red. `gate.txt` gains a last line, `host-noted: <suite>=<class>,…` (or
+`-`), and the pipeline.log `SELECTION-GATE rc=` line adds `host-noted=<n>`. The
+notes change only the gate's record: the merge-queue batch still runs and
+gates those suites, and the flaky quarantine is not touched.
+
 ### Every machine's disk (#1597)
 
 Each tick (once the worker has answered) lists the app's machines and runs one
