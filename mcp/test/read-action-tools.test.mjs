@@ -89,8 +89,10 @@ test('2 module shape: kinds, closed schemas, no tenant', async () => {
   }
 });
 
+// project_status is not here since BH-7876: it reads its daily ceiling beside
+// the dash route, four GETs, pinned in project-status-ceiling.bh-7876.test.mjs
+// (M1 path, bearer and no body; M4 the same 'a/b c' encoding).
 const READ_CASES = [
-  ['project_status', { project: 'a/b c' }, 'GET', '/api/dash/p/a%2Fb%20c'],
   ['builds', { limit: 5 }, 'GET', '/api/dash/builds?limit=5'],
   ['builds', {}, 'GET', '/api/dash/builds'],
   ['pipeline', { limit: 10, filter: { project: 'p' } }, 'GET', '/api/dash/kanban/pipeline?project=p&shipped_limit=10'],

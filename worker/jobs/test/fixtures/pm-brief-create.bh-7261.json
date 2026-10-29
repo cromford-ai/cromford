@@ -1,0 +1,55 @@
+{
+  "week": "2026-W43",
+  "body": {
+    "summary": "Two ideas are stale. Move the 30-day idea up.",
+    "stale": [
+      {
+        "idea_id": "pg1-d31",
+        "title": "Idea pg1-d31",
+        "lane": "next",
+        "age_days": 31
+      },
+      {
+        "idea_id": "pg1-d30",
+        "title": "Idea pg1-d30",
+        "lane": "ideas",
+        "age_days": 30
+      }
+    ],
+    "stale_partial": false,
+    "scores": [
+      {
+        "idea_id": "pg1-d0",
+        "score": 80,
+        "why": "fresh"
+      }
+    ],
+    "now": [],
+    "next_wave": [
+      "pg1-d30",
+      "pg1-d0"
+    ],
+    "snapshot_hash": "hash-new-fixture"
+  },
+  "moves": [
+    {
+      "idea_id": "pg1-d30",
+      "from_col": "ideas",
+      "to_col": "next",
+      "reason": "fixture reason",
+      "evidence": [
+        "signal.new-ok",
+        "stale.pg1-d30"
+      ]
+    },
+    {
+      "idea_id": "pg1-d31",
+      "from_col": "next",
+      "to_col": "discarded",
+      "reason": "fixture reason",
+      "evidence": [
+        "stale.pg1-d31"
+      ]
+    }
+  ]
+}

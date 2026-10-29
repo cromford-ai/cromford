@@ -1,0 +1,20 @@
+[
+    {
+        "id": "pm-groom",
+        "script": "bin/pm-groom.sh",
+        "marker": "AGENT_CALL_LANE=pm-groom AGENT_CALL_ROLE=product.pm",
+        "kind": "agent-call",
+        "lane": "pm-groom",
+        "stage": "pm",
+        "project": "per-project",
+        "runners": [
+            "ladder"
+        ],
+        "through_agent_call": true,
+        "priced": "yes",
+        "gated": "agent-call",
+        "dedup": "pm_briefs UNIQUE(project, week): POST /api/pm/briefs/claim makes the row BEFORE the call; a claimed or failed row is billed and final for the week, only bin/pm-groom.sh --force by a person re-claims it; AGENT_CALL_FP is pm-groom:<project>:<week> (BH-7261)",
+        "deterministic_candidate": null,
+        "note": "BH-7261: per-project cron, Monday 11:0x UTC; at most one call per project per week, model from the product.pm route, no tools."
+    }
+]

@@ -1,0 +1,3 @@
+# BH-8650: Telegram Approve/Reject buttons for PM brief moves, key-named (BH-5788).
+GET /api/pm/moves/tg-keyboard
+POST /api/pm/moves/tg

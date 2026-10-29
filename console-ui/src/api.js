@@ -181,6 +181,8 @@ export const api = {
   accountUsage: (window = '5h') => get('/api/coord/metrics/account-usage?window=' + encodeURIComponent(window)),
   // Each lane's spend today against its alert line and ceiling (BH-6174), same
   // coord proxy. No day = the worker's UTC today.
+  // BH-7876: one project's spend for the worker's current UTC day.
+  llmSpend: (project) => get('/api/coord/metrics/llm-spend?project=' + encodeURIComponent(project)),
   laneSpend: (day) => get('/api/coord/metrics/lane-spend' + (day ? '?day=' + encodeURIComponent(day) : '')),
   // Newest hourly utilization snapshot per project (BH-4011), same coord proxy.
   utilization: () => get('/api/coord/utilization'),

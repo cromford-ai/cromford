@@ -1,0 +1,7 @@
+# BH-7261 (BH-7244.3): the PM agent's weekly grooming brief, key-named (BH-5788).
+POST /api/pm/briefs/claim
+POST /api/pm/briefs
+POST /api/pm/briefs/fail
+POST /api/pm/briefs/sent
+GET /api/pm/briefs
+POST /api/pm/moves/decide

@@ -19,6 +19,7 @@
 #   cost-caps.conf  budget <p> <rest>   conf.cost-caps.budget.<p>
 #                   default <rest>      conf.cost-caps.default
 #                   ceiling <rest>      conf.cost-caps.ceiling
+#                   daily <p> <rest>    conf.cost-caps.<p>.daily_usd (BH-7876)
 #   lane-caps.conf  lane <l> <rest>     conf.lane-caps.lane.<l>
 #                   noise <l> <rest>    conf.lane-caps.noise.<l>
 #                   default <rest>      conf.lane-caps.default
@@ -74,7 +75,7 @@ _ccs_parse() {
     [ "${#w[@]}" -gt 0 ] || continue
     kw="${w[0]}"; name=""
     case "$fam:$kw" in
-      cost:budget|lane:lane|lane:noise) name="${w[1]:-}"; val="${w[*]:2}" ;;
+      cost:budget|cost:daily|lane:lane|lane:noise) name="${w[1]:-}"; val="${w[*]:2}" ;;
       cost:default|cost:ceiling|lane:default) val="${w[*]:1}" ;;
       *) echo "skipped: $file:$n: unknown directive '$kw'"; continue ;;
     esac
@@ -84,7 +85,10 @@ _ccs_parse() {
         if ! [[ "$name" =~ ^[a-z0-9][a-z0-9_-]*$ ]]; then
           echo "skipped: $file:$n: bad name '$name'"; continue
         fi
-        key="conf.$fam-caps.$kw.$name" ;;
+        # A project's daily ceiling is keyed project first, the shape
+        # bin/lib/cost-budget.sh _cb_row reads (BH-7876).
+        if [ "$fam:$kw" = cost:daily ]; then key="conf.cost-caps.$name.daily_usd"
+        else key="conf.$fam-caps.$kw.$name"; fi ;;
     esac
     [ -n "$val" ] || { echo "skipped: $file:$n: no value"; continue; }
     if [ -n "${VAL[$key]+x}" ]; then echo "duplicate: $key (line $n wins)"; else NROWS=$((NROWS+1)); fi

@@ -24,6 +24,9 @@ export const ARCHIVE_TABLES = {
   roadmap_ideas: { key: ["id"], time: "updated_at" },
   roadmap_idea_events: { key: ["id"], time: "at" },
   roadmap_waves: { key: ["id"], time: "updated_at" },
+  // BH-7261: the PM brief history (routes/retention.d/bh-7261-pm-briefs.js).
+  pm_briefs: { key: ["id"], time: "created_at" },
+  pm_moves: { key: ["id"], time: "created_at" },
   // BH-7595: the web_vault audit rule (routes/retention.js).
   web_vault_audit: { key: ["id"], time: "at" },
   // BH-7722: the Tackler decision ledger (routes/retention.js unblock_decisions.age).

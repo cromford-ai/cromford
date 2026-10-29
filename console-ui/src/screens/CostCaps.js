@@ -8,6 +8,7 @@ import { Section, Skeleton, Empty, ErrorBox } from '../ui/primitives.js';
 import { laneHref } from '../lib/settings.js';
 import { agoFromMinutes, minutesSince } from '../lib/format.js';
 import { capRows, editFormState, makeEditAction, CAP_GRAMMAR } from '../lib/cost-caps.js';
+import { DailyCeilingsSection } from './DailyCeilings.js';
 
 // BH-2566 (BH-2511.3): the Costs page's CAPS section, mounted on /costs
 // directly below COST BREAKER. Every conf.cost-caps.* / conf.lane-caps.*
@@ -33,6 +34,7 @@ export function CostCapsSection() {
 
   return html`
     <${CostCapsView} settings=${settings} onEdit=${onEdit} pending=${pending} msg=${msg}/>
+    <${DailyCeilingsSection} settings=${settings}/>
     ${dialog}`;
 }
 

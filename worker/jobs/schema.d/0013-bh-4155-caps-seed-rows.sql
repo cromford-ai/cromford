@@ -26,7 +26,7 @@ INSERT OR IGNORE INTO settings (key,value,note,actor,updated_at) VALUES
 INSERT OR IGNORE INTO settings (key,value,note,actor,updated_at) VALUES
   ('conf.cost-caps.budget.project-5','85 10','BH-4155: seeded from catalog/cost-caps.conf','registry-seed','2026-10-04T00:00:00Z');
 INSERT OR IGNORE INTO settings (key,value,note,actor,updated_at) VALUES
-  ('conf.cost-caps.ceiling','4000','BH-4155: seeded from catalog/cost-caps.conf','registry-seed','2026-10-04T00:00:00Z');
+  ('conf.cost-caps.ceiling','10000','BH-4155, BH-7876: seeded from catalog/cost-caps.conf','registry-seed','2026-10-04T00:00:00Z');
 INSERT OR IGNORE INTO settings (key,value,note,actor,updated_at) VALUES
   ('conf.cost-caps.default','100 5','BH-4155: seeded from catalog/cost-caps.conf','registry-seed','2026-10-04T00:00:00Z');
 INSERT OR IGNORE INTO settings (key,value,note,actor,updated_at) VALUES

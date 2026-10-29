@@ -1,0 +1,45 @@
+[
+    {
+      "lane": "pm-groom",
+      "stage": "pm",
+      "runner": null,
+      "job": "Per-project lane, Monday 11:0x UTC (bin/pm-groom.sh, BH-7261): at most one no-tools call per (project, week), claimed before the spend, that turns the backlog (lanes ideas and next), the stale list and the data-signals evidence into the weekly grooming brief (summary, moves, Now proposals).",
+      "target_tokens": 15000,
+      "ceiling_tokens": 60000,
+      "composition": [
+        {
+          "component": "lane SOP",
+          "source": "prompts/product-stages/pm-groom.md",
+          "cap": "static",
+          "purpose": "the evidence rule and the one-object answer contract"
+        },
+        {
+          "component": "backlog",
+          "source": "GET /api/roadmap/ideas?project=<p>&lane=ideas|next&limit=1000, one compact line per idea (id, title, lane, source, note, updated_at, age_days)",
+          "cap": "at most 1000 ideas per lane; a truncated read sets stale_partial",
+          "purpose": "THE SCOPED DELTA: the ideas the brief may move"
+        },
+        {
+          "component": "stale list",
+          "source": "computed in bin/pm-groom.sh from updated_at and pm.stale_days",
+          "cap": "a subset of the backlog",
+          "purpose": "which ideas have not moved"
+        },
+        {
+          "component": "evidence",
+          "source": "the ok rows of the newest products/<project>/*/data-signals.json plus one stale.<idea_id> row per stale idea",
+          "cap": "one data-signals file",
+          "purpose": "the only ids a move may cite"
+        }
+      ],
+      "bounds": [
+        "[lane:no_tools] the call runs with AGENT_CALL_NO_TOOLS=1, so the session cannot read files or the web and grow past its prompt (VERIFIED: bin/pm-groom.sh call site)",
+        "[lane:claim_first] POST /api/pm/briefs/claim is won before the call, so a second run in the same week never pays twice (VERIFIED: tests/pm-groom.bh-7261-test.sh)",
+        "[lane:backlog_1000] the backlog read is capped at limit=1000 per lane (VERIFIED: bin/pm-groom.sh)",
+        "[harness:prompt_guard] prompt_guard 720KB (VERIFIED — bounds the assembled prompt only, NOT session growth)"
+      ],
+      "measured_before": null,
+      "measured_before_note": "never measured: the stage is new in BH-7261.",
+      "_unmeasured": "no pm-groom call has run yet: the stage is new in BH-7261. 60,000 tokens covers a backlog of a few hundred compact idea lines plus the SOP, the evidence and the answer, with room. No context_kill_tokens: BH-2538 arms no lane without measured rows."
+    }
+]

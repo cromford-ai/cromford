@@ -63,3 +63,45 @@ tg_latest_chat_id() {
   echo "telegram: bad answer" >&2
   return 1
 }
+
+# _tg_q <value> — the value as a quoted curl config string: backslash, quote,
+# CR, LF and tab escaped, so a text line can never start a new config option.
+_tg_q() {
+  local v="${1//\\/\\\\}"
+  v="${v//\"/\\\"}"; v="${v//$'\n'/\\n}"; v="${v//$'\r'/\\r}"; v="${v//$'\t'/\\t}"
+  printf '"%s"' "$v"
+}
+
+# tg_send_message <token_var_name> <chat> <thread|""> <text> [<reply_markup_json>]
+# — one sendMessage POST (BH-8650). Print the raw answer; the caller reads
+# `.ok`. curl reads its whole config from stdin (`-K -`) through printf, so the
+# token, the text and the markup are in no argv. The thread is sent only when
+# given. rc 0 curl answered, rc 1 curl failed (the error with the token cut),
+# rc 2/3/70 as tg_call.
+tg_send_message() {
+  local name="${1:-}" chat="${2:-}" thread="${3:-}" text="${4:-}" markup="${5:-}" tok mode body rc
+  [[ "$name" =~ ^[A-Z_][A-Z0-9_]*$ ]] || { echo "telegram: '$name' is not a variable name" >&2; return 2; }
+  tok="${!name:-}"
+  [ -n "$tok" ] || { echo "telegram: $name is not set" >&2; return 3; }
+  mode=$(vendor_mode) || return 2
+  if [ "$mode" = fake ]; then
+    vendor_fake telegram sendMessage
+    return $?
+  fi
+  vendor_call_log telegram sendMessage
+  local tmo="${TELEGRAM_API_TIMEOUT_S:-20}"   # knob: catalog/lanes.d/_lib.vendor-telegram.knobs.d
+  [[ $tmo =~ ^[0-9]+$ ]] && [ "$tmo" -ge 1 ] && [ "$tmo" -le 120 ] || tmo=20
+  body=$({
+    printf 'url = %s\n' "$(_tg_q "https://api.telegram.org/bot$tok/sendMessage")"
+    printf 'form-string = %s\n' "$(_tg_q "chat_id=$chat")"
+    [ -z "$thread" ] || printf 'form-string = %s\n' "$(_tg_q "message_thread_id=$thread")"
+    printf 'form-string = %s\n' "$(_tg_q "text=$text")"
+    printf 'form-string = %s\n' "$(_tg_q "disable_web_page_preview=true")"
+    [ -z "$markup" ] || printf 'form-string = %s\n' "$(_tg_q "reply_markup=$markup")"
+  } | curl -sS --max-time "$tmo" -K - 2>&1); rc=$?
+  if [ "$rc" -ne 0 ]; then
+    echo "telegram: curl rc $rc: ${body//"$tok"/<token>}" >&2
+    return 1
+  fi
+  printf '%s\n' "$body"
+}

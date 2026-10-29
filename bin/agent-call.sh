@@ -4167,6 +4167,14 @@ case "$_BSRC" in
     exit 74 ;;
 esac
 # <<< budget-stop precall
+# >>> project ceiling note (BH-7876)
+# The project's daily ceiling (bin/lib/project-ceiling.sh) before a paid plan,
+# execute, review or lead-review call: one alert per project per UTC day at the
+# warn percent and at 100%. Alert only: this call goes on, because running
+# builds finish; the launch gate is what stops a new build.
+command -v pc_stage_note >/dev/null 2>&1 || . "$HARNESS/bin/lib/project-ceiling.sh" 2>/dev/null || true
+command -v pc_stage_note >/dev/null 2>&1 && { pc_stage_note "$PROJECT" "$STAGE" || true; }
+# <<< project ceiling note
 ctx_kill_work
 if ctx_kill_repeat_refuse; then
   printf 'AGENT_CALL_REFUSED context-kill repeat %s kills=%s tk=%s fp=%s\n' "$STAGE" "$CK_KILLS" "${CK_TK:--}" "${CK_FP:--}" \

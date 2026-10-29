@@ -13,6 +13,10 @@ export const CAP_KEY_PREFIX_RE = /^conf\.(cost-caps|lane-caps)\./;
 
 const SUBJECT_KEYS = [
   [/^conf\.cost-caps\.budget\.([a-z0-9_-]+)$/, "cost-caps", "budget"],
+  // BH-7876: a project's daily ceiling, keyed project FIRST, the shape
+  // _cb_row reads (`?*.daily_usd`). After `budget`, as in _cb_row, so
+  // `conf.cost-caps.budget.daily_usd` stays project `daily_usd`'s budget.
+  [/^conf\.cost-caps\.([a-z0-9_-]+)\.daily_usd$/, "cost-caps", "daily"],
   [/^conf\.lane-caps\.lane\.([a-z0-9_-]+)$/, "lane-caps", "lane"],
   [/^conf\.lane-caps\.noise\.([a-z0-9_-]+)$/, "lane-caps", "noise"],
 ];
@@ -22,8 +26,9 @@ const BARE_KEYS = new Map([
   ["conf.lane-caps.default", ["lane-caps", "default"]],
 ]);
 
-// capFleetKey(key) -> {file, kind, subject} | null. Exactly the six fleet
-// shapes, anchored: a box suffix (`budget.acme.hub-1`, `default.hub-1`) or any
+// capFleetKey(key) -> {file, kind, subject} | null. Exactly the seven fleet
+// shapes (the six of BH-2564 and BH-7876's daily ceiling), anchored: a box
+// suffix (`budget.acme.hub-1`, `default.hub-1`) or any
 // extra segment is null, because those rows belong to one box and the editor
 // writes the fleet's value.
 export function capFleetKey(key) {
@@ -54,6 +59,8 @@ const GRAMMAR = {
     budget: [2, (a, b) => cbNum(a) && (b === "" || cbNum(b)), "<usd per PR> [min PRs], each a number > 0"],
     default: [2, (a, b) => cbNum(a) && (b === "" || cbNum(b)), "<usd per PR> [min PRs], each a number > 0"],
     ceiling: [1, (a) => cbNum(a), "one number > 0"],
+    // _cb_row_ok `daily`: one number > 0 and nothing after it.
+    daily: [1, (a) => cbNum(a), "one number > 0"],
   },
   "lane-caps": {
     lane: [2, (a, b) => (a === "off" || lcNum(a)) && (b === "" || lcInt(b)), "<usd|off> [bytes], usd >= 0, bytes a whole number > 0"],

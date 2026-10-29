@@ -59,7 +59,10 @@ test('W1 schema.sql seeds every cap as a registry-seed row the cap grammar accep
     assert.equal(validateCapValue(cap, r.value), null, `${r.key}=${r.value}`);
   }
   const byKey = Object.fromEntries(rows.map((r) => [r.key, r.value]));
-  assert.equal(byKey['conf.cost-caps.ceiling'], '4000');
+  // BH-7876: the operator set the fleet ceiling to 10000 and project-6-os's daily
+  // ceiling to 5000 (ticket comment 6326016557); both follow the catalog.
+  assert.equal(byKey['conf.cost-caps.ceiling'], '10000');
+  assert.equal(byKey['conf.cost-caps.project-6-os.daily_usd'], '5000');
   assert.equal(byKey['conf.lane-caps.lane.responder'], '150 60000');
 }));
 

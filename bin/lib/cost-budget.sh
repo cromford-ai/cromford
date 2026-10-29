@@ -17,6 +17,9 @@
 #                                  "built-in defaults"
 #   cost_budget_legacy_rows     -> the rows this grammar refused, space separated
 #                                  (empty when there are none)
+#   cost_budget_daily <project> -> "<usd_per_day>" for that project, rc 1 when
+#                                  it has no daily ceiling (BH-7876)
+#   cost_budget_daily_warn_pct  -> the percent of a daily ceiling that warns
 #
 # Resolution, lowest to highest, each layer overriding the one below it line
 # by line (BH-4155):
@@ -32,7 +35,9 @@
 #   5. the operator settings rows (BH-2411, conf_rows), box row first.
 # A row's keys are `conf.cost-caps.budget.<project>` = `<per_pr> [min]`,
 # `conf.cost-caps.default` = `<per_pr> [min]`, `conf.cost-caps.ceiling` =
-# `<usd>`. A row this grammar refuses binds nothing and is named in
+# `<usd>`, `conf.cost-caps.<project>.daily_usd` = `<usd>` (the project's daily
+# ceiling, read by bin/lib/project-ceiling.sh), `conf.cost-caps.daily_warn_pct`
+# = `<1-100>`. A row this grammar refuses binds nothing and is named in
 # cost_budget_legacy_rows as `seed:<key>` or `row:<key>`. With $COST_CAPS_CONF
 # set (fixtures) no row of either kind is read: the first readable of it,
 # flags/ and the catalog answers alone, as before.
@@ -48,6 +53,7 @@ _CB_H="${HARNESS:-${H:-}}"
 COST_BUDGET_DEFAULT_PER_PR=100
 COST_BUDGET_DEFAULT_MIN_PRS=5
 COST_BUDGET_DEFAULT_CEILING=4000
+COST_BUDGET_DEFAULT_DAILY_WARN_PCT=80
 
 _CB_LOADED=""
 _CB_SOURCE=""
@@ -55,8 +61,10 @@ _CB_DEF_PER_PR=""
 _CB_DEF_MIN_PRS=""
 _CB_CEILING=""
 _CB_LEGACY=""
+_CB_DAILY_WARN=""
 declare -A _CB_PER_PR
 declare -A _CB_MIN_PRS
+declare -A _CB_DAILY
 
 _cb_num() { # a positive number, or nothing at all — never a half-parsed threshold
   case "${1:-}" in
@@ -65,12 +73,17 @@ _cb_num() { # a positive number, or nothing at all — never a half-parsed thres
   esac
 }
 
+_cb_pct() { # a percent above 0 and at most 100
+  _cb_num "${1:-}" >/dev/null && awk -v v="$1" 'BEGIN{ exit !(v+0 <= 100) }'
+}
+
 _cb_load() {
   [ -n "$_CB_LOADED" ] && return 0
   _CB_LOADED=1
   _CB_DEF_PER_PR="$COST_BUDGET_DEFAULT_PER_PR"
   _CB_DEF_MIN_PRS="$COST_BUDGET_DEFAULT_MIN_PRS"
   _CB_CEILING="$COST_BUDGET_DEFAULT_CEILING"
+  _CB_DAILY_WARN="$COST_BUDGET_DEFAULT_DAILY_WARN_PCT"
   _CB_SOURCE=""
   local f ff=""
   # $COST_CAPS_CONF (a fixture) reads no row of either kind: the first readable
@@ -140,7 +153,13 @@ _cb_row() {
   case "$k" in
     budget.*.*) return 1 ;;   # another box's row, or not a key this grammar has
     budget.?*) kw=budget; a="${k#budget.}"; b="$x"; c="$y" ;;
-    default|ceiling) kw="$k"; a="$x"; b="$y"; c="" ;;
+    default|ceiling|daily_warn_pct) kw="$k"; a="$x"; b="$y"; c="" ;;
+    # A project's daily ceiling. A dotted project is another box's row or a
+    # key with a segment too many: not a key this grammar has.
+    ?*.daily_usd)
+      a="${k%.daily_usd}"
+      case "$a" in *[!a-z0-9_-]*) return 1 ;; esac
+      kw=daily; b="$x"; c="$y" ;;
     *) return 1 ;;
   esac
   if [ -z "$z" ] && _cb_row_ok "$kw" "$a" "$b" "$c"; then
@@ -159,6 +178,8 @@ _cb_row_ok() {
     budget)  [ -n "$2" ] && _cb_num "$3" >/dev/null && { [ -z "$4" ] || _cb_num "$4" >/dev/null; } ;;
     default) _cb_num "$2" >/dev/null && { [ -z "$3" ] || _cb_num "$3" >/dev/null; } && [ -z "$4" ] ;;
     ceiling) _cb_num "$2" >/dev/null && [ -z "$3" ] ;;
+    daily)   [ -n "$2" ] && _cb_num "$3" >/dev/null && [ -z "$4" ] ;;
+    daily_warn_pct) _cb_pct "$2" && [ -z "$3" ] ;;
     *) return 1 ;;
   esac
 }
@@ -185,6 +206,19 @@ _cb_line() {
     ceiling)
       _cb_num "$a" >/dev/null && _CB_CEILING="$a"
       ;;
+    daily)
+      # `daily <project> <usd>`: one positive number and nothing after it. A
+      # bad line binds nothing and is named, like a bad budget line.
+      if [ -n "$a" ] && _cb_num "$b" >/dev/null && [ -z "$c" ]; then
+        _CB_DAILY["$a"]="$b"
+      else
+        _CB_LEGACY="${_CB_LEGACY:+$_CB_LEGACY }$kw:$a"
+      fi
+      ;;
+    daily_warn_pct)
+      if _cb_pct "$a" && [ -z "$b" ]; then _CB_DAILY_WARN="$a"
+      else _CB_LEGACY="${_CB_LEGACY:+$_CB_LEGACY }$kw"; fi
+      ;;
     *)
       # THE OLD GRAMMAR, REFUSED. "project-5 300" used to mean $300 per DAY.
       # Reading it as $300 per PR would raise the bar ~10x and page for
@@ -206,6 +240,15 @@ cost_budget_for() { # cost_budget_for <project> -> "<usd_per_pr> <min_prs>"
 cost_budget_ceiling() { _cb_load; printf '%s\n' "$_CB_CEILING"; }
 cost_budget_source()  { _cb_load; printf '%s\n' "$_CB_SOURCE"; }
 cost_budget_legacy_rows() { _cb_load; printf '%s\n' "$_CB_LEGACY"; }
+# A project with no daily line or row has no daily ceiling at all: rc 1, and
+# nothing reads its spend.
+cost_budget_daily() {
+  _cb_load
+  local p="${1:-}"
+  [ -n "$p" ] && [ -n "${_CB_DAILY[$p]:-}" ] || return 1
+  printf '%s\n' "${_CB_DAILY[$p]}"
+}
+cost_budget_daily_warn_pct() { _cb_load; printf '%s\n' "$_CB_DAILY_WARN"; }
 
 # cost_budget_rates_tsv -> one line per priced model, then a `__MAX__` line:
 #   <model>\t<prompt>\t<completion>\t<cache_read>\t<cache_write>\t<cliff_tokens|"">

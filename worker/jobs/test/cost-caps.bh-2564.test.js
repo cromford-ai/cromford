@@ -100,6 +100,17 @@ test('K3: a 65-char key is refused; the prefix regex takes box keys but not a lo
   assert.ok(!CAP_KEY_PREFIX_RE.test('conf.readiness-levels'));
 });
 
+test('K4 (BH-7876): a project daily ceiling is a fleet key, project first; a box row or extra segment is not', () => {
+  assert.deepEqual(capFleetKey('conf.cost-caps.project-6-os.daily_usd'), { file: 'cost-caps', kind: 'daily', subject: 'project-6-os' });
+  // `budget` wins first, as in _cb_row: this is project daily_usd's budget.
+  assert.deepEqual(capFleetKey('conf.cost-caps.budget.daily_usd'), { file: 'cost-caps', kind: 'budget', subject: 'daily_usd' });
+  for (const k of [
+    'conf.cost-caps.daily_usd', 'conf.cost-caps..daily_usd', 'conf.cost-caps.a.b.daily_usd',
+    'conf.cost-caps.acme.daily_usd.hub-1', 'conf.cost-caps.Acme.daily_usd', 'conf.lane-caps.acme.daily_usd',
+    'conf.cost-caps.acme.daily_usdx',
+  ]) assert.equal(capFleetKey(k), null, k);
+});
+
 // ── V: value grammar ────────────────────────────────────────────────────────
 const cap = (k) => capFleetKey(k);
 const ok = (k, v) => assert.equal(validateCapValue(cap(k), v), null, `${k} = ${JSON.stringify(v)} should pass`);
@@ -113,6 +124,12 @@ test('V1: cost-caps grammar mirrors _cb_row_ok', () => {
   ok('conf.cost-caps.ceiling', '3000');
   for (const v of ['abc', '-5', '0', '5 5', 'off', '']) no('conf.cost-caps.ceiling', v);
   for (const v of [5, null, undefined, {}]) no('conf.cost-caps.ceiling', v);
+});
+
+test('V4 (BH-7876): a daily ceiling is one number > 0, as _cb_row_ok `daily`', () => {
+  const k = 'conf.cost-caps.project-6-os.daily_usd';
+  for (const v of ['5000', '50.5', ' 5000 ', '.5']) ok(k, v);
+  for (const v of ['0', '-5', 'off', 'abc', '5000 3', '', '5000\t', '1e3']) no(k, v);
 });
 
 test('V2: lane-caps grammar mirrors _lc_row_ok', () => {

@@ -81,6 +81,7 @@ expected() {
   { awk '{ sub(/#.*/, "") } $1 == "budget" && NF >= 3 { k = "conf.cost-caps.budget." $2; $1 = ""; $2 = ""; }
          $1 == "default" && NF >= 2 { k = "conf.cost-caps.default"; $1 = "" }
          $1 == "ceiling" && NF >= 2 { k = "conf.cost-caps.ceiling"; $1 = "" }
+         $1 == "daily" && NF >= 3 { k = "conf.cost-caps." $2 ".daily_usd"; $1 = ""; $2 = ""; }
          k != "" { v = $0; gsub(/^ +| +$/, "", v); gsub(/ +/, " ", v); print k "\t" v; k = "" }' "$S/catalog/cost-caps.conf"
     awk '{ sub(/#.*/, "") } ($1 == "lane" || $1 == "noise") && NF >= 3 { k = "conf.lane-caps." $1 "." $2; $1 = ""; $2 = ""; }
          $1 == "default" && NF >= 2 { k = "conf.lane-caps.default"; $1 = "" }
@@ -101,6 +102,10 @@ for fam in conf.cost-caps.budget. conf.cost-caps.default conf.cost-caps.ceiling 
   jq -e --arg f "$fam" '[.rows[] | select(.key | startswith($f))] | length > 0' "$S/dry.json" >/dev/null \
     && ok || bad "S1 the family $fam must be present"
 done
+# BH-7876: a `daily <project> <usd>` line seeds the project-first key.
+eq "S1 the project-6-os daily ceiling row (BH-7876)" \
+  "$(jq -r '.rows[] | select(.key == "conf.cost-caps.project-6-os.daily_usd") | .value' "$S/dry.json")" \
+  "$(awk '$1 == "daily" && $2 == "project-6-os" { print $3 }' "$DIR/catalog/cost-caps.conf")"
 eq "S1 project-5 budget value" "$(jq -r '.rows[] | select(.key == "conf.cost-caps.budget.project-5") | .value' "$S/dry.json")" \
   "$(awk '$1 == "budget" && $2 == "project-5" { print $3 " " $4 }' "$DIR/catalog/cost-caps.conf")"
 eq "S1 the lane default is not a cost default" \

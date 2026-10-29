@@ -2,6 +2,7 @@
 // Names and argument shapes follow the Cloud worker's `mcp-tools.js` (moved out
 // of this repo, BH-5239).
 import { forward } from '../lib/tools.mjs';
+import { consoleFetch, redact } from '../lib/console.mjs';
 import { checkArgs } from './lib/schema.mjs';
 
 // Every object level is closed, and no schema declares a tenant property.
@@ -23,11 +24,61 @@ const query = (pairs) => {
 };
 const get = (path) => (args, ctx) => forward(ctx, 'GET', path(args));
 
+// project_status's spend_ceiling block (BH-7876): the project's daily ceiling
+// row conf.cost-caps.<project>.daily_usd, the warn row
+// conf.cost-caps.daily_warn_pct and the spend for the UTC day, read in
+// parallel with the dash read. The fleet rows only: a box row is not shown.
+// A failed dash read fails the tool as forward does; a failed ceiling read is
+// state 'unknown', never a spend of 0.
+const DAILY_WARN_PCT = 80; // the harness's code fallback (cost-budget.sh)
+const NUM = /^\d+(\.\d+)?$/;
+const rowNumber = (res) => {
+  const raw = res && res.ok ? res.data?.setting?.value : undefined;
+  const s = raw === undefined || raw === null ? '' : String(raw).trim();
+  return NUM.test(s) ? Number(s) : null;
+};
+const warnPct = (res) => {
+  const n = rowNumber(res);
+  return n !== null && n > 0 && n <= 100 ? n : DAILY_WARN_PCT;
+};
+export function spendCeiling(project, settingRes, spendRes, warnRes) {
+  const out = { project, ceiling_usd: null, spent_usd_today: null, pct: null, state: 'none', as_of: null };
+  if (!settingRes.ok) return { ...out, state: 'unknown', error: settingRes.status === 404 ? 'setting_route_missing' : String(settingRes.error) };
+  const raw = settingRes.data?.setting?.value;
+  if (raw === undefined || raw === null) return out;
+  const ceiling = NUM.test(String(raw).trim()) ? Number(String(raw).trim()) : 0;
+  if (!(ceiling > 0)) return { ...out, state: 'unreadable', error: 'ceiling_refused' };
+  out.ceiling_usd = ceiling;
+  const usd = spendRes.ok ? spendRes.data?.usd : undefined;
+  if (typeof usd !== 'number' || !Number.isFinite(usd)) {
+    return { ...out, state: 'unknown', error: spendRes.ok ? 'spend_not_a_number' : String(spendRes.error) };
+  }
+  const state = usd >= ceiling ? 'over' : usd * 100 >= ceiling * warnPct(warnRes) ? 'warn' : 'under';
+  return { ...out, spent_usd_today: usd, pct: Math.floor((usd * 100) / ceiling), state, as_of: spendRes.data?.as_of ?? null };
+}
+
+async function projectStatus(a, ctx) {
+  const fetcher = ctx.consoleFetch ?? consoleFetch;
+  const dashPath = `/api/dash/p/${seg(a.project)}`;
+  const [dash, setting, spend, warn] = await Promise.all([
+    fetcher(ctx.cfg, 'GET', dashPath),
+    fetcher(ctx.cfg, 'GET', `/api/coord/settings/${seg(`conf.cost-caps.${a.project}.daily_usd`)}`),
+    fetcher(ctx.cfg, 'GET', '/api/coord/metrics/llm-spend' + query([['project', a.project]])),
+    fetcher(ctx.cfg, 'GET', '/api/coord/settings/conf.cost-caps.daily_warn_pct'),
+  ]);
+  if (!dash.ok || dash.data === null || typeof dash.data !== 'object' || Array.isArray(dash.data)) {
+    // The answer forward gives, from the same response: no second dash read.
+    return forward({ ...ctx, consoleFetch: async () => dash }, 'GET', dashPath);
+  }
+  const data = { ...dash.data, spend_ceiling: spendCeiling(a.project, setting, spend, warn) };
+  return { content: [{ type: 'text', text: redact(JSON.stringify(data), ctx.cfg) }], structuredContent: data };
+}
+
 const defs = [
   {
     name: 'project_status', description: "One project's board and build state.", kind: 'read',
     inputSchema: obj({ project: PROJECT }, ['project']),
-    handler: get((a) => `/api/dash/p/${seg(a.project)}`),
+    handler: projectStatus,
   },
   {
     name: 'builds', description: 'List recent builds.', kind: 'read',

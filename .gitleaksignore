@@ -111,6 +111,8 @@ tests/otp-wait.bh-7732-test.sh:generic-api-key:41
 tests/plan-blocked-notice.bh-7116-test.sh:generic-api-key:39
 tests/plan-blocked-repeat.bh-7719-test.sh:generic-api-key:38
 tests/plan-contract-seams.bh-6384-test.sh:generic-api-key:161
+tests/pm-groom.bh-7261-test.sh:generic-api-key:175
+tests/pm-tg-buttons.bh-8650-test.sh:generic-api-key:402
 tests/pool-tick-summary.bh-7709-test.sh:generic-api-key:71
 tests/pool-tick-summary.bh-7709-test.sh:generic-api-key:76
 tests/prebuild-repro-self-comment.bh-2133-test.sh:generic-api-key:43

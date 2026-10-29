@@ -1,0 +1,24 @@
+# ── PM-GROOM LANE (BH-7261, BH-7244.3) ─────────────────────────────────────
+# Monday 11:0x UTC, two hours after run-product: the PM agent's weekly
+# grooming brief per product project. It reads the roadmap backlog and the
+# newest data-signals.json, claims the (project, week) brief row BEFORE its one
+# model call (role product.pm), stores the brief and its proposed moves, and
+# sends a Telegram text with Mission Control links. It shares the run-product
+# flock (flock -n: a held lock is a skip). It never posts or builds.
+# Off: flags/lane-off-pm-groom, or bin/harness-ctl.sh off pm-groom.
+# @box project-4
+8 11 * * 1 /root/harness/bin/pm-groom.sh project-4 >> /root/harness/logs/pm-groom.log 2>&1
+# @box project-1
+2 11 * * 1 /root/harness/bin/pm-groom.sh project-1 >> /root/harness/logs/pm-groom.log 2>&1
+# @box project-2
+4 11 * * 1 /root/harness/bin/pm-groom.sh project-2 >> /root/harness/logs/pm-groom.log 2>&1
+# @box project-3
+6 11 * * 1 /root/harness/bin/pm-groom.sh project-3 >> /root/harness/logs/pm-groom.log 2>&1
+# @box project-9
+5 11 * * 1 /root/harness/bin/pm-groom.sh project-9 >> /root/harness/logs/pm-groom.log 2>&1
+# @box project-5
+9 11 * * 1 /root/harness/bin/pm-groom.sh project-5 >> /root/harness/logs/pm-groom.log 2>&1
+# @box small
+1 11 * * 1 /root/harness/bin/pm-groom.sh project-8 >> /root/harness/logs/pm-groom.log 2>&1
+# @box project-6-os
+1 11 * * 1 /root/harness/bin/pm-groom.sh project-6-os >> /root/harness/logs/pm-groom.log 2>&1

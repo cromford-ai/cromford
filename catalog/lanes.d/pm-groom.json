@@ -1,0 +1,98 @@
+{
+  "id": "pm-groom",
+  "name": "PM weekly grooming brief",
+  "scope": "project",
+  "script": "bin/pm-groom.sh",
+  "cadence": "1 11 * * 1; 2 11 * * 1; 4 11 * * 1; 5 11 * * 1; 6 11 * * 1; 8 11 * * 1; 9 11 * * 1",
+  "boxes": [
+    "project-4",
+    "project-6-os",
+    "project-1",
+    "project-3",
+    "project-9",
+    "small",
+    "project-2",
+    "project-5"
+  ],
+  "switch": {
+    "kind": "flag",
+    "name": "lane-off-pm-groom",
+    "aliases": []
+  },
+  "wired": true,
+  "knobs": [
+    {
+      "env": "PM_GROOM_TIMEOUT_S",
+      "type": "int",
+      "default": 300,
+      "min": 60,
+      "max": 1200,
+      "unit": "s",
+      "zero_means": null,
+      "note": "BH-7261: seconds the one weekly brief call may run (bin/agent-call.sh timeout). Read by bin/pm-groom.sh as ${PM_GROOM_TIMEOUT_S:-300}; outside 60..1200 is one warn line in logs/pm-groom.log and the default.",
+      "settable": true
+    },
+    {
+      "env": "PM_MODEL",
+      "type": "string",
+      "default": "",
+      "zero_means": null,
+      "note": "BH-7261: an operator override of the model for this box only. Empty is the product.pm model route (lane_model PM_MODEL product.pm); no route is rc 75 and no call.",
+      "settable": false
+    },
+    {
+      "env": "PM_GROOM_NOW",
+      "type": "string",
+      "default": "",
+      "settable": false,
+      "zero_means": null,
+      "note": "BH-7261: test seam, the lane clock in epoch seconds. Read by bin/pm-groom.sh only with HARNESS_TEST_SANDBOX=1; empty is the clock. A box never sets it."
+    },
+    {
+      "env": "HARNESS_TEST_SANDBOX",
+      "type": "string",
+      "default": "",
+      "settable": false,
+      "zero_means": null,
+      "note": "BH-7261: test seam gate. bin/pm-groom.sh reads PM_GROOM_NOW only when this is 1. A box never sets it."
+    },
+    {
+      "env": "LLM_LANE_ENABLED",
+      "type": "int",
+      "default": 1,
+      "min": 0,
+      "max": 1,
+      "zero_means": "off",
+      "read_in": "bin/lib/llm-gate.sh",
+      "note": "0 makes this lane call no model at all. bin/lib/llm-gate.sh refuses BEFORE the vendor call and writes a zero-cost row_source=refused row, so the stop is visible in the ledger rather than being a lane that went quiet.",
+      "settable": true
+    },
+    {
+      "env": "LLM_RUNNER_ALLOWED",
+      "type": "string",
+      "default": "",
+      "zero_means": null,
+      "read_in": "bin/lib/llm-gate.sh",
+      "note": "Comma/space list of the ONLY ladder rungs this lane may reach. Empty is every rung, i.e. today's ladder unchanged. A rung outside the list is refused before the call.",
+      "settable": true
+    },
+    {
+      "env": "LLM_USD_CAP_DAY",
+      "type": "float",
+      "default": 0,
+      "min": 0,
+      "max": 10000,
+      "unit": "usd",
+      "zero_means": "unlimited",
+      "read_in": "bin/lib/llm-gate.sh",
+      "note": "Dollars this lane may spend in the current UTC day, summed from D1 cost_rows through GET /api/metrics/llm-spend, never from the box's own logs/cost.csv.",
+      "settable": true
+    }
+  ],
+  "stats": {
+    "cost_stage": "pm",
+    "cost_project_filter": null,
+    "lanes_row": false,
+    "log": "logs/pm-groom.log"
+  }
+}

@@ -1,0 +1,1 @@
+{"name":"project-ceiling-off","readers":["bin/lib/project-ceiling.sh"],"box_scoped":true,"what":"turns off the per-project daily spend ceiling (bin/lib/project-ceiling.sh, conf.cost-caps.<project>.daily_usd): no spend read, no alert, and the budget launch gate no longer defers a build over it"}
