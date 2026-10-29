@@ -42,6 +42,8 @@ queue_rules:
       - base=main
       # BH-2275: a standing changes-requested review keeps a PR out (and dequeues it).
       - "#changes-requested-reviews-by=0"
+      # A PR the main-red breaker paused leaves the queue, whatever queued it (BH-8706).
+      - -label=merge-queue-paused
       - "check-success=Build + Unit tests"
     # ... and the batch, built on current main, must be green before it merges.
     merge_conditions:
@@ -80,6 +82,8 @@ pull_request_rules:
       - label=merge-queue
       # Everything else: without this a fix-main-red PR matches both rules.
       - -label=fix-main-red
+      # ... and a PR the main-red breaker paused waits out of the queue (BH-8706).
+      - -label=merge-queue-paused
     actions:
       queue:
         name: default

@@ -603,9 +603,12 @@ mc_queue_state() {
 }
 
 # mc_queue_left_why <owner/repo> <pr-url> <head-sha>
-#   -> merged | merging | ejected | nowitness | unknown, always rc 0 (BH-4562)
+#   -> merged | paused | merging | ejected | nowitness | unknown, always rc 0 (BH-4562)
 #
 #   merged     a FRESH PR read says GitHub merged it
+#   paused     OPEN and labelled with the main-red breaker's pause label
+#              (BH-8706, bin/main-red-breaker.sh): Mergify dequeued it because
+#              main is red, which is not an ejection
 #   merging    still OPEN, but a Mergify queue check on the head is titled merged
 #   ejected    OPEN with a stated reason: a failed queue check, a `dequeued`
 #              title, or Mergify's `dequeued` label
@@ -625,7 +628,7 @@ mc_queue_state() {
 # ORDER: merged beats everything; a merged title beats a cancelled conclusion on
 # a sibling check line; only then does a stated reason eject.
 mc_queue_left_why() {
-  local slug="$1" url="$2" head="$3" j st labels chk
+  local slug="$1" url="$2" head="$3" j st labels chk pl
   j=$(GH_ETAG=0 mc_pr_view "$url" '"\(.STATE) \(.LABELS)"' 2>/dev/null) || j=""
   [ -n "$j" ] || { printf 'unknown'; return 0; }
   read -r st labels <<<"$j"
@@ -634,6 +637,15 @@ mc_queue_left_why() {
     OPEN) ;;
     *) printf 'unknown'; return 0 ;;
   esac
+  # The pause label is the registry knob main-red-breaker MAIN_RED_BREAKER_PAUSE_LABEL
+  # (catalog/lanes.d/main-red-breaker.json, settable:false: env, else the
+  # registry default). No lane_knob and no env: no label is the pause.
+  pl=""
+  command -v lane_knob >/dev/null 2>&1 && pl=$(lane_knob main-red-breaker MAIN_RED_BREAKER_PAUSE_LABEL 2>/dev/null)
+  [ -n "$pl" ] || pl="${MAIN_RED_BREAKER_PAUSE_LABEL:-}"
+  if [ -n "$pl" ]; then
+    case ",${labels:-}," in *",$pl,"*) printf 'paused'; return 0 ;; esac
+  fi
   chk=$(mc_mergify_check "$slug" "$url" "$head") || { printf 'unknown'; return 0; }
   # A negated title ("cannot be merged", "not merged") is not a landing; it
   # would read `merging` every tick and the row would never be counted.

@@ -2936,6 +2936,7 @@ tick_project() {
             unknown)
               mc_log "$QKEY still QUEUED: the dequeue could not be confirmed this tick (PR or check read failed) — no ejection counted (BH-4562)"
               exec 9>&-; continue ;;
+            paused) command -v mc_queue_left_paused >/dev/null 2>&1 && mc_queue_left_paused "$QKEY" "$QHEAD" "$SLUG" "${MAIN_RED:-}"; exec 9>&-; continue ;;
             nowitness)
               if ! mc_attempt_has "qgone $QKEY $QHEAD" 2>/dev/null; then
                 mc_attempt_put "qgone $QKEY $QHEAD"
@@ -2943,6 +2944,8 @@ tick_project() {
                 exec 9>&-; continue
               fi ;;   # second sighting of the same head: today's ejection below
           esac
+          # BH-8706: just resumed from a main-red pause, Mergify not back yet.
+          command -v mc_queue_left_resumed >/dev/null 2>&1 && mc_queue_left_resumed "$QKEY" "$QHEAD" && { exec 9>&-; continue; }
           # <<< queue left confirm
           # OPEN, not merged, and the queue no longer holds it = EJECTED. Under
           # the native queue that means its merge_group build (main + the entries

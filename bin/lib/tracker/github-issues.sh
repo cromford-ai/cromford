@@ -211,6 +211,20 @@ trk_gh_label_remove() {
   return "$rc"
 }
 
+# trk_gh_create <payload-json> <out> — POST a new issue from a JSON payload
+# file ({title, body, labels}); GitHub's answer goes to <out>. Not in a
+# subshell, so GH_REST_STATUS stays set for the caller's 201 check (BH-8706).
+trk_gh_create() {
+  local p="${1:-}" o="${2:-}" rc=0
+  command -v gh_rest >/dev/null 2>&1 && [[ "${TRK_SLUG:-}" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] \
+    && [ -r "$p" ] && [ -n "$o" ] || return 1
+  _trk_logw "gh api -X POST repos/$TRK_SLUG/issues --input $p"
+  _trk_dry && return 0
+  gh_rest POST "repos/$TRK_SLUG/issues" --input "$p" > "$o" || rc=$?
+  [ "$rc" = 0 ] || { _trk_gh_fail "$rc"; return $?; }
+  return 0
+}
+
 trk_gh_link_pr() {
   local n="${1:-}" url="${2:-}" f rc=0
   [[ "$url" =~ ^https://github\.com/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+/pull/[0-9]+$ ]] || return 1

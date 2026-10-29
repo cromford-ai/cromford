@@ -88,6 +88,8 @@ queue_rules:
       - base = main
       - label = queue-flake-fix
       - "#changes-requested-reviews-by=0"
+      # A PR the main-red breaker paused leaves the queue, whatever queued it (BH-8706).
+      - -label = merge-queue-paused
       - check-success = "Syntax + shellcheck + config integrity"
       - check-success = "Test determinism lint"
       - check-success = "Prompt replay evals (prompts/** only)"
@@ -116,6 +118,8 @@ queue_rules:
       - base = main
       - label = queue-solo
       - "#changes-requested-reviews-by=0"
+      # A PR the main-red breaker paused leaves the queue, whatever queued it (BH-8706).
+      - -label = merge-queue-paused
       - check-success = "Syntax + shellcheck + config integrity"
       - check-success = "Test determinism lint"
       - check-success = "Prompt replay evals (prompts/** only)"
@@ -141,6 +145,8 @@ queue_rules:
       - base = main
       # BH-2275: a standing changes-requested review keeps a PR out (and dequeues it).
       - "#changes-requested-reviews-by=0"
+      # A PR the main-red breaker paused leaves the queue, whatever queued it (BH-8706).
+      - -label = merge-queue-paused
       - check-success = "Syntax + shellcheck + config integrity"
       - check-success = "Test determinism lint"
       - check-success = "Prompt replay evals (prompts/** only)"
@@ -202,6 +208,8 @@ pull_request_rules:
       - label = queue-flake-fix
       # A fix-main-red PR takes the hotfix rule.
       - -label = fix-main-red
+      # Paused by the main-red breaker while main is red (BH-8706).
+      - -label = merge-queue-paused
     actions:
       queue:
         name: flake-fix
@@ -210,6 +218,8 @@ pull_request_rules:
       - base = main
       - label = merge-queue
       - -label = fix-main-red
+      # ... and a PR the main-red breaker paused waits out of the queue (BH-8706).
+      - -label = merge-queue-paused
       # ... and a solo-routed PR matches the rule below instead (BH-5430).
       - -label = queue-solo
       # ... and a flake-fix PR matches the flake-fix rule above (BH-7279).
@@ -224,6 +234,8 @@ pull_request_rules:
       - label = queue-solo
       # A fix-main-red PR takes the hotfix rule even when it scores high.
       - -label = fix-main-red
+      # Paused by the main-red breaker while main is red (BH-8706).
+      - -label = merge-queue-paused
       # A flake-fix PR takes the flake-fix rule even when it scores high.
       - -label = queue-flake-fix
     actions:

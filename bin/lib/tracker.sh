@@ -21,6 +21,7 @@
 #   tracker_transition <id> <status>
 #   tracker_label_add <id> <label>
 #   tracker_label_remove <id> <label>
+#   tracker_create <payload-json> <out>   github-issues only: POST a new issue, GitHub's answer in <out>
 #   tracker_link_pr <id> <pr-url>
 #   tracker_close_out <id> <bodyfile> [<status>]   comment, THEN the terminal status
 #   tracker_waiting_on <project> <id>   OK | BLOCKED <reason>, from bin/triage-gate.sh
@@ -405,6 +406,7 @@ tracker_comment()      { _trk_call comment "$@"; }
 tracker_transition()   { _trk_call transition "$@"; }
 tracker_label_add()    { _trk_call label_add "$@"; }
 tracker_label_remove() { _trk_call label_remove "$@"; }
+tracker_create()       { _trk_call create "$@"; }
 tracker_link_pr()      { _trk_call link_pr "$@"; }
 tracker_close_out()    { _trk_call close_out "$@"; }
 

@@ -17,6 +17,7 @@
 # Run from anywhere: HARNESS_TEST_SANDBOX=1 bash tests/mergify-flake-fix-queue.bh-7279-test.sh
 set -uo pipefail
 . "$(dirname "$0")/lib/scratch.sh" || exit 1
+. "$(dirname "$0")/lib/mergify-pause-filter.sh" || exit 1
 DIR=$(cd "$(dirname "$0")/.." && pwd)
 PASS=0; FAIL=0
 ok()  { PASS=$((PASS+1)); }
@@ -157,6 +158,9 @@ if [ -n "$BASE" ] && git -C "$DIR" cat-file -e "$BASE:bin/mergify-template.sh" 2
   for c in "$DIR/config/mergify/repos/project-5.conf" "$T/bh-noflake.conf"; do
     bash "$OLD/bin/mergify-template.sh" render "$c" > "$T/g7-old.yml" 2>/dev/null
     bash "$MT" render "$c" > "$T/g7-new.yml"
+    # TEST-CHANGE (BH-8706): drop the main-red breaker's pause lines from both
+    # sides only while the base has none (tests/lib/mergify-pause-filter.sh).
+    mergify_pause_filter "$T/g7-old.yml" "$T/g7-new.yml"
     [ -s "$T/g7-old.yml" ] && cmp -s "$T/g7-old.yml" "$T/g7-new.yml" && ok \
       || bad "G7 $(basename "$c") renders byte-identical to the merge base: $(diff "$T/g7-old.yml" "$T/g7-new.yml" | head -5 | tr '\n' ' ')"
   done

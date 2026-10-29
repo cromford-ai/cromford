@@ -1,0 +1,12 @@
+{
+  "env": "POOL_RB_MAX_PER_TICK",
+  "type": "int",
+  "default": 4,
+  "min": 0,
+  "max": 1000,
+  "unit": "rows",
+  "zero_means": "unlimited",
+  "required": false,
+  "read_in": "bin/lib/pool-rb-rows.sh",
+  "note": "BH-7643. The most conductor rebase rows (RB-<pr>-<head8>) the pool SPAWN walk starts in one tick. RB rows past it stay queued for the next tick, with one `rebase rows: <n> past pool_rb_max_per_tick=<max>` line, and the ticket rows behind them still get the budget. A row whose PR is closed or merged takes no slot: it is closed `empty: pr-closed` with no machine. Settings row `lane.fly-pool.pool_rb_max_per_tick`. 0 = no limit. A value outside 0-1000 uses 4."
+}

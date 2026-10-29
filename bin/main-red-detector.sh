@@ -245,6 +245,14 @@
 #                              name, then the default. A value that does not
 #                              compile falls back to the default with one warn
 #                              (BH-3769); it never disarms the detector
+#   MAIN_RED_SKIP_RE_OVERRIDES [{}]  a JSON object {"<owner>/<repo>": "<regex>"}
+#                              that replaces MAIN_RED_SKIP_RE for that one repo
+#                              (BH-8706: a repo whose E2E runs on push can count
+#                              it as required). Settings row
+#                              lane.main-red-breaker.main_red_skip_re_overrides,
+#                              then this env name, then {}. A bad object or a
+#                              regex that does not compile logs one line and
+#                              that repo keeps the global value
 #   MAIN_RED_REPOS       [fleet.conf repos + $HARNESS_REPO]  explicit repo list
 #   HARNESS_REPO         [example-org/cromford]
 #   MAIN_RED_QUEUE       [1]   the merge-queue arm above. Only the literal 0
@@ -283,7 +291,7 @@ while [ $# -gt 0 ]; do
   case "$1" in
     --explain) EXPLAIN=1 ;;
     --flagged-only) FLAGGED_ONLY=1 ;;
-    -h|--help) sed -n '2,276p' "$0"; exit 0 ;;
+    -h|--help) sed -n '2,284p' "$0"; exit 0 ;;
     -*) echo "main-red-detector.sh: unknown flag $1" >&2; exit 2 ;;
     *) ARGS+=("$1") ;;
   esac
@@ -357,6 +365,45 @@ if ! python3 -c 'import re,sys; re.compile(sys.argv[1], re.I)' "$SKIP_RE" >/dev/
   SKIP_RE="$SKIP_DEFAULT"; SKIP_FROM=default
 fi
 log "skip regex $SKIP_RE from $SKIP_FROM"
+# THE PER-REPO OVERRIDE (BH-8706). Registered on the main-red-breaker lane
+# (settings row lane.main-red-breaker.main_red_skip_re_overrides); read here the
+# same way as mr_skip_re_row: the row, then the env name, then {} (the code
+# fallback of that row: no repo overridden, every decision as before).
+mr_skip_by_repo_row() {
+  [ -r "$H/bin/lib/lane-gate.sh" ] || return 0
+  ( unset MAIN_RED_SKIP_RE_OVERRIDES; export HARNESS="$H"
+    # shellcheck source=bin/lib/lane-gate.sh
+    . "$H/bin/lib/lane-gate.sh" >/dev/null 2>&1
+    command -v lane_env_apply >/dev/null 2>&1 && lane_env_apply main-red-breaker >/dev/null 2>&1
+    printf '%s' "${MAIN_RED_SKIP_RE_OVERRIDES:-}" )
+}
+SKIP_BY_REPO=$(mr_skip_by_repo_row)
+[ -n "$SKIP_BY_REPO" ] || SKIP_BY_REPO="${MAIN_RED_SKIP_RE_OVERRIDES:-}"
+[ -n "$SKIP_BY_REPO" ] || SKIP_BY_REPO='{}'
+SKIP_GLOBAL="$SKIP_RE"
+# mr_skip_for <slug> — rc 0 prints the repo's override regex; rc 1 the repo has
+# none; rc 2 the object or the regex is invalid. The key match is exact.
+mr_skip_for() {
+  python3 - "$SKIP_BY_REPO" "$1" <<'PYEOF' 2>/dev/null
+import json, re, sys
+try:
+    d = json.loads(sys.argv[1])
+except Exception:
+    sys.exit(2)
+if not isinstance(d, dict):
+    sys.exit(2)
+if sys.argv[2] not in d:
+    sys.exit(1)
+v = d[sys.argv[2]]
+if not isinstance(v, str) or v == "":
+    sys.exit(2)
+try:
+    re.compile(v, re.I)
+except Exception:
+    sys.exit(2)
+print(v)
+PYEOF
+}
 # BH-4080: HARNESS_REPO's default lives in the deployment defaults home.
 # shellcheck source=bin/lib/deployment.sh
 . "${HARNESS_DEPLOYMENT_FILE-$(dirname "${BASH_SOURCE[0]}")/lib/deployment.sh}" || exit 1
@@ -1359,6 +1406,15 @@ for SLUG in $REPOS; do
   MR_CUR="$SLUG"
   [ -n "$SLUG" ] && [ "$SLUG" != "-" ] || continue
   FLAG="$H/flags/main-red-$(echo "$SLUG" | tr '/' '-')"
+  SKIP_RE="$SKIP_GLOBAL"
+  if [ "$SKIP_BY_REPO" != '{}' ]; then
+    SKRC=0; SKV=$(mr_skip_for "$SLUG") || SKRC=$?
+    case "$SKRC" in
+      0) SKIP_RE="$SKV"; log "$SLUG: skip regex $SKIP_RE (by-repo)" ;;
+      1) ;;
+      *) log "skip regex override for $SLUG is invalid — global used" ;;
+    esac
+  fi
   if command -v gh_default_auth_for_slug >/dev/null 2>&1; then
     # #469: ONE call for both halves — the App token when this box can mint one
     # for this repo, the gh_repo_use_token PAT probe inside the helper when it

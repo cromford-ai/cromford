@@ -1,0 +1,108 @@
+{
+  "id": "main-red-breaker",
+  "name": "Main-red breaker",
+  "scope": "hub",
+  "script": "bin/main-red-breaker.sh",
+  "cadence": "*/5 * * * *",
+  "boxes": [
+    "hub"
+  ],
+  "switch": {
+    "kind": "flag",
+    "name": "lane-off-main-red-breaker",
+    "aliases": []
+  },
+  "wired": true,
+  "knobs": [
+    {
+      "env": "MAIN_RED_BREAKER_PAUSE_LABEL",
+      "type": "string",
+      "default": "merge-queue-paused",
+      "zero_means": null,
+      "settable": false,
+      "note": "BH-8706: the label the breaker puts on every queued PR of a red repo and removes on green. The non-hotfix Mergify queue_rules exclude it in their queue_conditions (config/mergify/template.yml, bin/mergify-template.sh PAUSE_LABEL, .mergify.yml), and mc_queue_left_why answers paused on it. Read by bin/main-red-breaker.sh as ${MAIN_RED_BREAKER_PAUSE_LABEL:-merge-queue-paused}. settable:false (BH-8706 review): the Mergify files hold the literal, so a value changed from a page would label PRs that Mergify does not exclude, and the pause would fail open. A change is a PR that edits PAUSE_LABEL and re-renders every Mergify conf (bin/mergify-sync.sh apply)."
+    },
+    {
+      "env": "MAIN_RED_BREAKER_MAX_PRS",
+      "type": "int",
+      "default": 50,
+      "min": 1,
+      "max": 500,
+      "zero_means": null,
+      "note": "BH-8706: the most PRs one tick pauses (or resumes) per repo; a list at the cap logs `pause: capped` and the next tick goes on. Read by bin/main-red-breaker.sh as ${MAIN_RED_BREAKER_MAX_PRS:-50}."
+    },
+    {
+      "env": "MAIN_RED_BREAKER_MAX_JOBS",
+      "type": "int",
+      "default": 5,
+      "min": 1,
+      "max": 50,
+      "zero_means": null,
+      "note": "BH-8706: the most failed jobs the hotfix ticket lists. Read by bin/main-red-breaker.sh as ${MAIN_RED_BREAKER_MAX_JOBS:-5}."
+    },
+    {
+      "env": "MAIN_RED_BREAKER_MAX_ANNOTATIONS",
+      "type": "int",
+      "default": 10,
+      "min": 0,
+      "max": 100,
+      "zero_means": "off",
+      "note": "BH-8706: the most failure annotations (failing test lines) the hotfix ticket lists per failed job; 0 reads none. Read by bin/main-red-breaker.sh as ${MAIN_RED_BREAKER_MAX_ANNOTATIONS:-10}."
+    },
+    {
+      "env": "MAIN_RED_BREAKER_MAX_SUSPECTS",
+      "type": "int",
+      "default": 20,
+      "min": 1,
+      "max": 250,
+      "zero_means": null,
+      "note": "BH-8706: the most suspect merges (between the last green and the red sha) the hotfix ticket lists. Read by bin/main-red-breaker.sh as ${MAIN_RED_BREAKER_MAX_SUSPECTS:-20}."
+    },
+    {
+      "env": "MAIN_RED_BREAKER_TICKET_LABELS",
+      "type": "string",
+      "default": "ai-build,hotfix",
+      "zero_means": null,
+      "note": "BH-8706: the comma-separated labels of the hotfix ticket. Read by bin/main-red-breaker.sh as ${MAIN_RED_BREAKER_TICKET_LABELS:-ai-build,hotfix}; a value that is not a label list falls back to the default."
+    },
+    {
+      "env": "MAIN_RED_BREAKER_TICKETS",
+      "type": "int",
+      "default": 1,
+      "min": 0,
+      "max": 1,
+      "zero_means": "off",
+      "note": "BH-8706: 1 files one hotfix ticket per red episode; 0 = pause and resume only. Read by bin/main-red-breaker.sh as ${MAIN_RED_BREAKER_TICKETS:-1}."
+    },
+    {
+      "env": "MAIN_RED_SKIP_RE_OVERRIDES",
+      "type": "string",
+      "default": "{}",
+      "zero_means": null,
+      "note": "BH-8706: a JSON object {\"<owner>/<repo>\": \"<regex>\"} that replaces the global main-red skip regex (lane.main-red-pr-pair.main_red_skip_re) for that repo only, so a repo whose push-to-main run executes its impacted E2E can count that workflow as required. Read by bin/main-red-detector.sh once per pass; bad JSON or a regex that does not compile is logged and the global value is used. {} = no repo overridden.",
+      "read_in": "bin/main-red-detector.sh"
+    },
+    {
+      "env": "MAIN_RED_BREAKER_FIXTURE",
+      "type": "string",
+      "default": "",
+      "zero_means": null,
+      "note": "Test seam: a file bin/main-red-breaker.sh sources after its libs, only when HARNESS_TEST_SANDBOX=1 (tests/main-red-breaker.bh-8706-test.sh). NOT settable from the control plane: it names a file a root lane sources.",
+      "settable": false
+    },
+    {
+      "env": "HARNESS_TEST_SANDBOX",
+      "type": "string",
+      "default": "",
+      "zero_means": null,
+      "note": "Test seam gate: bin/main-red-breaker.sh sources MAIN_RED_BREAKER_FIXTURE only when this is 1 (the test harness sets it). Never set on a box, and NOT settable from the control plane.",
+      "settable": false
+    }
+  ],
+  "stats": {
+    "cost_stage": null,
+    "cost_project_filter": null,
+    "lanes_row": false,
+    "log": "logs/main-red-breaker.log"
+  }
+}

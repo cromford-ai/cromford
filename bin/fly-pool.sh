@@ -235,6 +235,12 @@ job_is_now() {
 # shellcheck source=bin/lib/pool-unblock-rank.sh
 . "$HARNESS/bin/lib/pool-unblock-rank.sh" 2>/dev/null \
   || . "$(dirname "${BASH_SOURCE[0]}")/lib/pool-unblock-rank.sh" 2>/dev/null || true
+# BH-7643: RB rows — the per-tick limit and the closed/merged PR check
+# (pool_rb_max_per_tick, pool_rb_close_if_pr_closed). Missing, RB rows spawn
+# as before: no limit, no PR read.
+# shellcheck source=bin/lib/pool-rb-rows.sh
+. "$HARNESS/bin/lib/pool-rb-rows.sh" 2>/dev/null \
+  || . "$(dirname "${BASH_SOURCE[0]}")/lib/pool-rb-rows.sh" 2>/dev/null || true
 # Hotfix files first, then dispatched keys, then the rest, order preserved
 # within each group — so the emergency takes the machine the tick can afford,
 # a reused machine takes the emergency job, and a dispatch goes next.
@@ -2164,7 +2170,11 @@ pool_spawn_decision() {
   # An RR-<pr>-<head8> re-review row (BH-7635) is the same kind of row for the
   # same reasons: a conductor read of an open PR, never a ticket.
   case "$KEY" in
-    RB-*) say "$KEY: rebase row — the ticket spawn gates do not apply"; return 0 ;;
+    # BH-7643: a rebase of a closed or merged PR gets no machine (the row is
+    # closed and its file removed). This covers the reuse handoff too.
+    RB-*) if command -v pool_rb_close_if_pr_closed >/dev/null 2>&1 \
+             && pool_rb_close_if_pr_closed "$JF" "$KEY" "$TICKET"; then return 1; fi
+          say "$KEY: rebase row — the ticket spawn gates do not apply"; return 0 ;;
     RR-*) say "$KEY: re-review row — the ticket spawn gates do not apply"; return 0 ;;
     LR-*) say "$KEY: lead-review row — the ticket spawn gates do not apply"; return 0 ;;
     # A console preview row (BH-8030): a build of one PR head for the hub's
@@ -6088,6 +6098,9 @@ pool_walk_spawn() {
   if [ "$JF_HOT" = 1 ]; then HOT_LAUNCHED=$((HOT_LAUNCHED+1)); else LAUNCHED=$((LAUNCHED+1)); fi
 }
 PDC_SEEN=0; PDC_FIRST=0
+# BH-7643: RB rows spawned this tick, the limit, and the keys past it.
+_POOL_RB_N=0; _POOL_RB_WAIT=""; _POOL_RB_MAX=0
+command -v pool_rb_max_per_tick >/dev/null 2>&1 && _POOL_RB_MAX=$(pool_rb_max_per_tick)
 POOL_TICK_T0=$(date +%s)
 for JF in $(hotfix_first $(ls -tr "$QDIR"/*.json 2>/dev/null)); do
   case "$JF" in *.failed.json) continue;; esac
@@ -6150,6 +6163,18 @@ for JF in $(hotfix_first $(ls -tr "$QDIR"/*.json 2>/dev/null)); do
   if command -v dm_job_admit >/dev/null 2>&1 && ! dm_job_admit "$JF"; then
     DM_HELD="${DM_HELD:+$DM_HELD }$KEY"; continue
   fi
+  # BH-7643: an RB row past pool_rb_max_per_tick stays queued for the next
+  # tick. `continue`, not `break`: the ticket rows behind it still get the
+  # budget. Then a closed or merged PR closes the row and takes no slot.
+  case "$KEY" in
+    RB-*)
+      if [ "$_POOL_RB_MAX" -gt 0 ] && [ "$_POOL_RB_N" -ge "$_POOL_RB_MAX" ]; then
+        _POOL_RB_WAIT="${_POOL_RB_WAIT:+$_POOL_RB_WAIT }$KEY"; continue
+      fi
+      command -v pool_rb_close_if_pr_closed >/dev/null 2>&1 \
+        && pool_rb_close_if_pr_closed "$JF" "$KEY" "$TICKET" && continue
+      _POOL_RB_N=$((_POOL_RB_N + 1)) ;;
+  esac
   # Spawn-decision gate: HOLD, open PR, terminal state, per-key cap (BH-1075).
   # BH-7706: in a background worker (bin/lib/pool-decide.sh). The tick budget
   # is checked here before each row after the first, as pool_spawn_decision
@@ -6183,6 +6208,9 @@ if [ "$PDC_ON" = 1 ]; then
   [ "$PDC_LEFT" -gt 0 ] && [ -z "$PDC_STOP" ] && PDC_STOP=cap
   pdc_walk_line "$PDC_LEFT"
   pdc_cleanup
+fi
+if [ -n "$_POOL_RB_WAIT" ]; then
+  say "rebase rows: $(wc -w <<<"$_POOL_RB_WAIT" | tr -d ' ') past pool_rb_max_per_tick=$_POOL_RB_MAX wait for the next tick ($_POOL_RB_WAIT)"
 fi
 # One hold-cache line per tick (BH-6549), only when a GitHub-issue row reached
 # the HOLD gate. NOT "pool $P: ..." (tests/pool-autoscale-test.sh reads that).

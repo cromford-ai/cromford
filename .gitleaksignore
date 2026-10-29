@@ -122,7 +122,7 @@ tests/prompt-render.bh-7971-test.sh:generic-api-key:32
 tests/prompt-resolve.bh-7940-test.sh:generic-api-key:32
 tests/qa-wiring-check.bh-6254-test.sh:stripe-access-token:112
 tests/qa-wiring-check.bh-6254-test.sh:generic-api-key:148
-tests/queue-partition.bh-4979-test.sh:generic-api-key:191
+tests/queue-partition.bh-4979-test.sh:generic-api-key:192
 tests/roadmap-file.bh-7243-test.sh:generic-api-key:198
 tests/roadmap-issue-sync.bh-7243-test.sh:generic-api-key:175
 tests/roadmap-render.bh-7243-test.sh:generic-api-key:263

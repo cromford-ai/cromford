@@ -1,0 +1,8 @@
+# @hub-lanes
+# Main-red breaker (BH-8706): while flags/main-red-<owner>-<repo> is up, put
+# merge-queue-paused on every queued PR of that repo (Mergify's non-hotfix
+# rules exclude it), file one ai-build + hotfix ticket per red episode, and
+# remove the label once main is green. Ledger kinds main_red_breaker and
+# main_red_hotfix. WRITES: logs/main-red-breaker.log, state/main-red-breaker/.
+# Off: flags/lane-off-main-red-breaker.
+*/5 * * * * /root/harness/bin/hub-lease.sh check && /root/harness/bin/main-red-breaker.sh >/dev/null 2>&1

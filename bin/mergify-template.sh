@@ -132,6 +132,10 @@ PATTERNS = {"batch_max_wait_time": r"[0-9]+ ?[a-z]+( [0-9]+ ?[a-z]+)*",
 COND_KEYS = {"conditions", "queue_conditions", "merge_conditions"}
 # The queue label the template's pull_request_rules key on (MC_MERGIFY_LABEL).
 LABEL = "merge-queue"
+# The label bin/main-red-breaker.sh adds to a queued PR while main is red; every
+# non-hotfix rule excludes it, so Mergify dequeues the PR until it is removed
+# (BH-8706). Must match the default of MAIN_RED_BREAKER_PAUSE_LABEL.
+PAUSE_LABEL = "merge-queue-paused"
 
 
 class Bad(Exception):
@@ -161,11 +165,11 @@ def check_value(key, val):  # -> the problem, or None
         return "merge_method %r is not squash|merge|rebase" % val
     elif key == "solo_label" and not re.fullmatch(r"[a-z0-9][a-z0-9-]{0,49}", val):
         return "solo_label %r is not a lowercase label of 1-50 [a-z0-9-] characters" % val
-    elif key == "solo_label" and val in ("merge-queue", "fix-main-red"):
+    elif key == "solo_label" and val in ("merge-queue", "fix-main-red", PAUSE_LABEL):
         return "solo_label %r is a label the harness already uses for another queue" % val
     elif key == "flake_fix_label" and not re.fullmatch(r"[a-z0-9][a-z0-9-]{0,49}", val):
         return "flake_fix_label %r is not a lowercase label of 1-50 [a-z0-9-] characters" % val
-    elif key == "flake_fix_label" and val in ("merge-queue", "fix-main-red", "hotfix"):
+    elif key == "flake_fix_label" and val in ("merge-queue", "fix-main-red", "hotfix", PAUSE_LABEL):
         return "flake_fix_label %r is a label the harness already uses for another purpose" % val
     elif key in PATTERNS and not re.fullmatch(PATTERNS[key], val):
         return "%s %r is malformed" % (key, val)
@@ -262,14 +266,17 @@ def render(path):
               "SOLO_QUEUE_BLOCK": ["- name: solo",
                                    "  # A high break-risk PR (bin/lib/queue-risk.sh) never shares a batch (BH-5430).",
                                    "  queue_conditions:", "    - base=" + c["base"], "    - label=" + solo,
-                                   '    - "#changes-requested-reviews-by=0"'] + cond(c["queue_checks"])
+                                   '    - "#changes-requested-reviews-by=0"',
+                                   "    # A PR the main-red breaker paused leaves the queue (BH-8706).", "    - -label=" + PAUSE_LABEL] + cond(c["queue_checks"])
                                   + ["  merge_conditions:", '    - "#changes-requested-reviews-by=0"'] + cond(c["checks"])
                                   + ["  merge_method: " + c["merge_method"], "  batch_size: 1", "  batch_max_wait_time: 0 s",
                                      "  max_checks_retries: 0", "  checks_timeout: " + c["checks_timeout"]] if solo else [],
               "SOLO_PR_RULE_BLOCK": ["- name: queue on the solo label", "  conditions:", "    - base=" + c["base"],
                                      "    - label=" + LABEL, "    - label=" + solo,
                                      "    # A fix-main-red PR takes the hotfix rule even when it scores high.",
-                                     "    - -label=fix-main-red"]
+                                     "    - -label=fix-main-red",
+                                     "    # Paused by the main-red breaker while main is red (BH-8706).",
+                                     "    - -label=" + PAUSE_LABEL]
                                     + (["    - -label=" + flake] if flake else [])
                                     + ["  actions:", "    queue:", "      name: solo"] if solo else [],
               "SOLO_EXCLUDE": ["- -label=" + solo] if solo else [],
@@ -277,7 +284,8 @@ def render(path):
               "FLAKE_QUEUE_BLOCK": ["- name: flake-fix",
                                     "  # A batch-fail suite fix (bin/lib/queue-flake-fix.sh) goes first after a hotfix (BH-7279).",
                                     "  queue_conditions:", "    - base=" + c["base"], "    - label=" + flake,
-                                    '    - "#changes-requested-reviews-by=0"'] + cond(c["queue_checks"])
+                                    '    - "#changes-requested-reviews-by=0"',
+                                    "    # A PR the main-red breaker paused leaves the queue (BH-8706).", "    - -label=" + PAUSE_LABEL] + cond(c["queue_checks"])
                                    + ["  merge_conditions:", '    - "#changes-requested-reviews-by=0"'] + cond(c["checks"])
                                    + ["  merge_method: " + c["merge_method"], "  batch_size: 1", "  batch_max_wait_time: 0 s",
                                       "  max_checks_retries: 0", "  checks_timeout: " + c["checks_timeout"]] if flake else [],
@@ -285,6 +293,8 @@ def render(path):
                                       "    - label=" + LABEL, "    - label=" + flake,
                                       "    # A fix-main-red PR takes the hotfix rule.",
                                       "    - -label=fix-main-red",
+                                      "    # Paused by the main-red breaker while main is red (BH-8706).",
+                                      "    - -label=" + PAUSE_LABEL,
                                       "  actions:", "    queue:", "      name: flake-fix"] if flake else [],
               "FLAKE_EXCLUDE": ["- -label=" + flake] if flake else [],
               "SCOPES_BLOCK": ["scopes:", "  source:", "    manual: {}",

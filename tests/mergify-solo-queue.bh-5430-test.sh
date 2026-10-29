@@ -15,6 +15,7 @@
 # Run from anywhere: HARNESS_TEST_SANDBOX=1 bash tests/mergify-solo-queue.bh-5430-test.sh
 set -uo pipefail
 . "$(dirname "$0")/lib/scratch.sh" || exit 1
+. "$(dirname "$0")/lib/mergify-pause-filter.sh" || exit 1
 DIR=$(cd "$(dirname "$0")/.." && pwd)
 PASS=0; FAIL=0
 ok()  { PASS=$((PASS+1)); }
@@ -97,6 +98,9 @@ if git -C "$DIR" rev-parse --verify -q origin/main >/dev/null; then
   for c in "$DIR/config/mergify/repos/project-5.conf" "$T/bh-nosolo.conf"; do
     bash "$OLD/bin/mergify-template.sh" render "$c" > "$T/m3-old.yml" 2>/dev/null
     bash "$MT" render "$c" > "$T/m3-new.yml"
+    # TEST-CHANGE (BH-8706): drop the main-red breaker's pause lines from both
+    # sides only while the base has none (tests/lib/mergify-pause-filter.sh).
+    mergify_pause_filter "$T/m3-old.yml" "$T/m3-new.yml"
     [ -s "$T/m3-old.yml" ] && cmp -s "$T/m3-old.yml" "$T/m3-new.yml" && ok \
       || bad "M3 $(basename "$c") renders byte-identical to main: $(diff "$T/m3-old.yml" "$T/m3-new.yml" | head -5 | tr '\n' ' ')"
   done

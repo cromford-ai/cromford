@@ -18,6 +18,7 @@
 # Run from anywhere: HARNESS_TEST_SANDBOX=1 bash tests/queue-partition.bh-4979-test.sh
 set -uo pipefail
 . "$(dirname "$0")/lib/scratch.sh" || exit 1
+. "$(dirname "$0")/lib/mergify-pause-filter.sh" || exit 1
 DIR=$(cd "$(dirname "$0")/.." && pwd)
 PASS=0; FAIL=0
 ok()  { PASS=$((PASS+1)); }
@@ -431,6 +432,9 @@ if git -C "$DIR" rev-parse --verify -q origin/main >/dev/null; then
       bash "$OLD/bin/mergify-template.sh" render "$T/bh-nokeys.conf" > "$T/old-$c.yml"
     fi
     bash "$MT" render "$T/new-$c.conf" > "$T/new-$c.yml"
+    # TEST-CHANGE (BH-8706): drop the main-red breaker's pause lines from both
+    # sides only while the base has none (tests/lib/mergify-pause-filter.sh).
+    mergify_pause_filter "$T/old-$c.yml" "$T/new-$c.yml"
     cmp -s "$T/old-$c.yml" "$T/new-$c.yml" && ok || bad "R1 $c.conf (serial) renders byte-identical to main: $(diff "$T/old-$c.yml" "$T/new-$c.yml" | head -5)"
   done
 else

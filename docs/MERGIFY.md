@@ -138,6 +138,9 @@ queue_rules:
       # A standing changes-requested review keeps a PR out of the queue, and
       # dequeues one that gets it while queued (BH-2275).
       - "#changes-requested-reviews-by=0"
+      # A PR the main-red breaker paused leaves the queue, whatever queued it:
+      # the label rule or the `@mergifyio queue` command (BH-8706).
+      - -label=merge-queue-paused
       - "check-success=Build + Unit tests"
     # Refuse to MERGE a batch whose build is not green.
     merge_conditions:
@@ -183,6 +186,8 @@ pull_request_rules:
       # EVERYTHING ELSE, literally: without this a fix-main-red PR matches both
       # rules and Mergify is handed two queue actions for one pull request.
       - -label=fix-main-red
+      # A PR the main-red breaker paused waits out of the queue (BH-8706).
+      - -label=merge-queue-paused
     actions:
       queue:
         name: default
@@ -221,8 +226,10 @@ Notes on the values:
 - **`merge_method: squash`** matches every other merge path in the fleet.
 - Mergify's own labels (`queued` by default, `dequeued` by default, `checking` unset by
   default) are left at their defaults. The harness reads them as a second witness and writes
-  exactly one of them, on exactly one path: **the re-entry sweep removes `dequeued`**
-  (BH-636). That is not a general licence — `mc_dequeue_label` still touches only our own
+  exactly one of them, through exactly one function: **`mc_requeue_mergify` removes
+  `dequeued`**. Its callers are the re-entry sweep (BH-636) and the main-red breaker's
+  resume (BH-8706, `bin/main-red-breaker.sh`), which puts back each PR its pause took
+  out of the queue. That is not a general licence — `mc_dequeue_label` still touches only our own
   trigger label — it is that `dequeued` is the marker keeping the head out of the queue, so
   re-adding `merge-queue` while it is on would be a no-op. Everything else Mergify labels
   stays Mergify's.

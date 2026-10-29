@@ -18,6 +18,7 @@
 # Run from anywhere: HARNESS_TEST_SANDBOX=1 bash tests/queue-eject-culprit.bh-4980-test.sh
 set -uo pipefail
 . "$(dirname "$0")/lib/scratch.sh" || exit 1
+. "$(dirname "$0")/lib/mergify-pause-filter.sh" || exit 1
 . "$(dirname "$0")/lib/lpp-stub.sh" || exit 1
 # E1's conductor parses review verdicts (vpf).
 # shellcheck source=tests/lib/verdict-fixture.sh
@@ -393,6 +394,9 @@ if git -C "$DIR" rev-parse --verify -q origin/main >/dev/null; then
     grep -vE '^(queue_mode|scope_default_capacity|solo_label|flake_fix_label)=' "$DIR/config/mergify/repos/$c.conf" > "$T/old-$c.conf"
     bash "$OLD/bin/mergify-template.sh" render "$T/old-$c.conf" > "$T/old-$c.yml" 2>/dev/null
     bash "$MT" render "$T/old-$c.conf" > "$T/new-$c.yml"
+    # TEST-CHANGE (BH-8706): drop the main-red breaker's pause lines from both
+    # sides only while the base has none (tests/lib/mergify-pause-filter.sh).
+    mergify_pause_filter "$T/old-$c.yml" "$T/new-$c.yml"
     [ -s "$T/old-$c.yml" ] && cmp -s "$T/old-$c.yml" "$T/new-$c.yml" && ok \
       || bad "M2 $c.conf renders byte-identical to main: $(diff "$T/old-$c.yml" "$T/new-$c.yml" | head -5)"
   done

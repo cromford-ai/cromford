@@ -14,6 +14,7 @@
 # Run from anywhere: HARNESS_TEST_SANDBOX=1 bash tests/mergify-default-status.bh-5429-test.sh
 set -uo pipefail
 . "$(dirname "$0")/lib/scratch.sh" || exit 1
+. "$(dirname "$0")/lib/mergify-pause-filter.sh" || exit 1
 DIR=$(cd "$(dirname "$0")/.." && pwd)
 PASS=0; FAIL=0
 ok()  { PASS=$((PASS+1)); }
@@ -79,6 +80,9 @@ if git -C "$DIR" rev-parse --git-dir >/dev/null 2>&1; then
       git -C "$DIR" show "$BASE:$rel" > "$T/base.conf"
       "$T/base/bin/mergify-template.sh" render "$T/base.conf" > "$T/base.out" 2>&1
       "$MT" render "$T/base.conf" > "$T/head.out" 2>&1
+      # TEST-CHANGE (BH-8706): drop the main-red breaker's pause lines from both
+      # sides only while the base has none (tests/lib/mergify-pause-filter.sh).
+      mergify_pause_filter "$T/base.out" "$T/head.out"
       cmp -s "$T/base.out" "$T/head.out" && ok || bad "M2 $(basename "$c") renders byte-identical to the merge base ($(diff "$T/base.out" "$T/head.out" | head -5))"
     done
   else

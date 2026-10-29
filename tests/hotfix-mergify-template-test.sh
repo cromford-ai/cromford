@@ -80,8 +80,14 @@ assert_config() {
   q='def norm: map(gsub("^\\s+|\\s+$";"") | gsub("\\s*=\\s*";"="));'
   jq -e "$q"'(.queue_rules[]|select(.name=="hotfix")|.queue_conditions|norm) | index("label=fix-main-red") != null' "$J" >/dev/null 2>&1 \
     && ok || bad "$L: hotfix.queue_conditions must carry label=fix-main-red (got $(jq -c '.queue_rules[]|select(.name=="hotfix")|.queue_conditions' "$J" 2>/dev/null))"
-  jq -e "$q"'((.queue_rules[]|select(.name=="hotfix")|.queue_conditions|norm)) as $h | ((.queue_rules[]|select(.name=="default")|.queue_conditions|norm)) as $d | ($d - $h) == []' "$J" >/dev/null 2>&1 \
-    && ok || bad "$L: hotfix.queue_conditions must contain every condition the default queue requires — missing $(jq -c "$q"'((.queue_rules[]|select(.name=="default")|.queue_conditions|norm)) - ((.queue_rules[]|select(.name=="hotfix")|.queue_conditions|norm))' "$J" 2>/dev/null)"
+  # TEST-CHANGE (BH-8706): ONE exemption, the main-red breaker's pause
+  # exclusion `-label=merge-queue-paused`. It is not a gate: it takes a PR out
+  # of the queue while main is red, and the hotfix queue is the one queue that
+  # must stay open then. The next check pins that hotfix does NOT carry it.
+  jq -e "$q"'((.queue_rules[]|select(.name=="hotfix")|.queue_conditions|norm)) as $h | ((.queue_rules[]|select(.name=="default")|.queue_conditions|norm)) as $d | ($d - $h - ["-label=merge-queue-paused"]) == []' "$J" >/dev/null 2>&1 \
+    && ok || bad "$L: hotfix.queue_conditions must contain every condition the default queue requires — missing $(jq -c "$q"'((.queue_rules[]|select(.name=="default")|.queue_conditions|norm)) - ((.queue_rules[]|select(.name=="hotfix")|.queue_conditions|norm)) - ["-label=merge-queue-paused"]' "$J" 2>/dev/null)"
+  jq -e "$q"'(.queue_rules[]|select(.name=="hotfix")|(.queue_conditions + .merge_conditions)|norm) | index("-label=merge-queue-paused") == null' "$J" >/dev/null 2>&1 \
+    && ok || bad "$L: the hotfix queue must not exclude the main-red breaker's pause label (BH-8706)"
   # A5: the SAME required check. A hotfix queue keyed on a check name that does
   # not exist merges nothing and pages when its budget runs out.
   jq -e "$q"'[.queue_rules[] | select(.name=="hotfix" or .name=="default") | (.queue_conditions|norm) | map(select(startswith("check-success=")))] | length == 2 and (.[0] == .[1])' "$J" >/dev/null 2>&1 \
