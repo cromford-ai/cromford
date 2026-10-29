@@ -3,7 +3,7 @@
     {
       "id": "merged-advance",
       "file": "bin/merged-ticket-advance.sh",
-      "note": "BH-3927 (BH-3921 part 5). Moves an in-app ticket on once its newest build's PR passed the post-merge deploy audit: one comment, then a move to done (system-filed) or review (client-filed). Called from inapp_released_lines (bin/lib/rt/scope.sh) before the in-app parent close. Doc: docs/verification-map/board-dependencies.md.",
+      "note": "BH-3927 (BH-3921 part 5). Moves an in-app ticket on once its newest build's PR passed the post-merge deploy audit: one comment, then a move to done (system-filed) or review (client-filed); a move to review also gives the turn to the client (POST /turn). Called from inapp_released_lines (bin/lib/rt/scope.sh) before the in-app parent close. BH-8786: a ticket with no build dir on this box (built by a peer fleet) takes the peer path: the newest thread comment with a project-repo PR URL, GitHub REST pulls/<n> for merged_at, and the prod version sha (GitHub compare) or, with no version route, MERGED_ADVANCE_DEPLOY_GRACE_S after the merge. Skip reasons in the MERGED_ADVANCE line: no-audit, audit-fail, newer-build, client-spoke, client-review, moved-back, move-gave-up, and on the peer path no-local-build (every peer candidate), no-pr-in-thread, pr-open, deploy-behind, peer-unread (a failed ticket, PR, compare or version read), pr-ambiguous (the newest PR comment names two PRs). Doc: docs/verification-map/board-dependencies.md.",
       "knobs": [
         {
           "env": "MERGED_ADVANCE_MAX",

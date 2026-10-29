@@ -37,6 +37,21 @@ inside that tick.
 | what it writes | `state/<project>.gate.json` / `.gate.pending` and `state/<project>.keymap.json` (the gate already wrote all three; this slice changes only what goes INTO them) |
 | the release line's shape | `board <bid>: UNBLOCKED <id> "<title>" (<KEY> — dependency <DEPKEY> done: …)` — gate-diff shape, so `triage_shard_key` parses it and the TICK SCOPE prompt text needs no edit |
 
+**Peer-built tickets (BH-8786).** A peer fleet can build a ticket on this
+board. Then this box has no build dir for it, and no post-merge audit line. The
+merged-ticket advance does not drop that ticket. It reads the newest thread
+comment with a PR URL on the project repo (`https://github.com/<repo>/pull/<n>`,
+the fleet.conf repo), the PR's `merged_at` and merge sha from GitHub REST, and
+the prod version sha. The ticket moves only when that sha is the merge or GitHub
+compare says it is `ahead` of it or `identical`. With no version route (a 404),
+it moves `MERGED_ADVANCE_DEPLOY_GRACE_S` (default 1800) after the merge, and the
+comment says "merged, deploy not confirmed from here". The dedupe token is
+`pr-<n>-<merge sha8>`. A move to `review`, on either path, also gives the turn to
+the client (`POST /tickets/<id>/turn {"to":"client"}`), because a move does not.
+Each skip has a counter in the `MERGED_ADVANCE` line: `no-local-build` (every
+peer candidate), `no-pr-in-thread`, `pr-open`, `deploy-behind`, `peer-unread`
+and `pr-ambiguous`.
+
 **How to drive it:**
 
 | what | how |
@@ -49,6 +64,7 @@ inside that tick.
 | the release reaching a real prompt | `bash tests/*.bh-901-test.sh` |
 | the parent close, POST bodies and all | `bash tests/*.bh-902-test.sh` |
 | the merged-ticket advance, and a split closing in one tick through it | `bash tests/merged-ticket-advance.bh-3921-test.sh` |
+| the merged-ticket advance of a peer-built ticket (no local build dir), and the turn to the client | `bash tests/merged-ticket-advance.peer-built-test.sh` |
 | the prompts and the webhook note | `bash tests/*.bh-903-test.sh` |
 | the prompt bytes did not move | `bash tests/rt-split-layout-test.sh` (goldens, no regen) |
 | one ticket by hand | `HARNESS=/root/harness bin/triage-gate.sh <project> --buildable <ticket-id>` |

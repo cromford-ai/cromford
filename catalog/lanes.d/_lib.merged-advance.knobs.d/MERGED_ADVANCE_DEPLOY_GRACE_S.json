@@ -1,0 +1,12 @@
+{
+  "env": "MERGED_ADVANCE_DEPLOY_GRACE_S",
+  "read_in": "bin/merged-ticket-advance.sh",
+  "type": "int",
+  "default": 1800,
+  "min": 0,
+  "max": 86400,
+  "unit": "seconds",
+  "zero_means": "no wait after merge",
+  "required": false,
+  "note": "BH-8786. Peer path only (BH-8786), and only when the prod version route answers 404: how long after the PR's merged_at the lane waits before it moves the ticket. That comment says 'merged, deploy not confirmed from here'. Inside the window the ticket counts deploy-behind. A non-number or empty reads 1800. Read as ${MERGED_ADVANCE_DEPLOY_GRACE_S:-1800}."
+}
