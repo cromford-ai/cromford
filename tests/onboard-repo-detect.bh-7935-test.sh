@@ -51,7 +51,7 @@ export PATH="$T/fakebin:$PATH"
 unset GH_APP_SLUG GH_APP_NAME GH_TOKEN 2>/dev/null || true
 
 # fx <name>: a fresh copy of one fixture dir at $T/fx; prints the path.
-fx() { rm -rf "$T/fx"; mkdir -p "$T/fx"; cp "$FX/$1"/* "$T/fx/"; printf '%s' "$T/fx"; }
+fx() { rm -rf "$T/fx"; mkdir -p "$T/fx"; cp -R "$FX/$1"/. "$T/fx/"; printf '%s' "$T/fx"; }
 calls() { local n; n=$(grep -c . "$T/fx/.calls" 2>/dev/null); printf '%s' "${n:-0}"; }
 
 # run_sh <fake dir or ""> <bash code>: a clean bash with the seam's environment.
@@ -193,7 +193,11 @@ FAKE=$(fx visible) hr repo-detect example-org/project-11
 check "R1 rc 0" '[ "$(rc)" = 0 ]'
 check "R1 one line equal to visible-probe.json" '[ "$(grep -c . "$T/out")" = 1 ] && [ "$(out)" = "$(jq -c . "$GOLDEN")" ]'
 check "R1 the five tracer facts" 'jq -e ".visible == true and .default_branch == \"main\" and .has_issues == true and .open_issues == 3 and (.install_url | endswith(\"/apps/cromford/installations/new\"))" "$T/out" >/dev/null'
-check "R1 one GitHub read" '[ "$(calls)" = 1 ]'
+check "R1 the four extra facts" 'jq -e ".ci_workflow == true and .package_manager == \"npm\" and .test_runner == \"vitest\" and (.readiness_level | type == \"number\")" "$T/out" >/dev/null'
+# The base read, then the extra's three reads and its clone (BH-7998).
+SEAM_CALLS=$(printf "%s\n" repos/example-org/project-11 repos/example-org/project-11/actions/workflows \
+  repos/example-org/project-11/contents repos/example-org/project-11/contents/package.json "clone repos/example-org/project-11")
+check "R1 five seam calls, in order" '[ "$(cat "$T/fx/.calls")" = "$SEAM_CALLS" ]'
 
 FAKE=$(fx invisible) hr repo-detect example-org/ghost
 check "R2 a 404 is a pass with visible:false and the install url" \
@@ -207,14 +211,15 @@ fx visible >/dev/null
 env HARNESS="$T/h" HARNESS_ENV_DIR="$T/env" ONBOARD_GITHUB_FAKE="$T/fx" HPD="$HPD" \
   bash -c 'hp_repo_detect_extra() { echo nope; echo "oops" >&2; }; . "$HPD/common.sh" && hp_run repo-detect example-org/project-11' \
   > "$T/out" 2>&1; echo $? > "$T/rc"
-check "R3 an extra that is not an object is ignored (stderr too)" '[ "$(rc)" = 0 ] && [ "$(out)" = "$(jq -c . "$GOLDEN")" ]'
+check "R3 an extra that is not an object is ignored (stderr too)" '[ "$(rc)" = 0 ] && [ "$(out)" = "$(jq -c "{visible, default_branch, has_issues, open_issues, install_url}" "$GOLDEN")" ]'
 fx visible >/dev/null
 env HARNESS="$T/h" HARNESS_ENV_DIR="$T/env" ONBOARD_GITHUB_FAKE="$T/fx" HPD="$HPD" \
   bash -c 'hp_repo_detect_extra() { echo "[1,2]"; }; . "$HPD/common.sh" && hp_run repo-detect example-org/project-11' \
   > "$T/out" 2>&1; echo $? > "$T/rc"
-check "R3 an extra array is ignored" '[ "$(out)" = "$(jq -c . "$GOLDEN")" ]'
-check "R3 the shipped placeholder prints {}" \
-  '[ "$(bash -c ". \"\$1/repo-detect-extra.sh\" && hp_repo_detect_extra example-org/project-11" _ "$HPD")" = "{}" ]'
+check "R3 an extra array is ignored" '[ "$(out)" = "$(jq -c "{visible, default_branch, has_issues, open_issues, install_url}" "$GOLDEN")" ]'
+fx visible >/dev/null
+check "R3 the shipped extra prints exactly the four keys" \
+  '[ "$(env TMPDIR="$T" ONBOARD_GITHUB_FAKE="$T/fx" HARNESS="$T/h" JOBS_URL="" bash -c ". \"\$1/repo-detect-extra.sh\" && hp_repo_detect_extra example-org/project-11" _ "$HPD" | jq -c keys)" = "[\"ci_workflow\",\"package_manager\",\"readiness_level\",\"test_runner\"]" ]'
 
 FAKE=$(fx issues-off) hr repo-detect example-org/no-issues
 check "R4 has_issues:false" '[ "$(rc)" = 0 ] && jq -e ".has_issues == false and .default_branch == \"trunk\" and .open_issues == 0" "$T/out" >/dev/null'
@@ -265,7 +270,7 @@ check "R6 the tick exits 0" '[ "$(rc)" = 0 ]'
 check "R6 the row is stored pass with the R1 line" \
   '[ "$(jq -r .result "$T/body-result" 2>/dev/null)" = pass ] && [ "$(jq -r .output "$T/body-result" | tr -d "\n")" = "$(jq -c . "$GOLDEN")" ]'
 check "R6 http_status 200" '[ "$(jq -r .http_status "$T/body-result")" = 200 ]'
-check "R6 one GitHub read through the fake" '[ "$(calls)" = 1 ]'
+check "R6 five seam calls through the fake" '[ "$(cat "$T/fx/.calls")" = "$SEAM_CALLS" ]'
 check "R6 no spool file left" '[ -z "$(ls -A "$H/state/hub-probe/owed" 2>/dev/null)" ]'
 check "R6 no comment posted, no vendor call" '[ ! -s "$VLOG" ]'
 check "R6 summary counts one pass" '[[ "$(tail -1 "$H/logs/hub-probe.log")" == *"claimed=1 ran=1 pass=1 fail=0"* ]]'

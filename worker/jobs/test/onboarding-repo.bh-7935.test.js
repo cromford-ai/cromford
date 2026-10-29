@@ -17,6 +17,7 @@ import { parseRepoSlug, fileScreenProbe } from '../src/routes/onboarding-repo.js
 //   D1-D3  the 60 s bucket: one row per minute, a new row next minute, never
 //          another project's row
 //   M1-M8  row state -> answer (plan Decision rule 3); W1 the golden probe line
+//          (seven facts beside visible since BH-7998)
 //   L1-L3  /repos lines, pending, fail; R2 the 600 s bucket
 //   X1     fileScreenProbe is exported and returns the stored row
 //   E1     EXPLAIN QUERY PLAN of the row lookup at 10k rows uses the index
@@ -198,7 +199,10 @@ test('(W1) a pass row holding the golden probe line answers the facts', async (t
   if (!b) return;
   assert.deepEqual(b, {
     state: 'ok', visible: true,
-    facts: { default_branch: 'main', has_issues: true, open_issues: 3 },
+    facts: {
+      default_branch: 'main', has_issues: true, open_issues: 3,
+      ci_workflow: true, package_manager: 'npm', test_runner: 'vitest', readiness_level: 1,
+    },
     install_url: 'https://github.com/apps/cromford/installations/new',
   });
 });

@@ -1,0 +1,1 @@
+{"name":"fixture","scripts":{"test":"vitest && playwright test"}}

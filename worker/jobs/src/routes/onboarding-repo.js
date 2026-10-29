@@ -12,7 +12,8 @@
 //   GET /api/onboarding/repos
 //       one app-installation-repos row per 10 minutes (onb-repos-<epoch/600>):
 //         {state:"ok", repos:[full_name...], total_count, incomplete} or the
-//         pending / error shapes above.
+//         pending / error shapes above. At most onboarding.repos_list_max
+//         names (reposMax); a cut list is incomplete:true.
 //
 // THE CACHE IS THE LEDGER. hub_probe_requests' UNIQUE(project, ticket_key,
 // probe, args_hash) makes a second GET in the same bucket read the first GET's
@@ -23,6 +24,7 @@
 // POST /api/hub-probe handler itself (canonical args, sha256 args_hash, INSERT
 // ON CONFLICT DO NOTHING + SELECT), so there is one copy of that SQL.
 import { json, nowIso } from "../lib/http.js";
+import { settingsRows } from "../lib/settings-cache.js";
 import { routes as hubProbeRoutes } from "./hub-probe.js";
 
 const PROJECT = "onboarding";
@@ -36,6 +38,12 @@ const URL_RE = /^https:\/\/github\.com\/([^/]+)\/([^/]+)(\/[^\s?#]*)?$/;
 const BARE_RE = /^([^/]+)\/([^/]+)$/;
 const FULL_NAME_RE = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
 const BAD_SLUG = "slug must be owner/repo or https://github.com/owner/repo";
+// The settings row onboarding.repos_list_max (seed schema.d/202610270355-
+// bh-7998-onboarding-repos-max.sql); this is its fallback when the row is
+// absent, unreadable or not an integer 1..REPOS_MAX_MAX.
+const REPOS_MAX_KEY = "onboarding.repos_list_max";
+const REPOS_MAX_DEFAULT = 200;
+const REPOS_MAX_MAX = 1000;
 
 // {owner, repo, slug} for owner/repo or https://github.com/owner/repo[.git][/...]
 // (trimmed, a trailing .git dropped), else null. Pure.
@@ -103,17 +111,31 @@ export function repoAnswer(row) {
   return errorOf(row);
 }
 
-export function reposAnswer(row) {
+// The onboarding.repos_list_max row, or its fallback. A settings read that
+// throws is the fallback: the cap must never cost the list.
+export async function reposMax(env) {
+  try {
+    const row = (await settingsRows(env)).byKey.get(REPOS_MAX_KEY);
+    const v = row ? String(row.value).trim() : "";
+    const n = /^\d{1,4}$/.test(v) ? Number(v) : NaN;
+    return n >= 1 && n <= REPOS_MAX_MAX ? n : REPOS_MAX_DEFAULT;
+  } catch {
+    return REPOS_MAX_DEFAULT;
+  }
+}
+
+export function reposAnswer(row, max = REPOS_MAX_DEFAULT) {
   if (row.status === "pending" || row.status === "claimed") return pendingOf(row);
   if (row.status === "pass") {
     const lines = String(row.output ?? "").split("\n").map((l) => l.trim());
     const total = lines.map((l) => /^total_count=(\d+)$/.exec(l)).find(Boolean);
     if (!total) return errorOf({ ...row, output: "" }, "unparseable probe output");
+    const repos = lines.filter((l) => FULL_NAME_RE.test(l));
     return {
       state: "ok",
-      repos: lines.filter((l) => FULL_NAME_RE.test(l)),
+      repos: repos.slice(0, max),
       total_count: Number(total[1]),
-      incomplete: lines.some((l) => l.startsWith("incomplete:")),
+      incomplete: repos.length > max || lines.some((l) => l.startsWith("incomplete:")),
     };
   }
   return errorOf(row);
@@ -138,11 +160,14 @@ export const routes = [
   [
     "GET", "/api/onboarding/repos",
     async ({ env, t }) => {
-      const row = await fileScreenProbe(env, {
-        t, ticket_key: `onb-repos-${bucket(t, REPOS_BUCKET_S)}`, probe: "app-installation-repos", args: [],
-      });
+      const [row, max] = await Promise.all([
+        fileScreenProbe(env, {
+          t, ticket_key: `onb-repos-${bucket(t, REPOS_BUCKET_S)}`, probe: "app-installation-repos", args: [],
+        }),
+        reposMax(env),
+      ]);
       if (!row) return json(503, NOT_FILED);
-      return json(200, reposAnswer(row));
+      return json(200, reposAnswer(row, max));
     },
   ],
 ];

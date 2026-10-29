@@ -1,0 +1,11 @@
+{
+  "env": "HUB_PROBE_REPO_CLONE_TIMEOUT_S",
+  "read_in": "bin/lib/onboard-github.sh",
+  "type": "int",
+  "default": 60,
+  "min": 5,
+  "max": 600,
+  "zero_means": null,
+  "note": "BH-7998: seconds one repo-detect probe may spend on its depth-1 clone (og_clone in bin/lib/onboard-github.sh), and again on bin/readiness-report.sh --no-run over that clone. Read by og_clone_timeout; a value that is not an integer 5..600 reads the fallback 60.",
+  "settable": true
+}
