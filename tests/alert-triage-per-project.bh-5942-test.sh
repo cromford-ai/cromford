@@ -244,6 +244,11 @@ q '"projfix-b"' t4b
 touch "$T/hold-projfix-a"
 dispatch
 WAITFOR '[ "$(ndone projfix-b)" -ge 1 ]' && ok || bad "T4: run projfix-b ends its agent call while projfix-a blocks"
+# The two runs start in parallel, so run B can end before run A has entered
+# its agent call (the nightly 2026-10-29: started=0 done=0). Wait for A to be
+# inside the call too; A stays there until $T/release, so done=0 still proves
+# that B ended while A blocks.
+WAITFOR '[ "$(nlines "$T/calls/projfix-a/started")" -ge 1 ]'
 [ "$(nlines "$T/calls/projfix-a/started")" = 1 ] && [ "$(ndone projfix-a)" = 0 ] && ok \
   || bad "T4: run projfix-a is inside its own agent call (started=$(nlines "$T/calls/projfix-a/started") done=$(ndone projfix-a))"
 [ "$(cat "$T/calls/projfix-a/locks" 2>/dev/null)" = "alert-triage-projfix-a.lock" ] && ok \

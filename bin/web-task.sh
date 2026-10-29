@@ -147,6 +147,13 @@ fi
 
 # shellcheck source=bin/lib/gh-rest.sh
 . "$H/bin/lib/gh-rest.sh" 2>/dev/null
+# Every issue read and write goes through the tracker seam (BH-7919): this lane
+# answers on GitHub issues only (wt_issue_project), so it loads that adapter.
+# shellcheck source=bin/lib/tracker.sh
+. "$H/bin/lib/tracker.sh"
+# shellcheck source=bin/lib/tracker/github-issues.sh
+. "$H/bin/lib/tracker/github-issues.sh"
+TRK_ADAPTER=github-issues; TRK_DRY=0; TRK_LOG=""
 command -v _lg_ensure_client >/dev/null 2>&1 && _lg_ensure_client >/dev/null 2>&1
 if ! command -v setting_get >/dev/null 2>&1 && [ -r "$H/bin/jobs-client.sh" ]; then
   # shellcheck source=bin/jobs-client.sh
@@ -186,6 +193,7 @@ if [ "$IP_RC" = 1 ]; then
 fi
 [ "$IP_RC" = 0 ] || SLUG="${PL_SLUG:-}"
 [[ "$SLUG" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] || { echo "web-task: no repo slug for $P" >&2; prof no-slug; exit 1; }
+TRK_SLUG="$SLUG"
 
 STAMP=$(date -u +%Y%m%dT%H%M%SZ)
 RUN="${PL_STATE_DIR:-$H/state/web-task/$P}/$KEY-$STAMP"
@@ -199,7 +207,7 @@ read_thread() { # -> $RUN/comments.json (all pages), rc 0 / the gh_rest rc
   local pg=1 rc n
   echo '[]' > "$RUN/comments.json"
   while :; do
-    rc=0; gh_rest GET "repos/$SLUG/issues/$TICKET/comments?per_page=100&page=$pg" > "$RUN/page.json" || rc=$?
+    rc=0; trk_gh_comments_page "$TICKET" "$pg" > "$RUN/page.json" || rc=$?
     [ "$rc" = 0 ] || return "$rc"
     n=$(jq -e 'length' "$RUN/page.json" 2>/dev/null) || return 75
     jq -s '.[0] + .[1]' "$RUN/comments.json" "$RUN/page.json" > "$RUN/c.tmp" && mv "$RUN/c.tmp" "$RUN/comments.json" || return 75
@@ -214,7 +222,7 @@ read_thread() { # -> $RUN/comments.json (all pages), rc 0 / the gh_rest rc
 marker_url() { # marker_url <marker> -> rc 0 and the comment's html_url when a comment carries it
   jq -er --arg m "$1" 'first(.[] | select((.body // "") | contains($m))) | (.html_url // "posted")' "$RUN/comments.json" 2>/dev/null
 }
-RC=0; gh_rest GET "repos/$SLUG/issues/$TICKET" > "$RUN/issue.json" || RC=$?
+RC=0; trk_gh_issue_raw "$TICKET" > "$RUN/issue.json" || RC=$?
 if [ "$RC" != 0 ] || ! jq -e '.number' "$RUN/issue.json" >/dev/null 2>&1; then
   log "ticket read failed (rc $RC): nothing spent, the lane-run retry reads it again"
   prof "ticket-read rc=$RC"; exit 75
@@ -225,7 +233,7 @@ RC=0; read_thread || RC=$?
 # unlabel <why> — take the handoff label ai-build off the issue (THE LABEL).
 unlabel() {
   local rc=0
-  gh_rest DELETE "repos/$SLUG/issues/$TICKET/labels/ai-build" >/dev/null 2>&1 || rc=$?
+  tracker_label_remove "$TICKET" ai-build >/dev/null 2>&1 || rc=$?
   if [ "$rc" = 0 ]; then log "unlabel ai-build: $1"
   else log "unlabel ai-build failed (rc $rc, ${GH_REST_STATUS:-?}): $1 — the next tick re-offers the ticket"
   fi
@@ -257,7 +265,7 @@ post_comment() {
       # A failed answer can still have landed: never post the same marker twice.
       if read_thread && url=$(marker_url "$mark"); then COMMENT_URL="$url"; return 0; fi
     fi
-    rc=0; gh_rest POST "repos/$SLUG/issues/$TICKET/comments" -F "body=@$body" > "$RUN/post.json" || rc=$?
+    rc=0; trk_gh_comment_raw "$TICKET" "$body" > "$RUN/post.json" || rc=$?
     if [ "$rc" = 0 ]; then
       COMMENT_URL=$(jq -r '.html_url // empty' "$RUN/post.json" 2>/dev/null)
       [ -n "$COMMENT_URL" ] || COMMENT_URL="posted"

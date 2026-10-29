@@ -200,7 +200,9 @@ set --
 fix5=1
 [ "$(git -C "$R" log --format=%H -- nine.txt | wc -l)" = 9 ] || fix5=0
 [ "$(git -C "$R" log --format=%H -- mixed.txt | wc -l)" = 15 ] || fix5=0
-[ "$(git -C "$R" ls-files | wc -l)" = 12 ] || fix5=0
+# "$T/a5", not "$R" (the same tree): newrepo binds R from a positional, and a
+# positional `git -C` ls-files reads as the whole checkout to bin/test-impact.sh.
+[ "$(git -C "$T/a5" ls-files | wc -l)" = 12 ] || fix5=0
 check "A5 fixture built as designed" '[ "$fix5" = 1 ]'
 run -C "$T/a5" --exclude 'vendor/*' --tsv
 check "A5 rc 0 (got $RC)" '[ "$RC" = 0 ]'

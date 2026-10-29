@@ -182,13 +182,16 @@ cat > "$T/runner.sh" <<'SH'
 exit "${STUB_RC:-0}"
 SH
 chmod +x "$T/plan.sh" "$T/runner.sh"
-# run <case> <tree> [VAR=value …] — one REAL bin/selection-gate.sh run.
+# run <case> <tree> [VAR=value …] — one REAL bin/selection-gate.sh run on the
+# scratch tree $T/<tree>. The tree is a name under $T, not a path: a --tree on
+# a positional value is a whole-checkout read to bin/test-impact.sh, and every
+# tree here is scratch (BH-8098: the always set is the real-checkout readers).
 run() {
   local c="$1" tr="$2"; shift 2
   mkdir -p "$T/$c"
   env -u CI_QUARANTINE -u SELECTION_GATE_WHY_MAX HARNESS="$T/no-harness" REPO_SLUG= \
     SELECTION_GATE_PLAN="$T/plan.sh" SELECTION_GATE_RUNNER="$T/runner.sh" CI_QUARANTINE=- \
-    "$@" bash "$SG" --tree "$tr" --base main --out "$T/$c/out" > "$T/$c/stdout" 2> "$T/$c/stderr"
+    "$@" bash "$SG" --tree "$T/$tr" --base main --out "$T/$c/out" > "$T/$c/stdout" 2> "$T/$c/stderr"
   RC=$?
 }
 gv() { sed -n "s/^$2: //p" "$T/$1/out/gate.txt" 2>/dev/null; }
@@ -206,31 +209,31 @@ body() {
 
 # ── S7: a compose failure is could-not-run why=compose-<name> ───────────────
 printf '%s\n' 'remote-gate: host git context — HEAD abc, base origin/main def, merge base abc' "$H3LINE" 'remote-gate:   Mem: 1 2 3' > "$T/s7.run"
-run s7 "$R" STUB_RC=125 STUB_FILE="$T/s7.run"
+run s7 repo STUB_RC=125 STUB_FILE="$T/s7.run"
 S7WHY="compose-llm-sites-build: $H3LINE"
 [ "$RC" = 3 ] && [ "$(gv s7 rc)" = could-not-run ] && [ "$(gv s7 why)" = "$S7WHY" ] && ok \
   || bad "S7 why=compose-<name>: <line> (exit $RC; $(cat "$T/s7/out/gate.txt" 2>/dev/null))"
 # The real H3 output fed to the gate gives the same why (writer -> reader).
 { echo "remote-gate: host git context — x"; cat "$T/h3.err" 2>/dev/null; } > "$T/s7b.run"
-run s7b "$R" STUB_RC=125 STUB_FILE="$T/s7b.run"
+run s7b repo STUB_RC=125 STUB_FILE="$T/s7b.run"
 [ "$(gv s7b why)" = "$S7WHY" ] && ok || bad "S7 H3's own stderr gives the compose why (got '$(gv s7b why)')"
 
 # ── S8: near misses ──────────────────────────────────────────────────────────
 printf '%s\n' 'remote-gate: the upload to the test host failed (rsync rc 2: x) — nothing ran' > "$T/s8a.run"
-run s8a "$R" STUB_RC=125 STUB_FILE="$T/s8a.run"
+run s8a repo STUB_RC=125 STUB_FILE="$T/s8a.run"
 [ "$(gv s8a why)" = 'runner-rc-125: remote-gate: the upload to the test host failed (rsync rc 2: x) — nothing ran' ] && ok || bad "S8 another 125 keeps runner-rc-125 (got '$(gv s8a why)')"
 printf '%s\n' ' remote-gate: compose-x failed (rc 1): y' > "$T/s8b.run"
-run s8b "$R" STUB_RC=125 STUB_FILE="$T/s8b.run"
+run s8b repo STUB_RC=125 STUB_FILE="$T/s8b.run"
 [ "$(gv s8b why)" = runner-rc-125 ] && ok || bad "S8 a leading-space compose line is not a compose why (got '$(gv s8b why)')"
 printf '%s\n' 'remote-gate: composed the catalogs CI composes before the suites (lanes-build)' 'remote-gate: RUNNER FAILURE — x' > "$T/s8c.run"
-run s8c "$R" STUB_RC=125 STUB_FILE="$T/s8c.run"
+run s8c repo STUB_RC=125 STUB_FILE="$T/s8c.run"
 case "$(gv s8c why)" in runner-rc-125*) ok ;; *) bad "S8 the success line is not a compose why (got '$(gv s8c why)')" ;; esac
 printf '%s\n' 'remote-gate: RUNNER FAILURE — the test host has 10 MB free on /srv/tmp, need 900; nothing ran' 'remote-gate:   Mem: 1 2 3' 'remote-gate:   /dev/root 7.8G 7.7G 0.1G 99% /' > "$T/s8e.run"
-run s8e "$R" STUB_RC=125 STUB_FILE="$T/s8e.run"
+run s8e repo STUB_RC=125 STUB_FILE="$T/s8e.run"
 [ "$(gv s8e why)" = 'runner-rc-125: remote-gate: RUNNER FAILURE — the test host has 10 MB free on /srv/tmp, need 900; nothing ran' ] && ok \
   || bad "S8 the host-resources dump after a runner failure is not the reason (got '$(gv s8e why)')"
 body "$T/s8d.run" "$(section tests/x.sh 'remote-gate: compose-lanes-build failed (rc 2): z' '  FAIL a real one')"
-run s8d "$R" STUB_RC=1 STUB_FILE="$T/s8d.run"
+run s8d repo STUB_RC=1 STUB_FILE="$T/s8d.run"
 [ "$RC" = 1 ] && [ "$(gv s8d red)" = tests/x.sh ] && ok || bad "S8 a red with a compose line in its log stays red (exit $RC; $(cat "$T/s8d/out/gate.txt"))"
 
 # ── N1: the shipped file parses through the gate's reader ────────────────────
@@ -247,7 +250,7 @@ grep -qE -- "$(cut -f3 <<<"$(grep -F "$S10" "$NOTES")")" <<<"$W1IX" && ok || bad
 
 # ── Q1: both live lines: noted ───────────────────────────────────────────────
 body "$T/q1.run" "$(section "$S42" '  ok C1 x' "$C3LIVE" 'fly-pool-split: 40 passed, 1 failed')$(section "$S10" "$W1X" 'issue-testhost-cert: 30 passed, 1 failed')"
-run q1 "$R" STUB_RC=2 STUB_FILE="$T/q1.run"
+run q1 repo STUB_RC=2 STUB_FILE="$T/q1.run"
 HNQ1="$S42=shallow-context,$S10=host-timing"
 [ "$RC" = 0 ] && [ "$(gv q1 rc)" = 0 ] && [ "$(gv q1 red)" = - ] && [ "$(gv q1 noted)" = "$S42,$S10" ] && ok \
   || bad "Q1 rc 0, red -, noted both (exit $RC; $(cat "$T/q1/out/gate.txt" 2>/dev/null))"
@@ -256,37 +259,37 @@ HNQ1="$S42=shallow-context,$S10=host-timing"
 
 # ── Q2: a partial match stays red ────────────────────────────────────────────
 body "$T/q2.run" "$(section "$S42" "$C3LIVE" '  FAIL C3 fpb_validate (sourced) on the real tree is rc 0')"
-run q2 "$R" STUB_RC=1 STUB_FILE="$T/q2.run"
+run q2 repo STUB_RC=1 STUB_FILE="$T/q2.run"
 [ "$RC" = 1 ] && [ "$(gv q2 red)" = "$S42" ] && [ "$(gv q2 host-noted)" = - ] && ok || bad "Q2 a second failure keeps it red (exit $RC; $(cat "$T/q2/out/gate.txt"))"
 
 # ── Q3: W1x and W1ix ─────────────────────────────────────────────────────────
 body "$T/q3.run" "$(section "$S10" "$W1X" "$W1IX")"
-run q3 "$R" STUB_RC=1 STUB_FILE="$T/q3.run"
+run q3 repo STUB_RC=1 STUB_FILE="$T/q3.run"
 [ "$RC" = 0 ] && [ "$(gv q3 host-noted)" = "$S10=host-timing" ] && ok || bad "Q3 W1x + W1ix noted (exit $RC; $(cat "$T/q3/out/gate.txt"))"
 
 # ── Q4: other format, no row, silent red ─────────────────────────────────────
 body "$T/q4a.run" "$(section "$S42" '  FAIL C3 0100-head.sh is not a byte prefix of bin/fly-pool.sh at the working tree (re-cut it, see README.md)')"
-run q4a "$R" STUB_RC=1 STUB_FILE="$T/q4a.run"
+run q4a repo STUB_RC=1 STUB_FILE="$T/q4a.run"
 [ "$RC" = 1 ] && [ "$(gv q4a red)" = "$S42" ] && ok || bad "Q4 'at the working tree' stays red ($(cat "$T/q4a/out/gate.txt"))"
 body "$T/q4b.run" "$(section tests/x.sh "$C3LIVE")"
-run q4b "$R" STUB_RC=1 STUB_FILE="$T/q4b.run"
+run q4b repo STUB_RC=1 STUB_FILE="$T/q4b.run"
 [ "$RC" = 1 ] && [ "$(gv q4b red)" = tests/x.sh ] && ok || bad "Q4 a suite with no row stays red ($(cat "$T/q4b/out/gate.txt"))"
 body "$T/q4c.run" "$(section "$S10" 'issue-testhost-cert: died')"
-run q4c "$R" STUB_RC=1 STUB_FILE="$T/q4c.run"
+run q4c repo STUB_RC=1 STUB_FILE="$T/q4c.run"
 [ "$RC" = 1 ] && [ "$(gv q4c red)" = "$S10" ] && ok || bad "Q4 a silent red stays red ($(cat "$T/q4c/out/gate.txt"))"
 # The W1x line in ANOTHER suite's section does not note bh-5210.
 body "$T/q4d.run" "$(section "$S10" 'FAIL: W2 something else')$(section tests/x.sh "$W1X")"
-run q4d "$R" STUB_RC=2 STUB_FILE="$T/q4d.run"
+run q4d repo STUB_RC=2 STUB_FILE="$T/q4d.run"
 [ "$RC" = 1 ] && [ "$(gv q4d red)" = "$S10,tests/x.sh" ] && ok || bad "Q4 the section stops at the next suite ($(cat "$T/q4d/out/gate.txt"))"
 
 # ── Q6: the window hides nothing: the suite's own count must equal the matched FAIL lines ──
 # run.txt holds a tail window of each suite (bin/remote-gate.sh RG_TAIL). A real FAIL above
 # the window with a noted FAIL inside it must stay red: the count line says 2 failed, one matched.
 body "$T/q6.run" "$(section "$S10" "$W1X" 'issue-testhost-cert (BH-5210): 88 passed, 2 failed')"
-run q6 "$R" STUB_RC=1 STUB_FILE="$T/q6.run"
+run q6 repo STUB_RC=1 STUB_FILE="$T/q6.run"
 [ "$RC" = 1 ] && [ "$(gv q6 red)" = "$S10" ] && [ "$(gv q6 host-noted)" = - ] && ok || bad "Q6 a count line above the matched FAIL lines keeps it red ($(cat "$T/q6/out/gate.txt"))"
 body "$T/q6b.run" "$(section "$S10" "$W1X" 'issue-testhost-cert (BH-5210): 89 passed, 1 failed')"
-run q6b "$R" STUB_RC=1 STUB_FILE="$T/q6b.run"
+run q6b repo STUB_RC=1 STUB_FILE="$T/q6b.run"
 [ "$RC" = 0 ] && [ "$(gv q6b host-noted)" = "$S10=host-timing" ] && ok || bad "Q6 a count line that equals the matched FAIL lines still notes ($(cat "$T/q6b/out/gate.txt"))"
 
 # ── Q5: bad rows are skipped, loudly ─────────────────────────────────────────
@@ -295,21 +298,21 @@ printf '%s\t%s\t%s\t%s\n' "$S10" flaky 'W1i?x' 'a wrong class' > "$R5/catalog/se
 printf '%s\t%s\t%s\n' "$S10" host-timing 'W1i?x' >> "$R5/catalog/selection-gate-host-notes.d/bh-8725.tsv"
 printf '%s\t%s\t%s\t%s\n' "$S10" host-timing 'W1(x' 'a bad ERE' >> "$R5/catalog/selection-gate-host-notes.d/bh-8725.tsv"
 body "$T/q5.run" "$(section "$S10" "$W1X")"
-run q5 "$R5" STUB_RC=1 STUB_FILE="$T/q5.run"
+run q5 repo5 STUB_RC=1 STUB_FILE="$T/q5.run"
 [ "$RC" = 1 ] && [ "$(gv q5 red)" = "$S10" ] && ok || bad "Q5 bad rows note nothing ($(cat "$T/q5/out/gate.txt"))"
 [ "$(grep -c '^selection-gate: host-notes: skipped .*bh-8725.tsv:[123] (' "$T/q5/stderr")" = 3 ] && ok || bad "Q5 one skipped line per bad row ($(cat "$T/q5/stderr"))"
 
 # ── Q6: no notes dir; a notes path that is not a dir ─────────────────────────
 R6="$T/repo6"; cp -a "$R" "$R6"; scratch_rm "$R6/catalog/selection-gate-host-notes.d"
 body "$T/q6.run" "$(section "$S10" "$W1X")"
-run q6 "$R6" STUB_RC=1 STUB_FILE="$T/q6.run"
+run q6 repo6 STUB_RC=1 STUB_FILE="$T/q6.run"
 [ "$RC" = 1 ] && [ "$(gv q6 red)" = "$S10" ] && [ "$(gv q6 host-noted)" = - ] && [ ! -s "$T/q6/stderr" ] && ok || bad "Q6 no notes dir: red, quiet ($(cat "$T/q6/out/gate.txt"); $(cat "$T/q6/stderr"))"
 echo x > "$R6/catalog/selection-gate-host-notes.d"
-run q6b "$R6" STUB_RC=1 STUB_FILE="$T/q6.run"
+run q6b repo6 STUB_RC=1 STUB_FILE="$T/q6.run"
 [ "$RC" = 1 ] && [ "$(gv q6b red)" = "$S10" ] && ok || bad "Q6 a notes path that is a file: red ($(cat "$T/q6b/out/gate.txt"))"
 
 # ── Q7: quarantine + host note; the lib's log line ───────────────────────────
-run q7 "$R" STUB_RC=2 STUB_FILE="$T/q1.run" CI_QUARANTINE="$S10"
+run q7 repo STUB_RC=2 STUB_FILE="$T/q1.run" CI_QUARANTINE="$S10"
 [ "$RC" = 0 ] && [ "$(gv q7 noted)" = "$S42,$S10" ] && [ "$(gv q7 host-noted)" = "$HNQ1" ] && ok \
   || bad "Q7 a quarantined, host-matching suite is in noted once ($(cat "$T/q7/out/gate.txt"))"
 HH="$T/h2"; mkdir -p "$HH/bin"

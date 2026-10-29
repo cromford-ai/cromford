@@ -71,6 +71,9 @@ recd() { printf '%s' "$H/builds/pool-bh-$1-$2"; }
 # The stubs' answers, per issue number: $T/st/<n> (open|closed), $T/st/<n>.rc.
 mkdir -p "$T/st"
 issue() { printf '%s\n' "$2" > "$T/st/$1"; rm -f "$T/st/$1.rc"; }
+# trk_stub_adapter — the tracker the gate sees: fleet.conf column 4 from $T/bp
+# ("-", the default, is github-issues; a prefix is board), with no D1 read.
+trk_stub_adapter() { case "$(cat "$T/bp" 2>/dev/null || echo -)" in -) echo github-issues ;; *) echo board ;; esac; }
 GATE() { # GATE <key> [VAR=value ...] -> rc of pbs_stop_check bh <key> <n> <job>
   local k="$1"; shift
   ( for kv in "$@"; do export "${kv?}"; done
@@ -86,7 +89,7 @@ GATE() { # GATE <key> [VAR=value ...] -> rc of pbs_stop_check bh <key> <n> <job>
     # adapter answer is stubbed (the tests/execute-empty.bh-5911-test.sh shape).
     # shellcheck disable=SC1090,SC1091
     . "$DIR/bin/lib/tracker.sh"
-    tracker_adapter() { echo github-issues; }
+    tracker_adapter() { trk_stub_adapter; }
     hold_check() { local v; v=$(cat "$T/holdv" 2>/dev/null); printf '%s\n' "$v"
       case "$v" in clear*) return 0 ;; held*) return 1 ;; esac; return 2; }
     _gh_rest_field() { printf 'field %s\n' "$1" >> "$T/gh.log"
@@ -359,6 +362,12 @@ PSD() { # PSD <psd-file> <key> -> "rc=<rc>"; the gates after it log to $T/psd.lo
     pool_spawn_cap_check() { printf 'cap\n' >> "$T/psd.log"; return 0; }
     # shellcheck disable=SC1090,SC1091
     . "$DIR/bin/lib/plan-blocked.sh"
+    # shellcheck disable=SC1090,SC1091
+    . "$DIR/bin/lib/tracker.sh"
+    tracker_adapter() { trk_stub_adapter; }
+    # The gate loads the tracker's GitHub adapter, which sources the real
+    # gh-rest.sh when no gh_rest is defined; that would replace the stubs here.
+    gh_rest() { printf 'rest %s\n' "$*" >> "$T/gh.log"; return 0; }
     gh_rest_issue_state() { printf 'state %s\n' "$2" >> "$T/gh.log"; cat "$T/st/$2" 2>/dev/null || echo open; }
     _pb_answers_since() { echo 0; }
     # shellcheck disable=SC1090

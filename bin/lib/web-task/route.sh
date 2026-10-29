@@ -31,7 +31,9 @@
 # result as GitHub issue <ticket> of the project's repo. An in-app board
 # project (fleet.conf board-api-prefix not "-") numbers its tickets on its own
 # board, so issue <ticket> of its repo is some other issue. wt_issue_project
-# answers which kind a project is. An in-app board project gets BUILD_REFUSED,
+# answers which kind a project is, through the tracker seam (tracker_kind in
+# bin/lib/tracker.sh, BH-7919): a Linear or Jira project also says "-" in
+# fleet.conf, and it is no GitHub-issue project either. An in-app board project gets BUILD_REFUSED,
 # the word every in-app prompt already closes with one ALERTS line and no
 # comment, so the WEBTASK_* words only ever reach a GitHub-issue project.
 #
@@ -43,16 +45,21 @@
 # shellcheck shell=bash
 
 # wt_issue_project <project> — rc 0 and the repo slug on stdout when the
-# project's tickets are GitHub issues (board-api-prefix "-" in fleet.conf, the
-# `fleet-conf.sh --projects-with-board` rule). rc 1 for an in-app board
-# project, rc 3 when fleet.conf names no valid repo, rc 2 when it cannot be read.
+# project's tickets are GitHub issues (tracker_kind is github-issues). rc 1 for
+# any other tracker (an in-app board, Jira, Linear), rc 3 when fleet.conf names
+# no valid repo, rc 2 when the tracker or the repo cannot be read.
 wt_issue_project() {
-  local p="${1:-}" root prefix repo
+  local p="${1:-}" root kind repo
   root="${HARNESS:-${H:-}}"
   [ -n "$root" ] && [ -x "$root/bin/fleet-conf.sh" ] || return 2
-  prefix=$("$root/bin/fleet-conf.sh" "$p" board_prefix 2>/dev/null) || return 2
+  if ! command -v tracker_kind >/dev/null 2>&1; then
+    # shellcheck source=bin/lib/tracker.sh
+    [ -r "$root/bin/lib/tracker.sh" ] && . "$root/bin/lib/tracker.sh"
+  fi
+  command -v tracker_kind >/dev/null 2>&1 || return 2
+  kind=$(tracker_kind "$p" 2>/dev/null) || return 2
   repo=$("$root/bin/fleet-conf.sh" "$p" repo 2>/dev/null) || return 2
-  [ -z "$prefix" ] || [ "$prefix" = - ] || return 1
+  [ "$kind" = github-issues ] || return 1
   [[ "$repo" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] || return 3
   printf '%s' "$repo"
 }

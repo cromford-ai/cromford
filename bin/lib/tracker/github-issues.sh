@@ -108,6 +108,38 @@ trk_gh_issue_page() {
   gh_rest GET "repos/$TRK_SLUG/issues" -f labels=ai-build -f state=open -F per_page=100 -F "page=$1"
 }
 
+# trk_gh_comments_page <n> <page> — one raw page (per_page=100) of issue <n>'s
+# comments, exactly as gh_rest answers it (html_url included), for a caller
+# that pages the thread itself (bin/web-task.sh's dedup read, BH-7919). rc as
+# gh_rest; 1 on a bad slug, number or page.
+trk_gh_comments_page() {
+  _trk_gh_ok "${1:-}" && [[ "${2:-}" =~ ^[1-9][0-9]*$ ]] || return 1
+  gh_rest GET "repos/$TRK_SLUG/issues/$1/comments?per_page=100&page=$2"
+}
+
+# trk_gh_comment_raw <n> <bodyfile> — trk_gh_comment, but the POST's raw answer
+# (the new comment's id and html_url) on stdout and gh_rest's own rc, for a
+# caller that links the comment it posted (bin/web-task.sh, BH-7919). A dry run
+# logs the write, prints DRYRUN, sends nothing and is rc 0.
+trk_gh_comment_raw() {
+  local n="${1:-}" f="${2:-}"
+  _trk_gh_ok "$n" && [ -r "$f" ] || return 1
+  _trk_logw "gh api -X POST repos/$TRK_SLUG/issues/$n/comments -F body=@$f"
+  _trk_dry && return 0
+  gh_rest POST "repos/$TRK_SLUG/issues/$n/comments" -F "body=@$f"
+}
+
+# trk_gh_close_completed <n> — close issue <n> as completed (state_reason
+# completed, which trk_gh_transition does not send). gh_rest's own rc and its
+# raw answer on stdout; the caller re-reads the state to prove the close took
+# (bin/lib/plan-blocked-stop.sh, BH-7919). A dry run logs, sends nothing, rc 0.
+trk_gh_close_completed() {
+  _trk_gh_ok "${1:-}" || return 1
+  _trk_logw "gh api -X PATCH repos/$TRK_SLUG/issues/$1 -f state=closed -f state_reason=completed"
+  _trk_dry && return 0
+  gh_rest PATCH "repos/$TRK_SLUG/issues/$1" -f state=closed -f state_reason=completed
+}
+
 # trk_gh_read <n> — the issue and its whole thread. A thread at the comment
 # cap is a PARTIAL read and answers 1: never decide on a truncated thread.
 trk_gh_read() {

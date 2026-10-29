@@ -12,8 +12,9 @@
 # THE GATE
 #   pbs_stop_check <project> <key> <ticket> [job-file]  rc 0 may spawn, rc 1
 #       refused (the row stays queued: no QROW write, no deferral, no cap count).
-#       Acts only on a GitHub-Issues project (fleet-conf board_prefix "-") with a
-#       numeric ticket, and only when the key's NEWEST record that has a RESULT
+#       Acts only on a GitHub-Issues project (tracker_kind github-issues, the
+#       BH-7919 seam in bin/lib/tracker.sh) with a numeric ticket, and only
+#       when the key's NEWEST record that has a RESULT
 #       (builds/pool-<p>-<key>-*/RESULT, by mtime) starts PLAN_BLOCKED. That
 #       record is classified ONCE (<record>/plan-blocked.class):
 #   done <sha>   plan.md line 1 is a BLOCKED marker followed by "already done on
@@ -199,7 +200,7 @@ _pbs_close_done() {
     fi
   fi
   rc=0
-  gh_rest PATCH "repos/$slug/issues/$n" -f state=closed -f state_reason=completed >/dev/null 2>&1 || rc=$?
+  TRK_SLUG="$slug" trk_gh_close_completed "$n" >/dev/null 2>&1 || rc=$?
   st=""
   if [ "$rc" = 0 ]; then _pbs_issue_state "$slug" "$n" && st="$_PBS_ST"; fi
   if [ "$st" = closed ]; then
@@ -308,7 +309,7 @@ _pbs_cap() {
 }
 
 pbs_stop_check() { # pbs_stop_check <project> <key> <ticket> [job-file]
-  local p="${1:-}" key="${2:-}" ticket="${3:-}" r on newest bp slug base cls
+  local p="${1:-}" key="${2:-}" ticket="${3:-}" r on newest slug base cls
   r=$(_pbs_root); [ -n "$r" ] && [ -n "$p" ] && [ -n "$key" ] || return 0
   on=$(_pbs_int "${POOL_PLAN_BLOCKED_STOP:-1}" 1) # knob POOL_PLAN_BLOCKED_STOP (catalog/lanes.d/fly-pool.knobs.d)
   [ "$on" -gt 0 ] || return 0
@@ -316,13 +317,18 @@ pbs_stop_check() { # pbs_stop_check <project> <key> <ticket> [job-file]
   newest=$(_pbs_newest "$r" "$p" "$key")
   [ -n "$newest" ] && _pbs_is_pb "$newest" || return 0
   [ -e "$newest/plan-blocked.released" ] || [ -e "$newest/plan-blocked.closed" ] && return 0
-  bp=$("$r/bin/fleet-conf.sh" "$p" board_prefix 2>/dev/null) || bp=""
-  [ "$bp" = "-" ] || return 0
+  command -v tracker_kind >/dev/null 2>&1 || . "${BASH_SOURCE[0]%/*}/tracker.sh" 2>/dev/null
+  command -v tracker_kind >/dev/null 2>&1 || return 0
+  # In this shell first, so the per-process cache is warm for the $( ) read.
+  tracker_kind "$p" >/dev/null 2>&1 || return 0
+  [ "$(tracker_kind "$p" 2>/dev/null)" = github-issues ] || return 0
   slug=$("$r/bin/fleet-conf.sh" "$p" repo 2>/dev/null) || slug=""
   [[ "$slug" =~ ^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$ ]] || return 0
   command -v gh_rest_issue_state >/dev/null 2>&1 || . "${BASH_SOURCE[0]%/*}/gh-rest.sh" 2>/dev/null
   command -v pb_excerpt >/dev/null 2>&1 || . "${BASH_SOURCE[0]%/*}/plan-blocked.sh" 2>/dev/null
-  command -v gh_rest_issue_state >/dev/null 2>&1 && command -v pb_excerpt >/dev/null 2>&1 || return 0
+  command -v trk_gh_close_completed >/dev/null 2>&1 || . "${BASH_SOURCE[0]%/*}/tracker/github-issues.sh" 2>/dev/null
+  command -v gh_rest_issue_state >/dev/null 2>&1 && command -v pb_excerpt >/dev/null 2>&1 \
+    && command -v trk_gh_close_completed >/dev/null 2>&1 || return 0
   base=$(_pbs_base "$r" "$p")
   cls=$(_pbs_classify "$r" "$p" "$key" "$newest" "$slug" "$base" "$ticket")
   case "$cls" in
