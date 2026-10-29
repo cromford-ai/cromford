@@ -43,6 +43,13 @@
 #                machine): lw_warm_refresh (lib/lane-run-warm.sh) runs before
 #                each claim and fetches or clones every fleet repo at most
 #                once per lane_run.warm_refresh_s.
+#   1c. beat     BH-8745: right after the step-2 name checks, lrh_start <id> ""
+#                <lane_run.prerun_beat_max_s> (1..3600, fallback 600) beats the
+#                row through steps 2b and 3, so a slow pre-run never lets the
+#                row lease run out and be claimed again. It is stopped before
+#                every pre-run report and before the spawn; when the row was
+#                lost meanwhile (409 `lost`: re-claimed or swept to died) the
+#                lane is NOT run and NOT reported, with one log line.
 #   2. check     lane and project are path-safe names and args[0] is a path
 #                under bin/ with no `..`. A bad row is logged and NOT run and
 #                NOT reported: its lease runs out and the row is re-claimed.
@@ -66,7 +73,9 @@
 #   4. run       LANE_RUN_ID=<id> setsid -w bin/project-lane-run.sh <lane>
 #                <project> 0 $H/<args[0]> <args[1..]>, with lrh_start/lrh_stop
 #                (lib/lane-run-heartbeat.sh) around the wait. Its stdout, then
-#                its stderr, go to logs/<lane>-cron.log, as on the hub.
+#                its stderr, go to logs/<lane>-cron.log, as on the hub. The
+#                row has beaten since the claim (step 1c), so it is never
+#                re-claimed while the run starts.
 #   5. write     unless lrh_lost: lri_checkpoint <lane> <project> posts what the
 #      back      run changed since its last checkpoint. A failure reports rc 75
 #                (EX_TEMPFAIL), never the run's own rc.
@@ -204,6 +213,26 @@ lw_poll_s() {
   printf '%s' "$v"
 }
 
+# lw_prerun_beat_max_s — BH-8745: how long the row beats before the spawn.
+# Settings row lane_run.prerun_beat_max_s (1..3600); 600 is the fallback.
+lw_prerun_beat_max_s() {
+  local v
+  v=$(setting_get lane_run.prerun_beat_max_s 2>/dev/null) || v=""
+  v=$(printf '%s' "$v" | tr -d '[:space:]')
+  case "$v" in ''|*[!0-9]*) v=600 ;; esac
+  [ "${#v}" -le 4 ] && [ "$((10#$v))" -ge 1 ] && [ "$((10#$v))" -le 3600 ] || v=600
+  printf '%s' "$((10#$v))"
+}
+
+# lw_prerun_lost <id> — stop the pre-run heartbeat; rc 0 (and one log line)
+# when the row was lost during the pre-run, so the caller must not report.
+lw_prerun_lost() {
+  lrh_stop
+  lrh_lost || return 1
+  lw_log "run $1: lease lost before the run; not reported"
+  return 0
+}
+
 lw_term_grace_s() {
   local v
   v=$(setting_get lane_run.term_grace_s 2>/dev/null) || v=""
@@ -318,7 +347,7 @@ lw_release() {
 lw_on_term() {
   local timer
   trap '' TERM INT
-  if [ -z "$LW_ID" ]; then exit 0; fi
+  if [ -z "$LW_ID" ]; then lrh_stop; exit 0; fi
   kill -TERM -- "-$LW_PID" 2>/dev/null || kill -TERM "$LW_PID" 2>/dev/null
   ( sleep "$LW_GRACE"; kill -KILL -- "-$LW_PID" 2>/dev/null || kill -KILL "$LW_PID" 2>/dev/null ) &
   timer=$!
@@ -362,9 +391,13 @@ lw_run() {
   if ! [[ ${args[0]} =~ ^bin/[A-Za-z0-9._/-]+$ ]] || [[ /${args[0]}/ == */../* ]]; then
     lw_log "run $id: args[0] '${args[0]}' is not a path under bin/; not run, not reported"; return 0
   fi
+  # BH-8745: the row beats from the claim, so a slow pre-run (the warm lock,
+  # the fetch, the snapshot download) never lets the lease run out under it.
+  lrh_start "$id" "" "$(lw_prerun_beat_max_s)"
   if [ ! -f "$H/${args[0]}" ] || [ ! -x "$H/${args[0]}" ]; then
     lw_log "run $id $lane/$project: ${args[0]} is not an executable file in the harness; not run"
     prof="PROF lane-run rc=127 reason=command-missing err=${args[0]} not in harness $(lw_commit12)"
+    lw_prerun_lost "$id" && return 0
     lw_alert_missing "$lane" "$project" 127 "${args[0]} not in harness"
     lw_report "$id" "$lane" "$project" 127 "${prof:0:512}"
     return 0
@@ -374,6 +407,7 @@ lw_run() {
     if ! lw_warm_ensure "$wp"; then
       lw_log "run $id $lane/$project: warm ensure failed ($LW_WARM_WHY); not run, reported rc 75"
       prof="PROF lane-run rc=75 reason=clone-ensure err=$LW_WARM_WHY"
+      lw_prerun_lost "$id" && return 0
       lw_report "$id" "$lane" "$project" 75 "$(head -c 512 < <(printf '%s' "$prof"))"
       return 0
     fi
@@ -381,6 +415,7 @@ lw_run() {
   fo=$(lri_fetch "$lane" "$project" "$H/state/$lane/$project" 2>&1); frc=$?
   if [ "$frc" != 0 ]; then
     lw_log "run $id: lri_fetch $lane $project rc $frc ($(printf '%s' "$fo" | tail -n 1)); not run"
+    lw_prerun_lost "$id" && return 0
     if [ -z "${LW_ALERTED[$lane]:-}" ]; then
       LW_ALERTED[$lane]=1
       [ -x "$H/bin/lane-alert.sh" ] && "$H/bin/lane-alert.sh" --severity warn --id "lane-inputs-$lane" "$lane" \
@@ -391,6 +426,12 @@ lw_run() {
     return 0
   fi
   [ -z "$fo" ] || lw_log "run $id $lane/$project: $fo"
+  # Before the spawn: the run-time heartbeat below clears the lost mark.
+  lrh_stop
+  if lrh_lost; then
+    lw_log "run $id $lane/$project: lease lost during the pre-run (another machine claimed it); not run, not reported"
+    return 0
+  fi
   out="$H/state/lane-run-worker/run-$id.out"
   err="$H/state/lane-run-worker/run-$id.err"
   LW_GRACE=$(lw_term_grace_s)

@@ -77,10 +77,12 @@
 #       applies the project's pending write-backs and publishes its snapshot
 #       (bin/lib/lane-run-inputs.sh), so the run starts from the hub's files
 #       of now. At most once per mc_project_fly.publish_min_s (fallback 120 s)
-#       per project (stamp <project>.published-at). Both lib calls wait up to
-#       mc_project_fly.publish_lock_wait_s (fallback 30 s, at most 600) for
+#       per project (stamp <project>.published-at). Both lib calls wait for
 #       the per-project snapshot lock the cron publisher
-#       (lane-snapshot-publish.sh --lane merge-conductor) also takes. A
+#       (lane-snapshot-publish.sh --lane merge-conductor) also takes: the
+#       apply up to mc_project_fly.apply_lock_wait_s (fallback 120 s, at most
+#       600; BH-8745), the publish up to mc_project_fly.publish_lock_wait_s
+#       (fallback 30 s, at most 600). A
 #       failure logs one line with its reason (`rc=<n>, no output` when the
 #       lib printed none). After a failed publish it reads the current
 #       snapshot (_mc_proj_snap_fresh): rc 0 when the cron publisher's
@@ -101,7 +103,14 @@
 #       (mc_proj_fly rc 3) fails closed for a project last placed fly
 #       (<project>.placed) or with a live row: rc 0. Before any hub fallback
 #       it applies the project's pending write-backs and writes the hub mark,
-#       under the gate lock; a stale row is withdrawn first.
+#       under the gate lock; a stale row is withdrawn first. The apply waits
+#       up to mc_project_fly.apply_lock_wait_s for the snapshot lock; past
+#       it the held line names the lock and the wait (BH-8745). BH-8745: a
+#       held apply writes <project>.apply-owed, and the next gate tick applies
+#       it first, under the gate lock and before any routing, whatever the
+#       publish throttle says. On success it removes the mark with ONE line
+#       `held write-backs of row <id> applied (...)`; on a failure it keeps
+#       the mark (`still not applied (...)`). Routing then goes on as before.
 #   mc_proj_takeback_full <project>
 #       a keyed hub tick's take-back: ONE full tick of <project> under the
 #       BH-5463 full-tick lock (the driver's tick_project calls it on rc 2).
@@ -122,6 +131,9 @@
 # Files under state/merge-conductor/project-fly/ (hub only):
 #   <project>.owed      one line: a wake came while the row was live. The next
 #                       tick that finds the row finished enqueues again.
+#   <project>.apply-owed `<row id|-> <epoch>`: a fallback could not apply the
+#                       machine's write-backs (BH-8745). The next gate tick
+#                       applies them first and removes the mark on success.
 #   <project>.taken     the id of the finished row the hub already took back,
 #                       so the next tick enqueues a new row instead of taking
 #                       the same row back again.
@@ -155,8 +167,9 @@ MC_PROJ_LANE=merge-conductor
 # Code fallbacks of the settings rows mc_project_fly.alert_s,
 # mc_project_fly.publish_min_s, mc_project_fly.failed_alert_n,
 # mc_project_fly.hubtick_max_s, mc_project_fly.nocap_backoff_s,
-# mc_project_fly.nocap_alert_n, mc_project_fly.publish_lock_wait_s and
-# mc_project_fly.snapshot_margin_s (_mc_proj_int).
+# mc_project_fly.nocap_alert_n, mc_project_fly.publish_lock_wait_s,
+# mc_project_fly.apply_lock_wait_s and mc_project_fly.snapshot_margin_s
+# (_mc_proj_int).
 MC_PROJ_ALERT_S=3600
 MC_PROJ_PUBLISH_MIN_S=120
 MC_PROJ_FAILED_ALERT_N=3
@@ -164,6 +177,7 @@ MC_PROJ_HUBTICK_MAX_S=3600
 MC_PROJ_NOCAP_BACKOFF_S=600
 MC_PROJ_NOCAP_ALERT_N=3
 MC_PROJ_PUBLISH_LOCK_WAIT_S=30
+MC_PROJ_APPLY_LOCK_WAIT_S=120
 MC_PROJ_SNAPSHOT_MARGIN_S=300
 # BH-7635: the longest deferred_prs= value. bin/lane-run-worker.sh keeps 512
 # bytes of the PROF line, and the rest of an mc-project line is under 140.
@@ -418,7 +432,7 @@ mc_proj_publish() {
     # walk and tar: wait for it within the bound (BH-7520).
     w=$(_mc_proj_int mc_project_fly.publish_lock_wait_s "$MC_PROJ_PUBLISH_LOCK_WAIT_S")
     [ "$w" -le 600 ] || w="$MC_PROJ_PUBLISH_LOCK_WAIT_S"
-    out=$(LRI_LOCK_WAIT_S="$w" lri_apply_pending "$MC_PROJ_LANE" "$p" 2>&1); rc=$?
+    out=$(LRI_LOCK_WAIT_S="$(_mc_proj_apply_wait)" lri_apply_pending "$MC_PROJ_LANE" "$p" 2>&1); rc=$?
     [ "$rc" = 0 ] || _mc_proj_log "$p ${MC_PROJ_TAG:-project-fly}: write-back apply failed ($(_mc_proj_why "$rc" "$out"))"
     out=$(LRI_LOCK_WAIT_S="$w" lri_publish "$MC_PROJ_LANE" "$p" 2>&1); rc=$?
     if [ "$rc" = 0 ]; then _mc_proj_put "$stamp" "$now"; return 0; fi
@@ -442,7 +456,9 @@ mc_proj_publish() {
 # a hub tick on stale state would change this project's lines, and the next
 # compare-and-set apply of the machine's write-back would then keep the hub's
 # copy and drop the machine's (a QUEUED row lost, its settle never run).
-# rc 0 = applied, or nothing to apply; rc 1 = not applied.
+# rc 0 = applied, or nothing to apply; rc 1 = not applied. The snapshot lock
+# wait is mc_project_fly.apply_lock_wait_s (BH-8745: the lib's 10 s was
+# shorter than the cron publisher holds the lock).
 _mc_proj_apply() {
   local p="$1" root out
   root=$(_mc_proj_root)
@@ -451,8 +467,45 @@ _mc_proj_apply() {
     [ -r "$root/bin/lib/lane-run-inputs.sh" ] && . "$root/bin/lib/lane-run-inputs.sh" 2>/dev/null
   fi
   command -v lri_apply_pending >/dev/null 2>&1 || { MC_PROJ_APPLY_WHY="no lane-run-inputs lib"; return 1; }
-  out=$(lri_apply_pending "$MC_PROJ_LANE" "$p" 2>&1) || { MC_PROJ_APPLY_WHY=$(printf '%s' "$out" | tail -n 1); return 1; }
+  out=$(LRI_LOCK_WAIT_S="$(_mc_proj_apply_wait)" lri_apply_pending "$MC_PROJ_LANE" "$p" 2>&1) \
+    || { MC_PROJ_APPLY_WHY=$(_mc_proj_apply_why "$p" "$(printf '%s' "$out" | tail -n 1)"); return 1; }
   MC_PROJ_APPLY_WHY="$out"
+  return 0
+}
+
+# _mc_proj_apply_wait — mc_project_fly.apply_lock_wait_s, 1..600, else the
+# fallback MC_PROJ_APPLY_LOCK_WAIT_S.
+_mc_proj_apply_wait() {
+  local w
+  w=$(_mc_proj_int mc_project_fly.apply_lock_wait_s "$MC_PROJ_APPLY_LOCK_WAIT_S")
+  [ "$w" -le 600 ] || w="$MC_PROJ_APPLY_LOCK_WAIT_S"
+  printf '%s' "$w"
+}
+
+# _mc_proj_apply_why <project> <last apply line> — the line, or for a busy
+# snapshot lock one line that names the lock and the wait.
+_mc_proj_apply_why() {
+  case "$2" in
+    *"(lock busy)") printf 'lock busy: locks/lane-snapshot-%s-%s.lock held past %ss (mc_project_fly.apply_lock_wait_s)' \
+                      "$MC_PROJ_LANE" "$1" "$(_mc_proj_apply_wait)" ;;
+    *) printf '%s' "$2" ;;
+  esac
+}
+
+# _mc_proj_owed_apply <project> — BH-8745: a held apply that a fallback left
+# in <project>.apply-owed is applied before anything else, once. Called by
+# mc_proj_gate under the gate lock. Always rc 0.
+_mc_proj_owed_apply() {
+  local p="$1" f oid
+  f="$(_mc_proj_dir)/$p.apply-owed"
+  [ -e "$f" ] || return 0
+  read -r oid _ < "$f" 2>/dev/null; [ -n "${oid:-}" ] || oid=-
+  if _mc_proj_apply "$p"; then
+    rm -f "$f"
+    _mc_proj_log "$p ${MC_PROJ_TAG:-project-fly}: held write-backs of row $oid applied (${MC_PROJ_APPLY_WHY:-applied})"
+  else
+    _mc_proj_log "$p ${MC_PROJ_TAG:-project-fly}: held write-backs of row $oid still not applied (${MC_PROJ_APPLY_WHY:-?})"
+  fi
   return 0
 }
 
@@ -462,7 +515,7 @@ _mc_proj_apply() {
 # pending write-backs (_mc_proj_apply) and writes the hub mark; when the apply
 # fails the hub does no PR work for the project this tick (rc 0, owed).
 _mc_proj_fallback() {
-  local p="$1" w="$2" det="$3" hubrc="$4"
+  local p="$1" w="$2" det="$3" hubrc="$4" oid
   MC_PROJ_OFF=0
   if [ "$(mc_proj_fallback "$p")" = off ]; then
     MC_PROJ_OFF=1
@@ -472,6 +525,9 @@ _mc_proj_fallback() {
   fi
   if ! _mc_proj_apply "$p"; then
     _mc_proj_put "$(_mc_proj_dir)/$p.owed" "owed $(date -u +%s)"
+    # BH-8745: the next gate tick applies it first (_mc_proj_owed_apply).
+    oid=-; [[ $det =~ ^row\ ([0-9]+): ]] && oid="${BASH_REMATCH[1]}"
+    _mc_proj_put "$(_mc_proj_dir)/$p.apply-owed" "$oid $(date -u +%s)"
     _mc_proj_log "$p ${MC_PROJ_TAG:-project-fly}: fallback=$w ($det) held — the machine's write-backs were not applied (${MC_PROJ_APPLY_WHY:-?}); no hub work for $p this tick, owed"
     return 0
   fi
@@ -679,6 +735,7 @@ mc_proj_gate() {
   rows=$(_jobs_req GET "/api/lane-runs/by-prefix?lane=$MC_PROJ_LANE&project_prefix=$p&limit=10") \
     && read -r kind id det < <(mc_proj_newest "$rows" "$p" "$(date -u +%s)" "$st" "$boxed") && [ -n "$kind" ] \
     || { kind=read-failed; id=-; det="http ${JOBS_HTTP:-none}"; }
+  _mc_proj_owed_apply "$p"
   taken=$(head -n 1 "$d/$p.taken" 2>/dev/null)
   case "$kind" in
     live)

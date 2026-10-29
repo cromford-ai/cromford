@@ -1,0 +1,9 @@
+-- BH-8745: the project-6-os Fly conductor faults. Four knob rows. No new table
+-- and no new index. Rollback values: lease_wait_s = 0 (no wait, the old
+-- immediate LEASE_HELD) and apply_lock_wait_s = 10 (the old lib default).
+-- prerun_beat_max_s has no off value: the pre-run heartbeat is the fix.
+INSERT OR IGNORE INTO settings (key,value,note,actor,updated_at) VALUES
+  ('lane_run.prerun_beat_max_s','600','BH-8745: bin/lane-run-worker.sh beats a claimed lane_runs row from the claim on, through the warm ensure and the input fetch, for at most this many seconds before the run starts; a pre-run longer than this lets the row lease run out as before (1..3600; any other value reads as 600); the code default is 600','seed','2026-10-28T00:00:00Z'),
+  ('mc_project_fly.lease_wait_s','210','BH-8745: bin/merge-conductor-project.sh on a lane-run machine polls a held merge-conductor project lease for up to this many seconds before it ends LEASE_HELD; 210 = project_lease.ttl_s 180 + 30, so a dead holder''s lease runs out inside it (0..900, 0 = no wait; any other value reads as 210); the code default is 210','seed','2026-10-28T00:00:00Z'),
+  ('mc_project_fly.lease_poll_s','15','BH-8745: the seconds between two acquire tries while bin/merge-conductor-project.sh waits on a held project lease (1..300; any other value reads as 15); the code default is 15','seed','2026-10-28T00:00:00Z'),
+  ('mc_project_fly.apply_lock_wait_s','120','BH-8745: the hub''s write-back apply for a fly-placed merge-conductor project (the gate fallback, the held apply and mc_proj_publish) waits this many seconds for locks/lane-snapshot-merge-conductor-<project>.lock, which the cron publisher holds across its apply and tar (1..600; any other value reads as 120); the code default is 120. The snapshot publish keeps mc_project_fly.publish_lock_wait_s','seed','2026-10-28T00:00:00Z');

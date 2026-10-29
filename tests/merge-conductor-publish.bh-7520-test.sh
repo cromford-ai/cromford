@@ -158,6 +158,8 @@ grep -q 'snapshot publish failed\|write-back apply failed' "$T/gate.log" && bad 
 
 echo "P2: a holder past the knob: the line names the lock and the stale snapshot"
 reset; echo 1 > "$T/settings/mc_project_fly.publish_lock_wait_s"; hold 4
+# BH-8745: the apply waits its own row now; 1 keeps this case's premise.
+echo 1 > "$T/settings/mc_project_fly.apply_lock_wait_s"
 tick
 WANT="mgfy project-fly: snapshot publish failed (lri_publish: lock busy: locks/lane-snapshot-merge-conductor-mgfy.lock held past 1s) — no fresh snapshot (snapshot 1300s old, max 1200s less margin 300s); this tick of mgfy stays on the hub"
 [ "$(publine)" = "$WANT" ] && ok "P2 the exact line" || bad "P2 line: '$(publine)'"

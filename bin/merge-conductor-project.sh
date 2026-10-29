@@ -11,10 +11,15 @@
 #
 #   1. check    the project has a repo in fleet.conf. Else exit 2.
 #   2. lease    pjl_acquire merge-conductor <project> <holder> (holder:
-#               FLY_MACHINE_ID, else machine-<hostname>). 409 `held` prints
-#               `PROF mc-project state=LEASE_HELD ...` and exits 0: the hub
-#               enqueues again on its next tick. No answer prints
-#               state=LEASE_UNAVAILABLE and exits 75.
+#               FLY_MACHINE_ID, else machine-<hostname>). On 409 `held` it
+#               polls again every mc_project_fly.lease_poll_s (1..300, fallback
+#               15) seconds for up to mc_project_fly.lease_wait_s (0..900,
+#               fallback 210 = project_lease.ttl_s + 30; 0 = no wait) seconds
+#               (BH-8745: a dead holder's lease runs out at its TTL). A lease
+#               still held at the end prints `PROF mc-project
+#               state=LEASE_HELD ...` and exits 0: the hub enqueues again on
+#               its next tick. No answer prints state=LEASE_UNAVAILABLE and
+#               exits 75. A TERM during the wait prints state=STOPPED, exit 0.
 #   3. run      bin/merge-conductor.sh with MC_ONLY_PROJECT=<project>,
 #               MC_ON_MACHINE=1, MC_LEASED_RUN=1 and the lease exported
 #               (MC_LEASE_FENCE, MC_LEASE_PROJECT, MC_LEASE_HOLDER): a full
@@ -96,10 +101,40 @@ mkdir -p "$H/state/merge-conductor-project" "$H/logs" 2>/dev/null
 TERMED=0; FENCE=""; CPID=""; RPID=""; TMP=""
 trap 'TERMED=1' TERM INT
 
-FENCE=$(pjl_acquire "$LANE" "$P" "$HOLDER"); arc=$?
+# knob <row> <lo> <hi> <fallback> — a whole-number settings row in range,
+# else the fallback.
+knob() {
+  local v
+  v=$(setting_get "$1" 2>/dev/null | tr -d '[:space:]') || v=""
+  [[ $v =~ ^[0-9]{1,6}$ ]] && [ "$((10#$v))" -ge "$2" ] && [ "$((10#$v))" -le "$3" ] || v="$4"
+  printf '%s' "$((10#$v))"
+}
+
+FENCE=$(pjl_acquire "$LANE" "$P" "$HOLDER"); arc=$?; LW_EL=0
+# BH-8745: a held lease is often a dead holder's lease that runs out at its
+# TTL (project_lease.ttl_s 180 against the 120 s row lease), so poll it for a
+# bounded window before giving up. mc_project_fly.lease_wait_s (0..900; 210 is
+# the fallback; 0 = no wait) and mc_project_fly.lease_poll_s (1..300; 15 is
+# the fallback).
+if [ "$arc" = 3 ]; then
+  LW_MAX=$(knob mc_project_fly.lease_wait_s 0 900 210)
+  LW_POLL=$(knob mc_project_fly.lease_poll_s 1 300 15)
+  LW_T0=$(date +%s)
+  [ "$LW_MAX" -gt 0 ] && mlog "project lease held — waiting up to ${LW_MAX}s (poll ${LW_POLL}s)"
+  while [ "$arc" = 3 ] && [ "$LW_EL" -lt "$LW_MAX" ]; do
+    sleep "$(( LW_POLL < LW_MAX - LW_EL ? LW_POLL : LW_MAX - LW_EL ))" & LW_SP=$!; wait "$LW_SP"
+    if [ "$TERMED" = 1 ]; then
+      kill "$LW_SP" 2>/dev/null
+      mlog "TERM during the lease wait — nothing run"; prof STOPPED 0 0 - -; exit 0
+    fi
+    FENCE=$(pjl_acquire "$LANE" "$P" "$HOLDER"); arc=$?
+    LW_EL=$(( $(date +%s) - LW_T0 ))
+  done
+  [ "$arc" = 0 ] && mlog "project lease free after ${LW_EL}s — run starts"
+fi
 case "$arc" in
   0) ;;
-  3) mlog "project lease held by another holder — nothing run"; prof LEASE_HELD 0 0 - -; exit 0 ;;
+  3) mlog "project lease held by another holder for ${LW_EL}s — nothing run"; prof LEASE_HELD 0 0 - -; exit 0 ;;
   *) mlog "project lease not answered (http ${JOBS_HTTP:-none}) — nothing run"; prof LEASE_UNAVAILABLE 0 0 - -; exit 75 ;;
 esac
 if [ "$TERMED" = 1 ]; then

@@ -1,15 +1,23 @@
 # shellcheck shell=bash
 # bin/lib/lane-run-heartbeat.sh — the heartbeat a machine keeps on a claimed
 # lane_runs row while the run lives. bin/lane-run-worker.sh calls these around
-# every run. Contract: docs/notes/2026-10-12-BH-6125-lane-run-lease.md.
+# every run, from the claim on (BH-8745: the pre-run steps beat too).
+# Contract: docs/notes/2026-10-12-BH-6125-lane-run-lease.md.
 #
-#   lrh_start <run_id> <pgid>  start a background loop: every
+#   lrh_start <run_id> <pgid> [max_s]
+#                              start a background loop: every
 #                              lane_run.heartbeat_s (1..300, fallback 30) it
 #                              POSTs /api/lane-runs/<id>/heartbeat {machine}.
 #                              On 409 `lost` it marks the run lost, then TERMs
 #                              the run's process group <pgid> and KILLs it 5 s
 #                              later. Any other failure is logged and the run
-#                              goes on: an outage is not a lost lease.
+#                              goes on: an outage is not a lost lease. With
+#                              max_s (a whole number 1..86400; the pre-run
+#                              form, pgid "") the loop stops beating after
+#                              max_s seconds, logs one line and kills nothing,
+#                              so the lease runs out as it would; a lost lease
+#                              only marks the run lost and logs `lease lost
+#                              (<reason>) before the run started`.
 #   lrh_stop                   end the loop
 #   lrh_lost                   rc 0 when the lease was lost (another machine
 #                              re-claimed the row), so the run must not report;
@@ -41,22 +49,32 @@ _lrh_kill() {
   return 0
 }
 
-# _lrh_loop <id> <pgid> <seconds> <machine> — runs in the background subshell.
+# _lrh_loop <id> <pgid> <seconds> <machine> [max_s] — runs in the background
+# subshell.
 _lrh_loop() {
-  local id="$1" pgid="$2" hb="$3" body sp="" rc reason
+  local id="$1" pgid="$2" hb="$3" body sp="" rc reason max="${5:-}" t0
   body=$(jq -nc --arg m "$4" '{machine:$m}')
   trap '[ -z "$sp" ] || kill "$sp" 2>/dev/null; exit 0' TERM
+  t0=$(date +%s)
   while :; do
     sleep "$hb" & sp=$!
     wait "$sp"; sp=""
     # The worker that owns the run is gone: stop, so the lease can run out.
     kill -0 "$$" 2>/dev/null || exit 0
+    if [ -n "$max" ] && [ $(( $(date +%s) - t0 )) -ge "$max" ]; then
+      _lrh_log "run $id: pre-run heartbeat stopped after ${max}s"
+      exit 0
+    fi
     # Into a file, not $( ): JOBS_HTTP must survive the call.
     _jobs_req POST "/api/lane-runs/$id/heartbeat" "$body" > "$LRH_RESP"; rc=$?
     [ "$rc" = 0 ] && continue
     if [ "$rc" = 9 ] && [ "${JOBS_HTTP:-}" = 409 ] && [ "$(jq -r '.error // empty' "$LRH_RESP" 2>/dev/null)" = lost ]; then
       reason=$(jq -r '.reason // "unknown"' "$LRH_RESP" 2>/dev/null)
       : > "$LRH_LOST_FILE"
+      if [ -z "$pgid" ] && [ -n "$max" ]; then
+        _lrh_log "run $id: lease lost ($reason) before the run started"
+        exit 0
+      fi
       _lrh_log "run $id: lease lost ($reason); killing process group $pgid"
       _lrh_kill "$pgid"
       exit 0
@@ -66,7 +84,8 @@ _lrh_loop() {
 }
 
 lrh_start() {
-  local id="${1:-}" pgid="${2:-}" root="${HARNESS:-${H:-}}" hb m
+  local id="${1:-}" pgid="${2:-}" max="${3:-}" root="${HARNESS:-${H:-}}" hb m
+  [[ $max =~ ^[1-9][0-9]{0,4}$ ]] && [ "$max" -le 86400 ] || max=""
   [ -z "$LRH_LOST_FILE" ] || rm -f "$LRH_LOST_FILE"
   LRH_ID="$id"; LRH_LOST_FILE=""; LRH_RESP=""
   if [ -z "$root" ] || ! mkdir -p "$root/state/lane-run-worker" 2>/dev/null; then
@@ -89,7 +108,7 @@ lrh_start() {
   hb=""
   ! declare -F setting_get >/dev/null || hb=$(setting_get lane_run.heartbeat_s 2>/dev/null) || hb=""
   [[ $hb =~ ^[0-9]+$ ]] && [ "$hb" -ge 1 ] && [ "$hb" -le 300 ] || hb=30
-  _lrh_loop "$id" "$pgid" "$hb" "$m" &
+  _lrh_loop "$id" "$pgid" "$hb" "$m" "$max" &
   LRH_PID=$!
   return 0
 }
