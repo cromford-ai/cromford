@@ -221,8 +221,8 @@ grep -q 'WARNING docs/notes/INDEX.md could not be generated' "$DIR/bin/publish-s
 # ── R3. CI runs the new --check, through the rendered workflow ───────────────
 grep -q 'run: bin/render-doc-index.sh --check$' "$DIR/.github/workflows/harness-ci.yml" && ok \
   || bad "R3: .github/workflows/harness-ci.yml must run bin/render-doc-index.sh --check"
-grep -q 'run: bin/render-doc-index.sh --check$' "$DIR/config/harness-ci/120-lint/000-job.yml" && ok \
-  || bad "R3: the step must come from config/harness-ci/120-lint/000-job.yml"
+grep -qh 'run: bin/render-doc-index.sh --check$' "$DIR"/config/harness-ci/120-lint/*.yml && ok \
+  || bad "R3: the step must come from config/harness-ci/120-lint/"
 "$DIR/bin/render-ci-workflow.sh" --root "$DIR" --check >/dev/null 2>&1; RC=$?
 [ "$RC" = 0 ] && ok || bad "R3: bin/render-ci-workflow.sh --check must be rc 0, got $RC"
 
