@@ -1,0 +1,12 @@
+{
+  "env": "PM_CLAIM_TIMEOUT_MIN",
+  "read_in": "worker/jobs/src/routes/pm-brief.js",
+  "type": "int",
+  "default": 120,
+  "min": 0,
+  "max": 10080,
+  "unit": "min",
+  "zero_means": "off",
+  "settable": true,
+  "note": "BH-8651: minutes after which POST /api/pm/briefs/claim releases a `claimed` PM brief row (a run that died after its claim) to the next claim, with one stage_events CLAIM_RELEASED row. Read by the jobs worker claimTimeoutMin from settings lane.pm-groom.pm_claim_timeout_min (seed 120); a row lane.pm-groom.<project>.pm_claim_timeout_min wins. A value that is not 0 and not 30..10080, or not an integer, is the next source down, then the code fallback 120. The box lane bin/pm-groom.sh does not read it."
+}

@@ -12,7 +12,12 @@
 //   ONE batch: INSERT ... ON CONFLICT(project, week) DO NOTHING, then the row.
 //   claimed:true only when this call made the row. With force, a `claimed` or
 //   `failed` row is claimed again (a CAS on status); a `ready` row never is.
-//   200 {brief, claimed}.
+//   Without force, a `claimed` row whose updated_at is MORE than
+//   claimTimeoutMin() minutes old (a lane that died after its claim) is
+//   released to this caller: ONE batch of the CAS on the old updated_at, one
+//   stage_events CLAIM_RELEASED row (only when the CAS changed the row) and the
+//   read-back. Of two racing callers only one wins. A `failed` or `ready` row
+//   is never released. 200 {brief, claimed, released}.
 // POST /api/pm/briefs {project, week, body, moves:[{idea_id, from_col, to_col, reason?, evidence}]}
 //   Every field is checked first (400 {error, field}). The row must be
 //   `claimed` (404 none, 409 otherwise). ONE batch: the UPDATE to `ready`
@@ -75,6 +80,39 @@ export async function pmLimits(env) {
   return out;
 }
 export const DECISIONS = ["approve", "reject"];
+
+// BH-8651: the claim timeout is a knob (BH-7945). Settings row
+// lane.pm-groom.<project>.pm_claim_timeout_min wins, then
+// lane.pm-groom.pm_claim_timeout_min (seed 120,
+// schema.d/202610301846-bh-8651-pm-claim-timeout.sql; catalog fragment
+// catalog/lanes.d/pm-groom.knobs.d/PM_CLAIM_TIMEOUT_MIN.json). [lo, hi,
+// fallback]: 0 is off; a value that is not an integer, or not 0 and outside
+// lo..hi, is the next source down. lo is over the lane's longest call
+// (PM_GROOM_TIMEOUT_S max 1200 s), so a live run is never released.
+export const CLAIM_TIMEOUT_MIN = [30, 10080, 120];
+const CLAIM_TIMEOUT_LANE_KEY = "lane.pm-groom.pm_claim_timeout_min";
+// Binds: ?1 the project key. Both keys by the settings primary key, one statement.
+// sql-ident-ok: CLAIM_TIMEOUT_LANE_KEY is a module constant
+export const CLAIM_TIMEOUT_SQL = `SELECT key, value FROM settings WHERE key IN (?1, '${CLAIM_TIMEOUT_LANE_KEY}')`;
+export async function claimTimeoutMin(env, project) {
+  const projectKey = `lane.pm-groom.${project}.pm_claim_timeout_min`.toLowerCase();
+  const got = {};
+  for (const r of (await env.DB.prepare(CLAIM_TIMEOUT_SQL).bind(projectKey).all()).results || []) got[r.key] = r.value;
+  const [lo, hi, def] = CLAIM_TIMEOUT_MIN;
+  for (const k of [projectKey, CLAIM_TIMEOUT_LANE_KEY]) {
+    const v = String(got[k] ?? "");
+    if (/^\d+$/.test(v) && (Number(v) === 0 || (Number(v) >= lo && Number(v) <= hi))) return Number(v);
+  }
+  return def;
+}
+// Binds: ?1 brief id, ?2 project, ?3 input_fp, ?4 model, ?5 t, ?6 the
+// updated_at this caller read. The CAS on ?6 hands the week to one caller.
+export const CLAIM_RELEASE_SQL = `UPDATE pm_briefs SET input_fp = ?3, model = ?4, error = NULL, updated_at = ?5
+  WHERE id = ?1 AND project = ?2 AND status = 'claimed' AND updated_at = ?6`;
+// Binds: ?1 job id pm-brief:<project>:<week>, ?2 detail JSON, ?3 t. It runs
+// right after CLAIM_RELEASE_SQL in the same batch, so changes() is that CAS.
+export const CLAIM_RELEASE_AUDIT_SQL = `INSERT INTO stage_events (job_id, stage, verdict, actor, detail, created_at)
+  SELECT ?1, 'pm-groom', 'CLAIM_RELEASED', 'pm-brief', ?2, ?3 WHERE changes() = 1`;
 
 const BRIEF_COLS = "id, project, week, status, input_fp, model, body, sent_mc, sent_tg, error, created_at, updated_at, decided_at";
 // sql-ident-ok: BRIEF_COLS is a module constant
@@ -205,7 +243,24 @@ export const routes = [
         env.DB.prepare(BRIEF_WEEK_SQL).bind(pw.p, pw.w),
       ]);
       let row = (sel.results || [])[0] || null;
-      if (Number(ins.meta.changes) === 1) return json(200, { brief: briefOut(row), claimed: true });
+      if (Number(ins.meta.changes) === 1) return json(200, { brief: briefOut(row), claimed: true, released: false });
+      if (!force && row && row.status === "claimed") {
+        const timeout = await claimTimeoutMin(env, pw.p);
+        const age = Date.parse(t) - Date.parse(row.updated_at);
+        if (timeout > 0 && age > timeout * 60e3) {
+          const detail = JSON.stringify({
+            brief_id: row.id, project: pw.p, week: pw.w, prior_updated_at: row.updated_at,
+            prior_input_fp: row.input_fp, prior_model: row.model, timeout_min: timeout,
+          });
+          const [upd, , again] = await env.DB.batch([
+            env.DB.prepare(CLAIM_RELEASE_SQL).bind(row.id, pw.p, b.input_fp || null, b.model || null, t, row.updated_at),
+            env.DB.prepare(CLAIM_RELEASE_AUDIT_SQL).bind(`pm-brief:${pw.p}:${pw.w}`, detail, t),
+            env.DB.prepare(BRIEF_WEEK_SQL).bind(pw.p, pw.w),
+          ]);
+          const won = Number(upd.meta.changes) === 1;
+          return json(200, { brief: briefOut((again.results || [])[0] || row), claimed: won, released: won });
+        }
+      }
       if (force && row && (row.status === "claimed" || row.status === "failed")) {
         const [upd, again] = await env.DB.batch([
           env.DB.prepare(`UPDATE pm_briefs SET status = 'claimed', input_fp = ?3, model = ?4, error = NULL, updated_at = ?5
@@ -214,9 +269,9 @@ export const routes = [
           env.DB.prepare(BRIEF_WEEK_SQL).bind(pw.p, pw.w),
         ]);
         row = (again.results || [])[0] || row;
-        return json(200, { brief: briefOut(row), claimed: Number(upd.meta.changes) === 1 });
+        return json(200, { brief: briefOut(row), claimed: Number(upd.meta.changes) === 1, released: false });
       }
-      return json(200, { brief: briefOut(row), claimed: false });
+      return json(200, { brief: briefOut(row), claimed: false, released: false });
     }),
   ],
 

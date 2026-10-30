@@ -29,7 +29,12 @@
 #   7. CLAIM BEFORE THE SPEND: POST /api/pm/briefs/claim makes the (project,
 #      week) row. Not won: a ready row with sent_tg=0 is sent again (no call);
 #      anything else is "already billed", rc 0. --force (a person) re-claims a
-#      claimed or failed row; a ready row is final.
+#      claimed or failed row; a ready row is final. The worker also
+#      hands a `claimed` row back to this claim (claimed:true, released:true)
+#      when its updated_at is older than settings
+#      lane.pm-groom[.<project>].pm_claim_timeout_min (seed 120, 0 = off), so a
+#      run that died after its claim does not hold the week; one stage_events
+#      CLAIM_RELEASED row records each release.
 #   8. ONE bin/agent-call.sh call (stage pm, role product.pm, no tools). A
 #      non-zero rc or an answer that is not the schema: POST .../fail, one
 #      ALERTS line, rc 0 (billed and final for the week).
