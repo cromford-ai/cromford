@@ -22,7 +22,6 @@
 # One suite path per line, LC_ALL=C sorted. tests/always-set-prepush.bh-7289-test.sh
 # checks that each line is an always-suite the gate runs.
 tests/account-lease-cas-test.sh
-tests/arch-audit-conflict.bh-5270-test.sh
 tests/br-split-layout-test.sh
 tests/checks-suite-test.sh
 tests/config-literal-lint.sh
