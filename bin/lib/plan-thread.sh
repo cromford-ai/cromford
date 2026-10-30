@@ -16,7 +16,11 @@
 # fleet's own Apps (hs_ours from bin/lib/harness-self.sh, the triage voice).
 # A third-party bot never counts. A comment whose normalized body is in this
 # build's own-post ledger (ptg_own_post) never counts: the build's replan
-# comment and its BUILD BLOCKED notice must not refuse its own plan.
+# comment and its BUILD BLOCKED notice must not refuse its own plan. A comment
+# by one of our Apps whose first non-blank line matches a registered status
+# marker (catalog/plan-thread-status-markers.txt, BH-8804) never counts: a
+# GATE_RED notice or a stop report is not steering, and before this one
+# restarted the build it reported on (#8775). A person's comment never skips.
 #
 # NEWER. created_at OR updated_at after the plan's stamp: an edit is a new turn.
 #
@@ -40,13 +44,23 @@ ptg_norm_sha() {
     | sha256sum | cut -d' ' -f1
 }
 
+# _ptg_markers -> the catalog EREs that start `^<!-- `, one per line. The
+#   catalog is ${PTG_STATUS_MARKERS:-catalog/plan-thread-status-markers.txt};
+#   an unreadable one prints nothing (no markers, nothing skipped).
+_ptg_markers() {
+  local f="${PTG_STATUS_MARKERS:-${BASH_SOURCE[0]%/*}/../../catalog/plan-thread-status-markers.txt}"
+  [ -r "$f" ] || return 0
+  grep -v -e '^#' -e '^[[:space:]]*$' "$f" 2>/dev/null | cut -f1 | grep -e '^\^<!-- '
+  return 0
+}
+
 # ptg_classify <plan.md> <since-iso> <comments-json> <apps-json> [<own-sha-file>]
-#   PURE: jq and sha256sum only, no network, no clock.
-#   rc 0 `ok<TAB><n> newer by a person or our App, each cited or our own post`
+#   PURE: jq, sha256sum and the marker catalog only, no network, no clock.
+#   rc 0 `ok<TAB><n> newer by a person or our App, each cited, our own post or a status report, <k> status comment(s) skipped`
 #   rc 1 `refuse<TAB><id> <login> <created_at>[; ...]` (five ids, then `+N more`)
 #   rc 2 `unreadable<TAB><why>`
 ptg_classify() {
-  local plan="$1" since="$2" comments="$3" apps="$4" own="${5:-}" cand id login created bodyb64 sha n=0 out="" more=0 tmp
+  local plan="$1" since="$2" comments="$3" apps="$4" own="${5:-}" cand id login created bodyb64 ours sha n=0 k=0 out="" more=0 tmp mk
   [[ "$since" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$ ]] \
     || { printf 'unreadable\tno plan stamp\n'; return 2; }
   [ -r "$plan" ] || { printf 'unreadable\tno plan.md\n'; return 2; }
@@ -62,20 +76,29 @@ ptg_classify() {
     | select(((.user.type // "") | ascii_downcase) != "bot" or hs_ours($apps))
     | select((.created_at // "") > $since or (.updated_at // "") > $since)
     | select(cited(.) | not)
-    | [(.id | tostring), (.user.login // "unknown"), (.created_at // "unknown"), ((.body // "") | @base64)] | @tsv' \
+    | [(.id | tostring), (.user.login // "unknown"), (.created_at // "unknown"), ((.body // "") | @base64),
+       (if ((.user.type // "") | ascii_downcase) == "bot" and hs_ours($apps) then "1" else "0" end)] | @tsv' \
     <<<"$comments" 2>/dev/null) || { printf 'unreadable\tthe thread is not a comment array\n'; return 2; }
   tmp=$(mktemp "${TMPDIR:-/tmp}/ptg-body.XXXXXX") || { printf 'unreadable\tno temp file\n'; return 2; }
-  while IFS=$'\t' read -r id login created bodyb64; do
+  mk=$(mktemp "${TMPDIR:-/tmp}/ptg-mk.XXXXXX") || { rm -f "$tmp"; printf 'unreadable\tno temp file\n'; return 2; }
+  _ptg_markers > "$mk"
+  while IFS=$'\t' read -r id login created bodyb64 ours; do
     [ -n "$id" ] || continue
     if [ -n "$own" ] && [ -s "$own" ]; then
       printf '%s' "$bodyb64" | base64 -d > "$tmp" 2>/dev/null
       sha=$(ptg_norm_sha "$tmp")
       grep -qx "$sha" "$own" && continue
     fi
+    # Our App's status report: its first non-blank line is a registered
+    # marker. A bad ERE (grep rc 2) is no match.
+    if [ "$ours" = 1 ] && [ -s "$mk" ] \
+      && printf '%s' "$bodyb64" | base64 -d 2>/dev/null | tr -d '\r' | awk 'NF {print; exit}' | grep -qE -f "$mk" 2>/dev/null; then
+      k=$((k+1)); continue
+    fi
     n=$((n+1))
     if [ "$n" -le 5 ]; then out="${out:+$out; }$id $login $created"; else more=$((more+1)); fi
   done <<<"$cand"
-  rm -f "$tmp"
+  rm -f "$tmp" "$mk"
   if [ "$n" -gt 0 ]; then
     [ "$more" -gt 0 ] && out="$out; +$more more"
     printf 'refuse\t%s\n' "$out"; return 1
@@ -85,7 +108,7 @@ ptg_classify() {
     [.[] | select(type == "object" and .id != null)
      | select(((.user.type // "") | ascii_downcase) != "bot" or hs_ours($apps))
      | select((.created_at // "") > $since or (.updated_at // "") > $since)] | length' <<<"$comments" 2>/dev/null)
-  printf 'ok\t%s newer by a person or our App, each cited or our own post\n' "${n:-0}"
+  printf 'ok\t%s newer by a person or our App, each cited, our own post or a status report, %s status comment(s) skipped\n' "${n:-0}" "$k"
   return 0
 }
 

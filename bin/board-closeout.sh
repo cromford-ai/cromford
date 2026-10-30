@@ -117,7 +117,8 @@ if [ "$PREFIX" = "-" ]; then
   # REST contract reads and the identity gh_rest_alert labels `explicit`.
   # shellcheck source=bin/lib/gh-rest.sh
   [ -r "$BIN/lib/gh-rest.sh" ] && . "$BIN/lib/gh-rest.sh"
-  BODY=$(printf '%s\n\n%s\n\nPR: %s\n\n%s\n' \
+  # Line 1 is the status marker bin/lib/plan-thread.sh skips (BH-8804).
+  BODY=$(printf '<!-- harness-status: board-closeout -->\n%s\n\n%s\n\nPR: %s\n\n%s\n' \
     "Built and opened for review." "${WHAT:-- see the PR for the change list}" "$PR_URL" "$VERIFIED")
   # The body goes by FILE (BH-781): a client-facing comment is the longest
   # argument this lane ever builds and argv is a process list.

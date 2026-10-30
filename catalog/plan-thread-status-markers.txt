@@ -1,0 +1,20 @@
+# catalog/plan-thread-status-markers.txt — the status markers the plan-thread
+# gate skips (BH-8804). bin/lib/plan-thread.sh (ptg_classify) reads it.
+#
+# A comment by one of our Apps (hs_ours) whose FIRST non-blank line matches an
+# ERE below is a status report, not steering: it never refuses a plan. A
+# person's comment is never skipped, whatever it carries. A third-party bot
+# never counted anyway.
+#
+# Format: `<ERE><TAB># <writer path> — <what>`. `#` lines and blank lines are
+# comments. An ERE must start with `^<!-- `: the lib ignores any other line, so
+# a `.*` can never exempt every App comment. A missing or unreadable file means
+# no markers (every App comment counts, the pre-BH-8804 rule), never a skip-all.
+#
+# Never register a lane whose comment can change scope: a hold, a steer, a
+# triage verdict, a question to the client, grouped findings, a nightly red
+# report. tests/plan-thread-status-marker.bh-8804-test.sh M5 checks that each
+# writer named here carries its marker. Seam: PTG_STATUS_MARKERS.
+^<!-- harness-status: selection-gate -->$	# bin/lib/selection-gate.sh — sg_notice, the GATE_RED notice
+^<!-- harness-status: board-closeout -->$	# bin/board-closeout.sh — the PR_CREATED / PR_MERGED close-out
+^<!-- harness-status: results-sweep -->$	# prompts/TEMPLATE-GH.md — the results sweep close-out and stop reports

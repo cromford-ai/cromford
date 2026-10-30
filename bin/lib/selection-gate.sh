@@ -182,6 +182,7 @@ sg_notice() {
   command -v gh_rest_comment >/dev/null 2>&1 || return 4
   bf=$(mktemp "${TMPDIR:-/tmp}/selection-gate-body.XXXXXX") || return 1
   {
+    printf '<!-- harness-status: selection-gate -->\n'
     printf 'The build is done, but %s test suite(s) failed when we ran the full merge-queue selection for this change on our test host:\n\n' "$n"
     tr ',' '\n' <<<"$red" | sed 's/^/- `/; s/$/`/'
     printf '\nWe did not open a PR. Details are in the build record (gate.txt).\n'

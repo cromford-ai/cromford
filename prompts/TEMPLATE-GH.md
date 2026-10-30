@@ -60,6 +60,11 @@ numbers over adjectives, near-zero em dashes). Link the exact PR, the test files
 added, and any prod URLs relevant to the change; for dynamic routes link a real
 sample record. Built work = PR link + what the acceptance tests prove.
 
+Every results-sweep close-out or stop comment (any RESULT terminal above) starts with
+the line `<!-- harness-status: results-sweep -->`. A triage verdict, a question to the
+client, or any comment that changes scope never carries it: bin/lib/plan-thread.sh
+skips a marked comment, so a running build does not see it.
+
 ## New-issue notifications
 For each genuinely NEW ai-build issue (absent from the previous state file), send one beat:
 `/root/harness/bin/beat.sh "$(jq -nc --arg p "<PROJECT>" --arg akey "tnew:<PROJECT>:<issue-number>" --arg l "<KEY_PREFIX>-<issue-number> — <title>" '{kind:"ticket_new",project:$p,akey:$akey,line:$l}')"`
