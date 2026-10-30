@@ -1,0 +1,12 @@
+{
+  "env": "MC_LIFECYCLE_REASON_MAX",
+  "read_in": "bin/merge-conductor.d/bh-8735-lifecycle.sh",
+  "type": "int",
+  "default": 500,
+  "min": 1,
+  "max": 500,
+  "unit": "characters",
+  "zero_means": null,
+  "note": "BH-8735: the conductor cuts the reason it sends with a lifecycle transition (the dequeue code and the failing checks) to this many characters, after tabs and newlines become spaces. 500 is the lifecycle route's own reason cap (#8731), so the max is 500. A bad or out-of-range value is the code fallback 500. Settings row: lane.merge-conductor.mc_lifecycle_reason_max.",
+  "settable": true
+}

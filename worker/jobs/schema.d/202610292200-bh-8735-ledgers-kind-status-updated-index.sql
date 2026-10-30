@@ -1,0 +1,11 @@
+-- BH-8735: the Tackler infra collector reads the conductor's parks on every
+-- collect: GET /api/ledger?kind=pr_state&status=BLOCKED_HUMAN&limit=N, which is
+-- WHERE kind=? AND status=? ORDER BY updated_at DESC, key DESC LIMIT N
+-- (src/routes/ledger.js). idx_ledgers_kind_updated serves the order and then
+-- filters status row by row, so a handful of parks among many pr_state rows
+-- reads every pr_state row; idx_ledgers_kind_status_created serves the filter
+-- and sorts in a temp b-tree. This index serves the filter and the order
+-- (BH-6730 iron law, EXPLAIN-tested in worker/jobs/test/ledger-status.bh-8735.test.js S4).
+-- Retention: ledgers hold history and are never deleted
+-- (202610142030-bh-6750-d1-retention.sql). Additive and re-runnable.
+CREATE INDEX IF NOT EXISTS idx_ledgers_kind_status_updated ON ledgers(kind, status, updated_at, key);

@@ -331,7 +331,8 @@ function srcFiles(dir = join(WORKER, 'src')) {
   return readdirSync(dir, { withFileTypes: true }).flatMap((e) =>
     e.isDirectory() ? srcFiles(join(dir, e.name)) : e.name.endsWith('.js') ? [join(dir, e.name)] : []);
 }
-const EXCLUDED = (rel) => rel === 'src/routes/retention.js' || /^src\/lib\/archive[^/]*\.js$/.test(rel);
+// TEST-CHANGE (BH-8398): the retention rules moved to src/routes/retention.d/ (BH-8407).
+const EXCLUDED = (rel) => /^src\/routes\/retention(\.js|\.d\/[^/]+\.js)$/.test(rel) || /^src\/lib\/archive[^/]*\.js$/.test(rel);
 // readerCounts(files) — per file, the FROM/JOIN reads of the three tables.
 function readerCounts(files = srcFiles(), read = (p) => readFileSync(p, 'utf8')) {
   const out = {};

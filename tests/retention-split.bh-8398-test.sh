@@ -7,14 +7,16 @@
 #      branch B adds bh-90002-fixture-b.js; the merge has no conflict,
 #      retention.js is byte-identical to base on A, B and the merge, and the
 #      composed RULES holds both fixture rules and every real rule
-#   S2 OLD SHAPE CONFLICTS: the same two rules appended in retention.js before
-#      the literal's closing `];` on two branches conflict
+#   S2 OLD SHAPE CONFLICTS: the same two rules appended before the closing
+#      `];` of an in-file rule literal on two branches conflict
+# TEST-CHANGE (BH-8407): retention.js holds no rule literal any more, so S2
+#      appends into a synthetic old-shape file, src/routes/old-shape.js
 #   S3 SAME RULES: the branch RULES, filtered to the names RULES had at $PIN,
-#      equal $PIN's RULES (names, order, each entry; a function compared by
-#      name and source). The baseline is `git show $PIN:...retention.js`; if
-#      $PIN is not in this checkout, the committed fixture (which this suite
-#      wrote with --write-fixture, and which S3 checks against git show when
-#      $PIN is present)
+#      equal $PIN's RULES (the same names and count, each entry deep-equal by
+#      name; a function compared by name and source). The baseline is
+#      `git show $PIN:...retention.js`; if $PIN is not in this checkout, the
+#      committed fixture (which this suite wrote with --write-fixture, and
+#      which S3 checks against git show when $PIN is present)
 #   S5 WIRING: build.command runs retention-build.mjs, package.json maps
 #      #retention-rules for workerd and default, the gen file is ignored and untracked
 #   S6 WORKERD ROUND TRIP: the render, imported under node, equals the Node
@@ -24,6 +26,8 @@
 #      with no del give rc 1, one `retention-build:` line, no gen and no tmp
 #      file; the Node loader throws the same message. Near misses render rc 0
 #   S8 ORDER: fragmentNames sorts by the numeric ticket key, then the name
+# TEST-CHANGE (BH-8407): rule order is the fragment order since every rule
+#      moved to retention.d/, so S3 compares by name; S8 and S6 pin the order
 #   S9 MUTATION: with the bh-7598 fragment deleted, S3's comparison is red and
 #      names web_task_human_step.age
 #
@@ -63,21 +67,20 @@ normalize() {
 }
 
 # compare <baseline.json> <branch.json> — rc 0 when the branch RULES, filtered to
-# the baseline names, equal the baseline in order. Names every difference.
+# the baseline names, hold each baseline rule deep-equal by name. Names every
+# difference. Order is not compared (TEST-CHANGE BH-8407: S8 and S6 pin it).
 compare() {
   node -e '
     const fs = require("fs");
     const base = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
     const got = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
     const names = new Set(base.map((r) => r.rule));
-    const kept = got.filter((r) => names.has(r.rule));
-    const have = new Set(kept.map((r) => r.rule));
+    const kept = new Map(got.filter((r) => names.has(r.rule)).map((r) => [r.rule, r]));
     let bad = 0;
-    for (const r of base) if (!have.has(r.rule)) { console.log("missing rule: " + r.rule); bad++; }
-    if (!bad) base.forEach((r, i) => {
-      if (kept[i].rule !== r.rule) { console.log(`order: #${i} is ${kept[i].rule}, want ${r.rule}`); bad++; }
-      else if (JSON.stringify(kept[i]) !== JSON.stringify(r)) { console.log("differs: " + r.rule); bad++; }
-    });
+    for (const r of base) {
+      if (!kept.has(r.rule)) { console.log("missing rule: " + r.rule); bad++; }
+      else if (JSON.stringify(kept.get(r.rule)) !== JSON.stringify(r)) { console.log("differs: " + r.rule); bad++; }
+    }
     process.exit(bad ? 1 : 0);' "$1" "$2"
 }
 
@@ -124,7 +127,7 @@ else
 fi
 normalize "$W" ./src/routes/retention.js >"$T/branch.json" 2>"$T/branch.err" \
   && ok "S3 the branch retention.js loads" || bad "S3 the branch retention.js does not load: $(head -3 "$T/branch.err")"
-compare "$BASE_JSON" "$T/branch.json" >"$T/s3.out" 2>&1 && ok "S3 same names, order and entries" \
+compare "$BASE_JSON" "$T/branch.json" >"$T/s3.out" 2>&1 && ok "S3 same names and entries" \
   || bad "S3 the branch RULES differ: $(head -5 "$T/s3.out")"
 NB=$(node -e 'console.log(JSON.parse(require("fs").readFileSync(process.argv[1],"utf8")).length)' "$BASE_JSON" 2>/dev/null)
 # The branch rules that carry a $PIN name, as compare() filters them: a later
@@ -232,6 +235,9 @@ rm -f "$RD/bh-7243.0-roadmap.js" "$RD/bh-1-a-b-c.js" "$GEN"
 # ── S1 siblings merge clean / S2 the old shape conflicts ──────────────────────
 echo "S1/S2: merges"
 R="$T/repo"; J="$R/worker/jobs"; scratch_worker "$J"
+# TEST-CHANGE (BH-8407): the old shape, one in-file rule literal, for S2.
+OLD=worker/jobs/src/routes/old-shape.js
+printf 'const INLINE_RULES = [\n  {\n    rule: "old.age", table: "old", key: "retention.old.days", def: 1,\n    ids: "SELECT id FROM old", del: "DELETE FROM old",\n  },\n];\nexport default INLINE_RULES;\n' >"$R/$OLD"
 git init -q -b main "$R"; git -C "$R" add -A; git -C "$R" commit -qm base
 RJ=worker/jobs/src/routes/retention.js
 BASE_SHA=$(git -C "$R" rev-parse "main:$RJ")
@@ -255,18 +261,18 @@ node -e '
   if (miss.length) { console.log("missing: " + miss.join(", ")); process.exit(1); }' "$T/s1.json" "$BASE_JSON" >"$T/s1c.out" 2>&1 \
   && ok "S1 the merged RULES hold both fixtures and every real rule" || bad "S1 merged RULES: $(cat "$T/s1c.out" "$T/s1.err" | head -3)"
 
-# append_inline <rule> — add a rule in retention.js before the literal's `];`.
+# append_inline <rule> — add a rule in old-shape.js before the literal's `];`.
 append_inline() {
   awk -v r="$1" '
     /^(export const RULES|const INLINE_RULES) = \[$/ { inlit = 1 }
     inlit && /^\];$/ { printf "  {\n    rule: \"%s\", table: \"t\", key: \"retention.t.days\", def: 1,\n    ids: \"SELECT id FROM t\", del: \"DELETE FROM t\",\n  },\n", r; inlit = 0 }
-    { print }' "$J/src/routes/retention.js" >"$T/ret.js" && mv "$T/ret.js" "$J/src/routes/retention.js"
+    { print }' "$R/$OLD" >"$T/ret.js" && mv "$T/ret.js" "$R/$OLD"
 }
 git -C "$R" checkout -q -b c main; append_inline fixture_a.age; git -C "$R" commit -qam c
 git -C "$R" checkout -q -b d main; append_inline fixture_b.age; git -C "$R" commit -qam d
 git -C "$R" merge -q --no-edit c >"$T/s2.out" 2>&1; RC=$?
-[ "$RC" != 0 ] && grep -qx "$RJ" <<<"$(git -C "$R" diff --name-only --diff-filter=U)" \
-  && ok "S2 the in-file shape conflicts in retention.js" || bad "S2 the in-file appends merged clean (rc $RC)"
+[ "$RC" != 0 ] && grep -qx "$OLD" <<<"$(git -C "$R" diff --name-only --diff-filter=U)" \
+  && ok "S2 the in-file shape conflicts in old-shape.js" || bad "S2 the in-file appends merged clean (rc $RC)"
 git -C "$R" merge --abort 2>/dev/null
 
 echo "retention-split.bh-8398: $PASS passed, $FAIL failed"

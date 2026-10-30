@@ -24,6 +24,9 @@
 #                      next get that asks for it reads GitHub again
 #         stale        the record is older than PR_RECORD_MAX_AGE_S, or that
 #                      knob is 0
+#         fresh        the caller set PR_RECORD_FRESH=1 for this one call
+#                      (BH-8735: the conductor's merged gate, right after its
+#                      own queue_state PUT made a stale `open` row look new)
 #       After a GitHub read it writes what it read into the record (source
 #       github) and prints the row the PUT returned. When that PUT fails it
 #       prints the GitHub values (same keys) and still returns 0.
@@ -356,6 +359,7 @@ pr_record_get() {
         case " $_PRR_GH_FIELDS " in *" $f "*) ;; *) continue ;; esac
         if jq -e --arg f "$f" '.[$f] == null' <<<"$row" >/dev/null 2>&1; then reason="field:$f"; break; fi
       done
+      if [ -z "$reason" ] && [ "${PR_RECORD_FRESH:-0}" = 1 ]; then reason=fresh; fi
       if [ -z "$reason" ]; then
         age=$(jq -r '.age_s // empty' <<<"$out")
         if [ "$max" = 0 ] || ! [[ "$age" =~ ^-?[0-9]+$ ]] || [ "$age" -gt "$max" ]; then reason=stale; fi

@@ -100,14 +100,17 @@ sdq_decide() {
 # QUEUED, labelled, not visibly queued), so this spends reads only on a PR the
 # queue is not holding. Any read it cannot make leaves the row as it is.
 sdq_arm() {
-  local pl pst pt he="-" lw="-" le="-" bb=0 rq vline word rqerr rqrc
+  local pl pst pt pcid he="-" lw="-" le="-" bb=0 rq vline word rqerr rqrc
   pl=$(sdq_payload_last "$SLUG" "$NUM"); case $? in
     0) ;;
     1) return 0 ;;
     *) mc_log "$KEY stale-dequeue check: the Mergify payload could not be read on ${HEAD:0:8} — nothing done this tick"; return 0 ;;
   esac
-  IFS=$'\t' read -r pst pt _ <<<"$pl"
+  IFS=$'\t' read -r pst pt pcid <<<"$pl"
   [ "$pst" = dequeued ] || return 0
+  # BH-8735: the ticket phase says ejected, once per dequeue comment, whatever
+  # the requeue decision below is (bin/merge-conductor.d/bh-8735-lifecycle.sh).
+  command -v mclc_dequeued >/dev/null 2>&1 && mclc_dequeued "$P" "$SLUG" "${BR:-}" "$NUM" "$HEAD" "${RAWLBL:-}" "$pcid" "$pt"
   rq=$(mc_requeued_mark "$KEY" "$HEAD")
   if [ -z "$rq" ]; then
     command -v vd_standing >/dev/null 2>&1 || { [ -r "${BASH_SOURCE[0]%/*}/verdicts.sh" ] && . "${BASH_SOURCE[0]%/*}/verdicts.sh"; }
@@ -167,6 +170,7 @@ sdq_arm() {
         case "$rqrc" in
           0|2) STATE=QUEUED; WHY="requeued on ${HEAD:0:8} after a stale Mergify dequeue"
                mc_count_inc "$P" staledequeue_requeue >/dev/null
+               command -v mclc_put >/dev/null 2>&1 && mclc_put in_queue "$P" "$SLUG" "${BR:-}" "$NUM" "$HEAD" "requeued on ${HEAD:0:8} after a stale Mergify dequeue"
                mc_log "STALE_DEQUEUE_REQUEUED $KEY $HEAD — Mergify dequeued it at $(date -u -d "@$pt" +%H:%MZ), a newer verdict binds this head, @mergifyio requeue posted and acknowledged" ;;
           3)   STATE=WAIT_CI; WHY="requeued on ${HEAD:0:8}, awaiting Mergify's witness"
                mc_log "REQUEUE_UNWITNESSED $KEY $HEAD — ${rqerr:-Mergify acknowledged nothing}. The row waits; it is NOT merged directly" ;;

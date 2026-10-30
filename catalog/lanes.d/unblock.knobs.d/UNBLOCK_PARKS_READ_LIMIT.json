@@ -1,0 +1,12 @@
+{
+  "env": "UNBLOCK_PARKS_READ_LIMIT",
+  "read_in": "bin/lib/unblock/collectors/infra.sh",
+  "type": "int",
+  "default": 1000,
+  "min": 101,
+  "max": 1000,
+  "unit": "rows",
+  "zero_means": null,
+  "note": "BH-8735: the page size of the infra collector's parks read, GET /api/ledger?kind=pr_state&status=BLOCKED_HUMAN&limit=<n> (the conductor's pr_state ledger rows, which replaced state/merge-conductor/pr-state.tsv). 1000 is the route's own ceiling. A page of exactly <n> rows marks every branch-park record truncated. Min 101: the collector keeps at most 100 park records. A bad or out-of-range value is the code fallback 1000.",
+  "settable": true
+}

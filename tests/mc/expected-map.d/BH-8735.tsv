@@ -1,0 +1,3 @@
+# tests/mc/expected-map.d/BH-8735.tsv — mc_ledger_put's ledgers row alone, no event row; the
+# same-state branch of mc_transition mirrors a re-reasoned park or a new head (BH-8735).
+settle	mc_ledger_row_put	lib

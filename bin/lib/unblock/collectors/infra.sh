@@ -13,7 +13,14 @@
 #     pool_status <p>   GET /api/pool/status?project=<p>  (#7709's declared shape)
 #     setting <key>     GET /api/settings/<key>          (the worker's own route;
 #                       a key with no row is 200 {"setting": null})
-#     parks             $HARNESS/state/merge-conductor/pr-state.tsv
+#     parks             GET /api/ledger?kind=pr_state&status=BLOCKED_HUMAN&limit=<n>
+#                       (BH-8735): the conductor's pr_state ledger rows, which
+#                       mc_ledger_put writes on every state change, as the
+#                       8-column TSV (key state since head reviewed alerted
+#                       reason url) mc_rows_rehydrate builds from the same rows.
+#                       A row whose detail does not parse is skipped. A page of
+#                       exactly <n> rows (UNBLOCK_PARKS_READ_LIMIT, default
+#                       1000) ends with a `#page-full` line.
 #     Any answer that is not a 2xx, an empty body or not a JSON object is rc 1.
 #     The HTTP reads go through _jobs_req (bin/lib/jobs/req.sh), which the
 #     caller loads; without it every HTTP source is rc 1.
@@ -42,13 +49,13 @@
 #   respawn-loop  one per ticket key respawned more than UNBLOCK_RESPAWN_MAX_DAY
 #                 (default 6) times today with last result PLAN_BLOCKED. The
 #                 proposal is lane.fly-pool.<p>.pool_record_read = 1.
-#   branch-park   one per pr-state.tsv row (key state since head reviewed
-#                 alerted reason url [hold_class]) in BLOCKED_HUMAN whose reason
+#   branch-park   one per parks row (key state since head reviewed alerted
+#                 reason url [hold_class]) in BLOCKED_HUMAN whose reason
 #                 starts conflict-unresolvable (mechanical_rung failed) or
 #                 rebase-gate-red (mechanical_rung n/a). fixrounds is
 #                 br_rows_count <url> fixround (bin/lib/br/record.sh, loaded by
 #                 the caller); null when that lib is absent or the read fails.
-#                 At most 100 rows.
+#                 At most 100 rows; a `#page-full` parks page is truncated too.
 #   ticket-starved (BH-8390, U13-STARVE)  one per ticket logs/pipeline-health.log
 #                 calls "queued <N>m with no spawn" since its last RESOLVED
 #                 line (see _unblock_infra_starve). --project only.
@@ -72,7 +79,7 @@
 # G6: a row whose actor starts tackler: is never a person change, and a record
 # built from such a row is dropped.
 #
-# The root is ${HARNESS:-${H:-}}; with neither set, parks is rc 1 (D43).
+# The root is ${HARNESS:-${H:-}} (fleet.conf); no source reads a file under it.
 
 _unblock_infra_root() { printf '%s' "${HARNESS:-${H:-}}"; }
 
@@ -86,13 +93,14 @@ _unblock_infra_now() {
 _unblock_infra_int() { if [[ ${1:-} =~ ^[0-9]{1,6}$ ]]; then printf '%s' "$((10#$1))"; else printf '%s' "$2"; fi; }
 
 unblock_infra_src() {
-  local name="${1:-}" arg="${2:-}" root path out
+  local name="${1:-}" arg="${2:-}" path out lim
   case "$name" in
     parks)
-      root=$(_unblock_infra_root); [ -n "$root" ] || return 1
-      [ -f "$root/state/merge-conductor/pr-state.tsv" ] && [ -r "$root/state/merge-conductor/pr-state.tsv" ] || return 1
-      cat "$root/state/merge-conductor/pr-state.tsv" 2>/dev/null || return 1
-      return 0 ;;
+      # Knob: catalog/lanes.d/unblock.knobs.d/UNBLOCK_PARKS_READ_LIMIT.json.
+      # 1000 is the route's own page ceiling and the fallback.
+      lim=$(_unblock_infra_int "${UNBLOCK_PARKS_READ_LIMIT:-}" 1000)
+      { [ "$lim" -ge 101 ] && [ "$lim" -le 1000 ]; } || lim=1000
+      path="/api/ledger?kind=pr_state&status=BLOCKED_HUMAN&limit=$lim" ;;
     box_health) path=/api/box-health ;;
     pool_status) [[ $arg =~ ^[A-Za-z0-9._-]{1,64}$ ]] || return 1; path="/api/pool/status?project=$arg" ;;
     setting) [[ $arg =~ ^[a-z0-9_.-]{1,64}$ ]] || return 1; path="/api/settings/$arg" ;;
@@ -103,7 +111,34 @@ unblock_infra_src() {
   [ -n "$out" ] || return 1
   jq -e 'type == "object"' <<<"$out" >/dev/null 2>&1 || return 1
   if [ "$name" = box_health ]; then _unblock_infra_box_view <<<"$out"; return; fi
+  if [ "$name" = parks ]; then _unblock_infra_parks_view "$lim" <<<"$out"; return; fi
   printf '%s\n' "$out"
+}
+
+# _unblock_infra_parks_view <limit> — a GET /api/ledger list body (stdin) to the
+# parks TSV (BH-8735). The projection is mc_rows_rehydrate's MC_REHYDRATE_JQ
+# (bin/lib/mc/settle.sh; this file does not source it): `detail` is the JSON
+# mc_ledger_put wrote, a row whose detail is not a JSON object emits nothing,
+# and tabs and newlines in a field become spaces. rc 1, no output, when the
+# body has no ledgers array. A page of exactly <limit> rows ends `#page-full`.
+_unblock_infra_parks_view() {
+  jq -er --argjson lim "$1" '
+    def c(v): (v // "-") | tostring | gsub("[\t\r\n]"; " ") | if . == "" then "-" else . end;
+    def ep(v): (v // "") | tostring
+      | if test("^[0-9]+$") then .
+        elif test("^[0-9]{4}-[0-9]{2}-[0-9]{2}T") then (try (fromdateiso8601 | tostring) catch "-")
+        else "-" end;
+    if (.ledgers | type) != "array" then error("no ledgers array") else . end
+    | (.ledgers | length) as $n
+    | ((.ledgers[]
+        | (try (.detail | fromjson) catch null) as $d
+        | select(($d | type) == "object")
+        | [ c(.key), c(.status), ep($d.since), c($d.head_sha), c($d.reviewed_sha),
+            c($d.alerted), c($d.reason), c($d.url) ]
+        | join("\t")),
+       (if $n >= $lim then "#page-full" else empty end))' 2>/dev/null
+  # -e: an empty page prints nothing and exits 4; that is a read, not an error.
+  case $? in 0|4) return 0 ;; *) return 1 ;; esac
 }
 
 # _unblock_infra_box_view — the GET /api/box-health body (stdin) to the record
@@ -317,6 +352,7 @@ _unblock_infra_parks() {
   rows=$(awk -F'\t' '$2 == "BLOCKED_HUMAN" && $1 ~ /^[^#[:space:]]+#[0-9]+$/ && ($7 ~ /^conflict-unresolvable/ || $7 ~ /^rebase-gate-red/)' <<<"$tsv")
   n=$(grep -c . <<<"$rows")
   [ "$n" -gt 100 ] && trunc=true
+  grep -qx '#page-full' <<<"$tsv" && trunc=true
   while IFS=$'\t' read -r key state since head reviewed alerted reason url hold; do
     [ -n "$key" ] || continue
     case "$reason" in conflict-unresolvable*) rung=failed ;; *) rung=n/a ;; esac
@@ -455,7 +491,7 @@ unblock_collect_infra() {
   # ONE --project (the tick's contract call, BH-8498). The claim route refuses
   # a decision with no project (2026-10-26: 6 x 400 project), and the tick
   # runs once per project, so each record goes to exactly one tick:
-  #   branch-park  pr-state.tsv is fleet-wide: a park is kept only in the tick
+  #   branch-park  the parks ledger is fleet-wide: a park is kept only in the tick
   #                of its own repo (--repo, compared case-blind) and takes that
   #                tick's project. Another repo's park is its own tick's. No
   #                --repo keeps no park.
@@ -530,7 +566,7 @@ _unblock_collect_infra_body() {
 # (bin/lib/unblock/collect.sh calls ub_collect_<family> with these two args).
 # Without it the tick logged "unwired infra (no ub_collect_infra defined)"
 # and collected nothing (2026-10-26). <repo> picks this tick's parks out of
-# the fleet-wide pr-state.tsv (BH-8498) and gives build-reach-blocked its
+# the fleet-wide parks ledger (BH-8498, BH-8735) and gives build-reach-blocked its
 # has_pr read (BH-8390); `-` or empty keeps none.
 ub_collect_infra() {
   [ -n "${1:-}" ] || return 2

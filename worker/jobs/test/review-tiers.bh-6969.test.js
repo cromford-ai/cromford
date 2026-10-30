@@ -124,7 +124,10 @@ test('R3 at seeded volume the four statements use their indexes, no full scan', 
     { DB: capturingD1(db, log), HARNESS_SECRET: SECRET });
   assert.equal(res.status, 200);
   const want = [
-    [/FROM ledgers\s+WHERE kind='merge'/, 'ledgers', /USING INDEX idx_ledgers_kind_updated/],
+    // TEST-CHANGE (BH-8735): idx_ledgers_kind_status_updated (kind, status,
+    // updated_at, key) also serves this kind + status + window read, as a
+    // covering index; either index is the index this case asks for.
+    [/FROM ledgers\s+WHERE kind='merge'/, 'ledgers', /USING (COVERING )?INDEX idx_ledgers_kind_(status_)?updated /],
     [/FROM verdicts/, 'verdicts', /USING INDEX idx_verdicts_created/],
     [/FROM outcome_metrics/, 'outcome_metrics', /USING INDEX idx_outcome_created/],
     [/FROM ledgers\s+WHERE kind='main_red_attrib'/, 'ledgers', /USING INDEX idx_ledgers_kind_updated/],

@@ -1,0 +1,12 @@
+{
+  "env": "MC_LIFECYCLE_WRITE",
+  "read_in": "bin/merge-conductor.d/bh-8735-lifecycle.sh",
+  "type": "int",
+  "default": 1,
+  "min": 0,
+  "max": 1,
+  "unit": null,
+  "zero_means": "off",
+  "note": "BH-8735 (lifecycle 5/6): 1 = the conductor writes the ticket phases it owns (in_queue on enqueue and requeue, ejected on a Mergify dequeue, merged on a merge with a merged pr_record) through lifecycle_transition (bin/lib/jobs/lifecycle.sh, #8731) with actor conductor. Fail-open: no lifecycle lib, no ticket key or no build_queue row writes nothing, and a failure is one log line. 0 = no lifecycle call at all. Settings row: lane.merge-conductor.mc_lifecycle_write.",
+  "settable": true
+}

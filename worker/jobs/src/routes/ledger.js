@@ -5,6 +5,7 @@
 // VERBATIM — same SQL, same validation, same status codes, same response keys —
 // so this file changed where the code lives and nothing about what it answers.
 // Since then GET /api/ledger's list has gained the BH-2450 `before_key` cursor.
+// BH-8735 added an optional exact `status` filter to that list.
 // GET with a key now falls back to the archive store for listed kinds (BH-6780).
 // src/index.js holds the ordered table that decides which of these runs.
 
@@ -51,6 +52,11 @@ export const routes = [
       if (beforeKey.length > 512) return json(400, { error: "before_key longer than a key" });
       const where = ["kind=?1"];
       const binds = [kind];
+      // BH-8735: an optional exact status (the infra collector's BLOCKED_HUMAN
+      // parks). idx_ledgers_kind_status_updated serves it; no status keeps the
+      // query text as it was.
+      const status = str(url.searchParams.get("status"), 64);
+      if (status) { binds.push(status); where.push(`status=?${binds.length}`); }
       if (before && beforeKey) {
         binds.push(before, beforeKey);
         const b = binds.length - 1, k = binds.length;

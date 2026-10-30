@@ -214,9 +214,12 @@ extract "$MQ" "$T"
 
 # G10. round trip through the real writer: mc_ledger_put -> job_ledger_put
 # captures the row; the captured row, read back, drives pmg_check.
+# mc_ledger_put writes its row through mc_ledger_row_put (BH-8735), so both
+# real functions are extracted: the writer is the pair, not a copy of it.
 grep -q '^mc_ledger_put()' "$DIR/bin/lib/mc/settle.sh" && ok || bad "G10 mc_ledger_put not found in bin/lib/mc/settle.sh"
+grep -q '^mc_ledger_row_put()' "$DIR/bin/lib/mc/settle.sh" && ok || bad "G10 mc_ledger_row_put not found in bin/lib/mc/settle.sh"
 ( T="$T" bash -c '
-    awk "/^mc_ledger_put\\(\\)/{f=1} f{print} f&&/^}/{exit}" "$0/bin/lib/mc/settle.sh" > "$T/mlp.sh"
+    awk "/^mc_ledger_(row_)?put\\(\\)/{f=1} f{print} f&&/^}/{f=0}" "$0/bin/lib/mc/settle.sh" > "$T/mlp.sh"
     . "$T/mlp.sh"
     mc_state_event_put() { :; }
     job_ledger_put() { jq -nc --arg s "$3" --arg d "$4" "{status:\$s, detail:\$d}" > "$T/captured"; }

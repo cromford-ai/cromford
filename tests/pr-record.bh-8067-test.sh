@@ -25,6 +25,8 @@
 #       nothing printed, the stale row unchanged
 #   A11 an unknown field (logs): rc 2, 0 GitHub reads, 0 worker requests
 #   A12 merged_at set -> state merged; closed unmerged -> closed
+#   A14 BH-8735: PR_RECORD_FRESH=1 on a fresh `open` row: 1 read, reason=fresh,
+#       the GitHub `merged` replaces it with last_source github; unset: 0 reads
 #   A13 the repo spelled with capitals finds the lowercased row, 0 reads
 #   B1  budget: 0 calls to a real host (JOBS_URL is 127.0.0.1, gh is the stub)
 #
@@ -245,6 +247,20 @@ eq "A12 draft false stored as 0" "$(jq -r '.draft' "$T/out")" 0
 eq "A12 base_sha from GitHub" "$(jq -r '.base_sha' "$T/out")" "$SHA_B"
 get fixture-org/fixture-a12 115
 eq "A12 closed unmerged: state closed" "$(jq -r '.state' "$T/out")" closed
+
+# ---- A14: PR_RECORD_FRESH forces the read (BH-8735) ----------------------------
+put fixture-org/fixture-a14 116 fleet "{\"state\":\"open\",\"head_sha\":\"$SHA_A\"}" || bad "A14 setup put"
+jq -nc --arg s "$SHA_A" '{state:"closed",merged_at:"2026-10-28T00:00:00Z",head:{sha:$s,ref:"t/f"},base:{ref:"main"}}' > "$GHT/pr-116.json"
+: > "$T/gh.log"; : > "$LOG"
+get fixture-org/fixture-a14 116 state
+eq "A14 unset: 0 reads on a fresh row" "$(reads 116)" 0
+eq "A14 unset: the stored open" "$(jq -r '.state' "$T/out")" open
+PR_RECORD_FRESH=1 get fixture-org/fixture-a14 116 state
+eq "A14 PR_RECORD_FRESH=1: 1 read" "$(reads 116)" 1
+eq "A14 PR_RECORD_FRESH=1: rc 0" "$(cat "$T/rc")" 0
+eq "A14 PR_RECORD_FRESH=1: GitHub's merged prints" "$(jq -r '.state' "$T/out")" merged
+eq "A14 the record says merged, last_source github" "$(row fixture-org/fixture-a14 116 | jq -r '[.state,.last_source]|join(" ")')" "merged github"
+grep -q 'fixture-a14#116 reason=fresh gh_rc=0 put=ok$' "$LOG" && ok "A14 the read's reason is fresh" || bad "A14 log: $(cat "$LOG")"
 
 # ---- A13: case ------------------------------------------------------------------
 : > "$T/gh.log"

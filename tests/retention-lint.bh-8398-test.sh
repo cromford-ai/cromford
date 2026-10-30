@@ -9,7 +9,9 @@
 #       retention.js and retention.d/
 #   L3  a new retention.d/ fragment alone is green; L3b retention.js growth
 #       plus a new fragment is green
-#   L4  an in-place value edit of retention.js (+1/-1) is green
+#   L4  an in-place value edit of retention.js (+1/-1) is green. Since BH-8407
+#       moved every rule into retention.d/, the edited value is the first rule
+#       `def:` if retention.js still has one, else the retention.batch default
 #   L5  growth of x/worker/jobs/src/routes/retention.js is green (the glob is
 #       repo-root anchored)
 # The fixture repo copies the real catalog, lint and retention files and runs
@@ -63,6 +65,15 @@ rule_in() {
        { print } END { if (!d) { print "// fixture.l2 a"; print "// fixture.l2 b"; print "// fixture.l2 c" } }' "$1" >"$1.tmp" && mv "$1.tmp" "$1"
 }
 
+# value_edit <file> — change ONE number in place (+1/-1): the first rule
+# `def: N`, else (no rule left in the file, BH-8407) the retention.batch
+# default in `intSetting(byKey, "retention.batch", N, ...)`.
+value_edit() {
+  awk '!d && /def: [0-9]+/ { sub(/def: [0-9]+/, "def: 9999"); d=1 }
+       !d && /"retention\.batch", [0-9]+/ { sub(/"retention\.batch", [0-9]+/, "\"retention.batch\", 9999"); d=1 }
+       { print }' "$1" >"$1.tmp" && mv "$1.tmp" "$1"
+}
+
 # ── L2 in-file append is red ──────────────────────────────────────────────────
 case_run l2 "rule_in $RJS"
 read -r A D <<<"$(numstat l2 "$RJS")"
@@ -81,7 +92,7 @@ read -r A D <<<"$(numstat l3b "$RJS")"
 [ "$RC" = 0 ] && ok || bad "L3b growth plus a fragment: rc $RC, want 0: $OUT"
 
 # ── L4 a value edit is green ──────────────────────────────────────────────────
-case_run l4 "awk '!d && /def: [0-9]+/ { sub(/def: [0-9]+/, \"def: 9999\"); d=1 } { print }' $RJS >$RJS.tmp && mv $RJS.tmp $RJS"
+case_run l4 "value_edit $RJS"
 [ "$(numstat l4 "$RJS")" = "1 1" ] && ok || bad "L4 the setup must be a +1/-1 edit: numstat [$(numstat l4 "$RJS")]"
 [ "$RC" = 0 ] && ok || bad "L4 value edit: rc $RC, want 0: $OUT"
 

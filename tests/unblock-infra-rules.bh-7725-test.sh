@@ -5,7 +5,8 @@
 # WHAT RUNS. The SHIPPED bin/lib/unblock/collectors/infra.sh, sourced in a
 # subshell. Its one input seam, unblock_infra_src, runs for real; only the
 # jobs transport under it (_jobs_req) is a stub that answers from a fixture's
-# `routes` map and counts every call. pr-state.tsv is a scratch file. A fake
+# `routes` map and counts every call. The parks ledger page is a scratch file
+# the stub serves (BH-8735: the parks no longer come from pr-state.tsv). A fake
 # curl, gh and lane-alert.sh count any write that would leave the box.
 #
 # THE RULE EVALUATOR. rules.sh is UNB-1 (#7723), not on main. evaluate() below
@@ -53,6 +54,8 @@ chmod +x "$H/bin/lane-alert.sh"
 # collect <fixture> [collector args] — one collector run. Prints its JSONL.
 # _jobs_req answers GET <path> from .routes[path] (null = HTTP 404 = rc 2,
 # the string "rc1" = an outage = rc 1). Every call lands in $T/jobs.log.
+# The parks read answers $T/parks.json when it exists (else 404), whatever the
+# fixture says.
 # br_rows_count answers from .fixrounds[url] when the fixture has the map.
 collect() {
   local fx="$1"; shift
@@ -63,6 +66,10 @@ collect() {
       printf '%s %s %s\n' "$1" "$2" "${3:-}" >> "$FXT/jobs.log"
       [ "$1" = GET ] || return 1
       local b
+      if [ "$2" = '/api/ledger?kind=pr_state&status=BLOCKED_HUMAN&limit=1000' ]; then
+        [ -f "$FXT/parks.json" ] || { JOBS_HTTP=404; return 2; }
+        JOBS_HTTP=200; cat "$FXT/parks.json"; return 0
+      fi
       b=$(jq -c --arg p "$2" '.routes[$p]' "$FXF")
       case "$b" in
         null) JOBS_HTTP=404; return 2 ;;
@@ -77,7 +84,17 @@ collect() {
 }
 # with <fixture> <jq filter> — a variant of a fixture, written to the scratch dir.
 with() { local out; out="$T/fx.$(printf '%s' "$2" | md5sum | cut -c1-8).json"; jq "$2" "$1" > "$out"; printf '%s' "$out"; }
-parks() { jq -r '.pr_state_tsv[]' "$1" > "$H/state/merge-conductor/pr-state.tsv"; }
+# TEST-CHANGE (BH-8735): the parks are the D1 pr_state ledger rows, not
+# pr-state.tsv. parks_tsv turns the same conductor rows (key state since head
+# reviewed alerted reason url) into the ledger page mc_ledger_put's rows give;
+# every record assertion below is unchanged.
+parks_tsv() {
+  jq -R -s -c 'split("\n") | map(select(length > 0) | split("\t"))
+    | {ledgers: map({kind: "pr_state", key: .[0], status: .[1],
+        detail: ({since: .[2], head_sha: .[3], reviewed_sha: .[4], alerted: .[5], reason: .[6], url: .[7]} | tojson)})}' \
+    > "$T/parks.json"
+}
+parks() { jq -r '.pr_state_tsv[]' "$1" | parks_tsv; }
 
 # evaluate <record-json> — the plan's rule contract over catalog/unblock-rules.d.
 # Prints {rule, class, action, key, near_miss}.
@@ -172,23 +189,23 @@ check "A4 park reason" 'jq -e ".park_reason | startswith(\"conflict-unresolvable
   printf 'example-org/alpha#104\tBLOCKED_HUMAN\t1792497600\th4\th4\t0\tiron-law: model id\thttps://github.com/example-org/alpha/pull/104\n'
   printf 'example-org/alpha#105\tBLOCKED_HUMAN\t1792497600\th5\th5\t0\tcontested:x\thttps://github.com/example-org/alpha/pull/105\n'
   printf 'example-org/alpha#106\tBLOCKED_HUMAN\t1792497600\th6\th6\t0\trebase-gate-red: lint\thttps://github.com/example-org/alpha/pull/106\n'
-} > "$H/state/merge-conductor/pr-state.tsv"
+} | parks_tsv
 OUT=$(collect "$FX/conflict-park.json" --family park)
 eq "A4 READY, iron-law and contested rows are not branch parks" "$(jq -s -c 'map(.pr)' <<<"$OUT")" "[101,102,106]"
 REC_PARKN=$(jq -c 'select(.pr == 106)' <<<"$OUT")
 eq "A4 rebase-gate-red: rung n/a, fix rounds unread = null, named unknown" "$(jq -c '[.mechanical_rung, .fixrounds, .unknown]' <<<"$REC_PARKN")" '["n/a",null,["fixrounds"]]'
 OUT=$(collect "$FX/box-project-6-os.json" --family park)
 eq "A4 no br lib loaded: fix rounds null" "$(jq -s -c 'map(.fixrounds) | unique' <<<"$OUT")" "[null]"
-for i in $(seq 1 105); do printf 'example-org/alpha#%d\tBLOCKED_HUMAN\t1792497600\th%d\th%d\t0\tconflict-unresolvable\thttps://github.com/example-org/alpha/pull/%d\n' "$((1000+i))" "$i" "$i" "$((1000+i))"; done > "$H/state/merge-conductor/pr-state.tsv"
+for i in $(seq 1 105); do printf 'example-org/alpha#%d\tBLOCKED_HUMAN\t1792497600\th%d\th%d\t0\tconflict-unresolvable\thttps://github.com/example-org/alpha/pull/%d\n' "$((1000+i))" "$i" "$i" "$((1000+i))"; done | parks_tsv
 OUT=$(collect "$FX/conflict-park.json" --family park)
 eq "A4 cap: at most 100 park records, each marked truncated" "$(jq -s -c '[length, (map(.truncated) | unique)]' <<<"$OUT")" "[100,[true]]"
 
 rm -f "$T/jobs.log" "$T/writes.log"
-rm -f "$H/state/merge-conductor/pr-state.tsv"
+rm -f "$T/parks.json"
 OUT=$(collect "$(with "$FX/box-project-6-os.json" '.routes["/api/box-health"] = "rc1"')")
 check "A5 box_health down: one source-unreadable record naming it" \
   'jq -s -e "map(select(.kind == \"source-unreadable\" and .unknown == [\"box_health\"])) | length == 1" <<<"$OUT" >/dev/null'
-check "A5 no pr-state.tsv: one source-unreadable record naming parks" \
+check "A5 no parks ledger page (404): one source-unreadable record naming parks" \
   'jq -s -e "map(select(.kind == \"source-unreadable\" and .unknown == [\"parks\"])) | length == 1" <<<"$OUT" >/dev/null'
 OUT=$(collect "$FX/box-project-6-os.json" --family pool --project project-6-os)
 check "A5 pool_status 404 is unreadable too, never nothing stalled" \
@@ -199,8 +216,8 @@ check "A5 a body that is not an object is unreadable" 'jq -e ".kind == \"source-
 # The seam itself, with no fixture stub: no jobs transport loaded at all.
 SEAM=$( (export HARNESS="$H" HARNESS_TEST_SANDBOX=1; . "$LIB"; unset -f _jobs_req 2>/dev/null; unblock_infra_src box_health; echo "rc=$?") )
 eq "A5 the seam with no jobs transport: rc 1, no output" "$SEAM" "rc=1"
-SEAM=$( (export HARNESS="" H=""; . "$LIB"; unblock_infra_src parks; echo "rc=$?") )
-eq "A5 the seam with no harness root: rc 1" "$SEAM" "rc=1"
+SEAM=$( (export HARNESS="$H" HARNESS_TEST_SANDBOX=1; . "$LIB"; unset -f _jobs_req 2>/dev/null; unblock_infra_src parks; echo "rc=$?") )
+eq "A5 the parks seam with no jobs transport: rc 1" "$SEAM" "rc=1"
 printf '# comment\nproject-6-os example-org/mk https://x.example.com /api 3 project-6-os\nalpha example-org/alpha https://a.example.com /api 3 a\n' > "$T/fleet.conf"
 rm -f "$T/jobs.log"
 OUT=$(FLEET_CONF="$T/fleet.conf" collect "$FX/pool-project-6.json" --family pool)

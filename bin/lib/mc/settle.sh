@@ -332,16 +332,26 @@ mc_rows_rehydrate() {
 #   The console's copy (kind=pr_state). Fail-open: no client, no row, no change.
 mc_ledger_put() {
   type job_ledger_put >/dev/null 2>&1 || return 0
-  local detail
-  detail=$(jq -nc --arg s "$3" --arg h "$4" --arg r "$5" --arg v "$6" --arg m "$7" --arg w "$8" \
-    --arg rec "$9" --arg u "${10}" --arg a "${11}" \
-    '{since:$s,head_sha:$h,reviewed_sha:$r,verdict:$v,merge_state:$m,reason:$w,record:$rec,url:$u,alerted:$a}' 2>/dev/null) || return 0
-  job_ledger_put pr_state "$1" "$2" "$detail" >/dev/null 2>&1 || true
+  mc_ledger_row_put "$@"
   # THE EVENT ROW IS WRITTEN THIRD (BH-1387): the file (mc_row_put, in the
   # caller), then the ledgers row above, then this. Both callers — mc_transition
   # and mc_budget_check's alert mark — come through here, so each writes one
   # pr_state_events row; its rc is ignored, and a failed POST changes nothing.
   mc_state_event_put "$1" "$2" "$3" "$4" "$5" "$8" "${10}" "${11}"
+}
+
+# mc_ledger_row_put — mc_ledger_put's ledgers row alone, no event row. The
+#   same-state branch of mc_transition uses it (BH-8735): the infra collector
+#   reads parks from this mirror, so a re-reasoned park or a refreshed head must
+#   reach it, but a same-state refresh is not a state event.
+mc_ledger_row_put() {
+  type job_ledger_put >/dev/null 2>&1 || return 0
+  local detail
+  detail=$(jq -nc --arg s "$3" --arg h "$4" --arg r "$5" --arg v "$6" --arg m "$7" --arg w "$8" \
+    --arg rec "$9" --arg u "${10}" --arg a "${11}" \
+    '{since:$s,head_sha:$h,reviewed_sha:$r,verdict:$v,merge_state:$m,reason:$w,record:$rec,url:$u,alerted:$a}' 2>/dev/null) || return 0
+  job_ledger_put pr_state "$1" "$2" "$detail" >/dev/null 2>&1 || true
+  return 0
 }
 
 # mc_state_event_put <key> <state> <since-iso> <head> <reviewed> <reason> <url> <alerted>
@@ -377,8 +387,15 @@ mc_transition() {
     [ "${MC_FIX_NOW_ON:-0}" = 1 ] && command -v mst_fix_now_on_park >/dev/null 2>&1 && mst_fix_now_on_park "$key" "$new" "$why" "$head" "$url"
   else
     [ -n "$since" ] || since=$(mc_now)
-    local prevwhy; prevwhy=$(cut -f7 <<<"$row")
+    local prevwhy prevhead; prevwhy=$(cut -f7 <<<"$row"); prevhead=$(cut -f4 <<<"$row")
     mc_row_put "$key" "$new" "$since" "$head" "$rev" "${alerted:--}" "$why" "$url"
+    # THE LEDGER MIRROR FOLLOWS A RE-REASON OR A NEW HEAD (BH-8735). The infra
+    # collector reads parks from it, so a park re-reasoned in or out of a
+    # branch-park reason, or a park whose head moved, must not stay stale there.
+    if [ "$why" != "$prevwhy" ] || [ "$head" != "$prevhead" ]; then
+      mc_ledger_row_put "$key" "$new" "$(date -u -d "@$since" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo "$since")" \
+        "$head" "$rev" "$v" "$ms" "$why" "${rec:--}" "$url" "${alerted:--}"
+    fi
     # A PARK RE-REASONED ONTO A HAND-OFF IS A HAND-OFF (BH-594). A row already
     # parked on a reason nobody owns (provenance) that a head-bound BLOCK moves
     # to head-not-reapproved never changes STATE, so the branch above never ran
@@ -903,6 +920,9 @@ conductor_settle() {
   fi
   mc_log "MERGED $key by conductor (record ${rec:-none})"
   mc_transition "$key" MERGED "$why" "$head" "$rev" "$url" "$v" "$ms" "$rec" >/dev/null
+  # BH-8735: the ticket phase says merged, only on a merged PR record. Only the
+  # conductor loads the fragment that defines it.
+  command -v mclc_merged >/dev/null 2>&1 && mclc_merged "$proj" "$slug" "${url##*/}" "$br" "$head" "$why"
   # EVERY CONTESTED HOLD THIS MERGE WINS ENDS HERE (BH-589). The losers move to
   # NEEDS_REBASE (mc_contested_release: rows first, file last) and the next tick
   # reclassifies them from GitHub — all but a loser some OTHER live hold still

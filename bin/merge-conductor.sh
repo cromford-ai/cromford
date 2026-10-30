@@ -1822,6 +1822,7 @@ pr_worker() {
              command -v mc_fbh_clear >/dev/null 2>&1 && mc_fbh_clear "$KEY" "$HEAD" bystander
              mc_attempt_clear crdequeue "$KEY" "$HEAD" 2>/dev/null   # BH-2275: back in after a cleared CR
              mc_log "REQUEUED $KEY $HEAD — dequeued label off, $MC_MERGIFY_LABEL back on, Mergify acknowledged; its batch build decides from here"
+             command -v mclc_put >/dev/null 2>&1 && mclc_put in_queue "$P" "$SLUG" "$BR" "$NUM" "$HEAD" "requeued on ${HEAD:0:8} after a flake ejection"
              fr_requeue_note "$SLUG" "$NUM" "$KEY" "$HEAD" ;;
         3)   STATE=WAIT_CI; WHY="requeued on ${HEAD:0:8}, awaiting Mergify's witness"
              mc_log "REQUEUE_UNWITNESSED $KEY $HEAD — ${RQERR:-Mergify acknowledged nothing}. The row waits; it is NOT merged directly"
@@ -2586,7 +2587,8 @@ pr_worker() {
              mc_attempt_clear crdequeue "$KEY" "$HEAD" 2>/dev/null   # BH-2275: re-queued after a cleared CR
              mc_log "$KEY enqueued in the $PROVIDER merge queue at ${HEAD:0:8} — the conductor settles it when the queue merges it"
              [ -n "${MC_LANDED_FILE:-}" ] && printf 'queued %s\n' "$KEY" >> "$MC_LANDED_FILE"
-             mc_transition "$KEY" QUEUED "enqueued at ${HEAD:0:8}" "$HEAD" "$REVIEWED" "$URL" "$VERDICT" "$MSTATE" "$REC" >/dev/null ;;
+             mc_transition "$KEY" QUEUED "enqueued at ${HEAD:0:8}" "$HEAD" "$REVIEWED" "$URL" "$VERDICT" "$MSTATE" "$REC" >/dev/null
+             command -v mclc_put >/dev/null 2>&1 && mclc_put in_queue "$P" "$SLUG" "$BR" "$NUM" "$HEAD" "enqueued in the $PROVIDER merge queue at ${HEAD:0:8}" ;;
           2) mc_count_inc "$P" merges >/dev/null
              command -v ae_mark >/dev/null 2>&1 && ae_mark "$P" asked "$KEY" "$HEAD"
              mc_step settle
@@ -3008,6 +3010,12 @@ tick_project() {
             ec_record "$SLUG" "${QKEY##*#}" "$QHEAD" "$QORD" "${QEC%%$'\t'*}" "${QEC#*$'\t'}"
             QEWHY="${QEC%%$'\t'*}"; [ -n "${QEC#*$'\t'}" ] && QEWHY="$QEWHY (${QEC#*$'\t'})"
             mc_log "EJECT_CAUSE $QKEY ${QHEAD:0:8} $QORD $QEWHY"
+          fi
+          # BH-8735: the ticket phase says ejected in this tick, with why.
+          if command -v mclc_put >/dev/null 2>&1; then
+            if [ "$PROVIDER" = mergify ]; then QLCW="mergify dequeue: ${QDQ:-batch failed}; checks: ${QEWHY:-not read}"
+            else QLCW="queue ejection ($PROVIDER): checks: ${QEWHY:-not read}"; fi
+            mclc_put ejected "$P" "$SLUG" "${QBR:-}" "${QKEY##*#}" "$QHEAD" "$QLCW"
           fi
           if [ "${EJN:-1}" -ge 2 ]; then
             mc_log "$QKEY EJECTED from the merge queue again on ${QHEAD:0:8} (ejections: $EJN, provider $PROVIDER)"
