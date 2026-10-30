@@ -1,0 +1,12 @@
+{
+  "env": "UNBLOCK_SEAM_ALERT_WINDOW_H",
+  "read_in": "bin/lib/unblock/seam-defect.sh",
+  "type": "int",
+  "default": 24,
+  "min": 1,
+  "max": 168,
+  "unit": "hours",
+  "zero_means": null,
+  "note": "BH-8748: the unblock tick writes at most one ALERT per project and reason in this window when the batch_failure seam is broken for the whole repo (tool, node, module, console URL or GitHub token missing), and no card per draft. A bad value is the code fallback 24.",
+  "settable": true
+}

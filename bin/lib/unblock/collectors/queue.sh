@@ -77,6 +77,23 @@
 #     $HARNESS/mcp/tools/batch-failure.mjs with node and prints its
 #     structuredContent. rc 1 when the tool file, node or the console config is
 #     missing, the answer isError, or it does not parse as an object.
+#     The seam env (BH-8748), set for the node call only: HARNESS_CONSOLE_URL
+#     (from CONSOLE_URL when unset) and HARNESS_MCP_GITHUB_TOKEN (when unset,
+#     minted per call by `bin/gh-token.sh --read <owner/repo>`, so any repo
+#     works). On rc 1 it sets UBQ_BF_REASON to one code, never node's text:
+#       lane defects (one cause for every draft): no-harness-root,
+#         tool-missing, node-missing, module-missing, console-url-missing,
+#         github-token-missing;
+#       per draft: precheck:<code>, tool-error[:<code>], bad-output,
+#         tool-crash.
+#     A per-draft failure is one queue-unreadable record with `reason`
+#     (`unknown` when the seam set none). A lane defect stops the reads for
+#     that repo and prints ONE record after the drafts loop:
+#     {kind:"queue-unreadable", project, repo, input:"batch_failure:<first>",
+#      subject_kind:"lane", subject:"queue:<repo>:batch_failure", reason,
+#      lane_defect:true, seam_file:"mcp/tools/batch-failure.mjs",
+#      drafts:[...]}. The tick folds it into one ALERT
+#     (bin/lib/unblock/seam-defect.sh), never a card per draft.
 #   ubq_drop_own < JSONL
 #     Drops every record that carries a `<!-- tackler:` marker in any string,
 #     or a `staff:` label: the agent never acts on its own trail.
@@ -117,30 +134,80 @@ ubq_batch_drafts() {
 
 # node gets the tool path, the repo and the draft as arguments, never inside
 # the program text. The tool's own console config comes from the environment
-# (mcp/lib/config.mjs), as it does for the MCP server.
+# (mcp/lib/config.mjs), as it does for the MCP server. On a failure the shim
+# writes ONE stderr line `ubq-reason: <code>` and exits 1. It writes only the
+# code, never a message: a message can carry a URL.
 _UBQ_BF_JS='
 import { pathToFileURL } from "node:url";
 import { dirname, join } from "node:path";
 const [tool, repo, draft] = process.argv.slice(1);
-const mod = await import(pathToFileURL(tool).href);
-const { loadConfig } = await import(pathToFileURL(join(dirname(tool), "..", "lib", "config.mjs")).href);
+const fail = (code) => { process.stderr.write("ubq-reason: " + code + "\n"); process.exit(1); };
+const word = (c) => (typeof c === "string" && /^[a-z0-9_-]{1,48}$/.test(c) ? c : "");
+// The code part of a tool text: `invalid_arguments: repo` -> invalid_arguments.
+// A text that is not a code (spaces, JSON) fails word() and gives "".
+const head = (s) => (typeof s === "string" ? s.split(":")[0] : "");
+let mod, cfgmod;
+try {
+  mod = await import(pathToFileURL(tool).href);
+  cfgmod = await import(pathToFileURL(join(dirname(tool), "..", "lib", "config.mjs")).href);
+} catch (e) { fail(e && e.code === "ERR_MODULE_NOT_FOUND" ? "module-missing" : "tool-crash"); }
 const t = (mod.tools || []).find((x) => x.name === "batch_failure");
-if (!t) process.exit(1);
+if (!t) fail("tool-missing");
 const args = { repo, draft: Number(draft) };
-const ctx = { cfg: loadConfig(process.env) };
-if (t.precheck && (await t.precheck(args, ctx))) process.exit(1);
-const r = await t.handler(args, ctx);
-if (!r || r.isError || !r.structuredContent) process.exit(1);
-process.stdout.write(JSON.stringify(r.structuredContent));
+let ctx;
+try { ctx = { cfg: cfgmod.loadConfig(process.env) }; }
+catch (e) { fail(cfgmod.ConfigError && e instanceof cfgmod.ConfigError ? "console-url-missing" : "tool-crash"); }
+let r;
+try {
+  const pc = t.precheck ? await t.precheck(args, ctx) : null;
+  if (pc) fail("precheck:" + (word(head(String(pc))) || "refused"));
+  r = await t.handler(args, ctx);
+} catch (e) { fail("tool-crash"); }
+const sc = r && r.structuredContent;
+if (r && r.isError) {
+  // The tool fails with fail(t) (mcp/tools/batch-failure.mjs): the code is the
+  // text of content[0], and there is no structuredContent. Its notFound reply
+  // carries the code in structuredContent.error instead. Read both.
+  const txt = Array.isArray(r.content) && r.content[0] ? r.content[0].text : "";
+  const c = word(sc && sc.error) || word(head(txt));
+  if (c === "github_auth_not_configured") fail("github-token-missing");
+  fail(c ? "tool-error:" + c : "tool-error");
+}
+if (!sc) fail("bad-output");
+process.stdout.write(JSON.stringify(sc));
 '
 
+# The reasons that are one cause for every draft of a repo (BH-8748): the
+# collector folds them into one lane-defect record, never one per draft.
+_UBQ_LANE_DEFECTS=" no-harness-root tool-missing node-missing module-missing console-url-missing github-token-missing "
+_ubq_lane_defect() { case "$_UBQ_LANE_DEFECTS" in *" $1 "*) return 0 ;; esac; return 1; }
+
 ubq_batch_failure() {
-  local h tool out
-  h=$(_ubq_root); [ -n "$h" ] || return 1
+  local h tool out err tok code rc=0
+  UBQ_BF_REASON=""
+  h=$(_ubq_root); [ -n "$h" ] || { UBQ_BF_REASON=no-harness-root; return 1; }
   tool="$h/mcp/tools/batch-failure.mjs"
-  [ -r "$tool" ] && command -v node >/dev/null 2>&1 || return 1
-  out=$(node --input-type=module -e "$_UBQ_BF_JS" "$tool" "$1" "$2" 2>/dev/null) || return 1
-  jq -e 'type == "object"' >/dev/null 2>&1 <<< "$out" || return 1
+  [ -r "$tool" ] || { UBQ_BF_REASON=tool-missing; return 1; }
+  command -v node >/dev/null 2>&1 || { UBQ_BF_REASON=node-missing; return 1; }
+  # The seam env (BH-8748), for the node call only: the console URL from the
+  # lane's CONSOLE_URL, and a per-run App token for THIS repo. An operator-set
+  # value wins. A failed mint is not a pre-check: the tool then answers
+  # github_auth_not_configured, which is the reason.
+  tok="${HARNESS_MCP_GITHUB_TOKEN:-}"
+  if [ -z "$tok" ] && [ -x "$h/bin/gh-token.sh" ]; then
+    tok=$("$h/bin/gh-token.sh" --read "$1" 2>/dev/null | head -n1) || tok=""
+  fi
+  err=$(mktemp "${TMPDIR:-/tmp}/ubq-bf.XXXXXX") || { UBQ_BF_REASON=tool-crash; return 1; }
+  out=$(HARNESS_CONSOLE_URL="${HARNESS_CONSOLE_URL:-${CONSOLE_URL:-}}" HARNESS_MCP_GITHUB_TOKEN="$tok" \
+        node --input-type=module -e "$_UBQ_BF_JS" "$tool" "$1" "$2" 2>"$err") || rc=$?
+  code=$(sed -n 's/^ubq-reason: //p' "$err" 2>/dev/null | head -n1)
+  rm -f "$err"
+  if [ "$rc" != 0 ]; then
+    [[ $code =~ ^[a-z0-9_:-]{1,64}$ ]] || code=tool-crash
+    UBQ_BF_REASON=$code
+    return 1
+  fi
+  jq -e 'type == "object"' >/dev/null 2>&1 <<< "$out" || { UBQ_BF_REASON=bad-output; return 1; }
   printf '%s\n' "$out"
 }
 
@@ -177,8 +244,20 @@ _ubq_mc() {
   esac
 }
 
-_ubq_unreadable() { jq -nc --arg p "$1" --arg r "$2" --arg i "$3" '{kind: "queue-unreadable", project: $p, repo: $r, input: $i,
-  subject_kind: "lane", subject: ("queue:" + $r + ":" + $i)}'; }
+# _ubq_unreadable <project> <slug> <input> [reason]: a non-empty reason rides
+# on the record as `reason` (BH-8748).
+_ubq_unreadable() { jq -nc --arg p "$1" --arg r "$2" --arg i "$3" --arg why "${4:-}" '{kind: "queue-unreadable", project: $p, repo: $r, input: $i,
+  subject_kind: "lane", subject: ("queue:" + $r + ":" + $i)} + (if $why != "" then {reason: $why} else {} end)'; }
+# _ubq_seam_record <project> <slug>: the ONE record for a lane defect of the
+# batch_failure seam (BH-8748), with every draft it left unread. The tick folds
+# it into one ALERT (bin/lib/unblock/seam-defect.sh), never a card per draft.
+_ubq_seam_record() {
+  jq -nc --arg p "$1" --arg r "$2" --arg i "batch_failure:$_UBQ_SEAM_FIRST" --arg why "$_UBQ_SEAM_DEAD" \
+    --argjson drafts "$(printf '%s\n' "${_UBQ_SEAM_DRAFTS[@]+"${_UBQ_SEAM_DRAFTS[@]}"}" | jq -Rsc 'split("\n") | map(select(. != "") | tonumber)')" \
+    '{kind: "queue-unreadable", project: $p, repo: $r, input: $i, subject_kind: "lane",
+      subject: ("queue:" + $r + ":batch_failure"), reason: $why, lane_defect: true,
+      seam_file: "mcp/tools/batch-failure.mjs", drafts: $drafts}'
+}
 # _ubq_unreadable_pr <project> <slug> <input> <num>: the same marker for one
 # PR (subject_kind pr), so a read that failed is a stall record, never silence.
 _ubq_unreadable_pr() {
@@ -190,7 +269,18 @@ _ubq_ejected() { # _ubq_ejected <project> <slug> <tmpdir> <draft json>
   local proj="$1" slug="$2" d="$3" dj="$4" draft bf n pf h head mstate labels open v vword ej rq unread
   draft=$(jq -r .draft <<< "$dj")
   bf="$d/bf-$draft.json"
-  ubq_batch_failure "$slug" "$draft" > "$bf" || { _ubq_unreadable "$proj" "$slug" "batch_failure:$draft"; return 0; }
+  # BH-8748: after a lane defect no draft of this repo is read; it is listed.
+  if [ -n "${_UBQ_SEAM_DEAD:-}" ]; then _UBQ_SEAM_DRAFTS+=("$draft"); return 0; fi
+  UBQ_BF_REASON=""
+  if ! ubq_batch_failure "$slug" "$draft" > "$bf"; then
+    if _ubq_lane_defect "${UBQ_BF_REASON:-}"; then
+      _UBQ_SEAM_DEAD=$UBQ_BF_REASON _UBQ_SEAM_FIRST=$draft
+      _UBQ_SEAM_DRAFTS+=("$draft")
+    else
+      _ubq_unreadable "$proj" "$slug" "batch_failure:$draft" "${UBQ_BF_REASON:-unknown}"
+    fi
+    return 0
+  fi
   jq -e '.batch_state == "failed" or .batch_state == "dead_shards"' "$bf" >/dev/null 2>&1 || return 0
   # BH-8390: on a red batch, what failed and which member owns it.
   local sigf="$d/sig-$draft.json" ownf ownj owners fr frmax
@@ -495,10 +585,12 @@ ub_collect_queue() {
   [ -n "$proj" ] && [[ "$slug" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] || return 1
   d=$(mktemp -d "${TMPDIR:-/tmp}/ubq.XXXXXX") || return 1
   {
+    _UBQ_SEAM_DEAD="" _UBQ_SEAM_FIRST=""; _UBQ_SEAM_DRAFTS=()
     if ubq_batch_drafts "$slug" "$d" > "$d/drafts.jsonl"; then
       while IFS= read -r dj; do
         [ -n "$dj" ] && _ubq_ejected "$proj" "$slug" "$d" "$dj"
       done < "$d/drafts.jsonl"
+      [ -n "$_UBQ_SEAM_DEAD" ] && _ubq_seam_record "$proj" "$slug"
     else
       _ubq_unreadable "$proj" "$slug" closed-pulls
     fi

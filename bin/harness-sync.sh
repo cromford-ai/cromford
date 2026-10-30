@@ -306,6 +306,11 @@ fi
 # agent-core/ before bin/ too: bin/staff-core.mjs imports ../agent-core/src
 # relative to itself, so the package must be live before its reader (BH-5561).
 [ -d "$CHECKOUT/agent-core" ] && rsync -a --delete "$CHECKOUT/agent-core/" "$HARNESS/agent-core/" 2>>"$LOG"
+# mcp/ before bin/ too (BH-8748): ubq_batch_failure (bin/lib/unblock/collectors/
+# queue.sh) runs $HARNESS/mcp/tools/batch-failure.mjs. Without this copy the
+# hub had no tool file and every red merge batch was read as queue-unreadable.
+# --delete drops files the checkout no longer has; node_modules/ is kept.
+[ -d "$CHECKOUT/mcp" ] && rsync -a --delete --exclude node_modules/ "$CHECKOUT/mcp/" "$HARNESS/mcp/" 2>>"$LOG"
 rsync -a "$CHECKOUT/bin/" "$HARNESS/bin/" 2>>"$LOG"
 # >>> post-copy steps lib (BH-7122)
 # The phase stamp, the per-step timeout and the pending deploy markers

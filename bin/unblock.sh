@@ -22,6 +22,10 @@
 #      collector call.
 #   2. COLLECT: ubc_collect (bin/lib/unblock/collect.sh) over
 #      bin/lib/unblock/collectors/*.sh, at most UNBLOCK_MAX_RECORDS records.
+#      Then ubs_fold (bin/lib/unblock/seam-defect.sh, BH-8748) removes each
+#      lane_defect record: one ALERT per project and reason per
+#      UNBLOCK_SEAM_ALERT_WINDOW_H, no card. The tick line adds
+#      `seam_defect=<n>` when n > 0, and records= no longer counts them.
 #   3. RULES: ub_rules_eval, when bin/lib/unblock/rules.sh defines it, reads
 #      the records (JSONL on stdin) and prints decisions (JSONL). Not defined
 #      = `rules=unwired`, 0 decisions.
@@ -111,6 +115,8 @@ HENV=$(harness_env_dir "$H")
 . "$SELF/lib/unblock/scope.sh" || { echo "unblock: bin/lib/unblock/scope.sh missing" >&2; exit 1; }
 # shellcheck source=bin/lib/unblock/act.sh
 . "$SELF/lib/unblock/act.sh" || { echo "unblock: bin/lib/unblock/act.sh missing" >&2; exit 1; }
+# shellcheck source=bin/lib/unblock/seam-defect.sh
+. "$SELF/lib/unblock/seam-defect.sh" || { echo "unblock: bin/lib/unblock/seam-defect.sh missing" >&2; exit 1; }
 # The conductor libs (BH-8418): mc_attempt_has and mc_requeued_mark for the
 # queue collector's ejected_on_head and requeued_on_head, and the requeue,
 # post_block and queue_approve arms of act.sh. Not on the tree = those reads
@@ -293,6 +299,9 @@ while IFS=$'\t' read -r -u 3 P MODE; do
   [[ $REPO =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] || { ubt_log "tick $P: no fleet.conf repo; skipped"; ubt_unlock; continue; }
   CLAIMED=0 ROWS=0 DEFERRED=0 NDEC=0 ALERTED=""
   UBC_MAX=$MAXREC ubc_collect "$P" "$REPO" "$COLLECTORS_DIR" > "$TMPD/records.jsonl"
+  # BH-8748: a lane-wide batch_failure seam defect is one ALERT, never a card.
+  SEAMD=$(ubs_fold "$P" "$TMPD/records.jsonl"); [[ $SEAMD =~ ^[0-9]+$ ]] || SEAMD=0
+  UBC_RECORDS=$((UBC_RECORDS - SEAMD))
   [ "$UBC_BAD" -gt 0 ] || [ "$UBC_OWN" -gt 0 ] && ubt_log "tick $P: dropped bad=$UBC_BAD own=$UBC_OWN"
   [ "$UBC_TRUNCATED" -gt 0 ] && ubt_log "tick $P: records truncated=$UBC_TRUNCATED (UNBLOCK_MAX_RECORDS=$MAXREC)"
   RULES=wired
@@ -315,6 +324,7 @@ while IFS=$'\t' read -r -u 3 P MODE; do
     LINE="tick $P mode=$MODE collectors=$UBC_COLLECTORS unwired=$UBC_UNWIRED failed=$UBC_FAILED records=$UBC_RECORDS decisions=$NDEC claimed=$CLAIMED rows=$ROWS deferred=$DEFERRED"
   fi
   [ "$RULES" = unwired ] && [ "$UBC_RECORDS" -gt 0 ] && LINE="$LINE rules=unwired"
+  [ "$SEAMD" -gt 0 ] && LINE="$LINE seam_defect=$SEAMD"
   ubt_log "$LINE"
   printf '%s\n' "$LINE"
   ubt_unlock

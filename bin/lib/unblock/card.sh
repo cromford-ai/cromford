@@ -128,7 +128,8 @@ unblock_card_fallback() {
             + (if (.near_miss // []) | length > 0
                then ": " + ([.near_miss[] | "\(.rule) needs \(.predicate) (read \(.read))"] | join("; "))
                else "" end)
-            + (if (.unknown // []) | length > 0 then ". Unknown: " + (.unknown | join(", ")) else "" end) + "."),
+            + (if (.unknown // []) | length > 0 then ". Unknown: " + (.unknown | join(", ")) else "" end) + "."
+            + (if (.reason // "") != "" then " Reason: \(.reason)." else "" end)),
      options: ["hold: keep it parked", words],
      recommendation: 1,
      reason: "no rule covers this case"}' "$stall" 2>/dev/null
