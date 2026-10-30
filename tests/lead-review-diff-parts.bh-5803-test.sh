@@ -54,6 +54,10 @@ export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@example.invalid GIT_COMMITTER_NAME=t
 export GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null
 # These cases review PR 41 more often than the per-PR-day tripwire allows.
 export LEAD_REVIEW_MAX_PER_PR_DAY=50
+# TEST-CHANGE (BH-8533): part review is on by default and would read these
+# over-limit heads in parts. This suite pins the split-required path, so it
+# runs with part review off (tests/lead-part-review.bh-8533-test.sh covers on).
+export LEAD_REVIEW_PART_REVIEW_ENABLED=0
 unset AGENT_CALL_FP AGENT_CALL_GUARD_STAGE LEAD_REVIEW_MAX_PER_TICK LEAD_REVIEW_DIFF_MAX_BYTES PLAN_CONTEXT_HOTSPOT_TOP
 
 HB="$T/h"; mkdir -p "$HB/bin" "$HB/prompts" "$HB/catalog/lanes.d" "$HB/state" "$T/repos" "$T/tmp" "$T/fakebin" "$T/log"

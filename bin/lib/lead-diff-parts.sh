@@ -35,6 +35,10 @@
 #   After rc 0 or 2 these globals hold the summary for the report header:
 #     LDP_TOTAL_FILES LDP_TOTAL_BYTES LDP_READ_FILES LDP_DIGEST_FILES
 #     LDP_TEST_FILES LDP_TEST_UNREAD LDP_UNREAD (newline list, non-digest)
+#   LDP_PARTS_TSV=<file> (env, BH-8533): on rc 0 or 2 ldp_build also writes the
+#       split to <file>, one row per file that is not a digest, in part order:
+#       <part>\t<over>\t<bytes>\t<path>. over=1 marks a unit over the limit
+#       alone. On rc 0 every row is part 1. Unset = no file, as before.
 #   ldp_unread_line
 #       LDP_UNREAD on one line for the report header: up to 20 paths, then an
 #       exact "+N more", or "none".
@@ -217,6 +221,14 @@ ldp_build() {
     for i in "${ORD[@]}"; do [ -n "${READ[$i]+x}" ] && cat "$d/f$i" >> "$d/packed"; done
   done
 
+  # BH-8533: when everything read fits, it is one part (LDP_PARTS_TSV; the
+  # proposed split below rewrites the file).
+  if [ -n "${LDP_PARTS_TSV:-}" ]; then
+    : > "$LDP_PARTS_TSV" || { rm -rf "$d"; return 1; }
+    for i in "${ORD[@]}"; do
+      [ -n "${READ[$i]+x}" ] && printf '1\t0\t%s\t%s\n' "$(wc -c < "$d/f$i" | tr -d ' ')" "${P[$i]}" >> "$LDP_PARTS_TSV"
+    done
+  fi
   if [ -z "$LDP_UNREAD" ] || { [ "$any" != any ] && [ "$LDP_TEST_UNREAD" -eq 0 ]; }; then rm -rf "$d"; return 0; fi
 
   # The proposed split. A unit is one non-test file (plan files first) plus every
@@ -239,6 +251,11 @@ ldp_build() {
   for i in "${ORD[@]}"; do
     [ "${CLS[$i]}" = test ] && [ -z "${OWNER[$i]:-}" ] && UNIT+=("$i")
   done
+  # BH-8533: with LDP_PARTS_TSV set, the same split is also written there for
+  # bin/lib/lead-part-review.sh, one row per file that is not a digest:
+  # <part>\t<over>\t<bytes>\t<path> (over=1: the unit is over the limit alone).
+  local tsv="${LDP_PARTS_TSV:-/dev/null}"
+  : > "$tsv" || { rm -rf "$d"; return 1; }
   {
     printf 'Each part holds at most %s bytes of diff (the %s-byte review limit less the coverage reserve), except a part marked over the limit alone. A test stays in the part of the file it names.\n' "$cap" "$budget"
     part=0; pb=0; local line=""
@@ -252,6 +269,7 @@ ldp_build() {
         [ -n "$line" ] && printf -- '- Part %s (%s bytes): %s\n' "$part" "$pb" "$line"
         part=$((part + 1)); line=""; pb=0
         printf -- '- Part %s (%s bytes): %s; over the limit alone: split this change\n' "$part" "$t" "$f"
+        for j in $u; do printf '%s\t1\t%s\t%s\n' "$part" "$(wc -c < "$d/f$j" | tr -d ' ')" "${P[$j]}" >> "$tsv"; done
         continue
       fi
       if [ -n "$line" ] && [ $((pb + t)) -gt "$cap" ]; then
@@ -259,6 +277,7 @@ ldp_build() {
       fi
       [ -z "$line" ] && part=$((part + 1))
       line="${line:+$line, }$f"; pb=$((pb + t))
+      for j in $u; do printf '%s\t0\t%s\t%s\n' "$part" "$(wc -c < "$d/f$j" | tr -d ' ')" "${P[$j]}" >> "$tsv"; done
     done
     [ -n "$line" ] && printf -- '- Part %s (%s bytes): %s\n' "$part" "$pb" "$line"
     if [ -s "$d/digest" ]; then

@@ -1395,6 +1395,14 @@ review_one() {
       || { log "could not write $report"; job_update "$job" status=failed; return; }
     finish_done "$id" "$job" "$sha" BLOCK "$report" "none:split-required" "$suite_line" "$key"; return
   fi
+  # BH-8533: part review reads the head in N parts, one paid call each
+  # (bin/lib/lead-part-review.sh); ldp_rc 4. Else LPR_WHY joins the finding.
+  if [ "$ldp_rc" = 2 ]; then
+    LPR_WHY="bin/lib/lead-part-review.sh is not loaded"
+    if command -v lpr_plan >/dev/null 2>&1 && lpr_plan "$WT" "origin/$base" "$sha" "$DIFF_MAX" "$repo" "$pr"; then
+      ldp_rc=4; log "$key: part review: $LPR_N parts ($LPR_PFP)"
+    else log "$key: no part review: $LPR_WHY"; fi
+  fi
   if [ "$ldp_rc" = 2 ]; then
     nprod=$(( $(printf '%s' "$LDP_UNREAD" | grep -c .) - LDP_TEST_UNREAD ))
     if [ "$LDP_TEST_UNREAD" -gt 0 ]; then
@@ -1404,6 +1412,7 @@ review_one() {
       ldp_mode="$nprod file$([ "$nprod" = 1 ] || echo s) that $([ "$nprod" = 1 ] && echo is || echo are) not a test do$([ "$nprod" = 1 ] && echo es) not fit LEAD_REVIEW_DIFF_MAX_BYTES=$DIFF_MAX; nothing merges unread"
       ldp_find="$nprod file$([ "$nprod" = 1 ] && echo " that is not a test does" || echo "s that are not tests do") not fit the $DIFF_MAX-byte review limit, and nothing merges unread (the operator, #5803): $(ldp_unread_line). This is not a finding on the code."
     fi
+    ldp_find="$ldp_find Part review did not run: $LPR_WHY."
     { printf '%s# Lead review %s (%s#%s at %s)\n\n- verdict: BLOCK\n- review mode: split required (%s)\n- %s\n- rules pack: %s\n- reviewer model: none:split-required\n- checklist: v%s\n\n' \
         "$RVLINE" "$key" "$repo" "$pr" "$sha" "$ldp_mode" "$suite_line" "$RP_STATE" "$CK_VER"
       printf 'Findings\n- [BLOCK split-required] %s\n\n## Proposed split\n' "$ldp_find"
@@ -1480,7 +1489,7 @@ review_one() {
     fi
     if [ "$ldp_rc" = 0 ]; then
       printf '\n'; cat "$WT.parts"
-    else
+    elif [ "$ldp_rc" != 4 ]; then  # part review: lpr_prompt adds each part's diff
     # At or under the limit here: an over-limit diff left above as parts or a BLOCK.
     printf '\n## Diff\n'
     cat "$WT.diff"
@@ -1492,9 +1501,23 @@ review_one() {
   # The guard key lfp (lead-head) is set before the rules pack (BH-7792, above).
   # BH-5355: the cost row says which prompt this was, so the ledger splits by mode.
   lnote="lead-mode=${dmode:-${imode:-${bmode:-full}}}"
+  if [ "$ldp_rc" = 4 ]; then  # BH-8533: N paid calls, one aggregate (cost rows note lead-mode=part k/N)
+    lpr_run "$project" "$repo" "$pr" "$sha" "$model" "$pf" "$WT" "$job" "$key" "$id"
+    case "$LPR_RC" in
+      ok) verdict="$LPR_VERDICT"; out="$LPR_OUT"; rc=0 ;;
+      superseded) post_result "$id" "$(jq -nc --arg j "$job" --arg s "$sha" --arg d "$LPR_DETAIL" '{job_id:$j,head_sha:$s,outcome:"superseded",detail:$d}')" || return
+        job_update "$job" status=done; log "superseded $key: $LPR_DETAIL"; R=superseded; return ;;
+      ratelimit) lr_release_rl "$key" "$job" "$LPR_DETAIL"; return ;;
+      empty|lost) log "$key: part review: $LPR_DETAIL; no verdict"
+        fail_terminal "$id" "$job" "$sha" "$([ "$LPR_RC" = lost ] && echo part-lost || echo empty)" "$model"; return ;;
+      *) log "$key: part review: $LPR_DETAIL"; lr_release_claim "$id" "$job" "$key" "part review: $LPR_DETAIL"; return ;;
+    esac
+  else
   AGENT_CALL_GUARD_STAGE="$lstage" AGENT_CALL_FP="$lfp" AGENT_CALL_ROW_NOTE="$lnote" \
   AGENT_CALL_PR="${repo:+https://github.com/$repo/pull/$pr}" AGENT_CALL_ROLE=lead.review "$H/bin/agent-call.sh" lead-review "$project" "$model" "$left" "$out" "@$pf" >/dev/null 2>&1; rc=$?
-  if [ "$rc" -lt 74 ] || [ "$rc" -gt 79 ]; then
+  fi
+  if [ "$ldp_rc" = 4 ]; then :
+  elif [ "$rc" -lt 74 ] || [ "$rc" -gt 79 ]; then
     lr_rate_limited "$rc" "$out" && { lr_release_rl "$key" "$job" "$rc"; return; }
     # The per-PR tripwire counts reviews the model answered, once a review (the
     # unknown-verdict retry is the same review). A refusal before billing and a
@@ -1626,6 +1649,7 @@ review_one() {
     [ -n "$lpk" ] && printf -- '- re-review: from %s (%s); %s BLOCK finding(s) on lines unchanged since then kept as NOTE\n' "${LPV_PREV:0:12}" "$LPV_WORD" "$lpk"
     [ "$ldp_rc" = 0 ] && printf -- '- diff read in parts: %s of %s files; not read: %s; digest: %s files\n' \
       "$LDP_READ_FILES" "$LDP_TOTAL_FILES" "$(ldp_unread_line)" "$LDP_DIGEST_FILES"
+    [ "$ldp_rc" = 4 ] && printf -- '- review mode: part review, %s parts (%s), parts: %s\n' "$LPR_N" "$LPR_PFP" "$LPR_SUM"
     printf '\n'
     if [ -n "$capr" ]; then lr_cap_body "$out" "$capfind" "$verdict"; else cat "$out"; fi
   } > "$report.tmp.$$" && mv -f "$report.tmp.$$" "$report" \

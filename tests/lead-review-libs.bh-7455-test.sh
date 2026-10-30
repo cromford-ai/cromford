@@ -203,7 +203,7 @@ cnt() { local c; c=$(grep -c "$1" "$2" 2>/dev/null); echo "${c:-0}"; }
 
 # ── S5. the production entry point loads the fragments ──────────────────────
 want_libs=$(sed -n -E 's/.*\. "\$H\/(bin\/lib\/[a-z0-9-]+\.sh)".*/\1/p' "$DIR/$REL"/*.sh | LC_ALL=C sort -u)
-[ "$(grep -c . <<<"$want_libs")" = 25 ] && ok || bad "S5: the fragments should source 25 libs (21 NNNN + 202610211850-bh-7667 + 2 of 202610221925-bh-8027 + 202610231206-bh-8081), found: $(tr '\n' ' ' <<<"$want_libs")"
+[ "$(grep -c . <<<"$want_libs")" = 26 ] && ok || bad "S5: the fragments should source 26 libs (21 NNNN + 202610211850-bh-7667 + 2 of 202610221925-bh-8027 + 202610231206-bh-8081 + 202610270120-bh-8533), found: $(tr '\n' ' ' <<<"$want_libs")"
 for f in "$DIR/$REL"/*.sh; do
   grep -qxF "$REL/${f##*/}" <<<"$CL" && ok || bad "S5: scratch_closure_list bin/lead-review.sh does not list $REL/${f##*/}"
 done

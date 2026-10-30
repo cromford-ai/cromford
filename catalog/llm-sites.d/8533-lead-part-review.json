@@ -1,0 +1,3 @@
+[
+    {"id": "lead-part-review", "script": "bin/lib/lead-part-review.sh", "marker": "\"$H/bin/agent-call.sh\" lead-review \"$_LPR_PROJECT\"", "kind": "agent-call", "lane": "lead-review", "stage": "lead-review", "project": "$_LPR_PROJECT", "runners": ["ladder"], "through_agent_call": true, "priced": "yes", "gated": "agent-call", "dedup": "K3 (call-guard) per part on guard stage lead-head (keys p<k>of<N>x / n), and a lead_part ledger row per part checked before the call", "deterministic_candidate": null, "note": "BH-8533: lead part-review mode. A head over LEAD_REVIEW_PART_BYTES is reviewed in N parts (LEAD_REVIEW_PART_MAX caps N), one paid call per part with no tools (AGENT_CALL_NO_TOOLS=1) and one retry on an unreadable verdict. MERGE only when every part is MERGE."}
+]
