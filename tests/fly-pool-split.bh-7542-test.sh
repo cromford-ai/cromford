@@ -3,28 +3,29 @@
 # is a committed render of the fragments in config/fly-pool.d/, joined by
 # bin/fly-pool-build.sh.
 #
-# SLICE C0 (round 3). Only 0100-head.sh is in config/fly-pool.d/ on this tree;
-# slice C1 adds 2000-tail.sh and the catalog/list-files.tsv row. So no case
-# renders the real tree: each scratch tree gets the REAL 0100-head.sh, a FIXTURE
-# 2000-tail.sh written here, and a fixture bin/fly-pool.sh that is the cat of
-# the two. The real-tree --check case comes back in slice C1.
+# The set is complete (BH-8740): config/fly-pool.d/ holds 0100-head.sh and the
+# 20 fine tail fragments, and catalog/list-files.tsv holds the bin/fly-pool.sh
+# row. Each scratch tree copies every REAL fragment and README.md, and its
+# bin/fly-pool.sh is the LC_ALL=C cat of those fragments.
 #
 # WHAT THIS PINS. Every case runs the REAL bin/fly-pool-build.sh as a process.
 # The scratch cases get their own tree under $T (scratch_install_closure of the
 # generator plus the fragments above), so no case shares state with another and
 # the order of the cases does not matter.
 #   C1 the real tree: bin/fly-pool.sh is tracked with mode 100755, and the
-#      generator is tracked with mode 100755
-#   C2 order: 1950-bh-9001-alpha.sh renders between head and tail; with a caller
+#      generator is tracked with mode 100755; --check is rc 0 and silent;
+#      fpb_render equals bin/fly-pool.sh and git show HEAD:bin/fly-pool.sh
+#   C2 order: 1950-bh-9001-alpha.sh renders between 0100-head.sh and the real
+#      2000-... to 3900-... tail fragments; with a caller
 #      LC_ALL=en_US.UTF-8, x-y.sh still renders before x.sh (C order)
 #   C3 every real fragment passes bash -n, is not empty and ends in a newline;
 #      0100-head.sh is a byte prefix of bin/fly-pool.sh as of the commit that
 #      last wrote 0100-head.sh (so a sibling edit of bin/fly-pool.sh is not red)
-#   C4 stale: one edited line -> --check rc 1 naming --write, render unchanged;
+#   C4 stale: one edited line in 2000-qrow-and-machine-io.sh -> --check rc 1 naming --write, render unchanged;
 #      --write -> --check rc 0, mode 755; a deleted fragment -> --check rc 1
 #   C5 malformed names, a missing dir, usage, a bash -n failure, --absorb, and
 #      no bin/.fly-pool.sh.* temp file left after a refusal
-#   C8 with the slice-C1 row added to a fixture catalog, bin/list-file-lint.sh
+#   C8 the real catalog holds the bin/fly-pool.sh row; with it, bin/list-file-lint.sh
 #      refuses a commit that grows bin/fly-pool.sh with no fragment, and passes
 #      one that adds a fragment and re-renders
 #   C9 bin/state-paths-guard.sh skips an added config/fly-pool.d/ fragment (it
@@ -48,20 +49,23 @@ export GIT_AUTHOR_NAME=fixture GIT_AUTHOR_EMAIL=fixture@example.com
 export GIT_COMMITTER_NAME=fixture GIT_COMMITTER_EMAIL=fixture@example.com
 export GIT_AUTHOR_DATE='2026-10-19T18:00:00Z' GIT_COMMITTER_DATE='2026-10-19T18:00:00Z'
 
-# The row slice C1 adds to catalog/list-files.tsv. C8 adds it to a fixture copy.
+# The bin/fly-pool.sh row of catalog/list-files.tsv (slice C1, BH-8740).
 C1_ROW=$'bin/fly-pool.sh\trendered config/fly-pool.d/\tcommitted render of bin/fly-pool-build.sh (BH-7454); hand edit: run --absorb'
-# fixture_tail <file> — the FIXTURE 2000-tail.sh: a three-line function.
-fixture_tail() { printf 'fpb_fixture_tail() {\n  echo tail\n}\n' > "$1"; }
-# mk <case> — a scratch tree at $T/<case> with the generator closure, the real
-# 0100-head.sh and README.md, a fixture 2000-tail.sh, and a fixture render
-# (the cat of the two, mode 755). Prints the tree path.
+# frags <dir> — copy every real fragment and README.md into <dir>, and print
+# the LC_ALL=C cat of the fragments (the render) on stdout.
+frags() {
+  cp -p "$FRAG"/[0-9][0-9][0-9][0-9]-*.sh "$FRAG/README.md" "$1/" || return 1
+  (cd "$1" && LC_ALL=C cat [0-9][0-9][0-9][0-9]-*.sh)
+}
+# mk <case> — a scratch tree at $T/<case> with the generator closure, every
+# real fragment and README.md, and the render (their cat, mode 755). Prints
+# the tree path.
 mk() {
   local R="$T/$1" D
   D="$R/config/fly-pool.d"
   mkdir -p "$D" "$R/bin" "$R/tmp" || return 1
   scratch_install_closure bin/fly-pool-build.sh "$R" >/dev/null || return 1
-  cp -p "$FRAG/0100-head.sh" "$FRAG/README.md" "$D/" && fixture_tail "$D/2000-tail.sh" \
-    && cat "$D/0100-head.sh" "$D/2000-tail.sh" > "$R/bin/fly-pool.sh" && chmod 755 "$R/bin/fly-pool.sh" || return 1
+  frags "$D" > "$R/bin/fly-pool.sh" && chmod 755 "$R/bin/fly-pool.sh" || return 1
   printf '%s\n' "$R"
 }
 # run <tree> [args...] — the tree's own generator, TMPDIR=<tree>/tmp; sets OUT and RC.
@@ -78,7 +82,19 @@ if git -C "$REPO" rev-parse --git-dir >/dev/null 2>&1; then
     [ "$mode" = 100755 ] && ok "C1 $f tracked, mode 100755" || bad "C1 $f mode '$mode'"
   done
 else
-  echo "  note C1 skipped: $REPO is not a git checkout"
+  echo "  note C1 mode checks skipped: $REPO is not a git checkout"
+fi
+OUT=$("$GEN" --check 2>&1); RC=$?
+[ "$RC" = 0 ] && [ -z "$OUT" ] && ok "C1 --check on the real tree: rc 0, silent" || bad "C1 --check rc=$RC out: $OUT"
+OUT=$( ( . "$GEN" && fpb_render "$T/c1-render" "$REPO" ) 2>&1); RC=$?
+[ "$RC" = 0 ] && cmp -s "$T/c1-render" "$REPO/bin/fly-pool.sh" \
+  && ok "C1 fpb_render (sourced) of the real fragments equals bin/fly-pool.sh" || bad "C1 fpb_render rc=$RC differs from bin/fly-pool.sh; out: $OUT"
+if git -C "$REPO" rev-parse --git-dir >/dev/null 2>&1; then
+  git -C "$REPO" show HEAD:bin/fly-pool.sh > "$T/c1-head" 2>/dev/null \
+    && cmp -s "$T/c1-render" "$T/c1-head" \
+    && ok "C1 fpb_render equals git show HEAD:bin/fly-pool.sh" || bad "C1 fpb_render differs from git show HEAD:bin/fly-pool.sh"
+else
+  echo "  note C1 git show half skipped: $REPO is not a git checkout"
 fi
 
 # C2
@@ -88,8 +104,8 @@ run "$R" --write
 n_alpha=$(line_of "$R/bin/fly-pool.sh" 'fpb_alpha_9001()')
 n_head=$(wc -l < "$FRAG/0100-head.sh")
 [ "$RC" = 0 ] && [ "$n_alpha" = $((n_head + 1)) ] \
-  && cmp -s <(tail -n +$((n_head + 2)) "$R/bin/fly-pool.sh") "$R/config/fly-pool.d/2000-tail.sh" \
-  && ok "C2 1950-bh-9001-alpha.sh renders after 0100-head.sh and before 2000-tail.sh" \
+  && cmp -s <(tail -n +$((n_head + 2)) "$R/bin/fly-pool.sh") <(cd "$FRAG" && LC_ALL=C cat [23][0-9][0-9][0-9]-*.sh) \
+  && ok "C2 1950-bh-9001-alpha.sh renders after 0100-head.sh and before the real 2000-3900 fragments" \
   || bad "C2 rc=$RC alpha at line '$n_alpha', head has $n_head lines; out: $OUT"
 en=$(locale -a 2>/dev/null | grep -iE '^en_US\.utf-?8$' | head -1)
 if [ -n "$en" ]; then
@@ -138,7 +154,7 @@ OUT=$( ( . "$GEN" && fpb_validate "$REPO" ) 2>&1); RC=$?
 # C4
 R=$(mk c4) || bad "C4 scratch tree"
 sha0=$(sha256sum < "$R/bin/fly-pool.sh")
-sed -i '2s/^/# c4 edit\n/' "$R/config/fly-pool.d/2000-tail.sh"
+sed -i '2s/^/# c4 edit\n/' "$R/config/fly-pool.d/2000-qrow-and-machine-io.sh"
 run "$R" --check
 [ "$RC" = 1 ] && has 'bin/fly-pool.sh is stale' && has '--write' && [ "$(sha256sum < "$R/bin/fly-pool.sh")" = "$sha0" ] \
   && ok "C4 edited fragment: --check rc 1, names --write, render unchanged" || bad "C4 stale rc=$RC out: $OUT"
@@ -148,7 +164,7 @@ run "$R" --check
 [ "$w" = 0 ] && [ "$RC" = 0 ] && [ "$(stat -c %a "$R/bin/fly-pool.sh")" = 755 ] && grep -qx '# c4 edit' "$R/bin/fly-pool.sh" && notmp "$R" \
   && ok "C4 --write then --check rc 0; render mode 755; no temp left" || bad "C4 write rc=$w check rc=$RC out: $OUT"
 R=$(mk c4b) || bad "C4b scratch tree"
-rm -f "$R/config/fly-pool.d/2000-tail.sh"
+rm -f "$R/config/fly-pool.d/2000-qrow-and-machine-io.sh"
 run "$R" --check
 [ "$RC" = 1 ] && has 'is stale' && ok "C4 deleted fragment: --check rc 1" || bad "C4 deleted fragment rc=$RC out: $OUT"
 
@@ -203,9 +219,10 @@ mkdir -p "$L" && cd "$L" && git init -q -b main . || bad "C8 git init"
 scratch_install_closure bin/list-file-lint.sh "$L" >/dev/null || bad "C8 lint closure"
 scratch_install_closure bin/fly-pool-build.sh "$L" >/dev/null || bad "C8 generator closure"
 mkdir -p catalog config/fly-pool.d
-cp "$REPO/catalog/list-files.tsv" catalog/ && printf '%s\n' "$C1_ROW" >> catalog/list-files.tsv \
-  && cp -p "$FRAG/0100-head.sh" "$FRAG/README.md" config/fly-pool.d/ && fixture_tail config/fly-pool.d/2000-tail.sh \
-  && cat config/fly-pool.d/0100-head.sh config/fly-pool.d/2000-tail.sh > bin/fly-pool.sh && chmod 755 bin/fly-pool.sh || bad "C8 fixture tree"
+grep -qxF -- "$C1_ROW" "$REPO/catalog/list-files.tsv" \
+  && ok "C8 the real catalog/list-files.tsv holds the bin/fly-pool.sh row" || bad "C8 the real catalog/list-files.tsv has no bin/fly-pool.sh row"
+cp "$REPO/catalog/list-files.tsv" catalog/ \
+  && frags config/fly-pool.d > bin/fly-pool.sh && chmod 755 bin/fly-pool.sh || bad "C8 scratch tree"
 git add -A && git commit -q -m base && git branch base
 echo '# hand append' >> bin/fly-pool.sh
 git add -A && git commit -q -m hand

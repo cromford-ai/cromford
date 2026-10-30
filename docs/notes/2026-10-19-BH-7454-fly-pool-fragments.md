@@ -53,8 +53,11 @@ The fragments are synced to boxes by `bin/harness-sync.sh` with the rest of
 
 ## The cut command
 
-Run from the repo root. It is exact while there are only the two coarse
-fragments. C0 runs only the `head` line; C1 runs all of it:
+History of slice C0. Slice C1 (BH-8740) did not land `2000-tail.sh`: it cut
+the tail into 20 fine fragments in the same PR (see
+`docs/notes/2026-10-28-BH-8740-fly-pool-tail-cut.md`). Do not run this
+command now. To edit `bin/fly-pool.sh`, follow `config/fly-pool.d/README.md`.
+As written for C0:
 
 ```bash
 f=bin/fly-pool.sh; q=$(grep -n '^QROW()' "$f" | head -1 | cut -d: -f1); s=$q
