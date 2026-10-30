@@ -64,6 +64,18 @@ The columns are tab separated:
   still carries its row, so deleting an escalate row cannot un-gate a job.
   Every non-batch-selected run, and an escalated batch, runs both jobs whole.
 
+  `catalog/prompt-markers.json` has a spa row, not a worker API read
+  (BH-8193, BH-8217). `console-ui/src/ui/PromptEditor.js` and
+  `worker/jobs/src/lib/prompt-markers.js` both import the file at build time,
+  so it is a build input of both trees. The file changes rarely (2 commits by
+  2026-10-28), so the extra console-ui job on those batches costs less than a
+  worker route, a console fetch with loading and error states, and an editor
+  that cannot list markers while the worker is down. To move the read to an
+  API later, delete the spa rows in the same PR. `seed-spa.tsv` keeps two spa
+  rows for the path (#8205 and #8211 added one each). `cbe_affects` stops at
+  the first match, so two rows answer the same as one. The BH-8649 seed
+  compare pins both rows.
+
 BH-6059 replaced the blanket `bin/lib/` and `catalog/` rows with single files:
 19 of 21 sampled batches ran the whole corpus through them, a README included.
 Every other bin/lib/ or catalog/ path runs its impact set, and one the impact
