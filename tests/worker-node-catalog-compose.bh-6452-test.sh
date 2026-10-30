@@ -32,7 +32,8 @@
 #
 # Cases: R0 the real tree; R1-R6 copies of real suites with and without the
 # compose; R7-R9 the helper sourced and called, sourced only, named only in a
-# comment; N1-N5 suites that must not be flagged. Fixtures live under $T only.
+# comment; R10-R11 bodies bigger than a pipe buffer, read with no SIGPIPE;
+# N1-N5 suites that must not be flagged. Fixtures live under $T only.
 #
 # Run: HARNESS_TEST_SANDBOX=1 bash tests/worker-node-catalog-compose.bh-6452-test.sh   (exit 0 = pass)
 set -uo pipefail
@@ -48,12 +49,26 @@ SELF=$(basename "$0")
 # code <file>: the file's non-comment lines.
 code() { grep -v '^[[:space:]]*#' "$1" 2>/dev/null; }
 
+# NO PIPE INTO grep -q (BH-8775 test-host red). Under pipefail, `a | grep -q`
+# is rc 141 whenever grep -q exits on its first match while a is still writing:
+# a big suite body (lead-land-empty-block, 25 KB) read as "not compliant" on a
+# loaded host, and a big worker test read as "no import". Every match below
+# reads a variable through a here-string instead.
+
 # helper_called <body>: rc 0 when one line sources tests/lib/worker-catalogs.sh
 # and another line calls worker_catalogs.
 helper_called() {
+  local rest
   grep -qE '^[[:space:]]*(\.|source)[[:space:]].*lib/worker-catalogs\.sh' <<<"$1" || return 1
-  grep -vE '^[[:space:]]*(\.|source)[[:space:]].*lib/worker-catalogs\.sh' <<<"$1" \
-    | grep -qE '(^|[^A-Za-z0-9_])worker_catalogs([[:space:]]|$)'
+  rest=$(grep -vE '^[[:space:]]*(\.|source)[[:space:]].*lib/worker-catalogs\.sh' <<<"$1")
+  grep -qE '(^|[^A-Za-z0-9_])worker_catalogs([[:space:]]|$)' <<<"$rest"
+}
+
+# inline_compose <body>: rc 0 when one line has both llm-sites-build.sh and --compose.
+inline_compose() {
+  local lines
+  lines=$(grep 'llm-sites-build\.sh' <<<"$1")
+  grep -qe '--compose' <<<"$lines"
 }
 
 # scan <ROOT>: one line per offender, "<suite path relative to root>: <why>".
@@ -73,7 +88,7 @@ scan() {
                     | grep -oE 'test/[A-Za-z0-9._-]+\.js' | sed 's#^test/##' | sort -u); do
         wt="$ROOT/worker/jobs/test/$name"
         [ -f "$wt" ] || continue
-        if code "$wt" | grep -qE "from ['\"]\.\./src/index\.js['\"]|import\(['\"]\.\./src/index\.js['\"]\)"; then
+        if grep -qE "from ['\"]\.\./src/index\.js['\"]|import\(['\"]\.\./src/index\.js['\"]\)" <<<"$(code "$wt")"; then
           why="node --test worker/jobs/test/$name imports ../src/index.js"; break
         fi
       done
@@ -82,14 +97,14 @@ scan() {
                       | grep -oE 'tests/lib/[A-Za-z0-9._-]+\.m?js' | sed 's#^tests/lib/##' | sort -u); do
           wt="$ROOT/tests/lib/$name"
           [ -f "$wt" ] || continue
-          if code "$wt" | grep -qE "import\([^)]*jobs/src/index\.js|from[[:space:]]*['\"][^'\"]*jobs/src/index\.js['\"]"; then
+          if grep -qE "import\([^)]*jobs/src/index\.js|from[[:space:]]*['\"][^'\"]*jobs/src/index\.js['\"]" <<<"$(code "$wt")"; then
             why="node runs tests/lib/$name, which imports worker/jobs/src/index.js"; break
           fi
         done
       fi
     fi
     [ -n "$why" ] || continue
-    printf '%s\n' "$body" | grep 'llm-sites-build\.sh' | grep -qe '--compose' && continue
+    inline_compose "$body" && continue
     helper_called "$body" && continue
     rel=${f#"$ROOT"/}
     echo "$rel: $why, and the suite never runs bin/llm-sites-build.sh --compose"
@@ -189,6 +204,31 @@ case $OUT in
   *) bad "R9 helper named only in a comment: want the suite flagged, got [$OUT]" ;;
 esac
 
+# --- R10/R11: a body bigger than a pipe buffer (BH-8775 test-host red) --------
+# FILLER is 256 KB of code lines, more than a 64 KB pipe holds. With a pipe into
+# grep -q, grep -q exits on the first match while the writer still has most of
+# the body to send: the writer dies of SIGPIPE every time, and pipefail turns a
+# match into rc 141. R10: the helper lines come first, then the filler; the
+# suite must read as compliant. R11: the worker test imports ../src/index.js on
+# its first line, then the filler; the suite must read as an offender.
+FILLER=$(awk 'BEGIN { for (i = 0; i < 4096; i++) printf "echo filler line %05d to pass a pipe buffer xxxxxxxxxxxxxx\n", i }')
+RW=$(fixture w)
+cp "$B_JS" "$RW/worker/jobs/test/"
+helper_suite "$RW" "$SRC_LINE
+$CALL_LINE
+$FILLER"
+OUT=$(scan "$RW")
+[ -z "$OUT" ] && ok "R10 helper called, 256 KB body after it: clean" || bad "R10 helper called with a 256 KB body: want nothing, got [$OUT]"
+RX=$(fixture x)
+{ echo "import worker from '../src/index.js';"; printf '%s\n' "$FILLER" | sed 's#^echo #// #; s#^#void 0; #'; } > "$RX/worker/jobs/test/big.bh-8775.test.js"
+printf '#!/bin/bash\nDIR=x\ncd "$DIR/worker/jobs" && node --test test/big.bh-8775.test.js\n' > "$RX/tests/big-test.sh"
+OUT=$(scan "$RX")
+case $OUT in
+  "tests/big-test.sh: node --test worker/jobs/test/big.bh-8775.test.js imports ../src/index.js"*)
+    ok "R11 worker test import, 256 KB body after it: flagged" ;;
+  *) bad "R11 worker test import with a 256 KB body: want the suite flagged, got [$OUT]" ;;
+esac
+
 # --- N5: node on a tests/lib helper that does not import the worker ------------
 RN=$(fixture n5)
 mkdir -p "$RN/tests/lib"
@@ -199,7 +239,7 @@ OUT=$(scan "$RN")
 
 # --- N1: node --test on a worker test that does not import ../src/index.js ------
 N1_JS="$DIR/worker/jobs/test/account-usage-contract.bh-167.test.js"
-if code "$N1_JS" | grep -q 'src/index\.js'; then
+if grep -q 'src/index\.js' <<<"$(code "$N1_JS")"; then
   bad "N1 fixture premise: $N1_JS now imports src/index.js; pick another worker test"
 else
   RN=$(fixture n1)
@@ -218,7 +258,7 @@ fi
 N2_SRC="$DIR/tests/block-categories-console.bh-5806-test.sh"
 RN=$(fixture n2)
 cp "$N2_SRC" "$RN/tests/"
-if code "$N2_SRC" | grep -q 'node --test'; then
+if grep -q 'node --test' <<<"$(code "$N2_SRC")"; then
   OUT=$(scan "$RN")
   [ -z "$OUT" ] && ok "N2 console-ui node --test: not flagged" || bad "N2: want nothing, got [$OUT]"
 else
@@ -241,7 +281,8 @@ fi
 N4_SRC="$DIR/tests/archie-fm-conflicts.bh-4585-test.sh"
 RN=$(fixture n4)
 cp "$N4_SRC" "$RN/tests/"
-if code "$N4_SRC" | grep 'import' | grep -q 'jobs/src/index\.js'; then
+N4_LINES=$(grep 'import' <<<"$(code "$N4_SRC")")
+if grep -q 'jobs/src/index\.js' <<<"$N4_LINES"; then
   OUT=$(scan "$RN")
   [ -z "$OUT" ] && ok "N4 index.js beside a fixture import string: not flagged" || bad "N4: want nothing, got [$OUT]"
 else

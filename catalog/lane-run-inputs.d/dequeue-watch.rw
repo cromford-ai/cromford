@@ -1,0 +1,22 @@
+# catalog/lane-run-inputs.d/dequeue-watch.rw — the files one
+# `bin/dequeue-watch.sh <p>` run writes (BH-7424). A write-back may carry
+# these only. The ro snapshot is these plus dequeue-watch.ro.
+#
+# NOT CARRIED (machine-local caches and logs, safe to lose):
+#   $MC_H/tmp/merge-queue-*.provider (one-tick cache), state/gh-budget/*,
+#   state/verdicts/route-missing-*, state/lead-authority/*,
+#   logs/needs-human.log, logs/merge-conductor.log, logs/verdicts.log.
+#   Alerts go through the jobs API when LANE_RUN_ID is set (bin/lane-alert.sh).
+# Secrets and locks are never carried: env/*, locks/*.
+# logs/dequeue-watch.log rides back as the lane log (.lri/log-append).
+#
+# MC_ATTEMPTS (bin/lib/mc/log.sh:53): mc_attempt_put "dqwculprit ..."
+# (bin/lib/dequeue-watch/act.sh:258) and mc_requeued_record/mc_requeued_mark
+# (bin/lib/mc/classify.sh:2443-2446). The same slice and ERE as
+# merge-conductor.rw, so both lanes write back this repo's lines under the
+# same attempts.txt.lock.
+state/merge-conductor/attempts.txt
+@rows state/merge-conductor/attempts.txt ^[^ ]+ $slug(#[0-9]+)?( |$)
+# mc_mergify_ask_file (bin/lib/mc/queue.sh:1154): the `@mergifyio requeue`
+# ask ledger, one file per PR, named by the folded repo.
+state/merge-conductor/mergify-asked/$repokey_*

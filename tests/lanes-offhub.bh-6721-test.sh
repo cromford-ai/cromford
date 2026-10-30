@@ -39,13 +39,17 @@ C8_LANES="dequeue-watch pr-url-reconcile archie-fm review-autopilot fleet-status
 # re_lane <lane> — the lane name as an ERE literal.
 re_lane() { printf '%s' "$1" | sed 's/[.[\*^$()+?{|]/\\&/g'; }
 
+# TEST-CHANGE (BH-7424): the greps that read `cat schema.d/*.sql` write to
+# /dev/null instead of -q. Under pipefail a -q match on an early fragment (BH-7424
+# seeds lane_placement.dequeue-watch in 202610201018-*.sql) closes the pipe, cat
+# dies of SIGPIPE, the pipeline returns 141 and the match reads as no match.
 # moved_lanes <root> — the C8 lanes a schema fragment sets to fly. The key must
 # be exactly 'lane_placement.<lane>': a '.hub_only' key is not a placement.
 moved_lanes() {
   local r="$1" l
   for l in $C8_LANES; do
     cat "$r"/worker/jobs/schema.d/*.sql 2>/dev/null \
-      | grep -qE "'lane_placement\.$(re_lane "$l")'[[:space:]]*,[[:space:]]*'fly'" && echo "$l"
+      | grep -E "'lane_placement\.$(re_lane "$l")'[[:space:]]*,[[:space:]]*'fly'" >/dev/null && echo "$l"
   done
 }
 
@@ -99,12 +103,12 @@ check_o3() {
       # placement, and the value must be hub.
       if cat "$r"/worker/jobs/schema.d/*.sql 2>/dev/null \
           | grep -E "'lane_placement\.$(re_lane "$l")'[[:space:]]*," \
-          | grep -vqE "'lane_placement\.$(re_lane "$l")'[[:space:]]*,[[:space:]]*'hub'"; then
+          | grep -vE "'lane_placement\.$(re_lane "$l")'[[:space:]]*,[[:space:]]*'hub'" >/dev/null; then
         echo "    $l: stays, but a schema fragment sets lane_placement.$l to a value other than hub"; rc=1
       fi
     elif cat "$r"/worker/jobs/schema.d/*.sql 2>/dev/null \
         | sed -E "s/'lane_placement\.$(re_lane "$l")\.hub_only'//g" \
-        | grep -qE "lane_placement\.$(re_lane "$l")([^[:alnum:]_-]|$)"; then
+        | grep -E "lane_placement\.$(re_lane "$l")([^[:alnum:]_-]|$)" >/dev/null; then
       # BH-7427: the exact quoted '.hub_only' key is a reason row, not a
       # placement (M-c), so it is removed before the grep.
       echo "    $l: stays, but a schema fragment names lane_placement.$l"; rc=1
@@ -156,6 +160,10 @@ fly_row() { printf "INSERT OR IGNORE INTO settings (key, value, description, act
 
 echo "M-a: fly fragment for dequeue-watch, no pl_dispatch, no manifest"
 mk ma; fly_row "$S" lane_placement.dequeue-watch fly
+# TEST-CHANGE (BH-7424): mk() copies the real catalog/lane-run-inputs.d, which now
+# holds the real dequeue-watch pair. This case needs a lane with NO manifest, so
+# the fixture drops the scratch copies. No assert below is loosened.
+rm -f "$S"/catalog/lane-run-inputs.d/dequeue-watch.ro "$S"/catalog/lane-run-inputs.d/dequeue-watch.rw
 # BH-5944 put dequeue-watch on pl_dispatch through bin/lib/project-lanes.sh.
 # Empty the scratch copy of the lib so the fixture lane is NOT on pl_dispatch.
 : > "$S/bin/lib/project-lanes.sh"

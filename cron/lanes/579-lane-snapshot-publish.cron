@@ -28,3 +28,9 @@
 # publishes that one project just before it enqueues its row
 # (bin/lib/mc/project-placement.sh), so this line is the backstop.
 6,16,26,36,46,56 * * * * /root/harness/bin/hub-lease.sh check && /root/harness/bin/lane-snapshot-publish.sh --lane merge-conductor >> /root/harness/logs/lane-snapshot-publish-cron.log 2>&1
+
+# The same publisher for the dequeue-watch project runs (BH-7424): it applies
+# their write-backs always, and publishes their snapshots once
+# lane_placement.dequeue-watch is fly. 3,13,...: two minutes before the
+# dequeue-watch dispatch at 5,15,... bin/lane-move.sh gate g4 reads its lines.
+3,13,23,33,43,53 * * * * /root/harness/bin/hub-lease.sh check && /root/harness/bin/lane-snapshot-publish.sh --lane dequeue-watch >> /root/harness/logs/lane-snapshot-publish-cron.log 2>&1

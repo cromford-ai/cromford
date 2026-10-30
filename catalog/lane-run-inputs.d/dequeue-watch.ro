@@ -1,0 +1,11 @@
+# catalog/lane-run-inputs.d/dequeue-watch.ro — what one
+# `bin/dequeue-watch.sh <p>` run reads and never writes back (BH-7424).
+# The file:line after each entry is where the run reads it. The run reads
+# GitHub over REST and the jobs worker for everything else
+# (bin/lib/dequeue-watch/gather.sh, bin/lib/dequeue-watch/llm.sh).
+#
+# bin/dequeue-watch.sh:165 (the project's repo), bin/lib/project-lanes.sh
+# (pl_project_known)
+fleet.conf
+# bin/lib/lane-gate.sh (the lane gate), bin/dequeue-watch.sh:97 (lane_switch)
+flags/*
