@@ -280,16 +280,21 @@ _pc_drop_refs() { # _pc_drop_refs <repo> <namespace>
 
 # pc_resolved <plan> <name> — rc 0 the plan's `## Design collisions` has a line
 # for `name` that says combine with 20+ characters of how; rc 2 it says
-# needs-human; rc 1 no such line.
+# needs-human; rc 1 no such line. The decision word is the first word after the
+# backticked name (separators `:`, dashes, spaces, `*` and `_` skipped); the
+# same word later on the line does not count (BH-8813: "combine. ... the earlier
+# needs-human stop" read as needs-human and BH-7305 looped 37 builds).
 pc_resolved() {
   local sec
   sec=$(_pc_section "$1" "Design collisions") || return 1
   printf '%s\n' "$sec" | awk -v n="\`$2\`" '
-    index($0, n) {
-      l = tolower($0)
-      if (index(l, "needs-human")) { nh = 1; next }
-      i = index(l, "combine")
-      if (i) { r = substr($0, i + 7); gsub(/^[ \t:—–-]+/, "", r); if (length(r) >= 20) ok = 1 }
+    { i = index($0, n) }
+    i {
+      r = substr($0, i + length(n))
+      sub(/^[ \t:*_—–-]+/, "", r)
+      w = tolower(r); sub(/[^a-z-].*$/, "", w)
+      if (w == "needs-human") { nh = 1; next }
+      if (w == "combine") { r = substr(r, 8); gsub(/^[ \t:.*_—–-]+/, "", r); if (length(r) >= 20) ok = 1 }
     }
     END { if (nh) exit 2; if (ok) exit 0; exit 1 }'
 }

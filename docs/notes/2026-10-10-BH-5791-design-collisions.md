@@ -42,6 +42,9 @@ bullet per symbol:
 - `flag_set`: needs-human — <the question a person must answer>
 ```
 
+The first word after the name decides: `combine` or `needs-human`. The same
+word later on the line does not count (BH-8813).
+
 ### The check (plan stage)
 
 The `# >>> design collisions (BH-5791)` block in `bin/lib/rb/plan.sh` runs
