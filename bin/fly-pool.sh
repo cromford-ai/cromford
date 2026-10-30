@@ -2528,6 +2528,28 @@ mput_fail_note() {
   return 0
 }
 # <<< mput error note
+# >>> fly error reason (hotfix pool-fly-stderr)
+# fly_err_reason <errfile> -> prints " :: <reason>" for a say line, or nothing.
+# A failed `machine run` or harness sftp used to log no reason: flyctl's stderr
+# went to /dev/null (project-6-os, 2026-10-29 20:13Z-20:51Z, 33-100% of launches
+# failed and nobody could say why). The reason is the last non-empty stderr
+# line, control characters removed, redacted, at most 200 characters. Redacted
+# to <redacted>: everything after "FlyV1 ", the word after "Bearer ", a GitHub
+# token shape, and any run of 40+ base64/hex characters.
+fly_err_reason() {
+  local why
+  [ -n "${1:-}" ] && [ -f "$1" ] && [ -r "$1" ] || return 0
+  why=$(grep -v '^[[:space:]]*$' "$1" 2>/dev/null | tail -n 1 | tr -d '\000-\037' \
+        | sed -E -e 's#FlyV1 .*#FlyV1 <redacted>#' \
+                 -e 's#([Bb]earer) [^[:space:]]+#\1 <redacted>#g' \
+                 -e 's#gh[pousr]_[A-Za-z0-9_.-]{20,}#<redacted>#g' \
+                 -e 's#github_pat_[A-Za-z0-9_]{22,}#<redacted>#g' \
+                 -e 's#[A-Za-z0-9+/=_-]{40,}#<redacted>#g' \
+        | cut -c1-200)
+  [ -n "$why" ] || why="(flyctl printed nothing)"
+  printf ' :: %s' "$why"
+}
+# <<< fly error reason
 
 # >>> machine destroy (BH-660)
 # EVERY DESTROY ANSWERS FOR ITSELF (BH-660). Until now all six destroy sites in
@@ -5872,12 +5894,15 @@ spawn_one() { # spawn_one <job-file> <key> <ticket-id> <attempt> <deferrals> <de
   # are their documented fallback (no lib, no row, or a refused row).
   local PVM_SIZE=performance-8x PVM_MEM=16384 PVM_WHY=""
   command -v pool_vm_resolve >/dev/null 2>&1 && { pool_vm_resolve || say "$KEY: VM size row refused ($PVM_WHY) — launching performance-8x/16384"; }
+  # flyctl's stderr goes to a file in $TMP (removed with it on every exit), so a
+  # failed launch logs why. /dev/null when $TMP is gone, so the call still runs.
+  local FLYERR=/dev/null; [ -d "${TMP:-}" ] && FLYERR="$TMP/fly-run.err"
   MID=$(timeout 180 "$FLY" machine run "$IMAGE" -a "$APP" --detach --vm-size "$PVM_SIZE" --vm-memory "$PVM_MEM" \
-        -e PROJECT="$P" -e POOL_MODE=1 -e HARNESS_CHECKOUT=/data/harness -e WARMUP_WAIT_S="$WW" ${PULL_ARGS[@]+"${PULL_ARGS[@]}"} 2>/dev/null | grep -i 'machine id' | grep -oE "[0-9a-f]{14}" | head -1)
+        -e PROJECT="$P" -e POOL_MODE=1 -e HARNESS_CHECKOUT=/data/harness -e WARMUP_WAIT_S="$WW" ${PULL_ARGS[@]+"${PULL_ARGS[@]}"} 2>"$FLYERR" | grep -i 'machine id' | grep -oE "[0-9a-f]{14}" | head -1)
   # EVERY EXIT FROM HERE DOWN HANDS THE ROW BACK (see pool_unclaim): the claim is
   # already won, and under the flag a claim nobody releases is a key stranded in
   # flight for the stale-claim sweep's six hours.
-  [ -n "$MID" ] || { say "machine run FAILED for $KEY — job stays queued"
+  [ -n "$MID" ] || { say "machine run FAILED for $KEY — job stays queued$(fly_err_reason "$FLYERR")"
                      rm -rf "$TMP"; rm -f "$TB"
                      command -v pool_account_release >/dev/null 2>&1 && pool_account_release "$LEASE_ID"
                      pool_spawn_cap_unrecord "$KEY" "$SPAWNCAPTS"
@@ -5902,13 +5927,14 @@ spawn_one() { # spawn_one <job-file> <key> <ticket-id> <attempt> <deferrals> <de
   sleep 20   # boot + entrypoint
   # The tarball was built before the launch (BH-7215); only the copy is here.
   SYNC_OK=1
-  timeout 120 "$FLY" ssh sftp put -a "$APP" --machine "$MID" "$TB" /run/harness/.hsync.tgz >/dev/null 2>&1 || SYNC_OK=0
+  local SYNCERR=/dev/null; [ -d "${TMP:-}" ] && SYNCERR="$TMP/fly-sftp.err"
+  timeout 120 "$FLY" ssh sftp put -a "$APP" --machine "$MID" "$TB" /run/harness/.hsync.tgz >/dev/null 2>"$SYNCERR" || SYNC_OK=0
   if [ "$SYNC_OK" = 1 ]; then
     mexec "$MID" "mkdir -p /data/harness && tar xzf /run/harness/.hsync.tgz -C /data/harness && mkdir -p /data/harness/logs /data/harness/state /data/harness/locks /data/harness/builds && rm -f /run/harness/.hsync.tgz" >/dev/null || SYNC_OK=0
   fi
   rm -f "$TB"
   if [ "$SYNC_OK" != 1 ]; then
-    say "harness sync FAILED to $MID for $KEY — destroying, job stays queued"
+    say "harness sync FAILED to $MID for $KEY — destroying, job stays queued$(fly_err_reason "$SYNCERR")"
     destroy_machine "$MID" "harness sync failed for $KEY"; rm -rf "$TMP"
     # The lease was taken before the launch (BH-7215), so this exit frees it too.
     command -v pool_account_release >/dev/null 2>&1 && pool_account_release "$MID"
