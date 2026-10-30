@@ -24,8 +24,9 @@
 #   "$DIR/bin/lanes-build.sh" --root "$DIR" --write >/dev/null || { echo "FAIL: cannot write catalog/lanes.json"; exit 1; }
 #
 # Cases: R0 the real tree; R1-R4 fixtures with and without that line; R5-R7
-# the helper sourced and called, sourced only, named only in a comment; N1-N2
-# suites that must not be flagged. Fixtures live under $T only.
+# the helper sourced and called, sourced only, named only in a comment; R8-R9
+# bodies bigger than a pipe buffer, read with no SIGPIPE; N1-N2 suites that
+# must not be flagged. Fixtures live under $T only.
 #
 # Run: HARNESS_TEST_SANDBOX=1 bash tests/worker-node-lanes-build.bh-6540-test.sh   (exit 0 = pass)
 set -uo pipefail
@@ -45,12 +46,26 @@ CALL_LINE='worker_catalogs "$DIR" || exit 1'
 # code <file>: the file's non-comment lines.
 code() { grep -v '^[[:space:]]*#' "$1" 2>/dev/null; }
 
+# NO PIPE INTO grep -q (BH-8775 test-host red, the same race #8812 fixed in the
+# BH-6452 scanner). Under pipefail, `a | grep -q` is rc 141 whenever grep -q
+# exits on its first match while a is still writing: a big suite body read as
+# "not compliant" on a loaded host, a big worker test read as "no import".
+# Every match below reads a variable through a here-string instead.
+
 # helper_called <body>: rc 0 when one line sources tests/lib/worker-catalogs.sh
 # and another line calls worker_catalogs.
 helper_called() {
+  local rest
   grep -qE '^[[:space:]]*(\.|source)[[:space:]].*lib/worker-catalogs\.sh' <<<"$1" || return 1
-  grep -vE '^[[:space:]]*(\.|source)[[:space:]].*lib/worker-catalogs\.sh' <<<"$1" \
-    | grep -qE '(^|[^A-Za-z0-9_])worker_catalogs([[:space:]]|$)'
+  rest=$(grep -vE '^[[:space:]]*(\.|source)[[:space:]].*lib/worker-catalogs\.sh' <<<"$1")
+  grep -qE '(^|[^A-Za-z0-9_])worker_catalogs([[:space:]]|$)' <<<"$rest"
+}
+
+# inline_write <body>: rc 0 when one line has both lanes-build.sh and --write.
+inline_write() {
+  local lines
+  lines=$(grep 'lanes-build\.sh' <<<"$1")
+  grep -qe '--write' <<<"$lines"
 }
 
 # scan <ROOT>: one line per offender, "<suite path relative to root>: <why>".
@@ -70,7 +85,7 @@ scan() {
                     | grep -oE 'test/[A-Za-z0-9._-]+\.js' | sed 's#^test/##' | sort -u); do
         wt="$ROOT/worker/jobs/test/$name"
         [ -f "$wt" ] || continue
-        if code "$wt" | grep -qE "from ['\"]\.\./src/index\.js['\"]|import\(['\"]\.\./src/index\.js['\"]\)"; then
+        if grep -qE "from ['\"]\.\./src/index\.js['\"]|import\(['\"]\.\./src/index\.js['\"]\)" <<<"$(code "$wt")"; then
           why="node --test worker/jobs/test/$name imports ../src/index.js"; break
         fi
       done
@@ -79,14 +94,14 @@ scan() {
                       | grep -oE 'tests/lib/[A-Za-z0-9._-]+\.m?js' | sed 's#^tests/lib/##' | sort -u); do
           wt="$ROOT/tests/lib/$name"
           [ -f "$wt" ] || continue
-          if code "$wt" | grep -qE "import\([^)]*jobs/src/index\.js|from[[:space:]]*['\"][^'\"]*jobs/src/index\.js['\"]"; then
+          if grep -qE "import\([^)]*jobs/src/index\.js|from[[:space:]]*['\"][^'\"]*jobs/src/index\.js['\"]" <<<"$(code "$wt")"; then
             why="node runs tests/lib/$name, which imports worker/jobs/src/index.js"; break
           fi
         done
       fi
     fi
     [ -n "$why" ] || continue
-    printf '%s\n' "$body" | grep 'lanes-build\.sh' | grep -qe '--write' && continue
+    inline_write "$body" && continue
     helper_called "$body" && continue
     rel=${f#"$ROOT"/}
     echo "$rel: $why, and the suite never runs bin/lanes-build.sh --write"
@@ -171,6 +186,31 @@ OUT=$(scan "$RA")
 case $OUT in
   "tests/drive-worker-test.sh: imports worker/jobs/src/index.js, and the suite never runs bin/lanes-build.sh --write") ok "R7 helper named only in a comment: flagged" ;;
   *) bad "R7 helper named only in a comment: want the suite flagged, got [$OUT]" ;;
+esac
+
+# --- R8/R9: a body bigger than a pipe buffer (BH-8775 test-host red) ----------
+# FILLER is 256 KB of code lines, more than a 64 KB pipe holds. With a pipe into
+# grep -q, grep -q exits on the first match while the writer still has most of
+# the body to send: the writer dies of SIGPIPE every time, and pipefail turns a
+# match into rc 141. R8: the helper lines come first, then the filler; the suite
+# must read as compliant. R9: the worker test imports ../src/index.js on its
+# first line, then the filler; the suite must read as an offender.
+FILLER=$(awk 'BEGIN { for (i = 0; i < 4096; i++) printf "echo filler line %05d to pass a pipe buffer xxxxxxxxxxxxxx\n", i }')
+RW=$(fixture w)
+cp "$B_JS" "$RW/worker/jobs/test/"
+{ grep -v -e 'lanes-build\.sh' -e 'worker[-_]catalogs' "$B_SRC" | sed -n '1,/^DIR=/p'
+  printf '%s\n' "$SRC_LINE" "$CALL_LINE" "$FILLER"
+  grep -v -e 'lanes-build\.sh' -e 'worker[-_]catalogs' "$B_SRC" | sed '1,/^DIR=/d'; } > "$RW/tests/staff-record.bh-5561-test.sh"
+OUT=$(scan "$RW")
+[ -z "$OUT" ] && ok "R8 helper called, 256 KB body after it: clean" || bad "R8 helper called with a 256 KB body: want nothing, got [$OUT]"
+RX=$(fixture x)
+{ echo "import worker from '../src/index.js';"; printf '%s\n' "$FILLER" | sed 's#^echo #// #; s#^#void 0; #'; } > "$RX/worker/jobs/test/big.bh-8775.test.js"
+printf '#!/bin/bash\nDIR=x\ncd "$DIR/worker/jobs" && node --test test/big.bh-8775.test.js\n' > "$RX/tests/big-test.sh"
+OUT=$(scan "$RX")
+case $OUT in
+  "tests/big-test.sh: node --test worker/jobs/test/big.bh-8775.test.js imports ../src/index.js"*)
+    ok "R9 worker test import, 256 KB body after it: flagged" ;;
+  *) bad "R9 worker test import with a 256 KB body: want the suite flagged, got [$OUT]" ;;
 esac
 
 # --- N1: index.js named only in a comment ---------------------------------------
