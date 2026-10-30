@@ -32,6 +32,10 @@ bad() { FAIL=$((FAIL+1)); echo "FAIL: $1"; }
 command -v jq >/dev/null || { echo "jq missing — skipping"; exit 0; }
 command -v flock >/dev/null || { echo "FAIL: flock missing"; exit 1; }
 lwf_setup
+# BH-8705: gate 07 (bin/lib/lead-gates.d/07-merge-carry.sh) carries a lead
+# word onto a main-merge head before gates 10 and 50. This suite pins the path
+# with that gate off; tests/lead-merge-carry.bh-8705-test.sh pins the gate.
+export LEAD_REVIEW_MERGE_CARRY=0
 lgf_setup
 lg6_setup
 lg8_setup

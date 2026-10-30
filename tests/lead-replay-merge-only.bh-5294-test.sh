@@ -201,6 +201,10 @@ T="$T/disp"; mkdir -p "$T"
 lwf_setup
 export LEAD_REVIEW_AUTO_REPOS="example-org/demo-os"
 [ -r "$H/bin/lib/lead-gates.d/50-replay-delta.sh" ] && ok || bad "setup: the closure of bin/lead-review.sh did not install bin/lib/lead-gates.d/50-replay-delta.sh"
+# BH-8705: gate 07 (bin/lib/lead-gates.d/07-merge-carry.sh) carries a lead
+# word onto a main-merge head before gates 10 and 50. This suite pins the path
+# with that gate off; tests/lead-merge-carry.bh-8705-test.sh pins the gate.
+export LEAD_REVIEW_MERGE_CARRY=0
 lwf_main_merge
 SG=${SHA:0:12}
 djobs() { lwf_cnt "^POST /api/jobs .*\"ticket_id\":\"lr-$1-" "$T/log/worker"; }

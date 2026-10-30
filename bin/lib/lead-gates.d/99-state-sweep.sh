@@ -13,7 +13,8 @@
 #       deletes, older than LEAD_REVIEW_GATE_STATE_KEEP_DAYS:
 #         the files risk-pub-* inbuild-wait-* traced-* alerted-* selfcheck-*
 #         review-tier-* (-maxdepth 1) and silence/note-* silence/scanned-*;
-#         the rows of risk.tsv and requested.tsv. Column 1 is the epoch; a row
+#         the rows of risk.tsv, requested.tsv and merge-carry.tsv (gate
+#         07, BH-8705). Column 1 is the epoch; a row
 #         whose column 1 is not all digits is kept.
 #       The window is a required registry knob (lane lead-review, default 7);
 #       0 = off. A value that is not a whole number (or unset: the registry
@@ -60,7 +61,7 @@ lg_tick_state_sweep() {
              -o -name 'alerted-*' -o -name 'selfcheck-*' -o -name 'review-tier-*' \) -mmin +$((keep * 1440)) -print0 2>/dev/null
            find "$st/silence" -maxdepth 1 -type f \( -name 'note-*' -o -name 'scanned-*' \) -mmin +$((keep * 1440)) -print0 2>/dev/null)
   cut=$(( $(date +%s) - keep * 86400 ))
-  for p in risk.tsv requested.tsv; do
+  for p in risk.tsv requested.tsv merge-carry.tsv; do
     rows=$((rows + $(_lgss_rows "$st/$p" "$cut" "$mode")))
   done
   mkdir -p "${stamp%/*}" 2>/dev/null && : > "$stamp" 2>/dev/null

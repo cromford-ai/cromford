@@ -204,6 +204,10 @@ awk -F'\t' '$3 == 8' "$ST/builder-carry.tsv" | grep -q . && ok || bad "B5 the 1-
 T="$ROOT_T/disp"; mkdir -p "$T"
 lwf_setup
 export LEAD_REVIEW_AUTO_REPOS="example-org/demo-os"
+# BH-8705: gate 07 (bin/lib/lead-gates.d/07-merge-carry.sh) carries a lead
+# word onto a main-merge head before gates 10 and 50. This suite pins the path
+# with that gate off; tests/lead-merge-carry.bh-8705-test.sh pins the gate.
+export LEAD_REVIEW_MERGE_CARRY=0
 lwf_main_merge
 SG=${SHA:0:12}
 gc=(git -C "$W" -c user.email=t@t -c user.name=t)

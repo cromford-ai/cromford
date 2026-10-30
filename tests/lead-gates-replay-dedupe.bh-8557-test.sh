@@ -53,6 +53,10 @@ unset AGENT_CALL_FP AGENT_CALL_GUARD_STAGE
 
 lwf_setup
 export LEAD_REVIEW_AUTO_REPOS="example-org/demo-os"
+# BH-8705: gate 07 (bin/lib/lead-gates.d/07-merge-carry.sh) carries a lead
+# word onto a main-merge head before gates 10 and 50. This suite pins the path
+# with that gate off; tests/lead-merge-carry.bh-8705-test.sh pins the gate.
+export LEAD_REVIEW_MERGE_CARRY=0
 lwf_main_merge
 SG=${SHA:0:12}; H112=${H1:0:12}
 refs=(); for n in $(seq 301 311); do refs+=("$H1:refs/pull/$n/head"); done
