@@ -1,0 +1,11 @@
+{
+  "env": "MC_PREQUEUE_FAST_LINTS_BUDGET_S",
+  "type": "int",
+  "default": 90,
+  "min": 10,
+  "max": 170,
+  "unit": "seconds",
+  "zero_means": null,
+  "read_in": "bin/lib/mc-prequeue.d/fast-lints.sh",
+  "note": "BH-8473: the wall budget of the pre-queue fast lint set, the base reruns of its red items included. 90 s, not 60: a red lanes-registry item runs its static sections (about 29 s, section 7 included) on the merged tree and again on main, one after the other. Each item gets `timeout` with the seconds left; an item the budget cuts is unfinished and never parks. The hook never takes more than the gate's call budget left (MC_PREQUEUE_CALL_BUDGET_S) minus MC_PREQUEUE_FAST_LINTS_RESERVE_S (default 10 s). Per project: lane.merge-conductor.<project>.mc_prequeue_fast_lints_budget_s."
+}

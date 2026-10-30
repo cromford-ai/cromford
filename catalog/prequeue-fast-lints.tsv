@@ -1,0 +1,27 @@
+# catalog/prequeue-fast-lints.tsv — the fast lint set the merge conductor runs
+# on a READY head merged onto current main, before it enqueues it (BH-8473).
+# bin/prequeue-fast-lints.sh reads it; bin/lib/mc-prequeue.d/fast-lints.sh is
+# the conductor's hook. The settings row lane.merge-conductor.mc_prequeue_fast_lints_set
+# picks rows by id (a comma list; empty = every row). A command is never a
+# settings row: it lives here, in git.
+# One row per item, four TAB-separated columns, none empty:
+#   id      stable name; the settings row, results.tsv and the log line use it
+#   argv    what runs, from the root of the tree under test (bash -c). `@trace`
+#           is the runner's trace item: bin/test-trace-safety.sh --gate on the
+#           tests/*.sh and tests/mc/*.sh the diff origin/main..HEAD adds or edits
+#   suite   the name a park reason gives (prequeue-red: <suites> on main …)
+#   reason  one plain line: what it catches, and the red batch that asked for it
+# tests/lanes-registry.bh-2205-test.sh is not a row: it runs the suite below
+# twice on copies of the tree (231 s) and catches nothing that suite does not.
+# Rows run in this order, longest first (measured on a build box, 2026-10-26),
+# so the slowest item starts at once and the set fits its budget.
+worker-node-lanes-build	bash tests/worker-node-lanes-build.bh-6540-test.sh	tests/worker-node-lanes-build.bh-6540-test.sh	the worker node catalogs, R0 on the real tree (#8361, #8370)
+rules-pack	bash bin/rules-pack.sh --runner local --base origin/main	bin/rules-pack.sh	the rules pack on the diff, plan-diff-bind included
+llm-lane-knobs	bash tests/llm-lane-knobs.bh-2533-test.sh	tests/llm-lane-knobs.bh-2533-test.sh	every LLM lane registers its model and budget knobs
+lanes-registry	LANES_REGISTRY_SECTIONS=static bash tests/lanes-registry-test.sh	tests/lanes-registry-test.sh	the knob schema, no missing knobs (§7) and the registry static sections (#8344, #8348, #8377)
+llm-lane-id	bash tests/llm-lane-id.bh-2303-test.sh	tests/llm-lane-id.bh-2303-test.sh	every LLM call site names its lane id
+mc-split-layout	bash tests/mc-split-layout-test.sh	tests/mc-split-layout-test.sh	the merge conductor module map (#8377)
+br-split-layout	bash tests/br-split-layout.bh-5241-test.sh	tests/br-split-layout.bh-5241-test.sh	the blocked-resolver module map
+context-budget-manifest	bash tests/context-budget-manifest-test.sh	tests/context-budget-manifest-test.sh	the context budget manifest covers every prompt (#8346)
+list-file-lint	bash bin/list-file-lint.sh	bin/list-file-lint.sh	the shared list files
+trace	@trace	bin/test-trace-safety.sh	the trace gate on the suites this diff adds or edits (#8346, #8370, #8401)

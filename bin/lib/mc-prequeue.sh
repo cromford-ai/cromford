@@ -29,6 +29,10 @@
 # (mc-prequeue.d/restamp.sh, BH-6842) and pq_mignum
 # (mc-prequeue.d/migration-numbers.sh, BH-7671), which renumbers a head's added
 # migration whose number main or a queued PR took, pushes, and holds.
+# A third, pq_fastlint (mc-prequeue.d/fast-lints.sh, BH-8473), runs after them,
+# also before the cache read and in both gate modes: a fast lint set on the
+# head merged onto the main tip. An item red there and green on main answers
+# red with PQ_SUITES naming it and PQ_PATH empty; every other answer goes on.
 #
 # THE KNOBS (lane merge-conductor; defaults in PQ_KNOB_DEFAULTS below):
 # MC_PREQUEUE_GATE is the gate itself. No seed row ships for
@@ -36,9 +40,14 @@
 # keeps the CI pre-queue gate on beside the builder's selection gate
 # (bin/selection-gate.sh). An operator sets the row to 0 per
 # docs/notes/2026-10-24-BH-8062-builder-selection-gate.md; rollback: the row to 1.
-# 0 skips only the verdict (cache read, pq_resolve, dispatch). When pq_restamp or
-# pq_mignum can act (pq_restamp_wanted / pq_mignum_wanted, no network), the
-# main-tip read and both hooks still run, so an unreadable tip still holds.
+# 0 skips only the verdict (cache read, pq_resolve, dispatch). When pq_restamp,
+# pq_mignum or pq_fastlint can act (pq_restamp_wanted / pq_mignum_wanted /
+# pq_fastlint_wanted, no network), the main-tip read and the hooks still run,
+# so an unreadable tip still holds and a fast lint red still parks.
+# MC_PREQUEUE_FAST_LINTS (BH-8473) 1 runs the fast lint set before the queue;
+# MC_PREQUEUE_FAST_LINTS_BUDGET_S and MC_PREQUEUE_FAST_LINTS_JOBS bound it, and
+# MC_PREQUEUE_FAST_LINTS_SET picks catalog/prequeue-fast-lints.tsv rows
+# (mc-prequeue.d/fast-lints.sh).
 # MC_PREQUEUE_FRESH_COMMITS (BH-6335) is how many commits behind the current
 # main a reused non-red verdict's main may be (mc-prequeue.d/dispatch.sh).
 # MC_PREQUEUE_TRACE (BH-6335) 1 asks the gate to run its suites under the trace
@@ -66,7 +75,7 @@
 # asks again. A dispatch never waits for its run: pq_dispatch writes `pending`
 # for (PR, head, main) and the gate holds; a later run reads the verdict.
 
-PQ_KNOB_DEFAULTS="MC_PREQUEUE_GATE=1 MC_PREQUEUE_FRESH_S=1800 MC_PREQUEUE_DEADLINE_S=2400 MC_PREQUEUE_REUSE=1 MC_BATCH_SOLO=1 MC_BATCH_SOLO_MAX_MEMBERS=13 MC_PREQUEUE_FRESH_COMMITS=3 MC_PREQUEUE_TRACE=1 MC_PREQUEUE_IMPACT_REUSE=1 MC_PREQUEUE_IMPACT_MAX_S=21600 MC_PREQUEUE_CALL_BUDGET_S=150 MC_PREQUEUE_GIT_LOCK_WAIT_S=5"
+PQ_KNOB_DEFAULTS="MC_PREQUEUE_GATE=1 MC_PREQUEUE_FRESH_S=1800 MC_PREQUEUE_DEADLINE_S=2400 MC_PREQUEUE_REUSE=1 MC_BATCH_SOLO=1 MC_BATCH_SOLO_MAX_MEMBERS=13 MC_PREQUEUE_FRESH_COMMITS=3 MC_PREQUEUE_TRACE=1 MC_PREQUEUE_IMPACT_REUSE=1 MC_PREQUEUE_IMPACT_MAX_S=21600 MC_PREQUEUE_CALL_BUDGET_S=150 MC_PREQUEUE_GIT_LOCK_WAIT_S=5 MC_PREQUEUE_FAST_LINTS=1 MC_PREQUEUE_FAST_LINTS_BUDGET_S=90 MC_PREQUEUE_FAST_LINTS_JOBS=4 MC_PREQUEUE_FAST_LINTS_RESERVE_S=10"
 
 # pq_knob <NAME> — a merge-conductor lane knob for this project, a non-negative
 #   integer, else its default from PQ_KNOB_DEFAULTS (the _bej_knob pattern).
@@ -139,15 +148,17 @@ pq_gate() {
   PQ_VERDICT=proceed; PQ_MAIN=""; PQ_WHY=""; PQ_SUITES=""; PQ_PATH=""
   _pq_wf=""; _pq_key="$slug#$num"; _pq_cs=(); _pq_cl=()
   # THE GATE OFF (BH-8062). MC_PREQUEUE_GATE=0 turns off only the verdict: the
-  # cache read and the prequeue-gate.yml dispatch. pq_restamp and pq_mignum
-  # below still run when either one can act (its cheap *_wanted check, no
-  # network), because a stale stamp or a taken number turns main red after the
-  # merge whatever the gate says. When neither can act, no main tip is read.
+  # cache read and the prequeue-gate.yml dispatch. pq_restamp, pq_mignum and
+  # pq_fastlint below still run when one can act (its cheap *_wanted check, no
+  # network), because a stale stamp, a taken number or a red lint turns main
+  # red after the merge whatever the gate says. When none can act, no main tip
+  # is read.
   local off=0
   if [ "$(pq_knob MC_PREQUEUE_GATE)" = 0 ]; then
     off=1
     if ! { declare -F pq_restamp >/dev/null && { ! declare -F pq_restamp_wanted >/dev/null || pq_restamp_wanted "$slug"; }; } \
-       && ! { declare -F pq_mignum >/dev/null && pq_mignum_wanted; }; then
+       && ! { declare -F pq_mignum >/dev/null && pq_mignum_wanted; } \
+       && ! { declare -F pq_fastlint >/dev/null && pq_fastlint_wanted; }; then
       declare -F pq_status_gate >/dev/null && pq_call -w status pq_status_gate "$slug" "$head" "$url" off; echo proceed; return 0
     fi
   fi
@@ -158,6 +169,7 @@ pq_gate() {
     PQ_VERDICT=hold; echo hold; return 0
   fi
   [ "$b" != 0 ] && _pq_budget_start "$b"
+  local t0=$SECONDS
   # An unreadable tip holds, a quota refusal (rc 75) included: never a guess at main.
   [ -n "$pbase" ] && { pq_call main-tip mc_rest_var raw gh_rest GET "repos/$slug/commits/$pbase" || rc=$?; }
   pq_over && { _pq_over_hold "$head" "$b"; return 0; }
@@ -185,6 +197,23 @@ pq_gate() {
     "held "*) PQ_WHY="migration number check held: ${mn#held }"; _pq_end hold; return 0 ;;
   esac
   pq_over && { _pq_over_hold "$head" "$b"; return 0; }
+  # BH-8473: the fast lint set on the head merged onto PQ_MAIN. A red parks in
+  # both gate modes, before the cache read; PQ_PATH stays empty. Its budget is
+  # the call budget left minus MC_PREQUEUE_FAST_LINTS_RESERVE_S (default 10 s),
+  # so the call bound never cuts a sane knob.
+  local fl=""
+  declare -F pq_fastlint >/dev/null && pq_fastlint_wanted \
+    && fl=$(pq_call fastlint pq_fastlint "$slug" "$num" "$url" "$head" "$PQ_MAIN" "$([ "$b" != 0 ] && echo $((b - (SECONDS - t0))) || echo 0)" 2>/dev/null | tail -n 1)
+  pq_over && { _pq_over_hold "$head" "$b"; return 0; }
+  case "$fl" in
+    "red "?*) PQ_SUITES="${fl#red }"; PQ_VERDICT=red
+      # The red publishes its status like every red (status.sh), inside the budget.
+      if declare -F pq_status_gate >/dev/null; then
+        pq_call -w status pq_status_gate "$slug" "$head" "$url"
+        [ "$?" = 124 ] && pq_over && { _pq_over_hold "$head" "$b"; return 0; }
+      fi
+      _pq_end red; return 0 ;;
+  esac
   # The gate off (BH-8062, above): the hooks ran and neither held.
   if [ "$off" = 1 ]; then
     _pq_budget_stop; PQ_VERDICT=proceed

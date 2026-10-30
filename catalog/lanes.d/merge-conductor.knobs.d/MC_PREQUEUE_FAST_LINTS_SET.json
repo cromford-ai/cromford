@@ -1,0 +1,8 @@
+{
+  "env": "MC_PREQUEUE_FAST_LINTS_SET",
+  "type": "string",
+  "default": "",
+  "zero_means": null,
+  "read_in": "bin/lib/mc-prequeue.d/fast-lints.sh",
+  "note": "BH-8473: a comma list of catalog/prequeue-fast-lints.tsv ids the pre-queue fast lint set runs, for example `lanes-registry,trace`. Empty = every row. An unknown id is skipped with one note. Only ids: the commands are in the catalog in git, never in a settings row. Per project: lane.merge-conductor.<project>.mc_prequeue_fast_lints_set."
+}

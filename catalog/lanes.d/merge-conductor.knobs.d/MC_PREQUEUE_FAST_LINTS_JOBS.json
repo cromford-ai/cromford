@@ -1,0 +1,11 @@
+{
+  "env": "MC_PREQUEUE_FAST_LINTS_JOBS",
+  "type": "int",
+  "default": 4,
+  "min": 1,
+  "max": 16,
+  "unit": null,
+  "zero_means": null,
+  "read_in": "bin/lib/mc-prequeue.d/fast-lints.sh",
+  "note": "BH-8473: how many items of the pre-queue fast lint set run at once. The longest item takes about 34 s and the set about 120 s serial, so 4 fits the 90 s budget. Per project: lane.merge-conductor.<project>.mc_prequeue_fast_lints_jobs."
+}

@@ -97,6 +97,19 @@ code_has() {
   [ "${n:-0}" -gt 0 ]
 }
 bad() { FAIL=$((FAIL+1)); echo "FAIL: $1"; }
+# LANES_REGISTRY_SECTIONS=static (BH-8473) skips the slow sections that render
+# cron, run lane headers or grep every script per knob: 2-5, 6, 12, 16 and 19.
+# The ones that read the registry and the knob fragments still run: 1, 7-11,
+# 13-15, 17, 18 and 20. Section 7 (no missing knobs, about 16 s) stays in: it
+# is the check that caught batch #8344 (a wired script read MC_LOG and the
+# registry did not carry it). The merge conductor's pre-queue fast lint set
+# (catalog/prequeue-fast-lints.tsv) runs it inside a 90 s budget. Unset, or any
+# other value, runs every section.
+lr_section() {
+  [ "${LANES_REGISTRY_SECTIONS:-}" = static ] || return 0
+  case " 2 6 12 16 19 " in *" $1 "*) return 1 ;; esac
+  return 0
+}
 
 # PLUMBING — names that are read with ${NAME:-default} but are not operator
 # knobs: where the harness lives, what the shell hands down, and credentials.
@@ -195,6 +208,7 @@ jq -e . "$REG" >/dev/null 2>&1 && ok || bad "1a catalog/lanes.json is not valid 
 NIDS=$(jq -r '.lanes|length' "$REG"); NUNIQ=$(jq -r '[.lanes[].id]|unique|length' "$REG")
 [ "$NIDS" = "$NUNIQ" ] && ok || bad "1b $NIDS lanes but $NUNIQ unique ids"
 
+if lr_section 2; then  # LANES_REGISTRY_SECTIONS=static skips 2-5 (they render and run cron)
 # --- 2. every cron script is registered --------------------------------------
 # Comments are stripped FIRST. hub.cron carries a prose note naming a script
 # that was REMOVED from cron; a registry test that read it would demand a lane
@@ -288,6 +302,9 @@ done < <(jq -r '.lanes[]|select(.wired)|.id' "$REG")
 # and the skip was recorded, not merely silent
 [ -s "$T/g/logs/lane-gate.log" ] && ok || bad "5b nothing was written to logs/lane-gate.log by nine gated headers"
 
+fi  # lr_section 2
+
+if lr_section 6; then  # LANES_REGISTRY_SECTIONS=static skips 6 (30 s of per-knob greps)
 # --- 6. no phantom knobs -----------------------------------------------------
 PHANTOM=""
 while read -r id env readin prefix; do
@@ -307,6 +324,7 @@ while read -r id env readin prefix; do
   grep -qw "$env" "$DIR/$f" || PHANTOM="$PHANTOM $id/$env"
 done < <(jq -r '.lanes[]|select(.wired)|.id as $i|.knobs[]?|[$i,(.env//"null"),(.read_in//"null"),(.prefix//"null")]|@tsv' "$REG")
 [ -z "$PHANTOM" ] && ok || bad "6 registered knobs nothing reads:$PHANTOM"
+fi  # lr_section 6
 
 # --- 7. no missing knobs -----------------------------------------------------
 # An operator knob looks like ${NAME:-default} for an ALL-CAPS NAME the script
@@ -409,6 +427,7 @@ BADPOL=$(jq -r '
     | "\($i)/\(if type == "object" then (.name // "?") else . end)" ] | join(" ")' "$REG")
 [ -z "$BADPOL" ] && ok || bad "11 aliases with no polarity (present|absent|partial):$BADPOL"
 
+if lr_section 12; then  # LANES_REGISTRY_SECTIONS=static skips 12 (it reads every cron render)
 # --- 12. every lane this repo owns is WIRED ------------------------------------
 # The only way out is a DECLARATION, and the declaration is checked: a lane
 # claiming external=true whose script is sitting in this repo fails here, and so
@@ -467,6 +486,8 @@ case "$B12F" in
   *) bad "12c the no-reason arm did not catch a MISSING external_reason:$B12F" ;;
 esac
 
+fi  # lr_section 12
+
 # --- 13. no secret is a knob --------------------------------------------------
 # A credential-SHAPED name is not automatically a credential: POOL_GH_TOKEN_
 # ROTATE_EVERY is how many seconds a token lives and POOL_SPAWN_CAP_PER_KEY is a
@@ -512,6 +533,7 @@ BADPRE=$(jq -r '[.lanes[]|.id as $i|.knobs[]?|select(has("prefix"))|.prefix as $
   |select(((.env|type)=="string" and (.env|startswith($pre)))|not)|"\($i)/\(.env // "?")"]|join(" ")' "$REG")
 [ -z "$BADPRE" ] && ok || bad "15 knobs whose declared prefix is not a prefix of the env name: $BADPRE"
 
+if lr_section 16; then  # LANES_REGISTRY_SECTIONS=static skips 16 (it walks every wired script)
 # --- 16. lane_env_apply runs BELOW the env load -------------------------------
 # THE BUG THIS EXISTS FOR. Phase C wired 68 lanes and put the gate header near
 # the top of each script — above `set -a; . env/global.env` in 24 of them. The
@@ -557,6 +579,8 @@ while read -r id; do
 done < <(jq -r '.lanes[]|select(.wired)|.id' "$REG")
 [ -z "$NOAPPLY" ] && ok || bad "16a wired lanes whose settings rows can never reach the script:$NOAPPLY"
 [ -z "$BADORDER" ] && ok || bad "16b lane_env_apply ABOVE the env load — global.env overwrites the row:$BADORDER"
+
+fi  # lr_section 16
 
 # --- 17. a command, a host, a path or an identity is never settable -----------
 # Registering every `${X:-…}` a wired script reads (section 7) pulled 212 new
@@ -657,6 +681,7 @@ BADSET=$(jq -r '[.lanes[]|.id as $i|.knobs[]?|select(has("settable"))|select((.s
 BADDEF=$(jq -r '[.lanes[]|.id as $i|.knobs[]?|select((.default|tostring)|test("\\$"))|"\($i)/\(.env)"]|join(" ")' "$REG")
 [ -z "$BADDEF" ] && ok || bad "18 knob defaults carrying shell text instead of a value:$BADDEF"
 
+if lr_section 19; then  # LANES_REGISTRY_SECTIONS=static skips 19 (it walks every wired script)
 # --- 19. the gate runs BEFORE the lane's work, not somewhere inside it --------
 # THE OTHER HALF OF SECTION 5 (BH-1165 review). Section 5 lifts a header's two
 # lines out of the script and runs them, so it proves the header WORKS — it
@@ -759,6 +784,8 @@ else
   bad "19b the pre-gate walk is dead: late(gate=$LG,work=$LW) early(gate=$EG,work=$EW)"
 fi
 
+fi  # lr_section 19
+
 # --- 20. the libs scope and the required knobs (BH-1511.1) -------------------
 # 20-self: code_has still tells a read from a comment, so the SIGPIPE-safe form
 # did not weaken 20a/20b.
@@ -806,5 +833,6 @@ done < <(jq -r '
   |@tsv' "$REG")
 [ -z "$REQBAD" ] && ok || bad "20d required knobs must have a default and no literal read left:$REQBAD"
 
-echo "lanes-registry: $PASS passed, $FAIL failed  ($NIDS lanes, $(jq -r '[.lanes[].knobs|length]|add' "$REG") knobs, $(jq -r '[.lanes[]|select(.wired)]|length' "$REG") wired)"
+LR_RUN=""; [ "${LANES_REGISTRY_SECTIONS:-}" = static ] && LR_RUN=" (static sections only: LANES_REGISTRY_SECTIONS=static)"
+echo "lanes-registry: $PASS passed, $FAIL failed  ($NIDS lanes, $(jq -r '[.lanes[].knobs|length]|add' "$REG") knobs, $(jq -r '[.lanes[]|select(.wired)]|length' "$REG") wired)$LR_RUN"
 [ "$FAIL" -eq 0 ]

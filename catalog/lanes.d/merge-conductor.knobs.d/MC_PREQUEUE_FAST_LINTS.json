@@ -1,0 +1,11 @@
+{
+  "env": "MC_PREQUEUE_FAST_LINTS",
+  "type": "int",
+  "default": 1,
+  "min": 0,
+  "max": 1,
+  "unit": null,
+  "zero_means": "off",
+  "read_in": "bin/lib/mc-prequeue.d/fast-lints.sh",
+  "note": "BH-8473: 1 = before the conductor enqueues a READY head, pq_gate runs the fast lint set (catalog/prequeue-fast-lints.tsv, bin/prequeue-fast-lints.sh) on the head merged onto current main, in a snapshot as nobody, with no GitHub or Mergify call. An item red there and green on main parks the row `prequeue-red: <suites> on main <m12>` for bin/blocked-resolver.sh; the PR is not enqueued. It runs with MC_PREQUEUE_GATE 0 or 1. A conflict, a busy git lock or a set that cannot run goes on to the queue (one PREQUEUE_FAST_LINT none line). 0 = off. Per project: lane.merge-conductor.<project>.mc_prequeue_fast_lints."
+}

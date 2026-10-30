@@ -1,0 +1,11 @@
+{
+  "env": "MC_PREQUEUE_FAST_LINTS_RESERVE_S",
+  "type": "int",
+  "default": 10,
+  "min": 0,
+  "max": 60,
+  "unit": "seconds",
+  "zero_means": null,
+  "read_in": "bin/lib/mc-prequeue.d/fast-lints.sh",
+  "note": "BH-8473: the seconds the pre-queue fast lint hook keeps back from the gate's call budget left (MC_PREQUEUE_CALL_BUDGET_S). The set's budget is never more than the budget left minus this reserve, so pq_call's bound never cuts the hook mid-run. When the budget left minus the reserve is under 1 s, the hook answers could-not-run and the row goes on. Per project: lane.merge-conductor.<project>.mc_prequeue_fast_lints_reserve_s."
+}

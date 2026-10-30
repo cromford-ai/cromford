@@ -145,8 +145,8 @@ share-publish-clean.bh-795-test.sh verification-map-no-commit-test.sh
 generated-not-tracked.bh-5518-test.sh"
 # Each bound is the after-number this build measured on its own tree plus at
 # most 10% for corpus growth (docs/notes/2026-10-23-BH-8098-always-cut.md).
-ALWAYS_MAX=55   # after 51, before 84
-Z2_MAX=95       # after 88 (this suite names the prompt), before 118 (119 with this suite)
+ALWAYS_MAX=62   # after 51, before 84; re-measured at 57 with BH-8473's two whole-tree suites
+Z2_MAX=106      # after 88 (this suite names the prompt), before 118 (119 with this suite); re-measured at 97 with BH-8473
 
 # in_tree <path> — rc 0 when the checkout holds <path>. A cd, not a rooted
 # path: the map reads a checkout tail it cannot bind as a whole-tree read.
