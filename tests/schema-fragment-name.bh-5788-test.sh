@@ -16,7 +16,8 @@
 #      finding that names that fragment when it does (BH-7229)
 #   N4 a stamp that is not a real UTC minute (month 13, day 32, hour 24, ...)
 #      is a finding
-#   N5 an added NNNN fragment on a free number (or renumbered to one) is clean
+#   N5 an added NNNN fragment on a free number (or renumbered to one) is a
+#      finding too (BH-6192)
 #   N6 a later stamp is clean (another worker's stamps do not count); the
 #      first stamp in a worker with only NNNN fragments is clean; edits,
 #      deletes and files outside schema.d/ are clean; no base is rc 125
@@ -26,8 +27,8 @@
 #      key-only name, a short stamp, an upper-case key and an 8-digit date are
 #      refused with `not a fragment name`
 # Catalog rows and the real entry points:
-#   N9 the self-check row body-schema-stamp NOTES a new NNNN fragment and is
-#      silent on a stamp-form one; the rules-pack row runs through
+#   N9 the self-check row body-schema-stamp is off (BH-6192) and silent on a
+#      new NNNN fragment and a stamp-form one; the rules-pack row runs through
 #      bin/rules-pack.sh, green on a clean diff and red on a reused number
 # Fixture repos only, fixed commit dates. Run from anywhere:
 #   HARNESS_TEST_SANDBOX=1 bash tests/schema-fragment-name.bh-5788-test.sh
@@ -112,22 +113,28 @@ fixture n2; add "$SD/x.sql"; git -C "$R" add -A; lint
 fixture n7u; add "$SD/202613121200-bh-9001-x.sql"; lint
 [ "$RC" = 1 ] && [ "$OUT" = "$SD/202613121200-bh-9001-x.sql: $MSG" ] && ok \
   || bad "N7 an untracked bad stamp must be a finding, rc $RC out [$OUT]"
-# ── N5 a new NNNN fragment on a FREE number: passes the pack, and the
-# self-check row body-schema-stamp NOTES it (the open NNNN PRs stay green) ────
+# ── N5 a new NNNN fragment on a FREE number: refused by the pack, and the
+# self-check row body-schema-stamp is off ────────────────────────────────────
+# TEST-CHANGE (BH-6192): N5 pinned "a free-number NNNN fragment passes the pack"
+# while open NNNN PRs drained. They drained; the ticket makes every new NNNN
+# fragment a finding (the generic line), renumbered ones included.
 fixture n7; add "$SD/0002-bh-9001-x.sql"; git -C "$R" add -A; git -C "$R" commit -qm n7; lint
-[ "$RC" = 0 ] && [ -z "$OUT" ] && ok || bad "N5 a new NNNN fragment on a free number must pass the pack, rc $RC out [$OUT]"
+[ "$RC" = 1 ] && [ "$OUT" = "$SD/0002-bh-9001-x.sql: $MSG" ] && ok || bad "N5 a new NNNN fragment on a free number must be refused by the pack, rc $RC out [$OUT]"
 fixture n7r; git -C "$R" mv "$SD/0001-bh-1-b.sql" "$SD/0002-bh-1-b.sql"; lint
-[ "$RC" = 0 ] && [ -z "$OUT" ] && ok || bad "N5 a fragment renumbered to a free number passes the pack, rc $RC out [$OUT]"
-N=$(grep -c $'^body-schema-stamp\tnote\tadded=worker/\*/schema.d/\[0-9\]\[0-9\]\[0-9\]\[0-9\]-\*.sql\t' "$DIR/catalog/pr-self-check.tsv")
-[ "$N" = 1 ] && ok || bad "N9 catalog/pr-self-check.tsv must carry one body-schema-stamp note row on added NNNN fragments (got $N)"
+[ "$RC" = 1 ] && [ "$OUT" = "$SD/0002-bh-1-b.sql: $MSG" ] && ok || bad "N5 a fragment renumbered to a free number must be refused by the pack, rc $RC out [$OUT]"
+# TEST-CHANGE (BH-6192): N9 pinned the body-schema-stamp row in mode note; the
+# pack refuses now, so the ticket sets the row to off.
+N=$(grep -c $'^body-schema-stamp\toff\tadded=worker/\*/schema.d/\[0-9\]\[0-9\]\[0-9\]\[0-9\]-\*.sql\t' "$DIR/catalog/pr-self-check.tsv")
+[ "$N" = 1 ] && ok || bad "N9 catalog/pr-self-check.tsv must carry one body-schema-stamp off row on added NNNN fragments (got $N)"
 printf '## Why\nA fixture.\n' > "$T/body.md"
 psc() { # psc <repo> — the real self-check, this row only
   ( cd "$1" && PR_SELF_CHECK_CATALOG="$DIR/catalog/pr-self-check.tsv" bash "$DIR/bin/pr-self-check.sh" check --repo . \
       --base "$BASE" --head HEAD --body "$T/body.md" --only '^body-schema-stamp$' ) >"$T/psc.out" 2>&1; RC=$?
 }
 fixture n7; add "$SD/0002-bh-9001-x.sql"; git -C "$R" add -A; git -C "$R" commit -qm n7; psc "$R"
-[ "$RC" = 0 ] && grep -q '^NOTE body-schema-stamp: ' "$T/psc.out" && grep -q 'yyyymmddhhmm' "$T/psc.out" && ok \
-  || bad "N9 the self-check must NOTE (never refuse) a new NNNN fragment: rc $RC [$(cat "$T/psc.out")]"
+# TEST-CHANGE (BH-6192): this case expected a NOTE line; the row is off now.
+[ "$RC" = 0 ] && ! grep -q 'body-schema-stamp' "$T/psc.out" && ok \
+  || bad "N9 the off self-check row must print no body-schema-stamp line on a new NNNN fragment: rc $RC [$(cat "$T/psc.out")]"
 fixture n7s; add "$SD/202610121200-bh-9001-x.sql"; git -C "$R" add -A; git -C "$R" commit -qm n7s; psc "$R"
 [ "$RC" = 0 ] && ! grep -q 'body-schema-stamp' "$T/psc.out" && ok \
   || bad "N9 a stamp-form fragment gets no note: rc $RC [$(cat "$T/psc.out")]"

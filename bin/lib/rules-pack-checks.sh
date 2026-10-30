@@ -41,11 +41,9 @@
 #   one to use: the stamp is a real UTC minute (year 2020-2099) and <key> a
 #   lower-case ticket key (`bh-5788`, a child `bh-6005-4`). A picked NNNN
 #   collides with the next build's pick (BH-5788); the key cannot, and the stamp
-#   orders the composition. A new NNNN fragment is a finding only when its
-#   number already exists at the base (the real collision); otherwise it passes
-#   here and catalog/pr-self-check.tsv's body-schema-stamp row notes it, so the
-#   PRs already open with an NNNN fragment are not turned red. Any other name is
-#   a finding.
+#   orders the composition. A new NNNN fragment is always a finding (BH-6192);
+#   when the base already has that number, the finding names the base fragment.
+#   Any other name is a finding.
 #   A new stamp-form fragment must not USE a table or view that a fragment of
 #   the same worker sorting AFTER it creates (BH-7229): the composed schema.sql
 #   would run the use before the CREATE. A use is the name after FROM, JOIN, ON,
@@ -205,16 +203,15 @@ rp_schema_fragment_name() {
     [ -n "$f" ] || continue
     b=${f##*/}
     if [[ $b =~ ^[0-9]{4}-[a-z0-9][a-z0-9_-]*\.sql$ ]]; then
-      # A picked NNNN is refused only when the base already has that number:
-      # that is the real collision. Any other new NNNN fragment passes here, and
-      # the self-check row body-schema-stamp NOTES it (open NNNN PRs stay green
-      # until a follow-up tightens it).
+      # A new NNNN fragment is always a finding (BH-6192): a free number is
+      # still a picked number. A reused base number names the base fragment.
       top=$(git -C "$1" ls-tree --name-only "$2" -- "${f%/*}/" 2>/dev/null | grep -F -- "/${b:0:4}-" | LC_ALL=C sort | head -n 1)
       if [ -n "$top" ]; then
         echo "$f: schema-fragment-name: number ${b:0:4} is already taken at the base by $top; name a new fragment <yyyymmddhhmm>-<ticket-key>-<name>.sql (the UTC minute you create it, then the key)"
-        n=$((n+1))
+      else
+        echo "$f: schema-fragment-name: a new fragment is named <yyyymmddhhmm>-<ticket-key>-<name>.sql (the UTC minute you create it, then the key), never a picked number"
       fi
-      continue
+      n=$((n+1)); continue
     fi
     if ! [[ $b =~ $re ]]; then
       echo "$f: schema-fragment-name: a new fragment is named <yyyymmddhhmm>-<ticket-key>-<name>.sql (the UTC minute you create it, then the key), never a picked number"
