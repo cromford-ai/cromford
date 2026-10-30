@@ -62,15 +62,24 @@
 # STAGING CHECK (evidence_staged): for each named test file that
 # `git -C <repo-dir> diff --name-only <base>...HEAD` lists, count ASSERT_RE
 # lines at `git merge-base <base> HEAD` (never at `<base>`'s own tip, which may
-# have moved since the branch forked) vs the working file. Count dropped →
-# REFUTED, note `staged: assertions N->M in a test the diff touched`, regardless
-# of validate.txt. Untouched file, count rose, or count unchanged → never
-# staged. File deleted in the diff → INCONCLUSIVE. A check that cannot run (not
-# a repo, unknown base, no merge-base) → INCONCLUSIVE, never CONFIRMED.
+# have moved since the branch forked) vs the working file. A named directory
+# (`tests/x.d/`) counts every file under it, and a driver that
+# `<repo-dir>/catalog/list-files.tsv` maps to a fragments dir (`<dir>/` input
+# kind) counts the driver plus that dir, so an assertion moved into a fragment
+# is not a drop (BH-8708). Count dropped → REFUTED, note `staged: assertions
+# N->M in a test the diff touched`, regardless of validate.txt — unless the
+# plan names the test under `## Tests that must change`: that drop is planned,
+# INCONCLUSIVE, note `planned removal: N->M`. Untouched file, count rose, or
+# count unchanged → never staged. File deleted in the diff → INCONCLUSIVE. A
+# check that cannot run (not a repo, unknown base, no merge-base) →
+# INCONCLUSIVE, never CONFIRMED.
 #
 # VERDICT RULES, IN ORDER, PER CLAIM:
 #   1. any named test located as fail → REFUTED (artifact = that line);
-#   2. any named test staged → REFUTED (artifact = <file> + the N->M note);
+#   2. any named test staged and not planned → REFUTED (artifact = <file> +
+#      the N->M note);
+#   2b. any named test staged and named under the plan's `## Tests that must
+#      change` → INCONCLUSIVE (artifact = <file>, note `planned removal: N->M`);
 #   3. every named test located as pass, none staged → CONFIRMED (artifact =
 #      harness-run line if one exists, else the validate.txt:<line>
 #      (agent-recorded) line);
@@ -234,7 +243,7 @@ evidence_tests_in() { # evidence_tests_in <item text> — the test paths it name
 }
 
 evidence_locate() { # evidence_locate <build> <test> — <pass|fail|none>TAB<artifact>TAB<note>
-  local build="${1:-}" tst="${2:-}" f epath ebase nm hit ln content scrub
+  local build="${1:-}" tst="${2:-}" f epath ebase enames nm hit ln content scrub
   local passref="" passnote="" win num eln vhit vln vcontent
   # A bare "failed" is not a fail marker: a pass summary like "12 passed, 0
   # failed" must not refute the claim it is reporting success on. Only a
@@ -258,11 +267,15 @@ evidence_locate() { # evidence_locate <build> <test> — <pass|fail|none>TAB<art
   # reads as a literal `$` in the `grep -qE` use of this same string below.
   local RUN_RE='^[[:space:]]*([$][[:space:]]|CMD|COMMAND:|bash[[:space:]]|RED[[:space:]:]|GREEN[[:space:]:])'
   [ -n "$build" ] && [ -n "$tst" ] || { printf 'none\t\t\n'; return 0; }
-  epath=$(_ev_ere "$tst"); ebase=$(_ev_ere "${tst##*/}")
+  epath=$(_ev_ere "$tst"); ebase=$(_ev_ere "${tst##*/}"); enames="$epath|$ebase"
+  # A directory claim (`tests/x.d/`) has an empty basename: `($epath|)` would
+  # match every line, and `s@@ @g` would reuse sed's last regex. It is named by
+  # its path only (BH-8708).
+  [ -n "$ebase" ] || enames="$epath"
   # A line "names" the test when its path or basename appears as a whole token.
   for f in harness-suite-head.txt harness-suite-fix.txt harness-suite.txt; do
     [ -f "$build/$f" ] || continue
-    nm=$(grep -nE "(^|[^A-Za-z0-9_./-])($epath|$ebase)([^A-Za-z0-9_./-]|\.([^A-Za-z0-9_-]|\$)|\$)" \
+    nm=$(grep -nE "(^|[^A-Za-z0-9_./-])($enames)([^A-Za-z0-9_./-]|\.([^A-Za-z0-9_-]|\$)|\$)" \
          "$build/$f" 2>/dev/null)
     [ -n "$nm" ] || continue
     passref=""; passnote=""
@@ -271,7 +284,11 @@ evidence_locate() { # evidence_locate <build> <test> — <pass|fail|none>TAB<art
       ln=${hit%%:*}; content=${hit#*:}
       # The test's own name is not a marker: tests/ok-test.sh must not read its
       # own basename as a pass, and `bad` in a name is not a failure.
-      scrub=$(printf '%s' "$content" | sed -E "s@$epath@ @g; s@$ebase@ @g" 2>/dev/null)
+      if [ -n "$ebase" ]; then
+        scrub=$(printf '%s' "$content" | sed -E "s@$epath@ @g; s@$ebase@ @g" 2>/dev/null)
+      else
+        scrub=$(printf '%s' "$content" | sed -E "s@$epath@ @g" 2>/dev/null)
+      fi
       if grep -qE "$FAIL_RE" <<<"$scrub"; then
         printf 'fail\t%s:%s\t%s\n' "$f" "$ln" "$(_ev_clean "$content")"
         return 0
@@ -341,8 +358,46 @@ evidence_locate() { # evidence_locate <build> <test> — <pass|fail|none>TAB<art
   return 0
 }
 
+_ev_fragment_dir() { # _ev_fragment_dir <repo> <test> — the fragments dir catalog/list-files.tsv maps <test> to
+  # Column 1 is compared as a literal path with its `\` escapes removed, never
+  # as a glob. Only the `<dir>/` input kind is a fragments dir: a `rendered` or
+  # `ignored` dir holds a render, not moved assertions. No file, no row: nothing.
+  local repo="${1:-}" tst="${2:-}"
+  [ -n "$repo" ] && [ -n "$tst" ] && [ -r "$repo/catalog/list-files.tsv" ] || return 0
+  tr -d '\r' < "$repo/catalog/list-files.tsv" 2>/dev/null | awk -F'\t' -v t="$tst" '
+    /^#/ || /^[ \t]*$/ { next }
+    { p = $1; gsub(/\\/, "", p)
+      if (p == t && $2 ~ /\/$/ && $2 !~ /^(rendered|ignored) /) { print $2; exit } }' 2>/dev/null
+  return 0
+}
+
+_ev_assert_count() { # _ev_assert_count <repo> <rev|-> <path>... — ASSERT_RE lines summed over every file under each path
+  # <rev> reads the files git holds at that commit; `-` reads the tracked
+  # files from the working tree. A missing path adds 0.
+  local repo="${1:-}" rev="${2:-}" sum=0 p f c files
+  shift 2 2>/dev/null || { printf '0\n'; return 0; }
+  for p in "$@"; do
+    if [ "$rev" = - ]; then
+      files=$(git -C "$repo" -c core.quotePath=off ls-files -- "$p" 2>/dev/null </dev/null)
+    else
+      files=$(git -C "$repo" -c core.quotePath=off ls-tree -r --name-only "$rev" -- "$p" 2>/dev/null </dev/null)
+    fi
+    while IFS= read -r f; do
+      [ -n "$f" ] || continue
+      if [ "$rev" = - ]; then
+        c=$(grep -cE "$ASSERT_RE" "$repo/$f" 2>/dev/null)
+      else
+        c=$(git -C "$repo" show "$rev:$f" 2>/dev/null </dev/null | grep -cE "$ASSERT_RE")
+      fi
+      sum=$((sum + ${c:-0}))
+    done <<< "$files"
+  done
+  printf '%s\n' "$sum"
+  return 0
+}
+
 evidence_staged() { # evidence_staged <repo-dir> <base> <test> — no|deleted|staged N M|unknown
-  local repo="${1:-}" base="${2:-}" tst="${3:-}" listed delisted n m mb
+  local repo="${1:-}" base="${2:-}" tst="${3:-}" listed delisted n m mb frag paths
   [ -n "$repo" ] && [ -n "$base" ] && [ -n "$tst" ] || { printf 'unknown\n'; return 0; }
   listed=$(git -C "$repo" diff --name-only "$base"...HEAD -- "$tst" 2>/dev/null </dev/null) \
     || { printf 'unknown\n'; return 0; }
@@ -364,9 +419,18 @@ evidence_staged() { # evidence_staged <repo-dir> <base> <test> — no|deleted|st
   mb=$(git -C "$repo" merge-base "$base" HEAD 2>/dev/null </dev/null) \
     || { printf 'unknown\n'; return 0; }
   # Absent at the merge-base means the diff ADDED the test: new assertions, not staging.
-  git -C "$repo" show "$mb:$tst" >/dev/null 2>&1 </dev/null || { printf 'no\n'; return 0; }
-  n=$(git -C "$repo" show "$mb:$tst" 2>/dev/null </dev/null | grep -cE "$ASSERT_RE")
-  m=$(grep -cE "$ASSERT_RE" "$repo/$tst" 2>/dev/null)
+  git -C "$repo" cat-file -e "$mb:${tst%/}" >/dev/null 2>&1 </dev/null || { printf 'no\n'; return 0; }
+  # One suite can span several files (BH-8708): a directory claim counts every
+  # file under it, and a driver that catalog/list-files.tsv maps to a fragments
+  # dir counts the driver plus that dir. An assertion moved into a fragment is
+  # not an assertion removed.
+  paths=("$tst")
+  case "$tst" in
+    */) ;;
+    *) frag=$(_ev_fragment_dir "$repo" "$tst"); [ -z "$frag" ] || paths+=("$frag") ;;
+  esac
+  n=$(_ev_assert_count "$repo" "$mb" "${paths[@]}")
+  m=$(_ev_assert_count "$repo" - "${paths[@]}")
   [ -n "$n" ] || n=0
   [ -n "$m" ] || m=0
   if [ "$n" -gt "$m" ]; then printf 'staged %s %s\n' "$n" "$m"; else printf 'no\n'; fi
@@ -401,13 +465,42 @@ evidence_proposals() { # evidence_proposals <build> <total> — <n>TAB<verdict>T
   return 0
 }
 
+_ev_planned_tests() { # _ev_planned_tests <plan> — each tests/ path under `## Tests that must change`
+  # Any heading level, case-insensitive, to the next heading of the same or
+  # higher level; CRLF stripped and fenced blocks skipped (as _ev_items). The
+  # path shape is bin/lib/pr-self-check.sh's _psc_tc_path, trailing dots cut.
+  local plan="${1:-}" line p
+  [ -n "$plan" ] && [ -r "$plan" ] || return 0
+  tr -d '\r' < "$plan" 2>/dev/null | awk '
+    {
+      line = $0
+      if (line ~ /^[ \t]*(```|~~~)/) { fence = 1 - fence; next }
+      if (fence) next
+      if (line ~ /^#+[ \t]/) {
+        match(line, /^#+/); lvl = RLENGTH
+        t = tolower(line); sub(/^#+[ \t]*/, "", t); gsub(/[*`#]/, "", t); sub(/^[ \t]+/, "", t)
+        if (t ~ /^tests that must change([ \t:—-]|$)/) { insect = 1; seclvl = lvl; next }
+        if (insect && lvl <= seclvl) { insect = 0 }
+        next
+      }
+      if (insect) print
+    }' 2>/dev/null | while IFS= read -r line; do
+    while [[ "$line" =~ (^|[^A-Za-z0-9_./-])(tests/[A-Za-z0-9_./-]+)(.*)$ ]]; do
+      p="${BASH_REMATCH[2]}"; line="${BASH_REMATCH[3]}"
+      while [[ "$p" == *. ]]; do p=${p%.}; done
+      printf '%s\n' "$p"
+    done
+  done
+  return 0
+}
+
 evidence_score() { # evidence_score <build> <plan> <base> <repo-dir>
   local build="${1:-}" plan="${2:-}" base="${3:-}" repo="${4:-}"
   local rows tmp items props prows pnotes n claim whole tests t prow
   local verdict artifact note proposed partifact pnote st loc lv la lnote
   local anyfail failref failnote anystaged stagedn stagedm deleted unknown
   local firstunloc harnessref harnessnote validref validnote total=0
-  local section_empty_note=""
+  local section_empty_note="" plannedtests planned plannedn plannedm
   command -v jq >/dev/null 2>&1 || {
     printf 'EVIDENCE VERDICTS: could not run (jq missing)\n'; return 1; }
   [ -n "$build" ] && [ -d "$build" ] && [ -w "$build" ] || {
@@ -415,6 +508,7 @@ evidence_score() { # evidence_score <build> <plan> <base> <repo-dir>
   [ -n "$plan" ] && [ -f "$plan" ] && [ -r "$plan" ] || {
     printf 'EVIDENCE VERDICTS: could not run (plan unreadable)\n'; return 1; }
   items=$(_ev_items "$plan")
+  plannedtests=$(_ev_planned_tests "$plan")
   [ -z "$items" ] || total=$(printf '%s\n' "$items" | grep -c .)
   # A present-but-empty section (no bullets, a table, prose only) scores the
   # same zero total as no section at all — but the two mean different things
@@ -444,16 +538,26 @@ evidence_score() { # evidence_score <build> <plan> <base> <repo-dir>
     tests=$(evidence_tests_in "$whole")
     if [ -n "$tests" ]; then
       anyfail=""; failref=""; failnote=""; anystaged=""; stagedn=""; stagedm=""
+      planned=""; plannedn=""; plannedm=""
       deleted=""; unknown=""; firstunloc=""
       harnessref=""; harnessnote=""; validref=""; validnote=""
       while IFS= read -r t; do
         [ -n "$t" ] || continue
         st=$(evidence_staged "$repo" "$base" "$t")
         case "$st" in
-          staged*) [ -n "$anystaged" ] || {
-                     anystaged="$t"
-                     stagedn=$(printf '%s' "$st" | cut -d' ' -f2)
-                     stagedm=$(printf '%s' "$st" | cut -d' ' -f3); } ;;
+          # A drop the plan declares under `## Tests that must change` is a
+          # planned removal, not staging (BH-8708).
+          staged*) if grep -qxF -- "$t" <<<"$plannedtests"; then
+                     [ -n "$planned" ] || {
+                       planned="$t"
+                       plannedn=$(printf '%s' "$st" | cut -d' ' -f2)
+                       plannedm=$(printf '%s' "$st" | cut -d' ' -f3); }
+                   else
+                     [ -n "$anystaged" ] || {
+                       anystaged="$t"
+                       stagedn=$(printf '%s' "$st" | cut -d' ' -f2)
+                       stagedm=$(printf '%s' "$st" | cut -d' ' -f3); }
+                   fi ;;
           deleted) [ -n "$deleted" ] || deleted="$t" ;;
           unknown) [ -n "$unknown" ] || unknown="$t" ;;
         esac
@@ -476,6 +580,9 @@ evidence_score() { # evidence_score <build> <plan> <base> <repo-dir>
       elif [ -n "$anystaged" ]; then
         verdict=REFUTED; artifact="$anystaged"
         note="staged: assertions $stagedn->$stagedm in a test the diff touched"
+      elif [ -n "$planned" ]; then
+        verdict=INCONCLUSIVE; artifact="$planned"
+        note="planned removal: $plannedn->$plannedm"
       elif [ -n "$deleted" ]; then
         verdict=INCONCLUSIVE; note="named test deleted in the diff ($deleted)"
       elif [ -n "$unknown" ]; then
