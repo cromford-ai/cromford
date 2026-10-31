@@ -50,7 +50,7 @@ import { intSetting } from "./retention.js";
 
 export const ROADMAP_TABLES = ["roadmap_ideas", "roadmap_idea_events", "roadmap_links", "roadmap_decisions", "roadmap_waves"];
 export const IDEA_LANES = ["ideas", "next", "discarded"];
-export const IDEA_SOURCES = ["operator", "client", "qa", "walkthrough", "metric", "import"];
+export const IDEA_SOURCES = ["operator", "client", "qa", "walkthrough", "metric", "import", "pm-agent"];
 
 const TITLE_MAX = 200;
 const NOTE_MAX = 4000;

@@ -45,6 +45,7 @@ import { rekeyHeadMovedRefusal } from '../_lib/merge-pr-rekey.js';
 import { BOARD_FALLBACK_TYPES, boardCommand, enqueueBoardCommand, signedIn } from '../_lib/board-commands.js';
 import { POOL_HOLD_TYPES, poolHoldCommand } from '../_lib/pool-hold-command.js';
 import { CONNECTION_PROBE_TYPES, connectionProbeCommand } from '../_lib/connection-probe-command.js';
+import { PM_FLESH_SCRIPT, pmFleshCommand } from '../_lib/pm-flesh-command.js';
 import { readOnlyRefusal } from '../_lib/qa-session.js';
 
 const WORKER = 'https://harness-console.operator.workers.dev';
@@ -142,11 +143,12 @@ export async function onRequest(context) {
     }, poolHoldCommand);
   }
   // PROBE NOW (BH-7924): run_script, connection-probe.sh <project> only.
+  // FLESH OUT (BH-7260): run_script, pm-flesh-launch.sh <project> <idea-id> only.
   if (sent && CONNECTION_PROBE_TYPES.has(sent.type) && upstream.status === 400) {
     return boardFallback(upstream, { ...sent, actor }, env, {
       cookie: request.headers.get('cookie') || '',
       authorization: request.headers.get('authorization') || ''
-    }, connectionProbeCommand);
+    }, sent.script === PM_FLESH_SCRIPT ? pmFleshCommand : connectionProbeCommand);
   }
 
   // Pass everything back verbatim.

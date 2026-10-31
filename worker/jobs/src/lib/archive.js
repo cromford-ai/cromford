@@ -27,6 +27,8 @@ export const ARCHIVE_TABLES = {
   // BH-7261: the PM brief history (routes/retention.d/bh-7261-pm-briefs.js).
   pm_briefs: { key: ["id"], time: "created_at" },
   pm_moves: { key: ["id"], time: "created_at" },
+  // BH-7260: the PM flesh-out ledger (routes/retention.d/bh-7260-pm-runs.js).
+  pm_runs: { key: ["id"], time: "created_at" },
   // BH-7595: the web_vault audit rule (routes/retention.js).
   web_vault_audit: { key: ["id"], time: "at" },
   // BH-7722: the Tackler decision ledger (routes/retention.js unblock_decisions.age).

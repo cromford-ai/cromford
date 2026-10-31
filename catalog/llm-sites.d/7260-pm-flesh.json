@@ -1,0 +1,20 @@
+[
+    {
+        "id": "pm-flesh",
+        "script": "bin/pm-flesh.sh",
+        "marker": "AGENT_CALL_LANE=run-product AGENT_CALL_ROLE=product.pm",
+        "kind": "agent-call",
+        "lane": "run-product",
+        "stage": "pm",
+        "project": "per-project",
+        "runners": [
+            "ladder"
+        ],
+        "through_agent_call": true,
+        "priced": "yes",
+        "gated": "agent-call",
+        "dedup": "pm_runs UNIQUE(project, idea_id, input_hash): POST /api/pm/claim makes the row BEFORE the call; claimed and failed are billed, only bin/pm-flesh.sh --force by a person re-claims them, and an answered or done row is never re-claimed; AGENT_CALL_FP is pm-flesh:<project>:<idea id>:<hash12> (BH-7260)",
+        "deterministic_candidate": null,
+        "note": "BH-7260: a manual tool (a person, or the idea page's FLESH OUT button), one call per idea and input hash, model from the product.pm route, no tools. It runs under run-product's switch and lock, so its spend counts on the run-product lane. The PRD and mockup stages after it run through bin/draft-proposal.sh and its own sites under the same claim."
+    }
+]

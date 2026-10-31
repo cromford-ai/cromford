@@ -15,6 +15,8 @@ import {
   IDEA_LANES, IDEA_SOURCES, laneLabel, laneParam, newIdemKey, rowActions, summaryRows,
   writeError, editChanges, eventLine, when
 } from '../../lib/roadmap.js';
+import { pmRuns } from '../../lib/roadmap-api/pm-flesh.js';
+import { FleshSection } from './flesh-section.js';
 
 const listPath = (project) => `/roadmap/${encodeURIComponent(project)}`;
 const ideaPath = (project, id) => `${listPath(project)}/idea/${encodeURIComponent(id)}`;
@@ -235,6 +237,8 @@ function EditIdeaForm({ project, idea, onSaved }) {
 
 export function RoadmapIdeaView({ project, id }) {
   const d = useApi(() => api.roadmapIdea(project, id), [project, id]);
+  // BH-7260: the PM flesh-out runs, read at mount in parallel with the idea.
+  const f = useApi(() => pmRuns(project, id), [project, id]);
   const [status, setStatus] = useState(null);
   const idea = d.data && d.data.idea;
   const events = (d.data && d.data.events) || [];
@@ -285,5 +289,6 @@ export function RoadmapIdeaView({ project, id }) {
                     empty=${html`<${Empty} title="No history yet."/>`}/>
                 </div>
               <//>`}
+      ${missing ? null : html`<${FleshSection} project=${project} id=${id} f=${f}/>`}
     </div>`;
 }

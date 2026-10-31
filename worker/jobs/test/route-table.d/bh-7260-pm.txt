@@ -1,0 +1,4 @@
+# BH-7260 (BH-7244.2): the PM flesh-out ledger, key-named (BH-5788).
+POST /api/pm/claim
+POST /api/pm/result
+GET /api/pm/runs

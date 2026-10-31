@@ -1,0 +1,4 @@
+{
+  "about": "BH-7260: start the PM flesh-out of one roadmap idea detached on the box that owns the project (the idea page's FLESH OUT button).",
+  "scripts": ["pm-flesh-launch.sh"]
+}
