@@ -6,6 +6,10 @@
 # failure -> ALERTS.log + fleet_alert beat (Telegram). Success -> one log line,
 # and then bin/hotfix-after-deploy.sh for a build whose hotfix SQL was deferred to
 # the deploy (BH-370.4) — hooked after the OK line, never able to change the verdict.
+# BH-8852: Vercel skips the build of a merge sha a newer main commit supersedes.
+# When the merge sha has no production deployment of its own, the newest
+# successful production deployment passes the verify if it contains the merge
+# (compare <merge>...<deployed> answers ahead or identical). A failed one never does.
 set -uo pipefail
 PROJECT="${1:?project}"; SLUG="${2:?slug}"; SHA="${3:?sha}"; BUILD="${4:?build-dir}"
 HARNESS="${HARNESS:-/root/harness}"
@@ -111,15 +115,68 @@ HOOK_TS=""
 command -v gh_auth_for >/dev/null 2>&1 && gh_auth_for "$SLUG" || true
 PROBE=$(gh api "repos/$SLUG/deployments?per_page=1" 2>&1); PRC=$?
 READABLE "$PROBE" "$PRC" || SMOKE_ONLY "PAT cannot read deployments" 1
+# BH-8852: how many recent deployments LATER_DEPLOY reads. Fallback 10 for the
+# row deploy.verify.later_deploy_scan. The client is sourced in a subshell, as
+# in bin/lib/deploy-kind.sh: a half-synced box keeps the fallback.
+LATER_SCAN=$(
+  [ -r "$HARNESS/bin/jobs-client.sh" ] || exit 2
+  # shellcheck source=/dev/null
+  . "$HARNESS/bin/jobs-client.sh" 2>/dev/null || exit 2
+  declare -F setting_get >/dev/null 2>&1 || exit 2
+  setting_get deploy.verify.later_deploy_scan 2>/dev/null
+)
+case "$LATER_SCAN" in ''|*[!0-9]*) LATER_SCAN=10 ;; esac
+{ [ "$LATER_SCAN" -ge 1 ] && [ "$LATER_SCAN" -le 100 ]; } 2>/dev/null || LATER_SCAN=10
+declare -A CMP_SEEN=()
+LATER_FAILED=""
+VIA=""
+# LATER_DEPLOY — the merge sha has no production deployment of its own. Walk the
+# newest production deployments, newest first, to the first one whose newest
+# terminal state is success. If its sha contains $SHA, set DID, STATE and VIA
+# and return 0. A failed or errored one is never a pass; one that contains the
+# merge is named in the timeout FAIL. The compare answer of one (A, B) pair
+# never changes, so a non-empty answer is read once per run.
+LATER_DEPLOY() {
+  local raw rc id sha st cmp
+  raw=$(gh api "repos/$SLUG/deployments?per_page=$LATER_SCAN" 2>&1); rc=$?
+  READABLE "$raw" "$rc" || return 1
+  while read -r id sha; do
+    [ -n "$id" ] && [ -n "$sha" ] && [ "$sha" != "$SHA" ] || continue
+    st=$(gh api "repos/$SLUG/deployments/$id/statuses?per_page=20" \
+         -q '[.[] | select(.state == "success" or .state == "failure" or .state == "error")][0].state // empty' 2>/dev/null)
+    [ -n "$st" ] || continue
+    cmp=${CMP_SEEN[$sha]:-}
+    if [ -z "$cmp" ]; then
+      cmp=$(gh api "repos/$SLUG/compare/$SHA...$sha" -q '.status // empty' 2>/dev/null) || cmp=""
+      case "$cmp" in ahead|identical|behind|diverged) CMP_SEEN[$sha]=$cmp ;; *) cmp="" ;; esac
+    fi
+    if [ "$st" != success ]; then
+      case "$cmp" in ahead|identical) LATER_FAILED="${sha:0:8}:$st" ;; esac
+      continue
+    fi
+    case "$cmp" in
+      ahead|identical) DID=$id; STATE=success; VIA=$sha; return 0 ;;
+    esac
+    return 1
+  done < <(printf '%s' "$raw" | jq -r '.[] | select(.environment | test("production"; "i")) | "\(.id) \(.sha)"' 2>/dev/null)
+  return 1
+}
 END=$((SECONDS + 1200))
 SEEN_READ=0
 while [ "$SECONDS" -lt "$END" ]; do
   RAW=$(gh api "repos/$SLUG/deployments?sha=$SHA&per_page=10" 2>&1); RRC=$?
+  EXACT_READ=0
   if READABLE "$RAW" "$RRC"; then
-    SEEN_READ=1
+    SEEN_READ=1; EXACT_READ=1
     DID=$(printf '%s' "$RAW" | jq -r '[.[] | select(.environment | test("production"; "i"))][0].id // empty' 2>/dev/null)
   else
     DID=""
+  fi
+  # BH-8852: before the hook, so a merge already live through a later deploy
+  # does not fire it.
+  if [ -z "$DID" ] && [ "$EXACT_READ" = 1 ] && LATER_DEPLOY; then
+    echo "$(STAMP) [$PROJECT] deploy-verify: verified through ${VIA:0:8}, which contains ${SHA:0:8}" >> "$BUILD/pipeline.log"
+    break
   fi
   # Recovery (2026-07-27): some projects never auto-deploy certain merges (project-3
   # only deploys operator-authored commits — TK-19 served stale 3 days). If no
@@ -147,6 +204,8 @@ done
 # API 403s now) never had a deployment to see. That is not a failed deploy, and
 # alerting it as one is the project-5 shape: a page nobody can act on.
 [ "$STATE" = "success" ] || [ "$SEEN_READ" = 1 ] || SMOKE_ONLY "deployments API stopped answering during the poll" 0
+[ "$STATE" = "success" ] || [ -z "$LATER_FAILED" ] \
+  || FAIL "no successful production deployment within 20 min (later deployment ${LATER_FAILED%%:*} contains ${SHA:0:8}: state=${LATER_FAILED#*:})"
 [ "$STATE" = "success" ] || FAIL "no successful production deployment within 20 min"
 
 PROD=$("$HARNESS/bin/prod-url.sh" "$PROJECT") || exit 0
