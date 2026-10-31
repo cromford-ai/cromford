@@ -187,6 +187,10 @@ park91() { # <reason> <mechanicals>
   jq -nc --argjson m "$2" '{project:"tproj",rkey:"tproj-TK-91",mechanicals:$m,fixrounds:0,rebuilds:0,regens:0,outcome:"",attempts:[]}' \
     > "$H/state/blocked-resolver/tproj/tproj-TK-91.json"
   rm -f "$H/state/blocked-resolver/tproj/tproj-TK-91.setup-alerted"
+  # Each case is a fresh project episode too: 4a+4b write 3 setup blocks in the
+  # hour, which trips the project rate alert, and its 24 h hold sends no
+  # per-park page (BH-7630 br_setup_rate, comment 6315926752).
+  rm -f "$H/state/blocked-resolver/tproj/setup-blocked.tsv" "$H/state/blocked-resolver/tproj/setup-blocked.alerted"
   ROW "o/tproj#91" "$1" "$U91"
   : > "$T/closed.txt"; : > "$T/queue.txt"; : > "$T/lane-alert.txt"; : > "$T/rebase.txt"; : > "$H/logs/blocked-resolver.log"
 }

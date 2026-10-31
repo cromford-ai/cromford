@@ -1,0 +1,12 @@
+{
+  "env": "BR_RATE_WINDOW_S",
+  "read_in": "bin/lib/br/lane.sh",
+  "type": "int",
+  "default": 3600,
+  "min": 60,
+  "max": 86400,
+  "unit": "seconds",
+  "zero_means": null,
+  "required": false,
+  "note": "BH-7630. The window the setup-blocked rows are counted over: br_setup_rate keeps this many seconds of rows in state/blocked-resolver/<p>/setup-blocked.tsv and alerts when more than BR_SETUP_BLOCKED_ALERT_N of one placement are in it; br_placement_check counts the Fly rows of every project over it. Read once a run by br_rate_window from the settings row lib.br.lane.rate_window_s, then ${BR_RATE_WINDOW_S}, then 3600. A non-number or 0 falls back to 3600."
+}

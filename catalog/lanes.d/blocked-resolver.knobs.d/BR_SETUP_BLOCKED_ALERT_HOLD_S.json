@@ -1,0 +1,12 @@
+{
+  "env": "BR_SETUP_BLOCKED_ALERT_HOLD_S",
+  "read_in": "bin/lib/br/lane.sh",
+  "type": "int",
+  "default": 86400,
+  "min": 3600,
+  "max": 604800,
+  "unit": "seconds",
+  "zero_means": null,
+  "required": false,
+  "note": "BH-7630, comment 6315926752 (operator, 2026-10-21: rc=4 repeats within 24h raise one alert per project, not one per PR). After one setup-blocked rate alert for a project (br_setup_rate), the next one for that project waits this long, and no per-park setup page (br_setup_blocked) is sent for that project in the meantime; the record, event and log line stay per park. The epoch is in state/blocked-resolver/<p>/setup-blocked.alerted. A non-number or a value under 3600 falls back to 86400."
+}

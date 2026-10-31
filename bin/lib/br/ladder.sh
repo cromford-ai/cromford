@@ -340,6 +340,14 @@ br_regen_rung() {
     say "$p/$rkey [$reason]: the regenerate rung has already run $n time(s) (BR_MAX_REGEN=$MAX_REGEN) — $next"
     br_regen_next; return 0
   fi
+  # A lane machine with no clone hands rung 1b to the owning box (BH-7630), as
+  # rung 1: the row carries hop_rung=regen:<next>, the box runs the merge and
+  # then the displaced answer only if it did not land. Nothing recorded here.
+  if command -v br_lane_no_clone >/dev/null 2>&1 && br_lane_no_clone "$p" \
+     && command -v br_hop_rung >/dev/null 2>&1; then
+    say "$p/$rkey [$reason]: rung 1b is not run on a lane machine with no clone of $p — handed to the owning box, then $next"
+    br_hop_rung "regen:$next" "$p" "$rkey" "$reason" "$url" "$rec" "$tkey"; return 0
+  fi
   br_event resolver_rung "$p" "$ck" "$reason" "rung 1b regenerate: mc_rebase on $br at ${head:0:8}"
   [ -f "${MC_LOG:-}" ] && mark=$(wc -l < "$MC_LOG" | tr -d ' ')   # BH-8003: this call's own log lines
   out=$(mc_rebase "$slug" "$p" "$br" "$head" "$url"); rc=$?

@@ -77,7 +77,7 @@ from the headers. `tests/module-map-mc-cutover.bh-5240-test.sh` pins this.
 
 `bin/lib/br/` has headers and a generated `MODULES` too (BH-5241). The
 resolver does not call `mm_load` yet. It keeps its literal
-`BR_MODULES="discovery keys ladder record cap headgate datalane contested"` loop, because that loop names the missing module
+`BR_MODULES="discovery keys ladder lane record cap headgate datalane contested"` loop, because that loop names the missing module
 in its `RESOLVER MODULE MISSING` refusal. `tests/br-split-layout.bh-5241-test.sh`
 case B4 holds that literal equal to `bin/lib/br/MODULES`, in order.
 `bin/lib/br/opt/` has no headers and no `MODULES`, so the build does not see it.

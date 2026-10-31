@@ -976,7 +976,7 @@ case "$FIX_LANE_TIMEOUT" in ''|*[!0-9]*) ;; *) [ "$((FIX_LANE_TIMEOUT / 3))" -gt
 # classifier — every park answered `none`, nothing fixed, and a log line that
 # reads exactly like a quiet tick.
 BR_LIB_DIR="$H/bin/lib/br"
-BR_MODULES="discovery keys ladder record cap headgate datalane contested"
+BR_MODULES="discovery keys ladder lane record cap headgate datalane contested"
 for _br_m in $BR_MODULES; do
   # shellcheck source=/dev/null
   if [ -r "$BR_LIB_DIR/$_br_m.sh" ] && . "$BR_LIB_DIR/$_br_m.sh"; then continue; fi
@@ -1038,7 +1038,7 @@ done; unset _br_frags _br_of _br_o
 # BR_DISPATCH_SPREAD_SECS (default 540, 0 = all at once). 540 keeps every start
 # inside the 10-minute cadence.
 if [ "$BR_DISPATCH" = 1 ]; then
-  BR_DISPATCH_RC=0
+  BR_DISPATCH_RC=0; br_placement_check
   if ! command -v pl_dispatch >/dev/null 2>&1; then
     say "bin/lib/project-lanes.sh is not loaded — no project run started this dispatch"
     BR_DISPATCH_RC=1
@@ -1176,7 +1176,7 @@ BR_REMOTE_OPEN=0
 br_remote_open_prime() {
   local n
   BR_REMOTE_OPEN=0
-  command -v hub_box_builds_here >/dev/null 2>&1 && ! hub_box_builds_here || return 0
+  br_fix_hops || return 0
   command -v fix_round_open_count >/dev/null 2>&1 || return 0
   n=$(fix_round_open_count 2>>"$LOG") || n=""
   case "$n" in
@@ -3899,7 +3899,7 @@ br_mechanical() {
     && { br_main_merge_gate "$p" "$ck" "$rkey" "$reason" "$slug" "$br" "$head" "$url"; rc=$?; }
   [ "$rc" = 0 ] && return 0
   if [ "$rc" = 3 ]; then out=$head; rc=0
-  else
+  else br_lane_hop_mech "$p" "$rkey" "$reason" "$url" "$rec" "$tkey" && return 0
   br_event resolver_rung "$p" "$ck" "$reason" "rung 1 mechanical: merging origin/$mbase into $br at ${head:0:8}"
   [ -f "${MC_LOG:-}" ] && mark=$(wc -l < "$MC_LOG" | tr -d ' ')   # BH-8003: this call's own log lines
   if [ "$mbase" = main ]; then out=$(mc_rebase "$slug" "$p" "$br" "$head" "$url"); rc=$?
@@ -4687,7 +4687,7 @@ br_rebuild_retry() {
 #   used to spend the mechanical rung, which walked a park one step closer to the
 #   rung that closes PRs for a reason that was never about the PR.
 br_setup_blocked() {
-  local p="$1" ck="$2" rkey="$3" reason="$4" url="${5:--}" what="$6" rung="${7:-fix-round}" f name
+  local p="$1" ck="$2" rkey="$3" reason="$4" url="${5:--}" what="$6" rung="${7:-fix-round}" f name BR_SETUP_RATE_HELD=0
   # What the page says is NEEDED (BH-594): a missing clone is the default, and a
   # caller whose block is not about a clone says what it IS about.
   local need="${8:-a working clone at $REPOS/$p and a credential that can fetch it}"
@@ -4696,20 +4696,20 @@ br_setup_blocked() {
     regen)      name="the regenerate rung" ;;
     *)          name="the fix round" ;;
   esac
-  say "$p/$rkey [$reason]: $name could not START ($what) — a machine problem, not a failed rung: no rung spent, nothing closed, retried next tick"
+  say "$p/$rkey [$reason]: $name could not START ($what) — a machine problem, not a failed rung: no rung spent, nothing closed, retried next tick"; br_setup_rate "$p" "$rung" "$rkey" "$what" "$need"
   # ONE of everything per park, the way br_nokey_alert does it: this lane
   # re-offers the same park every ten minutes, and a block that stands for a day
   # would otherwise write 144 alerts, 144 beats and 144 attempt entries into a
   # record whose whole job is to say what was TRIED. The log line above is the
   # per-tick evidence; the record, the event and the page are per EPISODE, and
   # the marker is deleted the moment a rung runs, so the next block says it all
-  # again. Stopping is an alert, not a whisper — but only the once.
+  # again, unless the project's rate alert holds it (br_setup_rate, #6315926752).
   f="$ST/$p/$ck.setup-alerted"; mkdir -p "$(dirname "$f")" 2>/dev/null
   [ -e "$f" ] && return 0
   : > "$f"
   br_record "$p" "$ck" "$rung-blocked" "$reason" "$name could not START: $what — no rung spent, nothing closed, retried next tick"
   br_event resolver_setup_blocked "$p" "$ck" "$reason" "$name could not start: $what — no rung spent, no rebuild, no close"
-  "$H/bin/lane-alert.sh" blocked-resolver "$p/$rkey [$reason]: the resolver's $rung rung cannot START on ${url:--no url} — $what. The PR is LEFT OPEN and nothing was rebuilt (an event-based ladder never closes a PR over a machine problem), so this park stands until somebody fixes the box. Needed on $(hostname 2>/dev/null || echo this box): $need." >/dev/null 2>&1 || true
+  [ "$BR_SETUP_RATE_HELD" = 1 ] || "$H/bin/lane-alert.sh" blocked-resolver "$p/$rkey [$reason]: the resolver's $rung rung cannot START on ${url:--no url} — $what. The PR is LEFT OPEN and nothing was rebuilt (an event-based ladder never closes a PR over a machine problem), so this park stands until somebody fixes the box. Needed on $(hostname 2>/dev/null || echo this box): $need." >/dev/null 2>&1 || true
   return 0
 }
 
@@ -4956,7 +4956,7 @@ br_xpr_wait_line() {
 #                     park is re-offered next tick (D9: never read as queued)
 br_fix_remote() {
   local p="$1" rkey="$2" reason="$3" url="$4" rec="$5" tkey="$6" ck="$7" hot="${8:-0}"
-  local box out rc=0 id st
+  local box out rc=0 id st what rung; br_hop_labels
   box=$("$H/bin/box-for.sh" "$p" 2>/dev/null)
   if [ -z "$box" ] || is_hub_box "$box"; then
     br_setup_blocked "$p" "$ck" "$rkey" "$reason" "$url" "no non-hub box owns $p in fleet.conf (box-for.sh answered '${box:--}') — the hub runs no agent build work" fix-round "$p owned by a non-hub box in fleet.conf that runs bin/fix-round-claim.sh and a bin/ with blocked-resolver.sh --fix-here"
@@ -4973,7 +4973,7 @@ br_fix_remote() {
     return 0
   fi
   [ "$hot" = 1 ] || hot=0
-  out=$(fix_round_enqueue "$p" "$ck" "$box" "$hot" "$(br_load "$p" "$ck")" "$p" "$rkey" "$reason" "$url" "$rec" "$tkey" 2>>"$LOG") || rc=$?
+  out=$(fix_round_enqueue "$p" "$ck" "$box" "$hot" "$(br_hop_record "$p" "$ck")" "$p" "$rkey" "$reason" "$url" "$rec" "$tkey" 2>>"$LOG") || rc=$?
   if [ "$rc" != 0 ]; then
     say "$p/$rkey [$reason]: fix round NOT queued — jobs DB unreachable, re-offered next tick"
     return 0
@@ -4984,8 +4984,8 @@ br_fix_remote() {
     say "$p/$rkey [$reason]: a fix round is already in flight on $box (row $id, $st) — not queued again"
     return 0
   fi
-  br_event resolver_rung "$p" "$ck" "$reason" "rung 2 fix-round queued for $box"
-  say "$p/$rkey [$reason]: fix round queued for $box as row $id — its bin/fix-round-claim.sh runs it, and a later tick adopts the result"
+  br_event resolver_rung "$p" "$ck" "$reason" "$rung queued for $box"
+  say "$p/$rkey [$reason]: $what queued for $box as row $id — its bin/fix-round-claim.sh runs it, and a later tick adopts the result"
   return 0
 }
 
@@ -5069,7 +5069,7 @@ br_fix_adopt() {
   ro=$(printf '%s' "$row" | jq -r '.record_out // empty | strings' 2>/dev/null)
   n0=$(br_load "$p" "$ck" | jq '(.attempts // []) | length' 2>/dev/null)
   if [ -n "$ro" ]; then
-    rjson=$(printf '%s' "$ro" | jq -c --arg p "$p" 'select(.project == $p)' 2>/dev/null)
+    rjson=$(printf '%s' "$ro" | jq -c --arg p "$p" 'select(.project == $p) | del(.hop_rung)' 2>/dev/null)
     [ -n "$rjson" ] || say "$p/$rkey [$reason]: the record $box sent back is not a record for $p — the hub's record is kept"
   fi
   [ -n "$rjson" ] && n1=$(printf '%s' "$rjson" | jq '(.attempts // []) | length' 2>/dev/null)
@@ -5551,8 +5551,8 @@ br_fix_round() {
   # A prequeue-red park's raw reason goes onto the record FIRST (BH-4549), so
   # the copy br_fix_remote hands the owning box carries the suites and the sha.
   [ "$(br_ladder_class "$reason")" = prequeue-red ] && br_prequeue_note "$p" "$ck" "$url"
-  if [ "${BR_FIX_HERE:-0}" != 1 ] && command -v hub_box_builds_here >/dev/null 2>&1 \
-     && ! hub_box_builds_here; then
+  if [ "${BR_FIX_HERE:-0}" != 1 ] && { [ -n "${LANE_RUN_ID:-}" ] \
+     || { command -v hub_box_builds_here >/dev/null 2>&1 && ! hub_box_builds_here; }; }; then
     br_fix_remote "$p" "$rkey" "$reason" "$url" "$rec" "$tkey" "$ck" "$hot"
     return 0
   fi
@@ -7199,15 +7199,15 @@ br_one() {
   # project's whole tick — a budget spent on reading a record and returning.
   command -v bpr_scope >/dev/null 2>&1 && bpr_scope "$p" "$rkey" "$ck" "$reason" "$url" "$st" && st=$(br_load "$p" "$ck")
   [ "$(printf '%s' "$st" | jq -r '.outcome // ""')" = ABANDONED ] && { br_reset_token; return 3; }
-  # A FIX ROUND THE HUB QUEUED IS THIS PARK'S ONE ACTION UNTIL IT IS ADOPTED
-  # (BH-2674). The row is the whole state of a remote round, so this read is
+  # A FIX ROUND THE HUB (OR A LANE MACHINE, BH-7630) QUEUED IS THIS PARK'S ONE
+  # ACTION UNTIL IT IS ADOPTED (BH-2674). The row is the whole state of a remote round, so this read is
   # what makes it survive a hub restart: queued or claimed holds the park (rc 3,
   # not a rung), done is adopted here, and no row falls through to the ladder.
   # A queue this box cannot read holds the park too: an outage must never let a
   # second paid round be queued behind one that may still be running.
-  if command -v hub_box_builds_here >/dev/null 2>&1 && ! hub_box_builds_here      && command -v fix_round_get >/dev/null 2>&1; then
-    local frow frc=0 fst
-    frow=$(fix_round_get "$p" "$ck" 2>>"$LOG") || frc=$?
+  if br_fix_hops && command -v fix_round_get >/dev/null 2>&1; then
+    local frow frc=0 fst rf; rf=$(mktemp 2>/dev/null) || rf=""
+    frow=$(fix_round_get "$p" "$ck" "$rf" 2>>"$LOG") || frc=$?; [ "$frc" = 2 ] || rm -f "$rf"
     case "$frc" in
       0) fst=$(printf '%s' "$frow" | jq -r '.status // ""' 2>/dev/null)
          case "$fst" in
@@ -7220,7 +7220,7 @@ br_one() {
              BR_READMEMO_LIVE=0 br_fix_adopt "$p" "$rkey" "$reason" "$url" "$rec" "$tkey" "$ck" "$frow"
              br_reset_token; return 0 ;;
          esac ;;
-      2) ;;
+      2) br_fix_heal "$p" "$rkey" "$reason" "$ck" "$rf" || { br_reset_token; return 3; }; st=$(br_load "$p" "$ck") ;;
       *) say "$p/$rkey [$reason]: fix-round queue unreadable, park held this tick"
          br_reset_token; return 3 ;;
     esac
@@ -7698,7 +7698,7 @@ if [ "$BR_FIX_HERE" = 1 ]; then
   _fh_in=$(cat)
   if printf '%s' "$_fh_in" | jq -e --arg p "$_fh_p" '.project == $p' >/dev/null 2>&1; then
     mkdir -p "$ST/$_fh_p" 2>/dev/null
-    br_save "$_fh_p" "$_fh_ck" "$(printf '%s' "$_fh_in" | jq -c .)"
+    br_save "$_fh_p" "$_fh_ck" "$(printf '%s' "$_fh_in" | jq -c 'del(.hop_rung)')"
   else
     say "$_fh_p/${BR_FIX_ARGS[1]}: --fix-here got no usable record on stdin — working from this box's own copy"
   fi
@@ -7715,7 +7715,7 @@ if [ "$BR_FIX_HERE" = 1 ]; then
   else
     trap 'br_wt_drop "the round ended"' EXIT
     trap 'br_wt_drop "the round was signalled"; mc_git_auth_clear 2>/dev/null; exit 143' TERM INT HUP
-    br_fix_round "${BR_FIX_ARGS[@]}"
+    br_fix_here_run "$_fh_in" "${BR_FIX_ARGS[@]}"
   fi
   echo "FIX_RECORD $(br_load "$_fh_p" "$_fh_ck" | base64 -w0)"
   [ "$BR_FIX_SAID" = 1 ] || echo "FIX_RESULT done"

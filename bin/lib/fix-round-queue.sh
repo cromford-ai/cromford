@@ -1,7 +1,7 @@
 #!/bin/bash
 # shellcheck shell=bash
 # bin/lib/fix-round-queue.sh — BH-2668 (BH-2530.0). The shell client for the
-# fix_round_jobs queue (worker/jobs/schema.sql): six verbs over the worker's
+# fix_round_jobs queue (worker/jobs/schema.sql): seven verbs over the worker's
 # /api/fix-rounds routes. Sourced, never executed, and only after
 # bin/jobs-client.sh is loaded (_jobs_req, _jobs_log, jobs_configured).
 #
@@ -61,11 +61,14 @@ fix_round_enqueue() {
   esac
 }
 
-# fix_round_get <p> <ck> — prints the one queued, claimed or done row for the
-#   park. rc 2 when there is none (an adopted row is none) or on a 404, rc 1 on
-#   an outage or an answer that is not a list.
+# fix_round_get <p> <ck> [resp-file] — prints the one queued, claimed or done
+#   row for the park. rc 2 when there is none (an adopted row is none) or on a
+#   404, rc 1 on an outage or an answer that is not a list. With <resp-file> the
+#   raw list is also saved there (emptied first), so fix_round_adopted_record can
+#   read the adopted rows from the SAME answer instead of a second GET (BH-7630).
 fix_round_get() {
-  local p="${1:-}" ck="${2:-}" q resp rc row
+  local p="${1:-}" ck="${2:-}" rf="${3:-}" q resp rc row
+  [ -z "$rf" ] || : > "$rf"
   [ -n "$p" ] && [ -n "$ck" ] || _frq_bad "fix_round_get needs <project> <cap_key>" || return 1
   _frq_ready || return 1
   q=$(jq -nr --arg p "$p" --arg ck "$ck" '"project=\($p|@uri)&cap_key=\($ck|@uri)&limit=500"') || return 1
@@ -75,6 +78,7 @@ fix_round_get() {
     2) return 2 ;;
     *) return 1 ;;
   esac
+  [ -z "$rf" ] || printf '%s' "$resp" > "$rf"
   row=$(printf '%s' "$resp" | jq -ce --arg ck "$ck" 'if (.fix_round_jobs|type) == "array"
     then ([.fix_round_jobs[] | select(.cap_key == $ck and (.status == "queued" or .status == "claimed" or .status == "done"))][0] // "none")
     else error("not a list") end' 2>/dev/null) || return 1
@@ -82,6 +86,35 @@ fix_round_get() {
   printf '%s' "$row"
 }
 
+# fix_round_adopted_record <p> <ck> [resp-file] — prints the record_out of the
+#   NEWEST adopted row for the park (BH-7630: a lane machine's adopt can reach
+#   the worker while its record write-back to the hub is lost). rc 2 when there
+#   is no adopted row with a record, when the newest one's result is not done
+#   (a terminal answer is never handed back to the ladder), or on a 404; rc 1 on an outage or an answer
+#   that is not a list. With <resp-file> (written by fix_round_get) it reads that
+#   list and makes no request; an empty file is rc 2 (the get saw a 404).
+fix_round_adopted_record() {
+  local p="${1:-}" ck="${2:-}" rf="${3:-}" q resp rc rec
+  [ -n "$p" ] && [ -n "$ck" ] || _frq_bad "fix_round_adopted_record needs <project> <cap_key>" || return 1
+  if [ -n "$rf" ]; then
+    resp=$(cat "$rf" 2>/dev/null); [ -n "$resp" ] || return 2
+  else
+    _frq_ready || return 1
+    q=$(jq -nr --arg p "$p" --arg ck "$ck" '"project=\($p|@uri)&cap_key=\($ck|@uri)&status=adopted&limit=500"') || return 1
+    resp=$(_jobs_req GET "/api/fix-rounds?$q"); rc=$?
+    case "$rc" in
+      0) ;;
+      2) return 2 ;;
+      *) return 1 ;;
+    esac
+  fi
+  rec=$(printf '%s' "$resp" | jq -re --arg ck "$ck" 'if (.fix_round_jobs|type) == "array"
+    then ([.fix_round_jobs[] | select(.cap_key == $ck and .status == "adopted" and (.record_out|type) == "string")]
+          | max_by(.id) // {} | if .result == "done" then .record_out // "" else "" end)
+    else error("not a list") end' 2>/dev/null) || return 1
+  [ -n "$rec" ] || return 2
+  printf '%s' "$rec"
+}
 # fix_round_claim <box> [stale_min] — POST /api/fix-rounds/claim. Prints .job
 #   (rc 0). rc 2 none, 9 lost race, 1 outage. stale_min is sent only when it is
 #   all digits.

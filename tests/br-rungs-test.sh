@@ -358,6 +358,9 @@ printf 'ticket/TK-91\n' > "$T/prbranch"; osha ticket/TK-91 > "$T/prhead"
 jq -nc '{project:"tproj",rkey:"tproj-TK-91",mechanicals:0,fixrounds:0,rebuilds:0,outcome:"",attempts:[]}' \
   > "$H/state/blocked-resolver/tproj/tproj-TK-91.json"
 rm -f "$H/state/blocked-resolver/tproj/tproj-TK-91.setup-alerted"
+# A fresh project too: the 8f blocks above tripped the project rate alert, whose
+# 24 h hold sends no per-park page (BH-7630, comment 6315926752).
+rm -f "$H/state/blocked-resolver/tproj/setup-blocked.tsv" "$H/state/blocked-resolver/tproj/setup-blocked.alerted"
 echo 4 > "$T/rebase-rc"; : > "$T/rebase-out"
 ROW "o/tproj#91" "conflict-unresolvable: CONFLICT (content): a.txt" "https://github.com/o/tproj/pull/91"
 : > "$T/closed.txt"; : > "$T/queue.txt"; : > "$T/lane-alert.txt"; : > "$H/logs/blocked-resolver.log"

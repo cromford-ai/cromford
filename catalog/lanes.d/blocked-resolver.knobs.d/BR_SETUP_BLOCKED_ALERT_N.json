@@ -1,0 +1,12 @@
+{
+  "env": "BR_SETUP_BLOCKED_ALERT_N",
+  "read_in": "bin/lib/br/lane.sh",
+  "type": "int",
+  "default": 2,
+  "min": 1,
+  "max": 1000,
+  "unit": "setup blocks",
+  "zero_means": null,
+  "required": false,
+  "note": "BH-7630. More rungs than this that could not START for a machine reason (no clone, mc_rebase rc 4, no owning box) on one placement (hub or fly) in one hour send ONE alert per project per BR_SETUP_BLOCKED_ALERT_HOLD_S, default 24 h (br_setup_rate; the rows are in state/blocked-resolver/<p>/setup-blocked.tsv). While lane_placement.blocked-resolver=fly, the hub dispatch also sends one warning when the Fly rows of every project in the last hour are over it (br_placement_check). A non-number falls back to 2."
+}
