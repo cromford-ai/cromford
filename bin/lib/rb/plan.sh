@@ -37,6 +37,7 @@
 #   PC_BASE PC_HITS PC_N PC_NH PC_RC PC_RESOLVED PC_SLUG PC_SUMMARY PC_UNRES PC_VERDICT STN_NOTE UI_PLAN_NOTE
 #   WT_LINE WT_RC LP_PLACE LP_WHY
 #   MN_NOTE
+#   SI_HOUT SI_HRC SI_MSG SI_OUT SI_RC
 # shellcheck shell=bash
 
 rb_plan() {
@@ -767,6 +768,41 @@ if command -v mn_plan_note >/dev/null 2>&1; then
   [ -s "$BUILD/migration-number.txt" ] && echo "$(STAMP) [$PROJECT/$KEY] migration-number: $(head -1 "$BUILD/migration-number.txt")" >> "$BUILD/pipeline.log"
 fi
 # <<< migration number note (BH-7325)
+# >>> spec intake (BH-8840)
+# A Spec line that mixes prose, quotes or globs with its path is read here by
+# the path rule (bin/lib/spec-trace.sh st_intake), before any paid plan call.
+# The readable tokens go into ticket-meta.json as .spec_trace, which the note,
+# the plan gate and the review lens read. A line that names no readable file
+# holds the ticket with ONE comment (thc_run hold) and starts no plan; a failed
+# hold leaves no COMMENTED, so the sweep posts plan.md's sentence. A clean line,
+# a resume, no lib or a base ref that does not resolve: nothing changes here.
+# shellcheck source=bin/lib/spec-trace.sh
+[ -r "$HARNESS/bin/lib/spec-trace.sh" ] && . "$HARNESS/bin/lib/spec-trace.sh" 2>/dev/null
+if [ -s "$BUILD/ticket-meta.json" ] && command -v st_intake >/dev/null 2>&1; then
+  SI_OUT=$(st_intake . "origin/${BASE:-main}" "$BUILD/ticket-meta.json" 2>>"$BUILD/pipeline.log"); SI_RC=$?
+  printf '%s\n' "$SI_OUT" > "$BUILD/spec-intake.txt"
+  case "$SI_OUT" in "SPEC_INTAKE: ok"*|"SPEC_INTAKE: refuse"*|"SPEC_INTAKE: unknown"*)
+    echo "$(STAMP) [$PROJECT/$KEY] spec-intake: $SI_OUT" >> "$BUILD/pipeline.log" ;;
+  esac
+  if [ "$SI_RC" = 3 ]; then
+    SI_MSG='The Spec line names no readable file. Write it as `Spec: <path>[#section]`.'
+    printf 'BLOCKED: SPEC intake :: %s\n\n%s\n' "$SI_MSG" "$SI_OUT" > "$BUILD/plan.md"
+    # shellcheck source=bin/lib/ticket-hold-cmd.sh
+    command -v thc_run >/dev/null 2>&1 || { [ -r "$HARNESS/bin/lib/ticket-hold-cmd.sh" ] && . "$HARNESS/bin/lib/ticket-hold-cmd.sh"; }
+    SI_HRC=1; SI_HOUT="ticket-hold-cmd.sh is not on this box"
+    if command -v thc_run >/dev/null 2>&1; then
+      SI_HOUT=$(thc_run hold "$PROJECT" "$(jq -nc --arg t "$KEY" --arg r "$SI_MSG" '{ticket:$t,reason:$r,actor:"spec-intake"}')" 2>/dev/null); SI_HRC=$?
+    fi
+    if [ "$SI_HRC" = 0 ]; then
+      touch "$BUILD/COMMENTED"
+    else
+      echo "$(STAMP) [$PROJECT/$KEY] SPEC intake: the Spec line of $KEY names no readable file and the hold failed (rc=$SI_HRC: $(printf '%s' "$SI_HOUT" | tr '\n' ' ' | cut -c1-160)). No plan ran; the results sweep posts plan.md's sentence." >> "$ALERTS"
+    fi
+    BB plan_blocked "" "" "" false "$(head -c 1200 "$BUILD/plan.md" 2>/dev/null)"
+    RESULT "PLAN_BLOCKED $BUILD/plan.md"; exit 4
+  fi
+fi
+# <<< spec intake (BH-8840)
 # >>> spec trace note (BH-6485)
 # A ticket body with `Spec:` or `Reference:` lines tells the planner the
 # `## Spec trace` rule (prompts/plan-contract.md §17) through UI_PLAN_NOTE, so

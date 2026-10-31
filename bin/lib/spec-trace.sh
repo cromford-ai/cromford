@@ -38,7 +38,18 @@
 #   st_shot_names <ticket>                 `<ref>\t<theme>\t<width>\t<file>` rows
 #   st_ui_ref_applies <ticket> <files>     rc 0: Reference lines and a UI diff
 #   st_conf [project]                      the knobs (ST_* variables)
+#   st_spec_tokens [file]                  the path-rule tokens of the Spec lines
+#   st_spec_clean [file]                   rc 0: every Spec line is clean
+#   st_intake <repo> <base> <meta.json>    BH-8840: resolve a mixed Spec line
 # A <ticket> file is ticket-meta.json (its .body) or the body text itself.
+#
+# THE INTAKE (BH-8840). A Spec line that mixes prose, quotes or globs with the
+# path lost the path to the comma split above, so every plan of the ticket
+# failed the gate. The plan stage (bin/lib/rb/plan.sh, `spec intake`) runs
+# st_intake before any paid call. A clean line is left alone. Any other line is
+# read by the path rule; the tokens that name a file on the base branch go into
+# ticket-meta.json as `.spec_trace`, and st_parse spec / st_dropped / st_has
+# read that list first. No token reads: the ticket is held with one comment.
 #
 # THE KNOBS (catalog/lanes.d/_lib.spec-trace.json, id spec-trace), read through
 # lib_env_apply, else the env, else the ST_DEFAULT_* values below.
@@ -62,7 +73,8 @@ _st_body() {
 }
 
 # _st_scan <field> <mode> — body on stdin. mode values: the kept values; mode
-# dropped: the count over the cap.
+# dropped: the count over the cap; mode raw: each key line's value after the
+# key, prefixed `|` (so an empty value is still one line).
 _st_scan() {
   tr -d '\r' | awk -v field="$1" -v mode="$2" -v max="$ST_MAX_VALUES" '
     {
@@ -81,6 +93,7 @@ _st_scan() {
       if (substr(k, 1, length(key)) != key) next
       v = substr(line, length(key) + 1)
       sub(/^`/, "", v)
+      if (mode == "raw") { print "|" v; next }
       n = split(v, w, ",")
       for (i = 1; i <= n; i++) {
         x = w[i]
@@ -99,20 +112,133 @@ _st_scan() {
     END { if (mode == "dropped") print dropped + 0 }'
 }
 
+# _st_resolved <ticket> — rc 0 and the intake's kept Spec values, one a line,
+# when the ticket is a JSON object with a `.spec_trace.spec` array (written by
+# st_intake). Only the spec field reads it; reference and cut never do.
+_st_resolved() {
+  local f="${1:-}"
+  [ -n "$f" ] && [ -r "$f" ] && [ -f "$f" ] || return 1
+  jq -e 'type == "object" and (.spec_trace.spec | type) == "array"' "$f" >/dev/null 2>&1 || return 1
+  jq -r '.spec_trace.spec[] | strings' "$f" 2>/dev/null
+}
+
 st_parse() {
   case "${1:-}" in spec|reference|cut) ;; *) return 2 ;; esac
+  if [ "$1" = spec ] && [ -n "${2:-}" ] && _st_resolved "$2"; then return 0; fi
   if [ -n "${2:-}" ]; then _st_body "$2" | _st_scan "$1" values; else _st_scan "$1" values; fi
 }
 
 st_dropped() {
   case "${1:-}" in spec|reference|cut) ;; *) return 2 ;; esac
+  # The intake kept at most ST_MAX_VALUES values and counted the rest.
+  if [ "$1" = spec ] && [ -n "${2:-}" ] && _st_resolved "$2" >/dev/null; then
+    jq -r '.spec_trace.capped // 0' "$2" 2>/dev/null; return 0
+  fi
   if [ -n "${2:-}" ]; then _st_body "$2" | _st_scan "$1" dropped; else _st_scan "$1" dropped; fi
 }
 
 st_has() {
   local b
+  [ -n "${1:-}" ] && [ -n "$(_st_resolved "$1")" ] && return 0
   b=$(if [ -n "${1:-}" ]; then _st_body "$1"; else cat; fi) || return 1
   [ -n "$(_st_scan spec values <<<"$b")$(_st_scan reference values <<<"$b")" ]
+}
+
+# st_spec_tokens [ticket] — the path rule over each Spec line's value (body on
+# stdin without a ticket): one `<path>\t<anchor>\t<lines>` row per token. A
+# token is `[A-Za-z0-9_./-]+` with an optional `#anchor` ([A-Za-z0-9_.-]) or
+# `:line[,line]`. Trailing dots (a sentence end) are cut. Only a path with a
+# `/` or a `.` and a letter counts, so `4.20`, `...` and `DASH-24` do not.
+# Deduped on path+anchor, at most ST_MAX_VALUES rows.
+st_spec_tokens() {
+  { if [ -n "${1:-}" ]; then _st_body "$1"; else cat; fi; } | _st_scan spec raw | awk -v max="$ST_MAX_VALUES" '
+    {
+      v = substr($0, 2)
+      while (match(v, /[A-Za-z0-9_.\/-]+(#[A-Za-z0-9_.-]+|:[0-9]+(,[0-9]+)*)?/)) {
+        t = substr(v, RSTART, RLENGTH); v = substr(v, RSTART + RLENGTH)
+        a = ""; l = ""
+        if ((i = index(t, "#")) > 0) { a = substr(t, i + 1); t = substr(t, 1, i - 1) }
+        else if ((i = index(t, ":")) > 0) { l = substr(t, i + 1); t = substr(t, 1, i - 1) }
+        sub(/\.+$/, "", t); sub(/\.+$/, "", a)
+        if (t !~ /[\/.]/ || t !~ /[A-Za-z]/) continue
+        k = t "#" a
+        if (k in seen) continue
+        seen[k] = 1
+        if (c >= max) continue
+        c++; printf "%s\t%s\t%s\n", t, a, l
+      }
+    }'
+}
+
+# st_spec_clean [ticket] — rc 0 when every Spec line is clean: at least one
+# non-empty comma part, and each part (spaces and backticks trimmed) is a path
+# value from the path byte set with a `/` or a `.`, and at most one #anchor.
+# A clean line is parsed exactly as before BH-8840; anything else goes through
+# st_intake's path rule.
+st_spec_clean() {
+  { if [ -n "${1:-}" ]; then _st_body "$1"; else cat; fi; } | _st_scan spec raw | awk '
+    {
+      n = split(substr($0, 2), w, ","); good = 0
+      for (i = 1; i <= n; i++) {
+        x = w[i]; gsub(/^[ \t`]+|[ \t`]+$/, "", x)
+        if (x == "") continue
+        if (x !~ /^[A-Za-z0-9_.\/-]*[\/.][A-Za-z0-9_.\/-]*(#[^# \t]+)?$/) exit 1
+        good++
+      }
+      if (!good) exit 1
+    }'
+}
+
+# st_intake <repo> <base-ref> <ticket-meta.json> — BH-8840: read a Spec line
+# that is not clean by the path rule, before any paid plan call. ONE status
+# line on stdout:
+#   SPEC_INTAKE: n/a                rc 0  no Spec line, or not a JSON object
+#   SPEC_INTAKE: reused             rc 0  .spec_trace is already there (a resume)
+#   SPEC_INTAKE: clean              rc 0  every Spec line is clean: today's path
+#   SPEC_INTAKE: unknown <why>      rc 0  the base ref does not resolve: fail open
+#   SPEC_INTAKE: ok kept=N dropped=M: <dropped>   rc 0  .spec_trace written
+#   SPEC_INTAKE: refuse dropped=M: <dropped>      rc 3  no token reads
+# A token reads when its path passes the _st_resolve path rules (no leading
+# `/`, no `..`) and `<base-ref>:<path>` is a blob (a directory does not read).
+# .spec_trace = {v:1, spec:[path[#anchor]], lines:["path:l,l"], dropped:[raw],
+# capped:<readable tokens over ST_MAX_VALUES>}, written to a temp file in the
+# same directory, then moved.
+st_intake() {
+  local repo="${1:-.}" base="${2:-}" tk="${3:-}" body p a l raw kept="" lines="" dropped="" nk=0 nd=0 nc=0 tmp dl
+  [ -n "$tk" ] && [ -r "$tk" ] && [ -f "$tk" ] && jq -e 'type == "object"' "$tk" >/dev/null 2>&1 \
+    || { echo "SPEC_INTAKE: n/a"; return 0; }
+  body=$(jq -r '.body // "" | tostring' "$tk" 2>/dev/null)
+  [ -n "$(_st_scan spec raw <<<"$body")" ] || { echo "SPEC_INTAKE: n/a"; return 0; }
+  if jq -e 'has("spec_trace")' "$tk" >/dev/null 2>&1; then echo "SPEC_INTAKE: reused"; return 0; fi
+  if st_spec_clean <<<"$body"; then echo "SPEC_INTAKE: clean"; return 0; fi
+  if ! git -C "$repo" rev-parse --verify -q "${base}^{commit}" >/dev/null 2>&1; then
+    echo "SPEC_INTAKE: unknown base ref '$base' does not resolve in $repo"; return 0
+  fi
+  # \037, not a tab: read collapses empty tab-separated fields.
+  while IFS=$'\037' read -r p a l; do
+    [ -n "$p" ] || continue
+    raw="$p${a:+#$a}${l:+:$l}"
+    case "$p" in /*|..|../*|*/..|*/../*) dropped+="$raw"$'\n'; nd=$((nd + 1)); continue ;; esac
+    if [ "$(git -C "$repo" cat-file -t "$base:$p" 2>/dev/null)" = blob ]; then
+      [ "$nk" -lt "$ST_MAX_VALUES" ] || { nc=$((nc + 1)); continue; }
+      kept+="$p${a:+#$a}"$'\n'; nk=$((nk + 1))
+      [ -n "$l" ] && lines+="$p:$l"$'\n'
+    else
+      dropped+="$raw"$'\n'; nd=$((nd + 1))
+    fi
+  done < <(ST_MAX_VALUES=1000 st_spec_tokens <<<"$body" | tr '\t' '\037')
+  dl=$(printf '%s' "$dropped" | paste -sd, - | sed 's/,/, /g' | cut -c1-200)
+  if [ "$nk" = 0 ]; then echo "SPEC_INTAKE: refuse dropped=$nd: ${dl:--}"; return 3; fi
+  tmp=$(mktemp "$(dirname "$tk")/.spec-intake.XXXXXX") || { echo "SPEC_INTAKE: unknown no temp file beside $tk"; return 0; }
+  if jq --arg k "$kept" --arg l "$lines" --arg d "$dropped" --argjson c "$nc" \
+       '.spec_trace = {v: 1, spec: ($k | split("\n") | map(select(. != ""))),
+                       lines: ($l | split("\n") | map(select(. != ""))),
+                       dropped: ($d | split("\n") | map(select(. != ""))), capped: $c}' "$tk" > "$tmp" 2>/dev/null \
+     && mv -f "$tmp" "$tk"; then
+    echo "SPEC_INTAKE: ok kept=$nk dropped=$nd: ${dl:--}"; return 0
+  fi
+  rm -f "$tmp"
+  echo "SPEC_INTAKE: unknown cannot write .spec_trace to $tk"; return 0
 }
 
 # _st_key <spec-value> — the section a spec value names, or its path when it
@@ -188,6 +314,9 @@ st_plan_note() {
   cut=$(_st_list "$tk" cut)
   printf 'SPEC TRACE (BH-6485, prompts/plan-contract.md §17): this ticket body names'
   [ -n "$sp" ] && printf ' spec sections %s' "$(paste -sd, - <<<"$sp" | sed 's/,/, /g')"
+  [ -n "$sp" ] && jq -r '.spec_trace.lines[]? | strings' "$tk" 2>/dev/null | while IFS= read -r ln; do
+    printf ' (lines %s of %s)' "$(sed 's/,/, /g' <<<"${ln##*:}")" "${ln%:*}"
+  done
   [ -n "$sp" ] && [ -n "$rf" ] && printf ' and'
   [ -n "$rf" ] && printf ' reference screens %s' "$(paste -sd, - <<<"$rf" | sed 's/,/, /g')"
   printf '. Read each named section in this repo. plan.md MUST carry a '"'"'## Spec trace'"'"' section with at least one line per named section, each in the form '"'"'S<section>: <requirement> → <task / file>'"'"' (for a Spec line with no #section, the section is its path)'
