@@ -631,6 +631,9 @@ fp_mc_lib_load() {
 # A box off the tailnet is named once, not only per ticket (BH-6693)
 # shellcheck source=bin/lib/pool-tailnet.sh
 [ -r "$HARNESS/bin/lib/pool-tailnet.sh" ] && . "$HARNESS/bin/lib/pool-tailnet.sh"
+# N harness syncs in a row fail: one probe per tick and ONE alert, not a destroy loop (BH-8780)
+# shellcheck source=bin/lib/pool-sync-streak.sh
+[ -r "$HARNESS/bin/lib/pool-sync-streak.sh" ] && . "$HARNESS/bin/lib/pool-sync-streak.sh"
 # Per-tick REST caches for the spawn-decision reads (BH-1075)
 declare -A _POOL_HEAD_CACHE=() _POOL_PR_CACHE=() _POOL_HOLD_CACHE=() _POOL_COMMENT_CACHE=()
 # The listing key per issue number, and the per-tick hold-cache counters (BH-6549)

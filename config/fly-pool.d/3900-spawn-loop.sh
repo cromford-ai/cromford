@@ -10,6 +10,8 @@ fi
 
 LAUNCHED=0
 HOT_LAUNCHED=0
+# BH-8780: a tick that starts with the sync streak at its max launches one probe.
+PSS_TICK_TRIPPED=0; command -v pss_tick_gate >/dev/null 2>&1 && pss_tick_gate
 TICK_KEYS=" "
 # Malformed entries quarantined this tick: paged ONCE after the loop, however
 # many there are, so a bad producer is one alert and not one per file.
@@ -53,6 +55,8 @@ for JF in $(hotfix_first $(ls -tr "$QDIR"/*.json 2>/dev/null)); do
   case "$JF" in *.failed.json) continue;; esac
   # BH-7475: the same stop rule at each queued row; the tail below still waits.
   command -v pts_stop_due >/dev/null 2>&1 && pts_stop_due && { PDC_STOP=stop; break; }
+  # BH-8780: the sync streak reached its max during this tick: no more launches.
+  command -v pss_stop_due >/dev/null 2>&1 && pss_stop_due && { PDC_STOP=stop; break; }
   # BH-7706: a slot is held from the start of a row's decision to its verdict
   # (PDC_PEND_PLAIN, PDC_PEND_HOT). With every budget slot held, a row first
   # waits for the pending verdicts, so the rule below reads what a serial walk

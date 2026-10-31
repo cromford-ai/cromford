@@ -458,6 +458,8 @@ spawn_one() { # spawn_one <job-file> <key> <ticket-id> <attempt> <deferrals> <de
   rm -f "$TB"
   if [ "$SYNC_OK" != 1 ]; then
     say "harness sync FAILED to $MID for $KEY — destroying, job stays queued$(fly_err_reason "$SYNCERR")"
+    # BH-8780: before rm -rf "$TMP", so the stderr file is still there.
+    command -v pss_note >/dev/null 2>&1 && pss_note fail "$P" "$KEY" "$MID" "$(fly_err_reason "$SYNCERR" | sed 's/^ :: //')"
     destroy_machine "$MID" "harness sync failed for $KEY"; rm -rf "$TMP"
     # The lease was taken before the launch (BH-7215), so this exit frees it too.
     command -v pool_account_release >/dev/null 2>&1 && pool_account_release "$MID"
@@ -465,6 +467,8 @@ spawn_one() { # spawn_one <job-file> <key> <ticket-id> <attempt> <deferrals> <de
     pool_unclaim "$KEY" "harness sync to $MID failed"; return 1
   fi
   OK=1
+  # BH-8780: a push-path sync passed, so the tunnel works: the streak ends.
+  command -v pss_note >/dev/null 2>&1 && pss_note ok "$P" "$KEY" "$MID"
   if [ -s "$TMP/gh-token-read" ]; then
     mput "$MID" "$TMP/gh-token-read" /run/harness-env/gh-token-read \
       || say "$MID: gh-token-read push FAILED — git answers the project token for the extra repos"

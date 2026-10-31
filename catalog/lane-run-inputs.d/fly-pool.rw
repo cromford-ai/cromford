@@ -42,6 +42,11 @@ state/build-notes/$p/*
 # them, :3041-3481 writes them. RESULT is the line the reap parks.
 @token <pool marker> RESULT RELAYED RELAY_DEFERRED COMMENTED DEFERRED TERMINAL SUPERSEDED CUSTODY_ALERTED
 builds/pool-$p-<KEY>-*/<pool marker>
+# The harness sync fail streak and its episode marker (BH-8780,
+# bin/lib/pool-sync-streak.sh pss_note): a pool tick on a machine must see the
+# failures of the ticks before it, or the stop never trips there.
+state/pool-sync-streak/$p.streak
+state/pool-sync-streak/$p.alerted
 # The once-a-day alert markers (bin/fly-pool.sh:599, :1984, :2873, :3682, :3990)
 flags/alerted-pool-*
 flags/alerted-extra-read-missing-*

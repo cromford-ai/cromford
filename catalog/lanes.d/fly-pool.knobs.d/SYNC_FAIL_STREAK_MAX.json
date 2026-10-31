@@ -1,0 +1,12 @@
+{
+  "env": "SYNC_FAIL_STREAK_MAX",
+  "type": "int",
+  "default": 5,
+  "min": 0,
+  "max": 100,
+  "unit": "failures",
+  "zero_means": "off",
+  "required": false,
+  "read_in": "bin/lib/pool-sync-streak.sh",
+  "note": "BH-8780. The push-path harness syncs in a row that may fail for one pool project before the pool stops its destroy loop. At the max, a tick launches ONE probe machine and the other rows stay queued, and the pool writes ONE ALERTS line per episode that names the flyctl error, the count, the key and the machine. The first sync that passes resets the streak and ends the episode. State: state/pool-sync-streak/<project>.streak. Settings row `lane.fly-pool.sync_fail_streak_max`. 0 = off. A value outside 0-100 uses 5."
+}

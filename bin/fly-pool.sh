@@ -631,6 +631,9 @@ fp_mc_lib_load() {
 # A box off the tailnet is named once, not only per ticket (BH-6693)
 # shellcheck source=bin/lib/pool-tailnet.sh
 [ -r "$HARNESS/bin/lib/pool-tailnet.sh" ] && . "$HARNESS/bin/lib/pool-tailnet.sh"
+# N harness syncs in a row fail: one probe per tick and ONE alert, not a destroy loop (BH-8780)
+# shellcheck source=bin/lib/pool-sync-streak.sh
+[ -r "$HARNESS/bin/lib/pool-sync-streak.sh" ] && . "$HARNESS/bin/lib/pool-sync-streak.sh"
 # Per-tick REST caches for the spawn-decision reads (BH-1075)
 declare -A _POOL_HEAD_CACHE=() _POOL_PR_CACHE=() _POOL_HOLD_CACHE=() _POOL_COMMENT_CACHE=()
 # The listing key per issue number, and the per-tick hold-cache counters (BH-6549)
@@ -5935,6 +5938,8 @@ spawn_one() { # spawn_one <job-file> <key> <ticket-id> <attempt> <deferrals> <de
   rm -f "$TB"
   if [ "$SYNC_OK" != 1 ]; then
     say "harness sync FAILED to $MID for $KEY — destroying, job stays queued$(fly_err_reason "$SYNCERR")"
+    # BH-8780: before rm -rf "$TMP", so the stderr file is still there.
+    command -v pss_note >/dev/null 2>&1 && pss_note fail "$P" "$KEY" "$MID" "$(fly_err_reason "$SYNCERR" | sed 's/^ :: //')"
     destroy_machine "$MID" "harness sync failed for $KEY"; rm -rf "$TMP"
     # The lease was taken before the launch (BH-7215), so this exit frees it too.
     command -v pool_account_release >/dev/null 2>&1 && pool_account_release "$MID"
@@ -5942,6 +5947,8 @@ spawn_one() { # spawn_one <job-file> <key> <ticket-id> <attempt> <deferrals> <de
     pool_unclaim "$KEY" "harness sync to $MID failed"; return 1
   fi
   OK=1
+  # BH-8780: a push-path sync passed, so the tunnel works: the streak ends.
+  command -v pss_note >/dev/null 2>&1 && pss_note ok "$P" "$KEY" "$MID"
   if [ -s "$TMP/gh-token-read" ]; then
     mput "$MID" "$TMP/gh-token-read" /run/harness-env/gh-token-read \
       || say "$MID: gh-token-read push FAILED — git answers the project token for the extra repos"
@@ -6089,6 +6096,8 @@ fi
 
 LAUNCHED=0
 HOT_LAUNCHED=0
+# BH-8780: a tick that starts with the sync streak at its max launches one probe.
+PSS_TICK_TRIPPED=0; command -v pss_tick_gate >/dev/null 2>&1 && pss_tick_gate
 TICK_KEYS=" "
 # Malformed entries quarantined this tick: paged ONCE after the loop, however
 # many there are, so a bad producer is one alert and not one per file.
@@ -6132,6 +6141,8 @@ for JF in $(hotfix_first $(ls -tr "$QDIR"/*.json 2>/dev/null)); do
   case "$JF" in *.failed.json) continue;; esac
   # BH-7475: the same stop rule at each queued row; the tail below still waits.
   command -v pts_stop_due >/dev/null 2>&1 && pts_stop_due && { PDC_STOP=stop; break; }
+  # BH-8780: the sync streak reached its max during this tick: no more launches.
+  command -v pss_stop_due >/dev/null 2>&1 && pss_stop_due && { PDC_STOP=stop; break; }
   # BH-7706: a slot is held from the start of a row's decision to its verdict
   # (PDC_PEND_PLAIN, PDC_PEND_HOT). With every budget slot held, a row first
   # waits for the pending verdicts, so the rule below reads what a serial walk
