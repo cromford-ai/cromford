@@ -43,6 +43,9 @@ python3 -I -c 'import sqlite3' 2>/dev/null || { echo "python3 sqlite3 missing �
 NOW=1792814400   # 2026-10-24T00:00:00Z, the settings cache's fetched_at
 KEY=lane.merge-conductor.mc_prequeue_gate
 PKEY=lane.merge-conductor.cromford.mc_prequeue_gate
+# BH-8801: the G0 and H rows also set the fallback off, so they pin the gate-off
+# path exactly (with the fallback on, the gate reads the PR body first).
+FBKEY=lane.merge-conductor.mc_prequeue_fallback
 SLUG=example-org/demo-os
 HEAD1=$(printf 'e%.0s' $(seq 40))
 MAIN=$(printf 'c%.0s' $(seq 40))
@@ -125,7 +128,7 @@ cache r "${ROWS:-{\}}"; gate r ""
 grep -q '^word=hold ' "$T/r/out" 2>/dev/null && ok || bad "R the composed schema: the answer is hold ($(cat "$T/r/out" 2>/dev/null))"
 
 # ── G0: global row 0 ─────────────────────────────────────────────────────────
-cache g0 "{\"$KEY\":\"0\"}"; gate g0 ""
+cache g0 "{\"$KEY\":\"0\",\"$FBKEY\":\"0\"}"; gate g0 ""
 [ "$(dispatches g0)" = 0 ] && ok || bad "G0 row 0: no dispatch (got $(dispatches g0))"
 [ ! -s "$T/g0/gh" ] && ok || bad "G0 row 0: no gh call at all ($(cat "$T/g0/gh"))"
 [ "$(store g0)" = 0 ] && ok || bad "G0 row 0: nothing written under prequeue/ (got $(store g0))"
@@ -139,25 +142,25 @@ grep -q '^word=proceed ' "$T/g0/out" 2>/dev/null && ok || bad "G0 row 0: proceed
 # pq_mignum (BH-7671) still run, and their push or refusal still holds the PR.
 hooks() { tr '\n' ' ' < "$T/$1/hooks" 2>/dev/null | sed 's/ $//'; }
 [ "$(hooks g0)" = "restamp mignum" ] && ok || bad "H0 row 0: pq_restamp and pq_mignum both run (got '$(hooks g0)')"
-cache h1 "{\"$KEY\":\"0\"}"; RS_WORD="pushed $MAIN 1" gate h1 ""
+cache h1 "{\"$KEY\":\"0\",\"$FBKEY\":\"0\"}"; RS_WORD="pushed $MAIN 1" gate h1 ""
 grep -q '^word=hold why=restamped 1 schema fragment' "$T/h1/out" && ok || bad "H1 row 0: a restamp push holds ($(cat "$T/h1/out" "$T/h1/err" 2>/dev/null))"
 [ "$(dispatches h1)" = 0 ] && [ "$(hooks h1)" = restamp ] && ok || bad "H1 row 0: no dispatch, mignum not reached (gh: $(cat "$T/h1/gh"); hooks: $(hooks h1))"
-cache h2 "{\"$KEY\":\"0\"}"; RS_WORD="held lock busy" gate h2 ""
+cache h2 "{\"$KEY\":\"0\",\"$FBKEY\":\"0\"}"; RS_WORD="held lock busy" gate h2 ""
 grep -q '^word=hold why=schema restamp held: lock busy' "$T/h2/out" && ok || bad "H2 row 0: a restamp refusal holds ($(cat "$T/h2/out" 2>/dev/null))"
-cache h3 "{\"$KEY\":\"0\"}"; MN_WORD="pushed $MAIN 2" gate h3 ""
+cache h3 "{\"$KEY\":\"0\",\"$FBKEY\":\"0\"}"; MN_WORD="pushed $MAIN 2" gate h3 ""
 grep -q '^word=hold why=renumbered 2 migration' "$T/h3/out" && ok || bad "H3 row 0: a migration renumber push holds ($(cat "$T/h3/out" "$T/h3/err" 2>/dev/null))"
 [ "$(hooks h3)" = "restamp mignum" ] && [ "$(dispatches h3)" = 0 ] && ok || bad "H3 row 0: both hooks ran, no dispatch (hooks: $(hooks h3))"
-cache h4 "{\"$KEY\":\"0\"}"; MN_WORD="held a renumber rebase is queued on the pool" gate h4 ""
+cache h4 "{\"$KEY\":\"0\",\"$FBKEY\":\"0\"}"; MN_WORD="held a renumber rebase is queued on the pool" gate h4 ""
 grep -q '^word=hold why=migration number check held: ' "$T/h4/out" && ok || bad "H4 row 0: a migration number refusal holds ($(cat "$T/h4/out" 2>/dev/null))"
 ! grep -q 'gate off' "$T/h4/status" && ok || bad "H4 a hold publishes no 'gate off' status ($(cat "$T/h4/status"))"
-cache h5 "{\"$KEY\":\"0\"}"; TIP_DOWN=1 gate h5 ""
+cache h5 "{\"$KEY\":\"0\",\"$FBKEY\":\"0\"}"; TIP_DOWN=1 gate h5 ""
 grep -q '^word=hold why=main tip unreadable' "$T/h5/out" && ok || bad "H5 row 0: an unreadable main tip holds, the hooks cannot run blind ($(cat "$T/h5/out" 2>/dev/null))"
 [ -z "$(hooks h5)" ] && ok || bad "H5 no hook runs without a main tip (got '$(hooks h5)')"
-cache h6 "{\"$KEY\":\"0\"}"; RS_WANT=0 MN_WANT=0 gate h6 ""
+cache h6 "{\"$KEY\":\"0\",\"$FBKEY\":\"0\"}"; RS_WANT=0 MN_WANT=0 gate h6 ""
 grep -q '^word=proceed ' "$T/h6/out" && [ -z "$(hooks h6)" ] && [ ! -s "$T/h6/tipreads" ] && ok \
   || bad "H6 row 0, neither hook can act: proceed, no hook, no main tip read ($(cat "$T/h6/out"); hooks '$(hooks h6)'; tip reads $(wc -l < "$T/h6/tipreads" 2>/dev/null))"
 grep -qx 'prequeue-verdict success gate off' "$T/h6/status" && ok || bad "H6 publishes \"gate off\" ($(cat "$T/h6/status"))"
-cache h7 "{\"$KEY\":\"0\"}"; RS_WANT=0 MN_WORD="pushed $MAIN 1" gate h7 ""
+cache h7 "{\"$KEY\":\"0\",\"$FBKEY\":\"0\"}"; RS_WANT=0 MN_WORD="pushed $MAIN 1" gate h7 ""
 grep -q '^word=hold why=renumbered 1 migration' "$T/h7/out" && [ "$(hooks h7)" = "restamp mignum" ] && ok \
   || bad "H7 row 0, only pq_mignum can act: the tip is read and its push holds ($(cat "$T/h7/out"); hooks '$(hooks h7)')"
 

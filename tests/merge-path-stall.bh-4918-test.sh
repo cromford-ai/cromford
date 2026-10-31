@@ -193,7 +193,7 @@ reset_calls() { : > "$T/c-posts.txt"; : > "$T/c-calls.txt"; : > "$T/c-alerts.txt
 # (no floor in effect); tests/merge-conductor-keyed-timeout-test.sh pins the floor.
 # It also sets MC_BACKSTOP_MAX_RUNNING=0 (BH-7376 count cap off): K13 there pins the cap.
 bs() { ( cd "$T" && setsid -w env -u MC_ONLY_PR PATH="$T/fakebin:$PATH" HARNESS="$T/h" MC_KEYED_READY_ARM_S=1 MC_BACKSTOP_MAX_RUNNING=0 HARNESS_SECRET=x JOBS_URL=http://worker.test GH_TOKEN=pat-default \
-  MC_BACKSTOP_MAX_KEYS=0 MC_MERGE_BUDGET=0 MC_ENQUEUE_SETTLE=0 MC_MERGE_SETTLE=0 MC_MERGIFY_SETTLE=0 MC_MERGIFY_WAIT_S=0 MC_QUEUE_TTL=0 MC_PREQUEUE_GATE=0 "$@" \
+  MC_BACKSTOP_MAX_KEYS=0 MC_MERGE_BUDGET=0 MC_ENQUEUE_SETTLE=0 MC_MERGE_SETTLE=0 MC_MERGIFY_SETTLE=0 MC_MERGIFY_WAIT_S=0 MC_QUEUE_TTL=0 MC_PREQUEUE_GATE=0 MC_PREQUEUE_FALLBACK=0 "$@" \
   bash "$T/h/bin/merge-conductor-backstop.sh" > "$T/bs.out" 2>&1 ) 2>/dev/null
   local lk; for lk in "$T/h/locks"/mc-backstop-*.lock; do [ -e "$lk" ] && flock -w 300 "$lk" true 2>/dev/null; done; sleep 0.5; }
 posted() { grep -c "issues/$1/comments -f body=@mergifyio queue" "$T/c-posts.txt" 2>/dev/null || true; }

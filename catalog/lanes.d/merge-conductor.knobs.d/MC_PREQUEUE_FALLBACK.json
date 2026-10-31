@@ -1,0 +1,11 @@
+{
+  "env": "MC_PREQUEUE_FALLBACK",
+  "type": "int",
+  "default": 1,
+  "min": 0,
+  "max": 1,
+  "unit": null,
+  "zero_means": "off",
+  "read_in": "bin/lib/mc-prequeue.sh",
+  "note": "BH-8801: with MC_PREQUEUE_GATE=0, 1 runs the pre-queue verdict (cache read, prequeue-gate.yml dispatch) for a head whose selection-gate record in the PR body is could-not-run or missing, with one PREQUEUE_FALLBACK line in the conductor log. A body the gate cannot read takes the gate-off path with one PREQUEUE_FALLBACK_UNREAD line. A fix-main-red head (BH-8769 hotfix skip) never falls back. 0 = the gate-off path as before. Rollback: set lane.merge-conductor.mc_prequeue_fallback to 0. Per project: lane.merge-conductor.<project>.mc_prequeue_fallback."
+}

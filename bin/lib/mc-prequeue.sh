@@ -44,6 +44,22 @@
 # pq_mignum or pq_fastlint can act (pq_restamp_wanted / pq_mignum_wanted /
 # pq_fastlint_wanted, no network), the main-tip read and the hooks still run,
 # so an unreadable tip still holds and a fast lint red still parks.
+# MC_PREQUEUE_FALLBACK (BH-8801, default 1, 0 = off) applies only with the gate
+# at 0: the gate reads the PR body's selection-gate marker for the current head
+# (_pq_gate_record, LR_GR_RE of bin/lib/lead-review/gate-record.sh). rc 0,
+# no-selection or off proceeds as the gate off does. rc could-not-run, or no
+# marker for this head, logs one `PREQUEUE_FALLBACK <slug#num> <head>
+# gate-record=<rc|missing>` line and runs the verdict as the gate on does. A
+# body it cannot read logs one `PREQUEUE_FALLBACK_UNREAD <slug#num> <head>`
+# line and takes the gate-off path, as before. Rollback: the row
+# lane.merge-conductor.mc_prequeue_fallback to 0.
+# THE HOTFIX SKIP (BH-8769, no knob; mc-prequeue.d/hotfix-skip.sh): a READY
+# head labelled MC_MAIN_RED_LABEL in a mergify repo takes the gate-off path in
+# both gate modes, with no fallback, and publishes the skipped text.
+# MC_PREQUEUE_CARRY (BH-8769, default 1, 0 = off) lets pq_resolve ask
+# pq_impact_reuse (mc-prequeue.d/dispatch.sh); a carried green's status names
+# the main it was proven on and the main it was carried to (status.sh).
+# Rollback: the row lane.merge-conductor.mc_prequeue_carry to 0.
 # MC_PREQUEUE_FAST_LINTS (BH-8473) 1 runs the fast lint set before the queue;
 # MC_PREQUEUE_FAST_LINTS_BUDGET_S and MC_PREQUEUE_FAST_LINTS_JOBS bound it, and
 # MC_PREQUEUE_FAST_LINTS_SET picks catalog/prequeue-fast-lints.tsv rows
@@ -75,7 +91,7 @@
 # asks again. A dispatch never waits for its run: pq_dispatch writes `pending`
 # for (PR, head, main) and the gate holds; a later run reads the verdict.
 
-PQ_KNOB_DEFAULTS="MC_PREQUEUE_GATE=1 MC_PREQUEUE_FRESH_S=1800 MC_PREQUEUE_DEADLINE_S=2400 MC_PREQUEUE_REUSE=1 MC_BATCH_SOLO=1 MC_BATCH_SOLO_MAX_MEMBERS=13 MC_PREQUEUE_FRESH_COMMITS=3 MC_PREQUEUE_TRACE=1 MC_PREQUEUE_IMPACT_REUSE=1 MC_PREQUEUE_IMPACT_MAX_S=21600 MC_PREQUEUE_CALL_BUDGET_S=150 MC_PREQUEUE_GIT_LOCK_WAIT_S=5 MC_PREQUEUE_FAST_LINTS=1 MC_PREQUEUE_FAST_LINTS_BUDGET_S=90 MC_PREQUEUE_FAST_LINTS_JOBS=4 MC_PREQUEUE_FAST_LINTS_RESERVE_S=10"
+PQ_KNOB_DEFAULTS="MC_PREQUEUE_GATE=1 MC_PREQUEUE_FRESH_S=1800 MC_PREQUEUE_DEADLINE_S=2400 MC_PREQUEUE_REUSE=1 MC_BATCH_SOLO=1 MC_BATCH_SOLO_MAX_MEMBERS=13 MC_PREQUEUE_FRESH_COMMITS=3 MC_PREQUEUE_TRACE=1 MC_PREQUEUE_IMPACT_REUSE=1 MC_PREQUEUE_IMPACT_MAX_S=21600 MC_PREQUEUE_CALL_BUDGET_S=150 MC_PREQUEUE_GIT_LOCK_WAIT_S=5 MC_PREQUEUE_FAST_LINTS=1 MC_PREQUEUE_FAST_LINTS_BUDGET_S=90 MC_PREQUEUE_FAST_LINTS_JOBS=4 MC_PREQUEUE_FAST_LINTS_RESERVE_S=10 MC_PREQUEUE_CARRY=1 MC_PREQUEUE_FALLBACK=1"
 
 # pq_knob <NAME> — a merge-conductor lane knob for this project, a non-negative
 #   integer, else its default from PQ_KNOB_DEFAULTS (the _bej_knob pattern).
@@ -137,6 +153,42 @@ _pq_over_hold() {
   _pq_end hold
 }
 
+# _pq_hooks_wanted <slug> — rc 0 when pq_restamp, pq_mignum or pq_fastlint can
+#   act (their cheap *_wanted checks, no network).
+_pq_hooks_wanted() {
+  { declare -F pq_restamp >/dev/null && { ! declare -F pq_restamp_wanted >/dev/null || pq_restamp_wanted "$1"; }; } \
+    || { declare -F pq_mignum >/dev/null && pq_mignum_wanted; } \
+    || { declare -F pq_fastlint >/dev/null && pq_fastlint_wanted; }
+}
+
+# _pq_gate_record <slug> <num> <head> — sets _pq_gr to the selection-gate
+#   record of <head> in the PR body (BH-8801): 0|no-selection|off|could-not-run
+#   as the marker says, missing when no marker names <head>, unread when the
+#   body read failed. A could-not-run marker for <head> wins over another marker
+#   for <head>. Runs in the caller's shell, so pq_call times the read under the
+#   gate's call budget. The extraction and LR_GR_RE are those of lr_gate_record
+#   (bin/lib/lead-review/gate-record.sh).
+_pq_gate_record() {
+  local slug="$1" num="$2" head="$3" raw="" body lines line mh mr got=""
+  _pq_gr=unread
+  pq_call gate-record mc_rest_var raw gh_rest GET "repos/$slug/pulls/$num" || return 0
+  # Two steps, never a pipe: a failed read into jq reads as an empty body.
+  body=$(jq -j '.body // ""' <<<"$raw" 2>/dev/null) || return 0
+  [ -n "${LR_GR_RE:-}" ] || . "$(dirname "${BASH_SOURCE[0]}")/lead-review/gate-record.sh" 2>/dev/null
+  _pq_gr=missing
+  [ -n "${LR_GR_RE:-}" ] || return 0
+  lines=$(grep -oE '<!--[[:space:]]*selection-gate:[^>]*>' <<<"$body" | sort -u)
+  while IFS= read -r line; do
+    [[ "$line" =~ $LR_GR_RE ]] || continue
+    mh="${BASH_REMATCH[1]}"; mr="${BASH_REMATCH[3]}"
+    [ "$mh" = "$head" ] || continue
+    [ "$mr" = could-not-run ] && { _pq_gr=could-not-run; return 0; }
+    [ -n "$got" ] || got="$mr"
+  done <<<"$lines"
+  [ -n "$got" ] && _pq_gr="$got"
+  return 0
+}
+
 # pq_gate <slug> <num> <url> <head> <pbase> — see THE CONTRACT above.
 pq_gate() {
   local slug="${1:-}" num="${2:-}" url="${3:-}" head="${4:-}" pbase="${5:-}" raw="" rc=0 path line st rest b
@@ -145,7 +197,7 @@ pq_gate() {
   # lock; a busy lock answers hold or no-answer, as it always did. Local, so it
   # ends with the gate.
   local MC_GIT_LOCK_WAIT; MC_GIT_LOCK_WAIT=$(pq_knob MC_PREQUEUE_GIT_LOCK_WAIT_S)
-  PQ_VERDICT=proceed; PQ_MAIN=""; PQ_WHY=""; PQ_SUITES=""; PQ_PATH=""
+  PQ_VERDICT=proceed; PQ_MAIN=""; PQ_WHY=""; PQ_SUITES=""; PQ_PATH=""; PQ_OFF_WHY=""
   _pq_wf=""; _pq_key="$slug#$num"; _pq_cs=(); _pq_cl=()
   # THE GATE OFF (BH-8062). MC_PREQUEUE_GATE=0 turns off only the verdict: the
   # cache read and the prequeue-gate.yml dispatch. pq_restamp, pq_mignum and
@@ -153,14 +205,18 @@ pq_gate() {
   # network), because a stale stamp, a taken number or a red lint turns main
   # red after the merge whatever the gate says. When none can act, no main tip
   # is read.
-  local off=0
-  if [ "$(pq_knob MC_PREQUEUE_GATE)" = 0 ]; then
+  # THE HOTFIX SKIP (BH-8769, mc-prequeue.d/hotfix-skip.sh) takes the same path
+  # in both gate modes and wins over the fallback. THE FALLBACK (BH-8801,
+  # MC_PREQUEUE_FALLBACK): with the gate off, a head whose selection-gate record
+  # is could-not-run or missing gets the verdict anyway (off back to 0 below).
+  local off=0 fb=0
+  if declare -F pq_hotfix_skip >/dev/null && pq_hotfix_skip "$slug" "$num" "$head"; then
     off=1
-    if ! { declare -F pq_restamp >/dev/null && { ! declare -F pq_restamp_wanted >/dev/null || pq_restamp_wanted "$slug"; }; } \
-       && ! { declare -F pq_mignum >/dev/null && pq_mignum_wanted; } \
-       && ! { declare -F pq_fastlint >/dev/null && pq_fastlint_wanted; }; then
-      declare -F pq_status_gate >/dev/null && pq_call -w status pq_status_gate "$slug" "$head" "$url" off; echo proceed; return 0
-    fi
+  elif [ "$(pq_knob MC_PREQUEUE_GATE)" = 0 ]; then
+    off=1; fb=$(pq_knob MC_PREQUEUE_FALLBACK)
+  fi
+  if [ "$off" = 1 ] && [ "$fb" = 0 ] && ! _pq_hooks_wanted "$slug"; then
+    declare -F pq_status_gate >/dev/null && pq_call -w status pq_status_gate "$slug" "$head" "$url" off; echo proceed; return 0
   fi
   b=$(_pq_budget_s)
   if [ "$b" = -1 ]; then
@@ -170,6 +226,21 @@ pq_gate() {
   fi
   [ "$b" != 0 ] && _pq_budget_start "$b"
   local t0=$SECONDS
+  if [ "$off" = 1 ] && [ "$fb" != 0 ]; then
+    _pq_gate_record "$slug" "$num" "$head"
+    pq_over && { _pq_over_hold "$head" "$b"; return 0; }
+    case "$_pq_gr" in
+      could-not-run|missing)
+        mc_log "PREQUEUE_FALLBACK $_pq_key $head gate-record=$_pq_gr" 2>/dev/null; off=0 ;;
+      unread)
+        mc_log "PREQUEUE_FALLBACK_UNREAD $_pq_key $head" 2>/dev/null ;;
+    esac
+    if [ "$off" = 1 ] && ! _pq_hooks_wanted "$slug"; then
+      _pq_budget_stop; PQ_VERDICT=proceed
+      declare -F pq_status_gate >/dev/null && pq_call -w status pq_status_gate "$slug" "$head" "$url" off
+      echo proceed; return 0
+    fi
+  fi
   # An unreadable tip holds, a quota refusal (rc 75) included: never a guess at main.
   [ -n "$pbase" ] && { pq_call main-tip mc_rest_var raw gh_rest GET "repos/$slug/commits/$pbase" || rc=$?; }
   pq_over && { _pq_over_hold "$head" "$b"; return 0; }

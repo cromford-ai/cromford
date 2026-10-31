@@ -408,8 +408,10 @@ pq_resolve() {
   fi
   # BH-6924: an older main's green counts when the main move misses this PR's
   # impact set and the head still merges (mc-prequeue.d/impact-reuse.sh).
+  # BH-8769: knob MC_PREQUEUE_CARRY (row lane.merge-conductor.mc_prequeue_carry,
+  # fallback 1 in PQ_KNOB_DEFAULTS) 0 turns the carry off here, at the caller.
   _pq_ir=none
-  declare -F pq_impact_reuse >/dev/null && pq_call impact-reuse pq_impact_reuse "$slug" "$num" "$url" "$head" "$main" "$pre"
+  [ "$(pq_knob MC_PREQUEUE_CARRY)" != 0 ] && declare -F pq_impact_reuse >/dev/null && pq_call impact-reuse pq_impact_reuse "$slug" "$num" "$url" "$head" "$main" "$pre"
   case "$_pq_ir" in
     reuse) echo proceed; return 0 ;;
     rebase) echo rebase; return 0 ;;

@@ -203,7 +203,7 @@ reset; tick
 # ============================================================================
 # K9. The gate switched off: success "gate off", and the enqueue happens.
 # ============================================================================
-reset; put 41 "$H1" "$M" red tests/a.sh; tick MC_PREQUEUE_GATE=0
+reset; put 41 "$H1" "$M" red tests/a.sh; tick MC_PREQUEUE_GATE=0 MC_PREQUEUE_FALLBACK=0
 [ "$(pqs)" = "statuses $H1 success prequeue-verdict gate off" ] && ok || bad "K9 one success 'gate off' (got '$(pqs)')"
 [ "$(nenq)" -ge 1 ] && ok || bad "K9 the head is enqueued (sink: $(sinkdump))"
 

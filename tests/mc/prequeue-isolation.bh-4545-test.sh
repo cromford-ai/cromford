@@ -215,7 +215,7 @@ enqueued "E6"
 # ============================================================================
 # E7. The gate switched off: a cached red is not read.
 # ============================================================================
-reset; put "$SLUG" 41 "$H1" "$M" red tests/a.sh; tick MC_PREQUEUE_GATE=0
+reset; put "$SLUG" 41 "$H1" "$M" red tests/a.sh; tick MC_PREQUEUE_GATE=0 MC_PREQUEUE_FALLBACK=0
 enqueued "E7"
 [ -s "$T/tip-calls.txt" ] && bad "E7 the gate off reads no main tip (calls: $(cat "$T/tip-calls.txt"))" || ok
 

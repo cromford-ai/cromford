@@ -1,0 +1,11 @@
+{
+  "env": "MC_PREQUEUE_CARRY",
+  "type": "int",
+  "default": 1,
+  "min": 0,
+  "max": 1,
+  "unit": null,
+  "zero_means": "off",
+  "read_in": "bin/lib/mc-prequeue.d/dispatch.sh",
+  "note": "BH-8769: 1 = the BH-6924 impact reuse may carry a green or no-selection verdict from an older main to the current main, and the prequeue-verdict status names both mains. 0 = the carry is off: no compare read, the gate is dispatched again. MC_PREQUEUE_IMPACT_REUSE=0 or MC_PREQUEUE_REUSE=0 also turns it off. Rollback: set lane.merge-conductor.mc_prequeue_carry to 0. Per project: lane.merge-conductor.<project>.mc_prequeue_carry."
+}

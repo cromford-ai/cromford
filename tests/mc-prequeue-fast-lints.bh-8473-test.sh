@@ -127,6 +127,7 @@ lane_knob() {
   case "$2" in
     MC_SCHEMA_RESTAMP|MC_MIGRATION_RECHECK) printf 0 ;;
     MC_PREQUEUE_GATE) printf '%s' "${GATE:-0}" ;;
+    MC_PREQUEUE_FALLBACK) printf 0 ;;   # BH-8801: the gate-off premise, no body read
     MC_PREQUEUE_FAST_LINTS) printf '%s' "${FL_KNOB:-}" ;;
     MC_PREQUEUE_FAST_LINTS_SET) printf '%s' "${FL_SET:-}" ;;
     MC_PREQUEUE_FAST_LINTS_BUDGET_S) printf '%s' "${FL_BUDGET:-}" ;;

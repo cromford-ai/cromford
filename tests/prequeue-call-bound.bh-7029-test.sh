@@ -207,7 +207,7 @@ mkdir -p "$UL/g5"
   RESOLVE_WORD=defer try 84 defer
   RESOLVE_WORD=hold try 85 resolve-hold
   gh_rest() { return 75; }; try 86 tip-unreadable
-  MC_PREQUEUE_GATE=0 try 87 gate-off
+  MC_PREQUEUE_GATE=0 MC_PREQUEUE_FALLBACK=0 try 87 gate-off
   gh_rest() { sleep 30 || return 75; }; try 88 over-budget   # determinism: ok the stalled read the budget kills
 ) > "$UL/g5/out" 2>&1
 for w in proceed:proceed red:red rebase:rebase defer:defer resolve-hold:hold tip-unreadable:hold gate-off:proceed over-budget:hold; do
