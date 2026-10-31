@@ -31,6 +31,10 @@
 #       while any named issue is open; released (<record>/plan-blocked.released)
 #       when all read closed, or when a person commented on the ticket after the
 #       RESULT (_pb_answers_since). An unreadable read refuses this tick.
+#       The ticket's own rollout parent (the first line-anchored `Part of #N`
+#       in its issue body, cached in <record>/plan-blocked.parent) is dropped
+#       from the list first, with one say line: the parent closes only after
+#       its children merge (BH-8839). An unreadable body drops nothing.
 #   other        anything else. POOL_PLAN_BLOCKED_MAX (2) `other` records younger
 #       than POOL_PLAN_BLOCKED_WINDOW_S (86400) and newer than the newest
 #       plan-blocked.lifted refuse, with ONE NEEDS_HUMAN hold through
@@ -217,10 +221,43 @@ _pbs_close_done() {
   return 1
 }
 
+# _pbs_parent <slug> <ticket> <record> <key> -> the ticket's rollout parent
+# number (the first line-anchored `Part of #N` in the issue body), or nothing.
+# Cached in <record>/plan-blocked.parent (the number or `none`) only after a
+# body read; an unreadable body caches nothing and is read again next tick.
+_pbs_parent() {
+  local cf="$3/plan-blocked.parent" v rc=0 GH_REST_TIMEOUT_S="${GH_REST_TIMEOUT_S:-20}"
+  if [ -s "$cf" ]; then
+    v=$(head -1 "$cf"); [ "$v" = none ] || printf '%s' "$v"; return 0
+  fi
+  command -v _gh_rest_field >/dev/null 2>&1 || return 0
+  v=$(_gh_rest_field "repos/$1/issues/$2" \
+    '[(.body // "") | scan("(?:^|[\\r\\n])[ \\t>*_#-]*part[- ]of:?[ \\t*_]*#([0-9]+)\\b"; "i")] | (.[0][0] // "none")') || rc=$?
+  case "$rc:$v" in
+    0:none) printf 'none\n' > "$cf" 2>/dev/null ;;
+    0:[0-9]*) case "$v" in *[!0-9]*) ;; *) printf '%s\n' "$v" > "$cf" 2>/dev/null; printf '%s' "$v"; return 0 ;; esac ;;
+    *) _pbs_say "$4: the body of #$2 could not be read — its rollout parent is not known this tick" ;;
+  esac
+  return 0
+}
+
 # _pbs_after_state <root> <p> <key> <record> <slug> <ticket> <keys> — rc 0
-# released, rc 1 refused this tick.
+# released, rc 1 refused this tick. The ticket's own rollout parent
+# (_pbs_parent) is dropped from <keys> first: it closes only after its
+# children merge, so waiting on it never ends (BH-8839, TK-3204).
 _pbs_after_state() {
-  local r="$1" p="$2" key="$3" rec="$4" slug="$5" ticket="$6" keys="$7" k n st rc open="" unread="" mt ans
+  local r="$1" p="$2" key="$3" rec="$4" slug="$5" ticket="$6" keys="$7" k n st rc open="" unread="" mt ans par kept=""
+  par=$(_pbs_parent "$slug" "$ticket" "$rec" "$key")
+  if [ -n "$par" ]; then
+    for k in $keys; do
+      if [ "$k" = "${key%%-*}-$par" ]; then
+        _pbs_say "$key: $k is this ticket's rollout parent — not waited on"
+      else
+        kept="${kept:+$kept }$k"
+      fi
+    done
+    keys="$kept"
+  fi
   if [ ! -e "$rec/plan-blocked.after" ]; then
     for k in $keys; do printf 'After: %s\n' "$k"; done > "$rec/plan-blocked.after" 2>/dev/null
   fi
