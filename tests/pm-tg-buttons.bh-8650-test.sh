@@ -210,7 +210,7 @@ eq "B1 the outcome line" "$(cat "$F/out")" "buttons=sent 77"
 eq "B1 one keyboard GET" "$(cat "$F/jobs.log")" "GET /api/pm/moves/tg-keyboard?project=pa&week=2026-W43"
 eq "B1 one ledger put" "$(n "$F/puts.log")" 1
 eq "B1 the put is pm_tg_buttons pa:2026-W43 sent" "$(cut -d' ' -f1-4 "$F/puts.log")" "put pm_tg_buttons pa:2026-W43 sent"
-eq "B1 the put detail" "$(cut -d' ' -f5- "$F/puts.log" | jq -c '{chat, message_id, moves}')" '{"chat":"-100123","message_id":77,"moves":2}'
+eq "B1 the put detail" "$(cut -d' ' -f5- "$F/puts.log" | jq -c '[.chat, .message_id, .moves]')" '["-100123",77,2]'
 eq "B1 the markup is the GET's markup byte for byte" "$(cat "$F/seam.markup")" "$(jq -c .reply_markup <<<"$KB")"
 eq "B1 the text is the GET's text" "$(sed -n 4,5p "$F/seam.args")" "$(jq -r .text <<<"$KB")"
 eq "B1 the token travels by name" "$(sed -n 1p "$F/seam.args")" TELEGRAM_BOT_TOKEN
