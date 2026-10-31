@@ -45,10 +45,15 @@
 # the first line naming the test's path or basename together with a pass marker
 # (✓, PASS, passed, ok) or a fail marker (✗, ×, FAIL, a NONZERO `N failed`, or
 # TAP `not ok`); a bare "0 failed" in a pass summary is not a fail marker; a
-# fail marker anywhere for that test wins over a pass. The test's own path and
-# basename are deleted from the line before markers are matched, so
-# tests/ok-test.sh never reads its own name as a pass. In validate.txt only a
-# RUN LINE names a test — one starting `$ `, `CMD`, `COMMAND:`, `bash `, `RED`
+# fail marker anywhere for that test wins over a pass. A harness-suite file
+# whose LAST line-leading `HARNESS_EXIT:` value is not an integer
+# (`could-not-run`, `no-test-script`) never ran: it decides nothing, pass or
+# fail, and the next source is read (BH-8850). An integer value (0, 1, 124)
+# or no `HARNESS_EXIT:` line at all leaves the file deciding as above. The
+# test's own path and basename are deleted from the line before markers are
+# matched, so tests/ok-test.sh never reads its own name as a pass. In
+# validate.txt only a RUN LINE names a test — one starting `$ `, `CMD`,
+# `COMMAND:`, `bash `, `RED`
 # or `GREEN` (a prose line mentioning the path decides nothing); the LAST such
 # run line wins (a RED block's failing run does not outrank a later GREEN
 # rerun). The verdict comes from the first LINE-LEADING `exit`/`exit code`/`rc`
@@ -84,7 +89,9 @@
 #      harness-run line if one exists, else the validate.txt:<line>
 #      (agent-recorded) line);
 #   4. tests named but none located → INCONCLUSIVE, note `named test never
-#      appears in harness-suite*.txt or validate.txt`;
+#      appears in harness-suite*.txt or validate.txt`, or `harness suite could
+#      not run (<file>)` when the first unlocated test was named only in a
+#      skipped could-not-run file (BH-8850);
 #   5. no test named: the proposal's artifact is used ONLY as a pointer — an
 #      existing non-empty file under $BUILD/qa-shots/ or $BUILD/ → CONFIRMED
 #      (artifact = that path); missing → INCONCLUSIVE, note `proposed CONFIRMED
@@ -244,7 +251,7 @@ evidence_tests_in() { # evidence_tests_in <item text> — the test paths it name
 
 evidence_locate() { # evidence_locate <build> <test> — <pass|fail|none>TAB<artifact>TAB<note>
   local build="${1:-}" tst="${2:-}" f epath ebase enames nm hit ln content scrub
-  local passref="" passnote="" win num eln vhit vln vcontent
+  local passref="" passnote="" win num eln vhit vln vcontent ex cnrfile=""
   # A bare "failed" is not a fail marker: a pass summary like "12 passed, 0
   # failed" must not refute the claim it is reporting success on. Only a
   # NONZERO count before "failed" counts (finding #3).
@@ -278,6 +285,17 @@ evidence_locate() { # evidence_locate <build> <test> — <pass|fail|none>TAB<art
     nm=$(grep -nE "(^|[^A-Za-z0-9_./-])($enames)([^A-Za-z0-9_./-]|\.([^A-Za-z0-9_-]|\$)|\$)" \
          "$build/$f" 2>/dev/null)
     [ -n "$nm" ] || continue
+    # A file whose LAST line-leading `HARNESS_EXIT:` is not an integer
+    # (`could-not-run`, `no-test-script`) never ran the suite: its lines
+    # decide nothing, so try the next source (BH-8850). Read the same way as
+    # LIVE_SUITE (bin/lib/rb/gates.sh). No `HARNESS_EXIT:` line at all keeps
+    # the old behaviour: the file decides.
+    ex=$(sed -n 's/^HARNESS_EXIT:[[:space:]]*//p' "$build/$f" 2>/dev/null | tail -1)
+    ex=${ex//[[:space:]]/}
+    if [ -n "$ex" ] && ! [[ "$ex" =~ ^-?[0-9]+$ ]]; then
+      [ -n "$cnrfile" ] || cnrfile="$f"
+      continue
+    fi
     passref=""; passnote=""
     while IFS= read -r hit; do
       [ -n "$hit" ] || continue
@@ -354,7 +372,11 @@ evidence_locate() { # evidence_locate <build> <test> — <pass|fail|none>TAB<art
       fi
     fi
   fi
-  printf 'none\t\t\n'
+  if [ -n "$cnrfile" ]; then
+    printf 'none\t\tharness suite could not run (%s)\n' "$cnrfile"
+  else
+    printf 'none\t\t\n'
+  fi
   return 0
 }
 
@@ -499,7 +521,7 @@ evidence_score() { # evidence_score <build> <plan> <base> <repo-dir>
   local rows tmp items props prows pnotes n claim whole tests t prow
   local verdict artifact note proposed partifact pnote st loc lv la lnote
   local anyfail failref failnote anystaged stagedn stagedm deleted unknown
-  local firstunloc harnessref harnessnote validref validnote total=0
+  local firstunloc firstunlocnote harnessref harnessnote validref validnote total=0
   local section_empty_note="" plannedtests planned plannedn plannedm
   command -v jq >/dev/null 2>&1 || {
     printf 'EVIDENCE VERDICTS: could not run (jq missing)\n'; return 1; }
@@ -539,7 +561,7 @@ evidence_score() { # evidence_score <build> <plan> <base> <repo-dir>
     if [ -n "$tests" ]; then
       anyfail=""; failref=""; failnote=""; anystaged=""; stagedn=""; stagedm=""
       planned=""; plannedn=""; plannedm=""
-      deleted=""; unknown=""; firstunloc=""
+      deleted=""; unknown=""; firstunloc=""; firstunlocnote=""
       harnessref=""; harnessnote=""; validref=""; validnote=""
       while IFS= read -r t; do
         [ -n "$t" ] || continue
@@ -571,7 +593,7 @@ evidence_score() { # evidence_score <build> <plan> <base> <repo-dir>
                   validate.txt*) [ -n "$validref" ] || { validref="$la"; validnote="$lnote"; } ;;
                   *) [ -n "$harnessref" ] || { harnessref="$la"; harnessnote="$lnote"; } ;;
                 esac ;;
-          *) [ -n "$firstunloc" ] || firstunloc="$t" ;;
+          *) [ -n "$firstunloc" ] || { firstunloc="$t"; firstunlocnote="$lnote"; } ;;
         esac
       done <<< "$tests"
       if [ -n "$anyfail" ]; then
@@ -592,7 +614,7 @@ evidence_score() { # evidence_score <build> <plan> <base> <repo-dir>
         note="${harnessnote:-$validnote}"
       else
         verdict=INCONCLUSIVE
-        note="named test never appears in harness-suite*.txt or validate.txt ($firstunloc)"
+        note="${firstunlocnote:-named test never appears in harness-suite*.txt or validate.txt ($firstunloc)}"
       fi
     elif [ "$proposed" = CONFIRMED ] && _ev_artifact_ok "$build" "$partifact"; then
       verdict=CONFIRMED; artifact="$partifact"; note="proposed CONFIRMED, artifact present"
