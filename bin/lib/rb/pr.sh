@@ -525,7 +525,21 @@ command -v rules_pack_block >/dev/null 2>&1 && rules_pack_block pr
 # next pass aims at that instead of at the two scripts whose names were nearest.
 T_TIER=$(STAGE_START)
 TIER=1
-CHANGED=$(git diff --name-only "$BASE"...HEAD)
+# >>> changed files (BH-7114; tests/evidence-files-base.bh-7114-test.sh drives the tier lines)
+# This build's own diff, from its merge base with origin/$BASE. The local $BASE
+# ref is shared by every worktree and stale after the rebase above, so
+# `$BASE...HEAD` listed sibling PRs' files here, in the tier pattern and in
+# changed-files.txt. A box mid-sync with no lib keeps the old line.
+if [ -r "$HARNESS/bin/lib/diff-base.sh" ]; then
+  # shellcheck source=bin/lib/diff-base.sh
+  . "$HARNESS/bin/lib/diff-base.sh"
+fi
+if declare -F diff_changed_files >/dev/null 2>&1; then
+  CHANGED=$(diff_changed_files "$BASE")
+else
+  CHANGED=$(git diff --name-only "$BASE"...HEAD)
+fi
+# <<< changed files
 # Here-string, not `echo | grep -q`: under pipefail the pipeline is 141 when
 # grep matches early and the producer still has bytes to write, so a big diff
 # that DID touch schema/auth stayed TIER=1 and auto-merged (BH-806).

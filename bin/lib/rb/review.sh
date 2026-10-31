@@ -1,7 +1,7 @@
 # bin/lib/rb/review.sh — the review stage: the e2e smoke lane, the three lenses, fix rounds, the extra lens a reopen earns, and the backstop join.
 # Entry functions, pipeline order: rb_review
 # Reads: _ ALERTS BASE BRANCH BUILD E2E_GATE_SAID E2E_JOIN_CAPPED E2E_JOIN_MAX E2E_JOIN_MAX_S
-#   E2E_NOTE E2E_PID E2E_RC E2E_SLUG E2E_VERDICT EV_OUT EV_RC FIX_MODEL FIX_ROUND_CAP
+#   E2E_NOTE E2E_PID E2E_RC E2E_SLUG E2E_VERDICT EV_BASE EV_OUT EV_RC FIX_MODEL FIX_ROUND_CAP
 #   GATES_ASYNC_FINDINGS GATES_JOINED GATES_NOTE GATES_PAR GATES_PARALLEL HARNESS HIGHRISK KEY
 #   KIND_SKIP_E2E KIND_SKIP_SECLENS L_ART L_CKPT L_FIX L_FIXLOG L_FIXRUN L_LOGLINE L_PROMPT
 #   L_PUSH L_RE L_RUN L_RUN2 LENS LENS_BLOCKED LENS_FIX_FILES LENS_LAUNCHED LENS_MR LENS_NAMED
@@ -11,7 +11,7 @@
 #   REVIEW_TIER_REASON RISKY RT_LINE SECURITY_PROMPT SLC_CLASSES SLC_LIB SLC_OUT SLC_RC SP_FIX_ROUND SPEC_DIR T_E2E T_LENSES
 #   VMAP_LIES_OUT VMAP_LINE VMAP_NOTE
 # Writes: CC_ARTIFACT_KIND E2E_BASE_REF E2E_GATE_SAID E2E_JOIN_CAPPED E2E_JOIN_MAX E2E_NOTE
-#   E2E_PID E2E_RC E2E_SLUG E2E_VERDICT EV_OUT FIX_ROUND_CAP GATES_JOINED GATES_NOTE HIGHRISK
+#   E2E_PID E2E_RC E2E_SLUG E2E_VERDICT EV_BASE EV_OUT FIX_ROUND_CAP GATES_JOINED GATES_NOTE HIGHRISK
 #   L_ART L_CKPT L_FIX L_FIXLOG L_LOGLINE L_PROMPT L_PUSH L_RE L_RUN LENS_BLOCKED
 #   LENS_FIX_FILES LENS_LAUNCHED LENS_MR LENS_PIDS LENS_SHA LENS_T0 LENS_TAGS LENS_TIER LENS_V
 #   LENSES NH_ISSUE NH_SLUG NH_SUFFIX PTG_DETAIL PTG_IDS PTG_OUT PTG_RC PTG_SINCE REFUTE_PRIORS REFUTE_PROMPT REFUTE_READ_PRIORS REVIEW_PROMPT REVIEW_TIER
@@ -813,8 +813,15 @@ if [ -r "$HARNESS/bin/lib/evidence.sh" ]; then
   # shellcheck source=/dev/null
   . "$HARNESS/bin/lib/evidence.sh"
 fi
+# The staging base is this build's fork point (bin/lib/diff-base.sh, BH-7114).
+EV_BASE="${BASE:-}"
+if [ -r "$HARNESS/bin/lib/diff-base.sh" ]; then
+  # shellcheck source=bin/lib/diff-base.sh
+  . "$HARNESS/bin/lib/diff-base.sh"
+fi
+declare -F diff_base_ref >/dev/null 2>&1 && [ -n "$EV_BASE" ] && EV_BASE=$(diff_base_ref "$EV_BASE")
 if declare -F evidence_score >/dev/null 2>&1; then
-  EV_OUT=$(evidence_score "$BUILD" "$BUILD/plan.md" "${BASE:-}" . 2>>"$BUILD/pipeline.log" \
+  EV_OUT=$(evidence_score "$BUILD" "$BUILD/plan.md" "$EV_BASE" . 2>>"$BUILD/pipeline.log" \
            | tee "$BUILD/evidence-verdicts.txt"); EV_RC=$?
   GATES_NOTE="${GATES_NOTE:-}"$'\n'"EVIDENCE VERDICTS:"$'\n'"$EV_OUT"
   echo "$(STAMP) [$PROJECT/$KEY] EVIDENCE VERDICTS: scored (rc=$EV_RC)" >> "$BUILD/pipeline.log"

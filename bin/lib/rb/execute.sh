@@ -650,7 +650,16 @@ fi
 T_SEMGREP=$(STAGE_START)
 if command -v semgrep >/dev/null 2>&1; then
   echo "$(STAMP) [$PROJECT/$KEY] SEMGREP" >> "$BUILD/pipeline.log"
-  git diff --name-only "$BASE"...HEAD | while read -r f; do [ -f "$f" ] && echo "$f"; done > "$BUILD/changed-files.txt"
+  # This build's own diff (bin/lib/diff-base.sh, BH-7114); no lib keeps the old line.
+  if [ -r "$HARNESS/bin/lib/diff-base.sh" ]; then
+    # shellcheck source=bin/lib/diff-base.sh
+    . "$HARNESS/bin/lib/diff-base.sh"
+  fi
+  if declare -F diff_changed_files >/dev/null 2>&1; then
+    diff_changed_files "$BASE"
+  else
+    git diff --name-only "$BASE"...HEAD
+  fi | while read -r f; do [ -f "$f" ] && echo "$f"; done > "$BUILD/changed-files.txt"
   [ -s "$BUILD/changed-files.txt" ] && timeout 300 semgrep scan --quiet --config p/default \
     $(cat "$BUILD/changed-files.txt") > "$BUILD/semgrep.txt" 2>&1 || true
 fi

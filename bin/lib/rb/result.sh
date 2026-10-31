@@ -16,7 +16,7 @@
 # Reads: ALERTS BASE BASE_MAIN BD_NOTE BD_PR BD_PRNUM BD_RLINE BD_TIER BD_VERDICT BD_WHERE
 #   BGOUT BGRC BG_HEAD BG_ISSUE BG_NUM BRANCH BUILD BUILDER_DIRECT_META BUILDER_DIRECT_ON
 #   BUILDER_EXEC BUILDER_NO_MERGE CLOSES_LINE CONDUCTOR_OWNS_MERGES DIFF_NOTE E2E_VERDICT EVIDENCE
-#   EVIDENCE_BLOCK EVIDENCE_GATE_ENFORCE EVIDENCE_SECTION EV_BAD EV_C EV_COUNTS
+#   EVIDENCE_BLOCK EVIDENCE_GATE_ENFORCE EVIDENCE_SECTION EV_BAD EV_BASE EV_C EV_COUNTS
 #   EV_ENFORCE EV_I EV_N EV_R EV_RC EV_T EV_WHY HARNESS HB_NOT HB_OUTCOME HB_PROMPT
 #   HB_RETRIED HB_WHY HEADBOUND_ENFORCE HEADBOUND_N HEADBOUND_NOW HEADBOUND_REREVIEW
 #   HEADBOUND_SCOPE HEADBOUND_SHA HM_D HM_HOTFIX HM_RC HM_W HOTFIX HOTFIX_ISSUE JOB_ID
@@ -30,7 +30,7 @@
 #   TIER TIER1_INQ TIER1_STATE TO_LEAD_CLEARED TO_PR_HEAD TO_PR_LOGIN T_BD T_SETTLE
 #   VERDICT_PROV VERDICT_WORD VSZ WT _PRM
 # Writes: BD_NOTE BD_PR BD_PRNUM BD_RLINE BD_TIER BD_VERDICT BGOUT BG_HEAD BG_ISSUE BG_NUM
-#   BUILDER_DIRECT_META CONDUCTOR_OWNS_MERGES EVIDENCE EVIDENCE_SECTION EV_BAD EV_C
+#   BUILDER_DIRECT_META CONDUCTOR_OWNS_MERGES EVIDENCE EVIDENCE_SECTION EV_BAD EV_BASE EV_C
 #   EV_COUNTS EV_I EV_R EV_T EV_WHY HB_NOT HB_OUTCOME HB_PROMPT HB_RETRIED HEADBOUND_N
 #   HEADBOUND_NOW HEADBOUND_SCOPE HEADBOUND_SHA HM_HOTFIX HM_RC IFS KIND_D KIND_D_MISS
 #   KIND_D_REPRO MERGE_NOTE MERGE_SHA MQ_COM MQ_ENQUEUED MQ_PRNUM PDGOUT PRNUM PR_URL
@@ -480,8 +480,17 @@ if [ -r "$HARNESS/bin/lib/evidence.sh" ]; then
   # shellcheck source=/dev/null
   . "$HARNESS/bin/lib/evidence.sh"
 fi
+# The staging base is this build's fork point: origin/$BASE when it resolves
+# (bin/lib/diff-base.sh, BH-7114). The stale local ref counted a sibling's
+# merged edit to a named test as this build's staging.
+EV_BASE="${BASE:-}"
+if [ -r "$HARNESS/bin/lib/diff-base.sh" ]; then
+  # shellcheck source=bin/lib/diff-base.sh
+  . "$HARNESS/bin/lib/diff-base.sh"
+fi
+declare -F diff_base_ref >/dev/null 2>&1 && [ -n "$EV_BASE" ] && EV_BASE=$(diff_base_ref "$EV_BASE")
 if declare -F evidence_score >/dev/null 2>&1; then
-  evidence_score "$BUILD" "$BUILD/plan.md" "${BASE:-}" . 2>>"$BUILD/pipeline.log" \
+  evidence_score "$BUILD" "$BUILD/plan.md" "$EV_BASE" . 2>>"$BUILD/pipeline.log" \
     | tee "$BUILD/evidence-verdicts.txt" >/dev/null; EV_RC=$?
   # Same reading as SCOPE_GATE_ENFORCE next door, adjudicated whether or not the
   # score came back: an unrecognised value is OFF and says so, because a `true`
@@ -549,8 +558,19 @@ fi
 # Written via a temp file: a git that cannot answer leaves the PR-open list
 # standing, which is stale but true of some head, rather than truncating it to
 # an empty file the renderer would have to read as "not recorded".
+# The diff is from the merge base with origin/$BASE (bin/lib/diff-base.sh,
+# BH-7114), not the stale shared local ref; a box with no lib keeps the old line.
 if [ -n "${BASE:-}" ]; then
-  if git diff --name-only "$BASE"...HEAD > "$BUILD/changed-files.new" 2>/dev/null; then
+  if [ -r "$HARNESS/bin/lib/diff-base.sh" ]; then
+    # shellcheck source=bin/lib/diff-base.sh
+    . "$HARNESS/bin/lib/diff-base.sh"
+  fi
+  if declare -F diff_changed_files >/dev/null 2>&1; then
+    diff_changed_files "$BASE" > "$BUILD/changed-files.new" 2>/dev/null
+  else
+    git diff --name-only "$BASE"...HEAD > "$BUILD/changed-files.new" 2>/dev/null
+  fi
+  if [ $? = 0 ]; then
     mv "$BUILD/changed-files.new" "$BUILD/changed-files.txt"
   else
     rm -f "$BUILD/changed-files.new"
