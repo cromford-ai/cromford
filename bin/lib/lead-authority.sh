@@ -15,8 +15,22 @@
 # fails (an outage, a 404 from a worker without the route, a body whose rows is
 # not an array, no jobs client loaded), and only while it is younger than the
 # settings row lead_protected_paths_cache_max_s (DB-driven; at least 60, code
-# fallback 86400 s). Older or missing, the rows are unreadable: rc 2, a hold,
-# never "not governed".
+# fallback 86400 s). An older cache file, of any content, is rc 2: a hold, never
+# "not governed".
+# NO CACHE FILE (BH-6695). A failed read with no cache file at all asks the
+# seed file. A repo with a seed line is governed: rc 2, a hold. A repo with no
+# seed line (a commented line does not count) has never been governed on this
+# host: rc 0 with no globs, LA_GLOBS_SRC `none (rows unreadable; no seed line,
+# no cache)`, and no cache file is written. A seed file that cannot be read is
+# rc 2 for every repo: nobody can tell which repos it names. So an outage holds
+# the governed repos and leaves every other fleet repo free to merge. A repo
+# whose rows were added in the console and that must stay held on a host that
+# never read it needs a seed line.
+# THE MEMO (BH-6695). Every answer of _la_db_globs (rc 0 or rc 2) is kept for
+# the rest of the process, keyed by the lowercased slug: one GET of the rows per
+# repo per process. A $(...) subshell reads the memo of its parent but cannot
+# write it back; a child process reads fresh. A row added in the console governs
+# the next process. la_memo_reset forgets every entry of this shell.
 # THE SEED FLOOR (BH-4148 review). catalog/lead-protected-paths.seed.tsv
 # (<owner/repo><TAB><glob>, the globs the deleted TSV held) is what
 # bin/lead-protected-paths-seed.sh PUTs. Until a glob of it has been DECIDED in
@@ -68,8 +82,10 @@
 # la_globs <owner/repo>   the globs in force, one per line (rc 2 = unreadable).
 # _la_db_globs <owner/repo> — runs in the caller's shell: LA_GLOBS (the globs,
 #   one per line, may be empty: live rows plus the undecided seed floor),
-#   LA_GLOBS_FLOOR (the floor part alone) and LA_GLOBS_SRC (`db`, or
-#   `cache <path>`); rc 0 read, rc 2 unreadable.
+#   LA_GLOBS_FLOOR (the floor part alone) and LA_GLOBS_SRC (`db`,
+#   `cache <path>`, or `none (...)` for an unreadable, ungoverned repo); rc 0
+#   read or not governed, rc 2 unreadable. Memoized per process (THE MEMO).
+# la_memo_reset — forget every memo entry of this shell.
 # la_human_needed <owner/repo> <pr> <head> <reason> <lane> — under mode lane,
 #   rc 0 with no beat and no marker. Under human, or an unreadable mode, ONE warn beat per
 #   head naming the command that publishes the status, deduped by
@@ -114,19 +130,26 @@ _la_cache_max() {
   printf '%s' "$v"
 }
 
-# _la_seed_floor <owner/repo, lowercased> <decided globs> — the seed file's
-# globs for the repo that have no row in the DB yet, one per line. The file is
-# under the harness root, else (no root) next to this lib.
-_la_seed_floor() {
+# _la_seed_file — the seed file's path: under the harness root, else (no root)
+# next to this lib. rc 1 when there is no path at all.
+_la_seed_file() {
   local root f
   root=$(_la_root)
   if [ -n "$root" ]; then
     f="$root/catalog/lead-protected-paths.seed.tsv"
   else
     f="${BASH_SOURCE[0]:-}"
-    case "$f" in */*) f="${f%/*}" ;; '') return 0 ;; *) f=. ;; esac
+    case "$f" in */*) f="${f%/*}" ;; '') return 1 ;; *) f=. ;; esac
     f="$f/../../catalog/lead-protected-paths.seed.tsv"
   fi
+  printf '%s' "$f"
+}
+
+# _la_seed_floor <owner/repo, lowercased> <decided globs> — the seed file's
+# globs for the repo that have no row in the DB yet, one per line.
+_la_seed_floor() {
+  local f
+  f=$(_la_seed_file) || return 0
   [ -r "$f" ] || return 0
   printf '%s\n' "$2" | awk -F'\t' -v r="$1" '
     FNR == NR { if (NF) seen[$0] = 1; next }
@@ -134,11 +157,44 @@ _la_seed_floor() {
     tolower($1) == r && !($2 in seen) && !out[$2]++ { print $2 }' - "$f" 2>/dev/null
 }
 
+# _la_memo_var <owner/repo, lowercased> — the memo's variable prefix for the
+# slug. `_` is encoded first, so two slugs never share a prefix.
+_la_memo_var() {
+  printf '_LA_MEMO_%s' "$(printf '%s' "$1" | sed 's/_/_5f/g; s/\./_2e/g; s/-/_2d/g; s/\//_2f/g')"
+}
+
+la_memo_reset() {
+  local k
+  for k in ${_LA_MEMO_KEYS:-}; do unset "${k}_RC" "${k}_G" "${k}_F" "${k}_S"; done
+  _LA_MEMO_KEYS=""
+}
+
 _la_db_globs() {
-  local slug on root c="" resp rc=1 g d tmp max
+  local slug k v rc=0
   LA_GLOBS=""; LA_GLOBS_SRC=""; LA_GLOBS_FLOOR=""
   [[ "${1:-}" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] || return 2
   slug=$(printf '%s' "$1" | tr 'A-Z' 'a-z')
+  k=$(_la_memo_var "$slug")
+  v="${k}_RC"
+  if [ -n "${!v:-}" ]; then
+    v="${k}_G"; LA_GLOBS="${!v}"
+    v="${k}_F"; LA_GLOBS_FLOOR="${!v}"
+    v="${k}_S"; LA_GLOBS_SRC="${!v}"
+    v="${k}_RC"; return "${!v}"
+  fi
+  _la_read_globs "$slug" || rc=$?
+  printf -v "${k}_RC" '%s' "$rc"
+  printf -v "${k}_G" '%s' "$LA_GLOBS"
+  printf -v "${k}_F" '%s' "$LA_GLOBS_FLOOR"
+  printf -v "${k}_S" '%s' "$LA_GLOBS_SRC"
+  _LA_MEMO_KEYS="${_LA_MEMO_KEYS:+$_LA_MEMO_KEYS }$k"
+  return "$rc"
+}
+
+# _la_read_globs <owner/repo, lowercased> — the read behind the memo: the GET,
+# else the cache file, else the no-cache rule (NO CACHE FILE).
+_la_read_globs() {
+  local slug="$1" on root c="" resp rc=1 g d tmp max f
   on=$(printf '%s' "$slug" | tr '/' '_')
   root=$(_la_root)
   [ -z "$root" ] || c="$root/state/lead-authority/globs-$on.cache"
@@ -159,12 +215,18 @@ _la_db_globs() {
     fi
     return 0
   fi
-  [ -n "$c" ] && [ -f "$c" ] || return 2
-  max=$(_la_cache_max)
-  # find -mmin, not stat: stat's flags differ between GNU and BSD (the Mac).
-  [ -n "$(find "$c" -mmin -$((max / 60)) 2>/dev/null)" ] || return 2
-  LA_GLOBS=$(awk 'NF' "$c" 2>/dev/null) || return 2
-  LA_GLOBS_SRC="cache $c"
+  if [ -n "$c" ] && [ -f "$c" ]; then
+    max=$(_la_cache_max)
+    # find -mmin, not stat: stat's flags differ between GNU and BSD (the Mac).
+    [ -n "$(find "$c" -mmin -$((max / 60)) 2>/dev/null)" ] || return 2
+    LA_GLOBS=$(awk 'NF' "$c" 2>/dev/null) || return 2
+    LA_GLOBS_SRC="cache $c"
+    return 0
+  fi
+  # NO CACHE FILE: a seed line (or an unreadable seed file) holds; else not governed.
+  f=$(_la_seed_file) && [ -r "$f" ] || return 2
+  [ -z "$(_la_seed_floor "$slug" "")" ] || return 2
+  LA_GLOBS_SRC="none (rows unreadable; no seed line, no cache)"
   return 0
 }
 
@@ -242,7 +304,10 @@ la_decide() {
   head=$(printf '%s' "$head" | tr 'A-F' 'a-f')
   # One read of the rows per decision: the scope and the match both use it.
   _la_db_globs "$slug" || { LA_REASON="the protected paths of $slug could not be read (jobs worker, no cache younger than $(_la_cache_max)s)"; return 2; }
-  [ -n "$LA_GLOBS" ] || { LA_REASON="not governed"; return 0; }
+  if [ -z "$LA_GLOBS" ]; then
+    case "$LA_GLOBS_SRC" in none*) LA_REASON="not governed (rows unreadable; no seed line, no cache)" ;; *) LA_REASON="not governed" ;; esac
+    return 0
+  fi
   globs="$LA_GLOBS"
   if [ "$source" = conductor ] && command -v vd_standing >/dev/null 2>&1; then
     line=$(vd_standing "$slug" "$pr" "$head" 2>/dev/null) || line=""

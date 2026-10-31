@@ -209,7 +209,7 @@ export function SettingsView({
       ${activeTab === 'hub' ? html`<${TokenHealthSection}/>` : null}
 
       ${activeTab === 'hub' ? html`
-        <${Section} title="PROTECTED PATHS" note="the lead's protected-path globs per repo, as rows. The lead lane still reads catalog/lead-protected-paths.tsv until its DB cutover ships">
+        <${Section} title="PROTECTED PATHS" note="the lead's protected-path globs per repo. The lead lane reads these rows. catalog/lead-protected-paths.seed.tsv only adds a glob that has no row yet">
           <${ProtectedPathsPanel}/>
         <//>` : null}
 

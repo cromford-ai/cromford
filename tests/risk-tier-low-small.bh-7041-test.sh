@@ -179,7 +179,11 @@ printf 'bin/merge-*' > "$T/set/risk_tier.high_globs"; ls1 l11
 reset_set
 
 # ── L12: the protected paths can not be read -> no ──
-printf '500' > "$DOWNF"; ls1 l1; rm -f "$DOWNF"
+# TEST-CHANGE BH-6695: with no cache file, an outage holds only a repo with a
+# seed line; a repo with no seed line is not governed. A scratch root whose seed
+# file names demo-os keeps this case about an unreadable governed repo.
+HARNESS="$T/gov"; mkdir -p "$HARNESS/catalog"; printf 'example-org/demo-os\tbin/guarded.sh\n' > "$HARNESS/catalog/lead-protected-paths.seed.tsv"
+printf '500' > "$DOWNF"; ls1 l1; rm -f "$DOWNF"; unset HARNESS
 [ "$LS" = no ] && ok || bad "L12 la_globs down: '$LS' ($LWHY)"
 case "$LWHY" in *unreadable*) ok ;; *) bad "L12 the reason: $LWHY" ;; esac
 

@@ -12,8 +12,8 @@ import { Skeleton, Empty, ErrorBox, ProjectLink } from './primitives.js';
 // pure pieces are exported so tests/protected-paths.bh-4140.test.js drives
 // them without a browser; PRVerdicts.js is the pattern.
 
-// The repo field's starting value, a convenience only: the one repo with rows
-// in catalog/lead-protected-paths.tsv. The field is editable.
+// The repo field's starting value, a convenience only: the one repo in
+// catalog/lead-protected-paths.seed.tsv, the seed of the rows. The field is editable.
 export const DEFAULT_REPO = 'example-org/cromford';
 
 const MODE_KEY = 'lead_authority_mode';

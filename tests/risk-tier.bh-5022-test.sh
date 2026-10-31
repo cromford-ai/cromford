@@ -177,7 +177,11 @@ reset_set
 case "$WHY" in *"rules unreadable"*) ok ;; *) bad "A9 reason: $WHY" ;; esac
 reset_set
 # ...and the protected-path list unreadable is medium too
-printf '500' > "$DOWNF"; cls a1; rm -f "$DOWNF"
+# TEST-CHANGE BH-6695: with no cache file, an outage holds only a repo with a
+# seed line; a repo with no seed line is not governed. A scratch root whose seed
+# file names demo-os keeps this case about an unreadable governed repo.
+HARNESS="$T/gov"; mkdir -p "$HARNESS/catalog"; printf 'example-org/demo-os\tbin/guarded.sh\n' > "$HARNESS/catalog/lead-protected-paths.seed.tsv"
+printf '500' > "$DOWNF"; cls a1; rm -f "$DOWNF"; unset HARNESS
 [ "$TIER" = medium ] && ok || bad "A9b no catalog left it '$TIER' ($WHY)"
 
 # A10: a rename out of .mergify.yml -> high
