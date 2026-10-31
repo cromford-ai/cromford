@@ -1,0 +1,11 @@
+{
+  "env": "MC_PROD_RED_HOLD",
+  "read_in": "bin/merge-conductor.d/bh-8781-prod-red-hold.sh",
+  "type": "int",
+  "default": 1,
+  "min": 0,
+  "max": 1,
+  "unit": null,
+  "zero_means": "off",
+  "note": "BH-8781: 1 = a READY PR of a project whose newest production deploy is red (.projects[<p>].prod_red in state/vercel-deploy-status.json, written by bin/vercel-deploy-snapshot.sh) is held: the row stays READY with the reason 'production red since <time>, commit <sha8>', and it merges on the first tick after a READY production deploy. A PR labelled fix-main-red or hotfix, or one whose whole diff is test files, passes. 0 = off. Not a whole number reads as 1. Per-project row: lane.merge-conductor.<project>.mc_prod_red_hold."
+}

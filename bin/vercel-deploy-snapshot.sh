@@ -8,7 +8,13 @@
 # snapshot to each box over the existing hub->watcher ssh direction:
 #   state/vercel-deploy-status.json
 #     { generated_at, projects: { <project>: { domain, serving: {id,sha,age_h},
-#       latest_ready: {id,sha,created}, domain_behind } } }
+#       latest_ready: {id,sha,created}, domain_behind,
+#       newest_prod: {id,state,sha,created_ms} | null,
+#       prod_red: {since,sha,id} | null } } }
+# prod_red (BH-8781) is set while the newest production deploy is ERROR; the
+# merge conductor holds the project's READY PRs while it is set
+# (bin/merge-conductor.d/bh-8781-prod-red-hold.sh), and the transition to red
+# pages one person through page_critical.
 # domain_behind=true means new READY production builds are NOT reaching the
 # domain (the paused-promotion state after an Instant Rollback / manual pin) —
 # a watcher seeing that should ALERT and park its deploy queue, never retry-loop.
@@ -27,6 +33,13 @@ HARNESS="${HARNESS:-/root/harness}"
 . "${HARNESS:-/root/harness}/bin/lib/lane-gate.sh" 2>/dev/null || true
 command -v lane_gate_or_exit >/dev/null 2>&1 && lane_gate_or_exit vercel-deploy-snapshot
 command -v lane_env_apply    >/dev/null 2>&1 && lane_env_apply    vercel-deploy-snapshot
+# The page on a red production deploy (BH-8781). Both optional: a tree without
+# page-critical.sh records the red state and pages nothing; deployment.sh names
+# the operator (HARNESS_GIT_EMAIL) in the page line.
+# shellcheck source=bin/lib/page-critical.sh
+. "$HARNESS/bin/lib/page-critical.sh" 2>/dev/null || page_critical() { return 0; }
+# shellcheck source=bin/lib/deployment.sh
+. "$HARNESS/bin/lib/deployment.sh" 2>/dev/null || HARNESS_GIT_EMAIL=operator
 CONF="$HARNESS/vercel.conf"
 OUT="$HARNESS/state/vercel-deploy-status.json"
 LOG="$HARNESS/logs/vercel-snapshot.log"
@@ -56,6 +69,37 @@ api() { curl -sf --max-time 20 -H "Authorization: Bearer $TOK" "https://api.verc
 NOW=$(date -u +%s)
 SNAP='{}'
 FAILED=""
+# PRODUCTION RED (BH-8781). The previous snapshot carries the red streak from
+# run to run: .projects[<p>].prod_red = {since, sha, id} while the newest
+# production deploy is red, null once the newest finished one is READY.
+PREV=$(jq -c '.projects // {} | if type == "object" then . else {} end' "$OUT" 2>/dev/null) || PREV='{}'
+[ -n "$PREV" ] || PREV='{}'
+# The page TTL: one page per project per this many seconds.
+# fallback 86400: settings row lane.vercel-deploy-snapshot.prod_red_repage_s (catalog/lanes.d/vercel-deploy-snapshot.knobs.d/PROD_RED_REPAGE_S.json)
+REPAGE_S="${PROD_RED_REPAGE_S:-86400}"
+case "$REPAGE_S" in ''|*[!0-9]*|0*) REPAGE_S=86400 ;; esac
+# prod_red_next <newest-json, or "" when the read failed> <previous project json>
+#   -> {newest_prod, prod_red}. ERROR is red (the streak keeps its first since);
+#   READY or no production deploy is green; any other state (BUILDING, QUEUED,
+#   CANCELED) leaves production as it was; a failed read carries both keys.
+prod_red_next() {
+  jq -nc --arg n "$1" --argjson pv "${2:-null}" '
+    ($pv // {}) as $pv
+    | if $n == "" then {newest_prod: ($pv.newest_prod // null), prod_red: ($pv.prod_red // null)}
+      else ($n | fromjson) as $d
+      | if ($d | type) != "object" or $d == {} then {newest_prod: null, prod_red: null}
+        else ($d.state // $d.readyState // "") as $st
+        | (($d.createdAt // $d.created // 0) | if type == "number" then . else 0 end) as $c
+        | (($d.meta.githubCommitSha // "") | .[0:8]) as $sha
+        | {newest_prod: {id: ($d.uid // ""), state: $st, sha: $sha, created_ms: $c},
+           prod_red: (if $st == "ERROR" then
+                        {since: ($pv.prod_red.since // (($c / 1000) | floor | todate)), sha: $sha, id: ($d.uid // "")}
+                      elif $st == "READY" then null
+                      else ($pv.prod_red // null) end)}
+        end
+      end' 2>/dev/null
+}
+REDNEW=""
 # Per-project preview files (2026-08-13): wait-preview.sh resolves QA preview
 # URLs from these now that the GitHub Deployments API 403s the fleet PAT.
 # fly-pool.sh mputs the per-project file onto live pool machines each tick.
@@ -88,6 +132,15 @@ while read -r p team pid domain; do
   LID=$(echo "$LATEST" | jq -r '.uid // ""')
   LSHA=$(echo "$LATEST" | jq -r '.meta.githubCommitSha // ""' | cut -c1-8)
   LCREATED=$(echo "$LATEST" | jq -r '.createdAt // 0')
+  # The NEWEST production deploy, any state (BH-8781): ERROR here is a red prod.
+  NEWEST=$(api "/v6/deployments?projectId=$pid&teamId=$team&target=production&limit=1" | jq -c '.deployments[0] // {}' 2>/dev/null) || NEWEST=""
+  [ -n "$NEWEST" ] || FAILED="$FAILED $p:newest"
+  PPREV=$(jq -c --arg p "$p" '.[$p] // null' <<<"$PREV" 2>/dev/null) || PPREV=null
+  RED=$(prod_red_next "$NEWEST" "${PPREV:-null}") && [ -n "$RED" ] || RED='{"newest_prod":null,"prod_red":null}'
+  # The transition to red: no red record before, one now.
+  if [ "$(jq -r '.prod_red != null' <<<"$RED")" = true ] && [ "$(jq -r '(.prod_red // null) == null' <<<"${PPREV:-null}" 2>/dev/null)" != false ]; then
+    REDNEW="$REDNEW $p"
+  fi
   BEHIND=false
   [ -n "$LID" ] && [ -n "$SID" ] && [ "$LID" != "$SID" ] && [ "$LCREATED" -gt "$SCREATED" ] && BEHIND=true
   AGE_H=$(( (NOW - SCREATED/1000) / 3600 ))
@@ -95,13 +148,24 @@ while read -r p team pid domain; do
   # is one file, and wait-preview.sh falls back to .projects[<p>].previews there.
   SNAP=$(echo "$SNAP" | jq -c --arg p "$p" --arg d "$domain" --arg sid "$SID" --arg ssha "$SSHA" \
     --argjson sage "$AGE_H" --arg lid "$LID" --arg lsha "$LSHA" --argjson lc "$LCREATED" --argjson b "$BEHIND" \
-    --argjson prevs "$PREVIEWS" \
-    '.[$p] = {domain:$d, serving:{id:$sid, sha:$ssha, age_h:$sage}, latest_ready:{id:$lid, sha:$lsha, created_ms:$lc}, domain_behind:$b, previews:$prevs}')
+    --argjson prevs "$PREVIEWS" --argjson red "$RED" \
+    '.[$p] = {domain:$d, serving:{id:$sid, sha:$ssha, age_h:$sage}, latest_ready:{id:$lid, sha:$lsha, created_ms:$lc}, domain_behind:$b, previews:$prevs} + $red')
 done < "$CONF"
 
 FINAL=$(jq -nc --arg ts "$(STAMP)" --argjson pr "$SNAP" '{generated_at:$ts, projects:$pr}')
 mkdir -p "$(dirname "$OUT")"
 printf '%s\n' "$FINAL" > "$OUT.tmp" && mv "$OUT.tmp" "$OUT"
+
+# Page ONE person per project on the transition to red (BH-8781), AFTER the
+# record is written: a crash between the two loses a page, never storms, since
+# the next run's PREV already carries the red record. page_critical dedupes on
+# prodred:<p> for REPAGE_S and stamps before it sends.
+for p in $REDNEW; do
+  IFS=$'\t' read -r rsince rsha rid < <(jq -r --arg p "$p" '.projects[$p].prod_red | [.since, .sha, .id] | @tsv' <<<"$FINAL")
+  PAGE_LANE=prod-red page_critical "$REPAGE_S" "prodred:$p" \
+    "PROD RED $p: the newest production deploy failed (Vercel $rid, commit $rsha, since $rsince). The merge queue for $p holds every READY PR until a production deploy is READY. Owner: $HARNESS_GIT_EMAIL. To merge the fix through the hold, label its PR with the main-red label (fix-main-red by default) or hotfix." \
+    "$p" </dev/null >/dev/null 2>&1 || true
+done
 
 # Push to the watcher boxes (hub->watcher is the only allowed ssh direction).
 # The targets are the boxes that own vercel.conf's projects, read from fleet.conf
@@ -162,4 +226,5 @@ for h in $TARGETS; do
 done
 
 BEHINDLIST=$(echo "$FINAL" | jq -r '[.projects | to_entries[] | select(.value.domain_behind) | .key] | join(",")')
-echo "$(STAMP) pushed:${PUSHED:- none} behind:[${BEHINDLIST}]${FAILED:+ FAILED:$FAILED}" >> "$LOG"
+REDLIST=$(echo "$FINAL" | jq -r '[.projects | to_entries[] | select(.value.prod_red != null) | .key] | join(",")')
+echo "$(STAMP) pushed:${PUSHED:- none} behind:[${BEHINDLIST}] prodred:[${REDLIST}]${FAILED:+ FAILED:$FAILED}" >> "$LOG"

@@ -1,0 +1,11 @@
+{
+  "env": "MC_PROD_RED_MAX_AGE_S",
+  "read_in": "bin/merge-conductor.d/bh-8781-prod-red-hold.sh",
+  "type": "int",
+  "default": 1800,
+  "min": 300,
+  "max": 86400,
+  "unit": "s",
+  "zero_means": null,
+  "note": "BH-8781: a vercel-deploy-status.json snapshot whose generated_at is older than this many seconds reads as unknown, and the production-red hold does not hold (fail open, one log line per project-hour). The snapshot lane runs every 4 minutes, so 1800 is 7 missed runs. Not a positive whole number reads as 1800. Per-project row: lane.merge-conductor.<project>.mc_prod_red_max_age_s."
+}

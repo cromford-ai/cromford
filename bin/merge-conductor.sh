@@ -2187,6 +2187,9 @@ pr_worker() {
           return 0
         fi
       fi
+      # PRODUCTION RED HOLDS THE MERGE (BH-8781): mc_prod_red_hold, fragment
+      # bh-8781-prod-red-hold.sh. The row stays READY; no gh write, no budget.
+      if command -v mc_prod_red_hold >/dev/null 2>&1 && mc_prod_red_hold; then return 0; fi
       mc_step dep-gate
       # >>> dep gate
       # AN OPEN DECLARED DEPENDENCY HOLDS THIS MERGE (BH-629). #615 merged with

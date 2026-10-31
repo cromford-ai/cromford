@@ -1,0 +1,11 @@
+{
+  "env": "PROD_RED_REPAGE_S",
+  "read_in": "bin/vercel-deploy-snapshot.sh",
+  "type": "int",
+  "default": 86400,
+  "min": 3600,
+  "max": 604800,
+  "unit": "s",
+  "required": false,
+  "note": "BH-8781. When a project's newest production deploy turns red, the lane pages one person through page_critical (key prodred:<project>). A second page for the same project waits this many seconds. Read as ${PROD_RED_REPAGE_S:-86400}; not a positive whole number reads as 86400."
+}
