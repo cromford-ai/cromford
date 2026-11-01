@@ -82,10 +82,15 @@ test('R1 a claimed row older than the fallback timeout is released to this calle
   assert.equal(a[0].stage, 'pm-groom');
   assert.equal(a[0].actor, 'pm-brief');
   assert.equal(a[0].created_at, NOW);
-  assert.deepEqual(JSON.parse(a[0].detail), {
-    brief_id: id, project: 'pr1', week: WEEK, prior_updated_at: prior,
-    prior_input_fp: 'fp-old', prior_model: 'model-old', timeout_min: 120,
-  });
+  const d = JSON.parse(a[0].detail);
+  assert.deepEqual(Object.keys(d).sort(), ['brief_id', 'prior_input_fp', 'prior_model', 'prior_updated_at', 'project', 'timeout_min', 'week']);
+  assert.equal(d.brief_id, id);
+  assert.equal(d.project, 'pr1');
+  assert.equal(d.week, WEEK);
+  assert.equal(d.prior_updated_at, prior);
+  assert.equal(d.prior_input_fp, 'fp-old');
+  assert.equal(d.prior_model, 'model-old');
+  assert.equal(d.timeout_min, 120);
   // The next run picks the work up: the create on the released row lands.
   const c = await call(o, 'POST', '/api/pm/briefs', {
     project: 'pr1', week: WEEK, moves: [],
