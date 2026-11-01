@@ -283,16 +283,24 @@ _pc_drop_refs() { # _pc_drop_refs <repo> <namespace>
 # needs-human; rc 1 no such line. The decision word is the first word after the
 # backticked name (separators `:`, dashes, spaces, `*` and `_` skipped); the
 # same word later on the line does not count (BH-8813: "combine. ... the earlier
-# needs-human stop" read as needs-human and BH-7305 looped 37 builds).
+# needs-human stop" read as needs-human and BH-7305 looped 37 builds). If that
+# word is not a decision word, the first word after the first colon that follows
+# the name decides, when no backtick sits before that colon: the planner writes
+# "- `name` (PR #N sha): combine — ..." (BH-8899: four plans stopped PLAN_BLOCKED).
 pc_resolved() {
   local sec
   sec=$(_pc_section "$1" "Design collisions") || return 1
   printf '%s\n' "$sec" | awk -v n="\`$2\`" '
+    function word(s) { s = tolower(s); sub(/[^a-z-].*$/, "", s); return s }
     { i = index($0, n) }
     i {
       r = substr($0, i + length(n))
       sub(/^[ \t:*_—–-]+/, "", r)
-      w = tolower(r); sub(/[^a-z-].*$/, "", w)
+      w = word(r)
+      if (w != "combine" && w != "needs-human") {
+        r = substr($0, i + length(n)); c = index(r, ":")
+        if (c && index(substr(r, 1, c - 1), "`") == 0) { r = substr(r, c + 1); sub(/^[ \t:*_—–-]+/, "", r); w = word(r) }
+      }
       if (w == "needs-human") { nh = 1; next }
       if (w == "combine") { r = substr(r, 8); gsub(/^[ \t:.*_—–-]+/, "", r); if (length(r) >= 20) ok = 1 }
     }
