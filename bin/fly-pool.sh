@@ -5929,9 +5929,34 @@ spawn_one() { # spawn_one <job-file> <key> <ticket-id> <attempt> <deferrals> <de
   else
   sleep 20   # boot + entrypoint
   # The tarball was built before the launch (BH-7215); only the copy is here.
+  # BOOT WAIT (#8824). On 2026-10-30 every sync failure read `Error: machine
+  # <id> is not started`: the copy ran 20 s after launch and the machine had
+  # not booted. That one error is retried until POOL_SYNC_BOOT_WAIT_S (lane
+  # knob, default 90 s, 0 = one attempt) has passed since the first try. Every
+  # number below derives from that knob: the step between tries is the budget
+  # split in nine (rounded up), a retry's sftp timeout is what is left of the
+  # budget minus one step, never under one step and never over the 120 s the
+  # first try always had, and a try cap of budget / step + 1 holds the loop
+  # when the clock does not advance. The wait is therefore bounded by the
+  # budget plus one try's timeout, not by the budget alone. Any other sync
+  # error fails at once, as before.
   SYNC_OK=1
   local SYNCERR=/dev/null; [ -d "${TMP:-}" ] && SYNCERR="$TMP/fly-sftp.err"
-  timeout 120 "$FLY" ssh sftp put -a "$APP" --machine "$MID" "$TB" /run/harness/.hsync.tgz >/dev/null 2>"$SYNCERR" || SYNC_OK=0
+  local SBW="${POOL_SYNC_BOOT_WAIT_S:-90}"; case "$SBW" in ''|*[!0-9]*) SBW=90 ;; esac
+  local SBW_STEP=$(( (SBW + 8) / 9 ))
+  local SBW_T0 SBW_WAITED=0 SBW_LEFT SBW_TO=120 SBW_N=1 SBW_MAX=1; SBW_T0=$(date +%s)
+  [ "$SBW_STEP" -gt 0 ] && SBW_MAX=$(( SBW / SBW_STEP + 1 ))
+  while :; do
+    SYNC_OK=1
+    timeout "$SBW_TO" "$FLY" ssh sftp put -a "$APP" --machine "$MID" "$TB" /run/harness/.hsync.tgz >/dev/null 2>"$SYNCERR" || SYNC_OK=0
+    [ "$SYNC_OK" = 1 ] && break
+    SBW_WAITED=$(( $(date +%s) - SBW_T0 )); SBW_LEFT=$(( SBW - SBW_WAITED ))
+    [ "$SBW_N" -lt "$SBW_MAX" ] && [ "$SBW_LEFT" -gt "$SBW_STEP" ] && [ "$SYNCERR" != /dev/null ] \
+      && grep -q "is not started" "$SYNCERR" 2>/dev/null || break
+    say "$MID: not started yet (${SBW_WAITED}s of ${SBW}s, try $SBW_N of $SBW_MAX) — harness sync retry for $KEY"
+    sleep "$SBW_STEP"; SBW_N=$(( SBW_N + 1 ))
+    SBW_TO=$(( SBW_LEFT - SBW_STEP )); [ "$SBW_TO" -ge "$SBW_STEP" ] || SBW_TO=$SBW_STEP; [ "$SBW_TO" -le 120 ] || SBW_TO=120
+  done
   if [ "$SYNC_OK" = 1 ]; then
     mexec "$MID" "mkdir -p /data/harness && tar xzf /run/harness/.hsync.tgz -C /data/harness && mkdir -p /data/harness/logs /data/harness/state /data/harness/locks /data/harness/builds && rm -f /run/harness/.hsync.tgz" >/dev/null || SYNC_OK=0
   fi

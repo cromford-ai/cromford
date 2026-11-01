@@ -1,0 +1,12 @@
+{
+  "env": "POOL_SYNC_BOOT_WAIT_S",
+  "type": "int",
+  "default": 90,
+  "min": 0,
+  "max": 600,
+  "unit": "seconds",
+  "zero_means": "off",
+  "required": false,
+  "read_in": "bin/fly-pool.sh",
+  "note": "BH-8824. Hotfix 2026-10-30 (PR #8824). Budget in seconds for the harness-sync boot wait: while flyctl says `machine <id> is not started`, the pool retries the sftp copy until this many seconds have passed since the first try. Everything derives from it: step between tries = budget/9 rounded up; a retry's sftp timeout = what is left minus one step, clamped between one step and the 120 s the first try always had; try cap = budget/step + 1. The total wait is bounded by the budget plus one try's timeout. 0 = one attempt 20 s after launch, as before. Any other sync error fails at once. 22 of 22 sync failures on 2026-10-30 were this error at the 20 s mark."
+}
