@@ -136,6 +136,7 @@ tests/run-decompose.bh-1340-test.sh:generic-api-key:72
 tests/scale-fakes.bh-7906-test.sh:generic-api-key:102
 tests/scope-trk-route.bh-8449-test.sh:generic-api-key:47
 tests/secret-literals-token-length.bh-1124-test.sh:github-app-token:59
+tests/slice-board.bh-8333-test.sh:generic-api-key:35
 tests/spend-lane-push.bh-6174-test.sh:curl-auth-header:214
 tests/state-backup-lowpri.bh-6173-test.sh:generic-api-key:120
 tests/state-restore-standby.bh-401-test.sh:generic-api-key:50

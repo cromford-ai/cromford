@@ -7,7 +7,14 @@
 #
 # ITS INPUTS ARE THE FC_* VARIABLES file_children SETS, never arguments:
 # FC_PROJECT, FC_PARENT (the board ticket id), FC_KEY, FC_BUILD, FC_SPEC
-# (children.json, validated by the caller), FC_KIND (decompose|rollout), FC_LANE.
+# (children.json, validated by the caller), FC_KIND (decompose|rollout|slice), FC_LANE.
+#
+# KIND `slice` (BH-8333) files the remaining slices of a merged SLICE plan
+# (bin/lib/slice-board.sh). It takes rollout's dependency rules (no contract
+# child, `after` positions only) and decompose's capability rule (fails open).
+# FC_SLICE_BASE is the merged slice C<k>, FC_SLICE_PR its pull request url.
+# FC_BOARD_PARK=0 skips the master comment and move (the caller posts its own);
+# the default 1 keeps every kind's park as it was.
 #
 # Sourced, never executed: no `set -e`, no `exit`, no side effect at source
 # time, safe under `set -u`. A failure RETURNS 1 with its reason in FC_ERROR and
@@ -83,13 +90,15 @@ fc_file_board() {
   local _FCB_DRY=0 _FCB_TOKEN="" _FCB_TOKEN_VAR="" envdir envfile
   local BASE N BOARDS BOARD_ID="" CAP=0 PARENT PRIORITY="" PARENT_ID_JSON="" RESP RC
   local i n p A P TITLE BODY CT BLOCK DEPENDS CONTRACT="" AFTERS KEEP DEPS REQ HTML
-  local KEY ID URL FILED_NEW=0 WORD _ei _eln=0 tn tk tid COMMENT LI
+  local KEY ID URL FILED_NEW=0 WORD _ei _eln=0 tn tk tid COMMENT LI NOCONTRACT=0 SPR
   local EXISTING=() KEYS=() IDS=() URLS=() TITLES=()
   local TRK_LOG="" TRK_ERR="" TRK_DRY=0 TRK_BOARD_BASE="" TRK_BOARD_TOKEN="" TRK_BOARD_TOKEN_VAR="" TRK_REQ_FILE="" TRK_CURL_RC=0
   fc_dry && _FCB_DRY=1
   FC_PROJECT="${FC_PROJECT:-}"; FC_PARENT="${FC_PARENT:-}"; FC_KEY="${FC_KEY:-}"
   FC_BUILD="${FC_BUILD:-}"; FC_SPEC="${FC_SPEC:-}"; FC_KIND="${FC_KIND:-decompose}"
   FC_ERROR=""
+  # Rollout waves and remaining slices have no contract child (BH-8333).
+  case "$FC_KIND" in rollout|slice) NOCONTRACT=1 ;; esac
 
   # A dry run cannot prove what a previous run filed, so a record means "done".
   if [ -s "$FC_BUILD/children.txt" ] && [ "$_FCB_DRY" = 1 ]; then
@@ -181,7 +190,7 @@ fc_file_board() {
     [ "$_FCB_DRY" = 1 ] || fc_log "$FC_BUILD" "WARN: could not read parent $FC_PARENT — children get no inherited priority"
     case "$FC_PARENT" in ''|*[!0-9]*) PARENT_ID_JSON=$(jq -Rn --arg p "$FC_PARENT" '$p') ;; *) PARENT_ID_JSON="$FC_PARENT" ;; esac
   fi
-  [ "$FC_KIND" = rollout ] \
+  [ "$NOCONTRACT" = 1 ] \
     || CONTRACT=$(jq -r 'if ((.[0].contract? // "") | type) == "string" then (.[0].contract // "") else "" end' "$FC_SPEC" 2>/dev/null)
 
   # ---- the creates, in order ---------------------------------------------
@@ -206,13 +215,13 @@ fc_file_board() {
     # on nothing.
     AFTERS=$(jq -r --argjson i "$i" '(.[$i].after // []) | .[] | tostring' "$FC_SPEC" 2>/dev/null)
     KEEP=""
-    if [ "$FC_KIND" != rollout ] && [ "$i" = 0 ]; then
+    if [ "$NOCONTRACT" = 0 ] && [ "$i" = 0 ]; then
       [ -n "$AFTERS" ] && fc_log "$FC_BUILD" "contract child: ignored 'after: $(paste -sd, <<<"$AFTERS")' — the contract waits on nothing"
     else
       while IFS= read -r A; do
         P=$(printf '%s' "${A%%:*}" | tr -d '[:space:]')
         case "$P" in ''|*[!0-9]*) continue ;; esac
-        [ "$FC_KIND" != rollout ] && [ "$P" = 1 ] && continue
+        [ "$NOCONTRACT" = 0 ] && [ "$P" = 1 ] && continue
         if [ "$P" -lt 1 ] || [ "$P" -ge "$n" ]; then
           fc_log "$FC_BUILD" "child $n: dropped 'after: $A' — a child can only depend on a sibling that lands before it"
         else
@@ -221,7 +230,7 @@ fc_file_board() {
       done <<<"$AFTERS"
     fi
     BLOCK=""; DEPENDS=""; DEPS="[]"
-    if [ "$FC_KIND" != rollout ] && [ "$i" != 0 ]; then
+    if [ "$NOCONTRACT" = 0 ] && [ "$i" != 0 ]; then
       BLOCK="${KEYS[1]} (hard)"
       DEPENDS="DEPENDS: ${KEYS[1]} hard — this slice imports the contract ($CONTRACT)"
       # BH-5520: this lane has no contract-path extraction, so it cannot check
@@ -279,7 +288,9 @@ fc_file_board() {
   # ---- park the master, LAST ---------------------------------------------
   # Only when this run filed something: a complete record re-proven by a rerun
   # does not post a second comment on the client's thread.
-  if [ "$FILED_NEW" = 1 ]; then
+  if [ "$FILED_NEW" = 1 ] && [ "${FC_BOARD_PARK:-1}" = 0 ]; then
+    fc_log "$FC_BUILD" "master $FC_PARENT not parked (FC_BOARD_PARK=0): the caller posts the comment and the move"
+  elif [ "$FILED_NEW" = 1 ]; then
     [ "$FC_KIND" = rollout ] && WORD=waves || WORD=parts
     LI=""
     for n in $(seq 1 "$N"); do
@@ -289,6 +300,11 @@ fc_file_board() {
       LI="$LI<li>$tk: $(printf '%s' "${TITLES[n]}" | _fcb_html | sed -e 's#^<p>##' -e 's#</p>$##')</li>"
     done
     COMMENT="<p>We split this one into $N $WORD and filed each as its own ticket. They are built in order, and this ticket stays open as the master until they land.</p><ol>$LI</ol>"
+    if [ "$FC_KIND" = slice ]; then
+      SPR=$(printf '%s' "${FC_SLICE_PR:-}" | sed -e 's/&/\&amp;/g' -e 's/</\&lt;/g' -e 's/>/\&gt;/g' -e 's/"/\&quot;/g')
+      case "$SPR" in http://*|https://*) SPR="<a href=\"$SPR\">$SPR</a>" ;; '') SPR="its pull request" ;; esac
+      COMMENT="<p>Slice C$(_fc_num "${FC_SLICE_BASE:-}" 0) is merged: $SPR. Not live yet: the rest of the plan. We filed each remaining slice as its own ticket:</p><ol>$LI</ol><p>This ticket stays in progress until they all land.</p>"
+    fi
     # The adapter writes comment.json ({body}) and move.json from these; the
     # HTML goes to a file with no trailing newline so the body is byte for byte
     # the string above.

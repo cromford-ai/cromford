@@ -583,7 +583,7 @@ mc_patch_same() {
 #   timestamped file to the deploy queue — two settles would depart two trains.
 #   That one is guarded by an MC_ATTEMPTS line, the shape mc_attempted uses.
 mc_settle_merged() { # … <head> [merge-sha]
-  local key="$1" url="$2" project="$3" slug="$4" br="$5" rec="$6" job="$7" head="${8:-}" msha issue first=1 note="" w="" lw="merge-conductor"
+  local key="$1" url="$2" project="$3" slug="$4" br="$5" rec="$6" job="$7" head="${8:-}" msha issue first=1 note="" w="" lw="merge-conductor" bkey="" btid=""
   [ -n "$head" ] && note=", reviewed head $head"
   # BH-6745: a direct landing (optimistic mode) says so, so DORA can split
   # direct from queued merges; every other landing keeps `merge-conductor`.
@@ -639,6 +639,31 @@ mc_settle_merged() { # … <head> [merge-sha]
           mc_log "$key merged but issue #$issue could not be closed ($w, HTTP $(mc_rest_status)) — no build record, so no retry marker; bin/merged-build-closeout.sh finds it"
         fi
       fi
+    fi
+  elif [ -x "$MC_H/bin/slice-board-settle.sh" ]; then
+    # In-app board projects (BH-8333): a merged SLICE build files its remaining
+    # slices as child tickets and keeps the master open. DETACHED, because this
+    # function holds the project flock on fd 9 and the filer makes several
+    # board calls of up to 25 s each. A merge that is not a slice answers
+    # skip:no-slice after one plan read; a slice the builder close-out already
+    # filed answers from the record's `filed` ledger and posts nothing twice.
+    # $key here is the conductor's <slug>#<n>, not the board KEY: the KEY and
+    # the board id come from the build record's job.json, else the KEY from
+    # the ticket/<key>[-r<n>] branch.
+    if [ -n "$rec" ] && [ -r "$rec/job.json" ]; then
+      bkey=$(jq -r '.key // empty' "$rec/job.json" 2>/dev/null)
+      btid=$(jq -r '.ticket_id // empty' "$rec/job.json" 2>/dev/null)
+    fi
+    if [ -z "$bkey" ] && [[ "$br" =~ ^ticket/([A-Za-z]+-[0-9]+)(-r[0-9]+)?$ ]]; then
+      bkey=$(printf '%s' "${BASH_REMATCH[1]}" | tr '[:lower:]' '[:upper:]')
+    fi
+    if [ -z "$bkey" ]; then
+      mc_log "$key board slice settle NOT spawned: no board KEY in the record or the branch ($br)"
+    else
+      mkdir -p "$MC_H/logs" 2>/dev/null
+      ( HARNESS="$MC_H" setsid "$MC_H/bin/slice-board-settle.sh" "$project" "$bkey" "$url" "${rec:--}" ${btid:+--ticket "$btid"} --park 1 \
+          </dev/null >>"$MC_H/logs/slice-board.log" 2>&1 9>&- 8>&- 7>&- 6>&- & ) 2>/dev/null
+      mc_log "$key board slice settle spawned for $bkey"
     fi
   fi
   if [ -z "$msha" ]; then

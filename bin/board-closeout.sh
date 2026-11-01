@@ -24,6 +24,16 @@
 # `done` ticket with an open PR is an invariant alert in bin/board-invariants.sh.
 # So PR_CREATED -> review, PR_MERGED -> done, and nothing else moves a status.
 #
+# A SLICE BUILD IS NEVER `done` (BH-8333). A board build whose plan says
+# `SLICE: C<k> of #<this ticket>` shipped one slice of a split plan. On
+# PR_MERGED this files the remaining slices as child tickets FIRST
+# (bin/lib/slice-board.sh), then posts one comment that names them and says
+# what is not live yet, then moves the master to `in_progress`.
+# bin/decompose-parent-close.sh closes it when every child is done. A filer
+# that cannot answer now (deferred) exits 1 with nothing posted, so the sweep
+# carries it. On PR_CREATED the status stays `review` and the comment says the
+# rest is filed at merge.
+#
 # HONEST CLAIMS. The comment says what was actually verified: the adversarial
 # review and the repo's own suite are named as build-proof, and the browser QA
 # pass is claimed ONLY when qa.md really ends in QA: PASS. Nothing here has
@@ -160,6 +170,50 @@ if [ -n "$WHAT" ]; then
   done <<<"$WHAT"
   WHAT_HTML="$WHAT_HTML</ul>"
 fi
+# --- a SLICE build (BH-8333) ---------------------------------------------------
+# The helper beside this script first, $HARNESS/bin/lib second. Without it, or
+# with no SLICE line for THIS ticket, the path below is today's, unchanged.
+SLICE_TOKEN=""; SLICE_K=""; SLICE_HTML=""; SLICE_NOTE=""
+_SBL="$(cd "$(dirname "$0")" && pwd)/lib/slice-board.sh"; [ -r "$_SBL" ] || _SBL="$BIN/lib/slice-board.sh"
+# shellcheck source=bin/lib/slice-board.sh
+if [ -r "$_SBL" ] && . "$_SBL" 2>/dev/null && command -v slice_board_token >/dev/null 2>&1; then
+  SLICE_TOKEN=$(slice_board_token "$BUILD/plan.md" "$TICKET" "$KEY" 2>/dev/null) || SLICE_TOKEN=""
+fi
+if [ -n "$SLICE_TOKEN" ]; then
+  SLICE_K=$(slice_board_line "$BUILD/plan.md" | cut -f1)
+  if [ "$TO_STATUS" = done ]; then
+    TO_STATUS=in_progress
+    # Park 0: the filer files and records, and this script owns the one comment.
+    SW=$(slice_board_settle "$PROJECT" "$KEY" "$PR_URL" "$BUILD" "$TICKET" 0 "$HARNESS" 2>/dev/null) || true
+    say "slice C$SLICE_K: $SW"
+    case "$SW" in
+      filed:*)
+        LI=""
+        while IFS= read -r CK; do
+          [ -n "$CK" ] || continue
+          # children.txt line n is spec row n (fc_file_board writes it in order).
+          N_=$(grep -nxF "$CK" "$BUILD/slice-board/children.txt" | head -1 | cut -d: -f1)
+          CT=$(jq -r --argjson i "$(( ${N_:-1} - 1 ))" '.[$i].title // ""' "$BUILD/slice-board/children.json" 2>/dev/null)
+          LI="$LI<li>$(esc "$CK"): $(esc "$CT")</li>"
+        done < <(tr ',' '\n' <<<"${SW#filed:}")
+        SLICE_HTML="<p>Not live yet: the rest of the plan. We filed each remaining slice as its own ticket:</p><ul>$LI</ul><p>This ticket stays in progress until they all land.</p>"
+        SLICE_NOTE=" (slice C$SLICE_K; children ${SW#filed:})" ;;
+      unknown:*)
+        SLICE_HTML="<p>Not live yet: the rest of the plan. The remaining slices are not filed yet: we could not read them from the plan, and we flagged it so a person files them.</p><p>This ticket stays in progress until they land.</p>"
+        SLICE_NOTE=" (slice C$SLICE_K; remaining slices not filed: ${SW#unknown:})" ;;
+      deferred:*)
+        say "slice C$SLICE_K: the remaining slices are not filed yet ($SW) — nothing posted, left for the sweep"
+        exit 1 ;;
+      *)
+        SLICE_HTML="<p>Not live yet: the rest of the plan. The remaining slices are not filed yet.</p><p>This ticket stays in progress until they land.</p>"
+        SLICE_NOTE=" (slice C$SLICE_K; remaining slices not filed: ${SW:-no answer})" ;;
+    esac
+  else
+    SLICE_HTML="<p>This PR is slice C$SLICE_K of the plan. When it merges, we file the remaining slices as their own tickets, and this ticket stays open until they land.</p>"
+    SLICE_NOTE=" (slice C$SLICE_K)"
+  fi
+fi
+
 LINKS_HTML=""
 if [ -n "$ROUTES" ]; then
   LINKS_HTML="<p>Where to see it:</p><ul>"
@@ -175,7 +229,8 @@ case "$TO_STATUS" in
   done) LEAD="This is merged and on its way to production." ;;
   *)    LEAD="This is built and open for review." ;;
 esac
-BODY_HTML="<p>$(esc "$LEAD")</p>${WHAT_HTML}${LINKS_HTML}<p>Code: <a href=\"$(esc "$PR_URL")\">$(esc "$PR_URL")</a></p><p>$(esc "$VERIFIED")</p>"
+[ "$TO_STATUS" = in_progress ] && LEAD="Slice C$SLICE_K of this ticket is merged and on its way to production."
+BODY_HTML="<p>$(esc "$LEAD")</p>${WHAT_HTML}${SLICE_HTML}${LINKS_HTML}<p>Code: <a href=\"$(esc "$PR_URL")\">$(esc "$PR_URL")</a></p><p>$(esc "$VERIFIED")</p>"
 
 RESP=$(CURL -X POST -d "$(jq -nc --arg b "$BODY_HTML" '{body:$b}')" \
   "$PROD$PREFIX/tickets/$TICKET/comments" 2>/dev/null)
@@ -195,4 +250,4 @@ if ! grep -q "$TO_STATUS" <<<"$MOVED"; then
   echo "POSTED $PROJECT/$KEY (status not moved)"
   exit 0
 fi
-echo "POSTED $PROJECT/$KEY -> $TO_STATUS"
+echo "POSTED $PROJECT/$KEY -> $TO_STATUS$SLICE_NOTE"

@@ -14,6 +14,7 @@
 # argument, never a literal.
 #
 #   slice_remainder_parse <plan.md> <parent-n> <out.json> [pr-url]
+#       <parent-n> is an issue number or a board id token (BH-8333)
 #       -> ok:<m> rc 0 (out.json written) | none rc 2 | bad:<why> rc 2
 #   slice_remainder_settle <repo-slug> <n> <pr-url> <record-dir> [harness]
 #       -> remainder-filed:#a,#b rc 0 | remainder-deferred:<why> rc 1
@@ -95,8 +96,13 @@ _SLR_EXCL_AWK='
 # acceptance and test sections do.
 _slr_scan() {
   local ex
+  local edge='([^0-9]|$)'
   if [ "$#" -ge 3 ]; then ex="$3"; else ex=$(slr_exclude_headings); fi
-  awk -v N="$2" -v EX="$ex" "$_SLR_EXCL_AWK"'
+  # The right edge of `#<parent>` (BH-8333): an issue number keeps `[^0-9]`
+  # byte for byte; a board id token (a cuid, or a KEY like TK-360) ends at
+  # any character a token cannot hold, so `#TK-3600` is not `#TK-360`.
+  case "$2" in *[!0-9]*) edge='([^A-Za-z0-9_-]|$)' ;; esac
+  awk -v N="$2" -v EDGE="$edge" -v EX="$ex" "$_SLR_EXCL_AWK"'
     function lead(s, c,   n) { n = 0; while (substr(s, n + 1, 1) == c) n++; return n }
     function trim(s) { sub(/^[ \t]+/, "", s); sub(/[ \t]+$/, "", s); return s }
     function clean(s) { gsub(/\t/, " ", s); gsub(/\*\*/, "", s); return trim(s) }
@@ -124,7 +130,7 @@ _slr_scan() {
     BEGIN { k = -1; fch = ""; flen = 0; cur = -1; excl = 0; acc = 0; subj = -1; exinit() }
     { sub(/\r$/, "") }
     # The merged slice: the guard regex of issue_close_guard, on any line.
-    k < 0 && ($0 ~ ("^[ \t*_>]*SLICE:[ \t*_]*C[0-9]+[ \t]+of[ \t]+#" N "([^0-9]|$)") || $0 ~ /^[ \t*_>]*The build for THIS ticket is C[0-9]+/) {
+    k < 0 && ($0 ~ ("^[ \t*_>]*SLICE:[ \t*_]*C[0-9]+[ \t]+of[ \t]+#" N EDGE) || $0 ~ /^[ \t*_>]*The build for THIS ticket is C[0-9]+/) {
       s = $0
       if (match(s, /SLICE:[ \t*_]*C[0-9]+/)) { s = substr(s, RSTART, RLENGTH); sub(/^.*C/, "", s) }
       else { match(s, /is C[0-9]+/); s = substr(s, RSTART + 4, RLENGTH - 4) }
@@ -216,7 +222,10 @@ _slr_title() {
 slice_remainder_parse() {
   local plan="${1:-}" n="${2:-}" out="${3:-}" pr="${4:-}" h="${HARNESS:-${H:-}}"
   local recs k js j prev="" cnt max i ti tsv="" title text tests after where
-  case "$n" in ''|*[!0-9]*) printf 'bad:no-slice-line\n'; return 2 ;; esac
+  # An issue number, or a board id token (BH-8333: a cuid such as
+  # cmvmtfpj2000k07kzd588kq7r, or a KEY). Anything else could reach the awk
+  # regex as a pattern, so it is refused.
+  [[ "$n" =~ ^[A-Za-z0-9][A-Za-z0-9_-]*$ ]] || { printf 'bad:no-slice-line\n'; return 2; }
   [ -r "$plan" ] && [ -n "$out" ] || { printf 'bad:no-slice-line\n'; return 2; }
   command -v jq >/dev/null 2>&1 || { printf 'bad:no-jq\n'; return 2; }
   recs=$(_slr_scan "$plan" "$n") || { printf 'bad:scan\n'; return 2; }
