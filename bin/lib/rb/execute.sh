@@ -78,6 +78,22 @@ esac
 # bin/lib/execute-empty.sh. The model's text never goes on the RESULT line, which
 # readers match by substring: the line stays the fixed text it always was.
 command -v ee_on_empty >/dev/null 2>&1 || . "${HARNESS:-/nonexistent}/bin/lib/execute-empty.sh" 2>/dev/null || true
+# BH-8868: the context meter stopped a session that changed no file
+# (bin/lib/execute-no-progress.sh). Same first word EXECUTE_EMPTY, so every
+# RESULT reader (the pool's relaunch cap, results ingest, the resolver) routes
+# it as before; the detail names the stop.
+if [ -f "$BUILD/execute-run.txt.noprogress" ]; then
+  NP_KV=""; read -r NP_KV < "$BUILD/execute-run.txt.noprogress" || true
+  NP_RULE=""; NP_EL=""; NP_TOT=""; NP_CAP=""
+  for NP_F in $NP_KV; do
+    case "$NP_F" in rule=*) NP_RULE="${NP_F#*=}" ;; elapsed_s=*) NP_EL="${NP_F#*=}" ;; total=*) NP_TOT="${NP_F#*=}" ;; ceiling=*) NP_CAP="${NP_F#*=}" ;; esac
+  done
+  echo "$(STAMP) [$PROJECT/$KEY] EXECUTE_NO_PROGRESS: the session changed no file ($NP_KV) — stopped before its context ceiling" >> "$BUILD/pipeline.log"
+  STAGE_LANE_DEFER execute "$BUILD/execute-run.txt"
+  command -v ee_on_empty >/dev/null 2>&1 && ee_on_empty "$BUILD" EXECUTE_NO_PROGRESS
+  RESULT "EXECUTE_EMPTY EXECUTE_NO_PROGRESS: ${NP_RULE:-?} after ${NP_EL:-?}s, ${NP_TOT:-?} of ${NP_CAP:-?} context tokens, 0 files changed — transcript in execute-transcript.md"
+  exit 5
+fi
 git diff --quiet "$BASE"...HEAD 2>/dev/null && {
   STAGE_LANE_DEFER execute "$BUILD/execute-run.txt"
   command -v ee_on_empty >/dev/null 2>&1 && ee_on_empty "$BUILD"

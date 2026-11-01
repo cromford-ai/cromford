@@ -1,0 +1,35 @@
+{
+  "libs": [
+    {
+      "id": "execute-no-progress",
+      "file": "bin/lib/execute-no-progress.sh",
+      "note": "BH-8868: the no-progress stop for an execute session. bin/agent-call.sh's context meter fingerprints the worktree (HEAD + git status, minus node_modules/.next/__pycache__) before the CLI starts and on every poll. If nothing changed and EXECUTE_NO_WRITE_STOP_MIN minutes passed, or the session's context total passed EXECUTE_NO_WRITE_STOP_CEILING_PCT % of its context_kill_tokens ceiling, the meter writes $OUT.noprogress and stops the session: rc 143, policy stop (no model escalation, no vendor failover), cost note no-progress:. bin/lib/rb/execute.sh then ends the build RESULT EXECUTE_EMPTY EXECUTE_NO_PROGRESS: and keeps execute-transcript.md. Armed only for stage execute, and only where the context kill is armed. Resolved at call time with lib_env_apply execute-no-progress; tests/execute-no-progress.bh-8868-test.sh drives it.",
+      "knobs": [
+        {
+          "env": "EXECUTE_NO_WRITE_STOP_MIN",
+          "type": "int",
+          "default": 20,
+          "min": 0,
+          "max": 600,
+          "unit": "minutes",
+          "zero_means": "off",
+          "required": false,
+          "note": "The time rule: an execute session that has changed no file this many minutes after it started is stopped with EXECUTE_NO_PROGRESS. 0 turns the time rule off. Read by bin/lib/execute-no-progress.sh as ${EXECUTE_NO_WRITE_STOP_MIN:-20}.",
+          "read_in": "bin/lib/execute-no-progress.sh"
+        },
+        {
+          "env": "EXECUTE_NO_WRITE_STOP_CEILING_PCT",
+          "type": "int",
+          "default": 50,
+          "min": 0,
+          "max": 100,
+          "unit": "percent of context_kill_tokens",
+          "zero_means": "off",
+          "required": false,
+          "note": "The ceiling rule: an execute session that has changed no file when its context total (input + cache_read) reaches this percent of its lane's context_kill_tokens ceiling is stopped with EXECUTE_NO_PROGRESS. 0 turns the ceiling rule off. Read by bin/lib/execute-no-progress.sh as ${EXECUTE_NO_WRITE_STOP_CEILING_PCT:-50}.",
+          "read_in": "bin/lib/execute-no-progress.sh"
+        }
+      ]
+    }
+  ]
+}

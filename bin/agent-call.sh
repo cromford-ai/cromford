@@ -424,6 +424,13 @@ elif [ -r "$HARNESS/bin/lib/cost-live.sh" ];    then . "$HARNESS/bin/lib/cost-li
 # shellcheck source=bin/lib/build-tripwire.sh
 if   [ -r "$(dirname "$0")/lib/build-tripwire.sh" ]; then . "$(dirname "$0")/lib/build-tripwire.sh"
 elif [ -r "$HARNESS/bin/lib/build-tripwire.sh" ];    then . "$HARNESS/bin/lib/build-tripwire.sh"; fi
+# THE NO-PROGRESS STOP (BH-8868): the context meter also stops an execute
+# session that has changed no file. A box whose sync has not landed the lib gets
+# a stub that never arms: exactly the behaviour before BH-8868.
+# shellcheck source=bin/lib/execute-no-progress.sh
+if   [ -r "$(dirname "$0")/lib/execute-no-progress.sh" ]; then . "$(dirname "$0")/lib/execute-no-progress.sh"
+elif [ -r "$HARNESS/bin/lib/execute-no-progress.sh" ];    then . "$HARNESS/bin/lib/execute-no-progress.sh"; fi
+command -v np_armed >/dev/null 2>&1 || np_armed() { return 1; }
 # THE HARD BUDGET CAPS (BH-4488, BH-4489): budget.stage.<stage>.* and
 # budget.project.<project>.day_usd settings rows, every stage. A box whose sync
 # has not landed the lib gets a stub that never refuses; the BUDGET_STOP marker
@@ -1378,25 +1385,45 @@ _ctx_kill_ceiling() { # _ctx_kill_ceiling <stage> [project] [runner] [model]
 # here — a meter that kills on its own read failure is worse than no meter —
 # and the one thing it must not do quietly is nothing, so the first failed read
 # of a session writes one line to logs/claude-cost.log.
-context_meter() { # context_meter <child-pid> <session-id> <ceiling> <cwd>
+# THE NO-PROGRESS STOP (BH-8868, bin/lib/execute-no-progress.sh) rides the same
+# poll when run_attempt passes a start fingerprint (args 5-8). The context kill
+# is checked first and wins. The time rule needs no transcript, so it still runs
+# on a poll whose read failed; the ceiling rule is skipped on that poll. A
+# fingerprint that cannot be read counts as a change: never stop on our own
+# read failure.
+context_meter() { # context_meter <child-pid> <session-id> <ceiling> <cwd> [np-start-fp np-start-epoch np-min np-pct]
   local pid="$1" sid="$2" cap="$3" cwd="$4" line in cr msgs tot said=""
+  local nps="${5:-}" npt="${6:-}" npmin="${7:-0}" nppct="${8:-0}" npnow npchg npv
   local errf="$OUT.ctxmeter.err"
   while kill -0 "$pid" 2>/dev/null; do
     sleep "${CONTEXT_KILL_POLL_S:-15}"
     kill -0 "$pid" 2>/dev/null || break
+    tot=""
     if ! line=$(eval "${ACCT_EXPORTS:-}"; "$_CTX_TCB" "$sid" --cwd "$cwd" 2>"$errf") || [ -z "$line" ]; then
       [ -n "$said" ] || { said=1
         echo "$(STAMP) [$PROJECT] $STAGE: context meter could not read session $sid — running UNMETERED rather than killing on a failed read ($(head -c 200 "$errf" 2>/dev/null | tr '\n' ' '))" >> "$HARNESS/logs/claude-cost.log"; }
-      continue
+    else
+      # input|output|cache_read|cache_write|usd|model|messages|files|unpriced
+      IFS='|' read -r in _ cr _ _ _ msgs _ _ <<<"$line"
+      case "${in}${cr}" in ''|*[!0-9]*) ;; *) tot=$(( in + cr )) ;; esac
     fi
-    # input|output|cache_read|cache_write|usd|model|messages|files|unpriced
-    IFS='|' read -r in _ cr _ _ _ msgs _ _ <<<"$line"
-    case "${in}${cr}" in ''|*[!0-9]*) continue ;; esac
-    tot=$(( in + cr ))
-    [ "$tot" -gt "$cap" ] || continue
-    printf 'ceiling=%s total=%s calls=%s session=%s\n' "$cap" "$tot" "${msgs:-0}" "$sid" > "$OUT.ctxkill"
-    kill -TERM "$pid" 2>/dev/null
-    break
+    if [ -n "$tot" ] && [ "$tot" -gt "$cap" ]; then
+      printf 'ceiling=%s total=%s calls=%s session=%s\n' "$cap" "$tot" "${msgs:-0}" "$sid" > "$OUT.ctxkill"
+      kill -TERM "$pid" 2>/dev/null
+      break
+    fi
+    [ -n "$nps" ] || continue
+    npchg=1; [ "$(np_snapshot "$cwd" 2>/dev/null)" = "$nps" ] && npchg=0
+    npnow=$(_np_now 2>/dev/null)
+    case "$npnow$npt" in ''|*[!0-9]*) npnow=""; ;; *) npnow=$(( npnow - npt )) ;; esac
+    npv=$(np_decide "$npnow" "$tot" "$cap" "$npchg" "$npmin" "$nppct" 2>/dev/null)
+    case "$npv" in
+      stop*)
+        # Marker first, then the TERM: a stopped session can never look finished.
+        printf '%s session=%s\n' "$(printf '%s' "$npv" | cut -f2- | tr '\t' ' ')" "$sid" > "$OUT.noprogress"
+        kill -TERM "$pid" 2>/dev/null
+        break ;;
+    esac
   done
   rm -f "$errf" 2>/dev/null
   return 0
@@ -2051,6 +2078,15 @@ ac_cost_row_write() {
     # The meter only fires after billed responses, so this call STARTED
     # (BH-3990): the row keeps whatever usage was read above (blank when none
     # could be) and says killed, never refused-style zeros.
+    ROW_SRC=killed
+  fi
+  # Same for a session the no-progress stop ended (BH-8868): which rule fired
+  # and how long the session ran, from $OUT.noprogress alone.
+  if [ "$runner" = claude ] && [ -f "$OUT.noprogress" ]; then
+    local _np="" _nkv _nr="" _ne=""
+    read -r _np < "$OUT.noprogress" || true
+    for _nkv in $_np; do case "$_nkv" in rule=*) _nr="${_nkv#*=}" ;; elapsed_s=*) _ne="${_nkv#*=}" ;; esac; done
+    _RN="${_RN:+$_RN;}no-progress:rule=${_nr:-?}:elapsed_s=${_ne:-?}"
     ROW_SRC=killed
   fi
   # Same for a session the build tripwire stopped (BH-3481): the first word of
@@ -2796,8 +2832,8 @@ run_attempt() { # run_attempt <runner> ; sets RC, writes $OUT, appends cost row
         # try can never be read as a kill on the opus one. The same is true of
         # the cliff marker, which is per-model: the fable rung may have a cliff
         # where the opus rung has none (BH-1384).
-        rm -f "$OUT.ctxkill" "$OUT.cliffcap" "$OUT.tripwire"
-        local _CAP="" _CPID="" _MPID="" _CTXF="" _CTXWHY="" _CL="" _LPID=""
+        rm -f "$OUT.ctxkill" "$OUT.cliffcap" "$OUT.tripwire" "$OUT.noprogress"
+        local _CAP="" _CPID="" _MPID="" _CTXF="" _CTXWHY="" _CL="" _LPID="" _NPS="" _NPT="" _NP_MIN="" _NP_PCT=""
         _CAP=$(_ctx_kill_ceiling "$STAGE" "$PROJECT" "$runner" "$cm")
         if [ -n "$_CAP" ]; then
           _CTX_TCB="$(dirname "$0")/transcript-cost.sh"
@@ -2835,6 +2871,12 @@ run_attempt() { # run_attempt <runner> ; sets RC, writes $OUT, appends cost row
         # Live cost (BH-3481.0) needs the CLI backgrounded too, so its meter can
         # run beside it. cost_live_on is a stub that answers off today.
         cost_live_on && _CL=1
+        # BH-8868: the no-progress baseline, taken BEFORE the CLI starts so a
+        # write in its first second is progress, not baseline. Only where the
+        # context meter runs (it carries the check); np_armed sets _NP_MIN/_NP_PCT.
+        if [ -n "$_CAP" ] && np_armed "$STAGE" "$PWD"; then
+          _NPS=$(np_snapshot "$PWD" 2>/dev/null) && _NPT=$(date -u +%s) || _NPS=""
+        fi
         if [ -n "$_CAP" ] || [ -n "$_CL" ]; then
           # Same invocation, backgrounded so the meter can watch it. $! is the
           # pipeline's last element — the subshell, which execs into timeout, so
@@ -2843,7 +2885,7 @@ run_attempt() { # run_attempt <runner> ; sets RC, writes $OUT, appends cost row
           printf '%s' "$PROMPT" | ( eval "$ACCT_EXPORTS"; exec timeout --kill-after=120 "$TO" ${EG_WRAP[@]+"${EG_WRAP[@]}"} env -u AGENT_CALL_RUNNERS -u AGENT_CALL_ROLE -u CONTEXT_KILL_TOKENS -u CONTEXT_KILL_CLIFF -u CONTEXT_KILL_CLIFF_MARGIN IS_SANDBOX=1 ${SP_ENV[@]+"${SP_ENV[@]}"} claude "${ARGS[@]}" ) > "$OUT.json" 2> "$OUT.err" &
           _CPID=$!
           if [ -n "$_CAP" ]; then
-            context_meter "$_CPID" "$SESSION_ID" "$_CAP" "$PWD" &
+            context_meter "$_CPID" "$SESSION_ID" "$_CAP" "$PWD" "$_NPS" "$_NPT" "${_NP_MIN:-0}" "${_NP_PCT:-0}" &
             _MPID=$!
           fi
           # The live meter needs a session to read, like the context meter.
@@ -2921,6 +2963,17 @@ run_attempt() { # run_attempt <runner> ; sets RC, writes $OUT, appends cost row
           else
             echo "$(STAMP) [$PROJECT] $STAGE claude: $cm stopped at its lane context ceiling ($_CK) — policy stop, no model escalation and no vendor failover" >> "$HARNESS/logs/failovers.log"
           fi
+          break
+        fi
+        # THE NO-PROGRESS STOP (BH-8868): the same policy stop, for an execute
+        # session that changed no file. The meter writes one marker per poll, so
+        # it never shares an attempt with a context kill.
+        if [ -f "$OUT.noprogress" ]; then
+          [ "$RC" -eq 0 ] && RC=143
+          local _NP=""; read -r _NP < "$OUT.noprogress" || true
+          printf '\nNO PROGRESS: %s/%s session stopped by the harness: no file changed in the worktree (%s) — output above is TRUNCATED\n' \
+            "$STAGE" "$PROJECT" "$_NP" >> "$OUT"
+          echo "$(STAMP) [$PROJECT] $STAGE claude: $cm no-progress stop ($_NP) — policy stop, no model escalation and no vendor failover" >> "$HARNESS/logs/failovers.log"
           break
         fi
         # THE BUILD TRIPWIRE (BH-3481) stops a session the same way, checked
@@ -3482,6 +3535,10 @@ run_attempt() { # run_attempt <runner> ; sets RC, writes $OUT, appends cost row
   # other runner a $OUT.tripwire on disk is a stale one.
   TW_STOP=""
   [ "$runner" = claude ] && [ -f "$OUT.tripwire" ] && { TW_STOP=1; BUDGET_STOP=1; }
+  # A NO-PROGRESS stop (BH-8868) is policy too, for the same reason. Claude
+  # only: that branch clears the marker before every attempt.
+  NP_STOP=""
+  [ "$runner" = claude ] && [ -f "$OUT.noprogress" ] && { NP_STOP=1; BUDGET_STOP=1; }
   # An EXTERNAL KILL is not a vendor failure (2026-08-27, after the false hub
   # "CLAUDE AUTH DOWN"): rc 137/143 is SIGKILL/SIGTERM — the OS, an operator or a
   # parent turn ending killed us. The vendor never answered, so there is nothing
@@ -3494,7 +3551,7 @@ run_attempt() { # run_attempt <runner> ; sets RC, writes $OUT, appends cost row
   # same rc 143 well inside the window. KILL_STOP buys one retry on the same
   # lane, which is precisely the re-spend the ceiling just refused.
   KILL_STOP=""
-  if [ -z "$CTX_STOP$TW_STOP" ] && { [ "$RC" -eq 137 ] || [ "$RC" -eq 143 ]; }; then
+  if [ -z "$CTX_STOP$TW_STOP$NP_STOP" ] && { [ "$RC" -eq 137 ] || [ "$RC" -eq 143 ]; }; then
     local _tos _el; _tos=$(printf '%s' "$TO" | tr -cd '0-9'); _el=$((T1-T0))
     if [ -n "$_tos" ] && [ "$_el" -lt $(( _tos * 9 / 10 )) ]; then
       KILL_STOP=1
@@ -3537,7 +3594,7 @@ run_attempt() { # run_attempt <runner> ; sets RC, writes $OUT, appends cost row
     # got to the end of the work, so "it outspent the cap and did not stop" is
     # a sentence about our own kill. Counting it would page about the wrong
     # thing and put a second line in ALERTS for one event.
-    [ -n "${CTX_STOP:-}${TW_STOP:-}" ] && _STOP=hit
+    [ -n "${CTX_STOP:-}${TW_STOP:-}${NP_STOP:-}" ] && _STOP=hit
     if awk -v c="$USD" -v b="$_B" 'BEGIN{exit !(c+0 > b+0)}' 2>/dev/null && [ -z "$_STOP" ]; then
       # PER-STAGE flag: ~29 callers share this path, so a single daily flag let
       # the first lane to trip it silence every other lane for the day.
@@ -4398,6 +4455,10 @@ elif [ "$RC" -ne 0 ] && [ -n "${BUDGET_STOP:-}" ]; then
     else
       echo "$(STAMP) [$PROJECT] $STAGE CONTEXT KILL: ${PHASE_RUNNER:-$RUNNER} stopped at its lane context ceiling — stage fails by policy; lower fallback/survival lanes NOT engaged. Ceilings live in catalog/context-budgets.json (context_kill_tokens)." >> "$HARNESS/logs/failovers.log"
     fi
+  elif [ -n "${NP_STOP:-}" ]; then
+    # The build's RESULT line (bin/lib/rb/execute.sh) is the record a person
+    # reads; this is the ladder's.
+    echo "$(STAMP) [$PROJECT] $STAGE NO PROGRESS: ${PHASE_RUNNER:-$RUNNER} stopped with no file changed ($(head -1 "$OUT.noprogress" 2>/dev/null)) — stage fails by policy; lower fallback/survival lanes NOT engaged. Knobs: lib.execute-no-progress.* settings rows." >> "$HARNESS/logs/failovers.log"
   elif [ -n "${TW_STOP:-}" ]; then
     # The tripwire lib owns the one alert for a trip; this is the ladder's record.
     echo "$(STAMP) [$PROJECT] $STAGE TRIPWIRE: ${PHASE_RUNNER:-$RUNNER} stopped by the build tripwire ($(head -1 "$OUT.tripwire" 2>/dev/null)) — stage fails by policy; lower fallback/survival lanes NOT engaged." >> "$HARNESS/logs/failovers.log"

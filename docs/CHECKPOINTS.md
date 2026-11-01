@@ -218,6 +218,32 @@ one ALERTS line and no board comment, and inventing a new outcome word would
 have meant editing eight prompt files to teach them one. The detail line carries
 the new information — where the tree is.
 
+### `EXECUTE_EMPTY EXECUTE_NO_PROGRESS:` — a session that writes nothing (BH-8868)
+
+The third shape. project-6-os TK-3225 ran 3510 s with 0 file changes until its
+context kill at 53.6M tokens. Now `bin/agent-call.sh`'s context meter also
+fingerprints the worktree (HEAD + `git status`, minus `node_modules/`, `.next/`
+and `__pycache__/`) before an execute session starts and on every poll
+(`bin/lib/execute-no-progress.sh`). A new commit, an edit or a new untracked
+file is progress, so a lane checkpoint is progress too. If nothing changed and
+either rule fires, the meter writes `$OUT.noprogress` and stops the session:
+
+| knob (lib `execute-no-progress`) | default | rule |
+| --- | --- | --- |
+| `EXECUTE_NO_WRITE_STOP_MIN` | `20` | stop after this many minutes with no change. `0` = off. |
+| `EXECUTE_NO_WRITE_STOP_CEILING_PCT` | `50` | stop when the context total reaches this % of the lane's `context_kill_tokens`. `0` = off. |
+
+Both are settings rows (`lib.execute-no-progress.<knob, lowercase>`); both `0`
+turns the check off. The stop is a policy stop: rc 143, a `NO PROGRESS:` line
+on `$OUT`, no model escalation, no vendor failover, cost note
+`no-progress:rule=<time|ceiling>:elapsed_s=<n>`. The build ends `EXECUTE_EMPTY
+EXECUTE_NO_PROGRESS: <rule> after <n>s, <total> of <ceiling> context tokens, 0
+files changed` (exit 5), so the pool's relaunch cap counts it, and
+`execute-transcript.md` keeps the session. The check runs only for stage
+`execute`, only where the context kill runs, and a failed `git` read counts as
+a change. `execute-transcript.md` now finds a killed session through
+`$OUT.session` and the account's `CLAUDE_CONFIG_DIR`.
+
 ## Config
 
 All of it is read from `env/global.env` (or a flag file), with the documented

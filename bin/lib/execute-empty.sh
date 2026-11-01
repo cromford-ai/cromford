@@ -10,8 +10,10 @@
 # why the model stopped.
 #
 # THE FUNCTIONS
-#   ee_on_empty <build-dir>   called by the `# >>> execute result` block of
-#       bin/lib/rb/execute.sh on both EXECUTE_EMPTY paths. Writes the stop
+#   ee_on_empty <build-dir> [label]   called by the `# >>> execute result`
+#       block of bin/lib/rb/execute.sh on every EXECUTE_EMPTY path. The label
+#       titles the transcript (default EXECUTE_EMPTY; the no-progress stop of
+#       BH-8868 passes EXECUTE_NO_PROGRESS). Writes the stop
 #       reason (ee_reason) to <build-dir>/stop-reason.txt and the transcript to
 #       <build-dir>/execute-transcript.md (ee_transcript), which shows the
 #       reason at the top. Prints nothing and never fails the caller.
@@ -21,9 +23,15 @@
 #       bin/deploy-train.sh take the first pull URL), so a final message that
 #       quotes either would act on the hub. The RESULT stays fixed text, and a
 #       reader that wants the reason reads stop-reason.txt.
-#   ee_transcript <outfile> <dest>  the execute session, rendered
+#   ee_transcript <outfile> <dest> [why] [label]  the execute session, rendered
 #       (bin/transcript-render.sh) when $OUT.json names a claude session whose
-#       jsonl is on this machine, else the stage's own output; the LAST
+#       jsonl is on this machine, else the stage's own output. A killed session
+#       writes no envelope, so the id then comes from $OUT.session, which
+#       bin/agent-call.sh writes for every claude attempt (`<sid>\t<config
+#       dir>`). The jsonl is searched under that account's <config dir>/projects
+#       first, then ${CLAUDE_PROJECTS_DIR:-$HOME/.claude/projects} (BH-8868:
+#       TK-3225's account set CLAUDE_CONFIG_DIR, so $HOME/.claude had no file).
+#       The id is refused unless it is [A-Za-z0-9._-] only. The LAST
 #       EE_TRANSCRIPT_LINES (200) lines, scrubbed by bin/transcript-scrub.sh.
 #       FAIL-CLOSED on the scrub: no scrubber, or a scrub that fails, writes no
 #       file (an unscrubbed transcript in a build record the hub relays is the
@@ -69,24 +77,31 @@ ee_reason() { # ee_reason <outfile>
   printf '%s' "${line:0:200}"
 }
 
-ee_transcript() { # ee_transcript <outfile> <dest> [stop-reason]
-  local out="${1:-}" dest="${2:-}" why="${3:-}" r sid jsonl src="" tmp n
+ee_transcript() { # ee_transcript <outfile> <dest> [stop-reason] [label]
+  local out="${1:-}" dest="${2:-}" why="${3:-}" label="${4:-EXECUTE_EMPTY}" r sid="" cfg="" ssid="" jsonl="" d src="" tmp n
   r=$(_ee_root); [ -n "$r" ] && [ -n "$dest" ] || return 0
   n=$(_ee_int "${EE_TRANSCRIPT_LINES:-}" 200)
   tmp=$(mktemp "${TMPDIR:-/tmp}/ee-transcript.XXXXXX") || return 0
-  if [ -s "$out.json" ]; then
-    sid=$(jq -r '.session_id // empty' "$out.json" 2>/dev/null)
-    case "$sid" in ''|*[!A-Za-z0-9._-]*) sid="" ;; esac
-    if [ -n "$sid" ]; then
-      jsonl=$(find "${CLAUDE_PROJECTS_DIR:-$HOME/.claude/projects}" -maxdepth 2 -name "$sid.jsonl" -print -quit 2>/dev/null)
-      [ -n "$jsonl" ] && [ -s "$jsonl" ] && bash "$r/bin/transcript-render.sh" "$jsonl" > "$tmp" 2>/dev/null && [ -s "$tmp" ] \
-        && src=session_jsonl
-    fi
+  [ -s "$out.json" ] && sid=$(jq -r '.session_id // empty' "$out.json" 2>/dev/null)
+  case "$sid" in ''|*[!A-Za-z0-9._-]*) sid="" ;; esac
+  # $OUT.session: the id when the envelope has none, and the account's config dir.
+  [ -s "$out.session" ] && IFS=$'\t' read -r ssid cfg < "$out.session" 2>/dev/null
+  case "$ssid" in ''|*[!A-Za-z0-9._-]*) ssid="" ;; esac
+  case "$cfg" in /*) ;; *) cfg="" ;; esac
+  [ -n "$sid" ] || sid="$ssid"
+  if [ -n "$sid" ]; then
+    for d in ${cfg:+"$cfg/projects"} "${CLAUDE_PROJECTS_DIR:-$HOME/.claude/projects}"; do
+      jsonl=$(find "$d" -maxdepth 2 -name "$sid.jsonl" -print -quit 2>/dev/null)
+      [ -n "$jsonl" ] && [ -s "$jsonl" ] && break
+      jsonl=""
+    done
+    [ -n "$jsonl" ] && bash "$r/bin/transcript-render.sh" "$jsonl" > "$tmp" 2>/dev/null && [ -s "$tmp" ] \
+      && src=session_jsonl
   fi
   if [ -z "$src" ] && [ -s "$out" ]; then cp "$out" "$tmp" 2>/dev/null && src=stage_output; fi
   if [ -z "$src" ]; then rm -f "$tmp"; return 0; fi
   {
-    echo "# execute transcript (EXECUTE_EMPTY)"
+    echo "# execute transcript ($label)"
     echo "source: $src${sid:+   session: $sid}   last $n lines, scrubbed (bin/transcript-scrub.sh)"
     [ "$src" = stage_output ] && echo "NOTE: no claude session file was found for this attempt, so this is the stage's final OUTPUT, not the turn-by-turn session."
     [ -n "$why" ] && echo "stop reason: $why"
@@ -99,12 +114,12 @@ ee_transcript() { # ee_transcript <outfile> <dest> [stop-reason]
   return 0
 }
 
-ee_on_empty() { # ee_on_empty <build-dir>
-  local b="${1:-}" why
+ee_on_empty() { # ee_on_empty <build-dir> [label]
+  local b="${1:-}" label="${2:-EXECUTE_EMPTY}" why
   [ -n "$b" ] && [ -d "$b" ] || return 0
   why=$(ee_reason "$b/execute-run.txt") || why=""
   [ -n "$why" ] && printf '%s\n' "$why" > "$b/stop-reason.txt" 2>/dev/null
-  ee_transcript "$b/execute-run.txt" "$b/execute-transcript.md" "$why" || true
+  ee_transcript "$b/execute-run.txt" "$b/execute-transcript.md" "$why" "$label" || true
   return 0
 }
 
