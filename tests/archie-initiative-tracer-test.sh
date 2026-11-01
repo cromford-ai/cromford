@@ -382,7 +382,10 @@ eq "T3 no model call" "$(calls)" 0
 eq "T3 no beat" "$(beats)" 0
 eq "T3 exactly one request, the due read" "$(n "$T/reqlog")" 1
 check "T3 the due query ($(cat "$T/reqlog"))" 'grep -qxF "GET /api/initiatives?status=active&due_before=$NOWISO&limit=3 " "$T/reqlog"'
-check "T3 no summary line" '[ ! -s "$H/logs/archie.log" ]'
+# BH-8417: a no-op tick writes exactly one local `tick due=0` line, so
+# bin/log-freshness.sh can tell a quiet lane from a dead one. Still no write
+# to the worker, no call and no beat (above).
+check "T3 one tick line, nothing else" '[ "$(grep -c . "$H/logs/archie.log")" = 1 ] && grep -q " tick due=0: no active initiative is due" "$H/logs/archie.log"'
 reset "$(row 10 "$FUTURE" always)"
 tick
 eq "T3 wakes on: no model call" "$(calls)" 0

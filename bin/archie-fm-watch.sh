@@ -48,8 +48,18 @@
 #      summary says incomplete=1, never "nothing found".
 #   3. per finding: the mode from archie.manage.<project> > archie.manage > on
 #      (fleet-scope findings read project `hub`); off skips it; then afw_handle.
-#   4. one line in logs/archie-fm-watch.log per tick that did anything:
-#      <ts> findings=<n> pulled=<n> tickets=<n> would=<n> capped=<n> skipped=<n> failed=<n> incomplete=<0|1> sessions=<n>
+#   4. one line in logs/archie-fm-watch.log on EVERY acting tick, a quiet one
+#      too (BH-8417: a quiet tick is still a line, so bin/log-freshness.sh can
+#      tell a live lane from a dead log):
+#      <ts> tick findings=<n> pulled=<n> tickets=<n> would=<n> capped=<n> skipped=<n> failed=<n> incomplete=<0|1> sessions=<n> route_absent=<0|1>
+#
+# ROUTE ABSENT vs ROW MISS (BH-8417). The real _jobs_req prints nothing on a
+# 404 and keeps the body in JOBS_BODY_FILE (set for the tick). A 404 whose body
+# is the worker's {"error":"archie action not found"} is a ROW miss: on the
+# ledger read it is "no row yet"; anywhere else it fails that one finding, with
+# one log line, and the loop goes on (afw_route_absent). Any other 404 is the
+# route absent: the tick stops, and ONE ALERTS line a UTC day says so (marker
+# state/archie-fm-watch/route-absent-<yyyymmdd>; only the newest is kept).
 #
 # EVERY LEVER PULL AND EVERY TICKET IS AN archie_actions ROW
 # (worker/jobs/src/routes/archie-actions.js, playbooks watch-<class> and
@@ -64,8 +74,8 @@
 # (BH-4760). A non-blank answer goes to the operator through bin/archie-tg-send.sh.
 #
 # NEVER: a merge, a push, a deploy outside the two deploy re-runs, an unpause, a
-# machine stop, a model call outside afw_session, an alert of its own, or a
-# state file.
+# machine stop, a model call outside afw_session, an alert of its own other
+# than the route-absent line, or a state file other than its day marker.
 #
 # OFF: ARCHIE_FMW_ENABLED=0, flags/lane-off-archie-fm-watch,
 # bin/harness-ctl.sh off archie-fm-watch, or archie.manage[.<project>]=off.
@@ -202,7 +212,7 @@ done
 [ -n "$AFW_PROJECTS" ] || afw_log "warn: bin/fleet-conf.sh --projects answered nothing; project findings are skipped"
 
 AFW_FINDINGS=$(mktemp "${TMPDIR:-/tmp}/afw-findings.XXXXXX") || { afw_log "mktemp failed; nothing read"; exit 0; }
-trap 'rm -f "$AFW_FINDINGS" "$AFW_FINDINGS.u"' EXIT
+trap 'rm -f "$AFW_FINDINGS" "$AFW_FINDINGS.u" "$AFW_FINDINGS.body"' EXIT
 afw_settings_load
 afw_collect
 AFW_N_FINDINGS=$(grep -c . "$AFW_FINDINGS")
@@ -213,6 +223,9 @@ if [ "$DRY_LIST" = 1 ]; then
   exit 0
 fi
 
+# The newest jobs request's 404 body, readable after a $( ) (afw_route_absent).
+# Not exported: a lever's child process never writes into it.
+JOBS_BODY_FILE="$AFW_FINDINGS.body"
 while IFS= read -r LINE; do
   [ -n "$LINE" ] || continue
   P=$(cut -f4 <<<"$LINE")
@@ -222,14 +235,34 @@ while IFS= read -r LINE; do
   fi
   [ "$MODE" = off ] && continue
   rc=0; afw_handle "$LINE" "$MODE" || rc=$?
-  [ "$rc" = 2 ] && AFM_ROUTE_ABSENT=1
-  [ "$AFM_ROUTE_ABSENT" = 1 ] && break
+  if [ "$rc" = 2 ] || [ "$AFM_ROUTE_ABSENT" = 1 ]; then
+    if afw_route_absent; then AFM_ROUTE_ABSENT=1; break; fi
+    # A ROW miss, not the route: this finding failed; the next one is handled.
+    AFM_ROUTE_ABSENT=0; AFM_ROW=""
+    afw_log "$(cut -f1 <<<"$LINE") $(cut -f3 <<<"$LINE"): the jobs worker answered 404 'archie action not found' (a row miss, not the route); this finding failed, the loop goes on"
+    AFW_N_FAILED=$((AFW_N_FAILED + 1))
+  fi
   if [ "$(( AFW_DEADLINE - $(date +%s) ))" -le 0 ]; then
     afw_log "the tick's 1500 s deadline passed; the rest wait for the next tick"; AFW_INCOMPLETE=1; break
   fi
 done < "$AFW_FINDINGS"
-[ "$AFM_ROUTE_ABSENT" = 1 ] && afw_log "archie_actions route absent (HTTP 404 from the jobs worker); nothing done"
+# afw_route_absent_alert — ONE ALERTS line per UTC day for an absent route
+#   (BH-8417). The marker is written after the line; only today's is kept.
+afw_route_absent_alert() {
+  local d m body
+  d="$H/state/archie-fm-watch"; m="$d/route-absent-$(date -u -d "@$NOW" +%Y%m%d)"
+  [ -e "$m" ] && return 0
+  mkdir -p "$d" 2>/dev/null || { afw_log "warn: $d could not be made; the route-absent alert is not sent this tick"; return 0; }
+  body=$(head -c 120 "$JOBS_BODY_FILE" 2>/dev/null | tr -d '\n')
+  afq_alert "archie_actions route absent: the jobs worker answered HTTP 404 for /api/archie/actions (body: ${body:-empty}), so the whole-factory watch did nothing this tick. Deploy worker/jobs (src/routes/archie-actions.js) or set the lane-off flag lane-off-archie-fm-watch. One line a day; logs/archie-fm-watch.log has every tick."
+  : > "$m" || afw_log "warn: $m could not be written; the next tick may alert again"
+  find "$d" -maxdepth 1 -name 'route-absent-*' ! -path "$m" -delete 2>/dev/null
+  return 0
+}
+if [ "$AFM_ROUTE_ABSENT" = 1 ]; then
+  afw_log "archie_actions route absent (HTTP 404 from the jobs worker); nothing done"
+  afw_route_absent_alert
+fi
 [ -z "$ONLY_CLASS" ] && [ "$AFM_ROUTE_ABSENT" != 1 ] && afw_session
-SUM=$((AFW_N_PULLED + AFW_N_TICKETS + AFW_N_WOULD + AFW_N_CAPPED + AFW_N_SKIPPED + AFW_N_FAILED + AFW_INCOMPLETE + AFW_N_SESSIONS))
-[ "$SUM" -gt 0 ] && afw_log "findings=$AFW_N_FINDINGS pulled=$AFW_N_PULLED tickets=$AFW_N_TICKETS would=$AFW_N_WOULD capped=$AFW_N_CAPPED skipped=$AFW_N_SKIPPED failed=$AFW_N_FAILED incomplete=$AFW_INCOMPLETE sessions=$AFW_N_SESSIONS"
+afw_log "tick findings=$AFW_N_FINDINGS pulled=$AFW_N_PULLED tickets=$AFW_N_TICKETS would=$AFW_N_WOULD capped=$AFW_N_CAPPED skipped=$AFW_N_SKIPPED failed=$AFW_N_FAILED incomplete=$AFW_INCOMPLETE sessions=$AFW_N_SESSIONS route_absent=$AFM_ROUTE_ABSENT"
 exit 0

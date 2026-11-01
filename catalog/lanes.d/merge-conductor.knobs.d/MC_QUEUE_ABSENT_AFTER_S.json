@@ -1,0 +1,11 @@
+{
+  "env": "MC_QUEUE_ABSENT_AFTER_S",
+  "read_in": "bin/merge-conductor.d/bh-8417-repo-truth.sh",
+  "type": "int",
+  "default": 1800,
+  "min": 300,
+  "max": 86400,
+  "unit": "s",
+  "zero_means": null,
+  "note": "BH-8417: the seconds a QUEUED row may be absent from Mergify's own merge-queue/status answer (state/merge-queue-status/, written by bin/merge-queue-reconcile.sh) before the conductor reconciles it: one @mergifyio requeue per (PR, head) and one page `not in Mergify queue`. Not a whole number, or under 1: 1800. Per-project row: lane.merge-conductor.<project>.mc_queue_absent_after_s."
+}

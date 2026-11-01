@@ -1,0 +1,23 @@
+{
+  "libs": [
+    {
+      "id": "repo-activity",
+      "file": "bin/repo-activity.sh",
+      "note": "BH-8417 (scope F). One line per GitHub event (merged, opened, closed, push, ci) of one repo since --since, read through gh_rest (ETag cache). A failed read prints UNREADABLE and exits 75; the page cap prints INCOMPLETE. Reader: archie_repo_activity_block (bin/lib/archie-repo-activity.sh). Applied by bin/repo-activity.sh through lib_env_apply; the code literal is the documented fallback.",
+      "knobs": [
+        {
+          "env": "REPO_ACTIVITY_MAX_PAGES",
+          "type": "int",
+          "default": 5,
+          "min": 1,
+          "max": 50,
+          "unit": "pages",
+          "zero_means": null,
+          "required": false,
+          "settable": true,
+          "note": "Pages of 100 read per endpoint (pulls, actions/runs) per run. Past it the script prints `INCOMPLETE <endpoint> pages=<n>` and lists only what it read. Code fallback 5 in bin/repo-activity.sh; outside 1..50 is one stderr line and the default."
+        }
+      ]
+    }
+  ]
+}

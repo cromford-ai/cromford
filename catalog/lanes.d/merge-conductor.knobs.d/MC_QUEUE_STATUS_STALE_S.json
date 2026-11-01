@@ -1,0 +1,11 @@
+{
+  "env": "MC_QUEUE_STATUS_STALE_S",
+  "read_in": "bin/merge-conductor.d/bh-8417-repo-truth.sh",
+  "type": "int",
+  "default": 600,
+  "min": 120,
+  "max": 86400,
+  "unit": "s",
+  "zero_means": null,
+  "note": "BH-8417: the age past which a state/merge-queue-status/<owner>_<repo>.json file (bin/merge-queue-reconcile.sh, every 2 min) no longer counts: queue presence is `unknown` and the conductor takes no queue action on it. Not a whole number, or under 1: 600."
+}

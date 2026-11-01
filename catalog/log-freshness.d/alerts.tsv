@@ -1,0 +1,5 @@
+# BH-8417: the hub ALERTS log. Many writers, through bin/alert-line.sh
+# (`%F %TZ` stamps); the steady one is bin/pipeline-health.sh (*/10, one
+# deduped line per finding-key), so it is the owning lane named in the alert.
+# path	cadence_s	owning_lane	reader
+logs/ALERTS.log	3600	pipeline-health	archie turn rule (prompts/archie-soul.d/15-operating-loop.md) and the poll-commands re-beat

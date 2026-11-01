@@ -853,6 +853,9 @@ pr_worker() {
   # A non-required check does not hold a PR (BH-8012): pending/red becomes
   # green when every required check is green (fragment bh-8012-required-ci).
   MC_CI_REQUIRED_GREEN=0; command -v mc_cireq_apply >/dev/null 2>&1 && mc_cireq_apply
+  # BH-8417: the head commit time for the STUCK clock (kept across memo hits)
+  # and the hung-CI arm (fragment bh-8417-head-clock).
+  MC_CI_HUNG=""; command -v mc_ci_hung_check >/dev/null 2>&1 && { mc_headclock_note "$KEY" "$HEAD"; mc_ci_hung_check; }
   # The strike ledger: one `red <key> <head>` per DIFFERENT head of this PR
   # that went red, not the same red seen on two ticks. Since BH-1671 it is a
   # record only — mc_classify no longer parks on it (`red-ci-twice` counted
@@ -1971,6 +1974,10 @@ pr_worker() {
   case "$STATE" in
     READY|NEEDS_REBASE) [ "$VERDICT" = APPROVE ] && mc_count_inc "$P" batchable >/dev/null ;;
   esac
+  # BH-8417: queue truth (a QUEUED row Mergify does not hold is reconciled
+  # here) and the GitHub facts for the log and the STUCK page (fragment
+  # bh-8417-repo-truth).
+  MC_GH_FACTS=""; command -v mc_repo_truth >/dev/null 2>&1 && mc_repo_truth
   SINCE=$(mc_transition "$KEY" "$STATE" "$WHY" "$HEAD" "$REVIEWED" "$URL" "$VERDICT" "$MSTATE" "$REC")
   if [ "$STATE" = READY ]; then MC_STEP_LOG=1; fi
   mc_step ready-checks
@@ -1990,7 +1997,7 @@ pr_worker() {
   # This is what #1045 and #1124/#1136 needed and no budget could give them —
   # #1045 was inside WAIT_CI's budget for ten hours after its one alert, and a
   # park the resolver owns pages never by design.
-  if mc_stuck_check "$KEY" "$STATE" "$SINCE" "$HEAD" "$URL" "$WHY" "verdict=$VERDICT ci=$CIWORD mergeState=$MSTATE mode=$MODE"; then
+  if mc_stuck_check "$KEY" "$STATE" "$SINCE" "$HEAD" "$URL" "$WHY" "verdict=$VERDICT ci=$CIWORD mergeState=$MSTATE mode=$MODE${MC_GH_FACTS:+; github: $MC_GH_FACTS}"; then
     stuck_rekick "$KEY" "$STATE" "$WHY" "$SLUG" "$NUM" "$URL" "$HEAD" "$MSTATE" "$MGABLE" "${BASEREF:-}" "$PBASE" "$CI" "$VERDICT" "$REVIEWED" "${PROVIDER:-}"
   fi
   # ---- the land trigger, before the state arms (BH-870) --------------------

@@ -204,6 +204,25 @@ afw_route_note() {
   : "$2"
 }
 
+# afw_route_absent [<body>] — called after a jobs-worker 404 (rc 2) on an
+#   /api/archie/actions call. rc 0 when the ROUTE is absent; rc 1 when the 404
+#   is the worker's ROW miss, {"error":"archie action not found"}
+#   (worker/jobs/src/routes/archie-actions.js notFound("archie action")).
+#   BH-8417: the real _jobs_req prints nothing on a 404. It keeps the body in
+#   JOBS_BODY (lost when the call ran in a $( )) and in JOBS_BODY_FILE, which
+#   bin/archie-fm-watch.sh sets for the tick, so the newest request's body is
+#   read from that file. <body> is what the caller's $( ) printed.
+afw_route_absent() {
+  local b="${1:-}"
+  if [ -n "${JOBS_BODY_FILE:-}" ] && [ -r "$JOBS_BODY_FILE" ]; then
+    b+=$(head -c 200 "$JOBS_BODY_FILE" 2>/dev/null)
+  else
+    b+=${JOBS_BODY:-}
+  fi
+  case "$b" in *"archie action not found"*) return 1 ;; esac
+  return 0
+}
+
 # afw_row_get <key> -> rc 0 and the row on stdout; rc 2 no row; rc 4 the route
 #   is not deployed (the worker's own 404, not "no such row"); rc 1 unreadable.
 #   Called in $( ): it signals by rc, never by a global.
@@ -213,8 +232,8 @@ afw_row_get() {
   resp=$(_afm_req GET "/api/archie/actions?dedupe_key=$enc"); rc=$?
   case "$rc" in
     0) jq -ce '.action | select(type == "object")' <<<"$resp" 2>/dev/null || return 1 ;;
-    2) jq -e '.error == "archie action not found"' <<<"$resp" >/dev/null 2>&1 && return 2
-       return 4 ;;
+    2) afw_route_absent "$resp" && return 4
+       return 2 ;;
     *) return 1 ;;
   esac
 }

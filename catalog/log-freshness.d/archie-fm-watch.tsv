@@ -1,0 +1,6 @@
+# BH-8417: the whole-factory watch log. bin/archie-fm-watch.sh writes one
+# `<iso> tick findings=...` line every acting tick (cron 7-57/10, acting once per
+# archie.watch.interval_min, default 20 min). 600 s x LOG_FRESHNESS_MULT 3 = 30 min.
+# Read by the Archie turn rule (prompts/archie-soul.d/15-operating-loop.md).
+# path	cadence_s	owning_lane	reader
+logs/archie-fm-watch.log	600	archie-fm-watch	archie turn rule (prompts/archie-soul.d/15-operating-loop.md)

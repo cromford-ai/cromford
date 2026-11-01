@@ -1,0 +1,11 @@
+{
+  "env": "MC_HEAD_CLOCK_KEEP_D",
+  "read_in": "bin/merge-conductor.d/bh-8417-head-clock.sh",
+  "type": "int",
+  "default": 14,
+  "min": 1,
+  "max": 365,
+  "unit": "d",
+  "zero_means": null,
+  "note": "BH-8417: the days a per-(PR, head) file in state/merge-conductor/head-clock/ (the head commit time kept for the STUCK clock) and state/merge-conductor/queue-absent/ (the not-in-Mergify-queue clock) is kept; older files are deleted on the next tick. Not a whole number, or under 1: 14."
+}

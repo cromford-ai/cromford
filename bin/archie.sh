@@ -130,6 +130,7 @@ HENV=$(harness_env_dir "$H")
   . "$SELF/lib/archie.sh" 2>/dev/null || true
   . "$SELF/lib/lane-switch.sh" 2>/dev/null || true
   . "$SELF/lib/archie-wake.sh" 2>/dev/null || true
+  . "$SELF/lib/archie-repo-activity.sh" 2>/dev/null || true
 }
 # The suite's seam. Sandbox only, and settable:false in the registry.
 if [ "${HARNESS_TEST_SANDBOX:-}" = 1 ] && [ -n "${ARCHIE_FIXTURE:-}" ]; then
@@ -448,6 +449,9 @@ check_row() {
         '{initiative: {id, goal, metric_query, escalation_rule, cadence_hours, links, last_value, last_decision, last_decision_note},
           check: {value: (if $v == "" then null else $v end), metric_unreadable: $u, due_at: $d, now: $n}}' <<<"$row"
       [ -n "$ctx" ] && printf '\n## Events this check is answering\n%s\n' "$ctx"
+      # BH-8417: repo truth, read once per tick (bin/lib/archie-repo-activity.sh).
+      [ -n "${RA_BLOCK+x}" ] || RA_BLOCK=$(archie_repo_activity_block 2>/dev/null) || true
+      [ -z "$RA_BLOCK" ] || printf '\n%s\n' "$RA_BLOCK"
     } > "$pf"
     # The attempt is written BEFORE the call (no spend without the ledger): an
     # answer that is paid for and then lost still counts toward MAX_ATT.
@@ -591,7 +595,9 @@ tick() {
     exit 0
   fi
   n=$(jq '.initiatives | length' <<<"$resp")
-  [ "$n" -gt 0 ] || exit 0
+  # A quiet tick still writes one line (BH-8417): bin/log-freshness.sh judges
+  # logs/archie.log by its newest line, and silence must mean "not running".
+  [ "$n" -gt 0 ] || { log "tick due=0: no active initiative is due; nothing checked"; exit 0; }
   [ "$(jq -r '.truncated == true' <<<"$resp")" = true ] \
     && log "more than $max initiatives due; the rest are deferred to the next tick"
   USD_OFF=0

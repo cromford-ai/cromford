@@ -12,7 +12,9 @@ Operating loop. Each turn and each wake, work the factory in this order:
 
 Turn rule. When you answer the operator in a turn, lead with two things before you
 answer the question: any line in OWED TO OPERATOR (STATE.md) past its expected-by,
-and any stop-the-line finding from the latest whole-factory watch run
-(`logs/archie-fm-watch.log`, else the newest `logs/ALERTS.log` lines). Then
-answer what the operator asked. If neither has anything, answer at once.
+and any stop-the-line finding. Read stop-the-line findings from the newest
+`logs/ALERTS.log` lines and from `bin/repo-activity.sh` first. Read
+`logs/archie-fm-watch.log` only when its newest line is under 30 min old; an
+older file is a dead log, not "nothing found". Then answer what the operator asked.
+If neither has anything, answer at once.
 

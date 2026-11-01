@@ -16,6 +16,11 @@
 #      for that repo. Repos past the cap are logged by name as deferred; the
 #      list is rotated by the 2-minute tick, so a deferred repo is first on a
 #      later tick.
+#      Each answer is also kept, whole, in
+#      state/merge-queue-status/<owner>_<repo>.json with `fetched_at` (epoch)
+#      added: tmp + mv, so a reader never sees half a file, and a failed read
+#      leaves the last good file as it was. The merge conductor reads it for
+#      queue presence (BH-8417, bin/merge-conductor.d/bh-8417-repo-truth.sh).
 #   4. POST the answers to /api/merge-queue/reconcile, which writes the
 #      corrective rows. A failed POST is `post-failed`, rc 1.
 # No lock: every write is idempotent, so an overlapping run is harmless.
@@ -95,6 +100,10 @@ for slug in "${CALL[@]}"; do
   if [ "$rc" -eq 0 ] && [[ "$code" =~ ^2[0-9][0-9]$ ]] && jq -e 'type == "object"' "$TMP/m.json" >/dev/null 2>&1; then
     jq -c --arg r "$slug" '{repo: $r, status: .}' "$TMP/m.json" >> "$TMP/answers.jsonl"
     okn=$((okn + 1))
+    SF="$H/state/merge-queue-status/${slug//\//_}.json"
+    mkdir -p "${SF%/*}" 2>/dev/null
+    jq -c --argjson t "$NOW" '. + {fetched_at: $t}' "$TMP/m.json" > "$SF.tmp.$$" 2>/dev/null \
+      && mv -f "$SF.tmp.$$" "$SF" 2>/dev/null || rm -f "$SF.tmp.$$"
   else
     printf '%s %s mergify http=%s rc=%s\n' "$(date -u +%FT%TZ)" "$slug" "${code:-000}" "$rc" >> "$LOG"
     failed=$((failed + 1))

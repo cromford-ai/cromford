@@ -1,0 +1,13 @@
+{
+  "env": "ARCHIE_REPO_ACTIVITY_SINCE_H",
+  "read_in": "bin/lib/archie-repo-activity.sh",
+  "type": "int",
+  "default": 6,
+  "min": 1,
+  "max": 168,
+  "unit": "hours",
+  "zero_means": null,
+  "required": false,
+  "settable": true,
+  "note": "BH-8417. The window of the `## Repo activity (last <n>h)` block of Archie's check prompt and of the chat-turn briefing (archie_repo_activity_block passes it to bin/repo-activity.sh --since <n>h, and the header names it). Code fallback 6; outside 1..168 is the default."
+}

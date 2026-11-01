@@ -715,15 +715,33 @@ mc_job_running() {
 #   bound (WHY ends in ` timeout`) and 0 otherwise; mc_classify reads it. A
 #   caller that needs either runs this
 #   as a plain command, never inside $( ).
+#
+#   BH-8417: the same body also sets, with no new read, MC_HEAD_COMMIT_TS (the
+#   newest head_commit.timestamp of a run on THIS sha, as epoch; empty when no
+#   run names one), MC_HEAD_COMMIT_SHA (the sha that time is for) and
+#   MC_CI_RUNS (one `id|name|status|started-epoch` line per latest run of each
+#   workflow; MC_CI_RUNS_SHA is the sha it is for). All four are reset at
+#   entry, so a failed read leaves them empty. mc_stuck_check reads the head
+#   time. The stdout word is unchanged.
 mc_ci_state() {
   local slug="$1" sha="$2" runs GH_REST_TIMEOUT_S
   MC_CI_READ_WHY=""; MC_CI_READ_HELD=0
+  MC_HEAD_COMMIT_TS=""; MC_HEAD_COMMIT_SHA=""; MC_CI_RUNS=""; MC_CI_RUNS_SHA=""
   GH_REST_TIMEOUT_S=$(mc_ci_read_timeout_s); [ "$GH_REST_TIMEOUT_S" -gt 0 ] || GH_REST_TIMEOUT_S=
   GH_REST_STATUS=; GH_REST_REASON=
   mc_rest_var runs gh_rest GET "repos/$slug/actions/runs?head_sha=$sha&per_page=50" || {
     MC_CI_READ_WHY="HTTP ${GH_REST_STATUS:-000}${GH_REST_REASON:+ $GH_REST_REASON}"
     [ "$MC_CI_READ_WHY" != "${MC_CI_READ_WHY% timeout}" ] && MC_CI_READ_HELD=1
     echo unavailable; return 0; }
+  MC_HEAD_COMMIT_TS=$(jq -r --arg s "$sha" '[.workflow_runs[]? | select((.head_sha // $s) == $s)
+                              | .head_commit.timestamp // empty | fromdateiso8601? // empty] | max // empty' <<<"$runs" 2>/dev/null) || MC_HEAD_COMMIT_TS=""
+  case "$MC_HEAD_COMMIT_TS" in ''|*[!0-9]*) MC_HEAD_COMMIT_TS="" ;; *) MC_HEAD_COMMIT_SHA="$sha" ;; esac
+  MC_CI_RUNS=$(jq -r '[.workflow_runs[]? | {n: ((.name // .workflow_id // "?") | tostring),
+                              t: ((.run_started_at // .created_at) // ""),
+                              a: (.run_attempt // 1), id: (.id // ""), s: (.status // "")}]
+        | group_by(.n) | map(sort_by(.t, .a) | last)
+        | .[] | "\(.id)|\(.n | gsub("[|\n]"; " "))|\(.s)|\((.t | fromdateiso8601?) // "")"' <<<"$runs" 2>/dev/null) || MC_CI_RUNS=""
+  [ -n "$MC_CI_RUNS" ] && MC_CI_RUNS_SHA="$sha"
   runs=$(jq -r '[.workflow_runs[]? | {n: ((.name // .workflow_id // "?") | tostring),
                               t: ((.run_started_at // .created_at) // ""),
                               a: (.run_attempt // 1),
@@ -1558,7 +1576,22 @@ mc_stuck_check() {
   case "$why" in contested*) return 1 ;; esac
   ttl=$(mc_ttl "$st"); case "$ttl" in ''|-1|-*) return 1 ;; esac
   case "${since:-}" in ''|*[!0-9]*) return 1 ;; esac
-  age=$(( $(mc_now) - since )); [ "$age" -ge "$ttl" ] || return 1
+  # THE CLOCK IS PER HEAD (BH-8417). mc_transition keeps `since` when the head
+  # moves inside one state, so now - since paged #7750 at 6408m for a head
+  # committed 15h earlier. The age runs from max(since, head commit time);
+  # MC_HEAD_COMMIT_TS is mc_ci_state's (or mc_headclock_note's) answer for
+  # THIS head. Another sha, no time, a time in the future or not a number:
+  # the since clock, as before, and the page says the head time is unknown.
+  local now clock="$since" hts="${MC_HEAD_COMMIT_TS:-}" hnote
+  now=$(mc_now)
+  if [ "${MC_HEAD_COMMIT_SHA:-}" = "$head" ] && [[ "$hts" =~ ^[0-9]+$ ]] && [ "$hts" -le "$now" ]; then
+    [ "$hts" -gt "$since" ] && clock="$hts"
+    hnote="head ${head:0:8} committed $(date -u -d "@$hts" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null)"
+  else
+    hnote="head ${head:0:8} (head time unknown)"
+  fi
+  hnote="$hnote, in $st since $(date -u -d "@$since" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null)"
+  age=$(( now - clock )); [ "$age" -ge "$ttl" ] || return 1
   # AN IDENTITY-BLOCKED ROW HAS ALREADY HAD ITS ONE PAGE (BH-988). Before the
   # marker, not after: rc 1 here leaves the (PR, state, head) triple unspent, so
   # the day a repo admin permits the identity and the row then genuinely stalls
@@ -1583,7 +1616,7 @@ mc_stuck_check() {
   # The alert text is built ONCE, above the marker check, because the held row
   # carries the same string the page would have: one place, so a held page and
   # an un-held one can never drift apart.
-  local text="STUCK: $((age/60))m in one state (TTL $((ttl/60))m) on ${head:0:8} — waiting on $waiting${detail:+; $detail}$sat — $url"
+  local text="STUCK: $((age/60))m in one state (TTL $((ttl/60))m) on ${head:0:8} — waiting on $waiting${detail:+; $detail}; $hnote$sat — $url"
   # THE PAUSED HOLD (BH-1201), before the marker on purpose: a held page leaves
   # the (PR, state, head) triple UNSPENT, so the row still owes exactly one page.
   # (i) The flush already owns this row — in every mode, including merge.
@@ -1613,7 +1646,7 @@ mc_stuck_check() {
     mc_log "$key STUCK $((age/60))m in $(mc_state_display "$st" "$why") on ${head:0:8} — claimed by bin/blocked-resolver.sh, STUCK page folded into the claimed-park gate: $url"
     return 0
   fi
-  mc_log "$key STUCK $((age/60))m in $(mc_state_display "$st" "$why") on ${head:0:8}, past its $((ttl/60))m TTL — waiting on $waiting${detail:+ ($detail)}$sat: $url"
+  mc_log "$key STUCK $((age/60))m in $(mc_state_display "$st" "$why") on ${head:0:8}, past its $((ttl/60))m TTL — waiting on $waiting${detail:+ ($detail)}; $hnote$sat: $url"
   mc_alert "$key" "$(mc_state_display "$st" "$why")" "$text"
   return 0
 }

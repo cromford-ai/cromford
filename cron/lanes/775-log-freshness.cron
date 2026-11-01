@@ -1,0 +1,11 @@
+# @hub-lanes
+
+# ── DEAD-LOG LANE (BH-8417) ─────────────────────────────────────────────────
+# Every 15 minutes. Reads catalog/log-freshness.d/*.tsv (one row per log: path,
+# expected cadence, owning lane, reader) and judges each log by its newest
+# stamped line (else its mtime). Past LOG_FRESHNESS_MULT (3) x the cadence is
+# ONE ALERTS line per (log, stale-since day) naming the owning lane; a missing
+# log is one `absent` line a day. One summary line in logs/log-freshness.log.
+# Reads only; no lock. Off: flags/lane-off-log-freshness
+# (bin/harness-ctl.sh off log-freshness).
+*/15 * * * * /root/harness/bin/hub-lease.sh check && /root/harness/bin/log-freshness.sh >/dev/null 2>&1

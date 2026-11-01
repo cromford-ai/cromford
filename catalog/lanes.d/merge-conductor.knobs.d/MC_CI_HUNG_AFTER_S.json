@@ -1,0 +1,11 @@
+{
+  "env": "MC_CI_HUNG_AFTER_S",
+  "read_in": "bin/merge-conductor.d/bh-8417-head-clock.sh",
+  "type": "int",
+  "default": 5400,
+  "min": 600,
+  "max": 86400,
+  "unit": "s",
+  "zero_means": null,
+  "note": "BH-8417: the seconds a workflow run on a PR head may stay not completed (in_progress, queued) after its run_started_at before the conductor names it `CI run <id> hung <n>m` and cancels it, then re-runs it, once per (PR, head). A second hang on the same head pages once. Not a whole number, or under 1: 5400. Per-project row: lane.merge-conductor.<project>.mc_ci_hung_after_s."
+}

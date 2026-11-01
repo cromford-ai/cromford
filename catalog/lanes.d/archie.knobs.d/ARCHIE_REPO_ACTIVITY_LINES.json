@@ -1,0 +1,13 @@
+{
+  "env": "ARCHIE_REPO_ACTIVITY_LINES",
+  "read_in": "bin/lib/archie-repo-activity.sh",
+  "type": "int",
+  "default": 40,
+  "min": 1,
+  "max": 400,
+  "unit": "lines",
+  "zero_means": null,
+  "required": false,
+  "settable": true,
+  "note": "BH-8417. Event lines in the `## Repo activity (last 6h)` block of Archie's check prompt (archie_repo_activity_block), newest first over every repo; UNREADABLE and INCOMPLETE lines are kept past it and a cut is said in one line. Code fallback 40; outside 1..400 is the default."
+}

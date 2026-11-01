@@ -1,0 +1,4 @@
+# BH-8417: the Archie initiative lane log (the "archie-sweep" log of the ticket).
+# bin/archie.sh runs */15 and writes `<iso> ...` lines (log() in bin/archie.sh).
+# path	cadence_s	owning_lane	reader
+logs/archie.log	900	archie	archie turn briefing and the daily report
