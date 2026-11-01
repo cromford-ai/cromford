@@ -420,7 +420,11 @@ spawn_one() { # spawn_one <job-file> <key> <ticket-id> <attempt> <deferrals> <de
   # flyctl's stderr goes to a file in $TMP (removed with it on every exit), so a
   # failed launch logs why. /dev/null when $TMP is gone, so the call still runs.
   local FLYERR=/dev/null; [ -d "${TMP:-}" ] && FLYERR="$TMP/fly-run.err"
-  MID=$(timeout 180 "$FLY" machine run "$IMAGE" -a "$APP" --detach --vm-size "$PVM_SIZE" --vm-memory "$PVM_MEM" \
+  # BH-8640: row lane.fly-pool.<project>.rootfs_gb adds --rootfs-size <GB>;
+  # 0, no row or no lib = no flag, the Fly default rootfs.
+  local PRFS_GB=0 PRFS_WHY=""; local -a PRFS_ARGS=()
+  command -v pool_rootfs_resolve >/dev/null 2>&1 && { pool_rootfs_resolve || say "$KEY: rootfs row not used ($PRFS_WHY) — launching on the Fly default rootfs"; }
+  MID=$(timeout 180 "$FLY" machine run "$IMAGE" -a "$APP" --detach --vm-size "$PVM_SIZE" --vm-memory "$PVM_MEM" ${PRFS_ARGS[@]+"${PRFS_ARGS[@]}"} \
         -e PROJECT="$P" -e POOL_MODE=1 -e HARNESS_CHECKOUT=/data/harness -e WARMUP_WAIT_S="$WW" ${PULL_ARGS[@]+"${PULL_ARGS[@]}"} 2>"$FLYERR" | grep -i 'machine id' | grep -oE "[0-9a-f]{14}" | head -1)
   # EVERY EXIT FROM HERE DOWN HANDS THE ROW BACK (see pool_unclaim): the claim is
   # already won, and under the flag a claim nobody releases is a key stranded in

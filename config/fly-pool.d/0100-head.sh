@@ -168,6 +168,10 @@ trap 'command -v pp_release >/dev/null 2>&1 && pp_release; true' EXIT
 # shellcheck source=bin/lib/pool-vm-size.sh
 . "$HARNESS/bin/lib/pool-vm-size.sh" 2>/dev/null \
   || . "$(dirname "${BASH_SOURCE[0]}")/lib/pool-vm-size.sh" 2>/dev/null || true
+# BH-8640: the rootfs size of a pool machine (row rootfs_gb; 0 = the Fly default).
+# shellcheck source=bin/lib/pool-rootfs.sh
+. "$HARNESS/bin/lib/pool-rootfs.sh" 2>/dev/null \
+  || . "$(dirname "${BASH_SOURCE[0]}")/lib/pool-rootfs.sh" 2>/dev/null || true
 # BH-7382: release a claimed fly row that no hub file and no live machine owns.
 # shellcheck source=bin/lib/pool-orphan-rows.sh
 . "$HARNESS/bin/lib/pool-orphan-rows.sh" 2>/dev/null \

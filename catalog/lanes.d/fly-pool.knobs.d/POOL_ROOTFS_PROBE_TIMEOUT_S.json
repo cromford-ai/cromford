@@ -1,0 +1,12 @@
+{
+  "env": "POOL_ROOTFS_PROBE_TIMEOUT_S",
+  "type": "int",
+  "default": 20,
+  "min": 1,
+  "max": 120,
+  "unit": "seconds",
+  "zero_means": null,
+  "required": false,
+  "read_in": "bin/lib/pool-rootfs.sh",
+  "note": "BH-8640. pool_rootfs_resolve cuts its one `fly machine run --help` probe (does flyctl have --rootfs-size?) after this many seconds. The probe runs only when ROOTFS_GB is a valid nonzero row. A cut probe reads as no flag: the machine launches on the Fly default rootfs and logs one `rootfs row not used` line. Settings row `lane.fly-pool.<project>.pool_rootfs_probe_timeout_s`. A value that is not a whole number in 1..120 uses 20."
+}

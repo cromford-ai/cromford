@@ -1,0 +1,11 @@
+-- ── BH-8640: pool machine rootfs size for project-6-os ────────────────────────
+-- Reader: bin/lib/pool-rootfs.sh (pool_rootfs_resolve), through lane_env_apply
+-- fly-pool <project> (knob ROOTFS_GB, catalog/lanes.d/fly-pool.knobs.d/).
+-- No table is created here, so no index or RLS applies.
+-- Sizing (ticket BH-8499, machine 80e9677b264708): the rootfs is 7.8 GB with
+-- 4.5 GB free when idle, so the base image uses about 3.3 GB. The TK-1692 and
+-- TK-1836 suites filled the 4.5 GB, so their peak is at least 4.5 GB. 2x that
+-- peak plus the base is 12.3 GB. The seed is 20 GB because 4.5 GB is a lower
+-- bound, not a measured peak. Change the row, not this file, after a measure.
+-- INSERT OR IGNORE: a re-apply changes nothing and an operator's value stays.
+INSERT OR IGNORE INTO settings (key,value,note,actor,updated_at) VALUES ('lane.fly-pool.project-6-os.rootfs_gb','20','BH-8640: rootfs GB of a project-6-os pool machine (--rootfs-size on fly machine run); 0 = the Fly default rootfs; 1..100; registry default 0 (catalog/lanes.d/fly-pool.knobs.d/ROOTFS_GB.json)','seed','2026-10-28T08:16:00Z');

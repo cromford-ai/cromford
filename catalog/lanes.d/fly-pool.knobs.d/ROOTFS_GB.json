@@ -1,0 +1,12 @@
+{
+  "env": "ROOTFS_GB",
+  "type": "int",
+  "default": 0,
+  "min": 0,
+  "max": 100,
+  "unit": "GB",
+  "zero_means": "off",
+  "required": false,
+  "read_in": "bin/lib/pool-rootfs.sh",
+  "note": "BH-8640 (rest of BH-8499, Fix 3). The rootfs size of every pool machine of the project: spawn_one passes it as `--rootfs-size <GB>` on `fly machine run`. Per-project row `lane.fly-pool.<project>.rootfs_gb`; project-6-os is seeded at 20 (worker/jobs/schema.d/202611011704-bh-8640-pool-rootfs-seed.sql). 0 (off) or no row: no flag, the Fly default rootfs, the argv before this knob. A value that is not a whole number in 1..100, or a flyctl whose `machine run --help` lists no --rootfs-size flag, launches on the Fly default rootfs and logs one `rootfs row not used` line per spawn."
+}
