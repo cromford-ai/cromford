@@ -12,6 +12,7 @@
 #   C  real bin/merge-conductor.sh ticks against a fake gh and a fake worker
 # Run from anywhere (exit 0 = all pass).
 # TEST-CHANGE BH-4140: globs come from the DB, not the TSV
+# TEST-CHANGE BH-5035: lead_authority_mode is lane only; a protected path is cleared under lane, a stored human mode row holds (rc 2)
 set -uo pipefail
 . "$(dirname "$0")/lib/scratch.sh" || exit 1
 . "$(dirname "$0")/lib/lpp-stub.sh" || exit 1
@@ -161,7 +162,8 @@ SHIM
 } > "$T/fakebin/gh"
 chmod +x "$T/fakebin/gh"
 # The jobs worker: the standing verdict on PR 31 is $T/verdict when the asked
-# head is $T/vhead; the lane authority row is $T/authority when it exists.
+# head is $T/vhead; the lane authority row is $T/authority and the mode row
+# lead_authority_mode is $T/mode, each when it is non-empty (no row = lane).
 cat > "$T/fakebin/curl" <<EOF
 #!/bin/bash
 URL="\${!#}"
@@ -173,8 +175,9 @@ case "\$URL" in
     if [ -s "$T/verdict" ] && [ "\${URL#*head=\$(cat "$T/vhead")}" != "\$URL" ]; then
       printf '{"standing":%s,"rows":[],"truncated":false}\n200\n' "\$(cat "$T/verdict")"
     else printf '{"standing":null,"rows":[],"truncated":false}\n200\n'; fi ;;
-  # TEST-CHANGE BH-4145: default mode is now lane; this suite pins human-mode behaviour
-  */api/settings/lead_authority_mode) printf '{"setting":{"key":"k","value":"human"}}\n200\n' ;;
+  */api/settings/lead_authority_mode)
+    if [ -s "$T/mode" ]; then printf '{"setting":{"key":"k","value":"%s"}}\n200\n' "\$(cat "$T/mode")"
+    else printf '{"error":"no such setting"}\n404\n'; fi ;;
   */api/settings/lead_authority.example-org.mgfy-os)
     if [ -s "$T/authority" ]; then printf '{"setting":{"key":"k","value":"%s"}}\n200\n' "\$(cat "$T/authority")"
     else printf '{"error":"no such setting"}\n404\n'; fi ;;
@@ -217,7 +220,7 @@ touch "$T/h/flags/merge-conductor-actions" "$T/h/flags/merge-conductor-merge"
 # a lead MERGE-WITH-NOTES stands on H2, checks green, CLEAN, base main.
 setup() {
   : > "$A"; : > "$T/label-adds.txt"; : > "$T/label-removes.txt"; : > "$T/comments.txt"; : > "$T/statuses.txt"
-  : > "$T/merges.txt"; : > "$T/gh-calls.txt"; : > "$T/writes.txt"; : > "$T/labels"; : > "$T/authority"; : > "$CLOG"
+  : > "$T/merges.txt"; : > "$T/gh-calls.txt"; : > "$T/writes.txt"; : > "$T/labels"; : > "$T/authority"; : > "$T/mode"; : > "$CLOG"
   : > "$T/lane-alerts.txt"
   rm -f "$T/h/state/merge-conductor/pr-state.tsv"; touch "$T/h/state/merge-conductor/pr-state.tsv"
   rm -rf "$T/h/state/merge-conductor/tick" "$T/h/state/merge-conductor/mergify-asked" "$T/h/state/lead-authority" 2>/dev/null
@@ -243,21 +246,32 @@ run_tick
 [ "$(queue_asks)" = 1 ] && ok || bad "C2: a second tick must not ask @mergifyio queue again (got $(queue_asks); $(why))"
 [ "$(grep -c 'LEAD_READY' "$CLOG")" = 1 ] && ok || bad "C2: LEAD_READY is said once per head (got $(grep -c LEAD_READY "$CLOG"))"
 
-# C3 — a protected path: no rebind, no enqueue, not READY.
+# C3 — a protected path under lane (the only mode, BH-5035): reported, not
+#      withheld. The lead MERGE is rebound and enqueued once, and LEAD_READY
+#      names the path la_decide found in the PR's files.
 setup
 printf 'src/x.ts\nprotected/rule.md\n' > "$T/files"
 run_tick
-[ "$(label_posts)" = 0 ] && ok || bad "C3: a protected path must get no label (got $(label_posts); $(why))"
-[ "$(queue_asks)" = 0 ] && ok || bad "C3: a protected path must get no @mergifyio queue (got $(queue_asks))"
-case "$(state_of "$K31")" in READY|QUEUED) bad "C3: a protected path must not read READY ($(why))" ;; *) ok ;; esac
-grep -q LEAD_READY "$CLOG" && bad "C3: no LEAD_READY on a protected path" || ok
+[ "$(label_posts)" = 1 ] && ok || bad "C3: a protected path under lane gets one label (got $(label_posts); $(why))"
+[ "$(queue_asks)" = 1 ] && ok || bad "C3: a protected path under lane gets one @mergifyio queue (got $(queue_asks))"
+grep -q "$K31 LEAD_READY on ${H2:0:8}: .*touches protected paths: protected/rule.md; cleared to merge on the lead verdict" "$CLOG" \
+  && ok || bad "C3: LEAD_READY names the protected path ($(why))"
 grep -q 'files?per_page=100&page=1' "$T/gh-calls.txt" && ok || bad "C3: la_decide must have read the PR's files to find the protected path"
 
-# C3b — the lane authority revoked for the repo: the same as protected.
+# C3b — a stored lead_authority_mode=human row (refused since BH-5035) holds:
+#      la_decide rc 2, no rebind, no enqueue, not READY. The authority row
+#      alone revokes nothing under lane.
+setup
+echo human > "$T/mode"
+printf 'src/x.ts\nprotected/rule.md\n' > "$T/files"
+run_tick
+[ "$(label_posts)" = 0 ] && [ "$(queue_asks)" = 0 ] && ok || bad "C3b: a refused human mode row must get no enqueue (labels $(label_posts), asks $(queue_asks); $(why))"
+case "$(state_of "$K31")" in READY|QUEUED) bad "C3b: a refused mode must not read READY ($(why))" ;; *) ok ;; esac
+grep -q LEAD_READY "$CLOG" && bad "C3b: no LEAD_READY under a refused mode" || ok
 setup
 echo human > "$T/authority"
 run_tick
-[ "$(label_posts)" = 0 ] && [ "$(queue_asks)" = 0 ] && ok || bad "C3b: a revoked authority must get no enqueue (labels $(label_posts), asks $(queue_asks); $(why))"
+[ "$(label_posts)" = 1 ] && [ "$(queue_asks)" = 1 ] && ok || bad "C3b: under lane the authority row revokes nothing (labels $(label_posts), asks $(queue_asks); $(why))"
 
 # C4 — stacked on a feature branch: STACKED_WAIT, nothing posted.
 setup

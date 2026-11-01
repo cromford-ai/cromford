@@ -97,16 +97,21 @@ export async function removeProtectedPath({ confirm, write, row }) {
 // The lead_authority_mode row as the hint shows it. bin/lib/lead-authority.sh
 // trims and lowercases once and reads no row as lane; anything else is a value
 // the lead lane treats as unreadable, so it is never shown as lane (D11).
+// BH-5035: lane is the only mode, so lane offers no button. A stored `human`
+// row is refused by the lead lane (it holds every protected PR) and offers
+// SET lane, the one value the worker still accepts.
 export function modeOf(state) {
   if (state.error || !state.data || !('setting' in state.data)) {
     return state.loading && !state.error ? { kind: 'loading' } : { kind: 'error' };
   }
   const s = state.data.setting;
-  if (s === null) return { kind: 'ok', value: null, label: 'no row, so lane', next: 'human' };
+  if (s === null) return { kind: 'ok', value: null, label: 'no row, so lane', next: null };
   const value = String(s.value == null ? '' : s.value).trim().toLowerCase();
-  if (value === 'lane') return { kind: 'ok', value, label: 'lane', next: 'human' };
-  if (value === 'human') return { kind: 'ok', value, label: 'human', next: 'lane' };
-  return { kind: 'unknown', value: s.value, label: `${s.value} (not lane or human: the lead lane cannot read it)`, next: 'lane' };
+  if (value === 'lane') return { kind: 'ok', value, label: 'lane', next: null };
+  if (value === 'human') {
+    return { kind: 'unknown', value: s.value, label: 'human (removed by BH-5035: the lead lane holds every protected PR until this row is lane)', next: 'lane' };
+  }
+  return { kind: 'unknown', value: s.value, label: `${s.value} (not lane: the lead lane cannot read it)`, next: 'lane' };
 }
 
 export function LeadAuthorityHint({ state, busy, onSet }) {
@@ -118,7 +123,7 @@ export function LeadAuthorityHint({ state, busy, onSet }) {
       : html`${MODE_KEY}: <b>${m.label}</b>.`;
   return html`
     <div class="section__note" style="display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-bottom:8px">
-      <span style="min-width:0">${head} lane = the lead review signs protected paths; human = a person must.
+      <span style="min-width:0">${head} lane = the lead review signs protected paths.
         A per-repo ${MODE_KEY}.&lt;owner&gt;.&lt;name&gt; row overrides it.</span>
       ${m.next ? html`<button type="button" class="btn btn--sm" disabled=${busy}
         onClick=${() => onSet(m.next)}>SET ${m.next}</button>` : null}
@@ -130,9 +135,7 @@ export function LeadAuthorityHint({ state, busy, onSet }) {
 export async function flipLeadAuthority({ confirm, write, to }) {
   const ok = await confirm({
     title: 'SET LEAD AUTHORITY MODE',
-    body: html`Set <b>${MODE_KEY}</b> to <b>${to}</b>? ${to === 'human'
-      ? 'A person must sign PRs that touch protected paths.'
-      : 'The lead review signs PRs that touch protected paths.'}`,
+    body: html`Set <b>${MODE_KEY}</b> to <b>${to}</b>? The lead review signs PRs that touch protected paths.`,
     tone: 'warn',
     confirmLabel: `SET ${to}`
   });

@@ -4,18 +4,18 @@
 #
 # the operator, 2026-10-05: retire the tier-2 human sign-off. The tier stays computed
 # and recorded as a risk class. A tier-2 APPROVE goes on the merge queue like
-# any other, unless an operator sets the settings row
-# tier_gate_mode[.<project>] to `human`. An unreadable or garbage row holds
-# (fail closed) and pages once per (project, UTC day).
+# any other. BH-5035 removed the tier_gate_mode `human` opt-in: a stored
+# row of any value, or an unreadable settings worker, changes nothing.
+# TEST-CHANGE BH-5035: tier_gate_mode is no longer read; a human, garbage or unreadable row is inert (the APPROVE enqueues, no page, no stamp, no hold line)
 #
 # DRIVEN, NOT GREPPED (D2/D3). Both hand-off blocks — `# >>> verdict at review`
 # (bin/lib/rb/pr.sh) and its settle twin `# >>> verdict artifact`
 # (bin/lib/rb/result.sh) — are extracted from the flattened pipeline by their
 # own markers and executed against a scratch $HARNESS that carries the real
-# bin/lib/tier-gate.sh and the real bin/alert-line.sh. setting_get is a stub
+# bin/alert-line.sh. setting_get is a stub
 # over $T/rows/<key> (absent = rc 2 no row, $T/rows/FAIL = rc 1 outage), and
 # merge_queue_put appends its arguments to $T/calls. Every assertion reads
-# $T/calls, the build's pipeline.log, ALERTS.log or the page stamp.
+# $T/calls, the build's pipeline.log, ALERTS.log or the (absent) page stamp.
 #
 # Run from anywhere: HARNESS_TEST_SANDBOX=1 bash tests/tier-retired.bh-4572-test.sh
 # (exit 0 = all pass)
@@ -44,14 +44,11 @@ marked '# >>> verdict artifact'  '# <<< verdict artifact'  "$RB" > "$SETTLE"
 [ -s "$EARLY" ]  && ok || bad "the pipeline carries no '# >>> verdict at review' block"
 [ -s "$SETTLE" ] && ok || bad "the pipeline carries no '# >>> verdict artifact' block"
 
-# fresh_h <name> [mutant-lib] — a scratch harness with the gate lib and the
-# pager, each with its source closure (BH-4552). A mutant is written first:
-# scratch_install_closure keeps a file already there.
+# fresh_h <name> — a scratch harness with the pager and its source closure
+# (BH-4552). BH-5035: there is no gate lib to install.
 fresh_h() {
   local h="$T/h-$1"
   scratch_rm "$h"; mkdir -p "$h/bin/lib" "$h/logs" "$h/flags" "$h/state"
-  [ -z "${2:-}" ] || cat "$2" > "$h/bin/lib/tier-gate.sh"
-  scratch_install_closure bin/lib/tier-gate.sh "$h" >/dev/null || return 1
   scratch_install_closure bin/alert-line.sh "$h" >/dev/null || return 1
   printf '%s\n' "$h"
 }
@@ -94,68 +91,64 @@ grep -q 'APPROVE enqueued #42' <<<"$(plog)" && ok || bad "T1: pipeline.log must 
 rows_reset; blk "$H1" t1b 2 "$SETTLE"
 [ "$(ncalls)" = 1 ] && ok || bad "T1b: the settle block with no row must enqueue once, got $(ncalls) ($(cat "$T/err-t1b"))"
 
-# ── T2: per-project human → held, named, no page ─────────────────────────────
+# ── T2: per-project human → inert: enqueued, no hold line, no page ─────────
+# TEST-CHANGE BH-5035: was "held, named, no page".
 rows_reset; row_set tier_gate_mode.$PROJECT human; H2=$(fresh_h t2)
 blk "$H2" t2 2 "$EARLY"
-[ "$(ncalls)" = 0 ] && ok || bad "T2: tier_gate_mode.$PROJECT=human must hold, got $(ncalls) calls"
-grep -qF 'APPROVE not enqueued: tier_gate_mode=human (tier_gate_mode.demo-os) holds tier 2' <<<"$(plog)" \
-  && ok || bad "T2: the hold line is missing: $(plog)"
-[ "$(nalerts "$H2")" = 0 ] && ok || bad "T2: a readable human row is not an alert: $(cat "$H2/logs/ALERTS.log")"
+[ "$(ncalls)" = 1 ] && ok || bad "T2: tier_gate_mode.$PROJECT=human is inert and must enqueue once, got $(ncalls) calls"
+grep -qF 'tier_gate_mode' <<<"$(plog)" && bad "T2: no tier_gate_mode hold line: $(plog)" || ok
+[ "$(nalerts "$H2")" = 0 ] && ok || bad "T2: a human row is not an alert: $(cat "$H2/logs/ALERTS.log")"
 
-# ── T2b: the settle twin under the same row → held too ───────────────────────
+# ── T2b: the settle twin under the same row → enqueued too ───────────────────
 blk "$H2" t2b 2 "$SETTLE"
-[ "$(ncalls)" = 0 ] && ok || bad "T2b: the settle twin must hold under human, got $(ncalls) calls"
-grep -qF 'APPROVE not enqueued: tier_gate_mode=human (tier_gate_mode.demo-os) holds tier 2' <<<"$(plog)" \
-  && ok || bad "T2b: the settle hold line is missing: $(plog)"
+[ "$(ncalls)" = 1 ] && ok || bad "T2b: the settle twin must enqueue under human, got $(ncalls) calls"
+grep -qF 'tier_gate_mode' <<<"$(plog)" && bad "T2b: no settle hold line: $(plog)" || ok
 blk "$H2" t2b2 2 "$EARLY" "$SETTLE"
-[ "$(ncalls)" = 0 ] && ok || bad "T2b: both blocks in one build must write no row under human, got $(ncalls)"
+[ "$(ncalls)" = 1 ] && ok || bad "T2b: both blocks in one build write exactly one row under human, got $(ncalls)"
 
-# ── T2c: global human, per-project off → the per-project row wins ────────────
+# ── T2c: global human, per-project off → enqueued either way ─────────────────
 rows_reset; row_set tier_gate_mode human; row_set tier_gate_mode.$PROJECT off
 blk "$H2" t2c 2 "$EARLY"
-[ "$(ncalls)" = 1 ] && ok || bad "T2c: a per-project off must beat a global human, got $(ncalls) calls"
+[ "$(ncalls)" = 1 ] && ok || bad "T2c: a per-project off with a global human must enqueue, got $(ncalls) calls"
 rows_reset; row_set tier_gate_mode human
 blk "$H2" t2c2 2 "$EARLY"
-[ "$(ncalls)" = 0 ] && ok || bad "T2c: a global human with no project row must hold, got $(ncalls)"
-grep -qF 'tier_gate_mode=human (tier_gate_mode) holds tier 2' <<<"$(plog)" \
-  && ok || bad "T2c: the global source must be named: $(plog)"
+[ "$(ncalls)" = 1 ] && ok || bad "T2c: a global human with no project row must enqueue, got $(ncalls)"
+grep -qF 'tier_gate_mode' <<<"$(plog)" && bad "T2c: no global source is named: $(plog)" || ok
 
-# ── T2d: ' HUMAN ' trims and lowercases to human ─────────────────────────────
+# ── T2d: ' HUMAN ' → inert, tier 3 enqueued with its tier in the note ────────
 rows_reset; row_set tier_gate_mode.$PROJECT ' HUMAN '
 blk "$H2" t2d 3 "$EARLY"
-[ "$(ncalls)" = 0 ] && ok || bad "T2d: ' HUMAN ' must read as human and hold, got $(ncalls)"
-grep -qF 'APPROVE not enqueued: tier_gate_mode=human (tier_gate_mode.demo-os) holds tier 3' <<<"$(plog)" \
-  && ok || bad "T2d: ' HUMAN ' must read as human, not as garbage: $(plog)"
-[ "$(nalerts "$H2")" = 0 ] && ok || bad "T2d: a mixed-case human is readable, so no page: $(cat "$H2/logs/ALERTS.log")"
+[ "$(ncalls)" = 1 ] && ok || bad "T2d: ' HUMAN ' must be inert and enqueue, got $(ncalls)"
+[ "$(cat "$CALLS")" = "$PROJECT 42 $SLUG tier-3 APPROVE from BH-4579" ] \
+  && ok || bad "T2d: the enqueue keeps the tier-3 note: $(cat "$CALLS")"
+[ "$(nalerts "$H2")" = 0 ] && ok || bad "T2d: no page: $(cat "$H2/logs/ALERTS.log")"
 
-# ── T3: an unreadable row → held, ONE page, stamp written ────────────────────
+# ── T3: an unreadable settings worker → enqueued, no page, no stamp ──────────
 rows_reset; touch "$ROWS/FAIL"; H3=$(fresh_h t3)
 blk "$H3" t3 2 "$EARLY"
-[ "$(ncalls)" = 0 ] && ok || bad "T3: an unreadable row must hold, got $(ncalls) calls"
-[ "$(nalerts "$H3")" = 1 ] && ok || bad "T3: exactly one page, got $(nalerts "$H3"): $(cat "$H3/logs/ALERTS.log" 2>/dev/null)"
-grep -qF '[tier-gate] demo-os' "$H3/logs/ALERTS.log" 2>/dev/null \
-  && ok || bad "T3: the page must name [tier-gate] demo-os: $(cat "$H3/logs/ALERTS.log" 2>/dev/null)"
-[ -e "$H3/state/tier-gate/page-demo-os-$DAY" ] && ok || bad "T3: the page stamp is missing"
-grep -qF 'APPROVE not enqueued: tier_gate_mode=unreadable' <<<"$(plog)" \
-  && ok || bad "T3: the hold line must say unreadable: $(plog)"
+[ "$(ncalls)" = 1 ] && ok || bad "T3: an unreadable row must not hold, got $(ncalls) calls"
+[ "$(nalerts "$H3")" = 0 ] && ok || bad "T3: no page, got $(nalerts "$H3"): $(cat "$H3/logs/ALERTS.log" 2>/dev/null)"
+grep -qF '[tier-gate]' "$H3/logs/ALERTS.log" 2>/dev/null \
+  && bad "T3: no [tier-gate] page: $(cat "$H3/logs/ALERTS.log")" || ok
+[ ! -e "$H3/state/tier-gate" ] && ok || bad "T3: no page stamp is written"
+grep -qF 'APPROVE enqueued #42' <<<"$(plog)" && ok || bad "T3: the enqueue line: $(plog)"
 
-# ── T4: again the same day → still held, still ONE page ──────────────────────
+# ── T4: again the same day, both blocks → one row, still no page ─────────────
 blk "$H3" t4 2 "$EARLY" "$SETTLE"
-[ "$(ncalls)" = 0 ] && ok || bad "T4: a second unreadable read must still hold, got $(ncalls)"
-[ "$(nalerts "$H3")" = 1 ] && ok || bad "T4: the page must not repeat the same day, got $(nalerts "$H3")"
+[ "$(ncalls)" = 1 ] && ok || bad "T4: a second unreadable read must enqueue once, got $(ncalls)"
+[ "$(nalerts "$H3")" = 0 ] && ok || bad "T4: still no page, got $(nalerts "$H3")"
 
-# ── T4b: garbage 'maybe' → held, one page ────────────────────────────────────
+# ── T4b: garbage 'maybe' → inert, no page ────────────────────────────────────
 rows_reset; row_set tier_gate_mode.$PROJECT maybe; H4=$(fresh_h t4b)
 blk "$H4" t4b 2 "$EARLY"
-[ "$(ncalls)" = 0 ] && ok || bad "T4b: 'maybe' must hold, got $(ncalls)"
-[ "$(nalerts "$H4")" = 1 ] && ok || bad "T4b: 'maybe' must page once, got $(nalerts "$H4")"
-grep -qF "value 'maybe'" "$H4/logs/ALERTS.log" 2>/dev/null && ok || bad "T4b: the page names the value: $(cat "$H4/logs/ALERTS.log" 2>/dev/null)"
+[ "$(ncalls)" = 1 ] && ok || bad "T4b: 'maybe' must be inert and enqueue, got $(ncalls)"
+[ "$(nalerts "$H4")" = 0 ] && ok || bad "T4b: 'maybe' pages nobody, got $(nalerts "$H4")"
 
-# ── T4c: the pager is gone → a page failure still holds ──────────────────────
+# ── T4c: no pager and an unreadable row → still enqueued ─────────────────────
 rows_reset; touch "$ROWS/FAIL"; H4C=$(fresh_h t4c); rm -f "$H4C/bin/alert-line.sh"
 blk "$H4C" t4c 2 "$EARLY"
-[ "$(ncalls)" = 0 ] && ok || bad "T4c: no pager must still hold, got $(ncalls)"
-[ ! -e "$H4C/state/tier-gate/page-demo-os-$DAY" ] && ok || bad "T4c: no page sent means no stamp (the next call retries)"
+[ "$(ncalls)" = 1 ] && ok || bad "T4c: no pager must still enqueue, got $(ncalls)"
+[ ! -e "$H4C/state/tier-gate" ] && ok || bad "T4c: no page stamp"
 
 # ── T5: TIER 1 never reaches merge_queue_put from either block ───────────────
 rows_reset; blk "$H1" t5 1 "$EARLY" "$SETTLE"
@@ -180,28 +173,27 @@ T7_STALE=$(grep -rlE 'tier2-autoenqueue\.sh' "$DIR/tests" --include='*.sh' 2>/de
 grep -qF 'state/tier2-autoenqueue.txt' "$DIR/bin/lib/autoenqueue.sh" \
   && ok || bad "T7: the ledger path state/tier2-autoenqueue.txt must be kept"
 
-# ── T8: a harness without the lib enqueues as before, and says so ────────────
-rows_reset; row_set tier_gate_mode.$PROJECT human; H8=$(fresh_h t8); rm -f "$H8/bin/lib/tier-gate.sh"
+# ── T8: the gate lib is gone; a human row still enqueues ────────────────────
+# TEST-CHANGE BH-5035: was "a harness without the lib enqueues and says so".
+rows_reset; row_set tier_gate_mode.$PROJECT human; H8=$(fresh_h t8)
 blk "$H8" t8 2 "$EARLY"
-[ "$(ncalls)" = 1 ] && ok || bad "T8: no lib must enqueue as before, got $(ncalls)"
-grep -qF 'tier gate lib not loaded' <<<"$(plog)" && ok || bad "T8: the missing lib must be named: $(plog)"
+[ "$(ncalls)" = 1 ] && ok || bad "T8: a human row must enqueue, got $(ncalls)"
+grep -qF 'tier gate lib not loaded' <<<"$(plog)" && bad "T8: the hand-off no longer looks for a gate lib: $(plog)" || ok
+[ ! -e "$DIR/bin/lib/tier-gate.sh" ] && ok || bad "T8: bin/lib/tier-gate.sh must be deleted (BH-5035)"
 
-# ── T9: tg_holds called directly (the contract sibling callers import) ──────
-# tg <tier> — rc of tg_holds against $ROWS, through the real lib in $H9.
+# ── T9: the contract from the outside — any tier, any row, one enqueue ───────
+# TEST-CHANGE BH-5035: was tg_holds called directly; the function is deleted.
 H9=$(fresh_h t9)
-tg() {
-  ( export HARNESS="$H9" ROWS="$ROWS" TG_PAGE_DAY="$DAY" ALERT_LINE_STAMP="$DAY 04:00:00Z"
-    bash -c 'setting_get() { [ -e "$ROWS/FAIL" ] && return 1; [ -f "$ROWS/$1" ] || return 2; cat "$ROWS/$1"; }
-      . "$HARNESS/bin/lib/tier-gate.sh" || exit 9
-      tg_holds demo-os "$1"' _ "$1" ) 2>/dev/null
-}
+for tv in "2 human" "3 human" "2 off" "2 FAIL"; do
+  set -- $tv
+  rows_reset
+  if [ "$2" = FAIL ]; then touch "$ROWS/FAIL"; else row_set tier_gate_mode.$PROJECT "$2"; fi
+  blk "$H9" "t9-$1-$2" "$1" "$EARLY"
+  [ "$(ncalls)" = 1 ] && ok || bad "T9: tier $1 with row '$2' must enqueue once, got $(ncalls)"
+done
 rows_reset; row_set tier_gate_mode.$PROJECT human
-tg 1; [ "$?" = 1 ] && ok || bad "T9: human must let tier 1 proceed"
-tg 2; [ "$?" = 0 ] && ok || bad "T9: human must hold tier 2"
-rows_reset
-tg 2; [ "$?" = 1 ] && ok || bad "T9: no row must let tier 2 proceed"
-rows_reset; touch "$ROWS/FAIL"
-tg 1; [ "$?" = 0 ] && ok || bad "T9: an unreadable row must hold even tier 1 for a direct caller"
+blk "$H9" t9-1 1 "$EARLY"
+[ "$(ncalls)" = 0 ] && ok || bad "T9: tier 1 still never enqueues from the hand-off, got $(ncalls)"
 
 # ── T10: the renamed lib with no root writes nothing (BH-2613 contract) ─────
 # The rename makes bin/lib/autoenqueue.sh a new path to the root-literal
@@ -231,19 +223,16 @@ H11=$(fresh_h t11)
 grep -qxF "$DAY 04:00:00Z [merge-conductor] demo-os#42 AUTOENQUEUE — fixture line" "$H11/logs/ALERTS.log" 2>/dev/null \
   && ok || bad "T11: the fallback page is missing: $(cat "$H11/logs/ALERTS.log" 2>/dev/null)"
 
-# ── M1: THE MUTATION. tg_holds always proceeds → T2 and T3 must enqueue ──────
-MUT="$T/tier-gate-mutant.sh"
-sed 's/^tg_holds() {$/tg_holds() { return 1/' "$DIR/bin/lib/tier-gate.sh" > "$MUT"
-if cmp -s "$DIR/bin/lib/tier-gate.sh" "$MUT"; then
-  bad "M1: could not build the mutant — no 'tg_holds() {' line in bin/lib/tier-gate.sh"
-else
-  rows_reset; row_set tier_gate_mode.$PROJECT human; HM=$(fresh_h m1 "$MUT")
-  blk "$HM" m1a 2 "$EARLY"
-  [ "$(ncalls)" = 1 ] && ok || bad "M1: the mutant must enqueue under human (T2 has no teeth), got $(ncalls)"
-  rows_reset; touch "$ROWS/FAIL"
-  blk "$HM" m1b 2 "$EARLY"
-  [ "$(ncalls)" = 1 ] && ok || bad "M1: the mutant must enqueue when unreadable (T3 has no teeth), got $(ncalls)"
-fi
+# ── M1: THE MUTATION. A hand-off that still asks a tg_holds must fail T2 ────
+# TEST-CHANGE BH-5035: was a mutant of the deleted bin/lib/tier-gate.sh. Now a
+# tg_holds that always holds is defined in the block's process: the hand-off
+# must not call it, so the enqueue still happens.
+rows_reset; row_set tier_gate_mode.$PROJECT human; HM=$(fresh_h m1)
+MSH="$T/tg-hold-stub.sh"; printf 'tg_holds() { echo tg >> "%s/tg-called"; return 0; }\n' "$T" > "$MSH"
+rm -f "$T/tg-called"
+blk "$HM" m1a 2 "$MSH" "$EARLY" "$SETTLE"
+[ "$(ncalls)" = 1 ] && ok || bad "M1: a hand-off that still asks tg_holds is held (T2 has no teeth otherwise), got $(ncalls)"
+[ ! -e "$T/tg-called" ] && ok || bad "M1: neither hand-off block may call tg_holds"
 
 echo "tier-retired.bh-4572: $PASS passed, $FAIL failed"
 [ "$FAIL" = 0 ]

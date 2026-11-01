@@ -12,6 +12,7 @@
 # reads and the conductor's fences are stubbed at their entry points, as
 # tests/tier2-autoenqueue-test.sh does. X12/X13 run bin/review-prs.sh's fresh
 # merge decision, beat line and merge_retry blocks, extracted by their markers.
+# TEST-CHANGE BH-5035: the tier_gate_mode human opt-in is removed; X12/X13 now pin that a human, off, missing or unreadable row is inert (merge_step runs, merge_retry spends an attempt, no hold line)
 # Run from anywhere; exit 0 = all pass.
 set -uo pipefail
 . "$(dirname "$0")/../lib/scratch.sh" || exit 1
@@ -233,7 +234,7 @@ reset; xpr 77 "$H1"; PROV=github xe
 [ "$(posts)" = 0 ] && [ ! -s "$T/gh-calls.txt" ] && ok || bad "X16b a non-Mergify provider is a no-op with no read"
 
 # ============================================================================
-# X12 / X13 — bin/review-prs.sh: the tier gate before both merge paths.
+# X12 / X13 — bin/review-prs.sh: no tier gate before either merge path (BH-5035).
 # ============================================================================
 RP="$DIR/bin/review-prs.sh"
 awk '/^  # >>> review-prs fresh merge/{f=1;next} /^  # <<< review-prs fresh merge/{exit} f' "$RP" > "$T/rp-fresh.sh"
@@ -252,22 +253,23 @@ rp_fresh() {
     STAMP() { printf TS; }
     setting_get() { case "$SETV" in unreadable) return 1 ;; none) return 2 ;; *) printf %s "$SETV" ;; esac; }
     merge_step() { echo "merge_step $*" >> "$T/rp-merge.txt"; MERGED=yes; }
-    . "$DIR/bin/lib/tier-gate.sh"
     PROJECT=project-4 NUM=77 SHA=aaaaaaaa1111 SERVED=claude AUTHOR=collaborator-1 RP_ADVISORY=0 RP_MODEL=-
     . "$0"
     printf "MERGED=%s\n" "$MERGED"' "$T/rp-fresh.sh" 2>"$T/rp.err"
 }
+# TEST-CHANGE BH-5035: was "human + tier 2: merge_step must not run, one hold line".
 OUT=$(rp_fresh 2 human)
-[ ! -s "$T/rp-merge.txt" ] && grep -q "MERGED=no" <<<"$OUT" && ok || bad "X12 human + tier 2: merge_step must not run (out '$OUT'; err $(cat "$T/rp.err"))"
-grep -q "#77 @aaaaaaa APPROVE left unmerged: tier_gate_mode (human, tier_gate_mode.project-4) holds tier 2" "$T/rp.log" && ok || bad "X12 human + tier 2: one hold line (log: $(cat "$T/rp.log"))"
+[ -s "$T/rp-merge.txt" ] && grep -q "MERGED=yes" <<<"$OUT" && ok || bad "X12 human + tier 2: the row is inert, merge_step runs (out '$OUT'; err $(cat "$T/rp.err"))"
+grep -q "tier_gate_mode" "$T/rp.log" && bad "X12 human + tier 2: no hold line (log: $(cat "$T/rp.log"))" || ok
 OUT=$(rp_fresh 1 human)
 [ -s "$T/rp-merge.txt" ] && ok || bad "X12 human + tier 1: merge_step runs (out '$OUT'; err $(cat "$T/rp.err"))"
 OUT=$(rp_fresh 2 off)
 [ -s "$T/rp-merge.txt" ] && grep -q "MERGED=yes" <<<"$OUT" && ok || bad "X12 off + tier 2: merge_step runs (out '$OUT'; err $(cat "$T/rp.err"))"
 OUT=$(rp_fresh 2 none)
 [ -s "$T/rp-merge.txt" ] && ok || bad "X12 no row (default off) + tier 2: merge_step runs (out '$OUT')"
+# TEST-CHANGE BH-5035: was "an unreadable row holds".
 OUT=$(rp_fresh 2 unreadable)
-[ ! -s "$T/rp-merge.txt" ] && ok || bad "X12 an unreadable row holds: merge_step must not run (out '$OUT')"
+[ -s "$T/rp-merge.txt" ] && ok || bad "X12 an unreadable row holds nothing: merge_step runs (out '$OUT')"
 OUT=$(rp_fresh 2 human REQUEST_CHANGES)
 [ ! -s "$T/rp-merge.txt" ] && ! grep -q "tier_gate_mode" "$T/rp.log" && ok || bad "X12 a REQUEST_CHANGES is neither merged nor reported as a tier hold (log: $(cat "$T/rp.log"))"
 # the beat line names the real hand-off
@@ -284,7 +286,7 @@ grep -q "auto-merged" <<<"$(rp_beat 0 yes)" && ok || bad "X12 a merged beat stil
 grep -q "awaiting the operator" <<<"$(rp_beat 0 no)$(rp_beat 1 no)" && bad "X12 no beat says 'awaiting the operator'" || ok
 grep -qE "handed|left for" <<<"$(rp_beat 1 no REQUEST_CHANGES)" && bad "X12 a REQUEST_CHANGES beat names no hand-off (got '$(rp_beat 1 no REQUEST_CHANGES)')" || ok
 
-# X13 merge_retry: a held tier 2 is not an attempt.
+# X13 merge_retry: no tier hold, so a tier 2 under any row is an attempt (BH-5035).
 rp_retry() { # rp_retry <tier> <setting>
   printf '{"77":{"verdict":"APPROVE","tier":"%s","served":"claude","merge_retries":0}}\n' "$1" > "$T/rp-state.json"
   : > "$T/rp.log"; : > "$T/rp-merge.txt"
@@ -300,14 +302,14 @@ rp_retry() { # rp_retry <tier> <setting>
     mc_pr_view() { echo "OPEN CLEAN"; }
     rp_state_write() { local t; t=$(mktemp); jq "$@" "$STATE" > "$t" && mv "$t" "$STATE"; }
     merge_step() { echo "merge_step $*" >> "$T/rp-merge.txt"; MERGED=no; }
-    . "$DIR/bin/lib/tier-gate.sh"
     PROJECT=project-4 SLUG=example-org/project-4-fx MERGED=
     . "$0"
     merge_retry 77 aaaaaaaa1111' "$T/rp-retry.sh" 2>"$T/rp.err"
 }
+# TEST-CHANGE BH-5035: was "human + tier 2 is held and not an attempt".
 rp_retry 2 human
-[ ! -s "$T/rp-merge.txt" ] && ok || bad "X13 merge_retry: human + tier 2 must not call merge_step (err $(cat "$T/rp.err"))"
-[ "$(jq -r '.["77"].merge_retries' "$T/rp-state.json")" = 0 ] && ok || bad "X13 a held tick is not an attempt: merge_retries stays 0 (state $(cat "$T/rp-state.json"))"
+[ -s "$T/rp-merge.txt" ] && ok || bad "X13 merge_retry: human + tier 2 calls merge_step (err $(cat "$T/rp.err"))"
+[ "$(jq -r '.["77"].merge_retries' "$T/rp-state.json")" = 1 ] && ok || bad "X13 the tick is an attempt: merge_retries is 1 (state $(cat "$T/rp-state.json"))"
 rp_retry 2 off
 [ -s "$T/rp-merge.txt" ] && [ "$(jq -r '.["77"].merge_retries' "$T/rp-state.json")" = 1 ] && ok || bad "X13 merge_retry: off + tier 2 retries the merge (state $(cat "$T/rp-state.json"); err $(cat "$T/rp.err"))"
 

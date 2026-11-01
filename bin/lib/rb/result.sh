@@ -752,20 +752,6 @@ if [ -n "$PR_URL" ] && [ -n "${JOB_ID:-}" ] && command -v job_artifact_put >/dev
       to_lane_lead_hold "$PROJECT" "${SLUG:-}" "$MQ_PRNUM" "" "" "$BUILD/pipeline.log"; MQ_LEAD=$?
       [ "$MQ_LEAD" = 2 ] && echo "$(STAMP) [$PROJECT/$KEY] the lead fence could not be read for #$MQ_PRNUM — enqueued anyway: bin/merge-queue.sh asks it again at landing and holds the entry there" >> "$BUILD/pipeline.log"
     fi
-    # THE TIER GATE (BH-4572): the tier decides nothing unless the operator row
-    # tier_gate_mode[.<project>] says `human`; an unreadable row holds and pages
-    # (bin/lib/tier-gate.sh). Loaded here because the suites run this block on
-    # its own. A tree without the lib enqueues as before, and says so.
-    command -v tg_holds >/dev/null 2>&1 \
-      || { [ -r "$HARNESS/bin/lib/tier-gate.sh" ] && . "$HARNESS/bin/lib/tier-gate.sh"; }
-    MQ_TG=1
-    if [ "$MQ_COM" != 1 ] && [ -n "$MQ_PRNUM" ] && [ "${MQ_ENQUEUED:-}" != "$MQ_PRNUM" ]; then
-      if command -v tg_holds >/dev/null 2>&1; then
-        tg_holds "$PROJECT" "$TIER"; MQ_TG=$?
-      else
-        echo "$(STAMP) [$PROJECT/$KEY] tier gate lib not loaded — enqueued as before" >> "$BUILD/pipeline.log"
-      fi
-    fi
     if [ "$MQ_COM" = 1 ]; then
       echo "$(STAMP) [$PROJECT/$KEY] APPROVE not enqueued: flags/conductor-owns-merges is on — bin/merge-conductor.sh owns merges" >> "$BUILD/pipeline.log"
     elif [ -z "$MQ_PRNUM" ]; then
@@ -774,8 +760,6 @@ if [ -n "$PR_URL" ] && [ -n "${JOB_ID:-}" ] && command -v job_artifact_put >/dev
       :
     elif [ "$MQ_LEAD" = 0 ]; then
       echo "$(STAMP) [$PROJECT/$KEY] APPROVE not enqueued: #$MQ_PRNUM is a lead PR with no lead MERGE verdict on its head — left for the lead" >> "$BUILD/pipeline.log"
-    elif [ "$MQ_TG" = 0 ]; then
-      echo "$(STAMP) [$PROJECT/$KEY] APPROVE not enqueued: tier_gate_mode=${TG_MODE:-unreadable} (${TG_MODE_SRC:-unreadable}) holds tier $TIER" >> "$BUILD/pipeline.log"
     elif merge_queue_put "$PROJECT" "$MQ_PRNUM" "${SLUG:-}" "tier-$TIER APPROVE from $KEY" >/dev/null 2>&1; then
       MQ_ENQUEUED="$MQ_PRNUM"
       echo "$(STAMP) [$PROJECT/$KEY] APPROVE enqueued #$MQ_PRNUM on the merge queue" >> "$BUILD/pipeline.log"

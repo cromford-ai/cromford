@@ -1,9 +1,10 @@
 #!/bin/bash
-# tests/lead-review-precision-authority.bh-3683-test.sh — BH-3683: when the lead
-# lane's MERGE precision drops under LEAD_REVIEW_AUTHORITY_MIN_PRECISION, the
-# daily precision run flips the repo's authority row to human:precision and pages
-# ONCE; it flips back when precision recovers, and never touches an operator's
-# `human`. Runs the real bin/lead-review-precision.sh (and, for R1's tail, the
+# tests/lead-review-precision-authority.bh-3683-test.sh — BH-3683: the daily
+# precision run and the repo's authority row. Since BH-5035 a drop under
+# LEAD_REVIEW_AUTHORITY_MIN_PRECISION writes nothing and pages nobody critical
+# (one log line: the lane stays the authority); a legacy human:precision row
+# flips back to lane when precision recovers; an operator's `human` row is never
+# touched; a page an older run owed is still sent first. Runs the real bin/lead-review-precision.sh (and, for R1's tail, the
 # real bin/lead-verdict.sh) against a scratch harness with only these stubbed:
 #   * curl — the jobs worker: GET /api/verdicts from $T/vrows.json, GET/PUT
 #            /api/settings over $T/set/<key> ($T/set503 = GET outage, $T/put500 =
@@ -19,6 +20,7 @@
 #            with $T/alertrc (default 0).
 # Run from anywhere: HARNESS_TEST_SANDBOX=1 bash tests/lead-review-precision-authority.bh-3683-test.sh
 # TEST-CHANGE BH-4140: globs come from the DB, not the TSV
+# TEST-CHANGE BH-5035: no mode row (lane) in reset; a drop no longer writes human:precision or pages critical, so R1-R4/R7 pin the left-alone line
 set -uo pipefail
 . "$(dirname "$0")/lib/scratch.sh" || exit 1
 . "$(dirname "$0")/lib/lpp-stub.sh" || exit 1
@@ -142,8 +144,6 @@ reset() {
   lpp_set "$LPP" "$REPO" .mergify.yml bin/lib/lead-authority.sh
   echo box-hub > "$H/state/box-name"
   echo '[{"filename":"README.md"}]' > "$T/files.json"
-  # TEST-CHANGE BH-4145: default mode is now lane; this suite pins human-mode behaviour
-  printf human > "$T/set/lead_authority_mode"
   score 11 12 13 14 15 -- 12 13
 }
 run() { ( cd "$T" && env "$@" bash "$H/bin/lead-review-precision.sh" ) > "$T/out" 2>&1; RC=$?; }
@@ -153,35 +153,51 @@ crit() { cat "$T/log/alerts" 2>/dev/null | grep -c '^rc=0 --severity critical --
 LOGF() { cat "$H/logs/lead-review-precision.log" 2>/dev/null; }
 owed() { ls "$H/state/lead-review-precision/"authority-page-owed-* 2>/dev/null | wc -l | tr -d ' '; }
 
-# ── R1 (acceptance 3): precision 0.6 < 0.8 revokes the lane and pages once ───
+LEFT="$REPO: precision 0.6 < 0.8 over n=5; the lane stays the authority (the human mode was removed, BH-5035); $KEY is left alone"
+
+# ── R1 (acceptance 3): precision 0.6 < 0.8 writes nothing and pages nobody ───
 reset; run LEAD_REVIEW_AUTHORITY_MIN_PRECISION=0.8
 [ "$RC" = 0 ] && ok || bad "R1 rc $RC: $(cat "$T/out")"
-[ "$(puts)" = 1 ] && [ "$(lastput | jq -r '.key + "=" + .value')" = "$KEY=human:precision" ] && ok \
-  || bad "R1 one PUT of $KEY=human:precision: $(grep PUT "$T/log/worker" 2>/dev/null)"
-[ "$(crit)" = 1 ] && grep -q 'REVOKED: precision 0.6 under 0.8' "$T/log/alerts" && grep -q "setting-set $KEY lane" "$T/log/alerts" \
-  && ok || bad "R1 exactly one critical revocation page: $(cat "$T/log/alerts" 2>/dev/null)"
-# The lane's next MERGE on an UNPROTECTED PR is advice only now.
+[ "$(puts)" = 0 ] && [ ! -f "$T/set/$KEY" ] && ok || bad "R1 no PUT of $KEY: $(grep PUT "$T/log/worker" 2>/dev/null)"
+[ "$(crit)" = 0 ] && [ "$(owed)" = 0 ] && ok || bad "R1 no critical page, nothing owed: $(cat "$T/log/alerts" 2>/dev/null)"
+[ "$(LOGF | grep -cF "$LEFT")" = 1 ] && ok || bad "R1 one left-alone log line: $(LOGF)"
+grep -q -- '--severity warn --id lead-precision-' "$T/log/alerts" && ok || bad "R1 the day's warn beat still reports the drop: $(cat "$T/log/alerts" 2>/dev/null)"
+# The lane's next MERGE on an UNPROTECTED PR still publishes.
 bash "$H/bin/lead-verdict.sh" post "$REPO" 11 "$(sha 11)" MERGE --source lead > /dev/null 2> "$T/lv.err"; RC=$?
-[ "$RC" = 5 ] && grep -q 'lane authority revoked' "$T/lv.err" && ok || bad "R1 a lane MERGE after revocation exits 5 naming it (rc $RC, $(cat "$T/lv.err"))"
-grep -q -- '-X POST repos/.*/statuses/' "$T/log/gh" && bad "R1 no status is published after revocation" || ok
+[ "$RC" = 0 ] && grep -q -- '-X POST repos/.*/statuses/.*-f state=success' "$T/log/gh" && ok \
+  || bad "R1 a lane MERGE after the drop publishes (rc $RC, $(cat "$T/lv.err"))"
+# A stored human mode row (removed by BH-5035) is refused: the post holds.
+printf human > "$T/set/lead_authority_mode"; rm -f "$T/log/gh"
+bash "$H/bin/lead-verdict.sh" post "$REPO" 12 "$(sha 12)" MERGE --source lead > /dev/null 2> "$T/lv.err"; RC=$?
+[ "$RC" = 5 ] && grep -q 'BH-5035 retired' "$T/lv.err" && ok || bad "R1 a stored human mode row withholds, exit 5, naming it (rc $RC, $(cat "$T/lv.err"))"
+grep -q -- '-X POST repos/.*/statuses/' "$T/log/gh" 2>/dev/null && bad "R1 no status is published under a refused mode row" || ok
+run LEAD_REVIEW_AUTHORITY_MIN_PRECISION=0.8
+[ "$(puts)" = 0 ] && [ "$(crit)" = 0 ] && ok || bad "R1 a stored human mode row still gets no write and no page (puts $(puts), pages $(crit))"
+rm -f "$T/set/lead_authority_mode"
 
-# ── R2: pages once — same day, next day, still 0.6 ──────────────────────────
+# ── R2: same day, next day, still 0.6: still nothing written or paged ───────
 run; run
 touch "$T/nextday"; run
-[ "$(puts)" = 1 ] && [ "$(crit)" = 1 ] && ok || bad "R2 no second PUT or page (puts $(puts), pages $(crit)): $(cat "$T/log/alerts")"
+[ "$(puts)" = 0 ] && [ "$(crit)" = 0 ] && ok || bad "R2 no PUT or page on any rerun (puts $(puts), pages $(crit)): $(cat "$T/log/alerts")"
 
-# ── R3: a failed page is owed and paid first on the next run ────────────────
-reset; echo 1 > "$T/alertrc"; run
-[ "$(puts)" = 1 ] && [ "$(owed)" = 1 ] && [ "$(crit)" = 0 ] && ok || bad "R3 the page failed: marker written (puts $(puts), owed $(owed))"
+# ── R3: a page an older run owed is paid first, once ────────────────────────
+reset; mkdir -p "$H/state/lead-review-precision"
+printf 'lead-authority-revoked-example-org_cromford-2026-10-30\nan owed fixture page\n' \
+  > "$H/state/lead-review-precision/authority-page-owed-example-org_cromford"
+echo 1 > "$T/alertrc"; run
+[ "$(puts)" = 0 ] && [ "$(owed)" = 1 ] && [ "$(crit)" = 0 ] && ok || bad "R3 the owed page failed again: the marker stays (puts $(puts), owed $(owed))"
 rm -f "$T/alertrc"; run
-[ "$(crit)" = 1 ] && [ "$(owed)" = 0 ] && [ "$(puts)" = 1 ] && ok || bad "R3 the owed page is sent and the marker removed (pages $(crit), owed $(owed), puts $(puts))"
+[ "$(crit)" = 1 ] && [ "$(owed)" = 0 ] && [ "$(puts)" = 0 ] && ok || bad "R3 the owed page is sent and the marker removed (pages $(crit), owed $(owed), puts $(puts))"
 run
 [ "$(crit)" = 1 ] && ok || bad "R3 and it is not sent a second time"
 
-# ── R4: a failed PUT pages nobody and owes nothing ──────────────────────────
+# ── R4: a refused PUT path: a drop never writes, a failed restore is logged ──
 reset; touch "$T/put500"; run
-[ "$(crit)" = 0 ] && [ "$(owed)" = 0 ] && [ ! -f "$T/set/$KEY" ] && ok || bad "R4 no page, no marker on a failed PUT"
-[ "$(LOGF | grep -c 'could not write the authority row')" = 1 ] && ok || bad "R4 one log line: $(LOGF)"
+[ "$(crit)" = 0 ] && [ "$(owed)" = 0 ] && [ ! -f "$T/set/$KEY" ] && ok || bad "R4 no page, no marker, no row on a drop"
+[ "$(LOGF | grep -c 'could not write')" = 0 ] && [ "$(LOGF | grep -cF "$LEFT")" = 1 ] && ok || bad "R4 a drop tries no write: $(LOGF)"
+reset; score 11 12 13 14 15; echo human:precision > "$T/set/$KEY"; touch "$T/put500"; run
+[ "$(LOGF | grep -c "could not write $KEY back to lane; retried next run")" = 1 ] && [ "$(cat "$T/set/$KEY")" = human:precision ] && ok \
+  || bad "R4 a failed restore PUT is one log line and leaves the row: $(LOGF)"
 
 # ── R5: recovery restores lane; an operator's human is sticky ───────────────
 reset; score 11 12 13 14 15; echo human:precision > "$T/set/$KEY"; run
@@ -204,7 +220,7 @@ LOGF | grep -q "authority row .* could not be read" && ok || bad "R6 the outage 
 # ── R7: the knob is validated and registered ───────────────────────────────
 reset; run LEAD_REVIEW_AUTHORITY_MIN_PRECISION=1.5
 LOGF | grep -q "LEAD_REVIEW_AUTHORITY_MIN_PRECISION='1.5' is not a number in \[0,1\]; using 0.8" && ok || bad "R7 1.5 falls back to 0.8: $(LOGF)"
-[ "$(lastput | jq -r .value)" = human:precision ] && ok || bad "R7 and the fallback 0.8 still revokes at 0.6"
+[ "$(LOGF | grep -cF "$LEFT")" = 1 ] && [ "$(puts)" = 0 ] && ok || bad "R7 and the fallback 0.8 still judges 0.6 low, writing nothing: $(LOGF)"
 K=$(jq -c '.knobs[] | select(.env == "LEAD_REVIEW_AUTHORITY_MIN_PRECISION") | [.type, .default, .min, .max]' "$DIR/catalog/lanes.d/lead-review-precision.json")
 [ "$K" = '["float",0.8,0,1]' ] && ok || bad "R7 the knob is registered float 0.8 in [0,1]: '$K'"
 reset; run LEAD_REVIEW_AUTHORITY_MIN_PRECISION=0.5
@@ -221,7 +237,7 @@ grep -q 'lead_authority.example-org.demo-os' "$T/log/worker" && bad "R8 an ungov
 reset; rm -f "$T/set/lead_authority_mode"; run LEAD_REVIEW_AUTHORITY_MIN_PRECISION=0.8
 [ "$RC" = 0 ] && [ "$(puts)" = 0 ] && [ "$(crit)" = 0 ] && [ "$(owed)" = 0 ] && ok \
   || bad "R9 lane: no PUT, no critical page, nothing owed (rc $RC, puts $(puts), pages $(crit), owed $(owed)): $(cat "$T/log/alerts" 2>/dev/null)"
-[ "$(LOGF | grep -c 'lead_authority_mode=lane (no row), so nothing is withheld')" = 1 ] && ok || bad "R9 one log line names the mode: $(LOGF)"
+[ "$(LOGF | grep -cF "$LEFT")" = 1 ] && ok || bad "R9 one left-alone log line: $(LOGF)"
 printf lane > "$T/set/lead_authority_mode"; run LEAD_REVIEW_AUTHORITY_MIN_PRECISION=0.8
 [ "$(puts)" = 0 ] && [ "$(crit)" = 0 ] && ok || bad "R9 an explicit lane row behaves the same (puts $(puts), pages $(crit))"
 # ── R10 (BH-4148): the rows are unreadable (route 500, no cache): authority unchanged ──

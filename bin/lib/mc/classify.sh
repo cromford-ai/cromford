@@ -1908,10 +1908,10 @@ mc_handoff_gc() {
 # it classifies a READY Mergify row, and a withheld verdict is its own state.
 #
 # mc_nhv_reason <owner/repo> <num> <head> <la_reason> -> the row's reason: what
-#   withheld it and the exact command that publishes it, on one line. It renders
-#   only under lead_authority_mode=human: under lane (the default, BH-4145)
-#   la_decide never answers rc 1 for a protected path, so no row is classified
-#   NEEDS_HUMAN_VERDICT for one.
+#   withheld it and the exact command that publishes it, on one line. la_decide
+#   no longer answers rc 1 (BH-5035 removed lead_authority_mode=human), so no
+#   row is classified NEEDS_HUMAN_VERDICT by it today; a refused or unreadable
+#   mode is rc 2, the BH-2199 hold. The state stays for an rc 1 a caller sees.
 mc_nhv_reason() {
   printf 'lead-verdict withheld on %s: %s — a human verdict publishes it: bin/lead-verdict.sh post %s %s %s MERGE --source human' \
     "${3:0:12}" "${4:-no reason given}" "$1" "$2" "$3" | tr '\t\n' '  '

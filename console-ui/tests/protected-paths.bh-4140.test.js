@@ -16,6 +16,7 @@ import { flush } from './helpers/settle.js';
 // methods behind it, and the coord proxy row that lets its PUT through. The
 // proxy cases go through the real onRequest; the panel cases mount the real
 // component in a fake DOM with a faked fetch.
+// TEST-CHANGE BH-5035: lead_authority_mode is lane only; the hint has no SET human button, a stored human row shows SET lane (H1, H2).
 
 const ROWS = [
   { repo: 'example-org/cromford', glob: 'bin/**', added_by: 'seed', added_at: '2026-10-01T00:00:00Z', removed_at: null },
@@ -316,51 +317,58 @@ test('PANEL: a refused add shows the worker error and is not "added"', async () 
 });
 
 // ---- the lead_authority_mode hint -------------------------------------------------
-test('H1: the hint names the value and both meanings; no row reads lane; an unreadable value is never lane', () => {
+test('H1: the hint names the value; no row and lane read lane with no button; a stored human row is refused, with SET lane only', () => {
   const hint = (state) => render(h(LeadAuthorityHint, { state, busy: false, onSet() {} }));
   const human = hint({ data: { setting: { value: 'human' } }, loading: false, error: null });
   assert.match(human, /lead_authority_mode/);
-  assert.match(human, /<b>human<\/b>/);
-  assert.match(human, /lane = the lead review signs protected paths/);
-  assert.match(human, /human = a person must/);
+  assert.match(human, /removed by BH-5035/);
+  assert.match(human, /lane = the lead review signs protected paths\./);
+  assert.doesNotMatch(human, /human = a person must/);
   assert.ok(human.includes('SET lane'));
+  assert.ok(!human.includes('SET human'));
   const none = hint({ data: { setting: null }, loading: false, error: null });
   assert.match(none, /no row, so lane/);
-  assert.ok(none.includes('SET human'));
+  assert.ok(!none.includes('SET '), 'no row is lane: no button');
+  const lane = hint({ data: { setting: { value: 'lane' } }, loading: false, error: null });
+  assert.ok(!lane.includes('SET '), 'lane: no button');
   const err = hint({ data: null, loading: false, error: new Error('boom') });
   assert.match(err, /could not read lead_authority_mode/);
   assert.ok(!err.includes('SET '), 'no SET button when the value is unknown');
   assert.doesNotMatch(err, /so lane/);
-  assert.deepEqual(modeOf({ data: { setting: { value: ' Human ' } }, error: null }), { kind: 'ok', value: 'human', label: 'human', next: 'lane' });
+  const m = modeOf({ data: { setting: { value: ' Human ' } }, error: null });
+  assert.equal(m.kind, 'unknown');
+  assert.equal(m.next, 'lane');
+  assert.match(m.label, /BH-5035/);
   assert.equal(modeOf({ data: { setting: { value: 'off' } }, error: null }).kind, 'unknown');
   assert.equal(modeOf({ data: {}, error: null }).kind, 'error', 'a body with no setting key is not "no row"');
 });
 
-test('H2: SET confirms through the modal, then PUTs the settings row and re-reads', async () => {
+test('H2: SET lane confirms through the modal, then PUTs the settings row and re-reads', async () => {
   const sent = [];
-  const r = await flipLeadAuthority({ confirm: async () => true, write: async (b) => { sent.push(b); return { setting: { value: 'human' } }; }, to: 'human' });
-  assert.deepEqual(sent, [{ key: 'lead_authority_mode', value: 'human', note: 'BH-4147 console' }]);
+  const r = await flipLeadAuthority({ confirm: async () => true, write: async (b) => { sent.push(b); return { setting: { value: 'lane' } }; }, to: 'lane' });
+  assert.deepEqual(sent, [{ key: 'lead_authority_mode', value: 'lane', note: 'BH-4147 console' }]);
   assert.equal(r.ok, true);
   let called = 0;
-  assert.deepEqual(await flipLeadAuthority({ confirm: async () => false, write: async () => { called++; }, to: 'human' }), { sent: false });
+  assert.deepEqual(await flipLeadAuthority({ confirm: async () => false, write: async () => { called++; }, to: 'lane' }), { sent: false });
   assert.equal(called, 0);
-  assert.equal((await flipLeadAuthority({ confirm: async () => true, write: async () => ({ setting: { value: 'lane' } }), to: 'human' })).ok, false,
+  assert.equal((await flipLeadAuthority({ confirm: async () => true, write: async () => ({ setting: { value: 'human' } }), to: 'lane' })).ok, false,
     'a row that came back with another value is not a success');
-  // mounted: no row -> SET human -> modal -> PUT settings -> re-read shows human
-  const calls = panelFetch();
+  // mounted: a stored human row -> SET lane -> modal -> PUT settings -> re-read shows lane, no button
+  const calls = panelFetch({ mode: { key: 'lead_authority_mode', value: 'human' } });
   const { root } = await mount(h(ProtectedPathsPanel));
-  assert.match(root.textContent, /no row, so lane/);
-  fire(byText(root, 'button', 'SET human')[0], 'click');
+  assert.match(root.textContent, /removed by BH-5035/);
+  assert.equal(byText(root, 'button', 'SET human').length, 0);
+  fire(byText(root, 'button', 'SET lane')[0], 'click');
   await flush();
   assert.equal(calls.filter((c) => c.method === 'PUT').length, 0, 'nothing sent before the modal answers');
-  fire(modalBtn(root, 'SET human'), 'click');
+  fire(modalBtn(root, 'SET lane'), 'click');
   await flush();
   const put = calls.filter((c) => c.method === 'PUT');
   assert.equal(put.length, 1);
   assert.equal(put[0].url, '/api/coord/settings');
-  assert.deepEqual(JSON.parse(put[0].body), { key: 'lead_authority_mode', value: 'human', note: 'BH-4147 console' });
-  assert.ok(byText(root, 'b', 'human').length, 'the re-read shows human');
-  assert.ok(byText(root, 'button', 'SET lane').length);
+  assert.deepEqual(JSON.parse(put[0].body), { key: 'lead_authority_mode', value: 'lane', note: 'BH-4147 console' });
+  assert.ok(byText(root, 'b', 'lane').length, 'the re-read shows lane');
+  assert.equal(byText(root, 'button', 'SET lane').length, 0, 'lane offers no button');
 });
 
 // ---- the Settings screen ----------------------------------------------------------

@@ -17,14 +17,17 @@ gates the next la_decide.
   The proxy's `WRITES` row (`console-ui/functions/api/coord/[[path]].js`,
   `protectedPathBody`) refuses a non-string repo/glob or any other op with a
   400, and stamps `added_by` and `actor` with the session actor (the Access
-  email, or `console`). POST/DELETE/PATCH are 405. The mode's SET button writes
-  `PUT /api/coord/settings` `{key: lead_authority_mode, value, note}`.
+  email, or `console`). POST/DELETE/PATCH are 405. The mode's SET lane button writes
+  `PUT /api/coord/settings` `{key: lead_authority_mode, value: lane, note}`.
 
 ## Selectors
 
 - Section: the `PROTECTED PATHS` section title.
-- Mode hint: the line starting `lead_authority_mode:` and its `SET human` /
-  `SET lane` button (no button when the row cannot be read).
+- Mode hint: the line starting `lead_authority_mode:`. No row or `lane` shows
+  no button. Any other stored value shows `SET lane`; a stored `human` row
+  reads `human (removed by BH-5035: ...)`. There is no `SET human` button: the
+  worker refuses that write with a 400 (BH-5035). No button when the row cannot
+  be read.
 - Inputs: `input[aria-label="repo"]` (starts at `example-org/cromford`; Enter
   or blur loads it) and `input[aria-label="glob"]` (Enter adds).
 - Buttons: `ADD`; one `REMOVE` per row; the modal's `REMOVE` / `CANCEL`.

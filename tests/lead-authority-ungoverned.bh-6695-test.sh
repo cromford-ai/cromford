@@ -15,6 +15,7 @@
 #          keys never collide, rc 2 memoized, la_memo_reset, no bad-slug entry
 #   B32    the new functions stay Bash 3.2 safe
 # Run from anywhere: HARNESS_TEST_SANDBOX=1 bash tests/lead-authority-ungoverned.bh-6695-test.sh
+# TEST-CHANGE BH-5035: M3 reads the hit under lane (no mode row): the human mode was retired
 set -uo pipefail
 . "$(dirname "$0")/lib/scratch.sh" || exit 1
 . "$(dirname "$0")/lib/lpp-stub.sh" || exit 1
@@ -214,13 +215,13 @@ lib ". \"$H/bin/lib/lead-delta.sh\" 2>/dev/null || . \"$DIR/bin/lib/lead-delta.s
 [ "$(gets)" = 1 ] && ok || bad "M2 ld_protected = 1 GET of the rows ($(gets))"
 
 # M3 ───────────────────────────────────────────────────────────────────────────
-fresh; lpp_set "$LPP" "$IN" .mergify.yml; files tmp/x; printf human > "$W/set/lead_authority_mode"
+fresh; lpp_set "$LPP" "$IN" .mergify.yml; files tmp/x
 R=$(decide "$IN" 7 lead)
 [ "${R%% *}" = rc=0 ] && grep -q 'reason=no protected path' <<<"$R" && ok || bad "M3 process A: tmp/x is no protected path ($R)"
 lib "_jobs_req PUT /api/lead-protected-paths '{\"repo\":\"example-org/cromford\",\"glob\":\"tmp/**\",\"op\":\"add\",\"added_by\":\"t\"}' >/dev/null"
 R=$(bash -c '. "$1/bin/jobs-client.sh" >/dev/null 2>&1; . "$1/bin/lib/verdicts.sh" 2>/dev/null; . "$1/bin/lib/verdict-status.sh" 2>/dev/null
              la_decide example-org/cromford 7 "$2" lead; echo "rc=$? reason=$LA_REASON"' _ "$H" "$HEAD" 2>/dev/null)
-[ "${R%% *}" = rc=1 ] && grep -q 'tmp/x' <<<"$R" && ok || bad "M3 process B: the PUT-added glob governs (rc 1 naming tmp/x): $R"
+[ "${R%% *}" = rc=0 ] && grep -q 'reason=touches protected paths: tmp/x;' <<<"$R" && ok || bad "M3 process B: the PUT-added glob governs (a hit naming tmp/x): $R"
 # and inside one shell the memo keeps the first answer until la_memo_reset
 R=$(lib '_la_db_globs example-org/cromford; echo "$LA_GLOBS" | tr "\n" " "; echo
          _jobs_req PUT /api/lead-protected-paths "{\"repo\":\"example-org/cromford\",\"glob\":\"new/**\",\"op\":\"add\",\"added_by\":\"t\"}" >/dev/null

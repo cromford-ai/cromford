@@ -83,8 +83,10 @@ case "\$M \$URL" in
     if [ -f "$VD/\$h" ]; then printf '%s\n200\n' "\$(cat "$VD/\$h")"
     else printf '{"standing":null,"rows":[]}\n200\n'; fi ;;
   "PUT "*/api/ledger) printf '{"ok":true}\n200\n' ;;
-  # TEST-CHANGE BH-4145: default mode is now lane; this suite pins human-mode behaviour
-  "GET "*/api/settings/lead_authority_mode) printf '{"setting":{"key":"lead_authority_mode","value":"human"}}\n200\n' ;;
+  # TEST-CHANGE BH-5035: the mode row is \$T/mode when it exists (no row = lane, the only mode)
+  "GET "*/api/settings/lead_authority_mode)
+    if [ -s "$T/mode" ]; then printf '{"setting":{"key":"lead_authority_mode","value":"%s"}}\n200\n' "\$(cat "$T/mode")"
+    else printf '{"error":"no such setting"}\n404\n'; fi ;;
   # TEST-CHANGE BH-4140: the lead_protected_paths rows (tests/lib/lpp-stub.sh, section L)
   *"/api/lead-protected-paths"*) lpp-answer "\$M" "\$URL"; exit 0 ;;
   *) printf '{"error":"not found"}\n404\n' ;;
@@ -349,8 +351,11 @@ parked_no_override N1
 # --- L: a lead MERGE is only an override where lead authority stands (BH-3683)
 # The real bin/lib/lead-authority.sh (through verdict-status.sh, as in prod),
 # the production rows plus one PUT-added row for this repo's protected glob (the
-# worker stub, tests/lib/lpp-stub.sh), and a PR whose files touch it. lead_authority_mode=human (the curl arm above, BH-4145): the
-# lane is the authority except on the path.
+# worker stub, tests/lib/lpp-stub.sh), and a PR whose files touch it. The mode
+# row is $T/mode (the curl arm above). TEST-CHANGE BH-5035: lane is the only
+# mode, so a protected path no longer makes a lead MERGE advisory; a stored
+# `human` mode row is refused (la_decide rc 2, held), and the caller's kept
+# rc-1 branch (advisory) is pinned with a la_decide stub (L1b).
 cp "$DIR/bin/lib/verdict-status.sh" "$DIR/bin/lib/lead-authority.sh" "$T/h/bin/lib/" || exit 1
 LPP="$T/lpp.json"
 lpp_install "$T/fakebin" "$LPP" "$T/lpp-down"
@@ -361,11 +366,22 @@ printf '[{"filename":"bin/merge-conductor.sh"},{"filename":"src/x.ts"}]' > "$T/f
 reset_tick
 rr_put "$H1" BLOCK "$T1"
 vd_put "$H1" MERGE lead 380 "$(iso $((T1 + 900)))"
+echo human > "$T/mode"
 lib mc_hv_override "$KEY" "$H1"; RC=$?
-[ "$RC" = 1 ] && ok || bad "L1: a lead MERGE on a protected-path PR (advisory, authority:human-required) must not override the lane BLOCK (got $RC)"
+[ "$RC" = 2 ] && ok || bad "L1: a lead MERGE under a refused lead_authority_mode=human row (withheld, authority:human-required) must not override the lane BLOCK: rc 2 hold (got $RC)"
 TICK
 parked_no_override L1
 hbrefused && ok || bad "L1: the BLOCK records hbrefused as today"
+grep -q "lead authority undecidable (the mode row lead_authority_mode reads 'human', a value BH-5035 retired" "$MCLOG" \
+  && ok || bad "L1: the hold names the BH-5035 reason $(ctx)"
+# L1b: the caller's rc-1 branch (an advisory lead MERGE) is kept and still refuses.
+RC=0; lib eval "la_decide() { LA_REASON='stub advisory'; return 1; }; mc_hv_override '$KEY' '$H1'" || RC=$?
+[ "$RC" = 1 ] && ok || bad "L1b: la_decide rc 1 (advisory) must not override (got $RC)"
+# L1c: under lane (no mode row) the same protected-path lead MERGE is cleared.
+rm -f "$T/mode"
+lib mc_hv_override "$KEY" "$H1"; RC=$?
+[ "$RC" = 0 ] && ok || bad "L1c: under lane a lead MERGE on a protected path overrides (got $RC)"
+echo human > "$T/mode"
 : > "$T/gh-comments.txt"
 vd_put "$H1" MERGE human 381 "$(iso $((T1 + 1000)))"
 lib mc_hv_override "$KEY" "$H1"; RC=$?
@@ -375,6 +391,7 @@ TICK
 case "$(reason_of)" in *"human verdict #381 overrides re-review BLOCK"*) ok ;;
   *) bad "L2: the reason must name verdict #381 $(ctx)" ;; esac
 printf '[{"filename":"src/x.ts"}]' > "$T/files.json"
+rm -f "$T/mode"
 reset_tick
 rr_put "$H1" BLOCK "$T1"
 vd_put "$H1" MERGE lead 382 "$(iso $((T1 + 900)))"

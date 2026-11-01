@@ -1,7 +1,9 @@
 #!/bin/bash
 # tests/lead-authority.bh-3683-test.sh — BH-3683: the hub lead-review lane is the
-# verdict authority, and a PR touching a protected path needs a --source human
-# verdict before anything publishes `lead-verdict: success`. Driven against a
+# verdict authority. Since BH-5035 lead_authority_mode is lane only: a protected
+# path is reported (rc 0, LA_PROTECTED_HIT=1) and the lane MERGE publishes; the
+# authority row is not read; a stored `human` mode row is refused (rc 2, the
+# status is withheld until a --source human verdict). Driven against a
 # scratch harness carrying the real bin/lib/lead-authority.sh, bin/lead-verdict.sh
 # and the conductor lib, with only these stubbed:
 #   * gh   — GitHub REST: pulls/<n> answers $G/head (then $G/head-after-files
@@ -15,12 +17,14 @@
 #            (rows in $LPPF, seeded with the cromford globs; $DOWNF = 500);
 #   * $H/bin/lane-alert.sh — records its argv in $T/alerts.
 #   G  glob semantics, la_globs (the DB rows), _la_key
-#   D  la_decide: scope, files, rename, unreadable, authority row, sources, rows unreadable
-#   P  bin/lead-verdict.sh post: withheld on a protected PR (exit 5), human publishes
+#   D  la_decide: scope, files, rename, unreadable, authority row not read, sources, rows unreadable
+#   P  bin/lead-verdict.sh post: a lane MERGE on a protected PR publishes; a refused
+#      mode row withholds (exit 5); human publishes
 #   V  bin/lead-verdict.sh authority + usage
 #   C  mc_enqueue_mergify obeys the same rule
 # Run from anywhere: HARNESS_TEST_SANDBOX=1 bash tests/lead-authority.bh-3683-test.sh
 # TEST-CHANGE BH-4140: globs come from the DB, not the TSV
+# TEST-CHANGE BH-5035: no mode row (lane) in reset; rc 1 cases now pin rc 0 with the hit, and a stored human mode row pins the rc 2 hold
 set -uo pipefail
 . "$(dirname "$0")/lib/scratch.sh" || exit 1
 . "$(dirname "$0")/lib/lpp-stub.sh" || exit 1
@@ -120,8 +124,6 @@ reset() {
   scratch_rm "$H/state/lead-authority"
   rm -f "$LPPF" "$LPPF.raw" "$LPPF.log" "$DOWNF"; seed
   echo "$HEAD" > "$G/head"; echo '[{"filename":"README.md"}]' > "$G/files.json"
-  # TEST-CHANGE BH-4145: default mode is now lane; this suite pins human-mode behaviour
-  printf human > "$W/set/lead_authority_mode"
 }
 files() { printf '%s\n' "$@" | jq -Rsc 'split("\n") | map(select(length > 0)) | map({filename:.})' > "$G/files.json"; }
 ghlog() { cat "$G/calls" 2>/dev/null; }
@@ -186,13 +188,14 @@ R=$(decide "$IN" 7 lead)
 [ "${R%% *}" = rc=0 ] && [ "$(filescalls)" -ge 1 ] && ok || bad "D2 in scope, README only, no row = rc 0 ($R, err $(cat "$T/lib.err"))"
 reset; files README.md .mergify.yml
 R=$(decide "$IN" 7 lead)
-[ "${R%% *}" = rc=1 ] && grep -q '\.mergify\.yml' <<<"$R" && ok || bad "D3 .mergify.yml in the files = rc 1 naming it ($R)"
+[ "${R%% *}" = rc=0 ] && grep -qF 'touches protected paths: .mergify.yml; cleared to merge on the lead verdict (lead_authority_mode=lane)' <<<"$R" && ok \
+  || bad "D3 .mergify.yml in the files = rc 0 naming it, cleared on the lane verdict ($R)"
 reset; echo '[{"filename":"bin/x.sh","previous_filename":"bin/lead-verdict.sh","status":"renamed"}]' > "$G/files.json"
 R=$(decide "$IN" 7 lead)
-[ "${R%% *}" = rc=1 ] && grep -q 'bin/lead-verdict.sh' <<<"$R" && ok || bad "D4 a rename out of a protected path is protected ($R)"
+[ "${R%% *}" = rc=0 ] && grep -q 'touches protected paths: .*bin/lead-verdict.sh' <<<"$R" && ok || bad "D4 a rename out of a protected path is protected ($R)"
 reset; echo '[{"filename":"bin/lib/verdicts.sh","status":"removed"}]' > "$G/files.json"
 R=$(decide "$IN" 7 lead)
-[ "${R%% *}" = rc=1 ] && ok || bad "D4 a deleted protected file is protected ($R)"
+[ "${R%% *}" = rc=0 ] && grep -q 'touches protected paths: bin/lib/verdicts.sh' <<<"$R" && ok || bad "D4 a deleted protected file is protected ($R)"
 reset; touch "$G/files500"
 R=$(decide "$IN" 7 lead)
 [ "${R%% *}" = rc=2 ] && ok || bad "D5 a files page answering 500 = rc 2 ($R)"
@@ -202,21 +205,17 @@ R=$(decide "$IN" 7 lead)
 reset; echo "$HEAD2" > "$G/head-after-files"
 R=$(decide "$IN" 7 lead)
 [ "${R%% *}" = rc=2 ] && grep -q 'head moved' <<<"$R" && ok || bad "D5 a head that moved during the file read = rc 2 ($R)"
-reset; printf 'human:precision' > "$W/set/lead_authority.example-org.cromford"
+# BH-5035: la_decide never reads the authority row, whatever it holds.
+authgets() { cat "$W/log" 2>/dev/null | grep -c '^GET /api/settings/lead_authority\.example-org\.cromford$'; }
+for v in human:precision human junk HUMAN lane; do
+  reset; printf '%s' "$v" > "$W/set/lead_authority.example-org.cromford"
+  R=$(decide "$IN" 7 lead)
+  [ "$R" = 'rc=0 reason=no protected path' ] && [ "$(authgets)" = 0 ] && ok \
+    || bad "D6 authority row $v = rc 0 on an unprotected PR, row not read ($R, $(authgets) reads)"
+done
+reset; printf human > "$W/set/lead_authority_mode"
 R=$(decide "$IN" 7 lead)
-[ "${R%% *}" = rc=1 ] && grep -q 'revoked' <<<"$R" && ok || bad "D6 row human:precision = rc 1 revoked on an unprotected PR ($R)"
-printf 'human' > "$W/set/lead_authority.example-org.cromford"
-R=$(decide "$IN" 7 lead)
-[ "${R%% *}" = rc=1 ] && grep -q 'revoked' <<<"$R" && ok || bad "D6 row human = rc 1 ($R)"
-printf 'junk' > "$W/set/lead_authority.example-org.cromford"
-R=$(decide "$IN" 7 lead)
-[ "${R%% *}" = rc=2 ] && ok || bad "D6 an unknown authority value = rc 2 ($R)"
-printf 'HUMAN' > "$W/set/lead_authority.example-org.cromford"
-R=$(decide "$IN" 7 lead)
-[ "${R%% *}" = rc=2 ] && ok || bad "D6 HUMAN (wrong case) is unknown = rc 2 ($R)"
-printf 'lane' > "$W/set/lead_authority.example-org.cromford"
-R=$(decide "$IN" 7 lead)
-[ "${R%% *}" = rc=0 ] && ok || bad "D6 row lane = rc 0 on an unprotected PR ($R)"
+[ "${R%% *}" = rc=2 ] && grep -q "reads 'human', a value BH-5035 retired" <<<"$R" && ok || bad "D6 a stored human mode row = rc 2, the retired reason ($R)"
 reset; touch "$W/set503"
 R=$(decide "$IN" 7 lead)
 [ "${R%% *}" = rc=2 ] && ok || bad "D6 a settings outage = rc 2 ($R)"
@@ -229,7 +228,7 @@ R=$(decide "$IN" 7 conductor)
 [ "${R%% *}" = rc=0 ] && ok || bad "D8 conductor with a standing human MERGE = rc 0 on a protected PR ($R)"
 jq -nc --arg h "$HEAD" '{verdict:"MERGE",source:"lead",id:6,created_at:"x",head_sha:$h}' > "$W/standing"
 R=$(decide "$IN" 7 conductor)
-[ "${R%% *}" = rc=1 ] && ok || bad "D8 conductor with a standing lead MERGE = rc 1 ($R)"
+[ "${R%% *}" = rc=0 ] && grep -q 'cleared to merge on the lead verdict' <<<"$R" && ok || bad "D8 conductor with a standing lead MERGE = rc 0 with the lane hit ($R)"
 reset; touch "$DOWNF"
 R=$(decide "$OUT" 41 lead)
 [ "${R%% *}" = rc=2 ] && grep -q 'the protected paths of example-org/demo-os could not be read' <<<"$R" && ok \
@@ -241,11 +240,15 @@ rm -f "$DOWNF"
 # ============================================================================
 reset; files README.md .mergify.yml
 cli post "$IN" 7 "$HEAD" MERGE --source lead --note "lead-review:9" >/dev/null; RC=$?
-[ "$RC" = 5 ] && ok || bad "P1 a lane MERGE on a protected PR exits 5 (rc $RC, err $(cat "$T/cli.err"))"
-[ "$(jq -r .note "$W/posted" 2>/dev/null)" = 'lead-review:9 authority:human-required' ] && ok \
-  || bad "P1 the row is recorded with the authority token: $(cat "$W/posted" 2>/dev/null)"
-[ "$(statuses)" = 0 ] && ok || bad "P1 no status POST on a protected PR: $(ghlog | grep statuses)"
-grep -q '\.mergify\.yml' "$T/cli.err" && grep -q -- '--source human' "$T/cli.err" && ok || bad "P1 stderr names the path and --source human: $(cat "$T/cli.err")"
+[ "$RC" = 0 ] && ok || bad "P1 a lane MERGE on a protected PR exits 0 (rc $RC, err $(cat "$T/cli.err"))"
+[ "$(jq -r .note "$W/posted" 2>/dev/null)" = 'lead-review:9 authority:lane-protected' ] && ok \
+  || bad "P1 the row is recorded with the lane token: $(cat "$W/posted" 2>/dev/null)"
+[ "$(statuses)" = 1 ] && ghlog | grep -- '/statuses/' | grep -q -- '-f state=success' && ok || bad "P1 one success status on a protected PR: $(ghlog | grep statuses)"
+reset; files README.md .mergify.yml; printf human > "$W/set/lead_authority_mode"
+cli post "$IN" 7 "$HEAD" MERGE --source lead --note "lead-review:9" >/dev/null; RC=$?
+[ "$RC" = 5 ] && [ "$(statuses)" = 0 ] && [ "$(jq -r .note "$W/posted" 2>/dev/null)" = 'lead-review:9 authority:human-required' ] && ok \
+  || bad "P1 a stored human mode row withholds: exit 5, no status, advice row (rc $RC, $(cat "$W/posted" 2>/dev/null))"
+grep -q 'BH-5035 retired' "$T/cli.err" && grep -q -- '--source human' "$T/cli.err" && ok || bad "P1 stderr names the refused row and --source human: $(cat "$T/cli.err")"
 grep -q 'x-lead-verdict-client: 4' "$W/hdr" 2>/dev/null && ok || bad "P5 the lead post sends x-lead-verdict-client: 4"
 reset; files README.md .mergify.yml
 cli post "$IN" 7 "$HEAD" MERGE --source human >/dev/null; RC=$?
@@ -269,11 +272,11 @@ cli post "$IN" 7 "$HEAD" MERGE --source lead >/dev/null; RC=$?
 reset
 OUTV=$(cli authority "$IN"); RC=$?
 [ "$RC" = 0 ] && grep -q 'in scope: yes' <<<"$OUTV" && grep -q '^globs (lead_protected_paths, from db): ' <<<"$OUTV" \
-  && grep -qx '  \.mergify\.yml' <<<"$OUTV" && grep -q 'authority: lane (no row)' <<<"$OUTV" \
+  && grep -qx '  \.mergify\.yml' <<<"$OUTV" && grep -qF 'authority: lane (no row; not read by la_decide since BH-5035)' <<<"$OUTV" \
   && ok || bad "V1 authority prints scope, globs and the row (rc $RC): $OUTV $(cat "$T/cli.err")"
 files .mergify.yml
 OUTV=$(cli authority "$IN" 7 "$HEAD")
-grep -q 'human required:' <<<"$OUTV" && grep -q '\.mergify\.yml' <<<"$OUTV" && ok || bad "V1 with pr+sha it prints the decision: $OUTV"
+grep -q 'a lead MERGE publishes (touches protected paths: .mergify.yml' <<<"$OUTV" && ok || bad "V1 with pr+sha it prints the decision: $OUTV"
 OUTV=$(cli authority "$OUT")
 grep -q "in scope: no (no live lead_protected_paths rows; the lane is the authority)" <<<"$OUTV" && ok || bad "V1 an out-of-scope repo says so: $OUTV"
 [ "$(statuses)" = 0 ] && [ ! -f "$W/posted" ] && ok || bad "V1 the authority verb writes nothing"
@@ -293,19 +296,20 @@ enq() { (
 reset; files .mergify.yml
 jq -nc --arg h "$HEAD" '{verdict:"MERGE",source:"lead",id:6,created_at:"x",head_sha:$h}' > "$W/standing"
 OUTC=$(enq); RC=$?
-[ "$(statuses)" = 0 ] && ok || bad "C1 no status POST from the conductor on a protected PR: $(ghlog | grep statuses)"
-# BH-3806: C1 INVERTED ON PURPOSE. Until BH-3806 the label and the ask still
-# went out here and the row read QUEUED while Mergify waited on a status only a
-# person can publish; now the enqueue refuses with rc 4 and writes nothing.
-[ "$RC" = 4 ] && ! grep -q -- "/labels" <<<"$(ghlog)" && [ ! -s "$G/asked" ] && ok \
-  || bad "C1 a withheld verdict is rc 4 with no label POST and no queue ask (rc $RC, out $OUTC, asked $(cat "$G/asked" 2>/dev/null))"
-ls "$H/state/lead-authority/"human-needed-* >/dev/null 2>&1 && ok || bad "C1 the human-needed marker is written"
-[ "$(nalerts)" = 1 ] && grep -q -- '--severity warn --id lead-human-needed-' "$T/alerts" && grep -q -- '--source human' "$T/alerts" && ok \
-  || bad "C1 one warn lead-human-needed beat naming --source human: $(cat "$T/alerts" 2>/dev/null)"
-grep -q 'withheld' <<<"$OUTC" && grep -qF -- "bin/lead-verdict.sh post $IN 7 $HEAD MERGE --source human" <<<"$OUTC" && ok \
-  || bad "C1 the rc 4 refusal says the status is withheld and names the --source human command: $OUTC"
+# BH-5035: under lane (the only mode) a protected PR with a standing lead MERGE
+# gets the conductor's success status and asks nobody.
+ghlog | grep -- "/statuses/$HEAD" | grep -q -- '-f state=success' && ok \
+  || bad "C1 a lane MERGE on a protected PR gets the conductor's status (rc $RC, out $OUTC): $(ghlog | grep statuses)"
+! ls "$H/state/lead-authority/"human-needed-* >/dev/null 2>&1 && [ "$(nalerts)" = 0 ] && ok \
+  || bad "C1 no human-needed marker and no beat under lane: $(cat "$T/alerts" 2>/dev/null)"
+reset; files .mergify.yml; printf human > "$W/set/lead_authority_mode"
+jq -nc --arg h "$HEAD" '{verdict:"MERGE",source:"lead",id:6,created_at:"x",head_sha:$h}' > "$W/standing"
+OUTC=$(enq); RC=$?
+[ "$RC" = 3 ] && [ "$(statuses)" = 0 ] && ! grep -q -- "/labels" <<<"$(ghlog)" && [ ! -s "$G/asked" ] \
+  && grep -q 'BH-5035 retired' <<<"$OUTC" && ok \
+  || bad "C1 a stored human mode row holds: rc 3, no status, no label, no ask, the retired reason (rc $RC, out $OUTC)"
 enq >/dev/null
-[ "$(nalerts)" = 1 ] && ok || bad "C4 a second enqueue on the same head asks nobody again: $(cat "$T/alerts")"
+[ "$(statuses)" = 0 ] && ! grep -q -- "/labels" <<<"$(ghlog)" && ok || bad "C4 a second enqueue on the same head still holds: $(ghlog | grep -E 'statuses|labels')"
 reset; files .mergify.yml
 jq -nc --arg h "$HEAD" '{verdict:"MERGE",source:"human",id:5,created_at:"x",head_sha:$h}' > "$W/standing"
 enq >/dev/null

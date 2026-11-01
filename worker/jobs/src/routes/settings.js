@@ -14,6 +14,7 @@ import {
 import { CAP_KEY_PREFIX_RE, capChangeStmt } from "../lib/cost-caps.js";
 import { invalidateSettings, settingsRows } from "../lib/settings-cache.js";
 import { CONFIG_KINDS, configChangeStmts, listConfigChanges } from "../lib/config-changes.js";
+import { retiredModeRefusal } from "../lib/retired-mode-values.js";
 import {
   PROTECTED_HUMAN_KEYS, PROTECTED_PREFIXES, humanTokenOk, isProtectedSetting, protectedMode, settingProof,
   settingSigMessage, settingSigMessageV2, sigKeyOf,
@@ -410,6 +411,9 @@ export const routes = [
       const isTheme = THEME_KEY_RE.test(key);
       const max = CONF_DOC_KEY_RE.test(key) || isTheme ? 4096 : 256;
       if (!value || value.length > max) return json(400, { error: `value must be non-empty and <= ${max} chars` });
+      // BH-5035: the removed `human` value of tier_gate_mode / lead_authority_mode.
+      const retired = retiredModeRefusal(key, value);
+      if (retired) return json(400, { error: retired, key });
       // BH-4090: a bearer write that LOOSENS a lead_* row needs the human token,
       // judged against the effective current value, so a raw D1 write cannot be
       // laundered by a "tightening" on top of it. Not mode-gated. Before every write.

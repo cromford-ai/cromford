@@ -2,8 +2,7 @@
 # External-PR review guard (per the operator, 2026-07-27): every open PR authored by
 # someone other than the harness/operator (operator) gets a Fable adversarial review.
 # Findings post on the PR; when the author pushes fixes, the new head re-reviews.
-# APPROVE (any tier) -> merge here (respects flags/automerge-disabled), unless
-# tier_gate_mode[.<project>]=human holds a tier-2 APPROVE (bin/lib/tier-gate.sh).
+# APPROVE (any tier) -> merge here (respects flags/automerge-disabled).
 # On a Mergify repo the conductor's external enqueue asks the queue instead
 # (bin/lib/mc/external-enqueue.sh). The beat is news, not a request.
 #
@@ -178,10 +177,6 @@ rp_freeze() {
 # BH-7667: the migration index lint (mil_tables, mil_scan, mil_merge). Without
 # it no PR is linted and every review posts as the model and the cap left it.
 . "${HARNESS}/bin/lib/migration-index-lint.sh" 2>/dev/null || true
-# tg_holds (BH-4580): the tier_gate_mode row, read through setting_get above.
-# A tree without the lib merges as before (the bin/lib/rb/pr.sh rule).
-# shellcheck source=bin/lib/tier-gate.sh
-[ -r "$HARNESS/bin/lib/tier-gate.sh" ] && . "$HARNESS/bin/lib/tier-gate.sh"
 
 # --- BH-1132: the lane's one off-switch -------------------------------------
 # flags/all-off, flags/lane-off-review-prs-<project>, or the D1 pause_flags row of the
@@ -720,11 +715,6 @@ merge_retry() { # merge_retry <num> <sha> [author]
   # `reused-unknown`, which is held.
   SERVED=$(jq -r --arg n "$NUM" '.[$n] | if (.reused_from // "") != "" and .served == null then "reused-unknown" else (.served // "claude") end' "$STATE")
   rp_prov_is_claude "$SERVED" || return 0
-  # BH-4580: tier_gate_mode=human holds a tier-2 APPROVE here exactly as at the
-  # fresh verdict. Silent and uncounted like the switches below: a hold is not an
-  # attempt, so it never spends REVIEW_MERGE_RETRY_MAX.
-  command -v tg_holds >/dev/null 2>&1 \
-    && tg_holds "$PROJECT" "$(jq -r --arg n "$NUM" '.[$n].tier // "?"' "$STATE")" && return 0
   # The holds return SILENTLY: each is a deliberate switch, and a line per PR
   # per tick while a fleet-wide pause is on is noise, not news.
   # BH-3687: a factory-stopped tick is not an attempt either, for the reason
@@ -1967,9 +1957,6 @@ _Posted as a comment review: the harness fix round consumes this verdict; it doe
   RP_MQ_WANT=0
   if [ "${RP_ADVISORY:-0}" = 1 ]; then
     echo "$(STAMP) [$PROJECT] #$NUM @${SHA:0:7} APPROVE left unmerged: an advisory read by the trivial route ($RP_MODEL) — the next tick re-reviews this head on the full model" >> "$LOG"
-  # BH-4580: the tier decides who merges only when tier_gate_mode says so.
-  elif [ "$VERDICT" = "APPROVE" ] && command -v tg_holds >/dev/null 2>&1 && tg_holds "$PROJECT" "${TIER:-?}"; then
-    echo "$(STAMP) [$PROJECT] #$NUM @${SHA:0:7} APPROVE left unmerged: tier_gate_mode (${TG_MODE:-unreadable}, ${TG_MODE_SRC:-unread}) holds tier ${TIER:-?}" >> "$LOG"
   elif [ "$VERDICT" = "APPROVE" ]; then
     merge_step "$NUM" "$SHA" "$SERVED" "$AUTHOR"
   fi

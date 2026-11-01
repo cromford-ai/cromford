@@ -12,8 +12,9 @@
 #   * gh   — GitHub REST: pulls/<n> answers $G/head, pulls/<n>/files
 #            $G/files.json, statuses POST 201; every call logged to $G/calls.
 # No catalog/ dir and no TSV exist anywhere in $T until F, which adds the seed file.
-#   D1  rows -> la_globs prints exactly them, la_scope rc 0, human-mode hit rc 1
-#   D2  a PUT add governs the next decide: human rc 1, lane rc 0 + LA_PROTECTED_HIT
+#   D1  rows -> la_globs prints exactly them, la_scope rc 0, a hit (rc 0 + LA_PROTECTED_HIT)
+#   D2  a PUT add governs the next decide: no row and lane rc 0 + LA_PROTECTED_HIT
+# TEST-CHANGE BH-5035: lead_authority_mode=human is retired; the hit cases read lane (no row), a human row is rc 2
 #   D3  worker down, no cache -> la_scope rc 2, la_decide rc 2 (lead and
 #       conductor), no status POST from a lead MERGE post
 #   D4  a removed row (PUT remove, or removed_at in the body) does not govern
@@ -128,9 +129,9 @@ R=$(lib "la_globs $IN"); RC=$?
 [ "$RC" = 0 ] && [ "$R" = "$(printf '.mergify.yml\nbin/lib/mc/**')" ] && ok || bad "D1 la_globs prints exactly the 2 rows (rc $RC): '$R'"
 lib "la_scope $IN"; RC=$?
 [ "$RC" = 0 ] && ok || bad "D1 la_scope rc $RC with rows (want 0)"
-files bin/lib/mc/x.sh; printf human > "$W/set/lead_authority_mode"
+files bin/lib/mc/x.sh
 R=$(decide "$IN" 7 lead)
-[ "${R%% *}" = rc=1 ] && grep -q 'touches protected paths: bin/lib/mc/x.sh' <<<"$R" && ok || bad "D1 human: a row's glob governs, rc 1 naming bin/lib/mc/x.sh ($R)"
+[ "${R%% *}" = rc=0 ] && grep -q 'hit=1 paths=bin/lib/mc/x.sh ' <<<"$R" && ok || bad "D1 lane: a row's glob governs, a hit naming bin/lib/mc/x.sh ($R)"
 [ "$(gets)" -ge 3 ] && ok || bad "D1 every read went to the worker ($(gets) GETs)"
 reset
 lib "la_scope $OUT"; RC=$?
@@ -138,13 +139,12 @@ lib "la_scope $OUT"; RC=$?
 
 # D2 ───────────────────────────────────────────────────────────────────────────
 reset; lpp_set "$LPP" "$IN" .mergify.yml; files tmp/x
-printf human > "$W/set/lead_authority_mode"
 R=$(decide "$IN" 7 lead)
 [ "${R%% *}" = rc=0 ] && grep -q 'reason=no protected path' <<<"$R" && ok || bad "D2 before the PUT, tmp/x is no protected path ($R)"
 lib "_jobs_req PUT /api/lead-protected-paths '{\"repo\":\"example-org/cromford\",\"glob\":\"tmp/**\",\"op\":\"add\",\"added_by\":\"t\"}' >/dev/null"; RC=$?
 [ "$RC" = 0 ] && ok || bad "D2 the PUT add answered rc $RC"
 R=$(decide "$IN" 7 lead)
-[ "${R%% *}" = rc=1 ] && grep -q 'tmp/x' <<<"$R" && ok || bad "D2 human: a PUT-added glob governs the next decide, rc 1 naming tmp/x ($R)"
+[ "${R%% *}" = rc=0 ] && grep -q 'reason=touches protected paths: tmp/x;' <<<"$R" && ok || bad "D2 no row: a PUT-added glob governs the next decide, a hit naming tmp/x ($R)"
 printf lane > "$W/set/lead_authority_mode"
 R=$(decide "$IN" 7 lead)
 [ "${R%% *}" = rc=0 ] && grep -q 'hit=1 paths=tmp/x ' <<<"$R" && ok || bad "D2 lane: rc 0, LA_PROTECTED_HIT=1, LA_PROTECTED_PATHS=tmp/x ($R)"
@@ -171,14 +171,13 @@ cli post "$IN" 7 "$HEAD" MERGE --source lead >/dev/null; RC=$?
 reset; lpp_set "$LPP" "$IN" .mergify.yml 'tmp/**'; files tmp/x
 lib "_jobs_req PUT /api/lead-protected-paths '{\"repo\":\"example-org/cromford\",\"glob\":\"tmp/**\",\"op\":\"remove\"}' >/dev/null"; RC=$?
 [ "$RC" = 0 ] && [ "$(jq -r '.rows[] | select(.glob == "tmp/**") | .removed_at' "$LPP")" != null ] && ok || bad "D4 the PUT remove did not soft-delete (rc $RC)"
-printf human > "$W/set/lead_authority_mode"
 R=$(decide "$IN" 7 lead)
-[ "${R%% *}" = rc=0 ] && grep -q 'reason=no protected path' <<<"$R" && ok || bad "D4 human: a removed row is 'no protected path' ($R)"
+[ "${R%% *}" = rc=0 ] && grep -q 'reason=no protected path' <<<"$R" && ok || bad "D4 a removed row is 'no protected path' ($R)"
 printf '{"rows":[{"repo":"example-org/cromford","glob":".mergify.yml","removed_at":null},{"repo":"example-org/cromford","glob":"tmp/**","removed_at":"2026-10-04T01:00:00Z"},{"repo":"example-org/cromford","glob":"bad glob","removed_at":null}]}' > "$LPP.raw"
 R=$(lib "la_globs $IN")
 [ "$R" = .mergify.yml ] && ok || bad "D4 a body row with removed_at set, or with whitespace, is ignored: '$R'"
 R=$(decide "$IN" 7 lead)
-[ "${R%% *}" = rc=0 ] && grep -q 'reason=no protected path' <<<"$R" && ok || bad "D4 human: the removed_at row does not govern ($R)"
+[ "${R%% *}" = rc=0 ] && grep -q 'reason=no protected path' <<<"$R" && ok || bad "D4 the removed_at row does not govern ($R)"
 
 # D5 ───────────────────────────────────────────────────────────────────────────
 reset; lpp_set "$LPP" "$IN" .mergify.yml 'tmp/**'; files tmp/x
@@ -243,7 +242,6 @@ R=$( ( unset HARNESS H; . "$LIBF"; la_scope "$IN"; echo "rc=$?" ) 2>/dev/null )
 # D6 ───────────────────────────────────────────────────────────────────────────
 reset; lpp_set "$LPP" "$IN" .mergify.yml; files tmp/x
 printf 'tmp/**' > "$W/set/lead_protected_paths_extra.example-org.cromford"
-printf human > "$W/set/lead_authority_mode"
 R=$(decide "$IN" 7 lead)
 [ "${R%% *}" = rc=0 ] && grep -q 'reason=no protected path' <<<"$R" && ok || bad "D6 the extras row no longer adds a glob ($R)"
 R=$(lib "la_globs $IN")
@@ -276,7 +274,6 @@ lib "la_scope $IN"; RC=$?
 [ "$RC" = 2 ] && ok || bad "N {\"rows\":null} is unreadable (rc $RC)"
 rm -f "$LPP.raw"
 reset; printf '{"rows":[{"repo":"example-org/other","glob":"tmp/**","removed_at":null}]}' > "$LPP.raw"; files tmp/x
-printf human > "$W/set/lead_authority_mode"
 R=$(decide "$IN" 7 lead)
 [ "${R%% *}" = rc=0 ] && grep -q 'reason=not governed' <<<"$R" && ok || bad "N another repo's row is ignored ($R)"
 rm -f "$LPP.raw"
@@ -285,7 +282,6 @@ R=$(decide "$OUT" 41 lead)
 [ "${R%% *}" = rc=0 ] && grep -q 'reason=not governed' <<<"$R" && ok || bad "N2 example-org/demo-os with no rows = rc 0 not governed ($R)"
 ! grep -q 'lead_authority_mode' "$W/log" && ok || bad "N2 an ungoverned repo costs no mode read: $(cat "$W/log")"
 reset; lpp_set "$LPP" "$IN" .mergify.yml; files docs/mergify.yml.md docs/.mergify.yml.md
-printf human > "$W/set/lead_authority_mode"
 R=$(decide "$IN" 7 lead)
 [ "${R%% *}" = rc=0 ] && grep -q 'reason=no protected path' <<<"$R" && ok || bad "N1 docs/.mergify.yml.md does not match .mergify.yml ($R)"
 
@@ -307,7 +303,8 @@ R=$(decide "$IN" 7 lead)
 [ "${R%% *}" = rc=0 ] && grep -q 'hit=1 paths=bin/worker-deploy.sh' <<<"$R" && ok || bad "F lane: an unseeded protected path is reported as a hit ($R)"
 printf human > "$W/set/lead_authority_mode"
 R=$(decide "$IN" 7 lead)
-[ "${R%% *}" = rc=1 ] && grep -q 'touches protected paths: bin/worker-deploy.sh' <<<"$R" && ok || bad "F human: an unseeded protected path needs a human verdict ($R)"
+[ "${R%% *}" = rc=2 ] && grep -q 'BH-5035 retired' <<<"$R" && ok || bad "F a stored human mode row is refused: the unseeded protected path is held, rc 2 ($R)"
+rm -f "$W/set/lead_authority_mode"
 grep -q '^GET .*/api/lead-protected-paths?repo=example-org/cromford&all=1$' "$LPP.log" && ok || bad "F the read asks for removed rows too: $(cat "$LPP.log")"
 OUTV=$(cli authority "$IN"); RC=$?
 NSEED=$(grep -c . "$FIX")   # TEST-CHANGE BH-4148 (merge of main): the count is the fixture's, not a literal 36 (main added 2 globs)
@@ -336,7 +333,7 @@ lib "_jobs_req PUT /api/lead-protected-paths '{\"repo\":\"example-org/cromford\"
 [ "$RC" = 0 ] && ok || bad "F the PUT remove answered rc $RC"
 R=$(lib "la_globs $IN")
 ! grep -qx 'bin/worker-deploy.sh' <<<"$R" && [ "$(printf '%s\n' "$R" | awk 'NF' | wc -l | tr -d ' ')" = "$(( $(grep -c . "$FIX") - 1 ))" ] && ok || bad "F a console remove un-protects the glob (one fewer than the seed, TEST-CHANGE: derived, was a literal 35): $(printf '%s\n' "$R" | grep worker-deploy)"
-files bin/worker-deploy.sh; printf human > "$W/set/lead_authority_mode"
+files bin/worker-deploy.sh
 R=$(decide "$IN" 7 lead)
 [ "${R%% *}" = rc=0 ] && grep -q 'reason=no protected path' <<<"$R" && ok || bad "F a removed seed glob no longer governs ($R)"
 # a reset table (rows and history gone) after a good read: the floor holds again

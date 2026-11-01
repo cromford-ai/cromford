@@ -187,11 +187,6 @@ PLUMBING="$PLUMBING MC_FANIN_SOLO_RUN HARNESS_REPO MC_WORKERS_DONE_BY MC_WINDOW_
 # them: a settings row could not move it, and registering it as a knob would
 # offer a value both lanes throw away. A constant from a lib, not an input.
 PLUMBING="$PLUMBING FLEET_PATHS"
-# TG_MODE and TG_MODE_SRC (BH-4580) are SET BY bin/lib/tier-gate.sh's tg_mode
-# and read back in bin/review-prs.sh's "APPROVE left unmerged" log line. The
-# same case as LANE_SWITCH_SRC: an output, not an input. The knob itself is the
-# tier_gate_mode settings row the lib reads.
-PLUMBING="$PLUMBING TG_MODE TG_MODE_SRC"
 # HC_STATE (BH-5271) is SET BY bin/lib/hotspot-context.sh's hc_section (yes,
 # none, never, off or unknown) and read back by bin/lead-review.sh in one log
 # line. GH_REST_STATUS's case: an output, not an input.

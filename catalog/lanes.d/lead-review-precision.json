@@ -60,7 +60,7 @@
       "min": 0,
       "max": 1,
       "zero_means": null,
-      "note": "BH-3683: a fraction, not a percent. A governed repo (live lead_protected_paths rows) whose lead MERGE precision is under this, with at least LEAD_REVIEW_PRECISION_MIN_N scored, has its lead_authority row set to human:precision (every lead MERGE is advice until a --source human verdict) and pages once; at or above it, a human:precision row goes back to lane. Below the warn line on purpose: the warn digest leads, the page follows. Read as ${LEAD_REVIEW_AUTHORITY_MIN_PRECISION:-0.8}."
+      "note": "BH-3683: a fraction, not a percent. A governed repo (live lead_protected_paths rows) whose lead MERGE precision is at or above this, with at least LEAD_REVIEW_PRECISION_MIN_N scored, has a legacy human:precision lead_authority row set back to lane. Under it, one log line and no write: BH-5035 removed the human mode, so the lane stays the authority and the day's warn beat reports the drop. Read as ${LEAD_REVIEW_AUTHORITY_MIN_PRECISION:-0.8}."
     }
   ],
   "stats": {

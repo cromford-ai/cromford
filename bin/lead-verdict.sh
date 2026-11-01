@@ -116,23 +116,20 @@
 # THE AUTHORITY RULE (BH-3683). The hub's lead-review lane is the verdict
 # authority: its --source lead MERGE publishes lead-verdict with no Mac
 # involved. On a repo with live lead_protected_paths rows (jobs worker), a lead MERGE /
-# MERGE-WITH-NOTES first asks la_decide (bin/lib/lead-authority.sh), and the
-# answer depends on lead_authority_mode (BH-4145; per repo
-# lead_authority_mode.<owner>.<name>, else global):
-#   lane  (the default, no row) — a protected path is reported, not withheld:
-#         the status publishes, the row carries the note token
-#         `authority:lane-protected`, and after the publish ONE PR comment says
-#         `touches protected paths <paths>; cleared to merge on the lead verdict`, deduped
-#         per head by state/lead-authority/lane-hit-<owner_name>-<pr>-<sha12>
-#         (written only after the comment POST returned 0; a failed comment is
-#         one stderr line and the next post retries it).
-#   human — when the PR touches a protected path, or the repo's lead_authority
-#         row is human or human:precision, the row is still recorded (it is
-#         advice, and precision scoring reads it) with the note token
-#         `authority:human-required`, NO status is published, and the exit is 5.
-#         A `--source human` verdict then publishes it.
-# An answer that cannot be read (mode row included) withholds the same way
-# under either mode. A BLOCK always publishes failure.
+# MERGE-WITH-NOTES first asks la_decide (bin/lib/lead-authority.sh). Its mode
+# row lead_authority_mode (BH-4145; per repo lead_authority_mode.<owner>.<name>,
+# else global) has one value, lane (the default, no row): a protected path is
+# reported, not withheld. The status publishes, the row carries the note token
+# `authority:lane-protected`, and after the publish ONE PR comment says
+# `touches protected paths <paths>; cleared to merge on the lead verdict`, deduped
+# per head by state/lead-authority/lane-hit-<owner_name>-<pr>-<sha12>
+# (written only after the comment POST returned 0; a failed comment is one
+# stderr line and the next post retries it).
+# An answer that cannot be read withholds: the row is still recorded (it is
+# advice, and precision scoring reads it) with the note token
+# `authority:human-required`, NO status is published, and the exit is 5. A
+# `--source human` verdict then publishes it. A mode row that reads `human`, the
+# value BH-5035 removed, is refused the same way. A BLOCK always publishes failure.
 # THE RISK TIER (BH-5022). bin/lead-review-enqueue.sh signs off a head that
 # bin/lib/risk-tier.sh classified low with --source risk-tier: a MERGE only (the
 # worker refuses any other word), posted with the lead token, put through the
@@ -142,10 +139,10 @@
 # NO row is written (a standing risk-tier advice row would cancel the lead
 # review the caller falls back to) and the exit is 5.
 # `authority` prints the rule in force for a repo, and with <pr> <head-sha> the
-# answer for that head; it writes nothing. The mode is changed with
-# bin/jobs-client.sh setting-set lead_authority_mode[.<owner>.<name>] lane|human,
-# the authority row (it only bites under human) with
-# bin/jobs-client.sh setting-set lead_authority.<owner>.<name> lane|human.
+# answer for that head; it writes nothing. A stale mode row is cleared with
+# bin/jobs-client.sh setting-set lead_authority_mode[.<owner>.<name>] lane. The
+# authority row lead_authority.<owner>.<name> is printed, but la_decide no
+# longer reads it (BH-5035).
 #
 # usage:
 #   bin/lead-verdict.sh post <owner/repo> <pr> <head-sha> <MERGE|MERGE-WITH-NOTES|BLOCK>
@@ -166,8 +163,8 @@
 #       4 (post) the row is recorded but the lead-verdict status is not published;
 #         (retract) the row is retracted but the status is not republished,
 #       5 (post) the row is recorded as advice; the status is withheld until a
-#         --source human verdict publishes it (BH-3683; lead_authority_mode=human,
-#         or an undecidable authority under either mode). Under --source
+#         --source human verdict publishes it (BH-3683; an undecidable
+#         authority, or a mode row BH-5035 refuses). Under --source
 #         risk-tier a 5 writes NO row: a lead review decides the head (BH-5022).
 #         Under --source lead a 5 is also a head where a human verdict is
 #         final: the worker answered human_final, the row is advice, and no
@@ -431,7 +428,8 @@ lv_post() {
   fi
   desc="$note"
   lv_head_check "$repo" "$pr" "$sha"
-  # BH-3683: may this lead row publish success? rc 1/2 = recorded as advice only.
+  # BH-3683: may this lead row publish success? rc 1/2 = recorded as advice only
+  # (la_decide no longer answers rc 1 since BH-5035; the branch still holds).
   local withhold="" lane_hit=""
   if { [ "$source" = lead ] || [ "$source" = risk-tier ]; } && [ "$verdict" != BLOCK ] && command -v la_decide >/dev/null 2>&1; then
     if ! la_decide "$repo" "$pr" "$sha" lead; then
@@ -718,7 +716,7 @@ lv_authority() {
   [ -z "${LA_GLOBS_FLOOR:-}" ] || echo "of which $(printf '%s\n' "$LA_GLOBS_FLOOR" | awk 'NF' | wc -l | tr -d ' ') have no DB row yet: the seed floor (catalog/lead-protected-paths.seed.tsv) still protects them; bin/lead-protected-paths-seed.sh on the hub turns them into rows"
   [ -n "$LA_GLOBS" ] || { echo "in scope: no (no live lead_protected_paths rows; the lane is the authority)"; return 0; }
   echo "in scope: yes"
-  if _la_authority "$repo"; then echo "authority: $LA_AUTH ($LA_AUTH_SRC)"
+  if _la_authority "$repo"; then echo "authority: $LA_AUTH ($LA_AUTH_SRC; not read by la_decide since BH-5035)"
   else echo "authority: UNREADABLE (settings row lead_authority.$(_la_key "$repo"))"; fi
   [ -n "$pr" ] || return 0
   lv_key_ok "$repo" "$pr"
@@ -727,7 +725,7 @@ lv_authority() {
   rc=0; la_decide "$repo" "$pr" "$sha" lead || rc=$?
   case "$rc" in
     0) echo "decision on #$pr @${sha:0:12}: a lead MERGE publishes ($LA_REASON)" ;;
-    1) echo "decision on #$pr @${sha:0:12}: human required: $LA_REASON" ;;
+    1) echo "decision on #$pr @${sha:0:12}: withheld (rc 1): $LA_REASON" ;;
     *) echo "decision on #$pr @${sha:0:12}: undecided, withheld: $LA_REASON" ;;
   esac
 }

@@ -14,16 +14,17 @@
 #   * POST repos/*/issues/*/comments answers $G/comment-status (default 201),
 #     every body logged to $G/comments.
 #   M1 no mode row = lane: hit rc 0, the lane reason, LA_PROTECTED_HIT=1; the REPRO
-#   M2 global human = today's rc 1 and string
+#   M2 global human = rc 2, refused (BH-5035 retired the value)
 #   M3 per-repo beats global both ways; ' Lane ' / HUMAN normalise
 #   M4 lane never reads lead_authority.<k>, human:precision/human revoke nothing
-#   M5 human + human:precision on an unprotected PR = rc 1 revoked
+#   M5 human + human:precision on an unprotected PR = rc 2 refused, not revoked
 #   M6 source human = rc 0, no read at all
 #   M7 la_human_needed: lane pages nobody; human (or unreadable) pages once
 #   M8 bin/lead-verdict.sh post under lane: success, one comment, dedupe, 500 retry
 #   M9 every hold (rc 2) and every non-hit
 # Run from anywhere: HARNESS_TEST_SANDBOX=1 bash tests/lead-authority-mode.bh-4145-test.sh
 # TEST-CHANGE BH-4140: globs come from the DB, not the TSV
+# TEST-CHANGE BH-5035: lead_authority_mode=human is refused (rc 2, retired reason), never rc 1
 set -uo pipefail
 . "$(dirname "$0")/lib/scratch.sh" || exit 1
 . "$(dirname "$0")/lib/lpp-stub.sh" || exit 1
@@ -155,20 +156,21 @@ R=$(decide "$IN" 7 lead)
 # ── M2: global human = BH-3683 ─────────────────────────────────────────────
 reset; files README.md .mergify.yml; setrow lead_authority_mode human
 R=$(decide "$IN" 7 lead)
-[ "$R" = 'rc=1 hit= reason=touches protected paths: .mergify.yml' ] && ok || bad "M2 global human = today's rc 1 and string ($R)"
+[ "$(rcof "$R")" = rc=2 ] && grep -qF "reason=the mode row lead_authority_mode reads 'human', a value BH-5035 retired" <<<"$R" && ok \
+  || bad "M2 global human = rc 2 with the BH-5035 retired reason ($R)"
 
 # ── M3: per-repo beats global, normalisation ───────────────────────────────
 reset; files .mergify.yml; setrow lead_authority_mode human; setrow "lead_authority_mode.$KEY" lane
 R=$(decide "$IN" 7 lead); [ "$(rcof "$R")" = rc=0 ] && ok || bad "M3 global human + per-repo lane = rc 0 ($R)"
 reset; files .mergify.yml; setrow lead_authority_mode lane; setrow "lead_authority_mode.$KEY" human
-R=$(decide "$IN" 7 lead); [ "$(rcof "$R")" = rc=1 ] && ok || bad "M3 global lane + per-repo human = rc 1 ($R)"
+R=$(decide "$IN" 7 lead); [ "$(rcof "$R")" = rc=2 ] && grep -qF "lead_authority_mode.$KEY reads 'human', a value BH-5035 retired" <<<"$R" && ok || bad "M3 global lane + per-repo human = rc 2 retired, naming the per-repo row ($R)"
 grep -q '^GET /api/settings/lead_authority_mode$' "$W/log" && bad "M3 a per-repo row means the global is never read" || ok
 reset; files .mergify.yml; setrow lead_authority_mode ' Lane '
 R=$(decide "$IN" 7 lead); [ "$(rcof "$R")" = rc=0 ] && ok || bad "M3 ' Lane ' normalises to lane ($R)"
 reset; files .mergify.yml; setrow "lead_authority_mode.$KEY" HUMAN
-R=$(decide "$IN" 7 lead); [ "$(rcof "$R")" = rc=1 ] && ok || bad "M3 HUMAN normalises to human ($R)"
+R=$(decide "$IN" 7 lead); [ "$(rcof "$R")" = rc=2 ] && grep -qF 'BH-5035 retired' <<<"$R" && ok || bad "M3 HUMAN normalises to human, the retired value ($R)"
 R=$(lib "_la_mode $IN; echo \"rc=\$? \$LA_MODE|\$LA_MODE_SRC\"")
-[ "$R" = "rc=0 human|lead_authority_mode.$KEY" ] && ok || bad "M3 _la_mode names the row it read ($R)"
+[ "$R" = "rc=2 human|lead_authority_mode.$KEY" ] && ok || bad "M3 _la_mode names the row it read and refuses human ($R)"
 reset; R=$(lib "_la_mode $IN; echo \"rc=\$? \$LA_MODE|\$LA_MODE_SRC\"")
 [ "$R" = "rc=0 lane|no row" ] && ok || bad "M3 _la_mode with no row = lane (no row) ($R)"
 
@@ -183,7 +185,9 @@ done
 # ── M5: human + human:precision on an unprotected PR ───────────────────────
 reset; setrow lead_authority_mode human; setrow "lead_authority.$KEY" human:precision
 R=$(decide "$IN" 7 lead)
-[ "$(rcof "$R")" = rc=1 ] && grep -q 'lane authority revoked' <<<"$R" && ok || bad "M5 human + human:precision = rc 1 revoked ($R)"
+[ "$(rcof "$R")" = rc=2 ] && grep -q 'BH-5035 retired' <<<"$R" && ! grep -q 'lane authority revoked' <<<"$R" && ok \
+  || bad "M5 human + human:precision = rc 2 refused mode, not revoked ($R)"
+grep -q "^GET /api/settings/lead_authority\.$KEY\$" "$W/log" && bad "M5 the authority row is not read" || ok
 
 # ── M6: source human ───────────────────────────────────────────────────────
 reset; files .mergify.yml

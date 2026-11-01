@@ -4,7 +4,9 @@
 # the worker's new answers for an unproven lead_* row under sig enforce. The
 # real bin/lib/jobs/*.sh, lead-authority.sh and catalog; only curl (the worker,
 # answers by path from $W/<key>.code + $W/<key>.json) and gh (REST) are stubbed.
-#   LS1  mode human; lead_authority answers the effective `human` -> la_decide lead rc 1
+#   LS1  mode human -> la_decide lead rc 2, refused (BH-5035); mode lane with the
+#        effective `human` of an unproven authority row -> rc 0 (the row is not read)
+# TEST-CHANGE BH-5035: LS1 pinned rc 1 under the retired human mode
 #   LS2  the lead_protected_paths read answers 409 with no fresh cache -> la_decide rc 2
 #        HOLD (BH-4148: was the extras row); an unproven signed row's 409 is still setting_get rc 9
 #   LS3  control: a proven lane, no extras, unprotected files -> rc 0
@@ -73,13 +75,17 @@ decide() {
     la_decide "$IN" 7 "$HEAD" lead; echo "rc=$? reason=${LA_REASON:-}" ) 2>"$T/err"
 }
 
-# LS1 — the worker's effective human for an unproven authority row (the
-# authority row only bites under lead_authority_mode=human, BH-4145)
+# LS1 — the worker's effective human for an unproven authority row. BH-5035
+# retired lead_authority_mode=human: that mode row is refused (rc 2 HOLD), and
+# under lane the authority row is not read, so its effective human revokes nothing.
 reset
 answer "$M" 200 "{\"key\":\"$M\",\"setting\":{\"key\":\"$M\",\"value\":\"human\"},\"source\":\"settings\"}"
 answer "$K" 200 "{\"key\":\"$K\",\"setting\":{\"key\":\"$K\",\"value\":\"human\",\"unproven\":true,\"stored_value\":\"lane\"},\"source\":\"unproven\"}"
 R=$(decide)
-case "$R" in "rc=1 reason=lane authority revoked"*) ok ;; *) bad "LS1 want rc 1 lane authority revoked, got: $R" ;; esac
+case "$R" in "rc=2 reason=the mode row $M reads 'human', a value BH-5035 retired"*) ok ;; *) bad "LS1 want rc 2 BH-5035 retired, got: $R" ;; esac
+answer "$M" 200 "{\"key\":\"$M\",\"setting\":{\"key\":\"$M\",\"value\":\"lane\"},\"source\":\"settings\"}"
+R=$(decide)
+case "$R" in "rc=0 "*) ok ;; *) bad "LS1 mode lane: an unproven human authority row revokes nothing, want rc 0, got: $R" ;; esac
 
 # LS2 — TEST-CHANGE BH-4148: the extras settings row is gone (a protected glob is
 # a lead_protected_paths row now), so the HOLD on an unreadable extras row

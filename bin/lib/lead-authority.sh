@@ -42,22 +42,17 @@
 # The file is read under the harness root ($HARNESS, else $H). With no root (the
 # lead's Mac, through verdict-status.sh) it is read next to this lib, at
 # ../../catalog/. A set root never falls back to the lib's tree.
-# What a protected path does depends on THE MODE (BH-4145), the settings row
-# lead_authority_mode.<owner>.<name>, else the global lead_authority_mode:
-#   lane   (the default: neither row exists) — a protected hit is REPORTED, not
-#          withheld: rc 0 with LA_PROTECTED_HIT=1, LA_PROTECTED_PATHS and a
-#          reason ending `cleared to merge on the lead verdict (lead_authority_mode=lane)`,
-#          so the lane MERGE publishes. The authority row is not read.
-#   human  the rule before BH-4145: two things take the lane's authority away
-#          for one PR head, and then a `--source human` verdict is the one
-#          writer that publishes success: 1. the PR touches a protected path; 2. the repo's authority
-#          row lead_authority.<owner>.<name> is `human` (an operator) or
-#          `human:precision` (bin/lead-review-precision.sh, after a precision
-#          drop). No authority row, or `lane`, leaves the lane authoritative.
-#          lead_authority.<owner>.<name> only bites under this mode.
-#   An unreadable mode row, or a value other than lane|human after trimming and
-#   lowercasing, is rc 2 (hold), never coerced to lane.
-#   Set it: bin/jobs-client.sh setting-set lead_authority_mode[.<owner>.<name>] lane|human
+# THE MODE (BH-4145) is the settings row lead_authority_mode.<owner>.<name>,
+# else the global lead_authority_mode. It has one value, `lane` (the default:
+# neither row exists): a protected hit is REPORTED, not withheld: rc 0 with
+# LA_PROTECTED_HIT=1, LA_PROTECTED_PATHS and a reason ending
+# `cleared to merge on the lead verdict (lead_authority_mode=lane)`, so the lane
+# MERGE publishes. The authority row lead_authority.<owner>.<name> is not read.
+# BH-5035 removed the `human` value. A stored `human` row is refused, not
+# coerced: rc 2 (hold) with LA_MODE_RETIRED=1 and a reason that names the row
+# and the fix. An unreadable mode row, or any other value after trimming and
+# lowercasing, is rc 2 too.
+#   Set it: bin/jobs-client.sh setting-set lead_authority_mode[.<owner>.<name>] lane
 # A repo with no live rows is not governed at all: it costs the one GET of its
 # rows and no other read (not even the mode row).
 #
@@ -65,11 +60,12 @@
 #   rc 0  this writer may publish success. Under lane, LA_PROTECTED_HIT=1 when
 #         the PR touches a protected path (empty otherwise), and
 #         LA_PROTECTED_PATHS names up to five of them (`, +N more`).
-#   rc 1  (mode human only) a human verdict is required; LA_REASON names the
-#         protected path(s), or says the lane authority is revoked.
+#   rc 1  no longer returned (the human mode it served was removed by
+#         BH-5035); callers keep their rc-1 branch, and it holds.
 #   rc 2  could not decide; LA_REASON says what was unreadable. Callers publish
 #         nothing on rc 2.
-# _la_mode <owner/repo>   LA_MODE (lane|human) and LA_MODE_SRC; rc 2 unreadable.
+# _la_mode <owner/repo>   LA_MODE and LA_MODE_SRC; rc 0 only for lane, rc 2
+#   unreadable, refused (LA_MODE_RETIRED=1 for human) or any other value.
 #   source=human is rc 0 with no read. A BLOCK is never asked: failure is the
 #   safe direction and any writer may publish it. For source=conductor a
 #   standing human MERGE / MERGE-WITH-NOTES on this exact head is rc 0 (a human
@@ -87,7 +83,7 @@
 #   read or not governed, rc 2 unreadable. Memoized per process (THE MEMO).
 # la_memo_reset — forget every memo entry of this shell.
 # la_human_needed <owner/repo> <pr> <head> <reason> <lane> — under mode lane,
-#   rc 0 with no beat and no marker. Under human, or an unreadable mode, ONE warn beat per
+#   rc 0 with no beat and no marker. Under an unreadable or refused mode, ONE warn beat per
 #   head naming the command that publishes the status, deduped by
 #   state/lead-authority/human-needed-<owner_name>-<pr>-<sha12>, written only
 #   after lane-alert.sh returned 0. While the head still waits it beats again
@@ -259,10 +255,11 @@ _la_authority() {
 # LA_MODE (`lane` when neither row exists) and LA_MODE_SRC (the key read, or
 # `no row`). The per-repo row lead_authority_mode.<owner>.<name> beats the
 # global lead_authority_mode. Trimmed and lowercased once, here. rc 2 when a
-# read fails or the value is not exactly lane|human (LA_MODE keeps the value).
+# read fails or the value is not exactly lane (LA_MODE keeps the value); a
+# `human` value, removed by BH-5035, also sets LA_MODE_RETIRED=1.
 _la_mode() {
   local k v rc=0
-  LA_MODE=""; LA_MODE_SRC=""
+  LA_MODE=""; LA_MODE_SRC=""; LA_MODE_RETIRED=""
   k=$(_la_key "$1") || return 2
   command -v setting_get >/dev/null 2>&1 || return 2
   v=$(setting_get "lead_authority_mode.$k") || rc=$?
@@ -277,7 +274,11 @@ _la_mode() {
     *) return 2 ;;
   esac
   LA_MODE=$(printf '%s' "$v" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//' | tr 'A-Z' 'a-z')
-  case "$LA_MODE" in lane|human) return 0 ;; *) return 2 ;; esac
+  case "$LA_MODE" in
+    lane) return 0 ;;
+    human) LA_MODE_RETIRED=1; return 2 ;;
+    *) return 2 ;;
+  esac
 }
 
 # _la_files <owner/repo> <pr> — every filename and previous_filename of the PR,
@@ -317,16 +318,15 @@ la_decide() {
       esac
     fi
   fi
-  _la_mode "$slug" || { LA_REASON="the mode row ${LA_MODE_SRC:-lead_authority_mode[.$(_la_key "$slug")]} could not be read or reads '$LA_MODE', not lane|human"; return 2; }
-  # Under lane the authority row is not even read: it revokes nothing.
-  if [ "$LA_MODE" = human ]; then
-    _la_authority "$slug" || { LA_REASON="the authority row lead_authority.$(_la_key "$slug") could not be read"; return 2; }
-    case "$LA_AUTH" in
-      lane) ;;
-      human|human:precision) LA_REASON="lane authority revoked (lead_authority.$(_la_key "$slug") = $LA_AUTH)"; return 1 ;;
-      *) LA_REASON="the authority row lead_authority.$(_la_key "$slug") reads '$LA_AUTH', not lane|human|human:precision"; return 2 ;;
-    esac
+  if ! _la_mode "$slug"; then
+    if [ "${LA_MODE_RETIRED:-}" = 1 ]; then
+      LA_REASON="the mode row $LA_MODE_SRC reads 'human', a value BH-5035 retired: delete the row or set it to lane (bin/jobs-client.sh setting-set $LA_MODE_SRC lane)"
+    else
+      LA_REASON="the mode row ${LA_MODE_SRC:-lead_authority_mode[.$(_la_key "$slug")]} could not be read or reads '$LA_MODE', not lane"
+    fi
+    return 2
   fi
+  # The mode is lane, so the authority row is not read: it revokes nothing.
   files=$(_la_files "$slug" "$pr") || { LA_REASON="the files of $slug#$pr could not be read whole"; return 2; }
   f=$(mktemp "${TMPDIR:-/tmp}/lead-authority.XXXXXX") || { LA_REASON="mktemp failed"; return 2; }
   grc=0; GH_ETAG=0 gh_rest GET "repos/$slug/pulls/$pr" > "$f" 2>/dev/null || grc=$?
@@ -351,13 +351,9 @@ $(printf '%s\n' "$files" | awk 'NF && !seen[$0]++')
 EOF
   if [ "$n" -gt 0 ]; then
     [ "$n" -gt 5 ] && hit="$hit, +$((n - 5)) more"
-    if [ "$LA_MODE" = lane ]; then
-      LA_PROTECTED_HIT=1; LA_PROTECTED_PATHS="$hit"
-      LA_REASON="touches protected paths: $hit; cleared to merge on the lead verdict (lead_authority_mode=lane)"
-      return 0
-    fi
-    LA_REASON="touches protected paths: $hit"
-    return 1
+    LA_PROTECTED_HIT=1; LA_PROTECTED_PATHS="$hit"
+    LA_REASON="touches protected paths: $hit; cleared to merge on the lead verdict (lead_authority_mode=lane)"
+    return 0
   fi
   LA_REASON="no protected path"
   return 0
@@ -367,7 +363,7 @@ la_human_needed() {
   local slug="$1" pr="$2" head="$3" reason="$4" lane="$5" root on mark
   root=$(_la_root)
   [ -n "$root" ] || return 1
-  # BH-4145: under lane nobody is asked. An unreadable mode still pages.
+  # BH-4145: under lane nobody is asked. An unreadable or refused mode still pages.
   if _la_mode "$slug" && [ "$LA_MODE" = lane ]; then return 0; fi
   on=$(printf '%s' "$slug" | tr 'A-Z/' 'a-z_')
   mark="$root/state/lead-authority/human-needed-$on-$pr-${head:0:12}"

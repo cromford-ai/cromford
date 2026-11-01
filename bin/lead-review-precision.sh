@@ -32,15 +32,15 @@
 # repo with its authority unchanged) with no error,
 # a precision and lead_merge >= LEAD_REVIEW_PRECISION_MIN_N:
 #   precision < LEAD_REVIEW_AUTHORITY_MIN_PRECISION and the settings row
-#     lead_authority.<owner>.<name> reads lane (or there is none): the row is
-#     set to human:precision, so every lead MERGE on the repo is advice until a
-#     --source human verdict publishes it, and ONE critical page goes out
-#     (lead-authority-revoked-<owner_name>-<day>). Only the transition pages. A
-#     failed row write pages nobody (next run retries); a written row whose page
-#     failed leaves state/lead-review-precision/authority-page-owed-<owner_name>,
-#     and the next run sends that page before anything else.
-#   precision >= the threshold and the row reads human:precision: back to lane,
-#     one warn beat (lead-authority-restored-<owner_name>-<day>).
+#     lead_authority.<owner>.<name> reads lane (or there is none): one log line,
+#     nothing written and no page. The lane stays the authority: BH-5035
+#     removed the human mode, so la_decide never reads that row. The drop is
+#     still in the day's warn beat above. A page owed by an older run
+#     (state/lead-review-precision/authority-page-owed-<owner_name>) is still
+#     sent first.
+#   precision >= the threshold and the row reads human:precision (a row an
+#     older run wrote): back to lane, one warn beat
+#     (lead-authority-restored-<owner_name>-<day>).
 #   The row reads human (an operator set it): never touched.
 #   An unreadable row: nothing changes, one log line.
 # A scored repo outside catalog scope is logged as scored but not governed.
@@ -269,26 +269,10 @@ while IFS=$'\t' read -r SLUG P N E; do
   esac
   LOWP=$(awk -v p="$P" -v t="$AMIN" 'BEGIN { print (p + 0 < t + 0) ? 1 : 0 }')
   if [ "$LOWP" = 1 ] && [ "$CUR" = lane ]; then
-    # BH-4145: under lead_authority_mode=lane (the default) la_decide never reads
-    # $KEY, so writing human:precision would withhold nothing and the critical
-    # page below would be false. The drop is still in the day's warn above; the
-    # lane stays the authority. An unreadable mode keeps the revocation (it holds).
-    MRC=0; _la_mode "$SLUG" || MRC=$?
-    if [ "$MRC" = 0 ] && [ "$LA_MODE" = lane ]; then
-      log "$SLUG: precision $P < $AMIN over n=$N; lead_authority_mode=lane ($LA_MODE_SRC), so nothing is withheld and $KEY is left alone"
-      continue
-    fi
-    if ! setting_set "$KEY" human:precision "BH-3683: precision $P < $AMIN over n=$N on $DAY"; then
-      log "$SLUG: precision $P < $AMIN but could not write the authority row $KEY; no page, retried next run"; continue
-    fi
-    log "$SLUG: precision $P < $AMIN over n=$N; $KEY set to human:precision"
-    PID="lead-authority-revoked-$ON-$DAY"
-    PMSG="$SLUG lead lane authority REVOKED: precision $P under $AMIN over the last $DAYS days (n=$N); every protected and unprotected PR now needs a --source human verdict. Detail: state/lead-review-precision/$DAY.json. Restore: bin/jobs-client.sh setting-set $KEY lane"
-    if ! "$H/bin/lane-alert.sh" --severity critical --id "$PID" lead-review-precision "$PMSG"; then
-      printf '%s\n%s\n' "$PID" "$PMSG" > "$STATE/authority-page-owed-$ON" \
-        && log "$SLUG: the revocation page failed; owed, sent first next run" \
-        || log "$SLUG: the revocation page failed and the owed marker could not be written"
-    fi
+    # BH-5035: la_decide never reads $KEY, so a human:precision row would
+    # withhold nothing. The drop is in the day's warn above.
+    log "$SLUG: precision $P < $AMIN over n=$N; the lane stays the authority (the human mode was removed, BH-5035); $KEY is left alone"
+    continue
   elif [ "$LOWP" = 0 ] && [ "$CUR" = human:precision ]; then
     if setting_set "$KEY" lane "BH-3683: precision recovered $P >= $AMIN"; then
       log "$SLUG: precision $P >= $AMIN; $KEY back to lane"

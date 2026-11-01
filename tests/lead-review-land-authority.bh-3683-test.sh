@@ -1,22 +1,28 @@
 #!/bin/bash
 # tests/lead-review-land-authority.bh-3683-test.sh — BH-3683: the hub land lane,
 # bin/lead-review-land.sh, is the lead-verdict authority for a normal PR (no Mac
-# anywhere) and records only advice on a PR that touches a protected path. Run
+# anywhere). Since BH-5035 lead_authority_mode is lane only: a protected PR
+# publishes too (the row carries authority:lane-protected). A stored `human`
+# mode row is refused, so the PR is recorded as advice only and one human-needed
+# beat goes out (the fail-closed hold). Run
 # WHOLE against a scratch harness carrying the real jobs client, lead-verdict.sh
 # and bin/lib/lead-authority.sh, with only these stubbed:
 #   * curl — a stateful jobs worker (the bh-1951 shape): lead-review list from
 #            $T/requests.json, POST/GET /api/verdicts over $T/vrows.json, the
-#            promoted stamp, GET /api/settings/<key> (404: no row), and GET
+#            promoted stamp, GET /api/settings/<key> (404: no row; the
+#            lead_authority_mode row answers `human` while $T/mode-human exists), and GET
 #            /api/lead-protected-paths answered by tests/lib/lpp-stub.sh (the
 #            repo's lead_protected_paths rows, $T/lpp.json);
 #   * gh   — PR 41's head, its files ($T/files.json), the statuses POST;
 #   * $H/bin/lane-alert.sh — records its argv in $T/log/alerts.
 #   L1 acceptance 2: an unprotected PR gets a published lead-verdict from the hub
-#   L2 acceptance 1: a protected PR gets the row as advice, no status, one beat
+#   L2 a protected PR under lane publishes; under a stored (refused) human mode
+#      row it gets the row as advice, no status, one beat
 #   L3 a withheld MERGE is not spot-checked; a published one still is (item 4)
 #   L4 the lane never claims --source human
 # Run from anywhere: HARNESS_TEST_SANDBOX=1 bash tests/lead-review-land-authority.bh-3683-test.sh
 # TEST-CHANGE BH-4140: globs come from the DB, not the TSV
+# TEST-CHANGE BH-5035: no mode row by default (lane); the withhold cases store a human mode row on purpose ($T/mode-human), which is now refused (rc 2)
 set -uo pipefail
 . "$(dirname "$0")/lib/scratch.sh" || exit 1
 . "$(dirname "$0")/lib/lpp-stub.sh" || exit 1
@@ -66,8 +72,9 @@ $(lpp_curl_case m url body)
   "POST /api/lead-reviews/"*/promoted)
     if [ "\$lead" != 1 ]; then code=403; out='{"error":"needs the lead token"}'
     else out='{"request":{"promoted_verdict_at":"2026-09-30T00:00:00Z"}}'; fi ;;
-  # TEST-CHANGE BH-4145: default mode is now lane; this suite pins human-mode behaviour
-  "GET /api/settings/lead_authority_mode") out='{"setting":{"key":"lead_authority_mode","value":"human"}}' ;;
+  "GET /api/settings/lead_authority_mode")
+    if [ -e "$T/mode-human" ]; then out='{"setting":{"key":"lead_authority_mode","value":"human"}}'
+    else code=404; out='{"error":"no such setting"}'; fi ;;
   "GET /api/settings/"*) code=404; out='{"error":"no such setting"}' ;;
   "POST /api/verdicts")
     if [ "\$(jq -r .source <<<"\$body")" != box ] && [ "\$lead" != 1 ]; then code=403; out='{"error":"needs the lead token"}'
@@ -112,7 +119,7 @@ setreqs() {
 }
 files() { printf '%s\n' "$@" | jq -Rsc 'split("\n") | map(select(length > 0)) | map({filename:.})' > "$T/files.json"; }
 reset() {
-  rm -f "$T/log"/* "$T/vrows.json" "$T/alertfail" "$H/logs/lead-review-land.log" "$H/logs/ALERTS.log"
+  rm -f "$T/log"/* "$T/vrows.json" "$T/alertfail" "$T/mode-human" "$H/logs/lead-review-land.log" "$H/logs/ALERTS.log"
   scratch_rm "$H/state/lead-review-land"; scratch_rm "$H/state/lead-authority"
   echo box-hub > "$H/state/box-name"
   setreqs MERGE; files README.md
@@ -135,8 +142,17 @@ grep -q -- '-f state=success' <<<"$S" && grep -q -- '-f context=lead-verdict' <<
 LOGF | grep -q 'lead review lr-1: MERGE posted as a source=lead row' && ok || bad "L1 the log line: $(LOGF)"
 grep -q 'lead-human-needed' <<<"$(alerts)" && bad "L1 a published PR asks no human: $(alerts)" || ok
 
-# ── L2 (acceptance 1 via the lane): a protected PR is advice, not a status ───
+# ── L2: under lane (no mode row) a protected PR publishes ───────────────────
 reset; files README.md bin/lib/verdict-status.sh; tick
+P=$(wlog | grep '^POST /api/verdicts ')
+[ "$(grep -c . <<<"$P")" = 1 ] && grep -q '"note":"lead-review:lr-1 report:state/lead-reviews/lr-41.md authority:lane-protected"' <<<"$P" \
+  && ok || bad "L2 lane: the row carries authority:lane-protected: $P"
+grep -- "-X POST repos/$REPO/statuses/$SHA" "$T/log/gh" 2>/dev/null | grep -q -- '-f state=success' && ok \
+  || bad "L2 lane: a protected PR gets lead-verdict success: $(grep statuses "$T/log/gh" 2>/dev/null)"
+grep -q 'lead-human-needed' <<<"$(alerts)" && bad "L2 lane: nobody is asked: $(alerts)" || ok
+
+# ── L2b: a stored human mode row (refused) holds: advice, not a status ──────
+reset; touch "$T/mode-human"; files README.md bin/lib/verdict-status.sh; tick
 P=$(wlog | grep '^POST /api/verdicts ')
 [ "$(grep -c . <<<"$P")" = 1 ] && grep -q '"note":"lead-review:lr-1 report:state/lead-reviews/lr-41.md authority:human-required"' <<<"$P" \
   && ok || bad "L2 the row is posted with the authority token: $P"
@@ -153,7 +169,7 @@ tick
 [ "$(statuses)" = 0 ] && ok || bad "L2 the stamp-only tick publishes nothing either"
 
 # ── L5: a beat that could not be sent is not stamped, and is asked next tick ─
-reset; files .mergify.yml; touch "$T/alertfail"; tick
+reset; touch "$T/mode-human"; files .mergify.yml; touch "$T/alertfail"; tick
 [ "$(wlog | grep -c '^POST /api/verdicts ')" = 1 ] && [ "$(wlog | grep -c '/promoted ')" = 0 ] && ok \
   || bad "L5 a failed beat: the row is posted, the request is not stamped: $(wlog)"
 LOGF | grep -q 'human-needed beat could not be sent; not stamped' && ok || bad "L5 the log says so: $(LOGF)"
@@ -164,7 +180,7 @@ tick
 [ "$(alerts | grep -c 'lead-human-needed')" = 1 ] && ok || bad "L5 and never asks twice for the head"
 
 # ── L3: spot-check sampling (item 4) ────────────────────────────────────────
-reset; files .mergify.yml; tick LEAD_REVIEW_SPOTCHECK_PCT=100
+reset; touch "$T/mode-human"; files .mergify.yml; tick LEAD_REVIEW_SPOTCHECK_PCT=100
 grep -q 'lead-spotcheck-' <<<"$(alerts)" && bad "L3 a withheld MERGE is not spot-checked: $(alerts)" || ok
 reset; tick LEAD_REVIEW_SPOTCHECK_PCT=100
 [ "$(alerts | grep -c 'lead-spotcheck-lr-1')" = 1 ] && ok || bad "L3 a published lane MERGE is still sampled: $(alerts)"

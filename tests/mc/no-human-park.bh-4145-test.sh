@@ -1,8 +1,8 @@
 #!/bin/bash
 # tests/mc/no-human-park.bh-4145-test.sh — BH-4145: under lead_authority_mode
 # lane (the default: no row) the conductor never parks a protected-path PR as
-# NEEDS_HUMAN_VERDICT; it enqueues it like any other PR. Under human it still
-# parks. CI is not bypassed.
+# NEEDS_HUMAN_VERDICT; it enqueues it like any other PR. A stored human mode
+# row (refused since BH-5035) holds the row, it never parks. CI is not bypassed.
 #
 # WHAT IS DRIVEN. The real bin/merge-conductor.sh over a Mergify repo through
 # tests/lib/nhv-conductor-fixture.sh, with two swaps the fixture does not make
@@ -18,12 +18,14 @@
 #     reaches the fixture's gh. $HARNESS/bin/lane-alert.sh records to $T/alerts.
 #   N1 protected PR, green CI, no mode row -> enqueued (QUEUED, labelled, success
 #      published), never NEEDS_HUMAN_VERDICT, nobody paged
-#   N2 the same with lead_authority_mode=human -> NEEDS_HUMAN_VERDICT
-#   N3 a row parked NEEDS_HUMAN_VERDICT under human, the row deleted -> one tick
-#      leaves the park and enqueues, alerts unchanged
+#   N2 the same with lead_authority_mode=human -> la_decide rc 2: the row stays
+#      READY under the BH-2199 hold (MERGE_HELD naming the BH-5035 reason), not
+#      NEEDS_HUMAN_VERDICT; no label, no success, no human-needed page
+#   N3 N2's held row, the human row deleted -> one tick enqueues, no page
 #   N4 lane + red CI -> not enqueued, no success published
 # Run from anywhere: HARNESS_TEST_SANDBOX=1 bash tests/mc/no-human-park.bh-4145-test.sh
 # TEST-CHANGE BH-4140: globs come from the DB, not the TSV
+# TEST-CHANGE BH-5035: a stored lead_authority_mode=human row is refused (rc 2 hold), it no longer parks NEEDS_HUMAN_VERDICT
 set -uo pipefail
 # shellcheck source=tests/lib/scratch.sh
 . "$(dirname "$0")/../lib/scratch.sh" || exit 1
@@ -116,16 +118,18 @@ grep -q "pulls/41/files" "$T/gh-calls.txt" && ok || bad "N1 lane: la_decide real
 # ── N2 ──────────────────────────────────────────────────────────────────────
 reset human
 nhvf_tick
-[ "$(state)" = NEEDS_HUMAN_VERDICT ] && ok || bad "N2 human: the protected PR parks NEEDS_HUMAN_VERDICT ($(why))"
+[ "$(state)" = READY ] && ok || bad "N2 human: a refused mode row holds the row READY, never NEEDS_HUMAN_VERDICT ($(why))"
+grep -F '#41' "$CLOG" | grep -q "MERGE_HELD: .*the lead authority could not be decided (the mode row lead_authority_mode reads 'human', a value BH-5035 retired" \
+  && ok || bad "N2 human: the hold names the BH-5035 reason ($(why))"
 labelled && bad "N2 human: no label" || ok
 [ "$(published)" = 0 ] && ok || bad "N2 human: no success published ($(cat "$T/vs-calls.txt"))"
-[ "$(nalerts)" = 1 ] && ok || bad "N2 human: one human-needed page ($(cat "$T/alerts" 2>/dev/null))"
+[ "$(nalerts)" = 0 ] && ok || bad "N2 human: no human-needed page ($(cat "$T/alerts" 2>/dev/null))"
 
 # ── N3 ──────────────────────────────────────────────────────────────────────
-# N2's parked row, the human row deleted: the next tick leaves the park.
+# N2's held row, the human row deleted: the next tick enqueues it.
 rm -f "$T/set/lead_authority_mode" "$T/alerts"; nhvf_clear
 nhvf_tick
-[ "$(state)" = QUEUED ] && labelled && ok || bad "N3 a NEEDS_HUMAN_VERDICT row under lane is enqueued in one tick ($(why))"
+[ "$(state)" = QUEUED ] && labelled && ok || bad "N3 a held row under lane is enqueued in one tick ($(why))"
 [ "$(nalerts)" = 0 ] && ok || bad "N3 no human-verdict page on the way out ($(cat "$T/alerts" 2>/dev/null))"
 
 # ── N4 ──────────────────────────────────────────────────────────────────────
