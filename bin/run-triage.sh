@@ -322,6 +322,10 @@ rt_dispatch_mode  # BH-6350: hotfix-only mode — one log line + launch directiv
 [ -r "$HARNESS/bin/lib/reopen-reason.sh" ] && . "$HARNESS/bin/lib/reopen-reason.sh" 2>/dev/null && rr_on && RR_NOTE=$(rr_triage_note "$PROJECT" 2>/dev/null) && [ -n "$RR_NOTE" ] && PROMPT_TEXT="$PROMPT_TEXT
 
 $RR_NOTE"
+# BH-8859: production red = no completion close-out this tick (bin/lib/prod-red-defer.sh); empty = prompt unchanged
+[ -r "$HARNESS/bin/lib/prod-red-defer.sh" ] && . "$HARNESS/bin/lib/prod-red-defer.sh" 2>/dev/null && PRD_NOTE=$(prod_red_triage_note "$HARNESS" "$PROJECT" 2>/dev/null) && [ -n "$PRD_NOTE" ] && { PROMPT_TEXT="$PROMPT_TEXT
+
+$PRD_NOTE"; echo "$STAMP [$PROJECT] PROD-RED defer: completion close-outs held ($(prod_red_defer_state "$HARNESS" "$PROJECT" | cut -f1,2 | tr '\t' ' '))" >> "$LOG"; }
 # The SOP as written, kept aside before the arms below wrap it in this tick's
 # scope. A triage shard carries its OWN one-ticket scope and then the SOP; handed
 # the wrapped copy it would also be handed the whole tick's reading list, which

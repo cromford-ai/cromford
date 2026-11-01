@@ -32,8 +32,14 @@
 # KILL FLAG: BUILDER_DIRECT=0 / flags/builder-direct-off -> exit 3 without
 # posting anything (bin/lib/builder-direct.sh owns the flag).
 #
-# exit 0 posted · 3 switched off · 4 not a close-out this lane words · 1 could
-# not post (the caller leaves the relay path to carry it, exactly as today).
+# PRODUCTION RED (BH-8859): a PR_MERGED close-out says "merged" and moves the
+# ticket to done, so while the project's production deploy is red
+# (bin/lib/prod-red-defer.sh) it exits 4 before any request. The RESULT stays
+# unmarked, and the sweep posts it after the next green deploy.
+#
+# exit 0 posted · 3 switched off · 4 not a close-out this lane words, or a
+# merged close-out that waits for a green deploy · 1 could not post (the caller
+# leaves the relay path to carry it, exactly as today).
 #
 # gh-rest: no-graphql
 #
@@ -47,6 +53,8 @@ command -v jq >/dev/null 2>&1 || { say "jq required"; exit 1; }
 # shellcheck source=bin/lib/builder-direct.sh
 [ -r "$BIN/lib/builder-direct.sh" ] && . "$BIN/lib/builder-direct.sh"
 command -v builder_direct_on >/dev/null 2>&1 || { say "bin/lib/builder-direct.sh missing"; exit 3; }
+# shellcheck source=bin/lib/prod-red-defer.sh
+[ -r "$BIN/lib/prod-red-defer.sh" ] && . "$BIN/lib/prod-red-defer.sh"
 [ "$(builder_direct_on "$HARNESS")" = 1 ] || { say "builder-direct is off"; exit 3; }
 [ -s "$BUILD/RESULT" ] || { say "no RESULT in $BUILD"; exit 4; }
 
@@ -60,6 +68,12 @@ case "$RLINE" in
   PR_MERGED\ http*)  TO_STATUS=done ;;
   *) say "not a PR close-out ($(printf '%.40s' "$RLINE")) — left for the sweep"; exit 4 ;;
 esac
+if [ "$TO_STATUS" = done ] && command -v prod_red_defers_dir >/dev/null 2>&1 \
+   && prod_red_defers_dir "$HARNESS" "$PROJECT" "$BUILD"; then
+  IFS=$'\t' read -r PRD_SINCE PRD_SHA _ <<<"$(prod_red_defer_state "$HARNESS" "$PROJECT")"
+  say "production red since ${PRD_SINCE:-?} (commit ${PRD_SHA:-?}): the merged close-out waits for a green deploy — left for the sweep"
+  exit 4
+fi
 PR_URL=$(grep -oE 'https://github.com/[^ ]+/pull/[0-9]+' <<<"$RLINE" | head -1)
 [ -n "$PR_URL" ] || { say "no PR url on the RESULT line"; exit 4; }
 

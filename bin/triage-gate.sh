@@ -138,6 +138,12 @@ for _P in "$(dirname "$0")/lib/rr-cursor.sh" "$HARNESS/bin/lib/rr-cursor.sh"; do
   # shellcheck source=/dev/null
   [ -r "$_P" ] && { . "$_P"; break; }
 done
+# BH-8859: a PR_MERGED close-out waits while production is red, so step 3
+# buys no results-sweep for it. No lib = step 3 as before.
+for _P in "$(dirname "$0")/lib/prod-red-defer.sh" "$HARNESS/bin/lib/prod-red-defer.sh"; do
+  # shellcheck source=/dev/null
+  [ -r "$_P" ] && { . "$_P"; break; }
+done
 # BH-2350: the builds-of-record reader, for section 3b. No lib, no 3b.
 for _P in "$(dirname "$0")/lib/builds-of-record.sh" "$HARNESS/bin/lib/builds-of-record.sh"; do
   # shellcheck source=/dev/null
@@ -1074,7 +1080,9 @@ fi
 # 3. finished builds awaiting their board close-out comment
 SWEEP_HELD=0
 for d in "$HARNESS/builds/$PROJECT"-*/ "$HARNESS/builds/pool-$PROJECT"-*/; do
-  if [ -f "$d/RESULT" ] && [ ! -f "$d/COMMENTED" ]; then
+  # BH-8859: a dir whose close-out waits for a green deploy wakes nothing.
+  if [ -f "$d/RESULT" ] && [ ! -f "$d/COMMENTED" ] \
+     && ! { command -v prod_red_defers_dir >/dev/null 2>&1 && prod_red_defers_dir "$HARNESS" "$PROJECT" "$d"; }; then
     # results-sweep COST BRAKE: if the exact same un-commented set already got a
     # session <45m ago and is still un-commented, the session PROVED it cannot
     # close these (RESULT_UNVERIFIED etc.) — a re-run on identical input burns

@@ -1,0 +1,11 @@
+{
+  "env": "TRIAGE_PROD_RED_DEFER",
+  "read_in": "bin/lib/prod-red-defer.sh",
+  "type": "int",
+  "default": 1,
+  "min": 0,
+  "max": 1,
+  "unit": null,
+  "zero_means": "off",
+  "note": "BH-8859: 1 = while the newest production deploy of a project is red (.projects[<p>].prod_red in state/vercel-deploy-status.json, fresh within MC_PROD_RED_MAX_AGE_S), a PR_MERGED close-out waits: bin/board-closeout.sh exits 4, the results sweep leaves the dir off its list, the triage gate buys no sweep for it, and the triage prompt forbids a completion comment. The dir keeps no COMMENTED marker, so it is swept after the next green deploy. 0 = off. Not 0 reads as 1. Per-project row: lane.run-triage.<project>.triage_prod_red_defer."
+}

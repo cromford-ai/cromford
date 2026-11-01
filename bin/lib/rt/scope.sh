@@ -71,6 +71,14 @@ for _RTS_P in "$(dirname "${BASH_SOURCE[0]}")/../gate-release.sh" ${_RTS_R:+"$_R
   [ -r "$_RTS_P" ] && { . "$_RTS_P"; break; }
 done
 unset _RTS_P
+# BH-8859: a PR_MERGED close-out waits while production is red; rt_unswept_dirs
+# leaves those dirs off the sweep list. No lib = the list as before.
+# shellcheck source=bin/lib/prod-red-defer.sh
+for _RTS_P in "$(dirname "${BASH_SOURCE[0]}")/../prod-red-defer.sh" ${_RTS_R:+"$_RTS_R/bin/lib/prod-red-defer.sh"}; do
+  # shellcheck source=/dev/null
+  [ -r "$_RTS_P" ] && { . "$_RTS_P"; break; }
+done
+unset _RTS_P
 # BH-3946: in-app text-dependency releases. bin/triage-gate.sh's step 1e answers
 # `RUN inapp-deps-ready`; inapp_released_lines appends inapp_deps_take_lines.
 # No lib = no line.
@@ -592,10 +600,13 @@ fi
 # un-commented dirs sorting first (BH-3001..3030) a fresh BH-3859 result never
 # made it, and the sweep that result fired bought shards for everyone else.
 # Ties keep glob order (sort -s); a RESULT that vanishes mid-list sorts last.
+# BH-8859: a PR_MERGED dir is left off while production is red
+# (prod_red_defers_dir); it keeps no COMMENTED, so it is back after green.
 rt_unswept_dirs() {
   local d m
   for d in "$HARNESS/builds/$PROJECT"-*/ "$HARNESS/builds/pool-$PROJECT"-*/; do
     [ -f "$d/RESULT" ] && [ ! -f "$d/COMMENTED" ] || continue
+    command -v prod_red_defers_dir >/dev/null 2>&1 && prod_red_defers_dir "$HARNESS" "$PROJECT" "$d" && continue
     m=$(stat -c %Y "$d/RESULT" 2>/dev/null) || m=0
     printf '%s\t%s :: %s\n' "${m:-0}" "${d%/}" "$(head -c 200 "$d/RESULT" 2>/dev/null | head -1)"
   done 2>/dev/null | sort -s -rn -k1,1 | cut -f2- | head -30
