@@ -406,7 +406,7 @@ _unblock_infra_tail() {
 # starve_min, starve_passes, triage_out (a logs/<p>.triage-<KEY>.out newer
 # than the first pass), day.
 _unblock_infra_starve() {
-  local root txt win smin spass stale p key out qm np deps src par pk st idle why unread bp
+  local root txt win smin spass stale p key out qm np deps src par pk st idle why unread kind
   local -a pars
   local -A stuck_kids=() stuck_src=()
   # An unread log is one source-unreadable record PER project asked about, so
@@ -430,9 +430,15 @@ _unblock_infra_starve() {
   local recs
   for p in "$@"; do
     stuck_kids=(); stuck_src=()
-    # A project with a product board (fleet.conf board_prefix not `-`) keys its
-    # tickets on the board, not on GitHub issue numbers: no parent read there.
-    bp=$("$root/bin/fleet-conf.sh" "$p" board_prefix 2>/dev/null) || bp=""
+    # Only a github-issues project keys its tickets on GitHub issue numbers: a
+    # board, Jira or Linear project gets no parent read (the kind seam,
+    # bin/lib/tracker.sh). The first call warms the cache in this shell.
+    # shellcheck source=bin/lib/tracker.sh
+    declare -F tracker_kind >/dev/null || . "$root/bin/lib/tracker.sh" 2>/dev/null || true
+    kind=""
+    if declare -F tracker_kind >/dev/null && tracker_kind "$p" >/dev/null 2>&1; then
+      kind=$(tracker_kind "$p" 2>/dev/null) || kind=""
+    fi
     recs=$(jq -Rnc --arg p "$p" --argjson now "$_UBI_NOW" --argjson win "$win" --argjson smin "$smin" --argjson spass "$spass" '
       def ep($a): ($a | sub(" "; "T") + "Z" | fromdateiso8601);
       [inputs | (capture("^(?<at>[0-9]{4}-[0-9]{2}-[0-9]{2} [0-9]{2}:[0-9]{2}:[0-9]{2})Z (?<p>[A-Za-z0-9._-]+) (?<key>[A-Za-z0-9.-]+) queued (?<min>[0-9]+)m with no spawn") | . + {ev: "q"}),
@@ -465,7 +471,7 @@ _unblock_infra_starve() {
           why="waits on over $(_unblock_infra_parent_max) parents: not read"; unread="over ${pars[1]} parents"; pars=()
         fi
         for par in "${pars[@]}"; do
-          _unblock_infra_parent_state "${_UBI_REPO:-}" "$par" "$bp"
+          _unblock_infra_parent_state "${_UBI_REPO:-}" "$par" "$kind"
           read -r st _ <<<"${_UBI_PS[$par]}"
           [ "$st" = open ] || continue
           read -r _ _ idle pk _ <<<"${_UBI_PS[$par]}"
@@ -581,26 +587,30 @@ _unblock_infra_parent_max() {
   printf '%s' "$m"
 }
 
-# _unblock_infra_parent_state <repo> <PARENT> [<board_prefix>] — BH-8766. Sets
+# _unblock_infra_parent_state <repo> <PARENT> <kind> — BH-8766. Sets
 # _UBI_PS[<PARENT>] to `<state> <progress_epoch> <idle_h> <pr> <pr_url>
 # <head>` (`-` for a missing value). state is open, closed or unread: no
 # repo, no gh_rest or _UBI_TMP, a failed read or a body that is not the issue object is
-# unread, never closed. A board_prefix that is set and not `-` (a product-board
-# project: its keys are not GitHub issue numbers) is unread with no gh call. When open, the PR is the open one from
+# unread, never closed. A tracker kind (tracker_kind) that is not exactly
+# github-issues (board, jira, linear, or empty when it does not resolve: the
+# keys are not GitHub issue numbers) is unread with no gh call. When open, the PR is the open one from
 # ticket/<parent lowercased> (_unblock_infra_reach's query); progress is that
 # PR's updated_at, else the issue's. Cached in _UBI_PS for the call. Runs in
 # the caller's shell: never call it in $(...).
 _unblock_infra_parent_state() {
-  local repo="$1" par="$2" bp="${3:-}" root n body st up pr=- url=- head=- pu prs pt
+  local repo="$1" par="$2" kind="${3:-}" root n body st up pr=- url=- head=- pu prs pt
   [ -n "${_UBI_PS[$par]+x}" ] && return 0
   _UBI_PS[$par]="unread - - - - -"
-  [ -n "$bp" ] && [ "$bp" != - ] && return 0
+  [ "$kind" = github-issues ] || return 0
   n=${par##*-}; root=$(_unblock_infra_root)
   [[ $repo =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] && [[ $n =~ ^[0-9]+$ ]] || return 0
   # shellcheck disable=SC1091
   declare -F gh_rest >/dev/null || { [ -n "$root" ] && . "$root/bin/lib/gh-rest.sh" 2>/dev/null; } || true
   declare -F gh_rest >/dev/null && [ -d "${_UBI_TMP:-}" ] || return 0
-  gh_rest GET "repos/$repo/issues/$n" > "$_UBI_TMP/parent-issue.json" 2>/dev/null || return 0
+  # shellcheck source=bin/lib/tracker/github-issues.sh
+  declare -F trk_gh_issue_raw >/dev/null || . "$root/bin/lib/tracker/github-issues.sh" 2>/dev/null || true
+  declare -F trk_gh_issue_raw >/dev/null || return 0
+  TRK_SLUG="$repo" trk_gh_issue_raw "$n" > "$_UBI_TMP/parent-issue.json" 2>/dev/null || return 0
   body=$(cat "$_UBI_TMP/parent-issue.json")
   read -r st up < <(jq -r 'if type == "object" and (.state == "open" or .state == "closed") and (.updated_at | type) == "string"
       then "\(.state) \(.updated_at | sub("\\.[0-9]+Z$"; "Z") | try fromdateiso8601 catch "-")" else "- -" end' <<<"$body" 2>/dev/null)

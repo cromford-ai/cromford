@@ -230,8 +230,8 @@ _pbs_parent() {
   if [ -s "$cf" ]; then
     v=$(head -1 "$cf"); [ "$v" = none ] || printf '%s' "$v"; return 0
   fi
-  command -v _gh_rest_field >/dev/null 2>&1 || return 0
-  v=$(_gh_rest_field "repos/$1/issues/$2" \
+  command -v trk_gh_issue_field >/dev/null 2>&1 || return 0
+  v=$(TRK_SLUG="$1" trk_gh_issue_field "$2" \
     '[(.body // "") | scan("(?:^|[\\r\\n])[ \\t>*_#-]*part[- ]of:?[ \\t*_]*#([0-9]+)\\b"; "i")] | (.[0][0] // "none")') || rc=$?
   case "$rc:$v" in
     0:none) printf 'none\n' > "$cf" 2>/dev/null ;;

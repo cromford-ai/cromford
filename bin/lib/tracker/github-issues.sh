@@ -64,6 +64,15 @@ trk_gh_issue_raw() {
   gh_rest GET "repos/$TRK_SLUG/issues/$1"
 }
 
+# trk_gh_issue_field <n> <jq filter> — one value from the single issue GET
+# (_gh_rest_field: 0 with the value, 44 absent, 75 unreadable or empty). rc 1
+# and no call on a bad slug or number, an empty filter or no _gh_rest_field.
+trk_gh_issue_field() {
+  _trk_gh_ok "${1:-}" && [ -n "${2:-}" ] || return 1
+  command -v _gh_rest_field >/dev/null 2>&1 || return 1
+  _gh_rest_field "repos/$TRK_SLUG/issues/$1" "$2"
+}
+
 # trk_gh_labels <n> — the issue's label names, one per line, from the single
 # GET (no comment read: bin/lib/fc-issues.sh's parent-label read must not cost
 # a second call). Prints nothing on a failed read; rc as trk_gh_issue_raw.
