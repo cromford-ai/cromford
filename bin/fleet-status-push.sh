@@ -327,6 +327,31 @@ fi
 # The fleet's .projects, remote_results_pending and expected lanes ARE the rows.
 PROJECTS=$(printf '%s' "$ROWS" | jq -sc 'reduce .[] as $r ({}; .[$r.project] = $r.row)' 2>/dev/null) || PROJECTS='{}'
 [ -n "$PROJECTS" ] || PROJECTS='{}'
+# >>> prod red (BH-8884)
+# The console's QUEUE cell shows `prod: red since <time>` next to the depth.
+# It reads the SAME answer the merge conductor holds on (mc_prod_red_state),
+# so the page never says green while the queue is held, or red while it is not.
+# Fail-open: no reader, no snapshot or a jq error leaves PROJECTS as it was.
+_f="$H/bin/merge-conductor.d/bh-8781-prod-red-hold.sh"
+# shellcheck source=bin/merge-conductor.d/bh-8781-prod-red-hold.sh
+[ -r "$_f" ] && . "$_f" 2>/dev/null
+if command -v mc_prod_red_state >/dev/null 2>&1; then
+  PRSNAP="${MC_PROD_RED_SNAPSHOT:-$H/state/vercel-deploy-status.json}"
+  PRMAP='{}'
+  # Only projects vercel.conf names have a production deploy to be red.
+  VPROJ=$(awk '!/^#/ && NF>=4 {print $1}' "$H/vercel.conf" 2>/dev/null)
+  for _p in $(jq -r 'keys[]' <<<"$PROJECTS" 2>/dev/null); do
+    grep -qxF -- "$_p" <<<"$VPROJ" || continue
+    _st=$(MC_PROD_RED_SNAPSHOT="$PRSNAP" P="$_p" mc_prod_red_state "$_p" 2>/dev/null); _rc=$?
+    case "$_rc" in
+      0) IFS=$'\t' read -r _since _sha _id <<<"$_st"
+         PRMAP=$(jq -c --arg p "$_p" --arg s "$_since" --arg h "$_sha" --arg i "$_id" '.[$p] = {state:"red",since:$s,sha:$h,id:$i}' <<<"$PRMAP") ;;
+      2) PRMAP=$(jq -c --arg p "$_p" --arg g "$_st" '.[$p] = {state:"unknown",generated_at:$g}' <<<"$PRMAP") ;;
+    esac
+  done
+  _pj=$(jq -c --argjson m "$PRMAP" 'with_entries(if $m[.key] then .value.prod = $m[.key] else . end)' <<<"$PROJECTS" 2>/dev/null) && [ -n "$_pj" ] && PROJECTS="$_pj"
+fi
+# <<< prod red
 RRP=$(printf '%s' "$ROWS" | jq -sc 'reduce .[] as $r ({}; .[$r.project] = ($r.rrp // 0))' 2>/dev/null) || RRP='{}'
 [ -n "$RRP" ] || RRP='{}'
 LANES=$(printf '%s' "$ROWS" | jq -sc '[.[] | .lane | select(type == "object")]' 2>/dev/null) || LANES='[]'

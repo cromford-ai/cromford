@@ -27,6 +27,7 @@ import { shapeFleetCells, wipInputError, cellText, flagSortValue } from '../lib/
 import { formatModeValue, allowInputError, parseAllowInput, modeText, modeRank } from '../lib/dispatch-mode.js';
 import { loadFirstRun, showFirstRun } from '../lib/first-run.js';
 import { FirstRun } from './FirstRun.js';
+import { prodMarker } from '../lib/prod-red.js';
 
 // Same map as Now.js, so LAST RESULT reads in the colours /now uses.
 const TONE_CLASS = { green: 'tag tag--green', dead: 'tag tag--dead', warn: 'tag tag--warn', muted: 'tag tag--idle' };
@@ -567,9 +568,14 @@ export function ProjectsTable({
         if (f.held) parked.push(`${f.held} held`);
         if (f.failed) parked.push(`${f.failed} failed`);
         const tail = parked.length ? html`<span class="na"> · ${parked.join(' · ')}</span>` : null;
+        // BH-8884: the conductor's production-red hold, beside the depth.
+        const m = prodMarker(f.prod);
+        const prod = m
+          ? html` <span class=${m.tone === 'bad' ? 'tag tag--bad' : 'tag tag--idle'} title=${m.title} data-testid="prod-red">${m.text}</span>`
+          : null;
         const n = countOrNull(q);
-        if (n === 'no data' || n === '0') return html`<span class="na">${n}</span>${tail}`;
-        return html`<span class="num">${n}</span>${tail}`;
+        if (n === 'no data' || n === '0') return html`<span class="na">${n}</span>${tail}${prod}`;
+        return html`<span class="num">${n}</span>${tail}${prod}`;
       }
     },
     {
