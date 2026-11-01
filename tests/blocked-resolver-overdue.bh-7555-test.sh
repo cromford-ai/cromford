@@ -48,8 +48,11 @@ ok()  { PASS=$((PASS+1)); }
 bad() { FAIL=$((FAIL+1)); echo "FAIL: $1"; }
 command -v jq >/dev/null || { echo "jq missing — skipping"; exit 0; }
 
-# ONE clock read for the whole file (bin/test-determinism-lint.sh): every park
-# age below is derived from it.
+# ONE clock read for the file (bin/test-determinism-lint.sh): every park age
+# below is derived from it. O10 takes a second read just before its rows: the
+# resolver ages rows against its own clock at tick time, and O10's assertion is
+# exact to the minute, so a suite that reaches O10 more than 60 s after this
+# read would see 101m (BH-8775).
 NOW=$(date -u +%s)
 
 H="$T/h"
@@ -296,6 +299,10 @@ RUN
 #      than its share.
 # ============================================================================
 CLEAN
+# Fresh anchor (BH-8775): oldest_untouched= is computed against the resolver's
+# own tick clock, and the assertion below is exact to the minute. The file-start
+# NOW is 60-80 s old by here on a loaded host, which reads 101m.
+NOW=$(date -u +%s)
 ROWADD "o/p1#100" "$((NOW - 600))"   "$CONFLICT" "https://github.com/o/p1/pull/100"
 ROWADD "o/p1#101" "$((NOW - 6000))"  "$IRONLAW"  "https://github.com/o/p1/pull/101" BLOCKED_HUMAN "$HEAD_B"
 ROWADD "o/p1#102" "$((NOW - 9000))"  "$IRONLAW"  "https://github.com/o/p1/pull/102" BLOCKED_HUMAN "$HEAD_B"
