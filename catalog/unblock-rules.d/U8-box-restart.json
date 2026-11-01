@@ -13,6 +13,12 @@
       "(.envbundle_fail_1h | type) == \"number\" and .envbundle_fail_1h > 3",
       "(.last_restart_min_ago | type) == \"number\" and .last_restart_min_ago > 60",
       ".build_claim_10m == false"
+    ],
+    "wait": [
+      {
+        "pred": "(.ssh_unreachable_min | type) == \"number\" and (.hung_min_threshold | type) == \"number\" and .ssh_unreachable_min > .hung_min_threshold",
+        "under": "(.ssh_unreachable_min | type) == \"number\" and (.hung_min_threshold | type) == \"number\" and .ssh_unreachable_min <= .hung_min_threshold"
+      }
     ]
   },
   "judge": null,

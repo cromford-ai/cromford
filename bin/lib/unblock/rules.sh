@@ -28,7 +28,10 @@
 #     value that starts with `.` is a record field path), judge null or
 #     {prompt, question, when?} (no `when` = the judge always runs),
 #     never_auto {<key glob>: <class>} (the class when .proposal.key matches),
-#     note and any other key the engine does not read.
+#     match.wait [{pred, under}] (BH-8766: pred is an entry of match.all that
+#     is a wait threshold, under a predicate that is T while the record is
+#     under it; a pred not in match.all refuses the load), note and any other
+#     key the engine does not read.
 #     The id is not required to be the file stem: main's U8-U12 files are
 #     U8-box-restart.json with id "U8". Every lookup indexes by id
 #     (bin/lib/unblock/override.sh uo_class_of, which
@@ -38,7 +41,10 @@
 #     Each predicate reads T (true), F (false) or U (unknown: an error, a
 #     non-boolean, or not exactly one output). Unknown is not false, and it is
 #     not true: a rule matches only when its match.kind takes the record's kind
-#     and EVERY predicate reads T. The first match by priority wins.
+#     and EVERY predicate reads T. A rule WAITS (BH-8766) when some
+#     match.wait[].under reads T and every match.all entry reads T or is the
+#     pred of such an under; an under that reads F or U never waits. The first
+#     rule by priority that matches or waits wins.
 #     Every decision carries the bin/unblock.sh seam shape:
 #       {decision_key, project, repo, subject_kind, subject, pr, head,
 #        stall_class (the record's kind), stall_kind, rule_id, cites, class,
@@ -54,10 +60,15 @@
 #               match that cannot be keyed: rule_id null, action null, reason
 #               "no rule matched", "key field <f> is null" or "unparseable
 #               stall record".
+#     wait:     a waiting rule (BH-8766): rule_id, cites, class, family from
+#               the rule, action null, judge null, reason "under rule <id>
+#               threshold", waiting_on [the under predicates that read T]. No
+#               claim and no card: bin/unblock.sh logs one line.
 #     class: the rule's class, or the never_auto class whose glob
 #     (case-insensitive) matches .proposal.key.
 #     decision_key is the sha256 of the rule's key field values and the rule
-#     id, joined by U+001F; an unkeyed escalation keys on repo, subject, head,
+#     id, joined by U+001F (a wait adds "wait"; with a null key field it keys
+#     as an unkeyed escalation); an unkeyed escalation keys on repo, subject, head,
 #     kind and "U12". No timestamp and no counter, so a second tick over the
 #     same stalls makes the same keys (the ledger's UNIQUE decision_key is the
 #     dedup).
@@ -107,7 +118,17 @@ if type != "object" then "not a JSON object" else
         or ((.judge | has("when")) and (.judge.when | str | not))
    then "judge needs prompt and question (when, if set, is a predicate)" else empty end),
   (if (.never_auto // {} | type) != "object" or (.never_auto // {} | all(.[]; str) | not)
-   then "never_auto must map key globs to classes" else empty end)
+   then "never_auto must map key globs to classes" else empty end),
+  (if (.match | type) != "object" or (.match | has("wait") | not) then empty
+   elif (.match.wait | type) != "array" then "match.wait must be an array of {pred, under}"
+   else .match.all as $all | .match.wait | to_entries[]
+     | if (.value | type) != "object" or (.value.pred | str | not) or (.value.under | str | not)
+         or (.value | keys - ["pred", "under"] | length) > 0
+       then "match.wait[\(.key)] must be an object with string pred and under"
+       elif .value.pred as $p | (($all | type) == "array" and ($all | index($p)) != null) | not
+       then "match.wait[\(.key)].pred \(.value.pred | tojson) is not an entry of match.all"
+       else empty end
+   end)
 end'
 
 ub_rules_load() {
@@ -138,7 +159,7 @@ ub_rules_load() {
       elif ! jq -n "def _ub_p: $p; null" >/dev/null 2>&1; then
         echo "ub_rules_load: $stem: predicate $p does not compile" >&2; bad=1
       fi
-    done < <(jq -r '.match.all[], (.judge.when // empty)' "$f")
+    done < <(jq -r '.match.all[], (.match.wait // [] | .[].under), (.judge.when // empty)' "$f")
     ok+=("$f")
   done
   if [ "${#ok[@]}" -gt 0 ]; then
@@ -161,8 +182,8 @@ ub_rules_load() {
 _ub_program() { # _ub_program <rules json>
   jq -r '
     def tri($p): "([try ((\($p)) | if . == true then \"T\" elif . == false then \"F\" else \"U\" end) catch \"U\"] | if length == 1 then .[0] else \"U\" end)";
-    (to_entries | map("def _ub_r\(.key): [\(.value.match.all | map(tri(.)) | join(", "))];\ndef _ub_w\(.key): \(tri(.value.judge.when // "true"));") | join("\n")),
-    "def _ub_d($i): if false then null \(to_entries | map("elif $i == \(.key) then {res: _ub_r\(.key), when: _ub_w\(.key)}") | join(" ")) else {res: [\"U\"], when: \"U\"} end;"
+    (to_entries | map("def _ub_r\(.key): [\(.value.match.all | map(tri(.)) | join(", "))];\ndef _ub_u\(.key): [\(.value.match.wait // [] | map(tri(.under)) | join(", "))];\ndef _ub_w\(.key): \(tri(.value.judge.when // "true"));") | join("\n")),
+    "def _ub_d($i): if false then null \(to_entries | map("elif $i == \(.key) then {res: _ub_r\(.key), under: _ub_u\(.key), when: _ub_w\(.key)}") | join(" ")) else {res: [\"U\"], under: [], when: \"U\"} end;"
   ' <<< "$1"
 }
 
@@ -178,6 +199,14 @@ def misses($tried): [$tried[] | select(.res | all(. == "T") | not) | .r as $x | 
   | {rule: $x.id,
      failed:  [range(0; $res | length) as $j | select($res[$j] == "F") | $x.match.all[$j]],
      unknown: [range(0; $res | length) as $j | select($res[$j] == "U") | $x.match.all[$j]]}];
+# waiting_on: the `under` predicates of a tried rule that read T, when every
+# match.all entry reads T or is the pred of one of them (BH-8766); else null.
+# An `under` that reads F or U never waits: unknown is not "not yet".
+def waiting_on($t): ($t.r.match.wait // []) as $w
+  | [range(0; $w | length) as $k | select($t.under[$k] == "T") | $w[$k]] as $on
+  | if ($on | length) == 0 then null
+    elif all(range(0; $t.res | length); . as $j | $t.res[$j] == "T" or any($on[]; .pred == $t.r.match.all[$j]))
+    then [$on[].under] else null end;
 def glob($g): "^" + ($g | ascii_upcase | split("*") | map(gsub("[^A-Z0-9_]"; ".")) | join(".*")) + "$";
 def klass($r; $rec): ($rec.proposal.key? // "" | tostring | ascii_upcase) as $k
   | ([($r.never_auto // {}) | to_entries[] | select(.key as $g | $k != "" and ($k | test(glob($g)))) | .value] | first) // $r.class;
@@ -190,9 +219,16 @@ def klass($r; $rec): ($rec.proposal.key? // "" | tostring | ascii_upcase) as $k
   else
     [$R | to_entries[] | select(.value.match.kind | index($rec.kind) != null or index("*") != null)
       | .key as $i | ($rec | _ub_d($i)) as $d
-      | {r: .value, res: $d.res, when: $d.when}] as $tried
-    | (first($tried[] | select(.res | all(. == "T"))) // null) as $m
+      | {r: .value, res: $d.res, under: $d.under, when: $d.when, full: ($d.res | all(. == "T"))}
+      | . + {on: waiting_on(.)}] as $tried
+    | (first($tried[] | select(.full or .on != null)) // null) as $m
     | if $m == null then unkeyed($rec; "no rule matched"; misses($tried))
+      elif ($m.full | not) then
+        $m.r as $r
+        | ($r.key | map(. as $k | if $k == "id" then $r.id else ($rec | getpath($k | split("."))) end)) as $kv
+        | base($rec) + {decision: "wait", rule_id: $r.id, cites: $r.cites, class: klass($r; $rec), family: $r.family,
+            action: null, judge: null, reason: "under rule \($r.id) threshold", waiting_on: $m.on,
+            _km: (if any($kv[]; . == null) then esc_km($rec) else ($kv | map(tostring)) + [$r.id, "wait"] | join("\u001f") end)}
       else
         $m.r as $r
         | ($r.key | map(. as $k | {k: $k, v: (if $k == "id" then $r.id else ($rec | getpath($k | split("."))) end)})) as $kv

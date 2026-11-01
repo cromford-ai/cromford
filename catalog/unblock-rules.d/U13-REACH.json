@@ -12,6 +12,12 @@
     "all": [
       ".has_pr == false",
       ".age_min >= .reach_stuck_min"
+    ],
+    "wait": [
+      {
+        "pred": ".age_min >= .reach_stuck_min",
+        "under": "(.age_min | type) == \"number\" and (.reach_stuck_min | type) == \"number\" and .age_min < .reach_stuck_min"
+      }
     ]
   },
   "judge": null,

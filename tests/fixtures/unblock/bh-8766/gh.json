@@ -1,0 +1,12 @@
+{
+  "now": "2026-10-29 00:38:00",
+  "gh": {
+    "repos/example-org/cromford/issues/8324": {"number": 8324, "state": "open", "updated_at": "2026-10-28T20:00:00Z"},
+    "repos/example-org/cromford/pulls?state=open&head=example-org:ticket/bh-8324&per_page=10": [
+      {"number": 8721, "html_url": "https://github.com/example-org/cromford/pull/8721",
+       "head": {"sha": "8721872187218721872187218721872187218721"}, "updated_at": "2026-10-28T23:38:00Z"}
+    ],
+    "repos/example-org/cromford/issues/8320": {"number": 8320, "state": "closed", "updated_at": "2026-10-28T10:00:00Z"}
+  },
+  "gh_status": {}
+}

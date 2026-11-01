@@ -1,0 +1,12 @@
+{
+  "env": "UNBLOCK_STACK_PARENT_MAX",
+  "read_in": "bin/lib/unblock/collectors/infra.sh",
+  "type": "int",
+  "default": 5,
+  "min": 1,
+  "max": 50,
+  "unit": "parents",
+  "zero_means": null,
+  "note": "BH-8766: the most Blocked-by parents the starve collector reads for one starved ticket (2 GitHub GETs each per tick). A ticket with more distinct parents is not dropped: no parent is read, the list counts as unread, and the ticket-starved record goes out with dep_unread once the ticket has been queued UNBLOCK_STACK_PARENT_STALE_H hours. A value outside 1..50 is the code fallback 5.",
+  "settable": true
+}

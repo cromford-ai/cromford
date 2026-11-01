@@ -1,0 +1,12 @@
+{
+  "env": "UNBLOCK_STACK_PARENT_STALE_H",
+  "read_in": "bin/lib/unblock/collectors/infra.sh",
+  "type": "int",
+  "default": 24,
+  "min": 1,
+  "max": 336,
+  "unit": "hours",
+  "zero_means": null,
+  "note": "BH-8766: a starved ticket that waits on an open Blocked-by parent gives no card; the parent gets one stack-parent-stuck card (U12, subject the parent) only when its newest progress (open PR updated_at, else the issue updated_at) is this many hours old or more. Default 24 = the STACK_WAIT_CAP_H default: past it the stack-wait gate builds the child without the parent. A value outside 1..336 is the code fallback 24.",
+  "settable": true
+}

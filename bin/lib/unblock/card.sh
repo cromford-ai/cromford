@@ -55,8 +55,22 @@
 #                                       alert DM, `lane-alert.sh --critical --id
 #                                       unblock-<key12>` (the operator 6294290004 item
 #                                       5), prints SENT_CARD <id> (rc 0) or
-#                                       SEND_FAILED <id> (rc 1). Else prints
-#                                       WOULD_SEND_CARD <id>, 0 alerts.
+#                                       SEND_FAILED <id> (rc 1). A card whose
+#                                       recommended option starts with the word
+#                                       `wait` is no decision: it goes out as
+#                                       `--severity warn` (the digest), with no
+#                                       --critical (_unblock_card_severity,
+#                                       BH-8766). Else prints WOULD_SEND_CARD
+#                                       <id>, 0 alerts.
+#   _unblock_card_severity <card-or-row.json>
+#                                       warn when the recommended option
+#                                       (.options[.recommendation - 1] when
+#                                       recommendation is 1..the option count, else
+#                                       the text's RECOMMEND: <n> and its
+#                                       `<n>. <option>` line), trimmed and
+#                                       lower-cased, matches ^wait([^a-z]|$);
+#                                       critical otherwise and on any read
+#                                       failure (today's behaviour).
 #   ubt_stage_card <decision-json> <model> [mode]
 #                                       the tick's escalate seam (bin/unblock.sh
 #                                       step 6, BH-8418). 0 calls unless
@@ -80,7 +94,8 @@
 #                                       ago or more: in act mode one alert with
 #                                       the SAME --id (the alert state machine
 #                                       counts a repeat and sends a REMIND, never
-#                                       a second FIRE), prints REMIND <id>;
+#                                       a second FIRE; the severity rule of
+#                                       unblock_card_send), prints REMIND <id>;
 #                                       shadow prints WOULD_REMIND <id>. Else
 #                                       `wait`. rc 1 on a row it cannot read.
 #
@@ -123,6 +138,9 @@ unblock_card_fallback() {
          else "change the pool knobs by hand" end)
       elif .kind == "branch-park" then "run one fix round on \(.subject) at \((.head // "the current head")[0:12])"
       elif .kind == "source-unreadable" then "check the \(.source // "unread") source by hand"
+      elif .kind == "stack-parent-stuck" then
+        "look at parent \(.parent // .subject)" + (if .parent_pr != null then " (PR #\(.parent_pr))" else "" end)
+        + " by hand; \((.children // []) | length) ticket(s) wait on it"
       else "look at \(.subject // "the stall") by hand" end;
     {what: ("\(.kind // "stall") on \(.subject // "an unknown subject"). No rule matched"
             + (if (.near_miss // []) | length > 0
@@ -246,13 +264,44 @@ unblock_card_decide() {
     '{outcome: $o, model_calls: $n, cost_usd: null, agent_call_rc: $rc, decision_key: $k, decide: $d}' > "$out"
 }
 
+_unblock_card_severity() {
+  local f="${1:-}" opt
+  opt=$(jq -r '
+    def pick:
+      if (.options | type) == "array" and (.recommendation | type) == "number" and .recommendation == (.recommendation | floor)
+         and .recommendation >= 1 and .recommendation <= (.options | length) then .options[.recommendation - 1]
+      elif (.text | type) == "string" then
+        (.text | split("\n")) as $l
+        | ([$l[] | capture("^RECOMMEND:[[:space:]]*(?<n>[0-9]+)") | .n] | first) as $n
+        | if $n == null then null
+          else ($l | index("OPTIONS:")) as $o
+          | if $o == null then null
+            else [$l[($o + 1):][] | capture("^(?<n>[0-9]+)\\.[[:space:]]+(?<t>.*)$") | select(.n == $n) | .t] | first end
+          end
+      else null end;
+    pick | if type == "string" then . else empty end' "$f" 2>/dev/null) || opt=""
+  opt=$(printf '%s' "$opt" | tr '[:upper:]' '[:lower:]' | sed -E 's/^[[:space:]]+//')
+  if [[ $opt =~ ^wait([^a-z]|$) ]]; then echo warn; else echo critical; fi
+}
+
+# _unblock_card_alert <json-file> <id> <text> — one lane-alert.sh call at the
+# file's severity: critical keeps the BH-7725 argv byte for byte.
+_unblock_card_alert() {
+  local root
+  root=$(_unblock_card_root); [ -n "$root" ] || return 1
+  if [ "$(_unblock_card_severity "$1")" = warn ]; then
+    "$root/bin/lane-alert.sh" --id "$2" --severity warn unblock "$3" >/dev/null 2>&1
+  else
+    "$root/bin/lane-alert.sh" --critical --id "$2" --severity critical unblock "$3" >/dev/null 2>&1
+  fi
+}
+
 unblock_card_send() {
-  local card="${1:-}" mode="${2:-shadow}" id key12 root
+  local card="${1:-}" mode="${2:-shadow}" id key12
   id=$(jq -r '.id // ""' "$card" 2>/dev/null); [ -n "$id" ] || return 1
   if [ "$mode" = act ] && [ "${UNBLOCK_ACT:-0}" = 1 ]; then
-    root=$(_unblock_card_root)
     key12=$(_unblock_card_hex "$(jq -r '.key // ""' "$card")" | cut -c1-12)
-    if [ -n "$root" ] && "$root/bin/lane-alert.sh" --critical --id "unblock-$key12" --severity critical unblock "$(jq -r .text "$card")" >/dev/null 2>&1; then
+    if _unblock_card_alert "$card" "unblock-$key12" "$(jq -r .text "$card")"; then
       printf 'SENT_CARD %s\n' "$id"; return 0
     fi
     printf 'SEND_FAILED %s\n' "$id"; return 1
@@ -307,7 +356,7 @@ _ubt_stage_card_run() {
 }
 
 unblock_card_redeclare() {
-  local row="${1:-}" now="${2:-}" mode="${3:-shadow}" id dl last key12 root
+  local row="${1:-}" now="${2:-}" mode="${3:-shadow}" id dl last key12
   [[ $now =~ ^[0-9]+$ ]] || return 1
   id=$(jq -r '.id // ""' "$row" 2>/dev/null); [ -n "$id" ] || return 1
   dl=$(jq -r '.deadline_at | sub("\\.[0-9]+Z$"; "Z") | fromdateiso8601' "$row" 2>/dev/null) || return 1
@@ -316,9 +365,8 @@ unblock_card_redeclare() {
   if [ "$now" -ge "$dl" ]; then echo expired; return 0; fi
   if [ $((now - last)) -lt 86400 ]; then echo wait; return 0; fi
   if [ "$mode" = act ] && [ "${UNBLOCK_ACT:-0}" = 1 ]; then
-    root=$(_unblock_card_root)
     key12=$(_unblock_card_hex "$(jq -r '.key // ""' "$row")" | cut -c1-12)
-    if [ -n "$root" ] && "$root/bin/lane-alert.sh" --critical --id "unblock-$key12" --severity critical unblock "REMINDER: $(jq -r .text "$row")" >/dev/null 2>&1; then
+    if _unblock_card_alert "$row" "unblock-$key12" "REMINDER: $(jq -r .text "$row")"; then
       printf 'REMIND %s\n' "$id"; return 0
     fi
     printf 'REMIND_FAILED %s\n' "$id"; return 1

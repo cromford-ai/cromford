@@ -58,7 +58,12 @@
 #                 At most 100 rows; a `#page-full` parks page is truncated too.
 #   ticket-starved (BH-8390, U13-STARVE)  one per ticket logs/pipeline-health.log
 #                 calls "queued <N>m with no spawn" since its last RESOLVED
-#                 line (see _unblock_infra_starve). --project only.
+#                 line, at or over both starve thresholds, that does not wait
+#                 on an open parent (see _unblock_infra_starve). --project only.
+#   stack-parent-stuck (BH-8766)  one per open parent that a starved ticket
+#                 waits on and that has had no progress for
+#                 UNBLOCK_STACK_PARENT_STALE_H (24) hours. Subject is the
+#                 parent; U12 cards it. --project only; needs --repo and gh_rest.
 #   build-reach-blocked (BH-8390, U13-REACH)  one per ticket whose newest
 #                 `stranded:` line in logs/<p>.log ends REVIEW_BLOCKED
 #                 suite-reach (see _unblock_infra_reach). --project only;
@@ -383,15 +388,27 @@ _unblock_infra_tail() {
   tail -n "$n" "$1" 2>/dev/null
 }
 
-# _unblock_infra_starve <project>... — BH-8390 (U13-STARVE). One
+# _unblock_infra_starve <project>... — BH-8390 (U13-STARVE), BH-8766. One
 # ticket-starved record per ticket that logs/pipeline-health.log calls
-# "queued <N>m with no spawn" on UNBLOCK_STARVE_PASSES (3) or more passes
-# since its last RESOLVED line, inside UNBLOCK_STARVE_WINDOW_H (6) hours.
+# "queued <N>m with no spawn" since its last RESOLVED line, inside
+# UNBLOCK_STARVE_WINDOW_H (6) hours, when BOTH hold: queued_min >= starve_min
+# (UNBLOCK_STARVE_MIN, 120) AND passes >= starve_passes (UNBLOCK_STARVE_PASSES,
+# 3). A ticket under either threshold is not starved yet: no record, one
+# `starve-skip` line. A ticket over both whose newest pool record is a
+# dependency wait (_unblock_infra_dep_wait) on a parent that is open, or whose
+# state cannot be read, is waiting, not starved: no record, one `starve-skip`
+# line. An unread parent, or a list over UNBLOCK_STACK_PARENT_MAX parents,
+# holds the record only while queued_min < UNBLOCK_STACK_PARENT_STALE_H * 60;
+# then it goes out with dep_unread (the parent, or `over <n> parents`). An
+# open parent idle UNBLOCK_STACK_PARENT_STALE_H hours or more is ONE
+# stack-parent-stuck record per parent (its waiting children folded).
 # Fields: ticket, queued_min (the newest pass), passes, first_at, last_at,
-# starve_min (UNBLOCK_STARVE_MIN, 120), starve_passes, triage_out (a
-# logs/<p>.triage-<KEY>.out newer than the first pass), day.
+# starve_min, starve_passes, triage_out (a logs/<p>.triage-<KEY>.out newer
+# than the first pass), day.
 _unblock_infra_starve() {
-  local root txt win smin spass p key out
+  local root txt win smin spass stale p key out qm np deps src par pk st idle why unread bp
+  local -a pars
+  local -A stuck_kids=() stuck_src=()
   # An unread log is one source-unreadable record PER project asked about, so
   # each project's tick sees it (a record with no project goes only to the
   # hub project's tick, BH-8498).
@@ -404,8 +421,18 @@ _unblock_infra_starve() {
   win=$(_unblock_infra_int "${UNBLOCK_STARVE_WINDOW_H:-}" 6)
   smin=$(_unblock_infra_int "${UNBLOCK_STARVE_MIN:-}" 120)
   spass=$(_unblock_infra_int "${UNBLOCK_STARVE_PASSES:-}" 3)
+  # Knob: catalog/lanes.d/unblock.knobs.d/UNBLOCK_STACK_PARENT_STALE_H.json. 24
+  # (the STACK_WAIT_CAP_H default) is its documented fallback, used for a value
+  # that is not 1..336.
+  stale=$(_unblock_infra_int "${UNBLOCK_STACK_PARENT_STALE_H:-}" 24)
+  { [ "$stale" -ge 1 ] && [ "$stale" -le 336 ]; } || stale=24
+  declare -gA _UBI_PS=()
   local recs
   for p in "$@"; do
+    stuck_kids=(); stuck_src=()
+    # A project with a product board (fleet.conf board_prefix not `-`) keys its
+    # tickets on the board, not on GitHub issue numbers: no parent read there.
+    bp=$("$root/bin/fleet-conf.sh" "$p" board_prefix 2>/dev/null) || bp=""
     recs=$(jq -Rnc --arg p "$p" --argjson now "$_UBI_NOW" --argjson win "$win" --argjson smin "$smin" --argjson spass "$spass" '
       def ep($a): ($a | sub(" "; "T") + "Z" | fromdateiso8601);
       [inputs | (capture("^(?<at>[0-9]{4}-[0-9]{2}-[0-9]{2} [0-9]{2}:[0-9]{2}:[0-9]{2})Z (?<p>[A-Za-z0-9._-]+) (?<key>[A-Za-z0-9.-]+) queued (?<min>[0-9]+)m with no spawn") | . + {ev: "q"}),
@@ -422,15 +449,172 @@ _unblock_infra_starve() {
          stall_at: (($q[0].t) | todate), day: ($now | todate)[0:10], truncated: false, unknown: []}' <<<"$txt" 2>/dev/null) || { _unblock_infra_unreadable pipeline_health_log "$p"; continue; }
     while IFS= read -r out; do
       [ -n "$out" ] || continue
-      key=$(jq -r .ticket <<<"$out")
+      read -r key qm np < <(jq -r '"\(.ticket) \(.queued_min) \(.passes)"' <<<"$out")
+      if [ "$qm" -lt "$smin" ] || [ "$np" -lt "$spass" ]; then
+        _unblock_infra_skip "$p" "$key" "under thresholds (${qm}m of $smin, $np of $spass passes)"
+        continue
+      fi
+      deps=$(_unblock_infra_dep_wait "$p" "$key")
+      unread=""
+      if [ -n "$deps" ]; then
+        src=${deps%% *}; read -r -a pars <<<"${deps#* }"
+        why=""
+        if [ "${pars[0]}" = OVER ]; then
+          # Over UNBLOCK_STACK_PARENT_MAX parents: none is read, and the list
+          # is unread, never "no dependency".
+          why="waits on over $(_unblock_infra_parent_max) parents: not read"; unread="over ${pars[1]} parents"; pars=()
+        fi
+        for par in "${pars[@]}"; do
+          _unblock_infra_parent_state "${_UBI_REPO:-}" "$par" "$bp"
+          read -r st _ <<<"${_UBI_PS[$par]}"
+          [ "$st" = open ] || continue
+          read -r _ _ idle pk _ <<<"${_UBI_PS[$par]}"
+          [ -n "$why" ] || why="waits on open parent $par$([ "$pk" != - ] && printf ' (PR #%s)' "$pk"), idle ${idle}h of ${stale}h"
+          if [ "$idle" -ge "$stale" ]; then
+            stuck_kids[$par]="${stuck_kids[$par]:+${stuck_kids[$par]} }$key"
+            [ -n "${stuck_src[$par]:-}" ] || stuck_src[$par]=$src
+          fi
+        done
+        if [ -z "$why" ]; then
+          for par in "${pars[@]}"; do
+            read -r st _ <<<"${_UBI_PS[$par]}"
+            [ "$st" = unread ] && { why="waits on parent $par: state unread"; unread=$par; break; }
+          done
+        fi
+        # An unread parent (or list) holds the record only until the ticket
+        # has been queued UNBLOCK_STACK_PARENT_STALE_H hours: past that the
+        # record goes out with dep_unread, so a lasting read failure pages.
+        if [ -n "$unread" ] && [ "$qm" -ge $((stale * 60)) ]; then why=""
+        else unread=""; fi
+        # Every parent read closed: not a wait, the record stands.
+        if [ -n "$why" ]; then _unblock_infra_skip "$p" "$key" "$why"; continue; fi
+      fi
       local tf="$root/logs/$p.triage-$key.out" to=false first
       first=$(jq -r .first_epoch <<<"$out")
       if [ -e "$tf" ]; then
         if [ "$(stat -c %Y "$tf" 2>/dev/null || stat -f %m "$tf" 2>/dev/null || echo 0)" -ge "$first" ]; then to=true; fi
       fi
-      jq -c --argjson to "$to" 'del(.first_epoch) + {triage_out: $to}' <<<"$out"
+      jq -c --argjson to "$to" --arg du "$unread" 'del(.first_epoch) + {triage_out: $to}
+        + (if $du == "" then {} else {dep_unread: $du} end)' <<<"$out"
     done <<<"$recs"
+    for par in "${!stuck_kids[@]}"; do
+      read -r _ _ idle pk url head <<<"${_UBI_PS[$par]}"
+      jq -nc --arg p "$p" --arg repo "${_UBI_REPO:-}" --arg par "$par" --arg pk "$pk" --arg url "$url" --arg head "$head" \
+        --argjson idle "$idle" --argjson stale "$stale" --arg kids "${stuck_kids[$par]}" --arg src "${stuck_src[$par]}" \
+        --argjson now "$_UBI_NOW" '
+        def opt($v): if $v == "-" then null else $v end;
+        ($now | todate) as $at
+        | {family: "infra", kind: "stack-parent-stuck", project: $p, repo: (if $repo == "" then null else $repo end),
+           subject: ("ticket:" + $p + ":" + $par), subject_kind: "build", parent: $par,
+           parent_issue: ($par | sub("^.*-"; "") | tonumber), parent_pr: (opt($pk) | if . == null then null else tonumber end),
+           parent_pr_url: opt($url), head: opt($head), parent_idle_h: $idle, parent_stale_h: $stale,
+           children: ($kids | split(" ") | unique), dep_source: $src,
+           stall_at: (($now - $idle * 3600) | todate), day: $at[0:10], truncated: false, unknown: []}'
+    done
   done
+}
+
+# _unblock_infra_skip <project> <KEY> <reason> — the one `starve-skip` line per
+# ticket per tick, through the tick's logger (ubt_log, bin/unblock.sh); with no
+# tick logger it goes to stderr, never nowhere.
+_unblock_infra_skip() {
+  if declare -F ubt_log >/dev/null; then ubt_log "starve-skip $1 $2: $3"
+  else printf 'starve-skip %s %s: %s\n' "$1" "$2" "$3" >&2; fi
+}
+
+# _unblock_infra_dep_wait <project> <KEY> — BH-8766. Prints `<source>
+# <PARENT>...` when the ticket's newest pool record (builds/pool-<p>-<KEY>-*/,
+# greatest RESULT mtime: plan-blocked-stop.sh _pbs_newest's rule) is a
+# dependency wait, else nothing:
+#   after       plan-blocked.after (plan-blocked-stop.sh `After: <KEY>` lines)
+#               and no plan-blocked.released
+#   stack-wait  RESULT starts `BUILD_DEFERRED stack-wait` and holds
+#               `Blocked-by #<n>` (bin/lib/rb/gates.sh)
+# A parent token loses a leading #; a bare number N is <child prefix>-N; any
+# shape but <PREFIX>-<digits> is dropped. Over UNBLOCK_STACK_PARENT_MAX
+# distinct parents it prints `<source> OVER <count>` instead: the caller reads
+# no parent and treats the list as unread, never as "no dependency".
+_unblock_infra_dep_wait() {
+  local p="$1" key="$2" root f mt nt=-1 newest="" line tok src="" pfx out=""
+  local -a toks=()
+  root=$(_unblock_infra_root); [ -n "$root" ] || return 0
+  for f in "$root/builds/pool-$p-$key-"*/RESULT; do
+    [ -f "$f" ] || continue
+    mt=$(stat -c %Y "$f" 2>/dev/null) || continue
+    [ "$mt" -ge "$nt" ] && { nt=$mt; newest="${f%/RESULT}"; }
+  done
+  [ -n "$newest" ] || return 0
+  if [ -e "$newest/plan-blocked.after" ] && [ ! -e "$newest/plan-blocked.released" ]; then
+    src=after
+    while IFS= read -r line; do
+      [[ $line =~ ^After:[[:space:]]*([^[:space:]]+) ]] && toks+=("${BASH_REMATCH[1]}")
+    done < "$newest/plan-blocked.after"
+  else
+    line=$(head -n1 "$newest/RESULT" 2>/dev/null)
+    if [[ $line == "BUILD_DEFERRED stack-wait"* ]] && [[ $line =~ Blocked-by[[:space:]]+#([0-9]+) ]]; then
+      src=stack-wait; toks=("${BASH_REMATCH[1]}")
+    fi
+  fi
+  [ -n "$src" ] || return 0
+  pfx=${key%-*}; [ "$pfx" != "$key" ] || pfx=""
+  local n=0
+  for tok in "${toks[@]}"; do
+    tok=${tok#\#}
+    if [[ $tok =~ ^[0-9]+$ ]]; then [ -n "$pfx" ] || continue; tok="$pfx-$tok"
+    elif ! [[ $tok =~ ^[A-Za-z][A-Za-z0-9]*-[0-9]+$ ]]; then continue; fi
+    case " $out " in *" $tok "*) continue ;; esac
+    out="${out:+$out }$tok"; n=$((n + 1))
+  done
+  [ -n "$out" ] || return 0
+  if [ "$n" -gt "$(_unblock_infra_parent_max)" ]; then printf '%s OVER %s\n' "$src" "$n"
+  else printf '%s %s\n' "$src" "$out"; fi
+  return 0
+}
+
+# _unblock_infra_parent_max — the parent cap. Knob:
+# catalog/lanes.d/unblock.knobs.d/UNBLOCK_STACK_PARENT_MAX.json. 5 is its
+# documented fallback, used for a value that is not 1..50.
+_unblock_infra_parent_max() {
+  local m
+  m=$(_unblock_infra_int "${UNBLOCK_STACK_PARENT_MAX:-}" 5)
+  { [ "$m" -ge 1 ] && [ "$m" -le 50 ]; } || m=5
+  printf '%s' "$m"
+}
+
+# _unblock_infra_parent_state <repo> <PARENT> [<board_prefix>] — BH-8766. Sets
+# _UBI_PS[<PARENT>] to `<state> <progress_epoch> <idle_h> <pr> <pr_url>
+# <head>` (`-` for a missing value). state is open, closed or unread: no
+# repo, no gh_rest or _UBI_TMP, a failed read or a body that is not the issue object is
+# unread, never closed. A board_prefix that is set and not `-` (a product-board
+# project: its keys are not GitHub issue numbers) is unread with no gh call. When open, the PR is the open one from
+# ticket/<parent lowercased> (_unblock_infra_reach's query); progress is that
+# PR's updated_at, else the issue's. Cached in _UBI_PS for the call. Runs in
+# the caller's shell: never call it in $(...).
+_unblock_infra_parent_state() {
+  local repo="$1" par="$2" bp="${3:-}" root n body st up pr=- url=- head=- pu prs pt
+  [ -n "${_UBI_PS[$par]+x}" ] && return 0
+  _UBI_PS[$par]="unread - - - - -"
+  [ -n "$bp" ] && [ "$bp" != - ] && return 0
+  n=${par##*-}; root=$(_unblock_infra_root)
+  [[ $repo =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] && [[ $n =~ ^[0-9]+$ ]] || return 0
+  # shellcheck disable=SC1091
+  declare -F gh_rest >/dev/null || { [ -n "$root" ] && . "$root/bin/lib/gh-rest.sh" 2>/dev/null; } || true
+  declare -F gh_rest >/dev/null && [ -d "${_UBI_TMP:-}" ] || return 0
+  gh_rest GET "repos/$repo/issues/$n" > "$_UBI_TMP/parent-issue.json" 2>/dev/null || return 0
+  body=$(cat "$_UBI_TMP/parent-issue.json")
+  read -r st up < <(jq -r 'if type == "object" and (.state == "open" or .state == "closed") and (.updated_at | type) == "string"
+      then "\(.state) \(.updated_at | sub("\\.[0-9]+Z$"; "Z") | try fromdateiso8601 catch "-")" else "- -" end' <<<"$body" 2>/dev/null)
+  case "$st" in open|closed) ;; *) return 0 ;; esac
+  if [ "$st" = closed ]; then _UBI_PS[$par]="closed - - - - -"; return 0; fi
+  [[ $up =~ ^[0-9]+$ ]] || return 0
+  gh_rest GET "repos/$repo/pulls?state=open&head=${repo%%/*}:ticket/$(printf '%s' "$par" | tr '[:upper:]' '[:lower:]')&per_page=10" > "$_UBI_TMP/parent-pr.json" 2>/dev/null || return 0
+  prs=$(cat "$_UBI_TMP/parent-pr.json")
+  read -r pr url head pu < <(jq -r 'if type != "array" then "x" elif length == 0 then "- - - -"
+      else (sort_by(.updated_at) | last) as $q
+        | "\($q.number // "-") \($q.html_url // "-") \($q.head.sha // "-") \(($q.updated_at // "") | sub("\\.[0-9]+Z$"; "Z") | try fromdateiso8601 catch "-")" end' <<<"$prs" 2>/dev/null)
+  [ "$pr" = x ] || [ -z "$pr" ] && return 0
+  pt=$up; [[ $pu =~ ^[0-9]+$ ]] && pt=$pu
+  _UBI_PS[$par]="open $pt $(( (_UBI_NOW - pt) / 3600 < 0 ? 0 : (_UBI_NOW - pt) / 3600 )) $pr $url $head"
 }
 
 # _unblock_infra_reach <project> <repo> — BH-8390 (U13-REACH, the #8481
@@ -534,6 +718,7 @@ unblock_collect_infra() {
 _unblock_collect_infra_body() {
   local fam="$1" p conf root
   shift
+  _UBI_REPO="${repo:-}"
   local -a projects=("$@")
   case "$fam" in ''|box) _unblock_infra_boxes ;; esac
   case "$fam" in ''|pool)

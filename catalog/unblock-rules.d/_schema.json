@@ -33,6 +33,19 @@
           "type": "array",
           "items": { "type": "string", "minLength": 1 },
           "description": "jq predicates over the stall record. An error or a null is unknown, and unknown never matches."
+        },
+        "wait": {
+          "type": "array",
+          "description": "BH-8766: the wait thresholds of this rule. pred is an entry of match.all; under is a jq predicate that is true while the record is under that threshold and both numbers are known. When some under is true and every other entry of match.all is true, the decision is wait: no claim, no card, one log line, and the next tick reads the record again.",
+          "items": {
+            "type": "object",
+            "required": ["pred", "under"],
+            "additionalProperties": false,
+            "properties": {
+              "pred": { "type": "string", "minLength": 1 },
+              "under": { "type": "string", "minLength": 1 }
+            }
+          }
         }
       }
     },

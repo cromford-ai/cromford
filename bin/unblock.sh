@@ -31,7 +31,12 @@
 #      = `rules=unwired`, 0 decisions.
 #   4. Per decision, BEFORE the claim, the seam it needs must be loaded:
 #      a judge question -> ubt_stage_judge; decision escalate -> ubt_stage_card;
-#      decision act -> ub_act (bin/lib/unblock/act.sh); refuse -> none.
+#      decision act -> ub_act (bin/lib/unblock/act.sh); refuse -> none;
+#      decision wait (BH-8766: the record is under its rule's own threshold,
+#      match.wait in catalog/unblock-rules.d) -> no seam and NO claim: one
+#      `wait <rule> <subject> [<head12>]: <under predicates>` line, and the
+#      next tick reads the record again. The tick line adds `waited=<n>` when
+#      n > 0.
 #      Not loaded = one `deferred <seam>` line and NO claim (the key stays free
 #      for the tick that has the seam). digest has no seam yet: deferred.
 #   5. CLAIM: POST /api/unblock/decisions/claim (evidence through token_redact;
@@ -221,6 +226,13 @@ ubt_decide() {
   key=$(jq -r '.decision_key // ""' <<<"$d")
   kind=$(jq -r '.decision // ""' <<<"$d")
   if ! [[ $key =~ ^[A-Za-z0-9._:-]{1,128}$ ]]; then ubt_log "decision dropped: bad decision_key"; return 0; fi
+  # BH-8766: a record under its matched rule's own threshold. No claim, no
+  # seam, no spend: one line, and the next tick reads the record again.
+  if [ "$kind" = wait ]; then
+    WAITED=$((WAITED + 1))
+    ubt_log "$(jq -r '"wait \(.rule_id // "?") \(.subject // "?")\((.head // "") | .[0:12] | if . == "" then "" else " " + . end): \((.waiting_on // []) | join(" and "))"' <<<"$d")"
+    return 0
+  fi
   if jq -e '.judge != null' >/dev/null 2>&1 <<<"$d"; then seam=ubt_stage_judge role=unblock.judge
   else
     case "$kind" in
@@ -297,7 +309,7 @@ while IFS=$'\t' read -r -u 3 P MODE; do
   if ! unb_scope_lock "$P"; then ubt_log "tick $P: lock held (locks/unblock-$P.lock); skipped"; continue; fi
   REPO=$("$H/bin/fleet-conf.sh" "$P" repo 2>/dev/null)
   [[ $REPO =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] || { ubt_log "tick $P: no fleet.conf repo; skipped"; ubt_unlock; continue; }
-  CLAIMED=0 ROWS=0 DEFERRED=0 NDEC=0 ALERTED=""
+  CLAIMED=0 ROWS=0 DEFERRED=0 NDEC=0 WAITED=0 ALERTED=""
   UBC_MAX=$MAXREC ubc_collect "$P" "$REPO" "$COLLECTORS_DIR" > "$TMPD/records.jsonl"
   # BH-8748: a lane-wide batch_failure seam defect is one ALERT, never a card.
   SEAMD=$(ubs_fold "$P" "$TMPD/records.jsonl"); [[ $SEAMD =~ ^[0-9]+$ ]] || SEAMD=0
@@ -325,6 +337,7 @@ while IFS=$'\t' read -r -u 3 P MODE; do
   fi
   [ "$RULES" = unwired ] && [ "$UBC_RECORDS" -gt 0 ] && LINE="$LINE rules=unwired"
   [ "$SEAMD" -gt 0 ] && LINE="$LINE seam_defect=$SEAMD"
+  [ "$WAITED" -gt 0 ] && LINE="$LINE waited=$WAITED"
   ubt_log "$LINE"
   printf '%s\n' "$LINE"
   ubt_unlock

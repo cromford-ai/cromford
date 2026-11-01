@@ -13,6 +13,12 @@
       ".old_verdict | test(\"^MERGE\")",
       ".lead_request_open == false",
       "(.idle_min | type) == \"number\" and .idle_min >= .restamp_idle_min"
+    ],
+    "wait": [
+      {
+        "pred": "(.idle_min | type) == \"number\" and .idle_min >= .restamp_idle_min",
+        "under": "(.idle_min | type) == \"number\" and (.restamp_idle_min | type) == \"number\" and .idle_min < .restamp_idle_min"
+      }
     ]
   },
   "judge": null,

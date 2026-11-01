@@ -14,6 +14,12 @@
       ".mergeable_state == \"clean\"",
       ".checks == \"green\"",
       ".changes_requested_open == false"
+    ],
+    "wait": [
+      {
+        "pred": ".idle_min >= .approved_idle_min",
+        "under": "(.idle_min | type) == \"number\" and (.approved_idle_min | type) == \"number\" and .idle_min < .approved_idle_min"
+      }
     ]
   },
   "action": {

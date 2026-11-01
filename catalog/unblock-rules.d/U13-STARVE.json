@@ -13,6 +13,16 @@
       ".queued_min >= .starve_min",
       ".passes >= .starve_passes",
       ".triage_out == false"
+    ],
+    "wait": [
+      {
+        "pred": ".queued_min >= .starve_min",
+        "under": "(.queued_min | type) == \"number\" and (.starve_min | type) == \"number\" and .queued_min < .starve_min"
+      },
+      {
+        "pred": ".passes >= .starve_passes",
+        "under": "(.passes | type) == \"number\" and (.starve_passes | type) == \"number\" and .passes < .starve_passes"
+      }
     ]
   },
   "judge": null,

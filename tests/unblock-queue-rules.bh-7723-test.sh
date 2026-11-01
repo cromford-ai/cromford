@@ -23,7 +23,7 @@
 #       C2b batch failed with no culprit: 0 act.
 #   C3  #7609 with standing row "1": U4 (cites G1, judge null). project-2,
 #       no row: escalate naming `.standing_approval == "1"`, 0 WOULD lines.
-#       C3b idle 19 min: no U4; idle 20: U4. C3c a check running: no U4.
+#       C3b idle 19 min: U4 waits (BH-8766); idle 20: U4. C3c a check running: no U4.
 #       C3d an open CHANGES_REQUESTED: no U4; one the same reviewer approved
 #       over: U4. C3e a test file in the diff: U4 with the test-weakening judge.
 #       C3f vd_standing rc 2: one queue-unreadable record names #7609 #7620.
@@ -225,7 +225,8 @@ check "C3 project-2: 0 WOULD lines" "$(wc -l < "$C/would.txt" | tr -d ' ')" "0"
 C=$(mkcase c3b) || exit 1
 fx "$C" approved-7609.json '.verdicts |= map_values(sub("2026-10-20T11:00:00Z"; "2026-10-20T11:41:00Z"))' >/dev/null
 run_pipe "$C" cromford
-check "C3b idle 19 min: no U4" "$(dec "$C" 7609 '"\(.decision) \(.near_misses[0].failed | join("|"))"')" "escalate .idle_min >= .approved_idle_min"
+# BH-8766: under approved_idle_min U4 waits (match.wait): no claim, no card.
+check "C3b idle 19 min: U4 waits" "$(dec "$C" 7609 '"\(.decision) \(.rule_id)"')" "wait U4-standing-approval"
 C=$(mkcase c3b20) || exit 1
 fx "$C" approved-7609.json '.verdicts |= map_values(sub("2026-10-20T11:00:00Z"; "2026-10-20T11:40:00Z"))' >/dev/null
 run_pipe "$C" cromford

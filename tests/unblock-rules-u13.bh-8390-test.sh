@@ -22,10 +22,11 @@
 #       open lead request, head commit 31 min old -> U13-RESTAMP (request_id
 #       none). C3b an open lead request for the head -> no U13-RESTAMP.
 #   C4  logs/pipeline-health.log: TK-2601 (3 passes, 296 min) -> U13-STARVE
-#       launch_fastpath TK-2601; TK-9 (RESOLVED, then 1 pass) -> nothing.
+#       launch_fastpath TK-2601; TK-9 (RESOLVED, then 1 pass) -> no record
+#       (under the starve thresholds, BH-8766).
 #   C5  logs/cromford.log: BH-8452.1 REVIEW_BLOCKED suite-reach, no open
 #       PR, 63 min -> U13-REACH card; BH-8475 PLAN_BLOCKED -> nothing; BH-8476
-#       (20 min) -> no card yet.
+#       (20 min) -> no card yet: wait U13-REACH (BH-8766).
 #   A   act.sh, act mode: lead_rerequest request_id none sends 0 resets and
 #       1 request with --priority; a request id sends 1 reset whose --notes
 #       carries the notes and 0 requests (BH-8512); launch_fastpath
@@ -83,8 +84,13 @@ for i in $(seq 0 $((NC - 1))); do
     fi
   fi
   wn=$(printf '%s\n' "$dn" | (. "$SRC/bin/lib/unblock/rules.sh"; ub_rules_would_lines))
-  case "$(jq -r '.rule_id // "null"' <<< "$dn")" in
-    U13-*) no "R $rule: the neighbour decides to no U13 rule" "$(jq -r .rule_id <<< "$dn")" ;;
+  # BH-8766: a neighbour under its rule's own threshold (match.wait) is a
+  # `wait` by that rule: no claim, no card, no action. Only U13-STARVE's
+  # neighbour (46m, 1 pass) is one; every other neighbour still decides to
+  # no U13 rule.
+  case "$rule $(jq -r '"\(.decision) \(.rule_id // "null")"' <<< "$dn")" in
+    "U13-STARVE wait U13-STARVE") ok "R $rule: the neighbour (under both starve thresholds) waits, no U13 action" ;;
+    *" "*" U13-"*) no "R $rule: the neighbour decides to no U13 rule" "$(jq -r '"\(.decision) \(.rule_id)"' <<< "$dn")" ;;
     *) ok "R $rule: the neighbour decides to no U13 rule" ;;
   esac
   check "R $rule: the neighbour gives 0 WOULD lines" "$(grep -c . <<< "$wn")" 0
@@ -249,7 +255,10 @@ cp "$FX/logfiles/pipeline-health.txt" "$C/h/logs/pipeline-health.log"
 run_infra "$C" project-6-os "2026-10-26 03:10:00" starve
 check "C4 TK-2601 starved: one WOULD_LAUNCH_FASTPATH" "$(grep -c '^WOULD_LAUNCH_FASTPATH U13-STARVE ticket:project-6-os:TK-2601 ' "$C/would.txt") $(grep -c . "$C/would.txt")" "1 1"
 check "C4 the fastpath key is TK-2601" "$(jq -r 'select(.rule_id == "U13-STARVE") | .action.args.key' "$C/decisions.jsonl")" TK-2601
-check "C4 TK-9 after RESOLVED: 1 pass, no fastpath" "$(jq -r 'select(.ticket == "TK-9") | "\(.passes) \(.queued_min)"' "$C/records.jsonl")" "1 10"
+# BH-8766: TK-9 after RESOLVED is 1 pass, 10 min: under both starve
+# thresholds, so the collector emits no record for it (it used to emit one,
+# which U12 then carded).
+check "C4 TK-9 after RESOLVED: 1 pass, 10 min, under threshold: no record" "$(jq -r 'select(.ticket == "TK-9") | .ticket' "$C/records.jsonl" | grep -c .)" 0
 check "C4 subject_kind is build" "$(jq -r .subject_kind "$C/records.jsonl" | sort -u)" build
 budget "$C" C4
 
@@ -266,7 +275,9 @@ run_infra "$C" cromford "2026-10-26 19:40:00" reach
 check "C5 BH-8452.1: U13-REACH card" "$(jq -r 'select(.evidence.ticket == "BH-8452.1") | "\(.rule_id) \(.decision)"' "$C/decisions.jsonl")" "U13-REACH escalate"
 check "C5 BH-8452.1 evidence names the suite and #8481" "$(jq -r 'select(.ticket == "BH-8452.1") | "\(.suites[0]) \(.issue) \(.has_pr) \(.age_min)"' "$C/records.jsonl")" "tests/pr-health-lib.bh-8452-test.sh 8481 false 63"
 check "C5 BH-8475 PLAN_BLOCKED: no record" "$(jq -r 'select(.ticket == "BH-8475") | .ticket' "$C/records.jsonl" | grep -c .)" 0
-case "$(jq -r 'select(.evidence.ticket == "BH-8476") | .rule_id' "$C/decisions.jsonl")" in U13-REACH) no "C5 BH-8476 at 20 min: no card yet" ;; *) ok "C5 BH-8476 at 20 min: no card yet" ;; esac
+# BH-8766: 20 min is under reach_stuck_min (45): a wait by U13-REACH, not a
+# card (on main it fell to a U12 card).
+check "C5 BH-8476 at 20 min: no card yet (wait U13-REACH)" "$(jq -r 'select(.evidence.ticket == "BH-8476") | "\(.decision) \(.rule_id)"' "$C/decisions.jsonl")" "wait U13-REACH"
 budget "$C" C5; kinds_ok "$C" C5
 
 C=$(mkcase c5b review-stalls.json)
