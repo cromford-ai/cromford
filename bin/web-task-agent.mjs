@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 // bin/web-task-agent.mjs — the browser loop of the web-task lane (BH-7594,
-// slice S1: read-only tasks on sites that need no sign-in).
+// slice S1: read-only tasks; BH-8250: a sign-in and a TOTP code through the
+// vault, on one allow-listed site per run).
 //
 // usage: node bin/web-task-agent.mjs --task <task.md> --out <dir>
 //          --domains <comma list> --max-steps <n> --max-s <seconds>
@@ -26,7 +27,30 @@
 // action object and exits 0, or exits 74..79 when nothing was billed (the
 // agent-call contract). bin/web-task.sh passes bin/lib/web-task/decide.sh.
 // Actions: goto {url}, click {ref}, type {ref, text}, scroll {dir}, read {},
-// done {answer}. Anything else is fed back as invalid in the next observation.
+// sign_in {}, type_otp {}, done {answer}. Anything else is fed back as
+// invalid in the next observation.
+//
+// sign_in and type_otp (BH-8250) name no value and no field. The tool layer
+// runs createSignIn (bin/lib/web-signin-step.mjs) or createOtpStep
+// (bin/lib/web-otp-step.mjs) on the page. The username and password come from
+// the vault through createTypeSecret (bin/lib/web-secret-action.mjs), and the
+// code is made at typing time by createTypeOtp (bin/lib/web-otp-action.mjs).
+// Both use their default providers and the project WEB_TASK_PROJECT. These
+// modules load on the first such action, so a read-only run needs none of them.
+//   - The vault site of a run is the page host at the first sign_in or
+//     type_otp, and only when that host is an exact entry of --domains. Else
+//     `refused: sign-in not allowed on <host>` (`otp` for type_otp), with no
+//     vault read. A later call on another host gets
+//     `refused: this run signs in on <site> only`.
+//   - A terminal step outcome (the attempt cap, a vault read that failed, a
+//     bad step knob, no WEB_TASK_PROJECT) stops the run: status error, reason
+//     `stopped: <outcome>`.
+//   - The record of either action is {step, action, outcome} and nothing else.
+//   - Every sink is scrubbed: each value typed in this run becomes [secret] and
+//     each code typed becomes [code], in the obs files (the prompt input), the
+//     outcomes, result.json and the result line. After the first step, every
+//     screenshot masks the password input, the inputs a secret was typed into
+//     (screenshotOptions) and the OTP inputs (OTP_SELECTORS).
 //
 // THE GUARDS ARE IN THIS TOOL LAYER, NOT IN THE PROMPT:
 //   - every main-frame navigation (a goto, a click, a script) is checked
@@ -36,16 +60,27 @@
 //     Location, and the tool layer re-issues that hop as a new navigation, so
 //     every hop of a chain passes the same check (at most MAX_HOPS);
 //   - every request whose method is not GET, HEAD or OPTIONS is aborted, so a
-//     form POST or a script write never leaves the browser;
+//     form POST or a script write never leaves the browser. ONE exception, the
+//     write window: while a sign_in or type_otp step runs, a POST passes when
+//     its URL passes the step's host gate (gate() of web-signin-step.mjs: the
+//     exact vault site, https or loopback http, no userinfo). The guard follows
+//     the redirects of such a POST navigation itself (at most MAX_HOPS). Every
+//     hop must pass the allow-list. A 307/308 hop repeats the POST only on the
+//     vault site, and a 301/302/303 hop becomes a GET with no body. The window
+//     closes when the step returns;
 //   - a click on a submit-like control (bin/lib/web-task/guards.mjs) is refused
-//     before the click, and an init script cancels every submit event;
+//     before the click, and an init script cancels every submit event. The one
+//     exception is the next submit after a click or Enter of the step itself:
+//     the tool layer sets a one-shot flag just before it. A page script that
+//     sets the flag gains nothing: the network guard still aborts its POST;
 //   - `type` strips CR and LF and never presses Enter.
 // Sub-resources (CSS, images, scripts) of other hosts load; they are not
 // navigations.
 //
 // Writes <out>/obs-NN.json and <out>/shot-NN.jpg per step, then
 // <out>/result.json {status, answer, steps, calls, actions, refusals,
-// final_url, screenshots (the last 5), reason}, and prints ONE line:
+// final_url, screenshots (the last 5), reason, vault_site (the vault site, or
+// "" when no sign_in or type_otp ran)}, and prints ONE line:
 //   WEB_TASK_RESULT status=<s> steps=<n> calls=<c> refusals=<r> reason="<...>"
 // status: done | step-cap | time-cap | refused-spend | error
 // exit:   0 done, 3 a cap stopped it, 4 the spend gate refused, 1 error.
@@ -54,6 +89,9 @@
 // NODE_PATH, `npm root -g`, /usr/local/lib/node_modules, /usr/lib/node_modules,
 // then the newest ~/.npm/_npx cache. ESM resolution ignores the global root,
 // so every root goes through createRequire (the bin/e2e-smoke.mjs rule).
+// Test seam, only under HARNESS_TEST_SANDBOX=1: WEB_TASK_TOTP_CLOCK names a file
+// that holds the TOTP clock in unix seconds. type_otp reads it as now(), and a
+// wait for the next window moves it instead of sleeping.
 import { createRequire } from "module";
 import { writeFileSync, readFileSync, readdirSync, statSync, existsSync } from "fs";
 import { spawn, execFileSync } from "child_process";
@@ -93,24 +131,52 @@ const DOMAINS = normDomains(opt.domains || "");
 const MAX_STEPS = Number(opt["max-steps"]);
 const MAX_S = Number(opt["max-s"]);
 
-const st = { steps: 0, calls: 0, actions: [], refusals: [], shots: [], textOffset: 0, lastUrl: "", lastGood: "", hop: null };
+const st = {
+  steps: 0, calls: 0, actions: [], refusals: [], shots: [], textOffset: 0, lastUrl: "", lastGood: "", hop: null,
+  // BH-8250: the vault site and the step instances of this run, the codes it
+  // typed, the open write window ({ site } or null), the landing URL of a
+  // POST in that window, why the guard aborted that POST (writeAbort), and
+  // the outcome that stopped the run.
+  vaultSite: null, secrets: null, signin: null, otpStep: null, codes: new Set(), write: null, landed: null, writeAbort: null, stop: "",
+};
 let browser = null;
+let ctx = null;
 let page = null;
+// The step modules, loaded on the first sign_in or type_otp (steps()).
+let lib = null;
 let finished = false;
 
 function oneLine(s, n = 200) { return String(s ?? "").replace(/\s+/g, " ").replace(/"/g, "'").trim().slice(0, n); }
 function pad(n) { return String(n).padStart(2, "0"); }
+
+// scrub(x) — x with every value typed in this run as [secret] and every code
+// as [code], over all strings of an object. The secrets go first: a code
+// inside a longer value must not split that value before it is redacted.
+function scrubText(v) {
+  let t = String(v);
+  if (st.secrets) t = st.secrets.redact(t);
+  for (const c of st.codes) t = t.split(c).join("[code]");
+  return t;
+}
+function scrub(x) {
+  if (!st.secrets && st.codes.size === 0) return x;
+  if (typeof x === "string") return scrubText(x);
+  if (Array.isArray(x)) return x.map(scrub);
+  if (x && typeof x === "object") return Object.fromEntries(Object.entries(x).map(([k, v]) => [k, scrub(v)]));
+  return x;
+}
 
 async function finish(status, extra = {}) {
   if (finished) return;
   finished = true;
   let finalUrl = "";
   try { finalUrl = page ? page.url() : ""; } catch { /* the page is gone */ }
-  const res = {
+  const res = scrub({
     status, answer: extra.answer ?? "", steps: st.steps, calls: st.calls,
     actions: st.actions, refusals: st.refusals, final_url: finalUrl,
     screenshots: st.shots.slice(-KEEP_SHOTS), reason: extra.reason ?? "",
-  };
+    vault_site: st.vaultSite || "",
+  });
   if (OUT) { try { writeFileSync(join(OUT, "result.json"), JSON.stringify(res, null, 2) + "\n"); } catch { /* reported below */ } }
   console.log(`WEB_TASK_RESULT status=${status} steps=${st.steps} calls=${st.calls} refusals=${st.refusals.length} reason="${oneLine(res.reason)}"`);
   if (browser) { await Promise.race([browser.close().catch(() => {}), new Promise((r) => setTimeout(r, CLOSE_MS))]); }
@@ -148,12 +214,18 @@ async function guard(route) {
   const req = route.request();
   const method = req.method().toUpperCase();
   const url = req.url();
-  if (method !== "GET" && method !== "HEAD" && method !== "OPTIONS") {
-    refuse({ kind: "method", method, url });
-    return route.abort("blockedbyclient");
-  }
   let nav = false;
   try { nav = req.isNavigationRequest() && !req.frame().parentFrame(); } catch { nav = false; }
+  if (method !== "GET" && method !== "HEAD" && method !== "OPTIONS") {
+    // The write window: a POST to the exact vault site while a step runs.
+    const w = st.write;
+    if (!(w && lib && method === "POST" && lib.gate(url, w.site, lib.allowList(DOMAINS)).ok)) {
+      refuse({ kind: "method", method, url });
+      return route.abort("blockedbyclient");
+    }
+    if (!nav) return route.continue();
+    return writeNav(route, url, w.site);
+  }
   if (!nav) return route.continue();
   if (!hostAllowed(url, DOMAINS)) {
     refuse({ kind: "host", url });
@@ -174,6 +246,46 @@ async function guard(route) {
     // through this guard.
     st.hop = { from: url, to };
     return route.abort("aborted");
+  }
+  return route.fulfill({ response: resp });
+}
+
+// writeNav — a POST navigation inside the write window. The guard follows its
+// redirect chain itself, so the browser never follows a hop unchecked: every
+// hop must pass the allow-list, a 307/308 repeats the POST only on the vault
+// site, and a 301/302/303 becomes a GET with no body. The last response is
+// handed to the browser; st.landed is the last hop, so the tool layer can
+// navigate there and the next observation shows the real URL.
+// Each abort also sets st.writeAbort, so vaultStep reports the step as an
+// error: the aborted navigation can leave a page with no form on it, which
+// the step alone would read as a pass.
+async function writeNav(route, url, site) {
+  let resp, from = url, post = true, hops = 0;
+  const abort = (why, how) => { st.writeAbort = why; return route.abort(how); };
+  try { resp = await route.fetch({ maxRedirects: 0 }); } catch { return abort("the POST did not complete", "failed"); }
+  for (;;) {
+    const code = resp.status();
+    const loc = resp.headers()["location"];
+    if (![301, 302, 303, 307, 308].includes(code) || !loc) break;
+    let to = loc;
+    try { to = new URL(loc, from).href; } catch { /* keep the raw value */ }
+    if (!hostAllowed(to, DOMAINS)) {
+      refuse({ kind: "redirect", from, to });
+      return abort("a redirect was refused", "blockedbyclient");
+    }
+    const repost = post && (code === 307 || code === 308);
+    if (repost && !lib.gate(to, site, lib.allowList(DOMAINS)).ok) {
+      refuse({ kind: "redirect", from, to });
+      return abort("a redirect was refused", "blockedbyclient");
+    }
+    if (++hops > MAX_HOPS) return abort(`more than ${MAX_HOPS} redirects`, "failed");
+    try {
+      resp = repost ? await route.fetch({ url: to, maxRedirects: 0 })
+        : await ctx.request.fetch(to, { method: "GET", maxRedirects: 0, timeout: NAV_MS });
+    } catch { return abort("a redirect did not complete", "failed"); }
+    post = repost;
+    from = to;
+    st.landed = to;
   }
   return route.fulfill({ response: resp });
 }
@@ -219,8 +331,8 @@ async function observe(n) {
     return { text, els };
   }, MAX_ELEMENTS).catch(() => ({ text: "", els: [] }));
   const shot = join(OUT, `shot-${pad(n)}.jpg`);
-  try { await page.screenshot({ path: shot, type: "jpeg", quality: 60, timeout: SHOT_MS }); st.shots.push(shot); } catch { /* a step without a shot */ }
-  const obs = {
+  try { await page.screenshot(maskOpts({ path: shot, type: "jpeg", quality: 60, timeout: SHOT_MS })); st.shots.push(shot); } catch { /* a step without a shot */ }
+  const obs = scrub({
     step: n, url, title,
     text: info.text.slice(st.textOffset, st.textOffset + TEXT_CHUNK),
     text_offset: st.textOffset, text_total: info.text.length,
@@ -228,7 +340,7 @@ async function observe(n) {
     history: st.actions.slice(-HISTORY_ACTIONS),
     refusals: st.refusals.slice(-HISTORY_REFUSALS),
     steps_left: MAX_STEPS - n,
-  };
+  });
   const path = join(OUT, `obs-${pad(n)}.json`);
   writeFileSync(path, JSON.stringify(obs, null, 2) + "\n");
   return { obs, path, textTotal: info.text.length };
@@ -273,6 +385,105 @@ async function element(ref) {
 async function settle(remainingMs) {
   if (SETTLE_MS > 0) await page.waitForTimeout(SETTLE_MS).catch(() => {});
   await page.waitForLoadState("domcontentloaded", { timeout: Math.max(1000, Math.min(ACT_MS, remainingMs)) }).catch(() => {});
+}
+
+// maskOpts(base) — the screenshot options: after the first step, the masks of
+// screenshotOptions (the password input and each input a secret was typed
+// into) and the OTP inputs. Before it, base unchanged.
+function maskOpts(base) {
+  let o = base;
+  if (st.secrets) o = lib.screenshotOptions(page, st.secrets, o);
+  if (st.otpStep) o = { ...o, mask: [...(o.mask || []), ...lib.OTP_SELECTORS.map((s) => page.locator(s))] };
+  return o;
+}
+
+async function steps() {
+  if (!lib) {
+    const mods = await Promise.all(["./lib/web-signin-step.mjs", "./lib/web-otp-step.mjs", "./lib/web-secret-action.mjs",
+      "./lib/web-otp-action.mjs"].map((m) => import(m)));
+    lib = Object.assign({}, ...mods);
+  }
+  return lib;
+}
+
+// stepPage() — the page subset the steps use. Its click and press open the
+// submit flag first, so the next submit event of the document passes the init
+// script once.
+function stepPage() {
+  const open = () => page.evaluate(() => { window.__wtSubmitOpen = true; });
+  return {
+    url: () => page.url(),
+    evaluate: (fn, arg) => page.evaluate(fn, arg),
+    waitForLoadState: (state, o) => page.waitForLoadState(state, o),
+    locator: (sel) => ({
+      count: () => page.locator(sel).count(),
+      first: () => {
+        const f = page.locator(sel).first();
+        return {
+          fill: (v) => f.fill(v, { timeout: ACT_MS }),
+          evaluate: (fn, arg) => f.evaluate(fn, arg),
+          press: async (key) => { await open(); return f.press(key, { timeout: ACT_MS }); },
+          click: async () => { await open(); return f.click({ timeout: ACT_MS }); },
+        };
+      },
+    }),
+  };
+}
+
+// totpClock() — { now, sleep } of the WEB_TASK_TOTP_CLOCK test seam, or {}.
+function totpClock() {
+  const f = process.env.HARNESS_TEST_SANDBOX === "1" ? process.env.WEB_TASK_TOTP_CLOCK || "" : "";
+  if (!f) return {};
+  const now = () => Number(readFileSync(f, "utf8").trim());
+  return { now, sleep: async (s) => { writeFileSync(f, `${now() + s}\n`); } };
+}
+
+// vaultStep <sign_in|type_otp> -> the outcome text. A terminal outcome is
+// also put in st.stop, and main() ends the run on it.
+async function vaultStep(kind, remainingMs) {
+  const what = kind === "sign_in" ? "sign-in" : "otp";
+  const stop = (o) => { st.stop = scrubText(o); return st.stop; };
+  try { await steps(); } catch (e) { return stop(`error: the ${what} step did not load (${oneLine(e && e.message, 120)})`); }
+  let host = "";
+  try { host = lib.normHost(new URL(page.url()).hostname); } catch { host = ""; }
+  if (!st.vaultSite) {
+    if (!host || !lib.allowList(DOMAINS).includes(host)) return `refused: ${what} not allowed on ${host || "(no host)"}`;
+    const project = process.env.WEB_TASK_PROJECT || "";
+    if (!project) return stop("error: no project for the vault (WEB_TASK_PROJECT)");
+    try {
+      const secrets = lib.createTypeSecret({ project, site: host });
+      const signin = lib.createSignIn({ site: host, allowed: DOMAINS, secrets });
+      const typeOtp = lib.createTypeOtp({ project, site: host, ...totpClock() });
+      const otpStep = lib.createOtpStep({
+        site: host, allowed: DOMAINS,
+        otp: (fill) => typeOtp((code) => { st.codes.add(code); return fill(code); }),
+      });
+      Object.assign(st, { vaultSite: host, secrets, signin, otpStep });
+    } catch (e) { return stop(`error: ${oneLine(e && e.message, 150)}`); }
+  } else if (host !== st.vaultSite) return `refused: this run signs in on ${st.vaultSite} only`;
+  st.write = { site: st.vaultSite };
+  st.landed = null;
+  st.writeAbort = null;
+  let r;
+  try {
+    r = kind === "sign_in" ? await st.signin.signIn(stepPage()) : await st.otpStep.passOtp(stepPage());
+  } catch (e) {
+    r = { outcome: `error: ${what} step failed (${oneLine(e && e.message, 120)})`, terminal: false };
+  } finally {
+    st.write = null;
+    await page.evaluate(() => { window.__wtSubmitOpen = false; }).catch(() => {});
+  }
+  const landed = st.landed;
+  st.landed = null;
+  if (r.outcome.startsWith("ok:") && st.writeAbort) r = { outcome: `error: ${what} failed (${st.writeAbort})`, terminal: false };
+  st.writeAbort = null;
+  if (r.outcome.startsWith("ok:") && landed && landed !== page.url()) {
+    try {
+      await page.goto(landed, { waitUntil: "domcontentloaded", timeout: Math.max(1000, Math.min(NAV_MS, remainingMs)) });
+      if (st.hop) await followHops(remainingMs);
+    } catch { /* the outcome stands; the next observation shows where the page is */ }
+  }
+  return r.terminal ? stop(r.outcome) : scrubText(r.outcome);
 }
 
 // act <action> -> the outcome text ("ok…", "refused…", "error…", "invalid…")
@@ -321,6 +532,7 @@ async function act(a, remainingMs, textTotal) {
     if (SCROLL_WAIT_MS > 0) await page.waitForTimeout(SCROLL_WAIT_MS).catch(() => {});
     return `ok: scrolled ${up ? "up" : "down"}`;
   }
+  if (kind === "sign_in" || kind === "type_otp") return vaultStep(kind, remainingMs);
   if (kind === "read") {
     if (st.textOffset + TEXT_CHUNK >= textTotal) return "ok: that was the end of the page text";
     st.textOffset += TEXT_CHUNK;
@@ -342,9 +554,12 @@ async function main() {
   if (!chromium) return finish("error", { reason: "playwright not found" });
   try {
     browser = await chromium.launch({ headless: true });
-    const context = await browser.newContext({ viewport: { width: 1280, height: 800 }, acceptDownloads: false, serviceWorkers: "block" });
+    const context = ctx = await browser.newContext({ viewport: { width: 1280, height: 800 }, acceptDownloads: false, serviceWorkers: "block" });
     await context.addInitScript(() => {
-      document.addEventListener("submit", (e) => { e.preventDefault(); e.stopImmediatePropagation(); }, true);
+      document.addEventListener("submit", (e) => {
+        if (window.__wtSubmitOpen === true) { window.__wtSubmitOpen = false; return; }
+        e.preventDefault(); e.stopImmediatePropagation();
+      }, true);
     });
     await context.route("**/*", guard);
     page = await context.newPage();
@@ -393,9 +608,11 @@ async function main() {
     if (Date.now() >= deadline) return finish("time-cap", { reason: `stopped by the wall-time cap of ${MAX_S}s (WEB_TASK_MAX_S) without an answer` });
     const outcome = await act(a, deadline - Date.now(), textTotal);
     const rec = { step: n, action: a && typeof a.action === "string" ? a.action : "invalid", outcome };
-    for (const k of ["url", "ref", "label", "dir"]) if (a && a[k] !== undefined) rec[k] = String(a[k]).slice(0, 300);
+    const vaultAct = rec.action === "sign_in" || rec.action === "type_otp";
+    if (!vaultAct) for (const k of ["url", "ref", "label", "dir"]) if (a && a[k] !== undefined) rec[k] = String(a[k]).slice(0, 300);
     if (a && a.action === "type") rec.text = sanitizeTyped(a.text).slice(0, 80);
     st.actions.push(rec);
+    if (st.stop) return finish("error", { reason: `stopped: ${st.stop}` });
     // After a refused navigation the page can sit on the browser's error page:
     // go back to the last allowed page so the next observation is a real one.
     let cur = "";

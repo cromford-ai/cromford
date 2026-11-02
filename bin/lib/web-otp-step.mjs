@@ -57,7 +57,7 @@ const TIMEOUT_FALLBACK_S = 20;
 const TIMEOUT_MIN_S = 5;
 const TIMEOUT_MAX_S = 120;
 // Matching rules, not tunables.
-const OTP_SELECTORS = ['input[autocomplete="one-time-code"]', 'input[name="otp"]', 'input[name="totp"]',
+export const OTP_SELECTORS = ['input[autocomplete="one-time-code"]', 'input[name="otp"]', 'input[name="totp"]',
   'input[name="code"]', 'input[inputmode="numeric"]'];
 const SUBMIT_SELECTOR = 'button[type="submit"], input[type="submit"]';
 

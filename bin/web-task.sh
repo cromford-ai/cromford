@@ -33,12 +33,16 @@
 #   8. bin/web-task-agent.mjs with bin/lib/web-task/decide.sh as its decide
 #      command: every model call goes through bin/agent-call.sh (llm-gate:
 #      LLM_LANE_ENABLED, LLM_RUNNER_ALLOWED, LLM_USD_CAP_DAY; one priced cost
-#      row per call), under WEB_TASK_MAX_STEPS and WEB_TASK_MAX_S
+#      row per call), under WEB_TASK_MAX_STEPS and WEB_TASK_MAX_S. Before it,
+#      lib_env_apply web-signin, web-otp and web-otp-step export the knob rows
+#      of the agent's sign_in and type_otp steps (BH-8250)
 #   9. the screenshots (the last 5) go to the branch harness-shots/<key>-web-task
 #      (bin/lib/web-task/shots.sh); each URL and the result are job_artifacts
 #      rows of <job-id> (GET /api/artifacts lists them)
 #  10. ONE comment: what was done, the answer or why it stopped, the refusals,
-#      the screenshots, the spend. Its last line is the result marker for a
+#      the screenshots, the spend. When result.json names a vault_site (a
+#      host) and a sign_in action ended ok, one line says the run signed in
+#      there. Its last line is the result marker for a
 #      `done` run, and for any other status (step-cap, time-cap, refused-spend,
 #      error) an attempt marker <!-- web-task-attempt:<KEY>:<stamp> --> that
 #      never blocks a later run. A post
@@ -329,6 +333,9 @@ if [ "$MRC" != 0 ] || [ -z "$WEB_TASK_MODEL" ]; then
 fi
 
 # 8. The browser loop.
+# The knob rows of the sign-in and OTP steps the agent runs (BH-8250): each
+# lib exports its settings rows, so the values reach the agent as env.
+{ command -v lib_env_apply >/dev/null 2>&1 && lib_env_apply web-signin && lib_env_apply web-otp && lib_env_apply web-otp-step; } >/dev/null 2>&1 || true
 jq -r '"# " + (.title // "") + "\n\n" + (.body // "")' "$RUN/issue.json" > "$RUN/task.md"
 export WEB_TASK_PROJECT="$P" WEB_TASK_MODEL WEB_TASK_DOMAINS="$DOMAINS"
 log "start: domains=$DOMAINS steps<=$WEB_TASK_MAX_STEPS wall<=${WEB_TASK_MAX_S}s run=$RUN"
@@ -348,6 +355,10 @@ STEPS=$(jq -r '.steps // 0' "$R" 2>/dev/null); STEPS="${STEPS:-0}"
 CALLS=$(jq -r '.calls // 0' "$R" 2>/dev/null); CALLS="${CALLS:-0}"
 ANSWER=$(jq -r '.answer // ""' "$R" 2>/dev/null)
 REASON=$(jq -r '.reason // ""' "$R" 2>/dev/null)
+# The vault site, only when the run signed in: a host, and a sign_in action
+# with an ok outcome.
+VAULT_SITE=$(jq -r 'if any(.actions[]?; .action == "sign_in" and ((.outcome // "") | startswith("ok:"))) then (.vault_site // "") else "" end' "$R" 2>/dev/null)
+[[ "$VAULT_SITE" =~ ^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$ ]] || VAULT_SITE=""
 if [ -z "$S" ]; then
   S=error; REASON="the agent wrote no result (rc $ARC): $(head -c 200 "$RUN/agent.err" 2>/dev/null | tr '\n' ' ')"
 fi
@@ -394,6 +405,10 @@ clean() { sed -e 's/<!--/< !--/g' -e 's/-->/-- >/g' -e 's/`/'"'"'/g'; }
     refused-spend) echo "**Status:** refused-spend. The spend gate refused the model call, so nothing was billed. The answer is incomplete." ;;
     *)             echo "**Status:** error. The answer is incomplete." ;;
   esac
+  if [ -n "$VAULT_SITE" ]; then
+    echo
+    echo "I signed in on \`$VAULT_SITE\` with the stored credential. The only forms the browser sent were the sign-in and code forms."
+  fi
   echo
   echo "### What I did"
   NA=$(jq '.actions | length' "$R" 2>/dev/null || echo 0)
