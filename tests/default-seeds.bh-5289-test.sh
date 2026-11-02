@@ -4,7 +4,8 @@
 # fallback behind it says the same value, so a hub with no row and a hub with
 # the seeded row behave alike. docs/OPERATING.md's Defaults table states each.
 #   S1 a fresh worker/jobs/schema.sql: size_gate 700/20, risk_tier.mode off,
-#      and no queue_partition.mode row (a fresh install is serial)
+#      and queue_partition.mode enforce (BH-8052; the conf stays serial, so a
+#      fresh install is still one serial queue)
 #   S2 bin/size-threshold.sh's fallbacks equal the size_gate rows
 #   S3 lead and builder review concurrency: catalog 10 == code fallback 10
 #   S4 "$DIR/bin/lib/risk-tier.sh" rt_mode reads the fresh schema's rows: the
@@ -44,7 +45,8 @@ SG_LINES=$(row size_gate.lines); SG_FILES=$(row size_gate.files); RT_GLOBAL=$(ro
 [ "$SG_FILES" = 20 ] && ok || bad "S1 size_gate.files seeds '$SG_FILES', want 20"
 [ "$RT_GLOBAL" = off ] && ok || bad "S1 risk_tier.mode seeds '$RT_GLOBAL', want off"
 [ "$(row risk_tier.mode.example-org.cromford)" = enforce ] && ok || bad "S1 the per-repo risk_tier.mode seed changed"
-row queue_partition.mode >/dev/null; [ "$?" = 2 ] && ok || bad "S1 a queue_partition.mode row is seeded; the Defaults table says a fresh install is serial"
+QP_MODE=$(row queue_partition.mode)
+[ "$QP_MODE" = enforce ] && ok || bad "S1 queue_partition.mode seeds '$QP_MODE', want enforce (BH-8052)"
 
 # ---------- S2 size gate code fallbacks equal the rows --------------------------
 CODE_L=$(sed -n 's/^DEF_LINES=\([0-9][0-9]*\)$/\1/p' "$DIR/bin/size-threshold.sh")
@@ -131,8 +133,9 @@ if [ -f "$OP" ]; then
   check 'floor for review workers' '1536'
   check 'floor for review workers' '1.5 GB'
   check_is 'Fast-lint' 'report-only'
-  # No queue_partition.mode row is seeded (S1 below), so a fresh install is
-  # serial; the Default cell must say so and not claim lanes are on.
+  # queue_partition.mode seeds enforce (S1 above), but the conf stays
+  # queue_mode=serial, so a fresh install is serial; the Default cell must say
+  # so and not claim lanes are on.
   check 'Merge queue' 'serial'
   check 'Merge queue' 'off until a repo opts in'
   check_is 'Impact CI' 'on'

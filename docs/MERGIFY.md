@@ -491,12 +491,11 @@ webhook left wrong (docs/notes/2026-10-10-BH-5670-merge-queue-reconcile.md).
 
 ## 6. Parallel lanes (BH-4979)
 
-**Status: shipped dark, still serial (checked by BH-5373 on 2026-10-13).** BH-5373 did not flip
-it: `MERGIFY_CI_KEY` is not on the hub yet, so the step 3 probe below cannot run.
-`config/mergify/repos/cromford.conf` says `queue_mode=serial`,
-so `.mergify.yml` is unchanged and the queue still runs one serial stream of batches. With no
-settings row the conductor runs in `shadow` mode. It works out each PR's lane and logs it,
-and it uploads nothing.
+**Status: uploads on, queue still serial (BH-8052 slice C0, 2026-11-02).** The settings row
+`queue_partition.mode` is seeded `enforce`. `config/mergify/repos/cromford.conf` still says
+`queue_mode=serial`, so `.mergify.yml` is unchanged and the queue still runs one serial stream of
+batches. The conductor works out each PR's lane, PUTs its scopes and logs the answer. A failed PUT
+does not hold the PR on a serial conf. The flip to `parallel` is a later PR (BH-8052 slice C1).
 
 **What a lane is.** Mergify's "partition rules" were removed on 2025-10-31. Their successor is
 parallel queue mode with manual scopes: `merge_queue.mode: parallel` plus
@@ -532,7 +531,7 @@ after the `lead-verdict` publish and before the label, so every enqueue path goe
 |---|---|
 | no row, worker outage | `shadow` |
 | `shadow` | logs `PARTITION <slug>#<n>@<head12> lane=<scoped\|serial> scopes=<k> reason=<why>` to `logs/merge-conductor.log`, uploads nothing |
-| `enforce` | the same line, then the PUT (key on stdin via `curl --config -`, never argv). One PUT per head and payload: the ledger is `state/merge-conductor/queue-partition/<slug_>_<n>`, written only after a 2xx |
+| `enforce` (seeded) | the same line, then the PUT (key on stdin via `curl --config -`, never argv). One PUT per head and payload: the ledger is `state/merge-conductor/queue-partition/<slug_>_<n>`, written only after a 2xx. Then one result line: `PARTITION <slug>#<n>: scopes uploaded on <head12> (HTTP <2xx>\|already uploaded)`, or on a serial conf `PARTITION <slug>#<n>: scopes not uploaded on <head12> (<why>); the queue is serial, enqueue proceeds` |
 | `off` | nothing |
 | anything else | `off`, with one log line saying so |
 
@@ -550,13 +549,14 @@ is `lane=serial`, lanes buy nothing yet. Tune `queue_partition.serial_re` before
 1. Mint a Mergify application key with the `ci` scope (Mergify dashboard, a human step).
 2. Put it on the hub and the standby hub as `MERGIFY_CI_KEY` in `/etc/harness/env/`. CI
    doesn't need it.
-3. Probe: `PUT /v1/repos/example-org/cromford/commits/<an open PR's head>/scopes` with
-   `{"scopes":["_inert"],"all_scopes":false}` must answer 2xx. Paste the curl and its answer
-   into the flip PR body.
-4. In that PR: `queue_mode=parallel` in the conf, the re-rendered `.mergify.yml`
-   (`bin/mergify-template.sh render`), and after it merges, the settings row
-   `queue_partition.mode=enforce`. Between the merge and the row, enqueues are held (rc 3), not
-   mis-queued. Set the row in the same sitting.
+3. Probe: the row is already `enforce`, so the conductor PUTs the scopes of every enqueued
+   cromford PR. `bin/queue-scopes-evidence.sh cromford` (live probe
+   `queue-scopes-uploads`) prints the counts and the result lines. It must say `newest=ok`
+   (exit 0): the newest result is an `HTTP 2xx` upload. Declare `probe: queue-scopes-uploads`
+   in a ```` ```live-probes ```` block of the flip PR body. The hub lane's comment for that head
+   is the evidence.
+4. In that PR: `queue_mode=parallel` in the conf and the re-rendered `.mergify.yml`
+   (`bin/mergify-template.sh render`). The mode row needs no change.
 
 `scope_default_capacity` (conf, 1..8, never above `max_parallel_checks`) bounds the batches per
 scope. `max_parallel_checks` stays the global ceiling, so lanes can't run more drafts at once

@@ -33,10 +33,11 @@ cap there.
   PR touching the build lane, even though neither can break the other.
 - **What the factory does.** With lanes switched on, PRs whose files do not
   overlap go into separate queue lanes and merge side by side.
-- **Knob.** `queue_partition.mode` (`off | shadow | enforce`, fallback
-  `shadow`) and `queue_mode=` in `config/mergify/repos/<repo>.conf`. Flip a repo
-  with the checklist in `docs/MERGIFY.md`, and probe that the CI key answers
-  before you do.
+- **Knob.** `queue_partition.mode` (`off | shadow | enforce`, seeded
+  `enforce`, fallback `shadow`) and `queue_mode=` in
+  `config/mergify/repos/<repo>.conf`. Flip a repo with the checklist in
+  `docs/MERGIFY.md`, and probe that the CI key answers before you do: the
+  probe is `probe: queue-scopes-uploads` (the conductor's logged PUT results).
 
 ### A failed batch drops the culprit, it does not bisect
 - **What goes wrong.** Bisecting a red batch re-runs CI on halves of it. With
@@ -327,7 +328,7 @@ Notes for the flip:
 | Fast-lint time budget | report-only | `FAST_LINTS_BUDGET_S` on the `fly-pool` lane (report-only in progress) | A slow lint never blocks a PR, so a slow suite is only noticed if someone reads the report. |
 | Size gate | 700 lines / 20 files | `size_gate.lines` and `size_gate.files` rows; fallback `DEF_LINES=700` and `DEF_FILES=20` in `bin/size-threshold.sh` | Smaller PRs review better and conflict less, but a ticket over the line is split, which adds a plan and a build. |
 | Risk tier | off | `risk_tier.mode` row (off) and `risk_tier.mode.<owner>.<name>` per repo; no row also reads off in `bin/lib/risk-tier.sh`. The rows are honoured only for repos in `RT_MODE_REPOS` (a code constant in `bin/lib/risk-tier.sh`, today the harness's own repo); any other repo stays off until it is added there, then opts in to `shadow`, then `enforce` | Off means every PR gets a lead review. Watch a repo in shadow before enforce, because enforce merges low-risk PRs without one. |
-| Merge queue | serial (separate lanes recommended, off until a repo opts in) | `queue_partition.mode` row (not seeded; fallback `shadow`, which logs lanes and uploads nothing) plus `queue_mode=` per repo in `config/mergify/repos/<repo>.conf` | Independent PRs land side by side. Needs a CI key and a per-repo flip; a repo that has not flipped stays serial. |
+| Merge queue | serial (separate lanes recommended, off until a repo opts in) | `queue_partition.mode` row (seeded `enforce` by BH-8052: it uploads each PR's scopes, and on a serial conf a failed upload is one log line and the enqueue goes ahead; code fallback `shadow`, which logs lanes and uploads nothing) plus `queue_mode=` per repo in `config/mergify/repos/<repo>.conf` | Independent PRs land side by side. Needs a CI key and a per-repo flip; a repo that has not flipped stays serial. |
 | Impact CI | on | always on in `.github/workflows/harness-ci.yml` (`bin/ci-plan.sh`) | Batches run in minutes, not an hour. A suite the impact map misses runs only in the scheduled full run on main. |
 | `/tmp` floor for review workers | 1536 MB (1.5 GB) | `LEAD_REVIEW_TMP_MIN_MB` and `REVIEW_TMP_MIN_MB` lane knobs; fallback 1536 in `bin/lib/review-pool.sh` | Reviews pause instead of failing on a full disk. Too high a floor idles a small box. |
 | Stale-review dismissal | on | no knob, on by construction (in progress) | A fixed PR is not held by its own old review. A reviewer who wants the block kept re-reviews. |

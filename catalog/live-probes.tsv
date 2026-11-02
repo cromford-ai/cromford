@@ -17,3 +17,4 @@ flags	jobs-get	/api/flags	the coordination flags (pauses, kill switches)
 lead-protected-paths	jobs-get	/api/lead-protected-paths?repo=example-org/cromford	the protected-path globs the lead review enforces for example-org/cromford (the route is per repo: no repo is HTTP 400, BH-6641)
 npm-registry	https-get	https://registry.npmjs.org/-/ping	is the npm registry answering
 outcome-check-dry-run	cmd	bin/outcome-check.sh --dry-run	the outcome-check lane's decisions for the merges now due (BH-6382); reads only, no ledger put, no issue POST, no ALERTS line
+queue-scopes-uploads	cmd	bin/queue-scopes-evidence.sh cromford	the conductor's Mergify scopes PUT results for example-org/cromford (BH-8052): counts and log lines; reads the log and ledger only

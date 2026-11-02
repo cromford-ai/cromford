@@ -240,7 +240,12 @@ qp_enqueue_step() {
   else
     urc=2; QP_UPLOAD_WHY="partition mode shadow"
   fi
-  [ "$urc" = 0 ] && return 0
+  # urc 0 is enforce only. The line is the hub's record of a real upload:
+  # bin/queue-scopes-evidence.sh (probe queue-scopes-uploads) reads it.
+  if [ "$urc" = 0 ]; then
+    _qp_log "PARTITION $slug#$num: scopes uploaded on ${head:0:12} ($QP_UPLOAD_WHY)"
+    return 0
+  fi
   if [ "$qmode" = parallel ]; then
     printf 'queue scopes could not be uploaded on %s (%s) — not labelled' "${head:0:12}" "$QP_UPLOAD_WHY"
     return 3
