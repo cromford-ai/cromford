@@ -38,6 +38,8 @@ bin/lib/archie-fm-queue/reconcile.sh
 bin/lib/archie-fm-watch/levers.sh
 bin/lib/autoenqueue.sh
 bin/lib/block-gate.sh
+# pre-existing on main (gh api search/issues for merged PRs, not a tracker read); landed by BH-8324 after BH-7919 was cut
+bin/lib/box-move/proof.sh
 bin/lib/br-pool-terminals.sh
 bin/lib/br/discovery.sh
 bin/lib/console-preview.sh
