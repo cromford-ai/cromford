@@ -36,21 +36,26 @@ export PATH="$T/fakebin:$PATH"
 # soul_checks <file> [quiet]: the A-checks over one soul file. Prints a FAIL
 # line per miss (unless quiet) and echoes the miss count on its last line.
 # Block checks join the block onto one line: prose wraps anywhere.
+# Each block is read into blk before grep (BH-8937): sed piped into grep -q
+# under pipefail is rc 141 when sed still writes after grep exits.
 soul_checks() {
-  local f="$1" q="${2:-}" n=0 s
+  local f="$1" q="${2:-}" n=0 s blk
   sc_bad() { n=$((n+1)); [ -n "$q" ] || echo "FAIL: $1" >&2; }
   [ -s "$f" ] || sc_bad "A1 the soul exists and is non-empty"
   grep -q '^MAY, without asking:' "$f" || sc_bad "A2 a line starts 'MAY, without asking:'"
+  blk=$(sed -n '/^MAY, without asking:/,/^NEVER:/p' "$f" | tr '\n' ' ')
   for s in rebase 'fix round' enqueue 'HOLD/RESUME' ai-build; do
-    sed -n '/^MAY, without asking:/,/^NEVER:/p' "$f" | tr '\n' ' ' | grep -qF "$s" || sc_bad "A2 the MAY block names [$s]"
+    grep -qF "$s" <<<"$blk" || sc_bad "A2 the MAY block names [$s]"
   done
   grep -q '^NEVER:' "$f" || sc_bad "A3 a line starts 'NEVER:'"
+  blk=$(sed -n '/^NEVER:/,/^REPORT:/p' "$f" | tr '\n' ' ')
   for s in 'gh pr merge' 'push to main' 'production DB write' 'spend cap'; do
-    sed -n '/^NEVER:/,/^REPORT:/p' "$f" | tr '\n' ' ' | grep -qF "$s" || sc_bad "A3 the NEVER block names [$s]"
+    grep -qF "$s" <<<"$blk" || sc_bad "A3 the NEVER block names [$s]"
   done
   grep -q '^REPORT:' "$f" || sc_bad "A4 a line starts 'REPORT:'"
+  blk=$(sed -n '/^REPORT:/,/^$/p' "$f" | tr '\n' ' ')
   for s in 'daily factory digest' 'stop-the-line'; do
-    sed -n '/^REPORT:/,/^$/p' "$f" | tr '\n' ' ' | grep -qF "$s" || sc_bad "A4 the REPORT block names [$s]"
+    grep -qF "$s" <<<"$blk" || sc_bad "A4 the REPORT block names [$s]"
   done
   awk '/^MAY, without asking:/{m=NR} /^NEVER:/{v=NR} /^REPORT:/{r=NR}
        END{exit !(m && v && r && m < v && v < r)}' "$f" || sc_bad "A5 MAY comes before NEVER before REPORT"
@@ -63,8 +68,9 @@ soul_checks() {
   for s in 'Owner, not assistant.' 'Curious and restless.' 'Measures before he brags.' "Respects the operator's attention." 'Has opinions.' 'De-AI'; do
     grep -qF "$s" "$f" || sc_bad "A8 the trait [$s] is kept"
   done
+  blk=$(sed -n '/^Initiatives\./,$p' "$f")
   for s in 'Archie, track <goal> | metric:' 'Archie approve I<n> / Archie change I<n> <what> / Archie drop I<n>'; do
-    sed -n '/^Initiatives\./,$p' "$f" | grep -qF "$s" || sc_bad "A9 the initiative block keeps [$s]"
+    grep -qF "$s" <<<"$blk" || sc_bad "A9 the initiative block keeps [$s]"
   done
   echo "$n"
 }
@@ -93,7 +99,7 @@ check "O1 the v2 prompt has no MUST ASK" '! grep -qiF "MUST ASK" <<<"$P"'
 check "O1 the marker comes before the MAY line" \
   'mk=$(grep -nF "=== WHO YOU ARE" <<<"$P" | head -1 | cut -d: -f1); ml=$(grep -nF "MAY, without asking:" <<<"$P" | head -1 | cut -d: -f1); [ -n "$mk" ] && [ -n "$ml" ] && [ "$mk" -lt "$ml" ]'
 check "O2 run_survival appends the soul" \
-  'sed -n "/^run_survival() {/,/^}/p" "$SRC" | grep -qF "prompts/archie-soul.d"'
+  'grep -qF "prompts/archie-soul.d" <<<"$(sed -n "/^run_survival() {/,/^}/p" "$SRC")"'
 
 # ═════ C: bin/archie.sh puts it first in the check prompt ════════════════════
 BLK=$(sed -n '/cat "\$H"\/prompts\/archie-soul\.d/,/> "\$pf"/p' "$DIR/bin/archie.sh")
