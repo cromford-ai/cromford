@@ -3,11 +3,11 @@
 # run. Defines functions only. The operator's guide is docs/ADDING-A-BOX.md,
 # "Box operations".
 #
-#   box-ops.sh restart <id> [--account <a>] [--apply]
+#   box-ops.sh restart <id> [--host <name>] [--account <a>] [--apply]
 #   box-ops.sh resize  <id> --account <a> [--vcpus N] [--mem-gb N] [--disk-gb N]
 #                      [--apply --confirm-monthly-usd <n>]
-#   box-ops.sh stop    <id> [--account <a>] [--apply]
-#   box-ops.sh retire  <id> [--to <box-id>] [--ip <old-ip>] [--root <dir>] [--apply] [--delete]
+#   box-ops.sh stop    <id> [--host <name>] [--account <a>] [--apply]
+#   box-ops.sh retire  <id> [--host <name>] [--to <box-id>] [--ip <old-ip>] [--root <dir>] [--apply] [--delete]
 #
 # DRY RUN IS THE DEFAULT. Without --apply a verb prints one `PLAN ...` line per
 # step and changes nothing (it may GET from Orgo to read the computer).
@@ -34,10 +34,21 @@
 #            origin/main no longer names the box (else `WAITING`, exit 4).
 #
 # The box id must match ^[a-z][a-z0-9]*$; hub and the box that runs the command
-# are refused. Host: the fleet.conf name, then catalog/cost-accounts.json
-# .box_aliases, then state/box-ops/<id>.json, then HARNESS_BOX_PREFIX<id>.
+# are refused. Host: --host <name> when given (restart, stop, retire), else the
+# fleet.conf name, then catalog/cost-accounts.json .box_aliases, then
+# state/box-ops/<id>.json, then HARNESS_BOX_PREFIX<id>.
 # Orgo id: state/box-launch/<id>.json, state/box-ops/<id>.json, then the one
 # computer on GET /computers with that name (0 or 2+ matches are refused).
+# With --host, a state file whose .host names another box is skipped.
+#
+# --host is for a box id that two boxes share: bin/box-move.sh keeps the old
+# box id on the new box (BH-8322), so the id alone names the new box. The id is
+# SHARED when bin/fleet-conf.sh --boxes-with-roles has a box other than --host
+# with that id and a role other than retired. retire --host without --delete
+# on a shared id is refused (box-register --retire <id> would strip the other
+# box's lists). retire --host --delete --apply on an id shared on origin/main
+# skips only the cron/boxes/<id>.d check (that list is the other box's); the
+# check that origin/main fleet.conf no longer names --host stays.
 # Key: the --account catalog key_env, else ORGO_API_KEY. The name of an unset
 # key is printed, never a value. Timeouts: BOX_LAUNCH_CALL_TIMEOUT_S,
 # BOX_LAUNCH_POLL_S, BOX_LAUNCH_DEADLINE_S. Dedupe lock (--apply only):
@@ -60,6 +71,7 @@ box_ops_orgo() (
   H="${HARNESS:-${H:-}}"
   VERB="${1:-}"; shift
   ID=""; ACCOUNT=""; VCPUS=""; MEMGB=""; DISKGB=""; APPLY=0; CONFIRM=""; TO=""; OLDIP=""; DELETE=0; ROOT=""
+  HOSTARG=""; HOSTSET=0; SHARED=""
   OID=""; KEYENV=ORGO_API_KEY; TOHOST=""; TOIP=""
   LIBD="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
   BIN="$(cd "$LIBD/.." && pwd)"
@@ -75,9 +87,9 @@ box_ops_orgo() (
   }
   refuse() { echo "box-ops: $*" >&2; finish 2 REFUSED "$*"; }
   fail()   { echo "box-ops: $*" >&2; finish 1 FAIL "$*"; }
-  usage()  { echo "usage: box-ops.sh restart|stop <id> [--account <a>] [--apply]" >&2
+  usage()  { echo "usage: box-ops.sh restart|stop <id> [--host <name>] [--account <a>] [--apply]" >&2
              echo "       box-ops.sh resize <id> --account <a> [--vcpus N] [--mem-gb N] [--disk-gb N] [--apply --confirm-monthly-usd <n>]" >&2
-             echo "       box-ops.sh retire <id> [--to <box-id>] [--ip <old-ip>] [--root <dir>] [--apply] [--delete]" >&2
+             echo "       box-ops.sh retire <id> [--host <name>] [--to <box-id>] [--ip <old-ip>] [--root <dir>] [--apply] [--delete]" >&2
              finish 2 REFUSED "usage"; }
 
   [ -n "$H" ] || { echo "box-ops: no harness root (HARNESS unset)" >&2; exit 1; }
@@ -92,6 +104,8 @@ box_ops_orgo() (
       --ip)      [ "$VERB" = retire ] || usage; OLDIP="${2-}"; shift 2 || usage ;;
       --root)    ROOT="${2-}"; shift 2 || usage ;;
       --delete)  [ "$VERB" = retire ] || usage; DELETE=1; shift ;;
+      --host)    case "$VERB" in restart|stop|retire) ;; *) usage ;; esac
+                 [ $# -ge 2 ] || usage; HOSTARG="$2"; HOSTSET=1; shift 2 ;;
       --apply)   APPLY=1; shift ;;
       -*) echo "box-ops: unknown flag $1" >&2; usage ;;
       *) [ -z "$ID" ] || usage; ID="$1"; shift ;;
@@ -101,6 +115,8 @@ box_ops_orgo() (
   [[ "$ID" =~ ^[a-z][a-z0-9]*$ ]] || refuse "box id '$ID' must match ^[a-z][a-z0-9]*\$"
   [ "$ID" != hub ] || refuse "hub is not operated by box-ops verbs"
   [ "$VERB" != resize ] || [ -n "$ACCOUNT" ] || refuse "resize needs --account (prices are per account)"
+  [ "$HOSTSET" = 0 ] || { [[ "$HOSTARG" != *$'\n'* ]] && [[ "$HOSTARG" =~ ^[a-z0-9][a-z0-9-]{0,62}$ ]]; } \
+    || refuse "--host '$HOSTARG' must match ^[a-z0-9][a-z0-9-]{0,62}\$"
   if [ -n "$ROOT" ]; then ROOT=$(cd "$ROOT" 2>/dev/null && pwd) || refuse "--root is not a directory"
   else ROOT=$(cd "$BIN/.." && pwd); fi
   export FLEET_CONF="$ROOT/fleet.conf"
@@ -159,10 +175,15 @@ box_ops_orgo() (
 
   # ---------- host, projects, retire target ----------
   BOXST="$H/state/box-ops/$ID.json"
-  HOST=$(cron_watchdog_name_for "$ID" 2>/dev/null) \
-    || HOST=$(jq -r --arg id "$ID" '[.box_aliases | to_entries[] | select(.value == $id) | .key][0] // empty' "$ROOT/catalog/cost-accounts.json" 2>/dev/null)
-  [ -n "$HOST" ] || HOST=$(jq -r '.host // empty' "$BOXST" 2>/dev/null)
-  [ -n "$HOST" ] || HOST="${HARNESS_BOX_PREFIX}${ID}"
+  if [ "$HOSTSET" = 1 ]; then
+    HOST="$HOSTARG"
+    SHARED=$(shared_box)
+  else
+    HOST=$(cron_watchdog_name_for "$ID" 2>/dev/null) \
+      || HOST=$(jq -r --arg id "$ID" '[.box_aliases | to_entries[] | select(.value == $id) | .key][0] // empty' "$ROOT/catalog/cost-accounts.json" 2>/dev/null)
+    [ -n "$HOST" ] || HOST=$(jq -r '.host // empty' "$BOXST" 2>/dev/null)
+    [ -n "$HOST" ] || HOST="${HARNESS_BOX_PREFIX}${ID}"
+  fi
   PROJECTS=$("$BIN/fleet-conf.sh" --projects-on-box "$HOST" | tr '\n' ' '); PROJECTS="${PROJECTS% }"
   if [ "$VERB" = retire ] && [ -n "$TO" ]; then
     [[ "$TO" =~ ^[a-z][a-z0-9]*$ ]] && [ "$TO" != hub ] || refuse "--to '$TO' must match ^[a-z][a-z0-9]*\$ and must not be hub"
@@ -189,6 +210,13 @@ box_ops_orgo() (
   resolve_oid() {  # sets OID; no key in a dry run leaves it empty
     local f m
     for f in "$H/state/box-launch/$ID.json" "$BOXST"; do
+      if [ "$HOSTSET" = 1 ]; then
+        m=$(jq -r '.host // empty' "$f" 2>/dev/null)
+        if [ -n "$m" ] && [ "$m" != "$HOST" ]; then
+          echo "box-ops: note: $f names host $m, not $HOST; skipped"
+          continue
+        fi
+      fi
       OID=$(jq -r '.orgo_id // empty | tostring' "$f" 2>/dev/null)
       [ -n "$OID" ] && break
     done
@@ -367,7 +395,10 @@ verb_resize() {
 }
 
 verb_retire() {
-  local p rc onmain
+  local p rc onmain mainshared mainconf
+  if [ -n "$SHARED" ] && [ "$DELETE" = 0 ]; then
+    refuse "box id $ID also belongs to $SHARED; box-register --retire $ID would strip its lists; use --delete only"
+  fi
   if [ -n "$PROJECTS" ] && [ -z "$TO" ] && [ "$DELETE" = 0 ]; then
     refuse "projects still point at box $ID: $PROJECTS; pass --to <box-id>"
   fi
@@ -381,7 +412,11 @@ verb_retire() {
     for p in $PROJECTS; do
       [ -n "$TO" ] && echo "PLAN move bin/box-register.sh $TO --ip $TOIP --project $p --root $ROOT --apply"
     done
-    echo "PLAN retire bin/box-register.sh --retire $ID${OLDIP:+ --ip $OLDIP} --root $ROOT --apply"
+    if [ -n "$SHARED" ]; then
+      echo "PLAN no box-register --retire: box id $ID also belongs to $SHARED"
+    else
+      echo "PLAN retire bin/box-register.sh --retire $ID${OLDIP:+ --ip $OLDIP} --root $ROOT --apply"
+    fi
     [ "$DELETE" = 1 ] && echo "PLAN delete DELETE /computers/<orgo-id> after origin/main no longer names $HOST"
     finish 0 PLAN "dry run"
   fi
@@ -422,7 +457,19 @@ verb_retire() {
   onmain=""
   git -C "$ROOT" show origin/main:fleet.conf 2>/dev/null \
     | awk -v h="$HOST" '!/^[[:space:]]*(#|$)/ && $6 == h {f=1} END {exit !f}' && onmain="fleet.conf names $HOST"
-  git -C "$ROOT" cat-file -e "origin/main:cron/boxes/$ID.d" 2>/dev/null && onmain="${onmain:+$onmain; }cron/boxes/$ID.d exists"
+  mainshared=""
+  if [ "$HOSTSET" = 1 ]; then
+    mainconf=$(mktemp) || fail "mktemp failed"
+    if git -C "$ROOT" show origin/main:fleet.conf > "$mainconf" 2>/dev/null; then
+      mainshared=$(FLEET_CONF="$mainconf" shared_box)
+    fi
+    rm -f "$mainconf"
+  fi
+  if [ -n "$mainshared" ]; then
+    echo "retire: box id $ID belongs to $mainshared on origin/main; cron/boxes/$ID.d is its list, not checked"
+  else
+    git -C "$ROOT" cat-file -e "origin/main:cron/boxes/$ID.d" 2>/dev/null && onmain="${onmain:+$onmain; }cron/boxes/$ID.d exists"
+  fi
   if [ -n "$onmain" ]; then
     echo "WAITING: origin/main still has the box ($onmain); merge the retire PR, then re-run"
     finish 4 WAITING "$onmain"
@@ -445,6 +492,16 @@ verb_retire() {
   fi
   box_state '.deleted_at = $t' --arg t "$(date -u +%FT%TZ)" || fail "computer $OID deleted, but $BOXST was not stamped"
   finish 0 OK "deleted"
+}
+
+# shared_box — the first box other than $HOST that the rows (FLEET_CONF)
+# give box id $ID with a role other than retired; empty when none. The
+# origin/main read sets REGISTRY_SOURCE=file through its own FLEET_CONF.
+shared_box() {
+  local src="${REGISTRY_SOURCE:-}"
+  [ "${FLEET_CONF:-}" = "$ROOT/fleet.conf" ] || src=file
+  REGISTRY_SOURCE="$src" "$BIN/fleet-conf.sh" --boxes-with-roles 2>/dev/null \
+    | awk -F'\t' -v id="$ID" -v h="$HOST" '$2 == id && $1 != h && $3 != "retired" {print $1; exit}'
 }
 
 # box_state <jq filter> [jq args...] — update state/box-ops/<id>.json, tmp+mv.

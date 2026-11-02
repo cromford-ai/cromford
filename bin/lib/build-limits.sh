@@ -3,9 +3,9 @@
 # runs it (BH-8281). Sourced by bin/run-build.sh and bin/fix-round-claim.sh;
 # defining functions is its only effect.
 #
-# WHY. On 2026-10-24 box-project-6-os-1 (10.0.0.14) reached a load average of
+# WHY. On 2026-10-24 box-project-6-os-1 reached a load average of
 # 92. From 11:20Z to 18:14Z the hub could not ssh to it, so the project-6-os
-# pool logged `env bundle FAILED … ssh env extract from 10.0.0.14 failed
+# pool logged `env bundle FAILED … ssh env extract from <project-6-os address> failed
 # (ssh rc 255)` on every tick and no project-6 build started for 7 hours. Six
 # project-6 fix rounds on the same box ended rc=137. The box had just taken
 # project-6-desktop, a Rust/cargo build, which by default runs one rustc job per

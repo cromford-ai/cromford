@@ -4,9 +4,9 @@ Doc: OPERATING, FLY-POOL
 
 ## What changed
 
-On 2026-10-24 box-project-6-os-1 (10.0.0.14) reached load 92. From 11:20Z
+On 2026-10-24 box-project-6-os-1 reached load 92. From 11:20Z
 to 18:14Z the hub could not ssh to it. The project-6-os pool logged
-`env bundle FAILED … ssh env extract from 10.0.0.14 failed (ssh rc 255)` on
+`env bundle FAILED … ssh env extract from <project-6-os address> failed (ssh rc 255)` on
 every tick, and no project-6 build started for 7 hours. The box had just taken
 the project-6-desktop cargo build.
 

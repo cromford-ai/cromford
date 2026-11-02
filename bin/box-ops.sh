@@ -70,9 +70,9 @@
 # Run by hand: bin/box-ops.sh
 #
 # ORGO VERBS. With a first argument this is an operator command, not the tick:
-#   box-ops.sh restart|stop <id> [--account <a>] [--apply]
+#   box-ops.sh restart|stop <id> [--host <name>] [--account <a>] [--apply]
 #   box-ops.sh resize <id> --account <a> [--vcpus N] [--mem-gb N] [--disk-gb N] [--apply --confirm-monthly-usd <n>]
-#   box-ops.sh retire <id> [--to <box-id>] [--ip <old-ip>] [--root <dir>] [--apply] [--delete]
+#   box-ops.sh retire <id> [--host <name>] [--to <box-id>] [--ip <old-ip>] [--root <dir>] [--apply] [--delete]
 # They live in bin/lib/box-ops-orgo.sh (dry run by default, exit 0/1/2/3/4 as
 # bin/box-launch.sh). They are not lane-gated and take no locks/box-ops.lock.
 # Any other first argument is a usage error (exit 2). docs/ADDING-A-BOX.md,

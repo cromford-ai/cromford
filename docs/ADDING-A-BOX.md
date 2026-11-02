@@ -207,9 +207,20 @@ bin/box-ops.sh restart oldbox                                  # dry run
 bin/box-ops.sh stop oldbox                                     # dry run
 bin/box-ops.sh resize oldbox --account project-6-account --mem-gb 8   # dry run
 bin/box-ops.sh retire oldbox --to newbox                       # dry run
+bin/box-ops.sh stop project-6-os --host box-project-6-os-1             # dry run, named host
+bin/box-ops.sh retire project-6-os --host box-project-6-os-1 --delete  # dry run, named host
 ```
 
 Add `--apply` to do the work. The code is in `bin/lib/box-ops-orgo.sh`.
+
+`--host <name>` (restart, stop, retire) names the Orgo computer when another
+box has the same box id. `bin/box-move.sh` keeps the old box id on the new
+box, so without `--host` the id resolves to the new box (BH-8325). With
+`--host`, box-ops reads the projects of that host and skips a state file that
+names another host. `retire --host` without `--delete` is refused when another
+live box has the id. `retire --host --delete --apply` skips the
+`cron/boxes/<id>.d` check when origin/main gives the id to another live box.
+The runbook is `docs/notes/2026-11-02-BH-8325-MKF-10-isolation.md`.
 
 - `restart` sends `POST /computers/<orgo-id>/restart`, then reads
   `GET /computers/<orgo-id>` until the status is `running`.

@@ -11,6 +11,7 @@
 #   bin/box-move.sh proof <oldbox> <newbox>
 #   bin/box-move.sh cutover --step B1|B2|B3|B4|B5 [--confirm] [--force-drain] <oldbox> <newbox>
 #   bin/box-move.sh rollback [--confirm] [--force-drain] <oldbox> <newbox>
+#   bin/box-move.sh isolation [--step I1 [--confirm]] <oldbox> <newbox>
 #
 # <oldbox> and <newbox> are fleet box names (box-project-6-os-1,
 # box-mkfly). The old box id, address and projects come from the rows
@@ -62,6 +63,19 @@
 #            old crontab. Without --confirm it prints WOULD RUN.
 #            --force-drain (cutover B2, rollback) skips the drain wait; for
 #            rollback it also takes an unreachable new box as stopped.
+# isolation  the isolation drill after the cut-over (bin/lib/box-move/isolation.sh).
+#            --step I1 refuses unless the last B5 row is ok and the rows put
+#            no project on the old box; it writes a byte-offset baseline of
+#            every hub log, stops the old Orgo computer through
+#            `bin/box-ops.sh stop <box id> --host <oldbox> --apply` and records
+#            `I1 ok`. Without --confirm it prints WOULD RUN and the box-ops dry
+#            run. Without --step: the drill report (old-address lines in the
+#            hub logs since the baseline, pull spawns that reached RESULT, lead
+#            reviews, merges, triage dispatches, fix rounds, the tailnet answer,
+#            tracked files on origin/main that name the old address, one
+#            `isolation verdict=` line and `retire_ready=`), also written to
+#            state/box-move/<newbox>/isolation-report-<ts>.txt. It never
+#            deletes the computer: it prints the retire command for the operator.
 #
 # Knobs (env, operator-run, no lane row; the value after each name is the
 # fallback): BOX_MOVE_APP (<newbox>), BOX_MOVE_REGION (iad), BOX_MOVE_VM_SIZE
@@ -83,6 +97,13 @@
 # before and after), BOX_MOVE_PROOF_SLACK (1, the ticket's "after >= before -
 # 1"; 0 is allowed), BOX_MOVE_ROLLBACK_BUDGET_S (900, the ticket's "< 15 min"
 # rollback drill); it reads JOBS_URL and HARNESS_SECRET for the fix rounds.
+# Isolation: BOX_MOVE_ISOLATION_WINDOW_S (259200, the ticket's 72 h),
+# BOX_MOVE_ISOLATION_MIN_PULL (5, AC2), BOX_MOVE_ISOLATION_MIN_EACH (1, AC3),
+# BOX_MOVE_RETIRE_CLEAN_S (604800, the ticket's 7 clean days),
+# BOX_MOVE_ISOLATION_PROJECTS (empty = the projects of old-rows.tsv),
+# BOX_MOVE_ISOLATION_IP_ALLOW (`bin/share/mapping.py .harness/specs/`, the
+# path prefixes the tracked-file check skips: the redaction table and the
+# frozen plans), BOX_MOVE_ORGO_ACCOUNT (empty; the box-ops --account).
 #
 # Exit: 0 done; 2 usage or a bad knob (nothing done); 3 preflight refused
 # (nothing done, one stderr line, one alert-line row box-move-preflight); 4 a
@@ -109,6 +130,8 @@ HARNESS="${HARNESS:-/root/harness}"
 . "$SELF_DIR/lib/box-move/cutover.sh" || exit 2
 # shellcheck source=bin/lib/box-move/proof.sh
 . "$SELF_DIR/lib/box-move/proof.sh" || exit 2
+# shellcheck source=bin/lib/box-move/isolation.sh
+. "$SELF_DIR/lib/box-move/isolation.sh" || exit 2
 
 BIN="$SELF_DIR"
 BM_TH="${BOX_MOVE_TARGET_HARNESS:-/root/harness}"
@@ -121,7 +144,7 @@ BM_CHECKOUT="${HARNESS_CHECKOUT:-/root/harness-checkout}"
 BM_IDLE_SIGNALS="$SELF_DIR/../catalog/fly-idle-signals.json"
 BM_VOLUME_NAME=box_data
 
-usage() { sed -n '6,13p' "$0" | sed 's/^# \{0,1\}//' >&2; exit 2; }
+usage() { sed -n '6,14p' "$0" | sed 's/^# \{0,1\}//' >&2; exit 2; }
 
 # ---- sandbox guard (as bin/hub-move.sh's) ------------------------------------
 sandbox_guard() {
@@ -153,6 +176,18 @@ check_knobs() {
       BM_PROOF_WINDOW_S BM_ROLLBACK_BUDGET_S; do
     bm_is_posint "${!k}" || { echo "box-move: BOX_MOVE_${k#BM_}='${!k}' is not a positive integer" >&2; exit 2; }
   done
+  for k in ISOLATION_WINDOW_S ISOLATION_MIN_PULL ISOLATION_MIN_EACH RETIRE_CLEAN_S; do
+    local v="BM_ISO_${k#ISOLATION_}"; [ "$k" = RETIRE_CLEAN_S ] && v=BM_RETIRE_CLEAN_S
+    bm_is_posint "${!v}" || { echo "box-move: BOX_MOVE_$k='${!v}' is not a positive integer" >&2; exit 2; }
+  done
+  for k in $BM_ISO_PROJECTS; do
+    bm_is_name "$k" || { echo "box-move: BOX_MOVE_ISOLATION_PROJECTS='$BM_ISO_PROJECTS' is not a list of project names" >&2; exit 2; }
+  done
+  for k in $BM_ISO_IP_ALLOW; do
+    [[ "$k" =~ ^[A-Za-z0-9._/-]+$ ]] || { echo "box-move: BOX_MOVE_ISOLATION_IP_ALLOW='$BM_ISO_IP_ALLOW' is not a list of paths" >&2; exit 2; }
+  done
+  [ -z "$BM_ORGO_ACCOUNT" ] || [[ "$BM_ORGO_ACCOUNT" =~ ^[A-Za-z0-9._-]+$ ]] \
+    || { echo "box-move: BOX_MOVE_ORGO_ACCOUNT='$BM_ORGO_ACCOUNT' is not an account key" >&2; exit 2; }
   bm_is_uint "$BM_PROOF_SLACK" || { echo "box-move: BOX_MOVE_PROOF_SLACK='$BM_PROOF_SLACK' is not a whole number" >&2; exit 2; }
   bm_is_uint "$BM_TS_WAIT_S" || { echo "box-move: BOX_MOVE_TS_WAIT_S='$BM_TS_WAIT_S' is not a whole number" >&2; exit 2; }
   [ -z "$BM_NPROC" ] || bm_is_posint "$BM_NPROC" || { echo "box-move: BOX_MOVE_NPROC='$BM_NPROC' is not a positive integer" >&2; exit 2; }
@@ -279,11 +314,12 @@ while [ $# -gt 0 ]; do
   esac
   shift
 done
-case "$VERB" in inventory|provision|seed|tick|proof|cutover|rollback) ;; *) usage ;; esac
+case "$VERB" in inventory|provision|seed|tick|proof|cutover|rollback|isolation) ;; *) usage ;; esac
 [ "$PLAN" -eq 0 ] || [ "$VERB" = provision ] || usage
 case "$VERB" in
   cutover) case "$STEP" in B1|B2|B3|B4|B5) ;; *) usage ;; esac ;;
   rollback) [ -z "$STEP" ] || usage ;;
+  isolation) [ "$FORCE_DRAIN" -eq 0 ] && { [ "$STEP" = I1 ] || { [ -z "$STEP" ] && [ "$CONFIRM" -eq 0 ]; }; } || usage ;;
   *) [ -z "$STEP" ] && [ "$CONFIRM" -eq 0 ] && [ "$FORCE_DRAIN" -eq 0 ] || usage ;;
 esac
 if [ "$REAL" -eq 1 ]; then
@@ -318,6 +354,13 @@ BM_B1_ALLOW="${BOX_MOVE_B1_ALLOW:-}"
 BM_PROOF_WINDOW_S="${BOX_MOVE_PROOF_WINDOW_S:-86400}"
 BM_PROOF_SLACK="${BOX_MOVE_PROOF_SLACK:-1}"
 BM_ROLLBACK_BUDGET_S="${BOX_MOVE_ROLLBACK_BUDGET_S:-900}"
+BM_ISO_WINDOW_S="${BOX_MOVE_ISOLATION_WINDOW_S:-259200}"
+BM_ISO_MIN_PULL="${BOX_MOVE_ISOLATION_MIN_PULL:-5}"
+BM_ISO_MIN_EACH="${BOX_MOVE_ISOLATION_MIN_EACH:-1}"
+BM_RETIRE_CLEAN_S="${BOX_MOVE_RETIRE_CLEAN_S:-604800}"
+BM_ISO_PROJECTS="${BOX_MOVE_ISOLATION_PROJECTS:-}"
+BM_ISO_IP_ALLOW="${BOX_MOVE_ISOLATION_IP_ALLOW-bin/share/mapping.py .harness/specs/}"
+BM_ORGO_ACCOUNT="${BOX_MOVE_ORGO_ACCOUNT:-}"
 check_knobs
 BM_SSH_OPTS=(-o BatchMode=yes -o "ConnectTimeout=$BM_SSH_CONNECT_TIMEOUT_S" -o StrictHostKeyChecking=accept-new)
 BM_STATE="$HARNESS/state/box-move/$NEW"
@@ -326,7 +369,7 @@ BM_TJ="$BM_STATE/target.json"
 LOCK=0
 case "$VERB" in
   provision|seed|tick) [ "$PLAN" -eq 0 ] && LOCK=1 ;;
-  cutover|rollback) [ "$CONFIRM" -eq 1 ] && LOCK=1 ;;
+  cutover|rollback|isolation) [ "$CONFIRM" -eq 1 ] && LOCK=1 ;;
 esac
 # Dedupe, never a queue: a held lock means another run is on this box. --plan
 # and a cutover or rollback without --confirm write nothing, so they take no
@@ -344,4 +387,6 @@ case "$VERB" in
   proof)     cmd_proof "$OLD" "$NEW" ;;
   cutover)   bm_cutover "$STEP" "$CONFIRM" "$FORCE_DRAIN" "$OLD" "$NEW" ;;
   rollback)  bm_rollback "$CONFIRM" "$FORCE_DRAIN" "$OLD" "$NEW" ;;
+  isolation) BM_NEW_NAME="$NEW"
+             if [ -n "$STEP" ]; then bm_iso_stop "$CONFIRM" "$OLD" "$NEW"; else bm_iso_report "$OLD" "$NEW"; fi ;;
 esac

@@ -25,6 +25,8 @@ mcp/test/board-actions.bh-5820.test.mjs:generic-api-key:76
 mcp/test/project-pause.bh-7708.test.mjs:generic-api-key:18
 tests/box-launch.bh-5748-test.sh:generic-api-key:220
 tests/box-launch.bh-5748-test.sh:generic-api-key:400
+tests/box-ops-orgo-host.bh-8325-test.sh:generic-api-key:104
+tests/box-ops-orgo-host.bh-8325-test.sh:generic-api-key:210
 tests/box-ssh-probe.bh-7710-test.sh:generic-api-key:79
 tests/box-ssh-probe.bh-7710-test.sh:generic-api-key:94
 tests/br-pool-fixround-fetch.bh-8458-test.sh:github-pat:137
@@ -88,6 +90,7 @@ tests/lead-report-transcript.bh-5915-test.sh:generic-api-key:114
 tests/lead-reviews-lib.bh-1948-test.sh:generic-api-key:101
 tests/lib-root-records.bh-2613-test.sh:generic-api-key:296
 tests/lib/box-move-fixture.bh-8322.sh:generic-api-key:23
+tests/lib/box-move-isolation-fixture.bh-8325.sh:generic-api-key:27
 tests/lib/onboarding-worker.bh-7949.mjs:generic-api-key:32
 tests/lib/otp-worker.bh-7732.mjs:generic-api-key:31
 tests/lib/tracker-jira-stub.sh:generic-api-key:38

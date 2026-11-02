@@ -5,7 +5,7 @@ Doc: OPERATING
 Part of #8315 (Order 6 of 10). Refs #8321.
 
 This note is the record for MKF-6. It changes no code, no row and no schedule.
-The build box (a Fly builder) has no route to project-6-os: `ssh root@10.0.0.14`
+The build box (a Fly builder) has no route to project-6-os: `ssh root@<project-6-os address>`
 timed out on port 22 at 2026-10-25 18:05Z. So the holds, the backup config and
 the three live probes are operator steps. Each one is written below as an exact
 command.
@@ -136,7 +136,7 @@ but the ticket does not name them, so they stay on.
 4. Record the hold time (UTC) and the line count of the project-6-os log, for the probe:
    ```bash
    date -u '+%Y-%m-%d %H:%M:%SZ'
-   ssh root@10.0.0.14 'wc -l < /root/harness/logs/merge-queue.log'
+   ssh root@<project-6-os address> 'wc -l < /root/harness/logs/merge-queue.log'
    ```
 
 **Undo:** the same grammar with `on`:
